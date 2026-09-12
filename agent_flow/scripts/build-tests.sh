@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# 把 src/engine 下的 TS 逻辑剥离成 ESM，供 node --test 直接跑。
+# 沙盒里装不全 tsc/tsx 时用它；正常环境请直接用 npm test。
+set -euo pipefail
+cd "$(dirname "$0")/.."
+OUT="${OUT:-/tmp/aftest}"
+mkdir -p "$OUT"
+S="python3 scripts/strip-ts.py"
+
+for f in topo template condition cron canvasOps parallel canvasStore; do
+  [ -f "src/engine/$f.ts" ] && $S "src/engine/$f.ts" "$OUT/$f.mjs" >/dev/null
+done
+# types.ts 里有运行时值（isCondition / DEFAULT_BRANCH / TRIGGER_META），也要生成
+$S src/types.ts "$OUT/types.mjs" >/dev/null
+# 每个映射单独一个 --import-map，避免只有第一个生效
+$S src/engine/parallel.ts "$OUT/parallel.mjs" --import-map ./condition=./condition.mjs >/dev/null
+$S src/engine/runner.ts "$OUT/runner.mjs" \
+   --import-map ./topo=./topo.mjs \
+   --import-map ./template=./template.mjs \
+   --import-map ./condition=./condition.mjs \
+   --import-map ./parallel=./parallel.mjs \
+   --import-map ../types=./types.mjs >/dev/null
+$S src/engine/triggers.ts "$OUT/triggers.mjs" \
+   --import-map ./cron=./cron.mjs \
+   --import-map ../types=./types.mjs >/dev/null
+echo "已生成到 $OUT"
