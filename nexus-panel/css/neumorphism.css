@@ -174,6 +174,7 @@ body {
 #body {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
+  grid-template-rows: 1fr;
   transition: grid-template-columns var(--t);
   min-height: 0;
 }
@@ -286,7 +287,7 @@ body {
 /* ---------- 内容区 ---------- */
 #main {
   display: grid;
-  grid-template-rows: 54px 1fr;
+  grid-template-rows: 1fr;
   min-width: 0;
   min-height: 0;
   padding: 14px 16px 16px 4px;
@@ -518,7 +519,7 @@ body {
    ============================================================ */
 .plugin-wrap {
   position: relative;
-  min-height: 100%;
+  height: 100%;
   isolation: isolate;          /* 把 mix-blend-mode 限制在容器内，不影响外壳 */
 }
 .plugin-root { min-height: 100%; position: relative; }
