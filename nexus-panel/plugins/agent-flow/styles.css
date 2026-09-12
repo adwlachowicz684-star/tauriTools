@@ -416,12 +416,6 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   margin-left: 6px; font-size: 10px; background: #3a2d1f;
   color: #f0a35e; border-radius: 4px; padding: 1px 5px;
 }
-.trig-summary {
-  margin: 5px 0; font-size: 11.5px; color: var(--af-soft);
-  background: #1b1a12; border: 1px solid #3a3520;
-  border-radius: 5px; padding: 4px 7px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 .trig-last { font-size: 10.5px; color: var(--af-dim); margin-bottom: 4px; }
 
 /* ---------------- 并发节点 ---------------- */
@@ -507,4 +501,42 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   line-height: 1.5;
   color: var(--af-soft);
   word-break: break-all;
+}
+
+/* ---------------- 触发器：一个节点多种方式 ---------------- */
+
+/* 属性面板里的多选区 */
+.trig-multi { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.trig-check {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 8px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--af-line);
+  background: var(--af-sunk);
+  font-size: 12px; color: var(--af-dim);
+  transition: border-color .12s, background .12s;
+}
+.trig-check:hover { border-color: var(--af-soft); }
+.trig-check.on {
+  border-color: #eab308;
+  background: rgba(234, 179, 8, .1);
+  color: var(--af-fg);
+}
+.trig-check input { accent-color: #eab308; cursor: pointer; }
+.trig-check-icon { flex: none; width: 14px; text-align: center; font-size: 12px; }
+.trig-check-label { flex: 1; }
+
+/* 节点卡片上的方式清单 */
+.trig-list { display: flex; flex-direction: column; gap: 3px; margin: 4px 0 2px; }
+.trig-row {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--af-soft);
+  background: var(--af-sunk); border: 1px solid var(--af-line);
+  border-radius: 4px; padding: 3px 6px;
+}
+.trig-row.dim { color: var(--af-warn); justify-content: center; }
+.trig-kind-icon { flex: none; width: 13px; text-align: center; }
+.trig-kind { flex: none; color: var(--af-fg); font-weight: 500; }
+.trig-detail {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--af-dim);
 }

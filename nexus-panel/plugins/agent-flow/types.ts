@@ -165,8 +165,18 @@ export function makeConditionNode(id: string, partial: Partial<ConditionNodeData
 export type TriggerNodeData = {
   kind: 'trigger';
   label: string;
-  /** 触发器类型 */
-  trigger: TriggerKind;
+  /**
+   * 触发方式 —— 可多选，同一节点上可以同时挂好几种。
+   * 比如同时「周期 + 监听」：定时兜底，改文件立刻跑。
+   *
+   * 五种方式共用同一个 config，各取所需字段，互不冲突。
+   */
+  triggers: TriggerKind[];
+  /**
+   * 旧版单值字段，仅为兼容历史数据保留。
+   * 读取一律走 triggerKindsOf()，不要直接用它。
+   */
+  trigger?: TriggerKind;
   config: TriggerConfig;
   /** 触发时注入的全局输入 */
   input: string;
@@ -175,7 +185,23 @@ export type TriggerNodeData = {
   output: string;
   error: string;
   lastFiredAt: number | null;
+  /** 最近一次是哪个方式触发的；配合 lastFiredAt 展示 */
+  lastFiredKind?: TriggerKind | null;
 };
+
+/**
+ * 取出节点的触发方式列表，兼容旧的单值字段。
+ *
+ * 历史数据只有 trigger 没有 triggers —— 用它兜住，
+ * 这样老画布打开后不会变成"一个都没选"而彻底不触发。
+ */
+export function triggerKindsOf(d: Pick<TriggerNodeData, 'triggers' | 'trigger'>): TriggerKind[] {
+  const raw = (d as TriggerNodeData).triggers;
+  if (Array.isArray(raw) && raw.length > 0) return raw;
+  const legacy = (d as TriggerNodeData).trigger;
+  if (legacy) return [legacy];
+  return ['manual'];
+}
 
 /* ------------------------------------------------------------------ */
 /* 并发节点                                                            */
@@ -221,15 +247,20 @@ export function isParallel(d: NodeData): d is ParallelNodeData {
 
 export function makeTriggerNode(
   id: string,
-  trigger: TriggerKind,
+  /**
+   * 可传单个或多个。传 'manual' 与 ['manual'] 等价。
+   * 保留单值入参是为了兼容既有调用点。
+   */
+  triggers: TriggerKind | TriggerKind[],
   partial: Partial<TriggerNodeData> = {},
 ): GraphNode {
+  const list = Array.isArray(triggers) ? triggers : [triggers];
   return {
     id,
     data: {
       kind: 'trigger',
-      label: partial.label ?? (TRIGGER_META[trigger]?.label ?? '触发器'),
-      trigger,
+      label: partial.label ?? '触发器',
+      triggers: list,
       config: partial.config ?? { ...DEFAULT_TRIGGER_CONFIG },
       input: partial.input ?? '',
       enabled: partial.enabled ?? true,
@@ -237,6 +268,7 @@ export function makeTriggerNode(
       output: partial.output ?? '',
       error: partial.error ?? '',
       lastFiredAt: partial.lastFiredAt ?? null,
+      lastFiredKind: partial.lastFiredKind ?? null,
     },
   };
 }
@@ -494,7 +526,14 @@ export type TriggerConfig = {
 };
 
 export type Trigger = {
+  /** 展开后的唯一标识：多选时形如 `${nodeId}:${kind}` */
   id: string;
+  /**
+   * 所属画布节点 id。
+   * 一个节点可挂多种触发方式，会展开成多条 Trigger，
+   * 调度器用 id 区分它们，而回写节点状态时要用它找回节点。
+   */
+  nodeId?: string;
   name: string;
   kind: TriggerKind;
   enabled: boolean;

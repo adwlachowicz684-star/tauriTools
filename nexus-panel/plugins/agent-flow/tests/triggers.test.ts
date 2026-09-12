@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { parseCron, nextRun, validateCron, cronMatches, describeCron } from '../engine/cron';
 import { TriggerScheduler } from '../engine/triggers';
 import type { Trigger } from '../types';
+import { makeTriggerNode, triggerKindsOf } from '../types';
 
 const baseConfig = {
   intervalSec: 300,
@@ -332,4 +333,149 @@ test('webhook: 触发器不存在时安全返回 false', async () => {
   const s = new TriggerScheduler({ getTriggers: () => [], onFire: async () => true, log: () => {} });
   assert.equal(await s.notifyWebhook('nope', 'x'), false);
   s.stop();
+});
+
+/* ================================================================== */
+/* 一个节点多种触发方式（多选）                                          */
+/*                                                                     */
+/* 多选后，一个画布节点会展开成多条 Trigger 交给调度器，                */
+/* 这里验证展开、独立计时、以及清理。                                    */
+/* ================================================================== */
+
+function nodeWith(kinds: string[], extra: Record<string, unknown> = {}) {
+  return makeTriggerNode('n1', kinds as never, extra);
+}
+
+test('triggerKindsOf: 新格式直接返回数组', () => {
+  const d = nodeWith(['interval', 'watch']).data;
+  assert.deepEqual(triggerKindsOf(d as never), ['interval', 'watch']);
+});
+
+test('triggerKindsOf: 旧单值字段兼容', () => {
+  // 历史数据只有 trigger，没有 triggers
+  assert.deepEqual(triggerKindsOf({ trigger: 'cron' } as never), ['cron']);
+});
+
+test('triggerKindsOf: 两个字段都没有时回退 manual', () => {
+  assert.deepEqual(triggerKindsOf({} as never), ['manual']);
+});
+
+test('triggerKindsOf: 空数组且不兼容旧值时回退 manual', () => {
+  assert.deepEqual(triggerKindsOf({ triggers: [] } as never), ['manual']);
+});
+
+test('makeTriggerNode: 单值与数组等价', () => {
+  assert.deepEqual(
+    (makeTriggerNode('a', 'cron').data as never as { triggers: string[] }).triggers,
+    ['cron'],
+  );
+  assert.deepEqual(
+    (makeTriggerNode('b', ['cron', 'watch']).data as never as { triggers: string[] }).triggers,
+    ['cron', 'watch'],
+  );
+});
+
+test('展开：一个节点多种方式 → 多条 Trigger，带 nodeId', () => {
+  const node = nodeWith(['interval', 'webhook']);
+  const kinds = triggerKindsOf(node.data as never);
+  const expanded = kinds.map((kind) => ({
+    id: `n1:${kind}`, nodeId: 'n1', kind,
+  }));
+  assert.equal(expanded.length, 2);
+  assert.deepEqual(expanded.map((e) => e.id), ['n1:interval', 'n1:webhook']);
+  assert.ok(expanded.every((e) => e.nodeId === 'n1'));
+});
+
+test('调度器：同一节点的多种方式各自独立计时', async () => {
+  const fired: string[] = [];
+  const sched = new TriggerScheduler({
+    getTriggers: () => [
+      T({ id: 'n1:interval', nodeId: 'n1', kind: 'interval', config: { ...baseConfig, intervalSec: 10 } }),
+      T({ id: 'n1:cron', nodeId: 'n1', kind: 'cron', config: { ...baseConfig, cronExpr: '* * * * *' } }),
+    ],
+    onFire: async (t, reason) => { fired.push(`${t.kind}:${reason}`); return true; },
+    now: () => Date.now(),
+  });
+
+  // interval 的 lastFired 与 cron 的 cronMemo 按各自的 id 记录，不应互相覆盖
+  (sched as unknown as { lastFired: Map<string, number> }).lastFired.set('n1:interval', Date.now());
+  (sched as unknown as { cronMemo: Map<string, unknown> }).cronMemo.set('n1:cron', { expr: '* * * * *', at: null });
+  assert.equal((sched as unknown as { lastFired: Map<string, number> }).lastFired.has('n1:cron'), false);
+  sched.stop();
+  void fired;
+});
+
+test('调度器：remove(nodeId) 清理该节点展开出的所有方式', () => {
+  const sched = new TriggerScheduler({
+    getTriggers: () => [],
+    onFire: async () => true,
+  });
+  const st = sched as unknown as {
+    lastFired: Map<string, number>;
+    cronMemo: Map<string, unknown>;
+    debounce: Map<string, unknown>;
+  };
+  st.lastFired.set('n1:interval', 1);
+  st.lastFired.set('n1:cron', 2);
+  st.cronMemo.set('n1:cron', { expr: 'x', at: null });
+  st.debounce.set('n1:watch', 'timer');
+  // 别的节点不该被误清
+  st.lastFired.set('n2:interval', 3);
+
+  sched.remove('n1');
+
+  assert.equal(st.lastFired.has('n1:interval'), false);
+  assert.equal(st.lastFired.has('n1:cron'), false);
+  assert.equal(st.cronMemo.has('n1:cron'), false);
+  assert.equal(st.debounce.has('n1:watch'), false);
+  assert.equal(st.lastFired.has('n2:interval'), true, '不应误清其他节点');
+  sched.stop();
+});
+
+test('调度器：fireManual 传 nodeId 也能找到', async () => {
+  const sched = new TriggerScheduler({
+    getTriggers: () => [
+      T({ id: 'n1:manual', nodeId: 'n1', kind: 'manual' }),
+      T({ id: 'n1:watch', nodeId: 'n1', kind: 'watch' }),
+    ],
+    onFire: async (t) => t.kind === 'manual',
+  });
+  // 传节点 id：应挑到 manual 那条，而不是第一条随便一个
+  const ok = await sched.fireManual('n1');
+  assert.equal(ok, true);
+
+  // 没有 manual 时退而取该节点的第一种
+  const sched2 = new TriggerScheduler({
+    getTriggers: () => [
+      T({ id: 'n2:watch', nodeId: 'n2', kind: 'watch' }),
+      T({ id: 'n2:cron', nodeId: 'n2', kind: 'cron' }),
+    ],
+    onFire: async (t) => t.kind === 'watch',
+  });
+  assert.equal(await sched2.fireManual('n2'), true);
+  sched.stop(); sched2.stop();
+});
+
+test('调度器：一个节点多种方式仍受全局防重入约束', async () => {
+  let running = 0;
+  let maxConcurrent = 0;
+  const sched = new TriggerScheduler({
+    getTriggers: () => [
+      T({ id: 'n1:interval', nodeId: 'n1', kind: 'interval' }),
+      T({ id: 'n1:webhook', nodeId: 'n1', kind: 'webhook' }),
+    ],
+    onFire: async () => {
+      running += 1;
+      maxConcurrent = Math.max(maxConcurrent, running);
+      await sleep(30);
+      running -= 1;
+      return true;
+    },
+  });
+  // 同一节点的两种方式几乎同时请求
+  const p1 = sched.notifyWebhook('n1:webhook', 'x');
+  const p2 = sched.notifyWebhook('n1:webhook', 'y');
+  await Promise.all([p1, p2]);
+  assert.equal(maxConcurrent, 1, '多选也不能并发跑');
+  sched.stop();
 });

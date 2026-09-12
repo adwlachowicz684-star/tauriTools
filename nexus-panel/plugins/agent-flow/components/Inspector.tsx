@@ -1,5 +1,5 @@
 import {
-  CLI_META, TRIGGER_META, DEFAULT_BRANCH, OP_META,
+  CLI_META, TRIGGER_META, DEFAULT_BRANCH, OP_META, triggerKindsOf,
   makeRule, makeParallelRule,
   isCondition, isTrigger, isParallel, isLoop, isFs,
   LOOP_MODE_META, FS_OP_META, MAX_LOOP_ITERATIONS,
@@ -242,6 +242,16 @@ function TriggerInspector({ node, onChange }: {
   const patchConfig = (patch: Partial<TriggerConfig>) =>
     onChange(node.id, { config: { ...d.config, ...patch } });
 
+  /** 兼容旧的单值字段：读的时候统一走 triggerKindsOf */
+  const selected = triggerKindsOf(d);
+  const toggle = (k: TriggerKind, on: boolean) => {
+    const next = on
+      ? (selected.includes(k) ? selected : [...selected, k])
+      : selected.filter((x) => x !== k);
+    // 写回时一并清掉旧的 trigger 字段，避免它与 triggers 打架
+    onChange(node.id, { triggers: next, trigger: undefined });
+  };
+
   return (
     <aside className="inspector">
       <label className="field">
@@ -249,31 +259,32 @@ function TriggerInspector({ node, onChange }: {
         <input value={d.label} onChange={(e) => onChange(node.id, { label: e.target.value })} />
       </label>
 
-      <label className="field">
-        <span>触发方式</span>
-        <select
-          value={d.trigger}
-          onChange={(e) => {
-            const next = e.target.value as TriggerKind;
-            /*
-              合并成一个节点后，切换类型会变频繁，所以不再清空 config。
-              所有触发方式共用同一个 Config 对象、各取所需字段，
-              保留旧值不会冲突，来回切换也不会丢已填的内容。
-            */
-            const patch: Record<string, unknown> = { trigger: next };
-            // 名字还是上一个类型的默认名时才自动跟随，避免覆盖用户自定义
-            if (d.label === TRIGGER_META[d.trigger]?.label) {
-              patch.label = TRIGGER_META[next]?.label;
-            }
-            onChange(node.id, patch);
-          }}
-        >
-          {(Object.keys(TRIGGER_META) as TriggerKind[]).map((k) => (
-            <option key={k} value={k}>{TRIGGER_META[k].label}</option>
-          ))}
-        </select>
-        <small className="dim">{TRIGGER_META[d.trigger]?.hint}</small>
-      </label>
+      <div className="field">
+        <span>触发方式（可多选）</span>
+        <div className="trig-multi">
+          {(Object.keys(TRIGGER_META) as TriggerKind[]).map((k) => {
+            const on = selected.includes(k);
+            return (
+              <label key={k} className={'trig-check' + (on ? ' on' : '')} title={TRIGGER_META[k].hint}>
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={(e) => toggle(k, e.target.checked)}
+                />
+                <span className="trig-check-icon">{TRIGGER_META[k].icon}</span>
+                <span className="trig-check-label">{TRIGGER_META[k].label}</span>
+              </label>
+            );
+          })}
+        </div>
+        <small className="dim">
+          {selected.length === 0
+            ? '一个都没选 —— 这个节点不会触发'
+            : selected.length === 1
+              ? TRIGGER_META[selected[0]].hint
+              : `已选 ${selected.length} 种，任一满足即触发`}
+        </small>
+      </div>
 
       <label className="check">
         <input
@@ -284,7 +295,7 @@ function TriggerInspector({ node, onChange }: {
         <span>启用这个触发器</span>
       </label>
 
-      {d.trigger === 'interval' && (
+      {selected.includes('interval') && (
         <label className="field">
           <span>间隔秒数（最小 10，避免把 CLI 打爆）</span>
           <input
@@ -295,7 +306,7 @@ function TriggerInspector({ node, onChange }: {
         </label>
       )}
 
-      {d.trigger === 'cron' && (
+      {selected.includes('cron') && (
         <label className="field">
           <span>cron 表达式（分 时 日 月 周）</span>
           <input
@@ -306,7 +317,7 @@ function TriggerInspector({ node, onChange }: {
         </label>
       )}
 
-      {d.trigger === 'watch' && (
+      {selected.includes('watch') && (
         <>
           <label className="field">
             <span>监听目录</span>
@@ -337,7 +348,7 @@ function TriggerInspector({ node, onChange }: {
         </>
       )}
 
-      {d.trigger === 'webhook' && (
+      {selected.includes('webhook') && (
         <>
           <div className="field row2">
             <label className="field">

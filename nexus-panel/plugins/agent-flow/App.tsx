@@ -23,8 +23,9 @@ import {
   loadFromStorage, saveToStorage,
   type Canvas,
 } from './engine/canvasStore';
-import { CLI_META, TRIGGER_META, DEFAULT_TRIGGER_CONFIG, DEFAULT_BRANCH, type TaskNodeData, makeNode, makeConditionNode, makeParallelNode, makeTriggerNode,
-  makeLoopNode, makeFsNode, isTrigger, isLoop, type CliKind, type FsNodeData, type Graph, type NodeData, type Trigger, type TriggerKind } from './types';
+import { CLI_META, DEFAULT_TRIGGER_CONFIG, DEFAULT_BRANCH, type TaskNodeData, makeNode, makeConditionNode, makeParallelNode, makeTriggerNode,
+  makeLoopNode, makeFsNode, isTrigger, isLoop, triggerKindsOf, type CliKind, type FsNodeData,
+  type Graph, type NodeData, type Trigger, type TriggerKind, type TriggerConfig } from './types';
 import type { FlowEdge, FlowNode } from './flowTypes';
 import { killCli, runCli, canWatch, startWatch, canWebhook, startWebhook, type DonePayload } from './lib/tauri';
 import {
@@ -178,22 +179,36 @@ export default function App() {
    * 这样"哪个触发器驱动哪条流水线"在画布上一眼可见，
    * 不用再去另一个面板里对名字。
    */
+  /**
+   * 一个触发器节点可挂多种方式，这里展开成多条 Trigger 交给调度器。
+   *
+   * id 用 `${nodeId}:${kind}` —— 调度器内部按 id 记录"上次触发时刻"
+   * "cron 下次时刻""防抖定时器"，展开后天然互不覆盖。
+   * 同时带上 nodeId，触发完才能把状态写回画布上那一个节点。
+   */
   const triggers = useMemo<Trigger[]>(
     () =>
       nodes
         .filter((n) => isTrigger(n.data))
-        .map((n) => {
-          const d = n.data as { trigger: TriggerKind; config: Record<string, unknown>; input: string; enabled: boolean; label: string };
-          return {
-            id: n.id,
+        .flatMap((n) => {
+          const d = n.data as {
+            triggers?: TriggerKind[]; trigger?: TriggerKind;
+            config: Record<string, unknown>; input: string;
+            enabled: boolean; label: string;
+          };
+          const kinds = triggerKindsOf(d as never);
+          const base = { ...DEFAULT_TRIGGER_CONFIG, ...(d.config ?? {}) } as TriggerConfig;
+          return kinds.map((kind) => ({
+            id: `${n.id}:${kind}`,
+            nodeId: n.id,
             name: d.label,
-            kind: d.trigger,
+            kind,
             enabled: d.enabled !== false,
-            config: { ...DEFAULT_TRIGGER_CONFIG, ...(d.config ?? {}) },
+            config: base,
             input: d.input ?? '',
             lastFiredAt: null,
             lastResult: null,
-          } as Trigger;
+          } as Trigger));
         }),
     [nodes],
   );
@@ -393,13 +408,11 @@ export default function App() {
         node = { id, type: 'fs', position: pos,
           data: makeFsNode(id, { label: '文件操作' }).data } as FlowNode;
       } else {
-        // 五种触发方式合并成一个节点，默认「手动触发」——
+        // 一个节点即可挂多种方式，默认只勾「手动」——
         // 周期/定时/监听/调用都会自动跑，放上画布就生效太危险
         const id = `tr${suffix}`;
         node = { id, type: 'trigger', position: pos,
-          data: makeTriggerNode(id, 'manual', {
-            label: TRIGGER_META.manual.label,
-          }).data } as FlowNode;
+          data: makeTriggerNode(id, ['manual'], { label: '触发器' }).data } as FlowNode;
       }
       setNodes((ns) => [...ns, node]);
       setSelectedId(node.id);
@@ -587,9 +600,11 @@ export default function App() {
           : t.input;
         const ok = await runRef.current(injected);
         // 触发记录写回画布上的触发器节点，直接在节点卡片上就能看到"上次触发时间"
+        const targetId = t.nodeId ?? t.id;
         setNodes((ns) => ns.map((n) =>
-          (n.id === t.id && isTrigger(n.data)
+          (n.id === targetId && isTrigger(n.data)
             ? { ...n, data: { ...n.data, lastFiredAt: Date.now(),
+                lastFiredKind: t.kind,
                 status: ok ? 'success' : 'failed' } as NodeData }
             : n)));
         return ok;

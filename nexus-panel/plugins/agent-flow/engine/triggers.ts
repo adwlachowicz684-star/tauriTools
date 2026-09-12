@@ -152,9 +152,20 @@ export class TriggerScheduler {
     );
   }
 
-  /** 手动触发（界面「立即执行」按钮）。同样受总开关与防重入约束。 */
+  /**
+   * 手动触发（界面「立即执行」按钮）。同样受总开关与防重入约束。
+   *
+   * 一个节点可挂多种方式并展开成多条 Trigger，
+   * 所以这里既接受展开后的 id（`nodeId:kind`），也接受 nodeId 本身
+   * —— 传节点 id 时会挑该节点上的 manual 触发器，
+   * 没有 manual 就退而取这个节点的第一种。
+   */
   async fireManual(id: string): Promise<boolean> {
-    const t = this.deps.getTriggers().find((x) => x.id === id);
+    const all = this.deps.getTriggers();
+    const t =
+      all.find((x) => x.id === id) ??
+      all.find((x) => x.nodeId === id && x.kind === 'manual') ??
+      all.find((x) => x.nodeId === id);
     if (!t) {
       this.log('触发器不存在');
       return false;
@@ -195,14 +206,29 @@ export class TriggerScheduler {
     }
   }
 
-  /** 触发器被删除时清理内部状态，防止内存泄漏与误触发 */
+  /**
+   * 触发器被删除时清理内部状态，防止内存泄漏与误触发。
+   *
+   * 传 nodeId 时，该节点展开出的所有方式一并清理
+   * （单选时代一个节点只有一条，多选后必须按前缀清）。
+   */
   remove(id: string) {
-    this.lastFired.delete(id);
-    this.cronMemo.delete(id);
-    const d = this.debounce.get(id);
-    if (d) {
-      clearTimeout(d);
-      this.debounce.delete(id);
+    const prefix = `${id}:`;
+    const keys = new Set<string>([id]);
+    // 三个 Map 都要扫 —— 只扫 lastFired 会漏：
+    // watch 的防抖项可能还没触发过（不在 lastFired），
+    // cron 的缓存也可能先于首次触发就建好了
+    for (const m of [this.lastFired, this.cronMemo, this.debounce]) {
+      for (const k of m.keys()) if (k.startsWith(prefix)) keys.add(k);
+    }
+    for (const k of keys) {
+      this.lastFired.delete(k);
+      this.cronMemo.delete(k);
+      const d = this.debounce.get(k);
+      if (d) {
+        clearTimeout(d);
+        this.debounce.delete(k);
+      }
     }
   }
 }
