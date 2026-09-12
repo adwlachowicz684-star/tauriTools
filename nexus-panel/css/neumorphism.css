@@ -168,7 +168,6 @@ body {
 #body {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
-  grid-template-rows: 1fr;
   transition: grid-template-columns var(--t);
   min-height: 0;
 }
@@ -281,7 +280,7 @@ body {
 /* ---------- 内容区 ---------- */
 #main {
   display: grid;
-  grid-template-rows: 1fr;
+  grid-template-rows: 54px 1fr;
   min-width: 0;
   min-height: 0;
   padding: 14px 16px 16px 4px;
@@ -513,7 +512,7 @@ body {
    ============================================================ */
 .plugin-wrap {
   position: relative;
-  height: 100%;
+  min-height: 100%;
   isolation: isolate;          /* 把 mix-blend-mode 限制在容器内，不影响外壳 */
 }
 .plugin-root { min-height: 100%; position: relative; }
@@ -756,3 +755,7 @@ html.theme-transition *:not(.spinner) {
 
 /* 保留：--accent-glow 辉光（nav-item.active::before、p-card h2::before）
    是强调色光效而非立体感，不在清除之列 */
+
+/* 插件容器底色：iframe 加载期保持 opacity:0，
+   露出这里的 --bg，于是切换插件不会闪白 */
+.plugin-wrap-frame { background: var(--bg); }

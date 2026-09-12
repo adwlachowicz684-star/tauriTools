@@ -231,7 +231,13 @@ export function initTheme() {
   try {
     if (localStorage.getItem(KEY_USERSET) !== '1') localStorage.removeItem(KEY_THEME);
   } catch { /* 忽略 */ }
-  return applyTheme(getThemeId(), getAccent(), { userInitiated: false });
+  const applied = applyTheme(getThemeId(), getAccent(), { userInitiated: false });
+  // 首屏防闪注入的 html{background:...} 已完成使命，交给 CSS 的
+  // body{background:var(--bg)} 接管，否则切换主题时底色会卡在首屏那一版
+  try {
+    document.getElementById('nexus-preload-bg')?.remove();
+  } catch { /* 忽略 */ }
+  return applied;
 }
 
 /* 供 iframe 插件同步用：返回扁平的变量表 */

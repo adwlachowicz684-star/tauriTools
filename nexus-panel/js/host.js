@@ -203,6 +203,8 @@ export function createHost(opts = {}) {
 
     stage.innerHTML = '';
     stage.appendChild(wrap);
+    // 一切就绪后再触发加载：opacity 已为 0，加载期白底不可见
+    iframe.src = resolveEntry(manifest.entry);
 
     const result = await def.mount(ctx);
     return { manifest, ctx, wrap, target: container, root: container,
@@ -214,9 +216,13 @@ export function createHost(opts = {}) {
     const wrap = document.createElement('div');
     wrap.className = 'plugin-wrap plugin-wrap-frame';
     const iframe = document.createElement('iframe');
-    iframe.src = resolveEntry(manifest.entry);
+    // 先不设 src：让 iframe 停在 about:blank（完全透明），避免白底窗口
     iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals');
-    iframe.style.cssText = 'width:100%;height:100%;border:0;background:transparent;display:block;';
+    // opacity 0 → ready 后淡入：iframe 内文档渲染出来之前一直是透明的，
+    // 露出 wrap 的背景（= --bg），于是"切换插件闪白"消失
+    iframe.style.cssText =
+      'width:100%;height:100%;border:0;background:transparent;display:block;' +
+      'opacity:0;transition:opacity .16s ease;';
     iframe.dataset.pluginId = manifest.id;
     wrap.appendChild(iframe);
 
@@ -233,10 +239,9 @@ export function createHost(opts = {}) {
 
         switch (d.type) {
           case 'ready':
-            // 主动回发 init（含 manifest/主题），再发 mount。
-            // postMessage 按序送达：iframe 先处理 init（ctx 就绪），随后 mount 才能挂载。
+            // 握手成功 = 插件文档已渲染出内容，此时再淡入，白底窗口被完全跳过
+            iframe.style.opacity = '1';
             send(iframe, { type: 'init', manifest, theme: exportVars() });
-            send(iframe, { type: 'mount' });
             break;
           case 'mounted':
             clearTimeout(timeout);
@@ -270,12 +275,15 @@ export function createHost(opts = {}) {
     try {
       await ready;
     } catch (err) {
+      // 握手失败也要让 iframe 显形，否则用户只看到一片底色，无法判断出了什么事
+      iframe.style.opacity = '1';
       cleanupFns.forEach((fn) => fn());
       wrap.remove();
       throw err;
     }
     if (state.mounting !== token) { cleanupFns.forEach((fn) => fn()); wrap.remove(); return null; }
 
+    send(iframe, { type: 'mount' });
     await new Promise((r) => setTimeout(r, 60));   // 给插件渲染时间，便于主题采样
 
     return {

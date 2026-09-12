@@ -4,6 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Agent Flow</title>
+  <style>
+    /* 防闪：iframe 内文档渲染前先铺上原生底色，
+       避免与主面板的深色之间露出白底。
+       值取自 --af-native-bg，与 styles.css 的原生层一致。 */
+    html { background: #0f1115; color-scheme: dark; }
+  </style>
 </head>
 <body>
   <div id="root"></div>
