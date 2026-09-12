@@ -11,7 +11,30 @@ import re
 import sys
 
 
+# 这些字符（或行首）之后出现的 / 才是正则字面量的开头，而不是除号。
+# 注意不能含 < ：JSX 的 </div> 会被误判。
+_REGEX_PREV = set('(,=:[!&|?{};+-*%~^')
+
+
+def _starts_regex(src: str, i: int) -> bool:
+    """判断 src[i] == '/' 是否开启一个正则字面量"""
+    j = i - 1
+    while j >= 0 and src[j] in ' \t':
+        j -= 1
+    if j < 0:
+        return True  # 行首
+    return src[j] in _REGEX_PREV
+
+
 def remove_comments(src: str) -> str:
+    """
+    去掉 // 与 /* */ 注释，且不影响字符串 / 模板串 / 正则字面量的内容。
+
+    必须识别正则字面量，否则会被里面的引号带偏状态机：
+        /rel\s*=\s*["']alternate["']/i
+    朴素实现会把 ["'] 当成字符串开始，之后一路错位，
+    最终把某个 URL 里的 // 当注释删掉（如 'https://...' 被切成 'https:）。
+    """
     out = []
     i, n = 0, len(src)
     state = None
@@ -24,6 +47,26 @@ def remove_comments(src: str) -> str:
                 state = 'block'; i += 2; continue
             if c == '/' and nxt == '/':
                 state = 'line'; i += 2; continue
+            if c == '/' and nxt not in ('/', '*') and _starts_regex(src, i):
+                # 正则字面量：整段照抄，直到未转义的 / 结束（不跨行）
+                out.append(c); i += 1
+                in_class = False
+                while i < n:
+                    ch = src[i]
+                    if ch == '\\':
+                        out.append(src[i:i + 2]); i += 2; continue
+                    if ch == '\n':
+                        break
+                    if ch == '[':
+                        in_class = True
+                    elif ch == ']':
+                        in_class = False
+                    elif ch == '/' and not in_class:
+                        out.append(ch); i += 1; break
+                    out.append(ch); i += 1
+                while i < n and src[i].isalpha():   # flags
+                    out.append(src[i]); i += 1
+                continue
             if c in '"\'':
                 state = 'str'; quote = c; out.append(c); i += 1; continue
             if c == '`':
@@ -59,15 +102,42 @@ def remove_comments(src: str) -> str:
 
 
 def clean_import_types(src: str) -> str:
-    """去掉 import 语句里的内联 type 修饰符：import { a, type B } -> import { a }"""
+    """
+    去掉 import 语句里的内联 type 修饰符：import { a, type B } -> import { a }
+
+    必须按"整个 import 语句"处理，不能只看以 import 开头的那一行：
+        import {
+          a,
+          type B,          <- 这一行不以 import 开头
+        } from './x';
+    只处理单行的话 type B 会被留下，生成的 .mjs 里就是裸标识符，直接语法错误。
+    """
+    lines = src.split('\n')
     out = []
-    for line in src.split('\n'):
-        if re.match(r'^\s*import\s', line):
+    in_import = False
+    for line in lines:
+        starts = re.match(r'^\s*import\s', line) is not None
+        if starts:
+            in_import = '{' in line and '}' not in line
+        is_type_only = re.match(r'^\s*import\s+type\s', line) is not None
+
+        if starts or in_import:
             line = re.sub(r'\btype\s+[A-Za-z_]\w*\s*,\s*', '', line)
             line = re.sub(r',\s*\btype\s+[A-Za-z_]\w*\s*', '', line)
             line = re.sub(r'\{\s*\btype\s+[A-Za-z_]\w*\s*\}', '{}', line)
+            # 整行只剩一个 type 项的情况
+            if re.match(r'^\s*type\s+[A-Za-z_]\w*\s*,?\s*$', line):
+                line = ''
+            if in_import and '}' in line:
+                in_import = False
+
         out.append(line)
-    return '\n'.join(out)
+    src = '\n'.join(out)
+    # 多行 import 里被清空后可能出现 `, ,`
+    src = re.sub(r',(\s*\n\s*),', r',\1', src)
+    void = is_type_only
+    del void
+    return src
 
 
 def remove_as(src: str) -> str:

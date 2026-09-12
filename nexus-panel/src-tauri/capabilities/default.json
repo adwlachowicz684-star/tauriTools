@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "面板基础权限 + agent_flow 插件（启动 CLI 子进程、目录监听、webhook）",
+  "description": "面板基础权限 + agent_flow 插件（启动 CLI 子进程、目录监听、webhook、抓取订阅源）",
   "windows": [
     "main"
   ],
@@ -54,6 +54,23 @@
         }
       ]
     },
-    "shell:allow-kill"
+    "shell:allow-kill",
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "https://api.bilibili.com/**"
+        },
+        {
+          "url": "https://www.bilibili.com/**"
+        },
+        {
+          "url": "https://**"
+        },
+        {
+          "url": "http://**"
+        }
+      ]
+    }
   ]
 }

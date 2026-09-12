@@ -12,6 +12,14 @@ export type RenderCtx = {
   input?: string;
   /** 循环体内的迭代上下文；不在循环中时为 null */
   loop?: LoopCtx | null;
+  /**
+   * 节点的附加字段，支持 {{nodeId.字段名}}。
+   *
+   * 更新检测节点靠它把"标题/链接/时间"交给下游：
+   * 节点主输出是 true/false（给条件节点判断用），
+   * 但下游任务节点往往还想知道"更新的那条叫什么"。
+   */
+  fields?: Record<string, Record<string, string>>;
 };
 
 /**
@@ -23,6 +31,7 @@ export type RenderCtx = {
  *   {{loop.item}}      循环：当前项
  *   {{loop.index}}     循环：当前下标（从 0 开始）
  *   {{loop.count}}     循环：总轮数
+ *   {{nodeId.字段}}     节点的附加字段（如更新检测节点的 title / url / date）
  */
 export function renderTemplate(tpl: string, ctx: RenderCtx): RenderResult {
   const missing: string[] = [];
@@ -44,6 +53,7 @@ export function renderTemplate(tpl: string, ctx: RenderCtx): RenderResult {
       else if (field === 'index') value = String(lp.index);
       else if (field === 'count') value = String(lp.count);
     } else if (field === 'output') value = ctx.outputs[nodeId];
+    else value = ctx.fields?.[nodeId]?.[field];
 
     if (value === undefined) {
       missing.push(key);

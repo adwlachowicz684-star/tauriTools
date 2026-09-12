@@ -904,6 +904,7 @@ fn fs_op(req: FsRequest) -> Result<FsResult, String> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_http::init())
         .manage(ProcRegistry(Mutex::new(HashMap::new())))
         .manage(WatchRegistry(Mutex::new(HashMap::new())))
         .manage(WebhookRegistry(Mutex::new(StdHashMap::new())))

@@ -65,7 +65,7 @@ export const CLI_META: Record<CliKind, { label: string; cmd: string; color: stri
 
 /** 画布上的节点种类：任务 / 条件分支 / 触发器 / 并发控制 / 循环 / 文件操作 */
 export type NodeKind =
-  | 'task' | 'condition' | 'trigger' | 'parallel' | 'loop' | 'fs';
+  | 'task' | 'condition' | 'trigger' | 'parallel' | 'loop' | 'fs' | 'update';
 
 export const DEFAULT_BRANCH = '__default__';
 
@@ -115,7 +115,8 @@ export type NodeData =
   | TriggerNodeData
   | ParallelNodeData
   | LoopNodeData
-  | FsNodeData;
+  | FsNodeData
+  | UpdateNodeData;
 
 export const OP_META: Record<ConditionOp, { label: string; needsValue: boolean }> = {
   contains:    { label: '包含',       needsValue: true },
@@ -447,6 +448,128 @@ export const FS_FORBIDDEN: string[] = [
   '/', '/etc', '/usr', '/bin', '/sbin', '/var', '/system', '/windows',
   'C:\\', 'C:\\Windows', 'C:\\Windows\\System32',
 ];
+
+/* ------------------------------------------------------------------ */
+/* 更新检测节点（B站 UP 主 / 微信公众号）                               */
+/*                                                                     */
+/* 两种源共用一套数据结构：抓取 → 解析 → 与基线比对 → 输出 bool。      */
+/* 差别只在"怎么抓"和"怎么解析"，由 source 字段区分。                  */
+/* ------------------------------------------------------------------ */
+
+export type UpdateSource = 'bilibili' | 'wechat';
+
+/** B站 的抓取方式 */
+export type BiliMode =
+  | 'api'   // 官方投稿列表接口，可能被风控，需要 Cookie
+  | 'rss';  // RSS（如 RSSHub），稳定但要自备服务
+
+export type UpdateNodeData = {
+  kind: 'update';
+  source: UpdateSource;
+  label: string;
+
+  /* ---- B站 ---- */
+  /** UID，或 space.bilibili.com 主页链接 */
+  biliUid: string;
+  biliMode: BiliMode;
+  /**
+   * 完整 Cookie 串，用于绕过风控。
+   * 只填 SESSDATA 往往不够 —— B站 还会看 buvid3 / _uuid。
+   * 直接把浏览器里复制的整条 Cookie 粘进来最省事。
+   */
+  biliCookie: string;
+
+  /* ---- 公众号 ---- */
+  /**
+   * 订阅源地址（RSS/Atom）。
+   * 公众号没有官方开放接口，必须用第三方桥接：
+   * wechat2rss / RSSHub / Feeddd 等，把生成的订阅地址填到这里。
+   */
+  feedUrl: string;
+
+  /* ---- 共用 ---- */
+  /** 自定义 User-Agent。部分源会拒绝默认的非浏览器 UA */
+  userAgent: string;
+  /**
+   * 首次运行（还没有基线）时算不算更新。
+   * 默认 false：刚配好就触发一次下游通常是误报。
+   */
+  firstRunAsUpdate: boolean;
+  /**
+   * 输出格式：
+   *  - bool   → 只输出 true / false，配合条件节点直接用
+   *  - detail → 附带标题、链接、时间
+   */
+  outputFormat: 'bool' | 'detail';
+  /** 请求超时秒数 */
+  timeoutSec: number;
+
+  /* ---- 运行时状态（随画布持久化，重启后仍记得基线） ---- */
+  /** 上次见到的最新条目 id —— 判定"有无更新"的基线 */
+  lastSeenId: string;
+  lastSeenTitle: string;
+  lastCheckedAt: number | null;
+  /** 最近一次检查是否发现有更新，界面上直接显示 */
+  lastUpdated: boolean | null;
+
+  status: NodeStatus;
+  output: string;
+  error: string;
+};
+
+export const UPDATE_SOURCE_META: Record<UpdateSource, {
+  label: string;
+  hint: string;
+  icon: string;
+  color: string;
+}> = {
+  bilibili: {
+    label: 'B站 UP 主',
+    hint: '检测 UP 主是否有新投稿',
+    icon: '📺',
+    color: '#fb7299',
+  },
+  wechat: {
+    label: '微信公众号',
+    hint: '检测公众号是否有新推文（需第三方订阅源）',
+    icon: '💬',
+    color: '#07c160',
+  },
+};
+
+export function isUpdate(d: NodeData): d is UpdateNodeData {
+  return (d as UpdateNodeData).kind === 'update';
+}
+
+export function makeUpdateNode(
+  id: string,
+  source: UpdateSource,
+  partial: Partial<UpdateNodeData> = {},
+): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'update',
+      source,
+      label: partial.label ?? UPDATE_SOURCE_META[source].label,
+      biliUid: partial.biliUid ?? '',
+      biliMode: partial.biliMode ?? 'rss',
+      biliCookie: partial.biliCookie ?? '',
+      feedUrl: partial.feedUrl ?? '',
+      userAgent: partial.userAgent ?? '',
+      firstRunAsUpdate: partial.firstRunAsUpdate ?? false,
+      outputFormat: partial.outputFormat ?? 'bool',
+      timeoutSec: partial.timeoutSec ?? 15,
+      lastSeenId: partial.lastSeenId ?? '',
+      lastSeenTitle: partial.lastSeenTitle ?? '',
+      lastCheckedAt: partial.lastCheckedAt ?? null,
+      lastUpdated: partial.lastUpdated ?? null,
+      status: partial.status ?? 'idle',
+      output: partial.output ?? '',
+      error: partial.error ?? '',
+    },
+  };
+}
 
 export function isFs(d: NodeData): d is FsNodeData {
   return (d as FsNodeData).kind === 'fs';

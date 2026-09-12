@@ -540,3 +540,67 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--af-dim);
 }
+
+/* ---------------- 更新检测节点（B站 / 公众号） ---------------- */
+.node-card.update { border-left-color: #fb7299; }
+.node-card.update.status-success { border-left-color: #22c55e; }
+
+.upd-icon { flex: none; font-size: 12px; }
+.upd-summary {
+  margin: 4px 0; font-size: 11px;
+  background: var(--af-sunk); border: 1px solid var(--af-line);
+  border-radius: 5px; padding: 4px 7px;
+}
+.upd-summary code {
+  font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--af-soft);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block;
+}
+
+.upd-foot { display: flex; align-items: center; gap: 8px; margin: 4px 0 2px; }
+.upd-verdict {
+  font-size: 10.5px; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--af-line);
+}
+.upd-verdict.yes {
+  color: var(--af-ok); border-color: currentColor;
+  background: color-mix(in srgb, var(--af-ok) 12%, transparent);
+}
+.upd-verdict.no { color: var(--af-dim); }
+.upd-time { font-size: 10.5px; color: var(--af-dim); }
+
+.upd-latest {
+  font-size: 10.5px; color: var(--af-dim); margin-top: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* 属性面板 */
+.upd-badge-row {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12px; color: var(--af-fg);
+  padding: 6px 8px; border-radius: 6px;
+  border: 1px solid var(--af-line); background: var(--af-sunk);
+}
+.upd-badge-row .dim { font-size: 11px; }
+
+.upd-baseline {
+  margin-top: 6px; padding: 7px 9px; border-radius: 6px;
+  border: 1px solid var(--af-line); background: var(--af-sunk);
+  font-size: 11.5px; color: var(--af-soft);
+  display: flex; flex-direction: column; gap: 4px; align-items: flex-start;
+}
+.upd-baseline code {
+  font-family: ui-monospace, monospace; font-size: 11px; color: var(--af-fg);
+  word-break: break-all;
+}
+.upd-baseline .dim { font-size: 11px; }
+
+.upd-test {
+  margin: 6px 0 0; padding: 8px 10px; border-radius: 6px;
+  font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-all;
+  border: 1px solid var(--af-line); background: var(--af-sunk);
+  color: var(--af-soft); max-height: 220px; overflow: auto;
+}
+.upd-test.yes { border-color: var(--af-ok); color: var(--af-ok); }
+.upd-test.no  { border-color: var(--af-line); color: var(--af-dim); }
+.upd-test.err { border-color: var(--af-bad); color: var(--af-bad); }

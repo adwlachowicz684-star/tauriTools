@@ -15,6 +15,8 @@ export type DragPayload =
   | { kind: 'parallel' }
   | { kind: 'loop' }
   | { kind: 'fs' }
+  | { kind: 'bili' }
+  | { kind: 'wechat' }
   | { kind: 'trigger' };
 
 export const DRAG_MIME = 'application/x-agent-flow-node';
@@ -32,6 +34,7 @@ export function decodeDrag(raw: string | null | undefined): DragPayload | null {
     if (p.kind === 'task' && (p as { cli?: string }).cli) return p;
     if (p.kind === 'condition' || p.kind === 'parallel') return p;
     if (p.kind === 'loop' || p.kind === 'fs') return p;
+    if (p.kind === 'bili' || p.kind === 'wechat') return p;
     if (p.kind === 'trigger') return p;
     return null;
   } catch {
@@ -142,6 +145,31 @@ export default function Sidebar({ onAdd, disabled }: Props) {
           <span className="side-dot" style={{ background: '#38bdf8' }} />
           <span className="side-label">文件操作</span>
         </div>
+      </div>
+
+      <div className="side-group">
+        <div className="side-title">更新检测</div>
+        <div
+          className="side-item"
+          draggable={!disabled}
+          onDragStart={(e) => onDragStart(e, { kind: 'bili' })}
+          onClick={() => !disabled && onAdd({ kind: 'bili' })}
+          title="检测 B站 UP 主是否有新投稿，输出 true / false 供条件节点判断"
+        >
+          <span className="side-dot" style={{ background: '#fb7299' }} />
+          <span className="side-label">B站 UP 主</span>
+        </div>
+        <div
+          className="side-item"
+          draggable={!disabled}
+          onDragStart={(e) => onDragStart(e, { kind: 'wechat' })}
+          onClick={() => !disabled && onAdd({ kind: 'wechat' })}
+          title="检测微信公众号是否有新推文（需填第三方订阅源地址）"
+        >
+          <span className="side-dot" style={{ background: '#07c160' }} />
+          <span className="side-label">微信公众号</span>
+        </div>
+        <div className="side-sub">输出 true / false，接条件节点即可分流</div>
       </div>
 
       {disabled && <div className="side-hint warn">运行中不可添加节点</div>}

@@ -48,7 +48,7 @@ const TOKEN = /\{\{\s*([A-Za-z0-9_.\-]+)\s*\}\}/g;
 export function templateTextOf(data: unknown): string {
   if (!data || typeof data !== 'object') return '';
   const d = data as Record<string, unknown>;
-  const parts: unknown[] = [d.prompt, d.path, d.target, d.content, d.pattern];
+  const parts: unknown[] = [d.prompt, d.path, d.target, d.content, d.pattern, d.feedUrl, d.biliUid];
   const texts: string[] = [];
   for (const v of parts) {
     if (typeof v === 'string') texts.push(v);

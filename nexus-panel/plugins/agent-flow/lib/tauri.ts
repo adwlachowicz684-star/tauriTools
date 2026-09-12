@@ -185,3 +185,75 @@ export function fsArgsOf(
 export function canFs(): boolean {
   return isTauri();
 }
+
+/* ---------------- 网络抓取（B站 / 公众号节点用） ---------------- */
+
+export type FetchTextOptions = {
+  /** 额外的请求头，如 UA、Cookie */
+  headers?: Record<string, string>;
+  /** 超时秒数 */
+  timeoutSec?: number;
+  /** 响应体最大字节，超出截断。默认 2MB，避免异常源撑爆内存 */
+  maxBytes?: number;
+};
+
+export type FetchTextResult = {
+  ok: boolean;
+  status: number;
+  text: string;
+};
+
+/**
+ * 抓取一段文本。
+ *
+ * 走 Tauri 的 http 插件（经 Rust 发出，不受浏览器同源策略限制）；
+ * 浏览器模式下退化为原生 fetch —— 大多数源会因 CORS 失败，
+ * 这时给明确提示，而不是静默返回空让人以为"确实没更新"。
+ */
+export async function fetchText(url: string, opts: FetchTextOptions = {}): Promise<FetchTextResult> {
+  const max = opts.maxBytes ?? 2_000_000;
+  const timeoutMs = Math.max(1, opts.timeoutSec ?? 15) * 1000;
+
+  if (!/^https?:\/\//i.test(url)) {
+    throw new Error('地址必须以 http:// 或 https:// 开头');
+  }
+
+  if (isTauri()) {
+    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
+    const res = await tauriFetch(url, {
+      method: 'GET',
+      headers: {
+        // B站接口对 UA 很敏感：不带浏览器 UA 大概率直接 -412
+        'User-Agent': UA,
+        ...(opts.headers ?? {}),
+      },
+      connectTimeout: timeoutMs,
+    });
+    const raw = await res.text();
+    return { ok: res.ok, status: res.status, text: raw.slice(0, max) };
+  }
+
+  // 浏览器模式：尽力而为
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const res = await globalThis.fetch(url, {
+      method: 'GET',
+      headers: { 'User-Agent': UA, ...(opts.headers ?? {}) },
+      signal: ac.signal,
+    });
+    const raw = await res.text();
+    return { ok: res.ok, status: res.status, text: raw.slice(0, max) };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `浏览器模式下抓取失败（${msg}）。多数订阅源不允许跨域，请用桌面端运行。`,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** 各源通用的浏览器 UA。B站不给这个会直接拒绝。 */
+export const UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';

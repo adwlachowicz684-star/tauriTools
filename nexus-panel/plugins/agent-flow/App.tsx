@@ -12,10 +12,11 @@ import TriggerNode from './components/TriggerNode';
 import ParallelNode from './components/ParallelNode';
 import LoopNode from './components/LoopNode';
 import FsNode from './components/FsNode';
+import UpdateNode from './components/UpdateNode';
 import Inspector from './components/Inspector';
 import Sidebar, { DRAG_MIME, decodeDrag, type DragPayload } from './components/Sidebar';
 import CanvasTabs from './components/CanvasTabs';
-import { runGraph, type Executor, type FsExecutor, type RunEvent, type RunSummary } from './engine/runner';
+import { runGraph, type Executor, type FsExecutor, type Fetcher, type RunEvent, type RunSummary } from './engine/runner';
 import { TriggerScheduler } from './engine/triggers';
 import {
   makeCanvas, nextCanvasName, renameCanvas, removeCanvas, nextActiveId,
@@ -24,7 +25,7 @@ import {
   type Canvas,
 } from './engine/canvasStore';
 import { CLI_META, DEFAULT_TRIGGER_CONFIG, DEFAULT_BRANCH, type TaskNodeData, makeNode, makeConditionNode, makeParallelNode, makeTriggerNode,
-  makeLoopNode, makeFsNode, isTrigger, isLoop, triggerKindsOf, type CliKind, type FsNodeData,
+  makeLoopNode, makeFsNode, makeUpdateNode, isTrigger, isLoop, triggerKindsOf, type CliKind, type FsNodeData,
   type Graph, type NodeData, type Trigger, type TriggerKind, type TriggerConfig } from './types';
 import type { FlowEdge, FlowNode } from './flowTypes';
 import { killCli, runCli, canWatch, startWatch, canWebhook, startWebhook, type DonePayload } from './lib/tauri';
@@ -41,6 +42,10 @@ const nodeTypes: NodeTypes = {
   parallel: ParallelNode,
   loop: LoopNode,
   fs: FsNode,
+  // B站与公众号是两种不同的源，但数据结构与展示几乎一致，
+  // 注册成两个类型是为了在画布上有各自的图标与配色
+  bili: UpdateNode,
+  wechat: UpdateNode,
 };
 const STORAGE_KEY = 'agent-flow:v1';
 const TRG_KEY = 'agent-flow:triggers:v1';
@@ -407,6 +412,14 @@ export default function App() {
         const id = `f${suffix}`;
         node = { id, type: 'fs', position: pos,
           data: makeFsNode(id, { label: '文件操作' }).data } as FlowNode;
+      } else if (p.kind === 'bili') {
+        const id = `bl${suffix}`;
+        node = { id, type: 'bili', position: pos,
+          data: makeUpdateNode(id, 'bilibili').data } as FlowNode;
+      } else if (p.kind === 'wechat') {
+        const id = `wx${suffix}`;
+        node = { id, type: 'wechat', position: pos,
+          data: makeUpdateNode(id, 'wechat').data } as FlowNode;
       } else {
         // 一个节点即可挂多种方式，默认只勾「手动」——
         // 周期/定时/监听/调用都会自动跑，放上画布就生效太危险
@@ -499,6 +512,11 @@ export default function App() {
           : n));
     } else if (e.type === 'layer-start') {
       pushLog(`第 ${e.layer + 1}/${e.total} 层开始：${e.ids.join(', ')}`);
+    } else if (e.type === 'update-checked') {
+      pushLog(`🔍 ${e.id} ${e.reason}`);
+      // 把新基线写回节点并持久化：否则下次运行又当成"首次"，永远检测不到更新
+      setNodes((ns) => ns.map((n) =>
+        (n.id === e.id ? { ...n, data: { ...n.data, ...e.patch } } as FlowNode : n)));
     } else if (e.type === 'loop-resolved') {
       const w = e.warnings.length ? ` ⚠ ${e.warnings.join('；')}` : '';
       pushLog(`⟲ ${e.id} 循环开始：${e.reason}（${e.count} 轮）${w}`);
@@ -571,9 +589,20 @@ export default function App() {
       return res.text;
     };
 
+    /* 网络抓取执行器：更新检测节点用，经 Tauri 的 http 插件发出 */
+    const fetcher: Fetcher = async (_node, url, o) => {
+      const res = await fetchText(url, {
+        headers: o.headers,
+        timeoutSec: o.timeoutSec,
+      });
+      if (!res.ok) throw new Error(`请求失败 HTTP ${res.status}`);
+      return res.text;
+    };
+
     const effectiveInput = inputOverride !== undefined && inputOverride !== '' ? inputOverride : globalInput;
     const result = await runGraph(graph, {
-      concurrency, executor, fsExecutor, input: effectiveInput, onEvent, signal: controller.signal,
+      concurrency, executor, fsExecutor, fetcher,
+      input: effectiveInput, onEvent, signal: controller.signal,
     });
     setSummary(result);
     setRunning(false);

@@ -7,7 +7,7 @@ OUT="${OUT:-/tmp/aftest}"
 mkdir -p "$OUT"
 S="python3 scripts/strip-ts.py"
 
-for f in topo template condition cron canvasOps parallel canvasStore loop; do
+for f in topo template condition cron canvasOps parallel canvasStore loop updates; do
   [ -f "engine/$f.ts" ] && $S "engine/$f.ts" "$OUT/$f.mjs" >/dev/null
 done
 # types.ts 里有运行时值（isCondition / DEFAULT_BRANCH / TRIGGER_META），也要生成
@@ -22,6 +22,7 @@ $S engine/runner.ts "$OUT/runner.mjs" \
    --import-map ./condition=./condition.mjs \
    --import-map ./parallel=./parallel.mjs \
    --import-map ./loop=./loop.mjs \
+   --import-map ./updates=./updates.mjs \
    --import-map ../types=./types.mjs >/dev/null
 $S engine/triggers.ts "$OUT/triggers.mjs" \
    --import-map ./cron=./cron.mjs \

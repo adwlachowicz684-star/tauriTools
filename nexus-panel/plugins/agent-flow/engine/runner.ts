@@ -1,12 +1,17 @@
-import type { Graph, GraphNode, NodeStatus, LoopCtx, LoopNodeData } from '../types';
+import type { Graph, GraphNode, NodeStatus, LoopCtx, LoopNodeData, UpdateNodeData } from '../types';
 import {
-  isCondition, isTrigger, isParallel, isLoop, isFs, DEFAULT_BRANCH,
+  isCondition, isTrigger, isParallel, isLoop, isFs, isUpdate, DEFAULT_BRANCH,
 } from '../types';
 import { topoLayers } from './topo';
 import { renderTemplate } from './template';
 import { evaluateCondition } from './condition';
 import { resolveParallel, effectiveConcurrency, MAX_CONCURRENCY } from './parallel';
 import { resolveLoopItems, makeLoopCtx, collectLoops, type LoopResolve } from './loop';
+import {
+  parseFeed, parseBiliApi, detectUpdate, sortByNewest, extractBiliUid, biliApiUrl,
+  BILI_REFERER,
+  type FeedItem,
+} from './updates';
 
 export type RunEvent =
   | { type: 'layer-start'; layer: number; total: number; ids: string[] }
@@ -24,6 +29,20 @@ export type RunEvent =
   | { type: 'loop-iteration'; id: string; index: number; item: string; count: number }
   /** 循环全部结束 */
   | { type: 'loop-done'; id: string; rounds: number; failed: number }
+  /**
+   * 更新检测节点检查完毕。
+   * patch 是需要写回节点的数据（新基线、上次检查时间等）——
+   * 执行器本身是纯的，改状态这件事交给调用方落盘。
+   */
+  | {
+      type: 'update-checked';
+      id: string;
+      updated: boolean;
+      item: FeedItem | null;
+      reason: string;
+      baseline: boolean;
+      patch: Record<string, unknown>;
+    }
   | { type: 'run-done'; ok: boolean }
   | { type: 'run-error'; message: string };
 
@@ -32,6 +51,13 @@ export type Executor = (
   node: GraphNode,
   renderedPrompt: string,
   onChunk: (chunk: string) => void,
+) => Promise<string>;
+
+/** 抓取一个 URL 的文本内容；抛错即视为失败 */
+export type Fetcher = (
+  node: GraphNode,
+  url: string,
+  opts: { headers: Record<string, string>; timeoutSec: number },
 ) => Promise<string>;
 
 /** 执行文件操作，返回展示用的结果文本；抛错即视为失败 */
@@ -46,6 +72,8 @@ export type RunOptions = {
   executor: Executor;
   /** 文件操作执行器；不提供时文件节点会直接失败并提示 */
   fsExecutor?: FsExecutor;
+  /** 网络抓取执行器；不提供时更新检测节点会直接失败并提示 */
+  fetcher?: Fetcher;
   input?: string;
   onEvent: (e: RunEvent) => void;
   signal?: AbortSignal;
@@ -114,6 +142,13 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
 
   /** 循环迭代上下文，供模板渲染 {{loop.item}} 等 */
   let loopCtx: LoopCtx | null = null;
+
+  /**
+   * 节点的附加字段（{{nodeId.title}} 等）。
+   * 用普通对象而非 Map：renderTemplate 每渲染一个变量就查一次，
+   * 对象属性访问比 Map.get 直接。
+   */
+  const nodeFields: Record<string, Record<string, string>> = {};
 
   const globalScope: Scope = {
     deadEdges: new Set<string>(),
@@ -305,12 +340,18 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
       return;
     }
 
+    /* ---------- 更新检测节点：抓取 → 解析 → 与基线比对 ---------- */
+    if (isUpdate(node.data)) {
+      await runUpdateNode(id, scope);
+      return;
+    }
+
     /* ---------- 文件操作节点 ---------- */
     if (isFs(node.data)) {
       setStatus(id, 'running');
-      const p = renderTemplate(node.data.path, { outputs, input: opts.input, loop: loopCtx });
-      const t = renderTemplate(node.data.target, { outputs, input: opts.input, loop: loopCtx });
-      const c = renderTemplate(node.data.content, { outputs, input: opts.input, loop: loopCtx });
+      const p = renderTemplate(node.data.path, { outputs, input: opts.input, loop: loopCtx, fields: nodeFields });
+      const t = renderTemplate(node.data.target, { outputs, input: opts.input, loop: loopCtx, fields: nodeFields });
+      const c = renderTemplate(node.data.content, { outputs, input: opts.input, loop: loopCtx, fields: nodeFields });
 
       if (!opts.fsExecutor) {
         const msg = '未提供文件操作执行器（当前可能运行在浏览器模式）';
@@ -339,7 +380,7 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
 
     /* ---------- 任务节点：渲染提示词并调 CLI ---------- */
     const { text: rendered, missing } = renderTemplate(node.data.prompt, {
-      outputs, input: opts.input, loop: loopCtx,
+      outputs, input: opts.input, loop: loopCtx, fields: nodeFields,
     });
     if (missing.length > 0) {
       console.warn(`[${id}] 未解析的变量: ${missing.join(', ')}`);
@@ -437,6 +478,136 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
       id, rounds: total, failed: roundFailed,
       reason: `${res.reason}，产出 ${done} 条${warn}`, warnings: res.warnings,
     });
+  }
+
+  /**
+   * 更新检测节点。
+   *
+   * 输出是 true / false —— 直接给条件节点判断用。
+   * 标题、链接等细节不走主输出（否则 `equals true` 就用不了），
+   * 而是放进 nodeFields，通过 {{id.title}} 取。
+   */
+  async function runUpdateNode(id: string, scope: Scope): Promise<void> {
+    const node = byId.get(id)!;
+    const d = node.data as UpdateNodeData;
+    setStatus(id, 'running');
+
+    const headers: Record<string, string> = {};
+    if (d.userAgent) headers['User-Agent'] = d.userAgent;
+    if (d.source === 'bilibili' && d.biliCookie) {
+      // 允许整条 Cookie 粘进来；只填 SESSDATA 时也能用
+      headers.Cookie = /=/ .test(d.biliCookie) && !/^SESSDATA=/i.test(d.biliCookie)
+        ? d.biliCookie
+        : `SESSDATA=${d.biliCookie.replace(/^SESSDATA=/i, '')}`;
+      headers.Referer = BILI_REFERER;
+    }
+
+    // 决定抓哪个地址
+    let url = '';
+    if (d.source === 'bilibili') {
+      if (d.biliMode === 'rss') {
+        url = d.feedUrl.trim();
+        if (!url) {
+          fail('RSS 模式需要填订阅源地址');
+          return;
+        }
+      } else {
+        const uid = extractBiliUid(d.biliUid);
+        if (!uid) {
+          fail('填一个 UP 主 UID 或 space.bilibili.com 主页链接');
+          return;
+        }
+        url = biliApiUrl(uid);
+      }
+    } else {
+      url = d.feedUrl.trim();
+      if (!url) {
+        fail('需要填订阅源地址。公众号没有官方接口，请用 wechat2rss / RSSHub 等生成');
+        return;
+      }
+    }
+
+    // 渲染模板：允许用上游输出拼地址
+    const renderedUrl = renderTemplate(url, { outputs, input: opts.input, loop: loopCtx, fields: nodeFields }).text;
+
+    if (!opts.fetcher) {
+      fail('未提供网络抓取执行器（当前可能运行在浏览器模式）');
+      return;
+    }
+
+    emit({ type: 'node-start', id, rendered: `GET ${renderedUrl}` });
+
+    let text: string;
+    try {
+      text = await opts.fetcher(node, renderedUrl, {
+        headers,
+        timeoutSec: d.timeoutSec,
+      });
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+      return;
+    }
+
+    // 解析：B站接口按 JSON，其余按 RSS/Atom
+    const parsed = d.source === 'bilibili' && d.biliMode === 'api'
+      ? parseBiliApi(text)
+      : parseFeed(text);
+
+    if (parsed.error) {
+      fail(parsed.error);
+      return;
+    }
+
+    const items = sortByNewest(parsed.items);
+    const res = detectUpdate({
+      items,
+      lastSeenId: d.lastSeenId,
+      firstRunAsUpdate: d.firstRunAsUpdate,
+    });
+
+    const latest: FeedItem | null = res.latest;
+    const out = d.outputFormat === 'bool'
+      ? String(res.updated)
+      : (res.updated
+          ? `true\n标题: ${latest?.title ?? ''}\n链接: ${latest?.url ?? ''}\n时间: ${latest?.date ?? ''}`
+          : `false\n${latest ? `最新仍是: ${latest.title}` : '无更新'}`);
+
+    outputs[id] = out;
+    const item = latest;
+    nodeFields[id] = {
+      title: item?.title ?? '',
+      url: item?.url ?? '',
+      date: item?.date ?? '',
+      updated: String(res.updated),
+    };
+
+    emit({
+      type: 'update-checked',
+      id,
+      updated: res.updated,
+      item,
+      reason: res.reason,
+      baseline: res.baseline,
+      // 基线只在"确实看到了最新条目"时才推进，解析失败时保持原值
+      patch: {
+        lastSeenId: item?.id ?? d.lastSeenId,
+        lastSeenTitle: item?.title ?? d.lastSeenTitle,
+        lastCheckedAt: Date.now(),
+        lastUpdated: res.updated,
+      },
+    });
+
+    const warn = parsed.warnings.length ? `；${parsed.warnings.join('；')}` : '';
+    emit({ type: 'node-done', id, ok: true, output: out, error: warn || undefined });
+    setStatus(id, 'success');
+
+    function fail(msg: string) {
+      outputs[id] = 'false';
+      nodeFields[id] = { title: '', url: '', date: '', updated: 'false' };
+      emit({ type: 'node-done', id, ok: false, output: 'false', error: msg });
+      markFailed(id, scope);
+      setStatus(id, 'failed');
+    }
   }
 
   /* ---------- 主流程：跳过循环体成员，它们由各自的循环执行 ---------- */
