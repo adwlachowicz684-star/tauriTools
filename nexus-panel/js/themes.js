@@ -19,6 +19,9 @@ export const THEME_VARS = [
   '--warn', '--danger',
   '--border', '--blur', '--hairline', '--mask',
   '--scroll-thumb', '--badge-fg',
+  // 形状语言：新拟态靠大圆角软化，扁平风该更克制。
+  // 主题未定义时自动回退 CSS 里的默认值（applyTo 会跳过 null），不影响既有主题。
+  '--r-xl', '--r-lg', '--r', '--r-sm',
 ];
 
 /**
@@ -200,6 +203,11 @@ export const PRESET_THEMES = [
       // 比原值(#262b36)提亮一档，因 surface 变亮后原值相对过弱(1.12)
       '--border': '#313846',
       '--blur': '0px',
+      // 扁平风用小圆角：新拟态的 26/20/14/9 偏"软"，Linear 一路更硬朗
+      '--r-xl': '12px',
+      '--r-lg': '10px',
+      '--r': '8px',
+      '--r-sm': '5px',
     },
   },
 ];

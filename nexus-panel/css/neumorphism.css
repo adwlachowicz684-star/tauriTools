@@ -630,3 +630,128 @@ html.theme-transition *:not(.spinner) {
 }
 .theme-card { position: relative; }
 .theme-card:hover .theme-del { display: grid; }
+
+/* ============================================================
+   flat 风格分支 —— 让 style:'flat' 真正生效
+   ------------------------------------------------------------
+   问题：theme-manager.js 会写 root.dataset.themeStyle，
+   但本文件原本没有任何 [data-theme-style] 规则 ——
+   于是 style:'flat' 只是个空标签，零效果。
+   把 --sh-light 调暗只能"减弱"左上高光，无法消除：
+   深底上比底色亮的光晕带本身就是立体感的来源。
+
+   修复：双向阴影 → 描边 + 明度差。
+   文件顶部已设 box-sizing: border-box，加 border 不会撑破布局。
+
+   作用于 style='flat' 的三个主题：
+   agentflow-dark / oled-flat / neon-dark。
+   glass 主题不走这里，保留毛玻璃。
+   ============================================================ */
+
+/* 1. 新拟态基元：凸起 / 凹陷一律去阴影，改由描边承担轮廓 */
+[data-theme-style="flat"] .nm-raised,
+[data-theme-style="flat"] .nm-raised-sm,
+[data-theme-style="flat"] .nm-pressed,
+[data-theme-style="flat"] .nm-inset,
+[data-theme-style="flat"] .nm-inset-sm {
+  box-shadow: none;
+  border: 1px solid var(--border);
+}
+/* 凹陷类改用更暗的底色维持"凹"的语义（没有阴影也能感知） */
+[data-theme-style="flat"] .nm-inset,
+[data-theme-style="flat"] .nm-inset-sm,
+[data-theme-style="flat"] .nm-pressed {
+  background: var(--surface-sunk);
+}
+
+/* 2. 区域分隔：单向投影去掉后边界会消失，必须补描边 */
+[data-theme-style="flat"] #titlebar {
+  box-shadow: none;
+  border-bottom: 1px solid var(--border);
+}
+[data-theme-style="flat"] #sidebar {
+  box-shadow: none;
+  border-right: 1px solid var(--border);
+}
+[data-theme-style="flat"] #main-inner {
+  box-shadow: none;
+  border: 1px solid var(--border);
+}
+
+/* 3. 按钮：凸起 → 描边；按下 → 背景变暗（替代 inset 凹陷） */
+[data-theme-style="flat"] .tb-btn,
+[data-theme-style="flat"] .bar-btn,
+[data-theme-style="flat"] .p-btn,
+[data-theme-style="flat"] .side-toggle {
+  box-shadow: none;
+  border: 1px solid var(--border);
+}
+[data-theme-style="flat"] .tb-btn:active,
+[data-theme-style="flat"] .bar-btn:active,
+[data-theme-style="flat"] .p-btn:active,
+[data-theme-style="flat"] .side-toggle:active,
+[data-theme-style="flat"] .tb-btn.on {
+  box-shadow: none;
+  background: var(--surface-sunk);
+}
+
+/* 4. 导航项：选中态用 accent 描边 + 暗底，比 inset 更清晰 */
+[data-theme-style="flat"] .nav-item {
+  box-shadow: none;
+  border: 1px solid transparent;
+}
+[data-theme-style="flat"] .nav-item:hover { border-color: var(--border); }
+[data-theme-style="flat"] .nav-item.active {
+  box-shadow: none;
+  background: var(--surface-sunk);
+  border-color: var(--accent);
+}
+
+/* 5. 输入框 / 标签 / 数值块（原为 inset 凹槽） */
+[data-theme-style="flat"] .p-input,
+[data-theme-style="flat"] .p-tag,
+[data-theme-style="flat"] .p-stat {
+  box-shadow: none;
+  border: 1px solid var(--border);
+  background: var(--surface-sunk);
+}
+
+/* 6. 卡片 / 提示 / 错误框 / 主题卡片 / 空态印记 */
+[data-theme-style="flat"] .p-card,
+[data-theme-style="flat"] .toast,
+[data-theme-style="flat"] .err-box,
+[data-theme-style="flat"] .err-box pre,
+[data-theme-style="flat"] .theme-card,
+[data-theme-style="flat"] .empty-mark {
+  box-shadow: none;
+  border: 1px solid var(--border);
+}
+[data-theme-style="flat"] .toast,
+[data-theme-style="flat"] .err-box,
+[data-theme-style="flat"] .err-box pre,
+[data-theme-style="flat"] .theme-card {
+  background: var(--surface);
+}
+[data-theme-style="flat"] .err-box pre { background: var(--surface-sunk); }
+
+/* 主题卡片：inset 凹陷 → accent 实心描边，选中更明确 */
+[data-theme-style="flat"] .theme-card.active {
+  box-shadow: none;
+  background: var(--surface-sunk);
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+[data-theme-style="flat"] .theme-card:hover {
+  transform: none;
+  border-color: var(--accent);
+}
+
+/* 7. 标题栏 logo（原为 inset 小方块） */
+[data-theme-style="flat"] .tb-logo {
+  box-shadow: none;
+  border: 1px solid var(--border);
+}
+
+/* 保留：--accent-glow 辉光（nav-item.active::before、p-card h2::before）
+   是强调色光效而非立体感，不在清除之列 */
