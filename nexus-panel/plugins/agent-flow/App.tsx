@@ -112,6 +112,8 @@ export default function App() {
   const init = useMemo(loadCanvases, []);
   const [canvases, setCanvases] = useState<Canvas[]>(init.canvases);
   const [activeId, setActiveId] = useState<string | null>(init.activeId);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(readThemeMode);
+  useEffect(() => { applyThemeMode(themeMode); }, [themeMode]);
 
   const active = canvases.find((c) => c.id === activeId) ?? null;
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(
