@@ -6,17 +6,28 @@
  */
 import { JSDOM } from 'jsdom';
 import { createRequire as _cr } from 'node:module';
-const _req = _cr(import.meta.url);
-const esbuild = _req(process.env.ESBUILD_PATH || '/data/workspace/.deps/node_modules/esbuild');
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+// 路径基准取自本文件位置，避免换目录名 / 换机器后全部路径失效
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const _req = _cr(import.meta.url);
+// esbuild 不在依赖里，优先按包名解析，回退到环境变量/旧路径
+const esbuild = await (async () => {
+  for (const p of [process.env.ESBUILD_PATH, 'esbuild', '/data/workspace/.deps/node_modules/esbuild']) {
+    if (!p) continue;
+    try { return _req(p); } catch { /* 继续尝试下一个 */ }
+  }
+  throw new Error('找不到 esbuild，请设 ESBUILD_PATH 或安装到 node_modules');
+})();
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const OUT = '/tmp/nexus-smoke.cjs';
 
 await esbuild.build({
-  entryPoints: ['src/App.tsx'],
+  entryPoints: [path.join(HERE, 'src/App.tsx')],
   bundle: true,
   outfile: OUT,
   format: 'cjs',
@@ -24,12 +35,12 @@ await esbuild.build({
   jsx: 'automatic',
   loader: { '.css': 'empty' },
   external: ['react', 'react-dom', 'react-dom/client'],
-  define: { 'import.meta.url': JSON.stringify('file:///data/workspace/nexus-panel/js/host.js') },
+  define: { 'import.meta.url': JSON.stringify(pathToFileURL(path.join(HERE, 'js/host.js')).href) },
   logLevel: 'error',
 });
 
 const dom = new JSDOM('<!doctype html><html><body><div id="root"></div><div id="toasts"></div></body></html>', {
-  url: 'file:///data/workspace/nexus-panel/index.html',
+  url: pathToFileURL(path.join(HERE, 'index.html')).href,
   pretendToBeVisual: true,
 });
 
