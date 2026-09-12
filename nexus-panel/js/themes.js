@@ -150,6 +150,49 @@ export const PRESET_THEMES = [
       '--blur': '14px',
     },
   },
+  {
+    /**
+     * Agent Flow 风格（Linear / Vercel 那一路开发者工具审美）
+     *
+     * 与其它主题的差别在**分层方式**：
+     *   · 新拟态 —— surface 与 bg 同色，靠双向阴影塑形
+     *   · 本主题 —— surface 比 bg 亮一档，靠**明度差**分层，阴影隐形
+     * 所以这里 --sh-* 被调到紧贴底色（视觉上消失），层次改由
+     * --surface 的明度差 + --border 的细描边承担。
+     *
+     * 配色取自 Tailwind 默认色板：accent=blue-500，accent-2=green-500，
+     * warn=amber-500，danger=red-500；背景接近 zinc-950 再压暗一档。
+     */
+    id: 'agentflow-dark',
+    name: 'Agent Flow 深色',
+    desc: 'Linear 风 · 蓝灰低饱和，明度分层，久看不累',
+    base: 'dark',
+    style: 'flat',
+    vars: {
+      // 背景不用纯黑：#0f1115 是偏蓝的深灰，长时间盯着不刺眼
+      '--bg': '#0f1115',
+      // 面板比背景亮一档 —— 这是整套观感的核心。
+      // 比 Agent Flow 原值(#171a21)略提亮：原比例 1.085 在本面板的分层里偏糊，
+      // 提到 1.19 既保留蓝灰调，又能看清面板边界
+      '--surface': '#1e222b',
+      '--surface-sunk': '#0d1014',
+      // 扁平风：阴影紧贴底色 → 视觉隐形，不参与塑形
+      '--sh-dark': '#0b0d11',
+      '--sh-light': '#13161b',
+      '--text': '#e6e9ef',
+      '--text-dim': '#8b93a7',
+      // 比 Agent Flow 原值(#5f6773)提亮，保证弱化文本仍有 3.3:1 可读
+      '--text-mute': '#687285',
+      '--accent': '#4c8dff',
+      '--accent-2': '#22c55e',
+      '--warn': '#f59e0b',
+      '--danger': '#ef4444',
+      // 边框极细且低对比：刚好看得见，不抢内容。
+      // 比原值(#262b36)提亮一档，因 surface 变亮后原值相对过弱(1.12)
+      '--border': '#313846',
+      '--blur': '0px',
+    },
+  },
 ];
 
 /** 强调色候选（任何主题下都能单独微调） */

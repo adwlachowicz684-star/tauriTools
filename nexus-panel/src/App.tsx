@@ -3,6 +3,7 @@ import {
   createHost, loadRegistry, filterByRuntime, saveCustomPlugins, getCustomPlugins, isInsideTauri,
   type Host, type PluginManifest,
 } from '../js/host.js';
+import { listThemes, applyTheme, getThemeId, getCurrent } from '../js/theme-manager.js';
 import Titlebar from './components/Titlebar';
 import Sidebar from './components/Sidebar';
 import Stage from './components/Stage';
@@ -22,6 +23,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [themeName, setThemeName] = useState('');
 
   const pushToast = useCallback((msg: string, type: 'info' | 'ok' | 'err' = 'info') => {
     const id = Date.now() + Math.random();
@@ -52,6 +54,7 @@ export default function App() {
       setSidebarOpen(saved === null ? true : saved === '1');
       const accent = localStorage.getItem('nexus:accent');
       if (accent) document.documentElement.style.setProperty('--accent', accent);
+      setThemeName(getCurrent().name);
 
       const last = localStorage.getItem('nexus:last-plugin');
       const initial = last && list.some((p) => p.id === last) ? last : list[0]?.id ?? null;
@@ -93,6 +96,21 @@ export default function App() {
   /* ---------- 供插件与调试使用 ---------- */
   useEffect(() => {
     if (!isInsideTauri()) pushToast('浏览器调试模式：Rust 命令不可用（⌘/Ctrl+R 可重载插件）', 'err');
+  }, [pushToast]);
+
+  /**
+   * 循环切换到下一个主题。
+   *
+   * 不需要手动刷新插件：host.js 已订阅 theme-manager 的 onChange，
+   * 切换后会自动重算 iframe 适配并向插件广播新变量。
+   */
+  const cycleTheme = useCallback(() => {
+    const list = listThemes();
+    const idx = list.findIndex((t) => t.id === getThemeId());
+    const next = list[(idx + 1 + list.length) % list.length];
+    applyTheme(next.id);
+    setThemeName(next.name);
+    pushToast(`主题：${next.name}`, 'ok');
   }, [pushToast]);
 
   const reload = useCallback(() => setReloadKey((n) => n + 1), []);
@@ -140,7 +158,9 @@ export default function App() {
     <div id="app">
       <Titlebar
         title={title}
+        themeName={themeName}
         onWin={(a) => hostRef.current?.win(a)}
+        onCycleTheme={cycleTheme}
       />
       <div id="body" className={sidebarOpen ? 'open' : ''}>
         <Sidebar

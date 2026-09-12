@@ -4,6 +4,7 @@ import type { PluginManifest } from '../../js/host.js';
 import {
   listThemes, applyTheme, setAccent, getThemeId, getAccent,
   saveAsCustom, deleteCustomTheme, ACCENT_SWATCHES,
+  onChange as onThemeChange,
 } from '../../js/theme-manager.js';
 import {
   ADAPT_POLICIES, PLUGIN_THEMES,
@@ -23,6 +24,13 @@ export default function Settings() {
   }, [ctx]);
 
   const rerender = () => force((n) => n + 1);
+
+  /**
+   * 订阅主题变更，让本页与外壳保持同步。
+   * 否则从标题栏按钮切换主题时，这里的"当前主题"高亮会滞后到下次交互。
+   * 同页插件与外壳共用同一个模块实例，所以直接订阅即可。
+   */
+  useEffect(() => onThemeChange(rerender), []);
 
   return (
     <>
