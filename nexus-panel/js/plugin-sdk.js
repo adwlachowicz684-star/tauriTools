@@ -233,6 +233,9 @@ export function bootIframePlugin(mountFn) {
   let seq = 0;
   let ctxReady;
   let resolveMount;
+  let manifest = null;       // 握手拿到的插件清单（显式声明，别再靠 var 提升）
+  let theme = null;          // 主题变量快照，切换主题时同步更新
+  let mounted = false;       // mount 只允许执行一次
   const mountPromise = new Promise((r) => (resolveMount = r));
 
   function post(msg) {
@@ -245,11 +248,21 @@ export function bootIframePlugin(mountFn) {
 
     // 主题初始化 / 运行时切换（切换主题无需重载插件）
     if (d.type === 'init' || d.type === 'theme') {
-      if (d.type === 'init') var { manifest, theme } = d;
-      else manifest = manifest || d.manifest;
+      if (d.type === 'init') {
+        manifest = d.manifest;
+        theme = d.theme;
+      } else {
+        manifest = manifest || d.manifest;
+        if (d.theme) theme = d.theme;
+      }
       // 把主题变量写到 iframe 的 :root，保证视觉与外壳一致
       if (d.theme) applyThemeVars(d.theme);
-      if (d.type !== 'init') return;             // 纯更新，不走挂载流程
+      if (d.type !== 'init') {
+        // 纯更新：不走挂载流程，但要把新变量同步给已运行插件的 ctx 快照
+        if (ctxReady && theme) ctxReady.theme = { ...(ctxReady.theme || {}), ...theme };
+        return;
+      }
+      if (ctxReady) return;                      // 重复 init：ctx 已就绪，忽略
 
       document.body.classList.add('nexus-iframe-plugin');
 
@@ -288,7 +301,8 @@ export function bootIframePlugin(mountFn) {
       busLocal.emit(d.event, d.payload);
     }
 
-    if (d.type === 'mount' && ctxReady) {
+    if (d.type === 'mount' && ctxReady && !mounted) {
+      mounted = true;                            // 重复 mount 不再二次挂载
       Promise.resolve(mountFn(ctxReady))
         .then((unmount) => {
           if (typeof unmount === 'function') ctxReady.onDestroy(unmount);

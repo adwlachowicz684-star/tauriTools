@@ -203,8 +203,6 @@ export function createHost(opts = {}) {
 
     stage.innerHTML = '';
     stage.appendChild(wrap);
-    // 一切就绪后再触发加载：opacity 已为 0，加载期白底不可见
-    iframe.src = resolveEntry(manifest.entry);
 
     const result = await def.mount(ctx);
     return { manifest, ctx, wrap, target: container, root: container,
@@ -228,6 +226,7 @@ export function createHost(opts = {}) {
 
     const cleanupFns = [];
     let bridgeHandler = null;
+    let handshaked = false;          // 每个 iframe 实例只握手一次
 
     const ready = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('iframe 插件握手超时（10s）')), 10000);
@@ -239,9 +238,22 @@ export function createHost(opts = {}) {
 
         switch (d.type) {
           case 'ready':
+            // 只握手一次：旧版 SDK 收到 init 会回发一次 ready，不去重会形成
+            // ready ↔ init 无限往返（实测 3 秒内消息数破 300 仍未收敛），
+            // 每轮还会重建 ctx 与事件订阅。
+            // token 校验则拦掉已被放弃的挂载，避免给即将卸载的 iframe
+            // 完整挂载一次（插件副作用如写 KV、起定时器会真实执行）。
+            if (handshaked || state.mounting !== token) break;
+            handshaked = true;
             // 握手成功 = 插件文档已渲染出内容，此时再淡入，白底窗口被完全跳过
             iframe.style.opacity = '1';
+            // 主动回发 init（含 manifest/主题），再发 mount，两者必须都在这里发：
+            // ready 这个 Promise 只由 mounted / error 解决，而 mounted 又要等 iframe
+            // 收到 mount 才回 —— 把 mount 放到 await ready 之后就是互等死锁
+            // （588009a 修过一次，abe4d639 合并时被挪回去导致复发）。
+            // postMessage 按序送达：iframe 先处理 init（ctx 就绪），随后 mount 才能挂载。
             send(iframe, { type: 'init', manifest, theme: exportVars() });
+            send(iframe, { type: 'mount' });
             break;
           case 'mounted':
             clearTimeout(timeout);
@@ -271,6 +283,11 @@ export function createHost(opts = {}) {
 
     stage.innerHTML = '';
     stage.appendChild(wrap);
+    // 舞台就位后再触发加载：此时 iframe 已 opacity:0 且 wrap 铺了 --bg，
+    // 内文档渲染出来之前露出的是主题底色，不会闪白。
+    // （abe4d639 把这行写进了 mountModule —— 那里没有 iframe 变量，
+    //   既让同页插件抛 ReferenceError，又让沙箱插件永远停在 about:blank）
+    iframe.src = resolveEntry(manifest.entry);
 
     try {
       await ready;
@@ -283,7 +300,7 @@ export function createHost(opts = {}) {
     }
     if (state.mounting !== token) { cleanupFns.forEach((fn) => fn()); wrap.remove(); return null; }
 
-    send(iframe, { type: 'mount' });
+    // mount 已在 ready 分支发出（见上），此处不可再发，否则重复挂载
     await new Promise((r) => setTimeout(r, 60));   // 给插件渲染时间，便于主题采样
 
     return {
