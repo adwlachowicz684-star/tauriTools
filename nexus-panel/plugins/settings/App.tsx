@@ -58,8 +58,19 @@ export default function Settings() {
                       border: `1px solid ${v['--border'] || 'transparent'}`,
                     }}
                   />
-                  <i className="bar" style={{ background: v['--accent'] }} />
-                  <i className="bar s" style={{ background: v['--accent-2'] }} />
+                  {/* 这两条是主题的装饰配色，不是状态色。
+                      状态色（成功/错误/运行中）语义固定，不随主题色变化，
+                      故不在此预览中展示，避免误导。 */}
+                  <i
+                    className="bar"
+                    title="强调色：按钮 / 选中态"
+                    style={{ background: v['--accent'] }}
+                  />
+                  <i
+                    className="bar s"
+                    title="主题色：次要点缀（非状态色）"
+                    style={{ background: v['--accent-2'] }}
+                  />
                 </div>
                 <div className="theme-name" style={{ color: v['--text'] }}>{t.name}</div>
                 <div className="theme-desc">{t.desc || (t.base === 'dark' ? '深色' : '浅色')}</div>
@@ -107,7 +118,10 @@ export default function Settings() {
         </div>
 
         <div className="p-muted" style={{ marginTop: 14 }}>
-          主题色（第二个主色 · 成功提示 / 次要点缀）
+          主题色（第二个主色 · 仅用于次要点缀）
+        </div>
+        <div className="p-muted" style={{ fontSize: 12, marginTop: 2, opacity: .8 }}>
+          成功 / 错误 / 运行中 / 警告 为固定语义色，不随这里变化
         </div>
         <div className="p-row" style={{ marginTop: 8 }}>
           {swatchFor(getBase()).map(([c, label]) => {

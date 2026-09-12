@@ -210,5 +210,53 @@ t('swatchFor 按基调返回对应色板',
 tm.resetColors();
 tm.applyTheme('agentflow-dark', null, null, { userInitiated: false });
 
+/* ---------- 11. 状态色与装饰色分离 ---------- */
+tm.resetColors();
+tm.applyTheme('agentflow-dark', null, null, { userInitiated: false });
+
+/* 最能暴露问题的场景：把两个装饰色都设成红色 */
+tm.setAccent('#ff2e97');
+tm.setThemeColor('#ff2e97');
+t('强调色可设为红', cssVar('--accent') === '#ff2e97', cssVar('--accent'));
+t('主题色可设为红', cssVar('--accent-2') === '#ff2e97', cssVar('--accent-2'));
+t('成功色不被主题色污染', cssVar('--ok') === '#22c55e', cssVar('--ok'));
+t('运行中色不被强调色污染', cssVar('--running') === '#4c8dff', cssVar('--running'));
+t('错误色保持独立', cssVar('--danger') === '#ef4444', cssVar('--danger'));
+t('警告色保持独立', cssVar('--warn') === '#f59e0b', cssVar('--warn'));
+
+/* 每个主题都得有状态色，且不受装饰色影响 */
+let sepOk = true, sepBad = '';
+for (const th of PRESET_THEMES) {
+  tm.applyTheme(th.id, null, '#ff0000', { userInitiated: false });
+  const ok = cssVar('--ok');
+  const run = cssVar('--running');
+  if (!ok || !run) { sepOk = false; sepBad = th.id + ' 缺状态色'; }
+  else if (ok === '#ff0000' || run === '#ff0000') { sepOk = false; sepBad = th.id + ' 状态色被污染'; }
+}
+t('7 个主题状态色均存在且独立', sepOk, sepBad);
+
+/* 状态色在各主题底色上的可读性 */
+const lumOf = (h) => {
+  const v = [0, 2, 4].map((i) => parseInt(h.substr(i + 1, 2), 16) / 255)
+    .map((c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)));
+  return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+};
+const ratioOf = (a, b) => {
+  const [x, y] = [lumOf(a), lumOf(b)].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+};
+let minStatus = Infinity;
+for (const th of PRESET_THEMES) {
+  const bg = th.vars['--surface'] || th.vars['--bg'];
+  if (!String(bg).startsWith('#')) continue;   // 半透明底跳过
+  for (const k of ['--ok', '--running', '--danger', '--warn']) {
+    minStatus = Math.min(minStatus, ratioOf(th.vars[k], bg));
+  }
+}
+t('状态色对比度均 ≥ 3', minStatus >= 3, minStatus.toFixed(2) + ':1');
+
+tm.resetColors();
+tm.applyTheme('agentflow-dark', null, null, { userInitiated: false });
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -18,10 +18,16 @@
   --text-dim:      #8b93a2;
   --text-mute:     #5f6773;
 
-  /* 强调色 */
+  /* 强调色 + 主题色（装饰用，用户可在设置里微调） */
   --accent:        #5b8cff;
   --accent-2:      #48e0c0;
   --accent-glow:   rgba(91, 140, 255, .30);
+
+  /* 状态色（语义色，只随主题变，不参与"主题色"微调）
+     成功 / 错误 / 运行中 / 警告 必须是稳定可辨的语义，
+     若跟装饰色联动，用户把主题色设成红色就会出现"红色的成功提示"。 */
+  --ok:            #3ddc97;
+  --running:       #5b8cff;
   --warn:          #ffb454;
   --danger:        #ff6b6b;
 
@@ -413,7 +419,7 @@ body {
   max-width: 320px;
 }
 .toast.err { color: var(--danger); }
-.toast.ok  { color: var(--accent-2); }
+.toast.ok  { color: var(--ok); }
 @keyframes toastIn { from { opacity: 0; transform: translateY(8px); } }
 
 /* ---------- 滚动条 ---------- */

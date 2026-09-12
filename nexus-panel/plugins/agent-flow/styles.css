@@ -27,9 +27,10 @@
   --af-native-dim:    #8b93a7;
   --af-native-soft:   #c4cbd9;
   --af-native-accent: #4c8dff;
-  --af-native-ok:     #22c55e;
-  --af-native-bad:    #ef4444;
-  --af-native-warn:   #f59e0b;
+  --af-native-ok:      #22c55e;
+  --af-native-bad:     #ef4444;
+  --af-native-warn:    #f59e0b;
+  --af-native-running: #4c8dff;
   --af-native-raised: #222836;   /* 按钮 / select 底色 */
   --af-native-sunk:   #12151c;   /* 输入框 / 代码区底色 */
   --af-native-item:   #171a21;   /* 边栏项 / 标签底色（与 panel 同层，差 1/255 不可辨）*/
@@ -44,9 +45,10 @@
   --af-dim:    var(--af-native-dim);
   --af-soft:   var(--af-native-soft);
   --af-accent: var(--af-native-accent);
-  --af-ok:     var(--af-native-ok);
-  --af-bad:    var(--af-native-bad);
-  --af-warn:   var(--af-native-warn);
+  --af-ok:      var(--af-native-ok);
+  --af-bad:     var(--af-native-bad);
+  --af-warn:    var(--af-native-warn);
+  --af-running: var(--af-native-running);
   --af-raised: var(--af-native-raised);
   --af-sunk:   var(--af-native-sunk);
   --af-item:   var(--af-native-item);
@@ -64,9 +66,12 @@
   --af-soft:   var(--text-soft,     var(--af-native-soft));
   --af-accent: var(--accent,        var(--af-native-accent));
   /* 面板没有 --success，用辅色 accent-2 映射（Agent Flow 深色下恰好 = #22c55e） */
-  --af-ok:     var(--accent-2,      var(--af-native-ok));
-  --af-bad:    var(--danger,        var(--af-native-bad));
-  --af-warn:   var(--warn,          var(--af-native-warn));
+  /* 状态色一律走语义变量 —— 不能跟装饰色（accent / accent-2）联动，
+     否则用户把主题色设成红色，就会出现"红色的成功标记"。 */
+  --af-ok:      var(--ok,      var(--af-native-ok));
+  --af-bad:     var(--danger,  var(--af-native-bad));
+  --af-warn:    var(--warn,    var(--af-native-warn));
+  --af-running: var(--running, var(--af-native-running));
   --af-raised: var(--surface-raised, var(--af-native-raised));
   --af-sunk:   var(--surface-sunk,  var(--af-native-sunk));
   --af-item:   var(--surface,       var(--af-native-item));
@@ -109,7 +114,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
   border-left: 4px solid var(--af-dim); border-radius: 10px; padding: 10px 12px;
 }
 .node-card.is-selected { border-color: var(--af-accent); box-shadow: 0 0 0 2px var(--af-glow); }
-.node-card.status-running { border-left-color: var(--af-accent); }
+.node-card.status-running { border-left-color: var(--af-running); }
 .node-card.status-success { border-left-color: var(--af-ok); }
 .node-card.status-failed  { border-left-color: var(--af-bad); }
 .node-card.status-skipped { border-left-color: var(--af-warn); }
@@ -118,7 +123,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
 .node-title { font-weight: 600; font-size: 14px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node-badge { font-size: 11px; padding: 1px 6px; border-radius: 999px; background: var(--af-raised); color: var(--af-dim); }
 .badge-success { color: var(--af-ok); } .badge-failed { color: var(--af-bad); }
-.badge-skipped { color: var(--af-warn); } .badge-running { color: var(--af-accent); }
+.badge-skipped { color: var(--af-warn); } .badge-running { color: var(--af-running); }
 .node-cli { font-size: 11px; color: var(--af-dim); margin: 4px 0 6px; }
 .node-prompt {
   font-size: 12px; color: var(--af-soft); background: var(--af-sunk); border-radius: 6px;
