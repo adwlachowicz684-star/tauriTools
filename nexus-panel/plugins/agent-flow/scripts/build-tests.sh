@@ -7,18 +7,21 @@ OUT="${OUT:-/tmp/aftest}"
 mkdir -p "$OUT"
 S="python3 scripts/strip-ts.py"
 
-for f in topo template condition cron canvasOps parallel canvasStore; do
+for f in topo template condition cron canvasOps parallel canvasStore loop; do
   [ -f "engine/$f.ts" ] && $S "engine/$f.ts" "$OUT/$f.mjs" >/dev/null
 done
 # types.ts 里有运行时值（isCondition / DEFAULT_BRANCH / TRIGGER_META），也要生成
 $S types.ts "$OUT/types.mjs" >/dev/null
 # 每个映射单独一个 --import-map，避免只有第一个生效
 $S engine/parallel.ts "$OUT/parallel.mjs" --import-map ./condition=./condition.mjs >/dev/null
+$S engine/loop.ts "$OUT/loop.mjs" \
+   --import-map ../types=./types.mjs >/dev/null
 $S engine/runner.ts "$OUT/runner.mjs" \
    --import-map ./topo=./topo.mjs \
    --import-map ./template=./template.mjs \
    --import-map ./condition=./condition.mjs \
    --import-map ./parallel=./parallel.mjs \
+   --import-map ./loop=./loop.mjs \
    --import-map ../types=./types.mjs >/dev/null
 $S engine/triggers.ts "$OUT/triggers.mjs" \
    --import-map ./cron=./cron.mjs \

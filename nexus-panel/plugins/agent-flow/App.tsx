@@ -10,10 +10,12 @@ import TaskNode from './components/TaskNode';
 import ConditionNode from './components/ConditionNode';
 import TriggerNode from './components/TriggerNode';
 import ParallelNode from './components/ParallelNode';
+import LoopNode from './components/LoopNode';
+import FsNode from './components/FsNode';
 import Inspector from './components/Inspector';
 import Sidebar, { DRAG_MIME, decodeDrag, type DragPayload } from './components/Sidebar';
 import CanvasTabs from './components/CanvasTabs';
-import { runGraph, type Executor, type RunEvent, type RunSummary } from './engine/runner';
+import { runGraph, type Executor, type FsExecutor, type RunEvent, type RunSummary } from './engine/runner';
 import { TriggerScheduler } from './engine/triggers';
 import {
   makeCanvas, nextCanvasName, renameCanvas, removeCanvas, nextActiveId,
@@ -21,7 +23,8 @@ import {
   loadFromStorage, saveToStorage,
   type Canvas,
 } from './engine/canvasStore';
-import { CLI_META, TRIGGER_META, DEFAULT_TRIGGER_CONFIG, DEFAULT_BRANCH, type TaskNodeData, makeNode, makeConditionNode, makeParallelNode, makeTriggerNode, isTrigger, type CliKind, type Graph, type NodeData, type Trigger, type TriggerKind } from './types';
+import { CLI_META, TRIGGER_META, DEFAULT_TRIGGER_CONFIG, DEFAULT_BRANCH, type TaskNodeData, makeNode, makeConditionNode, makeParallelNode, makeTriggerNode,
+  makeLoopNode, makeFsNode, isTrigger, isLoop, type CliKind, type FsNodeData, type Graph, type NodeData, type Trigger, type TriggerKind } from './types';
 import type { FlowEdge, FlowNode } from './flowTypes';
 import { killCli, runCli, canWatch, startWatch, canWebhook, startWebhook, type DonePayload } from './lib/tauri';
 import {
@@ -35,6 +38,8 @@ const nodeTypes: NodeTypes = {
   condition: ConditionNode,
   trigger: TriggerNode,
   parallel: ParallelNode,
+  loop: LoopNode,
+  fs: FsNode,
 };
 const STORAGE_KEY = 'agent-flow:v1';
 const TRG_KEY = 'agent-flow:triggers:v1';
@@ -112,8 +117,6 @@ export default function App() {
   const init = useMemo(loadCanvases, []);
   const [canvases, setCanvases] = useState<Canvas[]>(init.canvases);
   const [activeId, setActiveId] = useState<string | null>(init.activeId);
-  const [themeMode, setThemeMode] = useState<ThemeMode>(readThemeMode);
-  useEffect(() => { applyThemeMode(themeMode); }, [themeMode]);
 
   const active = canvases.find((c) => c.id === activeId) ?? null;
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(
@@ -234,14 +237,28 @@ export default function App() {
 
   const onConnect = useCallback(
     (params: Connection) => {
-      // handleId 即分支出口：条件节点的每个规则/兜底都有独立出口
-      const branch = params.sourceHandle ?? undefined;
+      // handleId 即出口标识：
+      //  · 条件节点 → 分支 id 或 __default__
+      //  · 循环节点 → 'body'（循环体）/ 'done'（循环结束）
+      //  · 其它节点 → 缺省（普通边）
+      const hid = params.sourceHandle ?? undefined;
+      const srcNode = nodes.find((n) => n.id === params.source);
+      const srcData = srcNode?.data;
+
+      const isLoopSrc = srcData ? isLoop(srcData) : false;
+      // 条件节点的出口才当分支；循环节点的 body/done 不能混进 branch 字段
+      const branch = !isLoopSrc && hid && hid !== 'body' && hid !== 'done' ? hid : undefined;
+      const loopRole = isLoopSrc ? (hid === 'done' ? 'done' : 'body') : undefined;
+
+      const suffix = hid ? `:${hid}` : '';
       const newEdge: FlowEdge = {
-        id: `${params.source}->${params.target}${branch ? `:${branch}` : ''}`,
+        id: `${params.source}->${params.target}${suffix}`,
         source: params.source,
         target: params.target,
-        data: branch ? { branch } : undefined,
-        label: branchLabel(nodes, params.source, branch),
+        data: branch || loopRole ? { branch, loopRole } : undefined,
+        label: isLoopSrc
+          ? (loopRole === 'done' ? '结束' : '循环体')
+          : branchLabel(nodes, params.source, branch),
       };
       setEdges((eds) => addEdge(newEdge as Edge, eds) as FlowEdge[]);
     },
@@ -367,6 +384,14 @@ export default function App() {
         const id = `p${suffix}`;
         node = { id, type: 'parallel', position: pos,
           data: makeParallelNode(id, { label: '并发控制' }).data } as FlowNode;
+      } else if (p.kind === 'loop') {
+        const id = `lp${suffix}`;
+        node = { id, type: 'loop', position: pos,
+          data: makeLoopNode(id, { label: '循环' }).data } as FlowNode;
+      } else if (p.kind === 'fs') {
+        const id = `f${suffix}`;
+        node = { id, type: 'fs', position: pos,
+          data: makeFsNode(id, { label: '文件操作' }).data } as FlowNode;
       } else {
         const id = `tr${suffix}`;
         node = { id, type: 'trigger', position: pos,
@@ -459,6 +484,15 @@ export default function App() {
           : n));
     } else if (e.type === 'layer-start') {
       pushLog(`第 ${e.layer + 1}/${e.total} 层开始：${e.ids.join(', ')}`);
+    } else if (e.type === 'loop-resolved') {
+      const w = e.warnings.length ? ` ⚠ ${e.warnings.join('；')}` : '';
+      pushLog(`⟲ ${e.id} 循环开始：${e.reason}（${e.count} 轮）${w}`);
+    } else if (e.type === 'loop-iteration') {
+      pushLog(`  ⟲ 第 ${e.index + 1}/${e.count} 轮：${e.item.slice(0, 60)}`);
+    } else if (e.type === 'loop-done') {
+      pushLog(e.failed > 0
+        ? `⟲ ${e.id} 循环结束：${e.rounds} 轮，其中 ${e.failed} 轮失败`
+        : `⟲ ${e.id} 循环结束：${e.rounds} 轮全部成功`);
     } else if (e.type === 'run-error') {
       pushLog(`✗ ${e.message}`);
     } else if (e.type === 'run-done') {
@@ -486,7 +520,12 @@ export default function App() {
 
     const graph: Graph = {
       nodes: nodes.map((n) => ({ id: n.id, data: n.data })),
-      edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+      edges: edges.map((e) => ({
+        id: e.id, source: e.source, target: e.target,
+        // 条件分支用 branch，循环出口用 loopRole——两者语义不同，不能混
+        branch: e.data?.branch,
+        loopRole: e.data?.loopRole,
+      })),
     };
 
     const executor: Executor = async (node, rendered, onChunk) => {
@@ -510,9 +549,16 @@ export default function App() {
       return '';
     };
 
+    /* 文件操作执行器：真正干活的是 Rust 的 fs_op 命令 */
+    const fsExecutor: FsExecutor = async (node, args) => {
+      const d = node.data as FsNodeData;
+      const res = await fileOp(fsArgsOf(d, args));
+      return res.text;
+    };
+
     const effectiveInput = inputOverride !== undefined && inputOverride !== '' ? inputOverride : globalInput;
     const result = await runGraph(graph, {
-      concurrency, executor, input: effectiveInput, onEvent, signal: controller.signal,
+      concurrency, executor, fsExecutor, input: effectiveInput, onEvent, signal: controller.signal,
     });
     setSummary(result);
     setRunning(false);

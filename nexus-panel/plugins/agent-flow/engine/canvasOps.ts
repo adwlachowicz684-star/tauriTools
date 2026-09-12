@@ -41,6 +41,21 @@ export type DeleteResult<N extends MinimalNode, E extends MinimalEdge> = {
 const TOKEN = /\{\{\s*([A-Za-z0-9_.\-]+)\s*\}\}/g;
 
 /** 提取提示词里引用的节点 id（只取 .output / 简写形式，忽略 {{input}}） */
+/**
+ * 取出一个节点里所有可能写模板变量的字段，拼成一段文本供引用检测用。
+ * 各类型节点字段不同，这里穷举已知字段；后续新增节点类型记得补上。
+ */
+export function templateTextOf(data: unknown): string {
+  if (!data || typeof data !== 'object') return '';
+  const d = data as Record<string, unknown>;
+  const parts: unknown[] = [d.prompt, d.path, d.target, d.content, d.pattern];
+  const texts: string[] = [];
+  for (const v of parts) {
+    if (typeof v === 'string') texts.push(v);
+  }
+  return texts.join(' ');
+}
+
 export function extractRefs(prompt: string): string[] {
   const refs: string[] = [];
   if (!prompt) return refs;
@@ -84,7 +99,10 @@ export function deleteElements<N extends MinimalNode, E extends MinimalEdge>(
   const danglingRefs: DeleteResult<N, E>['danglingRefs'] = [];
   for (const removed of removedNodeIds) {
     const usedBy = nextNodes
-      .filter((n) => extractRefs(n.data?.prompt ?? '').includes(removed))
+      // 不只查 prompt：循环的通配符、文件节点的路径/内容同样支持模板变量，
+      // 上游被删后这些字段会拿到空值——Rust 侧只会报"路径为空"，
+      // 用户看不出是引用断了，所以一并纳入检测
+      .filter((n) => extractRefs(templateTextOf(n.data)).includes(removed))
       .map((n) => n.id);
     if (usedBy.length > 0) {
       danglingRefs.push({ nodeId: removed, ref: `${removed}.output`, usedBy });

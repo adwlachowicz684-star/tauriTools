@@ -22,6 +22,7 @@ for f in tests/*.test.ts; do
     --import-map ../engine/triggers=../triggers.mjs \
     --import-map ../engine/canvasOps=../canvasOps.mjs \
     --import-map ../engine/parallel=../parallel.mjs \
+    --import-map ../engine/loop=../loop.mjs \
     --import-map ../engine/canvasStore=../canvasStore.mjs \
     --import-map ../types=../types.mjs >/dev/null
 done

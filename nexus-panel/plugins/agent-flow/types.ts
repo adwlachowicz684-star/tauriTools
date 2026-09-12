@@ -44,6 +44,13 @@ export type GraphEdge = {
    * - undefined → 普通边，无条件
    */
   branch?: string;
+  /**
+   * 循环节点出边专属：标注这条边是"循环体"还是"循环结束"。
+   * - 'body' → 每轮迭代都执行的部分（默认，未标注时按 body 处理）
+   * - 'done' → 全部迭代完成后才执行一次
+   * - undefined → 非循环节点的普通边
+   */
+  loopRole?: 'body' | 'done';
 };
 
 export const CLI_META: Record<CliKind, { label: string; cmd: string; color: string }> = {
@@ -56,8 +63,9 @@ export const CLI_META: Record<CliKind, { label: string; cmd: string; color: stri
 /* 条件分支节点                                                        */
 /* ------------------------------------------------------------------ */
 
-/** 画布上的节点种类：任务 / 条件分支 / 触发器 / 并发控制 */
-export type NodeKind = 'task' | 'condition' | 'trigger' | 'parallel';
+/** 画布上的节点种类：任务 / 条件分支 / 触发器 / 并发控制 / 循环 / 文件操作 */
+export type NodeKind =
+  | 'task' | 'condition' | 'trigger' | 'parallel' | 'loop' | 'fs';
 
 export const DEFAULT_BRANCH = '__default__';
 
@@ -105,7 +113,9 @@ export type NodeData =
   | TaskNodeData
   | ConditionNodeData
   | TriggerNodeData
-  | ParallelNodeData;
+  | ParallelNodeData
+  | LoopNodeData
+  | FsNodeData;
 
 export const OP_META: Record<ConditionOp, { label: string; needsValue: boolean }> = {
   contains:    { label: '包含',       needsValue: true },
@@ -253,6 +263,178 @@ export function makeParallelNode(id: string, partial: Partial<ParallelNodeData> 
       concurrency: partial.concurrency ?? 2,
       rules: partial.rules ?? [],
       fallbackConcurrency: partial.fallbackConcurrency ?? 1,
+      status: partial.status ?? 'idle',
+      output: partial.output ?? '',
+      error: partial.error ?? '',
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 循环节点                                                            */
+/* ------------------------------------------------------------------ */
+
+/** 迭代项从哪来 */
+export type LoopMode =
+  | 'times'   // 固定次数
+  | 'list'    // 把上游输出按分隔符切成列表
+  | 'glob';   // 文件通配符展开（配合文件节点用）
+
+/** 循环体内某轮失败时的处理 */
+export type LoopOnError = 'continue' | 'stop';
+
+export type LoopNodeData = {
+  kind: 'loop';
+  label: string;
+  mode: LoopMode;
+  /** times: 迭代次数（1-1000） */
+  times: number;
+  /** list: 分隔符，支持 \n / , / ; / 自定义字符串 */
+  separator: string;
+  /** 取哪个上游的输出作为来源；空字符串表示拼接全部上游 */
+  source: string;
+  /** glob: 通配符，如 /tmp/**\/*.ts */
+  pattern: string;
+  /** 安全上限，超过则截断并在界面提示 */
+  maxIterations: number;
+  onError: LoopOnError;
+  /** 是否把每轮输出收集进本节点 output（关掉可省内存） */
+  collect: boolean;
+  status: NodeStatus;
+  output: string;
+  error: string;
+};
+
+/** 循环体内可通过模板拿到的迭代上下文 */
+export type LoopCtx = {
+  /** 当前项文本 */
+  item: string;
+  /** 当前下标，从 0 开始 */
+  index: number;
+  /** 总轮数 */
+  count: number;
+};
+
+export const LOOP_MODE_META: Record<LoopMode, { label: string; hint: string }> = {
+  times: { label: '固定次数', hint: '重复执行 N 次，与上游内容无关' },
+  list:  { label: '遍历列表', hint: '把上游输出按分隔符切成多项，逐项执行' },
+  glob:  { label: '匹配文件', hint: '按通配符展开文件路径，逐文件执行' },
+};
+
+export const MAX_LOOP_ITERATIONS = 1000;
+
+export function isLoop(d: NodeData): d is LoopNodeData {
+  return (d as LoopNodeData).kind === 'loop';
+}
+
+export function makeLoopNode(id: string, partial: Partial<LoopNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'loop',
+      label: partial.label ?? '循环',
+      mode: partial.mode ?? 'list',
+      times: partial.times ?? 3,
+      separator: partial.separator ?? '\n',
+      source: partial.source ?? '',
+      pattern: partial.pattern ?? '',
+      maxIterations: partial.maxIterations ?? 50,
+      onError: partial.onError ?? 'continue',
+      collect: partial.collect ?? true,
+      status: partial.status ?? 'idle',
+      output: partial.output ?? '',
+      error: partial.error ?? '',
+    },
+  };
+}
+
+
+/* ------------------------------------------------------------------ */
+/* 文件 / 文件夹操作节点                                                */
+/* ------------------------------------------------------------------ */
+
+export type FsOp =
+  | 'read'     // 读文件全文
+  | 'write'    // 写文件（覆盖）
+  | 'append'   // 追加到文件末尾
+  | 'copy'     // 复制文件或目录
+  | 'move'     // 移动 / 重命名
+  | 'delete'   // 删除文件或目录
+  | 'list'     // 列出目录条目
+  | 'mkdir'    // 创建目录
+  | 'exists'   // 是否存在
+  | 'stat';    // 大小 / 修改时间等元信息
+
+export type FsNodeData = {
+  kind: 'fs';
+  label: string;
+  op: FsOp;
+  /** 主路径，支持 {{模板变量}} */
+  path: string;
+  /** copy / move 的目标路径 */
+  target: string;
+  /** write / append 的内容，支持 {{模板变量}} */
+  content: string;
+  /** list: 是否递归 */
+  recursive: boolean;
+  /** delete: 是否允许删非空目录 */
+  force: boolean;
+  /** 只打印将执行的操作，不真正改动磁盘 */
+  dryRun: boolean;
+  /** read 最大字节数，超出截断 */
+  maxBytes: number;
+  /** list: 文件名过滤后缀，空数组表示全部 */
+  exts: string[];
+  status: NodeStatus;
+  output: string;
+  error: string;
+};
+
+export const FS_OP_META: Record<FsOp, {
+  label: string;
+  hint: string;
+  needsTarget: boolean;
+  needsContent: boolean;
+  /** 会改动磁盘的操作，界面上标红提醒 */
+  destructive: boolean;
+}> = {
+  read:   { label: '读文件',   hint: '读取文本文件内容',                 needsTarget: false, needsContent: false, destructive: false },
+  write:  { label: '写文件',   hint: '写入内容，已存在则覆盖',           needsTarget: false, needsContent: true,  destructive: true  },
+  append: { label: '追加内容', hint: '在文件末尾追加',                   needsTarget: false, needsContent: true,  destructive: true  },
+  copy:   { label: '复制',     hint: '复制文件或整个目录',               needsTarget: true,  needsContent: false, destructive: true  },
+  move:   { label: '移动',     hint: '移动或重命名',                     needsTarget: true,  needsContent: false, destructive: true  },
+  delete: { label: '删除',     hint: '删除文件或目录',                   needsTarget: false, needsContent: false, destructive: true  },
+  list:   { label: '列目录',   hint: '列出目录下的条目',                 needsTarget: false, needsContent: false, destructive: false },
+  mkdir:  { label: '建目录',   hint: '创建目录（含父级）',               needsTarget: false, needsContent: false, destructive: true  },
+  exists: { label: '判断存在', hint: '返回 true / false',                needsTarget: false, needsContent: false, destructive: false },
+  stat:   { label: '查看信息', hint: '大小、类型、修改时间',             needsTarget: false, needsContent: false, destructive: false },
+};
+
+/** 这些路径绝不允许被删除——误删根目录或系统目录代价太大 */
+export const FS_FORBIDDEN: string[] = [
+  '/', '/etc', '/usr', '/bin', '/sbin', '/var', '/system', '/windows',
+  'C:\\', 'C:\\Windows', 'C:\\Windows\\System32',
+];
+
+export function isFs(d: NodeData): d is FsNodeData {
+  return (d as FsNodeData).kind === 'fs';
+}
+
+export function makeFsNode(id: string, partial: Partial<FsNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'fs',
+      label: partial.label ?? '文件操作',
+      op: partial.op ?? 'read',
+      path: partial.path ?? '',
+      target: partial.target ?? '',
+      content: partial.content ?? '',
+      recursive: partial.recursive ?? false,
+      force: partial.force ?? false,
+      dryRun: partial.dryRun ?? false,
+      maxBytes: partial.maxBytes ?? 1_000_000,
+      exts: partial.exts ?? [],
       status: partial.status ?? 'idle',
       output: partial.output ?? '',
       error: partial.error ?? '',

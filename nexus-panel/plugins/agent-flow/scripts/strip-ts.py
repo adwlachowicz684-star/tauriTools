@@ -154,8 +154,12 @@ def strip_ts(src: str) -> str:
     src = re.sub(r'(\bfunction\s+\w+)\s*<[^<>]*>\s*\(', r'\1(', src)
 
     # 2) 泛型实例化
-    src = re.sub(r'new\s+(Set|Map)<[^<>]*>\(\)', r'new \1()', src)
-    src = re.sub(r'new\s+(Set|Map)<[^<>]*>\(', r'new \1(', src)
+    # 泛型实参可能是嵌套的（如 Map<string, Set<string>>），
+    # 旧写法 [^<>]* 匹配不到，会残留 `<...>` 导致 "Missing initializer"。
+    # 这里允许一层嵌套：  < 普通段 ( <普通段> 普通段 )* >
+    _NESTED = r'[^<>]*(?:<[^<>]*>[^<>]*)*'
+    src = re.sub(r'new\s+(Set|Map)<' + _NESTED + r'>\(\)', r'new \1()', src)
+    src = re.sub(r'new\s+(Set|Map)<' + _NESTED + r'>\(', r'new \1(', src)
 
     # 3) 访问修饰符
     src = re.sub(r'\b(private|readonly|public|protected)\s+', '', src)

@@ -1,6 +1,6 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { CliKind } from '../types';
+import type { CliKind, FsOp, FsNodeData } from '../types';
 
 export type RunRequest = {
   runId: string;
@@ -130,5 +130,58 @@ export async function startWebhook(
 
 /** 浏览器模式不支持起本地 HTTP 服务 */
 export function canWebhook(): boolean {
+  return isTauri();
+}
+
+/* ---------------- 文件 / 文件夹操作 ---------------- */
+
+export type FsArgs = {
+  op: FsOp;
+  path: string;
+  target: string;
+  content: string;
+  recursive: boolean;
+  force: boolean;
+  dryRun: boolean;
+  maxBytes: number;
+  exts: string[];
+};
+
+export type FsOutcome = { ok: boolean; text: string };
+
+/**
+ * 执行一次文件或文件夹操作。
+ *
+ * 必须经 Rust：iframe 里没有磁盘访问权限。
+ * 浏览器模式下直接抛错——不做模拟，因为"假装成功"比报错更危险，
+ * 用户会以为工作流真的写了文件。
+ */
+export async function fileOp(args: FsArgs): Promise<FsOutcome> {
+  if (!isTauri()) {
+    throw new Error('文件操作需要运行在桌面端（当前是浏览器模式）');
+  }
+  return await invoke<FsOutcome>('fs_op', { req: args });
+}
+
+/** 从节点数据构造请求参数（已渲染过的 path/target/content 由调用方传入） */
+export function fsArgsOf(
+  data: FsNodeData,
+  rendered: { path: string; target: string; content: string },
+): FsArgs {
+  return {
+    op: data.op,
+    path: rendered.path,
+    target: rendered.target,
+    content: rendered.content,
+    recursive: data.recursive,
+    force: data.force,
+    dryRun: data.dryRun,
+    maxBytes: data.maxBytes,
+    exts: data.exts,
+  };
+}
+
+/** 浏览器模式不支持文件操作 */
+export function canFs(): boolean {
   return isTauri();
 }

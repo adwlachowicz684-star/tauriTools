@@ -14,6 +14,8 @@ export type DragPayload =
   | { kind: 'task'; cli: CliKind }
   | { kind: 'condition' }
   | { kind: 'parallel' }
+  | { kind: 'loop' }
+  | { kind: 'fs' }
   | { kind: 'trigger'; trigger: TriggerKind };
 
 export const DRAG_MIME = 'application/x-agent-flow-node';
@@ -30,6 +32,7 @@ export function decodeDrag(raw: string | null | undefined): DragPayload | null {
     if (!p || typeof p.kind !== 'string') return null;
     if (p.kind === 'task' && (p as { cli?: string }).cli) return p;
     if (p.kind === 'condition' || p.kind === 'parallel') return p;
+    if (p.kind === 'loop' || p.kind === 'fs') return p;
     if (p.kind === 'trigger' && (p as { trigger?: string }).trigger) return p;
     return null;
   } catch {
@@ -112,6 +115,30 @@ export default function Sidebar({ onAdd, disabled }: Props) {
         >
           <span className="side-dot" style={{ background: '#06b6d4' }} />
           <span className="side-label">并发控制</span>
+        </div>
+        <div
+          className="side-item"
+          draggable={!disabled}
+          onDragStart={(e) => onDragStart(e, { kind: 'loop' })}
+          onClick={() => !disabled && onAdd({ kind: 'loop' })}
+          title="重复执行下游子图：固定次数 / 遍历列表 / 匹配文件"
+        >
+          <span className="side-dot" style={{ background: '#f472b6' }} />
+          <span className="side-label">循环</span>
+        </div>
+      </div>
+
+      <div className="side-group">
+        <div className="side-title">文件</div>
+        <div
+          className="side-item"
+          draggable={!disabled}
+          onDragStart={(e) => onDragStart(e, { kind: 'fs' })}
+          onClick={() => !disabled && onAdd({ kind: 'fs' })}
+          title="读写删改文件或目录，经 Rust 执行"
+        >
+          <span className="side-dot" style={{ background: '#38bdf8' }} />
+          <span className="side-label">文件操作</span>
         </div>
       </div>
 

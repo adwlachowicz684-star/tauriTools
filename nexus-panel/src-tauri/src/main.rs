@@ -468,6 +468,439 @@ fn webhook_stop(state: State<'_, WebhookRegistry>, id: String) -> Result<(), Str
     Ok(())
 }
 
+/* ================================================================== */
+/* 文件 / 文件夹操作 —— Agent Flow 的「文件操作」节点用                  */
+/*                                                                     */
+/* 前端（iframe）无法直接读写本地磁盘，必须经 Rust。                    */
+/* 刻意用 std::fs 而不是 tauri-plugin-fs：                             */
+/*   · 少一个插件依赖，也就不必在 capabilities 里逐条声明路径权限      */
+/*   · 这里做的是"工作流里的显式操作"，路径由用户在节点里写明，        */
+/*     语义上更接近"执行一条命令"而非"应用申请文件系统权限"            */
+/*                                                                     */
+/* 安全兜底只做一件事：绝不允许删掉系统关键路径。                      */
+/* 路径穿越等不做限制——这是本地开发工具，用户对自己填的路径负责。      */
+/* ================================================================== */
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FsRequest {
+    pub op: String,
+    pub path: String,
+    pub target: String,
+    pub content: String,
+    pub recursive: bool,
+    pub force: bool,
+    pub dry_run: bool,
+    #[serde(default)]
+    pub max_bytes: usize,
+    #[serde(default)]
+    pub exts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FsResult {
+    pub ok: bool,
+    /// 展示用的结果文本（文件内容 / 目录清单 / 操作回执）
+    pub text: String,
+}
+
+/// 这些路径绝不允许删除——误删代价太大，宁可拒绝
+const FORBIDDEN_DELETE: &[&str] = &[
+    "/", "/etc", "/usr", "/bin", "/sbin", "/var", "/lib", "/boot", "/root",
+    "/system", "/windows", "/program files",
+    "c:\\", "c:\\windows", "c:\\windows\\system32", "c:\\program files",
+];
+
+fn is_forbidden_delete(p: &Path) -> bool {
+    let raw = p.to_string_lossy().replace('\\', "/").to_lowercase();
+    let trimmed = raw.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return true;
+    }
+    FORBIDDEN_DELETE.iter().any(|f| {
+        let f = f.replace('\\', "/").to_lowercase();
+        trimmed == f.as_str() || trimmed == f.trim_end_matches('/')
+    })
+}
+
+/// 只列出一层目录
+fn list_dir(dir: &Path, recursive: bool, exts: &[String]) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut stack: Vec<std::path::PathBuf> = vec![dir.to_path_buf()];
+
+    while let Some(cur) = stack.pop() {
+        let rd = std::fs::read_dir(&cur)
+            .map_err(|e| format!("读取目录失败 {}: {}", cur.display(), e))?;
+        let mut entries: Vec<std::path::PathBuf> = Vec::new();
+        for entry in rd.flatten() {
+            entries.push(entry.path());
+        }
+        entries.sort();
+
+        for p in entries {
+            let is_dir = p.is_dir();
+            let name = p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+
+            if is_dir {
+                out.push(format!("{}/", p.display()));
+                if recursive {
+                    stack.push(p);
+                }
+            } else if exts.is_empty()
+                || exts.iter().any(|e| name.to_lowercase().ends_with(&format!(".{}", e.trim_start_matches('.').to_lowercase())))
+            {
+                out.push(p.display().to_string());
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// 极简 glob：支持 `*` （单段通配）与 `**` （跨目录通配），不支持 `?` 与字符类。
+/// 够工作流用即可，避免为此引入 walkdir / glob crate。
+fn glob_match(pattern: &str, path: &str) -> bool {
+    let pnorm = pattern.replace('\\', "/");
+    let anorm = path.replace('\\', "/");
+    let pseg: Vec<&str> = pnorm.split('/').filter(|s| !s.is_empty()).collect();
+    let aseg: Vec<&str> = anorm.split('/').filter(|s| !s.is_empty()).collect();
+
+    fn seg_match(pat: &str, s: &str) -> bool {
+        if pat == "*" {
+            return true;
+        }
+        // 只处理 '*' 这一种通配符
+        let parts: Vec<&str> = pat.split('*').collect();
+        if parts.len() == 1 {
+            return pat == s;
+        }
+        let mut pos = 0usize;
+        for (i, part) in parts.iter().enumerate() {
+            if part.is_empty() {
+                continue;
+            }
+            if i == 0 {
+                if !s.starts_with(part) {
+                    return false;
+                }
+                pos = part.len();
+            } else if i + 1 == parts.len() {
+                if !s[pos..].ends_with(part) {
+                    return false;
+                }
+            } else {
+                match s[pos..].find(part) {
+                    Some(idx) => pos += idx + part.len(),
+                    None => return false,
+                }
+            }
+        }
+        true
+    }
+
+    // 注意：Rust 的嵌套 fn 不能捕获外层变量，
+    // 所以把 pseg / aseg 显式作为参数传进去（写成闭包则返回 Box，递归更麻烦）
+    fn walk(pseg: &[&str], aseg: &[&str], pi: usize, ai: usize) -> bool {
+        if pi == pseg.len() {
+            return ai == aseg.len();
+        }
+        let seg = pseg[pi];
+        if seg == "**" {
+            // '**' 吃掉 0..n 段
+            for k in ai..=aseg.len() {
+                if walk(pseg, aseg, pi + 1, k) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if ai >= aseg.len() {
+            return false;
+        }
+        if seg_match(seg, aseg[ai]) && walk(pseg, aseg, pi + 1, ai + 1) {
+            return true;
+        }
+        false
+    }
+
+    walk(&pseg, &aseg, 0, 0)
+}
+
+/// 展开通配符：从 pattern 里截出最长的"不含通配符的前缀目录"作为起点递归
+fn expand_glob(pattern: &str) -> Result<Vec<String>, String> {
+    let pnorm = pattern.replace('\\', "/");
+    let is_abs = pnorm.starts_with('/') || pnorm.contains(':');
+    let segs: Vec<&str> = pnorm.split('/').collect();
+
+    let mut base_parts: Vec<&str> = Vec::new();
+    for s in &segs {
+        if s.is_empty() || s.contains('*') {
+            break;
+        }
+        base_parts.push(*s);
+    }
+
+    let base = if base_parts.is_empty() {
+        if is_abs { "/" } else { "." }
+    } else {
+        // 绝对路径时首段为空，需要还原前导斜杠
+        let joined = base_parts.join("/");
+        if is_abs && !joined.starts_with('/') { format!("/{}", joined) } else { joined }
+    }.to_string();
+
+    let base_path = Path::new(&base);
+    if !base_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut hits: Vec<String> = Vec::new();
+    if base_path.is_file() {
+        if glob_match(&pnorm, &base) {
+            hits.push(base.clone());
+        }
+        return Ok(hits);
+    }
+
+    let mut stack = vec![base_path.to_path_buf()];
+    while let Some(cur) = stack.pop() {
+        let rd = match std::fs::read_dir(&cur) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            let ps = p.to_string_lossy().replace('\\', "/");
+            if p.is_dir() {
+                stack.push(p.clone());
+            }
+            if glob_match(&pnorm, &ps) {
+                hits.push(ps);
+            }
+        }
+    }
+    hits.sort();
+    Ok(hits)
+}
+
+fn copy_all(src: &Path, dst: &Path) -> Result<(), String> {
+    if src.is_dir() {
+        std::fs::create_dir_all(dst)
+            .map_err(|e| format!("创建目标目录失败 {}: {}", dst.display(), e))?;
+        for entry in std::fs::read_dir(src)
+            .map_err(|e| format!("读取源目录失败 {}: {}", src.display(), e))?
+            .flatten()
+        {
+            let name = entry.file_name();
+            copy_all(&entry.path(), &dst.join(name))?;
+        }
+    } else {
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("创建父目录失败: {}", e))?;
+        }
+        std::fs::copy(src, dst)
+            .map_err(|e| format!("复制失败 {} → {}: {}", src.display(), dst.display(), e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn fs_op(req: FsRequest) -> Result<FsResult, String> {
+    let dry = req.dry_run;
+    let path = req.path.trim().to_string();
+    if path.is_empty() {
+        return Err("路径不能为空".to_string());
+    }
+    let p = Path::new(&path);
+
+    macro_rules! done {
+        ($t:expr) => { Ok(FsResult { ok: true, text: $t }) };
+    }
+    macro_rules! skip {
+        ($t:expr) => { Ok(FsResult { ok: true, text: format!("[演练] {}", $t) }) };
+    }
+
+    match req.op.as_str() {
+        /* ---------- 读 ---------- */
+        "read" => {
+            if !p.exists() {
+                return Err(format!("文件不存在: {}", path));
+            }
+            if p.is_dir() {
+                return Err(format!("是目录不是文件，请用「列目录」: {}", path));
+            }
+            let meta = std::fs::metadata(p).map_err(|e| format!("读取元信息失败: {}", e))?;
+            let cap = if req.max_bytes == 0 { usize::MAX } else { req.max_bytes };
+            let bytes = std::fs::read(p).map_err(|e| format!("读取失败: {}", e))?;
+            let truncated = bytes.len() > cap;
+            let text = String::from_utf8_lossy(&bytes[..bytes.len().min(cap)]).to_string();
+            let mut out = text;
+            if truncated {
+                out.push_str(&format!(
+                    "\n\n… 已截断（共 {} 字节，上限 {}）",
+                    meta.len(),
+                    cap
+                ));
+            }
+            done!(out)
+        }
+
+        /* ---------- 写 / 追加 ---------- */
+        "write" | "append" => {
+            let is_append = req.op == "append";
+            if dry {
+                return skip!(format!("{} {} 字节 → {}", if is_append { "追加" } else { "写入" }, req.content.len(), path));
+            }
+            if let Some(parent) = p.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| format!("创建父目录失败 {}: {}", parent.display(), e))?;
+                }
+            }
+            if is_append {
+                use std::io::Write as _;
+                let mut f = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(p)
+                    .map_err(|e| format!("打开文件失败: {}", e))?;
+                f.write_all(req.content.as_bytes())
+                    .map_err(|e| format!("写入失败: {}", e))?;
+            } else {
+                std::fs::write(p, &req.content).map_err(|e| format!("写入失败: {}", e))?;
+            }
+            done!(format!("已{} {} 字节 → {}", if is_append { "追加" } else { "写入" }, req.content.len(), path))
+        }
+
+        /* ---------- 复制 ---------- */
+        "copy" => {
+            let dst = req.target.trim();
+            if dst.is_empty() {
+                return Err("复制需要提供目标路径".to_string());
+            }
+            if dry {
+                return skip!(format!("复制 {} → {}", path, dst));
+            }
+            if !p.exists() {
+                return Err(format!("源不存在: {}", path));
+            }
+            copy_all(p, Path::new(dst))?;
+            done!(format!("已复制 {} → {}", path, dst))
+        }
+
+        /* ---------- 移动 / 重命名 ---------- */
+        "move" => {
+            let dst = req.target.trim();
+            if dst.is_empty() {
+                return Err("移动需要提供目标路径".to_string());
+            }
+            if dry {
+                return skip!(format!("移动 {} → {}", path, dst));
+            }
+            if !p.exists() {
+                return Err(format!("源不存在: {}", path));
+            }
+            if let Some(parent) = Path::new(dst).parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent).map_err(|e| format!("创建父目录失败: {}", e))?;
+                }
+            }
+            std::fs::rename(p, dst).map_err(|e| format!("移动失败: {}", e))?;
+            done!(format!("已移动 {} → {}", path, dst))
+        }
+
+        /* ---------- 删除 ---------- */
+        "delete" => {
+            if is_forbidden_delete(p) {
+                return Err(format!("拒绝删除系统关键路径: {}", path));
+            }
+            if !p.exists() {
+                return Ok(FsResult { ok: true, text: format!("不存在，无需删除: {}", path) });
+            }
+            let kind = if p.is_dir() { "目录" } else { "文件" };
+            if p.is_dir() && !req.force {
+                return Err(format!("「{}」是目录。确认要连同内容一起删除请勾选「允许删目录」", path));
+            }
+            if dry {
+                return skip!(format!("删除{} {}", kind, path));
+            }
+            if p.is_dir() {
+                std::fs::remove_dir_all(p).map_err(|e| format!("删除目录失败: {}", e))?;
+            } else {
+                std::fs::remove_file(p).map_err(|e| format!("删除文件失败: {}", e))?;
+            }
+            done!(format!("已删除{} {}", kind, path))
+        }
+
+        /* ---------- 列目录 ---------- */
+        "list" => {
+            if !p.exists() {
+                return Err(format!("目录不存在: {}", path));
+            }
+            if !p.is_dir() {
+                return Err(format!("不是目录: {}", path));
+            }
+            let items = list_dir(p, req.recursive, &req.exts)?;
+            if items.is_empty() {
+                done!("（空目录）".to_string())
+            } else {
+                done!(items.join("\n"))
+            }
+        }
+
+        /* ---------- 建目录 ---------- */
+        "mkdir" => {
+            if dry {
+                return skip!(format!("创建目录 {}", path));
+            }
+            std::fs::create_dir_all(p).map_err(|e| format!("创建目录失败: {}", e))?;
+            done!(format!("已确保目录存在: {}", path))
+        }
+
+        /* ---------- 是否存在 ---------- */
+        "exists" => {
+            done!(if p.exists() { "true" } else { "false" }.to_string())
+        }
+
+        /* ---------- 元信息 ---------- */
+        "stat" => {
+            if !p.exists() {
+                return Err(format!("路径不存在: {}", path));
+            }
+            let meta = std::fs::metadata(p).map_err(|e| format!("读取元信息失败: {}", e))?;
+            let kind = if meta.is_dir() { "目录" } else { "文件" };
+            let modified = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| {
+                    let secs = d.as_secs() as i64;
+                    // 简单格式化，避免引入 chrono
+                    format!("{}", secs)
+                })
+                .unwrap_or_else(|| "未知".to_string());
+            done!(format!(
+                "类型: {}\n大小: {} 字节\n修改时间(Unix 秒): {}\n只读: {}",
+                kind,
+                meta.len(),
+                modified,
+                meta.permissions().readonly()
+            ))
+        }
+
+        /* ---------- 通配符展开（供循环节点 glob 模式用） ---------- */
+        "glob" => {
+            let hits = expand_glob(&path)?;
+            if hits.is_empty() {
+                done!("".to_string())
+            } else {
+                done!(hits.join("\n"))
+            }
+        }
+
+        other => Err(format!("未知操作: {}", other)),
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -478,7 +911,8 @@ fn main() {
             rust_ping, app_version, window_action,
             run_node, kill_node, check_cli,
             watch_start, watch_stop,
-            webhook_start, webhook_stop
+            webhook_start, webhook_stop,
+            fs_op
         ])
         .run(tauri::generate_context!())
         .expect("启动 Nexus Panel 失败");

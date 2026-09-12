@@ -1,3 +1,4 @@
+import type { LoopCtx } from '../types';
 export type RenderResult = {
   text: string;
   /** 引用了但上游还没产出的变量，调用方可据此标黄提示 */
@@ -6,17 +7,24 @@ export type RenderResult = {
 
 const TOKEN = /\{\{\s*([A-Za-z0-9_.\-]+)\s*\}\}/g;
 
+export type RenderCtx = {
+  outputs: Record<string, string>;
+  input?: string;
+  /** 循环体内的迭代上下文；不在循环中时为 null */
+  loop?: LoopCtx | null;
+};
+
 /**
  * 渲染节点提示词。
  * 支持的写法：
  *   {{nodeId.output}}  上游节点输出
  *   {{nodeId}}         output 的简写
  *   {{input}}          工作流全局输入
+ *   {{loop.item}}      循环：当前项
+ *   {{loop.index}}     循环：当前下标（从 0 开始）
+ *   {{loop.count}}     循环：总轮数
  */
-export function renderTemplate(
-  tpl: string,
-  ctx: { outputs: Record<string, string>; input?: string },
-): RenderResult {
+export function renderTemplate(tpl: string, ctx: RenderCtx): RenderResult {
   const missing: string[] = [];
   const text = tpl.replace(TOKEN, (_m, rawKey: string) => {
     const key = rawKey.trim();
@@ -25,7 +33,17 @@ export function renderTemplate(
 
     let value: string | undefined;
     if (nodeId === 'input') value = ctx.input ?? '';
-    else if (field === 'output') value = ctx.outputs[nodeId];
+    else if (nodeId === 'loop') {
+      // 循环变量只在循环体内可用；外部引用视为未解析（保留原样提示用户）
+      const lp = ctx.loop;
+      if (!lp) {
+        missing.push(key);
+        return `{{${key}}}`;
+      }
+      if (field === 'output' || field === 'item') value = lp.item;
+      else if (field === 'index') value = String(lp.index);
+      else if (field === 'count') value = String(lp.count);
+    } else if (field === 'output') value = ctx.outputs[nodeId];
 
     if (value === undefined) {
       missing.push(key);

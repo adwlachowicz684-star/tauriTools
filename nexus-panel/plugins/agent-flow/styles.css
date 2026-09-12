@@ -445,3 +445,57 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .par-rule.dim { color: var(--af-dim); }
 .rule-conc { width: 56px; flex: none; }
+
+/* ---------------- 循环节点 ---------------- */
+.node-card.loop { border-left-color: #f472b6; }
+.loop-summary {
+  display: flex; align-items: center; gap: 7px; margin: 5px 0;
+  font-size: 11.5px; color: #fbcfe8;
+  background: #2a1622; border: 1px solid #4a2537;
+  border-radius: 5px; padding: 4px 7px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.loop-icon { flex: none; font-size: 13px; color: #f472b6; }
+.loop-ports { display: flex; gap: 6px; margin: 5px 0 2px; }
+.loop-port {
+  font-size: 10px; padding: 1px 6px; border-radius: 4px;
+  border: 1px solid var(--af-line); color: var(--af-dim);
+}
+.loop-port.body { color: #f9a8d4; border-color: #4a2537; }
+.loop-port.done { color: #a5f3fc; border-color: #1d4d5a; }
+
+/* 循环节点的两个出口：颜色区分，避免接错 */
+.loop-handle { width: 9px !important; height: 9px !important; border: 2px solid var(--af-sunk) !important; }
+.loop-handle-body { background: #f472b6 !important; }
+.loop-handle-done { background: #06b6d4 !important; }
+
+/* ---------------- 文件操作节点 ---------------- */
+.node-card.fs { border-left-color: #38bdf8; }
+.fs-summary {
+  display: flex; align-items: center; gap: 7px; margin: 5px 0;
+  font-size: 11.5px; color: #bae6fd;
+  background: #0e202e; border: 1px solid #1d4d5a;
+  border-radius: 5px; padding: 4px 7px;
+}
+.fs-summary.sub { margin-top: -2px; opacity: .85; }
+.fs-summary.is-danger {
+  color: #fecaca; background: #2a1414; border-color: #5a2020;
+}
+.fs-op {
+  flex: none; background: #1d4d5a; color: #bae6fd;
+  border-radius: 4px; padding: 1px 6px; font-size: 11px;
+}
+.fs-summary.is-danger .fs-op { background: #5a2020; color: #fecaca; }
+.fs-path {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: ui-monospace, monospace; font-size: 11px;
+}
+.fs-arrow { flex: none; color: var(--af-dim); }
+.fs-flag {
+  margin-top: 4px; font-size: 10.5px; color: var(--af-warn);
+}
+
+/* 提示条：警告态 */
+.tip.warn {
+  color: #fecaca; background: #2a1414; border-color: #5a2020;
+}
