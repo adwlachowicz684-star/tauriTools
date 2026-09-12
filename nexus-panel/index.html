@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <!-- 无构建模式需要显式写 CSP；Vite 模式下可交给 Vite -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost" />
+  <title>Nexus Panel</title>
+  <link rel="stylesheet" href="./css/neumorphism.css" />
+  <script>
+    // 标记为「无构建模式」：React/TSX 插件（requiresBuild）会自动隐藏
+    window.__NEXUS_NO_BUILD__ = true;
+
+    /* 首屏防闪：在 CSS 变量系统就绪前，先把底色和文字色铺上。
+       只需 bg / text 两项即可消除白闪，完整变量由 js/theme-manager.js 接管。
+       新增主题时，这里与 js/themes.js 同步一下即可。 */
+    (function () {
+      var PRELOAD = {
+        'neumorph-dark':  ['#2b2f36', '#d9dee8'],
+        'neumorph-light': ['#e6e9ef', '#3a4050'],
+        'midnight':       ['#232838', '#cdd4e6'],
+        'oled-flat':      ['#000000', '#e8e8ec'],
+        'neon-dark':      ['#12121c', '#eae6ff'],
+        'glass-dark':     ['#1b1f2b', '#eef1f8']
+      };
+      try {
+        var id = localStorage.getItem('nexus:theme');
+        var p = PRELOAD[id];
+        if (!p) return;
+        var r = document.documentElement;
+        r.style.setProperty('--bg', p[0]);
+        r.style.setProperty('--text', p[1]);
+        r.style.background = p[0];
+      } catch (e) { /* 存储不可用时忽略 */ }
+    })();
+  </script>
+</head>
+<body>
+  <div id="app">
+    <!-- ===== 自定义标题栏（decorations: false，自绘三键） ===== -->
+    <header id="titlebar" data-tauri-drag-region>
+      <div class="tb-brand" data-tauri-drag-region>
+        <div class="tb-logo">◈</div>
+        <span>Nexus Panel</span>
+      </div>
+      <span class="tb-title" id="tb-title"></span>
+      <div class="tb-spacer" data-tauri-drag-region></div>
+      <div class="tb-btns">
+        <button class="tb-btn" id="btn-top"    title="窗口置顶">⇱</button>
+        <button class="tb-btn" id="btn-min"    title="最小化">─</button>
+        <button class="tb-btn" id="btn-max"    title="最大化">□</button>
+        <button class="tb-btn danger" id="btn-close" title="关闭">✕</button>
+      </div>
+    </header>
+
+    <!-- ===== 主体：侧边栏 + 插件舞台 ===== -->
+    <div id="body">
+      <aside id="sidebar">
+        <button class="side-toggle" id="side-toggle" title="展开/收起">
+          <b>☰</b><span>插件面板</span>
+        </button>
+        <nav id="plugin-list"></nav>
+        <div id="sidebar-foot">
+          <button class="nav-item" id="btn-add" title="安装插件">
+            <span class="nav-icon">＋</span><span class="nav-label">安装插件</span>
+          </button>
+          <button class="nav-item" id="btn-settings" title="设置">
+            <span class="nav-icon">⚙</span><span class="nav-label">设置</span>
+          </button>
+        </div>
+      </aside>
+
+      <main id="main">
+        <div id="main-inner">
+          <div id="plugin-bar">
+            <h1 id="bar-title">未选择插件</h1>
+            <span class="sub" id="bar-sub"></span>
+            <div class="bar-actions">
+              <button class="bar-btn" id="bar-reload" title="重新加载插件">↻ 重载</button>
+            </div>
+          </div>
+          <div id="stage">
+            <div id="stage-scroll"></div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div id="toasts"></div>
+
+  <!-- 无构建模式：原生 ESM，直接被浏览器加载
+       Vite 模式：vite 会识别 type="module" 并做同样的处理，无需改动 -->
+  <script type="module" src="./js/shell.js"></script>
+</body>
+</html>

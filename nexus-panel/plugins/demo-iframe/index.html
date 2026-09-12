@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>沙箱插件示例</title>
+  <style>
+    /* iframe 内部重置：背景透明，让外壳主题透出来 */
+    html, body { margin: 0; background: transparent; }
+    body { font-family: inherit; color: var(--text); }
+    #plugin-mount { min-height: 100%; }
+  </style>
+</head>
+<body>
+  <div id="plugin-mount"></div>
+  <script type="module">
+    import { bootIframePlugin, h } from '../../js/plugin-sdk.js';
+
+    // 注意：这里的 ctx 与同页插件完全一致，插件代码可以原样复用
+    bootIframePlugin(async (ctx) => {
+      let n = await ctx.store.get('n', 0);
+      const num = h('div.p-stat', {},
+        h('div.k', {}, '沙箱内计数'),
+        h('div.v', {}, String(n)),
+      );
+
+      const log = h('div.p-mono.p-muted', { style: { marginTop: '12px', lineHeight: '1.9' } });
+      const say = (s) => log.appendChild(h('div', {}, s));
+
+      const off = ctx.on('demo:counter', (v) => say(`收到同页插件广播：count=${v}`));
+      ctx.onDestroy(off);
+
+      ctx.root.appendChild(
+        h('div.p-card', {},
+          h('h2', {}, 'iframe 沙箱插件'),
+          h('div.p-muted', {}, 'CSS/JS 与主页面完全隔离；Rust 调用通过 postMessage 桥接，用法不变。'),
+          h('div.p-grid', { style: { marginTop: '14px' } }, num),
+          h('div.p-row', { style: { marginTop: '14px' } },
+            h('button.p-btn.primary', {
+              onclick: async () => { num.querySelector('.v').textContent = String(++n); await ctx.store.set('n', n); ctx.setBadge(n); },
+            }, '＋ 1'),
+            h('button.p-btn', {
+              onclick: async () => {
+                try { say('rust_ping → ' + await ctx.invoke('rust_ping', { payload: '来自沙箱' })); }
+                catch (e) { say('错误：' + e); }
+              },
+            }, 'invoke("rust_ping")'),
+            h('button.p-btn', { onclick: () => ctx.toast('沙箱插件的 toast') }, 'toast'),
+            h('button.p-btn', { onclick: () => ctx.reload() }, '重载自己'),
+          ),
+          log,
+        ),
+      );
+
+      say(`插件已挂载，mode = ${ctx.mode}`);
+    });
+  </script>
+</body>
+</html>

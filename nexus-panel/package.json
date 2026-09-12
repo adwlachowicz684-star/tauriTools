@@ -1,0 +1,35 @@
+{
+  "name": "nexus-panel",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Nexus Panel · 深色新拟态 Tauri 2.x 插件面板（React + Vite + TS 优先，兼容无构建原生模式）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "tauri:dev": "tauri dev --config src-tauri/tauri.vite.conf.json",
+    "tauri:build": "tauri build --config src-tauri/tauri.vite.conf.json",
+    "tauri:dev:plain": "tauri dev",
+    "tauri:build:plain": "tauri build",
+    "test:adapt": "node adapt-test.mjs",
+    "test": "node smoke-test.mjs",
+    "test:theme": "node theme-test.mjs",
+    "test:react": "node smoke-react.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^24",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}
