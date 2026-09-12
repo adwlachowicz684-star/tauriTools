@@ -57,6 +57,13 @@ export const PRESET_THEMES = [
       '--danger': '#ff6b6b', '--warn': '#ffb454',
       '--border': 'transparent',
       '--blur': '0px',
+      // 新拟态用大圆角：26/20/14/9 的"软"感是这一风格的骨架。
+      // 必须显式声明 —— applyTo 只覆写主题已声明的变量，
+      // 缺失时会残留上一个主题的圆角值。
+      '--r-xl': '26px',
+      '--r-lg': '20px',
+      '--r': '14px',
+      '--r-sm': '9px',
     },
   },
   {
@@ -80,6 +87,10 @@ export const PRESET_THEMES = [
       '--danger': '#c92a2a', '--warn': '#8a5a00',
       '--border': 'transparent',
       '--blur': '0px',
+      '--r-xl': '26px',
+      '--r-lg': '20px',
+      '--r': '14px',
+      '--r-sm': '9px',
     },
   },
   {
@@ -103,6 +114,10 @@ export const PRESET_THEMES = [
       '--danger': '#ff6b6b', '--warn': '#ffb454',
       '--border': 'transparent',
       '--blur': '0px',
+      '--r-xl': '26px',
+      '--r-lg': '20px',
+      '--r': '14px',
+      '--r-sm': '9px',
     },
   },
   {
@@ -127,6 +142,11 @@ export const PRESET_THEMES = [
       '--danger': '#ff6b6b', '--warn': '#ffb454',
       '--border': 'rgba(255,255,255,.09)',
       '--blur': '0px',
+      // 扁平风用小圆角，与 agentflow-dark 一致的 12/10/8/5
+      '--r-xl': '12px',
+      '--r-lg': '10px',
+      '--r': '8px',
+      '--r-sm': '5px',
     },
   },
   {
@@ -150,6 +170,10 @@ export const PRESET_THEMES = [
       '--danger': '#ff6b8b', '--warn': '#ffb454',
       '--border': 'rgba(255,46,151,.16)',
       '--blur': '0px',
+      '--r-xl': '12px',
+      '--r-lg': '10px',
+      '--r': '8px',
+      '--r-sm': '5px',
     },
   },
   {
@@ -174,6 +198,11 @@ export const PRESET_THEMES = [
       '--danger': '#ff6b6b', '--warn': '#ffb454',
       '--border': 'rgba(255,255,255,.12)',
       '--blur': '14px',
+      // 毛玻璃卡片同样走大圆角，与 neumorphism.css 的 :root 兜底一致
+      '--r-xl': '26px',
+      '--r-lg': '20px',
+      '--r': '14px',
+      '--r-sm': '9px',
     },
   },
   {

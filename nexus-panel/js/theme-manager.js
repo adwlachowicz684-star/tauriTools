@@ -87,6 +87,18 @@ function deriveVars(theme) {
   v['--blur'] = v['--blur'] || '0px';
   v['--warn'] = v['--warn'] || '#ffb454';
   v['--danger'] = v['--danger'] || '#ff6b6b';
+
+  // 圆角兜底：主题未声明时按风格派生。
+  // 不能靠 CSS 的 :root 默认值 —— applyTo 只覆写主题已声明的变量，
+  // 一旦某个主题漏写，切换主题后圆角会残留上一个主题的值
+  // （新增状态色时就踩过一次：7 个主题里 6 个缺 --r-*，圆角卡死在扁平风）。
+  const radii = theme.style === 'flat' ? {
+    '--r-xl': '12px', '--r-lg': '10px', '--r': '8px', '--r-sm': '5px',
+  } : {
+    '--r-xl': '26px', '--r-lg': '20px', '--r': '14px', '--r-sm': '9px',
+  };
+  for (const [k, def] of Object.entries(radii)) v[k] = v[k] || def;
+
   return v;
 }
 
