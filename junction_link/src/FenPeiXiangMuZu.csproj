@@ -1,0 +1,78 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 目标框架：.NET 8 桌面 Windows（WPF 依赖 Windows） -->
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>FenPeiXiangMuZu</RootNamespace>
+    <AssemblyName>分配项目组</AssemblyName>
+    <!-- exe 文件图标（资源管理器/任务栏快捷方式显示）：与窗口/托盘图标共用 Assets\tray.ico -->
+    <ApplicationIcon>Assets\tray.ico</ApplicationIcon>
+
+    <!-- 源码目录约定：src/ 下的所有 .cs/.xaml 自动编入；
+         dist/ 是发布输出目录（编译产物 exe），非源码 -->
+    <SelfContained>false</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <!-- 中间/输出产物路径由 Directory.Build.props 统一设置（须在 Common.props 导入前生效，见 src/Directory.Build.props），
+         此处不再内联，避免设置过晚报 MSB3539 导致生成物双写 src\obj 与 TEMP。 -->
+  </PropertyGroup>
+
+  <!-- .NET SDK 为 WinForms 会自动加 System.Windows.Forms/System.Drawing 全局 using，
+       与 WPF 命名空间产生歧义，故移除；托盘功能在 MainWindow 内用全限定名引用。 -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <!-- App.xaml 必须显式声明为 ApplicationDefinition 才能生成 WPF 入口点 Main；
+       MainWindow.xaml 等其余 .xaml 交给 SDK 默认隐式当作 Page，勿再显式声明（会 NETSDK1022 重复） -->
+  <ItemGroup>
+    <ApplicationDefinition Include="App\App.xaml" />
+  </ItemGroup>
+
+  <!-- 托盘/按钮图标：作为嵌入资源打进 exe，运行时从程序集资源流加载 -->
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\tray.ico" />
+    <EmbeddedResource Include="Assets\tray_btn.png" />
+    <!-- 脑图布局缩略图（裁剪自 kityminder 编辑器 template.png 雪碧图，与 webview 外观页签模板一致） -->
+    <EmbeddedResource Include="Assets\Layouts\layout-default.png" />
+    <EmbeddedResource Include="Assets\Layouts\layout-right.png" />
+    <EmbeddedResource Include="Assets\Layouts\layout-filetree.png" />
+    <EmbeddedResource Include="Assets\Layouts\layout-structure.png" />
+    <EmbeddedResource Include="Assets\Layouts\layout-fish-bone.png" />
+    <EmbeddedResource Include="Assets\Layouts\layout-tianpan.png" />
+    <!-- 优先级/进度图标（裁剪自 kityminder 编辑器 iconpriority.png / iconprogress.png 雪碧图，与 webview 页签一致） -->
+    <EmbeddedResource Include="Assets\Icons\iconpriority.png" />
+    <EmbeddedResource Include="Assets\Icons\iconprogress.png" />
+  </ItemGroup>
+
+  <!-- ACL 文件夹保护（Services/FolderLockService）：.NET 8 需显式引用 Windows ACL 扩展 -->
+  <ItemGroup>
+    <PackageReference Include="System.IO.FileSystem.AccessControl" Version="5.0.0" />
+    <!-- Markdown 解析（内置 Markdown 编辑器/预览，只做解析，渲染走自写 WPF 渲染器，见 Services/MarkdownRenderer.cs） -->
+    <PackageReference Include="Markdig" Version="0.37.0" />
+    <!-- 思维导图插件（kityminder）：WebView2 承载本地 HTML 页面（Plugins/KityMinderPlugin + Views/MindMapEditorWindow） -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
+  <!-- 可复用 kityminder 宿主控件库（src/KityMinderPlugin）：脑图渲染/编辑走该库的 KityMinderHost，收敛重复实现 -->
+  <ItemGroup>
+    <ProjectReference Include="KityMinderPlugin\KityMinderPlugin.csproj" />
+  </ItemGroup>
+
+  <!-- 类库子目录（KityMinderPlugin\ 内的 .cs/.xaml）从主工程默认 glob 中排除：
+       其类型仅经 ProjectReference 引用 KityMinderPlugin.dll 获得，否则主工程同时编译同名源与引用程序集
+       造成 CS0436 类型冲突（本项目实锤：KityMinderHost / KityMinderContract / KityMinderStatusArgs）。 -->
+  <ItemGroup>
+    <Compile Remove="KityMinderPlugin\**\*.cs" />
+    <Page Remove="KityMinderPlugin\**\*.xaml" />
+    <ApplicationDefinition Remove="KityMinderPlugin\**\*.xaml" />
+    <EmbeddedResource Remove="KityMinderPlugin\**\*.*" />
+    <None Remove="KityMinderPlugin\**\*.*" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,1380 @@
+<Window x:Class="FenPeiXiangMuZu.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:FenPeiXiangMuZu.Views"
+        xmlns:app="clr-namespace:FenPeiXiangMuZu"
+        xmlns:controls="clr-namespace:FenPeiXiangMuZu.Controls"
+        Title="分配项目组"
+        Width="2048" Height="1312"
+        MinWidth="1536" MinHeight="1024"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        Background="{DynamicResource BgBrush}">
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
+        <!-- 统一名称文字格式：项目组名（如"开发"）/ 侧边栏按钮文字共用 -->
+        <Style x:Key="NameCaption" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{StaticResource MainBrush}"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+
+        <!-- 按钮快捷键提示：设置→显示快捷键 勾选后，在侧栏/顶栏按钮上以等宽小字显示对应键位 -->
+        <Style x:Key="ShortcutHint" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="Foreground" Value="#FF8992A5"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+
+        <!-- 侧边栏图标条：图标条本身始终窄宽不变（居中加大图标），名称/快捷键移至右侧浮层显示 -->
+        <Style x:Key="SideIcon" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons"/>
+            <Setter Property="FontSize" Value="20"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="SideLabel" TargetType="TextBlock" BasedOn="{StaticResource NameCaption}">
+            <Setter Property="Margin" Value="10,0,0,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Visibility" Value="{Binding SidebarExpanded, Converter={StaticResource BoolToVis}, RelativeSource={RelativeSource AncestorType=Window}}"/>
+        </Style>
+        <!-- 侧边栏名称浮层项：名称文字取浅色固定（浮层为半透明深色底），快捷键沿用 ShortcutHint 浅灰 -->
+        <Style x:Key="SidePopupName" TargetType="TextBlock" BasedOn="{StaticResource NameCaption}">
+            <Setter Property="Foreground" Value="#E6EDF3"/>
+        </Style>
+        <!-- 侧边栏图标按钮基础样式：必须先于所有 BasedOn SidebarBtn 的样式定义，否则同一字典内 StaticResource 前向引用解析失败 -->
+        <Style x:Key="SidebarBtn" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="14,5"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Margin" Value="0,14,0,0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="{StaticResource NeuRadius6}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#22FFFFFF"/>
+                                <Setter Property="Foreground" Value="{StaticResource MainBrush}"/>
+                            </Trigger>
+                            <!-- 统一禁用态：置灰、箭头光标、无悬停反馈 -->
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bd" Property="Background" Value="Transparent"/>
+                                <Setter Property="Opacity" Value="0.45"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                                <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- 数据驱动侧边栏图标按钮：普通=侧边样式；危险项红色；Separator 项折叠（以分隔线展示） -->
+        <Style x:Key="SidebarItemBtn" TargetType="Button" BasedOn="{StaticResource SidebarBtn}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsDanger}" Value="True">
+                    <Setter Property="Foreground" Value="#C96A6A"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="Separator">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <!-- 图标列分隔线：仅 Separator 项显示 -->
+        <Style x:Key="SidebarIconSeparator" TargetType="Border">
+            <Setter Property="Height" Value="1"/>
+            <Setter Property="Background" Value="#22FFFFFF"/>
+            <Setter Property="Margin" Value="4,14,4,0"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="Separator">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <!-- 名称列分隔线：仅 Separator 项显示 -->
+        <Style x:Key="SidebarNameSeparator" TargetType="Border">
+            <Setter Property="Height" Value="1"/>
+            <Setter Property="Background" Value="#22FFFFFF"/>
+            <Setter Property="Margin" Value="0,14,0,0"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="Separator">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <!-- 名称列内容行：Kind=Separator 折叠；IsHovered 时半透明高亮（与图标列同实例联动） -->
+        <Style x:Key="SidePopupRow" TargetType="Border">
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Margin" Value="0,14,0,0"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="CornerRadius" Value="5"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="Separator">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsHovered}" Value="True">
+                    <Setter Property="Background" Value="#22FFFFFF"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <!-- 名称列快捷键：Shortcut 为 null 时折叠（由 builder 依据 ShowShortcuts 决定是否填充） -->
+        <Style x:Key="SidePopupShortcut" TargetType="TextBlock" BasedOn="{StaticResource ShortcutHint}">
+            <Setter Property="Text" Value="{Binding Shortcut}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Shortcut}" Value="{x:Null}">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="SidebarBtnDanger" TargetType="Button" BasedOn="{StaticResource SidebarBtn}">
+            <Setter Property="Foreground" Value="#C96A6A"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="{StaticResource NeuRadius6}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#22FFFFFF"/>
+                                <Setter Property="Foreground" Value="{StaticResource MainBrush}"/>
+                            </Trigger>
+                            <!-- 统一禁用态：置灰、箭头光标、无悬停反馈 -->
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bd" Property="Background" Value="Transparent"/>
+                                <Setter Property="Opacity" Value="0.45"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                                <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 侧边栏顶部切换按钮：始终居中加大图标；点击仅常驻模式生效（临时模式由鼠标悬停控制） -->
+        <Style x:Key="SidebarToggleBtn" TargetType="Button" BasedOn="{StaticResource IconBtn}">
+            <Setter Property="FontSize" Value="20"/>
+            <Setter Property="HorizontalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+        </Style>
+
+        <!-- 书签式项目页签 / 页签关闭按钮 / 分框标题栏 / 添加集群按钮 等新拟物控件样式已统一迁至 App\Themes\NeuTheme.xaml -->
+
+        <DataTemplate x:Key="EditTabItemTemplate">
+            <Grid Margin="1,4" MinHeight="30" Background="Transparent" Cursor="SizeAll"
+                  PreviewMouseLeftButtonDown="OnEditGripPreviewMouseDown">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="24"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="⠿" FontSize="15" Foreground="{StaticResource MutedBrush}"
+                           VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Name}" FontSize="13" VerticalAlignment="Center"
+                               MouseLeftButtonDown="OnEditNameDoubleClick">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SideLabel}">
+                                <Setter Property="Visibility" Value="Visible"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsListEditing}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBox Text="{Binding Name, Mode=OneWay}"
+                             Visibility="{Binding IsListEditing, Converter={StaticResource BoolToVis}}"
+                             KeyDown="OnEditNameKeyDown" LostFocus="OnEditNameLostFocus" MouseDoubleClick="OnEditNameDoubleClick"
+                             Foreground="{StaticResource MainBrush}" FontSize="13"
+                             BorderThickness="0" Background="Transparent" Padding="0" Margin="0"
+                             VerticalAlignment="Center" MinWidth="40"/>
+                </StackPanel>
+                <TextBlock Grid.Column="2" Text="{Binding CountLabel, Mode=OneWay}" Margin="10,0,0,0"
+                           VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                <Button Grid.Column="3" Style="{StaticResource EditListDelBtn}" Content="&#xE74D;" Margin="8,0,0,0"
+                        ToolTip="删除" Click="OnEditListItemDeleteClick"/>
+            </Grid>
+        </DataTemplate>
+
+        <!-- 卡片磁贴：图标 + 名称，选中高亮 / 失效置灰 / 链接圆点 -->
+        <Style x:Key="CardTile" TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource NeuSurface}"/>
+            <Setter Property="Foreground" Value="{StaticResource MainBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource NeuBezel}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Effect" Value="{StaticResource NeuShadowSmall}"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Padding" Value="10,7"/>
+            <Setter Property="Margin" Value="0,0,6,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                    Effect="{TemplateBinding Effect}" CornerRadius="{StaticResource NeuRadius8}"
+                                    Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"/>
+                            </Border>
+                            <!-- 选中高亮描边：覆盖层不参与布局，选中时卡片尺寸不变，避免集群分框整体抖动 -->
+                            <!-- BorderBrush 放 Style Setter 而非本地值，否则本地值优先级高于触发器，IsGrayed 无法覆盖为红框 -->
+                            <Border x:Name="sel" CornerRadius="{StaticResource NeuRadius8}" BorderThickness="2"
+                                    IsHitTestVisible="False"
+                                    Visibility="{Binding IsSelected, Converter={StaticResource BoolToVis}}">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="BorderBrush" Value="{StaticResource NeuBezelSel}"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsGrayed}" Value="True">
+                                                <Setter Property="BorderBrush" Value="#C8555A"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#FF1F222B"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource NeuBezelHi}"/>
+                                <Setter TargetName="bd" Property="Effect" Value="{StaticResource NeuShadowInsetHover}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#FF191B21"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource NeuBezelPress}"/>
+                                <Setter TargetName="bd" Property="Effect" Value="{StaticResource NeuShadowInsetPress}"/>
+                            </Trigger>
+                            <!-- 文件夹丢失：悬浮/按下时也保持红色边框（模板内触发器优先级高于 Style.Triggers，需在此覆盖） -->
+                            <DataTrigger Binding="{Binding IsGrayed}" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="#C8555A"/>
+                            </DataTrigger>
+                            <!-- 自定义标签色：悬浮/按下按颜色派生明暗、文字对比度自适应。
+                                 必须排在上方默认触发器之后——同属性多触发器命中时以后者为准。 -->
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource TemplatedParent}}" Value="True"/>
+                                    <Condition Binding="{Binding HasTagColor}" Value="True"/>
+                                </MultiDataTrigger.Conditions>
+                                <Setter TargetName="bd" Property="Background" Value="{Binding TagBrushHover}"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource NeuBezelHi}"/>
+                                <Setter Property="Foreground" Value="{Binding TagTextBrush}"/>
+                            </MultiDataTrigger>
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource TemplatedParent}}" Value="True"/>
+                                    <Condition Binding="{Binding HasTagColor}" Value="True"/>
+                                </MultiDataTrigger.Conditions>
+                                <Setter TargetName="bd" Property="Background" Value="{Binding TagBrushPress}"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource NeuBezelPress}"/>
+                                <Setter Property="Foreground" Value="{Binding TagTextBrush}"/>
+                            </MultiDataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                    <Setter Property="Background" Value="#FF3A404C"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource NeuBezelSel}"/>
+                    <Setter Property="Effect" Value="{StaticResource NeuShadowActive}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsGrayed}" Value="True">
+                    <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+                    <Setter Property="BorderBrush" Value="#C8555A"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- 链接项目组小按钮：装甲块样式（金属质感描边 + 顶部高光/底部暗线 + 左缘插销槽），紧贴项目标签右侧构成机械齿合体 -->
+        <Style x:Key="LinkedGroupBtn" TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource NeuSurface}"/>
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource NeuBezelHi}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Effect" Value="{StaticResource NeuShadowSmall}"/>
+            <Setter Property="Margin" Value="0,0,6,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                Effect="{TemplateBinding Effect}" CornerRadius="{StaticResource NeuRadius4}">
+                            <Grid>
+                                <!-- 顶部金属高光刻线 -->
+                                <Rectangle Height="1" Fill="#303A49" VerticalAlignment="Top" Margin="1,0,1,0"/>
+                                <!-- 底部暗影线 -->
+                                <Rectangle Height="1" Fill="#00000055" VerticalAlignment="Bottom" Margin="1,0,1,0"/>
+                                <!-- 左缘插销槽：竖向金属凹槽，是被连接件齿条咬合的插孔 -->
+                                <Border Width="4" Background="{StaticResource NeuInset}" CornerRadius="{StaticResource NeuRadius1}"
+                                        HorizontalAlignment="Left" VerticalAlignment="Center" Margin="3,2,0,2"
+                                        IsHitTestVisible="False"/>
+                                <!-- 主体内容：图标 + 名称 -->
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="10,1,7,1"/>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource NeuSurfaceHi}"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource NeuBezelHi}"/>
+                                <Setter TargetName="bd" Property="Effect" Value="{StaticResource NeuShadowFloat}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource NeuInset}"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource NeuBezelPress}"/>
+                                <Setter TargetName="bd" Property="Effect" Value="{x:Null}"/>
+                            </Trigger>
+                            <!-- 链接的项目组自定义色：悬浮/按下按颜色派生明暗、文字对比度自适应（排在默认触发器后，命中即覆盖） -->
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource TemplatedParent}}" Value="True"/>
+                                    <Condition Binding="{Binding HasGroupTagColor}" Value="True"/>
+                                </MultiDataTrigger.Conditions>
+                                <Setter TargetName="bd" Property="Background" Value="{Binding GroupTagBrushHover}"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource NeuBezelHi}"/>
+                                <Setter Property="Foreground" Value="{Binding GroupTagTextBrush}"/>
+                            </MultiDataTrigger>
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource TemplatedParent}}" Value="True"/>
+                                    <Condition Binding="{Binding HasGroupTagColor}" Value="True"/>
+                                </MultiDataTrigger.Conditions>
+                                <Setter TargetName="bd" Property="Background" Value="{Binding GroupTagBrushPress}"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource NeuBezelPress}"/>
+                                <Setter Property="Foreground" Value="{Binding GroupTagTextBrush}"/>
+                            </MultiDataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding HasAnyLink}" Value="False">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding GroupFolderExists}" Value="False">
+                    <Setter Property="BorderBrush" Value="#C8555A"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- 中间链接标签按钮：本身是一个小标签，两侧缘带齿条分别咬合项目标签与项目组标签，中心显示齿轮/穿引图标 -->
+        <Style x:Key="LinkedTabBtn" TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource NeuSurface}"/>
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource NeuBezelHi}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Effect" Value="{StaticResource NeuShadowSmall}"/>
+            <Setter Property="Width" Value="94"/>
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="Margin" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                Effect="{TemplateBinding Effect}" CornerRadius="{StaticResource NeuRadius4}" Padding="8,0,9,0">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <!-- 缩小后的链接齿轮（有效=强调蓝 / 破坏=红叉），右侧紧跟链接名 -->
+                                <TextBlock x:Name="gear" FontFamily="Segoe Fluent Icons" FontSize="12" ToolTip="{Binding LinkTip}"
+                                           VerticalAlignment="Center" Text="&#xE713;"/>
+                                <TextBlock x:Name="name" Text="{Binding Name}" FontFamily="Consolas" FontSize="11"
+                                           VerticalAlignment="Center" Margin="5,0,0,0" MaxWidth="58"
+                                           TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource NeuSurfaceHi}"/>
+                                <Setter TargetName="bd" Property="Effect" Value="{StaticResource NeuShadowFloat}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource NeuInset}"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource NeuBezelPress}"/>
+                                <Setter TargetName="bd" Property="Effect" Value="{x:Null}"/>
+                            </Trigger>
+                            <DataTrigger Binding="{Binding HasLink}" Value="True">
+                                <Setter TargetName="gear" Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                                <Setter TargetName="name" Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding HasBroken}" Value="True">
+                                <Setter TargetName="gear" Property="Text" Value="&#xE787;"/>
+                                <Setter TargetName="gear" Property="Foreground" Value="#C8555A"/>
+                                <Setter TargetName="name" Property="Foreground" Value="#C8555A"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="#C8555A"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding HasConflict}" Value="True">
+                                <Setter TargetName="gear" Property="Text" Value="&#xE787;"/>
+                                <Setter TargetName="gear" Property="Foreground" Value="#D9A441"/>
+                                <Setter TargetName="name" Property="Foreground" Value="#D9A441"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="#D9A441"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding ProjectFolderExists}" Value="False">
+                                <Setter TargetName="gear" Property="Text" Value="&#xE787;"/>
+                                <Setter TargetName="gear" Property="Foreground" Value="#C8555A"/>
+                                <Setter TargetName="name" Property="Foreground" Value="#C8555A"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="#C8555A"/>
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding HasAnyLink}" Value="False">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- 输入框 / 预览框 / GhostBtn / AccentBtn / RedBtn / ModeToggle / TitleBtn / TitleBtnActive /
+             纵向横向分隔条 等新拟物控件样式已统一迁至 App\Themes\NeuTheme.xaml -->
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="50"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- ======== 自绘标题栏 (x:Name=titleBarHost，拖拽/双击最大化直接引用) ======== -->
+        <Border x:Name="titleBarHost" Grid.Row="0" Background="{DynamicResource BarBrush}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0">
+                    <TextBlock x:Name="appTitleText" Text="分配项目组" Style="{StaticResource AppTitle}"/>
+                    <TextBlock x:Name="appSubtitleText" Text="  为项目快速分配项目组(agents/skills/rules和agent通用支持文件)并提供锁定迁移等辅助功能"
+                               Foreground="{DynamicResource MutedBrush}" FontSize="11" VerticalAlignment="Center" Margin="0,5,0,0"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0">
+                    <!-- 脑图控件可见性调试入口（临时辅助）：列出脑图区域所有控件，逐个取消勾选定位多余"底"层 -->
+                    <Button x:Name="btnMindMapDebug" Click="OnMindMapDebugClick" ToolTip="脑图控件可见性调试（列出脑图区域控件，逐个隐藏定位多余底框）"
+                            Style="{StaticResource TitleBtn}" Width="Auto" MinWidth="38" Padding="12,0,12,0" Margin="0,0,6,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="控件" FontSize="12" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <!-- TIPS 左侧插件展示区：动态列出已注册插件入口（当前为思维导图 kityminder）。
+                         未来安装新插件在此自动追加；入口按钮激活态由 PluginLauncherItem.IsActive 驱动（对应插件浮层打开时保持高亮）。 -->
+                    <ItemsControl x:Name="titlebarPluginHost" Focusable="False" VerticalAlignment="Center">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Click="OnPluginLauncherClick" ToolTip="{Binding ToolTip}"
+                                        Width="Auto" MinWidth="38" Padding="12,0,12,0" Margin="4,0,6,0" VerticalAlignment="Center">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource TitleBtn}">
+                                            <Setter Property="Padding" Value="12,0,12,0"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                                    <Setter Property="Background" Value="#FF232631"/>
+                                                    <Setter Property="BorderBrush" Value="{StaticResource NeuBezelHi}"/>
+                                                    <Setter Property="Effect" Value="{StaticResource NeuShadowActive}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons" FontSize="12" VerticalAlignment="Center"/>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Button x:Name="btnAssign" Click="OnTitleAssignClick" ToolTip="分配项目组（主视图）" Style="{StaticResource TitleBtnActive}" Width="Auto" MinWidth="38" Padding="12,0,12,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="分配项目组" FontSize="12" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="btnTips" Click="OnTitleTipsClick" ToolTip="使用说明" Style="{StaticResource TitleBtn}" Width="Auto" MinWidth="38" Padding="12,0,12,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="TIPS" FontSize="12" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding ShortcutHints[ToggleTips]}" Style="{StaticResource ShortcutHint}" Margin="6,0,0,0">
+                                <TextBlock.Visibility>
+                                    <MultiBinding Converter="{StaticResource ShortcutHintVis}">
+                                        <Binding Path="ShowShortcuts"/>
+                                        <Binding Path="ShortcutHints[ToggleTips]"/>
+                                    </MultiBinding>
+                                </TextBlock.Visibility>
+                            </TextBlock>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="btnMcp" Click="OnTitleMcpClick" ToolTip="MCP 工具开关" Style="{StaticResource TitleBtn}" Width="Auto" MinWidth="38" Padding="12,0,12,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="MCP" FontSize="12" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding ShortcutHints[ToggleMcp]}" Style="{StaticResource ShortcutHint}" Margin="6,0,0,0">
+                                <TextBlock.Visibility>
+                                    <MultiBinding Converter="{StaticResource ShortcutHintVis}">
+                                        <Binding Path="ShowShortcuts"/>
+                                        <Binding Path="ShortcutHints[ToggleMcp]"/>
+                                    </MultiBinding>
+                                </TextBlock.Visibility>
+                            </TextBlock>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="btnSettings" Click="OnTitleSettingsClick" ToolTip="设置" Style="{StaticResource TitleBtn}" Width="Auto" MinWidth="38" Padding="12,0,12,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE713;" FontFamily="Segoe Fluent Icons" FontSize="12" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding ShortcutHints[ToggleSettings]}" Style="{StaticResource ShortcutHint}" Margin="6,0,0,0">
+                                <TextBlock.Visibility>
+                                    <MultiBinding Converter="{StaticResource ShortcutHintVis}">
+                                        <Binding Path="ShowShortcuts"/>
+                                        <Binding Path="ShortcutHints[ToggleSettings]"/>
+                                    </MultiBinding>
+                                </TextBlock.Visibility>
+                            </TextBlock>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="btnTray" Margin="21,0,0,0" Click="OnTitleTrayClick" ToolTip="隐藏到托盘" Style="{StaticResource TitleBtn}" Width="Auto" MinWidth="38" Padding="12,0,12,0">
+                        <StackPanel Orientation="Horizontal">
+                            <Image x:Name="TrayBtnImage" Width="26" Height="20" Stretch="Fill" Margin="0,-1,0,1"
+                                   RenderOptions.BitmapScalingMode="HighQuality"/>
+                            <TextBlock Text="{Binding ShortcutHints[HideToTray]}" Style="{StaticResource ShortcutHint}" Margin="6,0,0,0">
+                                <TextBlock.Visibility>
+                                    <MultiBinding Converter="{StaticResource ShortcutHintVis}">
+                                        <Binding Path="ShowShortcuts"/>
+                                        <Binding Path="ShortcutHints[HideToTray]"/>
+                                    </MultiBinding>
+                                </TextBlock.Visibility>
+                            </TextBlock>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="btnMin" Content="—" Click="OnTitleMinClick" ToolTip="最小化" Style="{StaticResource TitleBtn}"/>
+                    <Button x:Name="btnMax" Content="▢" FontSize="14" Click="OnTitleMaxClick" ToolTip="最大化/还原" Style="{StaticResource TitleBtn}"/>
+                    <Button x:Name="btnClose" Content="✕" Click="OnTitleCloseClick" ToolTip="关闭" Style="{StaticResource TitleBtn}"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ======== 内容区：整层 Card（与思维导图整张 Card 一致）包裹 左栏 + 三栏主区 + 日志/预览 ======== -->
+        <Border Grid.Row="1" Margin="6" Style="{DynamicResource Card}" Padding="0">
+        <Grid x:Name="contentGrid" Margin="4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>  <!-- 左侧边栏 -->
+                <ColumnDefinition Width="*"/>     <!-- 主区 -->
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition x:Name="logRow" Height="140"/>
+            </Grid.RowDefinitions>
+
+            <!-- 左侧边栏（可复用组件）：分配等操作按钮，纵向排列，横跨整个内容区；图标条始终窄宽不变，
+                 名称浮层由组件内 Popup 自包含。SidebarExpanded 与主窗双向同步（编辑列表列头显隐/列宽补偿依赖）。 -->
+            <controls:SidebarControl x:Name="sidebar" Grid.Column="0" Grid.RowSpan="3" Margin="0,0,2,0"
+                                     SidebarPersistent="{Binding SidebarPersistent}"
+                                     SidebarExpanded="{Binding SidebarExpanded, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}"/>
+
+            <!-- 三栏主区：项目组 / 项目 / AgentSkill -->
+            <Grid Grid.Column="1" Grid.Row="0" x:Name="mainGrid">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="colProj" Width="20*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition x:Name="colGroup" Width="20*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition x:Name="colAgent" Width="46*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- ======== 项目组列（第 2 列 colGroup） ======== -->
+                <Border Grid.Column="2" Margin="0,0,0,0" Style="{DynamicResource Card}">
+                    <Grid Margin="6">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="28"/>  <!-- 标题行 -->
+                            <RowDefinition Height="*"/>   <!-- 纵向分框区 -->
+                        </Grid.RowDefinitions>
+
+                        <!-- 标题行：项目组收藏 -->
+                        <Grid Grid.Row="0" VerticalAlignment="Center">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Style="{StaticResource ColumnTitle}" Margin="2,2,0,0">
+                                <Run Text="项目组"/><Run Text="『 集群：" FontSize="12" Foreground="{StaticResource MutedBrush}"/><Run Text="{Binding GroupClusterCount, Mode=OneWay}" FontSize="12" Foreground="#FFB4B9C2"/><Run Text="，项目组：" FontSize="12" Foreground="{StaticResource MutedBrush}"/><Run Text="{Binding GroupCount, Mode=OneWay}" FontSize="12" Foreground="#FFB4B9C2"/><Run Text=" 』" FontSize="12" Foreground="{StaticResource MutedBrush}"/>
+                            </TextBlock>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <Button Style="{StaticResource GhostEditBtn}" Margin="0,0,6,0" ToolTip="展开 / 收起全部项目组集群" Click="OnToggleExpandAllGroups">
+                                    <Path Width="12" Height="12" Stretch="Uniform"
+                                          Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                          Data="M18 6.41L16.59 5L12 9.58L7.41 5L6 6.41L12 12.41L18 6.41ZM18 13L16.59 11.59L12 16.17L7.41 11.59L6 13L12 19L18 13Z"/>
+                                </Button>
+                                <Button x:Name="groupCreateBtn" Style="{StaticResource GhostEditBtn}" Content="&#xE710;" Margin="0,0,6,0"
+                                        ToolTip="在预设目录下新建项目组文件夹（自动拷贝模板内容）并加入当前页签" Click="OnCreateGroupClick"/>
+                                <Button x:Name="groupEditBtn" Style="{StaticResource GhostEditBtn}" Content="&#xE70F;" ToolTip="管理项目组集群"
+                                        Click="OnToggleGroupEdit"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <Border Grid.Row="1" Style="{StaticResource DarkFrame}" Padding="6" Margin="0,4,0,0">
+                        <ScrollViewer x:Name="groupBoxScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                              AllowDrop="True" DragOver="OnCardScrollDragOver" Drop="OnCardScrollDrop" Padding="0,0,4,0">
+                            <StackPanel>
+                            <ItemsControl x:Name="groupBoxes" ItemsSource="{Binding GroupTabs}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><app:AnimatedStackPanel/></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,0,8" Background="{StaticResource NeuSurfaceLoGrad}"
+                                                BorderBrush="{StaticResource NeuBezel}" BorderThickness="1"
+                                                CornerRadius="{StaticResource NeuRadius8}" Effect="{StaticResource NeuShadowSmall}">
+                                            <Grid>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="*"/>
+                                                </Grid.RowDefinitions>
+                                                <Border Grid.Row="0" Tag="GroupTabHeader" Style="{StaticResource BoxTitle}"
+                                                        HorizontalAlignment="Stretch" Cursor="Hand"
+                                                        MouseLeftButtonDown="OnGroupBoxHeaderClick"
+                                                        MouseLeftButtonUp="OnGroupBoxHeaderUp">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Tag="GroupHeaderText" Orientation="Horizontal" VerticalAlignment="Center" MouseLeftButtonDown="OnGroupBoxTextDoubleClick">
+                                                            <TextBlock Text="{Binding Name}">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock" BasedOn="{StaticResource NameCaption}">
+                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsEditing}" Value="True">
+                                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
+                                                            <TextBox Text="{Binding Name, Mode=OneWay}"
+                                                                     Visibility="{Binding IsEditing, Converter={StaticResource BoolToVis}}"
+                                                                     KeyDown="OnGroupBoxNameKeyDown" LostFocus="OnGroupBoxNameLostFocus"
+                                                                     Foreground="{StaticResource MainBrush}" CaretBrush="{StaticResource AccentBrush}"
+                                                                     BorderThickness="0" Background="Transparent" Padding="0" Margin="0"
+                                                                     VerticalAlignment="Center" MinWidth="40"/>
+                                                            <TextBlock Text="{Binding Count}" Margin="6,0,0,0" FontSize="11"
+                                                                       Foreground="{StaticResource MutedBrush}"/>
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                            <Button Style="{StaticResource BoxActionBtn}" Width="20" Height="20" Margin="0" Padding="0"
+                                                                    ToolTip="折叠/展开该组" Click="OnToggleGroupCollapse">
+                                                                <Path Width="10" Height="10" Stretch="Uniform"
+                                                                      Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                                      Data="M7.41,15.41L12,10.83L16.59,15.41L18,14L12,8L6,14L7.41,15.41Z">
+                                                                    <Path.Style>
+                                                                        <Style TargetType="Path">
+                                                                            <Setter Property="RenderTransform">
+                                                                                <Setter.Value>
+                                                                                    <RotateTransform Angle="0" CenterX="5" CenterY="5"/>
+                                                                                </Setter.Value>
+                                                                            </Setter>
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding IsCollapsed}" Value="True">
+                                                                                    <Setter Property="RenderTransform">
+                                                                                        <Setter.Value>
+                                                                                            <RotateTransform Angle="180" CenterX="5" CenterY="5"/>
+                                                                                        </Setter.Value>
+                                                                                    </Setter>
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </Path.Style>
+                                                                </Path>
+                                                            </Button>
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Border>
+                                                <Border Grid.Row="1" Tag="GroupBoxBody" CornerRadius="0,0,8,8" Padding="8" Cursor="Hand">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsCollapsed}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <ItemsControl Tag="GroupCardHost" ItemsSource="{Binding Items}">
+                                                        <ItemsControl.ItemsPanel>
+                                                            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                                        </ItemsControl.ItemsPanel>
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <Button Style="{StaticResource CardTile}" Width="202"
+                                                                        Background="{Binding TagBrush, TargetNullValue={StaticResource NeuSurface}}"
+                                                                        Command="{Binding DataContext.SelectCardCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                        CommandParameter="{Binding}" ToolTip="{Binding LinkTip}">
+                                                                    <Grid>
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="Auto"/>
+                                                                            <ColumnDefinition Width="Auto"/>
+                                                                            <ColumnDefinition Width="*"/>
+                                                                            <ColumnDefinition Width="Auto"/>
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <Grid>
+                                                                            <Image Source="{Binding Icon}" Width="20" Height="20">
+                                                                                <Image.Style>
+                                                                                    <Style TargetType="Image">
+                                                                                        <Style.Triggers>
+                                                                                            <DataTrigger Binding="{Binding IsGrayed}" Value="True">
+                                                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                                            </DataTrigger>
+                                                                                        </Style.Triggers>
+                                                                                    </Style>
+                                                                                </Image.Style>
+                                                                            </Image>
+                                                                            <TextBlock Text="&#xE787;" FontFamily="Segoe Fluent Icons" FontSize="18"
+                                                                                       VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}">
+                                                                                <TextBlock.Style>
+                                                                                    <Style TargetType="TextBlock">
+                                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                                        <Style.Triggers>
+                                                                                            <DataTrigger Binding="{Binding IsGrayed}" Value="True">
+                                                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                                                            </DataTrigger>
+                                                                                        </Style.Triggers>
+                                                                                    </Style>
+                                                                                </TextBlock.Style>
+                                                                            </TextBlock>
+                                                                        </Grid>
+                                                                        <Ellipse Grid.Column="1" Width="8" Height="8" Margin="6,0,0,0" VerticalAlignment="Center">
+                                                                            <Ellipse.Style>
+                                                                                <Style TargetType="Ellipse">
+                                                                                    <Setter Property="Fill" Value="{StaticResource AccentBrush}"/>
+                                                                                    <Style.Triggers>
+                                                                                        <DataTrigger Binding="{Binding HasLink}" Value="False">
+                                                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                                                        </DataTrigger>
+                                                                                    </Style.Triggers>
+                                                                                </Style>
+                                                                            </Ellipse.Style>
+                                                                        </Ellipse>
+                                                                        <TextBlock Grid.Column="2" Text="{Binding DisplayName}" Margin="6,0,0,0" VerticalAlignment="Center"
+                                                                                   TextTrimming="CharacterEllipsis"/>
+                                                                        <!-- 锁定/ACL 徽章：账面固定小锁与 ACL 保护盾牌互斥——有 ACL 保护只显示盾牌，锁仅在账固定且无 ACL 时显示 -->
+                                                                        <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                                                                            <TextBlock Text="&#xE72E;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                                                                                       Margin="6,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource LockBrush}" ToolTip="已固定">
+                                                                                <TextBlock.Style>
+                                                                                    <Style TargetType="TextBlock">
+                                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                                        <Style.Triggers>
+                                                                                            <MultiDataTrigger>
+                                                                                                <MultiDataTrigger.Conditions>
+                                                                                                    <Condition Binding="{Binding IsLocked}" Value="True"/>
+                                                                                                    <Condition Binding="{Binding IsAclProtected}" Value="False"/>
+                                                                                                </MultiDataTrigger.Conditions>
+                                                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                                                            </MultiDataTrigger>
+                                                                                        </Style.Triggers>
+                                                                                    </Style>
+                                                                                </TextBlock.Style>
+                                                                            </TextBlock>
+                                                                            <TextBlock Text="&#xEA18;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                                                                                       Margin="4,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource LockBrush}"
+                                                                                       Visibility="{Binding IsAclProtected, Converter={StaticResource BoolToVis}}"
+                                                                                       ToolTip="{Binding AclTip, FallbackValue=ACL 已保护}"/>
+                                                                        </StackPanel>
+                                                                    </Grid>
+                                                                </Button>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <Button x:Name="addBoxBtn" Style="{StaticResource AddBoxBtn}" Height="36" Margin="0,0,0,8"
+                                    Click="OnAddGroupTabClick">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="＋" FontSize="13"/>
+                                    <TextBlock Text="添加项目组集群" FontSize="12" Margin="7,0,0,0"/>
+                                </StackPanel>
+                            </Button>
+                            </StackPanel>
+                        </ScrollViewer>
+                        </Border>
+
+                        <Popup x:Name="groupEditPopup"
+                               IsOpen="{Binding IsGroupListEditing, Mode=TwoWay, RelativeSource={RelativeSource AncestorType=Window}}"
+                               PlacementTarget="{Binding ElementName=groupEditBtn}" Placement="Bottom" StaysOpen="False"
+                               AllowsTransparency="True" PopupAnimation="Slide">
+                            <Border Style="{StaticResource EditListPanel}">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0" Style="{StaticResource ColumnTitle}" Margin="2,0,0,6">
+                                        <Run Text="管理项目组集群"/>
+                                        <Run Text="{Binding GroupTabs.Count, Mode=OneWay, StringFormat=『共 {0} 个』}" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                                    </TextBlock>
+                                    <Grid Grid.Row="1" Margin="2,0,4,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="24"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="1" Text="名称" Style="{StaticResource SideLabel}" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                                        <TextBlock Grid.Column="2" Text="数量" Style="{StaticResource SideLabel}" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="10,0,0,0"/>
+                                        <TextBlock Grid.Column="3" Text="操作" Style="{StaticResource SideLabel}" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="8,0,0,0"/>
+                                    </Grid>
+                                    <ListBox x:Name="groupEditList" Grid.Row="2" Tag="group"
+                                             ItemsSource="{Binding GroupTabs}" ItemTemplate="{StaticResource EditTabItemTemplate}"
+                                             Background="Transparent" BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                             MaxHeight="340" AllowDrop="True"
+                                             MouseMove="OnEditListMouseMove" DragOver="OnEditListDragOver" Drop="OnEditListDrop">
+                                        <ListBox.Resources>
+                                            <Style TargetType="ListBoxItem">
+                                                <Setter Property="Background" Value="Transparent"/>
+                                                <Setter Property="Padding" Value="0"/>
+                                                <Setter Property="Template">
+                                                    <Setter.Value>
+                                                        <ControlTemplate TargetType="ListBoxItem">
+                                                            <ContentPresenter/>
+                                                        </ControlTemplate>
+                                                    </Setter.Value>
+                                                </Setter>
+                                                <Style.Triggers>
+                                                    <Trigger Property="IsSelected" Value="True">
+                                                        <Setter Property="Background" Value="Transparent"/>
+                                                    </Trigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </ListBox.Resources>
+                                    </ListBox>
+                                    <Button Grid.Row="3" Style="{StaticResource AddBoxBtn}" Height="36" Margin="0,8,0,0" Content="＋ 添加项目组集群"
+                                            Click="OnAddGroupTabClick"/>
+                                </Grid>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                </Border>
+
+                <!-- ======== 项目列（第 0 列）：项目框 + 下方书签式页签 ======== -->
+                <Grid Grid.Column="0" Margin="0,0,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>   <!-- 项目框 -->
+                        <RowDefinition Height="Auto"/> <!-- 书签式页签行 -->
+                    </Grid.RowDefinitions>
+
+                    <Border Style="{DynamicResource Card}">
+                        <Grid Margin="6">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="28"/>  <!-- 标题行 -->
+                                <RowDefinition Height="*"/>   <!-- 卡片流 -->
+                            </Grid.RowDefinitions>
+
+                            <!-- 标题行：项目收藏 -->
+                            <Grid Grid.Row="0" VerticalAlignment="Center">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Style="{StaticResource ColumnTitle}" Margin="2,2,0,0">
+                                    <Run Text="项目"/><Run Text="『 总数：" FontSize="12" Foreground="{StaticResource MutedBrush}"/><Run Text="{Binding ProjectCount, Mode=OneWay}" FontSize="12" Foreground="#FFB4B9C2"/><Run Text="，当前页签：" FontSize="12" Foreground="{StaticResource MutedBrush}"/><Run Text="{Binding CurrentProjectCount, Mode=OneWay}" FontSize="12" Foreground="#FFB4B9C2"/><Run Text=" 』" FontSize="12" Foreground="{StaticResource MutedBrush}"/>
+                                </TextBlock>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                    <Button Style="{StaticResource GhostEditBtn}" Margin="0,0,6,0" ToolTip="展开 / 收起全部项目" Click="OnToggleExpandAllProjects">
+                                        <Path Width="12" Height="12" Stretch="Uniform"
+                                              Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                              Data="M18 6.41L16.59 5L12 9.58L7.41 5L6 6.41L12 12.41L18 6.41ZM18 13L16.59 11.59L12 16.17L7.41 11.59L6 13L12 19L18 13Z"/>
+                                    </Button>
+                                    <Button x:Name="projectCreateBtn" Style="{StaticResource GhostEditBtn}" Content="&#xE710;" Margin="0,0,6,0"
+                                            ToolTip="在预设目录下新建项目文件夹并加入当前页签" Click="OnCreateProjectClick"/>
+                                    <Button x:Name="projectEditBtn" Style="{StaticResource GhostEditBtn}" Content="&#xE70F;" ToolTip="管理项目页签"
+                                            Click="OnToggleProjectEdit"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- 卡片流（整宽） -->
+                            <Border Grid.Row="1" Style="{StaticResource DarkFrame}" Padding="6" Margin="0,4,0,0">
+                            <ScrollViewer x:Name="projectCardsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                          AllowDrop="True" DragOver="OnCardScrollDragOver" Drop="OnCardScrollDrop">
+                                <ItemsControl x:Name="projectCardsHost" ItemsSource="{Binding CurrentProjectCards}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                        <!-- 层级结构：项目标签在上，链接与已连接项目组显示在项目下方；外层容器承担卡片间距 -->
+                                        <StackPanel Orientation="Vertical" VerticalAlignment="Top" Margin="0,0,8,6">
+                                            <!-- 项目标签（上层）：图标 + 名称 -->
+                                            <Button Style="{StaticResource CardTile}" Width="282" Margin="0" HorizontalContentAlignment="Stretch"
+                                                    Background="{Binding TagBrush, TargetNullValue={StaticResource NeuSurface}}"
+                                                    Command="{Binding DataContext.SelectCardCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}" ToolTip="{Binding LinkTip}">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <Grid Grid.Column="0">
+                                                        <Image Source="{Binding Icon}" Width="20" Height="20" VerticalAlignment="Center">
+                                                            <Image.Style>
+                                                                <Style TargetType="Image">
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsGrayed}" Value="True">
+                                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Image.Style>
+                                                        </Image>
+                                                        <TextBlock Text="&#xE787;" FontFamily="Segoe Fluent Icons" FontSize="18"
+                                                                   VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsGrayed}" Value="True">
+                                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                    </Grid>
+                                                    <TextBlock Grid.Column="1" Text="{Binding DisplayName}" Margin="6,1,6,0"
+                                                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                                    <!-- 链接总量标记：小蓝点 + 已连接项目组的链接总数（无链接时隐藏） -->
+                                                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0"
+                                                                Visibility="{Binding HasAnyLink, Converter={StaticResource BoolToVis}}"
+                                                                ToolTip="已连接项目组的链接总数">
+                                                        <Ellipse Width="8" Height="8" VerticalAlignment="Center">
+                                                            <Ellipse.Style>
+                                                                <Style TargetType="Ellipse">
+                                                                    <Setter Property="Fill" Value="{StaticResource AccentBrush}"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding HasBroken}" Value="True">
+                                                                            <Setter Property="Fill" Value="#E5484D"/>
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding HasConflict}" Value="True">
+                                                                            <Setter Property="Fill" Value="#D9A441"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Ellipse.Style>
+                                                        </Ellipse>
+                                                        <TextBlock Text="{Binding LinkCount}" FontSize="11" Margin="4,0,0,0"
+                                                                   Foreground="{StaticResource AccentBrush}"
+                                                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                    <!-- 锁定/ACL 徽章：账面固定小锁与 ACL 保护盾牌互斥——有 ACL 保护只显示盾牌，锁仅在账固定且无 ACL 时显示 -->
+                                                    <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <TextBlock Text="&#xE72E;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                                                                   VerticalAlignment="Center" Foreground="{StaticResource LockBrush}" ToolTip="已固定">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    <Style.Triggers>
+                                                                        <MultiDataTrigger>
+                                                                            <MultiDataTrigger.Conditions>
+                                                                                <Condition Binding="{Binding IsLocked}" Value="True"/>
+                                                                                <Condition Binding="{Binding IsAclProtected}" Value="False"/>
+                                                                            </MultiDataTrigger.Conditions>
+                                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                                        </MultiDataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                        <TextBlock Text="&#xEA18;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                                                                   Margin="4,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource LockBrush}"
+                                                                   Visibility="{Binding IsAclProtected, Converter={StaticResource BoolToVis}}"
+                                                                   ToolTip="{Binding AclTip, FallbackValue=ACL 已保护}"/>
+                                                    </StackPanel>
+                                                    <!-- 展开/折叠按钮：切换链接的项目组信息显示 -->
+                                                    <ToggleButton Grid.Column="4" IsChecked="{Binding IsExpanded, Mode=TwoWay}"
+                                                                  Style="{StaticResource BoxActionToggleBtn}"
+                                                                  Width="18" Height="20" VerticalAlignment="Center" Margin="6,0,2,0"
+                                                                  ToolTip="展开 / 收起链接的项目组">
+                                                        <TextBlock FontFamily="Segoe MDL2 Assets" FontSize="10" VerticalAlignment="Center">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Text" Value="&#xE70E;"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsChecked, RelativeSource={RelativeSource AncestorType=ToggleButton}}" Value="False">
+                                                                            <Setter Property="Text" Value="&#xE70D;"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                    </ToggleButton>
+                                                </Grid>
+                                            </Button>
+                                            <!-- 下层：逐条链接行（每行一条链接名 → 项目组；无链接或折叠时隐藏） -->
+                                            <ItemsControl ItemsSource="{Binding LinkRows}" Margin="10,4,0,0"
+                                                          Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate><StackPanel/></ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <StackPanel Orientation="Horizontal" Margin="0,2,0,2">
+                                                            <!-- 链接标识按钮：齿轮 + 链接名（有效=蓝 / 破坏=红）；单击编辑该项目的链接 -->
+                                                            <Button Style="{StaticResource LinkedTabBtn}" VerticalAlignment="Center" Click="OnEditLinkName" ToolTip="单击编辑该项目的链接"/>
+                                                            <!-- 该项目组：图标 + 名称，点击跳转定位（文件夹丢失时图标变⚠️+红色边框高亮） -->
+                                                            <Button Style="{StaticResource LinkedGroupBtn}" Margin="0" VerticalAlignment="Center"
+                                                                    Background="{Binding GroupTagBrush, TargetNullValue={StaticResource NeuSurface}}"
+                                                                    Command="{Binding DataContext.SelectLinkedGroupCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                    CommandParameter="{Binding}" ToolTip="点击定位到该项目组">
+                                                                <StackPanel Orientation="Horizontal">
+                                                                    <Image Source="{Binding GroupIcon}" Width="16" Height="16" VerticalAlignment="Center">
+                                                                        <Image.Style>
+                                                                            <Style TargetType="Image">
+                                                                                <Style.Triggers>
+                                                                                    <DataTrigger Binding="{Binding GroupFolderExists}" Value="False">
+                                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                                    </DataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </Image.Style>
+                                                                    </Image>
+                                                                    <TextBlock Text="&#xE787;" FontFamily="Segoe Fluent Icons" FontSize="14" VerticalAlignment="Center"
+                                                                               Foreground="#C8555A">
+                                                                        <TextBlock.Style>
+                                                                            <Style TargetType="TextBlock">
+                                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                                <Style.Triggers>
+                                                                                    <DataTrigger Binding="{Binding GroupFolderExists}" Value="False">
+                                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                                    </DataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </TextBlock.Style>
+                                                                    </TextBlock>
+                                                                    <TextBlock Text="{Binding Group}" Margin="5,0,0,0" FontSize="11"
+                                                                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="110">
+                                                                        <TextBlock.Style>
+                                                                            <Style TargetType="TextBlock">
+                                                                                <Style.Triggers>
+                                                                                    <DataTrigger Binding="{Binding GroupFolderExists}" Value="False">
+                                                                                        <Setter Property="Foreground" Value="#C8555A"/>
+                                                                                    </DataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </TextBlock.Style>
+                                                                    </TextBlock>
+                                                                </StackPanel>
+                                                            </Button>
+                                                        </StackPanel>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                            </Border>
+                        </Grid>
+                    </Border>
+
+                    <!-- 书签式页签行：位于项目框下方，选中页签与项目框连为一体 -->
+                    <ScrollViewer Grid.Row="1" x:Name="projectTabsScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                                  AllowDrop="True" DragOver="OnTabDragOver" Drop="OnTabDrop">
+                        <StackPanel Orientation="Horizontal">
+                            <ItemsControl x:Name="projectTabsHost" ItemsSource="{Binding ProjectTabs}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button Style="{StaticResource TabChip}" HorizontalAlignment="Stretch" Command="{Binding ActivateCommand}" MouseDoubleClick="OnProjectTabDoubleClick">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Name}">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsEditing}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                    <TextBox Text="{Binding Name, Mode=OneWay}"
+                                                             Visibility="{Binding IsEditing, Converter={StaticResource BoolToVis}}"
+                                                             KeyDown="OnProjectTabNameKeyDown" LostFocus="OnProjectTabNameLostFocus"
+                                                             Foreground="{StaticResource MainBrush}" CaretBrush="{StaticResource AccentBrush}"
+                                                             BorderThickness="0" Background="Transparent" Padding="0" Margin="0"
+                                                             VerticalAlignment="Center" MinWidth="40"/>
+                                                    <TextBlock Text="{Binding Count}" Margin="4,0,0,0" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                                                </StackPanel>
+                                                <Button Grid.Column="1" Style="{StaticResource TabCloseBtn}" Content="×"
+                                                        Tag="{Binding}" Click="OnTabCloseClick"/>
+                                            </Grid>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <!-- 页签末尾：+ 新增页签标签 -->
+                            <Button Style="{StaticResource TabChip}" Content="＋" ToolTip="新增项目页签" Click="OnAddProjectTabClick"/>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <Popup x:Name="projectEditPopup"
+                           IsOpen="{Binding IsProjectListEditing, Mode=TwoWay, RelativeSource={RelativeSource AncestorType=Window}}"
+                           PlacementTarget="{Binding ElementName=projectEditBtn}" Placement="Bottom" StaysOpen="False"
+                           AllowsTransparency="True" PopupAnimation="Slide">
+                        <Border Style="{StaticResource EditListPanel}">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0" Style="{StaticResource ColumnTitle}" Margin="2,0,0,6">
+                                        <Run Text="管理项目页签"/>
+                                        <Run Text="{Binding ProjectTabs.Count, Mode=OneWay, StringFormat=『共 {0} 个』}" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                                    </TextBlock>
+                                    <Grid Grid.Row="1" Margin="2,0,4,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="24"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="1" Text="名称" Style="{StaticResource SideLabel}" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                                        <TextBlock Grid.Column="2" Text="数量" Style="{StaticResource SideLabel}" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="10,0,0,0"/>
+                                        <TextBlock Grid.Column="3" Text="操作" Style="{StaticResource SideLabel}" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="8,0,0,0"/>
+                                    </Grid>
+                                    <ListBox x:Name="projectEditList" Grid.Row="2" Tag="project"
+                                         ItemsSource="{Binding ProjectTabs}" ItemTemplate="{StaticResource EditTabItemTemplate}"
+                                         Background="Transparent" BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                         MaxHeight="340" AllowDrop="True"
+                                         MouseMove="OnEditListMouseMove" DragOver="OnEditListDragOver" Drop="OnEditListDrop">
+                                    <ListBox.Resources>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="Background" Value="Transparent"/>
+                                            <Setter Property="Padding" Value="0"/>
+                                            <Setter Property="Template">
+                                                <Setter.Value>
+                                                    <ControlTemplate TargetType="ListBoxItem">
+                                                        <ContentPresenter/>
+                                                    </ControlTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                            <Style.Triggers>
+                                                <Trigger Property="IsSelected" Value="True">
+                                                    <Setter Property="Background" Value="Transparent"/>
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </ListBox.Resources>
+                                </ListBox>
+                                <Button Grid.Row="3" Style="{StaticResource AddBoxBtn}" Height="36" Margin="0,8,0,0" Content="＋ 添加页签"
+                                        Click="OnAddProjectTabClick"/>
+                            </Grid>
+                        </Border>
+                    </Popup>
+                </Grid>
+
+                <!-- ======== 中：Agent / Skill 内容区 ======== -->
+                <Border Grid.Column="4" Margin="0,0,0,0">
+                    <local:AgentSkillPanel Panel="{Binding Content}"/>
+                </Border>
+
+                <!-- 纵向分隔条：项目 | 项目组 | AgentSkill 三栏之间可拖拽调宽 -->
+                <GridSplitter Grid.Column="1" Style="{StaticResource VSplitter}" x:Name="splitterProjGroup"/>
+                <GridSplitter Grid.Column="3" Style="{StaticResource VSplitter}" x:Name="splitterGroupAgent"/>
+            </Grid>
+
+            <!-- 横向分隔条：三栏主区与底部日志/预览区之间可拖拽调高 -->
+            <GridSplitter Grid.Column="1" Grid.Row="1" Style="{StaticResource HSplitter}" x:Name="splitterRow"/>
+
+            <!-- 底部：日志(居左 项目+项目组 两列，与上方共享操作栏同宽) + Agent/Skill 预览(agent/skill 正下方) -->
+            <Grid Grid.Column="1" Grid.Row="2" Margin="0,1,0,0" x:Name="bottomGrid">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="bcolLog" Width="20*"/>
+                    <ColumnDefinition x:Name="bcolLog2" Width="20*"/>
+                    <ColumnDefinition x:Name="bcolPreview" Width="46*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- 日志区（横跨前两列，宽度与共享操作栏一致） -->
+                <Border Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,1,0" Style="{DynamicResource Card}">
+                    <Border Margin="6" Background="{StaticResource NeuInset}" BorderBrush="{StaticResource NeuBezelPress}"
+                            BorderThickness="1" Effect="{StaticResource NeuShadowInner}" CornerRadius="{StaticResource NeuRadius6}">
+                        <Grid>
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                <ItemsControl x:Name="logHost" ItemsSource="{Binding Logs.Entries}" HorizontalContentAlignment="Stretch">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <!-- C6：轻量 TextBlock 替代重量级 TextBox（500 条常驻可视树）；
+                                                 右键单条弹「复制该条」，整卷复制走右上「复制全部」按钮 -->
+                                            <TextBlock Text="{Binding Display}" FontSize="11" Margin="0,1,2,1"
+                                                       TextWrapping="NoWrap" TextTrimming="CharacterEllipsis">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Level}" Value="ERR">
+                                                                <Setter Property="Foreground" Value="#FFB4A0"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                                <TextBlock.ContextMenu>
+                                                    <ContextMenu>
+                                                        <MenuItem Header="复制该条" Click="OnCopyLogEntryClick" CommandParameter="{Binding}"/>
+                                                    </ContextMenu>
+                                                </TextBlock.ContextMenu>
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                            <Button Content="复制全部" Command="{Binding Logs.CopyAllCommand}"
+                                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,4,4,0">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource MiniGhost}">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Border}}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </Grid>
+                    </Border>
+                </Border>
+
+                <!-- Agent/Skill 预览区（位于 agent/skill 两栏正下方，左右边缘对齐） -->
+                <Border Grid.Column="2" Margin="1,0,0,0" Style="{DynamicResource Card}">
+                    <!-- Margin 挂在包裹层：按钮与 previewBox 同矩形，右上角对齐文本框而非卡片 -->
+                    <Grid x:Name="previewHost" Margin="6">
+                        <Grid.Resources>
+                            <!-- 预览区右上角浮动钮（内置编辑 + 打开编辑）：悬停 previewHost 才显示，与日志区「复制全部」一致 -->
+                            <Style x:Key="PreviewGhostBtn" TargetType="Button" BasedOn="{StaticResource MiniGhost}">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Setter Property="Margin" Value="4,0,0,0"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsMouseOver, ElementName=previewHost}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Grid.Resources>
+                        <TextBox x:Name="previewBox" Style="{StaticResource PreviewBox}"
+                                 IsReadOnly="True" TextWrapping="NoWrap" AcceptsReturn="True"
+                                 HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"/>
+                        <!-- 内置编辑：打开内置 MD 编辑器窗口（默认载入当前预览的源文件）；打开编辑：用外部编辑器打开 -->
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,4,4,0">
+                            <Button Content="内置编辑" Click="OnTitleMarkdownClick" ToolTip="Markdown 编辑器" Style="{StaticResource PreviewGhostBtn}"/>
+                            <Button Content="打开编辑" Command="{Binding Content.OpenEditCommand}" Style="{StaticResource PreviewGhostBtn}"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <!-- ======== 浮层面板（设置/MCP/TIPS）：置于 contentGrid 最上层，可覆盖日志区；
+                 高度由拖动面板底边调整（OnPopupResize*），与预览窗口高度无关 ======== -->
+
+            <!-- 设置面板浮层（标题栏"设置"按钮切换）。Padding=0：拖动柄直抵面板真实底边（内边距移入内容行） -->
+            <Border x:Name="settingsPopup" Grid.Column="1" Grid.RowSpan="3" HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Style="{DynamicResource Card}" Padding="0" Margin="0,4,4,0" Width="800" Height="900"
+                    Visibility="Collapsed" Panel.ZIndex="50">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <local:SettingsPanel Grid.Row="0" Margin="16,12,16,0" RequestClose="OnSettingsPanelClose"/>
+                    <GridSplitter Grid.Row="1" x:Name="settingsResize" Style="{StaticResource HSplitterNoLine}"
+                                  DragDelta="OnPopupResizeDelta" DragCompleted="OnPopupResizeCompleted"/>
+                </Grid>
+            </Border>
+
+            <!-- MCP 工具开关浮层（标题栏"MCP"按钮切换） -->
+            <Border x:Name="mcpPopup" Grid.Column="1" Grid.RowSpan="3" HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Style="{DynamicResource Card}" Padding="16,12" Margin="0,4,4,0" Width="800" Height="640"
+                    Visibility="Collapsed" Panel.ZIndex="50">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <local:McpPanel Grid.Row="0" Panel="{Binding Mcp}" RequestClose="OnMcpPanelClose"/>
+                    <GridSplitter Grid.Row="1" x:Name="mcpResize" Style="{StaticResource HSplitterNoLine}"
+                                  DragDelta="OnPopupResizeDelta" DragCompleted="OnPopupResizeCompleted"/>
+                </Grid>
+            </Border>
+
+            <!-- 使用说明浮层（标题栏"TIPS"按钮切换，内嵌浮层，非独立窗口） -->
+            <Border x:Name="tipsPopup" Grid.Column="1" Grid.RowSpan="3" HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Style="{DynamicResource Card}" Padding="0" Margin="0,4,4,0" Width="960" Height="800"
+                    Visibility="Collapsed" Panel.ZIndex="50">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <local:TipsPanel Grid.Row="0" RequestClose="OnTipsPanelClose"/>
+                    <GridSplitter Grid.Row="1" x:Name="tipsResize" Style="{StaticResource HSplitterNoLine}"
+                                  DragDelta="OnPopupResizeDelta" DragCompleted="OnPopupResizeCompleted"/>
+                </Grid>
+            </Border>
+
+            </Grid>
+        </Border>
+
+        <!-- 思维导图浮层（标题栏插件区"思维导图"按钮切换，WebView2 承载 kityminder 插件）。
+             打开时进入占满内容区模式：隐藏左栏/四栏/日志/预览；本层透明不设 Card，
+             与内容区整层 Card 完全重叠（同 Grid.Row=1 + Margin=6），直接复用其作为脑图底。
+             内部 Grid 边距与 contentGrid 一致（Margin=4），左侧边栏放置参数与主界面 sidebar 完全一致。 -->
+        <Border x:Name="mindMapPopup" Grid.Row="1" Margin="6"
+                Background="Transparent" Padding="0"
+                Visibility="Collapsed" Panel.ZIndex="50">
+            <Grid Margin="4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <controls:SidebarControl x:Name="mindMapSidebar" Grid.Column="0" Margin="0,0,2,0"
+                                         SidebarPersistent="False"/>
+                <local:MindMapPanel x:Name="mindMapPanel" Grid.Column="1" Margin="2,0,0,0"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

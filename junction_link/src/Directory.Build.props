@@ -1,0 +1,10 @@
+<Project>
+  <!-- 主工程（FenPeiXiangMuZu）中间/输出产物放英文 TEMP（仓库路径含中文，dotnet 子进程按 GBK 破坏中文路径参数）。
+       放本文件（Directory.Build.props）可在 Microsoft.Common.props 导入前生效，避免 MSB3539
+       “BaseIntermediateOutputPath 设置太晚”导致生成物同时落到默认 src\obj 与 TEMP 两处、.g.cs 撞车 CS0579/CS0102。
+       类库（KityMinderPlugin）用其子目录下另一份 Directory.Build.props 覆盖为独立英文目录。 -->
+  <PropertyGroup>
+    <BaseIntermediateOutputPath>$(TEMP)\fpx-migration-build\obj\</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(TEMP)\fpx-migration-build\bin\</BaseOutputPath>
+  </PropertyGroup>
+</Project>

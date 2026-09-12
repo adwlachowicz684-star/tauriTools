@@ -1,0 +1,440 @@
+<UserControl x:Class="FenPeiXiangMuZu.Views.AgentSkillPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+        <!-- 面板自含新拟物样式，复用 App.xaml 全局画刷；不依赖 MainWindow 局部样式以便单独集成 -->
+        <!-- SelBrush 直定义为 SolidColorBrush（与 NeuAccentTint 同值）：原 <StaticResource ResourceKey> 元素语法
+             在 BAML 延迟字典中求值时机特殊，与相邻 converter 条目共存时曾致触发器取到错误类型（渲染期崩溃） -->
+        <SolidColorBrush x:Key="SelBrush" Color="#FF353A45"/>
+
+        <!-- 分级展示用画刷：引导线=钢青灰；文件夹徽条=低饱和金；文件夹图标/名称=钢蓝 -->
+        <SolidColorBrush x:Key="GuideLineBrush" Color="#3E4F68"/>
+        <SolidColorBrush x:Key="FolderBarBrush" Color="#C9A15A"/>
+        <SolidColorBrush x:Key="FolderIconBrush" Color="#A9B6D4"/>
+        <SolidColorBrush x:Key="FolderNameBrush" Color="#9FB3D6"/>
+
+        <!-- 外凸小按钮：NeuSurface 面 + 斜向描边 + 右下深影，按压内凹 -->
+        <Style x:Key="GhostBtn" TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource NeuSurface}"/>
+            <Setter Property="Foreground" Value="{StaticResource MainBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource NeuBezel}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Effect" Value="{StaticResource NeuShadowSmall}"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                Effect="{TemplateBinding Effect}" CornerRadius="{StaticResource NeuRadius5}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource NeuSurfaceHi}"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource NeuBezelHi}"/>
+                                <Setter TargetName="bd" Property="Effect" Value="{StaticResource NeuShadowFloat}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource NeuInset}"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource NeuBezelPress}"/>
+                                <Setter TargetName="bd" Property="Effect" Value="{x:Null}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- 幽灵图标按钮：无边框 MDL2 图标，悬停浮起新拟物凸面，用于 刷新 / 打开 agent|skill 目录 -->
+        <Style x:Key="IconBtn" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Width" Value="28"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="{StaticResource NeuRadius6}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource NeuSurfaceHi}"/>
+                                <Setter TargetName="bd" Property="Effect" Value="{StaticResource NeuShadowSmall}"/>
+                                <Setter Property="Foreground" Value="{StaticResource MainBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource NeuInset}"/>
+                                <Setter TargetName="bd" Property="Effect" Value="{x:Null}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 递归分节节点：文件夹可展开，叶子可选中预览；图标(IconService) + 名字 -->
+        <HierarchicalDataTemplate x:Key="NodeTemplate" ItemsSource="{Binding Children}">
+            <Border x:Name="rowBg" CornerRadius="{StaticResource NeuRadius4}" Padding="2,1" Margin="0,1">
+                <Border.InputBindings>
+                    <!-- 右键先高亮该节点（不触发预览/展开切换），再弹出菜单；左键选中由 NodeTreeItem 的 PreviewMouseLeftButtonDown 整行处理 -->
+                    <MouseBinding MouseAction="RightClick"
+                                  Command="{Binding DataContext.RightClickCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                  CommandParameter="{Binding}"/>
+                </Border.InputBindings>
+                <Border.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="复制名称" FontSize="12"
+                                  Command="{Binding DataContext.CopyNameCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                  CommandParameter="{Binding}"/>
+                        <MenuItem Header="复制文件名" FontSize="12"
+                                  Command="{Binding DataContext.CopyFileNameCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                  CommandParameter="{Binding}"/>
+                        <MenuItem Header="复制文件路径" FontSize="12"
+                                  Command="{Binding DataContext.CopyPathCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                  CommandParameter="{Binding}"/>
+                        <Separator/>
+                        <MenuItem Header="打开文件" FontSize="12"
+                                  Visibility="{Binding ShowOpenFile, Converter={StaticResource BoolToVis}}"
+                                  Command="{Binding DataContext.OpenFileCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                  CommandParameter="{Binding}"/>
+                        <MenuItem Header="打开 SKILL.md" FontSize="12"
+                                  Visibility="{Binding CanOpenSkillMd, Converter={StaticResource BoolToVis}}"
+                                  Command="{Binding DataContext.OpenSkillMdCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                  CommandParameter="{Binding}"/>
+                        <MenuItem Header="打开所在文件夹" FontSize="12"
+                                  Visibility="{Binding ShowOpenContaining, Converter={StaticResource BoolToVis}}"
+                                  Command="{Binding DataContext.OpenContainingCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                  CommandParameter="{Binding}"/>
+                        <Separator/>
+                        <MenuItem Header="重命名" FontSize="12" IsEnabled="{Binding CanRename}"
+                                  Command="{Binding DataContext.RenameCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                  CommandParameter="{Binding}"/>
+                    </ContextMenu>
+                </Border.ContextMenu>
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Style.Triggers>
+                            <!-- 仅叶子(agent/skill)被选中时高亮；目录层级点击不高亮 -->
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                <Setter Property="Background" Value="{StaticResource SelBrush}"/>
+                            </DataTrigger>
+                            <!-- 文件夹按深度逐级加深色带，强化层级递进 -->
+                            <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding IsFolder}" Value="True"/>
+                                        <Condition Binding="{Binding Depth}" Value="1"/>
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Background" Value="#232A36"/>
+                                </MultiDataTrigger>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding IsFolder}" Value="True"/>
+                                        <Condition Binding="{Binding Depth}" Value="2"/>
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Background" Value="#242C39"/>
+                                </MultiDataTrigger>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding IsFolder}" Value="True"/>
+                                        <Condition Binding="{Binding Depth}" Value="3"/>
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Background" Value="#262F3D"/>
+                                </MultiDataTrigger>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding IsFolder}" Value="True"/>
+                                        <Condition Binding="{Binding Depth}" Value="4"/>
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Background" Value="#293341"/>
+                                </MultiDataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="3"/>
+                        <ColumnDefinition Width="18"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <!-- 文件夹金色徽条 -->
+                    <Rectangle Grid.Column="0" Width="3" Height="14" RadiusX="1.5" RadiusY="1.5"
+                               Fill="{StaticResource FolderBarBrush}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <Rectangle.Style>
+                            <Style TargetType="Rectangle">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsFolder}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Rectangle.Style>
+                    </Rectangle>
+                    <!-- 叶子页面图标 -->
+                    <TextBlock Grid.Column="1" FontFamily="Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center"
+                               Text="&#xE945;" Foreground="{DynamicResource MutedBrush}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Visible"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsFolder}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <!-- 文件夹图标（矢量 Path，规避图标字体字形缺失方块） -->
+                    <Viewbox Grid.Column="1" Width="14" Height="14" Stretch="Uniform"
+                             HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <Viewbox.Style>
+                            <Style TargetType="Viewbox">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsFolder}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Viewbox.Style>
+                        <Canvas Width="16" Height="16">
+                            <Path Data="M2.2 2.2h3.3l1.3 2.1h6.9a1 1 0 0 1 1 1v6.4a1 1 0 0 1-1 1H3.2a1 1 0 0 1-1-1V3.2a1 1 0 0 1 .9-1Z"
+                                  Fill="{StaticResource FolderIconBrush}"/>
+                        </Canvas>
+                    </Viewbox>
+                    <TextBlock Grid.Column="2" Text="{Binding DisplayName}" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" FontSize="13">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource MainBrush}"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsFolder}" Value="True">
+                                        <Setter Property="Foreground" Value="{StaticResource FolderNameBrush}"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Grid>
+            </Border>
+        </HierarchicalDataTemplate>
+
+        <!-- 横向可拖拽分隔条：agents 与 rules 分节之间调整高度；悬停/拖动亮线，视觉同主窗口 HSplitter -->
+        <Style x:Key="RowSplitter" TargetType="GridSplitter">
+            <Setter Property="Height" Value="3"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="ShowsPreview" Value="False"/>
+            <Setter Property="Cursor" Value="SizeNS"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="GridSplitter">
+                        <Grid Background="Transparent" Margin="0,-7">
+                            <Rectangle x:Name="line" Height="2" VerticalAlignment="Center"
+                                       Fill="Transparent" RadiusX="1" RadiusY="1"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="line" Property="Fill" Value="{StaticResource LineHoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsDragging" Value="True">
+                                <Setter TargetName="line" Property="Fill" Value="{StaticResource LineActiveBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- TreeViewItem 暗色主题：自定义模板以完全掌控行高亮；目录展开状态绑定到节点 IsExpanded -->
+        <Style x:Key="NodeTreeItem" TargetType="TreeViewItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource MainBrush}"/>
+            <Setter Property="Padding" Value="2,1"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TreeViewItem">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" MinWidth="14"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <ToggleButton x:Name="Expander" Grid.Column="0" Width="14" Height="14"
+                                              ClickMode="Press" Margin="0,0,2,0"
+                                              IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}}">
+                                    <ToggleButton.Template>
+                                        <ControlTemplate TargetType="ToggleButton">
+                                            <Border Background="Transparent" Padding="3,0,0,0" VerticalAlignment="Center">
+                                                <Path x:Name="arrow" Data="M 0 2 L 5 6 L 0 10 Z"
+                                                      Fill="{DynamicResource MutedBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsChecked" Value="True">
+                                                    <Setter TargetName="arrow" Property="Data" Value="M 1 0 L 9 0 L 5 6 Z"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </ToggleButton.Template>
+                                </ToggleButton>
+                                <Border x:Name="Bd" Grid.Column="1" Background="{TemplateBinding Background}"
+                                        CornerRadius="{StaticResource NeuRadius4}" Padding="{TemplateBinding Padding}">
+                                    <ContentPresenter x:Name="PART_Header" ContentSource="Header"
+                                                      HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"/>
+                                </Border>
+                            </Grid>
+                            <!-- 子层容器：左侧纵向引导线强化层级连接（折叠时隐藏） -->
+                            <Border x:Name="ChildrenHost" Grid.Row="1" Margin="15,0,0,0"
+                                    BorderBrush="{StaticResource GuideLineBrush}" BorderThickness="1,0,0,0"
+                                    Padding="10,0,0,0" HorizontalAlignment="Stretch">
+                                <ItemsPresenter/>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="HasItems" Value="False">
+                                <Setter TargetName="Expander" Property="Visibility" Value="Hidden"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource NeuSurfaceHi}"/>
+                            </Trigger>
+                            <Trigger Property="IsExpanded" Value="False">
+                                <Setter TargetName="ChildrenHost" Property="Visibility" Value="Collapsed"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Border Style="{DynamicResource Card}" Padding="6">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="4"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- agents + rules 分节（左列）：agents 在上、rules 在下，中间可拖拽调高 -->
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="60*"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="40*"/>
+                </Grid.RowDefinitions>
+
+                <!-- agents 分节：标题行(计数 + 刷新 + 打开目录) + 列表 -->
+                <Grid Grid.Row="0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0" Margin="2,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Style="{StaticResource ColumnTitle}">
+                            <Run Text="agents"/><Run Text="『 总数：" FontSize="12" Foreground="{StaticResource MutedBrush}"/><Run Text="{Binding AgentCount, Mode=OneWay}" FontSize="12" Foreground="#FFB4B9C2"/><Run Text=",目录：" FontSize="12" Foreground="{StaticResource MutedBrush}"/><Run Text="{Binding AgentDirCount, Mode=OneWay}" FontSize="12" Foreground="#FFB4B9C2"/><Run Text=" 』" FontSize="12" Foreground="{StaticResource MutedBrush}"/>
+                        </TextBlock>
+                        <Button Grid.Column="1" Content="&#xE72C;" Style="{StaticResource IconBtn}"
+                                Command="{Binding RefreshCommand}" ToolTip="刷新"/>
+                        <Button Grid.Column="2" Content="&#xE8DA;" Style="{StaticResource IconBtn}"
+                                Command="{Binding OpenAgentDirCommand}" ToolTip="打开 agent 目录"/>
+                    </Grid>
+                    <Border Grid.Row="1" Style="{StaticResource DarkFrame}" Padding="6" Margin="0,4,0,0">
+                        <TreeView ItemsSource="{Binding Agents}" ItemTemplate="{StaticResource NodeTemplate}"
+                                  ItemContainerStyle="{StaticResource NodeTreeItem}"
+                                  PreviewMouseLeftButtonDown="OnTreePreviewMouseDown"
+                                  Background="Transparent" BorderThickness="0"
+                                  Foreground="{DynamicResource MainBrush}"
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+                    </Border>
+                </Grid>
+
+                <GridSplitter Grid.Row="1" Style="{StaticResource RowSplitter}"/>
+
+                <!-- rules 分节：标题行(计数 + 刷新 + 打开目录) + 列表；样式与 agents 一致 -->
+                <Grid Grid.Row="2">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0" Margin="2,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Style="{StaticResource ColumnTitle}">
+                            <Run Text="rules"/><Run Text="『 总数：" FontSize="12" Foreground="{StaticResource MutedBrush}"/><Run Text="{Binding RuleCount, Mode=OneWay}" FontSize="12" Foreground="#FFB4B9C2"/><Run Text=",目录：" FontSize="12" Foreground="{StaticResource MutedBrush}"/><Run Text="{Binding RuleDirCount, Mode=OneWay}" FontSize="12" Foreground="#FFB4B9C2"/><Run Text=" 』" FontSize="12" Foreground="{StaticResource MutedBrush}"/>
+                        </TextBlock>
+                        <Button Grid.Column="1" Content="&#xE72C;" Style="{StaticResource IconBtn}"
+                                Command="{Binding RefreshCommand}" ToolTip="刷新"/>
+                        <Button Grid.Column="2" Content="&#xE8DA;" Style="{StaticResource IconBtn}"
+                                Command="{Binding OpenRuleDirCommand}" ToolTip="打开 rules 目录"/>
+                    </Grid>
+                    <Border Grid.Row="1" Style="{StaticResource DarkFrame}" Padding="6" Margin="0,4,0,0">
+                        <TreeView ItemsSource="{Binding Rules}" ItemTemplate="{StaticResource NodeTemplate}"
+                                  ItemContainerStyle="{StaticResource NodeTreeItem}"
+                                  PreviewMouseLeftButtonDown="OnTreePreviewMouseDown"
+                                  Background="Transparent" BorderThickness="0"
+                                  Foreground="{DynamicResource MainBrush}"
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+                    </Border>
+                </Grid>
+            </Grid>
+
+            <!-- skills 分节：标题行(计数 + 刷新 + 打开目录) + 列表 -->
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <Grid Grid.Row="0" Margin="2,0,0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Style="{StaticResource ColumnTitle}">
+                        <Run Text="skills"/><Run Text="『 总数：" FontSize="12" Foreground="{StaticResource MutedBrush}"/><Run Text="{Binding SkillCount, Mode=OneWay}" FontSize="12" Foreground="#FFB4B9C2"/><Run Text=",目录：" FontSize="12" Foreground="{StaticResource MutedBrush}"/><Run Text="{Binding SkillDirCount, Mode=OneWay}" FontSize="12" Foreground="#FFB4B9C2"/><Run Text=" 』" FontSize="12" Foreground="{StaticResource MutedBrush}"/>
+                    </TextBlock>
+                    <Button Grid.Column="1" Content="&#xE72C;" Style="{StaticResource IconBtn}"
+                            Command="{Binding RefreshCommand}" ToolTip="刷新"/>
+                    <Button Grid.Column="2" Content="&#xE8DA;" Style="{StaticResource IconBtn}"
+                            Command="{Binding OpenSkillDirCommand}" ToolTip="打开 skill 目录"/>
+                </Grid>
+                <Border Grid.Row="1" Style="{StaticResource DarkFrame}" Padding="6" Margin="0,4,0,0">
+                    <TreeView ItemsSource="{Binding Skills}" ItemTemplate="{StaticResource NodeTemplate}"
+                              ItemContainerStyle="{StaticResource NodeTreeItem}"
+                              PreviewMouseLeftButtonDown="OnTreePreviewMouseDown"
+                              Background="Transparent" BorderThickness="0"
+                              Foreground="{DynamicResource MainBrush}"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+                </Border>
+            </Grid>
+        </Grid>
+    </Border>
+</UserControl>

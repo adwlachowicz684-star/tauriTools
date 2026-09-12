@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "分配项目组": {
+      "command": "{env:FPX_ROOT}\\dist\\分配项目组.exe",
+      "args": ["--mcp"]
+    }
+  }
+}
