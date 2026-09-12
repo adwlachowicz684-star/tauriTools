@@ -227,3 +227,27 @@ export const ACCENT_SWATCHES = [
   ['#3ddc97', '薄荷'], ['#b48cff', '紫'], ['#ff2e97', '品红'],
   ['#ff8f5b', '橙'], ['#ffb454', '琥珀'], ['#ff6b8b', '粉'],
 ];
+
+/**
+ * 浅色底专用色板。
+ *
+ * 上面那套是为深色底挑的：同一个 #48e0c0 在深色上对比度 10.5，
+ * 放到浅色底 (#e6e9ef) 上只有 1.4 —— 几乎看不清。
+ * 所以浅色主题统一改用压暗后的版本，保证各色都能达到 3:1 以上。
+ */
+function darken(hex, amount) {
+  const m = String(hex).match(/^#([0-9a-f]{6})$/i);
+  if (!m) return hex;
+  const h = m[1];
+  const f = (v) => Math.max(0, Math.min(255, Math.round(v * (1 - amount))));
+  return '#' + [0, 2, 4]
+    .map((i) => f(parseInt(h.substr(i, 2), 16)).toString(16).padStart(2, '0'))
+    .join('');
+}
+
+export const ACCENT_SWATCHES_LIGHT = ACCENT_SWATCHES.map(([c, l]) => [darken(c, 0.42), l]);
+
+/** 按面板基调取对应色板：深色底用原色，浅色底用压暗版 */
+export function swatchFor(base) {
+  return base === 'light' ? ACCENT_SWATCHES_LIGHT : ACCENT_SWATCHES;
+}

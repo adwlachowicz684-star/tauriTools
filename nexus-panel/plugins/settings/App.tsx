@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { useNexus } from '../../src/nexus-react';
 import type { PluginManifest } from '../../js/host.js';
 import {
-  listThemes, applyTheme, setAccent, getThemeId, getAccent,
-  saveAsCustom, deleteCustomTheme, ACCENT_SWATCHES,
+  listThemes, applyTheme, setAccent, setThemeColor, resetColors,
+  getThemeId, getAccent, getThemeColor,
+  saveAsCustom, deleteCustomTheme, getBase,
   onChange as onThemeChange,
 } from '../../js/theme-manager.js';
+import { swatchFor } from '../../js/themes.js';
 import {
   ADAPT_POLICIES, PLUGIN_THEMES,
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
@@ -82,10 +84,10 @@ export default function Settings() {
         </div>
 
         <div className="p-muted" style={{ marginTop: 16 }}>
-          强调色（叠加在当前主题之上）
+          强调色（按钮 / 选中态 / 链接）
         </div>
         <div className="p-row" style={{ marginTop: 8 }}>
-          {ACCENT_SWATCHES.map(([c, label]) => {
+          {swatchFor(getBase()).map(([c, label]) => {
             const cur = getAccent();
             return (
               <button
@@ -103,6 +105,43 @@ export default function Settings() {
             );
           })}
         </div>
+
+        <div className="p-muted" style={{ marginTop: 14 }}>
+          主题色（第二个主色 · 成功提示 / 次要点缀）
+        </div>
+        <div className="p-row" style={{ marginTop: 8 }}>
+          {swatchFor(getBase()).map(([c, label]) => {
+            const cur = getThemeColor();
+            return (
+              <button
+                key={c}
+                className="p-btn"
+                style={{
+                  color: c,
+                  boxShadow: '3px 3px 7px var(--sh-dark), -3px -3px 7px var(--sh-light)',
+                  opacity: !cur || cur.toLowerCase() === c.toLowerCase() ? '1' : '.7',
+                }}
+                onClick={() => { setThemeColor(c); ctx.toast('主题色：' + label, 'ok'); rerender(); }}
+              >
+                ● {label}
+              </button>
+            );
+          })}
+        </div>
+
+        {(getAccent() || getThemeColor()) ? (
+          <div className="p-row" style={{ marginTop: 10 }}>
+            <button
+              className="p-btn"
+              onClick={() => { resetColors(); ctx.toast('已恢复主题自带配色', 'ok'); rerender(); }}
+            >
+              ↺ 恢复主题自带配色
+            </button>
+            <span className="p-muted">
+              当前：强调色 {getAccent() || '（默认）'} · 主题色 {getThemeColor() || '（默认）'}
+            </span>
+          </div>
+        ) : null}
 
         <div className="p-row" style={{ marginTop: 14 }}>
           <button

@@ -11,7 +11,7 @@ globalThis.localStorage = dom.window.localStorage;
 globalThis.getComputedStyle = dom.window.getComputedStyle;
 
 const tm = await import('./js/theme-manager.js');
-const { PRESET_THEMES, THEME_VARS, ACCENT_SWATCHES } = await import('./js/themes.js');
+const { PRESET_THEMES, THEME_VARS, ACCENT_SWATCHES, ACCENT_SWATCHES_LIGHT, swatchFor } = await import('./js/themes.js');
 const { installAdapter, setPolicy } = await import('./js/theme-normalizer.js');
 
 let pass = 0, fail = 0;
@@ -153,6 +153,62 @@ t('主题变更可订阅', notified >= 2, String(notified));
 off();
 tm.applyTheme('neumorph-dark');
 t('取消订阅后不再通知', notified === 2, String(notified));
+
+/* ---------- 10. 主题色（第二个主色） ---------- */
+tm.resetColors();
+tm.applyTheme('agentflow-dark', null, null, { userInitiated: false });
+t('初始无自定义主题色', tm.getThemeColor() === null);
+
+tm.setThemeColor('#ff8f5b');
+t('setThemeColor 生效', cssVar('--accent-2') === '#ff8f5b', cssVar('--accent-2'));
+t('设主题色不影响强调色', cssVar('--accent') === '#4c8dff', cssVar('--accent'));
+
+tm.setAccent('#ff2e97');
+t('设强调色不影响主题色', cssVar('--accent-2') === '#ff8f5b', cssVar('--accent-2'));
+
+tm.applyTheme('neumorph-dark', null, null, { userInitiated: false });
+t('切主题保留强调色', cssVar('--accent') === '#ff2e97', cssVar('--accent'));
+t('切主题保留主题色', cssVar('--accent-2') === '#ff8f5b', cssVar('--accent-2'));
+
+const cy = tm.saveAsCustom('色测试');
+t('saveAsCustom 带强调色', cy.vars['--accent'] === '#ff2e97', cy.vars['--accent']);
+t('saveAsCustom 带主题色', cy.vars['--accent-2'] === '#ff8f5b', cy.vars['--accent-2']);
+
+/* 色板随基调切换：深色选亮青 → 切浅色自动压暗 → 切回恢复 */
+tm.resetColors();
+tm.applyTheme('agentflow-dark', null, null, { userInitiated: false });
+tm.setAccent('#48e0c0');
+tm.setThemeColor('#48e0c0');
+const LIGHT_CYAN = ACCENT_SWATCHES_LIGHT[2][0];
+tm.applyTheme('neumorph-light', null, null, { userInitiated: false });
+t('深色选亮青 → 切浅色自动压暗', tm.getAccent() === LIGHT_CYAN, tm.getAccent());
+t('主题色同样自动压暗', tm.getThemeColor() === LIGHT_CYAN, tm.getThemeColor());
+tm.applyTheme('agentflow-dark', null, null, { userInitiated: false });
+t('切回深色恢复亮青', tm.getAccent() === '#48e0c0', tm.getAccent());
+
+/* 完全自定义色（不在任何色板里）不应被改动 */
+tm.setAccent('#123456');
+tm.applyTheme('neumorph-light', null, null, { userInitiated: false });
+t('自定义色不被擅自改动', tm.getAccent() === '#123456', tm.getAccent());
+
+/* 浅色版色板在浅底上的对比度 */
+const lum = (h) => {
+  const v = [0, 2, 4].map((i) => parseInt(h.substr(i + 1, 2), 16) / 255)
+    .map((c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)));
+  return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+};
+const ratio = (a, b) => {
+  const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+};
+const lightBg = '#e6e9ef';
+const minLight = Math.min(...ACCENT_SWATCHES_LIGHT.map(([c]) => ratio(c, lightBg)));
+t('浅色版色板在浅底上对比度均 ≥ 3', minLight >= 3, minLight.toFixed(2) + ':1');
+t('swatchFor 按基调返回对应色板',
+  swatchFor('light') === ACCENT_SWATCHES_LIGHT && swatchFor('dark') === ACCENT_SWATCHES);
+
+tm.resetColors();
+tm.applyTheme('agentflow-dark', null, null, { userInitiated: false });
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

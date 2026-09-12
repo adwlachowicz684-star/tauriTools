@@ -10,7 +10,7 @@ import {
   filterByRuntime, isInsideTauri,
 } from './host.js';
 import {
-  applyTheme, setAccent, getCurrent, exportVars, getBase,
+  applyTheme, setAccent, setThemeColor, getThemeColor, getCurrent, exportVars, getBase,
 } from './theme-manager.js';
 
 const $ = (s) => document.querySelector(s);
@@ -198,6 +198,6 @@ async function init(refresh = false) {
     getPlugins: () => host.getPlugins(),
     getInstance: () => host.state.instance,
     removePlugin: (id) => window.__nexusRemovePlugin(id),
-    theme: { applyTheme, setAccent, getCurrent, exportVars, getBase },
+    theme: { applyTheme, setAccent, setThemeColor, getThemeColor, getCurrent, exportVars, getBase },
   };
 })();
