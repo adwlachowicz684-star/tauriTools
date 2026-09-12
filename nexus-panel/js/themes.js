@@ -21,6 +21,15 @@ export const THEME_VARS = [
   '--scroll-thumb', '--badge-fg',
 ];
 
+/**
+ * 面板默认主题。
+ *
+ * 设为 Agent Flow 深色，与 agent_flow 插件的观感一致 ——
+ * 注意这只是"看起来协调"，插件自身的样式靠 --af-* 前缀变量独立保证，
+ * 切到别的主题时 agent_flow 也不会走样。
+ */
+export const DEFAULT_THEME_ID = 'agentflow-dark';
+
 export const PRESET_THEMES = [
   {
     id: 'neumorph-dark',

@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   resolveParallel, clampConcurrency, effectiveConcurrency, MAX_CONCURRENCY,
-} from '../src/engine/parallel';
-import type { ParallelNodeData } from '../src/types';
+} from '../engine/parallel';
+import type { ParallelNodeData } from '../types';
 
 const P = (over: Partial<ParallelNodeData>): ParallelNodeData => ({
   kind: 'parallel', label: 'p', mode: 'fixed', concurrency: 2,

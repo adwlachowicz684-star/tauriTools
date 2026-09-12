@@ -9,10 +9,10 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runGraph } from '../src/engine/runner';
-import { evaluateCondition } from '../src/engine/condition';
-import { descendantsOf } from '../src/engine/topo';
-import { isCondition, type NodeData, type ConditionRule } from '../src/types';
+import { runGraph } from '../engine/runner';
+import { evaluateCondition } from '../engine/condition';
+import { descendantsOf } from '../engine/topo';
+import { isCondition, type NodeData, type ConditionRule } from '../types';
 
 type AnyData = Record<string, unknown>;
 

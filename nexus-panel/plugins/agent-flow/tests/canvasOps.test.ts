@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   deleteElements, extractRefs, nextSelection, hasAnythingToDelete,
   makeSnapshot, describeDelete,
-} from '../src/engine/canvasOps';
+} from '../engine/canvasOps';
 
 type N = { id: string; data?: { prompt?: string } };
 type E = { id: string; source: string; target: string };

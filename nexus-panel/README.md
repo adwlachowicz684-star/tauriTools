@@ -15,6 +15,7 @@ nexus-panel/
 │   ├── registry.js            # 插件注册表
 │   ├── home/                  # 内置：概览
 │   ├── settings/              # 内置：设置（主题色 / 插件管理）
+│   ├── agent-flow/            # Agent Flow：CLI 工作流编排器（React + React Flow）
 │   ├── demo-module/           # 示例：同页挂载
 │   └── demo-iframe/           # 示例：沙箱挂载
 ├── src-tauri/                 # Rust 后端
@@ -254,3 +255,42 @@ npm run test:react   # React 外壳：注册表 → iframe 挂载 → 主题应�
 注意：jsdom 不加载 iframe 子文档，iframe 内部脚本无法在测试中跑通，
 测试只覆盖到「iframe 被正确插入、握手与主题推送」，插件内部行为需真机验证。
 这两个文件仅开发用，可随时删除。
+
+---
+
+## Agent Flow 插件
+
+`plugins/agent-flow/` 是由仓库根目录的 `agent_flow/` 独立项目重新封装而来，
+现在作为 nexus-panel 的一个**沙箱（iframe）插件**运行。
+
+### 封装时做了什么
+
+| 项 | 说明 |
+|---|---|
+| 挂载方式 | `type: 'iframe'` + `requiresBuild: true`，React + TSX 编写 |
+| 前端代码 | 整体搬入 `plugins/agent-flow/`，**业务逻辑零改动** |
+| CSS 变量 | `:root` 里的变量统一加 `--af-` 前缀 |
+| Rust 后端 | agent_flow 的 7 个命令并入 `src-tauri/src/main.rs` |
+| 权限 | capabilities 增加 `shell:allow-spawn/execute/kill`（traecli / codebuddy / cbc） |
+| 默认主题 | 面板默认改为 `agentflow-dark` |
+
+### 为什么 CSS 变量要加前缀
+
+面板主题会把 `--bg` / `--accent` / `--text` 等变量写到**插件文档的 `:root`** 上。
+若 agent_flow 沿用同名变量，切到「浅色新拟态」时它会被染成浅底深字而崩坏。
+
+加 `--af-` 前缀后，agent_flow 永远保持自己的观感，与面板主题解耦 ——
+这才是"界面样式不变"的严格实现。变量只在 `styles.css` 内部使用，改名不影响组件代码。
+
+### 为什么可以直接调 Rust
+
+iframe 与主页面同属一个 webview、同一 origin，Tauri 的 IPC 在每个 frame 都可用，
+所以插件沿用 `@tauri-apps/api` 直接 `invoke` / `listen`，无需走 SDK 桥接，
+流式 stdout 也照常工作。
+
+### 测试
+
+```bash
+cd plugins/agent-flow
+bash scripts/run-tests.sh     # 133 项，覆盖执行器 / 条件 / 并发 / 多画布 / cron
+```

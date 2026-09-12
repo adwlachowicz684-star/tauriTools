@@ -10,13 +10,15 @@
  *   3. 切换后立即通知订阅者 —— 外壳用它来刷新 iframe 插件与重算适配
  */
 
-import { PRESET_THEMES, THEME_VARS, ACCENT_SWATCHES } from './themes.js';
+import { PRESET_THEMES, THEME_VARS, ACCENT_SWATCHES, DEFAULT_THEME_ID } from './themes.js';
 
-export { ACCENT_SWATCHES, PRESET_THEMES, THEME_VARS };
+export { ACCENT_SWATCHES, PRESET_THEMES, THEME_VARS, DEFAULT_THEME_ID };
 
 const KEY_THEME = 'nexus:theme';
 const KEY_ACCENT = 'nexus:accent';
 const KEY_CUSTOM = 'nexus:custom-themes';
+/** 用户是否手动选过主题；未选过时才允许默认主题升级生效 */
+const KEY_USERSET = 'nexus:theme-userset';
 
 /* ---------------------------- 颜色工具 ---------------------------- */
 function parseHex(hex) {
@@ -102,7 +104,11 @@ export function listThemes() {
   return [...PRESET_THEMES, ...getCustomThemes()];
 }
 export function findTheme(id) {
-  return listThemes().find((t) => t.id === id) || PRESET_THEMES[0];
+  return (
+    listThemes().find((t) => t.id === id) ||
+    PRESET_THEMES.find((t) => t.id === DEFAULT_THEME_ID) ||
+    PRESET_THEMES[0]
+  );
 }
 
 /* ---------------------------- 状态 ---------------------------- */
@@ -110,7 +116,7 @@ let current = null;
 const listeners = new Set();
 
 export function getThemeId() {
-  try { return localStorage.getItem(KEY_THEME) || PRESET_THEMES[0].id; } catch { return PRESET_THEMES[0].id; }
+  try { return localStorage.getItem(KEY_THEME) || DEFAULT_THEME_ID; } catch { return DEFAULT_THEME_ID; }
 }
 export function getAccent() {
   try { return localStorage.getItem(KEY_ACCENT) || null; } catch { return null; }
@@ -152,7 +158,7 @@ function applyTo(theme, accent) {
   return { ...theme, vars };
 }
 
-export function applyTheme(id, accent) {
+export function applyTheme(id, accent, opts = {}) {
   const theme = findTheme(id);
   flashTransition();
   const applied = applyTo(theme, accent ?? getAccent());
@@ -160,6 +166,8 @@ export function applyTheme(id, accent) {
   try {
     localStorage.setItem(KEY_THEME, theme.id);
     if (accent) localStorage.setItem(KEY_ACCENT, accent);
+    // 仅在用户主动选择时打标记，默认主题才能对"没选过的人"继续生效
+    if (opts.userInitiated !== false) localStorage.setItem(KEY_USERSET, '1');
   } catch { /* 忽略存储失败 */ }
   listeners.forEach((fn) => {
     try { fn(applied, 'theme'); } catch (e) { console.error('[theme]', e); }
@@ -206,8 +214,18 @@ export function onChange(fn) {
 }
 
 /* ---------------------------- 初始化 ---------------------------- */
+/**
+ * 初始化。
+ *
+ * 默认主题升级的关键：老用户 localStorage 里存着旧主题 id，
+ * 直接读会永远轮不到新默认。这里对"从未手动选过主题"的用户清掉旧值，
+ * 让 DEFAULT_THEME_ID 真正生效；手动选过的则保留其选择。
+ */
 export function initTheme() {
-  return applyTheme(getThemeId(), getAccent());
+  try {
+    if (localStorage.getItem(KEY_USERSET) !== '1') localStorage.removeItem(KEY_THEME);
+  } catch { /* 忽略 */ }
+  return applyTheme(getThemeId(), getAccent(), { userInitiated: false });
 }
 
 /* 供 iframe 插件同步用：返回扁平的变量表 */

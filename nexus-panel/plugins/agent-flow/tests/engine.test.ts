@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { topoLayers, ancestorsOf } from '../src/engine/topo';
-import { renderTemplate } from '../src/engine/template';
-import { runGraph } from '../src/engine/runner';
-import { makeNode, type Graph, type GraphEdge, type GraphNode } from '../src/types';
+import { topoLayers, ancestorsOf } from '../engine/topo';
+import { renderTemplate } from '../engine/template';
+import { runGraph } from '../engine/runner';
+import { makeNode, type Graph, type GraphEdge, type GraphNode } from '../types';
 
 const E = (s: string, t: string): GraphEdge => ({ id: `${s}->${t}`, source: s, target: t });
 const G = (nodes: GraphNode[], edges: GraphEdge[]): Graph => ({ nodes, edges });

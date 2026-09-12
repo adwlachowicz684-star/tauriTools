@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   makeCanvas, nextCanvasName, renameCanvas, removeCanvas, nextActiveId,
   updateCanvasContent, sortForDisplay, serialize, deserialize, toMeta,
-} from '../src/engine/canvasStore';
+} from '../engine/canvasStore';
 
 const C = (id: string, name: string, nodes: number = 0, updatedAt: number = 0) => ({
   ...makeCanvas(name, { id, nodes: new Array(nodes).fill({}), updatedAt }),

@@ -9,9 +9,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCron, nextRun, validateCron, cronMatches, describeCron } from '../src/engine/cron';
-import { TriggerScheduler } from '../src/engine/triggers';
-import type { Trigger } from '../src/types';
+import { parseCron, nextRun, validateCron, cronMatches, describeCron } from '../engine/cron';
+import { TriggerScheduler } from '../engine/triggers';
+import type { Trigger } from '../types';
 
 const baseConfig = {
   intervalSec: 300,

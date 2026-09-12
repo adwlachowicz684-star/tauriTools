@@ -13,6 +13,9 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["devtools"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 以下两项为 agent_flow 插件所需：启动 CLI 子进程 + 目录监听
+tauri-plugin-shell = "2"
+notify = "6"
 
 [profile.release]
 codegen-units = 1

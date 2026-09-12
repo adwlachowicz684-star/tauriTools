@@ -13,6 +13,7 @@ const inputs = {
   'plugins/home/index': r('plugins/home/index.html'),
   'plugins/settings/index': r('plugins/settings/index.html'),
   'plugins/demo-react/index': r('plugins/demo-react/index.html'),
+  'plugins/agent-flow/index': r('plugins/agent-flow/index.html'),
 };
 
 /**
