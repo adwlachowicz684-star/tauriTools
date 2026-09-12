@@ -245,14 +245,13 @@ export function bootIframePlugin(mountFn) {
 
     // 主题初始化 / 运行时切换（切换主题无需重载插件）
     if (d.type === 'init' || d.type === 'theme') {
-      if (d.type === 'init') var { manifest } = d;
+      if (d.type === 'init') var { manifest, theme } = d;
       else manifest = manifest || d.manifest;
       // 把主题变量写到 iframe 的 :root，保证视觉与外壳一致
       if (d.theme) applyThemeVars(d.theme);
       if (d.type !== 'init') return;             // 纯更新，不走挂载流程
 
       document.body.classList.add('nexus-iframe-plugin');
-      post({ type: 'ready' });
 
       const bus = makeBusProxy();
       const transport = {
@@ -330,6 +329,9 @@ export function bootIframePlugin(mountFn) {
     post({ type: 'error', error: String(e.message) }));
   window.addEventListener('unhandledrejection', (e) =>
     post({ type: 'error', error: String(e.reason?.stack || e.reason) }));
+
+  // 脚本就绪即通知外壳（外壳收到后回发 init + mount，见 js/host.js）
+  post({ type: 'ready' });
 
   return mountPromise;
 }

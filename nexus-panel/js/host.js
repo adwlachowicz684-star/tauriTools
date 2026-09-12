@@ -233,7 +233,10 @@ export function createHost(opts = {}) {
 
         switch (d.type) {
           case 'ready':
+            // 主动回发 init（含 manifest/主题），再发 mount。
+            // postMessage 按序送达：iframe 先处理 init（ctx 就绪），随后 mount 才能挂载。
             send(iframe, { type: 'init', manifest, theme: exportVars() });
+            send(iframe, { type: 'mount' });
             break;
           case 'mounted':
             clearTimeout(timeout);
@@ -273,7 +276,6 @@ export function createHost(opts = {}) {
     }
     if (state.mounting !== token) { cleanupFns.forEach((fn) => fn()); wrap.remove(); return null; }
 
-    send(iframe, { type: 'mount' });
     await new Promise((r) => setTimeout(r, 60));   // 给插件渲染时间，便于主题采样
 
     return {
