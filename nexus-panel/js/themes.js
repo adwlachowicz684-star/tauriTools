@@ -14,9 +14,10 @@
 export const THEME_VARS = [
   '--bg', '--bg-image', '--surface', '--surface-sunk',
   '--sh-dark', '--sh-light',
-  '--text', '--text-dim', '--text-mute',
+  '--text', '--text-dim', '--text-soft', '--text-mute',
   '--accent', '--accent-2', '--accent-glow',
   '--warn', '--danger',
+  '--surface-raised',
   '--border', '--blur', '--hairline', '--mask',
   '--scroll-thumb', '--badge-fg',
   // 形状语言：新拟态靠大圆角软化，扁平风该更克制。
@@ -183,16 +184,24 @@ export const PRESET_THEMES = [
     vars: {
       // 背景不用纯黑：#0f1115 是偏蓝的深灰，长时间盯着不刺眼
       '--bg': '#0f1115',
-      // 面板比背景亮一档 —— 这是整套观感的核心。
-      // 比 Agent Flow 原值(#171a21)略提亮：原比例 1.085 在本面板的分层里偏糊，
-      // 提到 1.19 既保留蓝灰调，又能看清面板边界
-      '--surface': '#1e222b',
-      '--surface-sunk': '#0d1014',
+      // 面板比背景亮一档。
+      // 取值必须**等于** agent_flow 原生 --panel，这样插件在"跟随"模式下
+      // 选中本主题时，观感与原生模式逐像素一致（见 plugins/agent-flow/styles.css）。
+      '--surface': '#171a21',
+      // 凹陷底色 = agent_flow 原生输入框底色 #12151c
+      '--surface-sunk': '#12151c',
+      // 控件浮起底色 = agent_flow 原生按钮/select 底色 #222836。
+      // 少数主题会显式定义；其余由 theme-manager 从 surface 派生。
+      '--surface-raised': '#222836',
       // 扁平风：阴影紧贴底色 → 视觉隐形，不参与塑形
       '--sh-dark': '#0b0d11',
       '--sh-light': '#13161b',
       '--text': '#e6e9ef',
       '--text-dim': '#8b93a7',
+      // 卡片内正文（比 text-dim 亮一档）= agent_flow 原生 --af-soft。
+      // 面板自身用的是 text-dim；插件的"卡片正文"语义更亮，故单独给一个变量，
+      // 这样跟随模式下选中本主题时与原生逐像素一致。
+      '--text-soft': '#c4cbd9',
       // 比 Agent Flow 原值(#5f6773)提亮，保证弱化文本仍有 3.3:1 可读
       '--text-mute': '#687285',
       '--accent': '#4c8dff',
@@ -200,8 +209,8 @@ export const PRESET_THEMES = [
       '--warn': '#f59e0b',
       '--danger': '#ef4444',
       // 边框极细且低对比：刚好看得见，不抢内容。
-      // 比原值(#262b36)提亮一档，因 surface 变亮后原值相对过弱(1.12)
-      '--border': '#313846',
+      // = agent_flow 原生 --line
+      '--border': '#262b36',
       '--blur': '0px',
       // 扁平风用小圆角：新拟态的 26/20/14/9 偏"软"，Linear 一路更硬朗
       '--r-xl': '12px',

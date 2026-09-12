@@ -73,6 +73,12 @@ function deriveVars(theme) {
   // 角标文字
   v['--badge-fg'] = '#ffffff';
 
+  // 控件浮起底色：主题未显式定义时从 surface 派生（深色上浮，浅色下沉）
+  v['--surface-raised'] = v['--surface-raised'] || shift(v['--surface'], dark ? 9 : -7);
+
+  // 卡片内正文：比 text-dim 亮一档（深色）/ 暗一档（浅色）
+  v['--text-soft'] = v['--text-soft'] || shift(v['--text-dim'], dark ? 22 : -22);
+
   // 未定义的兜底
   v['--bg-image'] = v['--bg-image'] || 'none';
   v['--border'] = v['--border'] || 'transparent';

@@ -89,6 +89,25 @@ function loadCanvases(): { canvases: Canvas[]; activeId: string | null } {
 }
 
 
+/**
+ * 外观模式：原生（固定 Agent Flow 自己的样式） / 跟随（用面板主题）
+ * 默认跟随 —— 而"Agent Flow 深色"主题的变量值与原生逐像素相同，
+ * 所以默认观感 = 原生，同时切到别的主题会自动变色。
+ */
+const THEME_MODE_KEY = 'af:theme-mode';
+type ThemeMode = 'native' | 'follow';
+
+function readThemeMode(): ThemeMode {
+  try {
+    return localStorage.getItem(THEME_MODE_KEY) === 'native' ? 'native' : 'follow';
+  } catch { return 'follow'; }
+}
+
+function applyThemeMode(mode: ThemeMode) {
+  document.documentElement.dataset.afMode = mode;
+  try { localStorage.setItem(THEME_MODE_KEY, mode); } catch { /* 忽略 */ }
+}
+
 export default function App() {
   const init = useMemo(loadCanvases, []);
   const [canvases, setCanvases] = useState<Canvas[]>(init.canvases);
@@ -655,6 +674,13 @@ export default function App() {
           ⏱ 触发器{triggers.length > 0 && <span className="dot">{enabledCount}/{triggers.length}</span>}
         </span>
 
+        <label className="inline" title="原生＝固定 Agent Flow 自己的样式；跟随＝用面板主题">
+          外观
+          <select value={themeMode} onChange={(e) => setThemeMode(e.target.value as ThemeMode)}>
+            <option value="follow">跟随面板</option>
+            <option value="native">原生样式</option>
+          </select>
+        </label>
         <label className="inline">
           并发
           <select value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} disabled={running}>

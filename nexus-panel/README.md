@@ -260,37 +260,59 @@ npm run test:react   # React 外壳：注册表 → iframe 挂载 → 主题应�
 
 ## Agent Flow 插件
 
-`plugins/agent-flow/` 是由仓库根目录的 `agent_flow/` 独立项目重新封装而来，
-现在作为 nexus-panel 的一个**沙箱（iframe）插件**运行。
+`plugins/agent-flow/` 由根目录的 `agent_flow/` 独立项目封装而来，
+作为 nexus-panel 的**沙箱（iframe）插件**运行。
 
-### 封装时做了什么
+### 三层样式模型（核心设计）
 
-| 项 | 说明 |
+| 层 | 变量 | 行为 |
+|---|---|---|
+| **原生层** | `--af-native-*` | Agent Flow 自己的固定配色，永不改变 |
+| **默认层** | `--af-*` = 原生层 | 即"原生模式"，插件独立运行时也是这套 |
+| **跟随层** | `[data-af-mode="follow"]` | `--af-*` 改读面板主题变量 |
+
+工具栏「外观」可在 **跟随面板 / 原生样式** 间切换，默认跟随。
+
+三个诉求因此同时成立：
+
+1. **有自己的原生样式** —— `--af-native-*` 恒定，选"原生样式"即锁定，面板主题无法污染
+2. **用面板主题后跟随改变** —— 跟随模式下 `--af-*` 读 `--bg` / `--surface` / `--accent`，切主题即变
+3. **用「Agent Flow 深色」时与原生一模一样** —— 该主题的变量值被刻意设成与 `--af-native-*`
+   **逐像素相同**（`--surface: #171a21`、`--surface-sunk: #12151c`、`--border: #262b36` …），
+   所以跟随模式下选中它，观感与原生模式完全等价
+
+关键写法是 `var(--x, 回退)`：面板写了 `--x` 就用面板的，没写（独立运行）自动落回原生。
+一个表达式同时覆盖"在面板内"和"独立运行"两种场景。
+
+### 变量映射
+
+| Agent Flow | ← 面板变量 |
 |---|---|
-| 挂载方式 | `type: 'iframe'` + `requiresBuild: true`，React + TSX 编写 |
-| 前端代码 | 整体搬入 `plugins/agent-flow/`，**业务逻辑零改动** |
-| CSS 变量 | `:root` 里的变量统一加 `--af-` 前缀 |
-| Rust 后端 | agent_flow 的 7 个命令并入 `src-tauri/src/main.rs` |
-| 权限 | capabilities 增加 `shell:allow-spawn/execute/kill`（traecli / codebuddy / cbc） |
-| 默认主题 | 面板默认改为 `agentflow-dark` |
+| `--af-bg` / `--af-panel` / `--af-line` | `--bg` / `--surface` / `--border` |
+| `--af-fg` / `--af-dim` / `--af-soft` | `--text` / `--text-dim` / `--text-soft` |
+| `--af-accent` / `--af-ok` / `--af-bad` / `--af-warn` | `--accent` / `--accent-2` / `--danger` / `--warn` |
+| `--af-raised` / `--af-sunk` / `--af-item` | `--surface-raised` / `--surface-sunk` / `--surface` |
 
-### 为什么 CSS 变量要加前缀
+面板原本没有"浮起底色"和"软文字色"，这两个是新增的：
+显式定义优先，否则由 `theme-manager` 从 `surface` / `text-dim` 派生。
+`--af-glow`（选中辉光）固定不跟随——它是反馈强度而非配色。
 
-面板主题会把 `--bg` / `--accent` / `--text` 等变量写到**插件文档的 `:root`** 上。
-若 agent_flow 沿用同名变量，切到「浅色新拟态」时它会被染成浅底深字而崩坏。
-
-加 `--af-` 前缀后，agent_flow 永远保持自己的观感，与面板主题解耦 ——
-这才是"界面样式不变"的严格实现。变量只在 `styles.css` 内部使用，改名不影响组件代码。
+功能色（条件紫 `#a855f7`、并发青 `#06b6d4`、触发器黄 `#eab308`）保持硬编码，不参与跟随。
 
 ### 为什么可以直接调 Rust
 
-iframe 与主页面同属一个 webview、同一 origin，Tauri 的 IPC 在每个 frame 都可用，
-所以插件沿用 `@tauri-apps/api` 直接 `invoke` / `listen`，无需走 SDK 桥接，
-流式 stdout 也照常工作。
+iframe 与主页面同属一个 webview、同一 origin，Tauri IPC 在每个 frame 都可用，
+故插件沿用 `@tauri-apps/api` 直接 `invoke` / `listen`，无需走 SDK 桥接，流式 stdout 照常。
+
+### flat 风格
+
+`style: 'flat'` 主题（agentflow-dark / oled-flat / neon-dark）会走 CSS 里的
+`[data-theme-style="flat"]` 分支：34 处新拟态双向阴影全部清除，
+改由「描边 + 明度差」分层。此前该分支缺失，导致 `style` 字段形同虚设。
 
 ### 测试
 
 ```bash
 cd plugins/agent-flow
-bash scripts/run-tests.sh     # 133 项，覆盖执行器 / 条件 / 并发 / 多画布 / cron
+bash scripts/run-tests.sh     # 133 项
 ```

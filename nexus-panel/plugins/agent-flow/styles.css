@@ -1,17 +1,78 @@
 /*
- * 变量统一加 --af- 前缀 —— 这是本插件作为 nexus-panel 插件后唯一的样式改动。
+ * 三层样式模型
+ * ============================================================
+ * 1. 原生层（--af-native-*）：Agent Flow 自己的固定样式，永不改变。
+ *    这是它作为独立项目时的观感基准。
  *
- * 原因：面板主题会把 --bg / --accent / --text 等变量写到插件文档的 :root 上，
- * 若沿用同名变量，切到"浅色新拟态"等主题时 agent_flow 会被染成浅底深字而崩坏。
- * 加前缀后 agent_flow 永远保持自己的观感，与面板主题解耦。
+ * 2. 默认层：--af-* 默认直接取原生层 —— 即"原生模式"。
+ *    即便插件不在面板里、或面板没写任何变量，也是这套样式。
  *
- * 变量仅在 styles.css 内部使用，改名不影响任何组件代码。
+ * 3. 跟随层（[data-af-mode="follow"]）：--af-* 改为读取面板主题变量。
+ *    面板主题把 --bg / --surface / --accent 等写到插件文档的 :root 上，
+ *    于是切主题时 Agent Flow 跟着变。
+ *
+ * var(--x, 回退) 的回退值很关键：面板一旦写了 --x 就用面板的，
+ * 没写（独立运行）就自动落回原生 —— 一个表达式同时覆盖两种场景。
+ *
+ * 关于"Agent Flow 深色"主题：它的变量值被刻意设成与原生层**逐像素相同**
+ * （见 js/themes.js 里 agentflow-dark 的注释），所以跟随模式下选中它，
+ * 观感与原生模式完全一致 —— 既跟随了，又没变样。
  */
 :root {
-  --af-bg: #0f1115; --af-panel: #171a21; --af-line: #262b36;
-  --af-fg: #e6e9ef; --af-dim: #8b93a7; --af-accent: #4c8dff;
-  --af-ok: #22c55e; --af-bad: #ef4444; --af-warn: #f59e0b;
+  /* --- 原生基准（Agent Flow 独立项目时的原始配色） --- */
+  --af-native-bg:     #0f1115;
+  --af-native-panel:  #171a21;
+  --af-native-line:   #262b36;
+  --af-native-fg:     #e6e9ef;
+  --af-native-dim:    #8b93a7;
+  --af-native-soft:   #c4cbd9;
+  --af-native-accent: #4c8dff;
+  --af-native-ok:     #22c55e;
+  --af-native-bad:    #ef4444;
+  --af-native-warn:   #f59e0b;
+  --af-native-raised: #222836;   /* 按钮 / select 底色 */
+  --af-native-sunk:   #12151c;   /* 输入框 / 代码区底色 */
+  --af-native-item:   #171a21;   /* 边栏项 / 标签底色（与 panel 同层，差 1/255 不可辨）*/
+}
+
+/* --- 默认：原生模式 --- */
+:root {
+  --af-bg:     var(--af-native-bg);
+  --af-panel:  var(--af-native-panel);
+  --af-line:   var(--af-native-line);
+  --af-fg:     var(--af-native-fg);
+  --af-dim:    var(--af-native-dim);
+  --af-soft:   var(--af-native-soft);
+  --af-accent: var(--af-native-accent);
+  --af-ok:     var(--af-native-ok);
+  --af-bad:    var(--af-native-bad);
+  --af-warn:   var(--af-native-warn);
+  --af-raised: var(--af-native-raised);
+  --af-sunk:   var(--af-native-sunk);
+  --af-item:   var(--af-native-item);
+
   font-family: -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+/* --- 跟随模式：改用面板主题变量 --- */
+:root[data-af-mode="follow"] {
+  --af-bg:     var(--bg,            var(--af-native-bg));
+  --af-panel:  var(--surface,       var(--af-native-panel));
+  --af-line:   var(--border,        var(--af-native-line));
+  --af-fg:     var(--text,          var(--af-native-fg));
+  --af-dim:    var(--text-dim,      var(--af-native-dim));
+  --af-soft:   var(--text-soft,     var(--af-native-soft));
+  --af-accent: var(--accent,        var(--af-native-accent));
+  /* 面板没有 --success，用辅色 accent-2 映射（Agent Flow 深色下恰好 = #22c55e） */
+  --af-ok:     var(--accent-2,      var(--af-native-ok));
+  --af-bad:    var(--danger,        var(--af-native-bad));
+  --af-warn:   var(--warn,          var(--af-native-warn));
+  --af-raised: var(--surface-raised, var(--af-native-raised));
+  --af-sunk:   var(--surface-sunk,  var(--af-native-sunk));
+  --af-item:   var(--surface,       var(--af-native-item));
+  /* 选中辉光固定不跟随：它是"选中反馈强度"而非配色，
+     固定值同时保证原生/跟随两种模式观感一致 */
+  --af-glow:   rgba(76, 141, 255, .25);
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
@@ -25,17 +86,17 @@ body { background: var(--af-bg); color: var(--af-fg); }
 }
 .brand { margin-right: 6px; letter-spacing: .5px; }
 .toolbar button, .btn-like {
-  background: #222836; color: var(--af-fg); border: 1px solid var(--af-line);
+  background: var(--af-raised); color: var(--af-fg); border: 1px solid var(--af-line);
   padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
 }
 .toolbar button:hover:not(:disabled), .btn-like:hover { border-color: var(--af-accent); }
 .toolbar button:disabled { opacity: .45; cursor: not-allowed; }
 .toolbar button.primary { background: var(--af-accent); border-color: var(--af-accent); color: #fff; }
 .toolbar .inline { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--af-dim); }
-.toolbar select { background: #222836; color: var(--af-fg); border: 1px solid var(--af-line); border-radius: 6px; padding: 5px; }
+.toolbar select { background: var(--af-raised); color: var(--af-fg); border: 1px solid var(--af-line); border-radius: 6px; padding: 5px; }
 .toolbar .grow { flex: 1; }
 .toolbar input[type=text], .toolbar input:not([type]) {
-  background: #222836; border: 1px solid var(--af-line); color: var(--af-fg);
+  background: var(--af-raised); border: 1px solid var(--af-line); color: var(--af-fg);
   border-radius: 6px; padding: 6px 10px; font-size: 13px;
 }
 
@@ -47,7 +108,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
   width: 240px; background: var(--af-panel); border: 1px solid var(--af-line);
   border-left: 4px solid var(--af-dim); border-radius: 10px; padding: 10px 12px;
 }
-.node-card.is-selected { border-color: var(--af-accent); box-shadow: 0 0 0 2px rgba(76,141,255,.25); }
+.node-card.is-selected { border-color: var(--af-accent); box-shadow: 0 0 0 2px var(--af-glow); }
 .node-card.status-running { border-left-color: var(--af-accent); }
 .node-card.status-success { border-left-color: var(--af-ok); }
 .node-card.status-failed  { border-left-color: var(--af-bad); }
@@ -55,15 +116,15 @@ body { background: var(--af-bg); color: var(--af-fg); }
 .node-head { display: flex; align-items: center; gap: 6px; }
 .node-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .node-title { font-weight: 600; font-size: 14px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.node-badge { font-size: 11px; padding: 1px 6px; border-radius: 999px; background: #2a3040; color: var(--af-dim); }
+.node-badge { font-size: 11px; padding: 1px 6px; border-radius: 999px; background: var(--af-raised); color: var(--af-dim); }
 .badge-success { color: var(--af-ok); } .badge-failed { color: var(--af-bad); }
 .badge-skipped { color: var(--af-warn); } .badge-running { color: var(--af-accent); }
 .node-cli { font-size: 11px; color: var(--af-dim); margin: 4px 0 6px; }
 .node-prompt {
-  font-size: 12px; color: #b9c0d0; background: #12151c; border-radius: 6px;
+  font-size: 12px; color: var(--af-soft); background: var(--af-sunk); border-radius: 6px;
   padding: 6px 8px; min-height: 42px; line-height: 1.45;
 }
-.node-foot { display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; color: #6b7385; }
+.node-foot { display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; color: var(--af-dim); }
 
 /* 属性面板 */
 .inspector {
@@ -73,18 +134,18 @@ body { background: var(--af-bg); color: var(--af-fg); }
 .inspector .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
 .inspector .field > span { font-size: 12px; color: var(--af-dim); }
 .inspector input[type=text], .inspector input:not([type]), .inspector select, .inspector textarea {
-  background: #12151c; border: 1px solid var(--af-line); color: var(--af-fg);
+  background: var(--af-sunk); border: 1px solid var(--af-line); color: var(--af-fg);
   border-radius: 6px; padding: 7px 9px; font-size: 13px; font-family: inherit;
 }
 .inspector textarea { resize: vertical; line-height: 1.5; }
 .inspector .check { display: flex; align-items: center; gap: 7px; font-size: 13px; margin-bottom: 12px; }
 .var-bar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-bottom: 5px; }
 .chip {
-  font-size: 11px; background: #222836; border: 1px solid var(--af-line);
+  font-size: 11px; background: var(--af-raised); border: 1px solid var(--af-line);
   color: var(--af-accent); border-radius: 4px; padding: 2px 6px; cursor: pointer; font-family: ui-monospace, monospace;
 }
 .out {
-  background: #12151c; border: 1px solid var(--af-line); border-radius: 6px;
+  background: var(--af-sunk); border: 1px solid var(--af-line); border-radius: 6px;
   padding: 8px; font-size: 12px; max-height: 220px; overflow: auto;
   white-space: pre-wrap; word-break: break-all; line-height: 1.5; margin: 0;
 }
@@ -100,7 +161,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
 /* ---------------- 触发器 ---------------- */
 .toolbar .trg-btn { position: relative; background: #2a2036; border-color: #4a3a5e; }
 .toolbar .trg-btn .dot {
-  margin-left: 6px; font-size: 11px; background: #4c8dff; color: #fff;
+  margin-left: 6px; font-size: 11px; background: var(--af-accent); color: #fff;
   border-radius: 999px; padding: 1px 6px;
 }
 
@@ -135,7 +196,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
 .add-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 .kind-btn {
   display: inline-flex; align-items: center; gap: 6px;
-  background: #222836; border: 1px solid var(--af-line); color: var(--af-fg);
+  background: var(--af-raised); border: 1px solid var(--af-line); color: var(--af-fg);
   padding: 7px 12px; border-radius: 8px; cursor: pointer; font-size: 13px;
 }
 .kind-btn:hover:not(:disabled) { border-color: var(--af-accent); }
@@ -144,7 +205,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
 
 .trg {
   border: 1px solid var(--af-line); border-radius: 10px;
-  padding: 10px 12px; margin-bottom: 10px; background: #14171e;
+  padding: 10px 12px; margin-bottom: 10px; background: var(--af-sunk);
 }
 .trg.off { opacity: .55; }
 .trg.editing { border-color: var(--af-accent); }
@@ -152,30 +213,30 @@ body { background: var(--af-bg); color: var(--af-fg); }
 .trg-icon { font-size: 14px; }
 .trg-name { font-weight: 600; font-size: 14px; }
 .trg-kind {
-  font-size: 11px; color: var(--af-dim); background: #222836;
+  font-size: 11px; color: var(--af-dim); background: var(--af-raised);
   border-radius: 4px; padding: 2px 6px;
 }
 .trg-meta {
   display: flex; justify-content: space-between; gap: 10px;
-  margin-top: 6px; font-size: 12px; color: #a8b0c2;
+  margin-top: 6px; font-size: 12px; color: var(--af-soft);
 }
 .trg-edit {
   margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--af-line);
 }
 .trg-edit .field { margin-bottom: 10px; }
 .trg-edit input[type=text], .trg-edit input:not([type]) {
-  background: #12151c; border: 1px solid var(--af-line); color: var(--af-fg);
+  background: var(--af-sunk); border: 1px solid var(--af-line); color: var(--af-fg);
   border-radius: 6px; padding: 6px 9px; font-size: 13px; width: 100%;
 }
 .trg-edit input.invalid { border-color: var(--af-bad); }
 .trg-edit .err { color: #ff9b9b; font-size: 12px; margin-top: 4px; }
 .trg-edit .ok-line { color: var(--af-ok); font-size: 12px; margin-top: 4px; }
 .trg-edit code {
-  background: #222836; padding: 1px 4px; border-radius: 3px; font-family: ui-monospace, monospace;
+  background: var(--af-raised); padding: 1px 4px; border-radius: 3px; font-family: ui-monospace, monospace;
 }
 
 button.mini {
-  background: #222836; border: 1px solid var(--af-line); color: var(--af-fg);
+  background: var(--af-raised); border: 1px solid var(--af-line); color: var(--af-fg);
   font-size: 12px; padding: 3px 9px; border-radius: 5px; cursor: pointer;
 }
 button.mini:hover:not(:disabled) { border-color: var(--af-accent); }
@@ -186,7 +247,7 @@ button.mini.danger:hover { border-color: var(--af-bad); color: #ff9b9b; }
 .switch { position: relative; width: 34px; height: 18px; flex: none; }
 .switch input { opacity: 0; width: 0; height: 0; }
 .switch .slider {
-  position: absolute; inset: 0; background: #3a4256; border-radius: 999px;
+  position: absolute; inset: 0; background: var(--af-raised); border-radius: 999px;
   cursor: pointer; transition: .18s;
 }
 .switch .slider::before {
@@ -212,16 +273,16 @@ button.mini.danger:hover { border-color: var(--af-bad); color: #ff9b9b; }
   border-radius: 4px; padding: 1px 6px; font-size: 11px;
 }
 .cond-rule.is-default .cond-op { background: #2d3a52; color: #93c5fd; }
-.cond-text { color: #c4cbd9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cond-text { color: var(--af-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cond-empty { color: var(--af-dim); font-size: 12px; }
 
 /* 分支出口手柄：稍微内缩，避免和任务节点的出口混淆 */
-.branch-handle { width: 9px !important; height: 9px !important; background: #a855f7 !important; border: 2px solid #12151c !important; }
+.branch-handle { width: 9px !important; height: 9px !important; background: #a855f7 !important; border: 2px solid var(--af-sunk) !important; }
 
 /* ---------------- 属性面板：规则编辑 ---------------- */
 .rule-card {
   border: 1px solid var(--af-line); border-radius: 8px;
-  padding: 8px; margin-bottom: 8px; background: #14171e;
+  padding: 8px; margin-bottom: 8px; background: var(--af-sunk);
 }
 .rule-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .rule-row:last-child { margin-bottom: 0; }
@@ -232,7 +293,7 @@ button.mini.danger:hover { border-color: var(--af-bad); color: #ff9b9b; }
 }
 .rule-label { flex: 1; }
 .inspector .rule-card input, .inspector .rule-card select {
-  background: #12151c; border: 1px solid var(--af-line); color: var(--af-fg);
+  background: var(--af-sunk); border: 1px solid var(--af-line); color: var(--af-fg);
   border-radius: 5px; padding: 5px 7px; font-size: 13px;
 }
 .inspector .rule-value { flex: 1; }
@@ -240,7 +301,7 @@ button.mini.danger:hover { border-color: var(--af-bad); color: #ff9b9b; }
 
 .tip {
   margin-top: 10px; font-size: 12px; color: var(--af-dim);
-  background: #12151c; border: 1px dashed var(--af-line);
+  background: var(--af-sunk); border: 1px dashed var(--af-line);
   border-radius: 6px; padding: 8px 10px; line-height: 1.6;
 }
 
@@ -249,7 +310,7 @@ button.mini.danger:hover { border-color: var(--af-bad); color: #ff9b9b; }
 .field.row2 .field { flex: 1; margin-bottom: 0; }
 .url-box { display: flex; align-items: center; gap: 8px; }
 .url-box code {
-  flex: 1; background: #12151c; border: 1px solid var(--af-line);
+  flex: 1; background: var(--af-sunk); border: 1px solid var(--af-line);
   border-radius: 5px; padding: 6px 8px; font-size: 12px;
   font-family: ui-monospace, monospace; overflow: auto; white-space: nowrap;
 }
@@ -278,7 +339,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 
 /* ---------------- 左侧节点边栏 ---------------- */
 .sidebar {
-  width: 208px; flex: none; background: #0f1218;
+  width: 208px; flex: none; background: var(--af-bg);
   border-right: 1px solid var(--af-line);
   display: flex; flex-direction: column; overflow-y: auto; padding: 12px 10px;
 }
@@ -293,11 +354,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .side-item {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 9px; margin-bottom: 4px;
-  background: #161a22; border: 1px solid var(--af-line); border-radius: 7px;
+  background: var(--af-item); border: 1px solid var(--af-line); border-radius: 7px;
   cursor: grab; user-select: none; font-size: 12.5px;
   transition: border-color .12s, background .12s;
 }
-.side-item:hover { border-color: #3d4a63; background: #1a1f28; }
+.side-item:hover { border-color: var(--af-accent); background: var(--af-raised); }
 .side-item:active { cursor: grabbing; }
 .side-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .side-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -305,7 +366,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 /* ---------------- 画布标签栏 ---------------- */
 .canvas-tabs {
   display: flex; align-items: center; gap: 8px;
-  padding: 7px 12px; background: #0f1218;
+  padding: 7px 12px; background: var(--af-bg);
   border-bottom: 1px solid var(--af-line);
 }
 .tabs-scroll { display: flex; gap: 5px; overflow-x: auto; flex: 1; min-width: 0; }
@@ -313,16 +374,16 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .tab {
   display: flex; align-items: center; gap: 6px; flex: none;
   padding: 5px 9px; border-radius: 6px; cursor: pointer;
-  background: #161a22; border: 1px solid var(--af-line);
+  background: var(--af-item); border: 1px solid var(--af-line);
   font-size: 12.5px; color: var(--af-dim); white-space: nowrap;
 }
-.tab:hover { border-color: #3d4a63; }
+.tab:hover { border-color: var(--af-accent); }
 .tab.is-active {
-  background: #1b2436; border-color: var(--accent, #4c8dff); color: var(--af-fg);
+  background: var(--af-raised); border-color: var(--accent, var(--af-accent)); color: var(--af-fg);
 }
 .tab-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 .tab-count {
-  font-size: 10px; background: #232a36; color: var(--af-dim);
+  font-size: 10px; background: var(--af-raised); color: var(--af-dim);
   border-radius: 8px; padding: 0 5px;
 }
 .tab-close {
@@ -331,16 +392,16 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .tab-close:hover { color: #ff6b6b; }
 .tab-input {
-  background: #0d1016; border: 1px solid var(--accent, #4c8dff);
+  background: var(--af-sunk); border: 1px solid var(--accent, var(--af-accent));
   color: var(--af-fg); border-radius: 4px; padding: 2px 5px;
   font-size: 12.5px; width: 150px;
 }
 .tab-add {
   flex: none; font-size: 12px; padding: 5px 10px;
-  background: #161a22; border: 1px solid var(--af-line);
+  background: var(--af-item); border: 1px solid var(--af-line);
   border-radius: 6px; color: var(--af-fg); cursor: pointer;
 }
-.tab-add:hover { border-color: var(--accent, #4c8dff); }
+.tab-add:hover { border-color: var(--accent, var(--af-accent)); }
 
 /* ---------------- 触发器节点 ---------------- */
 .node-card.trigger { border-left-color: #eab308; }
@@ -351,7 +412,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   color: #f0a35e; border-radius: 4px; padding: 1px 5px;
 }
 .trig-summary {
-  margin: 5px 0; font-size: 11.5px; color: #c4cbd9;
+  margin: 5px 0; font-size: 11.5px; color: var(--af-soft);
   background: #1b1a12; border: 1px solid #3a3520;
   border-radius: 5px; padding: 4px 7px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -373,7 +434,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .par-bars i:nth-child(3) { height: 11px; }
 .par-rules { display: flex; flex-direction: column; gap: 3px; }
 .par-rule {
-  font-size: 11px; color: #c4cbd9; background: #14171e;
+  font-size: 11px; color: var(--af-soft); background: var(--af-sunk);
   border: 1px solid var(--af-line); border-radius: 4px; padding: 3px 6px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
