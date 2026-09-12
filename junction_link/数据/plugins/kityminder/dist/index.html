@@ -1453,11 +1453,13 @@
                 if (d && d.theme && !themeExists(d.theme)) d.theme = null;
                 km.importJson(d);
                 km.refresh();
+                _historyCommitBaseline();   // 导入即为新的历史基线，之前的编辑不再回退
                 return true;
             },
             importText: function (md) {
                 km.importData('markdown', md);   // core 内置 markdown 协议
                 km.refresh();
+                _historyCommitBaseline();
                 return true;
             },
             // 关键：km.exportData() 一律返回 Promise，而 WebView2 的 ExecuteScriptAsync 不会等待 Promise
@@ -1496,6 +1498,68 @@
                 km.useTemplate(tpl);
                 km.refresh();
                 return true;
+            },
+            // 切换布局模板（供 WPF 侧布局缩略图网格 / SetTemplateAsync 调用）：
+            // 优先内核 template 命令，回退 useTemplate（与 plan 一致）。
+            setTemplate: function (t) {
+                if (t == null) return false;
+                try { km.execCommand('template', t); }
+                catch (e) { try { km.useTemplate(t); } catch (e2) {} }
+                try { km.refresh(); } catch (e) {}
+                return true;
+            },
+            // 视图选择：复刻编辑器 selectAll 指令的 6 种语义（选择不增量走内核命令，需在桥接层自实现）。
+            // all=全选 / revert=反选 / siblings=兄弟 / level=同层 / path=根→选中节点路径 / tree=选中子树。
+            select: function (mode) {
+                try {
+                    var root = km.getRoot();
+                    if (!root || !km.getSelectedNodes) return false;
+                    var sel = km.getSelectedNodes();
+                    function contains(arr, x) { for (var i = 0; i < arr.length; i++) if (arr[i] === x) return true; return false; }
+                    function apply(ns) {
+                        km.clearSelect();
+                        for (var i = 0; i < ns.length; i++) { try { km.select(ns[i], true); } catch (e) {} }
+                        try { km.fire && km.fire('selectionchange'); } catch (e) {}
+                    }
+                    var nodes = [], n = (sel && sel.length && sel[0]) || km.getSelectedNode();
+                    switch (String(mode || '').toLowerCase()) {
+                        case 'all':
+                            try { root.traverse(function (x) { nodes.push(x); }); } catch (e) {}
+                            break;
+                        case 'revert':
+                            try { root.traverse(function (x) { if (!contains(sel, x)) nodes.push(x); }); } catch (e) {}
+                            break;
+                        case 'siblings': {
+                            if (!n) break;
+                            var p = n.parent || (n.getParent && n.getParent()) || null;
+                            if (!p) break;
+                            var kids = p.getChildren ? p.getChildren() : [];
+                            for (var i = 0; i < kids.length; i++) if (kids[i] !== n) nodes.push(kids[i]);
+                            break;
+                        }
+                        case 'level': {
+                            if (!n) break;
+                            var lv = n.getLevel ? n.getLevel() : 0;
+                            try { root.traverse(function (x) { if (x.getLevel && x.getLevel() === lv) nodes.push(x); }); } catch (e) {}
+                            break;
+                        }
+                        case 'path': {
+                            var cur = n;
+                            while (cur) { nodes.push(cur); cur = cur.parent || (cur.getParent && cur.getParent()) || null; }
+                            nodes.reverse();
+                            break;
+                        }
+                        case 'tree': {
+                            if (!n) break;
+                            (function walk(x) { nodes.push(x); (x.getChildren ? x.getChildren() : []).forEach(walk); })(n);
+                            break;
+                        }
+                        default:
+                            return false;
+                    }
+                    if (nodes.length) apply(nodes);
+                    return true;
+                } catch (e) { return false; }
             },
             setTheme: function (theme) {
                 km.setTheme(theme);
@@ -1626,7 +1690,49 @@
             }
         };
 
-        // ---- 行内文字编辑 ----
+        // ---- 撤回/重做历史栈 ----
+        // kityminder 内核既不注册 undo/redo 命令、也没有自带的 UndoManager，宿主「撤销/重做」
+        // 按钮（KityMinderHost.ExecCommandAsync 对 undo/redo 特判）走 window.editor.history。
+        // 这里以 contentchange 为内容变更信号，用「基线快照」模型维护两栈：内容变更发生时，
+        // 把变更前的状态压入撤销栈；undo/redo 通过重导入快照还原，期间以 _historyLock 防重入记录。
+        var _undoStack = [], _redoStack = [], _historyLock = false, _baseline = null;
+        function _historySnap() { try { return JSON.stringify(km.exportJson()); } catch (e) { return null; } }
+        function _historyApply(snap) {
+            _historyLock = true;
+            try { km.importJson(JSON.parse(snap)); km.refresh(); } catch (e) {} finally { _historyLock = false; }
+        }
+        function _historyCommitBaseline() { _baseline = _historySnap(); }
+        km.on('contentchange', function () {
+            if (_historyLock || _baseline == null) return;
+            var cur = _historySnap();
+            if (cur === null || cur === _baseline) return;
+            _undoStack.push(_baseline);
+            if (_undoStack.length > 100) _undoStack.shift();   // 上限防快照无限堆积
+            _redoStack.length = 0;                              // 新改动使重做链失效
+            _baseline = cur;
+        });
+        window.editor = window.editor || {};
+        window.editor.history = {
+            undo: function () {
+                if (!_undoStack.length) return false;
+                var cur = _baseline;
+                _historyApply(_undoStack.pop());
+                _redoStack.push(cur);
+                _baseline = _historySnap();
+                return true;
+            },
+            redo: function () {
+                if (!_redoStack.length) return false;
+                var cur = _baseline;
+                _historyApply(_redoStack.pop());
+                _undoStack.push(cur);
+                _baseline = _historySnap();
+                return true;
+            },
+            canUndo: function () { return _undoStack.length > 0; },
+            canRedo: function () { return _redoStack.length > 0; },
+            clear: function () { _undoStack = []; _redoStack = []; _baseline = null; }
+        };
         // SVG 节点文字不是可编辑 DOM，故双击/F2 时在节点 <text> 元素正上方盖一个样式完全仿真节点文字的
         // contentEditable 层（同色/同字/同字号、透明无边框），观感就是直接在节点上打字。
         // Enter/失焦应用（走 core 的 text 命令并重排布局），Esc 取消。
