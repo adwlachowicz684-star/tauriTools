@@ -1,5 +1,5 @@
 import {
-  CLI_META, TRIGGER_META, DEFAULT_BRANCH, OP_META, DEFAULT_TRIGGER_CONFIG,
+  CLI_META, TRIGGER_META, DEFAULT_BRANCH, OP_META,
   makeRule, makeParallelRule,
   isCondition, isTrigger, isParallel, isLoop, isFs,
   LOOP_MODE_META, FS_OP_META, MAX_LOOP_ITERATIONS,
@@ -253,10 +253,20 @@ function TriggerInspector({ node, onChange }: {
         <span>触发方式</span>
         <select
           value={d.trigger}
-          onChange={(e) => onChange(node.id, {
-            trigger: e.target.value as TriggerKind,
-            config: { ...DEFAULT_TRIGGER_CONFIG },
-          })}
+          onChange={(e) => {
+            const next = e.target.value as TriggerKind;
+            /*
+              合并成一个节点后，切换类型会变频繁，所以不再清空 config。
+              所有触发方式共用同一个 Config 对象、各取所需字段，
+              保留旧值不会冲突，来回切换也不会丢已填的内容。
+            */
+            const patch: Record<string, unknown> = { trigger: next };
+            // 名字还是上一个类型的默认名时才自动跟随，避免覆盖用户自定义
+            if (d.label === TRIGGER_META[d.trigger]?.label) {
+              patch.label = TRIGGER_META[next]?.label;
+            }
+            onChange(node.id, patch);
+          }}
         >
           {(Object.keys(TRIGGER_META) as TriggerKind[]).map((k) => (
             <option key={k} value={k}>{TRIGGER_META[k].label}</option>

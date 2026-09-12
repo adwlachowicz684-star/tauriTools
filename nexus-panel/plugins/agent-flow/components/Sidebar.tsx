@@ -3,7 +3,6 @@ import {
   CLI_META,
   TRIGGER_META,
   type CliKind,
-  type TriggerKind,
 } from '../types';
 
 /**
@@ -16,7 +15,7 @@ export type DragPayload =
   | { kind: 'parallel' }
   | { kind: 'loop' }
   | { kind: 'fs' }
-  | { kind: 'trigger'; trigger: TriggerKind };
+  | { kind: 'trigger' };
 
 export const DRAG_MIME = 'application/x-agent-flow-node';
 
@@ -33,7 +32,7 @@ export function decodeDrag(raw: string | null | undefined): DragPayload | null {
     if (p.kind === 'task' && (p as { cli?: string }).cli) return p;
     if (p.kind === 'condition' || p.kind === 'parallel') return p;
     if (p.kind === 'loop' || p.kind === 'fs') return p;
-    if (p.kind === 'trigger' && (p as { trigger?: string }).trigger) return p;
+    if (p.kind === 'trigger') return p;
     return null;
   } catch {
     return null;
@@ -44,8 +43,6 @@ type Props = {
   onAdd: (p: DragPayload) => void;
   disabled?: boolean;
 };
-
-const TRIGGER_KINDS: TriggerKind[] = ['manual', 'interval', 'cron', 'watch', 'webhook'];
 
 export default function Sidebar({ onAdd, disabled }: Props) {
   const onDragStart = (e: DragEvent, p: DragPayload) => {
@@ -79,19 +76,24 @@ export default function Sidebar({ onAdd, disabled }: Props) {
 
       <div className="side-group">
         <div className="side-title">触发器（起点）</div>
-        {TRIGGER_KINDS.map((k) => (
-          <div
-            key={k}
-            className="side-item"
-            draggable={!disabled}
-            onDragStart={(e) => onDragStart(e, { kind: 'trigger', trigger: k })}
-            onClick={() => !disabled && onAdd({ kind: 'trigger', trigger: k })}
-            title={TRIGGER_META[k].hint}
-          >
-            <span className="side-dot" style={{ background: '#eab308' }} />
-            <span className="side-label">{TRIGGER_META[k].label}</span>
-          </div>
-        ))}
+        {/*
+          五种触发方式合并成一个节点 —— 它们只是同一个节点的配置项，
+          拆成五个拖拽项会让节点库变长，而添加后还要在右侧面板再选一次类型。
+          默认「手动触发」：最安全，不会一放上画布就自动跑起来。
+        */}
+        <div
+          className="side-item"
+          draggable={!disabled}
+          onDragStart={(e) => onDragStart(e, { kind: 'trigger' })}
+          onClick={() => !disabled && onAdd({ kind: 'trigger' })}
+          title="工作流的起点。添加后在右侧面板里选择具体触发方式"
+        >
+          <span className="side-dot" style={{ background: '#eab308' }} />
+          <span className="side-label">触发器</span>
+        </div>
+        <div className="side-sub">
+          {Object.values(TRIGGER_META).map((m) => m.label).join(' / ')}
+        </div>
       </div>
 
       <div className="side-group">

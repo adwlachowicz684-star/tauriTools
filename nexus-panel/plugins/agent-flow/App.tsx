@@ -393,10 +393,12 @@ export default function App() {
         node = { id, type: 'fs', position: pos,
           data: makeFsNode(id, { label: '文件操作' }).data } as FlowNode;
       } else {
+        // 五种触发方式合并成一个节点，默认「手动触发」——
+        // 周期/定时/监听/调用都会自动跑，放上画布就生效太危险
         const id = `tr${suffix}`;
         node = { id, type: 'trigger', position: pos,
-          data: makeTriggerNode(id, p.trigger, {
-            label: TRIGGER_META[p.trigger]?.label ?? '触发器',
+          data: makeTriggerNode(id, 'manual', {
+            label: TRIGGER_META.manual.label,
           }).data } as FlowNode;
       }
       setNodes((ns) => [...ns, node]);
@@ -696,7 +698,7 @@ export default function App() {
         <button onClick={addTask} disabled={running}>+ 任务</button>
         <button onClick={addCondition} disabled={running}>+ 条件</button>
         <button onClick={() => spawnNode({ kind: 'parallel' })} disabled={running}>+ 并发</button>
-        <button onClick={() => spawnNode({ kind: 'trigger', trigger: 'manual' })} disabled={running}>
+        <button onClick={() => spawnNode({ kind: 'trigger' })} disabled={running}>
           + 触发器
         </button>
         <button
