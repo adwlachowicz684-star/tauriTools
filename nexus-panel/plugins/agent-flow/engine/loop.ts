@@ -23,10 +23,33 @@ export function unescapeSeparator(sep: string): string {
   return map[sep] ?? sep;
 }
 
-/** 安全上限：既不能超过节点自设的 maxIterations，也不能超过全局硬上限 */
+/**
+ * 安全上限：既不能超过节点自设的 maxIterations，也不能超过全局硬上限。
+ *
+ * `max` 必须防御非法值：maxIterations 是后来才加的字段，
+ * 老画布从 localStorage 读出来的节点没有这个属性，传进来是 undefined。
+ * 而 Math.min(5, undefined) === NaN，一路传到 Array.from({length: NaN})
+ * 就得到空数组 —— 循环静默变成 0 轮，还显示成功，用户根本看不出没跑。
+ */
 export function clampIterations(n: number, max: number): number {
-  const capped = Math.min(Number.isFinite(n) ? n : 0, max, MAX_LOOP_ITERATIONS);
+  const maxSafe = Number.isFinite(max) && max >= 0 ? max : MAX_LOOP_ITERATIONS;
+  const want = Number.isFinite(n) ? n : 0;
+  const capped = Math.min(want, maxSafe, MAX_LOOP_ITERATIONS);
   return Math.max(0, Math.floor(capped));
+}
+
+/**
+ * 被上限截断成 0 轮是一种异常，不该当成"正常跑完 0 轮"。
+ *
+ * 用户显式把次数设成 0 的入口已被 `want < 1` 的检查拦下，
+ * 走到这里还想迭代却得到 0，只能是 max 配成了 0 / 负数这类坏数据
+ * —— 报出来比静默跑 0 轮好得多。
+ */
+export function zeroIterationError(want: number, got: number, what: string): string | null {
+  if (want > 0 && got === 0) {
+    return `${what}：请求 ${want} 轮但被上限截成 0（检查"轮数上限"是否配成了 0）`;
+  }
+  return null;
 }
 
 /**
@@ -56,6 +79,10 @@ export function resolveLoopItems(
       };
     }
     const n = clampIterations(want, data.maxIterations);
+    const zeroErr = zeroIterationError(want, n, '固定次数');
+    if (zeroErr) {
+      return { items: [], reason: '固定次数：被上限截成 0 轮', warnings, error: zeroErr };
+    }
     if (n < want) warnings.push(`迭代次数被上限截断：${want} → ${n}`);
     const items = Array.from({ length: n }, (_, i) => String(i + 1));
     return { items, reason: `固定 ${n} 次`, warnings, error: null };
@@ -91,6 +118,10 @@ export function resolveLoopItems(
       };
     }
     const n = clampIterations(items.length, data.maxIterations);
+    const zeroErr = zeroIterationError(items.length, n, '匹配文件');
+    if (zeroErr) {
+      return { items: [], reason: '匹配文件：被上限截成 0 轮', warnings, error: zeroErr };
+    }
     if (n < items.length) warnings.push(`匹配到 ${items.length} 个，超过上限只取前 ${n} 个`);
     return {
       items: items.slice(0, n),
@@ -118,6 +149,10 @@ export function resolveLoopItems(
 
   const before = items.length;
   const n = clampIterations(items.length, data.maxIterations);
+  const zeroErr = zeroIterationError(before, n, '遍历列表');
+  if (zeroErr) {
+    return { items: [], reason: '遍历列表：被上限截成 0 轮', warnings, error: zeroErr };
+  }
   items = items.slice(0, n);
   if (n < before) warnings.push(`列表共 ${before} 项，超过上限只取前 ${n} 项`);
 
@@ -186,10 +221,17 @@ export function loopBodyOf(loopId: string, graph: Graph): Set<string> {
 }
 
 /** 收集图中所有循环节点及其循环体 */
+/**
+ * 收集所有循环节点及其循环体成员。
+ *
+ * 必须容忍坏节点：手工改过的 JSON、旧版本迁移残留、导入的第三方 canvas
+ * 都可能缺 data。这个函数在 runGraph 开头就调用，
+ * 一旦抛异常整张画布都跑不起来，而堆栈指向内部函数很难定位。
+ */
 export function collectLoops(graph: Graph): Map<string, Set<string>> {
   const map = new Map<string, Set<string>>();
-  for (const n of graph.nodes) {
-    if ((n.data as LoopNodeData).kind !== 'loop') continue;
+  for (const n of graph.nodes ?? []) {
+    if (n?.data?.kind !== 'loop') continue;
     map.set(n.id, loopBodyOf(n.id, graph));
   }
   return map;

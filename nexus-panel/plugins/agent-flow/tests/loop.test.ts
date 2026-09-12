@@ -317,7 +317,13 @@ test('循环体失败：onError=stop 时立即停止', async () => {
     onEvent: () => {},
   });
   assert.equal(n, 2, 'stop 应在第 2 轮失败后停止');
-  assert.equal(summary.loops[0].rounds, 5);
+  /*
+    这里原本断言 rounds === 5，那是 B3 描述的虚报行为：
+    用 res.items.length（解析出的项数）当轮数，
+    第 2 轮就 stop 了却报告"共 5 轮"。
+    修复后 rounds 是实际执行轮数，应为 2。
+  */
+  assert.equal(summary.loops[0].rounds, 2, '实际只跑了 2 轮，不是解析出的 5 项');
   assert.equal(summary.loops[0].failed, 1);
 });
 
@@ -542,4 +548,187 @@ test('删除上游时，引用它的文件节点被报告为悬空', () => {
     res.danglingRefs.some((d) => d.ref === 'a.output' && d.usedBy.includes('f')),
     '文件节点的 path 引用断了应被检出',
   );
+});
+
+/* ================================================================== */
+/* 回归：审查清单 B1 / B2                                              */
+/*                                                                     */
+/* 这两处原本在 169 项测试里都没覆盖 —— 测试全绿不代表没问题。          */
+/* ================================================================== */
+
+test('B1: maxIterations 为 undefined 时不静默变 0 轮', () => {
+  // maxIterations 是后加的字段，老画布从 localStorage 读出来没有这个属性
+  const legacy = { mode: 'times', times: 5 } as never;
+  const r = resolveLoopItems(legacy, { outputs: {} });
+  assert.equal(r.error, null, '不应报错');
+  assert.equal(r.items.length, 5, '必须跑满 5 轮，而不是静默变成 0 轮');
+});
+
+test('B1: clampIterations 对非法 max 有防御', () => {
+  assert.equal(clampIterations(5, 50), 5);
+  // undefined / null / NaN / 负数 都应退回硬上限，而不是产出 NaN
+  assert.equal(clampIterations(5, undefined as never), 5);
+  assert.equal(clampIterations(5, null as never), 5);
+  assert.equal(clampIterations(5, NaN), 5);
+  assert.equal(clampIterations(5, -1), 5);
+});
+
+test('B1: 轮数被截成 0 时报错而非显示成功', () => {
+  // 用户显式配 0 次已被 want<1 拦下；这里是被坏上限截成 0
+  const r = resolveLoopItems(
+    { mode: 'times', times: 5, maxIterations: 0 } as never,
+    { outputs: {} },
+  );
+  assert.ok(r.error, '必须报错，不能静默跑 0 轮还显示成功');
+  assert.equal(r.items.length, 0);
+});
+
+test('B1: list 模式遇到坏上限同样报错', () => {
+  const r = resolveLoopItems(
+    { mode: 'list', source: 'a', separator: '', maxIterations: 0 } as never,
+    { outputs: { a: 'x\ny\nz' } },
+  );
+  assert.ok(r.error);
+});
+
+test('B2: 节点缺 data 时 collectLoops 不崩溃', () => {
+  const bad = { nodes: [{ id: 'a' }, { id: 'b', data: { kind: 'loop' } }], edges: [] } as never;
+  const m = collectLoops(bad);
+  assert.equal(m.size, 1, '只应收集到那个真正的循环节点');
+  assert.ok(m.has('b'));
+});
+
+test('B2: data 为 null / undefined 都不崩溃', () => {
+  assert.doesNotThrow(() => collectLoops({ nodes: [{ id: 'x', data: null }], edges: [] } as never));
+  assert.doesNotThrow(() => collectLoops({ nodes: [{ id: 'x' }], edges: [] } as never));
+});
+
+test('B2: 空 nodes 也不崩溃', () => {
+  assert.doesNotThrow(() => collectLoops({ nodes: [], edges: [] } as never));
+  assert.equal(collectLoops({ nodes: [], edges: [] } as never).size, 0);
+});
+
+/* ================================================================== */
+/* 回归：审查清单 B3 / B4                                              */
+/* ================================================================== */
+
+/** 跑一个固定次数的循环，返回 summary 与每轮记录 */
+async function runTimesLoop(times: number, opts: {
+  failAt?: number;        // 第几轮抛错（1 起）
+  onError?: 'continue' | 'stop';
+  abortAfter?: number;    // 执行几轮后取消
+} = {}) {
+  const graph: Graph = {
+    nodes: [
+      makeLoopNode('l', {
+        mode: 'times', times,
+        onError: opts.onError ?? 'continue',
+      }),
+      makeNode('b1'),
+    ],
+    edges: [edge('l', 'b1', { loopRole: 'body' })],
+  };
+  let n = 0;
+  let ac: AbortController | null = null;
+  const events: RunEvent[] = [];
+  const summary = await runGraph(graph, {
+    concurrency: 1,
+    executor: async () => {
+      n += 1;
+      if (ac && n >= (opts.abortAfter ?? 0)) ac.abort();
+      if (opts.failAt && n === opts.failAt) throw new Error('boom');
+      return 'ok';
+    },
+    onEvent: (e) => { events.push(e); },
+    signal: (ac = new AbortController()).signal,
+  });
+  return { summary, n, events };
+}
+
+test('B3: 用户中途取消时轮数不虚报', async () => {
+  const { summary, n } = await runTimesLoop(1000, { abortAfter: 2 });
+  assert.ok(n < 1000, '确实被取消了');
+  assert.equal(
+    summary.loops[0].rounds, n,
+    `取消后应报告实际执行的 ${n} 轮，而不是解析出的 1000 项`,
+  );
+  assert.notEqual(summary.loops[0].rounds, 1000);
+});
+
+test('B3: onError=stop 提前结束时轮数不虚报', async () => {
+  const { summary, n } = await runTimesLoop(1000, { failAt: 1, onError: 'stop' });
+  assert.equal(n, 1);
+  assert.equal(summary.loops[0].rounds, 1);
+});
+
+test('B3: loop-done 事件的 rounds 与实际一致', async () => {
+  const { n, events } = await runTimesLoop(1000, { abortAfter: 3 });
+  const done = events.filter((e) => e.type === 'loop-done');
+  assert.equal(done.length, 1);
+  const e = done[0] as Extract<RunEvent, { type: 'loop-done' }>;
+  assert.equal(e.rounds, n);
+});
+
+test('B4: 嵌套循环中内层结束后外层上下文不丢失', async () => {
+  /*
+    l1(外层, 3 轮) → l2(内层, 2 轮) → body2
+                   → after（内层之后，仍在外层体内）
+
+    after 节点在外层循环体内、内层循环之外。
+    内层循环结束时会 pop 自己的 ctx，
+    改回栈之后应回落到外层 ctx —— after 仍能拿到正确的 {{loop.item}}。
+  */
+  const graph: Graph = {
+    nodes: [
+      makeLoopNode('l1', { mode: 'times', times: 2 }),
+      makeLoopNode('l2', { mode: 'times', times: 2 }),
+      makeNode('after', { prompt: 'OUTER={{loop.item}}' }),
+    ],
+    edges: [
+      edge('l1', 'l2', { loopRole: 'body' }),
+      edge('l2', 'after', { loopRole: 'done' }),
+    ],
+  };
+
+  const seen: string[] = [];
+  await runGraph(graph, {
+    concurrency: 1,
+    executor: async (node, prompt) => {
+      if (node.id === 'after') seen.push(prompt);
+      return 'ok';
+    },
+    onEvent: () => {},
+  });
+
+  assert.ok(seen.length > 0, 'after 应被执行到');
+  // 关键：不能出现未解析的 {{loop.item}}
+  for (const p of seen) {
+    assert.ok(!p.includes('{{loop.item}}'), `上下文丢失，渲染结果: ${p}`);
+    assert.ok(/^OUTER=[12]$/.test(p), `外层 loop.item 应为 1 或 2，实际: ${p}`);
+  }
+});
+
+test('B4: 循环结束后 loop 变量不再可用（不残留）', async () => {
+  // 循环 done 出口之后的节点，若还引用 {{loop.item}} 应保留原样提示用户
+  const graph: Graph = {
+    nodes: [
+      makeLoopNode('l', { mode: 'times', times: 2 }),
+      makeNode('b1'),
+      makeNode('after', { prompt: 'X={{loop.item}}' }),
+    ],
+    edges: [
+      edge('l', 'b1', { loopRole: 'body' }),
+      edge('l', 'after', { loopRole: 'done' }),
+    ],
+  };
+  let seen = '';
+  await runGraph(graph, {
+    concurrency: 1,
+    executor: async (node, prompt) => {
+      if (node.id === 'after') seen = prompt;
+      return 'ok';
+    },
+    onEvent: () => {},
+  });
+  assert.equal(seen, 'X={{loop.item}}', '循环外应是未解析状态，而不是残留上一轮的值');
 });

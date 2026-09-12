@@ -165,6 +165,11 @@ def remove_as(src: str) -> str:
                     k += 1
             else:
                 k, depth = j, 0
+                # 类型断言若是联合类型（as X | undefined），
+                # 只删 `as X` 会留下 `| undefined` 变成按位或运算，
+                # 例如 `(n?.data as Partial<T> | undefined)?.kind` 会变成
+                # `(n?.data | undefined)?.kind` → 恒为 0，静默改变语义。
+                # 这里一路扫到联合结束，整体移除。
                 while k < n:
                     c = src[k]
                     if c == '<':

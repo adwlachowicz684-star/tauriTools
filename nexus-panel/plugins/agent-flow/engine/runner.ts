@@ -140,8 +140,20 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
   const parallels: ParallelRecord[] = [];
   const loops: LoopRecord[] = [];
 
-  /** 循环迭代上下文，供模板渲染 {{loop.item}} 等 */
-  let loopCtx: LoopCtx | null = null;
+  /**
+   * 循环上下文栈 —— 供模板渲染 {{loop.item}} / {{loop.index}} / {{loop.count}}。
+   *
+   * 原本是单个变量，靠"赋值 → await 执行 → 下一轮覆盖"工作。两个问题：
+   *  1. 循环体内若有嵌套循环，内层结束时会置 null，
+   *     外层后续节点就读不到自己的 {{loop.item}} 了
+   *  2. 若某个节点的渲染被异步延迟到下一轮覆盖之后，会读到错轮的值
+   *
+   * 改成栈：进入循环体压栈、结束出栈，渲染取栈顶。
+   * 这样嵌套时内层 pop 后自动回落到外层的上下文。
+   */
+  const loopStack: LoopCtx[] = [];
+  const currentLoop = (): LoopCtx | null =>
+    loopStack.length > 0 ? loopStack[loopStack.length - 1] : null;
 
   /**
    * 节点的附加字段（{{nodeId.title}} 等）。
@@ -349,9 +361,9 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
     /* ---------- 文件操作节点 ---------- */
     if (isFs(node.data)) {
       setStatus(id, 'running');
-      const p = renderTemplate(node.data.path, { outputs, input: opts.input, loop: loopCtx, fields: nodeFields });
-      const t = renderTemplate(node.data.target, { outputs, input: opts.input, loop: loopCtx, fields: nodeFields });
-      const c = renderTemplate(node.data.content, { outputs, input: opts.input, loop: loopCtx, fields: nodeFields });
+      const p = renderTemplate(node.data.path, { outputs, input: opts.input, loop: currentLoop(), fields: nodeFields });
+      const t = renderTemplate(node.data.target, { outputs, input: opts.input, loop: currentLoop(), fields: nodeFields });
+      const c = renderTemplate(node.data.content, { outputs, input: opts.input, loop: currentLoop(), fields: nodeFields });
 
       if (!opts.fsExecutor) {
         const msg = '未提供文件操作执行器（当前可能运行在浏览器模式）';
@@ -380,7 +392,7 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
 
     /* ---------- 任务节点：渲染提示词并调 CLI ---------- */
     const { text: rendered, missing } = renderTemplate(node.data.prompt, {
-      outputs, input: opts.input, loop: loopCtx, fields: nodeFields,
+      outputs, input: opts.input, loop: currentLoop(), fields: nodeFields,
     });
     if (missing.length > 0) {
       console.warn(`[${id}] 未解析的变量: ${missing.join(', ')}`);
@@ -429,11 +441,19 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
     const bodyIds = orderByLayers(loopBodies.get(id) ?? []);
     const collected: string[] = [];
     let roundFailed = 0;
+    /**
+     * 实际执行的轮数。
+     * 不能用 res.items.length —— 那是解析出的项数：
+     * 用户中途取消、或 onError=stop 提前 break 时，
+     * 会虚报成"共 1000 轮"。
+     */
+    let executed = 0;
 
     for (let i = 0; i < res.items.length; i++) {
       if (opts.signal?.aborted) break;
+      executed += 1;
       const item = res.items[i];
-      loopCtx = makeLoopCtx(item, i, res.items.length);
+      loopStack.push(makeLoopCtx(item, i, res.items.length));
       emit({ type: 'loop-iteration', id, index: i, item, count: res.items.length });
 
       // 每轮用独立作用域：上一轮被裁掉的边不影响本轮
@@ -444,21 +464,25 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
       };
       await runScope(bodyIds, iterScope);
 
-      if (data.collect) {
-        const produced = bodyIds
-          .map((b) => outputs[b] ?? '')
-          .filter((s) => s.length > 0);
-        if (produced.length > 0) collected.push(`#${i + 1} ${item}\n${produced.join('\n')}`);
-      }
+      try {
+        if (data.collect) {
+          const produced = bodyIds
+            .map((b) => outputs[b] ?? '')
+            .filter((s) => s.length > 0);
+          if (produced.length > 0) collected.push(`#${i + 1} ${item}\n${produced.join('\n')}`);
+        }
 
-      if (iterScope.failedSet.size > 0) {
-        roundFailed += 1;
-        if (data.onError === 'stop') break;
+        if (iterScope.failedSet.size > 0) {
+          roundFailed += 1;
+          if (data.onError === 'stop') break;
+        }
+      } finally {
+        // 出栈放在 finally：循环体抛异常时也不会把栈留脏
+        loopStack.pop();
       }
     }
-    loopCtx = null;
 
-    const total = res.items.length;
+    const total = executed;
     const done = collected.length;
     outputs[id] = data.collect && collected.length > 0
       ? collected.join('\n\n')
@@ -528,7 +552,7 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
     }
 
     // 渲染模板：允许用上游输出拼地址
-    const renderedUrl = renderTemplate(url, { outputs, input: opts.input, loop: loopCtx, fields: nodeFields }).text;
+    const renderedUrl = renderTemplate(url, { outputs, input: opts.input, loop: currentLoop(), fields: nodeFields }).text;
 
     if (!opts.fetcher) {
       fail('未提供网络抓取执行器（当前可能运行在浏览器模式）');
