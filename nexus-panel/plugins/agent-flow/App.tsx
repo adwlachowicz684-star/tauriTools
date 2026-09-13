@@ -28,7 +28,8 @@ import { CLI_META, DEFAULT_TRIGGER_CONFIG, DEFAULT_BRANCH, type TaskNodeData, ma
   makeLoopNode, makeFsNode, makeUpdateNode, isTrigger, isLoop, triggerKindsOf, type CliKind, type FsNodeData,
   type Graph, type NodeData, type Trigger, type TriggerKind, type TriggerConfig } from './types';
 import type { FlowEdge, FlowNode } from './flowTypes';
-import { killCli, runCli, canWatch, startWatch, canWebhook, startWebhook, type DonePayload } from './lib/tauri';
+import { killCli, runCli, canWatch, startWatch, canWebhook, startWebhook,
+  fileOp, fsArgsOf, fetchText, type DonePayload } from './lib/tauri';
 import {
   deleteElements, nextSelection, hasAnythingToDelete,
   makeSnapshot, describeDelete,
@@ -69,10 +70,10 @@ function makeSeedCanvas(): Canvas {
     nodes: [
       { id: 'write', position: { x: 60, y: 140 }, type: 'task',
         data: makeNode('write', { label: '写脚本', cli: 'codebuddy',
-          prompt: '写一个备份 PostgreSQL 的 bash 脚本，带日期后缀和错误处理' }).data },
+          prompt: '写一个备份 PostgreSQL 的 bash 脚本，带日期后缀和错误处理' }).data } as FlowNode,
       { id: 'review', position: { x: 420, y: 140 }, type: 'task',
         data: makeNode('review', { label: '审查脚本', cli: 'traecli',
-          prompt: '审查下面这段脚本的安全性与健壮性，逐条给出行号和问题:\n{{write.output}}' }).data },
+          prompt: '审查下面这段脚本的安全性与健壮性，逐条给出行号和问题:\n{{write.output}}' }).data } as FlowNode,
     ],
     edges: [{ id: 'write->review', source: 'write', target: 'review' }],
   });
@@ -219,6 +220,9 @@ export default function App() {
   );
   const [watchSupported] = useState(() => canWatch());
   const [webhookSupported] = useState(() => canWebhook());
+  // 外观：跟随面板主题 / 固定 Agent Flow 原生样式
+  const [themeMode, setThemeMode] = useState<ThemeMode>(readThemeMode);
+  useEffect(() => applyThemeMode(themeMode), [themeMode]);
   /** 最近一次删除的快照，用于撤销；null 表示无可撤销 */
   const [undoSnap, setUndoSnap] = useState<UndoSnapshot<FlowNode, FlowEdge> | null>(null);
   /** 删除后可能出现的"下游还在引用被删节点"提示 */
@@ -241,7 +245,9 @@ export default function App() {
 
   const patchNode = useCallback((id: string, patch: Record<string, unknown>) => {
     setNodes((ns) => ns.map((n) =>
-      (n.id === id ? { ...n, data: { ...n.data, ...patch } as NodeData } : n)));
+      // 断言放在整体而非 data 上：若把 data 单独断言成联合类型 NodeData，
+      // 展开后就无法落回 FlowNode 的任何一个具体分支（task/condition/…）。
+      (n.id === id ? ({ ...n, data: { ...n.data, ...patch } } as FlowNode) : n)));
   }, [setNodes]);
 
   const addTask = () => {
@@ -250,7 +256,7 @@ export default function App() {
     setNodes((ns) => [
       ...ns,
       { id, type: 'task', position: { x: 80 + (ns.length % 4) * 300, y: 80 + Math.floor(ns.length / 4) * 220 },
-        data: makeNode(id, { label: `任务 ${ns.length + 1}` }).data },
+        data: makeNode(id, { label: `任务 ${ns.length + 1}` }).data } as FlowNode,
     ]);
     setSelectedId(id);
   };
@@ -463,7 +469,7 @@ export default function App() {
     setNodes((ns) => [
       ...ns,
       { id, type: 'condition', position: { x: 220 + (ns.length % 4) * 300, y: 300 },
-        data: makeConditionNode(id, { label: '条件判断' }).data },
+        data: makeConditionNode(id, { label: '条件判断' }).data } as FlowNode,
     ]);
     setSelectedId(id);
   };
@@ -502,13 +508,13 @@ export default function App() {
 
   const onEvent = useCallback((e: RunEvent) => {
     if (e.type === 'node-status') {
-      setNodes((ns) => ns.map((n) => (n.id === e.id ? { ...n, data: { ...n.data, status: e.status } } : n)));
+      setNodes((ns) => ns.map((n) => (n.id === e.id ? { ...n, data: { ...n.data, status: e.status } } as FlowNode : n)));
     } else if (e.type === 'node-chunk') {
-      setNodes((ns) => ns.map((n) => (n.id === e.id ? { ...n, data: { ...n.data, output: n.data.output + e.chunk } } : n)));
+      setNodes((ns) => ns.map((n) => (n.id === e.id ? { ...n, data: { ...n.data, output: (n.data as { output?: string }).output ?? '' } as TaskNodeData } as FlowNode : n)));
     } else if (e.type === 'node-done') {
       setNodes((ns) => ns.map((n) =>
         n.id === e.id
-          ? { ...n, data: { ...n.data, status: e.ok ? 'success' : 'failed', output: e.output, error: e.error ?? '' } }
+          ? ({ ...n, data: { ...n.data, status: e.ok ? 'success' : 'failed', output: e.output, error: e.error ?? '' } } as FlowNode)
           : n));
     } else if (e.type === 'layer-start') {
       pushLog(`第 ${e.layer + 1}/${e.total} 层开始：${e.ids.join(', ')}`);
@@ -549,7 +555,7 @@ export default function App() {
     abortRef.current = controller;
     const stamp = String(Date.now());
 
-    setNodes((ns) => ns.map((n) => ({ ...n, data: { ...n.data, output: '', error: '', status: 'idle' } })));
+    setNodes((ns) => ns.map((n) => ({ ...n, data: { ...n.data, output: '', error: '', status: 'idle' } } as FlowNode)));
 
     const graph: Graph = {
       nodes: nodes.map((n) => ({ id: n.id, data: n.data })),
@@ -564,7 +570,9 @@ export default function App() {
     const executor: Executor = async (node, rendered, onChunk) => {
       const runId = `${stamp}:${node.id}`;
       activeRuns.current.set(node.id, runId);
-      let done: DonePayload | null = null;
+      // 用 ref 而非 let：闭包里赋值时，TS 的流分析看不到赋值点，
+      // 会把 `if (!done) throw` 之后的 done 收窄成 never。
+      const doneRef: { current: DonePayload | null } = { current: null };
       // 执行器只会被任务节点调用：条件/触发器/并发节点在执行器内部处理并 continue
       const d = node.data as TaskNodeData;
       await runCli(
@@ -573,10 +581,11 @@ export default function App() {
         {
           onStdout: (c) => onChunk(c),
           onStderr: (c) => onChunk(c),
-          onDone: (p) => { done = p; },
+          onDone: (p) => { doneRef.current = p; },
         },
       );
       activeRuns.current.delete(node.id);
+      const done = doneRef.current;
       if (!done) throw new Error('未收到进程结束事件');
       if (!done.success) throw new Error(`CLI 退出码 ${done.code ?? '未知'}`);
       return '';
@@ -632,9 +641,9 @@ export default function App() {
         const targetId = t.nodeId ?? t.id;
         setNodes((ns) => ns.map((n) =>
           (n.id === targetId && isTrigger(n.data)
-            ? { ...n, data: { ...n.data, lastFiredAt: Date.now(),
+            ? ({ ...n, data: { ...n.data, lastFiredAt: Date.now(),
                 lastFiredKind: t.kind,
-                status: ok ? 'success' : 'failed' } as NodeData }
+                status: ok ? 'success' : 'failed' } } as FlowNode)
             : n)));
         return ok;
       },
@@ -803,7 +812,10 @@ export default function App() {
             nodeTypes={nodeTypes}
             onInit={(inst) => { rfInstance.current = inst; }}
             onNodeClick={(_, n) => setSelectedId(n.id)}
-            onBeforeDelete={beforeDelete}
+            /* xyflow v12 的 onBeforeDelete 传的是节点/边对象（内部按 id 处理，需转换），
+               且签名要求返回 Promise，所以要 async */
+            onBeforeDelete={async ({ nodes: dn, edges: de }) =>
+              beforeDelete({ nodeIds: dn.map((n) => n.id), edgeIds: de.map((e) => e.id) })}
             onNodesDelete={handleNodesDelete}
             deleteKeyCode={running ? null : ['Delete', 'Backspace']}
             fitView

@@ -8,7 +8,12 @@
 
 export type MinimalNode = {
   id: string;
-  data?: { prompt?: string };
+  /**
+   * 各节点 data 形状完全不同（task 有 prompt、condition 有 rules、fs 有 path…），
+   * 这里只做结构性占位，具体字段由 templateTextOf() 运行时自行探测。
+   * 写死成 `{ prompt?: string }` 会让 condition / fs 等节点类型不满足约束。
+   */
+  data?: unknown;
 };
 
 export type MinimalEdge = {

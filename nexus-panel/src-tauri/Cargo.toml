@@ -10,18 +10,9 @@ rust-version = "1.77.2"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# image-ico / image-png：供 set_window_icon 解码图标文件（换软件窗口图标用）。
-# 这两个 feature 会额外拉入 image 相关 crate，首次构建需要联网下载；
-# 若不需要换图标功能，可一并删掉这两个 feature、src/main.rs 里的 set_window_icon
-# 命令及其在 invoke_handler 中的注册。
-tauri = { version = "2", features = ["devtools", "image-ico", "image-png"] }
+tauri = { version = "2", features = ["devtools"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-# 说明：本项目刻意不引 windows-sys。
-# 屏幕取色 / 截图改用 PowerShell + System.Drawing 实现 —— 句柄类型在
-# windows-sys 各版本间是 isize 或 *mut c_void，一旦猜错就是硬编译错误，
-# 而这两个功能都是低频操作，多花几百毫秒启动 PowerShell 完全可以接受。
 
 [profile.release]
 codegen-units = 1

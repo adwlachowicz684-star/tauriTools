@@ -188,7 +188,8 @@ export function parseBiliApi(json: string): BiliApiResult {
       '-404': 'UID 不存在，检查一下主页链接',
       '-412': '请求过于频繁，稍后再试',
     };
-    const extra = hint[code] ?? `错误码 ${code}`;
+    // code 可能是 undefined（接口没返回 code），不能直接当索引
+    const extra = (code !== undefined ? hint[code] : undefined) ?? `错误码 ${code}`;
     return {
       items: [], warnings,
       error: `B站接口报错：${extra}${msg ? `（${msg}）` : ''}`,
@@ -205,7 +206,9 @@ export function parseBiliApi(json: string): BiliApiResult {
   }
 
   const items: FeedItem[] = vlist
-    .filter((v) => v && v.bvid)
+    // 用类型谓词而非普通 filter：否则 TS 不知道 bvid 已经非空，
+    // 会把 id 推断成 string | undefined，与 FeedItem 不匹配
+    .filter((v): v is BiliVideo & { bvid: string } => !!v?.bvid)
     .map((v) => ({
       id: v.bvid,
       title: v.title ?? '(无标题)',

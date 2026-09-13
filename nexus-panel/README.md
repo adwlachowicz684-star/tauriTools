@@ -481,7 +481,7 @@ await ctx.shell.external.setStatus('api.example.com', 'trusted');
 `src-tauri/src/main.rs` 已提供 `rust_ping`、`app_version`、`window_action`（自定义标题栏用）。
 新增命令后无需改前端，插件里直接 `ctx.invoke('你的命令')`。
 
-## 十、打包
+## 十一、打包
 
 ```bash
 cd src-tauri && cargo tauri build     # 无构建模式
@@ -489,7 +489,51 @@ npm run tauri:build                   # Vite + React 模式
 ```
 `icons/` 下是占位图标，正式发布前请替换：`npm run tauri icon 你的图标.png`。
 
-## 十一、开发辅助
+## 十二、Agent Flow 插件
+
+`plugins/agent-flow/` 是一个工作流编排画布（React + React Flow），以 iframe 沙箱方式挂进面板。
+
+### 关于已移除的 Rust 能力
+
+重构时 Rust 端移去了部分插件（`tauri-plugin-http` 等），因此：
+
+| 能力 | 状态 |
+|---|---|
+| 界面（画布 / 节点 / 检查器 / 日志） | ✅ 完整可用 |
+| 本地持久化（localStorage） | ✅ 可用 |
+| 导入 / 导出 JSON | ✅ 可用 |
+| 运行工作流（调 Rust 的 `run_node` 等） | ⚠️ 需自行补 Rust 命令 |
+| 文件监听、Webhook 触发器 | ⚠️ 同上 |
+
+前端对这些能力已做**降级处理**：不在 Tauri 里就跳过或用模拟输出，不会崩。
+
+### 网络请求的可选依赖
+
+`fetchText()` 优先用 Tauri http 插件（经 Rust 发出、不受同源策略限制），
+不可用时降级到浏览器 `fetch`。
+
+**关键：它用变量做动态 import，而不是字面量。**
+
+```js
+const spec = '@tauri-apps/plugin-http';
+const mod = await import(spec);   // 不是 await import('@tauri-apps/plugin-http')
+```
+
+因为字面量形式会被 Rollup **静态解析**：包没装时整个构建直接失败
+（"Rollup failed to resolve import"），连累其他所有插件一起打不出来。
+改成变量后，缺包只会让这一个功能降级，不影响构建。
+
+真正要用它：装 `@tauri-apps/plugin-http` + Cargo 加 `tauri-plugin-http`
++ capabilities 配 scope + 删掉 `plugins/agent-flow/optional-modules.d.ts`
++ 把 CSP 的 `connect-src` 放行目标域名。
+
+### 外观：跟随面板 / 原生样式
+
+工具栏「外观」下拉切换。样式由 CSS 分层实现
+（`styles.css` 的 `:root[data-af-mode="follow"]`），
+JS 只负责记住选择并写 `data-af-mode`，不直接改颜色。
+
+## 十三、开发辅助
 
 四个测试脚本都只用 jsdom，无需启动窗口：
 

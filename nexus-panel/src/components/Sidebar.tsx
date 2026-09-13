@@ -8,8 +8,6 @@ export default function Sidebar({
   onToggle,
   onSelect,
   onAdd,
-  injected = [],
-  onInjected,
 }: {
   open: boolean;
   plugins: PluginManifest[];
@@ -18,9 +16,6 @@ export default function Sidebar({
   onToggle: () => void;
   onSelect: (id: string) => void;
   onAdd: () => void;
-  /** 插件注入的侧边栏条目 */
-  injected?: { id: string; pluginId: string; label: string; icon?: string; event: string }[];
-  onInjected?: (it: { id: string; pluginId: string; event: string }) => void;
 }) {
   return (
     <aside id="sidebar">
@@ -49,19 +44,6 @@ export default function Sidebar({
             </button>
           );
         })}
-
-        {/* 插件注入的条目：点击后由外壳往总线发事件，插件自己响应 */}
-        {injected.map((it) => (
-          <button
-            key={`${it.pluginId}:${it.id}`}
-            className="nav-item nav-item-injected"
-            title={`${it.label}（来自插件 ${it.pluginId}）`}
-            onClick={() => onInjected?.({ id: it.id, pluginId: it.pluginId, event: it.event })}
-          >
-            <span className="nav-icon">{it.icon || '▶'}</span>
-            <span className="nav-label">{it.label}</span>
-          </button>
-        ))}
       </nav>
 
       <div id="sidebar-foot">

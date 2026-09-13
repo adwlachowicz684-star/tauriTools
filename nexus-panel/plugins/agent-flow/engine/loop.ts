@@ -1,5 +1,5 @@
 import type { Graph, LoopNodeData, LoopCtx } from '../types';
-import { MAX_LOOP_ITERATIONS } from '../types';
+import { MAX_LOOP_ITERATIONS, isLoop } from '../types';
 
 export type LoopResolve = {
   items: string[];
@@ -231,7 +231,10 @@ export function loopBodyOf(loopId: string, graph: Graph): Set<string> {
 export function collectLoops(graph: Graph): Map<string, Set<string>> {
   const map = new Map<string, Set<string>>();
   for (const n of graph.nodes ?? []) {
-    if (n?.data?.kind !== 'loop') continue;
+    // 用 isLoop 守卫而非直接取 .kind：NodeData 是联合类型，
+    // 只有部分分支带 kind，直接访问过不了类型检查；
+    // 同时必须挡住缺 data 的坏节点，否则这里一抛，整张画布都跑不起来。
+    if (!n?.data || !isLoop(n.data)) continue;
     map.set(n.id, loopBodyOf(n.id, graph));
   }
   return map;

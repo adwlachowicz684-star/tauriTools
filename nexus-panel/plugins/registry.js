@@ -78,27 +78,6 @@ export const plugins = [
     description: '不依赖构建工具的 iframe 插件',
   },
   {
-    id: 'project-group',
-    name: '项目组分配',
-    icon: '🗂',
-    type: 'iframe',
-    entry: './plugins/project-group/index.html',
-    // React + TSX，需要 Vite；无构建模式下自动隐藏
-    requiresBuild: true,
-    theme: 'dark',
-    description: '项目 / 项目组双栏管理：agent 链接分配、内容浏览、连锁指令、内置图标与备份',
-  },
-  {
-    id: 'mindmap',
-    name: '思维导图',
-    icon: '❖',
-    type: 'iframe',
-    entry: './plugins/mindmap/index.html',
-    version: '1.0.0',
-    theme: 'dark',
-    description: 'kityminder 内核：多画布 / 主题 / 布局 / 附件 / XMind 互导，内容实时缓存',
-  },
-  {
     id: 'settings',
     name: '设置',
     icon: '⚙',

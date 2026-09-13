@@ -210,6 +210,26 @@ export type FetchTextResult = {
  * 浏览器模式下退化为原生 fetch —— 大多数源会因 CORS 失败，
  * 这时给明确提示，而不是静默返回空让人以为"确实没更新"。
  */
+/**
+ * 可选：Tauri 的 http 插件。
+ *
+ * Rust 端若未启用 tauri-plugin-http（当前仓库就没有，重构时删掉了），
+ * 这里会拿到 null，调用方降级到浏览器 fetch。
+ *
+ * 用变量而非字面量做动态 import：这样 Rollup 无法静态解析，
+ * 不会因为"包没装"而让整个构建失败（@vite-ignore 在 TS 转换后会被 esbuild 丢掉，靠不住）。
+ */
+async function loadTauriHttp(): Promise<null | ((url: string, init?: any) => Promise<Response>)> {
+  if (!isTauri()) return null;
+  try {
+    const spec = '@tauri-apps/plugin-http';
+    const mod: any = await import(/* @vite-ignore */ spec);
+    return typeof mod?.fetch === 'function' ? mod.fetch : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchText(url: string, opts: FetchTextOptions = {}): Promise<FetchTextResult> {
   const max = opts.maxBytes ?? 2_000_000;
   const timeoutMs = Math.max(1, opts.timeoutSec ?? 15) * 1000;
@@ -218,19 +238,23 @@ export async function fetchText(url: string, opts: FetchTextOptions = {}): Promi
     throw new Error('地址必须以 http:// 或 https:// 开头');
   }
 
-  if (isTauri()) {
-    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-    const res = await tauriFetch(url, {
-      method: 'GET',
-      headers: {
-        // B站接口对 UA 很敏感：不带浏览器 UA 大概率直接 -412
-        'User-Agent': UA,
-        ...(opts.headers ?? {}),
-      },
-      connectTimeout: timeoutMs,
-    });
-    const raw = await res.text();
-    return { ok: res.ok, status: res.status, text: raw.slice(0, max) };
+  const headers = {
+    // B站接口对 UA 很敏感：不带浏览器 UA 大概率直接 -412
+    'User-Agent': UA,
+    ...(opts.headers ?? {}),
+  };
+
+  // 1) Tauri http 插件（仅当 Rust 端启用了 tauri-plugin-http 且前端装了对应 npm 包）
+  const tauriFetch = await loadTauriHttp();
+  if (tauriFetch) {
+    try {
+      const res = await tauriFetch(url, { method: 'GET', headers, connectTimeout: timeoutMs });
+      const raw = await res.text();
+      return { ok: res.ok, status: res.status, text: raw.slice(0, max) };
+    } catch (err) {
+      // 插件在但请求失败（如 scope 未放行该域名）→ 交给下面的浏览器路径再试一次
+      console.warn('[agent-flow] Tauri http 请求失败，尝试浏览器 fetch：', err);
+    }
   }
 
   // 浏览器模式：尽力而为
@@ -247,7 +271,9 @@ export async function fetchText(url: string, opts: FetchTextOptions = {}): Promi
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `浏览器模式下抓取失败（${msg}）。多数订阅源不允许跨域，请用桌面端运行。`,
+      `抓取失败（${msg}）。` + (isTauri()
+        ? '当前外壳未启用 Tauri http 插件，请求走浏览器通道，受 CORS 与 CSP connect-src 限制；多数订阅源会被拒绝。'
+        : '浏览器模式下多数订阅源不允许跨域，请用桌面端运行。'),
     );
   } finally {
     clearTimeout(timer);

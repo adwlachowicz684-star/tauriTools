@@ -574,7 +574,7 @@ function LoopInspector({ node, edges, onChange }: {
               onChange={(e) => onChange(node.id, { source: e.target.value })}
             >
               <option value="">拼接全部上游</option>
-              <option value="input">全局输入 {{'{{input}}'}}</option>
+              <option value="input">全局输入 {'{{input}}'}</option>
               {upstream.map((u) => (
                 <option key={u} value={u}>{u}</option>
               ))}
