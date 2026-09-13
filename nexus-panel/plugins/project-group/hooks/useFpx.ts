@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNexus } from '../../../src/nexus-react';
-import { errText, makeApi, normalizeKey } from '../api';
+import { errText, makeApi } from '../api';
 import type {
   Bootstrap, CardKind, ContentItem, FpxConfig, LinkRow, Snapshot, TabInfo,
 } from '../types';
@@ -27,23 +27,6 @@ export function useFpx() {
   const [selProject, setSelProject] = useState<string | null>(null);
   const [selGroup, setSelGroup] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Record<CardKind, number>>({ project: 0, group: 0 });
-
-  /**
-   * 记住上次停留的页签：首次拿到 boot 时按配置恢复。
-   * 页签数可能因删除而变少，必须 clamp——否则恢复出的序号越界，界面会指向不存在的页签。
-   */
-  const tabRestored = useRef(false);
-  useEffect(() => {
-    if (!boot || tabRestored.current) return;
-    tabRestored.current = true;
-    const p = Math.min(boot.config.activeProjectTabIndex ?? 0,
-      Math.max(0, (boot.projectTabs?.length ?? 1) - 1));
-    const g = Math.min(boot.config.activeGroupTabIndex ?? 0,
-      Math.max(0, (boot.groupTabs?.length ?? 1) - 1));
-    if (p !== 0 || g !== 0) setActiveTab({ project: p, group: g });
-  }, [boot]);
-
-
 
   // 插件被 reload() 时组件会卸载再挂载，alive 必须重新置 true，否则新实例里所有 setBusy 都被吞掉
   const alive = useRef(true);
@@ -81,28 +64,6 @@ export function useFpx() {
   useEffect(() => {
     if (boot) configRef.current = boot.config;
   }, [boot]);
-
-  /**
-   * 切换页签时把序号写回配置。
-   * 用 ref 记上一次的值，避免因 boot 变化触发的重复 effect 反复写同一份数据。
-   */
-  const lastSavedTab = useRef<string>('');
-  useEffect(() => {
-    if (!boot) return;
-    const key = `${activeTab.project}|${activeTab.group}`;
-    if (key === lastSavedTab.current) return;
-    lastSavedTab.current = key;
-
-    // 静默保存：不走 updateConfig/run，否则每次切页签都会闪一下 busy 状态。
-    const base = configRef.current ?? boot.config;
-    const draft: FpxConfig = JSON.parse(JSON.stringify(base));
-    draft.activeProjectTabIndex = activeTab.project;
-    draft.activeGroupTabIndex = activeTab.group;
-    configRef.current = draft;
-    api.saveConfig(draft).then((snap) => {
-      if (snap) { configRef.current = snap.config; applySnapshot(snap); }
-    }).catch((e) => pushLog(`保存页签位置失败：${errText(e)}`, true));
-  }, [boot, activeTab, api, applySnapshot, pushLog]);
 
   const refresh = useCallback(async () => {
     const b = await run('加载', () => api.bootstrap());
@@ -323,42 +284,8 @@ export function useFpx() {
 
   useEffect(() => { scan(focusDir, contentKind); }, [focusDir, contentKind, scan]);
 
-  /* ---------------- 改名 / 清除无效项 ---------------- */
-
-  const renameFolder = useCallback(async (kind: CardKind, path: string, newName: string) => {
-    const r = await run('改名', () => api.renameFolder(kind, path, newName));
-    if (!r) return null;
-    applySnapshot(r.snapshot);
-    // 选中项要跟着改，否则改名后选中的还是旧路径，后续操作会打到不存在的目录上
-    if (kind === 'project') {
-      setSelProject((p) => (p && normalizeKey(p) === normalizeKey(path) ? r.newPath : p));
-    } else {
-      setSelGroup((p) => (p && normalizeKey(p) === normalizeKey(path) ? r.newPath : p));
-    }
-    const extra = r.recHits > 0 ? `，同步 ${r.recHits} 条链接记录` : '';
-    pushLog(`已改名为「${newName}」${extra}`);
-    return r;
-  }, [api, applySnapshot, pushLog, run]);
-
-  const clearInvalid = useCallback(async () => {
-    const r = await run('清除无效项', () => api.clearInvalid());
-    if (!r) return null;
-    applySnapshot(r.snapshot);
-    // 被清掉的可能正是当前选中项
-    const gone = new Set(r.removed.map((p) => normalizeKey(p)));
-    setSelProject((p) => (p && gone.has(normalizeKey(p)) ? null : p));
-    setSelGroup((p) => (p && gone.has(normalizeKey(p)) ? null : p));
-    if (r.tabHits === 0 && r.recHits === 0) {
-      pushLog('没有发现无效项');
-    } else {
-      pushLog(`已清除 ${r.tabHits} 个无效登记${r.recHits > 0 ? `、${r.recHits} 条失效链接记录` : ''}`);
-    }
-    return r;
-  }, [api, applySnapshot, pushLog, run]);
-
   return {
     ctx, api, boot, loading, busy, log, pushLog, run,
-    renameFolder, clearInvalid,
     selProject, setSelProject, selGroup, setSelGroup,
     activeTab, setActiveTab,
     content, contentKind, setContentKind, focusDir, scan,

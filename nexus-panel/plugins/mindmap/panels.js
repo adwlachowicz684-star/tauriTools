@@ -113,9 +113,7 @@ export function buildSide(app) {
       const r = app.api.selectedRef(kind);
       if (!r?.a) { app.api.status('该附件来自旧版路径，无法在沙箱内打开', true); return; }
       const asset = await io.getAsset(r.a);
-      if (!asset?.blob) { app.api.status('附件数据已丢失', true); return; }
-      // 下载走的是 blob，不需要 URL；getAsset 顺手建的那个必须释放掉
-      if (asset.url) URL.revokeObjectURL(asset.url);
+      if (!asset?.url) { app.api.status('附件数据已丢失', true); return; }
       io.downloadBlob(asset.name || r.n || '附件', asset.blob);
     };
 
@@ -376,20 +374,9 @@ export function buildSide(app) {
 
 /* =========================== 浮层 =========================== */
 
-/**
- * 通用浮层。
- * @param onClose 关闭时的清理钩子：点遮罩、点关闭按钮、外部调 close() 都会触发，
- *   用于释放 Blob URL 之类的一次性资源。
- */
-function dialog(title, children, onClose) {
+function dialog(title, ...children) {
   const mask = h('div.mm-mask', {});
-  let cleaned = false;
-  const close = () => {
-    if (cleaned) return;
-    cleaned = true;
-    mask.remove();
-    try { onClose?.(); } catch { /* 清理失败不该拦住关闭 */ }
-  };
+  const close = () => mask.remove();
   mask.appendChild(
     h('div.mm-dialog', {},
       h('h3', {}, title),
@@ -428,7 +415,7 @@ export function openThemeEditor(app, theme) {
     app.api.toast('主题已保存并应用', 'ok');
   };
 
-  const dlg = dialog(theme ? '编辑主题' : '新建主题', [
+  const dlg = dialog(theme ? '编辑主题' : '新建主题',
     h('div.mm-field', {}, h('span.mm-label', {}, '名称'), nameInput),
     h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
       ...rows.map(([label, key]) => {
@@ -452,20 +439,14 @@ export function openThemeEditor(app, theme) {
       }),
     ),
     h('div.mm-actions', {}, h('button.mm-btn.primary', { onclick: save }, '保存并应用')),
-  ]
   );
   return dlg;
 }
 
-/**
- * 视频播放浮层：直接用原生 <video controls>，进度条/音量/全屏由浏览器提供。
- * 关闭时释放 Blob URL —— getAsset() 每次调用都会新建一个，不释放就是内存泄漏
- * （反复点开附件会一直堆积）。
- */
+/** 视频播放浮层：直接用原生 <video controls>，进度条/音量/全屏由浏览器提供 */
 export function openVideo(app, asset) {
   const v = h('video.mm-video', { src: asset.url, controls: true, autoplay: true });
-  const release = () => { if (asset.url) URL.revokeObjectURL(asset.url); };
-  return dialog(`播放：${asset.name || '视频'}`, [v], release);
+  return dialog(`播放：${asset.name || '视频'}`, v);
 }
 
 /** 图片附件预览浮层（点节点图标时，图片比直接下载更直观） */
@@ -474,8 +455,7 @@ export function openPreview(app, asset) {
   const save = h('button.mm-btn', {
     onclick: () => io.downloadBlob(asset.name || '附件', asset.blob),
   }, '另存为');
-  const release = () => { if (asset.url) URL.revokeObjectURL(asset.url); };
-  return dialog(`预览：${asset.name || '附件'}`, [h('div', {}, img, h('div.mm-actions', {}, save))], release);
+  return dialog(`预览：${asset.name || '附件'}`, h('div', {}, img, h('div.mm-actions', {}, save)));
 }
 
 /** 历史快照列表 */
@@ -506,14 +486,13 @@ export async function openBackups(app) {
   };
   await render();
 
-  const dlg = dialog('历史快照', [
+  const dlg = dialog('历史快照',
     h('div.mm-hint', {}, `按时间倒序，最多保留 ${store.BACKUP_KEEP} 份。恢复会覆盖当前所有画布。`),
     box,
     h('div.mm-actions', {},
       h('button.mm-btn', { onclick: async () => { await app.api.backupNow(); await render(); } }, '立即备份'),
       h('button.mm-btn', { onclick: async () => { await store.clearBackups(); await render(); } }, '清空快照'),
     ),
-  ]
   );
   return dlg;
 }

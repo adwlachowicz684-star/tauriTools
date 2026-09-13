@@ -24,23 +24,14 @@ export interface HostHooks {
   onActive?: (id: string | null) => void;
   onNavigate?: (id: string) => void;
   onOpen?: (id: string) => void;
-  /** 插件注入的侧边栏条目发生变化 */
-  onSidebarItems?: (items: SidebarItem[]) => void;
   /** 当前插件是否提供了自己的设置面板（决定「⚙ 设置」按钮显隐） */
   onSettingsAvailable?: (has: boolean) => void;
   /** iframe 插件把外壳保留键（mod+r / mod+b / mod+,）转发回来执行 */
   onShellShortcut?: (combo: string) => void;
   /** 插件内部被 CSP 拦下的外链（跨域事件外壳收不到，靠插件转发） */
   onCspViolation?: (info: { blockedURI: string; directive: string; view?: string }, manifest?: PluginManifest) => void;
-}
-
-/** 插件注入到外壳侧边栏的条目 */
-export interface SidebarItem {
-  id: string;
-  pluginId: string;
-  label: string;
-  icon?: string;
-  event: string;
+  /** 插件往侧边栏注入的条目集合发生变化（增删时回调全量） */
+  onSidebarItems?: (items: Array<{ id: string; pluginId: string; label: string; icon?: string; event: string; [k: string]: unknown }>) => void;
 }
 
 export interface Bus {
@@ -57,7 +48,6 @@ export interface HostState {
 export interface Host {
   state: HostState;
   bus: Bus;
-  getSidebarItems(): SidebarItem[];
   mount(id: string): Promise<void>;
   unmount(): Promise<void>;
   /**
@@ -71,6 +61,10 @@ export interface Host {
   setBadge(id: string, n: number): void;
   readTheme(): Record<string, string>;
   getPlugins(): PluginManifest[];
+  /** 已注册的应用级快捷键：accel → { pluginId, event, label } */
+  getShortcuts(): Record<string, { pluginId: string; event: string; label?: string }>;
+  /** 插件注入到侧边栏的条目 */
+  getSidebarItems(): Array<{ id: string; pluginId: string; label: string; icon?: string; event: string; [k: string]: unknown }>;
   refresh(): Promise<PluginManifest[]>;
   removePlugin(id: string): void;
 }

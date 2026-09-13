@@ -1,5 +1,3 @@
-import type { NodeParam } from './engine/params';
-
 export type CliKind = 'traecli' | 'codebuddy';
 
 /** 节点运行状态机 */
@@ -10,23 +8,6 @@ export type NodeStatus =
   | 'success'
   | 'failed'
   | 'skipped';  // 上游失败导致跳过
-
-/** 文件参数的产出方式 */
-export type FileOutputMode = 'auto' | 'manual';
-
-/**
- * 文件参数配置。
- *
- * auto：从 CLI 输出文本里识别路径（尽力而为，可能识别不全或混入噪声）
- * manual：识别不准时改为手动指定，路径一行一个
- */
-export type TaskFileOutput = {
-  /** 关闭后不再产出文件字段 */
-  enabled: boolean;
-  mode: FileOutputMode;
-  /** manual 模式的路径列表，换行分隔 */
-  manualPaths: string;
-};
 
 export type TaskNodeData = {
   label: string;
@@ -40,27 +21,7 @@ export type TaskNodeData = {
   status: NodeStatus;
   output: string;
   error: string;
-
-  /* ---------- 输出参数（新增） ---------- */
-  /**
-   * 文件参数。把"改了哪些文件"暴露给下游：
-   * {{id.file}} {{id.files}} {{id.fileName}} 等。
-   * 省略时按默认值处理（启用 + 自动识别）。
-   */
-  fileOutput?: TaskFileOutput;
-  /** 自定义参数，下游用 {{id.参数名}} 引用 */
-  params?: NodeParam[];
-  /**
-   * 上次运行时识别到的文件（回写字段，不需要用户配置）。
-   * 存下来是为了让面板能显示上一次的结果，排查时不必重跑。
-   */
-  lastFiles?: string[];
 };
-
-/** 文件参数的默认配置 */
-export function defaultFileOutput(): TaskFileOutput {
-  return { enabled: true, mode: 'auto', manualPaths: '' };
-}
 
 export type Graph = {
   nodes: GraphNode[];
@@ -120,58 +81,10 @@ export type ConditionOp =
   | 'isEmpty'
   | 'always';       // 恒真，用作兜底/保底分支
 
-/**
- * 一条原子条件。
- *
- * 规则（ConditionRule）可以包含多条 ConditionItem，用 AND / OR 组合。
- * 拆成独立对象后，每条都能单独开关 —— 调试时临时停掉一条条件，
- * 比删掉再重建省事得多。
- */
-export type ConditionItem = {
-  id: string;
-  op: ConditionOp;
-  /** 比较值；nonEmpty / isEmpty / always 不需要 */
-  value: string;
-  /**
-   * 判定哪个来源的文本：
-   * - 某上游节点 id
-   * - 'input' 表示全局输入
-   * - 空字符串表示拼接全部上游输出
-   */
-  source: string;
-  /** 关闭后这条条件不参与组合。默认视为启用（undefined 即启用） */
-  enabled?: boolean;
-};
-
-/** 多条条件之间的组合方式 */
-export type ConditionLogic = 'and' | 'or';
-
-export const LOGIC_META: Record<ConditionLogic, {
-  label: string;
-  short: string;
-  hint: string;
-  color: string;
-}> = {
-  and: {
-    label: '同时满足',
-    short: 'AND',
-    hint: '所有启用的条件都为真，这条规则才命中',
-    color: '#06b6d4',
-  },
-  or: {
-    label: '任一满足',
-    short: 'OR',
-    hint: '任意一个启用的条件为真，这条规则就命中',
-    color: '#a855f7',
-  },
-};
-
 export type ConditionRule = {
   id: string;
   /** 界面上显示的分支名 */
   label: string;
-
-  /* ---------- 单条件字段（保证旧数据兼容） ---------- */
   op: ConditionOp;
   /** 比较值；nonEmpty / isEmpty / always 不需要 */
   value: string;
@@ -182,40 +95,7 @@ export type ConditionRule = {
    * - 空字符串表示拼接全部上游输出
    */
   source: string;
-
-  /* ---------- 多条件（新增） ---------- */
-  /**
-   * 多条条件。存在且非空时以此为准；否则回退到 op/value/source 单条件。
-   *
-   * 之所以不直接把 op/value/source 换成数组：老画布已经存了大量单条件规则，
-   * 迁移成本高于收益。归一化交给 ruleConditions() 处理。
-   */
-  conditions?: ConditionItem[];
-  /** 条件间的组合方式，默认 and */
-  logic?: ConditionLogic;
-  /**
-   * 规则开关。关闭后整条规则不参与判定（等同于不存在，会继续看下一条）。
-   * undefined 视为启用。
-   */
-  enabled?: boolean;
 };
-
-/**
- * 归一化取一条规则的条件列表。
- *
- * 无论数据是新版多条件还是老版单条件，都返回统一结构，
- * 判定与界面渲染都只认这个结果 —— 避免两处各写一套兼容逻辑而悄悄分叉。
- */
-export function ruleConditions(rule: ConditionRule): ConditionItem[] {
-  if (rule.conditions && rule.conditions.length > 0) return rule.conditions;
-  return [{
-    id: `${rule.id}:0`,
-    op: rule.op,
-    value: rule.value ?? '',
-    source: rule.source ?? '',
-    enabled: true,
-  }];
-}
 
 export type ConditionNodeData = {
   kind: 'condition';
@@ -238,90 +118,17 @@ export type NodeData =
   | FsNodeData
   | UpdateNodeData;
 
-/** 算子分类，用于面板里分组展示 */
-export type OpCategory = 'text' | 'empty' | 'flow';
-
-export const OP_CATEGORY_META: Record<OpCategory, { label: string; hint: string }> = {
-  text:  { label: '文本比对', hint: '拿一段文本和给定值做比较' },
-  empty: { label: '空值判断', hint: '只看文本是否为空，不需要比较值' },
-  flow:  { label: '流程控制', hint: '不比对内容，直接决定走向' },
+export const OP_META: Record<ConditionOp, { label: string; needsValue: boolean }> = {
+  contains:    { label: '包含',       needsValue: true },
+  notContains: { label: '不包含',     needsValue: true },
+  equals:      { label: '等于',       needsValue: true },
+  notEquals:   { label: '不等于',     needsValue: true },
+  startsWith:  { label: '开头是',     needsValue: true },
+  regex:       { label: '正则匹配',   needsValue: true },
+  nonEmpty:    { label: '非空',       needsValue: false },
+  isEmpty:     { label: '为空',       needsValue: false },
+  always:      { label: '总是',       needsValue: false },
 };
-
-/**
- * 算子元信息。
- *
- * hint 写的是"精确语义"而不是泛泛而谈 —— 好几个算子有反直觉行为
- * （比较值为空时 contains 恒为真、equals 会先 trim），
- * 这些必须在界面上告诉用户，否则配出来的规则和自己想的不一样。
- */
-export const OP_META: Record<ConditionOp, {
-  label: string;
-  needsValue: boolean;
-  /** 单字符/双字符图标，面板与节点卡片共用 */
-  icon: string;
-  /** 精确语义，hover 与说明区显示 */
-  hint: string;
-  /** 展示用示例，形如「输出 包含 "error"」 */
-  example: string;
-  category: OpCategory;
-  /** 算子配色，随分类走 */
-  color: string;
-}> = {
-  contains: {
-    label: '包含', needsValue: true, icon: '⊇', category: 'text', color: '#4c8dff',
-    hint: '文本中能找到这个值即命中。注意：比较值留空时恒为真',
-    example: '输出 包含 "error"',
-  },
-  notContains: {
-    label: '不包含', needsValue: true, icon: '⊉', category: 'text', color: '#4c8dff',
-    hint: '文本中找不到这个值才命中。注意：比较值留空时恒为真',
-    example: '输出 不包含 "警告"',
-  },
-  equals: {
-    label: '等于', needsValue: true, icon: '=', category: 'text', color: '#06b6d4',
-    hint: '两端都去掉首尾空格后完全相同，区分大小写',
-    example: '输出 等于 "true"',
-  },
-  notEquals: {
-    label: '不等于', needsValue: true, icon: '≠', category: 'text', color: '#06b6d4',
-    hint: '去掉首尾空格后不相同，区分大小写',
-    example: '输出 不等于 "false"',
-  },
-  startsWith: {
-    label: '开头是', needsValue: true, icon: '↦', category: 'text', color: '#818cf8',
-    hint: '文本开头（已去首部空格）等于该值，区分大小写',
-    example: '输出 开头是 "OK"',
-  },
-  regex: {
-    label: '正则匹配', needsValue: true, icon: '.*', category: 'text', color: '#a855f7',
-    hint: '用 JS 正则匹配，如 ^err.*。正则写错只会跳过这条规则，不会中断流程',
-    example: '输出 匹配正则 "^ERR\d+"',
-  },
-  nonEmpty: {
-    label: '非空', needsValue: false, icon: '●', category: 'empty', color: '#f59e0b',
-    hint: '文本去掉首尾空格后仍有内容',
-    example: '输出 非空',
-  },
-  isEmpty: {
-    label: '为空', needsValue: false, icon: '○', category: 'empty', color: '#f59e0b',
-    hint: '文本为空，或只有空格换行',
-    example: '输出 为空',
-  },
-  always: {
-    label: '总是', needsValue: false, icon: '✓', category: 'flow', color: '#22c55e',
-    hint: '无条件命中。放在最后一条可当作兜底，或用于强制走某分支',
-    example: '总是走这条分支',
-  },
-};
-
-/** 按分类列出算子，供面板分组渲染 */
-export function opsByCategory(): Array<{ category: OpCategory; ops: ConditionOp[] }> {
-  const all = Object.keys(OP_META) as ConditionOp[];
-  return (Object.keys(OP_CATEGORY_META) as OpCategory[]).map((c) => ({
-    category: c,
-    ops: all.filter((op) => OP_META[op].category === c),
-  }));
-}
 
 let ruleSeq = 0;
 
@@ -333,24 +140,6 @@ export function makeRule(partial: Partial<ConditionRule> = {}): ConditionRule {
     op: partial.op ?? 'contains',
     value: partial.value ?? '',
     source: partial.source ?? '',
-    // 不默认生成 conditions：单条件就够用时保持数据最简，
-    // 需要多条件时由 UI 调 addCondition() 展开
-    conditions: partial.conditions,
-    logic: partial.logic ?? 'and',
-    enabled: partial.enabled ?? true,
-  };
-}
-
-/** 新建一条原子条件 */
-let condSeq = 0;
-export function makeCondition(partial: Partial<ConditionItem> = {}): ConditionItem {
-  condSeq += 1;
-  return {
-    id: partial.id ?? `c${condSeq}_${Date.now().toString(36)}`,
-    op: partial.op ?? 'contains',
-    value: partial.value ?? '',
-    source: partial.source ?? '',
-    enabled: partial.enabled ?? true,
   };
 }
 

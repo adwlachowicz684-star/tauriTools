@@ -3,10 +3,7 @@ import {
   CLI_META, TRIGGER_META, DEFAULT_BRANCH, OP_META, triggerKindsOf,
   makeRule, makeParallelRule,
   isCondition, isTrigger, isParallel, isLoop, isFs, isUpdate, UPDATE_SOURCE_META,
-  opsByCategory, OP_CATEGORY_META, LOGIC_META, makeCondition, ruleConditions,
-  type ConditionItem, type ConditionLogic,
-  LOOP_MODE_META, FS_OP_META, MAX_LOOP_ITERATIONS, defaultFileOutput,
-  type TaskFileOutput,
+  LOOP_MODE_META, FS_OP_META, MAX_LOOP_ITERATIONS,
   type CliKind, type ConditionOp, type ConditionNodeData,
   type TriggerKind, type TriggerConfig, type TriggerNodeData,
   type ParallelMode, type ParallelNodeData, type TaskNodeData,
@@ -15,17 +12,7 @@ import {
   type UpdateNodeData, type BiliMode,
 } from '../types';
 import { fetchText } from '../lib/tauri';
-import {
-  validateRule, validateCondition, simulateCondition, describeRuleExpression,
-} from '../engine/condition';
 import { parseFeed, parseBiliApi, detectUpdate, sortByNewest, extractBiliUid, biliApiUrl, BILI_REFERER } from '../engine/updates';
-import {
-  extractFileRefs, parseManualPaths, buildFileFields, FILE_FIELD_NAMES, FILE_FIELD_HINT,
-} from '../engine/files';
-import {
-  PARAM_SOURCE_META, resolveParam, validateParam, validateParams, makeParam,
-  type ParamSource, type NodeParam,
-} from '../engine/params';
 import type { FlowEdge, FlowNode } from '../flowTypes';
 
 type Props = {
@@ -111,41 +98,6 @@ export default function Inspector({ node, edges, onChange }: Props) {
           ))}
           <button className="chip" onClick={() => insert('{{input}}')}>{'{{input}}'}</button>
         </div>
-        {upstream.length > 0 && (
-          <div className="var-bar">
-            <small>上游文件（改了哪些）：</small>
-            {upstream.map((u) => (
-              <button
-                key={`${u}-file`}
-                className="chip file"
-                title={FILE_FIELD_HINT.file}
-                onClick={() => insert(`{{${u}.file}}`)}
-              >
-                {`{{${u}.file}}`}
-              </button>
-            ))}
-            {upstream.map((u) => (
-              <button
-                key={`${u}-files`}
-                className="chip file"
-                title={FILE_FIELD_HINT.files}
-                onClick={() => insert(`{{${u}.files}}`)}
-              >
-                {`{{${u}.files}}`}
-              </button>
-            ))}
-            {upstream.map((u) => (
-              <button
-                key={`${u}-fn`}
-                className="chip file"
-                title={FILE_FIELD_HINT.fileName}
-                onClick={() => insert(`{{${u}.fileName}}`)}
-              >
-                {`{{${u}.fileName}}`}
-              </button>
-            ))}
-          </div>
-        )}
         <textarea
           rows={10}
           value={d.prompt}
@@ -169,248 +121,12 @@ export default function Inspector({ node, edges, onChange }: Props) {
         <span>自动批准工具调用（-y）</span>
       </label>
 
-      <FileParamsPanel node={node} onChange={onChange} />
-
       <div className="field">
         <span>运行输出</span>
         <pre className="out">{d.output || '（尚未运行）'}</pre>
         {d.error && <pre className="out err">{d.error}</pre>}
       </div>
     </aside>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-
-/**
- * 任务节点的「输出参数」面板。
- *
- * 独立成组件是因为它有两块内容（文件参数 + 自定义参数），
- * 塞进上面的主面板会让那个函数长到看不清结构。
- */
-function FileParamsPanel({ node, onChange }: {
-  node: FlowNode;
-  onChange: (id: string, patch: Record<string, unknown>) => void;
-}) {
-  const d = node.data as TaskNodeData;
-  const cfg = d.fileOutput ?? defaultFileOutput();
-  const params = d.params ?? [];
-
-  const patchCfg = (patch: Partial<TaskFileOutput>) =>
-    onChange(node.id, { fileOutput: { ...cfg, ...patch } });
-
-  const patchParams = (next: NodeParam[]) => onChange(node.id, { params: next });
-
-  /* 预览：用上次输出模拟一次识别，让用户立刻看到效果 */
-  const previewRefs = cfg.mode === 'manual'
-    ? parseManualPaths(cfg.manualPaths, d.workdir)
-    : extractFileRefs(d.output, d.workdir);
-  const previewFields = buildFileFields(previewRefs);
-  const showPreview = cfg.enabled && (cfg.mode === 'manual' || d.output);
-
-  const paramIssues = validateParams(params);
-
-  return (
-    <>
-      {/* ---------- 文件参数 ---------- */}
-      <div className="field">
-        <div className="field-head">
-          <span>输出参数 · 文件</span>
-          <label className="rule-toggle" title={cfg.enabled ? '停用后下游拿不到文件字段' : '已停用'}>
-            <input
-              type="checkbox"
-              checked={cfg.enabled}
-              onChange={(e) => patchCfg({ enabled: e.target.checked })}
-            />
-          </label>
-        </div>
-        <small className="dim">
-          把「改了哪些文件」传给下游：{FILE_FIELD_NAMES.map((f) => `{{${node.id}.${f}}}`).slice(0, 3).join(' ')} …
-        </small>
-
-        {cfg.enabled && (
-          <>
-            <div className="cond-logic-switch">
-              <small className="dim">来源</small>
-              <button
-                type="button"
-                className={'cond-logic-btn' + (cfg.mode === 'auto' ? ' on' : '')}
-                style={cfg.mode === 'auto' ? { borderColor: '#06b6d4', color: '#06b6d4' } : undefined}
-                title="从 CLI 输出里自动识别路径（尽力而为）"
-                onClick={() => patchCfg({ mode: 'auto' })}
-              >
-                自动识别
-              </button>
-              <button
-                type="button"
-                className={'cond-logic-btn' + (cfg.mode === 'manual' ? ' on' : '')}
-                style={cfg.mode === 'manual' ? { borderColor: '#a855f7', color: '#a855f7' } : undefined}
-                title="识别不准时改为手动指定，一行一个路径"
-                onClick={() => patchCfg({ mode: 'manual' })}
-              >
-                手动指定
-              </button>
-            </div>
-
-            {cfg.mode === 'manual' ? (
-              <textarea
-                className="cond-sample"
-                rows={3}
-                value={cfg.manualPaths}
-                placeholder={'src/a.ts
-src/b.ts'}
-                onChange={(e) => patchCfg({ manualPaths: e.target.value })}
-              />
-            ) : (
-              <div className="cond-hint">
-                从本节点的 CLI 输出里识别路径（含斜杠 + 已知扩展名）。识别不准时切「手动指定」
-              </div>
-            )}
-
-            {showPreview && (
-              <div className="file-preview">
-                <div className="file-preview-head">
-                  识别结果（{previewRefs.length}）
-                </div>
-                {previewRefs.length === 0 && <div className="dim">没有识别到文件路径</div>}
-                {previewRefs.slice(0, 8).map((r) => (
-                  <div key={r.abs} className="file-preview-item" title={r.raw}>
-                    <span className="file-preview-name">{r.name}</span>
-                    <span className="file-preview-path">{r.abs}</span>
-                  </div>
-                ))}
-                {previewRefs.length > 8 && (
-                  <div className="dim">…还有 {previewRefs.length - 8} 个</div>
-                )}
-                {previewRefs.length > 0 && (
-                  <div className="file-preview-fields">
-                    {`{{${node.id}.file}}`} = {previewFields.file || '（空）'}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {d.lastFiles && d.lastFiles.length > 0 && cfg.mode === 'auto' && (
-              <div className="cond-hint">上次运行识别到 {d.lastFiles.length} 个文件</div>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* ---------- 自定义参数 ---------- */}
-      <div className="field">
-        <span>自定义参数（可选）</span>
-        <small className="dim">
-          给输出里的某个值起个名字，下游用 {'{{节点id.参数名}}'} 引用
-        </small>
-
-        {params.length === 0 && <div className="dim">还没有参数，点下面按钮添加</div>}
-
-        {params.map((p, i) => {
-          const meta = PARAM_SOURCE_META[p.source];
-          const issues = validateParam(p);
-          const on = p.enabled !== false;
-          return (
-            <div key={p.id} className={'param-card' + (on ? '' : ' off')}>
-              <div className="rule-row">
-                <span className="rule-idx">{i + 1}</span>
-                <input
-                  className="rule-label"
-                  value={p.name}
-                  placeholder="参数名"
-                  onChange={(e) => patchParams(params.map((x) => (x.id === p.id ? { ...x, name: e.target.value } : x)))}
-                />
-                <label className="rule-toggle" title={on ? '停用这个参数' : '启用'}>
-                  <input
-                    type="checkbox"
-                    checked={on}
-                    onChange={(e) => patchParams(params.map((x) => (x.id === p.id ? { ...x, enabled: e.target.checked } : x)))}
-                  />
-                </label>
-                <button
-                  className="mini danger"
-                  onClick={() => patchParams(params.filter((x) => x.id !== p.id))}
-                >
-                  删
-                </button>
-              </div>
-
-              <div className="param-row">
-                <select
-                  value={p.source}
-                  onChange={(e) => patchParams(params.map((x) => (x.id === p.id ? { ...x, source: e.target.value as ParamSource } : x)))}
-                  title={meta.hint}
-                >
-                  {(Object.keys(PARAM_SOURCE_META) as ParamSource[]).map((k) => (
-                    <option key={k} value={k}>{PARAM_SOURCE_META[k].label}</option>
-                  ))}
-                </select>
-                {meta.needs === 'pattern' && (
-                  <input
-                    className="rule-value mono"
-                    value={p.pattern ?? ''}
-                    placeholder="正则，含捕获组时取第一个组"
-                    onChange={(e) => patchParams(params.map((x) => (x.id === p.id ? { ...x, pattern: e.target.value } : x)))}
-                  />
-                )}
-                {meta.needs === 'value' && (
-                  <input
-                    className="rule-value"
-                    value={p.value ?? ''}
-                    placeholder="固定值"
-                    onChange={(e) => patchParams(params.map((x) => (x.id === p.id ? { ...x, value: e.target.value } : x)))}
-                  />
-                )}
-              </div>
-
-              {p.source !== 'manual' && (
-                <div className="param-row">
-                  <small className="dim">取第几个</small>
-                  <input
-                    className="param-index"
-                    type="number"
-                    min={0}
-                    value={p.index ?? 0}
-                    title="0 或不填 = 全部（换行分隔）"
-                    onChange={(e) => patchParams(params.map((x) => (x.id === p.id ? { ...x, index: Number(e.target.value) || 0 } : x)))}
-                  />
-                  <small className="dim">（0 = 全部）</small>
-                </div>
-              )}
-
-              <div className="cond-hint">{meta.hint}</div>
-
-              {/* 预览：用上次输出算一遍，能立刻看出配得对不对 */}
-              {p.source === 'regex' && d.output && (
-                <div className="param-preview">
-                  当前输出下取到：
-                  <code>
-                    {resolveParam(p, { output: d.output, refs: previewRefs }) || '（空）'}
-                  </code>
-                </div>
-              )}
-
-              {issues.map((it, k) => (
-                <div key={k} className={'cond-issue ' + it.level}>{it.message}</div>
-              ))}
-            </div>
-          );
-        })}
-
-        <button className="kind-btn" onClick={() => patchParams([...params, makeParam()])}>
-          + 添加参数
-        </button>
-
-        {paramIssues.length > 0 && (
-          <div className="cond-issues">
-            <div className="cond-issues-title">配置提示</div>
-            {paramIssues.map((it, k) => (
-              <div key={k} className={'cond-issue ' + it.level}>{it.message}</div>
-            ))}
-          </div>
-        )}
-      </div>
-    </>
   );
 }
 
@@ -425,31 +141,10 @@ function ConditionInspector({ node, edges, onChange }: {
   const rules = d.rules ?? [];
   const upstream = edges.filter((e) => e.target === node.id).map((e) => e.source);
 
-  /** 试跑用的示例文本 */
-  const [sample, setSample] = useState('');
-
   const patchRules = (next: typeof rules) => onChange(node.id, { rules: next });
 
-  const updateRule = (rid: string, patch: Partial<ConditionRule>) =>
+  const updateRule = (rid: string, patch: Partial<(typeof rules)[number]>) =>
     patchRules(rules.map((r) => (r.id === rid ? { ...r, ...patch } : r)));
-
-  /**
-   * 写回某条规则的条件列表。
-   *
-   * 单条件时同步回 op/value/source —— 老版本读取路径（节点卡片摘要、
-   * 悬空引用检测）只看这三个字段，不同步的话摘要会和实际判定不一致。
-   */
-  const writeConditions = (rid: string, conds: ConditionItem[]) => {
-    const rule = rules.find((r) => r.id === rid);
-    if (!rule) return;
-    const first = conds[0];
-    updateRule(rid, {
-      conditions: conds,
-      op: first?.op ?? rule.op,
-      value: first?.value ?? '',
-      source: first?.source ?? '',
-    });
-  };
 
   const addRule = () => {
     const n = rules.length + 1;
@@ -466,45 +161,6 @@ function ConditionInspector({ node, edges, onChange }: {
     patchRules(next);
   };
 
-  /* ---------- 子条件增删改 ---------- */
-
-  const addCondition = (rid: string) => {
-    const rule = rules.find((r) => r.id === rid);
-    if (!rule) return;
-    const cur = ruleConditions(rule);
-    // 新条件继承第一条的来源，省得每条都重选
-    writeConditions(rid, [...cur, makeCondition({ source: cur[0]?.source ?? '' })]);
-  };
-
-  const updateCondition = (rid: string, cid: string, patch: Partial<ConditionItem>) => {
-    const rule = rules.find((r) => r.id === rid);
-    if (!rule) return;
-    writeConditions(rid, ruleConditions(rule).map((c) => (c.id === cid ? { ...c, ...patch } : c)));
-  };
-
-  const removeCondition = (rid: string, cid: string) => {
-    const rule = rules.find((r) => r.id === rid);
-    if (!rule) return;
-    const next = ruleConditions(rule).filter((c) => c.id !== cid);
-    // 至少保留一条：全部删光后规则语义不明（空条件返回 false 会让人困惑）
-    writeConditions(rid, next.length > 0 ? next : [makeCondition({ source: rule.source })]);
-  };
-
-  const issues = validateCondition(d);
-  const sim = sample ? simulateCondition(d, sample) : null;
-
-  /** 试跑结果：规则 id → 命中状态 */
-  const statusOf = (rid: string): boolean | null | undefined => {
-    if (!sim) return undefined;
-    const hit = sim.results.find((r) => r.ruleId === rid);
-    if (!hit) return undefined;
-    // 命中即停：第一条 true 之后的规则不再参与
-    const firstTrue = sim.results.findIndex((r) => r.matched === true);
-    const idx = sim.results.indexOf(hit);
-    if (firstTrue >= 0 && idx > firstTrue) return undefined;
-    return hit.matched;
-  };
-
   return (
     <aside className="inspector">
       <label className="field">
@@ -512,55 +168,14 @@ function ConditionInspector({ node, edges, onChange }: {
         <input value={d.label} onChange={(e) => onChange(node.id, { label: e.target.value })} />
       </label>
 
-      {/* ---------- 可视化试跑 ---------- */}
       <div className="field">
-        <span>试跑（可选）</span>
-        <textarea
-          className="cond-sample"
-          rows={3}
-          value={sample}
-          placeholder="粘一段示例文本进来，立刻看到会命中哪条分支"
-          onChange={(e) => setSample(e.target.value)}
-        />
-        {sim && (
-          <div className="cond-sim">
-            会走：
-            <strong className={sim.branchId === DEFAULT_BRANCH ? 'warn' : (sim.branchId ? 'ok' : 'bad')}>
-              {sim.branchLabel}
-            </strong>
-            {sim.branchId === null && <span className="dim">（下游全部跳过）</span>}
-          </div>
-        )}
-        <small className="dim">
-          用这段文本逐条试算子，不改变任何配置。规则卡片上会标出命中 / 未命中
-        </small>
-      </div>
-
-      {/* ---------- 规则列表 ---------- */}
-      <div className="field">
-        <span>判定规则（从上到下，命中第一条即停止）</span>
+        <span>判定规则（从上到下，命中第一条即走该分支）</span>
         {rules.length === 0 && <div className="dim">还没有规则，点下面按钮添加</div>}
 
         {rules.map((r, i) => {
-          const conds = ruleConditions(r);
-          const multi = conds.length > 1;
-          const expr = describeRuleExpression(r);
-          const ruleIssues = validateRule(r);
-          const st = statusOf(r.id);
-          const ruleOn = r.enabled !== false;
-
+          const needsValue = OP_META[r.op]?.needsValue ?? true;
           return (
-            <div
-              key={r.id}
-              className={
-                'rule-card' +
-                (st === true ? ' hit' : '') +
-                (st === false ? ' miss' : '') +
-                (st === null ? ' broken' : '') +
-                (ruleOn ? '' : ' off')
-              }
-            >
-              {/* 头：序号 + 分支名 + 开关 + 上下移动 + 删除 */}
+            <div key={r.id} className="rule-card">
               <div className="rule-row">
                 <span className="rule-idx">{i + 1}</span>
                 <input
@@ -569,152 +184,33 @@ function ConditionInspector({ node, edges, onChange }: {
                   placeholder="分支名"
                   onChange={(e) => updateRule(r.id, { label: e.target.value })}
                 />
-                <label className="rule-toggle" title={ruleOn ? '点一下停用这条规则' : '这条规则已停用'}>
-                  <input
-                    type="checkbox"
-                    checked={ruleOn}
-                    onChange={(e) => updateRule(r.id, { enabled: e.target.checked })}
-                  />
-                </label>
-                {st === true && <span className="rule-flag hit" title="这条命中">命中</span>}
-                {st === false && <span className="rule-flag miss" title="未命中">未中</span>}
-                {st === null && <span className="rule-flag broken" title="配置有误，运行时跳过">跳过</span>}
-                <button className="mini" onClick={() => moveRule(i, -1)} disabled={i === 0} title="上移（越靠前越优先）">↑</button>
-                <button className="mini" onClick={() => moveRule(i, 1)} disabled={i === rules.length - 1} title="下移">↓</button>
+                <button className="mini" onClick={() => moveRule(i, -1)} disabled={i === 0}>↑</button>
+                <button className="mini" onClick={() => moveRule(i, 1)} disabled={i === rules.length - 1}>↓</button>
                 <button className="mini danger" onClick={() => removeRule(r.id)}>删</button>
               </div>
 
-              {/* 表达式预览：条件 ... AND/OR 条件 */}
-              <div className="cond-expr">
-                {expr.parts.map((p, k) => (
-                  <span key={p.id} className="cond-expr-item">
-                    {k > 0 && (
-                      <span
-                        className="cond-logic"
-                        style={{ borderColor: expr.logicColor, color: expr.logicColor }}
-                        title={`${expr.logicLabel}：${LOGIC_META[expr.logic].hint}`}
-                      >
-                        {expr.logic === 'or' ? '或' : '且'}
-                      </span>
-                    )}
-                    <span className={'cond-chip src' + (p.enabled ? '' : ' off')}>{p.sourceText}</span>
-                    <span
-                      className={'cond-op-badge' + (p.enabled ? '' : ' off')}
-                      style={p.enabled ? { borderColor: p.opColor, color: p.opColor } : undefined}
-                    >
-                      <span className="cond-op-badge-icon">{p.opIcon}</span>
-                      {p.opLabel}
-                    </span>
-                    {p.valueText !== null && (
-                      <span className={'cond-chip val' + (p.valueText ? '' : ' empty') + (p.enabled ? '' : ' off')}>
-                        {p.valueText ? `「${p.valueText}」` : '（未填）'}
-                      </span>
-                    )}
-                  </span>
-                ))}
+              <div className="rule-row">
+                <select value={r.op} onChange={(e) => updateRule(r.id, { op: e.target.value as ConditionOp })}>
+                  {OPS.map((op) => <option key={op} value={op}>{OP_META[op].label}</option>)}
+                </select>
+                {needsValue && (
+                  <input
+                    className="rule-value"
+                    value={r.value}
+                    placeholder="比较值"
+                    onChange={(e) => updateRule(r.id, { value: e.target.value })}
+                  />
+                )}
               </div>
 
-              {/* 多条件时的 AND / OR 切换 */}
-              {multi && (
-                <div className="cond-logic-switch">
-                  <small className="dim">组合方式</small>
-                  {(Object.keys(LOGIC_META) as ConditionLogic[]).map((lg) => {
-                    const m = LOGIC_META[lg];
-                    const on = expr.logic === lg;
-                    return (
-                      <button
-                        key={lg}
-                        type="button"
-                        className={'cond-logic-btn' + (on ? ' on' : '')}
-                        style={on ? { borderColor: m.color, color: m.color, background: `${m.color}1f` } : undefined}
-                        title={m.hint}
-                        onClick={() => updateRule(r.id, { logic: lg })}
-                      >
-                        {m.short} · {m.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* ---------- 条件列表 ---------- */}
-              <div className="cond-list">
-                {conds.map((c, k) => {
-                  const meta = OP_META[c.op];
-                  const needsValue = meta.needsValue;
-                  const on = c.enabled !== false;
-                  return (
-                    <div key={c.id} className={'cond-item' + (on ? '' : ' off')}>
-                      <div className="cond-item-head">
-                        <span className="cond-item-idx">{k + 1}</span>
-                        <label className="rule-toggle" title={on ? '停用这条条件' : '启用这条条件'}>
-                          <input
-                            type="checkbox"
-                            checked={on}
-                            onChange={(e) => updateCondition(r.id, c.id, { enabled: e.target.checked })}
-                          />
-                        </label>
-                        <select
-                          className="cond-op-select"
-                          value={c.op}
-                          onChange={(e) => updateCondition(r.id, c.id, { op: e.target.value as ConditionOp })}
-                          title={meta.hint}
-                        >
-                          {opsByCategory().map(({ category, ops }) => (
-                            <optgroup key={category} label={OP_CATEGORY_META[category].label}>
-                              {ops.map((op) => (
-                                <option key={op} value={op}>
-                                  {OP_META[op].icon} {OP_META[op].label}
-                                </option>
-                              ))}
-                            </optgroup>
-                          ))}
-                        </select>
-                        <button
-                          className="mini danger"
-                          onClick={() => removeCondition(r.id, c.id)}
-                          disabled={conds.length <= 1}
-                          title={conds.length <= 1 ? '至少保留一条条件' : '删除这条条件'}
-                        >
-                          删
-                        </button>
-                      </div>
-
-                      <div className="cond-item-body">
-                        {needsValue && (
-                          <input
-                            className="rule-value"
-                            value={c.value}
-                            placeholder={meta.example}
-                            onChange={(e) => updateCondition(r.id, c.id, { value: e.target.value })}
-                          />
-                        )}
-                        <select
-                          className="cond-src-select"
-                          value={c.source}
-                          onChange={(e) => updateCondition(r.id, c.id, { source: e.target.value })}
-                          title="判定哪段文本"
-                        >
-                          <option value="">全部上游输出</option>
-                          <option value="input">全局输入</option>
-                          {upstream.map((u) => <option key={u} value={u}>节点 {u}</option>)}
-                        </select>
-                      </div>
-
-                      <div className="cond-hint">{meta.hint}</div>
-                    </div>
-                  );
-                })}
-
-                <button className="cond-add" onClick={() => addCondition(r.id)}>
-                  + 添加条件（{multi ? LOGIC_META[expr.logic].label : '可组合多个条件'}）
-                </button>
+              <div className="rule-row">
+                <small className="dim">判定来源</small>
+                <select value={r.source} onChange={(e) => updateRule(r.id, { source: e.target.value })}>
+                  <option value="">全部上游输出（拼接）</option>
+                  <option value="input">全局输入 {'{{input}}'}</option>
+                  {upstream.map((u) => <option key={u} value={u}>节点 {u} 的输出</option>)}
+                </select>
               </div>
-
-              {/* 配置问题 */}
-              {ruleIssues.map((it, k) => (
-                <div key={k} className={'cond-issue ' + it.level}>{it.message}</div>
-              ))}
             </div>
           );
         })}
@@ -731,18 +227,8 @@ function ConditionInspector({ node, edges, onChange }: {
         <span>启用兜底分支（所有规则都未命中时走 {DEFAULT_BRANCH}）</span>
       </label>
 
-      {/* ---------- 整体体检 ---------- */}
-      {issues.length > 0 && (
-        <div className="cond-issues">
-          <div className="cond-issues-title">配置提示</div>
-          {issues.map((it, k) => (
-            <div key={k} className={'cond-issue ' + it.level}>{it.message}</div>
-          ))}
-        </div>
-      )}
-
       <div className="field">
-        <span>上次判定结果</span>
+        <span>判定结果</span>
         <pre className="out">{d.output || '（尚未运行）'}</pre>
         {d.error && <pre className="out err">{d.error}</pre>}
       </div>
@@ -750,10 +236,6 @@ function ConditionInspector({ node, edges, onChange }: {
       <div className="tip">
         条件节点不调用 CLI、不消耗积分。把各分支的连线接到节点右侧对应的出口上：
         每条规则对应一个出口，兜底单独一个出口。
-        <div style={{ marginTop: 6 }}>
-          一条规则可含多条条件，用「且 / 或」组合；条件可单独开关，
-          临时停一条比删了重建省事。
-        </div>
       </div>
     </aside>
   );

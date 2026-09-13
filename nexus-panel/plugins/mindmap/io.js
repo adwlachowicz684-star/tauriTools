@@ -83,9 +83,7 @@ export async function loadAssetBytes(refJson) {
   const rec = await store.get('asset:' + r.a, null);
   if (!rec?.blob) return null;
   try {
-    // 走 readBytes：Blob.arrayBuffer 在部分环境缺失，那里已备好 FileReader 回退。
-    // 直接调 blob.arrayBuffer() 会抛错并被吞成 null，导出时附件就静默丢了。
-    return new Uint8Array(await readBytes(rec.blob));
+    return new Uint8Array(await rec.blob.arrayBuffer());
   } catch {
     return null;
   }
@@ -161,13 +159,9 @@ export function saveText(filename, text, mime = 'text/plain;charset=utf-8') {
 
 /** base64 dataUrl（PNG 导出用）→ Blob */
 export function dataUrlToBlob(dataUrl) {
-  const s = String(dataUrl || '');
-  const comma = s.indexOf(',');
-  // 不是合法 dataUrl（比如编辑器导出失败返回空串）时 indexOf 给 -1，
-  // 后面 slice(0, -1) 会静默产出一段垃圾而不报错。这里显式拦掉。
-  if (comma < 0) return new Blob([], { type: 'application/octet-stream' });
-  const meta = s.slice(0, comma);
-  const b64 = s.slice(comma + 1);
+  const comma = String(dataUrl).indexOf(',');
+  const meta = String(dataUrl).slice(0, comma);
+  const b64 = String(dataUrl).slice(comma + 1);
   const isBase64 = meta.indexOf(';base64') >= 0;
   const mime = (meta.match(/data:([^;]*)/) || [, 'application/octet-stream'])[1];
   if (!isBase64) return new Blob([decodeURIComponent(b64)], { type: mime });

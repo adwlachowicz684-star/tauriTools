@@ -516,17 +516,6 @@ export default function App() {
         n.id === e.id
           ? ({ ...n, data: { ...n.data, status: e.ok ? 'success' : 'failed', output: e.output, error: e.error ?? '' } } as FlowNode)
           : n));
-    } else if (e.type === 'node-fields') {
-      /*
-        把识别到的文件写回节点并持久化。
-        这样即使不运行，打开面板也能看到"上次改了哪些文件"，
-        排查问题时不必重跑一遍。
-      */
-      setNodes((ns) => ns.map((n) =>
-        (n.id === e.id ? { ...n, data: { ...n.data, lastFiles: e.files } } as FlowNode : n)));
-      if (e.files.length > 0) {
-        pushLog(`📎 ${e.id} 识别到 ${e.files.length} 个文件：${e.files.slice(0, 3).join(', ')}${e.files.length > 3 ? ' …' : ''}`);
-      }
     } else if (e.type === 'layer-start') {
       pushLog(`第 ${e.layer + 1}/${e.total} 层开始：${e.ids.join(', ')}`);
     } else if (e.type === 'update-checked') {

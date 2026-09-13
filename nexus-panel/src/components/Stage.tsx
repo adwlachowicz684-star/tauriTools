@@ -9,8 +9,9 @@ import { forwardRef } from 'react';
 const Stage = forwardRef<HTMLDivElement, {
   title: string;
   subtitle: string;
-  hasSettings: boolean;
-  onOpenSettings: () => void;
+  /** 可选：老调用方可能还没接上插件设置面板 */
+  hasSettings?: boolean;
+  onOpenSettings?: () => void;
   onReload: () => void;
 }>(({ title, subtitle, hasSettings, onOpenSettings, onReload }, ref) => (
   <main id="main">

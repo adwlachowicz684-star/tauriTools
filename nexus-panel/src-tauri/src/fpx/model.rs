@@ -41,12 +41,6 @@ pub struct FpxConfig {
     /// 项目组页签。
     #[serde(default)]
     pub group_tabs: Vec<TabItem>,
-    /// 上次停留的项目页签序号（原版 `activeProjectTabIndex`），进插件时恢复。
-    #[serde(default)]
-    pub active_project_tab_index: usize,
-    /// 上次停留的项目组页签序号（原版 `activeGroupTabIndex`）。
-    #[serde(default)]
-    pub active_group_tab_index: usize,
     /// agent 链接名开关：目录名 → 是否启用（缺失视为开启）。
     #[serde(default)]
     pub link_agents: HashMap<String, bool>,
@@ -137,10 +131,6 @@ pub struct FpxConfig {
     /// MCP 服务总开关：false 时即使已启动也拒绝请求。
     #[serde(default = "default_true")]
     pub mcp_enabled: bool,
-    /// 退出软件时一并关闭 MCP 后台进程（原版 `closeMcpOnExit`）。
-    /// 进程启停本身是外壳行为，这里只存配置，由外壳读取后决定。
-    #[serde(default)]
-    pub close_mcp_on_exit: bool,
     /// MCP 工具开关：工具名 → 是否暴露（缺失视为开启，兼容旧配置）。
     #[serde(default)]
     pub mcp_tools: HashMap<String, bool>,
@@ -276,31 +266,6 @@ pub struct ChainActionItem {
 pub struct MoveAcrossResult {
     pub snapshot: Snapshot,
     pub relocated: Option<String>,
-}
-
-/// 文件夹改名的结果：新快照 + 新路径 + 同步改动的登记数量（供前端提示）。
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RenameResult {
-    pub snapshot: Snapshot,
-    pub new_path: String,
-    /// 受影响的项目/项目组页签登记条数
-    pub tab_hits: usize,
-    /// 受影响的链接记录条数
-    pub rec_hits: usize,
-}
-
-/// 清除无效项的结果：新快照 + 被移除的路径清单 + 各类计数。
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClearResult {
-    pub snapshot: Snapshot,
-    /// 被移除的无效路径（前端可展示给用户复核）
-    pub removed: Vec<String>,
-    /// 从页签里摘掉的条数
-    pub tab_hits: usize,
-    /// 清理掉的失效链接记录条数
-    pub rec_hits: usize,
 }
 
 /// 用户手动添加的连锁客户端（不在自动检测目录内，强制出现在客户端列表）。

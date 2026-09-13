@@ -169,7 +169,23 @@ function buildCtx(base) {
     openPlugin(targetId) { transport.notify('open', { id: targetId }); },
 
     /**
-     * 往外壳侧边栏注入一个条目。点击后外壳在总线上发 event，插件用 ctx.on(event) 接。
+     * 注册一个应用级快捷键（窗口在前台时生效，与插件是否激活无关）。
+     * accel 形如 'Ctrl+Shift+1' / 'Alt+K' / 'Mod+K'（Mod = macOS ⌘ / 其它 Ctrl）。
+     * 命中后外壳在总线上发 event，插件用 ctx.on(event, handler) 接收。
+     *
+     * 与 ctx.shortcut() 的区别：这个由外壳统一持有，适合"全局唤起"；
+     * ctx.shortcut() 只在插件激活时生效，适合插件内的局部操作。
+     */
+    registerShortcut(accel, event, label = '') {
+      transport.notify('shortcut.register', { accel, event, label });
+    },
+    unregisterShortcut(accel) {
+      transport.notify('shortcut.unregister', { accel });
+    },
+
+    /**
+     * 往外壳侧边栏注入一个条目（{ id, label, icon, event }）。
+     * 点击后外壳在总线上发 event，插件用 ctx.on(event, handler) 接收。
      * 插件卸载时条目自动移除。
      */
     addSidebarItem(item) { transport.notify('sidebar.add', { item }); },

@@ -61,38 +61,6 @@ export function templateTextOf(data: unknown): string {
   return texts.join(' ');
 }
 
-/**
- * 取出节点配置里"直接引用其他节点 id"的字段（非模板变量形式）。
- *
- * 条件节点的 source、循环节点的 source 都是直接存 id，不走 {{id.output}}，
- * 所以 extractRefs 扫不到 —— 上游被删后判定会静默拿到空字符串，
- * 表现为"一直没命中"而不是"配置坏了"，极难排查。
- */
-export function sourceRefsOf(data: unknown): string[] {
-  const d = data as Record<string, unknown> | undefined;
-  if (!d || typeof d !== 'object') return [];
-  const refs: string[] = [];
-
-  // 条件节点：rules[].source 与 rules[].conditions[].source
-  if (Array.isArray(d.rules)) {
-    for (const r of d.rules as Record<string, unknown>[]) {
-      if (!r || typeof r !== 'object') continue;
-      if (typeof r.source === 'string' && r.source) refs.push(r.source);
-      if (Array.isArray(r.conditions)) {
-        for (const c of r.conditions as Record<string, unknown>[]) {
-          if (!c || typeof c !== 'object') continue;
-          if (typeof c.source === 'string' && c.source) refs.push(c.source);
-        }
-      }
-    }
-  }
-
-  // 循环 / 并行等节点的来源
-  if (typeof d.source === 'string' && d.source) refs.push(d.source);
-
-  return refs;
-}
-
 export function extractRefs(prompt: string): string[] {
   const refs: string[] = [];
   if (!prompt) return refs;
@@ -139,9 +107,7 @@ export function deleteElements<N extends MinimalNode, E extends MinimalEdge>(
       // 不只查 prompt：循环的通配符、文件节点的路径/内容同样支持模板变量，
       // 上游被删后这些字段会拿到空值——Rust 侧只会报"路径为空"，
       // 用户看不出是引用断了，所以一并纳入检测
-      .filter((n) =>
-        extractRefs(templateTextOf(n.data)).includes(removed) ||
-        sourceRefsOf(n.data).includes(removed))
+      .filter((n) => extractRefs(templateTextOf(n.data)).includes(removed))
       .map((n) => n.id);
     if (usedBy.length > 0) {
       danglingRefs.push({ nodeId: removed, ref: `${removed}.output`, usedBy });

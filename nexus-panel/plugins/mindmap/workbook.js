@@ -233,30 +233,8 @@ export function parseWorkbook(text) {
  * 内容没变就只重置计时器、不写盘，避免空转出一堆一模一样的快照。
  * 对齐 C# 版 IsStateEquivalent 的做法（多画布逐张比；旧备份无画布时退化为比当前内容）。
  */
-/**
- * 工作簿指纹：用于「内容没变就不重复备份」的去重判断。
- *
- * 画布 content 在运行时是**对象**（kityminder 的 exportJson 返回对象，只有
- * 序列化落盘后才变成字符串）。早期版本直接做字符串拼接，对象会被转成
- * "[object Object]"，于是任何内容改动都不改变指纹 —— 备份去重退化成
- * 「只有增删/排序画布才备份，改内容永远不备份」。必须按内容序列化。
- */
 export function fingerprintSheets(sheets) {
-  return (sheets || [])
-    .map((s) => (s.id || '') + '\u0000' + contentText(s.content))
-    .join('\u0001');
-}
-
-/** 画布内容 → 可比较的文本（对象/字符串都兼容） */
-function contentText(content) {
-  if (content == null) return '';
-  if (typeof content === 'string') return content;
-  try {
-    return JSON.stringify(content);
-  } catch {
-    // 循环引用等极端情况：退化为稳定占位，至少不会崩
-    return '[unstringifiable]';
-  }
+  return (sheets || []).map((s) => (s.id || '') + '\u0000' + (s.content || '')).join('\u0001');
 }
 
 /** 从画布 JSON 文本里取出 theme / template（导入旧文件时恢复外观） */

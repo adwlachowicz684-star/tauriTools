@@ -25,8 +25,6 @@ for f in tests/*.test.ts; do
     --import-map ../engine/loop=../loop.mjs \
     --import-map ../engine/updates=../updates.mjs \
     --import-map ../engine/canvasStore=../canvasStore.mjs \
-    --import-map ../engine/files=../files.mjs \
-    --import-map ../engine/params=../params.mjs \
     --import-map ../types=../types.mjs >/dev/null
 done
 

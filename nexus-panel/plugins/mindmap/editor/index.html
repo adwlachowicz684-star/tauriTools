@@ -12,38 +12,22 @@
            要点二：圆角+不透明底+overflow 放到真实盒子 #minder-container 上才有可裁剪的盒子；
            角部缺口露出 WebView2 DefaultBackgroundColor(#1B1B1F，=宿主边框底色)，与卡片形成弧线对比。 */
         html, body { margin: 0; padding: 0; height: 100%; background: transparent; overflow: hidden; }
-        /* ==== 画布配色变量（Nexus Panel 移植新增）====
-           原版全部硬编码深色以贴合 WPF 外壳；插件版要跟随 nexus 外壳的亮/暗主题，
-           故抽成变量，由插件层通过门面 setCanvasTheme() 注入。默认值即原版深色，
-           WPF 宿主不调用该门面时行为与原来完全一致。 */
-        :root {
-            --km-canvas-bg: #1E1E1E;        /* 画布底色 */
-            --km-canvas-border: #3D4250;    /* 圆角内描边 */
-            --km-panel-bg: #222225;         /* 搜索面板底 */
-            --km-panel-head-bg: #26262B;    /* 搜索面板头部 */
-            --km-panel-text: #CFCFCF;       /* 面板正文 */
-            --km-panel-dim: #9A9AA0;        /* 面板次要文字 */
-            --km-panel-hover: #2C2C33;      /* 面板条目悬停 */
-            --km-panel-close-hover: #3A3A40;/* 关闭按钮悬停 */
-            --km-loading-bg: rgba(27,27,31,.9);
-            --km-loading-text: #AFAFAF;
-        }
         #minder-container {
             position: absolute; inset: 0;
             border-radius: 8px;                 /* 与 WPF DarkFrame/KityMinderHost(8) 对齐 */
-            background: var(--km-canvas-bg);
+            background: #1E1E1E;
             overflow: hidden;                   /* 把画布内容裁剪进圆角内 */
             box-sizing: border-box;
-            box-shadow: inset 0 0 0 1px var(--km-canvas-border);/* 1px 内描边，勾勒圆弧边界 */
+            box-shadow: inset 0 0 0 1px #3D4250;/* 1px 内描边，勾勒圆弧边界 */
         }
         /* 页面内加载遮罩（WebView2 内自绘，WPF 层遮罩会被 HWND 盖住四角变方角） */
         #km-loading {
             position: absolute; inset: 0;
             display: flex; align-items: center; justify-content: center;
-            background: var(--km-loading-bg);
+            background: #E61B1B1F;
             border-radius: 8px;
             overflow: hidden;
-            color: var(--km-loading-text); font-size: 14px;
+            color: #AFAFAF; font-size: 14px;
             z-index: 9999;
             pointer-events: none;
         }
@@ -54,8 +38,8 @@
             position: absolute; left: 10px; top: 10px;
             width: 232px; max-height: calc(100% - 20px);
             display: none; flex-direction: column;
-            background: var(--km-panel-bg);
-            border: 1px solid var(--km-canvas-border); border-radius: 8px;
+            background: #222225;
+            border: 1px solid #3D4250; border-radius: 8px;
             box-shadow: 0 4px 16px rgba(0,0,0,.45);
             overflow: hidden;
             font: 12px/1.7 "Segoe UI","Microsoft YaHei",sans-serif;
@@ -65,21 +49,21 @@
         #search-panel .sp-head {
             flex: none; display: flex; align-items: center;
             padding: 5px 8px 5px 10px;
-            color: var(--km-panel-text); background: var(--km-panel-head-bg);
-            border-bottom: 1px solid var(--km-canvas-border);
+            color: #CFCFCF; background: #26262B;
+            border-bottom: 1px solid #3D4250;
         }
         #search-panel .sp-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         #search-panel .sp-close {
-            flex: none; cursor: pointer; color: var(--km-panel-dim);
+            flex: none; cursor: pointer; color: #9A9AA0;
             width: 18px; height: 18px; line-height: 16px; text-align: center; border-radius: 4px;
         }
-        #search-panel .sp-close:hover { background: var(--km-panel-close-hover); color: var(--km-panel-text); }
+        #search-panel .sp-close:hover { background: #3A3A40; color: #E6E6E6; }
         #search-panel .sp-list { flex: 1; overflow-y: auto; padding: 4px 0; }
         #search-panel .sp-item {
-            padding: 3px 10px; color: var(--km-panel-text); cursor: pointer;
+            padding: 3px 10px; color: #D6D6D6; cursor: pointer;
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
-        #search-panel .sp-item:hover { background: var(--km-panel-hover); }
+        #search-panel .sp-item:hover { background: #2C2C33; }
         #search-panel .sp-item.sp-active { background: #0A84FF; color: #FFFFFF; }
         #search-panel .sp-item mark { background: transparent; color: #FFD60A; font-weight: 600; }
     </style>
@@ -113,21 +97,8 @@
     // 嵌套 iframe 模式下由父窗口回执，配合 window.__resolveHost 完成 request/response 配对
     window.addEventListener('message', function (e) {
         var d = e && e.data;
-        if (!d || d.channel !== KM_HOST_CHANNEL) return;
-        if (d.type === 'response') {
-            if (typeof window.__resolveHost === 'function') window.__resolveHost(d.id, d.result);
-            return;
-        }
-        // 父窗口下发画布配色（插件层跟随外壳亮/暗主题）。
-        // 本监听器早于 km 初始化注册，故先存起来：门面就绪后由 __applyPendingCanvasTheme 补套。
-        if (d.type === 'theme') {
-            window.__kmCanvasVars = d.vars || null;
-            try {
-                if (window.__minder && window.__minder.setCanvasTheme) {
-                    window.__minder.setCanvasTheme(window.__kmCanvasVars);
-                }
-            } catch (e2) { /* 未就绪则等门面建好后再套 */ }
-        }
+        if (!d || d.channel !== KM_HOST_CHANNEL || d.type !== 'response') return;
+        if (typeof window.__resolveHost === 'function') window.__resolveHost(d.id, d.result);
     });
 
     // 首帧即圆角：两个库脚本 defer（后台加载、不阻塞首次绘制），初始化推迟到 DOMContentLoaded（此刻库已就绪）。
@@ -1498,46 +1469,6 @@
             else { try { markSearchNode(_searchList[_searchPos - 1]); } catch (e) {} spSyncActive(); }
         }); } catch (e) {}
 
-        // ---- 画布主题（Nexus Panel 移植新增）：外壳亮/暗 → 画布配色 ----
-        var _canvasVars = null;
-        var _CANVAS_KEYS = {
-            canvasBg: '--km-canvas-bg',
-            canvasBorder: '--km-canvas-border',
-            panelBg: '--km-panel-bg',
-            panelHeadBg: '--km-panel-head-bg',
-            panelText: '--km-panel-text',
-            panelDim: '--km-panel-dim',
-            panelHover: '--km-panel-hover',
-            panelCloseHover: '--km-panel-close-hover',
-            loadingBg: '--km-loading-bg',
-            loadingText: '--km-loading-text',
-        };
-        var _CANVAS_DEFAULTS = {
-            canvasBg: '#1E1E1E', canvasBorder: '#3D4250',
-            panelBg: '#222225', panelHeadBg: '#26262B', panelText: '#CFCFCF',
-            panelDim: '#9A9AA0', panelHover: '#2C2C33', panelCloseHover: '#3A3A40',
-            loadingBg: 'rgba(27,27,31,.9)', loadingText: '#AFAFAF',
-        };
-        /** 门面建好后补套：父窗口可能在 km 初始化之前就把主题发过来了 */
-        function _applyPendingCanvasTheme() {
-            if (window.__kmCanvasVars && window.__minder && window.__minder.setCanvasTheme) {
-                try { window.__minder.setCanvasTheme(window.__kmCanvasVars); } catch (e) { /* ignore */ }
-            }
-        }
-
-        function _applyCanvasTheme() {
-            var v = _canvasVars || _CANVAS_DEFAULTS;
-            var root = document.documentElement;
-            for (var k in _CANVAS_KEYS) {
-                if (!Object.prototype.hasOwnProperty.call(_CANVAS_KEYS, k)) continue;
-                var val = v[k] || _CANVAS_DEFAULTS[k];
-                if (val) root.style.setProperty(_CANVAS_KEYS[k], val);
-            }
-            // 覆盖内核在 setTheme 时写入的内联底色（内联优先级高于 CSS 变量）
-            var rt = km.getRenderTarget && km.getRenderTarget();
-            if (rt) rt.style.background = v.canvasBg || _CANVAS_DEFAULTS.canvasBg;
-        }
-
         window.__minder = {
             importJson: function (data) {
                 var d = (typeof data === 'string') ? JSON.parse(data) : data;
@@ -1553,7 +1484,6 @@
                 km.importData('markdown', md);   // core 内置 markdown 协议
                 km.refresh();
                 _historyCommitBaseline();
-                _applyCanvasTheme();          // 导入可能触发 setTheme，补回画布配色
                 return true;
             },
             // 关键：km.exportData() 一律返回 Promise，而 WebView2 的 ExecuteScriptAsync 不会等待 Promise
@@ -1655,27 +1585,6 @@
                     return true;
                 } catch (e) { return false; }
             },
-            /**
-             * 注入画布配色（Nexus Panel 移植新增）。
-             * 原版画布底色写死深色以贴合 WPF 外壳；插件版改由外壳亮/暗主题驱动。
-             *
-             * 两个落点缺一不可：
-             *   1) :root 上的 CSS 变量 —— 管容器背景、内描边、搜索面板、加载遮罩；
-             *   2) 内核渲染目标的内联 background —— 内核 setTheme() 会执行
-             *      `c.style.background = getStyle('background')` 把主题自带底色写上去，
-             *      内联样式优先级高于 CSS 规则，不覆盖就会盖掉变量。
-             * 所以本方法同时写两处，并在每次 setTheme / importJson 之后重新套用一次。
-             *
-             * @param {Object|null} vars 形如 { canvasBg, canvasBorder, panelBg, ... }；
-             *        传 null 表示恢复默认（原版深色）。
-             */
-            setCanvasTheme: function (vars) {
-                try {
-                    _canvasVars = (vars && typeof vars === 'object') ? vars : null;
-                    _applyCanvasTheme();
-                    return true;
-                } catch (e) { return false; }
-            },
             setTheme: function (theme) {
                 km.setTheme(theme);
                 // 内核 setTheme 只记录主题名并切换 km-theme-* 类；refresh 只重排位置，
@@ -1693,7 +1602,6 @@
                     }
                 });
                 km.refresh();
-                _applyCanvasTheme();          // 内核 setTheme 改写了内联底色，这里补回来
                 return true;
             },
             // 把自定义主题（MindMapTheme 的 camelCase JSON）扁平化为 core 主题对象并写入主题表。
@@ -1805,9 +1713,6 @@
                 } catch (e) { return false; }
             }
         };
-
-        // 门面已建好，补套父窗口可能更早发来的画布配色
-        _applyPendingCanvasTheme();
 
         // ---- 撤回/重做历史栈 ----
         // kityminder 内核既不注册 undo/redo 命令、也没有自带的 UndoManager，宿主「撤销/重做」

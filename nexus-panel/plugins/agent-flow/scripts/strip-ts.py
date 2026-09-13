@@ -165,7 +165,6 @@ def remove_as(src: str) -> str:
                     k += 1
             else:
                 k, depth = j, 0
-                saw_union = False
                 # 类型断言若是联合类型（as X | undefined），
                 # 只删 `as X` 会留下 `| undefined` 变成按位或运算，
                 # 例如 `(n?.data as Partial<T> | undefined)?.kind` 会变成
@@ -180,25 +179,7 @@ def remove_as(src: str) -> str:
                             depth -= 1
                         else:
                             break
-                    elif depth == 0 and c in ' ,;).=!\n\t[]':
-                        # [ ] 也要停：类型断言后面可能紧跟数组字面量的 ]，
-                        # 例如 `... } as ConditionRule]);`
-                        # 不停在这里就会把 ] 一起吃掉，生成 `} );` 这种语法错误。
-                        # 至于 `as Foo[]` 的数组后缀，由下面那段专门处理。
-                        if c == ' ':
-                            # 空格后若是 |，说明是联合类型（as X | undefined），
-                            # 必须整体移除 —— 只删 `as X` 会留下 `| undefined`
-                            # 变成按位或运算，静默改变语义。
-                            j2 = k
-                            while j2 < n and src[j2] == ' ':
-                                j2 += 1
-                            if j2 < n and src[j2] == '|':
-                                saw_union = True
-                                k = j2 + 1
-                                continue
-                            if saw_union:
-                                k += 1  # 联合类型内部，空格继续
-                                continue
+                    elif depth == 0 and c in ' ,;).=!\n\t':
                         break
                     k += 1
             # 吃掉数组后缀 [] 等
