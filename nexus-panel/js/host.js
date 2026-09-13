@@ -46,7 +46,7 @@ export function createBus() {
 export async function loadRegistry() {
   let list = [];
   try {
-    const mod = await import(new URL('../plugins/registry.js', import.meta.url).href);
+    const mod = await import(/* @vite-ignore */ new URL('../plugins/registry.js', import.meta.url).href);
     list = mod.plugins || [];
   } catch (e) {
     console.warn('[registry] registry.js 加载失败', e);
@@ -212,7 +212,7 @@ export function createHost(opts = {}) {
     }
 
     // module：动态 import 命中浏览器缓存，拿到的是同一个模块对象
-    const mod = await import(resolveEntry(manifest.entry));
+    const mod = await import(/* @vite-ignore */ resolveEntry(manifest.entry));
     const def = mod.default || mod.plugin;
     if (typeof def?.settings !== 'function') {
       throw new Error(`插件「${manifest.name}」没有提供设置面板`);
@@ -298,7 +298,7 @@ export function createHost(opts = {}) {
 
     let mod;
     try {
-      mod = await import(resolveEntry(manifest.entry));
+      mod = await import(/* @vite-ignore */ resolveEntry(manifest.entry));
     } catch (err) {
       throw new Error(`无法加载插件入口：${manifest.entry}\n${err?.message || err}`);
     }
