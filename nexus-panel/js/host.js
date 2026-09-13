@@ -532,7 +532,7 @@ export function createHost(opts = {}) {
   const navigateHook = (id) => hooks.onNavigate?.(id);
 
   /* ---------------- 应用级快捷键 ---------------- */
-  /** key: `${pluginId} ${accel}` */
+  /** key: `${pluginId}\u0000${accel}` */
   const appShortcuts = new Map();
 
   function accelMatches(e, accel) {
@@ -562,7 +562,7 @@ export function createHost(opts = {}) {
   }
 
   function registerAppShortcut(pluginId, accel, event, label = '') {
-    const k = `${pluginId} ${accel}`;
+    const k = `${pluginId}\u0000${accel}`;
     if (appShortcuts.has(k)) window.removeEventListener('keydown', appShortcuts.get(k).fn);
     const fn = (e) => {
       if (!accelMatches(e, accel)) return;
@@ -575,7 +575,7 @@ export function createHost(opts = {}) {
   }
 
   function unregisterAppShortcut(pluginId, accel) {
-    const k = `${pluginId} ${accel}`;
+    const k = `${pluginId}\u0000${accel}`;
     const rec = appShortcuts.get(k);
     if (!rec) return;
     window.removeEventListener('keydown', rec.fn);
@@ -585,32 +585,32 @@ export function createHost(opts = {}) {
   /** 插件卸载时清掉它注册的全部应用级快捷键 */
   function clearAppShortcuts(pluginId) {
     for (const [k, rec] of [...appShortcuts]) {
-      if (!k.startsWith(`${pluginId} `)) continue;
+      if (!k.startsWith(`${pluginId}\u0000`)) continue;
       window.removeEventListener('keydown', rec.fn);
       appShortcuts.delete(k);
     }
   }
 
   /* ---------------- 侧边栏注入条目 ---------------- */
-  /** key: `${pluginId} ${itemId}` */
+  /** key: `${pluginId}\u0000${itemId}` */
   const injectedItems = new Map();
 
   function addSidebarItem(pluginId, item) {
     if (!item?.id) return;
-    const key = `${pluginId} ${item.id}`;
+    const key = `${pluginId}\u0000${item.id}`;
     injectedItems.set(key, { ...item, pluginId });
     publishInjected();
   }
 
   function removeSidebarItem(pluginId, itemId) {
-    injectedItems.delete(`${pluginId} ${itemId}`);
+    injectedItems.delete(`${pluginId}\u0000${itemId}`);
     publishInjected();
   }
 
   function clearSidebarItems(pluginId) {
     let changed = false;
     for (const k of [...injectedItems.keys()]) {
-      if (k.startsWith(`${pluginId} `)) { injectedItems.delete(k); changed = true; }
+      if (k.startsWith(`${pluginId}\u0000`)) { injectedItems.delete(k); changed = true; }
     }
     if (changed) publishInjected();
   }
