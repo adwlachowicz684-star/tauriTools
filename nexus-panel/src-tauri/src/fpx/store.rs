@@ -164,9 +164,24 @@ pub fn lock_of<'a>(cfg: &'a FpxConfig, path: &str) -> Option<&'a super::model::L
 }
 
 /// Windows 下路径比较忽略大小写与尾斜杠。
+/// 路径比较用的规范化 key —— **全项目唯一一套规则**，任何按路径查表的地方都必须用它。
+///
+/// 规则：去首尾空白 → 去尾部分隔符 → 统一分隔符为正斜杠 → 仅在 Windows 转小写。
+///
+/// 为什么只在 Windows 转小写：NTFS / FAT 的文件名大小写不敏感，`Foo` 与 `foo` 是同一个
+/// 文件；而 Linux（ext4 等）与 macOS（APFS 默认）是敏感的，它们是**两个不同的目录**。
+/// 无条件小写会让大小写不同的两个项目被判成同一个 key，标签色 / 图标 / ACL 锁 / 链接记录
+/// 互相覆盖 —— 即"数据串档"。
+///
+/// 为什么必须统一分隔符：同一个目录可能有 `C:\Foo` 与 `C:/Foo` 两种写法（手动改配置、
+/// 跨工具粘贴都可能产生）。不统一的话同一份数据会查出两种结果。
+///
+/// 历史教训：这个文件原先不带分隔符统一，而 sys.rs 另有一份"无条件小写"的副本，
+/// 前端 api.ts 又是第三份"无条件小写"。三套规则并存，是多个路径匹配 bug 的共同根因。
 pub fn normalize_key(path: &str) -> String {
     let p = path.trim().trim_end_matches(|c| c == '\\' || c == '/');
-    if cfg!(windows) { p.to_lowercase() } else { p.to_string() }
+    let p = p.replace('\\', "/");
+    if cfg!(windows) { p.to_lowercase() } else { p }
 }
 
 /// 把配置中的页签（路径列表）转成带运行时状态的 TabInfo。

@@ -328,6 +328,13 @@ export function useFpx() {
 
   /* ---------------- 内容浏览 ---------------- */
 
+  /**
+   * 路径比较是否忽略大小写 —— 必须按平台来，不能写死。
+   * Windows 文件系统不敏感，Linux / macOS 敏感（A/a 是两个不同目录）。
+   * 无条件转小写会把两个不同项目判成同一个，标签色 / 图标 / ACL 锁会串档。
+   */
+  const ci = boot?.platform === 'windows';
+
   /** 内容区焦点目录：选中的项目组，或选中项目已链接的项目组 */
   const focusDir = useMemo(() => {
     if (!boot) return '';
@@ -357,30 +364,30 @@ export function useFpx() {
     applySnapshot(r.snapshot);
     // 选中项要跟着改，否则改名后选中的还是旧路径，后续操作会打到不存在的目录上
     if (kind === 'project') {
-      setSelProject((p) => (p && normalizeKey(p) === normalizeKey(path) ? r.newPath : p));
+      setSelProject((p) => (p && normalizeKey(p, ci) === normalizeKey(path, ci) ? r.newPath : p));
     } else {
-      setSelGroup((p) => (p && normalizeKey(p) === normalizeKey(path) ? r.newPath : p));
+      setSelGroup((p) => (p && normalizeKey(p, ci) === normalizeKey(path, ci) ? r.newPath : p));
     }
     const extra = r.recHits > 0 ? `，同步 ${r.recHits} 条链接记录` : '';
     pushLog(`已改名为「${newName}」${extra}`);
     return r;
-  }, [api, applySnapshot, pushLog, run]);
+  }, [api, applySnapshot, ci, pushLog, run]);
 
   const clearInvalid = useCallback(async () => {
     const r = await run('清除无效项', () => api.clearInvalid());
     if (!r) return null;
     applySnapshot(r.snapshot);
     // 被清掉的可能正是当前选中项
-    const gone = new Set(r.removed.map((p) => normalizeKey(p)));
-    setSelProject((p) => (p && gone.has(normalizeKey(p)) ? null : p));
-    setSelGroup((p) => (p && gone.has(normalizeKey(p)) ? null : p));
+    const gone = new Set(r.removed.map((p) => normalizeKey(p, ci)));
+    setSelProject((p) => (p && gone.has(normalizeKey(p, ci)) ? null : p));
+    setSelGroup((p) => (p && gone.has(normalizeKey(p, ci)) ? null : p));
     if (r.tabHits === 0 && r.recHits === 0) {
       pushLog('没有发现无效项');
     } else {
       pushLog(`已清除 ${r.tabHits} 个无效登记${r.recHits > 0 ? `、${r.recHits} 条失效链接记录` : ''}`);
     }
     return r;
-  }, [api, applySnapshot, pushLog, run]);
+  }, [api, applySnapshot, ci, pushLog, run]);
 
   return {
     ctx, api, boot, loading, busy, log, pushLog, run,

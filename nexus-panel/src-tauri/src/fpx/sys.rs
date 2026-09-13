@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::model::{DirEntryLite, FpxConfig, TabItem};
+use super::store::normalize_key;
 
 /* ---------------------------- 目录浏览（给内嵌目录选择器用） ---------------------------- */
 
@@ -395,21 +396,14 @@ pub fn pick_screen_color(_x: Option<i32>, _y: Option<i32>) -> Result<String, Str
 }
 
 /// 列出数据目录 icons/ 下可用的图标文件。
-/// 路径是否位于 root 之下（root 自身不算）。比较用规范化后的完整路径，大小写不敏感。
+/// 路径是否位于 root 之下（root 自身不算）。比较用规范化后的完整路径。
+/// 是否忽略大小写由 normalize_key 按平台决定（Windows 忽略，Linux/macOS 不忽略）。
 pub fn is_under(root: &str, path: &str) -> bool {
     let r = normalize_key(root);
     let p = normalize_key(path);
     if r.is_empty() || p.is_empty() || r == p { return false; }
     // normalize_key 已把分隔符统一成正斜杠，这里只需比对一种
     p.starts_with(&format!("{r}/"))
-}
-
-/// 规范化：去首尾空白与尾部分隔符，统一分隔符为正斜杠并转小写（Windows 路径大小写不敏感）。
-fn normalize_key(path: &str) -> String {
-    path.trim()
-        .trim_end_matches(['/', '\\'])
-        .replace('\\', "/")
-        .to_lowercase()
 }
 
 /// 路径是否位于任一"默认根目录"（新建项目/项目组的预设父目录）之下。

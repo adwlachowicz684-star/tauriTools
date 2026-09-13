@@ -172,6 +172,11 @@ pub fn resolve_dir(cfg: &FpxConfig, data_dir: &Path, kind: &str) -> PathBuf {
 }
 
 /// 收集全部页签中的路径（去重、保序）。
+///
+/// 去重键必须用 `normalize_key`（按平台决定是否忽略大小写），不能无条件 to_lowercase：
+/// Linux / macOS 上 `/a/Foo` 与 `/b/foo` 是**两个不同的项目**，
+/// 无条件小写会把后者当成重复项丢掉 —— 它压根不会被备份，而且没有报错、没有日志，
+/// 用户以为备份过了。这类"静默少备份"比重复备份危险得多。
 pub fn collect_paths(tabs: &[super::model::TabItem]) -> Vec<String> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut out: Vec<String> = Vec::new();
@@ -179,7 +184,7 @@ pub fn collect_paths(tabs: &[super::model::TabItem]) -> Vec<String> {
         for raw in &t.items {
             let p = raw.trim().trim_end_matches(['/', '\\']);
             if p.is_empty() { continue; }
-            let key = p.to_lowercase();
+            let key = super::store::normalize_key(&p);
             if seen.insert(key) { out.push(p.to_string()); }
         }
     }
@@ -212,6 +217,10 @@ pub fn run(cfg: &FpxConfig, data_dir: &Path, kind: &str, append_only: bool) -> B
             r.errors.push(format!("[跳过] 无法从路径解析文件夹名: {src}"));
             continue;
         }
+        // 这里**刻意**用无条件小写，而不是 normalize_key：
+        // 备份目标可能在任何文件系统上（含大小写不敏感的 NTFS / APFS），
+        // 宁可误报冲突让用户改名，也不要让两个项目静默写进同一个目标目录互相覆盖。
+        // 误报的代价只是一条提示，漏报的代价是丢数据。
         let key = name.to_lowercase();
         if let Some(owner) = by_name.get(&key) {
             r.errors.push(format!("[跳过] 备份名冲突「{name}」：{src} 与 {owner} 同名，请改名其一"));
@@ -246,6 +255,9 @@ fn safe_folder_name(full: &str) -> String {
 }
 
 /// 两目录是否存在包含关系（任一方是另一方的前代）。
+///
+/// 同样**刻意**用无条件小写：漏判嵌套会导致备份目录被当成源一起复制（无限自我复制），
+/// 误判最多只是跳过一个源。这种不对称的代价下，宁可判得宽一点。
 fn is_nested(a: &Path, b: &Path) -> bool {
     let norm = |p: &Path| p.to_string_lossy().replace('\\', "/").trim_end_matches('/').to_lowercase() + "/";
     let x = norm(a);
