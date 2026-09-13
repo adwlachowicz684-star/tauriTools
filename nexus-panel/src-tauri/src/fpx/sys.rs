@@ -255,8 +255,8 @@ pub fn apply_lock(path: &str, deny_delete: bool, deny_write: bool) -> Result<Str
         let mut rights = String::new();
         if deny_delete { rights.push('D'); }
         if deny_write { rights.push('W'); }
-        if !rights.is_empty() { rights.insert(0, ','); }
-        let perm = format!("Everyone:(OI)(CI)({})", rights.trim_start_matches(','));
+        // 两个都为 false 的情况已在上面提前返回，这里 rights 必非空
+        let perm = format!("Everyone:(OI)(CI)({rights})");
         let out = run_cmd("icacls", &[path.to_string(), "/deny".to_string(), perm])?;
         if !out.status.success() {
             return Err(format!("icacls 失败: {}", String::from_utf8_lossy(&out.stderr).trim()));
@@ -269,13 +269,20 @@ pub fn apply_lock(path: &str, deny_delete: bool, deny_write: bool) -> Result<Str
     #[cfg(not(windows))]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = if deny_write { 0o555 } else { 0o755 };
+        // 非 Windows 没有独立的"防删除"档，只能用只读近似：
+        // 防写入 → 目录设 0o555；仅防删除 → 也设只读（否则等于没保护）。
+        // 关键：消息必须与实际落地的权限一致，不能嘴上说只读、实际是 0o755。
+        let read_only = deny_write || deny_delete;
+        let mode = if read_only { 0o555 } else { 0o755 };
         fs::set_permissions(p, fs::Permissions::from_mode(mode))
             .map_err(|e| format!("修改权限失败: {e}"))?;
-        if deny_delete {
+        if deny_delete && !deny_write {
             return Ok("已设为只读（当前平台不支持单独的防删除档）".into());
         }
-        Ok("已解除只读".into())
+        if read_only {
+            return Ok("已设为只读".into());
+        }
+        Ok("已解除保护".into())
     }
 }
 

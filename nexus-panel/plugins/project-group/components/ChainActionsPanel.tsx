@@ -104,6 +104,7 @@ export function ChainActionsPanel({
       title="连锁动作"
       onClose={onClose}
       width={720}
+      guardClose={dirty && !saving}
       footer={
         <>
           <button className="p-btn" onClick={addCustom}>＋ 自定义动作</button>

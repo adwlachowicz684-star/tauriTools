@@ -1,23 +1,41 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
-/** 居中弹窗：点遮罩或右上角 ✕ 关闭 */
+/**
+ * 居中弹窗：点遮罩或右上角 ✕ 关闭。
+ *
+ * `guardClose` = 有未保存改动。此时点遮罩 / 按 Esc 不会直接关，
+ * 而是弹确认 —— 编辑到一半误点遮罩会丢掉全部改动，这个代价太高。
+ * 注意：确认框本身要阻止冒泡，否则它自己也会被"点外部关闭"的逻辑吃掉。
+ */
 export function Modal({
-  title, onClose, children, width = 440, footer,
+  title, onClose, children, width = 440, footer, guardClose = false,
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
   width?: number;
   footer?: ReactNode;
+  guardClose?: boolean;
 }) {
+  const [confirming, setConfirming] = useState(false);
+  const ask = useCallback(() => {
+    if (guardClose) setConfirming(true);
+    else onClose();
+  }, [guardClose, onClose]);
+
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      if (confirming) setConfirming(false);
+      else ask();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [ask, confirming]);
 
   return (
-    <div className="mask" onMouseDown={onClose}>
+    <div className="mask" onMouseDown={ask}>
       <div
         className="dialog p-card"
         style={{ width, maxHeight: '86vh', overflow: 'auto' }}
@@ -25,11 +43,28 @@ export function Modal({
       >
         <div className="p-row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
           <h2 style={{ margin: 0 }}>{title}</h2>
-          <button className="p-btn" style={{ height: 30, padding: '0 12px' }} onClick={onClose}>✕</button>
+          <button className="p-btn" style={{ height: 30, padding: '0 12px' }} onClick={ask}>✕</button>
         </div>
         {children}
         {footer && <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 18 }}>{footer}</div>}
       </div>
+
+      {confirming && (
+        <div
+          className="mask"
+          style={{ zIndex: 1001 }}
+          onMouseDown={(e) => { e.stopPropagation(); setConfirming(false); }}
+        >
+          <div className="dialog p-card" style={{ width: 340 }} onMouseDown={(e) => e.stopPropagation()}>
+            <h2 style={{ margin: '0 0 10px' }}>放弃未保存的改动？</h2>
+            <div className="p-muted">当前有改动尚未保存，关闭后将丢失。</div>
+            <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
+              <button className="p-btn" onClick={() => setConfirming(false)}>继续编辑</button>
+              <button className="p-btn primary" onClick={onClose}>放弃并关闭</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -39,6 +74,8 @@ export interface MenuItem {
   onClick: () => void;
   danger?: boolean;
   disabled?: boolean;
+  /** React key。多个菜单项 label 相同时必须给，否则 React 会警告且可能渲染错乱 */
+  key?: string;
 }
 
 /** 右键菜单：自动定位在视口内，点外部关闭 */
@@ -75,7 +112,7 @@ export function ContextMenu({
     <div className="fpx-menu" ref={ref}>
       {items.map((it) => (
         <button
-          key={it.label}
+          key={it.key ?? it.label}
           className={`fpx-menu-item${it.danger ? ' danger' : ''}`}
           disabled={it.disabled}
           onClick={() => { it.onClick(); onClose(); }}

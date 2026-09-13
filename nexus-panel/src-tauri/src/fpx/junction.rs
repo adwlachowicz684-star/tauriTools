@@ -262,11 +262,16 @@ fn create_one(link: &Path, target: &str) -> Result<(), String> {
 }
 
 /// 删除某项目下的链接（仅链接，普通目录/文件拒绝）。
+///
+/// 判定用 `is_link` 而非 `link_state == Valid`：
+/// 后者会漏掉 **Broken（链接在、目标已丢失）** 的情况，而那恰恰是最需要清理的场景 ——
+/// 项目组被移走或删掉后链接就断在那儿，用户点「撤销链接」却删不掉，
+/// 残骸永远留在项目目录里。只要是链接就删；Conflict（普通目录/文件）仍然拒绝，避免误删内容。
 pub fn remove(project: &str, names: &[String]) -> Result<Vec<String>, String> {
     let mut removed: Vec<String> = Vec::new();
     for n in names {
         let lp = link_path(project, n);
-        if link_state(project, n) == LinkState::Valid {
+        if is_link(&lp) {
             remove_one(&lp)?;
             removed.push(lp.to_string_lossy().to_string());
         }

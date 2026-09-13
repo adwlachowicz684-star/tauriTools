@@ -282,12 +282,15 @@ export function StyleDialog({
 }) {
   const [ic, setIc] = useState(icon ?? '');
   const [cl, setCl] = useState<string | null>(color);
+  // 与进入时相比有变化才算"未保存"，避免只是打开看一眼也弹确认
+  const dirty = (ic.trim() || null) !== (icon ?? null) || cl !== color;
 
   return (
     <Modal
       title="图标与标签"
       onClose={onClose}
       width={520}
+      guardClose={dirty}
       footer={
         <>
           <button className="p-btn" onClick={() => { onApply(null, null); onClose(); }}>清除</button>
