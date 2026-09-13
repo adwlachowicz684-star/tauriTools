@@ -183,15 +183,24 @@ export function useFpx() {
     pushLog(`已从页签移除：${path}`);
   }, [activeTab, pushLog, updateConfig]);
 
-  /** 同栏内排序 / 跨页签移动 */
+  /**
+   * 同栏内排序 / 跨页签移动。
+   *
+   * 目标页签索引必须 clamp：movecard 会先把自己从所有页签里摘掉再插入目标页签，
+   * 若 toTabIndex 超出当前页签数，原来的写法会一路补空页签直到该下标，
+   * 卡片被塞进一个凭空新建的空白页签里 —— 用户看到的就是"卡片消失了"。
+   * 索引来源（activeTab）存在 localStorage 里，与当前快照偶有不同步，故在后端兜底。
+   */
   const moveCard = useCallback(async (
     kind: CardKind, path: string, toTabIndex: number, toIndex: number,
   ) => {
     await updateConfig((d) => {
       const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
+      // 掐头去尾：先把目标位置定在合法范围内，再摘卡（摘卡不影响页签数）
+      const maxTab = Math.max(0, tabs.length - 1);
+      const tab = Math.max(0, Math.min(toTabIndex, maxTab));
       for (const t of tabs) t.items = t.items.filter((p) => p !== path);
-      while (tabs.length <= toTabIndex) tabs.push({ name: `页签${tabs.length + 1}`, items: [] });
-      const target = tabs[toTabIndex];
+      const target = tabs[tab];
       const i = Math.max(0, Math.min(toIndex, target.items.length));
       target.items.splice(i, 0, path);
     });
@@ -236,6 +245,8 @@ export function useFpx() {
     const snap = await updateConfig((d) => {
       const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
       if (tabs.length <= 1) return;
+      // 越界直接不动，避免 splice 掉一个本不该删的页签
+      if (index < 0 || index >= tabs.length) return;
       tabs.splice(index, 1);
     });
     if (!snap) return;

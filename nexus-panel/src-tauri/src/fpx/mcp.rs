@@ -63,6 +63,10 @@ pub fn serve(app: AppHandle, port: u16) -> Result<String, String> {
             if !RUNNING.load(Ordering::SeqCst) { break; }
             match listener.accept() {
                 Ok((stream, _)) => {
+                    // 监听句柄是非阻塞的，accept 出来的连接要显式转回阻塞：
+                    // handle() 里的 set_read_timeout 只对阻塞 socket 有意义，
+                    // 若继承了非阻塞，读会直接返回 WouldBlock，请求全部失败。
+                    let _ = stream.set_nonblocking(false);
                     let app2 = app.clone();
                     std::thread::spawn(move || handle(stream, app2));
                 }

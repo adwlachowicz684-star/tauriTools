@@ -55,17 +55,21 @@ export function DirDialog({
     const sep = path.includes('\\') && !path.startsWith('/') ? '\\' : '/';
     const parts = path.split(/[\\/]/).filter(Boolean);
     const out: { label: string; path: string }[] = [];
+    // 拼接时不要重复分隔符：首段在 Windows 上会被补成 "C:\"（带尾部分隔符），
+    // 若下一段再无脑拼 sep，就会得到 "C:\\Users" 这种双分隔符路径。
+    const joinSeg = (a: string, b: string) =>
+      (a.endsWith('\\') || a.endsWith('/')) ? a + b : `${a}${sep}${b}`;
     let cur = '';
     for (const part of parts) {
       if (!cur) {
-        cur = path.startsWith('/') ? `/${part}` : `${part}${sep}`;
+        cur = path.startsWith('/') ? `/${part}` : part;
+        // Windows 盘符：C: 单独不是根目录，必须补成 C:\
+        if (/^[A-Za-z]:$/.test(cur)) cur = `${cur}\\`;
       } else {
-        cur = `${cur}${sep}${part}`;
+        cur = joinSeg(cur, part);
       }
       out.push({ label: part, path: cur });
     }
-    // Windows 盘符路径补全：C: → C:\
-    if (/^[A-Za-z]:$/.test(parts[0] ?? '')) out[0].path = `${parts[0]}\\`;
     return out;
   }, [path]);
 
