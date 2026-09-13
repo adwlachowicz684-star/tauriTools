@@ -229,7 +229,7 @@ pub fn watch_stop(state: State<'_, WatchRegistry>, id: String) -> Result<(), Str
 /// 一个端口对应一个监听线程；同端口上的多个触发器靠 path 区分
 pub struct WebhookRegistry(pub Mutex<StdHashMap<u16, WebhookServer>>);
 
-struct WebhookServer {
+pub struct WebhookServer {
     /// 停服标志：置 true 后 accept 循环退出
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// path -> (trigger_id, token)

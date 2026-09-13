@@ -169,10 +169,10 @@ fn dispatch(req: &Value, app: &AppHandle) -> Value {
             "serverInfo": { "name": "nexus-panel-project-group", "version": "0.1.0" },
         })),
         "ping" => Ok(json!({})),
-        "tools/list" => {
-            let cfg = load_cfg(app)?;
-            Ok(json!({ "tools": enabled_tools(&cfg) }))
-        }
+        "tools/list" => match load_cfg(app) {
+            Ok(cfg) => Ok(json!({ "tools": enabled_tools(&cfg) })),
+            Err(e) => Err(e),
+        },
         "tools/call" => call_tool(req, app),
         other => Err(json!({ "code": -32601, "message": format!("未知方法: {other}") })),
     };

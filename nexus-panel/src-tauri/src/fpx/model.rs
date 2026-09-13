@@ -213,6 +213,7 @@ impl Default for FpxConfig {
             backup_append_only: true,
             backup_auto_minutes: 0,
             mcp_enabled: true,
+            close_mcp_on_exit: false,
             mcp_tools: HashMap::new(),
             chain_client: None,
             chain_prompt: None,
