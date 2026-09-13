@@ -717,7 +717,7 @@ fn load_cfg(app: &AppHandle) -> Result<super::model::FpxConfig, Value> {
     Ok(super::store::load_config(&dir))
 }
 
-fn snapshot(app: &AppHandle) -> Result<super::Snapshot, Value> {
+fn snapshot(app: &AppHandle) -> Result<super::model::Snapshot, Value> {
     let dir = data_dir_of(app)?;
     Ok(super::core_snapshot(&dir))
 }

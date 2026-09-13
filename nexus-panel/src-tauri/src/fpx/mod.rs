@@ -26,20 +26,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, State};
 
 use model::{
-    Bootstrap, ContentItem, DirEntryLite, FpxConfig, LinkRecord, LinkRow, TabInfo,
+    Bootstrap, ContentItem, DirEntryLite, FpxConfig, LinkRecord, LinkRow, Snapshot, TabInfo,
 };
 use store::FpxState;
 
 /* ---------------------------- 快照 DTO ---------------------------- */
-
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Snapshot {
-    pub config: FpxConfig,
-    pub project_tabs: Vec<TabInfo>,
-    pub group_tabs: Vec<TabInfo>,
-    pub links: Vec<LinkRow>,
-}
+// Snapshot 本身定义在 model.rs（与其他 DTO 同处），这里只放构造逻辑。
 
 pub(crate) fn snapshot(dir: &std::path::Path, cfg: &FpxConfig) -> Snapshot {
     let records = store::load_records(dir);

@@ -403,6 +403,20 @@ pub struct LinkRow {
     pub state: String, // valid | broken | conflict | partial
 }
 
+/// 一次操作后的状态快照：配置 + 两侧页签 + 链接表。
+///
+/// 放在 model.rs 而不是命令层：它和 Bootstrap / LinkRow / TabInfo 同为发给前端的 DTO。
+/// 原先定义在 mod.rs，导致 model.rs 里引用它的三个 Result 类型拿不到这个名（E0425）——
+/// 让数据模型去依赖命令层是反的，所以挪过来。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    pub config: FpxConfig,
+    pub project_tabs: Vec<TabInfo>,
+    pub group_tabs: Vec<TabInfo>,
+    pub links: Vec<LinkRow>,
+}
+
 /// 前端启动所需的一次性数据。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
