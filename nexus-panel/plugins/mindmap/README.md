@@ -153,9 +153,31 @@ Ctrl+E / Ctrl+L / Ctrl+R / Ctrl+Shift+C / Ctrl+Shift+V
 内核 `commandShortcutKeys` 注册：Alt+↑↓（上移下移）/ Shift+Tab（插入上级）/
 Ctrl+Shift+L（整理布局）/ Ctrl+=-（缩放）/ Ctrl+A（全选）/ Ctrl+C/X/V
 
-> 注意：之前文档里写的「方向键导航、/ 折叠、Alt+1~5 展开层级」在内核里
-> **并未**以 shortcut 形式注册（Alt+1~5 是 `expandToLevel` 命令，无默认键），
-> 已从清单移除，避免写成文档后对不上。
+### 内核没实现的三个，由本插件补齐
+
+编辑器页面原本的注释写着「core 内置方向键导航、/ 折叠、Alt+1-5 展开层级」，
+**这句是错的**。查 `kityminder.core.min.js` 可确认：
+
+- `ArrowUp/Down/Left/Right` **零命中**；
+- 键码表里预留了 `isSelectedNodeKey: {37,38,39,40}` 常量，但**全文件无使用处**；
+- `/`(191) 同样只登记了键码，没有行为；
+- 不存在 `expandToLevel` 命令（`expandSelectedToLevel` 是本页面的门面方法）。
+
+即「常量预留了，行为没写」。现已在 `editor/index.html` 补齐：
+
+| 键 | 行为 |
+|---|---|
+| `↑` / `↓` | 在兄弟节点间移动，到头不动 |
+| `←` | 有子节点且展开 → 先折叠；否则上移到父节点 |
+| `→` | 折叠着 → 先展开；否则进入第一个子节点 |
+| `/` | 折叠 / 展开选中节点（叶子无效） |
+| `Alt+1~5` | 从选中节点展开到第 N 级（更深层收起） |
+
+`←` / `→` 用的是两级语义（先折叠/展开，再移动），与 XMind 一致；
+折叠与展开都会触发 `contentchange`，因此会被自动保存接住。
+
+同时修掉一个按键泄漏：外框标签输入框原先只 `preventDefault` 不 `stopPropagation`，
+编辑外框标签时按 Enter 会顺带插入一个同级节点、按方向键会跑偏选中。
 
 ## 设置项（对齐 C# SettingsPanel 的脑图页）
 
