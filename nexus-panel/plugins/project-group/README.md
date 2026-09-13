@@ -139,8 +139,10 @@ src-tauri/src/fpx/
 （改动在 `js/host.js`、`js/plugin-sdk.js`、`js/shell.js`、`src/App.tsx`、`src/components/Sidebar.tsx` 与 `src-tauri/src/main.rs`），
 不再是缺口：
 
-1. **连锁动作快捷键** —— 应用级快捷键（窗口前台生效），宿主统一监听 keydown 后发总线事件。
-   非操作系统全局热键：后者要引 `tauri-plugin-global-shortcut`，为免加依赖而没做。
+1. **连锁动作快捷键** —— 直接复用外壳已有的 `ctx.shortcut(combo, handler)`：
+   只在插件激活时生效、切走自动失效、卸载自动注销，比自己绑 window 更稳。
+   属于应用级快捷键（窗口前台生效），**不是操作系统全局热键**——
+   后者要引 `tauri-plugin-global-shortcut`，为免加依赖而没做。
 2. **动作挂到左侧栏** —— 宿主新增 `addSidebarItem` / `removeSidebarItem`，插件卸载时自动清理。
    原生外壳与 React 外壳两侧都实现了渲染。
 3. **软件自身图标** —— 新增 Rust 命令 `set_window_icon`（换窗口图标）。
