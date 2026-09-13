@@ -10,12 +10,19 @@
  *   3. 切换后立即通知订阅者 —— 外壳用它来刷新 iframe 插件与重算适配
  */
 
-import { PRESET_THEMES, THEME_VARS, ACCENT_SWATCHES, DEFAULT_THEME_ID } from './themes.js';
+import {
+  PRESET_THEMES, THEME_VARS, ACCENT_SWATCHES, ACCENT_SWATCHES_LIGHT,
+  DEFAULT_THEME_ID, swatchFor,
+} from './themes.js';
 
-export { ACCENT_SWATCHES, PRESET_THEMES, THEME_VARS };
+export { ACCENT_SWATCHES, ACCENT_SWATCHES_LIGHT, swatchFor, PRESET_THEMES, THEME_VARS };
 
 const KEY_THEME = 'nexus:theme';
 const KEY_ACCENT = 'nexus:accent';
+// 环境色（原「主题色」）：与强调色并列的第二个可调主色
+const KEY_ENV = 'nexus:env-color';
+// 用户是否手动选过主题 —— 没选过时默认主题才能继续生效
+const KEY_USERSET = 'nexus:theme-userset';
 const KEY_CUSTOM = 'nexus:custom-themes';
 // 首屏防闪用：最近一次应用的底色 / 前景色
 const KEY_PRELOAD_BG = 'nexus:preload-bg';
@@ -120,6 +127,11 @@ export function getThemeId() {
 export function getAccent() {
   try { return localStorage.getItem(KEY_ACCENT) || null; } catch { return null; }
 }
+
+/** 环境色：与强调色并列的第二个可调主色，仅作次要点缀 */
+export function getEnvColor() {
+  try { return localStorage.getItem(KEY_ENV) || null; } catch { return null; }
+}
 export function getCurrent() {
   return current || findTheme(getThemeId());
 }
@@ -152,11 +164,37 @@ export function isThemeTransitioning() {
 }
 
 /* ---------------------------- 应用 ---------------------------- */
-function applyTo(theme, accent) {
+/**
+ * 让已保存的自定义色跟随面板基调。
+ *
+ * 同一个色值在深底浅底上表现差异极大：#48e0c0（青）在深色底上对比度
+ * 10.5:1，放到浅色底只有 1.4:1 —— 几乎看不见。
+ *
+ * 所以切换主题时，若发现存的是"另一套色板里的同款色"，
+ * 就自动换成当前基调对应的那个值（青 → #2a826f）。
+ * 完全自定义的值（不在任何色板里）原样保留，不擅自改动。
+ */
+function adaptSwatchToBase(color, base) {
+  if (!color) return color;
+  const cur = swatchFor(base);
+  const low = String(color).toLowerCase();
+  if (cur.some(([c]) => c.toLowerCase() === low)) return color;
+  const other = swatchFor(base === 'light' ? 'dark' : 'light');
+  const idx = other.findIndex(([c]) => c.toLowerCase() === low);
+  return idx >= 0 ? cur[idx][0] : color;
+}
+
+function applyTo(theme, accent, envColor) {
   const vars = deriveVars(theme);
   if (accent) {
     vars['--accent'] = accent;
     vars['--accent-glow'] = rgba(accent, theme.base === 'dark' ? 0.32 : 0.22);
+  }
+  if (envColor) {
+    // 环境色不做二次派生：它本身就是"第二个主色"，直接用原值。
+    // 注意它只影响 --env-color，不碰 --ok / --running 等状态色 ——
+    // 否则把环境色设成红色，就会得到"红色的成功提示"。
+    vars['--env-color'] = envColor;
   }
   const root = document.documentElement;
   for (const k of THEME_VARS) {
@@ -177,17 +215,25 @@ function applyTo(theme, accent) {
   return { ...theme, vars };
 }
 
-export function applyTheme(id, accent) {
+export function applyTheme(id, accent, envColor, opts = {}) {
   const theme = findTheme(id);
   flashTransition();
-  const applied = applyTo(theme, accent ?? getAccent());
+  const a = adaptSwatchToBase(accent ?? getAccent(), theme.base);
+  const e = adaptSwatchToBase(envColor ?? getEnvColor(), theme.base);
+  const applied = applyTo(theme, a, e);
   current = theme;
   try {
     localStorage.setItem(KEY_THEME, theme.id);
-    if (accent) localStorage.setItem(KEY_ACCENT, accent);
+    // 存的是适配后的值，保证下次切换仍在当前基调的正确档位上
+    if (a) localStorage.setItem(KEY_ACCENT, a);
+    else localStorage.removeItem(KEY_ACCENT);
+    if (e) localStorage.setItem(KEY_ENV, e);
+    else localStorage.removeItem(KEY_ENV);
+    // 仅在用户主动选择时打标记，默认主题才能对「没选过的人」继续生效
+    if (opts.userInitiated !== false) localStorage.setItem(KEY_USERSET, '1');
   } catch { /* 忽略存储失败 */ }
   listeners.forEach((fn) => {
-    try { fn(applied, 'theme'); } catch (e) { console.error('[theme]', e); }
+    try { fn(applied, 'theme'); } catch (er) { console.error('[theme]', er); }
   });
   return applied;
 }
@@ -195,12 +241,34 @@ export function applyTheme(id, accent) {
 /** 只改强调色，保持当前主题 */
 export function setAccent(accent) {
   const theme = current || findTheme(getThemeId());
-  const applied = applyTo(theme, accent);
-  try { localStorage.setItem(KEY_ACCENT, accent); } catch {}
+  const a = adaptSwatchToBase(accent, theme.base);
+  const applied = applyTo(theme, a, getEnvColor());
+  try { localStorage.setItem(KEY_ACCENT, a); } catch {}
   listeners.forEach((fn) => {
     try { fn(applied, 'accent'); } catch (e) { console.error('[theme]', e); }
   });
   return applied;
+}
+
+/** 只改环境色，保持当前主题与强调色 */
+export function setEnvColor(envColor) {
+  const theme = current || findTheme(getThemeId());
+  const e = adaptSwatchToBase(envColor, theme.base);
+  const applied = applyTo(theme, getAccent(), e);
+  try { localStorage.setItem(KEY_ENV, e); } catch {}
+  listeners.forEach((fn) => {
+    try { fn(applied, 'env-color'); } catch (er) { console.error('[theme]', er); }
+  });
+  return applied;
+}
+
+/** 清除自定义的强调色与环境色，回到主题自带配色 */
+export function resetColors() {
+  try {
+    localStorage.removeItem(KEY_ACCENT);
+    localStorage.removeItem(KEY_ENV);
+  } catch {}
+  return applyTheme(getThemeId(), null, null, { userInitiated: true });
 }
 
 /** 把当前主题 + 强调色另存为自定义主题 */
@@ -212,6 +280,8 @@ export function saveAsCustom(name) {
     vars['--accent'] = accent;
     vars['--accent-glow'] = rgba(accent, theme.base === 'dark' ? 0.32 : 0.22);
   }
+  const env = getEnvColor();
+  if (env) vars['--env-color'] = env;
   const custom = {
     id: 'custom-' + Date.now().toString(36),
     name: name || `${theme.name} 副本`,
@@ -232,7 +302,9 @@ export function onChange(fn) {
 
 /* ---------------------------- 初始化 ---------------------------- */
 export function initTheme() {
-  return applyTheme(getThemeId(), getAccent());
+  // 参数顺序是 (id, accent, envColor, opts) —— 一旦 applyTheme 再扩参，
+  // 这里必须同步，否则 opts 会被当成环境色写进 localStorage。
+  return applyTheme(getThemeId(), getAccent(), getEnvColor(), { userInitiated: false });
 }
 
 /* 供 iframe 插件同步用：返回扁平的变量表 */
@@ -244,6 +316,8 @@ export function exportVars() {
     vars['--accent'] = accent;
     vars['--accent-glow'] = rgba(accent, theme.base === 'dark' ? 0.32 : 0.22);
   }
+  const env = getEnvColor();
+  if (env) vars['--env-color'] = env;
   return vars;
 }
 

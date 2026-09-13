@@ -20,7 +20,9 @@
 
   /* 强调色 */
   --accent:        #5b8cff;
-  --accent-2:      #48e0c0;
+  /* 环境色：与强调色并列的第二个可调主色，只作次要点缀。
+     注意它不等于状态色 —— 下面 --ok / --running 才是语义固定的那组。 */
+  --env-color:      #48e0c0;
   --accent-glow:   rgba(91, 140, 255, .30);
   --warn:          #ffb454;
   --danger:        #ff6b6b;
@@ -444,7 +446,10 @@ body {
   max-width: 320px;
 }
 .toast.err { color: var(--danger); }
-.toast.ok  { color: var(--accent-2); }
+/* 成功提示用状态色 --ok 而非环境色：
+   用环境色的话，用户把环境色调成红色，就会得到「红色的成功提示」。
+   这段曾在 53013446 的全量覆盖中被打回旧版，现补回。 */
+.toast.ok  { color: var(--ok); }
 @keyframes toastIn { from { opacity: 0; transform: translateY(8px); } }
 
 /* ---------- 滚动条 ---------- */

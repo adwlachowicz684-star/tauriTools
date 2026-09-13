@@ -15,7 +15,9 @@ export const THEME_VARS = [
   '--bg', '--bg-image', '--surface', '--surface-sunk',
   '--sh-dark', '--sh-light',
   '--text', '--text-dim', '--text-mute',
-  '--accent', '--accent-2', '--accent-glow',
+  // 环境色（原「主题色」）：与强调色并列的第二个可调主色，只作次要点缀。
+  // 状态色（--ok/--running/--warn/--danger）语义固定，不随它变化。
+  '--accent', '--env-color', '--accent-glow',
   // 状态色：与装饰色（accent / accent-2）分离，不参与主题色微调。
   // 否则用户把主题色设成红色，就会出现"红色的成功提示"。
   '--ok', '--running', '--warn', '--danger',
@@ -44,7 +46,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#8b93a2',
       '--text-mute': '#5f6773',
       '--accent': '#5b8cff',
-      '--accent-2': '#48e0c0',
+      '--env-color': '#48e0c0',
       '--border': 'transparent',
       '--blur': '0px',
     },
@@ -65,7 +67,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#6a7183',
       '--text-mute': '#9aa1b1',
       '--accent': '#3b6fe0',
-      '--accent-2': '#12a88c',
+      '--env-color': '#12a88c',
       '--border': 'transparent',
       '--blur': '0px',
     },
@@ -86,7 +88,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#7f89a6',
       '--text-mute': '#5a6382',
       '--accent': '#6f9cff',
-      '--accent-2': '#5ad3c8',
+      '--env-color': '#5ad3c8',
       '--border': 'transparent',
       '--blur': '0px',
     },
@@ -108,7 +110,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#94949e',
       '--text-mute': '#5e5e68',
       '--accent': '#7c8cff',
-      '--accent-2': '#3ddc97',
+      '--env-color': '#3ddc97',
       '--border': 'rgba(255,255,255,.09)',
       '--blur': '0px',
     },
@@ -129,7 +131,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#9d94c4',
       '--text-mute': '#6b6490',
       '--accent': '#ff2e97',
-      '--accent-2': '#00e5ff',
+      '--env-color': '#00e5ff',
       '--border': 'rgba(255,46,151,.16)',
       '--blur': '0px',
     },
@@ -151,7 +153,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#a8b0c4',
       '--text-mute': '#767e94',
       '--accent': '#7aa2ff',
-      '--accent-2': '#5fe3d0',
+      '--env-color': '#5fe3d0',
       '--border': 'rgba(255,255,255,.12)',
       '--blur': '14px',
     },
@@ -174,7 +176,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#9ba0a8',
       '--text-mute': '#6b7078',
       '--accent': '#7c9fff',
-      '--accent-2': '#6fd3a8',
+      '--env-color': '#6fd3a8',
       '--border': 'transparent',
       '--blur': '0px',
     },
@@ -195,7 +197,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#8ba398',
       '--text-mute': '#5f7569',
       '--accent': '#6fcf97',
-      '--accent-2': '#a8d8b9',
+      '--env-color': '#a8d8b9',
       '--border': 'transparent',
       '--blur': '0px',
     },
@@ -216,7 +218,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#ab9c8d',
       '--text-mute': '#7a6d61',
       '--accent': '#ffa94d',
-      '--accent-2': '#ffd8a8',
+      '--env-color': '#ffd8a8',
       '--border': 'transparent',
       '--blur': '0px',
     },
@@ -237,7 +239,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#9a92b8',
       '--text-mute': '#6d6689',
       '--accent': '#b48cff',
-      '--accent-2': '#ff8fd0',
+      '--env-color': '#ff8fd0',
       '--border': 'transparent',
       '--blur': '0px',
     },
@@ -258,7 +260,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#8492ab',
       '--text-mute': '#5c6880',
       '--accent': '#4d9de0',
-      '--accent-2': '#56d4c4',
+      '--env-color': '#56d4c4',
       '--border': 'transparent',
       '--blur': '0px',
     },
@@ -279,7 +281,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#b09ba0',
       '--text-mute': '#7d6a70',
       '--accent': '#d4a574',
-      '--accent-2': '#c97b84',
+      '--env-color': '#c97b84',
       '--border': 'transparent',
       '--blur': '0px',
     },
@@ -300,7 +302,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#84a3b0',
       '--text-mute': '#5b7784',
       '--accent': '#38bdf8',
-      '--accent-2': '#5eead4',
+      '--env-color': '#5eead4',
       '--border': 'transparent',
       '--blur': '0px',
     },
@@ -323,7 +325,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#6e675c',
       '--text-mute': '#a09a8d',
       '--accent': '#b8694d',
-      '--accent-2': '#6b8e5a',
+      '--env-color': '#6b8e5a',
       '--border': 'transparent',
       '--blur': '0px',
     },
@@ -344,7 +346,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#647a6f',
       '--text-mute': '#96a89e',
       '--accent': '#1f8f6b',
-      '--accent-2': '#7cc4a8',
+      '--env-color': '#7cc4a8',
       '--border': 'transparent',
       '--blur': '0px',
     },
@@ -365,7 +367,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#7d656c',
       '--text-mute': '#ac979e',
       '--accent': '#d63a68',
-      '--accent-2': '#f095b0',
+      '--env-color': '#f095b0',
       '--border': 'transparent',
       '--blur': '0px',
     },
@@ -386,7 +388,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#726a5e',
       '--text-mute': '#a39a8b',
       '--accent': '#b0601f',
-      '--accent-2': '#7d9b6a',
+      '--env-color': '#7d9b6a',
       '--border': 'transparent',
       '--blur': '0px',
     },
@@ -409,7 +411,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#65656e',
       '--text-mute': '#9a9aa2',
       '--accent': '#2f6fed',
-      '--accent-2': '#1fa97f',
+      '--env-color': '#1fa97f',
       '--border': 'rgba(0,0,0,.08)',
       '--blur': '0px',
     },
@@ -430,7 +432,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#4a9e63',
       '--text-mute': '#336b44',
       '--accent': '#8affc1',
-      '--accent-2': '#ffd166',
+      '--env-color': '#ffd166',
       '--border': 'rgba(110,231,143,.14)',
       '--blur': '0px',
     },
@@ -451,7 +453,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#a89bd4',
       '--text-mute': '#6f6599',
       '--accent': '#f7ff3c',
-      '--accent-2': '#00fff0',
+      '--env-color': '#00fff0',
       '--border': 'rgba(247,255,60,.18)',
       '--blur': '0px',
     },
@@ -475,7 +477,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#5f6878',
       '--text-mute': '#8d95a5',
       '--accent': '#3f74e0',
-      '--accent-2': '#1fa892',
+      '--env-color': '#1fa892',
       '--border': 'rgba(255,255,255,.65)',
       '--blur': '16px',
     },
@@ -497,7 +499,7 @@ export const PRESET_THEMES = [
       '--text-dim': '#b3aad6',
       '--text-mute': '#7f77a8',
       '--accent': '#8ce0ff',
-      '--accent-2': '#ff9ad5',
+      '--env-color': '#ff9ad5',
       '--border': 'rgba(255,255,255,.15)',
       '--blur': '18px',
     },
@@ -528,7 +530,7 @@ export const PRESET_THEMES = [
       '--text-mute': '#687285',
       '--text-soft': '#c4cbd9',
       '--accent': '#4c8dff',
-      '--accent-2': '#22c55e',
+      '--env-color': '#22c55e',
       '--ok': '#22c55e',
       '--running': '#4c8dff',
       '--warn': '#f59e0b',
@@ -544,12 +546,37 @@ export const PRESET_THEMES = [
     },
   },
 ];
-/** 强调色候选（任何主题下都能单独微调） */
+
+/**
+ * 浅色底专用色板。
+ *
+ * 同一组色值在深底浅底上的表现差异极大：#48e0c0（青）在深色底上
+ * 对比度 10.5:1，放到浅色底 #e6e9ef 上只有 1.4:1 —— 基本看不见。
+ * 所以浅色底统一压暗 42%，实测全部 ≥ 3.8:1。
+ */
+function darken(hex, amount) {
+  const m = String(hex).match(/^#([0-9a-f]{6})$/i);
+  if (!m) return hex;
+  const h = m[1];
+  const f = (v) => Math.max(0, Math.min(255, Math.round(v * (1 - amount))));
+  return '#' + [0, 2, 4]
+    .map((i) => f(parseInt(h.substr(i, 2), 16)).toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/** 强调色与环境色共用的候选色板 */
 export const ACCENT_SWATCHES = [
   ['#5b8cff', '蓝'], ['#7aa2ff', '天蓝'], ['#48e0c0', '青'],
   ['#3ddc97', '薄荷'], ['#b48cff', '紫'], ['#ff2e97', '品红'],
   ['#ff8f5b', '橙'], ['#ffb454', '琥珀'], ['#ff6b8b', '粉'],
 ];
+
+export const ACCENT_SWATCHES_LIGHT = ACCENT_SWATCHES.map(([c, l]) => [darken(c, 0.42), l]);
+
+/** 按面板基调取对应色板：深色底用原色，浅色底用压暗版 */
+export function swatchFor(base) {
+  return base === 'light' ? ACCENT_SWATCHES_LIGHT : ACCENT_SWATCHES;
+}
 
 /**
  * 面板默认主题。

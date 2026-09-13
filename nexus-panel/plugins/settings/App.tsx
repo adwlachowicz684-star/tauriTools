@@ -2,9 +2,12 @@ import { useEffect, useState } from 'react';
 import { useNexus } from '../../src/nexus-react';
 import type { PluginManifest } from '../../js/host.js';
 import {
-  listThemes, applyTheme, setAccent, getThemeId, getAccent,
-  saveAsCustom, deleteCustomTheme, ACCENT_SWATCHES,
+  listThemes, applyTheme, setAccent, setEnvColor, resetColors,
+  getThemeId, getAccent, getEnvColor, getBase,
+  saveAsCustom, deleteCustomTheme,
+  onChange as onThemeChange,
 } from '../../js/theme-manager.js';
+import { swatchFor } from '../../js/themes.js';
 import {
   ADAPT_POLICIES, PLUGIN_THEMES,
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
@@ -23,6 +26,13 @@ export default function Settings() {
     setPlugins(window.__NEXUS__?.getPlugins?.() ?? []);
     ctx.invoke<string>('app_version').then(setVersion).catch(() => setVersion('浏览器模式'));
   }, [ctx]);
+
+  /* 订阅主题变更：从标题栏的 ◐ / 主题名按钮切换时，
+     本页面当前主题的高亮与色板选中态要跟着刷新。
+     不订阅的话，只有用户点了本页某个元素触发重渲染才会更新，
+     看起来就像"切了但没生效"。
+     （这段曾在 53013446 的全量覆盖中丢失，现补回） */
+  useEffect(() => onThemeChange(() => force((n) => n + 1)), []);
 
   const rerender = () => force((n) => n + 1);
 
@@ -67,8 +77,19 @@ export default function Settings() {
                               ? `blur(${v['--blur']})` : undefined,
                           }}
                         />
-                        <i className="bar" style={{ background: v['--accent'] }} />
-                        <i className="bar s" style={{ background: v['--accent-2'] }} />
+                        {/* 这两条是主题的装饰配色，不是状态色。
+                            状态色（成功/错误/运行中）语义固定，不随环境色变化，
+                            故不在此预览中展示，避免误导。 */}
+                        <i
+                          className="bar"
+                          title="强调色：按钮 / 选中态"
+                          style={{ background: v['--accent'] }}
+                        />
+                        <i
+                          className="bar s"
+                          title="环境色：次要点缀（非状态色）"
+                          style={{ background: v['--env-color'] }}
+                        />
                       </div>
                       <div className="theme-name" style={{ color: v['--text'] }}>{t.name}</div>
                       <div className="theme-desc">{t.desc || (t.base === 'dark' ? '深色' : '浅色')}</div>
@@ -96,10 +117,10 @@ export default function Settings() {
         })()}
 
         <div className="p-muted" style={{ marginTop: 16 }}>
-          强调色（叠加在当前主题之上）
+          强调色（叠加在当前主题之上 · 按钮 / 选中态 / 链接）
         </div>
         <div className="p-row" style={{ marginTop: 8 }}>
-          {ACCENT_SWATCHES.map(([c, label]) => {
+          {swatchFor(getBase()).map(([c, label]) => {
             const cur = getAccent();
             return (
               <button
@@ -117,6 +138,46 @@ export default function Settings() {
             );
           })}
         </div>
+
+        <div className="p-muted" style={{ marginTop: 14 }}>
+          环境色（第二个主色 · 仅用于次要点缀）
+        </div>
+        <div className="p-muted" style={{ fontSize: 12, marginTop: 2, opacity: .8 }}>
+          成功 / 错误 / 运行中 / 警告 为固定语义色，不随这里变化
+        </div>
+        <div className="p-row" style={{ marginTop: 8 }}>
+          {swatchFor(getBase()).map(([c, label]) => {
+            const cur = getEnvColor();
+            return (
+              <button
+                key={c}
+                className="p-btn"
+                style={{
+                  color: c,
+                  boxShadow: '3px 3px 7px var(--sh-dark), -3px -3px 7px var(--sh-light)',
+                  opacity: !cur || cur.toLowerCase() === c.toLowerCase() ? '1' : '.7',
+                }}
+                onClick={() => { setEnvColor(c); ctx.toast('环境色：' + label, 'ok'); rerender(); }}
+              >
+                ● {label}
+              </button>
+            );
+          })}
+        </div>
+
+        {(getAccent() || getEnvColor()) ? (
+          <div className="p-row" style={{ marginTop: 10 }}>
+            <button
+              className="p-btn"
+              onClick={() => { resetColors(); ctx.toast('已恢复主题自带配色', 'ok'); rerender(); }}
+            >
+              ↺ 恢复主题自带配色
+            </button>
+            <span className="p-muted">
+              当前：强调色 {getAccent() || '（默认）'} · 环境色 {getEnvColor() || '（默认）'}
+            </span>
+          </div>
+        ) : null}
 
         <div className="p-row" style={{ marginTop: 14 }}>
           <button
