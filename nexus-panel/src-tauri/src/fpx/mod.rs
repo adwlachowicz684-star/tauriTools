@@ -1052,10 +1052,12 @@ pub async fn fpx_capture_screen(
 ) -> Result<screen::CaptureResult, String> {
     let dir = store::data_dir(&app, &state)?;
     let shots = dir.join("shots");
-    let r = tauri::async_runtime::spawn_blocking(move || screen::capture(&shots))
+    // 不能再包一层 Ok：screen::capture 本身就返回 Result，
+    // 而上面只 ? 掉了 spawn_blocking 的 JoinError，
+    // 此时 r 已经是 Result<CaptureResult, String>，直接返回即可。
+    tauri::async_runtime::spawn_blocking(move || screen::capture(&shots))
         .await
-        .map_err(|e| format!("截图任务异常终止: {e}"))?;
-    Ok(r)
+        .map_err(|e| format!("截图任务异常终止: {e}"))?
 }
 
 /* ---------------------------- 监听 / MCP ---------------------------- */

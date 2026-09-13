@@ -85,7 +85,7 @@ pub fn stop() {
     // 标志置 false 后，线程最多再睡 100ms 就会退出并释放端口
     RUNNING.store(false, Ordering::SeqCst);
 }
-pub fn is_running() -> bool { RUNNING.load(Ordering::SeqCst); }
+pub fn is_running() -> bool { RUNNING.load(Ordering::SeqCst) }
 
 /* ---------------------------- HTTP ---------------------------- */
 

@@ -261,9 +261,11 @@ pub fn apply_lock(path: &str, deny_delete: bool, deny_write: bool) -> Result<Str
         if !out.status.success() {
             return Err(format!("icacls 失败: {}", String::from_utf8_lossy(&out.stderr).trim()));
         }
+        // 三个分支都得 .into()：函数返回 Result<String, _>，
+        // 前两个转了而最后一个漏掉，第三个分支就会是 &str，与 String 不匹配。
         Ok(if deny_delete && deny_write { "已启用防删除 + 防写入".into() }
            else if deny_delete { "已启用防删除".into() }
-           else { "已启用防写入" })
+           else { "已启用防写入".into() })
     }
 
     #[cfg(not(windows))]

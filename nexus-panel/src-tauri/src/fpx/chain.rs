@@ -392,7 +392,7 @@ pub(crate) fn set_clipboard(text: &str) -> bool {
         // 优先 Wayland 的 wl-copy，其次 X11 的 xclip
         for prog in ["wl-copy", "xclip"] {
             if let Ok(mut child) = Command::new(prog)
-                .args(if prog == &"xclip" { vec!["-selection", "clipboard"] } else { vec![] })
+                .args(if prog == "xclip" { vec!["-selection", "clipboard"] } else { vec![] })
                 .stdin(std::process::Stdio::piped()).spawn()
             {
                 if let Some(sin) = child.stdin.as_mut() {
@@ -494,7 +494,9 @@ pub fn send(id: &str, directory: &str, prompt: &str, custom: &[super::model::Cus
                 let copied = set_clipboard(prompt);
                 return ChainSendResult {
                     ok: true,
-                    client: name,
+                    // 必须 clone：下面的 message 里还要用 name，
+                    // 而结构体字段按顺序求值，client: name 已经把它移走了
+                    client: name.clone(),
                     needs_paste: true,
                     message: if copied {
                         format!("已在 {name} 中打开，指令已复制到剪贴板，请粘贴。")
@@ -509,7 +511,7 @@ pub fn send(id: &str, directory: &str, prompt: &str, custom: &[super::model::Cus
             let copied = set_clipboard(prompt);
             return ChainSendResult {
                 ok: true,
-                client: name,
+                client: name.clone(),
                 needs_paste: true,
                 message: if copied {
                     format!("已唤起 {name}，指令已复制到剪贴板，请粘贴。")
@@ -522,7 +524,7 @@ pub fn send(id: &str, directory: &str, prompt: &str, custom: &[super::model::Cus
         let copied = set_clipboard(prompt);
         return ChainSendResult {
             ok: copied,
-            client: name,
+            client: name.clone(),
             needs_paste: true,
             message: if copied {
                 format!("未能打开 {name}，指令已复制到剪贴板，请粘贴。")
