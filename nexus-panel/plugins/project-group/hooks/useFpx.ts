@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNexus } from '../../../src/nexus-react';
-import { errText, makeApi } from '../api';
+import { errText, makeApi, normalizeKey } from '../api';
 import type {
   Bootstrap, CardKind, ContentItem, FpxConfig, LinkRow, Snapshot, TabInfo,
 } from '../types';
@@ -39,6 +39,46 @@ export function useFpx() {
     setLog((l) => [{ at: now(), text, isError }, ...l].slice(0, 200));
   }, []);
 
+  /* ---------------- 活动页签记忆 ----------------
+   * 存 ctx.store（localStorage）而不是 config.json：
+   * 这是 UI 会话状态，不是业务数据——MCP server / 备份 / 目录监听三个后台线程
+   * 都不关心"上次停在哪一栏"。放 config.json 的话每切一次页签都要写文件、
+   * 回传全量快照、重渲染整个界面；放 store 是零 IO、零重渲染。
+   * 代价是清浏览器数据会丢，但那只是个"上次在哪"的偏好，丢了无所谓。
+   */
+  const TAB_KEY = 'activeTab';
+  /** 恢复完成前不写回：否则初始的 {0,0} 会先把持久化的位置冲掉 */
+  const tabReady = useRef(false);
+  const lastSavedTab = useRef('');
+
+  useEffect(() => {
+    if (!boot || tabReady.current) return;
+    // 页签数可能因删除而变少，必须 clamp，否则恢复出的序号越界
+    const clamp = (i: number, n: number) => Math.min(Math.max(0, i), Math.max(0, n - 1));
+    void (async () => {
+      const saved = await ctx.store
+        .get<Record<CardKind, number> | null>(TAB_KEY, null)
+        .catch(() => null);
+      const p = clamp(saved?.project ?? 0, boot.projectTabs?.length ?? 1);
+      const g = clamp(saved?.group ?? 0, boot.groupTabs?.length ?? 1);
+      lastSavedTab.current = `${p}|${g}`;
+      tabReady.current = true;
+      if (!alive.current) return;
+      // 用户在恢复完成前已经手动切过页签，就不要再覆盖他的操作
+      setActiveTab((prev) =>
+        prev.project === 0 && prev.group === 0 ? { project: p, group: g } : prev);
+    })();
+  }, [boot, ctx]);
+
+  useEffect(() => {
+    if (!boot || !tabReady.current) return;
+    const key = `${activeTab.project}|${activeTab.group}`;
+    if (key === lastSavedTab.current) return;
+    lastSavedTab.current = key;
+    // 只写 store，不回写 config：不触发快照往返，界面不会闪
+    void ctx.store.set(TAB_KEY, activeTab).catch(() => {});
+  }, [boot, activeTab, ctx]);
+
   /** 统一套一层：出错记日志 + toast，不再到处 try/catch */
   const run = useCallback(async <T,>(label: string, fn: () => Promise<T>): Promise<T | null> => {
     setBusy(true);
@@ -64,6 +104,8 @@ export function useFpx() {
   useEffect(() => {
     if (boot) configRef.current = boot.config;
   }, [boot]);
+
+
 
   const refresh = useCallback(async () => {
     const b = await run('加载', () => api.bootstrap());
@@ -284,8 +326,42 @@ export function useFpx() {
 
   useEffect(() => { scan(focusDir, contentKind); }, [focusDir, contentKind, scan]);
 
+  /* ---------------- 改名 / 清除无效项 ---------------- */
+
+  const renameFolder = useCallback(async (kind: CardKind, path: string, newName: string) => {
+    const r = await run('改名', () => api.renameFolder(kind, path, newName));
+    if (!r) return null;
+    applySnapshot(r.snapshot);
+    // 选中项要跟着改，否则改名后选中的还是旧路径，后续操作会打到不存在的目录上
+    if (kind === 'project') {
+      setSelProject((p) => (p && normalizeKey(p) === normalizeKey(path) ? r.newPath : p));
+    } else {
+      setSelGroup((p) => (p && normalizeKey(p) === normalizeKey(path) ? r.newPath : p));
+    }
+    const extra = r.recHits > 0 ? `，同步 ${r.recHits} 条链接记录` : '';
+    pushLog(`已改名为「${newName}」${extra}`);
+    return r;
+  }, [api, applySnapshot, pushLog, run]);
+
+  const clearInvalid = useCallback(async () => {
+    const r = await run('清除无效项', () => api.clearInvalid());
+    if (!r) return null;
+    applySnapshot(r.snapshot);
+    // 被清掉的可能正是当前选中项
+    const gone = new Set(r.removed.map((p) => normalizeKey(p)));
+    setSelProject((p) => (p && gone.has(normalizeKey(p)) ? null : p));
+    setSelGroup((p) => (p && gone.has(normalizeKey(p)) ? null : p));
+    if (r.tabHits === 0 && r.recHits === 0) {
+      pushLog('没有发现无效项');
+    } else {
+      pushLog(`已清除 ${r.tabHits} 个无效登记${r.recHits > 0 ? `、${r.recHits} 条失效链接记录` : ''}`);
+    }
+    return r;
+  }, [api, applySnapshot, pushLog, run]);
+
   return {
     ctx, api, boot, loading, busy, log, pushLog, run,
+    renameFolder, clearInvalid,
     selProject, setSelProject, selGroup, setSelGroup,
     activeTab, setActiveTab,
     content, contentKind, setContentKind, focusDir, scan,
