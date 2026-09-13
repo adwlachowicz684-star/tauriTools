@@ -85,6 +85,8 @@ export function createHost(opts = {}) {
     mounting: null,
     badges: {},
     shortcutsPaused: false,   // 模态（如插件设置抽屉）打开时暂停插件快捷键
+    /** 插件注入的侧边栏条目 { id, pluginId, label, icon, event } */
+    sidebarItems: [],
   };
 
   /** 同页插件快捷键的激活判定：必须是当前插件，且没有被模态遮挡 */
@@ -97,6 +99,32 @@ export function createHost(opts = {}) {
     state.badges[id] = n || 0;
     hooks.onBadges?.({ ...state.badges });
   };
+
+  /* ---- 插件注入的侧边栏条目 ---- *
+   * 插件画不到外壳上，只能登记；点击由外壳往总线发事件，插件自己响应。
+   */
+  function addSidebarItem(pluginId, item) {
+    if (!item || !item.id) return false;
+    state.sidebarItems = state.sidebarItems.filter((x) => !(x.pluginId === pluginId && x.id === item.id));
+    state.sidebarItems.push({ ...item, pluginId });
+    hooks.onSidebarItems?.(state.sidebarItems.slice());
+    return true;
+  }
+  function removeSidebarItem(pluginId, itemId) {
+    const before = state.sidebarItems.length;
+    state.sidebarItems = state.sidebarItems.filter((x) => !(x.pluginId === pluginId && x.id === itemId));
+    if (state.sidebarItems.length !== before) {
+      hooks.onSidebarItems?.(state.sidebarItems.slice());
+      return true;
+    }
+    return false;
+  }
+  /** 插件卸载时清掉它注入的条目，避免留下点了没反应的幽灵项 */
+  function releasePluginRegistrations(pluginId) {
+    const before = state.sidebarItems.length;
+    state.sidebarItems = state.sidebarItems.filter((x) => x.pluginId !== pluginId);
+    if (state.sidebarItems.length !== before) hooks.onSidebarItems?.(state.sidebarItems.slice());
+  }
 
   /* ---- 加载 / 卸载 ---- */
   async function mount(id) {
@@ -178,6 +206,7 @@ export function createHost(opts = {}) {
     if (!state.instance) return;
     const inst = state.instance;
     state.instance = null;
+    if (inst?.manifest?.id) releasePluginRegistrations(inst.manifest.id);
     hooks.onSettingsAvailable?.(false);
     await safeTeardown(inst);
   }
@@ -350,7 +379,6 @@ export function createHost(opts = {}) {
     const cleanupFns = [];
     let bridgeHandler = null;
     let hasSettings = false;
-    let handshaked = false;          // 每个 iframe 实例只握手一次
     // 握手阶段就要写 reportedBase，此时完整实例还没构造出来，先放一个可变壳
     const inst0 = {};
 
@@ -364,22 +392,12 @@ export function createHost(opts = {}) {
 
         switch (d.type) {
           case 'ready':
-            // 只握手一次：旧版 SDK 收到 init 会回发一次 ready，不去重会形成
-            // ready ↔ init 无限往返，每轮还会重建 ctx 与事件订阅。
-            // token 校验拦掉已被放弃的挂载（settings 视图 token 为 null，不拦）。
-            if (handshaked || (token && state.mounting !== token)) break;
-            handshaked = true;
             hasSettings = !!d.hasSettings;      // 插件上报：是否提供了设置面板
-            // 主动回发 init（含 manifest/主题），再发 mount，两者必须都在这里发：
-            // ready 这个 Promise 只由 mounted / error 解决，而 mounted 又要等 iframe
-            // 收到 mount 才回 —— 把 mount 放到 await ready 之后就是互等死锁。
-            // postMessage 按序送达：iframe 先处理 init（ctx 就绪），随后 mount 才能挂载。
             send(iframe, {
               type: 'init', manifest, theme: exportVars(), view,
               isolated,                         // 插件据此决定能力探测方式
               reportBase: isolated && adaptTheme,  // 隔离且要适配 → 让插件自报基调
             });
-            send(iframe, { type: 'mount' });
             break;
           // 隔离插件无法被外壳穿透采样，由它自己采样后上报基调
           case 'base-report':
@@ -437,7 +455,9 @@ export function createHost(opts = {}) {
       return null;
     }
 
+    send(iframe, { type: 'mount' });
     await new Promise((r) => setTimeout(r, 60));   // 给插件渲染时间，便于主题采样
+
     /* 自动把焦点交给插件。
        不这么做的话，刚切换过来焦点还在主文档，插件的快捷键要等用户点一下才生效。
        用 preventScroll 避免页面跳动；contentWindow 可能因沙箱策略拿不到，失败即忽略。 */
@@ -523,6 +543,8 @@ export function createHost(opts = {}) {
       toast: ({ msg, type }) => hooks.toast?.(msg, type),
       reload: () => mount(manifest.id),
       open: ({ id }) => hooks.onOpen?.(id) ?? navigateHook(id),
+      'sidebar.add': ({ item }) => addSidebarItem(manifest.id, item),
+      'sidebar.remove': ({ itemId }) => removeSidebarItem(manifest.id, itemId),
     };
   }
   const navigateHook = (id) => hooks.onNavigate?.(id);
@@ -593,6 +615,8 @@ export function createHost(opts = {}) {
 
   return {
     state, bus, mount, unmount, mountSettings, win, setBadge,
+    addSidebarItem, removeSidebarItem, releasePluginRegistrations,
+    getSidebarItems: () => state.sidebarItems.slice(),
     hasSettings: () => hasSettings(state.instance),
     readTheme,
     getPlugins: () => state.plugins,

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ContentPanel } from './components/ContentPanel';
+import { RenameDialog } from './components/RenameDialog';
 import { CardGrid, TabBar, type DragPayload } from './components/CardGrid';
 import { CreateDialog, IconPickDialog, LockDialog, StyleDialog } from './components/dialogs';
 import { DirDialog } from './components/DirDialog';
@@ -25,7 +26,8 @@ type Dialog =
   | { type: 'editor' }
   | { type: 'chain'; target: string; kind: CardKind }
   | { type: 'settings' }
-  | { type: 'service' };
+  | { type: 'service' }
+  | { type: 'rename'; card: CardInfo; kind: CardKind };
 
 export default function App() {
   const s = useFpx();
@@ -111,6 +113,7 @@ export default function App() {
           () => ctx.toast('复制失败', 'err'),
         ),
       },
+      { label: '改名…（F2）', onClick: () => setDialog({ type: 'rename', card, kind }) },
       { label: '保护（ACL）…', onClick: () => setDialog({ type: 'lock', card }) },
       { label: '图标与标签…', onClick: () => setDialog({ type: 'style', card }) },
       { label: '发送到 AI…', onClick: () => setDialog({ type: 'chain', target: card.path, kind }) },
@@ -155,24 +158,33 @@ export default function App() {
     s.api.chainActions().then(setChainActions).catch(() => setChainActions([]));
   }, [boot, s.api]);
 
-  /* ---------------- 连锁动作：快捷键 + 侧边栏 ----------------
-   * 两者都属于外壳能力，插件只能「注册 + 监听事件」，不能直接画到外壳上。
-   * 动作清单变化时先撤再注册，避免残留指向已删除动作的条目。
+  /* ---------------- 快捷键 + 侧边栏 ----------------
+   * 快捷键走外壳的 ctx.shortcut（插件激活时生效、卸载自动注销）；
+   * 侧边栏条目由插件登记、外壳渲染，点击后外壳把事件发回总线，这里用 ctx.on 接。
+   *
+   * 分两类：
+   *   · 连锁动作自带的键位（用户自定义，存在 chainActions[].shortcut）
+   *   · 固定功能键（打开/锁定/改名/搬家/改色/改图标/删除/刷新/清除无效/页签切换）
    */
-  const shortcutEvent = (id: string) => `fpx:chain:${id}`;
   const sidebarEvent = (id: string) => `fpx:sidebar:${id}`;
 
-  /**
-   * 当前选中项用 ref 传给事件处理，而不是直接进 useEffect 依赖。
-   * 否则每点一张卡片都会重跑注册副作用：侧边栏被整体重建（闪烁、丢焦点），
-   * 快捷键也要反复注销再注册。
-   */
+  /** 当前选中项：用 ref 传，避免每点一张卡片就重建快捷键与侧边栏 */
   const selRef = useRef<{ path: string; kind: CardKind } | null>(null);
   selRef.current = s.selProject
     ? { path: s.selProject, kind: 'project' }
     : s.selGroup ? { path: s.selGroup, kind: 'group' } : null;
 
-  /** 对当前选中的卡片执行连锁动作；没选中就提示 */
+  /** 取当前选中的卡片对象（选中项可能已被清除 / 数据未就绪） */
+  const selectedCard = (): { card: CardInfo; kind: CardKind } | null => {
+    const sel = selRef.current;
+    if (!sel || !boot) return null;
+    const list = sel.kind === 'project'
+      ? boot.projectTabs.flatMap((t) => t.items)
+      : boot.groupTabs.flatMap((t) => t.items);
+    const card = list.find((c) => c.path === sel.path);
+    return card ? { card, kind: sel.kind } : null;
+  };
+
   const runActionOnSelection = (a: ChainAction) => {
     const sel = selRef.current;
     if (!sel) {
@@ -184,35 +196,78 @@ export default function App() {
 
   useEffect(() => {
     if (!boot) return;
-    const unsubs: Array<() => void> = [];
-    const registered: string[] = [];
+    const offs: Array<() => void> = [];
     const sidebarIds: string[] = [];
 
+    // ---- 连锁动作：用户自定义键位 + 可选挂侧边栏 ----
     for (const a of chainActions) {
       if (a.shortcut && a.shortcut.trim()) {
-        ctx.registerShortcut(a.shortcut.trim(), shortcutEvent(a.id), a.name);
-        registered.push(a.shortcut.trim());
+        offs.push(ctx.shortcut(a.shortcut.trim(), () => runActionOnSelection(a)));
       }
       if (a.showSidebar) {
         ctx.addSidebarItem({
           id: a.id, label: a.name, icon: a.icon || '▶', event: sidebarEvent(a.id),
         });
         sidebarIds.push(a.id);
+        offs.push(ctx.on(sidebarEvent(a.id), () => runActionOnSelection(a)));
       }
     }
 
-    // 两类事件都指向同一个处理：对当前选中的卡片执行该动作
-    for (const a of chainActions) {
-      unsubs.push(ctx.on(shortcutEvent(a.id), () => runActionOnSelection(a)));
-      unsubs.push(ctx.on(sidebarEvent(a.id), () => runActionOnSelection(a)));
+    // ---- 固定功能键（对齐原版 ShortcutCatalog 组2 / 组3）----
+    // 需要选中项的动作统一走 needSel：没选中就提示，不静默失败
+    const needSel = (label: string, fn: (card: CardInfo, kind: CardKind) => void) =>
+      ctx.shortcut(label, () => {
+        const hit = selectedCard();
+        if (!hit) { ctx.toast('请先选中一个项目或项目组', 'err'); return; }
+        fn(hit.card, hit.kind);
+      });
+
+    offs.push(needSel('mod+o', (c) => openPath(c.path, 'dir')));
+    offs.push(needSel('mod+l', (c) => setDialog({ type: 'lock', card: c })));
+    offs.push(needSel('F2', (c, k) => setDialog({ type: 'rename', card: c, kind: k })));
+    offs.push(needSel('F4', (c) => setDialog({ type: 'style', card: c })));
+    offs.push(needSel('F6', (c) => setDialog({ type: 'icons', card: c })));
+    offs.push(needSel('Delete', (c, k) => s.removeCard(k, c.path)));
+    // 搬家：与右键「转类别」等价，落到另一栏当前页签
+    offs.push(needSel('F3', (c, k) => void s.moveCardAcross(
+      k, c.path, k === 'project' ? s.activeTab.group : s.activeTab.project)));
+
+    // 面板级：不依赖选中项
+    offs.push(ctx.shortcut('F5', () => void s.refresh()));
+    offs.push(ctx.shortcut('F8', () => void s.clearInvalid()));
+
+    // 页签切换：project / group 各一组
+    const tabShortcuts: Array<[string, CardKind, number]> = [
+      ['ctrl+tab', 'group', 1], ['ctrl+shift+tab', 'group', -1],
+      ['ctrl+pagedown', 'project', 1], ['ctrl+pageup', 'project', -1],
+    ];
+    for (const [combo, kind, delta] of tabShortcuts) {
+      offs.push(ctx.shortcut(combo, () => {
+        if (!boot) return;
+        const count = (kind === 'project' ? boot.projectTabs : boot.groupTabs).length;
+        if (count === 0) return;
+        const cur = s.activeTab[kind];
+        const next = (cur + delta + count) % count;
+        s.setActiveTab((prev) => ({ ...prev, [kind]: next }));
+      }));
     }
+    // 左右方向键切焦点面板：这里简化为切到对应栏的第一个卡片
+    offs.push(ctx.shortcut('ctrl+left', () => {
+      if (!boot) return;
+      const first = boot.projectTabs[s.activeTab.project]?.items[0];
+      if (first) s.setSelProject(first.path);
+    }));
+    offs.push(ctx.shortcut('ctrl+right', () => {
+      if (!boot) return;
+      const first = boot.groupTabs[s.activeTab.group]?.items[0];
+      if (first) s.setSelGroup(first.path);
+    }));
 
     return () => {
-      for (const u of unsubs) { try { u(); } catch { /* 忽略已失效的订阅 */ } }
-      for (const acc of registered) ctx.unregisterShortcut(acc);
+      for (const off of offs) { try { off(); } catch { /* 忽略已失效的订阅 */ } }
       for (const id of sidebarIds) ctx.removeSidebarItem(id);
     };
-    // 只在动作清单变化时重建；选中项走 selRef，不进依赖
+    // 只在动作清单 / 数据变化时重建；选中项走 selRef，不进依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boot, chainActions, ctx]);
 
@@ -294,13 +349,37 @@ export default function App() {
             <button className="p-btn" onClick={() => setDialog({ type: 'settings' })}>设置</button>
             <button className="p-btn" onClick={() => setDialog({ type: 'backup' })}>备份</button>
             <button className="p-btn" onClick={() => setDialog({ type: 'service' })}>服务</button>
-            <button className="p-btn" onClick={() => s.refresh()}>刷新</button>
+            <button className="p-btn" onClick={() => s.refresh()} title="F5">刷新</button>
+            <button
+              className="p-btn"
+              title="摘掉页签里已不存在的路径（F8）"
+              onClick={() => void s.clearInvalid()}
+            >
+              清除无效项
+            </button>
             <button className="p-btn" onClick={() => setHelp(true)}>使用说明</button>
           </div>
           <div className="p-row">
             <span className="p-mono p-muted" title={boot.dataDir}>数据：{boot.dataDir}</span>
             <button className="p-btn" onClick={() => s.api.openDataDir().catch((e) => s.pushLog(String(e), true))}>
               打开数据目录
+            </button>
+            {/* 备份目录分开设置后，两个入口都要能直达；未配置时后端按统一根目录兜底 */}
+            <button
+              className="p-btn"
+              disabled={!boot.config.backupDir && !boot.config.backupProjectDir}
+              title={boot.config.backupProjectDir || boot.config.backupDir || '未配置备份目录'}
+              onClick={() => openPath(boot.config.backupProjectDir || boot.config.backupDir || '', 'dir')}
+            >
+              打开项目备份目录
+            </button>
+            <button
+              className="p-btn"
+              disabled={!boot.config.backupDir && !boot.config.backupGroupDir}
+              title={boot.config.backupGroupDir || boot.config.backupDir || '未配置备份目录'}
+              onClick={() => openPath(boot.config.backupGroupDir || boot.config.backupDir || '', 'dir')}
+            >
+              打开项目组备份目录
             </button>
           </div>
         </div>
@@ -468,6 +547,18 @@ export default function App() {
           denyWrite={dialog.card.denyWrite}
           onClose={() => setDialog({ type: 'none' })}
           onApply={(dd, dw) => s.setLock(dialog.card.path, dd, dw)}
+        />
+      )}
+
+      {dialog.type === 'rename' && (
+        <RenameDialog
+          card={dialog.card}
+          kind={dialog.kind}
+          onClose={() => setDialog({ type: 'none' })}
+          onSubmit={async (newName) => {
+            const r = await s.renameFolder(dialog.kind, dialog.card.path, newName);
+            return !!r;
+          }}
         />
       )}
 

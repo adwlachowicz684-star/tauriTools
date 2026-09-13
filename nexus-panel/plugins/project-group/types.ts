@@ -19,6 +19,10 @@ export interface IconGroup {
 export interface FpxConfig {
   projectTabs: TabItem[];
   groupTabs: TabItem[];
+  /** 上次停留的项目页签序号（进插件时恢复） */
+  activeProjectTabIndex: number;
+  /** 上次停留的项目组页签序号 */
+  activeGroupTabIndex: number;
   linkAgents: Record<string, boolean>;
   customLinkAgents: string[];
   linkAgentRemarks: Record<string, string>;
@@ -61,6 +65,8 @@ export interface FpxConfig {
   /** 自动备份间隔（分钟）；0 = 关闭 */
   backupAutoMinutes: number;
   mcpEnabled: boolean;
+  /** 退出软件时一并关闭 MCP 后台进程 */
+  closeMcpOnExit: boolean;
   /** 工具名 → 是否启用（缺失视为开启） */
   mcpTools: Record<string, boolean>;
   chainClient: string | null;
@@ -175,6 +181,28 @@ export interface ChainSendResult {
   client: string;
   needsPaste: boolean;
   message: string;
+}
+
+/** 文件夹改名的结果 */
+export interface RenameResult {
+  snapshot: Snapshot;
+  /** 改名后的完整路径 */
+  newPath: string;
+  /** 同步改动的页签登记条数 */
+  tabHits: number;
+  /** 同步改动的链接记录条数 */
+  recHits: number;
+}
+
+/** 清除无效项的结果 */
+export interface ClearResult {
+  snapshot: Snapshot;
+  /** 被移除的无效路径 */
+  removed: string[];
+  /** 从页签里摘掉的条数 */
+  tabHits: number;
+  /** 清理掉的失效链接记录条数 */
+  recHits: number;
 }
 
 /** 用户手动添加的连锁客户端 */

@@ -60,6 +60,180 @@ pub(crate) fn core_snapshot(dir: &std::path::Path) -> Snapshot {
     snapshot(dir, &cfg)
 }
 
+/* ---------------------------- 改名 / 清除无效项 ---------------------------- */
+
+/// 把路径中的「最后一段」换成新名字，其余部分原样保留。
+/// 用于改名后同步更新页签登记、链接记录、图标/颜色/锁等所有以路径为键的映射。
+fn replace_last_segment(path: &str, new_name: &str) -> String {
+    let p = std::path::Path::new(path);
+    let trimmed = path.trim_end_matches(|c| c == '\\' || c == '/');
+    match p.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => {
+            let sep = if trimmed.contains('\\') { "\\" } else { "/" };
+            let pstr = parent.to_string_lossy().to_string();
+            let pstr = pstr.trim_end_matches(|c| c == '\\' || c == '/');
+            // pstr 为盘符根（如 "C:"）时 sep 正好补上根分隔符，两种情况写法一致
+            format!("{pstr}{sep}{new_name}")
+        }
+        _ => new_name.to_string(),
+    }
+}
+
+/// 给项目/项目组文件夹改名：物理 rename + 同步所有按路径登记的映射。
+///
+/// 受 ACL 保护（防删除/防写入）时先临时摘锁，否则 rename 会被系统拒绝——
+/// 与建链行为一致（对应 C# 版 FolderLockService.WithUnlockForPath）。
+pub(crate) fn core_rename_folder(
+    dir: &std::path::Path,
+    kind: &str,
+    path: &str,
+    new_name: &str,
+) -> Result<model::RenameResult, String> {
+    let name = new_name.trim();
+    if name.is_empty() {
+        return Err("新名称不能为空".into());
+    }
+    // 名字里带分隔符会让"改名"变成"搬家"，语义完全不同，直接拒绝
+    if name.contains('/') || name.contains('\\') {
+        return Err("名称不能包含路径分隔符".into());
+    }
+    if name.chars().any(|c| matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|')) {
+        return Err("名称包含非法字符（: * ? \" < > |）".into());
+    }
+
+    let old = std::path::Path::new(path);
+    if !old.is_dir() {
+        return Err(format!("文件夹不存在或已被移动：{path}"));
+    }
+    let old_name = old
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if old_name == name {
+        return Err("新名称与当前名称相同".into());
+    }
+
+    let new_path = replace_last_segment(path, name);
+    if std::path::Path::new(&new_path).exists() {
+        return Err(format!("目标位置已存在同名文件夹：{new_path}"));
+    }
+
+    let mut cfg = store::load_config(dir);
+    let _guard = LockGuard::new(path, store::lock_of(&cfg, path));
+    // rename 只在同一卷内原子完成；跨卷失败时宁可整体中止，不做"复制+删除"
+    std::fs::rename(old, &new_path).map_err(|e| format!("改名失败：{e}"))?;
+    drop(_guard);
+
+    // ---- 同步所有以旧路径为键的登记 ----
+    let old_key = store::normalize_key(path);
+
+    // 页签登记（项目 / 项目组都要改：同一路径可能登记在多个页签里）
+    let mut tab_hits = 0usize;
+    for list in [&mut cfg.project_tabs, &mut cfg.group_tabs] {
+        for t in list.iter_mut() {
+            for item in t.items.iter_mut() {
+                if store::normalize_key(item) == old_key {
+                    *item = new_path.clone();
+                    tab_hits += 1;
+                }
+            }
+        }
+    }
+
+    // 图标 / 标签色 / ACL 锁：OrdinalIgnoreCase 语义的键需要整体重建
+    cfg.folder_icons = remap_keys(cfg.folder_icons, &old_key, &new_path);
+    cfg.tag_colors = remap_keys(cfg.tag_colors, &old_key, &new_path);
+    for l in cfg.locks.iter_mut() {
+        if store::normalize_key(&l.path) == old_key {
+            l.path = new_path.clone();
+        }
+    }
+
+    // 链接记录：项目改名改 project；项目组改名要改 group 与 lib（指向它的那些记录）
+    let mut records = store::load_records(dir);
+    let mut rec_hits = 0usize;
+    for r in records.iter_mut() {
+        if store::normalize_key(&r.project) == old_key {
+            r.project = new_path.clone();
+            rec_hits += 1;
+        }
+        if store::normalize_key(&r.group) == old_key {
+            r.group = new_path.clone();
+        }
+        if store::normalize_key(&r.lib) == old_key {
+            r.lib = new_path.clone();
+        }
+    }
+
+    store::save_config(dir, &cfg)?;
+    store::save_records(dir, &records)?;
+    let snapshot = snapshot(dir, &cfg);
+    Ok(model::RenameResult {
+        snapshot,
+        new_path,
+        tab_hits,
+        rec_hits,
+    })
+}
+
+/// 把 HashMap 中等于 old_key 的键换成 new_path（其余键原样保留）。
+fn remap_keys(
+    map: std::collections::HashMap<String, String>,
+    old_key: &str,
+    new_path: &str,
+) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::with_capacity(map.len());
+    for (k, v) in map {
+        if store::normalize_key(&k) == old_key {
+            out.insert(new_path.to_string(), v);
+        } else {
+            out.insert(k, v);
+        }
+    }
+    out
+}
+
+/// 清除无效项：把页签里已不存在的路径摘掉，并清理指向已消失项目的链接记录。
+///
+/// 只动"确实不存在"的条目——链接失效（junction 断了但目录还在）不算无效，
+/// 那种情况目录本身是好的，用户可能只是想重建链接。
+pub(crate) fn core_clear_invalid(dir: &std::path::Path) -> Result<model::ClearResult, String> {
+    let mut cfg = store::load_config(dir);
+
+    let mut removed: Vec<String> = Vec::new();
+    let mut tab_hits = 0usize;
+
+    for list in [&mut cfg.project_tabs, &mut cfg.group_tabs] {
+        for t in list.iter_mut() {
+            let before = t.items.len();
+            t.items.retain(|p| {
+                let ok = std::path::Path::new(p).exists();
+                if !ok && !removed.contains(p) {
+                    removed.push(p.clone());
+                }
+                ok
+            });
+            tab_hits += before - t.items.len();
+        }
+    }
+
+    // 链接记录：项目目录没了，记录自然失效，一并清掉
+    let mut records = store::load_records(dir);
+    let rec_before = records.len();
+    records.retain(|r| std::path::Path::new(&r.project).exists());
+    let rec_hits = rec_before - records.len();
+
+    store::save_config(dir, &cfg)?;
+    store::save_records(dir, &records)?;
+    let snapshot = snapshot(dir, &cfg);
+    Ok(model::ClearResult {
+        snapshot,
+        removed,
+        tab_hits,
+        rec_hits,
+    })
+}
+
 /// 保存整份配置。
 ///
 /// 注意 editorPickCache 由后端独家维护（`fpx_list_editors` 扫描后写入），
@@ -659,6 +833,29 @@ pub fn fpx_move_card_across(
     store::save_config(&dir, &cfg)?;
     let snapshot = snapshot(&dir, &cfg);
     Ok(model::MoveAcrossResult { snapshot, relocated })
+}
+
+/// 给项目/项目组文件夹改名（物理 rename + 同步页签、链接记录、图标/颜色/锁）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_rename_folder(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+    kind: String,
+    path: String,
+    new_name: String,
+) -> Result<model::RenameResult, String> {
+    let dir = store::data_dir(&app, &state)?;
+    core_rename_folder(&dir, &kind, &path, &new_name)
+}
+
+/// 清除无效项：摘掉页签里已不存在的路径，并清理指向它们的链接记录。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_clear_invalid(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+) -> Result<model::ClearResult, String> {
+    let dir = store::data_dir(&app, &state)?;
+    core_clear_invalid(&dir)
 }
 
 /// 保存用户手动添加的连锁客户端清单。

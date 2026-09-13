@@ -2,7 +2,8 @@ import type { PluginContext } from '../../js/plugin-sdk.js';
 import type {
   BackupAutoStatus, BackupResult, Bootstrap, CaptureResult, CardKind, ChainClient,
   ChainAction, ChainSendResult, ContentItem, CustomChainClient, DirEntryLite,
-  EditorCandidate, FpxConfig, McpToolRow, MoveAcrossResult, Snapshot, WatchEvent,
+  ClearResult, EditorCandidate, FpxConfig, McpToolRow, MoveAcrossResult,
+  RenameResult, Snapshot, WatchEvent,
 } from './types';
 
 /**
@@ -38,6 +39,13 @@ export function makeApi(ctx: PluginContext) {
       call<DirEntryLite[]>('fpx_list_dirs', { path }),
 
     quickRoots: () => call<DirEntryLite[]>('fpx_quick_roots'),
+
+    /** 给项目/项目组文件夹改名（物理 rename + 同步所有登记） */
+    renameFolder: (kind: 'project' | 'group', path: string, newName: string) =>
+      call<RenameResult>('fpx_rename_folder', { kind, path, new_name: newName }),
+
+    /** 清除无效项：摘掉页签里已不存在的路径 */
+    clearInvalid: () => call<ClearResult>('fpx_clear_invalid'),
 
     /** 更换软件窗口图标（外壳能力，非本插件数据） */
     setWindowIcon: (path: string) => call<void>('set_window_icon', { path }),
@@ -157,6 +165,16 @@ export function makeApi(ctx: PluginContext) {
 }
 
 export type Api = ReturnType<typeof makeApi>;
+
+/**
+ * 路径比较键：去尾部分隔符、统一分隔符、转小写。
+ * 与 Rust 侧 store::normalize_key 保持同一套规则，用于判断"是不是同一个目录"。
+ * （Windows 大小写不敏感；Linux/macOS 上转小写会把 A/a 视为同一路径，
+ *   但对改名/清除无效这类"同一批数据内部比对"的场景无害）
+ */
+export function normalizeKey(p: string): string {
+  return p.trim().replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase();
+}
 
 /** 统一错误信息抽取 */
 export function errText(e: unknown): string {
