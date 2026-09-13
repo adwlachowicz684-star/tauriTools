@@ -1,8 +1,10 @@
 // 防止 Windows 上 release 构建弹出额外控制台窗口
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// Manager 提供 package_info() / get_webview_window() / webview_windows() / handle()
-use tauri::{Manager, WebviewWindow};
+use tauri::WebviewWindow;
+// get_webview_window / package_info 等方法定义在 Manager 这个 trait 上，
+// 不导入它编译器就"看不见"这些方法（E0599），即使类型本身是对的。
+use tauri::Manager;
 
 mod af_flow;
 mod fpx;
@@ -46,7 +48,8 @@ fn window_action(window: WebviewWindow, action: String) -> Result<(), String> {
 #[tauri::command]
 fn set_window_icon(app: tauri::AppHandle, path: String) -> Result<(), String> {
     use tauri::image::Image;
-    use tauri::Manager;
+    // Manager 已在文件顶部导入（setup 里的 get_webview_window 也要用），
+    // 这里不再重复引入，否则会触发 "imported redundantly" 警告。
     let p = path.trim();
     if p.is_empty() { return Err("图标路径为空".into()); }
     if !std::path::Path::new(p).is_file() { return Err(format!("图标文件不存在: {p}")); }

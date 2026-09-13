@@ -10,9 +10,6 @@
 //! 现从历史提交 d06f060c 取回，并独立成模块 ——
 //! 不再与外壳代码混在同一个文件里，以免再被同类操作整体覆盖。
 
-// Manager 提供 app.state::<T>() / package_info() / get_webview_window() 等；
-// 缺它会在 E0599「no method named `state`」上报出来 —— 这类 trait 方法
-// 必须导入对应 trait 才能调用，这是 Rust 与多数语言的显著差别。
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
