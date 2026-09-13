@@ -10,7 +10,7 @@ S="python3 scripts/strip-ts.py"
 # 注意：每个文件都带上 ../types=./types.mjs。
 # condition.ts 会 import 运行时的 OP_META / DEFAULT_BRANCH（不只是 type），
 # 少了这条映射就会解析到 /tmp/types 而报 ERR_MODULE_NOT_FOUND。
-for f in topo template condition cron canvasOps parallel canvasStore loop updates files params llm; do
+for f in topo template condition cron canvasOps parallel canvasStore loop updates files params llm credentials github credentialStore crypto; do
   [ -f "engine/$f.ts" ] && $S "engine/$f.ts" "$OUT/$f.mjs" \
     --import-map ../types=./types.mjs >/dev/null
 done
@@ -31,8 +31,12 @@ $S engine/runner.ts "$OUT/runner.mjs" \
    --import-map ./parallel=./parallel.mjs \
    --import-map ./loop=./loop.mjs \
    --import-map ./updates=./updates.mjs \
+   --import-map ./credentials=./credentials.mjs \
+   --import-map ./github=./github.mjs \
    --import-map ../types=./types.mjs >/dev/null
 $S engine/triggers.ts "$OUT/triggers.mjs" \
    --import-map ./cron=./cron.mjs \
    --import-map ../types=./types.mjs >/dev/null
 echo "已生成到 $OUT"
+$S engine/credentialStore.ts "$OUT/credentialStore.mjs" \
+   --import-map ./crypto=./crypto.mjs >/dev/null

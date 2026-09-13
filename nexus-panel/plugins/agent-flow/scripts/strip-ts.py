@@ -320,7 +320,11 @@ def strip_ts(src: str) -> str:
     src = re.sub(r'^(\s*)(\w+)\s*:\s*[A-Za-z_][\w.<>\[\]|\s{}]*?;\s*$', '', src, flags=re.M)
 
     # 5) 函数返回类型（含对象字面量类型 / 联合类型）
-    src = re.sub(r'\)\s*:\s*[A-Za-z_{][\w.<>\[\]|\s,{};:\'"-]*?\s*\{\s*$', ') {', src, flags=re.M)
+    # 返回类型可能以字符串字面量开头（如 `): 'plain' | 'cipher' {`），
+    # 原规则要求首字符是字母或 { ，遇到引号开头的联合类型就漏处理，
+    # 于是类型注解整段留在代码里 → 生成的文件直接语法错误。
+    # 把引号加进首字符集合即可。
+    src = re.sub(r'\)\s*:\s*[A-Za-z_{\'"][\w.<>\[\]|\s,{};:\'"-]*?\s*\{\s*$', ') {', src, flags=re.M)
 
     # 5.5) 箭头函数返回类型：): Type =>   ->  ) =>
     src = re.sub(r'\)\s*:\s*[^=\n]{0,200}?=>', ') =>', src)
@@ -331,6 +335,39 @@ def strip_ts(src: str) -> str:
         while k < len(src) and src[k] in ' \n\t':
             k += 1
         return src.startswith('{', k) or src.startswith('=>', k)
+
+    def literal_spans(src):
+        """字符串 / 模板字面量 / 注释的 (start, end) 区间，用于跳过其中的括号"""
+        spans = []
+        i, n = 0, len(src)
+        while i < n:
+            c = src[i]
+            if c == '/' and i + 1 < n and src[i + 1] == '/':
+                j = src.find('\n', i)
+                spans.append((i, n if j < 0 else j))
+                i = n if j < 0 else j
+                continue
+            if c == '/' and i + 1 < n and src[i + 1] == '*':
+                j = src.find('*/', i + 2)
+                spans.append((i, n if j < 0 else j + 2))
+                i = n if j < 0 else j + 2
+                continue
+            if c in '"\'`':
+                q = c
+                j = i + 1
+                while j < n:
+                    if src[j] == '\\':
+                        j += 2
+                        continue
+                    if src[j] == q:
+                        j += 1
+                        break
+                    j += 1
+                spans.append((i, j))
+                i = j
+                continue
+            i += 1
+        return spans
 
     def clean_param_list(inner):
         parts, depth, cur = [], 0, ''
@@ -348,6 +385,17 @@ def strip_ts(src: str) -> str:
         for p in parts:
             p = p.strip()
             if not p:
+                continue
+            # 字符串字面量不是参数，冒号是内容的一部分。
+            #
+            # is_body 只要见到「) 后跟 {」就认定是函数体，于是
+            #     if (has('read:org')) {
+            # 里的 has(...) 被当成函数定义，参数 'read:org' 再被
+            # 当成「read: org」的类型注解切掉，结果变成 has('read) ——
+            # 静默产生语法错误的代码。
+            # 任何带冒号的字符串实参都会踩到（'github:read' 之类亦然）。
+            if p[0] in '"\'`':
+                res.append(p)
                 continue
             idx = p.find(':')
             if idx != -1:
@@ -369,8 +417,37 @@ def strip_ts(src: str) -> str:
 
     def clean_all_params(src):
         out, i, n = [], 0, len(src)
+        # 字符串/模板/注释里的括号不是参数列表，整段跳过
+        spans = literal_spans(src)
+        def in_lit(pos):
+            lo, hi = 0, len(spans) - 1
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                a, b = spans[mid]
+                if pos < a: hi = mid - 1
+                elif pos >= b: lo = mid + 1
+                else: return True
+            return False
+        # 这些关键字后面的括号是"条件"，不是参数列表。
+        # 只看「) 后跟 {」会把 if (has('read:org')) { 里的条件
+        # 当成函数参数，冒号被当类型注解切掉 → 静默产出语法错误的代码。
+        KEYWORD_PAREN = ('if', 'while', 'for', 'switch', 'catch', 'return', 'else')
         while i < n:
+            # 不用 literal_spans 跳过"字符串里的括号"：正则字面量里的引号
+            # （如 /['"]/）会被当成字符串起始，导致后面大片代码被误判为字符串，
+            # 参数注解整体漏处理。关键字判断已足够覆盖真实场景。
             if src[i] == '(':
+                k = i - 1
+                while k >= 0 and src[k] in ' \t\n':
+                    k -= 1
+                end = k + 1
+                while k >= 0 and (src[k].isalnum() or src[k] in '_$'):
+                    k -= 1
+                if src[k + 1:end] in KEYWORD_PAREN:
+                    # 跳过这个条件括号本身，继续扫描它内部的普通括号
+                    out.append(src[i])
+                    i += 1
+                    continue
                 depth, j = 0, i
                 while j < n:
                     if src[j] in '([{':

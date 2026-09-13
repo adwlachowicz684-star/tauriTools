@@ -16,6 +16,18 @@ import UpdateNode from './components/UpdateNode';
 import OcrNode from './components/OcrNode';
 import TranslateNode from './components/TranslateNode';
 import Inspector from './components/Inspector';
+import { GithubUpdateNode, GithubPushNode } from './components/GithubNode';
+import { CredentialPanel, canUse } from './components/CredentialPanel';
+import {
+  type Credential, type CredentialKind,
+  pickFor, needsOf, kindForNeed, missingCapabilities,
+} from './engine/credentials';
+import { verifyToken } from './engine/github';
+import {
+  parseStore, serializeStore, encryptStore, decryptStore, newDeviceSalt,
+  collectDeviceSignals, defaultBackend, type StoredFile,
+} from './engine/credentialStore';
+import { deviceSeed } from './engine/crypto';
 import Sidebar, { DRAG_MIME, decodeDrag, type DragPayload } from './components/Sidebar';
 import CanvasTabs from './components/CanvasTabs';
 import {
@@ -32,6 +44,7 @@ import {
 } from './engine/canvasStore';
 import { CLI_META, DEFAULT_TRIGGER_CONFIG, DEFAULT_BRANCH, type TaskNodeData, makeNode, makeConditionNode, makeParallelNode, makeTriggerNode,
   makeLoopNode, makeFsNode, makeUpdateNode, makeOcrNode, makeTranslateNode,
+  makeGithubUpdateNode, makeGithubPushNode,
   isTrigger, isLoop, isOcr, isTranslate, triggerKindsOf, type CliKind, type FsNodeData,
   type Graph, type NodeData, type Trigger, type TriggerKind, type TriggerConfig } from './types';
 import type { FlowEdge, FlowNode } from './flowTypes';
@@ -44,6 +57,8 @@ import {
 } from './engine/canvasOps';
 
 const nodeTypes: NodeTypes = {
+  'github-update': GithubUpdateNode,
+  'github-push': GithubPushNode,
   task: TaskNode,
   condition: ConditionNode,
   trigger: TriggerNode,
@@ -183,6 +198,116 @@ export default function App() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+
+  /* ---------------- 凭据中心 ---------------- */
+  /**
+   * 凭据单独存一个 key，不混进画布存档。
+   * 画布会被导出分享，密钥一旦进去就等于交出去了；
+   * 分开存之后，导出的文件里只有 credentialId，没有密钥本身。
+   */
+  /* ---------------------------------------------------------------- *
+   * 凭据库（加密）                                                    *
+   *                                                                   *
+   * 内存里是明文，磁盘上是密文。加解密只在 load / save 两个出入口做，  *
+   * 组件照常读写 credential.secret，不需要知道加密的存在 ——             *
+   * 加密一旦散落到各处，总会有人忘了调。                               *
+   * ---------------------------------------------------------------- */
+  const CRED_KEY = 'agent-flow.credentials.v1';
+  const beRef = useRef(defaultBackend());
+  const [store, setStore] = useState<StoredFile>(() => parseStore(localStorage.getItem(CRED_KEY)));
+  const [credentials, setCredentials] = useState<Credential[]>([]);
+  /** 解锁用的口令；null 表示锁着 */
+  const [vaultKey, setVaultKey] = useState<string | null>(null);
+  const [credOpen, setCredOpen] = useState(false);
+  const [credFocus, setCredFocus] = useState<string>('');
+  const [unlockErr, setUnlockErr] = useState('');
+  const [cryptoWarn, setCryptoWarn] = useState('');
+
+  // 首次运行：生成设备盐；auto 模式用本机特征直接解锁
+  useEffect(() => {
+    const be = beRef.current;
+    if (!be) {
+      setCryptoWarn('当前环境不支持 WebCrypto，凭据将以明文保存。请避免在公用设备上使用。');
+      return;
+    }
+    setCryptoWarn('');
+    let file = store;
+    if (!file.deviceSalt) {
+      file = { ...file, deviceSalt: newDeviceSalt(be) };
+      setStore(file);
+    }
+    if (file.mode === 'auto') {
+      const seed = deviceSeed(collectDeviceSignals(file.deviceSalt));
+      setVaultKey(seed);
+    }
+    // 只依赖 deviceSalt 是否为空：mode 与凭据由下面两个 effect 负责
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 解锁状态变化（或换模式后）→ 解密出运行时凭据
+  useEffect(() => {
+    const be = beRef.current;
+    if (!be || vaultKey === null) return;
+    let alive = true;
+    decryptStore(be, store, vaultKey).then((r) => {
+      if (!alive) return;
+      setCredentials(r.credentials);
+      if (r.failed.length > 0) {
+        setUnlockErr(`有 ${r.failed.length} 条凭据解不开，可能是口令不对或数据损坏。`);
+      }
+    });
+    return () => { alive = false; };
+    // store 变化时不重跑：否则保存后又立刻解密，会和用户输入打架
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vaultKey]);
+
+  // 凭据变化 → 加密落盘
+  useEffect(() => {
+    const be = beRef.current;
+    if (!be || vaultKey === null) return;
+    let alive = true;
+    encryptStore(be, store, credentials, vaultKey).then((next) => {
+      if (!alive) return;
+      setStore(next);
+      try { localStorage.setItem(CRED_KEY, serializeStore(next)); } catch { /* 忽略 */ }
+    });
+    return () => { alive = false; };
+    // store 是上一次的产物，纳入依赖会死循环
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [credentials, vaultKey]);
+
+  /** 用口令解锁 */
+  const unlock = useCallback(async (pass: string) => {
+    const be = beRef.current;
+    if (!be) { setUnlockErr('环境不支持加密'); return; }
+    const r = await decryptStore(be, store, pass);
+    if (store.credentials.length > 0 && r.failed.length === store.credentials.length) {
+      setUnlockErr('口令不对，一条都没解开。');
+      return;
+    }
+    setUnlockErr('');
+    setVaultKey(pass);
+    setCredentials(r.credentials);
+  }, [store]);
+
+  /** 切换加密方式：用新口令重新加密全部凭据 */
+  const changeVaultMode = useCallback(async (mode: 'auto' | 'passphrase', pass: string) => {
+    const be = beRef.current;
+    if (!be) return;
+    let salt = store.deviceSalt;
+    if (!salt) { salt = newDeviceSalt(be); }
+    const newKey = mode === 'auto' ? deviceSeed(collectDeviceSignals(salt)) : pass;
+    const base: StoredFile = { ...store, mode, deviceSalt: salt };
+    const next = await encryptStore(be, base, credentials, newKey);
+    setStore(next);
+    setVaultKey(newKey);
+    try { localStorage.setItem(CRED_KEY, serializeStore(next)); } catch { /* 忽略 */ }
+  }, [store, credentials]);
+
+  const openCredentials = useCallback((kind: string) => {
+    setCredFocus(kind);
+    setCredOpen(true);
+  }, []);
   const [concurrency, setConcurrency] = useState(1);
   const [globalInput, setGlobalInput] = useState('');
   const [summary, setSummary] = useState<RunSummary | null>(null);
@@ -439,6 +564,14 @@ export default function App() {
         const id = `ocr${suffix}`;
         node = { id, type: 'ocr', position: pos,
           data: makeOcrNode(id, { label: '图片识别' }).data } as FlowNode;
+      } else if (p.kind === 'github-update') {
+        const id = `gu${suffix}`;
+        node = { id, type: 'github-update', position: pos,
+          data: makeGithubUpdateNode(id, { label: 'GitHub 更新' }).data } as FlowNode;
+      } else if (p.kind === 'github-push') {
+        const id = `gp${suffix}`;
+        node = { id, type: 'github-push', position: pos,
+          data: makeGithubPushNode(id, { label: 'GitHub 推送' }).data } as FlowNode;
       } else if (p.kind === 'translate') {
         const id = `ty${suffix}`;
         node = { id, type: 'translate', position: pos,
@@ -877,7 +1010,31 @@ export default function App() {
             <button className="mini" onClick={() => setDeleteNotice(null)}>知道了</button>
           </div>
         )}
-        <Inspector node={selected} edges={edges} onChange={patchNode} />
+        <Inspector
+          node={selected}
+          edges={edges}
+          onChange={patchNode}
+          credentials={credentials}
+          onOpenCredentials={openCredentials}
+        />
+
+        {credOpen ? (
+          <CredentialPanel
+            credentials={credentials}
+            onChange={(next) => setCredentials(next)}
+            onClose={() => { setCredOpen(false); setCredFocus(''); }}
+            verify={verifyCredential}
+            locked={vaultKey === null}
+            mode={store.mode}
+            onUnlock={(pass) => {
+              if (pass === '') { setVaultKey(null); setCredentials([]); return; }
+              unlock(pass);
+            }}
+            onChangeMode={changeVaultMode}
+            cryptoWarn={cryptoWarn}
+            unlockError={unlockErr}
+          />
+        ) : null}
 
         <div className="logpane">
           <div className="log-head">

@@ -239,7 +239,9 @@ export type NodeData =
   | FsNodeData
   | UpdateNodeData
   | OcrNodeData
-  | TranslateNodeData;
+  | TranslateNodeData
+  | GithubUpdateNodeData
+  | GithubPushNodeData;
 
 /** 算子分类，用于面板里分组展示 */
 export type OpCategory = 'text' | 'empty' | 'flow';
@@ -753,6 +755,115 @@ export const UPDATE_SOURCE_META: Record<UpdateSource, {
 
 export function isUpdate(d: NodeData): d is UpdateNodeData {
   return (d as UpdateNodeData).kind === 'update';
+}
+
+/** GitHub 拉取策略。默认顺序即兜底顺序 */
+export type GithubStrategy = 'api' | 'atom' | 'cli';
+
+/** 拉取：要不要走本地 git（cli 方案需要机器上有 git） */
+export type GithubUpdateNodeData = {
+  kind: 'github-update';
+  label: string;
+  owner: string;
+  repo: string;
+  /** 留空则用仓库默认分支 */
+  branch: string;
+  /** 本地 HEAD / 上次记录的 sha；留空表示只取远端状态 */
+  base: string;
+  /** 策略顺序，前面失败了自动换后面 */
+  order: GithubStrategy[];
+  /** 凭据 id；留空则用节点内联的 token */
+  credentialId: string;
+  /** 内联令牌（兼容旧画布；新配置请走凭据） */
+  token: string;
+  status: NodeStatus;
+  output: string;
+  error: string;
+  /** 上次结果摘要，仅用于界面展示 */
+  lastSha?: string;
+  lastBranch?: string;
+  lastVia?: string;
+};
+
+export type GithubPushNodeData = {
+  kind: 'github-push';
+  label: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  /** 新建分支时基于此分支 */
+  fromBranch: string;
+  /** 提交信息，支持 {{上游.output}} */
+  message: string;
+  /** 要提交的文件，每行一条 `路径=内容来源`；内容来源支持模板 */
+  filesText: string;
+  /** cli 方案需要的本地仓库路径 */
+  workdir: string;
+  order: GithubStrategy[];
+  credentialId: string;
+  token: string;
+  status: NodeStatus;
+  output: string;
+  error: string;
+  lastCommit?: string;
+  lastVia?: string;
+};
+
+export function isGithubUpdate(d: NodeData): d is GithubUpdateNodeData {
+  return (d as GithubUpdateNodeData).kind === 'github-update';
+}
+
+export function isGithubPush(d: NodeData): d is GithubPushNodeData {
+  return (d as GithubPushNodeData).kind === 'github-push';
+}
+
+export function makeGithubUpdateNode(
+  id: string,
+  partial: Partial<GithubUpdateNodeData> = {},
+): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'github-update',
+      label: partial.label ?? 'GitHub 更新',
+      owner: partial.owner ?? '',
+      repo: partial.repo ?? '',
+      branch: partial.branch ?? '',
+      base: partial.base ?? '',
+      order: partial.order ?? ['api', 'atom', 'cli'],
+      credentialId: partial.credentialId ?? '',
+      token: partial.token ?? '',
+      status: partial.status ?? 'idle',
+      output: partial.output ?? '',
+      error: partial.error ?? '',
+    },
+  };
+}
+
+export function makeGithubPushNode(
+  id: string,
+  partial: Partial<GithubPushNodeData> = {},
+): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'github-push',
+      label: partial.label ?? 'GitHub 推送',
+      owner: partial.owner ?? '',
+      repo: partial.repo ?? '',
+      branch: partial.branch ?? 'main',
+      fromBranch: partial.fromBranch ?? 'main',
+      message: partial.message ?? 'chore: update via agent-flow',
+      filesText: partial.filesText ?? '',
+      workdir: partial.workdir ?? '',
+      order: partial.order ?? ['api', 'cli'],
+      credentialId: partial.credentialId ?? '',
+      token: partial.token ?? '',
+      status: partial.status ?? 'idle',
+      output: partial.output ?? '',
+      error: partial.error ?? '',
+    },
+  };
 }
 
 export function makeUpdateNode(

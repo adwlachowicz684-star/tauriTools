@@ -3,6 +3,7 @@ import {
   CLI_META, TRIGGER_META, DEFAULT_BRANCH, OP_META, triggerKindsOf,
   makeRule, makeParallelRule,
   isCondition, isTrigger, isParallel, isLoop, isFs, isUpdate, isOcr, isTranslate,
+  isGithubUpdate, isGithubPush,
   UPDATE_SOURCE_META, IMAGE_SOURCE_META, defaultOcrPrompt, defaultLlmConfig,
   type ImageSource, type OcrNodeData, type TranslateNodeData,
   opsByCategory, OP_CATEGORY_META, LOGIC_META, makeCondition, ruleConditions,
@@ -15,7 +16,11 @@ import {
   type LoopMode, type LoopNodeData, type LoopOnError,
   type FsOp, type FsNodeData,
   type UpdateNodeData, type BiliMode,
+  type GithubUpdateNodeData, type GithubPushNodeData, type GithubStrategy,
 } from '../types';
+import {
+  NODE_NEEDS, missingCapabilities, kindForNeed, type Credential,
+} from '../engine/credentials';
 import { fetchText } from '../lib/tauri';
 import {
   validateRule, validateCondition, simulateCondition, describeRuleExpression,
@@ -40,11 +45,15 @@ type Props = {
   node: FlowNode | null;
   edges: FlowEdge[];
   onChange: (id: string, patch: Record<string, unknown>) => void;
+  /** 凭据列表；不传则凭据选择区不显示 */
+  credentials?: Credential[];
+  /** 打开凭据中心，并聚焦到指定类型 */
+  onOpenCredentials?: (kind: string) => void;
 };
 
 const OPS = Object.keys(OP_META) as ConditionOp[];
 
-export default function Inspector({ node, edges, onChange }: Props) {
+export default function Inspector({ node, edges, onChange, credentials, onOpenCredentials }: Props) {
   if (!node) {
     return (
       <aside className="inspector">
@@ -94,7 +103,16 @@ export default function Inspector({ node, edges, onChange }: Props) {
 
   /* ---------- 翻译节点 ---------- */
   if (isTranslate(node.data)) {
-    return <TranslateInspector node={node} edges={edges} onChange={onChange} />;
+    return <TranslateInspector node={node} edges={edges} onChange={onChange}
+      credentials={credentials} onOpenCredentials={onOpenCredentials} />;
+  }
+  if (isGithubUpdate(node.data)) {
+    return <GithubUpdateInspector node={node} edges={edges} onChange={onChange}
+      credentials={credentials} onOpenCredentials={onOpenCredentials} />;
+  }
+  if (isGithubPush(node.data)) {
+    return <GithubPushInspector node={node} edges={edges} onChange={onChange}
+      credentials={credentials} onOpenCredentials={onOpenCredentials} />;
   }
 
   /* ---------- 任务节点 ---------- */
@@ -1914,5 +1932,281 @@ function UpdateInspector({ node, onChange }: {
         </div>
       </div>
     </aside>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* GitHub 节点                                                         */
+/* ------------------------------------------------------------------ */
+
+const GH_STRATEGY_META: Record<GithubStrategy, { label: string; hint: string }> = {
+  api: { label: 'GitHub API', hint: '要令牌；公开库可不填。信息最全' },
+  atom: { label: '订阅源', hint: '免令牌，但只能读公开库' },
+  cli: { label: '本地 git', hint: '走机器上的 git，免令牌；推送时需要本地仓库' },
+};
+
+/**
+ * 凭据选择区。
+ *
+ * 只列出**满足本节点权限要求**的凭据 —— 推送节点不会让你选一把只有读权限的令牌，
+ * 从源头避免"选完才在运行时撞 403"。
+ */
+function CredentialPicker({
+  nodeKind, value, credentialId, credentials, onOpenCredentials, onChange,
+}: {
+  nodeKind: string;
+  value: string;
+  credentialId: string;
+  credentials: Credential[];
+  onOpenCredentials?: (kind: string) => void;
+  onChange: (patch: Record<string, unknown>) => void;
+}) {
+  const need = NODE_NEEDS[nodeKind] || [];
+  const usable = (credentials || []).filter(
+    (c) => missingCapabilities(c.capabilities, need).length === 0,
+  );
+  const wantKind = kindForNeed(need);
+  const selected = (credentials || []).find((c) => c.id === credentialId);
+
+  return (
+    <div className="gh-cred">
+      <div className="p-row">
+        <span className="p-muted" style={{ width: 64, flex: 'none' }}>凭据</span>
+        <select
+          className="p-input"
+          value={credentialId || ''}
+          onChange={(e) => onChange({ credentialId: e.target.value })}
+        >
+          <option value="">（不用凭据，用下面内联的密钥）</option>
+          {usable.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}{c.identity ? ` (@${c.identity})` : ''}
+              {c.ambiguous ? ' · 权限待确认' : ''}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {usable.length === 0 ? (
+        <div className="gh-note">
+          还没有能用于本节点的凭据
+          {need.length ? `（需要：${need.join(' / ')}）` : ''}。
+          {onOpenCredentials ? (
+            <button
+              className="link-btn"
+              onClick={() => onOpenCredentials(wantKind || 'generic')}
+            >
+              去凭据中心填写 →
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {selected && selected.ambiguous && need.indexOf('github:write') >= 0 ? (
+        <div className="gh-warn">
+          这条凭据的权限无法自动判定。若推送时报 403，多半是它没有写权限 ——
+          重新申请时勾选 repo（私有库）或 public_repo（公开库）。
+        </div>
+      ) : null}
+
+      {!credentialId ? (
+        <label className="p-row">
+          <span className="p-muted" style={{ width: 64, flex: 'none' }}>内联密钥</span>
+          <input
+            className="p-input"
+            type="password"
+            value={value || ''}
+            onChange={(e) => onChange({ token: e.target.value })}
+            placeholder="不推荐：会随画布保存。请在凭据中心统一填写"
+          />
+        </label>
+      ) : null}
+    </div>
+  );
+}
+
+function OrderPicker({
+  order, fallback, onChange,
+}: {
+  order: GithubStrategy[];
+  fallback: GithubStrategy[];
+  onChange: (patch: Record<string, unknown>) => void;
+}) {
+  const list = order && order.length ? order : fallback;
+  const toggle = (s: GithubStrategy) => {
+    const has = list.indexOf(s) >= 0;
+    const next = has ? list.filter((x) => x !== s) : list.concat(s);
+    onChange({ order: next.length ? next : fallback });
+  };
+  return (
+    <div className="p-row" style={{ flexWrap: 'wrap', gap: 6 }}>
+      <span className="p-muted" style={{ width: 64, flex: 'none' }}>方案</span>
+      {(Object.keys(GH_STRATEGY_META) as GithubStrategy[]).map((s) => (
+        <button
+          key={s}
+          className={`chip ${list.indexOf(s) >= 0 ? 'on' : ''}`}
+          onClick={() => toggle(s)}
+          title={GH_STRATEGY_META[s].hint}
+        >
+          {GH_STRATEGY_META[s].label}
+        </button>
+      ))}
+      <span className="p-muted" style={{ fontSize: 11 }}>
+        顺序即优先级，前面的失败自动换下一个
+      </span>
+    </div>
+  );
+}
+
+function GithubUpdateInspector({
+  node, edges, onChange, credentials, onOpenCredentials,
+}: {
+  node: FlowNode;
+  edges: FlowEdge[];
+  onChange: (id: string, patch: Record<string, unknown>) => void;
+  credentials?: Credential[];
+  onOpenCredentials?: (kind: string) => void;
+}) {
+  const d = node.data as unknown as GithubUpdateNodeData;
+  const patch = (p: Record<string, unknown>) => onChange(node.id, p);
+  return (
+    <>
+      <div className="insp-title">
+        <input
+          className="title-input"
+          value={d.label}
+          onChange={(e) => patch({ label: e.target.value })}
+        />
+        <span className="insp-kind">GitHub 更新</span>
+      </div>
+
+      <label className="p-row">
+        <span className="p-muted" style={{ width: 64, flex: 'none' }}>仓库</span>
+        <input className="p-input" style={{ flex: 1 }}
+          value={d.owner} placeholder="owner"
+          onChange={(e) => patch({ owner: e.target.value })} />
+        <span className="p-muted">/</span>
+        <input className="p-input" style={{ flex: 1 }}
+          value={d.repo} placeholder="repo"
+          onChange={(e) => patch({ repo: e.target.value })} />
+      </label>
+
+      <label className="p-row">
+        <span className="p-muted" style={{ width: 64, flex: 'none' }}>分支</span>
+        <input className="p-input"
+          value={d.branch} placeholder="留空用默认分支"
+          onChange={(e) => patch({ branch: e.target.value })} />
+      </label>
+
+      <label className="p-row">
+        <span className="p-muted" style={{ width: 64, flex: 'none' }}>基准</span>
+        <input className="p-input"
+          value={d.base} placeholder="本地 HEAD，留空则只取远端状态"
+          onChange={(e) => patch({ base: e.target.value })} />
+      </label>
+
+      <CredentialPicker
+        nodeKind="github-update"
+        value={d.token}
+        credentialId={d.credentialId}
+        credentials={credentials || []}
+        onOpenCredentials={onOpenCredentials}
+        onChange={patch}
+      />
+
+      <OrderPicker
+        order={d.order}
+        fallback={['api', 'atom', 'cli']}
+        onChange={patch}
+      />
+
+      <div className="p-muted" style={{ fontSize: 12, marginTop: 6 }}>
+        输出 true / false，条件节点判断「等于 true」即可分流。
+        另附 {`{{${node.id}.sha}}`}、{`{{${node.id}.message}}`} 等字段。
+      </div>
+    </>
+  );
+}
+
+function GithubPushInspector({
+  node, edges, onChange, credentials, onOpenCredentials,
+}: {
+  node: FlowNode;
+  edges: FlowEdge[];
+  onChange: (id: string, patch: Record<string, unknown>) => void;
+  credentials?: Credential[];
+  onOpenCredentials?: (kind: string) => void;
+}) {
+  const d = node.data as unknown as GithubPushNodeData;
+  const patch = (p: Record<string, unknown>) => onChange(node.id, p);
+  return (
+    <>
+      <div className="insp-title">
+        <input
+          className="title-input"
+          value={d.label}
+          onChange={(e) => patch({ label: e.target.value })}
+        />
+        <span className="insp-kind">GitHub 推送</span>
+      </div>
+
+      <label className="p-row">
+        <span className="p-muted" style={{ width: 64, flex: 'none' }}>仓库</span>
+        <input className="p-input" style={{ flex: 1 }}
+          value={d.owner} placeholder="owner"
+          onChange={(e) => patch({ owner: e.target.value })} />
+        <span className="p-muted">/</span>
+        <input className="p-input" style={{ flex: 1 }}
+          value={d.repo} placeholder="repo"
+          onChange={(e) => patch({ repo: e.target.value })} />
+      </label>
+
+      <label className="p-row">
+        <span className="p-muted" style={{ width: 64, flex: 'none' }}>分支</span>
+        <input className="p-input"
+          value={d.branch} placeholder="main"
+          onChange={(e) => patch({ branch: e.target.value })} />
+      </label>
+
+      <label className="p-row">
+        <span className="p-muted" style={{ width: 64, flex: 'none' }}>提交信息</span>
+        <input className="p-input"
+          value={d.message} placeholder="支持 {{上游.output}}"
+          onChange={(e) => patch({ message: e.target.value })} />
+      </label>
+
+      <label className="p-col">
+        <span className="p-muted">文件（每行一条 路径=内容）</span>
+        <textarea
+          className="p-input"
+          rows={5}
+          value={d.filesText}
+          placeholder={'README.md=# 标题\nnotes/{{date}}.txt={{上游.output}}'}
+          onChange={(e) => patch({ filesText: e.target.value })}
+        />
+      </label>
+
+      <CredentialPicker
+        nodeKind="github-push"
+        value={d.token}
+        credentialId={d.credentialId}
+        credentials={credentials || []}
+        onOpenCredentials={onOpenCredentials}
+        onChange={patch}
+      />
+
+      <OrderPicker
+        order={d.order}
+        fallback={['api', 'cli']}
+        onChange={patch}
+      />
+
+      <label className="p-row">
+        <span className="p-muted" style={{ width: 64, flex: 'none' }}>本地路径</span>
+        <input className="p-input"
+          value={d.workdir} placeholder="仅 git 方案需要"
+          onChange={(e) => patch({ workdir: e.target.value })} />
+      </label>
+    </>
   );
 }

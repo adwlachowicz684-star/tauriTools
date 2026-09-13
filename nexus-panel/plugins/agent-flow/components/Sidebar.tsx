@@ -19,6 +19,8 @@ export type DragPayload =
   | { kind: 'wechat' }
   | { kind: 'ocr' }
   | { kind: 'translate' }
+  | { kind: 'github-update' }
+  | { kind: 'github-push' }
   | { kind: 'trigger' };
 
 export const DRAG_MIME = 'application/x-agent-flow-node';
@@ -38,6 +40,7 @@ export function decodeDrag(raw: string | null | undefined): DragPayload | null {
     if (p.kind === 'loop' || p.kind === 'fs') return p;
     if (p.kind === 'bili' || p.kind === 'wechat') return p;
     if (p.kind === 'ocr' || p.kind === 'translate') return p;
+    if (p.kind === 'github-update' || p.kind === 'github-push') return p;
     if (p.kind === 'trigger') return p;
     return null;
   } catch {
@@ -173,6 +176,31 @@ export default function Sidebar({ onAdd, disabled }: Props) {
           <span className="side-label">翻译</span>
         </div>
         <div className="side-sub">需填自己的大模型 API Key</div>
+      </div>
+
+      <div className="side-group">
+        <div className="side-title">GitHub</div>
+        <div
+          className="side-item"
+          draggable={!disabled}
+          onDragStart={(e) => onDragStart(e, { kind: 'github-update' })}
+          onClick={() => !disabled && onAdd({ kind: 'github-update' })}
+          title="拉取仓库最新状态，输出 true / false 供条件节点判断。API → 订阅源 → 本地 git 依次兜底"
+        >
+          <span className="side-dot" style={{ background: '#a78bfa' }} />
+          <span className="side-label">更新检测</span>
+        </div>
+        <div
+          className="side-item"
+          draggable={!disabled}
+          onDragStart={(e) => onDragStart(e, { kind: 'github-push' })}
+          onClick={() => !disabled && onAdd({ kind: 'github-push' })}
+          title="提交并推送文件。GitHub API → 本地 git 依次兜底"
+        >
+          <span className="side-dot" style={{ background: '#34d399' }} />
+          <span className="side-label">推送</span>
+        </div>
+        <div className="side-sub">在「凭据」里填一次令牌，两个节点共用</div>
       </div>
 
       <div className="side-group">

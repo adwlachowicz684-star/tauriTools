@@ -922,3 +922,35 @@ input.mono, textarea.mono {
   text-align: center;
   line-height: 15px;
 }
+
+/* ---------- 凭据中心 ---------- */
+.cred-mask { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 60;
+  display: flex; align-items: center; justify-content: center; }
+.cred-panel { width: min(560px, 92vw); max-height: 82vh; overflow: auto;
+  background: var(--af-panel); border: 1px solid var(--af-line); border-radius: 10px;
+  padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.cred-head { display: flex; align-items: center; justify-content: space-between; }
+.cred-tip { font-size: 12px; color: var(--af-text-mute); line-height: 1.6; }
+.cred-vault { display: flex; align-items: center; font-size: 12px; padding: 6px 0;
+  border-top: 1px solid var(--af-line); border-bottom: 1px solid var(--af-line); }
+.cred-edit { display: flex; flex-direction: column; gap: 8px; }
+.cred-list { display: flex; flex-direction: column; gap: 8px; }
+.cred-item { border: 1px solid var(--af-line); border-radius: 8px; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 6px; }
+.cred-item-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.cred-kind, .cred-id { font-size: 11px; color: var(--af-text-mute); }
+.cred-caps { display: flex; flex-wrap: wrap; gap: 5px; }
+.cred-cap { font-size: 11px; padding: 1px 7px; border-radius: 999px;
+  background: var(--af-item); border: 1px solid var(--af-line); color: var(--af-text-soft); }
+.cred-nocap { font-size: 11px; color: var(--af-text-mute); }
+.cred-warn { font-size: 11px; padding: 1px 7px; border-radius: 999px; color: var(--af-warn); cursor: help; }
+.cred-err { font-size: 12px; color: var(--af-bad); line-height: 1.5; }
+.cred-ok { font-size: 12px; color: var(--af-ok); line-height: 1.5; }
+.cred-note { font-size: 12px; color: var(--af-warn); line-height: 1.5; }
+.gh-cred { display: flex; flex-direction: column; gap: 6px;
+  border-top: 1px solid var(--af-line); padding-top: 8px; margin-top: 4px; }
+.gh-note { font-size: 12px; color: var(--af-warn); line-height: 1.6; }
+.gh-warn { font-size: 12px; color: var(--af-warn); border-radius: 6px;
+  padding: 6px 8px; line-height: 1.6; }
+.link-btn { background: none; border: none; color: var(--af-accent);
+  cursor: pointer; font-size: 12px; padding: 0 2px; text-decoration: underline; }

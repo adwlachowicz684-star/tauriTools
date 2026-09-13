@@ -4,6 +4,7 @@ import type {
 } from '../types';
 import {
   isCondition, isTrigger, isParallel, isLoop, isFs, isUpdate, isOcr, isTranslate,
+  isGithubUpdate, isGithubPush,
   DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt,
 } from '../types';
 import { topoLayers } from './topo';
@@ -99,6 +100,42 @@ export type FsExecutor = (
   args: { path: string; target: string; content: string },
 ) => Promise<string>;
 
+/**
+ * GitHub 拉取执行器。
+ *
+ * 与 Fetcher 分开：Fetcher 只有 (url) => text，而 GitHub 多方案需要
+ * 传目标、策略顺序、以及 cli 兜底的执行通道 —— 塞进 Fetcher 会让签名膨胀。
+ */
+export type GithubUpdateRunner = (req: {
+  owner: string;
+  repo: string;
+  branch?: string;
+  base?: string;
+  order?: string[];
+  token: string;
+}) => Promise<{ ok: boolean; info?: GithubUpdateInfo; error?: string; via?: string }>;
+
+export type GithubPushRunner = (req: {
+  owner: string;
+  repo: string;
+  branch?: string;
+  message: string;
+  files: { path: string; content: string }[];
+  workdir?: string;
+  order?: string[];
+  token: string;
+}) => Promise<{ ok: boolean; commit?: string; via?: string; error?: string }>;
+
+/** 拉取结果的展示字段，runner 只关心这几个 */
+export type GithubUpdateInfo = {
+  branch: string;
+  sha: string;
+  message: string;
+  author: string;
+  date: string;
+  updated: boolean;
+};
+
 export type RunOptions = {
   /** 同层并发上限。设为 1 即严格串行 */
   concurrency: number;
@@ -111,6 +148,10 @@ export type RunOptions = {
   llmCaller?: LlmCaller;
   /** 本地图片读取器；不提供时 OCR 的本地文件模式会失败并提示 */
   imageReader?: ImageReader;
+  /** GitHub 拉取执行器；不提供时 GitHub 更新节点会失败并提示 */
+  githubFetch?: GithubUpdateRunner;
+  /** GitHub 推送执行器；不提供时 GitHub 推送节点会失败并提示 */
+  githubPush?: GithubPushRunner;
   input?: string;
   onEvent: (e: RunEvent) => void;
   signal?: AbortSignal;
@@ -438,6 +479,16 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
     if (isTranslate(node.data)) {
       await runTranslate(id, node, scope);
       await sleep(20);
+      return;
+    }
+
+    /* ---------- GitHub 更新 / 推送 ---------- */
+    if (isGithubUpdate(node.data)) {
+      await runGithubUpdate(id, node, scope);
+      return;
+    }
+    if (isGithubPush(node.data)) {
+      await runGithubPush(id, node, scope);
       return;
     }
 
@@ -821,6 +872,133 @@ function resolveFileRefs(d: TaskNodeData, output: string): FileRef[] {
   /* ================================================================ */
   /* 翻译节点                                                          */
   /* ================================================================ */
+
+  /* ---------- GitHub 更新节点 ---------- */
+  async function runGithubUpdate(id: string, node: GraphNode, scope: Scope): Promise<void> {
+    const d = node.data as GithubUpdateNodeData;
+    setStatus(id, 'running');
+
+    const owner = renderTemplate(d.owner ?? '', {
+      outputs, input: opts.input, loop: currentLoop(), fields: nodeFields,
+    }).text.trim();
+    const repo = renderTemplate(d.repo ?? '', {
+      outputs, input: opts.input, loop: currentLoop(), fields: nodeFields,
+    }).text.trim();
+
+    if (!opts.githubFetch) {
+      setStatus(id, 'failed');
+      outputs[id] = 'false';
+      emit({ type: 'node-error', id, error: '未提供 GitHub 拉取执行器' });
+      return;
+    }
+    if (!owner || !repo) {
+      setStatus(id, 'failed');
+      outputs[id] = 'false';
+      emit({ type: 'node-error', id, error: '缺少 owner 或 repo' });
+      return;
+    }
+
+    try {
+      const r = await opts.githubFetch({
+        owner, repo,
+        branch: d.branch || undefined,
+        base: d.base || undefined,
+        order: d.order,
+        token: d.token || '',
+      });
+      if (!r.ok || !r.info) {
+        setStatus(id, 'failed');
+        outputs[id] = 'false';
+        emit({ type: 'node-error', id, error: r.error || '拉取失败' });
+        return;
+      }
+      const info = r.info;
+      // 主输出是 bool，好让条件节点直接判「等于 true」
+      outputs[id] = info.updated ? 'true' : 'false';
+      nodeFields[id] = {
+        sha: info.sha,
+        branch: info.branch,
+        message: info.message,
+        author: info.author,
+        date: info.date,
+        via: r.via || '',
+      };
+      setStatus(id, 'success');
+      emit({ type: 'node-done', id, output: outputs[id] });
+    } catch (e) {
+      setStatus(id, 'failed');
+      outputs[id] = 'false';
+      emit({ type: 'node-error', id, error: String(e) });
+    }
+  }
+
+  /* ---------- GitHub 推送节点 ---------- */
+  async function runGithubPush(id: string, node: GraphNode, scope: Scope): Promise<void> {
+    const d = node.data as GithubPushNodeData;
+    setStatus(id, 'running');
+
+    const tpl = (x: string) =>
+      renderTemplate(x ?? '', {
+        outputs, input: opts.input, loop: currentLoop(), fields: nodeFields,
+      }).text;
+
+    const owner = tpl(d.owner).trim();
+    const repo = tpl(d.repo).trim();
+
+    if (!opts.githubPush) {
+      setStatus(id, 'failed');
+      emit({ type: 'node-error', id, error: '未提供 GitHub 推送执行器' });
+      return;
+    }
+    if (!owner || !repo) {
+      setStatus(id, 'failed');
+      emit({ type: 'node-error', id, error: '缺少 owner 或 repo' });
+      return;
+    }
+
+    // 每行一条 `路径 = 内容来源`；等号后的内容走模板渲染
+    const files: { path: string; content: string }[] = [];
+    for (const line of (d.filesText || '').split('\n')) {
+      const raw = line.trim();
+      if (!raw) continue;
+      const eq = raw.indexOf('=');
+      if (eq < 0) {
+        setStatus(id, 'failed');
+        emit({ type: 'node-error', id, error: `文件行缺等号：${raw}` });
+        return;
+      }
+      files.push({ path: raw.slice(0, eq).trim(), content: tpl(raw.slice(eq + 1)) });
+    }
+    if (files.length === 0) {
+      setStatus(id, 'failed');
+      emit({ type: 'node-error', id, error: '没有要提交的文件' });
+      return;
+    }
+
+    try {
+      const r = await opts.githubPush({
+        owner, repo,
+        branch: d.branch || 'main',
+        message: tpl(d.message),
+        files,
+        workdir: d.workdir || undefined,
+        order: d.order,
+        token: d.token || '',
+      });
+      if (!r.ok) {
+        setStatus(id, 'failed');
+        emit({ type: 'node-error', id, error: r.error || '推送失败' });
+        return;
+      }
+      outputs[id] = r.commit ? `已提交 ${r.commit}` : '已推送';
+      nodeFields[id] = { commit: r.commit || '', via: r.via || '' };
+      setStatus(id, 'success');
+      emit({ type: 'node-done', id, output: outputs[id] });
+    } catch (e) {
+      setStatus(id, 'failed');
+      emit({ type: 'node-error', id, error: String(e) });
+    }
+  }
 
   async function runTranslate(id: string, node: GraphNode, scope: Scope): Promise<void> {
     const d = node.data as TranslateNodeData;
