@@ -39,7 +39,15 @@ export default function ConditionNode({ id, data, selected }: NodeProps<CondFlow
               style={{ top: 'auto' }}
               className="branch-handle"
             />
-            <span className="cond-op">{OP_META[r.op]?.label ?? r.op}</span>
+            {/* 算子带上图标与配色，扫一眼就能分辨是哪种判定 */}
+            <span
+              className="cond-op"
+              style={{ borderColor: OP_META[r.op]?.color, color: OP_META[r.op]?.color }}
+              title={OP_META[r.op]?.hint}
+            >
+              <span className="cond-op-icon">{OP_META[r.op]?.icon ?? '?'}</span>
+              {OP_META[r.op]?.label ?? r.op}
+            </span>
             <span className="cond-text">{describeRule(r)}</span>
           </div>
         ))}
