@@ -3,7 +3,7 @@
 
 use tauri::WebviewWindow;
 
-mod af;
+mod af_flow;
 mod fpx;
 
 /// 连通性测试：前端 ctx.invoke('rust_ping', { payload })
@@ -61,8 +61,14 @@ fn main() {
         // OCR / 翻译节点要调大模型 API：经官方 http 插件发出，
         // 绕过 webview 的同源策略（多数大模型 API 不允许浏览器直连）。
         // 依赖已在 Cargo.toml 声明，这里只是启用它。
+        // shell：agent-flow 用它启动 traecli / codebuddy 子进程
+        .plugin(tauri_plugin_shell::init())
+        // http：OCR / 翻译 / 订阅源抓取，绕过 webview 同源策略
         .plugin(tauri_plugin_http::init())
         .manage(fpx::store::FpxState::new())
+        .manage(af_flow::ProcRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
+        .manage(af_flow::WatchRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
+        .manage(af_flow::WebhookRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .invoke_handler(tauri::generate_handler![
             rust_ping, app_version, window_action, set_window_icon,
             fpx::fpx_bootstrap, fpx::fpx_save_config, fpx::fpx_create_link, fpx::fpx_remove_link,
@@ -77,7 +83,10 @@ fn main() {
             fpx::fpx_watch_stop, fpx::fpx_watch_poll, fpx::fpx_mcp_start, fpx::fpx_mcp_tools,
             fpx::fpx_backup_auto_status, fpx::fpx_backup_auto_sync, fpx::fpx_mcp_stop,
             fpx::fpx_mcp_status, fpx::fpx_import_icons, fpx::fpx_rename_folder, fpx::fpx_clear_invalid,
-            af::af_read_image_data_url
+            af_flow::run_node, af_flow::kill_node, af_flow::check_cli,
+            af_flow::watch_start, af_flow::watch_stop,
+            af_flow::webhook_start, af_flow::webhook_stop,
+            af_flow::fs_op, af_flow::af_read_image_data_url
         ])
         .run(tauri::generate_context!())
         .expect("启动 Nexus Panel 失败");

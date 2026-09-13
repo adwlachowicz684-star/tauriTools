@@ -1,8 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "面板基础权限：核心 IPC + 窗口控制",
-  "windows": ["main"],
+  "description": "面板基础权限 + agent_flow 插件（启动 CLI 子进程、目录监听、webhook、抓取订阅源 / 调用大模型）",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-minimize",
@@ -11,6 +13,58 @@
     "core:window:allow-is-maximized",
     "core:window:allow-close",
     "core:window:allow-set-always-on-top",
-    "core:webview:allow-internal-toggle-devtools"
+    "core:webview:allow-internal-toggle-devtools",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "traecli",
+          "cmd": "traecli",
+          "args": true
+        },
+        {
+          "name": "codebuddy",
+          "cmd": "codebuddy",
+          "args": true
+        },
+        {
+          "name": "cbc",
+          "cmd": "cbc",
+          "args": true
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "traecli",
+          "cmd": "traecli",
+          "args": true
+        },
+        {
+          "name": "codebuddy",
+          "cmd": "codebuddy",
+          "args": true
+        },
+        {
+          "name": "cbc",
+          "cmd": "cbc",
+          "args": true
+        }
+      ]
+    },
+    "shell:allow-kill",
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "https://**"
+        },
+        {
+          "url": "http://**"
+        }
+      ]
+    }
   ]
 }
