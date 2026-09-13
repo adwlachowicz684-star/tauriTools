@@ -1,13 +1,21 @@
 /**
  * 布局高度链测试（开发用，可删）
  *
- * 起因：#main 定义了 grid-template-rows: 54px 1fr，但它只有一个子元素
- * #main-inner —— 于是 main-inner 被塞进第一行（54px），
- * 它内部再分 54px + 1fr 时，#plugin-bar 吃掉全部高度，#stage 只剩 0。
- * 表现是"只看得见插件标题栏，内容区全空"，而且所有插件都这样。
+ * 背景：这个 bug 报了两次，第一次只修好了一半。
  *
- * 这类问题 jsdom 测不出来（它不做布局计算），只能静态核对：
- * 容器声明的网格行数，必须与实际子元素数量一致。
+ *   第一轮：#main 声明了两行（54px 1fr）但只有一个子元素，
+ *           #main-inner 被塞进第一行，#stage 只剩 0。
+ *   第二轮：改完 #main 后仍然无效 —— 真正的塌陷点在 #body：
+ *           它只声明了 grid-template-columns，行是隐式 auto，
+ *           高度由内容决定。而 #stage-scroll 是 absolute、不贡献内容高度，
+ *           于是整条链自我实现地塌到只剩 54px 的标题栏。
+ *
+ * 症状永远是「所有插件只看得见标题，看不见内容」，
+ * 而 jsdom 不做布局计算，运行时测试根本看不出来 —— 只能静态校验。
+ *
+ * 核心规则：链条上每个 grid 容器都必须**显式声明** grid-template-rows，
+ *          且用 minmax(0, 1fr) 而不是裸 1fr（1fr 的最小尺寸是 auto，
+ *          内容一超高就会把行撑破）。
  */
 import { readFileSync } from 'node:fs';
 
@@ -18,60 +26,98 @@ const t = (name, cond, extra = '') => {
 };
 
 const css = readFileSync('./css/neumorphism.css', 'utf8');
-const html = readFileSync('./index.html', 'utf8');
 
-/** 取出某选择器规则里 grid-template-rows 的值（按分号切，忽略注释行） */
-function gridRows(selector) {
-  const re = new RegExp(`(^|\\n)\\s*${selector.replace('#', '#')}\\s*\\{([^}]*)\\}`, 'm');
-  const m = re.exec(css);
+/** 取某选择器规则块（去掉注释行后） */
+function rule(sel) {
+  const m = new RegExp(`(^|\\n)\\s*${sel.replace(/[#.]/g, '\\$&')}\\s*\\{([^}]*)\\}`, 'm').exec(css);
   if (!m) return null;
-  const body = m[2].split('\n').filter((l) => !l.trim().startsWith('/*')).join('\n');
-  const r = /grid-template-rows:\s*([^;]+);/.exec(body);
-  return r ? r[1].trim() : null;
+  return m[2].split('\n').filter((l) => !l.trim().startsWith('/*')).join('\n');
 }
+const decl = (body, prop) => {
+  // 必须加左边界，否则 min-height 会被当成 height 匹配上
+  const m = new RegExp(`(?:^|[;\\s{])${prop}\\s*:\\s*([^;]+);`).exec(body || '');
+  return m ? m[1].trim() : null;
+};
 
-/** 粗略统计某 id 容器的直接子元素个数：靠缩进层级判断 */
-function childCount(id) {
-  const lines = html.split('\n');
-  const openRe = new RegExp(`<[a-z]+[^>]*id="${id}"[^>]*>`);
-  let start = -1, indent = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (openRe.test(lines[i])) { start = i; indent = lines[i].match(/^\s*/)[0].length; break; }
+/* 从 #app 到 #stage-scroll 的完整高度链。
+   每一层都必须把高度“传下去”，断一层就全塌。 */
+const CHAIN = [
+  { sel: '#app',        note: '根容器：100vh + 标题栏/主体两行' },
+  { sel: '#body',       note: '侧边栏 + 主区（列布局，但行也要声明）' },
+  { sel: '#main',       note: '主区外框（padding 留给 main-inner 投影）' },
+  { sel: '#main-inner', note: '插件标题栏 54px + 舞台占满剩余' },
+  { sel: '#stage',      note: '舞台：给 stage-scroll 做定位上下文' },
+];
+
+console.log('\n=== 1. 高度链逐层校验 ===');
+let prevIsGridWithRows = false;   // 上一层是不是"已声明 rows 的 grid 容器"
+for (const { sel, note } of CHAIN) {
+  const body = rule(sel);
+  if (!body) { t(`${sel} 规则存在`, false); continue; }
+
+  const isGrid = /display\s*:\s*grid/.test(body);
+  const rows = decl(body, 'grid-template-rows');
+  const height = decl(body, 'height');
+
+  if (isGrid) {
+    // grid 容器：必须显式声明行，否则行是隐式 auto、高度由内容决定
+    t(`${sel} 显式声明了 grid-template-rows`, !!rows, rows || '(缺失 → 行变 auto，高度塌陷)');
+    if (rows) {
+      // 每个自适应轨道都要带 minmax(0, ...)，裸 1fr 会被内容撑破
+      const flexible = rows.split(/\s+(?![^(]*\))/).filter((x) => /fr\)?$/.test(x) || x === '1fr');
+      const bare = flexible.filter((x) => x === '1fr');
+      t(`${sel} 的自适应轨道用了 minmax(0, …)`, bare.length === 0,
+        bare.length ? `裸 1fr: ${bare.join(', ')}` : rows);
+    }
+  } else {
+    /* 非 grid 容器（如 #stage）：自身不需要 height，
+       只要它是某个已声明 rows 的 grid 容器的 item，就会被 stretch 到轨道高度。
+       但若它脱了文档流（absolute/fixed），高度就得另说。 */
+    const pos = decl(body, 'position');
+    const outOfFlow = pos === 'absolute' || pos === 'fixed';
+    t(`${sel} 高度由父级 grid 轨道 stretch 得到`,
+      !outOfFlow && !!(height || prevIsGridWithRows),
+      outOfFlow ? `已脱流(${pos})，需另行保证高度` : (height || '父级轨道 stretch'));
   }
-  if (start < 0) return -1;
-  let n = 0;
-  for (let i = start + 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line.trim()) continue;
-    const ind = line.match(/^\s*/)[0].length;
-    if (ind <= indent) break;                       // 回到同级或更外层 → 结束
-    if (ind === indent + 2 && /^\s*<[a-z]+/.test(line) && !line.trim().startsWith('</')) n++;
-  }
-  return n;
+  console.log(`       └ ${note}`);
+  // 供下一层判断：本层能不能把高度传下去
+  prevIsGridWithRows = isGrid && !!rows;
 }
 
-console.log('\n=== 网格行数 vs 实际子元素数 ===');
-for (const sel of ['#app', '#main', '#main-inner']) {
-  const rows = gridRows(sel);
-  const kids = childCount(sel.slice(1));
-  if (!rows) { t(`${sel} 未声明 grid-template-rows`, true, '按默认流布局'); continue; }
-  // 数声明里有几个行轨道（minmax(...) 算一个）
-  const tracks = rows.replace(/minmax\([^)]*\)/g, 'X').split(/\s+(?![^(]*\))/).filter(Boolean).length;
-  t(`${sel} 行数(${tracks}) 与子元素数(${kids}) 一致`,
-    tracks === kids || kids === -1,
-    `rows: ${rows}`);
-}
+console.log('\n=== 2. 叶子容器：#stage-scroll ===');
+const ssBody = rule('#stage-scroll');
+t('#stage-scroll 用 absolute 脱离文档流',
+  decl(ssBody, 'position') === 'absolute', decl(ssBody, 'position'));
+t('#stage-scroll 用 inset 铺满 #stage',
+  !!decl(ssBody, 'inset'), decl(ssBody, 'inset'));
+t('#stage-scroll 可滚动', decl(ssBody, 'overflow') === 'auto', decl(ssBody, 'overflow'));
 
-console.log('\n=== 关键高度链 ===');
-// 只要 #main 不放回 "54px 1fr"，就不会再塌陷
-t('#main 不再声明两行（否则 main-inner 只占 54px）',
-  !/54px\s+1fr/.test(gridRows('#main') || ''), gridRows('#main'));
-t('#main-inner 仍是 54px + 1fr（标题栏 + 舞台）',
-  /54px\s+1fr/.test(gridRows('#main-inner') || ''), gridRows('#main-inner'));
-t('#stage 有定位上下文（stage-scroll 是 absolute）',
-  /#stage\s*\{[^}]*position:\s*relative/.test(css));
-t('#stage-scroll 用 inset 铺满且可滚动',
-  /#stage-scroll\s*\{[^}]*inset:[^;]+;[^}]*overflow:\s*auto/.test(css));
+/* 这是最容易被忽略的一条：absolute 元素不贡献父容器高度，
+   所以 #stage 的高度必须靠 grid 轨道给，而不能指望内容撑开。
+   上面第 1 步已经校验了 #stage 在 grid 行里，这里再明确记一笔。 */
+console.log('\n=== 3. 关键约束：absolute 不撑高父容器 ===');
+t('#stage 是 grid item（高度来自轨道而非内容）',
+  /grid-template-rows/.test(rule('#main-inner') || ''));
+/* 第二层隐患：百分比高度需要父级有确定的 height。
+   .plugin-wrap 原先只有 min-height:100%，自身 height 仍是 auto，
+   于是 .plugin-frame 的 min-height:100% 没有参照物、退化成 auto，
+   iframe 退回默认高度（150px），在 overflow:hidden 的 #stage 里基本看不见。 */
+t('.plugin-wrap 显式给了 height: 100%（否则子级百分比高度失效）',
+  decl(rule('.plugin-wrap'), 'height') === '100%',
+  decl(rule('.plugin-wrap'), 'height') || '(只有 min-height)');
+t('.plugin-frame 显式给了 height: 100%',
+  decl(rule('.plugin-frame'), 'height') === '100%',
+  decl(rule('.plugin-frame'), 'height') || '(只有 min-height)');
+t('.plugin-root 保留 min-height（同页插件需要能撑开滚动）',
+  decl(rule('.plugin-root'), 'min-height') === '100%');
+
+console.log('\n=== 4. 回归锚点（针对两次报错的具体写法） ===');
+t('#body 不再是“只声明 columns”',
+  !!decl(rule('#body'), 'grid-template-rows'),
+  decl(rule('#body'), 'grid-template-rows') || '(第二轮塌陷点)');
+t('#main 不再声明两行',
+  !/\b54px\s+1fr\b/.test(decl(rule('#main'), 'grid-template-rows') || ''),
+  decl(rule('#main'), 'grid-template-rows'));
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

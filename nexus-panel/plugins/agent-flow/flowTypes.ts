@@ -2,6 +2,7 @@ import type { Node } from '@xyflow/react';
 import type {
   TaskNodeData, ConditionNodeData, TriggerNodeData, ParallelNodeData,
   LoopNodeData, FsNodeData, UpdateNodeData, OcrNodeData, TranslateNodeData,
+  GithubUpdateNodeData, GithubPushNodeData,
 } from './types';
 
 /** React Flow v12 的节点类型；data 承载我们自己的定义 */
@@ -16,7 +17,12 @@ export type BiliFlowNode = Node<UpdateNodeData, 'bili'>;
 export type WechatFlowNode = Node<UpdateNodeData, 'wechat'>;
 export type OcrFlowNode = Node<OcrNodeData, 'ocr'>;
 export type TranslateFlowNode = Node<TranslateNodeData, 'translate'>;
+export type GithubUpdateFlowNode = Node<GithubUpdateNodeData, 'github-update'>;
+export type GithubPushFlowNode = Node<GithubPushNodeData, 'github-push'>;
 
+/* 新增节点类型时必须同时加到这里。
+   漏加的话，App.tsx 里 `as FlowNode` 会报 TS2352 ——
+   断言目标与源类型"重叠不足"，编译器认为这个转换没有意义。 */
 export type FlowNode =
   | TaskFlowNode
   | CondFlowNode
@@ -27,7 +33,9 @@ export type FlowNode =
   | BiliFlowNode
   | WechatFlowNode
   | OcrFlowNode
-  | TranslateFlowNode;
+  | TranslateFlowNode
+  | GithubUpdateFlowNode
+  | GithubPushFlowNode;
 
 /** React Flow v12 的边类型；data.branch 标注所属分支 */
 export type FlowEdgeData = {

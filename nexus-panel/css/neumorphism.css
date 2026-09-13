@@ -116,7 +116,9 @@ body {
 /* ---------- 布局骨架 ---------- */
 #app {
   display: grid;
-  grid-template-rows: var(--titlebar-h) 1fr;
+  /* minmax(0, 1fr) 而非 1fr：1fr 的最小尺寸是 auto，
+     内容一旦超高就会把这一行撑破，100vh 也就守不住了。 */
+  grid-template-rows: var(--titlebar-h) minmax(0, 1fr);
   height: 100vh;
 }
 
@@ -184,6 +186,11 @@ body {
 #body {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
+  /* 必须显式声明行：只写 columns 的话行是隐式 auto，
+     #main 的高度就由内容决定。而 #stage-scroll 是 absolute、
+     不贡献内容高度，于是整条链自我实现地塌到只剩标题栏 54px ——
+     表现就是「所有插件只看得见标题，看不见内容」。 */
+  grid-template-rows: minmax(0, 1fr);
   transition: grid-template-columns var(--t);
   min-height: 0;
 }
@@ -307,7 +314,7 @@ body {
 }
 #main-inner {
   display: grid;
-  grid-template-rows: 54px 1fr;
+  grid-template-rows: 54px minmax(0, 1fr);
   min-height: 0;
   border-radius: var(--r-xl);
   overflow: hidden;
@@ -535,12 +542,20 @@ body {
    ============================================================ */
 .plugin-wrap {
   position: relative;
+  /* height 必须显式给：只有 min-height 的话，本元素 height 仍是 auto，
+     子元素的百分比高度就没有参照物、会退化成 auto/0。
+     #stage-scroll 是 absolute + inset，有确定高度，所以这里的 100% 成立。 */
+  height: 100%;
   min-height: 100%;
   isolation: isolate;          /* 把 mix-blend-mode 限制在容器内，不影响外壳 */
 }
 .plugin-root { min-height: 100%; position: relative; }
 .plugin-frame {
   width: 100%;
+  /* 同理：靠 height 撑满，而不是只给 min-height。
+     否则 iframe 会退回替换元素的默认高度（150px），
+     在 #stage 高度不足时被 overflow:hidden 整块裁掉。 */
+  height: 100%;
   min-height: 100%;
   display: block;
   border: 0;

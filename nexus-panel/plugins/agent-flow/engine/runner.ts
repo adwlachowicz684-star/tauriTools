@@ -1,6 +1,6 @@
 import type {
   Graph, GraphNode, NodeStatus, LoopCtx, LoopNodeData, UpdateNodeData, TaskNodeData,
-  OcrNodeData, TranslateNodeData,
+  OcrNodeData, TranslateNodeData, GithubUpdateNodeData, GithubPushNodeData,
 } from '../types';
 import {
   isCondition, isTrigger, isParallel, isLoop, isFs, isUpdate, isOcr, isTranslate,
