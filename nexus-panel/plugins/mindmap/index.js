@@ -15,7 +15,7 @@
 
 import { bootIframePlugin, h } from '../../js/plugin-sdk.js';
 import { EditorBridge } from './editor-bridge.js';
-import { DEFAULT_THEME, DEFAULT_LAYOUT, isBuiltinTheme } from './themes.js';
+import { DEFAULT_THEME, DEFAULT_LAYOUT, isBuiltinTheme, deriveCanvasTheme } from './themes.js';
 import * as wb from './workbook.js';
 import * as store from './store.js';
 import * as io from './io.js';
@@ -43,6 +43,7 @@ bootIframePlugin(async (ctx) => {
   let lastBackupAt = 0;
   let lastBackupFp = null;      // 最新快照的指纹，用于「内容没变就不重复备份」
   let dragTabId = null;         // 页签拖拽排序：当前被拖动的画布 id
+  let lastCanvasTheme = null;   // 最近一次下发的画布配色（编辑器重载后用来补套）
   let dirty = false;
 
   // 撤销/重做：内容快照栈
@@ -386,6 +387,7 @@ bootIframePlugin(async (ctx) => {
     canvasEl.appendChild(loadingEl);
     await bridge.reload();
     loadingEl.remove();
+    bridge.setCanvasTheme(lastCanvasTheme);   // 新页面没有旧配色，补套一次
     await loadSheet();
     status('编辑器已重载');
   }
@@ -457,6 +459,30 @@ bootIframePlugin(async (ctx) => {
     if (suppress) return;
     dirty = true;
     scheduleSave();
+  }
+
+  /* ------------------------- 画布跟随外壳主题 ------------------------- */
+
+  /**
+   * 把外壳主题换算成画布配色并下发到内层编辑器页。
+   * 内层是独立文档，外壳注入的 CSS 变量进不去，只能 postMessage。
+   */
+  function syncCanvasTheme(vars) {
+    const t = deriveCanvasTheme(vars);
+    lastCanvasTheme = t;
+    bridge?.setCanvasTheme(t);
+  }
+
+  /**
+   * 外壳切换主题时，plugin-sdk 只更新 ctx.theme 并改 :root 变量，不会通知插件代码，
+   * 所以这里另注册一个监听器捕获 'theme' 消息（两个监听器互不影响）。
+   */
+  function watchShellTheme() {
+    window.addEventListener('message', (e) => {
+      const d = e.data;
+      if (!d || d.channel !== 'nexus-bridge-v1') return;
+      if (d.type === 'theme' && d.theme) syncCanvasTheme(d.theme);
+    });
   }
 
   /* ------------------------- 附件打开 ------------------------- */
@@ -756,12 +782,18 @@ bootIframePlugin(async (ctx) => {
     },
   });
 
+  // 画布底色跟随外壳亮/暗主题：先起监听（主题随时可能切），再按当前主题套一次
+  watchShellTheme();
+  syncCanvasTheme(ctx.theme);
+
   const ok = await bridge.load();
   if (!ok) {
     loadingEl.textContent = '编辑器加载失败，请点「重载」重试';
     status('编辑器未就绪', true);
   } else {
     loadingEl.remove();
+    // 编辑器页刚载入，重新下发一次（页面初始化期间可能错过前面的消息）
+    bridge.setCanvasTheme(lastCanvasTheme);
   }
 
   await loadSheet();

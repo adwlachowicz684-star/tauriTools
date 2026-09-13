@@ -255,6 +255,20 @@ export class EditorBridge {
     }
   }
 
+  /**
+   * 把画布配色下发到内层编辑器页面。
+   * 内层是独立文档，拿不到外壳注入的 CSS 变量，只能靠 postMessage 传过去。
+   * 传 null 表示恢复编辑器自带的默认深色。
+   */
+  setCanvasTheme(vars) {
+    const w = this.iframe?.contentWindow;
+    if (!w) return false;
+    // 页面可能还没执行到门面定义，先存一份；编辑器页自己会在门面就绪后补套
+    try { w.__kmCanvasVars = vars || null; } catch { /* ignore */ }
+    w.postMessage({ channel: HOST_CHANNEL, type: 'theme', vars: vars || null }, '*');
+    return true;
+  }
+
   /** 历史栈可用性探测：供调用方决定用编辑器的栈还是自己的栈 */
   hasHistory() {
     const h = this.iframe?.contentWindow?.editor?.history;

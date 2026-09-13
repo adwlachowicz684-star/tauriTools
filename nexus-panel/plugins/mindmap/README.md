@@ -62,6 +62,21 @@ WPF 宿主行为完全不变。
 底层是自己实现的（C# 的 `ZipArchive` / `XDocument` 在 JS 侧没有等价物）：
 zip 容器自写 CRC32 + 原生 `CompressionStream('deflate-raw')`，XML 走 `DOMParser`，**零第三方依赖**。
 
+## 画布跟随外壳亮/暗主题
+
+原版画布底色写死 `#1E1E1E` 以贴合 WPF 深色外壳。插件版改为跟随 nexus 外壳主题：
+
+- 编辑器页面的画布相关配色抽成 `--km-*` CSS 变量（容器底色、内描边、搜索面板、加载遮罩），
+  默认值为原版深色，**WPF 宿主不调用新门面时行为完全不变**；
+- 插件层从外壳主题变量派生画布配色（`deriveCanvasTheme`），`postMessage` 传给内层编辑器页
+  —— 内层是独立文档，外壳注入的 CSS 变量进不去；
+- 内核 `setTheme()` 会执行 `renderTarget.style.background = getStyle('background')`，
+  内联样式优先级高于 CSS 规则，所以门面在每次 `setTheme` / `importJson` 之后会重新套一次；
+- 编辑器重载、页面初始化早于消息到达两种情况都已覆盖（门面就绪后补套 pending 值）。
+
+**分工**：外壳主题决定画布明暗，kityminder 主题决定节点配色。节点都绘制了不透明底色，
+因此画布变色不影响节点内文字的可读性。
+
 ## 与 C# 版的差异说明
 
 - **撤销/重做**：优先用编辑器自维护的历史栈 `window.editor.history`（上游 dist 页已补齐，100 步、基线模型），拿不到时回退插件层 50 步快照栈。
