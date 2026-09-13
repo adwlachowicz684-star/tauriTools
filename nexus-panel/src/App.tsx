@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   createHost, loadRegistry, filterByRuntime, saveCustomPlugins, getCustomPlugins, isInsideTauri,
-  type Host, type PluginManifest,
+  type Host, type PluginManifest, type SidebarItem,
 } from '../js/host.js';
 import Titlebar from './components/Titlebar';
 import Sidebar from './components/Sidebar';
@@ -19,6 +19,7 @@ export default function App() {
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [badges, setBadges] = useState<Record<string, number>>({});
+  const [injected, setInjected] = useState<SidebarItem[]>([]);
   const [title, setTitle] = useState('未选择插件');
   const [subtitle, setSubtitle] = useState('');
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -43,6 +44,7 @@ export default function App() {
         onTitle: setTitle,
         onSubtitle: setSubtitle,
         onBadges: setBadges,
+        onSidebarItems: (items: SidebarItem[]) => setInjected(items),
         onOpen: (id) => setActiveId(id),
         onSettingsAvailable: (has) => {
           setHasPluginSettings(has);
@@ -197,6 +199,20 @@ export default function App() {
     [plugins, activeId],
   );
 
+  /**
+   * 点击插件注入的侧边栏条目：把事件发到总线，由插件自己响应。
+   * 若插件尚未挂载，先切过去再补发一次——否则用户点了没有任何反应。
+   */
+  const handleInjected = async (it: SidebarItem) => {
+    const host = hostRef.current;
+    if (!host) return;
+    if (host.state.activeId !== it.pluginId) {
+      setActiveId(it.pluginId);
+      await new Promise((r) => setTimeout(r, 150));   // 等插件挂载并订阅事件
+    }
+    host.bus.emit(it.event, { id: it.id });
+  };
+
   return (
     <div id="app">
       <Titlebar
@@ -217,6 +233,8 @@ export default function App() {
           }
           onSelect={setActiveId}
           onAdd={() => setDialogOpen(true)}
+          injected={injected}
+          onInjected={handleInjected}
         />
         <Stage
           ref={stageRef}

@@ -52,6 +52,8 @@ const host = createHost({
         el.classList.toggle('active', el.dataset.id === id));
     },
     onOpen: (id) => navigate(id),
+    // 插件注入的侧边栏条目变化时重绘
+    onSidebarItems: () => renderSidebar(),
     // 插件声明了 settings 才显示「⚙ 设置」按钮；切插件/插件没设置时自动收起
     onSettingsAvailable: (has) => {
       const btn = $('#bar-plugin-settings');
@@ -84,6 +86,23 @@ function renderSidebar() {
     btn.appendChild(h('span.nav-label', {}, p.name));
     btn.appendChild(h('span.nav-badge', { 'data-badge': p.id }));
     btn.addEventListener('click', () => navigate(p.id));
+    list.appendChild(btn);
+  }
+  // 插件注入的条目：点击后往总线发事件，由插件自己响应。
+  // 若插件此刻没挂载（点了没反应），先切过去再补发一次。
+  for (const it of host.getSidebarItems()) {
+    const btn = document.createElement('button');
+    btn.className = 'nav-item nav-item-injected';
+    btn.title = `${it.label}（来自插件 ${it.pluginId}）`;
+    btn.appendChild(h('span.nav-icon', {}, it.icon || '▶'));
+    btn.appendChild(h('span.nav-label', {}, it.label));
+    btn.addEventListener('click', async () => {
+      if (host.state.activeId !== it.pluginId) {
+        await navigate(it.pluginId);
+        await new Promise((r) => setTimeout(r, 120));   // 等插件挂载并订阅事件
+      }
+      host.bus.emit(it.event, { id: it.id });
+    });
     list.appendChild(btn);
   }
   syncBadges();

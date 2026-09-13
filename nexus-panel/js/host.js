@@ -85,6 +85,8 @@ export function createHost(opts = {}) {
     mounting: null,
     badges: {},
     shortcutsPaused: false,   // 模态（如插件设置抽屉）打开时暂停插件快捷键
+    /** 插件注入的侧边栏条目 { id, pluginId, label, icon, event } */
+    sidebarItems: [],
   };
 
   /** 同页插件快捷键的激活判定：必须是当前插件，且没有被模态遮挡 */
@@ -97,6 +99,34 @@ export function createHost(opts = {}) {
     state.badges[id] = n || 0;
     hooks.onBadges?.({ ...state.badges });
   };
+
+  /* ---- 插件注入的侧边栏条目 ---- *
+   * 插件自己画不到外壳上，只能登记；点击由外壳往总线发事件，插件自己响应。
+   */
+  function addSidebarItem(pluginId, item) {
+    if (!item || !item.id) return false;
+    state.sidebarItems = state.sidebarItems.filter((x) => !(x.pluginId === pluginId && x.id === item.id));
+    state.sidebarItems.push({ ...item, pluginId });
+    hooks.onSidebarItems?.(state.sidebarItems.slice());
+    return true;
+  }
+
+  function removeSidebarItem(pluginId, itemId) {
+    const before = state.sidebarItems.length;
+    state.sidebarItems = state.sidebarItems.filter((x) => !(x.pluginId === pluginId && x.id === itemId));
+    if (state.sidebarItems.length !== before) {
+      hooks.onSidebarItems?.(state.sidebarItems.slice());
+      return true;
+    }
+    return false;
+  }
+
+  /** 插件卸载时清掉它注入的条目，避免留下点了没反应的幽灵项 */
+  function releasePluginRegistrations(pluginId) {
+    const before = state.sidebarItems.length;
+    state.sidebarItems = state.sidebarItems.filter((x) => x.pluginId !== pluginId);
+    if (state.sidebarItems.length !== before) hooks.onSidebarItems?.(state.sidebarItems.slice());
+  }
 
   /* ---- 加载 / 卸载 ---- */
   async function mount(id) {
@@ -178,6 +208,8 @@ export function createHost(opts = {}) {
     if (!state.instance) return;
     const inst = state.instance;
     state.instance = null;
+    // 先清掉该插件注入的侧边栏条目，否则会留下点了没反应的幽灵项
+    if (inst?.manifest?.id) releasePluginRegistrations(inst.manifest.id);
     hooks.onSettingsAvailable?.(false);
     await safeTeardown(inst);
   }
@@ -514,6 +546,8 @@ export function createHost(opts = {}) {
       toast: ({ msg, type }) => hooks.toast?.(msg, type),
       reload: () => mount(manifest.id),
       open: ({ id }) => hooks.onOpen?.(id) ?? navigateHook(id),
+      'sidebar.add': ({ item }) => addSidebarItem(manifest.id, item),
+      'sidebar.remove': ({ itemId }) => removeSidebarItem(manifest.id, itemId),
     };
   }
   const navigateHook = (id) => hooks.onNavigate?.(id);
@@ -584,6 +618,8 @@ export function createHost(opts = {}) {
 
   return {
     state, bus, mount, unmount, mountSettings, win, setBadge,
+    addSidebarItem, removeSidebarItem, releasePluginRegistrations,
+    getSidebarItems: () => state.sidebarItems.slice(),
     hasSettings: () => hasSettings(state.instance),
     readTheme,
     getPlugins: () => state.plugins,

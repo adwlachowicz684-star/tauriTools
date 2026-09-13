@@ -168,6 +168,19 @@ function buildCtx(base) {
     /** 切换到另一个插件 */
     openPlugin(targetId) { transport.notify('open', { id: targetId }); },
 
+    /**
+     * 往外壳侧边栏注入一个条目。label/icon 为展示用；点击后外壳在总线上发 event，
+     * 插件用 ctx.on(event, handler) 接收。插件卸载时条目自动移除。
+     *
+     * 注意：条目只在插件处于已挂载状态时才有意义——外壳点击时会先确保插件已挂载。
+     */
+    addSidebarItem(item) {
+      transport.notify('sidebar.add', { item });
+    },
+    removeSidebarItem(itemId) {
+      transport.notify('sidebar.remove', { itemId });
+    },
+
     /** 注入样式：module 模式自动加作用域前缀，iframe 模式直接注入 */
     addStyle(css) {
       const style = document.createElement('style');

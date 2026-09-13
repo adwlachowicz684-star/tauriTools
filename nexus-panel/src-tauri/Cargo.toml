@@ -10,7 +10,11 @@ rust-version = "1.77.2"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["devtools"] }
+# image-ico / image-png：供 set_window_icon 解码图标文件（换软件窗口图标用）。
+# 这两个 feature 会额外拉入 image 相关 crate，首次构建需要联网下载；
+# 若不需要换图标功能，可一并删掉这两个 feature、src/main.rs 里的 set_window_icon
+# 命令及其在 invoke_handler 中的注册。
+tauri = { version = "2", features = ["devtools", "image-ico", "image-png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

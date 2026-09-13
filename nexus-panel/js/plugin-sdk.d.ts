@@ -42,6 +42,17 @@ export interface PluginContext {
   /** 跳转到另一个插件 */
   openPlugin(id: string): void;
 
+  /** 往外亮侧边栏注入条目；点击后总线发 event，插件用 on(event) 接 */
+  addSidebarItem(item: { id: string; label: string; icon?: string; event: string }): void;
+  removeSidebarItem(itemId: string): void;
+
+  /**
+   * 注册应用级快捷键：只在插件激活时生效，插件卸载自动注销，返回 off()。
+   * combo 形如 'mod+k'（mac=⌘，win/linux=Ctrl）、'ctrl+shift+p'、'esc'、'f5'。
+   */
+  shortcut(combo: string | string[], handler: (e: KeyboardEvent) => void,
+           opts?: { preventDefault?: boolean }): () => void;
+
   /** 注入样式（module 模式自动加作用域前缀），返回移除函数 */
   addStyle(css: string): () => void;
   /** 注册卸载回调 */

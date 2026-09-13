@@ -700,3 +700,24 @@ html.theme-transition *:not(.spinner) {
 /* 标签状态色 */
 .p-tag.ok { color: var(--accent-2); }
 .p-tag.danger { color: var(--danger); }
+
+/* 插件注入的侧边栏条目：与普通插件项区分开（缩进 + 左侧标记） */
+.nav-item.nav-item-injected {
+  padding-left: 26px;
+  opacity: .88;
+  font-size: 12.5px;
+}
+.nav-item.nav-item-injected .nav-icon { opacity: .8; font-size: 12px; }
+.nav-item.nav-item-injected:hover { opacity: 1; }
+.nav-item.nav-item-injected::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: .55;
+}
