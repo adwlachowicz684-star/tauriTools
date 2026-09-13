@@ -105,6 +105,10 @@ export async function saveAssetBytes(name, bytes) {
       name: name || '附件',
       size: bytes?.length || 0,
       type: blob.type || '',
+      // 从 XMind 包里还原出来的字节没有原文件的修改时间，只有入库时间。
+      // 两者都记，面板优先显示 mtime（这里与 addedAt 相同）。
+      mtime: Date.now(),
+      addedAt: Date.now(),
       blob,
     });
     return ok ? encodeRef({ n: name || '附件', a: id, s: bytes?.length || 0 }) : null;
@@ -189,6 +193,15 @@ function guessMime(ext) {
 }
 
 /** 带时间戳的默认文件名：脑图-20260912-1430.json */
+/**
+ * 文件名安全化：剔除路径非法字符（对齐 C# SanitizeFileName）。
+ * 用于主题导出等「按内容命名」的场景（stampName 会带时间戳，不适合这类）。
+ */
+export function safeFileName(name) {
+  const s = String(name || '').replace(/[\\/:*?"<>|]/g, '_').replace(/[\u0000-\u001f]/g, '_').trim();
+  return s || '未命名';
+}
+
 export function stampName(base, ext) {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');
@@ -208,16 +221,42 @@ export async function putAsset(file) {
     name: file.name,
     size: file.size,
     type: file.type || '',
+    // 本机文件才有真实修改时间（File.lastModified）；
+    // 从 XMind 导入还原出来的附件是新建 Blob，lastModified 会是「现在」，此时两者一致。
+    mtime: Number(file.lastModified) || Date.now(),
+    addedAt: Date.now(),
     blob: file,
   });
   return ok ? id : null;
 }
 
-export async function getAsset(id) {
+/**
+ * 把探测到的媒体元信息写回资产记录，避免每次打开面板都重新解析文件头。
+ * 解析一次要读最多 4MB 并遍历 box 树，视频大了还得多等 video 元素出元数据。
+ */
+export async function saveAssetMeta(id, meta) {
+  if (!id || !meta) return false;
+  const rec = await store.get('asset:' + id, null);
+  if (!rec) return false;
+  rec.meta = meta;
+  return await store.set('asset:' + id, rec);
+}
+
+/**
+ * 读取资产记录。
+ *
+ * 默认会顺带建一个 Blob URL 挂在 `url` 上 —— 但绝大多数调用方只要元信息
+ * （大小/类型/时间）或字节，用不到 URL，于是每处都得记得 revoke，漏一处就是泄漏。
+ * 因此加 `wantUrl` 开关：要播放/预览才传 true，其余场景不建。
+ *
+ * @param {string} id
+ * @param {boolean} [wantUrl=false] 是否需要可播放/可预览的 Blob URL
+ */
+export async function getAsset(id, wantUrl = false) {
   if (!id) return null;
   const rec = await store.get('asset:' + id, null);
   if (!rec) return null;
-  const url = rec.blob ? URL.createObjectURL(rec.blob) : null;
+  const url = wantUrl && rec.blob ? URL.createObjectURL(rec.blob) : null;
   return { ...rec, url };
 }
 

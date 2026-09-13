@@ -58,7 +58,12 @@ export class EditorBridge {
     if (this.iframe) return this.ready;
     this.loading = true;
     const gen = ++this._gen;
+    this._createIframe();
+    return this._waitReady(gen);
+  }
 
+  /** 建一个新的编辑器 iframe 挂到宿主容器上（复用同一 URL） */
+  _createIframe() {
     const iframe = document.createElement('iframe');
     iframe.src = new URL('./editor/index.html', location.href).href;
     iframe.style.cssText =
@@ -66,8 +71,7 @@ export class EditorBridge {
     iframe.title = 'kityminder 编辑器';
     this.host.appendChild(iframe);
     this.iframe = iframe;
-
-    return this._waitReady(gen);
+    return iframe;
   }
 
   /** 轮询等待内核挂载（对应 C# 版 PollReadyAsync，但直接读 window 变量，代价极低） */
@@ -90,15 +94,33 @@ export class EditorBridge {
     return false;
   }
 
-  /** 重载编辑器页面（重置就绪态） */
+  /**
+   * 重载编辑器页面（重置就绪态）。
+   *
+   * 实现选择：销毁旧 iframe 再新建一个，而不是 `contentWindow.location.reload()`。
+   *
+   * 两个原因 ——
+   * 1. reload() 之后旧文档不会立刻消失，contentWindow 短时间内仍指向它，
+   *    `__km` 可能还是**旧实例**；此时若判定就绪，导航一到它就失效了，
+   *    表现为「重载后第一次操作报错」。
+   * 2. 同 URL 重载依赖导航行为，某些宿主环境（含无头测试环境）不实现导航，
+   *    reload() 会抛错或静默不生效；重建 iframe 只依赖 DOM 操作，行为一致。
+   *
+   * 代价是旧 iframe 的 message 监听要一并摘掉，避免新旧两份监听器同时响应。
+   */
   async reload() {
     const gen = ++this._gen;
     this.ready = false;
     this.loading = true;
     this.handlers.onStatus?.('正在重新加载编辑器…');
-    this.iframe?.contentWindow?.location.reload();
-    // 给浏览器一点时间开始新导航，再进入轮询
-    await sleep(300);
+
+    // 摘掉旧监听 + 移除旧节点，避免旧文档继续 postMessage 干扰新实例
+    window.removeEventListener('message', this._onMessage);
+    try { this.iframe?.remove(); } catch { /* ignore */ }
+    this.iframe = null;
+
+    this._createIframe();
+    window.addEventListener('message', this._onMessage);
     return this._waitReady(gen);
   }
 

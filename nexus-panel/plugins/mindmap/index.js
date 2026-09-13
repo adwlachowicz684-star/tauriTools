@@ -36,7 +36,7 @@ bootIframePlugin(async (ctx) => {
   let workbook = (await store.workbook.load()) || wb.newWorkbook();
   workbook.sheets = wb.normalizeSheets(workbook.sheets);
   let customThemes = (await store.themes.load()) || [];
-  let settings = (await store.settings.load()) || { animate: false, backupMinutes: 2 };
+  let settings = (await store.settings.load()) || { animate: false, backupMinutes: 2, backupMax: 3 };
 
   let bridge = null;
   let side = null;
@@ -157,6 +157,8 @@ bootIframePlugin(async (ctx) => {
       B('SVG', () => exportSvg(), { title: '导出为矢量 SVG' }),
       B('PNG', () => exportPng(), { title: '导出整幅 PNG' }),
       B('新建', guard('新建画布', () => addSheet()), { title: '新建画布' }),
+      B('复制', guard('复制画布', () => duplicateSheet(workbook.activeId)),
+        { title: '复制当前画布（含内容与主题布局）' }),
     ));
 
     toolbar.appendChild(h('div.mm-sep', {}));
@@ -236,6 +238,10 @@ bootIframePlugin(async (ctx) => {
         ondblclick: guard('重命名', () => renameSheet(s.id)),
         draggable: true,                       // 拖拽排序
       }, s.title);
+      btn.appendChild(h('span.x', {
+        onclick: (e) => { e.stopPropagation(); guard('复制画布', () => duplicateSheet(s.id))(); },
+        title: '复制该画布',
+      }, '⧉'));
       if (workbook.sheets.length > 1) {
         btn.appendChild(h('span.x', {
           onclick: (e) => { e.stopPropagation(); guard('删除画布', () => removeSheet(s.id))(); },
@@ -306,6 +312,24 @@ bootIframePlugin(async (ctx) => {
     renderTabs();
     await loadSheet();     // 必须等载入完成再落盘，否则存的是旧内容
     await persist();
+  }
+
+  /**
+   * 复制画布（对齐 C# DuplicateSheetAsync）。
+   * C# 是页签右键菜单；插件没有右键菜单，改为顶栏「复制」+ 页签 ⧉ 两个入口。
+   * 副本插在原画布之后，标题「X 副本」（重名追加序号），与 C# 一致。
+   */
+  async function duplicateSheet(id) {
+    const src = workbook.sheets.find((s) => s.id === id);
+    if (!src) return;
+    capture();                       // 先把当前编辑收回来，否则副本拿到的是旧内容
+    const copy = wb.cloneSheet(src, workbook.sheets);
+    workbook.sheets.splice(workbook.sheets.indexOf(src) + 1, 0, copy);
+    workbook.activeId = copy.id;
+    renderTabs();
+    await loadSheet();
+    await persist();
+    status('已复制画布：' + copy.title);
   }
 
   async function removeSheet(id) {
@@ -465,13 +489,28 @@ bootIframePlugin(async (ctx) => {
       const fp = wb.fingerprintSheets(workbook.sheets);
       if (fp !== lastBackupFp) {
         lastBackupFp = fp;
-        await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId });
+        await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId }, settings.backupMax);
       }
     }
     status('已保存 · ' + new Date().toLocaleTimeString());
   }
 
 
+
+  /**
+   * 按当前上限滚动清理旧快照。
+   * 份数调小后必须立刻收敛，否则要等到下次备份才生效 —— 期间快照数一直超上限。
+   */
+  async function trimBackups() {
+    try {
+      const n = Number(settings.backupMax);
+      const limit = Number.isFinite(n) && n >= 1 ? Math.floor(n) : store.BACKUP_KEEP;
+      const all = (await store.keys('backup:')).sort();
+      for (let i = 0; i < all.length - limit; i++) await store.del(all[i]);
+    } catch (e) {
+      status('清理旧快照失败：' + (e?.message || e), true);
+    }
+  }
 
   async function persist() {
     // 内部兜底：调用方基本都是 fire-and-forget，写失败（配额触顶等）必须看得见。
@@ -539,24 +578,28 @@ bootIframePlugin(async (ctx) => {
       status('该附件是旧版本地路径，沙箱内无法打开（请重新附加一次）', true);
       return;
     }
-    const asset = await io.getAsset(ref.a);
-    if (!asset?.blob) { status('附件数据已丢失', true); return; }
+    // 先只取记录（不建 URL）判断走向：要预览/播放才建，纯下载不必建，
+    // 少一次创建就少一处可能忘记 revoke 的泄漏点。
+    const rec = await io.getAsset(ref.a);
+    if (!rec?.blob) { status('附件数据已丢失', true); return; }
+    const name = rec.name || ref.n || '附件';
 
-    // 视频直接播；其余按扩展名判断能否内联预览，不能则另存为。
-    // 注意 getAsset 每次都会新建一个 Blob URL：交给浮层的由浮层关闭时释放，
-    // 走下载路径的这里必须自己释放，否则每次点附件都泄漏一个 URL。
-    if (/\.(mp4|webm|ogg|ogv|mov|m4v)$/i.test(asset.name || ref.n || '')) {
-      openVideo(app, { ...asset, name: asset.name || ref.n });
-      status('正在播放：' + (asset.name || ref.n || '视频'));
+    // 视频直接播；图片内联预览；其余另存为。
+    if (/\.(mp4|webm|ogg|ogv|mov|m4v)$/i.test(name)) {
+      const asset = await io.getAsset(ref.a, true);
+      if (!asset?.url) { status('视频数据已丢失', true); return; }
+      openVideo(app, { ...asset, name });
+      status('正在播放：' + name);
       return;
     }
-    if (/^image\//.test(asset.blob.type || '')) {
-      openPreview(app, asset);
+    if (/^image\//.test(rec.blob.type || '')) {
+      const asset = await io.getAsset(ref.a, true);
+      if (!asset?.url) { status('图片数据已丢失', true); return; }
+      openPreview(app, { ...asset, name });
       return;
     }
-    io.downloadBlob(asset.name || ref.n || '附件', asset.blob);
-    if (asset.url) URL.revokeObjectURL(asset.url);
-    status('已导出附件：' + (asset.name || ref.n || '附件'));
+    io.downloadBlob(name, rec.blob);
+    status('已导出附件：' + name);
   }
 
   /* ------------------------- 撤销 / 重做 ------------------------- */
@@ -746,7 +789,7 @@ bootIframePlugin(async (ctx) => {
   async function backupNow() {
     capture();
     // pushBackup 写失败返回 null（不抛），不判断就会提示「已创建」但实际没写进去
-    const key = await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId });
+    const key = await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId }, settings.backupMax);
     lastBackupAt = Date.now();
     lastBackupFp = wb.fingerprintSheets(workbook.sheets);
     if (key) ctx.toast('已创建快照', 'ok');
@@ -792,6 +835,17 @@ bootIframePlugin(async (ctx) => {
       const ok = await store.settings.save(settings);
       if (!ok) { status('设置保存失败', true); return; }
       status(settings.backupMinutes === 0 ? '自动快照已关闭' : `自动快照间隔：${settings.backupMinutes} 分钟`);
+    }),
+    /**
+     * 最多保留备份份数（对应 C# MindMapBackupMax，默认 3）。
+     * 改完立即按新上限滚动清理，否则旧快照会一直堆到下次备份才收敛。
+     */
+    setBackupMax: guard('设置保留份数', async (n) => {
+      settings.backupMax = Number(n) || store.BACKUP_KEEP;
+      const ok = await store.settings.save(settings);
+      if (!ok) { status('设置保存失败', true); return; }
+      await trimBackups();
+      status(`最多保留 ${settings.backupMax} 份快照`);
     }),
     setAnimate: guard('设置布局动画', async (on) => {
       settings.animate = !!on;
@@ -869,7 +923,7 @@ bootIframePlugin(async (ctx) => {
     try {
       capture();
       await persist();
-      await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId });
+      await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId }, settings.backupMax);
     } catch (e) {
       console.warn('[mindmap] 卸载前兜底保存失败', e);
     }
