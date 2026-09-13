@@ -2008,17 +2008,20 @@
             // 复制/粘贴节点样式（无值命令）
             try { km.addCommandShortcutKeys({ copynodestyle: 'ctrl+shift+c', pastenodestyle: 'ctrl+shift+v' }); } catch (e) {}
 
-            // ---- 方向键导航 ----
+            // ---- 方向键导航：只移动光标，不折叠 ----
             // 说明：core 并没有实现方向键导航。它只在键码表里预留了 isSelectedNodeKey
             // 常量(37/38/39/40)，但 min.js 里 ArrowUp/Down/Left/Right 零命中、该常量也无使用处 ——
-            // 即「常量预留了，行为没写」。这里按经典脑图语义补齐。
+            // 即「常量预留了，行为没写」。这里按 XMind 语义补齐。
+            //
+            // 关键取舍：方向键**只移动**，折叠/展开另给 Ctrl+←/→ 与 /。
+            // 早先版本用「两级语义」（← 先折叠再上移、→ 先展开再进入），
+            // 实际用起来会「想移动却把分支收起来了」，与 XMind 习惯不符。
             function navNode(dir) {
                 try {
                     var n = km.getSelectedNode();
                     if (!n) { km.select(km.getRoot(), true); return; }
                     var p = n.parent;
                     var kids = n.getChildren();
-                    var collapsed = !!(n.isCollapsed && n.isCollapsed());
 
                     if (dir === 'up' || dir === 'down') {
                         if (!p) return;                       // 根节点没有兄弟
@@ -2029,35 +2032,51 @@
                         return;
                     }
                     if (dir === 'left') {
-                        // 两级语义：有子节点且展开着 → 先折叠；否则上移到父节点
-                        if (kids && kids.length && !collapsed) {
-                            n.collapse(); n.renderTree(); km.layout(100); km.fire('contentchange'); return;
-                        }
-                        if (!p) return;
-                        km.select(p, true);
+                        if (!p) return;                       // 根节点没有父节点
+                        km.select(p, true);                   // 纯上移，不折叠
                         return;
                     }
-                    // right：折叠着 → 先展开；否则进入第一个子节点
-                    if (kids && kids.length && collapsed) {
-                        n.expand(); n.renderTree(); km.layout(100); km.fire('contentchange'); return;
-                    }
+                    // right：进入第一个子节点。若当前折叠着则先展开再选中 ——
+                    // 否则会选中一个被折叠隐藏、画面上看不见的节点。
                     if (!kids || !kids.length) return;
+                    if (n.isCollapsed && n.isCollapsed()) setFold(n, true);
                     km.select(kids[0], true);
                 } catch (e) {}
             }
+
+            /**
+             * 折叠 / 展开单个节点（不递归、不改变选中）。
+             * renderTree 让子节点可见性随父节点联动，fire contentchange 让自动保存接住。
+             */
+            function setFold(n, wantExpand) {
+                if (!n) return false;
+                try {
+                    if (n.isLeaf && n.isLeaf()) return false;   // 叶子无事可做
+                    if (wantExpand) n.expand(); else n.collapse();
+                    n.renderTree(); km.layout(100); km.fire('contentchange');
+                    return true;
+                } catch (e) { return false; }
+            }
+
             kmShortcut('up', function () { navNode('up'); });
             kmShortcut('down', function () { navNode('down'); });
             kmShortcut('left', function () { navNode('left'); });
             kmShortcut('right', function () { navNode('right'); });
 
-            // ---- / 折叠或展开选中节点 ----
+            // ---- Ctrl+← 折叠 / Ctrl+→ 展开（对齐 XMind）----
+            // 注：内核键码解析里 ctrl 与 cmd 等价（case "ctrl": case "cmd":，
+            // 且事件侧判定为 a.ctrlKey || a.metaKey），所以 macOS 上按 Cmd+←/→ 同样生效 ——
+            // 这点正好避开 macOS 把 Ctrl+←/→ 占用为「切换桌面」的系统快捷键。
+            kmShortcut('ctrl+left', function () { setFold(km.getSelectedNode(), false); });
+            kmShortcut('ctrl+right', function () { setFold(km.getSelectedNode(), true); });
+
+            // ---- / 折叠或展开选中节点（来回切换）----
             // 同样只有键码(191)被登记，行为未实现。
             kmShortcut('/', function () {
                 try {
                     var n = km.getSelectedNode();
                     if (!n || (n.isLeaf && n.isLeaf())) return;
-                    if (n.isCollapsed && n.isCollapsed()) n.expand(); else n.collapse();
-                    n.renderTree(); km.layout(100); km.fire('contentchange');
+                    setFold(n, !!(n.isCollapsed && n.isCollapsed()));
                 } catch (e) {}
             });
 
