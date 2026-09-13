@@ -334,7 +334,17 @@ def strip_ts(src: str) -> str:
 
     def clean_param_list(inner):
         parts, depth, cur = [], 0, ''
-        for ch in inner:
+        i, n = 0, len(inner)
+        while i < n:
+            ch = inner[i]
+            # 箭头函数「=>」的 > 不是泛型闭合符。
+            # 不整体消费掉的话，depth 会变负，后面所有「,」的
+            # depth == 0 判断失效 —— 于是多行参数被并成一个，
+            # 只留下第一个（如 saveToStorage(set) 丢了 state）。
+            if ch == '=' and i + 1 < n and inner[i + 1] == '>':
+                cur += '=>'
+                i += 2
+                continue
             if ch in '([{<':
                 depth += 1
             elif ch in ')]}>':
@@ -343,6 +353,7 @@ def strip_ts(src: str) -> str:
                 parts.append(cur); cur = ''
             else:
                 cur += ch
+            i += 1
         parts.append(cur)
         res = []
         for p in parts:

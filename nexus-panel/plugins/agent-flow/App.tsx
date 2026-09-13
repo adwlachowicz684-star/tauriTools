@@ -27,7 +27,7 @@ import { TriggerScheduler } from './engine/triggers';
 import {
   makeCanvas, nextCanvasName, renameCanvas, removeCanvas, nextActiveId,
   updateCanvasContent, sortForDisplay, toMeta,
-  loadFromStorage, saveToStorage,
+  loadFromStorage, saveToStorage, redactNodes,
   type Canvas,
 } from './engine/canvasStore';
 import { CLI_META, DEFAULT_TRIGGER_CONFIG, DEFAULT_BRANCH, type TaskNodeData, makeNode, makeConditionNode, makeParallelNode, makeTriggerNode,
@@ -500,7 +500,13 @@ export default function App() {
   };
 
   const exportJson = () => {
-    const blob = new Blob([JSON.stringify({ nodes, edges, triggers }, null, 2)], { type: 'application/json' });
+    // 导出前脱敏：LLM 的 apiKey 不能跟着文件走。
+    // 这个文件是要发给别人 / 传上仓库的，里面带密钥等于直接交出去，
+    // 而填过密钥的人往往不会意识到它存在。
+    const blob = new Blob(
+      [JSON.stringify({ nodes: redactNodes(nodes), edges, triggers }, null, 2)],
+      { type: 'application/json' },
+    );
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'agent-flow.json';
