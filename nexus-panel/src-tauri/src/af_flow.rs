@@ -614,13 +614,17 @@ fn expand_glob(pattern: &str) -> Result<Vec<String>, String> {
         base_parts.push(*s);
     }
 
+    // 两个分支必须同为 String。
+    // else 分支里 join/format 产出的是 String，而 if 分支原本写的是 &str
+    // 字面量（"/" / "."）—— if/else 是同一个表达式，两分支类型必须一致，否则 E0308。
+    // 末尾的 .to_string() 救不回来：求值时 if/else 本身已必须先确定唯一类型。
     let base = if base_parts.is_empty() {
-        if is_abs { "/" } else { "." }
+        if is_abs { String::from("/") } else { String::from(".") }
     } else {
         // 绝对路径时首段为空，需要还原前导斜杠
         let joined = base_parts.join("/");
         if is_abs && !joined.starts_with('/') { format!("/{}", joined) } else { joined }
-    }.to_string();
+    };
 
     let base_path = Path::new(&base);
     if !base_path.exists() {
