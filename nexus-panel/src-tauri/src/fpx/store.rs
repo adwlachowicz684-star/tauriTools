@@ -289,3 +289,44 @@ pub fn build_link_rows(records: &[LinkRecord]) -> Vec<LinkRow> {
         })
         .collect()
 }
+
+/* ---------------------------- 命令行模式用的公开读写口 ---------------------------- */
+// cli.rs 拿不到 AppHandle，需要按**显式路径**读写；这里把已有的内部函数开放出去。
+
+/// 按显式路径读一个 JSON（失败直接返回 Err，不像内部 read_json 那样吞掉错误）。
+pub fn read_json_any<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Result<T, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("读取失败 {}: {e}", path.display()))?;
+    serde_json::from_str::<T>(&text)
+        .map_err(|e| format!("解析失败 {}: {e}", path.display()))
+}
+
+/// 按显式路径写 JSON（同样走原子写，避免写到一半留下坏文件）。
+pub fn write_json_any<T: serde::Serialize>(path: &std::path::Path, value: &T) -> Result<(), String> {
+    write_json(path, value)
+}
+
+/// 按**完整文件路径**读链接记录（与 load_records 不同：那个收的是目录）。
+pub fn load_records_from_exact(path: &std::path::Path) -> Result<Vec<LinkRecord>, String> {
+    #[derive(serde::Deserialize)]
+    struct File {
+        #[serde(default)]
+        links: Vec<LinkRecord>,
+    }
+    if !path.exists() { return Ok(Vec::new()); }
+    read_json_any::<File>(path).map(|f| f.links)
+}
+
+/// 按完整文件路径读链接记录；文件不存在时返回空（首次运行属正常）。
+pub fn load_records_from(path: &std::path::Path) -> Vec<LinkRecord> {
+    load_records_from_exact(path).unwrap_or_default()
+}
+
+/// 按**完整文件路径**写链接记录（与 save_records 不同：那个收的是目录）。
+pub fn save_records_to(path: &std::path::Path, records: &[LinkRecord]) -> Result<(), String> {
+    #[derive(serde::Serialize)]
+    struct File<'a> {
+        links: &'a [LinkRecord],
+    }
+    write_json(path, &File { links: records })
+}

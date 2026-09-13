@@ -12,11 +12,37 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// 当前操作对象（AI 用 select_folder 指定，后续带 target 的工具可省略参数）。
+/// 存 (路径, 类别)，类别为 project / group / other。
+static SELECTION: Mutex<Option<(String, String)>> = Mutex::new(None);
+
+fn set_selection(path: &str, kind: &str) {
+    if let Ok(mut g) = SELECTION.lock() {
+        *g = Some((path.to_string(), kind.to_string()));
+    }
+}
+
+fn get_selection_inner() -> Option<(String, String)> {
+    SELECTION.lock().ok().and_then(|g| g.clone())
+}
+
+/// 取目标目录：优先用显式 target，其次用已选对象；都没有时按 require 决定报错还是返回 None。
+fn resolve_target(args: &Value, require: bool) -> Result<Option<String>, String> {
+    let t = args.get("target").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if !t.is_empty() { return Ok(Some(t)); }
+    if let Some((p, _)) = get_selection_inner() { return Ok(Some(p)); }
+    if require {
+        return Err("未选择文件夹，请先 select_folder 或传 target".into());
+    }
+    Ok(None)
+}
 
 /// 启动 MCP server。port=0 时由系统分配空闲端口。返回实际监听地址。
 pub fn serve(app: AppHandle, port: u16) -> Result<String, String> {
@@ -192,6 +218,41 @@ fn tools() -> Vec<Value> {
             "kind": { "type": "string", "enum": ["project", "group"] },
             "appendOnly": { "type": "boolean", "description": "true=只新增更新，false=镜像同步" },
         }), vec!["kind"]),
+        // ---- 与原版对齐、此前缺失的能力 ----
+        tool("get_manual", "返回本服务全部工具的能力总览（Markdown 表格）", json!({}), vec![]),
+        tool("get_status", "返回当前状态：数据目录、项目/项目组清单、链接数、当前选择", json!({}), vec![]),
+        tool("select_folder", "指定当前操作对象（后续工具可省略 target）", json!({
+            "path": { "type": "string", "description": "项目或项目组文件夹完整路径" },
+        }), vec!["path"]),
+        tool("get_selection", "获取当前操作对象及其 agent/skill/rule 内容", json!({}), vec![]),
+        tool("lock_status", "查询某目录的 ACL 保护状态（防删除 / 防写入）", json!({
+            "path": { "type": "string" },
+        }), vec!["path"]),
+        tool("folder_icon_set", "设置文件夹图标（受设置 iconAffectExplorer 影响是否写入 desktop.ini）", json!({
+            "path": { "type": "string" },
+            "icon": { "type": "string", "description": "图标文件绝对路径；支持 路径|索引 形式" },
+        }), vec!["path", "icon"]),
+        tool("folder_icon_get", "查询文件夹当前图标", json!({
+            "path": { "type": "string" },
+        }), vec!["path"]),
+        tool("folder_icon_restore", "恢复文件夹为默认图标", json!({
+            "path": { "type": "string" },
+        }), vec!["path"]),
+        tool("capture_screen", "截取整个屏幕，返回落盘路径", json!({
+            "dir": { "type": "string", "description": "可选，保存目录；默认数据目录 shots/" },
+        }), vec![]),
+        tool("list_windows", "列举标题含关键字的可见窗口（仅 Windows）", json!({
+            "keyword": { "type": "string", "description": "可选，为空则列全部" },
+        }), vec![]),
+        tool("capture_window", "按标题关键字截取单个窗口（仅 Windows）", json!({
+            "title": { "type": "string" },
+            "dir": { "type": "string", "description": "可选，保存目录" },
+        }), vec!["title"]),
+        tool("deploy_skill", "部署 skill：无 AI 命令时本地生成 SKILL.md 骨架，有则写入请求并拉起 AI", json!({
+            "prompt": { "type": "string", "description": "skill 描述" },
+            "target": { "type": "string", "description": "可选，目标目录；省略则用当前选择" },
+            "agentCmd": { "type": "string", "description": "可选，临时指定 AI 客户端命令" },
+        }), vec!["prompt"]),
     ]
 }
 
@@ -341,9 +402,280 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
             let r = super::backup::run(&cfg, &dir, kind, append_only);
             json!({ "content": [{ "type": "text", "text": r.summary() }] })
         }
+        // ---- 与原版对齐、此前缺失的能力 ----
+        "get_manual" => {
+            let dir = data_dir_of(app)?;
+            json!({ "content": [{ "type": "text", "text": manual_text(&dir) }] })
+        }
+        "get_status" => {
+            let dir = data_dir_of(app)?;
+            let snap = snapshot(app)?;
+            let cfg = load_cfg(app)?;
+            let projects: Vec<String> = snap.project_tabs.iter().flat_map(|t| t.items.iter().map(|c| c.path.clone())).collect();
+            let groups: Vec<String> = snap.group_tabs.iter().flat_map(|t| t.items.iter().map(|c| c.path.clone())).collect();
+            let sel = get_selection_inner().map(|(p, k)| json!({ "path": p, "kind": k }));
+            json!({ "content": [{ "type": "text", "text": serde_json::to_string(&json!({
+                "configPath": dir.join("config.json").to_string_lossy(),
+                "recordPath": dir.join("link-record.json").to_string_lossy(),
+                "projects": projects,
+                "groups": groups,
+                "linkCount": snap.links.len(),
+                "chainClient": cfg.chain_client,
+                "selection": sel,
+            })).unwrap_or_default() }] })
+        }
+        "select_folder" => {
+            let path = s("path");
+            if path.is_empty() { return Err(err("缺少参数 path")); }
+            if !std::path::Path::new(&path).is_dir() { return Err(err(&format!("文件夹不存在: {path}"))); }
+            // 判定类别：先看项目组再看项目，都不在则是 other（仍可选，只是类别不明）
+            let snap = snapshot(app)?;
+            let key = super::store::normalize_key(&path);
+            let in_group = snap.group_tabs.iter().flat_map(|t| t.items.iter())
+                .any(|c| super::store::normalize_key(&c.path) == key);
+            let in_project = snap.project_tabs.iter().flat_map(|t| t.items.iter())
+                .any(|c| super::store::normalize_key(&c.path) == key);
+            let kind = if in_group { "group" } else if in_project { "project" } else { "other" };
+            set_selection(&path, kind);
+            let items = super::fpx_scan_content(path.clone(), Some("all".to_string()));
+            json!({ "content": [{ "type": "text", "text": serde_json::to_string(&json!({
+                "selection": { "path": path, "kind": kind },
+                "content": items,
+            })).unwrap_or_default() }] })
+        }
+        "get_selection" => {
+            match get_selection_inner() {
+                None => json!({ "content": [{ "type": "text", "text": "当前未选择任何文件夹，请先 select_folder" }] }),
+                Some((p, k)) => {
+                    let items = super::fpx_scan_content(p.clone(), Some("all".to_string()));
+                    json!({ "content": [{ "type": "text", "text": serde_json::to_string(&json!({
+                        "selection": { "path": p, "kind": k },
+                        "content": items,
+                    })).unwrap_or_default() }] })
+                }
+            }
+        }
+        "lock_status" => {
+            let path = s("path");
+            if path.is_empty() { return Err(err("缺少参数 path")); }
+            let dir = data_dir_of(app)?;
+            let cfg = super::store::load_config(&dir);
+            let (dd, dw) = match super::store::lock_of(&cfg, &path) {
+                Some(l) => (l.deny_delete, l.deny_write),
+                None => (false, false),
+            };
+            json!({ "content": [{ "type": "text", "text": serde_json::to_string(&json!({
+                "path": path, "locked": dd || dw, "denyDelete": dd, "denyWrite": dw,
+            })).unwrap_or_default() }] })
+        }
+        "folder_icon_set" => {
+            let path = s("path");
+            let icon = s("icon");
+            if path.is_empty() || icon.is_empty() { return Err(err("path 与 icon 必填")); }
+            if !std::path::Path::new(&path).is_dir() { return Err(err(&format!("目录不存在: {path}"))); }
+            let dir = data_dir_of(app)?;
+            // 事务内改配置 + 落 desktop.ini：apply_icon 失败则不落盘
+            let note = super::store::with_config(&dir, |cfg| {
+                cfg.folder_icons.insert(path.clone(), icon.clone());
+                if cfg.icon_affect_explorer {
+                    super::sys::apply_icon(&path, &icon)?;
+                    Ok("已写入 desktop.ini，资源管理器同步生效".to_string())
+                } else {
+                    Ok("已记录到配置（界面内生效，未写入资源管理器）".to_string())
+                }
+            }).map_err(|e| err(&e))?;
+            json!({ "content": [{ "type": "text", "text": note }] })
+        }
+        "folder_icon_get" => {
+            let path = s("path");
+            if path.is_empty() { return Err(err("缺少参数 path")); }
+            let dir = data_dir_of(app)?;
+            let cfg = super::store::load_config(&dir);
+            let cur = cfg.folder_icons.get(&path).cloned()
+                .or_else(|| {
+                    let key = super::store::normalize_key(&path);
+                    cfg.folder_icons.iter()
+                        .find(|(k, _)| super::store::normalize_key(k) == key)
+                        .map(|(_, v)| v.clone())
+                });
+            json!({ "content": [{ "type": "text", "text": serde_json::to_string(&json!({
+                "path": path,
+                "iconAffectExplorer": cfg.icon_affect_explorer,
+                "icon": cur,
+            })).unwrap_or_default() }] })
+        }
+        "folder_icon_restore" => {
+            let path = s("path");
+            if path.is_empty() { return Err(err("缺少参数 path")); }
+            let dir = data_dir_of(app)?;
+            super::store::with_config(&dir, |cfg| {
+                let key = super::store::normalize_key(&path);
+                cfg.folder_icons.retain(|k, _| super::store::normalize_key(k) != key);
+                if cfg.icon_affect_explorer {
+                    // 空 icon_ref = 恢复默认（删除 desktop.ini 并去掉 +s）
+                    let _ = super::sys::apply_icon(&path, "");
+                }
+                Ok(())
+            }).map_err(|e| err(&e))?;
+            json!({ "content": [{ "type": "text", "text": "已恢复默认图标" }] })
+        }
+        "capture_screen" => {
+            let dir = data_dir_of(app)?;
+            let target = match args.get("dir").and_then(|v| v.as_str()) {
+                Some(d) if !d.trim().is_empty() => std::path::PathBuf::from(d.trim()),
+                _ => dir.join("shots"),
+            };
+            let r = super::screen::capture(&target).map_err(|e| err(&e))?;
+            json!({ "content": [{ "type": "text", "text": serde_json::to_string(&r).unwrap_or_default() }] })
+        }
+        "list_windows" => {
+            let list = super::screen::list_windows(&s("keyword")).map_err(|e| err(&e))?;
+            json!({ "content": [{ "type": "text", "text": serde_json::to_string(&list).unwrap_or_default() }] })
+        }
+        "capture_window" => {
+            let title = s("title");
+            if title.is_empty() { return Err(err("缺少参数 title")); }
+            let dir = data_dir_of(app)?;
+            let target = match args.get("dir").and_then(|v| v.as_str()) {
+                Some(d) if !d.trim().is_empty() => std::path::PathBuf::from(d.trim()),
+                _ => dir.join("shots"),
+            };
+            let r = super::screen::capture_window(&target, &title).map_err(|e| err(&e))?;
+            json!({ "content": [{ "type": "text", "text": serde_json::to_string(&r).unwrap_or_default() }] })
+        }
+        "deploy_skill" => {
+            let prompt = s("prompt");
+            if prompt.trim().is_empty() { return Err(err("缺少参数 prompt（skill 描述）")); }
+            let target = resolve_target(&args, false).map_err(|e| err(&e))?
+                .ok_or_else(|| err("未指定目标文件夹，请先 select_folder 或传 target"))?;
+
+            let dir = data_dir_of(app)?;
+            let cfg = super::store::load_config(&dir);
+            // 目标为项目组时自动落到其 skill 目录（与界面行为一致）
+            let deploy_base = if let Some(sd) = super::content::skill_dir_of(&target) {
+                sd
+            } else {
+                std::path::Path::new(&target).join("skill")
+            };
+
+            // 摘锁创建：skill 目录可能是受保护项目组的子孙，直接 CreateDir 会被拒绝
+            let _guard = super::LockGuard::new(&target, super::store::lock_of(&cfg, &target));
+            if !deploy_base.is_dir() {
+                std::fs::create_dir_all(&deploy_base)
+                    .map_err(|e| err(&format!("创建 skill 目录失败: {e}")))?;
+            }
+            drop(_guard);
+
+            // 有 AI 命令 → 写请求文件并拉起；否则本地生成 SKILL.md 骨架
+            let agent_cmd = s("agentCmd");
+            let cmd = if agent_cmd.trim().is_empty() { cfg.chain_client.clone().unwrap_or_default() } else { agent_cmd };
+
+            if !cmd.trim().is_empty() {
+                let req = deploy_base.join("_deploy-request.json");
+                let body = json!({ "prompt": prompt, "target": deploy_base.to_string_lossy() });
+                std::fs::write(&req, serde_json::to_string_pretty(&body).unwrap_or_default())
+                    .map_err(|e| err(&format!("写入请求文件失败: {e}")))?;
+                // 注意用 send_command 而非 send：这里拿到的是一条命令行，不是客户端 id
+                let r = super::chain::send_command(&cmd, &deploy_base.to_string_lossy(), &prompt);
+                json!({ "content": [{ "type": "text", "text": serde_json::to_string(&json!({
+                    "mode": "agent",
+                    "deployBase": deploy_base.to_string_lossy(),
+                    "requestFile": req.to_string_lossy(),
+                    "ok": r.ok,
+                    "message": r.message,
+                })).unwrap_or_default() }] })
+            } else {
+                let r = local_skill_scaffold(&deploy_base, &prompt).map_err(|e| err(&e))?;
+                json!({ "content": [{ "type": "text", "text": serde_json::to_string(&json!({
+                    "mode": "local",
+                    "deployBase": deploy_base.to_string_lossy(),
+                    "name": r.0,
+                    "skillDir": r.1,
+                    "skillFile": r.2,
+                    "note": "已在 skill 目录生成本地骨架（SKILL.md），在 AI 客户端中重新打开该分组即可加载",
+                })).unwrap_or_default() }] })
+            }
+        }
         other => return Err(err(&format!("未知工具: {other}"))),
     };
     Ok(out)
+}
+
+/**
+ * 生成工具能力总览（Markdown 表格），内容由 tools() 推导，
+ * 与 tools/list 永远一致 —— 手写说明会和实际清单脱节。
+ */
+fn manual_text(data_dir: &std::path::Path) -> String {
+    let mut rows = String::new();
+    for t in tools() {
+        let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let desc = t.get("description").and_then(|v| v.as_str()).unwrap_or("").replace('|', "\\|");
+        let schema = t.get("inputSchema");
+        let props = schema.and_then(|s| s.get("properties"))
+            .and_then(|p| p.as_object())
+            .map(|m| m.keys().cloned().collect::<Vec<_>>().join(", "))
+            .unwrap_or_default();
+        let req = schema.and_then(|s| s.get("required"))
+            .and_then(|r| r.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "))
+            .unwrap_or_default();
+        rows.push_str(&format!("| {name} | {desc} | {} | {} |\n",
+            if props.is_empty() { "无".to_string() } else { props },
+            if req.is_empty() { "-".to_string() } else { req }));
+    }
+    format!(
+        "本 MCP 服务「项目组分配」工具能力总览：\n\n| 工具 | 说明 | 参数 | 必填 |\n|---|---|---|---|\n{rows}\n\n数据目录：{}\n用法：先 select_folder 指定操作对象，其后多数工具可省略 target。",
+        data_dir.to_string_lossy()
+    )
+}
+
+/// 本地生成 skill 骨架：目录名由描述清洗得来，同名自动加序号避让（永不覆盖已有内容）。
+/// 返回 (最终名称, 目录, SKILL.md 路径)。
+fn local_skill_scaffold(base: &std::path::Path, prompt: &str) -> Result<(String, String, String), String> {
+    let base_name = sanitize_name(prompt);
+    if base_name.is_empty() { return Err("skill 描述清洗后为空，请换个说法".into()); }
+
+    let (final_name, dir) = {
+        let mut n = base_name.clone();
+        let mut p = base.join(&n);
+        let mut i = 2;
+        while p.exists() {
+            n = format!("{base_name}{i}");
+            p = base.join(&n);
+            i += 1;
+        }
+        (n, p)
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建 skill 目录失败: {e}"))?;
+
+    let file = dir.join("SKILL.md");
+    let md = format!(
+        "---\nname: {final_name}\ndescription: {prompt}\n---\n\n# {final_name}\n\n> 由「项目组分配」MCP server 本地脚手架生成。\n\n## 用途\n{prompt}\n\n## 用法\n（在此补充该 skill 的具体步骤、命令或工具调用。）\n\n## 注意事项\n- 此文件由脚手架生成，内容需你完善。\n"
+    );
+    std::fs::write(&file, md).map_err(|e| format!("写入 SKILL.md 失败: {e}"))?;
+
+    Ok((final_name,
+        dir.to_string_lossy().to_string(),
+        file.to_string_lossy().to_string()))
+}
+
+/// 把描述清洗成合法目录名：保留中英文数字与 - _ ，其余转空格再压成一个 -
+fn sanitize_name(raw: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for c in raw.trim().chars() {
+        if c.is_alphanumeric() || c == '-' || c == '_' {
+            out.push(c);
+            last_dash = false;
+        } else if c.is_whitespace() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+            if !out.is_empty() && !last_dash {
+                out.push('-');
+                last_dash = true;
+            }
+        }
+    }
+    let trimmed = out.trim_matches('-').to_string();
+    if trimmed.len() > 60 { trimmed[..60].trim_end_matches('-').to_string() } else { trimmed }
 }
 
 fn err(msg: &str) -> Value {

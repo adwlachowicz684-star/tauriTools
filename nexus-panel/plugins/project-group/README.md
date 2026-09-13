@@ -227,3 +227,48 @@ A: 基于版本 1 改完 save()  // 版本 3 —— B 的改动被整份覆盖
   写配置时**重新 load** 而不是复用几秒前那份，且只改自己关心的字段
 - **不要在 `with_config` 闭包内调用任何会写配置的函数** —— `Mutex` 非重入，会死锁
 
+## MCP 工具（24 个）
+
+分两类。**基础能力**：
+
+| 工具 | 说明 |
+|---|---|
+| `list_projects` / `list_groups` | 列出项目 / 项目组页签与卡片 |
+| `list_links` | 全部链接记录及状态 |
+| `create_link` / `remove_link` | 建立 / 撤销分配 |
+| `scan_content` / `read_file` | 扫 agent / skill / rule、读文件 |
+| `create_folder` / `add_card` | 新建文件夹、加入页签 |
+| `set_lock` / `set_tag_color` | ACL 保护、卡片标签色 |
+| `backup` | 一键备份 |
+
+**与原版对齐的补全项**：
+
+| 工具 | 说明 |
+|---|---|
+| `get_manual` | 工具能力总览（表格由 `tools()` 推导，与 `tools/list` 永远一致，不会脱节） |
+| `get_status` | 数据目录、项目/项目组清单、链接数、当前选择 |
+| `select_folder` | 指定当前操作对象；其后多数工具可省略 `target` |
+| `get_selection` | 获取当前操作对象及其内容 |
+| `deploy_skill` | 部署 skill：有 AI 命令则写请求文件并拉起，否则本地生成 `SKILL.md` 骨架（同名自动加序号，永不覆盖） |
+| `lock_status` | 查询 ACL 保护状态 |
+| `folder_icon_set` / `_get` / `_restore` | 文件夹图标的设置 / 查询 / 恢复 |
+| `capture_screen` | 截全屏 |
+| `list_windows` / `capture_window` | 列举可见窗口 / 按标题截单个窗口（仅 Windows，其它平台明确报不支持而非静默退化为全屏） |
+
+## 命令行模式
+
+在 Tauri 启动**之前**处理，不创建窗口：
+
+```bash
+nexus-panel --self-check <config> <record> <outDir>   # 数据层自检，报告写入 outDir
+nexus-panel --migrate-hierarchy [config] [record]      # 项目搬到「新建项目父目录\页签名\名称」
+nexus-panel --migrate-groups-hierarchy [config] [record]  # 项目组同上，搬完重建指向它的链接
+nexus-panel --mcp [port]                              # 只跑 MCP server，不开界面
+```
+
+自检全程只写输出目录，不碰真实数据，可随时跑；报告含 `[FAIL]` 时退出码为 1，便于脚本判断。
+
+迁移要点：只在同一卷内 `rename`（跨卷会失败，硬搬可能留半截数据）；跳过已在目标位置与同名冲突的项；图标 / 标签色 / ACL 锁的键会跟着换；项目组搬走后逐个重建指向它的 junction。
+
+> `--appicon-apply`（给 exe 文件本身换图标）未移植：它需要改写 PE 资源区并重启，风险与收益不成正比。运行时换窗口图标请用 `set_window_icon`。
+

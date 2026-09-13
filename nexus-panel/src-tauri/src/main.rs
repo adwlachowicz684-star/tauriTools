@@ -57,6 +57,19 @@ fn set_window_icon(app: tauri::AppHandle, path: String) -> Result<(), String> {
 }
 
 fn main() {
+    // ---- 命令行模式：不进 Tauri、不开窗口 ----
+    // 必须在 Builder 之前处理：一旦 run() 起来就已经晚了。
+    // 有输出时打印并直接退出，返回 0 表示成功、1 表示失败。
+    let argv: Vec<String> = std::env::args().collect();
+    if let Some(out) = fpx::cli::try_handle(&argv) {
+        println!("{out}");
+        // 自检报告里出现 [FAIL] 就给非零退出码，方便脚本判断是否要通过
+        std::process::exit(if out.contains("[FAIL]") { 1 } else { 0 });
+    }
+
+    // --mcp：只跑 MCP server，不显示窗口（供 AI 客户端拉起）
+    let mcp_only = argv.len() > 1 && argv[1] == "--mcp";
+
     tauri::Builder::default()
         // OCR / 翻译节点要调大模型 API：经官方 http 插件发出，
         // 绕过 webview 的同源策略（多数大模型 API 不允许浏览器直连）。
@@ -88,6 +101,28 @@ fn main() {
             af_flow::webhook_start, af_flow::webhook_stop,
             af_flow::fs_op, af_flow::af_read_image_data_url
         ])
+        .setup(move |app| {
+            if mcp_only {
+                // 关掉主窗口：AI 客户端拉起的实例不需要界面，
+                // 留着只会多占资源、还可能因为窗口关闭而退出进程。
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.close();
+                }
+                let port = argv_opt_port(&argv);
+                match fpx::mcp::serve(app.handle().clone(), port) {
+                    Ok(addr) => eprintln!("[mcp] listening on http://{addr}/mcp"),
+                    Err(e) => eprintln!("[mcp] 启动失败: {e}"),
+                }
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("启动 Nexus Panel 失败");
+}
+
+/// 解析 `--mcp [port]` 里可选的端口号，没给则 0（由系统分配）。
+fn argv_opt_port(argv: &[String]) -> u16 {
+    argv.get(2)
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(0)
 }

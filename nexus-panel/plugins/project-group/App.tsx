@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ContentPanel } from './components/ContentPanel';
+import { RenameDialog } from './components/RenameDialog';
 import { CardGrid, TabBar, type DragPayload } from './components/CardGrid';
 import { CreateDialog, IconPickDialog, LockDialog, StyleDialog } from './components/dialogs';
 import { DirDialog } from './components/DirDialog';
@@ -25,7 +26,8 @@ type Dialog =
   | { type: 'editor' }
   | { type: 'chain'; target: string; kind: CardKind }
   | { type: 'settings' }
-  | { type: 'service' };
+  | { type: 'service' }
+  | { type: 'rename'; card: CardInfo; kind: CardKind };
 
 export default function App() {
   const s = useFpx();
@@ -111,6 +113,7 @@ export default function App() {
           () => ctx.toast('复制失败', 'err'),
         ),
       },
+      { label: '改名…（F2）', onClick: () => setDialog({ type: 'rename', card, kind }) },
       { label: '保护（ACL）…', onClick: () => setDialog({ type: 'lock', card }) },
       { label: '图标与标签…', onClick: () => setDialog({ type: 'style', card }) },
       { label: '发送到 AI…', onClick: () => setDialog({ type: 'chain', target: card.path, kind }) },
@@ -294,7 +297,14 @@ export default function App() {
             <button className="p-btn" onClick={() => setDialog({ type: 'settings' })}>设置</button>
             <button className="p-btn" onClick={() => setDialog({ type: 'backup' })}>备份</button>
             <button className="p-btn" onClick={() => setDialog({ type: 'service' })}>服务</button>
-            <button className="p-btn" onClick={() => s.refresh()}>刷新</button>
+            <button className="p-btn" onClick={() => s.refresh()} title="F5">刷新</button>
+            <button
+              className="p-btn"
+              title="摘掉页签里已不存在的路径（F8）"
+              onClick={() => void s.clearInvalid()}
+            >
+              清除无效项
+            </button>
             <button className="p-btn" onClick={() => setHelp(true)}>使用说明</button>
           </div>
           <div className="p-row">
@@ -468,6 +478,18 @@ export default function App() {
           denyWrite={dialog.card.denyWrite}
           onClose={() => setDialog({ type: 'none' })}
           onApply={(dd, dw) => s.setLock(dialog.card.path, dd, dw)}
+        />
+      )}
+
+      {dialog.type === 'rename' && (
+        <RenameDialog
+          card={dialog.card}
+          kind={dialog.kind}
+          onClose={() => setDialog({ type: 'none' })}
+          onSubmit={async (newName) => {
+            const r = await s.renameFolder(dialog.kind, dialog.card.path, newName);
+            return !!r;
+          }}
         />
       )}
 

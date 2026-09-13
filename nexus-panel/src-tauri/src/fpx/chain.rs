@@ -451,6 +451,39 @@ fn def_of(id: &str) -> (&'static str, &'static str, &'static str) {
 
 /// 发送连锁指令。占位符 {path} / {name} 由调用方替换后再传入。
 /// custom 为用户手动添加的客户端（内置 id 匹配不上时按它发送）。
+/// 按**命令行**直接发送（MCP 的 deploy_skill 用）。
+///
+/// 与 send() 的区别：send() 收的是客户端 id，从内置目录 / 自定义清单里查；
+/// 这里收的是一条可直接执行的命令（可能是 exe 路径，也可能是带参数的命令行），
+/// 原版 agent_cmd 就是这个语义。
+pub fn send_command(cmd: &str, directory: &str, prompt: &str) -> ChainSendResult {
+    let cmd = cmd.trim();
+    if cmd.is_empty() {
+        return ChainSendResult {
+            ok: false,
+            client: String::new(),
+            needs_paste: false,
+            message: "AI 客户端命令为空".into(),
+        };
+    }
+    // 命令里可能带自己的参数，这里只补上工作目录
+    let exe = std::path::PathBuf::from(cmd);
+    let ok = run(&exe, &[directory]);
+    let copied = if ok { set_clipboard(prompt) } else { false };
+    ChainSendResult {
+        ok,
+        client: cmd.to_string(),
+        needs_paste: ok,
+        message: if !ok {
+            format!("无法启动命令：{cmd}")
+        } else if copied {
+            format!("已在 {cmd} 中打开，指令已复制到剪贴板，请粘贴。")
+        } else {
+            format!("已在 {cmd} 中打开，请手动复制指令并粘贴。")
+        },
+    }
+}
+
 pub fn send(id: &str, directory: &str, prompt: &str, custom: &[super::model::CustomChainClient]) -> ChainSendResult {
     // 先查自定义客户端：它的 id 可能与内置不重合，且由用户显式登记，优先级更高
     if let Some(c) = custom.iter().find(|c| c.id.trim() == id) {

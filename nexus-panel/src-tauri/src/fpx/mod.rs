@@ -8,6 +8,7 @@
 #![allow(dead_code)]
 
 pub mod backup;
+pub mod cli;
 pub mod base64;
 pub mod chain;
 pub mod content;
@@ -1141,7 +1142,7 @@ pub async fn fpx_import_icons(
  * 操作结束（含提前 return 的失败路径）自动按原档位恢复。
  * 对应 C# 版的 FolderLockService.WithUnlockForPath。
  */
-struct LockGuard {
+pub(crate) struct LockGuard {
     path: String,
     deny_delete: bool,
     deny_write: bool,

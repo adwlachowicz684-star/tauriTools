@@ -188,3 +188,15 @@ pub fn skill_md_of(dir: &str) -> Option<String> {
     let p = Path::new(dir).join("SKILL.md");
     if p.is_file() { Some(p.to_string_lossy().to_string()) } else { None }
 }
+
+/// 返回该目录下的 skill 存放位置（若存在 skill / skills 子目录或 SKILL.md 结构）。
+/// 与原版 AgentSkillService.SkillDir 同义，供 MCP 的 deploy_skill 定位落点。
+pub fn skill_dir_of(root: &str) -> Option<std::path::PathBuf> {
+    let base = std::path::Path::new(root);
+    if !base.is_dir() { return None; }
+    for name in ["skill", "skills"] {
+        let p = base.join(name);
+        if p.is_dir() { return Some(p); }
+    }
+    None
+}

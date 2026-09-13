@@ -2,7 +2,8 @@ import type { PluginContext } from '../../js/plugin-sdk.js';
 import type {
   BackupAutoStatus, BackupResult, Bootstrap, CaptureResult, CardKind, ChainClient,
   ChainAction, ChainSendResult, ContentItem, CustomChainClient, DirEntryLite,
-  EditorCandidate, FpxConfig, McpToolRow, MoveAcrossResult, Snapshot, WatchEvent,
+  ClearResult, EditorCandidate, FpxConfig, McpToolRow, MoveAcrossResult,
+  RenameResult, Snapshot, WatchEvent,
 } from './types';
 
 /**
@@ -39,6 +40,13 @@ export function makeApi(ctx: PluginContext) {
 
     quickRoots: () => call<DirEntryLite[]>('fpx_quick_roots'),
 
+    /** 给项目/项目组文件夹改名（物理 rename + 同步所有登记） */
+    renameFolder: (kind: 'project' | 'group', path: string, newName: string) =>
+      call<RenameResult>('fpx_rename_folder', { kind, path, new_name: newName }),
+
+    /** 清除无效项：摘掉页签里已不存在的路径 */
+    clearInvalid: () => call<ClearResult>('fpx_clear_invalid'),
+
     /** 更换软件窗口图标（外壳能力，非本插件数据） */
     setWindowIcon: (path: string) => call<void>('set_window_icon', { path }),
 
@@ -46,14 +54,6 @@ export function makeApi(ctx: PluginContext) {
       call<string>('fpx_create_folder', {
         parent, name, hierarchy: hierarchy ?? null, template: template ?? null,
       }),
-
-    renameFolder: (kind: string, path: string, newName: string) =>
-      call<{ newPath: string; snapshot: Snapshot; recHits: number }>('fpx_rename_folder', {
-        kind, path, new_name: newName,
-      }),
-
-    clearInvalid: () =>
-      call<{ snapshot: Snapshot; removed: string[]; tabHits: number; recHits: number }>('fpx_clear_invalid'),
 
     setLock: (path: string, denyDelete: boolean, denyWrite: boolean) =>
       call<Snapshot>('fpx_set_lock', { path, deny_delete: denyDelete, deny_write: denyWrite }),
@@ -166,22 +166,17 @@ export function makeApi(ctx: PluginContext) {
 
 export type Api = ReturnType<typeof makeApi>;
 
-/** 统一错误信息抽取 */
 /**
- * 路径比较用的规范化。
- *
- * 直接比字符串会踩三个坑：Windows 上分隔符可能是 / 也可能是 \、
- * 首尾空格与尾部斜杠、盘符大小写。选中项改名/删除后要拿路径去比对，
- * 不统一处理就会出现"改完名选中的还是旧路径"。
+ * 路径比较键：去尾部分隔符、统一分隔符、转小写。
+ * 与 Rust 侧 store::normalize_key 保持同一套规则，用于判断"是不是同一个目录"。
+ * （Windows 大小写不敏感；Linux/macOS 上转小写会把 A/a 视为同一路径，
+ *   但对改名/清除无效这类"同一批数据内部比对"的场景无害）
  */
 export function normalizeKey(p: string): string {
-  return String(p ?? '')
-    .trim()
-    .replace(/\\/g, '/')
-    .replace(/\/+$/, '')
-    .toLowerCase();
+  return p.trim().replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase();
 }
 
+/** 统一错误信息抽取 */
 export function errText(e: unknown): string {
   const raw = e as { message?: string } | string | null;
   if (!raw) return '未知错误';
