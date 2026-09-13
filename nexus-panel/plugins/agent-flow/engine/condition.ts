@@ -1,6 +1,7 @@
-import type { ConditionNodeData, ConditionOp, ConditionRule } from '../types';
-import { ruleConditions, OP_META, LOGIC_META, DEFAULT_BRANCH } from '../types';
-import type { ConditionLogic } from '../types';
+import type {
+  ConditionNodeData, ConditionOp, ConditionRule, ConditionItem, ConditionLogic,
+} from '../types';
+import { OP_META, DEFAULT_BRANCH, LOGIC_META, ruleConditions } from '../types';
 
 export type EvalInput = {
   /** 上游节点 id → 输出 */
@@ -23,10 +24,16 @@ export type RuleOutcome = {
 
 const MAX_SHOW = 300;
 
-/** 取某条规则要判定的文本 */
-function resolveSource(rule: ConditionRule, ctx: EvalInput): string {
-  if (rule.source === 'input') return ctx.input ?? '';
-  if (rule.source && rule.source !== '') return ctx.outputs[rule.source] ?? '';
+/**
+ * 取某条条件要判定的文本。
+ *
+ * 参数只用到 source 字段，所以 ConditionRule 和 ConditionItem 都能传进来 ——
+ * 多条件与单条件共用同一套来源解析。
+ */
+function resolveSource(cond: { source?: string }, ctx: EvalInput): string {
+  const src = cond.source ?? '';
+  if (src === 'input') return ctx.input ?? '';
+  if (src !== '') return ctx.outputs[src] ?? '';
   // 未指定来源：拼接全部上游输出；无上游时退回全局输入
   if (ctx.upstream.length > 0) {
     return ctx.upstream.map((u) => ctx.outputs[u] ?? '').join('\n');
@@ -72,9 +79,59 @@ export function testCondition(op: ConditionOp, text: string, value: string): boo
   }
 }
 
-/** 单条规则的判定。返回 null 表示这条规则有配置错误（如非法正则） */
-function testRule(rule: ConditionRule, text: string): boolean | null {
-  return testCondition(rule.op, text, rule.value ?? '');
+export type RuleEval = {
+  /** true / false；null 表示规则有错（如所有条件都非法）应被跳过 */
+  matched: boolean | null;
+  /** 被停用的规则：不参与判定，也不算错 */
+  disabled?: boolean;
+  errors: string[];
+};
+
+/**
+ * 判定一条规则（可能含多条条件）。
+ *
+ * 组合规则：
+ *  - 规则整体停用 → 返回 false（不命中，继续看下一条），不报错
+ *  - 所有条件都停用 → 同样视为不命中
+ *  - 只统计"启用的条件"；非法正则那条算 null，被排除在组合之外
+ *    （与既有语义一致：非法正则跳过该条，不中断流程）
+ *  - 若启用的条件全是 null → 整条规则返回 null，由调用方跳过
+ */
+export function testRuleWithCtx(rule: ConditionRule, ctx: EvalInput): RuleEval {
+  const errors: string[] = [];
+
+  if (rule.enabled === false) {
+    return { matched: false, disabled: true, errors };
+  }
+
+  const all = ruleConditions(rule);
+  const active = all.filter((c) => c.enabled !== false);
+  if (active.length === 0) {
+    return { matched: false, errors };
+  }
+
+  const logic: ConditionLogic = rule.logic ?? 'and';
+  const results: Array<boolean | null> = [];
+
+  active.forEach((c, i) => {
+    const text = resolveSource(c, ctx);
+    const r = testCondition(c.op, text, c.value ?? '');
+    if (r === null) {
+      errors.push(`条件 ${i + 1}「${OP_META[c.op]?.label ?? c.op}」的正则非法：${c.value}`);
+      return; // 不参与组合
+    }
+    results.push(r);
+  });
+
+  if (results.length === 0) {
+    // 启用的条件全部非法 → 这条规则无法判定，交给调用方跳过并提示
+    return { matched: null, errors };
+  }
+
+  const combined = logic === 'or'
+    ? results.some(Boolean)
+    : results.every(Boolean);
+  return { matched: combined, errors };
 }
 
 /**
@@ -88,14 +145,15 @@ export function evaluateCondition(node: ConditionNodeData, ctx: EvalInput): Rule
   const errors: string[] = [];
 
   for (const rule of rules) {
-    const text = resolveSource(rule, ctx);
-    const r = testRule(rule, text);
+    const ev = testRuleWithCtx(rule, ctx);
+    errors.push(...ev.errors);
 
-    if (r === null) {
-      errors.push(`规则「${rule.label}」的正则非法：${rule.value}`);
-      continue;
-    }
-    if (r) {
+    if (ev.matched === null) continue; // 配置错误 → 跳过这条规则
+
+    if (ev.matched) {
+      // 展示第一条条件的来源文本，够用户判断为什么命中
+      const first = ruleConditions(rule)[0];
+      const text = first ? resolveSource(first, ctx) : (ctx.input ?? '');
       return {
         rule,
         branchId: rule.id,
@@ -106,7 +164,9 @@ export function evaluateCondition(node: ConditionNodeData, ctx: EvalInput): Rule
   }
 
   // 没有规则命中：走兜底分支（若节点启用了）
-  const firstText = rules.length > 0 ? resolveSource(rules[0], ctx) : (ctx.input ?? '');
+  const firstRule = rules[0];
+  const firstCond = firstRule ? ruleConditions(firstRule)[0] : undefined;
+  const firstText = firstCond ? resolveSource(firstCond, ctx) : (ctx.input ?? '');
   return {
     rule: null,
     branchId: node.defaultBranch ? '__default__' : null,
@@ -116,229 +176,274 @@ export function evaluateCondition(node: ConditionNodeData, ctx: EvalInput): Rule
 }
 
 /** 给界面用的中文摘要 */
-export function describeRule(rule: ConditionRule): string {
+/**
+ * 单条条件的中文摘要（简洁版，用于节点卡片）。
+ * 参数只用到 op / value / source，所以规则与条件对象都能传。
+ */
+function describeConditionCore(c: { op: ConditionOp; value?: string; source?: string }): string {
   const opText: Record<string, string> = {
     contains: '包含', notContains: '不包含', equals: '等于', notEquals: '不等于',
     startsWith: '开头是', regex: '匹配正则', nonEmpty: '非空', isEmpty: '为空', always: '总是',
   };
-  const t = opText[rule.op] ?? rule.op;
-  const needsValue = !['nonEmpty', 'isEmpty', 'always'].includes(rule.op);
-  const src = rule.source ? `${rule.source} ` : '';
-  return needsValue ? `${src}${t}「${rule.value}」` : `${src}${t}`;
+  const t = opText[c.op] ?? c.op;
+  const needsValue = !['nonEmpty', 'isEmpty', 'always'].includes(c.op);
+  const src = c.source ? `${c.source} ` : '';
+  return needsValue ? `${src}${t}「${c.value ?? ''}」` : `${src}${t}`;
 }
 
+/** 给界面用的中文摘要。多条件时用「且 / 或」连接 */
+export function describeRule(rule: ConditionRule): string {
+  const conds = ruleConditions(rule);
+  if (conds.length > 1) {
+    const joiner = (rule.logic ?? 'and') === 'or' ? ' 或 ' : ' 且 ';
+    return conds.map((c) => describeConditionCore(c)).join(joiner);
+  }
+  return describeConditionCore(rule);
+}
 
-/* ============================================================
- * 界面辅助：校验 / 试跑 / 表达式描述
- * ------------------------------------------------------------
- * 这四个是给 Inspector 用的**静态分析**能力，与上面的 evaluateCondition
- * （真正跑工作流时求值）分开：
- *   · validateRule / validateCondition —— 只看配置本身，不需要真实数据
- *   · simulateCondition —— 拿一段样例文本试跑，帮用户在写规则时确认语义
- *   · describeRuleExpression —— 多条件组合的可读摘要
- *
- * 全部走 ruleConditions() 归一化，单条件（老数据）与多条件（新数据）行为一致。
- * ============================================================ */
+/* ------------------------------------------------------------------ */
+/* 面板可视化用的配套函数                                              */
+/*                                                                     */
+/* 都写成纯函数：不依赖 React，可以在 node --test 里直接验证。          */
+/* 界面只负责把结果画出来，判断逻辑不被 UI 绑住。                        */
+/* ------------------------------------------------------------------ */
 
-export type CondIssue = {
-  /** error 会阻断运行；warn 只是提醒 */
-  level: 'error' | 'warn';
+export type RuleIssue = {
+  level: 'warn' | 'error';
   message: string;
 };
 
-/** 需要填比较值的操作符；空值对它们没有意义 */
-const OPS_NEED_VALUE = new Set(['contains', 'notContains', 'equals', 'notEquals', 'startsWith', 'regex']);
+/**
+ * 检查一条规则的配置问题。
+ *
+ * 重点是那些"看起来能跑、结果却不是你想要的"情况：
+ *  - 比较值留空 → contains / notContains / regex 会恒为真
+ *  - 正则写错 → 运行时该规则被跳过，等于这条规则不存在
+ * 这两类都不报错、不阻断，只能靠编辑时提示。
+ */
+export function validateRule(rule: ConditionRule): RuleIssue[] {
+  const issues: RuleIssue[] = [];
+  if (!rule) return issues;
 
-/** 校验单条规则 */
-export function validateRule(rule: ConditionRule): CondIssue[] {
-  const issues: CondIssue[] = [];
   const conds = ruleConditions(rule);
+  const multi = conds.length > 1;
 
-  if (conds.length === 0) {
-    issues.push({ level: 'error', message: '没有任何条件，这条规则永远不会命中' });
+  // 规则整体停用：其余检查都没意义，只提示一次
+  if (rule.enabled === false) {
+    issues.push({ level: 'warn', message: '这条规则已停用，判定时会被跳过' });
     return issues;
   }
 
-  for (const [i, c] of conds.entries()) {
-    const n = conds.length > 1 ? `第 ${i + 1} 条` : '';
-    if (OPS_NEED_VALUE.has(c.op) && (c.value ?? '').trim() === '') {
-      issues.push({ level: 'error', message: `${n}比较值为空，「${c.op}」需要填一个值` });
+  const activeCount = conds.filter((c) => c.enabled !== false).length;
+  if (activeCount === 0) {
+    issues.push({ level: 'warn', message: '所有条件都已关闭，这条规则永远不会命中' });
+    return issues;
+  }
+
+  conds.forEach((c, i) => {
+    const prefix = multi ? `条件 ${i + 1}：` : '';
+    if (c.enabled === false) return; // 关掉的条件不检查
+
+    const emptyValue = (c.value ?? '').trim() === '';
+    const emptyValueMatters = ['contains', 'notContains', 'regex'].includes(c.op);
+
+    if (emptyValue && emptyValueMatters) {
+      issues.push({
+        level: 'warn',
+        message: `${prefix}比较值留空时这条恒为真。想判断"有没有内容"请改用「非空」`,
+      });
     }
-    if (c.op === 'regex' && (c.value ?? '') !== '') {
+
+    if (c.op === 'regex' && !emptyValue) {
       try {
         new RegExp(c.value);
-      } catch {
-        issues.push({ level: 'error', message: `${n}正则表达式非法：${c.value}` });
+      } catch (err) {
+        issues.push({
+          level: 'error',
+          message: `${prefix}正则写错了：${err instanceof Error ? err.message : String(err)}。运行时这条会被跳过`,
+        });
       }
+    }
+  });
+
+  // AND 组合下，一条「为空」+ 一条「非空」互相矛盾，永远不可能同时满足
+  if (multi && (rule.logic ?? 'and') === 'and') {
+    const ops = conds.filter((c) => c.enabled !== false).map((c) => c.op);
+    const hasImpossiblePair =
+      (ops.includes('isEmpty') && ops.includes('nonEmpty')) ||
+      (ops.includes('equals') && ops.includes('notEquals') &&
+       conds.some((c) => c.op === 'equals') && conds.some((c) => c.op === 'notEquals') &&
+       new Set(conds.filter((c) => c.op === 'equals' || c.op === 'notEquals').map((c) => c.value)).size === 1);
+    if (hasImpossiblePair) {
+      issues.push({
+        level: 'warn',
+        message: 'AND 组合下这些条件互相矛盾，这条规则永远不会命中',
+      });
     }
   }
 
-  // 全部条件都关掉 → 组合结果恒真，通常是误操作
-  if (conds.every((c) => c.enabled === false)) {
-    issues.push({ level: 'warn', message: '所有条件都被关闭，这条规则会直接命中' });
-  }
   return issues;
 }
 
-/** 校验整个条件节点（含规则间的关系） */
-export function validateCondition(node: ConditionNodeData): CondIssue[] {
-  const issues: CondIssue[] = [];
+/**
+ * 检查整个条件节点的问题，包含规则顺序层面的提示。
+ */
+export function validateCondition(node: ConditionNodeData): RuleIssue[] {
+  const issues: RuleIssue[] = [];
   const rules = node.rules ?? [];
 
   if (rules.length === 0) {
-    // 没规则时：开了兜底就走兜底（合法），否则运行到这里会断流
-    issues.push(node.defaultBranch
-      ? { level: 'warn', message: '还没有规则，运行时会走兜底分支' }
-      : { level: 'error', message: '还没有规则，且未启用兜底分支 —— 运行到这里会中断' });
-    return issues;
+    issues.push({
+      level: 'warn',
+      message: '还没有任何规则。没有规则时只会走兜底分支，且兜底未启用则下游全被跳过',
+    });
   }
 
-  const enabled = rules.filter((r) => r.enabled !== false);
-  if (enabled.length === 0) {
-    issues.push(node.defaultBranch
-      ? { level: 'warn', message: '所有规则都已关闭，运行时会走兜底分支' }
-      : { level: 'error', message: '所有规则都已关闭，且未启用兜底分支' });
-  }
-
-  // 重名分支：用户自己在界面上也会分不清
-  const seen = new Map<string, number>();
-  for (const r of rules) {
-    const name = (r.label ?? '').trim();
-    if (!name) continue;
-    seen.set(name, (seen.get(name) ?? 0) + 1);
-  }
-  for (const [name, n] of seen) {
-    if (n > 1) issues.push({ level: 'warn', message: `有 ${n} 条规则都叫「${name}」，建议改名区分` });
-  }
-
-  for (const r of rules) {
-    for (const it of validateRule(r)) {
-      issues.push({ ...it, message: `规则「${r.label || r.id}」：${it.message}` });
+  rules.forEach((r, i) => {
+    for (const it of validateRule(r)) issues.push(it);
+    // 命中即停：always 之后的规则永远不会被执行。
+    // 多条件时只要含恒真的 always 且是 AND，效果等同于 always
+    const conds = ruleConditions(r);
+    const isAlways = conds.length === 1
+      ? conds[0].op === 'always'
+      : (r.logic ?? 'and') === 'and' && conds.some((c) => c.op === 'always' && c.enabled !== false);
+    if (r.enabled !== false && isAlways && i < rules.length - 1) {
+      issues.push({
+        level: 'warn',
+        message: `第 ${i + 1} 条是「总是」，它后面的 ${rules.length - i - 1} 条规则永远不会被执行`,
+      });
     }
+  });
+
+  /*
+    兜底检查不能只在"有规则"时做 —— 无规则且无兜底是最危险的情况：
+    条件节点什么都走不通，下游整条链静默全跳过，比有规则时更容易被忽略。
+  */
+  if (!node.defaultBranch) {
+    issues.push({
+      level: 'warn',
+      message: '未启用兜底分支：所有规则都不命中时，下游全部被跳过',
+    });
   }
+
   return issues;
 }
 
-export type SimulateResult = {
-  /** 逐条规则的判定结果（每条独立算，不套用"命中即停"） */
-  results: Array<{
-    ruleId: string;
-    /** true 命中 / false 未命中 / null 配置错误（如非法正则） */
-    matched: boolean | null;
-    /** 该规则实际判定的文本（截断） */
-    text: string;
-    error?: string;
-  }>;
-  /**
-   * 试跑最终会走哪个分支。
-   * null 表示没有规则命中且未启用兜底 —— 下游会被全部跳过。
-   */
+export type RuleSimResult = {
+  ruleId: string;
+  label: string;
+  /** true / false；null 表示这条规则有错（如非法正则）会被跳过 */
+  matched: boolean | null;
+};
+
+export type SimResult = {
+  results: RuleSimResult[];
+  /** 命中的规则 id；走兜底为 '__default__'；都没有为 null */
   branchId: string | null;
-  /** 分支展示名；走兜底时是「兜底分支」 */
+  /** 命中规则的名字，便于界面直接显示 */
   branchLabel: string;
 };
 
 /**
- * 拿一段样例文本试跑全部规则。
+ * 用一段示例文本模拟判定。
  *
- * 两个刻意的取舍：
- *  1. results 里每条规则**独立判定**，不套用"命中即停" ——
- *     用户想看清每一条的匹配情况，而不是只看最终赢家；
- *     哪条会先命中由 branchId 单独给出。
- *  2. 来源统一用样例文本：试跑的目的是验证"这段文本会不会命中"，
- *     而不是复现真实上下游关系（那需要整条流水线跑起来）。
+ * 这里刻意忽略各规则的 source 配置，把示例文本当作每条规则的输入 ——
+ * 编辑阶段通常还没运行过，上游输出是空的；
+ * 用户想验证的是"算子逻辑对不对"，而不是"上游到底输出了什么"。
  */
-export function simulateCondition(node: ConditionNodeData, sample: string): SimulateResult {
+export function simulateCondition(node: ConditionNodeData, text: string): SimResult {
   const rules = node.rules ?? [];
-  const text = sample ?? '';
+  const results: RuleSimResult[] = [];
   let branchId: string | null = null;
   let branchLabel = '';
 
-  const results = rules.map((rule) => {
-    const conds = ruleConditions(rule).filter((c) => c.enabled !== false);
-    const disabled = rule.enabled === false;
-
-    if (disabled) {
-      return { ruleId: rule.id, matched: false as const, text: text.slice(0, MAX_SHOW) };
-    }
-    if (conds.length === 0) {
-      return { ruleId: rule.id, matched: false as const, text: text.slice(0, MAX_SHOW) };
-    }
-
-    const logic = rule.logic ?? 'and';
-    let matched: boolean | null = logic === 'and';
-    let error = '';
-
-    for (const c of conds) {
-      const r = testCondition(c.op, text, c.value ?? '');
-      if (r === null) {
-        error = `正则非法：${c.value}`;
-        matched = null;
-        break;
-      }
-      matched = logic === 'and' ? (matched === true && r) : (matched === true || r);
-    }
-
-    // 命中即停：只认第一条真正命中的规则
-    if (matched === true && branchId === null) {
+  for (const rule of rules) {
+    // 示例文本作为每条条件的输入：编辑阶段验证的是"算子逻辑对不对"
+    const ctx: EvalInput = { outputs: {}, input: text, upstream: [] };
+    const ev = testRuleWithCtx(rule, ctx);
+    results.push({ ruleId: rule.id, label: rule.label, matched: ev.matched });
+    if (branchId === null && ev.matched === true) {
       branchId = rule.id;
-      branchLabel = rule.label || rule.id;
+      branchLabel = rule.label;
     }
-    return {
-      ruleId: rule.id,
-      matched,
-      text: text.slice(0, MAX_SHOW),
-      ...(error ? { error } : {}),
-    };
-  });
+  }
 
-  if (branchId === null && node.defaultBranch) {
-    branchId = DEFAULT_BRANCH;
-    branchLabel = '兜底分支';
+  if (branchId === null) {
+    if (node.defaultBranch) {
+      branchId = DEFAULT_BRANCH;
+      branchLabel = '兜底';
+    } else {
+      branchLabel = '（无分支，下游全跳过）';
+    }
   }
   return { results, branchId, branchLabel };
 }
 
-/**
- * 把一条规则拆成界面可直接渲染的结构化片段。
- *
- * 不返回字符串是刻意的：界面要按条件逐段上色、给关闭的条件加删除线、
- * 在条件之间插入 AND/OR 连接符 —— 拼成字符串后再切开会很脆。
- */
-export function describeRuleExpression(rule: ConditionRule): {
+export type ConditionDesc = {
+  sourceText: string;
+  opLabel: string;
+  opIcon: string;
+  opColor: string;
+  valueText: string | null;
+  sentence: string;
+};
+
+export type ConditionDescWithState = ConditionDesc & { enabled: boolean; id: string };
+
+export type RuleExpression = {
+  parts: ConditionDescWithState[];
   logic: ConditionLogic;
   logicLabel: string;
   logicColor: string;
-  parts: Array<{
-    id: string;
-    enabled: boolean;
-    sourceText: string;
-    opLabel: string;
-    opIcon: string;
-    opColor: string;
-    /** null 表示该操作符不需要比较值（如非空 / 总是） */
-    valueText: string | null;
-  }>;
-} {
-  const conds = ruleConditions(rule);
-  const logic: ConditionLogic = rule.logic ?? 'and';
-  const meta = LOGIC_META[logic];
+  text: string;
+};
+
+/** 单条条件的结构化描述 */
+export function describeCondition(cond: ConditionItem): ConditionDesc {
+  const meta = OP_META[cond.op];
+  const sourceText = cond.source === 'input'
+    ? '全局输入'
+    : cond.source
+      ? `节点 ${cond.source}`
+      : '全部上游输出';
+
+  const valueText = meta.needsValue ? (cond.value || '') : null;
+  const sentence = valueText === null
+    ? `${sourceText} ${meta.label}`
+    : `${sourceText} ${meta.label}「${valueText || '（空）'}」`;
 
   return {
-    logic,
-    logicLabel: meta.label,
-    logicColor: meta.color,
-    parts: conds.map((c) => {
-      const om = OP_META[c.op];
-      return {
-        id: c.id,
-        enabled: c.enabled !== false,
-        sourceText: c.source === 'input' ? '全局输入' : (c.source || '全部上游'),
-        opLabel: om?.label ?? String(c.op),
-        opIcon: om?.icon ?? '?',
-        opColor: om?.color ?? 'currentColor',
-        valueText: om && !om.needsValue ? null : (c.value ?? ''),
-      };
-    }),
+    sourceText,
+    opLabel: meta.label,
+    opIcon: meta.icon,
+    opColor: meta.color,
+    valueText,
+    sentence,
   };
+}
+
+/** 整条规则的组合方式描述（含 AND/OR 连接词） */
+export function describeRuleExpression(rule: ConditionRule): RuleExpression {
+  const conds = ruleConditions(rule);
+  const logic: ConditionLogic = rule.logic ?? 'and';
+  const parts = conds.map((c) => ({
+    ...describeCondition(c),
+    enabled: c.enabled !== false,
+    id: c.id,
+  }));
+  const joiner = LOGIC_META[logic].short;
+  const text = parts
+    .filter((p) => p.enabled)
+    .map((p) => p.sentence)
+    .join(` ${joiner} `) || '（无启用的条件）';
+  return { parts, logic, logicLabel: LOGIC_META[logic].label, logicColor: LOGIC_META[logic].color, text };
+}
+
+/**
+ * 结构化描述一条规则（取第一条条件），供界面拼装可视化表达式。
+ *
+ * 多条件场景请用 describeRuleExpression，它会给出全部条件与连接词。
+ */
+export function describeRuleParts(rule: ConditionRule): ConditionDesc {
+  return describeCondition(ruleConditions(rule)[0]);
 }

@@ -10,7 +10,7 @@
  *   3. 切换后立即通知订阅者 —— 外壳用它来刷新 iframe 插件与重算适配
  */
 
-import { PRESET_THEMES, THEME_VARS, ACCENT_SWATCHES } from './themes.js';
+import { PRESET_THEMES, THEME_VARS, ACCENT_SWATCHES, DEFAULT_THEME_ID } from './themes.js';
 
 export { ACCENT_SWATCHES, PRESET_THEMES, THEME_VARS };
 
@@ -105,7 +105,7 @@ export function listThemes() {
   return [...PRESET_THEMES, ...getCustomThemes()];
 }
 export function findTheme(id) {
-  return listThemes().find((t) => t.id === id) || PRESET_THEMES[0];
+  return listThemes().find((t) => t.id === id) || findTheme(DEFAULT_THEME_ID) || PRESET_THEMES[0];
 }
 
 /* ---------------------------- 状态 ---------------------------- */
@@ -113,7 +113,9 @@ let current = null;
 const listeners = new Set();
 
 export function getThemeId() {
-  try { return localStorage.getItem(KEY_THEME) || PRESET_THEMES[0].id; } catch { return PRESET_THEMES[0].id; }
+  // 未手动选过主题时用 DEFAULT_THEME_ID（Agent Flow 深色）而不是数组第一项，
+  // 这样打开 agent-flow 插件的观感与它独立运行时一致。
+  try { return localStorage.getItem(KEY_THEME) || DEFAULT_THEME_ID; } catch { return DEFAULT_THEME_ID; }
 }
 export function getAccent() {
   try { return localStorage.getItem(KEY_ACCENT) || null; } catch { return null; }

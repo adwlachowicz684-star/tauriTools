@@ -873,3 +873,52 @@ input.mono, textarea.mono {
 /* API Key 行：输入框 + 显示/隐藏按钮 */
 .key-row { display: flex; gap: 5px; align-items: center; }
 .key-row input { flex: 1; min-width: 0; }
+
+/* ------------------------------------------------------------------ */
+/* 补漏：下面几个 class 此前只在 TSX 里用了，CSS 里没定义，
+   导致节点底部信息与工具栏的触发器计数没有任何样式。            */
+/* ------------------------------------------------------------------ */
+
+/* 节点底部左侧：节点 id */
+.node-id {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--af-dim);
+  opacity: .75;
+}
+
+/* 节点底部右侧：补充说明（模型名 / 字数 / 只读标记等） */
+.node-model {
+  font-size: 10.5px;
+  color: var(--af-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+
+/* 工具栏里的触发器计数：现在是画布上的节点，这里只作静态展示 */
+.trg-btn-static {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--af-line);
+  background: #2a2036;
+  border-color: #4a3a5e;
+  color: var(--af-dim);
+  font-size: 13px;
+  cursor: default;
+  user-select: none;
+}
+.trg-btn-static .dot {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--af-accent);
+  color: #fff;
+  font-size: 10.5px;
+  text-align: center;
+  line-height: 15px;
+}

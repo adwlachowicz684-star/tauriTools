@@ -25,6 +25,17 @@
   --warn:          #ffb454;
   --danger:        #ff6b6b;
 
+  /* 状态色：与强调色、主题色分离，不参与用户的配色微调。
+     否则把主题色设成红色，就会出现"红色的成功提示"。
+     本文件只给兜底值；各主题可在 js/themes.js 里覆写。 */
+  --ok:            #3ddc97;
+  --running:       #5b8cff;
+
+  /* 衍生层：多数主题不必单独定义，缺省时回退到下面这些派生值。
+     需要特别处理的主题（如浅色底要压暗）在 themes.js 里显式覆盖。 */
+  --surface-raised: var(--surface);
+  --text-soft:      var(--text-dim);
+
   /* 风格层（由 js/theme-manager.js 按主题覆写，这里只是兜底默认值）
      · 新拟态：--surface 与 --bg 同色，靠 --sh-* 塑形，--border 透明
      · 扁平：  --sh-* 调到与底色接近（阴影隐形），改由 --border 描边

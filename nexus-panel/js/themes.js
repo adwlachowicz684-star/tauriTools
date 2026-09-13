@@ -16,9 +16,15 @@ export const THEME_VARS = [
   '--sh-dark', '--sh-light',
   '--text', '--text-dim', '--text-mute',
   '--accent', '--accent-2', '--accent-glow',
-  '--warn', '--danger',
+  // 状态色：与装饰色（accent / accent-2）分离，不参与主题色微调。
+  // 否则用户把主题色设成红色，就会出现"红色的成功提示"。
+  '--ok', '--running', '--warn', '--danger',
+  '--surface-raised', '--text-soft',
   '--border', '--blur', '--hairline', '--mask',
   '--scroll-thumb', '--badge-fg',
+  // 圆角也是形状语言的一部分：新拟态的大圆角是"软"的一部分，
+  // 扁平/Linear 风需要更硬朗的值。未定义的主题回退 CSS 默认值。
+  '--r-xl', '--r-lg', '--r-md', '--r-sm',
 ];
 
 export const PRESET_THEMES = [
@@ -496,11 +502,59 @@ export const PRESET_THEMES = [
       '--blur': '18px',
     },
   },
-];
 
+  {
+    id: 'agentflow-dark',
+    name: 'Agent Flow 深色',
+    desc: 'Linear / Vercel 风 · 扁平，靠明度差分层',
+    base: 'dark',
+    // flat 会让 neumorphism.css 关掉全部双向阴影，只留 1px 描边
+    style: 'flat',
+    vars: {
+      /*
+        这些值与 agent-flow 插件的原生层（--af-native-*）逐像素相同。
+        插件在「跟随面板」模式下读取本主题的变量，于是：
+            跟随 + Agent Flow 深色  ≡  原生模式
+        改动这里任何一个值都会破坏这个等价性。
+      */
+      '--bg': '#0f1115',
+      '--surface': '#171a21',
+      '--surface-sunk': '#12151c',
+      // 扁平风不需要塑形阴影，调成与底色接近以"隐形"
+      '--sh-dark': '#0b0d11',
+      '--sh-light': '#13161b',
+      '--text': '#e6e9ef',
+      '--text-dim': '#8b93a7',
+      '--text-mute': '#687285',
+      '--text-soft': '#c4cbd9',
+      '--accent': '#4c8dff',
+      '--accent-2': '#22c55e',
+      '--ok': '#22c55e',
+      '--running': '#4c8dff',
+      '--warn': '#f59e0b',
+      '--danger': '#ef4444',
+      '--surface-raised': '#222836',
+      '--border': '#262b36',
+      '--blur': '0px',
+      // 圆角比新拟态小一档，配合 flat 才是 Linear 那挂的观感
+      '--r-xl': '12px',
+      '--r-lg': '10px',
+      '--r-md': '8px',
+      '--r-sm': '5px',
+    },
+  },
+];
 /** 强调色候选（任何主题下都能单独微调） */
 export const ACCENT_SWATCHES = [
   ['#5b8cff', '蓝'], ['#7aa2ff', '天蓝'], ['#48e0c0', '青'],
   ['#3ddc97', '薄荷'], ['#b48cff', '紫'], ['#ff2e97', '品红'],
   ['#ff8f5b', '橙'], ['#ffb454', '琥珀'], ['#ff6b8b', '粉'],
 ];
+
+/**
+ * 面板默认主题。
+ *
+ * 设为 Agent Flow 深色：它的变量值与 agent-flow 插件的原生层一致，
+ * 因此未手动选过主题的用户打开插件时，观感与插件独立运行时完全相同。
+ */
+export const DEFAULT_THEME_ID = 'agentflow-dark';

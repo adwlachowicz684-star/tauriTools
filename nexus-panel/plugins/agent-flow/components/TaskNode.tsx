@@ -31,6 +31,14 @@ export default function TaskNode({ id, data, selected }: NodeProps<TaskFlowNode>
         {d.prompt ? d.prompt.slice(0, 90) + (d.prompt.length > 90 ? '…' : '') : '（未填写提示词）'}
       </div>
 
+      {/* 改了哪些文件：扫一眼就知道参数有没有传出去 */}
+      {d.lastFiles && d.lastFiles.length > 0 && (
+        <div className="node-files" title={d.lastFiles.join('\n')}>
+          <span className="node-files-badge">{d.lastFiles.length}</span>
+          <span>{d.lastFiles[0].split(/[\\/]/).pop()}</span>
+        </div>
+      )}
+
       <div className="node-foot">
         <span className="node-id">{id}</span>
         {d.model && <span className="node-model">{d.model}</span>}
