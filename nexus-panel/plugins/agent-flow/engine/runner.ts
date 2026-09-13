@@ -1,9 +1,22 @@
-import type { Graph, GraphNode, NodeStatus, LoopCtx, LoopNodeData, UpdateNodeData } from '../types';
+import type {
+  Graph, GraphNode, NodeStatus, LoopCtx, LoopNodeData, UpdateNodeData, TaskNodeData,
+  OcrNodeData, TranslateNodeData,
+} from '../types';
 import {
-  isCondition, isTrigger, isParallel, isLoop, isFs, isUpdate, DEFAULT_BRANCH,
+  isCondition, isTrigger, isParallel, isLoop, isFs, isUpdate, isOcr, isTranslate,
+  DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt,
 } from '../types';
 import { topoLayers } from './topo';
 import { renderTemplate } from './template';
+import {
+  extractFileRefs, parseManualPaths, buildFileFields, type FileRef,
+} from './files';
+import {
+  resolveConfig, buildHeaders, parseResponse, extractContent,
+  buildTranslateSystem, TARGET_LANGS, isUsableImageUrl,
+  type ChatMessage, type ContentPart,
+} from './llm';
+import { resolveParams } from './params';
 import { evaluateCondition } from './condition';
 import { resolveParallel, effectiveConcurrency, MAX_CONCURRENCY } from './parallel';
 import { resolveLoopItems, makeLoopCtx, collectLoops, type LoopResolve } from './loop';
@@ -18,6 +31,8 @@ export type RunEvent =
   | { type: 'node-start'; id: string; rendered: string }
   | { type: 'node-chunk'; id: string; chunk: string }
   | { type: 'node-done'; id: string; ok: boolean; output: string; error?: string }
+  /** 任务节点的参数字段已产出：{{id.file}} {{id.参数名}} 等可引用了 */
+  | { type: 'node-fields'; id: string; files: string[]; fields: Record<string, string> }
   | { type: 'node-status'; id: string; status: NodeStatus }
   /** 条件节点判定完成：branchId 为走的分支，pruned 是被裁掉的节点 */
   | { type: 'branch-taken'; id: string; branchId: string | null; label: string; pruned: string[] }
@@ -60,6 +75,24 @@ export type Fetcher = (
   opts: { headers: Record<string, string>; timeoutSec: number },
 ) => Promise<string>;
 
+export type LlmCallResult = { status: number; text: string };
+
+/**
+ * 调用大模型 API。
+ *
+ * 与 Fetcher 分开定义：大模型要的是"发 JSON + 拿回文本 + 带状态码"，
+ * 而 Fetcher 只管抓文本，混用一个签名会让两边的错误处理都变复杂。
+ */
+export type LlmCaller = (req: {
+  url: string;
+  headers: Record<string, string>;
+  body: unknown;
+  timeoutSec: number;
+}) => Promise<LlmCallResult>;
+
+/** 读取本地图片为 data URL（base64），供 OCR 节点使用 */
+export type ImageReader = (path: string) => Promise<string>;
+
 /** 执行文件操作，返回展示用的结果文本；抛错即视为失败 */
 export type FsExecutor = (
   node: GraphNode,
@@ -74,6 +107,10 @@ export type RunOptions = {
   fsExecutor?: FsExecutor;
   /** 网络抓取执行器；不提供时更新检测节点会直接失败并提示 */
   fetcher?: Fetcher;
+  /** 大模型调用执行器；不提供时 OCR / 翻译节点会直接失败并提示 */
+  llmCaller?: LlmCaller;
+  /** 本地图片读取器；不提供时 OCR 的本地文件模式会失败并提示 */
+  imageReader?: ImageReader;
   input?: string;
   onEvent: (e: RunEvent) => void;
   signal?: AbortSignal;
@@ -390,6 +427,20 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
       return;
     }
 
+    /* ---------- OCR 节点 ---------- */
+    if (isOcr(node.data)) {
+      await runOcr(id, node, scope);
+      await sleep(20);
+      return;
+    }
+
+    /* ---------- 翻译节点 ---------- */
+    if (isTranslate(node.data)) {
+      await runTranslate(id, node, scope);
+      await sleep(20);
+      return;
+    }
+
     /* ---------- 任务节点：渲染提示词并调 CLI ---------- */
     const { text: rendered, missing } = renderTemplate(node.data.prompt, {
       outputs, input: opts.input, loop: currentLoop(), fields: nodeFields,
@@ -408,10 +459,30 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
         emit({ type: 'node-chunk', id, chunk });
       });
       outputs[id] = acc;
+
+      /* ---------- 产出参数字段，供下游 {{id.xxx}} 引用 ---------- */
+      const td = node.data as TaskNodeData;
+      const refs = resolveFileRefs(td, acc);
+      nodeFields[id] = {
+        ...buildFileFields(refs),
+        ...resolveParams(td.params, { output: acc, refs }),
+      };
+      emit({
+        type: 'node-fields', id,
+        files: refs.map((r) => r.abs),
+        fields: nodeFields[id],
+      });
+
       emit({ type: 'node-done', id, ok: true, output: acc });
       setStatus(id, 'success');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      /*
+        失败时也要重置字段：不清的话下游会读到上一次成功运行留下的路径，
+        拿着一个根本没改过的文件继续跑，比直接失败更难排查。
+      */
+      nodeFields[id] = { ...buildFileFields([]) };
+      emit({ type: 'node-fields', id, files: [], fields: nodeFields[id] });
       emit({ type: 'node-done', id, ok: false, output: acc, error: msg });
       markFailed(id, scope);
       setStatus(id, 'failed');
@@ -629,6 +700,201 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
       outputs[id] = 'false';
       nodeFields[id] = { title: '', url: '', date: '', updated: 'false' };
       emit({ type: 'node-done', id, ok: false, output: 'false', error: msg });
+      markFailed(id, scope);
+      setStatus(id, 'failed');
+    }
+  }
+
+
+/**
+ * 决定这个节点"改了哪些文件"。
+ *
+ * 手动模式优先：自动识别是尽力而为，一旦用户明确指定了路径，
+ * 就应该完全信任用户的输入，不再从输出里猜。
+ */
+function resolveFileRefs(d: TaskNodeData, output: string): FileRef[] {
+  const cfg = d.fileOutput ?? defaultFileOutput();
+  if (!cfg.enabled) return [];
+  if (cfg.mode === 'manual') return parseManualPaths(cfg.manualPaths, d.workdir);
+  return extractFileRefs(output, d.workdir);
+}
+
+
+  /* ================================================================ */
+  /* OCR 节点                                                          */
+  /* ================================================================ */
+
+  async function runOcr(id: string, node: GraphNode, scope: Scope): Promise<void> {
+    const d = node.data as OcrNodeData;
+    setStatus(id, 'running');
+
+    const prompt = renderTemplate(
+      (d.prompt ?? '').trim() || defaultOcrPrompt(),
+      { outputs, input: opts.input, loop: currentLoop(), fields: nodeFields },
+    ).text;
+    const rawUrl = renderTemplate(d.url ?? '', { outputs, input: opts.input, loop: currentLoop(), fields: nodeFields }).text;
+    const rawPath = renderTemplate(d.path ?? '', { outputs, input: opts.input, loop: currentLoop(), fields: nodeFields }).text;
+
+    /*
+      图片地址要在使用前决定，因为两种来源的失败提示完全不同：
+      URL 只要拼字符串，本地文件还要读盘转 base64。
+    */
+    let imageUrl = '';
+    if (d.imageSource === 'file') {
+      const p = rawPath.trim();
+      if (!p) {
+        failOcr('图片来源选的是「本地文件」，但没有填路径');
+        return;
+      }
+      if (!opts.imageReader) {
+        failOcr('当前环境无法读取本地图片（浏览器模式不支持，请用桌面端运行）');
+        return;
+      }
+      emit({ type: 'node-start', id, rendered: `读取本地图片 ${p}` });
+      try {
+        imageUrl = await opts.imageReader(p);
+      } catch (err) {
+        failOcr(err instanceof Error ? err.message : String(err));
+        return;
+      }
+    } else {
+      imageUrl = rawUrl.trim();
+      if (!imageUrl) {
+        failOcr('图片来源选的是「网络地址」，但没有填地址');
+        return;
+      }
+      if (!isUsableImageUrl(imageUrl)) {
+        failOcr(`图片地址无效：${imageUrl.slice(0, 80)}。需要 http(s) 开头，或 data:image/ 开头`);
+        return;
+      }
+    }
+
+    const cfg = resolveConfig(d.llm);
+    const parts: ContentPart[] = [
+      { type: 'text', text: prompt },
+      { type: 'image_url', image_url: { url: imageUrl, detail: d.detail } },
+    ];
+    const messages: ChatMessage[] = [{ role: 'user', content: parts }];
+
+    const body = { model: cfg.model, messages, temperature: 0, stream: false };
+    emit({ type: 'node-start', id, rendered: `OCR ${cfg.model} · ${prompt.slice(0, 60)}` });
+
+    if (!opts.llmCaller) {
+      failOcr('未提供大模型调用执行器（当前可能运行在浏览器模式）');
+      return;
+    }
+
+    let res: LlmCallResult;
+    try {
+      res = await opts.llmCaller({
+        url: cfg.url,
+        headers: buildHeaders(cfg.apiKey),
+        body,
+        timeoutSec: cfg.timeoutSec,
+      });
+    } catch (err) {
+      failOcr(err instanceof Error ? err.message : String(err));
+      return;
+    }
+
+    const parsed = parseResponse(res.status, res.text);
+    if (!parsed.ok) {
+      failOcr(parsed.error);
+      return;
+    }
+
+    const text = parsed.text.trim();
+    outputs[id] = text;
+    nodeFields[id] = { text, chars: String(text.length) };
+    emit({ type: 'node-done', id, ok: true, output: text });
+    setStatus(id, 'success');
+
+    function failOcr(msg: string) {
+      outputs[id] = '';
+      nodeFields[id] = { text: '', chars: '0' };
+      emit({ type: 'node-done', id, ok: false, output: '', error: msg });
+      markFailed(id, scope);
+      setStatus(id, 'failed');
+    }
+  }
+
+  /* ================================================================ */
+  /* 翻译节点                                                          */
+  /* ================================================================ */
+
+  async function runTranslate(id: string, node: GraphNode, scope: Scope): Promise<void> {
+    const d = node.data as TranslateNodeData;
+    setStatus(id, 'running');
+
+    const src = renderTemplate(d.text ?? '', {
+      outputs, input: opts.input, loop: currentLoop(), fields: nodeFields,
+    }).text;
+
+    if (!src.trim()) {
+      failTranslate('待翻译文本为空。检查上游输出，或直接在节点里填写');
+      return;
+    }
+
+    const target = (d.targetLang ?? '').trim();
+    if (!target) {
+      failTranslate('未指定目标语言');
+      return;
+    }
+
+    // 允许填 "日语" 这种中文，也允许填 "ja"
+    const preset = TARGET_LANGS.find((l) => l.code === target);
+    const targetText = preset ? preset.label : target;
+
+    const sourceLang = (d.sourceLang ?? 'auto').trim() || 'auto';
+    const system = buildTranslateSystem(
+      targetText,
+      sourceLang === 'auto' ? '' : sourceLang,
+      d.glossary,
+    );
+
+    const cfg = resolveConfig(d.llm);
+    const messages: ChatMessage[] = [
+      { role: 'system', content: system },
+      { role: 'user', content: src },
+    ];
+    const body = { model: cfg.model, messages, temperature: 0.2, stream: false };
+
+    emit({ type: 'node-start', id, rendered: `翻译 → ${targetText}（${src.length} 字）` });
+
+    if (!opts.llmCaller) {
+      failTranslate('未提供大模型调用执行器（当前可能运行在浏览器模式）');
+      return;
+    }
+
+    let res: LlmCallResult;
+    try {
+      res = await opts.llmCaller({
+        url: cfg.url,
+        headers: buildHeaders(cfg.apiKey),
+        body,
+        timeoutSec: cfg.timeoutSec,
+      });
+    } catch (err) {
+      failTranslate(err instanceof Error ? err.message : String(err));
+      return;
+    }
+
+    const parsed = parseResponse(res.status, res.text);
+    if (!parsed.ok) {
+      failTranslate(parsed.error);
+      return;
+    }
+
+    const text = parsed.text.trim();
+    outputs[id] = text;
+    nodeFields[id] = { text, chars: String(text.length) };
+    emit({ type: 'node-done', id, ok: true, output: text });
+    setStatus(id, 'success');
+
+    function failTranslate(msg: string) {
+      outputs[id] = '';
+      nodeFields[id] = { text: '', chars: '0' };
+      emit({ type: 'node-done', id, ok: false, output: '', error: msg });
       markFailed(id, scope);
       setStatus(id, 'failed');
     }

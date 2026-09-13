@@ -1,6 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { CliKind, FsOp, FsNodeData } from '../types';
+import { isHttpUrl } from '../engine/llm';
 
 export type RunRequest = {
   runId: string;
@@ -283,3 +284,88 @@ export async function fetchText(url: string, opts: FetchTextOptions = {}): Promi
 /** 各源通用的浏览器 UA。B站不给这个会直接拒绝。 */
 export const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+
+/* ---------------- 大模型 API 调用 ---------------- */
+
+export type PostJsonResult = { status: number; text: string };
+
+/**
+ * 发一个 POST JSON 请求（给 OCR / 翻译节点调大模型用）。
+ *
+ * 通道优先级与 fetchText 一致：先 Tauri http 插件（绕过 CORS），
+ * 失败或不可用时退回浏览器 fetch。
+ *
+ * 这里刻意不解析 JSON —— 解析与错误归类交给 engine/llm.ts，
+ * 那部分有单测；本文件只管把请求发出去。
+ */
+export async function postJson(
+  url: string,
+  body: unknown,
+  headers: Record<string, string>,
+  timeoutSec: number,
+): Promise<PostJsonResult> {
+  if (!isHttpUrl(url)) {
+    throw new Error('API 地址必须以 http:// 或 https:// 开头');
+  }
+  const timeoutMs = Math.max(1, timeoutSec) * 1000;
+  const payload = JSON.stringify(body);
+
+  const tauriFetch = await loadTauriHttp();
+  if (tauriFetch) {
+    try {
+      const res = await tauriFetch(url, {
+        method: 'POST',
+        headers,
+        body: { type: 'Json', payload: body },
+        connectTimeout: timeoutMs,
+      });
+      return { status: res.status, text: await res.text() };
+    } catch (err) {
+      console.warn('[agent-flow] Tauri http POST 失败，尝试浏览器 fetch：', err);
+      // 继续走浏览器通道
+    }
+  }
+
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const res = await globalThis.fetch(url, {
+      method: 'POST',
+      headers,
+      body: payload,
+      signal: ac.signal,
+    });
+    return { status: res.status, text: await res.text() };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('abort') || (err instanceof Error && err.name === 'AbortError')) {
+      throw new Error(`请求超时（超过 ${timeoutSec} 秒）。长文本可考虑拆分成多个节点`);
+    }
+    throw new Error(
+      `请求失败（${msg}）。` + (isTauri()
+        ? '当前外壳未启用 Tauri http 插件，走浏览器通道，多数大模型 API 会因 CORS 被拒绝 —— 需要在 Rust 侧启用 tauri-plugin-http。'
+        : '浏览器模式下多数大模型 API 不允许跨域，请用桌面端运行。'),
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * 读取本地图片并转成 data URL。
+ *
+ * 需要桌面端：iframe 里没有磁盘权限，浏览器拿不到本地文件。
+ * 走 Rust 命令 af_read_image_data_url（见 src-tauri 的 agent_flow_llm.rs）。
+ */
+export async function readImageDataUrl(path: string): Promise<string> {
+  if (!isTauri()) {
+    throw new Error('读取本地图片需要运行在桌面端（当前是浏览器模式）');
+  }
+  if (!path.trim()) throw new Error('图片路径为空');
+  return await invoke<string>('af_read_image_data_url', { path });
+}
+
+/** 浏览器模式不支持读取本地图片 */
+export function canReadImage(): boolean {
+  return isTauri();
+}

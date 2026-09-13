@@ -17,6 +17,8 @@ export type DragPayload =
   | { kind: 'fs' }
   | { kind: 'bili' }
   | { kind: 'wechat' }
+  | { kind: 'ocr' }
+  | { kind: 'translate' }
   | { kind: 'trigger' };
 
 export const DRAG_MIME = 'application/x-agent-flow-node';
@@ -35,6 +37,7 @@ export function decodeDrag(raw: string | null | undefined): DragPayload | null {
     if (p.kind === 'condition' || p.kind === 'parallel') return p;
     if (p.kind === 'loop' || p.kind === 'fs') return p;
     if (p.kind === 'bili' || p.kind === 'wechat') return p;
+    if (p.kind === 'ocr' || p.kind === 'translate') return p;
     if (p.kind === 'trigger') return p;
     return null;
   } catch {
@@ -145,6 +148,31 @@ export default function Sidebar({ onAdd, disabled }: Props) {
           <span className="side-dot" style={{ background: '#38bdf8' }} />
           <span className="side-label">文件操作</span>
         </div>
+      </div>
+
+      <div className="side-group">
+        <div className="side-title">AI 能力</div>
+        <div
+          className="side-item"
+          draggable={!disabled}
+          onDragStart={(e) => onDragStart(e, { kind: 'ocr' })}
+          onClick={() => !disabled && onAdd({ kind: 'ocr' })}
+          title="调用视觉大模型识别图片中的文字，支持网络地址与本地文件"
+        >
+          <span className="side-dot" style={{ background: '#f472b6' }} />
+          <span className="side-label">图片识别 OCR</span>
+        </div>
+        <div
+          className="side-item"
+          draggable={!disabled}
+          onDragStart={(e) => onDragStart(e, { kind: 'translate' })}
+          onClick={() => !disabled && onAdd({ kind: 'translate' })}
+          title="调用大模型翻译文本，可指定术语表保证译名一致"
+        >
+          <span className="side-dot" style={{ background: '#38bdf8' }} />
+          <span className="side-label">翻译</span>
+        </div>
+        <div className="side-sub">需填自己的大模型 API Key</div>
       </div>
 
       <div className="side-group">

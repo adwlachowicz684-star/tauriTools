@@ -13,10 +13,16 @@ import ParallelNode from './components/ParallelNode';
 import LoopNode from './components/LoopNode';
 import FsNode from './components/FsNode';
 import UpdateNode from './components/UpdateNode';
+import OcrNode from './components/OcrNode';
+import TranslateNode from './components/TranslateNode';
 import Inspector from './components/Inspector';
 import Sidebar, { DRAG_MIME, decodeDrag, type DragPayload } from './components/Sidebar';
 import CanvasTabs from './components/CanvasTabs';
-import { runGraph, type Executor, type FsExecutor, type Fetcher, type RunEvent, type RunSummary } from './engine/runner';
+import {
+  runGraph,
+  type Executor, type FsExecutor, type Fetcher, type LlmCaller, type ImageReader,
+  type RunEvent, type RunSummary,
+} from './engine/runner';
 import { TriggerScheduler } from './engine/triggers';
 import {
   makeCanvas, nextCanvasName, renameCanvas, removeCanvas, nextActiveId,
@@ -25,11 +31,12 @@ import {
   type Canvas,
 } from './engine/canvasStore';
 import { CLI_META, DEFAULT_TRIGGER_CONFIG, DEFAULT_BRANCH, type TaskNodeData, makeNode, makeConditionNode, makeParallelNode, makeTriggerNode,
-  makeLoopNode, makeFsNode, makeUpdateNode, isTrigger, isLoop, triggerKindsOf, type CliKind, type FsNodeData,
+  makeLoopNode, makeFsNode, makeUpdateNode, makeOcrNode, makeTranslateNode,
+  isTrigger, isLoop, isOcr, isTranslate, triggerKindsOf, type CliKind, type FsNodeData,
   type Graph, type NodeData, type Trigger, type TriggerKind, type TriggerConfig } from './types';
 import type { FlowEdge, FlowNode } from './flowTypes';
 import { killCli, runCli, canWatch, startWatch, canWebhook, startWebhook,
-  fileOp, fsArgsOf, fetchText, type DonePayload } from './lib/tauri';
+  fileOp, fsArgsOf, fetchText, postJson, readImageDataUrl, type DonePayload } from './lib/tauri';
 import {
   deleteElements, nextSelection, hasAnythingToDelete,
   makeSnapshot, describeDelete,
@@ -47,6 +54,8 @@ const nodeTypes: NodeTypes = {
   // 注册成两个类型是为了在画布上有各自的图标与配色
   bili: UpdateNode,
   wechat: UpdateNode,
+  ocr: OcrNode,
+  translate: TranslateNode,
 };
 const STORAGE_KEY = 'agent-flow:v1';
 const TRG_KEY = 'agent-flow:triggers:v1';
@@ -426,6 +435,14 @@ export default function App() {
         const id = `wx${suffix}`;
         node = { id, type: 'wechat', position: pos,
           data: makeUpdateNode(id, 'wechat').data } as FlowNode;
+      } else if (p.kind === 'ocr') {
+        const id = `ocr${suffix}`;
+        node = { id, type: 'ocr', position: pos,
+          data: makeOcrNode(id, { label: '图片识别' }).data } as FlowNode;
+      } else if (p.kind === 'translate') {
+        const id = `ty${suffix}`;
+        node = { id, type: 'translate', position: pos,
+          data: makeTranslateNode(id, { label: '翻译' }).data } as FlowNode;
       } else {
         // 一个节点即可挂多种方式，默认只勾「手动」——
         // 周期/定时/监听/调用都会自动跑，放上画布就生效太危险
@@ -514,8 +531,29 @@ export default function App() {
     } else if (e.type === 'node-done') {
       setNodes((ns) => ns.map((n) =>
         n.id === e.id
-          ? ({ ...n, data: { ...n.data, status: e.ok ? 'success' : 'failed', output: e.output, error: e.error ?? '' } } as FlowNode)
+          ? ({
+              ...n,
+              data: {
+                ...n.data,
+                status: e.ok ? 'success' : 'failed',
+                output: e.output,
+                error: e.error ?? '',
+                // OCR / 翻译节点显示字数，方便一眼看出有没有拿到内容
+                lastChars: isOcr(n.data) || isTranslate(n.data) ? (e.output ?? '').length : undefined,
+              },
+            } as FlowNode)
           : n));
+    } else if (e.type === 'node-fields') {
+      /*
+        把识别到的文件写回节点并持久化。
+        这样即使不运行，打开面板也能看到"上次改了哪些文件"，
+        排查问题时不必重跑一遍。
+      */
+      setNodes((ns) => ns.map((n) =>
+        (n.id === e.id ? { ...n, data: { ...n.data, lastFiles: e.files } } as FlowNode : n)));
+      if (e.files.length > 0) {
+        pushLog(`📎 ${e.id} 识别到 ${e.files.length} 个文件：${e.files.slice(0, 3).join(', ')}${e.files.length > 3 ? ' …' : ''}`);
+      }
     } else if (e.type === 'layer-start') {
       pushLog(`第 ${e.layer + 1}/${e.total} 层开始：${e.ids.join(', ')}`);
     } else if (e.type === 'update-checked') {
@@ -609,8 +647,15 @@ export default function App() {
     };
 
     const effectiveInput = inputOverride !== undefined && inputOverride !== '' ? inputOverride : globalInput;
+    /* 大模型调用：走 Tauri http 插件（若启用），否则退回浏览器 fetch */
+    const llmCaller: LlmCaller = async (req) =>
+      postJson(req.url, req.body, req.headers, req.timeoutSec);
+
+    /* 本地图片读取：桌面端才有，浏览器模式会抛错并由节点转成提示 */
+    const imageReader: ImageReader = (path) => readImageDataUrl(path);
+
     const result = await runGraph(graph, {
-      concurrency, executor, fsExecutor, fetcher,
+      concurrency, executor, fsExecutor, fetcher, llmCaller, imageReader,
       input: effectiveInput, onEvent, signal: controller.signal,
     });
     setSummary(result);

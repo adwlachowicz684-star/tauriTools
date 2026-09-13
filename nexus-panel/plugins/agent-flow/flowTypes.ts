@@ -1,7 +1,7 @@
 import type { Node } from '@xyflow/react';
 import type {
   TaskNodeData, ConditionNodeData, TriggerNodeData, ParallelNodeData,
-  LoopNodeData, FsNodeData, UpdateNodeData,
+  LoopNodeData, FsNodeData, UpdateNodeData, OcrNodeData, TranslateNodeData,
 } from './types';
 
 /** React Flow v12 的节点类型；data 承载我们自己的定义 */
@@ -14,6 +14,8 @@ export type FsFlowNode = Node<FsNodeData, 'fs'>;
 /** B站与公众号共用同一种 data，靠 data.source 区分 */
 export type BiliFlowNode = Node<UpdateNodeData, 'bili'>;
 export type WechatFlowNode = Node<UpdateNodeData, 'wechat'>;
+export type OcrFlowNode = Node<OcrNodeData, 'ocr'>;
+export type TranslateFlowNode = Node<TranslateNodeData, 'translate'>;
 
 export type FlowNode =
   | TaskFlowNode
@@ -23,7 +25,9 @@ export type FlowNode =
   | LoopFlowNode
   | FsFlowNode
   | BiliFlowNode
-  | WechatFlowNode;
+  | WechatFlowNode
+  | OcrFlowNode
+  | TranslateFlowNode;
 
 /** React Flow v12 的边类型；data.branch 标注所属分支 */
 export type FlowEdgeData = {
