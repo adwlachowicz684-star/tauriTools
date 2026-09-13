@@ -10,7 +10,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -28,6 +28,12 @@ use super::model::FpxConfig;
 const TICK_SECS: u64 = 30;
 
 static AUTO_RUNNING: AtomicBool = AtomicBool::new(false);
+/// 自动备份线程的「代次」，与 watch.rs 的 GEN 同理。
+///
+/// stop_auto() 只置标志，老线程要等分段 sleep 走完才检查到；那段窗口里
+/// start_auto() 会正常起新线程，而老线程醒来发现标志又是 true 就继续跑 ——
+/// 结果两个线程各备份一遍。每次 start 领新代次，老线程发现代次变了就自行退出。
+static AUTO_GEN: AtomicU64 = AtomicU64::new(0);
 static AUTO_LAST: Mutex<Option<SystemTime>> = Mutex::new(None);
 
 /// 自动备份状态（给设置面板显示）。
@@ -49,18 +55,19 @@ pub fn start_auto(app: AppHandle) -> bool {
     };
     if minutes == 0 { return false; }
 
-    if AUTO_RUNNING.swap(true, Ordering::SeqCst) {
-        return true; // 已在跑
-    }
+    let gen = AUTO_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    AUTO_RUNNING.store(true, Ordering::SeqCst);
 
     thread::spawn(move || {
         let mut last: Option<SystemTime> = None;
-        while AUTO_RUNNING.load(Ordering::SeqCst) {
+        while AUTO_RUNNING.load(Ordering::SeqCst) && AUTO_GEN.load(Ordering::SeqCst) == gen {
             // 分段睡，方便响应"停止"与间隔改动
             for _ in 0..TICK_SECS {
-                if !AUTO_RUNNING.load(Ordering::SeqCst) { return; }
+                if !AUTO_RUNNING.load(Ordering::SeqCst)
+                    || AUTO_GEN.load(Ordering::SeqCst) != gen { return; }
                 thread::sleep(Duration::from_secs(1));
             }
+            if AUTO_GEN.load(Ordering::SeqCst) != gen { return; }
 
             let dir = match super::store::resolve_data_dir(&app) {
                 Ok(d) => d,
@@ -70,7 +77,7 @@ pub fn start_auto(app: AppHandle) -> bool {
             let mins = cfg.backup_auto_minutes;
 
             // 关掉了就自行退出，下次保存配置时会被重新拉起
-            if mins == 0 {
+            if mins == 0 && AUTO_GEN.load(Ordering::SeqCst) == gen {
                 AUTO_RUNNING.store(false, Ordering::SeqCst);
                 return;
             }
@@ -99,6 +106,7 @@ pub fn start_auto(app: AppHandle) -> bool {
 }
 
 pub fn stop_auto() {
+    AUTO_GEN.fetch_add(1, Ordering::SeqCst);
     AUTO_RUNNING.store(false, Ordering::SeqCst);
 }
 

@@ -64,7 +64,12 @@ export default function App() {
     void tick();
     const timer = window.setInterval(tick, secs * 1000);
     return () => { alive = false; window.clearInterval(timer); };
-  }, [watchOn, boot?.config.watchIntervalSecs, s]);
+    // 依赖里不能放 `s` 整体：useFpx 每次渲染都返回新对象，放进去会让
+    // 本 effect 反复重建 —— setInterval 每次都被清掉重来，界面只要持续
+    // 重渲染（比如 busy 态切换），轮询就永远等不到触发。
+    // 这里只依赖真正稳定的成员：api（useMemo）、pushLog（useCallback）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchOn, boot?.config.watchIntervalSecs, s.api, s.pushLog]);
 
   // 上次勾选过监听则进插件时自动恢复
   const watchBooted = useRef(false);
@@ -77,7 +82,9 @@ export default function App() {
         s.pushLog('已按上次设置恢复受保护目录监听');
       })
       .catch((e) => s.pushLog(`恢复监听失败：${String(e)}`, true));
-  }, [boot?.config.watchEnabled, boot?.config.watchIntervalSecs, s]);
+    // 同上：不放 `s` 整体。watchBooted 已保证只跑一次，这里只求引用稳定。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boot?.config.watchEnabled, boot?.config.watchIntervalSecs, s.api, s.pushLog]);
 
   const [help, setHelp] = useState(false);
 
@@ -102,16 +109,52 @@ export default function App() {
   const openPath = (p: string, mode: 'auto' | 'dir' | 'containing' | 'editor' = 'auto') =>
     s.api.openPath(p, mode).catch((e) => s.pushLog(String((e as Error)?.message ?? e), true));
 
+  /**
+   * 复制文本到剪贴板。
+   * 主力走后端（不受 iframe 沙箱权限限制）；后端不可用时退回 Clipboard API，
+   * 再不行用 execCommand 兜底 —— 三档都失败才提示，避免出现"点了没反应"。
+   */
+  const copyText = async (text: string) => {
+    try {
+      if (await s.api.copyText(text)) {
+        ctx.toast('已复制', 'ok');
+        return;
+      }
+      s.pushLog('复制失败：后端未能写入剪贴板', true);
+    } catch {
+      // 后端命令可能不存在（旧版本 Rust 未编译进来），静默降级到浏览器 API
+    }
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        ctx.toast('已复制', 'ok');
+        return;
+      }
+    } catch { /* 继续兜底 */ }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      ctx.toast(ok ? '已复制' : '复制失败', ok ? 'ok' : 'err');
+    } catch {
+      ctx.toast('复制失败', 'err');
+    }
+  };
+
   /* ---------------- 卡片右键菜单 ---------------- */
   const menus = (kind: CardKind) => (card: CardInfo): MenuItem[] => {
     const base: MenuItem[] = [
       { label: '打开文件夹', onClick: () => openPath(card.path, 'dir') },
       {
+        // 走后端复制：iframe 沙箱没有 allow-clipboard-write，
+        // navigator.clipboard 会静默失败（点了完全没反应）。
         label: '复制完整路径',
-        onClick: () => navigator.clipboard?.writeText(card.path).then(
-          () => ctx.toast('已复制路径', 'ok'),
-          () => ctx.toast('复制失败', 'err'),
-        ),
+        onClick: () => copyText(card.path),
       },
       { label: '改名…（F2）', onClick: () => setDialog({ type: 'rename', card, kind }) },
       { label: '保护（ACL）…', onClick: () => setDialog({ type: 'lock', card }) },

@@ -154,7 +154,15 @@ pub(crate) fn core_rename_folder(
             }
         }
 
-        // 链接记录：项目改名改 project；项目组改名要改 group 与 lib（指向它的那些记录）
+        // 链接记录：项目改名改 project；项目组改名要改 lib 与 group。
+        //
+        // 注意字段语义：`lib` 存**完整路径**，`group` 存**文件夹短名**（见 upsert_record）。
+        // 所以比对必须用 lib（拿短名和完整路径比永远不会相等，那行会是死代码），
+        // 而 group 要跟着换成新路径的 file_name，否则链接表里仍显示旧名字。
+        let new_name = std::path::Path::new(&new_path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
         let mut records = store::load_records(dir);
         let mut rec_hits = 0usize;
         for r in records.iter_mut() {
@@ -162,11 +170,9 @@ pub(crate) fn core_rename_folder(
                 r.project = new_path.clone();
                 rec_hits += 1;
             }
-            if store::normalize_key(&r.group) == old_key {
-                r.group = new_path.clone();
-            }
             if store::normalize_key(&r.lib) == old_key {
                 r.lib = new_path.clone();
+                if !new_name.is_empty() { r.group = new_name.clone(); }
             }
         }
         store::save_records(dir, &records)?;
@@ -491,6 +497,19 @@ pub fn fpx_read_file(path: String, max: Option<usize>) -> Result<String, String>
 }
 
 /// 打开路径。mode: auto | dir | containing | editor
+/// 写系统剪贴板。
+///
+/// 为什么要走后端：插件跑在沙箱 iframe 里，外壳没有给 `allow-clipboard-write`，
+/// `navigator.clipboard` 拿不到权限，前端复制会**静默失败**（点了没反应也不报错）。
+/// 后端直接调各平台自带命令，不受 iframe 权限限制。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_copy_text(text: String) -> Result<bool, String> {
+    if text.is_empty() {
+        return Err("复制内容为空".into());
+    }
+    Ok(chain::set_clipboard(&text))
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub fn fpx_open_path(
     app: AppHandle,

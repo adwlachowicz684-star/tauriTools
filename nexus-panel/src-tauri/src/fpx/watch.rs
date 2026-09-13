@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
@@ -21,6 +21,13 @@ use std::time::{Duration, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
+/// 监听线程的「代次」。
+///
+/// 为什么需要它：stop() 只是置标志，线程要等本次 sleep 结束才会检查到。
+/// 若 stop 后立刻 start，老线程醒来发现 RUNNING 又被新线程置成 true，
+/// 就会继续跑 —— 于是两个线程同时轮询，事件重复上报一遍。
+/// 每次 start 领一个新的代次号，线程发现代次变了就自行退出。
+static GEN: AtomicU64 = AtomicU64::new(0);
 /// 待前端取走的事件（后进先出无所谓，前端按序展示即可）。
 static PENDING: Mutex<Vec<WatchEvent>> = Mutex::new(Vec::new());
 
@@ -79,9 +86,11 @@ fn push_event(ev: WatchEvent, app: &AppHandle) {
 
 /// 启动监听线程（已在运行则忽略）。
 pub fn start(app: AppHandle, interval_secs: u64, paths: Vec<String>) {
-    if RUNNING.swap(true, Ordering::SeqCst) {
-        return;
-    }
+    // 先领代次：老线程（若有）看到代次变化会自行退出。
+    // 不能再沿用「已在运行就直接 return」——stop 只置标志，老线程要等 sleep
+    // 结束才退出，那段窗口里 start 会被误判成"重复启动"而拒绝，于是彻底没人监听。
+    let gen = GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    RUNNING.store(true, Ordering::SeqCst);
     let interval = Duration::from_secs(interval_secs.max(5));
     let mut last: HashMap<String, (usize, i64)> = HashMap::new();
     for p in &paths {
@@ -89,9 +98,10 @@ pub fn start(app: AppHandle, interval_secs: u64, paths: Vec<String>) {
     }
 
     thread::spawn(move || {
-        while RUNNING.load(Ordering::SeqCst) {
+        while RUNNING.load(Ordering::SeqCst) && GEN.load(Ordering::SeqCst) == gen {
             thread::sleep(interval);
-            if !RUNNING.load(Ordering::SeqCst) { break; }
+            // 代次变了说明有新线程接管，自己必须退出，否则两个线程重复上报
+            if !RUNNING.load(Ordering::SeqCst) || GEN.load(Ordering::SeqCst) != gen { break; }
 
             let dir = match super::store::resolve_data_dir(&app) {
                 Ok(d) => d,
@@ -135,10 +145,16 @@ pub fn start(app: AppHandle, interval_secs: u64, paths: Vec<String>) {
                 push_event(ev, &app);
             }
         }
+        // 只有自己这代仍是最新时才清标志：否则会把刚启动的新线程状态误清掉
+        if GEN.load(Ordering::SeqCst) == gen {
+            RUNNING.store(false, Ordering::SeqCst);
+        }
     });
 }
 
 pub fn stop() {
+    // 递增代次让当前线程尽快失效，不等它 sleep 结束
+    GEN.fetch_add(1, Ordering::SeqCst);
     RUNNING.store(false, Ordering::SeqCst);
 }
 

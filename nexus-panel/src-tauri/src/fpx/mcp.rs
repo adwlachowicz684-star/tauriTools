@@ -52,15 +52,24 @@ pub fn serve(app: AppHandle, port: u16) -> Result<String, String> {
     let listener = TcpListener::bind(("127.0.0.1", port)).map_err(|e| format!("绑定端口失败: {e}"))?;
     let addr = listener.local_addr().map_err(|e| e.to_string())?.to_string();
 
+    // 非阻塞 accept：阻塞式的 incoming() 不关掉 socket 就永远不会返回，
+    // 那样 stop() 只是置了个标志，线程卡在 accept 里、旧端口一直被占着。
+    // 改成非阻塞 + 短睡眠轮询，stop 后 100ms 内线程即可退出。
+    listener.set_nonblocking(true)
+        .map_err(|e| format!("设置非阻塞失败: {e}"))?;
+
     std::thread::spawn(move || {
-        for stream in listener.incoming() {
+        loop {
             if !RUNNING.load(Ordering::SeqCst) { break; }
-            match stream {
-                Ok(s) => {
+            match listener.accept() {
+                Ok((stream, _)) => {
                     let app2 = app.clone();
-                    std::thread::spawn(move || handle(s, app2));
+                    std::thread::spawn(move || handle(stream, app2));
                 }
-                Err(_) => continue,
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(_) => break,
             }
         }
         RUNNING.store(false, Ordering::SeqCst);
@@ -68,7 +77,10 @@ pub fn serve(app: AppHandle, port: u16) -> Result<String, String> {
     Ok(addr)
 }
 
-pub fn stop() { RUNNING.store(false, Ordering::SeqCst); }
+pub fn stop() {
+    // 标志置 false 后，线程最多再睡 100ms 就会退出并释放端口
+    RUNNING.store(false, Ordering::SeqCst);
+}
 pub fn is_running() -> bool { RUNNING.load(Ordering::SeqCst); }
 
 /* ---------------------------- HTTP ---------------------------- */
@@ -675,7 +687,14 @@ fn sanitize_name(raw: &str) -> String {
         }
     }
     let trimmed = out.trim_matches('-').to_string();
-    if trimmed.len() > 60 { trimmed[..60].trim_end_matches('-').to_string() } else { trimmed }
+    // 不能直接 &trimmed[..60]：中文每字 3 字节，硬切片落在字符中间会 panic。
+    // 先退到最近的合法边界再截。
+    if trimmed.len() > 60 {
+        let end = super::store::safe_truncate_at(&trimmed, 60);
+        trimmed[..end].trim_end_matches('-').to_string()
+    } else {
+        trimmed
+    }
 }
 
 fn err(msg: &str) -> Value {

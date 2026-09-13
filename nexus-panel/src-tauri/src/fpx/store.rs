@@ -330,3 +330,17 @@ pub fn save_records_to(path: &std::path::Path, records: &[LinkRecord]) -> Result
     }
     write_json(path, &File { links: records })
 }
+
+/// 返回**不超过** max、且落在 UTF-8 字符边界上的最大下标。
+///
+/// 为什么需要它：`String::truncate(n)` 与 `&s[..n]` 在 n 不在字符边界时会**直接 panic**。
+/// 中文每字 3 字节，按字节数截断中文文本极易命中 —— 预览文件、`deploy_skill`
+/// 生成目录名都会踩到。截断前先退到最近的合法边界即可。
+pub fn safe_truncate_at(s: &str, max: usize) -> usize {
+    if max >= s.len() { return s.len(); }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    end
+}

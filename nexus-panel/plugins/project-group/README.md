@@ -272,3 +272,29 @@ nexus-panel --mcp [port]                              # 只跑 MCP server，不�
 
 > `--appicon-apply`（给 exe 文件本身换图标）未移植：它需要改写 PE 资源区并重启，风险与收益不成正比。运行时换窗口图标请用 `set_window_icon`。
 
+## 三处后台线程：改之前请先读
+
+`watch.rs`（目录监听）、`backup.rs`（自动备份）、`mcp.rs`（MCP server）都是常驻线程，
+共用一套**「标志位 + 代次号」**约定，看着简单，但踩过坑：
+
+- 只用一个 `AtomicBool` 标志**不够**：`stop()` 置标志后，线程要等本次 sleep / accept 走完才检查得到。
+  那段窗口里如果又 `start()`，老线程醒来发现标志又是 true 就会继续跑 —— **两个线程同时干活**。
+  所以每次 start 领一个新的代次号（`GEN` / `AUTO_GEN`），老线程发现代次变了自行退出。
+- 反过来，若保留「已在运行就直接 return」，stop→start 快速切换时会**拒绝启动、彻底没人干活**。
+  现在 start 一律领代次并起新线程，由代次去挤掉老的。
+- 线程退出时只在**自己仍是最新代次**时才清标志，否则会把刚启动的新线程状态误清掉。
+- MCP 另有一处：`TcpListener::incoming()` 是阻塞的，不换掉它线程永远卡在 accept、
+  **旧端口一直被占**。已改成 `set_nonblocking(true)` + 100ms 轮询，stop 后 100ms 内释放端口。
+
+## 字符串截断必须过 safe_truncate_at
+
+`String::truncate(n)` 与 `&s[..n]` 在 n 不在 UTF-8 字符边界时**直接 panic**。
+中文每字 3 字节，按字节数截断几乎必然命中（文件预览、`deploy_skill` 生成目录名都踩过）。
+新增 `store::safe_truncate_at(s, max)` 会退到最近的合法边界，**任何按字节截断的地方都要先过它**。
+
+## 复制文本走后端
+
+插件跑在沙箱 iframe 里，外壳给的 sandbox 不含 `allow-clipboard-write`，
+`navigator.clipboard` 会**静默失败**（点了完全没反应也不报错）。
+所以新增 `fpx_copy_text` 走后端系统剪贴板；前端保留三级兜底：后端 → Clipboard API → `execCommand`。
+

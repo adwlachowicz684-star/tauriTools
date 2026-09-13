@@ -177,7 +177,10 @@ pub fn read_preview(path: &str, max: usize) -> Result<String, String> {
     }
     let mut text = fs::read_to_string(p).map_err(|e| format!("读取失败: {e}"))?;
     if text.len() > max {
-        text.truncate(max);
+        // 必须退到字符边界再截：String::truncate 在非边界上会 panic，
+        // 中文文件按字节截断几乎必然命中。
+        let end = super::store::safe_truncate_at(&text, max);
+        text.truncate(end);
         text.push_str("\n\n…（内容过长，已截断）");
     }
     Ok(text)

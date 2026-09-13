@@ -286,8 +286,20 @@ export function useFpx() {
     }
   }, [api, applySnapshot, ctx, pushLog, run]);
 
-  const setIcon = useCallback((path: string, iconRef: string | null) =>
-    saveStyle(path, iconRef, boot?.config.tagColors[path] ?? null), [boot, saveStyle]);
+  /**
+   * 只改图标，不碰标签色。
+   *
+   * 不能复用 saveStyle 并回传 boot 里读到的颜色：saveStyle 的 color 传 null 表示
+   * 「删除颜色」，而 boot 可能还没刷到刚保存的颜色（尤其继承自项目组的情况），
+   * 那样回传 null 会把颜色直接抹掉。所以走 fpx_set_icon 这个只改图标的命令。
+   */
+  const setIcon = useCallback(async (path: string, iconRef: string | null) => {
+    const snap = await run('保存图标', () => api.setIcon(path, iconRef));
+    if (snap) {
+      applySnapshot(snap);
+      pushLog(`已保存图标：${path}`);
+    }
+  }, [api, applySnapshot, pushLog, run]);
 
   const saveCustomColors = useCallback(async (colors: string[]) => {
     const snap = await run('保存常用色', () => api.saveCustomColors(colors));

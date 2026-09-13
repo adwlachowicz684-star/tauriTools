@@ -161,6 +161,9 @@ export function makeApi(ctx: PluginContext) {
       call<string>('fpx_save_icon_data', { name, data_base64: dataBase64 }),
 
     openDataDir: () => call<void>('fpx_open_data_dir'),
+
+    /** 写系统剪贴板（走后端：iframe 沙箱拿不到 clipboard 权限） */
+    copyText: (text: string) => call<boolean>('fpx_copy_text', { text }),
   };
 }
 

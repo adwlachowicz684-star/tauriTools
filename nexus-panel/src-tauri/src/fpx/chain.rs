@@ -360,7 +360,7 @@ fn run(exe: &PathBuf, args: &[&str]) -> bool {
 }
 
 /// 写系统剪贴板（各平台自带命令；失败不阻断流程，由调用方提示用户手工复制）。
-fn set_clipboard(text: &str) -> bool {
+pub(crate) fn set_clipboard(text: &str) -> bool {
     if cfg!(windows) {
         use std::io::Write;
         match Command::new("cmd").args(["/c", "clip"]).stdin(std::process::Stdio::piped()).spawn() {
