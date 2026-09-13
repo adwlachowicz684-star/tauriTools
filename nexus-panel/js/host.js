@@ -85,6 +85,8 @@ export function createHost(opts = {}) {
     mounting: null,
     badges: {},
     shortcutsPaused: false,   // 模态（如插件设置抽屉）打开时暂停插件快捷键
+    /** 插件注入的侧边栏条目 { id, pluginId, label, icon, event } */
+    sidebarItems: [],
   };
 
   /** 同页插件快捷键的激活判定：必须是当前插件，且没有被模态遮挡 */
@@ -97,6 +99,32 @@ export function createHost(opts = {}) {
     state.badges[id] = n || 0;
     hooks.onBadges?.({ ...state.badges });
   };
+
+  /* ---- 插件注入的侧边栏条目 ---- *
+   * 插件画不到外壳上，只能登记；点击由外壳往总线发事件，插件自己响应。
+   */
+  function addSidebarItem(pluginId, item) {
+    if (!item || !item.id) return false;
+    state.sidebarItems = state.sidebarItems.filter((x) => !(x.pluginId === pluginId && x.id === item.id));
+    state.sidebarItems.push({ ...item, pluginId });
+    hooks.onSidebarItems?.(state.sidebarItems.slice());
+    return true;
+  }
+  function removeSidebarItem(pluginId, itemId) {
+    const before = state.sidebarItems.length;
+    state.sidebarItems = state.sidebarItems.filter((x) => !(x.pluginId === pluginId && x.id === itemId));
+    if (state.sidebarItems.length !== before) {
+      hooks.onSidebarItems?.(state.sidebarItems.slice());
+      return true;
+    }
+    return false;
+  }
+  /** 插件卸载时清掉它注入的条目，避免留下点了没反应的幽灵项 */
+  function releasePluginRegistrations(pluginId) {
+    const before = state.sidebarItems.length;
+    state.sidebarItems = state.sidebarItems.filter((x) => x.pluginId !== pluginId);
+    if (state.sidebarItems.length !== before) hooks.onSidebarItems?.(state.sidebarItems.slice());
+  }
 
   /* ---- 加载 / 卸载 ---- */
   async function mount(id) {
@@ -178,6 +206,7 @@ export function createHost(opts = {}) {
     if (!state.instance) return;
     const inst = state.instance;
     state.instance = null;
+    if (inst?.manifest?.id) releasePluginRegistrations(inst.manifest.id);
     hooks.onSettingsAvailable?.(false);
     await safeTeardown(inst);
   }
@@ -245,8 +274,6 @@ export function createHost(opts = {}) {
 
   async function safeTeardown(inst) {
     if (!inst) return;
-    // 清掉该插件注册的应用级快捷键与注入的侧边栏条目，避免残留
-    try { clearAppShortcuts(inst.manifest?.id); clearSidebarItems(inst.manifest?.id); } catch {}
     try { await inst.ctx?.__destroy?.(); } catch (e) { console.error(e); }
     try { await inst.unmount?.(); } catch (e) { console.error('[unmount]', e); }
     if (inst.iframe) {
@@ -350,6 +377,13 @@ export function createHost(opts = {}) {
     wrap.appendChild(iframe);
 
     const cleanupFns = [];
+    /**
+     * 插件每次 ctx.on() 都会在宿主侧挂一个总线监听器；off() 时桥接只发来
+     * 'unsubscribe'，若宿主不处理，监听器就永远留着——表现为「点一次侧边栏
+     * 动作执行好几次」（插件每重订阅一次就多一个）。
+     * 这里用栈登记，退订时按后进先出逐个摘掉。卸载时 cleanupFns 会兜底清剩余。
+     */
+    const bridgeSubs = [];
     let bridgeHandler = null;
     let hasSettings = false;
     // 握手阶段就要写 reportedBase，此时完整实例还没构造出来，先放一个可变壳
@@ -388,9 +422,17 @@ export function createHost(opts = {}) {
           case 'req':
             handleBridgeRequest(manifest, iframe, d);
             break;
-          case 'subscribe':
-            cleanupFns.push(bus.on(d.event, (payload) => send(iframe, { type: 'event', event: d.event, payload })));
+          case 'subscribe': {
+            const off = bus.on(d.event, (payload) => send(iframe, { type: 'event', event: d.event, payload }));
+            bridgeSubs.push(off);
+            cleanupFns.push(off);
             break;
+          }
+          case 'unsubscribe': {
+            const off = bridgeSubs.pop();
+            try { off?.(); } catch { /* 已失效 */ }
+            break;
+          }
           case 'publish':
             bus.emit(d.event, d.payload);
             break;
@@ -516,106 +558,11 @@ export function createHost(opts = {}) {
       toast: ({ msg, type }) => hooks.toast?.(msg, type),
       reload: () => mount(manifest.id),
       open: ({ id }) => hooks.onOpen?.(id) ?? navigateHook(id),
-      /* 应用级快捷键：命中后往总线上发事件，插件用 ctx.on(event) 接收。
-         与 ctx.shortcut()（插件内快捷键）不同 —— 这个由外壳统一持有，
-         插件未激活时也照样触发，适合"全局唤起"类需求。 */
-      'shortcut.register': ({ accel, event, label }) =>
-        registerAppShortcut(manifest.id, accel, event, label),
-      'shortcut.unregister': ({ accel }) => unregisterAppShortcut(manifest.id, accel),
-      /* 往外壳侧边栏注入条目；插件卸载时自动清理 */
       'sidebar.add': ({ item }) => addSidebarItem(manifest.id, item),
       'sidebar.remove': ({ itemId }) => removeSidebarItem(manifest.id, itemId),
     };
   }
   const navigateHook = (id) => hooks.onNavigate?.(id);
-
-  /* ---------------- 应用级快捷键 ---------------- */
-  /** key: `${pluginId} ${accel}` */
-  const appShortcuts = new Map();
-
-  function accelMatches(e, accel) {
-    // accel 形如 'Ctrl+Shift+1' / 'Alt+K' / 'Cmd+K'
-    const parts = String(accel).toLowerCase().split('+').map((x) => x.trim());
-    const key = parts.pop();
-    const need = { ctrl: false, shift: false, alt: false, meta: false };
-    for (const p of parts) {
-      if (p === 'ctrl' || p === 'control') need.ctrl = true;
-      else if (p === 'shift') need.shift = true;
-      else if (p === 'alt' || p === 'option') need.alt = true;
-      else if (p === 'meta' || p === 'cmd' || p === 'command' || p === 'mod') need.meta = true;
-    }
-    // 'mod' 在 macOS 映射 ⌘，其它平台映射 Ctrl
-    if (parts.includes('mod')) {
-      const mac = /mac|iphone|ipad/i.test(navigator.userAgent || '');
-      need.meta = mac; need.ctrl = !mac;
-    }
-    if (need.ctrl !== e.ctrlKey) return false;
-    if (need.shift !== e.shiftKey) return false;
-    if (need.alt !== e.altKey) return false;
-    if (need.meta !== e.metaKey) return false;
-    // 数字键：同时兼容主键盘与数字小键盘
-    const k = (e.key || '').toLowerCase();
-    if (/^[0-9]$/.test(key)) return k === key || e.code === `Digit${key}` || e.code === `Numpad${key}`;
-    return k === key;
-  }
-
-  function registerAppShortcut(pluginId, accel, event, label = '') {
-    const k = `${pluginId} ${accel}`;
-    if (appShortcuts.has(k)) window.removeEventListener('keydown', appShortcuts.get(k).fn);
-    const fn = (e) => {
-      if (!accelMatches(e, accel)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      bus.emit(event, { accel, label, pluginId });
-    };
-    window.addEventListener('keydown', fn);
-    appShortcuts.set(k, { fn, event, label });
-  }
-
-  function unregisterAppShortcut(pluginId, accel) {
-    const k = `${pluginId} ${accel}`;
-    const rec = appShortcuts.get(k);
-    if (!rec) return;
-    window.removeEventListener('keydown', rec.fn);
-    appShortcuts.delete(k);
-  }
-
-  /** 插件卸载时清掉它注册的全部应用级快捷键 */
-  function clearAppShortcuts(pluginId) {
-    for (const [k, rec] of [...appShortcuts]) {
-      if (!k.startsWith(`${pluginId} `)) continue;
-      window.removeEventListener('keydown', rec.fn);
-      appShortcuts.delete(k);
-    }
-  }
-
-  /* ---------------- 侧边栏注入条目 ---------------- */
-  /** key: `${pluginId} ${itemId}` */
-  const injectedItems = new Map();
-
-  function addSidebarItem(pluginId, item) {
-    if (!item?.id) return;
-    const key = `${pluginId} ${item.id}`;
-    injectedItems.set(key, { ...item, pluginId });
-    publishInjected();
-  }
-
-  function removeSidebarItem(pluginId, itemId) {
-    injectedItems.delete(`${pluginId} ${itemId}`);
-    publishInjected();
-  }
-
-  function clearSidebarItems(pluginId) {
-    let changed = false;
-    for (const k of [...injectedItems.keys()]) {
-      if (k.startsWith(`${pluginId} `)) { injectedItems.delete(k); changed = true; }
-    }
-    if (changed) publishInjected();
-  }
-
-  function publishInjected() {
-    hooks.onSidebarItems?.([...injectedItems.values()]);
-  }
 
   /* ---- 错误边界 ---- */
   function showError(stage, manifest, err) {
@@ -683,15 +630,11 @@ export function createHost(opts = {}) {
 
   return {
     state, bus, mount, unmount, mountSettings, win, setBadge,
+    addSidebarItem, removeSidebarItem, releasePluginRegistrations,
+    getSidebarItems: () => state.sidebarItems.slice(),
     hasSettings: () => hasSettings(state.instance),
     readTheme,
     getPlugins: () => state.plugins,
-    /** 当前已注册的应用级快捷键（accel → { pluginId, event, label }） */
-    getShortcuts: () => Object.fromEntries(
-      [...appShortcuts].map(([k, v]) => [k.split('\u0000')[1], { pluginId: k.split('\u0000')[0], event: v.event, label: v.label }]),
-    ),
-    /** 插件注入到侧边栏的条目 */
-    getSidebarItems: () => [...injectedItems.values()],
     async refresh() {
       state.plugins = filterByRuntime(await loadRegistry());
       return state.plugins;
