@@ -14,9 +14,23 @@ import { getTauri } from './tauri-core.js';
 
 export const BRIDGE_CHANNEL = 'nexus-bridge-v1';
 
-/** 声明一个插件（语法糖，便于静态检查与未来扩展） */
+/**
+ * 外壳保留快捷键。
+ * 焦点一旦进入 iframe，这些键在父窗口就收不到了，
+ * 所以由 SDK 在 iframe 内捕获后转发回外壳执行（见 bootIframePlugin）。
+ */
+export const SHELL_SHORTCUTS = ['mod+b', 'mod+r', 'mod+,'];
+
+/**
+ * 声明一个插件
+ *
+ * mount(ctx)        —— 主视图，必填
+ * settings(ctx)     —— 插件自己的设置面板，可选。
+ *                      声明后外壳标题栏会出现「⚙ 设置」按钮；
+ *                      两种挂载模式下写法完全一致。
+ */
 export function definePlugin(def) {
-  return { name: def.name, mount: def.mount, ...def };
+  return { name: def.name, mount: def.mount, settings: def.settings, ...def };
 }
 
 /** 极简 DOM 构造器：h('div.p-card', { onclick }, '文本', childNode) */
@@ -43,6 +57,63 @@ function append(parent, children) {
     if (c == null || c === false) continue;
     parent.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
   }
+}
+
+/* ============================================================
+   快捷键
+   ============================================================ */
+
+/**
+ * 解析快捷键串。
+ * 支持：mod+k / ctrl+shift+p / meta+s / alt+/ / esc / f5 / ?
+ *  · mod = macOS 的 ⌘、其它平台 Ctrl（写一次两端都对）
+ *  · 单字符不区分大小写；'?' 需配合 shift，单独判断
+ */
+export function parseCombo(combo) {
+  const parts = String(combo || '').toLowerCase().split('+').map((s) => s.trim()).filter(Boolean);
+  if (!parts.length) return null;
+  const spec = { key: '', mod: false, ctrl: false, shift: false, alt: false, meta: false };
+  for (const p of parts) {
+    if (p === 'mod') { spec.mod = true; }
+    else if (p === 'ctrl' || p === 'control') { spec.ctrl = true; }
+    else if (p === 'shift') { spec.shift = true; }
+    else if (p === 'alt' || p === 'option') { spec.alt = true; }
+    else if (p === 'meta' || p === 'cmd' || p === 'command' || p === 'super') { spec.meta = true; }
+    else spec.key = p;
+  }
+  if (!spec.key) return null;
+  return spec;
+}
+
+/** 判断一次按键事件是否匹配某个快捷键 */
+export function matchCombo(e, spec) {
+  if (!spec) return false;
+  // mod：macOS 认 meta，其它认 ctrl
+  const modOk = !spec.mod || (isMac() ? e.metaKey : e.ctrlKey);
+  if (!modOk) return false;
+  // 显式声明的修饰键必须按下；未声明的必须没按（避免 mod+k 被 ctrl+alt+k 误触发）
+  const metaOk = spec.meta ? e.metaKey : !e.metaKey || (spec.mod && isMac());
+  const ctrlOk = spec.ctrl ? e.ctrlKey : !e.ctrlKey || (spec.mod && !isMac());
+  if (!metaOk || !ctrlOk) return false;
+  if (spec.alt !== e.altKey) return false;
+  if (spec.shift !== e.shiftKey) return false;
+
+  const k = String(e.key || '').toLowerCase();
+  const code = String(e.code || '').toLowerCase();
+  if (k === spec.key) return true;
+  // 功能键：code 形如 f5 / escape
+  if (code === spec.key) return true;
+  if (code === 'key' + spec.key) return true;         // 'k' → KeyK
+  if (spec.key === 'esc' && k === 'escape') return true;
+  if (spec.key === 'space' && (k === ' ' || code === 'space')) return true;
+  if (spec.key === '?' && k === '?') return true;
+  return false;
+}
+
+export function isMac() {
+  try {
+    return /mac|iphone|ipad/i.test(globalThis.navigator?.platform || globalThis.navigator?.userAgent || '');
+  } catch { return false; }
 }
 
 /* ============================================================
@@ -109,8 +180,63 @@ function buildCtx(base) {
       return () => style.remove();
     },
 
+    /**
+     * 注册快捷键。
+     *
+     * 关键行为（两种挂载模式一致）：
+     *   · 只在插件「被激活」时响应 —— 切到别的插件就自动失效
+     *   · 插件卸载时自动注销，不会残留
+     *   · 支持 mod+k（mac=⌘，win/linux=Ctrl）、ctrl+shift+p、esc、f5 等
+     *   · 返回 off()，可提前注销
+     *
+     * @param {string|string[]} combo  如 'mod+k' 或 ['mod+k', 'ctrl+k']
+     * @param {(e: KeyboardEvent) => void} handler
+     * @param {{ preventDefault?: boolean }} [opts]
+     */
+    shortcut(combo, handler, opts = {}) {
+      const specs = (Array.isArray(combo) ? combo : [combo])
+        .map(parseCombo).filter(Boolean);
+      if (!specs.length || typeof handler !== 'function') return () => {};
+      return base.bindShortcut?.(specs, handler, opts) ?? (() => {});
+    },
+
     /** 注册卸载回调（清理定时器、监听器等） */
     onDestroy(fn) { destroyHooks.push(fn); },
+
+    /**
+     * 外壳能力（配置 / 外链管理）。
+     *
+     * 这些方法在**主平台侧执行**并通过桥接返回结果，
+     * 所以插件处于隔离态（opaque origin）时依然可用 ——
+     * 隔离切断的是"直连通道"（parent / localStorage / Tauri IPC），
+     * 不是能力本身。
+     *
+     *   await ctx.shell.pluginConfig.get('my-plugin')
+     *   await ctx.shell.external.listHosts()
+     */
+    shell: {
+      pluginConfig: {
+        get: (id) => transport.request('shell.call',
+          { ns: 'pluginConfig', method: 'getPluginConfig', args: [id] }),
+        set: (id, patch) => transport.request('shell.call',
+          { ns: 'pluginConfig', method: 'setPluginConfig', args: [id, patch] }),
+      },
+      external: {
+        load: () => transport.request('shell.call', { ns: 'external', method: 'loadPolicy', args: [] }),
+        save: (p) => transport.request('shell.call', { ns: 'external', method: 'savePolicy', args: [p] }),
+        list: () => transport.request('shell.call', { ns: 'external', method: 'listHosts', args: [] }),
+        pending: () => transport.request('shell.call', { ns: 'external', method: 'pendingHosts', args: [] }),
+        decide: (host, policy) => transport.request('shell.call',
+          { ns: 'external', method: 'decideHost', args: [host, policy] }),
+        setStatus: (host, status, meta) => transport.request('shell.call',
+          { ns: 'external', method: 'setHostStatus', args: [host, status, meta] }),
+        remove: (host) => transport.request('shell.call', { ns: 'external', method: 'removeHost', args: [host] }),
+        suggestCsp: (policy) => transport.request('shell.call',
+          { ns: 'external', method: 'suggestCsp', args: [policy] }),
+        rescan: () => transport.request('shell.call', { ns: 'external', method: 'scanEntry', args: [] }),
+      },
+      isIsolated: () => transport.request('shell.isIsolated', {}),
+    },
     /** 供外壳调用 */
     async __destroy() {
       for (const fn of destroyHooks.reverse()) {
@@ -130,7 +256,11 @@ function buildCtx(base) {
    模式 A：同页模块插件（module）
    插件入口 export default definePlugin({ mount(ctx){ ... return unmount } })
    ============================================================ */
-export function createModuleContext({ manifest, container, bus, theme, shellHooks }) {
+export function createModuleContext({
+  manifest, container, bus, theme, shellHooks,
+  isActive = () => true,        // 插件当前是否处于激活态（引擎按 activeId 判定）
+  scope = null,                 // 事件绑定目标，默认主文档
+}) {
   const useShadow = !!manifest.shadow;
   const root = useShadow ? container.attachShadow({ mode: 'open' }) : container;
   if (useShadow) {
@@ -139,6 +269,31 @@ export function createModuleContext({ manifest, container, bus, theme, shellHook
     link.rel = 'stylesheet';
     link.href = new URL('../css/neumorphism.css', import.meta.url).href;
     root.appendChild(link);
+  }
+
+  const shortcutCleanups = [];
+  const target = scope || document;
+
+  /** 同页插件的快捷键：注册在主文档，靠 isActive() 做到「只在自己激活时生效」 */
+  function bindShortcut(specs, handler, opts = {}) {
+    const onKey = (e) => {
+      if (!isActive()) return;                 // ← 核心：切走了就不响应
+      for (const spec of specs) {
+        if (matchCombo(e, spec)) {
+          if (opts.preventDefault !== false) e.preventDefault();
+          try { handler(e); } catch (err) { console.error('[shortcut]', manifest.id, err); }
+          return;
+        }
+      }
+    };
+    target.addEventListener('keydown', onKey);
+    const off = () => {
+      target.removeEventListener('keydown', onKey);
+      const i = shortcutCleanups.indexOf(off);
+      if (i >= 0) shortcutCleanups.splice(i, 1);
+    };
+    shortcutCleanups.push(off);
+    return off;
   }
 
   const transport = {
@@ -181,10 +336,18 @@ export function createModuleContext({ manifest, container, bus, theme, shellHook
     notify(type, payload) { shellHooks?.[type]?.(payload); },
   };
 
-  return buildCtx({
+  const ctx = buildCtx({
     id: manifest.id, manifest, mode: 'module', root, container,
-    transport, bus, theme,
+    transport, bus, theme, bindShortcut,
   });
+
+  // 卸载时兜底注销所有快捷键，杜绝监听器残留
+  const baseDestroy = ctx.__destroy;
+  ctx.__destroy = async () => {
+    shortcutCleanups.splice(0).forEach((off) => { try { off(); } catch {} });
+    await baseDestroy();
+  };
+  return ctx;
 }
 
 /* ============================================================
@@ -227,15 +390,24 @@ function isLightColor(c) {
   }
   return (0.2126 * r + 0.7152 * g + 0.0722 * b) > 140;
 }
-export function bootIframePlugin(mountFn) {
+/**
+ * iframe 插件引导
+ *
+ * bootIframePlugin(mainFn)                    —— 只有主视图
+ * bootIframePlugin(mainFn, settingsFn)        —— 额外提供设置面板
+ *
+ * 外壳加载设置面板时会再开一个同样的页面，并在 init 消息里带 view='settings'，
+ * SDK 据此调用 settingsFn 而不是 mainFn；两者拿到的 ctx 完全一致。
+ */
+export function bootIframePlugin(mountFn, settingsFn) {
   const channel = BRIDGE_CHANNEL;
   let pending = new Map();
   let seq = 0;
   let ctxReady;
   let resolveMount;
-  let manifest = null;       // 握手拿到的插件清单（显式声明，别再靠 var 提升）
-  let theme = null;          // 主题变量快照，切换主题时同步更新
-  let mounted = false;       // mount 只允许执行一次
+  let view = 'main';                 // 'main' | 'settings'
+  let currentTheme = {};             // 外壳推来的主题变量，供 ctx.theme 读取
+  let isolated = false;              // 是否处于功能隔离（去掉 allow-same-origin）
   const mountPromise = new Promise((r) => (resolveMount = r));
 
   function post(msg) {
@@ -249,22 +421,37 @@ export function bootIframePlugin(mountFn) {
     // 主题初始化 / 运行时切换（切换主题无需重载插件）
     if (d.type === 'init' || d.type === 'theme') {
       if (d.type === 'init') {
-        manifest = d.manifest;
-        theme = d.theme;
+        var { manifest } = d;
+        view = d.view || 'main';                 // 本次要渲染哪个视图
       } else {
         manifest = manifest || d.manifest;
-        if (d.theme) theme = d.theme;
       }
       // 把主题变量写到 iframe 的 :root，保证视觉与外壳一致
-      if (d.theme) applyThemeVars(d.theme);
-      if (d.type !== 'init') {
-        // 纯更新：不走挂载流程，但要把新变量同步给已运行插件的 ctx 快照
-        if (ctxReady && theme) ctxReady.theme = { ...(ctxReady.theme || {}), ...theme };
-        return;
+      if (d.theme) {
+        currentTheme = d.theme;
+        applyThemeVars(d.theme);
+        // 回执：告诉外壳"新变量已生效，可以放心采样了"。
+        // 没有它，外壳可能在变量落地前就采样 → 读到旧色 → 基调误判 → 反转错。
+        if (d.type === 'theme') post({ type: 'theme-applied' });
       }
-      if (ctxReady) return;                      // 重复 init：ctx 已就绪，忽略
+      if (d.type !== 'init') return;             // 纯更新，不走挂载流程
 
+      isolated = !!d.isolated;
       document.body.classList.add('nexus-iframe-plugin');
+      document.body.classList.toggle('nexus-view-settings', view === 'settings');
+      document.body.classList.toggle('nexus-isolated', isolated);
+      // 上报能力：外壳据此决定要不要显示「设置」按钮
+      post({ type: 'ready', hasSettings: typeof settingsFn === 'function' });
+
+      /* 隔离插件：外壳读不到 contentDocument，采样会静默失败 → 不反转 →
+         深色面板上留一块刺眼的白。所以由插件自己采样并上报基调。 */
+      if (d.reportBase) {
+        const report = () => post({ type: 'base-report', base: sampleOwnBase(), view });
+        report();
+        // 内容可能是异步渲染的，稍后再报一次；图片加载完再报一次
+        setTimeout(report, 300);
+        window.addEventListener('load', () => setTimeout(report, 60), { once: true });
+      }
 
       const bus = makeBusProxy();
       const transport = {
@@ -282,10 +469,55 @@ export function bootIframePlugin(mountFn) {
       };
 
       const container = document.getElementById('plugin-mount') || document.body;
+
+      /* iframe 的快捷键：注册在自己的 window 上。
+         浏览器已按焦点隔离 —— 焦点不在本 iframe 时压根收不到事件，
+         天然满足「只在自己激活时生效」，无需再判 activeId。 */
+      const shortcutCleanups = [];
+      function bindShortcut(specs, handler, opts = {}) {
+        const onKey = (e) => {
+          for (const spec of specs) {
+            if (matchCombo(e, spec)) {
+              if (opts.preventDefault !== false) e.preventDefault();
+              try { handler(e); } catch (err) { console.error('[shortcut]', manifest.id, err); }
+              return;
+            }
+          }
+        };
+        window.addEventListener('keydown', onKey);
+        const off = () => {
+          window.removeEventListener('keydown', onKey);
+          const i = shortcutCleanups.indexOf(off);
+          if (i >= 0) shortcutCleanups.splice(i, 1);
+        };
+        shortcutCleanups.push(off);
+        return off;
+      }
+
       const ctx = buildCtx({
         id: manifest.id, manifest, mode: 'iframe',
-        root: container, container, transport, bus, theme,
+        root: container, container, transport, bus, theme: currentTheme, bindShortcut,
       });
+
+      // 卸载时兜底注销
+      const baseDestroy = ctx.__destroy;
+      ctx.__destroy = async () => {
+        shortcutCleanups.splice(0).forEach((off) => { try { off(); } catch {} });
+        await baseDestroy();
+      };
+
+      /* 焦点进入 iframe 后，外壳的全局快捷键（⌘R 重载 / ⌘B 侧栏 / ⌘, 设置）
+         会因为「事件不跨文档冒泡」而失效。这里把按键转发回外壳兜底执行，
+         但仅在外壳快捷键没被本插件占用时转发。 */
+      window.addEventListener('keydown', (e) => {
+        for (const combo of SHELL_SHORTCUTS) {
+          if (matchCombo(e, parseCombo(combo))) {
+            post({ type: 'shell-shortcut', combo, key: e.key });
+            return;
+          }
+        }
+      });
+
       ctxReady = ctx;
       resolveMount(ctx);
     }
@@ -301,14 +533,16 @@ export function bootIframePlugin(mountFn) {
       busLocal.emit(d.event, d.payload);
     }
 
-    if (d.type === 'mount' && ctxReady && !mounted) {
-      mounted = true;                            // 重复 mount 不再二次挂载
-      Promise.resolve(mountFn(ctxReady))
+    if (d.type === 'mount' && ctxReady) {
+      // settings 视图下优先用 settingsFn；没提供则回退到主视图，避免开个空面板
+      const fn = view === 'settings' ? (settingsFn || mountFn) : mountFn;
+      Promise.resolve(fn(ctxReady))
         .then((unmount) => {
           if (typeof unmount === 'function') ctxReady.onDestroy(unmount);
-          post({ type: 'mounted', ok: true });
+          post({ type: 'mounted', ok: true, view });
         })
-        .catch((err) => post({ type: 'mounted', ok: false, error: String(err?.stack || err) }));
+        .catch((err) =>
+          post({ type: 'mounted', ok: false, view, error: String(err?.stack || err) }));
     }
   });
 
@@ -344,10 +578,62 @@ export function bootIframePlugin(mountFn) {
   window.addEventListener('unhandledrejection', (e) =>
     post({ type: 'error', error: String(e.reason?.stack || e.reason) }));
 
-  // 脚本就绪即通知外壳（外壳收到后回发 init + mount，见 js/host.js）
-  post({ type: 'ready' });
+  /* 外链观测：CSP 违规只在违规发生的文档里触发，不会冒泡到父文档，
+     所以这里就地捕获并转发给外壳，否则外壳根本不知道插件想访问什么被拦了。 */
+  window.addEventListener('securitypolicyviolation', (e) => {
+    post({
+      type: 'csp-violation',
+      blockedURI: String(e.blockedURI || '').slice(0, 300),
+      directive: String(e.violatedDirective || ''),
+      view,
+    });
+  });
 
   return mountPromise;
+}
+
+/**
+ * 采样插件自身基调（隔离模式下代替外壳采样）。
+ * 取 body 或最外层容器的背景色亮度；拿不到就退回文字色亮度。
+ */
+function sampleOwnBase() {
+  const lum = (c) => {
+    const m = String(c).match(/rgba?\(([^)]+)\)/);
+    let r, g, b;
+    if (m) {
+      const p = m[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+      [r, g, b] = p;
+      if (p.length > 3 && p[3] === 0) return null;      // 全透明，当没取到
+    } else {
+      const h = String(c).trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+      if (!h) return null;
+      let t = h[1];
+      if (t.length === 3) t = t.split('').map((x) => x + x).join('');
+      r = parseInt(t.slice(0, 2), 16);
+      g = parseInt(t.slice(2, 4), 16);
+      b = parseInt(t.slice(4, 6), 16);
+    }
+    if ([r, g, b].some((v) => typeof v !== 'number' || Number.isNaN(v))) return null;
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  };
+
+  const tryEl = (el) => {
+    if (!el) return null;
+    let cur = el;
+    for (let i = 0; i < 6 && cur; i++) {
+      const cs = getComputedStyle(cur);
+      const v = lum(cs.backgroundColor);
+      if (v !== null) return v;
+      cur = cur.parentElement;
+    }
+    return null;
+  };
+
+  const bg = tryEl(document.body);
+  if (bg !== null) return bg > 0.55 ? 'light' : 'dark';
+  const fg = lum(getComputedStyle(document.body).color);
+  if (fg !== null) return fg > 0.55 ? 'dark' : 'light';   // 文字亮 → 底色暗
+  return null;
 }
 
 /* ============================================================

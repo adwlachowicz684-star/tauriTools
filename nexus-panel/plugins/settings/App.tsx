@@ -2,16 +2,15 @@ import { useEffect, useState } from 'react';
 import { useNexus } from '../../src/nexus-react';
 import type { PluginManifest } from '../../js/host.js';
 import {
-  listThemes, applyTheme, setAccent, setThemeColor, resetColors,
-  getThemeId, getAccent, getThemeColor,
-  saveAsCustom, deleteCustomTheme, getBase,
-  onChange as onThemeChange,
+  listThemes, applyTheme, setAccent, getThemeId, getAccent,
+  saveAsCustom, deleteCustomTheme, ACCENT_SWATCHES,
 } from '../../js/theme-manager.js';
-import { swatchFor } from '../../js/themes.js';
 import {
   ADAPT_POLICIES, PLUGIN_THEMES,
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
 } from '../../js/theme-normalizer.js';
+import * as extPolicy from '../../js/external-policy.js';
+import ExternalCard from './ExternalCard';
 
 export default function Settings() {
   const ctx = useNexus();
@@ -27,78 +26,80 @@ export default function Settings() {
 
   const rerender = () => force((n) => n + 1);
 
-  /**
-   * 订阅主题变更，让本页与外壳保持同步。
-   * 否则从标题栏按钮切换主题时，这里的"当前主题"高亮会滞后到下次交互。
-   * 同页插件与外壳共用同一个模块实例，所以直接订阅即可。
-   */
-  useEffect(() => onThemeChange(rerender), []);
-
   return (
     <>
       {/* ---------------- 主题 ---------------- */}
       <div className="p-card">
         <h2>主题</h2>
-        <div className="theme-grid">
-          {listThemes().map((t) => {
-            const v = t.vars;
-            return (
-              <button
-                key={t.id}
-                className={'theme-card' + (t.id === getThemeId() ? ' active' : '')}
-                title={t.desc || t.name}
-                onClick={() => { applyTheme(t.id); ctx.toast(`已切换到「${t.name}」`, 'ok'); rerender(); }}
-              >
-                <div className="theme-prev" style={{ background: v['--bg'] || v['--surface'] }}>
-                  <i
-                    className="sw"
-                    style={{
-                      background: v['--surface'],
-                      boxShadow: `2px 2px 5px ${v['--sh-dark']}, -2px -2px 5px ${v['--sh-light']}`,
-                      border: `1px solid ${v['--border'] || 'transparent'}`,
-                    }}
-                  />
-                  {/* 这两条是主题的装饰配色，不是状态色。
-                      状态色（成功/错误/运行中）语义固定，不随主题色变化，
-                      故不在此预览中展示，避免误导。 */}
-                  <i
-                    className="bar"
-                    title="强调色：按钮 / 选中态"
-                    style={{ background: v['--accent'] }}
-                  />
-                  <i
-                    className="bar s"
-                    title="主题色：次要点缀（非状态色）"
-                    style={{ background: v['--accent-2'] }}
-                  />
-                </div>
-                <div className="theme-name" style={{ color: v['--text'] }}>{t.name}</div>
-                <div className="theme-desc">{t.desc || (t.base === 'dark' ? '深色' : '浅色')}</div>
-                {t.custom ? (
-                  <button
-                    className="theme-del"
-                    title="删除该自定义主题"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteCustomTheme(t.id);
-                      if (getThemeId() === t.id) applyTheme(listThemes()[0].id);
-                      ctx.toast('已删除自定义主题', 'ok');
-                      rerender();
-                    }}
-                  >
-                    ✕
-                  </button>
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
+        {(() => {
+          const all = listThemes();
+          const groups: [string, typeof all][] = [
+            ['深色', all.filter((t) => t.base === 'dark')],
+            ['浅色', all.filter((t) => t.base === 'light')],
+          ];
+          return groups.filter(([, items]) => items.length).map(([label, items]) => (
+            <div className="theme-group" key={label}>
+              <div className="theme-group-title">{label} · {items.length}</div>
+              <div className="theme-grid">
+                {items.map((t) => {
+                  const v = t.vars;
+                  return (
+                    <button
+                      key={t.id}
+                      className={'theme-card' + (t.id === getThemeId() ? ' active' : '')}
+                      title={t.desc || t.name}
+                      onClick={() => { applyTheme(t.id); ctx.toast(`已切换到「${t.name}」`, 'ok'); rerender(); }}
+                    >
+                      <div
+                        className="theme-prev"
+                        style={{
+                          background: v['--bg'] || v['--surface'],
+                          backgroundImage: v['--bg-image'] && v['--bg-image'] !== 'none' ? v['--bg-image'] : undefined,
+                        }}
+                      >
+                        <i
+                          className="sw"
+                          style={{
+                            background: v['--surface'],
+                            boxShadow: `2px 2px 5px ${v['--sh-dark']}, -2px -2px 5px ${v['--sh-light']}`,
+                            border: `1px solid ${v['--border'] || 'transparent'}`,
+                            backdropFilter: v['--blur'] && v['--blur'] !== '0px'
+                              ? `blur(${v['--blur']})` : undefined,
+                          }}
+                        />
+                        <i className="bar" style={{ background: v['--accent'] }} />
+                        <i className="bar s" style={{ background: v['--accent-2'] }} />
+                      </div>
+                      <div className="theme-name" style={{ color: v['--text'] }}>{t.name}</div>
+                      <div className="theme-desc">{t.desc || (t.base === 'dark' ? '深色' : '浅色')}</div>
+                      {t.custom ? (
+                        <button
+                          className="theme-del"
+                          title="删除该自定义主题"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteCustomTheme(t.id);
+                            if (getThemeId() === t.id) applyTheme(listThemes()[0].id);
+                            ctx.toast('已删除自定义主题', 'ok');
+                            rerender();
+                          }}
+                        >
+                          ✕
+                        </button>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ));
+        })()}
 
         <div className="p-muted" style={{ marginTop: 16 }}>
-          强调色（按钮 / 选中态 / 链接）
+          强调色（叠加在当前主题之上）
         </div>
         <div className="p-row" style={{ marginTop: 8 }}>
-          {swatchFor(getBase()).map(([c, label]) => {
+          {ACCENT_SWATCHES.map(([c, label]) => {
             const cur = getAccent();
             return (
               <button
@@ -116,46 +117,6 @@ export default function Settings() {
             );
           })}
         </div>
-
-        <div className="p-muted" style={{ marginTop: 14 }}>
-          主题色（第二个主色 · 仅用于次要点缀）
-        </div>
-        <div className="p-muted" style={{ fontSize: 12, marginTop: 2, opacity: .8 }}>
-          成功 / 错误 / 运行中 / 警告 为固定语义色，不随这里变化
-        </div>
-        <div className="p-row" style={{ marginTop: 8 }}>
-          {swatchFor(getBase()).map(([c, label]) => {
-            const cur = getThemeColor();
-            return (
-              <button
-                key={c}
-                className="p-btn"
-                style={{
-                  color: c,
-                  boxShadow: '3px 3px 7px var(--sh-dark), -3px -3px 7px var(--sh-light)',
-                  opacity: !cur || cur.toLowerCase() === c.toLowerCase() ? '1' : '.7',
-                }}
-                onClick={() => { setThemeColor(c); ctx.toast('主题色：' + label, 'ok'); rerender(); }}
-              >
-                ● {label}
-              </button>
-            );
-          })}
-        </div>
-
-        {(getAccent() || getThemeColor()) ? (
-          <div className="p-row" style={{ marginTop: 10 }}>
-            <button
-              className="p-btn"
-              onClick={() => { resetColors(); ctx.toast('已恢复主题自带配色', 'ok'); rerender(); }}
-            >
-              ↺ 恢复主题自带配色
-            </button>
-            <span className="p-muted">
-              当前：强调色 {getAccent() || '（默认）'} · 主题色 {getThemeColor() || '（默认）'}
-            </span>
-          </div>
-        ) : null}
 
         <div className="p-row" style={{ marginTop: 14 }}>
           <button
@@ -250,6 +211,9 @@ export default function Settings() {
           </div>
         ))}
       </div>
+
+      {/* ---------------- 外链 ---------------- */}
+      <ExternalCard />
 
       {/* ---------------- 关于 ---------------- */}
       <div className="p-card">

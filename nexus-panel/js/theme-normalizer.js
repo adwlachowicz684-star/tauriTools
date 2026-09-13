@@ -114,6 +114,45 @@ export function isLightTheme(root) {
   return b === null ? false : b > LIGHT_THRESHOLD;
 }
 
+/**
+ * 等主题切换的过渡动画结束。
+ *
+ * 过渡期间 `getComputedStyle` 返回的是**动画中间值**，拿它判定基调必定出错：
+ * 深色→浅色切到一半时读数是中性灰，会被判成"深色插件"，
+ * 于是施加反转；等过渡跑完插件已是浅色，再被反转 → 与主平台正好相反。
+ * 这是"连续切换主题和插件后插件深浅反转"的根因。
+ */
+async function waitThemeSettled(timeout = 700) {
+  const t0 = Date.now();
+  // 先等 .theme-transition class 摘掉
+  while (Date.now() - t0 < timeout) {
+    let busy = false;
+    try {
+      const tm = await import('./theme-manager.js');
+      busy = tm.isThemeTransitioning();
+    } catch { busy = false; }
+    if (!busy) break;
+    await sleep(60);
+  }
+  // 再给一帧，确保样式已按最终值重算
+  await sleep(50);
+}
+
+/** 连续采样直到读数稳定，避免读到过渡残影 */
+async function stableSample(getRoot, tries = 3) {
+  let last = null;
+  for (let i = 0; i < tries; i++) {
+    const r = getRoot();
+    const b = r ? sampleBrightness(r) : null;
+    if (b !== null) {
+      if (last !== null && Math.abs(b - last) < 0.02) return b;   // 稳定了
+      last = b;
+    }
+    if (i < tries - 1) await sleep(90);
+  }
+  return last;
+}
+
 /* ---------------------------- 样式注入 ---------------------------- */
 function imgFixCss() {
   return `
@@ -175,30 +214,55 @@ export async function installAdapter(o) {
 
   // 判定插件自身基调：'light' | 'dark'
   let pluginBase;
+  let baseSource = 'sampled';
   if (policy === 'always') {
     pluginBase = panelBase === 'dark' ? 'light' : 'dark';   // 强制取反，保证一定反转
+    baseSource = 'policy';
   } else if (manifest.theme === 'light' || manifest.theme === 'dark') {
     pluginBase = manifest.theme;
+    baseSource = 'manifest';
+  } else if (o.reportedBase === 'light' || o.reportedBase === 'dark') {
+    /* 隔离插件：外壳读不到 contentDocument，由插件自己采样后上报。
+       没有这一步的话，隔离插件的采样会静默失败 → 被当成"基调一致" → 不反转，
+       于是在深色面板上留下一块刺眼的白，且不报任何错。 */
+    pluginBase = o.reportedBase;
+    baseSource = 'reported';
   } else {
-    pluginBase = null;                                       // 走自动检测
+    /* 走自动检测。
+       两道保险，缺一不可：
+         1) 等主题过渡结束 —— 否则读到动画中间色，必然误判
+         2) 连续采样直到稳定 —— 挡住个别插件自己的入场/异步渲染动画 */
+    await waitThemeSettled();
+    let b = null;
     for (let i = 0; i < 4; i++) {
       await sleep(i === 0 ? 120 : 260);
       const r = getRoot();
       if (!r) continue;
-      const b = sampleBrightness(r);
+      b = await stableSample(() => getRoot());
       if (b !== null) pluginBase = b > LIGHT_THRESHOLD ? 'light' : 'dark';
       if (r.children?.length || i === 3) break;
     }
-    if (!pluginBase) pluginBase = panelBase;                 // 采样失败：视为与面板一致，不反转
+    if (!pluginBase) {
+      pluginBase = panelBase;                                // 采样失败：视为与面板一致，不反转
+      baseSource = 'fallback';
+    }
   }
 
   // 基调一致 → 只做色调统一，不反转
   if (pluginBase === panelBase) {
-    onInfo?.({ adapted: false, reason: 'base-match', pluginBase, panelBase });
+    onInfo?.({ adapted: false, reason: 'base-match', pluginBase, panelBase, baseSource });
     return () => {};
   }
 
-  /* ---- L2：滤镜暗化 ---- */
+  /* ---- L2：滤镜暗化 ----
+     先清一遍再施加：让 installAdapter 对同一 target 幂等。
+     否则重复/并发调用（快速连点主题）会层层叠加滤镜与覆盖层。 */
+  try {
+    target.style.filter = '';
+    target.classList?.remove('nexus-adapted');
+    wrap?.querySelectorAll?.('.nexus-tone-overlay').forEach((o) => o.remove());
+  } catch { /* DOM 可能已销毁 */ }
+
   target.style.filter = DARK_FILTER;
   target.classList?.add('nexus-adapted');
 
@@ -222,13 +286,15 @@ export async function installAdapter(o) {
   onInfo?.({
     adapted: true,
     reason: policy === 'always' ? 'forced' : 'base-mismatch',
-    pluginBase, panelBase,
+    pluginBase, panelBase, baseSource,
   });
 
   return () => {
     try {
       target.style.filter = '';
       target.classList?.remove('nexus-adapted');
+      // A5：load 监听必须移除，否则每次切插件/切主题都会再挂一个，越积越多
+      if (isIframe) target.removeEventListener('load', applyImgFix);
       removeImgFix();
       overlay.remove();
     } catch { /* 卸载时 DOM 可能已销毁 */ }
@@ -241,13 +307,18 @@ function safeDoc(iframe) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * 给插件开发者的可选工具：把一段浅色 CSS 直接改写成深色
+ * 给插件开发者的可选工具：把一段浅色 CSS 改写成使用面板主题变量
  * （用于你"改造"第三方插件源码的场景，比滤镜更彻底）
+ *
+ * 只做三类安全替换：纯白底 → --surface、浅灰底 → --surface-sunk、
+ * 深色文字 → --text。其余（品牌色、边框、阴影）保持原样，避免改坏。
  */
 export function lightenToDarkVars(css) {
-  return css
-    .replace(/#fff(fff)?\b/gi, 'var(--surface)')
-    .replace(/#f{1}[0-9a-f]{2,5}\b/gi, 'var(--surface-sunk)')
-    .replace(/rgba?\(\s*255\s*,\s*255\s*,\s*255/gi, 'var(--surface')
-    .replace(/#(1|2|3)?[0-9a-f]{2}\b/gi, 'var(--text)');
+  return String(css)
+    .replace(/#ffffff\b/gi, 'var(--surface)')
+    .replace(/#fff\b/gi, 'var(--surface)')
+    .replace(/\brgba?\(\s*255\s*,\s*255\s*,\s*255\s*\)/gi, 'var(--surface)')
+    .replace(/#f[0-9a-f]{5}\b/gi, 'var(--surface-sunk)')
+    .replace(/#e[0-9a-f]{5}\b/gi, 'var(--surface-sunk)')
+    .replace(/#(?:1|2|3)[0-9a-f]{5}\b/gi, 'var(--text)');
 }

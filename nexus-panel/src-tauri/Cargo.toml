@@ -13,15 +13,6 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["devtools"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# 以下为 agent_flow 插件所需：
-#   tauri-plugin-shell  启动 CLI 子进程
-#   notify              目录监听（文件监听触发器）
-#   tauri-plugin-http   抓取 B站 / 公众号订阅源
-#                       用它而不是自己接 reqwest：官方插件已处理好 TLS，
-#                       不必在 Windows 上额外折腾 openssl / cmake
-tauri-plugin-shell = "2"
-tauri-plugin-http = "2"
-notify = "6"
 
 [profile.release]
 codegen-units = 1

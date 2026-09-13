@@ -17,25 +17,36 @@ export default function Demo() {
   const say = (s: string) =>
     setLog((l) => [`${new Date().toLocaleTimeString()} ${s}`, ...l].slice(0, 60));
 
+  const [step, setStep] = useState(1);
+  const [label, setLabel] = useState('计数');
+
   useEffect(() => {
     if (loaded.current) return;
     loaded.current = true;
     ctx.store.get<number>('count', 0).then(setCount);
+    ctx.store.get<number>('step', 1).then(setStep);
+    ctx.store.get<string>('label', '计数').then(setLabel);
     const offs = [
       ctx.on('demo:counter', (n: number) => say(`收到广播 demo:counter → ${n}`)),
       ctx.on('demo:ping', (p: any) => say(`收到广播 demo:ping → ${JSON.stringify(p)}`)),
+      // 设置面板保存后推过来的配置
+      ctx.on('demo-react:config', (cfg: any) => {
+        if (cfg?.step) setStep(cfg.step);
+        if (cfg?.label != null) setLabel(cfg.label || '计数');
+        say(`配置已更新：步长 ${cfg?.step}，名称「${cfg?.label}」`);
+      }),
     ];
     say(`插件已挂载：mode=${ctx.mode}，id=${ctx.id}`);
     return () => offs.forEach((fn) => fn?.());
   }, [ctx]);
 
   const bump = async () => {
-    const n = count + 1;
+    const n = count + step;
     setCount(n);
     await ctx.store.set('count', n);
     ctx.setBadge(n);
     ctx.emit('demo:counter', n);
-    say(`count = ${n}（已持久化）`);
+    say(`${label} = ${n}（步长 ${step}，已持久化）`);
   };
 
   const callRust = async () => {
@@ -55,7 +66,7 @@ export default function Demo() {
         <h2>计数器（持久化 + 跨插件广播）</h2>
         <div className="p-grid">
           <div className="p-stat">
-            <div className="k">当前值</div>
+            <div className="k">{label}（步长 {step}）</div>
             <div className="v">{count}</div>
           </div>
           <div className="p-stat">
@@ -68,7 +79,7 @@ export default function Demo() {
           </div>
         </div>
         <div className="p-row" style={{ marginTop: 16 }}>
-          <button className="p-btn primary" onClick={bump}>＋ 1</button>
+          <button className="p-btn primary" onClick={bump}>＋ {step}</button>
           <button
             className="p-btn"
             onClick={async () => { setCount(0); await ctx.store.set('count', 0); ctx.setBadge(0); }}

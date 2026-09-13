@@ -30,16 +30,23 @@ export function NexusProvider({ ctx, children }: { ctx: PluginContext; children:
  */
 export function bootIframeReactPlugin(
   render: (ctx: PluginContext) => ReactNode,
+  settingsRender?: (ctx: PluginContext) => ReactNode,
   mountPoint: string | HTMLElement = 'root',
 ) {
-  return bootIframePlugin(async (ctx) => {
+  const mountTo = (node: ReactNode, ctx: PluginContext) => {
     const el = typeof mountPoint === 'string'
       ? document.getElementById(mountPoint) ?? document.body
       : mountPoint;
     const root = createRoot(el);
-    root.render(<NexusProvider ctx={ctx}>{render(ctx)}</NexusProvider>);
+    root.render(<NexusProvider ctx={ctx}>{node}</NexusProvider>);
     return () => root.unmount();
-  });
+  };
+
+  return bootIframePlugin(
+    async (ctx) => mountTo(render(ctx), ctx),
+    // 传了第二个参数，外壳才会显示「⚙ 设置」按钮
+    settingsRender ? async (ctx) => mountTo(settingsRender(ctx), ctx) : undefined,
+  );
 }
 
 /**
@@ -55,16 +62,26 @@ export function renderReact(ctx: PluginContext, node: ReactNode): () => void {
   return () => root.unmount();
 }
 
-/** 同页插件的便捷定义方式 */
+/** 同页插件的便捷定义方式（可选提供设置面板） */
 export function defineReactPlugin(
   meta: { name?: string; version?: string },
   render: (ctx: PluginContext) => ReactNode,
+  settingsRender?: (ctx: PluginContext) => ReactNode,
 ) {
-  return {
+  const def: {
+    name?: string;
+    version?: string;
+    mount: (ctx: PluginContext) => () => void;
+    settings?: (ctx: PluginContext) => () => void;
+  } = {
     name: meta.name,
     version: meta.version,
     mount(ctx: PluginContext) {
       return renderReact(ctx, render(ctx));
     },
   };
+  if (settingsRender) {
+    def.settings = (ctx: PluginContext) => renderReact(ctx, settingsRender!(ctx));
+  }
+  return def;
 }

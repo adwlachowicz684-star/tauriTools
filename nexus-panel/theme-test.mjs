@@ -11,7 +11,7 @@ globalThis.localStorage = dom.window.localStorage;
 globalThis.getComputedStyle = dom.window.getComputedStyle;
 
 const tm = await import('./js/theme-manager.js');
-const { PRESET_THEMES, THEME_VARS, ACCENT_SWATCHES, ACCENT_SWATCHES_LIGHT, swatchFor } = await import('./js/themes.js');
+const { PRESET_THEMES, THEME_VARS, ACCENT_SWATCHES } = await import('./js/themes.js');
 const { installAdapter, setPolicy } = await import('./js/theme-normalizer.js');
 
 let pass = 0, fail = 0;
@@ -25,7 +25,7 @@ const root = document.documentElement;
 
 /* ---------- 1. 预设完整性 ---------- */
 console.log(`\n预设主题：${PRESET_THEMES.map((x) => x.name).join(' / ')}\n`);
-t('预设主题数量 ≥ 5', PRESET_THEMES.length >= 5, String(PRESET_THEMES.length));
+t('预设主题数量 ≥ 20', PRESET_THEMES.length >= 20, String(PRESET_THEMES.length));
 t('每个主题都有唯一 id', new Set(PRESET_THEMES.map((x) => x.id)).size === PRESET_THEMES.length);
 t('每个主题都声明了 base', PRESET_THEMES.every((x) => x.base === 'dark' || x.base === 'light'));
 
@@ -33,6 +33,40 @@ const REQUIRED = ['--bg', '--surface', '--sh-dark', '--sh-light', '--text', '--a
 t('每个主题都定义了核心变量',
   PRESET_THEMES.every((x) => REQUIRED.every((k) => x.vars[k])),
   PRESET_THEMES.filter((x) => !REQUIRED.every((k) => x.vars[k])).map((x) => x.id).join(',') || '全部齐备');
+
+// 每套主题的配色必须自洽：凹陷面比底色暗、双向阴影方向正确、文字对比度达标
+const hex2rgb = (h) => { const s = h.replace('#',''); return [0,2,4].map(i=>parseInt(s.slice(i,i+2),16)); };
+const lum = (h) => { const [r,g,b] = hex2rgb(h).map(v=>{const x=v/255; return x<=0.03928?x/12.92:((x+0.055)/1.055)**2.4;}); return 0.2126*r+0.7152*g+0.0722*b; };
+const contrast = (a,b) => { const la=lum(a), lb=lum(b); const [hi,lo]=la>lb?[la,lb]:[lb,la]; return (hi+0.05)/(lo+0.05); };
+
+let shadeBad = [], contrastBad = [];
+for (const x of PRESET_THEMES) {
+  const v = x.vars;
+  // 玻璃主题的半透明色不参与亮度比较
+  const solid = (c) => c && /^#[0-9a-f]{6}$/i.test(c);
+  // 纯黑底（lum≈0）无法再暗，凹陷与暗影只能往亮走 —— 这种是物理限制，豁免
+  const nearBlack = solid(v['--bg']) && lum(v['--bg']) < 0.005;
+  if (solid(v['--bg']) && solid(v['--surface-sunk']) && !nearBlack) {
+    if (lum(v['--surface-sunk']) >= lum(v['--bg'])) shadeBad.push(x.id + '(sunk 未凹陷)');
+  }
+  if (solid(v['--bg']) && solid(v['--sh-dark']) && solid(v['--sh-light']) && !nearBlack) {
+    if (lum(v['--sh-dark']) > lum(v['--bg'])) shadeBad.push(x.id + '(sh-dark 方向反)');
+    // 纯白底无法再亮，豁免 sh-light
+    if (lum(v['--sh-light']) < lum(v['--bg']) && lum(v['--bg']) < 0.95) {
+      shadeBad.push(x.id + '(sh-light 方向反)');
+    }
+  }
+  if (solid(v['--bg']) && solid(v['--text'])) {
+    const c = contrast(v['--text'], v['--bg']);
+    if (c < 4.5) contrastBad.push(`${x.id}(正文 ${c.toFixed(2)})`);
+  }
+  if (solid(v['--bg']) && solid(v['--text-dim'])) {
+    const c = contrast(v['--text-dim'], v['--bg']);
+    if (c < 3) contrastBad.push(`${x.id}(次级文字 ${c.toFixed(2)})`);
+  }
+}
+t('每套主题：凹陷面/阴影方向正确', shadeBad.length === 0, shadeBad.join(', ') || `${PRESET_THEMES.length} 套全部正确`);
+t('每套主题：正文对比度 ≥ 4.5、次级 ≥ 3', contrastBad.length === 0, contrastBad.join(', ') || '全部达标');
 
 // 风格覆盖
 const styles = new Set(PRESET_THEMES.map((x) => x.style));
@@ -153,110 +187,6 @@ t('主题变更可订阅', notified >= 2, String(notified));
 off();
 tm.applyTheme('neumorph-dark');
 t('取消订阅后不再通知', notified === 2, String(notified));
-
-/* ---------- 10. 主题色（第二个主色） ---------- */
-tm.resetColors();
-tm.applyTheme('agentflow-dark', null, null, { userInitiated: false });
-t('初始无自定义主题色', tm.getThemeColor() === null);
-
-tm.setThemeColor('#ff8f5b');
-t('setThemeColor 生效', cssVar('--accent-2') === '#ff8f5b', cssVar('--accent-2'));
-t('设主题色不影响强调色', cssVar('--accent') === '#4c8dff', cssVar('--accent'));
-
-tm.setAccent('#ff2e97');
-t('设强调色不影响主题色', cssVar('--accent-2') === '#ff8f5b', cssVar('--accent-2'));
-
-tm.applyTheme('neumorph-dark', null, null, { userInitiated: false });
-t('切主题保留强调色', cssVar('--accent') === '#ff2e97', cssVar('--accent'));
-t('切主题保留主题色', cssVar('--accent-2') === '#ff8f5b', cssVar('--accent-2'));
-
-const cy = tm.saveAsCustom('色测试');
-t('saveAsCustom 带强调色', cy.vars['--accent'] === '#ff2e97', cy.vars['--accent']);
-t('saveAsCustom 带主题色', cy.vars['--accent-2'] === '#ff8f5b', cy.vars['--accent-2']);
-
-/* 色板随基调切换：深色选亮青 → 切浅色自动压暗 → 切回恢复 */
-tm.resetColors();
-tm.applyTheme('agentflow-dark', null, null, { userInitiated: false });
-tm.setAccent('#48e0c0');
-tm.setThemeColor('#48e0c0');
-const LIGHT_CYAN = ACCENT_SWATCHES_LIGHT[2][0];
-tm.applyTheme('neumorph-light', null, null, { userInitiated: false });
-t('深色选亮青 → 切浅色自动压暗', tm.getAccent() === LIGHT_CYAN, tm.getAccent());
-t('主题色同样自动压暗', tm.getThemeColor() === LIGHT_CYAN, tm.getThemeColor());
-tm.applyTheme('agentflow-dark', null, null, { userInitiated: false });
-t('切回深色恢复亮青', tm.getAccent() === '#48e0c0', tm.getAccent());
-
-/* 完全自定义色（不在任何色板里）不应被改动 */
-tm.setAccent('#123456');
-tm.applyTheme('neumorph-light', null, null, { userInitiated: false });
-t('自定义色不被擅自改动', tm.getAccent() === '#123456', tm.getAccent());
-
-/* 浅色版色板在浅底上的对比度 */
-const lum = (h) => {
-  const v = [0, 2, 4].map((i) => parseInt(h.substr(i + 1, 2), 16) / 255)
-    .map((c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)));
-  return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
-};
-const ratio = (a, b) => {
-  const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
-  return (x + 0.05) / (y + 0.05);
-};
-const lightBg = '#e6e9ef';
-const minLight = Math.min(...ACCENT_SWATCHES_LIGHT.map(([c]) => ratio(c, lightBg)));
-t('浅色版色板在浅底上对比度均 ≥ 3', minLight >= 3, minLight.toFixed(2) + ':1');
-t('swatchFor 按基调返回对应色板',
-  swatchFor('light') === ACCENT_SWATCHES_LIGHT && swatchFor('dark') === ACCENT_SWATCHES);
-
-tm.resetColors();
-tm.applyTheme('agentflow-dark', null, null, { userInitiated: false });
-
-/* ---------- 11. 状态色与装饰色分离 ---------- */
-tm.resetColors();
-tm.applyTheme('agentflow-dark', null, null, { userInitiated: false });
-
-/* 最能暴露问题的场景：把两个装饰色都设成红色 */
-tm.setAccent('#ff2e97');
-tm.setThemeColor('#ff2e97');
-t('强调色可设为红', cssVar('--accent') === '#ff2e97', cssVar('--accent'));
-t('主题色可设为红', cssVar('--accent-2') === '#ff2e97', cssVar('--accent-2'));
-t('成功色不被主题色污染', cssVar('--ok') === '#22c55e', cssVar('--ok'));
-t('运行中色不被强调色污染', cssVar('--running') === '#4c8dff', cssVar('--running'));
-t('错误色保持独立', cssVar('--danger') === '#ef4444', cssVar('--danger'));
-t('警告色保持独立', cssVar('--warn') === '#f59e0b', cssVar('--warn'));
-
-/* 每个主题都得有状态色，且不受装饰色影响 */
-let sepOk = true, sepBad = '';
-for (const th of PRESET_THEMES) {
-  tm.applyTheme(th.id, null, '#ff0000', { userInitiated: false });
-  const ok = cssVar('--ok');
-  const run = cssVar('--running');
-  if (!ok || !run) { sepOk = false; sepBad = th.id + ' 缺状态色'; }
-  else if (ok === '#ff0000' || run === '#ff0000') { sepOk = false; sepBad = th.id + ' 状态色被污染'; }
-}
-t('7 个主题状态色均存在且独立', sepOk, sepBad);
-
-/* 状态色在各主题底色上的可读性 */
-const lumOf = (h) => {
-  const v = [0, 2, 4].map((i) => parseInt(h.substr(i + 1, 2), 16) / 255)
-    .map((c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)));
-  return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
-};
-const ratioOf = (a, b) => {
-  const [x, y] = [lumOf(a), lumOf(b)].sort((p, q) => q - p);
-  return (x + 0.05) / (y + 0.05);
-};
-let minStatus = Infinity;
-for (const th of PRESET_THEMES) {
-  const bg = th.vars['--surface'] || th.vars['--bg'];
-  if (!String(bg).startsWith('#')) continue;   // 半透明底跳过
-  for (const k of ['--ok', '--running', '--danger', '--warn']) {
-    minStatus = Math.min(minStatus, ratioOf(th.vars[k], bg));
-  }
-}
-t('状态色对比度均 ≥ 3', minStatus >= 3, minStatus.toFixed(2) + ':1');
-
-tm.resetColors();
-tm.applyTheme('agentflow-dark', null, null, { userInitiated: false });
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -4,38 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Nexus Panel</title>
-  <script>
-    /* 首屏防闪：CSS 变量系统就绪前先把底色铺上。
-       必须与 js/themes.js 的 --bg / --text 保持同步。
-       此前本文件（React 入口）完全没有这段，于是首屏会先闪一下白底。 */
-        (function () {
-      var PRELOAD = {
-        'neumorph-dark':  ['#2b2f36', '#d9dee8'],
-        'neumorph-light': ['#e6e9ef', '#3a4050'],
-        'midnight':       ['#232838', '#cdd4e6'],
-        'oled-flat':      ['#000000', '#e8e8ec'],
-        'neon-dark':      ['#12121c', '#eae6ff'],
-        'glass-dark':     ['#1b1f2b', '#eef1f8'],
-        'agentflow-dark': ['#0f1115', '#e6e9ef']
-      };
-      try {
-        var p = PRELOAD[localStorage.getItem('nexus:theme')];
-        if (!p) return;
-        var r = document.documentElement;
-        r.style.setProperty('--bg', p[0]);
-        r.style.setProperty('--text', p[1]);
-        /* 用注入 style 而非 r.style.background ——
-           内联样式优先级最高，主题初始化后不会自动更新，
-           切到别的主题时底色会卡在首屏那一版。
-           这里的选择器刻意带 #__preload 之外的低优先级，
-           真正生效的仍是 neumorphism.css 的 body{background:var(--bg)}。 */
-        var st = document.createElement('style');
-        st.id = 'nexus-preload-bg';
-        st.textContent = 'html{background:' + p[0] + '}';
-        document.head.appendChild(st);
-      } catch (e) { /* 存储不可用时忽略 */ }
-    })();
-  </script>
 </head>
 <body>
   <div id="root"></div>

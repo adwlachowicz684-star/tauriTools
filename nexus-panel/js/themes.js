@@ -14,26 +14,12 @@
 export const THEME_VARS = [
   '--bg', '--bg-image', '--surface', '--surface-sunk',
   '--sh-dark', '--sh-light',
-  '--text', '--text-dim', '--text-soft', '--text-mute',
+  '--text', '--text-dim', '--text-mute',
   '--accent', '--accent-2', '--accent-glow',
-  // 状态色：语义固定，不参与用户的主题色微调
-  '--ok', '--running', '--warn', '--danger',
-  '--surface-raised',
+  '--warn', '--danger',
   '--border', '--blur', '--hairline', '--mask',
   '--scroll-thumb', '--badge-fg',
-  // 形状语言：新拟态靠大圆角软化，扁平风该更克制。
-  // 主题未定义时自动回退 CSS 里的默认值（applyTo 会跳过 null），不影响既有主题。
-  '--r-xl', '--r-lg', '--r', '--r-sm',
 ];
-
-/**
- * 面板默认主题。
- *
- * 设为 Agent Flow 深色，与 agent_flow 插件的观感一致 ——
- * 注意这只是"看起来协调"，插件自身的样式靠 --af-* 前缀变量独立保证，
- * 切到别的主题时 agent_flow 也不会走样。
- */
-export const DEFAULT_THEME_ID = 'agentflow-dark';
 
 export const PRESET_THEMES = [
   {
@@ -53,17 +39,8 @@ export const PRESET_THEMES = [
       '--text-mute': '#5f6773',
       '--accent': '#5b8cff',
       '--accent-2': '#48e0c0',
-      '--ok': '#3ddc97', '--running': '#5b8cff',
-      '--danger': '#ff6b6b', '--warn': '#ffb454',
       '--border': 'transparent',
       '--blur': '0px',
-      // 新拟态用大圆角：26/20/14/9 的"软"感是这一风格的骨架。
-      // 必须显式声明 —— applyTo 只覆写主题已声明的变量，
-      // 缺失时会残留上一个主题的圆角值。
-      '--r-xl': '26px',
-      '--r-lg': '20px',
-      '--r': '14px',
-      '--r-sm': '9px',
     },
   },
   {
@@ -83,14 +60,8 @@ export const PRESET_THEMES = [
       '--text-mute': '#9aa1b1',
       '--accent': '#3b6fe0',
       '--accent-2': '#12a88c',
-      '--ok': '#1f8a5c', '--running': '#355194',
-      '--danger': '#c92a2a', '--warn': '#8a5a00',
       '--border': 'transparent',
       '--blur': '0px',
-      '--r-xl': '26px',
-      '--r-lg': '20px',
-      '--r': '14px',
-      '--r-sm': '9px',
     },
   },
   {
@@ -110,14 +81,8 @@ export const PRESET_THEMES = [
       '--text-mute': '#5a6382',
       '--accent': '#6f9cff',
       '--accent-2': '#5ad3c8',
-      '--ok': '#3ddc97', '--running': '#6c8cff',
-      '--danger': '#ff6b6b', '--warn': '#ffb454',
       '--border': 'transparent',
       '--blur': '0px',
-      '--r-xl': '26px',
-      '--r-lg': '20px',
-      '--r': '14px',
-      '--r-sm': '9px',
     },
   },
   {
@@ -138,15 +103,8 @@ export const PRESET_THEMES = [
       '--text-mute': '#5e5e68',
       '--accent': '#7c8cff',
       '--accent-2': '#3ddc97',
-      '--ok': '#3ddc97', '--running': '#5b8cff',
-      '--danger': '#ff6b6b', '--warn': '#ffb454',
       '--border': 'rgba(255,255,255,.09)',
       '--blur': '0px',
-      // 扁平风用小圆角，与 agentflow-dark 一致的 12/10/8/5
-      '--r-xl': '12px',
-      '--r-lg': '10px',
-      '--r': '8px',
-      '--r-sm': '5px',
     },
   },
   {
@@ -158,7 +116,7 @@ export const PRESET_THEMES = [
     vars: {
       '--bg': '#12121c',
       '--surface': '#1b1b2b',
-      '--surface-sunk': '#15151f',
+      '--surface-sunk': '#0e0e16',
       '--sh-dark': '#0c0c14',
       '--sh-light': '#23233a',
       '--text': '#eae6ff',
@@ -166,14 +124,8 @@ export const PRESET_THEMES = [
       '--text-mute': '#6b6490',
       '--accent': '#ff2e97',
       '--accent-2': '#00e5ff',
-      '--ok': '#3ddc97', '--running': '#8a7dff',
-      '--danger': '#ff6b8b', '--warn': '#ffb454',
       '--border': 'rgba(255,46,151,.16)',
       '--blur': '0px',
-      '--r-xl': '12px',
-      '--r-lg': '10px',
-      '--r': '8px',
-      '--r-sm': '5px',
     },
   },
   {
@@ -194,72 +146,354 @@ export const PRESET_THEMES = [
       '--text-mute': '#767e94',
       '--accent': '#7aa2ff',
       '--accent-2': '#5fe3d0',
-      '--ok': '#3ddc97', '--running': '#7aa2ff',
-      '--danger': '#ff6b6b', '--warn': '#ffb454',
       '--border': 'rgba(255,255,255,.12)',
       '--blur': '14px',
-      // 毛玻璃卡片同样走大圆角，与 neumorphism.css 的 :root 兜底一致
-      '--r-xl': '26px',
-      '--r-lg': '20px',
-      '--r': '14px',
-      '--r-sm': '9px',
+    },
+  },
+
+  /* ---------------- 深色 · 新拟态 ---------------- */
+  {
+    id: 'graphite',
+    name: '石墨灰',
+    desc: '中性深灰 · 不抢戏，长时间盯屏最舒服',
+    base: 'dark',
+    style: 'neumorph',
+    vars: {
+      '--bg': '#303236',
+      '--surface': '#303236',
+      '--surface-sunk': '#2c2e31',
+      '--sh-dark': '#222427',
+      '--sh-light': '#404347',
+      '--text': '#e3e5e8',
+      '--text-dim': '#9ba0a8',
+      '--text-mute': '#6b7078',
+      '--accent': '#7c9fff',
+      '--accent-2': '#6fd3a8',
+      '--border': 'transparent',
+      '--blur': '0px',
     },
   },
   {
-    /**
-     * Agent Flow 风格（Linear / Vercel 那一路开发者工具审美）
-     *
-     * 与其它主题的差别在**分层方式**：
-     *   · 新拟态 —— surface 与 bg 同色，靠双向阴影塑形
-     *   · 本主题 —— surface 比 bg 亮一档，靠**明度差**分层，阴影隐形
-     * 所以这里 --sh-* 被调到紧贴底色（视觉上消失），层次改由
-     * --surface 的明度差 + --border 的细描边承担。
-     *
-     * 配色取自 Tailwind 默认色板：accent=blue-500，accent-2=green-500，
-     * warn=amber-500，danger=red-500；背景接近 zinc-950 再压暗一档。
-     */
-    id: 'agentflow-dark',
-    name: 'Agent Flow 深色',
-    desc: 'Linear 风 · 蓝灰低饱和，明度分层，久看不累',
+    id: 'celadon',
+    name: '青瓷',
+    desc: '深墨绿 + 青瓷釉色，沉静有质感',
+    base: 'dark',
+    style: 'neumorph',
+    vars: {
+      '--bg': '#24302c',
+      '--surface': '#24302c',
+      '--surface-sunk': '#202b27',
+      '--sh-dark': '#18211e',
+      '--sh-light': '#314039',
+      '--text': '#d8e5df',
+      '--text-dim': '#8ba398',
+      '--text-mute': '#5f7569',
+      '--accent': '#6fcf97',
+      '--accent-2': '#a8d8b9',
+      '--border': 'transparent',
+      '--blur': '0px',
+    },
+  },
+  {
+    id: 'amber-dusk',
+    name: '暮橙',
+    desc: '深褐底 + 琥珀，暖意十足',
+    base: 'dark',
+    style: 'neumorph',
+    vars: {
+      '--bg': '#2e2723',
+      '--surface': '#2e2723',
+      '--surface-sunk': '#2a241f',
+      '--sh-dark': '#1f1a17',
+      '--sh-light': '#3d342e',
+      '--text': '#ece2d8',
+      '--text-dim': '#ab9c8d',
+      '--text-mute': '#7a6d61',
+      '--accent': '#ffa94d',
+      '--accent-2': '#ffd8a8',
+      '--border': 'transparent',
+      '--blur': '0px',
+    },
+  },
+  {
+    id: 'violet-dusk',
+    name: '紫暮',
+    desc: '深紫罗兰 + 品红点缀，优雅神秘',
+    base: 'dark',
+    style: 'neumorph',
+    vars: {
+      '--bg': '#2b2740',
+      '--surface': '#2b2740',
+      '--surface-sunk': '#272335',
+      '--sh-dark': '#1d1a2b',
+      '--sh-light': '#3a3557',
+      '--text': '#e2ddf0',
+      '--text-dim': '#9a92b8',
+      '--text-mute': '#6d6689',
+      '--accent': '#b48cff',
+      '--accent-2': '#ff8fd0',
+      '--border': 'transparent',
+      '--blur': '0px',
+    },
+  },
+  {
+    id: 'carbon-blue',
+    name: '碳晶蓝',
+    desc: '编辑器风格冷蓝，代码与数据友好',
+    base: 'dark',
+    style: 'neumorph',
+    vars: {
+      '--bg': '#1f2430',
+      '--surface': '#1f2430',
+      '--surface-sunk': '#1b202a',
+      '--sh-dark': '#141821',
+      '--sh-light': '#2b3242',
+      '--text': '#d4dae6',
+      '--text-dim': '#8492ab',
+      '--text-mute': '#5c6880',
+      '--accent': '#4d9de0',
+      '--accent-2': '#56d4c4',
+      '--border': 'transparent',
+      '--blur': '0px',
+    },
+  },
+  {
+    id: 'rose-noir',
+    name: '玫瑰黑金',
+    desc: '黑底 + 香槟金 + 玫瑰，低调奢华',
+    base: 'dark',
+    style: 'neumorph',
+    vars: {
+      '--bg': '#1c1618',
+      '--surface': '#1c1618',
+      '--surface-sunk': '#161113',
+      '--sh-dark': '#120d0f',
+      '--sh-light': '#2e2529',
+      '--text': '#f0e4e6',
+      '--text-dim': '#b09ba0',
+      '--text-mute': '#7d6a70',
+      '--accent': '#d4a574',
+      '--accent-2': '#c97b84',
+      '--border': 'transparent',
+      '--blur': '0px',
+    },
+  },
+  {
+    id: 'ocean-deep',
+    name: '深海',
+    desc: '深蓝绿 + 天青，通透清凉',
+    base: 'dark',
+    style: 'neumorph',
+    vars: {
+      '--bg': '#16262e',
+      '--surface': '#16262e',
+      '--surface-sunk': '#132227',
+      '--sh-dark': '#0f1a20',
+      '--sh-light': '#1f343d',
+      '--text': '#d5e6ec',
+      '--text-dim': '#84a3b0',
+      '--text-mute': '#5b7784',
+      '--accent': '#38bdf8',
+      '--accent-2': '#5eead4',
+      '--border': 'transparent',
+      '--blur': '0px',
+    },
+  },
+
+  /* ---------------- 浅色 · 新拟态 ---------------- */
+  {
+    id: 'paper',
+    name: '宣纸',
+    desc: '暖白纸感 + 朱砂点，久看不累',
+    base: 'light',
+    style: 'neumorph',
+    vars: {
+      '--bg': '#f0ece4',
+      '--surface': '#f0ece4',
+      '--surface-sunk': '#e7e2d8',
+      '--sh-dark': '#d4cfc4',
+      '--sh-light': '#faf8f3',
+      '--text': '#3d3830',
+      '--text-dim': '#6e675c',
+      '--text-mute': '#a09a8d',
+      '--accent': '#b8694d',
+      '--accent-2': '#6b8e5a',
+      '--border': 'transparent',
+      '--blur': '0px',
+    },
+  },
+  {
+    id: 'mint-morning',
+    name: '薄荷晨光',
+    desc: '清爽薄荷绿，明亮不刺眼',
+    base: 'light',
+    style: 'neumorph',
+    vars: {
+      '--bg': '#e8f0ec',
+      '--surface': '#e8f0ec',
+      '--surface-sunk': '#dfe9e3',
+      '--sh-dark': '#c8d6cf',
+      '--sh-light': '#f5faf8',
+      '--text': '#2f4038',
+      '--text-dim': '#647a6f',
+      '--text-mute': '#96a89e',
+      '--accent': '#1f8f6b',
+      '--accent-2': '#7cc4a8',
+      '--border': 'transparent',
+      '--blur': '0px',
+    },
+  },
+  {
+    id: 'sakura',
+    name: '樱花',
+    desc: '淡粉樱色，柔和温润',
+    base: 'light',
+    style: 'neumorph',
+    vars: {
+      '--bg': '#f5ebee',
+      '--surface': '#f5ebee',
+      '--surface-sunk': '#ede1e6',
+      '--sh-dark': '#ddccd2',
+      '--sh-light': '#fbf6f7',
+      '--text': '#4a3238',
+      '--text-dim': '#7d656c',
+      '--text-mute': '#ac979e',
+      '--accent': '#d63a68',
+      '--accent-2': '#f095b0',
+      '--border': 'transparent',
+      '--blur': '0px',
+    },
+  },
+  {
+    id: 'sandstone',
+    name: '砂岩',
+    desc: '大地色系，暖灰中带一点陶土',
+    base: 'light',
+    style: 'neumorph',
+    vars: {
+      '--bg': '#e9e4dc',
+      '--surface': '#e9e4dc',
+      '--surface-sunk': '#e0dad0',
+      '--sh-dark': '#cbc4b8',
+      '--sh-light': '#f6f3ee',
+      '--text': '#403a32',
+      '--text-dim': '#726a5e',
+      '--text-mute': '#a39a8b',
+      '--accent': '#b0601f',
+      '--accent-2': '#7d9b6a',
+      '--border': 'transparent',
+      '--blur': '0px',
+    },
+  },
+
+  /* ---------------- 扁平 ---------------- */
+  {
+    id: 'minimal-white',
+    name: '极简白',
+    desc: '纯白底 + 细描边，接近文档工具观感',
+    base: 'light',
+    style: 'flat',
+    vars: {
+      '--bg': '#ffffff',
+      '--surface': '#fbfbfc',
+      '--surface-sunk': '#f4f4f6',
+      '--sh-dark': '#ececef',
+      '--sh-light': '#f7f7f8',
+      '--text': '#2d2d31',
+      '--text-dim': '#65656e',
+      '--text-mute': '#9a9aa2',
+      '--accent': '#2f6fed',
+      '--accent-2': '#1fa97f',
+      '--border': 'rgba(0,0,0,.08)',
+      '--blur': '0px',
+    },
+  },
+  {
+    id: 'terminal',
+    name: '终端绿',
+    desc: '复古 CRT 荧光绿，极客味',
     base: 'dark',
     style: 'flat',
     vars: {
-      // 背景不用纯黑：#0f1115 是偏蓝的深灰，长时间盯着不刺眼
-      '--bg': '#0f1115',
-      // 面板比背景亮一档。
-      // 取值必须**等于** agent_flow 原生 --panel，这样插件在"跟随"模式下
-      // 选中本主题时，观感与原生模式逐像素一致（见 plugins/agent-flow/styles.css）。
-      '--surface': '#171a21',
-      // 凹陷底色 = agent_flow 原生输入框底色 #12151c
-      '--surface-sunk': '#12151c',
-      // 控件浮起底色 = agent_flow 原生按钮/select 底色 #222836。
-      // 少数主题会显式定义；其余由 theme-manager 从 surface 派生。
-      '--surface-raised': '#222836',
-      // 扁平风：阴影紧贴底色 → 视觉隐形，不参与塑形
-      '--sh-dark': '#0b0d11',
-      '--sh-light': '#13161b',
-      '--text': '#e6e9ef',
-      '--text-dim': '#8b93a7',
-      // 卡片内正文（比 text-dim 亮一档）= agent_flow 原生 --af-soft。
-      // 面板自身用的是 text-dim；插件的"卡片正文"语义更亮，故单独给一个变量，
-      // 这样跟随模式下选中本主题时与原生逐像素一致。
-      '--text-soft': '#c4cbd9',
-      // 比 Agent Flow 原值(#5f6773)提亮，保证弱化文本仍有 3.3:1 可读
-      '--text-mute': '#687285',
-      '--accent': '#4c8dff',
-      '--accent-2': '#22c55e',
-      '--ok': '#22c55e', '--running': '#4c8dff',
-      '--warn': '#f59e0b',
-      '--danger': '#ef4444',
-      // 边框极细且低对比：刚好看得见，不抢内容。
-      // = agent_flow 原生 --line
-      '--border': '#262b36',
+      '--bg': '#0d120e',
+      '--surface': '#131a15',
+      '--surface-sunk': '#090d0a',
+      '--sh-dark': '#070a08',
+      '--sh-light': '#161d18',
+      '--text': '#6ee78f',
+      '--text-dim': '#4a9e63',
+      '--text-mute': '#336b44',
+      '--accent': '#8affc1',
+      '--accent-2': '#ffd166',
+      '--border': 'rgba(110,231,143,.14)',
       '--blur': '0px',
-      // 扁平风用小圆角：新拟态的 26/20/14/9 偏"软"，Linear 一路更硬朗
-      '--r-xl': '12px',
-      '--r-lg': '10px',
-      '--r': '8px',
-      '--r-sm': '5px',
+    },
+  },
+  {
+    id: 'cyberpunk',
+    name: '赛博朋克',
+    desc: '霓虹黄 + 电光青，最高对比度',
+    base: 'dark',
+    style: 'flat',
+    vars: {
+      '--bg': '#0f0f1a',
+      '--surface': '#171728',
+      '--surface-sunk': '#0a0a12',
+      '--sh-dark': '#08080f',
+      '--sh-light': '#1f1f36',
+      '--text': '#f5f0ff',
+      '--text-dim': '#a89bd4',
+      '--text-mute': '#6f6599',
+      '--accent': '#f7ff3c',
+      '--accent-2': '#00fff0',
+      '--border': 'rgba(247,255,60,.18)',
+      '--blur': '0px',
+    },
+  },
+
+  /* ---------------- 玻璃 ---------------- */
+  {
+    id: 'glass-light',
+    name: '浅色玻璃',
+    desc: '白底毛玻璃 + 淡蓝粉光晕',
+    base: 'light',
+    style: 'glass',
+    vars: {
+      '--bg': '#eef2f7',
+      '--bg-image': 'radial-gradient(1000px 520px at 8% -8%, #cfe0ff 0%, transparent 58%), radial-gradient(820px 460px at 106% 108%, #ffd6e8 0%, transparent 55%)',
+      '--surface': 'rgba(255,255,255,.55)',
+      '--surface-sunk': 'rgba(0,0,0,.05)',
+      '--sh-dark': 'rgba(120,130,150,.22)',
+      '--sh-light': 'rgba(255,255,255,.70)',
+      '--text': '#2c3242',
+      '--text-dim': '#5f6878',
+      '--text-mute': '#8d95a5',
+      '--accent': '#3f74e0',
+      '--accent-2': '#1fa892',
+      '--border': 'rgba(255,255,255,.65)',
+      '--blur': '16px',
+    },
+  },
+  {
+    id: 'glass-aurora',
+    name: '极光玻璃',
+    desc: '强色彩渐变 + 毛玻璃，视觉冲击最强',
+    base: 'dark',
+    style: 'glass',
+    vars: {
+      '--bg': '#141024',
+      '--bg-image': 'radial-gradient(900px 520px at 6% -6%, #1e4d8c 0%, transparent 55%), radial-gradient(760px 460px at 100% 6%, #7b2d7d 0%, transparent 52%), radial-gradient(880px 500px at 50% 118%, #0f5f5c 0%, transparent 58%)',
+      '--surface': 'rgba(255,255,255,.09)',
+      '--surface-sunk': 'rgba(0,0,0,.26)',
+      '--sh-dark': 'rgba(0,0,0,.40)',
+      '--sh-light': 'rgba(255,255,255,.10)',
+      '--text': '#f2eefc',
+      '--text-dim': '#b3aad6',
+      '--text-mute': '#7f77a8',
+      '--accent': '#8ce0ff',
+      '--accent-2': '#ff9ad5',
+      '--border': 'rgba(255,255,255,.15)',
+      '--blur': '18px',
     },
   },
 ];
@@ -270,27 +504,3 @@ export const ACCENT_SWATCHES = [
   ['#3ddc97', '薄荷'], ['#b48cff', '紫'], ['#ff2e97', '品红'],
   ['#ff8f5b', '橙'], ['#ffb454', '琥珀'], ['#ff6b8b', '粉'],
 ];
-
-/**
- * 浅色底专用色板。
- *
- * 上面那套是为深色底挑的：同一个 #48e0c0 在深色上对比度 10.5，
- * 放到浅色底 (#e6e9ef) 上只有 1.4 —— 几乎看不清。
- * 所以浅色主题统一改用压暗后的版本，保证各色都能达到 3:1 以上。
- */
-function darken(hex, amount) {
-  const m = String(hex).match(/^#([0-9a-f]{6})$/i);
-  if (!m) return hex;
-  const h = m[1];
-  const f = (v) => Math.max(0, Math.min(255, Math.round(v * (1 - amount))));
-  return '#' + [0, 2, 4]
-    .map((i) => f(parseInt(h.substr(i, 2), 16)).toString(16).padStart(2, '0'))
-    .join('');
-}
-
-export const ACCENT_SWATCHES_LIGHT = ACCENT_SWATCHES.map(([c, l]) => [darken(c, 0.42), l]);
-
-/** 按面板基调取对应色板：深色底用原色，浅色底用压暗版 */
-export function swatchFor(base) {
-  return base === 'light' ? ACCENT_SWATCHES_LIGHT : ACCENT_SWATCHES;
-}

@@ -26,8 +26,16 @@
       const log = h('div.p-mono.p-muted', { style: { marginTop: '12px', lineHeight: '1.9' } });
       const say = (s) => log.appendChild(h('div', {}, s));
 
+      let step = await ctx.store.get('step', 1);
+
       const off = ctx.on('demo:counter', (v) => say(`收到同页插件广播：count=${v}`));
+      // 设置面板保存后推来的配置
+      const offCfg = ctx.on('demo-iframe:config', (cfg) => {
+        step = cfg?.step ?? step;
+        say(`配置已更新：步长 ${step}`);
+      });
       ctx.onDestroy(off);
+      ctx.onDestroy(offCfg);
 
       ctx.root.appendChild(
         h('div.p-card', {},
@@ -36,8 +44,8 @@
           h('div.p-grid', { style: { marginTop: '14px' } }, num),
           h('div.p-row', { style: { marginTop: '14px' } },
             h('button.p-btn.primary', {
-              onclick: async () => { num.querySelector('.v').textContent = String(++n); await ctx.store.set('n', n); ctx.setBadge(n); },
-            }, '＋ 1'),
+              onclick: async () => { n += step; num.querySelector('.v').textContent = String(n); await ctx.store.set('n', n); ctx.setBadge(n); },
+            }, '＋ ' + String(step)),
             h('button.p-btn', {
               onclick: async () => {
                 try { say('rust_ping → ' + await ctx.invoke('rust_ping', { payload: '来自沙箱' })); }
@@ -51,7 +59,56 @@
         ),
       );
 
+      // 快捷键：注册在沙箱自己的 window 上，焦点不在本 iframe 时收不到事件
+      ctx.shortcut('mod+j', () => { say('快捷键 mod+j'); ctx.toast('沙箱里按了 mod+j'); });
+      ctx.shortcut('alt+m', () => say('快捷键 alt+m'));
+
+      log.parentNode.appendChild(
+        h('div.p-muted', { style: { marginTop: '12px', lineHeight: '1.9' } },
+          '本沙箱注册了 mod+j、alt+m。焦点不在本插件时这些键不会响应 —— 浏览器天然隔离。',
+        ),
+      );
+
       say(`插件已挂载，mode = ${ctx.mode}`);
+    },
+
+    /* 插件自己的设置面板：第二个参数。
+       外壳会为它再开一个同样的沙箱页面（view='settings'），
+       所以这里面的样式与主视图互不影响，但 store / 事件总线是共享的。 */
+    async (ctx) => {
+      let step = await ctx.store.get('step', 1);
+
+      const opt = (n) => h('button.p-btn', {
+        class: step === n ? 'primary' : '',
+        style: { height: '30px', padding: '0 12px', fontSize: '12px' },
+        onclick: () => {
+          step = n;
+          [...box.querySelectorAll('button.p-btn')].forEach((b) => {
+            b.classList.toggle('primary', b.textContent.trim() === '＋' + n);
+          });
+        },
+      }, '＋' + n);
+
+      const box = h('div.p-row', {}, [1, 2, 5].map(opt));
+
+      ctx.root.appendChild(
+        h('div.p-card', {},
+          h('h2', {}, '沙箱插件设置'),
+          h('div.p-muted', { style: { lineHeight: '1.9' } },
+            '这个面板跑在另一个 iframe 里（view=settings），与主视图隔离但共享数据。'),
+          h('div.p-muted', { style: { margin: '12px 0 6px' } }, '计数步长'),
+          box,
+          h('div.p-row', { style: { marginTop: '16px' } },
+            h('button.p-btn.primary', {
+              onclick: async () => {
+                await ctx.store.set('step', step);
+                ctx.emit('demo-iframe:config', { step });
+                ctx.toast('已保存，主视图已同步', 'ok');
+              },
+            }, '保存'),
+          ),
+        ),
+      );
     });
   </script>
 </body>

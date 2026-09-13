@@ -4,18 +4,10 @@
  */
 import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 
-// 路径基准取自本文件位置，而非写死的绝对路径或 cwd：
-// 否则换目录名 / 换机器 / CI checkout 到别的名字时，所有 module 插件
-// 都会报「无法加载插件入口」，看起来像代码坏了，实际是测试路径问题。
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const INDEX_HTML = path.join(HERE, 'index.html');
-
-const html = fs.readFileSync(INDEX_HTML, 'utf8');
+const html = fs.readFileSync('./index.html', 'utf8');
 const dom = new JSDOM(html, {
-  url: pathToFileURL(INDEX_HTML).href,
+  url: 'file:///data/workspace/nexus-panel/index.html',
   pretendToBeVisual: true,
 });
 

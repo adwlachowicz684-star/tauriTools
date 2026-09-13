@@ -27,17 +27,6 @@ export const plugins = [
     description: '运行环境与插件清单',
   },
   {
-    id: 'agent-flow',
-    name: 'Agent Flow',
-    icon: '⟡',
-    type: 'iframe',
-    entry: './plugins/agent-flow/index.html',
-    version: '1.0.0',
-    theme: 'dark',
-    requiresBuild: true,
-    description: 'CLI 工作流编排器：多画布、触发器、条件分支、并发控制',
-  },
-  {
     id: 'demo-react',
     name: '示例·React 沙箱',
     icon: '◆',

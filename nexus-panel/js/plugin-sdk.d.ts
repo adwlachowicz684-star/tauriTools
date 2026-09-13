@@ -68,6 +68,8 @@ export interface PluginDefinition {
   name?: string;
   version?: string;
   mount(ctx: PluginContext): void | Promise<void | (() => void)>;
+  /** 插件自己的设置面板（可选）；声明后外壳标题栏出现「⚙ 设置」 */
+  settings?(ctx: PluginContext): void | Promise<void | (() => void)>;
   [k: string]: any;
 }
 
@@ -80,9 +82,19 @@ export function h(
   ...children: any[]
 ): HTMLElement;
 
-/** iframe 插件引导：bootIframePlugin(async (ctx) => { ... }) */
+/**
+ * iframe 插件引导
+ * bootIframePlugin(mainFn)              —— 只有主视图
+ * bootIframePlugin(mainFn, settingsFn)  —— 额外提供设置面板
+ */
+export const SHELL_SHORTCUTS: string[];
+export function parseCombo(combo: string): { key: string; mod: boolean; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean } | null;
+export function matchCombo(e: KeyboardEvent, spec: ReturnType<typeof parseCombo>): boolean;
+export function isMac(): boolean;
+
 export function bootIframePlugin(
   mountFn: (ctx: PluginContext) => Promise<(() => void) | void> | ((() => void) | void),
+  settingsFn?: (ctx: PluginContext) => Promise<(() => void) | void> | ((() => void) | void),
 ): Promise<PluginContext>;
 
 export function scopeCss(css: string, scope: string): string;

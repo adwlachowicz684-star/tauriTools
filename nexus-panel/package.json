@@ -16,12 +16,15 @@
     "test:adapt": "node adapt-test.mjs",
     "test": "node smoke-test.mjs",
     "test:theme": "node theme-test.mjs",
-    "test:react": "node smoke-react.mjs"
+    "test:react": "node smoke-react.mjs",
+    "test:settings": "node settings-test.mjs",
+    "test:shortcut": "node shortcut-test.mjs",
+    "test:external": "node external-test.mjs",
+    "test:bridge": "node bridge-test.mjs",
+    "test:adapt-seq": "node adapt-sequential-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-http": "^2",
-    "@xyflow/react": "^12.3.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
