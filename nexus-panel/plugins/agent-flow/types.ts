@@ -118,17 +118,90 @@ export type NodeData =
   | FsNodeData
   | UpdateNodeData;
 
-export const OP_META: Record<ConditionOp, { label: string; needsValue: boolean }> = {
-  contains:    { label: '包含',       needsValue: true },
-  notContains: { label: '不包含',     needsValue: true },
-  equals:      { label: '等于',       needsValue: true },
-  notEquals:   { label: '不等于',     needsValue: true },
-  startsWith:  { label: '开头是',     needsValue: true },
-  regex:       { label: '正则匹配',   needsValue: true },
-  nonEmpty:    { label: '非空',       needsValue: false },
-  isEmpty:     { label: '为空',       needsValue: false },
-  always:      { label: '总是',       needsValue: false },
+/** 算子分类，用于面板里分组展示 */
+export type OpCategory = 'text' | 'empty' | 'flow';
+
+export const OP_CATEGORY_META: Record<OpCategory, { label: string; hint: string }> = {
+  text:  { label: '文本比对', hint: '拿一段文本和给定值做比较' },
+  empty: { label: '空值判断', hint: '只看文本是否为空，不需要比较值' },
+  flow:  { label: '流程控制', hint: '不比对内容，直接决定走向' },
 };
+
+/**
+ * 算子元信息。
+ *
+ * hint 写的是"精确语义"而不是泛泛而谈 —— 好几个算子有反直觉行为
+ * （比较值为空时 contains 恒为真、equals 会先 trim），
+ * 这些必须在界面上告诉用户，否则配出来的规则和自己想的不一样。
+ */
+export const OP_META: Record<ConditionOp, {
+  label: string;
+  needsValue: boolean;
+  /** 单字符/双字符图标，面板与节点卡片共用 */
+  icon: string;
+  /** 精确语义，hover 与说明区显示 */
+  hint: string;
+  /** 展示用示例，形如「输出 包含 "error"」 */
+  example: string;
+  category: OpCategory;
+  /** 算子配色，随分类走 */
+  color: string;
+}> = {
+  contains: {
+    label: '包含', needsValue: true, icon: '⊇', category: 'text', color: '#4c8dff',
+    hint: '文本中能找到这个值即命中。注意：比较值留空时恒为真',
+    example: '输出 包含 "error"',
+  },
+  notContains: {
+    label: '不包含', needsValue: true, icon: '⊉', category: 'text', color: '#4c8dff',
+    hint: '文本中找不到这个值才命中。注意：比较值留空时恒为真',
+    example: '输出 不包含 "警告"',
+  },
+  equals: {
+    label: '等于', needsValue: true, icon: '=', category: 'text', color: '#06b6d4',
+    hint: '两端都去掉首尾空格后完全相同，区分大小写',
+    example: '输出 等于 "true"',
+  },
+  notEquals: {
+    label: '不等于', needsValue: true, icon: '≠', category: 'text', color: '#06b6d4',
+    hint: '去掉首尾空格后不相同，区分大小写',
+    example: '输出 不等于 "false"',
+  },
+  startsWith: {
+    label: '开头是', needsValue: true, icon: '↦', category: 'text', color: '#818cf8',
+    hint: '文本开头（已去首部空格）等于该值，区分大小写',
+    example: '输出 开头是 "OK"',
+  },
+  regex: {
+    label: '正则匹配', needsValue: true, icon: '.*', category: 'text', color: '#a855f7',
+    hint: '用 JS 正则匹配，如 ^err.*。正则写错只会跳过这条规则，不会中断流程',
+    example: '输出 匹配正则 "^ERR\d+"',
+  },
+  nonEmpty: {
+    label: '非空', needsValue: false, icon: '●', category: 'empty', color: '#f59e0b',
+    hint: '文本去掉首尾空格后仍有内容',
+    example: '输出 非空',
+  },
+  isEmpty: {
+    label: '为空', needsValue: false, icon: '○', category: 'empty', color: '#f59e0b',
+    hint: '文本为空，或只有空格换行',
+    example: '输出 为空',
+  },
+  always: {
+    label: '总是', needsValue: false, icon: '✓', category: 'flow', color: '#22c55e',
+    hint: '无条件命中。放在最后一条可当作兜底，或用于强制走某分支',
+    example: '总是走这条分支',
+  },
+};
+
+/** 按分类列出算子，供面板分组渲染 */
+export function opsByCategory(): Array<{ category: OpCategory; ops: ConditionOp[] }> {
+  const all = Object.keys(OP_META) as ConditionOp[];
+  return (Object.keys(OP_CATEGORY_META) as OpCategory[]).map((c) => ({
+    category: c,
+    ops: all.filter((op) => OP_META[op].category === c),
+  }));
+}
 
 let ruleSeq = 0;
 

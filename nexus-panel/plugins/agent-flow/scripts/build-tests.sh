@@ -7,8 +7,12 @@ OUT="${OUT:-/tmp/aftest}"
 mkdir -p "$OUT"
 S="python3 scripts/strip-ts.py"
 
+# 注意：每个文件都带上 ../types=./types.mjs。
+# condition.ts 会 import 运行时的 OP_META / DEFAULT_BRANCH（不只是 type），
+# 少了这条映射就会解析到 /tmp/types 而报 ERR_MODULE_NOT_FOUND。
 for f in topo template condition cron canvasOps parallel canvasStore loop updates; do
-  [ -f "engine/$f.ts" ] && $S "engine/$f.ts" "$OUT/$f.mjs" >/dev/null
+  [ -f "engine/$f.ts" ] && $S "engine/$f.ts" "$OUT/$f.mjs" \
+    --import-map ../types=./types.mjs >/dev/null
 done
 # types.ts 里有运行时值（isCondition / DEFAULT_BRANCH / TRIGGER_META），也要生成
 $S types.ts "$OUT/types.mjs" >/dev/null

@@ -3,6 +3,7 @@ import {
   CLI_META, TRIGGER_META, DEFAULT_BRANCH, OP_META, triggerKindsOf,
   makeRule, makeParallelRule,
   isCondition, isTrigger, isParallel, isLoop, isFs, isUpdate, UPDATE_SOURCE_META,
+  opsByCategory, OP_CATEGORY_META,
   LOOP_MODE_META, FS_OP_META, MAX_LOOP_ITERATIONS,
   type CliKind, type ConditionOp, type ConditionNodeData,
   type TriggerKind, type TriggerConfig, type TriggerNodeData,
@@ -12,6 +13,9 @@ import {
   type UpdateNodeData, type BiliMode,
 } from '../types';
 import { fetchText } from '../lib/tauri';
+import {
+  validateRule, validateCondition, simulateCondition, describeRuleParts,
+} from '../engine/condition';
 import { parseFeed, parseBiliApi, detectUpdate, sortByNewest, extractBiliUid, biliApiUrl, BILI_REFERER } from '../engine/updates';
 import type { FlowEdge, FlowNode } from '../flowTypes';
 
@@ -141,6 +145,9 @@ function ConditionInspector({ node, edges, onChange }: {
   const rules = d.rules ?? [];
   const upstream = edges.filter((e) => e.target === node.id).map((e) => e.source);
 
+  /** 试跑用的示例文本 */
+  const [sample, setSample] = useState('');
+
   const patchRules = (next: typeof rules) => onChange(node.id, { rules: next });
 
   const updateRule = (rid: string, patch: Partial<(typeof rules)[number]>) =>
@@ -161,6 +168,21 @@ function ConditionInspector({ node, edges, onChange }: {
     patchRules(next);
   };
 
+  const issues = validateCondition(d);
+  const sim = sample ? simulateCondition(d, sample) : null;
+
+  /** 试跑结果：规则 id → 命中状态；含兜底 */
+  const statusOf = (rid: string): boolean | null | undefined => {
+    if (!sim) return undefined;
+    const hit = sim.results.find((r) => r.ruleId === rid);
+    if (!hit) return undefined;
+    // 命中即停：第一条 true 之后的规则不再参与
+    const firstTrue = sim.results.findIndex((r) => r.matched === true);
+    const idx = sim.results.indexOf(hit);
+    if (firstTrue >= 0 && idx > firstTrue) return undefined;
+    return hit.matched;
+  };
+
   return (
     <aside className="inspector">
       <label className="field">
@@ -168,14 +190,53 @@ function ConditionInspector({ node, edges, onChange }: {
         <input value={d.label} onChange={(e) => onChange(node.id, { label: e.target.value })} />
       </label>
 
+      {/* ---------- 可视化试跑 ---------- */}
       <div className="field">
-        <span>判定规则（从上到下，命中第一条即走该分支）</span>
+        <span>试跑（可选）</span>
+        <textarea
+          className="cond-sample"
+          rows={3}
+          value={sample}
+          placeholder="粘一段示例文本进来，立刻看到会命中哪条分支"
+          onChange={(e) => setSample(e.target.value)}
+        />
+        {sim && (
+          <div className="cond-sim">
+            会走：
+            <strong className={sim.branchId === DEFAULT_BRANCH ? 'warn' : (sim.branchId ? 'ok' : 'bad')}>
+              {sim.branchLabel}
+            </strong>
+            {sim.branchId === null && <span className="dim">（下游全部跳过）</span>}
+          </div>
+        )}
+        <small className="dim">
+          用这段文本逐条试算子，不改变任何配置。规则卡片上会标出命中 / 未命中
+        </small>
+      </div>
+
+      {/* ---------- 规则列表 ---------- */}
+      <div className="field">
+        <span>判定规则（从上到下，命中第一条即停止）</span>
         {rules.length === 0 && <div className="dim">还没有规则，点下面按钮添加</div>}
 
         {rules.map((r, i) => {
           const needsValue = OP_META[r.op]?.needsValue ?? true;
+          const meta = OP_META[r.op];
+          const parts = describeRuleParts(r);
+          const ruleIssues = validateRule(r);
+          const st = statusOf(r.id);
+
           return (
-            <div key={r.id} className="rule-card">
+            <div
+              key={r.id}
+              className={
+                'rule-card' +
+                (st === true ? ' hit' : '') +
+                (st === false ? ' miss' : '') +
+                (st === null ? ' broken' : '')
+              }
+            >
+              {/* 头：序号 + 分支名 + 上下移动 + 删除 */}
               <div className="rule-row">
                 <span className="rule-idx">{i + 1}</span>
                 <input
@@ -184,20 +245,65 @@ function ConditionInspector({ node, edges, onChange }: {
                   placeholder="分支名"
                   onChange={(e) => updateRule(r.id, { label: e.target.value })}
                 />
-                <button className="mini" onClick={() => moveRule(i, -1)} disabled={i === 0}>↑</button>
-                <button className="mini" onClick={() => moveRule(i, 1)} disabled={i === rules.length - 1}>↓</button>
+                {st === true && <span className="rule-flag hit" title="这条命中">命中</span>}
+                {st === false && <span className="rule-flag miss" title="未命中">未中</span>}
+                {st === null && <span className="rule-flag broken" title="配置有误，运行时跳过">跳过</span>}
+                <button className="mini" onClick={() => moveRule(i, -1)} disabled={i === 0} title="上移（越靠前越优先）">↑</button>
+                <button className="mini" onClick={() => moveRule(i, 1)} disabled={i === rules.length - 1} title="下移">↓</button>
                 <button className="mini danger" onClick={() => removeRule(r.id)}>删</button>
               </div>
 
+              {/* 可视化表达式：来源 chip + 算子徽章 + 值 chip */}
+              <div className="cond-expr">
+                <span className="cond-chip src">{parts.sourceText}</span>
+                <span className="cond-op-badge" style={{ borderColor: parts.opColor, color: parts.opColor }}>
+                  <span className="cond-op-badge-icon">{parts.opIcon}</span>
+                  {parts.opLabel}
+                </span>
+                {needsValue && (
+                  <span className={'cond-chip val' + (r.value ? '' : ' empty')}>
+                    {r.value ? `「${r.value}」` : '（未填）'}
+                  </span>
+                )}
+              </div>
+
+              {/* 算子选择：分类图标网格，替代纯文字下拉 */}
+              <div className="cond-ops">
+                {opsByCategory().map(({ category, ops }) => (
+                  <div key={category} className="cond-op-group">
+                    <div className="cond-op-group-title" title={OP_CATEGORY_META[category].hint}>
+                      {OP_CATEGORY_META[category].label}
+                    </div>
+                    <div className="cond-op-items">
+                      {ops.map((op) => {
+                        const m = OP_META[op];
+                        const on = r.op === op;
+                        return (
+                          <button
+                            key={op}
+                            type="button"
+                            className={'cond-op-btn' + (on ? ' on' : '')}
+                            style={on ? { borderColor: m.color, color: m.color, background: `${m.color}1f` } : undefined}
+                            title={`${m.hint}\n例：${m.example}`}
+                            onClick={() => updateRule(r.id, { op })}
+                          >
+                            <span className="cond-op-btn-icon">{m.icon}</span>
+                            {m.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* 参数 */}
               <div className="rule-row">
-                <select value={r.op} onChange={(e) => updateRule(r.id, { op: e.target.value as ConditionOp })}>
-                  {OPS.map((op) => <option key={op} value={op}>{OP_META[op].label}</option>)}
-                </select>
                 {needsValue && (
                   <input
                     className="rule-value"
                     value={r.value}
-                    placeholder="比较值"
+                    placeholder={meta.example}
                     onChange={(e) => updateRule(r.id, { value: e.target.value })}
                   />
                 )}
@@ -207,10 +313,18 @@ function ConditionInspector({ node, edges, onChange }: {
                 <small className="dim">判定来源</small>
                 <select value={r.source} onChange={(e) => updateRule(r.id, { source: e.target.value })}>
                   <option value="">全部上游输出（拼接）</option>
-                  <option value="input">全局输入 {'{{input}}'}</option>
+                  <option value="input">全局输入 {{'{{input}}'}}</option>
                   {upstream.map((u) => <option key={u} value={u}>节点 {u} 的输出</option>)}
                 </select>
               </div>
+
+              {/* 算子语义提示 */}
+              <div className="cond-hint">{meta.hint}</div>
+
+              {/* 配置问题 */}
+              {ruleIssues.map((it, k) => (
+                <div key={k} className={'cond-issue ' + it.level}>{it.message}</div>
+              ))}
             </div>
           );
         })}
@@ -227,8 +341,18 @@ function ConditionInspector({ node, edges, onChange }: {
         <span>启用兜底分支（所有规则都未命中时走 {DEFAULT_BRANCH}）</span>
       </label>
 
+      {/* ---------- 整体体检 ---------- */}
+      {issues.length > 0 && (
+        <div className="cond-issues">
+          <div className="cond-issues-title">配置提示</div>
+          {issues.map((it, k) => (
+            <div key={k} className={'cond-issue ' + it.level}>{it.message}</div>
+          ))}
+        </div>
+      )}
+
       <div className="field">
-        <span>判定结果</span>
+        <span>上次判定结果</span>
         <pre className="out">{d.output || '（尚未运行）'}</pre>
         {d.error && <pre className="out err">{d.error}</pre>}
       </div>

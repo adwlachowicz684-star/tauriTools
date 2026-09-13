@@ -604,3 +604,106 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .upd-test.yes { border-color: var(--af-ok); color: var(--af-ok); }
 .upd-test.no  { border-color: var(--af-line); color: var(--af-dim); }
 .upd-test.err { border-color: var(--af-bad); color: var(--af-bad); }
+
+/* ---------------- 条件节点：可视化构建器 ---------------- */
+
+/* 试跑输入 */
+.cond-sample {
+  width: 100%; resize: vertical;
+  font-family: ui-monospace, monospace; font-size: 11.5px; line-height: 1.55;
+  padding: 7px 9px; border-radius: 6px;
+  border: 1px solid var(--af-line); background: var(--af-sunk);
+  color: var(--af-fg);
+}
+.cond-sample:focus { outline: none; border-color: var(--af-accent); }
+
+.cond-sim {
+  margin-top: 6px; padding: 6px 9px; border-radius: 6px;
+  font-size: 12px; color: var(--af-soft);
+  border: 1px solid var(--af-line); background: var(--af-sunk);
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.cond-sim strong { font-weight: 600; }
+.cond-sim strong.ok { color: var(--af-ok); }
+.cond-sim strong.warn { color: var(--af-warn); }
+.cond-sim strong.bad { color: var(--af-bad); }
+
+/* 表达式预览：来源 · 算子 · 值 */
+.cond-expr {
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  margin: 6px 0; padding: 6px 8px; border-radius: 6px;
+  border: 1px dashed var(--af-line); background: var(--af-sunk);
+}
+.cond-chip {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--af-line); color: var(--af-soft);
+  background: var(--af-panel); max-width: 45%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cond-chip.src { border-color: #38bdf8; color: #38bdf8; }
+.cond-chip.val { border-color: #a855f7; color: #c9a6f7; font-family: ui-monospace, monospace; }
+.cond-chip.val.empty { border-color: var(--af-warn); color: var(--af-warn); border-style: dashed; }
+
+.cond-op-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; font-weight: 600; padding: 2px 9px;
+  border-radius: 999px; border: 1px solid currentColor;
+  background: var(--af-panel);
+}
+.cond-op-badge-icon { font-family: ui-monospace, monospace; font-size: 12px; }
+
+/* 节点卡片内的算子也带图标（沿用原有紫色风格，只是加了图标间距） */
+.cond-rule .cond-op { display: inline-flex; align-items: center; gap: 4px; }
+.cond-rule .cond-op-icon { font-family: ui-monospace, monospace; font-size: 11px; opacity: .85; }
+
+/* 算子选择：分类按钮网格 */
+.cond-ops { display: flex; flex-direction: column; gap: 5px; margin: 6px 0; }
+.cond-op-group { display: flex; align-items: flex-start; gap: 6px; }
+.cond-op-group-title {
+  flex: none; width: 52px; padding-top: 4px;
+  font-size: 10.5px; color: var(--af-dim); cursor: help;
+}
+.cond-op-items { flex: 1; display: flex; flex-wrap: wrap; gap: 4px; }
+.cond-op-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 9px; border-radius: 5px; cursor: pointer;
+  font-size: 11.5px; color: var(--af-dim);
+  border: 1px solid var(--af-line); background: var(--af-sunk);
+  transition: border-color .12s, color .12s, background .12s;
+}
+.cond-op-btn:hover { border-color: var(--af-soft); color: var(--af-fg); }
+.cond-op-btn.on { font-weight: 600; }
+.cond-op-btn-icon { font-family: ui-monospace, monospace; font-size: 11.5px; }
+
+/* 算子语义提示 */
+.cond-hint {
+  font-size: 10.5px; line-height: 1.5; color: var(--af-dim);
+  padding: 4px 7px; border-left: 2px solid var(--af-line);
+  margin-top: 4px;
+}
+
+/* 配置问题 */
+.cond-issue {
+  font-size: 11px; line-height: 1.5; margin-top: 4px;
+  padding: 4px 8px; border-radius: 5px; border-left: 2px solid;
+}
+.cond-issue.warn { color: var(--af-warn); border-color: var(--af-warn); background: rgba(245, 158, 11, .08); }
+.cond-issue.error { color: var(--af-bad); border-color: var(--af-bad); background: rgba(239, 68, 68, .08); }
+
+.cond-issues {
+  margin-top: 6px; padding: 7px 9px; border-radius: 6px;
+  border: 1px solid var(--af-line); background: var(--af-sunk);
+}
+.cond-issues-title { font-size: 11px; color: var(--af-soft); margin-bottom: 4px; font-weight: 600; }
+
+/* 试跑结果在规则卡片上的反馈 */
+.rule-card.hit { border-color: var(--af-ok); box-shadow: 0 0 0 1px rgba(34, 197, 94, .25); }
+.rule-card.miss { opacity: .72; }
+.rule-card.broken { border-color: var(--af-bad); }
+.rule-flag {
+  font-size: 10px; padding: 1px 6px; border-radius: 999px; flex: none;
+  border: 1px solid currentColor;
+}
+.rule-flag.hit { color: var(--af-ok); }
+.rule-flag.miss { color: var(--af-dim); }
+.rule-flag.broken { color: var(--af-bad); }
