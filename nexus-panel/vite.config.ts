@@ -8,12 +8,18 @@ const r = (p: string) => resolve(__dirname, p);
 // 多页应用：外壳 + 每个 iframe 插件各有一个 HTML 入口。
 // 构建后 dist/index.html（外壳）、dist/plugins/<id>/index.html（插件页面），
 // 与 Tauri 的 frontendDist 完美对应。
-const inputs = {
+//
+// 自动扫描 plugins/<id>/index.html —— 新增插件不用再来改这里。
+const inputs: Record<string, string> = {
   index: r('index.react.html'),
-  'plugins/home/index': r('plugins/home/index.html'),
-  'plugins/settings/index': r('plugins/settings/index.html'),
-  'plugins/demo-react/index': r('plugins/demo-react/index.html'),
 };
+try {
+  for (const d of fsSync.readdirSync(r('plugins'), { withFileTypes: true })) {
+    if (!d.isDirectory()) continue;
+    const html = resolve(r('plugins'), d.name, 'index.html');
+    if (fsSync.existsSync(html)) inputs[`plugins/${d.name}/index`] = html;
+  }
+} catch { /* plugins 目录缺失时忽略 */ }
 
 /**
  * Vite 的多页输出会沿用源文件名，这里把 index.react.html 改成 index.html，

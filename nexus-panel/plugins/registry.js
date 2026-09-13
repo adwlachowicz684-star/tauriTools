@@ -27,6 +27,16 @@ export const plugins = [
     description: '运行环境与插件清单',
   },
   {
+    id: 'agent-flow',
+    name: 'Agent Flow',
+    icon: '⧉',
+    type: 'iframe',
+    entry: './plugins/agent-flow/index.html',
+    // React + TSX，需要 Vite；无构建模式下自动隐藏
+    requiresBuild: true,
+    description: '工作流编排画布（自带深色 UI）',
+  },
+  {
     id: 'demo-react',
     name: '示例·React 沙箱',
     icon: '◆',
