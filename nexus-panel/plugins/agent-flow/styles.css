@@ -707,3 +707,75 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .rule-flag.hit { color: var(--af-ok); }
 .rule-flag.miss { color: var(--af-dim); }
 .rule-flag.broken { color: var(--af-bad); }
+
+/* ---------------- 条件节点：多条件（AND / OR） ---------------- */
+
+/* 规则整体停用 */
+.rule-card.off { opacity: .55; border-style: dashed; }
+.rule-toggle { display: inline-flex; align-items: center; flex: none; cursor: pointer; }
+.rule-toggle input { cursor: pointer; margin: 0; }
+
+/* 表达式预览里的逻辑连接词 */
+.cond-expr-item { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.cond-logic {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .5px;
+  padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor;
+  background: var(--af-panel);
+}
+
+/* AND / OR 切换 */
+.cond-logic-switch {
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  margin: 2px 0 6px;
+}
+.cond-logic-btn {
+  font-size: 11px; padding: 2px 9px; border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--af-line); background: var(--af-sunk); color: var(--af-dim);
+  transition: border-color .12s, color .12s, background .12s;
+}
+.cond-logic-btn:hover { border-color: var(--af-soft); color: var(--af-fg); }
+.cond-logic-btn.on { font-weight: 600; }
+
+/* 条件列表 */
+.cond-list {
+  display: flex; flex-direction: column; gap: 5px;
+  margin-top: 5px; padding-left: 6px;
+  border-left: 2px solid var(--af-line);
+}
+.cond-item {
+  padding: 5px 7px; border-radius: 5px;
+  border: 1px solid var(--af-line); background: var(--af-sunk);
+}
+.cond-item.off { opacity: .5; border-style: dashed; }
+
+.cond-item-head { display: flex; align-items: center; gap: 5px; }
+.cond-item-idx {
+  flex: none; width: 15px; font-size: 10.5px; color: var(--af-dim);
+  font-family: ui-monospace, monospace;
+}
+.cond-op-select {
+  flex: 1; min-width: 0;
+  font-size: 11.5px; padding: 2px 6px; border-radius: 5px;
+  border: 1px solid var(--af-line); background: var(--af-panel); color: var(--af-fg);
+}
+.cond-op-select optgroup { color: var(--af-dim); font-style: normal; }
+.cond-op-select option { color: var(--af-fg); background: var(--af-panel); }
+
+.cond-item-body { display: flex; gap: 5px; margin-top: 5px; }
+.cond-src-select {
+  flex: none; max-width: 45%;
+  font-size: 11px; padding: 2px 5px; border-radius: 5px;
+  border: 1px solid var(--af-line); background: var(--af-panel); color: var(--af-dim);
+}
+
+.cond-add {
+  align-self: flex-start; margin-top: 2px;
+  font-size: 11px; padding: 3px 9px; border-radius: 5px; cursor: pointer;
+  border: 1px dashed var(--af-line); background: transparent; color: var(--af-dim);
+  transition: border-color .12s, color .12s;
+}
+.cond-add:hover { border-color: var(--af-accent); color: var(--af-accent); }
+
+/* 关闭的元素：chip 也跟着变淡 */
+.cond-chip.off { opacity: .45; text-decoration: line-through; }
+.cond-op-badge.off { opacity: .45; }

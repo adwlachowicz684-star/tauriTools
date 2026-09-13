@@ -81,10 +81,15 @@ export type ConditionOp =
   | 'isEmpty'
   | 'always';       // 恒真，用作兜底/保底分支
 
-export type ConditionRule = {
+/**
+ * 一条原子条件。
+ *
+ * 规则（ConditionRule）可以包含多条 ConditionItem，用 AND / OR 组合。
+ * 拆成独立对象后，每条都能单独开关 —— 调试时临时停掉一条条件，
+ * 比删掉再重建省事得多。
+ */
+export type ConditionItem = {
   id: string;
-  /** 界面上显示的分支名 */
-  label: string;
   op: ConditionOp;
   /** 比较值；nonEmpty / isEmpty / always 不需要 */
   value: string;
@@ -95,7 +100,83 @@ export type ConditionRule = {
    * - 空字符串表示拼接全部上游输出
    */
   source: string;
+  /** 关闭后这条条件不参与组合。默认视为启用（undefined 即启用） */
+  enabled?: boolean;
 };
+
+/** 多条条件之间的组合方式 */
+export type ConditionLogic = 'and' | 'or';
+
+export const LOGIC_META: Record<ConditionLogic, {
+  label: string;
+  short: string;
+  hint: string;
+  color: string;
+}> = {
+  and: {
+    label: '同时满足',
+    short: 'AND',
+    hint: '所有启用的条件都为真，这条规则才命中',
+    color: '#06b6d4',
+  },
+  or: {
+    label: '任一满足',
+    short: 'OR',
+    hint: '任意一个启用的条件为真，这条规则就命中',
+    color: '#a855f7',
+  },
+};
+
+export type ConditionRule = {
+  id: string;
+  /** 界面上显示的分支名 */
+  label: string;
+
+  /* ---------- 单条件字段（保证旧数据兼容） ---------- */
+  op: ConditionOp;
+  /** 比较值；nonEmpty / isEmpty / always 不需要 */
+  value: string;
+  /**
+   * 判定哪个来源的文本：
+   * - 某上游节点 id
+   * - 'input' 表示全局输入
+   * - 空字符串表示拼接全部上游输出
+   */
+  source: string;
+
+  /* ---------- 多条件（新增） ---------- */
+  /**
+   * 多条条件。存在且非空时以此为准；否则回退到 op/value/source 单条件。
+   *
+   * 之所以不直接把 op/value/source 换成数组：老画布已经存了大量单条件规则，
+   * 迁移成本高于收益。归一化交给 ruleConditions() 处理。
+   */
+  conditions?: ConditionItem[];
+  /** 条件间的组合方式，默认 and */
+  logic?: ConditionLogic;
+  /**
+   * 规则开关。关闭后整条规则不参与判定（等同于不存在，会继续看下一条）。
+   * undefined 视为启用。
+   */
+  enabled?: boolean;
+};
+
+/**
+ * 归一化取一条规则的条件列表。
+ *
+ * 无论数据是新版多条件还是老版单条件，都返回统一结构，
+ * 判定与界面渲染都只认这个结果 —— 避免两处各写一套兼容逻辑而悄悄分叉。
+ */
+export function ruleConditions(rule: ConditionRule): ConditionItem[] {
+  if (rule.conditions && rule.conditions.length > 0) return rule.conditions;
+  return [{
+    id: `${rule.id}:0`,
+    op: rule.op,
+    value: rule.value ?? '',
+    source: rule.source ?? '',
+    enabled: true,
+  }];
+}
 
 export type ConditionNodeData = {
   kind: 'condition';
@@ -213,6 +294,24 @@ export function makeRule(partial: Partial<ConditionRule> = {}): ConditionRule {
     op: partial.op ?? 'contains',
     value: partial.value ?? '',
     source: partial.source ?? '',
+    // 不默认生成 conditions：单条件就够用时保持数据最简，
+    // 需要多条件时由 UI 调 addCondition() 展开
+    conditions: partial.conditions,
+    logic: partial.logic ?? 'and',
+    enabled: partial.enabled ?? true,
+  };
+}
+
+/** 新建一条原子条件 */
+let condSeq = 0;
+export function makeCondition(partial: Partial<ConditionItem> = {}): ConditionItem {
+  condSeq += 1;
+  return {
+    id: partial.id ?? `c${condSeq}_${Date.now().toString(36)}`,
+    op: partial.op ?? 'contains',
+    value: partial.value ?? '',
+    source: partial.source ?? '',
+    enabled: partial.enabled ?? true,
   };
 }
 
