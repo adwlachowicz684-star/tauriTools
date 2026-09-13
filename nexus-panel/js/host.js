@@ -52,10 +52,12 @@ export async function loadRegistry() {
     console.warn('[registry] registry.js 加载失败', e);
   }
   if (!list.length) {
-    try {
-      const res = await fetch(new URL('../plugins/registry.json', import.meta.url) /* @vite-ignore */ .href);
-      list = (await res.json()).plugins || [];
-    } catch { /* ignore */ }
+    // 这里原本有一段 registry.json 的兜底：fetch 一个 json 再读 plugins。
+    // 但仓库里从来没有 registry.json（只有 registry.js），所以那条路径
+    // 从未成功过 —— 平时是死代码，真出问题时又必然一起失败，
+    // 还会让构建多一条 "doesn't exist at build time" 的警告。
+    // 删掉它，改由下面的控制台输出把失败暴露出来。
+    console.error('[registry] registry.js 未能提供插件列表，面板将没有插件可显示');
   }
   try {
     const custom = JSON.parse(localStorage.getItem('nexus:custom-plugins') || '[]');
