@@ -157,6 +157,8 @@ bootIframePlugin(async (ctx) => {
       B('SVG', () => exportSvg(), { title: '导出为矢量 SVG' }),
       B('PNG', () => exportPng(), { title: '导出整幅 PNG' }),
       B('新建', guard('新建画布', () => addSheet()), { title: '新建画布' }),
+      B('复制', guard('复制画布', () => duplicateSheet(workbook.activeId)),
+        { title: '复制当前画布（含内容与主题布局）' }),
     ));
 
     toolbar.appendChild(h('div.mm-sep', {}));
@@ -236,6 +238,10 @@ bootIframePlugin(async (ctx) => {
         ondblclick: guard('重命名', () => renameSheet(s.id)),
         draggable: true,                       // 拖拽排序
       }, s.title);
+      btn.appendChild(h('span.x', {
+        onclick: (e) => { e.stopPropagation(); guard('复制画布', () => duplicateSheet(s.id))(); },
+        title: '复制该画布',
+      }, '⧉'));
       if (workbook.sheets.length > 1) {
         btn.appendChild(h('span.x', {
           onclick: (e) => { e.stopPropagation(); guard('删除画布', () => removeSheet(s.id))(); },
@@ -306,6 +312,24 @@ bootIframePlugin(async (ctx) => {
     renderTabs();
     await loadSheet();     // 必须等载入完成再落盘，否则存的是旧内容
     await persist();
+  }
+
+  /**
+   * 复制画布（对齐 C# DuplicateSheetAsync）。
+   * C# 是页签右键菜单；插件没有右键菜单，改为顶栏「复制」+ 页签 ⧉ 两个入口。
+   * 副本插在原画布之后，标题「X 副本」（重名追加序号），与 C# 一致。
+   */
+  async function duplicateSheet(id) {
+    const src = workbook.sheets.find((s) => s.id === id);
+    if (!src) return;
+    capture();                       // 先把当前编辑收回来，否则副本拿到的是旧内容
+    const copy = wb.cloneSheet(src, workbook.sheets);
+    workbook.sheets.splice(workbook.sheets.indexOf(src) + 1, 0, copy);
+    workbook.activeId = copy.id;
+    renderTabs();
+    await loadSheet();
+    await persist();
+    status('已复制画布：' + copy.title);
   }
 
   async function removeSheet(id) {

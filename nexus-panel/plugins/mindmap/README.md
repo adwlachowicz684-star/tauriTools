@@ -120,6 +120,28 @@ C# 版把**文字格式**放在右侧栏 `SidePageStyle` 的第一段，顶栏�
 只是 UI 一直没入口）、**上移 / 下移**（`arrangeup` / `arrangedown`）、
 **整理布局**（`resetlayout`）。
 
+## 对照 C# 的完整性核查
+
+按 `MindMapPanel.xaml` 的控件清单与 `MindMapPanel.xaml.cs` 的全部 `On*` 处理函数逐条比对。
+
+**已补齐的遗漏项**
+
+| 项 | C# | 插件 |
+|---|---|---|
+| 复制画布 | `OnSheetDuplicateClick`（页签右键菜单） | 顶栏「复制」+ 页签 `⧉`（无右键菜单，改双入口） |
+| 主题导入 JSON | `OnImportThemeClick` | 主题页「导入」（重新生成 id，不覆盖现有） |
+| 主题导出 JSON | `OnExportThemeClick` | 主题页「导出」（导出当前画布在用的自定义主题） |
+| 外框 | `boundary` | 顶栏「外框」 |
+| 上移 / 下移 | `arrangeup` / `arrangedown` | 顶栏「上移」/「下移」 |
+| 整理布局 | `resetlayout`（样式页「外观」段） | 样式页「外观」段 |
+
+**顺带修掉的一个错命令**
+
+主题页「视图」段原有「整理布局」用 `exec('arrange')`。查内核后确认
+`arrange` 是**拖拽排序模块的内部命令**（需要 index 参数），单独执行无效；
+真正的整理布局是 `resetlayout`（`LayoutModule` 注册，快捷键 Ctrl+Shift+L）。
+已移除主题页那个，统一用样式页「外观」段的 `resetlayout`。
+
 ## 与 C# 版的差异说明
 
 - **撤销/重做**：优先用编辑器自维护的历史栈 `window.editor.history`（上游 dist 页已补齐，100 步、基线模型），拿不到时回退插件层 50 步快照栈。

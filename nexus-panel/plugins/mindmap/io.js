@@ -189,6 +189,15 @@ function guessMime(ext) {
 }
 
 /** 带时间戳的默认文件名：脑图-20260912-1430.json */
+/**
+ * 文件名安全化：剔除路径非法字符（对齐 C# SanitizeFileName）。
+ * 用于主题导出等「按内容命名」的场景（stampName 会带时间戳，不适合这类）。
+ */
+export function safeFileName(name) {
+  const s = String(name || '').replace(/[\\/:*?"<>|]/g, '_').replace(/[\u0000-\u001f]/g, '_').trim();
+  return s || '未命名';
+}
+
 export function stampName(base, ext) {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');
