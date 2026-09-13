@@ -223,8 +223,17 @@ export type FetchTextResult = {
 async function loadTauriHttp(): Promise<null | ((url: string, init?: any) => Promise<Response>)> {
   if (!isTauri()) return null;
   try {
-    const spec = '@tauri-apps/plugin-http';
-    const mod: any = await import(/* @vite-ignore */ spec);
+    // 必须用**字面量**：Rollup 只有在能静态解析时才把这段代码打进
+    // 独立 chunk，运行时才真的加载得到。
+    //
+    // 之前写成 `const spec = '...'; await import(/* @vite-ignore */ spec)`
+    // 是为了"包没装也不让构建失败"，但代价是 Rollup 完全不打包它 ——
+    // 运行时在 webview 里解析裸模块名必然失败，函数恒返回 null，
+    // 等于这个功能从来没生效过，一直在静默降级。
+    //
+    // 包已列入 dependencies，正常 npm install 就有；即便运行时加载失败，
+    // 下面的 try/catch 仍会退回浏览器 fetch，不会让插件崩掉。
+    const mod: any = await import('@tauri-apps/plugin-http');
     return typeof mod?.fetch === 'function' ? mod.fetch : null;
   } catch {
     return null;
@@ -316,7 +325,10 @@ export async function postJson(
       const res = await tauriFetch(url, {
         method: 'POST',
         headers,
-        body: { type: 'Json', payload: body },
+        // v2 的 plugin-http 内部走标准 `new Request()` + arrayBuffer()，
+        // 只认 BodyInit。Tauri v1 那种 { type:'Json', payload } 写法在这里
+        // 会被 String() 成 "[object Object]"，请求体直接坏掉。
+        body: payload,
         connectTimeout: timeoutMs,
       });
       return { status: res.status, text: await res.text() };

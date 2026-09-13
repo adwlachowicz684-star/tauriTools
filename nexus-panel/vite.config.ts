@@ -1,7 +1,14 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as fsSync from 'node:fs';
+
+// package.json 是 "type": "module"，配置按 ESM 加载，没有 __dirname。
+// 直接写 __dirname 全靠 Vite 注入的 shim 兜着 —— 换个 Vite 版本就可能
+// 加载失败（报 "config must export or return an object"）。
+// 自己从 import.meta.url 推导，不依赖任何外部行为。
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const r = (p: string) => resolve(__dirname, p);
 
