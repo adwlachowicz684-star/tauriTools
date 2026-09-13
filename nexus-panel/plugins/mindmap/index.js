@@ -22,6 +22,8 @@ import * as io from './io.js';
 import { buildSide, openVideo, openPreview } from './panels.js';
 import * as xmind from './xmind.js';
 
+/** 外壳桥接频道（plugin-sdk 的 BRIDGE_CHANNEL），用于捕获运行时主题切换 */
+const SHELL_CHANNEL = 'nexus-bridge-v1';
 const AUTOSAVE_MS = 800;        // 停止编辑多久后写入本地库
 const BACKUP_MS = 2 * 60 * 1000; // 两次快照的最小间隔
 const HISTORY_MAX = 50;
@@ -54,6 +56,19 @@ bootIframePlugin(async (ctx) => {
 
   const sheet = () => workbook.sheets.find((s) => s.id === workbook.activeId) || workbook.sheets[0];
 
+  /**
+   * 两份画布快照是否内容相同。
+   * exportJson() 每次都返回新对象，只能比内容不能比引用。
+   * 内容相同却判成不同，会让撤销/重做之后的自动保存误清空 redoStack。
+   */
+  const sameSnap = (a, b) => {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    const sa = typeof a === 'string' ? a : JSON.stringify(a);
+    const sb = typeof b === 'string' ? b : JSON.stringify(b);
+    return sa === sb;
+  };
+
   /* ------------------------- 界面骨架 ------------------------- */
 
   const statusEl = h('span.mm-status', {}, '初始化…');
@@ -65,7 +80,7 @@ bootIframePlugin(async (ctx) => {
 
   const foot = h('div.mm-foot', {},
     tabsEl,
-    h('button.mm-btn.icon', { onclick: () => addSheet(), title: '新建画布' }, '＋'),
+    h('button.mm-btn.icon', { onclick: guard('新建画布', () => addSheet()), title: '新建画布' }, '＋'),
     statusEl,
   );
 
@@ -83,6 +98,31 @@ bootIframePlugin(async (ctx) => {
   function status(msg, warn = false) {
     statusEl.textContent = msg;
     statusEl.className = 'mm-status' + (warn ? ' warn' : '');
+  }
+
+  /**
+   * 异步兜底：把失败变成状态栏提示，而不是未捕获的 Promise rejection。
+   * 之前的写法大量 fire-and-forget（persist() / loadSheet() / openAttachment() 直接调用不接），
+   * IndexedDB 写满（附件是 Blob，配额很容易触顶）或编辑器未就绪时，
+   * 会在控制台抛 unhandled rejection，用户只看得到「什么都没发生」。
+   */
+  function guard(label, fn) {
+    return (...args) => {
+      let r;
+      try {
+        r = fn(...args);
+      } catch (e) {
+        status(`${label}失败：${e?.message || e}`, true);
+        return undefined;
+      }
+      if (r && typeof r.then === 'function') {
+        return r.catch((e) => {
+          status(`${label}失败：${e?.message || e}`, true);
+          return undefined;
+        });
+      }
+      return r;
+    };
   }
 
   /* ------------------------- 工具栏 ------------------------- */
@@ -138,7 +178,7 @@ bootIframePlugin(async (ctx) => {
       B('MD', () => exportMarkdown(), { title: '导出为 Markdown' }),
       B('SVG', () => exportSvg(), { title: '导出为矢量 SVG' }),
       B('PNG', () => exportPng(), { title: '导出整幅 PNG' }),
-      B('新建', () => addSheet(), { title: '新建画布' }),
+      B('新建', guard('新建画布', () => addSheet()), { title: '新建画布' }),
     ));
 
     toolbar.appendChild(h('div.mm-sep', {}));
@@ -231,16 +271,16 @@ bootIframePlugin(async (ctx) => {
     for (const s of workbook.sheets) {
       const active = s.id === workbook.activeId;
       const btn = h('button.mm-tab' + (active ? '.active' : ''), {
-        ondblclick: () => renameSheet(s.id),
+        ondblclick: guard('重命名', () => renameSheet(s.id)),
         draggable: true,                       // 拖拽排序
       }, s.title);
       if (workbook.sheets.length > 1) {
         btn.appendChild(h('span.x', {
-          onclick: (e) => { e.stopPropagation(); removeSheet(s.id); },
+          onclick: (e) => { e.stopPropagation(); guard('删除画布', () => removeSheet(s.id))(); },
           title: '删除该画布',
         }, '✕'));
       }
-      btn.addEventListener('click', () => switchSheet(s.id));
+      btn.addEventListener('click', guard('切换画布', () => switchSheet(s.id)));
       wireTabDrag(btn, s.id);
       tabsEl.appendChild(btn);
     }
@@ -279,7 +319,7 @@ bootIframePlugin(async (ctx) => {
       if (!dragTabId || dragTabId === id) return;
       const r = el.getBoundingClientRect();
       const before = e.clientX < r.left + r.width / 2;
-      moveTab(dragTabId, id, before);
+      guard('调整顺序', () => moveTab(dragTabId, id, before))();
     });
   }
 
@@ -296,27 +336,27 @@ bootIframePlugin(async (ctx) => {
     status('画布顺序已调整');
   }
 
-  function addSheet() {
+  async function addSheet() {
     capture();
     const s = wb.newSheet(wb.nextTitle(workbook.sheets), '中心主题');
     workbook.sheets.push(s);
     workbook.activeId = s.id;
     renderTabs();
-    loadSheet();
-    persist();
+    await loadSheet();     // 必须等载入完成再落盘，否则存的是旧内容
+    await persist();
   }
 
-  function removeSheet(id) {
+  async function removeSheet(id) {
     if (workbook.sheets.length <= 1) { status('至少保留一张画布', true); return; }
     const i = workbook.sheets.findIndex((s) => s.id === id);
     if (i < 0) return;
     workbook.sheets.splice(i, 1);
     if (workbook.activeId === id) {
       workbook.activeId = workbook.sheets[Math.min(i, workbook.sheets.length - 1)].id;
-      loadSheet();
+      await loadSheet();
     }
     renderTabs();
-    persist();
+    await persist();
   }
 
   function renameSheet(id) {
@@ -400,7 +440,9 @@ bootIframePlugin(async (ctx) => {
     const json = bridge.exportJson();
     if (!json) return false;
     const s = sheet();
-    if (s.content === json) return false;
+    // 按内容比较：exportJson() 每次返回新对象，用 === 永远不等，
+    // 「内容没变就不必写回」的判断会永远失效。
+    if (sameSnap(s.content, json)) return false;
     s.content = json;
     return true;
   }
@@ -417,12 +459,25 @@ bootIframePlugin(async (ctx) => {
 
   async function doSave() {
     if (suppress || !bridge?.ready) return;
+    try {
+      await doSaveInner();
+    } catch (e) {
+      // 自动保存跑在定时器里，不兜住就只剩控制台的 unhandled rejection；
+      // 附件以 Blob 存 IndexedDB，配额触顶是真实可能发生的场景。
+      status('自动保存失败：' + (e?.message || e), true);
+    }
+  }
+
+  async function doSaveInner() {
     const s = sheet();
     const json = bridge.exportJson();
     if (!json) return;
 
-    // 历史栈：把「变更前的版本」压栈
-    if (lastSnap && lastSnap !== json) {
+    // 历史栈：把「变更前的版本」压栈。
+    // 必须按内容比较：exportJson() 返回对象，引用永远不等，
+    // 用 !== 会把「撤销/重做后重新导出」误判成新编辑，
+    // 从而清空 redoStack —— 表现为重做按钮点了没反应。
+    if (lastSnap && !sameSnap(lastSnap, json)) {
       undoStack.push(lastSnap);
       if (undoStack.length > HISTORY_MAX) undoStack.shift();
       redoStack = [];
@@ -431,7 +486,13 @@ bootIframePlugin(async (ctx) => {
 
     s.content = json;
     dirty = false;
-    await store.workbook.save(workbook);
+    // store.set 失败是返回 false 而不是抛出，不检查就会在「根本没存进去」的
+    // 情况下继续往下走、最后提示「已保存」——比不提示更糟。
+    const saved = await store.workbook.save(workbook);
+    if (!saved) {
+      status('自动保存失败：本地存储写入被拒绝（可能是空间不足）', true);
+      return;
+    }
 
     // 滚动快照：间隔可配（0=关闭），且与最新快照逐张比对，内容没变就只重置计时不写盘。
     // 对齐 C# 版 MaybeBackupAsync 的行为，避免每次到点都白写一份。
@@ -451,7 +512,17 @@ bootIframePlugin(async (ctx) => {
 
 
   async function persist() {
-    await store.workbook.save(workbook);
+    // 内部兜底：调用方基本都是 fire-and-forget，写失败（配额触顶等）必须看得见。
+    // 注意 store.set 是「吞异常返回 false」而不是抛出，所以必须检查返回值，
+    // 只写 try/catch 的话写失败会被静默吞掉。
+    try {
+      const ok = await store.workbook.save(workbook);
+      if (!ok) status('保存失败：本地存储写入被拒绝（可能是空间不足）', true);
+      return ok;
+    } catch (e) {
+      status('保存失败：' + (e?.message || e), true);
+      return false;
+    }
   }
 
   /** 编辑器侧 contentchange 回调 */
@@ -476,13 +547,16 @@ bootIframePlugin(async (ctx) => {
   /**
    * 外壳切换主题时，plugin-sdk 只更新 ctx.theme 并改 :root 变量，不会通知插件代码，
    * 所以这里另注册一个监听器捕获 'theme' 消息（两个监听器互不影响）。
+   * 返回的注销函数必须在插件卸载时调用，否则重复挂载会叠加监听器。
    */
   function watchShellTheme() {
-    window.addEventListener('message', (e) => {
+    const onMessage = (e) => {
       const d = e.data;
-      if (!d || d.channel !== 'nexus-bridge-v1') return;
+      if (!d || d.channel !== SHELL_CHANNEL) return;
       if (d.type === 'theme' && d.theme) syncCanvasTheme(d.theme);
-    });
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
   }
 
   /* ------------------------- 附件打开 ------------------------- */
@@ -506,7 +580,9 @@ bootIframePlugin(async (ctx) => {
     const asset = await io.getAsset(ref.a);
     if (!asset?.blob) { status('附件数据已丢失', true); return; }
 
-    // 视频直接播；其余按扩展名判断能否内联预览，不能则另存为
+    // 视频直接播；其余按扩展名判断能否内联预览，不能则另存为。
+    // 注意 getAsset 每次都会新建一个 Blob URL：交给浮层的由浮层关闭时释放，
+    // 走下载路径的这里必须自己释放，否则每次点附件都泄漏一个 URL。
     if (/\.(mp4|webm|ogg|ogv|mov|m4v)$/i.test(asset.name || ref.n || '')) {
       openVideo(app, { ...asset, name: asset.name || ref.n });
       status('正在播放：' + (asset.name || ref.n || '视频'));
@@ -517,6 +593,7 @@ bootIframePlugin(async (ctx) => {
       return;
     }
     io.downloadBlob(asset.name || ref.n || '附件', asset.blob);
+    if (asset.url) URL.revokeObjectURL(asset.url);
     status('已导出附件：' + (asset.name || ref.n || '附件'));
   }
 
@@ -577,7 +654,10 @@ bootIframePlugin(async (ctx) => {
   }
 
   async function saveThemes() {
-    await store.themes.save(customThemes);
+    // store.set 失败返回 false 而非抛出，不检查就等于静默丢主题
+    const ok = await store.themes.save(customThemes);
+    if (!ok) status('自定义主题保存失败', true);
+    return ok;
   }
 
   /* ------------------------- 导入导出 ------------------------- */
@@ -623,9 +703,20 @@ bootIframePlugin(async (ctx) => {
   async function exportXMind() {
     capture();
     try {
-      const blob = await xmind.writeXMind(workbook.sheets, workbook.activeId, io.loadAssetBytes);
+      // 统计附件：读不到字节的会被跳过（引用原样写入），别让用户以为附件已随包带走
+      let wanted = 0, packed = 0;
+      const loadAsset = async (ref) => {
+        wanted++;
+        const b = await io.loadAssetBytes(ref);
+        if (b && b.length) packed++;
+        return b;
+      };
+      const blob = await xmind.writeXMind(workbook.sheets, workbook.activeId, loadAsset);
       const r = await io.saveBlob(io.stampName('脑图', 'xmind'), blob);
       reportSave(r, 'XMind');
+      const lost = wanted - packed;
+      if (lost > 0) status(`XMind 已导出，但有 ${lost} 个附件未能打包`, true);
+      else if (packed > 0) status(`XMind 已导出（含 ${packed} 个附件）`);
     } catch (e) {
       status('XMind 导出失败：' + (e?.message || e), true);
     }
@@ -692,10 +783,12 @@ bootIframePlugin(async (ctx) => {
 
   async function backupNow() {
     capture();
-    await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId });
+    // pushBackup 写失败返回 null（不抛），不判断就会提示「已创建」但实际没写进去
+    const key = await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId });
     lastBackupAt = Date.now();
     lastBackupFp = wb.fingerprintSheets(workbook.sheets);
-    ctx.toast('已创建快照', 'ok');
+    if (key) ctx.toast('已创建快照', 'ok');
+    else status('快照创建失败（本地存储写入被拒绝）', true);
   }
 
   async function restoreBackup(b) {
@@ -710,17 +803,19 @@ bootIframePlugin(async (ctx) => {
 
   /* ------------------------- 对外能力（供 panels 用） ------------------------- */
 
+  // api 层统一兜底：面板和工具栏都是 onclick 直接调用，拿不到 Promise，
+  // 异步失败不包一层就只会在控制台留 unhandled rejection，界面上毫无反应。
   const api = {
     status,
     commit,
-    backupNow,
-    restoreBackup,
-    exportJson,
-    exportMarkdown,
-    importFile,
-    saveThemes,
-    applyTheme,
-    applyLayout,
+    backupNow: guard('备份', backupNow),
+    restoreBackup: guard('恢复快照', restoreBackup),
+    exportJson: guard('导出 JSON', exportJson),
+    exportMarkdown: guard('导出 Markdown', exportMarkdown),
+    importFile: guard('导入', importFile),
+    saveThemes: guard('保存主题', saveThemes),
+    applyTheme: guard('应用主题', applyTheme),
+    applyLayout: guard('应用布局', applyLayout),
     toast: (m, t) => ctx.toast(m, t),
     /** 读取选中节点的附件引用（file / video） */
     selectedRef(kind) {
@@ -730,17 +825,19 @@ bootIframePlugin(async (ctx) => {
     /** 当前选中节点的节点级样式（由编辑器 nodestyle 事件回传） */
     nodeStyle: () => nodeStyleCache,
     /** 修改设置项（自动快照间隔 / 布局动画），改完立即持久化并生效 */
-    async setBackupMinutes(m) {
+    setBackupMinutes: guard('设置快照间隔', async (m) => {
       settings.backupMinutes = Number(m) || 0;
-      await store.settings.save(settings);
+      const ok = await store.settings.save(settings);
+      if (!ok) { status('设置保存失败', true); return; }
       status(settings.backupMinutes === 0 ? '自动快照已关闭' : `自动快照间隔：${settings.backupMinutes} 分钟`);
-    },
-    async setAnimate(on) {
+    }),
+    setAnimate: guard('设置布局动画', async (on) => {
       settings.animate = !!on;
-      await store.settings.save(settings);
+      const ok = await store.settings.save(settings);
+      if (!ok) { status('设置保存失败', true); return; }
       applyOptions();
       status(settings.animate ? '布局动画已开启' : '布局动画已关闭');
-    },
+    }),
     get settings() { return settings; },
   };
 
@@ -769,7 +866,7 @@ bootIframePlugin(async (ctx) => {
     // 点击画布上节点的附件图标。（C# 版这里是：自动切到「文件」页签展示该文件信息，
     // 视频直接在页签内播放。沙箱里拿不到真实路径、也无法调用系统默认程序打开，
     // 所以退化为「视频播浮层 / 文件另存为」，并把侧栏切到文件页以便查看信息。）
-    onOpenFile: (path) => openAttachment(path),
+    onOpenFile: guard('打开附件', (path) => openAttachment(path)),
     onHostRequest: async (action, payload) => {
       // 编辑器的 callHost 通道：saveAs 直接落成文件
       if (action === 'saveAs') {
@@ -783,7 +880,7 @@ bootIframePlugin(async (ctx) => {
   });
 
   // 画布底色跟随外壳亮/暗主题：先起监听（主题随时可能切），再按当前主题套一次
-  watchShellTheme();
+  const unwatchTheme = watchShellTheme();
   syncCanvasTheme(ctx.theme);
 
   const ok = await bridge.load();
@@ -806,13 +903,19 @@ bootIframePlugin(async (ctx) => {
   // 卸载前兜底保存：避免正在编辑时关掉插件丢内容
   ctx.onDestroy(async () => {
     clearTimeout(saveTimer);
-    capture();
-    await persist();
-    await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId });
+    // 卸载路径不能抛：此时 UI 正在被拆掉，抛错既看不见也拦不住卸载流程
+    try {
+      capture();
+      await persist();
+      await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId });
+    } catch (e) {
+      console.warn('[mindmap] 卸载前兜底保存失败', e);
+    }
   });
 
   return () => {
     clearTimeout(saveTimer);
+    unwatchTheme?.();
     bridge?.destroy();
   };
 });

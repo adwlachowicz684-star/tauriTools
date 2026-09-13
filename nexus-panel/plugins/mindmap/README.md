@@ -77,6 +77,22 @@ zip 容器自写 CRC32 + 原生 `CompressionStream('deflate-raw')`，XML 走 `DO
 **分工**：外壳主题决定画布明暗，kityminder 主题决定节点配色。节点都绘制了不透明底色，
 因此画布变色不影响节点内文字的可读性。
 
+## 异步与存储的错误处理约定
+
+这块踩过坑，写成约定以免后续改回去：
+
+1. **`store.set` 失败是「返回 false」而不是抛异常**。所以检查写入结果必须判返回值，
+   只写 `try/catch` 等于静默丢弃。已统一：`persist()` / `doSaveInner()` / `saveThemes()` /
+   `backupNow()` / `setBackupMinutes()` / `setAnimate()` 全部判返回值并提示。
+2. **onclick 拿不到 Promise**。所有面板/工具栏入口经 `guard()` 或 `api` 层包装，
+   异步失败落状态栏，不留 unhandled rejection。`doSave()` 跑在定时器里，单独包一层。
+3. **画布 `content` 运行时是对象**（`exportJson()` 返回对象，仅序列化落盘后才是字符串）。
+   任何比较都必须按内容：`sameSnap()` 比较、`fingerprintSheets()` 序列化后再拼。
+   直接 `===` 或用字符串拼接会让「内容变了没」的判断永远失效
+   （对象转字符串是 `[object Object]`，备份去重会退化成只认画布增删/排序）。
+4. **Blob URL 要释放**。`getAsset()` 每次调用都新建一个 URL；交给浮层的由浮层关闭时
+   `revoke`，走下载路径的就地释放，否则反复点附件会一直堆积。
+
 ## 与 C# 版的差异说明
 
 - **撤销/重做**：优先用编辑器自维护的历史栈 `window.editor.history`（上游 dist 页已补齐，100 步、基线模型），拿不到时回退插件层 50 步快照栈。
@@ -95,7 +111,11 @@ zip 容器自写 CRC32 + 原生 `CompressionStream('deflate-raw')`，XML 走 `DO
 
 ## 验证情况
 
-- 数据层（序列化 / Markdown 互转 / 指纹去重 / 容错）：Node 单测 20 项通过；
-- XMind 层（zip 往返 / 三档解析 / 附件打包解包 / 坏输入）：Node 单测 31 项通过；
-- 插件挂载与交互、数据流、导入主题样式、补齐项、XMind 集成：jsdom 五组测试全通过；
+- 数据层（序列化 / Markdown 互转 / 指纹去重 / 容错）：Node 单测通过；
+- 配色派生（`parseColor` / `shiftColor` / `deriveCanvasTheme`）：Node 单测通过；
+- XMind 层（zip 往返 / 三档解析 / 附件打包解包 / 坏输入）：Node 单测通过；
+- **附件打包字节级验证**：构造带魔数的 PDF/MP4 样本，导出后拆 zip 逐字节比对，
+  再清空库（模拟换机器）导入，确认字节、文件名、扩展名全部还原；
+- 插件挂载 / 数据流 / 导入主题样式 / 补齐项 / XMind / 附件 / 画布主题 / 健壮性：
+  jsdom 八组测试全通过；
 - **未做真实浏览器渲染验证**（沙盒无法安装 Chromium），kityminder 的 SVG 渲染需在 Tauri 里实测确认。
