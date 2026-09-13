@@ -1,0 +1,2116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <title>KityMinder</title>
+    <link rel="stylesheet" href="kityminder.core.css">
+    <style>
+        /* WebView2 是独立 HWND，WPF 的 CornerRadius/ClipToBounds 裁剪不了它，圆角只能由网页自身绘制。
+           要点一：html/body 必须均透明——若根元素透明，body 的背景会触发「背景传播」上提到画布整块铺底，
+           border-radius 随之失效 = 之前始终方角的根因。
+           要点二：圆角+不透明底+overflow 放到真实盒子 #minder-container 上才有可裁剪的盒子；
+           角部缺口露出 WebView2 DefaultBackgroundColor(#1B1B1F，=宿主边框底色)，与卡片形成弧线对比。 */
+        html, body { margin: 0; padding: 0; height: 100%; background: transparent; overflow: hidden; }
+        /* ==== 画布配色变量（Nexus Panel 移植新增）====
+           原版全部硬编码深色以贴合 WPF 外壳；插件版要跟随 nexus 外壳的亮/暗主题，
+           故抽成变量，由插件层通过门面 setCanvasTheme() 注入。默认值即原版深色，
+           WPF 宿主不调用该门面时行为与原来完全一致。 */
+        :root {
+            --km-canvas-bg: #1E1E1E;        /* 画布底色 */
+            --km-canvas-border: #3D4250;    /* 圆角内描边 */
+            --km-panel-bg: #222225;         /* 搜索面板底 */
+            --km-panel-head-bg: #26262B;    /* 搜索面板头部 */
+            --km-panel-text: #CFCFCF;       /* 面板正文 */
+            --km-panel-dim: #9A9AA0;        /* 面板次要文字 */
+            --km-panel-hover: #2C2C33;      /* 面板条目悬停 */
+            --km-panel-close-hover: #3A3A40;/* 关闭按钮悬停 */
+            --km-loading-bg: rgba(27,27,31,.9);
+            --km-loading-text: #AFAFAF;
+        }
+        #minder-container {
+            position: absolute; inset: 0;
+            border-radius: 8px;                 /* 与 WPF DarkFrame/KityMinderHost(8) 对齐 */
+            background: var(--km-canvas-bg);
+            overflow: hidden;                   /* 把画布内容裁剪进圆角内 */
+            box-sizing: border-box;
+            box-shadow: inset 0 0 0 1px var(--km-canvas-border);/* 1px 内描边，勾勒圆弧边界 */
+        }
+        /* 页面内加载遮罩（WebView2 内自绘，WPF 层遮罩会被 HWND 盖住四角变方角） */
+        #km-loading {
+            position: absolute; inset: 0;
+            display: flex; align-items: center; justify-content: center;
+            background: var(--km-loading-bg);
+            border-radius: 8px;
+            overflow: hidden;
+            color: var(--km-loading-text); font-size: 14px;
+            z-index: 9999;
+            pointer-events: none;
+        }
+        /* 隐藏鼠标按下时的蓝色选中框，桌面应用里很碍眼 */
+        #minder-container * { user-select: none; }
+        /* ---- 搜索结果面板：画布左侧浮层，匹配数 >3 时由 JS 显示；条目可点击聚焦 ---- */
+        #search-panel {
+            position: absolute; left: 10px; top: 10px;
+            width: 232px; max-height: calc(100% - 20px);
+            display: none; flex-direction: column;
+            background: var(--km-panel-bg);
+            border: 1px solid var(--km-canvas-border); border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0,0,0,.45);
+            overflow: hidden;
+            font: 12px/1.7 "Segoe UI","Microsoft YaHei",sans-serif;
+            user-select: none; z-index: 500;   /* 画布之上、加载遮罩(9999)之下 */
+        }
+        #search-panel.sp-visible { display: flex; }
+        #search-panel .sp-head {
+            flex: none; display: flex; align-items: center;
+            padding: 5px 8px 5px 10px;
+            color: var(--km-panel-text); background: var(--km-panel-head-bg);
+            border-bottom: 1px solid var(--km-canvas-border);
+        }
+        #search-panel .sp-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #search-panel .sp-close {
+            flex: none; cursor: pointer; color: var(--km-panel-dim);
+            width: 18px; height: 18px; line-height: 16px; text-align: center; border-radius: 4px;
+        }
+        #search-panel .sp-close:hover { background: var(--km-panel-close-hover); color: var(--km-panel-text); }
+        #search-panel .sp-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+        #search-panel .sp-item {
+            padding: 3px 10px; color: var(--km-panel-text); cursor: pointer;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        #search-panel .sp-item:hover { background: var(--km-panel-hover); }
+        #search-panel .sp-item.sp-active { background: #0A84FF; color: #FFFFFF; }
+        #search-panel .sp-item mark { background: transparent; color: #FFD60A; font-weight: 600; }
+    </style>
+</head>
+<body>
+    <div id="minder-container"></div>
+
+    <!-- 加载遮罩放进 WebView2 页面内：WPF 层遮罩会被 WebView2 独立 HWND 盖住四角产生方角，页面内自绘圆角+裁剪才可靠；每次导航/重载自动重现 -->
+    <div id="km-loading">思维导图加载中…</div>
+
+    <script defer src="kity.min.js"></script>
+    <script defer src="kityminder.core.min.js"></script>
+    <script>
+    // ==== 宿主通信门面（必须最先执行：页面内所有通知都经由它发出）====
+    // 原版只走 WebView2 的 window.chrome.webview；本页被嵌套进 Nexus Panel 插件层 iframe 后没有该对象，
+    // 需回退到 postMessage 发给父窗口。此处收口，WPF 宿主（junction_link）行为完全不变。
+    var KM_HOST_CHANNEL = 'kityminder-host-v1';
+    function hostPost(msg) {
+        var wv = (window.chrome && window.chrome.webview) || null;
+        if (wv && typeof wv.postMessage === 'function') {
+            try { wv.postMessage(msg); return; } catch (e) {}
+        }
+        try {
+            if (window.parent && window.parent !== window) {
+                var out = { channel: KM_HOST_CHANNEL };
+                for (var k in msg) if (Object.prototype.hasOwnProperty.call(msg, k)) out[k] = msg[k];
+                window.parent.postMessage(out, '*');
+            }
+        } catch (e) {}
+    }
+    // 嵌套 iframe 模式下由父窗口回执，配合 window.__resolveHost 完成 request/response 配对
+    window.addEventListener('message', function (e) {
+        var d = e && e.data;
+        if (!d || d.channel !== KM_HOST_CHANNEL) return;
+        if (d.type === 'response') {
+            if (typeof window.__resolveHost === 'function') window.__resolveHost(d.id, d.result);
+            return;
+        }
+        // 父窗口下发画布配色（插件层跟随外壳亮/暗主题）。
+        // 本监听器早于 km 初始化注册，故先存起来：门面就绪后由 __applyPendingCanvasTheme 补套。
+        if (d.type === 'theme') {
+            window.__kmCanvasVars = d.vars || null;
+            try {
+                if (window.__minder && window.__minder.setCanvasTheme) {
+                    window.__minder.setCanvasTheme(window.__kmCanvasVars);
+                }
+            } catch (e2) { /* 未就绪则等门面建好后再套 */ }
+        }
+    });
+
+    // 首帧即圆角：两个库脚本 defer（后台加载、不阻塞首次绘制），初始化推迟到 DOMContentLoaded（此刻库已就绪）。
+    // 前提：kity.min.js / kityminder.core.min.js 必须与 index.html 同目录存在，否则 defer 加载 404 → kityminder 未定义。
+    document.addEventListener('DOMContentLoaded', function () {
+    (function () {
+        var km = window.__km = new kityminder.Minder({ renderTo: '#minder-container' });
+        km.enable();                       // 进编辑态；只读场景换成 km.disable()
+        // 布局过渡动画开关由设置面板控制（WPF 侧导航前注入 window.__kmAnimateLayout）：
+        // 关闭（默认）时打开画布/展开收起不播节点扩散动画，直接显示最终布局；开启则保留 300ms 过渡。
+        if (!window.__kmAnimateLayout) km.setOption('layoutAnimationDuration', 0);
+        km.setTheme('fresh-blue');
+
+        // ---- 文件附件支持（自注册 file 命令 + 节点右侧文件图标渲染器；点击图标经 WPF 打开文件）----
+        // 必须在首次渲染（importJson）前把渲染器类挂进 _rendererClasses，节点渲染时才带出文件图标。
+        (function () {
+            var FileCommand = kity.createClass('fileCommand', {
+                base: kityminder.Command,
+                execute: function (m, value) {
+                    var nodes = m.getSelectedNodes();
+                    nodes.forEach(function (n) {
+                        if (value) n.setData('file', value);
+                        else n.setData('file');
+                        n.render();
+                    });
+                    m.layout();
+                },
+                queryState: function () {
+                    var nodes = km.getSelectedNodes(), result = 0;
+                    if (nodes.length === 0) return -1;
+                    nodes.forEach(function (n) {
+                        if (n && n.getData('file')) { result = 1; return false; }
+                    });
+                    return result;
+                },
+                queryValue: function () {
+                    var n = km.getSelectedNode();
+                    return n ? (n.getData('file') || '') : '';
+                }
+            });
+            try { km._commands['file'] = new FileCommand(); } catch (e) {}
+
+            // 视频附件（独立 data.video 字段）：与 file 区分，节点可同时挂文件与视频；路径进 xmind 时映射为 href
+            var VideoCommand = kity.createClass('videoCommand', {
+                base: kityminder.Command,
+                execute: function (m, value) {
+                    var nodes = m.getSelectedNodes();
+                    nodes.forEach(function (n) {
+                        if (value) n.setData('video', value);
+                        else n.setData('video');
+                        n.render();
+                    });
+                    m.layout();
+                },
+                queryState: function () {
+                    var nodes = km.getSelectedNodes(), result = 0;
+                    if (nodes.length === 0) return -1;
+                    nodes.forEach(function (n) {
+                        if (n && n.getData('video')) { result = 1; return false; }
+                    });
+                    return result;
+                },
+                queryValue: function () {
+                    var n = km.getSelectedNode();
+                    return n ? (n.getData('video') || '') : '';
+                }
+            });
+            try { km._commands['video'] = new VideoCommand(); } catch (e) {}
+
+            var FileIcon = kity.createClass('FileIcon', {
+                base: kity.Group,
+                constructor: function () {
+                    this.callBase();
+                    this.width = 16;
+                    this.height = 20;
+                    this.rect = new kity.Rect(16, 20, 0, -10, 3).fill('transparent');
+                    this.path = (new kity.Path).setPathData('M-8,-10 L-1,-10 L3,-6 L3,10 L-8,10 Z M-1,-10 L-1,-6 L3,-6');
+                    this.addShapes([this.rect, this.path]);
+                    this.on('mouseover', function () { this.rect.fill('rgba(90, 141, 214, 0.25)'); })
+                        .on('mouseout', function () { this.rect.fill('transparent'); });
+                    this.setStyle('cursor', 'pointer');
+                }
+            });
+
+            var VideoIcon = kity.createClass('VideoIcon', {
+                base: kity.Group,
+                constructor: function () {
+                    this.callBase();
+                    this.width = 20;
+                    this.height = 16;
+                    this.frame = new kity.Rect(20, 16, 0, -8, 3).fill('transparent').stroke('#8A90A0', 1.2);
+                    this.path = (new kity.Path).setPathData('M-6,-6 L6,0 L-6,6 Z');
+                    this.addShapes([this.frame, this.path]);
+                    this.on('mouseover', function () { this.frame.fill('rgba(90, 141, 214, 0.25)'); })
+                        .on('mouseout', function () { this.frame.fill('transparent'); });
+                    this.setStyle('cursor', 'pointer');
+                }
+            });
+            // 不能把 FileRenderer 挂进 _rendererClasses['right']：core 的 renderNodeBatch 按 b[0] 节点
+            // 的渲染器数整体迭代，根节点无 right 渲染器、子节点多一个时，g._renderers[c] 会取到 undefined，
+            // 在 "e.contentBox=..." 处抛 "Cannot set properties of undefined (setting 'contentBox')"，
+            // 使子节点无法布局、全部堆在画布中心。改为 noderender 事件把文件图标作为独立形状绘制到节点渲染层，
+            // 与下方分组边界/组标签钩子同构，既保留文件图标又不扰动渲染器数组。
+            try {
+                // 文件/视频图标各自独立绘制（noderender 内一起清理重建），节点可同时挂两者：
+                // 文件在 baseX，存在文件时视频右移 20 与文件并排，互不覆盖。
+                km.on('noderender', function (e) {
+                    var node = e && e.node;
+                    if (!node) return;
+                    try {
+                        var old = node._kmFileIcon, oldv = node._kmVideoIcon;
+                        if (old) { if (old.remove) old.remove(); node._kmFileIcon = null; }
+                        if (oldv) { if (oldv.remove) oldv.remove(); node._kmVideoIcon = null; }
+                        var box = node.getContentBox();
+                        if (!box) return;
+                        var baseX = box.right + node.getStyle('space-left');
+                        var y = box.cy;
+                        var rc = node.getRenderContainer();
+                        if (!rc || !rc.appendShape) return;
+                        var color; try { color = node.getStyle('color'); } catch (e2) { color = null; }
+                        function attach(icon, path, cursorX) {
+                            try { icon.path.fill(color); } catch (e2) {}
+                            icon.setTranslate(cursorX, y);
+                            icon.on('mousedown', function (ev) {
+                                ev.preventDefault();
+                                if (path) { try { hostPost({ type: 'openfile', path: path }); } catch (e2) {} }
+                            });
+                            rc.appendShape(icon);
+                        }
+                        if (node.getData('file')) {
+                            var fc = new FileIcon();
+                            attach(fc, node.getData('file'), baseX);
+                            node._kmFileIcon = fc;
+                            baseX += 20;
+                        }
+                        if (node.getData('video')) {
+                            var vc = new VideoIcon();
+                            attach(vc, node.getData('video'), baseX);
+                            node._kmVideoIcon = vc;
+                        }
+                    } catch (e2) {}
+                });
+            } catch (e) {}
+        })();
+
+        // ---- 选中框视觉同步：强制重渲「从选中变为未选中」的节点，清掉点空白处后可能残留的高亮矩形 ----
+        // 内核取消选中时理论上会对被移除节点重渲；偶发漏渲会让高亮残留（纯显示问题，功能已失效）。
+        // 这里在任何选中变更后，把上一步选中、现在未选中的节点再 render() 一次，保证显示与选中态一致。
+        (function () {
+            var last = [];
+            function curSel() { try { return km.getSelectedNodes().slice(); } catch (e) { return []; } }
+            function sync() {
+                var now = curSel();
+                var removed = [];
+                last.forEach(function (n) {
+                    if (n && n.render && now.indexOf(n) === -1) removed.push(n);
+                });
+                last = now;
+                removed.forEach(function (n) { try { n.render(); } catch (e) {} });
+            }
+            try { km.on('selectionchange', sync); } catch (e) {}
+            try { km.on('selectionclear', sync); } catch (e) {}
+        })();
+        // 启动时给一个默认根节点，避免画布空白
+        km.importJson({ root: { data: { text: '中心主题' } } });
+
+        // ---- 容器尺寸变化后重排：WebView2 在 Popup 弹出过程中首帧容器尺寸可能偏小，
+        // kityminder core 不监听 resize，节点就困在首帧小范围里（视觉：节点挤在画布中间、四周留白）。
+        // 尺寸显著变化（或首次拿到足够尺寸）时用当前容器重排一次，让布局占满画布。
+        (function () {
+            var lastW = 0, lastH = 0, done = false;
+            function ensureRelayout() {
+                var c = document.getElementById('minder-container');
+                if (!c) return;
+                var w = c.clientWidth, h = c.clientHeight;
+                if (w <= 0 || h <= 0) return;
+                var changed = (lastW > 0 && lastH > 0) && (w !== lastW || h !== lastH);
+                lastW = w; lastH = h;
+                if ((changed || !done) && (w > 300 && h > 200)) {
+                    done = true;
+                    try { km.refresh(); } catch (e) {}
+                }
+            }
+            window.addEventListener('resize', ensureRelayout);
+            setInterval(ensureRelayout, 400);
+        })();
+
+        // ---- 删除线支持（core 无内置命令：自注册 strikethrough 命令 + 文本样式 hook）----
+        (function () {
+            var StrikethroughCommand = kity.createClass('strikethroughCommand', {
+                base: kityminder.Command,
+                execute: function (m) {
+                    var nodes = m.getSelectedNodes();
+                    var on = this.queryState() != 1;
+                    nodes.forEach(function (n) {
+                        if (on) n.setData('font-strikethrough', true);
+                        else n.setData('font-strikethrough');
+                        n.render();
+                    });
+                    m.layout();
+                },
+                queryState: function () {
+                    var nodes = km.getSelectedNodes(), result = 0;
+                    if (nodes.length === 0) return -1;
+                    nodes.forEach(function (n) {
+                        if (n && n.getData('font-strikethrough')) { result = 1; return false; }
+                    });
+                    return result;
+                }
+            });
+            try { km._commands['strikethrough'] = new StrikethroughCommand(); } catch (e) {}
+            var strikeHookDone = false;
+            function tryRegisterStrikeHook() {
+                if (strikeHookDone) return;
+                try {
+                    var root = km.getRoot && km.getRoot();
+                    var tr = root && root.getRenderer && root.getRenderer('TextRenderer');
+                    var TR = tr && tr.constructor;
+                    if (!TR || !TR.registerStyleHook) return;
+                    TR.registerStyleHook(function (node, textGroup) {
+                        var strike = node.getData && node.getData('font-strikethrough');
+                        textGroup.eachItem(function (i, t) {
+                            if (t && t.setAttr) t.setAttr('text-decoration', strike ? 'line-through' : 'none');
+                        });
+                    });
+                    strikeHookDone = true;
+                } catch (e) {}
+            }
+            try { km.on('noderender', tryRegisterStrikeHook); } catch (e) {}
+            tryRegisterStrikeHook();
+        })();
+
+        // ---- 文字对齐支持（core 无内置命令：自注册 textalign 命令 + 文本样式 hook）----
+        (function () {
+            var TextAlignCommand = kity.createClass('textalignCommand', {
+                base: kityminder.Command,
+                execute: function (m, value) {
+                    var nodes = m.getSelectedNodes();
+                    nodes.forEach(function (n) {
+                        if (value === 'left') n.setData('text-align');
+                        else n.setData('text-align', value);
+                        n.render();
+                    });
+                    m.layout();
+                },
+                queryState: function () {
+                    var nodes = km.getSelectedNodes();
+                    if (nodes.length === 0) return -1;
+                    var result = 0;
+                    nodes.forEach(function (n) {
+                        if (n && n.getData('text-align')) { result = 1; return false; }
+                    });
+                    return result;
+                },
+                queryValue: function () {
+                    var n = km.getSelectedNode();
+                    return n ? (n.getData('text-align') || 'left') : 'left';
+                }
+            });
+            try { km._commands['textalign'] = new TextAlignCommand(); } catch (e) {}
+            var alignHookDone = false;
+            function tryRegisterAlignHook() {
+                if (alignHookDone) return;
+                try {
+                    var root = km.getRoot && km.getRoot();
+                    var tr = root && root.getRenderer && root.getRenderer('TextRenderer');
+                    var TR = tr && tr.constructor;
+                    if (!TR || !TR.registerStyleHook) return;
+                    TR.registerStyleHook(function (node, textGroup) {
+                        var align = node.getData && node.getData('text-align');
+                        if (!align || align === 'left') {
+                            textGroup.eachItem(function (i, t) {
+                                if (t && t.setX) t.setX(0);
+                            });
+                            return;
+                        }
+                        var widths = [];
+                        textGroup.eachItem(function (i, t) {
+                            var w = 0;
+                            try { w = t.getBoundaryBox ? t.getBoundaryBox().width : 0; } catch (e) {}
+                            widths.push(w);
+                        });
+                        var maxW = 0;
+                        for (var i = 0; i < widths.length; i++) if (widths[i] > maxW) maxW = widths[i];
+                        textGroup.eachItem(function (i, t) {
+                            var w = widths[i] || 0, x = 0;
+                            if (align === 'center') x = (maxW - w) / 2;
+                            else if (align === 'right') x = maxW - w;
+                            if (t && t.setX) t.setX(x);
+                        });
+                    });
+                    alignHookDone = true;
+                } catch (e) {}
+            }
+            try { km.on('noderender', tryRegisterAlignHook); } catch (e) {}
+            tryRegisterAlignHook();
+        })();
+
+        // ---- 文字垂直对齐支持（自注册 valign 命令 + 文本样式 hook：文字在节点内容盒内靠上/居中/靠下）----
+        // 说明：节点内容盒紧贴文本时（无图片）三种对齐无可见差异；节点带图片时文本默认沉底，
+        // 靠上/居中/靠下会把文本在「图片+文本」组成的内容盒内上移/居中/下沉。
+        (function () {
+            var ValignCommand = kity.createClass('valignCommand', {
+                base: kityminder.Command,
+                execute: function (m, value) {
+                    var nodes = m.getSelectedNodes();
+                    nodes.forEach(function (n) {
+                        n.setData('vertical-align', value);
+                        n.render();
+                    });
+                    m.layout();
+                },
+                queryState: function () {
+                    var nodes = km.getSelectedNodes();
+                    if (nodes.length === 0) return -1;
+                    var result = 0;
+                    nodes.forEach(function (n) {
+                        if (n && n.getData('vertical-align')) { result = 1; return false; }
+                    });
+                    return result;
+                },
+                queryValue: function () {
+                    var n = km.getSelectedNode();
+                    return n ? (n.getData('vertical-align') || 'middle') : 'middle';
+                }
+            });
+            try { km._commands['valign'] = new ValignCommand(); } catch (e) {}
+            // 层级垂直偏移微调查表（临时调试工具）：key=节点层级(center中心/child一级/deep更深)，
+            // align=靠上top/居中middle/靠下bottom。值叠加到基础对齐落点上，保存在 localStorage 供
+            // WPF 偏移滑块读写；确定「看着正确」的位置后固化为默认规则并删除本微调面板。
+            var VO_KEY = 'km_valign_offset_v1';
+            window.__valignOffset = {
+                center: { top: 0, middle: 0, bottom: 0 },
+                child: { top: 0, middle: 0, bottom: 0 },
+                deep: { top: 0, middle: 0, bottom: 0 }
+            };
+            try {
+                var voSaved = JSON.parse(localStorage.getItem(VO_KEY) || 'null');
+                if (voSaved && voSaved.center && voSaved.child && voSaved.deep) window.__valignOffset = voSaved;
+            } catch (eo) {}
+            function voLevelKey(node) {
+                var lv = node.getLevel ? node.getLevel() : 0;
+                return lv <= 0 ? 'center' : (lv === 1 ? 'child' : 'deep');
+            }
+            function voOffset(node, va) {
+                try { var bx = window.__valignOffset[voLevelKey(node)]; return (bx && bx[va]) || 0; } catch (e3) { return 0; }
+            }
+            var ValignOffsetCommand = kity.createClass('valignoffsetCommand', {
+                base: kityminder.Command,
+                execute: function (m, value) {
+                    if (!value || !value.type || !value.align) return;
+                    var bx = window.__valignOffset[value.type];
+                    if (!bx) return;
+                    bx[value.align] = Math.round(Number(value.px) || 0);
+                    try { localStorage.setItem(VO_KEY, JSON.stringify(window.__valignOffset)); } catch (e4) {}
+                    try { km.getRoot().traverse(function (nd) { if (nd.render) nd.render(); }); } catch (e5) {}
+                },
+                queryState: function () { return 0; },
+                queryValue: function () { return window.__valignOffset; }
+            });
+            try { km._commands['valignoffset'] = new ValignOffsetCommand(); } catch (e6) {}
+            // 平移改在 noderender 之后做。曾用 TextRenderer 文本样式 hook（registerStyleHook）实现，
+            // 但在该时机 node.getContentBox() 尚未合并图片等其余 renderer 的内容盒，内容盒高取不到，
+            // 偏移恒为 0 -> 垂直对齐形同虚设；且 kity 的 transform 是 {translate:[x,y]}，原实现读
+            // textGroup.transform.matrix.f 也永远是 0。noderender 在整节点渲染完成后触发，此刻
+            // getContentBox() 与文本组边界均已确定，setTranslate(0,dy) 为绝对设定、每次内核复位后重设，幂等。
+            // dy = 基础对齐落点 + 该层级该对齐的微调偏移。
+            var valignBindDone = false;
+            function bindValign() {
+                if (valignBindDone) return;
+                try {
+                    km.on('noderender', function (e) {
+                        var node = e && e.node;
+                        if (!node || !node.getData || !node.getRenderer) return;
+                        var va = node.getData('vertical-align');
+                        if (!va) return;
+                        try {
+                            var tg = node.getRenderer('TextRenderer').getRenderShape();
+                            if (!tg || !tg.getBoundaryBox || !tg.setTranslate) return;
+                            var cbox = node.getContentBox();
+                            if (!cbox || !cbox.height) return;
+                            var textH = tg.getBoundaryBox().height || 0;
+                            if (textH <= 0) return;
+                            var extra = Math.max(0, cbox.height - textH);
+                            var baseDy = extra <= 0 ? 0 : (va === 'top' ? -extra : (va === 'bottom' ? 0 : -extra / 2));
+                            tg.setTranslate(0, baseDy + voOffset(node, va));
+                        } catch (e2) {}
+                    });
+                    valignBindDone = true;
+                } catch (e0) {}
+            }
+            try { km.on('noderender', bindValign); } catch (e0) {}
+            bindValign();
+        })();
+
+        // ---- 外框支持（组级大框：自注册 boundary 命令 + 根容器绘制合并矩形框 + 左上角可编辑标签）----
+        (function () {
+            var _boundarySeq = 0;
+            var _groupNodes = new Map();   // groupId -> 节点引用数组
+            var _groupShapes = new Map();  // groupId -> kity.Rect
+            var _groupLabels = new Map();  // groupId -> kity.Group（左上角标签）
+            var BOUNDARY_KEY = 'boundaryGroup';
+            var LABEL_KEY = 'boundaryLabel';
+            var _labelInput = null;
+            var _editingGid = null;
+            var _measureCanvas = null;
+            function measureText(text, size) {
+                try {
+                    if (!_measureCanvas) _measureCanvas = document.createElement('canvas');
+                    var ctx = _measureCanvas.getContext('2d');
+                    ctx.font = size + 'px "Microsoft YaHei", sans-serif';
+                    return ctx.measureText(text).width;
+                } catch (e) { return (text || '').length * size; }
+            }
+            function getGroupLabel(gid) {
+                var arr = _groupNodes.get(gid);
+                if (arr) {
+                    for (var i = 0; i < arr.length; i++) {
+                        var v = arr[i].getData && arr[i].getData(LABEL_KEY);
+                        if (v) return v;
+                    }
+                }
+                return '';
+            }
+            function setGroupLabel(gid, text) {
+                var arr = _groupNodes.get(gid);
+                if (arr) {
+                    arr.forEach(function (n) { if (n.setData) n.setData(LABEL_KEY, text || ''); });
+                }
+            }
+            function removeGroupVisuals(gid) {
+                var sh = _groupShapes.get(gid);
+                if (sh) { try { sh.remove(); } catch (e) {} _groupShapes.delete(gid); }
+                var lb = _groupLabels.get(gid);
+                if (lb) { try { lb.remove(); } catch (e) {} _groupLabels.delete(gid); }
+            }
+            function removeFromGroup(n) {
+                var gid = n.getData && n.getData(BOUNDARY_KEY);
+                if (!gid) return;
+                var arr = _groupNodes.get(gid);
+                if (arr) {
+                    var i = arr.indexOf(n);
+                    if (i >= 0) arr.splice(i, 1);
+                    if (arr.length === 0) {
+                        _groupNodes.delete(gid);
+                        removeGroupVisuals(gid);
+                    }
+                }
+                if (n.setData) n.setData(LABEL_KEY);
+            }
+            var BoundaryCommand = kity.createClass('boundaryCommand', {
+                base: kityminder.Command,
+                execute: function (m) {
+                    var nodes = m.getSelectedNodes();
+                    if (!nodes || !nodes.length) return;
+                    var on = this.queryState() != 1;
+                    if (on) {
+                        var gid = 'bg' + (++_boundarySeq);
+                        var arr = [];
+                        nodes.forEach(function (n) {
+                            removeFromGroup(n);
+                            n.setData(BOUNDARY_KEY, gid);
+                            n.render();
+                            arr.push(n);
+                        });
+                        _groupNodes.set(gid, arr);
+                    } else {
+                        nodes.forEach(function (n) {
+                            removeFromGroup(n);
+                            n.setData(BOUNDARY_KEY);
+                            n.render();
+                        });
+                    }
+                    m.layout();
+                },
+                queryState: function () {
+                    var nodes = km.getSelectedNodes(), result = 0;
+                    if (!nodes || nodes.length === 0) return -1;
+                    nodes.forEach(function (n) {
+                        if (n && n.getData && n.getData(BOUNDARY_KEY)) result = 1;
+                        else { result = 0; return false; }
+                    });
+                    return result;
+                }
+            });
+            try { km._commands['boundary'] = new BoundaryCommand(); } catch (e) {}
+            function renderGroupLabel(gid, box, rc, pad) {
+                var label = getGroupLabel(gid);
+                var group = _groupLabels.get(gid);
+                if (!group) {
+                    try {
+                        group = new kity.Group();
+                        group.on('click', function () { editLabel(gid); });
+                        rc.appendShape(group);
+                        _groupLabels.set(gid, group);
+                    } catch (e) { return; }
+                }
+                group.clear();
+                var size = 12, padX = 6, padY = 3;
+                var tw = measureText(label, size);
+                var w = Math.max(tw + padX * 2, 28);
+                var h = size + padY * 2 + 2;
+                var x = box.x - pad;
+                var y = box.y - pad - h - 4;
+                var bg = new kity.Rect().setRadius(4);
+                bg.stroke('#E0A94F', 1).fill('rgba(224,169,79,0.10)');
+                bg.setPosition(x, y).setSize(w, h);
+                group.addShape(bg);
+                var text = new kity.Text(label || '');
+                text.setFontSize(size).setFontFamily('Microsoft YaHei').setTextAnchor('start');
+                text.fill('#E0A94F');
+                text.setPosition(x + padX, y + padY);
+                try { text.setVerticalAlign('top'); } catch (e) {}
+                group.addShape(text);
+            }
+            function renderAllBoundaries() {
+                if (_groupNodes.size === 0) return;
+                var root = km.getRoot && km.getRoot();
+                var rc = root && root.getRenderContainer && root.getRenderContainer();
+                if (!rc) return;
+                _groupNodes.forEach(function (arr, gid) {
+                    var box = null;
+                    var alive = [];
+                    arr.forEach(function (n) {
+                        if (!n || !n.getLayoutBox) return;
+                        alive.push(n);
+                        var lb = n.getLayoutBox();
+                        if (!lb) return;
+                        box = box ? box.merge(lb) : new kity.Box(lb.x, lb.y, lb.width, lb.height);
+                    });
+                    if (alive.length !== arr.length) {
+                        if (alive.length === 0) { _groupNodes.delete(gid); }
+                        else { _groupNodes.set(gid, alive); }
+                    }
+                    var shape = _groupShapes.get(gid);
+                    if (!box || box.isEmpty()) {
+                        if (shape) { try { shape.remove(); } catch (e) {} _groupShapes.delete(gid); }
+                        var lb2 = _groupLabels.get(gid);
+                        if (lb2) { try { lb2.remove(); } catch (e) {} _groupLabels.delete(gid); }
+                        return;
+                    }
+                    if (!shape) {
+                        try {
+                            shape = new kity.Rect().setRadius(8);
+                            shape.stroke('#E0A94F', 2).fill('rgba(224,169,79,0.06)');
+                            shape.setStyle('cursor', 'pointer');
+                            shape.on('mousedown', function (ev) { onBoundaryMouseDown(ev, gid); });
+                            rc.prependShape(shape);
+                            _groupShapes.set(gid, shape);
+                        } catch (e) { return; }
+                    }
+                    var pad = 12;
+                    shape.setPosition(box.x - pad, box.y - pad);
+                    shape.setSize(box.width + pad * 2, box.height + pad * 2);
+                    renderGroupLabel(gid, box, rc, pad);
+                });
+            }
+            // ---- 外框交互：点击选中整组 + 左键拖动整组跟随 ----
+            var _dragState = null;
+            function clientToRC(clientX, clientY, rc) {
+                try {
+                    var g = rc.node;
+                    if (!g || !g.ownerSVGElement) return null;
+                    var pt = g.ownerSVGElement.createSVGPoint();
+                    pt.x = clientX;
+                    pt.y = clientY;
+                    var ctm = g.getScreenCTM();
+                    if (!ctm) return null;
+                    var p = pt.matrixTransform(ctm.inverse());
+                    return new kity.Point(p.x, p.y);
+                } catch (e) { return null; }
+            }
+            function isDescendantInGroup(n, arr) {
+                var p = n.parent;
+                while (p) {
+                    if (arr.indexOf(p) !== -1) return true;
+                    p = p.parent;
+                }
+                return false;
+            }
+            function getGroupDragSources(gid) {
+                var arr = _groupNodes.get(gid) || [];
+                return arr.filter(function (n) { return !isDescendantInGroup(n, arr); });
+            }
+            function moveGroupByDelta(gid, delta) {
+                getGroupDragSources(gid).forEach(function (n) {
+                    if (!n || !n.setLayoutOffset || !n.getLayoutOffset) return;
+                    n.setLayoutOffset(n.getLayoutOffset().offset(delta));
+                    km.applyLayoutResult(n);
+                });
+                renderAllBoundaries();
+            }
+            function onBoundaryMouseDown(e, gid) {
+                if (!e.originEvent || e.originEvent.button !== 0) return;
+                var root = km.getRoot && km.getRoot();
+                var rc = root && root.getRenderContainer && root.getRenderContainer();
+                if (!rc) return;
+                var pos = clientToRC(e.originEvent.clientX, e.originEvent.clientY, rc);
+                if (!pos) return;
+                var arr = _groupNodes.get(gid);
+                if (arr && arr.length) km.select(arr, true);
+                _dragState = { gid: gid, start: pos, last: pos, moved: false };
+                var onMove = function (ev) {
+                    if (!_dragState || _dragState.gid !== gid) return;
+                    var cur = clientToRC(ev.clientX, ev.clientY, rc);
+                    if (!cur) return;
+                    if (!_dragState.moved) {
+                        if (kity.Vector.fromPoints(_dragState.start, cur).length() < 5) return;
+                        _dragState.moved = true;
+                    }
+                    moveGroupByDelta(gid, kity.Vector.fromPoints(_dragState.last, cur));
+                    _dragState.last = cur;
+                };
+                var onUp = function () {
+                    window.removeEventListener('mousemove', onMove);
+                    window.removeEventListener('mouseup', onUp);
+                    if (_dragState && _dragState.gid === gid) {
+                        var dragged = _dragState.moved;
+                        _dragState = null;
+                        if (dragged) { try { km.fire('contentchange'); } catch (err) {} }
+                    }
+                };
+                window.addEventListener('mousemove', onMove);
+                window.addEventListener('mouseup', onUp);
+                e.stopPropagation();
+                e.preventDefault();
+            }
+            // 多画布切换/导入时，把上一个画布残留在渲染容器里的边界图元全部摘除，防止外框同时显示在多画布上
+            function removeAllBoundaryVisuals() {
+                _groupShapes.forEach(function (sh) { try { sh.remove(); } catch (e) {} });
+                _groupLabels.forEach(function (lb) { try { lb.remove(); } catch (e) {} });
+                _groupShapes.clear();
+                _groupLabels.clear();
+            }
+            function rebuildGroups() {
+                removeAllBoundaryVisuals();
+                _groupNodes.clear();
+                var groups = {};
+                try {
+                    km.getRoot().traverse(function (n) {
+                        var gid = n.getData && n.getData(BOUNDARY_KEY);
+                        if (gid) {
+                            if (!groups[gid]) groups[gid] = [];
+                            groups[gid].push(n);
+                        }
+                    });
+                } catch (e) {}
+                for (var g in groups) _groupNodes.set(g, groups[g]);
+                renderAllBoundaries();
+            }
+            function ensureLabelInput() {
+                if (_labelInput) return _labelInput;
+                _labelInput = document.createElement('input');
+                _labelInput.type = 'text';
+                _labelInput.style.cssText = 'position:fixed;display:none;z-index:99999;' +
+                    'background:#101318;color:#E0A94F;border:1px solid #E0A94F;border-radius:3px;' +
+                    'font:12px "Microsoft YaHei";padding:2px 6px;outline:none;';
+                document.body.appendChild(_labelInput);
+                _labelInput.addEventListener('keydown', function (e) {
+                    // 必须 stopPropagation：否则按键会冒泡到 km receiver 触发画布快捷键。
+                    // 原先只 preventDefault 不 stop，于是编辑外框标签时按 Enter 会顺带
+                    // 插入一个同级节点、按方向键会跑偏选中。
+                    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); commitLabel(); }
+                    else if (e.key === 'Escape') {
+                        e.preventDefault(); e.stopPropagation();
+                        _labelInput.style.display = 'none'; _editingGid = null;
+                    } else {
+                        e.stopPropagation();
+                    }
+                });
+                _labelInput.addEventListener('blur', function () { commitLabel(); });
+                return _labelInput;
+            }
+            function editLabel(gid) {
+                var input = ensureLabelInput();
+                _editingGid = gid;
+                var group = _groupLabels.get(gid);
+                var rect = group && group.node ? group.node.getBoundingClientRect() : null;
+                if (rect) {
+                    input.style.left = rect.left + 'px';
+                    input.style.top = rect.top + 'px';
+                    input.style.width = Math.max(rect.width, 80) + 'px';
+                }
+                input.value = getGroupLabel(gid) || '';
+                input.style.display = 'block';
+                input.focus();
+                input.select();
+            }
+            function commitLabel() {
+                var input = _labelInput;
+                if (!input || input.style.display === 'none') return;
+                var gid = _editingGid;
+                input.style.display = 'none';
+                _editingGid = null;
+                if (!gid) return;
+                setGroupLabel(gid, input.value);
+                renderAllBoundaries();
+                try { km._firePharse({ type: 'contentchange' }); } catch (e) {}
+            }
+            try { km.on('noderender', function () { renderAllBoundaries(); }); } catch (e) {}
+            try { km.on('layoutfinish', function () { renderAllBoundaries(); }); } catch (e) {}
+            try { km.on('noderemove', function (e) { removeFromGroup(e.node); }); } catch (e) {}
+            try { km.on('contentchange', function () { setTimeout(function () { rebuildGroups(); }, 50); }); } catch (e) {}
+            try { km.on('import', function () { setTimeout(function () { rebuildGroups(); }, 50); }); } catch (e) {}
+            try { setTimeout(function () { rebuildGroups(); }, 100); } catch (e) {}
+        })();
+
+        // ---- 图片独立选中/删除支持：单击图片边缘高亮选中，选中后 Del/Backspace 仅删除图片不删节点 ----
+        (function () {
+            var EDGE = 4;                  // 命中判定的"边缘带"像素
+            var _selImg = null;            // 当前选中图片所属节点
+            var _selEl = null;             // 当前选中图片的 SVG 元素（供外界点击判定）
+            var _selRect = null;           // 高亮矩形（kity.Rect）
+            var _themeColor = null;        // 主题选中描边色，找不到时回退默认蓝
+            var _suppressSelClear = false; // 自身 clearSelect 触发的 selectionchange 不导火索清选中
+
+            function hasImg(n) { return !!(n && n.getData && n.getData('image')); }
+            function getOkImageShape(node) {
+                try {
+                    var ir = node.getRenderer && node.getRenderer('ImageRenderer');
+                    var sh = ir && ir.getRenderShape && ir.getRenderShape();
+                    if (sh && sh.node) return sh;
+                } catch (e) {}
+                return null;
+            }
+            function refreshThemeColor() {
+                try {
+                    var pl = km.getThemeList && km.getThemeList();
+                    var th = km.getTheme && pl ? pl[km.getTheme()] : null;
+                    _themeColor = (th && th['selected-stroke']) || null;
+                } catch (e) { _themeColor = null; }
+            }
+            // 命中分类：'sel' 单选图片；'core'/'miss' 交还正常节点交互
+            function imgHitTest(ev, sh) {
+                var r = null;
+                try { r = sh.node.getBoundingClientRect(); } catch (e) {}
+                if (!r || !r.width || !r.height) return 'miss';
+                var x = ev.clientX, y = ev.clientY;
+                if (x < r.left - 2 || x > r.right + 2 || y < r.top - 2 || y > r.bottom + 2) return 'miss';
+                if (r.width < EDGE * 2.5 || r.height < EDGE * 2.5) return 'sel'; // 图标类小图：整幅即边缘
+                if (x <= r.left + EDGE || x >= r.right - EDGE || y <= r.top + EDGE || y >= r.bottom - EDGE) return 'sel';
+                return 'core';
+            }
+            function hookNodeImage(node) {
+                if (!node || !hasImg(node)) return;
+                var sh = getOkImageShape(node);
+                if (!sh || !sh.node) return;
+                if (sh.node.__imgHook) return;
+                sh.node.__imgHook = 1;
+                sh.node.addEventListener('mousedown', function (ev) {
+                    if (!sh.node || !hasImg(node)) return;
+                    if (ev.button === 2) return;
+                    if (imgHitTest(ev, sh) !== 'sel') return;
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    selectImage(node);
+                });
+            }
+            function refreshImageClicks() {
+                try { km.getRoot().traverse(function (n) { hookNodeImage(n); }); } catch (e) {}
+            }
+            // ---- 高亮矩形（叠加在根渲染容器上，位置由图片屏幕包围盒反算到 RC 坐标）----
+            function drawImgRect(node) {
+                removeImgRect();
+                var sh = getOkImageShape(node);
+                if (!sh || !sh.node) return;
+                var root = km.getRoot && km.getRoot();
+                var rc = root && root.getRenderContainer && root.getRenderContainer();
+                if (!rc || !rc.node || !rc.node.ownerSVGElement) return;
+                var ctm = null;
+                try { ctm = rc.node.getScreenCTM(); } catch (e) {}
+                if (!ctm) return;
+                var inv = ctm.inverse();
+                var svg = rc.node.ownerSVGElement;
+                var r = null;
+                try { r = sh.node.getBoundingClientRect(); } catch (e) {}
+                if (!r || !r.width || !r.height) return;
+                function toRc(cx, cy) {
+                    var p = svg.createSVGPoint(); p.x = cx; p.y = cy;
+                    return p.matrixTransform(inv);
+                }
+                var tl = toRc(r.left, r.top), br = toRc(r.right, r.bottom);
+                var pad = 3;
+                try {
+                    var rect = new kity.Rect().setRadius(2);
+                    rect.stroke(_themeColor || '#2B6CB0', 1.6).fill('none');
+                    try { rect.setStyle('pointer-events', 'none'); } catch (e) {}
+                    rect.setPosition(tl.x - pad, tl.y - pad);
+                    rect.setSize((br.x - tl.x) + pad * 2, (br.y - tl.y) + pad * 2);
+                    rc.appendShape(rect);
+                    _selRect = rect;
+                } catch (e) {}
+            }
+            function removeImgRect() {
+                if (_selRect) {
+                    try { _selRect.remove(); } catch (e) {}
+                    _selRect = null;
+                }
+            }
+            function refreshImageHighlight() {
+                if (_selImg && hasImg(_selImg)) drawImgRect(_selImg);
+                else if (_selImg) clearImgSelection();
+            }
+            function clearImgSelection() {
+                if (!_selImg && !_selRect) return;
+                _selImg = null;
+                _selEl = null;
+                removeImgRect();
+            }
+            function selectImage(node) {
+                if (!node || !hasImg(node)) return;
+                removeImgRect();
+                _selImg = node;
+                _selEl = null;
+                var sh = getOkImageShape(node);
+                if (sh) _selEl = sh.node;
+                _suppressSelClear = true;      // 反选节点，让画面只留图片高亮
+                try { km.clearSelect(); } catch (e) {}
+                _suppressSelClear = false;
+                refreshThemeColor();
+                drawImgRect(node);
+            }
+            // ---- 显示定位跟随 ----
+            function onSelChanged() { if (_suppressSelClear) return; clearImgSelection(); }
+            function removeImageDirect(node) {
+                try { node.setData('image'); } catch (e) {}
+                try { node.setData('imageTitle'); } catch (e) {}
+                try { node.setData('imageSize'); } catch (e) {}
+                var sh = getOkImageShape(node);
+                if (sh && sh.remove) { try { sh.remove(); } catch (e) {} }
+                var ir = node.getRenderer && node.getRenderer('ImageRenderer');
+                if (ir && ir.setRenderShape) { try { ir.setRenderShape(null); } catch (e) {} }
+                try { node.render(); } catch (e) {}
+                try { km.layout(); } catch (e) {}
+            }
+            function onImgKey(e) {
+                if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+                if (!_selImg) return;                                    // 未选中图片 → 交还 core 删节点
+                var ae = document.activeElement;
+                if (ae && ae.tagName === 'INPUT') return;                 // 文字/标签编辑框内不拦截
+                e.preventDefault();
+                e.stopPropagation();
+                removeImageDirect(_selImg);
+                clearImgSelection();
+                try { km.fire('contentchange'); } catch (err) {}
+            }
+            function onDocImgMouseDown(ev) {
+                if (!_selImg) return;
+                var el = _selEl;
+                if (el && (ev.target === el || (el.contains && el.contains(ev.target)))) return;
+                clearImgSelection();
+            }
+            try { km.on('noderender', function (e) { hookNodeImage(e && e.node); }); } catch (e) {}
+            try { km.on('layoutfinish', function () { refreshImageHighlight(); }); } catch (e) {}
+            try { km.on('contentchange', function () { setTimeout(function () { refreshImageHighlight(); refreshImageClicks(); }, 0); }); } catch (e) {}
+            try { km.on('import', function () { setTimeout(function () { refreshImageHighlight(); refreshImageClicks(); }, 0); }); } catch (e) {}
+            try { km.on('selectionchange', onSelChanged); } catch (e) {}
+            try { km.on('selectionclear', onSelChanged); } catch (e) {}
+            document.addEventListener('keydown', onImgKey, true);
+            document.addEventListener('mousedown', onDocImgMouseDown, true);
+            refreshThemeColor();
+            refreshImageClicks();
+        })();
+
+                        // ---- 节点级样式支持（单个/多个节点单独改填充/边框/圆角/连线，与自定义主题脱钩：自注册 setnodestyle 命令 + 渲染钩子）----
+                        (function () {
+                            // 连线样式的作用域：只作用于「本节点 ↔ 其父节点」之间的那一条连线（core 中即 node._connection）。
+                            // 中心主题（根节点）没有父节点、也不存在这条连线，因此不可设置连线样式。
+                            function canStyleLine(n) {
+                                try { return !!(n && !n.isRoot() && n.parent); } catch (e) { return false; }
+                            }
+                            var NodeStyleCommand = kity.createClass('nodestyleCommand', {
+                                base: kityminder.Command,
+                                execute: function (m, value) {
+                                    var nodes = m.getSelectedNodes();
+                                    nodes.forEach(function (n) {
+                                        if (!value) return;
+                                        // 中心主题（根）不存在与父节点之间的连线：清掉历史遗留数据，且不接受新的连线样式
+                                        if (!canStyleLine(n)) {
+                                            try { n.setData('node-line-stroke'); n.setData('node-line-width'); } catch (e) {}
+                                        }
+                                        if (value.fill !== undefined) {
+                                            if (value.fill) n.setData('background', value.fill);
+                                            else n.setData('background');
+                                        }
+                                        if (value.stroke !== undefined) {
+                                            if (value.stroke) n.setData('node-stroke', value.stroke);
+                                            else n.setData('node-stroke');
+                                        }
+                                        if (value.strokeWidth !== undefined) {
+                                            if (value.strokeWidth > 0) n.setData('node-stroke-width', value.strokeWidth);
+                                            else n.setData('node-stroke-width');
+                                        }
+                                        if (value.radius !== undefined) {
+                                            if (value.radius === null || value.radius === '') n.setData('node-radius');
+                                            else n.setData('node-radius', Math.max(0, value.radius));
+                                        }
+                                        if (value.lineColor !== undefined && canStyleLine(n)) {
+                                            if (value.lineColor) n.setData('node-line-stroke', value.lineColor);
+                                            else n.setData('node-line-stroke');
+                                        }
+                                        if (value.lineWidth !== undefined && canStyleLine(n)) {
+                                            if (value.lineWidth > 0) n.setData('node-line-width', value.lineWidth);
+                                            else n.setData('node-line-width');
+                                        }
+                                        n.render();
+                                    });
+                                    m.layout();
+                                },
+                                queryState: function () {
+                                    var nodes = km.getSelectedNodes(), result = 0;
+                                    if (!nodes || nodes.length === 0) return -1;
+                                    nodes.forEach(function (n) {
+                                        if (n && n.getData && (n.getData('background') || n.getData('node-stroke') || n.getData('node-radius') || n.getData('node-line-stroke'))) { result = 1; return false; }
+                                    });
+                                    return result;
+                                }
+                            });
+                            try { km._commands['setnodestyle'] = new NodeStyleCommand(); } catch (e) {}
+                            // 按主题清除节点样式（text=文字样式 / node=填充+圆角 / border=边框 / line=连线）
+                            var ClearNodeStyleCommand = kity.createClass('clearnodestyleCommand', {
+                                base: kityminder.Command,
+                                execute: function (m, scope) {
+                                    var nodes = m.getSelectedNodes();
+                                    nodes.forEach(function (n) {
+                                        if (scope === 'text') {
+                                            ['font-family', 'font-size', 'font-weight', 'font-style', 'color', 'font-strikethrough', 'text-align'].forEach(function (k) { n.setData(k); });
+                                        } else if (scope === 'node') {
+                                            n.setData('background');
+                                            n.setData('node-radius');
+                                        } else if (scope === 'border') {
+                                            n.setData('node-stroke');
+                                            n.setData('node-stroke-width');
+                                        } else if (scope === 'line') {
+                                            n.setData('node-line-stroke');
+                                            n.setData('node-line-width');
+                                        }
+                                        n.render();
+                                    });
+                                    m.layout();
+                                }
+                            });
+                            try { km._commands['clearnodestyle'] = new ClearNodeStyleCommand(); } catch (e) {}
+                            // 复制/粘贴节点样式（内存剪贴板，仅本次会话有效；复制取首个选中节点的全部节点级样式）
+                            var _copiedNodeStyle = null;
+                            var CopyNodeStyleCommand = kity.createClass('copynodestyleCommand', {
+                                base: kityminder.Command,
+                                execute: function (m) {
+                                    var nodes = m.getSelectedNodes();
+                                    if (!nodes || nodes.length === 0) return;
+                                    var n = nodes[0];
+                                    var s = {};
+                                    ['background', 'node-stroke', 'node-stroke-width', 'node-radius',
+                                     'node-line-stroke', 'node-line-width',
+                                     'font-family', 'font-size', 'font-weight', 'font-style', 'color',
+                                     'font-strikethrough', 'text-align', 'vertical-align'].forEach(function (k) {
+                                        var v = n.getData && n.getData(k);
+                                        if (v !== undefined && v !== null && v !== '') s[k] = v;
+                                    });
+                                    _copiedNodeStyle = s;
+                                }
+                            });
+                            try { km._commands['copynodestyle'] = new CopyNodeStyleCommand(); } catch (e) {}
+                            var PasteNodeStyleCommand = kity.createClass('pastenodestyleCommand', {
+                                base: kityminder.Command,
+                                execute: function (m) {
+                                    if (!_copiedNodeStyle) return;
+                                    var nodes = m.getSelectedNodes();
+                                    nodes.forEach(function (n) {
+                                        Object.keys(_copiedNodeStyle).forEach(function (k) {
+                                            // 中心主题不接收连线样式（没有与父节点之间的连线）
+                                            if ((k === 'node-line-stroke' || k === 'node-line-width') && !canStyleLine(n)) return;
+                                            n.setData(k, _copiedNodeStyle[k]);
+                                        });
+                                        n.render();
+                                    });
+                                    m.layout();
+                                }
+                            });
+                            try { km._commands['pastenodestyle'] = new PasteNodeStyleCommand(); } catch (e) {}
+                            // 渲染钩子：节点渲染完成后把节点级样式覆盖到外框/连线（选中态也生效，保证应用后即时可见）
+                            function applyNodeStyle(node) {
+                                if (!node) return;
+                                try {
+                                    var r = node.getRenderer && node.getRenderer('OutlineRenderer');
+                                    var shape = r && r.getRenderShape && r.getRenderShape();
+                                    if (shape && shape.stroke) {
+                                        var stroke = node.getData && node.getData('node-stroke');
+                                        var width = node.getData && node.getData('node-stroke-width');
+                                        if (stroke || width) {
+                                            if (stroke && width) shape.stroke(stroke, width);
+                                            else if (stroke) shape.stroke(stroke);
+                                            else if (width) {
+                                                var cur = shape.node ? shape.node.getAttribute('stroke') : null;
+                                                shape.stroke(cur || '#000000', width);
+                                            }
+                                        }
+                                        var radius = node.getData && node.getData('node-radius');
+                                        if (radius !== undefined && radius !== null && shape.setRadius && node.getStyle('shape') !== 'circle') {
+                                            shape.setRadius(radius);
+                                        }
+                                    }
+                                    // 连线：只覆盖「本节点 ↔ 其父节点」之间的这一条（core 中 node._connection 即父→本节点的路径）。
+                                    // updateConnect 已按主题画完，这里再叠加节点级颜色/粗细；中心主题无此连线，直接跳过。
+                                    var conn = canStyleLine(node) ? node._connection : null;
+                                    if (conn && conn.stroke) {
+                                        var lc = node.getData && node.getData('node-line-stroke');
+                                        var lw = node.getData && node.getData('node-line-width');
+                                        if (lc || lw) {
+                                            var curC = lc || (conn.node ? conn.node.getAttribute('stroke') : null);
+                                            var curW = lw || (conn.node ? parseFloat(conn.node.getAttribute('stroke-width')) : null);
+                                            conn.stroke(curC || '#000000', curW || 1);
+                                        }
+                                    }
+                                } catch (e) {}
+                            }
+                            function hook(e) { applyNodeStyle(e && e.node); }
+                            try { km.on('noderender', hook); } catch (e) {}
+                            // 布局/布局动画结束后 core 的 Connect 模块会按主题重画连线、冲掉节点级连线样式：
+                            // 同事件上再叠加一次本节点的样式，保证「本节点 ↔ 父节点」连线的自定义外观在布局后仍生效
+                            try { km.on('layoutapply', hook); } catch (e) {}
+                            try { km.on('layoutfinish', hook); } catch (e) {}
+                        })();
+
+                        // ---- 选中节点样式上报 WPF（切换节点/换样式后，GUI 样式面板据此回显颜色与数值）----
+                        // 取值优先级：节点级 data（用户单独设过）> 主题值（getStyle/km.getStyle）> 实际渲染外观。
+                        // 刻意绕开 selected-* / blur-selected-* 的"选中态外观"，否则一点节点色块就变成高亮色。
+                        (function () {
+                            var _probe = null;
+                            // 颜色归一：rgb()/rgba()/颜色名/缩写 hex 统一成 #RRGGBB（WPF ColorConverter 不认 rgb()）
+                            function toHex(v) {
+                                if (v === null || v === undefined) return null;
+                                var s = String(v).trim();
+                                if (!s || s === 'none' || s === 'transparent' || s.charAt(0) === '[' || s.indexOf('url(') === 0) return null;
+                                try {
+                                    if (!_probe) { var cvs = document.createElement('canvas'); cvs.width = cvs.height = 1; _probe = cvs.getContext('2d'); }
+                                    if (_probe) {
+                                        _probe.fillStyle = '#ffffff'; _probe.fillStyle = s; var a = String(_probe.fillStyle);
+                                        _probe.fillStyle = '#000000'; _probe.fillStyle = s; var b = String(_probe.fillStyle);
+                                        if (a !== b) return null;              // 两次基准色不同 → s 不是合法颜色
+                                        s = a;
+                                    }
+                                } catch (e) {}
+                                var m = s.match(/^rgba?\(([^)]+)\)$/i);
+                                if (m) {
+                                    var p = m[1].split(','), outp = [];
+                                    for (var i = 0; i < 3; i++) {
+                                        var n = parseInt(p[i], 10);
+                                        outp.push(('0' + ((isNaN(n) ? 0 : n) & 255).toString(16)).slice(-2));
+                                    }
+                                    return '#' + outp.join('');
+                                }
+                                if (s.charAt(0) === '#') {
+                                    if (s.length === 4) return ('#' + s[1] + s[1] + s[2] + s[2] + s[3] + s[3]).toLowerCase();
+                                    if (s.length === 7) return s.toLowerCase();
+                                }
+                                return s;
+                            }
+                            function num(v) {
+                                if (v === null || v === undefined || v === '') return null;
+                                var n = parseFloat(String(v).replace(/px$/i, '').trim());
+                                return isNaN(n) ? null : n;
+                            }
+                            // 依次取第一个"有效"值（0 有效，只有 null/undefined/'' 跳过）
+                            function first() {
+                                for (var i = 0; i < arguments.length; i++) {
+                                    var v = arguments[i];
+                                    if (v !== null && v !== undefined && v !== '') return v;
+                                }
+                                return null;
+                            }
+                            function data(n, k) {
+                                try { var v = n.getData(k); return (v === undefined || v === null || v === '') ? null : v; } catch (e) { return null; }
+                            }
+                            function styleOf(n, k) {
+                                try { var v = n.getStyle && n.getStyle(k); return (v === undefined || v === null || v === '' || v === 'none') ? null : v; } catch (e) { return null; }
+                            }
+                            function kmStyle(k) {
+                                try { var v = km.getStyle && km.getStyle(k); return (v === undefined || v === null || v === '' || v === 'none') ? null : v; } catch (e) { return null; }
+                            }
+                            function elOf(n, renderer) {
+                                try {
+                                    var r = n.getRenderer && n.getRenderer(renderer);
+                                    var sh = r && r.getRenderShape && r.getRenderShape();
+                                    return (sh && sh.node) ? sh.node : null;
+                                } catch (e) { return null; }
+                            }
+                            function attr(el, name) { try { return el ? el.getAttribute(name) : null; } catch (e) { return null; } }
+                            function css(el, prop) {
+                                try {
+                                    if (!el || !el.nodeType || !window.getComputedStyle) return null;
+                                    var v = window.getComputedStyle(el)[prop];
+                                    return (v === undefined || v === null || v === '') ? null : String(v);
+                                } catch (e) { return null; }
+                            }
+                            function textEl(n) {
+                                var g = elOf(n, 'TextRenderer');
+                                if (!g) return null;
+                                try { return (g.getElementsByTagName && g.getElementsByTagName('text')[0]) || g; } catch (e) { return g; }
+                            }
+                            function connEl(n) { try { return (n._connection && n._connection.node) || null; } catch (e) { return null; } }
+
+                            function collectNodeStyle(node) {
+                                if (!node || !node.getData) return null;
+                                var tx = textEl(node), cn = connEl(node), o = {};
+                                var v;
+                                // 是否中心主题（根节点）：根没有与父节点之间的连线，不上报连线样式，
+                                // 面板据 isRoot 禁用连线色/连线粗细/清除连线三个控件
+                                var isRoot = false;
+                                try { isRoot = !!(node.isRoot && node.isRoot()); } catch (e) {}
+                                o.isRoot = isRoot;
+                                // 节点附件（file 通用文件 / video 视频，各自只存路径）：始终上报，无附件为空串，
+                                // 供 WPF「文件」页签随选中节点同步展示/清空
+                                o.file = data(node, 'file') || '';
+                                o.video = data(node, 'video') || '';
+                                v = toHex(first(data(node, 'background'), styleOf(node, 'background')));
+                                if (v) o.fill = v;
+                                v = toHex(first(data(node, 'node-stroke'), styleOf(node, 'stroke')));
+                                if (v) o.stroke = v;
+                                // 主题里只有 main-stroke-width / selected-stroke-width，读 SVG 属性在选中时会拿到 selected 值，
+                                // 所以未设节点级值时统一退回主题值，取不到再按 kity 默认 1
+                                v = num(first(data(node, 'node-stroke-width'), styleOf(node, 'stroke-width'), 1));
+                                if (v !== null) o.strokeWidth = String(Math.round(v));
+                                var rd = data(node, 'node-radius');
+                                v = (rd === null) ? num(styleOf(node, 'radius')) : num(rd);
+                                if (v !== null) o.radius = String(Math.round(v));
+                                // connect-* 是 minder 级键（不带 root-/main- 前缀），node.getStyle 拼前缀后会取不到，故用 km.getStyle
+                                // 连线样式只在「本节点 ↔ 父节点」的连线上有意义：中心主题跳过，面板控件由 isRoot 禁用
+                                if (!isRoot) {
+                                    v = toHex(first(data(node, 'node-line-stroke'), kmStyle('connect-color'), attr(cn, 'stroke')));
+                                    if (v) o.lineColor = v;
+                                    v = num(first(data(node, 'node-line-width'), styleOf(node, 'connect-width'), kmStyle('connect-width'), attr(cn, 'stroke-width'), 1));
+                                    if (v !== null) o.lineWidth = String(Math.round(v));
+                                }
+                                v = num(first(data(node, 'font-size'), styleOf(node, 'font-size'), css(tx, 'fontSize')));
+                                if (v !== null) o.fontSize = String(Math.round(v));
+                                v = toHex(first(data(node, 'color'), styleOf(node, 'color'), css(tx, 'color')));
+                                if (v) o.color = v;
+                                // 主题没有 font-family 键，落到文本元素的实际字体；'default' 是 kity 的占位值，视为未设置
+                                v = first(data(node, 'font-family'), styleOf(node, 'font-family'), css(tx, 'fontFamily'));
+                                if (v) {
+                                    v = String(v).trim();
+                                    if (v && v.toLowerCase() !== 'default') o.fontFamily = v;
+                                }
+                                var fw = first(data(node, 'font-weight'), css(tx, 'fontWeight'));
+                                var fwn = num(fw);
+                                o.bold = !!fw && (String(fw).toLowerCase() === 'bold' || (fwn !== null && fwn >= 600));
+                                var fst = first(data(node, 'font-style'), css(tx, 'fontStyle'));
+                                o.italic = !!fst && String(fst).toLowerCase() === 'italic';
+                                o.strikethrough = !!data(node, 'font-strikethrough');
+                                var ta = first(data(node, 'text-align'), css(tx, 'textAlign'));
+                                if (ta) {
+                                    ta = String(ta).toLowerCase().trim();
+                                    if (ta === 'start') ta = 'left';
+                                    else if (ta === 'end') ta = 'right';
+                                    o.textAlign = ta;
+                                }
+                                var vva = data(node, 'vertical-align');
+                                if (vva) o.verticalAlign = String(vva).toLowerCase().trim();
+                                return o;
+                            }
+                            // 多选：只上报所有选中节点一致的键，不一致（mixed）保持面板现值
+                            function mergeStyles(list) {
+                                if (!list || list.length === 0) return null;
+                                var base = list[0], outp = {};
+                                Object.keys(base).forEach(function (k) {
+                                    var v = base[k], same = true;
+                                    for (var i = 1; i < list.length; i++) {
+                                        var other = list[i];
+                                        if (!other || !(k in other) || other[k] !== v) { same = false; break; }
+                                    }
+                                    if (same) outp[k] = v;
+                                });
+                                return outp;
+                            }
+                            var _styleTimer = null;
+                            function notifySelectedStyle() {
+                                if (_styleTimer) return;   // 合并连发（noderender 高频），80ms 内只上报一次当前选中
+                                _styleTimer = setTimeout(function () {
+                                    _styleTimer = null;
+                                    try {
+                                        var nodes = km.getSelectedNodes && km.getSelectedNodes();
+                                        if (!nodes || nodes.length === 0) return;   // 无选中：保持面板现值
+                                        var list = [];
+                                        for (var i = 0; i < nodes.length; i++) {
+                                            var st = collectNodeStyle(nodes[i]);
+                                            if (st) list.push(st);
+                                        }
+                                        var merged = mergeStyles(list);
+                                        if (!merged || Object.keys(merged).length === 0) return;
+                                        hostPost({ type: 'nodestyle', style: merged });
+                                    } catch (e) {}
+                                }, 80);
+                            }
+                            try { km.on('selectionchange', notifySelectedStyle); } catch (e) {}
+                            try { km.on('selectionclear',  notifySelectedStyle); } catch (e) {}
+                            try { km.on('noderender',      notifySelectedStyle); } catch (e) {}
+                        })();
+
+                        // ---- 内容变更通知 WPF（用于标题栏 * 号 / 自动保存）----
+        function notifyDirty() {
+            hostPost({ type: 'contentchange' });
+        }
+        km.on('contentchange', notifyDirty);
+
+        // ---- JS -> C# 的异步请求-响应：requestId 配对，避免 host object 同步调用死锁 ----
+        var pending = new Map(), seq = 0;
+        window.__resolveHost = function (id, data) {
+            var resolve = pending.get(id);
+            if (resolve) { pending.delete(id); resolve(data); }
+        };
+        function callHost(action, payload) {
+            return new Promise(function (resolve) {
+                var id = ++seq;
+                pending.set(id, resolve);
+                hostPost({ type: 'request', id: id, action: action, payload: payload });
+            });
+        }
+
+        // ---- 供 C# 调用的稳定 API 门面 ----
+        // ---- 搜索辅助状态与函数：匹配节点列表 + 当前下标 + 高亮框 ----
+        var _searchList = null, _searchKw = '', _searchPos = 0, _searchMark = null;
+        function clearSearchMark() {
+            if (_searchMark) { try { _searchMark.remove && _searchMark.remove(); } catch (e) {} _searchMark = null; }
+        }
+        function markSearchNode(node) {
+            clearSearchMark();
+            if (!node || !node.getLayoutBox || !km.getRenderContainer) return;
+            try {
+                var lb = node.getLayoutBox();
+                if (!lb) return;
+                var rc = km.getRenderContainer();
+                var shape = new kity.Rect().setRadius(6);
+                shape.stroke('#0A84FF', 2).fill('rgba(10,132,255,0.10)');
+                var pad = 6;
+                shape.setPosition(lb.x - pad, lb.y - pad);
+                shape.setSize(lb.width + pad * 2, lb.height + pad * 2);
+                rc.addShape(shape);
+                _searchMark = shape;
+                // 若匹配节点在视野外，把画布平移到该节点（参考拖动画布逻辑）
+                centerOnNode(node, rc);
+            } catch (e) { /* 高亮失败不影响搜索定位 */ }
+        }
+        function centerOnNode(node, rc) {
+            try {
+                if (!node || !node.getRenderBox || !rc || !rc.setTranslate) return;
+                var target = km.getRenderTarget && km.getRenderTarget();
+                if (!target) return;
+                var cw = target.clientWidth || 0, ch = target.clientHeight || 0;
+                if (!cw || !ch) return;
+                // 节点在面板(paper)坐标系中实际的屏幕位置盒（含当前平移）
+                var pb = node.getRenderBox(null, 'paper');
+                if (!pb) return;
+                var ccx = pb.x + pb.width / 2, ccy = pb.y + pb.height / 2;
+                // 节点中心已在视口内则不移动画布（避免搜索中心主题等可见节点时画面跳动）
+                if (ccx >= 0 && ccx <= cw && ccy >= 0 && ccy <= ch) return;
+                // 读取渲染容器当前平移：兼容 [x,y] 与 [Point] 两种形态
+                var cur = rc.transform ? rc.transform.translate : null;
+                var curX = 0, curY = 0;
+                if (cur && cur.length) {
+                    if (typeof cur[0] === 'number') { curX = cur[0]; curY = cur[1] || 0; }
+                    else if (cur[0] && typeof cur[0].x === 'number') { curX = cur[0].x; curY = cur[0].y; }
+                }
+                var dx = (cw / 2 - ccx) + curX;   // 新平移 = 旧平移 + (视口中心 - 节点屏幕中心)
+                var dy = (ch / 2 - ccy) + curY;
+                rc.setTranslate(new kity.Point(dx, dy));
+                // 不调用 km.refresh()：重排会改变节点位置，与平移目标冲突
+            } catch (e) { /* 平移失败则节点保持原位置 */ }
+        }
+        // 主题是否已注册：core 的 setTheme 对未知主题会 throw "Theme xxx not exists!"，
+        // 而 importJson 内部会 setTheme(json.theme)，一旦抛错整个导入失败（画布内容恢复不出来）。
+        function themeExists(name) {
+            try {
+                var list = window.__km && window.__km.getThemeList
+                    ? window.__km.getThemeList()
+                    : (typeof kityminder !== 'undefined' && kityminder.Minder && kityminder.Minder.getThemeList)
+                        ? kityminder.Minder.getThemeList()
+                        : null;
+                return !!(name && list && list[name]);
+            } catch (e) { return false; }
+        }
+
+        // ---- 搜索结果面板：匹配数 >3 时在画布左侧浮出，列出全部结果，点击条目聚焦对应节点 ----
+        var _spEl = null;                          // 面板根元素（惰性创建）
+        function spPanel() {
+            if (_spEl) return _spEl;
+            var el = document.createElement('div');
+            el.id = 'search-panel';
+            el.innerHTML =
+                '<div class="sp-head"><span class="sp-title"></span><span class="sp-close" title="关闭搜索面板">×</span></div>' +
+                '<div class="sp-list"></div>';
+            el.querySelector('.sp-close').addEventListener('click', function () { spHide(); });
+            document.body.appendChild(el);
+            _spEl = el;
+            return el;
+        }
+        function spIsVisible() { return !!(_spEl && _spEl.classList.contains('sp-visible')); }
+        function spHide() {
+            if (_spEl) _spEl.classList.remove('sp-visible');
+            _searchList = null; _searchKw = ''; _searchPos = 0;   // 复位：下次搜索从第一个匹配开始
+            clearSearchMark();
+        }
+        // 全量渲染结果条目（关键字片段高亮；超过 200 条只渲染前 200 条防卡顿，标题仍显示总数）
+        function spRender(kw) {
+            var el = spPanel();
+            var list = _searchList || [];
+            el.querySelector('.sp-title').textContent = '搜索结果 ' + list.length + ' 项';
+            var box = el.querySelector('.sp-list');
+            box.innerHTML = '';
+            var lowKw = String(kw || '').toLowerCase();
+            var count = Math.min(list.length, 200);
+            for (var i = 0; i < count; i++) {
+                var text = '';
+                try { text = (list[i].getText && list[i].getText()) || ''; } catch (e) {}
+                var item = document.createElement('div');
+                item.className = 'sp-item';
+                // 先按原始文本切出命中片段，再逐段 HTML 转义，避免转义实体串被关键字截断
+                var segs = [], lowText = String(text).toLowerCase(), pos = 0, hit;
+                if (lowKw) {
+                    while ((hit = lowText.indexOf(lowKw, pos)) !== -1) {
+                        if (hit > pos) segs.push([text.slice(pos, hit), false]);
+                        segs.push([text.slice(hit, hit + lowKw.length), true]);
+                        pos = hit + lowKw.length;
+                    }
+                }
+                if (pos < text.length) segs.push([text.slice(pos), false]);
+                var html = '';
+                for (var j = 0; j < segs.length; j++) {
+                    var t2 = String(segs[j][0]).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                    html += segs[j][1] ? '<mark>' + t2 + '</mark>' : t2;
+                }
+                item.innerHTML = html;
+                (function (idx) {
+                    item.addEventListener('click', function () { spFocus(idx); });
+                })(i);
+                box.appendChild(item);
+            }
+            el.classList.toggle('sp-visible', list.length > 3);   // 需求：结果数 >3 才显示面板
+            spSyncActive();
+        }
+        // 点击条目：选中并聚焦该节点（选中态同步 WPF 样式面板 + 高亮框 + 视野外时居中），焦点交还画布
+        function spFocus(idx) {
+            var list = _searchList || [];
+            if (idx < 0 || idx >= list.length) return;
+            _searchPos = idx + 1;                 // 与 search() 的 1 起下标保持一致
+            var node = list[idx];
+            try { km.clearSelect && km.clearSelect(); } catch (e) {}
+            try { km.select && km.select(node); } catch (e) {}
+            markSearchNode(node);
+            try { km.focus && km.focus(); } catch (e) {}
+            spSyncActive();
+        }
+        // 面板当前项与 _searchPos 同步（逐个搜索/点击条目后调用），并滚动到可视区
+        function spSyncActive() {
+            if (!_spEl || !spIsVisible()) return;
+            var items = _spEl.querySelectorAll('.sp-item');
+            for (var i = 0; i < items.length; i++) {
+                var on = (i === _searchPos - 1);
+                items[i].classList.toggle('sp-active', on);
+                if (on) { try { items[i].scrollIntoView({ block: 'nearest' }); } catch (e) {} }
+            }
+        }
+        // 内容变化后面板结果会过期：面板可见时按当前关键字静默重建；原聚焦节点被删则回落到第一个
+        try { km.on('contentchange', function () {
+            if (!spIsVisible() || !_searchKw) return;
+            var kw = _searchKw, prev = _searchPos;
+            _searchList = []; _searchPos = 0;
+            try { km.getRoot().traverse(function (n) {
+                var t = n && n.getText ? (n.getText() || '') : '';
+                if (String(t).toLowerCase().indexOf(kw) !== -1) _searchList.push(n);
+            }); } catch (e) {}
+            if (!_searchList.length) { spHide(); return; }
+            _searchPos = (prev >= 1 && prev <= _searchList.length) ? prev : 0;
+            spRender(kw);
+            if (_searchPos === 0) { _searchPos = 1; spFocus(0); }
+            else { try { markSearchNode(_searchList[_searchPos - 1]); } catch (e) {} spSyncActive(); }
+        }); } catch (e) {}
+
+        // ---- 画布主题（Nexus Panel 移植新增）：外壳亮/暗 → 画布配色 ----
+        var _canvasVars = null;
+        var _CANVAS_KEYS = {
+            canvasBg: '--km-canvas-bg',
+            canvasBorder: '--km-canvas-border',
+            panelBg: '--km-panel-bg',
+            panelHeadBg: '--km-panel-head-bg',
+            panelText: '--km-panel-text',
+            panelDim: '--km-panel-dim',
+            panelHover: '--km-panel-hover',
+            panelCloseHover: '--km-panel-close-hover',
+            loadingBg: '--km-loading-bg',
+            loadingText: '--km-loading-text',
+        };
+        var _CANVAS_DEFAULTS = {
+            canvasBg: '#1E1E1E', canvasBorder: '#3D4250',
+            panelBg: '#222225', panelHeadBg: '#26262B', panelText: '#CFCFCF',
+            panelDim: '#9A9AA0', panelHover: '#2C2C33', panelCloseHover: '#3A3A40',
+            loadingBg: 'rgba(27,27,31,.9)', loadingText: '#AFAFAF',
+        };
+        /** 门面建好后补套：父窗口可能在 km 初始化之前就把主题发过来了 */
+        function _applyPendingCanvasTheme() {
+            if (window.__kmCanvasVars && window.__minder && window.__minder.setCanvasTheme) {
+                try { window.__minder.setCanvasTheme(window.__kmCanvasVars); } catch (e) { /* ignore */ }
+            }
+        }
+
+        function _applyCanvasTheme() {
+            var v = _canvasVars || _CANVAS_DEFAULTS;
+            var root = document.documentElement;
+            for (var k in _CANVAS_KEYS) {
+                if (!Object.prototype.hasOwnProperty.call(_CANVAS_KEYS, k)) continue;
+                var val = v[k] || _CANVAS_DEFAULTS[k];
+                if (val) root.style.setProperty(_CANVAS_KEYS[k], val);
+            }
+            // 覆盖内核在 setTheme 时写入的内联底色（内联优先级高于 CSS 变量）
+            var rt = km.getRenderTarget && km.getRenderTarget();
+            if (rt) rt.style.background = v.canvasBg || _CANVAS_DEFAULTS.canvasBg;
+        }
+
+        window.__minder = {
+            importJson: function (data) {
+                var d = (typeof data === 'string') ? JSON.parse(data) : data;
+                // 自定义主题由 C# 在 import 之后注册并切换；此处带上未注册的主题名会让 importJson 直接抛错，
+                // 故先摘掉，让画布内容先恢复出来，主题稍后由 setTheme 补上。
+                if (d && d.theme && !themeExists(d.theme)) d.theme = null;
+                km.importJson(d);
+                km.refresh();
+                _historyCommitBaseline();   // 导入即为新的历史基线，之前的编辑不再回退
+                return true;
+            },
+            importText: function (md) {
+                km.importData('markdown', md);   // core 内置 markdown 协议
+                km.refresh();
+                _historyCommitBaseline();
+                _applyCanvasTheme();          // 导入可能触发 setTheme，补回画布配色
+                return true;
+            },
+            // 关键：km.exportData() 一律返回 Promise，而 WebView2 的 ExecuteScriptAsync 不会等待 Promise
+            // （实测返回值是 {}），所以导出一律走 core 的同步 exportJson，并 stringify 成文本返回。
+            exportJson: function () {
+                return JSON.stringify(km.exportJson());
+            },
+            exportMarkdown: async function () {
+                return await km.exportData('markdown');
+            },
+            // 完整画布 PNG 导出：exportData('png') 内部创建 canvas 绘制整幅画布（含滚动区域外），
+            // 是异步的且 WebView2 ExecuteScriptAsync 不等 Promise，故触发后把结果写 window 变量，
+            // C# 侧循环调用 pollExportPng() 轮询取回（成功 'OK:'+base64 dataUrl，失败 'ERR:'+msg，未就绪 'PENDING'）。
+            exportPng: function () {
+                window.__mindmapPng = { state: 'pending', data: '', err: '' };
+                km.exportData('png').then(function (dataUrl) {
+                    window.__mindmapPng = { state: 'done', data: dataUrl, err: '' };
+                }).catch(function (e) {
+                    window.__mindmapPng = { state: 'done', data: '', err: String(e && (e.message || e)) };
+                });
+                return true;
+            },
+            pollExportPng: function () {
+                var r = window.__mindmapPng;
+                if (!r || r.state === 'pending') return 'PENDING';
+                if (r.err) return 'ERR:' + r.err;
+                return 'OK:' + r.data;
+            },
+            exportSvg: async function () {
+                return await km.exportData('svg');
+            },
+            execCommand: function (name) {
+                return km.execCommand.apply(km, arguments);
+            },
+            setLayout: function (tpl) {
+                km.useTemplate(tpl);
+                km.refresh();
+                return true;
+            },
+            // 切换布局模板（供 WPF 侧布局缩略图网格 / SetTemplateAsync 调用）：
+            // 优先内核 template 命令，回退 useTemplate（与 plan 一致）。
+            setTemplate: function (t) {
+                if (t == null) return false;
+                try { km.execCommand('template', t); }
+                catch (e) { try { km.useTemplate(t); } catch (e2) {} }
+                try { km.refresh(); } catch (e) {}
+                return true;
+            },
+            // 视图选择：复刻编辑器 selectAll 指令的 6 种语义（选择不增量走内核命令，需在桥接层自实现）。
+            // all=全选 / revert=反选 / siblings=兄弟 / level=同层 / path=根→选中节点路径 / tree=选中子树。
+            select: function (mode) {
+                try {
+                    var root = km.getRoot();
+                    if (!root || !km.getSelectedNodes) return false;
+                    var sel = km.getSelectedNodes();
+                    function contains(arr, x) { for (var i = 0; i < arr.length; i++) if (arr[i] === x) return true; return false; }
+                    function apply(ns) {
+                        km.clearSelect();
+                        for (var i = 0; i < ns.length; i++) { try { km.select(ns[i], true); } catch (e) {} }
+                        try { km.fire && km.fire('selectionchange'); } catch (e) {}
+                    }
+                    var nodes = [], n = (sel && sel.length && sel[0]) || km.getSelectedNode();
+                    switch (String(mode || '').toLowerCase()) {
+                        case 'all':
+                            try { root.traverse(function (x) { nodes.push(x); }); } catch (e) {}
+                            break;
+                        case 'revert':
+                            try { root.traverse(function (x) { if (!contains(sel, x)) nodes.push(x); }); } catch (e) {}
+                            break;
+                        case 'siblings': {
+                            if (!n) break;
+                            var p = n.parent || (n.getParent && n.getParent()) || null;
+                            if (!p) break;
+                            var kids = p.getChildren ? p.getChildren() : [];
+                            for (var i = 0; i < kids.length; i++) if (kids[i] !== n) nodes.push(kids[i]);
+                            break;
+                        }
+                        case 'level': {
+                            if (!n) break;
+                            var lv = n.getLevel ? n.getLevel() : 0;
+                            try { root.traverse(function (x) { if (x.getLevel && x.getLevel() === lv) nodes.push(x); }); } catch (e) {}
+                            break;
+                        }
+                        case 'path': {
+                            var cur = n;
+                            while (cur) { nodes.push(cur); cur = cur.parent || (cur.getParent && cur.getParent()) || null; }
+                            nodes.reverse();
+                            break;
+                        }
+                        case 'tree': {
+                            if (!n) break;
+                            (function walk(x) { nodes.push(x); (x.getChildren ? x.getChildren() : []).forEach(walk); })(n);
+                            break;
+                        }
+                        default:
+                            return false;
+                    }
+                    if (nodes.length) apply(nodes);
+                    return true;
+                } catch (e) { return false; }
+            },
+            /**
+             * 注入画布配色（Nexus Panel 移植新增）。
+             * 原版画布底色写死深色以贴合 WPF 外壳；插件版改由外壳亮/暗主题驱动。
+             *
+             * 两个落点缺一不可：
+             *   1) :root 上的 CSS 变量 —— 管容器背景、内描边、搜索面板、加载遮罩；
+             *   2) 内核渲染目标的内联 background —— 内核 setTheme() 会执行
+             *      `c.style.background = getStyle('background')` 把主题自带底色写上去，
+             *      内联样式优先级高于 CSS 规则，不覆盖就会盖掉变量。
+             * 所以本方法同时写两处，并在每次 setTheme / importJson 之后重新套用一次。
+             *
+             * @param {Object|null} vars 形如 { canvasBg, canvasBorder, panelBg, ... }；
+             *        传 null 表示恢复默认（原版深色）。
+             */
+            setCanvasTheme: function (vars) {
+                try {
+                    _canvasVars = (vars && typeof vars === 'object') ? vars : null;
+                    // 同步回 window.__kmCanvasVars：那里是消息路径（d.type==='theme'）写入的暂存值，
+                    // 门面建好后的补套也读它。直调门面时不回写，两条路径的状态就会不一致。
+                    window.__kmCanvasVars = _canvasVars;
+                    _applyCanvasTheme();
+                    return true;
+                } catch (e) { return false; }
+            },
+            setTheme: function (theme) {
+                km.setTheme(theme);
+                // 内核 setTheme 只记录主题名并切换 km-theme-* 类；refresh 只重排位置，
+                // renderNode 对已存在 shape 会跳过 create，导致内联填充色停留在旧主题。
+                // 故先清空每个节点已建的 shape，再 refresh 强制按新主题全量重建节点/连线/文字。
+                km.getRoot().traverse(function (node) {
+                    var rs = node._renderers;
+                    if (!rs) return;
+                    for (var i = 0; i < rs.length; i++) {
+                        try {
+                            var sh = rs[i].getRenderShape && rs[i].getRenderShape();
+                            if (sh && sh.remove) sh.remove();
+                            if (rs[i].setRenderShape) rs[i].setRenderShape(null);
+                        } catch (e) { /* 单个类型失败不影响整体重建 */ }
+                    }
+                });
+                km.refresh();
+                _applyCanvasTheme();          // 内核 setTheme 改写了内联底色，这里补回来
+                return true;
+            },
+            // 把自定义主题（MindMapTheme 的 camelCase JSON）扁平化为 core 主题对象并写入主题表。
+            // core 的 getThemeList() 返回主题表 m（引用），setTheme 靠 m[a] 查找，故直接写入即注册。
+            registerCustomTheme: function (json) {
+                try {
+                    var th = (typeof json === 'string') ? JSON.parse(json) : json;
+                    var list = window.__km && window.__km.getThemeList
+                        ? window.__km.getThemeList()
+                        : (typeof kityminder !== 'undefined' && kityminder.Minder && kityminder.Minder.getThemeList)
+                            ? kityminder.Minder.getThemeList()
+                            : null;
+                    if (!list) return false;
+                    var s = th.palette || th;
+                    function nz(v, d) { return (v && String(v).trim()) ? String(v).trim() : d; }
+                    function num(v, d) { var n = parseInt(v, 10); return isNaN(n) ? d : n; }
+                    var bg = nz(s.textColor, '#333333'), sel = nz(s.selectedColor, '#2B6CB0');
+                    // 布局间距：兄弟节点纵向间隔（*-space）与父子左右间距（*-margin）。缺省沿用内核 fresh-blue 默认，
+                    // 旧版自主题缺这些键被内核按 0 处理，导致节点上下/左右贴死。
+                    var rootSpace = num(s.rootSpace ?? s.RootSpace, 10);
+                    var mainSpace = num(s.mainSpace ?? s.MainSpace, 5);
+                    var subSpace = num(s.subSpace ?? s.SubSpace, 5);
+                    var mainMargin = num(s.mainMargin ?? s.MainMargin, 20);
+                    var subMargin = num(s.subMargin ?? s.SubMargin, 20);
+                    var t = {
+                        background: nz(s.background, '#FBFBFB'),
+                        'connect-color': nz(s.connectColor, '#4A90D9'),
+                        'connect-width': num(s.connectWidth, 2),
+                        'root-background': nz(s.rootBackground, '#4A90D9'), 'root-color': bg,
+                        'root-font-size': num(s.rootFontSize, 16), 'root-stroke': nz(s.rootStroke, 'none'),
+                        'root-stroke-width': num(s.rootStrokeWidth, 0), 'root-radius': num(s.rootRadius, 5),
+                        'root-padding': [12, 24], 'root-margin': [30, 100], 'root-space': rootSpace,
+                        'main-background': nz(s.mainBackground, '#DCE9F7'), 'main-color': bg,
+                        'main-font-size': num(s.mainFontSize, 14), 'main-stroke': nz(s.mainStroke, 'none'),
+                        'main-stroke-width': num(s.mainStrokeWidth, 0), 'main-radius': num(s.mainRadius, 3),
+                        'main-padding': [6, 20], 'main-margin': mainMargin, 'main-space': mainSpace,
+                        'sub-background': nz(s.subBackground, '#FFFFFF'), 'sub-color': bg,
+                        'sub-font-size': num(s.subFontSize, 12), 'sub-stroke': nz(s.subStroke, 'none'),
+                        'sub-stroke-width': num(s.subStrokeWidth, 0), 'sub-radius': num(s.subRadius, 5),
+                        'sub-padding': [5, 10], 'sub-margin': subMargin, 'sub-space': subSpace,
+                        'connect-radius': 5,
+                        'selected-stroke': sel, 'selected-stroke-width': 3, 'blur-selected-stroke': sel,
+                        'text-selection-color': sel, 'marquee-stroke': sel, 'drop-hint-color': sel,
+                        'line-height': 1.5
+                    };
+                    list[th.id] = t;
+                    return true;
+                } catch (e) { return false; }
+            },
+            // 示例：JS 反向请求 WPF 弹出保存对话框
+            saveAs: async function () {
+                return callHost('saveAs', await km.exportData('json'));
+            },
+            // 编辑当前选中节点文字（供 WPF「编辑文字」按钮调用）
+            editSelected: function () {
+                beginTextEdit(null, null, null);
+                return true;
+            },
+            // 搜索：按文本匹配全部节点，逐个循环定位。同一关键字再次调用跳到下一个匹配；
+            // 关键字变更（或面板关闭后列表已复位）则重新搜索。返回 {total,index,text}（index 为 1 起；无匹配均为 0）。
+            // 匹配数 >3 时在画布左侧弹出搜索结果面板，列出全部结果，点击条目聚焦。
+            search: function (keyword) {
+                try {
+                    var kw = String(keyword == null ? '' : keyword).trim().toLowerCase();
+                    if (!kw) { clearSearchMark(); spHide(); return { total: 0, index: 0, text: '' }; }
+                    if (!_searchList || _searchKw !== kw) {
+                        _searchList = [];
+                        _searchKw = kw;
+                        _searchPos = 0;
+                        try { km.getRoot().traverse(function (n) {
+                            var t = n && n.getText ? (n.getText() || '') : '';
+                            if (String(t).toLowerCase().indexOf(kw) !== -1) _searchList.push(n);
+                        }); } catch (e) {}
+                        spRender(kw);          // 重建后刷新面板（内部按 >3 决定显示/隐藏）
+                    }
+                    if (!_searchList || _searchList.length === 0) {
+                        clearSearchMark();
+                        spHide();
+                        return { total: 0, index: 0, text: '' };
+                    }
+                    var total = _searchList.length;
+                    _searchPos = (_searchPos + 1) % (total + 1);   // 1..total 循环，0 表示无当前项
+                    if (_searchPos === 0) _searchPos = 1;
+                    var node = _searchList[_searchPos - 1];
+                    markSearchNode(node);
+                    spSyncActive();            // 面板当前项跟随逐个搜索推进
+                    return { total: total, index: _searchPos, text: node.getText ? (node.getText() || '') : '' };
+                } catch (e) { return { total: 0, index: 0, text: '' }; }
+            },
+            // 按选中节点展开其子树到指定层数（供 WPF 侧边栏「展开一级/二级/全部」按钮调用）。
+            // levels=1 展开选中节点本身（显示子节点）；2=再展开子节点（显示孙节点）；0 或负数=全部展开。
+            // 更深层一律收起（对齐「展开到指定层并收起更深」语义）。无选中节点返回 false。
+            // 采用内置展开/收起机制（与内置展开器/快捷键一致）：renderTree 触发 beforerender
+            // （节点与连线可见性随父节点展开态联动）+ layout 动画 + contentchange，而非 refresh。
+            expandSelectedToLevel: function (levels) {
+                try {
+                    var n = km.getSelectedNode();
+                    if (!n) return false;
+                    var base = n.getLevel();
+                    n.traverse(function (node) {
+                        var depth = node.getLevel() - base;
+                        if (levels <= 0 || depth < levels) node.expand();
+                        else if (!node.isLeaf()) node.collapse();
+                    });
+                    n.renderTree();
+                    km.layout(100);
+                    km.fire('contentchange');
+                    return true;
+                } catch (e) { return false; }
+            }
+        };
+
+        // 门面已建好，补套父窗口可能更早发来的画布配色
+        _applyPendingCanvasTheme();
+
+        // ---- 撤回/重做历史栈 ----
+        // kityminder 内核既不注册 undo/redo 命令、也没有自带的 UndoManager，宿主「撤销/重做」
+        // 按钮（KityMinderHost.ExecCommandAsync 对 undo/redo 特判）走 window.editor.history。
+        // 这里以 contentchange 为内容变更信号，用「基线快照」模型维护两栈：内容变更发生时，
+        // 把变更前的状态压入撤销栈；undo/redo 通过重导入快照还原，期间以 _historyLock 防重入记录。
+        var _undoStack = [], _redoStack = [], _historyLock = false, _baseline = null;
+        function _historySnap() { try { return JSON.stringify(km.exportJson()); } catch (e) { return null; } }
+        function _historyApply(snap) {
+            _historyLock = true;
+            try { km.importJson(JSON.parse(snap)); km.refresh(); } catch (e) {} finally { _historyLock = false; }
+        }
+        function _historyCommitBaseline() { _baseline = _historySnap(); }
+        km.on('contentchange', function () {
+            if (_historyLock || _baseline == null) return;
+            var cur = _historySnap();
+            if (cur === null || cur === _baseline) return;
+            _undoStack.push(_baseline);
+            if (_undoStack.length > 100) _undoStack.shift();   // 上限防快照无限堆积
+            _redoStack.length = 0;                              // 新改动使重做链失效
+            _baseline = cur;
+        });
+        window.editor = window.editor || {};
+        window.editor.history = {
+            undo: function () {
+                if (!_undoStack.length) return false;
+                var cur = _baseline;
+                _historyApply(_undoStack.pop());
+                _redoStack.push(cur);
+                _baseline = _historySnap();
+                return true;
+            },
+            redo: function () {
+                if (!_redoStack.length) return false;
+                var cur = _baseline;
+                _historyApply(_redoStack.pop());
+                _undoStack.push(cur);
+                _baseline = _historySnap();
+                return true;
+            },
+            canUndo: function () { return _undoStack.length > 0; },
+            canRedo: function () { return _redoStack.length > 0; },
+            clear: function () { _undoStack = []; _redoStack = []; _baseline = null; }
+        };
+        // SVG 节点文字不是可编辑 DOM，故双击/F2 时在节点 <text> 元素正上方盖一个样式完全仿真节点文字的
+        // contentEditable 层（同色/同字/同字号、透明无边框），观感就是直接在节点上打字。
+        // Enter/失焦应用（走 core 的 text 命令并重排布局），Esc 取消。
+        var editLayer = null;
+        function nodeTextElement(node) {
+            try {
+                var tr = node.getRenderer && node.getRenderer('TextRenderer');
+                var sh = tr && tr.getRenderShape && tr.getRenderShape();
+                var g = (sh && sh.node) || null;
+                if (!g) return null;
+                return (g.getElementsByTagName && g.getElementsByTagName('text')[0]) || g;
+            } catch (e) { return null; }
+        }
+        function closeTextEditor(apply) {
+            if (!editLayer) return;
+            var node = editLayer.node, el = editLayer.input;
+            if (apply) {
+                var v = (el.innerText || el.textContent || '').replace(/[\r\n]+/g, ' ');
+                try { km.execCommand('text', v); } catch (e) {}
+                try { node.render(); } catch (e) {}
+                try { km.layout(); } catch (e) {}
+            }
+            editLayer = null;
+            if (el.parentNode) el.parentNode.removeChild(el);
+            try { km.focus(); } catch (e) {}
+        }
+        function beginTextEdit(node, clientX, clientY) {
+            if (!node) node = km.getSelectedNode();
+            if (!node || editLayer) return;
+            var c = document.getElementById('minder-container');
+            var cRect = c.getBoundingClientRect();
+            var tx = nodeTextElement(node);
+            var ws = (tx && window.getComputedStyle) ? window.getComputedStyle(tx) : null;
+            var box = (tx && tx.getBoundingClientRect) ? tx.getBoundingClientRect() : null;
+            var fontSize = ws ? ws.fontSize : '14px';
+            var fs = parseFloat(fontSize) || 14;
+            var anchor = tx ? tx.getAttribute('text-anchor') : null;
+            var ta = anchor === 'middle' ? 'center' : (anchor === 'end' ? 'right' : (ws ? ws.textAlign : 'left'));
+            var el = document.createElement('div');
+            el.contentEditable = 'true';
+            el.setAttribute('spellcheck', 'false');
+            el.innerText = (typeof node.getText === 'function' && node.getText()) || '';
+            el.style.cssText = 'position:absolute;z-index:110;outline:none;background:transparent;border:none;box-shadow:none;' +
+                'margin:0;padding:0;cursor:text;white-space:pre;word-break:break-word;overflow:hidden;' +
+                'user-select:text;-webkit-user-select:text;' +
+                'color:' + (ws ? ws.color : '#e6e6e6') + ';' +
+                'font-family:' + (ws ? ws.fontFamily : '"Segoe UI","Microsoft YaHei",sans-serif') + ';' +
+                'font-size:' + fontSize + ';' +
+                'font-weight:' + (ws ? ws.fontWeight : 'normal') + ';' +
+                'font-style:' + (ws ? ws.fontStyle : 'normal') + ';' +
+                'text-align:' + ta + ';' +
+                'line-height:' + (box && box.height ? Math.round(box.height) : Math.round(fs * 1.5)) + 'px;';
+            el.addEventListener('blur', function () { closeTextEditor(true); });
+            el.addEventListener('keydown', function (ev) {
+                if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ev.stopPropagation(); closeTextEditor(true); }
+                else if (ev.key === 'Tab') { ev.preventDefault(); ev.stopPropagation(); closeTextEditor(true); }
+                else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeTextEditor(false); }
+                else { ev.stopPropagation(); }
+            });
+            if (box) {
+                el.style.left = Math.max(0, Math.round(box.left - cRect.left)) + 'px';
+                el.style.top = Math.max(0, Math.round(box.top - cRect.top)) + 'px';
+                el.style.width = Math.max(30, Math.round(box.width)) + 'px';
+                el.style.minWidth = Math.max(60, Math.round(box.width)) + 'px';
+            } else {
+                el.style.left = '12px'; el.style.top = '12px'; el.style.minWidth = '120px';
+            }
+            editLayer = { node: node, input: el };
+            c.appendChild(el);
+            el.focus();
+            try {
+                var range = document.createRange();
+                range.selectNodeContents(el);
+                var sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+            } catch (e) {}
+        }
+        km.on('dblclick', function (e) {
+            var node = km.getSelectedNode();
+            if (!node) return;
+            var oe = e && e.originEvent;
+            beginTextEdit(node, oe && oe.clientX != null ? oe.clientX : null, oe && oe.clientY != null ? oe.clientY : null);
+        });
+        document.getElementById('minder-container').addEventListener('keydown', function (e) {
+            // F2 编辑选中节点（kity 的 km-receiver 会吞掉常规按键，用捕获阶段兜底）
+            if (e.key === 'F2') { e.preventDefault(); beginTextEdit(null, null, null); }
+        }, true);
+        window.editSelected = function () { beginTextEdit(null, null, null); };
+
+        // ---- 默认快捷键 ----
+        // core 仅内置 Ctrl+A 全选，以及 commandShortcutKeys 里注册的那几个
+        // （alt+up/down 上移下移、shift+tab 插入上级、ctrl+shift+l 整理布局、ctrl+=- 缩放、ctrl+c/x/v）。
+        // 「方向键导航 / / 折叠 / Alt+1-5 展开层级」**内核并未实现**（键码表里有登记、行为没写），
+        // 由本文件在下方补齐。
+        // 行内文字编辑框已对按键 stopPropagation，编辑文字时不会误触发下方绑定。
+        (function () {
+            function kmShortcut(key, fn) { try { km.addShortcut(key, fn); } catch (e) {} }
+
+            // 插入新节点并进入行内编辑；父节点若折叠先展开
+            function insertNode(parent, index) {
+                try {
+                    if (!parent) return;
+                    if (parent.isCollapsed && parent.isCollapsed()) { try { parent.expand(); } catch (e) {} }
+                    var node = km.createNode(null, parent);
+                    km.appendNode(node, parent, index == null ? (parent.children ? parent.children.length : 0) : index);
+                    km.select(node, true);
+                    km.fire('contentchange');
+                    km.layout(100);
+                    beginTextEdit(node, null, null);
+                } catch (e) {}
+            }
+            function removeSelectedNode() {
+                var sel = km.getSelectedNode();
+                if (!sel || sel.getLevel() === 0) return;   // 根节点不删
+                try { km.removeNode(sel); } catch (e) { return; }
+                try { km.fire('contentchange'); km.layout(100); } catch (e) {}
+            }
+
+            // 插入：Tab 子节点、Enter 同级（当前节点之后；根/无选中则插子节点）
+            kmShortcut('Tab', function () {
+                var sel = km.getSelectedNode();
+                insertNode(sel || km.getRoot(), null);
+            });
+            kmShortcut('Enter', function () {
+                var sel = km.getSelectedNode();
+                if (!sel) { insertNode(km.getRoot && km.getRoot(), null); return; }
+                if (sel.parent && sel.getLevel() > 0) insertNode(sel.parent, sel.getIndex() + 1);
+                else insertNode(sel, null);
+            });
+            // 删除：Delete / Backspace
+            kmShortcut('Delete', removeSelectedNode);
+            kmShortcut('Backspace', removeSelectedNode);
+
+            // 格式化：加粗 / 斜体 / 删除线
+            kmShortcut('ctrl+b', function () { km.execCommand('bold'); });
+            kmShortcut('ctrl+i', function () { km.execCommand('italic'); });
+            kmShortcut('ctrl+d', function () { km.execCommand('strikethrough'); });
+            // 水平对齐：居中 / 左 / 右（显式传值给 textalign 命令）
+            kmShortcut('ctrl+e', function () { km.execCommand('textalign', 'center'); });
+            kmShortcut('ctrl+l', function () { km.execCommand('textalign', 'left'); });
+            kmShortcut('ctrl+r', function () { km.execCommand('textalign', 'right'); });
+            // 复制/粘贴节点样式（无值命令）
+            try { km.addCommandShortcutKeys({ copynodestyle: 'ctrl+shift+c', pastenodestyle: 'ctrl+shift+v' }); } catch (e) {}
+
+            // ---- 方向键导航：只移动光标，不折叠 ----
+            // 说明：core 并没有实现方向键导航。它只在键码表里预留了 isSelectedNodeKey
+            // 常量(37/38/39/40)，但 min.js 里 ArrowUp/Down/Left/Right 零命中、该常量也无使用处 ——
+            // 即「常量预留了，行为没写」。这里按 XMind 语义补齐。
+            //
+            // 关键取舍：方向键**只移动**，折叠/展开另给 Ctrl+←/→ 与 /。
+            // 早先版本用「两级语义」（← 先折叠再上移、→ 先展开再进入），
+            // 实际用起来会「想移动却把分支收起来了」，与 XMind 习惯不符。
+            function navNode(dir) {
+                try {
+                    var n = km.getSelectedNode();
+                    if (!n) { km.select(km.getRoot(), true); return; }
+                    var p = n.parent;
+                    var kids = n.getChildren();
+
+                    if (dir === 'up' || dir === 'down') {
+                        if (!p) return;                       // 根节点没有兄弟
+                        var sibs = p.getChildren();
+                        var i = n.getIndex() + (dir === 'up' ? -1 : 1);
+                        if (i < 0 || i >= sibs.length) return;  // 到头了就不动
+                        km.select(sibs[i], true);
+                        return;
+                    }
+                    if (dir === 'left') {
+                        if (!p) return;                       // 根节点没有父节点
+                        km.select(p, true);                   // 纯上移，不折叠
+                        return;
+                    }
+                    // right：进入第一个子节点。若当前折叠着则先展开再选中 ——
+                    // 否则会选中一个被折叠隐藏、画面上看不见的节点。
+                    if (!kids || !kids.length) return;
+                    if (n.isCollapsed && n.isCollapsed()) setFold(n, true);
+                    km.select(kids[0], true);
+                } catch (e) {}
+            }
+
+            /**
+             * 折叠 / 展开单个节点（不递归、不改变选中）。
+             * renderTree 让子节点可见性随父节点联动，fire contentchange 让自动保存接住。
+             */
+            function setFold(n, wantExpand) {
+                if (!n) return false;
+                try {
+                    if (n.isLeaf && n.isLeaf()) return false;   // 叶子无事可做
+                    if (wantExpand) n.expand(); else n.collapse();
+                    n.renderTree(); km.layout(100); km.fire('contentchange');
+                    return true;
+                } catch (e) { return false; }
+            }
+
+            kmShortcut('up', function () { navNode('up'); });
+            kmShortcut('down', function () { navNode('down'); });
+            kmShortcut('left', function () { navNode('left'); });
+            kmShortcut('right', function () { navNode('right'); });
+
+            // ---- Ctrl+← 折叠 / Ctrl+→ 展开（对齐 XMind）----
+            // 注：内核键码解析里 ctrl 与 cmd 等价（case "ctrl": case "cmd":，
+            // 且事件侧判定为 a.ctrlKey || a.metaKey），所以 macOS 上按 Cmd+←/→ 同样生效 ——
+            // 这点正好避开 macOS 把 Ctrl+←/→ 占用为「切换桌面」的系统快捷键。
+            kmShortcut('ctrl+left', function () { setFold(km.getSelectedNode(), false); });
+            kmShortcut('ctrl+right', function () { setFold(km.getSelectedNode(), true); });
+
+            // ---- / 折叠或展开选中节点（来回切换）----
+            // 同样只有键码(191)被登记，行为未实现。
+            kmShortcut('/', function () {
+                try {
+                    var n = km.getSelectedNode();
+                    if (!n || (n.isLeaf && n.isLeaf())) return;
+                    setFold(n, !!(n.isCollapsed && n.isCollapsed()));
+                } catch (e) {}
+            });
+
+            // ---- Alt+1~5：从选中节点展开到第 N 级 ----
+            // 走页面自己的门面 expandSelectedToLevel（更深层一律收起），
+            // 它不是内核命令，不能用 execCommand 调。
+            for (var _lv = 1; _lv <= 5; _lv++) {
+                (function (lv) {
+                    kmShortcut('alt+' + lv, function () {
+                        try {
+                            if (window.__minder && window.__minder.expandSelectedToLevel) {
+                                window.__minder.expandSelectedToLevel(lv);
+                            }
+                        } catch (e) {}
+                    });
+                })(_lv);
+            }
+        })();
+
+        hostPost({ type: 'request', id: 0, action: 'log', payload: 'kityminder 就绪' });
+    })();
+    }, false);
+    </script>
+    <script>
+        // 加载遮罩自隐：km 初始化完成后（DOMContentLoaded）隐藏；WebView2 每次导航/重载会自动重现本遮罩
+        (function () {
+            var el = document.getElementById('km-loading');
+            if (!el) return;
+            function hide() { el.style.display = 'none'; }
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hide);
+            else hide();
+            window.addEventListener('load', hide);
+            setTimeout(hide, 3000);   // 兜底：即使 DOMContentLoaded 未触发，也避免遮罩残留
+        })();
+    </script>
+</body>
+</html>

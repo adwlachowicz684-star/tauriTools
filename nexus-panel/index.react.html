@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nexus Panel</title>
+  <script>
+    /* 首屏防闪：主题系统就绪前先把底色铺上，避免白闪。
+       颜色由 theme-manager 每次应用主题时写入 localStorage，
+       所以新增主题不必回来改这里 —— 只改 js/themes.js 即可。
+
+       与 index.html（无构建模式）里的同名脚本保持一致。
+
+       注意：这里用注入 <style> 而不是内联 style.background ——
+       内联样式优先级最高，主题初始化后不会被覆盖，
+       首屏是深色、切到浅色后底色会卡在深色那一版。 */
+    (function () {
+      try {
+        var bg = localStorage.getItem('nexus:preload-bg');
+        var fg = localStorage.getItem('nexus:preload-fg');
+        if (!bg) return;
+        var st = document.createElement('style');
+        st.id = 'nexus-preload-bg';
+        st.textContent =
+          'html,body{background:' + bg + ';' +
+          (fg ? 'color:' + fg + ';' : '') + '}';
+        document.head.appendChild(st);
+      } catch (e) { /* 存储不可用时忽略 */ }
+    })();
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+</html>

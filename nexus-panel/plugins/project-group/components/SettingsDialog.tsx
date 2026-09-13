@@ -1,0 +1,368 @@
+import { useEffect, useState } from 'react';
+import type { Api } from '../api';
+import { errText } from '../api';
+import type { BackupAutoStatus, FpxConfig, McpToolRow } from '../types';
+import { ChainActionsPanel } from './ChainActionsPanel';
+import { ChainClientsDialog } from './ChainClientsDialog';
+import { Modal } from './ui';
+
+/** 自动备份档位（分钟）；0 = 关闭。与原版预设一致。 */
+const BACKUP_PRESETS: { value: number; label: string }[] = [
+  { value: 0, label: '关闭' },
+  { value: 15, label: '15 分钟' },
+  { value: 30, label: '30 分钟' },
+  { value: 60, label: '1 小时' },
+  { value: 120, label: '2 小时' },
+  { value: 360, label: '6 小时' },
+  { value: 720, label: '12 小时' },
+  { value: 1440, label: '每天' },
+];
+
+/**
+ * 基础设置面板。
+ *
+ * 这一组开关原先只有配置字段、没有界面，改起来得手改 JSON，现在集中在这里。
+ * 改动即时保存（与 WPF 版一致）；其中「自动备份间隔」保存后还要通知后端
+ * 重新拉起/停止定时器——后端是常驻线程，不跟着配置自己变。
+ */
+export function SettingsDialog({
+  api, config, dataDir, onClose, onLog, onSaved,
+}: {
+  api: Api;
+  config: FpxConfig;
+  /** 插件数据目录：拼 icons/ 下图标的绝对路径（换软件图标要用） */
+  dataDir: string;
+  onClose: () => void;
+  onLog: (m: string, isError?: boolean) => void;
+  /**
+   * 写入配置；传的对象会与当前草稿合并。
+   * 返回 Promise 是因为后面要紧接着通知后端重算定时器——
+   * 后端是读磁盘上的配置，必须等这次写入落盘，否则读到的是旧间隔。
+   */
+  onSaved: (patch: Partial<FpxConfig>) => Promise<unknown>;
+}) {
+  // 软件图标（外壳能力）：候选来自数据目录 icons/
+  const [iconFiles, setIconFiles] = useState<string[]>([]);
+  const [iconThumbs, setIconThumbs] = useState<Record<string, string>>({});
+  const [iconMsg, setIconMsg] = useState('');
+
+  const [autoSelect, setAutoSelect] = useState(config.autoSelect);
+  const [quickLink, setQuickLink] = useState(config.quickLink);
+  const [hierarchy, setHierarchy] = useState(config.createPathCarriesHierarchy);
+  const [iconSync, setIconSync] = useState(config.iconAffectExplorer);
+  const [appendOnly, setAppendOnly] = useState(config.backupAppendOnly);
+  const [autoMinutes, setAutoMinutes] = useState(config.backupAutoMinutes);
+
+  const [moveFolder, setMoveFolder] = useState(config.moveFolderOnCrossMove);
+  const [moveScope, setMoveScope] = useState(config.moveFolderScope || 'defaultRootsFlatten');
+  const [mcpEnabled, setMcpEnabled] = useState(config.mcpEnabled);
+  const [mcpTools, setMcpTools] = useState<Record<string, boolean>>({ ...config.mcpTools });
+  const [toolRows, setToolRows] = useState<McpToolRow[]>([]);
+  const [status, setStatus] = useState<BackupAutoStatus | null>(null);
+
+  // 工具清单与自动备份状态都取自后端；清单以工具名为准，开关状态用本地草稿覆盖
+  useEffect(() => {
+    api.mcpTools().then(setToolRows).catch((e) => onLog(errText(e), true));
+    api.backupAutoStatus().then(setStatus).catch(() => { /* 状态拿不到不影响设置 */ });
+    api.listIcons().then(setIconFiles).catch(() => { /* 拿不到就不显示图标列表 */ });
+  }, [api, onLog]);
+
+  // 图标是本地文件，沙箱里要后端转 data URI 才显示得出来
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const out: Record<string, string> = {};
+      for (const n of iconFiles) {
+        const base = dataDir.replace(/[\\/]+$/, '');
+        const sep = base.includes('\\') ? '\\' : '/';
+        try {
+          out[n] = await api.iconData(`${base}${sep}icons${sep}${n}`);
+        } catch { /* 单个失败不影响其余 */ }
+        if (!alive) return;
+      }
+      if (alive) setIconThumbs(out);
+    })();
+    return () => { alive = false; };
+  }, [api, iconFiles, dataDir]);
+
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      // 必须先等配置真正落盘：backupAutoSync 是让后端重读磁盘上的配置，
+      // 若这里不等，后端读到的是旧间隔，新设置要等到下次保存才生效。
+      await onSaved({
+        autoSelect,
+        quickLink,
+        createPathCarriesHierarchy: hierarchy,
+        iconAffectExplorer: iconSync,
+        backupAppendOnly: appendOnly,
+        backupAutoMinutes: autoMinutes,
+        moveFolderOnCrossMove: moveFolder,
+        moveFolderScope: moveScope,
+        mcpEnabled,
+        mcpTools,
+      });
+      const running = await api.backupAutoSync();
+      onLog(autoMinutes === 0 ? '已停止自动备份' : `自动备份已启用（每 ${autoMinutes} 分钟）`);
+      setStatus((s) => (s ? { ...s, running, minutes: autoMinutes } : s));
+      onClose();
+    } catch (e) {
+      onLog(errText(e), true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /**
+   * 把数据目录 icons/ 里的某个图标设为软件窗口图标。
+   * 后端要的是绝对路径，而 icons/ 就在数据目录下，用 bootstrap 给的 dataDir 拼出来。
+   */
+  const applyWindowIcon = async (name: string) => {
+    setIconMsg('');
+    const base = dataDir.replace(/[\\/]+$/, '');
+    const sep = base.includes('\\') ? '\\' : '/';
+    const full = `${base}${sep}icons${sep}${name}`;
+    try {
+      await api.setWindowIcon(full);
+      setIconMsg(`已把「${name}」设为软件图标（重启后恢复默认）`);
+      onLog(`已更换软件图标：${full}`);
+    } catch (e) {
+      const msg = errText(e);
+      setIconMsg(msg);
+      onLog(`设置软件图标失败：${msg}`, true);
+    }
+  };
+
+  /** 工具开关：只记录与"默认开启"不同的项，保持配置清爽 */
+  const toggleTool = (name: string, on: boolean) => {
+    setMcpTools((m) => {
+      const next = { ...m };
+      if (on) delete next[name];
+      else next[name] = false;
+      return next;
+    });
+  };
+
+  const isToolOn = (name: string) => mcpTools[name] ?? true;
+
+  // true = 切到连锁动作管理页。整页替换而不是嵌在本弹窗里：
+  // 管理页自己带 Modal，嵌进来会叠成两层遮罩。
+  const [managing, setManaging] = useState(false);
+  const [clientsOpen, setClientsOpen] = useState(false);
+
+  if (managing) {
+    return (
+      <ChainActionsPanel
+        api={api}
+        onClose={() => setManaging(false)}
+        onLog={onLog}
+      />
+    );
+  }
+
+  if (clientsOpen) {
+    return (
+      <ChainClientsDialog
+        api={api}
+        initial={config.customChainClients}
+        onClose={() => setClientsOpen(false)}
+        onLog={onLog}
+      />
+    );
+  }
+
+  return (
+    <Modal
+      title="基础设置"
+      onClose={onClose}
+      width={560}
+      footer={
+        <>
+          <button className="p-btn" onClick={onClose} disabled={saving}>取消</button>
+          <button className="p-btn primary" onClick={() => void save()} disabled={saving}>
+            {saving ? '保存中…' : '保存'}
+          </button>
+        </>
+      }
+    >
+      <div className="fpx-settings-sec">
+        <h3>交互</h3>
+        <Check
+          checked={autoSelect} onChange={setAutoSelect}
+          title="拖入的文件夹默认选中"
+          sub="拖放添加卡片后自动选中它，省一次点击"
+        />
+        <Check
+          checked={quickLink} onChange={setQuickLink}
+          title="快速链接（拖项目组⇄项目时直接创建链接）"
+          sub="关闭则跨栏拖放后还要再确认一次才建链"
+        />
+      </div>
+
+      <div className="fpx-settings-sec">
+        <h3>新建</h3>
+        <Check
+          checked={hierarchy} onChange={setHierarchy}
+          title="新建项目 / 项目组时路径携带页签层级"
+          sub="开启后路径为「父目录\页签名\名称」，关闭则直接建在父目录下"
+        />
+      </div>
+
+      <div className="fpx-settings-sec">
+        <h3>Agent 连锁</h3>
+        <div className="p-muted" style={{ fontSize: 11.5, marginBottom: 6 }}>
+          内置四项（自由任务 / 一键审查 / 快速归并 / 快速部署）+ 自定义动作，
+          每个动作分别可设项目与项目组两份指令模板。
+        </div>
+        <div className="p-row">
+          <button className="p-btn" onClick={() => setManaging(true)}>管理连锁动作…</button>
+          <button className="p-btn" onClick={() => setClientsOpen(true)}>自定义客户端…</button>
+        </div>
+      </div>
+
+      <div className="fpx-settings-sec">
+        <h3>跨类别移动（卡片换栏）</h3>
+        <Check
+          checked={moveFolder} onChange={setMoveFolder}
+          title="跨项目 / 项目组移动时同步移动文件夹"
+          sub="把卡片从「项目」栏移到「项目组」栏时，物理文件夹一并搬到项目组的预设父目录"
+        />
+        {moveFolder && (
+          <div className="fpx-field">
+            <label>搬家范围</label>
+            <select className="p-input fpx-select" value={moveScope}
+              onChange={(e) => setMoveScope(e.target.value)}>
+              <option value="defaultRootsFlatten">仅默认根目录下的卡片（嵌套层级扁平化到目标根）</option>
+              <option value="defaultRoots">仅默认根目录下的卡片（已在目标根内则保持原位）</option>
+              <option value="anywhere">任意位置的卡片都搬</option>
+            </select>
+            <div className="p-muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+              「默认根目录」指「新建」里设置的预设父目录（项目/项目组各一个）。
+              搬迁目标是另一类别的预设父目录；未设置时自动跳过物理搬家，只换卡片归属。
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="fpx-settings-sec">
+        <h3>软件图标（外壳）</h3>
+        <div className="p-muted" style={{ fontSize: 11.5, marginBottom: 6 }}>
+          更换本软件窗口在任务栏 / 标题栏上的图标。这是窗口级设置，不属于插件数据；
+          重启软件后会回到打包时的默认图标。
+        </div>
+        {iconFiles.length === 0 ? (
+          <div className="p-muted" style={{ fontSize: 11.5 }}>
+            数据目录 icons/ 下还没有图标。可先在卡片的「图标与标签」里导入，再来这里选用。
+          </div>
+        ) : (
+          <div className="fpx-settings-icons">
+            {iconFiles.map((n) => (
+              <button
+                key={n}
+                className="fpx-settings-iconbtn"
+                title={`设为软件图标：${n}`}
+                onClick={() => void applyWindowIcon(n)}
+              >
+                {iconThumbs[n] ? <img src={iconThumbs[n]} alt="" /> : '◆'}
+                <span>{n}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {iconMsg && (
+          <div className="p-muted" style={{ fontSize: 11.5, marginTop: 6 }}>{iconMsg}</div>
+        )}
+      </div>
+
+      <div className="fpx-settings-sec">
+        <h3>图标</h3>
+        <Check
+          checked={iconSync} onChange={setIconSync}
+          title="修改图标同步生效到资源管理器"
+          sub="写入文件夹 desktop.ini（仅 Windows）；关闭则只在本界面显示"
+        />
+      </div>
+
+      <div className="fpx-settings-sec">
+        <h3>备份</h3>
+        <Check
+          checked={appendOnly} onChange={setAppendOnly}
+          title="只增模式（源中删除的文件在备份中保留）"
+          sub="关闭则做镜像同步，备份里多余的文件会被清除"
+        />
+        <div className="fpx-field">
+          <label>自动备份间隔</label>
+          <div className="p-row">
+            <select
+              className="p-input fpx-select"
+              value={autoMinutes}
+              onChange={(e) => setAutoMinutes(Number(e.target.value))}
+            >
+              {BACKUP_PRESETS.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="p-muted" style={{ fontSize: 11.5 }}>
+            {status?.lastRun
+              ? `上次自动备份：${status.lastRun}${status.running ? '，运行中' : ''}`
+              : '设置后由后台定时执行，改动在保存时生效'}
+          </div>
+        </div>
+      </div>
+
+      <div className="fpx-settings-sec">
+        <h3>MCP 服务</h3>
+        <Check
+          checked={mcpEnabled} onChange={setMcpEnabled}
+          title="启用 MCP 服务"
+          sub="关闭后外部 AI 工具的全部调用都会被拒绝（进程仍在跑，可随时改回）"
+        />
+        <div className="p-muted" style={{ fontSize: 11.5, margin: '4px 0 8px' }}>
+          进程的启动 / 停止在「服务」面板；这里只管是否对外提供能力。
+        </div>
+        {toolRows.length > 0 && (
+          <div className="fpx-toollist">
+            {toolRows.map((t) => (
+              <Check
+                key={t.name}
+                checked={isToolOn(t.name)}
+                onChange={(v) => toggleTool(t.name, v)}
+                title={t.name}
+                sub={t.desc}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+/** 带副标题的勾选项（与 CheckLine 同款视觉，这里单独实现便于内联使用） */
+function Check({
+  checked, onChange, title, sub,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  title: string;
+  sub?: string;
+}) {
+  return (
+    <label className="fpx-check">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span className="fpx-check-box">{checked ? '✓' : ''}</span>
+      <span>
+        <span className="fpx-check-title">{title}</span>
+        {sub && <span className="fpx-check-sub">{sub}</span>}
+      </span>
+    </label>
+  );
+}

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <!-- 无构建模式需要显式写 CSP；Vite 模式下可交给 Vite -->
+  <!-- CSP：注意 script-src 必须带 'unsafe-inline'，
+       否则本页首屏防闪脚本、以及各插件 HTML 里的内联 <script type="module"> 都会被静默拦掉。
+       （插件 HTML 内联脚本是 iframe 插件的标准写法，不能禁）
+       外链白名单见 README「外链管理」。 -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; media-src 'self' asset: http://asset.localhost blob:; frame-src 'self'" />
+  <title>Nexus Panel</title>
+  <link rel="stylesheet" href="./css/neumorphism.css" />
+  <script>
+    // 标记为「无构建模式」：React/TSX 插件（requiresBuild）会自动隐藏
+    window.__NEXUS_NO_BUILD__ = true;
+
+    /* 首屏防闪：在主题系统就绪前先把底色铺上，避免白闪。
+       颜色由 theme-manager 每次应用主题时写入 localStorage，
+       所以新增主题不必回来改这里 —— 只改 js/themes.js 即可。 */
+    (function () {
+      try {
+        var bg = localStorage.getItem('nexus:preload-bg');
+        var fg = localStorage.getItem('nexus:preload-fg');
+        if (!bg) return;
+        var r = document.documentElement;
+        r.style.setProperty('--bg', bg);
+        if (fg) r.style.setProperty('--text', fg);
+        r.style.background = bg;
+      } catch (e) { /* 存储不可用时忽略 */ }
+    })();
+  </script>
+</head>
+<body>
+  <div id="app">
+    <!-- ===== 自定义标题栏（decorations: false，自绘三键） ===== -->
+    <header id="titlebar" data-tauri-drag-region>
+      <div class="tb-brand" data-tauri-drag-region>
+        <div class="tb-logo">◈</div>
+        <span>Nexus Panel</span>
+      </div>
+      <span class="tb-title" id="tb-title"></span>
+      <div class="tb-spacer" data-tauri-drag-region></div>
+      <div class="tb-btns">
+        <button class="tb-btn" id="btn-theme"  title="切换主题（缩略图选择）">◐</button>
+        <button class="tb-btn" id="btn-top"    title="窗口置顶">⇱</button>
+        <button class="tb-btn" id="btn-min"    title="最小化">─</button>
+        <button class="tb-btn" id="btn-max"    title="最大化">□</button>
+        <button class="tb-btn danger" id="btn-close" title="关闭">✕</button>
+      </div>
+    </header>
+
+    <!-- ===== 主体：侧边栏 + 插件舞台 ===== -->
+    <div id="body">
+      <aside id="sidebar">
+        <button class="side-toggle" id="side-toggle" title="展开/收起">
+          <b>☰</b><span>插件面板</span>
+        </button>
+        <nav id="plugin-list"></nav>
+        <div id="sidebar-foot">
+          <button class="nav-item" id="btn-add" title="安装插件">
+            <span class="nav-icon">＋</span><span class="nav-label">安装插件</span>
+          </button>
+          <button class="nav-item" id="btn-settings" title="设置">
+            <span class="nav-icon">⚙</span><span class="nav-label">设置</span>
+          </button>
+        </div>
+      </aside>
+
+      <main id="main">
+        <div id="main-inner">
+          <div id="plugin-bar">
+            <h1 id="bar-title">未选择插件</h1>
+            <span class="sub" id="bar-sub"></span>
+            <div class="bar-actions">
+              <button class="bar-btn" id="bar-plugin-settings" title="插件设置" hidden>⚙ 设置</button>
+              <button class="bar-btn" id="bar-reload" title="重新加载插件">↻ 重载</button>
+            </div>
+          </div>
+          <div id="stage">
+            <div id="stage-scroll"></div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div id="toasts"></div>
+
+  <!-- 无构建模式：原生 ESM，直接被浏览器加载
+       Vite 模式：vite 会识别 type="module" 并做同样的处理，无需改动 -->
+  <script type="module" src="./js/shell.js"></script>
+</body>
+</html>
