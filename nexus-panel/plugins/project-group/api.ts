@@ -170,21 +170,13 @@ export function makeApi(ctx: PluginContext) {
 export type Api = ReturnType<typeof makeApi>;
 
 /**
- * 路径比较键：去首尾空白 → 去尾部分隔符 → 统一分隔符为正斜杠。
- *
- * `ci`（case-insensitive）**必须**由调用方按平台传入：
- *   - Windows：NTFS / FAT 文件名大小写不敏感，`Foo` 与 `foo` 是同一目录 → 传 true
- *   - Linux / macOS：大小写敏感，两者是**两个不同的目录** → 传 false
- *
- * 默认 false 是刻意的：宁可漏匹配（大不了选中态没跟上），
- * 也不能误合并（会让两个不同项目的标签色 / 图标 / ACL 锁 / 链接记录互相覆盖）。
- *
- * 与 Rust 侧 store::normalize_key 同规则 —— 那边也只在 `cfg!(windows)` 时转小写。
- * 早期这里无条件 toLowerCase，与后端不一致，在 Linux/macOS 上会把 A/a 判成同一路径。
+ * 路径比较键：去尾部分隔符、统一分隔符、转小写。
+ * 与 Rust 侧 store::normalize_key 保持同一套规则，用于判断"是不是同一个目录"。
+ * （Windows 大小写不敏感；Linux/macOS 上转小写会把 A/a 视为同一路径，
+ *   但对改名/清除无效这类"同一批数据内部比对"的场景无害）
  */
-export function normalizeKey(p: string, ci = false): string {
-  const s = p.trim().replace(/[\\/]+$/, '').replace(/\\/g, '/');
-  return ci ? s.toLowerCase() : s;
+export function normalizeKey(p: string): string {
+  return p.trim().replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase();
 }
 
 /** 统一错误信息抽取 */

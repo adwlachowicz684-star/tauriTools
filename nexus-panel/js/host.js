@@ -623,16 +623,20 @@ export function createHost(opts = {}) {
   function showError(stage, manifest, err) {
     const msg = String(err?.stack || err?.message || err);
     console.error(`[plugin:${manifest?.id}]`, err);
+    // 插件名同样要转义：它和 msg 一样来自插件清单，
+    // 而插件清单可以由用户导入/编辑 —— 只转义 msg 不转义 name，
+    // 等于把门锁了却留着一扇窗（这处曾连续三轮漏修）。
+    const title = escapeHtml(manifest?.name || manifest?.id || '未知插件');
     stage.innerHTML = `
       <div class="err-box">
-        <h3>⚠ 插件「${manifest?.name || manifest?.id}」加载失败</h3>
+        <h3>⚠ 插件「${title}」加载失败</h3>
         <pre>${escapeHtml(msg)}</pre>
         <div class="row">
           <button class="p-btn primary" id="err-retry">重试</button>
           <button class="p-btn" id="err-back">返回概览</button>
         </div>
       </div>`;
-    stage.querySelector('#err-retry').onclick = () => mount(manifest.id);
+    stage.querySelector('#err-retry').onclick = () => mount(manifest?.id);
     stage.querySelector('#err-back').onclick = () => hooks.onOpen?.('home') ?? mount('home');
   }
 
@@ -714,8 +718,21 @@ export function readTheme() {
   for (const v of THEME_VARS) out[v] = cs.getPropertyValue(v).trim();
   return out;
 }
+/**
+ * HTML 转义。
+ *
+ * 五个字符都要转义：`&` `<` `>` 用于文本节点，`"` `'` 用于属性值。
+ * 只覆盖前四个的话，把内容插进 `title="..."` 这类单引号属性时仍可被闭合。
+ * 当前调用点都在文本节点里，但补齐单引号的成本为零，
+ * 免得以后有人拿它去拼属性时踩坑。
+ *
+ * 注意：这个函数只能保证"不产生 HTML 结构"，
+ * 不能用于 URL 上下文（href/src 里的 `javascript:` 需另行校验）。
+ */
 export function escapeHtml(s) {
-  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
 }
 
 /** 无构建模式下过滤掉需要编译器的插件（React/TSX） */

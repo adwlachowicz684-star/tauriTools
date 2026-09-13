@@ -22,7 +22,9 @@
     "test:external": "node external-test.mjs",
     "test:bridge": "node bridge-test.mjs",
     "test:adapt-seq": "node adapt-sequential-test.mjs",
-  "test:tauri-http": "node tauri-http-test.mjs"
+    "test:tauri-http": "node tauri-http-test.mjs",
+    "test:layout": "node layout-test.mjs",
+    "test:xss": "node xss-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

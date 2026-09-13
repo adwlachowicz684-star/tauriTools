@@ -136,117 +136,14 @@ export function sortForDisplay(list: Canvas[]): Canvas[] {
 
 const STORAGE_KEY = 'agent-flow.canvases.v1';
 const ACTIVE_KEY = 'agent-flow.activeCanvas.v1';
-/**
- * 密钥单独存放的键。
- *
- * LLM 的 apiKey 不随画布走：画布会被导出成 agent-flow.json 分享给别人，
- * 一旦带进去就是把密钥交出去了。所以 apiKey 存这里（按节点 id 索引），
- * 画布里只留空字符串，刷新后自动回填 —— 既不用每次重填，也导不出去。
- */
-const KEYS_KEY = 'agent-flow.llm-keys.v1';
 
 export type PersistedState = {
   canvases: Canvas[];
   activeId: string | null;
 };
 
-/* ------------------------------------------------------------------ */
-/* 密钥脱敏                                                            */
-/* ------------------------------------------------------------------ */
-
-/**
- * 判断并处理单个节点：把 data.llm.apiKey 挖空。
- *
- * 用鸭子类型而不是导入 isOcr / isTranslate：
- *  · Canvas.nodes 是 unknown[]，这层不该知道具体节点类型
- *  · 以后新增任何带 llm 的节点都会自动覆盖，不用回来改
- *
- * 只认「节点形态」{ id, data: { kind, llm } }，不去递归扫 output ——
- * 否则用户让 AI 生成一段恰好含 llm 字样的文本，会被误改。
- */
-function redactNode(n: unknown): unknown {
-  if (!n || typeof n !== 'object') return n;
-  const o = n as Record<string, unknown>;
-  const d = o.data;
-  if (!d || typeof d !== 'object') return n;
-  const dd = d as Record<string, unknown>;
-  if (typeof dd.kind !== 'string') return n;
-
-  const llm = dd.llm;
-  if (!llm || typeof llm !== 'object') return n;
-  const l = llm as Record<string, unknown>;
-  if (!('apiKey' in l)) return n;
-
-  return { ...o, data: { ...dd, llm: { ...l, apiKey: '' } } };
-}
-
-/** 节点数组脱敏。导出文件、写 localStorage 之前都应该过一遍。 */
-export function redactNodes(nodes: unknown[]): unknown[] {
-  return (nodes ?? []).map(redactNode);
-}
-
-/** 整个持久化状态脱敏（每个画布的节点都过一遍） */
-export function redactSecrets(state: PersistedState): PersistedState {
-  return {
-    ...state,
-    canvases: (state.canvases ?? []).map((c) => ({
-      ...c,
-      nodes: redactNodes(c.nodes),
-    })),
-  };
-}
-
-/** 收集所有节点的 apiKey，按节点 id 索引。保存时只收集当前存在的，等于自动清理了已删节点的残留。 */
-export function collectSecrets(state: PersistedState): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const c of state.canvases ?? []) {
-    for (const n of c.nodes ?? []) {
-      if (!n || typeof n !== 'object') continue;
-      const o = n as Record<string, unknown>;
-      const d = o.data as Record<string, unknown> | undefined;
-      const llm = d?.llm as Record<string, unknown> | undefined;
-      const key = llm?.apiKey;
-      if (typeof o.id === 'string' && typeof key === 'string' && key !== '') {
-        out[o.id] = key;
-      }
-    }
-  }
-  return out;
-}
-
-/** 把密钥回填到节点上。找不到对应密钥的节点保持空字符串，不报错。 */
-export function applySecrets(
-  state: PersistedState,
-  keys: Record<string, string>,
-): PersistedState {
-  if (!keys || Object.keys(keys).length === 0) return state;
-  return {
-    ...state,
-    canvases: (state.canvases ?? []).map((c) => ({
-      ...c,
-      nodes: (c.nodes ?? []).map((n) => {
-        if (!n || typeof n !== 'object') return n;
-        const o = n as Record<string, unknown>;
-        const d = o.data as Record<string, unknown> | undefined;
-        const llm = d?.llm as Record<string, unknown> | undefined;
-        if (!d || !llm || !('apiKey' in llm)) return n;
-        const k = keys[String(o.id)];
-        if (typeof k !== 'string' || k === '') return n;
-        return { ...o, data: { ...d, llm: { ...llm, apiKey: k } } };
-      }),
-    })),
-  };
-}
-
-/**
- * 序列化并脱敏。
- *
- * 这里默认脱敏而不是让调用方自己记得调 —— 密钥泄露属于「忘了就出事」，
- * 不该依赖调用方的自觉。需要明文（比如内存里传一份副本）请直接用
- * JSON.stringify，别走这个函数。
- */
 export function serialize(state: PersistedState): string {
-  return JSON.stringify(redactSecrets(state));
+  return JSON.stringify(state);
 }
 
 /**
@@ -308,50 +205,18 @@ export function deserialize(raw: string | null): PersistedState {
   return { canvases: deduped, activeId };
 }
 
-function parseKeys(raw: string | null): Record<string, string> {
-  if (!raw) return {};
-  try {
-    const p = JSON.parse(raw);
-    if (!p || typeof p !== 'object' || Array.isArray(p)) return {};
-    const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
-      if (typeof v === 'string' && v !== '') out[k] = v;
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
-
-/**
- * 读取：画布（已脱敏）+ 密钥保险箱，回填后返回。
- *
- * 两个来源分开读，所以旧版本存的、apiKey 还明文在画布里的数据也不会丢 ——
- * applySecrets 只覆盖有对应密钥的节点，画布里已有的明文原样保留。
- */
 export function loadFromStorage(
   get: (k: string) => string | null,
 ): PersistedState {
-  const st = deserialize(get(STORAGE_KEY));
-  return applySecrets(st, parseKeys(get(KEYS_KEY)));
+  return deserialize(get(STORAGE_KEY));
 }
 
-/**
- * 写入：画布脱敏落一份，密钥单独落一份。
- *
- * 这样导出的 agent-flow.json 里永远没有密钥，而本地刷新不用重填。
- */
 export function saveToStorage(
   set: (k: string, v: string) => void,
   state: PersistedState,
 ): void {
   set(STORAGE_KEY, serialize(state));
-  set(KEYS_KEY, JSON.stringify(collectSecrets(state)));
   if (state.activeId) set(ACTIVE_KEY, state.activeId);
 }
 
-export const STORAGE_KEYS = {
-  canvases: STORAGE_KEY,
-  active: ACTIVE_KEY,
-  secrets: KEYS_KEY,
-};
+export const STORAGE_KEYS = { canvases: STORAGE_KEY, active: ACTIVE_KEY };
