@@ -52,14 +52,7 @@ function renameShellEntry(): Plugin {
  * 这样 Vite 生产构建里它们依然可用。
  */
 function copyPlainPlugins(): Plugin {
-  // mindmap 必须在这里：它含 editor/ 下的 kityminder 原文件（4 个，靠 <script src>
-  // 引用、不能交给 Vite 处理），只有整个目录拷贝才能进 dist。
-  // 缺失时表现为「插件能开、画布一片空白」—— index.html 会被 Vite 正常产出，
-  // 但 editor/index.html 404，kityminder 未定义。
-  // 注意它同时也在 inputs 里（自动扫到了 index.html），closeBundle 的原样拷贝
-  // 会覆盖 Vite 产出的那份 —— 这正是想要的结果：mindmap 用的是原生 ES module，
-  // 源码版可直接跑，与 demo-* 一致。
-  const targets = ['demo-iframe', 'demo-module', 'demo-light', 'mindmap'];
+  const targets = ['demo-iframe', 'demo-module', 'demo-light'];
   return {
     name: 'nexus-copy-plain-plugins',
     apply: 'build',

@@ -517,9 +517,9 @@ npm run tauri:build                   # Vite + React 模式
 | 文件监听、Webhook 触发器 | ✅ 桌面端可用 |
 | 文件 / 文件夹操作（fs_op） | ✅ 桌面端可用 |
 
-### 网络请求：Tauri 通道已打通
+### 网络请求：走 Rust 通道，不额外装包
 
-OCR / 翻译 / 订阅源抓取优先走 Tauri http 插件（经 Rust 发出，不受同源策略限制），
+OCR / 翻译 / 订阅源抓取优先经 Rust 的 tauri-plugin-http 发出（不受同源策略限制），
 不可用时降级到浏览器 `fetch`。
 
 Rust 侧三处已就绪：
@@ -528,25 +528,26 @@ Rust 侧三处已就绪：
 - `main.rs` 里 `.plugin(tauri_plugin_http::init())`
 - `capabilities` 放行 `http://**` / `https://**`
 
-前端包 `@tauri-apps/plugin-http` 也已列入 dependencies。
+**前端不依赖 `@tauri-apps/plugin-http` 这个 npm 包。**
 
-**动态 import 必须用字面量**：
+`lib/tauri.ts` 里的 `tauriHttpRequest()` 直接调插件的 IPC 命令
+（`plugin:http|fetch` → `fetch_send` → `fetch_read_body` → `fetch_cancel_body`），
+只实现"发请求 → 拿文本"这一条路径。官方包本质上也是这几个调用的封装，
+外加完整 Response 的流式语义 —— 而本插件用不到流式，
+自己实现省掉一个依赖：拉下仓库不必为可选功能多装包，`package-lock` 也不用动。
 
-```js
-const mod = await import('@tauri-apps/plugin-http');   // ✅ 字面量
-// const spec = '...'; await import(/* @vite-ignore */ spec);  // ❌ 不会被打包
-```
+只用文本，所以省掉了官方包里 `ReadableStream` / `AbortSignal` / cookie 那套，
+代价是不支持流式响应与上传进度 —— 本插件用不到。
 
-曾经为了"包没装也不让构建失败"而用变量 + `@vite-ignore`，
-但那会让 Rollup 完全不打包这段代码 —— 运行时在 webview 里解析裸模块名必然失败，
-函数恒返回 null，**功能从来没生效过，一直在静默降级**。
-改回字面量后会被打成独立 chunk，运行时才真的加载得到。
+请求体必须传**已序列化的字符串**：Rust 侧按字节数组接收，
+传对象会被 `String()` 成 `"[object Object]"`，请求体直接坏掉。
+（Tauri v1 的 `body: { type:'Json', payload }` 写法同样不适用。）
 
-请求体注意：v2 的 plugin-http 内部走标准 `new Request()` + `arrayBuffer()`，
-只认 BodyInit。Tauri v1 的 `body: { type: 'Json', payload }` 写法会被转成
-`"[object Object]"`，必须传 `JSON.stringify(...)` 后的字符串。
+另：CSP 的 `connect-src` 需放行目标域名，否则请求在 webview 层就被拦下。
 
-另外 CSP 的 `connect-src` 需放行目标域名，否则请求在 webview 层就被拦下。
+逻辑用 mock 覆盖了（`npm run test:tauri-http`，23 项断言）：
+分块读取与结束标记、204 等无 body 状态码、`maxBytes` 截断与资源释放、
+请求体序列化、非 2xx 判定、通道不可用时降级。真机 IPC 行为仍需在 Tauri 内确认。
 
 ### 外观：跟随面板 / 原生样式
 

@@ -350,8 +350,6 @@ export function createHost(opts = {}) {
     wrap.appendChild(iframe);
 
     const cleanupFns = [];
-    // 事件订阅登记表（见 case 'subscribe' 的说明）
-    const subs = [];
     let bridgeHandler = null;
     let hasSettings = false;
     // 握手阶段就要写 reportedBase，此时完整实例还没构造出来，先放一个可变壳
@@ -390,29 +388,9 @@ export function createHost(opts = {}) {
           case 'req':
             handleBridgeRequest(manifest, iframe, d);
             break;
-          case 'subscribe': {
-            const unsub = bus.on(d.event, (payload) => send(iframe, { type: 'event', event: d.event, payload }));
-            cleanupFns.push(unsub);
-            // 单独记一份，供 unsubscribe 精确摘除。
-            //
-            // 为什么必须支持退订：插件每次 ctx.on(event, h) 都会在宿主挂一个 handler，
-            // ctx.off() 只是发来一条 'unsubscribe'。若宿主不处理，handler 永不移除 ——
-            // 插件里"动作清单变化就退订重订"是最常见的写法，于是每改一次设置，
-            // 同一事件的处理函数就多一个，表现为"按一次快捷键执行两次"。
-            subs.push({ event: d.event, unsub });
+          case 'subscribe':
+            cleanupFns.push(bus.on(d.event, (payload) => send(iframe, { type: 'event', event: d.event, payload })));
             break;
-          }
-          case 'unsubscribe': {
-            // 后进先出：同一个事件被订阅多次时，摘掉最近挂上的那个
-            for (let i = subs.length - 1; i >= 0; i--) {
-              if (subs[i].event === d.event) {
-                try { subs[i].unsub(); } catch { /* 已失效则忽略 */ }
-                subs.splice(i, 1);
-                break;
-              }
-            }
-            break;
-          }
           case 'publish':
             bus.emit(d.event, d.payload);
             break;

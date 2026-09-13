@@ -211,30 +211,83 @@ export type FetchTextResult = {
  * 浏览器模式下退化为原生 fetch —— 大多数源会因 CORS 失败，
  * 这时给明确提示，而不是静默返回空让人以为"确实没更新"。
  */
+/** 一次 HTTP 交换的结果。只要文本 —— 订阅源与大模型返回的都是文本。 */
+type HttpResult = { ok: boolean; status: number; text: string };
+
+/** 这些状态码按规范没有响应体，不必去读 */
+const NO_BODY_STATUS = [101, 103, 204, 205, 304];
+
 /**
- * 可选：Tauri 的 http 插件。
+ * 经 Rust 的 tauri-plugin-http 发请求，绕过 webview 的同源策略。
  *
- * Rust 端若未启用 tauri-plugin-http（当前仓库就没有，重构时删掉了），
- * 这里会拿到 null，调用方降级到浏览器 fetch。
+ * 这里**直接调插件的 IPC 命令**，不依赖 @tauri-apps/plugin-http 这个 npm 包。
+ * 官方包本质上也只是对下面这几个 invoke 的封装（外加完整 Response 的流式语义），
+ * 而本插件只用到"发请求 → 拿文本"，自己实现省掉一个依赖：
+ * 拉下仓库不必为一个可选功能多装包，package-lock 也不用跟着动。
  *
- * 用变量而非字面量做动态 import：这样 Rollup 无法静态解析，
- * 不会因为"包没装"而让整个构建失败（@vite-ignore 在 TS 转换后会被 esbuild 丢掉，靠不住）。
+ * Rust 侧启用插件的三处前提（见 src-tauri）：
+ *   Cargo.toml 声明 tauri-plugin-http、main.rs 里 .plugin(init)、
+ *   capabilities 放行 http(s)://**
+ *
+ * 返回 null 表示通道不可用（插件未启用 / scope 未放行 / 网络错误），
+ * 由调用方降级到浏览器 fetch —— 不做"假装成功"。
  */
-async function loadTauriHttp(): Promise<null | ((url: string, init?: any) => Promise<Response>)> {
-  if (!isTauri()) return null;
+async function tauriHttpRequest(
+  url: string,
+  init: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    connectTimeout?: number;
+    maxBytes?: number;
+  } = {},
+): Promise<HttpResult | null> {
   try {
-    // 必须用**字面量**：Rollup 只有在能静态解析时才把这段代码打进
-    // 独立 chunk，运行时才真的加载得到。
-    //
-    // 之前写成 `const spec = '...'; await import(/* @vite-ignore */ spec)`
-    // 是为了"包没装也不让构建失败"，但代价是 Rollup 完全不打包它 ——
-    // 运行时在 webview 里解析裸模块名必然失败，函数恒返回 null，
-    // 等于这个功能从来没生效过，一直在静默降级。
-    //
-    // 包已列入 dependencies，正常 npm install 就有；即便运行时加载失败，
-    // 下面的 try/catch 仍会退回浏览器 fetch，不会让插件崩掉。
-    const mod: any = await import('@tauri-apps/plugin-http');
-    return typeof mod?.fetch === 'function' ? mod.fetch : null;
+    const headers = Object.entries(init.headers ?? {}).map(([k, v]) => [k, String(v)]);
+    // 请求体按字节数组传给 Rust，与官方包一致（内部走 arrayBuffer 后转数组）
+    const data = init.body
+      ? Array.from(new TextEncoder().encode(init.body))
+      : null;
+
+    const rid = await invoke<number>('plugin:http|fetch', {
+      clientConfig: {
+        method: init.method ?? 'GET',
+        url,
+        headers,
+        data,
+        maxRedirections: 5,
+        connectTimeout: init.connectTimeout ?? null,
+        proxy: null,
+      },
+    });
+
+    const res = await invoke<{ status: number; rid: number }>('plugin:http|fetch_send', { rid });
+    const max = init.maxBytes ?? Infinity;
+
+    let text = '';
+    if (!NO_BODY_STATUS.includes(res.status)) {
+      const parts: Uint8Array[] = [];
+      let total = 0;
+      for (;;) {
+        // 每块的最后一个字节是结束标记：1 表示流已结束
+        const buf = await invoke<number[]>('plugin:http|fetch_read_body', { rid: res.rid });
+        const bytes = new Uint8Array(buf);
+        if (bytes.byteLength === 0) break;
+        const done = bytes[bytes.byteLength - 1] === 1;
+        const chunk = bytes.subarray(0, bytes.byteLength - 1);
+        parts.push(chunk);
+        total += chunk.byteLength;
+        if (done || total >= max) break;
+      }
+      const all = new Uint8Array(total);
+      let off = 0;
+      for (const p of parts) { all.set(p, off); off += p.byteLength; }
+      text = new TextDecoder('utf-8').decode(all);
+      // 释放 Rust 侧的响应体资源（提前截断时尤其必要）
+      void invoke('plugin:http|fetch_cancel_body', { rid: res.rid }).catch(() => {});
+    }
+
+    return { ok: res.status >= 200 && res.status < 300, status: res.status, text };
   } catch {
     return null;
   }
@@ -254,17 +307,14 @@ export async function fetchText(url: string, opts: FetchTextOptions = {}): Promi
     ...(opts.headers ?? {}),
   };
 
-  // 1) Tauri http 插件（仅当 Rust 端启用了 tauri-plugin-http 且前端装了对应 npm 包）
-  const tauriFetch = await loadTauriHttp();
-  if (tauriFetch) {
-    try {
-      const res = await tauriFetch(url, { method: 'GET', headers, connectTimeout: timeoutMs });
-      const raw = await res.text();
-      return { ok: res.ok, status: res.status, text: raw.slice(0, max) };
-    } catch (err) {
-      // 插件在但请求失败（如 scope 未放行该域名）→ 交给下面的浏览器路径再试一次
-      console.warn('[agent-flow] Tauri http 请求失败，尝试浏览器 fetch：', err);
-    }
+  // 1) 经 Rust 的 tauri-plugin-http（不受同源策略限制）
+  if (isTauri()) {
+    const r = await tauriHttpRequest(url, {
+      method: 'GET', headers, connectTimeout: timeoutMs, maxBytes: max,
+    });
+    if (r) return { ok: r.ok, status: r.status, text: r.text.slice(0, max) };
+    // 返回 null：插件未启用或 scope 未放行该域名 —— 交给下面的浏览器路径再试一次
+    console.warn('[agent-flow] Tauri http 通道不可用，尝试浏览器 fetch');
   }
 
   // 浏览器模式：尽力而为
@@ -282,7 +332,7 @@ export async function fetchText(url: string, opts: FetchTextOptions = {}): Promi
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
       `抓取失败（${msg}）。` + (isTauri()
-        ? '当前外壳未启用 Tauri http 插件，请求走浏览器通道，受 CORS 与 CSP connect-src 限制；多数订阅源会被拒绝。'
+        ? 'Tauri http 通道不可用，已退回浏览器请求，受 CORS 与 CSP connect-src 限制；多数订阅源会被拒绝（检查 Rust 侧是否启用了 tauri-plugin-http、capabilities 是否放行该域名）。'
         : '浏览器模式下多数订阅源不允许跨域，请用桌面端运行。'),
     );
   } finally {
@@ -319,23 +369,17 @@ export async function postJson(
   const timeoutMs = Math.max(1, timeoutSec) * 1000;
   const payload = JSON.stringify(body);
 
-  const tauriFetch = await loadTauriHttp();
-  if (tauriFetch) {
-    try {
-      const res = await tauriFetch(url, {
-        method: 'POST',
-        headers,
-        // v2 的 plugin-http 内部走标准 `new Request()` + arrayBuffer()，
-        // 只认 BodyInit。Tauri v1 那种 { type:'Json', payload } 写法在这里
-        // 会被 String() 成 "[object Object]"，请求体直接坏掉。
-        body: payload,
-        connectTimeout: timeoutMs,
-      });
-      return { status: res.status, text: await res.text() };
-    } catch (err) {
-      console.warn('[agent-flow] Tauri http POST 失败，尝试浏览器 fetch：', err);
-      // 继续走浏览器通道
-    }
+  // 请求体必须是已序列化的字符串：Rust 侧按字节数组接收，
+  // 传对象会被 String() 成 "[object Object]"，请求体直接坏掉。
+  if (isTauri()) {
+    const r = await tauriHttpRequest(url, {
+      method: 'POST',
+      headers,
+      body: payload,
+      connectTimeout: timeoutMs,
+    });
+    if (r) return { status: r.status, text: r.text };
+    console.warn('[agent-flow] Tauri http 通道不可用，尝试浏览器 fetch');
   }
 
   const ac = new AbortController();
@@ -355,7 +399,7 @@ export async function postJson(
     }
     throw new Error(
       `请求失败（${msg}）。` + (isTauri()
-        ? '当前外壳未启用 Tauri http 插件，走浏览器通道，多数大模型 API 会因 CORS 被拒绝 —— 需要在 Rust 侧启用 tauri-plugin-http。'
+        ? 'Tauri http 通道不可用，已退回浏览器请求，多数大模型 API 会因 CORS 被拒绝（检查 Rust 侧是否启用了 tauri-plugin-http，以及 CSP 的 connect-src 是否放行目标域名）。'
         : '浏览器模式下多数大模型 API 不允许跨域，请用桌面端运行。'),
     );
   } finally {
