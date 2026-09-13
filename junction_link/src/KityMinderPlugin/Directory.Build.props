@@ -1,8 +1,0 @@
-<Project>
-  <!-- KityMinderPlugin 类库：覆盖 src/Directory.Build.props 的路径，用独立英文子目录，
-       避免与主工程共享 obj 导致两门工程的生成物(AssemblyInfo/.g.cs)撞名 CS0579/CS0102。 -->
-  <PropertyGroup>
-    <BaseIntermediateOutputPath>$(TEMP)\fpx-kityminder-plugin-build\obj\</BaseIntermediateOutputPath>
-    <BaseOutputPath>$(TEMP)\fpx-kityminder-plugin-build\bin\</BaseOutputPath>
-  </PropertyGroup>
-</Project>
