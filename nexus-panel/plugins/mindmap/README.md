@@ -142,6 +142,35 @@ C# 版把**文字格式**放在右侧栏 `SidePageStyle` 的第一段，顶栏�
 真正的整理布局是 `resetlayout`（`LayoutModule` 注册，快捷键 Ctrl+Shift+L）。
 已移除主题页那个，统一用样式页「外观」段的 `resetlayout`。
 
+## 快捷键
+
+快捷键由**编辑器页面**（`editor/index.html`）与 kityminder **内核**注册，
+插件层无法改写，只能在文件页「快捷键…」里如实列出（18 条）。
+
+页面显式注册：Tab / Enter / Delete / F2 / Ctrl+B / Ctrl+I / Ctrl+D /
+Ctrl+E / Ctrl+L / Ctrl+R / Ctrl+Shift+C / Ctrl+Shift+V
+
+内核 `commandShortcutKeys` 注册：Alt+↑↓（上移下移）/ Shift+Tab（插入上级）/
+Ctrl+Shift+L（整理布局）/ Ctrl+=-（缩放）/ Ctrl+A（全选）/ Ctrl+C/X/V
+
+> 注意：之前文档里写的「方向键导航、/ 折叠、Alt+1~5 展开层级」在内核里
+> **并未**以 shortcut 形式注册（Alt+1~5 是 `expandToLevel` 命令，无默认键），
+> 已从清单移除，避免写成文档后对不上。
+
+## 设置项（对齐 C# SettingsPanel 的脑图页）
+
+| 设置 | C# | 插件 | 位置 |
+|---|---|---|---|
+| 布局过渡动画 | `MindMapLayoutAnimation` | `settings.animate` | 文件页「布局动画」 |
+| 自动备份间隔 | `MindMapBackupMinutes` | `settings.backupMinutes` | 文件页「自动间隔」 |
+| 最多保留份数 | `MindMapBackupMax`（默认 3） | `settings.backupMax`（默认 3） | 文件页「最多保留」 |
+| 备份目录 | 可选目录 + 迁移 | ❌ 固定 IndexedDB | — |
+
+「最多保留份数」原先是 `store.BACKUP_KEEP = 10` 硬编码常量，C# 是可配置的
+（`MindMapBackupMax`，默认 3）。现已改为设置项：调小后**立即**滚动清理超出部分，
+而不是等下次备份才收敛。非法值（0 / 负数 / NaN）退回默认 10 ——
+否则会算出「保留 0 份」，每次备份都被立刻删掉。
+
 ## 与 C# 版的差异说明
 
 - **撤销/重做**：优先用编辑器自维护的历史栈 `window.editor.history`（上游 dist 页已补齐，100 步、基线模型），拿不到时回退插件层 50 步快照栈。

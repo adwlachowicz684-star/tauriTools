@@ -36,7 +36,7 @@ bootIframePlugin(async (ctx) => {
   let workbook = (await store.workbook.load()) || wb.newWorkbook();
   workbook.sheets = wb.normalizeSheets(workbook.sheets);
   let customThemes = (await store.themes.load()) || [];
-  let settings = (await store.settings.load()) || { animate: false, backupMinutes: 2 };
+  let settings = (await store.settings.load()) || { animate: false, backupMinutes: 2, backupMax: 3 };
 
   let bridge = null;
   let side = null;
@@ -489,13 +489,28 @@ bootIframePlugin(async (ctx) => {
       const fp = wb.fingerprintSheets(workbook.sheets);
       if (fp !== lastBackupFp) {
         lastBackupFp = fp;
-        await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId });
+        await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId }, settings.backupMax);
       }
     }
     status('已保存 · ' + new Date().toLocaleTimeString());
   }
 
 
+
+  /**
+   * 按当前上限滚动清理旧快照。
+   * 份数调小后必须立刻收敛，否则要等到下次备份才生效 —— 期间快照数一直超上限。
+   */
+  async function trimBackups() {
+    try {
+      const n = Number(settings.backupMax);
+      const limit = Number.isFinite(n) && n >= 1 ? Math.floor(n) : store.BACKUP_KEEP;
+      const all = (await store.keys('backup:')).sort();
+      for (let i = 0; i < all.length - limit; i++) await store.del(all[i]);
+    } catch (e) {
+      status('清理旧快照失败：' + (e?.message || e), true);
+    }
+  }
 
   async function persist() {
     // 内部兜底：调用方基本都是 fire-and-forget，写失败（配额触顶等）必须看得见。
@@ -770,7 +785,7 @@ bootIframePlugin(async (ctx) => {
   async function backupNow() {
     capture();
     // pushBackup 写失败返回 null（不抛），不判断就会提示「已创建」但实际没写进去
-    const key = await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId });
+    const key = await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId }, settings.backupMax);
     lastBackupAt = Date.now();
     lastBackupFp = wb.fingerprintSheets(workbook.sheets);
     if (key) ctx.toast('已创建快照', 'ok');
@@ -816,6 +831,17 @@ bootIframePlugin(async (ctx) => {
       const ok = await store.settings.save(settings);
       if (!ok) { status('设置保存失败', true); return; }
       status(settings.backupMinutes === 0 ? '自动快照已关闭' : `自动快照间隔：${settings.backupMinutes} 分钟`);
+    }),
+    /**
+     * 最多保留备份份数（对应 C# MindMapBackupMax，默认 3）。
+     * 改完立即按新上限滚动清理，否则旧快照会一直堆到下次备份才收敛。
+     */
+    setBackupMax: guard('设置保留份数', async (n) => {
+      settings.backupMax = Number(n) || store.BACKUP_KEEP;
+      const ok = await store.settings.save(settings);
+      if (!ok) { status('设置保存失败', true); return; }
+      await trimBackups();
+      status(`最多保留 ${settings.backupMax} 份快照`);
     }),
     setAnimate: guard('设置布局动画', async (on) => {
       settings.animate = !!on;
@@ -893,7 +919,7 @@ bootIframePlugin(async (ctx) => {
     try {
       capture();
       await persist();
-      await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId });
+      await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId }, settings.backupMax);
     } catch (e) {
       console.warn('[mindmap] 卸载前兜底保存失败', e);
     }

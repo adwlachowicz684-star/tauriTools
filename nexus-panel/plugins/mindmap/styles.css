@@ -325,3 +325,19 @@ video.mm-video { width: 100%; border-radius: 9px; background: #000; }
   border-radius: 6px;
   background: var(--bg);
 }
+
+/* 快捷键说明里的按键样式：仿键盘按键，等宽字体 */
+.mm-kbd {
+  display: inline-block;
+  min-width: 96px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--bezel, rgba(255, 255, 255, .12));
+  background: var(--inset, rgba(0, 0, 0, .22));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+  font-family: Consolas, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  text-align: center;
+  color: var(--text, #d8dee9);
+  flex: 0 0 auto;
+}
