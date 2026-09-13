@@ -1,3 +1,5 @@
+import type { NodeParam } from './engine/params';
+
 export type CliKind = 'traecli' | 'codebuddy';
 
 /** 节点运行状态机 */
@@ -8,6 +10,23 @@ export type NodeStatus =
   | 'success'
   | 'failed'
   | 'skipped';  // 上游失败导致跳过
+
+/** 文件参数的产出方式 */
+export type FileOutputMode = 'auto' | 'manual';
+
+/**
+ * 文件参数配置。
+ *
+ * auto：从 CLI 输出文本里识别路径（尽力而为，可能识别不全或混入噪声）
+ * manual：识别不准时改为手动指定，路径一行一个
+ */
+export type TaskFileOutput = {
+  /** 关闭后不再产出文件字段 */
+  enabled: boolean;
+  mode: FileOutputMode;
+  /** manual 模式的路径列表，换行分隔 */
+  manualPaths: string;
+};
 
 export type TaskNodeData = {
   label: string;
@@ -21,7 +40,27 @@ export type TaskNodeData = {
   status: NodeStatus;
   output: string;
   error: string;
+
+  /* ---------- 输出参数（新增） ---------- */
+  /**
+   * 文件参数。把"改了哪些文件"暴露给下游：
+   * {{id.file}} {{id.files}} {{id.fileName}} 等。
+   * 省略时按默认值处理（启用 + 自动识别）。
+   */
+  fileOutput?: TaskFileOutput;
+  /** 自定义参数，下游用 {{id.参数名}} 引用 */
+  params?: NodeParam[];
+  /**
+   * 上次运行时识别到的文件（回写字段，不需要用户配置）。
+   * 存下来是为了让面板能显示上一次的结果，排查时不必重跑。
+   */
+  lastFiles?: string[];
 };
+
+/** 文件参数的默认配置 */
+export function defaultFileOutput(): TaskFileOutput {
+  return { enabled: true, mode: 'auto', manualPaths: '' };
+}
 
 export type Graph = {
   nodes: GraphNode[];

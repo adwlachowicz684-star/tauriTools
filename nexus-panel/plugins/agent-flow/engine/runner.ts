@@ -1,9 +1,16 @@
-import type { Graph, GraphNode, NodeStatus, LoopCtx, LoopNodeData, UpdateNodeData } from '../types';
+import type {
+  Graph, GraphNode, NodeStatus, LoopCtx, LoopNodeData, UpdateNodeData, TaskNodeData,
+} from '../types';
 import {
   isCondition, isTrigger, isParallel, isLoop, isFs, isUpdate, DEFAULT_BRANCH,
+  defaultFileOutput,
 } from '../types';
 import { topoLayers } from './topo';
 import { renderTemplate } from './template';
+import {
+  extractFileRefs, parseManualPaths, buildFileFields, type FileRef,
+} from './files';
+import { resolveParams } from './params';
 import { evaluateCondition } from './condition';
 import { resolveParallel, effectiveConcurrency, MAX_CONCURRENCY } from './parallel';
 import { resolveLoopItems, makeLoopCtx, collectLoops, type LoopResolve } from './loop';
@@ -18,6 +25,8 @@ export type RunEvent =
   | { type: 'node-start'; id: string; rendered: string }
   | { type: 'node-chunk'; id: string; chunk: string }
   | { type: 'node-done'; id: string; ok: boolean; output: string; error?: string }
+  /** 任务节点的参数字段已产出：{{id.file}} {{id.参数名}} 等可引用了 */
+  | { type: 'node-fields'; id: string; files: string[]; fields: Record<string, string> }
   | { type: 'node-status'; id: string; status: NodeStatus }
   /** 条件节点判定完成：branchId 为走的分支，pruned 是被裁掉的节点 */
   | { type: 'branch-taken'; id: string; branchId: string | null; label: string; pruned: string[] }
@@ -408,10 +417,30 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
         emit({ type: 'node-chunk', id, chunk });
       });
       outputs[id] = acc;
+
+      /* ---------- 产出参数字段，供下游 {{id.xxx}} 引用 ---------- */
+      const td = node.data as TaskNodeData;
+      const refs = resolveFileRefs(td, acc);
+      nodeFields[id] = {
+        ...buildFileFields(refs),
+        ...resolveParams(td.params, { output: acc, refs }),
+      };
+      emit({
+        type: 'node-fields', id,
+        files: refs.map((r) => r.abs),
+        fields: nodeFields[id],
+      });
+
       emit({ type: 'node-done', id, ok: true, output: acc });
       setStatus(id, 'success');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      /*
+        失败时也要重置字段：不清的话下游会读到上一次成功运行留下的路径，
+        拿着一个根本没改过的文件继续跑，比直接失败更难排查。
+      */
+      nodeFields[id] = { ...buildFileFields([]) };
+      emit({ type: 'node-fields', id, files: [], fields: nodeFields[id] });
       emit({ type: 'node-done', id, ok: false, output: acc, error: msg });
       markFailed(id, scope);
       setStatus(id, 'failed');
@@ -633,6 +662,20 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
       setStatus(id, 'failed');
     }
   }
+
+
+/**
+ * 决定这个节点"改了哪些文件"。
+ *
+ * 手动模式优先：自动识别是尽力而为，一旦用户明确指定了路径，
+ * 就应该完全信任用户的输入，不再从输出里猜。
+ */
+function resolveFileRefs(d: TaskNodeData, output: string): FileRef[] {
+  const cfg = d.fileOutput ?? defaultFileOutput();
+  if (!cfg.enabled) return [];
+  if (cfg.mode === 'manual') return parseManualPaths(cfg.manualPaths, d.workdir);
+  return extractFileRefs(output, d.workdir);
+}
 
   /* ---------- 主流程：跳过循环体成员，它们由各自的循环执行 ---------- */
   const mainIds = orderByLayers(

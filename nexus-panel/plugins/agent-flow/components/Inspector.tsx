@@ -5,7 +5,8 @@ import {
   isCondition, isTrigger, isParallel, isLoop, isFs, isUpdate, UPDATE_SOURCE_META,
   opsByCategory, OP_CATEGORY_META, LOGIC_META, makeCondition, ruleConditions,
   type ConditionItem, type ConditionLogic,
-  LOOP_MODE_META, FS_OP_META, MAX_LOOP_ITERATIONS,
+  LOOP_MODE_META, FS_OP_META, MAX_LOOP_ITERATIONS, defaultFileOutput,
+  type TaskFileOutput,
   type CliKind, type ConditionOp, type ConditionNodeData,
   type TriggerKind, type TriggerConfig, type TriggerNodeData,
   type ParallelMode, type ParallelNodeData, type TaskNodeData,
@@ -18,6 +19,13 @@ import {
   validateRule, validateCondition, simulateCondition, describeRuleExpression,
 } from '../engine/condition';
 import { parseFeed, parseBiliApi, detectUpdate, sortByNewest, extractBiliUid, biliApiUrl, BILI_REFERER } from '../engine/updates';
+import {
+  extractFileRefs, parseManualPaths, buildFileFields, FILE_FIELD_NAMES, FILE_FIELD_HINT,
+} from '../engine/files';
+import {
+  PARAM_SOURCE_META, resolveParam, validateParam, validateParams, makeParam,
+  type ParamSource, type NodeParam,
+} from '../engine/params';
 import type { FlowEdge, FlowNode } from '../flowTypes';
 
 type Props = {
@@ -103,6 +111,41 @@ export default function Inspector({ node, edges, onChange }: Props) {
           ))}
           <button className="chip" onClick={() => insert('{{input}}')}>{'{{input}}'}</button>
         </div>
+        {upstream.length > 0 && (
+          <div className="var-bar">
+            <small>上游文件（改了哪些）：</small>
+            {upstream.map((u) => (
+              <button
+                key={`${u}-file`}
+                className="chip file"
+                title={FILE_FIELD_HINT.file}
+                onClick={() => insert(`{{${u}.file}}`)}
+              >
+                {`{{${u}.file}}`}
+              </button>
+            ))}
+            {upstream.map((u) => (
+              <button
+                key={`${u}-files`}
+                className="chip file"
+                title={FILE_FIELD_HINT.files}
+                onClick={() => insert(`{{${u}.files}}`)}
+              >
+                {`{{${u}.files}}`}
+              </button>
+            ))}
+            {upstream.map((u) => (
+              <button
+                key={`${u}-fn`}
+                className="chip file"
+                title={FILE_FIELD_HINT.fileName}
+                onClick={() => insert(`{{${u}.fileName}}`)}
+              >
+                {`{{${u}.fileName}}`}
+              </button>
+            ))}
+          </div>
+        )}
         <textarea
           rows={10}
           value={d.prompt}
@@ -126,12 +169,248 @@ export default function Inspector({ node, edges, onChange }: Props) {
         <span>自动批准工具调用（-y）</span>
       </label>
 
+      <FileParamsPanel node={node} onChange={onChange} />
+
       <div className="field">
         <span>运行输出</span>
         <pre className="out">{d.output || '（尚未运行）'}</pre>
         {d.error && <pre className="out err">{d.error}</pre>}
       </div>
     </aside>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * 任务节点的「输出参数」面板。
+ *
+ * 独立成组件是因为它有两块内容（文件参数 + 自定义参数），
+ * 塞进上面的主面板会让那个函数长到看不清结构。
+ */
+function FileParamsPanel({ node, onChange }: {
+  node: FlowNode;
+  onChange: (id: string, patch: Record<string, unknown>) => void;
+}) {
+  const d = node.data as TaskNodeData;
+  const cfg = d.fileOutput ?? defaultFileOutput();
+  const params = d.params ?? [];
+
+  const patchCfg = (patch: Partial<TaskFileOutput>) =>
+    onChange(node.id, { fileOutput: { ...cfg, ...patch } });
+
+  const patchParams = (next: NodeParam[]) => onChange(node.id, { params: next });
+
+  /* 预览：用上次输出模拟一次识别，让用户立刻看到效果 */
+  const previewRefs = cfg.mode === 'manual'
+    ? parseManualPaths(cfg.manualPaths, d.workdir)
+    : extractFileRefs(d.output, d.workdir);
+  const previewFields = buildFileFields(previewRefs);
+  const showPreview = cfg.enabled && (cfg.mode === 'manual' || d.output);
+
+  const paramIssues = validateParams(params);
+
+  return (
+    <>
+      {/* ---------- 文件参数 ---------- */}
+      <div className="field">
+        <div className="field-head">
+          <span>输出参数 · 文件</span>
+          <label className="rule-toggle" title={cfg.enabled ? '停用后下游拿不到文件字段' : '已停用'}>
+            <input
+              type="checkbox"
+              checked={cfg.enabled}
+              onChange={(e) => patchCfg({ enabled: e.target.checked })}
+            />
+          </label>
+        </div>
+        <small className="dim">
+          把「改了哪些文件」传给下游：{FILE_FIELD_NAMES.map((f) => `{{${node.id}.${f}}}`).slice(0, 3).join(' ')} …
+        </small>
+
+        {cfg.enabled && (
+          <>
+            <div className="cond-logic-switch">
+              <small className="dim">来源</small>
+              <button
+                type="button"
+                className={'cond-logic-btn' + (cfg.mode === 'auto' ? ' on' : '')}
+                style={cfg.mode === 'auto' ? { borderColor: '#06b6d4', color: '#06b6d4' } : undefined}
+                title="从 CLI 输出里自动识别路径（尽力而为）"
+                onClick={() => patchCfg({ mode: 'auto' })}
+              >
+                自动识别
+              </button>
+              <button
+                type="button"
+                className={'cond-logic-btn' + (cfg.mode === 'manual' ? ' on' : '')}
+                style={cfg.mode === 'manual' ? { borderColor: '#a855f7', color: '#a855f7' } : undefined}
+                title="识别不准时改为手动指定，一行一个路径"
+                onClick={() => patchCfg({ mode: 'manual' })}
+              >
+                手动指定
+              </button>
+            </div>
+
+            {cfg.mode === 'manual' ? (
+              <textarea
+                className="cond-sample"
+                rows={3}
+                value={cfg.manualPaths}
+                placeholder={'src/a.ts
+src/b.ts'}
+                onChange={(e) => patchCfg({ manualPaths: e.target.value })}
+              />
+            ) : (
+              <div className="cond-hint">
+                从本节点的 CLI 输出里识别路径（含斜杠 + 已知扩展名）。识别不准时切「手动指定」
+              </div>
+            )}
+
+            {showPreview && (
+              <div className="file-preview">
+                <div className="file-preview-head">
+                  识别结果（{previewRefs.length}）
+                </div>
+                {previewRefs.length === 0 && <div className="dim">没有识别到文件路径</div>}
+                {previewRefs.slice(0, 8).map((r) => (
+                  <div key={r.abs} className="file-preview-item" title={r.raw}>
+                    <span className="file-preview-name">{r.name}</span>
+                    <span className="file-preview-path">{r.abs}</span>
+                  </div>
+                ))}
+                {previewRefs.length > 8 && (
+                  <div className="dim">…还有 {previewRefs.length - 8} 个</div>
+                )}
+                {previewRefs.length > 0 && (
+                  <div className="file-preview-fields">
+                    {`{{${node.id}.file}}`} = {previewFields.file || '（空）'}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {d.lastFiles && d.lastFiles.length > 0 && cfg.mode === 'auto' && (
+              <div className="cond-hint">上次运行识别到 {d.lastFiles.length} 个文件</div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ---------- 自定义参数 ---------- */}
+      <div className="field">
+        <span>自定义参数（可选）</span>
+        <small className="dim">
+          给输出里的某个值起个名字，下游用 {'{{节点id.参数名}}'} 引用
+        </small>
+
+        {params.length === 0 && <div className="dim">还没有参数，点下面按钮添加</div>}
+
+        {params.map((p, i) => {
+          const meta = PARAM_SOURCE_META[p.source];
+          const issues = validateParam(p);
+          const on = p.enabled !== false;
+          return (
+            <div key={p.id} className={'param-card' + (on ? '' : ' off')}>
+              <div className="rule-row">
+                <span className="rule-idx">{i + 1}</span>
+                <input
+                  className="rule-label"
+                  value={p.name}
+                  placeholder="参数名"
+                  onChange={(e) => patchParams(params.map((x) => (x.id === p.id ? { ...x, name: e.target.value } : x)))}
+                />
+                <label className="rule-toggle" title={on ? '停用这个参数' : '启用'}>
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={(e) => patchParams(params.map((x) => (x.id === p.id ? { ...x, enabled: e.target.checked } : x)))}
+                  />
+                </label>
+                <button
+                  className="mini danger"
+                  onClick={() => patchParams(params.filter((x) => x.id !== p.id))}
+                >
+                  删
+                </button>
+              </div>
+
+              <div className="param-row">
+                <select
+                  value={p.source}
+                  onChange={(e) => patchParams(params.map((x) => (x.id === p.id ? { ...x, source: e.target.value as ParamSource } : x)))}
+                  title={meta.hint}
+                >
+                  {(Object.keys(PARAM_SOURCE_META) as ParamSource[]).map((k) => (
+                    <option key={k} value={k}>{PARAM_SOURCE_META[k].label}</option>
+                  ))}
+                </select>
+                {meta.needs === 'pattern' && (
+                  <input
+                    className="rule-value mono"
+                    value={p.pattern ?? ''}
+                    placeholder="正则，含捕获组时取第一个组"
+                    onChange={(e) => patchParams(params.map((x) => (x.id === p.id ? { ...x, pattern: e.target.value } : x)))}
+                  />
+                )}
+                {meta.needs === 'value' && (
+                  <input
+                    className="rule-value"
+                    value={p.value ?? ''}
+                    placeholder="固定值"
+                    onChange={(e) => patchParams(params.map((x) => (x.id === p.id ? { ...x, value: e.target.value } : x)))}
+                  />
+                )}
+              </div>
+
+              {p.source !== 'manual' && (
+                <div className="param-row">
+                  <small className="dim">取第几个</small>
+                  <input
+                    className="param-index"
+                    type="number"
+                    min={0}
+                    value={p.index ?? 0}
+                    title="0 或不填 = 全部（换行分隔）"
+                    onChange={(e) => patchParams(params.map((x) => (x.id === p.id ? { ...x, index: Number(e.target.value) || 0 } : x)))}
+                  />
+                  <small className="dim">（0 = 全部）</small>
+                </div>
+              )}
+
+              <div className="cond-hint">{meta.hint}</div>
+
+              {/* 预览：用上次输出算一遍，能立刻看出配得对不对 */}
+              {p.source === 'regex' && d.output && (
+                <div className="param-preview">
+                  当前输出下取到：
+                  <code>
+                    {resolveParam(p, { output: d.output, refs: previewRefs }) || '（空）'}
+                  </code>
+                </div>
+              )}
+
+              {issues.map((it, k) => (
+                <div key={k} className={'cond-issue ' + it.level}>{it.message}</div>
+              ))}
+            </div>
+          );
+        })}
+
+        <button className="kind-btn" onClick={() => patchParams([...params, makeParam()])}>
+          + 添加参数
+        </button>
+
+        {paramIssues.length > 0 && (
+          <div className="cond-issues">
+            <div className="cond-issues-title">配置提示</div>
+            {paramIssues.map((it, k) => (
+              <div key={k} className={'cond-issue ' + it.level}>{it.message}</div>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 

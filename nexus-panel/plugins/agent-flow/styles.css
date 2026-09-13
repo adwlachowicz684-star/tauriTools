@@ -779,3 +779,75 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 /* 关闭的元素：chip 也跟着变淡 */
 .cond-chip.off { opacity: .45; text-decoration: line-through; }
 .cond-op-badge.off { opacity: .45; }
+
+/* ---------------- 任务节点：输出参数 ---------------- */
+
+.field-head { display: flex; align-items: center; gap: 8px; }
+.field-head > span { flex: 1; }
+
+/* 引用 chip 里文件相关的用另一种颜色，和输出区分开 */
+.chip.file {
+  border-color: #38bdf8; color: #7dd3fc;
+}
+.chip.file:hover { background: rgba(56, 189, 248, .12); }
+
+/* 识别结果预览 */
+.file-preview {
+  margin-top: 6px; padding: 6px 8px; border-radius: 6px;
+  border: 1px solid var(--af-line); background: var(--af-sunk);
+  max-height: 190px; overflow-y: auto;
+}
+.file-preview-head {
+  font-size: 11px; color: var(--af-soft); font-weight: 600; margin-bottom: 4px;
+}
+.file-preview-item {
+  display: flex; align-items: baseline; gap: 6px;
+  font-size: 11px; padding: 2px 0; line-height: 1.45;
+}
+.file-preview-name {
+  flex: none; color: #7dd3fc; font-family: ui-monospace, monospace;
+}
+.file-preview-path {
+  flex: 1; min-width: 0; color: var(--af-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.file-preview-fields {
+  margin-top: 5px; padding-top: 5px; border-top: 1px dashed var(--af-line);
+  font-size: 10.5px; color: var(--af-dim); font-family: ui-monospace, monospace;
+  word-break: break-all;
+}
+
+/* 自定义参数卡片 */
+.param-card {
+  margin-top: 5px; padding: 6px 8px; border-radius: 6px;
+  border: 1px solid var(--af-line); background: var(--af-sunk);
+}
+.param-card.off { opacity: .5; border-style: dashed; }
+.param-row { display: flex; align-items: center; gap: 5px; margin-top: 5px; }
+.param-row select {
+  flex: none; font-size: 11.5px; padding: 2px 6px; border-radius: 5px;
+  border: 1px solid var(--af-line); background: var(--af-panel); color: var(--af-fg);
+}
+.rule-value.mono { font-family: ui-monospace, monospace; font-size: 11px; }
+.param-index { width: 56px; flex: none; font-size: 11.5px; padding: 2px 5px; border-radius: 5px;
+  border: 1px solid var(--af-line); background: var(--af-panel); color: var(--af-fg); }
+
+.param-preview {
+  margin-top: 4px; font-size: 10.5px; color: var(--af-dim);
+  display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap;
+}
+.param-preview code {
+  font-family: ui-monospace, monospace; color: #7dd3fc;
+  background: var(--af-panel); border: 1px solid var(--af-line);
+  border-radius: 4px; padding: 1px 5px; word-break: break-all;
+}
+
+/* 节点卡片上的文件标记 */
+.node-files {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 10.5px; color: #7dd3fc; margin-top: 3px;
+}
+.node-files-badge {
+  border: 1px solid currentColor; border-radius: 999px;
+  padding: 0 6px; font-family: ui-monospace, monospace;
+}
