@@ -23,6 +23,9 @@ const KEY_ACCENT = 'nexus:accent';
 const KEY_ENV = 'nexus:env-color';
 // 用户是否手动选过主题 —— 没选过时默认主题才能继续生效
 const KEY_USERSET = 'nexus:theme-userset';
+// 主题色调整：在主题自身配色上做整体偏移（色相角度 / 明暗百分比）
+const KEY_HUE = 'nexus:hue-shift';
+const KEY_LIGHT = 'nexus:light-shift';
 const KEY_CUSTOM = 'nexus:custom-themes';
 // 首屏防闪用：最近一次应用的底色 / 前景色
 const KEY_PRELOAD_BG = 'nexus:preload-bg';
@@ -61,10 +64,196 @@ function rgba(hex, a) {
   return `rgba(${c.r}, ${c.g}, ${c.b}, ${a})`;
 }
 
+/* ------------------- 主题色调整（色相 / 明暗） ------------------- */
+
+/**
+ * 参与整体偏移的变量白名单。
+ *
+ * 刻意排除：
+ *  · --ok / --running / --warn / --danger  状态色，语义固定，不能被偏移
+ *  · --accent / --env-color                用户显式挑的，再偏移就不可控了
+ *  · --accent-glow                         由 accent 派生，跟随 accent
+ *  · --bg-image                            渐变，整体变换不可靠
+ *  · --blur 等非颜色量
+ */
+const SHIFTABLE_VARS = [
+  '--bg', '--surface', '--surface-sunk', '--surface-raised',
+  '--sh-dark', '--sh-light',
+  '--text', '--text-dim', '--text-mute', '--text-soft',
+  '--border',
+];
+
+/** 解析任意 CSS 颜色 → {r,g,b,a}；无法识别返回 null */
+function parseColor(c) {
+  if (c == null) return null;
+  const s2 = String(c).trim();
+  let m = /^#([0-9a-f]{3})$/i.exec(s2);
+  if (m) {
+    const h = m[1];
+    return { r: parseInt(h[0] + h[0], 16), g: parseInt(h[1] + h[1], 16),
+             b: parseInt(h[2] + h[2], 16), a: 1 };
+  }
+  m = /^#([0-9a-f]{6})$/i.exec(s2);
+  if (m) {
+    const h = m[1];
+    return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16),
+             b: parseInt(h.slice(4, 6), 16), a: 1 };
+  }
+  m = /^#([0-9a-f]{8})$/i.exec(s2);
+  if (m) {
+    const h = m[1];
+    return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16),
+             b: parseInt(h.slice(4, 6), 16), a: parseInt(h.slice(6, 8), 16) / 255 };
+  }
+  m = /^rgba?\(([^)]+)\)$/i.exec(s2);
+  if (m) {
+    const ps = m[1].split(',').map((x) => parseFloat(x));
+    if (ps.length >= 3 && ps.slice(0, 3).every((n) => !isNaN(n))) {
+      return { r: ps[0], g: ps[1], b: ps[2], a: ps.length > 3 && !isNaN(ps[3]) ? ps[3] : 1 };
+    }
+  }
+  return null;
+}
+
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  const l = (mx + mn) / 2;
+  const d = mx - mn;
+  if (d === 0) return { h: 0, s: 0, l };
+  const s = d / (1 - Math.abs(2 * l - 1));
+  let h;
+  if (mx === r) h = ((g - b) / d) % 6;
+  else if (mx === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  h *= 60;
+  if (h < 0) h += 360;
+  return { h, s, l };
+}
+
+function hslToRgb(h, s, l) {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) { r = c; g = x; }
+  else if (h < 120) { r = x; g = c; }
+  else if (h < 180) { g = c; b = x; }
+  else if (h < 240) { g = x; b = c; }
+  else if (h < 300) { r = x; b = c; }
+  else { r = c; b = x; }
+  return { r: (r + m) * 255, g: (g + m) * 255, b: (b + m) * 255 };
+}
+
+/**
+ * 单色偏移。
+ *
+ * 明暗用幂律 l' = l^p（p = 1 - percent/100）而不是直接加减：
+ * 幂律在 [0,1] 上单调、不会截断，且保留了颜色的相对层次 ——
+ * 直接加会让暗色一下子跳到中灰，而亮色几乎没变化。
+ */
+function shiftColor(str, hueDelta, lightPow) {
+  const c = parseColor(str);
+  if (!c) return str;
+  let { h, s, l } = rgbToHsl(c.r, c.g, c.b);
+  // 近灰色的色相不稳定（HSL 里灰色的 h 无意义），跳过以免引入杂色
+  if (s > 0.06 && hueDelta) h = (h + hueDelta + 3600) % 360;
+  if (lightPow !== 1) l = Math.max(0, Math.min(1, Math.pow(l, lightPow)));
+  const o = hslToRgb(h, s, l);
+  const r = Math.round(o.r), g = Math.round(o.g), b = Math.round(o.b);
+  if (c.a < 1) return `rgba(${r}, ${g}, ${b}, ${c.a})`;
+  return toHex({ r, g, b });
+}
+
+/* --- 可读性保护所需的几个小工具 --- */
+function relLum(c) {
+  const f = (v) => {
+    v /= 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+}
+
+function contrastRatio(a, b) {
+  const l1 = relLum(a), l2 = relLum(b);
+  const hi = Math.max(l1, l2), lo = Math.min(l1, l2);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** alpha 合成：fg 叠在 bg 上（glass 主题的 surface 是半透明的） */
+function composite(fg, bg) {
+  if (!fg) return bg;
+  if (!bg) return { ...fg, a: 1 };
+  const a = fg.a;
+  return {
+    r: fg.r * a + bg.r * (1 - a),
+    g: fg.g * a + bg.g * (1 - a),
+    b: fg.b * a + bg.b * (1 - a),
+    a: 1,
+  };
+}
+
+function mixColor(a, b, t) {
+  return { r: a.r + (b.r - a.r) * t, g: a.g + (b.g - a.g) * t,
+           b: a.b + (b.b - a.b) * t, a: a.a };
+}
+
+function fmtColor(c) {
+  const r = Math.round(c.r), g = Math.round(c.g), b = Math.round(c.b);
+  if (c.a < 1) return `rgba(${r}, ${g}, ${b}, ${c.a})`;
+  return toHex({ r, g, b });
+}
+
+/**
+ * 明暗偏移把正文和底色一起推，浅色主题大幅提亮时对比度会掉到 3 左右 ——
+ * 正文就糊了。这里在「偏移后的正文」与「原始正文」之间插值回拉，
+ * 直到对比度回到 4.65（WCAG 正文 AA 是 4.5，留一点余量抵消取整误差）。
+ *
+ * 只对 --text 做，其他文字档（--text-dim / --text-soft）是次要信息，
+ * 跟着走即可，过度保护反而会让层次消失。
+ */
+function ensureTextReadable(vars) {
+  const bg = composite(parseColor(vars['--surface']), parseColor(vars['--bg']));
+  const shifted = parseColor(vars['--text']);
+  if (!bg || !shifted) return;
+  if (contrastRatio(shifted, bg) >= 4.65) return;
+
+  /* 朝对比度更高的那一端推。
+     不能只看"正文现在是亮还是暗"：大幅提亮深色主题时底色会跨到浅色区，
+     此时继续把正文推向纯白反而更糟（白字配浅底），
+     正确做法是翻成深色字。所以黑白两端都算一遍，取更高的那个。 */
+  const white = { r: 255, g: 255, b: 255, a: shifted.a };
+  const black = { r: 0, g: 0, b: 0, a: shifted.a };
+  const target = contrastRatio(white, bg) >= contrastRatio(black, bg) ? white : black;
+  for (let t = 0.1; t <= 1.0001; t += 0.1) {
+    const c = mixColor(shifted, target, t);
+    if (contrastRatio(c, bg) >= 4.65) { vars['--text'] = fmtColor(c); return; }
+  }
+  vars['--text'] = fmtColor(target);
+}
+
+/** 把当前的色相 / 明暗偏移套用到一组变量上（原地改） */
+function applyShift(vars) {
+  const hue = getHueShift();
+  const pct = getLightShift();
+  if (!hue && !pct) return vars;
+  const pow = 1 - pct / 100;
+  for (const k of SHIFTABLE_VARS) {
+    if (vars[k] == null) continue;
+    vars[k] = shiftColor(vars[k], hue, pow);
+  }
+  if (pct) ensureTextReadable(vars);
+  return vars;
+}
+
 /* ---------------------------- 派生变量 ---------------------------- */
 function deriveVars(theme) {
   const v = { ...theme.vars };
   const dark = theme.base === 'dark';
+
+  // 先偏移基础配色，再做派生计算 —— 这样 scroll-thumb、hairline 之类
+  // 由 --bg 派生的量也会跟着一起变，不会出现"底色变了滑块没变"。
+  applyShift(v);
 
   // 强调色辉光
   v['--accent-glow'] = rgba(v['--accent'], dark ? 0.32 : 0.22);
@@ -131,6 +320,38 @@ export function getAccent() {
 /** 环境色：与强调色并列的第二个可调主色，仅作次要点缀 */
 export function getEnvColor() {
   try { return localStorage.getItem(KEY_ENV) || null; } catch { return null; }
+}
+
+/** 色相偏移，单位度，范围 -180 ~ 180，0 表示不偏移 */
+export function getHueShift() {
+  try {
+    const n = parseInt(localStorage.getItem(KEY_HUE) || '0', 10);
+    return isNaN(n) ? 0 : Math.max(-180, Math.min(180, n));
+  } catch { return 0; }
+}
+
+/** 明暗偏移，单位百分比，范围 -50（压暗）~ 50（提亮），0 表示不偏移 */
+export function getLightShift() {
+  try {
+    const n = parseInt(localStorage.getItem(KEY_LIGHT) || '0', 10);
+    return isNaN(n) ? 0 : Math.max(-50, Math.min(50, n));
+  } catch { return 0; }
+}
+
+/** 同时设置色相与明暗（分开设会触发两次重绘，滑块拖动时会卡顿） */
+export function setThemeShift(hue, light) {
+  const h = Math.max(-180, Math.min(180, Math.round(Number(hue) || 0)));
+  const l = Math.max(-50, Math.min(50, Math.round(Number(light) || 0)));
+  try {
+    localStorage.setItem(KEY_HUE, String(h));
+    localStorage.setItem(KEY_LIGHT, String(l));
+  } catch {}
+  const theme = current || findTheme(getThemeId());
+  const applied = applyTo(theme, getAccent(), getEnvColor());
+  listeners.forEach((fn) => {
+    try { fn(applied, 'theme-shift'); } catch (e) { console.error('[theme]', e); }
+  });
+  return applied;
 }
 export function getCurrent() {
   return current || findTheme(getThemeId());
@@ -267,6 +488,8 @@ export function resetColors() {
   try {
     localStorage.removeItem(KEY_ACCENT);
     localStorage.removeItem(KEY_ENV);
+    localStorage.removeItem(KEY_HUE);
+    localStorage.removeItem(KEY_LIGHT);
   } catch {}
   return applyTheme(getThemeId(), null, null, { userInitiated: true });
 }

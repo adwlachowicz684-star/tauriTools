@@ -687,3 +687,40 @@ html.theme-transition *:not(.spinner) {
   background: var(--accent);
   opacity: .55;
 }
+
+
+/* ---------------- 主题色调整滑块 ---------------- */
+/* 面板里没用过 range，这里补一套贴合当前主题的样式。
+   thumb 用强调色，轨道用凹陷底色 —— 与 slider 的语义一致。 */
+.p-range {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-sunk, rgba(0, 0, 0, .2));
+  border: 1px solid var(--border, transparent);
+  outline: none;
+  cursor: pointer;
+}
+.p-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1px solid var(--border, transparent);
+  cursor: pointer;
+}
+.p-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1px solid var(--border, transparent);
+  cursor: pointer;
+}
+.p-range:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-glow, rgba(91, 140, 255, .3));
+}

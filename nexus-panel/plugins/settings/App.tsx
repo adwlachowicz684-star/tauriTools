@@ -4,6 +4,7 @@ import type { PluginManifest } from '../../js/host.js';
 import {
   listThemes, applyTheme, setAccent, setEnvColor, resetColors,
   getThemeId, getAccent, getEnvColor, getBase,
+  getHueShift, getLightShift, setThemeShift,
   saveAsCustom, deleteCustomTheme,
   onChange as onThemeChange,
 } from '../../js/theme-manager.js';
@@ -165,7 +166,38 @@ export default function Settings() {
           })}
         </div>
 
-        {(getAccent() || getEnvColor()) ? (
+        <div className="p-muted" style={{ marginTop: 14 }}>
+          主题色调整（在主题自身配色上做整体偏移）
+        </div>
+        <div className="p-muted" style={{ fontSize: 12, marginTop: 2, opacity: .8 }}>
+          只偏移主题配色；强调色、环境色与状态色（成功 / 错误 / 运行中）不参与
+        </div>
+        <div className="p-row" style={{ marginTop: 8, gap: 8 }}>
+          <span className="p-muted" style={{ width: 30, flex: 'none' }}>色相</span>
+          <input
+            className="p-range"
+            type="range" min={-180} max={180} step={1}
+            value={getHueShift()}
+            onChange={(e) => { setThemeShift(Number(e.target.value), getLightShift()); rerender(); }}
+          />
+          <span className="p-mono p-muted" style={{ width: 46, flex: 'none', textAlign: 'right' }}>
+            {getHueShift() > 0 ? '+' : ''}{getHueShift()}°
+          </span>
+        </div>
+        <div className="p-row" style={{ marginTop: 6, gap: 8 }}>
+          <span className="p-muted" style={{ width: 30, flex: 'none' }}>明暗</span>
+          <input
+            className="p-range"
+            type="range" min={-50} max={50} step={1}
+            value={getLightShift()}
+            onChange={(e) => { setThemeShift(getHueShift(), Number(e.target.value)); rerender(); }}
+          />
+          <span className="p-mono p-muted" style={{ width: 46, flex: 'none', textAlign: 'right' }}>
+            {getLightShift() > 0 ? '+' : ''}{getLightShift()}%
+          </span>
+        </div>
+
+        {(getAccent() || getEnvColor() || getHueShift() || getLightShift()) ? (
           <div className="p-row" style={{ marginTop: 10 }}>
             <button
               className="p-btn"
@@ -175,6 +207,9 @@ export default function Settings() {
             </button>
             <span className="p-muted">
               当前：强调色 {getAccent() || '（默认）'} · 环境色 {getEnvColor() || '（默认）'}
+              {(getHueShift() || getLightShift())
+                ? ` · 偏移 ${getHueShift() > 0 ? '+' : ''}${getHueShift()}° / ${getLightShift() > 0 ? '+' : ''}${getLightShift()}%`
+                : ''}
             </span>
           </div>
         ) : null}
