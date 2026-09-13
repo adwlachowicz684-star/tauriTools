@@ -312,6 +312,21 @@ export function SettingsDialog({
               : '设置后由后台定时执行，改动在保存时生效'}
           </div>
         </div>
+        <div className="fpx-field">
+          <label>备份位置</label>
+          <div className="p-row">
+            <button className="p-btn" onClick={() => { void api.openBackupDir('project').catch((e) => onLog(`打开失败：${errText(e)}`, true)); }}>
+              打开项目备份目录
+            </button>
+            <button className="p-btn" onClick={() => { void api.openBackupDir('group').catch((e) => onLog(`打开失败：${errText(e)}`, true)); }}>
+              打开项目组备份目录
+            </button>
+          </div>
+          <div className="p-muted" style={{ fontSize: 11.5 }}>
+            打开的就是备份实际写入的目录。还没备份过时目录可能不存在 —— 这里不自动创建，
+            免得看到空目录反而困惑。
+          </div>
+        </div>
       </div>
 
       <div className="fpx-settings-sec">

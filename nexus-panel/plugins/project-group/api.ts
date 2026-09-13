@@ -162,6 +162,9 @@ export function makeApi(ctx: PluginContext) {
 
     openDataDir: () => call<void>('fpx_open_data_dir'),
 
+    /** 在文件管理器里打开项目 / 项目组的备份目录（与备份实际写入处一致） */
+    openBackupDir: (kind: CardKind) => call<void>('fpx_open_backup_dir', { kind }),
+
     /** 写系统剪贴板（走后端：iframe 沙箱拿不到 clipboard 权限） */
     copyText: (text: string) => call<boolean>('fpx_copy_text', { text }),
   };

@@ -92,7 +92,7 @@ fn main() {
             fpx::fpx_scan_content, fpx::fpx_read_file, fpx::fpx_open_path, fpx::fpx_list_dirs,
             fpx::fpx_quick_roots, fpx::fpx_copy_text, fpx::fpx_create_folder, fpx::fpx_set_lock, fpx::fpx_set_icon,
             fpx::fpx_save_style, fpx::fpx_list_icons, fpx::fpx_icon_data, fpx::fpx_save_icon_data,
-            fpx::fpx_pick_color, fpx::fpx_save_custom_colors, fpx::fpx_open_data_dir,
+            fpx::fpx_pick_color, fpx::fpx_save_custom_colors, fpx::fpx_open_data_dir, fpx::fpx_open_backup_dir,
             fpx::fpx_backup, fpx::fpx_list_editors, fpx::fpx_set_editor, fpx::fpx_edit_file,
             fpx::fpx_chain_clients, fpx::fpx_save_chain_clients, fpx::fpx_move_card_across,
             fpx::fpx_chain_actions, fpx::fpx_save_chain_actions, fpx::fpx_chain_send_action,

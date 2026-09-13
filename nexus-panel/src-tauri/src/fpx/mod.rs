@@ -728,6 +728,22 @@ pub fn fpx_open_data_dir(app: AppHandle, state: State<'_, FpxState>) -> Result<(
     sys::open_path(&dir.to_string_lossy(), "dir", "")
 }
 
+/// 在文件管理器里打开项目 / 项目组的备份目录。
+/// 目录可能还没建（一次都没备份过），这里不 create_dir_all ——
+/// 让用户看到"确实还没有"，比凭空造个空目录更容易理解。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_open_backup_dir(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+    kind: String,
+) -> Result<(), String> {
+    let dir = store::data_dir(&app, &state)?;
+    let cfg = store::load_config(&dir);
+    // 与备份时用的是同一个 resolver，保证"打开的就是实际写入的那个目录"
+    let target = backup::resolve_dir(&cfg, &dir, if kind == "group" { "group" } else { "project" });
+    sys::open_path(&target.to_string_lossy(), "dir", "")
+}
+
 /* ---------------------------- 备份 ---------------------------- */
 
 /// 一键备份项目 / 项目组到备份目录。
