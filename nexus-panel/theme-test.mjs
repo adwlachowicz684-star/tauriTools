@@ -3,6 +3,7 @@
  * 覆盖：预设完整性 → 变量落地 → 持久化 → 派生变量 → 自定义主题 → 基调切换联动插件适配
  */
 import { JSDOM } from 'jsdom';
+import { readFileSync } from 'node:fs';
 
 const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', { url: 'http://localhost/' });
 globalThis.window = dom.window;
@@ -46,8 +47,11 @@ for (const x of PRESET_THEMES) {
   const solid = (c) => c && /^#[0-9a-f]{6}$/i.test(c);
   // 纯黑底（lum≈0）无法再暗，凹陷与暗影只能往亮走 —— 这种是物理限制，豁免
   const nearBlack = solid(v['--bg']) && lum(v['--bg']) < 0.005;
-  if (solid(v['--bg']) && solid(v['--surface-sunk']) && !nearBlack) {
-    if (lum(v['--surface-sunk']) >= lum(v['--bg'])) shadeBad.push(x.id + '(sunk 未凹陷)');
+  // 凹陷面要跟**卡片面**比，而不是跟底色比。
+  // 扁平风（如 Agent Flow 深色）刻意让底色最深：bg #0f1115 < sunk #12151c < surface #171a21，
+  // 用"比底色暗"判定会误报；但"凹陷面比卡片面暗"这个语义在任何风格下都成立。
+  if (solid(v['--surface']) && solid(v['--surface-sunk']) && !nearBlack) {
+    if (lum(v['--surface-sunk']) >= lum(v['--surface'])) shadeBad.push(x.id + '(sunk 未凹陷)');
   }
   if (solid(v['--bg']) && solid(v['--sh-dark']) && solid(v['--sh-light']) && !nearBlack) {
     if (lum(v['--sh-dark']) > lum(v['--bg'])) shadeBad.push(x.id + '(sh-dark 方向反)');
@@ -100,9 +104,45 @@ t('派生 --accent-glow', /rgba/.test(cssVar('--accent-glow')), cssVar('--accent
 t('派生 --hairline（深色用微白）', /255, ?255, ?255/.test(cssVar('--hairline')), cssVar('--hairline'));
 t('派生 --scroll-thumb', cssVar('--scroll-thumb').startsWith('#'), cssVar('--scroll-thumb'));
 t('派生 --mask', /rgba/.test(cssVar('--mask')), cssVar('--mask'));
-t('THEME_VARS 全部已落地',
-  THEME_VARS.every((k) => cssVar(k) !== ''),
-  THEME_VARS.filter((k) => cssVar(k) === '').join(',') || '全部有值');
+// 变量必须**有来源**：要么主题内联设置，要么 css/neumorphism.css 的 :root 有默认值。
+// 圆角这类变量允许主题不定义（见 themes.js「未定义的主题回退 CSS 默认值」），
+// 但不能两头都不管 —— 那会得到一个空变量，用到它的样式直接失效。
+//
+// 另一个隐含前提：切主题时要清掉上一套主题残留的内联值，
+// 否则 CSS 兜底永远被内联样式压住，轮不上生效。
+const cssRootText = (() => {
+  try {
+    const css = readFileSync(new URL('./css/neumorphism.css', import.meta.url), 'utf8');
+    const m = /:root\s*\{([\s\S]*?)\n\}/.exec(css);
+    return m ? m[1] : '';
+  } catch { return ''; }
+})();
+const cssDefaults = new Set([...cssRootText.matchAll(/(--[a-z0-9-]+)\s*:/gi)].map((m) => m[1]));
+const missingSource = THEME_VARS.filter(
+  (k) => document.documentElement.style.getPropertyValue(k).trim() === '' && !cssDefaults.has(k),
+);
+
+t('THEME_VARS 均有来源（内联或 CSS 兜底）',
+  missingSource.length === 0,
+  missingSource.join(',') || '全部有来源');
+
+/* 切主题时不能留下上一套主题的残值。
+   扁平主题定义了圆角，新拟态主题没定义 —— 切回去时若不主动清除，
+   内联值会一直压住 CSS 里的默认值，圆角就回不来了。 */
+{
+  const FLAT = PRESET_THEMES.find((x) => x.style === 'flat' && x.vars?.['--r-xl']);
+  const SOFT = PRESET_THEMES.find((x) => x.style !== 'flat' && !x.vars?.['--r-xl']);
+  if (FLAT && SOFT) {
+    tm.applyTheme(FLAT.id);
+    const flatVal = cssVar('--r-xl');
+    tm.applyTheme(SOFT.id);
+    const after = document.documentElement.style.getPropertyValue('--r-xl').trim();
+    t('切回未定义该变量的主题时清掉残留内联值',
+      flatVal !== '' && after === '', `扁平 ${flatVal} → 切回后 ${after || '(已清除)'}`);
+  } else {
+    t('切回未定义该变量的主题时清掉残留内联值', true, '样本不足，跳过');
+  }
+}
 
 /* ---------- 4. 持久化 ---------- */
 tm.applyTheme('neon-dark');

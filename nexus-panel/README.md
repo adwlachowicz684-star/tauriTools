@@ -502,39 +502,51 @@ npm run tauri:build                   # Vite + React 模式
 
 `plugins/agent-flow/` 是一个工作流编排画布（React + React Flow），以 iframe 沙箱方式挂进面板。
 
-### 关于已移除的 Rust 能力
+### Rust 后端能力
 
-重构时 Rust 端移去了部分插件（`tauri-plugin-http` 等），因此：
+`run_node` / `kill_node` / `watch_start` / `webhook_start` / `fs_op` /
+`af_read_image_data_url` 等命令已在 `src-tauri/src/main.rs` 注册，
+由 `af_flow.rs` 实现，界面上的功能都有对应后端。
 
 | 能力 | 状态 |
 |---|---|
 | 界面（画布 / 节点 / 检查器 / 日志） | ✅ 完整可用 |
 | 本地持久化（localStorage） | ✅ 可用 |
 | 导入 / 导出 JSON | ✅ 可用 |
-| 运行工作流（调 Rust 的 `run_node` 等） | ⚠️ 需自行补 Rust 命令 |
-| 文件监听、Webhook 触发器 | ⚠️ 同上 |
+| 运行工作流（CLI 子进程流式输出） | ✅ 需系统装好对应 CLI |
+| 文件监听、Webhook 触发器 | ✅ 桌面端可用 |
+| 文件 / 文件夹操作（fs_op） | ✅ 桌面端可用 |
 
-前端对这些能力已做**降级处理**：不在 Tauri 里就跳过或用模拟输出，不会崩。
+### 网络请求：Tauri 通道已打通
 
-### 网络请求的可选依赖
-
-`fetchText()` 优先用 Tauri http 插件（经 Rust 发出、不受同源策略限制），
+OCR / 翻译 / 订阅源抓取优先走 Tauri http 插件（经 Rust 发出，不受同源策略限制），
 不可用时降级到浏览器 `fetch`。
 
-**关键：它用变量做动态 import，而不是字面量。**
+Rust 侧三处已就绪：
+
+- `Cargo.toml` 声明 `tauri-plugin-http = "2"`
+- `main.rs` 里 `.plugin(tauri_plugin_http::init())`
+- `capabilities` 放行 `http://**` / `https://**`
+
+前端包 `@tauri-apps/plugin-http` 也已列入 dependencies。
+
+**动态 import 必须用字面量**：
 
 ```js
-const spec = '@tauri-apps/plugin-http';
-const mod = await import(spec);   // 不是 await import('@tauri-apps/plugin-http')
+const mod = await import('@tauri-apps/plugin-http');   // ✅ 字面量
+// const spec = '...'; await import(/* @vite-ignore */ spec);  // ❌ 不会被打包
 ```
 
-因为字面量形式会被 Rollup **静态解析**：包没装时整个构建直接失败
-（"Rollup failed to resolve import"），连累其他所有插件一起打不出来。
-改成变量后，缺包只会让这一个功能降级，不影响构建。
+曾经为了"包没装也不让构建失败"而用变量 + `@vite-ignore`，
+但那会让 Rollup 完全不打包这段代码 —— 运行时在 webview 里解析裸模块名必然失败，
+函数恒返回 null，**功能从来没生效过，一直在静默降级**。
+改回字面量后会被打成独立 chunk，运行时才真的加载得到。
 
-真正要用它：装 `@tauri-apps/plugin-http` + Cargo 加 `tauri-plugin-http`
-+ capabilities 配 scope + 删掉 `plugins/agent-flow/optional-modules.d.ts`
-+ 把 CSP 的 `connect-src` 放行目标域名。
+请求体注意：v2 的 plugin-http 内部走标准 `new Request()` + `arrayBuffer()`，
+只认 BodyInit。Tauri v1 的 `body: { type: 'Json', payload }` 写法会被转成
+`"[object Object]"`，必须传 `JSON.stringify(...)` 后的字符串。
+
+另外 CSP 的 `connect-src` 需放行目标域名，否则请求在 webview 层就被拦下。
 
 ### 外观：跟随面板 / 原生样式
 

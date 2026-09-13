@@ -419,7 +419,16 @@ function applyTo(theme, accent, envColor) {
   }
   const root = document.documentElement;
   for (const k of THEME_VARS) {
-    if (vars[k] != null) root.style.setProperty(k, vars[k]);
+    if (vars[k] != null) {
+      root.style.setProperty(k, vars[k]);
+    } else {
+      // 新主题没定义的变量必须**主动清掉**。
+      // 只写不删的话，上一套主题的内联值会一直挂在 :root 上：
+      // 从定义了 --r-xl:12px 的扁平主题切回新拟态主题，圆角会停在 12px，
+      // 因为 CSS 里的 26px 永远被内联样式压住、根本没有机会生效。
+      // 清掉后由 css/neumorphism.css 的 :root 兜底。
+      root.style.removeProperty(k);
+    }
   }
 
   /* 缓存底色与前景色，供首屏防闪脚本读取。

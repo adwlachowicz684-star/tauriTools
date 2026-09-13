@@ -33,7 +33,12 @@ export default function Settings() {
      不订阅的话，只有用户点了本页某个元素触发重渲染才会更新，
      看起来就像"切了但没生效"。
      （这段曾在 53013446 的全量覆盖中丢失，现补回） */
-  useEffect(() => onThemeChange(() => force((n) => n + 1)), []);
+  useEffect(() => {
+    // 包一层：force() 返回 boolean，而 useEffect 的清理函数要求返回 void，
+    // 直接透传会被 TS 判为类型不匹配（Destructor 不接受 boolean）。
+    const off = onThemeChange(() => { force((n) => n + 1); });
+    return () => { off(); };
+  }, []);
 
   const rerender = () => force((n) => n + 1);
 
