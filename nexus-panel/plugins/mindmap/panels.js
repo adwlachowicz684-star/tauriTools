@@ -68,6 +68,7 @@ export function buildSide(app) {
     if (current === page) { close(); return; }
     current = page;
     body.classList.add('open');
+    body.dataset.page = page;      // 标记当前页，便于外部（含测试）判断侧栏停在哪个页
     body.innerHTML = '';
     body.appendChild(pages[page]());
   }
@@ -75,6 +76,7 @@ export function buildSide(app) {
   function close() {
     current = null;
     body.classList.remove('open');
+    delete body.dataset.page;
     body.innerHTML = '';
   }
 
@@ -113,7 +115,9 @@ export function buildSide(app) {
       const r = app.api.selectedRef(kind);
       if (!r?.a) { app.api.status('该附件来自旧版路径，无法在沙箱内打开', true); return; }
       const asset = await io.getAsset(r.a);
-      if (!asset?.url) { app.api.status('附件数据已丢失', true); return; }
+      if (!asset?.blob) { app.api.status('附件数据已丢失', true); return; }
+      // 下载走的是 blob，不需要 URL；getAsset 顺手建的那个必须释放掉
+      if (asset.url) URL.revokeObjectURL(asset.url);
       io.downloadBlob(asset.name || r.n || '附件', asset.blob);
     };
 
@@ -193,8 +197,70 @@ export function buildSide(app) {
       app.api.commit();
       refresh();
     };
+    // 文字格式走内核命令（bold/italic/…），与节点样式(setnodestyle)是两套机制
+    const run = (name, value) => {
+      app.bridge?.exec(name, value);
+      app.api.commit();
+    };
 
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
+      // 文字段：C# 版 SidePageStyle 的第一段。原本插件只把它放在顶部工具栏，
+      // 工具栏控件太多挤不下，且无法回显当前节点的格式状态（无状态按钮）。
+      // 这里补齐，并按 collectNodeStyle 上报的字段回显/高亮当前值。
+      section('文字',
+        h('div.mm-row', {},
+          h('span.mm-label', { style: { minWidth: '48px' } }, '字体'),
+          h('select.mm-select', {
+            style: { flex: '1 1 auto' },
+            onchange: (e) => run('fontfamily', e.target.value),
+          }, ...FONTS.map((f) =>
+            h('option', { value: f, selected: st.fontFamily === f }, f))),
+        ),
+        h('div.mm-row', {},
+          h('span.mm-label', { style: { minWidth: '48px' } }, '字号'),
+          h('select.mm-select', {
+            style: { flex: '1 1 auto' },
+            onchange: (e) => run('fontsize', Number(e.target.value)),
+          }, ...SIZES.map((n) =>
+            h('option', { value: n, selected: Number(st.fontSize) === n }, String(n)))),
+        ),
+        colorRow('字体色', st.color,
+          (v) => run('forecolor', v),
+          () => { app.bridge?.clearNodeStyle('text'); app.api.commit(); refresh(); }),
+        h('div.mm-row', {},
+          h('button.mm-chip' + (st.bold ? '.on' : ''), {
+            style: { fontWeight: '700' },
+            onclick: () => run('bold'),
+            title: '加粗',
+          }, 'B'),
+          h('button.mm-chip' + (st.italic ? '.on' : ''), {
+            style: { fontStyle: 'italic' },
+            onclick: () => run('italic'),
+            title: '斜体',
+          }, 'I'),
+          h('button.mm-chip' + (st.strikethrough ? '.on' : ''), {
+            style: { textDecoration: 'line-through' },
+            onclick: () => run('strikethrough'),
+            title: '删除线',
+          }, 'S'),
+        ),
+        h('div.mm-row', {},
+          h('span.mm-label', { style: { minWidth: '48px' } }, '水平'),
+          ...[['left', '左'], ['center', '中'], ['right', '右']].map(([v, t]) =>
+            h('button.mm-chip' + (st.textAlign === v ? '.on' : ''), {
+              onclick: () => run('textalign', v),
+              title: `水平${t}对齐`,
+            }, t)),
+        ),
+        h('div.mm-row', {},
+          h('span.mm-label', { style: { minWidth: '48px' } }, '垂直'),
+          ...[['top', '上'], ['middle', '中'], ['bottom', '下']].map(([v, t]) =>
+            h('button.mm-chip' + (st.verticalAlign === v ? '.on' : ''), {
+              onclick: () => run('valign', v),
+              title: `文字垂直${t}对齐`,
+            }, t)),
+        ),
+      ),
       section('节点填充',
         colorRow('填充', st.fill, (v) => set({ fill: v }), () => set({ fill: null })),
       ),
@@ -221,6 +287,15 @@ export function buildSide(app) {
           ...RADII.map((r) => h('button.mm-chip' + (Number(st.radius) === r ? '.on' : ''), {
             onclick: () => set({ radius: r }),
           }, String(r))),
+        ),
+      ),
+      // 外观：C# 样式页「外观」段（整理布局 + 清除/复制/粘贴样式）
+      section('外观',
+        h('div.mm-row', {},
+          h('button.mm-btn', {
+            onclick: () => { app.bridge?.exec('resetlayout'); app.api.commit(); app.api.status('布局已整理'); },
+            title: '重新排列节点布局（resetlayout）',
+          }, '整理布局'),
         ),
       ),
       section('样式刷',
@@ -374,9 +449,20 @@ export function buildSide(app) {
 
 /* =========================== 浮层 =========================== */
 
-function dialog(title, ...children) {
+/**
+ * 通用浮层。
+ * @param onClose 关闭时的清理钩子：点遮罩、点关闭按钮、外部调 close() 都会触发，
+ *   用于释放 Blob URL 之类的一次性资源。
+ */
+function dialog(title, children, onClose) {
   const mask = h('div.mm-mask', {});
-  const close = () => mask.remove();
+  let cleaned = false;
+  const close = () => {
+    if (cleaned) return;
+    cleaned = true;
+    mask.remove();
+    try { onClose?.(); } catch { /* 清理失败不该拦住关闭 */ }
+  };
   mask.appendChild(
     h('div.mm-dialog', {},
       h('h3', {}, title),
@@ -415,7 +501,7 @@ export function openThemeEditor(app, theme) {
     app.api.toast('主题已保存并应用', 'ok');
   };
 
-  const dlg = dialog(theme ? '编辑主题' : '新建主题',
+  const dlg = dialog(theme ? '编辑主题' : '新建主题', [
     h('div.mm-field', {}, h('span.mm-label', {}, '名称'), nameInput),
     h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
       ...rows.map(([label, key]) => {
@@ -439,14 +525,20 @@ export function openThemeEditor(app, theme) {
       }),
     ),
     h('div.mm-actions', {}, h('button.mm-btn.primary', { onclick: save }, '保存并应用')),
+  ]
   );
   return dlg;
 }
 
-/** 视频播放浮层：直接用原生 <video controls>，进度条/音量/全屏由浏览器提供 */
+/**
+ * 视频播放浮层：直接用原生 <video controls>，进度条/音量/全屏由浏览器提供。
+ * 关闭时释放 Blob URL —— getAsset() 每次调用都会新建一个，不释放就是内存泄漏
+ * （反复点开附件会一直堆积）。
+ */
 export function openVideo(app, asset) {
   const v = h('video.mm-video', { src: asset.url, controls: true, autoplay: true });
-  return dialog(`播放：${asset.name || '视频'}`, v);
+  const release = () => { if (asset.url) URL.revokeObjectURL(asset.url); };
+  return dialog(`播放：${asset.name || '视频'}`, [v], release);
 }
 
 /** 图片附件预览浮层（点节点图标时，图片比直接下载更直观） */
@@ -455,7 +547,8 @@ export function openPreview(app, asset) {
   const save = h('button.mm-btn', {
     onclick: () => io.downloadBlob(asset.name || '附件', asset.blob),
   }, '另存为');
-  return dialog(`预览：${asset.name || '附件'}`, h('div', {}, img, h('div.mm-actions', {}, save)));
+  const release = () => { if (asset.url) URL.revokeObjectURL(asset.url); };
+  return dialog(`预览：${asset.name || '附件'}`, [h('div', {}, img, h('div.mm-actions', {}, save))], release);
 }
 
 /** 历史快照列表 */
@@ -486,13 +579,14 @@ export async function openBackups(app) {
   };
   await render();
 
-  const dlg = dialog('历史快照',
+  const dlg = dialog('历史快照', [
     h('div.mm-hint', {}, `按时间倒序，最多保留 ${store.BACKUP_KEEP} 份。恢复会覆盖当前所有画布。`),
     box,
     h('div.mm-actions', {},
       h('button.mm-btn', { onclick: async () => { await app.api.backupNow(); await render(); } }, '立即备份'),
       h('button.mm-btn', { onclick: async () => { await store.clearBackups(); await render(); } }, '清空快照'),
     ),
+  ]
   );
   return dlg;
 }

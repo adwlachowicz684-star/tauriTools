@@ -62,6 +62,64 @@ WPF 宿主行为完全不变。
 底层是自己实现的（C# 的 `ZipArchive` / `XDocument` 在 JS 侧没有等价物）：
 zip 容器自写 CRC32 + 原生 `CompressionStream('deflate-raw')`，XML 走 `DOMParser`，**零第三方依赖**。
 
+## 画布跟随外壳亮/暗主题
+
+原版画布底色写死 `#1E1E1E` 以贴合 WPF 深色外壳。插件版改为跟随 nexus 外壳主题：
+
+- 编辑器页面的画布相关配色抽成 `--km-*` CSS 变量（容器底色、内描边、搜索面板、加载遮罩），
+  默认值为原版深色，**WPF 宿主不调用新门面时行为完全不变**；
+- 插件层从外壳主题变量派生画布配色（`deriveCanvasTheme`），`postMessage` 传给内层编辑器页
+  —— 内层是独立文档，外壳注入的 CSS 变量进不去；
+- 内核 `setTheme()` 会执行 `renderTarget.style.background = getStyle('background')`，
+  内联样式优先级高于 CSS 规则，所以门面在每次 `setTheme` / `importJson` 之后会重新套一次；
+- 编辑器重载、页面初始化早于消息到达两种情况都已覆盖（门面就绪后补套 pending 值）。
+
+**分工**：外壳主题决定画布明暗，kityminder 主题决定节点配色。节点都绘制了不透明底色，
+因此画布变色不影响节点内文字的可读性。
+
+## 异步与存储的错误处理约定
+
+这块踩过坑，写成约定以免后续改回去：
+
+1. **`store.set` 失败是「返回 false」而不是抛异常**。所以检查写入结果必须判返回值，
+   只写 `try/catch` 等于静默丢弃。已统一：`persist()` / `doSaveInner()` / `saveThemes()` /
+   `backupNow()` / `setBackupMinutes()` / `setAnimate()` 全部判返回值并提示。
+2. **onclick 拿不到 Promise**。所有面板/工具栏入口经 `guard()` 或 `api` 层包装，
+   异步失败落状态栏，不留 unhandled rejection。`doSave()` 跑在定时器里，单独包一层。
+3. **画布 `content` 运行时是对象**（`exportJson()` 返回对象，仅序列化落盘后才是字符串）。
+   任何比较都必须按内容：`sameSnap()` 比较、`fingerprintSheets()` 序列化后再拼。
+   直接 `===` 或用字符串拼接会让「内容变了没」的判断永远失效
+   （对象转字符串是 `[object Object]`，备份去重会退化成只认画布增删/排序）。
+4. **Blob URL 要释放**。`getAsset()` 每次调用都新建一个 URL；交给浮层的由浮层关闭时
+   `revoke`，走下载路径的就地释放，否则反复点附件会一直堆积。
+
+## 侧栏 / 工具栏的分工（对齐 C# MindMapPanel）
+
+C# 版把**文字格式**放在右侧栏 `SidePageStyle` 的第一段，顶栏只有
+上移/下移、编辑/删除、链接/图片/备注/文件/外框/视频、选择、搜索。
+
+早期插件版把文字格式（字体下拉 / 字号下拉 / 取色块 / 粗斜删 / 水平 + 垂直对齐）
+全塞进顶部工具栏，导致：
+
+- 顶栏 40 多个控件挤在一起，两个 `select` + 色块最占宽度；
+- 这些控件**无状态**，无法回显当前节点的格式（而编辑器 `collectNodeStyle`
+  上报了 `fontFamily / fontSize / color / bold / italic / strikethrough /
+  textAlign / verticalAlign`，侧栏可以按选中节点高亮）。
+
+现已改回 C# 的分工：
+
+| 位置 | 内容 |
+|---|---|
+| 右侧栏·样式 | 文字（字体/字号/字体色/粗斜删/水平/垂直）· 节点填充 · 节点边框 · 连线 · 圆角 · 外观（整理布局）· 样式刷 · 清除样式 |
+| 右侧栏·标签 | 优先级 · 进度 · 图标 · 超链接 · 备注 |
+| 右侧栏·主题 | 配色主题（含自定义增删改）· 布局模板 · 视图 |
+| 右侧栏·文件 | 文件附件 · 视频附件 · 备份与恢复 · 布局动画 · 导入导出 |
+| 顶部工具栏 | 导入导出 · 下级/同级/上级/删除/上移/下移/编辑 · 撤销重做 · 外框 · 六种选择 · 搜索定位 · 重载 |
+
+对照 C# 时补回的遗漏项：**外框**（`boundary`，数据层早已支持导出/导入，
+只是 UI 一直没入口）、**上移 / 下移**（`arrangeup` / `arrangedown`）、
+**整理布局**（`resetlayout`）。
+
 ## 与 C# 版的差异说明
 
 - **撤销/重做**：优先用编辑器自维护的历史栈 `window.editor.history`（上游 dist 页已补齐，100 步、基线模型），拿不到时回退插件层 50 步快照栈。
@@ -80,7 +138,11 @@ zip 容器自写 CRC32 + 原生 `CompressionStream('deflate-raw')`，XML 走 `DO
 
 ## 验证情况
 
-- 数据层（序列化 / Markdown 互转 / 指纹去重 / 容错）：Node 单测 20 项通过；
-- XMind 层（zip 往返 / 三档解析 / 附件打包解包 / 坏输入）：Node 单测 31 项通过；
-- 插件挂载与交互、数据流、导入主题样式、补齐项、XMind 集成：jsdom 五组测试全通过；
+- 数据层（序列化 / Markdown 互转 / 指纹去重 / 容错）：Node 单测通过；
+- 配色派生（`parseColor` / `shiftColor` / `deriveCanvasTheme`）：Node 单测通过；
+- XMind 层（zip 往返 / 三档解析 / 附件打包解包 / 坏输入）：Node 单测通过；
+- **附件打包字节级验证**：构造带魔数的 PDF/MP4 样本，导出后拆 zip 逐字节比对，
+  再清空库（模拟换机器）导入，确认字节、文件名、扩展名全部还原；
+- 插件挂载 / 数据流 / 导入主题样式 / 补齐项 / XMind / 附件 / 画布主题 / 健壮性：
+  jsdom 八组测试全通过；
 - **未做真实浏览器渲染验证**（沙盒无法安装 Chromium），kityminder 的 SVG 渲染需在 Tauri 里实测确认。

@@ -334,6 +334,39 @@ function sanitizeFileName(name) {
   return s.length ? s : 'attach';
 }
 
+/**
+ * 剥掉打包时加的 kma_<序号>_ 前缀。
+ * 不解掉的话，每次「导出→导入→再导出」都会在文件名上再叠一层前缀
+ * （报告.pdf → kma_0_报告.pdf → kma_0_kma_0_报告.pdf …），无限累积。
+ */
+function stripPackSeq(name) {
+  return String(name || '').replace(/^kma_\d+_/, '');
+}
+
+/**
+ * 从附件引用里取出真实文件名。
+ *
+ * 两种形态都要支持：
+ *   1) 插件版引用串：'{"n":"设计稿.pdf","a":"asFILE001","s":70}' —— 取 n 字段；
+ *   2) 文件路径：'D:\\x\\演示.mp4' 或包内 'resources/kma_0_设计稿.pdf' —— 取 basename。
+ *
+ * 早期版本直接对引用串做 split('/').pop()，把整个 JSON 当文件名，
+ * 且末尾是 '}' 导致扩展名丢失 —— 导入后无法按扩展名判断视频，附件放不了。
+ */
+function assetFileName(refRaw) {
+  const s = String(refRaw || '').trim();
+  if (!s) return 'attach';
+  if (s[0] === '{') {
+    try {
+      const o = JSON.parse(s);
+      const n = o && (o.n || o.name);
+      if (n && String(n).trim()) return String(n).trim();
+    } catch { /* 不是合法 JSON，按路径处理 */ }
+  }
+  // 路径：统一分隔符后取最后一段
+  return (s.replace(/\\/g, '/').split('/').pop() || 'attach');
+}
+
 function parseKm(content) {
   if (content == null) return null;
   try {
@@ -844,9 +877,10 @@ export async function writeXMind(sheets, activeId, loadAsset = null) {
         for (const key of ['file', 'video']) {
           const p = str(d[key]);
           if (!p || !p.trim() || packs.has(p)) continue;
-          const extMatch = /(\.[a-zA-Z0-9]+)$/.exec(p.replace(/\\/g, '/'));
+          // 用真实文件名（引用串取 n 字段 / 路径取 basename），不能直接拿引用串当名字
+          const base = stripPackSeq(assetFileName(p));
+          const extMatch = /(\.[a-zA-Z0-9]+)$/.exec(base);
           const ext = extMatch ? extMatch[1] : '';
-          const base = p.replace(/\\/g, '/').split('/').pop() || 'attach';
           const baseSafe = sanitizeFileName(base.replace(/(\.[a-zA-Z0-9]+)$/, ''));
           const packName = `resources/kma_${seq}_${baseSafe}${ext}`;
           seq++;
@@ -988,7 +1022,7 @@ export async function readXMind(input, saveAsset = null) {
           if (!v || !isPackRef(v)) continue;
           const data = entries.get(v);
           if (!data) continue;
-          const name = sanitizeFileName(v.split('/').pop() || 'attach');
+          const name = stripPackSeq(sanitizeFileName(v.split('/').pop() || 'attach'));
           tasks.push(
             Promise.resolve(saveAsset(name, data, { video: key === 'video' }))
               .then((ref) => {
