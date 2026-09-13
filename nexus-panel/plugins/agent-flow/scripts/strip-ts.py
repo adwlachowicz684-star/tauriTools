@@ -152,6 +152,22 @@ def remove_as(src: str) -> str:
                 j += 1
             if j >= n:
                 break
+            # `as keyof typeof X` 这类索引类型：keyof / typeof 都是类型语法，
+            # 不整体吃掉会剩下 `typeof` 关键字，生成语法错误的代码。
+            # 先尝试按 keyof/typeof 前缀整体跳过。
+            keyw = None
+            for kw in ('keyof typeof ', 'keyof ', 'typeof '):
+                if src.startswith(kw, j):
+                    keyw = kw
+                    break
+            if keyw is not None:
+                k = j + len(keyw)
+                while k < n and (src[k].isalnum() or src[k] in '_$.'):
+                    k += 1
+                while k < n and src[k] == ' ':
+                    k += 1
+                i = k
+                continue
             if src[j] == '{':
                 depth, k = 0, j
                 while k < n:

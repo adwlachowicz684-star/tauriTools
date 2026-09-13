@@ -30,6 +30,11 @@ import {
 import { deviceSeed } from './engine/crypto';
 import Sidebar, { DRAG_MIME, decodeDrag, type DragPayload } from './components/Sidebar';
 import CanvasTabs from './components/CanvasTabs';
+import { TaskPanel } from './components/TaskPanel';
+import {
+  makeTask, applyEvent, finishTask, cancelTask, clampOutput,
+  type TaskRecord, type TaskSource,
+} from './engine/tasks';
 import {
   runGraph,
   type Executor, type FsExecutor, type Fetcher, type LlmCaller, type ImageReader,
@@ -198,6 +203,24 @@ export default function App() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+
+  /* ---------------- 任务窗口 ---------------- */
+  /**
+   * 只保留本次会话的记录，不落盘 ——
+   * 跨会话的历史归"历史窗口"管，那个后面单独做。
+   */
+  const MAX_TASKS = 30;
+  const [view, setView] = useState<'flow' | 'tasks'>('flow');
+  const [tasks, setTasks] = useState<TaskRecord[]>([]);
+  /** 当前正在跑的任务 id。用 ref 避免 onEvent 因依赖变化而重建 */
+  const currentTaskRef = useRef<string | null>(null);
+  /** 每秒走一次，让任务耗时与进度实时刷新 */
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running && !tasks.some((t) => t.status === 'running')) return;
+    const h = window.setInterval(() => setTick(Date.now()), 1000);
+    return () => window.clearInterval(h);
+  }, [running, tasks]);
 
   /* ---------------- 凭据中心 ---------------- */
   /**
@@ -657,10 +680,20 @@ export default function App() {
   /* ---------------- 执行 ---------------- */
 
   const onEvent = useCallback((e: RunEvent) => {
+    // 同步到任务窗口。用 id 定位当前任务，避免依赖 tasks 数组
+    const tid = currentTaskRef.current;
+    if (tid) {
+      setTasks((list) => list.map((t) => (t.id === tid ? applyEvent(t, e) : t)));
+    }
     if (e.type === 'node-status') {
       setNodes((ns) => ns.map((n) => (n.id === e.id ? { ...n, data: { ...n.data, status: e.status } } as FlowNode : n)));
     } else if (e.type === 'node-chunk') {
-      setNodes((ns) => ns.map((n) => (n.id === e.id ? { ...n, data: { ...n.data, output: (n.data as { output?: string }).output ?? '' } as TaskNodeData } as FlowNode : n)));
+      /*
+        原实现把 output 设成了原值 —— chunk 根本没被追加，
+        流式输出在界面上等于失效。这里改成真正的追加。
+        任务窗口能实时看到输出，靠的就是这一行。
+      */
+      setNodes((ns) => ns.map((n) => (n.id === e.id ? { ...n, data: { ...n.data, output: clampOutput(((n.data as { output?: string }).output ?? '') + e.chunk) } as TaskNodeData } as FlowNode : n)));
     } else if (e.type === 'node-done') {
       setNodes((ns) => ns.map((n) =>
         n.id === e.id
@@ -714,12 +747,25 @@ export default function App() {
    * 跑一轮工作流。
    * @param inputOverride 触发器注入的全局输入，优先级高于工具栏里的输入框
    */
-  const run = useCallback(async (inputOverride?: string): Promise<boolean> => {
+  const run = useCallback(async (inputOverride?: string, source: TaskSource = 'unknown'): Promise<boolean> => {
     if (running) {
       pushLog('已有任务在运行，本次触发被跳过');
       return false;
     }
     setRunning(true);
+
+    // 建一条任务记录。total 先按节点数估，运行时以实际出现的节点为准
+    const task = makeTask({
+      canvasId: activeId ?? '',
+      canvasName: canvases.find((c) => c.id === activeId)?.name ?? '未命名流程',
+      source,
+      total: nodes.length,
+    });
+    currentTaskRef.current = task.id;
+    setTasks((list) => [task, ...list].slice(0, MAX_TASKS));
+    // 自动切到任务窗口，让人立刻看到进度 ——
+    // 触发器半夜跑起来时，停留在画布上看不出发生了什么
+    setView('tasks');
     setSummary(null);
     activeRuns.current.clear();
     const controller = new AbortController();
@@ -792,10 +838,15 @@ export default function App() {
       input: effectiveInput, onEvent, signal: controller.signal,
     });
     setSummary(result);
+    const finishedId = currentTaskRef.current;
+    if (finishedId) {
+      setTasks((list) => list.map((t) => (t.id === finishedId ? finishTask(t, result.ok) : t)));
+      currentTaskRef.current = null;
+    }
     setRunning(false);
     abortRef.current = null;
     return result.ok;
-  }, [running, nodes, edges, concurrency, globalInput, onEvent, setNodes, pushLog]);
+  }, [running, nodes, edges, concurrency, globalInput, onEvent, setNodes, pushLog, activeId, canvases]);
 
   // 调度器通过 ref 调用 run，避免闭包捕获旧状态
   const runRef = useRef(run);
@@ -814,7 +865,15 @@ export default function App() {
         const injected = t.kind === 'webhook' && t.config.payloadToInput && payload
           ? payload
           : t.input;
-        const ok = await runRef.current(injected);
+        // 把触发方式带进任务记录：任务窗口里要能分清
+        // 「我手动点的」和「半夜自己跑起来的」
+        const src: TaskSource =
+          t.kind === 'interval' ? 'interval'
+            : t.kind === 'cron' ? 'cron'
+              : t.kind === 'watch' ? 'watch'
+                : t.kind === 'webhook' ? 'webhook'
+                  : 'manual';
+        const ok = await runRef.current(injected, src);
         // 触发记录写回画布上的触发器节点，直接在节点卡片上就能看到"上次触发时间"
         const targetId = t.nodeId ?? t.id;
         setNodes((ns) => ns.map((n) =>
@@ -905,6 +964,11 @@ export default function App() {
     activeRuns.current.forEach((runId) => { void killCli(runId); });
     activeRuns.current.clear();
     setRunning(false);
+    // 先标记任务为"已取消"：用户主动停的不该显示成失败
+    const cancelling = currentTaskRef.current;
+    if (cancelling) {
+      setTasks((list) => list.map((t) => (t.id === cancelling ? cancelTask(t) : t)));
+    }
     pushLog('已请求停止');
   };
 
@@ -925,6 +989,19 @@ export default function App() {
       />
 
       <div className="toolbar">
+        <div className="view-switch">
+          <button className={view === 'flow' ? 'on' : ''} onClick={() => setView('flow')}>
+            流程
+          </button>
+          <button className={view === 'tasks' ? 'on' : ''} onClick={() => setView('tasks')}>
+            任务
+            {tasks.filter((t) => t.status === 'running').length > 0 ? (
+              <span className="view-badge">
+                {tasks.filter((t) => t.status === 'running').length}
+              </span>
+            ) : null}
+          </button>
+        </div>
         <strong className="brand">Agent Flow</strong>
         <button onClick={addTask} disabled={running}>+ 任务</button>
         <button onClick={addCondition} disabled={running}>+ 条件</button>
@@ -946,7 +1023,7 @@ export default function App() {
         >
           ↩ 撤销
         </button>
-        <button className="primary" onClick={() => void run()} disabled={running || nodes.length === 0}>
+        <button className="primary" onClick={() => void run(undefined, 'manual')} disabled={running || nodes.length === 0}>
           {running ? '运行中…' : '运行工作流'}
         </button>
         <button onClick={stop} disabled={!running}>停止</button>
@@ -980,7 +1057,24 @@ export default function App() {
       </div>
 
       <div className="body">
-        <div className="canvas" ref={wrapperRef} onDrop={onDrop} onDragOver={onDragOver}>
+        {view === 'tasks' ? (
+          <TaskPanel
+            tasks={tasks}
+            now={tick}
+            onCancel={(id) => {
+              // 只允许停当前那条；历史记录没有可停的东西
+              if (id === currentTaskRef.current) stop();
+            }}
+            onClear={() => setTasks((list) => list.filter((t) => t.status === 'running'))}
+            onJumpToCanvas={(canvasId) => {
+              if (canvasId && canvases.some((c) => c.id === canvasId)) {
+                setActiveId(canvasId);
+                setView('flow');
+              }
+            }}
+          />
+        ) : null}
+        <div className="canvas" ref={wrapperRef} onDrop={onDrop} onDragOver={onDragOver} style={view === 'tasks' ? { display: 'none' } : undefined}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
