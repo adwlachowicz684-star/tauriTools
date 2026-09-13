@@ -1,16 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   createHost, loadRegistry, filterByRuntime, saveCustomPlugins, getCustomPlugins, isInsideTauri,
-  type Host, type PluginManifest, type SidebarItem,
+  type Host, type PluginManifest,
 } from '../js/host.js';
+import { listThemes, applyTheme, getThemeId, getCurrent } from '../js/theme-manager.js';
 import Titlebar from './components/Titlebar';
 import Sidebar from './components/Sidebar';
 import Stage from './components/Stage';
 import Toasts, { type ToastItem } from './components/Toasts';
 import AddPluginDialog from './components/AddPluginDialog';
-import PluginSettingsDrawer from './components/PluginSettingsDrawer';
-import * as extPolicy from '../js/external-policy.js';
-import * as pluginCfg from '../js/plugin-config.js';
 
 export default function App() {
   const stageRef = useRef<HTMLDivElement>(null);
@@ -19,15 +17,16 @@ export default function App() {
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [badges, setBadges] = useState<Record<string, number>>({});
-  const [injected, setInjected] = useState<SidebarItem[]>([]);
+  const [injected, setInjected] = useState<
+    { id: string; pluginId: string; label: string; icon?: string; event: string }[]
+  >([]);
   const [title, setTitle] = useState('未选择插件');
   const [subtitle, setSubtitle] = useState('');
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [hasPluginSettings, setHasPluginSettings] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [themeName, setThemeName] = useState('');
 
   const pushToast = useCallback((msg: string, type: 'info' | 'ok' | 'err' = 'info') => {
     const id = Date.now() + Math.random();
@@ -44,25 +43,8 @@ export default function App() {
         onTitle: setTitle,
         onSubtitle: setSubtitle,
         onBadges: setBadges,
-        onSidebarItems: (items: SidebarItem[]) => setInjected(items),
         onOpen: (id) => setActiveId(id),
-        onSettingsAvailable: (has) => {
-          setHasPluginSettings(has);
-          if (!has) setSettingsOpen(false);
-        },
-        // 焦点在 iframe 插件里时，主窗口收不到按键，由插件转发回来
-        onShellShortcut: (combo) => runShellCommand(combo),
-        // 插件内部被 CSP 拦下的外链（跨文档事件外壳收不到）
-        onCspViolation: (d: { blockedURI: string; directive: string }, manifest?: PluginManifest) => {
-          const host = extPolicy.hostOf(d.blockedURI);
-          if (!host) return;
-          const decision = extPolicy.decideHost(host);
-          if (decision === 'allow') return;
-          extPolicy.recordHosts([{ host, kind: 'unknown', sample: d.blockedURI }], manifest?.id);
-          if (decision === 'ask') {
-            pushToast(`插件想访问 ${host}，已拦下 · 设置里可放行`, 'err');
-          }
-        },
+        onSidebarItems: (items) => setInjected(items),
       },
     });
     hostRef.current = host;
@@ -76,6 +58,7 @@ export default function App() {
       setSidebarOpen(saved === null ? true : saved === '1');
       const accent = localStorage.getItem('nexus:accent');
       if (accent) document.documentElement.style.setProperty('--accent', accent);
+      setThemeName(getCurrent().name);
 
       const last = localStorage.getItem('nexus:last-plugin');
       const initial = last && list.some((p) => p.id === last) ? last : list[0]?.id ?? null;
@@ -92,26 +75,21 @@ export default function App() {
     hostRef.current?.mount(activeId);
   }, [activeId, reloadKey]);
 
-  /* ---------- 快捷键 ----------
-     命令表抽出来，好让 iframe 插件转发回来的按键走同一套逻辑
-     （焦点在沙箱里时主窗口收不到 keydown）。 */
-  const runShellCommand = useCallback((combo: string) => {
-    switch (String(combo).toLowerCase()) {
-      case 'mod+b':
-        setSidebarOpen((v) => {
-          localStorage.setItem('nexus:sidebar-open', !v ? '1' : '0');
-          return !v;
-        });
-        break;
-      case 'mod+r':
-        setReloadKey((n) => n + 1);
-        break;
-      case 'mod+,':
-        setSettingsOpen((v) => !v);
-        break;
+  /**
+   * 点击插件注入的侧边栏条目：把事件发到总线，由插件自己响应。
+   * 若插件尚未挂载，先切过去再补发一次——否则用户点了没有任何反应。
+   */
+  const handleInjected = async (it: { id: string; pluginId: string; event: string }) => {
+    const host = hostRef.current;
+    if (!host) return;
+    if (host.state.activeId !== it.pluginId) {
+      setActiveId(it.pluginId);
+      await new Promise((r) => setTimeout(r, 150));   // 等插件挂载并订阅事件
     }
-  }, []);
+    host.bus.emit(it.event, { id: it.id });
+  };
 
+  /* ---------- 快捷键 ---------- */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
@@ -126,20 +104,31 @@ export default function App() {
       }
       if (k === 'r' && activeId) {
         e.preventDefault();
-        runShellCommand('mod+r');
-      }
-      if (e.key === ',' && hasPluginSettings) {
-        e.preventDefault();
-        runShellCommand('mod+,');
+        setReloadKey((n) => n + 1);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [activeId, hasPluginSettings, runShellCommand]);
+  }, [activeId]);
 
   /* ---------- 供插件与调试使用 ---------- */
   useEffect(() => {
     if (!isInsideTauri()) pushToast('浏览器调试模式：Rust 命令不可用（⌘/Ctrl+R 可重载插件）', 'err');
+  }, [pushToast]);
+
+  /**
+   * 循环切换到下一个主题。
+   *
+   * 不需要手动刷新插件：host.js 已订阅 theme-manager 的 onChange，
+   * 切换后会自动重算 iframe 适配并向插件广播新变量。
+   */
+  const cycleTheme = useCallback(() => {
+    const list = listThemes();
+    const idx = list.findIndex((t) => t.id === getThemeId());
+    const next = list[(idx + 1 + list.length) % list.length];
+    applyTheme(next.id);
+    setThemeName(next.name);
+    pushToast(`主题：${next.name}`, 'ok');
   }, [pushToast]);
 
   const reload = useCallback(() => setReloadKey((n) => n + 1), []);
@@ -175,22 +164,6 @@ export default function App() {
       navigate: (id: string) => setActiveId(id),
       removePlugin,
       getPlugins: () => plugins,
-      // 设置插件（沙箱）通过 parent.__NEXUS__.external 拿到外链能力
-      external: {
-        ...extPolicy,
-        setRefreshHandler: () => {},
-        rescanAll: async () => {
-          let total = 0;
-          for (const p of plugins) {
-            const r = await extPolicy.scanEntry(p.entry, p.id).catch(() => ({ hosts: [] }));
-            total += r.hosts?.length || 0;
-          }
-          pushToast(`已检查 ${plugins.length} 个插件，登记 ${total} 个外链`, 'ok');
-        },
-        scanPlugin: async (p: { entry: string; id: string; name?: string }) =>
-          extPolicy.scanEntry(p.entry, p.id),
-      },
-      pluginCfg,
     };
   }, [plugins, pushToast, removePlugin]);
 
@@ -199,25 +172,13 @@ export default function App() {
     [plugins, activeId],
   );
 
-  /**
-   * 点击插件注入的侧边栏条目：把事件发到总线，由插件自己响应。
-   * 若插件尚未挂载，先切过去再补发一次——否则用户点了没有任何反应。
-   */
-  const handleInjected = async (it: SidebarItem) => {
-    const host = hostRef.current;
-    if (!host) return;
-    if (host.state.activeId !== it.pluginId) {
-      setActiveId(it.pluginId);
-      await new Promise((r) => setTimeout(r, 150));   // 等插件挂载并订阅事件
-    }
-    host.bus.emit(it.event, { id: it.id });
-  };
-
   return (
     <div id="app">
       <Titlebar
         title={title}
+        themeName={themeName}
         onWin={(a) => hostRef.current?.win(a)}
+        onCycleTheme={cycleTheme}
       />
       <div id="body" className={sidebarOpen ? 'open' : ''}>
         <Sidebar
@@ -242,20 +203,11 @@ export default function App() {
           subtitle={activePlugin
             ? `${activePlugin.type === 'iframe' ? '沙箱模式' : '同页模式'}${activePlugin.version ? ' · v' + activePlugin.version : ''}`
             : ''}
-          hasSettings={hasPluginSettings}
-          onOpenSettings={() => setSettingsOpen(true)}
           onReload={reload}
         />
       </div>
       <Toasts items={toasts} />
       {dialogOpen && <AddPluginDialog onClose={() => setDialogOpen(false)} onSubmit={addPlugin} />}
-      {settingsOpen && activePlugin && hostRef.current && (
-        <PluginSettingsDrawer
-          manifest={activePlugin}
-          onClose={() => setSettingsOpen(false)}
-          mountSettings={(c, m) => hostRef.current!.mountSettings(c, m)}
-        />
-      )}
     </div>
   );
 }

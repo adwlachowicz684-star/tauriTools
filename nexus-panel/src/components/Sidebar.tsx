@@ -1,4 +1,4 @@
-import type { PluginManifest, SidebarItem } from '../../js/host.js';
+import type { PluginManifest } from '../../js/host.js';
 
 export default function Sidebar({
   open,
@@ -19,8 +19,8 @@ export default function Sidebar({
   onSelect: (id: string) => void;
   onAdd: () => void;
   /** 插件注入的侧边栏条目 */
-  injected?: SidebarItem[];
-  onInjected?: (it: SidebarItem) => void;
+  injected?: { id: string; pluginId: string; label: string; icon?: string; event: string }[];
+  onInjected?: (it: { id: string; pluginId: string; event: string }) => void;
 }) {
   return (
     <aside id="sidebar">
@@ -56,7 +56,7 @@ export default function Sidebar({
             key={`${it.pluginId}:${it.id}`}
             className="nav-item nav-item-injected"
             title={`${it.label}（来自插件 ${it.pluginId}）`}
-            onClick={() => onInjected?.(it)}
+            onClick={() => onInjected?.({ id: it.id, pluginId: it.pluginId, event: it.event })}
           >
             <span className="nav-icon">{it.icon || '▶'}</span>
             <span className="nav-label">{it.label}</span>

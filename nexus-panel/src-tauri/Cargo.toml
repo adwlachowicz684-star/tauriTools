@@ -18,6 +18,11 @@ tauri = { version = "2", features = ["devtools", "image-ico", "image-png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# 说明：本项目刻意不引 windows-sys。
+# 屏幕取色 / 截图改用 PowerShell + System.Drawing 实现 —— 句柄类型在
+# windows-sys 各版本间是 isize 或 *mut c_void，一旦猜错就是硬编译错误，
+# 而这两个功能都是低频操作，多花几百毫秒启动 PowerShell 完全可以接受。
+
 [profile.release]
 codegen-units = 1
 lto = true

@@ -156,9 +156,10 @@ export default function App() {
   }, [boot, s.api]);
 
   /* ---------------- 连锁动作：快捷键 + 侧边栏 ----------------
-   * 快捷键走外壳的 ctx.shortcut（只在插件激活时生效、卸载自动注销，比自己绑 window 更稳）；
-   * 侧边栏条目由插件登记、外壳渲染，点击后外壳把事件发回总线，这里用 ctx.on 接。
+   * 两者都属于外壳能力，插件只能「注册 + 监听事件」，不能直接画到外壳上。
+   * 动作清单变化时先撤再注册，避免残留指向已删除动作的条目。
    */
+  const shortcutEvent = (id: string) => `fpx:chain:${id}`;
   const sidebarEvent = (id: string) => `fpx:sidebar:${id}`;
 
   /**
@@ -172,7 +173,7 @@ export default function App() {
     : s.selGroup ? { path: s.selGroup, kind: 'group' } : null;
 
   /** 对当前选中的卡片执行连锁动作；没选中就提示 */
-  const runAction = (a: ChainAction) => {
+  const runActionOnSelection = (a: ChainAction) => {
     const sel = selRef.current;
     if (!sel) {
       ctx.toast(`「${a.name}」需要选中一个项目或项目组`, 'err');
@@ -183,25 +184,32 @@ export default function App() {
 
   useEffect(() => {
     if (!boot) return;
-    const offs: Array<() => void> = [];
+    const unsubs: Array<() => void> = [];
+    const registered: string[] = [];
     const sidebarIds: string[] = [];
 
     for (const a of chainActions) {
-      // 快捷键：外壳负责「只在插件激活时响应 + 卸载注销」
       if (a.shortcut && a.shortcut.trim()) {
-        offs.push(ctx.shortcut(a.shortcut.trim(), () => runAction(a)));
+        ctx.registerShortcut(a.shortcut.trim(), shortcutEvent(a.id), a.name);
+        registered.push(a.shortcut.trim());
       }
       if (a.showSidebar) {
         ctx.addSidebarItem({
           id: a.id, label: a.name, icon: a.icon || '▶', event: sidebarEvent(a.id),
         });
         sidebarIds.push(a.id);
-        offs.push(ctx.on(sidebarEvent(a.id), () => runAction(a)));
       }
     }
 
+    // 两类事件都指向同一个处理：对当前选中的卡片执行该动作
+    for (const a of chainActions) {
+      unsubs.push(ctx.on(shortcutEvent(a.id), () => runActionOnSelection(a)));
+      unsubs.push(ctx.on(sidebarEvent(a.id), () => runActionOnSelection(a)));
+    }
+
     return () => {
-      for (const off of offs) { try { off(); } catch { /* 忽略已失效的订阅 */ } }
+      for (const u of unsubs) { try { u(); } catch { /* 忽略已失效的订阅 */ } }
+      for (const acc of registered) ctx.unregisterShortcut(acc);
       for (const id of sidebarIds) ctx.removeSidebarItem(id);
     };
     // 只在动作清单变化时重建；选中项走 selRef，不进依赖

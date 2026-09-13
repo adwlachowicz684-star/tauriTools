@@ -39,19 +39,14 @@ export interface PluginContext {
   toast(msg: string, type?: 'info' | 'ok' | 'err'): void;
   /** 重新加载本插件 */
   reload(): void;
-  /** 跳转到另一个插件 */
-  openPlugin(id: string): void;
-
-  /** 往外亮侧边栏注入条目；点击后总线发 event，插件用 on(event) 接 */
+  /** 注册应用级快捷键（窗口前台时生效），命中后总线发 event */
+  registerShortcut(accel: string, event: string, label?: string): void;
+  unregisterShortcut(accel: string): void;
+  /** 往外亮侧边栏注入条目；点击后总线发 event */
   addSidebarItem(item: { id: string; label: string; icon?: string; event: string }): void;
   removeSidebarItem(itemId: string): void;
-
-  /**
-   * 注册应用级快捷键：只在插件激活时生效，插件卸载自动注销，返回 off()。
-   * combo 形如 'mod+k'（mac=⌘，win/linux=Ctrl）、'ctrl+shift+p'、'esc'、'f5'。
-   */
-  shortcut(combo: string | string[], handler: (e: KeyboardEvent) => void,
-           opts?: { preventDefault?: boolean }): () => void;
+  /** 跳转到另一个插件 */
+  openPlugin(id: string): void;
 
   /** 注入样式（module 模式自动加作用域前缀），返回移除函数 */
   addStyle(css: string): () => void;
@@ -79,8 +74,6 @@ export interface PluginDefinition {
   name?: string;
   version?: string;
   mount(ctx: PluginContext): void | Promise<void | (() => void)>;
-  /** 插件自己的设置面板（可选）；声明后外壳标题栏出现「⚙ 设置」 */
-  settings?(ctx: PluginContext): void | Promise<void | (() => void)>;
   [k: string]: any;
 }
 
@@ -93,19 +86,9 @@ export function h(
   ...children: any[]
 ): HTMLElement;
 
-/**
- * iframe 插件引导
- * bootIframePlugin(mainFn)              —— 只有主视图
- * bootIframePlugin(mainFn, settingsFn)  —— 额外提供设置面板
- */
-export const SHELL_SHORTCUTS: string[];
-export function parseCombo(combo: string): { key: string; mod: boolean; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean } | null;
-export function matchCombo(e: KeyboardEvent, spec: ReturnType<typeof parseCombo>): boolean;
-export function isMac(): boolean;
-
+/** iframe 插件引导：bootIframePlugin(async (ctx) => { ... }) */
 export function bootIframePlugin(
   mountFn: (ctx: PluginContext) => Promise<(() => void) | void> | ((() => void) | void),
-  settingsFn?: (ctx: PluginContext) => Promise<(() => void) | void> | ((() => void) | void),
 ): Promise<PluginContext>;
 
 export function scopeCss(css: string, scope: string): string;
