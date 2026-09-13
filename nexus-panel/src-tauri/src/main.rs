@@ -1,7 +1,8 @@
 // 防止 Windows 上 release 构建弹出额外控制台窗口
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tauri::WebviewWindow;
+// Manager 提供 package_info() / get_webview_window() / webview_windows() / handle()
+use tauri::{Manager, WebviewWindow};
 
 mod af_flow;
 mod fpx;
