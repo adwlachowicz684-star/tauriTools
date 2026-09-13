@@ -156,7 +156,9 @@ fn from_registry() -> Vec<EditorCandidate> {
             .args(["query", key, "/v", "ProgId"])
             .output()
             .ok()
-            .map(|o| String::from_utf8_lossy(o.stdout).to_string())
+            // 必须 &：from_utf8_lossy 要的是 &[u8]，而 out.stdout 是 Vec<u8>，
+            // Vec 不会自动转切片（本文件 184 行那处同类调用就带了 &）
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
             .unwrap_or_default();
         // 输出形如 "    ProgId    REG_SZ    VSCode.md"
         if let Some(rest) = text.split("REG_SZ").nth(1) {
