@@ -787,16 +787,8 @@
                     'font:12px "Microsoft YaHei";padding:2px 6px;outline:none;';
                 document.body.appendChild(_labelInput);
                 _labelInput.addEventListener('keydown', function (e) {
-                    // 必须 stopPropagation：否则按键会冒泡到 km receiver 触发画布快捷键。
-                    // 原先只 preventDefault 不 stop，于是编辑外框标签时按 Enter 会顺带
-                    // 插入一个同级节点、按方向键会跑偏选中。
-                    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); commitLabel(); }
-                    else if (e.key === 'Escape') {
-                        e.preventDefault(); e.stopPropagation();
-                        _labelInput.style.display = 'none'; _editingGid = null;
-                    } else {
-                        e.stopPropagation();
-                    }
+                    if (e.key === 'Enter') { e.preventDefault(); commitLabel(); }
+                    else if (e.key === 'Escape') { _labelInput.style.display = 'none'; _editingGid = null; }
                 });
                 _labelInput.addEventListener('blur', function () { commitLabel(); });
                 return _labelInput;
@@ -1951,10 +1943,7 @@
         window.editSelected = function () { beginTextEdit(null, null, null); };
 
         // ---- 默认快捷键 ----
-        // core 仅内置 Ctrl+A 全选，以及 commandShortcutKeys 里注册的那几个
-        // （alt+up/down 上移下移、shift+tab 插入上级、ctrl+shift+l 整理布局、ctrl+=- 缩放、ctrl+c/x/v）。
-        // 「方向键导航 / / 折叠 / Alt+1-5 展开层级」**内核并未实现**（键码表里有登记、行为没写），
-        // 由本文件在下方补齐。
+        // core 仅内置 Ctrl+A 全选、方向键导航、/ 折叠、Alt+1-5 展开层级；这里补齐常用编辑快捷键。
         // 行内文字编辑框已对按键 stopPropagation，编辑文字时不会误触发下方绑定。
         (function () {
             function kmShortcut(key, fn) { try { km.addShortcut(key, fn); } catch (e) {} }
@@ -2004,74 +1993,6 @@
             kmShortcut('ctrl+r', function () { km.execCommand('textalign', 'right'); });
             // 复制/粘贴节点样式（无值命令）
             try { km.addCommandShortcutKeys({ copynodestyle: 'ctrl+shift+c', pastenodestyle: 'ctrl+shift+v' }); } catch (e) {}
-
-            // ---- 方向键导航 ----
-            // 说明：core 并没有实现方向键导航。它只在键码表里预留了 isSelectedNodeKey
-            // 常量(37/38/39/40)，但 min.js 里 ArrowUp/Down/Left/Right 零命中、该常量也无使用处 ——
-            // 即「常量预留了，行为没写」。这里按经典脑图语义补齐。
-            function navNode(dir) {
-                try {
-                    var n = km.getSelectedNode();
-                    if (!n) { km.select(km.getRoot(), true); return; }
-                    var p = n.parent;
-                    var kids = n.getChildren();
-                    var collapsed = !!(n.isCollapsed && n.isCollapsed());
-
-                    if (dir === 'up' || dir === 'down') {
-                        if (!p) return;                       // 根节点没有兄弟
-                        var sibs = p.getChildren();
-                        var i = n.getIndex() + (dir === 'up' ? -1 : 1);
-                        if (i < 0 || i >= sibs.length) return;  // 到头了就不动
-                        km.select(sibs[i], true);
-                        return;
-                    }
-                    if (dir === 'left') {
-                        // 两级语义：有子节点且展开着 → 先折叠；否则上移到父节点
-                        if (kids && kids.length && !collapsed) {
-                            n.collapse(); n.renderTree(); km.layout(100); km.fire('contentchange'); return;
-                        }
-                        if (!p) return;
-                        km.select(p, true);
-                        return;
-                    }
-                    // right：折叠着 → 先展开；否则进入第一个子节点
-                    if (kids && kids.length && collapsed) {
-                        n.expand(); n.renderTree(); km.layout(100); km.fire('contentchange'); return;
-                    }
-                    if (!kids || !kids.length) return;
-                    km.select(kids[0], true);
-                } catch (e) {}
-            }
-            kmShortcut('up', function () { navNode('up'); });
-            kmShortcut('down', function () { navNode('down'); });
-            kmShortcut('left', function () { navNode('left'); });
-            kmShortcut('right', function () { navNode('right'); });
-
-            // ---- / 折叠或展开选中节点 ----
-            // 同样只有键码(191)被登记，行为未实现。
-            kmShortcut('/', function () {
-                try {
-                    var n = km.getSelectedNode();
-                    if (!n || (n.isLeaf && n.isLeaf())) return;
-                    if (n.isCollapsed && n.isCollapsed()) n.expand(); else n.collapse();
-                    n.renderTree(); km.layout(100); km.fire('contentchange');
-                } catch (e) {}
-            });
-
-            // ---- Alt+1~5：从选中节点展开到第 N 级 ----
-            // 走页面自己的门面 expandSelectedToLevel（更深层一律收起），
-            // 它不是内核命令，不能用 execCommand 调。
-            for (var _lv = 1; _lv <= 5; _lv++) {
-                (function (lv) {
-                    kmShortcut('alt+' + lv, function () {
-                        try {
-                            if (window.__minder && window.__minder.expandSelectedToLevel) {
-                                window.__minder.expandSelectedToLevel(lv);
-                            }
-                        } catch (e) {}
-                    });
-                })(_lv);
-            }
         })();
 
         hostPost({ type: 'request', id: 0, action: 'log', payload: 'kityminder 就绪' });

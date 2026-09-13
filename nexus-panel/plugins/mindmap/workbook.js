@@ -67,40 +67,6 @@ export function nextTitle(sheets) {
   return `画布 ${Date.now()}`;
 }
 
-/**
- * 复制一张画布（对齐 C# MindMapSheet.Clone + DuplicateSheetAsync）。
- * 新 id、标题「原名 副本」（重名追加序号），内容与主题/布局一并带走。
- *
- * content 可能是对象（运行时）也可能是字符串（落盘后），
- * 这里统一深拷贝，避免副本与原画布共享同一个对象引用 —— 改一个另一个跟着变。
- */
-export function cloneSheet(src, sheets = []) {
-  const used = new Set((sheets || []).map((s) => s.title));
-  const base = `${src.title || '画布'} 副本`;
-  let title = base;
-  let n = 2;
-  while (used.has(title)) title = `${base} ${n++}`;
-
-  return {
-    id: newSheetId(),
-    title,
-    theme: src.theme,
-    layout: src.layout,
-    content: deepCopyContent(src.content),
-  };
-}
-
-/** 画布内容深拷贝：对象走 JSON 往返，字符串原样返回（本身已是独立副本） */
-function deepCopyContent(content) {
-  if (content == null) return null;
-  if (typeof content === 'string') return content;
-  try {
-    return JSON.parse(JSON.stringify(content));
-  } catch {
-    return content;
-  }
-}
-
 /** 空工作簿 */
 export function newWorkbook() {
   const s = newSheet();

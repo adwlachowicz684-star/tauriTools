@@ -13,7 +13,10 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const OUT = '/tmp/nexus-smoke.cjs';
+/* 产物必须落在项目目录内：若放 /tmp，它 require('react') 会解析到全局副本，
+   而本脚本从项目目录解析到的是本地副本 —— 两份 React 同时存在就会
+   报 "Invalid hook call"。同目录才能保证拿到同一份。 */
+const OUT = new URL('./.smoke-react.cjs', import.meta.url).pathname;
 
 await esbuild.build({
   entryPoints: ['src/App.tsx'],

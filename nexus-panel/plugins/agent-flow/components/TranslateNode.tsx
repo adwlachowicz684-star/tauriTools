@@ -1,5 +1,6 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { PROVIDER_META, TARGET_LANGS, type TranslateNodeData } from '../types';
+import type { TranslateNodeData } from '../types';
+import { PROVIDER_META, TARGET_LANGS } from '../engine/llm';
 import type { TranslateFlowNode } from '../flowTypes';
 
 const STATUS_TEXT: Record<string, string> = {

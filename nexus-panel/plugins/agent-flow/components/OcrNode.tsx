@@ -1,5 +1,6 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { PROVIDER_META, type OcrNodeData } from '../types';
+import type { OcrNodeData } from '../types';
+import { PROVIDER_META } from '../engine/llm';
 import type { OcrFlowNode } from '../flowTypes';
 
 const STATUS_TEXT: Record<string, string> = {

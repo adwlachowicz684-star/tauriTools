@@ -20,6 +20,7 @@ import { fetchText } from '../lib/tauri';
 import {
   validateRule, validateCondition, simulateCondition, describeRuleExpression,
 } from '../engine/condition';
+import type { ConditionRule } from '../types';
 import { parseFeed, parseBiliApi, detectUpdate, sortByNewest, extractBiliUid, biliApiUrl, BILI_REFERER } from '../engine/updates';
 import {
   extractFileRefs, parseManualPaths, buildFileFields, FILE_FIELD_NAMES, FILE_FIELD_HINT,
@@ -274,8 +275,7 @@ function FileParamsPanel({ node, onChange }: {
                 className="cond-sample"
                 rows={3}
                 value={cfg.manualPaths}
-                placeholder={'src/a.ts
-src/b.ts'}
+                placeholder={'src/a.ts\nsrc/b.ts'}
                 onChange={(e) => patchCfg({ manualPaths: e.target.value })}
               />
             ) : (
@@ -734,8 +734,7 @@ function TranslateInspector({ node, edges, onChange }: {
           className="mono"
           rows={3}
           value={d.glossary}
-          placeholder={'GPU=图形处理器
-Transformer=变换器'}
+          placeholder={'GPU=图形处理器\nTransformer=变换器'}
           onChange={(e) => onChange(node.id, { glossary: e.target.value })}
         />
         <small className="dim">每行一条「原文=译文」，保证专有名词译法一致</small>

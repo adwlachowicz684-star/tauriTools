@@ -45,27 +45,6 @@ function colorRow(label, value, onPick, onClear) {
   );
 }
 
-/**
- * 面板内部异步兜底：与 index.js 的 guard() 同职责。
- * 面板层是独立模块，拿不到 index.js 里那个，这里自备一个 ——
- * onclick 拿不到 Promise，失败必须转成状态栏提示，否则界面毫无反应。
- */
-function safe(label, fn, onErr) {
-  return (...args) => {
-    let r;
-    try {
-      r = fn(...args);
-    } catch (e) {
-      onErr(`${label}失败：${e?.message || e}`);
-      return undefined;
-    }
-    if (r && typeof r.then === 'function') {
-      return r.catch((e) => { onErr(`${label}失败：${e?.message || e}`); });
-    }
-    return r;
-  };
-}
-
 function chips(items, current, onPick) {
   return h('div.mm-grid', {},
     ...items.map((it) =>
@@ -178,7 +157,6 @@ export function buildSide(app) {
         h('div.mm-row', {},
           h('button.mm-btn', { onclick: () => app.api.backupNow() }, '立即备份'),
           h('button.mm-btn', { onclick: () => openBackups(app) }, '历史快照…'),
-          h('button.mm-btn', { onclick: () => openShortcuts(app), title: '查看编辑器支持的快捷键' }, '快捷键…'),
         ),
         h('div.mm-row', { style: { marginTop: '2px' } },
           h('span.mm-label', {}, '自动间隔'),
@@ -189,15 +167,6 @@ export function buildSide(app) {
               m === 0 ? '关闭' : `${m} 分钟`))),
         ),
         h('div.mm-hint', {}, '到点才比对一次；内容与最新快照相同则不写盘，避免空转。'),
-        h('div.mm-row', { style: { marginTop: '2px' } },
-          h('span.mm-label', {}, '最多保留'),
-          h('select.mm-select', {
-            onchange: (e) => { app.api.setBackupMax(Number(e.target.value)); refresh(); },
-            title: '同一份脑图最多保留的快照份数，超出自动删除最旧的一份',
-          }, ...[1, 2, 3, 5, 10].map((n) =>
-            h('option', { value: n, selected: Number(app.settings?.backupMax ?? 3) === n }, `${n} 份`))),
-        ),
-        h('div.mm-hint', {}, '调小后立即清理超出部分，无需等下次备份。'),
       ),
 
       section('布局动画',
@@ -421,57 +390,6 @@ export function buildSide(app) {
     );
   }
 
-  /* ------------------------- 主题导入 / 导出 ------------------------- */
-
-  /**
-   * 导出当前画布使用的自定义主题为 JSON（对齐 C# OnExportThemeClick）。
-   * C# 是「导出选中的主题」，插件的主题列表没有独立的选中态（点即应用），
-   * 故改为导出当前画布正在用的那个 —— 更符合直觉，也省去一次选择。
-   */
-  async function exportThemeFile() {
-    const id = app.sheet?.theme;
-    const t = (app.customThemes || []).find((x) => x.id === id);
-    if (!t) {
-      app.api.status('当前画布用的是内置主题，无法导出（请先新建或选中自定义主题）', true);
-      return;
-    }
-    const r = await io.saveText(
-      `主题-${io.safeFileName(t.name || '未命名')}.json`,
-      JSON.stringify(t, null, 2),
-      'application/json',
-    );
-    app.api.status(r === 'error' ? '导出主题失败' : `已导出主题：${t.name || '未命名'}`);
-  }
-
-  /** 从 JSON 文件导入自定义主题（对齐 C# OnImportThemeClick，重新生成 id 避免覆盖） */
-  async function importThemeFile() {
-    const f = await io.pickFile('.json,application/json');
-    if (!f) return;
-    let t;
-    try {
-      t = JSON.parse(await io.readText(f));
-    } catch {
-      app.api.status('导入主题失败：不是合法的 JSON', true);
-      return;
-    }
-    const pal = t?.palette || t;
-    if (!t?.name || !pal || typeof pal !== 'object') {
-      app.api.status('导入主题失败：文件格式不符（缺少 name / palette）', true);
-      return;
-    }
-    const copy = {
-      id: 'custom-' + Math.random().toString(36).slice(2, 10),
-      name: String(t.name),
-      palette: { ...pal },
-    };
-    app.customThemes = [...(app.customThemes || []), copy];
-    await app.api.saveThemes();
-    app.bridge.registerTheme(copy);
-    app.api.applyTheme(copy.id);
-    refresh();
-    app.api.status(`已导入自定义主题：${copy.name}`);
-  }
-
   /* ------------------------- 主题页 ------------------------- */
 
   function pageTheme() {
@@ -505,18 +423,7 @@ export function buildSide(app) {
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
       section('配色主题',
         list,
-        h('div.mm-row', {},
-          h('button.mm-btn', { onclick: () => openThemeEditor(app, null) }, '＋ 新建'),
-          h('button.mm-btn', {
-            onclick: safe('导入主题', () => importThemeFile(), (m) => app.api.status(m, true)),
-            title: '从 JSON 文件导入自定义主题',
-          }, '导入'),
-          h('button.mm-btn', {
-            onclick: safe('导出主题', () => exportThemeFile(), (m) => app.api.status(m, true)),
-            title: '把当前画布使用的自定义主题导出为 JSON',
-          }, '导出'),
-        ),
-        h('div.mm-hint', {}, '导入/导出仅针对自定义主题；内置主题无法导出。'),
+        h('button.mm-btn', { onclick: () => openThemeEditor(app, null) }, '＋ 新建自定义主题'),
       ),
       section('布局模板',
         h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
@@ -526,10 +433,9 @@ export function buildSide(app) {
             }, h('span.name', {}, l.label))),
         ),
       ),
-      // 注：这里原先有个「整理布局」用 exec('arrange') —— 那是内核拖拽排序模块的内部命令
-      // （需要 index 参数），单独执行无效。真正的整理布局是 resetlayout，已在样式页「外观」段。
       section('视图',
         h('div.mm-row', {},
+          h('button.mm-btn', { onclick: () => { app.bridge.exec('arrange'); app.api.commit(); } }, '整理布局'),
           h('button.mm-btn', { onclick: () => { app.bridge.expandToLevel(1); app.api.commit(); } }, '展开一级'),
           h('button.mm-btn', { onclick: () => { app.bridge.expandToLevel(2); app.api.commit(); } }, '二级'),
           h('button.mm-btn', { onclick: () => { app.bridge.expandToLevel(0); app.api.commit(); } }, '全部'),
@@ -674,7 +580,7 @@ export async function openBackups(app) {
   await render();
 
   const dlg = dialog('历史快照', [
-    h('div.mm-hint', {}, `按时间倒序，最多保留 ${app.settings?.backupMax ?? store.BACKUP_KEEP} 份。恢复会覆盖当前所有画布。`),
+    h('div.mm-hint', {}, `按时间倒序，最多保留 ${store.BACKUP_KEEP} 份。恢复会覆盖当前所有画布。`),
     box,
     h('div.mm-actions', {},
       h('button.mm-btn', { onclick: async () => { await app.api.backupNow(); await render(); } }, '立即备份'),
@@ -683,53 +589,4 @@ export async function openBackups(app) {
   ]
   );
   return dlg;
-}
-
-/* ------------------------- 快捷键说明 ------------------------- */
-
-/**
- * 编辑器页面（editor/index.html）实际注册的快捷键。
- * 注：core 另外内置 Ctrl+A 全选、方向键导航、/ 折叠、Alt+1~5 展开层级。
- * 这里只列页面显式注册的，避免把内核行为写成文档后对不上。
- */
-const SHORTCUTS = [
-  // —— 编辑器页面显式注册（editor/index.html）——
-  ['Tab', '插入下级节点并进入编辑'],
-  ['Enter', '插入同级节点并进入编辑'],
-  ['Delete / Backspace', '删除选中节点（根节点除外）'],
-  ['F2', '编辑选中节点文字'],
-  ['Ctrl + B', '加粗'],
-  ['Ctrl + I', '斜体'],
-  ['Ctrl + D', '删除线'],
-  ['Ctrl + E', '水平居中'],
-  ['Ctrl + L', '水平左对齐'],
-  ['Ctrl + R', '水平右对齐'],
-  ['Ctrl + Shift + C', '复制节点样式'],
-  ['Ctrl + Shift + V', '粘贴节点样式'],
-  // —— 页面补齐：内核只登记了键码、未实现行为，由 editor/index.html 实现 ——
-  ['↑ / ↓', '在兄弟节点间移动'],
-  ['←', '折叠当前分支；已折叠则上移到父节点'],
-  ['→', '展开当前分支；已展开则进入第一个子节点'],
-  ['/', '折叠 / 展开选中节点'],
-  ['Alt + 1~5', '从选中节点展开到第 N 级（更深层收起）'],
-  // —— 内核 commandShortcutKeys 注册 ——
-  ['Alt + ↑ / ↓', '节点上移 / 下移'],
-  ['Shift + Tab', '插入上级节点'],
-  ['Ctrl + Shift + L', '整理布局'],
-  ['Ctrl + = / -', '画布缩放'],
-  ['Ctrl + A', '全选'],
-  ['Ctrl + C / X / V', '复制 / 剪切 / 粘贴节点'],
-];
-
-/** 快捷键说明浮层：快捷键由编辑器页面注册，插件无法改写，只能如实列出 */
-export function openShortcuts(app) {
-  const rows = SHORTCUTS.map(([k, d]) =>
-    h('div.mm-row', { style: { gap: '10px' } },
-      h('code.mm-kbd', {}, k),
-      h('span', { style: { fontSize: '12px' } }, d),
-    ));
-  return dialog('快捷键', [
-    h('div.mm-hint', {}, '快捷键由编辑器内核注册，焦点需在画布上才生效。'),
-    h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' } }, ...rows),
-  ]);
 }

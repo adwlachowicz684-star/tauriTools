@@ -15,11 +15,7 @@ const DB_NAME = 'nexus-mindmap';
 const DB_VERSION = 1;
 const STORE = 'docs';
 
-/**
- * 备份滚动窗口：保留最近 N 份快照。
- * 默认 10；实际份数由设置项 settings.backupMax 决定（C# 的 MindMapBackupMax，默认 3）。
- * 这里保留常量作为兜底默认值，pushBackup 接受 keep 参数。
- */
+/** 备份滚动窗口：保留最近 N 份快照 */
 export const BACKUP_KEEP = 10;
 
 let dbPromise = null;
@@ -142,18 +138,14 @@ export const settings = {
  * 写一份备份快照，并滚动删除超出窗口的旧备份。
  * 返回新备份的 key；写入失败返回 null（备份失败不应影响主流程）。
  */
-export async function pushBackup(snapshot, keep = BACKUP_KEEP) {
+export async function pushBackup(snapshot) {
   const ts = Date.now();
   const key = K_BACKUP + String(ts).padStart(14, '0');
   const ok = await set(key, { ts, ...snapshot });
   if (!ok) return null;
-  // 份数上限可配置（C# MindMapBackupMax）。非法值（0 / 负数 / NaN）退回默认，
-  // 否则会算出「保留 0 份」—— 每次备份都会被立刻删掉。
-  const n = Number(keep);
-  const limit = Number.isFinite(n) && n >= 1 ? Math.floor(n) : BACKUP_KEEP;
   const all = (await keys(K_BACKUP)).sort();
   // 字典序 = 时间序，从最旧开始删
-  for (let i = 0; i < all.length - limit; i++) await del(all[i]);
+  for (let i = 0; i < all.length - BACKUP_KEEP; i++) await del(all[i]);
   return key;
 }
 
