@@ -60,6 +60,183 @@ pub(crate) fn core_snapshot(dir: &std::path::Path) -> Snapshot {
     snapshot(dir, &cfg)
 }
 
+/* ---------------------------- 改名 / 清除无效项 ---------------------------- */
+
+/// 把路径中的「最后一段」换成新名字，其余部分原样保留。
+/// 用于改名后同步更新页签登记、链接记录、图标/颜色/锁等所有以路径为键的映射。
+fn replace_last_segment(path: &str, new_name: &str) -> String {
+    let p = std::path::Path::new(path);
+    let trimmed = path.trim_end_matches(|c| c == '\\' || c == '/');
+    match p.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => {
+            let sep = if trimmed.contains('\\') { "\\" } else { "/" };
+            let pstr = parent.to_string_lossy().to_string();
+            let pstr = pstr.trim_end_matches(|c| c == '\\' || c == '/');
+            // pstr 为盘符根（如 "C:"）时 sep 正好补上根分隔符，两种情况写法一致
+            format!("{pstr}{sep}{new_name}")
+        }
+        _ => new_name.to_string(),
+    }
+}
+
+/// 给项目/项目组文件夹改名：物理 rename + 同步所有按路径登记的映射。
+///
+/// 受 ACL 保护（防删除/防写入）时先临时摘锁，否则 rename 会被系统拒绝——
+/// 与建链行为一致（对应 C# 版 FolderLockService.WithUnlockForPath）。
+pub(crate) fn core_rename_folder(
+    dir: &std::path::Path,
+    kind: &str,
+    path: &str,
+    new_name: &str,
+) -> Result<model::RenameResult, String> {
+    let name = new_name.trim();
+    if name.is_empty() {
+        return Err("新名称不能为空".into());
+    }
+    // 名字里带分隔符会让"改名"变成"搬家"，语义完全不同，直接拒绝
+    if name.contains('/') || name.contains('\\') {
+        return Err("名称不能包含路径分隔符".into());
+    }
+    if name.chars().any(|c| matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|')) {
+        return Err("名称包含非法字符（: * ? \" < > |）".into());
+    }
+
+    let old = std::path::Path::new(path);
+    if !old.is_dir() {
+        return Err(format!("文件夹不存在或已被移动：{path}"));
+    }
+    let old_name = old
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if old_name == name {
+        return Err("新名称与当前名称相同".into());
+    }
+
+    let new_path = replace_last_segment(path, name);
+    if std::path::Path::new(&new_path).exists() {
+        return Err(format!("目标位置已存在同名文件夹：{new_path}"));
+    }
+
+    let old_key = store::normalize_key(path);
+
+    // 整个「读配置 → 改名 → 同步所有登记 → 写回」放进一个事务：
+    // 期间不能被别的写入者（MCP 线程 / 其它命令）插进来，否则两边各自基于
+    // 旧快照写回，后写的会把先写的整份覆盖。
+    store::with_config(dir, |cfg| {
+        // 摘锁后才能 rename：受 ACL 保护的目录 rename 会被系统拒绝
+        let _guard = LockGuard::new(path, store::lock_of(cfg, path));
+        // rename 只在同一卷内原子完成；跨卷失败时宁可整体中止，不做"复制+删除"
+        std::fs::rename(old, &new_path).map_err(|e| format!("改名失败：{e}"))?;
+        drop(_guard);
+
+        // ---- 同步所有以旧路径为键的登记 ----
+        // 页签登记（项目 / 项目组都要改：同一路径可能被登记在多个页签里）
+        let mut tab_hits = 0usize;
+        for list in [&mut cfg.project_tabs, &mut cfg.group_tabs] {
+            for t in list.iter_mut() {
+                for item in t.items.iter_mut() {
+                    if store::normalize_key(item) == old_key {
+                        *item = new_path.clone();
+                        tab_hits += 1;
+                    }
+                }
+            }
+        }
+
+        // 图标 / 标签色 / ACL 锁：OrdinalIgnoreCase 语义的键需要整体重建
+        cfg.folder_icons = remap_keys(std::mem::take(&mut cfg.folder_icons), &old_key, &new_path);
+        cfg.tag_colors = remap_keys(std::mem::take(&mut cfg.tag_colors), &old_key, &new_path);
+        for l in cfg.locks.iter_mut() {
+            if store::normalize_key(&l.path) == old_key {
+                l.path = new_path.clone();
+            }
+        }
+
+        // 链接记录：项目改名改 project；项目组改名要改 group 与 lib（指向它的那些记录）
+        let mut records = store::load_records(dir);
+        let mut rec_hits = 0usize;
+        for r in records.iter_mut() {
+            if store::normalize_key(&r.project) == old_key {
+                r.project = new_path.clone();
+                rec_hits += 1;
+            }
+            if store::normalize_key(&r.group) == old_key {
+                r.group = new_path.clone();
+            }
+            if store::normalize_key(&r.lib) == old_key {
+                r.lib = new_path.clone();
+            }
+        }
+        store::save_records(dir, &records)?;
+
+        Ok(model::RenameResult {
+            snapshot: snapshot(dir, cfg),
+            new_path: new_path.clone(),
+            tab_hits,
+            rec_hits,
+        })
+    })
+}
+
+/// 把 HashMap 中等于 old_key 的键换成 new_path（其余键原样保留）。
+fn remap_keys(
+    map: std::collections::HashMap<String, String>,
+    old_key: &str,
+    new_path: &str,
+) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::with_capacity(map.len());
+    for (k, v) in map {
+        if store::normalize_key(&k) == old_key {
+            out.insert(new_path.to_string(), v);
+        } else {
+            out.insert(k, v);
+        }
+    }
+    out
+}
+
+/// 清除无效项：把页签里已不存在的路径摘掉，并清理指向已消失项目的链接记录。
+///
+/// 只动"确实不存在"的条目——链接失效（junction 断了但目录还在）不算无效，
+/// 那种情况目录本身是好的，用户可能只是想重建链接。
+pub(crate) fn core_clear_invalid(dir: &std::path::Path) -> Result<model::ClearResult, String> {
+    // 整体事务化：与 core_rename_folder 同理，避免与 MCP 等写入者互相覆盖
+    store::with_config(dir, |cfg| {
+      let mut removed: Vec<String> = Vec::new();
+      let mut tab_hits = 0usize;
+
+      for list in [&mut cfg.project_tabs, &mut cfg.group_tabs] {
+          for t in list.iter_mut() {
+              let before = t.items.len();
+              t.items.retain(|p| {
+                  let ok = std::path::Path::new(p).exists();
+                  if !ok && !removed.contains(p) {
+                      removed.push(p.clone());
+                  }
+                  ok
+              });
+              tab_hits += before - t.items.len();
+          }
+      }
+
+      // 链接记录：项目目录没了，记录自然失效，一并清掉
+      let mut records = store::load_records(dir);
+      let rec_before = records.len();
+      records.retain(|r| std::path::Path::new(&r.project).exists());
+      let rec_hits = rec_before - records.len();
+
+      store::save_records(dir, &records)?;
+
+      Ok(model::ClearResult {
+          snapshot: snapshot(dir, cfg),
+          removed,
+          tab_hits,
+          rec_hits,
+    })
+    })
+}
+
 /// 保存整份配置。
 ///
 /// 注意 editorPickCache 由后端独家维护（`fpx_list_editors` 扫描后写入），
@@ -67,11 +244,14 @@ pub(crate) fn core_snapshot(dir: &std::path::Path) -> Snapshot {
 /// 用户只要再点一次「保存设置」，刚扫出来的缓存就被清空、下次又得重扫一遍。
 /// 所以该字段以磁盘上的值为准，不受前端草稿影响。
 pub(crate) fn core_save_config(dir: &std::path::Path, config: &FpxConfig) -> Result<Snapshot, String> {
-    let mut merged = config.clone();
-    let on_disk = store::load_config(dir);
-    merged.editor_pick_cache = on_disk.editor_pick_cache;
-    store::save_config(dir, &merged)?;
-    Ok(snapshot(dir, &merged))
+    // 事务化：读到的必须是磁盘最新值，且整段期间不许别人插进来。
+    // 这是前端「保存设置」与 MCP 共用的入口，不锁的话两边会互相覆盖。
+    store::with_config(dir, |cfg| {
+        let cache = std::mem::take(&mut cfg.editor_pick_cache);
+        *cfg = config.clone();
+        cfg.editor_pick_cache = cache;   // 以磁盘值为准，不受前端草稿影响
+        Ok(snapshot(dir, cfg))
+    })
 }
 
 pub(crate) fn core_create_link(
@@ -141,20 +321,20 @@ pub(crate) fn core_set_lock(
     deny_delete: bool,
     deny_write: bool,
 ) -> Result<Snapshot, String> {
-    let mut cfg = store::load_config(dir);
-    sys::apply_lock(path, deny_delete, deny_write)?;
-
-    let key = store::normalize_key(path);
-    cfg.locks.retain(|l| store::normalize_key(&l.path) != key);
-    if deny_delete || deny_write {
-        cfg.locks.push(model::LockItem {
-            path: path.to_string(),
-            deny_delete,
-            deny_write,
-        });
-    }
-    store::save_config(dir, &cfg)?;
-    Ok(snapshot(dir, &cfg))
+    store::with_config(dir, |cfg| {
+        // 先落 ACL 再记配置：apply_lock 失败时闭包返回 Err，配置不会落盘
+        sys::apply_lock(path, deny_delete, deny_write)?;
+        let key = store::normalize_key(path);
+        cfg.locks.retain(|l| store::normalize_key(&l.path) != key);
+        if deny_delete || deny_write {
+            cfg.locks.push(model::LockItem {
+                path: path.to_string(),
+                deny_delete,
+                deny_write,
+            });
+        }
+        Ok(snapshot(dir, cfg))
+    })
 }
 
 /// 图标 + 标签色一次保存（避免前端分两次写入互相覆盖）。
@@ -164,8 +344,9 @@ pub(crate) fn core_save_style(
     icon_ref: Option<String>,
     color: Option<String>,
 ) -> Result<Snapshot, String> {
-    let mut cfg = store::load_config(dir);
-
+    // 图标与标签色一次改完再落盘（避免前端分两次写入互相覆盖），
+    // 且整段在事务里：期间不许 MCP 等其它写入者插入。
+    store::with_config(dir, |cfg| {
     // 标签色：空串 / null 视为恢复默认（删除记录）
     let color = color.unwrap_or_default();
     let color = color.trim();
@@ -188,24 +369,47 @@ pub(crate) fn core_save_style(
         sys::apply_icon(path, &icon)?;
     }
 
-    store::save_config(dir, &cfg)?;
-    Ok(snapshot(dir, &cfg))
+    Ok(snapshot(dir, cfg))
+    })
+}
+
+
+/// 只改标签色，不碰图标。
+///
+/// 与 core_save_style 分开是为了避免「为了保留旧图标而先读一次配置」的写法：
+/// 那种写法在并发下会把读到的旧图标值写回，覆盖期间别人设的新图标。
+/// 只改自己关心的字段，其余留给事务里的磁盘最新值。
+pub(crate) fn core_set_tag_color(
+    dir: &std::path::Path,
+    path: &str,
+    color: Option<String>,
+) -> Result<Snapshot, String> {
+    store::with_config(dir, |cfg| {
+        // 空串 / null 视为恢复默认（删除记录）
+        let c = color.as_deref().unwrap_or_default().trim().to_uppercase();
+        if c.is_empty() {
+            cfg.tag_colors.remove(path);
+        } else {
+            cfg.tag_colors.insert(path.to_string(), c);
+        }
+        Ok(snapshot(dir, cfg))
+    })
 }
 
 pub(crate) fn core_save_custom_colors(
     dir: &std::path::Path,
     colors: Vec<String>,
 ) -> Result<Snapshot, String> {
-    let mut cfg = store::load_config(dir);
     let mut out: Vec<String> = Vec::new();
     for c in colors {
         let c = c.trim().to_uppercase();
         if c.is_empty() || out.contains(&c) || out.len() >= 24 { continue; }
         out.push(c);
     }
-    cfg.custom_colors = out;
-    store::save_config(dir, &cfg)?;
-    Ok(snapshot(dir, &cfg))
+    store::with_config(dir, |cfg| {
+        cfg.custom_colors = out.clone();
+        Ok(snapshot(dir, cfg))
+    })
 }
 
 /* ---------------------------- 命令 ---------------------------- */
@@ -375,28 +579,32 @@ pub fn fpx_set_icon(
     affect_explorer: Option<bool>,
 ) -> Result<Snapshot, String> {
     let dir = store::data_dir(&app, &state)?;
-    let mut cfg = store::load_config(&dir);
     let icon = icon_ref.unwrap_or_default();
-    let affect = affect_explorer.unwrap_or(cfg.icon_affect_explorer);
-
     let key = store::normalize_key(&path);
-    cfg.folder_icons.retain(|k, _| store::normalize_key(k) != key);
-    if !icon.trim().is_empty() {
-        cfg.folder_icons.insert(path.clone(), icon.clone());
-    }
 
-    // desktop.ini 是 Windows 资源管理器专属机制，其它平台只记在配置里（界面内仍生效）
-    let mut warn: Option<String> = None;
-    if affect && cfg!(windows) {
-        if let Err(e) = sys::apply_icon(&path, &icon) {
-            warn = Some(e);
+    // desktop.ini 写入失败只算警告：配置改动仍要落盘，所以不做成闭包 Err
+    // （闭包返回 Err 会跳过保存），而是带出来交给外层决定。
+    let (snap, warn) = store::with_config(&dir, |cfg| {
+        let affect = affect_explorer.unwrap_or(cfg.icon_affect_explorer);
+        cfg.folder_icons.retain(|k, _| store::normalize_key(k) != key);
+        if !icon.trim().is_empty() {
+            cfg.folder_icons.insert(path.clone(), icon.clone());
         }
+
+        // desktop.ini 是 Windows 资源管理器专属机制，其它平台只记在配置里（界面内仍生效）
+        let mut warn: Option<String> = None;
+        if affect && cfg!(windows) {
+            if let Err(e) = sys::apply_icon(&path, &icon) {
+                warn = Some(e);
+            }
+        }
+        Ok((snapshot(&dir, cfg), warn))
+    })?;
+
+    match warn {
+        Some(w) => Err(w),
+        None => Ok(snap),
     }
-    store::save_config(&dir, &cfg)?;
-    if let Some(w) = warn {
-        return Err(w);
-    }
-    Ok(snapshot(&dir, &cfg))
 }
 
 /// MCP 工具清单（工具名 + 说明 + 当前是否启用），供设置面板逐个开关。
@@ -520,15 +728,22 @@ pub async fn fpx_backup(
     append_only: Option<bool>,
 ) -> Result<backup::BackupResult, String> {
     let dir = store::data_dir(&app, &state)?;
-    let mut cfg = store::load_config(&dir);
+
+    // 目标目录是"顺带记住"，单独一次短事务，不与下面数秒的备份抢锁
     if let Some(t) = target {
         let t = t.trim().to_string();
-        cfg.backup_dir = if t.is_empty() { None } else { Some(t) };
-        store::save_config(&dir, &cfg)?;
+        store::with_config(&dir, |cfg| {
+            cfg.backup_dir = if t.is_empty() { None } else { Some(t.clone()) };
+            Ok(())
+        })?;
     }
-    let ao = append_only.unwrap_or(cfg.backup_append_only);
+
     // 备份要整树遍历，可能持续数秒。同步命令跑在主线程会卡死窗口，
     // 所以挪到阻塞线程池（async_runtime::spawn_blocking）。
+    // 关键：绝不能把这段放进 with_config —— 那会让配置锁被占住好几秒，
+    // 期间 MCP 与其它命令全部阻塞。这里只读一次配置即可（备份过程不写配置）。
+    let cfg = store::load_config(&dir);
+    let ao = append_only.unwrap_or(cfg.backup_append_only);
     let r = tauri::async_runtime::spawn_blocking(move || backup::run(&cfg, &dir, &kind, ao))
         .await
         .map_err(|e| format!("备份任务异常终止: {e}"))?;
@@ -549,25 +764,31 @@ pub async fn fpx_list_editors(
     refresh: Option<bool>,
 ) -> Result<Vec<editor::EditorCandidate>, String> {
     let dir = store::data_dir(&app, &state)?;
-    let cfg = store::load_config(&dir);
     let want_refresh = refresh.unwrap_or(false);
 
-    if !want_refresh && !cfg.editor_pick_cache.is_empty() {
-        return Ok(cfg.editor_pick_cache.iter()
-            .map(|c| editor::EditorCandidate { name: c.name.clone(), exe: c.exe.clone() })
-            .collect());
+    {
+        let cfg = store::load_config(&dir);
+        if !want_refresh && !cfg.editor_pick_cache.is_empty() {
+            return Ok(cfg.editor_pick_cache.iter()
+                .map(|c| editor::EditorCandidate { name: c.name.clone(), exe: c.exe.clone() })
+                .collect());
+        }
     }
 
+    // 扫 PATH + reg query，可能数秒。必须在锁外跑，理由同 fpx_backup。
     let r = tauri::async_runtime::spawn_blocking(editor::enumerate)
         .await
         .map_err(|e| format!("枚举编辑器异常终止: {e}"))?;
 
-    // 缓存只存名称与 exe；exe 可能随后被卸载，但不影响——真正打开前会再校验存在性
-    let mut cfg2 = cfg;
-    cfg2.editor_pick_cache = r.iter()
-        .map(|c| model::EditorPickCacheItem { name: c.name.clone(), exe: c.exe.clone() })
-        .collect();
-    store::save_config(&dir, &cfg2)?;
+    // 缓存只存名称与 exe；exe 可能随后被卸载，但不影响——真正打开前会再校验存在性。
+    // 这里重新 load 而不是复用扫描前那份：扫描耗时数秒，期间配置很可能已经变了，
+    // 拿旧快照写回会把别人的改动整份覆盖。只改自己这个字段最安全。
+    store::with_config(&dir, |cfg| {
+        cfg.editor_pick_cache = r.iter()
+            .map(|c| model::EditorPickCacheItem { name: c.name.clone(), exe: c.exe.clone() })
+            .collect();
+        Ok(())
+    })?;
     Ok(r)
 }
 
@@ -579,11 +800,11 @@ pub fn fpx_set_editor(
     path: String,
 ) -> Result<Snapshot, String> {
     let dir = store::data_dir(&app, &state)?;
-    let mut cfg = store::load_config(&dir);
     let p = path.trim().to_string();
-    cfg.edit_tool_path = if p.is_empty() { None } else { Some(p) };
-    store::save_config(&dir, &cfg)?;
-    Ok(snapshot(&dir, &cfg))
+    store::with_config(&dir, |cfg| {
+        cfg.edit_tool_path = if p.is_empty() { None } else { Some(p.clone()) };
+        Ok(snapshot(&dir, cfg))
+    })
 }
 
 /// 用配置里的编辑器打开文件（未配置则退回系统默认打开方式）。
@@ -635,224 +856,30 @@ pub fn fpx_move_card_across(
     if dst_kind != "project" && dst_kind != "group" { return Err("目标类别非法".into()); }
 
     let dir = store::data_dir(&app, &state)?;
-    let mut cfg = store::load_config(&dir);
-
-    // 物理搬家（可能返回"无需搬"= None）
-    let relocated = if cfg.move_folder_on_cross_move {
-        sys::relocate_cross_move(&cfg, &path, &dst_kind)?
-    } else {
-        None
-    };
-    let final_path = relocated.clone().unwrap_or_else(|| path.clone());
-
-    // 卡片换栏：从源类别**全部**页签摘除（同一路径可能被登记在多个页签里），
-    // 再插入目标类别页签末尾。两个分支分开写，避免同时对 cfg 的两个字段做可变借用。
     let idx = dst_tab_index.unwrap_or(0);
-    if from_kind == "project" {
-        sys::remove_card_from_tabs(&mut cfg.project_tabs, &path);
-        sys::insert_card_into_tab(&mut cfg.group_tabs, idx, usize::MAX, &final_path);
-    } else {
-        sys::remove_card_from_tabs(&mut cfg.group_tabs, &path);
-        sys::insert_card_into_tab(&mut cfg.project_tabs, idx, usize::MAX, &final_path);
-    }
 
-    store::save_config(&dir, &cfg)?;
-    let snapshot = snapshot(&dir, &cfg);
-    Ok(model::MoveAcrossResult { snapshot, relocated })
-}
-
-/* ---------------------------- 改名 / 清除无效项 ---------------------------- */
-
-/// 把路径中的「最后一段」换成新名字，其余部分原样保留。
-/// 用于改名后同步更新页签登记、链接记录、图标/颜色/锁等所有以路径为键的映射。
-fn replace_last_segment(path: &str, new_name: &str) -> String {
-    let p = std::path::Path::new(path);
-    let trimmed = path.trim_end_matches(|c| c == '\\' || c == '/');
-    match p.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => {
-            let sep = if trimmed.contains('\\') { "\\" } else { "/" };
-            let pstr = parent.to_string_lossy().to_string();
-            let pstr = pstr.trim_end_matches(|c| c == '\\' || c == '/');
-            // pstr 为盘符根（如 "C:"）时 sep 正好补上根分隔符，两种情况写法一致
-            format!("{pstr}{sep}{new_name}")
-        }
-        _ => new_name.to_string(),
-    }
-}
-
-/// 给项目/项目组文件夹改名：物理 rename + 同步所有按路径登记的映射。
-///
-/// 受 ACL 保护（防删除/防写入）时先临时摘锁，否则 rename 会被系统拒绝——
-/// 与建链行为一致（对应 C# 版 FolderLockService.WithUnlockForPath）。
-
-/// 给项目/项目组文件夹改名：物理 rename + 同步所有按路径登记的映射。
-///
-/// 受 ACL 保护（防删除/防写入）时先临时摘锁，否则 rename 会被系统拒绝——
-/// 与建链行为一致（对应 C# 版 FolderLockService.WithUnlockForPath）。
-pub(crate) fn core_rename_folder(
-    dir: &std::path::Path,
-    kind: &str,
-    path: &str,
-    new_name: &str,
-) -> Result<model::RenameResult, String> {
-    let name = new_name.trim();
-    if name.is_empty() {
-        return Err("新名称不能为空".into());
-    }
-    // 名字里带分隔符会让"改名"变成"搬家"，语义完全不同，直接拒绝
-    if name.contains('/') || name.contains('\\') {
-        return Err("名称不能包含路径分隔符".into());
-    }
-    if name.chars().any(|c| matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|')) {
-        return Err("名称包含非法字符（: * ? \" < > |）".into());
-    }
-
-    let old = std::path::Path::new(path);
-    if !old.is_dir() {
-        return Err(format!("文件夹不存在或已被移动：{path}"));
-    }
-    let old_name = old
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default();
-    if old_name == name {
-        return Err("新名称与当前名称相同".into());
-    }
-
-    let new_path = replace_last_segment(path, name);
-    if std::path::Path::new(&new_path).exists() {
-        return Err(format!("目标位置已存在同名文件夹：{new_path}"));
-    }
-
-    let mut cfg = store::load_config(dir);
-    let _guard = LockGuard::new(path, store::lock_of(&cfg, path));
-    // rename 只在同一卷内原子完成；跨卷失败时宁可整体中止，不做"复制+删除"
-    std::fs::rename(old, &new_path).map_err(|e| format!("改名失败：{e}"))?;
-    drop(_guard);
-
-    // ---- 同步所有以旧路径为键的登记 ----
-    let old_key = store::normalize_key(path);
-
-    // 页签登记（项目 / 项目组都要改：同一路径可能登记在多个页签里）
-    let mut tab_hits = 0usize;
-    for list in [&mut cfg.project_tabs, &mut cfg.group_tabs] {
-        for t in list.iter_mut() {
-            for item in t.items.iter_mut() {
-                if store::normalize_key(item) == old_key {
-                    *item = new_path.clone();
-                    tab_hits += 1;
-                }
-            }
-        }
-    }
-
-    // 图标 / 标签色 / ACL 锁：OrdinalIgnoreCase 语义的键需要整体重建
-    cfg.folder_icons = remap_keys(cfg.folder_icons, &old_key, &new_path);
-    cfg.tag_colors = remap_keys(cfg.tag_colors, &old_key, &new_path);
-    for l in cfg.locks.iter_mut() {
-        if store::normalize_key(&l.path) == old_key {
-            l.path = new_path.clone();
-        }
-    }
-
-    // 链接记录：项目改名改 project；项目组改名要改 group 与 lib（指向它的那些记录）
-    let mut records = store::load_records(dir);
-    let mut rec_hits = 0usize;
-    for r in records.iter_mut() {
-        if store::normalize_key(&r.project) == old_key {
-            r.project = new_path.clone();
-            rec_hits += 1;
-        }
-        if store::normalize_key(&r.group) == old_key {
-            r.group = new_path.clone();
-        }
-        if store::normalize_key(&r.lib) == old_key {
-            r.lib = new_path.clone();
-        }
-    }
-
-    store::save_config(dir, &cfg)?;
-    store::save_records(dir, &records)?;
-    let snapshot = snapshot(dir, &cfg);
-    Ok(model::RenameResult {
-        snapshot,
-        new_path,
-        tab_hits,
-        rec_hits,
-    })
-}
-
-/// 把 HashMap 中等于 old_key 的键换成 new_path（其余键原样保留）。
-
-/// 把 HashMap 中等于 old_key 的键换成 new_path（其余键原样保留）。
-fn remap_keys(
-    map: std::collections::HashMap<String, String>,
-    old_key: &str,
-    new_path: &str,
-) -> std::collections::HashMap<String, String> {
-    let mut out = std::collections::HashMap::with_capacity(map.len());
-    for (k, v) in map {
-        if store::normalize_key(&k) == old_key {
-            out.insert(new_path.to_string(), v);
+    store::with_config(&dir, |cfg| {
+        // 物理搬家（可能返回"无需搬"= None）
+        let relocated = if cfg.move_folder_on_cross_move {
+            sys::relocate_cross_move(cfg, &path, &dst_kind)?
         } else {
-            out.insert(k, v);
+            None
+        };
+        let final_path = relocated.clone().unwrap_or_else(|| path.clone());
+
+        // 卡片换栏：从源类别**全部**页签摘除（同一路径可能被登记在多个页签里），
+        // 再插入目标类别页签末尾。两个分支分开写，避免同时对 cfg 的两个字段做可变借用。
+        if from_kind == "project" {
+            sys::remove_card_from_tabs(&mut cfg.project_tabs, &path);
+            sys::insert_card_into_tab(&mut cfg.group_tabs, idx, usize::MAX, &final_path);
+        } else {
+            sys::remove_card_from_tabs(&mut cfg.group_tabs, &path);
+            sys::insert_card_into_tab(&mut cfg.project_tabs, idx, usize::MAX, &final_path);
         }
-    }
-    out
-}
 
-/// 清除无效项：把页签里已不存在的路径摘掉，并清理指向已消失项目的链接记录。
-///
-/// 只动"确实不存在"的条目——链接失效（junction 断了但目录还在）不算无效，
-/// 那种情况目录本身是好的，用户可能只是想重建链接。
-
-/// 清除无效项：把页签里已不存在的路径摘掉，并清理指向已消失项目的链接记录。
-///
-/// 只动"确实不存在"的条目——链接失效（junction 断了但目录还在）不算无效，
-/// 那种情况目录本身是好的，用户可能只是想重建链接。
-pub(crate) fn core_clear_invalid(dir: &std::path::Path) -> Result<model::ClearResult, String> {
-    let mut cfg = store::load_config(dir);
-
-    let mut removed: Vec<String> = Vec::new();
-    let mut tab_hits = 0usize;
-
-    for list in [&mut cfg.project_tabs, &mut cfg.group_tabs] {
-        for t in list.iter_mut() {
-            let before = t.items.len();
-            t.items.retain(|p| {
-                let ok = std::path::Path::new(p).exists();
-                if !ok && !removed.contains(p) {
-                    removed.push(p.clone());
-                }
-                ok
-            });
-            tab_hits += before - t.items.len();
-        }
-    }
-
-    // 链接记录：项目目录没了，记录自然失效，一并清掉
-    let mut records = store::load_records(dir);
-    let rec_before = records.len();
-    records.retain(|r| std::path::Path::new(&r.project).exists());
-    let rec_hits = rec_before - records.len();
-
-    store::save_config(dir, &cfg)?;
-    store::save_records(dir, &records)?;
-    let snapshot = snapshot(dir, &cfg);
-    Ok(model::ClearResult {
-        snapshot,
-        removed,
-        tab_hits,
-        rec_hits,
+        Ok(model::MoveAcrossResult { snapshot: snapshot(&dir, cfg), relocated })
     })
 }
-
-/// 保存整份配置。
-///
-/// 注意 editorPickCache 由后端独家维护（`fpx_list_editors` 扫描后写入），
-/// 前端拿到的 bootstrap 快照里可能还是旧值（缓存为空）。若直接照前端传来的写回，
-/// 用户只要再点一次「保存设置」，刚扫出来的缓存就被清空、下次又得重扫一遍。
-/// 所以该字段以磁盘上的值为准，不受前端草稿影响。
 
 /// 给项目/项目组文件夹改名（物理 rename + 同步页签、链接记录、图标/颜色/锁）。
 #[tauri::command(rename_all = "snake_case")]
@@ -885,9 +912,8 @@ pub fn fpx_save_chain_clients(
     clients: Vec<model::CustomChainClient>,
 ) -> Result<Vec<chain::ChainClient>, String> {
     let dir = store::data_dir(&app, &state)?;
-    let mut cfg = store::load_config(&dir);
 
-    // 清洗：去空 id、id 去重、exe/scheme 至少留一个
+    // 清洗放锁外：纯 CPU，不碰配置，没必要占着锁
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let list: Vec<model::CustomChainClient> = clients
         .into_iter()
@@ -902,8 +928,10 @@ pub fn fpx_save_chain_clients(
         })
         .collect();
 
-    cfg.custom_chain_clients = list.clone();
-    store::save_config(&dir, &cfg)?;
+    store::with_config(&dir, |cfg| {
+        cfg.custom_chain_clients = list.clone();
+        Ok(())
+    })?;
     Ok(chain::detect(&list))
 }
 
@@ -932,11 +960,8 @@ pub fn fpx_chain_actions(
     state: State<'_, FpxState>,
 ) -> Result<Vec<model::ChainActionItem>, String> {
     let dir = store::data_dir(&app, &state)?;
-    let mut cfg = store::load_config(&dir);
-    let list = chain::ensure_actions(&mut cfg);
     // ensure_actions 可能补齐了内置项，落盘以免下次又补一遍
-    store::save_config(&dir, &cfg)?;
-    Ok(list)
+    store::with_config(&dir, |cfg| Ok(chain::ensure_actions(cfg)))
 }
 
 /// 保存连锁动作清单（含增删改排序）。
@@ -949,8 +974,8 @@ pub fn fpx_save_chain_actions(
     actions: Vec<model::ChainActionItem>,
 ) -> Result<Vec<model::ChainActionItem>, String> {
     let dir = store::data_dir(&app, &state)?;
-    let mut cfg = store::load_config(&dir);
 
+    // 清洗放锁外：纯 CPU，不碰配置
     let mut list: Vec<model::ChainActionItem> = actions
         .into_iter()
         .filter(|a| !a.id.trim().is_empty())
@@ -959,8 +984,10 @@ pub fn fpx_save_chain_actions(
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     list.retain(|a| seen.insert(a.id.clone()));
 
-    cfg.chain_actions = Some(list.clone());
-    store::save_config(&dir, &cfg)?;
+    store::with_config(&dir, |cfg| {
+        cfg.chain_actions = Some(list.clone());
+        Ok(())
+    })?;
     Ok(list)
 }
 

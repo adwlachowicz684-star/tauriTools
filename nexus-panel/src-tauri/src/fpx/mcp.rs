@@ -295,14 +295,18 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
             let kind = s("kind");
             let path = s("path");
             if path.is_empty() { return Err(err("path 必填")); }
-            let mut cfg = load_cfg(app)?;
-            let tabs = if kind == "group" { &mut cfg.group_tabs } else { &mut cfg.project_tabs };
-            if tabs.is_empty() { tabs.push(super::model::TabItem { name: "默认".into(), items: vec![] }); }
-            let tab_name = tabs[0].name.clone();
-            let already = tabs[0].items.iter().any(|x| x == &path);
-            if !already { tabs[0].items.push(path.clone()); }
             let dir = data_dir_of(app)?;
-            super::core_save_config(&dir, &cfg).map_err(|e| err(&e))?;
+            // 必须在事务内「读→改→写」。
+            // 若先 load_cfg 改完再 core_save_config，传进去的是旧快照，
+            // core_save_config 会拿它整份覆盖磁盘 —— 期间别人的改动就丢了。
+            let (tab_name, already) = super::store::with_config(&dir, |cfg| {
+                let tabs = if kind == "group" { &mut cfg.group_tabs } else { &mut cfg.project_tabs };
+                if tabs.is_empty() { tabs.push(super::model::TabItem { name: "默认".into(), items: vec![] }); }
+                let tab_name = tabs[0].name.clone();
+                let already = tabs[0].items.iter().any(|x| x == &path);
+                if !already { tabs[0].items.push(path.clone()); }
+                Ok((tab_name, already))
+            }).map_err(|e| err(&e))?;
             let text = if already {
                 format!("{path} 已在页签「{tab_name}」中，未重复添加")
             } else {
@@ -320,9 +324,10 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
         "set_tag_color" => {
             let path = s("path");
             let color = s("color");
-            let icon = load_cfg(app)?.folder_icons.get(&path).cloned();
             let dir = data_dir_of(app)?;
-            super::core_save_style(&dir, &path, icon,
+            // 用只改颜色的版本：不先读 folder_icons 再传回去，
+            // 那样会把读到的旧图标写回，覆盖期间别人设的新图标。
+            super::core_set_tag_color(&dir, &path,
                 if color.is_empty() { None } else { Some(color) })
                 .map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": "标签颜色已保存" }] })

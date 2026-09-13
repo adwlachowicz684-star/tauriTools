@@ -103,6 +103,46 @@ pub fn save_config(dir: &Path, cfg: &FpxConfig) -> Result<(), String> {
     write_json(&dir.join("config.json"), cfg)
 }
 
+/**
+ * config.json 的写入互斥锁。
+ *
+ * 所有写入者都在**同一个进程内**：前端命令（Tauri command）、MCP server 线程、
+ * 自动备份定时器。所以进程内的 `Mutex` 就足够，**不需要 OS 文件锁（flock）**——
+ * 后者只在多进程同时写同一个文件时才必要，这里用不上，还会引入跨平台差异。
+ */
+static CONFIG_LOCK: Mutex<()> = Mutex::new(());
+
+/**
+ * 在持锁状态下完成「读配置 → 修改 → 写回」的整个事务。
+ *
+ * 为什么必须整体加锁，而不是只在 save 时加锁：
+ * 只在写时加锁能保证两次写不交错，但**挡不住过期快照覆盖**——
+ *   A: cfg = load()            // 读到版本 1
+ *   B: load → 改 → save()      // 版本 2 落盘
+ *   A: 基于手里的版本 1 改完 save()   // 版本 3 落盘，**B 的改动被整份覆盖**
+ * 所以 load 与 save 必须在同一个临界区内，中间不能被别人的写插进来。
+ *
+ * 闭包返回 `Err` 时**不落盘**，与原先「提前 return 错误即不保存」的语义一致。
+ * 返回值 R 用于把闭包里算出的东西（如新快照）带出来。
+ *
+ * 注意：闭包内做耗时操作（建 junction、rename、写 desktop.ini）会延长持锁时间。
+ * 这些都是毫秒级且低频（用户主动触发），可以接受；但不要在闭包里做秒级网络请求。
+ */
+pub fn with_config<F, R>(dir: &Path, f: F) -> Result<R, String>
+where
+    F: FnOnce(&mut FpxConfig) -> Result<R, String>,
+{
+    // 持锁线程 panic 会让 Mutex 中毒；这里选择继续用（数据本身仍在磁盘上，
+    // 且 with_config 会重新 load，不会因为中毒读到脏内存）
+    let _guard = CONFIG_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut cfg = load_config(dir);
+    let r = f(&mut cfg)?;
+    save_config(dir, &cfg)?;
+    Ok(r)
+}
+
 pub fn load_records(dir: &Path) -> Vec<LinkRecord> {
     #[derive(serde::Deserialize)]
     struct File { #[serde(default)] links: Vec<LinkRecord> }
