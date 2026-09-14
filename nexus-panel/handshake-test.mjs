@@ -45,7 +45,8 @@ globalThis.window = sdkWin;
 globalThis.document = sdkWin.document;
 globalThis.localStorage = sdkWin.localStorage;
 globalThis.location = sdkWin.location;
-globalThis.navigator = sdkWin.navigator;
+// Node 21+ 起 globalThis.navigator 是只读 getter，直接赋值会抛 TypeError
+Object.defineProperty(globalThis, 'navigator', { value: sdkWin.navigator, configurable: true, writable: true });
 globalThis.requestAnimationFrame = (f) => setTimeout(f, 0);
 globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
 
@@ -66,7 +67,12 @@ t('ready 里上报了 hasSettings',
 /* 模拟外壳回发 init + mount（这正是修复后的顺序） */
 const channel = posted[0]?.channel;
 const deliver = (msg) => {
-  const ev = new sdkWin.MessageEvent('message', { data: { channel, ...msg } });
+  // 必须带 source：SDK 用 `e.source !== window.parent` 做来源校验，
+  // 缺了它所有消息都会被静默丢弃（表现为 mount 不执行、握手"死锁"）。
+  const ev = new sdkWin.MessageEvent('message', {
+    data: { channel, ...msg },
+    source: sdkWin.parent,
+  });
   sdkWin.dispatchEvent(ev);
 };
 

@@ -30,7 +30,8 @@ globalThis.localStorage = {
   key: (i) => [..._ls.keys()][i] ?? null,
   get length() { return _ls.size; },
 };
-globalThis.navigator = dom.window.navigator;
+// Node 21+ 起 globalThis.navigator 是只读 getter，直接赋值会抛 TypeError
+Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true, writable: true });
 globalThis.Node = dom.window.Node;
 globalThis.HTMLElement = dom.window.HTMLElement;
 globalThis.getComputedStyle = dom.window.getComputedStyle;

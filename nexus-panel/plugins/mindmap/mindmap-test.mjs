@@ -56,7 +56,8 @@ const dom = new JSDOM('<!doctype html><html><body><div id="plugin-mount"></div><
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 globalThis.location = dom.window.location;
-globalThis.navigator = dom.window.navigator;
+// Node 21+ 起 globalThis.navigator 是只读 getter，直接赋值会抛 TypeError
+Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true, writable: true });
 globalThis.Node = dom.window.Node;
 globalThis.HTMLElement = dom.window.HTMLElement;
 globalThis.getComputedStyle = dom.window.getComputedStyle;

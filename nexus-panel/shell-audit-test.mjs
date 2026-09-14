@@ -15,7 +15,8 @@ globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 globalThis.localStorage = dom.window.localStorage;
 globalThis.getComputedStyle = dom.window.getComputedStyle;
-globalThis.navigator = dom.window.navigator;
+// Node 21+ 起 globalThis.navigator 是只读 getter，直接赋值会抛 TypeError
+Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true, writable: true });
 
 const src = (p) => fs.readFileSync(path.join(HERE, p), 'utf8');
 const hostSrc = src('js/host.js');

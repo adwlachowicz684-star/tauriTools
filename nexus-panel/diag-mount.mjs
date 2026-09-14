@@ -16,7 +16,8 @@ globalThis.window = window;
 globalThis.document = window.document;
 globalThis.localStorage = window.localStorage;
 globalThis.getComputedStyle = window.getComputedStyle;
-globalThis.navigator = window.navigator;
+// Node 21+ 起 globalThis.navigator 是只读 getter，直接赋值会抛 TypeError
+Object.defineProperty(globalThis, 'navigator', { value: window.navigator, configurable: true, writable: true });
 globalThis.HTMLElement = window.HTMLElement;
 globalThis.self = window;
 globalThis.location = window.location;

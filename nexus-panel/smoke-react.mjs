@@ -29,7 +29,9 @@ const require = createRequire(import.meta.url);
 /* 产物必须落在项目目录内：若放 /tmp，它 require('react') 会解析到全局副本，
    而本脚本从项目目录解析到的是本地副本 —— 两份 React 同时存在就会
    报 "Invalid hook call"。同目录才能保证拿到同一份。 */
-const OUT = new URL('./.smoke-react.cjs', import.meta.url).pathname;
+// 必须用 fileURLToPath：new URL(...).pathname 在 Windows 上是 "/E:/..."
+// （多一个前导斜杠），esbuild 会拿它去拼出 "…\nexus-panel\E:" 这种非法路径。
+const OUT = fileURLToPath(new URL('./.smoke-react.cjs', import.meta.url));
 
 await esbuild.build({
   entryPoints: [path.join(HERE, 'src/App.tsx')],
@@ -52,7 +54,8 @@ const dom = new JSDOM('<!doctype html><html><body><div id="root"></div><div id="
 const w = dom.window;
 globalThis.window = w;
 globalThis.document = w.document;
-globalThis.navigator = w.navigator;
+// Node 21+ 起 globalThis.navigator 是只读 getter，直接赋值会抛 TypeError
+Object.defineProperty(globalThis, 'navigator', { value: w.navigator, configurable: true, writable: true });
 globalThis.location = w.location;
 globalThis.HTMLElement = w.HTMLElement;
 globalThis.Node = w.Node;

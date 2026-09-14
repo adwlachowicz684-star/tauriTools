@@ -45,7 +45,8 @@ globalThis.localStorage = {
 // 固定为 macOS，让 mod = ⌘（可切换验证平台差异）
 let platform = 'MacIntel';
 Object.defineProperty(dom.window.navigator, 'platform', { get: () => platform, configurable: true });
-globalThis.navigator = dom.window.navigator;
+// Node 21+ 起 globalThis.navigator 是只读 getter，直接赋值会抛 TypeError
+Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true, writable: true });
 
 let pass = 0, fail = 0;
 const t = (name, cond, extra = '') => {
@@ -177,7 +178,8 @@ const savedW = globalThis.window, savedD = globalThis.document;
 Object.defineProperty(sdkDom.window.navigator, 'platform', { get: () => 'MacIntel', configurable: true });
 globalThis.window = sdkDom.window;
 globalThis.document = sdkDom.window.document;
-globalThis.navigator = sdkDom.window.navigator;
+// Node 21+ 起 globalThis.navigator 是只读 getter，直接赋值会抛 TypeError
+Object.defineProperty(globalThis, 'navigator', { value: sdkDom.window.navigator, configurable: true, writable: true });
 globalThis.Node = sdkDom.window.Node;
 globalThis.HTMLElement = sdkDom.window.HTMLElement;
 
