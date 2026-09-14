@@ -138,7 +138,8 @@ html, body {
 }
 .mm-rail .mm-btn { width: 34px; padding: 0; }
 
-/* 右侧属性侧栏：对齐 C# MindMapPanel 的 Column 1（Width="276"），常驻不折叠 */
+/* 右侧属性侧栏：对齐 C# MindMapPanel 的 Column 1（Width="276"），常驻不折叠。
+   页签在顶栏最右，不占这里的高度，所以整栏都是内容区。 */
 .mm-side {
   flex: 0 0 276px;
   display: flex;
@@ -148,45 +149,16 @@ html, body {
   border-radius: var(--r, 14px);
   background: var(--surface);
   box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
-  /* 整栏不滚动：页签固定在顶部，只有内容区滚动 —— 否则翻到下面页签就跟着跑了 */
-  overflow: hidden;
+  overflow-y: auto;
   min-height: 0;
 }
-/* 页签条 */
-.mm-side-tabs {
-  flex: 0 0 auto;
+
+/* 顶栏最右的属性侧栏页签（对齐 C# 的 Grid.Column=14） */
+.mm-top-tabs {
   display: flex;
   gap: 4px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border, transparent);
-}
-.mm-side-tab {
-  flex: 1 1 0;
-  height: 26px;
-  padding: 0 4px;
-  border: 0;
-  border-radius: 13px;
-  background: var(--surface-sunk, var(--surface));
-  color: var(--text-dim);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-  box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);
-}
-.mm-side-tab:hover { color: var(--accent); }
-.mm-side-tab.on {
-  color: var(--accent);
-  background: var(--surface);
-  box-shadow: 3px 3px 6px var(--sh-dark), -3px -3px 6px var(--sh-light);
-}
-/* 内容区：吃掉剩余高度并自行滚动 */
-.mm-side-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  overflow-y: auto;
+  margin-left: auto;      /* 推到顶栏最右 */
+  padding-left: 8px;
 }
 
 .mm-side h3 {
