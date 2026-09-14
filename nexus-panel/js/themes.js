@@ -42,6 +42,19 @@ export const THEME_VARS = [
   '--r-xl', '--r-lg', '--r-md', '--r-sm',
 ];
 
+/**
+ * style → 中文名。
+ *
+ * 主题卡片右上角的小角标用它，让"同样是深色"的几套能一眼分出新拟态 / 扁平 / 玻璃。
+ * 放在主题数据里而不是各 UI 组件里，是为了让选择器与设置页永远显示同一套叫法。
+ */
+export const STYLE_LABELS = { neumorph: '新拟态', flat: '扁平', glass: '玻璃' };
+
+/** 取风格的中文名；未知风格（如自定义主题没写 style）返回空串，卡片上就不显示角标 */
+export function styleLabel(style) {
+  return STYLE_LABELS[style] || '';
+}
+
 export const PRESET_THEMES = [
   /* ---------------- 新拟态 · 深色 ---------------- */
   {

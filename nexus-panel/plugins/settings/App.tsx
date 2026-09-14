@@ -8,7 +8,7 @@ import {
   saveAsCustom, deleteCustomTheme,
   onChange as onThemeChange,
 } from '../../js/theme-manager.js';
-import { swatchFor } from '../../js/themes.js';
+import { swatchFor, styleLabel } from '../../js/themes.js';
 import {
   ADAPT_POLICIES, PLUGIN_THEMES,
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
@@ -192,21 +192,37 @@ export default function Settings() {
                                 ? `blur(${v['--blur']})` : undefined,
                             }}
                           />
-                          {/* 这两条是主题的装饰配色，不是状态色。
+                          {/* 右半做成一小块「界面」：两条正文线 + 一条强调色条，
+                              与标题栏弹出层里的缩略图共用 .tp-* 样式。
+                              这两条是主题的装饰配色，不是状态色 ——
                               状态色（成功/错误/运行中）语义固定，不随环境色变化，
                               故不在此预览中展示，避免误导。 */}
-                          <i
-                            className="bar"
-                            title="强调色：按钮 / 选中态"
-                            style={{ background: v['--accent'] }}
-                          />
-                          <i
-                            className="bar s"
-                            title="环境色：次要点缀（非状态色）"
-                            style={{ background: v['--env-color'] }}
-                          />
+                          <div className="tp-mid">
+                            <i className="tp-line" style={{ background: v['--text'] }} />
+                            <i
+                              className="tp-line dim"
+                              style={{ background: v['--text-dim'] || v['--text'] }}
+                            />
+                            <div className="tp-row">
+                              <i
+                                className="bar"
+                                title="强调色：按钮 / 选中态"
+                                style={{ background: v['--accent'] }}
+                              />
+                              <i
+                                className="bar s"
+                                title="环境色：次要点缀（非状态色）"
+                                style={{ background: v['--env-color'] }}
+                              />
+                            </div>
+                          </div>
+                          {/* 当前主题打勾：缩略图很小，光靠描边看不出来 */}
+                          {t.id === getThemeId() ? <span className="theme-check">✓</span> : null}
                         </div>
-                        <div className="theme-name" style={{ color: v['--text'] }}>{t.name}</div>
+                        <div className="theme-foot">
+                          <div className="theme-name" style={{ color: v['--text'] }}>{t.name}</div>
+                          <span className="theme-badge">{styleLabel(t.style)}</span>
+                        </div>
                         <div className="theme-desc">{t.desc || (t.base === 'dark' ? '深色' : '浅色')}</div>
                         {t.custom ? (
                           <button

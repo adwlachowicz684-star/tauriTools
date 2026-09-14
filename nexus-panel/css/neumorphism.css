@@ -705,6 +705,13 @@ html.theme-transition *:not(.spinner) {
   font-weight: 600;
   border-bottom: 1px solid var(--hairline);
 }
+/* 键盘提示右对齐，不抢标题的位置 */
+.theme-pop-hint {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--text-mute);
+}
 .theme-pop-body {
   padding: 12px 16px 16px;
   overflow-y: auto;
@@ -713,9 +720,12 @@ html.theme-transition *:not(.spinner) {
 .theme-pop-body .theme-group-title { margin: 10px 0 8px; }
 .theme-pop-body .theme-group-title:first-of-type { margin-top: 2px; }
 /* 弹出层里卡片更紧凑：预览矮一点、名称字号小一点 */
-.theme-pop .theme-prev { height: 46px; padding: 9px; }
-.theme-pop .theme-name { padding: 7px 10px 1px; font-size: 12px; }
+.theme-pop .theme-prev { height: 48px; padding: 8px 10px; gap: 7px; }
+.theme-pop .theme-prev .sw { width: 26px; height: 26px; border-radius: 7px; }
+.theme-pop .theme-foot { padding: 7px 10px 1px; }
+.theme-pop .theme-name { font-size: 12px; }
 .theme-pop .theme-desc { padding: 0 10px 9px; font-size: 10px; }
+.theme-pop .theme-badge { font-size: 9px; padding: 1px 5px; }
 
 /* ---------- 设置页分页 ---------- */
 .set-tabs {
@@ -742,7 +752,9 @@ html.theme-transition *:not(.spinner) {
   color: var(--accent);
   box-shadow: inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light);
 }
+/* ---------- 主题卡片 ---------- */
 .theme-card {
+  position: relative;
   padding: 0;
   overflow: hidden;
   cursor: pointer;
@@ -755,23 +767,79 @@ html.theme-transition *:not(.spinner) {
   color: var(--text);
   font-family: inherit;
 }
-.theme-card:hover { transform: translateY(-2px); }
+.theme-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 6px 6px 14px var(--sh-dark), -6px -6px 14px var(--sh-light);
+}
+/* 键盘走位时的焦点环与选中态外观一致，避免两套"当前项"长得不一样 */
+.theme-card:focus-visible {
+  outline: none;
+  box-shadow: 6px 6px 14px var(--sh-dark), -6px -6px 14px var(--sh-light),
+              0 0 0 2px var(--accent);
+}
 .theme-card.active {
   box-shadow: inset 3px 3px 6px var(--sh-dark),
               inset -3px -3px 6px var(--sh-light),
               0 0 0 2px var(--accent);
 }
+/* 缩略图：左块（主题自己的阴影）+ 右半的"迷你界面"（正文线 / 强调色条） */
 .theme-prev {
+  position: relative;
   height: 58px;
-  padding: 11px;
+  padding: 10px 11px;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
+  overflow: hidden;
 }
-.theme-prev .sw { width: 28px; height: 28px; border-radius: 7px; flex: none; }
-.theme-prev .bar { flex: 1; height: 9px; border-radius: 5px; }
-.theme-prev .bar.s { flex: none; width: 22px; opacity: .55; }
-.theme-name { padding: 8px 12px 2px; font-size: 12.5px; font-weight: 600; }
+.theme-prev .sw { width: 30px; height: 30px; border-radius: 8px; flex: none; }
+.tp-mid {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tp-line { height: 4px; width: 100%; border-radius: 2px; opacity: .95; }
+.tp-line.dim { width: 62%; opacity: .65; }
+.tp-row { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
+.theme-prev .bar { flex: 1; height: 8px; border-radius: 4px; }
+.theme-prev .bar.s { flex: none; width: 18px; opacity: .6; }
+/* 当前主题：缩略图很小，光靠描边看不出来，再补一个勾 */
+.theme-check {
+  position: absolute; top: 5px; left: 5px;
+  width: 15px; height: 15px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 10px; line-height: 1; color: #fff;
+  background: var(--accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .35);
+}
+.theme-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px 2px;
+}
+.theme-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 风格角标：新拟态 / 扁平 / 玻璃 */
+.theme-badge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  background: var(--surface-sunk);
+  box-shadow: inset 1px 1px 2px var(--sh-dark), inset -1px -1px 2px var(--sh-light);
+}
 .theme-desc { padding: 0 12px 11px; font-size: 10.5px; color: var(--text-mute); line-height: 1.5; }
 .theme-del {
   position: absolute; top: 6px; right: 6px;
@@ -779,7 +847,6 @@ html.theme-transition *:not(.spinner) {
   background: var(--danger); color: #fff; cursor: pointer;
   font-size: 12px; line-height: 1; display: none; place-items: center;
 }
-.theme-card { position: relative; }
 .theme-card:hover .theme-del { display: grid; }
 
 /* 插件注入的侧边栏条目：与普通插件项区分开（缩进 + 弱化 + 左侧标记） */
