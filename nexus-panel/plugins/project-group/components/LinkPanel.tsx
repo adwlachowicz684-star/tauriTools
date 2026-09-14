@@ -1,10 +1,6 @@
 import { useMemo, useState } from 'react';
-import type { PresetAgent, FpxConfig, LinkRow } from '../types';
+import type { PresetAgent, FpxConfig } from '../types';
 import { CheckLine, Modal } from './ui';
-
-const STATE_TEXT: Record<string, string> = {
-  valid: '有效', broken: '失效', conflict: '冲突', partial: '部分',
-};
 
 /** 链接名开关：预设 + 自定义，缺失视为开启；支持改名 / 厂商标注 / 备注 */
 export function LinkAgentDialog({
@@ -288,38 +284,3 @@ export function LinkAgentDialog({
   );
 }
 
-/** 链接记录表 */
-export function LinkTable({
-  links, onOpen, onRemove, busy,
-}: {
-  links: LinkRow[];
-  onOpen: (row: LinkRow) => void;
-  onRemove: (project: string) => void;
-  busy: boolean;
-}) {
-  if (links.length === 0) {
-    return <div className="p-muted">（暂无链接记录，把项目卡片拖到项目组卡片上即可分配）</div>;
-  }
-  return (
-    <div className="fpx-table">
-      {links.map((l) => (
-        <div key={l.project} className="fpx-tr">
-          <div className="fpx-td fpx-td-path" title={l.project}>{l.project}</div>
-          <div className="fpx-td fpx-td-arrow">→</div>
-          <div className="fpx-td fpx-td-path" title={l.group}>{l.groupName || l.group}</div>
-          <div className="fpx-td fpx-td-names">
-            {l.names.slice(0, 4).map((n) => <span key={n} className="p-tag">{n}</span>)}
-            {l.names.length > 4 && <span className="p-tag">+{l.names.length - 4}</span>}
-          </div>
-          <div className="fpx-td fpx-td-time">{l.created}</div>
-          <div className={`fpx-td fpx-state ${l.state}`}>{STATE_TEXT[l.state] ?? l.state}</div>
-          <div className="fpx-td fpx-td-ops">
-            <button className="p-btn" style={{ height: 26, padding: '0 10px' }} onClick={() => onOpen(l)}>打开项目</button>
-            <button className="p-btn danger" style={{ height: 26, padding: '0 10px' }} disabled={busy}
-              onClick={() => onRemove(l.project)}>撤销</button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}

@@ -4,7 +4,7 @@ import { RenameDialog } from './components/RenameDialog';
 import { CardGrid, TabBar, type DragPayload } from './components/CardGrid';
 import { CreateDialog, IconPickDialog, LockDialog, StyleDialog } from './components/dialogs';
 import { DirDialog } from './components/DirDialog';
-import { LinkAgentDialog, LinkTable } from './components/LinkPanel';
+import { LinkAgentDialog } from './components/LinkPanel';
 import { SettingsDialog } from './components/SettingsDialog';
 import {
   BackupDialog, ChainDialog, EditorDialog, ServiceDialog,
@@ -13,7 +13,7 @@ import { ConfirmDialog, ContextMenu, type MenuItem } from './components/ui';
 import { useFpx } from './hooks/useFpx';
 import { useCardHotkeys } from './hooks/useCardHotkeys';
 import { useIconThumbs } from './hooks/useIconThumbs';
-import type { CardInfo, CardKind, ChainAction, LinkRow } from './types';
+import type { CardInfo, CardKind, ChainAction } from './types';
 
 type Dialog =
   | { type: 'none' }
@@ -519,7 +519,14 @@ export default function App() {
         />
 
         <div className="p-card fpx-col fpx-col-content">
-          <h2>内容浏览</h2>
+          {/*
+            与左右两栏用同一套头部结构（.fpx-col-head）：
+            原先这里是个裸 <h2>，带着浏览器默认的 margin-top，
+            标题比另两栏低一截；外壳的 .p-card h2 只重置了 margin-bottom，没管 margin-top。
+          */}
+          <div className="p-row fpx-col-head">
+            <h2 style={{ margin: 0 }}>内容浏览</h2>
+          </div>
           <ContentPanel
             api={s.api}
             root={s.focusDir}
@@ -529,17 +536,6 @@ export default function App() {
             onLog={s.pushLog}
           />
         </div>
-      </div>
-
-      {/* ---------------- 链接记录 ---------------- */}
-      <div className="p-card">
-        <h2>链接记录（{boot.links.length}）</h2>
-        <LinkTable
-          links={boot.links}
-          busy={s.busy}
-          onOpen={(row: LinkRow) => openPath(row.project, 'dir')}
-          onRemove={(p) => s.removeLink(p)}
-        />
       </div>
 
       {/* ---------------- 日志 ---------------- */}
@@ -759,17 +755,19 @@ function Column({
 
   return (
     <div className={`p-card fpx-col${focused ? ' focus' : ''}`}>
-      <div className="p-row" style={{ justifyContent: 'space-between' }}>
+      <div className="p-row fpx-col-head">
         <h2 style={{ margin: 0 }}>
           {title}
           <span className="p-muted" style={{ fontWeight: 400 }}>（{cards.length}）</span>
           {focused && (
-            <span className="fpx-badge dim" style={{ marginLeft: 6 }} title="键盘快捷键作用于此栏（Ctrl/⌘+←/→ 切换）">
-              焦点
+            // 用 ⌨ 而不是「焦点」二字：栏宽下限 240px，多两个汉字会把头部挤到换行，
+            // 页签条整体下移 —— 三栏上边缘看着就不齐了。含义靠 title 与使用说明补。
+            <span className="fpx-badge dim fpx-focus-tag" title="键盘快捷键作用于此栏（Ctrl/⌘+←/→ 切换）">
+              ⌨
             </span>
           )}
         </h2>
-        <div className="p-row">
+        <div className="p-row fpx-col-head-ops">
           <button className="p-btn" style={{ height: 30, padding: '0 12px' }} onClick={onAdd}>＋ 添加</button>
           <button
             className="p-btn"

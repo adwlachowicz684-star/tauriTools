@@ -15,10 +15,31 @@
 }
 .fpx-col { min-width: 0; }
 .fpx-col-content { min-height: 460px; }
+
+/* 三栏共用头部行：统一高度与下间距，保证页签条 / 卡片区的上边缘齐平。
+   min-height 取 30px —— 与"＋ 添加"、"⋯"按钮同高，标题再矮也撑得住。
+   nowrap 是必须的：栏宽下限 240px，任其 wrap 的话某一栏标题一换行，
+   整列内容就被推下去一截。 */
+.fpx-col-head {
+  min-height: 30px;
+  margin-bottom: 12px;
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  /* 比 .p-row 默认的 12px 收紧：栏宽下限 240px 时，标题 + 「焦点」标记 +
+     「＋ 添加」「⋯」两个按钮刚好卡在临界，留 4px 余量免得标题被裁。 */
+  gap: 8px;
+}
+/* 标题可压缩截断，按钮区不参与收缩，避免窄栏下互相挤 */
+.fpx-col-head > h2 { min-width: 0; overflow: hidden; }
+.fpx-col-head-ops { flex-shrink: 0; gap: 8px; }
+.fpx-focus-tag { margin-left: 6px; flex-shrink: 0; }
+/* 页签条的上间距已由 .fpx-col-head 的 margin-bottom 统一给出，不能再叠 */
+.fpx-col .fpx-tabs { margin-top: 0; }
+
 /* 键盘焦点栏：卡片快捷键（Ctrl/⌘+O、F2、Delete…）作用在哪一栏。
    只用一层内描边，不抢卡片本身的选中态视觉。 */
 .fpx-col.focus { box-shadow: inset 0 0 0 1px var(--accent); }
-.fpx-col.focus .fpx-badge.dim { opacity: .9; }
+.fpx-col.focus .fpx-focus-tag { opacity: .9; }
 
 /* ---------- 页签 ---------- */
 .fpx-tabs {
@@ -141,34 +162,6 @@
   font-family: "SF Mono", Menlo, Consolas, monospace;
   font-size: 11.5px; line-height: 1.7; white-space: pre-wrap; word-break: break-word;
 }
-
-/* ---------- 链接记录表 ---------- */
-.fpx-table { display: flex; flex-direction: column; gap: 6px; }
-.fpx-tr {
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) 24px minmax(0, 1.2fr) minmax(0, 1fr) 130px 60px 150px;
-  gap: 8px; align-items: center;
-  padding: 8px 10px; border-radius: var(--r-sm);
-  background: var(--surface-sunk); font-size: 11.5px;
-}
-@media (max-width: 1180px) {
-  .fpx-tr { grid-template-columns: 1fr 1fr; }
-  .fpx-td-arrow, .fpx-td-time { display: none; }
-}
-.fpx-td { min-width: 0; }
-.fpx-td-path {
-  font-family: "SF Mono", Menlo, Consolas, monospace;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text);
-}
-.fpx-td-arrow { text-align: center; color: var(--accent); }
-.fpx-td-names { display: flex; flex-wrap: wrap; gap: 4px; }
-.fpx-td-time { color: var(--text-mute); font-size: 11px; }
-.fpx-td-ops { display: flex; gap: 6px; justify-content: flex-end; }
-.fpx-state { font-size: 11px; text-align: center; }
-.fpx-state.valid { color: var(--accent); }
-.fpx-state.broken { color: var(--text-mute); }
-.fpx-state.conflict { color: var(--danger); }
-.fpx-state.partial { color: var(--warn); }
 
 /* ---------- 日志 ---------- */
 .fpx-log { display: flex; flex-direction: column; gap: 3px; max-height: 150px; overflow: auto; }

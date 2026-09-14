@@ -28,7 +28,7 @@ npm run tauri:build    # 打包
 | **项目 / 项目组双栏** | 各自多页签；卡片可拖拽排序、跨栏拖拽即分配 |
 | **分配（建链）** | 在项目目录下为每个启用的 agent 链接名建指向项目组的链接，逐条记账 |
 | **链接名管理** | 16 个预设（.opencode/.claude/.codex…）+ 自定义；开关存配置 |
-| **链接记录** | 项目 → 项目组、链接名、时间、四态（有效/失效/冲突/部分） |
+| **链接记录** | 后台记账（项目 → 项目组、链接名、时间、四态）；界面不展示表格，卡片上的 🔗 徽标即状态，需要查明细就「打开数据目录」看 `config.json` 的 `links` |
 | **agent / skill / rule 浏览** | 树形展示 + 文本预览 + 外部编辑 / 打开所在目录 |
 | **新建项目 / 项目组** | 直接建文件夹并入页签（项目组可带模板目录、可挂页签层级） |
 | **ACL 保护** | 防删除 / 防写入两档（Windows 走 icacls，其它平台退化为只读） |
@@ -86,7 +86,7 @@ npm run tauri:build    # 打包
 ```
 plugins/project-group/
 ├── index.html / main.tsx      # iframe 沙箱入口
-├── App.tsx                    # 三栏主界面 + 工具栏 + 链接记录 + 日志
+├── App.tsx                    # 三栏主界面 + 工具栏 + 日志
 ├── types.ts                   # 与 Rust model.rs 一一对应的 DTO
 ├── api.ts                     # 所有 ctx.invoke 集中在这里
 ├── style.css                  # 只用外壳主题变量，随主题自动适配
@@ -97,7 +97,7 @@ plugins/project-group/
     ├── ContentPanel.tsx       # agent·skill·rule 树 + 预览
     ├── ColorPicker.tsx        # 色盘：预设 24 色 / 常用色 / RGB·HEX / 吸管
     ├── DirDialog.tsx          # 内嵌目录选择器
-    ├── LinkPanel.tsx          # 链接名开关 + 链接记录表
+    ├── LinkPanel.tsx          # 链接名开关（记录表已移除，数据仍在 config.json）
     └── dialogs.tsx            # 新建 / ACL 保护 / 图标与标签
 ```
 
@@ -209,8 +209,9 @@ src-tauri/src/fpx/
   搬家的「默认根目录」就是新建预设父目录（`createProjectDir` / `createGroupDir`），
   两者都未设置时自动跳过物理搬家，只换卡片归属，不报错。
 - **换栏若触发物理搬家，指向该文件夹的链接会断**：比如把某个项目组搬到别处，
-  那些项目里指向它旧路径的 junction 就会失效（链接记录显示为「失效」）。
-  搬家前请先在链接记录里撤销指向它的链接，搬完再重新分配。
+  那些项目里指向它旧路径的 junction 就会失效（卡片上「未链接」徽标会亮起，
+  完整状态见数据目录 `config.json` 的 `links`）。
+  搬家前请先选中该项目、点「撤销链接」，搬完再重新分配。
   带链接的卡片换栏后，链接记录本身也不会自动清理（原版同样如此）。
 
 ## 配置写入的并发保护
@@ -242,7 +243,7 @@ A: 基于版本 1 改完 save()  // 版本 3 —— B 的改动被整份覆盖
 | 工具 | 说明 |
 |---|---|
 | `list_projects` / `list_groups` | 列出项目 / 项目组页签与卡片 |
-| `list_links` | 全部链接记录及状态 |
+| `list_links` | 全部链接记录及状态（界面不展示表格，要查明细走这里或 `config.json`） |
 | `create_link` / `remove_link` | 建立 / 撤销分配 |
 | `scan_content` / `read_file` | 扫 agent / skill / rule、读文件 |
 | `create_folder` / `add_card` | 新建文件夹、加入页签 |
