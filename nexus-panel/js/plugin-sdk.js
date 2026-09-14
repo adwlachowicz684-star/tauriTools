@@ -431,6 +431,7 @@ export function bootIframePlugin(mountFn, settingsFn) {
   let view = 'main';                 // 'main' | 'settings'
   let currentTheme = {};             // 外壳推来的主题变量，供 ctx.theme 读取
   let isolated = false;              // 是否处于功能隔离（去掉 allow-same-origin）
+  let mounted = false;               // mount 只允许执行一次
   const mountPromise = new Promise((r) => (resolveMount = r));
 
   function post(msg) {
@@ -463,8 +464,10 @@ export function bootIframePlugin(mountFn, settingsFn) {
       document.body.classList.add('nexus-iframe-plugin');
       document.body.classList.toggle('nexus-view-settings', view === 'settings');
       document.body.classList.toggle('nexus-isolated', isolated);
-      // 上报能力：外壳据此决定要不要显示「设置」按钮
-      post({ type: 'ready', hasSettings: typeof settingsFn === 'function' });
+      // 注意：这里**不能**回发 ready。
+      // 外壳的 ready Promise 由 mounted / error 解决，而 mounted 要等我们收到 mount 才发；
+      // 如果 ready 又要等 init，就成了 init ← ready ← init 的互等死锁。
+      // ready 在脚本就绪时就主动发一次（见本函数末尾）。
 
       /* 隔离插件：外壳读不到 contentDocument，采样会静默失败 → 不反转 →
          深色面板上留一块刺眼的白。所以由插件自己采样并上报基调。 */
@@ -556,7 +559,8 @@ export function bootIframePlugin(mountFn, settingsFn) {
       busLocal.emit(d.event, d.payload);
     }
 
-    if (d.type === 'mount' && ctxReady) {
+    if (d.type === 'mount' && ctxReady && !mounted) {
+      mounted = true;                            // 重复 mount 不再二次挂载
       // settings 视图下优先用 settingsFn；没提供则回退到主视图，避免开个空面板
       const fn = view === 'settings' ? (settingsFn || mountFn) : mountFn;
       Promise.resolve(fn(ctxReady))
@@ -611,6 +615,10 @@ export function bootIframePlugin(mountFn, settingsFn) {
       view,
     });
   });
+
+  // 脚本就绪即通知外壳（外壳收到后回发 init + mount，见 js/host.js）。
+  // 上报是否提供设置面板：外壳据此决定要不要显示「⚙ 设置」按钮。
+  post({ type: 'ready', hasSettings: typeof settingsFn === 'function' });
 
   return mountPromise;
 }

@@ -25,7 +25,8 @@
     "test:tauri-http": "node tauri-http-test.mjs",
     "test:layout": "node layout-test.mjs",
     "test:xss": "node xss-test.mjs",
-    "test:theme-picker": "node theme-picker-test.mjs"
+    "test:theme-picker": "node theme-picker-test.mjs",
+    "test:handshake": "node handshake-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

@@ -354,6 +354,7 @@ export function createHost(opts = {}) {
     const cleanupFns = [];
     let bridgeHandler = null;
     let hasSettings = false;
+    let handshaked = false;          // 每个 iframe 实例只握手一次
     // 握手阶段就要写 reportedBase，此时完整实例还没构造出来，先放一个可变壳
     const inst0 = {};
 
@@ -367,12 +368,22 @@ export function createHost(opts = {}) {
 
         switch (d.type) {
           case 'ready':
+            // 只握手一次：旧版 SDK 收到 init 会回发一次 ready，不去重会形成
+            // ready ↔ init 无限往返，每轮还会重建 ctx 与事件订阅。
+            // token 校验拦掉已被放弃的挂载（settings 视图 token 为 null，不拦）。
+            if (handshaked || (token && state.mounting !== token)) break;
+            handshaked = true;
             hasSettings = !!d.hasSettings;      // 插件上报：是否提供了设置面板
+            // 主动回发 init（含 manifest/主题），再发 mount，两者必须都在这里发：
+            // ready 这个 Promise 只由 mounted / error 解决，而 mounted 又要等 iframe
+            // 收到 mount 才回 —— 把 mount 放到 await ready 之后就是互等死锁。
+            // postMessage 按序送达：iframe 先处理 init（ctx 就绪），随后 mount 才能挂载。
             send(iframe, {
               type: 'init', manifest, theme: exportVars(), view,
               isolated,                         // 插件据此决定能力探测方式
               reportBase: isolated && adaptTheme,  // 隔离且要适配 → 让插件自报基调
             });
+            send(iframe, { type: 'mount' });
             break;
           // 隔离插件无法被外壳穿透采样，由它自己采样后上报基调
           case 'base-report':
@@ -430,7 +441,9 @@ export function createHost(opts = {}) {
       return null;
     }
 
-    send(iframe, { type: 'mount' });
+    // mount 已在收到 ready 时与 init 一起发出（见上面的 ready 分支）。
+    // 这里不能再发：ready Promise 由 mounted / error 解决，而 mounted 要等 iframe
+    // 收到 mount 才回 —— 放在 await ready 之后就是互等死锁。
     await new Promise((r) => setTimeout(r, 60));   // 给插件渲染时间，便于主题采样
 
     /* 自动把焦点交给插件。
