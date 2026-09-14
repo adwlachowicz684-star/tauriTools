@@ -107,5 +107,49 @@ t('名称原样作为文本', ec.querySelector('.theme-name').textContent === ev
   ec.querySelector('.theme-name').textContent);
 closeThemePicker();
 
+console.log('\n=== 8. 卡片结构与样式契约 ===');
+/* 这一节盯的是"DOM 与 CSS 各写一半"的事故：
+   卡片里加了 class 但 CSS 没定义 → 元素在、样式不在，静默塌掉；
+   CSS 只给弹出层写规则 → 设置页里同一个 class 变成裸 div，间距为 0。 */
+
+const { readFileSync } = await import('node:fs');
+const css = readFileSync(new URL('./css/neumorphism.css', import.meta.url), 'utf8');
+const hasRule = (cls) => new RegExp(`\\.${cls}[\\s,:.{>]`).test(css);
+
+closeThemePicker();
+openThemePicker({ anchor: btn });
+
+// 8.1 卡片用到的每个 class，CSS 里都得有定义
+const used = new Set();
+for (const el of document.querySelectorAll('.theme-pop .theme-card, .theme-pop .theme-card *')) {
+  for (const c of el.classList) used.add(c);
+}
+const undef = [...used].filter((c) => !hasRule(c));
+t('卡片用到的 class 都有样式定义', undef.length === 0, undef.join(', ') || `${used.size} 个全部有定义`);
+
+// 8.2 分组标题必须有**不带** .theme-pop-body 限定的规则。
+//     只写在 .theme-pop-body 下的话，设置页里的标题就是裸 div ——
+//     曾被修过一次：标题上下间距为 0，卡片直接压在标题文字上。
+/* 逐条取出「选择器 { 」逐个判断：只要有一条含 .theme-group-title
+   且**不含** .theme-pop-body 的规则就算过。
+   注意不能简单在整个文件里搜 `.theme-group-title {` ——
+   `.theme-pop-body .theme-group-title {` 也能被匹配到，那样断言就永远为真。 */
+const selectorsOf = (text) => [...text.matchAll(/([^{}]+)\{/g)].map((m) => m[1]);
+const globalTitle = selectorsOf(css)
+  .some((sel) => sel.includes('.theme-group-title') && !sel.includes('.theme-pop-body'));
+t('.theme-group-title 有不限定容器的全局规则', globalTitle);
+
+// 8.3 分组之间必须有显式间距，不能指望子元素 margin 撑开
+t('.theme-group 之间有间距', /\.theme-group\s*\+\s*\.theme-group\s*\{[^}]*margin-top/.test(css));
+
+// 8.4 主题名不再 inline 取预览主题的 --text
+//     （那段历史 bug：深色面板下预览浅色主题 = 深色字压深色底 1.3:1）
+const nameEls = [...document.querySelectorAll('.theme-pop .theme-name')];
+t('主题名不 inline 设色', nameEls.every((n) => !n.style.color), `${nameEls.length} 张卡片`);
+t('.theme-name 在 CSS 里显式给了颜色',
+  /\.theme-name\s*\{[^}]*color:/.test(css));
+
+closeThemePicker();
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

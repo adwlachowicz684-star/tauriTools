@@ -62,15 +62,21 @@ export function openThemePicker({ anchor, onPick } = {}) {
     ].filter(([, items]) => items.length);
 
     for (const [label, items] of groups) {
+      /* 与设置页保持同一套结构：.theme-group 包住「标题 + 网格」。
+         不包的话 .theme-group-title 拿不到间距（样式是按这个结构写的）。 */
+      const group = document.createElement('div');
+      group.className = 'theme-group';
+
       const title = document.createElement('div');
       title.className = 'theme-group-title';
       title.textContent = `${label} · ${items.length}`;
-      body.appendChild(title);
 
       const grid = document.createElement('div');
       grid.className = 'theme-grid compact';
       for (const t of items) grid.appendChild(card(t));
-      body.appendChild(grid);
+
+      group.append(title, grid);
+      body.appendChild(group);
     }
   };
 
@@ -139,7 +145,6 @@ export function openThemePicker({ anchor, onPick } = {}) {
     foot.className = 'theme-foot';
     const name = document.createElement('div');
     name.className = 'theme-name';
-    name.style.color = v['--text'];
     name.textContent = t.name;
     const badge = document.createElement('span');
     badge.className = 'theme-badge';

@@ -4,6 +4,7 @@ import {
   listThemes, applyTheme, setAccent, getThemeId, getCurrent,
   getAccent, saveAsCustom, deleteCustomTheme, ACCENT_SWATCHES,
 } from '../../js/theme-manager.js';
+import { styleLabel } from '../../js/themes.js';
 import {
   ADAPT_POLICIES, PLUGIN_THEMES,
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
@@ -107,10 +108,26 @@ export default definePlugin({
                 backdropFilter: v['--blur'] && v['--blur'] !== '0px' ? `blur(${v['--blur']})` : '',
               },
             }),
-            h('i.bar', { style: { background: v['--accent'] } }),
-            h('i.bar.s', { style: { background: v['--accent-2'] } }),
+            /* 右半的「迷你界面」与标题栏弹出层共用 .tp-* 样式：
+               两条正文线 + 一条强调色条，一眼看出这套主题的明暗层次。 */
+            h('div.tp-mid', {},
+              h('i.tp-line', { style: { background: v['--text'] } }),
+              h('i.tp-line.dim', { style: { background: v['--text-dim'] || v['--text'] } }),
+              h('div.tp-row', {},
+                h('i.bar', { title: '强调色：按钮 / 选中态', style: { background: v['--accent'] } }),
+                // 变量名是 --env-color（旧名 --accent-2 已废弃，取到 undefined 会画出空条）
+                h('i.bar.s', { title: '环境色：次要点缀（非状态色）', style: { background: v['--env-color'] } }),
+              ),
+            ),
+            // 当前主题打勾：缩略图很小，光靠描边看不出来
+            t.id === activeId ? h('span.theme-check', {}, '\u2713') : null,
           ),
-          h('div.theme-name', { style: { color: v['--text'] } }, t.name),
+          h('div.theme-foot', {},
+            // 名字用当前主题的正文色（.theme-name 定义），不能取 v['--text'] ——
+            // 那是被预览主题的颜色，深色面板下预览浅色主题会变成深色字压深色底
+            h('div.theme-name', {}, t.name),
+            h('span.theme-badge', {}, styleLabel(t.style)),
+          ),
           h('div.theme-desc', {}, t.desc || (t.base === 'dark' ? '深色' : '浅色')),
           t.custom
             ? h('button.theme-del', {
@@ -155,7 +172,7 @@ export default definePlugin({
             style: {
               color: c,
               boxShadow: '3px 3px 7px var(--sh-dark), -3px -3px 7px var(--sh-light)',
-              opacity: String(c).toLowerCase() === String(cur).toLowerCase() ? '1' : '.7',
+              opacity: String(c).toLowerCase() === String(cur).toLowerCase() ? '1' : '.8',
             },
             onclick: () => {
               setAccent(c);

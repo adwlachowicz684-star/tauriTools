@@ -220,7 +220,10 @@ export default function Settings() {
                           {t.id === getThemeId() ? <span className="theme-check">✓</span> : null}
                         </div>
                         <div className="theme-foot">
-                          <div className="theme-name" style={{ color: v['--text'] }}>{t.name}</div>
+                          {/* 名字用当前主题的正文色（.theme-name 已定义），
+                              不能取 v['--text'] —— 那是被预览主题的颜色，
+                              深色面板下预览浅色主题会变成深色字压深色底 */}
+                          <div className="theme-name">{t.name}</div>
                           <span className="theme-badge">{styleLabel(t.style)}</span>
                         </div>
                         <div className="theme-desc">{t.desc || (t.base === 'dark' ? '深色' : '浅色')}</div>
@@ -261,7 +264,7 @@ export default function Settings() {
                   style={{
                     color: c,
                     boxShadow: '3px 3px 7px var(--sh-dark), -3px -3px 7px var(--sh-light)',
-                    opacity: !cur || cur.toLowerCase() === c.toLowerCase() ? '1' : '.7',
+                    opacity: !cur || cur.toLowerCase() === c.toLowerCase() ? '1' : '.8',
                   }}
                   onClick={() => { setAccent(c); ctx.toast('强调色：' + label, 'ok'); rerender(); void syncThemeToShell(); }}
                 >
@@ -274,7 +277,7 @@ export default function Settings() {
           <div className="p-muted" style={{ marginTop: 14 }}>
             环境色（第二个主色 · 仅用于次要点缀）
           </div>
-          <div className="p-muted" style={{ fontSize: 12, marginTop: 2, opacity: .8 }}>
+          <div className="p-muted" style={{ fontSize: 12, marginTop: 2 }}>
             成功 / 错误 / 运行中 / 警告 为固定语义色，不随这里变化
           </div>
           <div className="p-row" style={{ marginTop: 8 }}>
@@ -287,7 +290,7 @@ export default function Settings() {
                   style={{
                     color: c,
                     boxShadow: '3px 3px 7px var(--sh-dark), -3px -3px 7px var(--sh-light)',
-                    opacity: !cur || cur.toLowerCase() === c.toLowerCase() ? '1' : '.7',
+                    opacity: !cur || cur.toLowerCase() === c.toLowerCase() ? '1' : '.8',
                   }}
                   onClick={() => { setEnvColor(c); ctx.toast('环境色：' + label, 'ok'); rerender(); void syncThemeToShell(); }}
                 >
@@ -300,7 +303,7 @@ export default function Settings() {
           <div className="p-muted" style={{ marginTop: 14 }}>
             主题色调整（在主题自身配色上做整体偏移）
           </div>
-          <div className="p-muted" style={{ fontSize: 12, marginTop: 2, opacity: .8 }}>
+          <div className="p-muted" style={{ fontSize: 12, marginTop: 2 }}>
             只偏移主题配色；强调色、环境色与状态色（成功 / 错误 / 运行中）不参与
           </div>
           <div className="p-row" style={{ marginTop: 8, gap: 8 }}>

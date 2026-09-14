@@ -1,6 +1,63 @@
 /* ============================================================
-   Nexus Panel · 深色新拟态 (Dark Neumorphism) 设计系统
+   Nexus Panel · 设计系统
+   一份 CSS 覆盖三种风格：新拟态 / 扁平 / 玻璃（靠变量切换，见文末「主题风格增强」）
    所有插件共享同一套 CSS 变量，改这里即可整体换肤
+   ============================================================
+
+   改样式前请先读完下面八条，它们是从实际 bug 里长出来的约束。
+
+   ── 一、变量分层 ────────────────────────────────────────────
+     :root 只给兜底值，真实值由 js/theme-manager.js 按主题覆写到 :root。
+     按 基底 → 塑形 → 文本 → 主色 → 状态色 → 风格 → 圆角 分组排列。
+     --hairline / --mask / --scroll-thumb / --badge-fg / --accent-glow
+     是派生量，由 theme-manager 统一算，本文件与主题数据里都不要写。
+
+   ── 二、文字四档，按信息层级取用 ────────────────────────────
+     --text       标题、正文、卡片名            对比度 ≥ 4.5
+     --text-soft  次级正文（表单值、列表主行）   ≥ 4.5
+     --text-dim   小标题、分组名、标签           ≥ 4.5
+     --text-mute  辅助说明、占位符、时间戳       ≥ 3
+     用法红线：≥ 12.5px 的说明文字至少用 --text-dim；--text-mute 只服务
+     ≤ 12px 的辅助信息。mute 是"能看清但不吸引注意"，不是"次要正文"。
+     弱化一律换档位（mute → dim），不要叠 opacity ——
+     --text-mute 的对比度本就卡在 3 的线上，再乘 .8 就跌到 2.4。
+     确需 opacity 表达未选中时，下限 .8。
+
+   ── 三、颜色只从**当前主题**取 ──────────────────────────────
+     面板上的任何文字都只能写 var(--text) 这类当前主题变量。
+     唯一例外：主题卡片的缩略图内部 —— 那一小块属于"被预览的主题"，
+     可以用 t.vars 里的色值（.theme-prev / .tp-* 就是干这个的）。
+     反例（已修）：.theme-name 曾用预览主题的 --text 上色，而卡片底板是
+     当前主题的 --surface —— 深色面板下预览浅色主题，深色字压深色底，
+     实测 1.3:1，名字完全看不见。
+
+   ── 四、状态色与装饰色分离 ──────────────────────────────────
+     --ok / --running / --warn / --danger 语义固定，不随 --accent /
+     --env-color 变化。成功提示只能用 --ok：若用环境色，用户把它调成
+     红色就会得到"红色的成功提示"。
+
+   ── 五、交互态三件套 ────────────────────────────────────────
+     hover          文字提亮一档（--text-dim → --text）或轻微抬起 -2px
+     :active        内凹阴影 inset，表示"按下去"
+     选中 / 聚焦     --accent 描边或文字，两者都要带上 focus-visible，
+                     键盘走位时"当前项"只能有一种长相
+     强调色文字用于激活态时，字号 ≥ 12.5px 且字重 ≥ 600 ——
+     --accent 的对比度下限是 3.25，小字细体吃不住。
+
+   ── 六、间距节奏 ────────────────────────────────────────────
+     4 / 8 / 12 / 16 / 20 / 24，不用奇数与半档。
+     分组与分组之间必须显式留白（.theme-group + .theme-group），
+     不能指望上一个分组的子元素 margin 撑开 —— 子元素被折叠时就贴上了。
+
+   ── 七、圆角 ────────────────────────────────────────────────
+     --r-xl(26) > --r-lg(20) > --r(14) > --r-md(17) > --r-sm(9)
+     容器用 xl/lg，卡片用 r，控件用 md/sm。风格可整组覆写（扁平更硬朗），
+     但四个变量要么都写、要么都不写，写一半会让上一主题的内联值残留。
+
+   ── 八、阴影 ────────────────────────────────────────────────
+     外凸：右下 --sh-dark、左上 --sh-light，两向成对，缺一就"歪了"
+     内凹：inset + --surface-sunk 表示"按下去 / 凹进去"
+     扁平风格下 --sh-* 被调成与底色接近，阴影自然隐形，改由 --border 描边
    ============================================================ */
 
 :root {
@@ -22,16 +79,18 @@
   --accent:        #5b8cff;
   /* 环境色：与强调色并列的第二个可调主色，只作次要点缀。
      注意它不等于状态色 —— 下面 --ok / --running 才是语义固定的那组。 */
-  --env-color:      #48e0c0;
-  --accent-glow:   rgba(91, 140, 255, .30);
-  --warn:          #ffb454;
-  --danger:        #ff6b6b;
+  --env-color:     #48e0c0;
+  --accent-glow:   rgba(91, 140, 255, .32);
+  --warn:          #f59e0b;
+  --danger:        #ef4444;
 
   /* 状态色：与强调色、主题色分离，不参与用户的配色微调。
      否则把主题色设成红色，就会出现"红色的成功提示"。
-     本文件只给兜底值；各主题可在 js/themes.js 里覆写。 */
-  --ok:            #3ddc97;
-  --running:       #5b8cff;
+     本文件只给兜底值，且刻意与 js/themes.js 预设里那一组完全相同 ——
+     新增主题漏写某个状态色时才不会串出另一种绿/另一种红。
+     各主题可在 js/themes.js 里覆写。 */
+  --ok:            #22c55e;
+  --running:       #4c8dff;
 
   /* 衍生层：多数主题不必单独定义，缺省时回退到下面这些派生值。
      需要特别处理的主题（如浅色底要压暗）在 themes.js 里显式覆盖。 */
@@ -255,6 +314,7 @@ body {
 .nav-item:hover { color: var(--text); }
 .nav-item.active {
   color: var(--accent);
+  font-weight: 600;          /* 强调色文字 ≥ 12.5px 时加粗，见顶部规范五 */
   box-shadow: inset 4px 4px 8px var(--sh-dark), inset -4px -4px 8px var(--sh-light);
 }
 .nav-item.active::before {
@@ -493,10 +553,12 @@ body {
   box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
   transition: all var(--t);
 }
+/* hover 只换色、不加粗：色板那一行是多个 .p-btn 并排，
+   字重一变按钮宽度就跟着变，整行会左右抖动 */
 .p-btn:hover { color: var(--accent); }
 .p-btn:active { box-shadow: inset 4px 4px 8px var(--sh-dark), inset -4px -4px 8px var(--sh-light); }
-.p-btn.primary { color: var(--accent); }
-.p-btn.danger  { color: var(--danger); }
+.p-btn.primary { color: var(--accent); font-weight: 600; }
+.p-btn.danger  { color: var(--danger); font-weight: 600; }
 .p-btn:disabled { opacity: .45; cursor: not-allowed; }
 
 .p-input {
@@ -716,9 +778,24 @@ html.theme-transition *:not(.spinner) {
   padding: 12px 16px 16px;
   overflow-y: auto;
 }
-/* 弹出层里的分组标题要离卡片近一点 */
-.theme-pop-body .theme-group-title { margin: 10px 0 8px; }
-.theme-pop-body .theme-group-title:first-of-type { margin-top: 2px; }
+/* ---------- 分组容器（设置页与弹出层共用同一套结构） ----------------
+   .theme-group 必须包住「标题 + 网格」两层：设置页与标题栏弹出层都这么写，
+   间距规则才能只用一条 .theme-group + .theme-group 表达。
+   此前弹出层是直接往 body 里平铺标题与网格，于是 .theme-group-title
+   只在 .theme-pop-body 下才有 margin —— 设置页里它是一条没有任何样式的
+   裸 div，上下间距为 0，卡片直接压在标题文字上。 */
+.theme-group + .theme-group { margin-top: 24px; }
+.theme-group-title {
+  margin: 0 0 10px;
+  padding-left: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .3px;
+  color: var(--text-dim);
+}
+/* 弹出层里分组之间收紧一点，一屏能多看几套 */
+.theme-pop-body .theme-group + .theme-group { margin-top: 16px; }
+.theme-pop-body .theme-group:first-child .theme-group-title { margin-top: 2px; }
 /* 弹出层里卡片更紧凑：预览矮一点、名称字号小一点 */
 .theme-pop .theme-prev { height: 48px; padding: 8px 10px; gap: 7px; }
 .theme-pop .theme-prev .sw { width: 26px; height: 26px; border-radius: 7px; }
@@ -750,6 +827,7 @@ html.theme-transition *:not(.spinner) {
 .set-tab:hover { color: var(--text); }
 .set-tab.active {
   color: var(--accent);
+  font-weight: 600;          /* 12.5px 的强调色文字，加粗才吃得住 */
   box-shadow: inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light);
 }
 /* ---------- 主题卡片 ---------- */
@@ -820,15 +898,26 @@ html.theme-transition *:not(.spinner) {
   gap: 6px;
   padding: 8px 12px 2px;
 }
+/* 主题名用**当前主题**的正文色，不是预览主题自己的 --text。
+   卡片底板、阴影、描边都是当前主题的（--surface / --sh-*），
+   只有缩略图那一小块才属于"被预览的主题"。
+   若拿预览主题的 --text 写名字，深色面板下预览浅色主题就是
+   深色字压深色底（实测最低 1.3:1）—— 名字直接看不见。
+   颜色一律交给 CSS，JS 侧不要再 inline 覆盖。 */
 .theme-name {
   flex: 1;
   min-width: 0;
+  color: var(--text);
   font-size: 12.5px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 选中态除了描边与勾，名字走强调色、说明提亮一档 ——
+   内凹阴影会把卡片面压暗，辅助文字留在 --text-mute 会显得脏 */
+.theme-card.active .theme-name { color: var(--accent); }
+.theme-card.active .theme-desc { color: var(--text-dim); }
 /* 风格角标：新拟态 / 扁平 / 玻璃 */
 .theme-badge {
   flex: none;
@@ -844,7 +933,7 @@ html.theme-transition *:not(.spinner) {
 .theme-del {
   position: absolute; top: 6px; right: 6px;
   width: 20px; height: 20px; border: 0; border-radius: 50%;
-  background: var(--danger); color: #fff; cursor: pointer;
+  background: var(--danger); color: var(--badge-fg); cursor: pointer;
   font-size: 12px; line-height: 1; display: none; place-items: center;
 }
 .theme-card:hover .theme-del { display: grid; }
