@@ -386,6 +386,30 @@ def strip_ts(src: str) -> str:
         return spans
 
     def clean_param_list(inner):
+        # 先摘掉箭头函数的返回类型。
+        #
+        # `set: (k: string, v: string) => void, state: PersistedState` 里，
+        # `=>` 的 `>` 会被下面的 depth 统计当成泛型闭合符，depth 变负，
+        # 于是后面所有「depth == 0 的逗号」都判不出来 ——
+        # 两个参数被并成一个，只剩 `set`，`state` 整个丢失。
+        # 生成的代码调用 saveToStorage(set) 时报 ReferenceError: state is not defined。
+        # 返回类型里还可能带逗号（Promise<Map<string, string>>），
+        # 所以跳过时要自己跟踪括号深度，遇到 depth==0 的逗号才停。
+        # 箭头函数类型里的 `=>` 会破坏下面的 depth 统计：
+        # `>` 被当成泛型闭合符，depth 变负，于是 `depth == 0 的逗号`
+        # 再也判不出来 —— 多个参数被并成一个，后面的参数整个丢失。
+        #
+        # 典型受害者：
+        #   saveToStorage(set: (k,v)=>void, state: PersistedState)
+        # 剥出来只剩 saveToStorage(set)，调用时报 state is not defined。
+        #
+        # 用占位符换掉 `=>`（保留占位符才能在最后还原），
+        # 这样 depth 统计与按逗号切分都恢复正常，
+        # 而 `heightOf: (row) => number = rowHeightOf` 里的默认值
+        # 也能被正确识别为默认值而不是类型的一部分。
+        if '=>' in inner:
+            inner = inner.replace('=>', '@@ARROW@@')
+
         parts, depth, cur = [], 0, ''
         for ch in inner:
             if ch in '([{<':
@@ -429,7 +453,7 @@ def strip_ts(src: str) -> str:
                     name = name + ' = ' + rest[eq + 1:].strip()
                 p = name
             res.append(p)
-        return ', '.join(res)
+        return ', '.join(res).replace('@@ARROW@@', '=>')
 
     def clean_all_params(src):
         out, i, n = [], 0, len(src)
