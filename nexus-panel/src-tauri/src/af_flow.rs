@@ -19,8 +19,8 @@ use std::collections::HashMap;
 use std::collections::HashMap as StdHashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::Path;
-use std::sync::Mutex;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -229,7 +229,11 @@ pub fn watch_stop(state: State<'_, WatchRegistry>, id: String) -> Result<(), Str
 /// 一个端口对应一个监听线程；同端口上的多个触发器靠 path 区分
 pub struct WebhookRegistry(pub Mutex<StdHashMap<u16, WebhookServer>>);
 
-struct WebhookServer {
+/// 必须 pub：WebhookRegistry 的字段是 pub，本类型若私有会让「有效可见性」
+/// （crate，因 main.rs 里 `mod af_flow;` 私有但 root 可访问其中 pub 项）
+/// 大于本类型的可见性，触发 private_interfaces 警告。加了 -D warnings 就会变硬错误。
+/// 字段可保持私有 —— 唯一构造点在本文件内。
+pub struct WebhookServer {
     /// 停服标志：置 true 后 accept 循环退出
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// path -> (trigger_id, token)
@@ -681,14 +685,193 @@ fn copy_all(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/* ================================================================== */
+/* fs_op 路径约束 —— 授权根目录白名单                                 */
+/* ================================================================== */
+/*
+ * fs_op 此前只校验「路径非空」，read / write / copy / move / delete / list
+ * 可作用于任意绝对路径；read 还不填 max_bytes 时不截断（cap = usize::MAX）。
+ * 配合 capabilities 里全开的 http（https://** 与 http://**），一个只需一次
+ * confirm 就能装上的外域插件，可以「读本地任意文件 → 经 fetch 外传」，
+ * 全程无二次确认 —— 这是「fs 无约束 + http 全开」的组合风险。
+ *
+ * 收敛点放在 fs_op 本身：任何路径（含 copy / move 的目标路径）都必须
+ * canonicalize 后落在授权根目录内。canonicalize 会解析符号链接，
+ * 因此 ../ 穿越与 symlink 逃逸一并挡住（不是靠字符串前缀比较）。
+ *
+ * 注意演练（dry_run）同样要校验：演练能列出任意目录 = 目录结构泄露，
+ * 越权判定必须在 dry 分支之前。
+ */
+
+/// 已授权的根目录（存的是 canonicalize 后的绝对路径，便于 starts_with 比较）。
+static FS_ROOTS: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
+
+fn fs_roots_lock() -> &'static Mutex<Vec<PathBuf>> {
+    FS_ROOTS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// 即便显式授权也拒绝的根：把整块盘或系统目录放进来等于没约束。
+fn is_forbidden_root(p: &Path) -> bool {
+    if p.parent().is_none() {
+        return true; // 文件系统根（/ 或 C:\）
+    }
+    let s = p.to_string_lossy().replace('\\', "/");
+    let s = s.trim_end_matches('/');
+    // 家目录根本身不放行（~/projects 这类具体子目录可以）
+    if let Ok(home) = std::env::var("HOME") {
+        let h = home.trim_end_matches('/');
+        if !h.is_empty() && s == h {
+            return true;
+        }
+    }
+    const DENY: &[&str] = &[
+        "/etc", "/usr", "/bin", "/sbin", "/boot", "/proc", "/sys", "/dev",
+        "/lib", "/lib64", "/var", "/System", "/Library", "/private",
+        "/Windows", "/Program Files", "/Program Files (x86)",
+    ];
+    DENY.iter().any(|d| s == *d || s.starts_with(&format!("{d}/")))
+}
+
+/// 取授权根目录快照。首次调用时把应用数据目录设为默认根，
+/// 保证「刚装好、还没配过任何目录」时 fs_op 仍可用于自己的数据区，
+/// 不至于一上来所有操作都被拒。
+fn fs_roots_snapshot(app: &AppHandle) -> Vec<PathBuf> {
+    let mut g = fs_roots_lock().lock().unwrap_or_else(|e| e.into_inner());
+    if g.is_empty() {
+        if let Ok(dir) = crate::fpx::store::resolve_data_dir(app) {
+            if let Ok(c) = dir.canonicalize() {
+                if !is_forbidden_root(&c) {
+                    g.push(c);
+                }
+            }
+        }
+    }
+    g.clone()
+}
+
+/// 解析路径并校验它落在授权范围内。
+///
+/// 目标不存在时（write 新建、copy 到新文件）canonicalize 会失败，
+/// 退化为「父目录 canonicalize + 文件名」——否则新建文件就能绕过校验。
+fn resolve_within(raw: &str, roots: &[PathBuf]) -> Result<PathBuf, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("路径不能为空".to_string());
+    }
+    if roots.is_empty() {
+        return Err(
+            "尚未授权任何目录，已拒绝本次操作。请先把要操作的目录加入授权列表。"
+                .to_string(),
+        );
+    }
+    let p = Path::new(trimmed);
+    let abs = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|e| format!("无法读取当前工作目录: {e}"))?
+            .join(p)
+    };
+
+    let canon = abs.canonicalize().or_else(|_| {
+        let parent = abs
+            .parent()
+            .ok_or_else(|| format!("路径缺少父目录，无法校验: {trimmed}"))?;
+        let name = abs
+            .file_name()
+            .ok_or_else(|| format!("路径缺少文件名，无法校验: {trimmed}"))?;
+        parent
+            .canonicalize()
+            .map(|c| c.join(name))
+            .map_err(|e| format!("路径不存在且父目录无法解析: {trimmed}（{e}）"))
+    })?;
+
+    if !roots.iter().any(|r| canon.starts_with(r)) {
+        let allowed = roots
+            .iter()
+            .map(|r| r.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n  · ");
+        return Err(format!(
+            "路径越权，已拒绝：{}\n允许的范围：\n  · {}\n请先把所在目录加入授权列表。",
+            canon.display(),
+            allowed
+        ));
+    }
+    Ok(canon)
+}
+
+/// 授权一个目录供 fs_op 使用。
 #[tauri::command]
-pub fn fs_op(req: FsRequest) -> Result<FsResult, String> {
+pub fn af_fs_allow_root(app: AppHandle, path: String) -> Result<Vec<String>, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("目录路径为空".to_string());
+    }
+    let p = Path::new(trimmed);
+    if !p.is_dir() {
+        return Err(format!("不是目录或目录不存在: {trimmed}"));
+    }
+    let canon = p
+        .canonicalize()
+        .map_err(|e| format!("目录无法解析: {trimmed}（{e}）"))?;
+    if is_forbidden_root(&canon) {
+        return Err(format!(
+            "不允许把 {} 整个加入授权范围（范围过大或属于系统目录）。请指定更具体的子目录。",
+            canon.display()
+        ));
+    }
+    let mut g = fs_roots_lock().lock().unwrap_or_else(|e| e.into_inner());
+    if g.is_empty() {
+        if let Ok(dir) = crate::fpx::store::resolve_data_dir(&app) {
+            if let Ok(c) = dir.canonicalize() {
+                if !is_forbidden_root(&c) {
+                    g.push(c);
+                }
+            }
+        }
+    }
+    if !g.contains(&canon) {
+        g.push(canon);
+    }
+    Ok(g.iter().map(|r| r.display().to_string()).collect())
+}
+
+/// 列出当前已授权的目录。
+#[tauri::command]
+pub fn af_fs_list_roots(app: AppHandle) -> Vec<String> {
+    fs_roots_snapshot(&app)
+        .iter()
+        .map(|r| r.display().to_string())
+        .collect()
+}
+
+/// 撤销某个目录的授权。应用数据目录是兜底范围，不允许撤销。
+#[tauri::command]
+pub fn af_fs_disallow_root(app: AppHandle, path: String) -> Result<Vec<String>, String> {
+    let canon = Path::new(path.trim())
+        .canonicalize()
+        .map_err(|e| format!("目录无法解析: {}（{e}）", path.trim()))?;
+    let default = crate::fpx::store::resolve_data_dir(&app)
+        .ok()
+        .and_then(|d| d.canonicalize().ok());
+    if Some(&canon) == default.as_ref() {
+        return Err("应用数据目录是 fs_op 的兜底范围，不能撤销。".to_string());
+    }
+    let mut g = fs_roots_lock().lock().unwrap_or_else(|e| e.into_inner());
+    g.retain(|r| r != &canon);
+    Ok(g.iter().map(|r| r.display().to_string()).collect())
+}
+
+#[tauri::command]
+pub fn fs_op(app: AppHandle, req: FsRequest) -> Result<FsResult, String> {
     let dry = req.dry_run;
     let path = req.path.trim().to_string();
     if path.is_empty() {
         return Err("路径不能为空".to_string());
     }
-    let p = Path::new(&path);
+    let roots = fs_roots_snapshot(&app);
+    let p = resolve_within(&path, &roots)?;
 
     macro_rules! done {
         ($t:expr) => { Ok(FsResult { ok: true, text: $t }) };
@@ -706,9 +889,9 @@ pub fn fs_op(req: FsRequest) -> Result<FsResult, String> {
             if p.is_dir() {
                 return Err(format!("是目录不是文件，请用「列目录」: {}", path));
             }
-            let meta = std::fs::metadata(p).map_err(|e| format!("读取元信息失败: {}", e))?;
+            let meta = std::fs::metadata(&p).map_err(|e| format!("读取元信息失败: {}", e))?;
             let cap = if req.max_bytes == 0 { usize::MAX } else { req.max_bytes };
-            let bytes = std::fs::read(p).map_err(|e| format!("读取失败: {}", e))?;
+            let bytes = std::fs::read(&p).map_err(|e| format!("读取失败: {}", e))?;
             let truncated = bytes.len() > cap;
             let text = String::from_utf8_lossy(&bytes[..bytes.len().min(cap)]).to_string();
             let mut out = text;
@@ -739,12 +922,12 @@ pub fn fs_op(req: FsRequest) -> Result<FsResult, String> {
                 let mut f = std::fs::OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .open(p)
+                    .open(&p)
                     .map_err(|e| format!("打开文件失败: {}", e))?;
                 f.write_all(req.content.as_bytes())
                     .map_err(|e| format!("写入失败: {}", e))?;
             } else {
-                std::fs::write(p, &req.content).map_err(|e| format!("写入失败: {}", e))?;
+                std::fs::write(&p, &req.content).map_err(|e| format!("写入失败: {}", e))?;
             }
             done!(format!("已{} {} 字节 → {}", if is_append { "追加" } else { "写入" }, req.content.len(), path))
         }
@@ -755,13 +938,16 @@ pub fn fs_op(req: FsRequest) -> Result<FsResult, String> {
             if dst.is_empty() {
                 return Err("复制需要提供目标路径".to_string());
             }
+            // 目标同样要落在授权范围内：只校验源的话，
+            // 可以把授权区内的文件复制到区外任意位置（写穿）。
+            let dst_p = resolve_within(dst, &roots)?;
             if dry {
                 return skip!(format!("复制 {} → {}", path, dst));
             }
             if !p.exists() {
                 return Err(format!("源不存在: {}", path));
             }
-            copy_all(p, Path::new(dst))?;
+            copy_all(&p, &dst_p)?;
             done!(format!("已复制 {} → {}", path, dst))
         }
 
@@ -771,24 +957,25 @@ pub fn fs_op(req: FsRequest) -> Result<FsResult, String> {
             if dst.is_empty() {
                 return Err("移动需要提供目标路径".to_string());
             }
+            let dst_p = resolve_within(dst, &roots)?;
             if dry {
                 return skip!(format!("移动 {} → {}", path, dst));
             }
             if !p.exists() {
                 return Err(format!("源不存在: {}", path));
             }
-            if let Some(parent) = Path::new(dst).parent() {
+            if let Some(parent) = dst_p.parent() {
                 if !parent.as_os_str().is_empty() {
                     std::fs::create_dir_all(parent).map_err(|e| format!("创建父目录失败: {}", e))?;
                 }
             }
-            std::fs::rename(p, dst).map_err(|e| format!("移动失败: {}", e))?;
+            std::fs::rename(&p, &dst_p).map_err(|e| format!("移动失败: {}", e))?;
             done!(format!("已移动 {} → {}", path, dst))
         }
 
         /* ---------- 删除 ---------- */
         "delete" => {
-            if is_forbidden_delete(p) {
+            if is_forbidden_delete(&p) {
                 return Err(format!("拒绝删除系统关键路径: {}", path));
             }
             if !p.exists() {
@@ -802,9 +989,9 @@ pub fn fs_op(req: FsRequest) -> Result<FsResult, String> {
                 return skip!(format!("删除{} {}", kind, path));
             }
             if p.is_dir() {
-                std::fs::remove_dir_all(p).map_err(|e| format!("删除目录失败: {}", e))?;
+                std::fs::remove_dir_all(&p).map_err(|e| format!("删除目录失败: {}", e))?;
             } else {
-                std::fs::remove_file(p).map_err(|e| format!("删除文件失败: {}", e))?;
+                std::fs::remove_file(&p).map_err(|e| format!("删除文件失败: {}", e))?;
             }
             done!(format!("已删除{} {}", kind, path))
         }
@@ -817,7 +1004,7 @@ pub fn fs_op(req: FsRequest) -> Result<FsResult, String> {
             if !p.is_dir() {
                 return Err(format!("不是目录: {}", path));
             }
-            let items = list_dir(p, req.recursive, &req.exts)?;
+            let items = list_dir(&p, req.recursive, &req.exts)?;
             if items.is_empty() {
                 done!("（空目录）".to_string())
             } else {
@@ -830,7 +1017,7 @@ pub fn fs_op(req: FsRequest) -> Result<FsResult, String> {
             if dry {
                 return skip!(format!("创建目录 {}", path));
             }
-            std::fs::create_dir_all(p).map_err(|e| format!("创建目录失败: {}", e))?;
+            std::fs::create_dir_all(&p).map_err(|e| format!("创建目录失败: {}", e))?;
             done!(format!("已确保目录存在: {}", path))
         }
 
@@ -844,7 +1031,7 @@ pub fn fs_op(req: FsRequest) -> Result<FsResult, String> {
             if !p.exists() {
                 return Err(format!("路径不存在: {}", path));
             }
-            let meta = std::fs::metadata(p).map_err(|e| format!("读取元信息失败: {}", e))?;
+            let meta = std::fs::metadata(&p).map_err(|e| format!("读取元信息失败: {}", e))?;
             let kind = if meta.is_dir() { "目录" } else { "文件" };
             let modified = meta
                 .modified()
@@ -868,10 +1055,15 @@ pub fn fs_op(req: FsRequest) -> Result<FsResult, String> {
         /* ---------- 通配符展开（供循环节点 glob 模式用） ---------- */
         "glob" => {
             let hits = expand_glob(&path)?;
-            if hits.is_empty() {
+            // 逐个回验：pattern 本身在授权区内，但符号链接可能把命中项指到区外。
+            let kept: Vec<String> = hits
+                .into_iter()
+                .filter(|h| resolve_within(h, &roots).is_ok())
+                .collect();
+            if kept.is_empty() {
                 done!("".to_string())
             } else {
-                done!(hits.join("\n"))
+                done!(kept.join("\n"))
             }
         }
 

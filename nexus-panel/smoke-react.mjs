@@ -11,7 +11,9 @@ const esbuild = _req(process.env.ESBUILD_PATH || '/data/workspace/.deps/node_mod
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 /* 产物必须落在项目目录内：若放 /tmp，它 require('react') 会解析到全局副本，
    而本脚本从项目目录解析到的是本地副本 —— 两份 React 同时存在就会
@@ -19,7 +21,7 @@ const require = createRequire(import.meta.url);
 const OUT = new URL('./.smoke-react.cjs', import.meta.url).pathname;
 
 await esbuild.build({
-  entryPoints: ['src/App.tsx'],
+  entryPoints: [path.join(HERE, 'src/App.tsx')],
   bundle: true,
   outfile: OUT,
   format: 'cjs',
@@ -27,12 +29,12 @@ await esbuild.build({
   jsx: 'automatic',
   loader: { '.css': 'empty' },
   external: ['react', 'react-dom', 'react-dom/client'],
-  define: { 'import.meta.url': JSON.stringify('file:///data/workspace/nexus-panel/js/host.js') },
+  define: { 'import.meta.url': JSON.stringify(pathToFileURL(path.join(HERE, 'js/host.js')).href) },
   logLevel: 'error',
 });
 
 const dom = new JSDOM('<!doctype html><html><body><div id="root"></div><div id="toasts"></div></body></html>', {
-  url: 'file:///data/workspace/nexus-panel/index.html',
+  url: pathToFileURL(path.join(HERE, 'index.html')).href,
   pretendToBeVisual: true,
 });
 

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "面板基础权限 + agent_flow 插件（启动 CLI 子进程、目录监听、webhook、抓取订阅源 / 调用大模型）",
+  "description": "面板基础权限 + agent_flow 插件（启动 CLI 子进程、目录监听、webhook、抓取订阅源 / 调用大模型）。http 仅放行 https 与本机常见推理服务端口（Ollama 11434 / LM Studio 1234 / llama.cpp·LocalAI 8080 / vLLM 8000 / text-generation-webui 7860）；端口按精确匹配，本机其它端口需在此补一条。",
   "windows": [
     "main"
   ],
@@ -62,7 +62,34 @@
           "url": "https://**"
         },
         {
-          "url": "http://**"
+          "url": "http://localhost:11434/**"
+        },
+        {
+          "url": "http://127.0.0.1:11434/**"
+        },
+        {
+          "url": "http://localhost:1234/**"
+        },
+        {
+          "url": "http://127.0.0.1:1234/**"
+        },
+        {
+          "url": "http://localhost:8080/**"
+        },
+        {
+          "url": "http://127.0.0.1:8080/**"
+        },
+        {
+          "url": "http://localhost:8000/**"
+        },
+        {
+          "url": "http://127.0.0.1:8000/**"
+        },
+        {
+          "url": "http://localhost:7860/**"
+        },
+        {
+          "url": "http://127.0.0.1:7860/**"
         }
       ]
     }

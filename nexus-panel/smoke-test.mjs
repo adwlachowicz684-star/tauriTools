@@ -4,10 +4,16 @@
  */
 import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const html = fs.readFileSync('./index.html', 'utf8');
+// 一切路径以脚本自身位置为基准，不依赖 CWD，也不假设项目放在哪个目录下。
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const INDEX_HTML = path.join(HERE, 'index.html');
+
+const html = fs.readFileSync(INDEX_HTML, 'utf8');
 const dom = new JSDOM(html, {
-  url: 'file:///data/workspace/nexus-panel/index.html',
+  url: pathToFileURL(INDEX_HTML).href,
   pretendToBeVisual: true,
 });
 

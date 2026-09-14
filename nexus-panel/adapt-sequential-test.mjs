@@ -14,9 +14,13 @@
  * 修复：采样前先等过渡结束（waitThemeSettled）+ 连续采样取稳定值。
  */
 import { JSDOM } from 'jsdom';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
-  url: 'file:///data/workspace/nexus-panel/index.html',
+  url: pathToFileURL(path.join(HERE, 'index.html')).href,
   pretendToBeVisual: true,
 });
 globalThis.window = dom.window;

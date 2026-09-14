@@ -164,6 +164,25 @@ export async function fileOp(args: FsArgs): Promise<FsOutcome> {
   return await invoke<FsOutcome>('fs_op', { req: args });
 }
 
+/**
+ * fs_op 的授权根目录管理。
+ *
+ * Rust 侧只接受落在授权根目录内的路径（canonicalize 后 starts_with），
+ * 默认范围仅应用数据目录。要读写其它目录，必须先把它加进来 ——
+ * 这是「读任意文件 + fetch 外传」组合风险的收敛点，不要图省事绕开。
+ */
+export async function fsAllowRoot(path: string): Promise<string[]> {
+  return await invoke<string[]>('af_fs_allow_root', { path });
+}
+
+export async function fsListRoots(): Promise<string[]> {
+  return await invoke<string[]>('af_fs_list_roots');
+}
+
+export async function fsDisallowRoot(path: string): Promise<string[]> {
+  return await invoke<string[]>('af_fs_disallow_root', { path });
+}
+
 /** 从节点数据构造请求参数（已渲染过的 path/target/content 由调用方传入） */
 export function fsArgsOf(
   data: FsNodeData,

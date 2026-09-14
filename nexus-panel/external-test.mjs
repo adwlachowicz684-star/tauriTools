@@ -8,8 +8,14 @@
  * E. 隔离插件的主题兜底：外壳采样不到时，用插件自报的基调
  */
 import { JSDOM } from 'jsdom';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'file:///data/workspace/nexus-panel/index.html' });
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+const dom = new JSDOM('<!doctype html><html><body></body></html>', {
+  url: pathToFileURL(path.join(HERE, 'index.html')).href,
+});
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 globalThis.location = dom.window.location;
@@ -65,7 +71,7 @@ const sample = `
   <script>fetch('https://api.example.com/data')</script>
   <a href="https://docs.example.com">文档</a>
 `;
-const found = ext.scanText(sample, 'file:///data/workspace/nexus-panel/plugins/x/index.html');
+const found = ext.scanText(sample, pathToFileURL(path.join(HERE, 'plugins/x/index.html')).href);
 const hosts = found.map((f) => f.host).sort();
 t('扫出全部 7 个外域', hosts.length === 7, `${hosts.length}: ${hosts.join(', ')}`);
 t('含 cdn.example.com', hosts.includes('cdn.example.com'));

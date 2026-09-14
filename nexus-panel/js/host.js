@@ -14,12 +14,24 @@ import * as extPolicy from './external-policy.js';
 import {
   initTheme, exportVars, onChange as onThemeChange,
 } from './theme-manager.js';
+// 注意：必须先 import 再 export。`export { X } from '...'` 是纯转发，
+// 不会在本模块作用域里留下 X 绑定 —— 而 readTheme() 内部直接读 THEME_VARS，
+// 只写转发式导出会抛 ReferenceError。写法与 theme-manager.js 保持一致。
+import { THEME_VARS } from './themes.js';
 
-export const THEME_VARS = [
-  '--bg', '--surface', '--surface-sunk', '--sh-dark', '--sh-light',
-  '--text', '--text-dim', '--text-mute', '--accent', '--accent-2',
-  '--accent-glow', '--warn', '--danger', '--r-xl', '--r-lg', '--r', '--r-sm',
-];
+/**
+ * 主题变量清单：直接沿用 themes.js 的唯一真源，不再在此维护副本。
+ * --------------------------------------------------------------------
+ * 此前这份本地清单停留在重构前：用的是 --accent-2 / --r 这两个旧名，
+ * 且缺 --ok --running --env-color --surface-raised --text-soft --bg-image 等
+ * 新增变量。readTheme() 按它遍历取值，导致插件层拿不到刚分离出来的状态色
+ * （--ok / --running）与环境色（--env-color），旧名则读到空字符串。
+ *
+ * 保留具名导出（而非 `export *`），让 `import { THEME_VARS } from './host.js'`
+ * 的既有写法继续可用；theme-manager.js 早已是同样的 re-export 写法，
+ * 三方共用同一份定义，从根上消除再次漂移的可能。
+ */
+export { THEME_VARS };
 
 export function isNoBuild() {
   return globalThis.__NEXUS_NO_BUILD__ === true;

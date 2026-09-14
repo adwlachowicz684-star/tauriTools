@@ -7,10 +7,15 @@
  */
 import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const html = fs.readFileSync('./index.html', 'utf8');
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const INDEX_HTML = path.join(HERE, 'index.html');
+
+const html = fs.readFileSync(INDEX_HTML, 'utf8');
 const dom = new JSDOM(html, {
-  url: 'file:///data/workspace/nexus-panel/index.html',
+  url: pathToFileURL(INDEX_HTML).href,
   pretendToBeVisual: true,
 });
 
