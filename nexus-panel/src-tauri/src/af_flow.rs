@@ -876,7 +876,7 @@ fn copy_all(src: &Path, dst: &Path) -> Result<(), String> {
 /*
  * fs_op 此前只校验「路径非空」，read / write / copy / move / delete / list
  * 可作用于任意绝对路径；read 还不填 max_bytes 时不截断（cap = usize::MAX）。
- * 配合 capabilities 里全开的 http（https://** 与 http://**），一个只需一次
+ * 配合 capabilities 里全开的 http（https 与 http 的通配 `**` 域），一个只需一次
  * confirm 就能装上的外域插件，可以「读本地任意文件 → 经 fetch 外传」，
  * 全程无二次确认 —— 这是「fs 无约束 + http 全开」的组合风险。
  *
