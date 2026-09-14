@@ -46,6 +46,17 @@ function renameShellEntry(): Plugin {
  * 这样 Vite 生产构建里它们依然可用。
  */
 function copyPlainPlugins(): Plugin {
+  // 走 Vite 打包的插件也可能夹带「不能交给 Vite 处理」的原生子目录。
+  // mindmap 的 editor/ 就是：kityminder 的 4 个原文件靠 <script src> 引用，
+  // 由编辑器 iframe 以 ./editor/index.html 直接加载（见 editor-bridge.js）。
+  // 少了它表现为「插件能开、画布一片空白」—— index.html 正常产出，
+  // 但 editor/index.html 404，kityminder 未定义（实测构建已确认）。
+  //
+  // 只补拷 editor/ 一层，不能把 mindmap 加进 PLAIN_PLUGINS：
+  // 它 index.js 里是 `import ... from '../../js/plugin-sdk.js'`，
+  // 必须靠 Vite 打包才解析得到；整目录原样拷贝会盖掉打包产物，
+  // 插件连开都开不了（比画布空白更糟）。两种产物的职责不能混。
+  const NATIVE_SUBDIRS = [{ plugin: 'mindmap', dir: 'editor' }];
   return {
     name: 'nexus-copy-plain-plugins',
     apply: 'build',
@@ -60,6 +71,13 @@ function copyPlainPlugins(): Plugin {
         const src = resolve(PATHS.plugins, name);
         if (fsSync.existsSync(src)) {
           fsSync.cpSync(src, resolve(out, name), { recursive: true });
+        }
+      }
+      // closeBundle 在打包产物落盘之后，这里补拷不会被覆盖
+      for (const { plugin, dir } of NATIVE_SUBDIRS) {
+        const src = resolve(PATHS.plugins, plugin, dir);
+        if (fsSync.existsSync(src)) {
+          fsSync.cpSync(src, resolve(out, plugin, dir), { recursive: true });
         }
       }
     },
