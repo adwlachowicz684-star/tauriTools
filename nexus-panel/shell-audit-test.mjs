@@ -106,6 +106,42 @@ console.log('\n=== P1-6 侧边栏监听器（实证：不成立） ===');
 t('renderSidebar 用 innerHTML="" 清空（节点连监听器一起丢弃）',
   /list\.innerHTML = '';/.test(src('js/shell.js')));
 
+/* ============ 附加 · .p-card 的 backdrop-filter 层叠陷阱 ============ */
+console.log('\n=== backdrop-filter 与 fixed 浮层 ===');
+const css = src('css/neumorphism.css');
+
+/* 定位那条 backdrop-filter 规则（含 -webkit- 前缀的声明） */
+const bfIdx = css.indexOf('-webkit-backdrop-filter: blur(var(--blur))');
+t('定位到 backdrop-filter 规则', bfIdx >= 0);
+
+/* 取规则的选择器：往前找上一个右花括号或块注释结束标记，再剥掉注释。
+   直接 slice 会把规则上方的说明注释一起当成选择器（它就在两者之间）；
+   而块注释结束标记是两个字符，只跳一个会把斜杠留在选择器开头。 */
+const braceAt = css.lastIndexOf('}', bfIdx);
+const commentAt = css.lastIndexOf('*/', bfIdx);
+const selStart = braceAt > commentAt ? braceAt + 1 : commentAt + 2;
+const ruleOpen = css.indexOf('{', selStart);
+const rawSel = bfIdx < 0 ? '' : css.slice(selStart, ruleOpen);
+const selector = rawSel.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\s+/g, ' ').trim();
+
+t('.p-card 不再带 backdrop-filter', !/\.p-card\b/.test(selector), selector.slice(0, 80) || '(空)');
+
+/* 逐段检查：只看"选择器里有 glass"是不够的 —— 破坏掉其中一段时，
+   其余段仍带 glass，断言会照样通过。所以按逗号切分后要求每段都带限定。 */
+const parts = selector.split(',').map((x) => x.trim()).filter(Boolean);
+t('选择器按逗号切分成功', parts.length >= 5, parts.length + ' 段');
+const unguardedSel = parts.filter((x) => !x.includes("data-theme-style='glass'"));
+t('每一段选择器都带 glass 限定', unguardedSel.length === 0,
+  unguardedSel.join(' | ').slice(0, 80) || (parts.length + ' 段均已限定'));
+
+/* 只允许上面那一条规则使用 blur(var(--blur))（带前缀共 2 行）。
+   若有人在别处新加一条不受限的，上面按段检查也覆盖不到 ——
+   它只检查了第一条规则的选择器。
+   注：.mask 那条 blur(2px) 是固定装饰值，且 .mask 自身就是 fixed 元素、
+   内部不会再有 fixed 后代，不属于本问题，故只匹配 var(--blur)。 */
+const themed = css.match(/-?w?e?b?k?i?t?-?backdrop-filter\s*:\s*blur\(var\(--blur\)\)/g) || [];
+t('全文件只有一条规则使用 blur(var(--blur))', themed.length === 2, themed.length + ' 处声明');
+
 /* ============ P2-8 · 能力探测只缓存成功 ============ */
 console.log('\n=== P2-8 探测缓存 ===');
 t('getTauri 失败不再写入缓存', !/_cache = null;\s*return _cache;/.test(coreSrc));

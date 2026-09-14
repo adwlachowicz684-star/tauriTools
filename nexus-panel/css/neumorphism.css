@@ -610,7 +610,43 @@ body {
   border: 1px solid var(--border);
 }
 
-#titlebar, #sidebar, #main-inner, .p-card, .toast, .err-box, .dialog {
+/* 毛玻璃：只给页面级容器，且**只在玻璃风格下**应用。
+   --------------------------------------------------------------------
+   backdrop-filter 只要不是 none，就会**同时**造成两件事：
+     1. 该元素成为一个层叠上下文；
+     2. 该元素成为其 position:fixed 后代的包含块。
+   两者都不是"想要就有、不想要就没"的可选项，而是这个属性的固有副作用。
+
+   于是：一个 .p-card 里的 fixed 浮层（右键菜单、凭证弹层、颜色拾取器……）
+     · 位置会相对**这张卡片**计算，而 left/top 写的是视口坐标 → 整体偏移；
+     · z-index 被关进卡片的层叠上下文，只在卡片内部参与排序，
+       再也无法和相邻卡片比较 → 被 DOM 里靠后的兄弟卡片盖住。
+
+   两点容易踩的坑，特此写明：
+
+   ① **--blur 为 0 时副作用照样存在。** blur(0px) 不等于 none，
+      规范看的是"计算值是否为 none"，不是"模糊半径是否为 0"。
+      所以新拟态 / 扁平这些默认风格（--blur: 0px）同样会踩到，
+      这也是这个问题一直没被联想到 backdrop-filter 上的原因。
+      按 data-theme-style 限定后，非玻璃风格根本不声明该属性 → 副作用消失。
+
+   ② **.p-card 不参与毛玻璃。** 它本来就嵌在 #main-inner（或 iframe 内的
+      对应容器）里，而那层已经模糊过一次；对"已模糊 + 半透明覆盖"的内容
+      再模糊一次，视觉增益几乎为零，却要付出上面两个副作用的代价 ——
+      收益与成本严重不成比例，因此直接移除。
+      需要浮层的插件（project-group 的菜单、agent-flow 的凭证弹层、
+      mindmap 的各类浮层）都因此受益。
+
+   注：插件若在 iframe 里，宿主这边的 #main-inner 影响不到它，
+   但插件自己引入的本文件里 .p-card 仍在生效 —— 所以 .p-card 这一处
+   对两种挂载模式都有效。
+*/
+html[data-theme-style='glass'] #titlebar,
+html[data-theme-style='glass'] #sidebar,
+html[data-theme-style='glass'] #main-inner,
+html[data-theme-style='glass'] .toast,
+html[data-theme-style='glass'] .err-box,
+html[data-theme-style='glass'] .dialog {
   -webkit-backdrop-filter: blur(var(--blur));
   backdrop-filter: blur(var(--blur));
 }
