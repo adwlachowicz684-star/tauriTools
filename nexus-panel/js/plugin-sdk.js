@@ -295,6 +295,26 @@ function buildCtx(base) {
         deleteCustomTheme: (id) => transport.request('shell.call',
           { ns: 'theme', method: 'deleteCustomTheme', args: [id] }),
       },
+      /**
+       * 插件主题适配策略（读 + 写），同样在**主平台侧**执行。
+       *
+       * 与 theme 同源的问题：策略存在 localStorage，iframe 隔离态下
+       * （opaque origin）本地根本写不进去，主面板读到的还是旧值。
+       *
+       * 另外：适配结果是 installAdapter 时按策略算一次并固化成滤镜的，
+       * 所以光"写入正确"还不够 —— 宿主侧的两个写方法会在写完后重算当前
+       * 插件的适配，否则改了看不到效果。
+       */
+      normalizer: {
+        getPolicy: () => transport.request('shell.call', { ns: 'normalizer', method: 'getPolicy', args: [] }),
+        setPolicy: (v) => transport.request('shell.call', { ns: 'normalizer', method: 'setPolicy', args: [v] }),
+        resolvePolicy: (id) => transport.request('shell.call',
+          { ns: 'normalizer', method: 'resolvePolicy', args: [id] }),
+        getPluginOverride: (id) => transport.request('shell.call',
+          { ns: 'normalizer', method: 'getPluginOverride', args: [id] }),
+        setPluginOverride: (id, v) => transport.request('shell.call',
+          { ns: 'normalizer', method: 'setPluginOverride', args: [id, v] }),
+      },
     },
     /** 供外壳调用 */
     async __destroy() {

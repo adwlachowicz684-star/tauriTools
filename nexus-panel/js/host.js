@@ -8,6 +8,7 @@
 import { getTauri, isInsideTauri } from './tauri-core.js';
 import { createModuleContext, BRIDGE_CHANNEL } from './plugin-sdk.js';
 import { installAdapter } from './theme-normalizer.js';
+import * as normalizer from './theme-normalizer.js';
 import { getPluginConfig } from './plugin-config.js';
 import * as pluginConfig from './plugin-config.js';
 import * as extPolicy from './external-policy.js';
@@ -66,6 +67,41 @@ export const THEME_API_METHODS = [
 const themeApi = Object.fromEntries(
   THEME_API_METHODS.map((m) => [m, themeManager[m]]).filter(([, fn]) => typeof fn === 'function'),
 );
+
+/**
+ * 插件主题适配策略（normalizer），同样经 ctx.shell 桥接。
+ *
+ * 与主题同源的问题：策略存在 localStorage 里，iframe 插件（尤其隔离态，
+ * opaque origin 下 localStorage 根本不可用）本地写不进主平台侧，
+ * 主面板读到的还是旧值。
+ *
+ * 但这里还多一层 —— **光写对还不够**。适配结果是在 installAdapter() 时
+ * 按 resolvePolicy() 算一次并固化成滤镜的；策略改了若不重算，当前插件
+ * 的滤镜不会变，看起来就是"改了没反应"。所以两个写方法外面包了一层：
+ * 写完立刻让宿主对当前实例重跑 reAdapt()。
+ *
+ * reAdapt 在 createHost 闭包里，这里用回调注入（单例宿主，够用）。
+ */
+export const NORMALIZER_API_METHODS = [
+  'getPolicy', 'setPolicy', 'getPluginOverride', 'setPluginOverride', 'resolvePolicy',
+];
+
+/** 由 createHost 注入：策略变更后重算当前插件的适配。 */
+let onAdaptPolicyChanged = () => {};
+
+const normalizerApi = {
+  getPolicy: normalizer.getPolicy,
+  resolvePolicy: normalizer.resolvePolicy,
+  getPluginOverride: normalizer.getPluginOverride,
+  setPolicy: (v) => {
+    normalizer.setPolicy(v);
+    onAdaptPolicyChanged();
+  },
+  setPluginOverride: (id, v) => {
+    normalizer.setPluginOverride(id, v);
+    onAdaptPolicyChanged();
+  },
+};
 
 /* ---------------------------- 事件总线 ---------------------------- */
 export function createBus() {
@@ -307,6 +343,8 @@ export function createHost(opts = {}) {
      而 adaptTeardown 只留最后一张 → 前面的永远清不掉、滤镜层层叠加。
      用 generation 令牌保证：只有最后一次调用的结果会被采纳。 */
   async function reAdapt(inst) {
+    /* 把重算入口暴露给模块级的 normalizerApi：
+       策略是从 iframe 里改的，改完必须重算当前插件才看得到效果。 */
     if (!inst?.adaptInput) return;
     const gen = (inst.adaptGen || 0) + 1;
     inst.adaptGen = gen;
@@ -330,6 +368,13 @@ export function createHost(opts = {}) {
     }
     inst.adaptTeardown = td;
   }
+
+  // 策略变更（可能来自 iframe 设置页）→ 对当前插件重算适配。
+  // 只重算当前这一个：其它插件下次挂载时自然会按新策略来，
+  // 没必要为没在显示的东西付采样开销。
+  onAdaptPolicyChanged = () => {
+    if (state.instance) reAdapt(state.instance);
+  };
 
   /* ---- 模式 A：同页模块插件 ---- */
   async function mountModule(stage, manifest, token) {
@@ -569,7 +614,8 @@ export function createHost(opts = {}) {
           const { ns, method, args } = payload || {};
           const mod = ns === 'pluginConfig' ? pluginConfig
             : ns === 'external' ? extPolicy
-            : ns === 'theme' ? themeApi : null;
+            : ns === 'theme' ? themeApi
+            : ns === 'normalizer' ? normalizerApi : null;
           if (!mod) return reply(false, null, '未知外壳命名空间: ' + ns);
           const fn = mod[method];
           if (typeof fn !== 'function') return reply(false, null, `未知方法: ${ns}.${method}`);

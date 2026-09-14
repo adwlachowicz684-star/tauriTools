@@ -78,6 +78,19 @@ export default function Settings() {
     } catch { /* 桥接不可用：保持本地结果 */ }
   };
 
+  /**
+   * 把适配策略同步给主平台侧并**触发重算**。
+   *
+   * 与主题同一类问题：策略存 localStorage，iframe 隔离态下本地写不进
+   * 主平台侧。更关键的是——适配滤镜是 installAdapter 时按策略算一次就
+   * 固化的，策略改了不重算，当前插件看起来就是"改了没反应"。
+   * 宿主侧的写方法会在写完后重跑 reAdapt，所以这一步不只是"存对"。
+   */
+  const syncPolicyToShell = async (fn: (() => Promise<unknown>) | undefined) => {
+    if (!fn) return;
+    try { await fn(); } catch { /* 桥接不可用：保持本地结果 */ }
+  };
+
   return (
     <>
       {/* ---------------- 分页导航 ---------------- */}
@@ -308,7 +321,11 @@ export default function Settings() {
                 className="p-input"
                 style={{ width: 220 }}
                 value={policy}
-                onChange={(e) => { setPolicy(e.target.value); setPolicyState(e.target.value); }}
+                onChange={(e) => {
+                  setPolicy(e.target.value);
+                  setPolicyState(e.target.value);
+                  void syncPolicyToShell(() => (ctx as any)?.shell?.normalizer?.setPolicy(e.target.value));
+                }}
               >
                 {ADAPT_POLICIES.map((p) => (
                   <option key={p.value} value={p.value}>{p.label}</option>
@@ -348,6 +365,8 @@ export default function Settings() {
                   value={getPluginOverride(p.id) ?? ''}
                   onChange={(e) => {
                     setPluginOverride(p.id, e.target.value || null);
+                    void syncPolicyToShell(() => (ctx as any)?.shell?.normalizer
+                      ?.setPluginOverride(p.id, e.target.value || null));
                     ctx.toast(`「${p.name}」适配策略已更新`, 'ok');
                   }}
                 >
