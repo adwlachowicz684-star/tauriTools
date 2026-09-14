@@ -35,8 +35,10 @@ bootIframePlugin(async (ctx) => {
   /* ------------------------- 状态 ------------------------- */
 
   let settings = (await store.settings.load()) || { animate: false, backupMinutes: 2, backupMax: 3 };
-  // filesOpen 默认开：老配置里没有这个字段，undefined 会让面板一进来就是收起的
-  if (settings.filesOpen === undefined) settings.filesOpen = true;
+  // filesOpen 默认关：文件库是 Web 版多文档功能，C# 原版没有左栏。
+  // 收起时画布左右只剩「属性侧栏」一侧占位，更接近原版观感；需要切换脑图时
+  // 点 📚 展开。老配置里没有这个字段时 undefined 会走 falsy 分支，正是想要的默认收起。
+  if (settings.filesOpen === undefined) settings.filesOpen = false;
 
   /* --------------------- 文件库（多文档） ---------------------
    * 旧版本整个插件只有一份工作簿（存在 workbook 键下）。
@@ -135,15 +137,21 @@ bootIframePlugin(async (ctx) => {
   const foot = h('div.mm-foot', {},
     tabsEl,
     addSheetBtn,
-    statusEl,
   );
+
+  /**
+   * 状态条单独一行（对齐 C# MindMapPanel 的 Grid.Row=3）。
+   * 之前它跟页签挤在同一条里，页签一多就把状态文字顶得忽长忽短；
+   * 拆出来后各自独立，也让底部成为「画布页签 / 状态」两行，与 C# 一致。
+   */
+  const statusBar = h('div.mm-statusbar', {}, statusEl);
 
   const rail = h('div.mm-rail', {});
   const toolbar = h('div.mm-toolbar', {});
   const body = h('div.mm-body', {}, rail, canvasEl);
 
   const root = h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%', gap: '10px' } },
-    toolbar, body, foot);
+    toolbar, body, foot, statusBar);
 
   ctx.root.appendChild(root);
 
@@ -332,26 +340,13 @@ bootIframePlugin(async (ctx) => {
 
   function buildRail() {
     rail.innerHTML = '';
-    // 文件库开关放在最上：它不是「属性页」，是切换编辑对象的入口
+    // 图标条现在只留「文件库」开关。
+    // 四个属性页的入口已经跟着侧栏搬到右侧顶部 —— 侧栏常驻后，
+    // 页签放在画布左边、内容显示在画布右边，视线要横穿整个画面对不上号。
     rail.appendChild(h('button.mm-btn' + (settings.filesOpen ? '.on' : ''), {
       title: settings.filesOpen ? '隐藏脑图文件列表' : '显示脑图文件列表',
       onclick: () => toggleFiles(),
     }, '📚'));
-    rail.appendChild(h('div.mm-rail-sep', {}));
-    const defs = [
-      ['📁', '文件'],
-      ['🎨', '样式'],
-      ['🏷', '标签'],
-      ['🌈', '主题'],
-    ];
-    const keys = ['file', 'style', 'tag', 'theme'];
-    defs.forEach(([icon, label], i) => {
-      // .page 标记：与最上面的「文件库」开关区分，避免按序号取按钮时错位
-      rail.appendChild(h('button.mm-btn.page', {
-        title: label,
-        onclick: () => side.open(keys[i]),
-      }, icon));
-    });
   }
 
   /* ------------------------- 页签 ------------------------- */
@@ -1195,9 +1190,11 @@ bootIframePlugin(async (ctx) => {
   };
   side = buildSide(app);
   fileList = buildFileList(app);
-  // 顺序：图标条 | 文件库 | 属性侧栏 | 画布
-  body.insertBefore(side.el, canvasEl);
-  body.insertBefore(fileList.el, side.el);
+  // 顺序对齐 C# MindMapPanel 的主体两列：[文件库] | 画布 | [属性侧栏 276px]
+  //   左侧：文件库（Web 版多文档功能，C# 没有；默认收起，点 📚 展开）
+  //   右侧：属性侧栏（样式/标签/主题/文件），C# 里固定 276px 常驻
+  body.insertBefore(fileList.el, canvasEl);
+  body.appendChild(side.el);
   fileList.setOpen(!!settings.filesOpen);
   buildRail();
   renderTabs();

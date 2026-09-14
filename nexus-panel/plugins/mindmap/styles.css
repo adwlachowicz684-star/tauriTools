@@ -138,18 +138,56 @@ html, body {
 }
 .mm-rail .mm-btn { width: 34px; padding: 0; }
 
+/* 右侧属性侧栏：对齐 C# MindMapPanel 的 Column 1（Width="276"），常驻不折叠 */
 .mm-side {
-  flex: 0 0 246px;
-  display: none;
+  flex: 0 0 276px;
+  display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 12px;
   border-radius: var(--r, 14px);
   background: var(--surface);
   box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
+  /* 整栏不滚动：页签固定在顶部，只有内容区滚动 —— 否则翻到下面页签就跟着跑了 */
+  overflow: hidden;
+  min-height: 0;
+}
+/* 页签条 */
+.mm-side-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border, transparent);
+}
+.mm-side-tab {
+  flex: 1 1 0;
+  height: 26px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 13px;
+  background: var(--surface-sunk, var(--surface));
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);
+}
+.mm-side-tab:hover { color: var(--accent); }
+.mm-side-tab.on {
+  color: var(--accent);
+  background: var(--surface);
+  box-shadow: 3px 3px 6px var(--sh-dark), -3px -3px 6px var(--sh-light);
+}
+/* 内容区：吃掉剩余高度并自行滚动 */
+.mm-side-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   overflow-y: auto;
 }
-.mm-side.open { display: flex; }
 
 .mm-side h3 {
   margin: 0;
@@ -226,6 +264,16 @@ html, body {
 
 .mm-tab .x { margin-left: 6px; opacity: .6; }
 .mm-tab .x:hover { opacity: 1; color: var(--danger, #e06c75); }
+
+/* 底部状态条：独立一行，对齐 C# MindMapPanel 的 Grid.Row=3 */
+.mm-statusbar {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border-radius: var(--r-sm, 8px);
+  background: var(--surface);
+  box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
+  overflow: hidden;
+}
 
 .mm-status {
   /* 不要加 margin-left:auto —— 底栏的「新建画布」按钮已经用它把自己推到最右，
@@ -398,14 +446,6 @@ video.mm-video { width: 100%; border-radius: 9px; background: #000; }
 .mm-files-title { font-size: 12px; font-weight: 600; color: var(--text); }
 .mm-files-body { display: flex; flex-direction: column; gap: 3px; min-height: 0; }
 .mm-files .mm-hint { color: var(--text-mute); font-size: 11px; padding: 3px 4px; }
-
-/* 图标条里的小分隔线 */
-.mm-rail-sep {
-  height: 1px;
-  margin: 2px 0;
-  background: var(--border, transparent);
-  box-shadow: 0 1px 0 var(--sh-light);
-}
 
 /* 一组文件（根目录 / 文件夹内容），同时是放置区 */
 .mm-file-group {

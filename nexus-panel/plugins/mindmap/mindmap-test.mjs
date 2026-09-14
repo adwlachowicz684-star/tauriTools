@@ -650,7 +650,8 @@ group('新建画布按钮（＋）位置');
   ok(/marginLeft:\s*'auto'/.test(foot),
     '新建按钮用 margin-left:auto 钉到最右 —— 页签少时不加它就停在一行中间');
   ok(/flex:\s*'0 0 auto'/.test(foot), '新建按钮不被压缩');
-  ok(foot.indexOf('addSheetBtn') < foot.indexOf('statusEl'), '顺序：页签区 → 「＋」→ 状态文字');
+  ok(/const foot = h\('div\.mm-foot', \{\},\s*\n\s*tabsEl,\s*\n\s*addSheetBtn,/.test(foot),
+    '底栏只放页签区与「＋」（状态文字已拆到独立状态条）');
 
   // 注释里也会提到这些属性名（说明"为什么不能加"），断言前先剥掉注释，
   // 否则会被自己写的说明文字误伤。
@@ -668,66 +669,63 @@ group('新建画布按钮（＋）位置');
 }
 
 /* ============================================================
-   十、审查清单 P2 · 监听器注销与 postMessage 目标源
+   十、面板分布（对齐 C# MindMapPanel）
    ============================================================ */
 
-group('P2-1 · pickFile 的 change 监听成对注销');
-{
-  const io = await import('./io.js');
-  const src = fs.readFileSync(path.join(HERE, 'io.js'), 'utf8');
-  const fn = src.slice(src.indexOf('export function pickFile'), src.indexOf('/**\n * 读取文本文件内容'));
-  ok(/inp\.addEventListener\('change',\s*onChange\)/.test(fn), '注册的是命名函数 onChange');
-  ok(/inp\.removeEventListener\('change',\s*onChange\)/.test(fn), 'finish 内成对注销');
-  ok(!/addEventListener\('change',\s*\(\)\s*=>/.test(fn), '不是无法注销的匿名箭头函数');
+group('面板分布：左文件库 / 中画布 / 右属性侧栏');
 
-  // 行为：change 触发后 input 摘除、Promise 结算，重复派发不二次响应
-  const p = io.pickFile('.json');
-  const inp = document.querySelector('input[type=file]');
-  ok(!!inp, '一次性 input 已挂到 DOM 上');
-  inp.dispatchEvent(new dom.window.Event('change'));
-  eq(await p, null, '无文件时 resolve null');
-  ok(!inp.isConnected, 'change 后 input 从 DOM 移除');
-  inp.dispatchEvent(new dom.window.Event('change'));
-  ok(true, '监听器已注销，重复派发不抛错');
+{
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+
+  // 10.1 主体三段的顺序：[文件库] | 画布 | [属性侧栏]
+  // 用 lastIndexOf 取收尾处的那次调用：buildRail() 在文件里出现两次（定义外的
+  // 早期调用点 + 初始化末尾），取第一个会让切片为空、断言静默失真。
+  const mount = src.slice(src.indexOf('side = buildSide(app)'), src.lastIndexOf('buildRail();'));
+  ok(/insertBefore\(fileList\.el,\s*canvasEl\)/.test(mount), '文件库插在画布**左**边');
+  ok(/appendChild\(side\.el\)/.test(mount), '属性侧栏挂在画布**右**边（appendChild 到 body 末尾）');
+  ok(mount.indexOf('insertBefore(fileList.el') < mount.indexOf('appendChild(side.el'),
+    '先插文件库、再挂侧栏 —— 画布始终夹在中间');
+
+  // 10.2 文件库默认收起（Web 版多文档，C# 没有左栏，收起更接近原版观感）
+  ok(/filesOpen === undefined\)\s*settings\.filesOpen = false/.test(src), 'filesOpen 默认 false（默认收起）');
+
+  // 10.3 图标条只留文件库开关：四个属性页入口已随侧栏搬到右侧
+  const railFn = src.slice(src.indexOf('function buildRail'), src.indexOf('/* ------------------------- 页签'));
+  ok(/📚/.test(railFn), '图标条保留文件库开关 📚');
+  ok(!/side\.open\(/.test(railFn), '图标条不再放属性页入口（页签已移到侧栏顶部）');
+
+  // 10.4 底部两行：画布页签条 + 独立状态条（对齐 C# 的 Grid.Row=2 / Row=3）
+  ok(/const statusBar = h\('div\.mm-statusbar', \{\}, statusEl\)/.test(src), '状态条独立成行');
+  ok(/toolbar,\s*body,\s*foot,\s*statusBar/.test(src), '根容器顺序：顶栏 → 主体 → 页签条 → 状态条');
 }
 
-group('P2-2 · postMessage 目标源不再是通配');
 {
-  const src = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
-  // 去掉注释再查，避免注释里提到的 '*' 干扰
-  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  ok(/^\s*_targetOrigin\(\s*\)/m.test(src), '定义了 _targetOrigin()');
-  ok(!/postMessage\([^)]*,\s*'\*'\s*\)/.test(code), '代码里不再有写死的通配目标');
+  // 10.5 侧栏自身：常驻 276px + 页签在内容上方
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const sideCss = css.slice(css.indexOf('.mm-side {'), css.indexOf('.mm-side h3'));
+  ok(/flex:\s*0 0 276px/.test(sideCss), '侧栏固定 276px（与 C# Column 1 的 Width="276" 一致）');
+  ok(/display:\s*flex/.test(sideCss), '侧栏默认显示（常驻，不靠 .open 打开）');
+  ok(!/display:\s*none/.test(sideCss), '不再 display:none —— 否则一进来是空的');
 
-  for (const [segName, from, to] of [
-    ['命令应答', 'async _handleRequest', '/* ---------------------- 命令封装'],
-    ['主题下发', 'setCanvasTheme(vars)', '/** 历史栈可用性探测'],
-  ]) {
-    const seg = src.slice(src.indexOf(from), src.indexOf(to));
-    ok(/this\._targetOrigin\(\)/.test(seg), `${segName}走 _targetOrigin()`);
-  }
+  const { buildSide } = await import('./panels.js');
+  const el = buildSide({ api: { status() {} } }).el;
+  ok(el.classList.contains('open'), '侧栏根节点带 open 类');
+  eq(el.dataset.page, 'theme', '默认停在「主题」页（对齐 C# ShowSidePage("theme")）');
 
-  const { EditorBridge } = await import('./editor-bridge.js');
-  const bridge = new EditorBridge(document.createElement('div'), {});
-  const sent = [];
-  bridge.iframe = {
-    src: 'http://tauri.localhost/nexus-panel/plugins/mindmap/editor/index.html',
-    contentWindow: { postMessage: (m, o) => sent.push(o) },
-    remove() {},
-  };
-  eq(bridge._targetOrigin(), 'http://tauri.localhost', '取 iframe 自身的源，不是通配');
-  bridge.setCanvasTheme({ background: '#000' });
-  eq(sent[0], 'http://tauri.localhost', '主题下发按收窄后的源发送');
+  const tabs = el.querySelector('.mm-side-tabs');
+  const content = el.querySelector('.mm-side-body');
+  ok(!!tabs && !!content, '侧栏拆成页签条 + 内容区两块');
+  eq([...tabs.children].map((b) => b.textContent).join('/'), '主题/标签/样式/文件',
+    '页签顺序：主题 → 标签 → 样式 → 文件（与 C# 顶栏四个 ToggleButton 一致）');
+  eq(el.children[0], tabs, '页签在内容区**上方**');
 
-  bridge.handlers.onHostRequest = async () => ({ ok: true });
-  await bridge._handleRequest({ id: 'r1', action: 'ping', payload: {} });
-  eq(sent[1], 'http://tauri.localhost', '命令应答按收窄后的源发送');
-
-  // 源拿不到时（iframe 还停在 about:blank）不能误用上一次的源 ——
-  // 那会让消息被静默丢弃，比广播更难排查
-  bridge.iframe = { src: '', contentWindow: null, remove() {} };
-  ok(bridge._targetOrigin() !== 'http://tauri.localhost', '无 src 时不会误用上一次的源');
-  bridge.destroy();
+  // 10.6 点当前页不再把面板点没（常驻侧栏没有收起语义）
+  const tagBtn = [...tabs.children].find((b) => b.textContent === '标签');
+  tagBtn.click();
+  eq(el.dataset.page, 'tag', '点「标签」切到标签页');
+  [...el.querySelector('.mm-side-tabs').children].find((b) => b.textContent === '标签').click();
+  eq(el.dataset.page, 'tag', '再点一次仍停在标签页（不会收起 —— 常驻侧栏）');
+  ok(!/display:\s*none/.test(el.style.cssText), '重复点击后面板依然可见');
 }
 
 /* ============================================================
