@@ -49,7 +49,15 @@ export function normalizeSheets(sheets) {
     return {
       id,
       title: typeof s.title === 'string' && s.title ? s.title : `画布 ${i + 1}`,
-      content: typeof s.content === 'string' ? s.content : emptyContent(),
+      // 内容既可能是字符串也可能是对象：
+      //   · newSheet() 建新画布时存的是 emptyContent() 的字符串
+      //   · 编辑后 exportJson() 返回对象，doSave/capture 直接赋给 s.content
+      // 原写法 `typeof === 'string' ? s.content : emptyContent()` 会把
+      // **所有编辑过的内容一律换成默认空画布** —— 表现为每次打开插件、
+      // 或每切换一次文件/画布，内容就变回「中心主题」。必须两种都保留。
+      content: typeof s.content === 'string'
+        ? s.content
+        : (s.content && typeof s.content === 'object' ? s.content : emptyContent()),
       theme: s.theme || DEFAULT_THEME,
       layout: s.layout || DEFAULT_LAYOUT,
     };

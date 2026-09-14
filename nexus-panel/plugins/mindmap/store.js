@@ -115,7 +115,10 @@ export async function keys(prefix = '') {
 
 /* --------------------------- 语义化封装 --------------------------- */
 
-const K_WORKBOOK = 'workbook';
+const K_WORKBOOK = 'workbook';   // 旧版单工作簿键，仅用于迁移
+const K_FILES = 'fileindex';
+const K_FOLDERS = 'folders';
+const K_DOC = 'doc:';
 const K_THEMES = 'themes';
 const K_SETTINGS = 'settings';
 const K_BACKUP = 'backup:';
@@ -125,6 +128,41 @@ export const workbook = {
   load: () => get(K_WORKBOOK, null),
   save: (wb) => set(K_WORKBOOK, wb),
 };
+
+/**
+ * 文件库（多文档）。
+ * ============================================================
+ * 旧模型是「一个工作簿 + 多张画布」，整份数据存在 workbook 键下。
+ * 加入左侧文件列表后改为「一个文件 = 一份工作簿」，各自存 doc:<id>，
+ * 列表本身只存轻量索引（名称 / 归属文件夹），不存画布内容 ——
+ * 否则每次打开文件都要把所有脑图读进内存。
+ *
+ * fileIndex: [{ id, name, folderId }]   folderId 为 null 表示在根目录
+ * folders:   [{ id, name, collapsed }]
+ */
+export const files = {
+  load: () => get(K_FILES, null),
+  save: (v) => set(K_FILES, v),
+};
+
+export const folders = {
+  load: () => get(K_FOLDERS, []),
+  save: (v) => set(K_FOLDERS, v),
+};
+
+/** 单个脑图文件的内容（一份工作簿） */
+export function doc(id) {
+  return {
+    load: () => get(K_DOC + id, null),
+    save: (v) => set(K_DOC + id, v),
+    del: () => del(K_DOC + id),
+  };
+}
+
+/** 列出所有文档 key（用于清理孤儿数据） */
+export function docKeys() {
+  return keys(K_DOC);
+}
 
 /** 自定义主题数组 */
 export const themes = {

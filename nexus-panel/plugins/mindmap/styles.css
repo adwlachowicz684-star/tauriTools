@@ -369,3 +369,104 @@ video.mm-video { width: 100%; border-radius: 9px; background: #000; }
   font-family: Consolas, 'SF Mono', Menlo, monospace;
   color: var(--text, #d8dee9);
 }
+
+/* ============================================================
+   左侧文件库（脑图文件列表 / 文件夹）
+   ============================================================ */
+
+.mm-files {
+  flex: 0 0 186px;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--r, 14px);
+  background: var(--surface);
+  box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
+  overflow-y: auto;
+}
+.mm-files.open { display: flex; }
+
+.mm-files-head { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+.mm-files-title { font-size: 12px; font-weight: 600; color: var(--text); }
+.mm-files-body { display: flex; flex-direction: column; gap: 3px; min-height: 0; }
+.mm-files .mm-hint { color: var(--text-mute); font-size: 11px; padding: 3px 4px; }
+
+/* 图标条里的小分隔线 */
+.mm-rail-sep {
+  height: 1px;
+  margin: 2px 0;
+  background: var(--border, transparent);
+  box-shadow: 0 1px 0 var(--sh-light);
+}
+
+/* 一组文件（根目录 / 文件夹内容），同时是放置区 */
+.mm-file-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 22px;
+  border-radius: 8px;
+  padding: 2px;
+  transition: box-shadow .12s;
+}
+.mm-file-group.drop-on,
+.mm-folder-head.drop-on {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* 单个脑图文件 */
+.mm-file-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--text);
+}
+.mm-file-item:hover { background: var(--surface-sunk, var(--surface)); }
+.mm-file-item.active {
+  color: var(--accent);
+  box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);
+}
+.mm-file-item.dragging { opacity: .4; }
+
+.mm-file-ic { flex: 0 0 auto; font-size: 12px; opacity: .85; }
+.mm-file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 操作按钮平时藏起来，悬停才出现，避免列表一眼全是图标 */
+.mm-file-ops { flex: 0 0 auto; display: flex; gap: 2px; opacity: 0; transition: opacity .12s; }
+.mm-file-item:hover .mm-file-ops,
+.mm-folder-head:hover .mm-file-ops { opacity: 1; }
+.mm-btn.icon.tiny { padding: 0 4px; font-size: 11px; }
+
+/* 文件夹 */
+.mm-folder { display: flex; flex-direction: column; gap: 2px; }
+.mm-folder-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--text);
+}
+.mm-folder-head:hover { background: var(--surface-sunk, var(--surface)); }
+.mm-file-count {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--text-mute);
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--surface-sunk, var(--surface));
+}

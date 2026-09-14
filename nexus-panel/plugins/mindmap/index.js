@@ -20,6 +20,7 @@ import * as wb from './workbook.js';
 import * as store from './store.js';
 import * as io from './io.js';
 import { buildSide, openVideo, openPreview } from './panels.js';
+import { buildFileList } from './filelist.js';
 import * as xmind from './xmind.js';
 
 /** 外壳桥接频道（plugin-sdk 的 BRIDGE_CHANNEL），用于捕获运行时主题切换 */
@@ -33,13 +34,34 @@ bootIframePlugin(async (ctx) => {
 
   /* ------------------------- 状态 ------------------------- */
 
-  let workbook = (await store.workbook.load()) || wb.newWorkbook();
+  let settings = (await store.settings.load()) || { animate: false, backupMinutes: 2, backupMax: 3 };
+  // filesOpen 默认开：老配置里没有这个字段，undefined 会让面板一进来就是收起的
+  if (settings.filesOpen === undefined) settings.filesOpen = true;
+
+  /* --------------------- 文件库（多文档） ---------------------
+   * 旧版本整个插件只有一份工作簿（存在 workbook 键下）。
+   * 有了左侧文件列表后改为「一个文件 = 一份工作簿」，各存 doc:<id>。
+   * 首次进入把旧数据迁移成第一个文件，老用户不会丢内容。 */
+  let foldersList = (await store.folders.load()) || [];
+  let fileIndex = await store.files.load();
+  if (!Array.isArray(fileIndex) || !fileIndex.length) {
+    const id = newFileId();
+    const legacy = await store.workbook.load();
+    await store.doc(id).save(legacy || wb.newWorkbook());
+    fileIndex = [{ id, name: '我的脑图', folderId: null }];
+    await store.files.save(fileIndex);
+  }
+  let currentFileId = fileIndex.some((f) => f.id === settings.lastFileId)
+    ? settings.lastFileId
+    : fileIndex[0].id;
+
+  let workbook = (await store.doc(currentFileId).load()) || wb.newWorkbook();
   workbook.sheets = wb.normalizeSheets(workbook.sheets);
   let customThemes = (await store.themes.load()) || [];
-  let settings = (await store.settings.load()) || { animate: false, backupMinutes: 2, backupMax: 3 };
 
   let bridge = null;
   let side = null;
+  let fileList = null;      // 左侧文件库面板
   let nodeStyleCache = {};
   let saveTimer = null;
   let lastBackupAt = 0;
@@ -55,6 +77,15 @@ bootIframePlugin(async (ctx) => {
   let suppress = false;
 
   const sheet = () => workbook.sheets.find((s) => s.id === workbook.activeId) || workbook.sheets[0];
+
+  // 用函数声明而非 const 箭头函数：上面的文件库迁移在初始化阶段就要用 newFileId，
+  // const 存在暂时性死区，此时访问会抛 ReferenceError（整个插件挂不上）。
+  function newFileId() {
+    return 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  }
+  function newFolderId() {
+    return 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  }
 
   /**
    * 两份画布快照是否内容相同。
@@ -213,6 +244,12 @@ bootIframePlugin(async (ctx) => {
 
   function buildRail() {
     rail.innerHTML = '';
+    // 文件库开关放在最上：它不是「属性页」，是切换编辑对象的入口
+    rail.appendChild(h('button.mm-btn' + (settings.filesOpen ? '.on' : ''), {
+      title: settings.filesOpen ? '隐藏脑图文件列表' : '显示脑图文件列表',
+      onclick: () => toggleFiles(),
+    }, '📚'));
+    rail.appendChild(h('div.mm-rail-sep', {}));
     const defs = [
       ['📁', '文件'],
       ['🎨', '样式'],
@@ -221,7 +258,8 @@ bootIframePlugin(async (ctx) => {
     ];
     const keys = ['file', 'style', 'tag', 'theme'];
     defs.forEach(([icon, label], i) => {
-      rail.appendChild(h('button.mm-btn', {
+      // .page 标记：与最上面的「文件库」开关区分，避免按序号取按钮时错位
+      rail.appendChild(h('button.mm-btn.page', {
         title: label,
         onclick: () => side.open(keys[i]),
       }, icon));
@@ -363,6 +401,165 @@ bootIframePlugin(async (ctx) => {
     renderTabs();
     await loadSheet();
     persist();
+  }
+
+  /* ------------------------- 文件库（多文档） ------------------------- */
+
+  function renderFiles() {
+    fileList?.refresh();
+  }
+
+  /**
+   * 清空撤销/重做栈。
+   * 切换文件时必须清 —— 栈里存的是上一个文件的快照，
+   * 跨文件撤销会把别的内容倒进当前画布。
+   */
+  function resetHistory() {
+    undoStack = [];
+    redoStack = [];
+    lastSnap = null;
+    lastBackupFp = null;
+    lastBackupAt = 0;
+  }
+
+  /** 只做「载入并切换」，不保存当前文件（保存由 openFile 负责） */
+  async function switchToFile(id) {
+    currentFileId = id;
+    settings.lastFileId = id;
+    await store.settings.save(settings);
+    workbook = (await store.doc(id).load()) || wb.newWorkbook();
+    workbook.sheets = wb.normalizeSheets(workbook.sheets);
+    resetHistory();
+    renderTabs();
+    renderFiles();
+    await loadSheet();
+    updateBadge();
+  }
+
+  /** 打开另一个脑图文件：先收当前编辑并落盘，失败则拒绝切换（避免丢内容） */
+  async function openFile(id) {
+    if (id === currentFileId) return;
+    if (!fileIndex.some((f) => f.id === id)) { status('文件不存在', true); return; }
+    capture();
+    const saved = await persist();
+    if (!saved) { status('切换失败：当前脑图没能保存', true); return; }
+    await switchToFile(id);
+    status('已打开：' + (fileIndex.find((f) => f.id === id)?.name || ''));
+  }
+
+  async function createFile(folderId = null) {
+    // 当前文件还在列表里才保存 —— 删掉最后一个文件后 currentFileId 已成孤儿，
+    // 此时 persist 会把内容写回刚删掉的 doc 键，留下一份没人引用的垃圾数据。
+    if (fileIndex.some((f) => f.id === currentFileId)) {
+      capture();
+      await persist();
+    }
+    const id = newFileId();
+    await store.doc(id).save(wb.newWorkbook());
+    const base = '未命名脑图';
+    let name = base;
+    let n = 1;
+    while (fileIndex.some((f) => f.name === name)) name = `${base} ${++n}`;
+    fileIndex.push({ id, name, folderId });
+    await store.files.save(fileIndex);
+    renderFiles();
+    status('已新建：' + name);
+    await openFile(id);
+  }
+
+  function renameFile(id) {
+    const f = fileIndex.find((x) => x.id === id);
+    if (!f) return;
+    const name = window.prompt('脑图名称', f.name);
+    if (name == null) return;
+    f.name = name.trim() || f.name;
+    store.files.save(fileIndex);
+    renderFiles();
+    status('已重命名');
+  }
+
+  /**
+   * 删除文件。删的是当前文件时直接切到另一个（不能走 openFile，
+   * 它会先 persist 到刚删掉的 doc 上，等于把内容写回去）。
+   */
+  async function deleteFile(id) {
+    const f = fileIndex.find((x) => x.id === id);
+    if (!f) return;
+    if (!window.confirm(`删除「${f.name}」？该脑图下的所有画布都会一并删除。`)) return;
+    fileIndex = fileIndex.filter((x) => x.id !== id);
+    await store.files.save(fileIndex);
+    await store.doc(id).del();
+    if (id === currentFileId) {
+      if (fileIndex.length) await switchToFile(fileIndex[0].id);
+      else await createFile(null);        // 删光了也要能继续用
+    }
+    renderFiles();
+    status('已删除：' + f.name);
+  }
+
+  async function createFolder() {
+    const name = window.prompt('文件夹名称', '新建文件夹');
+    if (name == null) return;
+    foldersList.push({ id: newFolderId(), name: name.trim() || '新建文件夹', collapsed: false });
+    await store.folders.save(foldersList);
+    renderFiles();
+    status('已新建文件夹');
+  }
+
+  function renameFolder(id) {
+    const fo = foldersList.find((x) => x.id === id);
+    if (!fo) return;
+    const name = window.prompt('文件夹名称', fo.name);
+    if (name == null) return;
+    fo.name = name.trim() || fo.name;
+    store.folders.save(foldersList);
+    renderFiles();
+  }
+
+  /** 只删文件夹，里面的文件移到根目录（不连带删除，避免误删内容） */
+  async function deleteFolder(id) {
+    const fo = foldersList.find((x) => x.id === id);
+    if (!fo) return;
+    const n = fileIndex.filter((f) => f.folderId === id).length;
+    if (!window.confirm(`删除文件夹「${fo.name}」？里面 ${n} 个脑图会移到根目录，不会被删除。`)) return;
+    for (const f of fileIndex) if (f.folderId === id) f.folderId = null;
+    foldersList = foldersList.filter((x) => x.id !== id);
+    await store.files.save(fileIndex);
+    await store.folders.save(foldersList);
+    renderFiles();
+    status('已删除文件夹');
+  }
+
+  function toggleFolder(id) {
+    const fo = foldersList.find((x) => x.id === id);
+    if (!fo) return;
+    fo.collapsed = !fo.collapsed;
+    store.folders.save(foldersList);
+    renderFiles();
+  }
+
+  async function moveFile(fileId, folderId) {
+    const f = fileIndex.find((x) => x.id === fileId);
+    if (!f || f.folderId === folderId) return;
+    if (folderId && !foldersList.some((x) => x.id === folderId)) return;
+    f.folderId = folderId;
+    await store.files.save(fileIndex);
+    renderFiles();
+    const to = folderId ? (foldersList.find((x) => x.id === folderId)?.name || '文件夹') : '根目录';
+    status(`已把「${f.name}」移到 ${to}`);
+  }
+
+  function fileState() {
+    return { files: fileIndex, folders: foldersList, currentId: currentFileId };
+  }
+
+  /** 文件库面板展开/隐藏，状态记在设置里，下次进来保持 */
+  function toggleFiles(force) {
+    const on = force == null ? !settings.filesOpen : !!force;
+    settings.filesOpen = on;
+    store.settings.save(settings);
+    fileList?.setOpen(on);
+    buildRail();
   }
 
   /* ------------------------- 编辑器装载 ------------------------- */
@@ -517,7 +714,7 @@ bootIframePlugin(async (ctx) => {
     // 注意 store.set 是「吞异常返回 false」而不是抛出，所以必须检查返回值，
     // 只写 try/catch 的话写失败会被静默吞掉。
     try {
-      const ok = await store.workbook.save(workbook);
+      const ok = await store.doc(currentFileId).save(workbook);
       if (!ok) status('保存失败：本地存储写入被拒绝（可能是空间不足）', true);
       return ok;
     } catch (e) {
@@ -813,6 +1010,17 @@ bootIframePlugin(async (ctx) => {
   const api = {
     status,
     commit,
+    // —— 文件库（左侧面板）——
+    fileState,
+    openFile: guard('打开文件', openFile),
+    createFile: guard('新建文件', (folderId) => createFile(folderId)),
+    renameFile: guard('重命名', renameFile),
+    deleteFile: guard('删除文件', deleteFile),
+    createFolder: guard('新建文件夹', createFolder),
+    renameFolder: guard('重命名文件夹', renameFolder),
+    deleteFolder: guard('删除文件夹', deleteFolder),
+    toggleFolder: guard('折叠文件夹', toggleFolder),
+    moveFile: guard('移动文件', moveFile),
     backupNow: guard('备份', backupNow),
     restoreBackup: guard('恢复快照', restoreBackup),
     exportJson: guard('导出 JSON', exportJson),
@@ -871,9 +1079,14 @@ bootIframePlugin(async (ctx) => {
     sheet,
   };
   side = buildSide(app);
+  fileList = buildFileList(app);
+  // 顺序：图标条 | 文件库 | 属性侧栏 | 画布
   body.insertBefore(side.el, canvasEl);
+  body.insertBefore(fileList.el, side.el);
+  fileList.setOpen(!!settings.filesOpen);
   buildRail();
   renderTabs();
+  renderFiles();
 
   bridge = new EditorBridge(canvasEl, {
     onStatus: status,
