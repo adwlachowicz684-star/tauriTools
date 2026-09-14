@@ -684,7 +684,15 @@ bootIframePlugin(async (ctx) => {
 
     // 竞态保护：本函数由 setTimeout 触发且全程异步。若保存进行中用户切了文件，
     // 迟到的这次会把「旧 workbook」盖到新文件的 doc 键上 —— 直接丢内容。
-    // 写之前和 await 之后各比对一次，任何一次不匹配就丢弃这次保存。
+    //
+    // ⚠️ 下面这两行之间**不要插任何 await**。
+    //    `save(workbook)` 的 workbook 是在调用那一瞬间求值的闭包变量。
+    //    捕获后立刻写入，workbook 就还是「捕获那一刻」的对象，安全；
+    //    中间一旦让出控制权，switchToFile 可能已经跑完 —— 于是
+    //    savedFileId 还是旧 id，workbook 却已换成新文件的内容，
+    //    结果是**用新文件的内容覆盖旧文件**，而下面的守卫只能拦住状态栏
+    //    和备份，拦不住已经发生的这次写入。
+    //    （mindmap-test.mjs 的 M1 分组里锁了这条约束。）
     const savedFileId = currentFileId;
     // store.set 失败是返回 false 而不是抛出，不检查就会在「根本没存进去」的
     // 情况下继续往下走、最后提示「已保存」——比不提示更糟。

@@ -134,6 +134,27 @@ zip 容器自写 CRC32 + 原生 `CompressionStream('deflate-raw')`，XML 走 `DO
 反而意外躲过了「迟到的保存盖到新文件上」。改对键之后这个风险才真实存在，
 所以 `doSaveInner` 在 `await` 前后各比对一次 `currentFileId`，不匹配就丢弃这次保存。
 
+**但光有那句守卫还不够 —— 它依赖「捕获 id」与「写入」之间没有 `await`。**
+
+```js
+const savedFileId = currentFileId;                    // ① 捕获
+//   ← 这里一旦插入 await，保护就静默失效
+const saved = await store.doc(savedFileId).save(workbook);   // ② 写入
+if (savedFileId !== currentFileId) return;            // ③ 守卫
+```
+
+`workbook` 是闭包变量，在 ② **调用那一瞬间**求值。① ② 之间没有让出点时，
+它还是捕获那一刻的对象，安全；一旦中间让出，`switchToFile` 可能已经跑完 ——
+于是 `savedFileId` 还是旧 id，`workbook` 却已换成新文件的内容，
+结果是**用新文件内容覆盖旧文件**。而 ③ 只能拦住状态栏和备份，拦不住已发生的写入。
+
+已实测（测试里的对照组）：两组代码守卫完全相同，只差中间有没有 `await`，
+有 `await` 的那组 `doc:f1` 直接被写成 f2 的内容。
+
+因此 `mindmap-test.mjs` 除了验证守卫存在，还锁住「① ② 之间恰好一个 `await`，
+且它就是 save 调用本身」。插入一个看似无害的 `await Promise.resolve()` 会让测试变红 ——
+这条断言做过变异验证，不是摆设。
+
 **M7 只改 `switchSheet`，没改 `switchToFile`。**
 清单建议两处都加，但 `switchToFile` 的三个调用点里：
 
@@ -145,7 +166,7 @@ zip 容器自写 CRC32 + 原生 `CompressionStream('deflate-raw')`，XML 走 `DO
 
 ### 测试
 
-新增 `mindmap-test.mjs`（`npm run test:mindmap`），61 项断言。
+新增 `mindmap-test.mjs`（`npm run test:mindmap`），69 项断言。
 自带 IndexedDB 内存桩（jsdom 不带 IndexedDB），桩上留了 `failPut` / `failTx` 开关
 专门用来验证 M8 的「失败要看得见」—— 否则错误处理就是没测过的空壳。
 
@@ -339,7 +360,7 @@ Ctrl+Shift+L（整理布局）/ Ctrl+=-（缩放）/ Ctrl+A（全选）/ Ctrl+C/
   再清空库（模拟换机器）导入，确认字节、文件名、扩展名全部还原；
 - 插件挂载 / 数据流 / 导入主题样式 / 补齐项 / XMind / 附件 / 画布主题 / 健壮性：
   jsdom 八组测试全通过；
-- **M1~M8 修复**：`mindmap-test.mjs` 61 项断言全通过（含真实构造的 zip bomb
+- **M1~M8 修复**：`mindmap-test.mjs` 69 项断言全通过（含真实构造的 zip bomb
   与 2000 层嵌套样本）；
 - **未做真实浏览器渲染验证**（沙盒无法安装 Chromium），kityminder 的 SVG 渲染需在 Tauri 里实测确认。
 
