@@ -245,5 +245,30 @@ off();
 tm.applyTheme('neumorph-dark');
 t('取消订阅后不再通知', notified === 2, String(notified));
 
+/* ---------- 10. 易漏项：点缀色可读性 / 风格角标 ---------- */
+const { STYLE_LABELS } = await import('./js/themes.js');
+
+/* 点缀色（强调色 / 环境色）不是正文，但至少要看得见 —— 非文本元素的 AA 线是 3:1。
+   浅色底最容易翻车：青色 #48e0c0 在米白底只有 1.4:1，几乎隐形。
+   基准取 --surface（卡片实际底色），玻璃主题 surface 半透明时才退回 --bg。 */
+const isHex = (c) => !!c && /^#[0-9a-f]{6}$/i.test(c);
+const decorBad = [];
+for (const x of PRESET_THEMES) {
+  const v = x.vars;
+  const card = isHex(v['--surface']) ? v['--surface'] : v['--bg'];
+  if (!isHex(card)) continue;
+  for (const k of ['--accent', '--env-color', '--text-mute']) {
+    if (!isHex(v[k])) continue;
+    const c = contrast(v[k], card);
+    if (c < 3) decorBad.push(`${x.id}(${k} ${c.toFixed(2)})`);
+  }
+}
+t('每套主题：点缀色与最弱文字对比度 ≥ 3', decorBad.length === 0, decorBad.join(', ') || '全部达标');
+
+// 卡片角标直接取 STYLE_LABELS[style]，style 拼错会渲染成一个空白角标
+const styleBad = PRESET_THEMES.filter((x) => !STYLE_LABELS[x.style]).map((x) => `${x.id}(${x.style})`);
+t('每套主题的 style 都能取到角标文案', styleBad.length === 0, styleBad.join(', ') || '全部有文案');
+t('每套主题都写了描述文案', PRESET_THEMES.every((x) => String(x.desc || '').trim().length > 0));
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
