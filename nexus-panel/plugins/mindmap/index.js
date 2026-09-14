@@ -168,8 +168,63 @@ bootIframePlugin(async (ctx) => {
 
   /* ------------------------- 工具栏 ------------------------- */
 
+  /**
+   * 判断焦点是否落在「正在输入文字」的控件里。
+   * 这类控件里 Tab 应当保持浏览器默认行为（跳到下一个控件），不能被画布抢走。
+   */
+  function isTextTarget(el) {
+    if (!el || !el.tagName) return false;
+    const t = el.tagName.toLowerCase();
+    return t === 'input' || t === 'textarea' || t === 'select' || el.isContentEditable === true;
+  }
+
+  /**
+   * Tab → 插入下级节点（XMind 语义）。
+   * ============================================================
+   * 问题：kityminder 的键盘输入全靠编辑器页里一个隐藏的 `input.km-receiver`，
+   * 焦点不在它上面时画布收不到任何键。而本层有一整排工具栏按钮 ——
+   * 用户点过任意一个之后焦点就停在 <button> 上，此时按 Tab，
+   * 浏览器拿它做焦点导航（在按钮之间跳），永远到不了画布。
+   *
+   * 点一下画布能恢复（内核在 beforemousedown 里 focus + preventDefault），
+   * 但用户通常不会先点画布再按 Tab，于是就变成「Tab 建不出下级节点」。
+   *
+   * 处理：在本层 window 上用**捕获阶段**监听 Tab，若焦点不在文本控件里就
+   * preventDefault 掉（阻止按钮间导航），再把动作转送给编辑器。
+   *
+   * 为什么用捕获阶段：要在浏览器执行「Tab → 移动焦点」这个默认行为之前拦下来，
+   * 冒泡阶段已经晚了。
+   *
+   * 为什么不会重复触发：keydown 不跨 iframe 冒泡。焦点在编辑器里时，
+   * 事件在内层文档就处理完了，本层收不到。
+   */
+  function bindTabForward() {
+    const onKey = (e) => {
+      if (e.key !== 'Tab') return;
+      if (e.ctrlKey || e.altKey || e.metaKey) return;   // 带修饰键的交给浏览器
+      if (isTextTarget(e.target)) return;               // 输入框里保持默认
+      e.preventDefault();
+      bridge?.insertChild();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }
+
+  /**
+   * 工具栏按钮点完把焦点交还画布。
+   * 不只是 Tab —— Enter / 方向键 / Delete / Ctrl+B 等同样依赖 receiver 的焦点，
+   * 点过按钮后它们会一起失效。统一在这里兜住，省得每个 handler 各写一遍。
+   *
+   * 放在 onclick 的**末尾**而非 setTimeout：handler 里若调了 window.prompt
+   * 这类同步模态，焦点会在用户关掉对话框之后才移动，顺序正好。
+   */
+  const refocusCanvas = () => { try { bridge?.focusCanvas(); } catch { /* ignore */ } };
+
   const B = (label, onclick, opt = {}) =>
-    h('button.mm-btn' + (opt.icon ? '.icon' : ''), { onclick, title: opt.title || '' }, label);
+    h('button.mm-btn' + (opt.icon ? '.icon' : ''), {
+      onclick: (e) => { const r = onclick?.(e); refocusCanvas(); return r; },
+      title: opt.title || '',
+    }, label);
 
   const group = (...els) => h('div.mm-row', {}, ...els);
 
@@ -1149,6 +1204,10 @@ bootIframePlugin(async (ctx) => {
   const unwatchTheme = watchShellTheme();
   syncCanvasTheme(ctx.theme);
 
+  // Tab 转发：焦点停在工具栏按钮上时，浏览器会拿 Tab 做焦点导航，
+  // 画布收不到键。这里拦下来转给画布（详见 bindTabForward 的注释）。
+  const unbindTab = bindTabForward();
+
   const ok = await bridge.load();
   if (!ok) {
     loadingEl.textContent = '编辑器加载失败，请点「重载」重试';
@@ -1184,6 +1243,7 @@ bootIframePlugin(async (ctx) => {
 
   return () => {
     clearTimeout(saveTimer);
+    unbindTab?.();
     unwatchTheme?.();
     bridge?.destroy();
   };

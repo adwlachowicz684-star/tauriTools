@@ -106,9 +106,7 @@
             if (window.parent && window.parent !== window) {
                 var out = { channel: KM_HOST_CHANNEL };
                 for (var k in msg) if (Object.prototype.hasOwnProperty.call(msg, k)) out[k] = msg[k];
-                // 本页与插件层同源（相对路径加载），目标 origin 写自身 origin 即可，不用 '*' 广播。
-                // file:// 下 origin 为 'null'（opaque origin），postMessage 接受该值并与父层匹配。
-                window.parent.postMessage(out, window.location.origin || '*');
+                window.parent.postMessage(out, '*');
             }
         } catch (e) {}
     }
@@ -116,9 +114,6 @@
     window.addEventListener('message', function (e) {
         var d = e && e.data;
         if (!d || d.channel !== KM_HOST_CHANNEL) return;
-        // 只认来自父窗口（插件层）的消息，与 editor-bridge.js 的 e.source 校验对称。
-        // 顶层打开时无父窗口，跳过该判断。
-        if (window.parent && window.parent !== window && e.source !== window.parent) return;
         if (d.type === 'response') {
             if (typeof window.__resolveHost === 'function') window.__resolveHost(d.id, d.result);
             return;
@@ -1988,10 +1983,30 @@
             }
 
             // 插入：Tab 子节点、Enter 同级（当前节点之后；根/无选中则插子节点）
-            kmShortcut('Tab', function () {
+            function insertChildNode() {
                 var sel = km.getSelectedNode();
                 insertNode(sel || km.getRoot(), null);
-            });
+            }
+            kmShortcut('Tab', insertChildNode);
+
+            /**
+             * 下面两个门面是给插件层（父文档）用的。
+             * ============================================================
+             * kityminder 的所有键盘输入都来自一个隐藏的 <input class="km-receiver">
+             * （_initKeyReceiver），它是 km 自己建在 renderTarget 里的。
+             * 也就是说：**只有 receiver 持有焦点时，Tab / Enter / 方向键才生效**。
+             *
+             * 而插件层（外层 index.js）有一整排工具栏按钮。用户点过任意一个之后，
+             * 焦点就停在那个 <button> 上 —— 此时按 Tab，浏览器拿它做焦点导航
+             * （在按钮之间跳），keydown 根本进不到内层 iframe，画布收不到，
+             * 表现为「Tab 建不出下级节点」。
+             *
+             * 点画布能恢复（内核在 beforemousedown 里 focus + preventDefault），
+             * 但用户往往不会先点一下画布再按 Tab。所以这里把「聚焦画布」和
+             * 「插入子节点」两个动作显式暴露出去，让插件层能把 Tab 转送过来。
+             */
+            window.__minderFocusCanvas = function () { try { km.focus(); } catch (e) {} };
+            window.__minderInsertChild = insertChildNode;
             kmShortcut('Enter', function () {
                 var sel = km.getSelectedNode();
                 if (!sel) { insertNode(km.getRoot && km.getRoot(), null); return; }

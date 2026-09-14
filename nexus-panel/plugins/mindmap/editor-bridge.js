@@ -162,34 +162,11 @@ export class EditorBridge {
     }
   }
 
-  /**
-   * 发往编辑器 iframe 的 postMessage 目标 origin。
-   *
-   * 编辑器页与本层同源（iframe.src 由 './editor/index.html' 相对 location.href 解析而来），
-   * 所以取该 URL 的 origin 即可，不必再用 '*' 广播给所有窗口。
-   *
-   * 两种回退：
-   *   · iframe 还停在 about:blank 时 src 为空 → 用 location.origin。同源 about:blank
-   *     继承父文档 origin，两者一致（setCanvasTheme 就可能在此时被调用）；
-   *   · file:// 下 origin 是字符串 'null'（opaque origin），postMessage 接受该值，
-   *     与编辑器页自身的 origin 匹配。
-   */
-  _targetOrigin() {
-    const src = this.iframe?.src;
-    if (src) {
-      try {
-        const o = new URL(src, location.href).origin;
-        if (o) return o;
-      } catch { /* URL 解析失败，走下面 */ }
-    }
-    return location.origin || '*';
-  }
-
   /** 编辑器用 callHost 发起的异步请求（saveAs / log 等），在此应答 */
   async _handleRequest(d) {
     const reply = (result) => {
       this.iframe?.contentWindow?.postMessage(
-        { channel: HOST_CHANNEL, type: 'response', id: d.id, result }, this._targetOrigin());
+        { channel: HOST_CHANNEL, type: 'response', id: d.id, result }, '*');
     };
     if (typeof this.handlers.onHostRequest === 'function') {
       try {
@@ -310,7 +287,7 @@ export class EditorBridge {
     if (!w) return false;
     // 页面可能还没执行到门面定义，先存一份；编辑器页自己会在门面就绪后补套
     try { w.__kmCanvasVars = vars || null; } catch { /* ignore */ }
-    w.postMessage({ channel: HOST_CHANNEL, type: 'theme', vars: vars || null }, this._targetOrigin());
+    w.postMessage({ channel: HOST_CHANNEL, type: 'theme', vars: vars || null }, '*');
     return true;
   }
 
@@ -326,6 +303,44 @@ export class EditorBridge {
   }
 
   editSelected() { return this._safe('编辑文字', (m) => m.editSelected()); }
+
+  /**
+   * 把焦点交回画布。
+   *
+   * kityminder 的键盘输入全靠一个隐藏 <input class="km-receiver">，
+   * 焦点不在它上面时，Tab / Enter / 方向键 / Delete 全部失效 ——
+   * 表现为「点了工具栏按钮之后，快捷键就不灵了」。
+   *
+   * 先给 iframe 的 window 焦点，再让内层把焦点交给 receiver：
+   * 只做前者的话，焦点停留在 iframe 的 document 上，receiver 仍没拿到。
+   */
+  focusCanvas() {
+    try {
+      const w = this.iframe?.contentWindow;
+      if (!w) return false;
+      w.focus();
+      w.__minderFocusCanvas?.();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 插入下级节点（等价于画布上按 Tab）。
+   * 供插件层在拦下 Tab 后转送 —— 见 index.js 的 bindTabForward。
+   */
+  insertChild() {
+    try {
+      const w = this.iframe?.contentWindow;
+      if (!w) return false;
+      w.focus();
+      w.__minderInsertChild?.();
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   /** 搜索：返回 {total,index,text}，无匹配为 0 */
   search(keyword) {

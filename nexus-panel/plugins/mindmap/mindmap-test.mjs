@@ -542,6 +542,94 @@ group('回归 · 备份滚动窗口');
 }
 
 /* ============================================================
+   八、Tab 建下级节点（焦点被工具栏按钮抢走时）
+   ============================================================ */
+
+group('Tab → 插入下级节点');
+
+{
+  // 8.1 编辑器层必须把「聚焦画布 / 插入子节点」暴露给父文档。
+  //     没有这两个门面，插件层拦下 Tab 也没地方转送 —— 这是整条链路的起点。
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  ok(/window\.__minderFocusCanvas\s*=/.test(html), '编辑器页暴露 window.__minderFocusCanvas');
+  ok(/window\.__minderInsertChild\s*=/.test(html), '编辑器页暴露 window.__minderInsertChild');
+  ok(/function\s+insertChildNode/.test(html), '插入逻辑抽成具名函数（Tab 与门面共用同一份）');
+  ok(/kmShortcut\('Tab',\s*insertChildNode\)/.test(html), 'Tab 快捷键仍注册，且与门面同一个实现');
+  // 关键：receiver 是内核私有的隐藏 input，编辑器页不能假设能直接拿到它
+  ok(/window\.__minderFocusCanvas\s*=\s*function\s*\(\)\s*\{\s*try\s*\{\s*km\.focus\(\)/.test(html),
+    '聚焦门面走 km.focus()（不直接摸 km-receiver —— 那是内核私有实现）');
+}
+
+{
+  // 8.2 bridge 层：把调用转送到内层 window，且先给 iframe 焦点
+  const { EditorBridge } = await import('./editor-bridge.js');
+  ok(typeof EditorBridge.prototype.focusCanvas === 'function', 'bridge 有 focusCanvas()');
+  ok(typeof EditorBridge.prototype.insertChild === 'function', 'bridge 有 insertChild()');
+
+  const src = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+  const seg = src.slice(src.indexOf('focusCanvas()'), src.indexOf('insertChild()'));
+  ok(/w\.focus\(\)/.test(seg), 'focusCanvas 先给 iframe 的 window 焦点（否则 receiver 拿不到）');
+
+  // 8.3 行为：真的调用了内层门面（用桩替换 contentWindow，不需要 kityminder）
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  const bridge = new EditorBridge(host, {});
+  bridge.iframe = document.createElement('iframe');
+  document.body.appendChild(bridge.iframe);
+  const w = bridge.iframe.contentWindow;
+  const calls = [];
+  w.focus = () => calls.push('window.focus');
+  w.__minderFocusCanvas = () => calls.push('focusCanvas');
+  w.__minderInsertChild = () => calls.push('insertChild');
+
+  bridge.focusCanvas();
+  eq(calls.join(','), 'window.focus,focusCanvas', 'focusCanvas() 依次调 window.focus 与内层门面');
+
+  calls.length = 0;
+  bridge.insertChild();
+  eq(calls.join(','), 'window.focus,insertChild', 'insertChild() 依次调 window.focus 与内层门面');
+
+  // 8.4 内层还没就绪（编辑器未加载完）时不能抛 —— 否则按个 Tab 就炸
+  const bare = new EditorBridge(document.createElement('div'), {});
+  let threw = false;
+  try { bare.focusCanvas(); bare.insertChild(); } catch { threw = true; }
+  ok(!threw, '无 iframe 时 focusCanvas / insertChild 静默返回，不抛');
+  eq(bare.focusCanvas(), false, '无 iframe 时返回 false 供调用方判断');
+  bridge.destroy();
+}
+
+{
+  // 8.5 插件层：Tab 必须在捕获阶段拦下，且放过文本控件与带修饰键的组合
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const fn = src.slice(src.indexOf('function bindTabForward'), src.indexOf('const refocusCanvas'));
+  ok(/window\.addEventListener\('keydown',\s*onKey,\s*true\)/.test(fn),
+    'Tab 监听在捕获阶段（冒泡阶段拦不住浏览器的焦点导航）');
+  ok(/e\.preventDefault\(\)/.test(fn), '拦下后 preventDefault');
+  ok(/bridge\?\.insertChild\(\)/.test(fn), '拦下后转送给编辑器');
+  ok(/e\.key\s*!==\s*'Tab'/.test(fn), '只处理 Tab');
+  ok(/e\.ctrlKey\s*\|\|\s*e\.altKey\s*\|\|\s*e\.metaKey/.test(fn), '带修饰键的 Tab 交给浏览器');
+  ok(/isTextTarget\(e\.target\)/.test(fn), '焦点在输入控件里时不抢 Tab');
+  ok(/window\.removeEventListener\('keydown',\s*onKey,\s*true\)/.test(fn), '返回注销函数');
+
+  ok(/function\s+isTextTarget/.test(src), '定义了 isTextTarget');
+  const it = src.slice(src.indexOf('function isTextTarget'), src.indexOf('function bindTabForward'));
+  for (const tag of ['input', 'textarea', 'select']) {
+    ok(it.includes(`'${tag}'`), `isTextTarget 覆盖 <${tag}>`);
+  }
+  ok(/isContentEditable/.test(it), 'isTextTarget 覆盖 contentEditable');
+
+  // 8.6 卸载时要注销，否则重复挂载会叠加监听
+  ok(/unbindTab\?\.\(\)/.test(src), '卸载时注销 Tab 监听');
+  ok(/const\s+unbindTab\s*=\s*bindTabForward\(\)/.test(src), '初始化时绑定');
+
+  // 8.7 工具栏按钮点完归还焦点 —— 不只 Tab，Enter/方向键/Delete 同样依赖它
+  const bseg = src.slice(src.indexOf('const refocusCanvas'), src.indexOf('function buildToolbar'));
+  ok(/bridge\?\.focusCanvas\(\)/.test(bseg), '按钮点击后调 bridge.focusCanvas()');
+  ok(/onclick:\s*\(e\)\s*=>\s*\{\s*const\s+r\s*=\s*onclick\?\.\(e\);\s*refocusCanvas\(\)/.test(bseg),
+    '焦点归还在 onclick 执行**之后**（handler 里的 prompt 先跑完）');
+}
+
+/* ============================================================
    结果
    ============================================================ */
 

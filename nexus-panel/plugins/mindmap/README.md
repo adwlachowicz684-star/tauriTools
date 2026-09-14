@@ -251,6 +251,31 @@ Ctrl+E / Ctrl+L / Ctrl+R / Ctrl+Shift+C / Ctrl+Shift+V
 内核 `commandShortcutKeys` 注册：Alt+↑↓（上移下移）/ Shift+Tab（插入上级）/
 Ctrl+Shift+L（整理布局）/ Ctrl+=-（缩放）/ Ctrl+A（全选）/ Ctrl+C/X/V
 
+### 前提：焦点必须在画布上
+
+kityminder 的所有键盘输入都来自一个隐藏的 `<input class="km-receiver">`，
+它由内核自己在 renderTarget 里创建。**焦点不在这个 input 上时，上面 18 条
+快捷键一条都不会生效** —— 这是最容易踩的坑，比快捷键本身更值得记住。
+
+典型表现：点过工具栏的按钮之后，Tab 不再建下级节点，而是在按钮之间跳
+（浏览器拿它做焦点导航了）。点一下画布能立刻恢复，因为内核在
+`beforemousedown` 里 `focus()` 并 `preventDefault()`。
+
+为了让「点完按钮接着按 Tab」也能用，做了两件事：
+
+| 位置 | 处理 |
+|---|---|
+| `editor/index.html` | 把「聚焦画布」「插入子节点」暴露成 `window.__minderFocusCanvas` / `window.__minderInsertChild`（与 Tab 共用同一份实现） |
+| `editor-bridge.js` | 新增 `focusCanvas()` / `insertChild()`，先给 iframe 的 window 焦点，再调内层门面 |
+| `index.js` | `bindTabForward()`：在 window **捕获阶段**拦下 Tab，焦点不在文本控件里就 `preventDefault` 并转送；工具栏按钮 `onclick` 执行后调 `focusCanvas()` 归还焦点 |
+
+为什么用捕获阶段：要在浏览器执行「Tab → 移动焦点」之前拦下来，冒泡阶段已经晚了。
+为什么不跨文档冲突：keydown 不跨 iframe 冒泡，焦点在编辑器里时插件层收不到，不会重复触发。
+
+按钮后归还焦点的意义不止 Tab —— Enter / 方向键 / Delete / Ctrl+B 同样依赖 receiver，
+点过按钮后会一起失效。放在 `onclick` 末尾而非 `setTimeout`：handler 里若调了
+`window.prompt` 这类同步模态，焦点会在用户关掉对话框之后才移动，顺序正好。
+
 ### 内核没实现的三个，由本插件补齐
 
 编辑器页面原本的注释写着「core 内置方向键导航、/ 折叠、Alt+1-5 展开层级」，
