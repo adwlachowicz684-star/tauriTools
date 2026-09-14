@@ -1,0 +1,45 @@
+/* 设置页布局（仅 iframe / Vite 模式生效）
+   --------------------------------------------------------------------
+   主面板的 css/neumorphism.css 里有：
+
+       html, body { height: 100%; overflow: hidden; }
+
+   那是给**主面板**用的：主面板自己不滚动，滚动交给内部的 #stage-scroll。
+
+   但设置页是 iframe 插件，它引入了同一份 neumorphism.css，而 iframe
+   内部**没有 #stage-scroll** —— 于是这份规则在这里只剩"禁止滚动"这一半：
+       html/body 高度锁死 100% + overflow:hidden
+       → 内容超出可视高度时无处可滚
+       → 超出部分被直接裁掉，窗口越小丢得越多。
+
+   表现就是"设置里下面的内容看不见"。iframe 高度是 100%（撑满舞台），
+   它不会随内容长高，所以超出部分是真的永久不可达，不是被盖住。
+
+   修法：在 #root 上重建一条滚动链 —— 根不滚、只让内容区滚。
+
+   为什么不直接给 #root 加 overflow:auto：那样分页条会跟着内容一起滚走，
+   切到「关于」后再想换页得先滚回顶部。所以拆成两段：
+       #root     —— flex 列，自身不滚
+       .set-body —— flex:1 + overflow-y:auto，只有它滚
+
+   分页条因此天然固定在顶部，不需要 position:sticky（那还得为它补背景色，
+   在玻璃主题下会盖掉 --bg-image 渐变、留下一块突兀的实色）。
+
+   无构建（module）模式不受影响：那种模式下设置页挂载在 .plugin-root 里，
+   由主面板的 #stage-scroll 负责滚动，本文件也不会被加载。
+*/
+
+#root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.set-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* 滚动条贴着内容走，不压住卡片右侧的阴影 */
+  padding-right: 2px;
+}

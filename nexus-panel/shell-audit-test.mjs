@@ -143,6 +143,36 @@ t('每一段选择器都带 glass 限定', unguardedSel.length === 0,
 const themed = css.match(/-?w?e?b?k?i?t?-?backdrop-filter\s*:\s*blur\(var\(--blur\)\)/g) || [];
 t('全文件只有一条规则使用 blur(var(--blur))', themed.length === 2, themed.length + ' 处声明');
 
+/* ============ 附加 · iframe 设置页的滚动链 ============ */
+console.log('\n=== 设置页滚动链（窗口小时内容被裁） ===');
+/* 主面板 html/body 是 overflow:hidden（滚动交给 #stage-scroll），
+   iframe 内没有 #stage-scroll，照搬就会把超出内容直接裁掉。 */
+t('主面板 html/body 确为 overflow:hidden',
+  /html,\s*body\s*\{[^}]*overflow:\s*hidden/.test(css));
+t('#stage-scroll 才是主面板的滚动容器',
+  /#stage-scroll\s*\{[^}]*overflow:\s*auto/.test(css));
+
+const setCssPath = 'plugins/settings/settings.css';
+const setCss = fs.existsSync(path.join(HERE, setCssPath)) ? src(setCssPath) : '';
+t('settings.css 存在', !!setCss);
+t('settings.css 让 #root 成为不滚的 flex 列',
+  /#root\s*\{[^}]*display:\s*flex[^}]*flex-direction:\s*column/.test(setCss));
+t('settings.css 让 .set-body 承担滚动',
+  /\.set-body\s*\{[^}]*overflow-y:\s*auto/.test(setCss));
+t('.set-body 有 min-height:0（否则 flex 子项撑破容器、滚动失效）',
+  /\.set-body\s*\{[^}]*min-height:\s*0/.test(setCss));
+
+const setMain = src('plugins/settings/main.tsx');
+t('main.tsx 引入了 settings.css', /import\s+'\.\/settings\.css'/.test(setMain));
+t('settings.css 在 neumorphism.css 之后引入',
+  setMain.indexOf('neumorphism.css') < setMain.indexOf('./settings.css'));
+
+const setApp = src('plugins/settings/App.tsx');
+t('App.tsx 用 .set-body 包裹内容（分页条留在滚动区外）',
+  /className="set-body"/.test(setApp));
+t('.set-body 的包裹位于分页条之后',
+  setApp.indexOf('set-tabs') < setApp.indexOf('set-body'));
+
 /* ============ P2-8 · 能力探测只缓存成功 ============ */
 console.log('\n=== P2-8 探测缓存 ===');
 t('getTauri 失败不再写入缓存', !/_cache = null;\s*return _cache;/.test(coreSrc));

@@ -6,6 +6,8 @@ import {
   getThemeId, getAccent, getEnvColor, getBase,
   getHueShift, getLightShift, setThemeShift,
   saveAsCustom, deleteCustomTheme,
+  // getCurrent：色相/明暗改为按主题各记一份后，提示文案要显示当前主题名
+  getCurrent,
   onChange as onThemeChange,
 } from '../../js/theme-manager.js';
 import { swatchFor, styleLabel } from '../../js/themes.js';
@@ -149,6 +151,9 @@ export default function Settings() {
         ))}
       </div>
 
+      {/* 内容区单独滚动：分页条留在滚动容器外，切页不必先滚回顶部。
+          详见 settings.css 的说明。 */}
+      <div className="set-body">
       {tab === 'theme' ? (
         /* ---------------- 主题 ---------------- */
         <div className="p-card">
@@ -492,6 +497,7 @@ export default function Settings() {
           </div>
         </div>
       ) : null}
+      </div>
     </>
   );
 }
