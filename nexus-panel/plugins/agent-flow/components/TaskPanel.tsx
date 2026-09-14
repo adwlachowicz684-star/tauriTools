@@ -1,15 +1,21 @@
-import { useState } from 'react';
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import {
-  type TaskRecord, type TaskNodeState,
+  type TaskRecord, type TaskNodeState, type TaskGroup,
   progressOf, elapsedOf, formatDuration, formatClock,
   STATUS_LABEL, NODE_STATUS_LABEL, SOURCE_LABEL,
+  groupByCanvas, flattenRows, rowOffsets, windowSlice, defaultExpanded,
+  GROUP_ROW_HEIGHT, TASK_ROW_HEIGHT,
 } from '../engine/tasks';
 
 /**
  * 任务窗口 —— 看"正在跑什么"，而不是"流程长什么样"。
  *
  * 与流程窗口的区别：流程是设计态（我打算怎么跑），任务是运行态（此刻跑到哪了）。
- * 两者分开，运行时才不会把画布上的节点状态改得面目全非。
+ *
+ * 数百个任务并发时，平铺列表既看不清也撑不住 —— 所以：
+ *   1. 按流程分组，可展开收起
+ *   2. 虚拟滚动，只渲染视口内的行
+ *   3. 不限制记录条数（上限只受内存约束，不人为截断）
  */
 
 function StatusPill({ status }: { status: string }) {
@@ -19,10 +25,14 @@ function StatusPill({ status }: { status: string }) {
 function NodeRow({ n, now }: { n: TaskNodeState; now: number }) {
   const [open, setOpen] = useState(false);
   const dur = n.startedAt ? elapsedOf({ startedAt: n.startedAt, endedAt: n.endedAt } as TaskRecord, now) : 0;
-  const hasBody = n.output || n.error || n.rendered;
+  const hasBody = Boolean(n.output || n.error || n.rendered);
   return (
     <div className={`task-node st-${n.status}`}>
-      <div className="task-node-head" onClick={() => hasBody && setOpen(!open)}>
+      <div
+        className="task-node-head"
+        onClick={() => { if (hasBody) setOpen(!open); }}
+        style={hasBody ? undefined : { cursor: 'default' }}
+      >
         <span className={`dot ${n.status === 'success' ? 'ok' : n.status === 'failed' ? 'bad' : n.status === 'running' ? 'run' : ''}`} />
         <span className="task-node-id">{n.id}</span>
         <span className="task-node-status">{NODE_STATUS_LABEL[n.status] || n.status}</span>
@@ -60,6 +70,36 @@ function NodeRow({ n, now }: { n: TaskNodeState; now: number }) {
   );
 }
 
+function GroupHead({
+  group, expanded, onToggle, now,
+}: {
+  group: TaskGroup;
+  expanded: boolean;
+  onToggle: () => void;
+  now: number;
+}) {
+  const running = group.tasks.filter((t) => t.status === 'running');
+  const totalMs = running.length > 0
+    ? running.reduce((sum, t) => sum + elapsedOf(t, now), 0) / running.length
+    : 0;
+  return (
+    <div className="task-group-head" onClick={onToggle}>
+      <span className="task-caret">{expanded ? '▾' : '▸'}</span>
+      <span className="task-group-name">{group.canvasName}</span>
+      <span className="task-group-count">{group.total}</span>
+      {group.runningCount > 0 ? (
+        <span className="task-tag run">运行 {group.runningCount}</span>
+      ) : null}
+      {group.failedCount > 0 ? (
+        <span className="task-tag bad">失败 {group.failedCount}</span>
+      ) : null}
+      {running.length > 0 ? (
+        <span className="task-group-dur">平均 {formatDuration(totalMs)}</span>
+      ) : null}
+    </div>
+  );
+}
+
 export function TaskPanel({
   tasks, now, onCancel, onClear, onJumpToCanvas,
 }: {
@@ -71,6 +111,66 @@ export function TaskPanel({
   onJumpToCanvas?: (canvasId: string) => void;
 }) {
   const [sel, setSel] = useState<string | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportH, setViewportH] = useState(600);
+  const listRef = useRef<HTMLDivElement | null>(null);
+
+  const groups = useMemo(() => groupByCanvas(tasks), [tasks]);
+
+  /* 默认展开只在"组集合变化"时重算。
+     放进依赖 tasks 的话，每来一个事件就会把用户手动折叠的组重新展开。 */
+  const groupKeys = useMemo(() => groups.map((g) => g.canvasId).join(','), [groups]);
+  const [expanded, setExpanded] = useState<Set<string>>(() => defaultExpanded(groups));
+  const lastKeys = useRef(groupKeys);
+  useEffect(() => {
+    if (lastKeys.current !== groupKeys) {
+      lastKeys.current = groupKeys;
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        for (const g of groups) {
+          // 新出现的组按默认规则决定；已存在的保持用户选择
+          if (!next.has(g.canvasId) && g.runningCount > 0) next.add(g.canvasId);
+        }
+        return next;
+      });
+    }
+  }, [groupKeys, groups]);
+
+  const { rows, offsets } = useMemo(() => {
+    const r = flattenRows(groups, expanded);
+    return { rows: r, offsets: rowOffsets(r) };
+  }, [groups, expanded]);
+
+  const win = useMemo(
+    () => windowSlice(rows, offsets, scrollTop, viewportH),
+    [rows, offsets, scrollTop, viewportH],
+  );
+
+  // 测量视口高度。不测的话 windowSlice 只能按默认值切，行数会不对
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const measure = () => setViewportH(el.clientHeight || 600);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const onScroll = useCallback((e: { currentTarget: { scrollTop: number } }) => {
+    setScrollTop(e.currentTarget.scrollTop);
+  }, []);
+
+  const toggle = useCallback((canvasId: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(canvasId)) next.delete(canvasId);
+      else next.add(canvasId);
+      return next;
+    });
+  }, []);
+
   const runningCount = tasks.filter((t) => t.status === 'running').length;
   const active = tasks.find((t) => t.id === sel) || tasks[0] || null;
 
@@ -80,7 +180,7 @@ export function TaskPanel({
         <div className="task-list-head">
           <strong>任务</strong>
           <span className="task-count">
-            {runningCount > 0 ? `${runningCount} 个运行中` : `${tasks.length} 条记录`}
+            {runningCount > 0 ? `${runningCount} 个运行中` : `${tasks.length} 条`}
           </span>
           <button className="mini" onClick={onClear} disabled={tasks.length === 0}>清空</button>
         </div>
@@ -90,39 +190,58 @@ export function TaskPanel({
             还没有运行记录。回到流程窗口点「运行」，这里的进度会实时更新。
           </div>
         ) : (
-          tasks.map((t) => {
-            const p = progressOf(t);
-            return (
-              <div
-                key={t.id}
-                className={`task-item ${active && active.id === t.id ? 'is-active' : ''}`}
-                onClick={() => setSel(t.id)}
-              >
-                <div className="task-item-top">
-                  <span className="task-name">{t.canvasName}</span>
-                  <StatusPill status={t.status} />
-                </div>
-                <div className="task-item-meta">
-                  <span className="task-src">{SOURCE_LABEL[t.source] || t.source}</span>
-                  <span>{formatClock(t.startedAt)}</span>
-                  <span>{formatDuration(elapsedOf(t, now))}</span>
-                </div>
-                <div className="task-bar">
-                  <div
-                    className={`task-bar-in ${t.status}`}
-                    style={{ width: `${p.percent}%` }}
-                  />
-                </div>
-                <div className="task-item-meta">
-                  <span>{p.percent}%</span>
-                  <span>成功 {p.done}</span>
-                  {p.failed ? <span className="task-bad">失败 {p.failed}</span> : null}
-                  {p.running ? <span className="task-run">运行 {p.running}</span> : null}
-                  {p.skipped ? <span className="task-mute">跳过 {p.skipped}</span> : null}
-                </div>
+          <div className="task-scroll" ref={listRef} onScroll={onScroll}>
+            <div style={{ height: win.totalHeight, position: 'relative' }}>
+              <div style={{ transform: `translateY(${win.padTop}px)` }}>
+                {rows.slice(win.start, win.end).map((row) =>
+                  row.kind === 'group' ? (
+                    <div key={row.key} style={{ height: GROUP_ROW_HEIGHT }}>
+                      <GroupHead
+                        group={row.group}
+                        expanded={expanded.has(row.group.canvasId)}
+                        onToggle={() => toggle(row.group.canvasId)}
+                        now={now}
+                      />
+                    </div>
+                  ) : (
+                    <div
+                      key={row.key}
+                      style={{ height: TASK_ROW_HEIGHT }}
+                      className={`task-row ${active && active.id === row.task.id ? 'is-active' : ''}`}
+                      onClick={() => setSel(row.task.id)}
+                    >
+                      <div className="task-item-top">
+                        <span className="task-name">{row.task.canvasName}</span>
+                        <StatusPill status={row.task.status} />
+                      </div>
+                      <div className="task-item-meta">
+                        <span className="task-src">{SOURCE_LABEL[row.task.source] || row.task.source}</span>
+                        <span>{formatClock(row.task.startedAt)}</span>
+                        <span>{formatDuration(elapsedOf(row.task, now))}</span>
+                      </div>
+                      {(() => {
+                        const p = progressOf(row.task);
+                        return (
+                          <>
+                            <div className="task-bar">
+                              <div className={`task-bar-in ${row.task.status}`} style={{ width: `${p.percent}%` }} />
+                            </div>
+                            <div className="task-item-meta">
+                              <span>{p.percent}%</span>
+                              <span>成功 {p.done}</span>
+                              {p.failed ? <span className="task-bad">失败 {p.failed}</span> : null}
+                              {p.running ? <span className="task-run">运行 {p.running}</span> : null}
+                              {p.skipped ? <span className="task-mute">跳过 {p.skipped}</span> : null}
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  ),
+                )}
               </div>
-            );
-          })
+            </div>
+          </div>
         )}
       </div>
 
@@ -152,9 +271,7 @@ export function TaskPanel({
             </div>
 
             {active.layerTotal > 0 ? (
-              <div className="task-layer">
-                第 {active.layerNow}/{active.layerTotal} 层
-              </div>
+              <div className="task-layer">第 {active.layerNow}/{active.layerTotal} 层</div>
             ) : null}
 
             <div className="task-nodes">

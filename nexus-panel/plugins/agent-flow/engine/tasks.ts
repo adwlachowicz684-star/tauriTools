@@ -329,3 +329,164 @@ export const NODE_STATUS_LABEL: Record<string, string> = {
   failed: '失败',
   skipped: '跳过',
 };
+
+/* ------------------------------------------------------------------ */
+/* 分组与虚拟滚动                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 按流程分组。
+ *
+ * 数百个任务并发时，平铺列表根本没法看 —— 同一个流程的几十条记录
+ * 会把其它流程的运行状态挤到看不见的地方。分组后每个流程一个头，
+ * 汇总"几条在跑、共几条"，折叠起来就只剩一行。
+ */
+export type TaskGroup = {
+  canvasId: string;
+  canvasName: string;
+  /** 按开始时间倒序，最新的在最上面 */
+  tasks: TaskRecord[];
+  runningCount: number;
+  failedCount: number;
+  total: number;
+  /** 组内最新一条的开始时间，用于组间排序 */
+  latestAt: number;
+};
+
+export function groupByCanvas(tasks: TaskRecord[]): TaskGroup[] {
+  const byId = new Map<string, TaskRecord[]>();
+  for (const t of tasks) {
+    const key = t.canvasId || '__unknown__';
+    const list = byId.get(key);
+    if (list) list.push(t);
+    else byId.set(key, [t]);
+  }
+  const groups: TaskGroup[] = [];
+  for (const [canvasId, list] of byId) {
+    // 先按开始时间倒序，之后取名字与 latestAt 都基于排好的第一条
+    list.sort((a, b) => b.startedAt - a.startedAt);
+    groups.push({
+      canvasId,
+      // 流程可能改过名，用最新一条记录上的名字
+      canvasName: (list[0] && list[0].canvasName) || '未命名流程',
+      tasks: list,
+      runningCount: list.filter((t) => t.status === 'running').length,
+      failedCount: list.filter((t) => t.status === 'failed').length,
+      total: list.length,
+      latestAt: list[0] ? list[0].startedAt : 0,
+    });
+  }
+  // 有任务在跑的组排最前，其次按最新开始时间
+  groups.sort((a, b) => {
+    if (a.runningCount !== b.runningCount) return b.runningCount - a.runningCount;
+    return b.latestAt - a.latestAt;
+  });
+  return groups;
+}
+
+/** 扁平行：虚拟滚动需要把"分组头 + 任务行"拉平成一维数组来切片 */
+export type TaskRow =
+  | { kind: 'group'; key: string; group: TaskGroup; index: number }
+  | { kind: 'task'; key: string; task: TaskRecord; index: number };
+
+/**
+ * 拉平。折叠的组只贡献一个头。
+ * index 是行在扁平数组里的位置，虚拟滚动靠它定位。
+ */
+export function flattenRows(groups: TaskGroup[], expanded: Set<string>): TaskRow[] {
+  const rows: TaskRow[] = [];
+  let i = 0;
+  for (const g of groups) {
+    rows.push({ kind: 'group', key: `g:${g.canvasId}`, group: g, index: i });
+    i += 1;
+    if (expanded.has(g.canvasId)) {
+      for (const t of g.tasks) {
+        rows.push({ kind: 'task', key: `t:${t.id}`, task: t, index: i });
+        i += 1;
+      }
+    }
+  }
+  return rows;
+}
+
+export const GROUP_ROW_HEIGHT = 40;
+export const TASK_ROW_HEIGHT = 76;
+/** 视口外多渲染几行，避免快速滚动时露白 */
+export const OVERSCAN = 3;
+
+export function rowHeightOf(row: TaskRow): number {
+  return row.kind === 'group' ? GROUP_ROW_HEIGHT : TASK_ROW_HEIGHT;
+}
+
+/** 每一行的顶部偏移。行数上千时这是 O(n)，但只在数据变化时算一次 */
+export function rowOffsets(rows: TaskRow[]): number[] {
+  const out: number[] = [];
+  let y = 0;
+  for (const r of rows) {
+    out.push(y);
+    y += rowHeightOf(r);
+  }
+  return out;
+}
+
+export type WindowSlice = {
+  start: number;
+  end: number;
+  /** 上方留白高度，撑起滚动条 */
+  padTop: number;
+  padBottom: number;
+  totalHeight: number;
+};
+
+/**
+ * 算出应该渲染哪几行。
+ *
+ * 用二分查找定位起始行，避免上千行时逐行累加。
+ */
+export function windowSlice(
+  rows: TaskRow[],
+  offsets: number[],
+  scrollTop: number,
+  viewportH: number,
+  overscan: number = OVERSCAN,
+): WindowSlice {
+  const n = rows.length;
+  if (n === 0) return { start: 0, end: 0, padTop: 0, padBottom: 0, totalHeight: 0 };
+  const totalHeight = offsets[n - 1] + rowHeightOf(rows[n - 1]);
+
+  // 二分：找最后一个 offset <= scrollTop 的行
+  let lo = 0, hi = n - 1, start = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (offsets[mid] <= scrollTop) { start = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  const bottom = scrollTop + viewportH;
+  let end = start;
+  while (end < n && offsets[end] < bottom) end += 1;
+  end = Math.min(n, end + 1);
+
+  const s = Math.max(0, start - overscan);
+  const e = Math.min(n, end + overscan);
+  return {
+    start: s,
+    end: e,
+    padTop: offsets[s] ?? 0,
+    padBottom: Math.max(0, totalHeight - ((offsets[e - 1] ?? 0) + rowHeightOf(rows[e - 1] ?? rows[n - 1]))),
+    totalHeight,
+  };
+}
+
+/** 默认展开哪些组：有任务在跑的自动展开，否则全展开（只有一个组时没必要折叠） */
+export function defaultExpanded(groups: TaskGroup[]): Set<string> {
+  const s = new Set<string>();
+  const running = groups.filter((g) => g.runningCount > 0);
+  if (running.length > 0) {
+    for (const g of running) s.add(g.canvasId);
+    return s;
+  }
+  if (groups.length <= 1) {
+    for (const g of groups) s.add(g.canvasId);
+  }
+  return s;
+}

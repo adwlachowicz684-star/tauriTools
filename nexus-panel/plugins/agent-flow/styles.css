@@ -1029,3 +1029,22 @@ input.mono, textarea.mono {
 .task-log-at { color: var(--af-text-mute); flex: none; }
 .task-log-id { color: var(--af-accent); flex: none; }
 .task-log-text { color: var(--af-text-soft); word-break: break-all; }
+
+/* ---------- 任务窗口：分组与虚拟滚动 ---------- */
+.task-scroll { flex: 1; overflow: auto; min-height: 0; }
+.task-group-head { display: flex; align-items: center; gap: 8px;
+  padding: 0 12px; height: 40px; cursor: pointer;
+  background: var(--af-item); border-bottom: 1px solid var(--af-line);
+  position: sticky; top: 0; z-index: 1; }
+.task-group-head:hover { background: var(--af-hover, var(--af-item)); }
+.task-group-name { font-size: 13px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-group-count { font-size: 11px; color: var(--af-text-mute);
+  padding: 0 6px; border-radius: 999px; background: var(--af-bg); }
+.task-group-dur { margin-left: auto; font-size: 11px; color: var(--af-text-mute); }
+.task-row { padding: 7px 12px 7px 24px; border-bottom: 1px solid var(--af-line);
+  cursor: pointer; overflow: hidden; }
+.task-row.is-active { background: var(--af-item); }
+.task-tag.run { color: var(--af-accent); }
+.task-tag.bad { color: var(--af-bad); }
+.task-caret { color: var(--af-text-mute); width: 10px; flex: none; font-size: 10px; }

@@ -209,18 +209,32 @@ export default function App() {
    * 只保留本次会话的记录，不落盘 ——
    * 跨会话的历史归"历史窗口"管，那个后面单独做。
    */
-  const MAX_TASKS = 30;
+  /*
+    条数不设上限 —— 数百个任务并发时要能全部看到。
+    渲染压力交给任务窗口的虚拟滚动（只画视口内的行），
+    这里不做人为截断，否则"刚跑完的被挤掉了"会让人以为任务丢了。
+  */
   const [view, setView] = useState<'flow' | 'tasks'>('flow');
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   /** 当前正在跑的任务 id。用 ref 避免 onEvent 因依赖变化而重建 */
   const currentTaskRef = useRef<string | null>(null);
-  /** 每秒走一次，让任务耗时与进度实时刷新 */
+  /*
+    让任务耗时与进度实时刷新。
+    两个约束：
+      1. 只在真的有任务在跑时才走 —— 全部空闲时每秒重渲染整个列表是白烧 CPU
+      2. 依赖用布尔值而非 tasks 数组 —— 否则每来一个运行事件都会重建定时器
+    已完成的任务显示固定耗时，不需要跟着刷新。
+  */
   const [tick, setTick] = useState(() => Date.now());
+  const hasRunning = useMemo(
+    () => tasks.some((t) => t.status === 'running'),
+    [tasks],
+  );
   useEffect(() => {
-    if (!running && !tasks.some((t) => t.status === 'running')) return;
+    if (!hasRunning) return;
     const h = window.setInterval(() => setTick(Date.now()), 1000);
     return () => window.clearInterval(h);
-  }, [running, tasks]);
+  }, [hasRunning]);
 
   /* ---------------- 凭据中心 ---------------- */
   /**
@@ -762,7 +776,7 @@ export default function App() {
       total: nodes.length,
     });
     currentTaskRef.current = task.id;
-    setTasks((list) => [task, ...list].slice(0, MAX_TASKS));
+    setTasks((list) => [task, ...list]);
     // 自动切到任务窗口，让人立刻看到进度 ——
     // 触发器半夜跑起来时，停留在画布上看不出发生了什么
     setView('tasks');
