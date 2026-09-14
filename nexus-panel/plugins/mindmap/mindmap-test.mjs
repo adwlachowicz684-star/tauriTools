@@ -56,7 +56,8 @@ const dom = new JSDOM('<!doctype html><html><body><div id="plugin-mount"></div><
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 globalThis.location = dom.window.location;
-globalThis.navigator = dom.window.navigator;
+// Node 21+ 起 globalThis.navigator 是只读 getter，直接赋值会抛 TypeError
+Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true, writable: true });
 globalThis.Node = dom.window.Node;
 globalThis.HTMLElement = dom.window.HTMLElement;
 globalThis.getComputedStyle = dom.window.getComputedStyle;
@@ -177,7 +178,7 @@ const store = await import('./store.js');
 
 {
   // 2.3 源码契约：doSaveInner 里不能出现 store.workbook.save
-  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
   const fn = src.slice(src.indexOf('async function doSaveInner'), src.indexOf('async function trimBackups'));
 
   ok(!/store\.workbook\.save/.test(fn), 'doSaveInner 不再写旧迁移键 store.workbook.save');
@@ -241,7 +242,7 @@ const store = await import('./store.js');
 {
   // 2.6 【源码契约】把上面验证过的约束锁到真实代码上：
   //     savedFileId 的捕获点与 save() 的调用点之间，不允许有任何让出点。
-  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
   const fn = src.slice(src.indexOf('async function doSaveInner'), src.indexOf('async function trimBackups'));
 
   const CAP = 'const savedFileId = currentFileId';
@@ -411,7 +412,7 @@ function maxDepth(sheet) {
 
 group('M4 · 外壳主题消息来源校验');
 {
-  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
   const fn = src.slice(src.indexOf('function watchShellTheme'), src.indexOf('/* ------------------------- 附件打开'));
   ok(/e\.source\s*!==\s*window\.parent/.test(fn), '只接受 window.parent 发来的主题消息');
   ok(/d\.channel\s*!==\s*SHELL_CHANNEL/.test(fn), '仍保留 channel 校验');
@@ -430,14 +431,14 @@ group('M5 · 下载文件名安全化');
   ok(!/[\u0000-\u001f]/.test(io.safeFileName('a\u0007b')), '控制字符被剔除');
   ok(io.safeFileName('').length > 0, '空名有兜底，不抛错');
 
-  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
   const fn = src.slice(src.indexOf('async function openAttachment'), src.indexOf('/* ------------------------- 撤销 / 重做'));
   ok(/io\.downloadBlob\(io\.safeFileName\(name\)/.test(fn), '下载前对附件名调用 safeFileName');
 }
 
 group('M6 · 撤销/重做栈不推入空快照');
 {
-  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
   const undoFn = src.slice(src.indexOf('function undo()'), src.indexOf('function redo()'));
   ok(/if\s*\(lastSnap\)\s*redoStack\.push\(lastSnap\)/.test(undoFn), 'undo：lastSnap 为 null 时不入栈');
   const redoFn = src.slice(src.indexOf('function redo()'), src.indexOf('/* ------------------------- 主题 / 布局'));
@@ -446,7 +447,7 @@ group('M6 · 撤销/重做栈不推入空快照');
 
 group('M7 · 切换画布落盘');
 {
-  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
   const fn = src.slice(src.indexOf('async function switchSheet'), src.indexOf('/* ------------------------- 文件库（多文档）'));
   ok(/await\s+persist\(\)/.test(fn), 'switchSheet 内 await persist()');
   ok(fn.indexOf('await persist()') > fn.indexOf('capture()'), '落盘发生在 capture() 之后');
@@ -491,7 +492,7 @@ group('M8 · 存储读写失败不再静默');
   store.resetStoreError();
 
   // 插件层要真的把错误显示出来
-  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
   ok(/function flushStoreError/.test(src), 'index.js 定义了 flushStoreError');
   ok(/flushStoreError\(\)/.test(src.slice(src.indexOf('await loadSheet();\n  updateBadge();'))), '初始化末尾调用了 flushStoreError');
 }
@@ -566,7 +567,7 @@ group('Tab → 插入下级节点');
   ok(typeof EditorBridge.prototype.focusCanvas === 'function', 'bridge 有 focusCanvas()');
   ok(typeof EditorBridge.prototype.insertChild === 'function', 'bridge 有 insertChild()');
 
-  const src = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+  const src = (fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8')).replace(/\r\n/g, '\n');
   const seg = src.slice(src.indexOf('focusCanvas()'), src.indexOf('insertChild()'));
   ok(/w\.focus\(\)/.test(seg), 'focusCanvas 先给 iframe 的 window 焦点（否则 receiver 拿不到）');
 
@@ -600,7 +601,7 @@ group('Tab → 插入下级节点');
 
 {
   // 8.5 插件层：Tab 必须在捕获阶段拦下，且放过文本控件与带修饰键的组合
-  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
   const fn = src.slice(src.indexOf('function bindTabForward'), src.indexOf('const refocusCanvas'));
   ok(/window\.addEventListener\('keydown',\s*onKey,\s*true\)/.test(fn),
     'Tab 监听在捕获阶段（冒泡阶段拦不住浏览器的焦点导航）');
@@ -638,7 +639,7 @@ group('新建画布按钮（＋）位置');
 {
   // jsdom 不做布局，无法断言像素位置；这里锁住决定布局的那些属性。
   // 每一个都对应一个真实的失效模式，注释里写明了会坏成什么样。
-  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
   const foot = src.slice(src.indexOf('const tabsEl ='), src.indexOf('const rail ='));
 
   ok(/div\.mm-row\.mm-tabs/.test(foot), '页签区带 .mm-tabs 类');
@@ -655,7 +656,7 @@ group('新建画布按钮（＋）位置');
 
   // 注释里也会提到这些属性名（说明"为什么不能加"），断言前先剥掉注释，
   // 否则会被自己写的说明文字误伤。
-  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const css = (fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8')).replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
   const footCss = css.slice(css.indexOf('.mm-foot {'), css.indexOf('.mm-status {'));
   ok(!/overflow-x/.test(footCss),
     '.mm-foot 不再 overflow-x:auto —— 整条底栏滚动会把「＋」和状态一起滚出视野');
@@ -675,7 +676,7 @@ group('新建画布按钮（＋）位置');
 group('面板分布：左文件库 / 中画布 / 右属性侧栏');
 
 {
-  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
 
   // 10.1 主体三段的顺序：[文件库] | 画布 | [属性侧栏]
   // 用 lastIndexOf 取收尾处的那次调用：buildRail() 在文件里出现两次（定义外的
@@ -701,7 +702,7 @@ group('面板分布：左文件库 / 中画布 / 右属性侧栏');
 
 {
   // 10.5 侧栏自身：常驻 276px，且**不含**页签（页签在顶栏，不占侧栏高度）
-  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const css = (fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8')).replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
   const sideCss = css.slice(css.indexOf('.mm-side {'), css.indexOf('.mm-side h3'));
   ok(/flex:\s*0 0 276px/.test(sideCss), '侧栏固定 276px（与 C# Column 1 的 Width="276" 一致）');
   ok(/display:\s*flex/.test(sideCss), '侧栏默认显示（常驻，不靠 .open 打开）');
@@ -719,7 +720,7 @@ group('面板分布：左文件库 / 中画布 / 右属性侧栏');
   eq(notified.join(','), 'theme', '初始化时也会回调 onPage（顶栏据此点亮「主题」）');
 
   // 10.6 页签在顶栏最右，顺序对齐 C# 的四个 ToggleButton
-  const src2 = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const src2 = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
   const tb = src2.slice(src2.indexOf('function buildToolbar'), src2.indexOf('/* ------------------------- 侧栏'));
   ok(/toolbar\.appendChild\(buildSideTabs\(\)\)/.test(tb), '顶栏 append 页签组');
   ok(/const SIDE_TABS = \[\['theme', '主题'\], \['tag', '标签'\], \['style', '样式'\], \['file', '文件'\]\]/.test(src2),
