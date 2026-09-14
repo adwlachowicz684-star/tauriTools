@@ -270,5 +270,65 @@ const styleBad = PRESET_THEMES.filter((x) => !STYLE_LABELS[x.style]).map((x) => 
 t('每套主题的 style 都能取到角标文案', styleBad.length === 0, styleBad.join(', ') || '全部有文案');
 t('每套主题都写了描述文案', PRESET_THEMES.every((x) => String(x.desc || '').trim().length > 0));
 
+/* ---------- 11. 色相 / 明暗按主题独立 ---------- */
+/* 全局单键的旧实现会把 A 主题调好的偏移带到 B 主题上，
+   而各主题的可调空间完全不同（纯黑底只能提亮、纯白底只能压暗），
+   串过去往往正好踩在另一套主题的雷区。 */
+tm.applyTheme('neumorph-dark');
+tm.setThemeShift(40, 10);
+t('设置后可读回', tm.getHueShift() === 40 && tm.getLightShift() === 10,
+  `${tm.getHueShift()}° / ${tm.getLightShift()}%`);
+
+tm.applyTheme('midnight');
+t('切到别的主题：偏移不跟过去', tm.getHueShift() === 0 && tm.getLightShift() === 0,
+  `${tm.getHueShift()}° / ${tm.getLightShift()}%`);
+
+tm.setThemeShift(-60, -25);
+t('每个主题可各存一套', tm.getHueShift() === -60 && tm.getLightShift() === -25,
+  `${tm.getHueShift()}° / ${tm.getLightShift()}%`);
+
+tm.applyTheme('neumorph-dark');
+t('切回原主题：仍是原值', tm.getHueShift() === 40 && tm.getLightShift() === 10,
+  `${tm.getHueShift()}° / ${tm.getLightShift()}%`);
+t('不切换也能按 id 查询', tm.getHueShift('midnight') === -60, String(tm.getHueShift('midnight')));
+
+// 旧版是全局单键，读不到本主题的键时要回落过去，老用户调过的值不至于丢
+localStorage.clear();
+localStorage.setItem('nexus:hue-shift', '25');
+localStorage.setItem('nexus:light-shift', '-10');
+tm.applyTheme('graphite');
+t('旧版全局值可迁移到当前主题', tm.getHueShift() === 25 && tm.getLightShift() === -10,
+  `${tm.getHueShift()}° / ${tm.getLightShift()}%`);
+
+tm.setThemeShift(0, 0);
+tm.applyTheme('celadon');
+tm.setThemeShift(30, 15);
+tm.resetColors();
+t('重置清掉当前主题偏移', tm.getHueShift() === 0 && tm.getLightShift() === 0);
+
+tm.setThemeShift(999, -999);
+t('超出范围被夹取', tm.getHueShift() === 180 && tm.getLightShift() === -50,
+  `${tm.getHueShift()}° / ${tm.getLightShift()}%`);
+tm.setThemeShift(0, 0);
+
+/* ---------- 12. 浮层底板 ---------- */
+/* 弹窗 / 吐司这类盖在别的内容上的容器，底板必须比 --surface 实，
+   否则后面的界面会透上来与浮层文字叠在一起（玻璃主题下透出率曾高达 93%）。 */
+const cssText = readFileSync(new URL('./css/neumorphism.css', import.meta.url), 'utf8');
+t('--surface-overlay 在 THEME_VARS 里', THEME_VARS.includes('--surface-overlay'));
+t('CSS 有兜底值', /--surface-overlay\s*:/.test(cssText));
+t('.dialog 用浮层底板', /\.dialog\s*\{[^}]*surface-overlay/.test(cssText));
+
+// 玻璃主题必须显式给一个高不透明度的值，不能只靠兜底
+const glass = PRESET_THEMES.filter((x) => x.style === 'glass');
+const glassBad = glass.filter((x) => {
+  const v = x.vars['--surface-overlay'];
+  if (!v) return true;
+  const m = /rgba?\([^)]*?([\d.]+)\s*\)/.exec(v);
+  return !m || parseFloat(m[1]) < 0.8;
+});
+t('玻璃主题浮层底板足够实（alpha ≥ .8）', glassBad.length === 0,
+  glassBad.map((x) => x.id).join(', ') || `${glass.length} 套均达标`);
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -304,7 +304,7 @@ export default function Settings() {
             主题色调整（在主题自身配色上做整体偏移）
           </div>
           <div className="p-muted" style={{ fontSize: 12, marginTop: 2 }}>
-            只偏移主题配色；强调色、环境色与状态色（成功 / 错误 / 运行中）不参与
+            {`每套主题各记一份（当前：${getCurrent().name}）；只偏移主题配色，强调色、环境色与状态色不参与`}
           </div>
           <div className="p-row" style={{ marginTop: 8, gap: 8 }}>
             <span className="p-muted" style={{ width: 30, flex: 'none' }}>色相</span>

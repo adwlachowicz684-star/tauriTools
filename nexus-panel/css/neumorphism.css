@@ -58,6 +58,17 @@
      外凸：右下 --sh-dark、左上 --sh-light，两向成对，缺一就"歪了"
      内凹：inset + --surface-sunk 表示"按下去 / 凹进去"
      扁平风格下 --sh-* 被调成与底色接近，阴影自然隐形，改由 --border 描边
+
+     ⚠️ 已知约束：新拟态下卡片与底板**完全同色**，边界 100% 靠阴影勾，
+     所以阴影一弱，元素就整个糊在背景里。实测（ΔL* 为阴影色与底色的
+     感知明度差，blur 9px 时有效强度约为其 29%）：
+       · 深色主题阴影 ΔL* 只有 6~7 → 有效 1.6~2.2，低于"勉强可见"的 3.0
+       · 浅色主题的 --sh-light 撞物理上限：底色 L* 已 90+，
+         亮影最多再提 6~8，怎么调都是徒劳 —— 浅色主题只能靠 --sh-dark
+       · 12px 模糊比 5px 模糊多摊薄约 30%，大卡片别盲目加大模糊
+     调整时优先动 --sh-* 的亮度（保持色相饱和度），目标 ΔL* ≈ 11（深色）
+     或 ≈ 14（浅色暗影）。单靠阴影仍只是"勉强"，要更清晰的边界得叠加
+     描边（--hairline）或减小模糊半径。
    ============================================================ */
 
 :root {
@@ -95,6 +106,11 @@
   /* 衍生层：多数主题不必单独定义，缺省时回退到下面这些派生值。
      需要特别处理的主题（如浅色底要压暗）在 themes.js 里显式覆盖。 */
   --surface-raised: var(--surface);
+  /* 浮层底面：弹窗 / 吐司 / 下拉这类盖在别的内容上的容器。
+     默认比 --surface 浮起一档（--surface-raised）—— 光靠阴影勾边不够，
+     弹窗与背景同色时会整个糊在背景里。玻璃主题在 themes.js 里进一步
+     调成高不透明度，避免后面的界面透上来。 */
+  --surface-overlay: var(--surface-raised);
   --text-soft:      var(--text-dim);
 
   /* 风格层（由 js/theme-manager.js 按主题覆写，这里只是兜底默认值）
@@ -448,7 +464,7 @@ body {
   margin: 40px auto;
   padding: 22px 24px;
   border-radius: var(--r-lg);
-  background: var(--surface);
+  background: var(--surface-overlay);
   box-shadow: 6px 6px 14px var(--sh-dark), -6px -6px 14px var(--sh-light);
 }
 .err-box h3 { color: var(--danger); font-size: 14px; margin-bottom: 10px; }
@@ -494,7 +510,7 @@ body {
   border-radius: var(--r-sm);
   font-size: 12.5px;
   color: var(--text);
-  background: var(--surface);
+  background: var(--surface-overlay);
   box-shadow: 5px 5px 12px var(--sh-dark), -5px -5px 12px var(--sh-light);
   animation: toastIn .25s ease;
   max-width: 320px;
@@ -675,9 +691,23 @@ body {
   z-index: 900;
   backdrop-filter: blur(2px);
 }
-.dialog { width: 440px; max-width: calc(100vw - 40px); }
+/* 弹窗同时挂着 .p-card，底板要在这里压过 .p-card 的 --surface：
+   弹窗是模态的，要盖住后面的界面并承载阅读，底板必须比普通卡片更实。
+   此前玻璃主题下弹窗只有 7% 白，后面 93% 的界面直接透上来，
+   弹窗里的文字和背景里的文字叠在一起，根本读不了。
+   
+   投影也叠了一层**固定黑色**（不依赖 --sh-*）：主题那组双向阴影在
+   浅色主题下最弱（纯白底没有"更亮"的空间，见顶部规范八），
+   而弹窗是最需要"浮起来"的容器，不能把边界寄托在它上面。 */
+.dialog {
+  width: 440px;
+  max-width: calc(100vw - 40px);
+  background: var(--surface-overlay);
+  box-shadow: 6px 6px 14px var(--sh-dark), -6px -6px 14px var(--sh-light),
+              0 18px 44px rgba(0, 0, 0, .22);
+}
 .dialog select.p-input { appearance: none; cursor: pointer; }
-.dialog select.p-input option { background: var(--surface); color: var(--text); }
+.dialog select.p-input option { background: var(--surface-overlay); color: var(--text); }
 
 /* ============================================================
    主题风格增强
@@ -767,7 +797,7 @@ html.theme-transition *:not(.spinner) {
   display: flex;
   flex-direction: column;
   border-radius: var(--r-lg);
-  background: var(--surface);
+  background: var(--surface-overlay);
   border: 1px solid var(--border);
   box-shadow: 10px 10px 26px var(--sh-dark), -10px -10px 26px var(--sh-light);
   overflow: hidden;

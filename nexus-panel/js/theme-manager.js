@@ -232,10 +232,14 @@ function ensureTextReadable(vars) {
   vars['--text'] = fmtColor(target);
 }
 
-/** 把当前的色相 / 明暗偏移套用到一组变量上（原地改） */
-function applyShift(vars) {
-  const hue = getHueShift();
-  const pct = getLightShift();
+/**
+ * 把某个主题的色相 / 明暗偏移套用到一组变量上（原地改）。
+ * 传入 theme 才能取到**那套主题**的偏移 —— 不传就默认当前主题，
+ * 于是「另存为自定义主题」会把当前偏移一并固化进去，符合预期。
+ */
+function applyShift(vars, theme) {
+  const hue = getHueShift(theme?.id);
+  const pct = getLightShift(theme?.id);
   if (!hue && !pct) return vars;
   const pow = 1 - pct / 100;
   for (const k of SHIFTABLE_VARS) {
@@ -253,7 +257,7 @@ function deriveVars(theme) {
 
   // 先偏移基础配色，再做派生计算 —— 这样 scroll-thumb、hairline 之类
   // 由 --bg 派生的量也会跟着一起变，不会出现"底色变了滑块没变"。
-  applyShift(v);
+  applyShift(v, theme);
 
   // 强调色辉光
   v['--accent-glow'] = rgba(v['--accent'], dark ? 0.32 : 0.22);
@@ -334,36 +338,83 @@ export function getEnvColor() {
   try { return localStorage.getItem(KEY_ENV) || null; } catch { return null; }
 }
 
-/** 色相偏移，单位度，范围 -180 ~ 180，0 表示不偏移 */
-export function getHueShift() {
+/**
+ * 色相 / 明暗偏移**按主题分别存储**。
+ *
+ * 早先是全局一份（nexus:hue-shift 一个键），结果在 A 主题上调好的偏移
+ * 会带到 B 主题上 —— 而不同主题的可调空间完全不同（纯黑底只能提亮、
+ * 纯白底只能压暗），串过去往往正好是另一个主题的雷区。
+ * 现在每个主题 id 各存一份，切主题时各自的偏移跟着切，互不干扰。
+ *
+ * 兼容：读时若本主题没存过，回落到旧的全局键（老用户已调好的值不至于丢），
+ * 再没有才是 0。写时只写本主题的键，旧键保持不变。
+ */
+const shiftKey = (key, themeId) => `${key}:${themeId || getThemeId()}`;
+
+/** 取某个主题的偏移值；本主题没存过就看旧的全局键（迁移用） */
+function readShift(key, clampFn) {
+  const id = current?.id || getThemeId();
   try {
-    const n = parseInt(localStorage.getItem(KEY_HUE) || '0', 10);
-    return isNaN(n) ? 0 : Math.max(-180, Math.min(180, n));
+    const own = localStorage.getItem(shiftKey(key, id));
+    if (own != null) return clampFn(parseInt(own, 10));
+    const legacy = localStorage.getItem(key);      // 旧版全局键
+    return clampFn(parseInt(legacy || '0', 10));
   } catch { return 0; }
+}
+
+const clampHue = (n) => (isNaN(n) ? 0 : Math.max(-180, Math.min(180, n)));
+const clampLight = (n) => (isNaN(n) ? 0 : Math.max(-50, Math.min(50, n)));
+
+/** 色相偏移，单位度，范围 -180 ~ 180，0 表示不偏移 */
+export function getHueShift(themeId) {
+  if (themeId) {
+    try {
+      const v = localStorage.getItem(shiftKey(KEY_HUE, themeId));
+      return v == null ? 0 : clampHue(parseInt(v, 10));
+    } catch { return 0; }
+  }
+  return readShift(KEY_HUE, clampHue);
 }
 
 /** 明暗偏移，单位百分比，范围 -50（压暗）~ 50（提亮），0 表示不偏移 */
-export function getLightShift() {
-  try {
-    const n = parseInt(localStorage.getItem(KEY_LIGHT) || '0', 10);
-    return isNaN(n) ? 0 : Math.max(-50, Math.min(50, n));
-  } catch { return 0; }
+export function getLightShift(themeId) {
+  if (themeId) {
+    try {
+      const v = localStorage.getItem(shiftKey(KEY_LIGHT, themeId));
+      return v == null ? 0 : clampLight(parseInt(v, 10));
+    } catch { return 0; }
+  }
+  return readShift(KEY_LIGHT, clampLight);
 }
 
-/** 同时设置色相与明暗（分开设会触发两次重绘，滑块拖动时会卡顿） */
-export function setThemeShift(hue, light) {
+/**
+ * 同时设置色相与明暗（分开设会触发两次重绘，滑块拖动时会卡顿）。
+ * 只作用于**当前主题**。
+ */
+export function setThemeShift(hue, light, themeId) {
   const h = Math.max(-180, Math.min(180, Math.round(Number(hue) || 0)));
   const l = Math.max(-50, Math.min(50, Math.round(Number(light) || 0)));
+  const id = themeId || current?.id || getThemeId();
   try {
-    localStorage.setItem(KEY_HUE, String(h));
-    localStorage.setItem(KEY_LIGHT, String(l));
+    localStorage.setItem(shiftKey(KEY_HUE, id), String(h));
+    localStorage.setItem(shiftKey(KEY_LIGHT, id), String(l));
   } catch {}
+  // 改的不是当前主题时不用重绘，等切过去自然会读新值
+  if (id !== (current?.id || getThemeId())) return getCurrent();
   const theme = current || findTheme(getThemeId());
   const applied = applyTo(theme, getAccent(), getEnvColor());
   listeners.forEach((fn) => {
     try { fn(applied, 'theme-shift'); } catch (e) { console.error('[theme]', e); }
   });
   return applied;
+}
+
+/** 清空某个主题的偏移（供「恢复主题自带配色」用，默认当前主题） */
+function clearShift(themeId) {
+  try {
+    localStorage.removeItem(shiftKey(KEY_HUE, themeId));
+    localStorage.removeItem(shiftKey(KEY_LIGHT, themeId));
+  } catch {}
 }
 export function getCurrent() {
   return current || findTheme(getThemeId());
@@ -506,9 +557,12 @@ export function setEnvColor(envColor) {
 
 /** 清除自定义的强调色与环境色，回到主题自带配色 */
 export function resetColors() {
+  const id = current?.id || getThemeId();
   try {
     localStorage.removeItem(KEY_ACCENT);
     localStorage.removeItem(KEY_ENV);
+    // 偏移按主题存，这里只清当前这套；旧的全局键一并清掉，避免又被回落读到
+    clearShift(id);
     localStorage.removeItem(KEY_HUE);
     localStorage.removeItem(KEY_LIGHT);
   } catch {}

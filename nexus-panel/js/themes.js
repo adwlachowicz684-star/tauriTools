@@ -24,6 +24,10 @@
 export const THEME_VARS = [
   // 基底：底色 / 背景渐变 / 卡片面 / 凹陷面 / 浮起一档的面
   '--bg', '--bg-image', '--surface', '--surface-sunk',
+  // 浮层底面：弹窗 / 吐司 / 下拉这类「盖在别的内容上」的容器专用。
+  // 它必须比 --surface 实 —— 底板半透明时，后面的界面会透上来与浮层里的
+  // 文字叠在一起，玻璃主题下尤其明显（见 glass 主题里那几个高 alpha 值）。
+  '--surface-overlay',
   // 塑形：右下暗、左上亮
   '--sh-dark', '--sh-light',
   // 文本：正文 / 次正文 / 次级 / 最弱
@@ -607,6 +611,7 @@ export const PRESET_THEMES = [
       '--bg-image': 'radial-gradient(1200px 600px at 12% -10%, #2d3a5c 0%, transparent 60%), radial-gradient(900px 500px at 110% 110%, #4a2a55 0%, transparent 55%)',
       '--surface': 'rgba(255,255,255,.07)',
       '--surface-sunk': 'rgba(0,0,0,.22)',
+      '--surface-overlay': 'rgba(34, 38, 52, .92)',
       '--surface-raised': 'rgba(255,255,255,0.16)',
       '--sh-dark': 'rgba(0,0,0,.34)',
       '--sh-light': 'rgba(255,255,255,.07)',
@@ -639,6 +644,7 @@ export const PRESET_THEMES = [
       '--bg-image': 'radial-gradient(1000px 520px at 8% -8%, #cfe0ff 0%, transparent 58%), radial-gradient(820px 460px at 106% 108%, #ffd6e8 0%, transparent 55%)',
       '--surface': 'rgba(255,255,255,.55)',
       '--surface-sunk': 'rgba(0,0,0,.05)',
+      '--surface-overlay': 'rgba(252, 253, 255, .90)',
       '--surface-raised': 'rgba(255,255,255,0.64)',
       '--sh-dark': 'rgba(120,130,150,.22)',
       '--sh-light': 'rgba(255,255,255,.70)',
@@ -671,6 +677,7 @@ export const PRESET_THEMES = [
       '--bg-image': 'radial-gradient(900px 520px at 6% -6%, #1e4d8c 0%, transparent 55%), radial-gradient(760px 460px at 100% 6%, #7b2d7d 0%, transparent 52%), radial-gradient(880px 500px at 50% 118%, #0f5f5c 0%, transparent 58%)',
       '--surface': 'rgba(255,255,255,.09)',
       '--surface-sunk': 'rgba(0,0,0,.26)',
+      '--surface-overlay': 'rgba(32, 28, 54, .92)',
       '--surface-raised': 'rgba(255,255,255,0.18)',
       '--sh-dark': 'rgba(0,0,0,.40)',
       '--sh-light': 'rgba(255,255,255,.10)',
