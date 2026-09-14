@@ -53,6 +53,31 @@ export default function Settings() {
 
   const rerender = () => force((n) => n + 1);
 
+  /**
+   * 把当前主题状态同步给主平台侧（外壳）。
+   *
+   * 为什么需要：本设置页是 iframe 插件，有自己的 document。本地这份
+   * theme-manager 的 applyTheme 只改 iframe 内的 :root —— 结果是"设置页
+   * 自己变了、主面板没变"。而标题栏右上角的切换跑在主平台侧，改主文档
+   * :root，主面板变、再经 pushTheme 推给 iframe，所以两边都变。
+   *
+   * 这里把写操作经 ctx.shell.theme 桥接给主平台侧再执行一次：
+   * 主面板立刻变 → 它的 onChange 触发 pushTheme → 把新变量推回 iframe。
+   * 单向流动不会来回触发 —— iframe 收到的是"应用变量"，不会再回写。
+   *
+   * 本地已经先执行过了，所以本函数失败也不影响设置页自身；
+   * 桥接拿不到时（module 模式、旧版外壳）只是主面板不联动，属降级。
+   */
+  const syncThemeToShell = async () => {
+    const shellTheme = (ctx as any)?.shell?.theme;
+    if (!shellTheme) return;
+    try {
+      // 色相 / 明暗是独立存储的两档，先同步再应用主题，否则会被覆盖回去
+      await shellTheme.setThemeShift?.(getHueShift(), getLightShift());
+      await shellTheme.applyTheme?.(getThemeId(), getAccent(), getEnvColor());
+    } catch { /* 桥接不可用：保持本地结果 */ }
+  };
+
   return (
     <>
       {/* ---------------- 分页导航 ---------------- */}
@@ -92,7 +117,7 @@ export default function Settings() {
                         key={t.id}
                         className={'theme-card' + (t.id === getThemeId() ? ' active' : '')}
                         title={t.desc || t.name}
-                        onClick={() => { applyTheme(t.id); ctx.toast(`已切换到「${t.name}」`, 'ok'); rerender(); }}
+                        onClick={() => { applyTheme(t.id); ctx.toast(`已切换到「${t.name}」`, 'ok'); rerender(); void syncThemeToShell(); }}
                       >
                         <div
                           className="theme-prev"
@@ -135,6 +160,7 @@ export default function Settings() {
                               e.stopPropagation();
                               deleteCustomTheme(t.id);
                               if (getThemeId() === t.id) applyTheme(listThemes()[0].id);
+                              void syncThemeToShell();
                               ctx.toast('已删除自定义主题', 'ok');
                               rerender();
                             }}
@@ -165,7 +191,7 @@ export default function Settings() {
                     boxShadow: '3px 3px 7px var(--sh-dark), -3px -3px 7px var(--sh-light)',
                     opacity: !cur || cur.toLowerCase() === c.toLowerCase() ? '1' : '.7',
                   }}
-                  onClick={() => { setAccent(c); ctx.toast('强调色：' + label, 'ok'); rerender(); }}
+                  onClick={() => { setAccent(c); ctx.toast('强调色：' + label, 'ok'); rerender(); void syncThemeToShell(); }}
                 >
                   ● {label}
                 </button>
@@ -191,7 +217,7 @@ export default function Settings() {
                     boxShadow: '3px 3px 7px var(--sh-dark), -3px -3px 7px var(--sh-light)',
                     opacity: !cur || cur.toLowerCase() === c.toLowerCase() ? '1' : '.7',
                   }}
-                  onClick={() => { setEnvColor(c); ctx.toast('环境色：' + label, 'ok'); rerender(); }}
+                  onClick={() => { setEnvColor(c); ctx.toast('环境色：' + label, 'ok'); rerender(); void syncThemeToShell(); }}
                 >
                   ● {label}
                 </button>
@@ -211,7 +237,7 @@ export default function Settings() {
               className="p-range"
               type="range" min={-180} max={180} step={1}
               value={getHueShift()}
-              onChange={(e) => { setThemeShift(Number(e.target.value), getLightShift()); rerender(); }}
+              onChange={(e) => { setThemeShift(Number(e.target.value), getLightShift()); rerender(); void syncThemeToShell(); }}
             />
             <span className="p-mono p-muted" style={{ width: 46, flex: 'none', textAlign: 'right' }}>
               {getHueShift() > 0 ? '+' : ''}{getHueShift()}°
@@ -223,7 +249,7 @@ export default function Settings() {
               className="p-range"
               type="range" min={-50} max={50} step={1}
               value={getLightShift()}
-              onChange={(e) => { setThemeShift(getHueShift(), Number(e.target.value)); rerender(); }}
+              onChange={(e) => { setThemeShift(getHueShift(), Number(e.target.value)); rerender(); void syncThemeToShell(); }}
             />
             <span className="p-mono p-muted" style={{ width: 46, flex: 'none', textAlign: 'right' }}>
               {getLightShift() > 0 ? '+' : ''}{getLightShift()}%
@@ -234,7 +260,7 @@ export default function Settings() {
             <div className="p-row" style={{ marginTop: 10 }}>
               <button
                 className="p-btn"
-                onClick={() => { resetColors(); ctx.toast('已恢复主题自带配色', 'ok'); rerender(); }}
+                onClick={() => { resetColors(); ctx.toast('已恢复主题自带配色', 'ok'); rerender(); void syncThemeToShell(); }}
               >
                 ↺ 恢复主题自带配色
               </button>
@@ -257,6 +283,7 @@ export default function Settings() {
                 applyTheme(t.id);
                 ctx.toast('已保存并应用：' + t.name, 'ok');
                 rerender();
+                void syncThemeToShell();
               }}
             >
               ＋ 保存为自定义主题

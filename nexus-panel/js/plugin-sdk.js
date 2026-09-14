@@ -259,6 +259,42 @@ function buildCtx(base) {
         rescan: () => transport.request('shell.call', { ns: 'external', method: 'scanEntry', args: [] }),
       },
       isIsolated: () => transport.request('shell.isIsolated', {}),
+      /**
+       * 主题（读 + 写），在**主平台侧**执行。
+       *
+       * 关键在"写"：iframe 有自己的 document，插件本地 import 一份
+       * theme-manager 去 applyTheme，改的只是 iframe 内的 :root，
+       * 主面板不会跟着变。走桥接让主平台侧执行，主面板才跟着变，
+       * 再由 onChange → pushTheme 把新变量推回 iframe。
+       *
+       * 读也走桥接：隔离态（opaque origin）下 iframe 的 localStorage 不可用，
+       * 本地读会拿到默认值而非用户实际选择。
+       *
+       * 用法与 external 一致：优先走它，拿不到再回退本地实现。
+       */
+      theme: {
+        // 读
+        listThemes: () => transport.request('shell.call', { ns: 'theme', method: 'listThemes', args: [] }),
+        getThemeId: () => transport.request('shell.call', { ns: 'theme', method: 'getThemeId', args: [] }),
+        getCurrent: () => transport.request('shell.call', { ns: 'theme', method: 'getCurrent', args: [] }),
+        getAccent: () => transport.request('shell.call', { ns: 'theme', method: 'getAccent', args: [] }),
+        getEnvColor: () => transport.request('shell.call', { ns: 'theme', method: 'getEnvColor', args: [] }),
+        getBase: () => transport.request('shell.call', { ns: 'theme', method: 'getBase', args: [] }),
+        getHueShift: () => transport.request('shell.call', { ns: 'theme', method: 'getHueShift', args: [] }),
+        getLightShift: () => transport.request('shell.call', { ns: 'theme', method: 'getLightShift', args: [] }),
+        // 写
+        applyTheme: (id, accent, env) => transport.request('shell.call',
+          { ns: 'theme', method: 'applyTheme', args: [id, accent, env] }),
+        setAccent: (c) => transport.request('shell.call', { ns: 'theme', method: 'setAccent', args: [c] }),
+        setEnvColor: (c) => transport.request('shell.call', { ns: 'theme', method: 'setEnvColor', args: [c] }),
+        resetColors: () => transport.request('shell.call', { ns: 'theme', method: 'resetColors', args: [] }),
+        setThemeShift: (hue, light) => transport.request('shell.call',
+          { ns: 'theme', method: 'setThemeShift', args: [hue, light] }),
+        saveAsCustom: (name) => transport.request('shell.call',
+          { ns: 'theme', method: 'saveAsCustom', args: [name] }),
+        deleteCustomTheme: (id) => transport.request('shell.call',
+          { ns: 'theme', method: 'deleteCustomTheme', args: [id] }),
+      },
     },
     /** 供外壳调用 */
     async __destroy() {

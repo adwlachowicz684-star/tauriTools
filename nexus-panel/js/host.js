@@ -14,6 +14,9 @@ import * as extPolicy from './external-policy.js';
 import {
   initTheme, exportVars, onChange as onThemeChange,
 } from './theme-manager.js';
+// 命名空间导入：供 ctx.shell.theme 桥接用。用具名导入会和本文件的
+// 局部变量撞名，用命名空间取最省心。
+import * as themeManager from './theme-manager.js';
 // 注意：必须先 import 再 export。`export { X } from '...'` 是纯转发，
 // 不会在本模块作用域里留下 X 绑定 —— 而 readTheme() 内部直接读 THEME_VARS，
 // 只写转发式导出会抛 ReferenceError。写法与 theme-manager.js 保持一致。
@@ -36,6 +39,33 @@ export { THEME_VARS };
 export function isNoBuild() {
   return globalThis.__NEXUS_NO_BUILD__ === true;
 }
+
+/**
+ * 供 iframe 插件经 ctx.shell.theme 桥接调用的主题能力。
+ *
+ * 为什么需要它：主题变量写在 :root 上，而 iframe 插件有**自己的 document**。
+ * 设置页是 iframe，它若直接 import 一份 theme-manager 并调 applyTheme，
+ * 改的只是 iframe 内部的 :root —— 于是"插件（设置页自己）变了、主面板没变"。
+ * 而标题栏右上角的切换跑在主平台侧，改的是主文档 :root，
+ * 主面板变、再经 pushTheme 推给 iframe，所以两边都变。
+ *
+ * 桥接之后：写操作由主平台侧执行 → 主面板立刻变 → onChange 触发 pushTheme
+ * → iframe 收到新变量并重绘。单向流动，不会来回触发（iframe 只是应用，不回写）。
+ *
+ * 用白名单而不是整个模块：主题是外壳的核心状态，不希望插件能调到
+ * 任意内部方法（含未导出的派生逻辑）。
+ */
+export const THEME_API_METHODS = [
+  // 读
+  'listThemes', 'getThemeId', 'getCurrent', 'getAccent', 'getEnvColor',
+  'getBase', 'getHueShift', 'getLightShift', 'exportVars',
+  // 写
+  'applyTheme', 'setAccent', 'setEnvColor', 'resetColors', 'setThemeShift',
+  'saveAsCustom', 'deleteCustomTheme',
+];
+const themeApi = Object.fromEntries(
+  THEME_API_METHODS.map((m) => [m, themeManager[m]]).filter(([, fn]) => typeof fn === 'function'),
+);
 
 /* ---------------------------- 事件总线 ---------------------------- */
 export function createBus() {
@@ -538,7 +568,8 @@ export function createHost(opts = {}) {
         case 'shell.call': {
           const { ns, method, args } = payload || {};
           const mod = ns === 'pluginConfig' ? pluginConfig
-            : ns === 'external' ? extPolicy : null;
+            : ns === 'external' ? extPolicy
+            : ns === 'theme' ? themeApi : null;
           if (!mod) return reply(false, null, '未知外壳命名空间: ' + ns);
           const fn = mod[method];
           if (typeof fn !== 'function') return reply(false, null, `未知方法: ${ns}.${method}`);
