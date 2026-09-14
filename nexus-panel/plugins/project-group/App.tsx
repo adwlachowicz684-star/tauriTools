@@ -9,7 +9,7 @@ import { SettingsDialog } from './components/SettingsDialog';
 import {
   BackupDialog, ChainDialog, EditorDialog, ServiceDialog,
 } from './components/ToolsPanel';
-import { ConfirmDialog, ContextMenu, type MenuItem } from './components/ui';
+import { ConfirmDialog, ContextMenu, MenuLayerContext, type MenuItem } from './components/ui';
 import { useFpx } from './hooks/useFpx';
 import { useCardHotkeys } from './hooks/useCardHotkeys';
 import { useIconThumbs } from './hooks/useIconThumbs';
@@ -390,7 +390,15 @@ export default function App() {
     );
   }
 
+  /**
+   * 菜单图层的宿主节点。
+   * 必须是 state 而不是 ref：ref 在首次渲染时还是 null，
+   * 用 state 才能在挂载完成后触发一次重渲染，把节点交给 ContextMenu。
+   */
+  const [menuLayer, setMenuLayer] = useState<HTMLDivElement | null>(null);
+
   return (
+    <MenuLayerContext.Provider value={menuLayer}>
     <div className="fpx-root">
       {/* ---------------- 工具栏 ---------------- */}
       <div className="p-card">
@@ -717,7 +725,11 @@ export default function App() {
       {help && (
         <HelpDialog onClose={() => setHelp(false)} platform={boot.platform} />
       )}
+
+      {/* 菜单统一渲染到这里（原因见 ui.tsx 的注释）：脱离 .p-card 的层叠上下文 */}
+      <div className="fpx-menu-layer" ref={setMenuLayer} />
     </div>
+    </MenuLayerContext.Provider>
   );
 }
 

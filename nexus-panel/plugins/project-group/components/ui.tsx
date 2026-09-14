@@ -1,4 +1,26 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode,
+} from 'react';
+import { createPortal } from 'react-dom';
+
+/**
+ * 菜单图层：所有右键菜单 / 「⋯」菜单统一渲染到这里，而不是留在各自的卡片里。
+ *
+ * 为什么必须这样：外壳主题给 `.p-card` 加了 `backdrop-filter`（css/neumorphism.css），
+ * 而 backdrop-filter 只要不是 none 就会 **同时** 造成两件事——
+ *   1. 该元素成为一个层叠上下文；
+ *   2. 该元素成为其 `position: fixed` 后代的包含块。
+ * 三栏都是 `.p-card`，于是「项目」栏里那个 z-index:1000 的菜单被关在本栏的层叠上下文里，
+ * 它的 1000 只在栏内排序、不再参与全局比较；而「项目组」栏是 DOM 里的后一个兄弟，
+ * 同处 z-index:auto，按文档顺序画在上面 —— 表现就是菜单被项目组栏盖住。
+ * 副作用还牵连定位：菜单的 fixed 变成相对「项目」栏定位，left/top 用的是
+ * 视口坐标，于是菜单整体偏移到右边一栏去。
+ *
+ * 把菜单挪出 `.p-card` 后两个问题一起消失。图层本身用 position:relative
+ * （不产生 fixed 包含块）并给 z-index 20：高于三栏（auto），低于弹窗遮罩
+ * （.mask 是 900），这样弹窗打开时仍能盖住未关闭的菜单。
+ */
+export const MenuLayerContext = createContext<HTMLElement | null>(null);
 
 /**
  * 居中弹窗：点遮罩或右上角 ✕ 关闭。
@@ -82,6 +104,7 @@ export interface MenuItem {
 export function ContextMenu({
   x, y, items, onClose,
 }: { x: number; y: number; items: MenuItem[]; onClose: () => void }) {
+  const layer = useContext(MenuLayerContext);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -108,7 +131,7 @@ export function ContextMenu({
     el.style.top = `${Math.max(8, top)}px`;
   }, [x, y]);
 
-  return (
+  const box = (
     <div className="fpx-menu" ref={ref}>
       {items.map((it) => (
         <button
@@ -122,6 +145,8 @@ export function ContextMenu({
       ))}
     </div>
   );
+  // 图层还没挂载好（首帧）时就地渲染，挂在好之后再 portal，避免菜单闪一下位置
+  return layer ? createPortal(box, layer) : box;
 }
 
 /**

@@ -113,6 +113,12 @@
 .fpx-badge.lock { color: var(--text-dim); }
 .fpx-badge.dim { opacity: .6; }
 
+/* 菜单图层：见 ui.tsx 的注释。
+   z-index 20 —— 高于三栏（auto），低于弹窗遮罩（.mask 900）。
+   用 position:relative 而非 fixed/transform：前者不产生 fixed 包含块，
+   菜单的视口定位才不会被带偏。 */
+.fpx-menu-layer { position: relative; z-index: 20; }
+
 /* ---------- 右键菜单 ---------- */
 .fpx-menu {
   position: fixed; z-index: 1000; min-width: 172px; padding: 6px;
