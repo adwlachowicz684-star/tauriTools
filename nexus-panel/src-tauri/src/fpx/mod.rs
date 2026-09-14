@@ -124,7 +124,7 @@ pub(crate) fn core_rename_folder(
         let _guard = LockGuard::new(path, store::lock_of(cfg, path));
         // 跨卷时 rename 必然失败，回退到"复制 + 删除"；
         // 回退的语义是"复制没成功就绝不删源"，不会留下两份残缺数据
-        crate::fpx::fsutil::rename_with_fallback(old, &new_path)
+        crate::fpx::fsutil::rename_with_fallback(old, std::path::Path::new(&new_path))
             .map_err(|e| format!("改名失败：{e}"))?;
         drop(_guard);
 
