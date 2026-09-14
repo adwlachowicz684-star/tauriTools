@@ -17,11 +17,13 @@ const uid = () => `c${Math.random().toString(16).slice(2, 10)}`;
  * 自定义动作可以改模板后保留、也可删除。
  */
 export function ChainActionsPanel({
-  api, onClose, onLog,
+  api, onClose, onLog, onChanged,
 }: {
   api: Api;
   onClose: () => void;
   onLog: (m: string, isError?: boolean) => void;
+  /** 保存成功后通知外层重新拉清单（右键菜单 / 侧边栏用的是外层的那份） */
+  onChanged?: () => void;
 }) {
   const [list, setList] = useState<ChainAction[]>([]);
   const [clients, setClients] = useState<ChainClient[]>([]);
@@ -92,6 +94,7 @@ export function ChainActionsPanel({
       setList(saved);
       setDirty(false);
       onLog('连锁动作已保存');
+      onChanged?.();
     } catch (e) {
       onLog(`保存失败：${errText(e)}`, true);
     } finally {

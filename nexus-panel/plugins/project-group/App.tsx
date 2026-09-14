@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ContentPanel } from './components/ContentPanel';
 import { RenameDialog } from './components/RenameDialog';
 import { CardGrid, TabBar, type DragPayload } from './components/CardGrid';
@@ -196,10 +196,29 @@ export default function App() {
 
   /** 连锁动作清单：右键菜单按需渲染，工具栏「发送到 AI」也用同一份 */
   const [chainActions, setChainActions] = useState<ChainAction[]>([]);
+  /**
+   * 拉取动作的代次号。
+   *
+   * 依赖不能放 `boot` 本身：applySnapshot 每次都造一个新 boot 对象，
+   * 于是加一张卡片、拖一次排序都会重新拉一次动作清单；而后端返回的永远是
+   * 一个新数组，引用一变就触发下面那个注册副作用——侧边栏被整体拆掉重建、
+   * 快捷键反复注销再注册（那正是这段注释本来想避免的闪烁与丢焦点）。
+   * 改成「首次加载 + 显式代次号」驱动：只在真的可能变了的时候才拉。
+   */
+  const [chainVersion, setChainVersion] = useState(0);
+  const refreshChainActions = useCallback(() => {
+    setChainVersion((v) => v + 1);
+  }, []);
+
+  const bootReady = !!boot;
   useEffect(() => {
-    if (!boot) return;
-    s.api.chainActions().then(setChainActions).catch(() => setChainActions([]));
-  }, [boot, s.api]);
+    if (!bootReady) return;
+    let cancelled = false;
+    s.api.chainActions()
+      .then((l) => { if (!cancelled) setChainActions(l); })
+      .catch(() => { if (!cancelled) setChainActions([]); });
+    return () => { cancelled = true; };
+  }, [bootReady, s.api, chainVersion]);
 
   /* ---------------- 连锁动作：快捷键 + 侧边栏 ----------------
    * 两者都属于外壳能力，插件只能「注册 + 监听事件」，不能直接画到外壳上。
@@ -229,7 +248,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!boot) return;
+    if (!bootReady) return;
     const unsubs: Array<() => void> = [];
     const registered: string[] = [];
     const sidebarIds: string[] = [];
@@ -258,9 +277,11 @@ export default function App() {
       for (const acc of registered) ctx.unregisterShortcut(acc);
       for (const id of sidebarIds) ctx.removeSidebarItem(id);
     };
-    // 只在动作清单变化时重建；选中项走 selRef，不进依赖
+    // 只在动作清单变化时重建；选中项走 selRef，不进依赖。
+    // 这里同样不能放 boot：它每次快照都是新对象，会让侧边栏与快捷键
+    // 在所有写操作后被反复拆装（见上面 refreshChainActions 的注释）。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boot, chainActions, ctx]);
+  }, [bootReady, chainActions, ctx]);
 
   /** 直接按动作发送（右键菜单用），失败记日志 + toast */
   const sendAction = async (actionId: string, kind: CardKind, path: string) => {
@@ -340,7 +361,17 @@ export default function App() {
             <button className="p-btn" onClick={() => setDialog({ type: 'settings' })}>设置</button>
             <button className="p-btn" onClick={() => setDialog({ type: 'backup' })}>备份</button>
             <button className="p-btn" onClick={() => setDialog({ type: 'service' })}>服务</button>
-            <button className="p-btn" onClick={() => s.refresh()} title="F5">刷新</button>
+            <button
+              className="p-btn"
+              title="F5"
+              onClick={() => {
+                // 刷新要连动作清单一起拉：外部（MCP / 旧版本配置迁移）也可能改过它
+                refreshChainActions();
+                s.refresh();
+              }}
+            >
+              刷新
+            </button>
             <button
               className="p-btn"
               title="摘掉页签里已不存在的路径（F8）"
@@ -605,6 +636,7 @@ export default function App() {
           onClose={() => setDialog({ type: 'none' })}
           onLog={s.pushLog}
           onSaved={(patch) => s.updateConfig((d) => Object.assign(d, patch))}
+          onChainActionsChanged={refreshChainActions}
         />
       )}
 

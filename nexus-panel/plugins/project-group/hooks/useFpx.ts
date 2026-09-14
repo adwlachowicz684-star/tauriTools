@@ -95,12 +95,24 @@ export function useFpx() {
     }
   }, [ctx, pushLog]);
 
+  /** 最新的配置副本，供 updateConfig 作为连续保存的基准（见 updateConfig 注释）。 */
+  const configRef = useRef<FpxConfig | null>(null);
+
+  /**
+   * 把后端返回的快照并回界面，同时**立刻**同步 configRef。
+   *
+   * 早期版本只 setBoot，configRef 交给下面那个 [boot] 的 effect 去补。
+   * 但 effect 要等到本次渲染提交后才跑，中间有一整段窗口：
+   * createLink / setIcon / setLock 这类「applySnapshot 但不走 updateConfig」的调用
+   * 之后若紧接着来一次 updateConfig，它读到的 configRef 还是上一次的旧草稿，
+   * 于是把刚落盘的快照整份盖掉。同步写死在这里就不存在这个窗口。
+   * 下面的 effect 仍保留：refresh() 等只 setBoot 的路径还得靠它兜。
+   */
   const applySnapshot = useCallback((snap: Snapshot) => {
+    configRef.current = snap.config;
     setBoot((b) => (b ? { ...b, ...snap } : b));
   }, []);
 
-  /** 最新的配置副本，供 updateConfig 作为连续保存的基准（见 updateConfig 注释）。 */
-  const configRef = useRef<FpxConfig | null>(null);
   useEffect(() => {
     if (boot) configRef.current = boot.config;
   }, [boot]);
@@ -139,7 +151,11 @@ export function useFpx() {
     if (snap) {
       configRef.current = snap.config;  // 以后端返回的为准（后端可能补过字段）
       applySnapshot(snap);
-    } else {
+    } else if (configRef.current === draft) {
+      // 只在「期间没人再推进过」时才回滚。
+      // 两次保存在飞是常态：先发的那次若最后才失败（昂贵的写先返回错误、
+      // 便宜的后发先成功都有可能），无条件回滚会把后一次已经落盘的结果
+      // 从 configRef 里抹掉，下一次保存便整份覆盖回去。
       configRef.current = prev;         // 失败回滚，别让本地继续错下去
     }
     return snap;

@@ -26,7 +26,7 @@ const BACKUP_PRESETS: { value: number; label: string }[] = [
  * 重新拉起/停止定时器——后端是常驻线程，不跟着配置自己变。
  */
 export function SettingsDialog({
-  api, config, dataDir, onClose, onLog, onSaved,
+  api, config, dataDir, onClose, onLog, onSaved, onChainActionsChanged,
 }: {
   api: Api;
   config: FpxConfig;
@@ -34,6 +34,14 @@ export function SettingsDialog({
   dataDir: string;
   onClose: () => void;
   onLog: (m: string, isError?: boolean) => void;
+  /**
+   * 连锁动作在管理页里改过之后通知外层重新拉清单。
+   *
+   * 非走不可：saveChainActions 返回的是动作数组而不是 Snapshot，
+   * 外层 boot 不会变，于是右键菜单和侧边栏会一直挂着旧清单，
+   * 用户刚加的自定义动作要等到下一次别的写操作才冒出来。
+   */
+  onChainActionsChanged?: () => void;
   /**
    * 写入配置；传的对象会与当前草稿合并。
    * 返回 Promise 是因为后面要紧接着通知后端重算定时器——
@@ -159,6 +167,7 @@ export function SettingsDialog({
         api={api}
         onClose={() => setManaging(false)}
         onLog={onLog}
+        onChanged={onChainActionsChanged}
       />
     );
   }
