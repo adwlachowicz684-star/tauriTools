@@ -23,10 +23,13 @@ export function pickFile(accept = '') {
     const finish = (f) => {
       if (done) return;
       done = true;
+      // 显式注销：匿名监听器只能等 inp 被丢弃后由 GC 连带回收，命名函数可以在这里摘干净
+      inp.removeEventListener('change', onChange);
       inp.remove();
       resolve(f);
     };
-    inp.addEventListener('change', () => finish(inp.files?.[0] || null));
+    const onChange = () => finish(inp.files?.[0] || null);
+    inp.addEventListener('change', onChange);
     // 部分 WebView 在窗口失焦时不派发 change，这里用 visibilitychange 兜底检测取消
     window.addEventListener('focus', function onFocus() {
       setTimeout(() => {
