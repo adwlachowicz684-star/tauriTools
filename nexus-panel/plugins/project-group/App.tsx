@@ -602,7 +602,9 @@ export default function App() {
           config={boot.config}
           onClose={() => setDialog({ type: 'none' })}
           onLog={s.pushLog}
-          onSaved={(patch) => s.updateConfig((d) => Object.assign(d, patch))}
+          // 备份要遍历整棵树，好几秒。这期间磁盘上的配置可能已被改过
+          // （MCP server 直接写文件，不经前端），所以存之前重读一次再改。
+          onSaved={(patch) => s.updateConfig((d) => Object.assign(d, patch), { fresh: true })}
         />
       )}
 

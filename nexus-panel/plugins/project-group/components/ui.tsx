@@ -144,7 +144,10 @@ export function ConfirmDialog({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
-      if (e.key === 'Enter') onConfirm();
+      // 回车要和下面那个「确定」按钮走同一条路径：确认 + 关闭。
+      // 只调 onConfirm 的话弹窗不会消失，用户再点一次按钮就重复执行了
+      // （对建链这类操作意味着连着建两次）。
+      if (e.key === 'Enter') { onConfirm(); onClose(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

@@ -139,7 +139,28 @@ export function useFpx() {
    * 快照刷进 boot，闭包里仍是旧 config，于是第二份草稿里没有第一次的改动，
    * 保存后直接把第一次的结果抹掉。ref 在每次改动后立刻更新，能串起连续操作。
    */
-  const updateConfig = useCallback(async (mutate: (draft: FpxConfig) => void) => {
+  const updateConfig = useCallback(async (
+    mutate: (draft: FpxConfig) => void,
+    opts?: { fresh?: boolean },
+  ) => {
+    /**
+     * fresh：改之前先向后端重读一次配置。
+     *
+     * 默认不能开。连续两次保存时，第二次若去重读，读到的可能还是「第一次尚未落盘」
+     * 的旧配置（第一次还在飞），基于它改完再保存就会把第一次的改动整份盖掉 ——
+     * 那正是上面用 ref 乐观推进要解决的问题，开成默认等于亲手把它退回去。
+     *
+     * 但耗时操作之后必须开：备份整树遍历要好几秒，这期间 MCP server 可能已经
+     * 在磁盘上改过配置（add_card / set_tag_color 都直接写文件，不经过前端）。
+     * 而 saveConfig 是整份覆盖，拿几秒前的旧草稿写回去，MCP 那次改动就没了。
+     */
+    if (opts?.fresh) {
+      const b = await run('重新读取配置', () => api.bootstrap());
+      if (b && alive.current) {
+        configRef.current = b.config;
+        setBoot(b);
+      }
+    }
     const base = configRef.current ?? boot?.config;
     if (!base) return null;
     const draft: FpxConfig = JSON.parse(JSON.stringify(base));
