@@ -1,11 +1,12 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import {
-  type TaskRecord, type TaskNodeState, type TaskGroup,
+  type TaskRecord, type TaskGroup,
   progressOf, elapsedOf, formatDuration, formatClock,
-  STATUS_LABEL, NODE_STATUS_LABEL, SOURCE_LABEL,
+  STATUS_LABEL, SOURCE_LABEL,
   groupByCanvas, flattenRows, rowOffsets, windowSlice, defaultExpanded,
   GROUP_ROW_HEIGHT, TASK_ROW_HEIGHT,
 } from '../engine/tasks';
+import { TaskDetail } from './TaskDetail';
 
 /**
  * 任务窗口 —— 看"正在跑什么"，而不是"流程长什么样"。
@@ -20,54 +21,6 @@ import {
 
 function StatusPill({ status }: { status: string }) {
   return <span className={`task-pill st-${status}`}>{STATUS_LABEL[status as keyof typeof STATUS_LABEL] || status}</span>;
-}
-
-function NodeRow({ n, now }: { n: TaskNodeState; now: number }) {
-  const [open, setOpen] = useState(false);
-  const dur = n.startedAt ? elapsedOf({ startedAt: n.startedAt, endedAt: n.endedAt } as TaskRecord, now) : 0;
-  const hasBody = Boolean(n.output || n.error || n.rendered);
-  return (
-    <div className={`task-node st-${n.status}`}>
-      <div
-        className="task-node-head"
-        onClick={() => { if (hasBody) setOpen(!open); }}
-        style={hasBody ? undefined : { cursor: 'default' }}
-      >
-        <span className={`dot ${n.status === 'success' ? 'ok' : n.status === 'failed' ? 'bad' : n.status === 'running' ? 'run' : ''}`} />
-        <span className="task-node-id">{n.id}</span>
-        <span className="task-node-status">{NODE_STATUS_LABEL[n.status] || n.status}</span>
-        {n.branch ? <span className="task-tag">分支 {n.branch}</span> : null}
-        {n.concurrency !== undefined ? <span className="task-tag">并发 {n.concurrency}</span> : null}
-        {n.loopTotal !== undefined ? (
-          <span className="task-tag">循环 {n.loopDone ?? 0}/{n.loopTotal}</span>
-        ) : null}
-        <span className="task-node-dur">{n.startedAt ? formatDuration(dur) : '—'}</span>
-        {hasBody ? <span className="task-caret">{open ? '▾' : '▸'}</span> : null}
-      </div>
-      {open ? (
-        <div className="task-node-body">
-          {n.rendered ? (
-            <div className="task-field">
-              <div className="task-field-k">提示词</div>
-              <pre className="task-pre">{n.rendered}</pre>
-            </div>
-          ) : null}
-          {n.output ? (
-            <div className="task-field">
-              <div className="task-field-k">输出</div>
-              <pre className="task-pre">{n.output}</pre>
-            </div>
-          ) : null}
-          {n.error ? (
-            <div className="task-field">
-              <div className="task-field-k">错误</div>
-              <pre className="task-pre err">{n.error}</pre>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 function GroupHead({
@@ -249,56 +202,12 @@ export function TaskPanel({
         {!active ? (
           <div className="task-empty">选一条任务看细节。</div>
         ) : (
-          <>
-            <div className="task-detail-head">
-              <strong>{active.canvasName}</strong>
-              <StatusPill status={active.status} />
-              <span className="task-mute">
-                {formatClock(active.startedAt)}
-                {active.endedAt ? ` → ${formatClock(active.endedAt)}` : ''}
-                {' · '}
-                {formatDuration(elapsedOf(active, now))}
-              </span>
-              <span className="task-grow" />
-              {active.status === 'running' ? (
-                <button className="p-btn danger" onClick={() => onCancel(active.id)}>停止</button>
-              ) : null}
-              {onJumpToCanvas ? (
-                <button className="p-btn" onClick={() => onJumpToCanvas(active.canvasId)}>
-                  打开所在流程
-                </button>
-              ) : null}
-            </div>
-
-            {active.layerTotal > 0 ? (
-              <div className="task-layer">第 {active.layerNow}/{active.layerTotal} 层</div>
-            ) : null}
-
-            <div className="task-nodes">
-              {active.order.length === 0 ? (
-                <div className="task-mute">还没有节点开始执行。</div>
-              ) : (
-                active.order.map((id) => (
-                  <NodeRow key={id} n={active.nodes[id]} now={now} />
-                ))
-              )}
-            </div>
-
-            <div className="task-logs">
-              <div className="task-logs-title">日志</div>
-              {active.logs.length === 0 ? (
-                <div className="task-mute">暂无日志。</div>
-              ) : (
-                active.logs.map((l, i) => (
-                  <div key={i} className="task-log">
-                    <span className="task-log-at">{formatClock(l.at)}</span>
-                    {l.nodeId ? <span className="task-log-id">{l.nodeId}</span> : null}
-                    <span className="task-log-text">{l.text}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </>
+          <TaskDetail
+            task={active}
+            now={now}
+            onCancel={onCancel}
+            onJumpToCanvas={onJumpToCanvas}
+          />
         )}
       </div>
     </div>

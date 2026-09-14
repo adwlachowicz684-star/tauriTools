@@ -31,6 +31,11 @@ import { deviceSeed } from './engine/crypto';
 import Sidebar, { DRAG_MIME, decodeDrag, type DragPayload } from './components/Sidebar';
 import CanvasTabs from './components/CanvasTabs';
 import { TaskPanel } from './components/TaskPanel';
+import { HistoryPanel } from './components/HistoryPanel';
+import {
+  parseHistory, serializeHistory, addToHistory, removeFromHistory,
+  clearCanvasHistory, emptyHistory, HISTORY_STORE_KEY, type HistoryEntry,
+} from './engine/history';
 import {
   makeTask, applyEvent, finishTask, cancelTask, clampOutput,
   type TaskRecord, type TaskSource,
@@ -214,7 +219,35 @@ export default function App() {
     渲染压力交给任务窗口的虚拟滚动（只画视口内的行），
     这里不做人为截断，否则"刚跑完的被挤掉了"会让人以为任务丢了。
   */
-  const [view, setView] = useState<'flow' | 'tasks'>('flow');
+  const [view, setView] = useState<'flow' | 'tasks' | 'history'>('flow');
+
+  /* ---------------- 历史（跨会话归档）---------------- */
+  const [historyFile, setHistoryFile] = useState(() => parseHistory(localStorage.getItem(HISTORY_STORE_KEY)));
+  const history: HistoryEntry[] = historyFile.entries;
+
+  /*
+    写盘可能触发 QuotaExceededError（localStorage 通常只有 5MB）。
+    失败时不能静默吞掉 —— 否则用户以为归档了，下次打开却是空的。
+    这里裁掉一半最旧的再试一次；仍失败就提示，让人知道要清理。
+  */
+  const [histWarn, setHistWarn] = useState('');
+  const saveHistory = useCallback((file: { v: number; entries: HistoryEntry[] }) => {
+    setHistoryFile(file);
+    for (const attempt of [0, 1]) {
+      try {
+        localStorage.setItem(HISTORY_STORE_KEY, serializeHistory(file));
+        if (attempt > 0) setHistWarn('存储空间紧张，已自动清理较旧的记录。');
+        else setHistWarn('');
+        return;
+      } catch {
+        // 装不下就丢掉最旧的一半再试
+        const keep = file.entries.slice(0, Math.max(1, Math.floor(file.entries.length / 2)));
+        file = { v: file.v, entries: keep };
+        setHistoryFile(file);
+      }
+    }
+    setHistWarn('存储空间不足，归档未能全部保存。建议清空部分历史。');
+  }, []);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   /** 当前正在跑的任务 id。用 ref 避免 onEvent 因依赖变化而重建 */
   const currentTaskRef = useRef<string | null>(null);
@@ -854,17 +887,27 @@ export default function App() {
     setSummary(result);
     const finishedId = currentTaskRef.current;
     if (finishedId) {
-      setTasks((list) => list.map((t) => (t.id === finishedId ? finishTask(t, result.ok) : t)));
+      setTasks((list) => list.map((t) => {
+        if (t.id !== finishedId) return t;
+        const done = finishTask(t, result.ok);
+        // 归档：任务窗口是当前会话的实时态，历史面板是跨会话的归档
+        saveHistory(addToHistory(historyRef.current, done).file);
+        return done;
+      }));
       currentTaskRef.current = null;
     }
     setRunning(false);
     abortRef.current = null;
     return result.ok;
-  }, [running, nodes, edges, concurrency, globalInput, onEvent, setNodes, pushLog, activeId, canvases]);
+  }, [running, nodes, edges, concurrency, globalInput, onEvent, setNodes, pushLog, activeId, canvases, saveHistory]);
 
   // 调度器通过 ref 调用 run，避免闭包捕获旧状态
   const runRef = useRef(run);
   useEffect(() => { runRef.current = run; }, [run]);
+
+  // run 里要读最新的历史文件，但把 history 放进依赖会让 run 频繁重建
+  const historyRef = useRef(historyFile);
+  useEffect(() => { historyRef.current = historyFile; }, [historyFile]);
 
   const triggersRef = useRef(triggers);
   useEffect(() => { triggersRef.current = triggers; }, [triggers]);
@@ -1015,7 +1058,13 @@ export default function App() {
               </span>
             ) : null}
           </button>
+          <button className={view === 'history' ? 'on' : ''} onClick={() => setView('history')}>
+            历史
+          </button>
         </div>
+        {histWarn ? (
+          <span className="hist-warn-inline" title={histWarn}>⚠ 归档存储</span>
+        ) : null}
         <strong className="brand">Agent Flow</strong>
         <button onClick={addTask} disabled={running}>+ 任务</button>
         <button onClick={addCondition} disabled={running}>+ 条件</button>
@@ -1071,6 +1120,21 @@ export default function App() {
       </div>
 
       <div className="body">
+        {view === 'history' ? (
+          <HistoryPanel
+            entries={history}
+            now={tick}
+            onDelete={(id) => saveHistory(removeFromHistory(historyFile, id))}
+            onClearAll={() => saveHistory(emptyHistory())}
+            onClearCanvas={(canvasId) => saveHistory(clearCanvasHistory(historyFile, canvasId))}
+            onJumpToCanvas={(canvasId) => {
+              if (canvasId && canvases.some((c) => c.id === canvasId)) {
+                setActiveId(canvasId);
+                setView('flow');
+              }
+            }}
+          />
+        ) : null}
         {view === 'tasks' ? (
           <TaskPanel
             tasks={tasks}
@@ -1088,7 +1152,7 @@ export default function App() {
             }}
           />
         ) : null}
-        <div className="canvas" ref={wrapperRef} onDrop={onDrop} onDragOver={onDragOver} style={view === 'tasks' ? { display: 'none' } : undefined}>
+        <div className="canvas" ref={wrapperRef} onDrop={onDrop} onDragOver={onDragOver} style={view === 'flow' ? undefined : { display: 'none' }}>
           <ReactFlow
             nodes={nodes}
             edges={edges}

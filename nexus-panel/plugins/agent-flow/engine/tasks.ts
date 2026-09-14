@@ -449,10 +449,12 @@ export function windowSlice(
   scrollTop: number,
   viewportH: number,
   overscan: number = OVERSCAN,
+  /** 自定义行高。历史面板的行类型不同，靠这个复用同一套切片逻辑 */
+  heightOf: (row: TaskRow) => number = rowHeightOf,
 ): WindowSlice {
   const n = rows.length;
   if (n === 0) return { start: 0, end: 0, padTop: 0, padBottom: 0, totalHeight: 0 };
-  const totalHeight = offsets[n - 1] + rowHeightOf(rows[n - 1]);
+  const totalHeight = offsets[n - 1] + heightOf(rows[n - 1]);
 
   // 二分：找最后一个 offset <= scrollTop 的行
   let lo = 0, hi = n - 1, start = 0;
@@ -472,7 +474,7 @@ export function windowSlice(
     start: s,
     end: e,
     padTop: offsets[s] ?? 0,
-    padBottom: Math.max(0, totalHeight - ((offsets[e - 1] ?? 0) + rowHeightOf(rows[e - 1] ?? rows[n - 1]))),
+    padBottom: Math.max(0, totalHeight - ((offsets[e - 1] ?? 0) + heightOf(rows[e - 1] ?? rows[n - 1]))),
     totalHeight,
   };
 }

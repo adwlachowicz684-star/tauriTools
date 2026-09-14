@@ -30,6 +30,7 @@ for f in tests/*.test.ts; do
     --import-map ../engine/llm=../llm.mjs \
     --import-map ../engine/credentials=../credentials.mjs \
     --import-map ../engine/github=../github.mjs \
+    --import-map ../engine/history=../history.mjs \
     --import-map ../engine/tasks=../tasks.mjs \
     --import-map ../engine/crypto=../crypto.mjs \
     --import-map ../engine/credentialStore=../credentialStore.mjs \

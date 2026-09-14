@@ -1048,3 +1048,26 @@ input.mono, textarea.mono {
 .task-tag.run { color: var(--af-accent); }
 .task-tag.bad { color: var(--af-bad); }
 .task-caret { color: var(--af-text-mute); width: 10px; flex: none; font-size: 10px; }
+
+/* ---------- 历史面板 ---------- */
+.hist-filter { padding: 8px 10px; border-bottom: 1px solid var(--af-line);
+  display: flex; flex-direction: column; gap: 6px; flex: none; }
+.hist-filter-row { display: flex; gap: 6px; }
+.hist-sel { flex: 1; min-width: 0; font-size: 12px; padding: 3px 6px; }
+.hist-search { font-size: 12px; padding: 4px 8px; }
+.hist-stats { display: flex; align-items: center; gap: 9px;
+  font-size: 11px; color: var(--af-text-mute); }
+.hist-bucket { display: flex; align-items: center; justify-content: space-between;
+  padding: 0 12px; font-size: 11px; color: var(--af-text-mute);
+  background: var(--af-bg); border-bottom: 1px solid var(--af-line);
+  box-sizing: border-box; }
+.hist-row { padding: 7px 12px; border-bottom: 1px solid var(--af-line);
+  cursor: pointer; overflow: hidden; box-sizing: border-box; }
+.hist-row:hover { background: var(--af-item); }
+.hist-row.is-active { background: var(--af-item); }
+.hist-row .task-item-meta { margin-top: 3px; }
+.task-archived-tip { padding: 5px 14px; font-size: 11px; line-height: 1.6;
+  color: var(--af-text-mute); background: var(--af-item);
+  border-bottom: 1px solid var(--af-line); }
+.hist-warn-inline { font-size: 11px; color: var(--af-warn); margin-left: 4px; cursor: help; }
+.mini.danger { color: var(--af-bad); }
