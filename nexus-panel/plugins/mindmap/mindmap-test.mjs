@@ -492,7 +492,9 @@ group('M8 · 存储读写失败不再静默');
   store.resetStoreError();
 
   // 插件层要真的把错误显示出来
-  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  // 统一换行后再匹配：本仓 Windows 与 CI 两侧混用 CRLF/LF，直接用 '\n' 定位
+  // 会在别人机器上静默失配（indexOf 返回 -1 → slice 错 → 断言假失败）。
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8').replace(/\r\n/g, '\n');
   ok(/function flushStoreError/.test(src), 'index.js 定义了 flushStoreError');
   ok(/flushStoreError\(\)/.test(src.slice(src.indexOf('await loadSheet();\n  updateBadge();'))), '初始化末尾调用了 flushStoreError');
 }
