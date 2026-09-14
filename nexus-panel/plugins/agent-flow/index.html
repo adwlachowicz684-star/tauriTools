@@ -2,6 +2,22 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
+  <script>
+    /* 首帧底色（防白闪）
+       ----------------------------------------------------------
+       本页是 iframe 内的独立文档，UA 默认画布是白的，
+       且不受父级 color-scheme 影响。从文档开始渲染到外壳把主题变量
+       推进来（postMessage）之间有几十到几百毫秒，深色面板下
+       切换插件就会闪一下刺眼的白底。
+       外壳每次应用主题都会把底色缓存进 localStorage，这里直接读出来铺上；
+       读不到（隔离态抛 SecurityError、或首次运行）就交给宿主侧的
+       .plugin-frame 遮罩兜底。 */
+    try {
+      var _bg = localStorage.getItem('nexus:preload-bg');
+      if (_bg) document.documentElement.style.background = _bg;
+    } catch (_e) { /* 隔离态无 localStorage，忽略 */ }
+  </script>
+
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Agent Flow</title>
   <style>

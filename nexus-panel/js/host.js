@@ -228,6 +228,10 @@ export function createHost(opts = {}) {
       } else if (instance) {
         hooks.onAdaptInfo?.({ adapted: false, reason: 'adapt-disabled' });
       }
+      /* 显形放在适配之后：滤镜挂上之前 iframe 是「白底未适配」的样子，
+         此刻摘遮罩就等于把那帧白放给用户看。
+         适配关掉时也要显形 —— 那是用户的选择，不是没走到这一步。 */
+      revealFrame(instance?.iframe);
 
       // 告诉外壳：这个插件有没有自己的设置面板（决定要不要显示「⚙ 设置」）
       hooks.onSettingsAvailable?.(instance ? hasSettings(instance) : false);
@@ -280,6 +284,8 @@ export function createHost(opts = {}) {
         root: null, isIframe: true,
       };
       await reAdapt(inst);
+      // 与主视图同理：等适配滤镜挂上再摘遮罩，否则抽屉里也会闪一下白
+      revealFrame(inst?.iframe);
       // 焦点在这个沙箱里，天然隔离；主视图（另一个 iframe 或主文档）收不到事件
       try { inst.iframe?.contentWindow?.focus(); } catch {}
       return async () => {
@@ -416,6 +422,25 @@ export function createHost(opts = {}) {
   /* ---- 模式 B：沙箱 iframe 插件（默认） ----
      view='main' 主视图；view='settings' 渲染插件自己的设置面板
      （设置面板复用同一个入口页面，只是 init 时告知 SDK 走 settings 分支） */
+  /**
+   * 让插件 iframe 显形（配合 .plugin-frame 的 opacity:0 初始值）。
+   *
+   * 时机很关键：必须在**主题变量推完 + 适配滤镜挂上之后**调用，
+   * 提前了就会把「白底未适配」的那一帧放出来 —— 深色面板下切插件
+   * 闪一下刺眼的白，就是这个窗口。
+   *
+   * 重复调用无害（classList.add 幂等），所以调用方不用自己记状态。
+   */
+  function revealFrame(iframe) {
+    try { iframe?.classList?.add('revealed'); } catch { /* iframe 已销毁 */ }
+  }
+
+  /** 兜底显形：适配卡住（插件报错、握手超时）时也不能让插件永远隐身 */
+  function armRevealFallback(iframe, delay = 900) {
+    const timer = setTimeout(() => revealFrame(iframe), delay);
+    return () => clearTimeout(timer);
+  }
+
   async function mountIframeView(hostEl, manifest, token, view = 'main') {
     const wrap = document.createElement('div');
     wrap.className = 'plugin-wrap plugin-wrap-frame';
@@ -539,6 +564,10 @@ export function createHost(opts = {}) {
 
     hostEl.innerHTML = '';
     hostEl.appendChild(wrap);
+
+    /* 兜底显形：mounted 之后无论后面适配成功与否，最多 900ms 一定显示。
+       没有它，reAdapt 抛错或插件自报基调迟迟不来时，插件会一直隐身。 */
+    cleanupFns.push(armRevealFallback(iframe));
 
     try {
       await ready;

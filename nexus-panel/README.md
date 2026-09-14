@@ -94,6 +94,22 @@ export default definePlugin({
 </script>
 ```
 
+> **新写一个 iframe 插件页面时，记得给首帧铺底色。** iframe 里是独立文档，
+> UA 默认画布是白的，且不受父级 `color-scheme` 影响 —— 从文档开始渲染到外壳
+> 把主题变量推进来之间有一两百毫秒，深色面板下就是一闪而过的刺眼白底。
+> 在 `<head>` 里读一下外壳缓存的底色即可（`localStorage` 在隔离态会抛，要 try/catch）：
+> ```html
+> <script>
+>   try {
+>     var _bg = localStorage.getItem('nexus:preload-bg');
+>     if (_bg) document.documentElement.style.background = _bg;
+>   } catch (_e) {}
+> </script>
+> ```
+> 漏了也不会白：宿主的 `.plugin-frame` 初始 `opacity:0`，等主题变量推完、
+> 适配滤镜挂上才由 `revealFrame()` 淡入（另有 900ms 兜底，不会永久隐身）。
+> `npm run test:flash` 会校验这条链路。
+
 ### 3. 用 React + TS 写插件（Vite 模式）
 
 `plugins/my-plugin/index.html` + `main.tsx` + `App.tsx`：
@@ -346,7 +362,13 @@ L2 的连带问题已处理：对 `img/video/canvas/svg` 做**二次反转**还�
    也可为单个插件单独指定，插件级优先于全局。
 
 `npm run test:adapt` 验证适配核心（14 项：亮度采样、施加/回滚、策略优先级）；
-`npm run test:theme` 验证主题系统（38 项：变量落地、派生、持久化、自定义、基调联动）。
+`npm run test:theme` 验证主题系统（45 项：变量落地、派生、持久化、自定义、基调联动）。
+
+**切换插件为什么会闪一下白底**：iframe 内文档的 UA 默认画布是白的，
+而「文档开始渲染 → 插件 CSS 生效 → 主题变量推入 → 适配滤镜挂上」这条链要走一两百毫秒。
+现在两头各挡一层：插件页面自己铺缓存底色（快），宿主 `.plugin-frame` 先隐身、
+适配完成后才淡入（稳，对第三方插件同样有效）。
+`npm run test:flash` 会校验遮罩、显形时机与兜底。
 
 
 ## 五、外链管理（Office 式分级管控）

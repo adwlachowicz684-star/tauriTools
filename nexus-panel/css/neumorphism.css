@@ -612,6 +612,19 @@ body {
   isolation: isolate;          /* 把 mix-blend-mode 限制在容器内，不影响外壳 */
 }
 .plugin-root { min-height: 100%; position: relative; }
+/* 挂载期遮罩：iframe 先隐身，等主题变量推完、适配滤镜也挂上再淡入。
+   --------------------------------------------------------------------
+   iframe 内是**独立文档**，UA 默认画布是白的，且不受父级 color-scheme 影响。
+   于是切换插件时会出现两段白：
+     ① iframe 文档已开始渲染、插件自己的 CSS 还没生效；
+     ② 插件是浅色第三方页面，主题适配（invert 滤镜）还没算完。
+   两段都在「挂载 → 适配完成」之间，深色面板下就是一闪而过的刺眼白底。
+
+   这里让 iframe 一开始 opacity:0（透出 #main-inner 的深色），
+   由 host.js 的 revealFrame() 在适配完成后摘掉，短淡入收尾。
+   不要给 .plugin-wrap 加背景色兜底 —— 插件文档背景是 transparent 时
+   （demo-iframe / mindmap）会永久露出那层底色，扁平主题下 bg 与 surface
+   不同色，等于把插件底的观感改掉了。 */
 .plugin-frame {
   width: 100%;
   /* 同理：靠 height 撑满，而不是只给 min-height。
@@ -623,6 +636,13 @@ body {
   border: 0;
   background: transparent;
   color-scheme: dark;          /* 让 iframe 里的表单控件/滚动条也走深色 */
+  opacity: 0;
+  transition: opacity .18s ease;
+}
+.plugin-frame.revealed { opacity: 1; }
+/* 系统开了「减少动效」就别淡入了，直接显示 */
+@media (prefers-reduced-motion: reduce) {
+  .plugin-frame { transition: none; }
 }
 
 /* L3 色调统一：把反色后的杂色拉回面板基色，保留明暗结构 */
