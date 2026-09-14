@@ -1,7 +1,77 @@
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { invoke as tauriInvoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { CliKind, FsOp, FsNodeData } from '../types';
 import { isHttpUrl } from '../engine/llm';
+
+/* ---------------- Tauri 通道：桥接优先，直连兜底 ----------------
+   本插件跑在 iframe（沙箱）里，能不能直接调 Tauri 取决于沙箱强度：
+
+     · 默认 iframe —— 与外壳同属一个 webview，window.__TAURI_INTERNALS__
+       可见，直接 import 进来的 invoke / listen 就能用。
+     · 严格沙箱 —— iframe 是 opaque origin，它那份 window 上没有
+       __TAURI_INTERNALS__，直连全部失效，而且**不报错**：
+       isTauri() 返回 false，功能要么悄悄走浏览器降级、要么抛
+       「请运行在桌面端」，用户明明在桌面端却被这么提示。
+
+   桥接（ctx.invoke）把命令转交主平台侧执行，隔离与否都走得通，
+   所以调 Rust 一律桥接优先、直连兜底，不再一上来就直连。
+   降级写法对照 plugins/settings/ExternalCard.tsx 的 bridge→direct。
+   ------------------------------------------------------------------ */
+
+/** 桥接只需要 invoke 这一种能力，多要一个字段就多一处要保持同步 */
+type InvokeBridge = (cmd: string, args?: Record<string, any>) => Promise<any>;
+
+let bridge: InvokeBridge | null = null;
+
+/**
+ * 注入桥接，由 main.tsx 拿到 ctx 后调用一次。
+ * 传空表示没有桥接（例如脱离外壳单独打开页面调试），
+ * 此时全部走直连，行为与改动前一致。
+ */
+export function setTauriBridge(ctx: unknown): void {
+  const fn = (ctx as { invoke?: InvokeBridge } | null | undefined)?.invoke;
+  bridge = typeof fn === 'function'
+    ? (cmd, args) => (fn as InvokeBridge).call(ctx, cmd, args)
+    : null;
+}
+
+/**
+ * 调 Rust 的统一入口：先桥接，桥接不通再直连。
+ * 两条路都失败就让错误冒泡 —— 不吞异常，调用方才好定位。
+ */
+async function invoke<T = any>(cmd: string, args: Record<string, any> = {}): Promise<T> {
+  if (bridge) {
+    try {
+      return await bridge(cmd, args);
+    } catch (e) {
+      console.warn(`[agent-flow] 桥接调用 ${cmd} 失败，回退直连`, e);
+    }
+  }
+  return await tauriInvoke<T>(cmd, args);
+}
+
+/**
+ * 是否具备调 Rust 的条件。
+ *
+ * 不能只看 isTauri()：隔离态下它是 false，可桥接其实还通着，
+ * 照它判断会把「明明能用」的桌面端功能误判成浏览器模式。
+ */
+function hasTauri(): boolean {
+  return !!bridge || isTauri();
+}
+
+/**
+ * 能否收到 Rust 推的事件。
+ *
+ * 与 invoke 不同，事件只有直连一条路 —— 桥接明确不转发
+ * （回调没法跨 postMessage 传，见 host.js 的 'listen' 分支），
+ * 所以这一项仍以 isTauri() 为准。
+ * 隔离态下拿不到事件，相关功能必须显式失败，
+ * 不能让调用方傻等一个永远不会来的 done。
+ */
+function hasTauriEvents(): boolean {
+  return isTauri();
+}
 
 export type RunRequest = {
   runId: string;
@@ -28,7 +98,7 @@ export type StreamHandlers = {
  * 在纯浏览器里降级为模拟输出，方便单独调试画布。
  */
 export async function runCli(req: RunRequest, h: StreamHandlers): Promise<void> {
-  if (!isTauri()) {
+  if (!hasTauri()) {
     // 浏览器降级：模拟流式返回，仅用于验证画布与调度逻辑
     const text = `[模拟输出] ${req.cli} 收到任务:\n${req.prompt.slice(0, 200)}`;
     for (const piece of text.match(/[\s\S]{1,24}/g) ?? []) {
@@ -36,6 +106,15 @@ export async function runCli(req: RunRequest, h: StreamHandlers): Promise<void> 
       await new Promise((r) => setTimeout(r, 30));
     }
     h.onDone({ code: 0, success: true });
+    return;
+  }
+
+  // 命令发得出去（走桥接），事件却收不回来：进程会照常跑完，
+  // 而前端既看不到输出、也等不到 done，节点永远停在 running。
+  // 这种情况直接判死，好过静默卡住。
+  if (!hasTauriEvents()) {
+    h.onStderr('拿不到 Tauri 事件通道，CLI 节点无法运行（需桌面端，且本插件未被设为隔离模式）\n');
+    h.onDone({ code: null, success: false });
     return;
   }
 
@@ -53,11 +132,13 @@ export async function runCli(req: RunRequest, h: StreamHandlers): Promise<void> 
     unlisteners.forEach((u) => u());
   };
 
-  unlisteners.push(await listen<string>(out, (e) => h.onStdout(e.payload)));
-  unlisteners.push(await listen<string>(err, (e) => h.onStderr(e.payload)));
-  unlisteners.push(await listen<DonePayload>(done, (e) => finish(e.payload)));
-
+  // listen 也包进 try：事件通道不可用时这里会抛，
+  // 留在外面会变成 unhandled rejection，界面上什么都不显示
   try {
+    unlisteners.push(await listen<string>(out, (e) => h.onStdout(e.payload)));
+    unlisteners.push(await listen<string>(err, (e) => h.onStderr(e.payload)));
+    unlisteners.push(await listen<DonePayload>(done, (e) => finish(e.payload)));
+
     await invoke<void>('run_node', { req });
   } catch (e) {
     h.onStderr(`启动失败: ${String(e)}\n`);
@@ -67,7 +148,7 @@ export async function runCli(req: RunRequest, h: StreamHandlers): Promise<void> 
 
 /** 终止正在跑的节点进程 */
 export async function killCli(runId: string): Promise<void> {
-  if (!isTauri()) return;
+  if (!hasTauri()) return;
   await invoke<void>('kill_node', { runId });
 }
 
@@ -75,7 +156,7 @@ export async function killCli(runId: string): Promise<void> {
 
 /**
  * 开始监听目录。文件变化会以 `watch-event/${id}` 事件推给前端。
- * 浏览器模式下返回 false，由调用方决定是否提示。
+ * 浏览器模式下返回 null，由调用方决定是否提示。
  */
 export async function startWatch(
   id: string,
@@ -83,7 +164,10 @@ export async function startWatch(
   recursive: boolean,
   onEvent: (path: string) => void,
 ): Promise<(() => void) | null> {
-  if (!isTauri() || !dir) return null;
+  if (!hasTauri() || !dir) return null;
+  // 变化全靠 Rust 推事件，收不到事件就别起：
+  // 起了也是个哑监听器，目录明明在变而界面毫无反应，比直接说不支持更难排查
+  if (!hasTauriEvents()) return null;
 
   await invoke<void>('watch_start', { id, dir, recursive });
   const un = await listen<string>(`watch-event/${id}`, (e) => onEvent(e.payload));
@@ -94,9 +178,9 @@ export async function startWatch(
   };
 }
 
-/** 浏览器模式（非 Tauri）不支持文件监听 */
+/** 浏览器模式（非 Tauri）不支持文件监听；隔离沙箱收不到事件，同样算不支持 */
 export function canWatch(): boolean {
-  return isTauri();
+  return hasTauri() && hasTauriEvents();
 }
 
 
@@ -113,7 +197,9 @@ export async function startWebhook(
   token: string,
   onEvent: (body: string) => void,
 ): Promise<(() => void) | null> {
-  if (!isTauri()) return null;
+  if (!hasTauri()) return null;
+  // 请求到达同样靠事件回传，没有事件通道就只是个开着的洞
+  if (!hasTauriEvents()) return null;
 
   try {
     await invoke<void>('webhook_start', { id, port, path, token });
@@ -129,9 +215,9 @@ export async function startWebhook(
   };
 }
 
-/** 浏览器模式不支持起本地 HTTP 服务 */
+/** 浏览器模式不支持起本地 HTTP 服务；隔离沙箱收不到事件，同样算不支持 */
 export function canWebhook(): boolean {
-  return isTauri();
+  return hasTauri() && hasTauriEvents();
 }
 
 /* ---------------- 文件 / 文件夹操作 ---------------- */
@@ -158,7 +244,7 @@ export type FsOutcome = { ok: boolean; text: string };
  * 用户会以为工作流真的写了文件。
  */
 export async function fileOp(args: FsArgs): Promise<FsOutcome> {
-  if (!isTauri()) {
+  if (!hasTauri()) {
     throw new Error('文件操作需要运行在桌面端（当前是浏览器模式）');
   }
   return await invoke<FsOutcome>('fs_op', { req: args });
@@ -203,7 +289,7 @@ export function fsArgsOf(
 
 /** 浏览器模式不支持文件操作 */
 export function canFs(): boolean {
-  return isTauri();
+  return hasTauri();
 }
 
 /* ---------------- 网络抓取（B站 / 公众号节点用） ---------------- */
@@ -327,7 +413,7 @@ export async function fetchText(url: string, opts: FetchTextOptions = {}): Promi
   };
 
   // 1) 经 Rust 的 tauri-plugin-http（不受同源策略限制）
-  if (isTauri()) {
+  if (hasTauri()) {
     const r = await tauriHttpRequest(url, {
       method: 'GET', headers, connectTimeout: timeoutMs, maxBytes: max,
     });
@@ -350,7 +436,7 @@ export async function fetchText(url: string, opts: FetchTextOptions = {}): Promi
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `抓取失败（${msg}）。` + (isTauri()
+      `抓取失败（${msg}）。` + (hasTauri()
         ? 'Tauri http 通道不可用，已退回浏览器请求，受 CORS 与 CSP connect-src 限制；多数订阅源会被拒绝（检查 Rust 侧是否启用了 tauri-plugin-http、capabilities 是否放行该域名）。'
         : '浏览器模式下多数订阅源不允许跨域，请用桌面端运行。'),
     );
@@ -390,7 +476,7 @@ export async function postJson(
 
   // 请求体必须是已序列化的字符串：Rust 侧按字节数组接收，
   // 传对象会被 String() 成 "[object Object]"，请求体直接坏掉。
-  if (isTauri()) {
+  if (hasTauri()) {
     const r = await tauriHttpRequest(url, {
       method: 'POST',
       headers,
@@ -417,7 +503,7 @@ export async function postJson(
       throw new Error(`请求超时（超过 ${timeoutSec} 秒）。长文本可考虑拆分成多个节点`);
     }
     throw new Error(
-      `请求失败（${msg}）。` + (isTauri()
+      `请求失败（${msg}）。` + (hasTauri()
         ? 'Tauri http 通道不可用，已退回浏览器请求，多数大模型 API 会因 CORS 被拒绝（检查 Rust 侧是否启用了 tauri-plugin-http，以及 CSP 的 connect-src 是否放行目标域名）。'
         : '浏览器模式下多数大模型 API 不允许跨域，请用桌面端运行。'),
     );
@@ -433,7 +519,7 @@ export async function postJson(
  * 走 Rust 命令 af_read_image_data_url（见 src-tauri 的 agent_flow_llm.rs）。
  */
 export async function readImageDataUrl(path: string): Promise<string> {
-  if (!isTauri()) {
+  if (!hasTauri()) {
     throw new Error('读取本地图片需要运行在桌面端（当前是浏览器模式）');
   }
   if (!path.trim()) throw new Error('图片路径为空');
@@ -442,5 +528,5 @@ export async function readImageDataUrl(path: string): Promise<string> {
 
 /** 浏览器模式不支持读取本地图片 */
 export function canReadImage(): boolean {
-  return isTauri();
+  return hasTauri();
 }

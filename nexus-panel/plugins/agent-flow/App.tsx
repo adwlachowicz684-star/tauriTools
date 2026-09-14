@@ -712,9 +712,14 @@ export default function App() {
       { type: 'application/json' },
     );
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(blob);
+    a.href = url;
     a.download = 'agent-flow.json';
     a.click();
+    // click() 是同步派发的，走到这里下载已经接管了这个 URL。
+    // 不 revoke 的话，URL 会连同它引用的整个 blob 一直挂在内存里 ——
+    // 每次导出漏一份，反复导出内存就一直涨。
+    URL.revokeObjectURL(url);
   };
 
   const importJson = (file: File) => {
