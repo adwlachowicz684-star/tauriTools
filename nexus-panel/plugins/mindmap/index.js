@@ -259,6 +259,35 @@ bootIframePlugin(async (ctx) => {
 
   const group = (...els) => h('div.mm-row', {}, ...els);
 
+  /**
+   * 属性侧栏的四个页签，位置对齐 C# MindMapPanel 的顶栏最右（Grid.Column=14）：
+   * SideBtnTheme → SideBtnTag → SideBtnStyle → SideBtnFile。
+   *
+   * 放在顶栏而不是侧栏顶部有两个理由：
+   *   1. 与原版一致；
+   *   2. 不占侧栏高度 —— 侧栏只有 276px 宽、纵向空间本就紧张，
+   *      顶部再压一条页签条等于凭空少一屏内容的 1/10。
+   */
+  const SIDE_TABS = [['theme', '主题'], ['tag', '标签'], ['style', '样式'], ['file', '文件']];
+  let sideTabsEl = null;
+
+  function buildSideTabs() {
+    sideTabsEl = h('div.mm-top-tabs', {});
+    for (const [key, label] of SIDE_TABS) {
+      sideTabsEl.appendChild(B(label, () => side?.open(key), { title: `切换到${label}页` }));
+    }
+    return sideTabsEl;
+  }
+
+  /** 高亮当前页签。侧栏也会自行切页（例如点节点附件会跳到「文件」页），
+   *  所以这里由 side 的 onPage 回调驱动，而不是只在点击时更新。 */
+  function syncSideTabs(page) {
+    if (!sideTabsEl) return;
+    [...sideTabsEl.children].forEach((b, i) => {
+      b.classList.toggle('on', SIDE_TABS[i][0] === page);
+    });
+  }
+
   function buildToolbar() {
     toolbar.innerHTML = '';
 
@@ -334,15 +363,17 @@ bootIframePlugin(async (ctx) => {
     toolbar.appendChild(group(
       B('重载', () => reloadEditor(), { title: '重新加载编辑器内核' }),
     ));
+
+    // 属性侧栏页签：顶栏最右（对齐 C# 的 Grid.Column=14）
+    toolbar.appendChild(buildSideTabs());
+    syncSideTabs(side?.current());
   }
 
   /* ------------------------- 侧栏 ------------------------- */
 
   function buildRail() {
     rail.innerHTML = '';
-    // 图标条现在只留「文件库」开关。
-    // 四个属性页的入口已经跟着侧栏搬到右侧顶部 —— 侧栏常驻后，
-    // 页签放在画布左边、内容显示在画布右边，视线要横穿整个画面对不上号。
+    // 图标条只留「文件库」开关：四个属性页入口在顶栏最右（对齐 C#）。
     rail.appendChild(h('button.mm-btn' + (settings.filesOpen ? '.on' : ''), {
       title: settings.filesOpen ? '隐藏脑图文件列表' : '显示脑图文件列表',
       onclick: () => toggleFiles(),
@@ -1188,7 +1219,7 @@ bootIframePlugin(async (ctx) => {
     get settings() { return settings; },
     sheet,
   };
-  side = buildSide(app);
+  side = buildSide(app, { onPage: syncSideTabs });
   fileList = buildFileList(app);
   // 顺序对齐 C# MindMapPanel 的主体两列：[文件库] | 画布 | [属性侧栏 276px]
   //   左侧：文件库（Web 版多文档功能，C# 没有；默认收起，点 📚 展开）

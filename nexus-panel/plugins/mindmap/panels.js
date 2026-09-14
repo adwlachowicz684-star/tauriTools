@@ -83,50 +83,34 @@ function chips(items, current, onPick) {
  * 右侧属性侧栏。
  * ============================================================
  * 对齐 C# 版 MindMapPanel：主体区是两列网格，画布占 Column 0，
- * 侧栏占 Column 1 固定 276px 且**常驻**（XAML 里没有折叠逻辑，
- * 四个页签 ToggleButton 只切换内容）。
+ * 侧栏占 Column 1 固定 276px 且**常驻**（XAML 里没有折叠逻辑）。
  *
- * 页签位置与 C# 不同：C# 把 主题/标签/样式/文件 四个 ToggleButton 放在
- * 顶栏最右（Grid.Column=14）。Web 版改放在侧栏顶部 —— 侧栏常驻之后，
- * 页签若留在顶栏最右，视线要横穿整个画布才能把「点了哪个钮」和
- * 「右侧变成什么」对上；放在内容正上方则一目了然。
+ * 四个页签（主题 / 标签 / 样式 / 文件）**不在**这里 —— C# 把它们的
+ * ToggleButton 放在顶栏最右（Grid.Column=14），由 index.js 的 buildToolbar
+ * 生成，通过 opts.onPage 回调与本处的当前页保持高亮同步。
+ *
+ * 页签也曾短暂地放在侧栏顶部，但那样会占掉侧栏内容约 34px 的可用高度，
+ * 且与原版不符，故改回顶栏。
  */
-export function buildSide(app) {
+export function buildSide(app, opts = {}) {
   const pages = {};
   let current = null;
 
   const body = h('div.mm-side.open', {});   // 常驻：初始即带 open
-  const tabs = h('div.mm-side-tabs', {});
-  const content = h('div.mm-side-body', {});
-  body.appendChild(tabs);
-  body.appendChild(content);
   const el = body;
-
-  // 顺序对齐 C# 顶栏的 SideBtnTheme → SideBtnTag → SideBtnStyle → SideBtnFile
-  const DEFS = [['theme', '主题'], ['tag', '标签'], ['style', '样式'], ['file', '文件']];
-
-  function renderTabs() {
-    tabs.innerHTML = '';
-    for (const [key, label] of DEFS) {
-      tabs.appendChild(h('button.mm-side-tab' + (current === key ? '.on' : ''), {
-        onclick: () => open(key),
-        title: label,
-      }, label));
-    }
-  }
 
   /** 切换页。常驻侧栏不再有「再点一次收起」的语义 —— 那会把面板点没。 */
   function open(page) {
     if (!pages[page]) return;
     current = page;
     body.dataset.page = page;      // 标记当前页，便于外部（含测试）判断侧栏停在哪个页
-    renderTabs();
     render();
+    opts.onPage?.(page);           // 顶栏页签据此同步高亮
   }
 
   function render() {
-    content.innerHTML = '';
-    content.appendChild(pages[current]());
+    body.innerHTML = '';
+    body.appendChild(pages[current]());
   }
 
   function refresh() {

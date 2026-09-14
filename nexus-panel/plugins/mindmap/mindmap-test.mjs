@@ -56,8 +56,7 @@ const dom = new JSDOM('<!doctype html><html><body><div id="plugin-mount"></div><
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 globalThis.location = dom.window.location;
-// Node 21+ 起 globalThis.navigator 是只读 getter，直接赋值会抛 TypeError
-Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true, writable: true });
+globalThis.navigator = dom.window.navigator;
 globalThis.Node = dom.window.Node;
 globalThis.HTMLElement = dom.window.HTMLElement;
 globalThis.getComputedStyle = dom.window.getComputedStyle;
@@ -492,9 +491,7 @@ group('M8 · 存储读写失败不再静默');
   store.resetStoreError();
 
   // 插件层要真的把错误显示出来
-  // 统一换行后再匹配：本仓 Windows 与 CI 两侧混用 CRLF/LF，直接用 '\n' 定位
-  // 会在别人机器上静默失配（indexOf 返回 -1 → slice 错 → 断言假失败）。
-  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   ok(/function flushStoreError/.test(src), 'index.js 定义了 flushStoreError');
   ok(/flushStoreError\(\)/.test(src.slice(src.indexOf('await loadSheet();\n  updateBadge();'))), '初始化末尾调用了 flushStoreError');
 }
@@ -683,7 +680,7 @@ group('面板分布：左文件库 / 中画布 / 右属性侧栏');
   // 10.1 主体三段的顺序：[文件库] | 画布 | [属性侧栏]
   // 用 lastIndexOf 取收尾处的那次调用：buildRail() 在文件里出现两次（定义外的
   // 早期调用点 + 初始化末尾），取第一个会让切片为空、断言静默失真。
-  const mount = src.slice(src.indexOf('side = buildSide(app)'), src.lastIndexOf('buildRail();'));
+  const mount = src.slice(src.indexOf('side = buildSide(app'), src.lastIndexOf('buildRail();'));
   ok(/insertBefore\(fileList\.el,\s*canvasEl\)/.test(mount), '文件库插在画布**左**边');
   ok(/appendChild\(side\.el\)/.test(mount), '属性侧栏挂在画布**右**边（appendChild 到 body 末尾）');
   ok(mount.indexOf('insertBefore(fileList.el') < mount.indexOf('appendChild(side.el'),
@@ -695,7 +692,7 @@ group('面板分布：左文件库 / 中画布 / 右属性侧栏');
   // 10.3 图标条只留文件库开关：四个属性页入口已随侧栏搬到右侧
   const railFn = src.slice(src.indexOf('function buildRail'), src.indexOf('/* ------------------------- 页签'));
   ok(/📚/.test(railFn), '图标条保留文件库开关 📚');
-  ok(!/side\.open\(/.test(railFn), '图标条不再放属性页入口（页签已移到侧栏顶部）');
+  ok(!/side\.open\(/.test(railFn), '图标条不再放属性页入口（页签在顶栏最右）');
 
   // 10.4 底部两行：画布页签条 + 独立状态条（对齐 C# 的 Grid.Row=2 / Row=3）
   ok(/const statusBar = h\('div\.mm-statusbar', \{\}, statusEl\)/.test(src), '状态条独立成行');
@@ -703,32 +700,45 @@ group('面板分布：左文件库 / 中画布 / 右属性侧栏');
 }
 
 {
-  // 10.5 侧栏自身：常驻 276px + 页签在内容上方
+  // 10.5 侧栏自身：常驻 276px，且**不含**页签（页签在顶栏，不占侧栏高度）
   const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const sideCss = css.slice(css.indexOf('.mm-side {'), css.indexOf('.mm-side h3'));
   ok(/flex:\s*0 0 276px/.test(sideCss), '侧栏固定 276px（与 C# Column 1 的 Width="276" 一致）');
   ok(/display:\s*flex/.test(sideCss), '侧栏默认显示（常驻，不靠 .open 打开）');
   ok(!/display:\s*none/.test(sideCss), '不再 display:none —— 否则一进来是空的');
+  ok(!/overflow:\s*hidden/.test(sideCss), '侧栏恢复自身滚动（页签已搬走，无需再切成 hidden+内容区滚）');
 
   const { buildSide } = await import('./panels.js');
-  const el = buildSide({ api: { status() {} } }).el;
+  // 切到「文件」页会读选中节点的附件引用，桩上补齐；其余页用不到
+  const stubApi = { status() {}, selectedRef: () => null, commit() {} };
+  let notified = [];
+  const el = buildSide({ api: stubApi }, { onPage: (p) => notified.push(p) }).el;
   ok(el.classList.contains('open'), '侧栏根节点带 open 类');
   eq(el.dataset.page, 'theme', '默认停在「主题」页（对齐 C# ShowSidePage("theme")）');
+  ok(!el.querySelector('.mm-side-tabs'), '侧栏内没有页签条 —— 页签在顶栏，不占侧栏高度');
+  eq(notified.join(','), 'theme', '初始化时也会回调 onPage（顶栏据此点亮「主题」）');
 
-  const tabs = el.querySelector('.mm-side-tabs');
-  const content = el.querySelector('.mm-side-body');
-  ok(!!tabs && !!content, '侧栏拆成页签条 + 内容区两块');
-  eq([...tabs.children].map((b) => b.textContent).join('/'), '主题/标签/样式/文件',
-    '页签顺序：主题 → 标签 → 样式 → 文件（与 C# 顶栏四个 ToggleButton 一致）');
-  eq(el.children[0], tabs, '页签在内容区**上方**');
+  // 10.6 页签在顶栏最右，顺序对齐 C# 的四个 ToggleButton
+  const src2 = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const tb = src2.slice(src2.indexOf('function buildToolbar'), src2.indexOf('/* ------------------------- 侧栏'));
+  ok(/toolbar\.appendChild\(buildSideTabs\(\)\)/.test(tb), '顶栏 append 页签组');
+  ok(/const SIDE_TABS = \[\['theme', '主题'\], \['tag', '标签'\], \['style', '样式'\], \['file', '文件'\]\]/.test(src2),
+    '页签顺序：主题 → 标签 → 样式 → 文件（与 C# 一致）');
+  ok(/buildSide\(app, \{ onPage: syncSideTabs \}\)/.test(src2), '侧栏切页回灌给顶栏页签（同步高亮）');
 
-  // 10.6 点当前页不再把面板点没（常驻侧栏没有收起语义）
-  const tagBtn = [...tabs.children].find((b) => b.textContent === '标签');
-  tagBtn.click();
-  eq(el.dataset.page, 'tag', '点「标签」切到标签页');
-  [...el.querySelector('.mm-side-tabs').children].find((b) => b.textContent === '标签').click();
-  eq(el.dataset.page, 'tag', '再点一次仍停在标签页（不会收起 —— 常驻侧栏）');
-  ok(!/display:\s*none/.test(el.style.cssText), '重复点击后面板依然可见');
+  const topCss = css.slice(css.indexOf('.mm-top-tabs {'), css.indexOf('/* 底部状态条'));
+  ok(/margin-left:\s*auto/.test(topCss), '页签组用 margin-left:auto 推到顶栏最右');
+
+  // 10.7 行为：侧栏自行切页（点节点附件→跳「文件」页）时顶栏也跟着变
+  const side2 = buildSide({ api: stubApi }, { onPage: (p) => notified.push(p) });
+  side2.open('file');
+  eq(side2.el.dataset.page, 'file', '切到文件页');
+  eq(notified[notified.length - 1], 'file', 'onPage 回调收到 file（顶栏据此改高亮）');
+
+  // 10.8 点当前页不再把面板点没（常驻侧栏没有收起语义）
+  side2.open('file');
+  eq(side2.el.dataset.page, 'file', '再点一次仍停在文件页（不会收起 —— 常驻侧栏）');
+  ok(side2.isOpen(), 'isOpen 恒为 true');
 }
 
 /* ============================================================
