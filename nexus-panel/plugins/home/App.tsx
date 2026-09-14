@@ -2,14 +2,36 @@ import { useEffect, useState } from 'react';
 import { useNexus } from '../../src/nexus-react';
 import type { PluginManifest } from '../../js/host.js';
 
+/**
+ * 取外壳全局单例：同页模式挂在 window 上，沙箱（iframe）模式挂在宿主窗口上。
+ *
+ * 直接读 window.__NEXUS__ 在严格沙箱下取不到，`?.` 会静默返回 undefined，
+ * 再被 `?? []` 兜成空数组 —— 界面显示「插件总数 0」却不报错，极难排查。
+ * 这里降级读 parent（settings/index.js 外链管理、ExternalCard.tsx 都是这个写法）；
+ * 隔离态（opaque origin）下连 parent 都访问不了，会抛 SecurityError，必须 try/catch。
+ */
+function shellGlobal(): any {
+  try {
+    return (window as any).__NEXUS__
+      ?? (window.parent !== window ? (window.parent as any)?.__NEXUS__ : null)
+      ?? null;
+  } catch {
+    return null; // 跨源 / 隔离态下访问 parent 抛 SecurityError
+  }
+}
+
 export default function Overview() {
   const ctx = useNexus();
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
+  // 拿不到外壳时显式标记为「未知」，别把失败显示成 0
+  const [pluginsUnknown, setPluginsUnknown] = useState(false);
   const [rust, setRust] = useState('检测中…');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    setPlugins(window.__NEXUS__?.getPlugins?.() ?? []);
+    const list = shellGlobal()?.getPlugins?.();
+    setPlugins(Array.isArray(list) ? list : []);
+    setPluginsUnknown(!Array.isArray(list));
     ctx.invoke<string>('app_version').then(setRust).catch(() => setRust('未连接'));
   }, [ctx]);
 
@@ -31,7 +53,11 @@ export default function Overview() {
         <h2>运行环境</h2>
         <div className="p-grid">
           <Stat k="挂载模式" v={ctx.mode === 'iframe' ? '沙箱 iframe' : '同页 module'} />
-          <Stat k="插件总数" v={plugins.length} />
+          <Stat
+            k="插件总数"
+            v={pluginsUnknown ? '—' : plugins.length}
+            title={pluginsUnknown ? '未连接到外壳（沙箱隔离态），读不到插件列表' : undefined}
+          />
           <Stat k="Rust 后端" v={rust} />
           <Stat k="面板" v="Nexus Panel" />
         </div>
@@ -65,6 +91,13 @@ export default function Overview() {
             </div>
           ))}
         </div>
+        {plugins.length ? null : (
+          <div className="p-muted" style={{ marginTop: 10 }}>
+            {pluginsUnknown
+              ? '未连接到外壳（沙箱隔离态），无法读取插件列表'
+              : '暂无插件'}
+          </div>
+        )}
       </div>
 
       <div className="p-card">
@@ -85,9 +118,9 @@ export default function Overview() {
   );
 }
 
-function Stat({ k, v }: { k: string; v: string | number }) {
+function Stat({ k, v, title }: { k: string; v: string | number; title?: string }) {
   return (
-    <div className="p-stat">
+    <div className="p-stat" title={title}>
       <div className="k">{k}</div>
       <div className="v">{v}</div>
     </div>

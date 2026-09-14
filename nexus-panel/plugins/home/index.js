@@ -1,6 +1,27 @@
 import { definePlugin, h } from '../../js/plugin-sdk.js';
 import { isInsideTauri, getTauri } from '../../js/tauri-core.js';
 
+/**
+ * 取外壳全局单例：同页模式挂在 window 上，沙箱（iframe）模式挂在宿主窗口上。
+ * 隔离态（opaque origin）下访问 parent 会抛 SecurityError，必须 try/catch。
+ * 同页/沙箱两态都取不到时返回 null，由调用方显式提示，不要静默显示成 0。
+ */
+function shellGlobal() {
+  try {
+    return window.__NEXUS__
+      || (window.parent !== window ? window.parent?.__NEXUS__ : null)
+      || null;
+  } catch {
+    return null;
+  }
+}
+
+/** 取插件列表；拿不到返回 null（区别于「有外壳但没有插件」的空数组）。 */
+function readPlugins() {
+  const list = shellGlobal()?.getPlugins?.();
+  return Array.isArray(list) ? list : null;
+}
+
 export default definePlugin({
   name: '概览',
   async mount(ctx) {
@@ -8,11 +29,13 @@ export default definePlugin({
 
     const info = await probeEnv(ctx);
 
+    const list = readPlugins();
+
     host.appendChild(
       h('div.p-card', {},
         h('h2', {}, '运行环境'),
         h('div.p-grid', {},
-          stat('插件总数', (window.__NEXUS__?.getPlugins() || []).length),
+          stat('插件总数', list ? list.length : '—'),
           stat('挂载模式', ctx.mode === 'iframe' ? '沙箱' : '同页'),
           stat('Tauri 环境', info.inside ? '已连接' : '浏览器'),
           stat('Rust 后端', info.rust || '未连接'),
@@ -37,11 +60,10 @@ export default definePlugin({
     );
 
     // 插件清单
-    const list = window.__NEXUS__?.getPlugins() || [];
     host.appendChild(
       h('div.p-card', {},
         h('h2', {}, '已安装插件'),
-        h('div.p-grid', {}, ...list.map((p) =>
+        h('div.p-grid', {}, ...(list || []).map((p) =>
           h('div.p-stat', {
             style: { cursor: 'pointer' },
             onclick: () => ctx.openPlugin(p.id),
@@ -56,6 +78,8 @@ export default definePlugin({
             ),
           ),
         )),
+        list && list.length ? null : h('div.p-muted', { style: { marginTop: '10px' } },
+          list ? '暂无插件' : '未连接到外壳（沙箱隔离态），无法读取插件列表'),
       ),
     );
 

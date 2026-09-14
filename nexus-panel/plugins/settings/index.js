@@ -9,6 +9,27 @@ import {
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
 } from '../../js/theme-normalizer.js';
 
+/**
+ * 取外壳全局单例：同页模式挂在 window 上，沙箱（iframe）模式挂在宿主窗口上。
+ * 隔离态（opaque origin）下访问 parent 会抛 SecurityError，必须 try/catch。
+ * 与外链管理（下文的 ext）同一套写法，读插件列表不该例外。
+ */
+function shellGlobal() {
+  try {
+    return window.__NEXUS__
+      || (window.parent !== window ? window.parent?.__NEXUS__ : null)
+      || null;
+  } catch {
+    return null;
+  }
+}
+
+/** 取插件列表；拿不到返回 null（区别于「有外壳但没有插件」的空数组）。 */
+function readPlugins() {
+  const list = shellGlobal()?.getPlugins?.();
+  return Array.isArray(list) ? list : null;
+}
+
 export default definePlugin({
   name: '设置',
   async mount(ctx) {
@@ -192,7 +213,8 @@ export default definePlugin({
     );
 
     /* ============ 3. 插件管理 ============ */
-    const rows = (window.__NEXUS__?.getPlugins() || []).map((p) => {
+    const plugins = readPlugins();
+    const rows = (plugins || []).map((p) => {
       const sel = h('select.p-input', {
         style: { height: '30px', width: '130px', fontSize: '12px', padding: '0 8px' },
       },
@@ -223,7 +245,18 @@ export default definePlugin({
           ? h('span.p-tag', {}, '内置')
           : h('button.p-btn.danger', {
               style: { height: '30px', padding: '0 10px', fontSize: '12px' },
-              onclick: () => window.__nexusRemovePlugin(p.id),
+              onclick: () => {
+                // 原来直接 window.__nexusRemovePlugin(p.id)：沙箱下该全局不存在，
+                // 点了「移除」要么抛 ReferenceError、要么毫无反应。这里走外壳降级，
+                // 取不到就显式提示，不静默。
+                const shell = shellGlobal();
+                if (typeof shell?.removePlugin !== 'function') {
+                  ctx.toast('移除失败：未连接到外壳，请用侧栏的插件管理操作', 'err');
+                  return;
+                }
+                shell.removePlugin(p.id);
+                ctx.toast(`已移除「${p.name}」`, 'ok');
+              },
             }, '移除'),
       );
     });
@@ -234,6 +267,8 @@ export default definePlugin({
         h('div.p-muted', { style: { marginBottom: '6px' } },
           '侧栏「＋」可安装新插件；右侧下拉为单个插件指定主题判定方式'),
         ...rows,
+        plugins && plugins.length ? null : h('div.p-muted', { style: { marginTop: '8px' } },
+          plugins ? '暂无可管理的插件' : '未连接到外壳（沙箱隔离态），读不到插件列表，移除功能不可用'),
       ),
     );
 

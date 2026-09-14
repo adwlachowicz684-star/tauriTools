@@ -18,6 +18,21 @@ import FilesCard from './FilesCard';
 
 type TabKey = 'theme' | 'plugins' | 'external' | 'files' | 'about';
 
+/**
+ * 取外壳全局单例：本设置页是 iframe 插件，开启严格沙箱后 window.__NEXUS__
+ * 取不到，要降级读宿主的 parent（同文件外链管理、ExternalCard.tsx 都是这个写法）。
+ * 隔离态（opaque origin）下连 parent 也访问不了，会抛 SecurityError，必须 try/catch。
+ */
+function shellGlobal(): any {
+  try {
+    return (window as any).__NEXUS__
+      ?? (window.parent !== window ? (window.parent as any)?.__NEXUS__ : null)
+      ?? null;
+  } catch {
+    return null; // 跨源 / 隔离态下访问 parent 抛 SecurityError
+  }
+}
+
 const TABS: [TabKey, string][] = [
   ['theme', '主题'],
   ['plugins', '插件'],
@@ -29,13 +44,17 @@ const TABS: [TabKey, string][] = [
 export default function Settings() {
   const ctx = useNexus();
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
+  const [pluginsUnknown, setPluginsUnknown] = useState(false);
   const [version, setVersion] = useState('…');
   const [, force] = useState(0);          // 主题切换后重渲染预览
   const [policy, setPolicyState] = useState(getPolicy());
   const [tab, setTab] = useState<TabKey>('theme');
 
   useEffect(() => {
-    setPlugins(window.__NEXUS__?.getPlugins?.() ?? []);
+    const list = shellGlobal()?.getPlugins?.();
+    setPlugins(Array.isArray(list) ? list : []);
+    // 拿不到外壳时不要静默显示成「0 个插件」，后面会渲染一条显式提示
+    setPluginsUnknown(!Array.isArray(list));
     ctx.invoke<string>('app_version').then(setVersion).catch(() => setVersion('浏览器模式'));
   }, [ctx]);
 
@@ -52,6 +71,30 @@ export default function Settings() {
   }, []);
 
   const rerender = () => force((n) => n + 1);
+
+  /**
+   * 移除插件。
+   *
+   * 原来直接 `window.__NEXUS__?.removePlugin?.(p.id)`：沙箱下取不到方法，
+   * `?.` 静默跳过 —— 用户点了「移除」却什么都没发生、也没有任何提示。
+   * 这里改成：先降级到 parent 找外壳；确实拿不到就显式报错，不再静默。
+   */
+  const removePlugin = (p: PluginManifest) => {
+    const shell = shellGlobal();
+    if (typeof shell?.removePlugin !== 'function') {
+      ctx.toast('移除失败：未连接到外壳，请用侧栏的插件管理操作', 'err');
+      return;
+    }
+    try {
+      shell.removePlugin(p.id);
+      const list = shell.getPlugins?.();
+      setPlugins(Array.isArray(list) ? list : []);
+      setPluginsUnknown(!Array.isArray(list));
+      ctx.toast(`已移除「${p.name}」`, 'ok');
+    } catch (e: any) {
+      ctx.toast('移除失败：' + String(e?.message ?? e), 'err');
+    }
+  };
 
   /**
    * 把当前主题状态同步给主平台侧（外壳）。
@@ -381,13 +424,20 @@ export default function Settings() {
                   <button
                     className="p-btn danger"
                     style={{ height: 30, padding: '0 10px', fontSize: 12 }}
-                    onClick={() => window.__NEXUS__?.removePlugin?.(p.id)}
+                    onClick={() => removePlugin(p)}
                   >
                     移除
                   </button>
                 )}
               </div>
             ))}
+            {plugins.length ? null : (
+              <div className="p-muted" style={{ marginTop: 10 }}>
+                {pluginsUnknown
+                  ? '未连接到外壳（沙箱隔离态），读不到插件列表，移除功能不可用'
+                  : '暂无可管理的插件'}
+              </div>
+            )}
           </div>
         </>
       ) : null}
