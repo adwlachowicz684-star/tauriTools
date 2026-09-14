@@ -11,6 +11,9 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+#[cfg(windows)]
+use crate::fpx::safety::{check_executable, safe_cmd_arg};
+
 /// 一个编辑器候选。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -164,10 +167,16 @@ fn from_registry() -> Vec<EditorCandidate> {
         if let Some(rest) = text.split("REG_SZ").nth(1) {
             let progid = rest.trim();
             if progid.is_empty() { continue; }
+            // progid 是注册表里读出来的字符串，会被拼进下一条 reg query 的键名。
+            // 它理论上可被任意程序写入（HKCU 分支），拼进命令行前必须校验字符集，
+            // 否则一条带元字符的 ProgId 就能改写整条 reg 命令的参数结构。
+            if !safe_cmd_arg(progid) { continue; }
             if let Some(cmd) = reg_query(&format!(r"HKCR\{progid}\shell\open\command")) {
                 if let Some(exe) = parse_command(&cmd) {
                     let p = PathBuf::from(&exe);
-                    if p.is_file() {
+                    // 注册表里的命令同样可被任意程序写入（HKCU 分支），
+                    // 这里只做存在性 + 扩展名白名单校验，不放行脚本类宿主
+                    if check_executable(&p).is_ok() {
                         out.push(EditorCandidate {
                             name: progid.trim_end_matches(".md").to_string(),
                             exe,

@@ -6,6 +6,11 @@ use std::process::Command;
 
 use super::model::{DirEntryLite, FpxConfig, TabItem};
 use super::store::normalize_key;
+use crate::fpx::fsutil::{copy_tree, is_real_dir, rename_with_fallback};
+use crate::fpx::safety::check_executable;
+// 只在 Windows 用：非 Windows 的 opener 不走 shell，无二次解析风险
+#[cfg(windows)]
+use crate::fpx::safety::safe_cmd_arg;
 
 /* ---------------------------- 目录浏览（给内嵌目录选择器用） ---------------------------- */
 
@@ -15,6 +20,9 @@ pub fn list_dirs(path: &str) -> Result<Vec<DirEntryLite>, String> {
         return Ok(list_roots());
     }
     let dir = Path::new(path);
+    // 入口路径跟随链接：这是"用户显式点进来的目录"，
+    // 项目组 junction 被点开时列出其内容才是预期行为（资源管理器同样如此）。
+    // 真正的递归风险不在这里 —— 列表只走一层，且下面的子项判定不跟随链接。
     if !dir.is_dir() {
         return Err(format!("目录不存在: {path}"));
     }
@@ -22,7 +30,8 @@ pub fn list_dirs(path: &str) -> Result<Vec<DirEntryLite>, String> {
     let entries = fs::read_dir(dir).map_err(|e| format!("无法读取目录: {e}"))?;
     for entry in entries.flatten() {
         let p = entry.path();
-        if !p.is_dir() { continue; }
+        // 子项用 symlink_metadata：链接目录不再被当成"可深入的真实目录"
+        if !is_real_dir(&p) { continue; }
         let name = p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
         if name.is_empty() || name.starts_with('.') { continue; }
         // 系统卷信息 / 回收站等跳过
@@ -42,7 +51,8 @@ pub fn list_dirs(path: &str) -> Result<Vec<DirEntryLite>, String> {
 
 fn has_subdir(dir: &Path) -> bool {
     match fs::read_dir(dir) {
-        Ok(entries) => entries.flatten().any(|e| e.path().is_dir()),
+        // 同样不跟随链接：链接目录不标成"有子目录"，避免引导用户顺着链接绕回去
+        Ok(entries) => entries.flatten().any(|e| is_real_dir(&e.path())),
         Err(_) => false,
     }
 }
@@ -146,29 +156,19 @@ pub fn create_folder(
         if !tpl.is_empty() {
             let tpl_path = Path::new(tpl);
             if tpl_path.is_dir() {
-                copy_dir_recursive(tpl_path, &target);
+                copy_tree(tpl_path, &target)?;
             }
         }
     }
     Ok(target.to_string_lossy().to_string())
 }
 
-fn copy_dir_recursive(src: &Path, dst: &Path) {
-    let entries = match fs::read_dir(src) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let s = entry.path();
-        let d = dst.join(entry.file_name());
-        if s.is_dir() {
-            fs::create_dir_all(&d).ok();
-            copy_dir_recursive(&s, &d);
-        } else {
-            fs::copy(&s, &d).ok();
-        }
-    }
-}
+/// 递归拷贝目录树（模板内容）。
+///
+/// 走 fsutil::copy_tree：跳过链接点 + 已访问节点集合。
+/// 原实现用跟随链接的 `is_dir()` 判断递归，模板目录里只要有一个指向上级的软链
+/// 就会无限递归（边递归边建目录，几秒内撑爆磁盘）。
+/// 顺带把"失败静默吞掉"改成向上抛错 —— 模板只拷了一半却报成功，更难排查。
 
 /* ---------------------------- 打开路径 ---------------------------- */
 
@@ -193,6 +193,10 @@ pub fn open_path(path: &str, mode: &str, editor_path: &str) -> Result<(), String
             if editor.is_empty() {
                 open_default(p)
             } else {
+                // editor 来自配置。配置一旦被污染，"打开方式"就变成了"执行任意程序"，
+                // 所以先过一遍校验：存在性 + 扩展名白名单 + 无 shell 元字符
+                check_executable(Path::new(editor))
+                    .map_err(|e| format!("编辑器不可用（{e}），请在设置里重新选择"))?;
                 Command::new(editor).arg(p).spawn()
                     .map(|_| ())
                     .map_err(|e| format!("无法启动编辑器: {e}"))
@@ -219,8 +223,15 @@ fn open_with_explorer(dir: &Path) -> Result<(), String> {
 
 #[cfg(windows)]
 fn open_default(file: &Path) -> Result<(), String> {
+    // `cmd /c start` 会做二次解析。Rust 的 Command 会给参数加引号，
+    // 但路径里若自带引号、%、换行或 & 之类，仍能逃出引号边界变成第二条命令。
+    // 挡掉比"能打开但可能被注入"重要：真遇到这种路径，提示用户去资源管理器里打开。
+    let s = file.to_string_lossy().to_string();
+    if !safe_cmd_arg(&s) {
+        return Err(format!("路径含特殊字符，已拒绝用系统 Shell 打开: {s}"));
+    }
     Command::new("cmd")
-        .args(["/c", "start", "", &file.to_string_lossy()])
+        .args(["/c", "start", "", &s])
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("无法打开文件: {e}"))
@@ -291,6 +302,13 @@ pub fn apply_lock(path: &str, deny_delete: bool, deny_write: bool) -> Result<Str
 
 #[cfg(windows)]
 fn run_cmd(program: &str, args: &[String]) -> Result<std::process::Output, String> {
+    // program 是写死的字面量（icacls / attrib），风险在参数：
+    // 路径若含引号 / % / & 会被 cmd 重新解释，先挡掉再说
+    for a in args {
+        if !safe_cmd_arg(a) {
+            return Err(format!("参数含不安全字符，已拒绝执行 {program}: {a}"));
+        }
+    }
     Command::new(program)
         .args(args)
         .output()
@@ -463,9 +481,10 @@ pub fn relocate_cross_move(
         return Err(format!("目标位置已存在同名文件夹，未移动：{}", new_path.display()));
     }
 
-    // 仅用 rename（同一卷内原子完成）。跨卷时 rename 会失败，
-    // 此时宁可整体中止也不做"复制+删除"——后者中途失败会留下两份残缺数据。
-    fs::rename(old, &new_path).map_err(|e| format!("移动文件夹失败：{e}"))?;
+    // 跨卷时 rename 必然失败，此时回退到"复制 + 删除"。
+    // 回退的失败语义是"复制没成功就绝不删源"，所以不会留下残缺数据 ——
+    // 最坏情况是源目录原地不动（返回 Err，调用方中止整个移动）。
+    rename_with_fallback(old, &new_path).map_err(|e| format!("移动文件夹失败：{e}"))?;
     Ok(Some(new_path.to_string_lossy().to_string()))
 }
 

@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use super::model::{ChainActionItem, CustomChainClient, FpxConfig};
+use crate::fpx::safety::{check_executable, safe_scheme, safe_url};
 
 /* ---------------------------- 内置连锁动作 ---------------------------- */
 /*
@@ -256,7 +257,9 @@ fn find_command(name: &str) -> Option<PathBuf> {
 /// 商店应用与每用户安装只注册在 HKCU，只查 HKLM 会漏检）。
 #[cfg(windows)]
 fn has_scheme(scheme: &str) -> bool {
-    if scheme.is_empty() { return false; }
+    // scheme 会被拼进 `reg query …\<scheme>`，必须先按 RFC 3986 校验，
+    // 否则自定义客户端里填一段带分隔符或元字符的字符串就能改变 reg 的参数结构
+    if !safe_scheme(scheme) { return false; }
     ["HKCU", "HKLM", "HKCR"].iter().any(|root| {
         std::process::Command::new("reg")
             .args(["query", &format!(r"{root}\Software\Classes\{scheme}")])
@@ -269,7 +272,7 @@ fn has_scheme(scheme: &str) -> bool {
 #[cfg(target_os = "macos")]
 fn has_scheme(scheme: &str) -> bool {
     // macOS 无注册表：用 LSGetApplicationForURL 等价的 `open -Ra` 探测能否处理该 scheme
-    !scheme.is_empty() && std::process::Command::new("open")
+    safe_scheme(scheme) && std::process::Command::new("open")
         .args(["-Ra", &format!("{scheme}://")])
         .output()
         .map(|o| o.status.success())
@@ -279,7 +282,8 @@ fn has_scheme(scheme: &str) -> bool {
 #[cfg(not(any(windows, target_os = "macos")))]
 fn has_scheme(scheme: &str) -> bool {
     // Linux：xdg-settings 不可靠，退化为「命令存在即认为可用」
-    !scheme.is_empty() && find_command(scheme).is_some()
+    // scheme 会被交给 find_command 去拼路径，同样先按 RFC 3986 校验
+    safe_scheme(scheme) && find_command(scheme).is_some()
 }
 
 fn vscode_exe() -> Option<PathBuf> {
@@ -336,7 +340,9 @@ fn custom_exe(c: &super::model::CustomChainClient) -> Option<PathBuf> {
     let p = c.exe.as_deref().map(str::trim).unwrap_or("");
     if p.is_empty() { return None; }
     let pb = PathBuf::from(p);
-    if pb.is_file() { Some(pb) } else { None }
+    // 自定义客户端的 exe 由用户填进配置，配置被污染就是"执行任意程序"。
+    // 这里要求它真实存在且扩展名在白名单内（挡住 .ps1 / .vbs / 无扩展名脚本）
+    if check_executable(&pb).is_ok() { Some(pb) } else { None }
 }
 
 /// 自定义客户端的 scheme。

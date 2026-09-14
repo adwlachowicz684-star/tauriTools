@@ -71,14 +71,14 @@ fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), String>
     if let Err(e) = fs::write(&tmp, &text) {
         return Err(format!("写入临时文件 {} 失败: {e}", tmp.display()));
     }
-    match fs::rename(&tmp, path) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            // rename 失败时清理临时文件，别在目录里留垃圾
-            fs::remove_file(&tmp).ok();
-            Err(format!("写入 {} 失败: {e}", path.display()))
-        }
+    // 临时文件与正式文件同目录，rename 必然同设备；
+    // 仍走 replace_file 是为了在异常情况下（如数据目录被换成挂载点）不至于丢配置
+    if let Err(e) = super::fsutil::replace_file(&tmp, path) {
+        // 失败时清理临时文件，别在目录里留垃圾
+        fs::remove_file(&tmp).ok();
+        return Err(format!("写入 {} 失败: {e}", path.display()));
     }
+    Ok(())
 }
 
 pub fn load_config(dir: &Path) -> FpxConfig {

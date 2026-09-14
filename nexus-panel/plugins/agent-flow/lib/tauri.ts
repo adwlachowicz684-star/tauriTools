@@ -196,13 +196,16 @@ export async function startWebhook(
   path: string,
   token: string,
   onEvent: (body: string) => void,
+  /** 后端在 token 留空时会自动生成校验 Token 并返回，这里回传给界面提示用户 */
+  onToken?: (token: string) => void,
 ): Promise<(() => void) | null> {
   if (!hasTauri()) return null;
   // 请求到达同样靠事件回传，没有事件通道就只是个开着的洞
   if (!hasTauriEvents()) return null;
 
   try {
-    await invoke<void>('webhook_start', { id, port, path, token });
+    const effective = await invoke<string>('webhook_start', { id, port, path, token });
+    if (effective && effective !== token) onToken?.(effective);
   } catch (e) {
     console.error('启动 webhook 失败', e);
     return null;

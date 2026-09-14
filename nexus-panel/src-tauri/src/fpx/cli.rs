@@ -170,7 +170,8 @@ fn migrate(
         for p in &t.items {
             let k = reloc_key(p);
             if excludes.iter().any(|e| e.eq_ignore_ascii_case(&k)) { continue; }
-            if !Path::new(p).is_dir() { continue; }
+            // 不跟随链接：搬迁一个 junction 会把链接背后的目录搬走，而不是搬链接本身
+            if !super::fsutil::is_real_dir(Path::new(p)) { continue; }
             plan.push((t.name.clone(), p.clone()));
         }
     }
@@ -198,13 +199,13 @@ fn migrate(
             continue;
         }
 
-        // 只在同一卷内搬：跨卷 rename 会失败，硬搬可能留下半截数据
+        // 跨卷时 rename 会失败，此时回退到"复制 + 删除"（复制没成功就不删源）
         if let Err(e) = std::fs::create_dir_all(&dst_dir) {
             failed += 1;
             items.push(MigItem { src: src.clone(), dst: dst.to_string_lossy().to_string(), note: format!("失败：无法创建目标目录 {e}") });
             continue;
         }
-        match std::fs::rename(src, &dst) {
+        match super::fsutil::rename_with_fallback(Path::new(src), &dst) {
             Ok(()) => {
                 moved += 1;
                 items.push(MigItem { src: src.clone(), dst: dst.to_string_lossy().to_string(), note: String::new() });
@@ -260,7 +261,8 @@ fn migrate(
     let mut relinked = 0;
     if kind == "group" {
         for r in records.iter_mut() {
-            if !Path::new(&r.project).is_dir() { continue; }
+            // 同上：不跟随链接
+            if !super::fsutil::is_real_dir(Path::new(&r.project)) { continue; }
             let names: Vec<String> = r.names.clone();
             if names.is_empty() { continue; }
             // 先删旧的（可能已断），再建新的

@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::model::{FpxConfig, PresetAgent};
+#[cfg(windows)]
+use crate::fpx::safety::safe_cmd_arg;
 
 /// 各家 AI agent 在项目根目录下默认存放 agent/skill 的目录名（与 C# 版 LinkAgentCatalog 对齐）。
 pub const PRESET_AGENTS: &[(&str, &str)] = &[
@@ -242,8 +244,18 @@ fn create_one(link: &Path, target: &str) -> Result<(), String> {
     {
         // 尾反斜杠会转义收尾引号导致 mklink 解析失败，必须去掉
         let t = target.trim_end_matches(|c| c == '\\' || c == '/');
+        // 链接名与目标都来自配置/用户选择，且要经过 `cmd /c` 的二次解析：
+        // 路径里若带引号、%、& 之类，会在 mklink 之外多出一条命令。
+        // 挡住比"建成但可能被注入"重要 —— 这类路径本就不该出现在项目树里。
+        let link_s = link.to_string_lossy().to_string();
+        if !safe_cmd_arg(&link_s) {
+            return Err(format!("链接路径含特殊字符，已拒绝创建: {link_s}"));
+        }
+        if !safe_cmd_arg(t) {
+            return Err(format!("目标路径含特殊字符，已拒绝创建: {t}"));
+        }
         let out = Command::new("cmd")
-            .args(["/c", "mklink", "/J", &link.to_string_lossy(), t])
+            .args(["/c", "mklink", "/J", &link_s, t])
             .output()
             .map_err(|e| format!("无法启动 mklink: {e}"))?;
         if !out.status.success() {

@@ -8,6 +8,9 @@
 
 use std::path::{Path, PathBuf};
 
+#[cfg(windows)]
+use crate::fpx::safety::safe_ps_literal;
+
 /// 截图结果：落盘路径 + 尺寸（尺寸由后端能确定时才有值，拿不到即为 0）。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +34,11 @@ pub fn capture(dir: &Path) -> Result<CaptureResult, String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = target_path(dir);
     let path_str = path.to_string_lossy().replace('\'', "''"); // PowerShell 单引号内转义
+    // 截图目录可由 MCP 传入。除了单引号双写，还要挡住换行与反引号：
+    // 它们能跳出单引号字符串所在的那一行，在脚本里另起一条语句。
+    if !safe_ps_literal(&path_str) {
+        return Err(format!("截图路径含不安全字符，已拒绝: {}", path.display()));
+    }
 
     let script = [
         "$ErrorActionPreference='Stop'",
@@ -170,6 +178,13 @@ pub fn capture_window(dir: &Path, keyword: &str) -> Result<CaptureResult, String
     let path = target_path(dir);
     let path_str = path.to_string_lossy().replace('\'', "''");
     let kw_esc = kw.replace('\'', "''");
+    // 同上：路径与标题关键字都要挡住换行 / 反引号 / $( )
+    if !safe_ps_literal(&path_str) {
+        return Err(format!("截图路径含不安全字符，已拒绝: {}", path.display()));
+    }
+    if !safe_ps_literal(&kw_esc) {
+        return Err("窗口标题含不安全字符，已拒绝".into());
+    }
 
     // C# 代码走 PowerShell 的单引号 here-string：内部双引号原样保留，不用转义。
     // 先 GetWindowRect 取窗口矩形，再 CopyFromScreen 只截这一块。

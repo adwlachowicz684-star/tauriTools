@@ -17,6 +17,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::AppHandle;
 
+use super::fsutil::{is_real_dir, replace_file};
 use super::model::FpxConfig;
 
 /* ---------------------------- 自动备份调度 ---------------------------- */
@@ -225,7 +226,8 @@ pub fn run(cfg: &FpxConfig, data_dir: &Path, kind: &str, append_only: bool) -> B
     }
 
     for (name, src) in sources {
-        if !src.is_dir() {
+        // 不跟随链接：备份源里若混着指向上级的软链，会一边复制一边绕回自身
+        if !is_real_dir(&src) {
             r.missing_sources += 1;
             continue;
         }
@@ -270,12 +272,21 @@ fn is_link(p: &Path) -> bool {
 }
 
 /// 递归收集源树：files = 相对路径 → (长度, 修改时间)；dirs = 相对路径集合。
+///
+/// 除跳过链接点外，还带一个"已访问目录"集合：
+/// 光跳过链接挡不住硬链接环与绑定挂载构成的回路，
+/// 那种情况下 read_dir 会一路成功、栈只会越来越深。
 fn collect_source(
     root: &Path, rel: &Path,
     files: &mut HashMap<String, (u64, i64)>, dirs: &mut HashSet<String>,
     r: &mut BackupResult,
+    seen: &mut HashSet<(u64, u64)>,
 ) {
     let abs = if rel.as_os_str().is_empty() { root.to_path_buf() } else { root.join(rel) };
+    if !super::fsutil::WalkGuard::mark(seen, &abs) {
+        r.errors.push(format!("[跳过] 检测到目录回路，不再深入: {}", abs.display()));
+        return;
+    }
     let entries = match fs::read_dir(&abs) {
         Ok(e) => e,
         Err(e) => { r.errors.push(format!("[失败] 枚举 {}: {e}", abs.display())); return; }
@@ -288,9 +299,9 @@ fn collect_source(
         };
         let rel_key = child_rel.to_string_lossy().replace('\\', "/");
         if is_link(&p) { r.skipped_links += 1; continue; }
-        if p.is_dir() {
+        if is_real_dir(&p) {
             dirs.insert(rel_key.clone());
-            collect_source(root, &child_rel, files, dirs, r);
+            collect_source(root, &child_rel, files, dirs, r, seen);
         } else if let Ok(m) = fs::metadata(&p) {
             files.insert(rel_key, (m.len(), mtime_secs(&p).unwrap_or(0)));
         }
@@ -302,7 +313,8 @@ fn sync_tree(src_root: &Path, dst_root: &Path, append_only: bool, r: &mut Backup
 
     let mut src_files: HashMap<String, (u64, i64)> = HashMap::new();
     let mut src_dirs: HashSet<String> = HashSet::new();
-    collect_source(src_root, Path::new(""), &mut src_files, &mut src_dirs, r);
+    let mut seen: HashSet<(u64, u64)> = HashSet::new();
+    collect_source(src_root, Path::new(""), &mut src_files, &mut src_dirs, r, &mut seen);
 
     // 1) 新增 / 更新
     for (rel, (len, mt)) in &src_files {
@@ -370,21 +382,22 @@ fn copy_atomic(src: &Path, dst: &Path) -> Result<(), String> {
     tmp.push(".bktmp~");
     let tmp = PathBuf::from(tmp);
     fs::copy(src, &tmp).map_err(|e| e.to_string())?;
-    match fs::rename(&tmp, dst) {
-        Ok(()) => Ok(()),
-        Err(e) => { let _ = fs::remove_file(&tmp); Err(e.to_string()) }
-    }
+    // 临时文件与正式文件同目录，rename 一定同设备；跨设备的兜底留着纯粹为保险
+    replace_file(&tmp, dst)
 }
 
 /// 遍历目录树；files_only 选择只要文件还是要目录。枚举异常降级为尽力而为。
 fn walk(root: &Path, files_only: bool) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
+    let mut seen: HashSet<(u64, u64)> = HashSet::new();
     while let Some(dir) = stack.pop() {
+        // 与 collect_source 同样的回路保护
+        if !super::fsutil::WalkGuard::mark(&mut seen, &dir) { continue; }
         let entries = match fs::read_dir(&dir) { Ok(e) => e, Err(_) => continue };
         for entry in entries.flatten() {
             let p = entry.path();
-            if p.is_dir() {
+            if is_real_dir(&p) {
                 if !files_only { out.push(p.clone()); }
                 stack.push(p);
             } else if files_only {

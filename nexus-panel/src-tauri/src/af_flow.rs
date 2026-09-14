@@ -20,7 +20,8 @@ use std::collections::HashMap as StdHashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,7 +90,12 @@ pub async fn run_node(
         .spawn()
         .map_err(|e| format!("无法启动 {}（检查是否已安装并在 PATH 中）: {}", program, e))?;
 
-    state.0.lock().unwrap().insert(req.run_id.clone(), child);
+    // 锁中毒时取回内部数据继续用：release profile 里 panic = "abort"，
+    // 一次 panic 会让整个进程退出，而不是只丢掉这一个子进程
+    state.0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(req.run_id.clone(), child);
 
     let run_id = req.run_id.clone();
     tauri::async_runtime::spawn(async move {
@@ -131,7 +137,7 @@ pub async fn run_node(
 
 #[tauri::command]
 pub fn kill_node(state: State<'_, ProcRegistry>, run_id: String) -> Result<(), String> {
-    let mut map = state.0.lock().unwrap();
+    let mut map = state.0.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(child) = map.remove(&run_id) {
         child.kill().map_err(|e| format!("终止进程失败: {}", e))?;
     }
@@ -166,7 +172,7 @@ pub fn watch_start(
     recursive: bool,
 ) -> Result<(), String> {
     {
-        let map = state.0.lock().unwrap();
+        let map = state.0.lock().unwrap_or_else(|e| e.into_inner());
         if map.contains_key(&id) {
             return Ok(()); // 已注册，避免重复监听导致事件翻倍
         }
@@ -205,14 +211,17 @@ pub fn watch_start(
         .watch(Path::new(&dir), mode)
         .map_err(|e| format!("监听目录失败 {}: {}", dir, e))?;
 
-    state.0.lock().unwrap().insert(id, watcher);
+    state.0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(id, watcher);
     Ok(())
 }
 
 /// 停止监听并从注册表移除（drop 即停止）
 #[tauri::command]
 pub fn watch_stop(state: State<'_, WatchRegistry>, id: String) -> Result<(), String> {
-    let mut map = state.0.lock().unwrap();
+    let mut map = state.0.lock().unwrap_or_else(|e| e.into_inner());
     map.remove(&id);
     Ok(())
 }
@@ -235,9 +244,23 @@ pub struct WebhookRegistry(pub Mutex<StdHashMap<u16, WebhookServer>>);
 /// 字段可保持私有 —— 唯一构造点在本文件内。
 pub struct WebhookServer {
     /// 停服标志：置 true 后 accept 循环退出
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    stop: Arc<AtomicBool>,
+    /// 停服用唤醒：accept 是无阻塞轮询，没有它就要睡满一整拍才检查到 stop
+    wake: Arc<(Mutex<bool>, Condvar)>,
     /// path -> (trigger_id, token)
-    routes: std::sync::Arc<Mutex<Vec<(String, String, String)>>>,
+    routes: Arc<Mutex<Vec<(String, String, String)>>>,
+}
+
+/// 单个请求的 body 上限（8 MiB）。
+///
+/// body 长度直接来自 Content-Length 头，不设上限就是"声明多大就分配多大"：
+/// 一个 `Content-Length: 999999999999` 的伪造请求足以让进程 OOM。
+/// webhook 只用来传触发参数，8 MiB 已远远够用。
+const MAX_BODY: usize = 8 * 1024 * 1024;
+
+/// body 超限的标记错误。调用方据 `ErrorKind::InvalidData` 回 413。
+fn body_too_large() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, "payload too large")
 }
 
 /// 极简 HTTP 请求
@@ -288,24 +311,33 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<MiniRequest>> 
     // Body
     let mut body = String::new();
     if content_len > 0 {
-        let mut buf = vec![0u8; content_len];
-        // 可能一次读不满，循环补齐（简单处理，body 通常很小）
-        let mut got = 0usize;
-        while got < content_len {
-            let n = reader.read(&mut buf[got..])?;
-            if n == 0 {
-                break;
-            }
-            got += n;
+        // 先校验再分配：绝不按声明长度直接 vec![0u8; content_len]
+        if content_len > MAX_BODY {
+            return Err(body_too_large());
         }
-        body = String::from_utf8_lossy(&buf[..got]).to_string();
+        // 预留按实际长度起步但封顶 64 KiB，剩下的靠 read_to_end 增长，
+        // 避免"合法但偏大"的请求一次性吃掉大量内存
+        let mut buf: Vec<u8> = Vec::with_capacity(content_len.min(64 * 1024));
+        // take 保证最多读 content_len 字节，读满即停
+        reader
+            .by_ref()
+            .take(content_len as u64)
+            .read_to_end(&mut buf)?;
+        body = String::from_utf8_lossy(&buf).to_string();
     }
 
     Ok(Some(MiniRequest { method, path, headers, body }))
 }
 
 fn write_response(stream: &mut TcpStream, status: u16, body: &str) {
-    let reason = if status == 200 { "OK" } else { "Unauthorized" };
+    let reason = match status {
+        200 => "OK",
+        400 => "Bad Request",
+        404 => "Not Found",
+        413 => "Payload Too Large",
+        503 => "Service Unavailable",
+        _ => "Unauthorized",
+    };
     let resp = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         status,
@@ -339,6 +371,10 @@ fn token_ok(req: &MiniRequest, expected: &str) -> bool {
     if expected.is_empty() {
         // 未配 token：不校验身份，但仍要挡住浏览器发起的静默触发。
         // 此前这里是 `return true`，等于本机任意网页可随意触发。
+        //
+        // 这一路现在只是兜底 —— webhook_start 会在 token 留空时自动生成
+        // 一个随机 token，正常流程走不到这里。保留它是为了防御未来
+        // 有人绕过 webhook_start 直接塞空 token 注册路由。
         return req.headers.iter().any(|(k, _)| k == BROWSER_GUARD_HEADER);
     }
     for (k, v) in &req.headers {
@@ -356,6 +392,68 @@ fn token_ok(req: &MiniRequest, expected: &str) -> bool {
     false
 }
 
+/// 生成一个随机 token，供"触发器没配 token"时兜底。
+///
+/// 不引 rand / getrandom：只为挡住"未配置就裸奔"，不是抗网络攻击的密钥
+/// （webhook 只绑 127.0.0.1）。熵来自 时间纳秒 + 进程号 + 调用序号，
+/// 用 FNV-1a 混成 128 位后输出 32 位十六进制。
+fn random_token() -> String {
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let seq = N.fetch_add(1, Ordering::Relaxed) as u128;
+    let pid = std::process::id() as u128;
+    let mut h: u128 = 0xcbf2_9ce4_8422_2325;
+    for v in [nanos as u128, pid, seq, (nanos as u128).rotate_left(37)] {
+        h ^= v;
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{h:032x}")
+}
+
+/// 处理单个 webhook 连接：解析请求 → 校验 → 回包。
+fn handle_webhook_conn(stream: &mut TcpStream, routes: &[(String, String, String)], app: &AppHandle) {
+    match read_request(stream) {
+        Ok(Some(req)) => {
+            // 去掉查询串后匹配 path
+            let req_path = req.path.split('?').next().unwrap_or(&req.path).to_string();
+            let hit = routes.iter().find(|(_, p, _)| *p == req_path);
+
+            match hit {
+                Some((tid, _, tok)) if token_ok(&req, tok) => {
+                    // 只接受写操作与 GET，其他返回 401 让调用方知道姿势不对
+                    if !matches!(req.method.as_str(), "GET" | "POST" | "PUT") {
+                        write_response(
+                            stream,
+                            401,
+                            r#"{"ok":false,"error":"method not allowed"}"#,
+                        );
+                        return;
+                    }
+                    let _ = app.emit(&format!("webhook-event/{}", tid), req.body.clone());
+                    write_response(stream, 200, r#"{"ok":true}"#);
+                }
+                Some(_) => {
+                    write_response(stream, 401, r#"{"ok":false,"error":"invalid token"}"#);
+                }
+                None => {
+                    write_response(stream, 404, r#"{"ok":false,"error":"no such route"}"#);
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+            // 唯一用 InvalidData 的地方就是 body 超限
+            write_response(stream, 413, r#"{"ok":false,"error":"payload too large"}"#);
+        }
+        Err(_) => {
+            write_response(stream, 400, r#"{"ok":false,"error":"bad request"}"#);
+        }
+    }
+}
+
 #[tauri::command]
 pub fn webhook_start(
     app: AppHandle,
@@ -364,16 +462,31 @@ pub fn webhook_start(
     port: u16,
     path: String,
     token: String,
-) -> Result<(), String> {
-    let mut map = state.0.lock().unwrap();
+) -> Result<String, String> {
+    // 没配 token 就生成一个。浏览器的静默触发已被 BROWSER_GUARD_HEADER 挡住，
+    // 但本机进程只要发个带自定义头的请求就能触发工作流（起 CLI、读写授权目录），
+    // 空口令等于把这些能力敞开给本机所有程序。
+    // 生成后回传给前端，用户才能在界面上看到该用什么 token 调用。
+    let effective = if token.trim().is_empty() {
+        let generated = random_token();
+        eprintln!(
+            "[webhook] 触发器 {} 未配置校验 Token，已自动生成: {}",
+            id, generated
+        );
+        generated
+    } else {
+        token.clone()
+    };
+
+    let mut map = state.0.lock().unwrap_or_else(|e| e.into_inner());
 
     // 端口已被占：直接把这条路由加进去（多触发器共端口靠 path 区分）
     if let Some(srv) = map.get(&port) {
-        let mut routes = srv.routes.lock().unwrap();
+        let mut routes = srv.routes.lock().unwrap_or_else(|e| e.into_inner());
         if !routes.iter().any(|(tid, _, _)| tid == &id) {
-            routes.push((id.clone(), path.clone(), token.clone()));
+            routes.push((id.clone(), path.clone(), effective.clone()));
         }
-        return Ok(());
+        return Ok(effective);
     }
 
     let listener = TcpListener::bind(("127.0.0.1", port))
@@ -383,79 +496,91 @@ pub fn webhook_start(
         .set_nonblocking(true)
         .map_err(|e| format!("设置非阻塞失败: {}", e))?;
 
-    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let routes = std::sync::Arc::new(Mutex::new(vec![(id.clone(), path.clone(), token.clone())]));
+    let stop = Arc::new(AtomicBool::new(false));
+    let wake = Arc::new((Mutex::new(false), Condvar::new()));
+    let routes = Arc::new(Mutex::new(vec![(
+        id.clone(),
+        path.clone(),
+        effective.clone(),
+    )]));
 
     let stop_c = stop.clone();
+    let wake_c = wake.clone();
     let routes_c = routes.clone();
     let app_c = app.clone();
 
     std::thread::spawn(move || {
+        // 并发连接上限。"每连接一个线程"不设限的话，
+        // 一堆连上却不发数据的慢速连接就能把线程数堆爆（fd + 栈内存双重压力）。
+        const MAX_CONNS: usize = 32;
+        let live = Arc::new(AtomicUsize::new(0));
+
         loop {
-            if stop_c.load(std::sync::atomic::Ordering::Relaxed) {
+            if stop_c.load(Ordering::Relaxed) {
                 break;
             }
             match listener.accept() {
                 Ok((mut stream, _)) => {
-                    let routes2 = routes_c.lock().unwrap().clone();
-                    let app2 = app_c.clone();
-                    // 每个连接一个线程，够用且实现简单
-                    std::thread::spawn(move || {
-                        match read_request(&mut stream) {
-                            Ok(Some(req)) => {
-                                // 去掉查询串后匹配 path
-                                let req_path = req.path.split('?').next().unwrap_or(&req.path).to_string();
-                                let hit = routes2.iter().find(|(_, p, _)| *p == req_path);
+                    // 读超时：连上了不发请求体的客户端不能永久占着一个线程
+                    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(10)));
 
-                                match hit {
-                                    Some((tid, _, tok)) if token_ok(&req, tok) => {
-                                        // 只接受写操作与 GET，其他返回 401 让调用方知道姿势不对
-                                        if !matches!(req.method.as_str(), "GET" | "POST" | "PUT") {
-                                            write_response(&mut stream, 401, r#"{"ok":false,"error":"method not allowed"}"#);
-                                            return;
-                                        }
-                                        let _ = app2.emit(&format!("webhook-event/{}", tid), req.body.clone());
-                                        write_response(&mut stream, 200, r#"{"ok":true}"#);
-                                    }
-                                    Some(_) => {
-                                        write_response(&mut stream, 401, r#"{"ok":false,"error":"invalid token"}"#);
-                                    }
-                                    None => {
-                                        write_response(&mut stream, 404, r#"{"ok":false,"error":"no such route"}"#);
-                                    }
-                                }
-                            }
-                            _ => {
-                                write_response(&mut stream, 400, r#"{"ok":false,"error":"bad request"}"#);
-                            }
-                        }
+                    if live.load(Ordering::Relaxed) >= MAX_CONNS {
+                        // 过载时直接回绝并关闭，而不是继续起线程
+                        write_response(
+                            &mut stream,
+                            503,
+                            r#"{"ok":false,"error":"too many connections"}"#,
+                        );
+                        continue;
+                    }
+                    let live_c = live.clone();
+                    live_c.fetch_add(1, Ordering::Relaxed);
+
+                    let routes2 = routes_c.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    let app2 = app_c.clone();
+                    std::thread::spawn(move || {
+                        handle_webhook_conn(&mut stream, &routes2, &app2);
+                        live_c.fetch_sub(1, Ordering::Relaxed);
                     });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    // 用条件变量代替 sleep：stop 时能立刻被唤醒，
+                    // 不必傻等满这一拍（100ms）才检查到标志
+                    let (lock, cvar) = &*wake_c;
+                    match lock.lock() {
+                        Ok(g) => {
+                            let _ = cvar.wait_timeout(g, std::time::Duration::from_millis(100));
+                        }
+                        Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
+                    }
                 }
                 Err(_) => {
-                    // 监听被关闭（stop 时 drop）
-                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    // 监听被关闭（stop 时 drop）：退出，不再空转
+                    break;
                 }
             }
         }
     });
 
-    map.insert(port, WebhookServer { stop, routes });
-    Ok(())
+    map.insert(port, WebhookServer { stop, wake, routes });
+    Ok(effective)
 }
 
 #[tauri::command]
 pub fn webhook_stop(state: State<'_, WebhookRegistry>, id: String) -> Result<(), String> {
-    let mut map = state.0.lock().unwrap();
+    let mut map = state.0.lock().unwrap_or_else(|e| e.into_inner());
     let mut empty_ports: Vec<u16> = Vec::new();
 
     for (port, srv) in map.iter_mut() {
-        let mut routes = srv.routes.lock().unwrap();
+        let mut routes = srv.routes.lock().unwrap_or_else(|e| e.into_inner());
         routes.retain(|(tid, _, _)| tid != &id);
         if routes.is_empty() {
-            srv.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            srv.stop.store(true, Ordering::Relaxed);
+            // 唤醒正在 wait_timeout 的 accept 线程，让它马上看到 stop
+            let (lock, cvar) = &*srv.wake;
+            if let Ok(_g) = lock.lock() {
+                cvar.notify_all();
+            }
             empty_ports.push(*port);
         }
     }
@@ -502,6 +627,45 @@ pub struct FsResult {
     pub text: String,
 }
 
+/// fs_op read 未指定 max_bytes 时使用的默认上限（8 MiB）。
+const FS_READ_DEFAULT_CAP: usize = 8 * 1024 * 1024;
+
+/// fs_op read 的硬上限（64 MiB）：即便调用方显式要更多，也最多读这么多。
+const FS_READ_HARD_CAP: usize = 64 * 1024 * 1024;
+
+/// 把请求里的 max_bytes 归一化成一个安全上限。
+///
+/// 此前 `max_bytes == 0` 被解释成 `usize::MAX`（不限制），
+/// 于是"忘了填上限"等于"把整个文件读进内存"。现在 0 表示"用默认值"。
+fn read_cap(max_bytes: usize) -> usize {
+    if max_bytes == 0 {
+        FS_READ_DEFAULT_CAP
+    } else {
+        max_bytes.min(FS_READ_HARD_CAP)
+    }
+}
+
+/// 流式读取文件的前 cap 字节，返回 (内容, 是否被截断)。
+///
+/// 关键在 **先限流再读**：`BufReader::take(cap + 1)` 读满即停，
+/// 所以内存占用只与 cap 有关，与文件多大无关。
+/// 多读 1 个字节只是为了判断"后面还有没有"，判断完立刻 truncate。
+fn read_head(p: &Path, cap: usize) -> Result<(String, bool), String> {
+    let f = std::fs::File::open(p).map_err(|e| format!("打开失败: {e}"))?;
+    let mut reader = BufReader::new(f);
+    let mut buf: Vec<u8> = Vec::with_capacity(cap.min(64 * 1024));
+    reader
+        .by_ref()
+        .take(cap as u64 + 1)
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("读取失败: {e}"))?;
+    let truncated = buf.len() > cap;
+    if truncated {
+        buf.truncate(cap);
+    }
+    Ok((String::from_utf8_lossy(&buf).to_string(), truncated))
+}
+
 /// 这些路径绝不允许删除——误删代价太大，宁可拒绝
 const FORBIDDEN_DELETE: &[&str] = &[
     "/", "/etc", "/usr", "/bin", "/sbin", "/var", "/lib", "/boot", "/root",
@@ -523,10 +687,17 @@ fn is_forbidden_delete(p: &Path) -> bool {
 
 /// 只列出一层目录
 fn list_dir(dir: &Path, recursive: bool, exts: &[String]) -> Result<Vec<String>, String> {
+    use crate::fpx::fsutil::{is_real_dir, WalkGuard};
+
     let mut out: Vec<String> = Vec::new();
+    let mut guard = WalkGuard::new();
     let mut stack: Vec<std::path::PathBuf> = vec![dir.to_path_buf()];
 
     while let Some(cur) = stack.pop() {
+        // 自指软链 / 硬链接环：这个节点本次已经走过，跳过
+        if !guard.visit(&cur) {
+            continue;
+        }
         let rd = std::fs::read_dir(&cur)
             .map_err(|e| format!("读取目录失败 {}: {}", cur.display(), e))?;
         let mut entries: Vec<std::path::PathBuf> = Vec::new();
@@ -536,7 +707,9 @@ fn list_dir(dir: &Path, recursive: bool, exts: &[String]) -> Result<Vec<String>,
         entries.sort();
 
         for p in entries {
-            let is_dir = p.is_dir();
+            // 用 symlink_metadata 判定：不跟随符号链接。
+            // 否则一个指向上级目录的软链就能让递归永不结束
+            let is_dir = is_real_dir(&p);
             let name = p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
 
             if is_dir {
@@ -655,15 +828,20 @@ fn expand_glob(pattern: &str) -> Result<Vec<String>, String> {
     }
 
     let mut hits: Vec<String> = Vec::new();
-    if base_path.is_file() {
+    if crate::fpx::fsutil::is_real_file(base_path) {
         if glob_match(&pnorm, &base) {
             hits.push(base.clone());
         }
         return Ok(hits);
     }
 
+    // 与 list_dir 同样的两道保险：链接点不深入 + 已访问节点集合
+    let mut guard = crate::fpx::fsutil::WalkGuard::new();
     let mut stack = vec![base_path.to_path_buf()];
     while let Some(cur) = stack.pop() {
+        if !guard.visit(&cur) {
+            continue;
+        }
         let rd = match std::fs::read_dir(&cur) {
             Ok(r) => r,
             Err(_) => continue,
@@ -671,7 +849,7 @@ fn expand_glob(pattern: &str) -> Result<Vec<String>, String> {
         for entry in rd.flatten() {
             let p = entry.path();
             let ps = p.to_string_lossy().replace('\\', "/");
-            if p.is_dir() {
+            if crate::fpx::fsutil::is_real_dir(&p) {
                 stack.push(p.clone());
             }
             if glob_match(&pnorm, &ps) {
@@ -683,25 +861,13 @@ fn expand_glob(pattern: &str) -> Result<Vec<String>, String> {
     Ok(hits)
 }
 
+/// 递归复制（文件 / 目录都支持）。
+///
+/// 走 fsutil::copy_tree：跳过链接点、带已访问节点集合。
+/// 原实现用 `src.is_dir()`（跟随链接）判断递归，目录软链会被当成普通目录一路深入，
+/// 遇到自指链接就是无限递归 + 无限复制。
 fn copy_all(src: &Path, dst: &Path) -> Result<(), String> {
-    if src.is_dir() {
-        std::fs::create_dir_all(dst)
-            .map_err(|e| format!("创建目标目录失败 {}: {}", dst.display(), e))?;
-        for entry in std::fs::read_dir(src)
-            .map_err(|e| format!("读取源目录失败 {}: {}", src.display(), e))?
-            .flatten()
-        {
-            let name = entry.file_name();
-            copy_all(&entry.path(), &dst.join(name))?;
-        }
-    } else {
-        if let Some(parent) = dst.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("创建父目录失败: {}", e))?;
-        }
-        std::fs::copy(src, dst)
-            .map_err(|e| format!("复制失败 {} → {}: {}", src.display(), dst.display(), e))?;
-    }
-    Ok(())
+    crate::fpx::fsutil::copy_tree(src, dst)
 }
 
 /* ================================================================== */
@@ -909,11 +1075,9 @@ pub fn fs_op(app: AppHandle, req: FsRequest) -> Result<FsResult, String> {
                 return Err(format!("是目录不是文件，请用「列目录」: {}", path));
             }
             let meta = std::fs::metadata(&p).map_err(|e| format!("读取元信息失败: {}", e))?;
-            let cap = if req.max_bytes == 0 { usize::MAX } else { req.max_bytes };
-            let bytes = std::fs::read(&p).map_err(|e| format!("读取失败: {}", e))?;
-            let truncated = bytes.len() > cap;
-            let text = String::from_utf8_lossy(&bytes[..bytes.len().min(cap)]).to_string();
-            let mut out = text;
+            let cap = read_cap(req.max_bytes);
+            // 流式读，读满 cap 就停：内存占用被 cap 约束，与文件实际大小无关
+            let (mut out, truncated) = read_head(&p, cap)?;
             if truncated {
                 out.push_str(&format!(
                     "\n\n… 已截断（共 {} 字节，上限 {}）",
@@ -988,7 +1152,10 @@ pub fn fs_op(app: AppHandle, req: FsRequest) -> Result<FsResult, String> {
                     std::fs::create_dir_all(parent).map_err(|e| format!("创建父目录失败: {}", e))?;
                 }
             }
-            std::fs::rename(&p, &dst_p).map_err(|e| format!("移动失败: {}", e))?;
+            // 跨设备（跨卷 / 跨挂载点）时 rename 必然失败，
+            // rename_with_fallback 会回退到"复制 + 删除"，且复制没成功前不删源
+            crate::fpx::fsutil::rename_with_fallback(&p, &dst_p)
+                .map_err(|e| format!("移动失败: {e}"))?;
             done!(format!("已移动 {} → {}", path, dst))
         }
 

@@ -1000,6 +1000,8 @@ export default function App() {
 
   // 为启用的 webhook 触发器启动本地 HTTP 服务
   const webhookCleanups = useRef<Map<string, () => void>>(new Map());
+  // 触发器没填校验 Token 时，后端会生成一个；按触发器 id 存下来给界面提示
+  const [webhookTokens, setWebhookTokens] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!webhookSupported) return;
     const wanted = new Map<string, Trigger>(
@@ -1010,14 +1012,27 @@ export default function App() {
       if (!wanted.has(id)) {
         cleanup();
         webhookCleanups.current.delete(id);
+        setWebhookTokens((m) => {
+          if (!(id in m)) return m;
+          const next = { ...m };
+          delete next[id];
+          return next;
+        });
       }
     }
 
     for (const [id, t] of wanted) {
       if (webhookCleanups.current.has(id)) continue;
-      void startWebhook(id, t.config.port, t.config.path, t.config.token, (body) => {
-        void scheduler.notifyWebhook(id, body);
-      }).then((cleanup) => {
+      void startWebhook(
+        id,
+        t.config.port,
+        t.config.path,
+        t.config.token,
+        (body) => {
+          void scheduler.notifyWebhook(id, body);
+        },
+        (tok) => setWebhookTokens((m) => ({ ...m, [id]: tok })),
+      ).then((cleanup) => {
         if (cleanup) webhookCleanups.current.set(id, cleanup);
       });
     }
@@ -1200,6 +1215,7 @@ export default function App() {
           onChange={patchNode}
           credentials={credentials}
           onOpenCredentials={openCredentials}
+          webhookTokens={webhookTokens}
         />
 
         {credOpen ? (

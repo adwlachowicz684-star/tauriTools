@@ -11,13 +11,25 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// 停服唤醒：accept 是非阻塞轮询，没有条件变量就得睡满一整拍才检查到 RUNNING。
+static WAKE: (Mutex<u64>, Condvar) = (Mutex::new(0), Condvar::new());
+
+/// 单个请求的 body 上限（8 MiB）。
+///
+/// 与 af_flow 的 webhook 同理：Content-Length 是客户端声明的，
+/// 照它直接 `vec![0u8; n]` 等于把内存分配权交给对端。
+const MAX_BODY: usize = 8 * 1024 * 1024;
+
+/// 同时处理的连接上限。每连接一个线程，不设限会被慢速连接堆满线程。
+const MAX_CONNS: usize = 32;
 
 /// 当前操作对象（AI 用 select_folder 指定，后续带 target 的工具可省略参数）。
 /// 存 (路径, 类别)，类别为 project / group / other。
@@ -59,6 +71,7 @@ pub fn serve(app: AppHandle, port: u16) -> Result<String, String> {
         .map_err(|e| format!("设置非阻塞失败: {e}"))?;
 
     std::thread::spawn(move || {
+        let live = Arc::new(AtomicUsize::new(0));
         loop {
             if !RUNNING.load(Ordering::SeqCst) { break; }
             match listener.accept() {
@@ -67,11 +80,26 @@ pub fn serve(app: AppHandle, port: u16) -> Result<String, String> {
                     // handle() 里的 set_read_timeout 只对阻塞 socket 有意义，
                     // 若继承了非阻塞，读会直接返回 WouldBlock，请求全部失败。
                     let _ = stream.set_nonblocking(false);
+
+                    if live.load(Ordering::SeqCst) >= MAX_CONNS {
+                        // 过载：直接关闭连接，而不是继续起线程
+                        continue;
+                    }
+                    let live_c = live.clone();
+                    live_c.fetch_add(1, Ordering::SeqCst);
                     let app2 = app.clone();
-                    std::thread::spawn(move || handle(stream, app2));
+                    std::thread::spawn(move || {
+                        handle(stream, app2);
+                        live_c.fetch_sub(1, Ordering::SeqCst);
+                    });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    // 条件变量代替 sleep：stop() 能立刻唤醒，无需等满 100ms
+                    let (lock, cvar) = &WAKE;
+                    match lock.lock() {
+                        Ok(g) => { let _ = cvar.wait_timeout(g, std::time::Duration::from_millis(100)); }
+                        Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
+                    }
                 }
                 Err(_) => break,
             }
@@ -84,6 +112,11 @@ pub fn serve(app: AppHandle, port: u16) -> Result<String, String> {
 pub fn stop() {
     // 标志置 false 后，线程最多再睡 100ms 就会退出并释放端口
     RUNNING.store(false, Ordering::SeqCst);
+    // 唤醒正在 wait_timeout 的 accept 线程，让它马上看到标志并释放端口
+    let (lock, cvar) = &WAKE;
+    if let Ok(_g) = lock.lock() {
+        cvar.notify_all();
+    }
 }
 pub fn is_running() -> bool { RUNNING.load(Ordering::SeqCst) }
 
@@ -93,7 +126,7 @@ fn handle(mut stream: TcpStream, app: AppHandle) {
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(10)));
 
     // 借用式 BufReader：作用域结束后即可再用 stream 写回
-    let (request_line, body) = {
+    let (request_line, body, too_large) = {
         let mut reader = BufReader::new(&stream);
 
         let mut request_line = String::new();
@@ -109,14 +142,33 @@ fn handle(mut stream: TcpStream, app: AppHandle) {
             }
             if line == "\r\n" || line == "\n" { break; }
             if let Some(v) = line.to_lowercase().strip_prefix("content-length:") {
+                // 解析失败按 0 处理；超大值由下面的 MAX_BODY 拦下
                 content_length = v.trim().parse().unwrap_or(0);
             }
         }
 
-        let mut body = vec![0u8; content_length];
-        if content_length > 0 && Read::read_exact(&mut reader, &mut body).is_err() { return; }
-        (request_line, body)
+        // 先校验再分配：绝不按声明长度直接 vec![0u8; content_length]。
+        // 借用块内拿不到 &mut stream（reader 还借着它），先用标志带出去，出块再回包。
+        let mut too_large = false;
+        let mut body: Vec<u8> = Vec::with_capacity(content_length.min(64 * 1024));
+        if content_length > MAX_BODY {
+            too_large = true;
+        } else if content_length > 0
+            && reader
+                .by_ref()
+                .take(content_length as u64)
+                .read_to_end(&mut body)
+                .is_err()
+        {
+            return;
+        }
+        (request_line, body, too_large)
     };
+
+    if too_large {
+        write_raw(&mut stream, 413, br#"{"error":"payload too large"}"#);
+        return;
+    }
 
     let parts: Vec<&str> = request_line.split_whitespace().collect();
     let method = parts.first().copied().unwrap_or("");
@@ -143,14 +195,25 @@ fn handle(mut stream: TcpStream, app: AppHandle) {
     };
 
     let body_bytes = if status == 204 { Vec::new() } else { serde_json::to_vec(&payload).unwrap_or_default() };
-    let status_text = match status { 200 => "OK", 204 => "No Content", 404 => "Not Found", _ => "Error" };
+    write_raw(&mut stream, status, &body_bytes);
+}
+
+/// 写 HTTP 响应（含 CORS 头，方便浏览器侧的 MCP 调试页直连）。
+fn write_raw(stream: &mut TcpStream, status: u16, body: &[u8]) {
+    let status_text = match status {
+        200 => "OK",
+        204 => "No Content",
+        404 => "Not Found",
+        413 => "Payload Too Large",
+        _ => "Error",
+    };
     let head = format!(
         "HTTP/1.1 {status} {status_text}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: *\r\nConnection: close\r\n\r\n",
-        body_bytes.len()
+        body.len()
     );
-    let mut out = Vec::with_capacity(head.len() + body_bytes.len());
+    let mut out = Vec::with_capacity(head.len() + body.len());
     out.extend_from_slice(head.as_bytes());
-    out.extend_from_slice(&body_bytes);
+    out.extend_from_slice(body);
     let _ = stream.write_all(&out);
     let _ = stream.flush();
 }
@@ -443,7 +506,14 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
         "select_folder" => {
             let path = s("path");
             if path.is_empty() { return Err(err("缺少参数 path")); }
-            if !std::path::Path::new(&path).is_dir() { return Err(err(&format!("文件夹不存在: {path}"))); }
+            // 用 symlink_metadata 判定，不跟随链接：项目目录里大量使用 junction，
+            // 跟随判定会把链接背后的目录当成"另一个真实目录"登记进来，
+            // 后续备份 / 递归遍历就可能顺着它绕回自身
+            let p = std::path::Path::new(&path);
+            if super::fsutil::is_link(p) {
+                return Err(err(&format!("不支持符号链接路径，请传入真实目录: {path}")));
+            }
+            if !super::fsutil::is_real_dir(p) { return Err(err(&format!("文件夹不存在: {path}"))); }
             // 判定类别：先看项目组再看项目，都不在则是 other（仍可选，只是类别不明）
             let snap = snapshot(app)?;
             let key = super::store::normalize_key(&path);
@@ -488,7 +558,10 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
             let path = s("path");
             let icon = s("icon");
             if path.is_empty() || icon.is_empty() { return Err(err("path 与 icon 必填")); }
-            if !std::path::Path::new(&path).is_dir() { return Err(err(&format!("目录不存在: {path}"))); }
+            // 同上：不跟随符号链接
+            if !super::fsutil::is_real_dir(std::path::Path::new(&path)) {
+                return Err(err(&format!("目录不存在: {path}")));
+            }
             let dir = data_dir_of(app)?;
             // 事务内改配置 + 落 desktop.ini：apply_icon 失败则不落盘
             let note = super::store::with_config(&dir, |cfg| {

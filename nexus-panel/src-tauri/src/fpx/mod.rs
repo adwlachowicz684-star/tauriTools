@@ -13,9 +13,11 @@ pub mod base64;
 pub mod chain;
 pub mod content;
 pub mod editor;
+pub mod fsutil;
 pub mod junction;
 pub mod mcp;
 pub mod model;
+pub mod safety;
 pub mod screen;
 pub mod store;
 pub mod sys;
@@ -95,7 +97,8 @@ pub(crate) fn core_rename_folder(
     }
 
     let old = std::path::Path::new(path);
-    if !old.is_dir() {
+    // 不跟随链接：改名一个 junction 不该变成"给链接指向的目录改名"
+    if !crate::fpx::fsutil::is_real_dir(old) {
         return Err(format!("文件夹不存在或已被移动：{path}"));
     }
     let old_name = old
@@ -119,8 +122,10 @@ pub(crate) fn core_rename_folder(
     store::with_config(dir, |cfg| {
         // 摘锁后才能 rename：受 ACL 保护的目录 rename 会被系统拒绝
         let _guard = LockGuard::new(path, store::lock_of(cfg, path));
-        // rename 只在同一卷内原子完成；跨卷失败时宁可整体中止，不做"复制+删除"
-        std::fs::rename(old, &new_path).map_err(|e| format!("改名失败：{e}"))?;
+        // 跨卷时 rename 必然失败，回退到"复制 + 删除"；
+        // 回退的语义是"复制没成功就绝不删源"，不会留下两份残缺数据
+        crate::fpx::fsutil::rename_with_fallback(old, &new_path)
+            .map_err(|e| format!("改名失败：{e}"))?;
         drop(_guard);
 
         // ---- 同步所有以旧路径为键的登记 ----

@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::fsutil::is_real_dir;
 use super::model::ContentItem;
 
 /// 各类资源的目录名（优先复数，其次单数）。
@@ -13,6 +14,8 @@ const RULE_DIRS: [&str; 2] = ["rules", "rule"];
 fn pick_dir(root: &Path, names: &[&str; 2]) -> Option<PathBuf> {
     for n in names {
         let p = root.join(n);
+        // 跟随链接：项目根下的 .claude / .cursor 之类本就是 junction，
+        // 用户点"看内容"时理应看到链接后的内容。递归风险由下面的收集函数负责挡。
         if p.is_dir() { return Some(p); }
     }
     None
@@ -71,6 +74,17 @@ fn scan_rules(root: &Path) -> Vec<ContentItem> {
 }
 
 fn collect_md(base: &Path, dir: &Path, kind: &str, prefix: &str, out: &mut Vec<ContentItem>) {
+    let mut guard = super::fsutil::WalkGuard::new();
+    collect_md_inner(base, dir, kind, prefix, out, &mut guard);
+}
+
+fn collect_md_inner(
+    base: &Path, dir: &Path, kind: &str, prefix: &str, out: &mut Vec<ContentItem>,
+    guard: &mut super::fsutil::WalkGuard,
+) {
+    // 链接点不深入 + 已访问节点集合：
+    // 项目根下的 agent 目录本身就是 junction，跟随递归会顺着链接绕回上级目录
+    if !guard.visit(dir) { return; }
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return, // 无权限等：静默跳过，避免整树失败
@@ -78,7 +92,7 @@ fn collect_md(base: &Path, dir: &Path, kind: &str, prefix: &str, out: &mut Vec<C
     let mut sub: Vec<PathBuf> = Vec::new();
     for entry in entries.flatten() {
         let p = entry.path();
-        if p.is_dir() {
+        if is_real_dir(&p) {
             sub.push(p);
         } else if p.extension().map(|e| e.eq_ignore_ascii_case("md")).unwrap_or(false) {
             let rp = format!("{}{}", prefix, rel(base, &p));
@@ -92,7 +106,7 @@ fn collect_md(base: &Path, dir: &Path, kind: &str, prefix: &str, out: &mut Vec<C
         }
     }
     for d in sub {
-        collect_md(base, &d, kind, prefix, out);
+        collect_md_inner(base, &d, kind, prefix, out, guard);
     }
 }
 
@@ -129,6 +143,16 @@ fn scan_skills(root: &Path) -> Vec<ContentItem> {
 }
 
 fn collect_skill_dirs(base: &Path, dir: &Path, seen: &mut Vec<String>, out: &mut Vec<ContentItem>) {
+    let mut guard = super::fsutil::WalkGuard::new();
+    collect_skill_dirs_inner(base, dir, seen, out, &mut guard);
+}
+
+fn collect_skill_dirs_inner(
+    base: &Path, dir: &Path, seen: &mut Vec<String>, out: &mut Vec<ContentItem>,
+    guard: &mut super::fsutil::WalkGuard,
+) {
+    // 与 collect_md 同理：链接点不深入 + 已访问节点集合
+    if !guard.visit(dir) { return; }
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -137,7 +161,7 @@ fn collect_skill_dirs(base: &Path, dir: &Path, seen: &mut Vec<String>, out: &mut
     let mut has_skill_md = false;
     for entry in entries.flatten() {
         let p = entry.path();
-        if p.is_dir() {
+        if is_real_dir(&p) {
             sub.push(p);
         } else if p.file_name().map(|n| n.eq_ignore_ascii_case("SKILL.md")).unwrap_or(false) {
             has_skill_md = true;
@@ -157,7 +181,7 @@ fn collect_skill_dirs(base: &Path, dir: &Path, seen: &mut Vec<String>, out: &mut
         }
     }
     for d in sub {
-        collect_skill_dirs(base, &d, seen, out);
+        collect_skill_dirs_inner(base, &d, seen, out, guard);
     }
 }
 

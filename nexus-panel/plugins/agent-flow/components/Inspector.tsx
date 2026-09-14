@@ -49,11 +49,15 @@ type Props = {
   credentials?: Credential[];
   /** 打开凭据中心，并聚焦到指定类型 */
   onOpenCredentials?: (kind: string) => void;
+  /** 后端为「未填 Token」的 webhook 触发器自动生成的校验 Token，按触发器 id 索引 */
+  webhookTokens?: Record<string, string>;
 };
 
 const OPS = Object.keys(OP_META) as ConditionOp[];
 
-export default function Inspector({ node, edges, onChange, credentials, onOpenCredentials }: Props) {
+export default function Inspector({
+  node, edges, onChange, credentials, onOpenCredentials, webhookTokens,
+}: Props) {
   if (!node) {
     return (
       <aside className="inspector">
@@ -1259,7 +1263,17 @@ function TriggerInspector({ node, onChange }: {
             <span>校验 Token（留空=不校验身份，但调用仍需带下方请求头）</span>
             <input value={d.config.token} onChange={(e) => patchConfig({ token: e.target.value })} />
           </label>
-          {!d.config.token && (
+          {!d.config.token && webhookTokens?.[d.id] ? (
+            <div className="tip">
+              未填 Token，后端已自动生成：<code>{webhookTokens[d.id]}</code>
+              <br />
+              调用时带上请求头 <code>X-Token</code> 或 <code>Authorization: Bearer …</code>。
+              留空不等于「不校验」——否则本机任何程序（不只网页）都能触发这条工作流。
+              <br />
+              例：<code>curl -H 'X-Token: {webhookTokens[d.id]}' http://127.0.0.1:{d.config.port}{d.config.path}</code>
+            </div>
+          ) : null}
+          {!d.config.token && !webhookTokens?.[d.id] && (
             <div className="tip">
               未配 Token 时，调用需带请求头 <code>X-Nexus-Webhook: 1</code>。
               这不是身份校验，而是挡住浏览器里的恶意网页静默触发本端口 ——
