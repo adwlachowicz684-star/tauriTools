@@ -98,12 +98,28 @@ document.querySelector('#dw-close')?.dispatchEvent(new dom.window.MouseEvent('cl
 await sleep(150);
 t('抽屉可关闭', !document.querySelector('#drawer-mask'));
 
-/* ============ B. 未声明 settings 的插件应隐藏按钮 ============ */
+/* ============ B. 未声明 settings 的插件：按钮仍显示，抽屉只给外壳设置 ============
+   此前按钮只在插件自带设置面板时才显示，于是大部分插件（home、agent-flow 等）
+   根本没有入口。现在「⚙ 设置」对每个插件都显示：抽屉里除了插件自定义设置，
+   还有外壳固定提供的沙箱 / 主题适配开关，对任何插件都有意义。 */
 console.log('\n--- B. 未声明 settings 的插件 ---');
 N.navigate('demo-iframe');
 await sleep(600);
 const btn2 = document.querySelector('#bar-plugin-settings');
-t('切到无设置插件后按钮隐藏（或保持隐藏）', !btn2 || btn2.hidden);
+t('切到无设置插件后按钮仍显示（外壳设置对每个插件都可用）', !!btn2 && !btn2.hidden);
+
+/* 关键陷阱：插件没提供 settingsFn 时，SDK 会**回退 mainFn**
+   （js/plugin-sdk.js:641）—— 若外壳照常调 mountSettings，抽屉里显示的
+   会是插件主界面而不是设置。所以这里必须断言"出现了占位提示"，
+   它间接证明外壳没有走引擎兜底。 */
+btn2?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+await sleep(600);
+t('无设置插件也能打开抽屉', !!document.querySelector('#drawer-mask'));
+t('抽屉显示占位提示，而非把插件主视图塞进来',
+  !!document.querySelector('#drawer-mask .drawer-empty'));
+document.querySelector('#dw-close')?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+await sleep(150);
+t('关闭后抽屉已移除', !document.querySelector('#drawer-mask'));
 
 /* ============ C. iframe SDK 的 view 分派协议 ============ */
 console.log('\n--- C. iframe SDK 的视图分派协议 ---');

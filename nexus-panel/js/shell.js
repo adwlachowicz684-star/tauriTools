@@ -53,10 +53,16 @@ const host = createHost({
         el.classList.toggle('active', el.dataset.id === id));
     },
     onOpen: (id) => navigate(id),
-    // 插件声明了 settings 才显示「⚙ 设置」按钮；切插件/插件没设置时自动收起
+    // 「⚙ 设置」对**每个**插件都显示，不再要求插件自带设置面板：
+    // 抽屉里除了插件自定义设置，还有外壳固定提供的那一段（沙箱隔离、
+    // 主题适配开关），这两项对任何插件都有实际意义，点开永远有内容。
+    // 所以显隐只看"有没有激活插件"，不看插件有没有 settings。
+    // host 在此处可能尚未赋值（createHost 期间同步回调），故用可选链。
     onSettingsAvailable: (has) => {
       const btn = $('#bar-plugin-settings');
-      if (btn) btn.hidden = !has;
+      if (btn) btn.hidden = !host?.state?.activeId;
+      // 切插件 / 重载时收起已开的抽屉（它的内容按 manifest 挂载，
+      // 留着会显示上一个插件的设置）
       if (!has) closePluginSettings();
     },
     // 焦点在 iframe 插件里时，由插件把外壳保留键转发过来执行
@@ -212,14 +218,27 @@ async function openPluginSettings() {
   renderShellSection(drawer.querySelector('#dw-shell'), manifest);
 
   const body = drawer.querySelector('#dw-body');
-  try {
-    settingsTeardown = await host.mountSettings(body, manifest);
-  } catch (err) {
-    console.error('[plugin settings]', err);
+  /* 插件不一定提供了自己的设置面板。没提供就**别让引擎挂载**：
+     SDK 的 settingsFn 缺省时会回退 mainFn（js/plugin-sdk.js），
+     那样抽屉里显示的是插件主界面，而不是设置。
+     这里直接给占位提示，下面的外壳区块照常可用。 */
+  if (host.hasSettings()) {
+    try {
+      settingsTeardown = await host.mountSettings(body, manifest);
+    } catch (err) {
+      console.error('[plugin settings]', err);
+      body.innerHTML = `
+        <div class="err-box">
+          <h3>⚠ 设置面板加载失败</h3>
+          <pre>${escapeHtml(String(err?.message || err))}</pre>
+        </div>`;
+    }
+  } else {
     body.innerHTML = `
-      <div class="err-box">
-        <h3>⚠ 设置面板加载失败</h3>
-        <pre>${escapeHtml(String(err?.message || err))}</pre>
+      <div class="drawer-empty">
+        「${escapeHtml(manifest.name)}」没有提供自己的设置面板。
+        <br />
+        下面的沙箱与主题适配由外壳提供，对所有插件都有效。
       </div>`;
   }
 }

@@ -12,10 +12,21 @@ export default function PluginSettingsDrawer({
   manifest,
   onClose,
   mountSettings,
+  hasPluginSettings = true,
 }: {
   manifest: PluginManifest;
   onClose: () => void;
   mountSettings: (container: HTMLElement, manifest: PluginManifest) => Promise<() => void>;
+  /**
+   * 插件是否提供了自己的设置面板。
+   *
+   * 「⚙ 设置」按钮对每个插件都显示，但插件不一定写了设置面板。
+   * 这里必须显式区分：**不能**靠引擎去挂载兜底 —— SDK 的 settingsFn
+   * 缺省时会回退 mainFn（js/plugin-sdk.js:641），结果抽屉里显示的是
+   * 插件主界面而不是设置。所以拿不到就干脆不挂，只显示占位提示，
+   * 外壳那段（沙箱 / 主题适配开关）照样可用。
+   */
+  hasPluginSettings?: boolean;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -29,21 +40,23 @@ export default function PluginSettingsDrawer({
     let teardown: (() => void) | null = null;
     let alive = true;
 
-    (async () => {
-      try {
-        const fn = await mountSettings(bodyRef.current!, manifest);
-        if (!alive) { fn(); return; }        // 挂载完成前就被关掉了
-        teardown = fn;
-      } catch (e: any) {
-        if (alive) setErr(String(e?.message ?? e));
-      }
-    })();
+    if (hasPluginSettings) {
+      (async () => {
+        try {
+          const fn = await mountSettings(bodyRef.current!, manifest);
+          if (!alive) { fn(); return; }        // 挂载完成前就被关掉了
+          teardown = fn;
+        } catch (e: any) {
+          if (alive) setErr(String(e?.message ?? e));
+        }
+      })();
+    }
 
     return () => {
       alive = false;
       try { teardown?.(); } catch (e) { console.error(e); }
     };
-  }, [manifest, mountSettings]);
+  }, [manifest, mountSettings, hasPluginSettings]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -72,7 +85,13 @@ export default function PluginSettingsDrawer({
           <div className="drawer-body" ref={bodyRef}>
             {err
               ? <div className="err-box"><h3>⚠ 设置面板加载失败</h3><pre>{err}</pre></div>
-              : <div className="loader"><div className="spinner" />正在载入设置…</div>}
+              : !hasPluginSettings
+                ? <div className="drawer-empty">
+                    「{manifest.name}」没有提供自己的设置面板。
+                    <br />
+                    下面的沙箱与主题适配由外壳提供，对所有插件都有效。
+                  </div>
+                : <div className="loader"><div className="spinner" />正在载入设置…</div>}
           </div>
           {/* 下半：外壳固定提供的开关区块 */}
           <SandboxSection manifest={manifest} />

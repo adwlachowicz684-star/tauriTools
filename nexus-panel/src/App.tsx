@@ -251,8 +251,11 @@ export default function App() {
   /* ---------- 插件设置抽屉 ---------- */
   const closePluginSettings = useCallback(() => setSettingsOpen(false), []);
 
+  /* 「⚙ 设置」对每个插件都显示，不再要求插件自带设置面板 ——
+     抽屉里除了插件自定义设置，还有外壳固定提供的沙箱 / 主题适配开关，
+     对任何插件都有意义，所以点开永远有内容。
+     插件没有自定义设置时，抽屉只显示那段外壳区块 + 占位提示。 */
   const openPluginSettings = useCallback(() => {
-    if (!hostRef.current?.hasSettings()) return;     // 插件没声明设置面板：不打开空抽屉
     setSettingsOpen(true);
   }, []);
 
@@ -356,7 +359,7 @@ export default function App() {
           subtitle={activePlugin
             ? `${activePlugin.type === 'iframe' ? '沙箱模式' : '同页模式'}${activePlugin.version ? ' · v' + activePlugin.version : ''}`
             : ''}
-          hasSettings={hasSettings && !!activePlugin}
+          hasPlugin={!!activePlugin}
           onOpenSettings={openPluginSettings}
           onReload={reload}
         />
@@ -367,6 +370,9 @@ export default function App() {
           manifest={activePlugin}
           onClose={closePluginSettings}
           mountSettings={mountSettings}
+          /* 插件是否提供了自己的设置面板。没有就**不能**调 mountSettings：
+             SDK 的 settingsFn 缺省会回退 mainFn，抽屉里会显示插件主界面。 */
+          hasPluginSettings={hasSettings}
         />
       ) : null}
       {dialogOpen && <AddPluginDialog onClose={() => setDialogOpen(false)} onSubmit={addPlugin} />}

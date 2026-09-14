@@ -9,18 +9,24 @@ import { forwardRef } from 'react';
 const Stage = forwardRef<HTMLDivElement, {
   title: string;
   subtitle: string;
-  /** 可选：老调用方可能还没接上插件设置面板 */
-  hasSettings?: boolean;
+  /**
+   * 当前是否有激活插件。
+   *
+   * 「⚙ 设置」对**每个**插件都显示，不再要求插件自己提供设置面板 ——
+   * 抽屉里除了插件自定义设置，还有外壳固定提供的那一段（沙箱隔离、
+   * 主题适配开关），这两项对任何插件都有实际意义，所以点开永远有内容。
+   */
+  hasPlugin?: boolean;
   onOpenSettings?: () => void;
   onReload: () => void;
-}>(({ title, subtitle, hasSettings, onOpenSettings, onReload }, ref) => (
+}>(({ title, subtitle, hasPlugin, onOpenSettings, onReload }, ref) => (
   <main id="main">
     <div id="main-inner">
       <div id="plugin-bar">
         <h1>{title}</h1>
         <span className="sub">{subtitle}</span>
         <div className="bar-actions">
-          {hasSettings ? (
+          {hasPlugin ? (
             <button className="bar-btn" onClick={onOpenSettings} title="插件设置（⌘/Ctrl + ,）">
               ⚙ 设置
             </button>

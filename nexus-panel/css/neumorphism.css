@@ -709,6 +709,72 @@ body {
 .dialog select.p-input { appearance: none; cursor: pointer; }
 .dialog select.p-input option { background: var(--surface-overlay); color: var(--text); }
 
+/* ---------------- 插件设置抽屉 ----------------
+   两个技术栈共用同一套类名：
+     · 无构建模式 —— js/shell.js 的 openPluginSettings() 手工拼出同样结构
+     · Vite 模式  —— src/components/PluginSettingsDrawer.tsx 渲染
+   改这里两边一起生效，不要只改一边。
+
+   底板走 --surface-overlay 实色（与 .dialog 一致），**刻意不加**
+   backdrop-filter：它和 .p-card 是同一个坑（见本文件 .p-card 处的说明）——
+   backdrop-filter 会让本元素成为 fixed 后代的包含块 + 层叠上下文，
+   而这里装的就是插件的设置面板，里面完全可能有浮层（颜色拾取器、
+   下拉菜单之类）。加了会让那些浮层定位偏移、并被裁在抽屉边界内。 */
+.drawer-mask {
+  /* .mask 默认 place-items:center（居中弹窗），抽屉是靠右的竖条 */
+  place-items: stretch end;
+}
+.drawer {
+  width: min(480px, 100vw);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-overlay, var(--surface-raised));
+  border-radius: var(--r-xl) 0 0 var(--r-xl);
+  box-shadow: -8px 0 28px rgba(0, 0, 0, .28);
+  /* 初始在视口右侧外，遮罩拿到 .on 后滑入 */
+  transform: translateX(100%);
+  transition: transform var(--t);
+  overflow: hidden;
+}
+.drawer-mask.on .drawer { transform: none; }
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  flex: none;
+  border-bottom: 1px solid var(--border);
+}
+.drawer-title { flex: 1; min-width: 0; }
+/* 没有裸 h2 规则（只有 .p-card h2），标题得自己定义 */
+.drawer-title h2 { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+
+/* 内容区：只有它滚动，头部保持固定。
+   min-height:0 不能省 —— flex 子项默认 min-height:auto，不归零会被内容
+   撑破容器、overflow-y 形同失效（与 settings.css 的 .set-body 同一处坑）。 */
+.drawer-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px;
+}
+.drawer-body { min-height: 0; }
+/* 插件未提供自定义设置时的占位提示。
+   不能让引擎去挂载主视图当兜底 —— SDK 的 settingsFn 缺省会回退 mainFn，
+   那样抽屉里显示的是插件主界面，不是设置。这里直接不放内容。 */
+.drawer-empty {
+  padding: 20px 22px;
+  border-radius: var(--r-lg);
+  background: var(--surface-sunk);
+  box-shadow: inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light);
+  color: var(--text-mute);
+  font-size: 12.5px;
+  line-height: 1.9;
+  margin-bottom: 16px;
+}
+
 /* ============================================================
    主题风格增强
    同一套 CSS 靠变量切换三种风格（由 theme-manager 覆写 --border / --blur）：
