@@ -14,13 +14,15 @@ import {
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
 } from '../../js/theme-normalizer.js';
 import ExternalCard from './ExternalCard';
+import FilesCard from './FilesCard';
 
-type TabKey = 'theme' | 'plugins' | 'external' | 'about';
+type TabKey = 'theme' | 'plugins' | 'external' | 'files' | 'about';
 
 const TABS: [TabKey, string][] = [
   ['theme', '主题'],
   ['plugins', '插件'],
   ['external', '外链'],
+  ['files', '文件'],
   ['about', '关于'],
 ];
 
@@ -346,6 +348,7 @@ export default function Settings() {
 
       {/* ---------------- 外链 ---------------- */}
       {tab === 'external' ? <ExternalCard /> : null}
+      {tab === 'files' ? <FilesCard /> : null}
 
       {/* ---------------- 关于 ---------------- */}
       {tab === 'about' ? (

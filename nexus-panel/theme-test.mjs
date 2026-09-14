@@ -144,6 +144,23 @@ t('THEME_VARS 均有来源（内联或 CSS 兜底）',
   }
 }
 
+/* 圆角要么不定义（交给 CSS 兜底），要么四个全定义。
+   只定义一部分会拼出「混合风格」：比如 --r-xl 用主题的 12px、
+   --r-md 却落到 CSS 兜底的 17px，同一套界面上两种圆角语言。
+   这条断言把「半套覆盖」钉死在加主题的时候，而不是等看出来。 */
+{
+  const R_KEYS = ['--r-xl', '--r-lg', '--r-md', '--r-sm'];
+  const half = PRESET_THEMES.filter((x) => {
+    const n = R_KEYS.filter((k) => x.vars?.[k] != null).length;
+    return n > 0 && n < R_KEYS.length;
+  }).map((x) => {
+    const got = R_KEYS.filter((k) => x.vars?.[k] != null).join(',');
+    const miss = R_KEYS.filter((k) => x.vars?.[k] == null).join(',');
+    return `${x.id}(有:${got} 缺:${miss})`;
+  });
+  t('圆角不出现半套覆盖', half.length === 0, half.join('; ') || '无半套主题');
+}
+
 /* ---------- 4. 持久化 ---------- */
 tm.applyTheme('neon-dark');
 t('主题选择已持久化', localStorage.getItem('nexus:theme') === 'neon-dark');

@@ -19,12 +19,14 @@ export default definePlugin({
       theme: h('div', {}),
       plugins: h('div', {}),
       external: h('div', {}),
+      files: h('div', {}),
       about: h('div', {}),
     };
     const TABS = [
       ['theme', '主题'],
       ['plugins', '插件'],
       ['external', '外链'],
+      ['files', '文件'],
       ['about', '关于'],
     ];
     let curTab = 'theme';
@@ -356,7 +358,112 @@ export default definePlugin({
       ext.setRefreshHandler?.(renderExternal);
     }
 
-    /* ============ 4. 关于 ============ */
+    /* ============ 4. 文件访问授权 ============ */
+    /*
+     * agent-flow 的「文件」节点经 Rust 的 fs_op 读写磁盘。fs_op 只接受落在
+     * 授权根目录内的路径（canonicalize 后 starts_with），默认范围仅应用
+     * 数据目录 —— 没有这个界面，用户改了工作流目录就会直接撞上"路径越权"
+     * 却无从下手。
+     *
+     * 只做文本输入：项目没引 tauri-plugin-dialog，加一个插件只为选目录
+     * 不划算。输入框里说明要填完整路径，失败时把 Rust 侧的报错原样显示
+     * （里面含允许范围与原因，比自己另写一套提示更准）。
+     */
+    {
+      const list = h('div', {});
+      const input = h('input.p-input', {
+        type: 'text',
+        placeholder: '粘贴要授权的目录完整路径，如 /Users/me/projects',
+        style: {
+          flex: '1', height: '30px', fontSize: '12px', padding: '0 10px', minWidth: '0',
+        },
+        onkeydown: (e) => { if (e.key === 'Enter') add(); },
+      });
+
+      const render = async () => {
+        list.innerHTML = '';
+        let roots = [];
+        try {
+          roots = await ctx.invoke('af_fs_list_roots');
+        } catch (e) {
+          list.appendChild(h('div.p-muted', { style: { padding: '12px 0' } },
+            `读取授权目录失败：${e?.message || e}`));
+          return;
+        }
+        if (!roots.length) {
+          list.appendChild(h('div.p-muted', { style: { padding: '12px 0' } },
+            '还没有授权任何目录，文件节点将无法读写。'));
+          return;
+        }
+        for (const r of roots) {
+          list.appendChild(
+            h('div.p-row', {
+              style: {
+                padding: '10px 12px', marginTop: '8px', borderRadius: 'var(--r-sm)',
+                background: 'var(--surface-sunk)',
+                boxShadow: 'inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light)',
+              },
+            },
+              h('div.p-mono', {
+                style: { flex: '1', minWidth: '0', fontSize: '12px', wordBreak: 'break-all' },
+              }, r),
+              h('button.p-btn', {
+                style: { height: '26px', padding: '0 9px', fontSize: '11px' },
+                title: '撤销授权（应用数据目录不可撤销）',
+                onclick: async () => {
+                  try {
+                    await ctx.invoke('af_fs_disallow_root', { path: r });
+                    ctx.toast('已撤销授权', 'ok');
+                  } catch (e) {
+                    ctx.toast(String(e?.message || e), 'err');
+                  }
+                  render();
+                },
+              }, '✕'),
+            ),
+          );
+        }
+      };
+
+      async function add() {
+        const p = (input.value || '').trim();
+        if (!p) return;
+        try {
+          await ctx.invoke('af_fs_allow_root', { path: p });
+          input.value = '';
+          ctx.toast('已加入授权范围', 'ok');
+        } catch (e) {
+          // Rust 侧的报错已经写清了原因（不是目录 / 范围过大 / 系统目录）
+          ctx.toast(String(e?.message || e), 'err');
+        }
+        render();
+      }
+
+      pages.files.appendChild(
+        h('div.p-card', {},
+          h('h2', {}, '文件访问'),
+          h('div.p-muted', { style: { marginBottom: '12px', lineHeight: '1.9' } },
+            'agent-flow 的文件节点只能读写这里列出的目录（含子目录）。',
+            h('br'),
+            '超出范围的操作会被拒绝 —— 这样插件就没法「读本地文件再发到网上」。',
+            h('br'),
+            '应用数据目录是默认范围，不能撤销。'),
+          list,
+          h('div.p-row', { style: { marginTop: '12px' } },
+            input,
+            h('button.p-btn.primary', {
+              style: { height: '30px', padding: '0 14px', fontSize: '12px' },
+              onclick: add,
+            }, '添加目录'),
+          ),
+        ),
+      );
+      // 不 await：挂载不该被一次列表读取卡住。挂 catch 是为了避免
+      // ctx.invoke 在浏览器模式下抛错时变成 unhandled rejection。
+      render().catch(() => {});
+    }
+
+    /* ============ 5. 关于 ============ */
     let version = '浏览器模式';
     if (isInsideTauri()) {
       try { version = await (await getTauri()).invoke('app_version'); } catch { version = '获取失败'; }

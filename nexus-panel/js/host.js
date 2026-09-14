@@ -578,8 +578,24 @@ export function createHost(opts = {}) {
   }
   const navigateHook = (id) => hooks.onNavigate?.(id);
 
+  /* ---------------- 复合 key 的分隔符 ---------------- */
+  /*
+   * 插件级注册表（应用快捷键、侧边栏注入项）用「pluginId + 分隔符 + 子 id」
+   * 拼成单个 key 存进 Map。分隔符用 NUL（\u0000）是因为它不可能出现在
+   * 正常的 id 里 —— 但这条前提此前只存在于注释中，8 处字面量各自手写，
+   * 新增调用点没有类型约束提醒你用同一个分隔符。
+   *
+   * 现在收成常量 + 两个工具函数：拼 key 只能走 keyOf()，前缀判断只能走
+   * keyPrefix()，散落的字面量与「手拼前缀」的写法都消失。
+   * 写成 \u0000 转义序列而非裸字节，源码文件保持纯文本（grep / git diff
+   * 都正常），运行时行为不变。
+   */
+  const SEP = '\u0000';
+  const keyOf = (pluginId, sub) => `${pluginId}${SEP}${sub}`;
+  const keyPrefix = (pluginId) => `${pluginId}${SEP}`;
+
   /* ---------------- 应用级快捷键 ---------------- */
-  /** key: `${pluginId}\u0000${accel}` */
+  /** key: keyOf(pluginId, accel) */
   const appShortcuts = new Map();
 
   function accelMatches(e, accel) {
@@ -609,7 +625,7 @@ export function createHost(opts = {}) {
   }
 
   function registerAppShortcut(pluginId, accel, event, label = '') {
-    const k = `${pluginId}\u0000${accel}`;
+    const k = keyOf(pluginId, accel);
     if (appShortcuts.has(k)) window.removeEventListener('keydown', appShortcuts.get(k).fn);
     const fn = (e) => {
       if (!accelMatches(e, accel)) return;
@@ -618,11 +634,13 @@ export function createHost(opts = {}) {
       bus.emit(event, { accel, label, pluginId });
     };
     window.addEventListener('keydown', fn);
-    appShortcuts.set(k, { fn, event, label });
+    // 顺手把 accel / pluginId 也存进值里：这样反向查表时不必再按分隔符
+    // 拆字符串 —— 分隔符只用于「拼」，不用于「拆」，耦合就少一半。
+    appShortcuts.set(k, { fn, event, label, accel, pluginId });
   }
 
   function unregisterAppShortcut(pluginId, accel) {
-    const k = `${pluginId}\u0000${accel}`;
+    const k = keyOf(pluginId, accel);
     const rec = appShortcuts.get(k);
     if (!rec) return;
     window.removeEventListener('keydown', rec.fn);
@@ -632,32 +650,32 @@ export function createHost(opts = {}) {
   /** 插件卸载时清掉它注册的全部应用级快捷键 */
   function clearAppShortcuts(pluginId) {
     for (const [k, rec] of [...appShortcuts]) {
-      if (!k.startsWith(`${pluginId}\u0000`)) continue;
+      if (!k.startsWith(keyPrefix(pluginId))) continue;
       window.removeEventListener('keydown', rec.fn);
       appShortcuts.delete(k);
     }
   }
 
   /* ---------------- 侧边栏注入条目 ---------------- */
-  /** key: `${pluginId}\u0000${itemId}` */
+  /** key: keyOf(pluginId, itemId) */
   const injectedItems = new Map();
 
   function addSidebarItem(pluginId, item) {
     if (!item?.id) return;
-    const key = `${pluginId}\u0000${item.id}`;
+    const key = keyOf(pluginId, item.id);
     injectedItems.set(key, { ...item, pluginId });
     publishInjected();
   }
 
   function removeSidebarItem(pluginId, itemId) {
-    injectedItems.delete(`${pluginId}\u0000${itemId}`);
+    injectedItems.delete(keyOf(pluginId, itemId));
     publishInjected();
   }
 
   function clearSidebarItems(pluginId) {
     let changed = false;
     for (const k of [...injectedItems.keys()]) {
-      if (k.startsWith(`${pluginId}\u0000`)) { injectedItems.delete(k); changed = true; }
+      if (k.startsWith(keyPrefix(pluginId))) { injectedItems.delete(k); changed = true; }
     }
     if (changed) publishInjected();
   }
@@ -668,21 +686,8 @@ export function createHost(opts = {}) {
 
   /* ---- 错误边界 ---- */
   function showError(stage, manifest, err) {
-    const msg = String(err?.stack || err?.message || err);
     console.error(`[plugin:${manifest?.id}]`, err);
-    // 插件名同样要转义：它和 msg 一样来自插件清单，
-    // 而插件清单可以由用户导入/编辑 —— 只转义 msg 不转义 name，
-    // 等于把门锁了却留着一扇窗（这处曾连续三轮漏修）。
-    const title = escapeHtml(manifest?.name || manifest?.id || '未知插件');
-    stage.innerHTML = `
-      <div class="err-box">
-        <h3>⚠ 插件「${title}」加载失败</h3>
-        <pre>${escapeHtml(msg)}</pre>
-        <div class="row">
-          <button class="p-btn primary" id="err-retry">重试</button>
-          <button class="p-btn" id="err-back">返回概览</button>
-        </div>
-      </div>`;
+    stage.innerHTML = renderErrorBox(manifest, err);
     stage.querySelector('#err-retry').onclick = () => mount(manifest?.id);
     stage.querySelector('#err-back').onclick = () => hooks.onOpen?.('home') ?? mount('home');
   }
@@ -741,7 +746,7 @@ export function createHost(opts = {}) {
     getPlugins: () => state.plugins,
     /** 当前已注册的应用级快捷键（accel → { pluginId, event, label }） */
     getShortcuts: () => Object.fromEntries(
-      [...appShortcuts].map(([k, v]) => [k.split('\u0000')[1], { pluginId: k.split('\u0000')[0], event: v.event, label: v.label }]),
+      [...appShortcuts.values()].map((v) => [v.accel, { pluginId: v.pluginId, event: v.event, label: v.label }]),
     ),
     /** 插件注入到侧边栏的条目 */
     getSidebarItems: () => [...injectedItems.values()],
@@ -780,6 +785,35 @@ export function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
+}
+
+/**
+ * 渲染插件加载失败的错误框，返回 HTML 字符串。
+ *
+ * 单独抽出来是为了让测试能调真实渲染路径。此前 xss-test.mjs 里
+ * 复刻了一份同样的模板 —— 于是它验的是自己那份拷贝：源码改了而
+ * 测试没跟着改，测试照样全绿。这正是"插件名 XSS 连续三轮漏修"
+ * 之所以能发生的结构性原因。现在只有这一处模板，改它就改了生产代码。
+ *
+ * 两个插值都来自插件清单（可由用户导入/编辑），因此都要转义：
+ * 只转义 msg 不转义 name，等于把门锁了却留着一扇窗。
+ *
+ * @param {{name?: string, id?: string}} manifest
+ * @param {unknown} err
+ * @returns {string}
+ */
+export function renderErrorBox(manifest, err) {
+  const msg = String(err?.stack || err?.message || err);
+  const title = escapeHtml(manifest?.name || manifest?.id || '未知插件');
+  return `
+      <div class="err-box">
+        <h3>⚠ 插件「${title}」加载失败</h3>
+        <pre>${escapeHtml(msg)}</pre>
+        <div class="row">
+          <button class="p-btn primary" id="err-retry">重试</button>
+          <button class="p-btn" id="err-back">返回概览</button>
+        </div>
+      </div>`;
 }
 
 /** 无构建模式下过滤掉需要编译器的插件（React/TSX） */

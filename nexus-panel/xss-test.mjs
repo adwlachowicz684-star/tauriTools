@@ -5,8 +5,13 @@
  * 而同一处的 `msg` 却做了转义 —— 同一份数据一处锁了一处没锁。
  * 审计连续三轮报出同一问题，所以补一组用例钉死它。
  *
- * 思路：不模拟整个宿主，而是把真实源码里那几段 innerHTML 模板
- * 抽出来跑一遍，确保"插件名进入 DOM 时不带 HTML 结构"。
+ * 思路：直接调 host.js 导出的 renderErrorBox() —— 也就是生产代码
+ * 走的那一个函数，确保"插件名进入 DOM 时不带 HTML 结构"。
+ *
+ * 这里**不再复刻模板**。此前本文件复制了一份 showError 的模板，
+ * 源码注释还写着"改一行时这里要跟着改"：结果是源码改了而这份拷贝
+ * 没跟上，测试依然全绿 —— 它验的是自己那份，不是真实渲染路径。
+ * 现在模板只有 host.js 里的一份，改了就一起变。
  */
 import { JSDOM } from 'jsdom';
 
@@ -18,7 +23,7 @@ globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 globalThis.localStorage = dom.window.localStorage;
 
-const { escapeHtml } = await import('./js/host.js');
+const { escapeHtml, renderErrorBox } = await import('./js/host.js');
 
 let pass = 0, fail = 0;
 const t = (name, cond, extra = '') => {
@@ -28,14 +33,9 @@ const t = (name, cond, extra = '') => {
 
 const stage = document.getElementById('stage');
 
-/** 复刻 host.js showError 里的模板（改一行时这里要跟着改） */
-function renderErrorBox(name, msg) {
-  const title = escapeHtml(name || '未知插件');
-  stage.innerHTML = `
-      <div class="err-box">
-        <h3>⚠ 插件「${title}」加载失败</h3>
-        <pre>${escapeHtml(msg)}</pre>
-      </div>`;
+/** 调真实渲染函数，把结果放进 stage —— 与本文件无重复的模板。 */
+function render(name, msg) {
+  stage.innerHTML = renderErrorBox({ name }, msg);
   return stage;
 }
 
@@ -59,7 +59,7 @@ const payloads = [
   ['带斜杠', '<img/src=x/onerror=alert(1)>'],
 ];
 for (const [label, p] of payloads) {
-  renderErrorBox(p, 'boom');
+  render(p, 'boom');
   const h3 = stage.querySelector('h3');
   // 关键断言：DOM 里没有凭空多出元素，文本就是原始字符串
   t(`${label} → 未产生元素`, stage.querySelectorAll('img,script,svg').length === 0);
@@ -67,7 +67,7 @@ for (const [label, p] of payloads) {
 }
 
 console.log('\n=== 3. 错误消息同样安全 ===');
-renderErrorBox('x', '<img src=x onerror=alert(1)>');
+render('x', '<img src=x onerror=alert(1)>');
 t('pre 内不产生元素', stage.querySelectorAll('pre img').length === 0);
 t('pre 文本原样',
   stage.querySelector('pre').textContent === '<img src=x onerror=alert(1)>');
@@ -75,7 +75,7 @@ t('pre 文本原样',
 console.log('\n=== 4. 模拟真实攻击链（导入恶意插件） ===');
 // 攻击路径：用户导入一个 name 里带 HTML 的插件 → 加载失败 → 走错误框
 const evil = { id: 'evil', name: '<img src=x onerror=window.__XSS__=1>', entry: './nope.js' };
-renderErrorBox(evil.name || evil.id, new Error('模块加载失败').stack);
+render(evil.name || evil.id, new Error('模块加载失败').stack);
 t('未执行 onerror（window.__XSS__ 未定义）', globalThis.window.__XSS__ === undefined);
 t('页面无 img 元素', stage.querySelectorAll('img').length === 0);
 t('标题显示为纯文本',
@@ -83,7 +83,7 @@ t('标题显示为纯文本',
 
 console.log('\n=== 5. 正常插件名不被破坏 ===');
 for (const n of ['概览', 'Agent Flow', "O'Brien 的工具", 'a & b', '<正式版>']) {
-  renderErrorBox(n, 'x');
+  render(n, 'x');
   t(`「${n}」显示正确`,
     stage.querySelector('h3').textContent === `⚠ 插件「${n}」加载失败`);
 }

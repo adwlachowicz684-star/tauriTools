@@ -521,7 +521,30 @@ npm run tauri:build                   # Vite + React 模式
 | 导入 / 导出 JSON | ✅ 可用 |
 | 运行工作流（CLI 子进程流式输出） | ✅ 需系统装好对应 CLI |
 | 文件监听、Webhook 触发器 | ✅ 桌面端可用 |
-| 文件 / 文件夹操作（fs_op） | ✅ 桌面端可用 |
+| 文件 / 文件夹操作（fs_op） | ✅ 桌面端可用（**需先授权目录**，见下） |
+
+### fs_op 的作用范围：授权根目录
+
+`fs_op` **只接受落在授权根目录内的路径**（`canonicalize` 后 `starts_with`），
+默认范围仅应用数据目录。
+
+**要操作别处的目录，先到「设置 → 文件」把它加进来。** 未授权的路径会被拒绝，
+报错里会列出允许的范围。
+
+这么收的原因是组合风险：插件安装只需一次确认，而 `ctx.invoke` 在 module 与
+iframe 两种模式下都能用。若 `fs_op` 可读写任意路径、配合出网能力，就形成了
+「读本地任意文件 → 经网络外传」的完整链条。约束 `fs_op` 是断链的主力 ——
+只收网络权限没用，`https` 仍在，有个 https 站点照样能外传。
+
+实现要点：
+
+- `canonicalize` 后比较，因此 `../` 穿越与符号链接逃逸一并挡住（不是字符串前缀比较）
+- `copy` / `move` 的**目标**路径同样校验 —— 只查来源不查目标，等于可以写穿到区外
+- `glob` 命中项逐个回验：`pattern` 在区内，符号链接可能指向区外
+- 演练（`dry_run`）同样校验：能列出任意目录本身就等于泄露目录结构
+- 文件系统根、家目录根与系统目录（`/etc` `/usr` `/System` `/Windows` …）即便显式授权也拒绝
+
+授权根目录是进程级状态，重启后回到默认（仅应用数据目录）。
 
 ### 网络请求：走 Rust 通道，不额外装包
 
@@ -532,7 +555,14 @@ Rust 侧三处已就绪：
 
 - `Cargo.toml` 声明 `tauri-plugin-http = "2"`
 - `main.rs` 里 `.plugin(tauri_plugin_http::init())`
-- `capabilities` 放行 `http://**` / `https://**`
+- `capabilities` 放行 `https://**`；明文 `http://` **只放行本机常见推理服务端口**
+  （Ollama 11434 / LM Studio 1234 / llama.cpp·LocalAI 8080 / vLLM 8000 /
+  text-generation-webui 7860，`localhost` 与 `127.0.0.1` 各一条）
+
+  注意 `tauri-plugin-http` 的 scope 里**端口是精确匹配的**
+  （`http://localhost:8080` 不匹配 `:8081`），所以用了别的端口要在此补一条。
+  `https://**` 保留是因为订阅源走 `rsshub.app` / `wechat2rss` 这类用户自填域名，
+  编译期无法枚举。
 
 **前端不依赖 `@tauri-apps/plugin-http` 这个 npm 包。**
 
