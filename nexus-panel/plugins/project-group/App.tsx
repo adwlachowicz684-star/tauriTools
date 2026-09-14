@@ -11,6 +11,7 @@ import {
 } from './components/ToolsPanel';
 import { ConfirmDialog, ContextMenu, type MenuItem } from './components/ui';
 import { useFpx } from './hooks/useFpx';
+import { useCardHotkeys } from './hooks/useCardHotkeys';
 import { useIconThumbs } from './hooks/useIconThumbs';
 import type { CardInfo, CardKind, ChainAction, LinkRow } from './types';
 
@@ -87,6 +88,13 @@ export default function App() {
   }, [boot?.config.watchEnabled, boot?.config.watchIntervalSecs, s.api, s.pushLog]);
 
   const [help, setHelp] = useState(false);
+
+  /**
+   * 键盘焦点栏：卡片快捷键（Ctrl/⌘+O、F2、Delete…）作用在哪一栏。
+   * 点哪一栏的卡片就把焦点带到哪一栏，也可由 Ctrl/⌘+←/→ 直接切换。
+   * 不存 store —— 只是本次会话的落点，重进默认给「项目」。
+   */
+  const [focus, setFocus] = useState<CardKind>('project');
 
   const projectCards = useMemo(
     () => boot?.projectTabs[s.activeTab.project]?.items ?? [],
@@ -324,6 +332,51 @@ export default function App() {
     }
   };
 
+  /* ---------------- 键盘操作 ----------------
+   * 键位见 hooks/useCardHotkeys.ts。作用对象是「焦点栏里当前选中的卡片」，
+   * 没选中就提示——静默失败比报错更让人困惑。
+   */
+  const focusedCard: CardInfo | null = useMemo(() => {
+    const p = focus === 'project' ? s.selProject : s.selGroup;
+    if (!p) return null;
+    return (focus === 'project' ? projectCards : groupCards).find((c) => c.path === p) ?? null;
+  }, [focus, s.selProject, s.selGroup, projectCards, groupCards]);
+
+  const needCard = (fn: (c: CardInfo) => void) => () => {
+    const c = focusedCard;
+    if (!c) {
+      ctx.toast(`先选中一个${focus === 'project' ? '项目' : '项目组'}`, 'err');
+      return;
+    }
+    fn(c);
+  };
+
+  /** 页签前后翻页，到头回环。索引先 clamp：activeTab 与当前快照可能不同步 */
+  const cycleTab = (kind: CardKind, delta: number) => {
+    const n = (kind === 'project' ? boot?.projectTabs.length : boot?.groupTabs.length) ?? 0;
+    if (n <= 1) return;
+    const cur = Math.min(Math.max(0, s.activeTab[kind]), n - 1);
+    const next = ((cur + delta) % n + n) % n;
+    s.setActiveTab((prev) => ({ ...prev, [kind]: next }));
+  };
+
+  useCardHotkeys(ctx, {
+    open: needCard((c) => openPath(c.path, 'dir')),
+    lock: needCard((c) => setDialog({ type: 'lock', card: c })),
+    rename: needCard((c) => setDialog({ type: 'rename', card: c, kind: focus })),
+    move: needCard((c) => void s.moveCardAcross(
+      focus, c.path, focus === 'project' ? s.activeTab.group : s.activeTab.project,
+    )),
+    color: needCard((c) => setDialog({ type: 'style', card: c })),
+    icon: needCard((c) => void openIconPicker(c)),
+    remove: needCard((c) => void s.removeCard(focus, c.path)),
+    refresh: () => { refreshChainActions(); s.refresh(); },
+    clearInvalid: () => void s.clearInvalid(),
+    cycleTab,
+    focus: setFocus,
+    // 有弹窗打开时整组让路：否则在对话框里按 Delete 会改到看不见的卡片
+  }, !!boot && dialog.type === 'none' && !help && !confirmLink);
+
   if (s.loading) {
     return <div className="p-card"><div className="p-muted">正在加载项目组数据…</div></div>;
   }
@@ -421,7 +474,7 @@ export default function App() {
           tabs={boot.projectTabs}
           cards={projectCards}
           selected={s.selProject}
-          onSelect={s.setSelProject}
+          onSelect={(p) => { setFocus('project'); s.setSelProject(p); }}
           onOpen={(p) => openPath(p, 'dir')}
           onMove={(path, i) => s.moveCard('project', path, s.activeTab.project, i)}
           onMoveToTab={(path, tabIndex) => {
@@ -437,6 +490,7 @@ export default function App() {
           onRemoveTab={(i) => s.removeTab('project', i)}
           active={s.activeTab.project}
           onTab={(i) => s.setActiveTab((prev) => ({ ...prev, project: i }))}
+          focused={focus === 'project'}
         />
 
         <Column
@@ -445,7 +499,7 @@ export default function App() {
           tabs={boot.groupTabs}
           cards={groupCards}
           selected={s.selGroup}
-          onSelect={s.setSelGroup}
+          onSelect={(p) => { setFocus('group'); s.setSelGroup(p); }}
           onOpen={(p) => openPath(p, 'dir')}
           onMove={(path, i) => s.moveCard('group', path, s.activeTab.group, i)}
           onMoveToTab={(path, tabIndex) => {
@@ -461,6 +515,7 @@ export default function App() {
           onRemoveTab={(i) => s.removeTab('group', i)}
           active={s.activeTab.group}
           onTab={(i) => s.setActiveTab((prev) => ({ ...prev, group: i }))}
+          focused={focus === 'group'}
         />
 
         <div className="p-card fpx-col fpx-col-content">
@@ -673,7 +728,7 @@ export default function App() {
 /** 一列（项目 / 项目组） */
 function Column({
   title, kind, tabs, cards, selected, onSelect, onOpen, onMove, onMoveToTab, onCrossDrop,
-  thumbs, menus, onAdd, onAddTab, onRenameTab, onRemoveTab, active, onTab,
+  thumbs, menus, onAdd, onAddTab, onRenameTab, onRemoveTab, active, onTab, focused,
 }: {
   title: string;
   kind: CardKind;
@@ -695,17 +750,24 @@ function Column({
   onRemoveTab: (i: number) => void;
   active: number;
   onTab: (i: number) => void;
+  /** 键盘焦点栏：卡片快捷键作用于此栏 */
+  focused: boolean;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   // 由「⋯」菜单触发的内联重命名：-1 表示不在编辑
   const [editingTab, setEditingTab] = useState(-1);
 
   return (
-    <div className="p-card fpx-col">
+    <div className={`p-card fpx-col${focused ? ' focus' : ''}`}>
       <div className="p-row" style={{ justifyContent: 'space-between' }}>
         <h2 style={{ margin: 0 }}>
           {title}
           <span className="p-muted" style={{ fontWeight: 400 }}>（{cards.length}）</span>
+          {focused && (
+            <span className="fpx-badge dim" style={{ marginLeft: 6 }} title="键盘快捷键作用于此栏（Ctrl/⌘+←/→ 切换）">
+              焦点
+            </span>
+          )}
         </h2>
         <div className="p-row">
           <button className="p-btn" style={{ height: 30, padding: '0 12px' }} onClick={onAdd}>＋ 添加</button>
@@ -775,6 +837,10 @@ function HelpDialog({ onClose, platform }: { onClose: () => void; platform: stri
           <li><b>保护 / 图标</b>：卡片右键可设 ACL 保护、自定义图标与标签颜色。</li>
           <li><b>数据</b>：独立存于 {platform === 'windows' ? '%APPDATA%' : '应用数据目录'} 下的 <span className="p-mono">project-group/</span>，
             与原 C# 版数据目录互不干扰。</li>
+          <li><b>快捷键</b>：栏目标题上标「焦点」的那栏就是键盘操作的对象（Ctrl/⌘+←/→ 切换，或点该栏卡片）。
+            对其选中的卡片：Ctrl/⌘+O 打开、Ctrl/⌘+L 保护、F2 改名、F3 换栏、F4 改色、F6 改图标、Delete 移除；
+            Ctrl/⌘+Tab 与 Ctrl/⌘+Shift+Tab 翻项目组页签，Ctrl/⌘+PageDown/PageUp 翻项目页签；
+            F5 刷新、F8 清除无效项。打字时与弹窗打开时整组不触发。</li>
         </ul>
         <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
           <button className="p-btn primary" onClick={onClose}>知道了</button>
