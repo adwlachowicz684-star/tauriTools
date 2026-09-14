@@ -29,7 +29,8 @@
     "test:handshake": "node handshake-test.mjs",
     "test:mindmap": "node plugins/mindmap/mindmap-test.mjs",
     "test:theme-bridge": "node theme-bridge-test.mjs",
-    "test:drag-payload": "node plugins/project-group/drag-payload-test.mjs"
+    "test:shell-audit": "node shell-audit-test.mjs",
+    "test:sidebar-listener": "node sidebar-listener-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

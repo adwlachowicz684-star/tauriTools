@@ -65,16 +65,19 @@ const shellState = {
 // 所以这里直接劫持插件侧的发送通道：替换 window.parent 前先保存原始 postMessage 行为）
 // 实际插件代码里 post(msg) 调用的是 window.parent.postMessage(...)。
 // 为了让测试能跑通，我们给 win 挂一个可写的 parent（非抛错），但标记 isolated。
-Object.defineProperty(win, 'parent', {
-  get() {
-    return {
-      postMessage: (msg) => {
-        shellGot.push(msg);
-        // 主平台侧应答
-        setTimeout(() => handleOnShell(msg), 0);
-      },
-    };
+//
+// 注意：parent 必须是**稳定的同一个对象**。SDK 侧校验 `e.source !== window.parent`，
+// 若 getter 每次返回新对象，两者永远不等，桥接会被整条丢弃（看起来像"功能坏了"）。
+// 真实浏览器里 window.parent 是稳定引用，iframe 收到的消息 e.source 就是它。
+const parentStub = {
+  postMessage: (msg) => {
+    shellGot.push(msg);
+    // 主平台侧应答
+    setTimeout(() => handleOnShell(msg), 0);
   },
+};
+Object.defineProperty(win, 'parent', {
+  get() { return parentStub; },
   configurable: true,
 });
 
@@ -83,6 +86,7 @@ function handleOnShell(msg) {
   const reply = (ok, data, error) => {
     win.dispatchEvent(new win.MessageEvent('message', {
       data: { channel: 'nexus-bridge-v1', type: 'res', id: msg.id, ok, data, error },
+      source: parentStub,          // 真实环境里 e.source 就是宿主窗口
     }));
   };
   if (msg.type === 'req') {
@@ -123,7 +127,7 @@ const { bootIframePlugin } = await import('./js/plugin-sdk.js');
 let ctx = null;
 bootIframePlugin(async (c) => { ctx = c; });
 
-const deliver = (data) => win.dispatchEvent(new win.MessageEvent('message', { data }));
+const deliver = (data) => win.dispatchEvent(new win.MessageEvent('message', { data, source: parentStub }));
 
 // init 时告知插件：你处于隔离态
 deliver({

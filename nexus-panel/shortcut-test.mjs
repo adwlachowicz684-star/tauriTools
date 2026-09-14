@@ -184,7 +184,7 @@ globalThis.HTMLElement = sdkDom.window.HTMLElement;
 const { bootIframePlugin: boot2 } = await import('./js/plugin-sdk.js?fresh=1');
 boot2(async () => {});
 const deliver = (d) => sdkDom.window.dispatchEvent(
-  new sdkDom.window.MessageEvent('message', { data: d }));
+  new sdkDom.window.MessageEvent('message', { data: d, source: sdkDom.window.parent }));
 deliver({ channel: 'nexus-bridge-v1', type: 'init', manifest: { id: 'p' }, theme: {}, view: 'main' });
 await sleep(60);
 

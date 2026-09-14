@@ -300,8 +300,20 @@ export function deleteCustomTheme(id) {
 export function listThemes() {
   return [...PRESET_THEMES, ...getCustomThemes()];
 }
+/**
+ * 按 id 取主题，取不到就退回默认，再取不到退回第一个预设。
+ *
+ * 兜底**不能递归**：此前写法是 `find(id) || findTheme(DEFAULT_THEME_ID) || PRESET[0]`。
+ * 若 DEFAULT_THEME_ID 恰好不在列表里（自定义主题被删、或默认 id 写错），
+ * 第二项会用**完全相同的参数**再调一次自己 → 无限递归 → 栈溢出，
+ * 而 `|| PRESET_THEMES[0]` 这层兜底永远到不了。
+ * 改成非递归的三级查找，任何情况下都有返回值。
+ */
 export function findTheme(id) {
-  return listThemes().find((t) => t.id === id) || findTheme(DEFAULT_THEME_ID) || PRESET_THEMES[0];
+  const all = listThemes();
+  return all.find((t) => t.id === id)
+    || all.find((t) => t.id === DEFAULT_THEME_ID)
+    || PRESET_THEMES[0];
 }
 
 /* ---------------------------- 状态 ---------------------------- */

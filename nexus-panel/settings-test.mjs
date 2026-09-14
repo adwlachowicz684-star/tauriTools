@@ -136,7 +136,8 @@ bootIframePlugin(
 );
 
 const deliver = (data) => {
-  const ev = new sdkDom.window.MessageEvent('message', { data });
+  // e.source 必须是 SDK 认定的宿主窗口：SDK 侧有 `e.source !== window.parent` 校验
+  const ev = new sdkDom.window.MessageEvent('message', { data, source: sdkDom.window.parent });
   sdkDom.window.dispatchEvent(ev);
 };
 
@@ -162,7 +163,7 @@ bootIframePlugin(
   async () => { settingsCalled++; },
 );
 const deliver2 = (data) => sdkDom2.window.dispatchEvent(
-  new sdkDom2.window.MessageEvent('message', { data }));
+  new sdkDom2.window.MessageEvent('message', { data, source: sdkDom2.window.parent }));
 deliver2({ channel: 'nexus-bridge-v1', type: 'init', manifest: { id: 'p' }, theme: {}, view: 'settings' });
 deliver2({ channel: 'nexus-bridge-v1', type: 'mount' });
 await sleep(60);
@@ -178,7 +179,7 @@ globalThis.window = sdkDom3.window;
 globalThis.document = sdkDom3.window.document;
 let onlyMain = 0;
 bootIframePlugin(async () => { onlyMain++; });
-const deliver3 = (d) => sdkDom3.window.dispatchEvent(new sdkDom3.window.MessageEvent('message', { data: d }));
+const deliver3 = (d) => sdkDom3.window.dispatchEvent(new sdkDom3.window.MessageEvent('message', { data: d, source: sdkDom3.window.parent }));
 deliver3({ channel: 'nexus-bridge-v1', type: 'init', manifest: { id: 'p' }, theme: {}, view: 'settings' });
 deliver3({ channel: 'nexus-bridge-v1', type: 'mount' });
 await sleep(60);

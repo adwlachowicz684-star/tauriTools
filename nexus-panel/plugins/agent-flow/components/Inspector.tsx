@@ -1256,9 +1256,18 @@ function TriggerInspector({ node, onChange }: {
             <code>{`http://127.0.0.1:${d.config.port}${d.config.path}`}</code>
           </div>
           <label className="field">
-            <span>校验 Token（留空=不校验）</span>
+            <span>校验 Token（留空=不校验身份，但调用仍需带下方请求头）</span>
             <input value={d.config.token} onChange={(e) => patchConfig({ token: e.target.value })} />
           </label>
+          {!d.config.token && (
+            <div className="tip">
+              未配 Token 时，调用需带请求头 <code>X-Nexus-Webhook: 1</code>。
+              这不是身份校验，而是挡住浏览器里的恶意网页静默触发本端口 ——
+              网页加不了自定义头，加了也会因预检失败而发不出去。
+              <br />
+              例：<code>curl -H 'X-Nexus-Webhook: 1' http://127.0.0.1:{d.config.port}{d.config.path}</code>
+            </div>
+          )}
         </>
       )}
 

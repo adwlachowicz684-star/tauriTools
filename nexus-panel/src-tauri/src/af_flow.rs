@@ -317,10 +317,29 @@ fn write_response(stream: &mut TcpStream, status: u16, body: &str) {
     let _ = stream.flush();
 }
 
+/// 浏览器防护头。
+///
+/// 背景：webhook 绑在 127.0.0.1，外部机器进不来，但**本机浏览器里的任意
+/// 网页**都能访问它 —— 同源策略管的是"读响应"，管不住"把请求发出去"。
+/// 于是恶意网页可以用 `<img src="http://127.0.0.1:8787/hook">` 或 fetch
+/// 静默触发本地 CLI 执行与文件操作，而用户毫无察觉。
+///
+/// 要求一个自定义头就能挡住所有来自网页的触发：
+///   · `<img>` / `<script>` / `<form>` 根本没法加自定义头
+///   · `fetch` / `XHR` 加了自定义头 → 浏览器先发 OPTIONS 预检，
+///     本服务不处理 OPTIONS → 预检失败 → 真实请求根本发不出去
+/// 而 curl / 脚本加一个 `-H` 毫无成本。
+///
+/// 只在"未配 token"时启用：配了 token 的请求自带 `X-Token` 自定义头，
+/// 同样会触发预检，天然已被挡住。
+const BROWSER_GUARD_HEADER: &str = "x-nexus-webhook";
+
 /// 校验 token：X-Token 头 或 Authorization: Bearer <token>
 fn token_ok(req: &MiniRequest, expected: &str) -> bool {
     if expected.is_empty() {
-        return true;
+        // 未配 token：不校验身份，但仍要挡住浏览器发起的静默触发。
+        // 此前这里是 `return true`，等于本机任意网页可随意触发。
+        return req.headers.iter().any(|(k, _)| k == BROWSER_GUARD_HEADER);
     }
     for (k, v) in &req.headers {
         if k == "x-token" && v == expected {

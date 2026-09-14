@@ -471,6 +471,10 @@ export function createHost(opts = {}) {
               type: 'init', manifest, theme: exportVars(), view,
               isolated,                         // 插件据此决定能力探测方式
               reportBase: isolated && adaptTheme,  // 隔离且要适配 → 让插件自报基调
+              // 宿主自报 origin，供插件回发消息时用作 targetOrigin。
+              // 隔离态下插件是 opaque origin，读不到 parent.location，
+              // 只能靠这里告诉它 —— 否则它只能通配 '*'。
+              hostOrigin: window.location.origin || '*',
             });
             send(iframe, { type: 'mount' });
             break;
@@ -571,8 +575,28 @@ export function createHost(opts = {}) {
     });
   }
 
+  /**
+   * 往 iframe 发桥接消息。
+   *
+   * targetOrigin 按插件是否隔离取不同值：
+   *   非隔离 —— 带 allow-same-origin，与外壳同源 → 用精确 origin。
+   *             这样万一 iframe 被导航到别的站点，消息不会跟着泄漏过去。
+   *   隔离   —— 去掉了 allow-same-origin，iframe 是 opaque origin，
+   *             没有任何字符串能匹配它，只能用 '*'。
+   *             这是 sandbox 机制的固有限制，不是漏改；此时发往的是
+   *             iframe.contentWindow 这一个具体窗口，不是广播。
+   */
+  function targetOriginFor(iframe) {
+    try {
+      return iframe.dataset.isolated === '1' ? '*' : (window.location.origin || '*');
+    } catch { return '*'; }
+  }
+
   function send(iframe, msg) {
-    iframe.contentWindow?.postMessage({ channel: BRIDGE_CHANNEL, ...msg }, '*');
+    iframe.contentWindow?.postMessage(
+      { channel: BRIDGE_CHANNEL, ...msg },
+      targetOriginFor(iframe),
+    );
   }
 
   /** iframe 插件的桥接服务端：转发 invoke / store 等请求 */
@@ -590,7 +614,10 @@ export function createHost(opts = {}) {
           return reply(false, null, 'iframe 模式不支持 listenTauri，请使用 ctx.on / ctx.emit');
         case 'store.get': {
           const raw = localStorage.getItem(`nexus:${manifest.id}:${payload.k}`);
-          return reply(true, raw == null ? payload.def : JSON.parse(raw));
+          if (raw == null) return reply(true, payload.def);
+          // 存储可能被外部改写、或跨版本格式变了。单个键读不出就退默认值，
+          // 不该让一次读取把插件整体带崩。
+          try { return reply(true, JSON.parse(raw)); } catch { return reply(true, payload.def); }
         }
         case 'store.set':
           localStorage.setItem(`nexus:${manifest.id}:${payload.k}`, JSON.stringify(payload.v));
@@ -600,9 +627,11 @@ export function createHost(opts = {}) {
           return reply(true, true);
         case 'store.all': {
           const out = {}, pre = `nexus:${manifest.id}:`;
+          // 逐键 try：一个键坏掉不该让整份配置拿不到（此前会整体抛错）
           for (let i = 0; i < localStorage.length; i++) {
             const k = localStorage.key(i);
-            if (k && k.startsWith(pre)) out[k.slice(pre.length)] = JSON.parse(localStorage.getItem(k));
+            if (!k || !k.startsWith(pre)) continue;
+            try { out[k.slice(pre.length)] = JSON.parse(localStorage.getItem(k)); } catch { /* 跳过坏键 */ }
           }
           return reply(true, out);
         }

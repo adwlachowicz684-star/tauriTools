@@ -391,7 +391,10 @@ export function createModuleContext({
         }
         case 'store.get': {
           const raw = localStorage.getItem(`nexus:${manifest.id}:${payload.k}`);
-          return raw == null ? payload.def : JSON.parse(raw);
+          if (raw == null) return payload.def;
+          // 存储可能被外部改写、或跨版本格式变了。单个键读不出就退默认值，
+          // 不该让一次读取把调用方整体带崩。
+          try { return JSON.parse(raw); } catch { return payload.def; }
         }
         case 'store.set':
           localStorage.setItem(`nexus:${manifest.id}:${payload.k}`, JSON.stringify(payload.v));
@@ -402,9 +405,11 @@ export function createModuleContext({
         case 'store.all': {
           const out = {};
           const pre = `nexus:${manifest.id}:`;
+          // 逐键 try：一个键坏掉不该让整份配置拿不到（此前会整体抛错）
           for (let i = 0; i < localStorage.length; i++) {
             const k = localStorage.key(i);
-            if (k.startsWith(pre)) out[k.slice(pre.length)] = JSON.parse(localStorage.getItem(k));
+            if (!k || !k.startsWith(pre)) continue;
+            try { out[k.slice(pre.length)] = JSON.parse(localStorage.getItem(k)); } catch { /* 跳过坏键 */ }
           }
           return out;
         }
@@ -488,21 +493,36 @@ export function bootIframePlugin(mountFn, settingsFn) {
   let currentTheme = {};             // 外壳推来的主题变量，供 ctx.theme 读取
   let isolated = false;              // 是否处于功能隔离（去掉 allow-same-origin）
   let mounted = false;               // mount 只允许执行一次
+  // 宿主的 origin，由 init 消息带过来，作为 postMessage 的 targetOrigin。
+  //
+  // 为什么需要：隔离态下本插件是 opaque origin，**读不到** parent 的 origin
+  // （访问 parent.location 会抛 SecurityError），而 postMessage 的
+  // targetOrigin 又必须精确匹配才能送达。所以只能由宿主自报。
+  // 拿不到时（老版宿主不带此字段）回退 '*'，否则整个桥接会断。
+  let hostOrigin = '*';
   const mountPromise = new Promise((r) => (resolveMount = r));
 
   function post(msg) {
-    window.parent.postMessage({ channel, ...msg }, '*');
+    window.parent.postMessage({ channel, ...msg }, hostOrigin);
   }
 
   window.addEventListener('message', (e) => {
     const d = e.data;
     if (!d || d.channel !== channel) return;
+    /* 来源校验：只认宿主窗口（iframe 的唯一父窗口）。
+       缺了它，同域任意窗口（含被注入的脚本、另一个标签页）都能伪造
+       init / mount / theme 消息，冒充宿主与插件对话。
+       用 e.source 而不是 e.origin：隔离态下本插件与宿主都可能是
+       opaque origin，origin 字符串无从比较，而窗口引用是精确的。
+       项目里 plugins/mindmap/editor-bridge.js 已是这个写法。 */
+    if (e.source !== window.parent) return;
 
     // 主题初始化 / 运行时切换（切换主题无需重载插件）
     if (d.type === 'init' || d.type === 'theme') {
       if (d.type === 'init') {
         var { manifest } = d;
         view = d.view || 'main';                 // 本次要渲染哪个视图
+        if (d.hostOrigin) hostOrigin = d.hostOrigin;
       } else {
         manifest = manifest || d.manifest;
       }
