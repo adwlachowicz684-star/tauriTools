@@ -107,11 +107,34 @@ bootIframePlugin(async (ctx) => {
   const loadingEl = h('div.mm-loading', {}, '编辑器加载中…');
   canvasEl.appendChild(loadingEl);
 
-  const tabsEl = h('div.mm-row', { style: { flex: '1 1 auto', flexWrap: 'nowrap', overflowX: 'auto' } });
+  /**
+   * 页签区：吃掉所有剩余空间，页签多到放不下时**自己**横向滚动。
+   * min-width:0 必须显式给 —— flex item 默认 min-width:auto，宽度会被内容顶住不收缩，
+   * 结果是页签一多就把下面的「＋」和状态栏一起挤出容器（.mm-foot 自身带 overflow-x:auto，
+   * 于是整条底栏开始滚动，「＋」被滚出视野）。
+   */
+  const tabsEl = h('div.mm-row.mm-tabs', {
+    style: { flex: '1 1 auto', minWidth: '0', flexWrap: 'nowrap', overflowX: 'auto' },
+  });
+
+  /**
+   * 新建画布按钮。
+   * margin-left:auto 是钉住位置的关键：页签少的时候页签区吃不满一行，
+   * 若不给这个 auto，「＋」就紧跟在最后一个页签后面停在一行中间。
+   *
+   * 注意它必须和 .mm-status 的 margin-left:auto **二选一** ——
+   * 两个 auto 会平分剩余空间，「＋」反而停在中间、状态文字跑到最右。
+   * 现在统一由「＋」负责推，状态文字紧跟其后，两者一起贴在最右。
+   */
+  const addSheetBtn = h('button.mm-btn.icon', {
+    onclick: guard('新建画布', () => addSheet()),
+    title: '新建画布',
+    style: { flex: '0 0 auto', marginLeft: 'auto' },
+  }, '＋');
 
   const foot = h('div.mm-foot', {},
     tabsEl,
-    h('button.mm-btn.icon', { onclick: guard('新建画布', () => addSheet()), title: '新建画布' }, '＋'),
+    addSheetBtn,
     statusEl,
   );
 

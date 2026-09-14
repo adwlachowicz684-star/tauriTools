@@ -192,8 +192,13 @@ html, body {
   border-radius: var(--r, 14px);
   background: var(--surface);
   box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
-  overflow-x: auto;
+  /* 这里**不能**加 overflow-x:auto。
+     底栏整体滚动的话，页签一多就会把「＋」和状态文字一起滚出视野。
+     滚动只交给内部的 .mm-tabs，右侧两个控件始终固定可见。 */
 }
+
+/* 页签滚动区：占满剩余宽度并自行收缩，溢出时内部横向滚动 */
+.mm-tabs { min-width: 0; }
 
 /* 画布页签 */
 .mm-tab {
@@ -223,7 +228,9 @@ html, body {
 .mm-tab .x:hover { opacity: 1; color: var(--danger, #e06c75); }
 
 .mm-status {
-  margin-left: auto;
+  /* 不要加 margin-left:auto —— 底栏的「新建画布」按钮已经用它把自己推到最右，
+     两个 auto margin 会平分剩余空间，把「＋」挤到一行中间。
+     这里只需固定宽度、紧跟在「＋」后面即可。 */
   color: var(--text-mute);
   font-size: 11.5px;
   white-space: nowrap;
@@ -311,8 +318,8 @@ video.mm-video { width: 100%; border-radius: 9px; background: #000; }
 .mm-dialog .mm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* 滚动条：跟随外壳基调，避免亮色滚动条刺眼 */
-.mm-side::-webkit-scrollbar, .mm-list::-webkit-scrollbar, .mm-foot::-webkit-scrollbar { height: 8px; width: 8px; }
-.mm-side::-webkit-scrollbar-thumb, .mm-list::-webkit-scrollbar-thumb, .mm-foot::-webkit-scrollbar-thumb {
+.mm-side::-webkit-scrollbar, .mm-list::-webkit-scrollbar, .mm-tabs::-webkit-scrollbar { height: 8px; width: 8px; }
+.mm-side::-webkit-scrollbar-thumb, .mm-list::-webkit-scrollbar-thumb, .mm-tabs::-webkit-scrollbar-thumb {
   background: var(--sh-dark); border-radius: 4px;
 }
 

@@ -630,6 +630,44 @@ group('Tab → 插入下级节点');
 }
 
 /* ============================================================
+   九、新建画布按钮固定在最右
+   ============================================================ */
+
+group('新建画布按钮（＋）位置');
+
+{
+  // jsdom 不做布局，无法断言像素位置；这里锁住决定布局的那些属性。
+  // 每一个都对应一个真实的失效模式，注释里写明了会坏成什么样。
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const foot = src.slice(src.indexOf('const tabsEl ='), src.indexOf('const rail ='));
+
+  ok(/div\.mm-row\.mm-tabs/.test(foot), '页签区带 .mm-tabs 类');
+  ok(/minWidth:\s*'0'/.test(foot),
+    '页签区 min-width:0 —— 否则 flex item 被内容顶住不收缩，页签多了会把「＋」挤出容器');
+  ok(/flex:\s*'1 1 auto'/.test(foot), '页签区吃掉剩余空间');
+  ok(/overflowX:\s*'auto'/.test(foot), '页签区自己横向滚动（而不是整条底栏滚）');
+
+  ok(/marginLeft:\s*'auto'/.test(foot),
+    '新建按钮用 margin-left:auto 钉到最右 —— 页签少时不加它就停在一行中间');
+  ok(/flex:\s*'0 0 auto'/.test(foot), '新建按钮不被压缩');
+  ok(foot.indexOf('addSheetBtn') < foot.indexOf('statusEl'), '顺序：页签区 → 「＋」→ 状态文字');
+
+  // 注释里也会提到这些属性名（说明"为什么不能加"），断言前先剥掉注释，
+  // 否则会被自己写的说明文字误伤。
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const footCss = css.slice(css.indexOf('.mm-foot {'), css.indexOf('.mm-status {'));
+  ok(!/overflow-x/.test(footCss),
+    '.mm-foot 不再 overflow-x:auto —— 整条底栏滚动会把「＋」和状态一起滚出视野');
+
+  const statusCss = css.slice(css.indexOf('.mm-status {'), css.indexOf('.mm-status.warn'));
+  ok(!/margin-left:\s*auto/.test(statusCss),
+    '.mm-status 不再 margin-left:auto —— 两个 auto 会平分剩余空间，反而把「＋」挤到中间');
+
+  // 页签区现在负责滚动，滚动条样式得跟着它（.mm-foot 那条已失效）
+  ok(/\.mm-tabs::-webkit-scrollbar/.test(css), '滚动条样式挂到 .mm-tabs 上');
+}
+
+/* ============================================================
    结果
    ============================================================ */
 
