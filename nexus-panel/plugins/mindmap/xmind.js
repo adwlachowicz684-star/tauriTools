@@ -53,10 +53,73 @@ async function deflateRaw(bytes) {
   }
 }
 
-async function inflateRaw(bytes) {
+/**
+ * 解压上限（单条目）。
+ * ============================================================
+ * .xmind 是用户从别处拿来的不可信输入，zip 炸弹必须防：
+ * 实测全 'A' 的数据压缩比约 1000:1，1MB 的包能解出约 1GB —— 全量进内存直接卡死插件。
+ * 这里边读边累计，超 MAX_INFLATE_BYTES 立刻中断并抛错（放弃整个导入）。
+ *
+ * 64MB 对脑图（content.json 通常几十 KB ~ 几 MB，外加附件）留了充足余量；
+ * 真有超大的视频附件，走的是「导入时让用户重新附加」的路径，不影响主流程。
+ *
+ * 对齐 mediainfo.js 的做法：那里对同等不可信的二进制输入也设了 guard++/depth 上限。
+ */
+export const MAX_INFLATE_BYTES = 64 * 1024 * 1024;
+
+/** 整个包解压后的总量上限（防止「很多个刚好卡在单条上限下的条目」叠加） */
+export const MAX_TOTAL_BYTES = 256 * 1024 * 1024;
+
+/** 单包的条目数上限。正常 .xmind 只有个位数条目 + 若干附件，1 万条足够宽松 */
+export const MAX_ENTRY_COUNT = 10000;
+
+/**
+ * 解析递归深度上限。
+ * ============================================================
+ * 导入的 .xmind 是不可信输入，几 KB 就能构造出上万层嵌套 ——
+ * 实测 10000 层直接 RangeError: Maximum call stack size exceeded，整个导入崩掉。
+ * 正常脑图极少超过 20 层，MAX_DEPTH 给的余量已经很宽松。
+ *
+ * 对齐 mediainfo.js 的做法（那里对同等不可信的二进制输入用了 depth < 8 + guard++ < 4096）。
+ *
+ * 放在文件前部而非紧挨使用处：下面 walkKmTopic / descendantsNamed /
+ * buildKmNode / buildKmFromXmlTopic 四处递归都引用它，而它们分布在不同章节，
+ * 放在使用点旁边会让其中三处形成「先引用后声明」（const 的 TDZ 在模块求值
+ * 完成后虽不触发，但读起来像 bug）。
+ */
+export const MAX_DEPTH = 200;
+
+/** 单次解析收集的节点总数上限，防「宽而不深」的炸弹 */
+export const MAX_NODES = 200000;
+
+async function inflateRaw(bytes, budget = null) {
   const ds = new DecompressionStream('deflate-raw');
   const stream = new Blob([bytes]).stream().pipeThrough(ds);
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+  const reader = stream.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_INFLATE_BYTES) {
+      // 立刻取消底层流，别让剩余数据继续往内存里灌
+      try { await reader.cancel(); } catch { /* ignore */ }
+      throw new Error('XMind 解压超限（zip bomb 防护）：单条目超过 ' + Math.round(MAX_INFLATE_BYTES / 1024 / 1024) + 'MB');
+    }
+    if (budget) {
+      budget.used += value.byteLength;
+      if (budget.used > MAX_TOTAL_BYTES) {
+        try { await reader.cancel(); } catch { /* ignore */ }
+        throw new Error('XMind 解压超限（zip bomb 防护）：整包超过 ' + Math.round(MAX_TOTAL_BYTES / 1024 / 1024) + 'MB');
+      }
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let p = 0;
+  for (const c of chunks) { out.set(c, p); p += c.byteLength; }
+  return out;
 }
 
 /* ============================================================
@@ -176,6 +239,14 @@ export async function zipRead(input) {
   let ptr = dv.getUint32(eocd + 16, true);
   const out = new Map();
 
+  // 条目数是包里读出来的不可信值：EOCD 用 2 字节存，最大 65535。
+  // 正常 .xmind 只有个位数条目 + 若干附件，超 MAX_ENTRY_COUNT 必然异常，直接拒。
+  if (count > MAX_ENTRY_COUNT) {
+    throw new Error('XMind 条目数异常（' + count + ' 条），拒绝解压');
+  }
+  // 整包预算：防「很多个刚好卡在单条上限下的条目」叠加成一颗大炸弹
+  const budget = { used: 0 };
+
   for (let n = 0; n < count; n++) {
     if (dv.getUint32(ptr, true) !== 0x02014b50) break;
     const method = dv.getUint16(ptr + 10, true);
@@ -186,13 +257,31 @@ export async function zipRead(input) {
     const localOff = dv.getUint32(ptr + 42, true);
     const name = dec.decode(buf.subarray(ptr + 46, ptr + 46 + nameLen));
 
+    // 本地头偏移本身也不可信：越界时 getUint16 抛的是 RangeError，
+    // 到用户那里就是一句看不懂的堆栈，这里提前转成明确的中文错误。
+    if (localOff < 0 || localOff + 30 > buf.length) {
+      throw new Error('XMind 条目头越界：' + name);
+    }
     // 本地头里的 name/extra 长度可能与中央目录不一致，以本地头为准
     const lNameLen = dv.getUint16(localOff + 26, true);
     const lExtraLen = dv.getUint16(localOff + 28, true);
     const dataStart = localOff + 30 + lNameLen + lExtraLen;
+    // 越界即停：恶意包可让 dataStart + compSize 指到缓冲区外，
+    // subarray 会静默截断，后续 inflate 拿到半截数据才报错，排查困难。
+    if (dataStart < 0 || dataStart + compSize > buf.length) {
+      throw new Error('XMind 条目数据越界：' + name);
+    }
     const raw = buf.subarray(dataStart, dataStart + compSize);
 
-    out.set(name, method === 0 ? raw : await inflateRaw(raw));
+    if (method === 0) {
+      budget.used += raw.byteLength;
+      if (budget.used > MAX_TOTAL_BYTES) {
+        throw new Error('XMind 解压超限（zip bomb 防护）：整包超过 ' + Math.round(MAX_TOTAL_BYTES / 1024 / 1024) + 'MB');
+      }
+      out.set(name, raw);
+    } else {
+      out.set(name, await inflateRaw(raw, budget));
+    }
     ptr += 46 + nameLen + extraLen + commentLen;
   }
   return out;
@@ -382,10 +471,10 @@ function walkKmNodes(km, action) {
   walkKmTopic(km?.root, action);
 }
 
-function walkKmTopic(node, action) {
-  if (!node) return;
+function walkKmTopic(node, action, depth = 0) {
+  if (!node || depth > MAX_DEPTH) return;
   action(node);
-  if (Array.isArray(node.children)) for (const c of node.children) walkKmTopic(c, action);
+  if (Array.isArray(node.children)) for (const c of node.children) walkKmTopic(c, action, depth + 1);
 }
 
 /* ============================================================
@@ -549,10 +638,12 @@ function parseZen(json) {
 
   const sheets = [];
   let index = 0;
+  const counter = { n: 0 };
   for (const sn of sheetNodes) {
     if (!sn.rootTopic) continue;
     index++;
-    const kmRoot = buildKmNode(sn.rootTopic);
+    const kmRoot = buildKmNode(sn.rootTopic, 0, counter);
+    if (!kmRoot) continue;   // 超深/超量被截断 —— 异常文件，跳过这张画布
     const doc = { root: kmRoot, template: 'default', theme: 'fresh-blue', version: '1.4.43' };
     sheets.push({
       id: safeId(sn.id) || newSheetId(),
@@ -565,7 +656,13 @@ function parseZen(json) {
   return { sheets };
 }
 
-function buildKmNode(topic) {
+function buildKmNode(topic, depth = 0, counter = null) {
+  if (depth > MAX_DEPTH) return null;   // 超深截断，与 legacy 档同一标准
+  if (counter) {
+    // 「宽而不深」的炸弹：几十万个节点同样能让 JSON 序列化/渲染卡死
+    counter.n++;
+    if (counter.n > MAX_NODES) return null;
+  }
   const data = {
     id: safeId(topic.id) || newNodeId(),
     created: Date.now(),
@@ -630,7 +727,8 @@ function buildKmNode(topic) {
       if (!Array.isArray(list)) continue;
       for (const c of list) {
         if (!c) continue;
-        const kmChild = buildKmNode(c);
+        const kmChild = buildKmNode(c, depth + 1, counter);
+        if (!kmChild) continue;   // 超深/超量被截断
         children.push(kmChild);
         pairs.push({ xid: safeId(c.id) || '', km: kmChild });
       }
@@ -712,16 +810,17 @@ function childrenOf(el, name) {
   return out;
 }
 
-function descendantsNamed(el, name) {
+function descendantsNamed(el, name, depth = 0) {
   const out = [];
-  if (!el) return out;
-  const walk = (n) => {
+  if (!el || depth > MAX_DEPTH) return out;
+  const walk = (n, d) => {
+    if (d > MAX_DEPTH) return;
     for (const c of n.children || []) {
       if (localName(c) === name) out.push(c);
-      walk(c);
+      walk(c, d + 1);
     }
   };
-  walk(el);
+  walk(el, depth);
   return out;
 }
 
@@ -734,6 +833,7 @@ function parseLegacy(xml) {
     if (!topicEls.length) continue;
     index++;
     const kmRoot = buildKmFromXmlTopic(topicEls[0]);
+    if (!kmRoot) continue;   // 根节点就超深 —— 异常文件，跳过这张画布
     const titleEl = childrenOf(sheetEl, 'title')[0];
     const title = titleEl?.textContent?.trim();
     const wrapper = { root: kmRoot, template: 'default', theme: 'fresh-blue', version: '1.4.43' };
@@ -748,7 +848,8 @@ function parseLegacy(xml) {
   return { sheets };
 }
 
-function buildKmFromXmlTopic(t) {
+function buildKmFromXmlTopic(t, depth = 0) {
+  if (depth > MAX_DEPTH) return null;   // 超深直接截断，不再下钻
   const data = {
     id: t.getAttribute('id') || newNodeId(),
     created: Date.now(),
@@ -796,7 +897,8 @@ function buildKmFromXmlTopic(t) {
   if (topicsEl) {
     for (const topics of childrenOf(topicsEl, 'topics')) {
       for (const child of childrenOf(topics, 'topic')) {
-        const kmChild = buildKmFromXmlTopic(child);
+        const kmChild = buildKmFromXmlTopic(child, depth + 1);
+        if (!kmChild) continue;   // 超深被截断
         children.push(kmChild);
         pairs.push({ xid: child.getAttribute('id') || '', km: kmChild });
       }

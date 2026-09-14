@@ -110,6 +110,50 @@ zip 容器自写 CRC32 + 原生 `CompressionStream('deflate-raw')`，XML 走 `DO
 **分工**：外壳主题决定画布明暗，kityminder 主题决定节点配色。节点都绘制了不透明底色，
 因此画布变色不影响节点内文字的可读性。
 
+## 2026-09-14 修复记录（M1~M8）
+
+按 `mindmap插件_待修清单.md` 的严格审查结论逐项修复。修复集中在一个提交里，
+原因是 **M7 与 M1 联动**：M1 修好后自动保存才真正落盘，此时 M7（切换画布不落盘）
+会从「被 M1 掩盖」变成新的数据丢失点，分开修会留下一个中间态。
+
+| 编号 | 优先级 | 修复 | 位置 |
+|---|---|---|---|
+| M1 | 🔴 P0 | 自动保存改写 `doc:<currentFileId>`，并加切换文件竞态守卫 | `index.js` `doSaveInner` |
+| M2 | 🟡 P1 | 解压加单条 64MB / 整包 256MB / 条目数 1 万三重上限，边读边累计 | `xmind.js` `inflateRaw` / `zipRead` |
+| M3 | 🟡 P1 | 解析递归深度上限 200、节点总数上限 20 万 | `xmind.js` 三处递归 |
+| M4 | 🟢 P2 | 主题消息只认 `window.parent` 发来的 | `index.js` `watchShellTheme` |
+| M5 | 🟢 P2 | 下载前对附件名过一遍 `safeFileName`（顺带修掉纯点号名） | `index.js` / `io.js` |
+| M6 | 🟢 P2 | `undo` / `redo` 对称加 `if (lastSnap)` 守卫 | `index.js` |
+| M7 | 🟢 P2 | `switchSheet` 补 `await persist()` | `index.js` |
+| M8 | 🟢 P2 | 读写失败记进 `lastStoreError`，初始化末尾推到状态栏 | `store.js` / `index.js` |
+
+### 两个值得记的判断
+
+**M1 的竞态是修复的一部分，不是可选优化。**
+改成写 `doc:<id>` 之前，自动保存写的是没人读的 `'workbook'` 键，
+反而意外躲过了「迟到的保存盖到新文件上」。改对键之后这个风险才真实存在，
+所以 `doSaveInner` 在 `await` 前后各比对一次 `currentFileId`，不匹配就丢弃这次保存。
+
+**M7 只改 `switchSheet`，没改 `switchToFile`。**
+清单建议两处都加，但 `switchToFile` 的三个调用点里：
+
+- `openFile` 已经先 `capture()` + `await persist()`，重复落盘是白写一次；
+- `deleteFile` 调它时**当前文件刚被删掉**，此时 `persist()` 会把内容写回已删除的
+  `doc:<id>`，留下一份没人引用的垃圾数据 —— 这正是 `deleteFile` 注释里点明的坑。
+
+所以只在 `switchSheet` 补落盘。
+
+### 测试
+
+新增 `mindmap-test.mjs`（`npm run test:mindmap`），61 项断言。
+自带 IndexedDB 内存桩（jsdom 不带 IndexedDB），桩上留了 `failPut` / `failTx` 开关
+专门用来验证 M8 的「失败要看得见」—— 否则错误处理就是没测过的空壳。
+
+- 数据层：直接跑真实代码；
+- `index.js` 里依赖 kityminder / 真实渲染的部分（M4 / M6 / M7），
+  用**源码契约断言**锁住：改回去即失败。不是因为偷懒 ——
+  沙盒里没有 Chromium，硬挂载只会得到一堆假绿。
+
 ## 异步与存储的错误处理约定
 
 这块踩过坑，写成约定以免后续改回去：
@@ -295,4 +339,9 @@ Ctrl+Shift+L（整理布局）/ Ctrl+=-（缩放）/ Ctrl+A（全选）/ Ctrl+C/
   再清空库（模拟换机器）导入，确认字节、文件名、扩展名全部还原；
 - 插件挂载 / 数据流 / 导入主题样式 / 补齐项 / XMind / 附件 / 画布主题 / 健壮性：
   jsdom 八组测试全通过；
+- **M1~M8 修复**：`mindmap-test.mjs` 61 项断言全通过（含真实构造的 zip bomb
+  与 2000 层嵌套样本）；
 - **未做真实浏览器渲染验证**（沙盒无法安装 Chromium），kityminder 的 SVG 渲染需在 Tauri 里实测确认。
+
+> 2000 层而非 10000 层：jsdom 的 `DOMParser` 在约 2000~5000 层时自己就 parsererror 了，
+> 测不到 xmind.js。2000 层已远超 `MAX_DEPTH`(200)，足以验证截断逻辑。

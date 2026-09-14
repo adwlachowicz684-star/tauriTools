@@ -198,7 +198,10 @@ function guessMime(ext) {
  * 用于主题导出等「按内容命名」的场景（stampName 会带时间戳，不适合这类）。
  */
 export function safeFileName(name) {
-  const s = String(name || '').replace(/[\\/:*?"<>|]/g, '_').replace(/[\u0000-\u001f]/g, '_').trim();
+  let s = String(name || '').replace(/[\\/:*?"<>|]/g, '_').replace(/[\u0000-\u001f]/g, '_').trim();
+  // 纯点号（'.' / '..'）在多数文件系统上指向目录本身，不能当落盘名用。
+  // 附件名来自导入的 .xmind，是不可信输入。
+  if (/^\.+$/.test(s)) s = '_' + s;
   return s || '未命名';
 }
 

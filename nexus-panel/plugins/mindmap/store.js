@@ -74,22 +74,64 @@ function tx(mode, fn) {
   );
 }
 
-/** 读取；不存在或异常时返回 def */
+/**
+ * 读路径的错误可见性。
+ * ============================================================
+ * 早前 store.get 把所有异常都吞成默认值：IndexedDB 损坏 / 被禁用（隐私模式）时，
+ * 用户看到的是「脑图变空了」而不是明确错误 —— 很可能继续编辑然后真丢数据。
+ *
+ * 写路径已经做得很好（set 返回 false，调用方全部判返回值）。读路径同样要能区分
+ * 「这个键本来就没数据」和「读失败」。这里做的两件事：
+ *   1. 首次读失败时 console.warn + 记录到 lastError，供插件层弹一次提示；
+ *   2. 导出 lastStoreError / takeStoreError / resetStoreError，
+ *      让 UI 有机会把「读失败」摆到状态栏上。
+ *
+ * 不改成抛异常：get 的调用点遍布初始化流程，抛出去会让整个插件挂不上，
+ * 而「降级成默认值 + 明确提示」才是这里想要的行为。
+ */
+let lastError = null;
+
+/** 最近一次读写失败的说明（null 表示一切正常） */
+export function lastStoreError() {
+  return lastError;
+}
+
+/** 取走并清空错误标记（插件层弹过提示后调用，避免重复提示） */
+export function takeStoreError() {
+  const e = lastError;
+  lastError = null;
+  return e;
+}
+
+/** 清空错误标记（测试用） */
+export function resetStoreError() {
+  lastError = null;
+}
+
+function noteError(op, key, e) {
+  lastError = `本地存储${op}失败（${key}）：${e?.message || e}`;
+  // 保留控制台痕迹：这是排查「为什么脑图变空了」的第一现场
+  try { console.warn('[mindmap/store]', lastError); } catch { /* ignore */ }
+}
+
+/** 读取；不存在或异常时返回 def（异常会记进 lastError，供 UI 提示） */
 export async function get(key, def = null) {
   try {
     const v = await tx('readonly', (s) => s.get(key));
     return v === undefined || v === null ? def : v;
-  } catch {
+  } catch (e) {
+    noteError('读取', key, e);
     return def;
   }
 }
 
-/** 写入（结构化克隆，支持任意 JSON 对象） */
+/** 写入（结构化克隆，支持任意 JSON 对象）；失败返回 false 并记错误 */
 export async function set(key, value) {
   try {
     await tx('readwrite', (s) => s.put(value, key));
     return true;
-  } catch {
+  } catch (e) {
+    noteError('写入', key, e);
     return false;
   }
 }
@@ -98,17 +140,19 @@ export async function del(key) {
   try {
     await tx('readwrite', (s) => s.delete(key));
     return true;
-  } catch {
+  } catch (e) {
+    noteError('删除', key, e);
     return false;
   }
 }
 
-/** 列出带前缀的 key（用于清理备份） */
+/** 列出带前缀的 key（用于清理备份）；失败返回空数组并记错误 */
 export async function keys(prefix = '') {
   try {
     const all = await tx('readonly', (s) => s.getAllKeys());
     return (all || []).filter((k) => typeof k === 'string' && k.startsWith(prefix));
-  } catch {
+  } catch (e) {
+    noteError('列举', prefix + '*', e);
     return [];
   }
 }
@@ -123,9 +167,15 @@ const K_THEMES = 'themes';
 const K_SETTINGS = 'settings';
 const K_BACKUP = 'backup:';
 
-/** 工作簿：{ sheets: [{id,title,content,theme,layout}], activeId } */
+/**
+ * 旧版单工作簿键 —— **只读，不要往这里写**。
+ * 多文档改造后每个脑图各存 doc:<id>，写 'workbook' 等于内容永远读不回来
+ * （加载路径读的是 doc:<id>），还白占一份 IndexedDB 配额。
+ * save 保留仅为兼容历史代码，请一律改用 doc(id).save()。
+ */
 export const workbook = {
   load: () => get(K_WORKBOOK, null),
+  /** @deprecated 仅迁移期兼容；新代码请用 doc(id).save() */
   save: (wb) => set(K_WORKBOOK, wb),
 };
 

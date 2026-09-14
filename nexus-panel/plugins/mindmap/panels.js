@@ -235,7 +235,9 @@ export function buildSide(app) {
       if (!r?.a) { app.api.status('该附件来自旧版路径，无法在沙箱内打开', true); return; }
       const asset = await io.getAsset(r.a);
       if (!asset?.blob) { app.api.status('附件数据已丢失', true); return; }
-      io.downloadBlob(asset.name || r.n || '附件', asset.blob);
+      // asset.name 与 index.js 的 rec.name 同源（来自导入的 .xmind），
+      // 同样要过 safeFileName —— M5 的同类路径，一起修掉保持实践一致。
+      io.downloadBlob(io.safeFileName(asset.name || r.n || '附件'), asset.blob);
     };
 
     const remove = (kind) => {
@@ -753,7 +755,7 @@ export function openVideo(app, asset) {
 export function openPreview(app, asset) {
   const img = h('img.mm-preview', { src: asset.url, alt: asset.name || '附件' });
   const save = h('button.mm-btn', {
-    onclick: () => io.downloadBlob(asset.name || '附件', asset.blob),
+    onclick: () => io.downloadBlob(io.safeFileName(asset.name || '附件'), asset.blob),
   }, '另存为');
   const release = () => { if (asset.url) URL.revokeObjectURL(asset.url); };
   return dialog(`预览：${asset.name || '附件'}`, [h('div', {}, img, h('div.mm-actions', {}, save))], release);

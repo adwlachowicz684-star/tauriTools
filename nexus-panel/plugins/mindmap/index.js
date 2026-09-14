@@ -132,6 +132,16 @@ bootIframePlugin(async (ctx) => {
   }
 
   /**
+   * 把「存储读失败」摆到状态栏上。
+   * store 的读路径降级成默认值但会记下 lastError —— 不提示的话用户看到的是
+   * 「脑图变空了」，很可能继续编辑然后真丢数据（M8）。
+   */
+  function flushStoreError() {
+    const e = store.takeStoreError();
+    if (e) status(e + '（当前显示的可能不是最新内容）', true);
+  }
+
+  /**
    * 异步兜底：把失败变成状态栏提示，而不是未捕获的 Promise rejection。
    * 之前的写法大量 fire-and-forget（persist() / loadSheet() / openAttachment() 直接调用不接），
    * IndexedDB 写满（附件是 Blob，配额很容易触顶）或编辑器未就绪时，
@@ -400,7 +410,9 @@ bootIframePlugin(async (ctx) => {
     workbook.activeId = id;
     renderTabs();
     await loadSheet();
-    persist();
+    // 必须 await 且必须落盘：切换画布不触发 onDirty（loadSheet 走 suppress），
+    // 自动保存不会被唤起，切完就崩的话刚才的编辑全丢。
+    await persist();
   }
 
   /* ------------------------- 文件库（多文档） ------------------------- */
@@ -669,9 +681,17 @@ bootIframePlugin(async (ctx) => {
 
     s.content = json;
     dirty = false;
+
+    // 竞态保护：本函数由 setTimeout 触发且全程异步。若保存进行中用户切了文件，
+    // 迟到的这次会把「旧 workbook」盖到新文件的 doc 键上 —— 直接丢内容。
+    // 写之前和 await 之后各比对一次，任何一次不匹配就丢弃这次保存。
+    const savedFileId = currentFileId;
     // store.set 失败是返回 false 而不是抛出，不检查就会在「根本没存进去」的
     // 情况下继续往下走、最后提示「已保存」——比不提示更糟。
-    const saved = await store.workbook.save(workbook);
+    // 键必须用 doc:<currentFileId>，与 persist()/加载路径保持一致；
+    // 写 'workbook'（旧版迁移键，只用于首次迁移读取）等于内容永远读不回来。
+    const saved = await store.doc(savedFileId).save(workbook);
+    if (savedFileId !== currentFileId) return;   // 期间切了文件，丢弃
     if (!saved) {
       status('自动保存失败：本地存储写入被拒绝（可能是空间不足）', true);
       return;
@@ -751,6 +771,10 @@ bootIframePlugin(async (ctx) => {
     const onMessage = (e) => {
       const d = e.data;
       if (!d || d.channel !== SHELL_CHANNEL) return;
+      // SHELL_CHANNEL 是 plugin-sdk 的公开常量，同页面里任何脚本都能伪造。
+      // 用 e.source 锁定只有父窗口（外壳）发的才算数 —— 与 editor-bridge.js
+      // 校验内层 iframe 的做法保持一致。
+      if (e.source !== window.parent) return;
       if (d.type === 'theme' && d.theme) syncCanvasTheme(d.theme);
     };
     window.addEventListener('message', onMessage);
@@ -795,7 +819,9 @@ bootIframePlugin(async (ctx) => {
       openPreview(app, { ...asset, name });
       return;
     }
-    io.downloadBlob(name, rec.blob);
+    // rec.name 来自导入的 .xmind，是不可信输入 —— 交给 safeFileName 剥掉
+    // 路径分隔符与控制字符，不依赖浏览器对 <a download> 的自发处理。
+    io.downloadBlob(io.safeFileName(name), rec.blob);
     status('已导出附件：' + name);
   }
 
@@ -820,7 +846,9 @@ bootIframePlugin(async (ctx) => {
     const r = bridge?.history('undo');
     if (r === true) { status('已撤销'); return; }
     if (!undoStack.length) { status('没有可撤销的操作', true); return; }
-    redoStack.push(lastSnap);
+    // lastSnap 为 null 时不能压栈：redo 那边 applySnapshot(null) 会静默返回，
+    // 而 undoStack 已经弹出 —— 这次撤销就永久不可恢复了。
+    if (lastSnap) redoStack.push(lastSnap);
     applySnapshot(undoStack.pop());
     status('已撤销（本地栈）');
   }
@@ -829,7 +857,8 @@ bootIframePlugin(async (ctx) => {
     const r = bridge?.history('redo');
     if (r === true) { status('已重做'); return; }
     if (!redoStack.length) { status('没有可重做的操作', true); return; }
-    undoStack.push(lastSnap);
+    // 与 undo 对称：null 不入栈，避免 redo 之后无法再撤销
+    if (lastSnap) undoStack.push(lastSnap);
     applySnapshot(redoStack.pop());
     status('已重做（本地栈）');
   }
@@ -1124,6 +1153,9 @@ bootIframePlugin(async (ctx) => {
 
   await loadSheet();
   updateBadge();
+  // 初始化期间所有的 store 读都跑完了：若中途有失败（IndexedDB 被禁用 / 损坏），
+  // 在这里一次性摆到状态栏 —— 否则用户只看到「脑图是空的」。
+  flushStoreError();
 
   function updateBadge() {
     ctx.setBadge(workbook.sheets.length > 1 ? workbook.sheets.length : 0);
