@@ -106,7 +106,9 @@
             if (window.parent && window.parent !== window) {
                 var out = { channel: KM_HOST_CHANNEL };
                 for (var k in msg) if (Object.prototype.hasOwnProperty.call(msg, k)) out[k] = msg[k];
-                window.parent.postMessage(out, '*');
+                // 本页与插件层同源（相对路径加载），目标 origin 写自身 origin 即可，不用 '*' 广播。
+                // file:// 下 origin 为 'null'（opaque origin），postMessage 接受该值并与父层匹配。
+                window.parent.postMessage(out, window.location.origin || '*');
             }
         } catch (e) {}
     }
@@ -114,6 +116,9 @@
     window.addEventListener('message', function (e) {
         var d = e && e.data;
         if (!d || d.channel !== KM_HOST_CHANNEL) return;
+        // 只认来自父窗口（插件层）的消息，与 editor-bridge.js 的 e.source 校验对称。
+        // 顶层打开时无父窗口，跳过该判断。
+        if (window.parent && window.parent !== window && e.source !== window.parent) return;
         if (d.type === 'response') {
             if (typeof window.__resolveHost === 'function') window.__resolveHost(d.id, d.result);
             return;
