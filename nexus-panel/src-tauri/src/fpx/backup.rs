@@ -179,7 +179,10 @@ pub fn collect_paths(tabs: &[super::model::TabItem]) -> Vec<String> {
         for raw in &t.items {
             let p = raw.trim().trim_end_matches(['/', '\\']);
             if p.is_empty() { continue; }
-            let key = p.to_lowercase();
+            // 去重键必须用 normalize_key（按平台决定是否忽略大小写），不能无条件小写：
+            // Linux / macOS 上 /a/Foo 与 /b/foo 是**两个不同的项目**，
+            // 无条件小写会把后者当成重复项丢掉 —— 它压根不会被备份，且无报错无日志。
+            let key = super::store::normalize_key(&p);
             if seen.insert(key) { out.push(p.to_string()); }
         }
     }

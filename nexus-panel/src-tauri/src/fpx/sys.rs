@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::model::{DirEntryLite, FpxConfig, TabItem};
+use super::store::normalize_key;
 
 /* ---------------------------- 目录浏览（给内嵌目录选择器用） ---------------------------- */
 
@@ -402,14 +403,6 @@ pub fn is_under(root: &str, path: &str) -> bool {
     if r.is_empty() || p.is_empty() || r == p { return false; }
     // normalize_key 已把分隔符统一成正斜杠，这里只需比对一种
     p.starts_with(&format!("{r}/"))
-}
-
-/// 规范化：去首尾空白与尾部分隔符，统一分隔符为正斜杠并转小写（Windows 路径大小写不敏感）。
-fn normalize_key(path: &str) -> String {
-    path.trim()
-        .trim_end_matches(['/', '\\'])
-        .replace('\\', "/")
-        .to_lowercase()
 }
 
 /// 路径是否位于任一"默认根目录"（新建项目/项目组的预设父目录）之下。
