@@ -1,0 +1,25 @@
+# 换行符统一：仓库内与工作区一律 LF
+#
+# 背景：本仓在 Windows（CRLF）与 CI/其他窗口（LF）之间反复横跳，
+# 一次 git status 能凭空报出 20 个"已修改"，实际只是行尾不同。
+# 这类噪声会淹没真正需要人工决策的改动 —— 有人因此误判过冲突数量。
+#
+# text=auto 让 git 自行识别文本/二进制；eol=lf 固定检出为 LF，
+# 于是"提交时归一化 + 检出时不转换"，工作区永远干净。
+* text=auto eol=lf
+
+# 显式声明二进制：别让 text=auto 猜错，图片字体一旦被换行符转换就废了
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.icns  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.eot   binary
+
+# 构建产物与依赖：不进 diff 统计，也不参与换行归一化判定
+target/     -diff
+node_modules/ -diff
