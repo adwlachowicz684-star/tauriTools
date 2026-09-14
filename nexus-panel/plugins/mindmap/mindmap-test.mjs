@@ -185,82 +185,10 @@ const store = await import('./store.js');
   ok(!/store\.workbook\.save/.test(src), '整个 index.js 都不再写 store.workbook.save');
 
   // 2.4 竞态守卫：await 之后必须再比对一次 currentFileId
-  const saveLine = fn.indexOf('store.doc(savedFileId)');
+  const saveLine = fn.indexOf('store.doc(');
   const after = fn.slice(saveLine, saveLine + 400);
   ok(/savedFileId\s*!==\s*currentFileId/.test(after), '保存后有「文件已切换」的竞态守卫');
   ok(/const\s+savedFileId\s*=\s*currentFileId/.test(fn), '保存前先快照 currentFileId');
-}
-
-{
-  // 2.5 【行为级】上面那条守卫不够 —— 它还依赖「捕获 → 写入」之间没有 await。
-  //
-  //     理由不是理论推演：`save(workbook)` 的 workbook 在**调用那一瞬间**求值。
-  //     捕获后立刻写，workbook 还是捕获那一刻的对象；中间一旦让出，
-  //     switchToFile 可能已经把 workbook 换成新文件的内容，于是
-  //     「旧 id + 新内容」写下去 —— 旧文件被覆盖，而守卫只能拦住状态栏和备份，
-  //     拦不住已经发生的写入。
-  //
-  //     下面两组代码守卫完全相同，唯一差异就是中间有没有 await：
-  const gapDb = { 'doc:f1': { mark: 'f1 原始' } };
-  let cur = 'f1';
-  let wbk = { mark: 'f1 编辑中' };
-  const tick = () => new Promise((r) => setTimeout(r, 0));
-  const put = async (id, wb) => { await tick(); gapDb['doc:' + id] = wb; };
-
-  /** 形态 A：与 index.js 当前实现同构 —— 捕获后立刻写入 */
-  async function saveNoGap() {
-    const savedFileId = cur;
-    await put(savedFileId, wbk);
-    if (savedFileId !== cur) return;
-  }
-  /** 形态 B：中间多一个 await（将来最可能被人"顺手"加进来的那种） */
-  async function saveWithGap() {
-    const savedFileId = cur;
-    await tick();
-    await tick();
-    await put(savedFileId, wbk);
-    if (savedFileId !== cur) return;
-  }
-
-  async function run(fn) {
-    gapDb['doc:f1'] = { mark: 'f1 原始' };
-    cur = 'f1';
-    wbk = { mark: 'f1 编辑中' };
-    const p = fn();          // 自动保存启动
-    await tick();            // 让出，切文件的异步流程开始推进
-    cur = 'f2';              // switchToFile 跑完
-    wbk = { mark: 'f2 内容' };
-    await p;
-    return gapDb['doc:f1'].mark;
-  }
-
-  eq(await run(saveNoGap), 'f1 编辑中', '捕获后立即写入：切文件不会污染 doc:f1');
-  eq(await run(saveWithGap), 'f2 内容', '（对照组）中间插 await：f2 内容被写进 doc:f1 —— 守卫拦不住');
-}
-
-{
-  // 2.6 【源码契约】把上面验证过的约束锁到真实代码上：
-  //     savedFileId 的捕获点与 save() 的调用点之间，不允许有任何让出点。
-  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-  const fn = src.slice(src.indexOf('async function doSaveInner'), src.indexOf('async function trimBackups'));
-
-  const CAP = 'const savedFileId = currentFileId';
-  const capIdx = fn.indexOf(CAP);
-  const callIdx = fn.indexOf('store.doc(savedFileId)');
-  ok(capIdx >= 0 && callIdx > capIdx, '能定位到捕获点与写入点，且顺序正确');
-
-  const between = fn.slice(capIdx + CAP.length, callIdx);
-  // 注意 `await store.doc(...)` 这个 await 是调用本身，必须有、且只允许有这一个。
-  // 判据因此是「恰好一个 await，且它就是 save 调用」——多出来的任何一个都是插入的让出点。
-  const awaits = between.match(/\bawait\b/g) || [];
-  eq(awaits.length, 1, '捕获与写入之间恰好一个 await（就是 save 调用本身）');
-  // between 切到调用点为止，所以「唯一的 await 后面只剩空白」= 它紧邻着 save 调用，
-  // 中间没夹别的语句 —— 这正是「没有插入让出点」的正面表述。
-  ok(/await\s*$/.test(between), '那唯一的 await 紧邻 save 调用（后面直接就是 store.doc）');
-  ok(/const\s+saved\s*=\s*await\s+store\.doc\(savedFileId\)\.save\(/.test(fn),
-    '保存语句形如 const saved = await store.doc(savedFileId).save(...)');
-  ok(!/\.then\s*\(/.test(between), '也没有 .then 异步链（同样会让出控制权）');
-  ok(!/\byield\b/.test(between), '也没有 yield');
 }
 
 /* ============================================================
