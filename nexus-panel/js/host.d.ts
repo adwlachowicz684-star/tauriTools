@@ -43,6 +43,13 @@ export interface HostState {
   plugins: PluginManifest[];
   activeId: string | null;
   badges: Record<string, number>;
+  /**
+   * 当前挂载中的插件实例（未挂载时为 null）。
+   * 形如 { manifest, ctx, unmount, iframe, bridgeHandler, cleanupFns } —— 结构随挂载模式变化，
+   * 只作调试观测用，业务代码不要依赖内部字段。
+   */
+  instance?: { manifest?: PluginManifest; [k: string]: unknown } | null;
+  [k: string]: unknown;
 }
 
 export interface Host {

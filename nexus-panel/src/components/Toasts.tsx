@@ -1,5 +1,6 @@
 export interface ToastItem {
-  id: number;
+  /** nextId() 生成的唯一 ID（crypto.randomUUID 或降级串） */
+  id: string;
   msg: string;
   type: 'info' | 'ok' | 'err';
 }

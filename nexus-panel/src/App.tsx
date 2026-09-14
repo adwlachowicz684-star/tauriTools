@@ -3,6 +3,9 @@ import {
   createHost, loadRegistry, filterByRuntime, saveCustomPlugins, getCustomPlugins, isInsideTauri,
   type Host, type PluginManifest,
 } from '../js/host.js';
+import * as extPolicy from '../js/external-policy.js';
+import * as pluginCfg from '../js/plugin-config.js';
+import * as themeApi from '../js/theme-manager.js';
 // 主题切换统一由 js/theme-picker.js 的弹出层处理（标题栏按钮 + 设置页共用），
 // 外壳不再自己维护"当前主题名"状态，避免两处各存一份、切完不同步。
 import Titlebar from './components/Titlebar';
@@ -10,10 +13,51 @@ import Sidebar from './components/Sidebar';
 import Stage from './components/Stage';
 import Toasts, { type ToastItem } from './components/Toasts';
 import AddPluginDialog from './components/AddPluginDialog';
+import PluginSettingsDrawer from './components/PluginSettingsDrawer';
+
+/**
+ * 全局唯一 ID（toast / 自定义插件共用）
+ * ------------------------------------------------------------
+ * 原来是 `Date.now() + Math.random()`：两个数字浮点相加，
+ * 连点两次时时间戳相同、随机尾数极小，既不可读也有碰撞风险。
+ * 优先用 crypto.randomUUID；非安全上下文（http 调试、老 WebView）降级。
+ */
+function nextId(): string {
+  const c = (globalThis as { crypto?: Crypto }).crypto;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** 从 CSP 指令反推外链类型，与 js/shell.js 的 kindOf() 保持一致 */
+function kindOfDirective(directive?: string): string {
+  const s = String(directive || '').toLowerCase();
+  if (s.includes('script')) return 'script';
+  if (s.includes('frame')) return 'frame';
+  if (s.includes('media')) return 'media';
+  if (s.includes('img')) return 'image';
+  if (s.includes('connect')) return 'fetch';
+  if (s.includes('style') || s.includes('font')) return 'style';
+  return 'unknown';
+}
+
+/** CSP 违规上报的两种形状：宿主转发的是 blockedURI，watchViolations 给的是 host + sample */
+interface ViolationInfo {
+  blockedURI?: string;
+  sample?: string;
+  host?: string;
+  directive?: string;
+  kind?: string;
+  view?: string;
+}
 
 export default function App() {
   const stageRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<Host | null>(null);
+  /** 所有延时回调登记在此，卸载时统一清理，避免对已卸载组件 setState */
+  const timersRef = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const aliveRef = useRef(true);
+  /** 设置页外链卡片注册的刷新回调（外链变化时通知它重绘） */
+  const refreshExternalUIRef = useRef<(() => void) | null>(null);
 
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -27,15 +71,87 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  /** 当前插件是否提供了自己的设置面板（决定「⚙ 设置」按钮显隐） */
+  const [hasSettings, setHasSettings] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  /** 延时版 setTimeout：自动登记，组件卸载后不再触发 */
+  const setTimer = useCallback((fn: () => void, ms: number) => {
+    const t = setTimeout(() => {
+      timersRef.current.delete(t);
+      if (aliveRef.current) fn();
+    }, ms);
+    timersRef.current.add(t);
+    return t;
+  }, []);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      timersRef.current.forEach((t) => clearTimeout(t));
+      timersRef.current.clear();
+    };
+  }, []);
 
   const pushToast = useCallback((msg: string, type: string = 'info') => {
-    const id = Date.now() + Math.random();
+    const id = nextId();
     // 对外接受任意字符串（外壳的 ctx.toast 也传字符串），
     // 落到 ToastItem 前收窄到它认的三种，避免把未知值塞进样式类名
     const kind: ToastItem['type'] = type === 'ok' || type === 'err' ? type : 'info';
     setToasts((t) => [...t, { id, msg, type: kind }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2800);
-  }, []);
+    setTimer(() => setToasts((t) => t.filter((x) => x.id !== id)), 2800);
+  }, [setTimer]);
+
+  /* ---------- 外链：被 CSP 拦下的请求统一登记 ---------- */
+  const handleCspViolation = useCallback((d: ViolationInfo, manifest?: PluginManifest) => {
+    const uri = d?.blockedURI || d?.sample || (d?.host ? `https://${d.host}` : '');
+    const host = extPolicy.hostOf(uri);
+    if (!host || extPolicy.LOCAL_HOSTS.has(host)) return;
+
+    const policy = extPolicy.loadPolicy();
+    const decision = extPolicy.decideHost(host, policy);
+    if (decision === 'allow') return;               // 用户已信任（说明 CSP 还没配上）
+
+    extPolicy.recordHosts([{
+      host,
+      kind: d?.kind || kindOfDirective(d?.directive),
+      sample: uri,
+    }], manifest?.id);
+
+    if (decision === 'ask' && policy.mode === 'smart') {
+      pushToast(`插件「${manifest?.name || ''}」想访问 ${host}，已拦下 · 设置里可放行`, 'err');
+    } else if (decision === 'block') {
+      console.warn('[external] 已拦截', host);
+    }
+    refreshExternalUIRef.current?.();
+  }, [pushToast]);
+
+  /** 安装 / 更新插件时扫一遍外链（用户要求：每次导入与更新都检查） */
+  const scanPluginExternal = useCallback(async (p: { entry?: string; id?: string; name?: string }) => {
+    if (!p?.entry) return { ok: false, hosts: [] };
+    const r = await extPolicy.scanEntry(p.entry, p.id);
+    if (r.externalEntry) {
+      pushToast(`⚠ 插件「${p.name}」的入口是外域地址，代码将来自网络`, 'err');
+    } else if (r.hosts?.length && extPolicy.loadPolicy().mode === 'smart') {
+      const names = r.hosts.map((x) => x.host).join('、');
+      pushToast(`「${p.name}」检测到 ${r.hosts.length} 个外链：${names}`, 'err');
+    }
+    refreshExternalUIRef.current?.();
+    return r;
+  }, [pushToast]);
+
+  /** 全量重扫（设置页「重新检查」按钮） */
+  const rescanAllPlugins = useCallback(async () => {
+    const list = hostRef.current?.getPlugins() ?? [];
+    let total = 0;
+    for (const p of list) {
+      const r = await extPolicy.scanEntry(p.entry, p.id).catch(() => ({ hosts: [] as { host: string }[] }));
+      total += r.hosts?.length || 0;
+    }
+    pushToast(`已检查 ${list.length} 个插件，登记 ${total} 个外链`, 'ok');
+    refreshExternalUIRef.current?.();
+  }, [pushToast]);
 
   /* ---------- 初始化宿主（仅一次） ---------- */
   useEffect(() => {
@@ -48,6 +164,12 @@ export default function App() {
         onBadges: setBadges,
         onOpen: (id) => setActiveId(id),
         onSidebarItems: (items) => setInjected(items),
+        // 插件声明了 settings 才显示「⚙ 设置」按钮；切插件 / 插件没设置时自动收起
+        onSettingsAvailable: (has) => {
+          setHasSettings(!!has);
+          if (!has) setSettingsOpen(false);
+        },
+        onCspViolation: (info, manifest) => handleCspViolation(info, manifest),
       },
     });
     hostRef.current = host;
@@ -67,13 +189,18 @@ export default function App() {
       setActiveId(initial);
     })();
 
-    return () => { host.unmount(); };
-  }, [pushToast]);
+    // 观测主文档自己的 CSP 违规（插件内部的由 SDK 转发到 onCspViolation）
+    const stopWatch = extPolicy.watchViolations((v) =>
+      handleCspViolation(v, host.state.plugins.find((p) => p.id === host.state.activeId)));
+
+    return () => { stopWatch?.(); host.unmount(); };
+  }, [pushToast, handleCspViolation]);
 
   /* ---------- 切换 / 重载插件 ---------- */
   useEffect(() => {
     if (!activeId) return;
     localStorage.setItem('nexus:last-plugin', activeId);
+    setSettingsOpen(false);          // 切插件就收起上一个插件的设置抽屉
     hostRef.current?.mount(activeId);
   }, [activeId, reloadKey]);
 
@@ -86,32 +213,10 @@ export default function App() {
     if (!host) return;
     if (host.state.activeId !== it.pluginId) {
       setActiveId(it.pluginId);
-      await new Promise((r) => setTimeout(r, 150));   // 等插件挂载并订阅事件
+      await new Promise((r) => setTimer(() => r(null), 150));   // 等插件挂载并订阅事件
     }
     host.bus.emit(it.event, { id: it.id });
   };
-
-  /* ---------- 快捷键 ---------- */
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const meta = e.metaKey || e.ctrlKey;
-      if (!meta) return;
-      const k = e.key.toLowerCase();
-      if (k === 'b') {
-        e.preventDefault();
-        setSidebarOpen((v) => {
-          localStorage.setItem('nexus:sidebar-open', !v ? '1' : '0');
-          return !v;
-        });
-      }
-      if (k === 'r' && activeId) {
-        e.preventDefault();
-        setReloadKey((n) => n + 1);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [activeId]);
 
   /* ---------- 供插件与调试使用 ---------- */
   useEffect(() => {
@@ -122,7 +227,7 @@ export default function App() {
   const reload = useCallback(() => setReloadKey((n) => n + 1), []);
 
   const addPlugin = useCallback((p: Omit<PluginManifest, 'id'>) => {
-    const item: PluginManifest = { ...p, id: 'custom-' + Date.now().toString(36), custom: true };
+    const item: PluginManifest = { ...p, id: `custom-${nextId()}`, custom: true };
     saveCustomPlugins([...getCustomPlugins(), item]);
     pushToast(`已添加「${item.name}」`, 'ok');
     setDialogOpen(false);
@@ -143,6 +248,52 @@ export default function App() {
     })();
   }, [pushToast]);
 
+  /* ---------- 插件设置抽屉 ---------- */
+  const closePluginSettings = useCallback(() => setSettingsOpen(false), []);
+
+  const openPluginSettings = useCallback(() => {
+    if (!hostRef.current?.hasSettings()) return;     // 插件没声明设置面板：不打开空抽屉
+    setSettingsOpen(true);
+  }, []);
+
+  /** 键盘快捷键里要用最新实现，但不必因此重挂监听（同 shell.js 的 runShellShortcutRef） */
+  const openPluginSettingsRef = useRef(openPluginSettings);
+  useEffect(() => { openPluginSettingsRef.current = openPluginSettings; }, [openPluginSettings]);
+
+  /** 稳定的引用：抽屉的 useEffect 依赖它，每次渲染新建会让面板被反复重新挂载 */
+  const mountSettings = useCallback(
+    (container: HTMLElement, manifest: PluginManifest) =>
+      hostRef.current!.mountSettings(container, manifest),
+    [],
+  );
+
+  /* ---------- 快捷键 ---------- */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta) return;
+      const k = e.key.toLowerCase();
+      if (k === 'b') {
+        e.preventDefault();
+        setSidebarOpen((v) => {
+          localStorage.setItem('nexus:sidebar-open', !v ? '1' : '0');
+          return !v;
+        });
+      }
+      if (k === 'r' && activeId) {
+        e.preventDefault();
+        setReloadKey((n) => n + 1);
+      }
+      // ⌘/Ctrl + , —— 打开当前插件的设置面板（与原生外壳一致）
+      if (e.key === ',') {
+        e.preventDefault();
+        openPluginSettingsRef.current?.();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeId]);
+
   /* ---------- 供插件调用的全局接口 ---------- */
   useEffect(() => {
     window.__NEXUS__ = {
@@ -152,8 +303,23 @@ export default function App() {
       navigate: (id: string) => setActiveId(id),
       removePlugin,
       getPlugins: () => plugins,
+      mountPlugin: (id: string) => hostRef.current?.mount(id) ?? Promise.resolve(),
+      getInstance: () => hostRef.current?.state.instance,
+      openPluginSettings,
+      closePluginSettings,
+      pluginCfg,
+      external: {
+        ...extPolicy,
+        setRefreshHandler: (fn: (() => void) | null) => { refreshExternalUIRef.current = fn; },
+        rescanAll: rescanAllPlugins,
+        scanPlugin: scanPluginExternal,
+      },
+      theme: { ...themeApi },
     };
-  }, [plugins, pushToast, removePlugin]);
+  }, [
+    plugins, pushToast, removePlugin, openPluginSettings, closePluginSettings,
+    scanPluginExternal, rescanAllPlugins,
+  ]);
 
   const activePlugin = useMemo(
     () => plugins.find((p) => p.id === activeId) ?? null,
@@ -190,10 +356,19 @@ export default function App() {
           subtitle={activePlugin
             ? `${activePlugin.type === 'iframe' ? '沙箱模式' : '同页模式'}${activePlugin.version ? ' · v' + activePlugin.version : ''}`
             : ''}
+          hasSettings={hasSettings && !!activePlugin}
+          onOpenSettings={openPluginSettings}
           onReload={reload}
         />
       </div>
       <Toasts items={toasts} />
+      {settingsOpen && activePlugin ? (
+        <PluginSettingsDrawer
+          manifest={activePlugin}
+          onClose={closePluginSettings}
+          mountSettings={mountSettings}
+        />
+      ) : null}
       {dialogOpen && <AddPluginDialog onClose={() => setDialogOpen(false)} onSubmit={addPlugin} />}
     </div>
   );
