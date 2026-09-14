@@ -17,8 +17,10 @@ nexus-panel/
 │   ├── settings/              # 内置：设置（主题 / 插件 / 外链 / 关于 四个分页）
 │   ├── demo-module/           # 示例：同页挂载
 │   └── demo-iframe/           # 示例：沙箱挂载
+├── config/nexus.config.mjs    # 配置单一来源：CSP / 端口 / 入口，两套栈共用
+├── scripts/sync-config.mjs    # 把共享配置同步到各入口（npm run config:sync）
 ├── src-tauri/                 # Rust 后端
-└── vite.config.js / package.json   # 可选：仅在你想用 Vite 时才需要
+└── vite.config.ts / package.json   # 可选：仅在你想用 Vite 时才需要
 ```
 
 ## 一、两种技术栈（共用同一套插件引擎）
@@ -364,8 +366,8 @@ L2 的连带问题已处理：对 `img/video/canvas/svg` 做**二次反转**还�
 
 ### 能力边界（重要）
 
-真正能拦住外链的是 **CSP**，而 CSP 是静态的（写在 `index.html` 的 meta 里），
-运行时改不了。所以本模块做的是**看得见、管得了、记得住**：
+真正能拦住外链的是 **CSP**，而 CSP 是静态的（唯一来源：`config/nexus.config.mjs`，
+由 `npm run config:sync` 同步到两个入口的 meta 与两份 tauri 配置），运行时改不了。所以本模块做的是**看得见、管得了、记得住**：
 
 - 扫描并列出所有外域
 - 记录你的放行/禁止决策
@@ -593,15 +595,95 @@ JS 只负责记住选择并写 `data-af-mode`，不直接改颜色。
 
 ## 十三、开发辅助
 
-四个测试脚本都只用 jsdom，无需启动窗口：
+校验脚本一共 **15 个**（`package.json` 里 `test` / `test:*`），都只用 jsdom，无需启动窗口：
 
 ```bash
-npm i -D jsdom
-npm run test         # 外壳主线：注册表 → 挂载 → 交互 → 持久化
-npm run test:adapt   # 主题适配：亮度采样 → 施加 → 策略优先级 → 回滚
-npm run test:theme   # 主题系统：变量落地 → 派生 → 持久化 → 自定义 → 基调联动
-npm run test:react   # React 外壳：注册表 → iframe 挂载 → 主题应用
+npm install                 # jsdom 在 devDependencies 里，装完即可跑
+
+# —— 外壳与主题（改动最常碰的两条主线）——
+npm run test                # 外壳主线：注册表 → 挂载 → 交互 → 持久化（无构建入口）
+npm run test:react          # React 外壳：注册表 → iframe 挂载 → 交互 / 持久化 / 角标
+npm run test:theme          # 主题系统：变量落地 → 派生 → 持久化 → 自定义 → 基调联动
+npm run test:adapt          # 主题适配：亮度采样 → 施加 → 策略优先级 → 回滚
+npm run test:adapt-seq      # 主题连续切换的适配回归（插件深浅与主平台反转）
+npm run test:theme-picker   # 标题栏主题选择器：缩略图 → 点击即换 → 同步高亮
+npm run test:theme-bridge   # 主题桥接契约（iframe 内改主题必须作用到主面板）
+
+# —— 插件机制 ——
+npm run test:settings       # 插件设置面板（module / iframe 两条路径）
+npm run test:shortcut       # 快捷键只在本插件被激活时生效
+npm run test:handshake      # iframe 握手协议（握手失败＝只见标题不见内容）
+npm run test:bridge         # 隔离态桥接：直连被切断，ctx 能力仍在
+npm run test:external       # 外链策略 + 沙箱两个开关的配置读写
+
+# —— 网络与渲染 ——
+npm run test:tauri-http     # 自研 Tauri http 客户端（分块 / 截断 / 状态码）
+npm run test:layout         # 布局高度链（同一个 bug 报过两次）
+npm run test:xss            # XSS 转义回归
+npm run test:mindmap        # 脑图插件回归（M1~M8 + 数据层）
 ```
+
 注意：jsdom 不加载 iframe 子文档，iframe 内部脚本无法在测试中跑通，
 测试只覆盖到「iframe 被正确插入、握手与主题推送」，插件内部行为需真机验证。
-这两个文件仅开发用，可随时删除。
+这些脚本仅开发用，可随时删除。
+
+### CI
+
+`.github/workflows/ci.yml` 在 push / PR 时跑：
+
+```
+npm ci → 配置漂移检查 → Vite 构建 → test / test:react / test:bridge
+```
+
+前三个是「双栈分叉」最容易出问题的地方：只改了无构建侧、或只改了 Vite 侧，
+CI 会直接红。其余脚本本地按需跑（跑一次几秒）。
+
+## 十四、构建与配置（两套入口怎么不打架）
+
+两套入口的配置原本分散在 `package.json`、`vite.config.ts`、
+`src-tauri/tauri.conf.json`、`src-tauri/tauri.vite.conf.json` 四处，
+出过「同一项配置只在一侧生效」的事故（CSP 只有无构建侧有，React 模式等于裸奔）。
+
+现在共享值统一定义在 **`config/nexus.config.mjs`**：
+
+| 共享值 | 被谁用 |
+| --- | --- |
+| `ENTRIES` | 两个入口 HTML（vite 多页输入 / 同步脚本） |
+| `DEV_SERVER` | `vite.config.ts` 的 `server.port`、`tauri.vite.conf.json` 的 `devUrl` |
+| `BASE_CSP` / `viteDevCsp()` | 两个入口的 CSP meta + 两份 tauri 配置的 `csp` / `devCsp` |
+| `buildInputs()` | vite 的 `rollupOptions.input`（自动扫 `plugins/<id>/index.html`） |
+| `PLAIN_PLUGINS` | 原样拷进 `dist/` 的无构建示例插件 |
+
+由它派生的部分**不要手改**，脚本会生成：
+
+```bash
+npm run config:sync    # 按共享源重写：两份 tauri 配置的 csp / devUrl、两个入口的 CSP meta
+npm run config:check   # 只检查不写入（CI 在用，漂移即失败）
+```
+
+### 两份 Tauri 配置是「合并」不是「替换」
+
+`npm run tauri:dev` / `tauri:build` 带 `--config src-tauri/tauri.vite.conf.json`，
+Tauri 用 **JSON Merge Patch** 把它叠在主配置上 —— 覆盖层没写的字段，
+主配置的值继续生效。所以 `csp` 这类安全项**必须在覆盖层里也显式写一遍**，
+只改主配置、或只给 `index.html` 加 meta，都管不到 Vite 模式的产物。
+
+| | 无构建模式 | Vite + React 模式 |
+| --- | --- | --- |
+| 入口 | `index.html` | `index.react.html` → 构建后 `dist/index.html` |
+| 生产 CSP | `tauri.conf.json` 的 `csp`（基线） | 覆盖层的 `csp`（同为基线）＋ 页面 meta |
+| 开发 CSP | 页面 meta | 覆盖层的 `devCsp` ＋ 页面 meta（走 devUrl 时 Tauri 不注入 header，全靠 meta） |
+| 启动 | `cargo tauri dev` | `npm run tauri:dev` |
+
+dev 态比基线多放行 dev server 与 HMR 的 WebSocket（`config` 里的 `viteDevCsp()`）。
+这两项**只出现在 `devCsp` 与 React 入口的 meta 里，不进生产**：
+生产构建时 Tauri 只注入基线，与页面 meta 取交集后 dev 放行项自动失效。
+（HMR 必需，所以 meta 里躲不掉；靠的是交集，不是"生产不用这个文件"。）
+
+### 改 CSP 的正确姿势
+
+1. 改 `config/nexus.config.mjs` 里的 `BASE_CSP`（或 `viteDevCsp()`）；
+2. `npm run config:sync`；
+3. 提交 `tauri.conf.json`、`tauri.vite.conf.json`、`index.html`、`index.react.html` 四处改动。
+
+外链白名单同理 —— 别只往 `index.html` 的 meta 里加域名，见第五节。

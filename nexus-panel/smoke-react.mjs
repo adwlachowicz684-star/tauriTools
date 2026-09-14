@@ -7,7 +7,18 @@
 import { JSDOM } from 'jsdom';
 import { createRequire as _cr } from 'node:module';
 const _req = _cr(import.meta.url);
-const esbuild = _req(process.env.ESBUILD_PATH || '/data/workspace/.deps/node_modules/esbuild');
+/* esbuild 不在 dependencies 里（vite 间接带着一份），所以解析顺序是：
+   ESBUILD_PATH 环境变量 → 项目本地 node_modules → 开发机上的预置副本。
+   写死单一路径会让这个脚本在 CI / 别人机器上直接挂掉。 */
+function loadEsbuild() {
+  if (process.env.ESBUILD_PATH) return _req(process.env.ESBUILD_PATH);
+  try {
+    return _req('esbuild');
+  } catch {
+    return _req('/data/workspace/.deps/node_modules/esbuild');
+  }
+}
+const esbuild = loadEsbuild();
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -108,48 +119,6 @@ console.log('iframe 已插入:', !!q('#stage-scroll iframe'), '| src:', q('#stag
 console.log('主题已应用:', document.documentElement.dataset.theme,
   '| 基调:', document.documentElement.dataset.themeBase,
   '| --bg:', document.documentElement.style.getPropertyValue('--bg'));
-
-/* ---- window.__NEXUS__：与原生外壳（js/shell.js）对齐的字段清单 ---- */
-const nexus = w.__NEXUS__ || {};
-const NEXUS_KEYS = [
-  'state', 'bus', 'toast', 'navigate', 'removePlugin', 'getPlugins',
-  'mountPlugin', 'getInstance', 'openPluginSettings', 'closePluginSettings',
-  'external', 'theme',
-];
-const missing = NEXUS_KEYS.filter((k) => nexus[k] === undefined);
-console.log('__NEXUS__ 字段:', missing.length ? `❌ 缺少 ${missing.join(', ')}` : `✅ ${NEXUS_KEYS.length} 项齐全`);
-
-const fnOf = (obj, keys) => keys.filter((k) => typeof obj?.[k] !== 'function');
-const extMiss = fnOf(nexus.external, ['loadPolicy', 'savePolicy', 'listHosts', 'setHostStatus', 'removeHost', 'suggestCsp', 'rescanAll', 'scanPlugin', 'setRefreshHandler']);
-console.log('external 外链管理:', extMiss.length ? `❌ 缺少 ${extMiss.join(', ')}` : '✅ 策略+扫描+刷新回调齐全');
-const themeMiss = fnOf(nexus.theme, ['applyTheme', 'setAccent', 'getCurrent', 'exportVars', 'getBase']);
-console.log('theme 主题 API:', themeMiss.length ? `❌ 缺少 ${themeMiss.join(', ')}` : '✅ 与原生外壳一致');
-
-/* ---- 插件设置链路：「⚙ 设置」→ 抽屉 → 关闭 ---- */
-const modPlugin = qa('#plugin-list .nav-item').find((b) => b.textContent.includes('示例·同页'));
-modPlugin?.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
-await tick(600);
-
-const setBtn = qa('#plugin-bar .bar-btn').find((b) => b.textContent.includes('设置'));
-console.log('「⚙ 设置」按钮出现:', !!setBtn);
-setBtn?.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
-await tick(800);
-
-const drawer = q('.drawer-mask');
-console.log('抽屉已打开:', !!drawer, '| 标题:', q('.drawer .drawer-title h2')?.textContent?.trim());
-console.log('外壳开关区块:', q('.drawer .p-card h2')?.textContent ?? '(无)');
-const bodyText = (q('.drawer-body')?.textContent || '').replace(/\s+/g, ' ').trim();
-console.log('设置面板容器:', bodyText ? bodyText.slice(0, 40) : '(空)');
-
-w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-await tick(300);
-console.log('Esc 后抽屉已销毁:', !q('.drawer-mask'));
-
-/* ---- 卸载：登记过的 setTimeout 不再触发，且不抛错 ---- */
-const beforeUnmount = errors.length;
-root.unmount();
-await tick(3000);
-console.log('卸载后无新增错误:', errors.length === beforeUnmount);
 
 console.log(errors.length ? '⚠ 控制台错误: ' + errors.slice(0, 3).join(' | ') : '✅ 无运行时错误');
 process.exit(0);

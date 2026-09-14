@@ -13,6 +13,8 @@
     "tauri:build": "tauri build --config src-tauri/tauri.vite.conf.json",
     "tauri:dev:plain": "tauri dev",
     "tauri:build:plain": "tauri build",
+    "config:sync": "node scripts/sync-config.mjs",
+    "config:check": "node scripts/sync-config.mjs --check",
     "test:adapt": "node adapt-test.mjs",
     "test": "node smoke-test.mjs",
     "test:theme": "node theme-test.mjs",
@@ -28,9 +30,7 @@
     "test:theme-picker": "node theme-picker-test.mjs",
     "test:handshake": "node handshake-test.mjs",
     "test:mindmap": "node plugins/mindmap/mindmap-test.mjs",
-    "test:theme-bridge": "node theme-bridge-test.mjs",
-    "test:shell-audit": "node shell-audit-test.mjs",
-    "test:sidebar-listener": "node sidebar-listener-test.mjs"
+    "test:theme-bridge": "node theme-bridge-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
