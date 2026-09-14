@@ -668,6 +668,69 @@ group('新建画布按钮（＋）位置');
 }
 
 /* ============================================================
+   十、审查清单 P2 · 监听器注销与 postMessage 目标源
+   ============================================================ */
+
+group('P2-1 · pickFile 的 change 监听成对注销');
+{
+  const io = await import('./io.js');
+  const src = fs.readFileSync(path.join(HERE, 'io.js'), 'utf8');
+  const fn = src.slice(src.indexOf('export function pickFile'), src.indexOf('/**\n * 读取文本文件内容'));
+  ok(/inp\.addEventListener\('change',\s*onChange\)/.test(fn), '注册的是命名函数 onChange');
+  ok(/inp\.removeEventListener\('change',\s*onChange\)/.test(fn), 'finish 内成对注销');
+  ok(!/addEventListener\('change',\s*\(\)\s*=>/.test(fn), '不是无法注销的匿名箭头函数');
+
+  // 行为：change 触发后 input 摘除、Promise 结算，重复派发不二次响应
+  const p = io.pickFile('.json');
+  const inp = document.querySelector('input[type=file]');
+  ok(!!inp, '一次性 input 已挂到 DOM 上');
+  inp.dispatchEvent(new dom.window.Event('change'));
+  eq(await p, null, '无文件时 resolve null');
+  ok(!inp.isConnected, 'change 后 input 从 DOM 移除');
+  inp.dispatchEvent(new dom.window.Event('change'));
+  ok(true, '监听器已注销，重复派发不抛错');
+}
+
+group('P2-2 · postMessage 目标源不再是通配');
+{
+  const src = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+  // 去掉注释再查，避免注释里提到的 '*' 干扰
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok(/^\s*_targetOrigin\(\s*\)/m.test(src), '定义了 _targetOrigin()');
+  ok(!/postMessage\([^)]*,\s*'\*'\s*\)/.test(code), '代码里不再有写死的通配目标');
+
+  for (const [segName, from, to] of [
+    ['命令应答', 'async _handleRequest', '/* ---------------------- 命令封装'],
+    ['主题下发', 'setCanvasTheme(vars)', '/** 历史栈可用性探测'],
+  ]) {
+    const seg = src.slice(src.indexOf(from), src.indexOf(to));
+    ok(/this\._targetOrigin\(\)/.test(seg), `${segName}走 _targetOrigin()`);
+  }
+
+  const { EditorBridge } = await import('./editor-bridge.js');
+  const bridge = new EditorBridge(document.createElement('div'), {});
+  const sent = [];
+  bridge.iframe = {
+    src: 'http://tauri.localhost/nexus-panel/plugins/mindmap/editor/index.html',
+    contentWindow: { postMessage: (m, o) => sent.push(o) },
+    remove() {},
+  };
+  eq(bridge._targetOrigin(), 'http://tauri.localhost', '取 iframe 自身的源，不是通配');
+  bridge.setCanvasTheme({ background: '#000' });
+  eq(sent[0], 'http://tauri.localhost', '主题下发按收窄后的源发送');
+
+  bridge.handlers.onHostRequest = async () => ({ ok: true });
+  await bridge._handleRequest({ id: 'r1', action: 'ping', payload: {} });
+  eq(sent[1], 'http://tauri.localhost', '命令应答按收窄后的源发送');
+
+  // 源拿不到时（iframe 还停在 about:blank）不能误用上一次的源 ——
+  // 那会让消息被静默丢弃，比广播更难排查
+  bridge.iframe = { src: '', contentWindow: null, remove() {} };
+  ok(bridge._targetOrigin() !== 'http://tauri.localhost', '无 src 时不会误用上一次的源');
+  bridge.destroy();
+}
+
+/* ============================================================
    结果
    ============================================================ */
 
