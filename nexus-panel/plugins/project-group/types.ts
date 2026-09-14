@@ -67,6 +67,16 @@ export interface FpxConfig {
   mcpTools: Record<string, boolean>;
   chainClient: string | null;
   chainPrompt: string | null;
+  /**
+   * 连锁动作有序清单（对应 Rust `chain_actions`）。
+   * null = 尚未迁移，后端首次读取时会用内置默认值生成。
+   *
+   * 前端不直接编辑它（走 `fpx_chain_actions` / `fpx_save_chain_actions`），
+   * 但保存整份 config 时必须原样带回去：若 JSON 里缺这个字段，
+   * serde 走 default 得到 null，后端会判定「尚未迁移」并用内置值重置，
+   * 用户自己加的动作就没了。
+   */
+  chainActions: ChainAction[] | null;
   watchEnabled: boolean;
   watchIntervalSecs: number;
 }
