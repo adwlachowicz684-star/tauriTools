@@ -28,7 +28,8 @@
     "test:theme-picker": "node theme-picker-test.mjs",
     "test:handshake": "node handshake-test.mjs",
     "test:mindmap": "node plugins/mindmap/mindmap-test.mjs",
-    "test:theme-bridge": "node theme-bridge-test.mjs"
+    "test:theme-bridge": "node theme-bridge-test.mjs",
+    "test:drag-payload": "node plugins/project-group/drag-payload-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

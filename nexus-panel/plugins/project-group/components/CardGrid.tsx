@@ -9,6 +9,34 @@ export interface DragPayload {
   path: string;
 }
 
+function isCardKind(v: unknown): v is CardKind {
+  return v === 'project' || v === 'group';
+}
+
+/**
+ * 解析拖拽载荷，失败返回 null。
+ *
+ * `raw` 取自 dataTransfer，内容可以是**任意文本**（从别的应用拖进来，或人为伪造）：
+ * 直接 JSON.parse 会抛异常中断拖拽处理；更隐蔽的是解析成功但结构不对（没有 kind / path），
+ * 后续 `drag.path` 为 undefined 会造成静默错乱。所以这里既要兜住解析异常，也要做结构校验。
+ */
+export function parseDragPayload(raw: string | null | undefined): DragPayload | null {
+  if (!raw) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const { kind, path } = parsed as Partial<DragPayload>;
+  if (!isCardKind(kind)) return null;
+  if (typeof path !== 'string' || path === '') return null;
+  return { kind, path };
+}
+
 /** 页签条：切换 / 新增 / 双击重命名 / 右键删除 */
 export function TabBar({
   tabs, active, onSelect, onAdd, onRename, onRemove, kind,
@@ -75,7 +103,8 @@ export function TabBar({
             if (!raw) return;
             e.preventDefault();
             e.stopPropagation();
-            const drag: DragPayload = JSON.parse(raw);
+            const drag = parseDragPayload(raw);
+            if (!drag) return;
             // 只接同栏卡片：跨栏拖拽的语义是「分配」，交给卡片区处理
             if (drag.kind !== kind) return;
             onDropCard(drag.path, i);
@@ -136,7 +165,8 @@ export function CardGrid({
         const raw = e.dataTransfer.getData(DRAG_MIME);
         setOver(-1);
         if (!raw) return;
-        const drag: DragPayload = JSON.parse(raw);
+        const drag = parseDragPayload(raw);
+        if (!drag) return;
         if (drag.kind === kind) onMove(drag.path, cards.length);
         else onCrossDrop(drag, null);
       }}
@@ -166,7 +196,8 @@ export function CardGrid({
             setOver(-1);
             const raw = e.dataTransfer.getData(DRAG_MIME);
             if (!raw) return;
-            const drag: DragPayload = JSON.parse(raw);
+            const drag = parseDragPayload(raw);
+            if (!drag) return;
             if (drag.kind === kind) onMove(drag.path, i);
             else onCrossDrop(drag, c);
           }}
