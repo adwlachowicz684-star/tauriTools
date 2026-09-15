@@ -33,7 +33,8 @@
     "test:theme-bridge": "node theme-bridge-test.mjs",
     "test:flash": "node plugin-flash-test.mjs",
     "test:tokens": "node style-tokens-test.mjs",
-    "test:plugin-theme": "node plugin-theme-test.mjs"
+    "test:plugin-theme": "node plugin-theme-test.mjs",
+    "test:tooltip": "node tooltip-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

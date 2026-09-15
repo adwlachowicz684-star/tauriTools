@@ -566,6 +566,35 @@ body {
 .toast.ok  { color: var(--ok); }
 @keyframes toastIn { from { opacity: 0; transform: translateY(8px); } }
 
+/* ---------------- 悬浮提示（接管原生 title） ----------------
+   原生 title 有约 1 秒延迟且无法调整，所以自己实现一个"移上去立刻显示"。
+   样式对齐 .toast：同样用 --surface-overlay 实色底板，保证在玻璃主题下
+   也能读（详见 .dialog 处关于底板的说明）。 */
+.nexus-tip {
+  position: fixed;
+  z-index: 1200;
+  max-width: 280px;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--surface-overlay, var(--surface-raised));
+  box-shadow: 4px 4px 10px var(--sh-dark), -4px -4px 10px var(--sh-light);
+  border: 1px solid var(--border);
+
+  /* 关键：不能吃鼠标事件。否则提示出现在光标下方时会抢走 hover 目标，
+     立刻触发 mouseout → 隐藏 → 又 mouseover，疯狂闪烁。 */
+  pointer-events: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+
+  /* 只做透明度过渡，位移由 JS 直接定位（避免过渡期间位置飘） */
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+.nexus-tip.on { opacity: 1; }
+
 /* ============================================================
    插件通用组件库（插件里直接用这些 class 就能保持风格统一）
    ============================================================ */

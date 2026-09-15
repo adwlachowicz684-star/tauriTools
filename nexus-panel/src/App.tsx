@@ -14,6 +14,7 @@ import Stage from './components/Stage';
 import Toasts, { type ToastItem } from './components/Toasts';
 import AddPluginDialog from './components/AddPluginDialog';
 import PluginSettingsDrawer from './components/PluginSettingsDrawer';
+import { installTooltip } from '../js/tooltip.js';
 
 /**
  * 全局唯一 ID（toast / 自定义插件共用）
@@ -152,6 +153,11 @@ export default function App() {
     pushToast(`已检查 ${list.length} 个插件，登记 ${total} 个外链`, 'ok');
     refreshExternalUIRef.current?.();
   }, [pushToast]);
+
+  /* 悬浮提示：接管原生 title（原生有约 1 秒延迟，无法调整）。
+     与无构建模式共用 js/tooltip.js，行为一致。
+     放在最前面，保证插件挂载前就已生效。 */
+  useEffect(() => installTooltip(), []);
 
   /* ---------- 初始化宿主（仅一次） ---------- */
   useEffect(() => {

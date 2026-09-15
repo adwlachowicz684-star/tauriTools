@@ -17,6 +17,7 @@ import { h } from './plugin-sdk.js';
 import * as extPolicy from './external-policy.js';
 import { getPluginConfig, setPluginConfig } from './plugin-config.js';
 import { openThemePicker } from './theme-picker.js';
+import { installTooltip } from './tooltip.js';
 
 const $ = (s) => document.querySelector(s);
 const state = { badges: {} };
@@ -40,6 +41,10 @@ function toast(msg, type = 'info') {
     setTimeout(() => el.remove(), 320);
   }, 2600);
 }
+
+/* 悬浮提示：接管原生 title，鼠标移上去立刻显示（原生有约 1 秒延迟，无法调整）。
+   必须在插件挂载前安装 —— 插件自己的按钮也带 title。 */
+installTooltip();
 
 /* ---------------------------- 宿主（主题在引擎内初始化） ---------------------------- */
 const host = createHost({
