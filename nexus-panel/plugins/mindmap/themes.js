@@ -132,6 +132,97 @@ export function themeSeed(themeValue, customThemes = []) {
 }
 
 /* ------------------------------------------------------------
+   导入主题时的 palette 校验（A65 边界收口）
+   ------------------------------------------------------------ */
+
+/**
+ * 判定一个值是否是能被 core 接受的色值（纯函数，可测）。
+ *
+ * `parseColor` 认的是 #RGB / #RRGGBB / rgb() / rgba()；
+ * 而 `'transparent'` 虽然 CSS 合法，**写进 palette 会让 core 解析失败、
+ * 整个主题失效**（A64 里已踩过一次）。所以这里单独放行并交给调用方回落。
+ *
+ * @returns {'color'|'transparent'|null}
+ */
+export function colorKind(v) {
+  if (typeof v !== 'string') return null;
+  if (v.trim().toLowerCase() === 'transparent') return 'transparent';
+  return parseColor(v) ? 'color' : null;
+}
+
+/** palette 里应当是色值的字段 */
+const COLOR_KEYS = [
+  'background', 'textColor', 'selectedColor', 'connectColor',
+  'rootBackground', 'mainBackground', 'subBackground',
+];
+
+/** 各字段的兜底色（非法值时的替代） */
+const COLOR_FALLBACK = {
+  background: '#FBFBFB',
+  textColor: '#333333',
+  selectedColor: '#4A90D9',
+  connectColor: '#4A90D9',
+  rootBackground: '#4A90D9',
+  mainBackground: '#DCE9F7',
+  subBackground: '#FFFFFF',
+};
+
+/**
+ * 校验并修复导入的 palette（纯函数，可测）。
+ *
+ * 为什么必须做：A64（新建主题以当前为种子）里发现 `sub='transparent'`
+ * 写进 palette 会让**整个主题失效**，当时在 themeSeed 里做了回落。
+ * 但**导入路径完全没有这层校验** —— 同一个坑在两条路径上不对称，
+ * 导入一个含非法色值的 JSON 就会静默得到一个坏主题。
+ *
+ * @param {object} pal 原始 palette
+ * @returns {{palette:object, fixed:string[]}} fixed = 被修正的字段名，
+ *   供调用方提示用户「哪些值被替换了」——静默改掉用户的东西不说一声不合适。
+ */
+export function sanitizePalette(pal) {
+  const src = (pal && typeof pal === 'object') ? pal : {};
+  const out = { ...src };
+  const fixed = [];
+
+  for (const k of COLOR_KEYS) {
+    const v = src[k];
+    if (v === undefined || v === null || v === '') continue;
+    // 'transparent' 只对 subBackground 有意义（表示不填充，透出底色），
+    // 但 core 不认它 —— 回落到画布底色，视觉效果一致。
+    if (colorKind(v) === 'transparent') {
+      out[k] = src.background && colorKind(src.background) === 'color'
+        ? src.background
+        : COLOR_FALLBACK.background;
+      fixed.push(k);
+      continue;
+    }
+    if (colorKind(v) !== 'color') {
+      out[k] = COLOR_FALLBACK[k] ?? '#FFFFFF';
+      fixed.push(k);
+    }
+  }
+
+  // connectWidth：必须是正数。0 会让连线看不见，负数/NaN 会让 core 直接崩，
+  // 而这两种都不会报错 —— 又是一个「静默坏掉」的入口。
+  const w = Number(src.connectWidth);
+  if (src.connectWidth !== undefined && (!Number.isFinite(w) || w <= 0)) {
+    out.connectWidth = 2;
+    fixed.push('connectWidth');
+  }
+
+  // 字号同理：0 或负数会让文字消失
+  for (const k of ['rootFontSize', 'mainFontSize', 'subFontSize']) {
+    const n = Number(src[k]);
+    if (src[k] !== undefined && (!Number.isFinite(n) || n <= 0)) {
+      out[k] = k === 'rootFontSize' ? 16 : (k === 'mainFontSize' ? 14 : 12);
+      fixed.push(k);
+    }
+  }
+
+  return { palette: out, fixed };
+}
+
+/* ------------------------------------------------------------
    外壳主题 → 画布配色
    ------------------------------------------------------------
    编辑器页面是独立文档（嵌套 iframe），拿不到外壳注入的 CSS 变量，

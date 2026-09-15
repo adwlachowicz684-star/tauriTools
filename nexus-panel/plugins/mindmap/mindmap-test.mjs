@@ -3335,8 +3335,13 @@ group('SVG → PDF 矢量通道');
   ok(/矢量 PDF 不可用，改用打印对话框/.test(ep), '矢量失败时**明确提示**再托底（不能静默弹框）');
   ok(/await printMap\(\{ landscape, margin \}\)/.test(ep), '托底走打印对话框');
   // 用户取消不再托底
-  ok(/if \(r !== 'cancel'\)/.test(ep), '落盘成功/失败才继续');
-  ok(/return;\s*\/\/ 用户主动取消，不再托底/.test(ep), '用户主动取消保存 → 不再托底弹框');
+  // 早先这里是 `if (r !== 'cancel') 就报成功` —— 'error' 也落进那个分支，
+  // 变成「保存失败却提示已导出」。现在统一走 reportSave（与其余 7 处导出一致）。
+  ok(/reportSave\(r, 'PDF（矢量）'\)/.test(ep), '落盘结果交给 reportSave 处理（不再自己判断）');
+  // 用「旧的错误提示文案已消失」来间接确认换了实现 ——
+  // 直接正则查 `r !== 'cancel'` 会命中解释这段历史的注释，属于假阳性。
+  ok(!/已导出 PDF（矢量）/.test(ep), '旧的「一律报成功」提示已移除（会把 error 也报成已导出）');
+  ok(/落盘结果无论成败都不再托底/.test(ep), '只有**矢量转换本身**失败才托底，落盘失败不托底');
 
   // 设置项
   ok(/setPdfChannel: guard/.test(idx), '新增 setPdfChannel API');
@@ -3359,6 +3364,214 @@ group('SVG → PDF 矢量通道');
 
   // 默认值
   ok(/pdfChannel: 'vector'/.test(idx), 'settings 默认值 pdfChannel=vector');
+}
+
+/* ============================================================
+   三十一、审查修复 + A65/A66 边界 + A5 + A18 + A70 + A71
+   ============================================================ */
+
+group('审查修复与 A65/A66 主题导入导出边界');
+
+{
+  const th = await import('./themes.js');
+
+  // ---- colorKind ----
+  eq(th.colorKind('#fff'), 'color', 'colorKind 认 #RGB');
+  eq(th.colorKind('#ffffff'), 'color', 'colorKind 认 #RRGGBB');
+  eq(th.colorKind('rgb(1,2,3)'), 'color', 'colorKind 认 rgb()');
+  eq(th.colorKind('transparent'), 'transparent', 'colorKind 单独识别 transparent（不是合法 palette 值）');
+  eq(th.colorKind('TRANSPARENT'), 'transparent', 'colorKind 大小写不敏感');
+  eq(th.colorKind('不是颜色'), null, 'colorKind 非法值 → null');
+  eq(th.colorKind(123), null, 'colorKind 非字符串 → null');
+
+  // ---- sanitizePalette ----
+  const r1 = th.sanitizePalette({ subBackground: 'transparent', background: '#101010' });
+  eq(r1.palette.subBackground, '#101010', "A65 transparent 回落到画布底色（core 不认 transparent）");
+  eq(r1.fixed.includes('subBackground'), true, 'A65 被修正的字段要列出来');
+
+  const r2 = th.sanitizePalette({ subBackground: 'transparent' });
+  eq(r2.palette.subBackground, '#FBFBFB', 'A65 没有 background 时用兜底色');
+
+  const r3 = th.sanitizePalette({ rootBackground: '随便乱写' });
+  eq(r3.palette.rootBackground, '#4A90D9', 'A65 非法色值 → 兜底色');
+  eq(r3.fixed.includes('rootBackground'), true, 'A65 非法值被记录');
+
+  const r4 = th.sanitizePalette({ connectWidth: 0 });
+  eq(r4.palette.connectWidth, 2, 'A65 connectWidth=0 会让连线看不见 → 修正为 2');
+  const r5 = th.sanitizePalette({ connectWidth: -3 });
+  eq(r5.palette.connectWidth, 2, 'A65 负数 connectWidth 会让 core 崩 → 修正');
+  const r6 = th.sanitizePalette({ rootFontSize: 0 });
+  eq(r6.palette.rootFontSize, 16, 'A65 字号 0 会让文字消失 → 修正');
+
+  const r7 = th.sanitizePalette({ background: '#fff', rootBackground: '#000' });
+  eq(r7.fixed.length, 0, 'A65 合法值不被修改');
+  eq(r7.palette.background, '#fff', 'A65 合法值原样保留');
+
+  // 未提供的字段不该被凭空加上（否则会把用户的部分主题填成另一套）
+  const r8 = th.sanitizePalette({ background: '#abcdef' });
+  eq(r8.palette.rootBackground, undefined, 'A65 缺失字段不擅自补默认值（保持用户的原样）');
+}
+
+{
+  const pn = await import('./panels.js');
+  // ---- 主题重名 ----
+  eq(pn.uniqueThemeName('我的主题', []), '我的主题', '重名：空列表直接用原名');
+  eq(pn.uniqueThemeName('我的主题', [{ name: '我的主题' }]), '我的主题 (2)', '重名：加 (2)');
+  eq(pn.uniqueThemeName('我的主题', [{ name: '我的主题' }, { name: '我的主题 (2)' }]), '我的主题 (3)',
+    '重名：已有 (2) 则给 (3)');
+  eq(pn.uniqueThemeName('', []), '未命名', '空名 → 未命名');
+  eq(pn.uniqueThemeName('  ', []), '未命名', '纯空格 → 未命名');
+
+  const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const imp = src.slice(src.indexOf('async function importThemeFile'), src.indexOf('function pageTheme'));
+  ok(/sanitizePalette\(pal\)/.test(imp), 'A65 导入时校验 palette（此前完全没有，属两条路径不对称）');
+  ok(/uniqueThemeName\(t\.name/.test(imp), 'A65 导入时处理重名');
+  ok(/固定\.length\s*\n?\s*\?/.test(imp) || /已修正 \$\{fixed\.length\} 个无效值/.test(imp),
+    'A65 修正过的字段要告诉用户（不能静默改人家的文件）');
+  const exp = src.slice(src.indexOf('async function exportThemeFile'), src.indexOf('async function importThemeFile'));
+  ok(/if \(r !== 'cancel'\)/.test(exp), 'A66 导出：用户取消时不提示');
+  ok(/导出主题失败/.test(exp), 'A66 导出：失败要提示');
+}
+
+group('A5 剪贴板位图导入 / A18 失效图标清理');
+
+{
+  const pn = await import('./panels.js');
+  // ---- imageItemsFromClipboard ----
+  eq(pn.imageItemsFromClipboard(null).length, 0, 'A5 无剪贴板数据 → 空');
+  eq(pn.imageItemsFromClipboard({ files: [] }).length, 0, 'A5 空文件列表 → 空');
+
+  const mkFile = (type) => ({ type, name: 'x' });
+  eq(pn.imageItemsFromClipboard({ files: [mkFile('image/png')] }).length, 1, 'A5 取图片文件');
+  eq(pn.imageItemsFromClipboard({ files: [mkFile('text/plain')] }).length, 0,
+    'A5 过滤掉非图片（否则会生成打不开的图标条目）');
+  eq(pn.imageItemsFromClipboard({ files: [mkFile('image/png'), mkFile('text/plain')] }).length, 1,
+    'A5 混合时只要图片');
+
+  // 兜底：只有 items 没有 files 的环境
+  const itemOnly = { items: [{ kind: 'file', type: 'image/png', getAsFile: () => mkFile('image/png') }] };
+  eq(pn.imageItemsFromClipboard(itemOnly).length, 1, 'A5 兜底走 items（部分环境不填 files）');
+  eq(pn.imageItemsFromClipboard({ items: [{ kind: 'string', type: 'text/plain' }] }).length, 0,
+    'A5 items 里的非 file 类型被忽略');
+
+  const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  ok(/addEventListener\('paste', onPasteIcons\)/.test(src), 'A5 挂了 paste 监听');
+  ok(/removeEventListener\('paste', onPasteIcons\)/.test(src),
+    'A5 关闭时解绑 —— 不解绑会重复触发，一次 Ctrl+V 加进去两份');
+  ok(/document\.addEventListener\('paste'/.test(src),
+    'A5 挂在 document 上（对话框本身拿不到焦点，挂它身上收不到 paste）');
+  ok(/if \(!files\.length\) return;/.test(src), 'A5 剪贴板没图时静默不响应（否则每次 Ctrl+V 都弹提示）');
+}
+
+{
+  const pi = await import('./preset-icons.js');
+  // ---- partitionMissing（纯函数）----
+  const live = new Set(['a1']);
+  const r = pi.partitionMissing(
+    [{ kind: 'user', assetId: 'a1' }, { kind: 'user', assetId: 'gone' }, { kind: 'builtin', id: 'b1' }],
+    live);
+  eq(r.keep.length, 2, 'A18 保留有效用户图标 + 内置图标');
+  eq(r.drop.length, 1, 'A18 挑出资产丢失的用户图标');
+  eq(r.drop[0].assetId, 'gone', 'A18 丢的是资产没了的那条');
+  // 内置图标不依赖资产，永不失效
+  eq(pi.partitionMissing([{ kind: 'builtin' }], new Set()).drop.length, 0,
+    'A18 内置图标无资产依赖，不会被判失效（path 在代码里）');
+  eq(pi.partitionMissing([], new Set()).keep.length, 0, 'A18 空列表不报错');
+  eq(pi.partitionMissing(null, new Set()).keep.length, 0, 'A18 null 不报错');
+
+  ok(typeof pi.pruneMissing === 'function', 'A18 导出 pruneMissing');
+  const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  ok(/清理失效/.test(src), 'A18 图标库里有「清理失效」入口');
+  ok(/picons\.pruneMissing\(\)/.test(src), 'A18 入口调用 pruneMissing');
+}
+
+group('A70 开发者工具 / A71 诊断捕获');
+
+{
+  // ---- Rust 侧 A70 ----
+  const rs = fs.readFileSync(path.join(HERE, '../../src-tauri/src/main.rs'), 'utf8');
+  ok(/fn mm_open_devtools/.test(rs), 'A70 Rust 新增 mm_open_devtools');
+  ok(/mm_open_devtools,/.test(rs), 'A70 命令已注册');
+  const f = rs.slice(rs.indexOf('fn mm_open_devtools'), rs.indexOf('/// 当前是否具备'));
+  ok(/#\[cfg\(debug_assertions\)\]/.test(f), 'A70 debug 构建才真的打开');
+  ok(/#\[cfg\(not\(debug_assertions\)\)\]/.test(f), 'A70 release 明确报错（给最终用户开控制台没意义）');
+  ok(/window\.open_devtools\(\)/.test(f), 'A70 调用 Tauri 的 open_devtools');
+  ok(/let _ = &window;/.test(f), 'A70 release 分支消费掉 magic parameter');
+
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  ok(/ctx\.invoke\('mm_open_devtools'/.test(idx), 'A70 前端调用 mm_open_devtools');
+  ok(/openDevTools: guard/.test(idx), 'A70 暴露 openDevTools API');
+  const pn2 = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  ok(/开发者工具/.test(pn2), 'A70 设置里有入口');
+}
+
+{
+  const dg = await import('./diagnostics.js');
+
+  // ---- normalize ----
+  const n1 = dg.normalize({ message: 'boom', level: 'error', source: 'editor' });
+  eq(n1.level, 'error', 'A71 normalize 保留级别');
+  eq(n1.message, 'boom', 'A71 normalize 保留消息');
+  eq(n1.source, 'editor', 'A71 normalize 保留来源');
+  eq(dg.normalize({ message: 'x', level: 'warn' }).level, 'warn', 'A71 warn 级别');
+  eq(dg.normalize({ message: 'x', level: 'haha' }).level, 'error', 'A71 未知级别归为 error');
+  eq(dg.normalize({ message: '   ' }), null, 'A71 空消息 → null（过滤噪声）');
+  eq(dg.normalize(null), null, 'A71 null → null');
+  ok(typeof dg.normalize('plain string').message === 'string', 'A71 裸字符串也能收');
+
+  // ---- pushEntries 环形缓冲 ----
+  const e = (i) => ({ message: 'm' + i, level: 'error', source: 'shell', at: i });
+  const big = dg.pushEntries([], Array.from({ length: 150 }, (_, i) => e(i)), 100);
+  eq(big.length, 100, 'A71 超限时截断到上限');
+  eq(big[big.length - 1].message, 'm149', 'A71 **保留最近的**（丢最旧的）');
+  eq(big[0].message, 'm50', 'A71 最旧的被丢掉');
+  eq(dg.pushEntries([e(1)], [e(2)]).length, 2, 'A71 未超限则累加');
+  const orig = [e(1)];
+  dg.pushEntries(orig, [e(2)]);
+  eq(orig.length, 1, 'A71 不改动入参（返回新数组）');
+
+  // ---- filterByLevel / formatReport ----
+  const mixed = [
+    { message: 'a', level: 'error', source: 's', at: 1 },
+    { message: 'b', level: 'warn', source: 's', at: 2 },
+  ];
+  eq(dg.filterByLevel(mixed, 'error').length, 1, 'A71 按级别过滤');
+  eq(dg.filterByLevel(mixed).length, 2, 'A71 不传级别返回全部');
+  ok(/ERROR/.test(dg.formatReport(mixed)), 'A71 报告含级别');
+  // 注意是**全角**括号：直接写 ASCII 的 \( \) 匹配不上，属于假阴性
+  ok(dg.formatReport([]).includes('无诊断记录'), 'A71 空列表给出明确文案');
+
+  // ---- 内层 iframe 捕获 ----
+  const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  ok(/addEventListener\('error'/.test(html), 'A71 iframe 捕获 onerror');
+  ok(/unhandledrejection/.test(html), 'A71 iframe 捕获 unhandledrejection');
+  ok(/console\[lv\]/.test(html) || /'error', 'warn'/.test(html), 'A71 iframe 包装 console.error/warn');
+  ok(/type: 'diagnostic'/.test(html), 'A71 iframe 以 diagnostic 类型上报');
+  // 捕获阶段：资源加载错误不冒泡
+  ok(/}, true\);\s*\/\/ 捕获阶段/.test(html) || /捕获阶段/.test(html),
+    'A71 用捕获阶段收资源加载错误（那类不冒泡）');
+
+  // ---- bridge 转发 ----
+  const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+  ok(/case 'diagnostic':/.test(br), 'A71 bridge 转发 diagnostic');
+  ok(/onDiagnostic\?\.\(d\)/.test(br), 'A71 通过 handler 回调出去');
+
+  // ---- 外壳侧捕获 ----
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  ok(/function captureShellErrors/.test(idx), 'A71 外壳侧也有捕获（不只 iframe）');
+  ok(/captureShellErrors\(\);/.test(idx), 'A71 外壳捕获真的被调用');
+  ok(/onDiagnostic: \(d\) =>/.test(idx), 'A71 插件层接收并收集');
+  ok(/diag\.pushEntries\(diagnostics, \[e\]\)/.test(idx), 'A71 走环形缓冲（不会无限堆积）');
+
+  // ---- 诊断窗口 ----
+  const pn3 = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  ok(/export function openDiagnostics/.test(pn3), 'A71 新增诊断窗口');
+  ok(/诊断记录…/.test(pn3), 'A71 设置里有入口');
+  const od = pn3.slice(pn3.indexOf('export function openDiagnostics'), pn3.indexOf('/** 自定义主题编辑器 */'));
+  ok(/textarea/.test(od), 'A71 用 textarea（可整段复制去报问题，pre 换行会乱）');
+  ok(/readonly/.test(od), 'A71 只读');
+  ok(/navigator\.clipboard\.writeText/.test(od), 'A71 一键复制');
+  ok(/ta\.select\(\)/.test(od), 'A71 剪贴板不可用时退化为全选（还能手动 Ctrl+C）');
 }
 
 /* ============================================================

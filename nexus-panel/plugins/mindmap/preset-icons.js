@@ -292,6 +292,74 @@ export async function copyBuiltinTo(groupId, icon) {
 }
 
 /* ------------------------------------------------------------
+   A18 失效图标清理（对齐 WPF `PresetIconService.PruneMissing`）
+   ------------------------------------------------------------ */
+
+/**
+ * 挑出失效图标（纯函数，可测）。
+ *
+ * C# 版判断的是「磁盘文件还在不在」（`File.Exists`）；
+ * Web 版没有磁盘文件，等价物是 **IndexedDB 里的资产记录** ——
+ * 图标条目还在、但资产读不出来，就是失效。
+ * 典型场景：清过浏览器数据、从别的设备导入配置、资产写入半途失败。
+ *
+ * @param {Array} icons 图标条目
+ * @param {Set<string>} live 仍然存在的 assetId 集合
+ * @returns {{keep:Array, drop:Array}}
+ */
+export function partitionMissing(icons = [], live = new Set()) {
+  const keep = [];
+  const drop = [];
+  for (const ic of icons || []) {
+    // 只有用户图标依赖资产；内置与内置副本的 path 在代码里，不会失效
+    if (ic?.kind === 'user' && ic.assetId && !live.has(ic.assetId)) drop.push(ic);
+    else keep.push(ic);
+  }
+  return { keep, drop };
+}
+
+/**
+ * 清理各分组里资产已消失的用户图标，并落盘。
+ *
+ * 为什么要做：失效图标在界面上是**一块空白**（图片加载不出来），
+ * 和之前踩过的「深色界面上纯黑 = 看不见」是同一类问题 ——
+ * 用户只看到一堆占位，不知道是图标坏了还是加载慢。
+ *
+ * @returns {Promise<{removed:number, groups:number}>} 清掉了多少个、涉及几组
+ */
+export async function pruneMissing() {
+  const groups = await loadLibrary();
+  let removed = 0;
+  let touched = 0;
+
+  // 先把所有 assetId 一次性查出来再批量判定：
+  // 逐个 await 判定会让「读库」与「改库」交错，逻辑更绕也更难测。
+  const ids = new Set();
+  for (const g of groups) {
+    for (const ic of g.icons || []) {
+      if (ic?.kind === 'user' && ic.assetId) ids.add(ic.assetId);
+    }
+  }
+  const live = new Set();
+  for (const id of ids) {
+    const rec = await store.get('asset:' + id, null);
+    if (rec?.blob) live.add(id);
+  }
+
+  for (const g of groups) {
+    if (g.builtin) continue;   // 内置分组由代码生成，改了下次加载会被覆盖回去
+    const { keep, drop } = partitionMissing(g.icons, live);
+    if (!drop.length) continue;
+    g.icons = keep;
+    removed += drop.length;
+    touched++;
+  }
+
+  if (removed > 0) await saveUserGroups(groups);
+  return { removed, groups: touched };
+}
+
+/* ------------------------------------------------------------
    图标 → 可显示内容
    ------------------------------------------------------------ */
 

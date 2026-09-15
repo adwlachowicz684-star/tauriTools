@@ -110,6 +110,45 @@
             }
         } catch (e) {}
     }
+    // ==== A71 诊断捕获 ====
+    // kityminder 跑在嵌套 iframe 里，这里的报错**不会**出现在外壳控制台 ——
+    // 用户侧「点了没反应」却查不到任何线索。捕获后推给父窗口统一展示。
+    // 必须在 kity 加载**之前**装好，否则初始化期间的报错抓不到。
+    (function () {
+        function send(level, message, stack) {
+            try {
+                hostPost({ type: 'diagnostic', level: level, message: String(message || '').slice(0, 2000), stack: String(stack || '').slice(0, 2000), at: Date.now() });
+            } catch (e) {}
+        }
+        window.addEventListener('error', function (ev) {
+            // 资源加载失败（img/script）时 ev.error 为空，只有 target ——
+            // 那种也要报，否则图片 404 会毫无痕迹。
+            if (ev && ev.target && ev.target !== window && ev.target.tagName) {
+                send('error', '资源加载失败: ' + (ev.target.src || ev.target.href || ev.target.tagName), '');
+                return;
+            }
+            send('error', (ev && ev.message) || '未知错误', (ev && ev.error && ev.error.stack) || '');
+        }, true);   // 捕获阶段：才能收到资源加载错误（那类不冒泡）
+        window.addEventListener('unhandledrejection', function (ev) {
+            var r = ev && ev.reason;
+            send('error', (r && r.message) || String(r || '未处理的 Promise 拒绝'), (r && r.stack) || '');
+        });
+        // console 包装：只截 error/warn，其余原样放行（不能影响正常调试输出）
+        ['error', 'warn'].forEach(function (lv) {
+            var orig = console[lv];
+            console[lv] = function () {
+                try {
+                    var s = Array.prototype.map.call(arguments, function (a) {
+                        if (a instanceof Error) return a.message;
+                        try { return typeof a === 'object' ? JSON.stringify(a) : String(a); } catch (e) { return String(a); }
+                    }).join(' ');
+                    if (s) send(lv === 'warn' ? 'warn' : 'error', s, '');
+                } catch (e) {}
+                if (typeof orig === 'function') orig.apply(console, arguments);
+            };
+        });
+    })();
+
     // 嵌套 iframe 模式下由父窗口回执，配合 window.__resolveHost 完成 request/response 配对
     window.addEventListener('message', function (e) {
         var d = e && e.data;

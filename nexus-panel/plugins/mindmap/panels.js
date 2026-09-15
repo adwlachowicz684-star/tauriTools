@@ -11,9 +11,58 @@
  */
 
 import { h } from '../../js/plugin-sdk.js';
-import { THEMES, LAYOUTS, blankTheme, DEFAULT_THEME, themeSeed } from './themes.js';
+import { THEMES, LAYOUTS, blankTheme, DEFAULT_THEME, themeSeed, sanitizePalette } from './themes.js';
+
+/**
+ * 主题重名时加序号（纯函数，可测）。
+ *
+ * 导入不检查重名的话，同名主题会堆成一列，用户分不清哪个是哪个 ——
+ * id 是新生成的，所以「重名」不会导致覆盖，只是**看不出区别**。
+ * 加 (2)(3) 后缀比弹框问「是否覆盖」轻：导入是低频操作，
+ * 而覆盖会让用户丢掉原来那个。
+ */
+/**
+ * A5 从剪贴板数据里挑出图片（纯函数，可测）。
+ *
+ * 走 `paste` 事件而不是 `navigator.clipboard.read()`：
+ * 后者要用户授权、且在 WebView2 里常被拒；前者是用户主动 Ctrl+V 的自然结果，
+ * 权限与兼容性都更稳。
+ *
+ * 只认图片：剪贴板里同时可能有文字、HTML、文件，
+ * 不加过滤的话会把文本也当成图标（生成一个打不开的条目）。
+ *
+ * @param {DataTransfer|null} dt
+ * @returns {File[]} 图片文件列表
+ */
+export function imageItemsFromClipboard(dt) {
+  if (!dt) return [];
+  const out = [];
+  // files 优先：多数浏览器复制图片时会给出 File
+  for (const f of dt.files || []) {
+    if (f && String(f.type || '').startsWith('image/')) out.push(f);
+  }
+  if (out.length) return out;
+  // 兜底：某些环境只填 items 不填 files
+  for (const it of dt.items || []) {
+    if (it?.kind === 'file' && String(it.type || '').startsWith('image/')) {
+      const f = typeof it.getAsFile === 'function' ? it.getAsFile() : null;
+      if (f) out.push(f);
+    }
+  }
+  return out;
+}
+
+export function uniqueThemeName(name, themes = []) {
+  const base = String(name || '未命名').trim() || '未命名';
+  const taken = new Set((themes || []).map((t) => t.name));
+  if (!taken.has(base)) return base;
+  let i = 2;
+  while (taken.has(`${base} (${i})`)) i++;
+  return `${base} (${i})`;
+}
 import { LAYOUT_THUMBS } from './layout-thumbs.js';
 import * as io from './io.js';
+import * as diag from './diagnostics.js';
 import * as store from './store.js';
 import * as mi from './mediainfo.js';
 import * as picons from './preset-icons.js';
@@ -908,7 +957,10 @@ export function buildSide(app, opts = {}) {
       JSON.stringify(t, null, 2),
       'application/json',
     );
-    app.api.status(r === 'error' ? '导出主题失败' : `已导出主题：${t.name || '未命名'}`);
+    // 与其余 7 处导出保持一致的提示口径（ok / cancel / fallback / error 四种）
+    if (r !== 'cancel') {
+      app.api.status(r === 'error' ? '导出主题失败' : `已导出主题：${t.name || '未命名'}`);
+    }
   }
 
   /** 从 JSON 文件导入自定义主题（对齐 C# OnImportThemeClick，重新生成 id 避免覆盖） */
@@ -927,10 +979,17 @@ export function buildSide(app, opts = {}) {
       app.api.status('导入主题失败：文件格式不符（缺少 name / palette）', true);
       return;
     }
+    // A65 边界：导入的 palette 可能含非法值（'transparent'、任意字符串、
+    // 0 或负数）。这些**都不会报错**，只会让主题静默失效 ——
+    // 画布停在一片错色上，用户根本不知道是导入的锅。
+    // A64（新建主题）早就做了这层回落，导入路径此前**完全没有**，
+    // 属于同一个坑在两条路上的不对称。
+    const { palette, fixed } = sanitizePalette(pal);
+    const name = uniqueThemeName(t.name, app.customThemes);
     const copy = {
       id: 'custom-' + Math.random().toString(36).slice(2, 10),
-      name: String(t.name),
-      palette: { ...pal },
+      name,
+      palette,
     };
     app.customThemes = [...(app.customThemes || []), copy];
     const okSave = await app.api.saveThemes();
@@ -938,7 +997,10 @@ export function buildSide(app, opts = {}) {
     app.bridge.registerTheme(copy);
     app.api.applyTheme(copy.id);
     refresh();
-    app.api.status(`已导入自定义主题：${copy.name}`);
+    // 修正过的字段必须说出来 —— 静默改掉用户文件里的值不合适
+    app.api.status(fixed.length
+      ? `已导入「${name}」；已修正 ${fixed.length} 个无效值：${fixed.join('、')}`
+      : `已导入自定义主题：${name}`);
   }
 
   /* ------------------------- 主题页 ------------------------- */
@@ -1189,6 +1251,57 @@ export function openPrintSettings(app, onPrint) {
     ),
   ]);
   return dlg;
+}
+
+/**
+ * A71 诊断窗口。
+ *
+ * 错误信息用**只读 textarea** 而不是 <pre>：用户要能选中、能整段复制去报问题。
+ * <pre> 在窄侧栏里换行混乱，复制出来也常带上缩进。
+ *
+ * @param {object} o
+ * @param {Array} o.entries 诊断条目
+ * @param {Function} o.onClear 清空回调
+ */
+export function openDiagnostics(o = {}) {
+  const entries = o.entries || [];
+  const text = diag.formatReport(entries);
+
+  const ta = h('textarea.mm-diag', {
+    readonly: true,
+    rows: 14,
+    spellcheck: 'false',
+    style: { width: '100%', resize: 'vertical' },
+  }, text);
+
+  const countEl = h('div.mm-hint', {}, `共 ${entries.length} 条`);
+
+  return dialog('诊断记录', [
+    h('div.mm-hint', {},
+      '记录画布（iframe 内）与外壳的错误与警告。',
+      '\n',
+      'kityminder 跑在嵌套 iframe 里，那边的报错不会出现在外壳控制台 —— 没有这里就查不到线索。'),
+    countEl,
+    ta,
+    h('div.mm-actions', {},
+      h('button.mm-btn', {
+        onclick: async () => {
+          try {
+            await navigator.clipboard.writeText(ta.value);
+            countEl.textContent = '已复制到剪贴板';
+          } catch {
+            // 剪贴板不可用时退化为全选：至少用户能手动 Ctrl+C
+            ta.focus();
+            ta.select();
+            countEl.textContent = '无法自动复制，已全选，请按 Ctrl+C';
+          }
+        },
+      }, '复制'),
+      h('button.mm-btn', {
+        onclick: () => { o.onClear?.(); ta.value = ''; countEl.textContent = '已清空'; },
+      }, '清空'),
+    ),
+  ]);
 }
 
 /** 自定义主题编辑器 */
@@ -1447,11 +1560,18 @@ export async function openIconLibrary(app) {
 
   /** A4 导入：把选中的图片存进 IndexedDB 并归入当前分组 */
   const importIcons = async () => {
+    const files = await io.pickFiles('image/*');
+    if (files?.length) await addImageFiles(files);
+  };
+
+  /**
+   * 把图片文件存入当前分组（A4 文件导入 与 A5 剪贴板导入 共用）。
+   * 抽出来是因为两条路的处理完全一致：容量校验 → 存资产 → 建条目。
+   */
+  const addImageFiles = async (files) => {
     const g = groups.find((x) => x.id === activeId);
     if (!g) return;
     if (g.builtin) { app.api.status('内置分组不可添加图标，请先新建一个分组', true); return; }
-    const files = await io.pickFiles('image/*');
-    if (!files || !files.length) return;
     let ok = 0;
     for (const f of files) {
       if (f.size > 1024 * 1024) { hint.textContent = `「${f.name}」超过 1MB，已跳过`; continue; }
@@ -1464,6 +1584,27 @@ export async function openIconLibrary(app) {
     app.api.status(ok ? `已导入 ${ok} 个图标` : '导入失败（未写入本地库）', !ok);
   };
 
+  /**
+   * A5 剪贴板位图导入。
+   *
+   * 不弹授权框、不读剪贴板历史 —— 只在用户主动 Ctrl+V 时取图。
+   * 剪贴板里没图就完全不响应（不提示），否则每按一次 Ctrl+V 都弹提示很烦。
+   */
+  const onPasteIcons = async (e) => {
+    const files = imageItemsFromClipboard(e?.clipboardData);
+    if (!files.length) return;         // 非图片：交给浏览器默认行为
+    e.preventDefault();
+    await addImageFiles(files);
+  };
+
+  /** A18 清理失效图标（资产已读不到的条目） */
+  const pruneIcons = async () => {
+    const r = await picons.pruneMissing();
+    if (!r.removed) { app.api.status('没有失效图标'); return; }
+    await reload();
+    app.api.status(`已清理 ${r.removed} 个失效图标（涉及 ${r.groups} 个分组）`);
+  };
+
   const dlg = dialog('图标库', [
     h('div.mm-icon-layout', {},
       h('div.mm-icon-side', {},
@@ -1472,6 +1613,19 @@ export async function openIconLibrary(app) {
           h('button.mm-btn', { onclick: () => newGroup(), title: '新建分组' }, '＋分组'),
           h('button.mm-btn', { onclick: () => renameCur() }, '重命名'),
           h('button.mm-btn', { onclick: () => delCur(), title: '删除当前分组（至少保留一个）' }, '删除'),
+        ),
+        h('div.mm-row', { style: { flexWrap: 'wrap' } },
+          h('button.mm-btn', { onclick: () => importIcons(), title: '从图片文件导入' }, '导入图片'),
+          // A5：不弹授权框，靠用户主动 Ctrl+V（见 onPasteIcons）
+          h('button.mm-btn', {
+            onclick: () => app.api.status('在此窗口按 Ctrl+V 即可把剪贴板里的图片加进当前分组'),
+            title: '剪贴板位图导入（A5）',
+          }, '粘贴图片'),
+          // A18
+          h('button.mm-btn', {
+            onclick: safe('清理失效图标', () => pruneIcons(), (m) => app.api.status(m, true)),
+            title: '移除资产已丢失的图标条目（对齐 WPF PruneMissing）',
+          }, '清理失效'),
         ),
       ),
       h('div.mm-icon-main', {},
@@ -1488,7 +1642,15 @@ export async function openIconLibrary(app) {
     // 浮层关掉时回收预览用的 Blob URL，否则会一直攒着
     for (const u of mediaUrls) { try { URL.revokeObjectURL(u); } catch (e) { /* ignore */ } }
     mediaUrls.length = 0;
+    // 粘贴监听必须解绑：挂在 document 上不解绑会一直存活到页面关闭，
+    // 且闭包捕获了本次的 groups/activeId —— 之后再开图标库会**重复触发**，
+    // 一次 Ctrl+V 加进去两份图标。
+    document.removeEventListener('paste', onPasteIcons);
   });
+
+  // 挂在 document 而不是对话框元素上：paste 只会派发给**当前焦点元素**，
+  // 对话框本身拿不到焦点（点的是里面的按钮），挂在它上面收不到事件。
+  document.addEventListener('paste', onPasteIcons);
 
   renderGroups();
   await renderGrid();
@@ -1602,7 +1764,19 @@ section('外观',
           onclick: () => openShortcuts(app),
           title: '查看编辑器支持的快捷键',
         }, '快捷键…'),
+        // A71：画布跑在 iframe 里，那边报错不进外壳控制台，
+        // 没有这个入口用户遇到「点了没反应」时毫无线索。
+        h('button.mm-btn', {
+          onclick: () => app.api.openDiagnostics(),
+          title: '查看画布与外壳的错误、警告记录',
+        }, '诊断记录…'),
+        // A70：debug 构建才真的能开，release 会给出提示
+        h('button.mm-btn', {
+          onclick: safe('开发者工具', () => app.api.openDevTools(), (m) => app.api.status(m, true)),
+          title: '打开开发者工具（仅调试构建可用）',
+        }, '开发者工具'),
       ),
+      h('div.mm-hint', {}, '诊断记录会一直累积到清空为止（最多保留最近 100 条）。'),
     ),
   ]);
 }

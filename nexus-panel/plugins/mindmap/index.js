@@ -17,9 +17,11 @@ import { bootIframePlugin, h } from '../../js/plugin-sdk.js';
 import { EditorBridge } from './editor-bridge.js';
 import { DEFAULT_THEME, DEFAULT_LAYOUT, isBuiltinTheme, deriveCanvasTheme } from './themes.js';
 import * as wb from './workbook.js';
+import * as diag from './diagnostics.js';
 import * as store from './store.js';
 import * as io from './io.js';
-import { buildSide, openVideo, openPreview, openSettings, confirmDialog, popupMenu, openPrintSettings } from './panels.js';
+import { buildSide, openVideo, openPreview, openSettings, confirmDialog, popupMenu,
+  openPrintSettings, openDiagnostics } from './panels.js';
 import { attachTabDrag } from './tab-drag.js';
 import { buildFileList } from './filelist.js';
 import * as xmind from './xmind.js';
@@ -65,6 +67,34 @@ bootIframePlugin(async (ctx) => {
   let bridge = null;
   let side = null;
   let fileList = null;      // 左侧文件库面板
+  // A71 诊断环形缓冲：只留最近若干条，避免长时间运行无限堆积
+  let diagnostics = [];
+
+  /**
+   * A71 外壳侧捕获。
+   *
+   * 内层 iframe 的报错由 editor-bridge 转发（见 handlers.onDiagnostic）；
+   * 这里补的是**外壳自身**的错误 ——
+   * 少了这一半，插件层抛的异常同样没有线索。
+   */
+  function captureShellErrors() {
+    const push = (level, message, stack) => {
+      const e = diag.normalize({ level, message, stack, source: 'shell' });
+      if (e) diagnostics = diag.pushEntries(diagnostics, [e]);
+    };
+    window.addEventListener('error', (ev) => {
+      // 资源加载失败不冒泡，只有捕获阶段收得到；且这类没有 ev.error
+      if (ev?.target && ev.target !== window && ev.target.tagName) {
+        push('error', `资源加载失败: ${ev.target.src || ev.target.href || ev.target.tagName}`, '');
+        return;
+      }
+      push('error', ev?.message || '未知错误', ev?.error?.stack || '');
+    }, true);
+    window.addEventListener('unhandledrejection', (ev) => {
+      const r = ev?.reason;
+      push('error', r?.message || String(r || '未处理的 Promise 拒绝'), r?.stack || '');
+    });
+  }
   let nodeStyleCache = {};
   let saveTimer = null;
   let lastBackupAt = 0;
@@ -1394,13 +1424,17 @@ bootIframePlugin(async (ctx) => {
         });
         const blob = io.base64ToBlob(b64, 'application/pdf');
         if (blob) {
+          // 必须用 reportSave：saveBlob 有四种返回（ok/cancel/fallback/error），
+          // 早先这里写成 `if (r !== 'cancel') 就报成功` —— 'error' 也会落进
+          // 那个分支，于是**保存失败却提示「已导出」**。其余 7 处导出函数
+          // 都用 reportSave 正确处理了，只有这里漏了。
           const r = await io.saveBlob(
             io.stampName(sheet()?.title || '脑图', 'pdf'), blob);
-          if (r !== 'cancel') {
-            status(`已导出 PDF（矢量）：${sheet()?.title || '当前画布'}`);
-            return;
-          }
-          return;   // 用户主动取消，不再托底
+          reportSave(r, 'PDF（矢量）');
+          // 落盘结果无论成败都不再托底：PDF 已经生成好了，
+          // 保存失败换打印对话框未必更好（它也要用户自己选位置）。
+          // 只有**矢量转换本身**失败才值得托底。
+          return;
         }
         throw new Error('返回内容不是合法 PDF');
       } catch (e) {
@@ -1652,6 +1686,24 @@ bootIframePlugin(async (ctx) => {
      * 'vector'（默认）：svg2pdf 矢量转换，不弹对话框直接保存。
      * 'dialog'        ：走系统打印对话框，在其中选「另存为 PDF」。
      */
+    /** A71 打开诊断记录窗口 */
+    openDiagnostics: () => openDiagnostics({
+      entries: diagnostics,
+      onClear: () => { diagnostics = []; },
+    }),
+    /**
+     * A70 开发者工具（对齐 WPF OpenDevTools）。
+     * release 构建下 Rust 侧会直接报错 —— 那不是异常，是预期行为
+     * （给最终用户开控制台没有意义），原样把提示透出即可。
+     */
+    openDevTools: guard('打开开发者工具', async () => {
+      try {
+        await ctx.invoke('mm_open_devtools', {});
+        status('已打开开发者工具');
+      } catch (e) {
+        status(e?.message || String(e), true);
+      }
+    }),
     setPdfChannel: guard('设置 PDF 通道', async (v) => {
       const next = v === 'dialog' ? 'dialog' : 'vector';
       if (settings.pdfChannel === next) return;
@@ -1693,6 +1745,7 @@ bootIframePlugin(async (ctx) => {
   body.insertBefore(fileList.el, canvasEl);
   body.appendChild(side.el);
   fileList.setOpen(!!settings.filesOpen);
+  captureShellErrors();
   buildRail();
   renderTabs();
   renderFiles();
@@ -1701,6 +1754,12 @@ bootIframePlugin(async (ctx) => {
     onStatus: status,
     onDirty,
     onNodeStyle: (st) => { nodeStyleCache = st || {}; side.refresh(); },
+    // A71：内层 iframe 的错误/警告。kityminder 跑在 iframe 里，那边的报错
+    // 不进外壳控制台 —— 不收集的话，用户侧「点了没反应」就查不到任何线索。
+    onDiagnostic: (d) => {
+      const e = diag.normalize({ ...d, source: 'editor' });
+      if (e) diagnostics = diag.pushEntries(diagnostics, [e]);
+    },
     // 点击画布上节点的附件图标。（C# 版这里是：自动切到「文件」页签展示该文件信息，
     // 视频直接在页签内播放。沙箱里拿不到真实路径、也无法调用系统默认程序打开，
     // 所以退化为「视频播浮层 / 文件另存为」，并把侧栏切到文件页以便查看信息。）

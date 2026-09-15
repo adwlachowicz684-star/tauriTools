@@ -160,6 +160,30 @@ fn mm_print_support() -> bool {
     cfg!(target_os = "macos")
 }
 
+/// 脑图：打开开发者工具（对齐 WPF `OpenDevTools()`）。
+///
+/// 注意：`open_devtools` 只在 **debug 构建或启用 devtools feature** 时存在。
+/// Cargo.toml 里已开 `devtools`，所以 release 也能用 —— 但这对最终用户没意义，
+/// 反而可能被误点。因此只在 debug 下真的打开，release 明确告知不可用。
+///
+/// 为什么不像 C# 那样直接调：WPF 的 `Editor.OpenDevTools()` 走的是
+/// WebView2 的 `OpenDevToolsWindow`；Tauri 这边对应 `open_devtools()`，
+/// 同样是窗口级能力，必须放在 Rust 侧（前端无权开控制台）。
+#[tauri::command]
+fn mm_open_devtools(window: WebviewWindow) -> Result<(), String> {
+    #[cfg(debug_assertions)]
+    {
+        window.open_devtools();
+        return Ok(());
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = &window;
+        Err("开发者工具仅在调试构建中可用（当前是 release 构建）".into())
+    }
+}
+
 /// 当前是否具备「SVG → PDF」静默导出能力。
 ///
 /// 与 `mm_svg_to_pdf` 不同，这个能力是**编译期就有**的（svg2pdf 是纯 Rust，
@@ -198,7 +222,7 @@ fn main() {
         .manage(af_flow::WebhookRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .invoke_handler(tauri::generate_handler![
             rust_ping, app_version, window_action, set_window_icon,
-            mm_print, mm_print_support, mm_svg_to_pdf, mm_pdf_vector_support,
+            mm_print, mm_print_support, mm_svg_to_pdf, mm_pdf_vector_support, mm_open_devtools,
             fpx::fpx_bootstrap, fpx::fpx_save_config, fpx::fpx_create_link, fpx::fpx_remove_link,
             fpx::fpx_scan_content, fpx::fpx_read_file, fpx::fpx_open_path, fpx::fpx_list_dirs,
             fpx::fpx_quick_roots, fpx::fpx_copy_text, fpx::fpx_create_folder, fpx::fpx_set_lock, fpx::fpx_set_icon,

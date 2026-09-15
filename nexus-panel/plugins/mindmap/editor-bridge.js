@@ -154,6 +154,11 @@ export class EditorBridge {
       case 'openfile':
         if (d.path) this.handlers.onOpenFile?.(d.path);
         break;
+      // A71：内层 iframe 的错误/警告推给插件层收集。
+      // 注意这里**不** return —— 诊断只是旁路记录，不影响其它消息的处理。
+      case 'diagnostic':
+        this.handlers.onDiagnostic?.(d);
+        break;
       case 'request':
         this._handleRequest(d);
         break;
