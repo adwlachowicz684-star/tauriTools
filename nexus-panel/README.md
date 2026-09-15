@@ -94,15 +94,18 @@ export default definePlugin({
 </script>
 ```
 
-> **新写一个 iframe 插件页面时，记得给首帧铺底色。** iframe 里是独立文档，
-> UA 默认画布是白的，且不受父级 `color-scheme` 影响 —— 从文档开始渲染到外壳
-> 把主题变量推进来之间有一两百毫秒，深色面板下就是一闪而过的刺眼白底。
-> 在 `<head>` 里读一下外壳缓存的底色即可（`localStorage` 在隔离态会抛，要 try/catch）：
+> **新写一个 iframe 插件页面时，记得给首帧铺底色 + 设 color-scheme。** iframe 里
+> 是独立文档，UA 默认画布是白的，且不受父级 `color-scheme` 影响 —— 从文档开始
+> 渲染到外壳把主题变量推进来之间有一两百毫秒，深色面板下就是一闪而过的刺眼白底。
+> 在 `<head>` 里读一下外壳缓存的底色与基调即可（`localStorage` 在隔离态会抛，要 try/catch）：
 > ```html
 > <script>
 >   try {
 >     var _bg = localStorage.getItem('nexus:preload-bg');
->     if (_bg) document.documentElement.style.background = _bg;
+>     var _base = localStorage.getItem('nexus:preload-base');
+>     var _r = document.documentElement;
+>     if (_bg) { _r.style.setProperty('--bg', _bg); _r.style.background = _bg; }
+>     if (_base) _r.style.colorScheme = _base;   // 表单控件与滚动条也跟着走
 >   } catch (_e) {}
 > </script>
 > ```
@@ -392,9 +395,25 @@ L2 的连带问题已处理：对 `img/video/canvas/svg` 做**二次反转**还�
 
 **切换插件为什么会闪一下白底**：iframe 内文档的 UA 默认画布是白的，
 而「文档开始渲染 → 插件 CSS 生效 → 主题变量推入 → 适配滤镜挂上」这条链要走一两百毫秒。
-现在两头各挡一层：插件页面自己铺缓存底色（快），宿主 `.plugin-frame` 先隐身、
-适配完成后才淡入（稳，对第三方插件同样有效）。
-`npm run test:flash` 会校验遮罩、显形时机与兜底。
+
+**插件坏了为什么会是一片白**：同一个根因，只是更长 —— 入口文件缺失、未构建、
+或插件脚本一上来就抛错时，iframe 内部**一个节点都画不出来**，此刻露出的是
+iframe 元素自己的背景。它原来是 `transparent`，于是深色浅色一视同仁地白。
+
+现在三层兜底：
+
+1. `.plugin-frame` 底板给 `var(--bg)`（不再是 transparent）—— 内部画不出东西时
+   露出主题底色。插件自带背景时会盖住它，不影响第三方插件
+2. 插件页面首帧从 `localStorage` 读缓存底色铺上，并设 `color-scheme`
+   （iframe 内的表单控件与滚动条不吃父级 color-scheme，不设就永远是浅色的）
+3. 宿主 `.plugin-frame` 先隐身，适配完成后才由 `revealFrame()` 淡入，另有 900ms 兜底
+
+另外，空白页面不再干等 10s 握手超时才报错：iframe `load` 之后会再看一眼，
+body 一个子节点都没有就立刻把主题化错误框顶上去，用户不用对着一片"什么都没有"
+猜是加载中还是坏了（隔离态读不到 contentDocument，那种情况仍走超时）。
+
+`npm run test:flash` 会校验遮罩、显形时机、iframe 底色不为 transparent、
+空白检测与 color-scheme。
 
 
 ## 五、外链管理（Office 式分级管控）

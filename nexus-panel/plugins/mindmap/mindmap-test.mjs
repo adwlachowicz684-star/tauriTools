@@ -679,8 +679,15 @@ group('新建画布按钮（＋）位置');
   ok(!/margin-left:\s*auto/.test(statusCss),
     '.mm-status 不再 margin-left:auto —— 两个 auto 会平分剩余空间，反而把「＋」挤到中间');
 
-  // 页签区现在负责滚动，滚动条样式得跟着它（.mm-foot 那条已失效）
-  ok(/\.mm-tabs::-webkit-scrollbar/.test(css), '滚动条样式挂到 .mm-tabs 上');
+  /* 页签区现在负责滚动，滚动条得是有样式的那条。
+     但样式**不能**写在本插件里：外壳文档的 ::-webkit-scrollbar 到不了
+     iframe 内部，本插件又只引 styles.css —— 抄一份就会漏 track / hover，
+     出现"细 1px 且无悬停反馈"的半成品。
+     现在由 css/tokens.css 统一提供，本文件引入它即可。 */
+  ok(!/\.mm-[a-z-]*::-webkit-scrollbar/.test(css),
+    '本插件不再重复声明滚动条样式（交给 css/tokens.css）');
+  ok(/@import\s+url\(['"]?\.\.\/\.\.\/css\/tokens\.css/.test(css),
+    '引入了 css/tokens.css（滚动条与尺度令牌的来源）');
 }
 
 /* ============================================================

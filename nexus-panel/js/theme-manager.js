@@ -30,6 +30,9 @@ const KEY_CUSTOM = 'nexus:custom-themes';
 // 首屏防闪用：最近一次应用的底色 / 前景色
 const KEY_PRELOAD_BG = 'nexus:preload-bg';
 const KEY_PRELOAD_FG = 'nexus:preload-fg';
+/* 基调（dark / light）：iframe 内的独立文档要靠它设 color-scheme，
+   否则里面的表单控件与滚动条永远按浏览器默认的浅色渲染 */
+const KEY_PRELOAD_BASE = 'nexus:preload-base';
 
 /* ---------------------------- 颜色工具 ---------------------------- */
 function parseHex(hex) {
@@ -517,6 +520,7 @@ function applyTo(theme, accent, envColor) {
   try {
     if (vars['--bg']) localStorage.setItem(KEY_PRELOAD_BG, vars['--bg']);
     if (vars['--text']) localStorage.setItem(KEY_PRELOAD_FG, vars['--text']);
+    localStorage.setItem(KEY_PRELOAD_BASE, theme.base);
   } catch { /* 存储不可用时忽略 */ }
   root.dataset.theme = theme.id;
   root.dataset.themeBase = theme.base;

@@ -104,5 +104,39 @@ t('读缓存底色的脚本都带 try/catch',
   snippets.length > 0 && snippets.every((s) => /try\s*\{[\s\S]*?preload-bg[\s\S]*?\}\s*catch/.test(s)),
   `${snippets.length} 处`);
 
+console.log('\n=== 4. 出错兜底：插件没渲染出来时不能是一片白 ===');
+/* iframe 内是独立文档，UA 默认画布是白的。以下情况内部都画不出东西：
+     · 入口文件缺失 / 未构建        · 插件脚本报错，一个节点都没挂上
+   此刻露出的是 iframe **元素自己**的背景 —— 若它是 transparent，就是白底。
+   注意：不给 .plugin-wrap 加底色（那是永久垫在插件底下，会改掉透明插件的
+   观感），但 .plugin-frame 自己必须有 --bg。 */
+const frameBlock = ruleOf('.plugin-frame {') || '';
+t('.plugin-frame 有主题底色，不是 transparent',
+  /background\s*:\s*var\(--bg\)/.test(frameBlock),
+  (frameBlock.match(/background\s*:\s*[^;]+;/) || ['未声明'])[0]);
+t('该底色不是 transparent（曾写过，出错时就露出白底）',
+  !/background\s*:\s*transparent/.test(frameBlock));
+
+/* 空页面不能干等 10s 握手超时 —— 那 10 秒里屏上一片"什么都没有"，
+   用户分不清是加载中还是坏了。现在 load 之后会再判一次空。 */
+t('load 后会检测空白页面并提前失败',
+  /iframe\.addEventListener\('load', onLoad\)/.test(host));
+t('判空只在未握手时进行（已握手的插件不误伤）',
+  /const onLoad = \(\) => \{\s*\n\s*if \(handshaked/.test(host));
+t('隔离态读不到 contentDocument 时跳过检测，不误报',
+  /catch\s*\{\s*return;\s*\}/.test(host));
+
+console.log('\n=== 5. 首帧脚本同时设 color-scheme ===');
+/* iframe 内的表单控件/滚动条不吃父级 color-scheme，
+   不设的话深色面板下插件里的下拉框、滚动条仍是浅色的。 */
+const withScheme = pluginDirs
+  .map((id) => read(`plugins/${id}/index.html`))
+  .filter((h) => h.includes('nexus:preload-bg'));
+t('首帧脚本设置了 colorScheme',
+  withScheme.length > 0 && withScheme.every((h) => /colorScheme/.test(h)),
+  `${withScheme.length} 处`);
+t('外壳缓存了基调供插件读取',
+  /nexus:preload-base/.test(read('js/theme-manager.js')));
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

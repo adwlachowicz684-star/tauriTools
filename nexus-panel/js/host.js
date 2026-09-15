@@ -485,6 +485,39 @@ export function createHost(opts = {}) {
     const ready = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('iframe 插件握手超时（10s）')), 10000);
 
+      /**
+       * 空页面快速失败。
+       *
+       * 握手超时是 10s，这 10 秒里 iframe 已经在屏上了，看到的就是它自己的
+       * 底色（已改为 --bg，见 .plugin-frame）——不刺眼，但**什么都没有**，
+       * 用户不知道是"加载中"还是"坏了"。这里在 load 之后再看一眼：
+       * 页面确实渲染出了内容就放行，一个节点都没有就立刻报错，把主题化的
+       * 错误框顶上去，不必干等到 10s。
+       *
+       * 判空只认"body 一个子元素都没有"。正常插件的 HTML 里至少有挂载点
+       * （<div id="root">），React/Vue 挂载前后 body 都不是空的，所以不会误伤。
+       * 隔离态拿不到 contentDocument，读不到就跳过（那种情况只能等超时）。
+       */
+      let emptyCheck = null;
+      const onLoad = () => {
+        if (handshaked || emptyCheck) return;
+        emptyCheck = setTimeout(() => {
+          if (handshaked) return;
+          let empty = false;
+          try {
+            const doc = iframe.contentDocument;
+            empty = !doc || !doc.body || (doc.body.childElementCount === 0
+              && !doc.body.textContent.trim());
+          } catch { return; }        // 隔离态（opaque origin）读不到，放弃检测
+          if (empty) {
+            reject(new Error('插件页面没有渲染出内容 —— 入口文件可能缺失，或该插件需要先执行构建'));
+          }
+        }, 1500);
+        cleanupFns.push(() => clearTimeout(emptyCheck));
+      };
+      iframe.addEventListener('load', onLoad);
+      cleanupFns.push(() => iframe.removeEventListener('load', onLoad));
+
       bridgeHandler = (e) => {
         const d = e.data;
         if (!d || d.channel !== BRIDGE_CHANNEL) return;
@@ -848,38 +881,17 @@ export function createHost(opts = {}) {
 
   // 主题：初始化并联动（iframe 推送新变量，无需重载；适配结果重算）
   initTheme();
-
-  /**
-   * 把"该插件此刻该用的主题"重新应用一遍。
-   *
-   * 两类插件走两条路，缺一不可：
-   *   · iframe —— 有独立文档，得 postMessage 推过去
-   *   · module —— 共享主文档 :root，只能重写容器上的内联变量
-   *     （它继承的是 :root，改 :root 也会带过去，但插件自选主题时
-   *      容器上的值优先级更高、不刷新就会一直沿用旧的那套）
-   * 最后重算适配：插件换了主题，它表现出的基调可能也变了，滤镜要跟着重算。
-   */
-  async function syncThemeToInstance(inst) {
+  onThemeChange(async () => {
+    const inst = state.instance;
     if (!inst) return;
     if (inst.iframe) {
       await pushTheme(inst.iframe, inst.manifest?.id);
     } else if (inst.root) {
+      // 同页插件：重刷容器上的内联变量（它继承的是 :root，改 :root 也会带过去，
+      // 但插件自选主题时容器上的值优先级更高、不刷新就会一直沿用旧的那套）
       applyThemeVarsTo(inst.root, varsForPlugin(inst.manifest?.id));
     }
     await reAdapt(inst);
-  }
-
-  onThemeChange(() => syncThemeToInstance(state.instance));
-
-  /* 插件主题配置一改就立即生效，不必等重载。
-     --------------------------------------------------------------------
-     只处理主题字段：isolated 改的是 iframe 的 sandbox 属性、
-     adaptTheme 影响滤镜是否安装，两者都仍需要重载才能完全生效，
-     它们各自的提示保持不变。 */
-  pluginConfig.onPluginConfigChange?.((id, cfg) => {
-    const inst = state.instance;
-    if (!inst || inst.manifest?.id !== id) return;
-    syncThemeToInstance(inst);
   });
 
   /**

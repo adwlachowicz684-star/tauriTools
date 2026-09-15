@@ -635,7 +635,11 @@ body {
    由 host.js 的 revealFrame() 在适配完成后摘掉，短淡入收尾。
    不要给 .plugin-wrap 加背景色兜底 —— 插件文档背景是 transparent 时
    （demo-iframe / mindmap）会永久露出那层底色，扁平主题下 bg 与 surface
-   不同色，等于把插件底的观感改掉了。 */
+   不同色，等于把插件底的观感改掉了。
+
+   注意区分两件事：这里不给 .plugin-wrap 加底色（那是"永久"垫在插件底下，
+   会改掉透明插件的观感）；但 .plugin-frame 自己必须有 --bg —— 它只在
+   插件文档画不出东西时才露出来，正是需要兜底的那些时刻。 */
 .plugin-frame {
   width: 100%;
   /* 同理：靠 height 撑满，而不是只给 min-height。
@@ -645,7 +649,23 @@ body {
   min-height: 100%;
   display: block;
   border: 0;
-  background: transparent;
+
+  /* 底板用主题底色，不能是 transparent：
+     ------------------------------------------------------------------
+     iframe 内是**独立文档**，UA 默认画布是白的，且不吃父级 color-scheme。
+     以下几种情况下内部文档根本画不出东西（或还没来得及画）：
+       · 入口文件缺失 / 未构建（webview 里就是一片白）
+       · 插件脚本报错，DOM 一个节点都没挂上
+       · 主题变量正经 postMessage 推过来之前的那一两百毫秒
+     这些时候露出的是 iframe **自己**的背景，transparent 就等于白底。
+     给成 --bg 后，上述三种情况都显示主题底色，深色面板下不再刺眼。
+
+     为什么是 --bg 而不是 --surface：--surface 在玻璃风格下是半透明的
+     （rgba），叠在 iframe 元素上会与下面的 #main-inner 叠两次、颜色发浑；
+     --bg 恒为不透明色，且新拟态下与 --surface 同值，观感一致。
+     插件文档自己声明了背景时会盖住这里，所以不影响 demo-light 这类
+     自带白底的第三方插件。 */
+  background: var(--bg);
   color-scheme: dark;          /* 让 iframe 里的表单控件/滚动条也走深色 */
   opacity: 0;
   transition: opacity var(--dur-base) ease;

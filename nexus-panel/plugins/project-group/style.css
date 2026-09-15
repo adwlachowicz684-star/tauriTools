@@ -33,7 +33,7 @@
   border: 1px solid transparent; border-radius: var(--r-sm);
   background: transparent; color: var(--text-dim);
   cursor: pointer;
-  transition: background-color .15s, color .15s, border-color .15s;
+  transition: background-color var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast);
 }
 .fpx-rail-btn:hover:not(:disabled) {
   background: var(--surface); color: var(--text); border-color: var(--border);
@@ -81,7 +81,7 @@
 .fpx-stack-spacer { flex: 1; }
 .fpx-stack-op {
   width: 22px; height: 22px; flex-shrink: 0;
-  background: transparent; border: 1px solid var(--border); border-radius: 4px;
+  background: transparent; border: 1px solid var(--border); border-radius: var(--r-xs);
   color: var(--text-dim); cursor: pointer; font-size: 12px; line-height: 1;
 }
 .fpx-stack-op:hover { color: var(--text); border-color: var(--accent); }
@@ -170,16 +170,16 @@
 .fpx-tab:hover { color: var(--text); }
 .fpx-tab.active {
   color: var(--accent);
-  box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);
+  box-shadow: var(--sh-in-sm);
 }
 .fpx-tab.add { color: var(--text-mute); }
 .fpx-tab-kind {
   font-size: 10px; opacity: .6;
-  border: 1px solid var(--border); border-radius: 4px; padding: 0 4px;
+  border: 1px solid var(--border); border-radius: var(--r-xs); padding: 0 4px;
 }
 .fpx-tab-input {
   width: 90px; height: 22px; padding: 0 6px;
-  border: 0; outline: none; border-radius: 4px;
+  border: 0; outline: none; border-radius: var(--r-xs);
   background: var(--surface); color: var(--text); font-size: 12px;
 }
 
@@ -192,11 +192,11 @@
   border-radius: var(--r-sm);
   background: var(--surface-sunk);
   cursor: pointer;
-  transition: transform .12s ease, box-shadow .12s ease;
+  transition: transform var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
 }
 .fpx-card:hover { transform: translateY(-1px); }
 .fpx-card.selected {
-  box-shadow: inset 3px 3px 7px var(--sh-dark), inset -3px -3px 7px var(--sh-light);
+  box-shadow: var(--sh-in-md);
   border-color: var(--accent);
 }
 .fpx-card.over { outline: 2px dashed var(--accent); outline-offset: -2px; }
@@ -205,7 +205,7 @@
 .fpx-card-icon {
   width: 26px; height: 26px; flex: none;
   display: grid; place-items: center;
-  border-radius: 8px; background: var(--surface);
+  border-radius: var(--r-sm); background: var(--surface);
   font-size: 14px;
 }
 .fpx-card-name {
@@ -214,12 +214,12 @@
 }
 .fpx-card-path {
   margin-top: 3px; font-size: 11px; color: var(--text-mute);
-  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .fpx-card-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .fpx-badge {
-  font-size: 10px; padding: 1px 6px; border-radius: 999px;
+  font-size: 10px; padding: 1px 6px; border-radius: var(--r-pill);
   border: 1px solid var(--border); color: var(--text-dim);
 }
 .fpx-badge.link { color: var(--accent); border-color: var(--accent); }
@@ -231,19 +231,19 @@
    z-index 20 —— 高于三栏（auto），低于弹窗遮罩（.mask 900）。
    用 position:relative 而非 fixed/transform：前者不产生 fixed 包含块，
    菜单的视口定位才不会被带偏。 */
-.fpx-menu-layer { position: relative; z-index: 20; }
+.fpx-menu-layer { position: relative; z-index: var(--z-sticky); }
 
 /* ---------- 右键菜单 ---------- */
 .fpx-menu {
-  position: fixed; z-index: 1000; min-width: 172px; padding: 6px;
+  position: fixed; z-index: var(--z-menu); min-width: 172px; padding: 6px;
   border: 1px solid var(--border); border-radius: var(--r-sm);
   background: var(--surface);
-  box-shadow: 6px 6px 16px var(--sh-dark), -6px -6px 16px var(--sh-light);
+  box-shadow: var(--sh-out-lg);
   display: flex; flex-direction: column; gap: 2px;
 }
 .fpx-menu-item {
   text-align: left; padding: 7px 10px; font-size: 12px;
-  border: 0; border-radius: 6px; background: transparent; color: var(--text);
+  border: 0; border-radius: var(--r-xs); background: transparent; color: var(--text);
   cursor: pointer;
 }
 .fpx-menu-item:hover { background: var(--surface-sunk); }
@@ -254,7 +254,7 @@
 .fpx-content { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
 .fpx-content-head { gap: 8px; }
 .fpx-content-root {
-  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .fpx-tree {
@@ -263,7 +263,7 @@
 }
 .fpx-node {
   display: flex; align-items: center; gap: 6px;
-  padding: 3px 6px; border-radius: 6px; font-size: 12px;
+  padding: 3px 6px; border-radius: var(--r-xs); font-size: 12px;
   color: var(--text-dim); cursor: pointer; white-space: nowrap;
 }
 .fpx-node:hover { background: var(--surface); color: var(--text); }
@@ -272,14 +272,14 @@
 .fpx-node-name { overflow: hidden; text-overflow: ellipsis; }
 .fpx-node-kind {
   margin-left: auto; font-size: 10px; color: var(--text-mute);
-  border: 1px solid var(--border); border-radius: 4px; padding: 0 4px;
+  border: 1px solid var(--border); border-radius: var(--r-xs); padding: 0 4px;
 }
 .fpx-preview { display: flex; flex-direction: column; gap: 6px; }
 .fpx-pre {
   margin: 0; max-height: 220px; overflow: auto;
   padding: 12px; border-radius: var(--r-sm);
   background: var(--surface-sunk); color: var(--text-dim);
-  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11.5px; line-height: 1.7; white-space: pre-wrap; word-break: break-word;
 }
 
@@ -302,7 +302,7 @@
 .fpx-check-box {
   width: 18px; height: 18px; flex: none; margin-top: 1px;
   display: grid; place-items: center;
-  border: 1px solid var(--border); border-radius: 5px;
+  border: 1px solid var(--border); border-radius: var(--r-xs);
   background: var(--surface-sunk); color: var(--accent); font-size: 12px;
 }
 .fpx-check input:checked + .fpx-check-box { border-color: var(--accent); }
@@ -332,7 +332,7 @@
 .fpx-iconitem:hover { border-color: var(--accent); }
 .fpx-iconthumb {
   width: 26px; height: 26px; flex: none; display: grid; place-items: center;
-  border-radius: 6px; background: var(--surface); font-size: 12px; color: var(--accent);
+  border-radius: var(--r-xs); background: var(--surface); font-size: 12px; color: var(--accent);
 }
 .fpx-iconname {
   font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -342,7 +342,7 @@
 .fpx-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin-bottom: 8px; }
 .fpx-crumb {
   border: 0; background: transparent; color: var(--text-dim);
-  font-size: 12px; cursor: pointer; padding: 2px 4px; border-radius: 4px;
+  font-size: 12px; cursor: pointer; padding: 2px 4px; border-radius: var(--r-xs);
 }
 .fpx-crumb:hover { color: var(--accent); background: var(--surface-sunk); }
 .fpx-crumb-sep { color: var(--text-mute); font-size: 11px; }
@@ -354,7 +354,7 @@
 .fpx-dirrow { display: flex; align-items: center; gap: 8px; }
 .fpx-dirname {
   flex: 1; text-align: left; padding: 6px 8px;
-  border: 0; border-radius: 6px; background: transparent;
+  border: 0; border-radius: var(--r-xs); background: transparent;
   color: var(--text); font-size: 12.5px; cursor: pointer;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -364,25 +364,25 @@
 .fpx-emoji-grid { display: flex; flex-wrap: wrap; gap: 6px; }
 .fpx-emoji {
   width: 34px; height: 34px; font-size: 16px; cursor: pointer;
-  border: 1px solid var(--border); border-radius: 8px;
+  border: 1px solid var(--border); border-radius: var(--r-sm);
   background: var(--surface-sunk);
 }
-.fpx-emoji.active { border-color: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
+.fpx-emoji.active { border-color: var(--accent); box-shadow: var(--glow-sm); }
 .fpx-swatch {
-  width: 34px; height: 34px; border-radius: 8px; cursor: pointer;
+  width: 34px; height: 34px; border-radius: var(--r-sm); cursor: pointer;
   border: 2px solid transparent;
 }
 .fpx-swatch.active { border-color: var(--text); }
 .fpx-color {
   width: 34px; height: 34px; padding: 0; border: 1px solid var(--border);
-  border-radius: 8px; background: transparent; cursor: pointer;
+  border-radius: var(--r-sm); background: transparent; cursor: pointer;
 }
 
 /* ---------- 色盘 ---------- */
 .fpx-picker { display: flex; flex-direction: column; gap: 8px; }
 .fpx-picker.compact { gap: 6px; }
 .fpx-preview-block {
-  width: 46px; height: 34px; flex: none; border-radius: 8px;
+  width: 46px; height: 34px; flex: none; border-radius: var(--r-sm);
   border: 1px solid var(--border);
   display: grid; place-items: center; font-size: 10px; color: #fff;
   text-shadow: 0 1px 2px rgba(0,0,0,.6);
@@ -482,7 +482,7 @@
 }
 .fpx-toollist .fpx-check { margin-bottom: 2px; }
 /* 工具名等宽，方便与外部配置对照 */
-.fpx-toollist .fpx-check-title { font-family: var(--mono, monospace); font-size: 11.5px; }
+.fpx-toollist .fpx-check-title { font-family: var(--font-mono); font-size: 11.5px; }
 
 .fpx-select { height: 32px; width: auto; min-width: 140px; padding: 0 8px; }
 
@@ -532,7 +532,7 @@
 .fpx-ca-item:hover .fpx-ca-ops { opacity: 1; }
 .fpx-ca-ops button {
   width: 20px; height: 20px; padding: 0; line-height: 18px;
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid var(--border); border-radius: var(--r-xs);
   background: var(--surface); color: var(--text-mute);
   font-size: 11px; cursor: pointer;
 }
@@ -603,7 +603,7 @@
   cursor: pointer; text-align: left; min-width: 0;
 }
 .fpx-editoritem:hover { border-color: var(--accent); }
-.fpx-editoritem.active { border-color: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
+.fpx-editoritem.active { border-color: var(--accent); box-shadow: var(--glow-sm); }
 .fpx-editorname { font-size: 13px; }
 .fpx-editorexe {
   font-size: 10.5px; color: var(--text-mute);
@@ -615,7 +615,7 @@
 .fpx-rename { width: 96px; flex: none; height: 28px; padding: 0 8px; font-size: 11.5px; }
 
 /* 页签接收拖拽时的高亮 */
-.fpx-tab.drop { border-color: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
+.fpx-tab.drop { border-color: var(--accent); box-shadow: var(--glow-sm); }
 
 /* ---------- 说明 ---------- */
 .fpx-help { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.9; color: var(--text-dim); }
