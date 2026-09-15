@@ -1,0 +1,348 @@
+import type { ReactNode } from 'react';
+import { getDef } from '../../nodes';
+import type { FlowNode, FlowEdge } from '../../flowTypes';
+import type { Credential } from '../../engine/credentials';
+import type { SecretPolicy } from '../../types';
+import { CredentialPicker } from './shared';
+
+/**
+ * 属性面板的**字段描述层**。
+ *
+ * 这是"新增节点更省事"的主力：节点不需要写 JSX，只要声明自己有哪些字段、
+ * 每个字段是什么类型、有哪些选项，基础面板（BasicInspector）就会渲染出来。
+ *
+ * 为什么做成描述而不是全手写 JSX：
+ *  仓库里 12 个节点的面板有大量完全一样的样板 —— 标题行、label+input 的
+ *  字段容器、onChange 里取 e.target.value、hint 小字、条件显隐。
+ *  逐字抄写时，任何一个字段的 onChange 写错 key（比如写成 d.branch 却 patch
+ *  了 branchName）编译器都发现不了，因为两边都是字符串。
+ *  描述化之后，渲染只认 `key` 一处，这类错位从根上不会发生。
+ *
+ * 为什么**不**把条件/循环/触发器这类复杂面板也描述化：
+ *  它们有大量"不是字段"的交互（规则拖拽排序、实时校验、算子切换改变后续
+ *  字段）。硬塞进描述会让描述格式膨胀到与手写 JSX 同等的复杂度，
+ *  却失去类型检查和调试能力。这类节点用 type:'custom' 的 render 逃生口，
+ *  内部再用本文件的 <Field> 控件拼 —— 即"主 A 副 B"。
+ */
+
+export type FieldOption = { value: string; label: string; hint?: string; color?: string };
+
+export type FieldType =
+  | 'text' // 单行输入
+  | 'textarea' // 多行
+  | 'number'
+  | 'select' // 下拉
+  | 'switch' // 勾选
+  | 'chips' // 按钮组（如目标语言）
+  | 'credential' // 凭据选择（同时写 token 与 credentialId）
+  | 'note' // 纯提示文本，不占字段
+  | 'custom'; // 逃生口：完全自己渲染
+
+/** 渲染单个字段时拿到的一切 */
+export type FieldRenderProps = {
+  /** 整个节点 data */
+  d: Record<string, unknown>;
+  value: unknown;
+  /** 改本字段（key 由描述提供，调用方不会写错） */
+  onChange: (v: unknown) => void;
+  /** 改多个字段。凭据选择器要同时写 token 与 credentialId，故需要这个 */
+  patch: (p: Record<string, unknown>) => void;
+  node: FlowNode;
+  edges: FlowEdge[];
+  /** 上游节点 id 列表，用于拼 {{xxx.output}} 之类的插入按钮 */
+  upstream: string[];
+  credentials?: Credential[];
+  onOpenCredentials?: (kind: string) => void;
+  secretPolicy?: SecretPolicy;
+  onChangeSecretPolicy?: (p: SecretPolicy) => void;
+};
+
+export type FieldDef = {
+  /** 存储用的字段名。note 类型不需要 */
+  key?: string;
+  label?: string;
+  type: FieldType;
+  placeholder?: string;
+  /** 字段下方的小字说明。给函数是为了让说明随其它字段变化 */
+  hint?: ReactNode | ((d: Record<string, unknown>) => ReactNode);
+  /** select/chips 的选项；给函数是为了让选项随其他字段动态变化 */
+  options?: FieldOption[] | ((d: Record<string, unknown>) => FieldOption[]);
+  /** 条件显隐：返回 false 时该字段不渲染 */
+  when?: (d: Record<string, unknown>) => boolean;
+  /** 显示值 ↔ 存储值的转换。例：'auto' 在界面上显示为空 */
+  toUI?: (v: unknown) => unknown;
+  fromUI?: (v: unknown) => unknown;
+  rows?: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  /** 标签在左、控件在右。默认标签在上（.field 列式） */
+  inline?: boolean;
+  /** credential 类型用：决定需要哪些能力的凭据 */
+  credentialKind?: string;
+  /** note 的内容 / custom 的渲染函数 */
+  render?: (p: FieldRenderProps) => ReactNode;
+  content?: ReactNode;
+};
+
+/** 字段清单。给函数是为了支持 when 这类依赖当前数据的逻辑 */
+export type FieldFactory = (d: Record<string, unknown>) => FieldDef[];
+
+function optsOf(
+  o: FieldDef['options'],
+  d: Record<string, unknown>,
+): FieldOption[] {
+  return typeof o === 'function' ? o(d) : o ?? [];
+}
+
+/* ------------------------------------------------------------------ */
+/* 控件（副 B：复杂面板手写时也可直接取用）                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 字段外壳。
+ *
+ * 统一了此前并存的两套写法：老的 `.field`（标签在上）和 `.p-row` + `.p-input`
+ * （标签在左）。现在一律走这里，新增节点不必再挑。
+ */
+export function Field({
+  label, hint, inline, children,
+}: {
+  label?: string;
+  hint?: ReactNode;
+  inline?: boolean;
+  children: ReactNode;
+}) {
+  if (inline) {
+    return (
+      <label className="p-row">
+        {label ? <span className="p-muted" style={{ width: 64, flex: 'none' }}>{label}</span> : null}
+        {children}
+        {hint ? <small className="dim" style={{ flexBasis: '100%' }}>{hint}</small> : null}
+      </label>
+    );
+  }
+  return (
+    <label className="field">
+      {label ? <span>{label}</span> : null}
+      {children}
+      {hint ? <small className="dim">{hint}</small> : null}
+    </label>
+  );
+}
+
+/** 一行"可引用"插入按钮。复杂面板手写时也能用 */
+export function VarBar({ title, tokens, onInsert }: {
+  title?: string;
+  tokens: Array<{ text: string; title?: string; file?: boolean }>;
+  onInsert: (token: string) => void;
+}) {
+  if (tokens.length === 0) return null;
+  return (
+    <div className="var-bar">
+      {title ? <small>{title}</small> : null}
+      {tokens.map((t) => (
+        <button
+          key={t.text}
+          className={'chip' + (t.file ? ' file' : '')}
+          title={t.title}
+          onClick={() => onInsert(t.text)}
+        >
+          {t.text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 渲染器（主 A）                                                       */
+/* ------------------------------------------------------------------ */
+
+function renderField(f: FieldDef, p: FieldRenderProps & { id: string; onChangeNode: (patch: Record<string, unknown>) => void }) {
+  const { type } = f;
+
+  if (type === 'note') {
+    return <div className="tip" key={f.key ?? Math.random()}>{f.content ?? f.render?.(p)}</div>;
+  }
+  if (type === 'custom') {
+    return <div key={f.key ?? Math.random()}>{f.render?.(p)}</div>;
+  }
+  if (type === 'credential') {
+    return (
+      <CredentialPicker
+        key={f.key}
+        nodeKind={f.credentialKind ?? ''}
+        value={String(p.d.token ?? '')}
+        credentialId={String(p.d.credentialId ?? '')}
+        credentials={p.credentials ?? []}
+        onOpenCredentials={p.onOpenCredentials}
+        onChange={p.onChangeNode}
+      />
+    );
+  }
+
+  const value = f.toUI ? f.toUI(p.value) : p.value;
+  const set = (raw: unknown) => p.onChange(f.fromUI ? f.fromUI(raw) : raw);
+  const body = () => {
+    switch (type) {
+      case 'textarea':
+        return (
+          <textarea
+            className="p-input"
+            rows={f.rows ?? 4}
+            value={String(value ?? '')}
+            placeholder={f.placeholder}
+            onChange={(e) => set(e.target.value)}
+          />
+        );
+      case 'number':
+        return (
+          <input
+            className="p-input"
+            type="number"
+            value={value === undefined || value === null ? '' : String(value)}
+            min={f.min}
+            max={f.max}
+            step={f.step}
+            placeholder={f.placeholder}
+            onChange={(e) => set(e.target.value === '' ? undefined : Number(e.target.value))}
+          />
+        );
+      case 'select':
+        return (
+          <select
+            className="p-input"
+            value={String(value ?? '')}
+            onChange={(e) => set(e.target.value)}
+          >
+            {optsOf(f.options, p.d).map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        );
+      case 'switch':
+        return (
+          <span className="check">
+            <input type="checkbox" checked={Boolean(value)} onChange={(e) => set(e.target.checked)} />
+            <span>{f.placeholder ?? ''}</span>
+          </span>
+        );
+      case 'chips':
+        return (
+          <div className="var-bar">
+            {optsOf(f.options, p.d).map((o) => (
+              <button
+                key={o.value}
+                className={'chip' + (value === o.value ? ' file' : '')}
+                title={o.hint}
+                onClick={() => set(o.value)}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        );
+      default:
+        return (
+          <input
+            className="p-input"
+            value={String(value ?? '')}
+            placeholder={f.placeholder}
+            onChange={(e) => set(e.target.value)}
+          />
+        );
+    }
+  };
+
+  const hint = typeof f.hint === 'function' ? f.hint(p.d) : f.hint;
+  return (
+    <Field key={f.key} label={f.label} hint={hint} inline={f.inline}>
+      {body()}
+    </Field>
+  );
+}
+
+/**
+ * 基础属性面板。
+ *
+ * 标题行（可改名 + 节点类型标签）是每个节点都有的，这里统一渲染，
+ * 节点定义只需要给 fields。
+ */
+export function BasicInspector({
+  node, edges, onChange, credentials, onOpenCredentials,
+  secretPolicy, onChangeSecretPolicy, fields, footer,
+}: {
+  node: FlowNode;
+  edges: FlowEdge[];
+  onChange: (id: string, patch: Record<string, unknown>) => void;
+  credentials?: Credential[];
+  onOpenCredentials?: (kind: string) => void;
+  secretPolicy?: SecretPolicy;
+  onChangeSecretPolicy?: (p: SecretPolicy) => void;
+  fields: FieldFactory;
+  /** 追加在字段之后的自定义内容（如 OCR 的"测试"按钮） */
+  footer?: (p: FieldRenderProps) => ReactNode;
+}) {
+  const d = node.data as unknown as Record<string, unknown>;
+  const def = getDef(node.type);
+  const upstream = edges.filter((e) => e.target === node.id).map((e) => e.source);
+  const patchObj = (p: Record<string, unknown>) => onChange(node.id, p);
+
+  const base: FieldRenderProps = {
+    d,
+    value: undefined,
+    onChange: () => {},
+    patch: patchObj,
+    node,
+    edges,
+    upstream,
+    credentials,
+    onOpenCredentials,
+    secretPolicy,
+    onChangeSecretPolicy,
+  };
+
+  const list = fields(d).filter((f) => (f.when ? f.when(d) : true));
+
+  return (
+    <aside className="inspector">
+      <div className="insp-title">
+        <input
+          className="title-input"
+          value={String(d.label ?? '')}
+          onChange={(e) => onChange(node.id, { label: e.target.value })}
+        />
+        <span className="insp-kind">{def.meta.label}</span>
+      </div>
+
+      {list.map((f) =>
+        renderField(f, {
+          ...base,
+          value: f.key ? d[f.key] : undefined,
+          onChange: (v) => f.key && onChange(node.id, { [f.key]: v }),
+        }),
+      )}
+
+      {footer ? footer(base) : null}
+    </aside>
+  );
+}
+
+/** 把字段清单包成一个面板组件，供节点定义直接用 */
+export function makeInspector(
+  fields: FieldFactory,
+  footer?: (p: FieldRenderProps) => ReactNode,
+) {
+  return function Inspector(props: {
+    node: FlowNode;
+    edges: FlowEdge[];
+    onChange: (id: string, patch: Record<string, unknown>) => void;
+    credentials?: Credential[];
+    onOpenCredentials?: (kind: string) => void;
+    secretPolicy?: SecretPolicy;
+    onChangeSecretPolicy?: (p: SecretPolicy) => void;
+  }) {
+    return <BasicInspector {...props} fields={fields} footer={footer} />;
+  };
+}

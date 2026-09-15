@@ -1,7 +1,7 @@
 import type { FlowEdge, FlowNode } from '../flowTypes';
 import type { Credential } from '../engine/credentials';
 import type { SecretPolicy } from '../types';
-import { getDef } from '../nodes/registry';
+import { getDef, inspectorOf } from '../nodes/registry';
 
 /**
  * 属性面板 —— 现在只是一个分发器。
@@ -45,7 +45,8 @@ export default function Inspector({
 
   // 未知类型会拿到兜底定义（一个"看得见但不能跑"的占位面板），
   // 所以这里不需要判空 —— 见 nodes/registry.ts 的 makeFallback
-  const Panel = getDef(node.type).Inspector;
+  const def = getDef(node.type);
+  const Panel = inspectorOf(def);
   return (
     <Panel
       node={node}

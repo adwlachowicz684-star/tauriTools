@@ -30,6 +30,43 @@ registerNode({
 });
 ```
 
+## 属性面板：优先写 fields，不要写 JSX
+
+多数节点**不需要 Inspector 组件**，只要在节点定义里给一份 `fields` 声明，
+基础面板会自动渲染（含标题行）。翻译节点从 163 行 JSX 变成约 100 行声明，
+且其中大半是 prompt/hint 文案。
+
+```ts
+fields: () => [
+  { type: 'select', key: 'detail', label: '图片细节',
+    options: [{ value: 'auto', label: '自动' }, { value: 'low', label: '低（省 token）' }] },
+  { type: 'text', key: 'url', label: '图片地址', placeholder: 'https://...' },
+  { type: 'switch', key: 'yolo', label: '', placeholder: '自动批准工具调用（-y）' },
+  { type: 'credential', key: 'credentialId', credentialKind: 'ocr' },
+]
+```
+
+可用的 `type`：`text` `textarea` `number` `select` `switch` `chips`
+`credential` `note` `custom`。
+
+常用修饰：
+
+| 修饰 | 作用 |
+|---|---|
+| `when: (d) => bool` | 条件显隐（目标路径只在 copy/move 时出现这类） |
+| `toUI` / `fromUI` | 显示值与存储值互转（`'auto'` 显示成空） |
+| `hint` | 字段下方小字；可给函数，随其它字段变化 |
+| `options` | 可给函数，做动态选项 |
+| `inline: true` | 标签在左、控件在右（默认标签在上） |
+
+描述不住的用 `type: 'custom'` 给一段自己的 `render`（提示词那栏要插上游
+变量按钮、仓库 owner/repo 要挤在一行，都是这么做的）；复杂到整体都描述不住
+的（条件规则编辑器、循环配置、触发器的五种子类型），直接给 `Inspector`
+整体接管 —— 见 `defs/condition.ts` 等。这是**逃生口**，不是首选。
+
+需要 `useState` 的挂件（如更新检测的「测试」按钮）抽成独立组件，
+用 `panelFooter` 挂在字段清单之后 —— 字段描述是纯数据，装不下 hook。
+
 ## 五个字段分别管什么
 
 | 字段 | 作用 | 不给会怎样 |

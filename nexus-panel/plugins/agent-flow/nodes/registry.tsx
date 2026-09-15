@@ -1,4 +1,5 @@
 import type { NodeProps, NodeTypes } from '@xyflow/react';
+import { makeInspector } from '../components/inspectors/fields';
 import {
   NODE_CATEGORY_META,
   type NodeCategory, type NodeDef, type NodePreset, type NodeInspectorProps,
@@ -132,6 +133,31 @@ export function presetsByCategory(): Array<{ category: NodeCategory; label: stri
   return order
     .filter((c) => (groups.get(c)?.length ?? 0) > 0)
     .map((c) => ({ category: c, label: NODE_CATEGORY_META[c].label, presets: groups.get(c)! }));
+}
+
+/**
+ * 取该节点的属性面板组件。
+ *
+ * 没写 Inspector 的节点：用 fields 清单自动生成（基础面板）。
+ * 连 fields 都没有的：给一个说明面板而不是空白 ——
+ * 空白会让"这个节点还没实现面板"看起来像"面板坏了"。
+ */
+export function inspectorOf(def: NodeDef): NodeDef['Inspector'] {
+  if (def.Inspector) return def.Inspector;
+  if (def.fields) return makeInspector(def.fields, def.panelFooter);
+  return function EmptyInspector({ node }: NodeInspectorProps) {
+    return (
+      <aside className="inspector">
+        <div className="insp-title">
+          <span className="title-input" style={{ flex: 1 }}>{def.meta.label}</span>
+          <span className="insp-kind">{def.meta.label}</span>
+        </div>
+        <div className="tip">
+          这个节点还没有配置面板（{node.type ?? '未知类型'}）。
+        </div>
+      </aside>
+    );
+  };
 }
 
 /** 画布的 nodeTypes 映射（xyflow 要的就是 type → 组件） */
