@@ -60,6 +60,57 @@ fn set_window_icon(app: tauri::AppHandle, path: String) -> Result<(), String> {
     win.set_icon(img).map_err(|e| format!("设置图标失败: {e}"))
 }
 
+/// 脑图打印：走 Tauri 原生打印（`WebviewWindow::print()`）。
+///
+/// # 关键前提：wry 目前**只在 macOS** 实现了它
+///
+/// Tauri 官方文档（含最新的 2.4.1）在 `WebviewWindow::print()` 上明确写着：
+/// "Currently only supported on macOS on wry. window.print() works on all platforms."
+///
+/// 也就是说在 Windows / Linux 上它是 **no-op**：不弹对话框、也不报错。
+/// 这比直接失败更难排查 —— 用户只看到「点了打印没反应」，
+/// 既不知道失败，也不知道该换哪条路。
+///
+/// 所以这里**主动声明支持范围**，而不是让它静默失败：
+///   - macOS  → 调原生打印（`NSPrintOperation`），返回 `"native"`
+///   - 其它   → 返回 `Err`，由前端回退到 `window.print()`
+///
+/// 行为因此可预测；将来 wry 补齐别的平台，只要放开下面的 cfg 即可。
+///
+/// 注意：**不在这里改窗口标题**。打印前设标题能影响 PDF 默认文件名与页眉，
+/// 但标题是窗口级的、打印结束时机又不确定，改了不恢复会留下副作用
+/// （用户会看到窗口标题变成「画布 1」）。
+#[tauri::command]
+fn mm_print(window: WebviewWindow) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        return window
+            .print()
+            .map(|_| "native".to_string())
+            .map_err(|e| e.to_string());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        // window 是 magic parameter，非 macOS 分支里用不到但必须存在，
+        // 显式消费掉以免触发 unused 警告。
+        let _ = &window;
+        Err(format!(
+            "wry 的原生打印目前只在 macOS 实现（当前平台 {}），请回退 window.print()",
+            std::env::consts::OS
+        ))
+    }
+}
+
+/// 当前平台是否支持 Tauri 原生打印。
+///
+/// 前端可据此决定要不要显示「打印」入口、以及提示走哪条路径，
+/// 而不是等点了才知道。与 `mm_print` 的 cfg 判断必须保持一致。
+#[tauri::command]
+fn mm_print_support() -> bool {
+    cfg!(target_os = "macos")
+}
+
 fn main() {
     // ---- 命令行模式：不进 Tauri、不开窗口 ----
     // 必须在 Builder 之前处理：一旦 run() 起来就已经晚了。
@@ -88,6 +139,7 @@ fn main() {
         .manage(af_flow::WebhookRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .invoke_handler(tauri::generate_handler![
             rust_ping, app_version, window_action, set_window_icon,
+            mm_print, mm_print_support,
             fpx::fpx_bootstrap, fpx::fpx_save_config, fpx::fpx_create_link, fpx::fpx_remove_link,
             fpx::fpx_scan_content, fpx::fpx_read_file, fpx::fpx_open_path, fpx::fpx_list_dirs,
             fpx::fpx_quick_roots, fpx::fpx_copy_text, fpx::fpx_create_folder, fpx::fpx_set_lock, fpx::fpx_set_icon,
@@ -100,7 +152,6 @@ fn main() {
             fpx::fpx_watch_stop, fpx::fpx_watch_poll, fpx::fpx_mcp_start, fpx::fpx_mcp_tools,
             fpx::fpx_backup_auto_status, fpx::fpx_backup_auto_sync, fpx::fpx_mcp_stop,
             fpx::fpx_mcp_status, fpx::fpx_import_icons, fpx::fpx_rename_folder, fpx::fpx_clear_invalid,
-            fpx::fpx_move_folder, fpx::fpx_rename_content_item,
             af_flow::run_node, af_flow::kill_node, af_flow::check_cli,
             af_flow::watch_start, af_flow::watch_stop,
             af_flow::webhook_start, af_flow::webhook_stop,

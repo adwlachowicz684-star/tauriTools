@@ -3118,6 +3118,111 @@ group('P3 打印与 PDF');
 }
 
 /* ============================================================
+   二十九、P3b：改走 Tauri Rust 命令（mm_print + 回退）
+   ============================================================ */
+
+group('P3b Tauri Rust 打印命令');
+
+{
+  const io = await import('./io.js');
+
+  // ---- 自定义 print 路径：返回 true 就用它，不再调 window.print ----
+  const savedPrint = globalThis.window.print;
+  let jsCalled = 0;
+  globalThis.window.print = () => { jsCalled++; };
+
+  let rustCalled = 0;
+  const okNative = await io.printSvg('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect/></svg>', {
+    print: async () => { rustCalled++; return true; },
+  });
+  eq(okNative, true, 'Rust 路径可用时返回 true');
+  eq(rustCalled, 1, '调用了 Rust 路径');
+  eq(jsCalled, 0, '**没有**再调 window.print（两条路不能都走，否则弹两个对话框）');
+  globalThis.window.print = savedPrint;
+  window.dispatchEvent(new globalThis.window.Event('afterprint'));
+
+  // ---- 返回 false：自动回退 window.print ----
+  const saved2 = globalThis.window.print;
+  let jsCalled2 = 0;
+  globalThis.window.print = () => { jsCalled2++; };
+  let rustCalled2 = 0;
+  const okFb = await io.printSvg('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect/></svg>', {
+    print: async () => { rustCalled2++; return false; },
+  });
+  eq(okFb, true, 'Rust 不可用时回退后仍返回 true');
+  eq(rustCalled2, 1, '确实先试过 Rust 路径');
+  eq(jsCalled2, 1, '回退到 window.print 并调用了一次');
+  globalThis.window.print = saved2;
+  window.dispatchEvent(new globalThis.window.Event('afterprint'));
+
+  // ---- Rust 抛异常（非 Tauri 环境）也要回退，不能冒泡 ----
+  const saved3 = globalThis.window.print;
+  let jsCalled3 = 0, threw = false;
+  globalThis.window.print = () => { jsCalled3++; };
+  try {
+    await io.printSvg('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect/></svg>', {
+      print: async () => { throw new Error('不在 Tauri 环境中'); },
+    });
+  } catch { threw = true; }
+  eq(threw, false, 'Rust 路径抛异常时不冒泡（浏览器调试模式下会走到这里）');
+  eq(jsCalled3, 1, '抛异常后仍回退 window.print');
+  globalThis.window.print = saved3;
+  window.dispatchEvent(new globalThis.window.Event('afterprint'));
+
+  // ---- 两条路都不可用：返回 false 且不留垃圾 DOM ----
+  const saved4 = globalThis.window.print;
+  globalThis.window.print = undefined;
+  const okNone = await io.printSvg('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect/></svg>', {
+    print: async () => false,
+  });
+  eq(okNone, false, '两条路都不可用 → 返回 false');
+  eq(document.querySelector('.mm-print-root'), null, '失败时不留打印容器（不留垃圾 DOM）');
+  globalThis.window.print = saved4;
+}
+
+{
+  // ---- Rust 侧：命令注册与平台判断 ----
+  const rs = fs.readFileSync(path.join(HERE, '../../src-tauri/src/main.rs'), 'utf8');
+  ok(/fn mm_print\(window: WebviewWindow\) -> Result<String, String>/.test(rs), 'Rust 新增 mm_print 命令');
+  ok(/mm_print, mm_print_support/.test(rs), '两个命令都已注册到 invoke_handler');
+  ok(/fn mm_print_support\(\) -> bool/.test(rs), 'Rust 新增 mm_print_support（前端可预知能力）');
+  ok(/cfg!\(target_os = "macos"\)/.test(rs), 'mm_print_support 与 mm_print 的平台判断一致（都用 macOS）');
+
+  const mmp = rs.slice(rs.indexOf('fn mm_print('), rs.indexOf('fn mm_print_support'));
+  ok(/#\[cfg\(target_os = "macos"\)\]/.test(mmp), 'macOS 分支走原生 print()');
+  ok(/#\[cfg\(not\(target_os = "macos"\)\)\]/.test(mmp), '非 macOS 分支显式声明不支持');
+  ok(/let _ = &window;/.test(mmp), '非 macOS 分支消费掉 window（magic parameter 必存在，否则 unused 警告）');
+  // 关键：不能静默 no-op
+  ok(/Err\(format!\(/.test(mmp), '非 macOS **返回 Err 而不是静默成功** —— 这是本实现的核心');
+  ok(/std::env::consts::OS/.test(mmp), '错误信息带上实际平台（便于排查）');
+
+  // 必须两个分支都有，缺一个就是「只支持一半」
+  const cfgCount = (mmp.match(/#\[cfg\(/g) || []).length;
+  eq(cfgCount, 2, 'mm_print 里恰好两个互斥 cfg 分支');
+}
+
+{
+  // ---- 前端：printMap 走 Rust 命令 ----
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const pm = idx.slice(idx.indexOf('async function printMap'), idx.indexOf('function reportSave'));
+  ok(/ctx\.invoke\('mm_print'/.test(pm), 'printMap 调用 Rust 命令 mm_print');
+  ok(/print: async \(\) => \{/.test(pm), '通过 opts.print 注入自定义路径（io 层不依赖 Tauri）');
+  const cb = pm.slice(pm.indexOf('print: async () =>'), pm.indexOf("},\n    });"));
+  ok(/catch \{\s*\n\s*return false;/.test(cb), 'Rust 路径失败时返回 false 让 io 回退（不是抛）');
+  ok(/via = 'Tauri 原生'/.test(pm), '走 Rust 时状态栏标明（让用户知道走的哪条路）');
+  ok(/via \? ` · \$\{via\}` : ''/.test(pm), '两条路径的提示要能区分');
+
+  // io 层不能引入 Tauri 知识
+  const iom = fs.readFileSync(path.join(HERE, 'io.js'), 'utf8');
+  ok(!/invoke|@tauri-apps/.test(iom), 'io.js 不引入 Tauri 依赖（路径选择留给调用方）');
+  ok(/if \(!ok && typeof window !== 'undefined' && typeof window\.print === 'function'\)/.test(iom),
+    'io.js 在自定义路径返回 false 后回退 window.print');
+  ok(/if \(!ok\) \{[\s\S]{0,120}cleanup\(\);[\s\S]{0,60}return false;/.test(iom),
+    'io.js 失败时清理并返回 false');
+  ok(/typeof timer\?\.unref === 'function'/.test(iom), '兜底定时器 unref（否则吊住 Node 进程不退出）');
+}
+
+/* ============================================================
    结果
    ============================================================ */
 

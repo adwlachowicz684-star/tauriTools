@@ -437,13 +437,18 @@ export function fitSvgForPrint(svgText) {
  * @param {boolean} [opts.landscape]
  * @param {number} [opts.margin]
  * @param {string} [opts.title] 打印时页眉显示的标题
+ * @param {Function} [opts.print] 自定义触发打印的函数（走 Tauri Rust 命令）。
+ *                                返回 `true` = 已发起；返回 `false` = 该路径不可用，
+ *                                本函数会自动回退到 `window.print()`。
+ *                                这么设计是为了让 io 层不引入 Tauri 依赖 ——
+ *                                路径选择交给调用方，io 只负责准备打印视图。
  * @returns {Promise<boolean>} 是否真的发起了打印
  */
 export async function printSvg(svgText, opts = {}) {
   const text = String(svgText || '');
   if (!text) return false;
   // jsdom / 无打印能力的环境要安静地失败，不能抛
-  if (typeof window === 'undefined' || typeof window.print !== 'function') return false;
+  if (typeof document === 'undefined') return false;
 
   const style = document.createElement('style');
   style.textContent = [
@@ -467,27 +472,54 @@ export async function printSvg(svgText, opts = {}) {
   const prevTitle = document.title;
   if (opts.title) document.title = String(opts.title);
 
-  try {
-    window.print();
-    return true;
-  } catch {
-    // 某些宿主提供了 window.print 但调用即抛（无打印后端）。
-    // 必须转成 false 而不是让异常冒出去：调用方据此提示「当前环境不支持」，
-    // 冒泡上去只会变成一个看不懂的 unhandled rejection。
-    return false;
-  } finally {
-    // 不能立刻清理：window.print() 在某些浏览器是同步阻塞、
-    // 在另一些是异步的，同步移除会让对话框还没渲染内容就没了。
-    // 用 afterprint 兜底 + 定时器双保险。
-    const cleanup = () => {
-      style.remove();
-      host.remove();
-      if (opts.title) document.title = prevTitle;
-      window.removeEventListener('afterprint', cleanup);
-    };
-    window.addEventListener('afterprint', cleanup);
-    setTimeout(cleanup, 60 * 1000);   // afterprint 不触发时的兜底
+  let timer = null;
+  const cleanup = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    style.remove();
+    host.remove();
+    if (opts.title) document.title = prevTitle;
+    if (typeof window !== 'undefined') window.removeEventListener('afterprint', cleanup);
+  };
+
+  /**
+   * 触发打印：优先用调用方给的路径（Tauri Rust 命令），
+   * 它返回 false 表示不可用（非 macOS / 不在 Tauri 环境 / 命令未注册），
+   * 此时回退 window.print()。
+   */
+  let ok = false;
+  if (opts.print) {
+    try {
+      ok = (await opts.print()) === true;
+    } catch {
+      ok = false;   // 路径不可用（如不在 Tauri 环境），继续回退
+    }
   }
+  if (!ok && typeof window !== 'undefined' && typeof window.print === 'function') {
+    try {
+      window.print();
+      ok = true;
+    } catch {
+      // 某些宿主提供了 window.print 但调用即抛（无打印后端）。
+      // 必须转成 false 而不是让异常冒出去：调用方据此提示「当前环境不支持」，
+      // 冒泡上去只会变成一个看不懂的 unhandled rejection。
+      ok = false;
+    }
+  }
+
+  if (!ok) {
+    // 没发起成功就立刻收：留着一个隐藏的打印容器在 DOM 里毫无意义
+    cleanup();
+    return false;
+  }
+
+  // 不能立刻清理：print() 在某些浏览器是同步阻塞、在另一些是异步的，
+  // 同步移除会让对话框还没渲染内容就没了。用 afterprint + 定时器双保险。
+  if (typeof window !== 'undefined') window.addEventListener('afterprint', cleanup);
+  timer = setTimeout(cleanup, 60 * 1000);
+  // Node/测试环境里 unref，否则这个 60 秒的兜底定时器会吊住进程不退出。
+  // 浏览器端没有 unref，条件调用即可，不影响打印本身。
+  if (typeof timer?.unref === 'function') timer.unref();
+  return true;
 }
 
 export function stampName(base, ext) {

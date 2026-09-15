@@ -535,7 +535,36 @@ Web 版原先「优先编辑器栈，拿不到就回退本地快照栈」，**�
 所以这不是「从 WPF 漏移植」，而是**未经核实的推测**（与 B2/B3 剪贴板同类
 误判：先入为主地以为「桌面应用应该有 X」）。已改判为 **Web 版新增能力**。
 
-### 技术路线：window.print() 而非 Tauri Rust
+### 技术路线：Tauri Rust 命令为主，`window.print()` 回退
+
+按你的要求改走 **Tauri Rust 命令 `mm_print`**（`src-tauri/src/main.rs`）。
+
+**但有个必须知道的前提**：Tauri 官方文档（含最新 2.4.1）在
+`WebviewWindow::print()` 上明确写着 ——
+
+> "Currently only supported on macOS on wry. window.print() works on all platforms."
+
+即 **wry 只在 macOS 实现了原生打印**，Windows / Linux 上是 **no-op**：
+不弹窗、也不报错。这比直接失败更难排查 —— 用户只看到「点了打印没反应」。
+
+所以 Rust 侧**主动声明支持范围**，而不是让它静默失败：
+
+| 平台 | 行为 |
+|---|---|
+| macOS | 调原生打印（`NSPrintOperation`），返回 `"native"` |
+| Windows / Linux | **返回 Err**，前端回退 `window.print()` |
+
+前端两条路都走：先 `ctx.invoke('mm_print')`，reject 就回退。这样
+跨平台行为可预测，将来 wry 补齐别的平台只要放开 cfg 就行。
+
+另外：浏览器调试模式下 `ctx.invoke` 会直接 reject（不在 Tauri 环境），
+同样走回退 —— 所以 `npm run dev` 里也能正常打印。
+
+**静默导出 PDF 仍未实现**：Tauri 2 没有内置 PDF 能力，
+`WebviewWindow::print()` 打开的是系统打印对话框，在其中选
+「Microsoft Print to PDF / 存为 PDF」导出。若要真正的静默 PDF，
+需 `tauri-plugin-printer-v2`（仅 Windows）或 `windows` + `webview2-com`
+直接调 WebView2 的 `PrintToPdf` —— 两者都要新增依赖，未擅自引入。
 
 1. 浏览器的打印对话框**自带预览** → 覆盖打印预览需求；
 2. 打印目标里通常有「另存为 PDF」→ 覆盖 PDF 导出需求；

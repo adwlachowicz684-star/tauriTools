@@ -1363,12 +1363,32 @@ bootIframePlugin(async (ctx) => {
     const svg = await bridge?.exportSvg();
     if (!svg) { status('打印失败：无法取得画布矢量图（编辑器未就绪？）', true); return; }
     const landscape = opts.landscape !== false;   // 脑图通常更宽，默认横向
+    let via = '';
     const ok = await io.printSvg(svg, {
       landscape,
       margin: opts.margin,
       title: sheet()?.title || '脑图',
+      /**
+       * 优先走 Tauri Rust 命令 mm_print。
+       *
+       * 它在**非 macOS 平台会 reject**（wry 只实现了 macOS 的原生打印），
+       * 在浏览器调试模式下 ctx.invoke 也会 reject（不在 Tauri 环境）。
+       * 两种情况都返回 false，让 io 层回退到 window.print()。
+       *
+       * 返回 false 而非抛：这是「路线不可用」而不是「出错」，
+       * 不该被当成失败冒泡上去。
+       */
+      print: async () => {
+        try {
+          await ctx.invoke('mm_print', {});
+          via = 'Tauri 原生';
+          return true;
+        } catch {
+          return false;
+        }
+      },
     });
-    if (ok) status(`已发起打印（A4 ${landscape ? '横向' : '纵向'}）：${sheet()?.title || '当前画布'}`);
+    if (ok) status(`已发起打印（A4 ${landscape ? '横向' : '纵向'}${via ? ` · ${via}` : ''}）：${sheet()?.title || '当前画布'}`);
     else status('当前环境不支持打印（需要浏览器窗口）', true);
   }
 
