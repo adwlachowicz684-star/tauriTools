@@ -600,29 +600,6 @@ export default function App() {
             </button>
           </div>
         </div>
-
-        {(s.selProject || s.selGroup) && (
-          <div className="p-row" style={{ marginTop: 12 }}>
-            <span className="p-muted">已选：</span>
-            <span className="p-mono">{s.selProject ?? '—'}</span>
-            <span className="p-muted">→</span>
-            <span className="p-mono">{s.selGroup ?? '—'}</span>
-            <button
-              className="p-btn primary"
-              disabled={!s.selProject || !s.selGroup || s.busy}
-              onClick={() => s.selProject && s.selGroup && s.createLink(s.selProject, s.selGroup)}
-            >
-              分配项目组（建链）
-            </button>
-            <button
-              className="p-btn"
-              disabled={!s.selProject || s.busy}
-              onClick={() => s.selProject && s.removeLink(s.selProject)}
-            >
-              撤销链接
-            </button>
-          </div>
-        )}
       </div>
 
       {/* ---------------- 左侧操作栏 + 三栏 + 日志 ----------------
@@ -1049,8 +1026,10 @@ function HelpDialog({ onClose, platform }: { onClose: () => void; platform: stri
       <div className="dialog p-card" style={{ width: 560 }} onMouseDown={(e) => e.stopPropagation()}>
         <h2>使用说明</h2>
         <ul className="fpx-help">
-          <li><b>分配</b>：把「项目」卡片拖到「项目组」卡片上（或选中两者后点「分配项目组」），
-            会在项目目录下为每个启用的 agent 链接名建立指向项目组的链接。</li>
+          <li><b>分配</b>：把「项目」卡片拖到「项目组」卡片上（或反向拖），
+            会在项目目录下为每个启用的 agent 链接名建立指向项目组的链接。
+            建链只有拖放这一条路，没有按钮。</li>
+          <li><b>撤销链接</b>：在「项目」卡片上右键 →「撤销链接」。</li>
           <li><b>链接名</b>：工具条「链接名」可开关 .opencode / .claude / .codex … 也可加自定义名字。</li>
           <li><b>内容浏览</b>：选中项目组后，右栏列出其 agent / skill / rule（读 <span className="p-mono">agent(s)/ skill(s)/ rules</span> 目录），点条目看内容。</li>
           <li><b>新建</b>：直接创建文件夹并加入页签（项目组可带模板目录）。</li>
