@@ -138,5 +138,32 @@ t('首帧脚本设置了 colorScheme',
 t('外壳缓存了基调供插件读取',
   /nexus:preload-base/.test(read('js/theme-manager.js')));
 
+console.log('\n=== 6. 加载覆盖层：加载期间要有东西看，且不能挡住就绪的插件 ===');
+/* 以前「正在加载…」是直接写进 stage.innerHTML 的，而挂载 iframe 时
+   一句 hostEl.innerHTML = '' 就把它抹了 —— 插件却还要等适配完成才淡入，
+   中间那段屏上只有 iframe 的底色，看着像卡死。现在改成了覆盖层。 */
+const loadingBlock = ruleOf('.plugin-loading {') || '';
+t('.plugin-loading 存在', !!loadingBlock);
+t('加载层是不透明的（transparent 盖不住下面没显形的 iframe）',
+  /background\s*:\s*var\(--bg\)/.test(loadingBlock),
+  (loadingBlock.match(/background\s*:\s*[^;]+;/) || ['未声明'])[0]);
+t('加载层用绝对定位铺满（是覆盖层，不是占位元素）',
+  /position\s*:\s*absolute/.test(loadingBlock) && /inset\s*:\s*0/.test(loadingBlock));
+t('有淡出态（成功时先透出插件再摘掉，避免跳变）',
+  /\.plugin-loading\.loading-done\s*\{[^}]*opacity\s*:\s*0/.test(css));
+
+t('挂载 iframe 时保留加载层，不再无条件 innerHTML = \'\'',
+  /for \(const n of \[\.\.\.hostEl\.children\]\)[\s\S]{0,120}plugin-loading/.test(host));
+t('加载层在插件显形时自动退场（连 900ms 兜底那条路径也覆盖）',
+  /function revealFrame\([\s\S]{0,400}dismissLoading/.test(host));
+t('同页插件（module，没有 iframe）也会收掉加载层',
+  /revealFrame\(instance\?\.iframe\);[\s\S]{0,200}dismiss\(\);/.test(host));
+t('失败时立即摘掉加载层，别挡着错误框',
+  /function showError\([\s\S]{0,300}dismissLoading\(stage, true\)/.test(host));
+t('加载层用了主题变量而非写死颜色（换肤要跟着变）',
+  /\.plugin-loading \.loading-inner[\s\S]{0,200}var\(--surface-overlay\)/.test(css));
+t('加载超过 3s 有补充说明（避免用户以为卡死）',
+  /3000/.test(host) && /首次加载可能较慢/.test(host));
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

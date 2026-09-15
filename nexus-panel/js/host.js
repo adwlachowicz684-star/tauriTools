@@ -204,7 +204,11 @@ export function createHost(opts = {}) {
 
     const token = Symbol(id);
     state.mounting = token;
-    stage.innerHTML = `<div class="loader"><div class="spinner"></div>正在加载插件…</div>`;
+    /* 加载覆盖层：盖在插件之上，插件显形时淡出，失败时给错误框让位。
+       不能用 stage.innerHTML 直接写 —— 挂载 iframe 时会清 innerHTML，
+       那样提示当场就没了，而插件还要等适配完成才显形。 */
+    stage.innerHTML = '';
+    const dismiss = showLoading(stage, manifest);
 
     const timer = setTimeout(() => {
       if (state.mounting === token) showError(stage, manifest, new Error('插件加载超时（10s）。请检查入口路径是否正确。'));
@@ -236,6 +240,9 @@ export function createHost(opts = {}) {
          此刻摘遮罩就等于把那帧白放给用户看。
          适配关掉时也要显形 —— 那是用户的选择，不是没走到这一步。 */
       revealFrame(instance?.iframe);
+      // iframe 插件由 revealFrame 顺带收掉加载层；同页插件（module）没有
+      // iframe，得在这里自己收，否则它会一直盖着已就绪的插件
+      dismiss();
 
       // 告诉外壳：这个插件有没有自己的设置面板（决定要不要显示「⚙ 设置」）
       hooks.onSettingsAvailable?.(instance ? hasSettings(instance) : false);
@@ -282,7 +289,12 @@ export function createHost(opts = {}) {
     if (!container) throw new Error('缺少设置面板容器');
 
     if (manifest.type === 'iframe') {
-      const inst = await mountIframeView(container, manifest, null, 'settings');
+      // 抽屉里同样先盖一层加载层：设置页也是独立文档，一样有那段空窗期
+      const dismissSettings = showLoading(container, manifest);
+      let inst;
+      try {
+        inst = await mountIframeView(container, manifest, null, 'settings');
+      } catch (e) { dismissSettings(true); throw e; }
       inst.adaptInput = {
         manifest, wrap: inst.wrap, target: inst.target,
         root: null, isIframe: true,
@@ -290,6 +302,7 @@ export function createHost(opts = {}) {
       await reAdapt(inst);
       // 与主视图同理：等适配滤镜挂上再摘遮罩，否则抽屉里也会闪一下白
       revealFrame(inst?.iframe);
+      dismissSettings();
       // 焦点在这个沙箱里，天然隔离；主视图（另一个 iframe 或主文档）收不到事件
       try { inst.iframe?.contentWindow?.focus(); } catch {}
       return async () => {
@@ -443,6 +456,13 @@ export function createHost(opts = {}) {
    */
   function revealFrame(iframe) {
     try { iframe?.classList?.add('revealed'); } catch { /* iframe 已销毁 */ }
+    /* 插件已经显形，加载层该退场了。
+       从 iframe 往上找到宿主容器再清，这样连 900ms 兜底显形那条路径
+       也会自动把加载层收掉，不必在每个调用点各写一遍。 */
+    try {
+      const hostEl = iframe?.closest?.('.plugin-wrap')?.parentElement;
+      if (hostEl) dismissLoading(hostEl);
+    } catch { /* iframe 已销毁 */ }
   }
 
   /** 兜底显形：适配卡住（插件报错、握手超时）时也不能让插件永远隐身 */
@@ -606,7 +626,13 @@ export function createHost(opts = {}) {
       cleanupFns.push(() => window.removeEventListener('message', bridgeHandler));
     });
 
-    hostEl.innerHTML = '';
+    /* 清掉上一次的插件 DOM，但**保留加载覆盖层**（.plugin-loading）。
+       以前这里是无条件 innerHTML = ''，加载提示当场被抹掉，
+       而 iframe 还要等主题变量推入 + 适配滤镜挂上才淡入 ——
+       中间那段就是一片没有内容的底色，看着像卡死。 */
+    for (const n of [...hostEl.children]) {
+      if (!n.classList.contains('plugin-loading')) n.remove();
+    }
     hostEl.appendChild(wrap);
 
     /* 兜底显形：mounted 之后无论后面适配成功与否，最多 900ms 一定显示。
@@ -863,9 +889,70 @@ export function createHost(opts = {}) {
     hooks.onSidebarItems?.([...injectedItems.values()]);
   }
 
+  /* ---- 加载覆盖层 ---- */
+
+  /**
+   * 盖一层「正在加载…」。
+   *
+   * 它是**覆盖在插件之上**的兄弟节点，不是插件的替代品：
+   * 插件在下面照常加载渲染，加载层只负责在它显形之前挡住那片空底色。
+   * 这样成功时只是淡出（插件已经就绪，不会闪），失败时才换成错误框。
+   *
+   * 底层色必须是 --bg（不透明）：下面那个 iframe 在适配完成前是 opacity:0，
+   * 但它的 --bg 底板仍然在 —— 加载层若半透明就会与之叠出奇怪的颜色。
+   *
+   * @returns {Function} 幂等的移除函数（成功 / 失败 / 切插件都会调）
+   */
+  function showLoading(hostEl, manifest) {
+    if (!hostEl) return () => {};
+    const el = document.createElement('div');
+    el.className = 'plugin-loading';
+    el.innerHTML = `
+      <div class="loading-inner">
+        <div class="spinner"></div>
+        <span class="loading-text">正在加载 <span class="loading-name">${
+          escapeHtml(manifest?.name || manifest?.id || '插件')
+        }</span>…</span>
+      </div>`;
+    hostEl.appendChild(el);
+
+    // 加载超过 3s 再补一句，避免用户以为卡死了 ——
+    // 此时多半是在等首次构建产物，或插件脚本抛错了正走向握手超时
+    const slow = setTimeout(() => {
+      const t = el.querySelector('.loading-text');
+      if (t) t.insertAdjacentHTML('beforeend',
+        '<br><span style="opacity:.75">首次加载可能较慢，若长时间无响应请检查是否已执行构建</span>');
+    }, 3000);
+
+    let gone = false;
+    return function dismiss(immediate = false) {
+      if (gone) return;
+      gone = true;
+      clearTimeout(slow);
+      if (!el.isConnected) return;
+      if (immediate) { el.remove(); return; }
+      el.classList.add('loading-done');
+      // 淡出后再摘：立刻 remove 会让底下刚显形的插件"跳"一下
+      setTimeout(() => el.remove(), 240);
+    };
+  }
+
+  /** 清掉容器里的加载层（切插件 / 卸载时用，不关心返回值） */
+  function dismissLoading(hostEl, immediate = false) {
+    if (!hostEl) return;
+    for (const n of hostEl.querySelectorAll('.plugin-loading')) {
+      if (immediate) n.remove();
+      else if (!n.classList.contains('loading-done')) {
+        n.classList.add('loading-done');
+        setTimeout(() => n.remove(), 240);
+      }
+    }
+  }
+
   /* ---- 错误边界 ---- */
   function showError(stage, manifest, err) {
     console.error(`[plugin:${manifest?.id}]`, err);
+    dismissLoading(stage, true);        // 立即摘掉，别挡着错误框
     stage.innerHTML = renderErrorBox(manifest, err);
     stage.querySelector('#err-retry').onclick = () => mount(manifest?.id);
     stage.querySelector('#err-back').onclick = () => hooks.onOpen?.('home') ?? mount('home');

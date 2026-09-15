@@ -494,6 +494,45 @@ body {
   display: flex; align-items: center; justify-content: center; gap: 10px;
   color: var(--text-mute); font-size: 12px;
 }
+
+/* ---------- 插件加载覆盖层 ----------
+   为什么要盖一层、而不是像以前那样把「正在加载…」直接塞进 stage：
+   以前 host.js 一挂上 iframe 就执行 hostEl.innerHTML = ''，
+   加载提示当场被清掉，而 iframe 又要等适配滤镜挂上才淡入 ——
+   中间那段时间（几十毫秒到 10 秒）屏上只有 iframe 的 --bg 底色，
+   什么都没有，用户分不清是「加载中」还是「坏了」。
+
+   现在加载层是**覆盖在插件之上**的兄弟节点，插件在下面照常加载渲染：
+     · 加载中 → 看到主题化的加载框
+     · 成功   → 加载层淡出，底下的插件已经就绪，不会闪
+     · 失败   → 换成主题化错误框
+   所以它必须有不透明底色（--bg），不能是 transparent —— 否则盖不住
+   下面还没显形的 iframe。 */
+.plugin-loading {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-raised);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 12px;
+  transition: opacity var(--dur-base) ease;
+}
+.plugin-loading .loading-inner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 20px;
+  border-radius: var(--r-lg);
+  background: var(--surface-overlay);
+  box-shadow: var(--sh-out-md);
+}
+.plugin-loading .loading-text { line-height: 1.5; }
+.plugin-loading .loading-name { color: var(--text); }
+/* 淡出：先让下面已就绪的插件透出来，再把自己摘掉 */
+.plugin-loading.loading-done { opacity: 0; pointer-events: none; }
+/* 系统开了「减少动效」就别淡出了，直接消失 */
+@media (prefers-reduced-motion: reduce) {
+  .plugin-loading { transition: none; }
+}
 .spinner {
   width: 18px; height: 18px;
   border-radius: 50%;
