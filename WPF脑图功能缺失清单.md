@@ -156,6 +156,12 @@ Web 可将这些能力桥接到编辑器命令，但必须为选择模式提供�
 | A31 | 单/多画布包自动识别 | `MindMapPanel.xaml.cs:2167-2175` | `TryParseWorkbook` 区分多画布包和单画布内容 | 完全缺失 | A-缺失功能 | 中 |
 | A32 | 多画布 Markdown 导出 | `MindMapPanel.xaml.cs:2114-2130` | 多张画布生成组合 Markdown | 完全缺失 | A-缺失功能 | 中 |
 | A33 | 整本 XMind 无损快照 | WPF `XMindConverter` | 标准内容与 kityminder 快照并存 | 有但行为不同 | A-缺失功能 | 中 |
+> **核实更正（第 8 批）**：A34–A37 / A41 / B29 六项的出处**全部写着「未定位到确切行号」**，
+> 实际在 WPF 源码中**零命中** —— 全仓搜 `Print` 无任何文档打印代码（唯一的
+> `PrintWindow` 是 `ScreenCaptureService` 里截窗口的 Win32 API，与打印无关）。
+> 这六项不是「从 WPF 漏移植」，而是**未经核实的推测**，已改判为
+> 「Web 版新增能力」（非移植项）。实现方案见 README 的 P3 章节。
+>
 | A34 | 打印脑图 | `KityMinderHost` 打印接口；未定位到确切行号 | WebView2 打印当前文档 | 完全缺失 | A-缺失功能 | 高 |
 | A35 | 打印预览 | 宿主打印能力；未定位到确切行号 | 系统预览后再打印 | 完全缺失 | A-缺失功能 | 高 |
 | A36 | 系统打印对话框 | WebView2 `ShowPrintUI`；未定位到确切行号 | 调用浏览器或系统打印 UI | 完全缺失 | A-缺失功能 | 中 |

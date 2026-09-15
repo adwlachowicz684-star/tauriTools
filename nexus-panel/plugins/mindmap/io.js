@@ -341,6 +341,155 @@ export async function svgToPngBlob(svgText, scale = 1) {
   }
 }
 
+/* --------------------------- 打印 / PDF --------------------------- */
+
+/**
+ * 打印 / PDF 的页面样式（纯函数，可测）。
+ *
+ * 【这不是从 WPF 移植的功能】
+ * WPF 原版**没有打印能力** —— 全仓搜 `Print` 零命中（唯一的 `PrintWindow`
+ * 是 `ScreenCaptureService` 里截窗口的 Windows API，与文档打印无关）。
+ * 清单里 A34–A37 / A41 / B29 六项出处全写着「未定位到确切行号」，
+ * 实际是未经核实的推测。这里是作为 **Web 版新增能力**实现的。
+ *
+ * 走 `window.print()` 而非 Tauri Rust 命令，理由：
+ *   1. 浏览器的打印对话框**自带预览**（覆盖打印预览需求）；
+ *   2. 目标里通常有「另存为 PDF」（覆盖 PDF 导出需求）；
+ *   3. 不需要写 Rust，风险与维护成本都低得多。
+ * 代价是无法「静默导出 PDF」，必须由用户在对话框里确认。
+ *
+ * @param {object} [o]
+ * @param {boolean} [o.landscape=false] true=A4 横向（脑图通常更宽，横向更合适）
+ * @param {number} [o.margin=10] 页边距（毫米）
+ * @returns {string} CSS 文本
+ */
+export function printPageCss(o = {}) {
+  const landscape = !!o.landscape;
+  const raw = Number(o.margin);
+  // 非法值（负数 / NaN）退回默认 —— 负页边距会让内容被裁掉且没有提示
+  const margin = Number.isFinite(raw) && raw >= 0 ? raw : 10;
+  return `@page { size: A4 ${landscape ? 'landscape' : 'portrait'}; margin: ${margin}mm; }`;
+}
+
+/**
+ * 打印时用于「只显示待打印内容」的样式（纯函数，可测）。
+ *
+ * 两段缺一不可：
+ *
+ * 1. `print-color-adjust: exact` —— 浏览器打印默认**丢弃背景**，
+ *    深色画布会印成一张白纸，节点底色全没了。这条是打印能看的**前提**。
+ * 2. 隐藏其它兄弟节点 —— 否则会把整个面板（侧栏、工具栏、页签）
+ *    一起印上去。用 `body > *` 选兄弟而非给每个元素加类，
+ *    将来新增顶层元素不用记得同步。
+ *
+ * @param {string} sel 打印根容器的选择器
+ */
+export function printHideCss(sel = '.mm-print-root') {
+  return [
+    '@media print {',
+    `  body > *:not(${sel}) { display: none !important; }`,
+    `  ${sel} { display: block !important; position: static !important; }`,
+    // 背景色必须保留（深色主题否则印成白纸）
+    '  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }',
+    '}',
+  ].join('\n');
+}
+
+/**
+ * 把 SVG 处理成适合打印的形态（纯函数，可测）。
+ *
+ * 关键：**只去掉固定宽高，viewBox 保持不动**。SVG 是矢量，交给 CSS 用
+ * `width:100%; height:auto` 让它按纸张宽度等比缩放；若把 viewBox 一起改，
+ * 就变成拉伸变形或留大片空白。
+ *
+ * 同时补 `preserveAspectRatio` —— 不同浏览器对「只有 viewBox 没有宽高」
+ * 的 SVG 默认行为不一致，显式指定才稳定。
+ *
+ * @returns {string} 处理后的 SVG 文本；解析失败原样返回（打印总比报错好）
+ */
+export function fitSvgForPrint(svgText) {
+  const text = String(svgText || '');
+  if (!text) return text;
+  try {
+    const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
+    if (!doc || doc.querySelector('parsererror')) return text;
+    const svg = doc.querySelector('svg');
+    if (!svg) return text;
+
+    // 宽高交给 CSS 控制（去掉内联的像素宽高，否则会溢出纸张）
+    svg.removeAttribute('width');
+    svg.removeAttribute('height');
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    svg.setAttribute('class', 'mm-print-svg');
+    return new XMLSerializer().serializeToString(svg);
+  } catch {
+    // 解析不了就用原样 —— 打印出来总好过抛异常
+    return text;
+  }
+}
+
+/**
+ * 打印 SVG（当前画布）。
+ *
+ * @param {string} svgText 完整画布的 SVG（必须是 exportSvg() 的全图，
+ *                         不是可视视口 —— 视口截图印出来只有一角）
+ * @param {object} [opts]
+ * @param {boolean} [opts.landscape]
+ * @param {number} [opts.margin]
+ * @param {string} [opts.title] 打印时页眉显示的标题
+ * @returns {Promise<boolean>} 是否真的发起了打印
+ */
+export async function printSvg(svgText, opts = {}) {
+  const text = String(svgText || '');
+  if (!text) return false;
+  // jsdom / 无打印能力的环境要安静地失败，不能抛
+  if (typeof window === 'undefined' || typeof window.print !== 'function') return false;
+
+  const style = document.createElement('style');
+  style.textContent = [
+    printPageCss(opts),
+    printHideCss('.mm-print-root'),
+    '.mm-print-root { display: none; }',
+    '.mm-print-svg { width: 100%; height: auto; display: block; }',
+  ].join('\n');
+
+  const host = document.createElement('div');
+  host.className = 'mm-print-root';
+  // 用 textContent 塞进一个预容器再取 innerHTML：
+  // 直接 innerHTML = svgText 也可行，但先过一次解析器能过滤掉畸形标记
+  host.innerHTML = fitSvgForPrint(text);
+
+  document.head.appendChild(style);
+  document.body.appendChild(host);
+
+  // 打印时临时改标题：多数浏览器把它用作 PDF 文件名与页眉，
+  // 不改的话导出的 PDF 会叫「页面标题」这种无意义的名字
+  const prevTitle = document.title;
+  if (opts.title) document.title = String(opts.title);
+
+  try {
+    window.print();
+    return true;
+  } catch {
+    // 某些宿主提供了 window.print 但调用即抛（无打印后端）。
+    // 必须转成 false 而不是让异常冒出去：调用方据此提示「当前环境不支持」，
+    // 冒泡上去只会变成一个看不懂的 unhandled rejection。
+    return false;
+  } finally {
+    // 不能立刻清理：window.print() 在某些浏览器是同步阻塞、
+    // 在另一些是异步的，同步移除会让对话框还没渲染内容就没了。
+    // 用 afterprint 兜底 + 定时器双保险。
+    const cleanup = () => {
+      style.remove();
+      host.remove();
+      if (opts.title) document.title = prevTitle;
+      window.removeEventListener('afterprint', cleanup);
+    };
+    window.addEventListener('afterprint', cleanup);
+    setTimeout(cleanup, 60 * 1000);   // afterprint 不触发时的兜底
+  }
+}
+
 export function stampName(base, ext) {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');

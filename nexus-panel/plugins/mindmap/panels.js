@@ -1144,6 +1144,53 @@ export function popupMenu(anchorEl, items) {
   return { close };
 }
 
+/**
+ * A35 / A41 打印设置框。
+ *
+ * 放在 panels.js 是因为 `dialog()` 在这里 —— index.js 拿不到它。
+ *
+ * 为什么要单独一框：方向与页边距在浏览器的打印对话框里也能调，但**藏得深**，
+ * 而且用户往往是按下打印、看到预览才发现方向不对，白走一轮。
+ * 这里先给一次明确选择，成本极低。
+ *
+ * @param {object} app
+ * @param {Function} onPrint 收到 { landscape, margin } 后由调用方执行打印
+ */
+export function openPrintSettings(app, onPrint) {
+  let landscape = true;      // 脑图通常更宽，横向更少浪费纸张
+  let margin = 10;
+
+  const dirBtn = h('button.mm-btn' + (landscape ? '.on' : ''), {
+    onclick: () => {
+      landscape = !landscape;
+      dirBtn.classList.toggle('on', landscape);
+      dirBtn.textContent = landscape ? '横向' : '纵向';
+    },
+    title: '脑图通常更宽，横向更少浪费纸张',
+  }, landscape ? '横向' : '纵向');
+
+  const marginSel = h('select.mm-select', {
+    onchange: (e) => { margin = Number(e.target.value); },
+    title: '页边距，毫米',
+  }, ...[0, 5, 10, 15, 20].map((m) =>
+    h('option', { value: m, selected: m === margin }, m === 0 ? '无边距' : `${m} mm`)));
+
+  const dlg = dialog('打印 / 存为 PDF', [
+    h('div.mm-row', {}, h('span.mm-label', {}, '纸张方向'), dirBtn),
+    h('div.mm-row', {}, h('span.mm-label', {}, '页边距'), marginSel),
+    h('div.mm-hint', {},
+      '将打开系统打印对话框；在其中选「另存为 PDF」即可导出 PDF。', '\n',
+      '打印的是**完整画布**，不是当前可见的那一块。'),
+    h('div.mm-actions', {},
+      h('button.mm-btn', {
+        onclick: () => { dlg.close(); try { onPrint?.({ landscape, margin }); } catch { /* 交给调用方处理提示 */ } },
+      }, '打印…'),
+      h('button.mm-btn', { onclick: () => dlg.close() }, '取消'),
+    ),
+  ]);
+  return dlg;
+}
+
 /** 自定义主题编辑器 */
 export function openThemeEditor(app, theme, seedTheme) {
   // A64：新建（theme 为空）时以 seedTheme 为种子，而不是永远空白。

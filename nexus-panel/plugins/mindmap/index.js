@@ -19,7 +19,7 @@ import { DEFAULT_THEME, DEFAULT_LAYOUT, isBuiltinTheme, deriveCanvasTheme } from
 import * as wb from './workbook.js';
 import * as store from './store.js';
 import * as io from './io.js';
-import { buildSide, openVideo, openPreview, openSettings, confirmDialog, popupMenu } from './panels.js';
+import { buildSide, openVideo, openPreview, openSettings, confirmDialog, popupMenu, openPrintSettings } from './panels.js';
 import { attachTabDrag } from './tab-drag.js';
 import { buildFileList } from './filelist.js';
 import * as xmind from './xmind.js';
@@ -291,6 +291,8 @@ bootIframePlugin(async (ctx) => {
       { label: 'TXT（.txt）', hint: hint.txt, onSelect: () => exportTxt() },
       { label: 'Markdown（.md）', hint: hint.md, onSelect: () => exportMarkdown() },
       { label: 'SVG（.svg）', hint: hint.svg, onSelect: () => exportSvg() },
+      '-',
+      { label: '打印 / 存为 PDF…', hint: '用系统打印对话框，可在其中选「另存为 PDF」', onSelect: () => openPrintSettings(app, (o) => printMap(o)) },
       '-',
       { label: 'PNG · 1 倍', hint: hint.png, onSelect: () => exportPng(1) },
       { label: 'PNG · 2 倍（高清）', hint: '像素密度翻倍，文字与连线不糊', onSelect: () => exportPng(2) },
@@ -1347,6 +1349,27 @@ bootIframePlugin(async (ctx) => {
     if (!blob) { status('PNG 导出失败：矢量图无法光栅化', true); return; }
     const r = await io.saveBlob(io.stampName(`脑图${s > 1 ? `@${s}x` : ''}`, 'png'), blob);
     reportSave(r, s > 1 ? `PNG（${s} 倍）` : 'PNG');
+  }
+
+  /**
+   * A34–A37 打印 / PDF（Web 版新增能力，非 WPF 移植 —— WPF 原版没有打印）。
+   *
+   * 走浏览器打印对话框：它自带预览，且目标里通常有「另存为 PDF」，
+   * 一次实现覆盖打印、预览、PDF 三件事，且不需要写 Rust。
+   *
+   * 必须先确认能拿到**完整画布**的 SVG：可视视口截图印出来只有一角。
+   */
+  async function printMap(opts = {}) {
+    const svg = await bridge?.exportSvg();
+    if (!svg) { status('打印失败：无法取得画布矢量图（编辑器未就绪？）', true); return; }
+    const landscape = opts.landscape !== false;   // 脑图通常更宽，默认横向
+    const ok = await io.printSvg(svg, {
+      landscape,
+      margin: opts.margin,
+      title: sheet()?.title || '脑图',
+    });
+    if (ok) status(`已发起打印（A4 ${landscape ? '横向' : '纵向'}）：${sheet()?.title || '当前画布'}`);
+    else status('当前环境不支持打印（需要浏览器窗口）', true);
   }
 
   function reportSave(r, what) {

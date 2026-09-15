@@ -2988,6 +2988,136 @@ group('P2 导入导出');
 }
 
 /* ============================================================
+   二十八、P3：打印 / PDF（A34–A37 A41 B29 —— 实为 Web 新增）
+   ============================================================ */
+
+group('P3 打印与 PDF');
+
+{
+  // ---- 先记录核实结论：WPF 原版没有打印功能 ----
+  // 清单里 A34–A37 / A41 / B29 的出处全是「未定位到确切行号」，
+  // 而 WPF 全仓搜 Print 零命中（唯一 PrintWindow 是截窗口的 Win32 API）。
+  // 所以这 8 项不是「移植缺失」，而是 Web 版新增。这里用注释锁住结论，
+  // 免得将来有人又当成「从 WPF 漏移植」去补。
+  const io = await import('./io.js');
+  ok(typeof io.printSvg === 'function', 'io 导出 printSvg');
+  ok(typeof io.printPageCss === 'function', 'io 导出 printPageCss');
+  ok(typeof io.printHideCss === 'function', 'io 导出 printHideCss');
+  ok(typeof io.fitSvgForPrint === 'function', 'io 导出 fitSvgForPrint');
+}
+
+{
+  const io = await import('./io.js');
+
+  // ---- printPageCss：方向与页边距 ----
+  eq(io.printPageCss({}).includes('size: A4 portrait'), true, 'A34 默认纵向');
+  ok(/size: A4 landscape/.test(io.printPageCss({ landscape: true })), 'A34 横向生效');
+  ok(/margin: 10mm/.test(io.printPageCss({})), 'A34 默认页边距 10mm');
+  ok(/margin: 0mm/.test(io.printPageCss({ margin: 0 })), 'A34 无边距（0 是合法值，不能当非法退回默认）');
+  ok(/margin: 15mm/.test(io.printPageCss({ margin: 15 })), 'A34 自定义页边距');
+  ok(/margin: 10mm/.test(io.printPageCss({ margin: -5 })), 'A34 负页边距退回默认（负边距会裁掉内容）');
+  ok(/margin: 10mm/.test(io.printPageCss({ margin: NaN })), 'A34 NaN 页边距退回默认');
+
+  // ---- printHideCss：两段缺一不可 ----
+  const hide = io.printHideCss('.mm-print-root');
+  ok(/print-color-adjust: exact/.test(hide), 'A34 保留背景色（否则深色画布印成白纸）');
+  ok(/-webkit-print-color-adjust: exact/.test(hide), 'A34 带 -webkit- 前缀（Safari/Chrome 需要）');
+  ok(/body > \*:not\(\.mm-print-root\) \{ display: none/.test(hide),
+    'A34 隐藏其它兄弟（否则侧栏/工具栏一起印上去）');
+  ok(/@media print/.test(hide), 'A34 只在打印时生效（屏幕上看不到影响）');
+}
+
+{
+  const io = await import('./io.js');
+
+  // ---- fitSvgForPrint：viewBox 必须保留 ----
+  const src = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600"><rect width="10" height="10"/></svg>';
+  const out = io.fitSvgForPrint(src);
+  ok(!/width="800"/.test(out), 'A34 去掉固定宽度（否则会溢出纸张）');
+  ok(!/height="600"/.test(out), 'A34 去掉固定高度');
+  ok(/viewBox="0 0 800 600"/.test(out), 'A34 **保留 viewBox** —— 这是等比缩放的前提');
+  ok(/preserveAspectRatio="xMidYMid meet"/.test(out),
+    'A34 显式 preserveAspectRatio（不同浏览器对无宽高 SVG 的默认行为不一致）');
+  ok(/class="mm-print-svg"/.test(out), 'A34 打上类名（交给 CSS 控制尺寸）');
+
+  // 异常输入：解析不了就原样返回，打印总好过抛异常
+  eq(io.fitSvgForPrint(''), '', 'A34 空串原样返回');
+  eq(io.fitSvgForPrint('这不是 svg'), '这不是 svg', 'A34 非法输入原样返回（不抛）');
+  eq(io.fitSvgForPrint(null), '', 'A34 null → 空串（不抛）');
+}
+
+{
+  const io = await import('./io.js');
+
+  // ---- printSvg：无打印能力 / 调用即抛时，都要安静地返回 false ----
+  //
+  // 注意 jsdom **有** window.print，只是个打 stderr 的 stub（不抛）。
+  // 所以「无打印能力」要**主动模拟**：把 print 置为 undefined。
+  // 直接断言「jsdom 下返回 false」是错的 —— 它有函数，返回 true 才对。
+  const savedPrint = globalThis.window.print;
+  let threw = false;
+  let r;
+  try {
+    globalThis.window.print = undefined;
+    r = await io.printSvg('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect/></svg>');
+  } catch { threw = true; } finally { globalThis.window.print = savedPrint; }
+  eq(threw, false, 'A36 无 window.print 时不抛异常');
+  eq(r, false, 'A36 无打印能力时返回 false（调用方据此提示而非静默）');
+  eq(await io.printSvg(''), false, 'A36 无 SVG 内容返回 false');
+
+  // 有函数但调用即抛（某些宿主的无打印后端）同样要转 false，不能冒泡
+  let threw2 = false, r2;
+  try {
+    globalThis.window.print = () => { throw new Error('no backend'); };
+    r2 = await io.printSvg('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect/></svg>');
+  } catch { threw2 = true; } finally { globalThis.window.print = savedPrint; }
+  eq(threw2, false, 'A36 打印抛异常时不冒泡（否则变成看不懂的 unhandled rejection）');
+  eq(r2, false, 'A36 打印抛异常时返回 false');
+
+  // ---- 反过来：有 print 时确实调用了 ----
+  const savedPrint2 = globalThis.window.print;
+  let called = 0;
+  globalThis.window.print = () => { called++; };
+  const okp = await io.printSvg('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect/></svg>', { title: '我的脑图' });
+  eq(okp, true, 'A36 有打印能力时返回 true');
+  eq(called, 1, 'A36 确实调用了 window.print 一次');
+  // 打印根容器要真的挂上去（否则印的是空白页）
+  ok(document.querySelector('.mm-print-root'), 'A34 打印根容器已挂载');
+  ok(document.querySelector('.mm-print-svg'), 'A34 待打印 SVG 已放入容器');
+  // 样式注入
+  const styles = [...document.querySelectorAll('style')].map((n) => n.textContent).join('\n');
+  ok(/@page/.test(styles), 'A34 注入了 @page 规则');
+  ok(/print-color-adjust: exact/.test(styles), 'A34 注入了保留背景的规则');
+
+  // 清理：afterprint 或定时器都会移除，不能留下垃圾 DOM
+  globalThis.window.print = savedPrint2;
+  window.dispatchEvent(new globalThis.window.Event('afterprint'));
+  eq(document.querySelector('.mm-print-root'), null, 'A34 打印后清理容器（不留垃圾 DOM）');
+}
+
+{
+  // ---- A35/A41 打印设置框 ----
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  ok(/export function openPrintSettings/.test(pn), 'A35 新增 openPrintSettings');
+  const fn = pn.slice(pn.indexOf('export function openPrintSettings'), pn.indexOf('/** 自定义主题编辑器'));
+  ok(/let landscape = true/.test(fn), 'A35 默认横向（脑图更宽，横向少浪费纸张）');
+  ok(/纸张方向/.test(fn), 'A41 提供方向选择');
+  ok(/页边距/.test(fn), 'A41 提供页边距选择');
+  ok(/onPrint\?\.\(\{ landscape, margin \}\)/.test(fn), 'A35 把设置回传给调用方');
+  ok(/另存为 PDF/.test(fn), 'A37 提示中说明如何导出 PDF');
+  ok(/完整画布/.test(fn), 'A34 提示说明打印的是完整画布而非视口');
+
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  ok(/async function printMap/.test(idx), 'A34 新增 printMap');
+  ok(/bridge\?\.exportSvg\(\)/.test(idx), 'A34 打印取的是完整画布 SVG（不是视口截图）');
+  const pm = idx.slice(idx.indexOf('async function printMap'), idx.indexOf('function reportSave'));
+  ok(/const ok = await io\.printSvg/.test(pm), 'A34 调用 io.printSvg');
+  ok(/status\(`已发起打印/.test(pm), 'A34 成功时给出状态提示');
+  ok(/当前环境不支持打印/.test(pm), 'A36 不支持时明确提示（printSvg 返回 false 不能被忽略）');
+  ok(/打印 \/ 存为 PDF…/.test(idx), 'A39 导出菜单里有打印入口');
+}
+
+/* ============================================================
    结果
    ============================================================ */
 
