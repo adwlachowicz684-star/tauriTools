@@ -433,16 +433,22 @@ pub(crate) fn core_create_link(
     }
     drop(_guard);
 
-    // 无论成败，已建成的部分都要写进账本，避免"链接在、记录缺失"
-    let mut records = store::load_records(dir);
+    // 无论成败，已建成的部分都要写进账本，避免"链接在、记录缺失"。
+    //
+    // 走事务而不是直接 load/save：账本是**全量覆盖写**的，
+    // 两个写入者各自 load→改→save 时，后写的会把先写的整条记录抹掉。
+    // 那样磁盘上的 junction 还在，账本里却查不到，界面显示"未链接"——
+    // 数据看起来是好的，所以极难定位。
     if !created.is_empty() {
         let done: Vec<String> = use_names
             .iter()
             .take(created.len())
             .cloned()
             .collect();
-        upsert_record(&mut records, project, group, done);
-        store::save_records(dir, &records)?;
+        store::with_records(dir, |records| {
+            upsert_record(records, project, group, done);
+            Ok(())
+        })?;
     }
 
     if let Some(e) = err {
@@ -453,9 +459,9 @@ pub(crate) fn core_create_link(
 
 pub(crate) fn core_remove_link(dir: &std::path::Path, project: &str) -> Result<Snapshot, String> {
     let cfg = store::load_config(dir);
-    let mut records = store::load_records(dir);
     let key = store::normalize_key(project);
-    let names: Vec<String> = records
+    // 只读一次账本，拿到要删的链接名（此处不改动，无需事务）
+    let names: Vec<String> = store::load_records(dir)
         .iter()
         .find(|r| store::normalize_key(&r.project) == key)
         .map(|r| r.link_names())
@@ -465,8 +471,11 @@ pub(crate) fn core_remove_link(dir: &std::path::Path, project: &str) -> Result<S
     junction::remove(project, &names)?;
     drop(_guard);
 
-    records.retain(|r| store::normalize_key(&r.project) != key);
-    store::save_records(dir, &records)?;
+    // 同 core_create_link：账本更新必须走事务，防并发覆盖
+    store::with_records(dir, |records| {
+        records.retain(|r| store::normalize_key(&r.project) != key);
+        Ok(())
+    })?;
     Ok(snapshot(dir, &cfg))
 }
 

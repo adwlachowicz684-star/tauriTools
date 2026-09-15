@@ -291,3 +291,143 @@ pub fn display_path(p: &Path) -> String {
 pub fn join(base: &Path, name: &str) -> PathBuf {
     base.join(name)
 }
+
+/* ---------------------------- 跨进程文件锁 ---------------------------- */
+// 放在 fsutil 是因为它是"跨平台、纯 std"的原语，与链接判定、rename 回退同类。
+
+/// 锁文件多久没更新就视为废弃（秒）。
+///
+/// 定 60 秒的依据：本锁只保护「读配置 → 改 → 写回」这类事务，
+/// 按设计都是毫秒级（见 store::with_config 的注释：不要在闭包里做秒级操作）。
+/// 60 秒的余量足以覆盖磁盘卡顿、杀毒软件扫描等偶发延迟，
+/// 又不至于让一个崩溃进程留下的锁长期堵住所有人。
+const LOCK_STALE_SECS: u64 = 60;
+
+/// 抢不到锁时的重试间隔（毫秒）。
+const LOCK_RETRY_MS: u64 = 20;
+
+/// 最多等多久（毫秒）。超时直接报错，**不强抢**。
+///
+/// 为什么不强抢：能在 10 秒内一直占着锁，说明对方真的在做事（或卡住了）。
+/// 这时候抢过来写，等于主动制造一次覆盖冲突——而这类冲突的代价是
+/// 用户登记整份丢失且不可逆。让用户看到错误、稍后重试，比静默抢锁安全得多。
+const LOCK_WAIT_MS: u64 = 10_000;
+
+/// 锁文件的 mtime 是否已旧到可以判定为废弃。
+fn lock_is_stale(path: &Path) -> bool {
+    let Ok(meta) = fs::metadata(path) else {
+        // 读不到元信息（刚好被别人删了）——当作可用，让调用方去抢
+        return true;
+    };
+    let Ok(modified) = meta.modified() else {
+        return true;
+    };
+    let Ok(age) = modified.duration_since(std::time::SystemTime::UNIX_EPOCH) else {
+        return true;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    now.saturating_sub(age.as_secs()) > LOCK_STALE_SECS
+}
+
+/// 尝试原子地创建锁文件；成功即视为拿到锁。
+///
+/// 用 `create_new(true)`（底层 `O_EXCL|O_CREAT`）而不是"先 exists 再 create"：
+/// 后者存在 TOCTOU 窗口——两个进程都看到"没有"，然后都去创建，都以为自己拿到了。
+fn try_lock(path: &Path) -> std::io::Result<Option<fs::File>> {
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(f) => Ok(Some(f)),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/**
+ * 跨进程互斥锁。
+ *
+ * 为什么需要它：本程序有**两个独立进程**会写同一份数据——
+ *   · GUI 主进程（前端命令、自动备份定时器）
+ *   · `exe --mcp` 拉起的 MCP 实例（AI 客户端启动，关窗口只跑服务）
+ * 进程内的 `Mutex` 只协调第一个进程内部的线程，完全挡不住第二个进程。
+ * 两者同时 load→改→save，后写的会把先写的整份覆盖，且没有任何提示。
+ *
+ * 为什么不用 OS 命名互斥量（Windows `CreateMutexW` / Unix semaphore）：
+ * 那是两套语义不同的 API，都超出 std，还得处理 Windows 会话隔离、
+ * Unix 下 System V 与 POSIX 两套实现之类的历史包袱。
+ * 本项目坚持纯 std 跨平台，引入它们会把 fsutil 变成平台分支的集合体。
+ *
+ * 锁文件内容（PID + 时间戳）仅供**诊断**：谁持锁、持了多久。
+ * 判定是否过期一律看文件系统 mtime——内容可能写到一半、也可能被别的
+ * 程序改过，解析内容做判断不如直接信 mtime 可靠。
+ */
+pub struct FileLock {
+    path: PathBuf,
+}
+
+impl FileLock {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    /// 拿到锁，返回 RAII guard（drop 时自动释放）。
+    pub fn lock(&self) -> Result<FileLockGuard, String> {
+        let started = std::time::Instant::now();
+        loop {
+            match try_lock(&self.path) {
+                Ok(Some(mut f)) => {
+                    // 记下 owner，纯诊断用；写失败无所谓，不影响持锁
+                    use std::io::Write;
+                    let _ = writeln!(f, "pid={} at={:?}", std::process::id(),
+                                     std::time::SystemTime::now());
+                    let _ = f.flush();
+                    return Ok(FileLockGuard { path: self.path.clone() });
+                }
+                Ok(None) => {
+                    // 锁存在：判断是否废弃，废弃就删掉重来
+                    if lock_is_stale(&self.path) {
+                        fs::remove_file(&self.path).ok();
+                        continue;
+                    }
+                }
+                Err(e) => {
+                    let p = self.path.display().to_string();
+                    return Err(format!("无法创建锁文件 {p}: {e}"));
+                }
+            }
+
+            if started.elapsed().as_millis() as u64 > LOCK_WAIT_MS {
+                let p = self.path.display().to_string();
+                return Err(format!(
+                    "等待数据锁超时（{LOCK_WAIT_MS}ms）。\n\
+                     另一个实例（{p} 的持有者）可能正在写入或已卡住。\n\
+                     请稍后重试；若确认没有其他实例在运行，可删除该锁文件。"
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(LOCK_RETRY_MS));
+        }
+    }
+}
+
+/// 锁的 RAII guard：离开作用域自动释放，panic 时也会释放。
+///
+/// 自己持有路径副本（不借用 `FileLock`），因此可以自由传递、存入结构体，
+/// 也让调用方能做"重入计数"这类包装而不受生命周期限制。
+pub struct FileLockGuard {
+    path: PathBuf,
+}
+
+impl Drop for FileLockGuard {
+    fn drop(&mut self) {
+        // 只删自己创建的那份；已被别人接管时（超时被回收）不误删
+        if lock_is_stale(&self.path) {
+            return;
+        }
+        fs::remove_file(&self.path).ok();
+    }
+}

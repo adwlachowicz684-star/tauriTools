@@ -291,13 +291,64 @@ pub fn save_config(dir: &Path, cfg: &FpxConfig) -> Result<(), String> {
 }
 
 /**
- * config.json 的写入互斥锁。
+ * config.json 的写入互斥锁（**进程内**）。
  *
- * 所有写入者都在**同一个进程内**：前端命令（Tauri command）、MCP server 线程、
- * 自动备份定时器。所以进程内的 `Mutex` 就足够，**不需要 OS 文件锁（flock）**——
- * 后者只在多进程同时写同一个文件时才必要，这里用不上，还会引入跨平台差异。
+ * 注意：它挡不住另一个进程。本程序有两个独立进程会写同一份数据：
+ *   · GUI 主进程（前端命令、自动备份定时器）
+ *   · `exe --mcp` 拉起的 MCP 实例（AI 客户端启动，关窗口只跑服务）
+ * 所以进程内 Mutex 只是第一层；真正的跨进程互斥由下面的 `data_lock()` 提供。
+ * 两层都要：进程内锁让同进程的并发走快路径（无文件 IO），
+ * 跨进程锁负责拦住另一个进程。
  */
 static CONFIG_LOCK: Mutex<()> = Mutex::new(());
+
+/// 账本（link-record.json）的进程内锁。
+static RECORDS_LOCK: Mutex<()> = Mutex::new(());
+
+/**
+ * 整个数据目录的跨进程锁。
+ *
+ * config 与账本**共用一把**：绝大多数操作同时改两者（建链既写账本也改页签登记），
+ * 分成两把就有 AB-BA 死锁的风险，收益却几乎没有。
+ */
+fn data_lock(dir: &Path) -> super::fsutil::FileLock {
+    super::fsutil::FileLock::new(dir.join(".data.lock"))
+}
+
+thread_local! {
+    /// 本线程已持有的跨进程锁层数。
+    ///
+    /// 为什么要可重入：`with_config` 的闭包里可能会再走 `with_records`
+    /// （例如改名既要改页签登记又要重建链接记录）。文件锁本身不可重入，
+    /// 直接再拿一次就是自己等自己——死锁，且没有任何提示。
+    /// 这里记层数：外层已持有时，内层直接跳过获取，由最外层统一释放。
+    static LOCK_DEPTH: std::cell::Cell<usize> = std::cell::Cell::new(0);
+}
+
+/// 进入事务前获取跨进程锁；嵌套调用时复用外层已持有的锁。
+///
+/// 返回值：外层拿到锁时是 `Some(guard)`，内层复用时是 `None`（什么都不用放）。
+fn acquire_data_lock(dir: &Path) -> Result<Option<super::fsutil::FileLockGuard>, String> {
+    let already = LOCK_DEPTH.with(|d| d.get() > 0);
+    if already {
+        LOCK_DEPTH.with(|d| d.set(d.get() + 1));
+        return Ok(None);
+    }
+    let guard = data_lock(dir).lock()?;
+    LOCK_DEPTH.with(|d| d.set(1));
+    Ok(Some(guard))
+}
+
+/// 配 `acquire_data_lock` 用：退出作用域时把深度减回去。
+///
+/// 声明时必须**晚于**锁 guard，这样 Rust 的逆序 drop 会先减深度、再放锁。
+struct LockDepthGuard;
+
+impl Drop for LockDepthGuard {
+    fn drop(&mut self) {
+        LOCK_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
 
 /**
  * 在持锁状态下完成「读配置 → 修改 → 写回」的整个事务。
@@ -324,6 +375,9 @@ where
     let _guard = CONFIG_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // 第二层：拦住另一个进程（GUI 与 `--mcp` 实例）。RAII，panic 也会释放。
+    let _xguard = acquire_data_lock(dir)?;
+    let _depth = LockDepthGuard;
 
     // 拿默认值写回损坏文件 = 用户登记全部丢失，不可逆。
     // 所以这里必须用严格加载，损坏时直接中止事务，一次都不写。
@@ -341,6 +395,57 @@ where
     let r = f(&mut cfg)?;
     save_config(dir, &cfg)?;
     Ok(r)
+}
+
+/**
+ * 在持锁状态下完成「读账本 → 修改 → 写回」的整个事务。
+ *
+ * 与 `with_config` 对称，共用同一把跨进程锁。
+ *
+ * 为什么必须走事务而不是直接 `load_records` / `save_records`：
+ * 账本是全量覆盖写的，两个写入者各自 load→改→save，
+ * 后写的会把先写的**整条记录**抹掉——链接还在磁盘上，但账本里查不到，
+ * 界面显示"未链接"，用户以为丢了。这类 bug 极难定位（数据看起来是好的）。
+ */
+pub fn with_records<F, R>(dir: &Path, f: F) -> Result<R, String>
+where
+    F: FnOnce(&mut Vec<LinkRecord>) -> Result<R, String>,
+{
+    let _guard = RECORDS_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _xguard = acquire_data_lock(dir)?;
+    let _depth = LockDepthGuard;
+
+    let mut records = match load_records_strict(dir) {
+        LoadOutcome::Ok(v) => v,
+        LoadOutcome::Corrupted { backup, reason } => {
+            let backup_path = backup.display().to_string();
+            return Err(format!(
+                "link-record.json 读取失败（{reason}），已中止本次操作以保护数据。\n\
+                 损坏内容已另存为：{backup_path}\n\
+                 请检查或删除该文件后重试（现场副本不会丢）。"
+            ));
+        }
+    };
+    let r = f(&mut records)?;
+    save_records(dir, &records)?;
+    Ok(r)
+}
+
+/// 严格加载账本（写入路径专用）。
+pub fn load_records_strict(dir: &Path) -> LoadOutcome<Vec<LinkRecord>> {
+    #[derive(serde::Deserialize, Default)]
+    struct File {
+        #[serde(default)]
+        links: Vec<LinkRecord>,
+    }
+    match load_strict::<File>(&dir.join("link-record.json")) {
+        LoadOutcome::Ok(f) => LoadOutcome::Ok(f.links),
+        LoadOutcome::Corrupted { backup, reason } => {
+            LoadOutcome::Corrupted { backup, reason }
+        }
+    }
 }
 
 pub fn load_records(dir: &Path) -> Vec<LinkRecord> {
