@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   bytesToB64, b64ToBytes, isCipherBundle, secretKind, deviceSeed,
   encryptString, decryptString, deriveKey, webCryptoBackend,
+  clearKeyCache, keyCacheSize,
   CIPHER_VERSION, CIPHER_ALG, IV_BYTES, PBKDF2_ITER,
 } from '../engine/crypto';
 import {
@@ -298,4 +299,102 @@ test('设备盐: 每次不同', () => {
 
 test('设备盐: 长度符合 16 字节', () => {
   assert.equal(b64ToBytes(newDeviceSalt(be)).length, 16);
+});
+
+
+/* ------------------------------------------------------------------ */
+/* 派生密钥缓存（A-05）                                                */
+/* ------------------------------------------------------------------ */
+
+/** 计数后端：转发给真实实现，但记下被调用了几次 */
+function countingBackend(inner: ReturnType<typeof webCryptoBackend>) {
+  const calls = { pbkdf2: 0 };
+  return {
+    calls,
+    be: {
+      ...inner,
+      pbkdf2: async (p: string, s: Uint8Array, i: number) => {
+        calls.pbkdf2 += 1;
+        return inner.pbkdf2(p, s, i);
+      },
+    },
+  };
+}
+
+test('缓存: 同样入参只派生一次', async () => {
+  clearKeyCache();
+  const { be, calls } = countingBackend(webCryptoBackend());
+  const salt = new Uint8Array(16).fill(7);
+  const a = await deriveKey(be, 'pw', salt, 1000);
+  const b = await deriveKey(be, 'pw', salt, 1000);
+  assert.equal(calls.pbkdf2, 1, '第二次应命中缓存');
+  assert.deepEqual(Array.from(a), Array.from(b), '结果必须一致');
+});
+
+test('缓存: salt 不同就是另一把钥匙（不能只按口令缓存）', async () => {
+  clearKeyCache();
+  const { be, calls } = countingBackend(webCryptoBackend());
+  await deriveKey(be, 'pw', new Uint8Array(16).fill(1), 1000);
+  await deriveKey(be, 'pw', new Uint8Array(16).fill(2), 1000);
+  assert.equal(calls.pbkdf2, 2);
+});
+
+test('缓存: 口令不同也要重新派生', async () => {
+  clearKeyCache();
+  const { be, calls } = countingBackend(webCryptoBackend());
+  const salt = new Uint8Array(16).fill(3);
+  await deriveKey(be, 'pw1', salt, 1000);
+  await deriveKey(be, 'pw2', salt, 1000);
+  assert.equal(calls.pbkdf2, 2);
+});
+
+test('缓存: 迭代次数不同也要重新派生', async () => {
+  clearKeyCache();
+  const { be, calls } = countingBackend(webCryptoBackend());
+  const salt = new Uint8Array(16).fill(4);
+  await deriveKey(be, 'pw', salt, 1000);
+  await deriveKey(be, 'pw', salt, 2000);
+  assert.equal(calls.pbkdf2, 2);
+});
+
+test('缓存: 返回的是副本，改写返回值不污染缓存', async () => {
+  clearKeyCache();
+  const be = webCryptoBackend();
+  const salt = new Uint8Array(16).fill(5);
+  const a = await deriveKey(be, 'pw', salt, 1000);
+  a.fill(0);                                  // 就地破坏
+  const b = await deriveKey(be, 'pw', salt, 1000);
+  assert.equal(Array.from(b).every((x) => x === 0), false, '缓存里的钥匙被改坏了');
+  assert.deepEqual(Array.from(b), Array.from(await deriveKey(be, 'pw', salt, 1000)));
+});
+
+test('缓存: 加解密走缓存后结果不变', async () => {
+  clearKeyCache();
+  const be = webCryptoBackend();
+  const bundle = await encryptString(be, 'secret-值', 'pw', 1000);
+  // 同一 bundle 解两次：第二次应命中缓存，且明文一致
+  assert.equal(await decryptString(be, bundle, 'pw'), 'secret-值');
+  assert.equal(await decryptString(be, bundle, 'pw'), 'secret-值');
+});
+
+test('缓存: clearKeyCache 后重新派生', async () => {
+  clearKeyCache();
+  const { be, calls } = countingBackend(webCryptoBackend());
+  const salt = new Uint8Array(16).fill(6);
+  await deriveKey(be, 'pw', salt, 1000);
+  assert.equal(keyCacheSize(), 1);
+  clearKeyCache();
+  assert.equal(keyCacheSize(), 0);
+  await deriveKey(be, 'pw', salt, 1000);
+  assert.equal(calls.pbkdf2, 2, '清过缓存就该重新算');
+});
+
+test('缓存: 条目数有上限，不会无限增长', async () => {
+  clearKeyCache();
+  const be = webCryptoBackend();
+  for (let i = 0; i < 200; i += 1) {
+    await deriveKey(be, 'pw', new Uint8Array(16).fill(i % 251), 10);
+  }
+  assert.ok(keyCacheSize() <= 32, `实际 ${keyCacheSize()}`);
+  assert.ok(keyCacheSize() > 0);
 });

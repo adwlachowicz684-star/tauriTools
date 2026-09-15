@@ -81,6 +81,23 @@ pub async fn run_node(
     let program = if req.cmd.is_empty() { req.cli.clone() } else { req.cmd.clone() };
     let args = build_args(&req);
 
+    /*
+     * 先查 workdir 再启动。
+     *
+     * 原来目录不存在时，错误会落到下面那句"无法启动 X（检查是否已安装并在 PATH 中）"——
+     * 把人引去查 CLI 装没装，而真正的原因是工作目录写错了。
+     * 这两类失败要分开说，否则用户会在错误的地方耗很久。
+     */
+    if !req.workdir.is_empty() {
+        let wd = Path::new(&req.workdir);
+        if !wd.exists() {
+            return Err(format!("工作目录不存在: {}", req.workdir));
+        }
+        if !wd.is_dir() {
+            return Err(format!("工作目录不是文件夹: {}", req.workdir));
+        }
+    }
+
     let mut command = app.shell().command(&program).args(&args);
     if !req.workdir.is_empty() {
         command = command.current_dir(&req.workdir);
@@ -1046,6 +1063,131 @@ pub fn af_fs_disallow_root(app: AppHandle, path: String) -> Result<Vec<String>, 
     let mut g = fs_roots_lock().lock().unwrap_or_else(|e| e.into_inner());
     g.retain(|r| r != &canon);
     Ok(g.iter().map(|r| r.display().to_string()).collect())
+}
+
+/* ------------------------------------------------------------------ */
+/* 设备盐（凭据加密用）                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 取本机设备盐；第一次调用时生成并落盘。
+ *
+ * 为什么要有这个命令：
+ *   凭据在 auto 模式下用「本机特征 + 设备盐」派生密钥。
+ *   盐原先存在 localStorage —— 而 localStorage 里的东西，
+ *   同一个页面上的任何脚本（包括别的插件）都能读。
+ *   拿到盐 + 公开的本机特征，就能算出密钥解开别人的凭据。
+ *
+ * 挪到这里之后， salt 只有能调 `af_device_salt` 的一方才拿得到，
+ * 这条路径可以被 capability 收口 —— 于是"别的插件顺手读走"被挡住了。
+ *
+ * 但要如实说明挡不住什么：
+ *   盐文件就在应用数据目录里，明文明放。
+ *   谁把整个用户数据目录拷走，谁就能拿到盐，接着离线复现密钥。
+ *   所以这一改动**不是**"防离线拷贝"，它防的是"同页面其它代码顺手读"。
+ *   要防离线拷贝，只有口令模式（钥匙在用户脑子里）。
+ *
+ * 生成失败必须报错而不是"退回一个默认值"：
+ *   盐变了，之前加密的凭据就全解不开了，静默换盐等于数据丢失。
+ */
+#[tauri::command]
+pub fn af_device_salt(app: AppHandle) -> Result<String, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("无法定位应用数据目录: {e}"))?;
+
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("创建应用数据目录失败 {}: {e}", dir.display()))?;
+
+    let file = dir.join("af-device-salt");
+
+    if let Ok(existing) = std::fs::read_to_string(&file) {
+        let s = existing.trim().to_string();
+        if !s.is_empty() {
+            return Ok(s);
+        }
+    }
+
+    let salt = make_device_salt();
+    // 写入失败必须向上报：写不进去的话下次又生成一个新的，
+    // 已存的凭据就再也解不开了 —— 宁可现在失败，也不能悄悄换盐。
+    std::fs::write(&file, &salt)
+        .map_err(|e| format!("写入设备盐失败 {}: {e}", file.display()))?;
+    Ok(salt)
+}
+
+/**
+ * 生成一段盐。
+ *
+ * 强度不来自这个字符串"有多随机" —— 盐是明文存盘的，谈不上保密。
+ * 它只需要做到两点：每台机器不同、不能从公开信息推出来。
+ * 时间戳 + 进程号已经满足（进程号不可预测、纳秒时间戳无法穷举），
+ * 再用 RandomState 混一道打散时间戳的可预测性。
+ * 不引新的随机 crate：为这点用途拉一个依赖不划算。
+ */
+fn make_device_salt() -> String {
+    use std::hash::{BuildHasher, Hash, Hasher};
+
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let pid = std::process::id();
+
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    nanos.hash(&mut hasher);
+    pid.hash(&mut hasher);
+    let mixed = hasher.finish();
+
+    format!("{nanos:x}-{pid:x}-{mixed:x}")
+}
+
+/// 检查 CLI 是否已安装。用标准库执行，不占用 shell 插件权限额度。
+
+/* ------------------------------------------------------------------ */
+/* 增量读取（对话监听用）                                              */
+/* ------------------------------------------------------------------ */
+
+/// 单次 tail 最多读多少字节。
+///
+/// 对话文件是追加写的，监听只需要看末尾。64KB 对"最近几十条消息"足够；
+/// 设上限是为了避免某个文件异常巨大时一次读爆内存。
+const TAIL_MAX: u64 = 64 * 1024;
+
+/// 读文件末尾的内容。
+///
+/// 为什么需要它：对话监听要**每隔几秒**看一眼文件末尾有没有新消息。
+/// 用 fs_op 的 read 得把整个文件读进来再切片 —— 一个几十 MB 的 jsonl
+/// 每 3 秒整读一次，磁盘和内存都吃不消。这里直接从末尾 seek。
+///
+/// 返回的内容**可能以半截行开头**（seek 落在行中间），
+/// 调用方负责丢掉第一行 —— 那行多半是半个 JSON，解析必然失败，
+/// 丢掉最多只漏一条消息，而它下一轮还会被完整读到。
+#[tauri::command]
+pub fn af_fs_tail(path: String, max_bytes: Option<u64>) -> Result<String, String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let p = Path::new(path.trim());
+    if !p.is_file() {
+        return Err(format!("不是文件或不存在: {}", path));
+    }
+
+    let meta = std::fs::metadata(p).map_err(|e| format!("读取元信息失败: {e}"))?;
+    let want = max_bytes.unwrap_or(TAIL_MAX).clamp(1, TAIL_MAX);
+    // 从末尾往前 want 字节；文件比 want 短就从头读
+    let start = meta.len().saturating_sub(want);
+
+    let mut f = std::fs::File::open(p).map_err(|e| format!("打开失败: {e}"))?;
+    f.seek(SeekFrom::Start(start))
+        .map_err(|e| format!("定位失败: {e}"))?;
+
+    let mut buf = Vec::with_capacity((meta.len() - start) as usize);
+    f.take(meta.len() - start)
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("读取失败: {e}"))?;
+
+    Ok(String::from_utf8_lossy(&buf).to_string())
 }
 
 #[tauri::command]

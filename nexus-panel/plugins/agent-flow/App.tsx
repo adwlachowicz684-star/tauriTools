@@ -20,14 +20,18 @@ import { GithubUpdateNode, GithubPushNode } from './components/GithubNode';
 import { CredentialPanel, canUse } from './components/CredentialPanel';
 import {
   type Credential, type CredentialKind,
-  pickFor, needsOf, kindForNeed, missingCapabilities,
+  pickFor, needsOf, kindForNeed, missingCapabilities, resolveSecret,
 } from './engine/credentials';
-import { verifyToken } from './engine/github';
+import {
+  verifyToken, fetchUpdate, pushFiles, type Fetcher as GithubFetcher,
+} from './engine/github';
 import {
   parseStore, serializeStore, encryptStore, decryptStore, newDeviceSalt,
   collectDeviceSignals, defaultBackend, type StoredFile,
 } from './engine/credentialStore';
-import { deviceSeed } from './engine/crypto';
+import { SECRET_POLICY_KEY, type SecretPolicy } from './types';
+import { checkChannel, type ChannelStatus } from './lib/channel';
+import { deviceSeed, clearKeyCache } from './engine/crypto';
 import Sidebar, { DRAG_MIME, decodeDrag, type DragPayload } from './components/Sidebar';
 import CanvasTabs from './components/CanvasTabs';
 import { TaskPanel } from './components/TaskPanel';
@@ -43,16 +47,25 @@ import {
 import {
   runGraph,
   type Executor, type FsExecutor, type Fetcher, type LlmCaller, type ImageReader,
+  type GithubUpdateRunner, type GithubPushRunner,
   type RunEvent, type RunSummary,
 } from './engine/runner';
 import { TriggerScheduler } from './engine/triggers';
 import {
   makeCanvas, nextCanvasName, renameCanvas, removeCanvas, nextActiveId,
   updateCanvasContent, sortForDisplay, toMeta,
-  loadFromStorage, saveToStorage,
+  loadFromStorage, saveToStorage, clearSecrets,
+  collectSecrets, applySecrets, STORAGE_KEYS,
   type Canvas,
   redactNodes,
 } from './engine/canvasStore';
+import {
+  sealSecrets, unsealSecrets, type SecretMap,
+} from './engine/secretVault';
+import {
+  parseKeywords, parseMessages, matchKeywords, takeNew, newSeenState,
+  type SeenState, type KeywordHit,
+} from './engine/conversations';
 import { CLI_META, DEFAULT_TRIGGER_CONFIG, DEFAULT_BRANCH, type TaskNodeData, makeNode, makeConditionNode, makeParallelNode, makeTriggerNode,
   makeLoopNode, makeFsNode, makeUpdateNode, makeOcrNode, makeTranslateNode,
   makeGithubUpdateNode, makeGithubPushNode,
@@ -60,7 +73,8 @@ import { CLI_META, DEFAULT_TRIGGER_CONFIG, DEFAULT_BRANCH, type TaskNodeData, ma
   type Graph, type NodeData, type Trigger, type TriggerKind, type TriggerConfig } from './types';
 import type { FlowEdge, FlowNode } from './flowTypes';
 import { killCli, runCli, canWatch, startWatch, canWebhook, startWebhook,
-  fileOp, fsArgsOf, fetchText, postJson, readImageDataUrl, type DonePayload } from './lib/tauri';
+  fileOp, fsArgsOf, fetchText, httpRequest, postJson, readImageDataUrl,
+  fetchDeviceSalt, tailFile, type DonePayload, type FsArgs } from './lib/tauri';
 import {
   deleteElements, nextSelection, hasAnythingToDelete,
   makeSnapshot, describeDelete,
@@ -284,6 +298,8 @@ export default function App() {
    * 加密一旦散落到各处，总会有人忘了调。                               *
    * ---------------------------------------------------------------- */
   const CRED_KEY = 'agent-flow.credentials.v1';
+  /** 保险箱自己的盐。与凭据库分开：两者解锁方式不同，混在一起分不清是谁解不开 */
+  const SECRETS_SALT_KEY = 'agent-flow.secrets-salt.v1';
   const beRef = useRef(defaultBackend());
   const [store, setStore] = useState<StoredFile>(() => parseStore(localStorage.getItem(CRED_KEY)));
   const [credentials, setCredentials] = useState<Credential[]>([]);
@@ -294,7 +310,18 @@ export default function App() {
   const [unlockErr, setUnlockErr] = useState('');
   const [cryptoWarn, setCryptoWarn] = useState('');
 
-  // 首次运行：生成设备盐；auto 模式用本机特征直接解锁
+  /*
+   * 首次运行：定下设备盐；auto 模式用本机特征直接解锁。
+   *
+   * 盐的存放位置（审查项 A-02）：
+   *   旧行为是生成后存进 localStorage —— 同一页面上的任何脚本都能读走它，
+   *   配合公开的本机特征就能算出凭据密钥。现在改为优先用 Rust 侧的盐
+   *   （存在应用数据目录，要调 af_device_salt 才拿得到）。
+   *
+   * 但**已有数据的老用户必须继续用原来那个盐** ——
+   * 换盐等于把已存的凭据全部锁死，那比"盐可被读到"严重得多。
+   * 所以只有"存盘里还没有盐"（新安装）这一条路径才走 Rust。
+   */
   useEffect(() => {
     const be = beRef.current;
     if (!be) {
@@ -302,18 +329,45 @@ export default function App() {
       return;
     }
     setCryptoWarn('');
-    let file = store;
-    if (!file.deviceSalt) {
-      file = { ...file, deviceSalt: newDeviceSalt(be) };
-      setStore(file);
+    const file = store;
+
+    let alive = true;
+    const useSalt = (salt: string, persist: boolean) => {
+      if (!alive) return;
+      if (persist) setStore({ ...file, deviceSalt: salt });
+      if (file.mode === 'auto') {
+        setVaultKey(deviceSeed(collectDeviceSignals(salt)));
+      }
+    };
+
+    if (file.deviceSalt) {
+      // 老数据：沿用存盘的盐，绝不重新生成
+      useSalt(file.deviceSalt, false);
+      return () => { alive = false; };
     }
-    if (file.mode === 'auto') {
-      const seed = deviceSeed(collectDeviceSignals(file.deviceSalt));
-      setVaultKey(seed);
-    }
-    // 只依赖 deviceSalt 是否为空：mode 与凭据由下面两个 effect 负责
+
+    // 新安装：先问 Rust 要；拿不到（浏览器模式 / 隔离态 / 命令未注册）
+    // 才退回本地生成并落盘 —— 功能不能因为拿不到盐就坏掉。
+    fetchDeviceSalt()
+      .then((rust) => {
+        if (!alive) return;
+        if (rust) { useSalt(rust, false); return; }
+        useSalt(newDeviceSalt(be), true);
+      })
+      .catch(() => { if (alive) useSalt(newDeviceSalt(be), true); });
+    return () => { alive = false; };
+    // 只运行一次：mode 与凭据由下面两个 effect 负责
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /*
+   * 刚从磁盘解出来的凭据，快照一份。
+   *
+   * 用来让下面那个"凭据变化 → 加密落盘"跳过无谓的一轮：
+   * 解密完 setCredentials 会触发它，于是又把同样的内容重新加密一遍 ——
+   * 每条凭据一次 PBKDF2（约 50ms），纯属白跑，磁盘上本来就已是这个状态。
+   */
+  const loadedCredsRef = useRef<{ list: Credential[]; key: string } | null>(null);
 
   // 解锁状态变化（或换模式后）→ 解密出运行时凭据
   useEffect(() => {
@@ -323,6 +377,7 @@ export default function App() {
     decryptStore(be, store, vaultKey).then((r) => {
       if (!alive) return;
       setCredentials(r.credentials);
+      loadedCredsRef.current = { list: r.credentials, key: vaultKey };
       if (r.failed.length > 0) {
         setUnlockErr(`有 ${r.failed.length} 条凭据解不开，可能是口令不对或数据损坏。`);
       }
@@ -336,6 +391,11 @@ export default function App() {
   useEffect(() => {
     const be = beRef.current;
     if (!be || vaultKey === null) return;
+
+    // 内容和刚解出来的一模一样，且口令没换 → 磁盘上已经是这个状态，不必重写
+    const loaded = loadedCredsRef.current;
+    if (loaded && loaded.list === credentials && loaded.key === vaultKey) return;
+
     let alive = true;
     encryptStore(be, store, credentials, vaultKey).then((next) => {
       if (!alive) return;
@@ -348,6 +408,14 @@ export default function App() {
   }, [credentials, vaultKey]);
 
   /** 用口令解锁 */
+  /** 锁定：清掉内存里的派生钥匙 */
+  const lockVault = useCallback(() => {
+    clearKeyCache();
+    loadedCredsRef.current = null;
+    setVaultKey(null);
+    setCredentials([]);
+  }, []);
+
   const unlock = useCallback(async (pass: string) => {
     const be = beRef.current;
     if (!be) { setUnlockErr('环境不支持加密'); return; }
@@ -375,14 +443,54 @@ export default function App() {
     try { localStorage.setItem(CRED_KEY, serializeStore(next)); } catch { /* 忽略 */ }
   }, [store, credentials]);
 
+  /**
+   * 保存凭据前的校验。
+   *
+   * GitHub 令牌真的去打一次 /user：既能确认令牌有效，
+   * 又能从 X-OAuth-Scopes 读出读写权限（面板据此填 capabilities）。
+   * 其它类型各家接口不统一，没法通用校验 —— 如实返回"未校验"，
+   * 而不是假装成功。
+   */
+  const verifyCredential = useCallback(async (kind: CredentialKind, secret: string) => {
+    if (kind === 'github') {
+      const f: GithubFetcher = async (url, init) => {
+        const r = await httpRequest(url, {
+          headers: init?.headers,
+          timeoutSec: 15,
+          // GitHub API 要自己的 UA，别用抓取订阅源那个浏览器 UA
+          withDefaultUa: false,
+        });
+        return { status: r.status, ok: r.ok, text: r.text, headers: r.headers };
+      };
+      const r = await verifyToken(f, secret);
+      return {
+        ok: r.ok,
+        identity: r.login || undefined,
+        scopes: r.scopes,
+        message: r.message,
+      };
+    }
+    // 大模型 / 通用密钥：只有真跑一次才知道对不对
+    return {
+      ok: true,
+      identity: undefined,
+      scopes: null,
+      message: '已保存（未验证：各家接口不统一，运行节点时才能确认可用）',
+    };
+  }, []);
+
   const openCredentials = useCallback((kind: string) => {
     setCredFocus(kind);
     setCredOpen(true);
   }, []);
+
+
   const [concurrency, setConcurrency] = useState(1);
   const [globalInput, setGlobalInput] = useState('');
   const [summary, setSummary] = useState<RunSummary | null>(null);
   const [log, setLog] = useState<string[]>([]);
+  /** 后端通道体检结果；null 表示还没探完 */
+  const [channel, setChannel] = useState<ChannelStatus | null>(null);
 
   // 触发器
   /**
@@ -445,6 +553,173 @@ export default function App() {
     const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
     setLog((l) => [`${ts} ${msg}`, ...l].slice(0, 100));
   }, []);
+
+  /*
+   * 启动时探一次后端通道（审查项 A-01）。
+   *
+   * 本插件直接 import 了 @tauri-apps/api 的 invoke，隔离态下会全部失效。
+   * 全量改走 ctx.invoke 是根治办法，但要先重做事件转发；
+   * 在此之前先把"通道不通"变成看得见的横幅，
+   * 而不是等用户点某个功能才发现它一直是坏的。
+   */
+  useEffect(() => {
+    let alive = true;
+    checkChannel().then((r) => {
+      if (!alive) return;
+      setChannel(r);
+      if (!r.ok) pushLog(`⚠ ${r.reason}`);
+    });
+    return () => { alive = false; };
+  }, [pushLog]);
+
+  /* ---------------------------------------------------------------- */
+  /* 内联密钥的落盘（加密）                                            */
+  /*                                                                  */
+  /* 节点里手填的 apiKey 不在画布存档里（serialize 已脱敏），           */
+  /* 但要"刷新后还在"，所以单独存一份 —— 这一份必须是密文。            */
+  /* ---------------------------------------------------------------- */
+
+  const [secretPolicy, setSecretPolicy] = useState<SecretPolicy>(() => {
+    try {
+      return localStorage.getItem(SECRET_POLICY_KEY) === 'session' ? 'session' : 'device';
+    } catch { return 'device'; }
+  });
+
+  const secretsSaltRef = useRef<string | null>(null);
+  const secretSaltInflight = useRef<Promise<string> | null>(null);
+
+  /**
+   * 定下保险箱用的盐。
+   *
+   * 与凭据库同理（见上面那段注释）：优先取 Rust 侧的盐，
+   * 但**已经存过盐的必须继续用旧的** —— 换盐等于把已存的密钥全锁死。
+   */
+  const resolveSecretSalt = useCallback(async (): Promise<string> => {
+    let legacy = '';
+    try { legacy = localStorage.getItem(SECRETS_SALT_KEY) ?? ''; } catch { legacy = ''; }
+    if (legacy) return legacy;              // 老用户：沿用，不换
+
+    const rust = await fetchDeviceSalt();
+    if (rust) return rust;                  // 新安装：盐不落 localStorage
+
+    // 拿不到 Rust 的盐：退回本地生成 + 落盘（与旧行为一致）
+    const be = defaultBackend();
+    const local = be ? newDeviceSalt(be) : 'no-crypto';
+    try { localStorage.setItem(SECRETS_SALT_KEY, local); } catch { /* 忽略 */ }
+    return local;
+  }, []);
+
+  /** 保险箱钥匙：本机特征派生，与凭据库的口令互不牵连 */
+  const secretPass = useCallback(async (): Promise<string> => {
+    if (secretsSaltRef.current === null) {
+      // 同一会话里并发调用只问一次
+      if (!secretSaltInflight.current) {
+        secretSaltInflight.current = resolveSecretSalt()
+          .then((s) => { secretsSaltRef.current = s; return s; })
+          .finally(() => { secretSaltInflight.current = null; });
+      }
+      await secretSaltInflight.current;
+    }
+    return deviceSeed(collectDeviceSignals(secretsSaltRef.current ?? ''));
+  }, [resolveSecretSalt]);
+
+  // 策略变化时落盘；选"仅本次会话"就把已存的密文一起清掉
+  const policyFirstRun = useRef(true);
+  useEffect(() => {
+    try { localStorage.setItem(SECRET_POLICY_KEY, secretPolicy); } catch { /* 忽略 */ }
+    if (secretPolicy === 'session') {
+      try { clearSecrets((k) => localStorage.removeItem(k)); } catch { /* 忽略 */ }
+      if (!policyFirstRun.current) pushLog('密钥不再保存到本机，仅本次会话有效');
+    }
+    policyFirstRun.current = false;
+  }, [secretPolicy, pushLog]);
+
+  /*
+   * 读取完成前不许写。
+   *
+   * 少了这道闸会出事：启动时画布里的密钥还是空的，
+   * 保存副作用会算出"没有密钥"→ 清掉保险箱 —— 用户存的密钥就这么没了，
+   * 而那正是它正要读出来的东西。
+   */
+  const [secretsReady, setSecretsReady] = useState(false);
+
+  // 启动时把密钥解回节点。只跑一次 —— 解不开要提示，不能反复重试刷屏
+  const secretsLoaded = useRef(false);
+  useEffect(() => {
+    if (secretsLoaded.current) return;
+    secretsLoaded.current = true;
+    const done = () => setSecretsReady(true);
+
+    if (secretPolicy === 'session') { done(); return; }
+    const be = beRef.current;
+    if (!be) { done(); return; }
+    let raw = '';
+    try { raw = localStorage.getItem(STORAGE_KEYS.secrets) ?? ''; } catch { done(); return; }
+    if (!raw) { done(); return; }
+
+    let alive = true;
+    // 盐要异步取（可能要问 Rust），所以包一层 async IIFE
+    void (async () => {
+      const pass = await secretPass();
+      if (!alive) return;
+      try {
+        const r = await unsealSecrets(be, raw, pass);
+        if (!alive) return;
+        if (r.failed) {
+          pushLog('⚠ 本机保存的密钥解不开（设备特征变了或数据损坏），请重新填写');
+          return;
+        }
+        if (Object.keys(r.keys).length === 0) return;
+        setCanvases((cs) => applySecrets({ canvases: cs, activeId: activeId ?? '' }, r.keys).canvases);
+        if (r.legacyPlaintext) pushLog('⚠ 检测到旧版本明文保存的密钥，已读入，保存后自动加密');
+      } catch {
+        if (alive) pushLog('⚠ 读取本机密钥失败');
+      } finally {
+        if (alive) setSecretsReady(true);
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [secretPolicy, secretPass]);
+
+  /*
+   * 画布变化 → 重新加密落盘。
+   *
+   * 这个 effect 依赖 canvases，而**拖一下节点**就会触发它（防抖 400ms 后）。
+   * 若不加判断地每次都加密，等于每拖一下就白跑一次 PBKDF2（约 50ms），
+   * 界面会明显发涩 —— 而密钥其实一个字都没变。
+   * 所以先比对：密钥集合与上次一致就整段跳过。
+   */
+  const saveSeq = useRef(0);
+  const lastSealedRef = useRef<string | null>(null);
+  /** 序列化成与键顺序无关的形式：节点重排不该被误判成"变了" */
+  const sealSig = (keys: SecretMap) =>
+    Object.keys(keys).sort().map((k) => `${k}=${keys[k]}`).join('\u0000');
+
+  useEffect(() => {
+    if (secretPolicy !== 'device') return;
+    if (!secretsReady) return;   // 还没读完就写，会把保险箱清掉
+    const be = beRef.current;
+    if (!be) return;
+    const keys: SecretMap = collectSecrets({ canvases, activeId });
+    const sig = sealSig(keys);
+    if (sig === lastSealedRef.current) return;
+
+    const seq = saveSeq.current + 1;
+    saveSeq.current = seq;
+    let alive = true;
+    void (async () => {
+      try {
+        const raw = await sealSecrets(be, keys, await secretPass());
+        if (!alive || seq !== saveSeq.current) return;
+        if (raw) localStorage.setItem(STORAGE_KEYS.secrets, raw);
+        else clearSecrets((k) => localStorage.removeItem(k));
+        // 写成功才记账：写失败的话下次得重试，不能假装已经存过
+        lastSealedRef.current = sig;
+      } catch { /* 忽略：下次画布变化会再试 */ }
+    })();
+    return () => { alive = false; };
+  }, [canvases, activeId, secretPolicy, secretPass, secretsReady]);
 
   /* ---------------- 节点编辑 ---------------- */
 
@@ -797,6 +1072,12 @@ export default function App() {
         : `⟲ ${e.id} 循环结束：${e.rounds} 轮全部成功`);
     } else if (e.type === 'run-error') {
       pushLog(`✗ ${e.message}`);
+    } else if (e.type === 'node-error') {
+      // 前置失败（缺执行器 / 参数不合法）不会走 node-done，
+      // 不在这里接住的话，节点只会变红而没有任何原因可看
+      pushLog(`✗ ${e.id} ${e.error}`);
+      setNodes((ns) => ns.map((n) =>
+        (n.id === e.id ? { ...n, data: { ...n.data, status: 'failed', error: e.error } } as FlowNode : n)));
     } else if (e.type === 'run-done') {
       pushLog(e.ok ? '运行结束：全部成功' : '运行结束：存在失败或跳过');
     }
@@ -892,8 +1173,63 @@ export default function App() {
     /* 本地图片读取：桌面端才有，浏览器模式会抛错并由节点转成提示 */
     const imageReader: ImageReader = (path) => readImageDataUrl(path);
 
+    /*
+     * GitHub 执行器。
+     *
+     * 这里只补"发请求"这一环（github.ts 里的策略与解析是纯函数，已有单测）。
+     * 令牌优先取凭据库里的，没有才用节点内联值 —— 与 OCR / 翻译节点一致。
+     * cli 方案不接线：run_node 是给 AI CLI 用的，跑不了 git，
+     * 硬塞一个会让它"看起来能用"然后在真机上失败，不如明确报"未提供 git 执行器"。
+     */
+    const ghFetcher: GithubFetcher = async (url, init) => {
+      const r = await httpRequest(url, {
+        headers: init?.headers,
+        timeoutSec: 20,
+        withDefaultUa: false,   // GitHub API 要自己的 UA
+      });
+      return { status: r.status, ok: r.ok, text: r.text, headers: r.headers };
+    };
+
+    const githubFetch: GithubUpdateRunner = async (req) => {
+      const token = resolveSecret(credentials, req.credentialId, req.token);
+      const r = await fetchUpdate(
+        ghFetcher,
+        { owner: req.owner, repo: req.repo, branch: req.branch },
+        { token, base: req.base, order: req.order },
+      );
+      if (!r.ok) return { ok: false, error: r.error };
+      const i = r.value;
+      return {
+        ok: true,
+        via: r.via,
+        info: {
+          branch: i.branch, sha: i.sha, message: i.message,
+          author: i.author, date: i.date, updated: i.updated,
+        },
+      };
+    };
+
+    const githubPush: GithubPushRunner = async (req) => {
+      const token = resolveSecret(credentials, req.credentialId, req.token);
+      const r = await pushFiles(
+        ghFetcher,
+        { owner: req.owner, repo: req.repo, branch: req.branch },
+        {
+          token,
+          branch: req.branch,
+          message: req.message,
+          files: req.files,
+          workdir: req.workdir,
+          order: req.order,
+        },
+      );
+      if (!r.ok) return { ok: false, error: r.error };
+      return { ok: true, via: r.via, commit: r.value.commit };
+    };
+
     const result = await runGraph(graph, {
       concurrency, executor, fsExecutor, fetcher, llmCaller, imageReader,
+      githubFetch, githubPush, credentials,
       input: effectiveInput, onEvent, signal: controller.signal,
     });
     setSummary(result);
@@ -911,7 +1247,7 @@ export default function App() {
     setRunning(false);
     abortRef.current = null;
     return result.ok;
-  }, [running, nodes, edges, concurrency, globalInput, onEvent, setNodes, pushLog, activeId, canvases, saveHistory]);
+  }, [running, nodes, edges, concurrency, globalInput, onEvent, setNodes, pushLog, activeId, canvases, saveHistory, credentials]);
 
   // 调度器通过 ref 调用 run，避免闭包捕获旧状态
   const runRef = useRef(run);
@@ -930,10 +1266,9 @@ export default function App() {
     () => new TriggerScheduler({
       getTriggers: () => triggersRef.current,
       onFire: async (t, _reason, payload) => {
-        // webhook 且开启了"请求体注入"时，payload 优先于触发器的固定输入
-        const injected = t.kind === 'webhook' && t.config.payloadToInput && payload
-          ? payload
-          : t.input;
+        // webhook 与对话触发都会带 payload（请求体 / 命中的对话内容），
+        // 它们优先于触发器的固定输入 —— 用户要的正是"把当时的内容传进去"
+        const injected = payload ? payload : t.input;
         // 把触发方式带进任务记录：任务窗口里要能分清
         // 「我手动点的」和「半夜自己跑起来的」
         const src: TaskSource =
@@ -941,7 +1276,8 @@ export default function App() {
             : t.kind === 'cron' ? 'cron'
               : t.kind === 'watch' ? 'watch'
                 : t.kind === 'webhook' ? 'webhook'
-                  : 'manual';
+                  : t.kind === 'chat' ? 'chat'
+                    : 'manual';
         const ok = await runRef.current(injected, src);
         // 触发记录写回画布上的触发器节点，直接在节点卡片上就能看到"上次触发时间"
         const targetId = t.nodeId ?? t.id;
@@ -1043,6 +1379,114 @@ export default function App() {
     webhookCleanups.current.clear();
   }, []);
 
+  /* ---------------------------------------------------------------- */
+  /* 对话监听（chat 触发器）                                            */
+  /* ---------------------------------------------------------------- */
+
+  /** 渲染命中内容模板。认得的占位符才替换，其余原样保留 */
+  const renderChatHit = useCallback((tpl: string, hit: KeywordHit, file: string): string => {
+    const roleText = hit.message.role === 'user' ? '用户' : 'AI';
+    const time = hit.message.ts !== null
+      ? new Date(hit.message.ts).toLocaleString('zh-CN', { hour12: false })
+      : '';
+    return (tpl || DEFAULT_TRIGGER_CONFIG.chatTemplate)
+      .replace(/\{\{keyword\}\}/g, hit.keyword)
+      .replace(/\{\{role\}\}/g, roleText)
+      .replace(/\{\{text\}\}/g, hit.message.text)
+      .replace(/\{\{excerpt\}\}/g, hit.excerpt)
+      .replace(/\{\{file\}\}/g, file)
+      .replace(/\{\{time\}\}/g, time);
+  }, []);
+
+  /*
+   * 轮询对话文件。
+   *
+   * 为什么是轮询而不是监听：
+   *   项目已有目录监听（watch），可以复用。但对话文件是**追加写**，
+   *   一次 AI 回复会触发多次 write —— 用它拿不到"消息"这个粒度，
+   *   只能在事件里再读一遍文件，等于绕一圈还是轮询。
+   *   而且监听要在目录里常驻 watcher，对话目录往往有成百上千个会话文件，
+   *   全监听代价太大。直接按固定间隔读末尾反而更简单可控。
+   *
+   * 只读**末尾**（af_fs_tail），不是整读：几十 MB 的 jsonl 每几秒整读
+   * 一次，磁盘和内存都扛不住。
+   */
+  const chatSeen = useRef<Map<string, SeenState>>(new Map());
+  const chatBusy = useRef(false);
+
+  useEffect(() => {
+    const active = triggers.filter(
+      (t) => t.kind === 'chat' && t.enabled && t.config.chatDir
+        && parseKeywords(t.config.chatKeywords).length > 0,
+    );
+    if (active.length === 0) return;
+
+    let stopped = false;
+    // 多个触发器取最小间隔：一个定时器覆盖全部，不必各起一个
+    const gap = Math.max(2, Math.min(...active.map((t) => t.config.chatPollSec || 3))) * 1000;
+
+    const tick = async () => {
+      if (stopped || chatBusy.current) return;
+      chatBusy.current = true;
+      try {
+        for (const t of active) {
+          if (stopped) break;
+          const dir = t.config.chatDir;
+          const exts = t.config.chatExts.length > 0 ? t.config.chatExts : ['jsonl'];
+
+          let listing = '';
+          try {
+            listing = (await fileOp({
+              op: 'list', path: dir, recursive: false, exts,
+            } as FsArgs)).text;
+          } catch (e) {
+            pushLog(`对话监听「${t.name}」列目录失败：${String(e)}`);
+            continue;
+          }
+          const files = listing.split('\n').map((s) => s.trim()).filter(Boolean);
+          if (files.length === 0) continue;
+
+          const kws = parseKeywords(t.config.chatKeywords);
+          const seenMap = chatSeen.current;
+
+          for (const f of files) {
+            if (stopped) break;
+            const content = await tailFile(f);
+            if (content === null) continue;
+
+            const key = `${t.id}:${f}`;
+            let st = seenMap.get(key);
+            const prime = st === undefined;
+            if (!st) { st = newSeenState(); seenMap.set(key, st); }
+
+            const fresh = takeNew(parseMessages(content, f), st, prime);
+            if (fresh.length === 0) continue;
+
+            const hits = matchKeywords(fresh, kws, t.config.chatScope);
+            if (hits.length === 0) continue;
+
+            // 多条命中合并成一次触发：AI 常连续输出多行，
+            // 一次回复触发三遍流程没有意义
+            const first = hits[0];
+            pushLog(`对话触发「${t.name}」：${f.split(/[\\/]/).pop()} 中出现「${first.keyword}」`
+              + (hits.length > 1 ? `（本轮共 ${hits.length} 处）` : ''));
+            void scheduler.notifyChat(t.id, renderChatHit(t.config.chatTemplate, first, f));
+            break;
+          }
+        }
+      } finally {
+        chatBusy.current = false;
+      }
+    };
+
+    void tick();
+    const timer = setInterval(() => void tick(), gap);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [triggers, scheduler, pushLog, renderChatHit]);
+
   const stop = () => {
     abortRef.current?.abort();
     activeRuns.current.forEach((runId) => { void killCli(runId); });
@@ -1060,8 +1504,25 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar onAdd={(p) => spawnNode(p)} disabled={running} />
+      {/*
+        节点库只在流程视图出现。
+        任务 / 历史是查看态，画布都藏起来了，节点拖不出去 —— 留着它
+        就是一条死栏。隐藏之后，任务 / 历史的列表正好顶上这条栏的位置。
+      */}
+      {view === 'flow' ? (
+        <Sidebar onAdd={(p) => spawnNode(p)} disabled={running} />
+      ) : null}
       <div className="app">
+      {channel && !channel.ok ? (
+        <div className="chan-banner" role="alert">
+          <span>⚠ {channel.reason}</span>
+          {channel.isolated ? (
+            <button className="mini" onClick={() => window.location.reload()}>
+              重载插件
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <CanvasTabs
         canvases={canvases.map(toMeta)}
         activeId={activeId}
@@ -1093,26 +1554,35 @@ export default function App() {
           <span className="hist-warn-inline" title={histWarn}>⚠ 归档存储</span>
         ) : null}
         <strong className="brand">Agent Flow</strong>
-        <button onClick={addTask} disabled={running}>+ 任务</button>
-        <button onClick={addCondition} disabled={running}>+ 条件</button>
-        <button onClick={() => spawnNode({ kind: 'parallel' })} disabled={running}>+ 并发</button>
-        <button onClick={() => spawnNode({ kind: 'trigger' })} disabled={running}>
-          + 触发器
-        </button>
-        <button
-          onClick={deleteSelected}
-          disabled={running || nodes.length === 0}
-          title="删除选中的节点或连线（Delete / Backspace）"
-        >
-          删除
-        </button>
-        <button
-          onClick={undoDelete}
-          disabled={running || !undoSnap}
-          title={undoSnap ? `撤销删除：${undoSnap.label}` : '没有可撤销的删除'}
-        >
-          ↩ 撤销
-        </button>
+        {/*
+          这几个是**画布编辑**按钮。任务 / 历史视图里画布是藏起来的，
+          留着就是点了没反应 —— 和别处的"静默失效"是同一类问题，所以一并隐藏。
+          运行 / 保存 / 导入导出 不受影响：那些在查看态下依然有意义。
+        */}
+        {view === 'flow' ? (
+          <>
+            <button onClick={addTask} disabled={running}>+ 任务</button>
+            <button onClick={addCondition} disabled={running}>+ 条件</button>
+            <button onClick={() => spawnNode({ kind: 'parallel' })} disabled={running}>+ 并发</button>
+            <button onClick={() => spawnNode({ kind: 'trigger' })} disabled={running}>
+              + 触发器
+            </button>
+            <button
+              onClick={deleteSelected}
+              disabled={running || nodes.length === 0}
+              title="删除选中的节点或连线（Delete / Backspace）"
+            >
+              删除
+            </button>
+            <button
+              onClick={undoDelete}
+              disabled={running || !undoSnap}
+              title={undoSnap ? `撤销删除：${undoSnap.label}` : '没有可撤销的删除'}
+            >
+              ↩ 撤销
+            </button>
+          </>
+        ) : null}
         <button className="primary" onClick={() => void run(undefined, 'manual')} disabled={running || nodes.length === 0}>
           {running ? '运行中…' : '运行工作流'}
         </button>
@@ -1209,14 +1679,46 @@ export default function App() {
             <button className="mini" onClick={() => setDeleteNotice(null)}>知道了</button>
           </div>
         )}
-        <Inspector
-          node={selected}
-          edges={edges}
-          onChange={patchNode}
-          credentials={credentials}
-          onOpenCredentials={openCredentials}
-          webhookTokens={webhookTokens}
-        />
+
+        {/*
+          任务 / 历史视图下属性面板保留，但只读 —— 保留是为了看完整信息。
+
+          用 fieldset[disabled] 而不是逐个控件加 disabled：面板里有几十个
+          input / select / button，分散在一堆子组件里，逐个改既漏又啰嗦。
+          fieldset 的 disabled 会原生禁用所有后代控件，连键盘 Tab 进去改
+          也一并挡住 —— 这是 CSS 的 pointer-events 做不到的。
+        */}
+        <div className="insp-slot">
+          {view !== 'flow' ? (
+            <div className="insp-ro-bar">
+              <span className="insp-ro-tag">只读</span>
+              <span className="insp-ro-hint">
+                {selected ? '改节点请回流程' : '未选中节点'}
+              </span>
+              <button
+                className="mini"
+                onClick={() => setView('flow')}
+                disabled={!selected}
+                title={selected ? '回到流程视图编辑这个节点' : '先在流程视图里选中一个节点'}
+              >
+                前往流程编辑
+              </button>
+            </div>
+          ) : null}
+          <fieldset className="insp-lock" disabled={view !== 'flow'}>
+            <Inspector
+              node={selected}
+              edges={edges}
+              onChange={patchNode}
+              credentials={credentials}
+              onOpenCredentials={openCredentials}
+              secretPolicy={secretPolicy}
+              onChangeSecretPolicy={setSecretPolicy}
+              webhookTokens={webhookTokens}
+            />
+          </fieldset>
+        </div>
+
 
         {credOpen ? (
           <CredentialPanel
@@ -1227,7 +1729,7 @@ export default function App() {
             locked={vaultKey === null}
             mode={store.mode}
             onUnlock={(pass) => {
-              if (pass === '') { setVaultKey(null); setCredentials([]); return; }
+              if (pass === '') { lockVault(); return; }
               unlock(pass);
             }}
             onChangeMode={changeVaultMode}

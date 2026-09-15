@@ -88,11 +88,17 @@ export default function CanvasTabs({
             )}
           </div>
         ))}
-      </div>
 
-      <button className="tab-add" onClick={onAdd} disabled={disabled} title="新建工作流">
-        + 新建
-      </button>
+        {/*
+          新建按钮放在滚动容器**内部**，靠 sticky 决定它停在哪：
+            标签没占满 → 紧跟最后一个标签（普通流位置）
+            标签溢出    → 粘在右边缘，滚动时始终可见
+          放在容器外的话，它会永远钉在最右边，标签少时孤零零悬在半空。
+        */}
+        <button className="tab-add" onClick={onAdd} disabled={disabled} title="新建工作流">
+          + 新建
+        </button>
+      </div>
     </div>
   );
 }

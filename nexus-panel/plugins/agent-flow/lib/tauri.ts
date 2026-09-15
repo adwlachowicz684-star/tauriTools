@@ -319,11 +319,62 @@ export type FetchTextResult = {
  * 浏览器模式下退化为原生 fetch —— 大多数源会因 CORS 失败，
  * 这时给明确提示，而不是静默返回空让人以为"确实没更新"。
  */
+/**
+ * 带响应头的完整结果。
+ *
+ * 少数场景必须读头：GitHub 令牌校验靠 `X-OAuth-Scopes` 判断读写权限，
+ * 只拿文本就分不清 classic PAT 与 fine-grained PAT。
+ */
+export type FetchFullResult = FetchTextResult & {
+  /** 键已统一转成小写，取值时不必再猜大小写 */
+  headers: Record<string, string>;
+};
+
+/**
+ * 抓取一段文本。
+ *
+ * 走 Tauri 的 http 插件（经 Rust 发出，不受浏览器同源策略限制）；
+ * 浏览器模式下退化为原生 fetch —— 大多数源会因 CORS 失败，
+ * 这时给明确提示，而不是静默返回空让人以为"确实没更新"。
+ */
 /** 一次 HTTP 交换的结果。只要文本 —— 订阅源与大模型返回的都是文本。 */
-type HttpResult = { ok: boolean; status: number; text: string };
+type HttpResult = FetchFullResult;
 
 /** 这些状态码按规范没有响应体，不必去读 */
 const NO_BODY_STATUS = [101, 103, 204, 205, 304];
+
+/**
+ * 把响应头规整成「小写键 → 值」。
+ *
+ * 两种来源形状不同：Rust 侧给的是 `[["a","1"],["b","2"]]`，
+ * 浏览器侧是 `Headers` 对象。统一在这里收口，调用方只看一种格式。
+ * 解析不出来就返回空对象 —— 头是辅助信息，不该因为格式变了就整条请求失败。
+ */
+function normalizeHeaders(h: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  try {
+    if (!h) return out;
+    // [name, value][] —— Rust 侧与 Headers 迭代结果都是这个形状
+    if (Array.isArray(h)) {
+      for (const pair of h) {
+        if (Array.isArray(pair) && pair.length >= 2) {
+          out[String(pair[0]).toLowerCase()] = String(pair[1]);
+        }
+      }
+      return out;
+    }
+    if (typeof (h as Headers).forEach === 'function') {
+      (h as Headers).forEach((v: string, k: string) => { out[String(k).toLowerCase()] = String(v); });
+      return out;
+    }
+    if (typeof h === 'object') {
+      for (const [k, v] of Object.entries(h as Record<string, unknown>)) {
+        out[k.toLowerCase()] = String(v);
+      }
+    }
+  } catch { /* 头解析失败不影响主体 */ }
+  return out;
+}
 
 /**
  * 经 Rust 的 tauri-plugin-http 发请求，绕过 webview 的同源策略。
@@ -340,6 +391,57 @@ const NO_BODY_STATUS = [101, 103, 204, 205, 304];
  * 返回 null 表示通道不可用（插件未启用 / scope 未放行 / 网络错误），
  * 由调用方降级到浏览器 fetch —— 不做"假装成功"。
  */
+/**
+ * Tauri 通道的失败原因。
+ *
+ * 审查项 A-04：原来一律 catch 成 null，界面只能说"受 CORS 限制"，
+ * 把真正的原因（插件没启用 / scope 没放行 / 网络问题）全盖住了。
+ * 分出来之后，提示语才能直指该改的地方。
+ */
+export type HttpFailureKind =
+  /** 插件没启用或命令没注册 —— 要去 Rust 侧开 tauri-plugin-http */
+  | 'no-plugin'
+  /** 插件在，但目标域名没被 capabilities 放行 —— 要去加 scope */
+  | 'no-scope'
+  /** 通道正常，请求本身失败（DNS / 超时 / 对端拒绝） */
+  | 'request';
+
+export type HttpFailure = { kind: HttpFailureKind; message: string };
+
+/** 一次 IPC 交换的结果：成功带响应，失败带原因 */
+export type TauriHttpOutcome =
+  | { ok: true; value: HttpResult }
+  | { ok: false; failure: HttpFailure };
+
+/**
+ * 把 invoke 抛出的东西归类。
+ *
+ * Tauri 的报错是字符串，判断只能靠关键字匹配 —— 不优雅但有效；
+ * 匹配不上就归到 request，至少不会把"插件没装"说成"网络不通"。
+ */
+function classifyInvokeError(e: unknown): HttpFailure {
+  const msg = String(e instanceof Error ? e.message : e).toLowerCase();
+  if (msg.includes('command not found') || msg.includes('command') && msg.includes('not found')) {
+    return { kind: 'no-plugin', message: String(e) };
+  }
+  if (msg.includes('not allowed') || msg.includes('scope') || msg.includes('permission')
+      || msg.includes('url not allowed')) {
+    return { kind: 'no-scope', message: String(e) };
+  }
+  return { kind: 'request', message: String(e) };
+}
+
+/** 把失败原因翻译成人话，直接进运行日志 */
+export function describeHttpFailure(f: HttpFailure): string {
+  if (f.kind === 'no-plugin') {
+    return 'Tauri http 插件未启用：请确认 Rust 侧注册了 tauri-plugin-http';
+  }
+  if (f.kind === 'no-scope') {
+    return '目标域名未放行：请在 capabilities 里把该域名加进 http 的 scope';
+  }
+  return `请求失败（${f.message}）`;
+}
+
 async function tauriHttpRequest(
   url: string,
   init: {
@@ -349,7 +451,7 @@ async function tauriHttpRequest(
     connectTimeout?: number;
     maxBytes?: number;
   } = {},
-): Promise<HttpResult | null> {
+): Promise<TauriHttpOutcome> {
   try {
     const headers = Object.entries(init.headers ?? {}).map(([k, v]) => [k, String(v)]);
     // 请求体按字节数组传给 Rust，与官方包一致（内部走 arrayBuffer 后转数组）
@@ -369,7 +471,11 @@ async function tauriHttpRequest(
       },
     });
 
-    const res = await invoke<{ status: number; rid: number }>('plugin:http|fetch_send', { rid });
+    const res = await invoke<{
+      status: number;
+      rid: number;
+      headers?: unknown;
+    }>('plugin:http|fetch_send', { rid });
     const max = init.maxBytes ?? Infinity;
 
     let text = '';
@@ -395,11 +501,103 @@ async function tauriHttpRequest(
       void invoke('plugin:http|fetch_cancel_body', { rid: res.rid }).catch(() => {});
     }
 
-    return { ok: res.status >= 200 && res.status < 300, status: res.status, text };
-  } catch {
-    return null;
+    return {
+      ok: true,
+      value: {
+        ok: res.status >= 200 && res.status < 300,
+        status: res.status,
+        text,
+        headers: normalizeHeaders(res.headers),
+      },
+    };
+  } catch (e) {
+    return { ok: false, failure: classifyInvokeError(e) };
   }
 }
+
+/**
+ * 发一个 HTTP 请求，返回文本 + 响应头。
+ *
+ * 通道与 `fetchText` 一致（先 Tauri 插件，失败降级浏览器），
+ * 区别是能指定方法 / 请求体，并且把响应头带回来 ——
+ * 校验 GitHub 令牌要靠 `X-OAuth-Scopes` 判读写权限，只拿文本不够。
+ */
+export async function httpRequest(
+  url: string,
+  opts: FetchTextOptions & {
+    method?: string;
+    body?: string;
+    /** 是否补默认 UA。GitHub API 要用自己的 UA，关掉 */
+    withDefaultUa?: boolean;
+  } = {},
+): Promise<FetchFullResult> {
+  const max = opts.maxBytes ?? 2_000_000;
+  const timeoutMs = Math.max(1, opts.timeoutSec ?? 15) * 1000;
+
+  if (!/^https?:\/\//i.test(url)) {
+    throw new Error('地址必须以 http:// 或 https:// 开头');
+  }
+
+  const ua: Record<string, string> = opts.withDefaultUa === false ? {} : { 'User-Agent': UA };
+  const headers = { ...ua, ...(opts.headers ?? {}) };
+
+  // 1) 经 Rust 的 tauri-plugin-http（不受同源策略限制）
+  let tauriFailure: HttpFailure | null = null;
+  if (isTauri()) {
+    const r = await tauriHttpRequest(url, {
+      method: opts.method ?? 'GET',
+      headers,
+      body: opts.body,
+      connectTimeout: timeoutMs,
+      maxBytes: max,
+    });
+    if (r.ok) {
+      return { ok: r.value.ok, status: r.value.status, text: r.value.text.slice(0, max), headers: r.value.headers };
+    }
+    // 通道没走通：记下原因，先降级到浏览器 fetch，两条都不通时再报出来
+    tauriFailure = r.failure;
+    console.warn('[agent-flow] Tauri http 通道不可用：', describeHttpFailure(r.failure));
+  }
+
+  // 浏览器模式：尽力而为
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const res = await globalThis.fetch(url, {
+      method: opts.method ?? 'GET',
+      headers,
+      body: opts.body,
+      signal: ac.signal,
+    });
+    const raw = await res.text();
+    return {
+      ok: res.ok,
+      status: res.status,
+      text: raw.slice(0, max),
+      headers: normalizeHeaders(res.headers),
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    /*
+     * 两条通道都不通时报出来，带上各自的真实原因。
+     * 此前一律写"受 CORS 限制"，把 no-plugin / no-scope 全盖住了 ——
+     * 用户照着提示去查 CSP，其实该改的是 Rust 侧的插件或 scope。
+     */
+    const tauriHint = tauriFailure
+      ? `${describeHttpFailure(tauriFailure)}；已退回浏览器请求，又受 CORS 与 CSP connect-src 限制（${msg}）`
+      : `浏览器请求失败（${msg}）；浏览器模式下多数订阅源不允许跨域，请用桌面端运行`;
+    throw new Error(`${tauriHint}。`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * 抓取一个 URL，返回文本 + 响应头。
+ *
+ * 与 `fetchText` 同一条通道、同一套降级逻辑，只是多带回头。
+ * 需要头的调用方（令牌校验）用这个，其余继续用 `fetchText`。
+ */
 
 export async function fetchText(url: string, opts: FetchTextOptions = {}): Promise<FetchTextResult> {
   const max = opts.maxBytes ?? 2_000_000;
@@ -420,9 +618,10 @@ export async function fetchText(url: string, opts: FetchTextOptions = {}): Promi
     const r = await tauriHttpRequest(url, {
       method: 'GET', headers, connectTimeout: timeoutMs, maxBytes: max,
     });
-    if (r) return { ok: r.ok, status: r.status, text: r.text.slice(0, max) };
-    // 返回 null：插件未启用或 scope 未放行该域名 —— 交给下面的浏览器路径再试一次
-    console.warn('[agent-flow] Tauri http 通道不可用，尝试浏览器 fetch');
+    if (r.ok) return { ok: r.value.ok, status: r.value.status, text: r.value.text.slice(0, max) };
+    // 通道没走通：记下具体原因（插件未启用 / scope 未放行 / 请求出错），
+    // 交给下面的浏览器路径再试一次；两条都不通时报出来，而不是一律甩锅 CORS
+    console.warn('[agent-flow] Tauri http 通道不可用：', describeHttpFailure(r.failure));
   }
 
   // 浏览器模式：尽力而为
@@ -465,6 +664,12 @@ export type PostJsonResult = { status: number; text: string };
  * 这里刻意不解析 JSON —— 解析与错误归类交给 engine/llm.ts，
  * 那部分有单测；本文件只管把请求发出去。
  */
+/** 审查项 A-03：postJson 的响应上限（8 MiB）。
+ *
+ * 大模型偶尔会返回异常大的响应（日志、超长生成），原先是 Infinity ——
+ * 整包进内存再解码，足以把面板拖垮。 */
+const POST_MAX_BYTES = 8 * 1024 * 1024;
+
 export async function postJson(
   url: string,
   body: unknown,
@@ -485,9 +690,11 @@ export async function postJson(
       headers,
       body: payload,
       connectTimeout: timeoutMs,
+      // 审查项 A-03：原先是 Infinity，大模型返回异常大的响应会整包进内存
+      maxBytes: POST_MAX_BYTES,
     });
-    if (r) return { status: r.status, text: r.text };
-    console.warn('[agent-flow] Tauri http 通道不可用，尝试浏览器 fetch');
+    if (r.ok) return { status: r.value.status, text: r.value.text };
+    console.warn('[agent-flow] Tauri http 通道不可用：', describeHttpFailure(r.failure));
   }
 
   const ac = new AbortController();
@@ -532,4 +739,46 @@ export async function readImageDataUrl(path: string): Promise<string> {
 /** 浏览器模式不支持读取本地图片 */
 export function canReadImage(): boolean {
   return hasTauri();
+}
+
+/**
+ * 取本机设备盐（凭据加密用）。
+ *
+ * 盐原先存在 localStorage —— 同一页面上的任何脚本（包括别的插件）
+ * 都能直接读走，拿到它 + 公开的本机特征就能算出凭据密钥。
+ * 现在由 Rust 侧生成并存在应用数据目录，只有能调这条命令的一方拿得到。
+ *
+ * 返回 null 表示拿不到（浏览器模式 / 隔离态 / 命令未注册），
+ * 调用方应退回本地生成并落盘 —— 功能不能因为拿不到盐就坏掉。
+ *
+ * 注意它挡不住什么：盐文件在应用数据目录里明文明放，
+ * 整个用户数据目录被拷走的人照样能拿到。它防的是"同页面其它代码顺手读"。
+ */
+export async function fetchDeviceSalt(): Promise<string | null> {
+  if (!isTauri()) return null;
+  try {
+    const s = await invoke<string>('af_device_salt');
+    return typeof s === 'string' && s.trim() !== '' ? s.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 读文件末尾（对话监听用）。
+ *
+ * 监听要隔几秒看一眼文件末尾有没有新消息。用 fs_op 的 read 得整读再切片，
+ * 几十 MB 的 jsonl 每几秒整读一次，磁盘和内存都扛不住 —— 所以走 Rust 的
+ * seek-from-end。
+ *
+ * 返回内容**可能以半截行开头**，调用方需丢掉第一行（见 engine/conversations）。
+ * 拿不到（浏览器模式 / 隔离态 / 命令未注册）返回 null，调用方据此降级。
+ */
+export async function tailFile(path: string, maxBytes?: number): Promise<string | null> {
+  if (!isTauri()) return null;
+  try {
+    return await invoke<string>('af_fs_tail', { path, maxBytes: maxBytes ?? null });
+  } catch {
+    return null;
+  }
 }

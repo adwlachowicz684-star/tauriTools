@@ -913,6 +913,8 @@ export type OcrNodeData = {
   label: string;
   /** 大模型配置（与翻译节点共用） */
   llm: LlmConfig;
+  /** 凭据 id；留空则用 llm.apiKey 的内联值 */
+  credentialId: string;
   imageSource: ImageSource;
   /** url 模式：图片地址；支持 {{上游.output}} */
   url: string;
@@ -936,6 +938,8 @@ export type TranslateNodeData = {
   kind: 'translate';
   label: string;
   llm: LlmConfig;
+  /** 凭据 id；留空则用 llm.apiKey 的内联值 */
+  credentialId: string;
   /** 待翻译文本，支持 {{上游.output}} */
   text: string;
   /** 目标语言，可填预设 code 之外的任意说法 */
@@ -970,6 +974,7 @@ export function makeOcrNode(id: string, partial: Partial<OcrNodeData> = {}): Gra
       path: partial.path ?? '',
       prompt: partial.prompt ?? defaultOcrPrompt(),
       detail: partial.detail ?? 'auto',
+      credentialId: partial.credentialId ?? '',
       status: partial.status ?? 'idle',
       output: partial.output ?? '',
       error: partial.error ?? '',
@@ -988,12 +993,41 @@ export function makeTranslateNode(id: string, partial: Partial<TranslateNodeData
       targetLang: partial.targetLang ?? 'zh',
       sourceLang: partial.sourceLang ?? 'auto',
       glossary: partial.glossary ?? '',
+      credentialId: partial.credentialId ?? '',
       status: partial.status ?? 'idle',
       output: partial.output ?? '',
       error: partial.error ?? '',
     },
   };
 }
+
+/**
+ * 节点里手填的 apiKey（区别于凭据中心里的凭据）怎么保存。
+ *
+ * device  —— 加密后存在本机，刷新后自动填回
+ * session —— 只在内存里，关掉面板就没
+ *
+ * 两者的差别**不是**"安全 / 不安全"，而是"便利性 vs 落盘痕迹"：
+ * device 只是把明文变成密文，属于抬成本；密钥派生的盐与本机特征都
+ * 存在本机 / 是公开信息，拿到整个数据目录的人照样能复现钥匙
+ * （见 engine/secretVault.ts 顶部）。要真挡住，用凭据中心 + 口令模式。
+ */
+export type SecretPolicy = 'device' | 'session';
+
+/** 存策略的键。UI 与 App 共用同一个名字，免得两边各写一份字符串 */
+export const SECRET_POLICY_KEY = 'agent-flow.secret-policy.v1';
+
+export const SECRET_POLICY_META: Record<SecretPolicy, { label: string; hint: string }> = {
+  device: {
+    label: '存本机（加密）',
+    hint: '加密后存在本机，刷新后自动填回。只是抬高偷看成本 —— 拿到整个数据目录的人仍能解开，'
+      + '要真隔离请用凭据中心的口令模式',
+  },
+  session: {
+    label: '仅本次会话',
+    hint: '只留在内存里，关掉面板即清空，本机不留任何痕迹。代价是下次打开要重新填写',
+  },
+};
 
 /** 默认识别提示：按原布局输出，不额外解释 */
 export function defaultOcrPrompt(): string {
@@ -1061,7 +1095,7 @@ export function makeNode(id: string, partial: Partial<TaskNodeData> = {}): Graph
 /* 触发器                                                              */
 /* ------------------------------------------------------------------ */
 
-export type TriggerKind = 'manual' | 'interval' | 'cron' | 'watch' | 'webhook';
+export type TriggerKind = 'manual' | 'interval' | 'cron' | 'watch' | 'webhook' | 'chat';
 
 /** 各类触发器的配置，按 kind 取用对应字段；未用到的字段留默认值即可 */
 export type TriggerConfig = {
@@ -1085,6 +1119,23 @@ export type TriggerConfig = {
   token: string;
   /** webhook: 是否把请求体注入 {{input}} */
   payloadToInput: boolean;
+
+  /* ---- chat: 监听 AI 对话 ---- */
+  /** 对话文件所在目录（绝对路径）。留空则用探测到的默认目录 */
+  chatDir: string;
+  /** 只关心这些后缀；留空时默认 jsonl */
+  chatExts: string[];
+  /** 关键词，一行一个；# 开头为注释 */
+  chatKeywords: string;
+  /** 匹配范围：只算用户说的，还是用户与 AI 都算 */
+  chatScope: 'user' | 'both';
+  /** 轮询间隔秒数，最小 2 */
+  chatPollSec: number;
+  /**
+   * 命中后注入 {{input}} 的内容模板。
+   * 支持 {{keyword}} {{role}} {{text}} {{excerpt}} {{file}} {{time}}
+   */
+  chatTemplate: string;
 };
 
 export type Trigger = {
@@ -1114,6 +1165,7 @@ export const TRIGGER_META: Record<TriggerKind, { label: string; hint: string; ic
   cron:     { label: '定时触发',   hint: '按 cron 表达式在指定时刻执行',             icon: '⏰' },
   watch:    { label: '监听触发',   hint: '监听目录内文件变化后执行（带防抖）',       icon: '👁' },
   webhook:  { label: '调用触发',   hint: '本地起 HTTP 服务，外部调用 URL 即触发',   icon: '🔗' },
+  chat:     { label: '对话触发',   hint: '监听 AI 对话，出现关键词时执行',          icon: '💬' },
 };
 
 export const DEFAULT_TRIGGER_CONFIG: TriggerConfig = {
@@ -1127,6 +1179,13 @@ export const DEFAULT_TRIGGER_CONFIG: TriggerConfig = {
   path: '/hooks/run',
   token: '',
   payloadToInput: true,
+
+  chatDir: '',
+  chatExts: [],
+  chatKeywords: '',
+  chatScope: 'both',
+  chatPollSec: 3,
+  chatTemplate: '对话中出现「{{keyword}}」：\n{{excerpt}}',
 };
 
 let triggerSeq = 0;

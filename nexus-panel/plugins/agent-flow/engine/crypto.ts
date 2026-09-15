@@ -205,6 +205,39 @@ export { hasWebCrypto };
 /* 加解密                                                              */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* 派生密钥缓存                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * PBKDF2 是刻意慢的（31 万次迭代），单次约 50ms 量级。
+ * 慢是为了抗离线暴力破解，这个代价该付 —— 但**重复**派生同一把钥匙没必要付第二次。
+ *
+ * 缓存键是「迭代次数 + salt + 口令」三元组：salt 变了就是另一把钥匙，
+ * 不能只按口令缓存。条目上限 32，超出淘汰最久未用的（Map 保序，即最简 LRU）。
+ *
+ * 关于风险：缓存把派生结果在内存里的存活期从"用完即弃"拉长到"整个会话"。
+ * 但这不构成新的泄露面 —— 口令本身已经在内存里（口令模式下在 React state，
+ * auto 模式下由本机特征拼出，本来就不是秘密）。
+ * 真正需要清空缓存的时机是"锁定"，见 clearKeyCache。
+ */
+const KEY_CACHE_LIMIT = 32;
+const keyCache = new Map<string, Uint8Array>();
+
+function cacheKeyOf(pass: string, salt: Uint8Array, iter: number): string {
+  return `${iter}|${bytesToB64(salt)}|${pass}`;
+}
+
+/** 锁定 / 退出时调用：把已派生的钥匙从内存里抹掉 */
+export function clearKeyCache(): void {
+  keyCache.clear();
+}
+
+/** 当前缓存条目数。仅用于测试与诊断 */
+export function keyCacheSize(): number {
+  return keyCache.size;
+}
+
 /**
  * 派生密钥。
  * @param pass 口令；auto 模式传本机特征串，passphrase 模式传用户口令
@@ -215,7 +248,23 @@ export async function deriveKey(
   salt: Uint8Array,
   iter: number = PBKDF2_ITER,
 ): Promise<Uint8Array> {
-  return be.pbkdf2(pass, salt, iter);
+  const ck = cacheKeyOf(pass, salt, iter);
+  const hit = keyCache.get(ck);
+  if (hit) {
+    // 命中后挪到队尾，维持 LRU 顺序
+    keyCache.delete(ck);
+    keyCache.set(ck, hit);
+    // 返回副本：调用方拿到后若就地改写，不会污染缓存里的其它使用者
+    return hit.slice();
+  }
+
+  const key = await be.pbkdf2(pass, salt, iter);
+  if (keyCache.size >= KEY_CACHE_LIMIT) {
+    const oldest = keyCache.keys().next().value;
+    if (oldest !== undefined) keyCache.delete(oldest);
+  }
+  keyCache.set(ck, key);
+  return key.slice();
 }
 
 /** 加密字符串。每次都换新的 salt 与 IV —— GCM 下 IV 重用会直接泄露明文关系 */

@@ -34,6 +34,8 @@ for f in tests/*.test.ts; do
     --import-map ../engine/tasks=../tasks.mjs \
     --import-map ../engine/crypto=../crypto.mjs \
     --import-map ../engine/credentialStore=../credentialStore.mjs \
+    --import-map ../engine/secretVault=../secretVault.mjs \
+    --import-map ../engine/conversations=../conversations.mjs \
     --import-map ../types=../types.mjs >/dev/null
 done
 
