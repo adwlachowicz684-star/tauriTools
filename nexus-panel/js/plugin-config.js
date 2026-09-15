@@ -25,7 +25,21 @@
 const KEY = (id) => `nexus:plugin-cfg:${id}`;
 const EVENT = 'nexus:plugin-cfg-changed';
 
-export const DEFAULTS = { isolated: false, adaptTheme: true };
+/**
+ * themeDark / themeLight —— 插件自选的主题，null 表示跟随全局。
+ *
+ * 语义（这是最容易搞混的一点）：**不是**"锁定成深色/浅色"，
+ * 而是"当整体主题是深色时用哪套、是浅色时用哪套"。
+ * 两个都填了，插件就会跟着整体主题的深浅在自己这两套之间切换，
+ * 但**不会**跟着用户在深色系列里换主题（比如从石墨换到极光）。
+ * 只填一个的话，另一个基调下仍跟随全局。
+ */
+export const DEFAULTS = {
+  isolated: false,
+  adaptTheme: true,
+  themeDark: null,
+  themeLight: null,
+};
 
 export function getPluginConfig(id) {
   try {

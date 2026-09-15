@@ -11,6 +11,7 @@ import {
 } from './host.js';
 import {
   applyTheme, setAccent, getCurrent, exportVars, getBase,
+  listThemes,        // 插件主题下拉：按基调分列可选主题
 } from './theme-manager.js';
 import { h } from './plugin-sdk.js';
 import * as extPolicy from './external-policy.js';
@@ -298,6 +299,39 @@ function renderShellSection(box, manifest) {
     rows.push(t.row);
   }
 
+  /* ---- 插件自选主题：深色一套、浅色一套 ----
+     语义不是"锁定深浅"，而是"整体是深色时用哪套、浅色时用哪套"：
+     两个都选了，插件就跟着整体的深浅在自己这两套之间切，
+     但不会跟着用户在同基调里换主题（比如从石墨换到极光）。 */
+  const themeRow = (label, key, base) => {
+    const all = listThemes().filter((t) => t.base === base);
+    const sel = h('select.p-input', {
+      style: { height: '30px', fontSize: '12px', padding: '0 8px', flex: '1', minWidth: '0' },
+    },
+      h('option', { value: '' }, '跟随全局'),
+      ...all.map((t) => h('option', { value: t.id, selected: cfg[key] === t.id }, t.name)),
+    );
+    sel.onchange = () => {
+      setPluginConfig(manifest.id, { [key]: sel.value || null });
+      toast('已保存，重载插件后生效', 'ok');
+    };
+    return h('div.p-row', {
+      style: {
+        padding: '12px 14px', marginTop: '10px', borderRadius: 'var(--r)',
+        background: 'var(--surface-sunk)',
+        boxShadow: 'inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light)',
+      },
+    },
+      h('div', { style: { flex: '1', minWidth: '0' } },
+        h('div', { style: { fontSize: '13px' } }, label),
+        h('div.p-muted', {
+          style: { fontSize: '11px', marginTop: '2px', lineHeight: '1.7' },
+        }, base === 'dark' ? '整体主题为深色时，本插件用这套' : '整体主题为浅色时，本插件用这套'),
+      ),
+      sel,
+    );
+  };
+
   box.innerHTML = '';
   box.appendChild(
     h('div.p-card', {},
@@ -320,6 +354,15 @@ function renderShellSection(box, manifest) {
         '（它们在主平台侧执行）：ctx.invoke 调 Rust、ctx.store 持久化、'
         + 'ctx.on/emit 跨插件事件、ctx.setTitle/setBadge/toast、主题同步。',
       ),
+    ),
+    h('div.p-card', {},
+      h('h2', {}, '插件主题'),
+      h('div.p-muted', { style: { lineHeight: '1.9', marginBottom: '4px' } },
+        '分别为深色 / 浅色各挑一套。选好后，本插件只跟随整体主题的',
+        h('b', {}, '深浅'),
+        '在自己这两套之间切换，不再跟随你在同基调里换哪套主题。留空则跟随全局。'),
+      themeRow('深色时用', 'themeDark', 'dark'),
+      themeRow('浅色时用', 'themeLight', 'light'),
     ),
   );
 

@@ -32,7 +32,8 @@
     "test:mindmap": "node plugins/mindmap/mindmap-test.mjs",
     "test:theme-bridge": "node theme-bridge-test.mjs",
     "test:flash": "node plugin-flash-test.mjs",
-    "test:tokens": "node style-tokens-test.mjs"
+    "test:tokens": "node style-tokens-test.mjs",
+    "test:plugin-theme": "node plugin-theme-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

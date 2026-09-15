@@ -13,7 +13,8 @@ import { getPluginConfig } from './plugin-config.js';
 import * as pluginConfig from './plugin-config.js';
 import * as extPolicy from './external-policy.js';
 import {
-  initTheme, exportVars, onChange as onThemeChange,
+  initTheme, exportVars, exportVarsFor, findTheme,
+  onChange as onThemeChange,
 } from './theme-manager.js';
 // 命名空间导入：供 ctx.shell.theme 桥接用。用具名导入会和本文件的
 // 局部变量撞名，用命名空间取最省心。
@@ -223,6 +224,9 @@ export function createHost(opts = {}) {
         instance.adaptInput = {
           manifest, wrap: instance.wrap, target: instance.target,
           root: instance.root, isIframe: manifest.type === 'iframe',
+          // 插件自选了主题后，它看到的"面板基调"就是那套的基调。
+          // 不传的话 installAdapter 会取全局基调 → 深浅判断反 → 滤镜加反。
+          panelBase: baseForPlugin(manifest.id),
         };
         await reAdapt(instance);
       } else if (instance) {
@@ -414,6 +418,12 @@ export function createHost(opts = {}) {
     stage.innerHTML = '';
     stage.appendChild(wrap);
 
+    /* 插件自选主题：同页插件与外部共享主文档的 :root，没有自己的文档，
+       所以只能把变量写到它自己的容器上（CSS 变量向下继承，只影响这个子树）。
+       iframe 插件走 init/theme 消息，用不到这里。
+       注意要在 mount 前写：插件挂载时可能立刻读变量做初始化配色。 */
+    applyThemeVarsTo(container, varsForPlugin(manifest.id));
+
     const result = await def.mount(ctx);
     return { manifest, def, ctx, wrap, target: container, root: container,
              unmount: typeof result === 'function' ? result : null, iframe: null };
@@ -493,7 +503,8 @@ export function createHost(opts = {}) {
             // 收到 mount 才回 —— 把 mount 放到 await ready 之后就是互等死锁。
             // postMessage 按序送达：iframe 先处理 init（ctx 就绪），随后 mount 才能挂载。
             send(iframe, {
-              type: 'init', manifest, theme: exportVars(), view,
+              // 插件可能自选了主题（见 varsForPlugin）；没有则等同全局
+              type: 'init', manifest, theme: varsForPlugin(manifest.id), view,
               isolated,                         // 插件据此决定能力探测方式
               reportBase: isolated && adaptTheme,  // 隔离且要适配 → 让插件自报基调
               // 宿主自报 origin，供插件回发消息时用作 targetOrigin。
@@ -840,7 +851,13 @@ export function createHost(opts = {}) {
   onThemeChange(async () => {
     const inst = state.instance;
     if (!inst) return;
-    if (inst.iframe) await pushTheme(inst.iframe);
+    if (inst.iframe) {
+      await pushTheme(inst.iframe, inst.manifest?.id);
+    } else if (inst.root) {
+      // 同页插件：重刷容器上的内联变量（它继承的是 :root，改 :root 也会带过去，
+      // 但插件自选主题时容器上的值优先级更高、不刷新就会一直沿用旧的那套）
+      applyThemeVarsTo(inst.root, varsForPlugin(inst.manifest?.id));
+    }
     await reAdapt(inst);
   });
 
@@ -851,7 +868,7 @@ export function createHost(opts = {}) {
    * 读到的还是旧主题的颜色 → 基调误判 → 施加本不该有的反转。
    * SDK 应用完变量会回 theme-applied；老插件不回就靠超时兜底。
    */
-  function pushTheme(iframe) {
+  function pushTheme(iframe, pluginId) {
     return new Promise((resolve) => {
       let done = false;
       const finish = () => {
@@ -869,7 +886,7 @@ export function createHost(opts = {}) {
       const timer = setTimeout(finish, 400);      // 兜底：不能无限等
       try {
         window.addEventListener('message', onAck);
-        send(iframe, { type: 'theme', theme: exportVars() });
+        send(iframe, { type: 'theme', theme: varsForPlugin(pluginId) });
       } catch { finish(); }
     });
   }
@@ -904,6 +921,64 @@ export function readTheme() {
   const out = {};
   for (const v of THEME_VARS) out[v] = cs.getPropertyValue(v).trim();
   return out;
+}
+
+/* -------------------- 插件自选主题 -------------------- */
+
+/**
+ * 该插件自己指定的主题；没有则返回 null（表示跟随全局）。
+ *
+ * 规则：按**全局当前基调**在插件的两套之间选 ——
+ *   全局是深色 → 用插件的 themeDark；全局是浅色 → 用 themeLight。
+ * 所以插件只跟随"深浅"这一档，不跟随用户在同基调里换哪套主题。
+ *
+ * 两个防御都不能省：
+ *   · 基调必须对得上。配置里存的是"深色用哪套"，就不能在浅色下生效，
+ *     否则用户把某套深色主题误选进浅色槽，浅色面板上会突然冒出一块深色。
+ *   · findTheme 兜底拿不到（自定义主题被删）时返回 null 跟随全局，
+ *     不让一个失效的配置把插件变量变成空对象。
+ */
+export function resolvePluginTheme(pluginId) {
+  if (!pluginId) return null;
+  let cfg;
+  try { cfg = getPluginConfig(pluginId); } catch { return null; }
+  const base = themeManager.getBase();
+  const want = base === 'light' ? cfg.themeLight : cfg.themeDark;
+  if (!want) return null;
+  const t = findTheme(want);
+  if (!t || t.base !== base) return null;
+  return t;
+}
+
+/** 该插件实际要用的主题变量（未指定时等同全局）。 */
+export function varsForPlugin(pluginId) {
+  const t = resolvePluginTheme(pluginId);
+  return t ? exportVarsFor(t) : exportVars();
+}
+
+/**
+ * 该插件实际表现出的基调。
+ *
+ * 供主题适配使用：适配要的是"插件看到的面板是什么基调"。
+ * 插件自选了主题后，它看到的就是那套的基调，而不是全局的 ——
+ * 若这里还返回全局基调，深浅判断会反，滤镜会加反。
+ */
+export function baseForPlugin(pluginId) {
+  const t = resolvePluginTheme(pluginId);
+  return t ? t.base : themeManager.getBase();
+}
+
+/**
+ * 把主题变量写到容器元素上（module 模式专用）。
+ *
+ * 同页插件与外部共享主文档的 :root，**没有自己的文档**，
+ * 所以"插件用别的主题"不能靠改 :root，只能把变量写到它自己的容器上 ——
+ * CSS 变量会向下继承，正好只影响这个插件的子树。
+ * iframe 插件有独立文档，走 init/theme 消息即可，用不到这个。
+ */
+export function applyThemeVarsTo(el, vars) {
+  if (!el?.style) return;
+  for (const [k, v] of Object.entries(vars)) el.style.setProperty(k, v);
 }
 /**
  * HTML 转义。

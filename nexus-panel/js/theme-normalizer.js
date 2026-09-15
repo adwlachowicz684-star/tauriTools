@@ -198,11 +198,19 @@ export async function installAdapter(o) {
 
   // 面板当前基调：深色面板要"暗化"浅色插件，浅色面板要"亮化"深色插件，
   // 两者用的是同一个滤镜，所以只需比较基调是否一致。
+  //
+  // 可由调用方显式指定（o.panelBase）：插件自选了主题后，它看到的面板基调
+  // 是自己那套的、而非全局的。宿主侧用 baseForPlugin() 算好传进来；
+  // 不传则回退全局基调（老调用方行为不变）。
   let panelBase = 'dark';
-  try {
-    const tm = await import('./theme-manager.js');
-    panelBase = tm.getBase();
-  } catch { /* 主题模块不可用时按深色处理 */ }
+  if (o.panelBase) {
+    panelBase = o.panelBase;
+  } else {
+    try {
+      const tm = await import('./theme-manager.js');
+      panelBase = tm.getBase();
+    } catch { /* 主题模块不可用时按深色处理 */ }
+  }
 
   // 等插件把内容渲染出来再采样（异步插件可能慢一拍）
   const getRoot = () => {

@@ -624,8 +624,18 @@ export function initTheme() {
 }
 
 /* 供 iframe 插件同步用：返回扁平的变量表 */
-export function exportVars() {
-  const theme = current || findTheme(getThemeId());
+/**
+ * 按**指定主题**导出变量（而非当前全局主题）。
+ *
+ * 用于插件自选主题：某个插件可以指定"整体深色时用 A 套、浅色时用 B 套"，
+ * 此时要算的是那套主题的变量，不是全局那套。
+ * 走 deriveVars(theme) 而非读 :root，所以那套主题自己的色相/明暗偏移
+ * （远端 05b88c6e 起按主题独立存储）也会正确带上。
+ *
+ * 强调色 / 环境色是用户单独调的两档、与主题独立存储，所以这里同样叠加上去 ——
+ * 否则插件自选主题后会丢掉用户调的强调色。
+ */
+export function exportVarsFor(theme) {
   const vars = deriveVars(theme);
   const accent = getAccent();
   if (accent) {
@@ -635,6 +645,10 @@ export function exportVars() {
   const env = getEnvColor();
   if (env) vars['--env-color'] = env;
   return vars;
+}
+
+export function exportVars() {
+  return exportVarsFor(current || findTheme(getThemeId()));
 }
 
 export { shift, rgba, parseHex };

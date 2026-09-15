@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { PluginManifest } from '../../js/host.js';
 import { getPluginConfig, setPluginConfig } from '../../js/plugin-config.js';
+import { listThemes } from '../../js/theme-manager.js';
 import * as extPolicy from '../../js/external-policy.js';
 
 /**
@@ -31,6 +32,43 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
   ];
 
   const mine = extPolicy.listHosts().filter((x) => x.pluginId === manifest.id);
+
+  /**
+   * 插件自选主题的一行：为某个基调挑一套。
+   *
+   * 不是"锁定成深色/浅色"，而是"整体深色时用哪套、浅色时用哪套"。
+   * 留空（跟随全局）表示该基调下不覆盖。
+   */
+  const themeRow = (label: string, key: 'themeDark' | 'themeLight', base: 'dark' | 'light') => {
+    const all = listThemes().filter((t) => t.base === base);
+    return (
+      <div
+        key={key}
+        className="p-row"
+        style={{
+          padding: '12px 14px', marginTop: 10, borderRadius: 'var(--r)',
+          background: 'var(--surface-sunk)',
+          boxShadow: 'inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light)',
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13 }}>{label}</div>
+          <div className="p-muted" style={{ fontSize: 11, marginTop: 2, lineHeight: 1.7 }}>
+            {base === 'dark' ? '整体主题为深色时，本插件用这套' : '整体主题为浅色时，本插件用这套'}
+          </div>
+        </div>
+        <select
+          className="p-input"
+          style={{ height: 30, fontSize: 12, padding: '0 8px', flex: 'none', maxWidth: 190 }}
+          value={cfg[key] ?? ''}
+          onChange={(e) => setCfg(setPluginConfig(manifest.id, { [key]: e.target.value || null }))}
+        >
+          <option value="">跟随全局</option>
+          {all.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+      </div>
+    );
+  };
 
   return (
     <>
@@ -80,6 +118,19 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
           （它们在主平台侧执行）：ctx.invoke 调 Rust、ctx.store 持久化、ctx.on/emit 跨插件事件、
           ctx.setTitle/setBadge/toast、主题同步。
         </div>
+      </div>
+
+      {/* 插件自选主题：深色一套、浅色一套。
+          语义不是"锁定深浅"，而是按整体的深浅在自己这两套之间切，
+          不再跟随用户在同基调里换哪套主题。 */}
+      <div className="p-card">
+        <h2>插件主题</h2>
+        <div className="p-muted" style={{ lineHeight: 1.9, marginBottom: 4 }}>
+          分别为深色 / 浅色各挑一套。选好后，本插件只跟随整体主题的<b>深浅</b>
+          在自己这两套之间切换，不再跟随你在同基调里换哪套主题。留空则跟随全局。
+        </div>
+        {themeRow('深色时用', 'themeDark', 'dark')}
+        {themeRow('浅色时用', 'themeLight', 'light')}
       </div>
 
       {mine.length ? (
