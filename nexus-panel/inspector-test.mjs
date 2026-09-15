@@ -37,7 +37,8 @@ globalThis.localStorage = dom.window.localStorage;
 globalThis.getComputedStyle = dom.window.getComputedStyle;
 globalThis.innerWidth = 1200;
 globalThis.innerHeight = 800;
-globalThis.navigator = dom.window.navigator;
+// Node 21+ 起 globalThis.navigator 是只读 getter，直接赋值会抛 TypeError
+Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true, writable: true });
 
 const insp = await import('./js/inspector.js');
 const uninstall = insp.installInspector();

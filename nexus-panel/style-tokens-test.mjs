@@ -87,8 +87,8 @@ t('引入 tokens.css 的样式文件不再各自声明滚动条', dupScroll.leng
 console.log('\n=== 4. 阴影走档位变量 ===');
 /* 允许剩下的：方向性投影（标题栏/侧边栏只朝一个方向）、辉光与描边环。
    不允许：把 rgba(...) / #xxx 写进双向立体阴影 —— 换主题不会跟着变。 */
-const isRingOrGlow = (v) => /^inset 0 0 0 /.test(v) || /^0 0 \d+px var\(--accent/.test(v)
-  || /^0 0 \d+px currentColor/.test(v) || /^inset 0 1px 0 /.test(v)
+const isRingOrGlow = (v) => /^inset 0 0 0 /.test(v) || /^0 0 (?:0 )?\d+px var\(--/.test(v)
+  || /^0 0 (?:0 )?\d+px currentColor$/.test(v) || /^inset 0 1px 0 /.test(v)
   || /^inset -?\d+px 0 0 /.test(v) || v === 'none';
 const hardShadow = [];
 for (const f of all) {

@@ -38,7 +38,7 @@ const t = (name, cond, extra = '') => {
 };
 
 /* ---------- A. plugin-sdk 引用的方法 ⊆ host 白名单 ---------- */
-const sdkSrc = fs.readFileSync(path.join(HERE, 'js/plugin-sdk.js'), 'utf8');
+const sdkSrc = (fs.readFileSync(path.join(HERE, 'js/plugin-sdk.js'), 'utf8')).replace(/\r\n/g, '\n');
 const start = sdkSrc.indexOf('theme: {');
 if (start < 0) {
   t('在 plugin-sdk 中定位到 ctx.shell.theme', false, '未找到 theme 块');
@@ -82,7 +82,7 @@ if (normStart < 0) {
    注意要**按块切**再判断：直接在整份源码上用宽松正则，setPolicy 的
    匹配窗口会一路扫到 setPluginOverride 的回调上，于是"setPolicy 忘了
    重算"也能蒙混过关（这条断言就假绿了）。 */
-const hostSrc = fs.readFileSync(path.join(HERE, 'js/host.js'), 'utf8');
+const hostSrc = (fs.readFileSync(path.join(HERE, 'js/host.js'), 'utf8')).replace(/\r\n/g, '\n');
 const apiStart = hostSrc.indexOf('const normalizerApi = {');
 const apiBlock = apiStart < 0 ? '' : hostSrc.slice(apiStart, hostSrc.indexOf('\n};', apiStart));
 t('定位到 normalizerApi 定义', apiStart >= 0);
