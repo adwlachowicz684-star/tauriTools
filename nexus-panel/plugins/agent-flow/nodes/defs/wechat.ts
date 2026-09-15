@@ -1,10 +1,13 @@
 import { makeUpdateNode, UPDATE_SOURCE_META, type UpdateNodeData } from '../../types';
 import UpdateNode from '../../components/UpdateNode';
-import { UpdateInspector } from '../../components/inspectors/UpdateInspector';
 import { runUpdate } from '../../engine/runners/update';
 import { registerNode } from '../registry';
+import { updateFields, updateFooter } from './updateFields';
 
-/** 公众号更新检测。与 bili 共用 data 类型，见 bili.ts 的说明 */
+/**
+ * 与 wechat 共用一份 data（kind='update'）与字段清单，靠 data.source 区分。
+ * 注册成两个 type 是为了在画布上有各自的图标与配色。
+ */
 registerNode({
   type: 'wechat',
   dataKind: 'update',
@@ -17,6 +20,7 @@ registerNode({
   create: (id, partial) =>
     makeUpdateNode(id, 'wechat', (partial ?? {}) as Partial<UpdateNodeData>).data,
   Canvas: UpdateNode,
-  Inspector: UpdateInspector,
+  fields: () => updateFields,
+  panelFooter: updateFooter,
   run: runUpdate,
 });

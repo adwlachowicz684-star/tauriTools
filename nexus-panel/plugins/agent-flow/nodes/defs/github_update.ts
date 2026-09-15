@@ -1,8 +1,52 @@
 import { makeGithubUpdateNode } from '../../types';
 import { GithubUpdateNode } from '../../components/GithubNode';
-import { GithubUpdateInspector } from '../../components/inspectors/GithubUpdateInspector';
+import { OrderPicker } from '../../components/inspectors/shared';
+import { Field, type FieldDef } from '../../components/inspectors/fields';
 import { runGithubUpdate } from '../../engine/runners/githubUpdate';
 import { registerNode } from '../registry';
+
+const fields: FieldDef[] = [
+  {
+    // owner / repo 在同一行更像一个整体，用 custom 保住这个观感
+    type: 'custom',
+    render: (p) => (
+      <label className="p-row">
+        <span className="p-muted" style={{ width: 64, flex: 'none' }}>仓库</span>
+        <input
+          className="p-input"
+          value={String(p.d.owner ?? '')}
+          placeholder="owner"
+          onChange={(e) => p.patch({ owner: e.target.value })}
+        />
+        <span className="p-muted">/</span>
+        <input
+          className="p-input"
+          value={String(p.d.repo ?? '')}
+          placeholder="repo"
+          onChange={(e) => p.patch({ repo: e.target.value })}
+        />
+      </label>
+    ),
+  },
+  { type: 'text', key: 'branch', label: '分支', placeholder: '留空用默认分支', inline: true },
+  {
+    type: 'text',
+    key: 'base',
+    label: '基准',
+    placeholder: '本地 HEAD，留空则只取远端状态',
+    inline: true,
+    hint: '填了会与本地 HEAD 比对，只关心"本地是否落后"时很有用',
+  },
+  { type: 'credential', key: 'credentialId', credentialKind: 'github-update' },
+  {
+    type: 'custom',
+    render: (p) => <OrderPicker order={p.d.order as never} fallback={['api', 'atom', 'cli']} onChange={p.patch} />,
+  },
+  {
+    type: 'note',
+    content: '输出 true / false，条件节点判断「等于 true」即可分流。',
+  },
+];
 
 registerNode({
   type: 'github-update',
@@ -12,9 +56,10 @@ registerNode({
     color: '#a78bfa',
     category: 'external',
     idPrefix: 'gu',
+    sub: '在「凭据」里填一次令牌，两个节点共用',
   },
   create: (id, partial) => makeGithubUpdateNode(id, (partial ?? {}) as never).data,
   Canvas: GithubUpdateNode,
-  Inspector: GithubUpdateInspector,
+  fields: () => fields,
   run: runGithubUpdate,
 });

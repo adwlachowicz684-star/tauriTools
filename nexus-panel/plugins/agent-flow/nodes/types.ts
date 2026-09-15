@@ -120,8 +120,21 @@ export type NodeDef = {
    * 会因参数逆变而赋值失败。xyflow 自己也是用 data:any 放宽的，这里照抄它的口径。
    */
   Canvas: NodeTypes[string];
-  /** 右侧属性面板 */
-  Inspector: ComponentType<NodeInspectorProps>;
+  /**
+   * 属性面板字段清单。
+   *
+   * 给了 fields 就不必再写 Inspector —— 基础面板按描述自动渲染（含标题行）。
+   * 这是新增节点的**首选写法**：多数节点只需声明字段，不写 JSX。
+   *
+   * 需要特殊交互时（条件规则编辑器、循环配置、触发器的五种子类型），
+   * 用 type:'custom' 的 render 逃生口嵌一段自己的 JSX；
+   * 复杂到描述不住的，给 Inspector 整体接管。
+   */
+  fields?: FieldFactory;
+  /** 追加在字段之后的自定义内容（例：OCR 的「测试一下」按钮） */
+  panelFooter?: (p: FieldRenderProps) => React.ReactNode;
+  /** 属性面板。不给则按 fields 自动渲染；两者都没给则为空面板 */
+  Inspector?: ComponentType<NodeInspectorProps>;
   /**
    * 执行器。不提供时该节点只做"直通"：不产出输出、直接成功。
    * 纯编排类节点（并发控制的某些模式）可以不给。
