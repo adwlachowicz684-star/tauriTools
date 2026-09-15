@@ -560,6 +560,27 @@ await ctx.shell.external.setStatus('api.example.com', 'trusted');
 选中态用 `--accent` 描边或文字，且必须同时给 `focus-visible` 同款样式，
 键盘走位时"当前项"只有一种长相。强调色文字字号 ≥ 12.5px 时字重 ≥ 600。
 
+**3.5 尺度走 `css/tokens.css`**
+阴影档位、圆角补档、过渡时长、字体、层级统一在这一个文件里，外壳与插件各自
+`@import` 拿到。以前同一个几何值在四五个文件里各写一遍，改一处忘三处。
+
+```
+--sh-out-sm/md/lg/xl   外凸阴影（几何只分四档，颜色取自主题的 --sh-*）
+--sh-in-xs/sm/md/lg    内凹阴影
+--sh-cast-xs/sm/md/lg  投射阴影（浮层专用，颜色故意不跟主题）
+--glow-sm/md           强调色辉光
+--r-xs / --r-pill      圆角补档（主档 --r-* 由主题覆写，留在 neumorphism.css）
+--dur-fast/base/slow   过渡时长
+--font-sans / --font-mono
+--z-base/raised/sticky/float/menu/mask/dialog/pop/toast
+```
+
+滚动条规则也放在这里 —— 插件是**独立文档**，外壳文档里的 `::-webkit-scrollbar`
+到不了 iframe 内部，每个文档都得自己拿到一份。
+
+`agent-flow` 是唯一例外：它刻意不引入任何共享样式，所以在自己的 `:root` 里
+声明了一套等价的 `--af-*` 令牌自成一套。
+
 **4. 状态色与装饰色分离**
 `--ok / --running / --warn / --danger` 语义固定，不随 `--accent / --env-color` 变化。
 成功提示只能用 `--ok`，否则用户把环境色调成红色就会得到"红色的成功提示"。

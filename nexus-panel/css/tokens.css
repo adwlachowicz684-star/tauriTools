@@ -1,0 +1,103 @@
+/* ============================================================
+   Nexus Panel · 设计令牌（与主题无关的那部分）
+   ------------------------------------------------------------
+   这里放的是**不随主题变化**的尺度：阴影几何、圆角补档、时长、
+   字体、层级。随主题变化的部分（--bg / --text / --sh-dark / --r-* …）
+   在 neumorphism.css 与 js/themes.js 里。
+
+   为什么单独一个文件：
+     · 外壳与插件是**不同文档**（iframe 各有一份 document），
+       各自引入本文件就能拿到同一套尺度，不必重复声明；
+     · agent-flow 刻意不引入 neumorphism.css（两套组件样式会互相污染），
+       但仍可只引入本文件拿到尺度，观感一致又不被组件样式干扰。
+
+   本文件只定义变量，不写任何选择器 —— 引入它没有副作用。
+
+   注意：--sh-* 档位引用了主题变量（--sh-dark / --sh-light），
+   所以主题推送到达之前这些阴影是无效果的（与直接使用 --sh-dark 时一致）。
+   ============================================================ */
+
+:root {
+  /* ---------- 立体阴影：外凸 ----------
+     新拟态的凸起靠「右下暗 + 左上亮」两向成对，缺一就歪了。
+     档位只管几何（偏移 / 模糊），颜色始终取自主题的 --sh-*，
+     所以调档位不会影响配色，调配色也不会打乱层级。 */
+  --sh-out-sm:  2px  2px  5px var(--sh-dark),  -2px  -2px  5px var(--sh-light);
+  --sh-out-md:  4px  4px  9px var(--sh-dark),  -4px  -4px  9px var(--sh-light);
+  --sh-out-lg:  6px  6px 14px var(--sh-dark),  -6px  -6px 14px var(--sh-light);
+  --sh-out-xl: 10px 10px 26px var(--sh-dark), -10px -10px 26px var(--sh-light);
+
+  /* ---------- 立体阴影：内凹 ----------
+     inset 表示「按下去 / 凹进去」。xs 一档只给极小元素（角标这类
+     高度 13px 上下的），再大就会把它整块吃掉。 */
+  --sh-in-xs: inset 1px 1px 2px var(--sh-dark), inset -1px -1px 2px var(--sh-light);
+  --sh-in-sm: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);
+  --sh-in-md: inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light);
+  --sh-in-lg: inset 4px 4px 8px var(--sh-dark), inset -4px -4px 8px var(--sh-light);
+
+  /* ---------- 投射阴影 ----------
+     与上面两组不同，这类是「浮在内容之上」的投影，颜色**故意不跟主题**：
+     一个浮起的遮罩在任何主题下都应该把背后的内容压暗，
+     换成主题色就会出现「浅色主题下弹窗几乎没有影子」。
+
+     浓度不是随档位递增的：投影铺开的面积越大，同样浓度看起来越脏，
+     所以大面积的 md（弹窗）反而比小面积的 sm（浮动条）淡。 */
+  --sh-cast-xs: 0  1px  4px rgba(0, 0, 0, .35);
+  --sh-cast-sm: 0  8px 24px rgba(0, 0, 0, .45);
+  --sh-cast-md: 0 18px 44px rgba(0, 0, 0, .22);
+  --sh-cast-lg: 0 20px 60px rgba(0, 0, 0, .50);
+
+  /* ---------- 辉光 ----------
+     选中 / 激活的强调反馈。走 --accent-glow（由强调色派生），
+     所以改强调色时会自动跟着变。 */
+  --glow-sm: 0 0  8px var(--accent-glow);
+  --glow-md: 0 0 10px var(--accent-glow);
+
+  /* ---------- 圆角补档 ----------
+     主档 --r-sm / --r / --r-md / --r-lg / --r-xl 在 neumorphism.css 里，
+     因为扁平 / 玻璃风格会整体覆写它们。这里只补两档语义化的： */
+  --r-xs:   6px;     /* 标签、色点这类比 --r-sm 更小的东西 */
+  --r-pill: 999px;   /* 胶囊：与 50% 不同，50% 是正圆，这个是"两端全圆" */
+
+  /* ---------- 过渡时长 ----------
+     三档够了：微交互 / 常规 / 主题切换这类大范围重绘。 */
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 260ms;
+
+  /* ---------- 字体 ----------
+     等宽栈此前有四种写法（SF Mono / ui-monospace / Menlo…），
+     统一到 --font-mono 后换字体只改一处。 */
+  --font-sans: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "SF Mono", Menlo, Consolas, ui-monospace, monospace;
+
+
+/* ---------- 滚动条 ----------
+   必须放在这里、而不是 neumorphism.css：插件跑在**独立文档**（iframe）里，
+   外壳文档里的 ::-webkit-scrollbar 到不了那边，结果是插件里出现 WebKit
+   默认的浅色滚动条 —— 深色面板下非常刺眼。
+   此前 mindmap 自己抄了一半（只写宽度与 thumb 底色，漏了 track 与 hover），
+   既不一致又没覆盖全；放进本文件后，引入它的文档都能拿到完整一份。 */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border-radius: var(--r-xs);
+  border: 2px solid transparent;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-mute); }
+
+  /* ---------- 层级 ----------
+     外壳与插件在各自文档里，数值不跨文档比较；
+     统一成命名层级是为了「这个元素该盖住什么」一眼可读，
+     不是为了让跨 iframe 的浮层互相压。 */
+  --z-base:     1;    /* 普通堆叠（吸表头这类） */
+  --z-raised:  10;    /* 面板、侧边栏抬起一档 */
+  --z-sticky:  20;    /* 吸顶、标题栏按钮 */
+  --z-float:   50;    /* 插件内悬浮条 / 通知 */
+  --z-menu:    60;    /* 下拉、右键菜单 */
+  --z-mask:   900;    /* 模态遮罩 */
+  --z-dialog: 940;    /* 遮罩之上的弹窗 */
+  --z-pop:    950;    /* 主题选择器这类从标题栏弹出的浮层 */
+  --z-toast:  999;    /* 全局提示，最上层 */
+}

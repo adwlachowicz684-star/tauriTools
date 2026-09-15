@@ -71,6 +71,10 @@
      描边（--hairline）或减小模糊半径。
    ============================================================ */
 
+/* 与主题无关的尺度（阴影档位 / 时长 / 字体 / 层级）统一在 tokens.css，
+   插件也能单独引入它而不用背上一整套组件样式。必须在所有规则之前。 */
+@import url('./tokens.css');
+
 :root {
   /* 基底色 —— 新拟态要求元素与背景同色，靠阴影塑形 */
   --bg:            #2b2f36;
@@ -155,7 +159,7 @@ body {
   background-image: var(--bg-image);
   background-attachment: fixed;
   color: var(--text);
-  font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
   user-select: none;
@@ -164,28 +168,23 @@ body {
 /* ---------- 新拟态基元 ---------- */
 .nm-raised {
   background: var(--surface);
-  box-shadow: 6px 6px 12px var(--sh-dark),
-             -6px -6px 12px var(--sh-light);
+  box-shadow: var(--sh-out-lg);
 }
 .nm-raised-sm {
   background: var(--surface);
-  box-shadow: 3px 3px 7px var(--sh-dark),
-             -3px -3px 7px var(--sh-light);
+  box-shadow: var(--sh-out-md);
 }
 .nm-inset {
   background: var(--surface-sunk);
-  box-shadow: inset 5px 5px 10px var(--sh-dark),
-              inset -5px -5px 10px var(--sh-light);
+  box-shadow: var(--sh-in-lg);
 }
 .nm-inset-sm {
   background: var(--surface-sunk);
-  box-shadow: inset 3px 3px 6px var(--sh-dark),
-              inset -3px -3px 6px var(--sh-light);
+  box-shadow: var(--sh-in-md);
 }
 .nm-pressed {
   background: var(--surface);
-  box-shadow: inset 4px 4px 8px var(--sh-dark),
-              inset -4px -4px 8px var(--sh-light);
+  box-shadow: var(--sh-in-lg);
 }
 
 /* ---------- 布局骨架 ---------- */
@@ -205,7 +204,7 @@ body {
   padding: 0 12px 0 16px;
   background: var(--surface);
   box-shadow: 0 4px 10px var(--sh-dark);
-  z-index: 20;
+  z-index: var(--z-sticky);
   position: relative;
 }
 .tb-brand {
@@ -219,13 +218,12 @@ body {
 }
 .tb-logo {
   width: 24px; height: 24px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   display: grid; place-items: center;
   font-size: 12px;
   color: var(--accent);
   background: var(--surface);
-  box-shadow: inset 2px 2px 5px var(--sh-dark),
-              inset -2px -2px 5px var(--sh-light);
+  box-shadow: var(--sh-in-sm);
 }
 .tb-title {
   color: var(--text-dim);
@@ -242,19 +240,18 @@ body {
 .tb-btns { display: flex; gap: 8px; }
 .tb-btn {
   width: 30px; height: 26px;
-  border: 0; border-radius: 8px;
+  border: 0; border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--text-dim);
   cursor: pointer;
   display: grid; place-items: center;
-  box-shadow: 2px 2px 5px var(--sh-dark),
-             -2px -2px 5px var(--sh-light);
+  box-shadow: var(--sh-out-sm);
   transition: all var(--t);
   font-size: 12px;
   line-height: 1;
 }
 .tb-btn:hover { color: var(--text); }
-.tb-btn:active { box-shadow: inset 2px 2px 4px var(--sh-dark), inset -2px -2px 4px var(--sh-light); }
+.tb-btn:active { box-shadow: var(--sh-in-sm); }
 .tb-btn.danger:hover { color: var(--danger); }
 
 /* ---------- 主体 ---------- */
@@ -279,7 +276,7 @@ body {
   flex-direction: column;
   padding: 14px 12px;
   gap: 12px;
-  z-index: 10;
+  z-index: var(--z-raised);
   overflow: hidden;
 }
 
@@ -289,13 +286,13 @@ body {
   background: var(--surface);
   color: var(--text-dim);
   cursor: pointer;
-  box-shadow: 3px 3px 7px var(--sh-dark), -3px -3px 7px var(--sh-light);
+  box-shadow: var(--sh-out-md);
   transition: all var(--t);
   display: flex; align-items: center; justify-content: center; gap: 8px;
   font-size: 13px;
   flex: none;
 }
-.side-toggle:active { box-shadow: inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light); }
+.side-toggle:active { box-shadow: var(--sh-in-md); }
 .side-toggle span { white-space: nowrap; opacity: 0; width: 0; transition: opacity var(--t); font-size: 12px; }
 #body.open .side-toggle span { opacity: 1; width: auto; }
 #body.open .side-toggle { justify-content: flex-start; padding: 0 12px; }
@@ -323,7 +320,7 @@ body {
   background: var(--surface);
   color: var(--text-dim);
   cursor: pointer;
-  box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
+  box-shadow: var(--sh-out-md);
   transition: all var(--t);
   overflow: hidden;
 }
@@ -331,7 +328,7 @@ body {
 .nav-item.active {
   color: var(--accent);
   font-weight: 600;          /* 强调色文字 ≥ 12.5px 时加粗，见顶部规范五 */
-  box-shadow: inset 4px 4px 8px var(--sh-dark), inset -4px -4px 8px var(--sh-light);
+  box-shadow: var(--sh-in-lg);
 }
 .nav-item.active::before {
   content: "";
@@ -341,7 +338,7 @@ body {
   width: 3px; height: 26px;
   border-radius: 0 3px 3px 0;
   background: var(--accent);
-  box-shadow: 0 0 10px var(--accent-glow);
+  box-shadow: var(--glow-md);
 }
 .nav-icon {
   font-size: 17px;
@@ -365,7 +362,7 @@ body {
   right: 10px; top: 10px;
   min-width: 16px; height: 16px;
   padding: 0 4px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--danger);
   color: var(--badge-fg);
   font-size: 10px;
@@ -395,7 +392,7 @@ body {
   border-radius: var(--r-xl);
   overflow: hidden;
   background: var(--surface);
-  box-shadow: 6px 6px 14px var(--sh-dark), -6px -6px 14px var(--sh-light);
+  box-shadow: var(--sh-out-lg);
 }
 
 #plugin-bar {
@@ -419,11 +416,11 @@ body {
   color: var(--text-dim);
   font-size: 12px;
   cursor: pointer;
-  box-shadow: 3px 3px 6px var(--sh-dark), -3px -3px 6px var(--sh-light);
+  box-shadow: var(--sh-out-sm);
   transition: all var(--t);
 }
 .bar-btn:hover { color: var(--text); }
-.bar-btn:active { box-shadow: inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light); }
+.bar-btn:active { box-shadow: var(--sh-in-md); }
 
 #stage {
   position: relative;
@@ -455,7 +452,7 @@ body {
   font-size: 30px;
   color: var(--text-mute);
   background: var(--surface);
-  box-shadow: 8px 8px 16px var(--sh-dark), -8px -8px 16px var(--sh-light);
+  box-shadow: var(--sh-out-lg);
 }
 .empty p { font-size: 13px; }
 
@@ -465,7 +462,7 @@ body {
   padding: 22px 24px;
   border-radius: var(--r-lg);
   background: var(--surface-overlay);
-  box-shadow: 6px 6px 14px var(--sh-dark), -6px -6px 14px var(--sh-light);
+  box-shadow: var(--sh-out-lg);
 }
 .err-box h3 { color: var(--danger); font-size: 14px; margin-bottom: 10px; }
 .err-box pre {
@@ -479,7 +476,7 @@ body {
   padding: 12px;
   border-radius: var(--r-sm);
   background: var(--surface-sunk);
-  box-shadow: inset 3px 3px 7px var(--sh-dark), inset -3px -3px 7px var(--sh-light);
+  box-shadow: var(--sh-in-md);
 }
 .err-box .row { margin-top: 16px; display: flex; gap: 10px; }
 
@@ -503,7 +500,7 @@ body {
   position: fixed;
   right: 20px; bottom: 20px;
   display: flex; flex-direction: column; gap: 10px;
-  z-index: 999;
+  z-index: var(--z-toast);
 }
 .toast {
   padding: 11px 16px;
@@ -511,7 +508,7 @@ body {
   font-size: 12.5px;
   color: var(--text);
   background: var(--surface-overlay);
-  box-shadow: 5px 5px 12px var(--sh-dark), -5px -5px 12px var(--sh-light);
+  box-shadow: var(--sh-out-lg);
   animation: toastIn .25s ease;
   max-width: 320px;
 }
@@ -522,16 +519,6 @@ body {
 .toast.ok  { color: var(--ok); }
 @keyframes toastIn { from { opacity: 0; transform: translateY(8px); } }
 
-/* ---------- 滚动条 ---------- */
-::-webkit-scrollbar { width: 9px; height: 9px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: var(--scroll-thumb);
-  border-radius: 6px;
-  border: 2px solid transparent;
-}
-::-webkit-scrollbar-thumb:hover { background: var(--text-mute); }
-
 /* ============================================================
    插件通用组件库（插件里直接用这些 class 就能保持风格统一）
    ============================================================ */
@@ -539,7 +526,7 @@ body {
   padding: 20px;
   border-radius: var(--r-lg);
   background: var(--surface);
-  box-shadow: 6px 6px 14px var(--sh-dark), -6px -6px 14px var(--sh-light);
+  box-shadow: var(--sh-out-lg);
 }
 .p-card + .p-card { margin-top: 16px; }
 .p-card h2 {
@@ -554,7 +541,7 @@ body {
   width: 6px; height: 6px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 8px var(--accent-glow);
+  box-shadow: var(--glow-sm);
 }
 
 .p-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
@@ -566,13 +553,13 @@ body {
   color: var(--text);
   font-size: 13px;
   cursor: pointer;
-  box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
+  box-shadow: var(--sh-out-md);
   transition: all var(--t);
 }
 /* hover 只换色、不加粗：色板那一行是多个 .p-btn 并排，
    字重一变按钮宽度就跟着变，整行会左右抖动 */
 .p-btn:hover { color: var(--accent); }
-.p-btn:active { box-shadow: inset 4px 4px 8px var(--sh-dark), inset -4px -4px 8px var(--sh-light); }
+.p-btn:active { box-shadow: var(--sh-in-lg); }
 .p-btn.primary { color: var(--accent); font-weight: 600; }
 .p-btn.danger  { color: var(--danger); font-weight: 600; }
 .p-btn:disabled { opacity: .45; cursor: not-allowed; }
@@ -587,30 +574,30 @@ body {
   color: var(--text);
   font-size: 13px;
   font-family: inherit;
-  box-shadow: inset 4px 4px 8px var(--sh-dark), inset -4px -4px 8px var(--sh-light);
+  box-shadow: var(--sh-in-lg);
 }
 .p-input::placeholder { color: var(--text-mute); }
 
 .p-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .p-muted { color: var(--text-mute); font-size: 12px; }
 .p-mono {
-  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 .p-tag {
   display: inline-block;
   padding: 3px 9px;
-  border-radius: 20px;
+  border-radius: var(--r-pill);
   font-size: 11px;
   color: var(--text-dim);
   background: var(--surface-sunk);
-  box-shadow: inset 2px 2px 4px var(--sh-dark), inset -2px -2px 4px var(--sh-light);
+  box-shadow: var(--sh-in-sm);
 }
 .p-stat {
   padding: 16px;
   border-radius: var(--r);
   background: var(--surface-sunk);
-  box-shadow: inset 4px 4px 8px var(--sh-dark), inset -4px -4px 8px var(--sh-light);
+  box-shadow: var(--sh-in-lg);
 }
 .p-stat .k { font-size: 11px; color: var(--text-mute); }
 .p-stat .v { font-size: 22px; font-weight: 600; color: var(--accent); margin-top: 4px; }
@@ -653,7 +640,7 @@ body {
   background: transparent;
   color-scheme: dark;          /* 让 iframe 里的表单控件/滚动条也走深色 */
   opacity: 0;
-  transition: opacity .18s ease;
+  transition: opacity var(--dur-base) ease;
 }
 .plugin-frame.revealed { opacity: 1; }
 /* 系统开了「减少动效」就别淡入了，直接显示 */
@@ -666,7 +653,7 @@ body {
   position: absolute;
   inset: 0;
   pointer-events: none;        /* 不拦截插件交互 */
-  z-index: 10;
+  z-index: var(--z-raised);
   background: var(--bg);
   mix-blend-mode: color;
   opacity: .9;
@@ -678,7 +665,7 @@ body {
 /* 标题栏置顶按钮激活态 */
 .tb-btn.on {
   color: var(--accent);
-  box-shadow: inset 2px 2px 4px var(--sh-dark), inset -2px -2px 4px var(--sh-light);
+  box-shadow: var(--sh-in-sm);
 }
 
 /* ---------------- 弹窗 ---------------- */
@@ -688,7 +675,7 @@ body {
   background: var(--mask);
   display: grid;
   place-items: center;
-  z-index: 900;
+  z-index: var(--z-mask);
   backdrop-filter: blur(2px);
 }
 /* 弹窗同时挂着 .p-card，底板要在这里压过 .p-card 的 --surface：
@@ -703,77 +690,10 @@ body {
   width: 440px;
   max-width: calc(100vw - 40px);
   background: var(--surface-overlay);
-  box-shadow: 6px 6px 14px var(--sh-dark), -6px -6px 14px var(--sh-light),
-              0 18px 44px rgba(0, 0, 0, .22);
+  box-shadow: var(--sh-out-lg), var(--sh-cast-md);
 }
 .dialog select.p-input { appearance: none; cursor: pointer; }
 .dialog select.p-input option { background: var(--surface-overlay); color: var(--text); }
-
-/* ---------------- 插件设置抽屉 ----------------
-   两个技术栈共用同一套类名：
-     · 无构建模式 —— js/shell.js 的 openPluginSettings() 手工拼出同样结构
-     · Vite 模式  —— src/components/PluginSettingsDrawer.tsx 渲染
-   改这里两边一起生效，不要只改一边。
-
-   底板走 --surface-overlay 实色（与 .dialog 一致），**刻意不加**
-   backdrop-filter：它和 .p-card 是同一个坑（见本文件 .p-card 处的说明）——
-   backdrop-filter 会让本元素成为 fixed 后代的包含块 + 层叠上下文，
-   而这里装的就是插件的设置面板，里面完全可能有浮层（颜色拾取器、
-   下拉菜单之类）。加了会让那些浮层定位偏移、并被裁在抽屉边界内。 */
-.drawer-mask {
-  /* .mask 默认 place-items:center（居中弹窗），抽屉是靠右的竖条 */
-  place-items: stretch end;
-}
-.drawer {
-  width: min(480px, 100vw);
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  background: var(--surface-overlay, var(--surface-raised));
-  border-radius: var(--r-xl) 0 0 var(--r-xl);
-  box-shadow: -8px 0 28px rgba(0, 0, 0, .28);
-  /* 初始在视口右侧外，遮罩拿到 .on 后滑入 */
-  transform: translateX(100%);
-  transition: transform var(--t);
-  overflow: hidden;
-}
-.drawer-mask.on .drawer { transform: none; }
-
-.drawer-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 16px 18px;
-  flex: none;
-  border-bottom: 1px solid var(--border);
-}
-.drawer-title { flex: 1; min-width: 0; }
-/* 没有裸 h2 规则（只有 .p-card h2），标题得自己定义 */
-.drawer-title h2 { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
-
-/* 内容区：只有它滚动，头部保持固定。
-   min-height:0 不能省 —— flex 子项默认 min-height:auto，不归零会被内容
-   撑破容器、overflow-y 形同失效（与 settings.css 的 .set-body 同一处坑）。 */
-.drawer-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 18px;
-}
-.drawer-body { min-height: 0; }
-/* 插件未提供自定义设置时的占位提示。
-   不能让引擎去挂载主视图当兜底 —— SDK 的 settingsFn 缺省会回退 mainFn，
-   那样抽屉里显示的是插件主界面，不是设置。这里直接不放内容。 */
-.drawer-empty {
-  padding: 20px 22px;
-  border-radius: var(--r-lg);
-  background: var(--surface-sunk);
-  box-shadow: inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light);
-  color: var(--text-mute);
-  font-size: 12.5px;
-  line-height: 1.9;
-  margin-bottom: 16px;
-}
 
 /* ============================================================
    主题风格增强
@@ -832,9 +752,9 @@ html[data-theme-style='glass'] .dialog {
 /* 切换主题时的短暂过渡（由 theme-manager 临时挂上 .theme-transition） */
 html.theme-transition,
 html.theme-transition *:not(.spinner) {
-  transition: background-color .26s ease, background-image .26s ease,
-              color .26s ease, border-color .26s ease,
-              box-shadow .26s ease !important;
+  transition: background-color var(--dur-slow) ease, background-image var(--dur-slow) ease,
+              color var(--dur-slow) ease, border-color var(--dur-slow) ease,
+              box-shadow var(--dur-slow) ease !important;
 }
 
 /* ---------------- 主题选择器 ---------------- */
@@ -853,11 +773,11 @@ html.theme-transition *:not(.spinner) {
 .theme-pop-mask {
   position: fixed;
   inset: 0;
-  z-index: 940;
+  z-index: var(--z-dialog);
 }
 .theme-pop {
   position: fixed;
-  z-index: 950;
+  z-index: var(--z-pop);
   width: min(430px, calc(100vw - 24px));
   max-height: min(70vh, 620px);
   display: flex;
@@ -865,7 +785,7 @@ html.theme-transition *:not(.spinner) {
   border-radius: var(--r-lg);
   background: var(--surface-overlay);
   border: 1px solid var(--border);
-  box-shadow: 10px 10px 26px var(--sh-dark), -10px -10px 26px var(--sh-light);
+  box-shadow: var(--sh-out-xl);
   overflow: hidden;
   animation: pop-in .14s ease-out;
 }
@@ -914,7 +834,7 @@ html.theme-transition *:not(.spinner) {
 .theme-pop-body .theme-group:first-child .theme-group-title { margin-top: 2px; }
 /* 弹出层里卡片更紧凑：预览矮一点、名称字号小一点 */
 .theme-pop .theme-prev { height: 48px; padding: 8px 10px; gap: 7px; }
-.theme-pop .theme-prev .sw { width: 26px; height: 26px; border-radius: 7px; }
+.theme-pop .theme-prev .sw { width: 26px; height: 26px; border-radius: var(--r-sm); }
 .theme-pop .theme-foot { padding: 7px 10px 1px; }
 .theme-pop .theme-name { font-size: 12px; }
 .theme-pop .theme-desc { padding: 0 10px 9px; font-size: 10px; }
@@ -937,14 +857,14 @@ html.theme-transition *:not(.spinner) {
   font-family: inherit;
   font-size: 12.5px;
   cursor: pointer;
-  box-shadow: 3px 3px 7px var(--sh-dark), -3px -3px 7px var(--sh-light);
+  box-shadow: var(--sh-out-md);
   transition: all var(--t);
 }
 .set-tab:hover { color: var(--text); }
 .set-tab.active {
   color: var(--accent);
   font-weight: 600;          /* 12.5px 的强调色文字，加粗才吃得住 */
-  box-shadow: inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light);
+  box-shadow: var(--sh-in-md);
 }
 /* ---------- 主题卡片 ---------- */
 .theme-card {
@@ -955,7 +875,7 @@ html.theme-transition *:not(.spinner) {
   text-align: left;
   border-radius: var(--r);
   background: var(--surface);
-  box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
+  box-shadow: var(--sh-out-md);
   border: 1px solid var(--border);
   transition: transform var(--t), box-shadow var(--t);
   color: var(--text);
@@ -963,17 +883,15 @@ html.theme-transition *:not(.spinner) {
 }
 .theme-card:hover {
   transform: translateY(-2px);
-  box-shadow: 6px 6px 14px var(--sh-dark), -6px -6px 14px var(--sh-light);
+  box-shadow: var(--sh-out-lg);
 }
 /* 键盘走位时的焦点环与选中态外观一致，避免两套"当前项"长得不一样 */
 .theme-card:focus-visible {
   outline: none;
-  box-shadow: 6px 6px 14px var(--sh-dark), -6px -6px 14px var(--sh-light),
-              0 0 0 2px var(--accent);
+  box-shadow: var(--sh-out-lg), 0 0 0 2px var(--accent);
 }
 .theme-card.active {
-  box-shadow: inset 3px 3px 6px var(--sh-dark),
-              inset -3px -3px 6px var(--sh-light),
+  box-shadow: var(--sh-in-md),
               0 0 0 2px var(--accent);
 }
 /* 缩略图：左块（主题自己的阴影）+ 右半的"迷你界面"（正文线 / 强调色条） */
@@ -986,7 +904,7 @@ html.theme-transition *:not(.spinner) {
   gap: 8px;
   overflow: hidden;
 }
-.theme-prev .sw { width: 30px; height: 30px; border-radius: 8px; flex: none; }
+.theme-prev .sw { width: 30px; height: 30px; border-radius: var(--r-sm); flex: none; }
 .tp-mid {
   flex: 1;
   min-width: 0;
@@ -994,19 +912,19 @@ html.theme-transition *:not(.spinner) {
   flex-direction: column;
   gap: 4px;
 }
-.tp-line { height: 4px; width: 100%; border-radius: 2px; opacity: .95; }
+.tp-line { height: 4px; width: 100%; border-radius: var(--r-pill); opacity: .95; }
 .tp-line.dim { width: 62%; opacity: .65; }
 .tp-row { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
-.theme-prev .bar { flex: 1; height: 8px; border-radius: 4px; }
+.theme-prev .bar { flex: 1; height: 8px; border-radius: var(--r-pill); }
 .theme-prev .bar.s { flex: none; width: 18px; opacity: .6; }
 /* 当前主题：缩略图很小，光靠描边看不出来，再补一个勾 */
 .theme-check {
   position: absolute; top: 5px; left: 5px;
   width: 15px; height: 15px; border-radius: 50%;
   display: grid; place-items: center;
-  font-size: 10px; line-height: 1; color: #fff;
+  font-size: 10px; line-height: 1; color: var(--badge-fg);
   background: var(--accent);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, .35);
+  box-shadow: var(--sh-cast-xs);
 }
 .theme-foot {
   display: flex;
@@ -1038,12 +956,12 @@ html.theme-transition *:not(.spinner) {
 .theme-badge {
   flex: none;
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   font-size: 9.5px;
   line-height: 1.6;
   color: var(--text-dim);
   background: var(--surface-sunk);
-  box-shadow: inset 1px 1px 2px var(--sh-dark), inset -1px -1px 2px var(--sh-light);
+  box-shadow: var(--sh-in-xs);
 }
 .theme-desc { padding: 0 12px 11px; font-size: 10.5px; color: var(--text-mute); line-height: 1.5; }
 .theme-del {
@@ -1084,7 +1002,7 @@ html.theme-transition *:not(.spinner) {
   appearance: none;
   flex: 1;
   height: 4px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--surface-sunk, rgba(0, 0, 0, .2));
   border: 1px solid var(--border, transparent);
   outline: none;
