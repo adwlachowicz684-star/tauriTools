@@ -12,6 +12,7 @@
 
 import { h } from '../../js/plugin-sdk.js';
 import { THEMES, LAYOUTS, blankTheme } from './themes.js';
+import { LAYOUT_THUMBS } from './layout-thumbs.js';
 import * as io from './io.js';
 import * as store from './store.js';
 import * as mi from './mediainfo.js';
@@ -821,11 +822,19 @@ export function buildSide(app, opts = {}) {
         h('div.mm-hint', {}, '导入/导出仅针对自定义主题；内置主题无法导出。'),
       ),
       section('布局模板',
-        h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+        // 两列缩略图网格 + 名称，对齐 WPF 原版（UniformGrid Columns="2" + 100×58 缩略图）
+        h('div.mm-layouts', {},
           ...LAYOUTS.map((l) =>
-            h('button.mm-theme' + (curLayout === l.value ? '.on' : ''), {
+            h('button.mm-layout' + (curLayout === l.value ? '.on' : ''), {
               onclick: () => { app.api.applyLayout(l.value); refresh(); },
-            }, h('span.name', {}, l.label))),
+              title: l.label,
+            },
+              h('span.mm-layout-thumb', {},
+                // 缺图时退化成占位符而不是空白 —— 空白在深色面板上等同于「没这项」
+                LAYOUT_THUMBS[l.value]
+                  ? h('img', { src: LAYOUT_THUMBS[l.value], alt: l.label, width: '100', height: '40' })
+                  : h('span.mm-layout-nothumb', {}, '⁇')),
+              h('span.mm-layout-name', {}, l.label))),
         ),
       ),
       // 注：这里原先有个「整理布局」用 exec('arrange') —— 那是内核拖拽排序模块的内部命令

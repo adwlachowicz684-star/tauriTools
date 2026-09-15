@@ -1169,6 +1169,79 @@ group('附件：file 与 video 互不干扰');
 }
 
 /* ============================================================
+   十五、布局模板：缩略图 + 名称（对齐 WPF 原版）
+   ============================================================ */
+
+group('布局模板缩略图');
+
+{
+  const { LAYOUT_THUMBS } = await import('./layout-thumbs.js');
+  const { LAYOUTS } = await import('./themes.js');
+
+  // 15.1 每个布局都要有缩略图 —— 少一个就是一格空白
+  for (const l of LAYOUTS) {
+    ok(!!LAYOUT_THUMBS[l.value], `布局 ${l.value} 有缩略图`);
+  }
+  eq(Object.keys(LAYOUT_THUMBS).length, LAYOUTS.length,
+    `缩略图数量与布局数量一致（${Object.keys(LAYOUT_THUMBS).length}/${LAYOUTS.length}）`);
+
+  // 15.2 必须是**合法 PNG**：base64 拼错的话浏览器静默不显示，没有任何报错
+  for (const [k, v] of Object.entries(LAYOUT_THUMBS)) {
+    ok(/^data:image\/png;base64,/.test(v), `${k} 是 PNG data URL`);
+    const buf = Buffer.from(v.split(',')[1], 'base64');
+    ok(buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])),
+      `${k} PNG 魔数正确`);
+    // 尺寸写在 IHDR：宽高各 4 字节，位于第 16 / 20 字节
+    ok(buf.readUInt32BE(16) > 0 && buf.readUInt32BE(20) > 0, `${k} 尺寸有效`);
+  }
+}
+
+{
+  // 15.3 渲染形态：两列网格 + 缩略图 + 名称
+  const { buildSide } = await import('./panels.js');
+  let applied = null;
+  const el = buildSide({
+    api: {
+      status() {}, commit() {}, selectedRef: () => null,
+      applyLayout: (v) => { applied = v; },
+      applyTheme: () => {}, saveThemes: async () => true,
+      nodeStyle: () => ({}), setNodeStyle: () => {},
+    },
+    bridge: {},
+    customThemes: [],
+  }, {});
+  el.open('theme');
+
+  const grid = el.el.querySelector('.mm-layouts');
+  ok(!!grid, '布局区用 .mm-layouts 容器');
+
+  const items = [...grid.querySelectorAll('.mm-layout')];
+  eq(items.length, 6, '六个布局各一格');
+
+  const first = items[0];
+  const img = first.querySelector('.mm-layout-thumb img');
+  ok(!!img, '每格有缩略图 img');
+  ok(/^data:image\/png;base64,/.test(img.getAttribute('src') || ''), '缩略图 src 是内联 PNG');
+  eq(first.querySelector('.mm-layout-name')?.textContent, '思维导图', '每格显示布局名称');
+
+  // 名称不能是空的 —— 光有图不知道点的是什么
+  ok(items.every((b) => (b.querySelector('.mm-layout-name')?.textContent || '').trim()),
+    '每个布局都有非空名称');
+
+  // 15.4 点击应用布局
+  items[2].dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  eq(applied, 'filetree', '点第三格应用对应布局');
+}
+
+{
+  // 15.5 缺图时要退化成可见占位符，而不是空白
+  const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const seg = src.slice(src.indexOf("section('布局模板'"), src.indexOf('// 注：这里原先有个'));
+  ok(/LAYOUT_THUMBS\[l\.value\]\s*\?/.test(seg), '渲染前判断缩略图是否存在');
+  ok(/mm-layout-nothumb/.test(seg), '缺图时给占位符（不留空白）');
+}
+
+/* ============================================================
    结果
    ============================================================ */
 
