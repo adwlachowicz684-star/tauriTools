@@ -70,6 +70,32 @@ import * as tb from './tag-badges.js';
 
 const FONTS = ['微软雅黑', '宋体', '黑体', '楷体', 'Arial', 'Consolas', 'sans-serif'];
 const SIZES = [12, 14, 16, 18, 20, 24, 28, 32, 40];
+
+/**
+ * 把当前值补进档位列表，并保持有序（纯函数，可测）。
+ *
+ * B4/B5：节点的字号/圆角/线宽可能来自导入文件、样式刷或旧版本数据，
+ * 不在预设档位里。此时下拉**没有任何一项被选中**，显示成空白或第一项 ——
+ * 用户会以为「字号是 12」，实际是 13，随手一改就把值弄丢了。
+ *
+ * 对齐 WPF `MindMapPanel.xaml.cs:2521-2544` 的做法：动态补项 + 刷新。
+ *
+ * @param {Array<number>} presets 预设档位（升序）
+ * @param {number} value 当前值
+ * @returns {Array<number>} 含当前值的新列表（升序、去重）
+ */
+export function withPresetValue(presets, value) {
+  const list = Array.isArray(presets) ? presets.slice() : [];
+  // null / '' 要显式挡掉：Number(null) 是 0 且 Number.isFinite(0) 为真，
+  // 不挡的话「节点没设字号」会往下拉里塞一个 **0** 选项。
+  if (value === null || value === undefined || value === '') return list;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return list;
+  if (list.includes(n)) return list;
+  list.push(n);
+  // 数值升序：字符串排序会把 100 排到 20 前面
+  return list.sort((a, b) => a - b);
+}
 const RADII = [0, 3, 5, 8, 12, 16, 24];
 const WIDTHS = [1, 2, 3, 4, 6];
 
@@ -735,7 +761,7 @@ export function buildSide(app, opts = {}) {
           h('select.mm-select', {
             style: { flex: '1 1 auto' },
             onchange: (e) => run('fontsize', Number(e.target.value)),
-          }, ...SIZES.map((n) =>
+          }, ...withPresetValue(SIZES, st.fontSize).map((n) =>
             h('option', { value: n, selected: Number(st.fontSize) === n }, String(n)))),
         ),
         colorRow('字体色', st.color,

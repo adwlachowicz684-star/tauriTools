@@ -234,6 +234,46 @@ export function sanitizePalette(pal) {
 const clamp255 = (n) => Math.max(0, Math.min(255, Math.round(n)));
 
 /** 解析 #RGB / #RRGGBB / rgb() / rgba()，失败返回 null */
+/**
+ * CSS 颜色名 → RGB（B6）。
+ *
+ * 只收了**常见且主题里可能用到**的一小撮，不是完整的 148 个。
+ * 为什么不用完整表：这层的目的是兜住「导入的旧主题里写了颜色名」这种情况，
+ * 完整表要占 3KB，而绝大多数名字永远不会出现 —— 性价比不划算。
+ * 真正需要全覆盖时，浏览器原生解析更准（见 `parseColorWithDom`）。
+ */
+const NAMED_COLORS = {
+  // 刻意**不含** transparent：透明没有 RGB 值，硬映射成黑色会让
+  // 「这个色能不能用」的判断失真（colorKind 已单独识别它）。
+  black: [0, 0, 0], white: [255, 255, 255],
+  red: [255, 0, 0], lime: [0, 255, 0], blue: [0, 0, 255],
+  yellow: [255, 255, 0], cyan: [0, 255, 255], magenta: [255, 0, 255],
+  silver: [192, 192, 192], gray: [128, 128, 128], grey: [128, 128, 128],
+  maroon: [128, 0, 0], olive: [128, 128, 0], green: [0, 128, 0],
+  purple: [128, 0, 128], teal: [0, 128, 128], navy: [0, 0, 128],
+  orange: [255, 165, 0], gold: [255, 215, 0], pink: [255, 192, 203],
+  brown: [165, 42, 42], coral: [255, 127, 80], salmon: [250, 128, 114],
+  tomato: [255, 99, 71], khaki: [240, 230, 140], lavender: [230, 230, 250],
+  beige: [245, 245, 220], ivory: [255, 255, 240], linen: [250, 240, 230],
+  snow: [255, 250, 250], azure: [240, 255, 255], mintcream: [245, 255, 250],
+  darkred: [139, 0, 0], darkgreen: [0, 100, 0], darkblue: [0, 0, 139],
+  lightgray: [211, 211, 211], lightgrey: [211, 211, 211],
+  darkgray: [169, 169, 169], darkgrey: [169, 169, 169],
+  dimgray: [105, 105, 105], dimgrey: [105, 105, 105],
+  whitesmoke: [245, 245, 245], gainsboro: [220, 220, 220],
+  steelblue: [70, 130, 180], royalblue: [65, 105, 225],
+  dodgerblue: [30, 144, 255], skyblue: [135, 206, 235],
+  seagreen: [46, 139, 87], forestgreen: [34, 139, 34],
+  firebrick: [178, 34, 34], crimson: [220, 20, 60],
+  darkorange: [255, 140, 0], darkgoldenrod: [184, 134, 11],
+  slategray: [112, 128, 144], slategrey: [112, 128, 144],
+  lightblue: [173, 216, 230], lightgreen: [144, 238, 144],
+  lightyellow: [255, 255, 224], lightpink: [255, 182, 193],
+  hotpink: [255, 105, 180], deeppink: [255, 20, 147],
+  orchid: [218, 112, 214], plum: [221, 160, 221], violet: [238, 130, 238],
+  indigo: [75, 0, 130], turquoise: [64, 224, 208],
+};
+
 export function parseColor(v) {
   if (typeof v !== 'string') return null;
   const s = v.trim();
@@ -243,7 +283,9 @@ export function parseColor(v) {
   if (m) return [parseInt(m[1].slice(0, 2), 16), parseInt(m[1].slice(2, 4), 16), parseInt(m[1].slice(4, 6), 16)];
   m = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec(s);
   if (m) return [+m[1], +m[2], +m[3]];
-  return null;
+  // B6 颜色名（大小写不敏感）
+  const named = NAMED_COLORS[s.toLowerCase()];
+  return named ? named.slice() : null;
 }
 
 const toHex = (rgb) => '#' + rgb.map((n) => clamp255(n).toString(16).padStart(2, '0')).join('');

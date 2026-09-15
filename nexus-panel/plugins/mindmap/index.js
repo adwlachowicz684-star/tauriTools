@@ -1306,7 +1306,20 @@ bootIframePlugin(async (ctx) => {
     reportSave(r, 'JSON');
   }
 
+  /**
+   * Markdown 导出（B27）。
+   *
+   * **必须先 capture()**：这里读的是 `workbook.sheets`（内存里的数据结构），
+   * 不是编辑器实时状态。少了这一句，用户改完节点立刻导出会拿到**改之前**的内容。
+   *
+   * exportJson / exportTxt 早就有这一句，只有这里漏了 ——
+   * 又是「同一件事多条路径、只修了一条」（已第三次遇到，见 README）。
+   *
+   * 注：PNG / PDF / 打印**不需要** capture —— 它们走 `bridge.exportSvg()`
+   * 直接从编辑器取当前画面，本来就是实时的。给它们加反而是多余的序列化开销。
+   */
   async function exportMarkdown() {
+    capture();
     const text = wb.workbookToMarkdown(workbook.sheets);
     const r = await io.saveText(io.stampName('脑图', 'md'), text, 'text/markdown');
     reportSave(r, 'Markdown');

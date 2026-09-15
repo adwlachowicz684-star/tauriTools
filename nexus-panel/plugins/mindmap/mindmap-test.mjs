@@ -3575,6 +3575,100 @@ group('A70 开发者工具 / A71 诊断捕获');
 }
 
 /* ============================================================
+   三十二、B27 导出前同步 + B4/B5 档位补项 + B6 颜色名
+   ============================================================ */
+
+group('B27 导出前同步编辑器状态（capture）');
+
+{
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const lines = idx.split('\n');
+  const fns = ['exportJson', 'exportMarkdown', 'exportTxt', 'exportSvg',
+    'exportXmind', 'exportPng', 'exportPdf', 'printMap'];
+  const starts = [];
+  for (const fn of fns) {
+    for (let i = 0; i < lines.length; i++) {
+      if (new RegExp('function\\s+' + fn + '\\s*\\(').test(lines[i])) { starts.push([fn, i]); break; }
+    }
+  }
+  starts.sort((a, b) => a[1] - b[1]);
+
+  const bodyOf = (fn) => {
+    const k = starts.findIndex((x) => x[0] === fn);
+    if (k < 0) return '';
+    const end = k + 1 < starts.length ? starts[k + 1][1] : starts[k][1] + 40;
+    return lines.slice(starts[k][1], end).join('\n');
+  };
+
+  // 读内存数据结构的导出**必须**先 capture，否则导出的是改之前的内容
+  for (const fn of ['exportJson', 'exportMarkdown', 'exportTxt']) {
+    ok(/capture\(\)/.test(bodyOf(fn)), `B27 ${fn} 读内存 workbook，必须先 capture()`);
+  }
+  // 直接取编辑器画面的不需要 capture（加了是多余开销）
+  for (const fn of ['exportPng', 'exportPdf', 'printMap']) {
+    ok(/exportSvg\(\)/.test(bodyOf(fn)), `B27 ${fn} 走 bridge.exportSvg()（实时，无需 capture）`);
+  }
+
+  // 防回归：把「哪些需要 capture」写死成断言 ——
+  // 这是**第三次**遇到「多条路径只修了一条」，不能只靠人记。
+  ok(/必须先 capture\(\)/.test(idx), 'B27 注释里写明了为什么 exportMarkdown 需要 capture');
+  ok(/PNG \/ PDF \/ 打印\*\*不需要\*\* capture/.test(idx),
+    'B27 注释里也写明了 PNG/PDF/打印为什么**不需要**（避免后人误加）');
+}
+
+group('B4/B5 档位动态补项 + B6 颜色名');
+
+{
+  const pn = await import('./panels.js');
+
+  // ---- withPresetValue ----
+  eq(JSON.stringify(pn.withPresetValue([12, 16], 16)), JSON.stringify([12, 16]),
+    'B4 值已在档位里 → 原样返回（不重复加）');
+  eq(JSON.stringify(pn.withPresetValue([12, 16], 13)), JSON.stringify([12, 13, 16]),
+    'B4 缺失值补进去并**插到正确位置**');
+  eq(JSON.stringify(pn.withPresetValue([12, 16], 8)), JSON.stringify([8, 12, 16]), 'B4 比最小还小 → 排最前');
+  eq(JSON.stringify(pn.withPresetValue([12, 16], 40)), JSON.stringify([12, 16, 40]), 'B4 比最大还大 → 排最后');
+  // 数值排序：字符串排序会把 100 排到 20 前面
+  eq(JSON.stringify(pn.withPresetValue([20, 100], 9)), JSON.stringify([9, 20, 100]),
+    'B4 **数值**升序（字符串排序会把 100 排到 20 前）');
+  eq(JSON.stringify(pn.withPresetValue([12], 'abc')), JSON.stringify([12]), 'B4 非法值不加');
+  eq(JSON.stringify(pn.withPresetValue([12], null)), JSON.stringify([12]), 'B4 null 不加');
+  // presets 非法时当作空数组处理、value 照常补入 ——
+  // 不能因为 presets 坏了就把唯一有效值也丢掉
+  eq(JSON.stringify(pn.withPresetValue(null, 13)), JSON.stringify([13]), 'B4 presets 非法 → 不崩，value 仍补入');
+
+  const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  ok(/withPresetValue\(SIZES, st\.fontSize\)/.test(src),
+    'B5 字号下拉用动态档位（否则 13 号字时无任何项选中，显示成空白/第一项）');
+}
+
+{
+  const th = await import('./themes.js');
+  // ---- B6 颜色名 ----
+  eq(JSON.stringify(th.parseColor('red')), JSON.stringify([255, 0, 0]), 'B6 认 red');
+  eq(JSON.stringify(th.parseColor('RED')), JSON.stringify([255, 0, 0]), 'B6 大小写不敏感');
+  eq(JSON.stringify(th.parseColor('  blue  ')), JSON.stringify([0, 0, 255]), 'B6 忽略首尾空格');
+  eq(JSON.stringify(th.parseColor('steelblue')), JSON.stringify([70, 130, 180]), 'B6 认复合名');
+  eq(th.parseColor('不是颜色名'), null, 'B6 未知名 → null');
+  // transparent **不能**被当成黑色
+  eq(th.parseColor('transparent'), null,
+    'B6 transparent 不映射到黑色（透明没有 RGB；colorKind 已单独识别）');
+  eq(th.colorKind('transparent'), 'transparent', 'B6 colorKind 仍单独识别 transparent');
+  // 原有格式不受影响
+  eq(JSON.stringify(th.parseColor('#fff')), JSON.stringify([255, 255, 255]), 'B6 #RGB 不受影响');
+  eq(JSON.stringify(th.parseColor('rgb(1,2,3)')), JSON.stringify([1, 2, 3]), 'B6 rgb() 不受影响');
+
+  // 颜色名也要能参与亮度判断（否则 isLightColor 会把 yellow 判成深色）
+  eq(th.isLightColor('yellow'), true, 'B6 颜色名参与亮度判断：yellow 是浅色');
+  eq(th.isLightColor('navy'), false, 'B6 颜色名参与亮度判断：navy 是深色');
+  eq(th.parseColor('red').length, 3, 'B6 返回 3 元组');
+  // 返回副本，改了不影响表
+  const c = th.parseColor('red');
+  c[0] = 0;
+  eq(th.parseColor('red')[0], 255, 'B6 返回副本（改返回值不污染颜色表）');
+}
+
+/* ============================================================
    结果
    ============================================================ */
 
