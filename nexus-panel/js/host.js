@@ -966,19 +966,38 @@ export function createHost(opts = {}) {
     catch (e) { hooks.toast?.('窗口控制失败：' + e, 'err'); }
   }
 
-  // 主题：初始化并联动（iframe 推送新变量，无需重载；适配结果重算）
-  initTheme();
-  onThemeChange(async () => {
-    const inst = state.instance;
+  /**
+   * 把当前主题重新推给一个已加载的插件实例，并**等它应用完**再返回。
+   *
+   * 两条路都要覆盖：
+   * - iframe 插件走 postMessage。必须等它回执 —— 推完立刻去采样会读到旧主题
+   *   的颜色，基调误判，于是施加本不该有的反转。
+   * - 同页插件重刷容器上的内联变量。它继承 :root，改 :root 也会带过去，
+   *   但插件自选主题时容器上的值优先级更高，不刷新就一直沿用旧的那套。
+   *
+   * 主题变化与插件配置变化共用这一条路：两者的后果完全一样，
+   * 「插件该用哪套变量」的答案变了。
+   */
+  async function syncThemeToInstance(inst) {
     if (!inst) return;
     if (inst.iframe) {
       await pushTheme(inst.iframe, inst.manifest?.id);
     } else if (inst.root) {
-      // 同页插件：重刷容器上的内联变量（它继承的是 :root，改 :root 也会带过去，
-      // 但插件自选主题时容器上的值优先级更高、不刷新就会一直沿用旧的那套）
       applyThemeVarsTo(inst.root, varsForPlugin(inst.manifest?.id));
     }
     await reAdapt(inst);
+  }
+
+  // 主题：初始化并联动（iframe 推送新变量，无需重载；适配结果重算）
+  initTheme();
+  onThemeChange(() => syncThemeToInstance(state.instance));
+
+  // 插件自选主题改完立刻生效，不必重载。
+  // 只认当前活跃插件：别的插件此刻没加载，等它被加载时自己会算一遍。
+  pluginConfig.onPluginConfigChange?.((id) => {
+    const inst = state.instance;
+    if (!inst || inst.manifest?.id !== id) return;
+    syncThemeToInstance(inst);
   });
 
   /**
