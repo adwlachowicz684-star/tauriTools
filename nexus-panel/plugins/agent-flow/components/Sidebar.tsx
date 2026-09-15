@@ -1,27 +1,15 @@
 import type { DragEvent } from 'react';
-import {
-  CLI_META,
-  TRIGGER_META,
-  type CliKind,
-} from '../types';
+import { presetsByCategory, getDef } from '../nodes';
 
 /**
  * 从边栏拖到画布上时携带的数据。
  * 用 dataTransfer 传字符串，drop 时再解析——这是 HTML5 拖放的标准做法。
+ *
+ * kind 存的是**预设 key**（'task' / 'task:codebuddy' / 'condition' …），
+ * 不再是枚举出来的联合类型 —— 预设由注册表生成，写死联合会立刻过期
+ * （以后用户自定义节点注册进来，这里不可能预先知道）。
  */
-export type DragPayload =
-  | { kind: 'task'; cli: CliKind }
-  | { kind: 'condition' }
-  | { kind: 'parallel' }
-  | { kind: 'loop' }
-  | { kind: 'fs' }
-  | { kind: 'bili' }
-  | { kind: 'wechat' }
-  | { kind: 'ocr' }
-  | { kind: 'translate' }
-  | { kind: 'github-update' }
-  | { kind: 'github-push' }
-  | { kind: 'trigger' };
+export type DragPayload = { kind: string };
 
 export const DRAG_MIME = 'application/x-agent-flow-node';
 
@@ -29,20 +17,19 @@ export function encodeDrag(p: DragPayload): string {
   return JSON.stringify(p);
 }
 
-/** 解析拖拽数据；格式不对时返回 null，调用方应静默忽略 */
+/**
+ * 解析拖拽数据。
+ *
+ * 只校验「是个带 kind 字符串的对象」——不再维护一份类型白名单。
+ * 白名单的问题是新注册的类型忘了加进来就会被静默丢弃，
+ * 而真正的合法性判断在 App 那边：查不到预设就忽略，行为一致。
+ */
 export function decodeDrag(raw: string | null | undefined): DragPayload | null {
   if (!raw) return null;
   try {
     const p = JSON.parse(raw) as DragPayload;
     if (!p || typeof p.kind !== 'string') return null;
-    if (p.kind === 'task' && (p as { cli?: string }).cli) return p;
-    if (p.kind === 'condition' || p.kind === 'parallel') return p;
-    if (p.kind === 'loop' || p.kind === 'fs') return p;
-    if (p.kind === 'bili' || p.kind === 'wechat') return p;
-    if (p.kind === 'ocr' || p.kind === 'translate') return p;
-    if (p.kind === 'github-update' || p.kind === 'github-push') return p;
-    if (p.kind === 'trigger') return p;
-    return null;
+    return p;
   } catch {
     return null;
   }
@@ -61,174 +48,43 @@ export default function Sidebar({ onAdd, disabled }: Props) {
     e.dataTransfer.effectAllowed = 'copy';
   };
 
+  /*
+   * 侧栏条目、分组、配色、提示语全部来自注册表里各节点自己声明的 meta。
+   *
+   * 以前这里的每个条目都是手写的一段 JSX：加一种节点要在 DragPayload 联合、
+   * decodeDrag 白名单、以及下面这片 UI 里各加一处，三处不同步就会出现
+   * "侧栏点得出来、但拖放被 decodeDrag 判为非法而静默丢弃"。
+   * 现在只有一处真相，这类不同步不可能再发生。
+   */
+  const groups = presetsByCategory();
+
   return (
     <aside className="sidebar">
       <div className="side-head">节点库</div>
       <div className="side-hint">拖到画布，或点击直接添加</div>
 
-      <div className="side-group">
-        <div className="side-title">任务</div>
-        {(Object.keys(CLI_META) as CliKind[]).map((k) => (
-          <div
-            key={k}
-            className="side-item"
-            draggable={!disabled}
-            onDragStart={(e) => onDragStart(e, { kind: 'task', cli: k })}
-            onClick={() => !disabled && onAdd({ kind: 'task', cli: k })}
-            title={`拖到画布添加 ${CLI_META[k].label} 任务节点`}
-          >
-            <span className="side-dot" style={{ background: CLI_META[k].color }} />
-            <span className="side-label">{CLI_META[k].label}</span>
+      {groups.map((g) => {
+        const def = getDef(g.presets[0].type);
+        return (
+          <div className="side-group" key={g.category}>
+            <div className="side-title">{g.label}</div>
+            {g.presets.map((p) => (
+              <div
+                key={p.key}
+                className="side-item"
+                draggable={!disabled}
+                onDragStart={(e) => onDragStart(e, { kind: p.key })}
+                onClick={() => !disabled && onAdd({ kind: p.key })}
+                title={p.hint ?? `拖到画布添加 ${p.label}`}
+              >
+                <span className="side-dot" style={{ background: p.color }} />
+                <span className="side-label">{p.label}</span>
+              </div>
+            ))}
+            {def.meta.sub ? <div className="side-sub">{def.meta.sub}</div> : null}
           </div>
-        ))}
-      </div>
-
-      <div className="side-group">
-        <div className="side-title">触发器（起点）</div>
-        {/*
-          五种触发方式合并成一个节点 —— 它们只是同一个节点的配置项，
-          拆成五个拖拽项会让节点库变长，而添加后还要在右侧面板再选一次类型。
-          默认「手动触发」：最安全，不会一放上画布就自动跑起来。
-        */}
-        <div
-          className="side-item"
-          draggable={!disabled}
-          onDragStart={(e) => onDragStart(e, { kind: 'trigger' })}
-          onClick={() => !disabled && onAdd({ kind: 'trigger' })}
-          title="工作流的起点。添加后在右侧面板里选择具体触发方式"
-        >
-          <span className="side-dot" style={{ background: '#eab308' }} />
-          <span className="side-label">触发器</span>
-        </div>
-        <div className="side-sub">
-          {Object.values(TRIGGER_META).map((m) => m.label).join(' / ')}
-        </div>
-      </div>
-
-      <div className="side-group">
-        <div className="side-title">流程控制</div>
-        <div
-          className="side-item"
-          draggable={!disabled}
-          onDragStart={(e) => onDragStart(e, { kind: 'condition' })}
-          onClick={() => !disabled && onAdd({ kind: 'condition' })}
-          title="按条件走不同分支，不消耗积分"
-        >
-          <span className="side-dot" style={{ background: '#a855f7' }} />
-          <span className="side-label">条件分支</span>
-        </div>
-        <div
-          className="side-item"
-          draggable={!disabled}
-          onDragStart={(e) => onDragStart(e, { kind: 'parallel' })}
-          onClick={() => !disabled && onAdd({ kind: 'parallel' })}
-          title="控制下游节点的并发度，可按条件决定"
-        >
-          <span className="side-dot" style={{ background: '#06b6d4' }} />
-          <span className="side-label">并发控制</span>
-        </div>
-        <div
-          className="side-item"
-          draggable={!disabled}
-          onDragStart={(e) => onDragStart(e, { kind: 'loop' })}
-          onClick={() => !disabled && onAdd({ kind: 'loop' })}
-          title="重复执行下游子图：固定次数 / 遍历列表 / 匹配文件"
-        >
-          <span className="side-dot" style={{ background: '#f472b6' }} />
-          <span className="side-label">循环</span>
-        </div>
-      </div>
-
-      <div className="side-group">
-        <div className="side-title">文件</div>
-        <div
-          className="side-item"
-          draggable={!disabled}
-          onDragStart={(e) => onDragStart(e, { kind: 'fs' })}
-          onClick={() => !disabled && onAdd({ kind: 'fs' })}
-          title="读写删改文件或目录，经 Rust 执行"
-        >
-          <span className="side-dot" style={{ background: '#38bdf8' }} />
-          <span className="side-label">文件操作</span>
-        </div>
-      </div>
-
-      <div className="side-group">
-        <div className="side-title">AI 能力</div>
-        <div
-          className="side-item"
-          draggable={!disabled}
-          onDragStart={(e) => onDragStart(e, { kind: 'ocr' })}
-          onClick={() => !disabled && onAdd({ kind: 'ocr' })}
-          title="调用视觉大模型识别图片中的文字，支持网络地址与本地文件"
-        >
-          <span className="side-dot" style={{ background: '#f472b6' }} />
-          <span className="side-label">图片识别 OCR</span>
-        </div>
-        <div
-          className="side-item"
-          draggable={!disabled}
-          onDragStart={(e) => onDragStart(e, { kind: 'translate' })}
-          onClick={() => !disabled && onAdd({ kind: 'translate' })}
-          title="调用大模型翻译文本，可指定术语表保证译名一致"
-        >
-          <span className="side-dot" style={{ background: '#38bdf8' }} />
-          <span className="side-label">翻译</span>
-        </div>
-        <div className="side-sub">需填自己的大模型 API Key</div>
-      </div>
-
-      <div className="side-group">
-        <div className="side-title">GitHub</div>
-        <div
-          className="side-item"
-          draggable={!disabled}
-          onDragStart={(e) => onDragStart(e, { kind: 'github-update' })}
-          onClick={() => !disabled && onAdd({ kind: 'github-update' })}
-          title="拉取仓库最新状态，输出 true / false 供条件节点判断。API → 订阅源 → 本地 git 依次兜底"
-        >
-          <span className="side-dot" style={{ background: '#a78bfa' }} />
-          <span className="side-label">更新检测</span>
-        </div>
-        <div
-          className="side-item"
-          draggable={!disabled}
-          onDragStart={(e) => onDragStart(e, { kind: 'github-push' })}
-          onClick={() => !disabled && onAdd({ kind: 'github-push' })}
-          title="提交并推送文件。GitHub API → 本地 git 依次兜底"
-        >
-          <span className="side-dot" style={{ background: '#34d399' }} />
-          <span className="side-label">推送</span>
-        </div>
-        <div className="side-sub">在「凭据」里填一次令牌，两个节点共用</div>
-      </div>
-
-      <div className="side-group">
-        <div className="side-title">更新检测</div>
-        <div
-          className="side-item"
-          draggable={!disabled}
-          onDragStart={(e) => onDragStart(e, { kind: 'bili' })}
-          onClick={() => !disabled && onAdd({ kind: 'bili' })}
-          title="检测 B站 UP 主是否有新投稿，输出 true / false 供条件节点判断"
-        >
-          <span className="side-dot" style={{ background: '#fb7299' }} />
-          <span className="side-label">B站 UP 主</span>
-        </div>
-        <div
-          className="side-item"
-          draggable={!disabled}
-          onDragStart={(e) => onDragStart(e, { kind: 'wechat' })}
-          onClick={() => !disabled && onAdd({ kind: 'wechat' })}
-          title="检测微信公众号是否有新推文（需填第三方订阅源地址）"
-        >
-          <span className="side-dot" style={{ background: '#07c160' }} />
-          <span className="side-label">微信公众号</span>
-        </div>
-        <div className="side-sub">输出 true / false，接条件节点即可分流</div>
-      </div>
-
-      {disabled && <div className="side-hint warn">运行中不可添加节点</div>}
+        );
+      })}
     </aside>
   );
 }
