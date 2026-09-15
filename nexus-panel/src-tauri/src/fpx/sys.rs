@@ -335,21 +335,39 @@ pub fn apply_icon(dir: &str, icon_ref: &str) -> Result<String, String> {
         }
         let ini = p.join(INI_NAME);
         let (file, index) = split_icon_ref(icon_ref);
+        let ini_arg = || ini.to_string_lossy().to_string();
 
         if icon_ref.trim().is_empty() {
             if ini.exists() {
-                let _ = run_cmd("attrib", &[format!("-s"), "-h".to_string(), ini.to_string_lossy().to_string()]);
-                fs::remove_file(&ini).ok();
+                // 先摘属性再改，否则隐藏/系统属性可能让写入失败
+                let _ = run_cmd("attrib", &["-s".to_string(), "-h".to_string(), ini_arg()]);
+                // 读不出来就放弃（#510）：宁可什么都不做，也不覆盖未知内容
+                if let Some(text) = read_ini_text(&ini)? {
+                    let merged = remove_icon_resource(&text);
+                    if merged.trim().is_empty() {
+                        fs::remove_file(&ini).ok();
+                    } else {
+                        write_ini_text(&ini, &merged)?;
+                        let _ = run_cmd("attrib", &["+h".to_string(), "+s".to_string(), ini_arg()]);
+                    }
+                }
             }
+            // 文件夹只清系统属性；**绝不动 +h**——加 +h 会让文件夹本身
+            // 在资源管理器里被隐藏，用户会以为数据丢了
             let _ = run_cmd("attrib", &["-s".to_string(), p.to_string_lossy().to_string()]);
             return Ok("已恢复默认图标".into());
         }
 
-        let content = format!("[.ShellClassInfo]\r\nIconResource={file},{index}\r\n");
-        fs::write(&ini, content).map_err(|e| format!("写入 desktop.ini 失败: {e}"))?;
-        // +s 让资源管理器读取该 ini；+h 隐藏 ini 本身
+        // 读原有内容（不存在则 None）；读失败时 `?` 直接放弃写入
+        let content = match read_ini_text(&ini)? {
+            Some(t) => set_icon_resource(&t, &file, index),
+            None => format!("[.ShellClassInfo]\r\nIconResource={file},{index}\r\n"),
+        };
+        let _ = run_cmd("attrib", &["-s".to_string(), "-h".to_string(), ini_arg()]);
+        write_ini_text(&ini, &content)?;
+        // 文件夹加 +s（让资源管理器读取 ini）；ini 本身加 +h +s（隐藏它）
         let _ = run_cmd("attrib", &["+s".to_string(), p.to_string_lossy().to_string()]);
-        let _ = run_cmd("attrib", &["+h".to_string(), "+s".to_string(), ini.to_string_lossy().to_string()]);
+        let _ = run_cmd("attrib", &["+h".to_string(), "+s".to_string(), ini_arg()]);
         Ok("已写入资源管理器图标（资源管理器可能需要按 F5 刷新）".into())
     }
 }
@@ -360,6 +378,181 @@ fn split_icon_ref(icon_ref: &str) -> (String, i32) {
     let file = parts.next().unwrap_or("").trim().to_string();
     let index = parts.next().and_then(|s| s.trim().parse::<i32>().ok()).unwrap_or(0);
     (file, index)
+}
+
+/* ---------------------------- desktop.ini 的读写（编码安全 + 合并式修改） ---------------------------- */
+
+/**
+ * 按 BOM **精确**判定编码来读 desktop.ini；文件不存在返回 `Ok(None)`。
+ *
+ * 为什么不能"先试 UTF-8、失败再回退 UTF-16"：
+ * UTF-16LE 的字节流（如 `61 00 62 00`）当 UTF-8 解析时**几乎不会报错**——
+ * NUL 是合法的 UTF-8 字符，于是得到 "a\0b\0" 这种乱码，回退分支永远触发不了。
+ * 乱码随后被写回，就成了永久脏数据，且用户完全不知道发生了什么。
+ * 所以必须先查 BOM：FF FE → UTF-16LE；EF BB BF → UTF-8 跳过 BOM；
+ * 都没有才按 UTF-8 试，且**严格解析**——失败就报错，不用 lossy 静默替换。
+ *
+ * 返回 `Err` 时调用方必须放弃写入（见 #510）：读不出原内容还去覆盖，
+ * 等于把未知内容一次性丢掉。
+ */
+#[cfg(windows)]
+fn read_ini_text(path: &Path) -> Result<Option<String>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let bytes = fs::read(path).map_err(|e| {
+        let p = path.display().to_string();
+        format!("读取 desktop.ini 失败（{p}）: {e}")
+    })?;
+
+    if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
+        let units: Vec<u16> = bytes[2..]
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        return String::from_utf16(&units).map(Some).map_err(|e| {
+            let p = path.display().to_string();
+            format!("desktop.ini 带 UTF-16 BOM 但内容非法（{p}）: {e}")
+        });
+    }
+
+    let skip = if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
+        3
+    } else {
+        0
+    };
+    String::from_utf8(bytes[skip..].to_vec())
+        .map(Some)
+        .map_err(|e| {
+            let p = path.display().to_string();
+            format!("desktop.ini 不是合法文本（{p}）: {e}；已放弃写入以免覆盖未知内容")
+        })
+}
+
+/// 写回 desktop.ini，统一用 **UTF-16LE 带 BOM**。
+///
+/// Windows Shell 读取 desktop.ini 时对 ANSI / 无 BOM UTF-8 的处理在不同版本上
+/// 并不一致，含中文路径时尤其容易乱码；UTF-16LE 带 BOM 是它最认的格式。
+#[cfg(windows)]
+fn write_ini_text(path: &Path, text: &str) -> Result<(), String> {
+    let mut buf: Vec<u8> = vec![0xFF, 0xFE];
+    for u in text.encode_utf16() {
+        buf.extend_from_slice(&u.to_le_bytes());
+    }
+    fs::write(path, &buf).map_err(|e| {
+        let p = path.display().to_string();
+        format!("写入 desktop.ini 失败（{p}）: {e}")
+    })
+}
+
+/**
+ * 在 ini 文本里设置 `[.ShellClassInfo]` 的 IconResource，**保留其余所有内容**。
+ *
+ * 为什么要合并而不是整份重写：desktop.ini 里可能有用户或其它程序写的内容
+ * —— `[LocalizedFileNames]`（给文件夹起中文别名）、`[ViewState]`（视图设置）
+ * 都常见。整份覆盖会把它们一次性吃掉，而且没有任何提示。
+ */
+#[cfg(windows)]
+fn set_icon_resource(text: &str, file: &str, index: i32) -> String {
+    merge_icon_line(text, Some(&format!("IconResource={file},{index}")))
+}
+
+/// 删掉 IconResource / IconIndex 行（清除图标用）；段因此变空则连带删掉段。
+#[cfg(windows)]
+fn remove_icon_resource(text: &str) -> String {
+    merge_icon_line(text, None)
+}
+
+#[cfg(windows)]
+fn merge_icon_line(text: &str, new_line: Option<&str>) -> String {
+    const SEC: &str = "[.ShellClassInfo]";
+    let lines: Vec<String> = text
+        .lines()
+        .map(|l| l.trim_end_matches('\r').to_string())
+        .collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 2);
+    let mut in_sec = false;
+    let mut handled = false;
+
+    for line in &lines {
+        let t = line.trim();
+        // 段标题：形如 [xxx]
+        if t.starts_with('[') && t.ends_with(']') {
+            // 刚离开目标段却还没写入新行 → 补在段末
+            if in_sec && !handled {
+                if let Some(nl) = new_line {
+                    out.push(nl.to_string());
+                }
+                handled = true;
+            }
+            in_sec = t.eq_ignore_ascii_case(SEC);
+            out.push(line.clone());
+            continue;
+        }
+        if in_sec {
+            let key = t
+                .split('=')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            if key == "iconresource" || key == "iconindex" {
+                // 只保留新行这一条，其余同名行（含重复键）丢弃
+                if !handled {
+                    if let Some(nl) = new_line {
+                        out.push(nl.to_string());
+                    }
+                    handled = true;
+                }
+                continue;
+            }
+        }
+        out.push(line.clone());
+    }
+    // 文件末尾仍在目标段内
+    if in_sec && !handled {
+        if let Some(nl) = new_line {
+            out.push(nl.to_string());
+        }
+        handled = true;
+    }
+
+    // 整个目标段都不存在 → 追加到末尾
+    if new_line.is_some() && !out.iter().any(|l| l.trim().eq_ignore_ascii_case(SEC)) {
+        while out.last().map(|s| s.trim().is_empty()).unwrap_or(false) {
+            out.pop();
+        }
+        if !out.is_empty() {
+            out.push(String::new());
+        }
+        out.push(SEC.to_string());
+        out.push(new_line.unwrap().to_string());
+    }
+
+    // 清除模式下段内已无内容 → 删掉空段标题
+    if new_line.is_none() {
+        for i in 0..out.len() {
+            if !out[i].trim().eq_ignore_ascii_case(SEC) {
+                continue;
+            }
+            let next = out
+                .iter()
+                .skip(i + 1)
+                .position(|l| l.trim().starts_with('[') && l.trim().ends_with(']'))
+                .map(|p| p + i + 1)
+                .unwrap_or(out.len());
+            if out[i + 1..next].iter().all(|l| l.trim().is_empty()) {
+                out.remove(i);
+            }
+            break;
+        }
+    }
+
+    let mut s = out.join("\r\n");
+    if !s.is_empty() {
+        s.push_str("\r\n");
+    }
+    s
 }
 
 /* ---------------------------- 屏幕取色（色盘吸管） ---------------------------- */
