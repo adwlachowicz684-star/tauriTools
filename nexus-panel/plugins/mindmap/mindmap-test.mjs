@@ -1242,6 +1242,129 @@ group('布局模板缩略图');
 }
 
 /* ============================================================
+   十六、主题配色条（背景 + 根节点 + 主节点 + 子节点）
+   ============================================================ */
+
+group('主题配色条');
+
+{
+  const { THEMES } = await import('./themes.js');
+
+  // 16.1 每个主题都要有完整四色 —— 缺一项就少一段，看着像 bug
+  for (const t of THEMES) {
+    ok(t.bg && t.root && t.main && t.sub, `${t.value} 四色齐全（bg/root/main/sub）`);
+  }
+
+  // 16.2 颜色值必须合法，否则 CSS 会整段不渲染（表现为空白）
+  const HEX = /^#[0-9A-Fa-f]{3,8}$/;
+  for (const t of THEMES) {
+    for (const k of ['bg', 'root', 'main']) {
+      ok(HEX.test(t[k]), `${t.value}.${k} = ${t[k]} 是合法十六进制色`);
+    }
+    // sub 允许 'transparent'
+    ok(t.sub === 'transparent' || HEX.test(t.sub), `${t.value}.sub = ${t.sub} 合法（色值或 transparent）`);
+  }
+
+  // 16.3 fresh 系列的 root 必须与内核 HSL 公式一致。
+  //      这是交叉校验：公式 H(h,37%,60%)，色相 {red:0,soil:25,green:122,blue:204,purple:246,pink:334}
+  const hsl2hex = (h, s, l) => {
+    const S = s / 100, L = l / 100;
+    const k = (n) => (n + h / 30) % 12;
+    const a = S * Math.min(L, 1 - L);
+    const f = (n) => L - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+    const to = (v) => Math.round(255 * v).toString(16).padStart(2, '0').toUpperCase();
+    return '#' + to(f(0)) + to(f(8)) + to(f(4));
+  };
+  const HUES = { red: 0, soil: 25, green: 122, blue: 204, purple: 246, pink: 334 };
+  for (const [name, hue] of Object.entries(HUES)) {
+    const t = THEMES.find((x) => x.value === 'fresh-' + name);
+    eq(t.root, hsl2hex(hue, 37, 60), `fresh-${name} 的 root 与内核 HSL(${hue},37%,60%) 一致`);
+    eq(t.main, hsl2hex(hue, 33, 95), `fresh-${name} 的 main 与内核 HSL(${hue},33%,95%) 一致`);
+  }
+
+  // 16.4 关键区分度：snow / classic / fish 的 root 相同，靠 sub 才能分开
+  const byV = (v) => THEMES.find((x) => x.value === v);
+  eq(byV('snow').root, byV('classic').root, '（对照）snow 与 classic 的 root 相同');
+  ok(byV('snow').sub !== byV('classic').sub,
+    'snow 与 classic 的 sub 不同 —— 这正是「只有圆点时分不出来」的原因');
+}
+
+{
+  // 16.5 渲染：配色条四段 + 名称
+  const { buildSide } = await import('./panels.js');
+  const el = buildSide({
+    api: {
+      status() {}, commit() {}, selectedRef: () => null,
+      applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
+      nodeStyle: () => ({}), setNodeStyle: () => {},
+    },
+    bridge: {},
+    customThemes: [],
+  }, {});
+  el.open('theme');
+
+  const items = [...el.el.querySelectorAll('.mm-theme')];
+  eq(items.length, 10, '十个内置主题');
+
+  const first = items[0];
+  const bar = first.querySelector('.mm-swbar');
+  ok(!!bar, '每项有配色条（不再只有一个圆点）');
+  eq(bar.querySelectorAll('.mm-sw').length, 4, '配色条分四段');
+  ok(!first.querySelector('.dot'), '不再渲染旧的单一圆点');
+  eq(first.querySelector('.name')?.textContent, '清新蓝', '仍显示主题名');
+
+  const segs = [...bar.querySelectorAll('.mm-sw')];
+  eq(segs[0].style.background.replace(/\s/g, ''), 'rgb(251,251,251)', '第一段是画布底色');
+  ok(segs[0].getAttribute('title').includes('画布底色'), '每段有 title 说明是哪一层');
+  ok(segs[3].classList.contains('transparent'), '子节点透明时该段标记为 transparent');
+  ok(segs[3].getAttribute('title').includes('透明'), '透明段的 title 说明是透明的');
+
+  // 16.6 非 transparent 的段不该带标记
+  const wire = items.find((b) => b.querySelector('.name')?.textContent === '线框灰');
+  ok(!wire.querySelector('.mm-sw.transparent'), '线框灰没有 transparent 段（四色都是 #999）');
+}
+
+{
+  // 16.7 自定义主题：palette 字段名不同，要能归一
+  const { buildSide } = await import('./panels.js');
+  const el = buildSide({
+    api: {
+      status() {}, commit() {}, selectedRef: () => null,
+      applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
+      nodeStyle: () => ({}), setNodeStyle: () => {},
+    },
+    bridge: {},
+    customThemes: [{
+      id: 'custom-1',
+      name: '我的主题',
+      palette: {
+        background: '#101010', rootBackground: '#FF0000',
+        mainBackground: '#00FF00', subBackground: '#0000FF',
+      },
+    }],
+  }, {});
+  el.open('theme');
+  const mine = [...el.el.querySelectorAll('.mm-theme')]
+    .find((b) => b.querySelector('.name')?.textContent === '我的主题');
+  ok(!!mine, '自定义主题也渲染出来了');
+  const segs = [...mine.querySelectorAll('.mm-sw')].map((s) => s.style.background.replace(/\s/g, ''));
+  eq(segs[0], 'rgb(16,16,16)', '自定义主题：第 1 段取 palette.background');
+  eq(segs[1], 'rgb(255,0,0)', '自定义主题：第 2 段取 palette.rootBackground');
+  eq(segs[2], 'rgb(0,255,0)', '自定义主题：第 3 段取 palette.mainBackground');
+  eq(segs[3], 'rgb(0,0,255)', '自定义主题：第 4 段取 palette.subBackground');
+}
+
+{
+  // 16.8 transparent 段必须有可见标记 —— 否则「透明」和「白色」看起来一样
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const seg = css.slice(css.indexOf('.mm-sw.transparent {'), css.indexOf('.mm-sw.transparent {') + 400);
+  ok(/repeating-linear-gradient/.test(seg), '透明段用斜纹标出（不能只是空白）');
+  // 外圈描边：snow/classic 的画布底 #3A4144 与深色面板太接近，没边就糊住
+  const barCss = css.slice(css.indexOf('.mm-swbar {'), css.indexOf('.mm-sw {'));
+  ok(/border:\s*1px solid/.test(barCss), '配色条有外圈描边（深色底主题才不会糊在面板里）');
+}
+
+/* ============================================================
    结果
    ============================================================ */
 

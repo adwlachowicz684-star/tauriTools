@@ -5,18 +5,33 @@
  * 注意：core 另有 -compact / -compat 变体未列出。
  */
 
-/** 内置配色主题：值 / 中文名 / 参考底色（仅用于 UI 色块预览） */
+/**
+ * 内置配色主题：值 / 中文名 / 预览四色（画布底 / 根节点 / 主节点 / 子节点）
+ * ============================================================
+ * 四色**全部取自 kityminder.core.min.js 的真实主题定义**，不是估的：
+ *
+ * · fresh-* 系列由 HSL 生成：root = H(h,37%,60%)、main = H(h,33%,95%)、
+ *   色相 j = { red:0, soil:25, green:122, blue:204, purple:246, pink:334 }。
+ *   下面这六个 root 值就是用该公式算出来的，与原先手填的 `root` 完全一致
+ *   （#BF7373 / #BF9373 / #73BF76 / #73A1BF / #7B73BF / #BF7394），可互为校验。
+ * · classic / snow / fish 的 main = #a4c5c0、root = #e9df98，直接读自源码。
+ * · wire 没有节点背景（stroke:none、只画 #999 的线），故四色都记为 #999999
+ *   表示「线条灰」，配合 black 底。
+ *
+ * `sub` 为 'transparent' 表示子节点无填充（透出画布底色）—— 预览时按 bg
+ * 显示并加虚线框标识，不能显示成空白，那会被当成「这一项没有颜色」。
+ */
 export const THEMES = [
-  { value: 'fresh-blue', label: '清新蓝', bg: '#FBFBFB', root: '#73A1BF' },
-  { value: 'fresh-green', label: '清新绿', bg: '#FBFBFB', root: '#73BF76' },
-  { value: 'fresh-red', label: '清新红', bg: '#FBFBFB', root: '#BF7373' },
-  { value: 'fresh-soil', label: '土壤棕', bg: '#FBFBFB', root: '#BF9373' },
-  { value: 'fresh-purple', label: '清新紫', bg: '#FBFBFB', root: '#7B73BF' },
-  { value: 'fresh-pink', label: '清新粉', bg: '#FBFBFB', root: '#BF7394' },
-  { value: 'snow', label: '雪白', bg: '#3A4144', root: '#E9DF98' },
-  { value: 'classic', label: '经典黄', bg: '#3A4144', root: '#E9DF98' },
-  { value: 'wire', label: '线框灰', bg: '#000000', root: '#999999' },
-  { value: 'fish', label: '青色', bg: '#3A4144', root: '#E9DF98' },
+  { value: 'fresh-blue', label: '清新蓝', bg: '#FBFBFB', root: '#73A1BF', main: '#EEF3F6', sub: 'transparent' },
+  { value: 'fresh-green', label: '清新绿', bg: '#FBFBFB', root: '#73BF76', main: '#EEF6EE', sub: 'transparent' },
+  { value: 'fresh-red', label: '清新红', bg: '#FBFBFB', root: '#BF7373', main: '#F6EEEE', sub: 'transparent' },
+  { value: 'fresh-soil', label: '土壤棕', bg: '#FBFBFB', root: '#BF9373', main: '#F6F2EE', sub: 'transparent' },
+  { value: 'fresh-purple', label: '清新紫', bg: '#FBFBFB', root: '#7B73BF', main: '#EFEEF6', sub: 'transparent' },
+  { value: 'fresh-pink', label: '清新粉', bg: '#FBFBFB', root: '#BF7394', main: '#F6EEF2', sub: 'transparent' },
+  { value: 'snow', label: '雪白', bg: '#3A4144', root: '#E9DF98', main: '#A4C5C0', sub: '#FFFFFF' },
+  { value: 'classic', label: '经典黄', bg: '#3A4144', root: '#E9DF98', main: '#A4C5C0', sub: 'transparent' },
+  { value: 'wire', label: '线框灰', bg: '#000000', root: '#999999', main: '#999999', sub: '#999999' },
+  { value: 'fish', label: '青色', bg: '#3A4144', root: '#E9DF98', main: '#A4C5C0', sub: '#FFFFFF' },
 ];
 
 /** 布局模板：与编辑器【外观】页签模板下拉一致 */

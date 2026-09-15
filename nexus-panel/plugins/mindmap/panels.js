@@ -46,6 +46,55 @@ function fileIcon(name) {
   return '📄';
 }
 
+/* ------------------------- 主题配色条 ------------------------- */
+
+/**
+ * 主题预览四色：画布底 / 根节点 / 主节点 / 子节点。
+ *
+ * 之前每个主题只有一个圆点（根节点色），看不出画布底色和各级节点长什么样 ——
+ * 尤其 snow / classic / fish 三者 root 同为 #E9DF98，单看圆点完全分不出来。
+ */
+function themeSwatch(t) {
+  const bg = t?.bg || '#FBFBFB';
+  return {
+    bg,
+    root: t?.root || '#4A90D9',
+    main: t?.main || '#DCE9F7',
+    // 子节点无填充时透出的是画布底色，按 bg 显示（并标为 transparent）
+    sub: t?.sub === 'transparent' ? bg : (t?.sub || '#FFFFFF'),
+    subTransparent: t?.sub === 'transparent',
+  };
+}
+
+/** 自定义主题：palette 字段名与内置主题不同，在这里归一 */
+function customSwatch(t) {
+  const p = t?.palette || {};
+  return themeSwatch({
+    bg: p.background || '#FBFBFB',
+    root: p.rootBackground || '#4A90D9',
+    main: p.mainBackground || '#DCE9F7',
+    sub: p.subBackground || p.background || '#FFFFFF',
+  });
+}
+
+/**
+ * 四段颜色条。
+ * 段间不留缝也不加分隔线 —— 40px 宽分四段已经很窄，再留缝就成四个孤立色点了。
+ */
+function swatchBar(s) {
+  const seg = (color, title, transparent) =>
+    h('span.mm-sw' + (transparent ? '.transparent' : ''), {
+      style: { background: color },
+      title,
+    });
+  return h('span.mm-swbar', {},
+    seg(s.bg, `画布底色 ${s.bg}`),
+    seg(s.root, `根节点 ${s.root}`),
+    seg(s.main, `主节点 ${s.main}`),
+    seg(s.sub, s.subTransparent ? `子节点 透明（透出 ${s.bg}）` : `子节点 ${s.sub}`, s.subTransparent),
+  );
+}
+
 function section(title, ...children) {
   return h('div.mm-field', {}, h('h3', {}, title), ...children);
 }
@@ -785,12 +834,15 @@ export function buildSide(app, opts = {}) {
         h('button.mm-theme' + (cur === t.value ? '.on' : ''), {
           onclick: () => { app.api.applyTheme(t.value); refresh(); },
         },
-          h('span.dot', { style: { background: t.root } }),
+          swatchBar(themeSwatch(t)),
           h('span.name', {}, t.label),
         )),
       ...(app.customThemes || []).map((t) =>
         h('div.mm-theme' + (cur === t.id ? '.on' : ''), {},
-          h('span.dot', { style: { background: t.palette?.rootBackground || '#4A90D9' }, onclick: () => { app.api.applyTheme(t.id); refresh(); } }),
+          h('span', {
+            style: { display: 'flex', cursor: 'pointer' },
+            onclick: () => { app.api.applyTheme(t.id); refresh(); },
+          }, swatchBar(customSwatch(t))),
           h('span.name', { onclick: () => { app.api.applyTheme(t.id); refresh(); } }, t.name || t.id),
           h('button.mm-btn.icon', { onclick: () => { openThemeEditor(app, t); }, title: '编辑' }, '✎'),
           h('button.mm-btn.icon', {

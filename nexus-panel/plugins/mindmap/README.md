@@ -414,6 +414,37 @@ SVG 缺 `fill` 属性时**默认渲染成黑色** —— 于是图标在深色�
 
 图标另带 SVG `<title>`（附件名），悬停即可知道挂的是哪个文件 —— 光看图标认不出来。
 
+## 主题配色条
+
+每个主题原来只有一个圆点（根节点色），看不出画布底色和各级节点长什么样。
+现在改成**四段配色条**：画布底 / 根节点 / 主节点 / 子节点。
+
+四色全部取自 `kityminder.core.min.js` 的真实主题定义：
+
+| 主题族 | 取值 |
+|---|---|
+| `fresh-*` | 内核用 HSL 生成：root = `H(h,37%,60%)`、main = `H(h,33%,95%)`，色相 `{red:0, soil:25, green:122, blue:204, purple:246, pink:334}` |
+| `classic` / `snow` / `fish` | root `#E9DF98`、main `#A4C5C0`，直接读自源码 |
+| `wire` | 无节点背景（`stroke:none`，只画 `#999` 的线），四色都记 `#999999` |
+
+算出来的 fresh 系列 root 与原先手填的值**完全一致**（`#BF7373` / `#BF9373` /
+`#73BF76` / `#73A1BF` / `#7B73BF` / `#BF7394`），两边互为校验 —— 测试里就用
+HSL 公式反算一遍锁住。
+
+**为什么必须显示四色而不是只显示 root**：`snow`、`classic`、`fish` 三者的 root
+**同为 `#E9DF98`**，只看圆点完全分不出来；它们的差别在 sub（snow/fish 是白色、
+classic 是透明）。
+
+两个细节：
+
+- 子节点 `transparent` 时按**画布底色**显示并加**斜纹**标记。留空白的话会被
+  当成「这一项没有颜色」。
+- 配色条有外圈描边 —— `snow` / `classic` 的画布底 `#3A4144` 与深色面板太接近，
+  没有边就糊在一起。
+
+自定义主题走 `palette` 字段（`background` / `rootBackground` / `mainBackground` /
+`subBackground`），字段名与内置主题不同，由 `customSwatch()` 归一。
+
 ## 布局模板：缩略图 + 名称
 
 对齐 WPF 原版右侧栏「布局」段（`UniformGrid Columns="2"` + `Image Width="100"

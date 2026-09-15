@@ -292,8 +292,31 @@ html, body {
 }
 .mm-theme:hover { color: var(--text); }
 .mm-theme.on { color: var(--accent); box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light); }
-.mm-theme .dot { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--sh-dark); flex: 0 0 auto; }
 .mm-theme .name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ------------------------------ 主题配色条 ------------------------------ */
+
+/* 四段：画布底 / 根节点 / 主节点 / 子节点。
+   段间不留缝 —— 40px 分四段已经很窄，留缝就退化成四个孤立色点。 */
+.mm-swbar {
+  flex: 0 0 auto;
+  display: flex;
+  width: 42px;
+  height: 18px;
+  border-radius: 5px;
+  overflow: hidden;
+  /* 外圈描边：snow / classic 的画布底 #3A4144 与深色面板太接近，没有边就糊在一起 */
+  border: 1px solid var(--sh-dark);
+}
+.mm-sw { flex: 1 1 0; min-width: 0; }
+
+/* 子节点无填充：用斜纹标出「这是透明的」，否则和「有这个颜色」分不清 */
+.mm-sw.transparent {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(128, 128, 128, .55) 0 2px,
+    transparent 2px 4px);
+}
 
 /* ------------------------------ 布局模板缩略图 ------------------------------ */
 
