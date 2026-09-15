@@ -700,6 +700,29 @@ video.mm-video { width: 100%; border-radius: 9px; background: #000; }
 }
 .mm-vsum-dur { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
 .mm-vsum-size { flex: 0 0 auto; }
+/* A21 播放状态：用 accent 色让它在摘要行里跳出来，
+   否则「播放中」三个字和灰色的时长/大小混在一起，等于没写。 */
+.mm-vsum-state {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 11px;
+}
+.mm-vsum-state:empty { display: none; }
+
+/* A20 拖拽进度条：原生 controls 在 276px 侧栏里会被挤成一条，
+   单独给一条时间轴才点得中。 */
+.mm-vseek {
+  width: 100%;
+  height: 14px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.mm-vseek:disabled { opacity: .35; cursor: default; }
+
+/* 失效提示（A16）：warn 变体之前没有，缺了就只能用普通灰字，
+   在深色面板上和说明文字一个样，看不出是问题。 */
+.mm-hint.warn { color: var(--danger, #e06c75); }
 
 .mm-meta {
   display: flex;

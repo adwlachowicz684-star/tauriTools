@@ -12,33 +12,46 @@ import * as store from './store.js';
 /* ------------------------------ 读取 ------------------------------ */
 
 /** 弹出文件选择框，返回 File 或 null（取消） */
-export function pickFile(accept = '') {
+/**
+ * 选文件。multiple=true 时返回 File[]（A4 图标批量导入用；
+ * C# 版是 OpenFileDialog 的 Multiselect）。
+ * 取消时返回 null（单文件）或 []（多文件）。
+ */
+export function pickFile(accept = '', multiple = false) {
   return new Promise((resolve) => {
     const inp = document.createElement('input');
     inp.type = 'file';
     if (accept) inp.accept = accept;
+    if (multiple) inp.multiple = true;
     inp.style.cssText = 'position:fixed;left:-9999px;';
     document.body.appendChild(inp);
     let done = false;
     const finish = (f) => {
       if (done) return;
       done = true;
-      // 显式注销：匿名监听器只能等 inp 被丢弃后由 GC 连带回收，命名函数可以在这里摘干净
-      inp.removeEventListener('change', onChange);
       inp.remove();
       resolve(f);
     };
-    const onChange = () => finish(inp.files?.[0] || null);
-    inp.addEventListener('change', onChange);
+    const take = () => {
+      const files = inp.files ? [...inp.files] : [];
+      if (!files.length) return multiple ? [] : null;
+      return multiple ? files : files[0];
+    };
+    inp.addEventListener('change', () => finish(take()));
     // 部分 WebView 在窗口失焦时不派发 change，这里用 visibilitychange 兜底检测取消
     window.addEventListener('focus', function onFocus() {
       setTimeout(() => {
-        if (!inp.files || !inp.files.length) finish(null);
+        if (!inp.files || !inp.files.length) finish(multiple ? [] : null);
       }, 400);
       window.removeEventListener('focus', onFocus);
     }, { once: true });
     inp.click();
   });
+}
+
+/** 多选文件（批量导入图标用） */
+export function pickFiles(accept = '') {
+  return pickFile(accept, true);
 }
 
 /**
@@ -284,6 +297,21 @@ export function decodeRef(raw) {
     // 兼容 C# 版留下的纯路径字符串
     return { n: String(raw).split(/[\\/]/).pop() || String(raw), a: null, s: 0, legacyPath: String(raw) };
   }
+}
+
+/**
+ * 从路径里取所在目录（A17）。
+ *
+ * 只用于 C# 版遗留的纯路径引用 —— 新附件存在 IndexedDB 里，没有文件系统
+ * 路径可谈。取不到目录时返回空串而不是 '—'：调用方要据此决定整行要不要显示
+ * （显示一个全是破折号的行没有意义）。
+ *
+ * 分隔符同时兼容 \ 与 /：老路径来自 Windows，但也可能由 JSON 转义过。
+ */
+export function dirOf(path) {
+  const p = String(path || '').replace(/\\/g, '/');
+  const i = p.lastIndexOf('/');
+  return i > 0 ? p.slice(0, i) : '';
 }
 
 export function formatSize(n) {

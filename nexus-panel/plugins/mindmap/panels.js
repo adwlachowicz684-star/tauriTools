@@ -243,23 +243,45 @@ export function buildSide(app, opts = {}) {
 
   /** 文件信息：名称 / 大小 / 类型 / 修改时间 */
   async function fillFileMeta(ref, box) {
-    // 名称与大小已经显示在卡片上，这里只补卡片放不下的两项，避免重复
+    // 名称与大小已经显示在卡片上，这里只补卡片放不下的项，避免重复
     box.innerHTML = '';
     if (!ref) return;                             // 「未附加」由卡片自己表达
+
+    // A16 路径失效：**仍展示已知字段 + 失效原因**（对照 WPF LoadFileIntoPanel，
+    // :552-557）。原版在文件被移动/删除时照样列出类型与所在目录，理由是
+    // 「方便定位是哪个附件失效」—— 只写一句「打不开」，用户连是哪个文件都不知道。
     if (!ref.a) {
-      // C# 版迁移过来的纯路径引用：拿不到本体，也就没有类型与修改时间
-      box.appendChild(h('div.mm-hint', {}, '旧版本地路径，沙箱内读不到文件本体'));
+      const rows = [['类型', mi.shortType('', ref.n)]];
+      if (ref.legacyPath) {
+        rows.push(['所在目录', io.dirOf(ref.legacyPath) || '—']);
+        rows.push(['完整路径', ref.legacyPath]);
+      }
+      fillMeta(box, rows, '');
+      box.appendChild(h('div.mm-hint.warn', {}, '原文件已不在原路径（C# 版遗留的本地路径引用），请重新附加一次'));
       return;
     }
+
     const a = await io.getAsset(ref.a);          // 只要元信息，不建 URL
     if (!a) {
       box.appendChild(h('div.mm-hint', {}, '附件数据已丢失（可重新附加一次）'));
       return;
     }
-    fillMeta(box, [
-      ['类型', mi.shortType(a.type, ref.n)],
+
+    // A17 / B23 / B24：类型 · 大小 · 修改时间 · 添加时间 · 所在目录
+    //
+    // 「创建时间」在 Web 版没有直接对应 —— 沙箱里的文件是附加时存进来的副本，
+    // 操作系统那个 ctime 无从取得。最接近的语义是**添加时间**（addedAt），
+    // 即这份附件进入本脑图的时间；原文件在磁盘上的创建时间拿不到，
+    // 硬凑一个不存在的值不如写明它是什么。
+    const rows = [
+      ['类型', mi.shortType(a.type, a.name || ref.n)],
+      ['大小', io.formatSize(a.size ?? ref.s)],
       ['修改', mi.formatDateTime(a.mtime || a.addedAt)],
-    ], '');
+      ['添加', mi.formatDateTime(a.addedAt)],
+    ];
+    // 目录只对老路径有意义；新附件存在 IndexedDB 里，没有文件系统路径可谈
+    if (ref.legacyPath) rows.push(['所在目录', io.dirOf(ref.legacyPath) || '—']);
+    fillMeta(box, rows, '');
   }
 
   /**
@@ -343,14 +365,58 @@ export function buildSide(app, opts = {}) {
    */
   function buildVideoPreview(vref) {
     const dur = h('span.mm-vsum-dur', {}, '');
+    // A21 播放状态：C# 版是 MediaElement 的播放/暂停两态；
+    // 这里用一个文字标记表达，比让用户去猜控件里的三角形是朝哪边清楚。
+    const state = h('span.mm-vsum-state', {}, '');
     const box = h('div.mm-vthumb', {});
+    // A20 进度条：原生 controls 在 276px 侧栏里会被挤成一条，
+    // 播放/音量/全屏几个按钮叠在一起几乎点不中。这里单独给一条可拖拽的时间轴。
+    const bar = h('input.mm-vseek', {
+      type: 'range', min: '0', max: '1000', value: '0', step: '1',
+      disabled: true,            // 时长未知前无法定位
+      title: '拖动定位',
+    });
     const wrap = h('div.mm-vwrap', {},
       box,
       h('div.mm-vsum', {},
         h('span.mm-vsum-name', { title: vref?.n || '' }, vref?.n || '未附加视频'),
         dur,
+        state,
         h('span.mm-vsum-size', {}, vref?.s ? io.formatSize(vref.s) : '')),
+      bar,
     );
+
+    let video = null;
+    let seeking = false;      // 正在拖进度条：期间 timeupdate 不许回写，否则滑块会跟手指打架
+
+    /**
+     * 时长未知的两种情况都要挡住：元数据还没解析完（NaN），或是直播流（Infinity）。
+     * 这两种情况下进度条没有意义，放开会让滑块行为诡异（拖到 Infinity）。
+     */
+    const seekable = () => !!video && Number.isFinite(video.duration) && video.duration > 0;
+
+    const syncBar = () => {
+      if (!seekable()) return;
+      bar.disabled = false;
+      if (!seeking) bar.value = String(Math.round((video.currentTime / video.duration) * 1000));
+    };
+
+    const setState = (s) => {
+      state.textContent = s === 'playing' ? '播放中' : s === 'paused' ? '已暂停' : s === 'ended' ? '已结束' : '';
+      // 状态同时反映在缩略图上，封面状态下看摘要行容易漏看
+      box.classList.toggle('is-playing', s === 'playing');
+    };
+
+    bar.addEventListener('input', () => {
+      if (!seekable()) return;
+      seeking = true;
+      video.currentTime = (Number(bar.value) / 1000) * video.duration;
+    });
+    // 松手才解除锁定：拖拽期间 timeupdate 会持续回调，不锁住滑块会来回跳
+    const endSeek = () => { seeking = false; };
+    bar.addEventListener('change', endSeek);
+    bar.addEventListener('pointerup', endSeek);
+
     const setDuration = (d) => { dur.textContent = (d && mi.formatDuration(d)) || ''; };
 
     /**
@@ -375,7 +441,6 @@ export function buildSide(app, opts = {}) {
     box.classList.add('loading');
     box.appendChild(h('div.mm-vthumb-empty', {}, '读取中…'));
 
-    let video = null;
     const start = () => {
       if (!video) return;
       // 就地播：不换元素、不弹窗。controls 里自带全屏，侧栏里放不下也能看。
@@ -391,6 +456,22 @@ export function buildSide(app, opts = {}) {
         // 环境根本没实现 play（jsdom 直接抛 Not implemented）。
         // 控件已经挂上，不影响手动播放。
       }
+    };
+
+    /**
+     * A21 播放状态 / A20 进度同步。
+     *
+     * 状态由**元素事件**驱动而不是在 start() 里直接写「播放中」：
+     * play() 可能被浏览器策略拒绝（此时并没有真的在播），也可能播完自动停。
+     * 只有元素自己报的事件才是可信的。
+     */
+    const bindPlayback = () => {
+      if (!video) return;
+      video.addEventListener('play', () => setState('playing'));
+      video.addEventListener('pause', () => setState('paused'));
+      video.addEventListener('ended', () => setState('ended'));
+      video.addEventListener('timeupdate', syncBar);
+      video.addEventListener('loadedmetadata', syncBar);
     };
 
     safe('读取视频', async () => {
@@ -428,9 +509,16 @@ export function buildSide(app, opts = {}) {
       box.appendChild(h('div.mm-vthumb-play', {}, '▶'));
       box.classList.remove('loading');
       box.classList.add('ready');
+      bindPlayback();
+      syncBar();
     }, (m) => app.api.status(m, true))();
 
-    box.addEventListener('click', start);
+    // 点缩略图 = 播放/暂停切换（再次点击暂停，符合媒体播放器习惯）
+    box.addEventListener('click', () => {
+      if (!video) return;
+      if (video.paused) start();
+      else { try { video.pause(); } catch { /* jsdom 等环境可能未实现 */ } }
+    });
     return { el: wrap, setDuration };
   }
 
@@ -447,6 +535,23 @@ export function buildSide(app, opts = {}) {
     const vinfo = videoMeta;
 
     const attach = async (kind) => {
+      const label = kind === 'video' ? '视频' : '文件';
+      // A23 替换前先告知（对照 WPF OnFileClick，:427 / OnVideoClick :458）。
+      //
+      // **不阻断、但也不静默**：C# 版弹的是「移除 or 取消（取消=继续选文件替换）」，
+      // 两个选项都指向同一个结果，用户读完反而不确定点了会怎样。
+      // 这里改成直白的「继续替换 / 取消」—— 继续就弹文件框，取消则什么都不做。
+      //
+      // 关键是不能静默覆盖：已挂着的附件被新文件顶掉是不可逆的，
+      // 用户若不知道原来有附件，就分不清「替换成功」和「附件丢了」。
+      const had = app.api.selectedRef(kind);
+      if (had) {
+        const ok = await confirmDialog(
+          `替换${label}附件`,
+          `该节点已附加${label}：\n${had.n || '（未命名）'}\n\n继续将用新选择的${label}替换它，原附件不可恢复。`,
+          '继续替换', true);
+        if (!ok) return;
+      }
       const f = await io.pickFile(kind === 'video' ? 'video/*' : '');
       if (!f) return;
       const id = await io.putAsset(f);
@@ -455,6 +560,8 @@ export function buildSide(app, opts = {}) {
       app.bridge[kind === 'video' ? 'setVideo' : 'setFile'](payload);
       app.api.commit();
       refresh();
+      // 说清「替换」而不是笼统的「已附加」：用户才知道旧附件已经没了
+      app.api.status(had ? `已替换${label}附件：${f.name}（原附件已移除）` : `已附加${label}：${f.name}`);
     };
 
     const openOne = async (kind) => {
@@ -467,7 +574,17 @@ export function buildSide(app, opts = {}) {
       io.downloadBlob(io.safeFileName(asset.name || r.n || '附件'), asset.blob);
     };
 
-    const remove = (kind) => {
+    const remove = async (kind) => {
+      const label = kind === 'video' ? '视频' : '文件';
+      // A23 移除不可逆，先确认
+      const r = app.api.selectedRef(kind);
+      if (r) {
+        const ok = await confirmDialog(
+          `移除${label}附件`,
+          `确定移除该节点上的${label}附件？\n${r.n || '（未命名）'}\n\n附件本体将从本地库中删除，此操作不可恢复。`,
+          '移除', true);
+        if (!ok) return;
+      }
       // 「移除文件不该动视频」这条边界必须守住，而且**失守时要让人看见**。
       // 静默丢掉的话，用户只看到「侧栏空了」，无从判断是显示问题还是真丢了数据。
       const other = kind === 'video' ? 'file' : 'video';
@@ -476,7 +593,7 @@ export function buildSide(app, opts = {}) {
       app.api.commit();
       refresh();
       if (hadOther && !app.api.selectedRef(other)) {
-        app.api.status(`移除${kind === 'video' ? '视频' : '文件'}时，${kind === 'video' ? '文件' : '视频'}引用也一并丢失了（编辑器的 file/video 是各自独立的 data 字段，不应互相影响）`, true);
+        app.api.status(`移除${label}时，${other === 'video' ? '视频' : '文件'}引用也一并丢失了（编辑器的 file/video 是各自独立的 data 字段，不应互相影响）`, true);
       }
     };
 
@@ -959,6 +1076,32 @@ function dialog(title, children, onClose) {
   mask.addEventListener('click', (e) => { if (e.target === mask) close(); });
   document.body.appendChild(mask);
   return { mask, close };
+}
+
+/**
+ * 确认对话框（Promise 版）。
+ *
+ * 之前这类确认用的是 `window.confirm`：它长相由浏览器决定、在深色面板上
+ * 是个突兀的白框，而且**无法测试**（jsdom 里没有实现，直接返回 undefined）。
+ *
+ * 返回 Promise 而不是收回调：调用点是 async 流程（先 await 确认、再打开文件
+ * 选择框），用回调会把后续逻辑缩进一层。
+ *
+ * @returns {Promise<boolean>} true = 确认
+ */
+export function confirmDialog(title, message, okText = '确定', danger = false) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; dlg.close(); resolve(v); } };
+    const dlg = dialog(title, [
+      h('div.mm-hint', { style: { whiteSpace: 'pre-wrap', lineHeight: '1.6' } }, message),
+      h('div.mm-actions', {},
+        h('button.mm-btn' + (danger ? '.danger' : ''), { onclick: () => finish(true) }, okText),
+        h('button.mm-btn', { onclick: () => finish(false) }, '取消'),
+      ),
+    ], () => finish(false));
+    dlg.mask.addEventListener('click', (e) => { if (e.target === dlg.mask) finish(false); });
+  });
 }
 
 /** 自定义主题编辑器 */

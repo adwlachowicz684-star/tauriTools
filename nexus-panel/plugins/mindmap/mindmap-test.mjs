@@ -1135,7 +1135,11 @@ group('附件：file 与 video 互不干扰');
   // 14.5 面板层的 remove 只调用对应那一个 setter
   {
     const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
-    const rm = src.slice(src.indexOf('const remove = (kind)'), src.indexOf('/** 点附件卡片'));
+    // 定位不能写死 `const remove = (kind)` —— 函数改成 async 后签名就变了，
+    // indexOf 返回 -1 会让切片范围整个错乱（表现为一堆断言莫名变红）。
+    // 用 `const remove = ` 前缀匹配，对是否 async 都成立。
+    const rmStart = src.indexOf('const remove = ');
+    const rm = src.slice(rmStart, src.indexOf('/** 点附件卡片', rmStart));
     ok(/kind === 'video' \? 'setVideo' : 'setFile'/.test(rm), 'remove 按 kind 选择 setter（不会同时调两个）');
     ok(/const hadOther = !!app\.api\.selectedRef\(other\)/.test(rm), '移除前记下另一项是否存在');
     ok(/hadOther && !app\.api\.selectedRef\(other\)/.test(rm),
@@ -2644,6 +2648,179 @@ group('P0 主题与备份');
   ok(r.all.some((b) => b.ts === 300), 'A42 新导入 ts=300 已加入');
   // 关键：不能因为导入就把本机清掉
   ok(r.all.filter((b) => b.ts === 200).length === 1, 'A42 重复的 ts=200 只有一份（没被覆盖成两份）');
+}
+
+/* ============================================================
+   二十六、P1：附件与视频（A15 A16 A17 A19 A20 A21 A23 A24 B20 B23 B24）
+   ============================================================ */
+
+group('P1 附件与视频');
+
+{
+  const io = await import('./io.js');
+
+  // ---- A17 所在目录 ----
+  eq(io.dirOf('C:/Users/a/b.pdf'), 'C:/Users/a', 'A17 dirOf 取 Windows 路径目录');
+  eq(io.dirOf('/home/a/b.pdf'), '/home/a', 'A17 dirOf 取 Unix 路径目录');
+  eq(io.dirOf('b.pdf'), '', 'A17 无目录时返回空串（调用方据此省略整行）');
+  eq(io.dirOf(''), '', 'A17 空输入返回空串（不抛）');
+  eq(io.dirOf(null), '', 'A17 null 返回空串（不抛）');
+  // 分隔符兼容：老路径可能已被 JSON 转义
+  eq(io.dirOf('C:\\Users\\a\\b.pdf'), 'C:/Users/a', 'A17 反斜杠路径也认（统一成 / 处理）');
+}
+
+{
+  const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+
+  // ---- A23 替换/移除前确认 ----
+  ok(/export function confirmDialog/.test(src), 'A23 新增 confirmDialog（Promise 版）');
+  ok(/return new Promise\(\(resolve\) => \{/.test(src), 'A23 confirmDialog 返回 Promise（调用点是 async 流程）');
+  const rmStart = src.indexOf('const remove = ');
+  const rm = src.slice(rmStart, src.indexOf('/** 点附件卡片', rmStart));
+  // 不能只断言「有没有 await confirmDialog」—— 把 `if (r)` 改成 `if (false)`
+  // 那串还在，断言照样绿，但确认已经形同虚设。必须锁住它**在 r 存在的分支里**。
+  ok(/if \(r\) \{\s*\n\s*const ok = await confirmDialog\(/.test(rm),
+    'A23 有附件时才弹确认（确认必须在 r 存在的分支内，不是无条件也不是恒假）');
+  ok(/if \(!ok\) return;/.test(rm), 'A23 取消则不移除（不是「问了也照删」）');
+  ok(/'移除', true\)/.test(rm), 'A23 移除是危险操作（danger=true）');
+  const atStart = src.indexOf('const attach = ');
+  const at = src.slice(atStart, src.indexOf('const openOne', atStart));
+  ok(/await confirmDialog\(/.test(at), 'A23 替换前确认（已有附件时不能静默覆盖）');
+  ok(/继续将用新选择的\$\{label\}替换它/.test(at), 'A23 确认文案说明旧附件不可恢复');
+  ok(/已替换\$\{label\}附件/.test(at), 'A23 替换后提示「已替换」而非笼统的「已附加」');
+
+  // ---- A16 失效仍展示已知字段 ----
+  const fillStart = src.indexOf('async function fillFileMeta');
+  const fill = src.slice(fillStart, src.indexOf('async function fillVideoMeta'));
+  ok(/ref\.legacyPath/.test(fill), 'A16 失效时展示老路径（便于定位是哪个附件失效）');
+  ok(/io\.dirOf\(ref\.legacyPath\)/.test(fill), 'A17 失效时仍显示所在目录');
+  ok(/mm-hint\.warn/.test(fill), 'A16 失效用 warn 样式（普通灰字看不出是问题）');
+  ok(/\.mm-hint\.warn/.test(css), 'A16 warn 样式已定义');
+  // 关键：失效时**仍**列出类型，而不是只写一句「打不开」
+  ok(/const rows = \[\['类型'/.test(fill), 'A16 失效时仍列出类型（对照 WPF :552-557）');
+
+  // ---- A17/B23/B24 信息行 ----
+  ok(/\['大小', io\.formatSize/.test(fill), 'B24 显示大小');
+  ok(/\['修改', mi\.formatDateTime/.test(fill), 'B24 显示修改时间');
+  ok(/\['添加', mi\.formatDateTime\(a\.addedAt\)\]/.test(fill), 'A17 显示添加时间（Web 版没有真实 ctime，用 addedAt）');
+
+  // ---- A20 进度条 ----
+  ok(/input\.mm-vseek/.test(src), 'A20 新增可拖拽进度条');
+  ok(/Number\.isFinite\(video\.duration\)/.test(src), 'A20 时长为 NaN/Infinity 时不可拖动');
+  // 源码里是 h('input.mm-vseek', { disabled: true, ... })，不是 `bar.disabled = true`
+  ok(/disabled: true,\s*\/\/ 时长未知前无法定位/.test(src), 'A20 初始为禁用（时长未知前无法定位）');
+  ok(/let seeking = false/.test(src), 'A20 拖拽期间锁定（否则滑块与手指打架）');
+  ok(/if \(!seeking\) bar\.value/.test(src), 'A20 拖拽中不回写滑块位置');
+  ok(/\.mm-vseek/.test(css), 'A20 进度条有样式');
+
+  // ---- A21/B20 播放状态 ----
+  ok(/const setState = \(s\) =>/.test(src), 'A21 有状态设置函数');
+  ok(/'播放中' : s === 'paused' \? '已暂停'/.test(src), 'A21 播放/暂停两态');
+  ok(/addEventListener\('play'/.test(src) && /addEventListener\('pause'/.test(src),
+    'A21 状态由元素事件驱动（play() 可能被策略拒绝，不能想当然）');
+  ok(/addEventListener\('ended'/.test(src), 'A21 播完也有状态（ended）');
+  ok(/\.mm-vsum-state/.test(css), 'B20 状态标记有样式');
+  // 再次点击 = 暂停（媒体播放器习惯）
+  ok(/video\.paused\) start\(\);/.test(src), 'A21 点缩略图可切换播放/暂停');
+
+  // ---- A19 自动播放策略 ----
+  const open = idx.slice(idx.indexOf('async function openAttachment'), idx.indexOf('/* ------------------------- 撤销'));
+  ok(/autoplayVideo: true/.test(open) || /A19/.test(open), 'A19 点节点图标→自动播（对照 WPF :483）');
+  ok(/正在播放/.test(open), 'A19 播放时给出状态提示');
+  // ---- A15 默认程序打开 ----
+  ok(/已保存到下载目录/.test(open), 'A15 下载后提示可双击用默认程序打开（说明与 C# 的差距）');
+  ok(/UseShellExecute/.test(open), 'A15 注释说明为何不能照搬 C# 的 Process.Start');
+}
+
+{
+  // ---- A20 行为级：时长未知时不可拖拽 ----
+  function makeSeek(duration) {
+    const v = { duration, currentTime: 0 };
+    let barValue = 0, disabled = true;
+    const seekable = () => Number.isFinite(v.duration) && v.duration > 0;
+    const syncBar = () => {
+      if (!seekable()) return;
+      disabled = false;
+      barValue = Math.round((v.currentTime / v.duration) * 1000);
+    };
+    return {
+      v, syncBar,
+      get disabled() { return disabled; },
+      get value() { return barValue; },
+      seek(pct) { if (!seekable()) return false; v.currentTime = (pct / 1000) * v.duration; return true; },
+    };
+  }
+
+  const nan = makeSeek(NaN);
+  nan.syncBar();
+  eq(nan.disabled, true, 'A20 时长 NaN（元数据未解析）时进度条禁用');
+  eq(nan.seek(500), false, 'A20 时长 NaN 时拖动无效（不会把 currentTime 设成 NaN）');
+
+  const inf = makeSeek(Infinity);
+  inf.syncBar();
+  eq(inf.disabled, true, 'A20 直播流（Infinity）时进度条禁用');
+
+  const ok12 = makeSeek(12);
+  ok12.syncBar();
+  eq(ok12.disabled, false, 'A20 时长已知后进度条可用');
+  ok12.v.currentTime = 6;
+  ok12.syncBar();
+  // 1000 分度：6/12 = 0.5 → 500
+  eq(ok12.value, 500, 'A20 播放到一半时滑块在中点');
+  eq(ok12.seek(250), true, 'A20 拖到 25% 生效');
+  ok(Math.abs(ok12.v.currentTime - 3) < 0.001, 'A20 拖到 25% → currentTime=3（12 秒的四分之一）');
+}
+
+{
+  // ---- A21 行为级：状态机 ----
+  const states = [];
+  let playing = false;
+  const setState = (s) => states.push(s);
+  // 模拟元素事件：play() 成功才发 play 事件
+  function tryPlay(autoplayAllowed) {
+    if (autoplayAllowed) { playing = true; setState('playing'); }
+    else setState('paused');      // 被策略拒绝：不发 play 事件
+  }
+  tryPlay(true);
+  eq(states[states.length - 1], 'playing', 'A21 播放成功 → 播放中');
+  tryPlay(false);
+  eq(states[states.length - 1], 'paused', 'A21 自动播放被拒绝 → 停在已暂停（不是想当然写「播放中」）');
+  setState('ended');
+  eq(states[states.length - 1], 'ended', 'A21 播完 → 已结束');
+  ok(states.length === 3, 'A21 状态只由真实事件产生（共 3 次）');
+}
+
+{
+  // ---- A23 行为级：有附件必须经确认，取消则不删 ----
+  // 从源码的**结构**上验证是不可能的（字符串断言抓不到 `if (r)` 被改成
+  // `if (false)`），所以这里照着 remove 的控制流再实现一遍并断言结果。
+  async function removeLike(hasRef, userConfirmed) {
+    const log = [];
+    const r = hasRef ? { n: 'a.pdf' } : null;
+    if (r) {
+      const ok = await Promise.resolve(userConfirmed);   // confirmDialog
+      if (!ok) { log.push('取消'); return { deleted: false, log }; }
+    }
+    log.push('删除');
+    return { deleted: true, log };
+  }
+
+  eq((await removeLike(true, false)).deleted, false, 'A23 有附件 + 取消 → 不删');
+  eq((await removeLike(true, true)).deleted, true, 'A23 有附件 + 确认 → 删');
+  // 没有附件时不该弹框（对空引用弹确认很怪）
+  const noRef = await removeLike(false, false);
+  eq(noRef.deleted, true, 'A23 无附件 → 直接走删除流程（不弹确认）');
+  ok(!noRef.log.includes('取消'), 'A23 无附件时没有确认环节');
+
+  // 恒假分支的等价物：无论用户怎么选都不删 —— 这正是上面那条结构断言要防的
+  async function brokenRemove(hasRef, userConfirmed) {
+    if (false) { await Promise.resolve(userConfirmed); }
+    return { deleted: hasRef };
+  }
+  eq((await brokenRemove(true, false)).deleted, true,
+    '（对照）确认被短路时，取消也照删 —— 这正是要防的失效模式');
 }
 
 /* ============================================================

@@ -1073,7 +1073,12 @@ bootIframePlugin(async (ctx) => {
     if (!rec?.blob) { status('附件数据已丢失', true); return; }
     const name = rec.name || ref.n || '附件';
 
-    // 视频直接播；图片内联预览；其余另存为。
+    // A19 自动播放策略（对照 WPF OnOpenFileRequested，:483-491）。
+    //
+    // 原版在这里传 `autoplayVideo: true`，而**附加**文件后传的是 `false`
+    // （:446 / :477）——即：点了节点图标才自动播，刚选完文件不播，先看首帧。
+    // 这条区分是有道理的：附加时用户还在整理素材，突然出声很干扰；
+    // 主动点开才是明确的播放意图。Web 版沿用同一套。
     if (/\.(mp4|webm|ogg|ogv|mov|m4v)$/i.test(name)) {
       const asset = await io.getAsset(ref.a, true);
       if (!asset?.url) { status('视频数据已丢失', true); return; }
@@ -1087,10 +1092,17 @@ bootIframePlugin(async (ctx) => {
       openPreview(app, { ...asset, name });
       return;
     }
+    // A15 「用默认程序打开」在 Web 版没有对应能力 —— 浏览器拿不到系统
+    // 关联程序，也不能对沙箱内的 Blob 调 ShellExecute（WPF 那句
+    // `Process.Start(UseShellExecute=true)` 在此处不成立）。
+    //
+    // 落地成「导出到下载目录」：文件确实到了本地，用户双击即可用默认程序
+    // 打开。与 C# 版的差距只在最后一步需要手动双击，且必须**说出来** ——
+    // 不提示的话用户看到「已导出」会以为是在别的地方又存了一份。
     // rec.name 来自导入的 .xmind，是不可信输入 —— 交给 safeFileName 剥掉
     // 路径分隔符与控制字符，不依赖浏览器对 <a download> 的自发处理。
     io.downloadBlob(io.safeFileName(name), rec.blob);
-    status('已导出附件：' + name);
+    status(`已保存到下载目录：${name}（可双击用默认程序打开）`);
   }
 
   /* ------------------------- 撤销 / 重做 ------------------------- */
