@@ -1,3 +1,5 @@
+import { defaultFileOutput, type TaskNodeData } from '../types';
+
 /**
  * 从 CLI 输出文本里提取"被修改/创建的文件路径"，供下游节点引用。
  *
@@ -264,4 +266,20 @@ export function parseManualPaths(text: string, workdir?: string): FileRef[] {
     });
   }
   return refs;
+}
+
+/**
+ * 决定这个节点"改了哪些文件"。
+ *
+ * 手动模式优先：自动识别是尽力而为，一旦用户明确指定了路径，
+ * 就应该完全信任用户的输入，不再从输出里猜。
+ *
+ * 放在这里而不是 runner.ts：节点执行器抽到 engine/runners/ 后拿不到
+ * runner 的模块级函数，而文件字段的解析本来就属于 files 这一层。
+ */
+export function resolveFileRefs(d: TaskNodeData, output: string): FileRef[] {
+  const cfg = d.fileOutput ?? defaultFileOutput();
+  if (!cfg.enabled) return [];
+  if (cfg.mode === 'manual') return parseManualPaths(cfg.manualPaths, d.workdir);
+  return extractFileRefs(output, d.workdir);
 }

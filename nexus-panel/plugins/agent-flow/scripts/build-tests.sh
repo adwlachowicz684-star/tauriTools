@@ -12,7 +12,7 @@ S="python3 scripts/strip-ts.py"
 # 少了这条映射就会解析到 /tmp/types 而报 ERR_MODULE_NOT_FOUND。
 for f in topo template condition cron canvasOps parallel canvasStore loop updates files params llm credentials github credentialStore crypto tasks taskGroups history secretVault conversations; do
   [ -f "engine/$f.ts" ] && $S "engine/$f.ts" "$OUT/$f.mjs" \
-    --import-map ../types=./types.mjs >/dev/null
+   --import-map ../types=./types.mjs >/dev/null
 done
 # types.ts 里有运行时值（isCondition / DEFAULT_BRANCH / TRIGGER_META），也要生成
 $S types.ts "$OUT/types.mjs" >/dev/null
@@ -24,7 +24,37 @@ $S engine/history.ts "$OUT/history.mjs" \
    --import-map ./tasks=./tasks.mjs >/dev/null
 $S engine/loop.ts "$OUT/loop.mjs" \
    --import-map ../types=./types.mjs >/dev/null
+# ---- 节点执行器（engine/runners/*）与汇总表 ----
+# 执行逻辑已从 runner.ts 的闭包里抽到每个节点一个文件，
+# 测试构建要跟着多生成这些模块，否则 runner.mjs 会 ERR_MODULE_NOT_FOUND。
+RUNNER_IMPORTS="\
+  --import-map ../../types=./types.mjs \
+  --import-map ../credentials=./credentials.mjs \
+  --import-map ../template=./template.mjs \
+  --import-map ../files=./files.mjs \
+  --import-map ../llm=./llm.mjs \
+  --import-map ../params=./params.mjs \
+  --import-map ../condition=./condition.mjs \
+  --import-map ../parallel=./parallel.mjs \
+  --import-map ../loop=./loop.mjs \
+  --import-map ../updates=./updates.mjs"
+for f in task trigger condition parallel loop fs ocr translate update githubUpdate githubPush; do
+  [ -f "engine/runners/$f.ts" ] && $S "engine/runners/$f.ts" "$OUT/runners_$f.mjs" $RUNNER_IMPORTS >/dev/null
+done
+$S engine/runnerRegistry.ts "$OUT/runnerRegistry.mjs" \
+  --import-map ./runners/task=./runners_task.mjs \
+  --import-map ./runners/trigger=./runners_trigger.mjs \
+  --import-map ./runners/condition=./runners_condition.mjs \
+  --import-map ./runners/parallel=./runners_parallel.mjs \
+  --import-map ./runners/loop=./runners_loop.mjs \
+  --import-map ./runners/fs=./runners_fs.mjs \
+  --import-map ./runners/ocr=./runners_ocr.mjs \
+  --import-map ./runners/translate=./runners_translate.mjs \
+  --import-map ./runners/update=./runners_update.mjs \
+  --import-map ./runners/githubUpdate=./runners_githubUpdate.mjs \
+  --import-map ./runners/githubPush=./runners_githubPush.mjs >/dev/null
 $S engine/runner.ts "$OUT/runner.mjs" \
+   --import-map ./runnerRegistry=./runnerRegistry.mjs \
    --import-map ./llm=./llm.mjs \
    --import-map ./files=./files.mjs \
    --import-map ./params=./params.mjs \

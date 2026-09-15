@@ -6,17 +6,10 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-import TaskNode from './components/TaskNode';
-import ConditionNode from './components/ConditionNode';
-import TriggerNode from './components/TriggerNode';
-import ParallelNode from './components/ParallelNode';
-import LoopNode from './components/LoopNode';
-import FsNode from './components/FsNode';
-import UpdateNode from './components/UpdateNode';
-import OcrNode from './components/OcrNode';
-import TranslateNode from './components/TranslateNode';
 import Inspector from './components/Inspector';
-import { GithubUpdateNode, GithubPushNode } from './components/GithubNode';
+// 副作用导入：把 nodes/defs/ 下的节点定义注册进表。
+// 放在这里是刻意的 —— 注册表必须先被填充，下面的 buildNodeTypes() 才有内容。
+import { buildNodeTypes, getDef, allPresets } from './nodes';
 import { CredentialPanel, canUse } from './components/CredentialPanel';
 import {
   type Credential, type CredentialKind,
@@ -81,22 +74,15 @@ import {
   type UndoSnapshot,
 } from './engine/canvasOps';
 
-const nodeTypes: NodeTypes = {
-  'github-update': GithubUpdateNode,
-  'github-push': GithubPushNode,
-  task: TaskNode,
-  condition: ConditionNode,
-  trigger: TriggerNode,
-  parallel: ParallelNode,
-  loop: LoopNode,
-  fs: FsNode,
-  // B站与公众号是两种不同的源，但数据结构与展示几乎一致，
-  // 注册成两个类型是为了在画布上有各自的图标与配色
-  bili: UpdateNode,
-  wechat: UpdateNode,
-  ocr: OcrNode,
-  translate: TranslateNode,
-};
+/**
+ * 画布的节点组件映射。
+ *
+ * 以前这里手工列一张表，加一种节点要同时改这里 —— 漏改的话该节点
+ * 会退化成 xyflow 的默认节点（能拖动但内容全空），且不报错。
+ * 现在从注册表构建，与侧栏、属性面板、执行引擎共用同一份声明。
+ */
+const nodeTypes: NodeTypes = buildNodeTypes();
+
 const STORAGE_KEY = 'agent-flow:v1';
 const TRG_KEY = 'agent-flow:triggers:v1';
 
@@ -730,13 +716,17 @@ export default function App() {
       (n.id === id ? ({ ...n, data: { ...n.data, ...patch } } as FlowNode) : n)));
   }, [setNodes]);
 
+  /** 工具栏「+ 任务」。走注册表，与从侧栏添加走同一条路径 */
   const addTask = () => {
     seq.current += 1;
     const id = `task${Date.now().toString(36)}${seq.current}`;
     setNodes((ns) => [
       ...ns,
-      { id, type: 'task', position: { x: 80 + (ns.length % 4) * 300, y: 80 + Math.floor(ns.length / 4) * 220 },
-        data: makeNode(id, { label: `任务 ${ns.length + 1}` }).data } as FlowNode,
+      {
+        id, type: 'task',
+        position: { x: 80 + (ns.length % 4) * 300, y: 80 + Math.floor(ns.length / 4) * 220 },
+        data: getDef('task').create(id, { label: `任务 ${ns.length + 1}` }),
+      } as FlowNode,
     ]);
     setSelectedId(id);
   };
@@ -877,58 +867,29 @@ export default function App() {
       const suffix = `${Date.now().toString(36)}${seq.current}`;
       const pos = at ?? { x: 120 + (nodes.length % 5) * 60, y: 120 + (nodes.length % 5) * 40 };
 
-      let node: FlowNode;
-      if (p.kind === 'task') {
-        const id = `t${suffix}`;
-        node = { id, type: 'task', position: pos,
-          data: makeNode(id, { label: `${CLI_META[p.cli]?.label ?? '任务'}任务`, cli: p.cli }).data } as FlowNode;
-      } else if (p.kind === 'condition') {
-        const id = `c${suffix}`;
-        node = { id, type: 'condition', position: pos,
-          data: makeConditionNode(id, { label: '条件判断' }).data } as FlowNode;
-      } else if (p.kind === 'parallel') {
-        const id = `p${suffix}`;
-        node = { id, type: 'parallel', position: pos,
-          data: makeParallelNode(id, { label: '并发控制' }).data } as FlowNode;
-      } else if (p.kind === 'loop') {
-        const id = `lp${suffix}`;
-        node = { id, type: 'loop', position: pos,
-          data: makeLoopNode(id, { label: '循环' }).data } as FlowNode;
-      } else if (p.kind === 'fs') {
-        const id = `f${suffix}`;
-        node = { id, type: 'fs', position: pos,
-          data: makeFsNode(id, { label: '文件操作' }).data } as FlowNode;
-      } else if (p.kind === 'bili') {
-        const id = `bl${suffix}`;
-        node = { id, type: 'bili', position: pos,
-          data: makeUpdateNode(id, 'bilibili').data } as FlowNode;
-      } else if (p.kind === 'wechat') {
-        const id = `wx${suffix}`;
-        node = { id, type: 'wechat', position: pos,
-          data: makeUpdateNode(id, 'wechat').data } as FlowNode;
-      } else if (p.kind === 'ocr') {
-        const id = `ocr${suffix}`;
-        node = { id, type: 'ocr', position: pos,
-          data: makeOcrNode(id, { label: '图片识别' }).data } as FlowNode;
-      } else if (p.kind === 'github-update') {
-        const id = `gu${suffix}`;
-        node = { id, type: 'github-update', position: pos,
-          data: makeGithubUpdateNode(id, { label: 'GitHub 更新' }).data } as FlowNode;
-      } else if (p.kind === 'github-push') {
-        const id = `gp${suffix}`;
-        node = { id, type: 'github-push', position: pos,
-          data: makeGithubPushNode(id, { label: 'GitHub 推送' }).data } as FlowNode;
-      } else if (p.kind === 'translate') {
-        const id = `ty${suffix}`;
-        node = { id, type: 'translate', position: pos,
-          data: makeTranslateNode(id, { label: '翻译' }).data } as FlowNode;
-      } else {
-        // 一个节点即可挂多种方式，默认只勾「手动」——
-        // 周期/定时/监听/调用都会自动跑，放上画布就生效太危险
-        const id = `tr${suffix}`;
-        node = { id, type: 'trigger', position: pos,
-          data: makeTriggerNode(id, ['manual'], { label: '触发器' }).data } as FlowNode;
-      }
+      /*
+       * 以前这里是一条 12 个分支的 if-else 链，每加一种节点都要来插一段，
+       * 并且要记住"这个类型该用哪个 make 函数、id 前缀是什么"。
+       * 现在这些都写在节点定义里，这里只按预设取用。
+       *
+       * preset.key 形如 'task' 或 'task:codebuddy'（带变体的类型）。
+       */
+      const preset = allPresets().find((x) => x.key === p.kind)
+        ?? allPresets().find((x) => x.type === p.kind);
+      if (!preset) return;                       // 拖拽载荷已损坏，静默忽略
+      const def = getDef(preset.type);
+      const id = `${def.meta.idPrefix}${suffix}`;
+      const node = {
+        id,
+        type: preset.type,
+        position: pos,
+        /*
+         * 顺序有讲究：create 先铺全字段默认值，再用 preset.init() 覆盖
+         * 变体差异（cli / source / label）。反过来写，init 里精心设的
+         * 「WorkBuddy CLI任务」会被 create 的默认值盖掉。
+         */
+        data: { ...def.create(id), ...preset.init() },
+      } as FlowNode;
       setNodes((ns) => [...ns, node]);
       setSelectedId(node.id);
     },
@@ -959,13 +920,17 @@ export default function App() {
     e.dataTransfer.dropEffect = 'copy';
   }, []);
 
+  /** 工具栏「+ 条件」。同上，走注册表 */
   const addCondition = () => {
     seq.current += 1;
     const id = `cond${Date.now().toString(36)}${seq.current}`;
     setNodes((ns) => [
       ...ns,
-      { id, type: 'condition', position: { x: 220 + (ns.length % 4) * 300, y: 300 },
-        data: makeConditionNode(id, { label: '条件判断' }).data } as FlowNode,
+      {
+        id, type: 'condition',
+        position: { x: 220 + (ns.length % 4) * 300, y: 300 },
+        data: getDef('condition').create(id, { label: '条件判断' }),
+      } as FlowNode,
     ]);
     setSelectedId(id);
   };

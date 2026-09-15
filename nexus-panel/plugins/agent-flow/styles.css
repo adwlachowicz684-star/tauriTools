@@ -186,6 +186,12 @@ body { background: var(--af-bg); color: var(--af-fg); }
  * 这里不单独开特例 —— 状态由 StatusDot 圆点呈现，保持各节点行为统一。
  */
 .node-card.kind-github { border-left-color: #8957e5; }
+/*
+ * 未注册节点（自定义节点被移除、或工作流来自另一个环境）。
+ * 用中性灰且不加状态色 —— 它不可能有运行态，染成绿/红会让人以为跑过了。
+ */
+.node-card.kind-unknown { border-left-color: #64748b; border-style: dashed; }
+
 .node-kind {
   font-size: 10px; padding: 0 6px; border-radius: 999px; flex: none;
   border: 1px solid var(--af-line); color: var(--af-dim);
