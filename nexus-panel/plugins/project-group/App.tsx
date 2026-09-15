@@ -11,6 +11,7 @@ import {
   BackupDialog, ChainDialog, EditorDialog,
 } from './components/ToolsPanel';
 import { ConfirmDialog, ContextMenu, MenuLayerContext, type MenuItem } from './components/ui';
+import { normalizeKey } from './api';
 import { useFpx } from './hooks/useFpx';
 import { useCardHotkeys } from './hooks/useCardHotkeys';
 import { useIconThumbs } from './hooks/useIconThumbs';
@@ -262,6 +263,28 @@ export default function App() {
   const refreshChainActions = useCallback(() => {
     setChainVersion((v) => v + 1);
   }, []);
+
+  /**
+   * 点项目卡片上的「→ 项目组名」跳过去选中它（对照 WPF 的 SelectLinkedGroupCommand）。
+   *
+   * CardInfo 里只有组**名**（linkedGroup），定位却要**路径**，
+   * 所以从链接记录里按项目路径反查。
+   *
+   * 查不到就明说，而不是静默不动：那通常意味着链接记录缺失
+   * （手改过 config、或从未在这台机器上登记过），此时组名仍在卡片上显示，
+   * 但点它跳不过去 —— 说清楚比让人反复点要强。
+   */
+  const jumpToGroup = useCallback((card: CardInfo) => {
+    const ci = boot?.platform === 'windows';
+    const key = normalizeKey(card.path, ci);
+    const row = boot?.links.find((l) => normalizeKey(l.project, ci) === key);
+    if (!row?.group) {
+      ctx.toast(`找不到「${card.linkedGroup}」的路径：链接记录里没有这一条`, 'err');
+      return;
+    }
+    setFocus('group');
+    s.setSelGroup(row.group);
+  }, [boot, ctx, s, setFocus]);
 
   /**
    * 设置页改完配置后要刷新主视图。
@@ -649,6 +672,7 @@ export default function App() {
               active={s.activeTab.project}
               onTab={(i) => s.setActiveTab((prev) => ({ ...prev, project: i }))}
               focused={focus === 'project'}
+              onJumpToGroup={jumpToGroup}
             />
 
             {/*
@@ -895,6 +919,7 @@ export default function App() {
 function Column({
   title, kind, tabs, cards, selected, onSelect, onOpen, onMove, onMoveToTab, onCrossDrop,
   thumbs, menus, onAdd, onAddTab, onRenameTab, onRemoveTab, active, onTab, focused,
+  onJumpToGroup,
 }: {
   title: string;
   kind: CardKind;
@@ -918,6 +943,8 @@ function Column({
   onTab: (i: number) => void;
   /** 键盘焦点栏：卡片快捷键作用于此栏 */
   focused: boolean;
+  /** 点卡片上的项目组名 → 在项目组栏里选中它（仅项目栏用得到） */
+  onJumpToGroup?: (card: CardInfo) => void;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   // 由「⋯」菜单触发的内联重命名：-1 表示不在编辑
@@ -972,6 +999,7 @@ function Column({
         onCrossDrop={onCrossDrop}
         menus={menus}
         emptyHint={`还没有${title}，点「＋ 添加」选一个文件夹`}
+        onJumpToGroup={onJumpToGroup}
       />
 
       {menu && (
@@ -1001,7 +1029,8 @@ function HelpDialog({ onClose, platform }: { onClose: () => void; platform: stri
             会在项目目录下为每个启用的 agent 链接名建立指向项目组的链接。
             建链只有拖放这一条路，没有按钮。</li>
           <li><b>撤销链接</b>：在「项目」卡片上右键 →「撤销链接」。</li>
-          <li><b>链接名</b>：工具条「链接名」可开关 .opencode / .claude / .codex … 也可加自定义名字。</li>
+          <li><b>链接名 / 服务 / 基础设置</b>：都在外壳右上角的「⚙ 设置」里（重载按钮左侧）——
+            链接名开关、MCP 与目录监听、备份与交互选项等。</li>
           <li><b>内容浏览</b>：选中项目组后，右栏列出其 agent / skill / rule（读 <span className="p-mono">agent(s)/ skill(s)/ rules</span> 目录），点条目看内容。</li>
           <li><b>新建</b>：直接创建文件夹并加入页签（项目组可带模板目录）。</li>
           <li><b>保护 / 图标</b>：卡片右键可设 ACL 保护、自定义图标与标签颜色。</li>

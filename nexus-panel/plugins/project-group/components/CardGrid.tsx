@@ -139,7 +139,7 @@ export function TabBar({
 /** 卡片网格：选中 / 打开 / 右键菜单 / 拖拽（跨栏=分配，同栏=排序） */
 export function CardGrid({
   kind, cards, selected, thumbs, onSelect, onOpen, onMove, onCrossDrop, menus,
-  emptyHint,
+  emptyHint, onJumpToGroup,
 }: {
   kind: CardKind;
   cards: CardInfo[];
@@ -152,6 +152,12 @@ export function CardGrid({
   onCrossDrop: (drag: DragPayload, target: CardInfo | null) => void;
   menus: (card: CardInfo) => MenuItem[];
   emptyHint: string;
+  /**
+   * 点卡片上的项目组名就跳过去选中它（对照 WPF 的 SelectLinkedGroupCommand）。
+   * 传整张卡片而不是组名：CardInfo 里只有组**名**、没有组**路径**，
+   * 而定位要的是路径，得由外层从链接记录里反查。
+   */
+  onJumpToGroup?: (card: CardInfo) => void;
 }) {
   const [menu, setMenu] = useState<{ card: CardInfo; x: number; y: number } | null>(null);
   const [over, setOver] = useState(-1);
@@ -226,6 +232,21 @@ export function CardGrid({
           <div className="fpx-card-path" title={c.path}>{c.path}</div>
           <div className="fpx-card-badges">
             {c.hasLink && <span className="fpx-badge link" title="已建链接">🔗 {c.linkCount}</span>}
+            {/* 链接到哪个项目组：光有「🔗 3」看不出连的是谁，必须把组名写出来。
+                只在项目卡片上显示——项目组卡片自己就是组，写自己没意义。 */}
+            {kind === 'project' && c.linkedGroup && (c.hasLink || c.hasBroken) && (
+              <span
+                className={`fpx-badge group${onJumpToGroup ? ' jump' : ''}`}
+                title={`链接到项目组：${c.linkedGroup}${onJumpToGroup ? '（点击定位）' : ''}`}
+                onClick={(e) => {
+                  if (!onJumpToGroup) return;
+                  e.stopPropagation();          // 别顺带把卡片选中态改了
+                  onJumpToGroup(c);
+                }}
+              >
+                → {c.linkedGroup}
+              </span>
+            )}
             {c.hasConflict && <span className="fpx-badge warn" title="同名位置被普通目录/文件占用">⚠ 冲突</span>}
             {c.hasBroken && !c.hasLink && <span className="fpx-badge dim" title="链接失效">∅ 未链接</span>}
             {c.locked && <span className="fpx-badge lock" title="ACL 已保护">🔒</span>}
