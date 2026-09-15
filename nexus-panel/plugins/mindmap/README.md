@@ -448,6 +448,43 @@ SVG 缺 `fill` 属性时**默认渲染成黑色** —— 于是图标在深色�
 
 图标另带 SVG `<title>`（附件名），悬停即可知道挂的是哪个文件 —— 光看图标认不出来。
 
+## 页签拖拽（A53–A57）
+
+对应 WPF `WireSheetDragOnce` 那套指针状态机
+（`MindMapPanel.xaml.cs:1394-1700`）：跟随动画 / 死区换位 / 边缘自动滚动 /
+插入竖条 / 取消回弹。
+
+### 为什么不用 HTML5 Drag & Drop
+
+原实现用 `draggable=true` + dragstart/dragover/drop，三个硬伤：
+
+1. **拖影由浏览器绘制，无法自定义** —— 跟随动画做不到；
+2. **`dragstart` 无死区** —— 手指一抖就进入拖拽，单击切换、双击重命名会被吞；
+3. **`dragover` 频率不足以驱动流畅的实时换位**。
+
+改用 Pointer Events 自建状态机（`tab-drag.js`）。
+
+### 关键实现
+
+| 项 | 做法 |
+|---|---|
+| 启动阈值 | 5px（WPF 用 `MinimumHorizontalDragDistance`） |
+| 换位死区 | `min(16, 邻框宽×0.2)` —— 小页签自动缩小，否则窄页签几乎换不动 |
+| 探测点 | 跟随元素**中心** X（不是指针位置，才跟手） |
+| 循环推进 | 一次 move 可跨多格，快速甩动追得上 |
+| 自动滚动 | 贴边 56px 区，4–18px/帧按侵入深度加速；用 rAF（页面隐藏自动暂停） |
+| 取消 | ESC 或落点未变 → 回弹动画（WPF 的 `SpringBack`） |
+
+**滚动后必须主动重算跟随与换位** —— 滚动不产生 `pointermove`，不补算标签会脱手。
+
+**事件委托**：`pointerdown` 挂容器、按 `[data-tab-id]` 找目标，所以
+`renderTabs()` 每次重建 DOM 都不会累积监听器（原实现是每个页签 wire 一次）。
+
+**拖拽结束吞掉这一次 click**，否则松手会顺带触发「切换画布」。
+
+**顺序归并兜底**：重排后若数量对不上就重建、DOM 里漏掉的补到末尾 ——
+绝不能静默丢画布。
+
 ## 优先级 / 进度徽章（A1 / A2 / A13 / A14）
 
 对应 WPF `BuildTagPage` + `BuildSpriteNumRow`（`MindMapPanel.xaml.cs:178-218`）。

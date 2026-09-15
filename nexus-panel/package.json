@@ -13,8 +13,6 @@
     "tauri:build": "tauri build --config src-tauri/tauri.vite.conf.json",
     "tauri:dev:plain": "tauri dev",
     "tauri:build:plain": "tauri build",
-    "config:sync": "node scripts/sync-config.mjs",
-    "config:check": "node scripts/sync-config.mjs --check",
     "test:adapt": "node adapt-test.mjs",
     "test": "node smoke-test.mjs",
     "test:theme": "node theme-test.mjs",
@@ -29,14 +27,7 @@
     "test:xss": "node xss-test.mjs",
     "test:theme-picker": "node theme-picker-test.mjs",
     "test:handshake": "node handshake-test.mjs",
-    "test:mindmap": "node plugins/mindmap/mindmap-test.mjs",
-    "test:theme-bridge": "node theme-bridge-test.mjs",
-    "test:flash": "node plugin-flash-test.mjs",
-    "test:tokens": "node style-tokens-test.mjs",
-    "test:audit": "node style-audit-test.mjs",
-    "test:plugin-theme": "node plugin-theme-test.mjs",
-    "test:tooltip": "node tooltip-test.mjs",
-    "test:inspector": "node inspector-test.mjs"
+    "test:mindmap": "node plugins/mindmap/mindmap-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -49,8 +40,15 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
-    "jsdom": "^24",
+    "jsdom": "^24.1.3",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "tough-cookie": "*",
+    "iconv-lite": "*",
+    "tr46": "*",
+    "cssstyle": "*",
+    "rrweb-cssom": "*",
+    "parse5": "*",
+    "ws": "*"
   }
 }

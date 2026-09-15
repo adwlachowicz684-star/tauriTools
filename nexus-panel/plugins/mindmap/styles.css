@@ -234,6 +234,32 @@ html, body {
 .mm-tab.drop-before { box-shadow: inset 2px 0 0 var(--accent), inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light); }
 .mm-tab.drop-after  { box-shadow: inset -2px 0 0 var(--accent), inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light); }
 
+/* A53–A57 页签拖拽（Pointer Events 状态机，见 tab-drag.js） */
+
+/* 被拖的页签：留在 DOM 里占位做「让位」，自身半透明 + 轻微缩小。
+   不能 visibility:hidden —— 那样它不占位，其他页签不会让开。 */
+.mm-tab.dragging {
+  opacity: .35;
+  /* 原位留一个明显的「洞」，配合竖条指示落点 */
+  background: var(--surface-sunk, var(--surface));
+  box-shadow: none;
+}
+/* A56 插入位置竖条（对齐 WPF 的 _sheetInsertBar：2px 圆角竖线） */
+.mm-tab-insertbar {
+  background: var(--accent);
+  opacity: .9;
+  box-shadow: 0 0 4px var(--accent);
+}
+/* A53 跟随元素：脱离布局、贴着指针，不受容器滚动影响 */
+.mm-tab-follow {
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
+  cursor: grabbing;
+  white-space: nowrap;
+}
+
+/* 拖拽中整个容器禁止文字选中 —— 否则会选到页签标题 */
+.mm-tabs { touch-action: pan-y; }
+
 .mm-tab .x { margin-left: 6px; opacity: .6; }
 .mm-tab .x:hover { opacity: 1; color: var(--danger, #e06c75); }
 

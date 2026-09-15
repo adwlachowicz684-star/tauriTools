@@ -20,6 +20,7 @@ import * as wb from './workbook.js';
 import * as store from './store.js';
 import * as io from './io.js';
 import { buildSide, openVideo, openPreview, openSettings } from './panels.js';
+import { attachTabDrag } from './tab-drag.js';
 import { buildFileList } from './filelist.js';
 import * as xmind from './xmind.js';
 
@@ -68,7 +69,6 @@ bootIframePlugin(async (ctx) => {
   let saveTimer = null;
   let lastBackupAt = 0;
   let lastBackupFp = null;      // 最新快照的指纹，用于「内容没变就不重复备份」
-  let dragTabId = null;         // 页签拖拽排序：当前被拖动的画布 id
   let lastCanvasTheme = null;   // 最近一次下发的画布配色（编辑器重载后用来补套）
   let dirty = false;
 
@@ -413,9 +413,10 @@ bootIframePlugin(async (ctx) => {
     tabsEl.innerHTML = '';
     for (const s of workbook.sheets) {
       const active = s.id === workbook.activeId;
+      // data-tab-id：拖拽用事件委托按它找目标，故 renderTabs 重建后无需重新绑定
       const btn = h('button.mm-tab' + (active ? '.active' : ''), {
         ondblclick: guard('重命名', () => renameSheet(s.id)),
-        draggable: true,                       // 拖拽排序
+        'data-tab-id': s.id,
       }, s.title);
       btn.appendChild(h('span.x', {
         onclick: (e) => { e.stopPropagation(); guard('复制画布', () => duplicateSheet(s.id))(); },
@@ -428,56 +429,34 @@ bootIframePlugin(async (ctx) => {
         }, '✕'));
       }
       btn.addEventListener('click', guard('切换画布', () => switchSheet(s.id)));
-      wireTabDrag(btn, s.id);
       tabsEl.appendChild(btn);
     }
   }
 
   /**
-   * 页签拖拽排序（对齐 C# 版「页签拖拽排序」）。
-   * HTML5 drag 事件即可，无需指针计算：经过谁就把被拖的插到谁的位置。
+   * A53–A57 页签拖拽：改用 Pointer Events 自建状态机（见 tab-drag.js）。
+   *
+   * 事件委托挂在容器上，所以上面 renderTabs() 每次重建 DOM 都不会累积监听器。
    */
-  function wireTabDrag(el, id) {
-    el.addEventListener('dragstart', (e) => {
-      dragTabId = id;
-      el.classList.add('dragging');
-      e.dataTransfer?.setData('text/plain', id);
-      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-    });
-    el.addEventListener('dragend', () => {
-      dragTabId = null;
-      el.classList.remove('dragging');
-      for (const t of tabsEl.children) t.classList.remove('drop-before', 'drop-after');
-    });
-    el.addEventListener('dragover', (e) => {
-      if (!dragTabId || dragTabId === id) return;
-      e.preventDefault();                      // 允许放下
-      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-      // 落在页签左半边插到它前面，右半边插到后面
-      const r = el.getBoundingClientRect();
-      const before = e.clientX < r.left + r.width / 2;
-      el.classList.toggle('drop-before', before);
-      el.classList.toggle('drop-after', !before);
-    });
-    el.addEventListener('dragleave', () => el.classList.remove('drop-before', 'drop-after'));
-    el.addEventListener('drop', (e) => {
-      e.preventDefault();
-      el.classList.remove('drop-before', 'drop-after');
-      if (!dragTabId || dragTabId === id) return;
-      const r = el.getBoundingClientRect();
-      const before = e.clientX < r.left + r.width / 2;
-      guard('调整顺序', () => moveTab(dragTabId, id, before))();
-    });
-  }
+  const tabDrag = attachTabDrag(tabsEl, {
+    // 只有一张画布时拖了也没意义，直接不启动
+    canDrag: () => (workbook.sheets?.length || 0) > 1,
+    getOrder: () => workbook.sheets.map((s) => s.id),
+    onReorder: guard('调整顺序', (order) => applyTabOrder(order)),
+  });
 
-  /** 把 from 移到 to 的前面或后面 */
-  function moveTab(fromId, toId, before) {
-    const from = workbook.sheets.findIndex((s) => s.id === fromId);
-    if (from < 0) return;
-    const [item] = workbook.sheets.splice(from, 1);
-    let to = workbook.sheets.findIndex((s) => s.id === toId);
-    if (to < 0) to = workbook.sheets.length - 1;
-    workbook.sheets.splice(before ? to : to + 1, 0, item);
+  /** 按新顺序重排画布。order 来自 DOM，故以 DOM 为准做一次归并 */
+  function applyTabOrder(order) {
+    const map = new Map(workbook.sheets.map((s) => [s.id, s]));
+    const next = [];
+    for (const id of order) {
+      const s = map.get(id);
+      if (s) { next.push(s); map.delete(id); }
+    }
+    // 兜底：DOM 里漏掉的（理论上不会）补到末尾，绝不能静默丢画布
+    for (const s of map.values()) next.push(s);
+    if (next.length !== workbook.sheets.length) { renderTabs(); return; }
+    workbook.sheets = next;
     renderTabs();
     persist();
     status('画布顺序已调整');

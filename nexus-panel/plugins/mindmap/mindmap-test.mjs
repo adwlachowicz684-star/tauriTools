@@ -2090,6 +2090,156 @@ const tb = await import('./tag-badges.js');
 }
 
 /* ============================================================
+   二十三、A53–A57 页签拖拽
+   ============================================================ */
+
+group('A53–A57 页签拖拽');
+
+const { attachTabDrag, swapIndex } = await import('./tab-drag.js');
+
+{
+  const src = fs.readFileSync(path.join(HERE, 'tab-drag.js'), 'utf8');
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+
+  // ---- 为什么不用 HTML5 DnD：模块注释必须写明，否则后人会改回去 ----
+  ok(/draggable=true/.test(src) && /无法自定义|做不到/.test(src), '模块说明了 HTML5 DnD 的局限（防止被改回去）');
+  ok(/无死区|没有死区/.test(src), '点明 HTML5 dragstart 无死区（会吞掉单击/双击）');
+
+  // ---- 事件委托：renderTabs 重建 DOM 时不重新绑定 ----
+  ok(/container\.addEventListener\('pointerdown', onPointerDown\)/.test(src), 'pointerdown 挂在容器上（事件委托）');
+  ok(/e\.target\.closest\?\.\('\[data-tab-id\]'\)/.test(src), '按 [data-tab-id] 找目标');
+  ok(/document\.addEventListener\('pointermove'/.test(src), 'pointermove 挂 document（指针会移出容器）');
+  ok(/data-tab-id/.test(idx), 'renderTabs 给页签加了 data-tab-id');
+  ok(!/draggable:\s*true/.test(idx), '（对照）不再用 draggable=true');
+  ok(!/function wireTabDrag/.test(idx), '（对照）不再逐个 wireTabDrag（重建会累积监听器）');
+
+  // ---- A54 阈值：不达阈值不启动 ----
+  ok(/const DRAG_THRESHOLD = 5;/.test(src), '有拖拽启动阈值');
+  ok(/Math\.hypot\(dx, dy\) < DRAG_THRESHOLD\) return;/.test(src), '死区内不进入拖拽态（单击/双击才不会被吞）');
+
+  // ---- A53 跟随：克隆而非移动原节点 ----
+  ok(/cloneNode\(true\)/.test(src), 'A53 用克隆做跟随元素');
+  ok(/position:fixed/.test(src), '跟随元素 fixed 定位（不受容器滚动影响）');
+  ok(/pointer-events:none/.test(src), '跟随元素不拦截指针事件');
+  ok(/removeAttribute\('data-tab-id'\)/.test(src), '跟随元素不参与顺序计算（否则顺序里会多一项）');
+  ok(/\.mm-tab-follow/.test(fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8')), '有跟随元素样式');
+
+  // ---- A55 自动滚动 ----
+  ok(/const SCROLL_ZONE = 56;/.test(src), '边缘区 56px（对齐 WPF）');
+  ok(/SCROLL_MIN_SPEED = 4/.test(src) && /SCROLL_MAX_SPEED = 18/.test(src), '速度区间 4–18（对齐 WPF）');
+  ok(/requestAnimationFrame/.test(src), '用 rAF 驱动（页面隐藏时自动暂停，不空转）');
+  ok(/container\.scrollLeft = /.test(src), '真的改 scrollLeft');
+  // 滚动不产生 pointermove，必须主动重算，否则标签脱手
+  ok(/滚动不产生 pointermove/.test(src), '注释说明滚动后必须主动重算');
+
+  // ---- A56 插入竖条 ----
+  ok(/mm-tab-insertbar/.test(src), 'A56 有插入竖条元素');
+  ok(/mm-tab-insertbar/.test(fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8')), '竖条有样式');
+  ok(/width:2px/.test(src), '竖条 2px 宽（对齐 WPF _sheetInsertBar）');
+
+  // ---- A57 回弹 ----
+  ok(/function springBack/.test(src), 'A57 有回弹函数');
+  ok(/e\.key === 'Escape'/.test(src), 'ESC 可取消');
+  ok(/transition = `left \$\{SPRING_MS\}/.test(src), '回弹走 transition 动画（不是瞬间消失）');
+
+  // ---- 拖拽结束吞掉 click ----
+  ok(/onClickCapture/.test(src), '拖拽刚结束时吞掉 click（避免顺带切换画布）');
+  ok(/Date\.now\(\) - lastDragEndAt < 220/.test(src), '有时间间隔判定');
+
+  // ---- 取消时恢复 DOM ----
+  ok(/container\.insertBefore\(el, anchor \|\| null\)/.test(src), '取消时按锚点插回原位');
+}
+
+{
+  // ---- A54 死区换位算法（对齐 WPF GetSheetSwapIndex）----
+  // 三个等宽 100px 的页签，中心分别在 50 / 150 / 250
+  const rects = [
+    { left: 0, width: 100 },
+    { left: 100, width: 100 },
+    { left: 200, width: 100 },
+  ];
+  const R = (o) => o;   // swapIndex 只用 .left / .width
+
+  // 拖第 0 个（rects[0] 传 null 表示它自己）
+  const r0 = [null, R(rects[1]), R(rects[2])];
+  // 探测点略过邻框中心 150，但没超过死区（16）→ 不换
+  eq(swapIndex(150 + 10, 0, r0), 0, '越过中心但在死区内 → 不换（防抖动）');
+  // 超过中心 + 死区 → 换一步
+  eq(swapIndex(150 + 20, 0, r0), 1, '越过中心+死区 → 换一步');
+  // 甩得很远 → 一次推进到底（循环多步）
+  eq(swapIndex(999, 0, r0), 2, '快速甩动一次跨多格（循环推进）');
+  // 反向
+  eq(swapIndex(-999, 2, [R(rects[0]), R(rects[1]), null]), 0, '反向甩到最前');
+  // 死区内保持
+  eq(swapIndex(50, 0, r0), 0, '原地不动 → 索引不变');
+
+  // 死区对小页签自动缩小（min(16, 宽*0.2)）
+  const small = [null, { left: 0, width: 30 }];   // 邻框宽 30 → 死区 = 6
+  eq(swapIndex(15 + 8, 0, small), 1, '小页签：死区缩小到 6，越过即换');
+  eq(swapIndex(15 + 2, 0, small), 0, '小页签：仍在死区内不换');
+}
+
+{
+  // ---- 顺序归并：DOM 漏了绝不能静默丢画布 ----
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const fn = idx.slice(idx.indexOf('function applyTabOrder'), idx.indexOf('function addSheet'));
+  ok(/new Map\(workbook\.sheets\.map\(\(s\) => \[s\.id, s\]\)\)/.test(fn), '按 id 建映射');
+  ok(/for \(const s of map\.values\(\)\) next\.push\(s\);/.test(fn), 'DOM 里漏掉的补到末尾（不静默丢画布）');
+  ok(/if \(next\.length !== workbook\.sheets\.length\) \{ renderTabs\(\); return; \}/.test(fn),
+    '数量对不上就重建，不硬写（防止写坏数据）');
+}
+
+{
+  // ---- 只有一张画布时不启动拖拽 ----
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const seg = idx.slice(idx.indexOf('const tabDrag = attachTabDrag'), idx.indexOf('function applyTabOrder'));
+  ok(/canDrag: \(\) => \(workbook\.sheets\?\.length \|\| 0\) > 1/.test(seg),
+    '只有一张画布时不启动拖拽（拖了也没意义）');
+}
+
+{
+  // ---- 行为级：模拟一次完整拖拽，验证顺序真的变了 ----
+  const c = dom.window.document.createElement('div');
+  dom.window.document.body.appendChild(c);
+  for (const id of ['A', 'B', 'C']) {
+    const b = dom.window.document.createElement('button');
+    b.className = 'mm-tab';
+    b.setAttribute('data-tab-id', id);
+    b.textContent = id;
+    c.appendChild(b);
+  }
+  let order = ['A', 'B', 'C'];
+  const d = attachTabDrag(c, {
+    getOrder: () => order.slice(),
+    onReorder: (o) => { order = o.slice(); },
+    canDrag: () => true,
+  });
+
+  // jsdom 没有布局，getBoundingClientRect 全 0 —— 这里只验证状态机不抛错、
+  // 且未达阈值不会误触发重排（真正的顺序计算靠上面 swapIndex 的单元测试）
+  const bA = c.children[0];
+  // jsdom 没有 PointerEvent 构造器，用 MouseEvent 派发同名的 pointer* 事件
+  // （attachTabDrag 只监听事件名，不看事件类型）
+  const ev = (type, x, y) => {
+    const e = new dom.window.MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 });
+    return e;
+  };
+
+  bA.dispatchEvent(ev('pointerdown', 10, 10));
+
+  // 微小移动（2px）：不达阈值 5px
+  dom.window.document.dispatchEvent(ev('pointermove', 12, 11));
+  eq(order.join(''), 'ABC', '未达阈值不触发重排（单击不会被吞）');
+
+  // 松手
+  dom.window.document.dispatchEvent(ev('pointerup', 12, 11));
+  eq(order.join(''), 'ABC', '未进入拖拽态松手 → 顺序不变');
+
+  d.destroy();
+  c.remove();
+}
+
+/* ============================================================
    结果
    ============================================================ */
 
