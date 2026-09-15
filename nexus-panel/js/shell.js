@@ -18,6 +18,7 @@ import * as extPolicy from './external-policy.js';
 import { getPluginConfig, setPluginConfig } from './plugin-config.js';
 import { openThemePicker } from './theme-picker.js';
 import { installTooltip } from './tooltip.js';
+import { installInspector, toggleInspector, isInspectorOn } from './inspector.js';
 
 const $ = (s) => document.querySelector(s);
 const state = { badges: {} };
@@ -45,6 +46,9 @@ function toast(msg, type = 'info') {
 /* 悬浮提示：接管原生 title，鼠标移上去立刻显示（原生有约 1 秒延迟，无法调整）。
    必须在插件挂载前安装 —— 插件自己的按钮也带 title。 */
 installTooltip();
+/* 开发者模式 · 元素检查器：Ctrl/Cmd + Shift + D 开关。
+   装在宿主之前 —— 插件挂载后它内部的控件也要能查。 */
+installInspector();
 
 /* ---------------------------- 宿主（主题在引擎内初始化） ---------------------------- */
 const host = createHost({
@@ -519,6 +523,21 @@ async function init() {
   };
   $('#btn-add').onclick = openAddDialog;
   $('#btn-settings').onclick = () => navigate('settings');
+
+  /* 开发者模式 · 元素检查器：开启后鼠标悬浮即高亮控件并显示名称。
+     按钮自身的激活态（.active）与检查器状态保持同步 ——
+     否则按快捷键开启后，按钮看起来还是关着的。 */
+  const inspectBtn = $('#btn-inspect');
+  if (inspectBtn) {
+    inspectBtn.onclick = () => {
+      toggleInspector();
+      inspectBtn.classList.toggle('active', isInspectorOn());
+    };
+    inspectBtn.classList.toggle('active', isInspectorOn());
+    document.addEventListener('nexus:inspector-toggle', () => {
+      inspectBtn.classList.toggle('active', isInspectorOn());
+    });
+  }
   $('#bar-reload').onclick = () => host.state.activeId && host.mount(host.state.activeId);
   $('#bar-plugin-settings').onclick = openPluginSettings;
 

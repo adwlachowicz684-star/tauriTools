@@ -129,12 +129,7 @@
      · 新拟态：--surface 与 --bg 同色，靠 --sh-* 塑形，--border 透明
      · 扁平：  --sh-* 调到与底色接近（阴影隐形），改由 --border 描边
      · 玻璃：  --surface 半透明 + --blur 打开毛玻璃 */
-  /* ⚠️ --border 是**风格开关**，不是"分隔线颜色"。
-     新拟态下它是 transparent —— 那是故意的，边界交给阴影。
-     要画"两个区域之间的分界"请用 --divider（任何风格都可见）。
-     详见 js/theme-manager.js 里 --divider 的注释。 */
   --border:        transparent;
-  --divider:       rgba(255,255,255,.10);
   --blur:          0px;
   --bg-image:      none;
   --hairline:      rgba(255,255,255,.05);
@@ -577,7 +572,7 @@ body {
    也能读（详见 .dialog 处关于底板的说明）。 */
 .nexus-tip {
   position: fixed;
-  z-index: var(--z-tooltip);
+  z-index: 1200;
   max-width: 280px;
   padding: 6px 10px;
   border-radius: var(--r-sm);
@@ -585,7 +580,7 @@ body {
   line-height: 1.6;
   color: var(--text);
   background: var(--surface-overlay, var(--surface-raised));
-  box-shadow: var(--sh-out-md);
+  box-shadow: 4px 4px 10px var(--sh-dark), -4px -4px 10px var(--sh-light);
   border: 1px solid var(--border);
 
   /* 关键：不能吃鼠标事件。否则提示出现在光标下方时会抢走 hover 目标，
@@ -596,9 +591,70 @@ body {
 
   /* 只做透明度过渡，位移由 JS 直接定位（避免过渡期间位置飘） */
   opacity: 0;
-  transition: opacity var(--dur-fast) ease;
+  transition: opacity .12s ease;
 }
 .nexus-tip.on { opacity: 1; }
+
+/* ---------------- 开发者模式 · 元素检查器 ----------------
+   结构：.nx-insp-overlay 是一个 fixed 容器，里面四条边 + 一个尺寸角标，
+   中间镂空 —— 既能看清边界，又不遮住元素本身。
+   整体 pointer-events:none，否则它会抢走 hover 目标导致元素反复切换。 */
+.nx-insp-overlay {
+  position: fixed;
+  left: var(--x, 0); top: var(--y, 0);
+  width: var(--w, 0); height: var(--h, 0);
+  z-index: 1500;
+  pointer-events: none;
+  display: none;
+}
+.nx-insp-overlay.on { display: block; }
+
+/* 四条边用 outline 般的实线 + 半透明填充：
+   实线保证在任意主题下都看得见（不依赖 --sh-* 双向阴影） */
+.nx-insp-overlay > div {
+  position: absolute;
+  border: 1px solid #4f9cf9;
+  background: rgba(79, 156, 249, .12);
+}
+.nx-insp-top    { left: -1px; right: -1px; top: -1px; height: 3px; }
+.nx-insp-bottom { left: -1px; right: -1px; bottom: -1px; height: 3px; }
+.nx-insp-left   { top: -1px; bottom: -1px; left: -1px; width: 3px; }
+.nx-insp-right  { top: -1px; bottom: -1px; right: -1px; width: 3px; }
+
+/* 信息条 */
+.nx-insp-badge {
+  position: fixed;
+  z-index: 1501;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  max-width: 460px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #e8eaed;
+  background: #1f2430;
+  border: 1px solid #4f9cf9;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .35);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.nx-insp-badge.on { display: flex; }
+.nx-insp-name   { color: #8ec5ff; font-weight: 600; }
+.nx-insp-size   { color: #b9c0cc; }
+.nx-insp-plugin {
+  color: #ffd479;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(255, 212, 121, .14);
+}
+.nx-insp-warn   { color: #ff9d9d; }
+.nx-insp-locked { color: #9ae6a0; }
+
+/* 开启时把光标换成十字，给一个"当前在检查模式"的明确信号。
+   用 !important 是因为插件自己的 CSS 可能给按钮设了 cursor:pointer。 */
+body.nx-inspecting,
+body.nx-inspecting * { cursor: crosshair !important; }
 
 /* ============================================================
    插件通用组件库（插件里直接用这些 class 就能保持风格统一）

@@ -15,6 +15,7 @@ import Toasts, { type ToastItem } from './components/Toasts';
 import AddPluginDialog from './components/AddPluginDialog';
 import PluginSettingsDrawer from './components/PluginSettingsDrawer';
 import { installTooltip } from '../js/tooltip.js';
+import { installInspector, toggleInspector, isInspectorOn } from '../js/inspector.js';
 
 /**
  * 全局唯一 ID（toast / 自定义插件共用）
@@ -158,6 +159,19 @@ export default function App() {
      与无构建模式共用 js/tooltip.js，行为一致。
      放在最前面，保证插件挂载前就已生效。 */
   useEffect(() => installTooltip(), []);
+
+  /* 开发者模式 · 元素检查器：与无构建模式共用 js/inspector.js。
+     快捷键在模块内部注册（Ctrl/Cmd + Shift + D）。 */
+  const [inspecting, setInspecting] = useState(isInspectorOn());
+  useEffect(() => {
+    const un = installInspector();
+    return un;
+  }, []);
+  useEffect(() => {
+    const h = () => setInspecting(isInspectorOn());
+    document.addEventListener('nexus:inspector-toggle', h);
+    return () => document.removeEventListener('nexus:inspector-toggle', h);
+  }, []);
 
   /* ---------- 初始化宿主（仅一次） ---------- */
   useEffect(() => {
@@ -356,6 +370,8 @@ export default function App() {
           }
           onSelect={setActiveId}
           onAdd={() => setDialogOpen(true)}
+          onInspect={() => setInspecting(toggleInspector())}
+          inspecting={inspecting}
           injected={injected}
           onInjected={handleInjected}
         />

@@ -35,7 +35,8 @@
     "test:tokens": "node style-tokens-test.mjs",
     "test:audit": "node style-audit-test.mjs",
     "test:plugin-theme": "node plugin-theme-test.mjs",
-    "test:tooltip": "node tooltip-test.mjs"
+    "test:tooltip": "node tooltip-test.mjs",
+    "test:inspector": "node inspector-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
