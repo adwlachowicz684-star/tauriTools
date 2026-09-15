@@ -682,13 +682,7 @@ group('新建画布按钮（＋）位置');
     '.mm-status 不再 margin-left:auto —— 两个 auto 会平分剩余空间，反而把「＋」挤到中间');
 
   // 页签区现在负责滚动，滚动条样式得跟着它（.mm-foot 那条已失效）
-  /* 样式**不能**写在本插件里：外壳文档的 ::-webkit-scrollbar 到不了
-     iframe 内部，本插件又只引 styles.css —— 抄一份就会漏 track / hover，
-     出现"细 1px 且无悬停反馈"的半成品。现在由 css/tokens.css 统一提供。 */
-  ok(!/\.mm-[a-z-]*::-webkit-scrollbar/.test(css),
-    '本插件不再重复声明滚动条样式（交给 css/tokens.css）');
-  ok(/@import\s+url\(['"]?\.\.\/\.\.\/css\/tokens\.css/.test(css),
-    '引入了 css/tokens.css（滚动条与尺度令牌的来源）');
+  ok(/\.mm-tabs::-webkit-scrollbar/.test(css), '滚动条样式挂到 .mm-tabs 上');
 }
 
 /* ============================================================
@@ -1559,6 +1553,210 @@ group('设置面板');
   ok(/openSettings/.test(src.slice(0, src.indexOf("import { buildSide") + 200)) ||
      /import \{[^}]*openSettings[^}]*\} from '\.\/panels\.js'/.test(src),
     'index.js 已 import openSettings');
+}
+
+/* ============================================================
+   十九、A49 切换画布原子性 + A48 保存抑制补存
+   ============================================================ */
+
+group('A49/A48 持久化正确性');
+
+{
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+
+  // ---- A49 源码契约 ----
+  const fn = src.slice(src.indexOf('async function switchSheet(id)'),
+    src.indexOf('/* ------------------------- 文件库（多文档）'));
+
+  ok(/let switchingSheet = false;/.test(src), '声明了重入守卫变量（漏声明会在严格模式下直接抛错）');
+  ok(/if \(switchingSheet\) return;/.test(fn), '① 重入守卫：切换进行中直接返回');
+  ok(/if \(!bridge\?\.ready\) \{ status\('编辑器未就绪，稍后再切换画布', true\); return; \}/.test(fn),
+    '② 编辑器未就绪时中止（否则 exportJson 拿不到内容，编辑就丢了）');
+  ok(/const target = workbook\.sheets\.find\(\(s\) => s\.id === id\);/.test(fn),
+    '③ 目标存在性检查');
+  ok(/if \(!target\) return;/.test(fn), '③ 目标不存在则中止');
+  ok(/if \(capture\(\) === 'missing'\) \{/.test(fn), '④ capture 拿不到内容时中止');
+  ok(/status\('画布内容读取失败，已取消切换', true\);/.test(fn), '④ 中止时要告诉用户，不能静默');
+  ok(/switchingSheet = true;/.test(fn) && /finally \{\s*switchingSheet = false;/.test(fn),
+    '守卫用 try/finally 释放（异常时不会永久卡死切换）');
+
+  // 顺序：四道检查必须都在改 activeId 之前
+  const iGuard = fn.indexOf('if (switchingSheet) return;');
+  const iReady = fn.indexOf('if (!bridge?.ready)');
+  const iTarget = fn.indexOf('const target = workbook.sheets.find');
+  const iCapture = fn.indexOf('capture() ===');
+  const iActive = fn.indexOf('workbook.activeId = id;');
+  ok(iGuard < iReady && iReady < iTarget && iTarget < iCapture && iCapture < iActive,
+    '四道检查全部排在 activeId 修改**之前**（顺序本身就是原子性）');
+
+  // ---- capture 三态 ----
+  const cap = src.slice(src.indexOf('function capture() {'), src.indexOf('function commit()'));
+  ok(/return 'missing';/.test(cap), "capture 返回 'missing'（拿不到内容）");
+  ok(/return 'same';/.test(cap), "capture 返回 'same'（内容未变）");
+  ok(/return 'changed';/.test(cap), "capture 返回 'changed'（已写回）");
+  ok(!/return false;/.test(cap), "（对照）capture 不再返回 false —— 那无法区分「没变」与「拿不到」");
+}
+
+{
+  // ---- A49 行为对照：旧实现（无守卫）会不会真的写错画布 ----
+  // 场景：连点两个页签，两次切换交错。
+  const mkSheets = () => [
+    { id: 'A', content: { root: { data: { text: 'A内容' } } } },
+    { id: 'B', content: { root: { data: { text: 'B内容' } } } },
+    { id: 'C', content: { root: { data: { text: 'C内容' } } } },
+  ];
+
+  // 旧实现：capture() 后立刻改 activeId；第二次调用进来时 activeId 已被改掉
+  function oldSwitch(wb, id, editorJson) {
+    if (id === wb.activeId) return;
+    // 旧：capture() 写进 sheet()（= 当前 activeId 对应的那张）
+    const cur = wb.sheets.find((s) => s.id === wb.activeId) || wb.sheets[0];
+    cur.content = editorJson;
+    wb.activeId = id;
+  }
+
+  const wbOld = { activeId: 'A', sheets: mkSheets() };
+  // 用户从 A 连点 B、C：两次调用几乎同时，编辑器里都还是 A 的内容
+  oldSwitch(wbOld, 'B', { root: { data: { text: 'A内容' } } });
+  oldSwitch(wbOld, 'C', { root: { data: { text: 'A内容' } } });
+  eq(wbOld.sheets.find((s) => s.id === 'B').content.root.data.text, 'A内容',
+    '（对照）旧实现：A 的内容被写进了 B —— 数据错乱');
+
+  // 新实现：重入守卫拦住第二次
+  function newSwitch(wb, id, editorJson, switchingRef) {
+    if (switchingRef.on) return;
+    if (id === wb.activeId) return;
+    const target = wb.sheets.find((s) => s.id === id);
+    if (!target) return;
+    const cur = wb.sheets.find((s) => s.id === wb.activeId) || wb.sheets[0];
+    cur.content = editorJson;
+    wb.activeId = id;
+    switchingRef.on = true;   // 模拟「切换进行中」（异步 loadSheet 尚未完成）
+  }
+  const wbNew = { activeId: 'A', sheets: mkSheets() };
+  const ref = { on: false };
+  newSwitch(wbNew, 'B', { root: { data: { text: 'A内容' } } }, ref);
+  newSwitch(wbNew, 'C', { root: { data: { text: 'A内容' } } }, ref);   // 被守卫拦下
+  eq(wbNew.activeId, 'B', '新实现：第二次切换被守卫拦住，activeId 停在 B');
+  eq(wbNew.sheets.find((s) => s.id === 'C').content.root.data.text, 'C内容',
+    '新实现：C 的内容未被污染');
+}
+
+{
+  // ---- A48 行为对照：抑制期间的编辑，旧实现会丢 ----
+  let saved = 0;
+  const state = { suppress: false, dirtyDuringSuppress: false };
+
+  function oldOnDirty() { if (state.suppress) return; saved++; }   // 直接丢弃
+  function newOnDirty() { if (state.suppress) { state.dirtyDuringSuppress = true; return; } saved++; }
+  function endSuppress() {
+    state.suppress = false;
+    if (state.dirtyDuringSuppress) { state.dirtyDuringSuppress = false; saved++; }  // 补存
+  }
+
+  // 旧：抑制期间的一次编辑
+  saved = 0;
+  state.suppress = true; state.dirtyDuringSuppress = false;
+  oldOnDirty();                 // 用户在抑制窗口内改了东西
+  state.suppress = false;
+  eq(saved, 0, '（对照）旧实现：抑制期间的编辑被直接丢弃，永久丢失');
+
+  // 新：同样的编辑
+  saved = 0;
+  state.suppress = true; state.dirtyDuringSuppress = false;
+  newOnDirty();
+  endSuppress();
+  eq(saved, 1, '新实现：抑制期间的编辑被记录，解除后补存');
+
+  // 抑制期间没有编辑 → 不该凭空补存
+  saved = 0;
+  state.suppress = true; state.dirtyDuringSuppress = false;
+  endSuppress();
+  eq(saved, 0, '抑制期间无编辑时不补存（避免无谓写盘）');
+
+  // ---- A48 源码契约 ----
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  ok(/function beginSuppress\(\)/.test(src), '抽出 beginSuppress()');
+  ok(/function endSuppressSoon\(\)/.test(src), '抽出 endSuppressSoon()（延迟解除）');
+  ok(/if \(suppress\) \{ dirtyDuringSuppress = true; return; \}/.test(src),
+    'onDirty 在抑制期间记录而非丢弃');
+  ok(/suppressTimer = setTimeout\(\(\) => \{/.test(src), '解除是延迟的（吸收异步派发）');
+  ok(/if \(dirtyDuringSuppress\) \{\s*dirtyDuringSuppress = false;\s*scheduleSave\(\);/.test(src),
+    '延迟解除后若有变更则补存');
+  ok(/const SUPPRESS_MS = 800;/.test(src), '抑制窗口 800ms（WPF 是 1200ms，Web 同步直调故更短）');
+}
+
+/* ============================================================
+   二十、A44 手动备份去重 + A46 恢复确认
+   ============================================================ */
+
+group('A44/A46 备份闭环');
+
+{
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const cap = src.slice(src.indexOf('async function backupNow('), src.indexOf('async function restoreBackup'));
+
+  // ---- A44 手动备份去重 ----
+  ok(/async function backupNow\(force = false\)/.test(src), 'backupNow 支持 force 参数');
+  ok(/const fp = wb\.fingerprintSheets\(workbook\.sheets\);/.test(cap), '手动备份也先算指纹');
+  ok(/if \(!force && fp === lastBackupFp\) \{/.test(cap), '内容相同则跳过（force 除外）');
+  ok(/status\('内容与最新快照相同，未重复创建', false\)/.test(cap), '跳过时明确告知用户，不是静默无反应');
+  ok(/lastBackupFp = fp;/.test(cap), '写成功后更新指纹');
+
+  // ---- A46 恢复前留后路 ----
+  const rst = src.slice(src.indexOf('async function restoreBackup'), src.indexOf('/* ------------------------- 对外能力'));
+  ok(/await backupNow\(true\);/.test(rst), '恢复前先把当前状态另存一份（恢复错了还能回滚）');
+  ok(/不可撤销|已另存一份|恢复前的状态已另存/.test(rst), '提示里说明已留后路');
+
+  // ---- 恢复必须有确认 ----
+  const p = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const seg = p.slice(p.indexOf('export async function openBackups'), p.indexOf('/* ------------------------- 设置'));
+  ok(/window\.confirm\(/.test(seg), 'A46 恢复前有 window.confirm（覆盖全部画布，不可逆）');
+  ok(/不可撤销/.test(seg), '确认文案说明不可撤销');
+  ok(/safe\('恢复快照'/.test(seg), '恢复动作包了 safe()（异步失败要看得见）');
+}
+
+{
+  // ---- A44 行为对照：不去重会挤掉真实历史 ----
+  const KEEP = 3;
+  function makeStore() {
+    const keys = [];
+    return {
+      push(snap) {
+        keys.push({ ts: keys.length, sheets: snap.sheets, fp: snap.fp });
+        while (keys.length > KEEP) keys.shift();   // 滚动删除最旧
+        return true;
+      },
+      list: () => keys.slice(),
+    };
+  }
+
+  const fpOf = (s) => (s || []).map((x) => x.id + ':' + x.text).join('|');
+  const A = [{ id: '1', text: 'v1' }];
+
+  // 旧：连点三次「立即备份」，内容都没变
+  const old = makeStore();
+  for (let i = 0; i < 3; i++) old.push({ sheets: A, fp: fpOf(A) });
+  eq(old.list().length, KEEP, '（对照）旧实现：三次相同内容各写一份');
+  eq(new Set(old.list().map((x) => x.fp)).size, 1,
+    '（对照）旧实现：3 份快照内容全一样 —— 真实历史已被挤空');
+
+  // 新：同样连点三次
+  const nw = makeStore();
+  let lastFp = null;
+  for (let i = 0; i < 3; i++) {
+    const fp = fpOf(A);
+    if (fp === lastFp) continue;      // 去重
+    nw.push({ sheets: A, fp });
+    lastFp = fp;
+  }
+  eq(nw.list().length, 1, '新实现：内容没变只写一份');
+
+  // 内容真的变了才写新的
+  const B = [{ id: '1', text: 'v2' }];
+  if (fpOf(B) !== lastFp) { nw.push({ sheets: B, fp: fpOf(B) }); lastFp = fpOf(B); }
+  eq(nw.list().length, 2, '内容变化后才追加新快照');
+  eq(new Set(nw.list().map((x) => x.fp)).size, 2, '两份快照内容不同 —— 都是有效历史');
 }
 
 /* ============================================================

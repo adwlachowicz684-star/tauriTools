@@ -997,10 +997,18 @@ export async function openBackups(app) {
         h('div.mm-item', {},
           h('span.name', {}, `${new Date(b.ts).toLocaleString()} · ${(b.sheets || []).length} 张画布`),
           h('button.mm-btn.icon', {
-            onclick: async () => {
-              if (b.sheets) await app.api.restoreBackup(b);
+            onclick: safe('恢复快照', async () => {
+              if (!b.sheets) return;
+              // A46 恢复会覆盖**当前所有画布**且不可逆 —— 必须确认。
+              // 不确认的话，误点一下整份工作就没了。
+              const n = (b.sheets || []).length;
+              if (!window.confirm(
+                `恢复到 ${new Date(b.ts).toLocaleString()} 的快照？\n\n` +
+                `当前所有画布将被替换为该快照的 ${n} 张画布，此操作不可撤销。\n` +
+                `（恢复前的当前状态会自动另存一份快照，可再回滚）`)) return;
+              await app.api.restoreBackup(b);
               dlg.close();
-            },
+            }, (m) => app.api.status(m, true)),
           }, '恢复'),
         ),
       );

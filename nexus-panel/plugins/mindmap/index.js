@@ -77,6 +77,18 @@ bootIframePlugin(async (ctx) => {
   let redoStack = [];
   let lastSnap = null;
   let suppress = false;
+  /** A49 切换画布的重入守卫（WPF `_switchingSheet`） */
+  let switchingSheet = false;
+  /** 抑制期间发生过的变更（WPF `_dirtyDuringSuppress`）。抑制解除后补存。 */
+  let dirtyDuringSuppress = false;
+  let suppressTimer = null;
+  /**
+   * 抑制窗口时长。WPF 用 1200ms（`DelayThenClearSuppressAsync`），因为它走
+   * WebView2 的异步 postMessage；Web 版是同源同步直调，异步派发少得多，
+   * 800ms 足够吸收 layoutallfinish / selectionchange 等尾部事件，
+   * 又不至于让用户的编辑长时间不落盘。
+   */
+  const SUPPRESS_MS = 800;
 
   const sheet = () => workbook.sheets.find((s) => s.id === workbook.activeId) || workbook.sheets[0];
 
@@ -523,15 +535,46 @@ bootIframePlugin(async (ctx) => {
   }
 
   /** 切换画布：先把当前内容收回来，再载入目标 */
+  /**
+   * A49 切换画布的原子性（对照 WPF `SwitchSheetAsync`，
+   * `MindMapPanel.xaml.cs:1239-1273`）。
+   *
+   * WPF 的做法是：重入守卫 → 就绪检查 → 目标存在性检查 → 切换期间抑制保存
+   * → finally 里保证补存。Web 版原先只有 `capture()` + `persist()`，缺前四项。
+   */
   async function switchSheet(id) {
+    // ① 重入守卫（WPF `_switchingSheet`）。
+    //    连点两个页签会让两次切换交错：第二次进来时 activeId 已被第一次改掉，
+    //    它的 capture() 会把当前编辑器内容写到**第一张**画布上。
+    if (switchingSheet) return;
     if (id === workbook.activeId) return;
-    capture();
-    workbook.activeId = id;
-    renderTabs();
-    await loadSheet();
-    // 必须 await 且必须落盘：切换画布不触发 onDirty（loadSheet 走 suppress），
-    // 自动保存不会被唤起，切完就崩的话刚才的编辑全丢。
-    await persist();
+
+    // ② 编辑器未就绪时 exportJson 拿不到内容，继续切换就丢当前画布的编辑
+    if (!bridge?.ready) { status('编辑器未就绪，稍后再切换画布', true); return; }
+
+    // ③ 目标必须存在。sheet() 的 fallback 是 sheets[0] ——
+    //    少了这道检查，切到不存在的 id 会把当前内容盖到第一张画布上。
+    const target = workbook.sheets.find((s) => s.id === id);
+    if (!target) return;
+
+    // ④ 原子性核心：拿不到当前内容就**不切换**。
+    //    activeId 一旦改掉，当前画布的编辑就再也回不来了。
+    if (capture() === 'missing') {
+      status('画布内容读取失败，已取消切换', true);
+      return;
+    }
+
+    switchingSheet = true;
+    try {
+      workbook.activeId = id;
+      renderTabs();
+      await loadSheet();
+      // 必须 await 且必须落盘：切换画布不触发 onDirty（loadSheet 抑制期间），
+      // 自动保存不会被唤起，切完就崩的话刚才的编辑全丢。
+      await persist();
+    } finally {
+      switchingSheet = false;
+    }
   }
 
   /* ------------------------- 文件库（多文档） ------------------------- */
@@ -693,6 +736,39 @@ bootIframePlugin(async (ctx) => {
     buildRail();
   }
 
+  /* ------------------------- 保存抑制（A48） ------------------------- */
+
+  /**
+   * A48 自动保存抑制与补存，对照 WPF `DelayThenClearSuppressAsync`
+   * （`MindMapPanel.xaml.cs:1850-1861`）：import 期间抑制保存，延迟解除，
+   * **期间有变更则补存一次**。
+   *
+   * 为什么不能只用一个同步开关：importJson 之后内核还会派发
+   * `layoutallfinish` / `selectionchange` 等异步事件，其中任何一个触发
+   * contentchange 都会被当成用户编辑 → 自动保存 → 无谓地重排历史栈。
+   *
+   * 为什么必须补存：抑制窗口内若真有用户编辑，只吞不补就永久丢失。
+   */
+  function beginSuppress() {
+    suppress = true;
+    dirtyDuringSuppress = false;
+    clearTimeout(suppressTimer);
+    suppressTimer = null;
+  }
+
+  /** 延迟解除：吸收异步派发；期间若有变更则补存 */
+  function endSuppressSoon() {
+    clearTimeout(suppressTimer);
+    suppressTimer = setTimeout(() => {
+      suppressTimer = null;
+      suppress = false;
+      if (dirtyDuringSuppress) {
+        dirtyDuringSuppress = false;
+        scheduleSave();
+      }
+    }, SUPPRESS_MS);
+  }
+
   /* ------------------------- 编辑器装载 ------------------------- */
 
   async function loadSheet() {
@@ -710,6 +786,7 @@ bootIframePlugin(async (ctx) => {
     suppress = true;
     bridge.importJson(s.content || wb.emptyContent());
     suppress = false;
+    endSuppressSoon();   // 继续吸收异步派发（详见 beginSuppress 的注释）
 
     if (s.theme && !isBuiltinTheme(s.theme)) {
       const t = customThemes.find((x) => x.id === s.theme);
@@ -749,16 +826,26 @@ bootIframePlugin(async (ctx) => {
   /* ------------------------- 内容同步与持久化 ------------------------- */
 
   /** 从编辑器取回 JSON 写进当前画布（并同步主题/布局） */
+  /**
+   * 从编辑器取回 JSON 写进当前画布。
+   *
+   * @returns {'missing'|'same'|'changed'}
+   *   - missing：拿不到内容（编辑器未就绪 / 导出失败）。
+   *     **调用方必须据此中止写操作** —— 否则会把「空」当成当前内容，
+   *     或（更糟）在切换画布时把 activeId 改掉后丢掉当前编辑。
+   *   - same：内容与已存的一致，无需写回。
+   *   - changed：已写回 s.content。
+   */
   function capture() {
-    if (!bridge?.ready) return false;
+    if (!bridge?.ready) return 'missing';
     const json = bridge.exportJson();
-    if (!json) return false;
+    if (!json) return 'missing';
     const s = sheet();
     // 按内容比较：exportJson() 每次返回新对象，用 === 永远不等，
     // 「内容没变就不必写回」的判断会永远失效。
-    if (sameSnap(s.content, json)) return false;
+    if (sameSnap(s.content, json)) return 'same';
     s.content = json;
-    return true;
+    return 'changed';
   }
 
   function commit() {
@@ -872,7 +959,10 @@ bootIframePlugin(async (ctx) => {
 
   /** 编辑器侧 contentchange 回调 */
   function onDirty() {
-    if (suppress) return;
+    // 抑制期间**不能只是丢弃**：这期间也可能有真实的用户编辑
+    // （例如切换画布后立刻打字），吞掉就等于永久丢失。
+    // 记下来，等抑制解除后补存 —— 对应 WPF 的 _dirtyDuringSuppress。
+    if (suppress) { dirtyDuringSuppress = true; return; }
     dirty = true;
     scheduleSave();
   }
@@ -956,9 +1046,9 @@ bootIframePlugin(async (ctx) => {
 
   function applySnapshot(json) {
     if (!json) return;
-    suppress = true;
+    beginSuppress();
     bridge.importJson(json);
-    suppress = false;
+    endSuppressSoon();
     sheet().content = json;
     lastSnap = json;
     scheduleSave();
@@ -1139,24 +1229,49 @@ bootIframePlugin(async (ctx) => {
     ctx.toast(`已导入 ${sheets.length} 张画布`, 'ok');
   }
 
-  async function backupNow() {
+  /**
+   * A44 手动备份也要去重（WPF `BackupNowAsync` 同样先比对再写，
+   * `MindMapPanel.xaml.cs:1903-1912` 的 `SameWorkbook` 检查）。
+   *
+   * 不去重的后果：连点几次「立即备份」就产生一堆内容相同的快照。保留份数是
+   * 有限的（默认 10），这些空快照会把**真实的历史版本挤出去** ——
+   * 恰好在最需要回滚的时候找不到可用版本。
+   *
+   * @param {boolean} force true=即使内容相同也强制写一份
+   */
+  async function backupNow(force = false) {
     capture();
+    const fp = wb.fingerprintSheets(workbook.sheets);
+    if (!force && fp === lastBackupFp) {
+      status('内容与最新快照相同，未重复创建', false);
+      return;
+    }
     // pushBackup 写失败返回 null（不抛），不判断就会提示「已创建」但实际没写进去
     const key = await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId }, settings.backupMax);
     lastBackupAt = Date.now();
-    lastBackupFp = wb.fingerprintSheets(workbook.sheets);
+    lastBackupFp = fp;
     if (key) ctx.toast('已创建快照', 'ok');
     else status('快照创建失败（本地存储写入被拒绝）', true);
   }
 
+  /**
+   * A46 从快照恢复：会**覆盖当前所有画布**，不可逆。
+   *
+   * 两道保护：
+   *   1. 调用前由 UI 弹确认（见 panels.js 的 openBackups）；
+   *   2. 恢复前先把当前状态存成一份快照 —— 万一恢复错了（比如选错时间点）
+   *      还能再回滚回来。成本几乎为零：这份快照是最新的，不会被滚动删除。
+   */
   async function restoreBackup(b) {
+    // 先给当前状态留一份，再覆盖
+    await backupNow(true);
     workbook.sheets = wb.normalizeSheets(b.sheets);
     workbook.activeId = b.activeId || workbook.sheets[0].id;
     renderTabs();
     await loadSheet();
     await persist();
     lastBackupFp = wb.fingerprintSheets(workbook.sheets);
-    ctx.toast('已从快照恢复', 'ok');
+    ctx.toast('已从快照恢复（恢复前的状态已另存一份）', 'ok');
   }
 
   /* ------------------------- 对外能力（供 panels 用） ------------------------- */
