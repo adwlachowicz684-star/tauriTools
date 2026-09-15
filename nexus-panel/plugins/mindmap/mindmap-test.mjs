@@ -975,6 +975,79 @@ group('附件卡片 / 视频预览');
 }
 
 /* ============================================================
+   十三、画布附件图标不能是黑块
+   ============================================================ */
+
+group('画布附件图标配色');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  const icons = html.slice(html.indexOf('function iconColor'), html.indexOf('// 不能把 FileRenderer 挂进'));
+
+  // 13.1 取色必须有回落：主题里查不到 color 时 core 的 getStyle 返回 null
+  ok(/function\s+iconColor/.test(icons), '抽出了 iconColor()');
+  ok(/c\s*=\s*node\.getStyle\('color'\)/.test(icons), '优先取节点文字色');
+  ok(/return\s+c\s*\|\|\s*'#AEB6C4'/.test(icons), '取不到时回落到明确颜色（不能把 null 传给 fill）');
+
+  // 13.2 不再出现「直接把可能为空的 color 传给 fill」的写法
+  ok(!/icon\.path\.fill\(color\)/.test(html), '不再有 icon.path.fill(color) —— color 为 null 时会删掉 fill 属性');
+
+  // 13.3 文件图标：fill none + 描边（实心会盖住折角线，认不出是文件）
+  ok(/\.fill\('none'\);/.test(icons), 'FileIcon 的 path fill 为 none');
+  ok(/this\.path\.stroke\(color,\s*1\.3\)/.test(icons), 'FileIcon 用 paint() 上描边');
+
+  // 13.4 视频图标：外框与三角都要显式上色（原来三角没设 fill → 默认黑）
+  ok(/this\.frame\.stroke\(color,\s*1\.2\)/.test(icons), 'VideoIcon 外框上色');
+  ok(/this\.path\.fill\(color\)\.stroke\(color,\s*1\)/.test(icons), 'VideoIcon 三角也显式上色');
+  ok(!/stroke\('#8A90A0',\s*1\.2\)/.test(icons), '不再硬编码 #8A90A0（改为跟随节点色）');
+
+  // 13.5 悬停提示：光看图标认不出挂的是哪个文件
+  //      （这段在 attach() 里，位于 noderender 块内，故对全文匹配）
+  ok(/createElementNS\('http:\/\/www\.w3\.org\/2000\/svg',\s*'title'\)/.test(html), '图标带 SVG <title> 提示');
+  ok(/function\s+refName/.test(icons), 'refName() 解析附件名（节点里存的是 JSON 字符串）');
+  ok(/icon\.paint\(color\)/.test(html), 'attach 时统一调用 paint(color)');
+}
+
+{
+  // 13.6 行为级：复刻 kity 的 fill 语义，坐实「传 null 会变黑」
+  //      kity: fill(a){ a&&node.setAttribute('fill',a); null===a&&node.removeAttribute('fill'); }
+  //      SVG 缺 fill 属性时渲染为黑色 —— 这就是「黑框」的来源。
+  function fakePath() {
+    const attrs = new Map();
+    return {
+      attrs,
+      fill(a) {
+        if (a) attrs.set('fill', String(a));
+        if (a === null) attrs.delete('fill');
+        return this;
+      },
+      // SVG 规范：fill 属性缺失时默认 black
+      renderedFill() { return attrs.has('fill') ? attrs.get('fill') : 'black'; },
+    };
+  }
+
+  const p = fakePath();
+  p.fill('#AEB6C4');
+  eq(p.renderedFill(), '#AEB6C4', '给了颜色就是那个颜色');
+
+  const q = fakePath();
+  q.fill(null);                       // ← 旧代码：node.getStyle('color') 返回 null
+  eq(q.renderedFill(), 'black', '（对照）fill(null) 会删掉属性 → SVG 默认黑色');
+
+  // refName 的等价实现
+  const refName = (raw) => {
+    if (!raw) return '';
+    try {
+      const o = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      return o && o.n ? String(o.n) : '';
+    } catch { return ''; }
+  };
+  eq(refName(JSON.stringify({ n: '报告.pdf', a: 'x1', s: 100 })), '报告.pdf', 'refName 从 JSON 串解析出文件名');
+  eq(refName('不是JSON'), '', 'refName 对非法 JSON 返回空串，不抛');
+  eq(refName(null), '', 'refName 对空值返回空串');
+}
+
+/* ============================================================
    结果
    ============================================================ */
 

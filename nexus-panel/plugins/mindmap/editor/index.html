@@ -197,6 +197,38 @@
             });
             try { km._commands['video'] = new VideoCommand(); } catch (e) {}
 
+            /**
+             * 附件图标的取色。
+             * ============================================================
+             * node.getStyle('color') 在不少主题下返回 **null** —— core 的
+             * getStyle 只在主题项里查得到才返回值，查不到就是 null。
+             *
+             * 而 kity 的 fill() 是：
+             *     fill: function (a) {
+             *         a && node.setAttribute('fill', a.toString());
+             *         null === a && node.removeAttribute('fill');   // ← 关键
+             *     }
+             * 传 null 等于**删掉** fill 属性。SVG 缺 fill 时**默认黑色**，
+             * 于是图标在深色画布上变成一块纯黑矩形 —— 既看不见形状也认不出
+             * 是文件还是视频，正是「附加文件后是个黑框」的原因。
+             *
+             * 所以取不到主题色时必须回落到明确颜色，绝不能把 null 传进去。
+             */
+            function iconColor(node) {
+                var c = null;
+                try { c = node.getStyle('color'); } catch (e) { c = null; }
+                return c || '#AEB6C4';
+            }
+
+            /** 附件名：节点里存的是 encodeRef 序列化后的 JSON 字符串 */
+            function refName(raw) {
+                if (!raw) return '';
+                try {
+                    var o = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                    return o && o.n ? String(o.n) : '';
+                } catch (e) { return ''; }
+            }
+
             var FileIcon = kity.createClass('FileIcon', {
                 base: kity.Group,
                 constructor: function () {
@@ -204,11 +236,18 @@
                     this.width = 16;
                     this.height = 20;
                     this.rect = new kity.Rect(16, 20, 0, -10, 3).fill('transparent');
-                    this.path = (new kity.Path).setPathData('M-8,-10 L-1,-10 L3,-6 L3,10 L-8,10 Z M-1,-10 L-1,-6 L3,-6');
+                    // fill 保持 none：实心的话会盖住折角那条线，看不出是「文件」
+                    this.path = (new kity.Path).setPathData('M-8,-10 L-1,-10 L3,-6 L3,10 L-8,10 Z M-1,-10 L-1,-6 L3,-6')
+                        .fill('none');
                     this.addShapes([this.rect, this.path]);
                     this.on('mouseover', function () { this.rect.fill('rgba(90, 141, 214, 0.25)'); })
                         .on('mouseout', function () { this.rect.fill('transparent'); });
                     this.setStyle('cursor', 'pointer');
+                },
+                /** 描边色 = 节点文字色（取不到则由 iconColor 回落） */
+                paint: function (color) {
+                    try { this.path.stroke(color, 1.3); } catch (e) {}
+                    return this;
                 }
             });
 
@@ -218,12 +257,20 @@
                     this.callBase();
                     this.width = 20;
                     this.height = 16;
-                    this.frame = new kity.Rect(20, 16, 0, -8, 3).fill('transparent').stroke('#8A90A0', 1.2);
+                    this.frame = new kity.Rect(20, 16, 0, -8, 3).fill('transparent');
+                    // 三角同样是实心填充，不显式上色就是黑的
                     this.path = (new kity.Path).setPathData('M-6,-6 L6,0 L-6,6 Z');
                     this.addShapes([this.frame, this.path]);
                     this.on('mouseover', function () { this.frame.fill('rgba(90, 141, 214, 0.25)'); })
                         .on('mouseout', function () { this.frame.fill('transparent'); });
                     this.setStyle('cursor', 'pointer');
+                },
+                paint: function (color) {
+                    try {
+                        this.frame.stroke(color, 1.2);
+                        this.path.fill(color).stroke(color, 1);
+                    } catch (e) {}
+                    return this;
                 }
             });
             // 不能把 FileRenderer 挂进 _rendererClasses['right']：core 的 renderNodeBatch 按 b[0] 节点
@@ -247,9 +294,17 @@
                         var y = box.cy;
                         var rc = node.getRenderContainer();
                         if (!rc || !rc.appendShape) return;
-                        var color; try { color = node.getStyle('color'); } catch (e2) { color = null; }
-                        function attach(icon, path, cursorX) {
-                            try { icon.path.fill(color); } catch (e2) {}
+                        var color = iconColor(node);
+                        function attach(icon, path, cursorX, tip) {
+                            icon.paint(color);
+                            // 悬停提示：光看图标认不出挂的是哪个文件
+                            if (tip && icon.node) {
+                                try {
+                                    var t = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+                                    t.textContent = tip;
+                                    icon.node.appendChild(t);
+                                } catch (e2) {}
+                            }
                             icon.setTranslate(cursorX, y);
                             icon.on('mousedown', function (ev) {
                                 ev.preventDefault();
@@ -259,13 +314,13 @@
                         }
                         if (node.getData('file')) {
                             var fc = new FileIcon();
-                            attach(fc, node.getData('file'), baseX);
+                            attach(fc, node.getData('file'), baseX, refName(node.getData('file')) || '文件附件');
                             node._kmFileIcon = fc;
                             baseX += 20;
                         }
                         if (node.getData('video')) {
                             var vc = new VideoIcon();
-                            attach(vc, node.getData('video'), baseX);
+                            attach(vc, node.getData('video'), baseX, refName(node.getData('video')) || '视频附件');
                             node._kmVideoIcon = vc;
                         }
                     } catch (e2) {}
