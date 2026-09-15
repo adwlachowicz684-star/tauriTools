@@ -39,6 +39,10 @@ export function useFpx() {
     setLog((l) => [{ at: now(), text, isError }, ...l].slice(0, 200));
   }, []);
 
+  /** 清空日志（原版 ClearCommand）。
+   *  只是会话内的操作流水，不是业务数据，清了不损失任何登记。 */
+  const clearLog = useCallback(() => setLog([]), []);
+
   /* ---------------- 活动页签记忆 ----------------
    * 存 ctx.store（localStorage）而不是 config.json：
    * 这是 UI 会话状态，不是业务数据——MCP server / 备份 / 目录监听三个后台线程
@@ -285,6 +289,35 @@ export function useFpx() {
     });
   }, [updateConfig]);
 
+  /**
+   * 删除页签前的检查（原版两条保护）：
+   *
+   * - **含锁定项 → 直接拒绝**：页签里有 ACL 保护的卡片，删了会连带把保护登记
+   *   一起丢掉。用户设保护正是为了防误删，结果一个删页签就绕过去了，说不通。
+   * - **含卡片 → 要先确认**：删页签会把它登记的所有卡片一起移除，
+   *   而页签名字看起来只是个"分类"，很多人不会意识到里面还挂着东西。
+   */
+  const tabRemoveCheck = useCallback((kind: CardKind, index: number) => {
+    const tabs = cardsOf(kind);
+    const tab = tabs[index];
+    if (!tab) return { blocked: '页签不存在' as string | undefined };
+    const items = tab.items ?? [];
+    const locked = items.filter((c) => c.locked);
+    if (locked.length > 0) {
+      return {
+        blocked: `该分类里有 ${locked.length} 个受保护项（${locked[0].name}${locked.length > 1 ? ' 等' : ''}），`
+          + '请先解除保护再删除',
+      };
+    }
+    if (items.length > 0) {
+      return {
+        confirm: `「${tab.name}」里有 ${items.length} 个${kind === 'project' ? '项目' : '项目组'}，`
+          + '删除会把它们从登记中一并移除。文件夹本身不会动。确认删除？',
+      };
+    }
+    return {};
+  }, [cardsOf]);
+
   const removeTab = useCallback(async (kind: CardKind, index: number) => {
     const before = cardsOf(kind).length;
     if (before <= 1) {
@@ -439,7 +472,7 @@ export function useFpx() {
   }, [api, applySnapshot, ci, pushLog, run]);
 
   return {
-    ctx, api, boot, loading, busy, log, pushLog, run,
+    ctx, api, boot, loading, busy, log, pushLog, clearLog, run,
     renameFolder, clearInvalid,
     // 搬家 / 改名等新命令返回的是 RenameResult（含 snapshot），
     // 需要由调用方自己把快照并回界面——之前只有内部路径用得到，现在对外暴露。
@@ -448,6 +481,7 @@ export function useFpx() {
     activeTab, setActiveTab,
     content, contentKind, setContentKind, focusDir, scan,
     updateConfig, addCard, removeCard, moveCard, moveCardAcross, addTab, renameTab, removeTab,
+    tabRemoveCheck,
     createLink, removeLink, setTagColor, setIcon, saveStyle, saveCustomColors, setLock, refresh,
   };
 }

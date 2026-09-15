@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { CardInfo, CardKind } from '../types';
+import { shade } from '../utils/color';
 import { ContextMenu, type MenuItem } from './ui';
 
 export const DRAG_MIME = 'application/x-fpx-card';
@@ -188,7 +189,13 @@ export function CardGrid({
             !c.exists ? 'missing' : '',
             over === i ? 'over' : '',
           ].filter(Boolean).join(' ')}
-          style={c.tagColor ? { borderLeft: `4px solid ${c.tagColor}` } : undefined}
+          style={c.tagColor ? ({
+            borderLeft: `4px solid ${c.tagColor}`,
+            // hover / press 用派生色：自定义色的卡片原先移上去毫无变化，
+            // 看着像没选中。派生色算好存进 CSS 变量，交给 CSS 做状态切换。
+            '--tag-hover': shade(c.tagColor, 0.18),
+            '--tag-press': shade(c.tagColor, -0.12),
+          } as React.CSSProperties) : undefined}
           draggable
           onDragStart={(e) => {
             e.dataTransfer.setData(DRAG_MIME, JSON.stringify({ kind, path: c.path } satisfies DragPayload));

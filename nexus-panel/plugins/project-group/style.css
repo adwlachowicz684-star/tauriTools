@@ -48,6 +48,12 @@
   font-size: 10.5px; line-height: 1.2;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* 键位提示：比标签更小更淡，只在有绑定时占位，不撑高按钮 */
+.fpx-rail-key {
+  font-size: 9px; line-height: 1.1;
+  color: var(--text-dim); opacity: .75;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* ---------- 项目组栏：分类纵向堆叠 ---------- */
 .fpx-stack { display: flex; flex-direction: column; gap: 8px; }
@@ -196,12 +202,21 @@
   transition: transform var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
 }
 .fpx-card:hover { transform: translateY(-1px); }
+/* 标签色的 hover / press 派生色（变量由卡片按自身颜色算好）。
+   只在有 --tag-hover 时才生效，没设标签色的卡片不受影响。 */
+.fpx-card:hover { border-left-color: var(--tag-hover); }
+.fpx-card:active { border-left-color: var(--tag-press); }
 .fpx-card.selected {
   box-shadow: var(--sh-in-md);
   border-color: var(--accent);
 }
 .fpx-card.over { outline: 2px dashed var(--accent); outline-offset: -2px; }
-.fpx-card.missing { opacity: .55; }
+/* 缺失卡片：红框而非整体变淡。
+   优先级必须高于 hover —— 一眼能看出哪个是缺的，
+   而不是靠"稍微淡一点"这种要对比才看得出的差别。
+   保留一点降透明度表示"不可操作"，但主体识别靠红框。 */
+.fpx-card.missing { border-color: var(--danger); opacity: .8; }
+.fpx-card.missing:hover { border-color: var(--danger); }
 .fpx-card-top { display: flex; align-items: center; gap: 8px; }
 .fpx-card-icon {
   width: 26px; height: 26px; flex: none;

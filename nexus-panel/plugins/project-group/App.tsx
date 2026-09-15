@@ -105,6 +105,13 @@ export default function App() {
    */
   const [menuLayer, setMenuLayer] = useState<HTMLDivElement | null>(null);
 
+  /** 日志行右键菜单：复制这一条（原版日志区有复制单项的操作）。 */
+  const [logMenu, setLogMenu] = useState<{ text: string; x: number; y: number } | null>(null);
+
+  /** 删页签的确认（页签里还有卡片时先问一次）。 */
+  const [confirmRemoveTab, setConfirmRemoveTab] =
+    useState<{ kind: CardKind; index: number; message: string } | null>(null);
+
   /**
    * 键盘焦点栏：卡片快捷键（Ctrl/⌘+O、F2、Delete…）作用在哪一栏。
    * 点哪一栏的卡片就把焦点带到哪一栏，也可由 Ctrl/⌘+←/→ 直接切换。
@@ -410,6 +417,24 @@ export default function App() {
     setConfirmLink({ project, group });
   };
 
+  /**
+   * 删页签前的两道闸（原版 DeleteTabCommand 的语义）：
+   * 含受保护项直接拒绝；含其它卡片先确认——页签看着只是个"分类"，
+   * 很多人不会意识到删它会把里面登记的东西一起清掉。
+   */
+  const requestRemoveTab = (kind: CardKind, index: number) => {
+    const chk = s.tabRemoveCheck(kind, index);
+    if (chk.blocked) {
+      ctx.toast(chk.blocked, 'err');
+      return;
+    }
+    if (chk.confirm) {
+      setConfirmRemoveTab({ kind, index, message: chk.confirm });
+      return;
+    }
+    void s.removeTab(kind, index);
+  };
+
   const openIconPicker = async (card: CardInfo) => {
     try {
       const files = await s.api.listIcons();
@@ -489,6 +514,7 @@ export default function App() {
       actions: [
         {
           icon: '⟳', label: '刷新',
+          hotkey: 'F5',
           title: '刷新全部（F5）',
           onClick: () => { refreshChainActions(); s.refresh(); },
         },
@@ -499,6 +525,7 @@ export default function App() {
         },
         {
           icon: '🧹', label: '清无效',
+          hotkey: 'F8',
           title: '清除无效项（F8）：摘掉页签里已不存在的路径',
           onClick: () => void s.clearInvalid(),
         },
@@ -509,16 +536,19 @@ export default function App() {
       actions: [
         {
           icon: '📂', label: '打开',
+          hotkey: 'mod+O',
           title: '打开选中文件夹（Ctrl/⌘+O）',
           onClick: needCard((c) => openPath(c.path, 'dir')),
         },
         {
           icon: '🔒', label: '保护',
+          hotkey: 'mod+L',
           title: 'ACL 保护（Ctrl/⌘+L）',
           onClick: needCard((c) => setDialog({ type: 'lock', card: c })),
         },
         {
           icon: '✎', label: '改名',
+          hotkey: 'F2',
           title: '改名（F2）',
           onClick: needCard((c) => setDialog({ type: 'rename', card: c, kind: focus })),
         },
@@ -529,11 +559,13 @@ export default function App() {
         },
         {
           icon: '🎨', label: '改色',
+          hotkey: 'F4',
           title: '图标与标签色（F4）',
           onClick: needCard((c) => setDialog({ type: 'style', card: c })),
         },
         {
           icon: '🖼', label: '改图标',
+          hotkey: 'F6',
           title: '改图标（F6）',
           onClick: needCard((c) => void openIconPicker(c)),
         },
@@ -544,6 +576,7 @@ export default function App() {
       actions: [
         {
           icon: '🗑', label: '移除',
+          hotkey: 'Del',
           title: '从当前分类 / 页签移除（Delete）',
           danger: true,
           onClick: needCard((c) => void s.removeCard(
@@ -675,7 +708,7 @@ export default function App() {
               onAdd={() => setDialog({ type: 'pickDir', kind: 'project' })}
           onAddTab={() => s.addTab('project', `页签${(boot.projectTabs.length) + 1}`)}
               onRenameTab={(i, n) => s.renameTab('project', i, n)}
-              onRemoveTab={(i) => s.removeTab('project', i)}
+              onRemoveTab={(i) => requestRemoveTab('project', i)}
               active={s.activeTab.project}
               onTab={(i) => s.setActiveTab((prev) => ({ ...prev, project: i }))}
               focused={focus === 'project'}
@@ -722,7 +755,7 @@ export default function App() {
                 onCrossDrop={onCrossDrop}
                 menus={menus('group')}
                 onRename={(i, n) => s.renameTab('group', i, n)}
-                onRemove={(i) => s.removeTab('group', i)}
+                onRemove={(i) => requestRemoveTab('group', i)}
                 onAdd={(i) => setDialog({ type: 'pickDir', kind: 'group', tabIndex: i })}
                 emptyHint="还没有项目组，点分类右侧的 ＋ 添加"
               />
@@ -752,11 +785,42 @@ export default function App() {
 
           {/* ---------------- 日志（对照 WPF 底部的 140px 日志行）---------------- */}
           <div className="p-card fpx-logcard">
-            <h2 style={{ margin: 0 }}>日志</h2>
+            <div className="p-row fpx-col-head">
+              <h2>日志</h2>
+              <div className="p-row fpx-col-head-ops">
+                <button
+                  className="p-btn"
+                  style={{ height: 26, padding: '0 8px' }}
+                  title="复制全部日志（含时间戳）"
+                  disabled={s.log.length === 0}
+                  onClick={() => copyText(
+                    s.log.slice(0, 40).map((l) => `[${l.at}] ${l.text}`).join('\n'))}
+                >
+                  复制全部
+                </button>
+                <button
+                  className="p-btn"
+                  style={{ height: 26, padding: '0 8px' }}
+                  title="清空日志（只清界面上的流水，不影响任何登记）"
+                  disabled={s.log.length === 0}
+                  onClick={s.clearLog}
+                >
+                  清空
+                </button>
+              </div>
+            </div>
             <div className="fpx-log">
               {s.log.length === 0 && <div className="p-muted">（暂无）</div>}
               {s.log.slice(0, 40).map((l, i) => (
-                <div key={i} className={l.isError ? 'fpx-log-line err' : 'fpx-log-line'}>
+                <div
+                  key={i}
+                  className={l.isError ? 'fpx-log-line err' : 'fpx-log-line'}
+                  title="右键可复制这一条"
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setLogMenu({ text: `[${l.at}] ${l.text}`, x: e.clientX, y: e.clientY });
+                  }}
+                >
                   <span className="p-muted">[{l.at}]</span> {l.text}
                 </div>
               ))}
@@ -911,8 +975,29 @@ export default function App() {
         />
       )}
 
+      {confirmRemoveTab && (
+        <ConfirmDialog
+          title="删除分类"
+          message={confirmRemoveTab.message}
+          confirmText="删除"
+          danger
+          onConfirm={() => void s.removeTab(confirmRemoveTab.kind, confirmRemoveTab.index)}
+          onClose={() => setConfirmRemoveTab(null)}
+        />
+      )}
+
       {help && (
         <HelpDialog onClose={() => setHelp(false)} platform={boot.platform} />
+      )}
+
+      {/* 日志行右键：复制这一条（原版日志区支持复制单项） */}
+      {logMenu && (
+        <ContextMenu
+          x={logMenu.x}
+          y={logMenu.y}
+          items={[{ label: '复制这一条', onClick: () => copyText(logMenu.text) }]}
+          onClose={() => setLogMenu(null)}
+        />
       )}
 
       {/* 菜单统一渲染到这里（原因见 ui.tsx 的注释）：脱离 .p-card 的层叠上下文 */}

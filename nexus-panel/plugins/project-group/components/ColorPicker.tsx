@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { Api } from '../api';
 import { errText } from '../api';
+import { hexToRgb, rgbToHex, normalizeHex } from '../utils/color';
 
 /** 预设常用色 24 个（取自原 C# 版 ColorPickDialog 的 PresetColors，不可删） */
 export const PRESET_COLORS = [
@@ -13,29 +14,6 @@ export const PRESET_COLORS = [
 ];
 
 const MAX_CUSTOM = 24;
-
-function normalize(hex: string): string | null {
-  const s = (hex || '').trim();
-  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(s);
-  if (!m) return null;
-  let t = m[1];
-  if (t.length === 3) t = t.split('').map((c) => c + c).join('');
-  return `#${t.toUpperCase()}`;
-}
-
-function hexToRgb(hex: string): [number, number, number] {
-  const h = normalize(hex) ?? '#000000';
-  return [
-    parseInt(h.slice(1, 3), 16),
-    parseInt(h.slice(3, 5), 16),
-    parseInt(h.slice(5, 7), 16),
-  ];
-}
-
-function rgbToHex(r: number, g: number, b: number): string {
-  const c = (n: number) => Math.max(0, Math.min(255, Math.round(n) || 0)).toString(16).padStart(2, '0');
-  return `#${c(r)}${c(g)}${c(b)}`.toUpperCase();
-}
 
 /** 色盘：预设 24 色 + 自定义常用色（可增删持久化）+ RGB/HEX 输入 + 吸管 + 恢复默认 */
 export function ColorPicker({
@@ -58,7 +36,7 @@ export function ColorPicker({
   const current = useMemo(() => rgbToHex(...rgb), [rgb]);
 
   const applyHex = (raw: string) => {
-    const hex = normalize(raw);
+    const hex = normalizeHex(raw);
     setHexText(raw);
     if (!hex) return;
     setRgb(hexToRgb(hex));

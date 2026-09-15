@@ -14,11 +14,22 @@ export interface RailAction {
   icon: string;
   /** 图标下方文字，控制在 4 字内 */
   label: string;
+  /**
+   * 键位提示，直接显示在按钮上（对应原版 ShowShortcuts）。
+   * 用 `mod` 代指 Ctrl / ⌘，渲染时按平台替换——写死任一个都会让另一半用户看错。
+   * 只给"真的绑了键"的项，没有就不显示，不拿灰字占位。
+   */
+  hotkey?: string;
   title?: string;
   disabled?: boolean;
   danger?: boolean;
   onClick: () => void;
 }
+
+/** `mod` → ⌘（mac）或 Ctrl（其它平台）。 */
+const IS_MAC = typeof navigator !== 'undefined'
+  && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
+const MOD = IS_MAC ? '⌘' : 'Ctrl';
 
 export interface RailGroup {
   /** 连锁动作分组的标识，用于空数组时不渲染 */
@@ -48,6 +59,9 @@ export function SideRail({
             >
               <span className="fpx-rail-icon">{a.icon}</span>
               <span className="fpx-rail-label">{a.label}</span>
+              {a.hotkey && (
+                <span className="fpx-rail-key">{a.hotkey.replace('mod', MOD)}</span>
+              )}
             </button>
           ))}
         </div>
@@ -64,6 +78,9 @@ export function SideRail({
             >
               <span className="fpx-rail-icon">{a.icon || '▶'}</span>
               <span className="fpx-rail-label">{a.name}</span>
+              {a.shortcut && (
+                <span className="fpx-rail-key">{a.shortcut.replace('mod', MOD)}</span>
+              )}
             </button>
           ))}
         </div>
