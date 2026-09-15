@@ -245,6 +245,21 @@ export async function pushBackup(snapshot, keep = BACKUP_KEEP) {
   return key;
 }
 
+/**
+ * 写入**指定时间戳**的备份（A42 导入用）。
+ *
+ * 与 pushBackup 的区别：不自动生成 ts、不做滚动清理。导入场景要保留对方
+ * 的原始时间（否则所有导入快照都挤成同一秒、排序失去意义），且清理统一
+ * 由调用方在导入结束后做一次（逐份清理会在导入中途删掉刚写进去的）。
+ *
+ * @returns {boolean} 是否写入成功
+ */
+export async function putBackup(snapshot) {
+  if (!snapshot || typeof snapshot.ts !== 'number') return false;
+  const key = K_BACKUP + String(snapshot.ts).padStart(14, '0');
+  return await set(key, snapshot);
+}
+
 /** 备份列表（新→旧） */
 export async function listBackups() {
   const all = (await keys(K_BACKUP)).sort().reverse();

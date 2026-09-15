@@ -85,6 +85,52 @@ export function isBuiltinTheme(name) {
   return THEMES.some((t) => t.value === name);
 }
 
+/**
+ * A64 新建主题的种子调色板。
+ *
+ * 对应 WPF `OnNewThemeClick`（`MindMapPanel.xaml.cs:2859-2900`）：原版**始终**
+ * 以当前选中主题为起点 —— 自定义主题直接取它的 palette，内置主题则把主色
+ * 映射进 palette 的核心键。Web 版原先永远从 `blankTheme()` 起，等于每次
+ * 新建都要从零调 7 个色，实际没人这么用。
+ *
+ * `sub` 为 'transparent' 表示子节点无填充（透出画布底色）。种子里**不能**
+ * 把 'transparent' 直接写进 subBackground —— 那不是一个合法色值，
+ * core 解析失败会让整个主题失效。此处回落成画布底色：视觉等价（透出底色
+ * 与直接填底色在纯色背景上一致），且是合法值。
+ *
+ * @param {string} themeValue 当前主题值（内置名或自定义 id）
+ * @param {Array} customThemes 自定义主题列表
+ * @returns {object} palette
+ */
+export function themeSeed(themeValue, customThemes = []) {
+  const custom = (customThemes || []).find((t) => t.id === themeValue);
+  if (custom?.palette) return JSON.parse(JSON.stringify(custom.palette));
+
+  const b = THEMES.find((t) => t.value === themeValue) || THEMES.find((t) => t.value === DEFAULT_THEME);
+  const fallbackBg = b.bg;
+  return {
+    background: b.bg,
+    textColor: isLightColor(b.bg) ? '#333333' : '#E8E8E8',
+    selectedColor: b.root,
+    connectColor: b.root,
+    connectWidth: 2,
+    rootBackground: b.root,
+    rootFontSize: 16,
+    rootRadius: 5,
+    rootSpace: 10,
+    mainBackground: b.main,
+    mainFontSize: 14,
+    mainRadius: 3,
+    mainSpace: 5,
+    mainMargin: 20,
+    subBackground: b.sub === 'transparent' ? fallbackBg : b.sub,
+    subFontSize: 12,
+    subRadius: 5,
+    subSpace: 5,
+    subMargin: 20,
+  };
+}
+
 /* ------------------------------------------------------------
    外壳主题 → 画布配色
    ------------------------------------------------------------

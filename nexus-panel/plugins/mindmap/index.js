@@ -773,10 +773,16 @@ bootIframePlugin(async (ctx) => {
     suppress = false;
     endSuppressSoon();   // 继续吸收异步派发（详见 beginSuppress 的注释）
 
-    if (s.theme && !isBuiltinTheme(s.theme)) {
-      const t = customThemes.find((x) => x.id === s.theme);
-      if (t) bridge.registerTheme(t);
-    }
+    // A67 注册顺序：切换/重载画布后**按 customThemes 的既有顺序**注册全部。
+    //
+    // 原先只注册当前画布用的那一个，于是切到另一张画布后，之前注册过的自定义
+    // 主题全丢了 —— 在主题面板里看得见（列表读的是 customThemes）、点上去却
+    // 报「注册失败」，因为编辑器侧根本没这个主题。重载编辑器后表现又不一样
+    // （注册状态被清空），同一个操作两种结果。
+    //
+    // 顺序必须固定为 customThemes 的数组序：core 用「注册序」做主题回退链，
+    // 顺序不定会让同名/近名主题的解析结果漂移。
+    registerCustomThemes();
     bridge.setTheme(s.theme || DEFAULT_THEME);
     bridge.setTemplate(s.layout || DEFAULT_LAYOUT);
 
@@ -904,9 +910,11 @@ bootIframePlugin(async (ctx) => {
 
     // 滚动快照：间隔可配（0=关闭），且与最新快照逐张比对，内容没变就只重置计时不写盘。
     // 对齐 C# 版 MaybeBackupAsync 的行为，避免每次到点都白写一份。
+    // A47 暂停：pause 是**临时**停、保留原间隔值；interval=0 是**永久关闭**。
+    // 两者必须分开 —— 若用「置 0」来暂停，恢复时用户得重新想起原来设的几分钟。
     const now = Date.now();
     const intervalMs = (Number(settings.backupMinutes) || 0) * 60 * 1000;
-    if (intervalMs > 0 && now - lastBackupAt > intervalMs) {
+    if (!settings.backupPaused && intervalMs > 0 && now - lastBackupAt > intervalMs) {
       lastBackupAt = now;
       const fp = wb.fingerprintSheets(workbook.sheets);
       if (fp !== lastBackupFp) {
@@ -918,6 +926,58 @@ bootIframePlugin(async (ctx) => {
   }
 
 
+
+  /**
+   * A42 备份迁移：导出全部快照 / 从文件导入合并。
+   *
+   * 【为什么不是「备份目录」】C# 版 `MoveMindMapBackupDir` 改的是**文件系统
+   * 目录**（MainViewModel.MindMap.cs:75-98），Web 版用 IndexedDB，用户根本
+   * 看不到文件，做个「虚拟目录名」既不可见也没人用。
+   *
+   * 真正等价的诉求是**换机器时能把备份带走** —— 所以落地成导出 / 导入文件，
+   * 这也是 WPF 那个目录的实际用途（拷到别的盘 / 别的机器）。
+   *
+   * 导入用**合并**而非「整体替换」：C# 的 Move 是移动（旧的没了），但那是
+   * 同一个盘的目录搬迁；跨机导入若是替换，一旦选错文件就把本机现有快照
+   * 全清了 —— 不可逆。合并按 ts 去重，重复的跳过，本机原有的保留。
+   */
+  async function exportBackups() {
+    const all = await store.listBackups();
+    if (!all.length) { status('没有可导出的快照', true); return; }
+    const payload = {
+      kind: 'nexus-mindmap-backups',
+      version: 1,
+      exportedAt: Date.now(),
+      backups: all.map((b) => ({ ts: b.ts, sheets: b.sheets, activeId: b.activeId })),
+    };
+    io.downloadBlob(
+      io.stampName('脑图快照', 'json'),
+      new Blob([JSON.stringify(payload)], { type: 'application/json' }),
+    );
+    status(`已导出 ${all.length} 份快照`);
+  }
+
+  async function importBackups() {
+    const f = await io.pickFile('application/json,.json');
+    if (!f) return;
+    let data;
+    try { data = JSON.parse(await io.readText(f)); } catch { status('快照文件无法解析（不是合法 JSON）', true); return; }
+    const list = data?.backups;
+    if (!Array.isArray(list) || !list.length) { status('文件里没有快照数据', true); return; }
+
+    const mine = new Set((await store.listBackups()).map((b) => b.ts));
+    let added = 0, skipped = 0;
+    for (const b of list) {
+      // ts 缺失的快照无法排序，也无法去重 —— 宁可跳过也不要塞进库里
+      // 造成「列表里出现一个时间戳为 undefined 的条目」
+      if (!b || typeof b.ts !== 'number' || !Array.isArray(b.sheets)) { skipped++; continue; }
+      if (mine.has(b.ts)) { skipped++; continue; }
+      const ok = await store.putBackup({ ts: b.ts, sheets: b.sheets, activeId: b.activeId });
+      if (ok) { added++; mine.add(b.ts); } else skipped++;
+    }
+    await trimBackups();
+    status(`已导入 ${added} 份快照${skipped ? `，跳过 ${skipped} 份（重复或格式不符）` : ''}`);
+  }
 
   /**
    * 按当前上限滚动清理旧快照。
@@ -1102,6 +1162,30 @@ bootIframePlugin(async (ctx) => {
   }
 
   /* ------------------------- 主题 / 布局 ------------------------- */
+
+  /**
+   * A67 按既有序注册**全部**自定义主题。
+   *
+   * 只注册当前用的那一个是不够的：core 的主题表在编辑器实例内存活，
+   * 切换画布不会清空它，但**重载编辑器会** —— 于是「切换」和「重载」
+   * 两种操作后主题可用性不一致，同一个按钮时灵时不灵。
+   *
+   * 逐个注册且**不因单个失败中断**：一个主题数据坏了不该连累其它主题，
+   * 否则用户会看到「所有自定义主题都失效」这种放大了的故障。
+   *
+   * 顺序必须固定为 `customThemes` 的数组序：core 用注册序做主题解析，
+   * 顺序漂移会让「切换画布」与「重载编辑器」得到不同的解析结果，
+   * 表现为同一个主题按钮时灵时不灵。
+   *
+   * @returns {number} 成功注册的数量
+   */
+  function registerCustomThemes() {
+    let n = 0;
+    for (const t of customThemes || []) {
+      try { if (bridge?.registerTheme(t)) n++; } catch { /* 单个坏主题不连累其它 */ }
+    }
+    return n;
+  }
 
   async function applyTheme(name) {
     const s = sheet();
@@ -1314,6 +1398,8 @@ bootIframePlugin(async (ctx) => {
     toggleFolder: guard('折叠文件夹', toggleFolder),
     moveFile: guard('移动文件', moveFile),
     backupNow: guard('备份', backupNow),
+    exportBackups: guard('导出快照', exportBackups),
+    importBackups: guard('导入快照', importBackups),
     restoreBackup: guard('恢复快照', restoreBackup),
     exportJson: guard('导出 JSON', exportJson),
     exportMarkdown: guard('导出 Markdown', exportMarkdown),
@@ -1340,6 +1426,19 @@ bootIframePlugin(async (ctx) => {
      * 最多保留备份份数（对应 C# MindMapBackupMax，默认 3）。
      * 改完立即按新上限滚动清理，否则旧快照会一直堆到下次备份才收敛。
      */
+    /**
+     * A47 暂停 / 恢复自动快照。
+     * 与「间隔=0（永久关闭）」是两条独立的状态：暂停只加一个布尔位，
+     * 原间隔值原样留着，恢复时立刻回到原来的节奏。
+     */
+    setBackupPaused: guard('暂停快照', async (on) => {
+      settings.backupPaused = !!on;
+      const ok = await store.settings.save(settings);
+      if (!ok) { status('设置保存失败', true); return; }
+      status(settings.backupPaused
+        ? `自动快照已暂停（间隔仍为 ${settings.backupMinutes || 0} 分钟，恢复后继续）`
+        : `自动快照已恢复（每 ${settings.backupMinutes || 0} 分钟）`);
+    }),
     setBackupMax: guard('设置保留份数', async (n) => {
       settings.backupMax = Number(n) || store.BACKUP_KEEP;
       const ok = await store.settings.save(settings);

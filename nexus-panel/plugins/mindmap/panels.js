@@ -11,7 +11,7 @@
  */
 
 import { h } from '../../js/plugin-sdk.js';
-import { THEMES, LAYOUTS, blankTheme } from './themes.js';
+import { THEMES, LAYOUTS, blankTheme, DEFAULT_THEME, themeSeed } from './themes.js';
 import { LAYOUT_THUMBS } from './layout-thumbs.js';
 import * as io from './io.js';
 import * as store from './store.js';
@@ -828,6 +828,10 @@ export function buildSide(app, opts = {}) {
 
   function pageTheme() {
     const cur = app.sheet?.theme || 'fresh-blue';
+    // 当前主题的显示名（新建种子提示用）：自定义主题有 name，内置主题查 THEMES
+    const curName = (app.customThemes || []).find((x) => x.id === cur)?.name
+      || THEMES.find((x) => x.value === cur)?.label
+      || cur;
     const curLayout = app.sheet?.layout || 'default';
 
     const list = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
@@ -847,11 +851,28 @@ export function buildSide(app, opts = {}) {
           h('span.name', { onclick: () => { app.api.applyTheme(t.id); refresh(); } }, t.name || t.id),
           h('button.mm-btn.icon', { onclick: () => { openThemeEditor(app, t); }, title: '编辑' }, '✎'),
           h('button.mm-btn.icon', {
+            // A62 删除回退（对照 WPF OnDeleteThemeClick，MindMapPanel.xaml.cs:2825）
             onclick: safe('删除主题', async () => {
+              // 关键：删的若是**正在使用**的主题，必须先切回内置并落盘，
+              // 否则 sheet.theme 会指向一个已注销的 id —— 重载后主题注册失败，
+              // 画布停在错误配色上，且用户没有任何提示。
+              //
+              // 与 C# 版的刻意差异：WPF 是**无条件**切回 fresh-blue，
+              // 即删一个压根没在用的主题，也会把当前主题重置掉。
+              // 这里改成「只有删的是当前主题才回退」——删别的主题不该打扰用户。
+              const isCurrent = cur === t.id;
+              if (isCurrent) await app.api.applyTheme(DEFAULT_THEME);
               app.customThemes = (app.customThemes || []).filter((x) => x.id !== t.id);
               const ok = await app.api.saveThemes();
-              if (!ok) { app.api.status('删除失败（未写入本地库）', true); return; }
+              if (!ok) {
+                app.api.status('删除失败（未写入本地库）', true);
+                if (isCurrent) await app.api.applyTheme(t.id);   // 回滚，别把用户卡在中间态
+                return;
+              }
               refresh();
+              app.api.status(isCurrent
+                ? `已删除「${t.name}」并回退到内置主题`
+                : `已删除「${t.name}」`);
             }, (m) => app.api.status(m, true)),
             title: '删除',
           }, '✕'),
@@ -862,7 +883,11 @@ export function buildSide(app, opts = {}) {
       section('配色主题',
         list,
         h('div.mm-row', {},
-          h('button.mm-btn', { onclick: () => openThemeEditor(app, null) }, '＋ 新建'),
+          // A64：把当前主题传进去当种子（原版 OnNewThemeClick 同款行为）
+          h('button.mm-btn', {
+            onclick: () => openThemeEditor(app, null, cur),
+            title: `以当前主题「${curName}」为起点新建`,
+          }, '＋ 新建'),
           h('button.mm-btn', {
             onclick: safe('导入主题', () => importThemeFile(), (m) => app.api.status(m, true)),
             title: '从 JSON 文件导入自定义主题',
@@ -937,8 +962,18 @@ function dialog(title, children, onClose) {
 }
 
 /** 自定义主题编辑器 */
-export function openThemeEditor(app, theme) {
-  const editing = theme ? JSON.parse(JSON.stringify(theme)) : blankTheme('th' + Math.random().toString(36).slice(2, 10), '自定义主题');
+export function openThemeEditor(app, theme, seedTheme) {
+  // A64：新建（theme 为空）时以 seedTheme 为种子，而不是永远空白。
+  //   · 自定义主题 → 克隆它的 palette
+  //   · 内置主题   → 用它的四色（bg/root/main/sub）映射成 palette
+  // 编辑时 theme 非空，走原路径（深拷贝自身，保留 id 以覆盖更新）。
+  const editing = theme
+    ? JSON.parse(JSON.stringify(theme))
+    : {
+      id: 'th' + Math.random().toString(36).slice(2, 10),
+      name: '自定义主题',
+      palette: themeSeed(seedTheme, app.customThemes),
+    };
   const p = editing.palette || (editing.palette = {});
 
   const rows = [
@@ -1260,6 +1295,17 @@ export function openSettings(app) {
     h('option', { value: m, selected: Number(s.backupMinutes ?? 2) === m },
       m === 0 ? '关闭' : `${m} 分钟`)));
 
+  // A47 暂停开关：就地更新文案（整体重建会让同面板的 <select> 失焦）
+  const pauseBtn = h('button.mm-btn' + (s.backupPaused ? '.on' : ''), {
+    onclick: () => {
+      app.api.setBackupPaused(!app.settings?.backupPaused);
+      const on = !!app.settings?.backupPaused;
+      pauseBtn.classList.toggle('on', on);
+      pauseBtn.textContent = on ? '已暂停' : '进行中';
+    },
+    title: '临时停掉自动快照；与「间隔=关闭」不同，暂停会保留原间隔值',
+  }, s.backupPaused ? '已暂停' : '进行中');
+
   const keepSel = h('select.mm-select', {
     onchange: (e) => app.api.setBackupMax(Number(e.target.value)),
     title: '同一份脑图最多保留的快照份数，超出自动删除最旧的一份',
@@ -1270,6 +1316,9 @@ export function openSettings(app) {
     section('备份',
       h('div.mm-row', {}, h('span.mm-label', {}, '自动间隔'), intervalSel),
       h('div.mm-hint', {}, '到点才比对一次；内容与最新快照相同则不写盘，避免空转。'),
+      h('div.mm-row', { style: { marginTop: '2px' } },
+        h('span.mm-label', {}, '自动快照'), pauseBtn),
+      h('div.mm-hint', {}, '暂停只临时停，间隔值保留；选「关闭」才是永久停用。'),
       h('div.mm-row', { style: { marginTop: '2px' } }, h('span.mm-label', {}, '最多保留'), keepSel),
       h('div.mm-hint', {}, '调小后立即清理超出部分，无需等下次备份。'),
       h('div.mm-row', { style: { marginTop: '4px' } },
@@ -1278,6 +1327,18 @@ export function openSettings(app) {
           onclick: safe('打开快照', () => openBackups(app), (m) => app.api.status(m, true)),
         }, '历史快照…'),
       ),
+      // A42 换机迁移：导出成文件带走 / 从文件合并回来
+      h('div.mm-row', { style: { marginTop: '2px' } },
+        h('button.mm-btn', {
+          onclick: safe('导出快照', () => app.api.exportBackups(), (m) => app.api.status(m, true)),
+          title: '把所有快照导出成一个 JSON 文件（用于换机器/备份到别处）',
+        }, '导出全部'),
+        h('button.mm-btn', {
+          onclick: safe('导入快照', () => app.api.importBackups(), (m) => app.api.status(m, true)),
+          title: '从 JSON 文件合并快照；重复时间戳的会跳过，本机现有快照保留',
+        }, '从文件导入'),
+      ),
+      h('div.mm-hint', {}, 'C# 版这里是「备份目录」；Web 版存储不可见，改用文件导出/导入实现同等的换机迁移。'),
     ),
     section('外观',
       h('div.mm-row', {}, h('span.mm-label', {}, '布局动画'), animBtn),

@@ -2430,6 +2430,223 @@ group('B2/B3 内核已提供');
 }
 
 /* ============================================================
+   二十五、P0：A62 / A64 / A67 / A47 / A42
+   ============================================================ */
+
+group('P0 主题与备份');
+
+{
+  const th = await import('./themes.js');
+
+  // ---- A64 新建主题种子 ----
+  ok(typeof th.themeSeed === 'function', 'themes.js 导出 themeSeed');
+
+  // 内置主题 → 四色映射
+  const seed = th.themeSeed('fresh-blue', []);
+  eq(seed.background, '#FBFBFB', 'A64 种子：背景取内置主题 bg');
+  eq(seed.rootBackground, '#73A1BF', 'A64 种子：根节点色取 root');
+  eq(seed.mainBackground, '#EEF3F6', 'A64 种子：主干色取 main');
+  eq(seed.subBackground, '#FBFBFB', 'A64 种子：sub=transparent 回落为画布底色（不是字符串 transparent）');
+  ok(!/transparent/i.test(JSON.stringify(seed)), 'A64 种子里不含 transparent（非法色值会让主题失效）');
+
+  // transparent 必须回落 —— 直接写会让 core 解析失败
+  const snow = th.themeSeed('snow', []);
+  eq(snow.subBackground, '#FFFFFF', 'A64 snow 的 sub 是实色，原样取用');
+
+  // 自定义主题 → 克隆 palette，且是深拷贝
+  const custom = [{ id: 'c1', name: '我的', palette: { background: '#123456', rootBackground: '#ABCDEF' } }];
+  const cs = th.themeSeed('c1', custom);
+  eq(cs.background, '#123456', 'A64 自定义主题：取它的 palette');
+  ok(cs !== custom[0].palette, 'A64 是深拷贝（改种子不会污染原主题）');
+  cs.background = '#FFFFFF';
+  eq(custom[0].palette.background, '#123456', 'A64 改种子后原主题不受影响');
+
+  // 未知主题 → 回落到默认，不返回 undefined
+  const unk = th.themeSeed('不存在的主题', []);
+  ok(unk && typeof unk.background === 'string', 'A64 未知主题回落到默认（不返回 undefined）');
+
+  // 每个内置主题都能产出完整 palette
+  const need = ['background', 'textColor', 'selectedColor', 'connectColor', 'rootBackground', 'mainBackground', 'subBackground'];
+  let allOk = true;
+  for (const t of th.THEMES) {
+    const p = th.themeSeed(t.value, []);
+    if (!need.every((k) => typeof p[k] === 'string' && p[k])) allOk = false;
+  }
+  ok(allOk, 'A64 每个内置主题都能产出完整 palette（7 个核心键齐全）');
+
+  // 色值合法性：非法色值会让整段 CSS 不渲染
+  let hexOk = true;
+  for (const t of th.THEMES) {
+    const p = th.themeSeed(t.value, []);
+    for (const k of need) if (!/^#[0-9A-Fa-f]{6}$/.test(p[k])) hexOk = false;
+  }
+  ok(hexOk, 'A64 所有种子色值都是合法 #RRGGBB（非法色值会静默不渲染）');
+}
+
+{
+  const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+
+  // ---- A62 删除回退 ----
+  const delSeg = src.slice(src.indexOf("safe('删除主题'"), src.indexOf('title: \'删除\','));
+  ok(/const isCurrent = cur === t\.id;/.test(delSeg), 'A62 判断是否删的是当前主题');
+  ok(/if \(isCurrent\) await app\.api\.applyTheme\(DEFAULT_THEME\);/.test(delSeg),
+    'A62 删当前主题时先切回内置并落盘（否则 sheet.theme 指向已注销 id）');
+  // 关键：只在 isCurrent 时回退 —— 与 WPF 的无条件回退不同。
+  // 注意不能只搜「有没有 applyTheme(DEFAULT_THEME)」：有 if 包裹和无 if 包裹
+  // 都含这串，正则区分不了。改为逐处回看它前面有没有 isCurrent。
+  const calls = [...delSeg.matchAll(/applyTheme\(DEFAULT_THEME\)/g)];
+  ok(calls.length > 0, 'A62 确实会回退到内置主题');
+  ok(calls.every((m) => /if \(isCurrent\)[^\n]*$/.test(delSeg.slice(0, m.index).split('\n').pop() || '')),
+    'A62（对照）每次回退都在 isCurrent 分支内 —— 删别的主题不会重置当前主题');
+  ok(/if \(isCurrent\) await app\.api\.applyTheme\(t\.id\);/.test(delSeg),
+    'A62 保存失败时回滚（别把用户卡在「主题已删、切换失败」的中间态）');
+
+  // ---- A64 接线 ----
+  ok(/openThemeEditor\(app, null, cur\)/.test(src), 'A64 新建按钮把当前主题传进去当种子');
+  const edFn = src.slice(src.indexOf('export function openThemeEditor'), src.indexOf('export function openThemeEditor') + 900);
+  ok(/palette: themeSeed\(seedTheme, app\.customThemes\)/.test(edFn), 'A64 新建时 palette 取自 themeSeed');
+  ok(/const editing = theme\s*\?\s*JSON\.parse/.test(edFn), 'A64 编辑时仍深拷贝自身（保留 id 覆盖更新）');
+}
+
+{
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+
+  // ---- A67 注册顺序 ----
+  ok(/function registerCustomThemes\(\)/.test(src), 'A67 抽出 registerCustomThemes()');
+  // JSDoc 在 function 关键字**之前**，切片起点要往前取，否则读不到注释
+  const regFn = src.slice(
+    src.lastIndexOf('/**', src.indexOf('function registerCustomThemes()')),
+    src.indexOf('async function applyTheme'));
+  ok(/for \(const t of customThemes \|\| \[\]\)/.test(regFn), 'A67 遍历全部自定义主题（不只当前那个）');
+  ok(/try \{ if \(bridge\?\.registerTheme\(t\)\) n\+\+; \} catch/.test(regFn),
+    'A67 单个坏主题不中断整个循环（否则一个坏数据会让所有主题失效）');
+  ok(/registerCustomThemes\(\);/.test(src), 'A67 在 loadSheet 里调用');
+  // 关键：顺序固定为数组序
+  ok(/注册序|顺序漂移/.test(regFn), 'A67 注释说明顺序为何要固定（顺序漂移会让同一按钮时灵时不灵）');
+
+  // ---- A47 暂停 ----
+  ok(/setBackupPaused: guard/.test(src), 'A47 提供 setBackupPaused');
+  ok(/settings\.backupPaused = !!on;/.test(src), 'A47 写入 backupPaused');
+  ok(/if \(!settings\.backupPaused && intervalMs > 0 && now - lastBackupAt > intervalMs\)/.test(src),
+    'A47 暂停时不写盘（且与 interval=0 是两个独立状态）');
+  const pause = src.slice(src.indexOf("setBackupPaused: guard"), src.indexOf('setBackupMax: guard'));
+  ok(/间隔仍为|保留原间隔值/.test(pause), 'A47 提示里保留原间隔值（恢复时不用重设）');
+
+  // ---- A42 备份迁移 ----
+  ok(/async function exportBackups\(\)/.test(src), 'A42 提供 exportBackups');
+  ok(/async function importBackups\(\)/.test(src), 'A42 提供 importBackups');
+  ok(/kind: 'nexus-mindmap-backups'/.test(src), 'A42 导出带类型标记（导入时可校验）');
+  const imp = src.slice(src.indexOf('async function importBackups()'), src.indexOf('按当前上限滚动清理'));
+  ok(/new Set\(\(await store\.listBackups\(\)\)\.map\(\(b\) => b\.ts\)\)/.test(imp), 'A42 导入按 ts 去重');
+  ok(/if \(mine\.has\(b\.ts\)\) \{ skipped\+\+; continue; \}/.test(imp), 'A42 重复的跳过（不覆盖本机现有快照）');
+  ok(/typeof b\.ts !== 'number'/.test(imp), 'A42 缺 ts 的跳过（否则列表里会出现 undefined 时间戳条目）');
+  ok(/await trimBackups\(\);/.test(imp), 'A42 导入结束后统一清理一次（逐份清理会删掉刚写进去的）');
+
+  const st = fs.readFileSync(path.join(HERE, 'store.js'), 'utf8');
+  ok(/export async function putBackup\(snapshot\)/.test(st), 'A42 store 新增 putBackup（指定时间戳写入）');
+  ok(/typeof snapshot\.ts !== 'number'\) return false;/.test(st), 'A42 putBackup 校验 ts');
+}
+
+{
+  // ---- A62 行为级：删当前主题必须回退，删其它主题不能打扰 ----
+  // 模拟：sheet.theme 指向某自定义主题，删它之后不能停在已注销 id 上
+  function makeThemeEnv() {
+    return {
+      customThemes: [{ id: 'c1', name: '我的蓝', palette: {} }, { id: 'c2', name: '我的绿', palette: {} }],
+      theme: 'c1',
+      saveOk: true,
+      log: [],
+    };
+  }
+  async function deleteTheme(env, id, saveOk = true) {
+    const isCurrent = env.theme === id;
+    if (isCurrent) { env.theme = 'fresh-blue'; env.log.push('回退到内置'); }
+    const removed = env.customThemes.filter((x) => x.id !== id);
+    if (!saveOk) {
+      if (isCurrent) { env.theme = id; env.log.push('回滚'); }
+      env.log.push('保存失败');
+      return env;
+    }
+    env.customThemes = removed;
+    env.log.push('已删除');
+    return env;
+  }
+
+  const e1 = makeThemeEnv();
+  await deleteTheme(e1, 'c1');
+  eq(e1.theme, 'fresh-blue', 'A62 删的是当前主题 → 回退到内置');
+  ok(e1.customThemes.every((x) => x.id !== 'c1'), 'A62 主题已从列表移除');
+
+  const e2 = makeThemeEnv();
+  await deleteTheme(e2, 'c2');
+  eq(e2.theme, 'c1', 'A62 删的不是当前主题 → 当前主题保持不变（WPF 会无条件重置，这里更好）');
+
+  const e3 = makeThemeEnv();
+  await deleteTheme(e3, 'c1', false);
+  eq(e3.theme, 'c1', 'A62 保存失败 → 回滚，不停在中间态');
+  ok(e3.customThemes.some((x) => x.id === 'c1'), 'A62 保存失败 → 列表也没删掉');
+}
+
+{
+  // ---- A47 行为级：暂停保留原间隔值 ----
+  function makeBackupEnv() {
+    return { settings: { backupMinutes: 5, backupPaused: false }, wrote: 0 };
+  }
+  function maybeBackup(env, now, lastAt) {
+    const ms = (Number(env.settings.backupMinutes) || 0) * 60 * 1000;
+    if (!env.settings.backupPaused && ms > 0 && now - lastAt > ms) { env.wrote++; return true; }
+    return false;
+  }
+  const b1 = makeBackupEnv();
+  eq(maybeBackup(b1, 10 * 60000, 0), true, 'A47 正常运行：到点会备份');
+
+  b1.settings.backupPaused = true;
+  eq(maybeBackup(b1, 20 * 60000, 0), false, 'A47 暂停后不备份');
+  eq(b1.settings.backupMinutes, 5, 'A47 暂停时原间隔值仍保留（不会被置 0）');
+
+  b1.settings.backupPaused = false;
+  eq(maybeBackup(b1, 30 * 60000, 0), true, 'A47 恢复后立即按原间隔继续');
+  eq(b1.settings.backupMinutes, 5, 'A47 恢复后间隔值没变（用户不用重设）');
+
+  // 与「间隔=0 永久关闭」是两条独立状态
+  const b2 = makeBackupEnv();
+  b2.settings.backupMinutes = 0;
+  eq(maybeBackup(b2, 999 * 60000, 0), false, 'A47 间隔=0 是永久关闭');
+  b2.settings.backupPaused = false;
+  eq(maybeBackup(b2, 999 * 60000, 0), false, 'A47 取消暂停也救不回「间隔=0」（两者独立）');
+}
+
+{
+  // ---- A42 行为级：合并去重，不覆盖本机 ----
+  function makeImport(existing, incoming) {
+    const mine = new Set(existing.map((b) => b.ts));
+    const all = existing.slice();
+    let added = 0, skipped = 0;
+    for (const b of incoming) {
+      if (!b || typeof b.ts !== 'number' || !Array.isArray(b.sheets)) { skipped++; continue; }
+      if (mine.has(b.ts)) { skipped++; continue; }
+      all.push(b); mine.add(b.ts); added++;
+    }
+    return { all, added, skipped };
+  }
+  const local = [{ ts: 100, sheets: [] }, { ts: 200, sheets: [] }];
+  const r = makeImport(local, [
+    { ts: 200, sheets: [] },        // 重复
+    { ts: 300, sheets: [] },        // 新
+    { ts: 'x', sheets: [] },        // ts 非法
+    { sheets: [] },                 // 缺 ts
+    null,                           // 空项
+  ]);
+  eq(r.added, 1, 'A42 只导入真正新增的 1 份');
+  eq(r.skipped, 4, 'A42 跳过 4 份（1 重复 + 3 格式不符）');
+  eq(r.all.length, 3, 'A42 本机原有快照完整保留（合并而非替换）');
+  ok(r.all.some((b) => b.ts === 100), 'A42 本机 ts=100 还在');
+  ok(r.all.some((b) => b.ts === 300), 'A42 新导入 ts=300 已加入');
+  // 关键：不能因为导入就把本机清掉
+  ok(r.all.filter((b) => b.ts === 200).length === 1, 'A42 重复的 ts=200 只有一份（没被覆盖成两份）');
+}
+
+/* ============================================================
    结果
    ============================================================ */
 
