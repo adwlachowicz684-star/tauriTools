@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { CardInfo, CardKind } from '../types';
-import { shade } from '../utils/color';
+import { isDark, shade } from '../utils/color';
 import { ContextMenu, type MenuItem } from './ui';
 
 export const DRAG_MIME = 'application/x-fpx-card';
@@ -227,7 +227,12 @@ export function CardGrid({
             {c.tagColor && (
               <span
                 className="fpx-color-dot"
-                style={{ background: c.tagColor }}
+                style={{
+                  background: c.tagColor,
+                  // 深色标签在深色背景上会糊成一团、看不出边界，
+                  // 按自身明暗给一圈对比边框（原版按底色明暗选黑白的同款思路）。
+                  borderColor: isDark(c.tagColor) ? 'rgba(255,255,255,.45)' : 'rgba(0,0,0,.25)',
+                }}
                 title={c.tagColorInherited ? `继承自项目组：${c.tagColor}` : c.tagColor}
               />
             )}

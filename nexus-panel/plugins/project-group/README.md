@@ -43,10 +43,10 @@ npm run tauri:build    # 打包
 | **发送到 AI** | 内置四项连锁动作（自由任务 / 一键审查 / 快速归并 / 快速部署）+ 自定义；每个动作分别有项目与项目组两份模板，可指定专属客户端、可挂右键菜单。发给 opencode / Cursor / VSCode / Trae 等（部分客户端降级为复制+粘贴） |
 | **截图** | 存到数据目录 `shots/`（Windows 直出，macOS/Linux 调系统命令） |
 | **目录监听** | 受保护目录被外部改动时告警（轮询比对，见「注意」） |
-| **MCP server** | 仅本机可访问；让外部 AI 工具调用本插件 13 个能力 |
+| **MCP server** | 仅本机可访问；让外部 AI 工具调用本插件 24 个能力 |
 | **链接名改名 / 厂商** | 每个预设链接名可改名（改实际建链目录名）、可覆盖厂商标注 |
 | **链接名置顶** | 星标置顶，多个置顶项按点击顺序排前；改名后自动跟随新名 |
-| **基础设置面板** | 拖入后自动选中、快速链接、新建路径带页签层级、图标同步资源管理器、只增备份、自动备份间隔、MCP 总开关与 13 个工具逐个开关 |
+| **基础设置面板** | 拖入后自动选中、快速链接、新建路径带页签层级、图标同步资源管理器、只增备份、自动备份间隔、MCP 总开关与 24 个工具逐个开关 |
 | **设置走外壳「⚙」** | 「基础设置」「Agent 链接名」「服务（MCP / 监听 / 截图）」三块都收进**外壳右上角的「⚙ 设置」**（重载按钮左侧），不占主界面工具栏。主界面只留日常操作（新建、备份、发送到 AI、刷新、清除无效项） |
 | **自动备份** | 后台线程按间隔定时备份项目 + 项目组；改动在保存时生效，设为「关闭」即停 |
 | **备份目录分开** | 项目与项目组可各指定一个备份目录，优先于统一根目录；留空则回退 |
@@ -113,12 +113,22 @@ plugins/project-group/
 
 ```
 src-tauri/src/fpx/
-├── mod.rs         命令层（43 条 fpx_*）
+├── mod.rs         命令层（47 条 fpx_*）
 ├── model.rs       DTO
-├── store.rs       配置 / 记录读写 + 卡片状态计算
+├── store.rs       配置 / 记录读写 + 卡片状态计算 + 事务与锁
 ├── junction.rs    链接操作 + agent 链接名名单
 ├── content.rs     agent / skill / rule 扫描
-└── sys.rs         目录浏览 / 新建 / 打开 / ACL / desktop.ini
+├── sys.rs         目录浏览 / 新建 / 打开 / ACL / desktop.ini
+├── backup.rs      一键备份
+├── chain.rs       Agent 连锁（发指令给桌面 AI 客户端）
+├── mcp.rs         内置 MCP server（24 个工具）
+├── watch.rs       受保护目录监听
+├── screen.rs      屏幕截图
+├── editor.rs      编辑器候选枚举
+├── cli.rs         命令行模式（--self-check / --migrate-*）
+├── fsutil.rs      跨平台文件原语（链接判定 / 递归遍历 / 跨设备回退 / 文件锁）
+├── safety.rs      外部命令安全边界
+└── base64.rs      极简 base64
 ```
 
 ## 五、与 C# 版的对应关系
@@ -146,7 +156,7 @@ src-tauri/src/fpx/
 | Agent 连锁 | `fpx/chain.rs` | 工具条「发送到 AI」/ 卡片右键 | opencode、Cursor 走深链接；VSCode 走命令行；其余降级为「复制+唤起+提示粘贴」 |
 | 截图 | `fpx/screen.rs` | 「服务」→ 截图 | Windows 走 PowerShell+System.Drawing；macOS 用 screencapture；Linux 需 import/gnome-screenshot/grim |
 | 目录监听 | `fpx/watch.rs` | 「服务」→ 监听 | 轮询比对指纹（条目数+最大修改时间），改动经 `fpx_watch_poll` 拉取告警 |
-| MCP server | `fpx/mcp.rs` | 「服务」→ MCP | 仅绑定 127.0.0.1；JSON-RPC 2.0，暴露 13 个工具 |
+| MCP server | `fpx/mcp.rs` | 「服务」→ MCP | 仅绑定 127.0.0.1；JSON-RPC 2.0，暴露 24 个工具 |
 | 链接名改名 | `linkAgentRenames` | 链接名面板每行可改名 | 改的是实际建链目录名；**已存在的链接不会跟着改**，需撤销后重分配 |
 | 厂商标注覆盖 | `linkAgentVendors` | 链接名面板「厂商」列 | 覆盖预设厂商，留空回退默认 |
 
@@ -300,14 +310,19 @@ A: 基于版本 1 改完 save()  // 版本 3 —— B 的改动被整份覆盖
 
 ## 命令行模式
 
-在 Tauri 启动**之前**处理，不创建窗口：
+`--self-check` / `--migrate-*` 由 `cli.rs` 在 Tauri 启动**之前**处理，不创建窗口：
 
 ```bash
 nexus-panel --self-check <config> <record> <outDir>   # 数据层自检，报告写入 outDir
 nexus-panel --migrate-hierarchy [config] [record]      # 项目搬到「新建项目父目录\页签名\名称」
 nexus-panel --migrate-groups-hierarchy [config] [record]  # 项目组同上，搬完重建指向它的链接
-nexus-panel --mcp [port]                              # 只跑 MCP server，不开界面
 ```
+
+`--mcp [port]` **不在这里**——它由 `main.rs` 在 Tauri `Builder` 的 `setup` 里处理
+（关掉主窗口后再 `serve()`）。也就是说它仍然加载了完整的 Tauri 栈，
+只是不显示窗口。若将来要加 stdio 模式，必须把它挪到 `main()` 最前面、
+在 `Builder` 之前处理：Tauri 自己会往 stdout 打东西，
+而 stdio 模式要求 stdout 只能输出 JSON-RPC。
 
 自检全程只写输出目录，不碰真实数据，可随时跑；报告含 `[FAIL]` 时退出码为 1，便于脚本判断。
 

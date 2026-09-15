@@ -80,6 +80,27 @@ export function ContentPanel({
 
   useEffect(() => { setSelected(null); setText(''); }, [root, kind]);
 
+  /**
+   * 某类资源的**实际基目录**（对应原版 OpenAgentDir / OpenSkillDir / OpenRuleDir）。
+   *
+   * 不能直接拼 `root/agents` —— 后端兼容单复数两种写法（`agent` / `agents`），
+   * 拼错了打开的目录不存在，用户只看到一句报错却不知道为什么。
+   * 从已有条目反推最可靠：`path` 以 `relPath` 结尾，掐掉剩下的就是基目录。
+   * 该类一个条目都没有时返回 null（按钮置灰），比给个打不开的按钮强。
+   */
+  const baseDirOf = (k: 'agent' | 'skill' | 'rule'): string | null => {
+    const it = items.find((i) => i.kind === k);
+    if (!it?.relPath || !it.path.endsWith(it.relPath)) return null;
+    const base = it.path.slice(0, it.path.length - it.relPath.length).replace(/[\\/]+$/, '');
+    return base || null;
+  };
+
+  /** 取路径最后一段（带扩展名）。原版 CopyFileNameCommand 与 CopyNameCommand 是两个。 */
+  const fileNameOf = (p: string): string => {
+    const t = p.replace(/[\\/]+$/, '');
+    return t.slice(Math.max(t.lastIndexOf('\\'), t.lastIndexOf('/')) + 1);
+  };
+
   const read = async (item: ContentItem) => {
     setSelected(item);
     setText('');
@@ -148,6 +169,23 @@ export function ContentPanel({
         >
           打开目录
         </button>
+        {/* 三类目录直达（原版 OpenAgentDir / OpenSkillDir / OpenRuleDir）。
+            目录不存时置灰而不是点了报错——不知道为什么打不开最让人困惑。 */}
+        {(['agent', 'skill', 'rule'] as const).map((k) => {
+          const dir = baseDirOf(k);
+          return (
+            <button
+              key={k}
+              className="p-btn"
+              style={{ height: 30, padding: '0 12px' }}
+              disabled={!dir}
+              title={dir ? `打开 ${KIND_LABEL[k]} 目录：${dir}` : `该目录下没有 ${KIND_LABEL[k]}`}
+              onClick={() => dir && api.openPath(dir, 'dir').catch((e) => onLog(errText(e), true))}
+            >
+              {KIND_LABEL[k]}目录
+            </button>
+          );
+        })}
         <button
           className="p-btn"
           style={{ height: 30, padding: '0 12px' }}
@@ -206,6 +244,19 @@ export function ContentPanel({
                   )
                 }>
                 复制路径
+              </button>
+              {/* 「复制名」给的是去扩展名的显示名；这个给磁盘上的真实文件名（带扩展名）。
+                  两者在 skill 目录下常常不一样，所以都留着。 */}
+              <button className="p-btn" style={{ height: 28, padding: '0 10px' }}
+                title="复制文件名（含扩展名，磁盘上的真实名字）"
+                onClick={() => {
+                  const fn = fileNameOf(selected.path);
+                  api.copyText(fn).then(
+                    (ok) => onLog(ok ? `已复制文件名：${fn}` : '复制失败', !ok),
+                    (e) => onLog(errText(e), true),
+                  );
+                }}>
+                复制文件名
               </button>
             </div>
           )}
