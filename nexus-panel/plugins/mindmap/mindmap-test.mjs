@@ -640,8 +640,10 @@ group('Tab → 插入下级节点');
   // 8.7 工具栏按钮点完归还焦点 —— 不只 Tab，Enter/方向键/Delete 同样依赖它
   const bseg = src.slice(src.indexOf('const refocusCanvas'), src.indexOf('function buildToolbar'));
   ok(/bridge\?\.focusCanvas\(\)/.test(bseg), '按钮点击后调 bridge.focusCanvas()');
-  ok(/onclick:\s*\(e\)\s*=>\s*\{\s*const\s+r\s*=\s*onclick\?\.\(e\);\s*refocusCanvas\(\)/.test(bseg),
+  ok(/onclick:\s*\(e\)\s*=>\s*\{\s*const\s+r\s*=\s*onclick\?\.\(e\);/.test(bseg),
     '焦点归还在 onclick 执行**之后**（handler 里的 prompt 先跑完）');
+  ok(/if \(opt\.refocus !== false\) refocusCanvas\(\)/.test(bseg),
+    '可跳过归还（refocus:false）—— 打开模态浮层时画布不能继续吃快捷键');
 }
 
 /* ============================================================
@@ -1442,6 +1444,99 @@ group('行内编辑贴合节点');
   const boxH = 60, lines = 3;
   eq(boxH / lines, 20, '三行 60px → 单行行高 20px');
   ok(boxH !== 20, '（对照）直接用 box.height 作为 line-height 会偏大 3 倍');
+}
+
+/* ============================================================
+   十八、设置面板（备份/动画等全局项从文件页移出）
+   ============================================================ */
+
+group('设置面板');
+
+{
+  const { openSettings } = await import('./panels.js');
+
+  const s = { backupMinutes: 2, backupMax: 3, animate: false };
+  const calls = [];
+  const app = {
+    settings: s,
+    bridge: { registerTheme: () => true },
+    api: {
+      status: (m) => calls.push(['status', m]),
+      commit() {},
+      selectedRef: () => null,
+      setBackupMinutes: (v) => { s.backupMinutes = v; calls.push(['minutes', v]); },
+      setBackupMax: (v) => { s.backupMax = v; calls.push(['max', v]); },
+      setAnimate: (on) => { s.animate = on; calls.push(['animate', on]); },
+      backupNow: () => calls.push(['backupNow']),
+    },
+  };
+
+  const dlg = openSettings(app);
+  const root = dlg.mask.querySelector('.mm-dialog');
+
+  // 18.1 三段齐全
+  const titles = [...root.querySelectorAll('h3')].map((x) => x.textContent);
+  ok(titles.includes('备份'), '有「备份」段');
+  ok(titles.includes('外观'), '有「外观」段（布局动画）');
+  ok(titles.includes('其它'), '有「其它」段（快捷键）');
+
+  // 18.2 备份间隔 / 最多保留
+  const sels = [...root.querySelectorAll('select.mm-select')];
+  eq(sels.length, 2, '两个下拉：自动间隔 + 最多保留');
+  ok(sels[0].innerHTML.includes('分钟'), '第一个下拉是时间间隔');
+  ok(sels[1].innerHTML.includes('份'), '第二个下拉是保留份数');
+
+  sels[0].value = '10';
+  sels[0].dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  eq(s.backupMinutes, 10, '改间隔会调用 setBackupMinutes');
+
+  sels[1].value = '5';
+  sels[1].dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  eq(s.backupMax, 5, '改份数会调用 setBackupMax');
+
+  // 18.3 布局动画按钮点一下就切换（就地更新，不重建 DOM）
+  const btnOf = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent === t);
+  const off = btnOf('已关闭');
+  ok(!!off, '动画默认显示为「已关闭」');
+  off.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  eq(s.animate, true, '点击后开启动画');
+  ok(!btnOf('已关闭') && !!btnOf('已开启'), '按钮文案就地更新（不整体重建）');
+
+  // 18.4 立即备份 / 历史快照 / 快捷键 入口
+  ok(!!btnOf('立即备份'), '有「立即备份」');
+  ok(!!btnOf('历史快照…'), '有「历史快照…」');
+  ok(!!btnOf('快捷键…'), '有「快捷键…」');
+  btnOf('立即备份').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  ok(calls.some((c) => c[0] === 'backupNow'), '「立即备份」调用 api.backupNow');
+
+  dlg.close();
+}
+
+{
+  // 18.5 文件页不再塞这些全局设置
+  const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const filePage = src.slice(src.indexOf('function pageFile'), src.indexOf('/* ------------------------- 样式页'));
+  ok(!/section\('备份与恢复'/.test(filePage), '文件页不再有「备份与恢复」段');
+  ok(!/section\('布局动画'/.test(filePage), '文件页不再有「布局动画」段');
+  ok(!/setBackupMinutes/.test(filePage), '文件页不再直接改备份间隔');
+  ok(!/setAnimate/.test(filePage), '文件页不再直接改动动画开关');
+  ok(/section\('导入导出'/.test(filePage), '文件页保留「导入导出」（文档级操作，不是设置）');
+  ok(/已移到顶栏「设置」/.test(filePage), '留有注释说明搬去哪了');
+}
+
+{
+  // 18.6 顶栏：设置按钮在重载左边
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const seg = src.slice(src.indexOf("B('设置'"), src.indexOf('// 属性侧栏页签'));
+  const iSet = seg.indexOf("B('设置'");
+  const iReload = seg.indexOf("B('重载'");
+  ok(iSet >= 0 && iReload >= 0, '顶栏同时有「设置」与「重载」');
+  ok(iSet < iReload, '设置按钮在重载按钮**左边**');
+  ok(/openSettings\(app\)/.test(seg), '设置按钮打开 openSettings');
+  ok(/refocus:\s*false/.test(seg), '设置按钮 refocus:false（模态浮层打开时不把焦点还给画布）');
+  ok(/openSettings/.test(src.slice(0, src.indexOf("import { buildSide") + 200)) ||
+     /import \{[^}]*openSettings[^}]*\} from '\.\/panels\.js'/.test(src),
+    'index.js 已 import openSettings');
 }
 
 /* ============================================================

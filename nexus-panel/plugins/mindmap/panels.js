@@ -521,43 +521,8 @@ export function buildSide(app, opts = {}) {
           h('button.mm-btn', { onclick: () => remove('video'), disabled: !vref }, '移除'),
         ),
       ),
-      section('备份与恢复',
-        h('div.mm-hint', {}, '实时缓存已开启（自动写入本地库）。这里管理历史快照，闪退或从备份回退时用。'),
-        h('div.mm-row', {},
-          h('button.mm-btn', { onclick: () => app.api.backupNow() }, '立即备份'),
-          h('button.mm-btn', {
-            onclick: safe('打开快照', () => openBackups(app), (m) => app.api.status(m, true)),
-          }, '历史快照…'),
-          h('button.mm-btn', { onclick: () => openShortcuts(app), title: '查看编辑器支持的快捷键' }, '快捷键…'),
-        ),
-        h('div.mm-row', { style: { marginTop: '2px' } },
-          h('span.mm-label', {}, '自动间隔'),
-          h('select.mm-select', {
-            onchange: (e) => { app.api.setBackupMinutes(Number(e.target.value)); refresh(); },
-          }, ...[0, 1, 2, 5, 10, 30].map((m) =>
-            h('option', { value: m, selected: Number(app.settings?.backupMinutes ?? 2) === m },
-              m === 0 ? '关闭' : `${m} 分钟`))),
-        ),
-        h('div.mm-hint', {}, '到点才比对一次；内容与最新快照相同则不写盘，避免空转。'),
-        h('div.mm-row', { style: { marginTop: '2px' } },
-          h('span.mm-label', {}, '最多保留'),
-          h('select.mm-select', {
-            onchange: (e) => { app.api.setBackupMax(Number(e.target.value)); refresh(); },
-            title: '同一份脑图最多保留的快照份数，超出自动删除最旧的一份',
-          }, ...[1, 2, 3, 5, 10].map((n) =>
-            h('option', { value: n, selected: Number(app.settings?.backupMax ?? 3) === n }, `${n} 份`))),
-        ),
-        h('div.mm-hint', {}, '调小后立即清理超出部分，无需等下次备份。'),
-      ),
-
-      section('布局动画',
-        h('div.mm-row', {},
-          h('button.mm-btn' + (app.settings?.animate ? '.on' : ''), {
-            onclick: () => { app.api.setAnimate(!app.settings?.animate); refresh(); },
-          }, app.settings?.animate ? '已开启' : '已关闭'),
-        ),
-        h('div.mm-hint', {}, '开启后打开画布、展开/收起分支会播 300ms 过渡动画；关闭则直接显示最终布局。'),
-      ),
+      // 备份间隔 / 最多保留 / 布局动画都已移到顶栏「设置」——
+      // 它们是与当前节点无关的全局选项，不该挂在「文件」页下。
       section('导入导出',
         h('div.mm-hint', {}, '导出为文件是主要存档方式。XMind 与官方互通（多画布、主题、外框、附件一并打包，换机可还原）；JSON 保留全部私有字段；Markdown 便于人读。'),
         h('div.mm-row', {},
@@ -1053,6 +1018,70 @@ export async function openBackups(app) {
   ]
   );
   return dlg;
+}
+
+/* ------------------------- 设置 ------------------------- */
+
+/**
+ * 设置面板（顶栏「设置」按钮打开）。
+ *
+ * 备份间隔 / 最多保留份数 / 布局动画这类**与当前节点无关**的全局选项，
+ * 原先堆在文件页里 —— 它们不是「文件」的属性，放在那儿既难找，
+ * 又把一个常用页签撑得很长。现在统一收到设置里。
+ */
+export function openSettings(app) {
+  const s = app.settings || {};
+
+  // 布局动画按钮就地更新：整体重建会让同面板里的 <select> 失焦
+  const animBtn = h('button.mm-btn' + (s.animate ? '.on' : ''), {
+    onclick: () => {
+      app.api.setAnimate(!app.settings?.animate);
+      // 重新读一遍：setAnimate 内部会写回 settings，以它的结果为准
+      const on = !!app.settings?.animate;
+      animBtn.classList.toggle('on', on);
+      animBtn.textContent = on ? '已开启' : '已关闭';
+    },
+  }, s.animate ? '已开启' : '已关闭');
+
+  const intervalSel = h('select.mm-select', {
+    onchange: (e) => app.api.setBackupMinutes(Number(e.target.value)),
+    title: '每隔多久比对一次内容并写入快照；关闭则不自动备份',
+  }, ...[0, 1, 2, 5, 10, 30].map((m) =>
+    h('option', { value: m, selected: Number(s.backupMinutes ?? 2) === m },
+      m === 0 ? '关闭' : `${m} 分钟`)));
+
+  const keepSel = h('select.mm-select', {
+    onchange: (e) => app.api.setBackupMax(Number(e.target.value)),
+    title: '同一份脑图最多保留的快照份数，超出自动删除最旧的一份',
+  }, ...[1, 2, 3, 5, 10].map((n) =>
+    h('option', { value: n, selected: Number(s.backupMax ?? 3) === n }, `${n} 份`)));
+
+  return dialog('设置', [
+    section('备份',
+      h('div.mm-row', {}, h('span.mm-label', {}, '自动间隔'), intervalSel),
+      h('div.mm-hint', {}, '到点才比对一次；内容与最新快照相同则不写盘，避免空转。'),
+      h('div.mm-row', { style: { marginTop: '2px' } }, h('span.mm-label', {}, '最多保留'), keepSel),
+      h('div.mm-hint', {}, '调小后立即清理超出部分，无需等下次备份。'),
+      h('div.mm-row', { style: { marginTop: '4px' } },
+        h('button.mm-btn', { onclick: () => app.api.backupNow() }, '立即备份'),
+        h('button.mm-btn', {
+          onclick: safe('打开快照', () => openBackups(app), (m) => app.api.status(m, true)),
+        }, '历史快照…'),
+      ),
+    ),
+    section('外观',
+      h('div.mm-row', {}, h('span.mm-label', {}, '布局动画'), animBtn),
+      h('div.mm-hint', {}, '开启后打开画布、展开/收起分支会播 300ms 过渡动画；关闭则直接显示最终布局。'),
+    ),
+    section('其它',
+      h('div.mm-row', {},
+        h('button.mm-btn', {
+          onclick: () => openShortcuts(app),
+          title: '查看编辑器支持的快捷键',
+        }, '快捷键…'),
+      ),
+    ),
+  ]);
 }
 
 /* ------------------------- 快捷键说明 ------------------------- */

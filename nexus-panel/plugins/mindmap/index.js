@@ -19,7 +19,7 @@ import { DEFAULT_THEME, DEFAULT_LAYOUT, isBuiltinTheme, deriveCanvasTheme } from
 import * as wb from './workbook.js';
 import * as store from './store.js';
 import * as io from './io.js';
-import { buildSide, openVideo, openPreview } from './panels.js';
+import { buildSide, openVideo, openPreview, openSettings } from './panels.js';
 import { buildFileList } from './filelist.js';
 import * as xmind from './xmind.js';
 
@@ -251,9 +251,17 @@ bootIframePlugin(async (ctx) => {
    */
   const refocusCanvas = () => { try { bridge?.focusCanvas(); } catch { /* ignore */ } };
 
+  /**
+   * opt.refocus:false 用于「点击后焦点不该回画布」的按钮 ——
+   * 典型是打开模态浮层：焦点还留在画布的话，画布会在浮层背后继续吃快捷键。
+   */
   const B = (label, onclick, opt = {}) =>
     h('button.mm-btn' + (opt.icon ? '.icon' : ''), {
-      onclick: (e) => { const r = onclick?.(e); refocusCanvas(); return r; },
+      onclick: (e) => {
+        const r = onclick?.(e);
+        if (opt.refocus !== false) refocusCanvas();
+        return r;
+      },
       title: opt.title || '',
     }, label);
 
@@ -361,6 +369,13 @@ bootIframePlugin(async (ctx) => {
     }), searchInfo));
 
     toolbar.appendChild(group(
+      // 设置放在重载左边。
+      // refocus:false 是必要的 —— 打开的是模态浮层，若按默认把焦点还给画布，
+      // 画布会在浮层**背后**继续响应快捷键（Tab 会插节点、Delete 会删节点）。
+      B('设置', () => openSettings(app), {
+        title: '备份间隔、保留份数、布局动画等全局设置',
+        refocus: false,
+      }),
       B('重载', () => reloadEditor(), { title: '重新加载编辑器内核' }),
     ));
 
