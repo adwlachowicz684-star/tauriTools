@@ -27,7 +27,8 @@
     "test:xss": "node xss-test.mjs",
     "test:theme-picker": "node theme-picker-test.mjs",
     "test:handshake": "node handshake-test.mjs",
-    "test:mindmap": "node plugins/mindmap/mindmap-test.mjs"
+    "test:mindmap": "node plugins/mindmap/mindmap-test.mjs",
+    "crossend:check": "node cross-end-check.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

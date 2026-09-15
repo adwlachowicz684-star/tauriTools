@@ -37,6 +37,11 @@ jobs:
       - name: 配置漂移检查
         run: npm run config:check
 
+      # Rust 命令（定义/注册）与前端调用（api.ts / types.ts）是四处分散的契约，
+      # 漏改任何一处都要到运行时才暴露，且报错方向往往误导
+      - name: 跨端契约一致性检查
+        run: npm run crossend:check -- --strict
+
       - name: Vite 构建（验证多页入口与外壳重命名）
         run: npm run build
 
