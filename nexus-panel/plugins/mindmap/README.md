@@ -317,6 +317,40 @@ b ? this.select(b, true)                          // 点到节点 → 改选中
 顺带把 `editLayer = null` 提到 `execCommand` 之前：`execCommand` 会触发渲染与
 事件，万一重入会二次提交。
 
+### 行内编辑：怎么做到「像直接在节点里改」
+
+先说原理边界：**SVG 的 `<text>` 没有 `contenteditable`**（SVG 1.1/2 都不提供原生
+文本编辑），所以必然要一层 HTML 编辑层 —— 做不到真的在 SVG 节点里改字。
+能做的是让它**看起来**就在节点里。之前的差距来自四处：
+
+**1. 缩放后字号与位置对不上（量纲混用）**
+
+```js
+fontSize = getComputedStyle(tx).fontSize   // CSS 像素，**不含**缩放
+box      = tx.getBoundingClientRect()      // 屏幕像素，**已含**缩放
+```
+
+画布 zoom 走的是 `paper.setViewPort({zoom})` → SVG transform，它**不改
+`font-size`**，只改变换矩阵。于是 zoom=50% 时节点文字在屏幕上只剩 7px，
+编辑层仍按 14px 渲染。修法：字号与行高都乘 zoom，位置尺寸保持屏幕像素。
+
+**2. 只取了第一行**
+
+`g.getElementsByTagName('text')[0]` 拿的是第一个 `<text>`，而 kity 的文字是
+**每行一个 `<text>`**（源码 `eachItem(... setY(m + a*i*h))` 逐行排布）。多行节点
+编辑时编辑层只盖住第一行，下面几行还露着 —— 重影就是这么来的。改用整组 `<g>`
+取 bbox，行数按 `<text>` 数量算，`line-height = 总高 / 行数`（直接用总高会让
+单行文字垂直偏移）。
+
+**3. 原 SVG 文字没隐藏**：编辑层盖在上面，任何 1px 偏差都会看出叠影。
+现在编辑期间 `visibility:hidden`，关闭时恢复。
+
+**4. 宽度写死 + `overflow:hidden`**：输入超长直接被截断，而节点文字是自适应
+的。改为 `width:auto` + `min-width` 保底。
+
+另外编辑期间画布一变换（缩放/平移）就先提交关闭：编辑层是绝对定位的 HTML，
+不跟着 SVG transform 走，不处理就会飘在半空。
+
 ### 前提：焦点必须在画布上
 
 kityminder 的所有键盘输入都来自一个隐藏的 `<input class="km-receiver">`，

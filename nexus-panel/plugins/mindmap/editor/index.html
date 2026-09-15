@@ -1918,22 +1918,16 @@
             canRedo: function () { return _redoStack.length > 0; },
             clear: function () { _undoStack = []; _redoStack = []; _baseline = null; }
         };
-        // SVG 节点文字不是可编辑 DOM，故双击/F2 时在节点 <text> 元素正上方盖一个样式完全仿真节点文字的
-        // contentEditable 层（同色/同字/同字号、透明无边框），观感就是直接在节点上打字。
+        // SVG 的 <text> 不可编辑（SVG 1.1 没有 contenteditable），故双击/F2 时在节点
+        // 文字正上方盖一个样式仿真的 contentEditable 层：同色/同字/同字号、透明无边框，
+        // 并把原 SVG 文字藏起来 —— 观感就是「直接在节点上打字」。
         // Enter/失焦应用（走 core 的 text 命令并重排布局），Esc 取消。
         var editLayer = null;
-        function nodeTextElement(node) {
-            try {
-                var tr = node.getRenderer && node.getRenderer('TextRenderer');
-                var sh = tr && tr.getRenderShape && tr.getRenderShape();
-                var g = (sh && sh.node) || null;
-                if (!g) return null;
-                return (g.getElementsByTagName && g.getElementsByTagName('text')[0]) || g;
-            } catch (e) { return null; }
-        }
         function closeTextEditor(apply) {
             if (!editLayer) return;
             var node = editLayer.node, el = editLayer.input;
+            // 编辑期间被隐藏的原 SVG 文字（关于「为什么必须隐藏」见 beginTextEdit）
+            var hidden = editLayer.hidden;
             // 先清掉再执行：下面的 execCommand 会触发渲染/事件，
             // 万一重入到这里，editLayer 已空则直接返回，不会二次提交。
             editLayer = null;
@@ -1953,18 +1947,66 @@
                 try { km.layout(); } catch (e) {}
             }
             if (el.parentNode) el.parentNode.removeChild(el);
+            // 恢复被隐藏的原 SVG 文字。
+            // 编辑器开着时若节点被重渲（commit/布局都会 render），原来的 <g>
+            // 可能已不在树上了 —— 那种情况下写不写都无所谓，故容错处理。
+            try {
+                if (hidden && hidden.el) hidden.el.style.visibility = hidden.prev || '';
+            } catch (e) {}
             try { km.focus(); } catch (e) {}
         }
+        /**
+         * 取节点文字**组**（整个 <g>），而不是第一个 <text>。
+         * kity 的文字是每行一个 <text>（源码里 eachItem(... setY(m + a*i*h)) 逐行排布），
+         * 取 [0] 只会拿到第一行 —— 多行节点编辑时下面几行还露着，就是重影的来源。
+         */
+        function nodeTextGroup(node) {
+            try {
+                var tr = node.getRenderer && node.getRenderer('TextRenderer');
+                var sh = tr && tr.getRenderShape && tr.getRenderShape();
+                return (sh && sh.node) || null;
+            } catch (e) { return null; }
+        }
+
+        /** 画布缩放比例（1 = 100%）。内核用 SVG transform 缩放，**不改 font-size**。 */
+        function currentZoom() {
+            try {
+                var z = km.getZoomValue ? Number(km.getZoomValue()) : 100;
+                if (z && isFinite(z) && z > 0) return z / 100;
+            } catch (e) {}
+            return 1;
+        }
+
         function beginTextEdit(node, clientX, clientY) {
             if (!node) node = km.getSelectedNode();
             if (!node || editLayer) return;
             var c = document.getElementById('minder-container');
             var cRect = c.getBoundingClientRect();
-            var tx = nodeTextElement(node);
+            var group = nodeTextGroup(node);
+            var tx = group ? (group.getElementsByTagName('text')[0] || group) : null;
             var ws = (tx && window.getComputedStyle) ? window.getComputedStyle(tx) : null;
-            var box = (tx && tx.getBoundingClientRect) ? tx.getBoundingClientRect() : null;
-            var fontSize = ws ? ws.fontSize : '14px';
-            var fs = parseFloat(fontSize) || 14;
+            // 用**整组**的 bbox：只取第一行的话，多行节点的位置与高度都不对
+            var box = (group && group.getBoundingClientRect) ? group.getBoundingClientRect() : null;
+
+            /*
+             * 缩放对齐（关键修复）
+             * ------------------------------------------------------------
+             * box 来自 getBoundingClientRect，是**屏幕像素**（已含缩放）；
+             * 而 getComputedStyle().fontSize 是 **CSS 像素**（缩放是 transform，
+             * 不改 font-size）。两者量纲不同，直接混用就会在 zoom≠100% 时错位：
+             * 画布缩到 50%，节点文字在屏幕上只有 7px，编辑层仍按 14px 渲染。
+             *
+             * 统一办法：字号、行高都乘 zoom，位置与尺寸保持屏幕像素。
+             */
+            var zoom = currentZoom();
+            var fs = (ws ? parseFloat(ws.fontSize) : 0) || 14;
+            var scaledFs = fs * zoom;
+
+            // 行数：每个 <text> 是一行。line-height 要按**单行**算，
+            // 否则多行的 box.height 会让单行文字垂直偏移。
+            var lineCount = group ? Math.max(1, group.getElementsByTagName('text').length) : 1;
+            var lh = (box && box.height) ? (box.height / lineCount) : (scaledFs * 1.5);
+
             var anchor = tx ? tx.getAttribute('text-anchor') : null;
             var ta = anchor === 'middle' ? 'center' : (anchor === 'end' ? 'right' : (ws ? ws.textAlign : 'left'));
             var el = document.createElement('div');
@@ -1972,15 +2014,17 @@
             el.setAttribute('spellcheck', 'false');
             el.innerText = (typeof node.getText === 'function' && node.getText()) || '';
             el.style.cssText = 'position:absolute;z-index:110;outline:none;background:transparent;border:none;box-shadow:none;' +
-                'margin:0;padding:0;cursor:text;white-space:pre;word-break:break-word;overflow:hidden;' +
+                'margin:0;padding:0;cursor:text;white-space:pre;word-break:break-word;' +
+                // 不设 overflow:hidden —— 输入超长时会被截断看不见，
+                // 而节点文字本身是自适应的，编辑时也该跟着长。
                 'user-select:text;-webkit-user-select:text;' +
                 'color:' + (ws ? ws.color : '#e6e6e6') + ';' +
                 'font-family:' + (ws ? ws.fontFamily : '"Segoe UI","Microsoft YaHei",sans-serif') + ';' +
-                'font-size:' + fontSize + ';' +
+                'font-size:' + scaledFs + 'px;' +
                 'font-weight:' + (ws ? ws.fontWeight : 'normal') + ';' +
                 'font-style:' + (ws ? ws.fontStyle : 'normal') + ';' +
                 'text-align:' + ta + ';' +
-                'line-height:' + (box && box.height ? Math.round(box.height) : Math.round(fs * 1.5)) + 'px;';
+                'line-height:' + Math.round(lh) + 'px;';
             el.addEventListener('blur', function () { closeTextEditor(true); });
             el.addEventListener('keydown', function (ev) {
                 if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ev.stopPropagation(); closeTextEditor(true); }
@@ -1991,12 +2035,22 @@
             if (box) {
                 el.style.left = Math.max(0, Math.round(box.left - cRect.left)) + 'px';
                 el.style.top = Math.max(0, Math.round(box.top - cRect.top)) + 'px';
-                el.style.width = Math.max(30, Math.round(box.width)) + 'px';
+                // 宽度随内容增长（min-width 保底），不写死 —— 写死就等于截断
                 el.style.minWidth = Math.max(60, Math.round(box.width)) + 'px';
+                el.style.width = 'auto';
             } else {
                 el.style.left = '12px'; el.style.top = '12px'; el.style.minWidth = '120px';
             }
-            editLayer = { node: node, input: el };
+
+            // 隐藏原 SVG 文字。编辑层盖在上面，任何 1px 偏差都会看到叠影 ——
+            // 藏掉之后，观感就是「字直接在节点里被改」。
+            var hidden = null;
+            if (group) {
+                hidden = { el: group, prev: group.style ? group.style.visibility : '' };
+                try { group.style.visibility = 'hidden'; } catch (e) { hidden = null; }
+            }
+
+            editLayer = { node: node, input: el, hidden: hidden };
             c.appendChild(el);
             el.focus();
             try {
@@ -2018,6 +2072,18 @@
             if (e.key === 'F2') { e.preventDefault(); beginTextEdit(null, null, null); }
         }, true);
         window.editSelected = function () { beginTextEdit(null, null, null); };
+
+        /**
+         * 编辑期间画布一变换就先提交。
+         * 编辑层是绝对定位在容器上的 HTML，位置在打开那一刻算定；缩放/平移是
+         * SVG transform，不会带着它走 —— 不提交的话编辑层就飘在半空，
+         * 且提交时会按新坐标算，等于把错位状态固化下来。
+         */
+        (function () {
+            function bail() { if (editLayer) closeTextEditor(true); }
+            try { km.on('zoom', bail); } catch (e) {}
+            try { km.on('viewchange', bail); } catch (e) {}
+        })();
 
         /**
          * 兜底：点画布任意处（含点空白、点别的节点）都要先提交正在编辑的文字。

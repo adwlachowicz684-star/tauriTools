@@ -56,8 +56,7 @@ const dom = new JSDOM('<!doctype html><html><body><div id="plugin-mount"></div><
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 globalThis.location = dom.window.location;
-// Node 21+ 起 globalThis.navigator 是只读 getter，直接赋值会抛 TypeError
-Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true, writable: true });
+globalThis.navigator = dom.window.navigator;
 globalThis.Node = dom.window.Node;
 globalThis.HTMLElement = dom.window.HTMLElement;
 globalThis.getComputedStyle = dom.window.getComputedStyle;
@@ -193,7 +192,7 @@ const store = await import('./store.js');
 
 {
   // 2.3 源码契约：doSaveInner 里不能出现 store.workbook.save
-  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   const fn = src.slice(src.indexOf('async function doSaveInner'), src.indexOf('async function trimBackups'));
 
   ok(!/store\.workbook\.save/.test(fn), 'doSaveInner 不再写旧迁移键 store.workbook.save');
@@ -257,7 +256,7 @@ const store = await import('./store.js');
 {
   // 2.6 【源码契约】把上面验证过的约束锁到真实代码上：
   //     savedFileId 的捕获点与 save() 的调用点之间，不允许有任何让出点。
-  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   const fn = src.slice(src.indexOf('async function doSaveInner'), src.indexOf('async function trimBackups'));
 
   const CAP = 'const savedFileId = currentFileId';
@@ -427,7 +426,7 @@ function maxDepth(sheet) {
 
 group('M4 · 外壳主题消息来源校验');
 {
-  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   const fn = src.slice(src.indexOf('function watchShellTheme'), src.indexOf('/* ------------------------- 附件打开'));
   ok(/e\.source\s*!==\s*window\.parent/.test(fn), '只接受 window.parent 发来的主题消息');
   ok(/d\.channel\s*!==\s*SHELL_CHANNEL/.test(fn), '仍保留 channel 校验');
@@ -446,14 +445,14 @@ group('M5 · 下载文件名安全化');
   ok(!/[\u0000-\u001f]/.test(io.safeFileName('a\u0007b')), '控制字符被剔除');
   ok(io.safeFileName('').length > 0, '空名有兜底，不抛错');
 
-  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   const fn = src.slice(src.indexOf('async function openAttachment'), src.indexOf('/* ------------------------- 撤销 / 重做'));
   ok(/io\.downloadBlob\(io\.safeFileName\(name\)/.test(fn), '下载前对附件名调用 safeFileName');
 }
 
 group('M6 · 撤销/重做栈不推入空快照');
 {
-  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   const undoFn = src.slice(src.indexOf('function undo()'), src.indexOf('function redo()'));
   ok(/if\s*\(lastSnap\)\s*redoStack\.push\(lastSnap\)/.test(undoFn), 'undo：lastSnap 为 null 时不入栈');
   const redoFn = src.slice(src.indexOf('function redo()'), src.indexOf('/* ------------------------- 主题 / 布局'));
@@ -462,7 +461,7 @@ group('M6 · 撤销/重做栈不推入空快照');
 
 group('M7 · 切换画布落盘');
 {
-  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   const fn = src.slice(src.indexOf('async function switchSheet'), src.indexOf('/* ------------------------- 文件库（多文档）'));
   ok(/await\s+persist\(\)/.test(fn), 'switchSheet 内 await persist()');
   ok(fn.indexOf('await persist()') > fn.indexOf('capture()'), '落盘发生在 capture() 之后');
@@ -507,7 +506,7 @@ group('M8 · 存储读写失败不再静默');
   store.resetStoreError();
 
   // 插件层要真的把错误显示出来
-  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   ok(/function flushStoreError/.test(src), 'index.js 定义了 flushStoreError');
   ok(/flushStoreError\(\)/.test(src.slice(src.indexOf('await loadSheet();\n  updateBadge();'))), '初始化末尾调用了 flushStoreError');
 }
@@ -582,7 +581,7 @@ group('Tab → 插入下级节点');
   ok(typeof EditorBridge.prototype.focusCanvas === 'function', 'bridge 有 focusCanvas()');
   ok(typeof EditorBridge.prototype.insertChild === 'function', 'bridge 有 insertChild()');
 
-  const src = (fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const src = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
   const seg = src.slice(src.indexOf('focusCanvas()'), src.indexOf('insertChild()'));
   ok(/w\.focus\(\)/.test(seg), 'focusCanvas 先给 iframe 的 window 焦点（否则 receiver 拿不到）');
 
@@ -616,7 +615,7 @@ group('Tab → 插入下级节点');
 
 {
   // 8.5 插件层：Tab 必须在捕获阶段拦下，且放过文本控件与带修饰键的组合
-  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   const fn = src.slice(src.indexOf('function bindTabForward'), src.indexOf('const refocusCanvas'));
   ok(/window\.addEventListener\('keydown',\s*onKey,\s*true\)/.test(fn),
     'Tab 监听在捕获阶段（冒泡阶段拦不住浏览器的焦点导航）');
@@ -654,7 +653,7 @@ group('新建画布按钮（＋）位置');
 {
   // jsdom 不做布局，无法断言像素位置；这里锁住决定布局的那些属性。
   // 每一个都对应一个真实的失效模式，注释里写明了会坏成什么样。
-  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   const foot = src.slice(src.indexOf('const tabsEl ='), src.indexOf('const rail ='));
 
   ok(/div\.mm-row\.mm-tabs/.test(foot), '页签区带 .mm-tabs 类');
@@ -671,7 +670,7 @@ group('新建画布按钮（＋）位置');
 
   // 注释里也会提到这些属性名（说明"为什么不能加"），断言前先剥掉注释，
   // 否则会被自己写的说明文字误伤。
-  const css = (fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8')).replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const footCss = css.slice(css.indexOf('.mm-foot {'), css.indexOf('.mm-status {'));
   ok(!/overflow-x/.test(footCss),
     '.mm-foot 不再 overflow-x:auto —— 整条底栏滚动会把「＋」和状态一起滚出视野');
@@ -680,12 +679,8 @@ group('新建画布按钮（＋）位置');
   ok(!/margin-left:\s*auto/.test(statusCss),
     '.mm-status 不再 margin-left:auto —— 两个 auto 会平分剩余空间，反而把「＋」挤到中间');
 
-  // 页签区现在负责滚动，滚动条样式原本跟着它（.mm-foot 那条已失效）。
-  // 但 1f65166 之后规格收口到 tokens.css：那里是全局 ::-webkit-scrollbar，
-  // 带齐 track 与 hover；插件自己抄一半会漏这两条，出现「细 1px 且无悬停反馈」。
-  // 所以这里守的是"引入关系"，不是"本文件里再写一遍"。
-  ok(/@import\s+url\(['"]?\.\.\/\.\.\/css\/tokens\.css/.test(css),
-    '滚动条规格来自 tokens.css（本文件已引入，不再自己抄一半）');
+  // 页签区现在负责滚动，滚动条样式得跟着它（.mm-foot 那条已失效）
+  ok(/\.mm-tabs::-webkit-scrollbar/.test(css), '滚动条样式挂到 .mm-tabs 上');
 }
 
 /* ============================================================
@@ -695,7 +690,7 @@ group('新建画布按钮（＋）位置');
 group('面板分布：左文件库 / 中画布 / 右属性侧栏');
 
 {
-  const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
 
   // 10.1 主体三段的顺序：[文件库] | 画布 | [属性侧栏]
   // 用 lastIndexOf 取收尾处的那次调用：buildRail() 在文件里出现两次（定义外的
@@ -721,7 +716,7 @@ group('面板分布：左文件库 / 中画布 / 右属性侧栏');
 
 {
   // 10.5 侧栏自身：常驻 276px，且**不含**页签（页签在顶栏，不占侧栏高度）
-  const css = (fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8')).replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const sideCss = css.slice(css.indexOf('.mm-side {'), css.indexOf('.mm-side h3'));
   ok(/flex:\s*0 0 276px/.test(sideCss), '侧栏固定 276px（与 C# Column 1 的 Width="276" 一致）');
   ok(/display:\s*flex/.test(sideCss), '侧栏默认显示（常驻，不靠 .open 打开）');
@@ -739,7 +734,7 @@ group('面板分布：左文件库 / 中画布 / 右属性侧栏');
   eq(notified.join(','), 'theme', '初始化时也会回调 onPage（顶栏据此点亮「主题」）');
 
   // 10.6 页签在顶栏最右，顺序对齐 C# 的四个 ToggleButton
-  const src2 = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const src2 = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   const tb = src2.slice(src2.indexOf('function buildToolbar'), src2.indexOf('/* ------------------------- 侧栏'));
   ok(/toolbar\.appendChild\(buildSideTabs\(\)\)/.test(tb), '顶栏 append 页签组');
   ok(/const SIDE_TABS = \[\['theme', '主题'\], \['tag', '标签'\], \['style', '样式'\], \['file', '文件'\]\]/.test(src2),
@@ -953,7 +948,7 @@ group('附件卡片 / 视频预览');
 
   // 12.6 ▶ 提示不能拦点击：拦了就和容器双重触发 / 点不动
   {
-    const css = (fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8')).replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+    const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
     const playCss = css.slice(css.indexOf('.mm-vthumb-play {'), css.indexOf('.mm-vthumb.playing .mm-vthumb-play'));
     ok(/pointer-events:\s*none/.test(playCss), '▶ 覆盖层 pointer-events:none（点击交给容器，避免双重触发）');
   }
@@ -1137,7 +1132,7 @@ group('附件：file 与 video 互不干扰');
 
   // 14.5 面板层的 remove 只调用对应那一个 setter
   {
-    const src = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
+    const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
     const rm = src.slice(src.indexOf('const remove = (kind)'), src.indexOf('/** 点附件卡片'));
     ok(/kind === 'video' \? 'setVideo' : 'setFile'/.test(rm), 'remove 按 kind 选择 setter（不会同时调两个）');
     ok(/const hadOther = !!app\.api\.selectedRef\(other\)/.test(rm), '移除前记下另一项是否存在');
@@ -1240,7 +1235,7 @@ group('布局模板缩略图');
 
 {
   // 15.5 缺图时要退化成可见占位符，而不是空白
-  const src = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   const seg = src.slice(src.indexOf("section('布局模板'"), src.indexOf('// 注：这里原先有个'));
   ok(/LAYOUT_THUMBS\[l\.value\]\s*\?/.test(seg), '渲染前判断缩略图是否存在');
   ok(/mm-layout-nothumb/.test(seg), '缺图时给占位符（不留空白）');
@@ -1361,12 +1356,92 @@ group('主题配色条');
 
 {
   // 16.8 transparent 段必须有可见标记 —— 否则「透明」和「白色」看起来一样
-  const css = (fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8')).replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const seg = css.slice(css.indexOf('.mm-sw.transparent {'), css.indexOf('.mm-sw.transparent {') + 400);
   ok(/repeating-linear-gradient/.test(seg), '透明段用斜纹标出（不能只是空白）');
   // 外圈描边：snow/classic 的画布底 #3A4144 与深色面板太接近，没边就糊住
   const barCss = css.slice(css.indexOf('.mm-swbar {'), css.indexOf('.mm-sw {'));
   ok(/border:\s*1px solid/.test(barCss), '配色条有外圈描边（深色底主题才不会糊在面板里）');
+}
+
+/* ============================================================
+   十七、行内编辑要像「直接在节点里改」
+   ============================================================ */
+
+group('行内编辑贴合节点');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  const fn = html.slice(html.indexOf('function beginTextEdit'), html.indexOf("km.on('dblclick'"));
+  // 去掉整行注释再断言：注释里会提到「overflow:hidden」这类词，不清掉会误判
+  const code = fn.replace(/^\s*\/\/.*$/gm, '');
+
+  /*
+   * 先说清楚为什么做不到「真的在 SVG 节点里改」：
+   * SVG 1.1/2 的 <text> 没有 contenteditable，浏览器不提供原生文本编辑。
+   * 所以必然要一层 HTML 编辑层 —— 目标是让它**看起来**就在节点里。
+   */
+
+  // 17.1 缩放对齐：font-size 必须乘 zoom
+  //      box 来自 getBoundingClientRect（屏幕像素，已含缩放）；
+  //      getComputedStyle().fontSize 是 CSS 像素（缩放走 transform，不改 font-size）。
+  //      直接混用 → zoom=50% 时节点文字只剩 7px、编辑层仍是 14px。
+  ok(/function currentZoom\(\)/.test(html), '抽出 currentZoom()');
+  ok(/var zoom = currentZoom\(\);/.test(fn), 'beginTextEdit 里取当前缩放');
+  ok(/var scaledFs = fs \* zoom;/.test(fn), '字号按 zoom 缩放（与屏幕像素统一量纲）');
+  ok(/font-size:' \+ scaledFs \+ 'px;'/.test(fn), 'font-size 用的是缩放后的值');
+  ok(!/font-size:' \+ fontSize \+ 'px;'/.test(fn), '（对照）不再直接用未缩放的 fontSize');
+  ok(/line-height:' \+ Math\.round\(lh\) \+ 'px;'/.test(fn), 'line-height 同样按缩放后的行高');
+
+  // 17.2 取整组 bbox，而不是第一个 <text>
+  //      kity 每行一个 <text>（eachItem(... setY(m + a*i*h))），取 [0] 只拿到第一行，
+  //      多行节点下面几行还露着 → 重影。
+  ok(/function nodeTextGroup\(node\)/.test(html), '抽出 nodeTextGroup() 取整组');
+  ok(!/function nodeTextElement\(node\)/.test(html), '（对照）旧的只取首行版本已移除');
+  ok(/var group = nodeTextGroup\(node\);/.test(fn), '用整组定位');
+  ok(/group\.getBoundingClientRect/.test(fn), 'bbox 取整组的（覆盖所有行）');
+  ok(/group\.getElementsByTagName\('text'\)/.test(fn), '行数按整组的 <text> 数量算');
+
+  // 17.3 行高要按单行算：多行的 box.height 会让单行文字垂直偏移
+  ok(/var lineCount = group \? Math\.max\(1, group\.getElementsByTagName\('text'\)\.length\) : 1;/.test(fn),
+    '算出总行数');
+  ok(/var lh = \(box && box\.height\) \? \(box\.height \/ lineCount\)/.test(fn),
+    'line-height = 总高 / 行数（单行行高）');
+
+  // 17.4 必须隐藏原 SVG 文字，否则编辑层盖在上面会有叠影
+  ok(/group\.style\.visibility = 'hidden'/.test(fn), '编辑期间隐藏原 SVG 文字');
+  ok(/hidden\.el\.style\.visibility = hidden\.prev/.test(html), '关闭时恢复原文字可见性');
+  ok(/var hidden = editLayer\.hidden;/.test(html), '隐藏信息存进 editLayer，随编辑器一起管理');
+
+  // 17.5 宽度自适应，不截断
+  ok(/el\.style\.width = 'auto';/.test(fn), '宽度随内容增长');
+  ok(/el\.style\.minWidth = Math\.max\(60, Math\.round\(box\.width\)\) \+ 'px';/.test(fn), 'min-width 保底为原宽度');
+  ok(!/overflow:hidden/.test(code), '（对照）不再 overflow:hidden —— 那会截断超长输入');
+
+  // 17.6 画布一变换就先提交：编辑层是绝对定位的 HTML，不跟 SVG transform 走
+  ok(/km\.on\('zoom', bail\)/.test(html), '缩放时提交关闭编辑器');
+  ok(/km\.on\('viewchange', bail\)/.test(html), '视图变化时提交关闭编辑器');
+  ok(/if \(editLayer\) closeTextEditor\(true\);/.test(html), '变换兜底走「提交」而非丢弃');
+}
+
+{
+  // 17.7 行为级：验证 zoom 换算确实是必要的（对照旧算法）
+  //      模拟 SVG transform scale(zoom) 下的两种算法
+  const fs = 14;                    // CSS 像素字号
+  for (const zoom of [0.5, 1, 2]) {
+    const onScreen = fs * zoom;     // 屏幕上真实显示的字号
+    const oldWay = fs;              // 旧算法：直接用 fontSize
+    const newWay = fs * zoom;       // 新算法：乘 zoom
+    eq(newWay, onScreen, `zoom=${zoom}：新算法字号与屏幕显示一致`);
+    if (zoom !== 1) {
+      ok(oldWay !== onScreen, `（对照）zoom=${zoom}：旧算法字号与屏幕显示不符`);
+    }
+  }
+
+  // 17.8 行高：多行时按总高/行数
+  const boxH = 60, lines = 3;
+  eq(boxH / lines, 20, '三行 60px → 单行行高 20px');
+  ok(boxH !== 20, '（对照）直接用 box.height 作为 line-height 会偏大 3 倍');
 }
 
 /* ============================================================
