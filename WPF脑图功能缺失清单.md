@@ -247,8 +247,8 @@ WPF 还定义了 `ReadyChanged`、`ContentChanged`、`NodeStyleChanged`、`OpenF
 | 编号 | 功能名 | WPF 出处 | WPF 行为 | Web 现状 | 归类 | 难度 |
 |---|---|---|---|---|---|---|
 | B1 | 撤销重做统一栈 | `MindMapPanel.xaml.cs:2194-2208` | `undo/redo` 走编辑器 history，并与自动保存协调 | 有但行为不同 | B-优化建议 | 高 |
-| B2 | 剪切/复制/粘贴节点 | `Ctrl+X/C/V`；未定位到确切行号 | 标准剪贴板语义，含跨层级粘贴 | 完全缺失 | B-优化建议 | 中 |
-| B3 | 多选拖拽移动 | 多选；未定位到确切行号 | 框选/Shift 多选后整体移动 | 完全缺失 | B-优化建议 | 高 |
+| B2 | 剪切/复制/粘贴节点 | kityminder `ClipboardModule`（`commandShortcutKeys:{copy:"normal::ctrl+c\|",cut:"normal::ctrl+x",paste:"normal::ctrl+v"}`） | 提供 `copy`/`cut`/`paste` 命令与 Ctrl+C/X/V；copy/cut 取 `getSelectedAncestors()`，paste 克隆节点挂到选中节点下 | **内核已提供**（初判「完全缺失」有误，见下方注记） | — | — |
+| B3 | 多选拖拽移动 | kityminder `DragTree`（`_calcDragSources(){this._dragSources=this._minder.getSelectedAncestors()}`） | 在 `normal.mousedown` 启动拖拽，拖拽源取 `getSelectedAncestors()` —— 天然支持多选；提供 `movetoparent` 命令 | **内核已提供**（初判「完全缺失」有误，见下方注记） | — | — |
 
 **B28 应优先于多数装饰性功能。** 自动保存与快照不能替代撤销：用户删除、移动或粘贴后，预期能够逐步回退。Web 若优先使用编辑器内部 history，必须验证以下边界：
 
@@ -330,6 +330,31 @@ B18–B19 还需形成统一资产规范：`image` 使用 dataURL，`file/video`
 实施时应遵循依赖顺序：**先完成 A48/A49 的持久化正确性，再实现 A53–A57 的拖拽交互。** 原因是拖拽换页会触发额外的保存与恢复路径；若底层竞态尚未收敛，新增交互只会放大状态丢失概率。
 
 图标体系同样应与 XMind 导入导出同步设计，确保导入的预设图标和节点图片在“JSON 引用、IndexedDB 资产、XMind resources”三种路径中均可还原。否则，Web 版可能在短期看起来的可用，却无法保证跨设备和跨格式迁移。
+
+### 实施期更正：B2 / B3 实为内核已提供
+
+开工后逐条核对 `kityminder.core.min.js`，发现清单初稿对 B2、B3 的判定有误
+（两条当初都标注「未定位到确切行号」，属推测，未核实）：
+
+| 编号 | 初判 | 核实结果 |
+|---|---|---|
+| B2 | 完全缺失 | 内核 `ClipboardModule` 提供 `copy`/`cut`/`paste` 命令，并已注册 Ctrl+C/X/V 快捷键 |
+| B3 | 完全缺失 | 内核 `DragTree` 在 `normal.mousedown` 启动拖拽，拖拽源取 `getSelectedAncestors()`，天然支持多选 |
+
+**误判的成因值得记一笔**：在 min.js 里搜 `"copy"` / `"cut"` / `"paste"`
+三个**字符串字面量**是零命中的 —— 命令在源码里写作
+`commands:{copy:i,cut:j,paste:k}`，是**标识符**而非字符串。
+只看字符串搜索会得出「内核没有」的错误结论。
+
+另一处易错点：`copy` / `cut` 没有自定义 `queryState`，而基类
+`Command.queryState` 返回 `STATE_NORMAL`（=0，不是 -1）。快捷键回调的判定是
+`-1 !== queryCommandState(name)`，故这两个命令**能**被快捷键触发。
+若误以为「没定义 queryState 就不生效」，也会得出错误结论。
+
+已按此更正：不再重复实现这两项，改为在
+`mindmap-test.mjs` 的「B2/B3 内核已提供」组加澄清性断言锁住事实，
+防止将来有人照着旧清单重复实现（重复实现还有一个副作用：自定义命令若也
+注册 Ctrl+X，会与内核快捷键冲突）。
 
 ## 6. 结论：先建立可信数据内核，再补齐桌面级完整性
 

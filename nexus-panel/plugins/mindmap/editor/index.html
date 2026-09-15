@@ -1162,7 +1162,7 @@
                                     m.layout();
                                 }
                             });
-                            try { km._commands['pastenodestyle'] = new PasteNodeStyleCommand(); } catch (e) {}
+
                             // 渲染钩子：节点渲染完成后把节点级样式覆盖到外框/连线（选中态也生效，保证应用后即时可见）
                             function applyNodeStyle(node) {
                                 if (!node) return;

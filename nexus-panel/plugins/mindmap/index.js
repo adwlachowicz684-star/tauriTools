@@ -79,6 +79,9 @@ bootIframePlugin(async (ctx) => {
   let suppress = false;
   /** A49 切换画布的重入守卫（WPF `_switchingSheet`） */
   let switchingSheet = false;
+  /** B1 上一次撤销走的是哪条栈（'editor' | 'local' | null）。
+   *  重做必须走同一条，否则会重做到另一条栈上，那次撤销就永久回不来了。 */
+  let pendingRedo = null;
   /** 抑制期间发生过的变更（WPF `_dirtyDuringSuppress`）。抑制解除后补存。 */
   let dirtyDuringSuppress = false;
   let suppressTimer = null;
@@ -573,6 +576,9 @@ bootIframePlugin(async (ctx) => {
     lastSnap = null;
     lastBackupFp = null;
     lastBackupAt = 0;
+    // 切文件后编辑器历史也会重置，锁必须跟着解 ——
+    // 否则会拿着上一个文件的栈标记去操作新文件。
+    pendingRedo = null;
   }
 
   /** 只做「载入并切换」，不保存当前文件（保存由 openFile 负责） */
@@ -781,6 +787,9 @@ bootIframePlugin(async (ctx) => {
     bridge?.historyClear();
     undoStack = [];
     redoStack = [];
+    // 切换/重载画布会重置编辑器历史基线，锁必须解 ——
+    // 否则会拿旧栈标记去操作新画布（与 resetHistory 同理）
+    pendingRedo = null;
     updateBadge();
   }
 
@@ -861,6 +870,9 @@ bootIframePlugin(async (ctx) => {
       undoStack.push(lastSnap);
       if (undoStack.length > HISTORY_MAX) undoStack.shift();
       redoStack = [];
+      // 新编辑使重做链失效 —— 编辑器栈自己会清，本地栈在这里清。
+      // 锁也一并解掉：新编辑之后的重做该重新选栈（可能编辑器刚就绪）。
+      pendingRedo = null;
     }
     lastSnap = json;
 
@@ -1034,24 +1046,54 @@ bootIframePlugin(async (ctx) => {
   }
 
   /**
-   * 撤销 / 重做：优先用编辑器自维护的历史栈（上游 dist/index.html 已补齐，100 步、基线模型），
-   * 编辑器执行时会 importJson → 触发 contentchange → 自动落盘，所以这里不用再手动保存。
-   * 只有拿不到编辑器历史栈（旧页面 / 编辑器未就绪）时才回退到插件层的快照栈。
+   * B1 统一撤销栈（对照 WPF `Undo`/`Redo`，`MindMapPanel.xaml.cs:2194-2208`）。
+   *
+   * WPF 只有一个栈：无条件 `ExecCommandAsync("undo"/"redo")`。
+   * Web 版原先是「优先编辑器栈，拿不到就回退本地快照栈」，**两条路径会在
+   * 一次撤销序列里混用** —— 这是真实的丢数据路径：
+   *
+   *   1. 连按撤销：编辑器栈有 3 步 → 走编辑器栈，撤销 3 次；
+   *   2. 编辑器栈空了 → `history('undo')` 返回 false → 回退到**本地栈**；
+   *   3. 此时按重做：`redo()` 先试编辑器栈 —— 它有 3 条待重做！
+   *      → 重做的是编辑器的第 3 次撤销，**本地那次撤销永远重做不回来**，
+   *        且本地 `redoStack` 里留了一条孤儿，之后会突然跳到旧内容。
+   *
+   * 修法：**一次撤销序列只用一条栈**。
+   *   - `pickHistoryStack()` 决定用哪条（编辑器可用就用它）；
+   *   - `pendingRedo` 锁住「这次撤销用的哪条栈」，重做必须走同一条；
+   *   - 产生新编辑时清掉这把锁（新编辑本来就使重做链失效）。
    */
+  function pickHistoryStack() {
+    return bridge?.hasHistory?.() ? 'editor' : 'local';
+  }
+
   function undo() {
-    const r = bridge?.history('undo');
-    if (r === true) { status('已撤销'); return; }
+    const stack = pendingRedo || pickHistoryStack();
+    if (stack === 'editor') {
+      const r = bridge?.history('undo');
+      // 编辑器栈空就到此为止 —— **不再回退到本地栈**，否则一次序列里混用两条栈
+      if (r === true) { pendingRedo = 'editor'; status('已撤销'); return; }
+      status('没有可撤销的操作', true);
+      return;
+    }
     if (!undoStack.length) { status('没有可撤销的操作', true); return; }
     // lastSnap 为 null 时不能压栈：redo 那边 applySnapshot(null) 会静默返回，
     // 而 undoStack 已经弹出 —— 这次撤销就永久不可恢复了。
     if (lastSnap) redoStack.push(lastSnap);
     applySnapshot(undoStack.pop());
+    pendingRedo = 'local';
     status('已撤销（本地栈）');
   }
 
   function redo() {
-    const r = bridge?.history('redo');
-    if (r === true) { status('已重做'); return; }
+    // 与上一次撤销**必须同栈**，否则会重做到另一条栈上去
+    const stack = pendingRedo || pickHistoryStack();
+    if (stack === 'editor') {
+      const r = bridge?.history('redo');
+      if (r === true) { status('已重做'); return; }
+      status('没有可重做的操作', true);
+      return;
+    }
     if (!redoStack.length) { status('没有可重做的操作', true); return; }
     // 与 undo 对称：null 不入栈，避免 redo 之后无法再撤销
     if (lastSnap) undoStack.push(lastSnap);

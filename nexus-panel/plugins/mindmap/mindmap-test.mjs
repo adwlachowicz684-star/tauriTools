@@ -2240,6 +2240,196 @@ const { attachTabDrag, swapIndex } = await import('./tab-drag.js');
 }
 
 /* ============================================================
+   二十三、B1 统一撤销栈
+   ============================================================ */
+
+group('B1 统一撤销栈');
+
+{
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+
+  // ---- 源码契约 ----
+  ok(/function pickHistoryStack\(\)/.test(src), '抽出 pickHistoryStack() 决定用哪条栈');
+  ok(/bridge\?\.hasHistory\?\.\(\) \? 'editor' : 'local'/.test(src), '编辑器栈可用就用它');
+
+  const undoFn = src.slice(src.indexOf('function undo() {'), src.indexOf('function redo() {'));
+  ok(/const stack = pendingRedo \|\| pickHistoryStack\(\);/.test(undoFn), '撤销时先看来没看锁（同栈优先）');
+  // 关键：编辑器栈空时**不再**回退到本地栈
+  ok(!/if \(r === true\) \{ pendingRedo = 'editor'; status\('已撤销'\); return; \}\s*if \(!undoStack\.length\)/.test(undoFn),
+    '（对照）编辑器栈空后不再接着用本地栈 —— 一次序列只走一条栈');
+  ok(/status\('没有可撤销的操作', true\);\s*return;/.test(undoFn), '编辑器栈空就提示「没有可撤销的操作」');
+
+  const redoFn = src.slice(src.indexOf('function redo() {'), src.indexOf('/* ------------------------- 主题'));
+  ok(/const stack = pendingRedo \|\| pickHistoryStack\(\);/.test(redoFn), '重做时同样先看锁');
+  ok(!/if \(r === true\) \{ status\('已重做'\); return; \}\s*if \(!redoStack\.length\)/.test(redoFn),
+    '（对照）重做也不再跨栈回退');
+
+  // ---- 锁的清理时机 ----
+  ok(/let pendingRedo = null;/.test(src), 'pendingRedo 已声明');
+  ok(/pendingRedo = 'editor';/.test(src), '撤销走编辑器栈时上锁');
+  ok(/pendingRedo = 'local';/.test(src), '撤销走本地栈时上锁');
+  // 新编辑 / 切文件 / 切换画布，三处都要解锁
+  const saveFn = src.slice(src.indexOf('async function doSaveInner'), src.indexOf('异步失败不包一层'));
+  ok(/pendingRedo = null;/.test(saveFn), '新编辑后解锁（重做链已失效）');
+  const resetFn = src.slice(src.indexOf('function resetHistory'), src.indexOf('/** 只做「载入并切换」'));
+  ok(/pendingRedo = null;/.test(resetFn), '切文件后解锁');
+  ok(/切换\/重载画布会重置编辑器历史基线/.test(src), '切换画布处也解锁（有注释说明）');
+}
+
+{
+  // ---- 行为对照：旧实现（每次都优先编辑器栈）怎么丢数据 ----
+  // 造一个双栈环境：编辑器栈 3 步，本地栈 2 步
+  function makeEnv() {
+    const editor = { undo: [3, 2, 1], redo: [] };   // 栈内是版本号
+    const local = { undo: ['v0', 'v1'], redo: [] };
+    let cur = 4;
+    let lastSnap = 'v3';
+    const log = [];
+    return {
+      // 旧：undo 先试编辑器，失败才用本地
+      oldUndo() {
+        if (editor.undo.length) {
+          const v = editor.undo.pop(); editor.redo.push(cur); cur = v;
+          log.push('editor-undo→' + v); return;
+        }
+        if (local.undo.length) {
+          local.redo.push(lastSnap);
+          const v = local.undo.pop(); lastSnap = v;
+          log.push('local-undo→' + v); return;
+        }
+        log.push('nothing');
+      },
+      oldRedo() {
+        if (editor.redo.length) {
+          const v = editor.redo.pop(); editor.undo.push(cur); cur = v;
+          log.push('editor-redo→' + v); return;
+        }
+        if (local.redo.length) {
+          local.undo.push(lastSnap);
+          const v = local.redo.pop(); lastSnap = v;
+          log.push('local-redo→' + v); return;
+        }
+        log.push('nothing');
+      },
+      log, local, editor,
+      get cur() { return cur; },
+    };
+  }
+
+  // 旧实现：撤销 4 次（前 3 次走编辑器，第 4 次走本地），再重做 1 次
+  const e1 = makeEnv();
+  for (let i = 0; i < 4; i++) e1.oldUndo();
+  e1.oldRedo();
+  ok(e1.log.includes('local-undo→v1'), '（对照）旧实现：第 4 次撤销回退到本地栈');
+  ok(e1.log[e1.log.length - 1].startsWith('editor-redo'),
+    '（对照）旧实现：重做跑到了编辑器栈 —— 刚那次本地撤销永远重做不回来');
+  ok(e1.local.redo.length === 1, '（对照）旧实现：本地 redo 栈留了一条孤儿，之后会突然跳到旧内容');
+  // 再多按几次重做也吃不到那条孤儿：它只在本地栈被选中时才会被消费
+  e1.oldRedo(); e1.oldRedo();
+  ok(e1.local.redo.length === 1, '（对照）旧实现：继续重做也消费不掉那条孤儿（本地栈永远轮不到）');
+
+  // 新实现：撤销时锁栈，重做必须同栈
+  function makeNew() {
+    const editor = { undo: [3, 2, 1], redo: [] };
+    const local = { undo: ['v0', 'v1'], redo: [] };
+    let cur = 4, lastSnap = 'v3', lock = null;
+    const log = [];
+    const pick = () => 'editor';    // 编辑器栈可用
+    return {
+      undo() {
+        const st = lock || pick();
+        if (st === 'editor') {
+          if (editor.undo.length) {
+            const v = editor.undo.pop(); editor.redo.push(cur); cur = v;
+            lock = 'editor'; log.push('editor-undo→' + v);
+          } else { log.push('nothing'); }
+          return;
+        }
+        if (!local.undo.length) { log.push('nothing'); return; }
+        local.redo.push(lastSnap);
+        const v = local.undo.pop(); lastSnap = v; lock = 'local';
+        log.push('local-undo→' + v);
+      },
+      redo() {
+        const st = lock || pick();
+        if (st === 'editor') {
+          if (editor.redo.length) {
+            const v = editor.redo.pop(); editor.undo.push(cur); cur = v;
+            log.push('editor-redo→' + v);
+          } else { log.push('nothing'); }
+          return;
+        }
+        if (!local.redo.length) { log.push('nothing'); return; }
+        local.undo.push(lastSnap);
+        const v = local.redo.pop(); lastSnap = v;
+        log.push('local-redo→' + v);
+      },
+      log, editor, local,
+      get cur() { return cur; },
+    };
+  }
+
+  const e2 = makeNew();
+  for (let i = 0; i < 4; i++) e2.undo();
+  // 新实现：编辑器栈空了就停在「没有可撤销」，**不会**跨到本地栈
+  ok(!e2.log.includes('local-undo→v1'), '新实现：编辑器栈空后不跨到本地栈（一次序列只走一条）');
+  e2.redo();
+  ok(e2.log[e2.log.length - 1].startsWith('editor-redo'), '新实现：重做与撤销同栈（编辑器栈）');
+  ok(e2.local.redo.length === 0, '新实现：本地 redo 栈没有孤儿');
+  ok(e2.local.undo.length === 2, '新实现：本地 undo 栈完全没被动过（没跨栈）');
+}
+
+/* ============================================================
+   二十四、B2/B3 由内核提供（澄清，防止重复实现）
+   ============================================================ */
+
+group('B2/B3 内核已提供');
+
+{
+  // 这一组是「澄清性断言」：B2（剪切/复制/粘贴节点）与 B3（多选拖拽移动）
+  // 在差距清单里被判为「完全缺失 / 未定位到确切行号」，属推测。
+  // 实际核对 kityminder.core.min.js 后确认**内核本来就提供**，
+  // 故这里锁住事实，避免将来有人照着清单重复实现一套。
+  const core = fs.readFileSync(path.join(HERE, 'editor', 'kityminder.core.min.js'), 'utf8');
+
+  // ---- B2：ClipboardModule ----
+  ok(/register\("ClipboardModule"/.test(core), '内核注册了 ClipboardModule');
+  ok(/commands:\{copy:i,cut:j,paste:k\}/.test(core), 'B2 提供 copy / cut / paste 三个命令');
+  ok(/commandShortcutKeys:\{copy:"normal::ctrl\+c\|",cut:"normal::ctrl\+x",paste:"normal::ctrl\+v"\}/.test(core),
+    'B2 已注册 Ctrl+C / Ctrl+X / Ctrl+V 快捷键');
+
+  // 命令名会被转小写存进 _commands
+  ok(/this\._commands\[d\.toLowerCase\(\)\]=new i\[d\]/.test(core),
+    '模块命令以小写名进 _commands（故是 copy/cut/paste，不是 copynode）');
+
+  // 基类 queryState 返回 STATE_NORMAL(0)，快捷键回调的 `-1 !== state` 判定会通过
+  ok(/queryState:function\(a\)\{return h\}/.test(core), 'Command 基类 queryState 返回 STATE_NORMAL');
+  ok(/i\.STATE_NORMAL=h,i\.STATE_ACTIVE=1,i\.STATE_DISABLED=-1/.test(core), 'STATE_NORMAL=0（不是 -1，故快捷键能触发）');
+  ok(/-1!==e\.queryCommandState\(b\)&&e\.execCommand\(b\)/.test(core),
+    '快捷键回调：state !== -1 才执行（copy/cut 返回 0 → 会执行）');
+
+  // 复制的是节点而非样式：PasteCommand 用 clone() + append
+  ok(/a\(g,e\.clone\(\)\)/.test(core), 'B2 paste 是克隆**节点**并挂到选中节点下');
+  ok(/getSelectedAncestors/.test(core), 'B2 copy/cut 取 getSelectedAncestors（自动剔除被祖先覆盖的子孙）');
+
+  // ---- B3：DragTree ----
+  ok(/register\("DragTree"/.test(core), '内核注册了 DragTree');
+  ok(/_calcDragSources:function\(\)\{this\._dragSources=this\._minder\.getSelectedAncestors\(\)\}/.test(core),
+    'B3 拖拽源取 getSelectedAncestors —— **天然支持多选**');
+  ok(/"normal\.mousedown inputready\.mousedown"/.test(core), 'B3 在 normal 状态的 mousedown 启动拖拽');
+  ok(/commands:\{movetoparent:i\}/.test(core), 'B3 提供 movetoparent 命令（跨层级移动）');
+
+  // ---- 默认启用：未指定 options.modules 就全启用 ----
+  ok(/this\._options\.modules\|\|f\.keys\(a\)/.test(core), '未指定 modules 时启用全部注册模块');
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  ok(!/modules\s*:\s*\[/.test(html), '编辑器初始化没有限定 modules（故两个模块都会启用）');
+
+  // ---- 防止重复实现：项目里不应再出现自定义 copynode/cutnode/pastenode ----
+  ok(!/copynode['"]?\s*[:,]|cutnode['"]?\s*[:,]|pastenode['"]?\s*[:,]/.test(html),
+    '（防回归）编辑器没有自定义的 copynode/cutnode/pastenode（会与内核快捷键冲突）');
+}
+
+/* ============================================================
    结果
    ============================================================ */
 

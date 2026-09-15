@@ -1324,6 +1324,9 @@ const SHORTCUTS = [
   ['/', '折叠 / 展开选中节点（来回切换）'],
   ['Alt + 1~5', '从选中节点展开到第 N 级（更深层收起）'],
   // —— 内核 commandShortcutKeys 注册 ——
+  // ClipboardModule 提供 copy/cut/paste 命令并注册了这组快捷键；
+  // DragTree 提供节点拖拽（含多选，见 getSelectedAncestors）。
+  ['Ctrl + C / X / V', '复制 / 剪切 / 粘贴节点（含子树，根不可复制）'],
   ['Alt + ↑ / ↓', '节点上移 / 下移'],
   ['Shift + Tab', '插入上级节点'],
   ['Ctrl + Shift + L', '整理布局'],
