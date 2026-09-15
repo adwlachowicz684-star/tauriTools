@@ -156,5 +156,61 @@ const strayZ = all
     .map((m) => `${f.p}: ${m[1].trim()}`));
 t('层级走 --z-*', strayZ.length === 0, strayZ.join(', ') || 'OK');
 
+/* ---------- 7. 立体描边 ---------- */
+/* 新拟态卡片与底板完全同色，边界只能靠阴影勾；但阴影经模糊摊薄后
+   有效强度只剩约 29%，实测把色调到 ΔL* 11 也只能落到 3.2（勉强）。
+   描边那层 inset 0 0 0 1px 没有模糊、不摊薄，是真正让边界清晰的那一下 ——
+   只调色值的话 17 套非扁平主题里有 14 套仍低于可辨线，加描边后降到 0 套。 */
+t('外凸档位都挂了描边层',
+  ['--sh-out-sm', '--sh-out-md', '--sh-out-lg', '--sh-out-xl'].every((v) => {
+    const m = new RegExp(`\\${v}\\s*:([^;]*);`).exec(tokens);
+    return m && /inset 0 0 0 1px var\(--relief-edge\)/.test(m[1]);
+  }));
+/* 逐个看每个 0 0 0 1px 前面是不是都有 inset。
+   不能用 `[^t]0 0 0 1px` 这种写法 —— 它会让 [^t] 吃到 "inset " 末尾的空格，
+   把 inset 版本也判成外扩（实测误报）。 */
+const bareRing = [...tokens.matchAll(/0 0 0 1px/g)]
+  .filter((m) => !/inset\s*$/.test(tokens.slice(Math.max(0, m.index - 8), m.index)))
+  .map((m) => tokens.slice(Math.max(0, m.index - 30), m.index + 12).trim());
+t('描边用 inset（外扩会让元素视觉上大 1px，密集布局会与邻居重叠）',
+  bareRing.length === 0, bareRing.join(' | ') || '无外扩描边');
+t('--relief-edge 取自主题派生的 --edge，且有 transparent 兜底',
+  /--relief-edge\s*:\s*var\(--edge,\s*transparent\)/.test(tokens));
+
+// --edge 由 theme-manager 按基调派生：扁平风格必须关掉，否则与已有的
+// border: 1px solid var(--border) 叠成 2px 粗边
+const tmSrc = read('js/theme-manager.js');
+t('--edge 按风格派生（扁平 → transparent）',
+  /--edge'\]\s*=\s*theme\.style\s*===\s*'flat'/.test(tmSrc));
+t('--edge 按基调派生（深色微白 / 浅色微黑）',
+  /dark\s*\?\s*'rgba\(255,255,255,\.[\d.]+\)'\s*:\s*'rgba\(0,0,0,\.[\d.]+\)'/.test(tmSrc));
+
+/* ---------- 8. 阴影色值已按感知明度校准 ---------- */
+/* 深色主题 ΔL* ≈ 11、浅色暗影 ≈ 14；撞物理上限的（纯黑底 / 纯白底）
+   取边界值即可，靠描边补。这里只校验"不再停留在 6~7 的老水平"。 */
+const { PRESET_THEMES } = await import('./js/themes.js');
+const lin = (v) => {
+  const x = v / 255;
+  return x <= 0.04045 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+};
+const Lstar = (c) => {
+  const y = 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+  return y > 0.008856 ? 116 * Math.pow(y, 1 / 3) - 16 : 903.3 * y;
+};
+const hex2 = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const tooWeak = [];
+for (const th of PRESET_THEMES) {
+  if (th.style === 'flat') continue;
+  const bg = th.vars['--bg'];
+  const shD = th.vars['--sh-dark'];
+  if (!/^#[0-9a-f]{6}$/i.test(bg || '') || !/^#[0-9a-f]{6}$/i.test(shD || '')) continue;
+  const d = Math.abs(Lstar(hex2(shD)) - Lstar(hex2(bg)));
+  // 纯黑底（L* 已接近 0）提不动暗影，属物理上限，不参与
+  if (Lstar(hex2(bg)) < 12) continue;
+  if (d < 9) tooWeak.push(`${th.id}(${d.toFixed(1)})`);
+}
+t('暗影强度已校准到 ΔL* ≥ 9', tooWeak.length === 0,
+  tooWeak.join(', ') || '（纯黑底主题因物理上限豁免）');
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -22,10 +22,17 @@
      新拟态的凸起靠「右下暗 + 左上亮」两向成对，缺一就歪了。
      档位只管几何（偏移 / 模糊），颜色始终取自主题的 --sh-*，
      所以调档位不会影响配色，调配色也不会打乱层级。 */
-  --sh-out-sm:  2px  2px  5px var(--sh-dark),  -2px  -2px  5px var(--sh-light);
-  --sh-out-md:  4px  4px  9px var(--sh-dark),  -4px  -4px  9px var(--sh-light);
-  --sh-out-lg:  6px  6px 14px var(--sh-dark),  -6px  -6px 14px var(--sh-light);
-  --sh-out-xl: 10px 10px 26px var(--sh-dark), -10px -10px 26px var(--sh-light);
+  --sh-out-sm:  2px  2px  5px var(--sh-dark),  -2px  -2px  5px var(--sh-light),
+                inset 0 0 0 1px var(--relief-edge);
+  --sh-out-md:  4px  4px  9px var(--sh-dark),  -4px  -4px  9px var(--sh-light),
+                inset 0 0 0 1px var(--relief-edge);
+  /* lg 一档的模糊从 14px 收到 12px：模糊越大、同一份浓度被摊得越薄
+     （有效系数 23% → 25%），而大卡片正是最需要"浮起来"的那一类。
+     同时这也是 .nm-raised 原本的设计值，统一档位时无意间把它抬到了 14。 */
+  --sh-out-lg:  6px  6px 12px var(--sh-dark),  -6px  -6px 12px var(--sh-light),
+                inset 0 0 0 1px var(--relief-edge);
+  --sh-out-xl: 10px 10px 26px var(--sh-dark), -10px -10px 26px var(--sh-light),
+                inset 0 0 0 1px var(--relief-edge);
 
   /* ---------- 立体阴影：内凹 ----------
      inset 表示「按下去 / 凹进去」。xs 一档只给极小元素（角标这类
@@ -52,6 +59,13 @@
      所以改强调色时会自动跟着变。 */
   --glow-sm: 0 0  8px var(--accent-glow);
   --glow-md: 0 0 10px var(--accent-glow);
+
+  /* ---------- 立体描边 ----------
+     外凸档位每档末尾都挂了一层 inset 0 0 0 1px，颜色取自这里。
+     用 inset 而不是外扩：外扩会让元素视觉上大 1px，密集布局里会与邻居重叠。
+     取 --edge（由主题按基调派生，扁平风格为 transparent）；
+     想退回"纯阴影、无描边"的观感，把这里改成 transparent 一行即可。 */
+  --relief-edge: var(--edge, transparent);
 
   /* ---------- 圆角补档 ----------
      主档 --r-sm / --r / --r-md / --r-lg / --r-xl 在 neumorphism.css 里，
