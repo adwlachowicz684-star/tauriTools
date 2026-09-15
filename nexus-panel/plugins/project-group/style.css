@@ -90,7 +90,6 @@
 .fpx-stack-toggleall { margin-top: 2px; height: 28px; font-size: 11.5px; }
 
 /* ---------- 底部日志（对照 WPF 的 140px 日志行）---------- */
-.fpx-logcard { margin-top: 0; }
 .fpx-logcard .fpx-log { max-height: 132px; }
 
 /* ---------- 三栏 ---------- */
@@ -101,6 +100,18 @@
   gap: 16px;
   align-items: start;
 }
+/*
+  必须清零外壳的 `.p-card + .p-card { margin-top: 16px }`。
+
+  那条规则是给"纵向堆叠的卡片"用的，但三栏也是相邻的 .p-card 兄弟，
+  于是在 grid 里被额外加了 16px 上边距，与容器 gap 叠加 ——
+  第 2、3 栏整体比第 1 栏低 16px。这正是「三栏上边缘不齐」的主因
+  （另一个是内容栏裸 h2 的默认 margin-top，已在别处统一）。
+
+  grid / flex 容器的间距一律交给 gap，卡片自带的相邻间距要去掉。
+*/
+.fpx-cols > .p-card,
+.fpx-main > .p-card { margin-top: 0; }
 @media (max-width: 1180px) {
   .fpx-cols { grid-template-columns: 1fr; }
 }
