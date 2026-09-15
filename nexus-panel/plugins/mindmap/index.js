@@ -35,7 +35,7 @@ bootIframePlugin(async (ctx) => {
 
   /* ------------------------- 状态 ------------------------- */
 
-  let settings = (await store.settings.load()) || { animate: false, backupMinutes: 2, backupMax: 3 };
+  let settings = (await store.settings.load()) || { animate: false, backupMinutes: 2, backupMax: 3, pdfChannel: 'vector' };
   // filesOpen 默认关：文件库是 Web 版多文档功能，C# 原版没有左栏。
   // 收起时画布左右只剩「属性侧栏」一侧占位，更接近原版观感；需要切换脑图时
   // 点 📚 展开。老配置里没有这个字段时 undefined 会走 falsy 分支，正是想要的默认收起。
@@ -284,6 +284,7 @@ bootIframePlugin(async (ctx) => {
       md: '多画布按「## 画布：」分块，便于人读与 diff',
       svg: '矢量图，可无损放大',
       png: '位图，1 倍=画布原尺寸',
+      pdf: '矢量图，不经浏览器、不弹对话框，直接保存；失败时自动改用打印对话框',
     };
     popupMenu(anchorEl, [
       { label: 'XMind（.xmind）', hint: hint.xmind, onSelect: () => exportXMind() },
@@ -292,6 +293,7 @@ bootIframePlugin(async (ctx) => {
       { label: 'Markdown（.md）', hint: hint.md, onSelect: () => exportMarkdown() },
       { label: 'SVG（.svg）', hint: hint.svg, onSelect: () => exportSvg() },
       '-',
+      { label: 'PDF（矢量，直接保存）', hint: hint.pdf, onSelect: () => exportPdf() },
       { label: '打印 / 存为 PDF…', hint: '用系统打印对话框，可在其中选「另存为 PDF」', onSelect: () => openPrintSettings(app, (o) => printMap(o)) },
       '-',
       { label: 'PNG · 1 倍', hint: hint.png, onSelect: () => exportPng(1) },
@@ -1359,6 +1361,60 @@ bootIframePlugin(async (ctx) => {
    *
    * 必须先确认能拿到**完整画布**的 SVG：可视视口截图印出来只有一角。
    */
+  /**
+   * PDF 导出：默认走 **svg2pdf（矢量、静默）**，失败才托底到打印对话框。
+   *
+   * 通道由 settings.pdfChannel 决定，但**两条路互为托底**，用户不必每次选：
+   *
+   *   pdfChannel='vector'（默认）
+   *      先试 svg2pdf → 成功即静默落盘；
+   *      失败则**自动**转打印对话框（并提示），不把失败抛给用户。
+   *
+   *   pdfChannel='dialog'
+   *      直接用打印对话框。（svg2pdf 若失败也无更好选择，本身就需人工确认）
+   *
+   * 为什么不干脆只保留一条：矢量通道在**字体缺失**等边缘情况下可能失败，
+   * 而打印对话框几乎总能出结果 —— 留一条兜底，用户不会卡在「导不出来」。
+   */
+  async function exportPdf(opts = {}) {
+    const wantVector = settings.pdfChannel !== 'dialog';
+    const landscape = opts.landscape !== false;
+    const margin = opts.margin;
+
+    let svg = null;
+    try {
+      svg = await bridge?.exportSvg();
+    } catch { /* 下面统一处理 */ }
+
+    if (wantVector && svg) {
+      try {
+        const b64 = await ctx.invoke('mm_svg_to_pdf', {
+          svg,
+          dpi: io.pdfDpi(svg, { landscape, margin }),
+        });
+        const blob = io.base64ToBlob(b64, 'application/pdf');
+        if (blob) {
+          const r = await io.saveBlob(
+            io.stampName(sheet()?.title || '脑图', 'pdf'), blob);
+          if (r !== 'cancel') {
+            status(`已导出 PDF（矢量）：${sheet()?.title || '当前画布'}`);
+            return;
+          }
+          return;   // 用户主动取消，不再托底
+        }
+        throw new Error('返回内容不是合法 PDF');
+      } catch (e) {
+        // 矢量通道不可用：不弹错误，改为托底。
+        // 但要**明确告知**——静默导出突然弹出打印对话框会让人困惑。
+        status(`矢量 PDF 不可用，改用打印对话框：${e?.message || e}`, true);
+      }
+    }
+
+    // 托底（或本来就选了 dialog）：走打印对话框
+    if (!svg) { status('PDF 导出失败：无法取得画布矢量图（编辑器未就绪？）', true); return; }
+    await printMap({ landscape, margin });
+  }
+
   async function printMap(opts = {}) {
     const svg = await bridge?.exportSvg();
     if (!svg) { status('打印失败：无法取得画布矢量图（编辑器未就绪？）', true); return; }
@@ -1586,6 +1642,25 @@ bootIframePlugin(async (ctx) => {
       if (!ok) { status('设置保存失败', true); return; }
       await trimBackups();
       status(`最多保留 ${settings.backupMax} 份快照`);
+    }),
+    /**
+     * PDF 导出通道（settings.pdfChannel）。
+     *
+     * 只决定「先试哪条」——任一通道不可用都会自动托底到另一条，
+     * 所以这里选错也不会导不出来，最多是少弹/多弹一次对话框。
+     *
+     * 'vector'（默认）：svg2pdf 矢量转换，不弹对话框直接保存。
+     * 'dialog'        ：走系统打印对话框，在其中选「另存为 PDF」。
+     */
+    setPdfChannel: guard('设置 PDF 通道', async (v) => {
+      const next = v === 'dialog' ? 'dialog' : 'vector';
+      if (settings.pdfChannel === next) return;
+      settings.pdfChannel = next;
+      const ok = await store.settings.save(settings);
+      if (!ok) { status('设置保存失败', true); return; }
+      status(next === 'vector'
+        ? 'PDF 默认走矢量通道（不弹对话框，直接保存）'
+        : 'PDF 默认走打印对话框（可在其中选「另存为 PDF」）');
     }),
     setAnimate: guard('设置布局动画', async (on) => {
       settings.animate = !!on;

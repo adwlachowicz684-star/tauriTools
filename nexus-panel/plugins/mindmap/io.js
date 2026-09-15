@@ -522,6 +522,104 @@ export async function printSvg(svgText, opts = {}) {
   return true;
 }
 
+/* --------------------------- SVG → PDF（矢量） --------------------------- */
+
+/**
+ * 取 SVG 的固有尺寸（纯函数，可测）。
+ *
+ * 先看 width/height 属性，取不到再看 viewBox ——
+ * 只认 width/height 会在「只有 viewBox」的 SVG 上拿不到尺寸，
+ * 而 kityminder 两种都可能给出。
+ *
+ * @returns {{w:number, h:number}} 取不到时返回 {0,0}（调用方据此回退）
+ */
+export function svgSize(svgText) {
+  const text = String(svgText || '');
+  if (!text) return { w: 0, h: 0 };
+  try {
+    const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
+    if (!doc || doc.querySelector('parsererror')) return { w: 0, h: 0 };
+    const svg = doc.querySelector('svg');
+    if (!svg) return { w: 0, h: 0 };
+
+    const num = (v) => {
+      const n = parseFloat(v);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    let w = num(svg.getAttribute('width'));
+    let h = num(svg.getAttribute('height'));
+    if (w && h) return { w, h };
+
+    const vb = (svg.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+    if (vb.length === 4 && vb.every(Number.isFinite)) {
+      // viewBox 的 x/y 是原点偏移，尺寸只看后两位
+      if (!w) w = vb[2] > 0 ? vb[2] : 0;
+      if (!h) h = vb[3] > 0 ? vb[3] : 0;
+    }
+    return { w, h };
+  } catch {
+    return { w: 0, h: 0 };
+  }
+}
+
+/**
+ * 算 SVG → PDF 的 dpi（纯函数，可测）。
+ *
+ * svg2pdf 用 dpi 把 SVG 像素换算成 PDF 点（1pt = 1/72 inch）：
+ *     pdfPt = px * 72 / dpi
+ *
+ * 所以「缩放到目标尺寸」对应的 dpi 是 `72 / scale`。
+ *
+ * **取 min(宽比, 高比)** 而不是只管宽度：脑图常常又宽又扁，
+ * 只按宽度适配的话高度可能溢出纸面，svg2pdf 生成的是**单页**，
+ * 溢出不会自动分页而是把页面撑大，打印时仍会被缩放 —— 等于白算。
+ *
+ * **只缩不放**（scale ≤ 1）：小图放大不会多出任何信息，
+ * 而缩小的目的是不裁切。
+ *
+ * @param {string} svgText
+ * @param {object} [o]
+ * @param {boolean} [o.landscape=false]
+ * @param {number} [o.margin=10] 页边距（毫米）
+ * @returns {number} dpi；拿不到尺寸时返回 72（svg2pdf 默认值，不缩放）
+ */
+export function pdfDpi(svgText, o = {}) {
+  const { w, h } = svgSize(svgText);
+  if (!w || !h) return 72;
+
+  const raw = Number(o.margin);
+  const margin = Number.isFinite(raw) && raw >= 0 ? raw : 10;
+  const MM = 72 / 25.4;                       // 1mm = 2.8346pt
+  // A4：210×297mm；横向时宽高互换
+  const pw = (o.landscape ? 297 : 210) - margin * 2;
+  const ph = (o.landscape ? 210 : 297) - margin * 2;
+  if (pw <= 0 || ph <= 0) return 72;
+
+  const scale = Math.min((pw * MM) / w, (ph * MM) / h, 1);
+  if (!Number.isFinite(scale) || scale <= 0) return 72;
+  return 72 / scale;
+}
+
+/**
+ * base64 → Blob（纯函数式，便于测试时替换）。
+ *
+ * 不直接 `fetch('data:...')` 的原因：data: URL 长度在部分浏览器有限制，
+ * 而 PDF 动辄几 MB，超了会静默失败（拿回一个空 blob）。
+ * 手动解码走 Uint8Array 没有这个上限。
+ */
+export function base64ToBlob(b64, type = 'application/pdf') {
+  const raw = String(b64 || '');
+  if (!raw) return null;
+  try {
+    const bin = atob(raw);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type });
+  } catch {
+    return null;
+  }
+}
+
 export function stampName(base, ext) {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');

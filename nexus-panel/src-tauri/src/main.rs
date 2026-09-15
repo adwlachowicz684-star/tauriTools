@@ -102,6 +102,55 @@ fn mm_print(window: WebviewWindow) -> Result<String, String> {
     }
 }
 
+/// 脑图：SVG → PDF（**矢量、静默**，不经浏览器）。
+///
+/// # 为什么这是默认通道
+///
+/// 另两条路都要把 SVG 塞进 HTML 再交给 webview 渲染打印：
+///   - `WebviewWindow::print()`：wry **只在 macOS 实现**，Windows/Linux 是 no-op；
+///   - `window.print()`：能跨平台，但必须用户在对话框里确认，做不到「无感导出」。
+///
+/// 而 kityminder 导出的**本身就是 SVG**，SVG → PDF 是矢量到矢量的直接转换，
+/// 不需要浏览器参与。svg2pdf 是纯 Rust、跨平台、不栅格化、真静默。
+///
+/// 经核实 kityminder 的 SVG 只用到 path / text / image，
+/// 不含 gradient / pattern / clipPath / filter / foreignObject，
+/// 全部落在 svg2pdf 的能力范围内。
+///
+/// @param svg  完整画布的 SVG 文本（**必须带 viewBox**，否则尺寸无从确定）
+/// @param dpi  可选。SVG 像素 → PDF 点 的换算基准，默认 72（1px = 1pt）。
+///             前端按「缩放到 A4 内容区」算好再传进来 —— 计算逻辑放在 JS 侧，
+///             一是可单测，二是让 Rust 侧保持极简以降低编译风险。
+/// @returns    base64 编码的 PDF（复用 fpx::base64，不额外引 crate）
+#[tauri::command]
+fn mm_svg_to_pdf(svg: String, dpi: Option<f32>) -> Result<String, String> {
+    let text = svg.trim();
+    if text.is_empty() {
+        return Err("SVG 内容为空".into());
+    }
+
+    let mut options = svg2pdf::usvg::Options::default();
+    // 必须加载系统字体：SVG 里的中文（微软雅黑 / Heiti SC）要靠它解析，
+    // 不加载的话文字会丢失或变成方框。
+    //
+    // 已知限制：Linux 上可能没有微软雅黑/Heiti SC，中文会走形。
+    // 真要覆盖 Linux，得内置一款开源中文字体并用 load_font_data 注入 ——
+    // 那会显著增大体积，暂不做，先把 Windows / macOS 两条主路径走通。
+    options.fontdb_mut().load_system_fonts();
+
+    let tree = svg2pdf::usvg::Tree::from_str(text, &options)
+        .map_err(|e| format!("SVG 解析失败：{e}"))?;
+
+    let page = svg2pdf::PageOptions { dpi: dpi.unwrap_or(72.0) };
+    let pdf = svg2pdf::to_pdf(&tree, svg2pdf::ConversionOptions::default(), page)
+        .map_err(|e| format!("PDF 生成失败：{e}"))?;
+
+    if pdf.is_empty() {
+        return Err("PDF 生成结果为空".into());
+    }
+    Ok(fpx::base64::encode(&pdf))
+}
+
 /// 当前平台是否支持 Tauri 原生打印。
 ///
 /// 前端可据此决定要不要显示「打印」入口、以及提示走哪条路径，
@@ -109,6 +158,16 @@ fn mm_print(window: WebviewWindow) -> Result<String, String> {
 #[tauri::command]
 fn mm_print_support() -> bool {
     cfg!(target_os = "macos")
+}
+
+/// 当前是否具备「SVG → PDF」静默导出能力。
+///
+/// 与 `mm_svg_to_pdf` 不同，这个能力是**编译期就有**的（svg2pdf 是纯 Rust，
+/// 不挑平台），所以恒为 true。但前端仍需要一个探测入口：
+/// 万一将来裁剪掉该依赖、或换成可选 feature，前端能据此降级而不是崩溃。
+#[tauri::command]
+fn mm_pdf_vector_support() -> bool {
+    true
 }
 
 fn main() {
@@ -139,7 +198,7 @@ fn main() {
         .manage(af_flow::WebhookRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .invoke_handler(tauri::generate_handler![
             rust_ping, app_version, window_action, set_window_icon,
-            mm_print, mm_print_support,
+            mm_print, mm_print_support, mm_svg_to_pdf, mm_pdf_vector_support,
             fpx::fpx_bootstrap, fpx::fpx_save_config, fpx::fpx_create_link, fpx::fpx_remove_link,
             fpx::fpx_scan_content, fpx::fpx_read_file, fpx::fpx_open_path, fpx::fpx_list_dirs,
             fpx::fpx_quick_roots, fpx::fpx_copy_text, fpx::fpx_create_folder, fpx::fpx_set_lock, fpx::fpx_set_icon,

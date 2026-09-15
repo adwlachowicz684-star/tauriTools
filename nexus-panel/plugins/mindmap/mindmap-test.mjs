@@ -1506,10 +1506,17 @@ group('设置面板');
   ok(titles.includes('其它'), '有「其它」段（快捷键）');
 
   // 18.2 备份间隔 / 最多保留
+  //
+  // 原先断言「恰好 2 个下拉」。新增 PDF 通道后是 3 个 ——
+  // 但**前两个仍必须是自动间隔和最多保留**：这里真正要保证的是
+  // 「新增设置项排在后面，不挤动既有项的顺序」（用户的肌肉记忆）。
+  // 若把 PDF 通道放到最前面，下面两条就会红。
   const sels = [...root.querySelectorAll('select.mm-select')];
-  eq(sels.length, 2, '两个下拉：自动间隔 + 最多保留');
+  ok(sels.length >= 2, '至少两个下拉（自动间隔 + 最多保留）');
   ok(sels[0].innerHTML.includes('分钟'), '第一个下拉是时间间隔');
   ok(sels[1].innerHTML.includes('份'), '第二个下拉是保留份数');
+  // 新增的 PDF 通道下拉必须在它们**之后**
+  ok(sels.slice(2).some((x) => x.innerHTML.includes('矢量')), 'PDF 通道下拉排在既有项之后');
 
   sels[0].value = '10';
   sels[0].dispatchEvent(new dom.window.Event('change', { bubbles: true }));
@@ -3220,6 +3227,138 @@ group('P3b Tauri Rust 打印命令');
   ok(/if \(!ok\) \{[\s\S]{0,120}cleanup\(\);[\s\S]{0,60}return false;/.test(iom),
     'io.js 失败时清理并返回 false');
   ok(/typeof timer\?\.unref === 'function'/.test(iom), '兜底定时器 unref（否则吊住 Node 进程不退出）');
+}
+
+/* ============================================================
+   三十、SVG → PDF 矢量通道（svg2pdf）+ 双通道托底
+   ============================================================ */
+
+group('SVG → PDF 矢量通道');
+
+{
+  const io = await import('./io.js');
+
+  // ---- svgSize：宽高属性 / viewBox / 都没有 ----
+  eq(io.svgSize('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect/></svg>').w, 800, 'svgSize 读 width');
+  eq(io.svgSize('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect/></svg>').h, 600, 'svgSize 读 height');
+  const vb = io.svgSize('<svg xmlns="http://www.w3.org/2000/svg" viewBox="10 20 400 300"><rect/></svg>');
+  eq(vb.w, 400, 'svgSize 回退 viewBox 宽（忽略 x 偏移）');
+  eq(vb.h, 300, 'svgSize 回退 viewBox 高（忽略 y 偏移）');
+  // width 有、height 没有 → 各自独立回退
+  const mix = io.svgSize('<svg xmlns="http://www.w3.org/2000/svg" width="800" viewBox="0 0 400 300"><rect/></svg>');
+  eq(mix.w, 800, 'svgSize 宽优先用属性');
+  eq(mix.h, 300, 'svgSize 高从 viewBox 补（宽高各自独立回退）');
+  eq(io.svgSize('').w, 0, 'svgSize 空串 → 0');
+  eq(io.svgSize('不是 svg').w, 0, 'svgSize 非法输入 → 0（不抛）');
+  eq(io.svgSize(null).w, 0, 'svgSize null → 0（不抛）');
+
+  // ---- pdfDpi ----
+  // 拿不到尺寸 → 回退 72（svg2pdf 默认，即不缩放）
+  eq(io.pdfDpi(''), 72, 'pdfDpi 无尺寸 → 72');
+  eq(io.pdfDpi('xx'), 72, 'pdfDpi 非法输入 → 72');
+
+  // 极小图（200×100）不会超出 A4 → 只缩不放，scale=1 → dpi=72
+  const tiny = '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><rect/></svg>';
+  eq(io.pdfDpi(tiny), 72, 'pdfDpi 小图不放大（scale 钳到 1）');
+
+  // 大图（4000×1000，又宽又扁）纵向时宽度是瓶颈
+  const wide = '<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="1000"><rect/></svg>';
+  const dPortrait = io.pdfDpi(wide, { landscape: false });
+  // A4 纵向内容区 190mm ≈ 538.6pt；scale=538.6/4000；dpi=72/scale
+  const expP = 72 / ((190 * (72 / 25.4)) / 4000);
+  ok(Math.abs(dPortrait - expP) < 0.01, `pdfDpi 纵向按**宽度**适配（${dPortrait.toFixed(1)} ≈ ${expP.toFixed(1)}）`);
+  ok(dPortrait > 72, 'pdfDpi 大图时 dpi > 72（表示缩小）');
+
+  // 同一张图横向：内容区更宽(277mm)，缩放更少 → dpi 更小
+  const dLand = io.pdfDpi(wide, { landscape: true });
+  ok(dLand < dPortrait, 'pdfDpi 横向 dpi 更小（纸更宽，缩放更少）');
+
+  // 又高又窄的图：纵向时**高度**才是瓶颈，只按宽度算会溢出
+  const tall = '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="4000"><rect/></svg>';
+  const dTall = io.pdfDpi(tall, { landscape: false });
+  // 高度瓶颈：A4 纵向高 297mm − 20mm 边距 = 277mm ≈ 785.2pt
+  const expT = 72 / ((277 * (72 / 25.4)) / 4000);
+  ok(Math.abs(dTall - expT) < 0.01, `pdfDpi 取宽高**两个比例的 min**（高图按高度定，${dTall.toFixed(1)}）`);
+  // 只按宽度算的话 dpi 会是 72/(538.6/1000)=133.7，明显不同
+  const widthOnly = 72 / ((190 * (72 / 25.4)) / 1000);
+  ok(Math.abs(dTall - widthOnly) > 1, 'pdfDpi 不是只按宽度算（否则高图会溢出纸面）');
+
+  // 页边距非法值
+  ok(Number.isFinite(io.pdfDpi(wide, { margin: -5 })), 'pdfDpi 负边距不产生 NaN（退回默认边距）');
+  ok(Number.isFinite(io.pdfDpi(wide, { margin: NaN })), 'pdfDpi NaN 边距不产生 NaN');
+  // 边距大到内容区为负 → 回退 72，不能算出负 dpi
+  eq(io.pdfDpi(wide, { margin: 999 }), 72, 'pdfDpi 边距吃光纸张 → 72（不能出负数）');
+}
+
+{
+  const io = await import('./io.js');
+  // ---- base64ToBlob：不走 data: URL（大 PDF 会超长度限制而静默失败）----
+  const b64 = btoa('hello');
+  const blob = io.base64ToBlob(b64, 'application/pdf');
+  ok(blob instanceof Blob, 'base64ToBlob 返回 Blob');
+  eq(blob?.type, 'application/pdf', 'base64ToBlob 带正确 MIME');
+  eq(blob?.size, 5, 'base64ToBlob 长度正确');
+  eq(io.base64ToBlob(''), null, 'base64ToBlob 空串 → null');
+  eq(io.base64ToBlob('!!!非法!!!'), null, 'base64ToBlob 非法 base64 → null（不抛）');
+  eq(io.base64ToBlob(null), null, 'base64ToBlob null → null');
+}
+
+{
+  // ---- Rust 侧 ----
+  const rs = fs.readFileSync(path.join(HERE, '../../src-tauri/src/main.rs'), 'utf8');
+  ok(/fn mm_svg_to_pdf/.test(rs), 'Rust 新增 mm_svg_to_pdf');
+  ok(/mm_svg_to_pdf, mm_pdf_vector_support/.test(rs), '两个 PDF 命令都已注册');
+  ok(/fn mm_pdf_vector_support/.test(rs), 'Rust 新增 mm_pdf_vector_support（供前端探测降级）');
+
+  const f = rs.slice(rs.indexOf('fn mm_svg_to_pdf'), rs.indexOf('fn mm_print_support'));
+  ok(/svg2pdf::usvg::Tree::from_str/.test(f), 'Rust 用 usvg 解析 SVG');
+  ok(/options\.fontdb_mut\(\)\.load_system_fonts\(\)/.test(f),
+    'Rust **加载系统字体** —— 不加载中文会丢失/变方框');
+  ok(/svg2pdf::PageOptions \{ dpi/.test(f), 'Rust 按传入 dpi 生成页面');
+  ok(/dpi\.unwrap_or\(72\.0\)/.test(f), 'Rust dpi 缺省 72（与 JS 侧回退值一致）');
+  ok(/fpx::base64::encode/.test(f), 'Rust 返回 base64（复用 fpx::base64，不额外引 crate）');
+  ok(/if text\.is_empty\(\)/.test(f), 'Rust 空 SVG 直接报错（不进解析）');
+  ok(/if pdf\.is_empty\(\)/.test(f), 'Rust 空 PDF 结果报错（不返回空串）');
+
+  const cg = fs.readFileSync(path.join(HERE, '../../src-tauri/Cargo.toml'), 'utf8');
+  ok(/svg2pdf = "0\.13\.0"/.test(cg), 'Cargo.toml 已加 svg2pdf 0.13.0');
+
+  // ---- 前端通道逻辑 ----
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  ok(/async function exportPdf/.test(idx), '新增 exportPdf');
+  const ep = idx.slice(idx.indexOf('async function exportPdf'), idx.indexOf('async function printMap'));
+  ok(/ctx\.invoke\('mm_svg_to_pdf'/.test(ep), 'exportPdf 调用 mm_svg_to_pdf');
+  ok(/io\.pdfDpi\(svg/.test(ep), 'exportPdf 先算 dpi 再传给 Rust');
+  ok(/settings\.pdfChannel !== 'dialog'/.test(ep), '默认通道 = 矢量（只有显式 dialog 才不走）');
+  ok(/io\.base64ToBlob\(b64/.test(ep), 'exportPdf 解码 base64');
+  // 托底
+  ok(/矢量 PDF 不可用，改用打印对话框/.test(ep), '矢量失败时**明确提示**再托底（不能静默弹框）');
+  ok(/await printMap\(\{ landscape, margin \}\)/.test(ep), '托底走打印对话框');
+  // 用户取消不再托底
+  ok(/if \(r !== 'cancel'\)/.test(ep), '落盘成功/失败才继续');
+  ok(/return;\s*\/\/ 用户主动取消，不再托底/.test(ep), '用户主动取消保存 → 不再托底弹框');
+
+  // 设置项
+  ok(/setPdfChannel: guard/.test(idx), '新增 setPdfChannel API');
+  const sp = idx.slice(idx.indexOf('setPdfChannel: guard'), idx.indexOf('setAnimate: guard'));
+  ok(/v === 'dialog' \? 'dialog' : 'vector'/.test(sp), '未知值一律归一为 vector（不存脏值）');
+  ok(/await store\.settings\.save\(settings\)/.test(sp), 'setPdfChannel 立即持久化');
+
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  ok(/PDF 通道/.test(pn), '设置面板新增「PDF 通道」');
+  ok(/app\.api\.setPdfChannel\(e\.target\.value\)/.test(pn), '下拉切换调用 setPdfChannel');
+  ok(/矢量（直接保存）/.test(pn), '选项一：矢量');
+  ok(/打印对话框/.test(pn), '选项二：打印对话框');
+  // 切片要从 pdfSel **之后**再找「外观」：文件里另有一个 openXxx 也含
+  // section('外观'，直接用 indexOf 会定位到前面那个，导致 slice 返回空串
+  const pselStart = pn.indexOf("const pdfSel =");
+  const psel = pn.slice(pselStart, pn.indexOf("section('外观'", pselStart));
+  ok(/selected: \(s\.pdfChannel \|\| 'vector'\) === 'vector'/.test(psel),
+    '默认选中「矢量」（未设置过 pdfChannel 时也要选中它）');
+  ok(/任一通道不可用时会自动改用另一条/.test(psel), '说明里讲清托底行为（不是二选一硬切）');
+
+  // 默认值
+  ok(/pdfChannel: 'vector'/.test(idx), 'settings 默认值 pdfChannel=vector');
 }
 
 /* ============================================================

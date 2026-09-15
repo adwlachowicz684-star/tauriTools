@@ -1542,6 +1542,21 @@ export function openSettings(app) {
   }, ...[1, 2, 3, 5, 10].map((n) =>
     h('option', { value: n, selected: Number(s.backupMax ?? 3) === n }, `${n} 份`)));
 
+  // PDF 导出通道：让用户能改默认，但**不是必选** ——
+  // 任一通道走不通都会自动托底到另一条，这里选的只是「先试哪条」。
+  const pdfSel = h('select.mm-select', {
+    onchange: (e) => app.api.setPdfChannel(e.target.value),
+    title: '「矢量」不弹对话框、直接保存；失败会自动改用打印对话框',
+  },
+  h('option', {
+    value: 'vector',
+    selected: (s.pdfChannel || 'vector') === 'vector',
+  }, '矢量（直接保存）'),
+  h('option', {
+    value: 'dialog',
+    selected: s.pdfChannel === 'dialog',
+  }, '打印对话框'));
+
   return dialog('设置', [
     section('备份',
       h('div.mm-row', {}, h('span.mm-label', {}, '自动间隔'), intervalSel),
@@ -1570,7 +1585,14 @@ export function openSettings(app) {
       ),
       h('div.mm-hint', {}, 'C# 版这里是「备份目录」；Web 版存储不可见，改用文件导出/导入实现同等的换机迁移。'),
     ),
-    section('外观',
+        section('导出',
+      h('div.mm-row', {}, h('span.mm-label', {}, 'PDF 通道'), pdfSel),
+      h('div.mm-hint', {},
+        '「矢量」用 svg2pdf 直接转，不经浏览器、不弹对话框，输出仍是矢量可无损放大。',
+        '\n',
+        '任一通道不可用时会自动改用另一条，这里只是决定先试哪条。'),
+    ),
+section('外观',
       h('div.mm-row', {}, h('span.mm-label', {}, '布局动画'), animBtn),
       h('div.mm-hint', {}, '开启后打开画布、展开/收起分支会播 300ms 过渡动画；关闭则直接显示最终布局。'),
     ),

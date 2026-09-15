@@ -18,6 +18,21 @@ tauri = { version = "2", features = ["protocol-asset", "devtools", "image-ico", 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# ---- 脑图：SVG → PDF（矢量、静默） ----
+# svg2pdf 由 Typst 团队维护，纯 Rust，**不碰任何 Windows API**，
+# 因此与下面「刻意不引 windows-sys」的原则不冲突 —— 它不依赖系统环境，
+# 只是增加打包体积（约 8–13 MB / 223K SLoC，主要是 usvg / resvg / fontdb）。
+#
+# 转换**不栅格化**（"no quality is lost"），脑图导出的是矢量 PDF。
+#
+# 体积可裁剪：svg2pdf 默认启用 image / filters / text 三个 feature，
+# 而 kityminder 导出的 SVG 经核实**不含任何 SVG filter**（唯一一次 `filter`
+# 出现在 JS 数组方法里），关掉 `filters` 可省下 resvg + tiny-skia。
+# 但 default-features=false 尚未编译验证，为降低风险这里保留默认，
+# 需要瘦身时再改：
+#   svg2pdf = { version = "0.13.0", default-features = false, features = ["text", "image"] }
+svg2pdf = "0.13.0"
+
 # 说明：本项目刻意不引 windows-sys。
 # 屏幕取色 / 截图改用 PowerShell + System.Drawing 实现 —— 句柄类型在
 # windows-sys 各版本间是 isize 或 *mut c_void，一旦猜错就是硬编译错误，
