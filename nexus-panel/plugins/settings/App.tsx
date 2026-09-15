@@ -15,6 +15,7 @@ import {
   ADAPT_POLICIES, PLUGIN_THEMES,
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
 } from '../../js/theme-normalizer.js';
+import { auditPlugin, summarize, LEVEL_ORDER } from '../../js/style-audit.js';
 import ExternalCard from './ExternalCard';
 import FilesCard from './FilesCard';
 
@@ -43,6 +44,111 @@ const TABS: [TabKey, string][] = [
   ['about', '关于'],
 ];
 
+/**
+ * 样式审计徽标。
+ *
+ * 三种状态：
+ *   · 未检测（module 插件 / 隔离态读不到 CSS）—— 灰字，点开说明原因
+ *   · 无冲突 —— 一个 ✓，不抢眼
+ *   · 有冲突 —— 按 error / warn 显示数量，点击展开逐条列出
+ *
+ * 冲突文案直接来自 style-audit.js 的规则，那里写了**为什么错**和**实际后果**，
+ * 所以这里不用再解释一遍。
+ */
+function StyleAuditBadge({ audit, open, onToggle }: {
+  audit: any; open: boolean; onToggle: () => void;
+}) {
+  const [hover, setHover] = useState(false);
+
+  /* 还没跑到（异步）或拿不到样式 */
+  const undetected = audit === undefined || audit === null;
+  const issues = (audit?.issues || []).slice().sort(
+    (a: any, b: any) => (LEVEL_ORDER[a.level] ?? 9) - (LEVEL_ORDER[b.level] ?? 9));
+  const c = summarize(issues);
+  const bad = c.error + c.warn;
+
+  const color = undetected ? 'var(--text-mute)'
+    : c.error ? 'var(--danger)'
+    : c.warn ? 'var(--warn)' : 'var(--ok)';
+
+  const label = undetected ? '样式 —'
+    : bad === 0 ? '样式 ✓'
+    : `样式 ${bad}`;
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        title={undetected
+          ? '未检测：同页插件没有独立样式文件，或沙箱隔离态下读不到'
+          : `${c.error} 处错误 / ${c.warn} 处警告 / ${c.info} 条提示`}
+        style={{
+          height: 30, padding: '0 10px', fontSize: 12,
+          borderRadius: 'var(--r-xs)', cursor: 'pointer',
+          border: `1px solid ${hover ? color : 'var(--divider)'}`,
+          background: 'transparent', color,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {label}
+      </button>
+
+      {open ? (
+        <div style={{
+          position: 'absolute', right: 0, top: 34, zIndex: 'var(--z-menu)' as any,
+          width: 400, maxHeight: 320, overflow: 'auto',
+          padding: '10px 12px', borderRadius: 'var(--r-sm)',
+          background: 'var(--surface-overlay)',
+          border: '1px solid var(--divider)',
+          boxShadow: 'var(--sh-cast-md)',
+          fontSize: 11.5, lineHeight: 1.65,
+        }}>
+          {undetected ? (
+            <div style={{ color: 'var(--text-dim)' }}>
+              未检测。同页插件（module）没有独立的样式文档，
+              或当前处于沙箱隔离态、读不到插件的 CSS 文件。
+            </div>
+          ) : issues.length === 0 ? (
+            <div style={{ color: 'var(--ok)' }}>
+              ✓ 未发现样式冲突（已扫描 {audit.files.join('、')}）
+            </div>
+          ) : (
+            <>
+              <div style={{ color: 'var(--text-dim)', marginBottom: 6 }}>
+                扫描 {audit.files.join('、')} ·
+                {' '}{c.error} 错误 / {c.warn} 警告 / {c.info} 提示
+              </div>
+              {issues.map((x: any, i: number) => (
+                <div key={i} style={{
+                  padding: '5px 0',
+                  borderTop: i ? '1px solid var(--divider)' : 'none',
+                }}>
+                  <span style={{
+                    color: x.level === 'error' ? 'var(--danger)'
+                      : x.level === 'warn' ? 'var(--warn)' : 'var(--text-mute)',
+                    marginRight: 6,
+                  }}>
+                    {x.level === 'error' ? '✕' : x.level === 'warn' ? '⚠' : 'ⓘ'}
+                  </span>
+                  <span style={{ color: 'var(--text)' }}>{x.msg}</span>
+                  {x.line ? (
+                    <span className="p-mono" style={{ color: 'var(--text-mute)', marginLeft: 6 }}>
+                      L{x.line}
+                    </span>
+                  ) : null}
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function Settings() {
   const ctx = useNexus();
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
@@ -51,6 +157,9 @@ export default function Settings() {
   const [, force] = useState(0);          // 主题切换后重渲染预览
   const [policy, setPolicyState] = useState(getPolicy());
   const [tab, setTab] = useState<TabKey>('theme');
+  /* 样式审计结果：id → { issues, files }；拿不到样式（隔离态 / module 插件）为 null */
+  const [audits, setAudits] = useState<Record<string, any>>({});
+  const [auditOpen, setAuditOpen] = useState<string | null>(null);
 
   useEffect(() => {
     const list = shellGlobal()?.getPlugins?.();
@@ -73,6 +182,29 @@ export default function Settings() {
   }, []);
 
   const rerender = () => force((n) => n + 1);
+
+  /* 样式审计：拉每个插件的 CSS，跑一遍与外壳变量契约的规则。
+     插件是独立文档，外壳的 CSS 到不了那边，只能靠"引入 + 变量映射"保持一致；
+     这条链上任何一环错位，表现都是某个主题下突然看不清，很难联想到是接错了。
+     这里直接把冲突报在插件卡片上，而不是等用户撞见。
+
+     只在「插件」标签页打开时才跑 —— 每个插件要 fetch HTML + CSS，
+     没必要在用户看主题页时就发出一堆请求。 */
+  useEffect(() => {
+    if (tab !== 'plugins') return;
+    let alive = true;
+    (async () => {
+      for (const p of plugins) {
+        if (!alive) return;
+        // 已审过就跳过（切标签来回切不会重复请求）
+        if (Object.prototype.hasOwnProperty.call(audits, p.id)) continue;
+        const res = await auditPlugin(p).catch(() => null);
+        if (!alive) return;
+        setAudits((prev) => ({ ...prev, [p.id]: res }));
+      }
+    })();
+    return () => { alive = false; };
+  }, [tab, plugins]);
 
   /**
    * 移除插件。
@@ -426,6 +558,11 @@ export default function Settings() {
                   <div className="p-mono p-muted" style={{ fontSize: 11 }}>{p.entry}</div>
                 </div>
                 <span className="p-tag">{p.type === 'iframe' ? '沙箱' : '同页'}</span>
+                <StyleAuditBadge
+                  audit={audits[p.id]}
+                  open={auditOpen === p.id}
+                  onToggle={() => setAuditOpen((cur) => (cur === p.id ? null : p.id))}
+                />
                 <select
                   className="p-input"
                   style={{ width: 130, height: 30, fontSize: 12, padding: '0 8px' }}
