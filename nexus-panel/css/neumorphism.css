@@ -129,7 +129,17 @@
      · 新拟态：--surface 与 --bg 同色，靠 --sh-* 塑形，--border 透明
      · 扁平：  --sh-* 调到与底色接近（阴影隐形），改由 --border 描边
      · 玻璃：  --surface 半透明 + --blur 打开毛玻璃 */
+  /* --border 是**风格开关**、不是分隔线颜色：新拟态下它是 transparent，
+
+     边界由 --sh-* 阴影塑形；扁平/玻璃恰好给它赋了值才"碰巧"看得见。
+
+     真正保证任何风格都可见的边界请一律用 --divider，不要接到 --border 上。
+
+     （agent-flow 曾把 26 处分隔线接到 --border，新拟态下整片消失） */
+
   --border:        transparent;
+
+  --divider:       rgba(255,255,255,.10);
   --blur:          0px;
   --bg-image:      none;
   --hairline:      rgba(255,255,255,.05);
@@ -572,7 +582,7 @@ body {
    也能读（详见 .dialog 处关于底板的说明）。 */
 .nexus-tip {
   position: fixed;
-  z-index: 1200;
+  z-index: var(--z-tooltip, 1200);
   max-width: 280px;
   padding: 6px 10px;
   border-radius: var(--r-sm);
@@ -580,7 +590,7 @@ body {
   line-height: 1.6;
   color: var(--text);
   background: var(--surface-overlay, var(--surface-raised));
-  box-shadow: 4px 4px 10px var(--sh-dark), -4px -4px 10px var(--sh-light);
+  box-shadow: var(--sh-out-md);
   border: 1px solid var(--border);
 
   /* 关键：不能吃鼠标事件。否则提示出现在光标下方时会抢走 hover 目标，
@@ -591,7 +601,7 @@ body {
 
   /* 只做透明度过渡，位移由 JS 直接定位（避免过渡期间位置飘） */
   opacity: 0;
-  transition: opacity .12s ease;
+  transition: opacity var(--dur-fast) ease;
 }
 .nexus-tip.on { opacity: 1; }
 
@@ -603,7 +613,7 @@ body {
   position: fixed;
   left: var(--x, 0); top: var(--y, 0);
   width: var(--w, 0); height: var(--h, 0);
-  z-index: 1500;
+  z-index: var(--z-inspector, 1500);
   pointer-events: none;
   display: none;
 }
@@ -624,18 +634,18 @@ body {
 /* 信息条 */
 .nx-insp-badge {
   position: fixed;
-  z-index: 1501;
+  z-index: calc(var(--z-inspector, 1500) + 1);
   display: none;
   align-items: center;
   gap: 8px;
   max-width: 460px;
   padding: 5px 10px;
-  border-radius: 6px;
+  border-radius: var(--r-xs, 6px);
   font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: #e8eaed;
   background: #1f2430;
   border: 1px solid #4f9cf9;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, .35);
+  box-shadow: var(--sh-cast-sm);
   pointer-events: none;
   white-space: nowrap;
 }
@@ -645,7 +655,7 @@ body {
 .nx-insp-plugin {
   color: #ffd479;
   padding: 1px 6px;
-  border-radius: 3px;
+  border-radius: var(--r-xs, 3px);
   background: rgba(255, 212, 121, .14);
 }
 .nx-insp-warn   { color: #ff9d9d; }

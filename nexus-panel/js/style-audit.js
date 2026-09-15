@@ -58,6 +58,8 @@ export const TOKEN_VARS = [
   '--font-sans', '--font-mono',
   '--z-base', '--z-raised', '--z-sticky', '--z-float', '--z-menu',
   '--z-mask', '--z-dialog', '--z-pop', '--z-toast', '--z-tooltip',
+  '--ring-neutral',
+  '--z-inspector',
 ];
 
 const KNOWN = new Set([...SHELL_VARS, ...TOKEN_VARS]);
