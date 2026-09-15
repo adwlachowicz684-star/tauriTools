@@ -19,7 +19,7 @@ import { DEFAULT_THEME, DEFAULT_LAYOUT, isBuiltinTheme, deriveCanvasTheme } from
 import * as wb from './workbook.js';
 import * as store from './store.js';
 import * as io from './io.js';
-import { buildSide, openVideo, openPreview, openSettings } from './panels.js';
+import { buildSide, openVideo, openPreview, openSettings, confirmDialog, popupMenu } from './panels.js';
 import { attachTabDrag } from './tab-drag.js';
 import { buildFileList } from './filelist.js';
 import * as xmind from './xmind.js';
@@ -270,6 +270,34 @@ bootIframePlugin(async (ctx) => {
    * opt.refocus:false 用于「点击后焦点不该回画布」的按钮 ——
    * 典型是打开模态浮层：焦点还留在画布的话，画布会在浮层背后继续吃快捷键。
    */
+  /**
+   * A39 导出格式菜单。
+   *
+   * PNG 单独列出 1/2/3 倍 —— 高分辨率是要用户主动选的：
+   * 默认 3 倍的话，一个普通脑图会导出几十 MB，多数人并不需要。
+   */
+  function openExportMenu(anchorEl) {
+    const hint = {
+      xmind: '与 XMind 官方互通，多画布 + 主题 + 外框 + 附件一并打包，换机器可还原',
+      json: '保留全部私有字段，本工具无损往返',
+      txt: '与 JSON 同内容，仅扩展名不同（对齐 C# 版）',
+      md: '多画布按「## 画布：」分块，便于人读与 diff',
+      svg: '矢量图，可无损放大',
+      png: '位图，1 倍=画布原尺寸',
+    };
+    popupMenu(anchorEl, [
+      { label: 'XMind（.xmind）', hint: hint.xmind, onSelect: () => exportXMind() },
+      { label: 'JSON（.json）', hint: hint.json, onSelect: () => exportJson() },
+      { label: 'TXT（.txt）', hint: hint.txt, onSelect: () => exportTxt() },
+      { label: 'Markdown（.md）', hint: hint.md, onSelect: () => exportMarkdown() },
+      { label: 'SVG（.svg）', hint: hint.svg, onSelect: () => exportSvg() },
+      '-',
+      { label: 'PNG · 1 倍', hint: hint.png, onSelect: () => exportPng(1) },
+      { label: 'PNG · 2 倍（高清）', hint: '像素密度翻倍，文字与连线不糊', onSelect: () => exportPng(2) },
+      { label: 'PNG · 3 倍（超清）', hint: '体积较大，适合打印或大屏', onSelect: () => exportPng(3) },
+    ]);
+  }
+
   const B = (label, onclick, opt = {}) =>
     h('button.mm-btn' + (opt.icon ? '.icon' : ''), {
       onclick: (e) => {
@@ -329,7 +357,17 @@ bootIframePlugin(async (ctx) => {
 
     toolbar.appendChild(group(
       B('导入', () => importFile(), { title: '导入 XMind / JSON / Markdown' }),
-      B('导出', () => exportJson(), { title: '导出为 JSON 工作簿' }),
+      // A39 导出格式菜单：原先「导出」直接导出 JSON，
+      // 但按钮上写的是「导出」而不是「导出 JSON」—— 点了才知道出来的是什么格式。
+      // 里出全部格式（含 PNG 倍率），左键点开、右键也出。
+      (() => {
+        const btn = h('button.mm-btn', {
+          title: '导出为……（左键或右键都能打开格式菜单）',
+          onclick: (e) => { e.preventDefault(); openExportMenu(btn); },
+          oncontextmenu: (e) => { e.preventDefault(); openExportMenu(btn); },
+        }, '导出 ▾');
+        return btn;
+      })(),
       B('XMIND', () => exportXMind(), { title: '导出为 .xmind（含 XMind 官方 content.json + 本工具无损快照，附件一并打包）' }),
       B('TXT', () => exportTxt(), { title: '导出为 .txt（内容与 JSON 相同，仅扩展名不同，对齐 C# 版）' }),
       B('MD', () => exportMarkdown(), { title: '导出为 Markdown' }),
@@ -1287,11 +1325,28 @@ bootIframePlugin(async (ctx) => {
     }
   }
 
-  async function exportPng() {
-    const dataUrl = await bridge?.exportPng();
-    if (!dataUrl) { status('PNG 导出失败', true); return; }
-    const r = await io.saveBlob(io.stampName('脑图', 'png'), io.dataUrlToBlob(dataUrl));
-    reportSave(r, 'PNG');
+  /**
+   * A38 高分辨率整图 PNG。
+   *
+   * 走 SVG 中间层而不是内核的 `exportData('png')` —— 后者传更大的尺寸只是
+   * 在四周补白（见 io.svgToPngBlob 的注释），出不来真正的高分辨率。
+   *
+   * @param {number} [scale=1] 倍数
+   */
+  async function exportPng(scale = 1) {
+    const s = Math.max(1, Number(scale) || 1);
+    let blob = null;
+    try {
+      const svg = await bridge?.exportSvg();
+      if (!svg) { status('PNG 导出失败：无法取得矢量图（编辑器未就绪？）', true); return; }
+      blob = await io.svgToPngBlob(svg, s);
+    } catch (e) {
+      status('PNG 导出失败：' + (e?.message || e), true);
+      return;
+    }
+    if (!blob) { status('PNG 导出失败：矢量图无法光栅化', true); return; }
+    const r = await io.saveBlob(io.stampName(`脑图${s > 1 ? `@${s}x` : ''}`, 'png'), blob);
+    reportSave(r, s > 1 ? `PNG（${s} 倍）` : 'PNG');
   }
 
   function reportSave(r, what) {
@@ -1311,6 +1366,17 @@ bootIframePlugin(async (ctx) => {
         const buf = await io.readBytes(f);
         const r = await xmind.readXMind(buf, io.saveAssetBytes);
         if (!r.sheets?.length) { ctx.toast('文件里没有可用画布', 'err'); return; }
+        // A30 同上：XMind 导入同样是整体替换，先确认
+        const hadSheets = workbook.sheets?.length || 0;
+        if (hadSheets > 0) {
+          const ok = await confirmDialog(
+            '导入将替换全部画布',
+            `当前共有 ${hadSheets} 张画布，导入 .xmind 后会全部被替换。\n\n`
+            + `待导入：${r.sheets.length} 张画布\n\n`
+            + '此操作不可撤销，建议先「导出」或「立即备份」保存当前内容。',
+            '替换', true);
+          if (!ok) { status('已取消导入'); return; }
+        }
         workbook.sheets = wb.normalizeSheets(r.sheets);
         workbook.activeId = r.activeId || workbook.sheets[0].id;
         renderTabs();
@@ -1328,21 +1394,41 @@ bootIframePlugin(async (ctx) => {
 
     const text = await io.readText(f);
     let sheets = null;
+    let form = '';
 
     if (/\.(md|markdown|txt)$/i.test(f.name)) {
       sheets = wb.markdownToWorkbook(text);
+      form = 'markdown';
     } else {
       const parsed = wb.parseWorkbook(text);
-      if (parsed) sheets = parsed.sheets;
-      else sheets = wb.markdownToWorkbook(text);   // 兜底：当 Markdown 试一次
+      if (parsed) { sheets = parsed.sheets; form = parsed.form; }
+      else { sheets = wb.markdownToWorkbook(text); form = 'markdown(兜底)'; }   // 兜底：当 Markdown 试一次
     }
     if (!sheets || !sheets.length) { ctx.toast('无法识别该文件', 'err'); return; }
+
+    // A30 整体替换是不可逆的 —— 导入包会**顶掉当前所有画布**。
+    // 不确认的话，用户点「导入」选错文件就等于清空了正在编辑的脑图。
+    // C# 版 ApplyWorkbookAsync 同样是无条件替换，但它至少有撤销栈兜底；
+    // 这里导入后会重置历史（新内容=新基线），撤销救不回来。
+    const curCount = workbook.sheets?.length || 0;
+    if (curCount > 0) {
+      const ok = await confirmDialog(
+        '导入将替换全部画布',
+        `当前共有 ${curCount} 张画布，导入后会全部被替换。\n\n`
+        + `待导入：${sheets.length} 张画布（识别为 ${form}）\n\n`
+        + '此操作不可撤销，建议先「导出」或「立即备份」保存当前内容。',
+        '替换', true);
+      if (!ok) { status('已取消导入'); return; }
+    }
 
     workbook.sheets = sheets;
     workbook.activeId = sheets[0].id;
     renderTabs();
     await loadSheet();
     await persist();
+    // A31 把识别到的形态说出来
+    const formTip = { workbook: '多画布包', single: '单画布', markdown: 'Markdown', 'markdown(兜底)': 'Markdown（未按 JSON 解析，走了兜底）' }[form] || form;
+    status(`已导入 ${sheets.length} 张画布（识别为：${formTip}）`);
     ctx.toast(`已导入 ${sheets.length} 张画布`, 'ok');
   }
 

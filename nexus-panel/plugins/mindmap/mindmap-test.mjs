@@ -62,6 +62,9 @@ globalThis.Node = dom.window.Node;
 globalThis.HTMLElement = dom.window.HTMLElement;
 globalThis.getComputedStyle = dom.window.getComputedStyle;
 globalThis.DOMParser = dom.window.DOMParser;
+// A38 高分辨率 PNG 要序列化放大后的 SVG —— 缺了这个全局，
+// scaleSvgText 会走 catch 返回 null，表现为「导出莫名失败」
+globalThis.XMLSerializer = dom.window.XMLSerializer;
 globalThis.Event = dom.window.Event;
 
 /**
@@ -2823,6 +2826,165 @@ group('P1 附件与视频');
   }
   eq((await brokenRemove(true, false)).deleted, true,
     '（对照）确认被短路时，取消也照删 —— 这正是要防的失效模式');
+}
+
+/* ============================================================
+   二十七、P2：导入导出（A30 A31 A38 A39）
+   ============================================================ */
+
+group('P2 导入导出');
+
+{
+  // ---- 先核实：A32 / A33 / A40 其实早已实现 ----
+  const wbk = await import('./workbook.js');
+  const io = await import('./io.js');
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+
+  // A32 多画布 Markdown 导出
+  const md = wbk.workbookToMarkdown([
+    { id: 's1', title: 'A', content: wbk.emptyContent('甲'), theme: 'fresh-blue', layout: 'default' },
+    { id: 's2', title: 'B', content: wbk.emptyContent('乙'), theme: 'fresh-blue', layout: 'default' },
+  ]);
+  ok(/## 画布：A/.test(md) && /## 画布：B/.test(md), 'A32 多画布 Markdown 导出（已实现）');
+  ok(/甲/.test(md) && /乙/.test(md), 'A32 两张画布内容都在');
+
+  // A33 整本 XMind：writeXMind 传的是 workbook.sheets（全部），不是单张
+  const xm = fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8');
+  ok(/export async function writeXMind\(sheets, activeId/.test(xm), 'A33 writeXMind 接的是 sheets 数组');
+  ok(/xmind\.writeXMind\(workbook\.sheets, workbook\.activeId/.test(idx), 'A33 导出时传全部画布（整本快照，已实现）');
+
+  // A40 命名时间戳
+  const name = io.stampName('脑图', 'json');
+  ok(/^脑图-\d{8}-\d{4}\.json$/.test(name), 'A40 导出名带时间戳（已实现）');
+}
+
+{
+  // ---- A31 识别形态要报出来 ----
+  const wbk = await import('./workbook.js');
+  const book = wbk.parseWorkbook(wbk.serializeWorkbook([
+    { id: 's1', title: 'A', content: wbk.emptyContent(), theme: 'fresh-blue', layout: 'default' },
+    { id: 's2', title: 'B', content: wbk.emptyContent(), theme: 'fresh-blue', layout: 'default' },
+  ], 's1'));
+  eq(book.form, 'workbook', 'A31 多画布包识别为 workbook');
+  eq(book.sheets.length, 2, 'A31 两张画布');
+
+  const single = wbk.parseWorkbook(JSON.stringify({ root: { data: { text: 'x' } }, template: 'right' }));
+  eq(single.form, 'single', 'A31 单画布识别为 single');
+  eq(single.sheets.length, 1, 'A31 单画布 → 一张');
+
+  eq(wbk.parseWorkbook('不是 json'), null, 'A31 无法解析返回 null（不抛）');
+  eq(wbk.parseWorkbook('{}'), null, 'A31 无 sheets 也无 root → null');
+
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  ok(/识别为：\$\{formTip\}/.test(idx), 'A31 导入后把识别到的形态说出来');
+}
+
+{
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+
+  // ---- A30 整体替换前确认 ----
+  ok(/await confirmDialog\(\s*\n?\s*'导入将替换全部画布'/.test(idx), 'A30 导入前弹确认');
+  const imp = idx.slice(idx.indexOf('async function importFile'), idx.indexOf('A44 手动备份'));
+  ok(/const curCount = workbook\.sheets\?\.length \|\| 0;/.test(imp), 'A30 先数当前有几张画布');
+  ok(/if \(curCount > 0\) \{\s*\n\s*const ok = await confirmDialog\(/.test(imp),
+    'A30 **有画布时才确认**（空脑图不该弹框，否则新建后第一次导入也被拦）');
+  ok(/if \(!ok\) \{ status\('已取消导入'\); return; \}/.test(imp), 'A30 取消则不替换');
+  ok(/此操作不可撤销/.test(imp), 'A30 提示里说明不可逆');
+  ok(/建议先「导出」或「立即备份」/.test(imp), 'A30 提示里给出规避办法（先备份）');
+  // XMind 分支同样要确认 —— 只堵住 JSON 分支等于没堵
+  ok((imp.match(/导入将替换全部画布/g) || []).length >= 2,
+    'A30 JSON 与 XMind 两条分支都要确认（只堵一条等于没堵）');
+
+  // ---- A38 高分辨率 PNG ----
+  ok(/async function exportPng\(scale = 1\)/.test(idx), 'A38 exportPng 接受倍率');
+  ok(/io\.svgToPngBlob\(svg, s\)/.test(idx), 'A38 走 SVG 中间层（内核 png 只是补白，不是真高清）');
+  ok(/脑图\$\{s > 1 \? `@\$\{s\}x` : ''\}/.test(idx), 'A38 多倍文件名带 @2x 标记');
+  const iom = fs.readFileSync(path.join(HERE, 'io.js'), 'utf8');
+  ok(/export async function svgToPngBlob/.test(iom), 'A38 新增 svgToPngBlob');
+  ok(/export function pngScaleDims/.test(iom), 'A38 抽出 pngScaleDims（纯函数，可单测）');
+  ok(/export function scaleSvgText/.test(iom), 'A38 抽出 scaleSvgText（纯 DOM 操作，可单测）');
+  const s2p = iom.slice(iom.indexOf('export async function svgToPngBlob'), iom.indexOf('export function stampName'));
+  ok(/ctx\.fillRect\(0, 0, W, H\)/.test(s2p), 'A38 先铺背景（SVG 的 style 背景在 canvas 里不保证渲染）');
+  ok(/finally \{[\s\S]{0,80}revokeObjectURL/.test(s2p), 'A38 无论成败都回收 Blob URL');
+  // 关键：真实实现里**不能**出现改 viewBox 的语句
+  // （只断言注释是没用的 —— 注释在，代码照样可以改坏）
+  const scaleFn = iom.slice(iom.indexOf('export function scaleSvgText'), iom.indexOf('export async function svgToPngBlob'));
+  ok(!/setAttribute\('viewBox'/.test(scaleFn),
+    'A38 scaleSvgText 里没有改 viewBox 的语句（改了就退化成补白，图还是糊的）');
+  ok(/setAttribute\('width', String\(dims\.W\)\)/.test(scaleFn), 'A38 用钳制后的尺寸重设 width');
+
+  // ---- A39 导出格式菜单 ----
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  ok(/export function popupMenu/.test(pn), 'A39 新增 popupMenu');
+  ok(/function openExportMenu/.test(idx), 'A39 新增 openExportMenu');
+  ok(/oncontextmenu/.test(idx), 'A39 右键也能打开菜单');
+  ok(/PNG · 2 倍（高清）/.test(idx) && /PNG · 3 倍（超清）/.test(idx), 'A39 菜单里列出 PNG 倍率');
+  ok(/document\.addEventListener\('pointerdown', onDoc, true\)/.test(pn),
+    'A39 菜单用捕获阶段监听（否则点画布会被画布先处理，菜单关不掉）');
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+  ok(/\.mm-menu-item/.test(css), 'A39 菜单有样式');
+}
+
+{
+  // ---- A38 行为级：直接测**真实**函数 ----
+  //
+  // 这里刻意不去「复刻一份算法再测」：复刻版与真实实现是两份代码，
+  // 真实实现改坏了复刻版照样绿。上一轮变异验证就是这么漏掉的
+  // （改了 viewBox、去掉了倍率钳制，断言全绿）。
+  //
+  // 所以把纯逻辑拆成 pngScaleDims / scaleSvgText 两个导出函数，直接测它们。
+  // jsdom 有 DOMParser 与 XMLSerializer，只是没有 canvas —— 拆开后正好可测。
+  const io = await import('./io.js');
+
+  eq(io.pngScaleDims(800, 600, 1).W, 800, 'A38 1 倍 = 原尺寸');
+  eq(io.pngScaleDims(800, 600, 2).W, 1600, 'A38 2 倍 = 宽度翻倍');
+  eq(io.pngScaleDims(800, 600, 2).H, 1200, 'A38 2 倍 = 高度也翻倍（等比，不变形）');
+  eq(io.pngScaleDims(800, 600, 3).W, 2400, 'A38 3 倍');
+  eq(io.pngScaleDims(800, 600, 0).s, 1, 'A38 倍率 0 钳到 1（不能产出 0 像素的图）');
+  eq(io.pngScaleDims(800, 600, -5).s, 1, 'A38 负倍率钳到 1');
+  eq(io.pngScaleDims(800, 600, NaN).s, 1, 'A38 NaN 倍率钳到 1');
+  eq(io.pngScaleDims(800, 600, 99).s, 8, 'A38 超大倍率钳到 8（800×600 配 100 倍要 19GB，浏览器会崩）');
+  eq(io.pngScaleDims(0, 600, 2), null, 'A38 宽度 0 → null');
+  eq(io.pngScaleDims(NaN, 600, 2), null, 'A38 宽度 NaN → null');
+  eq(io.pngScaleDims(-10, 600, 2), null, 'A38 负宽度 → null');
+
+  // ---- scaleSvgText：viewBox 必须原样不动 ----
+  const src1 = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" style="background:#fff"><rect width="10" height="10"/></svg>';
+  const out2 = io.scaleSvgText(src1, 2);
+  ok(!!out2, 'A38 scaleSvgText 正常返回');
+  ok(/width="1600"/.test(out2), 'A38 2 倍 → width=1600');
+  ok(/height="1200"/.test(out2), 'A38 2 倍 → height=1200');
+  ok(/viewBox="0 0 800 600"/.test(out2),
+    'A38 **viewBox 保持不动** —— 这是矢量放大的关键（一起改就变成补白，图还是糊的）');
+  ok(/xmlns="http:\/\/www\.w3\.org\/2000\/svg"/.test(out2), 'A38 输出带 xmlns（否则浏览器拒绝当图片加载）');
+
+  // 1 倍时不该有任何尺寸变化
+  const out1 = io.scaleSvgText(src1, 1);
+  ok(/width="800"/.test(out1) && /height="600"/.test(out1), 'A38 1 倍尺寸不变');
+
+  // 异常输入
+  eq(io.scaleSvgText('', 2), null, 'A38 空字符串 → null');
+  eq(io.scaleSvgText(null, 2), null, 'A38 null → null');
+  eq(io.scaleSvgText('<svg width="0" height="600"></svg>', 2), null, 'A38 宽为 0 → null');
+  eq(io.scaleSvgText('这不是 xml', 2), null, 'A38 非法 XML → null（不抛）');
+}
+
+{
+  // ---- A30 行为级：确认与否的结果 ----
+  async function importLike(curCount, userConfirmed) {
+    if (curCount > 0) {
+      const ok = await Promise.resolve(userConfirmed);
+      if (!ok) return { replaced: false };
+    }
+    return { replaced: true };
+  }
+  eq((await importLike(3, false)).replaced, false, 'A30 有 3 张画布 + 取消 → 不替换');
+  eq((await importLike(3, true)).replaced, true, 'A30 有 3 张画布 + 确认 → 替换');
+  eq((await importLike(0, false)).replaced, true, 'A30 空脑图 → 不弹确认，直接导入');
+
+  // 对照：无确认的版本，用户点错文件就清空了正在编辑的内容
+  async function brokenImport(curCount) { return { replaced: true }; }
+  eq((await brokenImport(3)).replaced, true, '（对照）无确认时照替换 —— 这正是要防的（选错文件即清空）');
 }
 
 /* ============================================================

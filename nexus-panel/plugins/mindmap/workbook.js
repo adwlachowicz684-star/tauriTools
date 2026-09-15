@@ -250,10 +250,12 @@ export function parseWorkbook(text) {
   }
   if (!obj || typeof obj !== 'object') return null;
 
-  // 形态一：本插件工作簿
+  // 形态一：本插件工作簿（多画布包）
   if (Array.isArray(obj.sheets)) {
     const sheets = normalizeSheets(obj.sheets);
-    return { sheets, activeId: obj.activeId || sheets[0].id };
+    // A31 报出识别到的形态：导入后提示「按多画布包解析」，
+    // 否则用户拿到一个不像预期的结果时，无从判断是文件不对还是解析错了。
+    return { sheets, activeId: obj.activeId || sheets[0].id, form: 'workbook' };
   }
   // 形态二：kityminder 单画布导出（含 root）
   if (obj.root) {
@@ -264,7 +266,7 @@ export function parseWorkbook(text) {
       theme: obj.theme || DEFAULT_THEME,
       layout: obj.template || DEFAULT_LAYOUT,
     };
-    return { sheets: [sheet], activeId: sheet.id };
+    return { sheets: [sheet], activeId: sheet.id, form: 'single' };
   }
   return null;
 }

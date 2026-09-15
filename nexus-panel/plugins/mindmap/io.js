@@ -221,6 +221,126 @@ export function safeFileName(name) {
   return s || '未命名';
 }
 
+/**
+ * A38 SVG → 高分辨率 PNG。
+ *
+ * 内核自带的 `exportData('png')` 拿的是 SVG 的**自然尺寸**，
+ * 传更大的 width/height 只是在四周补白（源码里是 `drawImage(img, x, y,
+ * a.width, a.height)` —— 没有缩放），并不是真正的高分辨率。
+ *
+ * 真正的高分辨率必须**重设 SVG 的宽高但保留 viewBox**：SVG 是矢量，
+ * viewBox 不变的前提下把 width/height 放大 N 倍，光栅化出来就是 N 倍
+ * 像素密度，文字与连线都不会糊。
+ *
+ * @param {string} svgText 内核 exportData('svg') 的结果
+ * @param {number} [scale=1] 倍数，1/2/3
+ * @returns {Promise<Blob|null>}
+ */
+/**
+ * A38 目标像素尺寸（纯函数，可单测）。
+ *
+ * 倍率必须钳到 [1,8]：
+ * - 低于 1 会产出 0 像素的图；
+ * - 不设上限的话，一个 800×600 的图配 100 倍就是 80000×60000 像素，
+ *   canvas 按 4 字节/像素算是 19 GB —— 浏览器直接崩，而不是「慢一点」。
+ *
+ * @returns {{W:number,H:number,s:number}|null} 宽高无效时返回 null
+ */
+export function pngScaleDims(w, h, scale) {
+  const W0 = parseFloat(w);
+  const H0 = parseFloat(h);
+  if (!(W0 > 0) || !(H0 > 0)) return null;
+  const s = Math.max(1, Math.min(8, Number(scale) || 1));
+  return { W: Math.round(W0 * s), H: Math.round(H0 * s), s };
+}
+
+/**
+ * A38 把 SVG 文本放大到目标倍率，返回新的 SVG 文本（纯 DOM 操作，可单测）。
+ *
+ * 关键：**只改 width/height，viewBox 保持不动**。SVG 是矢量，viewBox 不变
+ * 的前提下放大 width/height，光栅化出来的就是更高的**像素密度**；
+ * 若连 viewBox 一起改，就变成把同一张小图铺到大画布上 —— 图还是糊的，
+ * 只是四周多了空白，这正是内核自带 png 导出的做法。
+ *
+ * @returns {string|null} 无法解析或宽高无效时返回 null
+ */
+export function scaleSvgText(svgText, scale = 1) {
+  const text = String(svgText || '');
+  if (!text) return null;
+
+  let doc;
+  try {
+    doc = new DOMParser().parseFromString(text, 'image/svg+xml');
+  } catch {
+    return null;
+  }
+  if (!doc || doc.querySelector('parsererror')) return null;
+  const svg = doc.querySelector('svg');
+  if (!svg) return null;
+
+  const dims = pngScaleDims(svg.getAttribute('width'), svg.getAttribute('height'), scale);
+  if (!dims) return null;
+
+  svg.setAttribute('width', String(dims.W));
+  svg.setAttribute('height', String(dims.H));
+  // xmlns 必须显式补上：DOMParser 出来的 svg 序列化后可能不带，
+  // 没有命名空间浏览器会拒绝把它当图片加载（且只报笼统的 load 失败）
+  svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+
+  try {
+    return new XMLSerializer().serializeToString(svg);
+  } catch {
+    return null;
+  }
+}
+
+export async function svgToPngBlob(svgText, scale = 1) {
+  const svgSrc = String(svgText || '');
+  if (!svgSrc) return null;
+
+  const doc0 = new DOMParser().parseFromString(svgSrc, 'image/svg+xml');
+  const svg0 = doc0.querySelector('svg');
+  if (!svg0 || doc0.querySelector('parsererror')) return null;
+  const dims = pngScaleDims(svg0.getAttribute('width'), svg0.getAttribute('height'), scale);
+  if (!dims) return null;
+
+  const xml = scaleSvgText(svgSrc, scale);
+  if (!xml) return null;
+  const { W, H } = dims;
+
+  // 先铺背景色：SVG 上的 style="background:…" 在 canvas 里**不保证**渲染，
+  // 漏了会得到一张透明底的图 —— 放到深色文档里看就是「图没了」
+  const bg = /background:\s*([^;]+)/.exec(svg0.getAttribute('style') || '');
+  const bgColor = bg ? bg[1].trim() : '';
+
+  const url = URL.createObjectURL(new Blob([xml], { type: 'image/svg+xml' }));
+  try {
+    const img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = () => reject(new Error('SVG 光栅化失败'));
+      img.src = url;
+    });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    if (bgColor && bgColor !== 'transparent' && bgColor !== 'none') {
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    ctx.drawImage(img, 0, 0, W, H);
+    return await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+  } finally {
+    // 无论成败都要收：Blob URL 不 revoke 会一直占着内存
+    URL.revokeObjectURL(url);
+  }
+}
+
 export function stampName(base, ext) {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');

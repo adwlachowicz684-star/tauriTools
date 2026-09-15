@@ -1104,6 +1104,46 @@ export function confirmDialog(title, message, okText = '确定', danger = false)
   });
 }
 
+/**
+ * A39 轻量弹出菜单（导出格式等）。
+ *
+ * 用独立的 mask + 定位面板，而不是给每个按钮都配一个 `<dialog>`：
+ * 菜单的生命周期是「点开 → 选一项 → 立刻关」，与对话框的「填完再提交」
+ * 不同，套用 dialog() 会多出一层无意义的「关闭」按钮。
+ *
+ * @param {HTMLElement} anchorEl 定位锚点（菜单贴在它下方）
+ * @param {Array<{label:string,onSelect:Function,hint?:string}|'-'>} items '-' 为分隔线
+ */
+export function popupMenu(anchorEl, items) {
+  const close = () => { mask.remove(); document.removeEventListener('pointerdown', onDoc, true); };
+  const onDoc = (e) => { if (!mask.contains(e.target) && e.target !== anchorEl) close(); };
+
+  const panel = h('div.mm-menu', {},
+    ...items.map((it) => (it === '-'
+      ? h('div.mm-menu-sep', {})
+      : h('button.mm-menu-item', {
+        title: it.hint || '',
+        onclick: () => { close(); try { it.onSelect?.(); } catch { /* 单项失败不该卡住菜单 */ } },
+      }, it.label))));
+
+  const mask = h('div.mm-menu-mask', {}, panel);
+  document.body.appendChild(mask);
+
+  // 贴着锚点右下角排；越界就往回收，否则贴右边缘的按钮会把菜单顶出屏幕外
+  const r = anchorEl?.getBoundingClientRect?.();
+  if (r) {
+    const w = 168;
+    const left = Math.min(r.left, Math.max(4, window.innerWidth - w - 4));
+    const top = Math.min(r.bottom + 2, Math.max(4, window.innerHeight - 8 - items.length * 28));
+    panel.style.left = left + 'px';
+    panel.style.top = top + 'px';
+  }
+
+  // 捕获阶段：否则点到画布会先被画布的 mousedown 处理掉，菜单关不掉
+  document.addEventListener('pointerdown', onDoc, true);
+  return { close };
+}
+
 /** 自定义主题编辑器 */
 export function openThemeEditor(app, theme, seedTheme) {
   // A64：新建（theme 为空）时以 seedTheme 为种子，而不是永远空白。
