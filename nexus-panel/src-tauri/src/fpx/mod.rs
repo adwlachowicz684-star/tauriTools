@@ -84,17 +84,12 @@ pub(crate) fn core_rename_folder(
     path: &str,
     new_name: &str,
 ) -> Result<model::RenameResult, String> {
-    let name = new_name.trim();
-    if name.is_empty() {
-        return Err("新名称不能为空".into());
-    }
-    // 名字里带分隔符会让"改名"变成"搬家"，语义完全不同，直接拒绝
-    if name.contains('/') || name.contains('\\') {
-        return Err("名称不能包含路径分隔符".into());
-    }
-    if name.chars().any(|c| matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|')) {
-        return Err("名称包含非法字符（: * ? \" < > |）".into());
-    }
+    // 与新建走同一套校验（sys::validate_name）。
+    // 此前这里只查了空 / 路径分隔符 / 非法字符，漏掉两项：
+    //   - 「.」「..」及纯点串：新建时被拒，改名却能写进去，随后路径解析会出问题；
+    //   - 长度上限 120：同上，超长名能绕过新建检查。
+    // 两处各写一份相同或相近的校验，迟早会漂移，所以收敛到唯一实现。
+    let name = sys::validate_name(new_name)?;
 
     let old = std::path::Path::new(path);
     // 不跟随链接：改名一个 junction 不该变成"给链接指向的目录改名"
@@ -109,7 +104,7 @@ pub(crate) fn core_rename_folder(
         return Err("新名称与当前名称相同".into());
     }
 
-    let new_path = replace_last_segment(path, name);
+    let new_path = replace_last_segment(path, &name);
     if std::path::Path::new(&new_path).exists() {
         return Err(format!("目标位置已存在同名文件夹：{new_path}"));
     }
@@ -1105,16 +1100,9 @@ pub fn fpx_rename_content_item(
     path: String,
     new_name: String,
 ) -> Result<model::ContentRenameResult, String> {
-    let name = new_name.trim();
-    if name.is_empty() {
-        return Err("新名称不能为空".into());
-    }
-    if name.contains('/') || name.contains('\\') {
-        return Err("名称不能包含路径分隔符".into());
-    }
-    if name.chars().any(|c| matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|')) {
-        return Err("名称包含非法字符（: * ? \" < > |）".into());
-    }
+    // 同 core_rename_folder：与新建共用 sys::validate_name，
+    // 补齐「. / .. / 纯点串」与「长度上限 120」两项此处漏掉的检查。
+    let name = sys::validate_name(&new_name)?;
 
     let old = std::path::Path::new(&path);
     if !old.exists() {
@@ -1123,7 +1111,7 @@ pub fn fpx_rename_content_item(
 
     // 目录（目录型 skill）直接换末段；文件则保留扩展名，只改主名
     let new_path = if old.is_dir() {
-        replace_last_segment(&path, name)
+        replace_last_segment(&path, &name)
     } else {
         let ext = old
             .extension()
