@@ -1,0 +1,101 @@
+id,title,area,wpf_location,status,difficulty,priority
+A1,精灵图优先级 P1-P9,节点标签,BuildTagPage / MindMapPanel.xaml.cs:178-218,缺失,高,P0
+A2,精灵图进度 1-9,节点标签,BuildTagPage / MindMapPanel.xaml.cs:178-218,缺失,高,P0
+A3,预设图标库分组服务,标签图标,PresetIconService.cs:51-108,缺失,高,P0
+A4,预设图标批量导入,标签图标,PresetIconService.cs:113-134,缺失,高,P0
+A5,剪贴板位图导入图标,标签图标,PresetIconService.cs:136-165,缺失,中,P1
+A6,图标重命名与引用修复,标签图标,PresetIconService.cs:231-271,缺失,中,P1
+A7,图标分组排序/删除,标签图标,PresetIconService.cs:72-108,缺失,中,P1
+A8,自定义图标网格应用,标签图标,RebuildCustomIconSection / MindMapPanel.xaml.cs:913-960,缺失,高,P0
+A9,图标跨分组移动,标签图标,PresetIconService.cs:293-307,缺失,中,P1
+A10,ico 多尺寸转换,标签图标,PresetIconService.cs:141,缺失,高,P1
+A11,附件默认程序打开,附件,OpenFileExternal / MindMapPanel.xaml.cs:496-512,缺失,低,P2
+A12,附件路径失效状态,附件,LoadFileIntoPanel / MindMapPanel.xaml.cs:552-565,缺失,低,P2
+A13,附件目录/创建时间,附件,FileInfoHost / MindMapPanel.xaml.cs:563-566,缺失,低,P2
+A14,附件存在性诊断,附件,PresetIconService.cs:42-49,缺失,低,P2
+A15,视频自动播放策略,附件,视频状态字段 / MindMapPanel.xaml.cs:91-94,缺失,中,P1
+A16,视频进度条拖拽,附件,OnVideoSeekValueChanged / MindMapPanel.xaml.cs:855-891,缺失,中,P1
+A17,视频播放/暂停状态,附件,视频状态字段 / MindMapPanel.xaml.cs:91-94,缺失,中,P1
+A18,视频元数据展示,附件,mediainfo.js 已有基础,缺失,中,P2
+A19,附件移除先询问替换,附件,OnFileClick / MindMapPanel.xaml.cs:419-480,缺失,低,P2
+A20,节点点击附件打开请求,附件,OnOpenFileRequested / MindMapPanel.xaml.cs:482-491,缺失,中,P1
+A21,选择全部/反选/兄弟/路径/子树,选择,OnSelectChanged / MindMapPanel.xaml.cs:1048-1066,缺失,中,P1
+A22,展开到层级,视图,ExpandToLevel / MindMapPanel.xaml.cs:2183-2189,缺失,低,P2
+A23,展开选中子树 N 层,视图,ExpandSelected / MindMapPanel.xaml.cs:2210-2218,缺失,低,P2
+A24,逐一定位搜索计数,搜索,DoSearchAsync / MindMapPanel.xaml.cs:1068-1098,缺失,中,P1
+A25,搜索失败状态,搜索,DoSearchAsync / MindMapPanel.xaml.cs:1082-1098,缺失,低,P2
+A26,安装/卸载脑图组件,组件宿主,Install/Uninstall / MindMapPanel.xaml.cs:1952-1987,缺失,高,P0
+A27,组件未启用占位,组件宿主,RefreshInstallUi / MindMapPanel.xaml.cs:1942-1950,缺失,中,P2
+A28,多画布整体替换导入,导入,ApplyWorkbookAsync / MindMapPanel.xaml.cs:1375-1389,缺失,中,P1
+A29,单/多画布包自动识别,导入,ApplySingleContentAsync / MindMapPanel.xaml.cs:1762-1782,缺失,中,P1
+A30,多画布 Markdown 导出,导出,ExportAs md / MindMapPanel.xaml.cs:2114-2130,缺失,中,P1
+A31,整本 XMind 无损快照,导出,XMindConverter/WriteXMind,有但行为不同,中,P1
+A32,打印脑图,导出,Print,缺失,高,P1
+A33,打印预览,导出,PrintPreview,缺失,高,P1
+A34,系统打印对话框,导出,ShowPrintUI,缺失,中,P2
+A35,PDF 导出,导出,PrintToPdf,缺失,高,P1
+A36,高分辨率整图 PNG,导出,CapturePngAsync / MindMapPanel.xaml.cs:2099-2113,部分实现,中,P2
+A37,导出格式右键菜单,导出,ExportAs / MindMapPanel.xaml.cs:2037-2137,部分实现,低,P2
+A38,导出命名时间戳,导出,Export / MindMapPanel.xaml.cs:2011,部分实现,低,P3
+A39,缩略图/打印预览窗口,导出,缩略图窗口,缺失,高,P2
+A40,自动备份目录配置,备份,ResolvedMindMapBackupDir / MindMapPanel.xaml.cs:1881,缺失,低,P2
+A41,备份版本迁移,备份,MindMapStateStore,缺失,中,P1
+A42,备份内容指纹去重,备份,SameWorkbook / MindMapPanel.xaml.cs:1903-1929,部分实现,中,P1
+A43,最近文件恢复列表,备份,恢复快照,缺失,中,P1
+A44,从备份恢复覆盖当前,备份,恢复快照,缺失,中,P1
+A45,自动备份暂停/恢复,备份,IsVisibleChanged / MindMapPanel.xaml.cs:124-136,缺失,低,P2
+A46,自动保存抑制与补存,多画布,MindMapPanel.xaml.cs:1850-1861,部分实现,高,P0
+A47,切换画布原子保存,多画布,SwitchSheetAsync / MindMapPanel.xaml.cs:1239-1273,部分实现,高,P0
+A48,画布激活 ID 保存,多画布,SaveStateNowAsync / MindMapPanel.xaml.cs:1824-1832,部分实现,中,P1
+A49,画布复制按位置插入,多画布,DuplicateSheetAsync / MindMapPanel.xaml.cs:1331-1349,部分实现,低,P2
+A50,画布删除确认及焦点,多画布,DeleteSheetAsync / MindMapPanel.xaml.cs:1351-1373,部分实现,低,P2
+A51,画布页签拖拽跟随动画,页签,MindMapPanel.xaml.cs:1436-1474,缺失,高,P1
+A52,拖拽死区与实时换位,页签,GetSheetSwapIndex / MindMapPanel.xaml.cs:1621-1644,缺失,高,P1
+A53,边缘自动滚动,页签,OnSheetAutoScrollTick / MindMapPanel.xaml.cs:1646-1685,缺失,中,P2
+A54,插入位置竖条,页签,UpdateSheetHighlight / MindMapPanel.xaml.cs:1687-1716,缺失,中,P2
+A55,拖拽取消回弹,页签,CancelSheetDrag / MindMapPanel.xaml.cs:1524-1536,缺失,高,P1
+A56,页签双击重命名,页签,OnSheetTabDoubleClick / MindMapPanel.xaml.cs:1293-1299,部分实现,低,P2
+A57,画布最小保留一张,页签,DeleteSheetAsync / MindMapPanel.xaml.cs:1351-1373,部分实现,低,P2
+A58,内置布局缩略图资源,主题,LoadLayoutThumb / MindMapPanel.xaml.cs:2232-2253,有但行为不同,低,P2
+A59,内置主题四色预览,主题,BuildSidebar / MindMapPanel.xaml.cs:245-274,部分实现,低,P2
+A60,自定义主题删除回退,主题,OnDeleteThemeClick / MindMapPanel.xaml.cs:2824-2846,缺失,中,P1
+A61,自定义主题编辑覆盖,主题,OnEditThemeClick / MindMapPanel.xaml.cs:2910-2930,缺失,中,P1
+A62,以当前主题作新建种子,主题,OnNewThemeClick / MindMapPanel.xaml.cs:2862-2908,缺失,中,P1
+A63,主题 JSON 导入,主题,OnImportThemeClick,部分实现,低,P2
+A64,主题 JSON 导出,主题,OnExportThemeClick,部分实现,低,P2
+A65,自定义主题注册顺序,主题,MindMapThemeStore,缺失,中,P2
+A66,节点填充/边框/圆角/连线,样式,SetNodeStyleAsync / MindMapPanel.xaml.cs:2700-2771,部分实现,中,P0
+A67,样式数值滚轮步进,样式,OnIntMouseWheel / MindMapPanel.xaml.cs:2657-2680,部分实现,低,P2
+A68,清除文本/节点/边框/连线,样式,ClearNodeStyleScopeAsync / MindMapPanel.xaml.cs:2773-2788,缺失,中,P1
+A69,根节点禁用连线,样式,SetLineStyleEnabled / MindMapPanel.xaml.cs:2488-2498,部分实现,低,P2
+A70,动态字号回显,样式,SelectFontSize / MindMapPanel.xaml.cs:2500-2519,部分实现,低,P2
+B1,字号档位可配置,样式,sizeBox / MindMapPanel.xaml.cs:38-41,优化建议,低,P2
+B2,动态字体回显,样式,SelectFontFamily / MindMapPanel.xaml.cs:2521-2544,优化建议,低,P2
+B3,RGBA 颜色解析,样式,ParseColor / MindMapPanel.xaml.cs:2547-2581,优化建议,低,P2
+B4,样式面板防回写,样式,_syncingStyle / MindMapPanel.xaml.cs:2428-2486,优化建议,中,P1
+B5,文字垂直对齐三档,样式,valign / MindMapPanel.xaml.cs:2278-2288,优化建议,低,P2
+B6,水平对齐回显,样式,textalign / MindMapPanel.xaml.cs:2291-2301,优化建议,低,P2
+B7,加粗/斜体/删除线回显,样式,OnAppearanceClick / MindMapPanel.xaml.cs:2473-2475,优化建议,低,P2
+B8,节点样式快照清除,样式,OnClearAllStyleClick / MindMapPanel.xaml.cs:2790-2806,优化建议,低,P2
+B9,样式刷复制粘贴,样式,Copy/PasteNodeStyle / MindMapPanel.xaml.cs:2808-2822,优化建议,中,P1
+B10,外框标签编辑,结构,boundary,优化建议,中,P2
+B11,概要节点插入,结构,summary,优化建议,高,P1
+B12,关联线/关系线,结构,relation,优化建议,高,P1
+B13,备注面板打开,标签,SetNoteAsync / MindMapPanel.xaml.cs:409-417,优化建议,中,P2
+B14,超链接留空移除,标签,SetHyperlinkAsync / MindMapPanel.xaml.cs:389-397,优化建议,低,P2
+B15,图片自动转 dataURL,图片,LoadImageAsDataUri / MindMapPanel.xaml.cs:997-1046,有但行为不同,中,P2
+B16,ico 最大帧转 PNG,图片,LoadImageAsDataUri / MindMapPanel.xaml.cs:1012-1028,缺失,高,P1
+B17,自定义图片图标,图片,OnBrowseImageClick / MindMapPanel.xaml.cs:975-986,缺失,高,P1
+B18,清除图片,图片,OnClearIconClick / MindMapPanel.xaml.cs:988-994,缺失,低,P2
+B19,优先级 0 清除,标签,OnPriorityClick / MindMapPanel.xaml.cs:893-899,缺失,低,P2
+B20,进度 0 清除,标签,OnProgressClick / MindMapPanel.xaml.cs:901-907,缺失,低,P2
+B21,附件卡片播放状态,附件,VideoTipText / MindMapPanel.xaml.cs:568-578,优化建议,中,P2
+B22,附件 Blob URL 生命周期,附件,getAsset / README 已知限制,优化建议,中,P1
+B23,附件跨机迁移提示,附件,XMind 资源 / README 已知限制,优化建议,低,P3
+B24,文件类型/修改时间,附件,FileInfoHost / MindMapPanel.xaml.cs:551-578,部分实现,低,P2
+B25,附件大小格式化,附件,SizeText / MindMapPanel.xaml.cs:560,部分实现,低,P3
+B26,附件失效但仍显示,附件,状态行 / BuildInfoRow / MindMapPanel.xaml.cs:594-615,优化建议,低,P2
+B27,附件移除后同步侧栏,附件,ClearFilePanel / MindMapPanel.xaml.cs:581-591,优化建议,低,P2
+B28,撤销重做统一栈,历史,history / MindMapPanel.xaml.cs:2194-2208,优化建议,高,P0
+B29,剪切/复制/粘贴节点,历史,Ctrl+X/C/V,优化建议,中,P1
+B30,多选拖拽移动,多选,多选拖拽,优化建议,高,P0
