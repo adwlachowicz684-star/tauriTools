@@ -16,6 +16,8 @@ import { LAYOUT_THUMBS } from './layout-thumbs.js';
 import * as io from './io.js';
 import * as store from './store.js';
 import * as mi from './mediainfo.js';
+import * as picons from './preset-icons.js';
+import * as tb from './tag-badges.js';
 
 const FONTS = ['微软雅黑', '宋体', '黑体', '楷体', 'Arial', 'Consolas', 'sans-serif'];
 const SIZES = [12, 14, 16, 18, 20, 24, 28, 32, 40];
@@ -678,10 +680,35 @@ export function buildSide(app, opts = {}) {
 
   /* ------------------------- 标签页 ------------------------- */
 
-  function pageTag() {
-    const items = [];
-    for (let i = 1; i <= 9; i++) items.push({ v: i, t: String(i) });
+  /**
+   * A1/A2 优先级 / 进度徽章行。
+   * 对齐 WPF `BuildSpriteNumRow` 的两行布局（1–5 / 6–9 + 清除格）。
+   */
+  function badgeRow(kind, current, onPick) {
+    return h('div.mm-badges', {},
+      ...tb.BADGE_ROWS.map((row) =>
+        h('div.mm-badge-row', {},
+          ...row.map((v) => {
+            const on = String(current) === String(v) && !!v;
+            return h('button.mm-badge' + (on ? '.on' : ''), {
+              onclick: () => onPick(v),
+              title: tb.badgeTitle(kind, v),
+              'data-v': String(v),
+            },
+              h('span.mm-badge-face', {
+                style: {
+                  background: tb.badgeBg(kind, v),
+                  color: tb.badgeTextColor(kind, v),
+                  width: tb.BADGE_SIZE + 'px',
+                  height: tb.BADGE_SIZE + 'px',
+                },
+              }, tb.badgeLabel(v)),
+            );
+          }))),
+    );
+  }
 
+  function pageTag() {
     const pickImage = async () => {
       const f = await io.pickFile('image/*');
       if (!f) return;
@@ -699,19 +726,28 @@ export function buildSide(app, opts = {}) {
 
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
       section('优先级',
-        chips(items, null, (v) => { app.bridge.exec('priority', v); app.api.commit(); }),
-        h('button.mm-btn', { onclick: () => { app.bridge.exec('priority', 0); app.api.commit(); } }, '清除优先级'),
+        // A1/A13：徽章行（1–5 / 6–9 + 清除格）。清除格走 priority 0，
+        // 与 WPF 的 cell9 一致 —— 它和其他格同排，不再是另起一个按钮。
+        badgeRow('priority', app.bridge.getSelectedPriority?.() ?? null,
+          (v) => { app.bridge.exec('priority', v); app.api.commit(); refresh(); }),
       ),
       section('进度',
-        chips(items, null, (v) => { app.bridge.exec('progress', v); app.api.commit(); }),
-        h('button.mm-btn', { onclick: () => { app.bridge.exec('progress', 0); app.api.commit(); } }, '清除进度'),
+        // A2/A14：同理，清除格是 progress 0。
+        badgeRow('progress', app.bridge.getSelectedProgress?.() ?? null,
+          (v) => { app.bridge.exec('progress', v); app.api.commit(); refresh(); }),
       ),
       section('图标',
         h('div.mm-row', {},
+          h('button.mm-btn', {
+            onclick: safe('打开图标库', () => openIconLibrary(app), (m) => app.api.status(m, true)),
+            title: '从预设图标库点选（A3–A10）',
+          }, '图标库…'),
           h('button.mm-btn', { onclick: pickImage }, '浏览图片…'),
+        ),
+        h('div.mm-row', {},
           h('button.mm-btn', { onclick: () => { app.bridge.setImage(null); app.api.commit(); } }, '清除图标'),
         ),
-        h('div.mm-hint', {}, '图片以 dataURL 内联进脑图，随文件一起导出；建议控制在 2MB 内。'),
+        h('div.mm-hint', {}, '图标与图片都以 dataURL 内联进脑图，随文件一起导出；建议控制在 2MB 内。'),
       ),
       section('超链接',
         h('input.mm-input', {
@@ -1025,6 +1061,172 @@ export async function openBackups(app) {
     ),
   ]
   );
+  return dlg;
+}
+
+/* ------------------------- 预设图标库（A3–A10） ------------------------- */
+
+/**
+ * 图标库浮层：左侧分组列表，右侧图标网格，点图标即设为选中节点的图片。
+ *
+ * 与 WPF `OnPresetIconClick` 的差别：WPF 点一下就直接设为节点图片并关掉窗口。
+ * 这里保留窗口开着 —— 连续给多个节点配图标是常见操作，关了又开很烦。
+ */
+export async function openIconLibrary(app) {
+  let groups = await picons.loadLibrary();
+  let activeId = groups[0]?.id || null;
+
+  const grid = h('div.mm-icons', {});
+  const groupList = h('div.mm-icon-groups', {});
+  const hint = h('div.mm-hint', {}, '');
+
+  const renderGroups = () => {
+    groupList.innerHTML = '';
+    groups.forEach((g) => {
+      groupList.appendChild(
+        h('button.mm-btn.icon-group' + (g.id === activeId ? '.on' : ''), {
+          onclick: () => { activeId = g.id; renderGroups(); renderGrid(); },
+          title: g.builtin ? '内置分组（不可编辑）' : g.name,
+        }, g.name + (g.builtin ? '' : ` (${(g.icons || []).length})`)),
+      );
+    });
+  };
+
+  const renderGrid = async () => {
+    const g = groups.find((x) => x.id === activeId) || groups[0];
+    grid.innerHTML = '';
+    if (!g) { grid.appendChild(h('div.mm-hint', {}, '暂无分组')); return; }
+    const icons = g.icons || [];
+    if (!icons.length) {
+      grid.appendChild(h('div.mm-hint', {}, g.builtin ? '（内置）' : '该分组还没有图标，可点下方「导入」添加'));
+    }
+    for (const ic of icons) {
+      const isUser = ic.kind === 'user';
+      const box = h('button.mm-icon-cell', {
+        onclick: safe('应用图标', async () => {
+          const url = await picons.iconToDataUrl(ic);
+          if (!url) { app.api.status('图标数据读取失败', true); return; }
+          // 尺寸不用自己设：内核 image 命令会先 new Image() 探测真实尺寸
+          // 再写 imageSize（受 maxImageWidth/Height 限制，默认 200）。
+          // SVG 里写了明确的 width/height 属性，所以能正确探测到。
+          app.bridge.setImage(url);
+          app.api.commit();
+          app.api.status(`已应用图标：${ic.name}`);
+        }, (m) => app.api.status(m, true)),
+        title: ic.name,
+      });
+      if (isUser) {
+        // 用户图标要从 IndexedDB 取缩略图（异步）
+        const rec = await store.get('asset:' + ic.assetId, null);
+        if (rec?.blob) {
+          const url = URL.createObjectURL(rec.blob);
+          mediaUrls.push(url);
+          box.appendChild(h('img', { src: url, alt: ic.name }));
+        } else {
+          box.appendChild(h('span.mm-icon-broken', {}, '⁇'));
+        }
+      } else {
+        const u = picons.iconPreviewUrl(ic);
+        if (u) box.appendChild(h('img', { src: u, alt: ic.name }));
+        else box.appendChild(h('span.mm-icon-broken', {}, '⁇'));
+      }
+      box.appendChild(h('span.mm-icon-name', {}, ic.name));
+      grid.appendChild(box);
+    }
+  };
+
+  // 用户图标预览会建 Blob URL，浮层关掉时统一回收
+  const mediaUrls = [];
+
+  const reload = async () => {
+    groups = await picons.loadLibrary();
+    if (!groups.some((g) => g.id === activeId)) activeId = groups[0]?.id || null;
+    renderGroups();
+    await renderGrid();
+  };
+
+  // ---- 分组管理 ----
+  const newGroup = async () => {
+    const name = window.prompt('新分组名称', '新分组');
+    if (name == null) return;
+    const g = await picons.addGroup(name);
+    if (!g) { app.api.status('新建分组失败', true); return; }
+    activeId = g.id;
+    await reload();
+    app.api.status('已新建分组：' + g.name);
+  };
+
+  const renameCur = async () => {
+    const g = groups.find((x) => x.id === activeId);
+    if (!g) return;
+    if (g.builtin) { app.api.status('内置分组不可重命名', true); return; }
+    const name = window.prompt('分组名称', g.name);
+    if (name == null || name === g.name) return;
+    const r = await picons.renameGroup(g.id, name);
+    if (!r.ok) { app.api.status(r.error, true); return; }
+    await reload();
+    app.api.status('已重命名');
+  };
+
+  const delCur = async () => {
+    const g = groups.find((x) => x.id === activeId);
+    if (!g) return;
+    if (g.builtin) { app.api.status('内置分组不可删除', true); return; }
+    const n = (g.icons || []).length;
+    if (!window.confirm(`删除分组「${g.name}」？${n ? `组内 ${n} 个图标会一并删除。` : ''}`)) return;
+    const r = await picons.deleteGroup(g.id);
+    if (!r.ok) { app.api.status(r.error, true); return; }
+    await reload();
+    app.api.status('已删除分组：' + g.name);
+  };
+
+  /** A4 导入：把选中的图片存进 IndexedDB 并归入当前分组 */
+  const importIcons = async () => {
+    const g = groups.find((x) => x.id === activeId);
+    if (!g) return;
+    if (g.builtin) { app.api.status('内置分组不可添加图标，请先新建一个分组', true); return; }
+    const files = await io.pickFiles('image/*');
+    if (!files || !files.length) return;
+    let ok = 0;
+    for (const f of files) {
+      if (f.size > 1024 * 1024) { hint.textContent = `「${f.name}」超过 1MB，已跳过`; continue; }
+      const id = await io.putAsset(f);
+      if (!id) continue;
+      const r = await picons.addIcon(g.id, { kind: 'user', name: f.name.replace(/\.[^.]+$/, ''), assetId: id });
+      if (r.ok) ok++;
+    }
+    await reload();
+    app.api.status(ok ? `已导入 ${ok} 个图标` : '导入失败（未写入本地库）', !ok);
+  };
+
+  const dlg = dialog('图标库', [
+    h('div.mm-icon-layout', {},
+      h('div.mm-icon-side', {},
+        groupList,
+        h('div.mm-row', { style: { flexWrap: 'wrap' } },
+          h('button.mm-btn', { onclick: () => newGroup(), title: '新建分组' }, '＋分组'),
+          h('button.mm-btn', { onclick: () => renameCur() }, '重命名'),
+          h('button.mm-btn', { onclick: () => delCur(), title: '删除当前分组（至少保留一个）' }, '删除'),
+        ),
+      ),
+      h('div.mm-icon-main', {},
+        grid,
+        h('div.mm-row', {},
+          h('button.mm-btn', { onclick: () => importIcons(), title: '把图片导入当前分组' }, '导入…'),
+          h('button.mm-btn', { onclick: () => { app.bridge.setImage(null); app.api.commit(); app.api.status('已清除节点图标'); } }, '清除节点图标'),
+        ),
+        hint,
+      ),
+    ),
+    h('div.mm-hint', {}, '点图标即设为选中节点的图片。图标本体存在本地库；内置图标是矢量图，不占脑图体积。'),
+  ], () => {
+    // 浮层关掉时回收预览用的 Blob URL，否则会一直攒着
+    for (const u of mediaUrls) { try { URL.revokeObjectURL(u); } catch (e) { /* ignore */ } }
+    mediaUrls.length = 0;
+  });
+
+  renderGroups();
+  await renderGrid();
   return dlg;
 }
 

@@ -162,34 +162,11 @@ export class EditorBridge {
     }
   }
 
-  /**
-   * 发往编辑器 iframe 的 postMessage 目标 origin。
-   *
-   * 编辑器页与本层同源（iframe.src 由 './editor/index.html' 相对 location.href 解析而来），
-   * 所以取该 URL 的 origin 即可，不必再用 '*' 广播给所有窗口。
-   *
-   * 两种回退：
-   *   · iframe 还停在 about:blank 时 src 为空 → 用 location.origin。同源 about:blank
-   *     继承父文档 origin，两者一致（setCanvasTheme 就可能在此时被调用）；
-   *   · file:// 下 origin 是字符串 'null'（opaque origin），postMessage 接受该值，
-   *     与编辑器页自身的 origin 匹配。
-   */
-  _targetOrigin() {
-    const src = this.iframe?.src;
-    if (src) {
-      try {
-        const o = new URL(src, location.href).origin;
-        if (o) return o;
-      } catch { /* URL 解析失败，走下面 */ }
-    }
-    return location.origin || '*';
-  }
-
   /** 编辑器用 callHost 发起的异步请求（saveAs / log 等），在此应答 */
   async _handleRequest(d) {
     const reply = (result) => {
       this.iframe?.contentWindow?.postMessage(
-        { channel: HOST_CHANNEL, type: 'response', id: d.id, result }, this._targetOrigin());
+        { channel: HOST_CHANNEL, type: 'response', id: d.id, result }, '*');
     };
     if (typeof this.handlers.onHostRequest === 'function') {
       try {
@@ -310,7 +287,7 @@ export class EditorBridge {
     if (!w) return false;
     // 页面可能还没执行到门面定义，先存一份；编辑器页自己会在门面就绪后补套
     try { w.__kmCanvasVars = vars || null; } catch { /* ignore */ }
-    w.postMessage({ channel: HOST_CHANNEL, type: 'theme', vars: vars || null }, this._targetOrigin());
+    w.postMessage({ channel: HOST_CHANNEL, type: 'theme', vars: vars || null }, '*');
     return true;
   }
 
@@ -410,6 +387,27 @@ export class EditorBridge {
   setNote(text) { return this.exec('note', text ?? null); }
   setFile(path) { return this.exec('file', path ?? null); }
   setVideo(path) { return this.exec('video', path ?? null); }
+
+  /**
+   * 读取选中节点的优先级 / 进度（A1/A2 徽章回显用）。
+   *
+   * 走 `getData` 而不是 `queryCommandValue('priority')`：
+   * 后者在**多选或未选中**时返回 -1 之类的哨兵值，与「真的设了 -1」
+   * 分不开；直接读 data 拿到什么就是什么，未设置则是 undefined。
+   */
+  getSelectedPriority() {
+    return this._safe('读取优先级', (_m, km) => {
+      const v = km.getSelectedNode?.()?.getData?.('priority');
+      return v == null || v === '' ? null : Number(v) || null;
+    });
+  }
+
+  getSelectedProgress() {
+    return this._safe('读取进度', (_m, km) => {
+      const v = km.getSelectedNode?.()?.getData?.('progress');
+      return v == null || v === '' ? null : Number(v) || null;
+    });
+  }
 
   /** 读取选中节点的文件/视频附件路径 */
   getSelectedFile() {

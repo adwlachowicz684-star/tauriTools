@@ -1760,6 +1760,336 @@ group('A44/A46 备份闭环');
 }
 
 /* ============================================================
+   二十一、A3–A10 预设图标库
+   ============================================================ */
+
+group('A3–A10 预设图标库');
+
+const picons = await import('./preset-icons.js');
+
+{
+  // ---- 内置集合 ----
+  const lib = await picons.loadLibrary();
+  ok(lib.length >= 5, `内置分组 ${lib.length} 个`);
+  ok(lib.every((g) => g.builtin), '首次加载全是内置分组');
+  ok(lib.every((g) => (g.icons || []).length > 0), '每个内置分组都有图标');
+
+  const names = lib.map((g) => g.name);
+  ok(new Set(names).size === names.length, '内置分组名不重复');
+
+  // 图标必须有可用的 path（没有的话 dataURL 会画出一个空框）
+  const allIcons = lib.flatMap((g) => g.icons);
+  ok(allIcons.every((i) => i.kind === 'builtin' && i.d && i.d.length > 0),
+    '每个内置图标都有 SVG path');
+  const ids = allIcons.map((i) => i.id);
+  eq(new Set(ids).size, ids.length, '内置图标 id 唯一（重用会互相覆盖）');
+
+  // ---- SVG dataURL 必须能解码成合法 SVG ----
+  const u = picons.builtinIconUrl('M5 13l4 4L19 7');
+  ok(/^data:image\/svg\+xml;charset=utf-8,/.test(u), '内置图标产出 SVG dataURL');
+  const svg = decodeURIComponent(u.split(',')[1]);
+  ok(svg.startsWith('<svg') && svg.includes('</svg>'), 'dataURL 解码后是完整 <svg>');
+  ok(/viewBox="0 0 24 24"/.test(svg), 'viewBox 固定 24×24（图标才能统一缩放）');
+  // stroke 必须有具体颜色：SVG 当 <img> 加载时是独立文档，
+  // currentColor 没有继承上下文，会画成黑块。
+  ok(!/stroke="currentColor"/.test(svg), '（对照）不能是 currentColor —— img 里无继承上下文');
+  ok(/stroke="#[0-9A-Fa-f]{6}"/.test(svg), 'stroke 是具体色值');
+  ok(/width="\d+"\s+height="\d+"/.test(svg), '有明确的 width/height（内核靠它探测尺寸）');
+}
+
+{
+  // ---- A3/A7 分组管理 ----
+  const g = await picons.addGroup('我的图标');
+  ok(!!g, '新建分组成功');
+  eq(g.name, '我的图标', '分组名正确');
+
+  const g2 = await picons.addGroup('我的图标');
+  eq(g2.name, '我的图标 2', '重名自动加序号（对齐 WPF UniqueGroupName）');
+
+  // 分组名校验
+  let lib = await picons.loadLibrary();
+  eq(picons.validateGroupName(lib, ''), '分组名不能为空。', '空名被拒');
+  eq(picons.validateGroupName(lib, '我的图标'), '分组「我的图标」已存在。', '重名被拒');
+  eq(picons.validateGroupName(lib, '全新名字'), null, '合法名通过');
+
+  // 内置分组不可改名/删除
+  const builtin = lib.find((x) => x.builtin);
+  const r1 = await picons.renameGroup(builtin.id, '改了');
+  eq(r1.ok, false, '内置分组不可重命名');
+  ok(/内置分组/.test(r1.error), '给出具体原因');
+  const r2 = await picons.deleteGroup(builtin.id);
+  eq(r2.ok, false, '内置分组不可删除');
+
+  // 重命名
+  const r3 = await picons.renameGroup(g.id, '重命名后');
+  ok(r3.ok, '用户分组可重命名');
+  lib = await picons.loadLibrary();
+  eq(lib.find((x) => x.id === g.id).name, '重命名后', '重命名已落盘');
+
+  // 重命名为已存在的名字要被拒
+  const r4 = await picons.renameGroup(g.id, '我的图标 2');
+  eq(r4.ok, false, '重命名为已有名被拒');
+}
+
+{
+  // ---- A4 导入图标 + A6 重命名 + 删除 ----
+  let lib = await picons.loadLibrary();
+  let g = lib.find((x) => !x.builtin);
+  if (!g) g = await picons.addGroup('测试组');
+
+  const r = await picons.addIcon(g.id, { kind: 'user', name: 'logo', assetId: 'as1' });
+  ok(r.ok, '导入图标成功');
+  eq(r.icon.name, 'logo', '图标名正确');
+
+  const r2 = await picons.addIcon(g.id, { kind: 'user', name: 'logo', assetId: 'as2' });
+  eq(r2.icon.name, 'logo 2', '同名自动加序号（对齐 WPF 导入重名处理）');
+
+  lib = await picons.loadLibrary();
+  g = lib.find((x) => x.id === g.id);
+  eq((g.icons || []).length, 2, '两个图标都在');
+
+  // 重命名
+  const r3 = await picons.renameIcon(g.id, r.icon.id, '新名字');
+  ok(r3.ok, '重命名图标成功');
+  const r4 = await picons.renameIcon(g.id, r.icon.id, '   ');
+  eq(r4.ok, false, '空名被拒');
+
+  // ---- A9 跨组移动 ----
+  const g2 = await picons.addGroup('另一个组');
+  const mv = await picons.moveIcon(g.id, r.icon.id, g2.id);
+  ok(mv.ok, '用户图标可跨组移动');
+  lib = await picons.loadLibrary();
+  eq((lib.find((x) => x.id === g.id).icons || []).length, 1, '源组少了一个');
+  eq((lib.find((x) => x.id === g2.id).icons || []).length, 1, '目标组多了一个');
+
+  // 内置图标不可移动 —— 它们是常量，移了下次加载会被重新生成回去
+  const builtinIcon = lib.find((x) => x.builtin).icons[0];
+  const mv2 = await picons.moveIcon(lib.find((x) => x.builtin).id, builtinIcon.id, g2.id);
+  eq(mv2.ok, false, '内置图标不可移动（否则表现为「移动无效」）');
+
+  // 内置分组不可加图标
+  const add1 = await picons.addIcon(lib.find((x) => x.builtin).id, { kind: 'user', name: 'x', assetId: 'as9' });
+  eq(add1.ok, false, '内置分组不可添加图标');
+}
+
+{
+  // ---- A7 删除分组：至少保留一个 ----
+  // 清掉已有用户分组，只留一个，再试着删它
+  let lib = await picons.loadLibrary();
+  const userGroups = lib.filter((x) => !x.builtin);
+  for (const g of userGroups.slice(1)) await picons.deleteGroup(g.id);
+  lib = await picons.loadLibrary();
+  const last = lib.filter((x) => !x.builtin);
+  if (last.length === 1) {
+    // 内置分组 + 1 个用户分组 > 1，这里要测的是「用户分组不可删到 0」
+    // 实际上 WPF 的约束是分组总数 >= 1；Web 版内置恒在，故用户分组可以删光。
+    // 关键是：删光后 loadLibrary 仍能返回内置分组，不会变成空库。
+    const r = await picons.deleteGroup(last[0].id);
+    ok(r.ok, '最后一个用户分组可删（内置分组兜底，库不会空）');
+    lib = await picons.loadLibrary();
+    ok(lib.length >= 5 && lib.every((g) => g.builtin), '删光用户分组后仍剩内置分组');
+    ok(lib.some((g) => (g.icons || []).length > 0), '内置图标仍在 —— 库不会变空');
+  } else {
+    ok(true, '（跳过）用户分组数量不符，跳过最后一组删除测试');
+  }
+}
+
+{
+  // ---- 内置图标不进持久化 ----
+  // 若把内置集合也存进 IndexedDB，将来新增内置图标老用户永远看不到。
+  const src = fs.readFileSync(path.join(HERE, 'preset-icons.js'), 'utf8');
+  ok(/const K_ICONLIB = 'iconlib';/.test(src), '图标库有独立存储键');
+  const saveFn = src.slice(src.indexOf('async function saveUserGroups'), src.indexOf('const newId'));
+  ok(/groups\.filter\(\(g\) => !g\.builtin\)/.test(saveFn), '只持久化用户分组（内置不落盘）');
+  ok(/\[...builtinGroups\(\), ...ug/.test(src), '读取时把内置分组拼在最前');
+}
+
+{
+  // ---- A10：不做 ico 转换，须有说明 ----
+  const src = fs.readFileSync(path.join(HERE, 'preset-icons.js'), 'utf8');
+  ok(/不实现 ico 转换/.test(src), 'A10 ico 转换：明确标注不适用并说明理由');
+  ok(/SVG/.test(src.slice(0, 1200)), '改用 SVG（矢量、无需多尺寸转换）');
+}
+
+{
+  // ---- 渲染：标签页有「图标库…」入口 ----
+  const { buildSide } = await import('./panels.js');
+  const el = buildSide({
+    api: {
+      status() {}, commit() {}, selectedRef: () => null,
+      applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
+      nodeStyle: () => ({}), setNodeStyle: () => {},
+    },
+    bridge: {}, customThemes: [],
+  }, {});
+  el.open('tag');
+  const btns = [...el.el.querySelectorAll('button')].map((b) => b.textContent);
+  ok(btns.includes('图标库…'), '标签页有「图标库…」入口');
+  ok(btns.includes('清除图标'), '保留「清除图标」');
+}
+
+{
+  // ---- io.pickFiles 多选（A4 批量导入需要）----
+  const io = await import('./io.js');
+  ok(typeof io.pickFiles === 'function', 'io 提供 pickFiles（批量导入用）');
+  const src = fs.readFileSync(path.join(HERE, 'io.js'), 'utf8');
+  ok(/export function pickFile\(accept = '', multiple = false\)/.test(src), 'pickFile 支持 multiple 参数');
+  ok(/inp\.multiple = true/.test(src), 'multiple 时设置 input.multiple');
+  // 取消时：单文件返回 null、多文件返回 []，调用方才好区分
+  ok(/multiple \? \[\] : null/.test(src), '取消时多文件返回 []（与单文件的 null 区分）');
+}
+
+/* ============================================================
+   二十二、A1/A2/A13/A14 优先级与进度徽章
+   ============================================================ */
+
+group('A1/A2 优先级与进度徽章');
+
+const tb = await import('./tag-badges.js');
+
+{
+  // ---- 配色必须来自 WPF 精灵图采样，不是随手挑的 ----
+  eq(tb.PRIORITY_COLORS.length, 9, '优先级 9 档颜色');
+  eq(tb.PRIORITY_COLORS[0], '#E60E07', 'P1 红（iconpriority.png cell0 采样）');
+  eq(tb.PRIORITY_COLORS[1], '#006BE5', 'P2 蓝（cell1）');
+  eq(tb.PRIORITY_COLORS[2], '#00A000', 'P3 绿（cell2）');
+  eq(tb.PRIORITY_COLORS[3], '#F08825', 'P4 橙（cell3）');
+  eq(tb.PRIORITY_COLORS[4], '#9156F3', 'P5 紫（cell4）');
+  eq(tb.PRIORITY_COLORS[8], '#939393', 'P9 灰（cell8）');
+  // 6–9 同为灰是原图设计（低优先级统一灰，避免画面太花），不是采样失败
+  ok(tb.PRIORITY_COLORS.slice(5).every((c) => c === '#939393'), 'P6–P9 同为灰色（原图设计）');
+
+  eq(tb.PROGRESS_BG, '#FFE98A', '进度底色 黄（iconprogress.png 采样）');
+  eq(tb.PROGRESS_FG, '#6DB200', '进度填充 绿（采样）');
+  eq(tb.PROGRESS_FILL.length, 9, '进度 9 档填充比例');
+  eq(tb.PROGRESS_FILL[0], 0, '1/9 全黄（绿色占比 0）');
+  eq(tb.PROGRESS_FILL[8], 1, '9/9 全绿');
+  // 单调递增：填充比例必须随进度上升，否则视觉与语义相反
+  let mono = true;
+  for (let i = 1; i < 9; i++) if (!(tb.PROGRESS_FILL[i] > tb.PROGRESS_FILL[i - 1])) mono = false;
+  ok(mono, '填充比例单调递增（1/9→9/9 黄→绿）');
+  // 与 (i-1)/8 的理论值不能差太远
+  const maxDev = Math.max(...tb.PROGRESS_FILL.map((v, i) => Math.abs(v - i / 8)));
+  ok(maxDev < 0.15, `填充比例贴近理论值 (i-1)/8（最大偏差 ${maxDev.toFixed(2)}）`);
+
+  eq(tb.CLEAR_BG, '#E1E1E1', '清除格底色 浅灰（cell9）');
+  eq(tb.CLEAR_FG, '#C1272D', '清除格前景 红（cell9）');
+}
+
+{
+  // ---- 渲染函数 ----
+  eq(tb.priorityBg(1), '#E60E07', 'priorityBg(1)');
+  eq(tb.priorityBg(9), '#939393', 'priorityBg(9)');
+  eq(tb.priorityBg(99), '#939393', 'priorityBg 越界钳到 9（不返回 undefined）');
+  eq(tb.priorityBg(0), '#E60E07', 'priorityBg(0) 钳到 1（0 走清除格分支，不进这里）');
+
+  ok(tb.progressBg(1).startsWith('#'), '1/9 是纯色（全黄，不必写渐变）');
+  ok(tb.progressBg(9).startsWith('#'), '9/9 是纯色（全绿）');
+  ok(/linear-gradient/.test(tb.progressBg(5)), '5/9 是渐变');
+  ok(tb.progressBg(5).includes('43%'), '5/9 渐变断点 = 43%');
+
+  eq(tb.badgeLabel(5), '5', '数字格显示数字');
+  eq(tb.badgeLabel(0), '✕', '清除格显示 ✕（不是 0 —— 0 会被当成数字）');
+  eq(tb.badgeBg('priority', 0), tb.CLEAR_BG, '清除格用清除色');
+  eq(tb.badgeTitle('priority', 3), '优先级 3', '优先级 tooltip');
+  eq(tb.badgeTitle('progress', 3), '进度 3/9', '进度 tooltip 带分母');
+  eq(tb.badgeTitle('priority', 0), '移除优先级', '清除格 tooltip（对齐 WPF clearTip）');
+
+  // 语义校验：清除格必须真的下发 0
+  eq(tb.BADGE_ROWS.flat().filter((v) => v === 0).length, 1, '恰好一个清除格');
+  ok(tb.BADGE_ROWS[1].includes(0), '清除格在第二行末（对齐 WPF values 第二排）');
+  eq(tb.BADGE_ROWS.flat().length, 10, '共 10 格（1–9 + 清除）');
+}
+
+{
+  // ---- 页面渲染 ----
+  const { buildSide } = await import('./panels.js');
+  const el = buildSide({
+    api: {
+      status() {}, commit() {}, selectedRef: () => null,
+      applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
+      nodeStyle: () => ({}), setNodeStyle: () => {},
+    },
+    bridge: {
+      getSelectedPriority: () => null,
+      getSelectedProgress: () => null,
+    },
+    customThemes: [],
+  }, {});
+  el.open('tag');
+
+  const rows = [...el.el.querySelectorAll('.mm-badge-row')];
+  eq(rows.length, 4, '优先级+进度 各两行 = 4 行');
+  eq(rows[0].querySelectorAll('.mm-badge').length, 5, '每行 5 格');
+  eq(el.el.querySelectorAll('.mm-badge').length, 20, '共 20 格（两组各 10）');
+
+  // 清除格必须是 ✕ 且 data-v=0
+  const clears = [...el.el.querySelectorAll('.mm-badge')].filter((b) => b.getAttribute('data-v') === '0');
+  eq(clears.length, 2, '两组各一个清除格');
+  ok(clears.every((b) => b.textContent.includes('✕')), '清除格显示 ✕');
+
+  // 数字格背景色
+  const p1 = el.el.querySelector('.mm-badge[data-v="1"] .mm-badge-face');
+  ok(p1, '有 P1 徽章');
+  eq(p1.style.background.replace(/\s/g, ''), 'rgb(230,14,7)', 'P1 徽章背景是采样到的红');
+}
+
+{
+  // ---- 回显：当前优先级要高亮 ----
+  const { buildSide } = await import('./panels.js');
+  const el = buildSide({
+    api: {
+      status() {}, commit() {}, selectedRef: () => null,
+      applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
+      nodeStyle: () => ({}), setNodeStyle: () => {},
+    },
+    bridge: {
+      getSelectedPriority: () => 2,
+      getSelectedProgress: () => 7,
+    },
+    customThemes: [],
+  }, {});
+  el.open('tag');
+  const on = [...el.el.querySelectorAll('.mm-badge.on')];
+  eq(on.length, 2, '优先级与进度各高亮一个');
+  ok(on.some((b) => b.getAttribute('data-v') === '2'), '优先级 2 高亮');
+  ok(on.some((b) => b.getAttribute('data-v') === '7'), '进度 7 高亮');
+}
+
+{
+  // ---- A13/A14：清除必须下发 0 ----
+  const { buildSide } = await import('./panels.js');
+  const calls = [];
+  const el = buildSide({
+    api: {
+      status() {}, commit() {}, selectedRef: () => null,
+      applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
+      nodeStyle: () => ({}), setNodeStyle: () => {},
+    },
+    bridge: {
+      getSelectedPriority: () => null,
+      getSelectedProgress: () => null,
+      exec: (n, v) => { calls.push([n, v]); return true; },
+    },
+    customThemes: [],
+  }, {});
+  el.open('tag');
+  const clear = [...el.el.querySelectorAll('.mm-badge')].find((b) => b.getAttribute('data-v') === '0');
+  clear.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  ok(calls.some(([n, v]) => n === 'priority' && v === 0), 'A13 点清除格下发 priority 0');
+}
+
+{
+  // ---- bridge 读取接口 ----
+  const src = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+  ok(/getSelectedPriority\(\)/.test(src), 'bridge 有 getSelectedPriority');
+  ok(/getSelectedProgress\(\)/.test(src), 'bridge 有 getSelectedProgress');
+  ok(/getData\?\.\('priority'\)/.test(src), '优先级读 getData 而非 queryCommandValue');
+  // queryCommandValue 在多选/未选中时返回哨兵值 -1，与「真的设了 -1」分不开
+  ok(/未设置则是 undefined|v == null/.test(src), '未设置时返回 null（不用哨兵值）');
+}
+
+/* ============================================================
    结果
    ============================================================ */
 
