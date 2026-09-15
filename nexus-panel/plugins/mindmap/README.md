@@ -289,6 +289,33 @@ Ctrl+E / Ctrl+L / Ctrl+R / Ctrl+Shift+C / Ctrl+Shift+V
 内核 `commandShortcutKeys` 注册：Alt+↑↓（上移下移）/ Shift+Tab（插入上级）/
 Ctrl+Shift+L（整理布局）/ Ctrl+=-（缩放）/ Ctrl+A（全选）/ Ctrl+C/X/V
 
+### 行内编辑：不只是回车才提交
+
+早期版本「输入完必须按回车，点旁边就白输」。根因在 kityminder 的两处设计：
+
+```js
+// text 命令的执行体：只写「当前选中的节点」
+execute: (minder, v) => { const n = minder.getSelectedNode(); n && (n.setText(v), …) }
+// 且 queryState 要求选中数恰好为 1，否则命令被直接拒绝（不报错、不写）
+
+// select 模块的 mousedown：点画布会立刻改/清选中
+b ? this.select(b, true)                          // 点到节点 → 改选中
+  : (this.removeAllSelectedNodes(), …)            // 点空白   → 清空选中
+```
+
+于是「编辑中 → 点旁边」有两种坏结果：点空白 → 选中被清空，命令被 `queryState`
+拒绝，输入**静默丢失**；点别的节点 → 选中改了，文字被写到**错误的节点**上。
+
+**修复**：两道保险，且互相独立。
+
+| 位置 | 作用 |
+|---|---|
+| `document` 捕获阶段的 `mousedown` | 抢在内核改动选中**之前**提交。只靠 blur 不够 —— SVG 不可聚焦，焦点何时转移取决于内核是否抢焦点，时序不可依赖 |
+| `closeTextEditor` 内 | 提交前若 `getSelectedNode() !== editLayer.node` 就先 `select` 回来，让提交与「当前选中是谁」彻底解耦 |
+
+顺带把 `editLayer = null` 提到 `execCommand` 之前：`execCommand` 会触发渲染与
+事件，万一重入会二次提交。
+
 ### 前提：焦点必须在画布上
 
 kityminder 的所有键盘输入都来自一个隐藏的 `<input class="km-receiver">`，

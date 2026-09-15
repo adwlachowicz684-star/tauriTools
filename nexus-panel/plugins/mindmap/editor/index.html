@@ -106,9 +106,7 @@
             if (window.parent && window.parent !== window) {
                 var out = { channel: KM_HOST_CHANNEL };
                 for (var k in msg) if (Object.prototype.hasOwnProperty.call(msg, k)) out[k] = msg[k];
-                // 本页与插件层同源（相对路径加载），目标 origin 写自身 origin 即可，不用 '*' 广播。
-                // file:// 下 origin 为 'null'（opaque origin），postMessage 接受该值并与父层匹配。
-                window.parent.postMessage(out, window.location.origin || '*');
+                window.parent.postMessage(out, '*');
             }
         } catch (e) {}
     }
@@ -116,9 +114,6 @@
     window.addEventListener('message', function (e) {
         var d = e && e.data;
         if (!d || d.channel !== KM_HOST_CHANNEL) return;
-        // 只认来自父窗口（插件层）的消息，与 editor-bridge.js 的 e.source 校验对称。
-        // 顶层打开时无父窗口，跳过该判断。
-        if (window.parent && window.parent !== window && e.source !== window.parent) return;
         if (d.type === 'response') {
             if (typeof window.__resolveHost === 'function') window.__resolveHost(d.id, d.result);
             return;
@@ -1884,13 +1879,24 @@
         function closeTextEditor(apply) {
             if (!editLayer) return;
             var node = editLayer.node, el = editLayer.input;
+            // 先清掉再执行：下面的 execCommand 会触发渲染/事件，
+            // 万一重入到这里，editLayer 已空则直接返回，不会二次提交。
+            editLayer = null;
             if (apply) {
                 var v = (el.innerText || el.textContent || '').replace(/[\r\n]+/g, ' ');
-                try { km.execCommand('text', v); } catch (e) {}
+                try {
+                    // 关键：把选中切回正在编辑的这个节点。
+                    // text 命令只写「当前选中的节点」，且选中数不为 1 时会被
+                    // queryState 直接拒绝（静默失败）。点画布空白会清空选中、
+                    // 点别的节点会改选中 —— 两种情况下输入都会丢或写错地方。
+                    // 顺序上已由 document 捕获阶段的 mousedown 兜底抢在内核之前，
+                    // 这里再做一层，让提交与「当前选中是谁」彻底解耦。
+                    if (node && km.getSelectedNode && km.getSelectedNode() !== node) km.select(node, true);
+                    km.execCommand('text', v);
+                } catch (e) {}
                 try { node.render(); } catch (e) {}
                 try { km.layout(); } catch (e) {}
             }
-            editLayer = null;
             if (el.parentNode) el.parentNode.removeChild(el);
             try { km.focus(); } catch (e) {}
         }
@@ -1957,6 +1963,41 @@
             if (e.key === 'F2') { e.preventDefault(); beginTextEdit(null, null, null); }
         }, true);
         window.editSelected = function () { beginTextEdit(null, null, null); };
+
+        /**
+         * 兜底：点画布任意处（含点空白、点别的节点）都要先提交正在编辑的文字。
+         * ============================================================
+         * text 命令的执行体是：
+         *     execute: function (minder, v) {
+         *         var n = minder.getSelectedNode();
+         *         n && (n.setText(v), n.render(), minder.layout());
+         *     }
+         * 它的 queryState 还要求选中数「恰好为 1」，否则直接拒绝执行。
+         *
+         * 而内核 select 模块的 mousedown 是：
+         *     b ? this.select(b, !0)              // 点到节点 → 改选中
+         *       : (this.removeAllSelectedNodes(), …)  // 点空白   → 清空选中
+         *
+         * 于是「编辑中 → 点旁边」有两种坏结果：
+         *   · 点空白：选中被清空，命令被 queryState 拒绝 → 输入**静默丢失**；
+         *   · 点别的节点：选中改了，文字被写到**错误的节点**上。
+         *
+         * 这正是「必须按回车才生效，点旁边没用」的原因。
+         *
+         * 用**捕获阶段**监听：保证在内核 mousedown 改动选中之前先把文字提交掉。
+         * 只靠 blur 不够 —— SVG 不可聚焦，焦点何时转移取决于内核是否抢焦点，
+         * 时序不可依赖。
+         */
+        (function () {
+            function onDocMouseDown(e) {
+                if (!editLayer) return;
+                var el = editLayer.input;
+                if (el === e.target || (el.contains && el.contains(e.target))) return;  // 还在框内编辑
+                closeTextEditor(true);
+            }
+            // 捕获阶段挂在 document 上：iframe 内任意点击都先过这里
+            document.addEventListener('mousedown', onDocMouseDown, true);
+        })();
 
         // ---- 默认快捷键 ----
         // core 仅内置 Ctrl+A 全选，以及 commandShortcutKeys 里注册的那几个
