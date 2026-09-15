@@ -212,5 +212,29 @@ for (const th of PRESET_THEMES) {
 t('暗影强度已校准到 ΔL* ≥ 9', tooWeak.length === 0,
   tooWeak.join(', ') || '（纯黑底主题因物理上限豁免）');
 
+console.log('\n=== 9. 风格开关与「保证可见的边界」必须分开 ===');
+/* --border 是风格开关（新拟态下 transparent，边界交给阴影）；
+   --divider 保证任何风格都可见。混用会让新拟态下的分隔线全部消失 ——
+   agent-flow 曾把 26 处分隔线接到 --border 上，侧边栏与画布连成一片。
+   扁平/玻璃恰好没事，只因那两种风格给 --border 赋了值，属碰巧没踩到。 */
+const tm = read('js/theme-manager.js');
+t('--divider 由外壳按基调派生（不交给主题自己填，否则可能又被填成透明）',
+  /v\['--divider'\]\s*=\s*dark\s*\?/.test(tm));
+const dividerDecl = /v\['--divider'\]\s*=\s*([^;]+);/.exec(tm)?.[1] || '';
+t('--divider 在深/浅两种基调下都有颜色（不能有一侧 transparent）',
+  /rgba\(255,255,255,/.test(dividerDecl) && /rgba\(0,0,0,/.test(dividerDecl)
+  && !/transparent/.test(dividerDecl), dividerDecl.trim());
+t('外壳 CSS 里 --divider 有兜底值', /--divider\s*:\s*rgba\(/.test(shell));
+t('外壳注明了 --border 是风格开关、不是分隔线颜色',
+  /--border 是\*\*风格开关\*\*/.test(shell));
+const afCss = read('plugins/agent-flow/styles.css');
+t('agent-flow 有自己的分隔线变量', /--af-divider\s*:\s*var\(--divider/.test(afCss));
+/* 分界两侧往往同色（新拟态下 --surface 与 --bg 同值），
+   用 --border 一透明就没有任何东西托底 */
+const sideBorders = [...afCss.matchAll(/border-(?:right|left|top|bottom)\s*:\s*([^;]+);/g)]
+  .map((m) => m[1]).filter((v) => v.includes('var(--af-line)'));
+t('单边分隔线不再使用 --af-line（接到风格开关上了）',
+  sideBorders.length === 0, sideBorders.slice(0, 3).join(' | ') || '已全部改用 --af-divider');
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

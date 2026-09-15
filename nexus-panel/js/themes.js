@@ -39,6 +39,8 @@ export const THEME_VARS = [
   // 否则用户把主题色设成红色，就会出现"红色的成功提示"。
   '--ok', '--running', '--warn', '--danger',
   '--surface-raised', '--text-soft',
+  /* --divider 由 theme-manager 按基调派生（不进主题 vars）：
+     它必须"任何风格下都可见"，交给主题自己填就可能又被填成透明。 */
   '--border', '--blur', '--hairline', '--mask',
   '--scroll-thumb', '--badge-fg',
   // 圆角也是形状语言的一部分：新拟态的大圆角是"软"的一部分，

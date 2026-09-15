@@ -617,7 +617,28 @@ await ctx.shell.external.setStatus('api.example.com', 'trusted');
 选中态用 `--accent` 描边或文字，且必须同时给 `focus-visible` 同款样式，
 键盘走位时"当前项"只有一种长相。强调色文字字号 ≥ 12.5px 时字重 ≥ 600。
 
-**3.5 尺度走 `css/tokens.css`**
+**3.5 `--border` 是风格开关，不是「分隔线颜色」**
+
+`--border` 在新拟态下是 `transparent`（边界交给阴影），扁平 / 玻璃下才着色。
+**画两个区域之间的分界请用 `--divider`——它保证任何风格都可见。**
+
+混用会怎样（实测）：agent-flow 曾把分隔线接到 `--border` 上，于是新拟态下
+26 处分隔线 + 10 处无底色控件全部消失，侧边栏与画布连成一片。扁平 / 玻璃
+恰好没事，只因那两种风格给 `--border` 赋了值 —— 属于碰巧没踩到，不是设计对了。
+
+分界两侧往往同色（新拟态下 `--surface` 与 `--bg` 就是同一个值），
+一旦 `--border` 透明就没有任何东西托底，所以这条不是"建议"而是必须：
+
+```css
+border-right: 1px solid var(--divider);   /* ✅ 分界：任何风格都在 */
+border: 1px solid var(--border);          /* ✅ 卡片描边：跟着风格走 */
+```
+
+`--divider` 由 `theme-manager` 按基调派生（深色微白 / 浅色微黑），
+不进主题 `vars` —— 交给主题自己填就可能又被填成透明。
+`npm run test:tokens` 会校验这条契约（把某处分隔线改回 `--border` 会红）。
+
+**3.6 尺度走 `css/tokens.css`**
 阴影档位、圆角补档、过渡时长、字体、层级统一在这一个文件里，外壳与插件各自
 `@import` 拿到。以前同一个几何值在四五个文件里各写一遍，改一处忘三处。
 

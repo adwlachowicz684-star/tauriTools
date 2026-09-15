@@ -129,7 +129,12 @@
      · 新拟态：--surface 与 --bg 同色，靠 --sh-* 塑形，--border 透明
      · 扁平：  --sh-* 调到与底色接近（阴影隐形），改由 --border 描边
      · 玻璃：  --surface 半透明 + --blur 打开毛玻璃 */
+  /* ⚠️ --border 是**风格开关**，不是"分隔线颜色"。
+     新拟态下它是 transparent —— 那是故意的，边界交给阴影。
+     要画"两个区域之间的分界"请用 --divider（任何风格都可见）。
+     详见 js/theme-manager.js 里 --divider 的注释。 */
   --border:        transparent;
+  --divider:       rgba(255,255,255,.10);
   --blur:          0px;
   --bg-image:      none;
   --hairline:      rgba(255,255,255,.05);
@@ -572,7 +577,7 @@ body {
    也能读（详见 .dialog 处关于底板的说明）。 */
 .nexus-tip {
   position: fixed;
-  z-index: 1200;
+  z-index: var(--z-tooltip);
   max-width: 280px;
   padding: 6px 10px;
   border-radius: var(--r-sm);
@@ -580,7 +585,7 @@ body {
   line-height: 1.6;
   color: var(--text);
   background: var(--surface-overlay, var(--surface-raised));
-  box-shadow: 4px 4px 10px var(--sh-dark), -4px -4px 10px var(--sh-light);
+  box-shadow: var(--sh-out-md);
   border: 1px solid var(--border);
 
   /* 关键：不能吃鼠标事件。否则提示出现在光标下方时会抢走 hover 目标，
@@ -591,7 +596,7 @@ body {
 
   /* 只做透明度过渡，位移由 JS 直接定位（避免过渡期间位置飘） */
   opacity: 0;
-  transition: opacity .12s ease;
+  transition: opacity var(--dur-fast) ease;
 }
 .nexus-tip.on { opacity: 1; }
 
