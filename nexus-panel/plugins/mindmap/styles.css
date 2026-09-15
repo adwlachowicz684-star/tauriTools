@@ -7,8 +7,6 @@
    2. 结构色（画布底色、图标色板）是内容本身的一部分，才允许硬编码。
    ============================================================ */
 
-@import url('../../css/tokens.css');
-
 html, body {
   margin: 0;
   height: 100%;
@@ -32,7 +30,7 @@ html, body {
 .mm-grow { flex: 1 1 auto; }
 .mm-sep { width: 1px; align-self: stretch; background: var(--sh-dark); margin: 0 2px; }
 .mm-label { color: var(--text-dim); font-size: 12px; white-space: nowrap; }
-.mm-mono { font-family: var(--font-mono); }
+.mm-mono { font-family: Menlo, Consolas, monospace; }
 
 /* 迷你按钮：比 .p-btn 更紧凑，工具栏用 */
 .mm-btn {
@@ -45,8 +43,8 @@ html, body {
   color: var(--text);
   font-size: 12.5px;
   cursor: pointer;
-  box-shadow: var(--sh-out-md);
-  transition: box-shadow var(--dur-fast), color var(--dur-fast);
+  box-shadow: 3px 3px 6px var(--sh-dark), -3px -3px 6px var(--sh-light);
+  transition: box-shadow .12s, color .12s;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -55,9 +53,9 @@ html, body {
 }
 .mm-btn:hover { color: var(--accent); }
 .mm-btn:active {
-  box-shadow: var(--sh-in-md);
+  box-shadow: inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light);
 }
-.mm-btn.on { color: var(--accent); box-shadow: var(--sh-in-md); }
+.mm-btn.on { color: var(--accent); box-shadow: inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light); }
 .mm-btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
 
 .mm-btn.wide { min-width: 0; }
@@ -71,7 +69,7 @@ html, body {
   background: var(--surface-sunk, var(--surface));
   color: var(--text);
   font-size: 12.5px;
-  box-shadow: var(--sh-in-md);
+  box-shadow: inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light);
   outline: none;
 }
 .mm-input::placeholder { color: var(--text-mute); }
@@ -85,13 +83,13 @@ html, body {
   color: var(--text);
   font-size: 12.5px;
   outline: none;
-  box-shadow: var(--sh-in-md);
+  box-shadow: inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light);
 }
 
 /* 色块（颜色选择按钮） */
 .mm-swatch {
   width: 26px; height: 26px;
-  border-radius: var(--r-sm);
+  border-radius: 7px;
   border: 1px solid var(--sh-dark);
   cursor: pointer;
   padding: 0;
@@ -101,7 +99,7 @@ html, body {
 .mm-swatch::after {
   content: '';
   position: absolute; inset: 0;
-  box-shadow: inset 0 0 0 1px var(--hairline, rgba(255,255,255,.08));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
 }
 
 /* ------------------------------ 工具栏 ------------------------------ */
@@ -114,7 +112,7 @@ html, body {
   padding: 8px 10px;
   border-radius: var(--r, 14px);
   background: var(--surface);
-  box-shadow: var(--sh-out-md);
+  box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
   flex: 0 0 auto;
 }
 
@@ -136,7 +134,7 @@ html, body {
   padding: 8px 6px;
   border-radius: var(--r, 14px);
   background: var(--surface);
-  box-shadow: var(--sh-out-md);
+  box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
 }
 .mm-rail .mm-btn { width: 34px; padding: 0; }
 
@@ -150,7 +148,7 @@ html, body {
   padding: 12px;
   border-radius: var(--r, 14px);
   background: var(--surface);
-  box-shadow: var(--sh-out-md);
+  box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
   overflow-y: auto;
   min-height: 0;
 }
@@ -182,7 +180,7 @@ html, body {
   border-radius: var(--r, 14px);
   overflow: hidden;
   background: #1E1E1E;
-  box-shadow: var(--sh-out-md);
+  box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
 }
 
 .mm-loading {
@@ -190,7 +188,7 @@ html, body {
   display: flex; align-items: center; justify-content: center;
   color: #AFAFAF; font-size: 13px;
   background: #1E1E1E;
-  z-index: var(--z-raised);
+  z-index: 5;
 }
 
 /* ------------------------------ 底部 ------------------------------ */
@@ -203,7 +201,7 @@ html, body {
   padding: 6px 8px;
   border-radius: var(--r, 14px);
   background: var(--surface);
-  box-shadow: var(--sh-out-md);
+  box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
   /* 这里**不能**加 overflow-x:auto。
      底栏整体滚动的话，页签一多就会把「＋」和状态文字一起滚出视野。
      滚动只交给内部的 .mm-tabs，右侧两个控件始终固定可见。 */
@@ -217,24 +215,24 @@ html, body {
   height: 26px;
   padding: 0 11px;
   border: 0;
-  border-radius: var(--r);
+  border-radius: 13px;
   background: var(--surface-sunk, var(--surface));
   color: var(--text-dim);
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
-  box-shadow: var(--sh-in-sm);
+  box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);
 }
 .mm-tab.active {
   color: var(--accent);
   background: var(--surface);
-  box-shadow: var(--sh-out-md);
+  box-shadow: 3px 3px 6px var(--sh-dark), -3px -3px 6px var(--sh-light);
 }
 .mm-tab { user-select: none; }
 .mm-tab.dragging { opacity: .4; }
 /* 拖拽插入位置竖条：对齐 C# 版的「插入位置竖条指示器」 */
-.mm-tab.drop-before { box-shadow: inset 2px 0 0 var(--accent), var(--sh-in-sm); }
-.mm-tab.drop-after  { box-shadow: inset -2px 0 0 var(--accent), var(--sh-in-sm); }
+.mm-tab.drop-before { box-shadow: inset 2px 0 0 var(--accent), inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light); }
+.mm-tab.drop-after  { box-shadow: inset -2px 0 0 var(--accent), inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light); }
 
 .mm-tab .x { margin-left: 6px; opacity: .6; }
 .mm-tab .x:hover { opacity: 1; color: var(--danger, #e06c75); }
@@ -245,7 +243,7 @@ html, body {
   padding: 5px 10px;
   border-radius: var(--r-sm, 8px);
   background: var(--surface);
-  box-shadow: var(--sh-out-md);
+  box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
   overflow: hidden;
 }
 
@@ -271,48 +269,48 @@ html, body {
 .mm-chip {
   height: 26px;
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: 7px;
   background: var(--surface);
   color: var(--text-dim);
   font-size: 11.5px;
   cursor: pointer;
-  box-shadow: var(--sh-out-sm);
+  box-shadow: 2px 2px 5px var(--sh-dark), -2px -2px 5px var(--sh-light);
 }
 .mm-chip:hover { color: var(--accent); }
-.mm-chip.on { color: var(--accent); box-shadow: var(--sh-in-sm); }
+.mm-chip.on { color: var(--accent); box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light); }
 
 /* 主题卡片 */
 .mm-theme {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 9px;
-  border-radius: var(--r-sm);
+  border-radius: 9px;
   background: var(--surface);
   color: var(--text-dim);
   font-size: 12px;
   cursor: pointer;
-  box-shadow: var(--sh-out-sm);
+  box-shadow: 2px 2px 5px var(--sh-dark), -2px -2px 5px var(--sh-light);
 }
 .mm-theme:hover { color: var(--text); }
-.mm-theme.on { color: var(--accent); box-shadow: var(--sh-in-sm); }
+.mm-theme.on { color: var(--accent); box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light); }
 .mm-theme .dot { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--sh-dark); flex: 0 0 auto; }
 .mm-theme .name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 颜色网格（9 档优先级 / 进度色板简化为单色选择） */
 .mm-colors { display: grid; grid-template-columns: repeat(9, 1fr); gap: 4px; }
-.mm-colors .mm-swatch { width: 100%; height: 20px; border-radius: var(--r-xs); }
+.mm-colors .mm-swatch { width: 100%; height: 20px; border-radius: 5px; }
 
 .mm-list { display: flex; flex-direction: column; gap: 5px; max-height: 220px; overflow-y: auto; }
 .mm-item {
   display: flex; align-items: center; gap: 7px;
   padding: 6px 8px;
-  border-radius: var(--r-sm);
+  border-radius: 8px;
   background: var(--surface-sunk, var(--surface));
   font-size: 12px;
   color: var(--text-dim);
 }
 .mm-item .name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-video.mm-video { width: 100%; border-radius: var(--r-sm); background: #000; }
+video.mm-video { width: 100%; border-radius: 9px; background: #000; }
 
 /* 搜索结果提示 */
 .mm-search-info { color: var(--text-mute); font-size: 11.5px; min-width: 74px; }
@@ -322,7 +320,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm); background: #000; }
   position: fixed; inset: 0;
   background: rgba(0,0,0,.55);
   display: flex; align-items: center; justify-content: center;
-  z-index: var(--z-mask);
+  z-index: 50;
 }
 .mm-dialog {
   width: min(560px, 92vw);
@@ -330,10 +328,8 @@ video.mm-video { width: 100%; border-radius: var(--r-sm); background: #000; }
   overflow-y: auto;
   padding: 16px;
   border-radius: var(--r-lg, 18px);
-  /* 浮层用更实的底板：脑图画布本身有网格与节点，
-     半透明弹窗会把它们透上来干扰阅读 */
-  background: var(--surface-overlay, var(--surface));
-  box-shadow: var(--sh-out-lg);
+  background: var(--surface);
+  box-shadow: 8px 8px 18px var(--sh-dark), -8px -8px 18px var(--sh-light);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -341,16 +337,19 @@ video.mm-video { width: 100%; border-radius: var(--r-sm); background: #000; }
 .mm-dialog h3 { margin: 0; font-size: 14px; }
 .mm-dialog .mm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
-/* 滚动条：交给外壳的全局规则（9px + --scroll-thumb + hover 变亮）。
-   此前这里只写了宽度与 thumb 底色，漏了 track 与 hover，
-   结果这三处的滚动条比外壳的细 1px 且没有悬停反馈 —— 补一半不如不写。 */
+/* 滚动条：跟随外壳基调，避免亮色滚动条刺眼 */
+.mm-side::-webkit-scrollbar, .mm-list::-webkit-scrollbar, .mm-tabs::-webkit-scrollbar { height: 8px; width: 8px; }
+.mm-side::-webkit-scrollbar-thumb, .mm-list::-webkit-scrollbar-thumb, .mm-tabs::-webkit-scrollbar-thumb {
+  background: var(--sh-dark); border-radius: 4px;
+}
+
 /* 图片附件预览浮层 */
 .mm-preview {
   max-width: min(70vw, 720px);
   max-height: 60vh;
   display: block;
   margin: 0 auto;
-  border-radius: var(--r-xs);
+  border-radius: 6px;
   background: var(--bg);
 }
 
@@ -359,11 +358,11 @@ video.mm-video { width: 100%; border-radius: var(--r-sm); background: #000; }
   display: inline-block;
   min-width: 96px;
   padding: 3px 8px;
-  border-radius: var(--r-xs);
+  border-radius: 5px;
   border: 1px solid var(--bezel, rgba(255, 255, 255, .12));
   background: var(--inset, rgba(0, 0, 0, .22));
-  box-shadow: inset 0 1px 0 var(--sh-light);
-  font-family: var(--font-mono);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+  font-family: Consolas, 'SF Mono', Menlo, monospace;
   font-size: 11px;
   text-align: center;
   color: var(--text, #d8dee9);
@@ -371,6 +370,120 @@ video.mm-video { width: 100%; border-radius: var(--r-sm); background: #000; }
 }
 
 /* 附件元信息表（文件页）：左标签右取值，取值过长省略并带 title */
+/* ------------------------------ 附件卡片 ------------------------------ */
+
+.mm-acard {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--r-sm, 8px);
+  background: var(--surface-sunk, var(--surface));
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);
+  transition: color .12s;
+}
+.mm-acard:hover { color: var(--accent); }
+.mm-acard.empty {
+  cursor: default;
+  color: var(--text-mute);
+  font-size: 11.5px;
+  justify-content: center;
+}
+.mm-acard.empty:hover { color: var(--text-mute); }
+
+.mm-acard-icon {
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: 2px 2px 5px var(--sh-dark), -2px -2px 5px var(--sh-light);
+}
+.mm-acard-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.mm-acard-main { flex: 1 1 auto; min-width: 0; }
+.mm-acard-name {
+  font-size: 12px;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mm-acard-sub { font-size: 11px; color: var(--text-mute); margin-top: 2px; }
+
+/* ------------------------------ 视频预览 ------------------------------ */
+
+.mm-vwrap { display: flex; flex-direction: column; gap: 5px; }
+
+/* 16:9 预览区：默认显示首帧，点一下就地播放 */
+.mm-vthumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--r-sm, 8px);
+  overflow: hidden;
+  background: #000;
+  box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);
+}
+.mm-vthumb.ready { cursor: pointer; }
+.mm-vthumb-media { width: 100%; height: 100%; object-fit: contain; display: block; }
+/* 播放中让控件占满，不然 16:9 太扁、控件挤成一条 */
+.mm-vthumb.playing { aspect-ratio: auto; }
+.mm-vthumb.playing .mm-vthumb-media { height: auto; max-height: 60vh; }
+
+/* ▶ 只是视觉提示，点击由 .mm-vthumb 统一处理（避免按钮与容器双重触发） */
+.mm-vthumb-play {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  color: #fff;
+  pointer-events: none;                 /* 关键：不拦点击 */
+  background: rgba(0, 0, 0, .25);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .6);
+}
+.mm-vthumb.playing .mm-vthumb-play { display: none; }
+
+.mm-vthumb.empty,
+.mm-vthumb.broken {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-sunk, var(--surface));
+  cursor: default;
+}
+.mm-vthumb-empty { color: var(--text-mute); font-size: 11.5px; }
+
+.mm-vsum {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-mute);
+}
+.mm-vsum-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mm-vsum-dur { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.mm-vsum-size { flex: 0 0 auto; }
+
 .mm-meta {
   display: flex;
   flex-direction: column;
@@ -394,7 +507,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm); background: #000; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-mono);
+  font-family: Consolas, 'SF Mono', Menlo, monospace;
   color: var(--text, #d8dee9);
 }
 
@@ -410,7 +523,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm); background: #000; }
   padding: 10px;
   border-radius: var(--r, 14px);
   background: var(--surface);
-  box-shadow: var(--sh-out-md);
+  box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
   overflow-y: auto;
 }
 .mm-files.open { display: flex; }
@@ -426,9 +539,9 @@ video.mm-video { width: 100%; border-radius: var(--r-sm); background: #000; }
   flex-direction: column;
   gap: 2px;
   min-height: 22px;
-  border-radius: var(--r-sm);
+  border-radius: 8px;
   padding: 2px;
-  transition: box-shadow var(--dur-fast);
+  transition: box-shadow .12s;
 }
 .mm-file-group.drop-on,
 .mm-folder-head.drop-on {
@@ -441,7 +554,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm); background: #000; }
   align-items: center;
   gap: 6px;
   padding: 5px 6px;
-  border-radius: var(--r-sm);
+  border-radius: 8px;
   cursor: pointer;
   user-select: none;
   font-size: 12px;
@@ -450,7 +563,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm); background: #000; }
 .mm-file-item:hover { background: var(--surface-sunk, var(--surface)); }
 .mm-file-item.active {
   color: var(--accent);
-  box-shadow: var(--sh-in-sm);
+  box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);
 }
 .mm-file-item.dragging { opacity: .4; }
 
@@ -463,7 +576,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm); background: #000; }
   white-space: nowrap;
 }
 /* 操作按钮平时藏起来，悬停才出现，避免列表一眼全是图标 */
-.mm-file-ops { flex: 0 0 auto; display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-fast); }
+.mm-file-ops { flex: 0 0 auto; display: flex; gap: 2px; opacity: 0; transition: opacity .12s; }
 .mm-file-item:hover .mm-file-ops,
 .mm-folder-head:hover .mm-file-ops { opacity: 1; }
 .mm-btn.icon.tiny { padding: 0 4px; font-size: 11px; }
@@ -475,7 +588,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm); background: #000; }
   align-items: center;
   gap: 5px;
   padding: 5px 6px;
-  border-radius: var(--r-sm);
+  border-radius: 8px;
   cursor: pointer;
   user-select: none;
   font-size: 12px;
@@ -487,6 +600,6 @@ video.mm-video { width: 100%; border-radius: var(--r-sm); background: #000; }
   font-size: 10.5px;
   color: var(--text-mute);
   padding: 0 5px;
-  border-radius: var(--r-pill);
+  border-radius: 999px;
   background: var(--surface-sunk, var(--surface));
 }

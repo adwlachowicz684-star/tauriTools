@@ -64,6 +64,21 @@ globalThis.DOMParser = dom.window.DOMParser;
 globalThis.Event = dom.window.Event;
 
 /**
+ * jsdom 不实现 URL.createObjectURL / revokeObjectURL，而附件预览全靠它。
+ * 桩上记一份「还活着的 URL」，revoke 是否真的被调用就能直接断言 ——
+ * 这正是这次改动最容易漏的地方（refresh 反复重建 DOM，每次都新建 URL）。
+ */
+const liveBlobUrls = new Set();
+let blobSeq = 0;
+dom.window.URL.createObjectURL = () => {
+  const u = `blob:mock/${++blobSeq}`;
+  liveBlobUrls.add(u);
+  return u;
+};
+dom.window.URL.revokeObjectURL = (u) => { liveBlobUrls.delete(u); };
+globalThis.URL = dom.window.URL;
+
+/**
  * 最小 IndexedDB 桩：只实现 store.js 用到的那几个 API。
  * 刻意做成**内存 Map**，让「写哪个键」这件事在测试里一目了然 ——
  * M1 的本质就是写错了键，用真库反而看不出来。
@@ -833,6 +848,129 @@ group('行内编辑提交（点画布也要生效）');
     commitNew(km, km.nodes[0], '新文字');
     eq(km.nodes[0].text, '新文字', '点别的节点：文字仍写回原节点');
     eq(km.nodes[1].text, '别的节点', '点别的节点：不会污染被点到的那个节点');
+  }
+}
+
+/* ============================================================
+   十二、附件卡片与视频预览
+   ============================================================ */
+
+group('附件卡片 / 视频预览');
+
+{
+  const { buildSide } = await import('./panels.js');
+  const store = await import('./store.js');
+
+  // 造一份资产：Blob 走 store，getAsset 才能取到。
+  // meta 必须预置 —— 否则 fillVideoMeta 会走 mi.probeVideo，而 jsdom 的 video
+  // 永远不触发 loadedmetadata，probe 要等满 8 秒超时才回收它自己建的 URL，
+  // 会把下面「URL 不增长」的断言搅乱（那是 mediainfo 自己的超时保护，非本次改动）。
+  const blob = new dom.window.Blob(['fake-bytes'], { type: 'video/mp4' });
+  await store.set('asset:vid1', {
+    name: '演示.mp4', size: 12345, blob, type: 'video/mp4', mtime: Date.now(),
+    meta: { duration: 12.5, width: 1920, height: 1080, container: 'MP4' },
+  });
+  const imgBlob = new dom.window.Blob(['fake-img'], { type: 'image/png' });
+  await store.set('asset:img1', { name: '截图.png', size: 2048, blob: imgBlob, type: 'image/png', mtime: Date.now() });
+
+  const statuses = [];
+  function makeApp(refs) {
+    return {
+      api: {
+        status: (m, w) => statuses.push(String(m)),
+        selectedRef: (kind) => refs[kind] || null,
+        commit() {},
+      },
+      bridge: {},
+    };
+  }
+
+  /** 打开侧栏并切到文件页，等异步填充跑完 */
+  async function openFilePage(refs) {
+    const s = buildSide(makeApp(refs), {});
+    s.open('file');
+    // 缩略图 / 视频 URL 都是 async 填的，让出几拍
+    for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0));
+    return s;
+  }
+
+  // 12.1 文件卡片：图标 + 名称 + 大小
+  {
+    const s = await openFilePage({ file: { n: '报告.pdf', a: 'img1', s: 2048 } });
+    const card = s.el.querySelector('.mm-acard');
+    ok(!!card, '渲染出附件卡片');
+    eq(card.querySelector('.mm-acard-name')?.textContent, '报告.pdf', '卡片显示文件名');
+    eq(card.querySelector('.mm-acard-icon')?.textContent, '📕', '按扩展名给图标（pdf → 📕）');
+    eq(card.querySelector('.mm-acard-sub')?.textContent, '2.0 KB', '卡片显示大小');
+  }
+
+  // 12.2 图片附件显示缩略图而不是图标
+  {
+    const s = await openFilePage({ file: { n: '截图.png', a: 'img1', s: 2048 } });
+    const thumb = s.el.querySelector('.mm-acard-thumb');
+    ok(!!thumb, '图片附件显示缩略图（不再是干巴巴的图标）');
+    ok(/^blob:/.test(thumb.getAttribute('src') || ''), '缩略图用 Blob URL');
+  }
+
+  // 12.3 未附加时的空态
+  {
+    const s = await openFilePage({});
+    const card = s.el.querySelector('.mm-acard');
+    ok(card.classList.contains('empty'), '未附加文件时卡片是空态');
+    ok(/未附加/.test(card.textContent), '空态提示文案');
+  }
+
+  // 12.4 视频预览：video 元素 + 首帧 + 摘要行
+  {
+    const s = await openFilePage({ video: { n: '演示.mp4', a: 'vid1', s: 12345 } });
+    const v = s.el.querySelector('.mm-vthumb-media');
+    ok(!!v, '渲染出 video 预览元素');
+    ok(/#t=0\.1$/.test(v.getAttribute('src') || ''),
+      'src 带 #t=0.1 —— 不少浏览器不 seek 就不绘制首帧，否则预览区一片黑');
+    eq(v.getAttribute('preload'), 'metadata', 'preload=metadata：只拉头部，不把整个视频读进内存');
+    ok(s.el.querySelector('.mm-vthumb-play'), '有 ▶ 播放提示');
+    eq(s.el.querySelector('.mm-vsum-name')?.textContent, '演示.mp4', '摘要行显示文件名');
+    eq(s.el.querySelector('.mm-vsum-size')?.textContent, '12.1 KB', '摘要行显示大小');
+    // 时长要等媒体头解析完才有，由 fillVideoMeta 回填
+    ok(!!s.el.querySelector('.mm-vsum-dur')?.textContent, '摘要行回填了时长');
+  }
+
+  // 12.5 点预览区就地播放（不再弹浮层）
+  {
+    const s = await openFilePage({ video: { n: '演示.mp4', a: 'vid1', s: 12345 } });
+    const box = s.el.querySelector('.mm-vthumb');
+    const v = s.el.querySelector('.mm-vthumb-media');
+    eq(v.hasAttribute('controls'), false, '默认不带控件（只是张封面）');
+    box.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    eq(v.hasAttribute('controls'), true, '点一下就地挂上控件');
+    ok(box.classList.contains('playing'), '切到播放态（▶ 提示随之隐藏）');
+  }
+
+  // 12.6 ▶ 提示不能拦点击：拦了就和容器双重触发 / 点不动
+  {
+    const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const playCss = css.slice(css.indexOf('.mm-vthumb-play {'), css.indexOf('.mm-vthumb.playing .mm-vthumb-play'));
+    ok(/pointer-events:\s*none/.test(playCss), '▶ 覆盖层 pointer-events:none（点击交给容器，避免双重触发）');
+  }
+
+  // 12.7 Blob URL 回收：refresh 反复重建 DOM，不回收就线性增长
+  {
+    liveBlobUrls.clear();
+    const s = await openFilePage({ video: { n: '演示.mp4', a: 'vid1', s: 12345 }, file: { n: '截图.png', a: 'img1', s: 2048 } });
+    const first = liveBlobUrls.size;
+    ok(first >= 2, `打开后至少 2 个 Blob URL（视频 + 缩略图，实际 ${first}）`);
+
+    // 每次 refresh 都会新建一批，但旧的必须回收 —— 否则数量线性增长
+    for (let i = 0; i < 3; i++) {
+      s.refresh();
+      for (let k = 0; k < 8; k++) await new Promise((r) => setTimeout(r, 0));
+    }
+    eq(liveBlobUrls.size, first, `连续 3 次 refresh 后 URL 数不增长（${first} → ${liveBlobUrls.size}）`);
+
+    // 切走：文件页的 URL 全部回收
+    s.open('theme');
+    for (let k = 0; k < 8; k++) await new Promise((r) => setTimeout(r, 0));
+    eq(liveBlobUrls.size, 0, `切到别的页后文件页的 URL 全部回收（残留 ${liveBlobUrls.size}）`);
   }
 }
 

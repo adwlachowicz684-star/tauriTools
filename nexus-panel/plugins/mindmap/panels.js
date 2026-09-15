@@ -23,6 +23,28 @@ const WIDTHS = [1, 2, 3, 4, 6];
 
 /* --------------------------- 小组件 --------------------------- */
 
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico', 'avif']);
+const VIDEO_EXTS = new Set(['mp4', 'webm', 'mov', 'mkv', 'avi', 'm4v', 'ogv']);
+
+const extOf = (name) => String(name || '').split('.').pop().toLowerCase();
+const isImageName = (name) => IMAGE_EXTS.has(extOf(name));
+
+/** 按扩展名给一个象形图标。附件卡片上比干巴巴的一行文字直观得多。 */
+function fileIcon(name) {
+  const ext = extOf(name);
+  if (IMAGE_EXTS.has(ext)) return '🖼';
+  if (VIDEO_EXTS.has(ext)) return '🎬';
+  if (ext === 'pdf') return '📕';
+  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2'].includes(ext)) return '🗜';
+  if (['doc', 'docx', 'rtf', 'odt'].includes(ext)) return '📘';
+  if (['xls', 'xlsx', 'csv', 'ods'].includes(ext)) return '📗';
+  if (['ppt', 'pptx', 'odp'].includes(ext)) return '📙';
+  if (['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac'].includes(ext)) return '🎵';
+  if (['txt', 'md', 'log'].includes(ext)) return '📃';
+  if (['json', 'xml', 'yml', 'yaml'].includes(ext)) return '🧩';
+  return '📄';
+}
+
 function section(title, ...children) {
   return h('div.mm-field', {}, h('h3', {}, title), ...children);
 }
@@ -96,6 +118,24 @@ export function buildSide(app, opts = {}) {
   const pages = {};
   let current = null;
 
+  /**
+   * 本侧栏实例创建的 Blob URL 池。
+   * ============================================================
+   * io.getAsset(id, true) 每次调用都**新建一个** URL —— 这是刻意为之
+   * （调用方各自持有、各自释放，避免共享 URL 被谁提前 revoke），
+   * 代价是每次 refresh（切页、附加/移除附件后重建 DOM）都会漏一批。
+   * 视频预览 + 图片缩略图一次就要两个，漏得更快。
+   *
+   * 侧栏没有 unmount 钩子，统一在 render 重建 DOM 前回收。
+   * 挂在实例上而非模块级：模块级单例会被多个侧栏实例互相 revoke 掉还在用的 URL。
+   */
+  let mediaUrls = [];
+  const trackMediaUrl = (u) => { if (u) mediaUrls.push(u); return u; };
+  const releaseMediaUrls = () => {
+    for (const u of mediaUrls) { try { URL.revokeObjectURL(u); } catch { /* ignore */ } }
+    mediaUrls = [];
+  };
+
   const body = h('div.mm-side.open', {});   // 常驻：初始即带 open
   const el = body;
 
@@ -109,6 +149,9 @@ export function buildSide(app, opts = {}) {
   }
 
   function render() {
+    // 重建 DOM 前先回收上一批 Blob URL —— refresh 会被「附加/移除附件」
+    // 反复触发，不回收就会一直攒着（每个视频都是一份完整文件的内存映射）
+    releaseMediaUrls();
     body.innerHTML = '';
     body.appendChild(pages[current]());
   }
@@ -148,9 +191,9 @@ export function buildSide(app, opts = {}) {
 
   /** 文件信息：名称 / 大小 / 类型 / 修改时间 */
   async function fillFileMeta(ref, box) {
-    if (!ref) { fillMeta(box, null, '当前节点未附加文件'); return; }
-    fillMeta(box, [['名称', ref.n], ['大小', io.formatSize(ref.s)]], '');
-
+    // 名称与大小已经显示在卡片上，这里只补卡片放不下的两项，避免重复
+    box.innerHTML = '';
+    if (!ref) return;                             // 「未附加」由卡片自己表达
     if (!ref.a) {
       // C# 版迁移过来的纯路径引用：拿不到本体，也就没有类型与修改时间
       box.appendChild(h('div.mm-hint', {}, '旧版本地路径，沙箱内读不到文件本体'));
@@ -162,8 +205,6 @@ export function buildSide(app, opts = {}) {
       return;
     }
     fillMeta(box, [
-      ['名称', ref.n],
-      ['大小', io.formatSize(a.size ?? ref.s)],
       ['类型', mi.shortType(a.type, ref.n)],
       ['修改', mi.formatDateTime(a.mtime || a.addedAt)],
     ], '');
@@ -174,10 +215,10 @@ export function buildSide(app, opts = {}) {
    * 浏览器只给得出时长与分辨率，帧率和编解码器必须解容器，
    * 所以走 mediainfo.probeVideo；结果写回资产库，下次打开直接读。
    */
-  async function fillVideoMeta(vref, box) {
-    if (!vref) { fillMeta(box, null, '当前节点未附加视频'); return; }
-    fillMeta(box, [['名称', vref.n], ['大小', io.formatSize(vref.s)]], '');
-
+  async function fillVideoMeta(vref, box, onMeta) {
+    // 名称 / 大小 / 时长 由预览区下方的摘要行显示，这里只列技术参数
+    box.innerHTML = '';
+    if (!vref) return;                            // 「未附加」由预览区自己表达
     if (!vref.a) {
       box.appendChild(h('div.mm-hint', {}, '旧版本地路径，沙箱内读不到文件本体'));
       return;
@@ -204,9 +245,6 @@ export function buildSide(app, opts = {}) {
     const acodec = acodecParts.filter(Boolean).join(' · ') || '—';
 
     fillMeta(box, [
-      ['名称', vref.n],
-      ['大小', io.formatSize(a.size ?? vref.s)],
-      ['时长', mi.formatDuration(meta.duration)],
       ['分辨率', w && h_ ? `${w}×${h_}` : '—'],
       ['帧率', mi.formatFps(meta.frameRate)],
       ['比特率', mi.formatBitrate(meta.bitrate)],
@@ -214,16 +252,118 @@ export function buildSide(app, opts = {}) {
       ['音频编码', acodec],
       ['容器', meta.container || '—'],
     ], '');
+    // 时长不在表里了，回填给预览区下方的摘要行
+    try { onMeta?.(meta); } catch { /* 摘要行写不进去不影响别处 */ }
+  }
+
+  /**
+   * 附件卡片：图标（图片则直接显示缩略图）+ 名称 + 大小，点一下即打开。
+   * 之前的形态是「两行文字 + 三个按钮」，文件长什么样完全看不出来。
+   */
+  function buildFileCard(ref, onOpen) {
+    if (!ref) return h('div.mm-acard.empty', {}, '当前节点未附加文件');
+
+    const name = ref.n || '未命名';
+    const iconBox = h('div.mm-acard-icon', {}, fileIcon(name));
+
+    // 图片直接显示缩略图：比一个 🖼 图标有用得多
+    if (ref.a && isImageName(name)) {
+      safe('读取缩略图', async () => {
+        const asset = await io.getAsset(ref.a, true);
+        if (!asset?.url) return;
+        trackMediaUrl(asset.url);
+        iconBox.innerHTML = '';
+        iconBox.appendChild(h('img.mm-acard-thumb', { src: asset.url, alt: name }));
+      }, () => { /* 缩略图失败不影响卡片本身，留着图标即可 */ })();
+    }
+
+    return h('button.mm-acard', { title: '点击打开', onclick: onOpen },
+      iconBox,
+      h('div.mm-acard-main', {},
+        h('div.mm-acard-name', { title: name }, name),
+        h('div.mm-acard-sub', {}, io.formatSize(ref.s))),
+    );
+  }
+
+  /**
+   * 视频预览：默认显示首帧，点一下**就地**播放（不再弹浮层）。
+   * 返回 { el, setDuration } —— 时长要等媒体头解析完才知道，由 fillVideoMeta 回填。
+   */
+  function buildVideoPreview(vref) {
+    const dur = h('span.mm-vsum-dur', {}, '');
+    const box = h('div.mm-vthumb', {});
+    const wrap = h('div.mm-vwrap', {},
+      box,
+      h('div.mm-vsum', {},
+        h('span.mm-vsum-name', { title: vref?.n || '' }, vref?.n || '未附加视频'),
+        dur,
+        h('span.mm-vsum-size', {}, vref?.s ? io.formatSize(vref.s) : '')),
+    );
+    const setDuration = (d) => { dur.textContent = (d && mi.formatDuration(d)) || ''; };
+
+    if (!vref?.a) {
+      box.classList.add('empty');
+      box.appendChild(h('div.mm-vthumb-empty', {}, '未附加视频'));
+      return { el: wrap, setDuration };
+    }
+
+    let video = null;
+    const start = () => {
+      if (!video) return;
+      // 就地播：不换元素、不弹窗。controls 里自带全屏，侧栏里放不下也能看。
+      video.controls = true;
+      video.muted = false;
+      video.currentTime = 0;
+      box.classList.add('playing');
+      try {
+        const p = video.play();
+        // 自动播放可能被浏览器策略拒绝；controls 已经出来了，用户能自己点
+        if (p && p.catch) p.catch(() => {});
+      } catch {
+        // 环境根本没实现 play（jsdom 直接抛 Not implemented）。
+        // 控件已经挂上，不影响手动播放。
+      }
+    };
+
+    safe('读取视频', async () => {
+      const asset = await io.getAsset(vref.a, true);
+      if (!asset?.url) {
+        box.classList.add('empty');
+        box.appendChild(h('div.mm-vthumb-empty', {}, '视频数据已丢失'));
+        return;
+      }
+      trackMediaUrl(asset.url);
+      // preload=metadata 只拉头部：能解出首帧当封面，又不会把整个视频读进内存。
+      // #t=0.1 是必要的 —— 不少浏览器不 seek 就不绘制首帧，只显示一片黑。
+      video = h('video.mm-vthumb-media', {
+        src: asset.url + '#t=0.1',
+        preload: 'metadata',
+        muted: true,
+        playsinline: true,
+      });
+      video.addEventListener('error', () => {
+        box.classList.add('broken');
+        app.api.status('视频无法播放（格式可能不受支持）', true);
+      });
+      // ▶ 只是个视觉提示，点击交给 box，避免按钮与容器双重触发
+      box.appendChild(video);
+      box.appendChild(h('div.mm-vthumb-play', {}, '▶'));
+      box.classList.add('ready');
+    }, (m) => app.api.status(m, true))();
+
+    box.addEventListener('click', start);
+    return { el: wrap, setDuration };
   }
 
   function pageFile() {
     const ref = app.api.selectedRef('file');
     const vref = app.api.selectedRef('video');
-    const fileMeta = h('div.mm-meta', {}, h('div.mm-hint', {}, '读取中…'));
-    const videoMeta = h('div.mm-meta', {}, h('div.mm-hint', {}, '读取中…'));
+    const fileMeta = h('div.mm-meta', {});
+    const videoMeta = h('div.mm-meta', {});
+    const vprev = buildVideoPreview(vref);
     // 两个都是 async（要读资产库、解析文件头），失败要可见而非静默
     safe('读取文件信息', () => fillFileMeta(ref, fileMeta), (m) => { app.api.status(m, true); })();
-    safe('读取视频信息', () => fillVideoMeta(vref, videoMeta), (m) => { app.api.status(m, true); })();
+    safe('读取视频信息', () => fillVideoMeta(vref, videoMeta, vprev.setDuration), (m) => { app.api.status(m, true); })();
     const info = fileMeta;
     const vinfo = videoMeta;
 
@@ -254,16 +394,22 @@ export function buildSide(app, opts = {}) {
       refresh();
     };
 
-    const play = async () => {
-      const r = app.api.selectedRef('video');
-      if (!r?.a) { app.api.status('未附加视频', true); return; }
-      const asset = await io.getAsset(r.a, true);   // 播放需要 Blob URL
-      if (!asset?.url) { app.api.status('视频数据已丢失', true); return; }
-      openVideo(app, asset);
+    /** 点附件卡片：图片就地预览，其余只能下载（沙箱拿不到真实路径） */
+    const openFileCard = () => {
+      const r = app.api.selectedRef('file');
+      if (!r?.a) { app.api.status('该附件来自旧版路径，无法在沙箱内打开', true); return; }
+      safe('打开附件', async () => {
+        const asset = await io.getAsset(r.a, true);
+        if (!asset?.blob) { app.api.status('附件数据已丢失', true); return; }
+        trackMediaUrl(asset.url);
+        if (isImageName(r.n) && asset.url) openPreview(app, asset);
+        else io.downloadBlob(io.safeFileName(asset.name || r.n || '附件'), asset.blob);
+      }, (m) => app.api.status(m, true))();
     };
 
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
       section('文件附件',
+        buildFileCard(ref, openFileCard),
         info,
         h('div.mm-row', {},
           h('button.mm-btn', {
@@ -277,15 +423,17 @@ export function buildSide(app, opts = {}) {
         ),
       ),
       section('视频附件',
+        // 预览区本身就是播放入口（点一下就地播），不再需要单独的「播放」按钮
+        vprev.el,
         vinfo,
         h('div.mm-row', {},
           h('button.mm-btn', {
             onclick: safe('附加视频', () => attach('video'), (m) => app.api.status(m, true)),
           }, '附加视频…'),
           h('button.mm-btn', {
-            onclick: safe('播放视频', play, (m) => app.api.status(m, true)),
+            onclick: safe('下载视频', () => openOne('video'), (m) => app.api.status(m, true)),
             disabled: !vref?.a,
-          }, '播放'),
+          }, '下载'),
           h('button.mm-btn', { onclick: () => remove('video'), disabled: !vref }, '移除'),
         ),
       ),
