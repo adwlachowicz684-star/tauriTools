@@ -98,6 +98,18 @@ export default function App() {
   const [help, setHelp] = useState(false);
 
   /**
+   * 菜单图层的宿主节点。
+   * 必须是 state 而不是 ref：ref 在首次渲染时还是 null，
+   * 用 state 才能在挂载完成后触发一次重渲染，把节点交给 ContextMenu。
+   *
+   * 位置不能往下挪：下面有 `if (s.loading)` / `if (!boot)` 两个提前 return，
+   * hook 一旦落在它们之后，首帧（loading）就调不到、次帧调得到，
+   * React 会直接抛 "Rendered more hooks than during the previous render"
+   * —— 整个组件树崩掉、插件白屏。所有 hook 必须在这两个分支之前。
+   */
+  const [menuLayer, setMenuLayer] = useState<HTMLDivElement | null>(null);
+
+  /**
    * 键盘焦点栏：卡片快捷键（Ctrl/⌘+O、F2、Delete…）作用在哪一栏。
    * 点哪一栏的卡片就把焦点带到哪一栏，也可由 Ctrl/⌘+←/→ 直接切换。
    * 不存 store —— 只是本次会话的落点，重进默认给「项目」。
@@ -535,13 +547,6 @@ export default function App() {
       </div>
     );
   }
-
-  /**
-   * 菜单图层的宿主节点。
-   * 必须是 state 而不是 ref：ref 在首次渲染时还是 null，
-   * 用 state 才能在挂载完成后触发一次重渲染，把节点交给 ContextMenu。
-   */
-  const [menuLayer, setMenuLayer] = useState<HTMLDivElement | null>(null);
 
   return (
     <MenuLayerContext.Provider value={menuLayer}>
