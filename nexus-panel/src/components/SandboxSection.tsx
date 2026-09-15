@@ -128,6 +128,7 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
         <div className="p-muted" style={{ lineHeight: 1.9, marginBottom: 4 }}>
           分别为深色 / 浅色各挑一套。选好后，本插件只跟随整体主题的<b>深浅</b>
           在自己这两套之间切换，不再跟随你在同基调里换哪套主题。留空则跟随全局。
+          修改<b>立即生效</b>，无需重载。
         </div>
         {themeRow('深色时用', 'themeDark', 'dark')}
         {themeRow('浅色时用', 'themeLight', 'light')}

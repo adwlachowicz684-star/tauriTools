@@ -848,17 +848,38 @@ export function createHost(opts = {}) {
 
   // 主题：初始化并联动（iframe 推送新变量，无需重载；适配结果重算）
   initTheme();
-  onThemeChange(async () => {
-    const inst = state.instance;
+
+  /**
+   * 把"该插件此刻该用的主题"重新应用一遍。
+   *
+   * 两类插件走两条路，缺一不可：
+   *   · iframe —— 有独立文档，得 postMessage 推过去
+   *   · module —— 共享主文档 :root，只能重写容器上的内联变量
+   *     （它继承的是 :root，改 :root 也会带过去，但插件自选主题时
+   *      容器上的值优先级更高、不刷新就会一直沿用旧的那套）
+   * 最后重算适配：插件换了主题，它表现出的基调可能也变了，滤镜要跟着重算。
+   */
+  async function syncThemeToInstance(inst) {
     if (!inst) return;
     if (inst.iframe) {
       await pushTheme(inst.iframe, inst.manifest?.id);
     } else if (inst.root) {
-      // 同页插件：重刷容器上的内联变量（它继承的是 :root，改 :root 也会带过去，
-      // 但插件自选主题时容器上的值优先级更高、不刷新就会一直沿用旧的那套）
       applyThemeVarsTo(inst.root, varsForPlugin(inst.manifest?.id));
     }
     await reAdapt(inst);
+  }
+
+  onThemeChange(() => syncThemeToInstance(state.instance));
+
+  /* 插件主题配置一改就立即生效，不必等重载。
+     --------------------------------------------------------------------
+     只处理主题字段：isolated 改的是 iframe 的 sandbox 属性、
+     adaptTheme 影响滤镜是否安装，两者都仍需要重载才能完全生效，
+     它们各自的提示保持不变。 */
+  pluginConfig.onPluginConfigChange?.((id, cfg) => {
+    const inst = state.instance;
+    if (!inst || inst.manifest?.id !== id) return;
+    syncThemeToInstance(inst);
   });
 
   /**

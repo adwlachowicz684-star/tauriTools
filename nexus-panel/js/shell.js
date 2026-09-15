@@ -313,7 +313,9 @@ function renderShellSection(box, manifest) {
     );
     sel.onchange = () => {
       setPluginConfig(manifest.id, { [key]: sel.value || null });
-      toast('已保存，重载插件后生效', 'ok');
+      // 主题是即时生效的（host 订阅了配置变更并会重推变量），不需要重载。
+      // 与上面「沙箱与主题」两个开关不同 —— 那两个确实要重载。
+      toast('已保存', 'ok');
     };
     return h('div.p-row', {
       style: {

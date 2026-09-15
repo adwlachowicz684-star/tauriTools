@@ -120,6 +120,28 @@ t('插件变量非空且有底色', !!mine['--bg']);
 t('插件变量带上了用户强调色（不因自选主题而丢）',
   tm.getAccent() ? mine['--accent'] === tm.getAccent() : true);
 
+/* ---------- 8. 改配置即生效（不必重载） ---------- */
+console.log('\n=== 8. 即时生效 ===');
+const hostSrc2 = src('js/host.js');
+t('host 订阅了插件配置变更', /pluginConfig\.onPluginConfigChange\?\.\(/.test(hostSrc2));
+t('订阅里只对**当前活跃插件**生效', /inst\.manifest\?\.id !== id\) return;/.test(hostSrc2));
+t('同步逻辑抽成了函数（主题变化与配置变化共用）',
+  /async function syncThemeToInstance\(inst\)/.test(hostSrc2));
+t('onThemeChange 也走同一个函数',
+  /onThemeChange\(\(\) => syncThemeToInstance\(state\.instance\)\)/.test(hostSrc2));
+t('推送两条路都覆盖（iframe 推消息 / module 重写内联变量）',
+  /await pushTheme\(inst\.iframe, inst\.manifest\?\.id\)/.test(hostSrc2)
+  && /applyThemeVarsTo\(inst\.root, varsForPlugin\(inst\.manifest\?\.id\)\)/.test(hostSrc2));
+
+/* 文案：主题改动不应再提示"重载" */
+const shellSrc = src('js/shell.js');
+const sb = shellSrc.slice(shellSrc.indexOf('插件自选主题'));
+t('主题下拉的提示不再要求重载',
+  /setPluginConfig\(manifest\.id, \{ \[key\]: sel\.value \|\| null \}\);[\s\S]{0,220}?toast\('已保存', 'ok'\)/.test(sb));
+t('沙箱开关仍保留重载提示（isolated 确实要重载）',
+  /toast\('已保存，重载插件后生效', 'ok'\)/.test(shellSrc));
+t('React 版说明标注立即生效', /立即生效/.test(src('src/components/SandboxSection.tsx')));
+
 /* ---------- 8. 源码级：调用点确实接上了 ---------- */
 console.log('\n=== 8. 调用点接线 ===');
 const hostSrc = src('js/host.js');
