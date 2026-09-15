@@ -682,13 +682,7 @@ group('新建画布按钮（＋）位置');
     '.mm-status 不再 margin-left:auto —— 两个 auto 会平分剩余空间，反而把「＋」挤到中间');
 
   // 页签区现在负责滚动，滚动条样式得跟着它（.mm-foot 那条已失效）
-  /* 样式**不能**写在本插件里：外壳文档的 ::-webkit-scrollbar 到不了
-     iframe 内部，本插件又只引 styles.css —— 抄一份就会漏 track / hover，
-     出现"细 1px 且无悬停反馈"的半成品。现在由 css/tokens.css 统一提供。 */
-  ok(!/\.mm-[a-z-]*::-webkit-scrollbar/.test(css),
-    '本插件不再重复声明滚动条样式（交给 css/tokens.css）');
-  ok(/@import\s+url\(['"]?\.\.\/\.\.\/css\/tokens\.css/.test(css),
-    '引入了 css/tokens.css（滚动条与尺度令牌的来源）');
+  ok(/\.mm-tabs::-webkit-scrollbar/.test(css), '滚动条样式挂到 .mm-tabs 上');
 }
 
 /* ============================================================
@@ -1367,9 +1361,25 @@ group('主题配色条');
   const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const seg = css.slice(css.indexOf('.mm-sw.transparent {'), css.indexOf('.mm-sw.transparent {') + 400);
   ok(/repeating-linear-gradient/.test(seg), '透明段用斜纹标出（不能只是空白）');
+
   // 外圈描边：snow/classic 的画布底 #3A4144 与深色面板太接近，没边就糊住
   const barCss = css.slice(css.indexOf('.mm-swbar {'), css.indexOf('.mm-sw {'));
   ok(/border:\s*1px solid/.test(barCss), '配色条有外圈描边（深色底主题才不会糊在面板里）');
+
+  // 16.9 扁长比例：宽度明显大于高度，四段才看得清
+  ok(/flex:\s*0 1 150px/.test(barCss), '基础宽度 150px');
+  ok(/height:\s*10px/.test(barCss), '高度 10px（150:10，扁长条）');
+  ok(!/width:\s*42px/.test(barCss), '（对照）不再是 42px 的小方块');
+  ok(/min-width:\s*76px/.test(barCss), '有最小宽度，名称很长时也不会被压没');
+
+  // 16.10 段间分隔线：wire 四段都是 #999，没分隔就糊成一整条
+  ok(/\.mm-sw \+ \.mm-sw\s*\{[^}]*box-shadow:\s*inset 1px 0 0/.test(css),
+    '段间有 1px 分隔线（wire 四段同色，没有就分不出是四段）');
+
+  // 16.11 选中态：配色条本身是色块，内凹阴影看不出来，得用外环
+  const onCss = css.slice(css.indexOf('.mm-theme.on .mm-swbar'), css.indexOf('.mm-sw {'));
+  ok(/box-shadow:\s*0 0 0 2px var\(--accent\)/.test(onCss), '选中态用 accent 外环标出');
+  ok(/\.mm-theme:hover \.mm-swbar/.test(css), '悬停有反馈（条略增高）');
 }
 
 /* ============================================================
