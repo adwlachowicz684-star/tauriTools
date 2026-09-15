@@ -301,11 +301,27 @@ export function buildSide(app, opts = {}) {
     );
     const setDuration = (d) => { dur.textContent = (d && mi.formatDuration(d)) || ''; };
 
-    if (!vref?.a) {
+    /**
+     * 三态必须分开说清楚 —— 混在一起就是「视频凭空消失」。
+     *
+     * 之前只有「有 a」和「没有 a」两态，没有 a 时统一显示「未附加视频」。
+     * 但 vref 存在而 vref.a 为空是**另一种情况**：C# 版迁移过来的纯路径引用，
+     * 或者 .xmind 里没打包本体 —— 节点上明明挂着视频（画布图标还在画着），
+     * 侧栏却说「未附加」，看起来就像视频被一起删掉了。
+     */
+    if (!vref) {
       box.classList.add('empty');
       box.appendChild(h('div.mm-vthumb-empty', {}, '未附加视频'));
       return { el: wrap, setDuration };
     }
+    if (!vref.a) {
+      box.classList.add('empty');
+      box.appendChild(h('div.mm-vthumb-empty', {}, '旧版本地路径，沙箱内读不到本体'));
+      return { el: wrap, setDuration };
+    }
+    // 加载中先给个说法：整块纯黑会被当成「没了」
+    box.classList.add('loading');
+    box.appendChild(h('div.mm-vthumb-empty', {}, '读取中…'));
 
     let video = null;
     const start = () => {
@@ -328,7 +344,10 @@ export function buildSide(app, opts = {}) {
     safe('读取视频', async () => {
       const asset = await io.getAsset(vref.a, true);
       if (!asset?.url) {
-        box.classList.add('empty');
+        // 清掉「读取中…」再写结论，否则两段文字叠在一起
+        box.classList.remove('loading');
+        box.classList.add('broken');
+        box.innerHTML = '';
         box.appendChild(h('div.mm-vthumb-empty', {}, '视频数据已丢失'));
         return;
       }
@@ -345,9 +364,17 @@ export function buildSide(app, opts = {}) {
         box.classList.add('broken');
         app.api.status('视频无法播放（格式可能不受支持）', true);
       });
+      // 首帧就绪再撤掉「读取中…」：提前清会让黑块闪一下，看着像加载失败
+      video.addEventListener('loadeddata', () => {
+        box.classList.remove('loading');
+        const t = box.querySelector('.mm-vthumb-empty');
+        if (t) t.remove();
+      });
       // ▶ 只是个视觉提示，点击交给 box，避免按钮与容器双重触发
+      box.innerHTML = '';
       box.appendChild(video);
       box.appendChild(h('div.mm-vthumb-play', {}, '▶'));
+      box.classList.remove('loading');
       box.classList.add('ready');
     }, (m) => app.api.status(m, true))();
 
@@ -389,9 +416,16 @@ export function buildSide(app, opts = {}) {
     };
 
     const remove = (kind) => {
+      // 「移除文件不该动视频」这条边界必须守住，而且**失守时要让人看见**。
+      // 静默丢掉的话，用户只看到「侧栏空了」，无从判断是显示问题还是真丢了数据。
+      const other = kind === 'video' ? 'file' : 'video';
+      const hadOther = !!app.api.selectedRef(other);
       app.bridge[kind === 'video' ? 'setVideo' : 'setFile'](null);
       app.api.commit();
       refresh();
+      if (hadOther && !app.api.selectedRef(other)) {
+        app.api.status(`移除${kind === 'video' ? '视频' : '文件'}时，${kind === 'video' ? '文件' : '视频'}引用也一并丢失了（编辑器的 file/video 是各自独立的 data 字段，不应互相影响）`, true);
+      }
     };
 
     /** 点附件卡片：图片就地预览，其余只能下载（沙箱拿不到真实路径） */

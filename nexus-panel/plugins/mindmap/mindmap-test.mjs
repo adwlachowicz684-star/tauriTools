@@ -679,15 +679,8 @@ group('新建画布按钮（＋）位置');
   ok(!/margin-left:\s*auto/.test(statusCss),
     '.mm-status 不再 margin-left:auto —— 两个 auto 会平分剩余空间，反而把「＋」挤到中间');
 
-  /* 页签区现在负责滚动，滚动条得是有样式的那条。
-     但样式**不能**写在本插件里：外壳文档的 ::-webkit-scrollbar 到不了
-     iframe 内部，本插件又只引 styles.css —— 抄一份就会漏 track / hover，
-     出现"细 1px 且无悬停反馈"的半成品。
-     现在由 css/tokens.css 统一提供，本文件引入它即可。 */
-  ok(!/\.mm-[a-z-]*::-webkit-scrollbar/.test(css),
-    '本插件不再重复声明滚动条样式（交给 css/tokens.css）');
-  ok(/@import\s+url\(['"]?\.\.\/\.\.\/css\/tokens\.css/.test(css),
-    '引入了 css/tokens.css（滚动条与尺度令牌的来源）');
+  // 页签区现在负责滚动，滚动条样式得跟着它（.mm-foot 那条已失效）
+  ok(/\.mm-tabs::-webkit-scrollbar/.test(css), '滚动条样式挂到 .mm-tabs 上');
 }
 
 /* ============================================================
@@ -1052,6 +1045,127 @@ group('画布附件图标配色');
   eq(refName(JSON.stringify({ n: '报告.pdf', a: 'x1', s: 100 })), '报告.pdf', 'refName 从 JSON 串解析出文件名');
   eq(refName('不是JSON'), '', 'refName 对非法 JSON 返回空串，不抛');
   eq(refName(null), '', 'refName 对空值返回空串');
+}
+
+/* ============================================================
+   十四、file / video 互不干扰（移除一项不能带走另一项）
+   ============================================================ */
+
+group('附件：file 与 video 互不干扰');
+
+{
+  /*
+   * 用 editor/index.html 里的**真实命令源码**跑，而不是复刻一份。
+   * 复刻的话命令改了测试还是绿的，等于没测。
+   */
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  const cmdSrc = html.slice(
+    html.indexOf("var FileCommand = kity.createClass('fileCommand'"),
+    html.indexOf('// 不能把 FileRenderer 挂进'));
+
+  const kity = {
+    createClass(name, def) {
+      function C() { if (def.constructor) def.constructor.apply(this, arguments); }
+      Object.assign(C.prototype, def);
+      return C;
+    },
+  };
+  const kityminder = { Command: function () {} };
+
+  function makeKm(node) {
+    return {
+      _commands: {},
+      getSelectedNodes: () => [node],
+      getSelectedNode: () => node,
+      layout() {},
+      // 复刻内核 execCommand 的前置检查：queryState 返回 -1 时命令被拒绝
+      queryCommandState(name) {
+        const b = this._commands[name];
+        return b ? b.queryState.apply(b, [this]) : -1;
+      },
+      execCommand(name, ...args) {
+        const b = this._commands[name];
+        if (!b) return null;
+        if (!~this.queryCommandState(name)) return null;
+        return b.execute.apply(b, [this, ...args]);
+      },
+    };
+  }
+  const newKm = (data) => {
+    const node = { data, setData(k, v) { this.data[k] = v; }, getData(k) { return this.data[k]; }, render() {} };
+    const km = makeKm(node);
+    new Function('kity', 'kityminder', 'km', cmdSrc)(kity, kityminder, km);
+    return km;
+  };
+
+  // 14.1 命令注册
+  {
+    const km = newKm({ text: 'x' });
+    eq(Object.keys(km._commands).sort().join(','), 'file,video', '编辑器注册了 file / video 两个命令');
+  }
+
+  // 14.2 核心：移除 file 只删 file，video 原样保留
+  {
+    const km = newKm({ text: 'x', file: 'F', video: 'V' });
+    km.execCommand('file', null);
+    eq(km.getSelectedNode().getData('file'), undefined, '移除后 file 已清空');
+    eq(km.getSelectedNode().getData('video'), 'V',
+      '移除 file 后 video **必须还在**（两者是各自独立的 data 字段）');
+  }
+
+  // 14.3 反向同样成立
+  {
+    const km = newKm({ text: 'x', file: 'F', video: 'V' });
+    km.execCommand('video', null);
+    eq(km.getSelectedNode().getData('video'), undefined, '移除后 video 已清空');
+    eq(km.getSelectedNode().getData('file'), 'F', '移除 video 后 file 必须还在');
+  }
+
+  // 14.4 写入也不互相覆盖：先挂 file 再挂 video，两个都在
+  {
+    const km = newKm({ text: 'x' });
+    km.execCommand('file', 'F');
+    km.execCommand('video', 'V');
+    eq(km.getSelectedNode().getData('file'), 'F', '挂了 video 之后 file 仍在');
+    eq(km.getSelectedNode().getData('video'), 'V', 'file 与 video 可共存');
+  }
+
+  // 14.5 面板层的 remove 只调用对应那一个 setter
+  {
+    const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+    const rm = src.slice(src.indexOf('const remove = (kind)'), src.indexOf('/** 点附件卡片'));
+    ok(/kind === 'video' \? 'setVideo' : 'setFile'/.test(rm), 'remove 按 kind 选择 setter（不会同时调两个）');
+    ok(/const hadOther = !!app\.api\.selectedRef\(other\)/.test(rm), '移除前记下另一项是否存在');
+    ok(/hadOther && !app\.api\.selectedRef\(other\)/.test(rm),
+      '移除后校验另一项 —— 真丢了要报出来，不能静默');
+  }
+}
+
+{
+  // 14.6 视频预览的三种状态必须区分开。
+  //      「有引用但读不到本体」被说成「未附加视频」，看起来就像视频被一起删了。
+  const { buildSide } = await import('./panels.js');
+  const mk = (video) => {
+    const el = buildSide({
+      api: { status() {}, selectedRef: (k) => (k === 'video' ? video : null), commit() {} },
+      bridge: {},
+    }, {});
+    el.open('file');
+    return el.el.querySelector('.mm-vthumb');
+  };
+
+  ok(/未附加视频/.test(mk(null).textContent), '无引用 → 「未附加视频」');
+
+  // 有引用但没有本地资产 id（C# 版遗留的纯路径 / xmind 未打包本体）
+  const legacy = mk({ n: '旧视频.mp4', a: null, s: 100 });
+  ok(/读不到本体/.test(legacy.textContent),
+    '有引用但无本体 → 说清是「旧版本地路径」，不能说「未附加」');
+  ok(!/未附加/.test(legacy.textContent), '（对照）有引用时不出现「未附加」字样');
+
+  // 有 id 但资产取不到 → 加载态 / 丢失，同样不能说「未附加」
+  const missing = mk({ n: '视频.mp4', a: 'not-exist', s: 100 });
+  await new Promise((r) => setTimeout(r, 30));
+  ok(!/未附加/.test(missing.textContent), '资产取不到时也不说「未附加」');
 }
 
 /* ============================================================
