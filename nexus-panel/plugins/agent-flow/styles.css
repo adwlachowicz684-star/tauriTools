@@ -85,6 +85,15 @@
   --af-z-mask:  60;
   --af-z-modal: 100;
 
+
+  /*
+   * 左侧栏宽度，节点库与任务 / 历史列表共用。
+   *
+   * 两者是"同一个位置上的两种内容"（切视图时互换），宽度必须一致 ——
+   * 否则切换时右侧内容会横向跳动一下，很显眼。
+   * 抽成变量就是为了让它们不可能各自漂移。
+   */
+  --af-side-w: 280px;
   font-family: -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
 }
 
@@ -378,7 +387,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 
 /* ---------------- 左侧节点边栏 ---------------- */
 .sidebar {
-  width: 208px; flex: none; background: var(--af-bg);
+  width: var(--af-side-w); flex: none; background: var(--af-bg);
   border-right: 1px solid var(--af-divider);
   display: flex; flex-direction: column; overflow-y: auto; padding: 12px 10px;
 }
@@ -439,6 +448,21 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   flex: none; font-size: 12px; padding: 5px 10px;
   background: var(--af-item); border: 1px solid var(--af-line);
   border-radius: var(--af-r-sm); color: var(--af-fg); cursor: pointer;
+
+  /*
+   * 粘在滚动容器右边缘：只有标签溢出时才生效。
+   * 没溢出时 sticky 不起作用，它就待在普通流里 —— 即紧跟最后一个标签。
+   */
+  position: sticky; right: 0; z-index: 1;
+
+  /*
+   * 向左补一段同色实心块，正好等于容器 gap（5px）。
+   *
+   * 没有它，滚动时标签会从这个缝隙里穿出来，看着像按钮"浮"在标签上。
+   * 用 box-shadow 而不是 margin/padding：它不占布局，按钮位置与尺寸不变。
+   * 不滚动时这段颜色与缝隙原本露出的容器背景同色，所以看不出差别。
+   */
+  box-shadow: -5px 0 0 var(--af-bg);
 }
 .tab-add:hover { border-color: var(--accent, var(--af-accent)); }
 
@@ -1105,3 +1129,219 @@ input.mono, textarea.mono {
   border-bottom: 1px solid var(--af-divider); }
 .hist-warn-inline { font-size: 11px; color: var(--af-warn); margin-left: 4px; cursor: help; }
 .mini.danger { color: var(--af-bad); }
+
+/* 后端通道不可用时的横幅（审查项 A-01）。
+   隔离态下 invoke 全部失效，此前没有任何可见提示 —— 这里补上。 */
+.chan-banner { display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px; font-size: 12px; line-height: 1.6;
+  color: var(--af-warn); background: var(--af-item);
+  border-bottom: 1px solid var(--af-line); box-sizing: border-box; }
+.chan-banner span { flex: 1; min-width: 0; }
+
+/* ------------------------------------------------------------------ */
+/* 任务 / 历史视图：列表顶替节点库那条栏                                */
+/*                                                                     */
+/* 切过去时画布是隐藏的，节点库拖不出东西 —— 所以它被隐藏，              */
+/* 任务 / 历史的列表顶上它的位置与宽度，视觉上就是同一条栏换了内容。     */
+/* ------------------------------------------------------------------ */
+
+/* 宽度、背景、边框与 .sidebar 对齐 —— 同一个变量，不可能各自漂移 */
+.task-list {
+  width: var(--af-side-w);
+  background: var(--af-bg);
+  overflow: hidden;
+}
+
+/* 列表头对齐 .side-head 的观感：更矮、更轻 */
+.task-list-head {
+  padding: 11px 12px 8px;
+  background: var(--af-bg);
+  font-size: 13px;
+}
+.task-list-head strong { font-weight: 600; color: var(--af-fg); }
+
+/* 允许换行：任务行三列元信息在 280px 下放得开，
+   但历史行还有两个操作按钮，挤的时候换行总比重叠好 */
+.task-item-meta { flex-wrap: wrap; gap: 4px 8px; }
+
+/* 历史行要塞下「删除 / 清空流程」两个按钮，比任务行更挤，
+   所以按钮仍收小一档 —— 280px 下不必缩到 208px 时那么小 */
+.hist-row .mini { padding: 2px 6px; font-size: 11px; }
+.hist-row .task-item-meta { gap: 3px 7px; }
+
+/* 筛选区同样按侧栏内边距对齐 */
+.hist-filter { padding: 9px 12px; }
+
+/* ------------------------------------------------------------------ */
+/* 属性面板：查看态只读                                                 */
+/* ------------------------------------------------------------------ */
+
+.insp-slot {
+  display: flex; flex-direction: column; flex: none; min-height: 0;
+}
+
+/* fieldset 默认带边框与内边距，重置掉让它"看起来不存在" */
+.insp-lock {
+  display: flex; flex-direction: column; flex: 1; min-height: 0;
+  border: 0; margin: 0; padding: 0; min-inline-size: 0;
+}
+.insp-slot .inspector { flex: 1; min-height: 0; }
+
+.insp-ro-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; flex: none;
+  font-size: 11px; line-height: 1.5;
+  color: var(--af-text-mute); background: var(--af-item);
+  border-left: 1px solid var(--af-line); border-bottom: 1px solid var(--af-line);
+}
+.insp-ro-tag {
+  flex: none; font-size: 10px; padding: 1px 6px; border-radius: 999px;
+  border: 1px solid var(--af-line); color: var(--af-warn);
+}
+.insp-ro-hint { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 兜底：万一某个自定义控件不吃 fieldset 的 disabled，至少点不动 */
+.insp-lock[disabled] .inspector input,
+.insp-lock[disabled] .inspector select,
+.insp-lock[disabled] .inspector textarea,
+.insp-lock[disabled] .inspector button { pointer-events: none; }
+
+/* --- 侧栏宽度下的收尾（280px） --- */
+
+/* 属性面板整体宽度固定，否则只读提示条会把这条栏撑宽 */
+.insp-slot { width: 340px; }
+
+/* 分组头在窄栏里一行放不下：允许换行，别让"运行/失败"标签被挤出视野 */
+.task-group-head { flex-wrap: wrap; gap: 3px 7px; padding: 6px 12px; }
+.task-group-name { max-width: 100%; }
+.task-group-count { margin-left: auto; }
+/* 换行后"平均耗时"不再靠 margin-left:auto 顶到行尾，恢复常规间距 */
+.task-group-dur { margin-left: 0; }
+
+/* 任务行 / 历史行的内边距：280px 下不必再按 208px 那么紧 */
+.task-row { padding: 8px 12px; }
+.hist-row { padding: 7px 12px; }
+
+/* ------------------------------------------------------------------ */
+/* 画布控件：左下缩放条（Controls）与右下小地图（MiniMap）              */
+/*                                                                     */
+/* 两者的配色原本是 xyflow 官方写死的深色（按钮 #2b2b2b、图标 #f8f8f8、  */
+/* 小地图 #141414），既不跟随本插件主题，深色下对比也过强、很扎眼。      */
+/*                                                                     */
+/* 官方取色是三层链：                                                   */
+/*   var(--xy-x-props, var(--xy-x, var(--xy-x-default)))                */
+/* 这里覆盖**中间层**：组件没传 props，中间层生效；而且变量取值与样式表   */
+/* 引入顺序无关 —— 官方 style.css 是在本文件之后注入的，同名规则会反压   */
+/* 我们，但 var() 求的是元素计算值，不受谁先谁后影响。                   */
+/* ------------------------------------------------------------------ */
+
+:root {
+  /* 缩放条：整体用项目自己的控件底色，图标改用 --af-soft（原为 #f8f8f8）*/
+  --xy-controls-box-shadow: none;
+  --xy-controls-button-background-color: var(--af-raised);
+  --xy-controls-button-border-color: var(--af-line);
+  --xy-controls-button-color: var(--af-soft);
+  /* hover 用 --af-item：比 raised 暗一档，读作"按下去"；
+     全部走已有变量，所以深浅主题都跟随，且不引入新的对比度风险 */
+  --xy-controls-button-background-color-hover: var(--af-item);
+  --xy-controls-button-color-hover: var(--af-fg);
+
+  /* 小地图：底比画布亮一档，才能和画布分开；非视口区用半透明黑压暗 */
+  --xy-minimap-background-color: var(--af-panel);
+  --xy-minimap-mask-background-color: rgba(0, 0, 0, .45);
+  /* 视口框描边用 --af-dim（原为 transparent）：看得见但不抢眼 */
+  --xy-minimap-mask-stroke-color: var(--af-dim);
+  --xy-minimap-node-background-color: var(--af-raised);
+  --xy-minimap-node-stroke-color: var(--af-line);
+}
+
+/*
+ * 下面两条是**规则**覆盖（圆角 / 边框没有对应的官方变量）。
+ * 官方 style.css 在 styles.css 之后注入，同级选择器会被它反压，
+ * 所以多带一层 .canvas 提高优先级。
+ */
+.canvas .react-flow__controls {
+  border: 1px solid var(--af-line);
+  border-radius: 6px; overflow: hidden;
+}
+.canvas .react-flow__minimap {
+  border: 1px solid var(--af-line);
+  border-radius: 6px; overflow: hidden;
+}
+
+/* ------------------------------------------------------------------ */
+/* 画布网格点（Background）                                             */
+/*                                                                     */
+/* 难点：网格点必须**相对背景**有稳定对比，而不是某个固定色。            */
+/*   深色主题：背景暗 → 点要比背景亮                                    */
+/*   浅色主题：背景亮 → 点要比背景暗                                    */
+/* 方向是相反的，所以 rgba(255,255,255,.x) 或 rgba(0,0,0,.x) 都只能顾一头 */
+/* —— 白点在浅色背景上隐形，黑点在深色背景上隐形。                       */
+/*                                                                     */
+/* 解法：以 --af-fg（前景文字色）为基色再调低不透明度。                  */
+/* fg 与 bg 天然反向（深主题 fg 浅、浅主题 fg 深），于是：               */
+/*   深色 → 半透明浅点叠在暗背景上 = 提亮 ✓                              */
+/*   浅色 → 半透明深点叠在亮背景上 = 加深 ✓                              */
+/* 对比方向永远正确，且自动跟随任意主题，无需为深浅各写一套。            */
+/* ------------------------------------------------------------------ */
+
+:root {
+  /* 回退：不支持 color-mix 时用边框色（固定，但至少跟随主题） */
+  --af-grid-dot: var(--af-line);
+  --af-grid-line: var(--af-line);
+
+  /*
+   * 三种 pattern（dots / lines / cross）都读同一个官方变量
+   * --xy-background-pattern-color，所以先给 dots 的值；
+   * lines / cross 面积大、视觉权重高，下面单独降一档。
+   */
+  --xy-background-pattern-color: var(--af-grid-dot);
+}
+
+@supports (color: color-mix(in srgb, red 50%, transparent)) {
+  :root {
+    /*
+     * 16% / 9% 的来历：
+     *   官方 dots 是 #555，配 #141414 背景，明度差约 25% —— 偏重，
+     *   所以取到 16%（深色下约 #313131），仍看得清但不抢戏。
+     *   lines / cross 官方用 #333，约为 dots 的 0.6 倍，对应 9%：
+     *   线铺满整屏、面积远大于点，同色会明显重得多。
+     */
+    --af-grid-dot: color-mix(in srgb, var(--af-fg) 16%, transparent);
+    --af-grid-line: color-mix(in srgb, var(--af-fg) 9%, transparent);
+  }
+}
+
+/* 同上：规则覆盖要提权，否则被后注入的官方样式反压 */
+.canvas .react-flow__background-pattern.lines { stroke: var(--af-grid-line); }
+.canvas .react-flow__background-pattern.cross { stroke: var(--af-grid-line); }
+
+/* ------------------------------------------------------------------ */
+/* 对话触发：来源探测                                                   */
+/* ------------------------------------------------------------------ */
+
+.chat-probe-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.chat-probe-head .dim { flex: 1; min-width: 0; }
+.chat-probe-err { margin-top: 6px; font-size: 11px; color: var(--af-bad); line-height: 1.6; }
+
+.chat-probe-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.chat-probe-row {
+  padding: 7px 9px; border-radius: 6px; font-size: 11.5px; line-height: 1.6;
+  background: var(--af-item); border: 1px solid var(--af-line);
+}
+/* 可用 / 不可用靠左侧色条区分，不靠整块变色 —— 大面积红绿会很吵 */
+.chat-probe-row.ok { border-left: 3px solid var(--af-ok); }
+.chat-probe-row.no { border-left: 3px solid var(--af-warn); }
+
+.chat-probe-top { display: flex; align-items: center; gap: 7px; }
+.chat-probe-name { font-weight: 600; color: var(--af-fg); flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-probe-tag { flex: none; font-size: 10px; padding: 0 6px; border-radius: 999px;
+  border: 1px solid var(--af-line); color: var(--af-dim); }
+.chat-probe-row.ok .chat-probe-tag { color: var(--af-ok); }
+.chat-probe-row.no .chat-probe-tag { color: var(--af-warn); }
+.chat-probe-note { color: var(--af-soft); margin-top: 3px; }
+.chat-probe-path {
+  color: var(--af-dim); margin-top: 2px; font-size: 10.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}

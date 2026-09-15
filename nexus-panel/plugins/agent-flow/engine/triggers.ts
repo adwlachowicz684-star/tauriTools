@@ -1,7 +1,7 @@
 import type { Trigger } from '../types';
 import { nextRun } from './cron';
 
-export type FireReason = 'manual' | 'interval' | 'cron' | 'watch' | 'webhook';
+export type FireReason = 'manual' | 'interval' | 'cron' | 'watch' | 'webhook' | 'chat';
 
 export type SchedulerDeps = {
   /** 每次 tick 拉取最新触发器，避免闭包持有过期数据 */
@@ -119,6 +119,25 @@ export class TriggerScheduler {
   }
 
   /**
+   * 对话关键词命中入口。
+   *
+   * 与 webhook 共用防重入：对话里关键词可能密集出现（AI 一次回复
+   * 反复提到同一个词），绝不能让 CLI 进程堆起来。
+   */
+  async notifyChat(id: string, payload: string): Promise<boolean> {
+    const t = this.deps.getTriggers().find((x) => x.id === id);
+    if (!t) {
+      this.log(`对话命中，但未找到触发器 ${id}`);
+      return false;
+    }
+    if (!t.enabled) {
+      this.log(`对话触发器「${t.name}」已停用，忽略本次命中`);
+      return false;
+    }
+    return this.fire(t, 'chat', payload);
+  }
+
+  /**
    * 外部 HTTP 调用入口。
    * 与其他触发一样受防重入约束：上一轮没跑完会直接跳过，
    * 所以疯狂 curl 也不会把 CLI 进程堆起来。
@@ -191,15 +210,19 @@ export class TriggerScheduler {
       this.cronMemo.set(t.id, { expr: t.config.cronExpr, at: at ? at.getTime() : null });
     }
 
-    const label = { manual: '手动', interval: '周期', cron: '定时', watch: '监听', webhook: '调用' }[reason];
-    this.log(`${label}触发「${t.name}」开始执行`);
+    const label: Record<FireReason, string> = {
+      manual: '手动', interval: '周期', cron: '定时',
+      watch: '监听', webhook: '调用', chat: '对话',
+    };
+    const labelText = label[reason];
+    this.log(`${labelText}触发「${t.name}」开始执行`);
 
     try {
       const ok = await this.deps.onFire(t, reason, payload);
-      this.log(`${label}触发「${t.name}」${ok ? '执行成功' : '执行失败'}`);
+      this.log(`${labelText}触发「${t.name}」${ok ? '执行成功' : '执行失败'}`);
       return ok;
     } catch (err) {
-      this.log(`${label}触发「${t.name}」异常：${String(err)}`);
+      this.log(`${labelText}触发「${t.name}」异常：${String(err)}`);
       return false;
     } finally {
       this.running = false;

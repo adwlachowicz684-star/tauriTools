@@ -7,6 +7,7 @@ import {
   isGithubUpdate, isGithubPush,
   DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt,
 } from '../types';
+import { resolveSecret, type Credential } from './credentials';
 import { topoLayers } from './topo';
 import { renderTemplate } from './template';
 import {
@@ -32,6 +33,14 @@ export type RunEvent =
   | { type: 'node-start'; id: string; rendered: string }
   | { type: 'node-chunk'; id: string; chunk: string }
   | { type: 'node-done'; id: string; ok: boolean; output: string; error?: string }
+  /**
+   * 节点出错但还没到"完成"那一步 —— 缺执行器、参数不合法等前置失败。
+   *
+   * 与 `node-done{ok:false}` 的区别：done 表示节点真的跑过了，
+   * error 表示**根本没跑起来**。分开是必要的 ——
+   * 前者输出可能有效，后者输出一定是空的，界面上不该同等对待。
+   */
+  | { type: 'node-error'; id: string; error: string }
   /** 任务节点的参数字段已产出：{{id.file}} {{id.参数名}} 等可引用了 */
   | { type: 'node-fields'; id: string; files: string[]; fields: Record<string, string> }
   | { type: 'node-status'; id: string; status: NodeStatus }
@@ -113,6 +122,7 @@ export type GithubUpdateRunner = (req: {
   base?: string;
   order?: string[];
   token: string;
+  credentialId?: string;
 }) => Promise<{ ok: boolean; info?: GithubUpdateInfo; error?: string; via?: string }>;
 
 export type GithubPushRunner = (req: {
@@ -124,6 +134,7 @@ export type GithubPushRunner = (req: {
   workdir?: string;
   order?: string[];
   token: string;
+  credentialId?: string;
 }) => Promise<{ ok: boolean; commit?: string; via?: string; error?: string }>;
 
 /** 拉取结果的展示字段，runner 只关心这几个 */
@@ -148,6 +159,11 @@ export type RunOptions = {
   llmCaller?: LlmCaller;
   /** 本地图片读取器；不提供时 OCR 的本地文件模式会失败并提示 */
   imageReader?: ImageReader;
+  /**
+   * 凭据库。节点只存 credentialId，真正取密钥在这里做 ——
+   * 密钥不进图数据，导出画布时也不会跟着走。
+   */
+  credentials?: Credential[];
   /** GitHub 拉取执行器；不提供时 GitHub 更新节点会失败并提示 */
   githubFetch?: GithubUpdateRunner;
   /** GitHub 推送执行器；不提供时 GitHub 推送节点会失败并提示 */
@@ -839,7 +855,7 @@ function resolveFileRefs(d: TaskNodeData, output: string): FileRef[] {
     try {
       res = await opts.llmCaller({
         url: cfg.url,
-        headers: buildHeaders(cfg.apiKey),
+        headers: buildHeaders(resolveSecret(opts.credentials ?? [], d.credentialId, cfg.apiKey)),
         body,
         timeoutSec: cfg.timeoutSec,
       });
@@ -905,6 +921,7 @@ function resolveFileRefs(d: TaskNodeData, output: string): FileRef[] {
         base: d.base || undefined,
         order: d.order,
         token: d.token || '',
+        credentialId: d.credentialId,
       });
       if (!r.ok || !r.info) {
         setStatus(id, 'failed');
@@ -924,7 +941,7 @@ function resolveFileRefs(d: TaskNodeData, output: string): FileRef[] {
         via: r.via || '',
       };
       setStatus(id, 'success');
-      emit({ type: 'node-done', id, output: outputs[id] });
+      emit({ type: 'node-done', id, ok: true, output: outputs[id] });
     } catch (e) {
       setStatus(id, 'failed');
       outputs[id] = 'false';
@@ -984,6 +1001,7 @@ function resolveFileRefs(d: TaskNodeData, output: string): FileRef[] {
         workdir: d.workdir || undefined,
         order: d.order,
         token: d.token || '',
+        credentialId: d.credentialId,
       });
       if (!r.ok) {
         setStatus(id, 'failed');
@@ -993,7 +1011,7 @@ function resolveFileRefs(d: TaskNodeData, output: string): FileRef[] {
       outputs[id] = r.commit ? `已提交 ${r.commit}` : '已推送';
       nodeFields[id] = { commit: r.commit || '', via: r.via || '' };
       setStatus(id, 'success');
-      emit({ type: 'node-done', id, output: outputs[id] });
+      emit({ type: 'node-done', id, ok: true, output: outputs[id] });
     } catch (e) {
       setStatus(id, 'failed');
       emit({ type: 'node-error', id, error: String(e) });
@@ -1048,7 +1066,7 @@ function resolveFileRefs(d: TaskNodeData, output: string): FileRef[] {
     try {
       res = await opts.llmCaller({
         url: cfg.url,
-        headers: buildHeaders(cfg.apiKey),
+        headers: buildHeaders(resolveSecret(opts.credentials ?? [], d.credentialId, cfg.apiKey)),
         body,
         timeoutSec: cfg.timeoutSec,
       });

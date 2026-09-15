@@ -7,11 +7,12 @@
  */
 
 import type { RunEvent } from './runner';
+import type { NodeStatus } from '../types';
 
 export type TaskStatus = 'running' | 'success' | 'failed' | 'cancelled';
 
 /** 触发来源。用于区分"我手动点的"和"半夜自己跑的" */
-export type TaskSource = 'manual' | 'interval' | 'cron' | 'watch' | 'webhook' | 'unknown';
+export type TaskSource = 'manual' | 'interval' | 'cron' | 'watch' | 'webhook' | 'chat' | 'unknown';
 
 export const SOURCE_LABEL: Record<TaskSource, string> = {
   manual: '手动',
@@ -19,12 +20,14 @@ export const SOURCE_LABEL: Record<TaskSource, string> = {
   cron: '定时',
   watch: '监听',
   webhook: '调用',
+  chat: '对话',
   unknown: '自动',
 };
 
 export type TaskNodeState = {
   id: string;
-  status: 'idle' | 'running' | 'success' | 'failed' | 'skipped';
+  /** 与画布节点同一套状态机，pending 也要认 —— runner 会给等待上游的节点发它 */
+  status: NodeStatus;
   output: string;
   error: string;
   startedAt?: number;
@@ -157,6 +160,17 @@ function reduce(task: TaskRecord, e: RunEvent, now: number): void {
       if (e.output) n.output = clampOutput(e.output);
       n.error = e.error ?? '';
       log(task, now, `${e.ok ? '完成' : '失败'}：${e.id}${e.error ? ` — ${e.error}` : ''}`, e.id);
+      break;
+    }
+
+    case 'node-error': {
+      const n = touch(task, e.id, now);
+      n.status = 'failed';
+      n.endedAt = now;
+      n.error = e.error;
+      // 缺执行器、参数不合法这类前置失败不产生输出，
+      // 但必须进日志 —— 否则界面上只看到节点变红，不知道为什么
+      log(task, now, `错误：${e.id} — ${e.error}`, e.id);
       break;
     }
 

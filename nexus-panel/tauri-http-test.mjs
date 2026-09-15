@@ -123,5 +123,46 @@ t('浏览器模式下走原生 fetch', r.text === 'browser', r.text);
 t('浏览器模式下不调 IPC',
   !state.calls.some((c) => c.cmd === 'plugin:http|fetch'));
 
+console.log('\n=== 9. 失败原因可区分（A-04） ===');
+// 原来一律 catch 成 null，UI 只能说"受 CORS 限制"；
+// 现在要能分清"插件没启用"和"域名没放行"，提示才能直指该改的地方。
+const { describeHttpFailure } = await import('./plugins/agent-flow/lib/tauri.ts');
+
+const reasonOf = async (errText) => {
+  setMock({ isTauri: true, invoke: async () => { throw new Error(errText); } });
+  const f = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('浏览器通道也不可用'); };
+  let msg = '';
+  try { await fetchText('https://example.com/x'); } catch (e) { msg = String(e.message); }
+  globalThis.fetch = f;
+  return msg;
+};
+
+let m = await reasonOf('command not found: plugin:http|fetch');
+t('插件未启用 → 提示去注册插件', m.includes('插件未启用'), m);
+t('插件未启用 → 不再甩锅给 CORS', !m.includes('请用桌面端运行'), m);
+
+m = await reasonOf('http scope not allowed for url https://example.com');
+t('域名未放行 → 提示去加 scope', m.includes('未放行'), m);
+
+m = await reasonOf('connection reset by peer');
+t('通道正常但请求失败 → 归到网络问题', m.includes('请求失败'), m);
+
+t('describeHttpFailure 对三类给出不同文案',
+  new Set(['no-plugin', 'no-scope', 'request'].map((k) =>
+    describeHttpFailure({ kind: k, message: 'x' }))).size === 3);
+
+console.log('\n=== 10. POST 响应体上限（A-03） ===');
+// 每块 1MB，共 20 块 —— 不设限会整包进内存
+const mb = 'y'.repeat(1024 * 1024);
+mockResponse({ chunks: Array(20).fill(mb) });
+const before = state.calls.length;
+pj = await postJson('https://api.example.com/v1/chat', { a: 1 }, {}, 30);
+t('POST 响应被截断在 8MB 内', pj.text.length <= 8 * 1024 * 1024,
+  `${(pj.text.length / 1024 / 1024).toFixed(1)}MB`);
+t('确实读了数据（不是空返回）', pj.text.length > 0);
+t('截断后释放了响应体',
+  state.calls.slice(before).some((c) => c.cmd === 'plugin:http|fetch_cancel_body'));
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

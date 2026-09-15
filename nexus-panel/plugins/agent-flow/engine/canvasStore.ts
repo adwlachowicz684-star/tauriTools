@@ -142,7 +142,11 @@ const ACTIVE_KEY = 'agent-flow.activeCanvas.v1';
  *
  * LLM 的 apiKey 不随画布走：画布会被导出成 agent-flow.json 分享给别人，
  * 一旦带进去就是把密钥交出去了。所以 apiKey 存这里（按节点 id 索引），
- * 画布里只留空字符串，刷新后自动回填 —— 既不用每次重填，也导不出去。
+ * 画布里只留空字符串，刷新后由调用方回填 —— 既不用每次重填，也导不出去。
+ *
+ * 这里存的是**密文**：加解密在 engine/secretVault.ts。
+ * 本模块只负责"挖出来 / 填回去"，不碰加密细节，
+ * 这样它可以继续当纯同步逻辑来单测。
  */
 const KEYS_KEY = 'agent-flow.llm-keys.v1';
 
@@ -156,13 +160,65 @@ export type PersistedState = {
 /* ------------------------------------------------------------------ */
 
 /**
- * 判断并处理单个节点：把 data.llm.apiKey 挖空。
+ * 节点上可能存着密钥的字段。
+ *
+ * llm.apiKey —— OCR / 翻译节点的大模型密钥
+ * token      —— GitHub 节点的内联令牌（更新检测 / 推送）
+ *
+ * 后者权限更大：一个带 repo 的令牌能直接改别人的仓库，
+ * 所以两个字段一起脱敏，不因为"清单里只提了 apiKey"就放过它。
+ */
+const SECRET_FIELDS = ['llm.apiKey', 'token'] as const;
+export type SecretField = (typeof SECRET_FIELDS)[number];
+
+/** 节点 id + 字段名 → 保险箱里的键。带上字段名，回填时才知道该写回哪个字段 */
+function vaultKey(nodeId: string, field: SecretField): string {
+  return `${nodeId}#${field}`;
+}
+
+/** 取节点上某个密钥字段的值；不存在或不是字符串则返回 null */
+function getSecretField(data: Record<string, unknown>, field: SecretField): string | null {
+  if (field === 'token') {
+    const v = data.token;
+    return typeof v === 'string' && v !== '' ? v : null;
+  }
+  const llm = data.llm;
+  if (!llm || typeof llm !== 'object') return null;
+  const v = (llm as Record<string, unknown>).apiKey;
+  return typeof v === 'string' && v !== '' ? v : null;
+}
+
+/** 把某个密钥字段写成空串，返回新的 data */
+function blankSecretField(
+  data: Record<string, unknown>,
+  field: SecretField,
+): Record<string, unknown> {
+  if (field === 'token') return { ...data, token: '' };
+  const llm = data.llm;
+  if (!llm || typeof llm !== 'object') return data;
+  return { ...data, llm: { ...(llm as Record<string, unknown>), apiKey: '' } };
+}
+
+/** 把某个密钥字段写成指定值，返回新的 data */
+function setSecretField(
+  data: Record<string, unknown>,
+  field: SecretField,
+  value: string,
+): Record<string, unknown> {
+  if (field === 'token') return { ...data, token: value };
+  const llm = data.llm;
+  if (!llm || typeof llm !== 'object') return data;
+  return { ...data, llm: { ...(llm as Record<string, unknown>), apiKey: value } };
+}
+
+/**
+ * 判断并处理单个节点：把密钥字段挖空。
  *
  * 用鸭子类型而不是导入 isOcr / isTranslate：
  *  · Canvas.nodes 是 unknown[]，这层不该知道具体节点类型
- *  · 以后新增任何带 llm 的节点都会自动覆盖，不用回来改
+ *  · 以后新增任何带 llm / token 的节点都会自动覆盖，不用回来改
  *
- * 只认「节点形态」{ id, data: { kind, llm } }，不去递归扫 output ——
+ * 只认「节点形态」{ id, data: { kind, … } }，不去递归扫 output ——
  * 否则用户让 AI 生成一段恰好含 llm 字样的文本，会被误改。
  */
 function redactNode(n: unknown): unknown {
@@ -173,12 +229,12 @@ function redactNode(n: unknown): unknown {
   const dd = d as Record<string, unknown>;
   if (typeof dd.kind !== 'string') return n;
 
-  const llm = dd.llm;
-  if (!llm || typeof llm !== 'object') return n;
-  const l = llm as Record<string, unknown>;
-  if (!('apiKey' in l)) return n;
-
-  return { ...o, data: { ...dd, llm: { ...l, apiKey: '' } } };
+  let next = dd;
+  for (const f of SECRET_FIELDS) {
+    if (getSecretField(next, f) !== null) next = blankSecretField(next, f);
+  }
+  if (next === dd) return n;
+  return { ...o, data: next };
 }
 
 /** 节点数组脱敏。导出文件、写 localStorage 之前都应该过一遍。 */
@@ -197,18 +253,23 @@ export function redactSecrets(state: PersistedState): PersistedState {
   };
 }
 
-/** 收集所有节点的 apiKey，按节点 id 索引。保存时只收集当前存在的，等于自动清理了已删节点的残留。 */
+/**
+ * 收集所有节点上的密钥，按「节点 id + 字段名」索引。
+ *
+ * 只收集当前存在的节点，等于顺手清掉了已删节点的残留。
+ */
 export function collectSecrets(state: PersistedState): Record<string, string> {
   const out: Record<string, string> = {};
   for (const c of state.canvases ?? []) {
     for (const n of c.nodes ?? []) {
       if (!n || typeof n !== 'object') continue;
       const o = n as Record<string, unknown>;
+      if (typeof o.id !== 'string') continue;
       const d = o.data as Record<string, unknown> | undefined;
-      const llm = d?.llm as Record<string, unknown> | undefined;
-      const key = llm?.apiKey;
-      if (typeof o.id === 'string' && typeof key === 'string' && key !== '') {
-        out[o.id] = key;
+      if (!d || typeof d !== 'object') continue;
+      for (const f of SECRET_FIELDS) {
+        const v = getSecretField(d, f);
+        if (v !== null) out[vaultKey(o.id, f)] = v;
       }
     }
   }
@@ -228,12 +289,17 @@ export function applySecrets(
       nodes: (c.nodes ?? []).map((n) => {
         if (!n || typeof n !== 'object') return n;
         const o = n as Record<string, unknown>;
+        if (typeof o.id !== 'string') return n;
         const d = o.data as Record<string, unknown> | undefined;
-        const llm = d?.llm as Record<string, unknown> | undefined;
-        if (!d || !llm || !('apiKey' in llm)) return n;
-        const k = keys[String(o.id)];
-        if (typeof k !== 'string' || k === '') return n;
-        return { ...o, data: { ...d, llm: { ...llm, apiKey: k } } };
+        if (!d || typeof d !== 'object') return n;
+
+        let next = d;
+        for (const f of SECRET_FIELDS) {
+          const v = keys[vaultKey(o.id, f)];
+          if (typeof v === 'string' && v !== '') next = setSecretField(next, f, v);
+        }
+        if (next === d) return n;
+        return { ...o, data: next };
       }),
     })),
   };
@@ -310,41 +376,36 @@ export function deserialize(raw: string | null): PersistedState {
   return { canvases: deduped, activeId };
 }
 
-function parseKeys(raw: string | null): Record<string, string> {
-  if (!raw) return {};
-  try {
-    const p = JSON.parse(raw);
-    if (!p || typeof p !== 'object' || Array.isArray(p)) return {};
-    const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
-      if (typeof v === 'string' && v !== '') out[k] = v;
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
-
 /**
- * 读取：画布（已脱敏）+ 密钥保险箱，回填后返回。
+ * 读取：只管画布（已脱敏）。
  *
- * 两个来源分开读，所以旧版本存的、apiKey 还明文在画布里的数据也不会丢 ——
- * applySecrets 只覆盖有对应密钥的节点，画布里已有的明文原样保留。
+ * 密钥不在这里回填 —— 它是密文，解不开要提示用户而不是静默返回空，
+ * 那是异步的事，交给调用方（App）用 secretVault 处理。
+ * 旧版本存在画布里的明文 apiKey 不受影响：applySecrets 从不删已有值。
  */
 export function loadFromStorage(
   get: (k: string) => string | null,
 ): PersistedState {
-  const st = deserialize(get(STORAGE_KEY));
-  return applySecrets(st, parseKeys(get(KEYS_KEY)));
+  return deserialize(get(STORAGE_KEY));
 }
 
+/**
+ * 保存画布。
+ *
+ * 刻意**不碰** KEYS_KEY：密钥的写入走 secretVault 加密后单独落盘，
+ * 在这一行里顺手写会把密文覆盖成明文，等于白加密。
+ */
 export function saveToStorage(
   set: (k: string, v: string) => void,
   state: PersistedState,
 ): void {
   set(STORAGE_KEY, serialize(state));
-  set(KEYS_KEY, JSON.stringify(collectSecrets(state)));
   if (state.activeId) set(ACTIVE_KEY, state.activeId);
+}
+
+/** 清空密钥保险箱（用户选了"不保存密钥"时调用） */
+export function clearSecrets(remove: (k: string) => void): void {
+  remove(KEYS_KEY);
 }
 
 export const STORAGE_KEYS = {
