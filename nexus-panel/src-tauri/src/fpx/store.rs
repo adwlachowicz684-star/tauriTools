@@ -43,9 +43,173 @@ pub fn data_dir(app: &AppHandle, state: &FpxState) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
-    let text = fs::read_to_string(path).ok()?;
-    serde_json::from_str::<T>(&text).ok()
+/* ---------------------------- 数据损坏保护 ---------------------------- */
+// config.json 与 link-record.json 都是**唯一副本**：没有别的副本能兜底，
+// 也没有版本号能做迁移。所以「读不出来」这件事必须被当成事故处理，
+// 而不是退回默认值继续跑。
+
+/**
+ * 一份数据的加载结果。
+ *
+ * 为什么必须区分「文件不存在」与「读不出来」：
+ * 解析失败时若静默返回默认值，下一次保存就会拿默认值**整份覆盖**那个损坏文件——
+ * 损坏的原文（唯一能人工抢救的线索）没了，用户的登记也没了，两头空。
+ * 这不是理论风险：config 是整份覆盖写回的，一次误覆盖就不可逆。
+ */
+pub enum LoadOutcome<T> {
+    /// 正常读到。文件不存在（全新/首次运行）也算正常，给默认值。
+    Ok(T),
+    /// 文件存在但读不出来：现场已另存为 `backup`，`reason` 是失败原因。
+    Corrupted { backup: PathBuf, reason: String },
+}
+
+impl<T> LoadOutcome<T> {
+    /// 只取可用的值；损坏时给 `fallback`。
+    /// **仅用于只读展示**；写入路径必须显式处理 Corrupted，不能退化成默认值。
+    pub fn unwrap_or(self, fallback: T) -> T {
+        match self {
+            LoadOutcome::Ok(v) => v,
+            LoadOutcome::Corrupted { .. } => fallback,
+        }
+    }
+
+    /// 同上，惰性版本（构造默认值有开销时用）。
+    pub fn unwrap_or_else(self, f: impl FnOnce() -> T) -> T {
+        match self {
+            LoadOutcome::Ok(v) => v,
+            LoadOutcome::Corrupted { .. } => f(),
+        }
+    }
+}
+
+/// 一个被保护文件的损坏现场。
+#[derive(Clone)]
+struct CorruptSite {
+    /// 原始文件路径（规范化后，用于比对）
+    file: String,
+    /// 现场备份路径
+    backup: PathBuf,
+    reason: String,
+}
+
+/// 进程内记录的损坏现场。
+///
+/// 为什么只记进程内：损坏现场是**一次性**的——一旦被覆盖就再也找不回来。
+/// 记在磁盘上意义不大（进程退出后用户多半已经处理了），而记在内存里
+/// 足以拦住本进程内后续所有写入，这正是要防的（界面开着、用户点了几下）。
+static CORRUPT_SITES: Mutex<Vec<CorruptSite>> = Mutex::new(Vec::new());
+
+/// 记下某文件已损坏（含现场备份位置）。重复记录时保留首次的现场。
+fn mark_corrupt(site: CorruptSite) {
+    let mut list = CORRUPT_SITES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if list.iter().any(|s| s.file == site.file) {
+        return;
+    }
+    list.push(site);
+}
+
+/**
+ * 写入前的拦截：若该文件已被标记为损坏，拒绝写入。
+ *
+ * 这是整套保护的关键——检测到损坏只是第一步，
+ * **拦住后续写入**才是真正保住现场的那道闸。
+ */
+pub fn guard_against_corrupt(path: &Path) -> Result<(), String> {
+    let key = normalize_key(&path.to_string_lossy());
+    let mut list = CORRUPT_SITES.lock().unwrap_or_else(|p| p.into_inner());
+    let idx = match list.iter().position(|s| s.file == key) {
+        Some(i) => i,
+        None => return Ok(()),
+    };
+
+    // 用户已自行处理：文件被删掉了。现场还在（另存的那份），
+    // 所以可以安全放行——程序会按"首次运行"重建，不会丢东西。
+    if !path.exists() {
+        list.remove(idx);
+        return Ok(());
+    }
+
+    // 注意：format! 里统一用隐式捕获，不混用位置参数（混用会编译失败）
+    let file = path.display().to_string();
+    let backup_path = list[idx].backup.display().to_string();
+    let reason = list[idx].reason.clone();
+    Err(format!(
+        "{file} 读取失败（{reason}），已暂停一切写入以保护现场。\n\
+         损坏内容已另存为：{backup_path}\n\
+         请检查并修好该文件，或删除它让程序重建（现场副本不会丢）。"
+    ))
+}
+
+/// 把损坏文件另存为现场（复制而非移动，原件保持原样便于人工比对）。
+fn quarantine(path: &Path, reason: &str) -> Result<PathBuf, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "data".into());
+    let backup = path.with_file_name(format!("{name}.corrupt-{stamp}.bak"));
+
+    fs::copy(path, &backup).map_err(|e| {
+        let dst = backup.display().to_string();
+        format!("无法保存损坏现场到 {dst}: {e}")
+    })?;
+
+    mark_corrupt(CorruptSite {
+        file: normalize_key(&path.to_string_lossy()),
+        backup: backup.clone(),
+        reason: reason.to_string(),
+    });
+    Ok(backup)
+}
+
+/// 读文件原文，失败原因带出来（不像 read_json 那样吞掉）。
+fn read_text(path: &Path) -> Result<String, String> {
+    fs::read_to_string(path)
+        .map_err(|e| format!("读取失败：{e}"))
+}
+
+/**
+ * 严格加载一份 JSON：读不出来就隔离现场并报告，绝不静默退回默认值。
+ *
+ * `default` 只在文件不存在（首次运行）时使用。
+ */
+fn load_strict<T: serde::de::DeserializeOwned + Default>(path: &Path) -> LoadOutcome<T> {
+    if !path.exists() {
+        return LoadOutcome::Ok(T::default());
+    }
+    let text = match read_text(path) {
+        Ok(t) => t,
+        Err(e) => {
+            return match quarantine(path, &e) {
+                Ok(backup) => LoadOutcome::Corrupted { backup, reason: e },
+                Err(qe) => {
+                    let orig = path.display().to_string();
+                    LoadOutcome::Corrupted {
+                        backup: path.to_path_buf(),
+                        reason: format!("{e}；且{qe}（现场未能另存，请手动备份：{orig}）"),
+                    }
+                }
+            };
+        }
+    };
+    match serde_json::from_str::<T>(&text) {
+        Ok(v) => LoadOutcome::Ok(v),
+        Err(e) => {
+            let reason = format!("JSON 解析失败：{e}");
+            match quarantine(path, &reason) {
+                Ok(backup) => LoadOutcome::Corrupted { backup, reason },
+                Err(qe) => LoadOutcome::Corrupted {
+                    backup: path.to_path_buf(),
+                    reason: format!("{reason}；且{qe}"),
+                },
+            }
+        }
+    }
 }
 
 /// 原子写：先写同目录临时文件，成功后再 rename 覆盖。
@@ -81,9 +245,8 @@ fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), String>
     Ok(())
 }
 
-pub fn load_config(dir: &Path) -> FpxConfig {
-    let cfg: Option<FpxConfig> = read_json(&dir.join("config.json"));
-    let mut cfg = cfg.unwrap_or_default();
+/// 兜底整理：两侧页签都至少有一个（界面依赖「永远有当前页签」）。
+fn ensure_default_tabs(cfg: &mut FpxConfig) {
     if cfg.project_tabs.is_empty() {
         cfg.project_tabs.push(Default::default());
         if let Some(first) = cfg.project_tabs.first_mut() {
@@ -96,11 +259,35 @@ pub fn load_config(dir: &Path) -> FpxConfig {
             if first.name.is_empty() { first.name = "默认".into(); }
         }
     }
+}
+
+/// 只读用途的宽松加载：损坏时给默认值（界面仍能出快照），
+/// 但**损坏状态已被记下**，随后的任何写入都会被 guard 拦住。
+pub fn load_config(dir: &Path) -> FpxConfig {
+    let mut cfg = load_config_strict(dir).unwrap_or_else(FpxConfig::default);
+    ensure_default_tabs(&mut cfg);
     cfg
 }
 
+/// 严格加载：写入路径必须用它，损坏时返回 Corrupted 而不是默认值。
+pub fn load_config_strict(dir: &Path) -> LoadOutcome<FpxConfig> {
+    let p = dir.join("config.json");
+    match load_strict::<FpxConfig>(&p) {
+        LoadOutcome::Ok(mut cfg) => {
+            ensure_default_tabs(&mut cfg);
+            LoadOutcome::Ok(cfg)
+        }
+        LoadOutcome::Corrupted { backup, reason } => {
+            LoadOutcome::Corrupted { backup, reason }
+        }
+    }
+}
+
 pub fn save_config(dir: &Path, cfg: &FpxConfig) -> Result<(), String> {
-    write_json(&dir.join("config.json"), cfg)
+    let p = dir.join("config.json");
+    // 损坏现场未处理前，禁止覆盖——否则唯一能抢救的原文就没了
+    guard_against_corrupt(&p)?;
+    write_json(&p, cfg)
 }
 
 /**
@@ -137,24 +324,44 @@ where
     let _guard = CONFIG_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut cfg = load_config(dir);
+
+    // 拿默认值写回损坏文件 = 用户登记全部丢失，不可逆。
+    // 所以这里必须用严格加载，损坏时直接中止事务，一次都不写。
+    let mut cfg = match load_config_strict(dir) {
+        LoadOutcome::Ok(c) => c,
+        LoadOutcome::Corrupted { backup, reason } => {
+            let backup_path = backup.display().to_string();
+            return Err(format!(
+                "config.json 读取失败（{reason}），已中止本次操作以保护数据。\n\
+                 损坏内容已另存为：{backup_path}\n\
+                 请检查或删除该文件后重试（现场副本不会丢）。"
+            ));
+        }
+    };
     let r = f(&mut cfg)?;
     save_config(dir, &cfg)?;
     Ok(r)
 }
 
 pub fn load_records(dir: &Path) -> Vec<LinkRecord> {
-    #[derive(serde::Deserialize)]
+    #[derive(serde::Deserialize, Default)]
     struct File { #[serde(default)] links: Vec<LinkRecord> }
-    read_json::<File>(&dir.join("link-record.json"))
-        .map(|f| f.links)
+    // 账本同样是唯一副本：读不出来时**绝不能以空列表继续**——
+    // 后续 save_records 会把空列表整份写回，所有链接记录瞬间蒸发。
+    // 这里给空列表只为让界面仍能渲染，但损坏状态会被记下，
+    // 随后的 save_records 会被 guard_against_corrupt 拦住。
+    load_strict::<File>(&dir.join("link-record.json"))
         .unwrap_or_default()
+        .links
 }
 
 pub fn save_records(dir: &Path, records: &[LinkRecord]) -> Result<(), String> {
     #[derive(serde::Serialize)]
     struct File<'a> { links: &'a [LinkRecord] }
-    write_json(&dir.join("link-record.json"), &File { links: records })
+    let p = dir.join("link-record.json");
+    // 同上：损坏现场未处理前，禁止用（可能是空的）内存数据覆盖
+    guard_against_corrupt(&p)?;
+    write_json(&p, &File { links: records })
 }
 
 /// 配置里的某个路径是否被 ACL 保护。
