@@ -456,7 +456,7 @@ pub fn load_records(dir: &Path) -> Vec<LinkRecord> {
     // 这里给空列表只为让界面仍能渲染，但损坏状态会被记下，
     // 随后的 save_records 会被 guard_against_corrupt 拦住。
     load_strict::<File>(&dir.join("link-record.json"))
-        .unwrap_or_default()
+        .unwrap_or_else(File::default)
         .links
 }
 
