@@ -386,8 +386,15 @@ export default function App() {
   };
 
   const onCrossDrop = (drag: DragPayload, target: CardInfo | null) => {
+    // 跨栏拖到卡片区**空白** = 换栏移动（项目 ⇄ 项目组），不是错误。
+    //
+    // 对应原版 ResolveLinkDrop 的语义：命中具体卡片 → 建链；没命中 → 跨列移动。
+    // 此前这里一律 toast 拒绝，等于把这条通路堵死了。
+    // 落点栏是当前显示的那一个（项目栏 activeTab.project / 项目组栏 activeTab.group），
+    // 与"拖过去时看到的界面"一致，不会莫名其妙跑到别的分类里。
     if (!target) {
-      ctx.toast('请拖到具体的卡片上', 'err');
+      const dst: CardKind = drag.kind === 'project' ? 'group' : 'project';
+      void s.moveCardAcross(drag.kind, drag.path, s.activeTab[dst] ?? 0);
       return;
     }
     // 拖放方向决定谁是项目、谁是项目组
