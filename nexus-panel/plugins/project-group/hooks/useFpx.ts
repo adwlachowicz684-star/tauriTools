@@ -187,9 +187,17 @@ export function useFpx() {
 
   /* ---------------- 卡片 / 页签 ---------------- */
 
-  const addCard = useCallback(async (kind: CardKind, path: string) => {
+  /**
+   * 添加卡片。
+   *
+   * tabIndex 可显式指定目标页签。项目组栏改成纵向堆叠后必须用它：
+   * 每个分类框都有自己的「＋」，点哪个就该加到哪个；
+   * 否则一律落到 activeTab 那一个分类里，用户点「创作」的 ＋ 却加到「政策」，
+   * 且因为堆叠布局看不到页签切换，完全无从察觉。
+   */
+  const addCard = useCallback(async (kind: CardKind, path: string, tabIndex?: number) => {
     const list = cardsOf(kind);
-    const idx = activeTab[kind];
+    const idx = tabIndex ?? activeTab[kind];
     if (list[idx]?.items.some((c) => c.path === path)) {
       ctx.toast('该文件夹已在当前页签中', 'err');
       return;
@@ -208,11 +216,15 @@ export function useFpx() {
 
   /**
    * 从页签移除卡片。
-   * 只动当前页签——卡片是按页签分别登记的，同一路径可以存在于多个页签，
+   *
+   * 只动一个页签——卡片是按页签分别登记的，同一路径可以存在于多个页签，
    * 全表删除会连带清掉用户在别的页签里的登记。
+   *
+   * tabIndex 与 addCard 同理：项目组栏堆叠后，卡片所在分类不一定等于 activeTab。
+   * 不传就用 activeTab（项目栏仍是页签形态，行为不变）。
    */
-  const removeCard = useCallback(async (kind: CardKind, path: string) => {
-    const idx = activeTab[kind];
+  const removeCard = useCallback(async (kind: CardKind, path: string, tabIndex?: number) => {
+    const idx = tabIndex ?? activeTab[kind];
     await updateConfig((d) => {
       const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
       if (tabs[idx]) tabs[idx].items = tabs[idx].items.filter((p) => p !== path);
@@ -429,6 +441,9 @@ export function useFpx() {
   return {
     ctx, api, boot, loading, busy, log, pushLog, run,
     renameFolder, clearInvalid,
+    // 搬家 / 改名等新命令返回的是 RenameResult（含 snapshot），
+    // 需要由调用方自己把快照并回界面——之前只有内部路径用得到，现在对外暴露。
+    applySnapshot,
     selProject, setSelProject, selGroup, setSelGroup,
     activeTab, setActiveTab,
     content, contentKind, setContentKind, focusDir, scan,

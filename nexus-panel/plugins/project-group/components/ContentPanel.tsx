@@ -54,7 +54,7 @@ function buildTree(items: ContentItem[]): TreeNode[] {
 const KIND_LABEL: Record<string, string> = { agent: 'Agent', skill: 'Skill', rule: 'Rule' };
 
 export function ContentPanel({
-  api, root, items, kind, onKind, onLog,
+  api, root, items, kind, onKind, onLog, onRename, onRefresh,
 }: {
   api: Api;
   root: string;
@@ -62,6 +62,10 @@ export function ContentPanel({
   kind: 'all' | 'agent' | 'skill' | 'rule';
   onKind: (k: 'all' | 'agent' | 'skill' | 'rule') => void;
   onLog: (msg: string, isError?: boolean) => void;
+  /** 条目改名（WPF AgentSkill 面板的 RenameCommand 对应入口） */
+  onRename: (item: ContentItem) => void;
+  /** 重新扫描当前目录 */
+  onRefresh: () => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<ContentItem | null>(null);
@@ -144,6 +148,15 @@ export function ContentPanel({
         >
           打开目录
         </button>
+        <button
+          className="p-btn"
+          style={{ height: 30, padding: '0 12px' }}
+          disabled={!root}
+          title="重新扫描当前目录"
+          onClick={onRefresh}
+        >
+          刷新
+        </button>
       </div>
 
       <div className="p-muted fpx-content-root">{root || '未选择项目组'}</div>
@@ -167,6 +180,32 @@ export function ContentPanel({
               <button className="p-btn" style={{ height: 28, padding: '0 10px' }}
                 onClick={() => api.editFile(selected.path).catch((e) => onLog(errText(e), true))}>
                 外部编辑
+              </button>
+              <button className="p-btn" style={{ height: 28, padding: '0 10px' }}
+                title="重命名该条目（文件保留扩展名）"
+                onClick={() => onRename(selected)}>
+                改名
+              </button>
+              {/* 沙箱内 navigator.clipboard 会被静默拒绝，走后端复制命令 */}
+              <button className="p-btn" style={{ height: 28, padding: '0 10px' }}
+                title="复制条目名称"
+                onClick={() =>
+                  api.copyText(selected.name).then(
+                    (ok) => onLog(ok ? `已复制名称：${selected.name}` : '复制失败', !ok),
+                    (e) => onLog(errText(e), true),
+                  )
+                }>
+                复制名
+              </button>
+              <button className="p-btn" style={{ height: 28, padding: '0 10px' }}
+                title="复制完整路径"
+                onClick={() =>
+                  api.copyText(selected.path).then(
+                    (ok) => onLog(ok ? `已复制路径：${selected.path}` : '复制失败', !ok),
+                    (e) => onLog(errText(e), true),
+                  )
+                }>
+                复制路径
               </button>
             </div>
           )}

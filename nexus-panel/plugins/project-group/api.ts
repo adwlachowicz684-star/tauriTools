@@ -3,7 +3,7 @@ import type {
   BackupAutoStatus, BackupResult, Bootstrap, CaptureResult, CardKind, ChainClient,
   ChainAction, ChainSendResult, ContentItem, CustomChainClient, DirEntryLite,
   ClearResult, EditorCandidate, FpxConfig, McpToolRow, MoveAcrossResult,
-  RenameResult, Snapshot, WatchEvent,
+  ContentRenameResult, RenameResult, Snapshot, WatchEvent,
 } from './types';
 
 /**
@@ -43,6 +43,14 @@ export function makeApi(ctx: PluginContext) {
     /** 给项目/项目组文件夹改名（物理 rename + 同步所有登记） */
     renameFolder: (kind: 'project' | 'group', path: string, newName: string) =>
       call<RenameResult>('fpx_rename_folder', { kind, path, new_name: newName }),
+
+    /** 搬家：把文件夹移到别的父目录下（物理移动 + 同步页签/链接/图标/颜色/锁） */
+    moveFolder: (kind: 'project' | 'group', path: string, destParent: string) =>
+      call<RenameResult>('fpx_move_folder', { kind, path, dest_parent: destParent }),
+
+    /** 内容区条目改名（agent / skill / rule 的文件或目录型 skill 目录） */
+    renameContentItem: (path: string, newName: string) =>
+      call<ContentRenameResult>('fpx_rename_content_item', { path, new_name: newName }),
 
     /** 清除无效项：摘掉页签里已不存在的路径 */
     clearInvalid: () => call<ClearResult>('fpx_clear_invalid'),

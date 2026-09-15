@@ -189,15 +189,28 @@ export interface ChainSendResult {
   message: string;
 }
 
-/** 文件夹改名的结果 */
+/** 文件夹改名 / 搬家的结果 */
 export interface RenameResult {
   snapshot: Snapshot;
-  /** 改名后的完整路径 */
+  /** 改名 / 搬家后的完整路径 */
   newPath: string;
   /** 同步改动的页签登记条数 */
   tabHits: number;
   /** 同步改动的链接记录条数 */
   recHits: number;
+  /** 搬家时重建成功的链接数（项目组搬家才有，改名恒为 0） */
+  relinked?: number;
+  /** 重建失败的项目清单（路径：原因）；非空说明有链接需要手动复查 */
+  relinkErrors?: string[];
+}
+
+/**
+ * 内容区（agent / skill / rule）条目改名的结果。
+ * 内容条目不进配置，所以没有快照——前端拿到 newPath 后重新扫目录即可。
+ */
+export interface ContentRenameResult {
+  /** 改名后的绝对路径 */
+  newPath: string;
 }
 
 /** 清除无效项的结果 */

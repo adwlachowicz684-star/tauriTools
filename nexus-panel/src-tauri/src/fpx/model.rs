@@ -273,7 +273,7 @@ pub struct MoveAcrossResult {
     pub relocated: Option<String>,
 }
 
-/// 文件夹改名的结果：新快照 + 新路径 + 同步改动的登记数量（供前端提示）。
+/// 文件夹改名 / 搬家的结果：新快照 + 新路径 + 同步改动的登记数量（供前端提示）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenameResult {
@@ -283,6 +283,13 @@ pub struct RenameResult {
     pub tab_hits: usize,
     /// 受影响的链接记录条数
     pub rec_hits: usize,
+    /// 搬家时重建成功的链接数（项目组搬家才有；改名恒为 0）
+    pub relinked: usize,
+    /// 重建失败的项目清单（路径：原因）。非空说明有链接需要手动复查。
+    ///
+    /// 刻意不因重建失败而回滚整个搬家——目录已经挪过去了，
+    /// 回滚反而可能二次破坏；把失败明细交回前端提示用户更诚实。
+    pub relink_errors: Vec<String>,
 }
 
 /// 清除无效项的结果：新快照 + 被移除的路径清单 + 各类计数。
@@ -457,6 +464,17 @@ pub struct ContentItem {
     /// 绝对路径（可能是目录：目录型 skill）
     pub path: String,
     pub is_dir: bool,
+}
+
+/// 内容区（agent / skill / rule）条目改名的结果。
+///
+/// 内容条目不进配置（不在页签 / 链接记录里留痕），所以这里没有快照，
+/// 前端拿到 new_path 后重新扫一遍目录即可。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentRenameResult {
+    /// 改名后的绝对路径
+    pub new_path: String,
 }
 
 /// 目录选择器用的一条目录项。

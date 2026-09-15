@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ContentPanel } from './components/ContentPanel';
 import { RenameDialog } from './components/RenameDialog';
+import { RenameContentDialog } from './components/RenameContentDialog';
 import { CardGrid, TabBar, type DragPayload } from './components/CardGrid';
 import { CreateDialog, IconPickDialog, LockDialog, StyleDialog } from './components/dialogs';
 import { DirDialog } from './components/DirDialog';
 import { LinkAgentDialog } from './components/LinkPanel';
 import { SettingsDialog } from './components/SettingsDialog';
+import { SideRail } from './components/SideRail';
+import { StackedGroups } from './components/StackedGroups';
 import {
   BackupDialog, ChainDialog, EditorDialog, ServiceDialog,
 } from './components/ToolsPanel';
@@ -17,7 +20,8 @@ import type { CardInfo, CardKind, ChainAction } from './types';
 
 type Dialog =
   | { type: 'none' }
-  | { type: 'pickDir'; kind: CardKind }
+  /** 选目录加入页签；tabIndex 用于项目组栏堆叠后指定落到哪个分类 */
+  | { type: 'pickDir'; kind: CardKind; tabIndex?: number }
   | { type: 'create'; kind: CardKind }
   | { type: 'agents' }
   | { type: 'lock'; card: CardInfo }
@@ -28,7 +32,11 @@ type Dialog =
   | { type: 'chain'; target: string; kind: CardKind }
   | { type: 'settings' }
   | { type: 'service' }
-  | { type: 'rename'; card: CardInfo; kind: CardKind };
+  | { type: 'rename'; card: CardInfo; kind: CardKind }
+  /** 搬家：选目标父目录 */
+  | { type: 'move'; card: CardInfo; kind: CardKind }
+  /** 内容区条目改名 */
+  | { type: 'renameContent'; path: string; name: string };
 
 export default function App() {
   const s = useFpx();
@@ -100,10 +108,40 @@ export default function App() {
     () => boot?.projectTabs[s.activeTab.project]?.items ?? [],
     [boot, s.activeTab.project],
   );
+  /**
+   * 项目组栏改成纵向堆叠后，所有分类的卡片同时在界面上，
+   * 所以"当前项目组卡片"的概念从「当前页签」变成「全部分类」。
+   * 不铺平的话：选中第 2 个分类里的卡片时，focusedCard 会在第 1 个分类里找不到它，
+   * 于是左栏操作和快捷键一律报"先选中一个项目组"。
+   */
   const groupCards = useMemo(
-    () => boot?.groupTabs[s.activeTab.group]?.items ?? [],
-    [boot, s.activeTab.group],
+    () => boot?.groupTabs.flatMap((t) => t.items) ?? [],
+    [boot],
   );
+
+  /**
+   * 项目组栏改成纵向堆叠后，每个分类都要能取到自己的卡片。
+   * 原先只有一个「当前页签」的 groupCards，堆叠布局下要按索引取。
+   */
+  const groupCardsOf = useCallback(
+    (i: number) => boot?.groupTabs[i]?.items ?? [],
+    [boot],
+  );
+
+  /**
+   * 某个项目组卡片属于第几个分类。
+   *
+   * 堆叠布局下 activeTab.group 不再代表"看得见的那个分类"，
+   * 移除卡片时必须知道它究竟登记在哪个分类里，否则点移除毫无反应
+   * （更糟的是日志还显示"已移除"）。
+   */
+  const groupTabIndexOf = useCallback((path: string) => {
+    if (!boot) return undefined;
+    // 快照里的 items 是 CardInfo（含 exists / 链接状态等后端补齐的字段），
+    // 不是配置里的裸路径字符串 —— 要按 .path 比。
+    const i = boot.groupTabs.findIndex((t) => t.items.some((c) => c.path === path));
+    return i === -1 ? undefined : i;
+  }, [boot]);
 
   // 卡片图标是本地路径，沙箱内需后端转 data URI 才能显示
   const iconPaths = useMemo(
@@ -351,14 +389,120 @@ export default function App() {
     fn(c);
   };
 
-  /** 页签前后翻页，到头回环。索引先 clamp：activeTab 与当前快照可能不同步 */
+  /** 搬家：选好目标父目录后调用后端，物理移动 + 同步所有登记 */
+  const doMove = useCallback(async (card: CardInfo, kind: CardKind, dest: string) => {
+    const r = await s.run('搬家', () => s.api.moveFolder(kind, card.path, dest));
+    if (!r) return;
+    s.applySnapshot(r.snapshot);
+    if (kind === 'project') s.setSelProject(r.newPath);
+    else s.setSelGroup(r.newPath);
+    s.pushLog(`已搬家：${card.path} → ${r.newPath}（同步 ${r.tabHits} 条登记）`);
+    // 项目组搬家会重建指向它的 junction；失败的必须说出来，
+    // 否则用户以为链接还在，实际全断了却毫不知情。
+    if (r.relinked) s.pushLog(`已重建 ${r.relinked} 条链接`);
+    for (const e of r.relinkErrors ?? []) s.pushLog(`链接重建失败：${e}`, true);
+  }, [s]);
+
+  /** 内容区条目改名：改完重扫一遍目录 */
+  const doRenameContent = useCallback(async (path: string, name: string) => {
+    const r = await s.run('改名', () => s.api.renameContentItem(path, name));
+    if (!r) return;
+    s.pushLog(`已改名为「${name}」`);
+    await s.scan(s.focusDir);
+  }, [s]);
+
+  /**
+   * 页签前后翻页，到头回环。索引先 clamp：activeTab 与当前快照可能不同步。
+   *
+   * 项目组栏改成纵向堆叠后，所有分类同时在屏幕上，
+   * 再切「当前页签」没有任何可见效果 —— 所以这里改成把选中项移到下一个分类的
+   * 第一张卡片：既保留了"在分类间前后跳"的语义，又真的看得见（还会把键盘焦点带过去）。
+   */
   const cycleTab = (kind: CardKind, delta: number) => {
     const n = (kind === 'project' ? boot?.projectTabs.length : boot?.groupTabs.length) ?? 0;
     if (n <= 1) return;
     const cur = Math.min(Math.max(0, s.activeTab[kind]), n - 1);
     const next = ((cur + delta) % n + n) % n;
     s.setActiveTab((prev) => ({ ...prev, [kind]: next }));
+    if (kind !== 'group') return;
+    const first = boot?.groupTabs[next]?.items[0]?.path;
+    if (first) { setFocus('group'); s.setSelGroup(first); }
   };
+
+  /* ---------------- 左栏操作 ----------------
+   * 分组与顺序沿用 WPF 原版侧边栏：全局 → 选中项 → 连锁动作 → 危险操作置底。
+   * 每项都要求先选中卡片（needCard 会提示），与原版一致。
+   */
+  const railGroups = useMemo(() => [
+    {
+      key: 'global',
+      actions: [
+        {
+          icon: '⟳', label: '刷新',
+          title: '刷新全部（F5）',
+          onClick: () => { refreshChainActions(); s.refresh(); },
+        },
+        {
+          icon: '🗄', label: '备份',
+          title: '一键备份：把项目 / 项目组增量同步到备份目录',
+          onClick: () => setDialog({ type: 'backup' }),
+        },
+        {
+          icon: '🧹', label: '清无效',
+          title: '清除无效项（F8）：摘掉页签里已不存在的路径',
+          onClick: () => void s.clearInvalid(),
+        },
+      ],
+    },
+    {
+      key: 'selected',
+      actions: [
+        {
+          icon: '📂', label: '打开',
+          title: '打开选中文件夹（Ctrl/⌘+O）',
+          onClick: needCard((c) => openPath(c.path, 'dir')),
+        },
+        {
+          icon: '🔒', label: '保护',
+          title: 'ACL 保护（Ctrl/⌘+L）',
+          onClick: needCard((c) => setDialog({ type: 'lock', card: c })),
+        },
+        {
+          icon: '✎', label: '改名',
+          title: '改名（F2）',
+          onClick: needCard((c) => setDialog({ type: 'rename', card: c, kind: focus })),
+        },
+        {
+          icon: '🚚', label: '搬家',
+          title: '把选中的文件夹移到别的目录',
+          onClick: needCard((c) => setDialog({ type: 'move', card: c, kind: focus })),
+        },
+        {
+          icon: '🎨', label: '改色',
+          title: '图标与标签色（F4）',
+          onClick: needCard((c) => setDialog({ type: 'style', card: c })),
+        },
+        {
+          icon: '🖼', label: '改图标',
+          title: '改图标（F6）',
+          onClick: needCard((c) => void openIconPicker(c)),
+        },
+      ],
+    },
+    {
+      key: 'danger',
+      actions: [
+        {
+          icon: '🗑', label: '移除',
+          title: '从当前分类 / 页签移除（Delete）',
+          danger: true,
+          onClick: needCard((c) => void s.removeCard(
+            focus, c.path, focus === 'group' ? groupTabIndexOf(c.path) : undefined,
+          )),
+        },
+      ],
+    },
+  ], [focus, groupTabIndexOf, needCard, openIconPicker, openPath, refreshChainActions, s]);
 
   useCardHotkeys(ctx, {
     open: needCard((c) => openPath(c.path, 'dir')),
@@ -369,7 +513,9 @@ export default function App() {
     )),
     color: needCard((c) => setDialog({ type: 'style', card: c })),
     icon: needCard((c) => void openIconPicker(c)),
-    remove: needCard((c) => void s.removeCard(focus, c.path)),
+    remove: needCard((c) => void s.removeCard(
+      focus, c.path, focus === 'group' ? groupTabIndexOf(c.path) : undefined,
+    )),
     refresh: () => { refreshChainActions(); s.refresh(); },
     clearInvalid: () => void s.clearInvalid(),
     cycleTab,
@@ -474,88 +620,123 @@ export default function App() {
         )}
       </div>
 
-      {/* ---------------- 三栏 ---------------- */}
-      <div className="fpx-cols">
-        <Column
-          title="项目"
-          kind="project"
-          tabs={boot.projectTabs}
-          cards={projectCards}
-          selected={s.selProject}
-          onSelect={(p) => { setFocus('project'); s.setSelProject(p); }}
-          onOpen={(p) => openPath(p, 'dir')}
-          onMove={(path, i) => s.moveCard('project', path, s.activeTab.project, i)}
-          onMoveToTab={(path, tabIndex) => {
-            const n = boot.projectTabs[tabIndex]?.items.length ?? 0;
-            s.moveCard('project', path, tabIndex, n);
-          }}
-          onCrossDrop={onCrossDrop}
-          thumbs={iconThumbs}
-          menus={menus('project')}
-          onAdd={() => setDialog({ type: 'pickDir', kind: 'project' })}
+      {/* ---------------- 左侧操作栏 + 三栏 + 日志 ----------------
+        对照 WPF 原版：SidebarControl 纵跨整个内容区（含日志行），
+        主区则是「三栏行 + 日志行」两行。 */}
+      <div className="fpx-body">
+        <SideRail
+          groups={railGroups}
+          chainActions={chainActions.filter((a) => a.showSidebar)}
+          onChainAction={runActionOnSelection}
+        />
+
+        <div className="fpx-main">
+          <div className="fpx-cols">
+            <Column
+              title="项目"
+              kind="project"
+              tabs={boot.projectTabs}
+              cards={projectCards}
+              selected={s.selProject}
+              onSelect={(p) => { setFocus('project'); s.setSelProject(p); }}
+              onOpen={(p) => openPath(p, 'dir')}
+              onMove={(path, i) => s.moveCard('project', path, s.activeTab.project, i)}
+              onMoveToTab={(path, tabIndex) => {
+                const n = boot.projectTabs[tabIndex]?.items.length ?? 0;
+                s.moveCard('project', path, tabIndex, n);
+              }}
+              onCrossDrop={onCrossDrop}
+              thumbs={iconThumbs}
+              menus={menus('project')}
+              onAdd={() => setDialog({ type: 'pickDir', kind: 'project' })}
           onAddTab={() => s.addTab('project', `页签${(boot.projectTabs.length) + 1}`)}
-          onRenameTab={(i, n) => s.renameTab('project', i, n)}
-          onRemoveTab={(i) => s.removeTab('project', i)}
-          active={s.activeTab.project}
-          onTab={(i) => s.setActiveTab((prev) => ({ ...prev, project: i }))}
-          focused={focus === 'project'}
-        />
+              onRenameTab={(i, n) => s.renameTab('project', i, n)}
+              onRemoveTab={(i) => s.removeTab('project', i)}
+              active={s.activeTab.project}
+              onTab={(i) => s.setActiveTab((prev) => ({ ...prev, project: i }))}
+              focused={focus === 'project'}
+            />
 
-        <Column
-          title="项目组"
-          kind="group"
-          tabs={boot.groupTabs}
-          cards={groupCards}
-          selected={s.selGroup}
-          onSelect={(p) => { setFocus('group'); s.setSelGroup(p); }}
-          onOpen={(p) => openPath(p, 'dir')}
-          onMove={(path, i) => s.moveCard('group', path, s.activeTab.group, i)}
-          onMoveToTab={(path, tabIndex) => {
-            const n = boot.groupTabs[tabIndex]?.items.length ?? 0;
-            s.moveCard('group', path, tabIndex, n);
-          }}
-          onCrossDrop={onCrossDrop}
-          thumbs={iconThumbs}
-          menus={menus('group')}
-          onAdd={() => setDialog({ type: 'pickDir', kind: 'group' })}
-          onAddTab={() => s.addTab('group', `页签${(boot.groupTabs.length) + 1}`)}
-          onRenameTab={(i, n) => s.renameTab('group', i, n)}
-          onRemoveTab={(i) => s.removeTab('group', i)}
-          active={s.activeTab.group}
-          onTab={(i) => s.setActiveTab((prev) => ({ ...prev, group: i }))}
-          focused={focus === 'group'}
-        />
+            {/*
+              项目组栏：所有分类纵向堆叠、各自可折叠（对照 WPF 原版 groupBoxes 与截图形态）。
+              项目栏仍用页签切换 —— 原版就是这样：项目组是分区框，项目是横向页签条。
+            */}
+        <div className={`p-card fpx-col${focus === 'group' ? ' focus' : ''}`}>
+              <div className="p-row fpx-col-head">
+                <h2 style={{ margin: 0 }}>
+                  项目组
+                  <span className="p-muted" style={{ fontWeight: 400 }}>
+                    （{boot.groupTabs.reduce((n, t) => n + t.items.length, 0)}）
+                  </span>
+                  {focus === 'group' && (
+                    <span className="fpx-badge dim fpx-focus-tag" title="键盘快捷键作用于此栏（Ctrl/⌘+←/→ 切换）">
+                      ⌨
+                    </span>
+                  )}
+                </h2>
+                <div className="p-row fpx-col-head-ops">
+                  <button
+                    className="p-btn"
+                    style={{ height: 30, padding: '0 12px' }}
+                    title="新增分类"
+                onClick={() => s.addTab('group', `页签${(boot.groupTabs.length) + 1}`)}
+                  >
+                    ＋ 分类
+                  </button>
+                </div>
+              </div>
 
-        <div className="p-card fpx-col fpx-col-content">
-          {/*
-            与左右两栏用同一套头部结构（.fpx-col-head）：
-            原先这里是个裸 <h2>，带着浏览器默认的 margin-top，
-            标题比另两栏低一截；外壳的 .p-card h2 只重置了 margin-bottom，没管 margin-top。
-          */}
-          <div className="p-row fpx-col-head">
-            <h2 style={{ margin: 0 }}>内容浏览</h2>
-          </div>
-          <ContentPanel
-            api={s.api}
-            root={s.focusDir}
-            items={s.content}
-            kind={s.contentKind}
-            onKind={s.setContentKind}
-            onLog={s.pushLog}
-          />
-        </div>
-      </div>
-
-      {/* ---------------- 日志 ---------------- */}
-      <div className="p-card">
-        <h2>日志</h2>
-        <div className="fpx-log">
-          {s.log.length === 0 && <div className="p-muted">（暂无）</div>}
-          {s.log.slice(0, 10).map((l, i) => (
-            <div key={i} className={l.isError ? 'fpx-log-line err' : 'fpx-log-line'}>
-              <span className="p-muted">[{l.at}]</span> {l.text}
+              <StackedGroups
+                tabs={boot.groupTabs}
+                cardsOf={(i) => groupCardsOf(i)}
+                selected={s.selGroup}
+                thumbs={iconThumbs}
+                onSelect={(p) => { setFocus('group'); s.setSelGroup(p); }}
+                onOpen={(p) => openPath(p, 'dir')}
+                onMove={(tabIndex, path, index) => s.moveCard('group', path, tabIndex, index)}
+                onCrossDrop={onCrossDrop}
+                menus={menus('group')}
+                onRename={(i, n) => s.renameTab('group', i, n)}
+                onRemove={(i) => s.removeTab('group', i)}
+                onAdd={(i) => setDialog({ type: 'pickDir', kind: 'group', tabIndex: i })}
+                emptyHint="还没有项目组，点分类右侧的 ＋ 添加"
+              />
             </div>
-          ))}
+
+            <div className="p-card fpx-col fpx-col-content">
+              {/*
+                与左右两栏用同一套头部结构（.fpx-col-head）：
+                原先这里是个裸 <h2>，带着浏览器默认的 margin-top，
+                标题比另两栏低一截；外壳的 .p-card h2 只重置了 margin-bottom，没管 margin-top。
+              */}
+              <div className="p-row fpx-col-head">
+                <h2 style={{ margin: 0 }}>内容浏览</h2>
+              </div>
+              <ContentPanel
+                api={s.api}
+                root={s.focusDir}
+                items={s.content}
+                kind={s.contentKind}
+                onKind={s.setContentKind}
+                onLog={s.pushLog}
+                onRename={(it) => setDialog({ type: 'renameContent', path: it.path, name: it.name })}
+                onRefresh={() => void s.scan(s.focusDir)}
+              />
+            </div>
+          </div>
+
+          {/* ---------------- 日志（对照 WPF 底部的 140px 日志行）---------------- */}
+          <div className="p-card fpx-logcard">
+            <h2 style={{ margin: 0 }}>日志</h2>
+            <div className="fpx-log">
+              {s.log.length === 0 && <div className="p-muted">（暂无）</div>}
+              {s.log.slice(0, 40).map((l, i) => (
+                <div key={i} className={l.isError ? 'fpx-log-line err' : 'fpx-log-line'}>
+                  <span className="p-muted">[{l.at}]</span> {l.text}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -622,6 +803,30 @@ export default function App() {
           onSubmit={async (newName) => {
             const r = await s.renameFolder(dialog.kind, dialog.card.path, newName);
             return !!r;
+          }}
+        />
+      )}
+
+      {dialog.type === 'move' && (
+        <DirDialog
+          api={s.api}
+          title={`选择「${dialog.card.name}」的新位置（搬家）`}
+          allowCreate
+          onClose={() => setDialog({ type: 'none' })}
+          onPick={(p) => {
+            setDialog({ type: 'none' });
+            void doMove(dialog.card, dialog.kind, p);
+          }}
+        />
+      )}
+
+      {dialog.type === 'renameContent' && (
+        <RenameContentDialog
+          name={dialog.name}
+          onClose={() => setDialog({ type: 'none' })}
+          onSubmit={async (n) => {
+            await doRenameContent(dialog.path, n);
+            return true;
           }}
         />
       )}
@@ -849,7 +1054,8 @@ function HelpDialog({ onClose, platform }: { onClose: () => void; platform: stri
             与原 C# 版数据目录互不干扰。</li>
           <li><b>快捷键</b>：栏目标题上标「焦点」的那栏就是键盘操作的对象（Ctrl/⌘+←/→ 切换，或点该栏卡片）。
             对其选中的卡片：Ctrl/⌘+O 打开、Ctrl/⌘+L 保护、F2 改名、F3 换栏、F4 改色、F6 改图标、Delete 移除；
-            Ctrl/⌘+Tab 与 Ctrl/⌘+Shift+Tab 翻项目组页签，Ctrl/⌘+PageDown/PageUp 翻项目页签；
+            Ctrl/⌘+Tab 与 Ctrl/⌘+Shift+Tab 在项目组分类间跳（选中该分类第一张卡片），
+            Ctrl/⌘+PageDown/PageUp 翻项目页签；
             F5 刷新、F8 清除无效项。打字时与弹窗打开时整组不触发。</li>
         </ul>
         <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 16 }}>

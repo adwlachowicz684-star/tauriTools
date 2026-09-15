@@ -13,11 +13,9 @@ pub mod base64;
 pub mod chain;
 pub mod content;
 pub mod editor;
-pub mod fsutil;
 pub mod junction;
 pub mod mcp;
 pub mod model;
-pub mod safety;
 pub mod screen;
 pub mod store;
 pub mod sys;
@@ -97,8 +95,7 @@ pub(crate) fn core_rename_folder(
     }
 
     let old = std::path::Path::new(path);
-    // 不跟随链接：改名一个 junction 不该变成"给链接指向的目录改名"
-    if !crate::fpx::fsutil::is_real_dir(old) {
+    if !old.is_dir() {
         return Err(format!("文件夹不存在或已被移动：{path}"));
     }
     let old_name = old
@@ -122,10 +119,8 @@ pub(crate) fn core_rename_folder(
     store::with_config(dir, |cfg| {
         // 摘锁后才能 rename：受 ACL 保护的目录 rename 会被系统拒绝
         let _guard = LockGuard::new(path, store::lock_of(cfg, path));
-        // 跨卷时 rename 必然失败，回退到"复制 + 删除"；
-        // 回退的语义是"复制没成功就绝不删源"，不会留下两份残缺数据
-        crate::fpx::fsutil::rename_with_fallback(old, std::path::Path::new(&new_path))
-            .map_err(|e| format!("改名失败：{e}"))?;
+        // rename 只在同一卷内原子完成；跨卷失败时宁可整体中止，不做"复制+删除"
+        std::fs::rename(old, &new_path).map_err(|e| format!("改名失败：{e}"))?;
         drop(_guard);
 
         // ---- 同步所有以旧路径为键的登记 ----
@@ -179,8 +174,163 @@ pub(crate) fn core_rename_folder(
             new_path: new_path.clone(),
             tab_hits,
             rec_hits,
+            // 改名不重建 junction：原版同样如此（改名后链接会断，提示用户重新分配）
+            relinked: 0,
+            relink_errors: Vec::new(),
         })
     })
+}
+
+/// 搬家：把项目 / 项目组文件夹移到别的父目录下（物理移动 + 同步所有登记）。
+///
+/// 与「改名」共用一套同步逻辑，差别只有目标路径的构造方式：
+/// 改名是「父目录不变、换末段」，搬家是「末段不变、换父目录」。
+/// 语义上必须分开——WPF 原版就是两个入口，且改名会拒绝带分隔符的名字，
+/// 正是为了不让它退化成搬家。
+fn core_move_folder(
+    dir: &std::path::Path,
+    kind: &str,
+    path: &str,
+    dest_parent: &str,
+) -> Result<model::RenameResult, String> {
+    let old = std::path::Path::new(path);
+    if !old.is_dir() {
+        return Err(format!("文件夹不存在或已被移动：{path}"));
+    }
+    let dest = std::path::Path::new(dest_parent);
+    if !dest.is_dir() {
+        return Err(format!("目标目录不存在：{dest_parent}"));
+    }
+    let name = old
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if name.is_empty() {
+        return Err("无法取到文件夹名，拒绝搬家".into());
+    }
+
+    // 拼目标路径：分隔符跟着目标目录走（Windows 用 \，Unix 用 /）
+    let dstr = dest_parent.trim_end_matches(|c| c == '\\' || c == '/');
+    let sep = if dstr.contains('\\') { "\\" } else { "/" };
+    let new_path = format!("{dstr}{sep}{name}");
+
+    if store::normalize_key(&new_path) == store::normalize_key(path) {
+        return Err("目标位置与当前位置相同".into());
+    }
+    if std::path::Path::new(&new_path).exists() {
+        return Err(format!("目标位置已存在同名文件夹：{new_path}"));
+    }
+    // 把目录搬进自己的子目录会让路径无限递归，必须先挡掉
+    let old_key_prefix = format!("{}\\", store::normalize_key(path));
+    let old_key_prefix_u = format!("{}/", store::normalize_key(path));
+    let dest_key = store::normalize_key(dest_parent);
+    if dest_key == store::normalize_key(path)
+        || dest_key.starts_with(&old_key_prefix)
+        || dest_key.starts_with(&old_key_prefix_u)
+    {
+        return Err("不能把文件夹移动到它自己或其子目录下".into());
+    }
+
+    let old_key = store::normalize_key(path);
+    // 项目组搬家要重建指向它的 junction；项目搬家不用（junction 是它的子项）
+    let kind_is_group = kind == "group";
+
+    // 与 WPF 原版一致：只支持同盘搬家。
+    // Directory.Move / std::fs::rename 跨卷会直接失败；曾经考虑过"复制+删除"兜底，
+    // 但项目目录里满是 junction（本插件的核心产物），递归复制必然跳过链接点，
+    // 搬完链接全丢且毫无提示 —— 宁可明确拒绝，也不制造静默的数据损失。
+    let src_root = path_root(path);
+    let dst_root = path_root(&new_path);
+    if src_root.is_empty() || dst_root.is_empty() || !src_root.eq_ignore_ascii_case(&dst_root) {
+        return Err(format!(
+            "暂不支持跨盘搬家（源在 {src_root}，目标在 {dst_root}）。请选同一磁盘分区内的目录。"
+        ));
+    }
+
+    store::with_config(dir, |cfg| {
+        // 与改名同理：先摘锁再移动，顺序反过来会被系统拒绝
+        let _guard = LockGuard::new(path, store::lock_of(cfg, path));
+        std::fs::rename(old, &new_path).map_err(|e| format!("移动文件夹失败：{e}"))?;
+        drop(_guard);
+
+        // ---- 同步所有以旧路径为键的登记（与改名完全一致）----
+        let mut tab_hits = 0usize;
+        for list in [&mut cfg.project_tabs, &mut cfg.group_tabs] {
+            for t in list.iter_mut() {
+                for item in t.items.iter_mut() {
+                    if store::normalize_key(item) == old_key {
+                        *item = new_path.clone();
+                        tab_hits += 1;
+                    }
+                }
+            }
+        }
+
+        cfg.folder_icons = remap_keys(std::mem::take(&mut cfg.folder_icons), &old_key, &new_path);
+        cfg.tag_colors = remap_keys(std::mem::take(&mut cfg.tag_colors), &old_key, &new_path);
+        for l in cfg.locks.iter_mut() {
+            if store::normalize_key(&l.path) == old_key {
+                l.path = new_path.clone();
+            }
+        }
+
+        // ---- 链接记录 + junction 重建 ----
+        // 项目组搬家：所有指向旧路径的 junction 全断了，必须逐个重建到新路径
+        // （WPF RelocateCard / cli.rs 迁移脚本都是这么做的）。
+        // 项目搬家则无需重建 —— junction 是项目目录的子项，随目录一起挪过去了。
+        let mut records = store::load_records(dir);
+        let mut rec_hits = 0usize;
+        let mut relinked = 0usize;
+        let mut relink_errors: Vec<String> = Vec::new();
+
+        for r in records.iter_mut() {
+            if store::normalize_key(&r.project) == old_key {
+                r.project = new_path.clone();
+                rec_hits += 1;
+            }
+            if store::normalize_key(&r.lib) == old_key {
+                r.lib = new_path.clone();
+            }
+        }
+
+        // 只有项目组搬家需要重建（项目搬家时 lib 不指向它）
+        if kind_is_group {
+            for r in records.iter() {
+                if store::normalize_key(&r.lib) != old_key { continue; }
+                if !std::path::Path::new(&r.project).is_dir() { continue; }
+                let names = r.link_names();
+                if names.is_empty() { continue; }
+                // 先删旧的（可能已断），再建指向新路径的。
+                // 失败不中断：记录下来一并回传，让前端提示用户手动复查。
+                let _ = junction::remove(&r.project, &names);
+                match junction::create(&r.project, &new_path, &names) {
+                    Ok(_) => relinked += 1,
+                    Err(e) => relink_errors.push(format!("{}：{e}", r.project)),
+                }
+            }
+        }
+
+        store::save_records(dir, &records)?;
+
+        Ok(model::RenameResult {
+            snapshot: snapshot(dir, cfg),
+            new_path: new_path.clone(),
+            tab_hits,
+            rec_hits,
+            relinked,
+            relink_errors,
+        })
+    })
+}
+
+/// 取路径的根（Windows 为盘符如 `C:`，Unix 为 `/`）。用于判断是否跨盘。
+fn path_root(p: &str) -> String {
+    use std::path::Component;
+    match std::path::Path::new(p).components().next() {
+        Some(Component::Prefix(pre)) => pre.as_os_str().to_string_lossy().to_string(),
+        Some(Component::RootDir) => "/".to_string(),
+        _ => String::new(),
+    }
 }
 
 /// 把 HashMap 中等于 old_key 的键换成 new_path（其余键原样保留）。
@@ -925,6 +1075,70 @@ pub fn fpx_rename_folder(
 ) -> Result<model::RenameResult, String> {
     let dir = store::data_dir(&app, &state)?;
     core_rename_folder(&dir, &kind, &path, &new_name)
+}
+
+/// 搬家：把项目 / 项目组文件夹移到别的父目录下。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_move_folder(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+    kind: String,
+    path: String,
+    dest_parent: String,
+) -> Result<model::RenameResult, String> {
+    let dir = store::data_dir(&app, &state)?;
+    core_move_folder(&dir, &kind, &path, &dest_parent)
+}
+
+/// 给内容区（agent / skill / rule）条目改名。
+///
+/// 目录型 skill 整体就是一个 skill，改名即改目录名；其余改文件名（保留扩展名）。
+/// 只动磁盘，不涉及配置登记——内容条目不在页签 / 链接记录里留痕。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_rename_content_item(
+    path: String,
+    new_name: String,
+) -> Result<model::ContentRenameResult, String> {
+    let name = new_name.trim();
+    if name.is_empty() {
+        return Err("新名称不能为空".into());
+    }
+    if name.contains('/') || name.contains('\\') {
+        return Err("名称不能包含路径分隔符".into());
+    }
+    if name.chars().any(|c| matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|')) {
+        return Err("名称包含非法字符（: * ? \" < > |）".into());
+    }
+
+    let old = std::path::Path::new(&path);
+    if !old.exists() {
+        return Err(format!("条目不存在：{path}"));
+    }
+
+    // 目录（目录型 skill）直接换末段；文件则保留扩展名，只改主名
+    let new_path = if old.is_dir() {
+        replace_last_segment(&path, name)
+    } else {
+        let ext = old
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy()))
+            .unwrap_or_default();
+        replace_last_segment(&path, &format!("{name}{ext}"))
+    };
+
+    let old_file = old.file_name().map(|s| s.to_string_lossy().to_string());
+    let new_file = std::path::Path::new(&new_path)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string());
+    if old_file == new_file {
+        return Err("新名称与当前名称相同".into());
+    }
+    if std::path::Path::new(&new_path).exists() {
+        return Err(format!("目标位置已存在同名条目：{new_path}"));
+    }
+
+    std::fs::rename(old, &new_path).map_err(|e| format!("改名失败：{e}"))?;
+    Ok(model::ContentRenameResult { new_path })
 }
 
 /// 清除无效项：摘掉页签里已不存在的路径，并清理指向它们的链接记录。
