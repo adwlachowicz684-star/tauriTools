@@ -1,14 +1,13 @@
 import { useMemo, useState } from 'react';
 import type { PresetAgent, FpxConfig } from '../types';
-import { CheckLine, Modal } from './ui';
+import { CheckLine } from './ui';
 
-/** 链接名开关：预设 + 自定义，缺失视为开启；支持改名 / 厂商标注 / 备注 */
-export function LinkAgentDialog({
-  config, presetAgents, onClose, onSave,
+/** 链接名开关主体（不带 Modal）：预设 + 自定义，缺失视为开启；支持改名 / 厂商标注 / 备注 */
+export function LinkAgentBody({
+  config, presetAgents, onSave, onLog,
 }: {
   config: FpxConfig;
   presetAgents: PresetAgent[];
-  onClose: () => void;
   onSave: (next: {
     linkAgents: Record<string, boolean>;
     custom: string[];
@@ -17,6 +16,8 @@ export function LinkAgentDialog({
     renames: Record<string, string>;
     pinned: string[];
   }) => void;
+  /** 保存后提示用；设置面板里没有日志区，走 toast 由外层决定 */
+  onLog?: (m: string) => void;
 }) {
   const [map, setMap] = useState<Record<string, boolean>>({ ...config.linkAgents });
   const [custom, setCustom] = useState<string[]>([...config.customLinkAgents]);
@@ -133,47 +134,37 @@ export function LinkAgentDialog({
     setErr('');
   };
 
-  return (
-    <Modal
-      title="Agent 链接名"
-      onClose={onClose}
-      width={520}
-      footer={
-        <>
-          <button className="p-btn" onClick={onClose}>取消</button>
-          <button className="p-btn primary" onClick={() => {
-            // 只保留「名字仍存在且值非空」的项，避免删掉链接名后残留孤儿备注 / 厂商覆盖
-            const pick = (src: Record<string, string>) => {
-              const out: Record<string, string> = {};
-              for (const n of allNames) {
-                const v = (src[n] ?? '').trim();
-                if (v) out[n] = v;
-              }
-              return out;
-            };
-            // 改名后名字已变，renames 里的键要落回「当前显示名」
-            const keptRenames: Record<string, string> = {};
-            for (const [from, to] of Object.entries(renames)) {
-              if (!to.trim() || to === from) continue;
-              keptRenames[from] = to.trim();
-            }
-            // 置顶只保留当前仍存在的名字，避免删掉链接名后列表里留着幽灵项
-            const keptPinned = pinned.filter((n) => allNames.includes(n));
-            onSave({
-              linkAgents: map,
-              custom,
-              remarks: pick(remarks),
-              vendors: pick(vendors),
-              renames: keptRenames,
-              pinned: keptPinned,
-            });
-            onClose();
-          }}>
-            保存（已启用 {enabledCount}/{allNames.length}）
-          </button>
-        </>
+  const submit = () => {
+    // 只保留「名字仍存在且值非空」的项，避免删掉链接名后残留孤儿备注 / 厂商覆盖
+    const pick = (src: Record<string, string>) => {
+      const out: Record<string, string> = {};
+      for (const n of allNames) {
+        const v = (src[n] ?? '').trim();
+        if (v) out[n] = v;
       }
-    >
+      return out;
+    };
+    // 改名后名字已变，renames 里的键要落回「当前显示名」
+    const keptRenames: Record<string, string> = {};
+    for (const [from, to] of Object.entries(renames)) {
+      if (!to.trim() || to === from) continue;
+      keptRenames[from] = to.trim();
+    }
+    // 置顶只保留当前仍存在的名字，避免删掉链接名后列表里留着幽灵项
+    const keptPinned = pinned.filter((n) => allNames.includes(n));
+    onSave({
+      linkAgents: map,
+      custom,
+      remarks: pick(remarks),
+      vendors: pick(vendors),
+      renames: keptRenames,
+      pinned: keptPinned,
+    });
+    onLog?.('链接名设置已保存');
+  };
+
+  return (
+    <>
       <div className="p-muted" style={{ marginBottom: 10 }}>
         分配项目组时，会在项目目录下为每个启用的名字创建一个指向项目组的链接（junction），
         各家 agent 打开项目时即可读到该项目组的 agent / skill。
@@ -280,7 +271,12 @@ export function LinkAgentDialog({
           })}
         </div>
       )}
-    </Modal>
+
+      <div className="p-row" style={{ marginTop: 12 }}>
+        <button className="p-btn primary" onClick={submit}>
+          保存（已启用 {enabledCount}/{allNames.length}）
+        </button>
+      </div>
+    </>
   );
 }
-

@@ -5,12 +5,10 @@ import { RenameContentDialog } from './components/RenameContentDialog';
 import { CardGrid, TabBar, type DragPayload } from './components/CardGrid';
 import { CreateDialog, IconPickDialog, LockDialog, StyleDialog } from './components/dialogs';
 import { DirDialog } from './components/DirDialog';
-import { LinkAgentDialog } from './components/LinkPanel';
-import { SettingsDialog } from './components/SettingsDialog';
 import { SideRail } from './components/SideRail';
 import { StackedGroups } from './components/StackedGroups';
 import {
-  BackupDialog, ChainDialog, EditorDialog, ServiceDialog,
+  BackupDialog, ChainDialog, EditorDialog,
 } from './components/ToolsPanel';
 import { ConfirmDialog, ContextMenu, MenuLayerContext, type MenuItem } from './components/ui';
 import { useFpx } from './hooks/useFpx';
@@ -23,15 +21,12 @@ type Dialog =
   /** 选目录加入页签；tabIndex 用于项目组栏堆叠后指定落到哪个分类 */
   | { type: 'pickDir'; kind: CardKind; tabIndex?: number }
   | { type: 'create'; kind: CardKind }
-  | { type: 'agents' }
   | { type: 'lock'; card: CardInfo }
   | { type: 'style'; card: CardInfo }
   | { type: 'icons'; card: CardInfo }
   | { type: 'backup' }
   | { type: 'editor' }
   | { type: 'chain'; target: string; kind: CardKind }
-  | { type: 'settings' }
-  | { type: 'service' }
   | { type: 'rename'; card: CardInfo; kind: CardKind }
   /** 搬家：选目标父目录 */
   | { type: 'move'; card: CardInfo; kind: CardKind }
@@ -267,6 +262,19 @@ export default function App() {
   const refreshChainActions = useCallback(() => {
     setChainVersion((v) => v + 1);
   }, []);
+
+  /**
+   * 设置页改完配置后要刷新主视图。
+   *
+   * 设置面板跑在另一个 iframe（view='settings'），与主视图不共享内存：
+   * 它改的是同一份磁盘配置，但主视图内存里的 boot 还是旧的，
+   * 不刷新就会出现"设置里改了、这边没反应"。
+   * 连锁动作清单也要重拉——设置页里能增删改动作。
+   */
+  useEffect(() => ctx.on('project-group:config-changed', () => {
+    refreshChainActions();
+    void s.refresh();
+  }), [ctx, refreshChainActions, s.refresh]);
 
   const bootReady = !!boot;
   useEffect(() => {
@@ -557,7 +565,6 @@ export default function App() {
           <div className="p-row">
             <button className="p-btn primary" onClick={() => setDialog({ type: 'create', kind: 'project' })}>＋ 新建项目</button>
             <button className="p-btn primary" onClick={() => setDialog({ type: 'create', kind: 'group' })}>＋ 新建项目组</button>
-            <button className="p-btn" onClick={() => setDialog({ type: 'agents' })}>链接名</button>
             <button
               className="p-btn"
               disabled={!s.selProject && !s.selGroup}
@@ -570,9 +577,14 @@ export default function App() {
             >
               发送到 AI
             </button>
-            <button className="p-btn" onClick={() => setDialog({ type: 'settings' })}>设置</button>
             <button className="p-btn" onClick={() => setDialog({ type: 'backup' })}>备份</button>
-            <button className="p-btn" onClick={() => setDialog({ type: 'service' })}>服务</button>
+            <button
+              className="p-btn"
+              title="基础设置 / 链接名 / 服务已移到外壳右上角的「⚙ 设置」"
+              onClick={() => s.pushLog('设置入口在外壳右上角的「⚙ 设置」（重载按钮左侧）')}
+            >
+              设置在哪？
+            </button>
             <button
               className="p-btn"
               title="F5"
@@ -749,24 +761,6 @@ export default function App() {
         />
       )}
 
-      {dialog.type === 'agents' && (
-        <LinkAgentDialog
-          config={boot.config}
-          presetAgents={boot.presetAgents}
-          onClose={() => setDialog({ type: 'none' })}
-          onSave={(next) => {
-            s.updateConfig((d) => {
-              d.linkAgents = next.linkAgents;
-              d.customLinkAgents = next.custom;
-              d.linkAgentRemarks = next.remarks;
-              d.linkAgentVendors = next.vendors;
-              d.linkAgentRenames = next.renames;
-              d.linkAgentsPinned = next.pinned;
-            });
-          }}
-        />
-      )}
-
       {dialog.type === 'lock' && (
         <LockDialog
           path={dialog.card.path}
@@ -873,29 +867,6 @@ export default function App() {
           onClose={() => setDialog({ type: 'none' })}
           onLog={s.pushLog}
           onSaved={(patch) => s.updateConfig((d) => Object.assign(d, patch))}
-        />
-      )}
-
-      {dialog.type === 'settings' && (
-        <SettingsDialog
-          api={s.api}
-          config={boot.config}
-          dataDir={boot.dataDir}
-          onClose={() => setDialog({ type: 'none' })}
-          onLog={s.pushLog}
-          onSaved={(patch) => s.updateConfig((d) => Object.assign(d, patch))}
-          onChainActionsChanged={refreshChainActions}
-        />
-      )}
-
-      {dialog.type === 'service' && (
-        <ServiceDialog
-          api={s.api}
-          config={boot.config}
-          onClose={() => setDialog({ type: 'none' })}
-          onLog={s.pushLog}
-          onSaved={(patch) => s.updateConfig((d) => Object.assign(d, patch))}
-          onWatchToggled={setWatchOn}
         />
       )}
 

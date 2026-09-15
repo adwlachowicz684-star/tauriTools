@@ -367,12 +367,16 @@ export function ChainDialog({
 
 /* ---------------------------- MCP / 监听 ---------------------------- */
 
-export function ServiceDialog({
-  api, config, onClose, onLog, onSaved, onWatchToggled,
+/**
+ * 服务面板主体（不带 Modal）：MCP server 启停、受保护目录监听、截图。
+ *
+ * 这三项都是"开关 / 动作"而非数据，操作即时生效，没有整体保存按钮。
+ */
+export function ServiceBody({
+  api, config, onLog, onSaved, onWatchToggled,
 }: {
   api: Api;
   config: FpxConfig;
-  onClose: () => void;
   onLog: (m: string, isError?: boolean) => void;
   onSaved: (patch: Partial<FpxConfig>) => void;
   /** 通知外层开始/停止轮询拉取监听事件 */
@@ -435,7 +439,7 @@ export function ServiceDialog({
   };
 
   return (
-    <Modal title="服务：MCP / 监听 / 截图" onClose={onClose} width={560}>
+    <>
       <div className="fpx-field">
         <label>MCP server</label>
         <div className="p-row">
@@ -474,10 +478,6 @@ export function ServiceDialog({
           Windows 走 GDI 直出 BMP；macOS 用 screencapture，Linux 需 ImageMagick / gnome-screenshot / grim。
         </div>
       </div>
-
-      <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 12 }}>
-        <button className="p-btn" onClick={onClose}>关闭</button>
-      </div>
-    </Modal>
+    </>
   );
 }

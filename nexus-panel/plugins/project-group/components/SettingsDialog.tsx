@@ -4,7 +4,6 @@ import { errText } from '../api';
 import type { BackupAutoStatus, FpxConfig, McpToolRow } from '../types';
 import { ChainActionsPanel } from './ChainActionsPanel';
 import { ChainClientsDialog } from './ChainClientsDialog';
-import { Modal } from './ui';
 
 /** 自动备份档位（分钟）；0 = 关闭。与原版预设一致。 */
 const BACKUP_PRESETS: { value: number; label: string }[] = [
@@ -19,20 +18,22 @@ const BACKUP_PRESETS: { value: number; label: string }[] = [
 ];
 
 /**
- * 基础设置面板。
+ * 基础设置主体（不带 Modal 外壳）。
  *
  * 这一组开关原先只有配置字段、没有界面，改起来得手改 JSON，现在集中在这里。
  * 改动即时保存（与 WPF 版一致）；其中「自动备份间隔」保存后还要通知后端
  * 重新拉起/停止定时器——后端是常驻线程，不跟着配置自己变。
+ *
+ * 抽成"主体"（不带 Modal 外壳）是为了直接嵌进外壳的「⚙ 设置」面板——
+ * 那一页本身就是个独立页面，再套 Modal 会多一层无意义的遮罩。
  */
-export function SettingsDialog({
-  api, config, dataDir, onClose, onLog, onSaved, onChainActionsChanged,
+export function SettingsBody({
+  api, config, dataDir, onLog, onSaved, onChainActionsChanged,
 }: {
   api: Api;
   config: FpxConfig;
   /** 插件数据目录：拼 icons/ 下图标的绝对路径（换软件图标要用） */
   dataDir: string;
-  onClose: () => void;
   onLog: (m: string, isError?: boolean) => void;
   /**
    * 连锁动作在管理页里改过之后通知外层重新拉清单。
@@ -70,9 +71,11 @@ export function SettingsDialog({
 
   // 工具清单与自动备份状态都取自后端；清单以工具名为准，开关状态用本地草稿覆盖
   useEffect(() => {
-    api.mcpTools().then(setToolRows).catch((e) => onLog(errText(e), true));
+    // 三项都做了空值兜底：后端理论上不返回 null，但一旦返回（旧版本 / 异常路径），
+    // 下面 toolRows.length / iconFiles.length 会直接让整个设置页白屏。
+    api.mcpTools().then((r) => setToolRows(r ?? [])).catch((e) => onLog(errText(e), true));
     api.backupAutoStatus().then(setStatus).catch(() => { /* 状态拿不到不影响设置 */ });
-    api.listIcons().then(setIconFiles).catch(() => { /* 拿不到就不显示图标列表 */ });
+    api.listIcons().then((r) => setIconFiles(r ?? [])).catch(() => { /* 拿不到就不显示图标列表 */ });
   }, [api, onLog]);
 
   // 图标是本地文件，沙箱里要后端转 data URI 才显示得出来
@@ -116,7 +119,7 @@ export function SettingsDialog({
       const running = await api.backupAutoSync();
       onLog(autoMinutes === 0 ? '已停止自动备份' : `自动备份已启用（每 ${autoMinutes} 分钟）`);
       setStatus((s) => (s ? { ...s, running, minutes: autoMinutes } : s));
-      onClose();
+      onLog('设置已保存');
     } catch (e) {
       onLog(errText(e), true);
     } finally {
@@ -184,19 +187,7 @@ export function SettingsDialog({
   }
 
   return (
-    <Modal
-      title="基础设置"
-      onClose={onClose}
-      width={560}
-      footer={
-        <>
-          <button className="p-btn" onClick={onClose} disabled={saving}>取消</button>
-          <button className="p-btn primary" onClick={() => void save()} disabled={saving}>
-            {saving ? '保存中…' : '保存'}
-          </button>
-        </>
-      }
-    >
+    <>
       <div className="fpx-settings-sec">
         <h3>交互</h3>
         <Check
@@ -362,12 +353,20 @@ export function SettingsDialog({
           </div>
         )}
       </div>
-    </Modal>
+
+      {/* 保存按钮放在主体里而不是外层 Modal 的 footer：
+          设置面板（外壳「⚙」）没有 Modal，只有主体，按钮必须自带。 */}
+      <div className="p-row" style={{ marginTop: 16 }}>
+        <button className="p-btn primary" onClick={() => void save()} disabled={saving}>
+          {saving ? '保存中…' : '保存设置'}
+        </button>
+      </div>
+    </>
   );
 }
 
 /** 带副标题的勾选项（与 CheckLine 同款视觉，这里单独实现便于内联使用） */
-function Check({
+export function Check({
   checked, onChange, title, sub,
 }: {
   checked: boolean;
