@@ -238,5 +238,50 @@ const sideBorders = [...afCss.matchAll(/border-(?:right|left|top|bottom)\s*:\s*(
 t('单边分隔线不再使用 --af-line（接到风格开关上了）',
   sideBorders.length === 0, sideBorders.slice(0, 3).join(' | ') || '已全部改用 --af-divider');
 
+console.log('\n=== 10. 组件用到的 class 必须有样式定义（防"裸 div"）===');
+/* 这一节盯的是"DOM 与 CSS 各写一半"的事故：
+   组件里加了 class，CSS 里却没有任何规则 —— 元素在、样式不在，
+   静默塌掉。插件设置抽屉就真实踩过：.drawer/.drawer-head/... 六个类
+   两个外壳都在用，css/ 下却搜不到一条规则，于是标题栏里的标题、
+   副标题、关闭按钮按文档流各占一行，也没有底板。 */
+const shellCss = shell;
+const hasRule = (cls) => new RegExp(`\\.${cls}[\\s,:.{>]`).test(shellCss);
+
+/* 抽屉：React 外壳（src/components/PluginSettingsDrawer.tsx）
+   与原生外壳（js/shell.js）共用同一套类名，两边都靠这里的规则 */
+const drawerUsed = ['drawer', 'drawer-head', 'drawer-title', 'drawer-scroll',
+  'drawer-body', 'drawer-empty', 'drawer-mask'];
+const drawerUndef = drawerUsed.filter((c) => !hasRule(c));
+t('抽屉用到的 class 都有样式定义', drawerUndef.length === 0,
+  drawerUndef.join(', ') || `${drawerUsed.length} 个全部有定义`);
+
+/* 标题栏要的是"左标题 + 右关闭"：没有 flex 就变成上下堆叠 */
+const headBlock = /\.drawer-head\s*\{([^}]*)\}/.exec(shellCss)?.[1] || '';
+t('标题栏用 flex 横向排列（左标题 / 右关闭，不上下堆叠）',
+  /display\s*:\s*flex/.test(headBlock) && /justify-content\s*:\s*space-between/.test(headBlock));
+t('标题框有底板（用户明确要求"有个 bg 做标题框"）',
+  /background\s*:\s*var\(/.test(headBlock), (headBlock.match(/background\s*:\s*[^;]+;/) || ['无'])[0]);
+/* 分隔线必须用 --divider：--border 是风格开关，新拟态下透明会整条消失 */
+t('标题框下边线用 --divider（不是风格开关 --border）',
+  /border-bottom\s*:\s*[^;]*var\(--divider/.test(headBlock)
+  && !/border-bottom\s*:\s*[^;]*var\(--border/.test(headBlock));
+t('关闭按钮不参与收缩（标题过长时不会被挤变形）',
+  /\.drawer-head \.tb-btn[\s\S]{0,120}flex\s*:\s*none/.test(shellCss));
+
+/* 抽屉是右侧滑出，必须覆盖 .mask 的居中（place-items:center 是弹窗用的） */
+const maskBlock = /\.drawer-mask\s*\{([^}]*)\}/.exec(shellCss)?.[1] || '';
+t('抽屉遮罩靠右满高（覆盖了 .mask 的居中）',
+  /place-items\s*:\s*stretch\s+end/.test(maskBlock));
+t('遮罩未显示时不拦截点击（等 raf 加 .on 的那一帧不能吃掉操作）',
+  /pointer-events\s*:\s*none/.test(maskBlock) && /\.drawer-mask\.on[\s\S]{0,80}pointer-events\s*:\s*auto/.test(shellCss));
+t('抽屉有滑入过渡，且尊重 prefers-reduced-motion',
+  /\.drawer-mask\.on \.drawer\s*\{/.test(shellCss)
+  && /prefers-reduced-motion[\s\S]{0,200}\.drawer\b/.test(shellCss));
+
+/* 内容区可滚动：flex 子项要写 min-height:0，否则会被内容顶开 */
+const scrollBlock = /\.drawer-scroll\s*\{([^}]*)\}/.exec(shellCss)?.[1] || '';
+t('内容区可滚动且写了 min-height:0（否则被内容顶开，滚动失效）',
+  /overflow\s*:\s*auto/.test(scrollBlock) && /min-height\s*:\s*0/.test(scrollBlock));
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

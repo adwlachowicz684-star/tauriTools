@@ -237,16 +237,19 @@
 .fpx-card.drop-after::after {
   content: '';
   position: absolute; left: 0; right: 0;
-  height: 2px; border-radius: 1px;
+  height: 2px;
+  /* 胶囊端头：--r-pill 是 999px，浏览器会按最小边（2px）的一半缩放到 1px，
+     与直接写 1px 渲染一致，但语义是"两端全圆"而不是一个魔法数字 */
+  border-radius: var(--r-pill);
   background: var(--accent);
   box-shadow: 0 0 6px var(--accent);
-  z-index: 3;
+  z-index: var(--z-base);
 }
 .fpx-card.drop-before::before { top: -5px; }
 .fpx-card.drop-after::after { bottom: -5px; }
 /* 空列表时的落点线 */
 .fpx-drop-line {
-  height: 2px; border-radius: 1px; margin: 3px 0;
+  height: 2px; border-radius: var(--r-pill); margin: 3px 0;
   background: var(--accent); box-shadow: 0 0 6px var(--accent);
 }
 /* 跨栏落点 = 建链，与同栏排序（虚线）刻意区分：
