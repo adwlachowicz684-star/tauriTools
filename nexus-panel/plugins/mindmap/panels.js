@@ -22,6 +22,34 @@ import { THEMES, LAYOUTS, blankTheme, DEFAULT_THEME, themeSeed, sanitizePalette 
  * 而覆盖会让用户丢掉原来那个。
  */
 /**
+ * A29 搜索结果的展示文案（纯函数，可测）。
+ *
+ * 原实现三种情况都显示「无匹配」：
+ *   1. 没输入关键字
+ *   2. 编辑器还没就绪（此时根本没搜）
+ *   3. 真的没搜到
+ *
+ * 其中第 2 种最误导 —— 用户会以为脑图里确实没有这个词。
+ * 前两种要**提醒**（warn），第三种是正常结果，不该报警。
+ *
+ * @param {string} keyword 搜索框原文
+ * @param {object|null} r `EditorBridge.search()` 的返回
+ * @returns {{text:string, warn:boolean}}
+ */
+export function searchStatusText(keyword, r) {
+  const kw = String(keyword ?? '').trim();
+  if (!kw) return { text: '请输入关键字', warn: true };
+  if (!r || r.ok === false) {
+    return {
+      text: r?.reason === 'error' ? '搜索失败' : '编辑器未就绪',
+      warn: true,
+    };
+  }
+  if (!r.total) return { text: '无匹配', warn: false };
+  return { text: `${r.index}/${r.total}`, warn: false };
+}
+
+/**
  * A5 从剪贴板数据里挑出图片（纯函数，可测）。
  *
  * 走 `paste` 事件而不是 `navigator.clipboard.read()`：
@@ -68,7 +96,6 @@ import * as mi from './mediainfo.js';
 import * as picons from './preset-icons.js';
 import * as tb from './tag-badges.js';
 
-import { show as showDialog, confirm as askConfirm, prompt as askPrompt } from '../../js/dialog.js';
 const FONTS = ['微软雅黑', '宋体', '黑体', '楷体', 'Arial', 'Consolas', 'sans-serif'];
 const SIZES = [12, 14, 16, 18, 20, 24, 28, 32, 40];
 
@@ -1143,29 +1170,28 @@ export function buildSide(app, opts = {}) {
 
 /**
  * 通用浮层。
- *
- * 现在**委托给全工具共用的 js/dialog.js**（原来这里自己拼了一份 .mm-mask /
- * .mm-dialog）。两份实现并存会让观感随时间漂移 —— 改了主题这边忘了那边，
- * 表现就是"某个弹窗跟别的不一样"。所以留的只是这层薄封装：
- * 把老的 (title, children, onClose) 签名翻译成共用 API。
- *
  * @param onClose 关闭时的清理钩子：点遮罩、点关闭按钮、外部调 close() 都会触发，
  *   用于释放 Blob URL 之类的一次性资源。
  */
 function dialog(title, children, onClose) {
+  const mask = h('div.mm-mask', {});
   let cleaned = false;
-  const d = showDialog({
-    title,
-    body: children,
-    actions: [{ label: '关闭' }],
-  });
   const close = () => {
     if (cleaned) return;
     cleaned = true;
-    d.close();
+    mask.remove();
     try { onClose?.(); } catch { /* 清理失败不该拦住关闭 */ }
   };
-  return { mask: d.mask, dialog: d.dialog, close, settled: d.settled };
+  mask.appendChild(
+    h('div.mm-dialog', {},
+      h('h3', {}, title),
+      ...children,
+      h('div.mm-actions', {}, h('button.mm-btn', { onclick: close }, '关闭')),
+    ),
+  );
+  mask.addEventListener('click', (e) => { if (e.target === mask) close(); });
+  document.body.appendChild(mask);
+  return { mask, close };
 }
 
 /**
@@ -1180,8 +1206,18 @@ function dialog(title, children, onClose) {
  * @returns {Promise<boolean>} true = 确认
  */
 export function confirmDialog(title, message, okText = '确定', danger = false) {
-  /* 委托给共用弹窗（js/dialog.js）—— 与外壳、其它插件同一套观感与行为 */
-  return askConfirm({ title, message, okText, danger });
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; dlg.close(); resolve(v); } };
+    const dlg = dialog(title, [
+      h('div.mm-hint', { style: { whiteSpace: 'pre-wrap', lineHeight: '1.6' } }, message),
+      h('div.mm-actions', {},
+        h('button.mm-btn' + (danger ? '.danger' : ''), { onclick: () => finish(true) }, okText),
+        h('button.mm-btn', { onclick: () => finish(false) }, '取消'),
+      ),
+    ], () => finish(false));
+    dlg.mask.addEventListener('click', (e) => { if (e.target === dlg.mask) finish(false); });
+  });
 }
 
 /**
@@ -1434,15 +1470,10 @@ export async function openBackups(app) {
               // A46 恢复会覆盖**当前所有画布**且不可逆 —— 必须确认。
               // 不确认的话，误点一下整份工作就没了。
               const n = (b.sheets || []).length;
-              const restore = await askConfirm({
-                title: '恢复快照',
-                message: `恢复到 ${new Date(b.ts).toLocaleString()} 的快照？\n\n`
-                  + `当前所有画布将被替换为该快照的 ${n} 张画布，此操作不可撤销。\n`
-                  + `（恢复前的当前状态会自动另存一份快照，可再回滚）`,
-                okText: '恢复',
-                danger: true,
-              });
-              if (!restore) return;
+              if (!window.confirm(
+                `恢复到 ${new Date(b.ts).toLocaleString()} 的快照？\n\n` +
+                `当前所有画布将被替换为该快照的 ${n} 张画布，此操作不可撤销。\n` +
+                `（恢复前的当前状态会自动另存一份快照，可再回滚）`)) return;
               await app.api.restoreBackup(b);
               dlg.close();
             }, (m) => app.api.status(m, true)),
@@ -1548,7 +1579,7 @@ export async function openIconLibrary(app) {
 
   // ---- 分组管理 ----
   const newGroup = async () => {
-    const name = await askPrompt({ title: '新建分组', label: '分组名称', defaultValue: '新分组' });
+    const name = window.prompt('新分组名称', '新分组');
     if (name == null) return;
     const g = await picons.addGroup(name);
     if (!g) { app.api.status('新建分组失败', true); return; }
@@ -1561,7 +1592,7 @@ export async function openIconLibrary(app) {
     const g = groups.find((x) => x.id === activeId);
     if (!g) return;
     if (g.builtin) { app.api.status('内置分组不可重命名', true); return; }
-    const name = await askPrompt({ title: '重命名分组', label: '分组名称', defaultValue: g.name });
+    const name = window.prompt('分组名称', g.name);
     if (name == null || name === g.name) return;
     const r = await picons.renameGroup(g.id, name);
     if (!r.ok) { app.api.status(r.error, true); return; }
@@ -1574,12 +1605,7 @@ export async function openIconLibrary(app) {
     if (!g) return;
     if (g.builtin) { app.api.status('内置分组不可删除', true); return; }
     const n = (g.icons || []).length;
-    const del = await askConfirm({
-      title: '删除分组',
-      message: `删除分组「${g.name}」？${n ? `组内 ${n} 个图标会一并删除。` : ''}`,
-      danger: true,
-    });
-    if (!del) return;
+    if (!window.confirm(`删除分组「${g.name}」？${n ? `组内 ${n} 个图标会一并删除。` : ''}`)) return;
     const r = await picons.deleteGroup(g.id);
     if (!r.ok) { app.api.status(r.error, true); return; }
     await reload();

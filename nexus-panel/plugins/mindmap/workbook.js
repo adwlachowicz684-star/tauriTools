@@ -223,6 +223,49 @@ export function markdownToWorkbook(md) {
  * 导出为 .json 工作簿文本。
  * 顶层带 kind 标记，导入时可区分「工作簿 / 单画布 / 未知」。
  */
+/**
+ * 收集画布里所有附件的资产 id（纯函数，可测）。
+ *
+ * B22：用于在导入 .json 时判断「这个文件是不是从别的机器来的」。
+ *
+ * 本插件的 .json 只存**引用**（`{a: '<assetId>'}`），附件本体在 IndexedDB 里。
+ * 换台机器导入这个 JSON，引用看着完全正常、界面上附件也还在，
+ * 但**字节没有跟过来** —— 点开才发现打不开。
+ * 不提前提示的话，用户会以为是文件坏了。
+ *
+ * 只收**解析得出 a 字段**的引用；C# 版遗留的纯路径字符串没有资产 id，
+ * 那种是另一种情况（本来就打不开），不归这里管。
+ *
+ * @param {Array} sheets
+ * @returns {string[]} 去重后的资产 id
+ */
+export function collectAssetRefs(sheets = []) {
+  const ids = new Set();
+  const visit = (node) => {
+    const d = node?.data;
+    if (d) {
+      for (const k of ['file', 'video']) {
+        const v = d[k];
+        if (typeof v !== 'string' || !v) continue;
+        try {
+          const ref = JSON.parse(v);
+          if (ref && typeof ref.a === 'string' && ref.a) ids.add(ref.a);
+        } catch { /* 纯路径引用，无资产 id，跳过 */ }
+      }
+    }
+    for (const c of node?.children || []) visit(c);
+  };
+
+  for (const s of sheets || []) {
+    if (!s?.content) continue;
+    let km = null;
+    try { km = typeof s.content === 'string' ? JSON.parse(s.content) : s.content; } catch { continue; }
+    if (!km) continue;
+    visit(km.root);
+  }
+  return [...ids];
+}
+
 export function serializeWorkbook(sheets, activeId) {
   const list = normalizeSheets(sheets);
   return JSON.stringify(

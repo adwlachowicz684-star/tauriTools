@@ -1497,8 +1497,7 @@ group('设置面板');
   };
 
   const dlg = openSettings(app);
-  /* 弹窗已统一到 js/dialog.js（.nx-dlg），不再是插件自写的 .mm-dialog */
-  const root = dlg.mask.querySelector('.nx-dlg');
+  const root = dlg.mask.querySelector('.mm-dialog');
 
   // 18.1 三段齐全
   const titles = [...root.querySelectorAll('h3')].map((x) => x.textContent);
@@ -1728,10 +1727,7 @@ group('A44/A46 备份闭环');
   // ---- 恢复必须有确认 ----
   const p = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
   const seg = p.slice(p.indexOf('export async function openBackups'), p.indexOf('/* ------------------------- 设置'));
-  /* 确认框已从 window.confirm 换成通用弹窗（js/dialog.js）：原生对话框
-     长相由浏览器决定、不跟随主题，且在 jsdom 里无法测试。 */
-  ok(/askConfirm\(|window\.confirm\(/.test(seg), 'A46 恢复前有确认框（覆盖全部画布，不可逆）');
-  ok(!/window\.confirm\(/.test(seg), 'A46 不再用原生 window.confirm（改用通用弹窗）');
+  ok(/window\.confirm\(/.test(seg), 'A46 恢复前有 window.confirm（覆盖全部画布，不可逆）');
   ok(/不可撤销/.test(seg), '确认文案说明不可撤销');
   ok(/safe\('恢复快照'/.test(seg), '恢复动作包了 safe()（异步失败要看得见）');
 }
@@ -2692,11 +2688,7 @@ group('P1 附件与视频');
 
   // ---- A23 替换/移除前确认 ----
   ok(/export function confirmDialog/.test(src), 'A23 新增 confirmDialog（Promise 版）');
-  /* confirmDialog 现在委托给全工具共用的 js/dialog.js —— 实现里不再自己
-     new Promise。要保证的是**调用点可以 await**，所以改看它返回的是不是
-     Promise（委托给 askConfirm 同样满足）。 */
-  ok(/return askConfirm\(|return new Promise\(\(resolve\) => \{/.test(src),
-    'A23 confirmDialog 返回 Promise（调用点是 async 流程）');
+  ok(/return new Promise\(\(resolve\) => \{/.test(src), 'A23 confirmDialog 返回 Promise（调用点是 async 流程）');
   const rmStart = src.indexOf('const remove = ');
   const rm = src.slice(rmStart, src.indexOf('/** 点附件卡片', rmStart));
   // 不能只断言「有没有 await confirmDialog」—— 把 `if (r)` 改成 `if (false)`
@@ -2853,7 +2845,7 @@ group('P2 导入导出');
   // ---- 先核实：A32 / A33 / A40 其实早已实现 ----
   const wbk = await import('./workbook.js');
   const io = await import('./io.js');
-  const idx = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
 
   // A32 多画布 Markdown 导出
   const md = wbk.workbookToMarkdown([
@@ -2864,7 +2856,7 @@ group('P2 导入导出');
   ok(/甲/.test(md) && /乙/.test(md), 'A32 两张画布内容都在');
 
   // A33 整本 XMind：writeXMind 传的是 workbook.sheets（全部），不是单张
-  const xm = (fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const xm = fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8');
   ok(/export async function writeXMind\(sheets, activeId/.test(xm), 'A33 writeXMind 接的是 sheets 数组');
   ok(/xmind\.writeXMind\(workbook\.sheets, workbook\.activeId/.test(idx), 'A33 导出时传全部画布（整本快照，已实现）');
 
@@ -2890,12 +2882,12 @@ group('P2 导入导出');
   eq(wbk.parseWorkbook('不是 json'), null, 'A31 无法解析返回 null（不抛）');
   eq(wbk.parseWorkbook('{}'), null, 'A31 无 sheets 也无 root → null');
 
-  const idx = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   ok(/识别为：\$\{formTip\}/.test(idx), 'A31 导入后把识别到的形态说出来');
 }
 
 {
-  const idx = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
 
   // ---- A30 整体替换前确认 ----
   ok(/await confirmDialog\(\s*\n?\s*'导入将替换全部画布'/.test(idx), 'A30 导入前弹确认');
@@ -2914,7 +2906,7 @@ group('P2 导入导出');
   ok(/async function exportPng\(scale = 1\)/.test(idx), 'A38 exportPng 接受倍率');
   ok(/io\.svgToPngBlob\(svg, s\)/.test(idx), 'A38 走 SVG 中间层（内核 png 只是补白，不是真高清）');
   ok(/脑图\$\{s > 1 \? `@\$\{s\}x` : ''\}/.test(idx), 'A38 多倍文件名带 @2x 标记');
-  const iom = (fs.readFileSync(path.join(HERE, 'io.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const iom = fs.readFileSync(path.join(HERE, 'io.js'), 'utf8');
   ok(/export async function svgToPngBlob/.test(iom), 'A38 新增 svgToPngBlob');
   ok(/export function pngScaleDims/.test(iom), 'A38 抽出 pngScaleDims（纯函数，可单测）');
   ok(/export function scaleSvgText/.test(iom), 'A38 抽出 scaleSvgText（纯 DOM 操作，可单测）');
@@ -2929,14 +2921,14 @@ group('P2 导入导出');
   ok(/setAttribute\('width', String\(dims\.W\)\)/.test(scaleFn), 'A38 用钳制后的尺寸重设 width');
 
   // ---- A39 导出格式菜单 ----
-  const pn = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   ok(/export function popupMenu/.test(pn), 'A39 新增 popupMenu');
   ok(/function openExportMenu/.test(idx), 'A39 新增 openExportMenu');
   ok(/oncontextmenu/.test(idx), 'A39 右键也能打开菜单');
   ok(/PNG · 2 倍（高清）/.test(idx) && /PNG · 3 倍（超清）/.test(idx), 'A39 菜单里列出 PNG 倍率');
   ok(/document\.addEventListener\('pointerdown', onDoc, true\)/.test(pn),
     'A39 菜单用捕获阶段监听（否则点画布会被画布先处理，菜单关不掉）');
-  const css = (fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8')).replace(/\r\n/g, '\n');
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
   ok(/\.mm-menu-item/.test(css), 'A39 菜单有样式');
 }
 
@@ -3112,7 +3104,7 @@ group('P3 打印与 PDF');
 
 {
   // ---- A35/A41 打印设置框 ----
-  const pn = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   ok(/export function openPrintSettings/.test(pn), 'A35 新增 openPrintSettings');
   const fn = pn.slice(pn.indexOf('export function openPrintSettings'), pn.indexOf('/** 自定义主题编辑器'));
   ok(/let landscape = true/.test(fn), 'A35 默认横向（脑图更宽，横向少浪费纸张）');
@@ -3122,7 +3114,7 @@ group('P3 打印与 PDF');
   ok(/另存为 PDF/.test(fn), 'A37 提示中说明如何导出 PDF');
   ok(/完整画布/.test(fn), 'A34 提示说明打印的是完整画布而非视口');
 
-  const idx = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   ok(/async function printMap/.test(idx), 'A34 新增 printMap');
   ok(/bridge\?\.exportSvg\(\)/.test(idx), 'A34 打印取的是完整画布 SVG（不是视口截图）');
   const pm = idx.slice(idx.indexOf('async function printMap'), idx.indexOf('function reportSave'));
@@ -3197,7 +3189,7 @@ group('P3b Tauri Rust 打印命令');
 
 {
   // ---- Rust 侧：命令注册与平台判断 ----
-  const rs = (fs.readFileSync(path.join(HERE, '../../src-tauri/src/main.rs'), 'utf8')).replace(/\r\n/g, '\n');
+  const rs = fs.readFileSync(path.join(HERE, '../../src-tauri/src/main.rs'), 'utf8');
   ok(/fn mm_print\(window: WebviewWindow\) -> Result<String, String>/.test(rs), 'Rust 新增 mm_print 命令');
   ok(/mm_print, mm_print_support/.test(rs), '两个命令都已注册到 invoke_handler');
   ok(/fn mm_print_support\(\) -> bool/.test(rs), 'Rust 新增 mm_print_support（前端可预知能力）');
@@ -3218,7 +3210,7 @@ group('P3b Tauri Rust 打印命令');
 
 {
   // ---- 前端：printMap 走 Rust 命令 ----
-  const idx = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   const pm = idx.slice(idx.indexOf('async function printMap'), idx.indexOf('function reportSave'));
   ok(/ctx\.invoke\('mm_print'/.test(pm), 'printMap 调用 Rust 命令 mm_print');
   ok(/print: async \(\) => \{/.test(pm), '通过 opts.print 注入自定义路径（io 层不依赖 Tauri）');
@@ -3228,7 +3220,7 @@ group('P3b Tauri Rust 打印命令');
   ok(/via \? ` · \$\{via\}` : ''/.test(pm), '两条路径的提示要能区分');
 
   // io 层不能引入 Tauri 知识
-  const iom = (fs.readFileSync(path.join(HERE, 'io.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const iom = fs.readFileSync(path.join(HERE, 'io.js'), 'utf8');
   ok(!/invoke|@tauri-apps/.test(iom), 'io.js 不引入 Tauri 依赖（路径选择留给调用方）');
   ok(/if \(!ok && typeof window !== 'undefined' && typeof window\.print === 'function'\)/.test(iom),
     'io.js 在自定义路径返回 false 后回退 window.print');
@@ -3313,7 +3305,7 @@ group('SVG → PDF 矢量通道');
 
 {
   // ---- Rust 侧 ----
-  const rs = (fs.readFileSync(path.join(HERE, '../../src-tauri/src/main.rs'), 'utf8')).replace(/\r\n/g, '\n');
+  const rs = fs.readFileSync(path.join(HERE, '../../src-tauri/src/main.rs'), 'utf8');
   ok(/fn mm_svg_to_pdf/.test(rs), 'Rust 新增 mm_svg_to_pdf');
   ok(/mm_svg_to_pdf, mm_pdf_vector_support/.test(rs), '两个 PDF 命令都已注册');
   ok(/fn mm_pdf_vector_support/.test(rs), 'Rust 新增 mm_pdf_vector_support（供前端探测降级）');
@@ -3328,11 +3320,11 @@ group('SVG → PDF 矢量通道');
   ok(/if text\.is_empty\(\)/.test(f), 'Rust 空 SVG 直接报错（不进解析）');
   ok(/if pdf\.is_empty\(\)/.test(f), 'Rust 空 PDF 结果报错（不返回空串）');
 
-  const cg = (fs.readFileSync(path.join(HERE, '../../src-tauri/Cargo.toml'), 'utf8')).replace(/\r\n/g, '\n');
+  const cg = fs.readFileSync(path.join(HERE, '../../src-tauri/Cargo.toml'), 'utf8');
   ok(/svg2pdf = "0\.13\.0"/.test(cg), 'Cargo.toml 已加 svg2pdf 0.13.0');
 
   // ---- 前端通道逻辑 ----
-  const idx = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   ok(/async function exportPdf/.test(idx), '新增 exportPdf');
   const ep = idx.slice(idx.indexOf('async function exportPdf'), idx.indexOf('async function printMap'));
   ok(/ctx\.invoke\('mm_svg_to_pdf'/.test(ep), 'exportPdf 调用 mm_svg_to_pdf');
@@ -3357,7 +3349,7 @@ group('SVG → PDF 矢量通道');
   ok(/v === 'dialog' \? 'dialog' : 'vector'/.test(sp), '未知值一律归一为 vector（不存脏值）');
   ok(/await store\.settings\.save\(settings\)/.test(sp), 'setPdfChannel 立即持久化');
 
-  const pn = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   ok(/PDF 通道/.test(pn), '设置面板新增「PDF 通道」');
   ok(/app\.api\.setPdfChannel\(e\.target\.value\)/.test(pn), '下拉切换调用 setPdfChannel');
   ok(/矢量（直接保存）/.test(pn), '选项一：矢量');
@@ -3430,7 +3422,7 @@ group('审查修复与 A65/A66 主题导入导出边界');
   eq(pn.uniqueThemeName('', []), '未命名', '空名 → 未命名');
   eq(pn.uniqueThemeName('  ', []), '未命名', '纯空格 → 未命名');
 
-  const src = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   const imp = src.slice(src.indexOf('async function importThemeFile'), src.indexOf('function pageTheme'));
   ok(/sanitizePalette\(pal\)/.test(imp), 'A65 导入时校验 palette（此前完全没有，属两条路径不对称）');
   ok(/uniqueThemeName\(t\.name/.test(imp), 'A65 导入时处理重名');
@@ -3462,7 +3454,7 @@ group('A5 剪贴板位图导入 / A18 失效图标清理');
   eq(pn.imageItemsFromClipboard({ items: [{ kind: 'string', type: 'text/plain' }] }).length, 0,
     'A5 items 里的非 file 类型被忽略');
 
-  const src = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   ok(/addEventListener\('paste', onPasteIcons\)/.test(src), 'A5 挂了 paste 监听');
   ok(/removeEventListener\('paste', onPasteIcons\)/.test(src),
     'A5 关闭时解绑 —— 不解绑会重复触发，一次 Ctrl+V 加进去两份');
@@ -3488,7 +3480,7 @@ group('A5 剪贴板位图导入 / A18 失效图标清理');
   eq(pi.partitionMissing(null, new Set()).keep.length, 0, 'A18 null 不报错');
 
   ok(typeof pi.pruneMissing === 'function', 'A18 导出 pruneMissing');
-  const src = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   ok(/清理失效/.test(src), 'A18 图标库里有「清理失效」入口');
   ok(/picons\.pruneMissing\(\)/.test(src), 'A18 入口调用 pruneMissing');
 }
@@ -3497,7 +3489,7 @@ group('A70 开发者工具 / A71 诊断捕获');
 
 {
   // ---- Rust 侧 A70 ----
-  const rs = (fs.readFileSync(path.join(HERE, '../../src-tauri/src/main.rs'), 'utf8')).replace(/\r\n/g, '\n');
+  const rs = fs.readFileSync(path.join(HERE, '../../src-tauri/src/main.rs'), 'utf8');
   ok(/fn mm_open_devtools/.test(rs), 'A70 Rust 新增 mm_open_devtools');
   ok(/mm_open_devtools,/.test(rs), 'A70 命令已注册');
   const f = rs.slice(rs.indexOf('fn mm_open_devtools'), rs.indexOf('/// 当前是否具备'));
@@ -3506,10 +3498,10 @@ group('A70 开发者工具 / A71 诊断捕获');
   ok(/window\.open_devtools\(\)/.test(f), 'A70 调用 Tauri 的 open_devtools');
   ok(/let _ = &window;/.test(f), 'A70 release 分支消费掉 magic parameter');
 
-  const idx = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   ok(/ctx\.invoke\('mm_open_devtools'/.test(idx), 'A70 前端调用 mm_open_devtools');
   ok(/openDevTools: guard/.test(idx), 'A70 暴露 openDevTools API');
-  const pn2 = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const pn2 = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   ok(/开发者工具/.test(pn2), 'A70 设置里有入口');
 }
 
@@ -3550,7 +3542,7 @@ group('A70 开发者工具 / A71 诊断捕获');
   ok(dg.formatReport([]).includes('无诊断记录'), 'A71 空列表给出明确文案');
 
   // ---- 内层 iframe 捕获 ----
-  const html = (fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8')).replace(/\r\n/g, '\n');
+  const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
   ok(/addEventListener\('error'/.test(html), 'A71 iframe 捕获 onerror');
   ok(/unhandledrejection/.test(html), 'A71 iframe 捕获 unhandledrejection');
   ok(/console\[lv\]/.test(html) || /'error', 'warn'/.test(html), 'A71 iframe 包装 console.error/warn');
@@ -3560,19 +3552,19 @@ group('A70 开发者工具 / A71 诊断捕获');
     'A71 用捕获阶段收资源加载错误（那类不冒泡）');
 
   // ---- bridge 转发 ----
-  const br = (fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
   ok(/case 'diagnostic':/.test(br), 'A71 bridge 转发 diagnostic');
   ok(/onDiagnostic\?\.\(d\)/.test(br), 'A71 通过 handler 回调出去');
 
   // ---- 外壳侧捕获 ----
-  const idx = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   ok(/function captureShellErrors/.test(idx), 'A71 外壳侧也有捕获（不只 iframe）');
   ok(/captureShellErrors\(\);/.test(idx), 'A71 外壳捕获真的被调用');
   ok(/onDiagnostic: \(d\) =>/.test(idx), 'A71 插件层接收并收集');
   ok(/diag\.pushEntries\(diagnostics, \[e\]\)/.test(idx), 'A71 走环形缓冲（不会无限堆积）');
 
   // ---- 诊断窗口 ----
-  const pn3 = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const pn3 = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   ok(/export function openDiagnostics/.test(pn3), 'A71 新增诊断窗口');
   ok(/诊断记录…/.test(pn3), 'A71 设置里有入口');
   const od = pn3.slice(pn3.indexOf('export function openDiagnostics'), pn3.indexOf('/** 自定义主题编辑器 */'));
@@ -3589,7 +3581,7 @@ group('A70 开发者工具 / A71 诊断捕获');
 group('B27 导出前同步编辑器状态（capture）');
 
 {
-  const idx = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   const lines = idx.split('\n');
   const fns = ['exportJson', 'exportMarkdown', 'exportTxt', 'exportSvg',
     'exportXmind', 'exportPng', 'exportPdf', 'printMap'];
@@ -3645,7 +3637,7 @@ group('B4/B5 档位动态补项 + B6 颜色名');
   // 不能因为 presets 坏了就把唯一有效值也丢掉
   eq(JSON.stringify(pn.withPresetValue(null, 13)), JSON.stringify([13]), 'B4 presets 非法 → 不崩，value 仍补入');
 
-  const src = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   ok(/withPresetValue\(SIZES, st\.fontSize\)/.test(src),
     'B5 字号下拉用动态档位（否则 13 号字时无任何项选中，显示成空白/第一项）');
 }
@@ -3674,6 +3666,110 @@ group('B4/B5 档位动态补项 + B6 颜色名');
   const c = th.parseColor('red');
   c[0] = 0;
   eq(th.parseColor('red')[0], 255, 'B6 返回副本（改返回值不污染颜色表）');
+}
+
+/* ============================================================
+   三十三、A29 搜索失败状态 + B22 跨机迁移提示
+   ============================================================ */
+
+group('A29 搜索失败状态三态分流');
+
+{
+  const pn = await import('./panels.js');
+
+  // 1) 没输入关键字 —— 不该显示「无匹配」（会让人以为真没有这个词）
+  const t1 = pn.searchStatusText('', { ok: true, total: 0, index: 0 });
+  eq(t1.text, '请输入关键字', 'A29 空关键字 → 提示输入（不是「无匹配」）');
+  eq(t1.warn, true, 'A29 空关键字是提醒级别');
+  eq(pn.searchStatusText('   ', { ok: true, total: 3, index: 1 }).text, '请输入关键字',
+    'A29 纯空格也算空（trim 后判断）');
+
+  // 2) 编辑器未就绪 —— 最误导的一种，原实现同样显示「无匹配」
+  const t2 = pn.searchStatusText('abc', { ok: false, reason: 'notready' });
+  eq(t2.text, '编辑器未就绪', 'A29 未就绪 → 明确说未就绪');
+  eq(t2.warn, true, 'A29 未就绪是提醒级别');
+  eq(pn.searchStatusText('abc', null).text, '编辑器未就绪', 'A29 无返回也按未就绪处理');
+  const t3 = pn.searchStatusText('abc', { ok: false, reason: 'error' });
+  eq(t3.text, '搜索失败', 'A29 出错 → 说搜索失败（与未就绪区分）');
+  eq(t3.warn, true, 'A29 出错是提醒级别');
+
+  // 3) 真的没搜到 —— 正常结果，**不该报警**
+  const t4 = pn.searchStatusText('abc', { ok: true, total: 0, index: 0 });
+  eq(t4.text, '无匹配', 'A29 零结果 → 无匹配');
+  eq(t4.warn, false, 'A29 零结果是正常结果，不报警');
+
+  // 4) 有结果
+  const t5 = pn.searchStatusText('abc', { ok: true, total: 7, index: 2 });
+  eq(t5.text, '2/7', 'A29 有结果 → index/total');
+  eq(t5.warn, false, 'A29 有结果不报警');
+
+  // ---- bridge 侧：未就绪不能再被兜底成 total:0 ----
+  const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+  const sf = br.slice(br.indexOf('  search(keyword) {'), br.indexOf('  search(keyword) {') + 900);
+  ok(/ok: false, reason: 'notready'/.test(sf), 'A29 bridge 用 ok:false + reason 表达未就绪');
+  ok(!/\|\| \{ total: 0, index: 0, text: '' \}/.test(sf),
+    'A29 去掉了把未就绪压成 total:0 的兜底（那正是三态混为一谈的根源）');
+  ok(/ok: true, total: r\.total/.test(sf), 'A29 成功时带 ok:true');
+
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  eq((idx.match(/searchStatusText\(searchInput\.value/g) || []).length, 2,
+    'A29 两处调用点（回车 + 定位按钮）都改了 —— 只改一处会不一致');
+  ok(/classList\.toggle\('warn', st\.warn\)/.test(idx), 'A29 提醒状态要反映到样式上');
+
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+  ok(/\.mm-search-info\.warn/.test(css), 'A29 有对应样式（否则 warn 类形同虚设）');
+}
+
+group('B22 附件跨机迁移提示');
+
+{
+  const wb = await import('./workbook.js');
+  const sheet = (root) => ({ id: 's1', title: 'T', content: JSON.stringify({ root }) });
+
+  // ---- collectAssetRefs ----
+  const one = sheet({ data: { text: 'a', file: JSON.stringify({ a: 'A1', n: 'x.pdf' }) }, children: [] });
+  eq(wb.collectAssetRefs([one]).length, 1, 'B22 收到一个 file 引用');
+  eq(wb.collectAssetRefs([one])[0], 'A1', 'B22 取的是 a 字段（资产 id）');
+
+  const two = sheet({
+    data: { text: 'r' },
+    children: [
+      { data: { text: 'a', file: JSON.stringify({ a: 'A1' }) } },
+      { data: { text: 'b', video: JSON.stringify({ a: 'A2' }) } },
+    ],
+  });
+  eq(wb.collectAssetRefs([two]).length, 2, 'B22 同时收 file 与 video');
+
+  // 去重：同一个附件被多个节点引用
+  const dup = sheet({
+    data: { text: 'r' },
+    children: [
+      { data: { file: JSON.stringify({ a: 'A1' }) } },
+      { data: { file: JSON.stringify({ a: 'A1' }) } },
+    ],
+  });
+  eq(wb.collectAssetRefs([dup]).length, 1, 'B22 同一 id 去重（否则提示数量会虚高）');
+
+  // 老式纯路径引用没有资产 id —— 不归这里管
+  const legacy = sheet({ data: { text: 'a', file: 'C:\\x\\y.pdf' }, children: [] });
+  eq(wb.collectAssetRefs([legacy]).length, 0,
+    'B22 老式路径引用无资产 id，跳过（那是另一种情况，不是跨机问题）');
+
+  eq(wb.collectAssetRefs([]).length, 0, 'B22 空列表不报错');
+  eq(wb.collectAssetRefs([{ id: 'x' }]).length, 0, 'B22 无 content 不报错');
+  eq(wb.collectAssetRefs([{ id: 'x', content: '不是 JSON' }]).length, 0, 'B22 坏 JSON 不崩（不能拦住导入）');
+  eq(wb.collectAssetRefs([sheet({ data: { text: '无附件' } })]).length, 0, 'B22 无附件 → 空');
+
+  // ---- 提示接入 ----
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  ok(/async function warnForeignAssets/.test(idx), 'B22 新增 warnForeignAssets');
+  ok(/await warnForeignAssets\(sheets\)/.test(idx),
+    'B22 在 **JSON 导入成功后**立即检查（不能等用户点到节点才发现）');
+  const wf = idx.slice(idx.indexOf('async function warnForeignAssets'), idx.indexOf('async function warnForeignAssets') + 1200);
+  ok(/改用 \.xmind 导出/.test(wf), 'B22 要告诉用户**怎么办**（改用 .xmind，它会打包附件）');
+  ok(/JSON 只带引用、不带本体/.test(wf), 'B22 要说清**为什么**（引用在、字节不在）');
+  // .xmind 分支不该调用它：xmind 会把附件打包，不存在这个问题
+  ok(!/warnForeignAssets\(r\.sheets\)/.test(idx), 'B22 不对 .xmind 用（它本来就带附件）');
 }
 
 /* ============================================================

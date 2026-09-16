@@ -348,8 +348,24 @@ export class EditorBridge {
   }
 
   /** 搜索：返回 {total,index,text}，无匹配为 0 */
+  /**
+   * 搜索（A29）。
+   *
+   * 早先写成 `_safe(...) || { total: 0, index: 0, text: '' }` ——
+   * 这个兜底把「编辑器未就绪」和「搜了但没结果」**压成了同一种结果**，
+   * 两者都返回 `total: 0`。UI 只能统一显示「无匹配」，
+   * 用户在编辑器还没加载完时搜索，看到的也是「无匹配」，
+   * 会以为自己的脑图里真的没有那个词。
+   *
+   * @returns {object} `{ ok:false, reason:'notready'|'error' }` 或
+   *   `{ ok:true, total, index, text }`
+   */
   search(keyword) {
-    return this._safe('搜索', (m) => m.search(keyword)) || { total: 0, index: 0, text: '' };
+    if (!this.ready || !this.minder) return { ok: false, reason: 'notready', total: 0, index: 0 };
+    const r = this._safe('搜索', (m) => m.search(keyword));
+    // _safe 异常时已经通过 onStatus 提示过了，这里只负责把状态传出去
+    if (!r) return { ok: false, reason: 'error', total: 0, index: 0 };
+    return { ok: true, total: r.total || 0, index: r.index || 0, text: r.text || '' };
   }
 
   /** 按选中节点展开到第 N 层（0/负数=全部） */

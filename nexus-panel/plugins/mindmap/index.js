@@ -21,12 +21,11 @@ import * as diag from './diagnostics.js';
 import * as store from './store.js';
 import * as io from './io.js';
 import { buildSide, openVideo, openPreview, openSettings, confirmDialog, popupMenu,
-  openPrintSettings, openDiagnostics } from './panels.js';
+  openPrintSettings, openDiagnostics, searchStatusText } from './panels.js';
 import { attachTabDrag } from './tab-drag.js';
 import { buildFileList } from './filelist.js';
 import * as xmind from './xmind.js';
 
-import { confirm, prompt } from '../../js/dialog.js';
 /** 外壳桥接频道（plugin-sdk 的 BRIDGE_CHANNEL），用于捕获运行时主题切换 */
 const SHELL_CHANNEL = 'nexus-bridge-v1';
 const AUTOSAVE_MS = 800;        // 停止编辑多久后写入本地库
@@ -385,8 +384,9 @@ bootIframePlugin(async (ctx) => {
       onkeydown: (e) => {
         if (e.key !== 'Enter') return;
         e.preventDefault();
-        const r = bridge?.search(searchInput.value);
-        searchInfo.textContent = r && r.total ? `${r.index}/${r.total}` : '无匹配';
+        const st = searchStatusText(searchInput.value, bridge?.search(searchInput.value));
+        searchInfo.textContent = st.text;
+        searchInfo.classList.toggle('warn', st.warn);
       },
     });
 
@@ -452,8 +452,9 @@ bootIframePlugin(async (ctx) => {
     toolbar.appendChild(h('div.mm-sep', {}));
 
     toolbar.appendChild(group(searchInput, B('定位', () => {
-      const r = bridge?.search(searchInput.value);
-      searchInfo.textContent = r && r.total ? `${r.index}/${r.total}` : '无匹配';
+      const st = searchStatusText(searchInput.value, bridge?.search(searchInput.value));
+      searchInfo.textContent = st.text;
+      searchInfo.classList.toggle('warn', st.warn);
     }), searchInfo));
 
     toolbar.appendChild(group(
@@ -579,10 +580,10 @@ bootIframePlugin(async (ctx) => {
     await persist();
   }
 
-  async function renameSheet(id) {
+  function renameSheet(id) {
     const s = workbook.sheets.find((x) => x.id === id);
     if (!s) return;
-    const name = await prompt({ title: '重命名画布', label: '画布名称', defaultValue: s.title });
+    const name = window.prompt('画布名称', s.title);
     if (name == null) return;
     s.title = name.trim() || s.title;
     renderTabs();
@@ -699,10 +700,10 @@ bootIframePlugin(async (ctx) => {
     await openFile(id);
   }
 
-  async function renameFile(id) {
+  function renameFile(id) {
     const f = fileIndex.find((x) => x.id === id);
     if (!f) return;
-    const name = await prompt({ title: '重命名脑图', label: '脑图名称', defaultValue: f.name });
+    const name = window.prompt('脑图名称', f.name);
     if (name == null) return;
     f.name = name.trim() || f.name;
     store.files.save(fileIndex);
@@ -717,12 +718,7 @@ bootIframePlugin(async (ctx) => {
   async function deleteFile(id) {
     const f = fileIndex.find((x) => x.id === id);
     if (!f) return;
-    const ok = await confirm({
-      title: '删除脑图',
-      message: `删除「${f.name}」？该脑图下的所有画布都会一并删除。`,
-      danger: true,
-    });
-    if (!ok) return;
+    if (!window.confirm(`删除「${f.name}」？该脑图下的所有画布都会一并删除。`)) return;
     fileIndex = fileIndex.filter((x) => x.id !== id);
     await store.files.save(fileIndex);
     await store.doc(id).del();
@@ -735,7 +731,7 @@ bootIframePlugin(async (ctx) => {
   }
 
   async function createFolder() {
-    const name = await prompt({ title: '新建文件夹', label: '文件夹名称', defaultValue: '新建文件夹' });
+    const name = window.prompt('文件夹名称', '新建文件夹');
     if (name == null) return;
     foldersList.push({ id: newFolderId(), name: name.trim() || '新建文件夹', collapsed: false });
     await store.folders.save(foldersList);
@@ -743,10 +739,10 @@ bootIframePlugin(async (ctx) => {
     status('已新建文件夹');
   }
 
-  async function renameFolder(id) {
+  function renameFolder(id) {
     const fo = foldersList.find((x) => x.id === id);
     if (!fo) return;
-    const name = await prompt({ title: '重命名文件夹', label: '文件夹名称', defaultValue: fo.name });
+    const name = window.prompt('文件夹名称', fo.name);
     if (name == null) return;
     fo.name = name.trim() || fo.name;
     store.folders.save(foldersList);
@@ -758,12 +754,7 @@ bootIframePlugin(async (ctx) => {
     const fo = foldersList.find((x) => x.id === id);
     if (!fo) return;
     const n = fileIndex.filter((f) => f.folderId === id).length;
-    const ok = await confirm({
-      title: '删除文件夹',
-      message: `删除文件夹「${fo.name}」？里面 ${n} 个脑图会移到根目录，不会被删除。`,
-      danger: true,
-    });
-    if (!ok) return;
+    if (!window.confirm(`删除文件夹「${fo.name}」？里面 ${n} 个脑图会移到根目录，不会被删除。`)) return;
     for (const f of fileIndex) if (f.folderId === id) f.folderId = null;
     foldersList = foldersList.filter((x) => x.id !== id);
     await store.files.save(fileIndex);
@@ -1587,6 +1578,39 @@ bootIframePlugin(async (ctx) => {
     const formTip = { workbook: '多画布包', single: '单画布', markdown: 'Markdown', 'markdown(兜底)': 'Markdown（未按 JSON 解析，走了兜底）' }[form] || form;
     status(`已导入 ${sheets.length} 张画布（识别为：${formTip}）`);
     ctx.toast(`已导入 ${sheets.length} 张画布`, 'ok');
+
+    // B22 跨机迁移提示：必须**在导入成功后立刻**说，
+    // 不能等用户点到那个节点才发现 —— 那时他已经以为文件坏了。
+    await warnForeignAssets(sheets);
+  }
+
+  /**
+   * B22：检查刚导入的画布里有没有「本机读不到」的附件。
+   *
+   * 本插件的 .json 只存引用，本体在 IndexedDB。换机器导入后，
+   * 引用看着正常、附件图标也在，但**字节没跟过来** —— 点开才发现打不开。
+   *
+   * 只针对 .json 有意义：.xmind 会把附件打包进去，不存在这个问题。
+   */
+  async function warnForeignAssets(sheets) {
+    let ids = [];
+    try { ids = wb.collectAssetRefs(sheets); } catch { return; }
+    if (!ids.length) return;
+
+    let missing = 0;
+    for (const id of ids) {
+      try {
+        const rec = await store.get('asset:' + id, null);
+        if (!rec?.blob) missing++;
+      } catch { missing++; }
+    }
+    if (!missing) return;
+
+    status(
+      `⚠ ${missing} 个附件在本机找不到数据（JSON 只带引用、不带本体）。`
+      + '如需跨机器迁移，请改用 .xmind 导出（会把附件一起打包）。',
+      true,
+    );
   }
 
   /**
