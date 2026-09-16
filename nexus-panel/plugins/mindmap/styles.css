@@ -343,7 +343,7 @@ html, body {
   font-weight: 600;
   /* 深色面板上，徽章自带底色就够了；但浅色底（清除格 #E1E1E1）需要描边
      才不会糊在面板里 —— 用中性灰，两种底都不突兀 */
-  box-shadow: 0 0 0 1px var(--ring-neutral, rgba(128, 128, 128, .45));
+  box-shadow: 0 0 0 1px var(--ring-neutral);
   transition: transform var(--dur-fast);
 }
 .mm-badge:hover .mm-badge-face { transform: scale(1.12); }
