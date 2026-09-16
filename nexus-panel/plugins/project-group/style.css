@@ -801,3 +801,21 @@
   box-shadow: 0 0 0 1px rgba(0,0,0,.55);
   pointer-events: none;
 }
+
+/* ---------- 吸管待命遮罩 ---------- */
+/* 注意：这个遮罩 portal 到 body，不能写成 .fpx-picker 的后代选择器 */
+.fpx-pick-overlay {
+  position: fixed; inset: 0; z-index: 1200;
+  cursor: crosshair;
+  /* α 不能是 0：完全透明会让整层点击穿透（底刷也不能用 pure transparent） */
+  background: rgba(0, 0, 0, .01);
+}
+.fpx-pick-hint {
+  position: fixed; left: 50%; top: 24px; transform: translateX(-50%);
+  padding: 8px 14px; border-radius: var(--r-sm);
+  background: var(--surface); border: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .3);
+  font-size: 12px; line-height: 1.7; text-align: center;
+  pointer-events: none;    /* 提示条不该挡住取样点击 */
+}
+.fpx-pick-hint .dim { opacity: .6; font-size: 11px; }

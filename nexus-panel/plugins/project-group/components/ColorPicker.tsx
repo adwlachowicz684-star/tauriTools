@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Api } from '../api';
 import { errText } from '../api';
 import { hexToRgb, rgbToHex, normalizeHex, hexToHsv, hsvToRgb, hsvToHex, type Hsv } from '../utils/color';
@@ -15,6 +16,15 @@ export const PRESET_COLORS = [
 ];
 
 const MAX_CUSTOM = 24;
+
+/**
+ * 未设标签色时色盘的**起始色**。
+ *
+ * 它不代表"卡片是这个颜色"（没设色就是没设色，预览块上会标「默认」），
+ * 只是给用户一个能看的起点：直接拖面板就是在它基础上调，
+ * 不必先盲选一个预设色块再微调。
+ */
+const DEFAULT_COLOR = '#7C8CFF';
 
 /** 色盘：预设 24 色 + 自定义常用色（可增删持久化）+ RGB/HEX 输入 + 吸管 + 恢复默认 */
 export function ColorPicker({
@@ -37,9 +47,21 @@ export function ColorPicker({
    * 每拖一次都要做一次 RGB→HSV→RGB 往返，灰阶（s=0）还会**丢失色相**
    * （任何灰色的 HSV 都是 h=0），拖过一次黑白色块后就再也回不到原来的色调。
    */
-  const [hsv, setHsv] = useState<Hsv>(() => hexToHsv(value ?? '#7C8CFF'));
+  const [hsv, setHsv] = useState<Hsv>(() => hexToHsv(value ?? DEFAULT_COLOR));
   const [hexText, setHexText] = useState(value ?? '');
   const [picking, setPicking] = useState(false);
+  /**
+   * 吸管已**待命**：等用户把鼠标移到目标位置再点一下（#4 的可行形态）。
+   *
+   * 原来是一点吸管就立刻取色 —— 而那一刻光标**正在吸管按钮上**，
+   * 于是取到的是按钮自己的颜色：每次都返回同一个值，功能形同虚设。
+   * 后端是起 PowerShell 读 Cursor.Position，从点击到真正取样有上百毫秒，
+   * 指望"点完赶紧移开鼠标"并不现实。
+   *
+   * 改成两段式：点一下进入待命 → 用户移到位 → 再点一下，此刻光标就在目标上。
+   * 全程 Esc 可取消。
+   */
+  const [armed, setArmed] = useState(false);
 
   const current = useMemo(() => hsvToHex(hsv), [hsv]);
   const rgb = useMemo(() => hsvToRgb(hsv), [hsv]);
@@ -69,7 +91,9 @@ export function ColorPicker({
     onChange(hex);
   };
 
-  const pick = async () => {
+  /** 真正取样：此刻光标已在目标位置，不传坐标让后端读 Cursor.Position */
+  const doPick = async () => {
+    setArmed(false);
     setPicking(true);
     try {
       const hex = await api.pickColor();
@@ -81,6 +105,16 @@ export function ColorPicker({
       setPicking(false);
     }
   };
+
+  // 待命期间 Esc 取消；不挂这个的话用户点错了只能硬取一个色
+  useEffect(() => {
+    if (!armed) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.stopPropagation(); setArmed(false); }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [armed]);
 
   const addCustom = () => {
     if (customColors.length >= MAX_CUSTOM) {
@@ -124,12 +158,17 @@ export function ColorPicker({
           placeholder="#RRGGBB"
           onChange={(e) => applyHex(e.target.value)}
         />
-        <button className="p-btn" disabled={picking} onClick={pick} title="读取当前鼠标位置的颜色">
-          {picking ? '取色中…' : '⌖ 吸管'}
+        <button className="p-btn" disabled={picking || armed}
+          onClick={() => setArmed(true)}
+          title="进入取色模式：移开鼠标后再点一下取样，Esc 取消">
+          {picking ? '取色中…' : armed ? '请点击取样…' : '⌖ 吸管'}
         </button>
+        {/* 恢复默认后**把默认色填进输入框与面板**（#676）：
+            之前 hexText 被清成空、面板却仍是默认紫，两处对不上；
+            清空的另一个后果是用户没法在默认色基础上微调，只能先盲选一个。 */}
         <button className="p-btn" onClick={() => {
-          setHexText('');
-          setHsv(hexToHsv('#7C8CFF'));
+          setHsv(hexToHsv(DEFAULT_COLOR));
+          setHexText(DEFAULT_COLOR);
           onChange(null);
         }}>
           恢复默认
@@ -149,6 +188,20 @@ export function ColorPicker({
           />
         ))}
       </div>
+
+      {/* 待命遮罩：portal 到 body。
+          不放在本组件里是因为外壳 `.dialog` 有 backdrop-filter，
+          它会成为 fixed 后代的包含块，遮罩会被关在弹窗盒子里而不是铺满视口。 */}
+      {armed && createPortal(
+        <div className="fpx-pick-overlay" onPointerDown={doPick}>
+          <div className="fpx-pick-hint">
+            <b>取色模式</b>
+            <div>把鼠标移到要取的位置，<b>单击</b>取样</div>
+            <div className="dim">Esc 取消</div>
+          </div>
+        </div>,
+        document.body,
+      )}
 
       {/* 自定义常用色 */}
       <div className="fpx-picker-label">
