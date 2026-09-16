@@ -48,7 +48,8 @@
     "test:crossend-fault": "node crossend-fault-injection-test.mjs",
     "test:mcp-tab-index": "node mcp-tab-index-test.mjs",
     "test:fs-roots-persist": "node fs-roots-persist-test.mjs",
-    "test:mcp-stdio": "node mcp-stdio-test.mjs"
+    "test:mcp-stdio": "node mcp-stdio-test.mjs",
+    "test:tray": "node tray-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

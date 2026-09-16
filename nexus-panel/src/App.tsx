@@ -312,10 +312,19 @@ export default function App() {
         e.preventDefault();
         openPluginSettingsRef.current?.();
       }
+      /* ⌘/Ctrl + ~ —— 藏到托盘。
+         只能"藏"不能"唤"：窗口隐藏后收不到键盘事件（那要全局快捷键插件）。
+         所以必须明确提示怎么回来，否则窗口凭空消失、任务栏里也没有它，
+         用户只会以为程序崩了。 */
+      if (e.key === '`' || e.key === '~') {
+        e.preventDefault();
+        void hostRef.current?.win('hide');
+        pushToast('已隐藏到托盘 · 点击托盘图标可唤回', 'info');
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [activeId]);
+  }, [activeId, pushToast]);
 
   /* 侧边栏展开后，正挂着的 nav-item 提示要收掉：名字已由 .nav-label 显示。
      必须在 DOM 更新之后跑 —— 这里读的是 #body 的 class，

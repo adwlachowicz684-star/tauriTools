@@ -5,6 +5,8 @@ use tauri::WebviewWindow;
 // get_webview_window / package_info 等方法定义在 Manager 这个 trait 上，
 // 不导入它编译器就"看不见"这些方法（E0599），即使类型本身是对的。
 use tauri::Manager;
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
 mod af_flow;
 mod fpx;
@@ -21,7 +23,36 @@ fn app_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
-/// 自定义标题栏的窗口控制：minimize / maximize / close / topmost
+/* ---------------- 主窗口的显隐 ---------------- */
+
+/// 把主窗口带到前台。三步都不能省：
+///   unminimize —— 最小化状态下直接 set_focus 在部分平台无效
+///   show       —— 被 hide 过（Ctrl+~ / --mcp）的窗口不会因 set_focus 而显示
+///   set_focus  —— 真正把它带到前台
+fn focus_main_window(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    } else {
+        eprintln!("[tray] 没有 main 窗口，无法聚焦");
+    }
+}
+
+/// 主窗口当前是否可见。查不到窗口 / 查询失败都当作不可见 ——
+/// 这样"切换"逻辑会走 show 分支，最坏情况是多调一次 show（无害）；
+/// 反过来若当作可见，用户就永远切不回来了。
+fn main_window_visible(app: &tauri::AppHandle) -> bool {
+    app.get_webview_window("main")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false)
+}
+
+/// 自定义标题栏的窗口控制：minimize / maximize / close / topmost / hide
+///
+/// `hide` 是"藏到托盘"：窗口关掉但进程还在，靠托盘或 Ctrl+~ 唤回。
+/// 与 `close` 的区别是 close 会**销毁**窗口 —— 之后 single-instance 回调
+/// 里没有窗口可聚焦，表现为"双击图标点了没反应"（见 --mcp 那段的说明）。
 #[tauri::command]
 fn window_action(window: WebviewWindow, action: String) -> Result<(), String> {
     match action.as_str() {
@@ -34,6 +65,7 @@ fn window_action(window: WebviewWindow, action: String) -> Result<(), String> {
             }
         }
         "close" => window.close(),
+        "hide" => window.hide(),
         "topmost" => {
             let next = !window.is_always_on_top().unwrap_or(false);
             window.set_always_on_top(next)
@@ -41,6 +73,18 @@ fn window_action(window: WebviewWindow, action: String) -> Result<(), String> {
         other => return Err(format!("unknown window action: {}", other)),
     }
     .map_err(|e| e.to_string())
+}
+
+/// 供托盘点击调用：窗口可见则藏起来，不可见则唤回。
+#[tauri::command]
+fn tray_toggle_window(app: tauri::AppHandle) {
+    if main_window_visible(&app) {
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.hide();
+        }
+    } else {
+        focus_main_window(&app);
+    }
 }
 
 /// 更换软件窗口图标（任务栏 / 标题栏上的那一个）。外壳能力：图标属于窗口，不属于插件。
@@ -277,9 +321,66 @@ fn main() {
             af_flow::watch_start, af_flow::watch_stop,
             af_flow::webhook_start, af_flow::webhook_stop,
             af_flow::fs_op, af_flow::af_read_image_data_url,
-            af_flow::af_fs_allow_root, af_flow::af_fs_list_roots, af_flow::af_fs_disallow_root
+            af_flow::af_fs_allow_root, af_flow::af_fs_list_roots, af_flow::af_fs_disallow_root,
+            tray_toggle_window
         ])
         .setup(move |app| {
+            /* 托盘图标。
+               ------------------------------------------------------------------
+               为什么要它：Ctrl+~ 把窗口藏起来之后，**没有任何入口能把它唤回来**
+               —— 窗口隐藏时收不到键盘事件（那需要全局快捷键插件），
+               任务栏里也没有它的身影。托盘是唯一的回路。
+
+               所以托盘必须在 setup 里无条件创建，`--mcp` 模式下也一样：
+               那种模式窗口本来就是隐藏的，没有托盘的话进程只能靠任务管理器杀。
+
+               图标用应用自带的默认图标取不到时（理论上不该发生，bundle 里
+               已经配了 icons/）仍然创建托盘 —— 无图标的托盘在多数平台上
+               仍可点击，功能不丢，只是不美观。 */
+            let show_item = MenuItemBuilder::with_id("show", "显示面板").build(app)?;
+            let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
+            let menu = MenuBuilder::new(app)
+                .item(&show_item)
+                .separator()
+                .item(&quit_item)
+                .build()?;
+
+            let mut tray = TrayIconBuilder::with_id("main-tray")
+                .menu(&menu)
+                .tooltip("Nexus Panel")
+                .on_menu_event(move |app, event| match event.id().as_ref() {
+                    "show" => focus_main_window(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                /* 左键单击 = 切换显隐。用 Up 而不是 Down：
+                   部分平台在 Down 时就会触发，随后系统又弹右键菜单，
+                   两者叠在一起会出现"点了显示却先弹菜单"的错乱。 */
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if main_window_visible(app) {
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.hide();
+                            }
+                        } else {
+                            focus_main_window(app);
+                        }
+                    }
+                });
+
+            if let Some(icon) = app.default_window_icon().cloned() {
+                tray = tray.icon(icon);
+            } else {
+                eprintln!("[tray] 应用默认图标不可用，托盘将无图标（功能仍可用）");
+            }
+            tray.build(app)?;
+
             if mcp_only {
                 /* 隐藏主窗口：AI 客户端拉起的实例不需要界面。
                    ------------------------------------------------------------------

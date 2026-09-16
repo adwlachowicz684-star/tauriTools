@@ -572,6 +572,17 @@ async function init() {
     'mod+b': () => { $('#side-toggle').click(); },
     'mod+r': () => { if (host.state.activeId) host.mount(host.state.activeId); },
     'mod+,': () => { if (host.hasSettings()) openPluginSettings(); },
+    /* 藏到托盘。
+       ------------------------------------------------------------------
+       只能"藏"，不能"唤"：窗口隐藏后它**收不到任何键盘事件**，
+       全局快捷键要额外插件，不值得为一个快捷键引入。
+
+       所以隐藏时必须明确告诉用户怎么回来 —— 否则窗口凭空消失、
+       任务栏里也没有它，用户只会以为程序崩了。 */
+    'mod+`': () => {
+      host.win('hide');
+      toast('已隐藏到托盘 · 点击托盘图标可唤回', 'info');
+    },
   };
   const runShellShortcut = (combo) => shellCommands[String(combo).toLowerCase()]?.();
   runShellShortcutRef = runShellShortcut;
@@ -584,6 +595,9 @@ async function init() {
     if (k === 'b') { e.preventDefault(); runShellShortcut('mod+b'); }
     else if (k === 'r') { e.preventDefault(); runShellShortcut('mod+r'); }
     else if (e.key === ',') { e.preventDefault(); runShellShortcut('mod+,'); }
+    /* Ctrl+~ —— 反引号键位。多数布局下 e.key 是 '`'；
+       带 Shift 的 `~` 一并接受，免得用户按了没反应以为是坏了。 */
+    else if (e.key === '`' || e.key === '~') { e.preventDefault(); runShellShortcut('mod+`'); }
   });
 
   if (!isInsideTauri()) toast('当前为浏览器调试模式，Rust 命令不可用', 'err');
