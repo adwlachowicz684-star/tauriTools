@@ -93,14 +93,19 @@ const fields: FieldDef[] = [
 registerNode({
   type: 'task',
   dataKind: 'task',
-  meta: { label: '任务', color: '#f97316', category: 'task', idPrefix: 't' },
-  presets: () =>
-    (Object.keys(CLI_META) as CliKind[]).map((k) => ({
-      key: `task:${k}`,
-      label: CLI_META[k].label,
-      color: CLI_META[k].color,
-      init: () => makeNode('', { cli: k, label: `${CLI_META[k].label}任务` }).data,
-    })),
+  /* presets 必须写在 meta 里：注册表读的是 def.meta.presets（见 registry.tsx 的
+     allPresets）。写到 NodeDef 顶层不会被读，两种 CLI 预设也就展不开 ——
+     侧栏只剩一条「任务」，用户再也选不到另一种 CLI。 */
+  meta: {
+    label: '任务', color: '#f97316', category: 'task', idPrefix: 't',
+    presets: () =>
+      (Object.keys(CLI_META) as CliKind[]).map((k) => ({
+        key: `task:${k}`,
+        label: CLI_META[k].label,
+        color: CLI_META[k].color,
+        init: () => makeNode('', { cli: k, label: `${CLI_META[k].label}任务` }).data,
+      })),
+  },
   create: (id, partial) => makeNode(id, (partial ?? {}) as Partial<TaskNodeData>).data,
   Canvas: TaskNode,
   fields: () => fields,

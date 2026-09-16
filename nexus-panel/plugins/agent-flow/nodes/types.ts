@@ -4,6 +4,11 @@ import type { NodeData, GraphNode, SecretPolicy } from '../types';
 import type { FlowNode, FlowEdge } from '../flowTypes';
 import type { Credential } from '../engine/credentials';
 import type { RunContext } from '../engine/runContext';
+/* 必须保持 `import type`：fields 属于组件层，而注册表（nodes/registry）依赖本文件。
+   一旦变成值导入，组件层就会被拉进注册表的运行时依赖，
+   重新形成 registry → components → nodes → registry 的环（详见
+   components/inspectors/inspectorOf.tsx 的注释：环会让插件卡死在握手上）。 */
+import type { FieldFactory, FieldRenderProps } from '../components/inspectors/fields';
 
 /**
  * 节点注册表 —— 让"新增一种节点"只需要写一个文件。

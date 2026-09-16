@@ -53,7 +53,9 @@ const GH_STRATEGY_META: Record<GithubStrategy, { label: string; hint: string }> 
   cli: { label: '本地 git', hint: '走机器上的 git，免令牌；推送时需要本地仓库' },
 };
 
-type TestState =
+/* 导出是因为 UpdateTestPanel.tsx 要用它声明 useState 的类型 ——
+   两个文件描述的是同一次"试跑"的状态机，各写一份迟早会漂。 */
+export type TestState =
   | { phase: 'idle' }
   | { phase: 'running' }
   | { phase: 'ok'; text: string; updated: boolean }

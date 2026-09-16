@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import type { FlowNode } from '../../flowTypes';
-import type { UpdateNodeData } from '../../types';
+import { UPDATE_SOURCE_META, type UpdateNodeData } from '../../types';
 import { fetchText } from '../../lib/tauri';
 import {
   parseFeed, parseBiliApi, detectUpdate, sortByNewest, extractBiliUid, biliApiUrl, BILI_REFERER,
 } from '../../engine/updates';
+import type { TestState } from './shared';
 
 /**
  * 更新检测节点的「测试」与「重置基线」。

@@ -12,13 +12,13 @@ registerNode({
   type: 'bili',
   dataKind: 'update',
   meta: {
-    label: UPDATE_SOURCE_META.bili.label,
-    color: UPDATE_SOURCE_META.bili.color,
+    label: UPDATE_SOURCE_META.bilibili.label,
+    color: UPDATE_SOURCE_META.bilibili.color,
     category: 'external',
     idPrefix: 'bl',
   },
   create: (id, partial) =>
-    makeUpdateNode(id, 'bili', (partial ?? {}) as Partial<UpdateNodeData>).data,
+    makeUpdateNode(id, 'bilibili', (partial ?? {}) as Partial<UpdateNodeData>).data,
   Canvas: UpdateNode,
   fields: () => updateFields,
   panelFooter: updateFooter,

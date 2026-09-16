@@ -321,6 +321,10 @@ export function BasicInspector({
           ...base,
           value: f.key ? d[f.key] : undefined,
           onChange: (v) => f.key && onChange(node.id, { [f.key]: v }),
+          // renderField 的凭据分支要用 onChangeNode（type:'credential' 的字段），
+          // custom 渲染的作者也可能读 id。少了这两个，点凭据选择器会撞 undefined。
+          id: node.id,
+          onChangeNode: patchObj,
         }),
       )}
 
