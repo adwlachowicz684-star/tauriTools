@@ -204,6 +204,27 @@ fn main() {
         std::process::exit(if out.contains("[FAIL]") { 1 } else { 0 });
     }
 
+    /* --stdio：以 stdio 方式跑 MCP server（供 Claude Desktop 这类客户端拉起）。
+       ------------------------------------------------------------------
+       **必须在这里处理，不能放进 Builder 之后。**
+
+       stdio 模式下 stdout 只能有 JSON-RPC 消息，客户端按行解析；
+       Tauri 一旦 run() 起来，往 stdout 打了什么就不可控了（webview
+       在部分平台会输出信息），一行杂讯就会让客户端解析失败。
+
+       所以这里先算好数据目录（拿不到 AppHandle，走与 Tauri 相同的规则），
+       起 stdio server，进程就一直待在下面那行 —— 根本不会进 Tauri。 */
+    if argv.len() > 1 && argv[1] == "--stdio" {
+        let dir = fpx::cli::dirs_data_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("project-group"));
+        if let Err(e) = fpx::mcp::serve_stdio(dir) {
+            // 走 stderr：stdout 是协议通道，不能被污染
+            eprintln!("[mcp:stdio] 退出: {e}");
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
+
     // --mcp：只跑 MCP server，不显示窗口（供 AI 客户端拉起）
     let mcp_only = argv.len() > 1 && argv[1] == "--mcp";
 

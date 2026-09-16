@@ -64,11 +64,21 @@ const rsSrc = src('src-tauri/src/af_flow.rs');
 t('Rust: 定义了浏览器防护头常量', /const BROWSER_GUARD_HEADER/.test(rsSrc));
 t('Rust: 空 token 时不再无条件放行',
   !/if expected\.is_empty\(\) \{\s*return true;/.test(rsSrc));
+/* 先切出 token_ok 函数体再判断，**不要**用「N 个字符窗口」在整份源码上匹配。
+
+   原写法是 `expected\.is_empty\(\)[\s\S]{0,200}?BROWSER_GUARD_HEADER`，
+   在整份 af_flow.rs 上搜：两者之间隔了一段中文注释，实际 319 字符，
+   超出 200 窗口 → 恒红。于是出现最糟的一类假红：**代码是对的，测试是错的**，
+   而且它会被当成"防护缺失"去追 —— 我正是据此误报过一次。
+
+   把窗口放宽到 800 也能解决当下，但注释再长一点就又红了 ——
+   守的是注释长度，不是结论。切函数体则与注释长度无关。 */
+const tokStart = rsSrc.indexOf('fn token_ok');
+const tokBody = tokStart < 0 ? '' : rsSrc.slice(tokStart, rsSrc.indexOf('\n}', tokStart));
 t('Rust: 空 token 时要求防护头',
-  /* 窗口别收太紧：这个分支里夹着 6 行「为什么这么改」的注释，
-     实测 expected.is_empty() 到 BROWSER_GUARD_HEADER 跨 339 字符。
-     这里要守的是结论（空 token 时仍要求防护头），不是注释长度。 */
-  /expected\.is_empty\(\)[\s\S]{0,800}?BROWSER_GUARD_HEADER/.test(rsSrc));
+  /expected\.is_empty\(\)[\s\S]*?BROWSER_GUARD_HEADER/.test(tokBody));
+t('Rust: 防护头常量值小写（HTTP 头名大小写不敏感，但别写成别的名字）',
+  /const BROWSER_GUARD_HEADER:\s*&str\s*=\s*"x-nexus-webhook"/.test(rsSrc));
 /* 扫整个 components 树：上游把各节点的检查器拆进了 components/inspectors/，
    写死 Inspector.tsx 会在重构后误报"防护头提示没了"，其实只是搬了家。 */
 const afCompText = (function walk(dir) {

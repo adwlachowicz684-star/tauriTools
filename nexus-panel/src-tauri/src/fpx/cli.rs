@@ -357,14 +357,41 @@ fn default_paths(rest: &[String]) -> (String, String) {
     )
 }
 
-/// 与 store::resolve_data_dir 相同的落点，只是这里拿不到 AppHandle。
-fn dirs_data_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("APPDATA")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)?;
-    if std::env::var_os("APPDATA").is_some() {
-        Some(home.join("nexus-panel").join("project-group"))
+/// 必须与 `tauri.conf.json` 的 `identifier` 一致。
+///
+/// **有测试守护**（`mcp-stdio-test.mjs` 会比对 tauri.conf.json）：
+/// 改了配置里的 identifier 而忘了改这里，两个模式就会各读一份配置，
+/// 症状是"CLI/stdio 里看不到 GUI 里登记的项目"，且很难往这方面想。
+pub const APP_IDENTIFIER: &str = "com.nexus.panel";
+
+/// 与 `store::resolve_data_dir` **同一个**落点，只是这里拿不到 AppHandle。
+///
+/// 原实现拼的是 `$APPDATA/nexus-panel`（Win）/ `~/.nexus-panel`（其它），
+/// 而 Tauri 的 `app_data_dir()` 走的是：
+///   Windows  `%APPDATA%/<identifier>`
+///   macOS    `~/Library/Application Support/<identifier>`
+///   Linux    `$XDG_DATA_HOME/<identifier>` 或 `~/.local/share/<identifier>`
+/// identifier 是 `com.nexus.panel`，所以**两边指向的不是同一个目录** ——
+/// CLI 模式一直在读写另一份配置，而注释还写着"相同落点"。
+///
+/// stdio 模式同样拿不到 AppHandle，若沿用旧实现会把这个 bug 复制一份，
+/// 所以这里按 Tauri 的规则对齐（含 XDG_DATA_HOME 优先）。
+pub fn dirs_data_dir() -> Option<PathBuf> {
+    let base = if cfg!(target_os = "windows") {
+        std::env::var_os("APPDATA").map(PathBuf::from)?
+    } else if cfg!(target_os = "macos") {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)?
+            .join("Library")
+            .join("Application Support")
     } else {
-        Some(home.join(".nexus-panel").join("project-group"))
-    }
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .map(|h| h.join(".local").join("share"))
+            })?
+    };
+    Some(base.join(APP_IDENTIFIER).join("project-group"))
 }

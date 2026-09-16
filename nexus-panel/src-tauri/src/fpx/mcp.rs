@@ -10,7 +10,7 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -70,6 +70,11 @@ pub fn serve(app: AppHandle, port: u16) -> Result<String, String> {
     listener.set_nonblocking(true)
         .map_err(|e| format!("设置非阻塞失败: {e}"))?;
 
+    /* 数据目录在这里解析一次，之后整个 server 只认路径、不认句柄。
+       serve 仍收 AppHandle 是为了兼容现有调用方（setup 里传 app.handle()）。 */
+    let dir = super::store::resolve_data_dir(&app)
+        .map_err(|e| format!("无法定位数据目录: {e}"))?;
+
     std::thread::spawn(move || {
         let live = Arc::new(AtomicUsize::new(0));
         loop {
@@ -87,9 +92,9 @@ pub fn serve(app: AppHandle, port: u16) -> Result<String, String> {
                     }
                     let live_c = live.clone();
                     live_c.fetch_add(1, Ordering::SeqCst);
-                    let app2 = app.clone();
+                    let dir2 = dir.clone();
                     std::thread::spawn(move || {
-                        handle(stream, app2);
+                        handle(stream, dir2);
                         live_c.fetch_sub(1, Ordering::SeqCst);
                     });
                 }
@@ -109,6 +114,80 @@ pub fn serve(app: AppHandle, port: u16) -> Result<String, String> {
     Ok(addr)
 }
 
+/* ---------------------------- stdio ---------------------------- */
+
+/// 以 stdio 方式跑 MCP server（供 Claude Desktop 这类客户端拉起子进程）。
+///
+/// 协议是 MCP 规定的 **换行分隔 JSON**（不是 LSP 的 Content-Length 分帧）：
+/// 一行一条 JSON-RPC 消息，stdin 读、stdout 写。
+///
+/// 为什么必须有这个模式：客户端拉起的是**子进程**，它只认 stdout。
+/// HTTP 模式要额外知道端口，而端口是动态分配的，客户端无从得知。
+///
+/// 三条硬约束：
+///
+/// 1. **stdout 只能有 JSON-RPC。**
+///    任何日志、panic 信息、Tauri 启动输出混进去都会让客户端解析失败。
+///    所以本函数一行 println! 都没有，日志一律 eprintln!（走 stderr）。
+///    也正因如此，它必须在 Tauri `Builder` **之前**调用 ——
+///    一旦 run() 起来，Tauri 往 stdout 打了什么就不可控了。
+///
+/// 2. **每条消息后必须 flush。**
+///    不 flush 的话内容留在缓冲区，客户端会一直等，表现为"卡住无响应"。
+///
+/// 3. **解析失败不能让循环崩。**
+///    回一个 JSON-RPC -32700（Parse error）继续读下一行；
+///    否则一行坏数据就把整个 server 打死，客户端只会看到"进程退出"。
+pub fn serve_stdio(dir: PathBuf) -> Result<(), String> {
+    let stdin = std::io::stdin();
+    let mut reader = BufReader::new(stdin.lock());
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = reader
+            .read_line(&mut line)
+            .map_err(|e| format!("读取 stdin 失败: {e}"))?;
+        if n == 0 {
+            break; // EOF：客户端关闭了管道，正常退出
+        }
+        let text = line.trim();
+        if text.is_empty() {
+            continue;
+        }
+
+        let req: Value = match serde_json::from_str(text) {
+            Ok(v) => v,
+            Err(e) => {
+                // -32700 Parse error。id 未知，按规范填 null。
+                eprintln!("[mcp:stdio] 解析失败: {e}");
+                write_out(
+                    &mut out,
+                    &json!({
+                        "jsonrpc": "2.0", "id": Value::Null,
+                        "error": { "code": -32700, "message": format!("解析失败: {e}") }
+                    }),
+                )?;
+                continue;
+            }
+        };
+
+        if let Some(resp) = dispatch_opt(&req, &dir) {
+            write_out(&mut out, &resp)?;
+        }
+    }
+    Ok(())
+}
+
+/// 写一行 JSON 并**立即 flush**（不 flush 客户端会一直等）。
+fn write_out<W: Write>(out: &mut W, v: &Value) -> Result<(), String> {
+    let text = serde_json::to_string(v).map_err(|e| format!("序列化响应失败: {e}"))?;
+    writeln!(out, "{text}").map_err(|e| format!("写 stdout 失败: {e}"))?;
+    out.flush().map_err(|e| format!("flush stdout 失败: {e}"))
+}
+
 pub fn stop() {
     // 标志置 false 后，线程最多再睡 100ms 就会退出并释放端口
     RUNNING.store(false, Ordering::SeqCst);
@@ -122,7 +201,7 @@ pub fn is_running() -> bool { RUNNING.load(Ordering::SeqCst) }
 
 /* ---------------------------- HTTP ---------------------------- */
 
-fn handle(mut stream: TcpStream, app: AppHandle) {
+fn handle(mut stream: TcpStream, dir: PathBuf) {
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(10)));
 
     // 借用式 BufReader：作用域结束后即可再用 stream 写回
@@ -187,7 +266,7 @@ fn handle(mut stream: TcpStream, app: AppHandle) {
             if req.get("id").is_none() {
                 (204, Value::Null)
             } else {
-                (200, dispatch(&req, &app))
+                (200, dispatch(&req, &dir))
             }
         }
         "OPTIONS" => (204, json!(null)),
@@ -221,7 +300,24 @@ fn write_raw(stream: &mut TcpStream, status: u16, body: &[u8]) {
 /* ---------------------------- JSON-RPC ---------------------------- */
 
 /// 处理一个带 id 的 JSON-RPC 请求（通知在 handle 里已用 204 打发，不进这里）。
-fn dispatch(req: &Value, app: &AppHandle) -> Value {
+/// 分发一个 JSON-RPC 请求。
+///
+/// 返回 `None` 表示这是一条**通知**（没有 id），按 JSON-RPC 规范不应回复。
+/// HTTP 模式下无所谓（总会回一个），但 stdio 模式下必须区分：
+/// 客户端发的 `notifications/initialized` 若收到一个 id:null 的响应，
+/// 部分客户端会当成协议错误直接断开。
+fn dispatch_opt(req: &Value, dir: &Path) -> Option<Value> {
+    // 没有 "id" 字段 = 通知。注意区分「没有 id」和「id 为 null」：
+    // 后者是合法请求，客户端要的是 id:null 的响应。
+    if !req.get("id").map(|v| !v.is_null()).unwrap_or(false)
+        && !req.as_object().map(|o| o.contains_key("id")).unwrap_or(false)
+    {
+        return None;
+    }
+    Some(dispatch(req, dir))
+}
+
+fn dispatch(req: &Value, dir: &Path) -> Value {
     let id = req.get("id").cloned().unwrap_or(Value::Null);
     let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
 
@@ -232,11 +328,11 @@ fn dispatch(req: &Value, app: &AppHandle) -> Value {
             "serverInfo": { "name": "nexus-panel-project-group", "version": "0.1.0" },
         })),
         "ping" => Ok(json!({})),
-        "tools/list" => match load_cfg(app) {
+        "tools/list" => match load_cfg(dir) {
             Ok(cfg) => Ok(json!({ "tools": enabled_tools(&cfg) })),
             Err(e) => Err(e),
         },
-        "tools/call" => call_tool(req, app),
+        "tools/call" => call_tool(req, dir),
         other => Err(json!({ "code": -32601, "message": format!("未知方法: {other}") })),
     };
 
@@ -415,7 +511,7 @@ fn canonical_tool(name: &str) -> (&str, Option<(&str, &str)>) {
     (name, None)
 }
 
-fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
+fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
     let params = req.get("params").cloned().unwrap_or(json!({}));
     let raw = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
     let mut args = params.get("arguments").cloned().unwrap_or(json!({}));
@@ -442,7 +538,7 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
     let s = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
 
     // 先过开关，再谈执行：总开关关着就整个拒绝，单工具关着就只拒绝那一个
-    let cfg = load_cfg(app)?;
+    let cfg = load_cfg(dir)?;
     if !service_enabled(&cfg) {
         return Err(err("MCP 服务已在设置中关闭"));
     }
@@ -455,25 +551,23 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
 
     let out = match name {
         "list_projects" | "list_groups" => {
-            let snap = snapshot(app)?;
+            let snap = snapshot(dir)?;
             let tabs = if name == "list_groups" { snap.group_tabs } else { snap.project_tabs };
             json!({ "content": [{ "type": "text", "text": serde_json::to_string(&tabs).unwrap_or_default() }] })
         }
         "list_links" => {
-            let snap = snapshot(app)?;
+            let snap = snapshot(dir)?;
             json!({ "content": [{ "type": "text", "text": serde_json::to_string(&snap.links).unwrap_or_default() }] })
         }
         "create_link" => {
             let project = s("project");
             let group = s("group");
             if project.is_empty() || group.is_empty() { return Err(err("project 与 group 必填")); }
-            let dir = data_dir_of(app)?;
             let snap = super::core_create_link(&dir, &project, &group, None)
                 .map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": format!("已分配，当前链接 {} 条", snap.links.len()) }] })
         }
         "remove_link" => {
-            let dir = data_dir_of(app)?;
             let snap = super::core_remove_link(&dir, &s("project"))
                 .map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": format!("已撤销，剩余链接 {} 条", snap.links.len()) }] })
@@ -492,7 +586,6 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
             // （那会建出 父目录\project\名称 这种错误层级）。
             // 层级走独立的 hierarchy 参数，未给则不拼。
             let hierarchy = args.get("hierarchy").and_then(|v| v.as_str()).map(str::to_string);
-            let dir = data_dir_of(app)?;
             let p = super::core_create_folder(&dir, &s("parent"), &s("name"),
                 hierarchy.as_deref(), None)
                 .map_err(|e| err(&e))?;
@@ -505,7 +598,6 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
             // 用 as_u64 而不是 as_i64：JSON 里没有负数这种页签序号，
             // as_u64 顺带挡掉 -1 这种（as_i64 会收下，然后转 usize 时溢出）。
             let tab_index = args.get("tab_index").and_then(|v| v.as_u64()).map(|v| v as usize);
-            let dir = data_dir_of(app)?;
             // 必须在事务内「读→改→写」。
             // 若先 load_cfg 改完再 core_save_config，传进去的是旧快照，
             // core_save_config 会拿它整份覆盖磁盘 —— 期间别人的改动就丢了。
@@ -545,14 +637,12 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
         "set_lock" => {
             let dd = args.get("denyDelete").and_then(|v| v.as_bool()).unwrap_or(false);
             let dw = args.get("denyWrite").and_then(|v| v.as_bool()).unwrap_or(false);
-            let dir = data_dir_of(app)?;
             super::core_set_lock(&dir, &s("path"), dd, dw).map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": format!("保护已更新：防删除={dd} 防写入={dw}") }] })
         }
         "set_tag_color" => {
             let path = s("path");
             let color = s("color");
-            let dir = data_dir_of(app)?;
             // 用只改颜色的版本：不先读 folder_icons 再传回去，
             // 那样会把读到的旧图标写回，覆盖期间别人设的新图标。
             super::core_set_tag_color(&dir, &path,
@@ -563,7 +653,6 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
         "backup" => {
             let kind = if s("kind") == "group" { "group" } else { "project" };
             let append_only = args.get("appendOnly").and_then(|v| v.as_bool()).unwrap_or(true);
-            let dir = data_dir_of(app)?;
             let cfg = super::store::load_config(&dir);
             // summary 是方法不是字段，别写成 r.summary
             let r = super::backup::run(&cfg, &dir, kind, append_only);
@@ -571,13 +660,11 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
         }
         // ---- 与原版对齐、此前缺失的能力 ----
         "get_manual" => {
-            let dir = data_dir_of(app)?;
             json!({ "content": [{ "type": "text", "text": manual_text(&dir) }] })
         }
         "get_status" => {
-            let dir = data_dir_of(app)?;
-            let snap = snapshot(app)?;
-            let cfg = load_cfg(app)?;
+            let snap = snapshot(dir)?;
+            let cfg = load_cfg(dir)?;
             let projects: Vec<String> = snap.project_tabs.iter().flat_map(|t| t.items.iter().map(|c| c.path.clone())).collect();
             let groups: Vec<String> = snap.group_tabs.iter().flat_map(|t| t.items.iter().map(|c| c.path.clone())).collect();
             let sel = get_selection_inner().map(|(p, k)| json!({ "path": p, "kind": k }));
@@ -603,7 +690,7 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
             }
             if !super::fsutil::is_real_dir(p) { return Err(err(&format!("文件夹不存在: {path}"))); }
             // 判定类别：先看项目组再看项目，都不在则是 other（仍可选，只是类别不明）
-            let snap = snapshot(app)?;
+            let snap = snapshot(dir)?;
             let key = super::store::normalize_key(&path);
             let in_group = snap.group_tabs.iter().flat_map(|t| t.items.iter())
                 .any(|c| super::store::normalize_key(&c.path) == key);
@@ -632,7 +719,6 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
         "lock_status" => {
             let path = s("path");
             if path.is_empty() { return Err(err("缺少参数 path")); }
-            let dir = data_dir_of(app)?;
             let cfg = super::store::load_config(&dir);
             let (dd, dw) = match super::store::lock_of(&cfg, &path) {
                 Some(l) => (l.deny_delete, l.deny_write),
@@ -650,7 +736,6 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
             if !super::fsutil::is_real_dir(std::path::Path::new(&path)) {
                 return Err(err(&format!("目录不存在: {path}")));
             }
-            let dir = data_dir_of(app)?;
             // 事务内改配置 + 落 desktop.ini：apply_icon 失败则不落盘
             let note = super::store::with_config(&dir, |cfg| {
                 cfg.folder_icons.insert(path.clone(), icon.clone());
@@ -666,7 +751,6 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
         "folder_icon_get" => {
             let path = s("path");
             if path.is_empty() { return Err(err("缺少参数 path")); }
-            let dir = data_dir_of(app)?;
             let cfg = super::store::load_config(&dir);
             let cur = cfg.folder_icons.get(&path).cloned()
                 .or_else(|| {
@@ -684,7 +768,6 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
         "folder_icon_restore" => {
             let path = s("path");
             if path.is_empty() { return Err(err("缺少参数 path")); }
-            let dir = data_dir_of(app)?;
             super::store::with_config(&dir, |cfg| {
                 let key = super::store::normalize_key(&path);
                 cfg.folder_icons.retain(|k, _| super::store::normalize_key(k) != key);
@@ -697,7 +780,6 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
             json!({ "content": [{ "type": "text", "text": "已恢复默认图标" }] })
         }
         "capture_screen" => {
-            let dir = data_dir_of(app)?;
             let target = match args.get("dir").and_then(|v| v.as_str()) {
                 Some(d) if !d.trim().is_empty() => std::path::PathBuf::from(d.trim()),
                 _ => dir.join("shots"),
@@ -712,7 +794,6 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
         "capture_window" => {
             let title = s("title");
             if title.is_empty() { return Err(err("缺少参数 title")); }
-            let dir = data_dir_of(app)?;
             let target = match args.get("dir").and_then(|v| v.as_str()) {
                 Some(d) if !d.trim().is_empty() => std::path::PathBuf::from(d.trim()),
                 _ => dir.join("shots"),
@@ -726,7 +807,6 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
             let target = resolve_target(&args, false).map_err(|e| err(&e))?
                 .ok_or_else(|| err("未指定目标文件夹，请先 select_folder 或传 target"))?;
 
-            let dir = data_dir_of(app)?;
             let cfg = super::store::load_config(&dir);
             // 目标为项目组时自动落到其 skill 目录（与界面行为一致）
             let deploy_base = if let Some(sd) = super::content::skill_dir_of(&target) {
@@ -893,19 +973,21 @@ fn err(msg: &str) -> Value {
 
 /* ---------------------------- 后端访问 ---------------------------- */
 
-/// 直接解析数据目录，不依赖 State（MCP 线程不是 Tauri 命令，拿不到 State）。
-fn data_dir_of(app: &AppHandle) -> Result<PathBuf, Value> {
-    super::store::resolve_data_dir(app).map_err(|e| err(&e))
+/* 数据目录由调用方解析好后传进来，mcp.rs 自身不再依赖 AppHandle。
+
+   为什么要这样改：
+   stdio 模式必须在 Tauri `Builder` **之前**跑起来（见 serve_stdio），
+   那时还没有 AppHandle 可用。而 mcp.rs 里所有 app 的用途只有一件事 ——
+   解析数据目录。把依赖从「句柄」降为「路径」，stdio 就能复用整条工具链，
+   不必为它另写一套。
+
+   HTTP 模式仍由 serve() 从 AppHandle 现算一次，行为与改动前一致。 */
+fn load_cfg(dir: &Path) -> Result<super::model::FpxConfig, Value> {
+    Ok(super::store::load_config(dir))
 }
 
-fn load_cfg(app: &AppHandle) -> Result<super::model::FpxConfig, Value> {
-    let dir = data_dir_of(app)?;
-    Ok(super::store::load_config(&dir))
-}
-
-fn snapshot(app: &AppHandle) -> Result<super::model::Snapshot, Value> {
-    let dir = data_dir_of(app)?;
-    Ok(super::core_snapshot(&dir))
+fn snapshot(dir: &Path) -> Result<super::model::Snapshot, Value> {
+    Ok(super::core_snapshot(dir))
 }
 
 /// 供命令层查询运行状态（前端展示用）。
