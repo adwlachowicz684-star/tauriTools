@@ -290,6 +290,33 @@ body {
 }
 #body.open { grid-template-columns: var(--sidebar-open) 1fr; }
 
+/* ---------- 响应式断点 ----------
+   窗口最小 940×620（见 src-tauri/tauri.conf.json），但**插件感知的是
+   iframe 自己的宽度**，不是窗口宽度：
+
+     窗口 940 − 侧边栏 218(展开) − stage padding 36 = 686px
+     窗口 940 − 侧边栏  86(收起) − stage padding 36 = 818px
+
+   所以插件里的断点按 iframe 宽度定，与窗口宽度差 150~250px。
+
+     1200px 及以上   宽松（双栏 / 三栏）
+     900 ~ 1200px    紧凑（单栏 / 收窄侧栏）
+     700px 及以下    极窄（纵向栏转横向条）
+
+   两条通用规则（"看不见右边"与"看不见下面"的根因）：
+
+   1) 横向 flex 容器必须能换行，或让子项可收缩
+      flex 子项默认 `min-width: auto`（不能比内容窄），窗口一窄就
+      把后面的兄弟挤出容器 —— 表现是"右边的东西不见了"。
+      要么容器加 `flex-wrap: wrap`，要么子项加 `min-width: 0` + 省略号。
+
+   2) 纵向 flex 容器滚动区必须写 `min-height: 0`
+      否则 `min-height: auto` 会让滚动区被内容顶开、`overflow: auto`
+      失效 —— 表现是"下面的内容看不见，且滚不动"。
+
+   本项目此前只有 project-group 有断点，其余界面在全尺寸下才正常。
+   ------------------------------------------------------------------ */
+
 /* ---------- 侧边栏 ---------- */
 #sidebar {
   background: var(--surface);
@@ -321,6 +348,7 @@ body {
 
 #plugin-list {
   flex: 1;
+  min-height: 0;   /* 缺它滚动区会被内容顶开、overflow 失效 */
   overflow-y: auto;
   overflow-x: hidden;
   display: flex;
@@ -427,10 +455,21 @@ body {
 #plugin-bar h1 {
   font-size: 15px;
   font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
   letter-spacing: .3px;
 }
-#plugin-bar .sub { font-size: 12px; color: var(--text-mute); }
-.bar-actions { margin-left: auto; display: flex; gap: 8px; }
+#plugin-bar .sub { font-size: 12px; min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  color: var(--text-mute); }
+.bar-actions { margin-left: auto; display: flex; flex: none;
+  gap: 8px; }
 .bar-btn {
   height: 30px; padding: 0 12px;
   border: 0; border-radius: var(--r-sm);
@@ -845,6 +884,7 @@ body.nx-inspecting * { cursor: crosshair !important; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-width: 0;
   gap: 12px;
   padding: 14px 18px;
   background: var(--surface-overlay);
@@ -1037,6 +1077,7 @@ html.theme-transition *:not(.spinner) {
 .theme-pop-head {
   display: flex;
   align-items: baseline;
+  min-width: 0;
   gap: 8px;
   padding: 13px 16px 9px;
   font-size: 13px;

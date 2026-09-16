@@ -364,6 +364,7 @@ html, body {
   flex-direction: column;
   gap: 4px;
   max-height: 320px;
+  min-height: 0;
   overflow-y: auto;
 }
 .mm-icon-groups { display: flex; flex-direction: column; gap: 3px; }
@@ -475,7 +476,8 @@ html, body {
 .mm-colors { display: grid; grid-template-columns: repeat(9, 1fr); gap: 4px; }
 .mm-colors .mm-swatch { width: 100%; height: 20px; border-radius: var(--r-xs, 5px); }
 
-.mm-list { display: flex; flex-direction: column; gap: 5px; max-height: 220px; overflow-y: auto; }
+.mm-list { display: flex; flex-direction: column; gap: 5px; max-height: 220px; min-height: 0;
+  overflow-y: auto; }
 .mm-item {
   display: flex; align-items: center; gap: 7px;
   padding: 6px 8px;
@@ -749,6 +751,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: var(-
   border-radius: var(--r, 14px);
   background: var(--surface);
   box-shadow: var(--sh-out-md);
+  min-height: 0;
   overflow-y: auto;
 }
 .mm-files.open { display: flex; }
@@ -827,4 +830,24 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: var(-
   padding: 0 5px;
   border-radius: var(--r-pill);
   background: var(--surface-sunk, var(--surface));
+}
+
+
+/* ============================================================
+   响应式：窄屏收窄侧栏
+   ============================================================
+   断点按 iframe 宽度定（不是窗口宽度）—— 详见 neumorphism.css
+   顶部的「响应式断点」说明。
+
+   .mm-side 固定 276px，在 686px 的可用宽度下会吃掉 40%，
+   画布只剩约 340px，节点一多就互相挤压。
+   ============================================================ */
+@media (max-width: 1000px) {
+  .mm-side { flex: 0 0 210px; padding: 10px; }
+  .mm-icon-side { flex: 0 0 96px; }
+}
+@media (max-width: 760px) {
+  /* 极窄：侧栏转为可滚动的横向条，画布拿回全部宽度 */
+  .mm-body { flex-wrap: wrap; }
+  .mm-side { flex: 1 1 100%; max-height: 220px; overflow-y: auto; }
 }
