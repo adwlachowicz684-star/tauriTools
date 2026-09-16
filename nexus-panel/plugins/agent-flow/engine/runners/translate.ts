@@ -46,13 +46,11 @@ export async function runTranslate(ctx: RunContext): Promise<void> {
 
   if (!src.trim()) {
     failTranslate('待翻译文本为空。检查上游输出，或直接在节点里填写');
-    return;
   }
 
   const target = (d.targetLang ?? '').trim();
   if (!target) {
     failTranslate('未指定目标语言');
-    return;
   }
 
   // 允许填 "日语" 这种中文，也允许填 "ja"
@@ -78,7 +76,7 @@ export async function runTranslate(ctx: RunContext): Promise<void> {
 
   let res: LlmCallResult;
   try {
-    res = await opts.llmCaller({
+    res = await opts.llmCaller!({
       url: cfg.url,
       headers: buildHeaders(resolveSecret(opts.credentials ?? [], d.credentialId, cfg.apiKey)),
       body,
@@ -86,13 +84,11 @@ export async function runTranslate(ctx: RunContext): Promise<void> {
     });
   } catch (err) {
     failTranslate(err instanceof Error ? err.message : String(err));
-    return;
   }
 
   const parsed = parseResponse(res.status, res.text);
   if (!parsed.ok) {
     failTranslate(parsed.error);
-    return;
   }
 
   const text = parsed.text.trim();

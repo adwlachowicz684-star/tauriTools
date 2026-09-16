@@ -36,7 +36,7 @@ export async function runGithubUpdate(ctx: RunContext): Promise<void> {
 
     if (!owner || !repo) throw new NodeFailError('缺少 owner 或 repo', 'false');
 
-    const r = await opts.githubFetch({
+    const r = await opts.githubFetch!({
       owner, repo,
       branch: d.branch || undefined,
       base: d.base || undefined,

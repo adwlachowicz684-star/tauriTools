@@ -133,7 +133,7 @@ export async function withNodeRun(
     const r = await run();
     outputs[id] = r.output;
     // 写了 fields / files 就必须发事件通知 UI，否则界面上会残留上一次的值
-    writeFields(ctx, r.fields, r.files);
+    writeFields(ctx, r.fields ?? null, r.files ?? null);
     emit({
       type: 'node-done',
       id,

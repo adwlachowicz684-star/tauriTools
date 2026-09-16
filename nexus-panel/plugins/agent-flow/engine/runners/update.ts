@@ -50,13 +50,11 @@ export async function runUpdate(ctx: RunContext): Promise<void> {
       url = d.feedUrl.trim();
       if (!url) {
         fail('RSS 模式需要填订阅源地址');
-        return;
       }
     } else {
       const uid = extractBiliUid(d.biliUid);
       if (!uid) {
         fail('填一个 UP 主 UID 或 space.bilibili.com 主页链接');
-        return;
       }
       url = biliApiUrl(uid);
     }
@@ -64,7 +62,6 @@ export async function runUpdate(ctx: RunContext): Promise<void> {
     url = d.feedUrl.trim();
     if (!url) {
       fail('需要填订阅源地址。公众号没有官方接口，请用 wechat2rss / RSSHub 等生成');
-      return;
     }
   }
 
@@ -75,13 +72,12 @@ export async function runUpdate(ctx: RunContext): Promise<void> {
 
   let text: string;
   try {
-    text = await opts.fetcher(node, renderedUrl, {
+    text = await opts.fetcher!(node, renderedUrl, {
       headers,
       timeoutSec: d.timeoutSec,
     });
   } catch (err) {
     fail(err instanceof Error ? err.message : String(err));
-    return;
   }
 
   // 解析：B站接口按 JSON，其余按 RSS/Atom
@@ -91,7 +87,6 @@ export async function runUpdate(ctx: RunContext): Promise<void> {
 
   if (parsed.error) {
     fail(parsed.error);
-    return;
   }
 
   const items = sortByNewest(parsed.items);

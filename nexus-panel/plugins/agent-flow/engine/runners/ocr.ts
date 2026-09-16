@@ -56,24 +56,20 @@ export async function runOcr(ctx: RunContext): Promise<void> {
     const p = rawPath.trim();
     if (!p) {
       failOcr('图片来源选的是「本地文件」，但没有填路径');
-      return;
     }
     emit({ type: 'node-start', id, rendered: `读取本地图片 ${p}` });
     try {
-      imageUrl = await opts.imageReader(p);
+      imageUrl = await opts.imageReader!(p);
     } catch (err) {
       failOcr(err instanceof Error ? err.message : String(err));
-      return;
     }
   } else {
     imageUrl = rawUrl.trim();
     if (!imageUrl) {
       failOcr('图片来源选的是「网络地址」，但没有填地址');
-      return;
     }
     if (!isUsableImageUrl(imageUrl)) {
       failOcr(`图片地址无效：${imageUrl.slice(0, 80)}。需要 http(s) 开头，或 data:image/ 开头`);
-      return;
     }
   }
 
@@ -90,7 +86,7 @@ export async function runOcr(ctx: RunContext): Promise<void> {
 
   let res: LlmCallResult;
   try {
-    res = await opts.llmCaller({
+    res = await opts.llmCaller!({
       url: cfg.url,
       headers: buildHeaders(resolveSecret(opts.credentials ?? [], d.credentialId, cfg.apiKey)),
       body,
@@ -98,13 +94,11 @@ export async function runOcr(ctx: RunContext): Promise<void> {
     });
   } catch (err) {
     failOcr(err instanceof Error ? err.message : String(err));
-    return;
   }
 
   const parsed = parseResponse(res.status, res.text);
   if (!parsed.ok) {
     failOcr(parsed.error);
-    return;
   }
 
   const text = parsed.text.trim();

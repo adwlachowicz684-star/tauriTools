@@ -49,7 +49,7 @@ export async function runGithubPush(ctx: RunContext): Promise<void> {
     }
     if (files.length === 0) throw new NodeFailError('没有要提交的文件');
 
-    const r = await opts.githubPush({
+    const r = await opts.githubPush!({
       owner, repo,
       branch: d.branch || 'main',
       message: tpl(d.message),

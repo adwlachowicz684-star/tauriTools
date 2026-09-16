@@ -40,7 +40,7 @@ export async function runFs(ctx: RunContext): Promise<void> {
     emit({ type: 'node-start', id, rendered: `${d.op} ${p}` });
     let out = '';
     try {
-      out = await opts.fsExecutor(node, { path: p, target: t, content: c });
+      out = await opts.fsExecutor!(node, { path: p, target: t, content: c });
     } catch (err) {
       throw new NodeFailError(err instanceof Error ? err.message : String(err));
     }
