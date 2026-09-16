@@ -38,7 +38,7 @@ import type {
 export type {
   RunEvent, RunOptions, RunSummary, Scope, BranchRecord, ParallelRecord, LoopRecord,
   Executor, Fetcher, LlmCaller, LlmCallResult, ImageReader, FsExecutor,
-  GithubUpdateRunner, GithubPushRunner, GithubUpdateInfo,
+  GithubUpdateRunner, GithubPushRunner, GithubUpdateInfo, HttpRequester,
 } from './runTypes';
 
 /**
