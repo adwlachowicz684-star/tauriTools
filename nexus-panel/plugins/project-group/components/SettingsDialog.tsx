@@ -4,6 +4,7 @@ import { errText } from '../api';
 import type { BackupAutoStatus, FpxConfig, McpToolRow } from '../types';
 import { ChainActionsPanel } from './ChainActionsPanel';
 import { ChainClientsDialog } from './ChainClientsDialog';
+import { DirDialog } from './DirDialog';
 
 /** 自动备份档位（分钟）；0 = 关闭。与原版预设一致。 */
 const BACKUP_PRESETS: { value: number; label: string }[] = [
@@ -62,6 +63,13 @@ export function SettingsBody({
   const [appendOnly, setAppendOnly] = useState(config.backupAppendOnly);
   const [autoMinutes, setAutoMinutes] = useState(config.backupAutoMinutes);
 
+  /* 目录设置（#49 #578）：config 里早有这些字段、后端也一直在读，
+     但界面上从来没有入口，想改只能手改 JSON。 */
+  const [createProjectDir, setCreateProjectDir] = useState(config.createProjectDir ?? '');
+  const [createGroupDir, setCreateGroupDir] = useState(config.createGroupDir ?? '');
+  const [groupTemplateDir, setGroupTemplateDir] = useState(config.createGroupTemplateDir ?? '');
+  const [dirPicker, setDirPicker] = useState<'cp' | 'cg' | 'gt' | null>(null);
+
   const [moveFolder, setMoveFolder] = useState(config.moveFolderOnCrossMove);
   const [moveScope, setMoveScope] = useState(config.moveFolderScope || 'defaultRootsFlatten');
   const [mcpEnabled, setMcpEnabled] = useState(config.mcpEnabled);
@@ -96,6 +104,25 @@ export function SettingsBody({
     return () => { alive = false; };
   }, [api, iconFiles, dataDir]);
 
+  /** 目录行：输入框 + 浏览 + 清空。与备份弹窗里那套一致，避免两处写法漂移。 */
+  const dirRow = (
+    label: string,
+    value: string,
+    onChange: (v: string) => void,
+    which: 'cp' | 'cg' | 'gt',
+    hint: string,
+  ) => (
+    <div className="fpx-field">
+      <label>{label}</label>
+      <div className="p-row">
+        <input className="p-input" value={value} placeholder={hint}
+          onChange={(e) => onChange(e.target.value)} />
+        <button className="p-btn" onClick={() => setDirPicker(which)}>浏览…</button>
+        <button className="p-btn" title="清空" onClick={() => onChange('')}>清空</button>
+      </div>
+    </div>
+  );
+
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
@@ -107,6 +134,9 @@ export function SettingsBody({
       await onSaved({
         autoSelect,
         quickLink,
+        createProjectDir: createProjectDir.trim() || null,
+        createGroupDir: createGroupDir.trim() || null,
+        createGroupTemplateDir: groupTemplateDir.trim() || null,
         createPathCarriesHierarchy: hierarchy,
         iconAffectExplorer: iconSync,
         backupAppendOnly: appendOnly,
@@ -200,6 +230,23 @@ export function SettingsBody({
           title="快速链接（拖项目组⇄项目时直接创建链接）"
           sub="关闭则跨栏拖放后还要再确认一次才建链"
         />
+      </div>
+
+      <div className="fpx-settings-sec">
+        <h3>目录</h3>
+        <div className="p-muted" style={{ fontSize: 11.5, marginBottom: 8 }}>
+          下面几个目录决定**新建设在哪、跨栏搬家往哪搬**。留空则每次新建时自己选。
+        </div>
+        {dirRow('新建项目的预设父目录', createProjectDir, setCreateProjectDir, 'cp',
+          '留空 = 每次新建时手动选')}
+        {dirRow('新建项目组的预设父目录', createGroupDir, setCreateGroupDir, 'cg',
+          '留空 = 每次新建时手动选')}
+        {dirRow('项目组模板文件夹', groupTemplateDir, setGroupTemplateDir, 'gt',
+          '新建项目组时把这里的内容复制过去（留空 = 不套模板）')}
+        <div className="p-muted" style={{ fontSize: 11.5, marginTop: 6 }}>
+          「跨类别移动」里的<b>默认根目录</b>指的就是前两项：卡片换栏时若开启同步移动，
+          文件夹会被搬到另一类别的预设父目录。两项都没设时，换栏只改归属、不搬文件夹。
+        </div>
       </div>
 
       <div className="fpx-settings-sec">
@@ -353,6 +400,21 @@ export function SettingsBody({
           </div>
         )}
       </div>
+
+      {dirPicker && (
+        <DirDialog
+          api={api}
+          title="选择文件夹"
+          allowCreate
+          onClose={() => setDirPicker(null)}
+          onPick={(p) => {
+            if (dirPicker === 'cp') setCreateProjectDir(p);
+            else if (dirPicker === 'cg') setCreateGroupDir(p);
+            else setGroupTemplateDir(p);
+            setDirPicker(null);
+          }}
+        />
+      )}
 
       {/* 保存按钮放在主体里而不是外层 Modal 的 footer：
           设置面板（外壳「⚙」）没有 Modal，只有主体，按钮必须自带。 */}
