@@ -46,7 +46,10 @@ t('存在 ALIASES 常量', /const ALIASES:/.test(rs));
 const aliasBlock = rs.slice(rs.indexOf('const ALIASES'), rs.indexOf('/// 把可能是原版名字'));
 const pairs = [...aliasBlock.matchAll(/\("([a-z_]+)",\s*"([a-z_]+)",\s*(None|Some\(\("(\w+)",\s*"(\w+)"\)\))/g)]
   .map((m) => ({ old: m[1], neu: m[2], patch: m[3] === 'None' ? null : { k: m[4], v: m[5] } }));
-t('解析出 6 条映射', pairs.length === 6, String(pairs.length));
+/* 不写死条数 —— 加别名是正常的，写成常量会变成"每次加都要改测试"，
+   而真正要守的是下面的「每条的目标都是已声明的实名」。
+   只要求至少能解析出若干条，防的是解析逻辑失效（解析出 0 条）。 */
+t('解析出别名映射', pairs.length >= 6, String(pairs.length));
 
 const byOld = Object.fromEntries(pairs.map((p) => [p.old, p]));
 const need = [
@@ -54,6 +57,7 @@ const need = [
   ['lock_set', 'set_lock'],
   ['list_agents', 'scan_content'],
   ['list_skills', 'scan_content'],
+  ['list_rules', 'scan_content'],
   ['create_project', 'create_folder'],
   ['create_group', 'create_folder'],
 ];
@@ -71,6 +75,27 @@ t('list_agents 自动补 kind=agent',
   byOld.list_agents?.patch?.k === 'kind' && byOld.list_agents?.patch?.v === 'agent');
 t('list_skills 自动补 kind=skill',
   byOld.list_skills?.patch?.k === 'kind' && byOld.list_skills?.patch?.v === 'skill');
+t('list_rules 自动补 kind=rule',
+  byOld.list_rules?.patch?.k === 'kind' && byOld.list_rules?.patch?.v === 'rule');
+
+/* ---------- 2b. 拆分型别名必须成套 ---------- */
+/* 原版把 scan_content 按 kind 拆成三个独立工具，合成一个后**三个旧名都要有别名**。
+   此前只补了 agent / skill，漏了 rule —— 缺的那一个会落到「未知工具」，
+   而且更隐蔽：若被当成 scan_content 处理又不带 kind，会返回 all（含另两类），
+   **语义错误但不报错**。
+
+   这条断言的价值在于：将来有人往 enum 里加第四个 kind，
+   而忘了补对应别名时，这里会红 —— 守的是"成套"这个约束，不是这一条记录。 */
+const enumLine = rs.match(/"kind":\s*\{\s*"type":\s*"string",\s*"enum":\s*\[([^\]]+)\]/);
+const kinds = (enumLine?.[1] ?? '')
+  .split(',')
+  .map((x) => x.trim().replace(/"/g, ''))
+  .filter((x) => x && x !== 'all');
+t('能解析出 scan_content 的 kind 枚举', kinds.length > 0, kinds.join('/'));
+for (const k of kinds) {
+  t(`  kind=${k} 有对应旧名别名`, byOld[`list_${k}s`]?.neu === 'scan_content',
+    byOld[`list_${k}s`]?.neu);
+}
 t('纯改名类不补参数（backup_now）', byOld.backup_now?.patch === null);
 t('纯改名类不补参数（lock_set）', byOld.lock_set?.patch === null);
 

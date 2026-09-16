@@ -490,8 +490,17 @@ pub fn tool_rows(cfg: &super::model::FpxConfig) -> Vec<super::model::McpToolRow>
 const ALIASES: &[(&str, &str, Option<(&str, &str)>)] = &[
     ("backup_now", "backup", None),
     ("lock_set", "set_lock", None),
+    /* 三个 kind **必须成套**。
+       原版把 scan_content 按类型拆成三个独立工具（agent / skill / rule），
+       这里合成一个靠 kind 区分，所以三个旧名都要有别名。
+
+       此前只补了 agent 与 skill，漏了 rule：
+       旧配置里写 `list_rules` 的客户端会落到「未知工具」，
+       而更糟的是 —— 就算它被当成 scan_content 处理，缺了 kind 也会返回
+       all（含 agent/skill），**语义错误但不报错**，比直接失败更难排查。 */
     ("list_agents", "scan_content", Some(("kind", "agent"))),
     ("list_skills", "scan_content", Some(("kind", "skill"))),
+    ("list_rules", "scan_content", Some(("kind", "rule"))),
     // 原版建项目 / 建项目组是两个工具，当前合并成 create_folder。
     // 注意：底层的 core_create_folder 本就不区分类型（第 5 参是 template
     // 而非 kind），所以这两个别名落到同一行为是**既有语义**，不是别名
