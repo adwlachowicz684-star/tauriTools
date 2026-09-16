@@ -55,6 +55,8 @@ export const NODE_CATEGORY_META: Record<NodeCategory, { label: string }> = {
  * 注册表要用同一个 ComponentType 装下所有面板，签名必须一致。
  */
 export type NodeInspectorProps = {
+  /** 进入模块实例的内部编辑（由属性面板注入） */
+  onEditModule?: (nodeId: string) => void;
   node: FlowNode;
   edges: FlowEdge[];
   onChange: (id: string, patch: Record<string, unknown>) => void;

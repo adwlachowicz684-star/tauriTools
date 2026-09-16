@@ -140,6 +140,48 @@ def clean_import_types(src: str) -> str:
     return src
 
 
+def skip_union_tail(src: str, k: int) -> int:
+    """
+    从 k 起，若紧跟 ` | 类型` 形式的联合尾部则整体跳过，返回新位置。
+
+    为什么需要：`as` 断言的类型部分要整体移除，漏掉 `| undefined`
+    就会留下一个按位或表达式，把值静默变成 0。
+    """
+    n = len(src)
+    while True:
+        j = k
+        while j < n and src[j] == ' ':
+            j += 1
+        if j >= n or src[j] != '|':
+            return k
+        k = j + 1
+        while k < n and src[k] == ' ':
+            k += 1
+        if k < n and src[k] == '{':
+            depth = 0
+            while k < n:
+                if src[k] == '{':
+                    depth += 1
+                elif src[k] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        k += 1
+                        break
+                k += 1
+        else:
+            # 普通类型片段：标识符 / 字面量类型（'a' | 'b'）
+            if k < n and src[k] in '\'"':
+                q = src[k]
+                k += 1
+                while k < n and src[k] != q:
+                    k += 1
+                if k < n:
+                    k += 1
+            else:
+                while k < n and (src[k].isalnum() or src[k] in '_$.'):
+                    k += 1
+
+
 def remove_as(src: str) -> str:
     """移除 X as <Type> 断言，支持对象类型 { ... } 与泛型数组后缀 []"""
     out = []
@@ -179,6 +221,11 @@ def remove_as(src: str) -> str:
                             k += 1
                             break
                     k += 1
+                # 对象类型的联合断言（as { ... } | undefined）：
+                # 扫到配对的 } 就停会留下 `| undefined`，
+                # JS 里那是按位或 —— `obj | undefined` 恒为 0，
+                # 静默改变语义且不报错（表现为"这个变量莫名是空的"）。
+                k = skip_union_tail(src, k)
             else:
                 k, depth = j, 0
                 saw_union = False

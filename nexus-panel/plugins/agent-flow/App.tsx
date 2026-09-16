@@ -37,6 +37,13 @@ import { SECRET_POLICY_KEY, type SecretPolicy } from './types';
 import { checkChannel, type ChannelStatus } from './lib/channel';
 import { deviceSeed, clearKeyCache } from './engine/crypto';
 import Sidebar, { DRAG_MIME, decodeDrag, type DragPayload } from './components/Sidebar';
+import ModuleLibrary, {
+  MODULE_DRAG_MIME, decodeModuleDrag, askCreateModule,
+} from './components/ModuleLibrary';
+import {
+  expandModules, findModule, addModule, saveModules, loadModules,
+  stripRuntimeNodes, type ModuleDef,
+} from './engine/modules';
 import CanvasTabs from './components/CanvasTabs';
 import { TaskPanel } from './components/TaskPanel';
 import { HistoryPanel } from './components/HistoryPanel';
@@ -979,6 +986,183 @@ export default function App() {
     [nodes, edges, setNodes, setEdges],
   );
 
+  /**
+   * 落一个模块实例到画布。
+   *
+   * 实例只记 moduleId，结构仍住在模块库里 —— 改库则所有实例跟着变。
+   * 想让某个实例独善其身，就在属性面板里「脱钩」。
+   */
+  const spawnModule = useCallback(
+    (moduleId: string, at?: { x: number; y: number }) => {
+      const m = findModule(moduleId);
+      if (!m) {
+        pushLog('✗ 这个模块已经不存在了（可能刚被删掉）');
+        return;
+      }
+      seq.current += 1;
+      const id = `m${Date.now().toString(36)}${seq.current}`;
+      const pos = at ?? { x: 120 + (nodes.length % 5) * 60, y: 120 + (nodes.length % 5) * 40 };
+      const def = getDef('module');
+      const node = {
+        id,
+        type: 'module',
+        position: pos,
+        // label 用模块名：新建时就该显示得像模像样，而不是"新模块"
+        data: { ...def.create(id), moduleId, label: m.name },
+      } as unknown as FlowNode;
+      setNodes((ns) => [...ns, node]);
+      setSelectedId(node.id);
+    },
+    [nodes.length, setNodes, setSelectedId, pushLog],
+  );
+
+  /* ---------------------------------------------------------------- */
+  /* 模块：编辑模式                                                     */
+  /* ---------------------------------------------------------------- */
+
+  /*
+   * 编辑模块内部时，借用主画布：把模块内容载入画布，改完存回模块库。
+   *
+   * 为什么不做独立的模块编辑弹窗：
+   * 那要重新实现一遍画布交互（连线、框选、缩放、撤销），
+   * 而这些逻辑已经写在主画布上了。复用主画布只多了"进入/退出"两个动作。
+   *
+   * 代价是进入编辑期间必须锁住画布切换 —— 否则切换会把模块内容
+   * 当成另一个画布的内容存走，模块库里的东西就丢了。
+   */
+  const [editingModule, setEditingModule] = useState<string | null>(null);
+  const moduleBackup = useRef<{ nodes: FlowNode[]; edges: FlowEdge[] } | null>(null);
+
+  const enterModuleEdit = useCallback(
+    (id: string) => {
+      const m = findModule(id);
+      if (!m) return;
+      // 已经在编辑别的模块了，先退出，否则备份会被覆盖
+      if (editingModule) return;
+      moduleBackup.current = { nodes, edges };
+      setNodes(m.nodes.map((n) => ({ ...n })) as unknown as FlowNode[]);
+      setEdges(m.edges.map((e) => ({ ...e })) as unknown as FlowEdge[]);
+      setSelectedId(null);
+      setEditingModule(id);
+      pushLog(`✎ 正在编辑模块「${m.name}」—— 改完点「完成」保存，所有实例跟着变`);
+    },
+    [nodes, edges, editingModule, setNodes, setEdges, setSelectedId, pushLog],
+  );
+
+  /** 编辑某个模块实例的内部 —— 会顺带脱钩（见下） */
+  const enterInstanceEdit = useCallback(
+    (nodeId: string) => {
+      const n = nodes.find((x) => x.id === nodeId);
+      if (!n) return;
+      const d = n.data as unknown as Record<string, unknown>;
+      if (d?.kind !== 'module') return;
+      if (editingModule) return;
+
+      moduleBackup.current = { nodes, edges };
+      const own = d.inner as { nodes?: unknown[]; edges?: unknown[] } | null;
+      if (own?.nodes) {
+        // 已脱钩：直接编辑自带副本
+        setNodes(own.nodes.map((x) => ({ ...(x as object) })) as unknown as FlowNode[]);
+        setEdges((own.edges ?? []).map((x) => ({ ...(x as object) })) as unknown as FlowEdge[]);
+      } else {
+        const m = findModule(String(d.moduleId ?? ''));
+        if (!m) {
+          pushLog('✗ 模块已删除，无法编辑（可先在属性面板脱钩）');
+          return;
+        }
+        setNodes(m.nodes.map((x) => ({ ...x })) as unknown as FlowNode[]);
+        setEdges(m.edges.map((x) => ({ ...x })) as unknown as FlowEdge[]);
+      }
+      setSelectedId(null);
+      // 存一个特殊标记：退出时写回这个实例而不是模块库
+      setEditingModule(`@instance:${nodeId}`);
+      pushLog('✎ 正在编辑这个模块实例 —— 改完会脱钩成独立副本');
+    },
+    [nodes, edges, editingModule, setNodes, setEdges, setSelectedId, pushLog],
+  );
+
+  /** 退出编辑并保存 */
+  const exitModuleEdit = useCallback(
+    (save: boolean) => {
+      const target = editingModule;
+      if (!target) return;
+      const backup = moduleBackup.current;
+
+      if (save) {
+        const clean = stripRuntimeNodes(
+          nodes.map((n) => ({ ...n })) as unknown as Record<string, unknown>[],
+        );
+        const newEdges = edges.map((e) => ({
+          id: e.id, source: e.source, target: e.target,
+          branch: e.data?.branch,
+          loopRole: e.data?.loopRole,
+        }));
+
+        if (target.startsWith('@instance:')) {
+          /*
+           * 写回实例并脱钩。
+           *
+           * 为什么进入实例编辑就必须脱钩：画布上的编辑是"整体替换"，
+           * 无法表达"只改这一处但模块库里同步更新" ——
+           * 后者是个合并问题，会让用户困惑于"我改的到底生效在哪"。
+           * 干脆让实例编辑 = 脱钩，语义干净。
+           */
+          const nodeId = target.slice('@instance:'.length);
+          setNodes((ns) => ns.map((n) => (
+            n.id === nodeId
+              ? ({
+                  ...n,
+                  data: {
+                    ...(n.data as object),
+                    inner: { nodes: clean, edges: newEdges },
+                    moduleId: '',
+                  },
+                } as unknown as FlowNode)
+              : n
+          )));
+          pushLog('✓ 已脱钩为独立副本，模块库与其它实例不受影响');
+        } else {
+          const list = loadModules().map((m) => (
+            m.id === target
+              ? { ...m, nodes: clean, edges: newEdges as never }
+              : m
+          ));
+          saveModules(list);
+          pushLog('✓ 模块已保存，所有引用它的实例都会跟着变');
+        }
+      }
+
+      setEditingModule(null);
+      moduleBackup.current = null;
+      if (backup) {
+        setNodes(backup.nodes);
+        setEdges(backup.edges);
+      }
+    },
+    [editingModule, nodes, edges, setNodes, setEdges, pushLog],
+  );
+
+  /** 把画布上选中的节点存成新模块 */
+  const createModuleFromSelection = useCallback(async () => {
+    const picked = nodes.filter((n) => n.selected);
+    if (picked.length === 0) {
+      pushLog('✗ 还没选节点：先在画布上框选或点选要打包的节点');
+      return;
+    }
+    const ids = new Set(picked.map((n) => n.id));
+    // 只保留两端都在选中集合里的边，否则模块内部会连到外面的节点
+    const innerEdges = edges.filter((e) => ids.has(e.source) && ids.has(e.target));
+
+    const def = await askCreateModule({
+      nodes: picked.map((n) => ({ ...n })) as unknown as Record<string, unknown>[],
+      edges: innerEdges.map((e) => ({
+        id: e.id, source: e.source, target: e.target,
+        branch: e.data?.branch, loopRole: e.data?.loopRole,
+      })) as unknown as Record<string, unknown>[],
+    });
+    if (def) pushLog(`✓ 已存成模块「${def.name}」，可从模块库拖出来复用`);
+  }, [nodes, edges, pushLog]);
+
   const onNodeDragStart = useCallback(
     (e: unknown, node: unknown, dragged: unknown) => {
       const ev = e as { ctrlKey?: boolean; metaKey?: boolean };
@@ -1097,6 +1281,21 @@ export default function App() {
           return;
         }
         applyCardToNode(nodeId, cardPayload.cardId);
+        return;
+      }
+
+      /* ---- 模块 ---- */
+      const modPayload = decodeModuleDrag(e.dataTransfer.getData(MODULE_DRAG_MIME))
+        ?? decodeModuleDrag(e.dataTransfer.getData('text/plain'));
+      if (modPayload) {
+        const bounds2 = wrapperRef.current?.getBoundingClientRect();
+        const pos2 = bounds2
+          ? rfInstance.current?.screenToFlowPosition({
+              x: e.clientX - bounds2.left,
+              y: e.clientY - bounds2.top,
+            })
+          : undefined;
+        spawnModule(modPayload.moduleId, pos2);
         return;
       }
 
@@ -1279,7 +1478,14 @@ export default function App() {
 
     setNodes((ns) => ns.map((n) => ({ ...n, data: { ...n.data, output: '', error: '', status: 'idle' } } as FlowNode)));
 
-    const graph: Graph = {
+    /*
+     * 先展开模块，再执行。
+     *
+     * 展开在这里做而不是塞进 runner：runner 是纯逻辑层、
+     * 拿不到 localStorage 里的模块库（测试在 Node 下跑它）。
+     * 所以由调用方注入 resolve —— 这是 App 才有的能力。
+     */
+    const rawGraph: Graph = {
       nodes: nodes.map((n) => ({ id: n.id, data: n.data })),
       edges: edges.map((e) => ({
         id: e.id, source: e.source, target: e.target,
@@ -1288,6 +1494,23 @@ export default function App() {
         loopRole: e.data?.loopRole,
       })),
     };
+
+    const graph = expandModules(rawGraph as never, (moduleId) => findModule(moduleId)) as unknown as Graph;
+
+    /*
+     * 模块被删了但画布上还留着实例 —— 展开时会退化成一个空壳节点，
+     * 执行时"什么都不做"却也不报错，用户只会看到下游没输出。
+     * 这里显式查一遍并提示。脱钩过的实例（自带 inner）不算。
+     */
+    const brokenModules = rawGraph.nodes
+      .filter((n) => {
+        const d = n.data as unknown as Record<string, unknown>;
+        return d?.kind === 'module' && !d?.inner && !findModule(String(d?.moduleId ?? ''));
+      })
+      .map((n) => n.id);
+    if (brokenModules.length > 0) {
+      pushLog(`✗ 模块已删除：${brokenModules.join('、')}（可在属性面板里脱钩后自行编辑）`);
+    }
 
     const executor: Executor = async (node, rendered, onChunk) => {
       const runId = `${stamp}:${node.id}`;
@@ -1697,8 +1920,44 @@ export default function App() {
         就是一条死栏。隐藏之后，任务 / 历史的列表正好顶上这条栏的位置。
       */}
       {view === 'flow' ? (
-        <Sidebar onAdd={(p) => spawnNode(p)} disabled={running} />
+        <Sidebar
+          onAdd={(p) => spawnNode(p)}
+          disabled={running}
+          modulePanel={
+            <ModuleLibrary
+              onCreateFromSelection={() => void createModuleFromSelection()}
+              onEdit={(id) => enterModuleEdit(id)}
+              disabled={running || editingModule !== null}
+            />
+          }
+        />
       ) : null}
+      {/*
+       * 模块编辑条。
+       * 编辑模块内部时借用主画布，所以必须明确告诉用户"你现在不在流程画布上" ——
+       * 否则改了半天以为在改流程，其实是改模块。
+       */}
+      {editingModule ? (
+        <div className="mod-bar" role="status">
+          <span className="mod-bar-tag">
+            {editingModule.startsWith('@instance:') ? '编辑模块实例' : '编辑模块库'}
+          </span>
+          <span>
+            {editingModule.startsWith('@instance:')
+              ? '改完点「完成」会脱钩成独立副本，模块库不受影响'
+              : '改完点「完成」保存，所有引用它的实例都会跟着变'}
+          </span>
+          <span className="mod-bar-ops">
+            <button className="mod-btn primary" onClick={() => exitModuleEdit(true)}>
+              完成
+            </button>
+            <button className="mod-btn" onClick={() => exitModuleEdit(false)}>
+              放弃
+            </button>
+          </span>
+        </div>
+      ) : null}
+
       <div className="app">
       {channel && !channel.ok ? (
         <div className="chan-banner" role="alert">
@@ -1905,6 +2164,7 @@ export default function App() {
               secretPolicy={secretPolicy}
               onChangeSecretPolicy={setSecretPolicy}
               webhookTokens={webhookTokens}
+              onEditModule={(id) => enterInstanceEdit(id)}
             />
           </fieldset>
         </div>

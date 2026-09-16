@@ -26,11 +26,17 @@ type Props = {
   onChangeSecretPolicy?: (p: SecretPolicy) => void;
   /** 后端为「未填 Token」的 webhook 触发器自动生成的校验 Token，按触发器 id 索引 */
   webhookTokens?: Record<string, string>;
+  /**
+   * 进入模块实例的内部编辑（由 App 提供）。
+   * 不提供时模块节点不显示这个入口 —— 面板组件是纯展示层，
+   * 拿不到 App 的画布状态，只能由外部注入。
+   */
+  onEditModule?: (nodeId: string) => void;
 };
 
 export default function Inspector({
   node, edges, onChange, credentials, onOpenCredentials, webhookTokens,
-  secretPolicy, onChangeSecretPolicy,
+  secretPolicy, onChangeSecretPolicy, onEditModule,
 }: Props) {
   if (!node) {
     return (
@@ -50,6 +56,7 @@ export default function Inspector({
   const Panel = inspectorOf(def);
   return (
     <Panel
+      onEditModule={onEditModule}
       node={node}
       edges={edges}
       onChange={onChange}

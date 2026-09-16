@@ -398,7 +398,7 @@ function renderField(
  */
 export function BasicInspector({
   node, edges, onChange, credentials, onOpenCredentials,
-  secretPolicy, onChangeSecretPolicy, fields, footer,
+  secretPolicy, onChangeSecretPolicy, fields, footer, onEditModule,
 }: {
   node: FlowNode;
   edges: FlowEdge[];
@@ -410,6 +410,8 @@ export function BasicInspector({
   fields: FieldFactory;
   /** 追加在字段之后的自定义内容（如 OCR 的"测试"按钮） */
   footer?: (p: FieldRenderProps) => ReactNode;
+  /** 进入模块实例的内部编辑 */
+  onEditModule?: (nodeId: string) => void;
 }) {
   const d = node.data as unknown as Record<string, unknown>;
   const def = getDef(node.type);
@@ -466,7 +468,22 @@ export function BasicInspector({
           onChange={(e) => onChange(node.id, { label: e.target.value })}
         />
         <span className="insp-kind">{def.meta.label}</span>
-        <SaveAsCustom node={node} />
+        {/*
+         * 模块节点的编辑入口。
+         * 放在标题行而不是字段区：进内部编辑是"整个节点层面"的动作，
+         * 混在字段里会被当成一个普通参数。
+         */}
+        {node.type === 'module' && onEditModule ? (
+          <button
+            className="link-btn"
+            title="编辑这个模块的内部结构（改完会脱钩成独立副本）"
+            onClick={() => onEditModule(node.id)}
+          >
+            编辑内部
+          </button>
+        ) : (
+          <SaveAsCustom node={node} />
+        )}
       </div>
 
       {list.map(({ f, i }) =>

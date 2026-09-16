@@ -1636,3 +1636,45 @@ input.mono, textarea.mono {
   :root { --af-side-w: 220px; }
   .toolbar .grow { display: none; }
 }
+
+
+/* ---------------- 模块 ---------------- */
+/*
+ * 模块编辑条：借用主画布编辑模块内部时，必须明确提示"你不在流程画布上"。
+ * 用固定色（琥珀）而不是主题变量 —— 它是一条临时状态条，
+ * 就该看起来和普通界面不一样，混进主题色会不够醒目。
+ */
+.mod-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px; flex: none;
+  background: rgba(245, 158, 11, 0.14);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.45);
+  color: #fbbf24; font-size: 12px;
+}
+.mod-bar-tag {
+  font-weight: 700; font-size: 11px; padding: 2px 7px; border-radius: 4px;
+  background: rgba(245, 158, 11, 0.3); flex: none;
+}
+.mod-bar-ops { margin-left: auto; display: flex; gap: 6px; flex: none; }
+.mod-btn {
+  border: 1px solid rgba(245, 158, 11, 0.5); border-radius: 5px;
+  background: transparent; color: #fbbf24; cursor: pointer;
+  font-family: inherit; font-size: 12px; padding: 3px 11px;
+  transition: background var(--af-dur-fast);
+}
+.mod-btn:hover { background: rgba(245, 158, 11, 0.22); }
+.mod-btn.primary { background: rgba(245, 158, 11, 0.3); font-weight: 600; }
+.mod-btn.primary:hover { background: rgba(245, 158, 11, 0.45); }
+
+/* 侧栏的「节点库 / 模块库」切换 */
+.side-tabs { display: inline-flex; gap: 2px; }
+.side-tab {
+  border: 1px solid transparent; border-radius: 5px; cursor: pointer;
+  background: transparent; color: var(--af-dim); font-family: inherit;
+  font-size: 12px; padding: 2px 9px;
+  transition: color var(--af-dur-fast), border-color var(--af-dur-fast);
+}
+.side-tab:hover { color: var(--af-fg); }
+.side-tab.on {
+  color: var(--af-fg); border-color: var(--af-line); background: var(--af-raised);
+}
