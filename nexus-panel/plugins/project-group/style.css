@@ -195,6 +195,10 @@
 .fpx-empty { padding: 14px; text-align: center; }
 .fpx-card {
   padding: 10px 12px;
+  /* 标签色派生变量的默认值：没设标签色的卡片 hover / press 时边框色不变。
+     设了标签色的卡片由 CardGrid 用内联 style 覆盖成算好的深/浅色。 */
+  --tag-hover: var(--border);
+  --tag-press: var(--border);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--surface-sunk);

@@ -1231,7 +1231,7 @@ input.mono, textarea.mono {
 .chan-banner { display: flex; align-items: center; gap: 10px;
   padding: 7px 12px; font-size: 12px; line-height: 1.6;
   color: var(--af-warn); background: var(--af-item);
-  border-bottom: 1px solid var(--af-line); box-sizing: border-box; }
+  border-bottom: 1px solid var(--af-divider); box-sizing: border-box; }
 .chan-banner span { flex: 1; min-width: 0; }
 
 /* ------------------------------------------------------------------ */
@@ -1287,8 +1287,8 @@ input.mono, textarea.mono {
   display: flex; align-items: center; gap: 8px;
   padding: 6px 10px; flex: none;
   font-size: 11px; line-height: 1.5;
-  color: var(--af-text-mute); background: var(--af-item);
-  border-left: 1px solid var(--af-line); border-bottom: 1px solid var(--af-line);
+  color: var(--af-mute); background: var(--af-item);
+  border-left: 1px solid var(--af-divider); border-bottom: 1px solid var(--af-divider);
 }
 .insp-ro-tag {
   flex: none; font-size: 10px; padding: 1px 6px; border-radius: 999px;
