@@ -1461,16 +1461,17 @@ input.mono, textarea.mono {
  * 删除按钮只在 hover / focus 时显形：常驻会让每条都多一个红叉，
  * 视觉噪声压过列表本身。键盘用户靠 :focus-visible 也能看到。
  */
-.side-del {
-  margin-left: auto; flex: none;
+.side-ops { margin-left: auto; display: flex; gap: 2px; flex: none; }
+.side-op {
   border: none; background: none; cursor: pointer;
-  color: var(--af-mute); font-size: 14px; line-height: 1;
+  color: var(--af-mute); font-size: 13px; line-height: 1;
   padding: 0 3px; border-radius: 4px;
   opacity: 0; transition: opacity var(--af-dur-fast), color var(--af-dur-fast);
 }
-.side-item:hover .side-del,
-.side-del:focus-visible { opacity: 1; }
-.side-del:hover { color: var(--af-bad); background: var(--af-item); }
+.side-item:hover .side-op,
+.side-op:focus-visible { opacity: 1; }
+.side-op:hover { color: var(--af-fg); background: var(--af-item); }
+.side-del:hover { color: var(--af-bad); }
 
 /* 分组标题右侧的「导出 / 导入」 */
 .side-title-ops { margin-left: auto; display: flex; gap: 6px; }

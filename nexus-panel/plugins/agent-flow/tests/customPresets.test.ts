@@ -289,3 +289,52 @@ test('存成预设后不再含内联令牌', () => {
   assert.equal(p.data.token, '');
   assert.equal(p.data.owner, 'o');
 });
+
+/**
+ * 这条守的是一个隐蔽 bug：dataOf 若只展开一层（浅拷贝），
+ * 从同一预设拖出的所有节点会共享 llm / config / rules 等嵌套对象。
+ * 表现为"改了一个节点的配置，其它节点也跟着变"，且不报任何错。
+ * 与 duplicate 的 cloneData 必须是同一套口径。
+ */
+test('dataOf 是深拷贝：改一个实例不改到预设本身', () => {
+  const p: CustomPreset = {
+    id: 'a', name: 'A', baseType: 'ocr',
+    data: { label: 'A', llm: { provider: 'openai', apiKey: '' } },
+    createdAt: 1,
+  };
+  const one = dataOf(p) as unknown as Record<string, unknown>;
+  (one.llm as Record<string, unknown>).provider = 'deepseek';
+  assert.equal(
+    (p.data.llm as Record<string, unknown>).provider,
+    'openai',
+    '预设本身不该被实例改动污染',
+  );
+});
+
+test('dataOf 是深拷贝：两个实例互不干扰', () => {
+  const p: CustomPreset = {
+    id: 'a', name: 'A', baseType: 'ocr',
+    data: { label: 'A', llm: { provider: 'openai' } },
+    createdAt: 1,
+  };
+  const one = dataOf(p) as unknown as Record<string, unknown>;
+  const two = dataOf(p) as unknown as Record<string, unknown>;
+  (one.llm as Record<string, unknown>).provider = 'deepseek';
+  assert.equal(
+    (two.llm as Record<string, unknown>).provider,
+    'openai',
+    '拖出的第二个实例不该受第一个影响',
+  );
+});
+
+test('dataOf 是深拷贝：数组类配置（如条件规则）同样独立', () => {
+  const p: CustomPreset = {
+    id: 'a', name: 'A', baseType: 'condition',
+    data: { label: 'A', rules: [{ id: 'r1', op: 'eq' }] },
+    createdAt: 1,
+  };
+  const one = dataOf(p) as unknown as Record<string, unknown>;
+  (one.rules as Array<Record<string, unknown>>).push({ id: 'r2' });
+  const two = dataOf(p) as unknown as Record<string, unknown>;
+  assert.equal((two.rules as unknown[]).length, 1);
+});

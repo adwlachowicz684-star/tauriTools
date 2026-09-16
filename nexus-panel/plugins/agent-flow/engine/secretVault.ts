@@ -105,15 +105,9 @@ export async function unsealSecrets(
   }
 }
 
-/** 存档里躺的是不是明文。用于 UI 提示"当前密钥未加密" */
-export function isPlaintextVault(raw: string | null): boolean {
-  if (!raw) return false;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return false;
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
-  return !isCipherBundle(parsed) && Object.keys(pickStrings(parsed)).length > 0;
-}
+/*
+ * 原本这里有个 isPlaintextVault(raw)，与 unsealSecrets 的 legacyPlaintext
+ * 判断逻辑完全相同（都是「不是密文包 且 挑得出字符串」），但从未被业务调用 ——
+ * 真正的提示走的是 App 里对 legacyPlaintext 的处理。
+ * 留两份判断方式，改一处忘另一处就会不一致，故删。
+ */
