@@ -28,7 +28,17 @@
     "test:theme-picker": "node theme-picker-test.mjs",
     "test:handshake": "node handshake-test.mjs",
     "test:mindmap": "node plugins/mindmap/mindmap-test.mjs",
-    "crossend:check": "node cross-end-check.mjs"
+    "crossend:check": "node cross-end-check.mjs",
+    "config:sync": "node scripts/sync-config.mjs",
+    "config:check": "node scripts/sync-config.mjs --check",
+    "test:theme-bridge": "node theme-bridge-test.mjs",
+    "test:flash": "node plugin-flash-test.mjs",
+    "test:tokens": "node style-tokens-test.mjs",
+    "test:audit": "node style-audit-test.mjs",
+    "test:plugin-theme": "node plugin-theme-test.mjs",
+    "test:tooltip": "node tooltip-test.mjs",
+    "test:inspector": "node inspector-test.mjs",
+    "test:single-instance": "node single-instance-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
