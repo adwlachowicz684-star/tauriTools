@@ -42,7 +42,12 @@ done
 
 # 源码级守卫测试（tests/inspectorRemount.test.ts）要读源文件，
 # 而测试是在 $OUT/tests 下跑的，相对路径到不了仓库。
-export AF_SRC="$(pwd)"
+#
+# 路径必须是 Windows 原生的写法：git bash 下 $(pwd) 返回 /e/_project/... 这种
+# MSYS 路径，Windows 的 fs 会把它当成「当前盘的 \e\_project\...」→ ENOENT
+# （表现为「测试读不到源码」，而不是报路径错，很容易误判成产品坏了）。
+# pwd -W 只有 git bash 有，Linux 上回退到 pwd。
+export AF_SRC="$(pwd -W 2>/dev/null || pwd)"
 
 cd "$OUT/tests"
 node --test ./*.mjs
