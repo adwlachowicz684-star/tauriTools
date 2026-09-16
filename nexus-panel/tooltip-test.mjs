@@ -109,12 +109,87 @@ t('上方放不下会翻到下方', /if \(top < 4\) top = r\.bottom \+ gap;/.tes
 
 /* ---------- 8. 两个入口都接上了 ---------- */
 console.log('\n=== 8. 入口接线 ===');
+/* 断言只锁定 installTooltip 出现在 import 里，不锁死整个 import 列表 ——
+   将来再加导出（如 refreshTooltip）不该让这条红。 */
 t('无构建版（shell.js）已安装',
-  /import \{ installTooltip \} from '\.\/tooltip\.js';/.test(src('js/shell.js'))
+  /import \{[^}]*\binstallTooltip\b[^}]*\} from '\.\/tooltip\.js';/.test(src('js/shell.js'))
   && /^installTooltip\(\);$/m.test(src('js/shell.js')));
 t('Vite 版（App.tsx）已安装',
-  /import \{ installTooltip \} from '\.\.\/js\/tooltip\.js';/.test(src('src/App.tsx'))
+  /import \{[^}]*\binstallTooltip\b[^}]*\} from '\.\.\/js\/tooltip\.js';/.test(src('src/App.tsx'))
   && /useEffect\(\(\) => installTooltip\(\), \[\]\)/.test(src('src/App.tsx')));
+
+/* ============================================================
+   B5：侧边栏展开时不弹 nav-item 提示
+   ============================================================ */
+console.log('\n=== 9. B5 · 侧边栏展开时抑制 nav-item 提示 ===');
+
+const b5Src = src('js/tooltip.js');
+const shellSrc = src('js/shell.js');
+const appSrc = src('src/App.tsx');
+
+t('tooltip.js 有 suppressed 判断', /function suppressed\(el\)/.test(b5Src));
+t('判断的是 .nav-item', /classList\?\.contains\('nav-item'\)/.test(b5Src));
+t('判断的是 #body.open 状态', /getElementById\('body'\)[\s\S]{0,80}classList\.contains\('open'\)/.test(b5Src));
+/* 刻意不含 side-toggle：它的 title 是「展开/收起」，描述动作而非名字，
+   展开后仍然有用 */
+t('不含 .side-toggle（它的提示是动作描述，不是重复的名字）',
+  !/side-toggle/.test(b5Src.split('function suppressed')[1]?.split('\n}')[0] ?? ''));
+
+t('adopt 与 show 已分离（不显示时也要摘掉原生 title）',
+  /adopt\(el\);\s*\n\s*if \(suppressed\(el\)\) \{ hide\(\); return; \}/.test(b5Src));
+t('onFocusIn 也走了抑制（键盘 Tab 同样不弹）',
+  (b5Src.match(/if \(suppressed\(el\)\) \{ hide\(\); return; \}/g) || []).length >= 2);
+
+t('导出 refreshTooltip', /export function refreshTooltip\(\)/.test(b5Src));
+t('refreshTooltip 会隐藏被抑制的当前提示',
+  /if \(current && suppressed\(current\)\) hide\(\);/.test(b5Src));
+
+t('无构建版：toggle 后调用了 refreshTooltip',
+  /classList\.toggle\('open'\)[\s\S]{0,120}refreshTooltip\(\)/.test(shellSrc));
+/* React 版必须在 DOM 更新后跑 —— 在 setSidebarOpen 回调里调会读到旧 class */
+t('Vite 版：在 useEffect 里按 sidebarOpen 变化刷新（不是在 setState 回调里）',
+  /useEffect\(\(\) => \{ refreshTooltip\(\); \}, \[sidebarOpen\]\)/.test(appSrc));
+
+/* ---- 行为验证（真的跑一遍）---- */
+/* 上面第 6 节已经 uninstall，所以这里能重新装。
+   必须把 globalThis.document 指到新文档**再** install：
+   tooltip 的事件委托是绑在 document 上的，绑完再换 document 就收不到事件了。 */
+const dom2 = new JSDOM(
+  `<!doctype html><html><body>
+     <div id="body" class="open"><aside id="sidebar">
+       <button class="nav-item" title="脑图（沙箱）"><span class="nav-label">脑图</span></button>
+     </aside></div>
+   </body></html>`,
+  { pretendToBeVisual: true, url: 'http://localhost/' });
+globalThis.window = dom2.window;
+globalThis.document = dom2.window.document;
+globalThis.getComputedStyle = dom2.window.getComputedStyle;
+
+const { installTooltip: install2, refreshTooltip: refresh2 } = await import('./js/tooltip.js');
+install2();
+
+const nav = dom2.window.document.querySelector('.nav-item');
+const bodyEl = dom2.window.document.getElementById('body');
+
+// ① 展开状态：hover 后应摘掉 title（否则原生 tooltip 照弹），但不显示自定义提示
+nav.dispatchEvent(new dom2.window.MouseEvent('mouseover', { bubbles: true }));
+t('展开时：原生 title 已被摘掉（否则浏览器自己会弹）', !nav.hasAttribute('title'));
+t('展开时：信息保留在 aria-label（读屏不丢）', nav.getAttribute('aria-label') === '脑图（沙箱）');
+t('展开时：未显示自定义提示', !dom2.window.document.getElementById('nexus-tip'));
+
+// ② 收起状态：应正常显示
+bodyEl.classList.remove('open');
+nav.dispatchEvent(new dom2.window.MouseEvent('mouseover', { bubbles: true }));
+const tip2 = dom2.window.document.getElementById('nexus-tip');
+t('收起时：正常显示提示', !!tip2 && tip2.classList.contains('on'));
+t('收起时：提示文本正确', !!tip2 && tip2.textContent === '脑图（沙箱）');
+
+// ③ 收起→展开：正挂着的提示应被 refreshTooltip 收掉
+bodyEl.classList.add('open');
+refresh2();
+const tip3 = dom2.window.document.getElementById('nexus-tip');
+t('收起→展开：refreshTooltip 收掉了正挂着的提示',
+  !tip3 || !tip3.classList.contains('on'));
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

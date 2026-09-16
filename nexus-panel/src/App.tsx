@@ -14,7 +14,7 @@ import Stage from './components/Stage';
 import Toasts, { type ToastItem } from './components/Toasts';
 import AddPluginDialog from './components/AddPluginDialog';
 import PluginSettingsDrawer from './components/PluginSettingsDrawer';
-import { installTooltip } from '../js/tooltip.js';
+import { installTooltip, refreshTooltip } from '../js/tooltip.js';
 import { installInspector, toggleInspector, isInspectorOn } from '../js/inspector.js';
 
 /**
@@ -316,6 +316,11 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [activeId]);
+
+  /* 侧边栏展开后，正挂着的 nav-item 提示要收掉：名字已由 .nav-label 显示。
+     必须在 DOM 更新之后跑 —— 这里读的是 #body 的 class，
+     在 setSidebarOpen 的回调里调会读到旧值。 */
+  useEffect(() => { refreshTooltip(); }, [sidebarOpen]);
 
   /* ---------- 供插件调用的全局接口 ---------- */
   useEffect(() => {

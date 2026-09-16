@@ -17,7 +17,7 @@ import { h } from './plugin-sdk.js';
 import * as extPolicy from './external-policy.js';
 import { getPluginConfig, setPluginConfig } from './plugin-config.js';
 import { openThemePicker } from './theme-picker.js';
-import { installTooltip } from './tooltip.js';
+import { installTooltip, refreshTooltip } from './tooltip.js';
 import { installInspector, toggleInspector, isInspectorOn } from './inspector.js';
 
 import { confirm as askConfirm } from './dialog.js';
@@ -523,6 +523,8 @@ async function init() {
   $('#side-toggle').onclick = () => {
     const open = $('#body').classList.toggle('open');
     localStorage.setItem('nexus:sidebar-open', open ? '1' : '0');
+    // 收起→展开时，正挂着的 nav-item 提示要立刻收掉：名字已显示出来了
+    refreshTooltip();
   };
   $('#btn-min').onclick = () => host.win('minimize');
   $('#btn-max').onclick = () => host.win('maximize');

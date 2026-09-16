@@ -41,6 +41,27 @@ function ensureEl() {
   return tipEl;
 }
 
+/**
+ * 判断是否该跳过这个元素的提示。
+ * ============================================================
+ * 侧边栏**展开**时，条目名已经由 .nav-label 显示出来了
+ * （CSS：#body.open .nav-label { opacity: 1 }），再弹一个同样的名字
+ * 是重复，且会挡住刚显示出来的文字。
+ *
+ * 收起时才需要提示 —— 那时 .nav-label 是 opacity: 0，只剩图标。
+ *
+ * 两个版本（无构建外壳 / React 外壳）都是 .nav-item + #body.open
+ * 这套结构，所以这里统一判断即可，不必各写一份。
+ *
+ * 刻意**不含** .side-toggle：它的 title 是「展开/收起」，描述的是
+ * **动作**而非名字，展开后仍然有用（否则用户不知道点它能收起）。
+ */
+function suppressed(el) {
+  if (!el.classList?.contains('nav-item')) return false;
+  const body = document.getElementById('body');
+  return !!body && body.classList.contains('open');
+}
+
 /** 把元素上的原生 title 转成自定义提示的数据源（只做一次） */
 function adopt(el) {
   if (!el || el.dataset.nexusTip !== undefined) return el.getAttribute(ATTR);
@@ -99,7 +120,12 @@ function onOver(e) {
   const el = e.target?.closest?.(`[${ATTR}], [title]`);
   if (!el) { if (current) hide(); return; }
   if (el === current) return;
+  /* adopt 与 show 必须分开：即使这次不显示（比如侧边栏展开时），
+     title 也**必须**被摘掉 —— 否则浏览器原生 tooltip 会在约 1 秒后
+     自己弹出来，照样是"两个提示"里那个慢的。
+     摘的同时会补 aria-label，所以读屏软件拿到的信息不丢。 */
   adopt(el);
+  if (suppressed(el)) { hide(); return; }
   show(el);
 }
 
@@ -111,6 +137,7 @@ function onFocusIn(e) {
   const el = e.target?.closest?.(`[${ATTR}], [title]`);
   if (!el) return;
   adopt(el);
+  if (suppressed(el)) { hide(); return; }
   show(el);
 }
 function onFocusOut() { hide(); }
@@ -144,6 +171,20 @@ export function installTooltip() {
     current = null;
     installed = false;
   };
+}
+
+/**
+ * 状态变化后重新判断当前提示是否还该显示。
+ *
+ * 为什么需要：侧边栏收起 → 展开是纯 CSS class 切换，不会重跑
+ * renderSidebar，也不会触发新的 mouseover。若正挂着 nav-item 的提示，
+ * 它会一直留在屏幕上，而此刻名字已经显示出来了 —— 恰好是要消除的东西。
+ *
+ * 由调用方在切换状态**之后**调用（React 侧要在 DOM 更新后的
+ * useEffect 里调，否则读到的还是旧 class）。
+ */
+export function refreshTooltip() {
+  if (current && suppressed(current)) hide();
 }
 
 /** 测试用：读取当前是否正在显示 */
