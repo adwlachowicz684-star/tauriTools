@@ -1,0 +1,317 @@
+/* ============================================================
+   通用控件
+   ============================================================
+   全工具共用一套基础控件：外壳、各插件都引这一份。
+
+   为什么单独一层
+   --------------------------------------------------------------------
+   之前每个界面各写各的按钮 / 输入框 / 下拉，语义完全一样却有多份实现：
+
+     .p-btn   （外壳，38px）   167 处引用
+     .mm-btn  （脑图，28px）    67 处引用
+     .p-input / .mm-input / .mm-select / .fpx-select …… 同理
+
+   多份实现的代价不是"多写几行"，而是**改一处漏一处**：
+   调整 hover 手感、修 disabled 态、跟随新的主题变量，都得在每个文件里
+   各改一遍，漏掉的那个就成了"怎么这个按钮跟别的不一样"。
+
+   统一方式：选择器组，不是改类名
+   --------------------------------------------------------------------
+   现有 DOM 里的 .mm-btn / .p-btn 一个都不用动 —— 把它们和新的 .nx-btn
+   放进**同一个选择器组**，规则只写一份。想加新控件，往组里加一个类名即可。
+
+   如果反过来要求全局替换类名，67 + 167 处引用要全改，风险高且没收益：
+   类名是"这个界面里的按钮"的语义，值得保留；要统一的是**实现**。
+
+   尺寸：两档足够
+   --------------------------------------------------------------------
+     md  38px  标准（外壳设置页、弹窗按钮）
+     sm  28px  紧凑（脑图这类密集布局）
+   尺寸、内边距、字号都走 --ctl-* 变量，.sm 只覆盖变量，
+   所以新增一档只要改变量、不用重写整条规则。
+
+   变量全部引用外壳主题（--surface / --text / --accent / --sh-* 等），
+   所以在深色、浅色、玻璃各风格下都自动跟随。
+   ============================================================ */
+
+/* ------------------------------------------------------------
+   按钮
+   ------------------------------------------------------------ */
+.nx-btn,
+.p-btn,
+.mm-btn {
+  --ctl-h: 38px;
+  --ctl-pad: 18px;
+  --ctl-fs: 13px;
+  --ctl-shadow: var(--sh-out-md);
+
+  height: var(--ctl-h);
+  padding: 0 var(--ctl-pad);
+  font: inherit;
+  font-size: var(--ctl-fs);
+  color: var(--text);
+  background: var(--surface);
+  border: 0;
+  border-radius: var(--r-sm);
+  box-shadow: var(--ctl-shadow);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+  transition: color var(--dur-fast), box-shadow var(--dur-fast),
+    background var(--dur-fast), opacity var(--dur-fast);
+}
+
+/* 紧凑档：脑图这类密集布局。放在后面是为了覆盖上面的默认值 ——
+   同一个元素同时挂 .nx-btn 和 .sm 时才生效 */
+.nx-btn.sm,
+.mm-btn {
+  --ctl-h: 28px;
+  --ctl-pad: 9px;
+  --ctl-fs: 12.5px;
+  --ctl-shadow: var(--sh-out-sm);
+}
+
+/* hover 只换色、不加粗：并排多个按钮时字重一变宽度就跟着变，整行会抖 */
+.nx-btn:hover,
+.p-btn:hover,
+.mm-btn:hover { color: var(--accent); }
+
+.nx-btn:active,
+.p-btn:active,
+.mm-btn:active { box-shadow: var(--sh-in-md); }
+
+/* 选中态：外壳叫 .primary，脑图叫 .on —— 语义都是"当前选中" */
+.nx-btn.primary,
+.p-btn.primary,
+.nx-btn.on,
+.mm-btn.on {
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: var(--sh-in-md);
+}
+
+.nx-btn.danger,
+.p-btn.danger { color: var(--danger); font-weight: 600; }
+
+/* 实底主按钮：文字色用 --badge-fg（那本来就是"叠在强调色上的文字色"，
+   深浅由主题决定），不写死 #fff —— 浅色强调色上白字会看不见 */
+.nx-btn.solid {
+  color: var(--badge-fg);
+  background: var(--accent);
+  font-weight: 600;
+}
+.nx-btn.solid:hover { color: var(--badge-fg); filter: brightness(1.06); }
+
+.nx-btn.danger.solid {
+  color: var(--badge-fg);
+  background: var(--danger);
+}
+
+.nx-btn:disabled,
+.p-btn:disabled,
+.mm-btn:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.nx-btn:disabled:hover,
+.p-btn:disabled:hover,
+.mm-btn:disabled:hover { color: var(--text); }
+
+/* 纯图标按钮：等比收缩。字号单独放大一点，图标字符才不会显得小 */
+.nx-btn.icon,
+.mm-btn.icon {
+  padding: 0 7px;
+  font-weight: 600;
+}
+.nx-btn.wide,
+.mm-btn.wide { min-width: 0; }
+
+/* ------------------------------------------------------------
+   输入框 / 下拉
+   ------------------------------------------------------------
+   两者样式几乎相同（都是"凹进去的录入区"），所以共用一组规则。
+   分开写会再次出现"改了输入框忘了下拉"的老问题。 */
+.nx-input,
+.nx-select,
+.p-input,
+.mm-input,
+.mm-select {
+  --ctl-h: 38px;
+  --ctl-pad: 10px;
+  --ctl-fs: 13px;
+
+  height: var(--ctl-h);
+  padding: 0 var(--ctl-pad);
+  font: inherit;
+  font-size: var(--ctl-fs);
+  color: var(--text);
+  background: var(--surface-sunk, var(--surface));
+  border: 0;
+  border-radius: var(--r-sm);
+  box-shadow: var(--sh-in-md);
+  outline: none;
+  transition: box-shadow var(--dur-fast);
+}
+
+.nx-input.sm,
+.nx-select.sm,
+.mm-input,
+.mm-select {
+  --ctl-h: 28px;
+  --ctl-pad: 9px;
+  --ctl-fs: 12.5px;
+}
+
+.nx-input::placeholder,
+.p-input::placeholder,
+.mm-input::placeholder { color: var(--text-mute); }
+
+/* 聚焦用描边环而不是阴影变化：内凹阴影在聚焦时"更深"容易被误读成禁用 */
+.nx-input:focus,
+.nx-select:focus,
+.p-input:focus,
+.mm-input:focus,
+.mm-select:focus {
+  box-shadow: var(--sh-in-md), 0 0 0 2px var(--accent-glow);
+}
+
+.nx-input:disabled,
+.p-input:disabled,
+.mm-input:disabled,
+.mm-select:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+/* 下拉：原生箭头由系统画，颜色不跟随主题，这里统一收口 */
+.nx-select,
+.mm-select { cursor: pointer; }
+.nx-select option,
+.mm-select option {
+  color: var(--text);
+  background: var(--surface-overlay, var(--surface));
+}
+
+/* 多行文本 */
+.nx-textarea {
+  padding: 8px var(--ctl-pad, 10px);
+  font: inherit;
+  font-size: var(--ctl-fs, 13px);
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--surface-sunk, var(--surface));
+  border: 0;
+  border-radius: var(--r-sm);
+  box-shadow: var(--sh-in-md);
+  outline: none;
+  resize: vertical;
+}
+.nx-textarea:focus { box-shadow: var(--sh-in-md), 0 0 0 2px var(--accent-glow); }
+
+/* ------------------------------------------------------------
+   标签 / 徽标
+   ------------------------------------------------------------ */
+.nx-tag,
+.p-tag,
+.mm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 9px;
+  font-size: 11.5px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: var(--surface-sunk, var(--surface));
+  border-radius: var(--r-xs);
+  white-space: nowrap;
+}
+.nx-tag.accent,
+.p-tag.accent { color: var(--accent); }
+.nx-tag.ok { color: var(--ok); }
+.nx-tag.warn { color: var(--warn); }
+.nx-tag.err,
+.p-tag.err { color: var(--danger); }
+
+/* ------------------------------------------------------------
+   行 / 字段
+   ------------------------------------------------------------
+   .p-row 与 .mm-field 都是"横向排一行的控件组"，只是间距习惯不同 */
+.nx-row,
+.p-row,
+.mm-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.nx-row.wrap,
+.p-row.wrap { flex-wrap: wrap; }
+.nx-row.end,
+.p-row.end { justify-content: flex-end; }
+.nx-row.between,
+.p-row.between { justify-content: space-between; }
+
+/* ------------------------------------------------------------
+   文本辅助
+   ------------------------------------------------------------ */
+.nx-muted,
+.p-muted,
+.mm-hint {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.nx-mono,
+.p-mono,
+.mm-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------------
+   开关
+   ------------------------------------------------------------ */
+.nx-switch {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 18px;
+  border-radius: var(--r-pill);
+  background: var(--surface-sunk, var(--surface));
+  box-shadow: var(--sh-in-sm);
+  cursor: pointer;
+  border: 0;
+  transition: background var(--dur-fast);
+}
+.nx-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--r-pill);
+  background: var(--text-mute);
+  transition: transform var(--dur-fast), background var(--dur-fast);
+}
+.nx-switch.on { background: var(--accent); }
+.nx-switch.on::after {
+  transform: translateX(16px);
+  background: var(--badge-fg, #fff);
+}
+.nx-switch:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ------------------------------------------------------------
+   分隔线
+   ------------------------------------------------------------
+   用 --divider 而非 --border：后者是风格开关，新拟态下是 transparent，
+   用它分隔线会整条消失 —— 这个坑在 agent-flow 和抽屉标题栏上踩过两次 */
+.nx-sep {
+  height: 1px;
+  margin: 12px 0;
+  background: var(--divider);
+  border: 0;
+}

@@ -1,3 +1,4 @@
+@import url('../../css/controls.css'); /* 通用控件 */
 /* 通用弹窗（js/dialog.js 依赖它）。
    本插件只加载这一份 CSS（index.html 里没有额外的 <link>），
    所以共享样式必须在这里显式引入，否则弹窗会是没有任何样式的裸 div。 */

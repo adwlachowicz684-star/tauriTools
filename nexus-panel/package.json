@@ -18,6 +18,7 @@
     "test:adapt-seq": "node adapt-sequential-test.mjs",
     "test:audit": "node style-audit-test.mjs",
     "test:bridge": "node bridge-test.mjs",
+    "test:controls": "node controls-test.mjs",
     "test:dialog": "node dialog-test.mjs",
     "test:errdiag": "node err-diag-test.mjs",
     "test:external": "node external-test.mjs",

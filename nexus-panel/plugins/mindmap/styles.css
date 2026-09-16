@@ -8,6 +8,7 @@
    ============================================================ */
 
 @import url('../../css/tokens.css');
+@import url('../../css/controls.css'); /* 通用控件 */
 @import url('../../css/dialog.css');   /* 通用弹窗（js/dialog.js 依赖它） */
 
 :root {
@@ -42,58 +43,9 @@ html, body {
 .mm-mono { font-family: var(--font-mono); }
 
 /* 迷你按钮：比 .p-btn 更紧凑，工具栏用 */
-.mm-btn {
-  min-width: 28px;
-  height: 28px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: var(--r-sm, 8px);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 12.5px;
-  cursor: pointer;
-  box-shadow: var(--sh-out-sm);
-  transition: box-shadow var(--dur-fast), color var(--dur-fast);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  white-space: nowrap;
-}
-.mm-btn:hover { color: var(--accent); }
-.mm-btn:active {
-  box-shadow: var(--sh-in-md);
-}
-.mm-btn.on { color: var(--accent); box-shadow: var(--sh-in-md); }
-.mm-btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
 
-.mm-btn.wide { min-width: 0; }
-.mm-btn.icon { padding: 0 7px; font-weight: 600; }
 
-.mm-input {
-  height: 28px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: var(--r-sm, 8px);
-  background: var(--surface-sunk, var(--surface));
-  color: var(--text);
-  font-size: 12.5px;
-  box-shadow: var(--sh-in-md);
-  outline: none;
-}
-.mm-input::placeholder { color: var(--text-mute); }
 
-.mm-select {
-  height: 28px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: var(--r-sm, 8px);
-  background: var(--surface-sunk, var(--surface));
-  color: var(--text);
-  font-size: 12.5px;
-  outline: none;
-  box-shadow: var(--sh-in-md);
-}
 
 /* 色块（颜色选择按钮） */
 .mm-swatch {
@@ -145,8 +97,7 @@ html, body {
   background: var(--surface);
   box-shadow: var(--sh-out-md);
 }
-.mm-rail .mm-btn { width: 34px; padding: 0; }
-
+.mm-rail 
 /* 右侧属性侧栏：对齐 C# MindMapPanel 的 Column 1（Width="276"），常驻不折叠。
    页签在顶栏最右，不占这里的高度，所以整栏都是内容区。 */
 .mm-side {
@@ -538,6 +489,12 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
 .mm-search-info { color: var(--text-mute); font-size: 11.5px; min-width: 74px; }
 
 /* 浮层（视频播放 / 自定义主题编辑） */
+
+/* 基础控件（.mm-btn / .mm-input / .mm-select）的实现已移到
+   css/controls.css 的选择器组里，与外壳的 .p-btn / .p-input 同一份。
+   保留类名是因为 DOM 里有 67 处引用，而"这个界面里的按钮"本身就是
+   有意义的语义 —— 要统一的是实现，不是名字。
+   .mm-btn 默认走紧凑档（28px），由 controls.css 里的 .mm-btn 覆盖变量实现。 */
 
 /* 通用浮层（.mm-mask / .mm-dialog）已删除：panels.js 的 dialog() 改为
    委托给全工具共用的 js/dialog.js，用 .nx-mask / .nx-dlg。

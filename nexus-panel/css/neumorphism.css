@@ -82,6 +82,8 @@
 /* 与主题无关的尺度（阴影档位 / 时长 / 字体 / 层级）统一在 tokens.css，
    插件也能单独引入它而不用背上一整套组件样式。必须在所有规则之前。 */
 @import url('./tokens.css');
+/* 通用控件：按钮 / 输入框 / 下拉 / 标签 / 开关（.nx-* 与各插件的 .p-* .mm-* 同组） */
+@import url('./controls.css');
 /* 通用弹窗：外壳与所有引了本文件的插件都能用（settings / agent-flow） */
 @import url('./dialog.css');
 
@@ -516,8 +518,7 @@ body {
 .err-diag[open] > summary::before { transform: rotate(90deg); }
 .err-diag > summary:hover { color: var(--text); }
 .err-diag-actions { margin: 10px 0; display: flex; gap: 8px; }
-.err-diag-actions .p-btn { height: 28px; padding: 0 10px; font-size: 12px; }
-/* 日志正文：等宽 + 限制高度，长堆栈不会把整个错误框撑到屏幕外 */
+.err-diag-actions /* 日志正文：等宽 + 限制高度，长堆栈不会把整个错误框撑到屏幕外 */
 .err-diag-body {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -728,51 +729,29 @@ body.nx-inspecting * { cursor: crosshair !important; }
 
 .p-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
 
-.p-btn {
-  height: 38px; padding: 0 18px;
-  border: 0; border-radius: var(--r-sm);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 13px;
-  cursor: pointer;
-  box-shadow: var(--sh-out-md);
-  transition: all var(--t);
-}
-/* hover 只换色、不加粗：色板那一行是多个 .p-btn 并排，
-   字重一变按钮宽度就跟着变，整行会左右抖动 */
-.p-btn:hover { color: var(--accent); }
-.p-btn:active { box-shadow: var(--sh-in-lg); }
-.p-btn.primary { color: var(--accent); font-weight: 600; }
-.p-btn.danger  { color: var(--danger); font-weight: 600; }
-.p-btn:disabled { opacity: .45; cursor: not-allowed; }
 
+/* 外壳输入框的基础实现在 css/controls.css（与 .nx-input / .mm-input 同组）。
+   这里只写外壳特有的两点差异：
+     · width:100% —— 外壳表单是竖排撑满的，脑图那种紧凑行内则不是
+     · 内凹更深一档（--sh-in-lg）—— 外壳卡片面积大，浅了看不出来
+   两条都必须留：直接套用统一层会让现有输入框变窄、凹陷变浅。 */
 .p-input {
-  height: 38px;
   width: 100%;
   padding: 0 14px;
-  border: 0; outline: none;
-  border-radius: var(--r-sm);
-  background: var(--surface-sunk);
-  color: var(--text);
-  font-size: 13px;
-  font-family: inherit;
   box-shadow: var(--sh-in-lg);
 }
-.p-input::placeholder { color: var(--text-mute); }
+.p-input:focus { box-shadow: var(--sh-in-lg), 0 0 0 2px var(--accent-glow); }
 
-.p-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.p-muted { color: var(--text-mute); font-size: 12px; }
-.p-mono {
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
+/* 以下四条的基础实现同样在 controls.css，这里只写外壳与默认值的差异：
+   .p-row 默认换行且间距更大；.p-muted 用更弱的 --text-mute */
+.p-row { gap: 12px; flex-wrap: wrap; }
+.p-muted { color: var(--text-mute); }
 .p-tag {
-  display: inline-block;
-  padding: 3px 9px;
+  /* 胶囊圆角 + 内凹是外壳标签的观感，与脑图 .mm-chip 的方角外凸不同 ——
+     两者都是"标签"，但长相有意区分，所以这里保留差异 */
   border-radius: var(--r-pill);
+  padding: 3px 9px;
   font-size: 11px;
-  color: var(--text-dim);
-  background: var(--surface-sunk);
   box-shadow: var(--sh-in-sm);
 }
 .p-stat {
