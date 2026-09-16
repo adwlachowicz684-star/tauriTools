@@ -24,7 +24,7 @@ const KEY = 'nexus:external-policy';
 const EVENT = 'nexus:external-changed';
 
 /** 视为本域的 host（Tauri 内部服务 + 本地回环） */
-const LOCAL_HOSTS = new Set([
+export const LOCAL_HOSTS = new Set([
   'localhost', '127.0.0.1', '[::1]', '::1', '0.0.0.0',
   'asset.localhost', 'ipc.localhost', 'tauri.localhost',
 ]);
