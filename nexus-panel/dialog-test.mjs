@@ -22,7 +22,8 @@ const dom = new JSDOM('<!doctype html><html><body><button id="opener">open</butt
 });
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
-globalThis.navigator = dom.window.navigator;
+// Node 21+ 起 globalThis.navigator 是只读 getter，直接赋值会抛 TypeError
+Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true, writable: true });
 globalThis.location = dom.window.location;
 globalThis.getComputedStyle = dom.window.getComputedStyle;
 globalThis.requestAnimationFrame = dom.window.requestAnimationFrame
@@ -195,7 +196,7 @@ function reachesDialogCss(file, depth = 0) {
   return false;
 }
 const missCss = jsUsers.filter((f) => {
-  const rel = f.slice(HERE.length + 1);
+  const rel = f.slice(HERE.length + 1).replace(/\\/g, '/');
   if (shellSheetHasIt && /^(src|js)\/|^[^/]*\.(jsx?|tsx?)$/.test(rel)) return false;
   /* 插件：样式可能由 .css 引入，也可能由 **JS/TS 里的 import 'xx.css'**
      引入（settings 就是 main.tsx 里 import '../../css/neumorphism.css'），
@@ -230,7 +231,7 @@ const SKIP = /kityminder\.core\.min\.js|node_modules|\.test\.|tests\/|dialog-tes
 const native = [];
 for (const f of files) {
   if (!/\.(jsx?|tsx?)$/.test(f)) continue;
-  const rel = f.slice(HERE.length + 1);
+  const rel = f.slice(HERE.length + 1).replace(/\\/g, '/');
   if (SKIP.test(rel)) continue;
   /* js/dialog.js 自身的导出就叫 confirm/alert/prompt，不算原生调用 */
   if (rel === 'js/dialog.js') continue;
