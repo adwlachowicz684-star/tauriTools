@@ -169,6 +169,8 @@ export function makeApi(ctx: PluginContext) {
       call<string>('fpx_save_icon_data', { name, data_base64: dataBase64 }),
 
     openDataDir: () => call<void>('fpx_open_data_dir'),
+    /** 外壳版本（app_version）；外壳命令，旧版可能不存在，调用处需容错 */
+    appVersion: () => call<string>('app_version'),
 
     /** 在文件管理器里打开项目 / 项目组的备份目录（与备份实际写入处一致） */
     openBackupDir: (kind: CardKind) => call<void>('fpx_open_backup_dir', { kind }),

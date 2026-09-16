@@ -1,8 +1,6 @@
 /* 项目组分配插件 · 样式（只用外壳主题变量，随主题自动适配） */
 
 @import url('../../css/tokens.css');
-@import url('../../css/controls.css'); /* 通用控件 */
-@import url('../../css/dialog.css');   /* 通用弹窗（js/dialog.js 依赖它） */
 .fpx-root { padding: 4px 2px 24px; }
 
 /* ---------- 左操作栏 + 主区（对照 WPF：SidebarControl 纵跨含日志的整个内容区）---------- */
@@ -712,3 +710,17 @@
 }
 .fpx-pick-row:hover { background: var(--surface); }
 .fpx-pick-row input { flex: none; cursor: pointer; }
+
+/* ---------- 设置页底部：版本 / 数据目录 ---------- */
+.fpx-settings-foot {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: 14px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 11px; color: var(--text-mute);
+}
+.fpx-foot-sep { opacity: .5; }
+.fpx-foot-btn {
+  height: 22px; padding: 0 8px; font-size: 11px;
+  color: var(--text-mute);
+}
+.fpx-foot-btn:hover { color: var(--text); }

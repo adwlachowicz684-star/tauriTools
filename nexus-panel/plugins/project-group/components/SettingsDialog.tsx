@@ -123,6 +123,13 @@ export function SettingsBody({
     </div>
   );
 
+  const [version, setVersion] = useState('');
+
+  useEffect(() => {
+    // 外壳命令可能不存在（旧版本 Rust 未编译进来），静默失败即可
+    api.appVersion().then(setVersion).catch(() => setVersion(''));
+  }, [api]);
+
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
@@ -422,6 +429,33 @@ export function SettingsBody({
         <button className="p-btn primary" onClick={() => void save()} disabled={saving}>
           {saving ? '保存中…' : '保存设置'}
         </button>
+      </div>
+
+      {/* 版本与数据目录：出问题（要发日志、要手改 config）时第一件事就是找这两个。
+          外壳命令不存在时（旧版 Rust 未编译进来）显示占位，不阻塞设置页。 */}
+      <div className="fpx-settings-foot">
+        <span>版本 {version || '—'}</span>
+        <span className="fpx-foot-sep">·</span>
+        {dataDir ? (
+          <button className="p-btn fpx-foot-btn" title="打开数据目录"
+            onClick={() => api.openPath(dataDir, 'dir').catch((e) => onLog(errText(e), true))}>
+            数据目录
+          </button>
+        ) : (
+          <span>数据目录 —</span>
+        )}
+        {dataDir && (
+          <>
+            <span className="fpx-foot-sep">·</span>
+            <button className="p-btn fpx-foot-btn" title="复制数据目录路径"
+              onClick={() => api.copyText(dataDir).then(
+                (ok) => onLog(ok ? '已复制数据目录路径' : '复制失败', !ok),
+                (e) => onLog(errText(e), true),
+              )}>
+              复制路径
+            </button>
+          </>
+        )}
       </div>
     </>
   );
