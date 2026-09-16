@@ -91,7 +91,12 @@ const LEVEL = { error: 'error', warn: 'warn', info: 'info' };
  * @returns {{level, rule, msg, line}[]}
  */
 export function auditCss(css, file = 'styles.css', opt = {}) {
-  const text = String(css || '').replace(/\/\*[\s\S]*?\*\//g, '');
+  /* 注释要剥离，但必须**保留原来的换行结构**：把注释内的非换行字符换成空格，
+     而不是整块删掉。因为 line 字段是拿去原文件里定位的，而这里的正则都在 text
+     上匹配 —— 一旦整块删除，text 的行号坐标就比原文件少了注释占的行，
+     报出去的行号会系统性偏小（project-group 的 style.css 曾因此偏 31 行）。
+     换成空白同时保证注释里的写法不会被规则误判。 */
+  const text = String(css || '').replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
   const out = [];
   const lineOf = (i) => text.slice(0, i).split('\n').length;
   const push = (level, rule, msg, i) =>
