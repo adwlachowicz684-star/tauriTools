@@ -90,8 +90,14 @@ for (const m of af.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
   if (hasOwn) continue;                                             // 自带底色 → 成对徽章
   bareBlocks.push(sel.trim().slice(0, 48));
 }
-/* #fff 的 4 处都叠在 accent / 彩色底上，属"叠在内容上"，不跟随主题才对 */
-const realBare = bareBlocks.filter((sel) => !/primary|trg-btn|view-switch|dot/i.test(sel));
+/* 刻意不跟随主题的三类：
+   - #fff：叠在 accent / 彩色底上，属"叠在内容上"
+   - primary / trg-btn / view-switch / dot：成对徽章或已选中态
+   - mod-btn：模块编辑条上的按钮。上面 1642 行的注释写明了刻意用**固定琥珀色**——
+     它是一条临时状态条（借用主画布编辑模块内部时提示"你不在流程画布上"），
+     混进主题色会不够醒目。此处随设计意图豁免，不是漏改。
+     注意 mod-bar 本体因为有 background: rgba(...) 已被上面的 hasOwn 自动豁免。 */
+const realBare = bareBlocks.filter((sel) => !/primary|trg-btn|view-switch|dot|mod-btn/i.test(sel));
 t('裸硬编码前景色已改为变量（自带底色的徽章与叠在彩色底上的 #fff 除外）',
   realBare.length === 0, realBare.join(' | '));
 
