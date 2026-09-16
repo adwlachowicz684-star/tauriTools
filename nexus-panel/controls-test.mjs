@@ -269,5 +269,84 @@ console.log('\n=== 8. 反馈类：空状态 / 加载 / Toast ===');
   t('agent-flow 空状态元素挂了 .nx-empty', /nx-empty empty-hint/.test(afInsp));
 }
 
+console.log('\n=== 9. 观感一致性：禁用态 / 键盘焦点 ===');
+{
+  /* 禁用态此前有 6 种弱化值：.45 / .4 / .5 / .38 / .35 / .3。
+     差异不是设计出来的，是各写各的 —— 表现就是"这个界面的灰按钮比
+     那个界面更淡"。统一成一个变量后，调整观感只改一处。 */
+  const allCss = ['css/controls.css', 'css/neumorphism.css', 'css/dialog.css',
+    'plugins/mindmap/styles.css', 'plugins/agent-flow/styles.css',
+    'plugins/project-group/style.css'].map((f) => ({ f, text: read(f) }));
+
+  const hardOpacity = [];
+  for (const { f, text } of allCss) {
+    for (const m of text.matchAll(/:disabled[^{}]*\{([^}]*)\}/g)) {
+      const body = m[1];
+      const om = /opacity\s*:\s*([^;]+)/.exec(body);
+      if (!om) continue;
+      const v = om[1].trim();
+      if (!/var\(--ctl-disabled-opacity\)/.test(v)) {
+        hardOpacity.push(`${f}: ${v}`);
+      }
+    }
+  }
+  t('禁用态弱化值统一走 --ctl-disabled-opacity',
+    hardOpacity.length === 0, hardOpacity.join(' | ').slice(0, 120) || '6 种写法已合并为一个变量');
+
+  t('禁用态变量在控件层定义',
+    /--ctl-disabled-opacity\s*:\s*\.?\d/.test(controls)
+    && /--ctl-disabled-cursor\s*:\s*not-allowed/.test(controls));
+
+  /* cursor：default 只表示"没有特殊指针"，禁用态要传达的是"点不了" */
+  const cursorDefault = [];
+  for (const { f, text } of allCss) {
+    for (const m of text.matchAll(/:disabled[^{}]*\{([^}]*)\}/g)) {
+      if (/cursor\s*:\s*default/.test(m[1])) cursorDefault.push(f);
+    }
+  }
+  t('禁用态光标统一 not-allowed（不用 default）',
+    cursorDefault.length === 0, cursorDefault.join(', ') || '全部 not-allowed');
+
+  /* 键盘焦点环：此前按钮一个都没有 —— Tab 过去看不出当前项 */
+  t('按钮有键盘焦点环',
+    /\.nx-btn:focus-visible[^{]*\{[^}]*outline/.test(controls),
+    (controls.match(/\.nx-btn:focus-visible[^{]*\{[^}]*\}/) || ['无'])[0].replace(/\s+/g, ' ').slice(0, 70));
+  t('焦点环用 outline 而非 box-shadow（后者会被立体阴影覆盖）',
+    !/\.nx-btn:focus-visible[^{]*\{[^}]*box-shadow/.test(controls));
+  t('输入框键盘进来时也有环（与指针点击区分）',
+    /:focus-visible[^{]*\{[^}]*outline/.test(controls));
+  t('用 :focus-visible 而非 :focus（鼠标点击不该出现环）',
+    /:focus-visible/.test(controls) && !/\.nx-btn:focus\s*[,{]/.test(controls));
+
+  /* agent-flow 的自建控件此前也没有环 */
+  const af = read('plugins/agent-flow/styles.css');
+  t('agent-flow 自建控件补了焦点环',
+    /\.tab-input:focus-visible/.test(af) && /\.kind-btn:focus-visible/.test(af)
+    && /\.cond-op-select:focus-visible/.test(af) && /\.hist-search:focus-visible/.test(af));
+}
+
+console.log('\n=== 10. 观感一致性：媒体底色跟随主题 ===');
+{
+  const mm = read('plugins/mindmap/styles.css');
+  /* 媒体预览框原来是写死的深色（#1E1E1E / #1B1B1F / #000），
+     浅色主题下这些深色块在浅底上非常突兀 */
+  t('画布底色跟随主题', !/background\s*:\s*#1E1E1E/i.test(mm));
+  t('缩略图底色跟随主题', !/background\s*:\s*#1B1B1F/i.test(mm) && !/background\s*:\s*#000\b/i.test(mm));
+  t('加载层文字与底色跟随主题', !/color\s*:\s*#AFAFAF/i.test(mm));
+
+  /* 但**叠在内容上的遮罩**必须保持深色 —— 视频帧明暗不定，
+     换成主题变量会在浅色主题下变成"浅底 + 白三角"，整个消失 */
+  t('视频播放遮罩保留深色（叠在内容上，不能跟随主题）',
+    /\.mm-vthumb-play[\s\S]{0,300}color\s*:\s*#fff/i.test(mm));
+  t('遮罩的硬编码写明了原因',
+    /叠在视频帧上/.test(mm) || /内容上的遮罩/.test(mm));
+
+  const pg = read('plugins/project-group/style.css');
+  t('危险色不再写死（改用 --danger）',
+    !/\.fpx-rail-btn\.danger\s*\{[^}]*#[0-9a-f]{3,8}/i.test(pg));
+  t('频道色块上的白字保留了原因说明',
+    /用户自定义的频道色/.test(pg) || /明暗不定/.test(pg));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

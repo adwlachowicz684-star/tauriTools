@@ -37,6 +37,22 @@
 /* ------------------------------------------------------------
    按钮
    ------------------------------------------------------------ */
+/* 禁用态：全工具统一一个弱化值。
+   --------------------------------------------------------------------
+   此前各处各写一个数：.45 / .4 / .5 / .38 / .35 / .3 共 6 种。
+   差异不是设计出来的，是各写各的 —— 表现就是"这个界面的灰按钮比
+   那个界面更淡"。统一成变量后，想调整观感只改这一处。
+
+   选 .45 是因为它是出现次数最多的那个（4 处），也是按钮原有的值，
+   改动面最小；且 0.45 在深浅两种底上都仍能看出"被禁用"。
+
+   cursor 统一 not-allowed：default 只表示"没有特殊指针"，
+   而禁用态要传达的是"这个现在点不了"。 */
+:root {
+  --ctl-disabled-opacity: .45;
+  --ctl-disabled-cursor: not-allowed;
+}
+
 .nx-btn,
 .p-btn,
 .mm-btn {
@@ -79,6 +95,25 @@
 .p-btn:hover,
 .mm-btn:hover { color: var(--accent); }
 
+/* 键盘焦点环。
+   --------------------------------------------------------------------
+   此前只有输入框有焦点环，按钮一个都没有 —— Tab 走到按钮上时看不出
+   当前项在哪。外壳的 .theme-card:focus-visible 有，说明这条规范本来就
+   存在，只是没覆盖到按钮。
+
+   用 outline 而不是 box-shadow：按钮的 box-shadow 已被立体阴影占用，
+   再加一层环会把立体阴影整个覆盖掉，按钮会瞬间"变平"，像是被按下去了。
+   outline 不占布局、不干扰阴影，outline-offset 留一点缝更好认。
+
+   用 :focus-visible 而不是 :focus —— 鼠标点击不该出现焦点环，
+   只有键盘走位时才需要（这也是"当前项只能有一种长相"的前提）。 */
+.nx-btn:focus-visible,
+.p-btn:focus-visible,
+.mm-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .nx-btn:active,
 .p-btn:active,
 .mm-btn:active { box-shadow: var(--sh-in-md); }
@@ -113,8 +148,8 @@
 .nx-btn:disabled,
 .p-btn:disabled,
 .mm-btn:disabled {
-  opacity: .45;
-  cursor: not-allowed;
+  opacity: var(--ctl-disabled-opacity);
+  cursor: var(--ctl-disabled-cursor);
   box-shadow: none;
 }
 .nx-btn:disabled:hover,
@@ -178,13 +213,23 @@
 .mm-select:focus {
   box-shadow: var(--sh-in-md), 0 0 0 2px var(--accent-glow);
 }
+/* 输入框用 :focus（点进来也要亮），但键盘 Tab 进来时把描边环再加粗一点，
+   与"指针点击"区分开 —— 键盘用户看不到鼠标指针在哪 */
+.nx-input:focus-visible,
+.nx-select:focus-visible,
+.p-input:focus-visible,
+.mm-input:focus-visible,
+.mm-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 
 .nx-input:disabled,
 .p-input:disabled,
 .mm-input:disabled,
 .mm-select:disabled {
-  opacity: .5;
-  cursor: not-allowed;
+  opacity: var(--ctl-disabled-opacity);
+  cursor: var(--ctl-disabled-cursor);
 }
 
 /* 下拉：原生箭头由系统画，颜色不跟随主题，这里统一收口 */
@@ -302,7 +347,10 @@
   transform: translateX(16px);
   background: var(--badge-fg, #fff);
 }
-.nx-switch:disabled { opacity: .45; cursor: not-allowed; }
+.nx-switch:disabled {
+  opacity: var(--ctl-disabled-opacity);
+  cursor: var(--ctl-disabled-cursor);
+}
 
 /* ------------------------------------------------------------
    分隔线

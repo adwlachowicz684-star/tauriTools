@@ -9,7 +9,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { auditCss, summarize, LEVEL_ORDER, SHELL_VARS, TOKEN_VARS } from './js/style-audit.js';
+import { auditCss, summarize, LEVEL_ORDER, SHELL_VARS, TOKEN_VARS, CONTROLS_VARS } from './js/style-audit.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let pass = 0, fail = 0;
@@ -161,6 +161,33 @@ t('LEVEL_ORDER 能把 error 排在最前', LEVEL_ORDER.error < LEVEL_ORDER.warn
   && LEVEL_ORDER.warn < LEVEL_ORDER.info);
 t('summarize 支持任意 level 键（不会 TS7053）',
   summarize([{ level: 'error' }, { level: 'warn' }]).warn === 1);
+
+console.log('\n=== 8. 共享变量列表不漂移 ===');
+{
+  /* style-audit 在浏览器里跑，不能读文件，所以 TOKEN_VARS / CONTROLS_VARS
+     是手工维护的列表。手工列表必然漂移 —— 共享 CSS 里加了新变量、
+     这里忘了同步，插件用了就会被误报成"变量未定义"。
+
+     所以反过来盯着：共享 CSS 里定义的每个 --ctl-* 都必须已在列表里。 */
+  const controlsCss = readFileSync(join(HERE, 'css/controls.css'), 'utf8');
+  /* 只盯**在 :root 里定义的** --ctl-*。
+     --ctl-h / --ctl-pad / --ctl-fs / --ctl-shadow 是在具体规则里定义的
+     档位变量（.sm 靠覆盖它们降尺寸），属于控件内部实现，插件不该用，
+     所以不算"共享变量"，不进列表。 */
+  const rootBlocks = [...controlsCss.matchAll(/:root\s*\{([^}]*)\}/g)]
+    .map((m) => m[1]).join('\n');
+  const defined = [...new Set(
+    [...rootBlocks.matchAll(/(--ctl-[a-z0-9-]+)\s*:/gi)].map((m) => m[1]))];
+  const missing = defined.filter((v) => !CONTROLS_VARS.includes(v));
+  t('controls.css 里的 --ctl-* 变量都已在 CONTROLS_VARS 中登记',
+    missing.length === 0, missing.join(', ') || `已登记 ${defined.length} 个`);
+
+  /* 反向：列表里登记了的变量，共享 CSS 里必须真的有定义
+     （否则是改名后忘了清理，插件照着列表写就会踩空） */
+  const notDefined = CONTROLS_VARS.filter((v) => !defined.includes(v));
+  t('CONTROLS_VARS 里没有已经不存在的变量',
+    notDefined.length === 0, notDefined.join(', ') || '无残留');
+}
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

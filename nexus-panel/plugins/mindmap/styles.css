@@ -139,15 +139,18 @@ html, body {
   position: relative;
   border-radius: var(--r, 14px);
   overflow: hidden;
-  background: #1E1E1E;
+  /* 原来是写死的 #1E1E1E —— 浅色主题下这块深色在浅底上非常突兀。
+     改用 --surface-sunk：它比画布再暗一档，深色主题下观感几乎不变，
+     浅色主题下会自动变浅。 */
+  background: var(--surface-sunk, var(--surface));
   box-shadow: var(--sh-out-md);
 }
 
 .mm-loading {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
-  color: #AFAFAF; font-size: 13px;
-  background: #1E1E1E;
+  color: var(--text-dim); font-size: 13px;
+  background: var(--surface-sunk, var(--surface));
   z-index: var(--z-raised, 5);
 }
 
@@ -343,7 +346,7 @@ html, body {
   font-weight: 600;
   /* 深色面板上，徽章自带底色就够了；但浅色底（清除格 #E1E1E1）需要描边
      才不会糊在面板里 —— 用中性灰，两种底都不突兀 */
-  box-shadow: 0 0 0 1px var(--ring-neutral);
+  box-shadow: 0 0 0 1px var(--ring-neutral, rgba(128, 128, 128, .45));
   transition: transform var(--dur-fast);
 }
 .mm-badge:hover .mm-badge-face { transform: scale(1.12); }
@@ -448,7 +451,7 @@ html, body {
   justify-content: center;
   border-radius: var(--r-xs, 6px);
   overflow: hidden;
-  background: #1B1B1F;
+  background: var(--surface-sunk, var(--surface));
 }
 .mm-layout-thumb img {
   max-width: 100%;
@@ -483,7 +486,10 @@ html, body {
 }
 .mm-item .name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000; }
+/* 底色与 .mm-vthumb 保持一致：同一个视频，缩略图态是主题色、
+   展开播放后变成纯黑的话，切换瞬间颜色会跳一下。
+   视频**内容**本身仍按原始帧显示，这里只是没有帧时的兜底底色。 */
+video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: var(--surface-sunk, var(--surface)); }
 
 /* 搜索结果提示 */
 .mm-search-info { color: var(--text-mute); font-size: 11.5px; min-width: 74px; }
@@ -586,7 +592,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
   aspect-ratio: 16 / 9;
   border-radius: var(--r-sm, 8px);
   overflow: hidden;
-  background: #000;
+  background: var(--surface-sunk, var(--surface));
   box-shadow: var(--sh-in-sm);
 }
 .mm-vthumb.ready { cursor: pointer; }
@@ -603,6 +609,9 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
   align-items: center;
   justify-content: center;
   font-size: 22px;
+  /* 这层**必须**是深色：它叠在视频帧上，而视频内容明暗不定 ——
+     换成主题变量的话，浅色主题下会得到"浅底 + 白三角"，整个消失。
+     属于"叠在内容上的遮罩"，不是界面底色，所以这里允许硬编码。 */
   color: #fff;
   pointer-events: none;                 /* 关键：不拦点击 */
   background: rgba(0, 0, 0, .25);
@@ -694,7 +703,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
   accent-color: var(--accent);
   cursor: pointer;
 }
-.mm-vseek:disabled { opacity: .35; cursor: default; }
+.mm-vseek:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 
 /* 失效提示（A16）：warn 变体之前没有，缺了就只能用普通灰字，
    在深色面板上和说明文字一个样，看不出是问题。 */

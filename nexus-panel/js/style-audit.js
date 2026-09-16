@@ -62,7 +62,19 @@ export const TOKEN_VARS = [
   '--z-inspector',
 ];
 
-const KNOWN = new Set([...SHELL_VARS, ...TOKEN_VARS]);
+/* 控件层（css/controls.css）定义的共享变量。
+   --------------------------------------------------------------------
+   与 TOKEN_VARS 一样是手工维护的列表 —— style-audit 要在设置页的浏览器
+   环境里跑，不能读文件，所以无法像测试那样从 CSS 里反查。
+
+   手工列表会漂移（controls.css 加了新变量、这里忘了同步），所以
+   style-audit-test 里有一条断言盯着：controls.css 里定义的 --ctl-*
+   必须全部出现在这个列表里。 */
+export const CONTROLS_VARS = [
+  '--ctl-disabled-opacity', '--ctl-disabled-cursor',
+];
+
+const KNOWN = new Set([...SHELL_VARS, ...TOKEN_VARS, ...CONTROLS_VARS]);
 
 /* ------------------------------------------------------------------ */
 

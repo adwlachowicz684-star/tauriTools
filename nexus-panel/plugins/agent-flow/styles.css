@@ -144,7 +144,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
   padding: 6px 12px; border-radius: var(--af-r-sm); cursor: pointer; font-size: 13px;
 }
 .toolbar button:hover:not(:disabled), .btn-like:hover { border-color: var(--af-accent); }
-.toolbar button:disabled { opacity: .45; cursor: not-allowed; }
+.toolbar button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 .toolbar button.primary { background: var(--af-accent); border-color: var(--af-accent); color: #fff; }
 .toolbar .inline { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--af-dim); }
 .toolbar select { background: var(--af-raised); color: var(--af-fg); border: 1px solid var(--af-line); border-radius: var(--af-r-sm); padding: 5px; }
@@ -268,7 +268,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
   font-family: inherit; cursor: pointer; flex: none;
 }
 .p-btn:hover { border-color: var(--af-accent); }
-.p-btn:disabled { opacity: .45; cursor: not-allowed; }
+.p-btn:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 .p-btn.primary { color: var(--af-accent); font-weight: 600; }
 .p-btn.danger { color: var(--af-bad); }
 
@@ -348,7 +348,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
   padding: 7px 12px; border-radius: 8px; cursor: pointer; font-size: 13px;
 }
 .kind-btn:hover:not(:disabled) { border-color: var(--af-accent); }
-.kind-btn:disabled { opacity: .4; cursor: not-allowed; }
+.kind-btn:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 .kind-icon { font-size: 14px; }
 
 .trg {
@@ -388,7 +388,7 @@ button.mini {
   font-size: 12px; padding: 3px 9px; border-radius: 5px; cursor: pointer;
 }
 button.mini:hover:not(:disabled) { border-color: var(--af-accent); }
-button.mini:disabled { opacity: .4; cursor: not-allowed; }
+button.mini:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 button.mini.danger:hover { border-color: var(--af-bad); color: #ff9b9b; }
 
 /* 开关 */
@@ -479,7 +479,7 @@ button.mini.danger:hover { border-color: var(--af-bad); color: #ff9b9b; }
 .delete-notice .mini { flex: none; }
 
 /* 危险操作按钮 */
-button:disabled { opacity: .45; cursor: not-allowed; }
+button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 
 /* ---------------- 整体布局：边栏 + 主区 ---------------- */
 .app-shell { display: flex; height: 100vh; overflow: hidden; }
@@ -1448,4 +1448,25 @@ input.mono, textarea.mono {
 .chat-probe-path {
   color: var(--af-dim); margin-top: 2px; font-size: 10.5px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+
+/* ------------------------------------------------------------
+   自建控件的键盘焦点环
+   ------------------------------------------------------------
+   本插件有一批自建控件（页签输入框、节点类型按钮、条件里的两个下拉、
+   历史搜索框），此前都没有焦点环 —— Tab 走过去看不出当前项在哪。
+
+   用选择器组一次补齐，而不是逐个加规则：以后新增控件往组里加一个类名
+   即可，也避免"补了这个漏了那个"。
+
+   统一用 outline + offset，不用 box-shadow：这些控件里有些（.kind-btn）
+   有立体阴影，加环会把它盖掉，看起来像被按下去。 */
+.tab-input:focus-visible,
+.kind-btn:focus-visible,
+.cond-op-select:focus-visible,
+.cond-src-select:focus-visible,
+.hist-search:focus-visible {
+  outline: 2px solid var(--af-accent);
+  outline-offset: 1px;
 }
