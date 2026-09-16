@@ -11,6 +11,8 @@
  * 历史画布里残留的该类型节点会退化成"未注册"占位，不会白屏。
  */
 import './defs/task';
+import './defs/genericHttp';
+import './defs/extract';
 import './defs/trigger';
 import './defs/condition';
 import './defs/parallel';

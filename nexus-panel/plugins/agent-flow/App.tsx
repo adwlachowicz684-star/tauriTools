@@ -40,7 +40,7 @@ import {
 import {
   runGraph,
   type Executor, type FsExecutor, type Fetcher, type LlmCaller, type ImageReader,
-  type GithubUpdateRunner, type GithubPushRunner,
+  type GithubUpdateRunner, type GithubPushRunner, type HttpRequester,
   type RunEvent, type RunSummary,
 } from './engine/runner';
 import { TriggerScheduler } from './engine/triggers';
@@ -1192,9 +1192,27 @@ export default function App() {
       return { ok: true, via: r.via, commit: r.value.commit };
     };
 
+    /*
+     * 通用 HTTP 执行器：给「HTTP 请求」节点用。
+     *
+     * 与 fetcher 的区别 —— fetcher 只会 GET 且只回文本，而这里要能指定方法、
+     * 请求体，并把状态码与响应头一并带回来（节点靠 status 判 4xx 是否算失败）。
+     * 两者共用 httpRequest 这条通道：先 Tauri 插件，不通再降级浏览器。
+     */
+    const httpRequester: HttpRequester = async (url, o) => {
+      const r = await httpRequest(url, {
+        method: o.method,
+        headers: o.headers,
+        body: o.body,
+        timeoutSec: o.timeoutSec,
+        maxBytes: o.maxBytes,
+      });
+      return { status: r.status, ok: r.ok, text: r.text, headers: r.headers };
+    };
+
     const result = await runGraph(graph, {
       concurrency, executor, fsExecutor, fetcher, llmCaller, imageReader,
-      githubFetch, githubPush, credentials,
+      githubFetch, githubPush, httpRequester, credentials,
       input: effectiveInput, onEvent, signal: controller.signal,
     });
     setSummary(result);

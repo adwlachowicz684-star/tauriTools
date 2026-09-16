@@ -28,6 +28,8 @@ import { runTranslate } from './runners/translate';
 import { runUpdate } from './runners/update';
 import { runGithubUpdate } from './runners/githubUpdate';
 import { runGithubPush } from './runners/githubPush';
+import { runGenericHttp } from './runners/genericHttp';
+import { runExtract } from './runners/extract';
 
 export type NodeRunner = (ctx: RunContext) => Promise<void>;
 
@@ -44,6 +46,8 @@ const RUNNERS: Record<string, NodeRunner | undefined> = {
   update: runUpdate,
   'github-update': runGithubUpdate,
   'github-push': runGithubPush,
+  'generic-http': runGenericHttp,
+  extract: runExtract,
 };
 
 /**
