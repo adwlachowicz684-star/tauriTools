@@ -42,6 +42,29 @@ function renameShellEntry(): Plugin {
 }
 
 /**
+ * 拷一个文件 / 一棵目录树。
+ *
+ * 不用 `fs.cpSync`：它在 Windows 上覆盖已存在文件时会走 unlink，
+ * 而本机那条路径抛的是 errno=0 的假错（消息为「The operation completed
+ * successfully」，syscall=unlink）—— 同一路径用 unlinkSync / copyFileSync
+ * 都正常，只有 cpSync 内部的 unlink 会挂。结果就是 `npm run build`
+ * 每次报 `[nexus-copy-plain-plugins]` 失败。copyFileSync 没有这个问题，
+ * 且覆盖写是幂等的，这里自己递归一层即可。
+ */
+function copyInto(src: string, dest: string): void {
+  const st = fsSync.statSync(src);
+  if (st.isDirectory()) {
+    fsSync.mkdirSync(dest, { recursive: true });
+    for (const name of fsSync.readdirSync(src)) {
+      copyInto(resolve(src, name), resolve(dest, name));
+    }
+    return;
+  }
+  fsSync.mkdirSync(resolve(dest, '..'), { recursive: true });
+  fsSync.copyFileSync(src, dest);
+}
+
+/**
  * 原生（无构建）示例插件不参与打包，直接原样拷进 dist，
  * 这样 Vite 生产构建里它们依然可用。
  */
@@ -65,19 +88,19 @@ function copyPlainPlugins(): Plugin {
       fsSync.mkdirSync(out, { recursive: true });
       // 注册表是运行时动态加载的（便于不改代码热插拔插件），需一并拷贝
       if (fsSync.existsSync(PATHS.registry)) {
-        fsSync.cpSync(PATHS.registry, resolve(out, 'registry.js'));
+        copyInto(PATHS.registry, resolve(out, 'registry.js'));
       }
       for (const name of PLAIN_PLUGINS) {
         const src = resolve(PATHS.plugins, name);
         if (fsSync.existsSync(src)) {
-          fsSync.cpSync(src, resolve(out, name), { recursive: true });
+          copyInto(src, resolve(out, name));
         }
       }
       // closeBundle 在打包产物落盘之后，这里补拷不会被覆盖
       for (const { plugin, dir } of NATIVE_SUBDIRS) {
         const src = resolve(PATHS.plugins, plugin, dir);
         if (fsSync.existsSync(src)) {
-          fsSync.cpSync(src, resolve(out, plugin, dir), { recursive: true });
+          copyInto(src, resolve(out, plugin, dir));
         }
       }
     },
