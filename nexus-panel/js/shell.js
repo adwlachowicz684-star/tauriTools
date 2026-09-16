@@ -526,9 +526,28 @@ async function init() {
     // 收起→展开时，正挂着的 nav-item 提示要立刻收掉：名字已显示出来了
     refreshTooltip();
   };
+  /* 隐藏到托盘：与 Ctrl+~ 同一个动作。
+     放在"置顶"与"最小化"之间 —— 它俩都是窗口级操作，
+     ✕ 在最右单独一档（危险操作）。 */
+  $('#btn-hide').onclick = () => {
+    host.win('hide');
+    toast('已隐藏到托盘 · 点击托盘图标可唤回', 'info');
+  };
   $('#btn-min').onclick = () => host.win('minimize');
   $('#btn-max').onclick = () => host.win('maximize');
-  $('#btn-close').onclick = () => host.win('close');
+  /* ✕ 的行为由设置决定：默认藏到托盘，也可设为真正退出。
+     每次点击时才取 —— 改完设置不用重启就生效。 */
+  const closeLabel = () => (host.getCloseAction() === 'hide' ? '隐藏到托盘' : '退出');
+  const syncCloseBtn = () => {
+    $('#btn-close').title = closeLabel();
+  };
+  syncCloseBtn();
+  host.onCloseActionChange(syncCloseBtn);
+  $('#btn-close').onclick = () => {
+    const act = host.getCloseAction();
+    host.win(act);
+    if (act === 'hide') toast('已隐藏到托盘 · 点击托盘图标可唤回', 'info');
+  };
   $('#btn-top').onclick = (e) => { e.currentTarget.classList.toggle('on'); host.win('topmost'); };
   $('#btn-theme').onclick = (e) => {
     openThemePicker({

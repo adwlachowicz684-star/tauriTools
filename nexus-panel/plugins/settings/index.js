@@ -43,6 +43,7 @@ export default definePlugin({
       plugins: h('div', {}),
       external: h('div', {}),
       files: h('div', {}),
+      window: h('div', {}),
       about: h('div', {}),
     };
     const TABS = [
@@ -50,6 +51,7 @@ export default definePlugin({
       ['plugins', '插件'],
       ['external', '外链'],
       ['files', '文件'],
+      ['window', '窗口'],
       ['about', '关于'],
     ];
     let curTab = 'theme';
@@ -520,7 +522,73 @@ export default definePlugin({
       render().catch(() => {});
     }
 
-    /* ============ 5. 关于 ============ */
+    /* ============ 窗口行为 ============ */
+    /*
+     * 点标题栏 ✕ 是"藏到托盘"还是"真正退出"。
+     *
+     * 走 ctx.shell.window 而不是直接写 localStorage：
+     * 本页在 Vite 模式下是 iframe，隔离态（opaque origin）下 localStorage
+     * 不可用，本地读写都会落空 —— 与主题、适配策略同一类问题。
+     */
+    {
+      const card = h('div.p-card', {}, h('h2', {}, '关闭窗口时'));
+      const wrap = h('div', { style: { marginTop: '6px' } });
+
+      const OPT = [
+        ['hide', '隐藏到托盘', '窗口消失但程序还在，点托盘图标即可唤回。适合常驻使用。'],
+        ['close', '退出程序', '真正结束进程。下次启动要从头加载。'],
+      ];
+      let cur = 'hide';
+      const rows = {};
+
+      const paint = () => {
+        for (const [v] of OPT) {
+          const el = rows[v];
+          if (!el) continue;
+          el.style.boxShadow = v === cur
+            ? 'inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light)'
+            : '';
+          el.style.background = v === cur ? 'var(--surface-sunk)' : 'transparent';
+        }
+      };
+
+      const pick = async (v) => {
+        cur = v;
+        paint();
+        try {
+          await ctx.shell.window.setCloseAction(v);
+        } catch (e) {
+          ctx.toast?.('保存失败：' + (e?.message || e), 'err');
+        }
+      };
+
+      for (const [v, label, desc] of OPT) {
+        const row = h('div', {
+          style: {
+            padding: '10px 12px', marginTop: '8px', borderRadius: 'var(--r-sm)',
+            cursor: 'pointer',
+          },
+          onclick: () => pick(v),
+        },
+          h('div', { style: { fontSize: '13px', fontWeight: '600' } }, label),
+          h('div.p-muted', { style: { marginTop: '3px', fontSize: '11px', lineHeight: '1.5' } }, desc),
+        );
+        rows[v] = row;
+        wrap.appendChild(row);
+      }
+      card.appendChild(wrap);
+      card.appendChild(h('div.p-muted', {
+        style: { marginTop: '10px', fontSize: '11px', lineHeight: '1.6' },
+      }, '标题栏 ⇲ 按钮随时可以直接藏到托盘，与这里的选择无关。'));
+      pages.window.appendChild(card);
+
+      // 初值：走桥接读（iframe 隔离态下本地读不到用户的实际选择）
+      ctx.shell.window.getCloseAction()
+        .then((v) => { cur = v === 'close' ? 'close' : 'hide'; paint(); })
+        .catch(() => { /* 读不到就保持默认 */ });
+    }
+
+    /* ============ 关于 ============ */
     let version = '浏览器模式';
     if (isInsideTauri()) {
       try { version = await (await getTauri()).invoke('app_version'); } catch { version = '获取失败'; }

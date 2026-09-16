@@ -6,6 +6,7 @@ import {
 import * as extPolicy from '../js/external-policy.js';
 import * as pluginCfg from '../js/plugin-config.js';
 import * as themeApi from '../js/theme-manager.js';
+import { getCloseAction, onCloseActionChange } from '../js/host.js';
 // 主题切换统一由 js/theme-picker.js 的弹出层处理（标题栏按钮 + 设置页共用），
 // 外壳不再自己维护"当前主题名"状态，避免两处各存一份、切完不同步。
 import Titlebar from './components/Titlebar';
@@ -104,6 +105,19 @@ export default function App() {
     setToasts((t) => [...t, { id, msg, type: kind }]);
     setTimer(() => setToasts((t) => t.filter((x) => x.id !== id)), 2800);
   }, [setTimer]);
+
+  /* ---------- 标题栏窗口按钮 ---------- */
+  /* ✕ 的行为由设置决定（默认藏到托盘）。用 state 存是为了让按钮文案跟着变；
+     订阅宿主的变化通知，设置页改完立即生效，不用重启。 */
+  const [closeAction, setCloseAction] = useState<'hide' | 'close'>(() => getCloseAction());
+  useEffect(() => onCloseActionChange((v) => setCloseAction(v)), []);
+
+  const handleWin = useCallback((a: string) => {
+    void hostRef.current?.win(a);
+    /* 藏起来之后没有任何入口能唤回（窗口收不到键盘事件），
+       必须明确告诉用户点托盘 —— 否则窗口凭空消失，只会以为程序崩了。 */
+    if (a === 'hide') pushToast('已隐藏到托盘 · 点击托盘图标可唤回', 'info');
+  }, [pushToast]);
 
   /* ---------- 外链：被 CSP 拦下的请求统一登记 ---------- */
   const handleCspViolation = useCallback((d: ViolationInfo, manifest?: PluginManifest) => {
@@ -367,8 +381,9 @@ export default function App() {
     <div id="app">
       <Titlebar
         title={title}
-        onWin={(a) => hostRef.current?.win(a)}
+        onWin={handleWin}
         onToast={pushToast}
+        closeAction={closeAction}
       />
       <div id="body" className={sidebarOpen ? 'open' : ''}>
         <Sidebar

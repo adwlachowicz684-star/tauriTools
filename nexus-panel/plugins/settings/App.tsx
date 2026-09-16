@@ -18,9 +18,10 @@ import {
 import { auditPlugin, summarize, LEVEL_ORDER } from '../../js/style-audit.js';
 import ExternalCard from './ExternalCard';
 import FilesCard from './FilesCard';
+import WindowCard from './WindowCard';
 import { prompt } from '../../js/dialog.js';
 
-type TabKey = 'theme' | 'plugins' | 'external' | 'files' | 'about';
+type TabKey = 'theme' | 'plugins' | 'external' | 'files' | 'window' | 'about';
 
 /**
  * 取外壳全局单例：本设置页是 iframe 插件，开启严格沙箱后 window.__NEXUS__
@@ -42,6 +43,7 @@ const TABS: [TabKey, string][] = [
   ['plugins', '插件'],
   ['external', '外链'],
   ['files', '文件'],
+  ['window', '窗口'],
   ['about', '关于'],
 ];
 
@@ -611,6 +613,7 @@ export default function Settings() {
       {/* ---------------- 外链 ---------------- */}
       {tab === 'external' ? <ExternalCard /> : null}
       {tab === 'files' ? <FilesCard /> : null}
+      {tab === 'window' ? <WindowCard /> : null}
 
       {/* ---------------- 关于 ---------------- */}
       {tab === 'about' ? (

@@ -315,6 +315,19 @@ function buildCtx(base) {
         setPluginOverride: (id, v) => transport.request('shell.call',
           { ns: 'normalizer', method: 'setPluginOverride', args: [id, v] }),
       },
+      /**
+       * 窗口行为：点 ✕ 是"藏到托盘"还是"真正退出"。
+       *
+       * 走桥接的原因与主题/适配策略一致 —— 设置页在 Vite 模式下是 iframe，
+       * 隔离态（opaque origin）下 localStorage 不可用，本地读写都会落空。
+       * 而且这是**外壳窗口**的行为，本来就该由外壳持有，不该由插件各存一份。
+       */
+      window: {
+        getCloseAction: () => transport.request('shell.call',
+          { ns: 'window', method: 'getCloseAction', args: [] }),
+        setCloseAction: (v) => transport.request('shell.call',
+          { ns: 'window', method: 'setCloseAction', args: [v] }),
+      },
     },
     /** 供外壳调用 */
     async __destroy() {

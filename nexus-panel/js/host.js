@@ -104,6 +104,58 @@ const normalizerApi = {
   },
 };
 
+/* -------------------- 关闭窗口的行为 -------------------- */
+
+const CLOSE_ACTION_KEY = 'nexus:close-action';
+
+/**
+ * 点标题栏 ✕ 时做什么：
+ *   'hide'  → 藏到托盘（默认。进程还在，靠托盘唤回）
+ *   'close' → 真正退出
+ *
+ * 默认取 hide：装了托盘之后，"关闭"还把进程杀掉就与托盘的存在相矛盾 ——
+ * 用户既然能从托盘唤回，就说明这个应用是常驻型的。
+ * 但仍要给用户选退出的权利：有人就是希望 ✕ 等于退出。
+ *
+ * 值只认这两种，其它一律回退默认 —— 手改 localStorage 不该把按钮变哑
+ * （点下去什么都不发生比报错更难发现）。
+ */
+function readCloseAction() {
+  try {
+    return localStorage.getItem(CLOSE_ACTION_KEY) === 'close' ? 'close' : 'hide';
+  } catch { return 'hide'; }
+}
+
+let closeAction = readCloseAction();
+const closeActionHooks = new Set();
+
+export function getCloseAction() {
+  return closeAction;
+}
+
+/** 设置 ✕ 的行为；返回实际生效的值 */
+export function setCloseAction(v) {
+  const next = v === 'close' ? 'close' : 'hide';
+  if (next === closeAction) return closeAction;
+  closeAction = next;
+  try { localStorage.setItem(CLOSE_ACTION_KEY, closeAction); } catch { /* 无妨 */ }
+  // 通知外壳刷新 ✕ 的提示文案，否则按钮还写着旧行为
+  for (const fn of closeActionHooks) {
+    try { fn(closeAction); } catch (e) { console.error('[closeAction hook]', e); }
+  }
+  return closeAction;
+}
+
+export function onCloseActionChange(fn) {
+  closeActionHooks.add(fn);
+  return () => closeActionHooks.delete(fn);
+}
+
+const windowApi = {
+  getCloseAction,
+  setCloseAction,
+};
+
 /* ---------------------------- 事件总线 ---------------------------- */
 export function createBus() {
   const map = new Map();
@@ -793,7 +845,8 @@ export function createHost(opts = {}) {
           const mod = ns === 'pluginConfig' ? pluginConfig
             : ns === 'external' ? extPolicy
             : ns === 'theme' ? themeApi
-            : ns === 'normalizer' ? normalizerApi : null;
+            : ns === 'normalizer' ? normalizerApi
+            : ns === 'window' ? windowApi : null;
           if (!mod) return reply(false, null, '未知外壳命名空间: ' + ns);
           const fn = mod[method];
           if (typeof fn !== 'function') return reply(false, null, `未知方法: ${ns}.${method}`);
@@ -1119,6 +1172,11 @@ export function createHost(opts = {}) {
   return {
     state, bus, mount, unmount, mountSettings, win, setBadge,
     hasSettings: () => hasSettings(state.instance),
+    /* 点 ✕ 的行为（'hide' | 'close'）。外壳**在点击时**才取，
+       所以设置页改完立即生效，不用重启。 */
+    getCloseAction,
+    setCloseAction,
+    onCloseActionChange,
     readTheme,
     getPlugins: () => state.plugins,
     /** 当前已注册的应用级快捷键（accel → { pluginId, event, label }） */
