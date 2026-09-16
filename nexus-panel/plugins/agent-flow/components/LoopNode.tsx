@@ -2,15 +2,7 @@ import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { LoopNodeData } from '../types';
 import { LOOP_MODE_META } from '../types';
 import type { LoopFlowNode } from '../flowTypes';
-
-const STATUS_TEXT: Record<string, string> = {
-  idle: '待运行',
-  pending: '排队中',
-  running: '循环进行中',
-  success: '循环完成',
-  failed: '有轮次失败',
-  skipped: '已跳过',
-};
+import { NodeShell, NODE_STATUS_TEXT } from './NodeShell';
 
 /** 把分隔符显示成人能看懂的样子 */
 function sepLabel(sep: string): string {
@@ -33,9 +25,27 @@ export default function LoopNode({ id, data, selected }: NodeProps<LoopFlowNode>
         : `匹配 ${d.pattern || '（未填通配符）'}`;
 
   return (
-    <div className={`node-card loop status-${d.status} ${selected ? 'is-selected' : ''}`}>
-      <Handle type="target" position={Position.Left} />
-
+    <NodeShell
+      id={id}
+      type="loop"
+      data={d}
+      selected={selected}
+      className="loop"
+      tag={`循环 · ${LOOP_MODE_META[d.mode]?.label ?? d.mode} · 不调用 CLI`}
+      statusText={{
+        ...NODE_STATUS_TEXT,
+        running: '循环进行中',
+        success: '循环完成',
+        failed: '有轮次失败',
+      }}
+      footExtra={
+        <span className="node-model">
+          上限 {d.maxIterations} · {d.onError === 'stop' ? '遇错停止' : '遇错继续'}
+        </span>
+      }
+      // 两个出口（循环体 / 结束）在下面自行渲染，不用外壳默认那个
+      hasSource={false}
+    >
       {/*
         两个出口：
           上 = 循环体（每轮迭代都跑）
@@ -59,14 +69,6 @@ export default function LoopNode({ id, data, selected }: NodeProps<LoopFlowNode>
         title="循环结束：全部迭代完成后执行一次"
       />
 
-      <div className="node-head">
-        <span className="node-dot" style={{ background: '#f472b6' }} />
-        <span className="node-title">{d.label}</span>
-        <span className={`node-badge badge-${d.status}`}>{STATUS_TEXT[d.status]}</span>
-      </div>
-
-      <div className="node-cli">循环 · {LOOP_MODE_META[d.mode]?.label ?? d.mode} · 不调用 CLI</div>
-
       <div className="loop-summary">
         <span className="loop-icon" aria-hidden>
           ⟲
@@ -78,13 +80,6 @@ export default function LoopNode({ id, data, selected }: NodeProps<LoopFlowNode>
         <span className="loop-port body">循环体</span>
         <span className="loop-port done">结束</span>
       </div>
-
-      <div className="node-foot">
-        <span className="node-id">{id}</span>
-        <span className="node-model">
-          上限 {d.maxIterations} · {d.onError === 'stop' ? '遇错停止' : '遇错继续'}
-        </span>
-      </div>
-    </div>
+    </NodeShell>
   );
 }

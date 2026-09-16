@@ -1,16 +1,8 @@
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import type { NodeProps } from '@xyflow/react';
 import type { ParallelNodeData } from '../types';
 import type { ParallelFlowNode } from '../flowTypes';
 import { describeRule } from '../engine/parallel';
-
-const STATUS_TEXT: Record<string, string> = {
-  idle: '待运行',
-  pending: '排队中',
-  running: '解析中',
-  success: '已解析',
-  failed: '解析异常',
-  skipped: '已跳过',
-};
+import { NodeShell, NODE_STATUS_TEXT } from './NodeShell';
 
 export default function ParallelNode({ id, data, selected }: NodeProps<ParallelFlowNode>) {
   const d: ParallelNodeData = data;
@@ -26,18 +18,21 @@ export default function ParallelNode({ id, data, selected }: NodeProps<ParallelF
           : `兜底并发 ${d.fallbackConcurrency}`;
 
   return (
-    <div className={`node-card parallel status-${d.status} ${selected ? 'is-selected' : ''}`}>
-      <Handle type="target" position={Position.Left} />
-      <Handle type="source" position={Position.Right} />
-
-      <div className="node-head">
-        <span className="node-dot" style={{ background: '#06b6d4' }} />
-        <span className="node-title">{d.label}</span>
-        <span className={`node-badge badge-${d.status}`}>{STATUS_TEXT[d.status]}</span>
-      </div>
-
-      <div className="node-cli">并发控制 · 不调用 CLI</div>
-
+    <NodeShell
+      id={id}
+      type="parallel"
+      data={d}
+      selected={selected}
+      className="parallel"
+      tag="并发控制 · 不调用 CLI"
+      statusText={{
+        ...NODE_STATUS_TEXT,
+        running: '解析中',
+        success: '已解析',
+        failed: '解析异常',
+      }}
+      footExtra={<span className="node-model">作用于下游</span>}
+    >
       <div className="par-summary">
         <span className="par-bars" aria-hidden>
           {Array.from({ length: 3 }, (_, i) => (
@@ -57,11 +52,6 @@ export default function ParallelNode({ id, data, selected }: NodeProps<ParallelF
           {rules.length > 3 && <div className="par-rule dim">…还有 {rules.length - 3} 条</div>}
         </div>
       )}
-
-      <div className="node-foot">
-        <span className="node-id">{id}</span>
-        <span className="node-model">作用于下游</span>
-      </div>
-    </div>
+    </NodeShell>
   );
 }

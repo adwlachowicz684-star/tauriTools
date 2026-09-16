@@ -2,32 +2,33 @@ import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { DEFAULT_BRANCH, OP_META, type ConditionNodeData } from '../types';
 import type { CondFlowNode } from '../flowTypes';
 import { describeRule } from '../engine/condition';
-
-const STATUS_TEXT: Record<string, string> = {
-  idle: '待运行',
-  pending: '排队中',
-  running: '判定中',
-  success: '已判定',
-  failed: '判定异常',
-  skipped: '已跳过',
-};
+import { NodeShell, NODE_STATUS_TEXT } from './NodeShell';
 
 export default function ConditionNode({ id, data, selected }: NodeProps<CondFlowNode>) {
   const d: ConditionNodeData = data;
   const rules = d.rules ?? [];
 
   return (
-    <div className={`node-card cond status-${d.status} ${selected ? 'is-selected' : ''}`}>
-      <Handle type="target" position={Position.Left} />
-
-      <div className="node-head">
-        <span className="node-dot" style={{ background: '#a855f7' }} />
-        <span className="node-title">{d.label}</span>
-        <span className={`node-badge badge-${d.status}`}>{STATUS_TEXT[d.status]}</span>
-      </div>
-
-      <div className="node-cli">条件分支 · 不调用 CLI</div>
-
+    <NodeShell
+      id={id}
+      type="condition"
+      data={d}
+      selected={selected}
+      className="cond"
+      tag="条件分支 · 不调用 CLI"
+      statusText={{
+        ...NODE_STATUS_TEXT,
+        running: '判定中',
+        success: '已判定',
+        failed: '判定异常',
+      }}
+      footExtra={<span className="node-model">菱形决策</span>}
+      /*
+       * 出口是每条规则各一个（分支手柄在 children 里逐个渲染），
+       * 不是统一的一个右侧出口，所以关掉外壳默认那个。
+       */
+      hasSource={false}
+    >
       <div className="cond-rules">
         {rules.length === 0 && <div className="nx-empty cond-empty">未配置规则</div>}
         {rules.map((r) => (
@@ -64,11 +65,6 @@ export default function ConditionNode({ id, data, selected }: NodeProps<CondFlow
           </div>
         )}
       </div>
-
-      <div className="node-foot">
-        <span className="node-id">{id}</span>
-        <span className="node-model">菱形决策</span>
-      </div>
-    </div>
+    </NodeShell>
   );
 }

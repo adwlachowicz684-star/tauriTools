@@ -98,17 +98,56 @@ export function nextActiveId(list: Canvas[], removedId: string, removedIndex: nu
   return list[nextIdx].id;
 }
 
+/**
+ * 内容是否真的变了。
+ *
+ * 先比引用（React Flow 没动过时给的是同一份数组），再比序列化结果。
+ * 只比引用不够：画布改动后拿到的总是新数组，那样每次都会刷新 updatedAt。
+ */
+function sameContent(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    // 循环引用之类的极端情况：宁可当作变了，也不能漏存
+    return false;
+  }
+}
+
+/**
+ * 更新某个画布的节点与连线。
+ *
+ * **幂等**：内容没变就原样返回入参，不刷 updatedAt。
+ *
+ * 不幂等会怎样（这是个真实的 bug，别把优化删掉）：
+ * 保存 effect 调它 → 产生新的 canvases 引用与新的 updatedAt →
+ * effect 的依赖里有 canvases → 再跑一次 → 400ms 后再保存……
+ * 于是即使什么都不做，也会每 400ms 全量序列化写一次 localStorage。
+ * updatedAt 一直跳还会让 sortForDisplay 的结果反复重排。
+ *
+ * 返回原数组（而不是新数组）还有一层好处：React 见到引用没变会直接跳过
+ * 重渲染与后续 effect，循环从两头都被掐断。
+ */
 export function updateCanvasContent(
   list: Canvas[],
   id: string,
   patch: { nodes?: unknown[]; edges?: unknown[] },
 ): Canvas[] {
+  const target = list.find((c) => c.id === id);
+  if (!target) return list;
+
+  const nodes = patch.nodes ?? target.nodes;
+  const edges = patch.edges ?? target.edges;
+  if (sameContent(target.nodes, nodes) && sameContent(target.edges, edges)) {
+    return list;
+  }
+
   return list.map((c) =>
     c.id === id
       ? {
           ...c,
-          nodes: patch.nodes ?? c.nodes,
-          edges: patch.edges ?? c.edges,
+          nodes,
+          edges,
           updatedAt: Date.now(),
         }
       : c,

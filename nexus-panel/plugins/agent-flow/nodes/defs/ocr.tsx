@@ -2,7 +2,9 @@ import { makeOcrNode, IMAGE_SOURCE_META, defaultOcrPrompt, type ImageSource } fr
 import { canReadImage } from '../../lib/tauri';
 import OcrNode from '../../components/OcrNode';
 import { LlmConfigPanel } from '../../components/inspectors/shared';
-import { Field, VarBar, type FieldDef } from '../../components/inspectors/fields';
+import {
+  Field, VarBar, upstreamTokens, upstreamFileTokens, type FieldDef,
+} from '../../components/inspectors/fields';
 import { runOcr } from '../../engine/runners/ocr';
 import { registerNode } from '../registry';
 
@@ -42,7 +44,7 @@ const fields: FieldDef[] = [
       <Field label="图片地址">
         <VarBar
           title="可引用："
-          tokens={p.upstream.map((u) => ({ text: `{{${u}.output}}` }))}
+          tokens={upstreamTokens(p.upstream)}
           onInsert={(t) => p.onChange(String(p.d.url ?? '') + t)}
         />
         <input
@@ -66,7 +68,7 @@ const fields: FieldDef[] = [
       >
         <VarBar
           title="可引用："
-          tokens={p.upstream.map((u) => ({ text: `{{${u}.file}}`, file: true }))}
+          tokens={upstreamFileTokens(p.upstream).filter((t) => t.text.endsWith('.file}}'))}
           onInsert={(t) => p.onChange(String(p.d.path ?? '') + t)}
         />
         <input

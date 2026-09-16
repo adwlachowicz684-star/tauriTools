@@ -3,6 +3,9 @@ import { getDef } from '../../nodes';
 import type { FlowNode, FlowEdge } from '../../flowTypes';
 import type { Credential } from '../../engine/credentials';
 import type { SecretPolicy } from '../../types';
+// 从 engine/files 直接拿，不绕 shared：shared 只是转手 import 进来用，
+// 并没有再导出，硬要从它拿就得让它多导出一次，平白加一层耦合
+import { FILE_FIELD_HINT } from '../../engine/files';
 import { CredentialPicker } from './shared';
 
 /**
@@ -149,6 +152,48 @@ export function Field({
       {hint ? <small className="dim">{hint}</small> : null}
     </label>
   );
+}
+
+/** VarBar 里一个可插入按钮 */
+export type VarToken = { text: string; title?: string; file?: boolean };
+
+/**
+ * 生成"上游输出"的可插入 token：{{上游id.output}}。
+ *
+ * 抽出来是因为这段逻辑此前在任务 / OCR / 翻译三处各写了一遍，
+ * 只是字段名不同。抄写时最容易出的错是：改了模板语法（比如加前缀）
+ * 却漏掉其中一处，于是某个节点的插入按钮变废按钮 —— 点了插进去不生效。
+ * 统一生成后，这类改动只需动这一个函数。
+ *
+ * @param upstream 上游节点 id 列表
+ * @param extra    追加的固定 token，如 '{{input}}'
+ */
+export function upstreamTokens(upstream: string[], extra: string[] = []): VarToken[] {
+  return [
+    ...upstream.map((u) => ({ text: `{{${u}.output}}` })),
+    ...extra.map((text) => ({ text })),
+  ];
+}
+
+/**
+ * 生成"上游改动文件"的 token：{{id.file}} / {{id.fileName}}。
+ *
+ * 与 upstreamTokens 分开：只有任务节点会产出文件改动，
+ * 给所有节点都挂这两个按钮是噪声。
+ */
+export function upstreamFileTokens(upstream: string[]): VarToken[] {
+  return [
+    ...upstream.map((u) => ({
+      text: `{{${u}.file}}`,
+      file: true,
+      title: FILE_FIELD_HINT.file,
+    })),
+    ...upstream.map((u) => ({
+      text: `{{${u}.fileName}}`,
+      file: true,
+      title: FILE_FIELD_HINT.fileName,
+    })),
+  ];
 }
 
 /** 一行"可引用"插入按钮。复杂面板手写时也能用 */
