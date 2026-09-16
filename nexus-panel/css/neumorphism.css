@@ -363,7 +363,7 @@ body {
   box-shadow: var(--glow-md);
 }
 .nav-icon {
-  font-size: 17px;
+  font-size: var(--fs-18, 18px);
   width: 22px;
   text-align: center;
   flex: none;
@@ -474,7 +474,7 @@ body {
 }
 .err-box h3 { color: var(--danger); font-size: 14px; margin-bottom: 10px; }
 .err-box pre {
-  font-size: 11.5px;
+  font-size: var(--fs-11, 11px);
   line-height: 1.7;
   color: var(--text-dim);
   white-space: pre-wrap;
@@ -1031,7 +1031,7 @@ html.theme-transition *:not(.spinner) {
 /* 键盘提示右对齐，不抢标题的位置 */
 .theme-pop-hint {
   margin-left: auto;
-  font-size: 10.5px;
+  font-size: var(--fs-11, 11px);
   font-weight: 400;
   color: var(--text-mute);
 }
@@ -1063,7 +1063,7 @@ html.theme-transition *:not(.spinner) {
 .theme-pop .theme-foot { padding: 7px 10px 1px; }
 .theme-pop .theme-name { font-size: 12px; }
 .theme-pop .theme-desc { padding: 0 10px 9px; font-size: 10px; }
-.theme-pop .theme-badge { font-size: 9px; padding: 1px 5px; }
+.theme-pop .theme-badge { font-size: var(--fs-10, 10px); padding: 1px 5px; }
 
 /* ---------- 设置页分页 ---------- */
 .set-tabs {
@@ -1080,7 +1080,7 @@ html.theme-transition *:not(.spinner) {
   background: var(--surface);
   color: var(--text-dim);
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: var(--fs-12, 12px);
   cursor: pointer;
   box-shadow: var(--sh-out-md);
   transition: all var(--t);
@@ -1167,7 +1167,7 @@ html.theme-transition *:not(.spinner) {
   flex: 1;
   min-width: 0;
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--fs-12, 12px);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1182,13 +1182,13 @@ html.theme-transition *:not(.spinner) {
   flex: none;
   padding: 1px 6px;
   border-radius: var(--r-pill);
-  font-size: 9.5px;
+  font-size: var(--fs-10, 10px);
   line-height: 1.6;
   color: var(--text-dim);
   background: var(--surface-sunk);
   box-shadow: var(--sh-in-xs);
 }
-.theme-desc { padding: 0 12px 11px; font-size: 10.5px; color: var(--text-mute); line-height: 1.5; }
+.theme-desc { padding: 0 12px 11px; font-size: var(--fs-11, 11px); color: var(--text-mute); line-height: 1.5; }
 .theme-del {
   position: absolute; top: 6px; right: 6px;
   width: 20px; height: 20px; border: 0; border-radius: 50%;
@@ -1201,7 +1201,7 @@ html.theme-transition *:not(.spinner) {
 .nav-item.nav-item-injected {
   padding-left: 26px;
   opacity: .88;
-  font-size: 12.5px;
+  font-size: var(--fs-12, 12px);
 }
 .nav-item.nav-item-injected .nav-icon { opacity: .8; font-size: 12px; }
 .nav-item.nav-item-injected:hover { opacity: 1; }

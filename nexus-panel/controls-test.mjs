@@ -401,5 +401,85 @@ console.log('\n=== 11. 清理与规范：动画时长 / 减少动效 / 死代码
     !/--af-z-modal\s*:/.test(af) && !/var\(--af-z-modal\)/.test(af));
 }
 
+console.log('\n=== 12. 原生表单控件：勾选框 / 单选 / 滑块 ===');
+{
+  /* 原生勾选框是白底灰框，由浏览器绘制 —— 既不吃父级 color-scheme
+     （iframe 是独立文档），也不认识 --accent。深色面板上就是一小块
+     突兀的白，跟之前那些原生 confirm 弹窗是同一类问题。
+     全仓 15 处 checkbox / 2 处 range，此前一处样式都没有。 */
+  t('勾选框接管了原生外观',
+    /input\[type='checkbox'\][\s\S]{0,400}appearance:\s*none/.test(controls));
+  t('单选也接管了，且是圆的',
+    /input\[type='radio'\][\s\S]{0,200}border-radius:\s*50%/.test(controls));
+  t('勾选框用 --surface-sunk（与输入框同一层，不是卡片色）',
+    /input\[type='checkbox'\][^{]*\{[^}]*--surface-sunk/.test(controls));
+  t('选中态用 --accent',
+    /:checked[^{]*\{[^}]*--accent/.test(controls));
+  t('勾用内联 SVG 而不是字符（字符受字体影响，各平台渲染不一致）',
+    /data:image\/svg\+xml/.test(controls));
+  /* input 是 void element，没有伪元素；clip-path 会裁掉整个元素含背景，
+     结果只剩"勾形状的色块"而不是"方块底 + 勾" —— 这是个很容易踩的坑 */
+  t('没有用 clip-path 画勾（会连背景一起裁掉）',
+    !/clip-path:\s*polygon/.test(controls));
+  t('勾选框有键盘焦点环',
+    /input\[type='checkbox'\]:focus-visible/.test(controls));
+  t('滑块的 WebKit 与 Firefox 伪元素分开写（写一起会被整条丢弃）',
+    /::-webkit-slider-thumb/.test(controls) && /::-moz-range-thumb/.test(controls));
+  t('滑块 thumb 用 --accent',
+    /::-webkit-slider-thumb[^{]*\{[^}]*--accent/.test(controls));
+
+  /* ---- 高对比度 ----
+     新拟态卡片与底板完全同色，边界 100% 靠阴影勾；而 forced-colors
+     下系统会丢弃所有 box-shadow —— 界面会连成一片。
+     这与 --border 那个坑同源：都是"边界只寄托在单一机制上"。 */
+  const tokens = read('css/tokens.css');
+  t('强制色模式下给卡片补了系统色描边',
+    /@media \(forced-colors: active\)[\s\S]{0,400}border:\s*1px solid CanvasText/.test(tokens));
+  t('强制色下勾选框显形（SVG 勾可能被系统覆盖，用实心底色表达）',
+    /@media \(forced-colors: active\)[\s\S]{0,600}Highlight/.test(controls)
+    || /@media \(forced-colors: active\)[\s\S]{0,600}Highlight/.test(tokens));
+}
+
+console.log('\n=== 13. 尺度收口：圆角 / 字号 ===');
+{
+  /* 字号：此前 17 档含 4 个半档（11.5 / 10.5 / 12.5 / 9）。
+     半档不是设计出来的 —— 11.5 与 12 在亚像素渲染后往往就是同一个结果，
+     但维护时你得记住"这里为什么偏偏是 11.5"。 */
+  const all = ['css/controls.css', 'css/neumorphism.css', 'css/dialog.css',
+    'plugins/mindmap/styles.css', 'plugins/agent-flow/styles.css',
+    'plugins/project-group/style.css'].map((f) => ({ f, text: read(f) }));
+  const half = [];
+  for (const { f, text } of all) {
+    for (const m of text.matchAll(/font-size:\s*([0-9.]+)px/g)) {
+      if (!/^\d+$/.test(m[1])) half.push(`${f}: ${m[1]}px`);
+    }
+  }
+  t('字号无半档（全部整数）', half.length === 0, half.join(', ') || '4 个半档已归整');
+
+  const tokens = read('css/tokens.css');
+  t('定义了 --fs-* 字号档位', /--fs-12\s*:/.test(tokens) && /--fs-11\s*:/.test(tokens));
+  t('消除了 9px（太小，正文读不清）',
+    !/font-size:\s*9px/.test([...all].map((x) => x.text).join('\n')));
+
+  /* 圆角：999px 就是 --r-pill */
+  const hard999 = [];
+  for (const { f, text } of all) {
+    if (/border-radius:\s*999px/.test(text)) hard999.push(f);
+  }
+  t('999px 圆角改走 --r-pill', hard999.length === 0,
+    hard999.join(', ') || '21 处已替换');
+
+  /* 用了令牌就必须能拿到 —— 插件是独立文档，外壳那份传不进来。
+     这条是审计工具先抓出来的真 bug：agent-flow 引了 controls.css
+     却没引 tokens.css，控件层里的 --sh-* / --r-* 全部静默降级。 */
+  for (const { f, text } of all) {
+    if (f.startsWith('css/')) continue;
+    const usesTokens = /var\(--(?:sh-|r-|dur-|z-|font-|anim-|fs-|ctl-)/.test(text);
+    if (usesTokens) {
+      t(`${f} 用了令牌且引入了 tokens.css`, /@import\s+url\(['"]?[^'"]*tokens\.css/.test(text));
+    }
+  }
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

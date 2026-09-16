@@ -268,7 +268,7 @@
   gap: 4px;
   height: 22px;
   padding: 0 9px;
-  font-size: 11.5px;
+  font-size: var(--fs-11, 11px);
   line-height: 1;
   color: var(--text-dim);
   background: var(--surface-sunk, var(--surface));
@@ -498,7 +498,7 @@
   padding: 11px 16px;
   max-width: 320px;
   border-radius: var(--r-sm);
-  font-size: 12.5px;
+  font-size: var(--fs-12, 12px);
   line-height: 1.5;
   color: var(--text);
   /* 与弹窗同理：用 --surface-overlay，玻璃主题下 --surface 只有 7% 白 */
@@ -533,3 +533,185 @@
 }
 /* 容器不拦点击，但单条 toast 要能点（将来可能有"撤销"按钮） */
 .nx-toasts > *, #toasts > * { pointer-events: auto; }
+
+/* ============================================================
+   原生表单控件：勾选框 / 单选 / 滑块
+   ============================================================
+   为什么必须接管：
+
+   原生勾选框是**白底灰框**，由浏览器绘制 —— 它既不吃父级的
+   color-scheme（iframe 是独立文档），也不认识 --accent。
+   深色面板上就是一小块突兀的白，跟之前那些原生 confirm 弹窗
+   是同一类问题：长相由浏览器决定、不跟随主题、jsdom 里测不了。
+
+   全仓有 15 处 input[type=checkbox]、2 处 range，此前**一处样式
+   都没有**（grep input\[type=checkbox] 结果为 0）。
+
+   做法：appearance: none 抹掉原生外观，用主题变量重画。
+   不用"隐藏原生 + 伪元素"那套老办法 —— 那样键盘焦点和
+   :checked 状态都要自己维护，容易丢可访问性。appearance 方案
+   保留了元素本身的语义与键盘行为，我们只改长相。
+
+   顺带处理 file：它在本项目里是 hidden + <label> 触发的，
+   不需要样式，但 appearance 重置不影响它。
+   ============================================================ */
+
+.nx-check,
+input[type='checkbox'],
+input[type='radio'] {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  /* 用 --surface-sunk 而不是 --surface：勾选框是"凹进去的录入区"，
+     与输入框同一层。用 --surface 会和卡片底板撞成一片。 */
+  background: var(--surface-sunk, var(--surface));
+  border: 1px solid var(--divider);
+  border-radius: var(--r-xs);
+  box-shadow: var(--sh-in-sm);
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background var(--dur-fast), border-color var(--dur-fast);
+}
+/* 单选是圆的，勾选是方的 —— 只有这一处差异 */
+input[type='radio'],
+.nx-check.radio { border-radius: 50%; }
+
+input[type='checkbox']:checked,
+input[type='radio']:checked,
+.nx-check:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+/* 勾：用内联 SVG 画，不用字符 —— 字符受字体影响，不同平台渲染出的
+   勾形状、粗细、高低都不一样（在 Windows 上尤其明显）。
+   也不用 clip-path：input 是 void element，没有伪元素可用，而 clip-path
+   会裁掉**整个元素**（含背景），结果只剩一个"勾形状的色块"，
+   而不是"方块底 + 勾"。
+
+   SVG data URI 里拿不到 CSS 变量，所以勾色只能硬编码。选白色是因为
+   勾叠在 --accent 上，而 --badge-fg（强调色上的文字色）在深浅主题下
+   基本都是白或近白 —— 这两者本来就该一致。 */
+input[type='checkbox']:checked,
+.nx-check:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 100% 100%;
+}
+/* 单选是实心圆点：用内阴影画，不需额外元素。
+   注意这里**不能**用 clip-path（会连背景一起裁掉） */
+input[type='radio']:checked,
+.nx-check.radio:checked {
+  box-shadow: var(--sh-in-sm), inset 0 0 0 3px var(--surface-sunk, var(--surface));
+}
+
+input[type='checkbox']:focus-visible,
+input[type='radio']:focus-visible,
+.nx-check:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+input[type='checkbox']:disabled,
+input[type='radio']:disabled,
+.nx-check:disabled {
+  opacity: var(--ctl-disabled-opacity);
+  cursor: var(--ctl-disabled-cursor);
+}
+
+/* ---- 滑块 ----
+   原生 range 在深色下是亮色轨道 + 系统色滑块，同样不跟随主题。
+   thumb 用 accent 着色，track 用凹陷槽，与输入框同一层。 */
+.nx-range,
+input[type='range'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.nx-range::-webkit-slider-runnable-track,
+input[type='range']::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-sunk, var(--surface));
+  box-shadow: var(--sh-in-sm);
+}
+.nx-range::-webkit-slider-thumb,
+input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -4px;              /* (6 - 14) / 2，让 thumb 垂直居中于 track */
+  border-radius: 50%;
+  background: var(--accent);
+  border: 0;
+  box-shadow: var(--sh-out-sm);
+}
+/* Firefox 的伪元素与 WebKit 不同，必须分开写 ——
+   写成一条规则的话，浏览器遇到不认识的选择器会把整条丢弃 */
+.nx-range::-moz-range-track,
+input[type='range']::-moz-range-track {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-sunk, var(--surface));
+}
+.nx-range::-moz-range-thumb,
+input[type='range']::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 0;
+}
+.nx-range:focus-visible,
+input[type='range']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.nx-range:disabled,
+input[type='range']:disabled {
+  opacity: var(--ctl-disabled-opacity);
+  cursor: var(--ctl-disabled-cursor);
+}
+
+/* ------------------------------------------------------------
+   高对比度模式（Windows 高对比度 / 系统强制色）
+   ------------------------------------------------------------
+   新拟态的卡片与底板**完全同色**，边界 100% 靠阴影勾 —— 而阴影在
+   forced-colors 下会被系统全部丢弃。结果是开了高对比度后，整个界面
+   连成一片，看不出哪是卡片哪是背景。
+
+   这与 --border 那个坑同源：都是"边界只寄托在一种机制上"。
+   --border 的教训是别把边界寄托在会变透明的变量上，这里是别只
+   寄托在阴影上。
+
+   所以 forced-colors 下补一条系统色描边（--divider 在此模式下会被
+   系统接管），并让勾选框显形（clip-path 在强制色下可能失效）。 */
+@media (forced-colors: active) {
+  .nx-check,
+  input[type='checkbox'],
+  input[type='radio'] {
+    border: 1px solid ButtonBorder;
+    background: ButtonFace;
+    /* 强制色下 SVG 勾可能被系统色覆盖，这里让 :checked 的实心底色
+       承担"已选中"的表达（见下一条 Highlight） */
+    background-image: none;
+  }
+  input[type='checkbox']:checked,
+  input[type='radio']:checked,
+  .nx-check:checked {
+    background: Highlight;
+    border-color: Highlight;
+  }
+  input[type='range']::-webkit-slider-thumb,
+  .nx-range::-webkit-slider-thumb {
+    background: Highlight;
+    border: 1px solid ButtonBorder;
+  }
+}
