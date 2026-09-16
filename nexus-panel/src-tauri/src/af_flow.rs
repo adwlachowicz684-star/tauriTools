@@ -905,11 +905,91 @@ fn copy_all(src: &Path, dst: &Path) -> Result<(), String> {
  * 越权判定必须在 dry 分支之前。
  */
 
-/// 已授权的根目录（存的是 canonicalize 后的绝对路径，便于 starts_with 比较）。
-static FS_ROOTS: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
+/* 已授权的根目录（存的是 canonicalize 后的绝对路径，便于 starts_with 比较）。
 
-fn fs_roots_lock() -> &'static Mutex<Vec<PathBuf>> {
-    FS_ROOTS.get_or_init(|| Mutex::new(Vec::new()))
+   `loaded` 与 `roots` 放在**同一个 struct 里**：加载标记和列表必须被同一把锁
+   保护，否则两个线程可以同时判定「还没加载过」、各自去读一遍文件再各写一次。 */
+struct FsRootsState {
+    loaded: bool,
+    roots: Vec<PathBuf>,
+}
+
+static FS_ROOTS: OnceLock<Mutex<FsRootsState>> = OnceLock::new();
+
+fn fs_roots_lock() -> &'static Mutex<FsRootsState> {
+    FS_ROOTS.get_or_init(|| Mutex::new(FsRootsState { loaded: false, roots: Vec::new() }))
+}
+
+/* ---------------- fs_op 授权的持久化 ---------------- */
+/*
+ * 授权列表此前只活在内存里，重启就回到「只有应用数据目录」的默认状态 ——
+ * 用户每次启动都要重新加一遍，等于这个入口形同虚设。
+ *
+ * 存到独立的 fs-roots.json，而不是塞进 project-group 的 config.json：
+ * 授权是**安全边界**，不该和插件的业务配置共用一个文件 ——
+ * 混在一起意味着任何写 config.json 的代码路径都可能碰到它。
+ *
+ * 三个必须守住的点：
+ *
+ * 1. **加载时重新校验 forbidden。**
+ *    文件是用户可编辑的，内容不可信。若加载时不过 is_forbidden_root，
+ *    手工往 JSON 里写 "/" 就能绕过 UI 的限制。
+ *
+ * 2. **加载时重新 canonicalize。**
+ *    同理：文件里可以是任意字符串。只对「能解析成真实目录」的条目放行。
+ *
+ * 3. **不持久化应用数据目录。**
+ *    它是动态算出来的兜底范围（换机器 / 重命名都会变），存进去会留下
+ *    指向旧位置的僵尸条目。所以只存用户显式授权的那些。
+ */
+
+const FS_ROOTS_FILE: &str = "fs-roots.json";
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct FsRootsFile {
+    #[serde(default)]
+    roots: Vec<String>,
+}
+
+/// 从磁盘读回授权列表。**失败一律当作空列表** —— 首次启动本来就没文件，
+/// 而列表为空只会让 fs_op 退回「仅数据目录」的默认状态，不会失控。
+fn load_fs_roots(dir: &Path) -> Vec<PathBuf> {
+    let path = dir.join(FS_ROOTS_FILE);
+    let file: FsRootsFile = match crate::fpx::store::read_json_any(&path) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),   // 不存在 / 解析失败 → 视作未授权过
+    };
+    let mut out = Vec::new();
+    for raw in file.roots {
+        let p = Path::new(raw.trim());
+        // 不存在、或已被 forbidden 规则排除的，一律丢弃（内容不可信）
+        let Ok(canon) = p.canonicalize() else { continue };
+        if is_forbidden_root(&canon) { continue; }
+        if !out.contains(&canon) { out.push(canon); }
+    }
+    out
+}
+
+/// 写回磁盘。**不存**应用数据目录（理由见上）。
+/// 写失败只记日志、不向上抛：授权已经在内存里生效了，
+/// 因为落盘失败就让用户本次操作报错，代价明显大于收益。
+fn persist_fs_roots(app: &AppHandle) {
+    let Ok(dir) = crate::fpx::store::resolve_data_dir(app) else { return };
+    let default = dir.canonicalize().ok();
+    let g = fs_roots_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let roots: Vec<String> = g
+        .roots
+        .iter()
+        .filter(|r| Some(*r) != default.as_ref())
+        .map(|r| r.display().to_string())
+        .collect();
+    drop(g);   // 别把锁带进 IO
+    if let Err(e) = crate::fpx::store::write_json_any(
+        &dir.join(FS_ROOTS_FILE),
+        &FsRootsFile { roots },
+    ) {
+        eprintln!("[fs_op] 授权列表写入失败（本次仍生效，重启后丢失）: {e}");
+    }
 }
 
 /// 即便显式授权也拒绝的根：把整块盘或系统目录放进来等于没约束。
@@ -939,16 +1019,27 @@ fn is_forbidden_root(p: &Path) -> bool {
 /// 不至于一上来所有操作都被拒。
 fn fs_roots_snapshot(app: &AppHandle) -> Vec<PathBuf> {
     let mut g = fs_roots_lock().lock().unwrap_or_else(|e| e.into_inner());
-    if g.is_empty() {
-        if let Ok(dir) = crate::fpx::store::resolve_data_dir(app) {
-            if let Ok(c) = dir.canonicalize() {
-                if !is_forbidden_root(&c) {
-                    g.push(c);
+    if !g.loaded {
+        // 先置位：即使下面加载失败也不再重试，避免每次调用都打一次磁盘
+        g.loaded = true;
+        let dir = crate::fpx::store::resolve_data_dir(app).ok();
+        if let Some(d) = &dir {
+            for c in load_fs_roots(d) {
+                if !g.roots.contains(&c) {
+                    g.roots.push(c);
+                }
+            }
+        }
+        // 兜底：保证「刚装好、还没配过任何目录」时 fs_op 仍可用于自己的数据区
+        if let Some(d) = &dir {
+            if let Ok(c) = d.canonicalize() {
+                if !is_forbidden_root(&c) && !g.roots.contains(&c) {
+                    g.roots.push(c);
                 }
             }
         }
     }
-    g.clone()
+    g.roots.clone()
 }
 
 /// 解析路径并校验它落在授权范围内。
@@ -1024,19 +1115,26 @@ pub fn af_fs_allow_root(app: AppHandle, path: String) -> Result<Vec<String>, Str
         ));
     }
     let mut g = fs_roots_lock().lock().unwrap_or_else(|e| e.into_inner());
-    if g.is_empty() {
-        if let Ok(dir) = crate::fpx::store::resolve_data_dir(&app) {
-            if let Ok(c) = dir.canonicalize() {
-                if !is_forbidden_root(&c) {
-                    g.push(c);
-                }
+    /* 这里也要确保兜底目录在内：用户可能一启动就来授权，
+       中间没经过任何一次 fs_op，snapshot 的懒加载还没跑过。
+       不补的话 persist 会把「只有用户目录」的列表写下去，
+       之后 snapshot 再补兜底目录，两者不一致。 */
+    if let Ok(dir) = crate::fpx::store::resolve_data_dir(&app) {
+        if let Ok(c) = dir.canonicalize() {
+            if !is_forbidden_root(&c) && !g.roots.contains(&c) {
+                g.roots.push(c);
             }
         }
     }
-    if !g.contains(&canon) {
-        g.push(canon);
+    if !g.roots.contains(&canon) {
+        g.roots.push(canon);
     }
-    Ok(g.iter().map(|r| r.display().to_string()).collect())
+    let out: Vec<String> = g.roots.iter().map(|r| r.display().to_string()).collect();
+    drop(g);   // 先放锁再写盘
+    // 标记已加载：这次是显式授权，不该被随后某次 snapshot 的懒加载覆盖掉
+    fs_roots_lock().lock().unwrap_or_else(|e| e.into_inner()).loaded = true;
+    persist_fs_roots(&app);
+    Ok(out)
 }
 
 /// 列出当前已授权的目录。
@@ -1061,8 +1159,11 @@ pub fn af_fs_disallow_root(app: AppHandle, path: String) -> Result<Vec<String>, 
         return Err("应用数据目录是 fs_op 的兜底范围，不能撤销。".to_string());
     }
     let mut g = fs_roots_lock().lock().unwrap_or_else(|e| e.into_inner());
-    g.retain(|r| r != &canon);
-    Ok(g.iter().map(|r| r.display().to_string()).collect())
+    g.roots.retain(|r| r != &canon);
+    let out: Vec<String> = g.roots.iter().map(|r| r.display().to_string()).collect();
+    drop(g);
+    persist_fs_roots(&app);
+    Ok(out)
 }
 
 /* ------------------------------------------------------------------ */
