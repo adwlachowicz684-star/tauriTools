@@ -1,32 +1,27 @@
-import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { CLI_META, type TaskNodeData } from '../types';
+import type { NodeProps } from '@xyflow/react';
+import { NodeShell } from './NodeShell';
+import type { TaskNodeData } from '../types';
+import { CLI_META } from '../types';
 import type { TaskFlowNode } from '../flowTypes';
 
-const STATUS_TEXT: Record<string, string> = {
-  idle: '待运行',
-  pending: '排队中',
-  running: '执行中',
-  success: '已完成',
-  failed: '失败',
-  skipped: '已跳过',
-};
-
 export default function TaskNode({ id, data, selected }: NodeProps<TaskFlowNode>) {
-  const meta = CLI_META[data.cli];
   const d: TaskNodeData = data;
+  const meta = CLI_META[d.cli];
 
   return (
-    <div className={`node-card status-${d.status} ${selected ? 'is-selected' : ''}`}>
-      <Handle type="target" position={Position.Left} />
-
-      <div className="node-head">
-        <span className="node-dot" style={{ background: meta.color }} />
-        <span className="node-title">{d.label}</span>
-        <span className={`node-badge badge-${d.status}`}>{STATUS_TEXT[d.status]}</span>
-      </div>
-
-      <div className="node-cli">{meta.label}</div>
-
+    <NodeShell
+      id={id}
+      type="task"
+      data={d}
+      selected={selected}
+      /*
+       * 圆点按所选 CLI 变色（两种 CLI 各有自己的品牌色），
+       * 这是"同类型不同变体"的正当特例 —— 其余节点都该用注册表的 meta.color。
+       */
+      dotColor={meta?.color}
+      tag={meta?.label}
+      footExtra={d.model ? <span className="node-model">{d.model}</span> : null}
+    >
       <div className="node-prompt">
         {d.prompt ? d.prompt.slice(0, 90) + (d.prompt.length > 90 ? '…' : '') : '（未填写提示词）'}
       </div>
@@ -38,13 +33,6 @@ export default function TaskNode({ id, data, selected }: NodeProps<TaskFlowNode>
           <span>{d.lastFiles[0].split(/[\\/]/).pop()}</span>
         </div>
       )}
-
-      <div className="node-foot">
-        <span className="node-id">{id}</span>
-        {d.model && <span className="node-model">{d.model}</span>}
-      </div>
-
-      <Handle type="source" position={Position.Right} />
-    </div>
+    </NodeShell>
   );
 }

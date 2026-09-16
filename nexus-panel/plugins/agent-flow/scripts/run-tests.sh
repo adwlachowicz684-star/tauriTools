@@ -37,7 +37,8 @@ for f in tests/*.test.ts; do
     --import-map ../engine/secretVault=../secretVault.mjs \
     --import-map ../engine/conversations=../conversations.mjs \
     --import-map ../types=../types.mjs \
-    --import-map ../engine/extract=../extract.mjs >/dev/null
+    --import-map ../engine/extract=../extract.mjs \
+    --import-map ../engine/runnerKit=../runnerKit.mjs >/dev/null
 done
 
 # 源码级守卫测试（tests/inspectorRemount.test.ts）要读源文件，

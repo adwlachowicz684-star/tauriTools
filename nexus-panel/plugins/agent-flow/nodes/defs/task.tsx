@@ -1,8 +1,9 @@
 import { CLI_META, makeNode, type CliKind, type TaskNodeData } from '../../types';
-import { FILE_FIELD_HINT } from '../../engine/files';
 import TaskNode from '../../components/TaskNode';
 import { FileParamsPanel } from '../../components/inspectors/shared';
-import { Field, VarBar, type FieldDef } from '../../components/inspectors/fields';
+import {
+  Field, VarBar, upstreamTokens, upstreamFileTokens, type FieldDef,
+} from '../../components/inspectors/fields';
 import { runTask } from '../../engine/runners/task';
 import { registerNode } from '../registry';
 
@@ -28,27 +29,13 @@ const fields: FieldDef[] = [
       <Field label="提示词内容">
         <VarBar
           title="可引用："
-          tokens={[
-            ...p.upstream.map((u) => ({ text: `{{${u}.output}}` })),
-            { text: '{{input}}' },
-          ]}
+          tokens={upstreamTokens(p.upstream, ['{{input}}'])}
           onInsert={(t) => p.onChange(String(p.d.prompt ?? '') + t)}
         />
         {p.upstream.length > 0 ? (
           <VarBar
             title="上游文件（改了哪些）："
-            tokens={[
-              ...p.upstream.map((u) => ({
-                text: `{{${u}.file}}`,
-                file: true,
-                title: FILE_FIELD_HINT.file,
-              })),
-              ...p.upstream.map((u) => ({
-                text: `{{${u}.fileName}}`,
-                file: true,
-                title: FILE_FIELD_HINT.fileName,
-              })),
-            ]}
+            tokens={upstreamFileTokens(p.upstream)}
             onInsert={(t) => p.onChange(String(p.d.prompt ?? '') + t)}
           />
         ) : null}

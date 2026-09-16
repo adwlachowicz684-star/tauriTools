@@ -1,59 +1,32 @@
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import type { NodeProps } from '@xyflow/react';
+import { NodeShell } from './NodeShell';
 import { EXTRACT_MODE_META, HTTP_METHODS, type ExtractNodeData, type GenericHttpNodeData } from '../types';
 import type { ExtractFlowNode, GenericHttpFlowNode } from '../flowTypes';
 
-const STATUS_TEXT: Record<string, string> = {
-  idle: '待运行',
-  pending: '排队中',
-  running: '执行中',
-  success: '已完成',
-  failed: '失败',
-  skipped: '已跳过',
-};
-
 /**
- * 通用节点的画布卡片。
- *
- * 一个组件服务两种节点（HTTP 请求 / 数据提取）：它们的卡片结构完全一样
- * （标题行 + 一行摘要），差别只在摘要怎么算。为此各写一个组件会多出两份
- * 几乎相同的 60 行，不值得。
+ * 通用卡片：HTTP 请求与数据提取的画布结构完全一样（标题行 + 一行摘要），
+ * 差别只在摘要怎么算。各写一个组件会多出两份几乎相同的 60 行，不值得。
  */
 function Card({
-  id, data, selected, color, tag, summary, title,
+  id, type, data, selected, tag, summary, title,
 }: {
   id: string;
+  type: string;
   data: { label?: string; status?: string };
   selected?: boolean;
-  color: string;
   tag: string;
   summary: { text: string; full?: string };
   title?: string;
 }) {
   return (
-    <div
-      className={`node-card status-${data.status ?? 'idle'} ${selected ? 'is-selected' : ''}`}
-      id={id}
-    >
-      <Handle type="target" position={Position.Left} />
-      <Handle type="source" position={Position.Right} />
-
-      <div className="node-head">
-        <span className="node-dot" style={{ background: color }} />
-        <span className="node-title">{data.label}</span>
-        <span className={`node-badge badge-${data.status ?? 'idle'}`}>
-          {STATUS_TEXT[data.status ?? 'idle']}
-        </span>
-      </div>
-
-      <div className="node-cli">{tag}</div>
-
+    <NodeShell id={id} type={type} data={data} selected={selected} tag={tag}>
       <div className="fs-summary">
         <code className="fs-path" title={summary.full ?? summary.text}>
           {summary.text}
         </code>
       </div>
       {title ? <div className="node-sub">{title}</div> : null}
-    </div>
+    </NodeShell>
   );
 }
 
@@ -77,9 +50,9 @@ export function HttpCard({ id, data, selected }: NodeProps<GenericHttpFlowNode>)
   return (
     <Card
       id={id}
+      type="generic-http"
       data={d}
       selected={selected}
-      color="#0ea5e9"
       tag="HTTP 请求 · 经桌面端发出"
       summary={{ text: `${method} ${briefUrl(d.url).text}` }}
       title={briefUrl(d.url).full !== briefUrl(d.url).text ? briefUrl(d.url).full : undefined}
@@ -93,9 +66,9 @@ export function ExtractCard({ id, data, selected }: NodeProps<ExtractFlowNode>) 
   return (
     <Card
       id={id}
+      type="extract"
       data={d}
       selected={selected}
-      color="#38bdf8"
       tag={`按${meta?.label ?? d.mode}提取`}
       summary={{
         text: d.mode === 'text' ? '原样传给下游' : (d.spec || '（未填参数）'),

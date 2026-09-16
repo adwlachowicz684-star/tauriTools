@@ -200,7 +200,19 @@ export default function App() {
     return () => {
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
     };
-  }, [nodes, edges, activeId, canvases]);
+    /*
+     * 依赖里**不能**放 canvases。
+     *
+     * 放了的后果：本 effect 写回内容 → canvases 变新引用 → 依赖变化 →
+     * 本 effect 重跑 → 400ms 后再写回 → ……
+     * 无限循环，表现为空闲时每 400ms 全量序列化并写一次 localStorage。
+     *
+     * 不放也不影响正确性：写回用的是函数式更新 (cs) => ...，
+     * 读的是 setCanvases 内部的最新值，用不着外层的 canvases。
+     * （updateCanvasContent 现在是幂等的，内容没变就返回原数组，
+     *  双重保险 —— 即便将来谁把 canvases 加回来，循环也不会起来。）
+     */
+  }, [nodes, edges, activeId]);
 
   /** 持久化整个多画布状态 */
   useEffect(() => {

@@ -1,15 +1,7 @@
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import type { NodeProps } from '@xyflow/react';
 import { TRIGGER_META, triggerKindsOf, type TriggerKind, type TriggerNodeData } from '../types';
 import type { TriggerFlowNode } from '../flowTypes';
-
-const STATUS_TEXT: Record<string, string> = {
-  idle: '待触发',
-  pending: '排队中',
-  running: '触发中',
-  success: '已触发',
-  failed: '异常',
-  skipped: '已跳过',
-};
+import { NodeShell, NODE_STATUS_TEXT } from './NodeShell';
 
 /** 某种触发方式的简短摘要 */
 function summaryOf(d: TriggerNodeData, k: TriggerKind): string {
@@ -36,27 +28,33 @@ export default function TriggerNode({ id, data, selected }: NodeProps<TriggerFlo
   const kinds: TriggerKind[] = triggerKindsOf(d);
 
   return (
-    <div
-      className={`node-card trigger status-${d.status} ${selected ? 'is-selected' : ''} ${
-        d.enabled ? '' : 'is-disabled'
-      }`}
+    <NodeShell
+      id={id}
+      type="trigger"
+      data={d}
+      selected={selected}
+      // is-disabled 是触发器独有的（停用态），外壳不认识，这里自己加
+      className={`trigger ${d.enabled ? '' : 'is-disabled'}`}
+      statusText={{
+        ...NODE_STATUS_TEXT,
+        idle: '待触发',
+        running: '触发中',
+        success: '已触发',
+        failed: '异常',
+      }}
+      /* 触发器是起点，没有输入端口 */
+      hasTarget={false}
+      tag={
+        <>
+          <span className="trig-icon">⚡</span>
+          {kinds.length === 1
+            ? (TRIGGER_META[kinds[0]]?.label ?? kinds[0])
+            : `${kinds.length} 种触发方式`}
+          {!d.enabled && <span className="trig-off">已停用</span>}
+        </>
+      }
+      footExtra={<span className="node-model">触发器起点</span>}
     >
-      {/* 触发器是起点，没有输入端口 */}
-      <Handle type="source" position={Position.Right} />
-
-      <div className="node-head">
-        <span className="node-dot" style={{ background: '#eab308' }} />
-        <span className="node-title">{d.label}</span>
-        <span className={`node-badge badge-${d.status}`}>{STATUS_TEXT[d.status]}</span>
-      </div>
-
-      <div className="node-cli">
-        <span className="trig-icon">⚡</span>
-        {kinds.length === 1
-          ? (TRIGGER_META[kinds[0]]?.label ?? kinds[0])
-          : `${kinds.length} 种触发方式`}
-        {!d.enabled && <span className="trig-off">已停用</span>}
-      </div>
 
       <div className="trig-list">
         {kinds.length === 0 && <div className="trig-row dim">未选择触发方式</div>}
@@ -76,10 +74,6 @@ export default function TriggerNode({ id, data, selected }: NodeProps<TriggerFlo
         </div>
       )}
 
-      <div className="node-foot">
-        <span className="node-id">{id}</span>
-        <span className="node-model">触发器起点</span>
-      </div>
-    </div>
+    </NodeShell>
   );
 }

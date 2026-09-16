@@ -2,7 +2,9 @@ import { makeTranslateNode } from '../../types';
 import { TARGET_LANGS } from '../../engine/llm';
 import TranslateNode from '../../components/TranslateNode';
 import { LlmConfigPanel } from '../../components/inspectors/shared';
-import { Field, VarBar, type FieldDef } from '../../components/inspectors/fields';
+import {
+  Field, VarBar, upstreamTokens, type FieldDef,
+} from '../../components/inspectors/fields';
 import { runTranslate } from '../../engine/runners/translate';
 import { registerNode } from '../registry';
 
@@ -58,10 +60,7 @@ const fields: FieldDef[] = [
       <Field label="待翻译内容">
         <VarBar
           title="可引用："
-          tokens={[
-            ...p.upstream.map((u) => ({ text: `{{${u}.output}}` })),
-            { text: '{{input}}' },
-          ]}
+          tokens={upstreamTokens(p.upstream, ['{{input}}'])}
           onInsert={(t) => p.onChange(String(p.d.text ?? '') + t)}
         />
         <textarea

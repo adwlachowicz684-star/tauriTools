@@ -1,15 +1,7 @@
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import type { NodeProps } from '@xyflow/react';
 import { UPDATE_SOURCE_META, type UpdateNodeData } from '../types';
 import type { BiliFlowNode, WechatFlowNode } from '../flowTypes';
-
-const STATUS_TEXT: Record<string, string> = {
-  idle: '待检查',
-  pending: '排队中',
-  running: '检查中',
-  success: '已检查',
-  failed: '检查失败',
-  skipped: '已跳过',
-};
+import { NodeShell, NODE_STATUS_TEXT } from './NodeShell';
 
 /** 卡片上显示"要检测谁" */
 function targetOf(d: UpdateNodeData): string {
@@ -40,20 +32,30 @@ export default function UpdateNode({ id, data, selected }: NodeProps<BiliFlowNod
         : { text: '无更新', cls: 'no' };
 
   return (
-    <div className={`node-card update status-${d.status} ${selected ? 'is-selected' : ''}`}>
-      <Handle type="target" position={Position.Left} />
-      <Handle type="source" position={Position.Right} />
-
-      <div className="node-head">
-        <span className="node-dot" style={{ background: meta.color }} />
-        <span className="node-title">{d.label}</span>
-        <span className={`node-badge badge-${d.status}`}>{STATUS_TEXT[d.status]}</span>
-      </div>
-
-      <div className="node-cli">
-        <span className="upd-icon">{meta.icon}</span>
-        {meta.label} · 输出 true / false
-      </div>
+    <NodeShell
+      id={id}
+      // 本组件服务 bili / wechat 两种类型，圆点色按数据源取（两处的
+      // meta.color 本就引用同一个 UPDATE_SOURCE_META，仍是单一来源）
+      type="bili"
+      dotColor={meta.color}
+      data={d}
+      selected={selected}
+      className="update"
+      statusText={{
+        ...NODE_STATUS_TEXT,
+        idle: '待检查',
+        running: '检查中',
+        success: '已检查',
+        failed: '检查失败',
+      }}
+      footExtra={<span className="node-model">更新检测</span>}
+      tag={
+        <>
+          <span className="upd-icon">{meta.icon}</span>
+          {meta.label} · 输出 true / false
+        </>
+      }
+    >
 
       <div className="upd-summary">
         <code title={d.source === 'bilibili' && d.biliMode === 'api' ? d.biliUid : d.feedUrl}>
@@ -78,10 +80,6 @@ export default function UpdateNode({ id, data, selected }: NodeProps<BiliFlowNod
         </div>
       )}
 
-      <div className="node-foot">
-        <span className="node-id">{id}</span>
-        <span className="node-model">更新检测</span>
-      </div>
-    </div>
+    </NodeShell>
   );
 }
