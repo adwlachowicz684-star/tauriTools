@@ -5,6 +5,17 @@ import { ContextMenu, type MenuItem } from './ui';
 
 export const DRAG_MIME = 'application/x-fpx-card';
 
+/** 链接状态 → 说明 */
+const STATE_TITLE: Record<string, string> = {
+  valid: '链接有效',
+  broken: '链接失效（已建过但目标没了）',
+  conflict: '同名位置被普通目录 / 文件占用',
+};
+const STATE_TEXT: Record<string, string> = {
+  broken: '失效',
+  conflict: '冲突',
+};
+
 /**
  * 当前正在拖的卡片属于哪一栏（模块级临时量）。
  *
@@ -311,6 +322,22 @@ export function CardGrid({
   /** 按下时的指针位置，用于拖拽阈值判定（见 DRAG_THRESHOLD） */
   const pressAt = useRef<{ x: number; y: number } | null>(null);
   /**
+   * 已展开链接明细的卡片（#16）。
+   *
+   * 纯视图状态，不写进配置：折叠与否只影响当前这一次浏览，
+   * 下次打开回到默认（收起）反而更好——否则卡片一多，展开态堆在一起更乱。
+   */
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  /** 有链接明细的卡片数（决定要不要显示"展开全部"） */
+  const linkableCount = cards.filter((c) => (c.linkDetails?.length ?? 0) > 0).length;
+  const allExpanded = linkableCount > 0 && expanded.size >= linkableCount;
+
+  const toggleLinks = (path: string) => setExpanded((s) => {
+    const n = new Set(s);
+    if (n.has(path)) n.delete(path); else n.add(path);
+    return n;
+  });
+  /**
    * 悬停的这张卡片是不是**跨栏**拖来的。
    * 跨栏语义是建链（落在卡片上），不是插入缝隙，所以此时不画竖条。
    */
@@ -366,7 +393,22 @@ export function CardGrid({
         else onCrossDrop(drag, null);
       }}
     >
-      {cards.length === 0 && <div className="nx-empty fpx-empty">{emptyHint}</div>}
+      {linkableCount > 0 && (
+        <div className="fpx-links-bar">
+          <button className="p-btn fpx-links-toggle"
+            onClick={() => {
+              // 只要还有没收起的，这一下就是"全部展开"；全都展开了才是"收起"
+              setExpanded(allExpanded ? new Set() : new Set(
+                cards.filter((c) => (c.linkDetails?.length ?? 0) > 0).map((c) => c.path),
+              ));
+            }}>
+            {allExpanded ? '收起全部链接' : '展开全部链接'}
+          </button>
+          <span className="p-muted" style={{ fontSize: 11 }}>{linkableCount} 个有链接</span>
+        </div>
+      )}
+
+      {cards.length === 0 && <div className="p-muted fpx-empty">{emptyHint}</div>}
       {cards.length === 0 && dropAt === 0 && draggingKind === kind && (
         <div className="fpx-drop-line" />
       )}
@@ -463,7 +505,21 @@ export function CardGrid({
           </div>
           <div className="fpx-card-path" title={c.path}>{c.path}</div>
           <div className="fpx-card-badges">
-            {c.hasLink && <span className="fpx-badge link" title="已建链接">🔗 {c.linkCount}</span>}
+            {/* 链接数兼展开开关：点一下展开逐条明细。
+                只在有明细可展时才可点——老版本后端不返回 linkDetails，
+                那时给一个不带按钮的普通徽标，点了没反应更糟。 */}
+            {(c.linkDetails?.length ?? 0) > 0 ? (
+              <button
+                className="fpx-badge link expandable"
+                title="展开 / 收起链接明细"
+                onClick={(e) => { e.stopPropagation(); toggleLinks(c.path); }}
+              >
+                🔗 {c.linkCount}
+                <span className={`fpx-link-arrow${expanded.has(c.path) ? ' open' : ''}`}>▸</span>
+              </button>
+            ) : (
+              c.hasLink && <span className="fpx-badge link" title="已建链接">🔗 {c.linkCount}</span>
+            )}
             {/* 链接到哪个项目组：光有「🔗 3」看不出连的是谁，必须把组名写出来。
                 只在项目卡片上显示——项目组卡片自己就是组，写自己没意义。 */}
             {kind === 'project' && c.linkedGroup && (c.hasLink || c.hasBroken) && (
@@ -484,6 +540,32 @@ export function CardGrid({
             {c.locked && <span className="fpx-badge lock" title="ACL 已保护">🔒</span>}
             {!c.exists && <span className="fpx-badge warn" title="文件夹不存在">✗ 缺失</span>}
           </div>
+
+          {expanded.has(c.path) && (c.linkDetails?.length ?? 0) > 0 && (
+            <div className="fpx-links">
+              {c.linkDetails!.map((d) => (
+                <div className={`fpx-link-row ${d.state}`} key={d.name + d.group}>
+                  <span className="fpx-link-dot" title={STATE_TITLE[d.state]} />
+                  <span className="fpx-link-name" title={d.name}>{d.name}</span>
+                  {kind === 'project' && d.groupName && (
+                    <>
+                      <span className="fpx-link-to">→</span>
+                      <span className="fpx-link-group"
+                        title={d.group || d.groupName}
+                        onClick={(e) => {
+                          if (!onJumpToGroup) return;
+                          e.stopPropagation();
+                          onJumpToGroup(c);
+                        }}>{d.groupName}</span>
+                    </>
+                  )}
+                  {d.state !== 'valid' && (
+                    <span className="fpx-link-state">{STATE_TEXT[d.state]}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       ))}
 

@@ -99,6 +99,20 @@ export interface CardInfo {
   tagColor: string | null;
   /** 颜色是否继承自所链接的项目组 */
   tagColorInherited: boolean;
+  /** 逐条链接明细；展开链接时用。老版本后端没有此字段，按空数组处理 */
+  linkDetails?: LinkDetail[];
+}
+
+export interface LinkDetail {
+  /** 链接名（如 .opencode、agents） */
+  name: string;
+  /** 指向的项目组名 */
+  groupName: string;
+  /** 指向的项目组路径 */
+  group: string;
+  /** valid / broken / conflict */
+  state: 'valid' | 'broken' | 'conflict';
+  created: string;
 }
 
 export interface TabInfo {

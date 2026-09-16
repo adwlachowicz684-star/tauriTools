@@ -398,6 +398,28 @@ pub struct CardInfo {
     /// tag_color 是否为继承自所链接项目组的颜色（界面上淡化显示，避免误以为改过）。
     #[serde(default)]
     pub tag_color_inherited: bool,
+    /// 逐条链接明细（界面上"展开链接"时用）。
+    ///
+    /// 只凭 `link_count` 用户只知道"连了 N 条"，不知道连的是谁、哪条坏了。
+    /// 每条给出**链接名**与它的状态；同一链接名指向多个项目组时会展开成多行。
+    #[serde(default)]
+    pub link_details: Vec<LinkDetail>,
+}
+
+/// 一条链接的明细。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkDetail {
+    /// 链接名（如 `.opencode`、`agents`）
+    pub name: String,
+    /// 指向的项目组名字（可能为空：记录缺失时）
+    pub group_name: String,
+    /// 指向的项目组路径
+    pub group: String,
+    /// valid / broken / conflict
+    pub state: String,
+    /// 建立时间（记录里没有则空串）
+    pub created: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

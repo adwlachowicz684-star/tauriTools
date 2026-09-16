@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use tauri::{AppHandle, Manager};
 
-use super::model::{FpxConfig, LinkRecord, LinkRow, TabInfo, CardInfo};
+use super::model::{FpxConfig, LinkRecord, LinkRow, TabInfo, CardInfo, LinkDetail};
 
 /// 数据目录缓存：插件子目录 <appDataDir>/project-group
 pub struct FpxState {
@@ -551,12 +551,20 @@ fn build_card(
     let mut has_link = 0usize;
     let mut broken = 0usize;
     let mut conflict = 0usize;
+    let mut details: Vec<LinkDetail> = Vec::with_capacity(names.len());
     for n in &names {
-        match super::junction::link_state(path, n) {
-            super::junction::LinkState::Valid => has_link += 1,
-            super::junction::LinkState::Broken => broken += 1,
-            super::junction::LinkState::Conflict => conflict += 1,
-        }
+        let state = match super::junction::link_state(path, n) {
+            super::junction::LinkState::Valid => { has_link += 1; "valid" }
+            super::junction::LinkState::Broken => { broken += 1; "broken" }
+            super::junction::LinkState::Conflict => { conflict += 1; "conflict" }
+        };
+        details.push(LinkDetail {
+            name: n.clone(),
+            group_name: rec.map(|r| r.group.clone()).unwrap_or_default(),
+            group: rec.map(|r| r.lib.clone()).unwrap_or_default(),
+            state: state.to_string(),
+            created: rec.map(|r| r.created.clone()).unwrap_or_default(),
+        });
     }
     let lock = lock_of(cfg, path);
     let (tag_color, tag_color_inherited) = resolve_tag_color(path, cfg, records, kind);
@@ -578,6 +586,7 @@ fn build_card(
         icon: cfg.folder_icons.get(path).cloned(),
         tag_color,
         tag_color_inherited,
+        link_details: details,
     }
 }
 

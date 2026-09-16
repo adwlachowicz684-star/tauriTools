@@ -1,8 +1,6 @@
 /* 项目组分配插件 · 样式（只用外壳主题变量，随主题自动适配） */
 
 @import url('../../css/tokens.css');
-@import url('../../css/controls.css'); /* 通用控件 */
-@import url('../../css/dialog.css');   /* 通用弹窗（js/dialog.js 依赖它） */
 .fpx-root { padding: 4px 2px 24px; }
 
 /* ---------- 左操作栏 + 主区（对照 WPF：SidebarControl 纵跨含日志的整个内容区）---------- */
@@ -217,7 +215,7 @@
 
 /* ---------- 卡片 ---------- */
 .fpx-cards { display: flex; flex-direction: column; gap: 8px; min-height: 80px; }
-.fpx-empty { padding: 14px; }
+.fpx-empty { padding: 14px; text-align: center; }
 .fpx-card {
   position: relative;   /* 插入竖条用伪元素绝对定位，不占布局 */
   padding: 10px 12px;
@@ -717,7 +715,7 @@
 .fpx-settings-foot {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   margin-top: 14px; padding-top: 10px;
-  border-top: 1px solid var(--divider);
+  border-top: 1px solid var(--border);
   font-size: 11px; color: var(--text-mute);
 }
 .fpx-foot-sep { opacity: .5; }
@@ -739,7 +737,7 @@
   padding: 5px 8px; border-radius: var(--r-sm); font-size: 12px;
 }
 .fpx-hotkey-row:hover { background: var(--surface); }
-.fpx-hotkey-row.bad { box-shadow: inset 2px 0 0 var(--danger); }
+.fpx-hotkey-row.bad { box-shadow: inset 2px 0 0 var(--danger, #c8555a); }
 .fpx-hotkey-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fpx-hotkey-val { height: 26px; padding: 0 10px; font-family: var(--font-mono); font-size: 11px; min-width: 110px; }
 .fpx-hotkey-reset { height: 26px; padding: 0 8px; }
@@ -748,3 +746,46 @@
   margin-bottom: 8px; padding: 6px 8px; border-radius: var(--r-sm);
   background: var(--surface-sunk); color: var(--danger, #c8555a); font-size: 11.5px;
 }
+
+/* ---------- 卡片链接明细（展开）---------- */
+.fpx-links-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 2px 6px;
+}
+.fpx-links-toggle { height: 22px; padding: 0 8px; font-size: 11px; }
+
+.fpx-badge.expandable {
+  cursor: pointer; display: inline-flex; align-items: center; gap: 3px;
+}
+.fpx-badge.expandable:hover { filter: brightness(1.15); }
+.fpx-link-arrow {
+  display: inline-block; font-size: 9px; transition: transform .12s;
+}
+.fpx-link-arrow.open { transform: rotate(90deg); }
+
+.fpx-links {
+  margin-top: 6px; padding: 5px 7px;
+  border-radius: var(--r-sm);
+  background: var(--surface-sunk);
+  display: flex; flex-direction: column; gap: 3px;
+}
+.fpx-link-row {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; line-height: 1.5;
+}
+.fpx-link-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: var(--accent);
+}
+.fpx-link-row.broken .fpx-link-dot { background: var(--text-mute); }
+.fpx-link-row.conflict .fpx-link-dot { background: var(--danger, #c8555a); }
+.fpx-link-name {
+  font-family: var(--font-mono); font-size: 10.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fpx-link-to { opacity: .5; }
+.fpx-link-group { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fpx-link-row:not(.broken):not(.conflict) .fpx-link-group { cursor: default; }
+.fpx-link-state { margin-left: auto; flex: none; font-size: 10px; opacity: .8; }
+.fpx-link-row.broken .fpx-link-state { color: var(--text-mute); }
+.fpx-link-row.conflict .fpx-link-state { color: var(--danger, #c8555a); }
