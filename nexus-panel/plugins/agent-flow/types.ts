@@ -30,6 +30,8 @@ export type TaskFileOutput = {
 };
 
 export type TaskNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   label: string;
   cli: CliKind;
   /** 节点内编辑的提示词，支持 {{nodeId.output}} 引用上游输出 */
@@ -61,6 +63,26 @@ export type TaskNodeData = {
 /** 文件参数的默认配置 */
 export function defaultFileOutput(): TaskFileOutput {
   return { enabled: true, mode: 'auto', manualPaths: '' };
+}
+
+/**
+ * 节点显示尺寸（只影响高度，宽度保持不变）。
+ *
+ * 存在的理由：模块组合后画布上会有很多"内部细节不重要"的节点，
+ * 全用同样的高度会把关键节点淹没。矮卡片只留标题行，
+ * 一眼就能看出主干；高卡片给关键节点更多展示空间。
+ */
+export type NodeSize = 'sm' | 'md' | 'lg';
+
+export const NODE_SIZE_META: Record<NodeSize, { label: string; hint: string }> = {
+  sm: { label: '矮', hint: '只留标题行 —— 模块内部的次要节点用这个' },
+  md: { label: '中', hint: '标准高度（默认）' },
+  lg: { label: '高', hint: '展开更多内容 —— 关键节点用这个' },
+};
+
+/** 缺省 / 非法值一律按 'md' 处理 —— 老存档没有这个字段 */
+export function normalizeSize(v: unknown): NodeSize {
+  return v === 'sm' || v === 'lg' ? v : 'md';
 }
 
 export type Graph = {
@@ -219,6 +241,8 @@ export function ruleConditions(rule: ConditionRule): ConditionItem[] {
 }
 
 export type ConditionNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'condition';
   label: string;
   /** 从上到下依次判定，命中第一条即走对应分支 */
@@ -390,6 +414,8 @@ export function makeConditionNode(id: string, partial: Partial<ConditionNodeData
 /* ------------------------------------------------------------------ */
 
 export type TriggerNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'trigger';
   label: string;
   /**
@@ -450,6 +476,8 @@ export type ParallelRule = {
 };
 
 export type ParallelNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'parallel';
   label: string;
   mode: ParallelMode;
@@ -543,6 +571,8 @@ export type LoopMode =
 export type LoopOnError = 'continue' | 'stop';
 
 export type LoopNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'loop';
   label: string;
   mode: LoopMode;
@@ -634,6 +664,8 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 export const HTTP_METHODS: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 
 export type GenericHttpNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'generic-http';
   label: string;
   /** 请求地址，支持 {{模板变量}} */
@@ -688,6 +720,8 @@ export const EXTRACT_MODE_META: Record<ExtractMode, { label: string; spec: strin
 };
 
 export type ExtractNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'extract';
   label: string;
   mode: ExtractMode;
@@ -702,6 +736,8 @@ export type ExtractNodeData = {
 };
 
 export type FsNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'fs';
   label: string;
   op: FsOp;
@@ -767,6 +803,8 @@ export type BiliMode =
   | 'rss';  // RSS（如 RSSHub），稳定但要自备服务
 
 export type UpdateNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'update';
   source: UpdateSource;
   label: string;
@@ -849,6 +887,8 @@ export type GithubStrategy = 'api' | 'atom' | 'cli';
 
 /** 拉取：要不要走本地 git（cli 方案需要机器上有 git） */
 export type GithubUpdateNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'github-update';
   label: string;
   owner: string;
@@ -873,6 +913,8 @@ export type GithubUpdateNodeData = {
 };
 
 export type GithubPushNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'github-push';
   label: string;
   owner: string;
@@ -996,6 +1038,8 @@ export const IMAGE_SOURCE_META: Record<ImageSource, { label: string; hint: strin
 };
 
 export type OcrNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'ocr';
   label: string;
   /** 大模型配置（与翻译节点共用） */
@@ -1022,6 +1066,8 @@ export type OcrNodeData = {
 };
 
 export type TranslateNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'translate';
   label: string;
   llm: LlmConfig;
@@ -1164,6 +1210,8 @@ export function makeGenericHttpNode(id: string, partial: Partial<GenericHttpNode
 /* ================================================================== */
 
 export type WaitNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'wait';
   label: string;
   /** 等待毫秒数。支持模板，如 {{上游.output}} */
@@ -1175,6 +1223,8 @@ export type WaitNodeData = {
 
 /** 日志标记：把一段文本写进运行日志，并把输出原样传给下游 */
 export type LogNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'log';
   label: string;
   /** 支持模板。留空则输出上游内容 */
@@ -1204,6 +1254,8 @@ export const BEEP_PRESET_META: Record<BeepPreset, { label: string; hint: string 
 };
 
 export type BeepNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'beep';
   label: string;
   preset: BeepPreset;
@@ -1216,6 +1268,8 @@ export type BeepNodeData = {
 
 /** 播放本地音频文件。需要 fs 能力，浏览器模式下不可用 */
 export type PlayAudioNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'play-audio';
   label: string;
   /** 支持模板，如 {{上游.output}} */
@@ -1229,6 +1283,8 @@ export type PlayAudioNodeData = {
 };
 
 export type ClockNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'clock';
   label: string;
   /**
@@ -1243,6 +1299,8 @@ export type ClockNodeData = {
 };
 
 export type ConstNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'const';
   label: string;
   /** 固定输出。支持模板（模板在运行时求值，所以"常量"也可以是动态拼出来的） */
@@ -1338,6 +1396,8 @@ export function makeClockNode(id: string, partial: Partial<ClockNodeData> = {}):
  * 而"有没有自带结构"本身就是脱钩的定义，不需要第二个真相。
  */
 export type ModuleNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
   kind: 'module';
   label: string;
   /** 跟随的模块 id；脱钩后为空串 */

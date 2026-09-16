@@ -1714,3 +1714,53 @@ input.mono, textarea.mono {
   border-left: 2px solid rgba(239, 68, 68, 0.55);
   border-radius: 3px; padding: 3px 6px;
 }
+
+
+/* ---------------- 节点显示高度（矮 / 中 / 高）---------------- */
+/*
+ * 只改高度与内边距，**宽度保持 240px 不变** ——
+ * 卡片宽度统一才能对齐，模块组合时尤其明显。
+ *
+ * 矮卡片靠"隐藏子元素"变矮（见 NodeShell），这里只收紧内边距与行高，
+ * 不去设死 height：设死的话，标题稍长或加了参数卡片就会被裁掉。
+ */
+.node-card.size-sm {
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+.node-card.size-sm .node-head { gap: 5px; }
+.node-card.size-sm .node-title { font-size: 12.5px; }
+.node-card.size-sm .node-badge { font-size: 10px; padding: 0 5px; }
+.node-card.size-sm .node-foot { margin-top: 3px; font-size: 10px; }
+/* 矮卡片上的参数卡片也要收紧，否则它比标题还占地方 */
+.node-card.size-sm .card-chip { font-size: 10px; padding: 0 5px; }
+
+.node-card.size-lg { padding: 12px 14px; }
+.node-card.size-lg .node-title { font-size: 15px; }
+/*
+ * 高卡片让摘要展开到多行。
+ * 中/矮都是单行截断（见 .fs-path），关键节点才需要看全。
+ */
+.node-card.size-lg .fs-path {
+  white-space: pre-wrap; word-break: break-all; overflow: visible;
+  text-overflow: clip; max-height: 4.6em;
+}
+
+/* 属性面板里的尺寸选择器 */
+.insp-size {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 10px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--af-divider);
+}
+.insp-size-label { font-size: 12px; color: var(--af-dim); flex: none; }
+.insp-size-ops { display: inline-flex; gap: 4px; }
+.insp-size-btn {
+  border: 1px solid var(--af-line); border-radius: 5px; cursor: pointer;
+  background: transparent; color: var(--af-dim); font-family: inherit;
+  font-size: 12px; padding: 2px 10px;
+  transition: color var(--af-dur-fast), border-color var(--af-dur-fast);
+}
+.insp-size-btn:hover { color: var(--af-fg); }
+.insp-size-btn.on {
+  color: var(--af-fg); border-color: var(--af-accent); background: var(--af-raised);
+}
