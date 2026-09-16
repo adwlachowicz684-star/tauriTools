@@ -19,6 +19,7 @@ npm-debug.log*
 
 # 校验脚本产物
 .smoke-react.cjs
+.drag-payload-test*.cjs
 
 # 本地临时测试脚手架（不入库）
 .rt/

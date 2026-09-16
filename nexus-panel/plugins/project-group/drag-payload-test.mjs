@@ -11,6 +11,7 @@
  */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -29,24 +30,44 @@ const esbuild = require(resolveEsbuild());
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.join(HERE, 'components/CardGrid.tsx');
-/* 产物落在源码同目录：esbuild 打包 react 时按此位置解析，放 /tmp 会解析到别的副本 */
-const OUT = path.join(HERE, '.drag-payload-test.cjs');
 
-await esbuild.build({
-  entryPoints: [SRC],
-  bundle: true,
-  outfile: OUT,
-  format: 'cjs',
-  platform: 'node',
-  jsx: 'automatic',
-  loader: { '.css': 'empty' },
-  logLevel: 'silent',
-  /* 只有全局副本时，让 esbuild 也能解析到 react 等依赖（本地装了则优先本地） */
-  nodePaths: ['/usr/local/lib/node_modules'],
-});
+/* 产物放系统临时目录，不放源码目录，两个原因：
+   1) plugins/project-group/ 正被 vite dev 的 watcher 盯着，刚写完的文件偶尔被占住；
+   2) 这个环境里 fs.rmSync 会「报告成功、文件却还在」（沙箱 safe-delete 垫片），
+      留在源码目录只会越攒越多 —— 实测 20 次并发跑完留下 18 个 1.3MB 的 .cjs。
+   扔进 os.tmpdir() 就与仓库无关了。
+   文件名还必须带 pid：批量并发跑测试时两次运行会共用同一个文件，一方 import 时
+   另一方刚把它删掉 → MODULE_NOT_FOUND，30 项断言全红，看着像测试挂了，其实是自相残杀。 */
+const OUT = path.join(os.tmpdir(), `.drag-payload-test.${process.pid}.cjs`);
+
+/* 目标文件偶尔被杀软或 watcher 短暂占住，写不进去 → 重试再判定真失败 */
+for (let i = 0; ; i++) {
+  try {
+    await esbuild.build({
+      entryPoints: [SRC],
+      bundle: true,
+      outfile: OUT,
+      format: 'cjs',
+      platform: 'node',
+      jsx: 'automatic',
+      loader: { '.css': 'empty' },
+      logLevel: 'silent',
+      /* 产物已不在项目内，react 等依赖靠这条显式指回项目 node_modules；
+         只有全局副本时再退到全局目录（沙盒 / CI） */
+      nodePaths: [path.join(HERE, '../../node_modules'), '/usr/local/lib/node_modules'],
+    });
+    break;
+  } catch (e) {
+    if (i >= 2) throw e;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+}
 
 const { parseDragPayload } = await import(pathToFileURL(OUT).href);
-fs.rmSync(OUT, { force: true });
+/* 删不掉也不算测试结论：文件在系统临时目录、名字带 pid，既不进仓库也不互相干扰，
+   真删不掉就留给系统清理。这一条以前没兜住 —— rmSync 抛 EPERM/ENOENT 时整轮判红，
+   而 30 项断言其实全绿。 */
+try { fs.rmSync(OUT, { force: true }); } catch { /* 交给系统清理 */ }
 
 let pass = 0, fail = 0;
 const t = (name, cond, extra = '') => {
