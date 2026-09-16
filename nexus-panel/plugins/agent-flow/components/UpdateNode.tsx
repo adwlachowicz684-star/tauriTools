@@ -37,7 +37,7 @@ export default function UpdateNode({ id, data, selected }: NodeProps<BiliFlowNod
       // 本组件服务 bili / wechat 两种类型，圆点色按数据源取（两处的
       // meta.color 本就引用同一个 UPDATE_SOURCE_META，仍是单一来源）
       type="bili"
-      dotColor={meta.color}
+      typeColor={meta.color}
       data={d}
       selected={selected}
       className="update"

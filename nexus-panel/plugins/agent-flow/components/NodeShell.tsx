@@ -1,6 +1,7 @@
 import { Handle, Position } from '@xyflow/react';
 import type { ReactNode } from 'react';
 import { getDef } from '../nodes/registry';
+import { validateNode, LEVEL_COLOR, LEVEL_TEXT, type IssueLevel } from '../engine/nodeValidate';
 
 /**
  * 节点卡片外壳 —— 10 种画布卡片共用的骨架。
@@ -46,11 +47,11 @@ export type NodeShellProps = {
   /** 覆盖状态文案（如 OCR 的「识别中 / 已识别」比「执行中 / 已完成」更贴切） */
   statusText?: Record<string, string>;
   /**
-   * 覆盖圆点颜色。
+   * 覆盖左边条颜色（节点类型色）。
    * 默认取 def.meta.color；只有"同类型不同变体用不同色"才需要传，
    * 例如任务节点按所选 CLI 变色、更新检测节点按数据源变色。
    */
-  dotColor?: string;
+  typeColor?: string;
   hasTarget?: boolean;
   hasSource?: boolean;
   /** node-foot 里 id 右侧的补充信息（模型名、字数等） */
@@ -60,26 +61,46 @@ export type NodeShellProps = {
 };
 
 export function NodeShell({
-  id, type, data, selected, className, tag, statusText, dotColor,
+  id, type, data, selected, className, tag, statusText, typeColor,
   hasTarget = true, hasSource = true, footExtra, children,
 }: NodeShellProps) {
   const status = data.status ?? 'idle';
   const text = statusText?.[status] ?? NODE_STATUS_TEXT[status] ?? status;
-  // 颜色唯一来源：注册表里那份。未注册的类型走兜底定义（灰色），不会崩
-  const color = dotColor ?? getDef(type).meta.color;
+  // 节点类型色的唯一来源：注册表里那份。未注册的类型走兜底定义（灰色），不会崩
+  const color = typeColor ?? getDef(type).meta.color;
+
+  /*
+   * 圆点是**配置预警**，不是运行状态（运行状态由右侧徽章呈现）。
+   *
+   * 以前圆点用类型色、左边条被 status 覆盖，结果"哪种节点"和"跑得怎么样"
+   * 混在一起：节点一跑起来，左边条就变色，类型反而认不出了。
+   * 现在分开 —— 左边条恒为类型色（认种类），圆点报配置完整度（认能不能跑）。
+   */
+  const issue = validateNode({ data });
+  const dot: IssueLevel = issue.level;
 
   return (
     <div
       className={`node-card ${className ?? ''} status-${status} ${selected ? 'is-selected' : ''}`}
+      style={{ borderLeftColor: color }}
     >
       {hasTarget ? <Handle type="target" position={Position.Left} /> : null}
       {hasSource ? <Handle type="source" position={Position.Right} /> : null}
 
       <div className="node-head">
-        <span className="node-dot" style={{ background: color }} />
+        <span
+          className={`node-dot level-${dot}`}
+          style={{ background: LEVEL_COLOR[dot] }}
+          title={issue.messages.length ? issue.messages.join('；') : LEVEL_TEXT[dot]}
+        />
         <span className="node-title">{data.label}</span>
         <span className={`node-badge badge-${status}`}>{text}</span>
       </div>
+
+      {/* 红色时把原因写出来 —— 只靠一个小红点，用户不知道缺什么 */}
+      {dot === 'error' && issue.messages.length ? (
+        <div className="node-alert">{issue.messages[0]}</div>
+      ) : null}
 
       {tag ? <div className="node-cli">{tag}</div> : null}
 

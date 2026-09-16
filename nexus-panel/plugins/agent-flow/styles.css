@@ -212,10 +212,14 @@ body { background: var(--af-bg); color: var(--af-fg); }
   border-left: 4px solid var(--af-dim); border-radius: 10px; padding: 10px 12px;
 }
 .node-card.is-selected { border-color: var(--af-accent); box-shadow: 0 0 0 2px var(--af-glow); }
-.node-card.status-running { border-left-color: var(--af-running); }
-.node-card.status-success { border-left-color: var(--af-ok); }
-.node-card.status-failed  { border-left-color: var(--af-bad); }
-.node-card.status-skipped { border-left-color: var(--af-warn); }
+/*
+ * 左边条现在**只表示节点类型**（由 NodeShell 用内联样式注入 def.meta.color），
+ * 不再被运行状态覆盖 —— 以前一跑起来左边条就变色，反而认不出是哪类节点了。
+ * 运行状态改由右侧徽章（.node-badge 的文字与颜色）呈现。
+ *
+ * 下面这几条规则因此不再需要。留着的话会被内联样式压过、不生效，
+ * 却会让人误以为还在起作用。
+ */
 .node-head { display: flex; align-items: center; gap: 6px; }
 .node-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .node-title { font-weight: 600; font-size: 14px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1677,4 +1681,36 @@ input.mono, textarea.mono {
 .side-tab:hover { color: var(--af-fg); }
 .side-tab.on {
   color: var(--af-fg); border-color: var(--af-line); background: var(--af-raised);
+}
+
+
+/* ---------------- 配置预警圆点 ---------------- */
+/*
+ * 圆点报的是"配置完整度"（绿=齐全 / 黄=有缺但能跑 / 红=会阻断），
+ * 不是运行状态 —— 运行状态看右侧徽章。
+ */
+.node-dot.level-warn { box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.22); }
+.node-dot.level-error {
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.28);
+  animation: af-pulse-dot 1.6s ease-in-out infinite;
+}
+/*
+ * 只给红点加脉动：红是"会阻断"，值得抢视线；
+ * 黄点如果也闪，画布上一片闪动反而看不出重点。
+ */
+@keyframes af-pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+/* 尊重系统的"减少动态效果"设置 */
+@media (prefers-reduced-motion: reduce) {
+  .node-dot.level-error { animation: none; }
+}
+
+/* 阻断原因直接写在卡片上 —— 只靠一个小红点，用户不知道缺什么 */
+.node-alert {
+  margin-top: 5px; font-size: 11px; line-height: 1.45;
+  color: #fca5a5; background: rgba(239, 68, 68, 0.12);
+  border-left: 2px solid rgba(239, 68, 68, 0.55);
+  border-radius: 3px; padding: 3px 6px;
 }

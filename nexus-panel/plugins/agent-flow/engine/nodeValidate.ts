@@ -1,0 +1,319 @@
+import type {
+  ConditionNodeData, TriggerNodeData, ParallelNodeData, LoopNodeData,
+  FsNodeData, OcrNodeData, TranslateNodeData, UpdateNodeData,
+  GithubUpdateNodeData, GithubPushNodeData, GenericHttpNodeData,
+  ExtractNodeData, TaskNodeData, WaitNodeData, BeepNodeData,
+  PlayAudioNodeData, ClockNodeData, ConstNodeData, ModuleNodeData,
+} from '../types';
+
+/**
+ * 节点配置校验 —— 画布圆点的三色预警。
+ *
+ * ================= 三档语义 =================
+ *
+ *   ok（绿）   配置齐全
+ *   warn（黄） 有缺项，但**能跑通** —— 有默认值兜底，或该项本就可选
+ *   error（红） 信息不全，**会阻断** —— 跑起来必然失败或毫无意义
+ *
+ * 黄与红的分界是"能不能跑通"，不是"重不重要"。
+ * 把"没填工作目录"判成红色会让画布一片红，
+ * 而它实际会用默认目录正常执行 —— 假警报比没警报更糟，
+ * 用户会很快学会忽略圆点。
+ *
+ * ================= 为什么放一个文件 =================
+ *
+ * 执行器是一节点一文件（每个几十行），校验规则只有几行且需要互相参照
+ * （比如"缺凭据"在拉取是黄、在推送是红），拆散了反而看不出这个对照。
+ * 集中一处，规则表一目了然。
+ *
+ * 与执行器同样刻意**不 import 任何 React**：
+ * 画布卡片要用它、单测要在 Node 下直接跑它。
+ */
+
+export type IssueLevel = 'ok' | 'warn' | 'error';
+
+export type NodeIssue = {
+  level: IssueLevel;
+  messages: string[];
+};
+
+type V = { level: IssueLevel; messages: string[] };
+
+function ok(): V {
+  return { level: 'ok', messages: [] };
+}
+function warn(...m: string[]): V {
+  return { level: 'warn', messages: m };
+}
+function error(...m: string[]): V {
+  return { level: 'error', messages: m };
+}
+
+const blank = (v: unknown): boolean => !String(v ?? '').trim();
+
+/* ------------------------------------------------------------------ */
+/* 各节点的校验                                                        */
+/* ------------------------------------------------------------------ */
+
+function vTask(d: TaskNodeData): V {
+  if (blank(d.prompt)) return error('没填提示词 —— CLI 无从下手');
+  const msgs: string[] = [];
+  // 都有默认值兜底：用默认工作目录、用该 CLI 的默认模型
+  if (blank(d.workdir)) msgs.push('没填工作目录，会用默认目录');
+  if (blank(d.model)) msgs.push('没指定模型，会用默认模型');
+  return msgs.length ? warn(...msgs) : ok();
+}
+
+function vCondition(d: ConditionNodeData): V {
+  const rules = Array.isArray(d.rules) ? d.rules : [];
+  if (rules.length === 0) {
+    // 有条兜底分支就能走下去，只是"永远走兜底"
+    return d.defaultBranch
+      ? warn('没有配置规则，只会走兜底分支')
+      : error('没有配置规则 —— 判断不出该走哪个分支');
+  }
+  const empty = rules.filter(
+    (r) => !Array.isArray(r.conditions) || r.conditions.length === 0,
+  );
+  if (empty.length > 0) {
+    return warn(`${empty.length} 条规则里没有条件，它们永远不会命中`);
+  }
+  return ok();
+}
+
+function vTrigger(d: TriggerNodeData): V {
+  const kinds: string[] = d.triggers ?? (d.trigger ? [d.trigger] : []);
+  if (kinds.length === 0) return error('没选任何触发方式');
+
+  const cfg = d.config ?? ({} as never);
+  const msgs: string[] = [];
+  let blocked = false;
+
+  for (const k of kinds) {
+    if (k === 'cron' && blank(cfg.cronExpr)) {
+      msgs.push('cron 没填表达式');
+      blocked = true;
+    }
+    if (k === 'watch' && blank(cfg.watchDir)) {
+      msgs.push('目录监听没填目录');
+      blocked = true;
+    }
+    if (k === 'chat') {
+      if (blank(cfg.chatDir)) { msgs.push('对话触发没填对话目录'); blocked = true; }
+      if (blank(cfg.chatKeywords)) { msgs.push('对话触发没填关键词'); blocked = true; }
+    }
+    if (k === 'interval') {
+      const sec = Number(cfg.intervalSec);
+      if (!Number.isFinite(sec) || sec < 10) {
+        msgs.push('定时间隔无效（最小 10 秒）');
+        blocked = true;
+      }
+    }
+  }
+
+  if (blocked) return error(...msgs);
+  if (!d.enabled) msgs.push('触发器已停用，不会被自动触发');
+  return msgs.length ? warn(...msgs) : ok();
+}
+
+function vParallel(d: ParallelNodeData): V {
+  if (d.mode === 'fixed') {
+    const c = Number(d.concurrency);
+    if (!Number.isFinite(c) || c < 1) return error('固定并发数无效（至少为 1）');
+    return ok();
+  }
+  const rules = Array.isArray(d.rules) ? d.rules : [];
+  if (rules.length === 0) {
+    const fb = Number(d.fallbackConcurrency);
+    return Number.isFinite(fb) && fb >= 1
+      ? warn('没有配置并发规则，会用兜底并发数')
+      : error('没有规则也没有兜底并发数');
+  }
+  return ok();
+}
+
+function vLoop(d: LoopNodeData): V {
+  if (d.mode === 'times') {
+    const t = Number(d.times);
+    if (!Number.isFinite(t) || t < 1) return error('循环次数无效（至少为 1）');
+    return ok();
+  }
+  if (d.mode === 'list') return blank(d.source) ? error('没填用于拆分的文本') : ok();
+  if (d.mode === 'glob') return blank(d.pattern) ? error('没填文件匹配模式') : ok();
+  return ok();
+}
+
+const NEEDS_TARGET = new Set(['copy', 'move', 'rename']);
+
+function vFs(d: FsNodeData): V {
+  if (blank(d.path)) return error('没填路径');
+  if (NEEDS_TARGET.has(d.op) && blank(d.target)) {
+    return error(`${d.op} 需要目标路径`);
+  }
+  return ok();
+}
+
+function vOcr(d: OcrNodeData): V {
+  if (d.imageSource === 'file' && blank(d.path)) return error('没填图片路径');
+  if (d.imageSource !== 'file' && blank(d.url)) return error('没填图片地址');
+  if (blank(d.credentialId) && blank(d.llm?.apiKey)) {
+    return warn('没选凭据也没填密钥，调用模型时可能失败');
+  }
+  return ok();
+}
+
+function vTranslate(d: TranslateNodeData): V {
+  const msgs: string[] = [];
+  if (blank(d.credentialId) && blank(d.llm?.apiKey)) {
+    msgs.push('没选凭据也没填密钥，调用模型时可能失败');
+  }
+  /*
+   * text 为空不判错：它可能挂在某个上游后面，靠 {{上游.output}} 取内容。
+   * 校验器拿不到边，判断不了"有没有上游" —— 宁可漏报也不要误报红色。
+   */
+  if (blank(d.targetLang)) msgs.push('没填目标语言');
+  return msgs.length ? warn(...msgs) : ok();
+}
+
+function vUpdate(d: UpdateNodeData): V {
+  if (d.source === 'bilibili') return blank(d.biliUid) ? error('没填 B 站 UID') : ok();
+  return blank(d.feedUrl) ? error('没填公众号 feed 地址') : ok();
+}
+
+function vGithubUpdate(d: GithubUpdateNodeData): V {
+  if (blank(d.repo)) return error('没填仓库');
+  /*
+   * 拉取缺令牌只是"可能受限"：公开仓库不需要鉴权，
+   * 私有仓库才需要。判黄 —— 能跑，只是可能拿不到。
+   */
+  if (blank(d.credentialId) && blank(d.token)) {
+    return warn('没选凭据也没填令牌，私有仓库会拉取失败');
+  }
+  return ok();
+}
+
+function vGithubPush(d: GithubPushNodeData): V {
+  if (blank(d.repo)) return error('没填仓库');
+  if (blank(d.filesText)) return error('没填要推送的文件');
+  /*
+   * 推送必须有令牌，没有例外 —— 与上面的拉取不同，这里判红。
+   * 这两条规则的差异正是"能不能跑通"这条分界线的具体体现。
+   */
+  if (blank(d.credentialId) && blank(d.token)) {
+    return error('推送必须有令牌：选一个凭据或填写内联令牌');
+  }
+  return ok();
+}
+
+function vHttp(d: GenericHttpNodeData): V {
+  if (blank(d.url)) return error('没填请求地址');
+  const t = Number(d.timeoutSec);
+  if (Number.isFinite(t) && t <= 0) return error('超时时间无效');
+  return ok();
+}
+
+function vExtract(d: ExtractNodeData): V {
+  if (blank(d.spec)) {
+    return error(
+      d.mode === 'json' ? '没填 JSON 路径' : d.mode === 'regex' ? '没填正则表达式' : '没填行规则',
+    );
+  }
+  return ok();
+}
+
+function vWait(d: WaitNodeData): V {
+  const ms = Number(d.ms);
+  if (!Number.isFinite(ms) || ms < 0) return error('等待时长不是有效数字');
+  return ok();
+}
+
+function vBeep(d: BeepNodeData): V {
+  const v = Number(d.volume);
+  if (!Number.isFinite(v) || v < 0 || v > 1) return error('音量要在 0~1 之间');
+  return ok();
+}
+
+function vPlayAudio(d: PlayAudioNodeData): V {
+  return blank(d.path) ? error('没填音频文件路径') : ok();
+}
+
+function vClock(d: ClockNodeData): V {
+  return blank(d.format) ? error('没填时间格式') : ok();
+}
+
+function vConst(d: ConstNodeData): V {
+  return blank(d.value) ? warn('值是空的，会输出空字符串') : ok();
+}
+
+function vModule(d: ModuleNodeData): V {
+  if (!d.inner && blank(d.moduleId)) return error('这个模块既没跟模块库关联，也没有自带结构');
+  return ok();
+}
+
+/* ------------------------------------------------------------------ */
+/* 分派                                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 按 data.kind 分派，不用 node.type。
+ *
+ * 与执行器分派同样的理由：引擎拿到的图结构里节点类型被剥掉了，
+ * 而 data.kind 是数据自带的。bili / wechat 两个 type 共用一份 data，
+ * 也靠 kind 统一处理。
+ */
+type Table = Record<string, (d: never) => V>;
+
+const VALIDATORS: Table = {
+  task: vTask as never,
+  condition: vCondition as never,
+  trigger: vTrigger as never,
+  parallel: vParallel as never,
+  loop: vLoop as never,
+  fs: vFs as never,
+  ocr: vOcr as never,
+  translate: vTranslate as never,
+  update: vUpdate as never,
+  'github-update': vGithubUpdate as never,
+  'github-push': vGithubPush as never,
+  'generic-http': vHttp as never,
+  extract: vExtract as never,
+  wait: vWait as never,
+  beep: vBeep as never,
+  'play-audio': vPlayAudio as never,
+  clock: vClock as never,
+  const: vConst as never,
+  module: vModule as never,
+};
+
+/** 校验单个节点。未知类型返回 ok —— 没规则时不要乱报红 */
+export function validateNode(node: { data?: unknown } | null | undefined): NodeIssue {
+  const d = node?.data as Record<string, unknown> | undefined;
+  if (!d) return { level: 'ok', messages: [] };
+  const fn = VALIDATORS[String(d.kind ?? '')];
+  if (!fn) return { level: 'ok', messages: [] };
+  try {
+    return fn(d as never);
+  } catch {
+    // 校验出错不该让画布白屏
+    return { level: 'ok', messages: [] };
+  }
+}
+
+/** 一批节点里最严重的那一档，用于"整张画布有没有问题"的汇总 */
+export function worstLevel(issues: IssueLevel[]): IssueLevel {
+  if (issues.includes('error')) return 'error';
+  if (issues.includes('warn')) return 'warn';
+  return 'ok';
+}
+
+export const LEVEL_TEXT: Record<IssueLevel, string> = {
+  ok: '配置齐全',
+  warn: '有缺项但可运行',
+  error: '配置不全，会阻断',
+};
+
+export const LEVEL_COLOR: Record<IssueLevel, string> = {
+  ok: '#22c55e',
+  warn: '#f59e0b',
+  error: '#ef4444',
+};
