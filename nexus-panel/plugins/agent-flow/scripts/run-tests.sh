@@ -43,6 +43,7 @@ for f in tests/*.test.ts; do
     --import-map ../engine/duplicate=../duplicate.mjs \
     --import-map ../engine/clock=../clock.mjs \
     --import-map ../engine/paramCards=../paramCards.mjs \
+    --import-map ../engine/modules=../modules.mjs \
     --import-map ../components/Sidebar=../Sidebar.mjs >/dev/null
 done
 

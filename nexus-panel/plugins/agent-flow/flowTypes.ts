@@ -5,7 +5,7 @@ import type {
   GenericHttpNodeData, ExtractNodeData,
   GithubUpdateNodeData, GithubPushNodeData,
   WaitNodeData, LogNodeData, BeepNodeData, PlayAudioNodeData,
-  ClockNodeData, ConstNodeData,
+  ClockNodeData, ConstNodeData, ModuleNodeData,
 } from './types';
 
 /** React Flow v12 的节点类型；data 承载我们自己的定义 */
@@ -31,6 +31,7 @@ export type BeepFlowNode = Node<BeepNodeData, 'beep'>;
 export type PlayAudioFlowNode = Node<PlayAudioNodeData, 'play-audio'>;
 export type ClockFlowNode = Node<ClockNodeData, 'clock'>;
 export type ConstFlowNode = Node<ConstNodeData, 'const'>;
+export type ModuleFlowNode = Node<ModuleNodeData, 'module'>;
 
 /* 新增节点类型时必须同时加到这里。
    漏加的话，App.tsx 里 `as FlowNode` 会报 TS2352 ——
@@ -55,7 +56,8 @@ export type FlowNode =
   | BeepFlowNode
   | PlayAudioFlowNode
   | ClockFlowNode
-  | ConstFlowNode;
+  | ConstFlowNode
+  | ModuleFlowNode;
 
 /** React Flow v12 的边类型；data.branch 标注所属分支 */
 export type FlowEdgeData = {

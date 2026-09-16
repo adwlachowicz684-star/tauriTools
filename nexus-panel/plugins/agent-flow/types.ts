@@ -250,7 +250,8 @@ export type NodeData =
   | BeepNodeData
   | PlayAudioNodeData
   | ClockNodeData
-  | ConstNodeData;
+  | ConstNodeData
+  | ModuleNodeData;
 
 /** 算子分类，用于面板里分组展示 */
 export type OpCategory = 'text' | 'empty' | 'flow';
@@ -1323,6 +1324,48 @@ export function makeClockNode(id: string, partial: Partial<ClockNodeData> = {}):
       error: '',
     } as ClockNodeData,
   };
+}
+
+/**
+ * 模块节点 —— 画布上一个模块的实例。
+ *
+ * 两种状态，二选一：
+ *   · 跟随（moduleId 有值、inner 为空）：结构来自模块库，改库则所有实例跟着变
+ *   · 脱钩（inner 有值）：自带一份结构副本，与模块库再无关系
+ *
+ * 为什么用"有 inner 就是脱钩"而不是再存一个 detached 布尔：
+ * 两个标志位可能不同步（比如 inner 还在但 detached=false），
+ * 而"有没有自带结构"本身就是脱钩的定义，不需要第二个真相。
+ */
+export type ModuleNodeData = {
+  kind: 'module';
+  label: string;
+  /** 跟随的模块 id；脱钩后为空串 */
+  moduleId: string;
+  /** 脱钩后的自带结构；跟随状态下为 null */
+  inner: { nodes: unknown[]; edges: unknown[] } | null;
+  status: NodeStatus;
+  output: string;
+  error: string;
+};
+
+export function makeModuleNode(id: string, partial: Partial<ModuleNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'module',
+      label: partial.label ?? '模块',
+      moduleId: partial.moduleId ?? '',
+      inner: partial.inner ?? null,
+      status: 'idle',
+      output: '',
+      error: '',
+    } as ModuleNodeData,
+  };
+}
+
+export function isModule(d: NodeData): d is ModuleNodeData {
+  return (d as ModuleNodeData).kind === 'module';
 }
 
 export function makeConstNode(id: string, partial: Partial<ConstNodeData> = {}): GraphNode {

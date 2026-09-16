@@ -38,6 +38,7 @@ import './defs/beep';
 import './defs/playAudio';
 import './defs/clock';
 import './defs/const';
+import './defs/module';
 import './defs/wechat';
 
 export {
