@@ -160,6 +160,11 @@ export function auditCss(css, file = 'styles.css', opt = {}) {
        只是多画一条线；颜色走变量就会跟着主题变。 */
     if (/^(?:inset )?-?\d+px 0 0 /.test(t)) continue;
     if (/^inset 0 -?\d+px 0 var\(--/.test(t)) continue;
+    /* 用 color-mix(in srgb, var(--xx) …) 从主题变量**派生**的阴影。
+       看着是"写了个颜色函数"，但它读的是 var(--bg) / var(--text) 等
+       主题变量 —— 换主题照样跟着变，所以是合法的。
+       纯 rgba(0,0,0,.3) 那种才是真写死。 */
+    if (/color-mix\([^)]*var\(--/.test(t)) continue;
     /* 零模糊的**单像素描边环**（色盘游标那类）：它是"给指针加个边"，
        不是立体感 —— 没有模糊就不产生明暗，只是画一圈线。
        这类环的颜色往往必须硬编码：游标叠在任意颜色的色盘上，

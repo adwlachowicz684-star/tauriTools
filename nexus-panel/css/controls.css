@@ -822,3 +822,38 @@ input[type='range']:disabled {
   transform: translate(-50%, -50%);
   /* 完全透明，只用来接收点击，不影响观感 */
 }
+
+/* ------------------------------------------------------------
+   容器级错误态
+   ------------------------------------------------------------
+   上面那条 [aria-invalid] 要求**逐个输入框**去设属性。但真实表单里
+   往往是"整块配置有问题"（比如某个节点的一条规则填错了），错误来自
+   校验函数的汇总结果，拿不到具体是哪个 input。
+
+   所以补一条容器级规则：容器标记 .has-error 后，内部所有录入控件
+   一起变色。两种用法并存：
+
+     · 能定位到具体字段  → 给 input 设 aria-invalid（精确，只红一个）
+     · 只能定位到一块    → 给容器加 .has-error（粗粒度，整块提示）
+
+   颜色只描边、不加粗、不改底板 —— 错误态要"指出来"而不是"吓人"，
+   满屏红底会让用户以为数据丢了。
+   ============================================================ */
+.has-error .nx-input,
+.has-error .p-input,
+.has-error .mm-input,
+.has-error .nx-select,
+.has-error .mm-select,
+.has-error input[type='text'],
+.has-error input[type='number'],
+.has-error select,
+.has-error textarea {
+  border-color: var(--danger);
+}
+/* 里层再套一块没错的（比如错误块里嵌个正常输入框）时不该继续红 */
+.has-error .no-error .nx-input,
+.has-error .no-error .p-input,
+.has-error .no-error input[type='text'],
+.has-error .no-error select {
+  border-color: var(--divider);
+}

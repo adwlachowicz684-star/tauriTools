@@ -183,6 +183,11 @@ export function ConditionInspector({ node, edges, onChange }: {
           const multi = conds.length > 1;
           const expr = describeRuleExpression(r);
           const ruleIssues = validateRule(r);
+          /* 卡片级错误态：错误文字已经在卡片内逐条列出了，但没有这条
+             标记的话，扫视时看不出哪张卡有问题 —— 得把每张卡的文字
+             都读一遍。加上 .has-error 后卡片内输入框一起变红，
+             一眼就能定位到第几条。 */
+          const ruleErrors = ruleIssues.filter((it) => it.level === 'error');
           const st = statusOf(r.id);
           const ruleOn = r.enabled !== false;
 
@@ -194,7 +199,8 @@ export function ConditionInspector({ node, edges, onChange }: {
                 (st === true ? ' hit' : '') +
                 (st === false ? ' miss' : '') +
                 (st === null ? ' broken' : '') +
-                (ruleOn ? '' : ' off')
+                (ruleOn ? '' : ' off') +
+                (ruleErrors.length > 0 ? ' has-error' : '')
               }
             >
               {/* 头：序号 + 分支名 + 开关 + 上下移动 + 删除 */}

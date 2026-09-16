@@ -128,29 +128,37 @@ function strOf(
  *
  * 统一了此前并存的两套写法：老的 `.field`（标签在上）和 `.p-row` + `.p-input`
  * （标签在左）。现在一律走这里，新增节点不必再挑。
+ *
+ * `error` 是字段级错误说明。传了就给容器加 `.has-error`，内部输入框
+ * 一起变色（见 controls.css 的"容器级错误态"）—— 校验结果往往来自
+ * 汇总函数、定位不到具体 input，所以走容器级而不是逐个设 aria-invalid。
  */
 export function Field({
-  label, hint, inline, children,
+  label, hint, inline, error, children,
 }: {
   label?: string;
   hint?: ReactNode;
   inline?: boolean;
+  /** 字段级错误说明；传了即进入错误态 */
+  error?: string;
   children: ReactNode;
 }) {
   if (inline) {
     return (
-      <label className="p-row">
+      <label className={'p-row' + (error ? ' has-error' : '')}>
         {label ? <span className="p-muted" style={{ width: 64, flex: 'none' }}>{label}</span> : null}
         {children}
         {hint ? <small className="dim" style={{ flexBasis: '100%' }}>{hint}</small> : null}
+        {error ? <small className="nx-field-error" style={{ flexBasis: '100%' }}>{error}</small> : null}
       </label>
     );
   }
   return (
-    <label className="field">
+    <label className={'field' + (error ? ' has-error' : '')}>
       {label ? <span>{label}</span> : null}
       {children}
       {hint ? <small className="dim">{hint}</small> : null}
+      {error ? <small className="nx-field-error">{error}</small> : null}
     </label>
   );
 }

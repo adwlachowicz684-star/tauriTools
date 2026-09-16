@@ -30,7 +30,9 @@ export default function Sidebar({
 }) {
   return (
     <aside id="sidebar">
-      <button className="side-toggle" onClick={onToggle} title="展开/收起">
+      {/* nx-touch：这是个 34px 的独立按钮，周围没有紧邻控件，
+          加 44px 命中区不会与邻居重叠 —— 触屏上更好点。 */}
+        <button className="side-toggle nx-touch" onClick={onToggle} title="展开/收起">
         <b>☰</b>
         <span>插件面板</span>
       </button>

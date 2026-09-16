@@ -507,6 +507,16 @@ console.log('\n=== 14. 文本溢出 / 表单错误态 / 触摸目标 ===');
   t('有配套的字段级错误说明类',
     /\.nx-field-error\s*\{[^}]*--danger/.test(controls));
 
+  /* 容器级错误态：[aria-invalid] 要求逐个 input 设属性，但校验结果
+     往往来自汇总函数、定位不到具体 input（比如"第 3 条规则填错了"）。
+     所以要有容器级：标记 .has-error 后内部控件一起变色。 */
+  t('有容器级错误态（.has-error 内控件变红）',
+    /\.has-error \.nx-input/.test(controls));
+  t('容器级错误态只描边不改底板（满屏红底会让人以为数据丢了）',
+    !/\.has-error \.nx-input[^{]*\{[^}]*background/.test(controls));
+  t('支持嵌套豁免（错误块里嵌的普通输入框不该继续红）',
+    /\.no-error/.test(controls));
+
   /* ---- 触摸目标 ----
      桌面端鼠标点得中 14px 的小叉号，触屏很难。
      但直接撑到 44px 会破坏密集布局，所以只扩**命中区**不改视觉尺寸。 */
