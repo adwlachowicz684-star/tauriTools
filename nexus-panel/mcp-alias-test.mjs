@@ -61,6 +61,7 @@ const need = [
   ['create_project', 'create_folder'],
   ['create_group', 'create_folder'],
   ['folder_icon_set_dll', 'folder_icon_set'],
+  ['refresh_content', 'scan_content'],
 ];
 for (const [o, n] of need) {
   t(`  ${o} → ${n}`, byOld[o]?.neu === n, byOld[o]?.neu);
@@ -99,6 +100,24 @@ for (const k of kinds) {
 }
 t('纯改名类不补参数（backup_now）', byOld.backup_now?.patch === null);
 t('纯改名类不补参数（lock_set）', byOld.lock_set?.patch === null);
+
+/* ---------- 2c. 名字接上了，参数也要接得上 ---------- */
+/* 原版 refresh_content 收 `target` 且允许缺省（回退当前选中），
+   而 scan_content 收 `root`。只做名字归一化的话，旧提示词传 target
+   会撞上"缺 root" —— 名字接上了参数没接上，等于没接。
+
+   这条守的是"参数回退"，不是"别名存在"。 */
+const scanBody = fnBody(rs, 'fn call_tool');
+const scanSeg = scanBody.slice(scanBody.indexOf('"scan_content" =>'));
+t('scan_content 在 root 为空时回退 resolve_target',
+  /resolve_target\(&args, true\)/.test(scanSeg));
+
+/* 必须是**先取 root、为空才回退**，不能反过来 ——
+   反过来会让显式传的 root 被当前选中覆盖，用户明明指定了却扫了别处。 */
+const iRoot = scanSeg.indexOf('s("root")');
+const iFallback = scanSeg.indexOf('resolve_target(&args, true)');
+t('回退在 root 之后判断（显式 root 优先）',
+  iRoot >= 0 && iFallback > iRoot, `root=${iRoot} fallback=${iFallback}`);
 
 /* ---------- 3. 归一化与开关的顺序 ---------- */
 console.log('\n=== 3. 顺序（关键设计）===');

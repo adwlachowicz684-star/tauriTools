@@ -505,6 +505,18 @@ const ALIASES: &[(&str, &str, Option<(&str, &str)>)] = &[
     ("list_agents", "scan_content", Some(("kind", "agent"))),
     ("list_skills", "scan_content", Some(("kind", "skill"))),
     ("list_rules", "scan_content", Some(("kind", "rule"))),
+    /* 原版 refresh_content（McpServer.cs:445）与 list_agents / list_skills
+       调的是**同一个** ScanContent —— 它没有缓存可刷，就是重扫一遍，
+       工具目录里也写明"等价界面「刷新内容」按钮"。
+
+       所以它不是"缺失的能力"，只是旧名字，加别名即可。
+
+       但它有一个别的别名没有的差异：**参数名不同**。
+       原版收 `target`（且 ResolveTarget(args, true) 会回退到当前选中），
+       而当前 scan_content 收 `root` 且必填。
+       只加名字别名的话，旧提示词传 target 会报"缺 root" —— 错误明确但
+       等于没接上。所以 scan_content 分支那边做了 target / 选中回退。 */
+    ("refresh_content", "scan_content", None),
     // 原版建项目 / 建项目组是两个工具，当前合并成 create_folder。
     // 注意：底层的 core_create_folder 本就不区分类型（第 5 参是 template
     // 而非 kind），所以这两个别名落到同一行为是**既有语义**，不是别名
@@ -593,7 +605,19 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
         }
         "scan_content" => {
             let kind = if s("kind").is_empty() { "all".to_string() } else { s("kind") };
-            let items = super::fpx_scan_content(s("root"), Some(kind));
+            /* root 是本工具的正式参数名；为空时回退 `target`，再回退当前选中。
+               原因：原版 refresh_content 走的是 ResolveTarget(args, true)，
+               收 target **且允许缺省**（用当前选中）。只做名字归一化的话，
+               旧提示词传 target 会撞上"缺 root" —— 名字接上了，参数没接上。
+
+               tools/list 的声明里 root 仍标必填（不动现有契约），
+               这里只是运行时更宽容 —— 纯增强，不影响既有调用。 */
+            let root = {
+                let r = s("root");
+                if !r.is_empty() { r }
+                else { resolve_target(&args, true).map_err(|e| err(&e))? }
+            };
+            let items = super::fpx_scan_content(root, Some(kind));
             json!({ "content": [{ "type": "text", "text": serde_json::to_string(&items).unwrap_or_default() }] })
         }
         "read_file" => {
