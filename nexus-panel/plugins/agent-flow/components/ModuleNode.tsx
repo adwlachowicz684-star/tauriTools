@@ -20,7 +20,7 @@ export function ModuleNode({ id, data, selected }: NodeProps<ModuleFlowNode>) {
       data={d}
       selected={selected}
       tag="模块"
-      dotColor={detached ? '#94a3b8' : '#f59e0b'}
+      typeColor={detached ? '#94a3b8' : '#f59e0b'}
       statusText={{
         idle: detached ? '已脱钩' : '跟随模块库',
       }}

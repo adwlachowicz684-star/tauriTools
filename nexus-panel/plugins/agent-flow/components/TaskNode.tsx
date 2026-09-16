@@ -18,7 +18,7 @@ export default function TaskNode({ id, data, selected }: NodeProps<TaskFlowNode>
        * 圆点按所选 CLI 变色（两种 CLI 各有自己的品牌色），
        * 这是"同类型不同变体"的正当特例 —— 其余节点都该用注册表的 meta.color。
        */
-      dotColor={meta?.color}
+      typeColor={meta?.color}
       tag={meta?.label}
       footExtra={d.model ? <span className="node-model">{d.model}</span> : null}
     >

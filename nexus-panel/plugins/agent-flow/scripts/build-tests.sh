@@ -96,6 +96,8 @@ $S engine/conversations.ts "$OUT/conversations.mjs" \
    --import-map ../types=./types.mjs >/dev/null
 $S engine/modules.ts "$OUT/modules.mjs" \
    --import-map ./duplicate=./duplicate.mjs >/dev/null
+$S engine/nodeValidate.ts "$OUT/nodeValidate.mjs" \
+   --import-map ../types=./types.mjs >/dev/null
 # paramCards / duplicate 是纯逻辑模块，单独生成
 $S engine/paramCards.ts "$OUT/paramCards.mjs" \
    --import-map ./duplicate=./duplicate.mjs >/dev/null

@@ -1,6 +1,8 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { GithubUpdateNodeData, GithubPushNodeData } from '../types';
 import { NodeCardChips } from './NodeCardChips';
+import { validateNode, LEVEL_COLOR, LEVEL_TEXT } from '../engine/nodeValidate';
+import { getDef } from '../nodes/registry';
 
 /**
  * GitHub 节点卡片。
@@ -42,11 +44,22 @@ function GithubCard({
   out: React.ReactNode;
 }) {
   const target = d.owner && d.repo ? `${d.owner}/${d.repo}` : '（未配置仓库）';
+  /*
+   * 这张卡片没套 NodeShell（视觉自成一体），所以预警要自己接。
+   * 状态点保留 —— 它报的是运行态（成功/失败/执行中），
+   * 与预警点（配置完整度）是两回事，两个点各管一摊。
+   */
+  const issue = validateNode({ data: d });
   return (
     <>
       <Handle type="target" position={Position.Left} />
       <div className="node-head">
         <span className="node-kind">GitHub</span>
+        <span
+          className={`node-dot level-${issue.level}`}
+          style={{ background: LEVEL_COLOR[issue.level] }}
+          title={issue.messages.length ? issue.messages.join('；') : LEVEL_TEXT[issue.level]}
+        />
         <StatusDot status={d.status} />
       </div>
       <div className="node-title">{d.label || fallbackLabel}</div>
@@ -55,6 +68,9 @@ function GithubCard({
       <NodeCardChips data={d} groups={[{ group: 'github-repo', fallback: '地址' }]} />
       <div className="node-meta">{meta}</div>
       {out}
+      {issue.level === 'error' && issue.messages.length ? (
+        <div className="node-alert">{issue.messages[0]}</div>
+      ) : null}
       {d.error ? <div className="node-err">{d.error}</div> : null}
       <Handle type="source" position={Position.Right} />
     </>
@@ -64,7 +80,10 @@ function GithubCard({
 export function GithubUpdateNode({ data, selected }: NodeProps) {
   const d = data as unknown as GithubUpdateNodeData;
   return (
-    <div className={`node-card kind-github ${selected ? 'is-selected' : ''} status-${d.status}`}>
+    <div
+      className={`node-card kind-github ${selected ? 'is-selected' : ''} status-${d.status}`}
+      style={{ borderLeftColor: getDef('github-update').meta.color }}
+    >
       <GithubCard
         d={d}
         fallbackLabel="GitHub 更新"
@@ -97,7 +116,10 @@ export function GithubPushNode({ data, selected }: NodeProps) {
     .map((x) => x.trim())
     .filter((x) => x !== '').length;
   return (
-    <div className={`node-card kind-github ${selected ? 'is-selected' : ''} status-${d.status}`}>
+    <div
+      className={`node-card kind-github ${selected ? 'is-selected' : ''} status-${d.status}`}
+      style={{ borderLeftColor: getDef('github-push').meta.color }}
+    >
       <GithubCard
         d={d}
         fallbackLabel="GitHub 推送"
