@@ -197,7 +197,9 @@ export function createHost(opts = {}) {
     if (!stage) return;
 
     if (!manifest) {
-      stage.innerHTML = `<div class="empty"><div class="empty-mark">◈</div>
+      /* .nx-empty.lg = 全屏大空态（居中 + 图标），.nx-empty-mark 是那个圆形图标。
+         两者都在 css/controls.css 里，外壳不再自己写一套 */
+      stage.innerHTML = `<div class="nx-empty lg"><div class="nx-empty-mark">◈</div>
         <p>左侧选择一个插件，或点击 ＋ 安装新插件</p></div>`;
       return;
     }
@@ -945,7 +947,10 @@ export function createHost(opts = {}) {
   function showLoading(hostEl, manifest) {
     if (!hostEl) return () => {};
     const el = document.createElement('div');
-    el.className = 'plugin-loading';
+    /* 同时挂 .nx-loading：基础表现（全屏覆盖、居中、淡出）在
+       css/controls.css 里，.plugin-loading 只留外壳自己的 .loading-inner
+       与 .loading-done 两处差异。只挂一个类会丢掉那一整层基础样式。 */
+    el.className = 'nx-loading plugin-loading';
     el.innerHTML = `
       <div class="loading-inner">
         <div class="spinner"></div>

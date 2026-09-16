@@ -725,6 +725,44 @@ disabled 态、跟随新的主题变量，都得在每个文件里各改一遍�
 | `.p-muted` 用 `--text-mute` | 外壳 | 比统一层的 `--text-dim` 更弱 |
 | `.p-tag` 胶囊圆角 | 外壳 | 与 `.mm-chip` 方角**有意区分** |
 
+**3.7.1 反馈类：空状态 / 加载 / Toast**
+
+这三类此前比按钮还散 —— 空状态有 **6 套**实现：
+
+| 类名 | 位置 |
+|---|---|
+| `.empty` / `.drawer-empty` | 外壳（全屏大空态 / 抽屉提示块） |
+| `.empty-hint` | agent-flow 检查器 |
+| `.cond-empty` | agent-flow 条件节点（行内小提示） |
+| `.task-empty` | agent-flow 任务与历史面板 |
+| `.mm-vthumb-empty` | 脑图视频缩略图占位 |
+| `.fpx-empty` | 项目组 |
+
+它们的差异多数是**无意的**（各写各的颜色与行高），少数是有意的
+（全屏居中 vs 行内一行字）。统一策略同上：基础表现进选择器组
+（弱化色 + 行高 + 居中），**尺寸与位置差异留在各自样式里**。
+
+```html
+<div class="nx-empty">没有内容</div>              <!-- 局部空态 -->
+<div class="nx-empty lg">                          <!-- 全屏大空态 -->
+  <div class="nx-empty-mark">◈</div><p>选一个插件</p>
+</div>
+<div class="nx-loading"><div class="nx-loading-inner">
+  <div class="nx-spinner"></div><span>正在加载…</span>
+</div></div>
+<div class="nx-toast ok">已保存</div>
+```
+
+几点说明：
+
+- **加载层要同时挂两类**：`.nx-loading`（基础）+ `.plugin-loading`
+  （外壳差异）。只挂一个会丢掉一整层基础样式 —— 这个坑测试里守着。
+- **Toast 的 `.ok` 必须是 `--ok` 而非环境色**：否则用户把环境色调成红色，
+  就会得到「红色的成功提示」。这条曾被全量覆盖打回过一次。
+- **Toast 容器 `pointer-events: none`**：右下角不该吃掉用户对背后界面的点击。
+- **转圈在减少动效时放慢而非停止**：转圈是最典型的前庭触发源，
+  直接停掉会让人以为卡死。
+
 **3.8 控件清单（哪些是共享的、哪些是插件自建的）**
 
 | 层 | 前缀 | 位置 | 说明 |

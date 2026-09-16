@@ -139,7 +139,7 @@ export function TaskPanel({
         </div>
 
         {tasks.length === 0 ? (
-          <div className="task-empty">
+          <div className="nx-empty task-empty">
             还没有运行记录。回到流程窗口点「运行」，这里的进度会实时更新。
           </div>
         ) : (
@@ -200,7 +200,7 @@ export function TaskPanel({
 
       <div className="task-detail">
         {!active ? (
-          <div className="task-empty">选一条任务看细节。</div>
+          <div className="nx-empty task-empty">选一条任务看细节。</div>
         ) : (
           <TaskDetail
             task={active}

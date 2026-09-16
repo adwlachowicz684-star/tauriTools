@@ -35,7 +35,7 @@ export default function Inspector({
   if (!node) {
     return (
       <aside className="inspector">
-        <div className="empty-hint">
+        <div className="nx-empty empty-hint">
           选中一个节点来编辑内容
           <br />
           <small>从左侧节点库拖一个节点到画布，或点击节点库直接添加</small>

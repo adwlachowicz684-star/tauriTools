@@ -199,5 +199,75 @@ console.log('\n=== 7. 引用计数（说明统一的价值）===');
     '这些引用一个都不用改，却共用同一份实现');
 }
 
+console.log('\n=== 8. 反馈类：空状态 / 加载 / Toast ===');
+{
+  /* 这三类此前比按钮还散：空状态 6 套实现（.empty / .drawer-empty /
+     .empty-hint / .cond-empty / .task-empty / .mm-vthumb-empty / .fpx-empty），
+     加载态外壳 .spinner + .plugin-loading、脑图 .mm-loading 各一份。
+     统一策略同按钮：基础表现进选择器组，尺寸差异留在各自样式里。 */
+
+  const gEmpty = groupOf(controls, '.nx-empty');
+  t('空状态合并进选择器组（含各插件的 6 个类名）',
+    ['\.nx-empty', '\.empty', '\.empty-hint', '\.cond-empty',
+      '\.task-empty', '\.mm-vthumb-empty', '\.fpx-empty']
+      .every((c) => new RegExp(c).test(gEmpty)),
+    gEmpty.replace(/\s+/g, ' ').slice(0, 100));
+  t('空状态基础表现是弱化色 + 行高 + 居中',
+    /color:\s*var\(--text-dim\)/.test(ruleOf(controls, '.nx-empty'))
+    && /line-height/.test(ruleOf(controls, '.nx-empty'))
+    && /text-align:\s*center/.test(ruleOf(controls, '.nx-empty')));
+  t('大空态 .nx-empty.lg 全屏居中',
+    /height:\s*100%/.test(ruleOf(controls, '.nx-empty.lg'))
+    && /justify-content:\s*center/.test(ruleOf(controls, '.nx-empty.lg')));
+  t('.nx-empty-mark 有底板与立体阴影（原来 .empty-mark 有，不能丢）',
+    /background:\s*var\(--surface\)/.test(ruleOf(controls, '.nx-empty-mark'))
+    && /box-shadow:\s*var\(--sh-out-lg\)/.test(ruleOf(controls, '.nx-empty-mark')));
+
+  /* 转圈：与 .spinner 同组，且尊重减少动效 */
+  const gSpin = groupOf(controls, '.nx-spinner');
+  t('.nx-spinner / .spinner 在同一条规则里',
+    /\.nx-spinner/.test(gSpin) && /\.spinner/.test(gSpin));
+  t('转圈动画在减少动效时放慢（转圈是最典型的 vestibular 触发源）',
+    /prefers-reduced-motion[\s\S]{0,200}nx-spinner[\s\S]{0,80}animation-duration/.test(controls));
+  t('覆盖式加载层 .nx-loading 有淡出态',
+    /\.nx-loading\.done\s*\{[^}]*opacity/.test(controls));
+
+  /* Toast：.ok 必须是状态色 --ok，不能是环境色 */
+  const gToast = groupOf(controls, '.nx-toast');
+  t('.nx-toast / .toast 在同一条规则里',
+    /\.nx-toast/.test(gToast) && /\.toast/.test(gToast), gToast.replace(/\s+/g, ' '));
+  t('toast 底板用 --surface-overlay（不是 --surface）',
+    /background:\s*var\(--surface-overlay\)/.test(ruleOf(controls, '.nx-toast')));
+  t('toast 成功色是 --ok 而不是环境色',
+    /\.toast\.ok\s*\{[^}]*--ok/.test(controls)
+    && !/\.toast\.ok\s*\{[^}]*--env/.test(controls));
+  t('Toast 容器不拦点击（右下角不该吃掉操作）',
+    /#toasts\s*\{[^}]*pointer-events:\s*none/.test(controls));
+
+  /* 重复定义清理 */
+  t('外壳不再自己写 .toast 的完整实现',
+    !/\.toast\s*\{[^}]*max-width/.test(shell));
+  t('外壳不再自己写 .spinner（已移到 controls）',
+    !/\.spinner\s*\{[^}]*animation/.test(shell));
+  t('外壳不再自己写 .empty / .empty-mark',
+    !/\.empty\s*\{[^}]*height:\s*100%/.test(shell)
+    && !/\.empty-mark\s*\{/.test(shell));
+
+  /* DOM 侧：加载层要同时挂两类，只挂一个会丢掉一整层基础样式 */
+  const hostJs = read('js/host.js');
+  t('加载层同时挂 .nx-loading 与 .plugin-loading',
+    /nx-loading plugin-loading|plugin-loading nx-loading/.test(hostJs));
+  t('大空态改用 .nx-empty.lg / .nx-empty-mark',
+    /nx-empty lg/.test(hostJs) && /nx-empty-mark/.test(hostJs));
+
+  /* 各插件的空状态元素也要挂上 .nx-empty，否则拿不到统一层 */
+  const mmJs = read('plugins/mindmap/panels.js');
+  t('脑图空状态元素挂了 .nx-empty', /nx-empty\.mm-vthumb-empty/.test(mmJs));
+  const pgTsx = read('plugins/project-group/components/CardGrid.tsx');
+  t('项目组空状态元素挂了 .nx-empty', /nx-empty fpx-empty/.test(pgTsx));
+  const afInsp = read('plugins/agent-flow/components/Inspector.tsx');
+  t('agent-flow 空状态元素挂了 .nx-empty', /nx-empty empty-hint/.test(afInsp));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

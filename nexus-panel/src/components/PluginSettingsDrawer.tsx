@@ -86,7 +86,7 @@ export default function PluginSettingsDrawer({
             {err
               ? <div className="err-box"><h3>⚠ 设置面板加载失败</h3><pre>{err}</pre></div>
               : !hasPluginSettings
-                ? <div className="drawer-empty">
+                ? <div className="nx-empty drawer-empty">
                     「{manifest.name}」没有提供自己的设置面板。
                     <br />
                     下面的沙箱与主题适配由外壳提供，对所有插件都有效。

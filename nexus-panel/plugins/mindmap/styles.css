@@ -8,6 +8,8 @@
    ============================================================ */
 
 @import url('../../css/tokens.css');
+@import url('../../css/controls.css'); /* 通用控件 */
+@import url('../../css/dialog.css');   /* 通用弹窗（js/dialog.js 依赖它） */
 
 :root {
   --bezel:         rgba(255, 255, 255, .12);   /* 输入控件的外圈 */
@@ -41,58 +43,9 @@ html, body {
 .mm-mono { font-family: var(--font-mono); }
 
 /* 迷你按钮：比 .p-btn 更紧凑，工具栏用 */
-.mm-btn {
-  min-width: 28px;
-  height: 28px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: var(--r-sm, 8px);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 12.5px;
-  cursor: pointer;
-  box-shadow: var(--sh-out-sm);
-  transition: box-shadow var(--dur-fast), color var(--dur-fast);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  white-space: nowrap;
-}
-.mm-btn:hover { color: var(--accent); }
-.mm-btn:active {
-  box-shadow: var(--sh-in-md);
-}
-.mm-btn.on { color: var(--accent); box-shadow: var(--sh-in-md); }
-.mm-btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
 
-.mm-btn.wide { min-width: 0; }
-.mm-btn.icon { padding: 0 7px; font-weight: 600; }
 
-.mm-input {
-  height: 28px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: var(--r-sm, 8px);
-  background: var(--surface-sunk, var(--surface));
-  color: var(--text);
-  font-size: 12.5px;
-  box-shadow: var(--sh-in-md);
-  outline: none;
-}
-.mm-input::placeholder { color: var(--text-mute); }
 
-.mm-select {
-  height: 28px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: var(--r-sm, 8px);
-  background: var(--surface-sunk, var(--surface));
-  color: var(--text);
-  font-size: 12.5px;
-  outline: none;
-  box-shadow: var(--sh-in-md);
-}
 
 /* 色块（颜色选择按钮） */
 .mm-swatch {
@@ -144,8 +97,7 @@ html, body {
   background: var(--surface);
   box-shadow: var(--sh-out-md);
 }
-.mm-rail .mm-btn { width: 34px; padding: 0; }
-
+.mm-rail 
 /* 右侧属性侧栏：对齐 C# MindMapPanel 的 Column 1（Width="276"），常驻不折叠。
    页签在顶栏最右，不占这里的高度，所以整栏都是内容区。 */
 .mm-side {
@@ -540,26 +492,9 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
 .mm-search-info.warn { color: var(--warn, #E0A33A); }
 
 /* 浮层（视频播放 / 自定义主题编辑） */
-.mm-mask {
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,.55);
-  display: flex; align-items: center; justify-content: center;
-  z-index: var(--z-float, 50);
-}
-.mm-dialog {
-  width: min(560px, 92vw);
-  max-height: 86vh;
-  overflow-y: auto;
-  padding: 16px;
-  border-radius: var(--r-lg, 18px);
-  background: var(--surface);
-  box-shadow: var(--sh-out-lg);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.mm-dialog h3 { margin: 0; font-size: 14px; }
-.mm-dialog .mm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+/* 通用浮层（.mm-mask / .mm-dialog）已删除：panels.js 的 dialog() 改为
+   委托给全工具共用的 js/dialog.js，用 .nx-mask / .nx-dlg。
+   样式留在 css/dialog.css，本插件通过顶部 @import 引入。 */
 
 
 /* 图片附件预览浮层 */
@@ -684,7 +619,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
   background: var(--surface-sunk, var(--surface));
   cursor: default;
 }
-.mm-vthumb-empty { color: var(--text-mute); font-size: 11.5px; }
+.mm-vthumb-empty { font-size: 11.5px; }
 /* 加载中：不能是一块纯黑 —— 那会被当成「附件没了」 */
 .mm-vthumb.loading { background: var(--surface-sunk, var(--surface)); }
 .mm-vthumb.loading .mm-vthumb-empty { opacity: .8; }

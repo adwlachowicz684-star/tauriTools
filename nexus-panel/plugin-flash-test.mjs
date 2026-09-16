@@ -24,6 +24,10 @@ const t = (name, cond, extra = '') => {
 };
 
 const css = read('css/neumorphism.css');
+/* 加载覆盖层的基础表现（全屏、不透明底板、淡出）已移到 css/controls.css 的
+   .nx-loading；外壳的 .plugin-loading 只留 .loading-inner 与 .loading-done
+   两处差异。所以这里要连带读那份文件，否则断言会查错地方。 */
+const controls = read('css/controls.css');
 const host = read('js/host.js');
 
 /* 取出某个选择器对应的声明块（只取第一条，够用且不会被后面的覆盖干扰） */
@@ -144,13 +148,21 @@ console.log('\n=== 6. 加载覆盖层：加载期间要有东西看，且不能�
 /* 以前「正在加载…」是直接写进 stage.innerHTML 的，而挂载 iframe 时
    一句 hostEl.innerHTML = '' 就把它抹了 —— 插件却还要等适配完成才淡入，
    中间那段屏上只有 iframe 的底色，看着像卡死。现在改成了覆盖层。 */
-const loadingBlock = ruleOf('.plugin-loading {') || '';
-t('.plugin-loading 存在', !!loadingBlock);
+/* .nx-loading（统一层）+ .plugin-loading（外壳差异）合起来才是完整实现 */
+const nxBlock = (() => {
+  const i = controls.indexOf('.nx-loading {');
+  if (i < 0) return '';
+  const open = controls.indexOf('{', i);
+  return controls.slice(open + 1, controls.indexOf('}', open));
+})();
+const loadingBlock = (ruleOf('.plugin-loading {') || '') + nxBlock;
+t('加载层存在（.nx-loading 基础 + .plugin-loading 差异）',
+  !!nxBlock && /nx-loading plugin-loading|plugin-loading nx-loading/.test(host));
 t('加载层是不透明的（transparent 盖不住下面没显形的 iframe）',
-  /background\s*:\s*var\(--bg\)/.test(loadingBlock),
-  (loadingBlock.match(/background\s*:\s*[^;]+;/) || ['未声明'])[0]);
+  /background\s*:\s*var\(--bg\)/.test(nxBlock),
+  (nxBlock.match(/background\s*:\s*[^;]+;/) || ['未声明'])[0]);
 t('加载层用绝对定位铺满（是覆盖层，不是占位元素）',
-  /position\s*:\s*absolute/.test(loadingBlock) && /inset\s*:\s*0/.test(loadingBlock));
+  /position\s*:\s*absolute/.test(nxBlock) && /inset\s*:\s*0/.test(nxBlock));
 t('有淡出态（成功时先透出插件再摘掉，避免跳变）',
   /\.plugin-loading\.loading-done\s*\{[^}]*opacity\s*:\s*0/.test(css));
 

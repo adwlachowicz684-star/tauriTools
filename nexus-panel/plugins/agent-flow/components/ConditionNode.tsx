@@ -29,7 +29,7 @@ export default function ConditionNode({ id, data, selected }: NodeProps<CondFlow
       <div className="node-cli">条件分支 · 不调用 CLI</div>
 
       <div className="cond-rules">
-        {rules.length === 0 && <div className="cond-empty">未配置规则</div>}
+        {rules.length === 0 && <div className="nx-empty cond-empty">未配置规则</div>}
         {rules.map((r) => (
           <div key={r.id} className="cond-rule">
             <Handle

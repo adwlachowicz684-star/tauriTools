@@ -135,7 +135,7 @@ export function HistoryPanel({
         </div>
 
         {rows.length === 0 ? (
-          <div className="task-empty">
+          <div className="nx-empty task-empty">
             {entries.length === 0
               ? '还没有历史记录。运行过的任务会自动归档到这里，下次打开还在。'
               : '没有符合筛选条件的记录。换个时间范围或清空搜索词试试。'}
@@ -194,7 +194,7 @@ export function HistoryPanel({
 
       <div className="task-detail">
         {!active ? (
-          <div className="task-empty">选一条记录看细节。</div>
+          <div className="nx-empty task-empty">选一条记录看细节。</div>
         ) : (
           <TaskDetail
             task={active}

@@ -315,3 +315,164 @@
   background: var(--divider);
   border: 0;
 }
+
+/* ============================================================
+   反馈类：空状态 / 加载 / Toast
+   ============================================================
+   这三类此前比按钮还散 —— 空状态有 6 套实现：
+
+     .empty / .drawer-empty   外壳（全屏大空态 / 抽屉提示块）
+     .empty-hint               agent-flow 检查器
+     .cond-empty                agent-flow 条件节点（行内小提示）
+     .task-empty                agent-flow 任务与历史面板
+     .mm-vthumb-empty           脑图视频缩略图占位
+     .fpx-empty                 项目组
+
+   它们的差异多数是**无意的**（各写各的颜色与行高），少数是有意的
+   （全屏居中 vs 行内一行字）。统一策略与按钮一致：
+     · 基础表现（弱化色、行高、居中）放进选择器组，只写一份
+     · 位置与尺寸差异留在各自的样式里
+
+   加载态同理：外壳 .spinner + .plugin-loading，脑图 .mm-loading。
+   ============================================================ */
+
+/* ------------------------------------------------------------
+   空状态
+   ------------------------------------------------------------ */
+.nx-empty,
+.empty,
+.empty-hint,
+.cond-empty,
+.task-empty,
+.mm-vthumb-empty,
+.fpx-empty {
+  color: var(--text-dim);
+  line-height: 1.7;
+  text-align: center;
+}
+
+/* 全屏大空态：居中 + 图标 + 主文案。
+   .empty 与 .drawer-empty 是这个档位，差异（圆形 mark、凹陷底板）
+   留在外壳自己的样式里 */
+.nx-empty.lg {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--text-mute);
+}
+.nx-empty-mark {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  color: var(--text-mute);
+  background: var(--surface);
+  box-shadow: var(--sh-out-lg);
+}
+
+/* ------------------------------------------------------------
+   加载
+   ------------------------------------------------------------ */
+.nx-spinner,
+.spinner {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid var(--sh-light);
+  border-top-color: var(--accent);
+  animation: nx-spin .8s linear infinite;
+}
+/* 系统开了「减少动效」就不转了 —— 转圈是最典型的 vestibular 触发源 */
+@media (prefers-reduced-motion: reduce) {
+  .nx-spinner, .spinner { animation-duration: 2s; }
+}
+@keyframes nx-spin { to { transform: rotate(360deg); } }
+
+/* 行内"载入中"：一个圈 + 一行字 */
+.nx-loading-inline,
+.loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px 20px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* 覆盖式加载层：盖在插件之上，插件在下面照常加载。
+   外壳的 .plugin-loading 就是这个档位（全屏 + --bg 底板） */
+.nx-loading {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-raised);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 12px;
+  transition: opacity var(--dur-base) ease;
+}
+.nx-loading .nx-loading-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-radius: var(--r-lg);
+  background: var(--surface-overlay);
+  box-shadow: var(--sh-out-md);
+}
+/* 淡出：先让下面已就绪的内容透出来，再把自己摘掉 */
+.nx-loading.done { opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .nx-loading { transition: none; }
+}
+
+/* ------------------------------------------------------------
+   Toast
+   ------------------------------------------------------------ */
+.nx-toast,
+.toast {
+  padding: 11px 16px;
+  max-width: 320px;
+  border-radius: var(--r-sm);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+  /* 与弹窗同理：用 --surface-overlay，玻璃主题下 --surface 只有 7% 白 */
+  background: var(--surface-overlay);
+  box-shadow: var(--sh-out-lg);
+  animation: nx-toast-in var(--dur-slow) ease;
+}
+/* 成功用状态色 --ok 而非环境色：
+   用环境色的话，用户把环境色调成红色，就会得到「红色的成功提示」 */
+.nx-toast.ok,  .toast.ok  { color: var(--ok); }
+.nx-toast.err, .toast.err { color: var(--danger); }
+.nx-toast.warn, .toast.warn { color: var(--warn); }
+@keyframes nx-toast-in { from { opacity: 0; transform: translateY(8px); } }
+@media (prefers-reduced-motion: reduce) {
+  .nx-toast, .toast { animation: none; }
+}
+
+/* Toast 容器：右下角竖排。
+   插件若自己显示 toast，也要有一个同类容器 —— 位置与层级统一 */
+.nx-toasts,
+#toasts {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: var(--z-toast);
+  pointer-events: none;
+}
+/* 容器不拦点击，但单条 toast 要能点（将来可能有"撤销"按钮） */
+.nx-toasts > *, #toasts > * { pointer-events: auto; }

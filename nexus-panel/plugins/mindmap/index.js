@@ -26,6 +26,7 @@ import { attachTabDrag } from './tab-drag.js';
 import { buildFileList } from './filelist.js';
 import * as xmind from './xmind.js';
 
+import { confirm, prompt } from '../../js/dialog.js';
 /** 外壳桥接频道（plugin-sdk 的 BRIDGE_CHANNEL），用于捕获运行时主题切换 */
 const SHELL_CHANNEL = 'nexus-bridge-v1';
 const AUTOSAVE_MS = 800;        // 停止编辑多久后写入本地库
@@ -580,10 +581,10 @@ bootIframePlugin(async (ctx) => {
     await persist();
   }
 
-  function renameSheet(id) {
+  async function renameSheet(id) {
     const s = workbook.sheets.find((x) => x.id === id);
     if (!s) return;
-    const name = window.prompt('画布名称', s.title);
+    const name = await prompt({ title: '重命名画布', label: '画布名称', defaultValue: s.title });
     if (name == null) return;
     s.title = name.trim() || s.title;
     renderTabs();
@@ -700,10 +701,10 @@ bootIframePlugin(async (ctx) => {
     await openFile(id);
   }
 
-  function renameFile(id) {
+  async function renameFile(id) {
     const f = fileIndex.find((x) => x.id === id);
     if (!f) return;
-    const name = window.prompt('脑图名称', f.name);
+    const name = await prompt({ title: '重命名脑图', label: '脑图名称', defaultValue: f.name });
     if (name == null) return;
     f.name = name.trim() || f.name;
     store.files.save(fileIndex);
@@ -718,7 +719,12 @@ bootIframePlugin(async (ctx) => {
   async function deleteFile(id) {
     const f = fileIndex.find((x) => x.id === id);
     if (!f) return;
-    if (!window.confirm(`删除「${f.name}」？该脑图下的所有画布都会一并删除。`)) return;
+    const ok = await confirm({
+      title: '删除脑图',
+      message: `删除「${f.name}」？该脑图下的所有画布都会一并删除。`,
+      danger: true,
+    });
+    if (!ok) return;
     fileIndex = fileIndex.filter((x) => x.id !== id);
     await store.files.save(fileIndex);
     await store.doc(id).del();
@@ -731,7 +737,7 @@ bootIframePlugin(async (ctx) => {
   }
 
   async function createFolder() {
-    const name = window.prompt('文件夹名称', '新建文件夹');
+    const name = await prompt({ title: '新建文件夹', label: '文件夹名称', defaultValue: '新建文件夹' });
     if (name == null) return;
     foldersList.push({ id: newFolderId(), name: name.trim() || '新建文件夹', collapsed: false });
     await store.folders.save(foldersList);
@@ -739,10 +745,10 @@ bootIframePlugin(async (ctx) => {
     status('已新建文件夹');
   }
 
-  function renameFolder(id) {
+  async function renameFolder(id) {
     const fo = foldersList.find((x) => x.id === id);
     if (!fo) return;
-    const name = window.prompt('文件夹名称', fo.name);
+    const name = await prompt({ title: '重命名文件夹', label: '文件夹名称', defaultValue: fo.name });
     if (name == null) return;
     fo.name = name.trim() || fo.name;
     store.folders.save(foldersList);
@@ -754,7 +760,12 @@ bootIframePlugin(async (ctx) => {
     const fo = foldersList.find((x) => x.id === id);
     if (!fo) return;
     const n = fileIndex.filter((f) => f.folderId === id).length;
-    if (!window.confirm(`删除文件夹「${fo.name}」？里面 ${n} 个脑图会移到根目录，不会被删除。`)) return;
+    const ok = await confirm({
+      title: '删除文件夹',
+      message: `删除文件夹「${fo.name}」？里面 ${n} 个脑图会移到根目录，不会被删除。`,
+      danger: true,
+    });
+    if (!ok) return;
     for (const f of fileIndex) if (f.folderId === id) f.folderId = null;
     foldersList = foldersList.filter((x) => x.id !== id);
     await store.files.save(fileIndex);

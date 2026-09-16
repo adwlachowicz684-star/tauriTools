@@ -34,11 +34,17 @@ function toast(msg, type = 'info') {
   const box = $('#toasts');
   if (!box) return;
   const el = document.createElement('div');
-  el.className = 'toast ' + (type === 'info' ? '' : type);
+  /* 同时挂 .nx-toast：基础表现在 css/controls.css 里（与插件共用一套）。
+     .toast 仍保留是因为既有代码/测试可能按它查找 */
+  el.className = 'nx-toast toast' + (type === 'info' ? '' : ' ' + type);
   el.textContent = msg;
   box.appendChild(el);
   setTimeout(() => {
-    el.style.transition = 'opacity .3s';
+    /* 淡出时长读 --dur-slow，与入场动画 nx-toast-in 同档。
+       写死 0.3s 的话，用户调快动效时入场快、退场慢，节奏会割裂 */
+    const d = getComputedStyle(document.documentElement)
+      .getPropertyValue('--dur-slow').trim() || '260ms';
+    el.style.transition = `opacity ${d}`;
     el.style.opacity = '0';
     setTimeout(() => el.remove(), 320);
   }, 2600);
@@ -246,7 +252,7 @@ async function openPluginSettings() {
     }
   } else {
     body.innerHTML = `
-      <div class="drawer-empty">
+      <div class="nx-empty drawer-empty">
         「${escapeHtml(manifest.name)}」没有提供自己的设置面板。
         <br />
         下面的沙箱与主题适配由外壳提供，对所有插件都有效。

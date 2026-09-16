@@ -366,7 +366,7 @@ export function CardGrid({
         else onCrossDrop(drag, null);
       }}
     >
-      {cards.length === 0 && <div className="p-muted fpx-empty">{emptyHint}</div>}
+      {cards.length === 0 && <div className="nx-empty fpx-empty">{emptyHint}</div>}
       {cards.length === 0 && dropAt === 0 && draggingKind === kind && (
         <div className="fpx-drop-line" />
       )}

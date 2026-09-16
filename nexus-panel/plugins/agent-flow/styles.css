@@ -296,7 +296,9 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
   white-space: pre-wrap; word-break: break-all; line-height: 1.5; margin: 0;
 }
 .out.err { color: #ffb4b4; border-color: #4a2020; }
-.empty-hint { color: var(--af-dim); font-size: 13px; text-align: center; padding-top: 40px; line-height: 1.8; }
+/* 空状态：基础表现（弱化色 / 行高 / 居中）已在 css/controls.css 的
+   .nx-empty 组里，这里只留各自的尺寸差异 */
+.empty-hint { font-size: 13px; padding-top: 40px; }
 
 /* 日志面板 */
 .logpane { width: 280px; flex: none; background: var(--af-panel); border-left: 1px solid var(--af-divider); display: flex; flex-direction: column; }
@@ -420,7 +422,7 @@ button.mini.danger:hover { border-color: var(--af-bad); color: #ff9b9b; }
 }
 .cond-rule.is-default .cond-op { background: #2d3a52; color: #93c5fd; }
 .cond-text { color: var(--af-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cond-empty { color: var(--af-dim); font-size: 12px; }
+.cond-empty { font-size: 12px; }
 
 /* 分支出口手柄：稍微内缩，避免和任务节点的出口混淆 */
 .branch-handle { width: 9px !important; height: 9px !important; background: #a855f7 !important; border: 2px solid var(--af-sunk) !important; }
@@ -1152,7 +1154,7 @@ input.mono, textarea.mono {
 .task-run { color: var(--af-accent); }
 .task-mute { color: var(--af-mute); }
 .task-grow { flex: 1; }
-.task-empty { padding: 24px 16px; color: var(--af-mute); font-size: 13px; line-height: 1.7; }
+.task-empty { font-size: 13px; padding: 24px 16px; }
 
 .task-detail { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 .task-detail-head { display: flex; align-items: center; gap: 10px;

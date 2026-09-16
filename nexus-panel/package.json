@@ -44,8 +44,7 @@
     "config:sync": "node scripts/sync-config.mjs",
     "config:check": "node scripts/sync-config.mjs --check",
     "test:single-instance": "node single-instance-test.mjs",
-    "test:mcp-alias": "node mcp-alias-test.mjs",
-    "test:crossend-fault": "node crossend-fault-injection-test.mjs"
+    "test:mcp-alias": "node mcp-alias-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

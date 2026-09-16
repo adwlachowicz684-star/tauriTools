@@ -131,6 +131,11 @@ export function auditCss(css, file = 'styles.css', opt = {}) {
     if (/^0 \d+px \d+px var\(--sh-dark\)$/.test(t)) continue;      // 标题栏向下投
     if (/^\d+px 0 \d+px var\(--sh-dark\)$/.test(t)) continue;      // 侧边栏向右投
     if (/^inset [-\d]+px [-\d]+px [-\d]+px var\(--sh-light\)$/.test(t)) continue;
+    /* 单轴 + 零模糊 = 用阴影画的**指示条**（页签下方的强调色线、
+       错误行左侧的红线）。不是立体感：没有模糊就没有双向明暗，
+       只是多画一条线；颜色走变量就会跟着主题变。 */
+    if (/^(?:inset )?-?\d+px 0 0 /.test(t)) continue;
+    if (/^inset 0 -?\d+px 0 var\(--/.test(t)) continue;
     if (!/rgba?\(|#[0-9a-f]{3,8}\b/i.test(t)) continue;            // 没写死颜色就不管
     push(LEVEL.error, '阴影写死色值',
       `立体阴影里写死了颜色（换主题不会跟着变）：${t.slice(0, 48)}`, m.index);
