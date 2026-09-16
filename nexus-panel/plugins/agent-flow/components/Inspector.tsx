@@ -3,6 +3,7 @@ import type { Credential } from '../engine/credentials';
 import type { SecretPolicy } from '../types';
 import { getDef } from '../nodes/registry';
 import { inspectorOf } from './inspectors/inspectorOf';
+import { NODE_SIZE_META, normalizeSize, type NodeSize } from '../types';
 
 /**
  * 属性面板 —— 现在只是一个分发器。
@@ -54,9 +55,39 @@ export default function Inspector({
   // 所以这里不需要判空 —— 见 nodes/registry.ts 的 makeFallback
   const def = getDef(node.type);
   const Panel = inspectorOf(def);
+  const size = normalizeSize((node.data as { size?: unknown }).size);
+
+  /*
+   * 尺寸选择器放在分发器里，而不是各节点的面板里 ——
+   * 条件 / 循环 / 并发 / 触发器用的是整体自定义面板，
+   * 塞进节点面板就得改 4 个文件；放在这里一次覆盖全部节点类型。
+   *
+   * 它也不属于"节点参数"（不影响执行结果），所以不该混进字段列表，
+   * 单独一行放在标题下方更合适。
+   */
+  const sizeRow = (
+    <div className="insp-size">
+      <span className="insp-size-label">显示高度</span>
+      <span className="insp-size-ops">
+        {(Object.keys(NODE_SIZE_META) as NodeSize[]).map((k) => (
+          <button
+            key={k}
+            className={`insp-size-btn${size === k ? ' on' : ''}`}
+            title={NODE_SIZE_META[k].hint}
+            onClick={() => onChange(node.id, { size: k })}
+          >
+            {NODE_SIZE_META[k].label}
+          </button>
+        ))}
+      </span>
+    </div>
+  );
+
   return (
-    <Panel
-      onEditModule={onEditModule}
+    <>
+      {sizeRow}
+      <Panel
+        onEditModule={onEditModule}
       node={node}
       edges={edges}
       onChange={onChange}
@@ -64,7 +95,8 @@ export default function Inspector({
       onOpenCredentials={onOpenCredentials}
       secretPolicy={secretPolicy}
       onChangeSecretPolicy={onChangeSecretPolicy}
-      webhookTokens={webhookTokens}
-    />
+        webhookTokens={webhookTokens}
+      />
+    </>
   );
 }

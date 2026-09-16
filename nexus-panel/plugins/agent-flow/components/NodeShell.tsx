@@ -2,6 +2,7 @@ import { Handle, Position } from '@xyflow/react';
 import type { ReactNode } from 'react';
 import { getDef } from '../nodes/registry';
 import { validateNode, LEVEL_COLOR, LEVEL_TEXT, type IssueLevel } from '../engine/nodeValidate';
+import { normalizeSize, type NodeSize } from '../types';
 
 /**
  * 节点卡片外壳 —— 10 种画布卡片共用的骨架。
@@ -65,6 +66,7 @@ export function NodeShell({
   hasTarget = true, hasSource = true, footExtra, children,
 }: NodeShellProps) {
   const status = data.status ?? 'idle';
+  const size: NodeSize = normalizeSize((data as { size?: unknown }).size);
   const text = statusText?.[status] ?? NODE_STATUS_TEXT[status] ?? status;
   // 节点类型色的唯一来源：注册表里那份。未注册的类型走兜底定义（灰色），不会崩
   const color = typeColor ?? getDef(type).meta.color;
@@ -81,7 +83,7 @@ export function NodeShell({
 
   return (
     <div
-      className={`node-card ${className ?? ''} status-${status} ${selected ? 'is-selected' : ''}`}
+      className={`node-card size-${size} ${className ?? ''} status-${status} ${selected ? 'is-selected' : ''}`}
       style={{ borderLeftColor: color }}
     >
       {hasTarget ? <Handle type="target" position={Position.Left} /> : null}
@@ -102,13 +104,19 @@ export function NodeShell({
         <div className="node-alert">{issue.messages[0]}</div>
       ) : null}
 
-      {tag ? <div className="node-cli">{tag}</div> : null}
+      {/* 矮卡片隐去说明行与主体，只留"这是什么 + 跑得怎么样" */}
+      {size !== 'sm' && tag ? <div className="node-cli">{tag}</div> : null}
 
-      {children}
+      {size !== 'sm' ? children : null}
 
+      {/*
+       * 底部 id 行在矮卡片上保留。
+       * 隐掉它虽然更干净，但排查日志时找不到节点对应关系 ——
+       * 而矮卡片正是给模块内部的一堆节点用的，那里最容易需要对照日志。
+       */}
       <div className="node-foot">
         <span className="node-id">{id}</span>
-        {footExtra}
+        {size === 'sm' ? null : footExtra}
       </div>
     </div>
   );

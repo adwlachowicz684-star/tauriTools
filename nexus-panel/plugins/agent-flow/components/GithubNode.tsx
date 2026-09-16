@@ -3,6 +3,7 @@ import type { GithubUpdateNodeData, GithubPushNodeData } from '../types';
 import { NodeCardChips } from './NodeCardChips';
 import { validateNode, LEVEL_COLOR, LEVEL_TEXT } from '../engine/nodeValidate';
 import { getDef } from '../nodes/registry';
+import { normalizeSize } from '../types';
 
 /**
  * GitHub 节点卡片。
@@ -50,6 +51,7 @@ function GithubCard({
    * 与预警点（配置完整度）是两回事，两个点各管一摊。
    */
   const issue = validateNode({ data: d });
+  const size = normalizeSize((d as { size?: unknown }).size);
   return (
     <>
       <Handle type="target" position={Position.Left} />
@@ -63,11 +65,15 @@ function GithubCard({
         <StatusDot status={d.status} />
       </div>
       <div className="node-title">{d.label || fallbackLabel}</div>
-      <div className="node-sub">{target}</div>
-      {/* 套用的参数卡片，像卡扣一样嵌在节点上 */}
+      {size === 'sm' ? null : <div className="node-sub">{target}</div>}
+      {/*
+       * 参数卡片在矮卡片上保留。
+       * 它是"这个节点用的是哪套配置"的关键信息 ——
+       * 一片矮卡片里若看不出各自套用了哪张卡，模块就没法快速核对了。
+       */}
       <NodeCardChips data={d} groups={[{ group: 'github-repo', fallback: '地址' }]} />
-      <div className="node-meta">{meta}</div>
-      {out}
+      {size === 'sm' ? null : <div className="node-meta">{meta}</div>}
+      {size === 'sm' ? null : out}
       {issue.level === 'error' && issue.messages.length ? (
         <div className="node-alert">{issue.messages[0]}</div>
       ) : null}
@@ -79,9 +85,10 @@ function GithubCard({
 
 export function GithubUpdateNode({ data, selected }: NodeProps) {
   const d = data as unknown as GithubUpdateNodeData;
+  const size = normalizeSize((d as { size?: unknown }).size);
   return (
     <div
-      className={`node-card kind-github ${selected ? 'is-selected' : ''} status-${d.status}`}
+      className={`node-card size-${size} kind-github ${selected ? 'is-selected' : ''} status-${d.status}`}
       style={{ borderLeftColor: getDef('github-update').meta.color }}
     >
       <GithubCard
@@ -111,13 +118,14 @@ export function GithubUpdateNode({ data, selected }: NodeProps) {
 
 export function GithubPushNode({ data, selected }: NodeProps) {
   const d = data as unknown as GithubPushNodeData;
+  const size = normalizeSize((d as { size?: unknown }).size);
   const fileCount = (d.filesText || '')
     .split('\n')
     .map((x) => x.trim())
     .filter((x) => x !== '').length;
   return (
     <div
-      className={`node-card kind-github ${selected ? 'is-selected' : ''} status-${d.status}`}
+      className={`node-card size-${size} kind-github ${selected ? 'is-selected' : ''} status-${d.status}`}
       style={{ borderLeftColor: getDef('github-push').meta.color }}
     >
       <GithubCard
