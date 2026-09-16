@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import {
 import { prompt } from '../../../js/dialog.js';
+import {
   type Credential, type CredentialKind, type Capability,
   makeCredential, missingCapabilities, NODE_NEEDS, detectGithubCapabilities,
   scopeHintFor,
