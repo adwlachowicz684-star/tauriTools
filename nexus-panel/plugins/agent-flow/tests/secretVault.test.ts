@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { webCryptoBackend } from '../engine/crypto';
 import {
-  sealSecrets, unsealSecrets, isPlaintextVault,
+  sealSecrets, unsealSecrets,
 } from '../engine/secretVault';
 
 const be = webCryptoBackend();
@@ -92,24 +92,6 @@ test('unseal: 数组不是合法存档', async () => {
 
 /* ---------- 明文识别 ---------- */
 
-test('isPlaintextVault: 明文存档认得出来', () => {
-  assert.equal(isPlaintextVault(JSON.stringify({ n1: SECRET })), true);
-});
-
-test('isPlaintextVault: 密文包不算明文', async () => {
-  const raw = await sealSecrets(be, { n1: SECRET }, PASS);
-  assert.equal(isPlaintextVault(raw), false);
-});
-
-test('isPlaintextVault: 空 / 非法都不算明文', () => {
-  assert.equal(isPlaintextVault(null), false);
-  assert.equal(isPlaintextVault(''), false);
-  assert.equal(isPlaintextVault('{}'), false);
-  assert.equal(isPlaintextVault('not-json'), false);
-});
-
-/* ---------- 升级路径 ---------- */
-
 test('升级: 明文存档读回后重新落盘即变密文', async () => {
   const legacy = JSON.stringify({ n1: SECRET });
   const r = await unsealSecrets(be, legacy, PASS);
@@ -117,6 +99,53 @@ test('升级: 明文存档读回后重新落盘即变密文', async () => {
 
   const rewritten = await sealSecrets(be, r.keys, PASS);
   assert.equal(rewritten.includes(SECRET), false);
-  assert.equal(isPlaintextVault(rewritten), false);
+  assert.equal((await unsealSecrets(be, rewritten, PASS)).legacyPlaintext, false);
   assert.deepEqual((await unsealSecrets(be, rewritten, PASS)).keys, { n1: SECRET });
+});
+
+/*
+ * 明文识别改由 unsealSecrets 的 legacyPlaintext 承担 ——
+ * 它才是 App 真正用于提示"检测到旧版明文密钥"的字段。
+ */
+test('明文存档：legacyPlaintext 为 true，且密钥读得出来', async () => {
+  const r = await unsealSecrets(be, JSON.stringify({ n1: SECRET }), 'pw');
+  assert.equal(r.legacyPlaintext, true);
+  assert.equal(r.keys.n1, SECRET);
+  assert.equal(r.failed, false);
+});
+
+test('密文包：legacyPlaintext 为 false', async () => {
+  const raw = await sealSecrets(be, { n1: SECRET }, 'pw');
+  const r = await unsealSecrets(be, raw, 'pw');
+  assert.equal(r.legacyPlaintext, false);
+  assert.equal(r.keys.n1, SECRET);
+});
+
+/*
+ * 「没存过」与「存了但坏了」要分开：
+ *   null / ''  → 首次使用，不是错误（failed: false），不该弹警告
+ *   '{}'       → 解析成功但内容为空，也不是错误
+ *   'not-json' → 真坏了，必须标记 failed，不能静默给空
+ * 混为一谈的话，新用户一打开就会看到"密钥读取失败"。
+ */
+test('没存过（null / 空串）不算失败', async () => {
+  for (const raw of [null, '']) {
+    const r = await unsealSecrets(be, raw, PASS);
+    assert.equal(r.failed, false, `输入 ${JSON.stringify(raw)} 是首次使用，不该报失败`);
+    assert.equal(r.legacyPlaintext, false);
+    assert.deepEqual(r.keys, {});
+  }
+});
+
+test('内容为空的存档也不算失败', async () => {
+  const r = await unsealSecrets(be, '{}', PASS);
+  assert.equal(r.failed, false);
+  assert.equal(r.legacyPlaintext, false);
+});
+
+test('存档损坏（非 JSON）要标记 failed，不能静默给空', async () => {
+  const r = await unsealSecrets(be, 'not-json', PASS);
+  assert.equal(r.failed, true);
+  assert.equal(r.legacyPlaintext, false);
+  assert.deepEqual(r.keys, {});
 });

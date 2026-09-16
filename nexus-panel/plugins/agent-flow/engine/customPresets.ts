@@ -1,5 +1,5 @@
 import type { NodeData } from '../types';
-import { stripRuntime } from './duplicate';
+import { stripRuntime, cloneData } from './duplicate';
 
 /**
  * 用户自定义节点（本质是「预设」）。
@@ -306,6 +306,17 @@ export function presetIdOf(key: string): string | null {
 }
 
 /** 按预设造初始数据。每次返回新对象，避免多个实例共享同一份被就地改写 */
+/**
+ * 按预设造初始数据。
+ *
+ * 必须深拷贝（cloneData），不能只展开一层：
+ * data 里有嵌套对象（llm / config / rules），浅拷贝会让**所有从这个预设
+ * 拖出来的节点共享同一份嵌套对象** —— 改其中一个的模型配置，
+ * 其余实例和预设本身跟着变。这类 bug 不报错，只表现为
+ * "改了一个，另一个也动了"，极难定位。
+ *
+ * 与 engine/duplicate.ts 复制节点时用的是同一个 cloneData，口径一致。
+ */
 export function dataOf(p: CustomPreset): NodeData {
-  return { ...p.data } as unknown as NodeData;
+  return cloneData(p.data) as unknown as NodeData;
 }

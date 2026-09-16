@@ -1,9 +1,10 @@
 import { useRef, useState, type DragEvent } from 'react';
 import { presetsByCategory, getDef } from '../nodes';
 import { hasDef } from '../nodes/registry';
-import { confirm, alert } from '../../../js/dialog.js';
+import { confirm, alert, prompt } from '../../../js/dialog.js';
 import {
-  presetIdOf, removeCustomPreset, exportCustomPresets, importCustomPresets,
+  presetIdOf, removeCustomPreset, renameCustomPreset,
+  exportCustomPresets, importCustomPresets,
 } from '../engine/customPresets';
 
 /**
@@ -62,6 +63,21 @@ export default function Sidebar({ onAdd, disabled }: Props) {
   const refresh = () => setTick((t) => t + 1);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
+
+  const askRename = async (key: string, label: string) => {
+    const id = presetIdOf(key);
+    if (!id) return;
+    const next = await prompt({
+      title: '重命名',
+      message: '只改侧栏里的显示名，画布上已放好的节点不受影响。',
+      placeholder: '节点名称',
+      defaultValue: label,
+      validate: (v: string) => (v && v.trim() ? null : '请填个名字'),
+    });
+    if (!next) return;
+    renameCustomPreset(id, next);
+    refresh();
+  };
 
   const askRemove = async (key: string, label: string) => {
     const id = presetIdOf(key);
@@ -158,17 +174,29 @@ export default function Sidebar({ onAdd, disabled }: Props) {
                 <span className="side-dot" style={{ background: p.color }} />
                 <span className="side-label">{p.label}</span>
                 {isCustom ? (
-                  <button
-                    className="side-del"
-                    title="删除这个自定义节点"
-                    onClick={(e) => {
-                      // 不阻止冒泡的话会顺带触发"点击添加"
-                      e.stopPropagation();
-                      void askRemove(p.key, p.label);
-                    }}
-                  >
-                    ×
-                  </button>
+                  <span className="side-ops">
+                    <button
+                      className="side-op"
+                      title="重命名"
+                      onClick={(e) => {
+                        // 不阻止冒泡的话会顺带触发"点击添加"
+                        e.stopPropagation();
+                        void askRename(p.key, p.label);
+                      }}
+                    >
+                      ✎
+                    </button>
+                    <button
+                      className="side-op side-del"
+                      title="删除这个自定义节点"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void askRemove(p.key, p.label);
+                      }}
+                    >
+                      ×
+                    </button>
+                  </span>
                 ) : null}
               </div>
             ))}
