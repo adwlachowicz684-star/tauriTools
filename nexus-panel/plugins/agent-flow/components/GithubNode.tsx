@@ -1,5 +1,6 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { GithubUpdateNodeData, GithubPushNodeData } from '../types';
+import { NodeCardChips } from './NodeCardChips';
 
 /**
  * GitHub 节点卡片。
@@ -50,6 +51,8 @@ function GithubCard({
       </div>
       <div className="node-title">{d.label || fallbackLabel}</div>
       <div className="node-sub">{target}</div>
+      {/* 套用的参数卡片，像卡扣一样嵌在节点上 */}
+      <NodeCardChips data={d} groups={[{ group: 'github-repo', fallback: '地址' }]} />
       <div className="node-meta">{meta}</div>
       {out}
       {d.error ? <div className="node-err">{d.error}</div> : null}
