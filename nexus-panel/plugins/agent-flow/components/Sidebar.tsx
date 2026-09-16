@@ -1,4 +1,4 @@
-import { useRef, useState, type DragEvent } from 'react';
+import { useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import { presetsByCategory, getDef } from '../nodes';
 import { hasDef } from '../nodes/registry';
 import { confirm, alert, prompt } from '../../../js/dialog.js';
@@ -52,6 +52,28 @@ export default function Sidebar({ onAdd, disabled }: Props) {
     // 同时放一份 text/plain，某些环境下自定义 MIME 会被过滤
     e.dataTransfer.setData('text/plain', encodeDrag(p));
     e.dataTransfer.effectAllowed = 'copy';
+  };
+
+  /*
+   * 点击行为改了：普通点击展开说明，按住 Ctrl / ⌘ 点击才添加。
+   *
+   * 起因是误触 —— 侧栏条目排得很密，扫列表时随手一点就往画布里塞个节点，
+   * 而画布上新增的节点往往落在视口外或压住别的节点，得手动找、再删。
+   * 添加是「重操作」，不该由一个没有确认的单击触发。
+   *
+   * 普通点击给个有用的反馈（展开说明）而不是静默无反应：
+   * 静默会让人以为界面坏了，进而反复点击，反而更容易触发误添加。
+   */
+  const [openKey, setOpenKey] = useState<string | null>(null);
+
+  const onItemClick = (e: MouseEvent, p: { key: string }) => {
+    if (disabled) return;
+    if (e.ctrlKey || e.metaKey) {
+      onAdd({ kind: p.key });
+      return;
+    }
+    // 再点一次收起
+    setOpenKey((k) => (k === p.key ? null : p.key));
   };
 
   /*
@@ -133,7 +155,7 @@ export default function Sidebar({ onAdd, disabled }: Props) {
   return (
     <aside className="sidebar" key={tick}>
       <div className="side-head">节点库</div>
-      <div className="side-hint">拖到画布，或点击直接添加</div>
+      <div className="side-hint">拖到画布添加；点击展开说明，按住 Ctrl / ⌘ 点击直接添加</div>
 
       {groups.map((g) => {
         const def = getDef(g.presets[0].type);
@@ -162,44 +184,57 @@ export default function Sidebar({ onAdd, disabled }: Props) {
               ) : null}
             </div>
 
-            {g.presets.map((p) => (
-              <div
-                key={p.key}
-                className="side-item"
-                draggable={!disabled}
-                onDragStart={(e) => onDragStart(e, { kind: p.key })}
-                onClick={() => !disabled && onAdd({ kind: p.key })}
-                title={p.hint ?? `拖到画布添加 ${p.label}`}
-              >
-                <span className="side-dot" style={{ background: p.color }} />
-                <span className="side-label">{p.label}</span>
-                {isCustom ? (
-                  <span className="side-ops">
-                    <button
-                      className="side-op"
-                      title="重命名"
-                      onClick={(e) => {
-                        // 不阻止冒泡的话会顺带触发"点击添加"
-                        e.stopPropagation();
-                        void askRename(p.key, p.label);
-                      }}
-                    >
-                      ✎
-                    </button>
-                    <button
-                      className="side-op side-del"
-                      title="删除这个自定义节点"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void askRemove(p.key, p.label);
-                      }}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ) : null}
-              </div>
-            ))}
+            {g.presets.map((p) => {
+              const open = openKey === p.key;
+              // 说明优先用预设自带的 hint，没有则退回节点定义里的 sub
+              const desc = p.hint ?? def.meta.sub ?? '';
+              return (
+                <div key={p.key}>
+                  <div
+                    className={`side-item${open ? ' is-open' : ''}`}
+                    draggable={!disabled}
+                    onDragStart={(e) => onDragStart(e, { kind: p.key })}
+                    onClick={(e) => onItemClick(e, p)}
+                    title={disabled ? '运行中不可添加' : '点击展开说明；按住 Ctrl / ⌘ 点击直接添加；也可拖到画布'}
+                  >
+                    <span className="side-dot" style={{ background: p.color }} />
+                    <span className="side-label">{p.label}</span>
+                    {isCustom ? (
+                      <span className="side-ops">
+                        <button
+                          className="side-op"
+                          title="重命名"
+                          onClick={(e) => {
+                            // 不阻止冒泡的话会顺带展开说明
+                            e.stopPropagation();
+                            void askRename(p.key, p.label);
+                          }}
+                        >
+                          ✎
+                        </button>
+                        <button
+                          className="side-op side-del"
+                          title="删除这个自定义节点"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void askRemove(p.key, p.label);
+                          }}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ) : null}
+                  </div>
+                  {/* 展开的说明块；没内容时给个兜底文案，避免点了像没反应 */}
+                  {open ? (
+                    <div className="side-desc">
+                      {desc || '这个节点没有额外说明'}
+                      <span className="side-desc-add">按住 Ctrl / ⌘ 点击添加</span>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
 
             {def.meta.sub && !isCustom ? <div className="side-sub">{def.meta.sub}</div> : null}
           </div>

@@ -1507,6 +1507,21 @@ input.mono, textarea.mono {
 }
 .side-item:hover .side-op,
 .side-op:focus-visible { opacity: 1; }
+
+/* 展开态：底色略亮 + 左侧强调条，让"这一条是展开的"一眼可见 */
+.side-item.is-open { background: var(--af-item); border-left: 2px solid var(--af-accent); }
+.side-item.is-open .side-label { color: var(--af-fg); }
+
+/* 点击展开的说明块 */
+.side-desc {
+  font-size: 11px; line-height: 1.55; color: var(--af-mute);
+  padding: 6px 10px 8px 22px;
+  border-left: 2px solid var(--af-accent);
+  background: var(--af-item);
+}
+.side-desc-add {
+  display: block; margin-top: 4px; color: var(--af-dim);
+}
 .side-op:hover { color: var(--af-fg); background: var(--af-item); }
 .side-del:hover { color: var(--af-bad); }
 
