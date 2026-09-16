@@ -54,6 +54,17 @@ npm run tauri:build      # 打包
 
 两种写法任选，ctx API 完全一致（见第五节）。
 
+> **样式怎么接？** 新插件要做的第一件事是引入共享样式，否则界面会是
+> 没有样式的裸 div。
+>
+> | 插件形态 | 做法 |
+> |---|---|
+> | 同页（module） | 什么都不用做 —— 直接吃主面板的 `neumorphism.css`，用 `.p-*` 类即可 |
+> | 沙箱（iframe）/ Vite | 自己引：`@import url('../../css/tokens.css');` + `controls.css` + `dialog.css`（用弹窗才需要最后一份）。或在入口 `import '../../css/neumorphism.css'` 一次拿全套 |
+>
+> 沙箱插件是**独立文档**，外壳的样式表传不进去，必须各引各的。
+> 常见坑与完整分层见 **3.4.0 样式体系总览** 和 **3.7.8**。
+
 ### 1. 同页挂载（module）—— 默认推荐
 
 `plugins/my-plugin/index.js`：
