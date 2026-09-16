@@ -5,7 +5,7 @@ import type {
 } from '../../types';
 import { DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt } from '../../types';
 import { resolveSecret } from '../credentials';
-import { renderTemplate } from '../template';
+
 import {
   extractFileRefs, parseManualPaths, buildFileFields, resolveFileRefs, type FileRef,
 } from '../files';
@@ -23,23 +23,18 @@ import {
   BILI_REFERER, type FeedItem,
 } from '../updates';
 import type { RunContext } from '../runContext';
+import { withNodeRun, NodeFailError } from '../runnerKit';
 
 export async function runTask(ctx: RunContext): Promise<void> {
-  const {
-    id, node, graph, opts, scope, emit, setStatus, markFailed, markSkipped, sleep,
-    outputs, nodeFields, currentLoop, branches, parallels, loops, byId,
-    loopBodies, orderByLayers, loopStack, setConcurrency,
+    const {
+    id, node, opts, emit,
+    sleep, outputs, nodeFields, currentLoop,
   } = ctx;
 
-    const td = node.data as TaskNodeData;
-    const { text: rendered, missing } = renderTemplate(td.prompt, {
-      outputs, input: opts.input, loop: currentLoop(), fields: nodeFields,
-    });
-    if (missing.length > 0) {
-      console.warn(`[${id}] 未解析的变量: ${missing.join(', ')}`);
-    }
+  const td = node.data as TaskNodeData;
+  const rendered = ctx.tpl(td.prompt);
 
-    setStatus(id, 'running');
+  await withNodeRun(ctx, async () => {
     emit({ type: 'node-start', id, rendered });
 
     let acc = '';
@@ -48,33 +43,27 @@ export async function runTask(ctx: RunContext): Promise<void> {
         acc += chunk;
         emit({ type: 'node-chunk', id, chunk });
       });
-      outputs[id] = acc;
 
       /* ---------- 产出参数字段，供下游 {{id.xxx}} 引用 ---------- */
-            const refs = resolveFileRefs(td, acc);
-      nodeFields[id] = {
-        ...buildFileFields(refs),
-        ...resolveParams(td.params, { output: acc, refs }),
-      };
-      emit({
-        type: 'node-fields', id,
+      const refs = resolveFileRefs(td, acc);
+      return {
+        output: acc,
+        fields: {
+          ...buildFileFields(refs),
+          ...resolveParams(td.params, { output: acc, refs }),
+        },
         files: refs.map((r) => r.abs),
-        fields: nodeFields[id],
-      });
-
-      emit({ type: 'node-done', id, ok: true, output: acc });
-      setStatus(id, 'success');
+      };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       /*
         失败时也要重置字段：不清的话下游会读到上一次成功运行留下的路径，
         拿着一个根本没改过的文件继续跑，比直接失败更难排查。
+        output 用 acc 而不是空串 —— 已经产出的部分内容对排查有用。
       */
-      nodeFields[id] = { ...buildFileFields([]) };
-      emit({ type: 'node-fields', id, files: [], fields: nodeFields[id] });
-      emit({ type: 'node-done', id, ok: false, output: acc, error: msg });
-      markFailed(id, scope);
-      setStatus(id, 'failed');
+      throw new NodeFailError(msg, acc, { ...buildFileFields([]) });
     }
-    await sleep(50);
+  });
+
+  await sleep(50);
 }

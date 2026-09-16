@@ -226,6 +226,23 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
     markFailed: (i, s) => markFailed(i, s ?? scope),
     markSkipped: (i, s) => markSkipped(i, s ?? scope),
     outputs, nodeFields, currentLoop,
+    /*
+     * 模板渲染统一在这里带上上下文，执行器直接 ctx.tpl(x) 即可。
+     *
+     * 未解析变量的告警也在这一层处理：原先只有任务节点自己 warn，
+     * 其他节点引用了不存在的变量则完全没提示。下沉后所有节点自动
+     * 获得这个能力 —— 以后要改成发事件、或改成可配置的严格模式
+     * （缺失即失败），也只需要动这一处。
+     */
+    tpl: (text) => {
+      const r = renderTemplate(text, {
+        outputs, input: opts.input, loop: currentLoop(), fields: nodeFields,
+      });
+      if (r.missing.length > 0) {
+        console.warn(`[${id}] 未解析的变量: ${r.missing.join(', ')}`);
+      }
+      return r.text;
+    },
     branches, parallels, loops,
     byId, bodyNodeSet, loopBodies, orderByLayers, inheritConcurrency,
     setConcurrency: (i, v) => concOf.set(i, v),

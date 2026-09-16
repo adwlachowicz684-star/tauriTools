@@ -5,7 +5,7 @@ import type {
 } from '../../types';
 import { DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt } from '../../types';
 import { resolveSecret } from '../credentials';
-import { renderTemplate } from '../template';
+
 import { extractFileRefs, parseManualPaths, buildFileFields, type FileRef } from '../files';
 import {
   resolveConfig, buildHeaders, parseResponse, extractContent,
@@ -21,56 +21,34 @@ import {
   BILI_REFERER, type FeedItem,
 } from '../updates';
 import type { RunContext } from '../runContext';
+import { withNodeRun, NodeFailError } from '../runnerKit';
 
 export async function runGithubPush(ctx: RunContext): Promise<void> {
-  const {
-    id, node, graph, opts, scope, emit, setStatus, markFailed, markSkipped, sleep,
-    outputs, nodeFields, currentLoop, branches, parallels, loops, byId,
-    loopBodies, orderByLayers, loopStack, setConcurrency,
+    const {
+    node, opts, outputs, nodeFields,
+    currentLoop,
   } = ctx;
-
   const d = node.data as GithubPushNodeData;
-  setStatus(id, 'running');
 
-  const tpl = (x: string) =>
-    renderTemplate(x ?? '', {
-      outputs, input: opts.input, loop: currentLoop(), fields: nodeFields,
-    }).text;
+  await withNodeRun(ctx, async () => {
+    const tpl = (x: string) => ctx.tpl(x ?? '');
 
-  const owner = tpl(d.owner).trim();
-  const repo = tpl(d.repo).trim();
+    const owner = tpl(d.owner).trim();
+    const repo = tpl(d.repo).trim();
 
-  if (!opts.githubPush) {
-    setStatus(id, 'failed');
-    emit({ type: 'node-error', id, error: '未提供 GitHub 推送执行器' });
-    return;
-  }
-  if (!owner || !repo) {
-    setStatus(id, 'failed');
-    emit({ type: 'node-error', id, error: '缺少 owner 或 repo' });
-    return;
-  }
+    if (!owner || !repo) throw new NodeFailError('缺少 owner 或 repo');
 
-  // 每行一条 `路径 = 内容来源`；等号后的内容走模板渲染
-  const files: { path: string; content: string }[] = [];
-  for (const line of (d.filesText || '').split('\n')) {
-    const raw = line.trim();
-    if (!raw) continue;
-    const eq = raw.indexOf('=');
-    if (eq < 0) {
-      setStatus(id, 'failed');
-      emit({ type: 'node-error', id, error: `文件行缺等号：${raw}` });
-      return;
+    // 每行一条 `路径 = 内容来源`；等号后的内容走模板渲染
+    const files: { path: string; content: string }[] = [];
+    for (const line of (d.filesText || '').split('\n')) {
+      const raw = line.trim();
+      if (!raw) continue;
+      const eq = raw.indexOf('=');
+      if (eq < 0) throw new NodeFailError(`文件行缺等号：${raw}`);
+      files.push({ path: raw.slice(0, eq).trim(), content: tpl(raw.slice(eq + 1)) });
     }
-    files.push({ path: raw.slice(0, eq).trim(), content: tpl(raw.slice(eq + 1)) });
-  }
-  if (files.length === 0) {
-    setStatus(id, 'failed');
-    emit({ type: 'node-error', id, error: '没有要提交的文件' });
-    return;
-  }
+    if (files.length === 0) throw new NodeFailError('没有要提交的文件');
 
-  try {
     const r = await opts.githubPush({
       owner, repo,
       branch: d.branch || 'main',
@@ -81,17 +59,11 @@ export async function runGithubPush(ctx: RunContext): Promise<void> {
       token: d.token || '',
       credentialId: d.credentialId,
     });
-    if (!r.ok) {
-      setStatus(id, 'failed');
-      emit({ type: 'node-error', id, error: r.error || '推送失败' });
-      return;
-    }
-    outputs[id] = r.commit ? `已提交 ${r.commit}` : '已推送';
-    nodeFields[id] = { commit: r.commit || '', via: r.via || '' };
-    setStatus(id, 'success');
-    emit({ type: 'node-done', id, ok: true, output: outputs[id] });
-  } catch (e) {
-    setStatus(id, 'failed');
-    emit({ type: 'node-error', id, error: String(e) });
-  }
+    if (!r.ok) throw new NodeFailError(r.error || '推送失败');
+
+    return {
+      output: r.commit ? `已提交 ${r.commit}` : '已推送',
+      fields: { commit: r.commit || '', via: r.via || '' },
+    };
+  });
 }

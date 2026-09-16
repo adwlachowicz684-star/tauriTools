@@ -5,7 +5,7 @@ import type {
 } from '../../types';
 import { DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt } from '../../types';
 import { resolveSecret } from '../credentials';
-import { renderTemplate } from '../template';
+
 import { extractFileRefs, parseManualPaths, buildFileFields, type FileRef } from '../files';
 import {
   resolveConfig, buildHeaders, parseResponse, extractContent,
@@ -21,21 +21,28 @@ import {
   BILI_REFERER, type FeedItem,
 } from '../updates';
 import type { RunContext } from '../runContext';
+import { withNodeRun, NodeFailError } from '../runnerKit';
 import type { LlmCallResult } from '../runTypes';
 
 export async function runTranslate(ctx: RunContext): Promise<void> {
-  const {
-    id, node, graph, opts, scope, emit, setStatus, markFailed, markSkipped, sleep,
-    outputs, nodeFields, currentLoop, branches, parallels, loops, byId,
-    loopBodies, orderByLayers, loopStack, setConcurrency,
+    const {
+    id, node, opts, emit,
+    outputs, nodeFields, currentLoop,
   } = ctx;
 
   const d = node.data as TranslateNodeData;
-  setStatus(id, 'running');
 
-  const src = renderTemplate(d.text ?? '', {
-    outputs, input: opts.input, loop: currentLoop(), fields: nodeFields,
-  }).text;
+  /*
+   * 失败一律抛异常，由 withNodeRun 统一收口（置空 / node-done / markFailed /
+   * setStatus 四连），避免漏掉 markFailed 造成"假失败"。
+   */
+  function failTranslate(msg: string): never {
+    throw new NodeFailError(msg, '', { text: '', chars: '0' });
+  }
+
+  await withNodeRun(ctx, async () => {
+
+  const src = ctx.tpl(d.text ?? '');
 
   if (!src.trim()) {
     failTranslate('待翻译文本为空。检查上游输出，或直接在节点里填写');
@@ -68,10 +75,6 @@ export async function runTranslate(ctx: RunContext): Promise<void> {
 
   emit({ type: 'node-start', id, rendered: `翻译 → ${targetText}（${src.length} 字）` });
 
-  if (!opts.llmCaller) {
-    failTranslate('未提供大模型调用执行器（当前可能运行在浏览器模式）');
-    return;
-  }
 
   let res: LlmCallResult;
   try {
@@ -93,16 +96,7 @@ export async function runTranslate(ctx: RunContext): Promise<void> {
   }
 
   const text = parsed.text.trim();
-  outputs[id] = text;
-  nodeFields[id] = { text, chars: String(text.length) };
-  emit({ type: 'node-done', id, ok: true, output: text });
-  setStatus(id, 'success');
+  return { output: text, fields: { text, chars: String(text.length) } };
+  });
 
-  function failTranslate(msg: string) {
-    outputs[id] = '';
-    nodeFields[id] = { text: '', chars: '0' };
-    emit({ type: 'node-done', id, ok: false, output: '', error: msg });
-    markFailed(id, scope);
-    setStatus(id, 'failed');
-  }
 }

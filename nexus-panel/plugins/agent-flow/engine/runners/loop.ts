@@ -5,7 +5,7 @@ import type {
 } from '../../types';
 import { DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt } from '../../types';
 import { resolveSecret } from '../credentials';
-import { renderTemplate } from '../template';
+
 import { extractFileRefs, parseManualPaths, buildFileFields, type FileRef } from '../files';
 import {
   resolveConfig, buildHeaders, parseResponse, extractContent,
@@ -21,27 +21,27 @@ import {
   BILI_REFERER, type FeedItem,
 } from '../updates';
 import type { RunContext, Scope } from '../runContext';
+import { withNodeRun, NodeFailError } from '../runnerKit';
 
 export async function runLoop(ctx: RunContext): Promise<void> {
-  const {
-    id, node, graph, opts, scope, emit, setStatus, markFailed, markSkipped, sleep,
-    outputs, nodeFields, currentLoop, branches, parallels, loops, byId,
-    loopBodies, orderByLayers, loopStack, setConcurrency,
+    const {
+    id, node, opts, emit,
+    outputs, loops, loopBodies, orderByLayers,
+    loopStack,
   } = ctx;
 
   const data = node.data as LoopNodeData;
-  setStatus(id, 'running');
-
   const res: LoopResolve = resolveLoopItems(data, { outputs, input: opts.input });
 
   if (res.error) {
-    outputs[id] = '';
-    emit({ type: 'node-done', id, ok: false, output: '', error: res.error });
-    markFailed(id, scope);
-    setStatus(id, 'failed');
+    // 解析不出迭代项：记一条 0 轮的循环记录再失败，
+    // 这样面板上能看出"是解析阶段就失败了"，而不是"循环跑了 0 次"
     loops.push({ id, rounds: 0, failed: 0, reason: res.reason, warnings: res.warnings });
+    await withNodeRun(ctx, async (): Promise<never> => { throw new NodeFailError(res.error!); });
     return;
   }
+
+  await withNodeRun(ctx, async () => {
 
   emit({ type: 'loop-resolved', id, count: res.items.length, reason: res.reason, warnings: res.warnings });
 
@@ -91,22 +91,17 @@ export async function runLoop(ctx: RunContext): Promise<void> {
 
   const total = executed;
   const done = collected.length;
-  outputs[id] = data.collect && collected.length > 0
+  const out = data.collect && collected.length > 0
     ? collected.join('\n\n')
     : `[循环] ${res.reason}，共 ${total} 轮`;
 
   const warn = res.warnings.length ? `；${res.warnings.join('；')}` : '';
   emit({ type: 'loop-done', id, rounds: total, failed: roundFailed });
-  emit({
-    type: 'node-done', id,
-    ok: roundFailed === 0,
-    output: outputs[id],
-    error: roundFailed > 0 ? `${roundFailed}/${total} 轮失败${warn}` : undefined,
-  });
-  setStatus(id, roundFailed > 0 ? 'failed' : 'success');
-  if (roundFailed > 0) markFailed(id, scope);
   loops.push({
     id, rounds: total, failed: roundFailed,
     reason: `${res.reason}，产出 ${done} 条${warn}`, warnings: res.warnings,
+  });
+  if (roundFailed > 0) throw new NodeFailError(`${roundFailed}/${total} 轮失败${warn}`, out);
+  return { output: out };
   });
 }
