@@ -101,8 +101,10 @@ export function formatCombo(combo: string, isMac: boolean): string {
   const parts = combo.toLowerCase().split('+').map((s) => s.trim()).filter(Boolean);
   const mods = parts.filter((p) => order.includes(p));
   const rest = parts.filter((p) => !order.includes(p));
+  // 按 order **正序**输出：mod/ctrl 在前、shift 居中、alt 在后。
+  // 曾经写成 reverse，结果 Ctrl+Shift+G 被显示成 Shift+Ctrl+G。
   const out: string[] = [];
-  for (const m of [...order].reverse()) {
+  for (const m of order) {
     if (mods.includes(m)) {
       if (m === 'mod') out.push(isMac ? '⌘' : 'Ctrl');
       else if (m === 'meta') out.push('⌘');

@@ -33,38 +33,38 @@ export function HotkeySettings({
   const conflicts = findConflicts(draft);
   const conflictIds = new Set(conflicts.flatMap((c) => c.ids));
 
+  /**
+   * draft → 存出去的形态。
+   *
+   * 只剔除「与默认相同」的项；**显式空串要保留** —— 它代表"用户主动取消了这个绑定"，
+   * 若也一并剔除，读回来没有这个键就会退回默认值，
+   * 用户以为取消了，重启后又活了。
+   */
+  const commit = (d: Record<string, string>) => {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(d)) {
+      const def = HOTKEYS.find((h) => h.id === k)?.combo ?? '';
+      if (normalizeCombo(v) === normalizeCombo(def)) continue;
+      out[k] = v;
+    }
+    onChange(Object.keys(out).length ? out : null);
+  };
+
   const setOne = (id: HotkeyId, combo: string) => {
-    setDraft((d) => {
-      const next = { ...d, [id]: combo };
-      // 与默认相同就删掉，保持"只存改过的项"
-      const def = HOTKEYS.find((h) => h.id === id)?.combo;
-      if (normalizeCombo(combo) === normalizeCombo(def ?? '')) delete next[id];
-      return next;
-    });
+    const next = { ...draft, [id]: combo };
+    setDraft(next);
+    commit(next);          // 必须立刻提交：否则界面变了但没存，刷新就丢
     setCapturing(null);
   };
 
   const resetOne = (id: HotkeyId) => {
-    setDraft((d) => {
-      const next = { ...d };
-      delete next[id];
-      return next;
-    });
+    const next = { ...draft };
+    delete next[id];
+    setDraft(next);
+    commit(next);
   };
 
   const resetAll = () => { setDraft({}); onChange(null); };
-
-  /** draft → 存出去的形态：全空就是 null */
-  const commit = (d: Record<string, string>) => {
-    const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(d)) {
-      if (normalizeCombo(v) && normalizeCombo(v) !== normalizeCombo(
-        HOTKEYS.find((h) => h.id === k)?.combo ?? '')) {
-        out[k] = v;
-      }
-    }
-    onChange(Object.keys(out).length ? out : null);
-  };
 
   // 录入模式：全局捕获按键
   useEffect(() => {
