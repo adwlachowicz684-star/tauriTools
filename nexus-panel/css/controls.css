@@ -715,3 +715,110 @@ input[type='range']:disabled {
     border: 1px solid ButtonBorder;
   }
 }
+
+/* ============================================================
+   文本溢出：单行 / 多行省略
+   ============================================================
+   共享层（tokens / controls / dialog）此前一处 text-overflow 都没有，
+   而三个插件加起来有 41 处 —— 说明各写各的。这里把最常用的两种收成
+   工具类，新界面直接用，不必再抄四行。
+
+   为什么必须有 `min-width: 0`：
+
+   flex 子项的默认 min-width 是 auto，意思是"不能比内容窄"。
+   结果 `overflow: hidden` 根本不生效 —— 容器被文字顶开，
+   省略号永远出不来，整个布局被撑破。
+   这是 flex 布局里最容易踩的坑之一，所以写在类里而不是让调用方记。
+
+   扫描发现还有 13 处写了 `white-space: nowrap` 却没写 ellipsis，
+   那些地方文字不是"省略"而是被硬生生裁断（Cut 掉，没有 …）。
+   ============================================================ */
+
+.nx-ellipsis {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 多行：WebKit 私有属性，但各 WebView（含 Tauri 用的 WKWebView /
+   WebView2）都支持。不支持时会退化成"截断"，不会破版。 */
+.nx-clamp {
+  min-width: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+.nx-clamp.one   { -webkit-line-clamp: 1; line-clamp: 1; }
+.nx-clamp.three { -webkit-line-clamp: 3; line-clamp: 3; }
+
+/* ------------------------------------------------------------
+   表单错误态
+   ------------------------------------------------------------
+   此前 :invalid / [aria-invalid] 一处样式都没有 —— 校验失败时输入框
+   外观毫无变化，用户只知道"提交没反应"，不知道是哪个字段、为什么。
+
+   用 [aria-invalid] 而不只是 :invalid：
+     · :invalid 在页面刚加载、用户还没输入时就会命中（空值 + required），
+       一进界面就满屏红框，非常劝退
+     · [aria-invalid] 由代码显式设置，只在"真的校验过且没过"时出现
+
+   两者都写，但 [aria-invalid] 是主路径。
+   ============================================================ */
+.nx-input[aria-invalid='true'],
+.p-input[aria-invalid='true'],
+.mm-input[aria-invalid='true'],
+.nx-select[aria-invalid='true'],
+.mm-select[aria-invalid='true'] {
+  border-color: var(--danger);
+  box-shadow: var(--sh-in-md), 0 0 0 2px var(--accent-glow);
+}
+/* 原生 :invalid 只在"用户已经交互过"时才提示，避免一进来就满屏红 */
+.nx-input:user-invalid,
+.p-input:user-invalid,
+.mm-input:user-invalid {
+  border-color: var(--danger);
+}
+
+/* 字段级错误说明：与输入框配对使用 */
+.nx-field-error {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--fs-11, 11px);
+  color: var(--danger);
+  line-height: 1.4;
+}
+
+/* ------------------------------------------------------------
+   触摸目标
+   ------------------------------------------------------------
+   桌面端鼠标点得中 14px 的小叉号，触屏很难 —— 手指的接触面约
+   40~44px，WCAG 2.5.8 要求最小 24px。
+
+   但直接把所有按钮撑到 44px 会破坏现有密集布局（页签栏、节点库）。
+   所以这里只做**命中区域**扩展：视觉尺寸不变，用透明外边距把可点
+   范围撑到 44px。视觉与手感解耦，布局不受影响。
+
+   注意用 ::after 而不是 padding —— padding 会改变元素占位，
+   把邻居挤开。
+   ============================================================ */
+.nx-touch {
+  position: relative;
+}
+/* 只对**明确标记**的元素扩展命中区，不自动套用到 .nx-btn.icon ——
+   密集排列的图标按钮（页签栏、节点库）之间间距往往不足 44px，
+   自动扩展会让相邻按钮的命中区互相重叠，结果是"点 A 却触发了 B"。
+   这类按钮的正确修法是加大间距（改布局），不是偷偷扩命中区。
+
+   所以这里只提供工具类：哪个按钮周围确实有余量，就给它加 .nx-touch。 */
+.nx-touch::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+  /* 完全透明，只用来接收点击，不影响观感 */
+}

@@ -39,7 +39,7 @@ html, body {
 .mm-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .mm-grow { flex: 1 1 auto; }
 .mm-sep { width: 1px; align-self: stretch; background: var(--sh-dark); margin: 0 2px; }
-.mm-label { color: var(--text-dim); font-size: 12px; white-space: nowrap; }
+.mm-label { color: var(--text-dim); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
 .mm-mono { font-family: var(--font-mono); }
 
 /* 迷你按钮：比 .p-btn 更紧凑，工具栏用 */
@@ -183,7 +183,7 @@ html, body {
   color: var(--text-dim);
   font-size: 12px;
   cursor: pointer;
-  white-space: nowrap;
+  white-space: nowrap; text-overflow: ellipsis;
   box-shadow: var(--sh-in-sm);
 }
 .mm-tab.active {
@@ -217,7 +217,7 @@ html, body {
 .mm-tab-follow {
   box-shadow: var(--sh-cast-sm);
   cursor: grabbing;
-  white-space: nowrap;
+  white-space: nowrap; text-overflow: ellipsis;
 }
 
 /* 拖拽中整个容器禁止文字选中 —— 否则会选到页签标题 */
@@ -242,7 +242,7 @@ html, body {
      这里只需固定宽度、紧跟在「＋」后面即可。 */
   color: var(--text-mute);
   font-size: var(--fs-11, 11px);
-  white-space: nowrap;
+  white-space: nowrap; text-overflow: ellipsis;
   flex: 0 0 auto;
 }
 .mm-status.warn { color: var(--warn, #e5c07b); }

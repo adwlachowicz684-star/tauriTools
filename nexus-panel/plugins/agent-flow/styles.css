@@ -445,7 +445,7 @@ button.mini.danger:hover { border-color: var(--af-bad); color: #ff9b9b; }
 .url-box code {
   flex: 1; background: var(--af-sunk); border: 1px solid var(--af-line);
   border-radius: 5px; padding: 6px 8px; font-size: 12px;
-  font-family: var(--af-mono); overflow: auto; white-space: nowrap;
+  font-family: var(--af-mono); overflow: auto; white-space: nowrap; text-overflow: ellipsis;
 }
 .out.snippet {
   color: #a5d6ff; font-size: 11px; line-height: 1.5;
@@ -508,7 +508,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   display: flex; align-items: center; gap: 6px; flex: none;
   padding: 5px 9px; border-radius: var(--af-r-sm); cursor: pointer;
   background: var(--af-item); border: 1px solid var(--af-line);
-  font-size: var(--fs-12, 12px); color: var(--af-dim); white-space: nowrap;
+  font-size: var(--fs-12, 12px); color: var(--af-dim); white-space: nowrap; text-overflow: ellipsis;
 }
 .tab:hover { border-color: var(--af-accent); }
 .tab.is-active {
@@ -1005,7 +1005,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   display: inline-block; margin-right: 5px;
   font-size: 10px; padding: 0 6px; border-radius: var(--r-pill, 999px);
   border: 1px solid var(--af-line); color: var(--af-dim);
-  background: var(--af-sunk); white-space: nowrap;
+  background: var(--af-sunk); white-space: nowrap; text-overflow: ellipsis;
 }
 
 /* 等宽输入：地址、模型名、Key 这类 */

@@ -481,5 +481,44 @@ console.log('\n=== 13. 尺度收口：圆角 / 字号 ===');
   }
 }
 
+console.log('\n=== 14. 文本溢出 / 表单错误态 / 触摸目标 ===');
+{
+  /* ---- 文本溢出 ----
+     共享层此前一处 text-overflow 都没有，三个插件共 41 处各写各的。
+     收成 .nx-ellipsis / .nx-clamp 两个工具类。 */
+  t('有单行省略工具类',
+    /\.nx-ellipsis\s*\{[^}]*text-overflow:\s*ellipsis/.test(controls));
+  t('单行省略带 min-width: 0（flex 子项默认为 auto，不写就不生效）',
+    /\.nx-ellipsis\s*\{[^}]*min-width:\s*0/.test(controls));
+  t('有多行省略工具类且可指定行数',
+    /\.nx-clamp\s*\{[^}]*-webkit-line-clamp/.test(controls));
+
+  /* flex 子项 min-width 默认是 auto（不能比内容窄）—— 不写 min-width:0
+     的话 overflow:hidden 根本不生效，容器被文字顶开，省略号永远出不来。
+     这是 flex 布局最容易踩的坑，必须写在类里而不是让调用方记。 */
+
+  /* ---- 表单错误态 ----
+     此前 :invalid / [aria-invalid] 一处样式都没有：校验失败时输入框
+     外观毫无变化，用户只知道"提交没反应"。 */
+  t('输入框有 aria-invalid 错误态',
+    /\[aria-invalid='true'\][^{]*\{[^}]*--danger/.test(controls));
+  t('用 aria-invalid 而不是只靠 :invalid（后者一进页面就满屏红）',
+    /aria-invalid/.test(controls) && /user-invalid/.test(controls));
+  t('有配套的字段级错误说明类',
+    /\.nx-field-error\s*\{[^}]*--danger/.test(controls));
+
+  /* ---- 触摸目标 ----
+     桌面端鼠标点得中 14px 的小叉号，触屏很难。
+     但直接撑到 44px 会破坏密集布局，所以只扩**命中区**不改视觉尺寸。 */
+  t('有触摸目标扩展类（44px 命中区）',
+    /\.nx-touch::after\s*\{[^}]*44px/.test(controls));
+  t('命中区扩展用 ::after 而不是 padding（padding 会把邻居挤开）',
+    /\.nx-touch::after/.test(controls) && !/\.nx-touch\s*\{[^}]*padding/.test(controls));
+  /* 不自动套用到 .nx-btn.icon：密集排列时相邻命中区会重叠，
+     变成"点 A 触发 B"。所以只提供显式工具类。 */
+  t('触摸扩展不自动套用到图标按钮（密集时会重叠误触）',
+    !/\.nx-btn\.icon::after/.test(controls));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -88,6 +88,26 @@ console.log('\n=== 4. 阴影走档位变量 ===');
 /* 允许剩下的：方向性投影（标题栏/侧边栏只朝一个方向）、辉光与描边环。
    不允许：把 rgba(...) / #xxx 写进双向立体阴影 —— 换主题不会跟着变。 */
 const isRingOrGlow = (v) => /^inset 0 0 0 /.test(v) || /^0 0 (?:0 )?\d+px var\(--/.test(v)
+  /* 零模糊的**单像素描边环**（色盘游标那类）：给指针加个边，不是立体感
+     —— 没有模糊就不产生明暗，只是画一圈线。这类环的颜色往往必须
+     硬编码：游标叠在任意颜色的色盘上，换成主题色会在同色区域整个
+     消失（红区上红描边看不见）。与 .mm-vthumb-play 的白三角同理。 */
+  || (() => {
+    /* 按**顶层**逗号分段（rgba(...) 内部也有逗号，不能直接 split(',')）。
+       每段都是零模糊单像素才算描边环 —— 只要有一段有真实模糊，
+       那就是立体阴影，不能豁免。 */
+    const parts = [];
+    let depth = 0, cur = '';
+    for (const ch of v) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      if (ch === ',' && depth === 0) { parts.push(cur.trim()); cur = ''; }
+      else cur += ch;
+    }
+    parts.push(cur.trim());
+    return parts.length > 0
+      && parts.every((x) => /^(?:inset )?0 0 0 1px /.test(x));
+  })()
   || /^0 0 (?:0 )?\d+px currentColor$/.test(v) || /^inset 0 1px 0 /.test(v)
   // 单轴 + 零模糊 = 用阴影画的纯色块（挡条 / 缝隙遮挡），不是立体感；
   // 带不带 inset 都一样，颜色走变量就会跟着主题变

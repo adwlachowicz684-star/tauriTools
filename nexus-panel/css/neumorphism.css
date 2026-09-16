@@ -315,7 +315,7 @@ body {
   flex: none;
 }
 .side-toggle:active { box-shadow: var(--sh-in-md); }
-.side-toggle span { white-space: nowrap; opacity: 0; width: 0; transition: opacity var(--t); font-size: 12px; }
+.side-toggle span { white-space: nowrap; text-overflow: ellipsis; opacity: 0; width: 0; transition: opacity var(--t); font-size: 12px; }
 #body.open .side-toggle span { opacity: 1; width: auto; }
 #body.open .side-toggle { justify-content: flex-start; padding: 0 12px; }
 
@@ -371,7 +371,7 @@ body {
 }
 .nav-label {
   font-size: 13px;
-  white-space: nowrap;
+  white-space: nowrap; text-overflow: ellipsis;
   opacity: 0;
   transform: translateX(-4px);
   transition: opacity var(--t), transform var(--t);
@@ -639,7 +639,7 @@ body {
   border: 1px solid #4f9cf9;
   box-shadow: var(--sh-cast-sm);
   pointer-events: none;
-  white-space: nowrap;
+  white-space: nowrap; text-overflow: ellipsis;
 }
 .nx-insp-badge.on { display: flex; }
 .nx-insp-name   { color: #8ec5ff; font-weight: 600; }

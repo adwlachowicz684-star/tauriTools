@@ -60,6 +60,7 @@ export const TOKEN_VARS = [
   '--z-mask', '--z-dialog', '--z-pop', '--z-toast', '--z-tooltip',
   '--ring-neutral',
   '--z-inspector',
+  '--z-picker',   /* 吸管 / 全屏取样遮罩 */
   /* 动画时长：与 --dur-*（一次性过渡）分开的一档，见 tokens.css 的说明 */
   '--anim-spin', '--anim-pulse', '--anim-in',
   /* 字号八档。此前全仓 17 档含 4 个半档（11.5/10.5/12.5/9），
@@ -159,6 +160,12 @@ export function auditCss(css, file = 'styles.css', opt = {}) {
        只是多画一条线；颜色走变量就会跟着主题变。 */
     if (/^(?:inset )?-?\d+px 0 0 /.test(t)) continue;
     if (/^inset 0 -?\d+px 0 var\(--/.test(t)) continue;
+    /* 零模糊的**单像素描边环**（色盘游标那类）：它是"给指针加个边"，
+       不是立体感 —— 没有模糊就不产生明暗，只是画一圈线。
+       这类环的颜色往往必须硬编码：游标叠在任意颜色的色盘上，
+       换成主题色会在同色区域整个消失（红区上红描边看不见）。
+       属"叠在内容上"，与 .mm-vthumb-play 的白三角同理。 */
+    if (/^(?:inset )?0 0 0 1px /.test(t)) continue;
     if (!/rgba?\(|#[0-9a-f]{3,8}\b/i.test(t)) continue;            // 没写死颜色就不管
     push(LEVEL.error, '阴影写死色值',
       `立体阴影里写死了颜色（换主题不会跟着变）：${t.slice(0, 48)}`, m.index);
