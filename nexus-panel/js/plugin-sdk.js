@@ -127,6 +127,20 @@ function buildCtx(base) {
     id,
     mode,                                  // 'module' | 'iframe'
     manifest,
+    /* 调用服务插件（kind:'service'）：
+         await ctx.services.call('color-picker', 'pick', { from: '#3a7afe' })
+       返回 Promise，拿到服务方法的返回值。
+
+       两种通路，调用方写法完全一致：
+         · 沙箱插件 —— 走桥接转发给宿主，宿主再转给服务 iframe。
+           所以服务即使跑在另一个沙箱里也能被调用，隔离不影响能力。
+         · 同页插件 —— 宿主直接注入（base.services），省掉消息往返。
+           不注入就回退桥接，那时会报"未知请求"，错误信息明确。 */
+    services: base.services || {
+      call: (id, method, args) =>
+        transport.request('service.call', { id, method, args }),
+      list: () => transport.request('service.list', {}),
+    },
     root,                                  // 挂载点：HTMLElement 或 ShadowRoot
     container,                             // 宿主元素（始终在文档流里）
     version: manifest.version || '0.0.0',
@@ -352,6 +366,7 @@ export function createModuleContext({
   manifest, container, bus, theme, shellHooks,
   isActive = () => true,        // 插件当前是否处于激活态（引擎按 activeId 判定）
   scope = null,                 // 事件绑定目标，默认主文档
+  services = null,              // 服务调用入口（宿主注入）；同页插件与宿主同文档，直连
 }) {
   const useShadow = !!manifest.shadow;
   const root = useShadow ? container.attachShadow({ mode: 'open' }) : container;
@@ -436,6 +451,7 @@ export function createModuleContext({
   const ctx = buildCtx({
     id: manifest.id, manifest, mode: 'module', root, container,
     transport, bus, theme, bindShortcut,
+    services,   // 同页插件与宿主同文档，宿主直接注入，不必绕桥接
   });
 
   // 卸载时兜底注销所有快捷键，杜绝监听器残留
@@ -507,7 +523,7 @@ function isLightColor(c) {
  * 外壳加载设置面板时会再开一个同样的页面，并在 init 消息里带 view='settings'，
  * SDK 据此调用 settingsFn 而不是 mainFn；两者拿到的 ctx 完全一致。
  */
-export function bootIframePlugin(mountFn, settingsFn) {
+export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
   const channel = BRIDGE_CHANNEL;
   let pending = new Map();
   let seq = 0;
@@ -670,6 +686,29 @@ export function bootIframePlugin(mountFn, settingsFn) {
       d.ok ? p.resolve(d.data) : p.reject(new Error(d.error));
     }
 
+    /* 服务调用：宿主转发别的插件发来的 ctx.services.call(...)。
+       方法表由 bootServicePlugin 传入；普通插件没传，这里会回"未提供"。
+
+       必须**回一条消息**（无论成败）：调用方在等 res，
+       漏回会让它一直挂到超时（15s），而用户看到的就是"点了没反应"。
+
+       第二个参数把 ctx 交给服务方法 —— 服务同样需要 store / invoke /
+       shell 这些能力（比如色盘要记住用户最近用过的颜色）。 */
+    if (d.type === 'service.call') {
+      const reply = (ok, data, error) =>
+        post({ type: 'service.res', id: d.id, ok, data, error });
+      const fn = serviceMethods?.[d.method];
+      if (typeof fn !== 'function') {
+        reply(false, null, `服务未提供方法: ${d.method}`);
+        return;
+      }
+      Promise.resolve()
+        .then(() => fn(d.args, ctxReady))
+        .then((data) => reply(true, data, null))
+        .catch((err) => reply(false, null, String(err?.message || err)));
+      return;
+    }
+
     if (d.type === 'event' && ctxReady) {
       busLocal.emit(d.event, d.payload);
     }
@@ -736,6 +775,37 @@ export function bootIframePlugin(mountFn, settingsFn) {
   post({ type: 'ready', hasSettings: typeof settingsFn === 'function' });
 
   return mountPromise;
+}
+
+/**
+ * 服务插件引导（kind:'service'）
+ *
+ * 与 bootIframePlugin 的区别：
+ *   · 不渲染业务 UI —— 它是"被调用"的，不是"被浏览"的
+ *   · 用一张方法表代替 mount 函数
+ *
+ * 外壳收到别的插件的 ctx.services.call(id, method, args) 时，
+ * 会转发一条 service.call 消息进来，SDK 在这张表里找到对应方法执行。
+ *
+ * 方法签名：(args, ctx) => value | Promise<value>
+ *   · args —— 调用方传的参数对象
+ *   · ctx  —— 本服务自己的上下文（store / invoke / shell 都可用）
+ *
+ * 返回值会被送回调用方。**抛出即失败**：调用方的 await 会 reject，
+ * 所以错误信息要写清楚，那是调用方能看到的唯一线索。
+ */
+export function bootServicePlugin(methods) {
+  /* 仍然走 bootIframePlugin：握手、主题、桥接、ctx 构造全部复用，
+     只是 mount 时什么都不渲染 —— 服务没有"主视图"这个概念。 */
+  return bootIframePlugin(
+    async () => {
+      /* 服务不需要渲染。但完全不写点东西的话，外壳的"空页面快速失败"
+         检测（body 无子节点）会把服务误判成坏插件并报错 ——
+         所以入口 HTML 里放了一行说明文字，这里不再动 DOM。 */
+    },
+    null,
+    methods,
+  );
 }
 
 /**

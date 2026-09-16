@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  createHost, loadRegistry, filterByRuntime, saveCustomPlugins, getCustomPlugins, isInsideTauri,
+  createHost, loadRegistry, filterByRuntime, visiblePlugins, saveCustomPlugins, getCustomPlugins, isInsideTauri,
   type Host, type PluginManifest,
 } from '../js/host.js';
 import * as extPolicy from '../js/external-policy.js';
@@ -210,8 +210,8 @@ export default function App() {
 
     (async () => {
       const list = filterByRuntime(await loadRegistry());
-      host.state.plugins = list;
-      setPlugins(list);
+      host.state.plugins = list;          // 宿主持有完整列表（服务插件也要挂）
+      setPlugins(visiblePlugins(list));   // 侧边栏只显示非服务插件
 
       const saved = localStorage.getItem('nexus:sidebar-open');
       setSidebarOpen(saved === null ? true : saved === '1');
@@ -267,7 +267,7 @@ export default function App() {
     setDialogOpen(false);
     (async () => {
       hostRef.current!.state.plugins = filterByRuntime(await loadRegistry());
-      setPlugins([...hostRef.current!.state.plugins]);
+      setPlugins(visiblePlugins(hostRef.current!.state.plugins));
       setActiveId(item.id);
     })();
   }, [pushToast]);
@@ -277,7 +277,7 @@ export default function App() {
     pushToast('已移除插件', 'ok');
     (async () => {
       hostRef.current!.state.plugins = filterByRuntime(await loadRegistry());
-      setPlugins([...hostRef.current!.state.plugins]);
+      setPlugins(visiblePlugins(hostRef.current!.state.plugins));
       setActiveId('home');
     })();
   }, [pushToast]);

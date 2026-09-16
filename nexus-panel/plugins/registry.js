@@ -5,6 +5,20 @@
  * entry 入口文件，相对项目根目录
  * theme 'dark' 与面板同基调(不适配) | 'light' 相反(需适配) | 'auto'/省略 运行时检测
  * requiresBuild  true = 用 React/TSX 编写，需要 Vite；无构建模式下自动隐藏
+ * kind   'app'（默认，显示在侧边栏） | 'service'（不进侧边栏，供其它插件调用）
+ *
+ * kind:'service' —— 服务插件
+ * ------------------------------------------------------------
+ * 这类插件**不出现在侧边栏**，用户不直接打开它；它被挂载到一个隐藏的
+ * 常宿容器里，由其它插件通过 ctx.services.call(id, method, args) 调用。
+ *
+ * 典型用途：色盘、Markdown 编辑器、图标选择器 —— 这些是"被别人用"的
+ * 能力，而不是"用户去逛"的页面。做成服务插件可以：
+ *   · 一份实现，所有插件共用，不用每个插件各拷一份色盘
+ *   · 升级服务不用改调用方（只要 method 签名不变）
+ *   · 未来可从插件商店独立安装/卸载
+ *
+ * 服务插件的入口要用 bootServicePlugin（而非 bootIframePlugin）声明方法。
  *
  * 概览 / 设置 各写了两份实现：
  *   · 无构建（原生）→ *.js  同页挂载，零依赖直接跑
@@ -107,6 +121,29 @@ export const plugins = [
     version: '1.0.0',
     theme: 'dark',
     description: 'kityminder 内核：多画布 / 主题 / 布局 / 附件 / XMind 互导，内容实时缓存',
+  },
+  /* ---- 服务插件：不显示在侧边栏，供其它插件调用 ---- */
+  {
+    id: 'demo-service',
+    name: '示例·取色服务',
+    icon: '🎨',
+    kind: 'service',
+    type: 'iframe',
+    entry: './plugins/demo-service/index.html',
+    version: '1.0.0',
+    theme: 'dark',
+    description: '示例服务插件：不进侧边栏，由其它插件通过 ctx.services.call 调用',
+  },
+  {
+    id: 'store',
+    name: '插件',
+    icon: '⊞',
+    type: noBuild ? 'module' : 'iframe',
+    entry: noBuild ? './plugins/store/index.js' : './plugins/store/index.html',
+    theme: 'dark',
+    requiresBuild: !noBuild,
+    builtin: true,
+    description: '插件商店：已安装插件与服务插件的管理，未来接联网安装卸载',
   },
   {
     id: 'settings',

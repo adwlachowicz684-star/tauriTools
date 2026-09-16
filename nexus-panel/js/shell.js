@@ -7,7 +7,7 @@
 
 import {
   createHost, loadRegistry, getCustomPlugins, saveCustomPlugins,
-  filterByRuntime, isInsideTauri, escapeHtml,
+  filterByRuntime, visiblePlugins, isInsideTauri, escapeHtml,
 } from './host.js';
 import {
   applyTheme, setAccent, getCurrent, exportVars, getBase,
@@ -97,7 +97,9 @@ function renderSidebar() {
   const list = $('#plugin-list');
   if (!list) return;
   list.innerHTML = '';
-  for (const p of host.getPlugins()) {
+  /* 服务插件不进侧边栏 —— 它们没有主视图，列出来只会点开一片空白。
+     过滤放在渲染处而非数据源：宿主仍要持有完整列表（服务要靠它挂载）。 */
+  for (const p of visiblePlugins(host.getPlugins())) {
     const btn = document.createElement('button');
     btn.className = 'nav-item' + (p.id === host.state.activeId ? ' active' : '');
     btn.dataset.id = p.id;

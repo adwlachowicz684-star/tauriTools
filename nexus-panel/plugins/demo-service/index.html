@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>示例·取色服务</title>
+  <style>
+    /* 服务插件不展示 UI，但 iframe 仍需要一个"已挂载"的样子。
+       保持极简：不设底色（用面板背景），只放一行说明。
+
+       注意：这里**不能**写 display:none 或 visibility:hidden ——
+       一来 iframe 是隐藏容器里的，本就看不见；
+       二来某些浏览器对完全隐藏的 iframe 会延迟/跳过加载，
+       服务就永远握不上手。 */
+    html, body { margin: 0; height: 100%; font: 12px/1.6 system-ui, sans-serif; }
+    body {
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text-muted, #888);
+    }
+    .hint { opacity: .6; text-align: center; padding: 12px; }
+  </style>
+</head>
+<body>
+  <div class="hint">
+    这是一个<b>服务插件</b>（kind: 'service'）<br />
+    它不出现在侧边栏，由其它插件通过<br />
+    <code>ctx.services.call('demo-service', 'pick', {...})</code> 调用
+  </div>
+  <script type="module" src="./index.js"></script>
+</body>
+</html>

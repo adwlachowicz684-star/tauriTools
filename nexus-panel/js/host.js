@@ -226,6 +226,97 @@ export function createHost(opts = {}) {
 
   const bus = createBus();
 
+  /* ---- 服务插件运行时（kind:'service'） ----
+     服务不进侧边栏，用户不直接打开；它们被挂到一个隐藏的常宿容器里，
+     由任意插件通过 ctx.services.call(id, method, args) 调用。
+
+     两个关键点：
+
+     ① **必须真实挂到 DOM**。iframe 只有在文档里才会加载运行，
+        所以容器要"藏"而不是"不插入" —— 用移出视口的方式，
+        不用 display:none（部分浏览器对完全隐藏的 iframe 会延迟/跳过加载）。
+
+     ② **懒加载 + 并发去重**。服务可能有十几个，启动时全挂会很慢；
+        谁被调才挂谁。首次调用会并发到达（多个插件同时要色盘），
+        所以挂载中的 Promise 存在表里，后来者直接复用，不重复挂载。 */
+  const serviceHost = document.createElement('div');
+  serviceHost.id = 'nexus-service-host';
+  serviceHost.setAttribute('aria-hidden', 'true');
+  // 移出视口而非 display:none —— 见上面 ①
+  serviceHost.style.cssText =
+    'position:absolute;left:-99999px;top:0;width:400px;height:300px;overflow:hidden;pointer-events:none;';
+  (opts.serviceHostParent || document.body).appendChild(serviceHost);
+
+  /** id -> { promise, instance } */
+  const services = new Map();
+
+  function serviceManifest(id) {
+    return state.plugins.find((p) => p.id === id && p.kind === 'service');
+  }
+
+  async function ensureService(id) {
+    const existing = services.get(id);
+    if (existing) return existing;
+
+    const manifest = serviceManifest(id);
+    if (!manifest) throw new Error(`未找到服务插件: ${id}`);
+
+    const entry = {
+      promise: (async () => {
+        const box = document.createElement('div');
+        box.style.cssText = 'width:100%;height:100%;';
+        serviceHost.appendChild(box);
+        const inst = manifest.type === 'iframe'
+          ? await mountIframeView(box, manifest, null, 'service')
+          : await mountModule(box, manifest, null);
+        if (!inst) throw new Error(`服务插件挂载失败: ${id}`);
+        entry.instance = inst;
+        return inst;
+      })(),
+      instance: null,
+    };
+    services.set(id, entry);
+    return entry;
+  }
+
+  /** 供调试/面板使用：列出已声明的服务（未挂载的也列出） */
+  function listServices() {
+    return state.plugins
+      .filter((p) => p.kind === 'service')
+      .map((p) => ({ id: p.id, name: p.name, icon: p.icon, description: p.description,
+                     version: p.version, mounted: services.has(p.id) }));
+  }
+
+  /**
+   * 调用服务插件的方法。
+   *
+   * 两种挂载形态走不同通路，但调用方写法完全一致：
+   *   · iframe 服务 —— 发 service.call 消息，等它的 service.res
+   *   · module 服务 —— 直接调 def.methods[method]，省掉消息往返
+   *
+   * 服务**懒加载**：谁被调才挂谁。启动就把十几个服务全挂起来会很慢，
+   * 而多数服务整场可能一次都用不到。
+   */
+  async function callService(id, method, args) {
+    const entry = await ensureService(id);
+    const inst = await entry.promise;
+    if (typeof method !== 'string' || !method) {
+      throw new Error('服务方法名不能为空');
+    }
+    if (inst.iframe) {
+      if (typeof inst.callService !== 'function') {
+        throw new Error(`服务实例不支持调用: ${id}`);
+      }
+      return inst.callService(method, args);
+    }
+    // module 服务：方法表挂在 def.methods 上
+    const fn = inst.def?.methods?.[method];
+    if (typeof fn !== 'function') {
+      throw new Error(`服务 ${id} 未提供方法: ${method}`);
+    }
+    return fn(args, inst.ctx);
+  }
+
   const setBadge = (id, n) => {
     state.badges[id] = n || 0;
     hooks.onBadges?.({ ...state.badges });
@@ -234,6 +325,20 @@ export function createHost(opts = {}) {
   /* ---- 加载 / 卸载 ---- */
   async function mount(id) {
     const manifest = state.plugins.find((p) => p.id === id);
+    /* 服务插件不该被用户直接打开：它没有主视图，打开是空白。
+       拦在这里而不是只靠侧边栏不显示 —— 侧边栏只是 UI，
+       快捷键、恢复上次插件等路径都可能绕过它。 */
+    if (manifest?.kind === 'service') {
+      await unmount();
+      state.activeId = null;
+      const stage0 = getStage();
+      if (stage0) {
+        stage0.innerHTML = `<div class="nx-empty lg"><div class="nx-empty-mark">◈</div>
+          <p>「${manifest.name}」是服务插件，供其它插件调用，不能直接打开</p></div>`;
+      }
+      hooks.onActive?.(null);
+      return;
+    }
     await unmount();
 
     state.activeId = id;
@@ -483,6 +588,10 @@ export function createHost(opts = {}) {
       theme: readTheme(),
       shellHooks: makeShellHooks(manifest),
       isActive: isPluginActive(manifest.id),   // 快捷键只在自己激活时生效
+      services: {
+        call: (id, method, args) => callService(id, method, args),
+        list: () => listServices(),
+      },
     });
 
     stage.innerHTML = '';
@@ -559,6 +668,9 @@ export function createHost(opts = {}) {
     let handshaked = false;          // 每个 iframe 实例只握手一次
     // 握手阶段就要写 reportedBase，此时完整实例还没构造出来，先放一个可变壳
     const inst0 = {};
+    /* 本 iframe 实例私有的"服务调用等待表"：id -> 回包处理函数。
+       挂载 iframe 服务时用它接收 service.res。 */
+    const serviceCalls = new Map();
 
     /* iframe 现场快照：失败时随错误一起带到错误框里。
        必须在 iframe 还在的时候抓 —— 出错后 wrap 会被移除，届时只剩一个
@@ -708,6 +820,14 @@ export function createHost(opts = {}) {
             }
             break;
           }
+          /* 服务调用的回包。
+             由 serviceCalls 表（本 iframe 实例私有）里的 id 找回等待者。
+             注意这里是**实例私有**的表：每个服务 iframe 各自一份，
+             id 只在自己这条桥接上有意义，混用会串台。 */
+          case 'service.res':
+            serviceCalls.get(d.id)?.(d);
+            serviceCalls.delete(d.id);
+            break;
           case 'publish':
             bus.emit(d.event, d.payload);
             break;
@@ -771,6 +891,24 @@ export function createHost(opts = {}) {
     return Object.assign(inst0, {
       manifest, wrap, target: iframe, root: null, iframe, bridgeHandler, cleanupFns, hasSettings,
       isolated, adaptTheme,
+      serviceCalls,
+      /** 向本 iframe 服务发一次调用，等它的 service.res */
+      callService(method, args) {
+        const id = `svc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        return new Promise((resolve, reject) => {
+          /* 超时必须清理，否则 promise 永远悬着 ——
+             调用方 await 不到结果，界面就那么卡着，没有任何提示。 */
+          const timer = setTimeout(() => {
+            serviceCalls.delete(id);
+            reject(new Error(`服务调用超时: ${manifest.id}.${method}（15s）`));
+          }, 15000);
+          serviceCalls.set(id, (d) => {
+            clearTimeout(timer);
+            d.ok ? resolve(d.data) : reject(new Error(d.error || '服务调用失败'));
+          });
+          send(iframe, { type: 'service.call', id, method, args });
+        });
+      },
       ctx: { __destroy: async () => cleanupFns.forEach((fn) => fn()) },
       unmount: null,
     });
@@ -826,6 +964,15 @@ export function createHost(opts = {}) {
         case 'store.del':
           localStorage.removeItem(`nexus:${manifest.id}:${payload.k}`);
           return reply(true, true);
+        /* 服务调用：沙箱插件 → 宿主 → 服务 iframe。
+           宿主居中转发是必要的：服务跑在自己的沙箱里，调用方拿不到它的
+           contentWindow，只能靠宿主这条已知的桥接通道。 */
+        case 'service.call': {
+          const data = await callService(payload.id, payload.method, payload.args);
+          return reply(true, data);
+        }
+        case 'service.list':
+          return reply(true, listServices());
         case 'store.all': {
           const out = {}, pre = `nexus:${manifest.id}:`;
           // 逐键 try：一个键坏掉不该让整份配置拿不到（此前会整体抛错）
@@ -1491,6 +1638,22 @@ export function diagnosticsFilename(manifest) {
 /** 无构建模式下过滤掉需要编译器的插件（React/TSX） */
 export function filterByRuntime(plugins) {
   return isNoBuild() ? plugins.filter((p) => !p.requiresBuild) : plugins;
+}
+
+/**
+ * 侧边栏该显示哪些插件 —— 即排除服务插件（kind:'service'）。
+ *
+ * 单独抽出来是因为**有多条路径**要做这个判断：侧边栏渲染、
+ * 恢复上次打开的插件、快捷键切换……只在一处过滤的话，
+ * 别的路径迟早会把服务塞进主舞台。
+ */
+export function visiblePlugins(plugins) {
+  return (plugins || []).filter((p) => p.kind !== 'service');
+}
+
+/** 是否是服务插件 */
+export function isService(p) {
+  return p?.kind === 'service';
 }
 
 export { isInsideTauri };

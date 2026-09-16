@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8" />
+  <script>
+    /* 首帧底色（防白闪 / 出错兜底）
+       ----------------------------------------------------------
+       本页是 iframe 内的独立文档，UA 默认画布是白的，
+       且不受父级 color-scheme 影响。以下几种情况内部都画不出东西：
+         · 脚本报错，一个节点都没挂上
+         · 主题变量正经 postMessage 推过来之前的那一两百毫秒
+       外壳每次应用主题都会把底色缓存进 localStorage，这里直接读出来铺上。
+       color-scheme 一并设上：否则 iframe 里的表单控件与滚动条永远按
+       浏览器默认的浅色渲染，深色面板下特别扎眼。
+       读不到（隔离态抛 SecurityError、或首次运行）就交给宿主侧
+       .plugin-frame 的 --bg 底板兜底。 */
+    try {
+      var _bg = localStorage.getItem('nexus:preload-bg');
+      var _base = localStorage.getItem('nexus:preload-base');
+      var _r = document.documentElement;
+      if (_bg) { _r.style.setProperty('--bg', _bg); _r.style.background = _bg; }
+      if (_base) _r.style.colorScheme = _base;
+    } catch (_e) { /* 隔离态无 localStorage，忽略 */ }
+  </script>
+<title>settings</title></head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="./index.js"></script>
+</body>
+</html>
