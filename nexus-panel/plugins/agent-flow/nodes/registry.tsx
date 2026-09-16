@@ -1,5 +1,4 @@
 import type { NodeProps, NodeTypes } from '@xyflow/react';
-import { makeInspector } from '../components/inspectors/fields';
 import {
   NODE_CATEGORY_META,
   type NodeCategory, type NodeDef, type NodePreset, type NodeInspectorProps,
@@ -10,6 +9,14 @@ import {
  *
  * 用 Map 而不是对象字面量：键是用户数据里来的字符串（node.type），
  * 用对象可能被 __proto__ / constructor 之类的键打到原型链上。
+ *
+ * 本模块**只许依赖纯类型模块**（本文件 + ./types + ./store）。
+ * 一旦它 import 了带组件的模块，就会和 nodes/defs/* 形成环 —— defs/* 在模块
+ * 顶层调 registerNode()，而环里的本文件那时只走到 import 阶段，下面的 const
+ * 仍在 TDZ，于是抛「Cannot access 'defs' before initialization」。脚本在模块
+ * 求值阶段中断，SDK 末尾的 post({ type: 'ready' }) 执行不到，外壳只会干等 10s
+ * 报「iframe 插件握手超时」，连错误原因都传不出来。详见
+ * components/inspectors/inspectorOf.tsx 的注释（原先挂在本文件的那个函数）。
  */
 const defs = new Map<string, NodeDef>();
 /** data.kind → def。多个 type 共用一份 data 时（bili/wechat），取先注册的 */
@@ -133,31 +140,6 @@ export function presetsByCategory(): Array<{ category: NodeCategory; label: stri
   return order
     .filter((c) => (groups.get(c)?.length ?? 0) > 0)
     .map((c) => ({ category: c, label: NODE_CATEGORY_META[c].label, presets: groups.get(c)! }));
-}
-
-/**
- * 取该节点的属性面板组件。
- *
- * 没写 Inspector 的节点：用 fields 清单自动生成（基础面板）。
- * 连 fields 都没有的：给一个说明面板而不是空白 ——
- * 空白会让"这个节点还没实现面板"看起来像"面板坏了"。
- */
-export function inspectorOf(def: NodeDef): NodeDef['Inspector'] {
-  if (def.Inspector) return def.Inspector;
-  if (def.fields) return makeInspector(def.fields, def.panelFooter);
-  return function EmptyInspector({ node }: NodeInspectorProps) {
-    return (
-      <aside className="inspector">
-        <div className="insp-title">
-          <span className="title-input" style={{ flex: 1 }}>{def.meta.label}</span>
-          <span className="insp-kind">{def.meta.label}</span>
-        </div>
-        <div className="tip">
-          这个节点还没有配置面板（{node.type ?? '未知类型'}）。
-        </div>
-      </aside>
-    );
-  };
 }
 
 /** 画布的 nodeTypes 映射（xyflow 要的就是 type → 组件） */

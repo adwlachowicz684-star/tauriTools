@@ -1,7 +1,8 @@
 import type { FlowEdge, FlowNode } from '../flowTypes';
 import type { Credential } from '../engine/credentials';
 import type { SecretPolicy } from '../types';
-import { getDef, inspectorOf } from '../nodes/registry';
+import { getDef } from '../nodes/registry';
+import { inspectorOf } from './inspectors/inspectorOf';
 
 /**
  * 属性面板 —— 现在只是一个分发器。
