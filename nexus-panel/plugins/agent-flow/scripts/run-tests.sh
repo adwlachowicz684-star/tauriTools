@@ -39,5 +39,9 @@ for f in tests/*.test.ts; do
     --import-map ../types=../types.mjs >/dev/null
 done
 
+# 源码级守卫测试（tests/inspectorRemount.test.ts）要读源文件，
+# 而测试是在 $OUT/tests 下跑的，相对路径到不了仓库。
+export AF_SRC="$(pwd)"
+
 cd "$OUT/tests"
 node --test ./*.mjs

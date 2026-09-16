@@ -159,14 +159,27 @@ export function VarBar({ title, tokens, onInsert }: {
 /* 渲染器（主 A）                                                       */
 /* ------------------------------------------------------------------ */
 
-function renderField(f: FieldDef, p: FieldRenderProps & { id: string; onChangeNode: (patch: Record<string, unknown>) => void }) {
+/**
+ * @param i 字段在清单里的原始下标，用作 key 的兜底。
+ *
+ * 这里原先写的是 `key={f.key ?? Math.random()}` —— 每次渲染生成一个新的
+ * 随机数，React 于是认为这是个全新元素，当场卸载重建。custom 字段里若套了
+ * <input>/<select>（任务节点的 FileParamsPanel 就有），输一个字失焦一次。
+ * 没有 key 的自定义字段只能拿下标兜底：字段顺序在该节点内是固定的，
+ * 下标因此在重渲染之间稳定。
+ */
+function renderField(
+  f: FieldDef,
+  p: FieldRenderProps & { id: string; onChangeNode: (patch: Record<string, unknown>) => void },
+  i = 0,
+) {
   const { type } = f;
 
   if (type === 'note') {
-    return <div className="tip" key={f.key ?? Math.random()}>{f.content ?? f.render?.(p)}</div>;
+    return <div className="tip" key={f.key ?? `note-${i}`}>{f.content ?? f.render?.(p)}</div>;
   }
   if (type === 'custom') {
-    return <div key={f.key ?? Math.random()}>{f.render?.(p)}</div>;
+    return <div key={f.key ?? `custom-${i}`}>{f.render?.(p)}</div>;
   }
   if (type === 'credential') {
     return (
@@ -303,7 +316,13 @@ export function BasicInspector({
     onChangeSecretPolicy,
   };
 
-  const list = fields(d).filter((f) => (f.when ? f.when(d) : true));
+  /*
+   * 带上过滤前的原始下标：when 条件隐藏某个字段时，后面字段的下标不该平移。
+   * 平移会让 React 把 key 对到另一个字段上，造成"输到一半的内容跳到别的框"。
+   */
+  const list = fields(d)
+    .map((f, i) => ({ f, i }))
+    .filter(({ f }) => (f.when ? f.when(d) : true));
 
   return (
     <aside className="inspector">
@@ -316,16 +335,20 @@ export function BasicInspector({
         <span className="insp-kind">{def.meta.label}</span>
       </div>
 
-      {list.map((f) =>
-        renderField(f, {
-          ...base,
-          value: f.key ? d[f.key] : undefined,
-          onChange: (v) => f.key && onChange(node.id, { [f.key]: v }),
-          // renderField 的凭据分支要用 onChangeNode（type:'credential' 的字段），
-          // custom 渲染的作者也可能读 id。少了这两个，点凭据选择器会撞 undefined。
-          id: node.id,
-          onChangeNode: patchObj,
-        }),
+      {list.map(({ f, i }) =>
+        renderField(
+          f,
+          {
+            ...base,
+            value: f.key ? d[f.key] : undefined,
+            onChange: (v) => f.key && onChange(node.id, { [f.key]: v }),
+            // renderField 的凭据分支要用 onChangeNode（type:'credential' 的字段），
+            // custom 渲染的作者也可能读 id。少了这两个，点凭据选择器会撞 undefined。
+            id: node.id,
+            onChangeNode: patchObj,
+          },
+          i,
+        ),
       )}
 
       {footer ? footer(base) : null}
@@ -333,20 +356,56 @@ export function BasicInspector({
   );
 }
 
+/**
+ * 缓存表：同一份 (fields, footer) 只造一次组件。
+ *
+ * 不缓存会怎样（这是个真实的坑，别删掉缓存）：
+ * inspectorOf() 在 Inspector.tsx 的**每次渲染**里被调用，它转手调本函数。
+ * 本函数若每次 return 一个新的函数组件，React 协调时看到
+ * <Panel /> 的 type 引用变了 —— 它比较元素类型用的是 `===` —— 于是判定
+ * 这是另一种组件：把整棵子树卸载再重新挂载。
+ *
+ * 后果是每次重渲染（哪怕只是父组件 setState）都：
+ *   - <input> 被销毁重建 → 光标丢失，打一个字失焦一次
+ *   - <select> 被销毁重建 → 下拉刚展开就被关掉，选不了值
+ *   - 子树里的 useState 全部重置
+ * 用户看到的就是"下拉框一出来就消失""点了光标就没"，很像失焦，
+ * 其实是组件在反复重挂载。
+ *
+ * 只有走 fields 自动生成面板的节点会中招 —— 写了自定义 Inspector 的节点
+ * 返回的是节点定义模块顶层的稳定引用，不会变。
+ *
+ * 外层用 WeakMap（键是节点定义里的 fields 函数）：节点若将来支持动态
+ * 卸载，函数对象被回收时缓存条目也跟着走，不会泄漏。
+ */
+type InspectorComponent = (props: {
+  node: FlowNode;
+  edges: FlowEdge[];
+  onChange: (id: string, patch: Record<string, unknown>) => void;
+  credentials?: Credential[];
+  onOpenCredentials?: (kind: string) => void;
+  secretPolicy?: SecretPolicy;
+  onChangeSecretPolicy?: (p: SecretPolicy) => void;
+}) => JSX.Element;
+
+const inspectorCache = new WeakMap<FieldFactory, Map<unknown, InspectorComponent>>();
+
 /** 把字段清单包成一个面板组件，供节点定义直接用 */
 export function makeInspector(
   fields: FieldFactory,
   footer?: (p: FieldRenderProps) => ReactNode,
-) {
-  return function Inspector(props: {
-    node: FlowNode;
-    edges: FlowEdge[];
-    onChange: (id: string, patch: Record<string, unknown>) => void;
-    credentials?: Credential[];
-    onOpenCredentials?: (kind: string) => void;
-    secretPolicy?: SecretPolicy;
-    onChangeSecretPolicy?: (p: SecretPolicy) => void;
-  }) {
-    return <BasicInspector {...props} fields={fields} footer={footer} />;
-  };
+): InspectorComponent {
+  let byFooter = inspectorCache.get(fields);
+  if (!byFooter) {
+    byFooter = new Map();
+    inspectorCache.set(fields, byFooter);
+  }
+  const cached = byFooter.get(footer);
+  if (cached) return cached;
+
+  const Inspector: InspectorComponent = (props) => (
+    <BasicInspector {...props} fields={fields} footer={footer} />
+  );
+  byFooter.set(footer, Inspector);
+  return Inspector;
 }
