@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import type { Api } from '../api';
 import { errText } from '../api';
-import { hexToRgb, rgbToHex, normalizeHex } from '../utils/color';
+import { hexToRgb, rgbToHex, normalizeHex, hexToHsv, hsvToRgb, hsvToHex, type Hsv } from '../utils/color';
+import { SvPanel, HueBar } from './SvPanel';
 
 /** 预设常用色 24 个（取自原 C# 版 ColorPickDialog 的 PresetColors，不可删） */
 export const PRESET_COLORS = [
@@ -29,25 +30,41 @@ export function ColorPicker({
   onLog: (msg: string, isError?: boolean) => void;
   compact?: boolean;
 }) {
-  const [rgb, setRgb] = useState<[number, number, number]>(() => hexToRgb(value ?? '#7C8CFF'));
+  /**
+   * 内部状态用 HSV。
+   *
+   * 此前存 RGB，而 SV 面板的两个轴是饱和度与明度 —— 用 RGB 反推的话，
+   * 每拖一次都要做一次 RGB→HSV→RGB 往返，灰阶（s=0）还会**丢失色相**
+   * （任何灰色的 HSV 都是 h=0），拖过一次黑白色块后就再也回不到原来的色调。
+   */
+  const [hsv, setHsv] = useState<Hsv>(() => hexToHsv(value ?? '#7C8CFF'));
   const [hexText, setHexText] = useState(value ?? '');
   const [picking, setPicking] = useState(false);
 
-  const current = useMemo(() => rgbToHex(...rgb), [rgb]);
+  const current = useMemo(() => hsvToHex(hsv), [hsv]);
+  const rgb = useMemo(() => hsvToRgb(hsv), [hsv]);
+
+  /** 面板拖动：只改预览，不落盘（落盘由外层点保存触发） */
+  const applyHsv = (next: Hsv) => {
+    setHsv(next);
+    const hex = hsvToHex(next);
+    setHexText(hex);
+    onChange(hex);
+  };
 
   const applyHex = (raw: string) => {
     const hex = normalizeHex(raw);
     setHexText(raw);
     if (!hex) return;
-    setRgb(hexToRgb(hex));
+    setHsv(hexToHsv(hex));
     onChange(hex);
   };
 
   const setChannel = (i: 0 | 1 | 2, v: number) => {
     const next = [...rgb] as [number, number, number];
     next[i] = Math.max(0, Math.min(255, Number.isFinite(v) ? v : 0));
-    setRgb(next);
     const hex = rgbToHex(...next);
+    setHsv(hexToHsv(hex));
     setHexText(hex);
     onChange(hex);
   };
@@ -76,6 +93,13 @@ export function ColorPicker({
 
   return (
     <div className={compact ? 'fpx-picker compact' : 'fpx-picker'}>
+      {/* 可视化选色区：SV 面板 + 色相条。
+          此前只能靠预设色块和 RGB 数字调，没有一个能"看颜色"的地方。 */}
+      <div className="fpx-picker-visual">
+        <SvPanel hsv={hsv} onChange={applyHsv} />
+        <HueBar hsv={hsv} onChange={applyHsv} />
+      </div>
+
       {/* 预览 + 通道输入 */}
       <div className="p-row">
         <div className="fpx-preview-block" style={{ background: current }}>
@@ -103,7 +127,11 @@ export function ColorPicker({
         <button className="p-btn" disabled={picking} onClick={pick} title="读取当前鼠标位置的颜色">
           {picking ? '取色中…' : '⌖ 吸管'}
         </button>
-        <button className="p-btn" onClick={() => { setHexText(''); onChange(null); }}>
+        <button className="p-btn" onClick={() => {
+          setHexText('');
+          setHsv(hexToHsv('#7C8CFF'));
+          onChange(null);
+        }}>
           恢复默认
         </button>
       </div>

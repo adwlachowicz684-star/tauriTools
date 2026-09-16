@@ -63,3 +63,74 @@ export function luminance(hex: string): number {
 export function isDark(hex: string): boolean {
   return luminance(hex) < 0.5;
 }
+
+/* ---------------------------- HSV ---------------------------- */
+/**
+ * HSV 色彩模型（色相 / 饱和度 / 明度）。
+ *
+ * 色盘的二维面板必须用 HSV 而不是 RGB：面板的 X 轴是饱和度、Y 轴是明度，
+ * 拖动时**色相保持不变**——这正是"在这块颜色里挑深浅"的直觉。
+ * 用 RGB 表达就没有这两个正交的维度，拖动手感是错的。
+ */
+export interface Hsv {
+  /** 色相 0~360 */
+  h: number;
+  /** 饱和度 0~1 */
+  s: number;
+  /** 明度 0~1 */
+  v: number;
+}
+
+/** RGB → HSV。h 取 0~360；灰阶（s=0）时 h 保留为 0。 */
+export function rgbToHsv(r: number, g: number, b: number): Hsv {
+  const rn = r / 255, gn = g / 255, bn = b / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const d = max - min;
+  let h = 0;
+  if (d !== 0) {
+    if (max === rn) h = ((gn - bn) / d) % 6;
+    else if (max === gn) h = (bn - rn) / d + 2;
+    else h = (rn - gn) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  const s = max === 0 ? 0 : d / max;
+  return { h, s, v: max };
+}
+
+/** HSV → RGB（各分量 0~255 整数）。 */
+export function hsvToRgb(hsv: Hsv): [number, number, number] {
+  const { s, v } = hsv;
+  //  hue 归一化到 0~360，防负数与超过一圈
+  const h = ((hsv.h % 360) + 360) % 360;
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) { r = c; g = x; }
+  else if (h < 120) { r = x; g = c; }
+  else if (h < 180) { g = c; b = x; }
+  else if (h < 240) { g = x; b = c; }
+  else if (h < 300) { r = x; b = c; }
+  else { r = c; b = x; }
+  return [
+    Math.round((r + m) * 255),
+    Math.round((g + m) * 255),
+    Math.round((b + m) * 255),
+  ];
+}
+
+export function hexToHsv(hex: string): Hsv {
+  const [r, g, b] = hexToRgb(hex);
+  return rgbToHsv(r, g, b);
+}
+
+export function hsvToHex(hsv: Hsv): string {
+  return rgbToHex(...hsvToRgb(hsv));
+}
+
+/** 色相对应的**纯色**（饱和度和明度都拉满），面板底色与色相条游标都用它。 */
+export function pureHueHex(h: number): string {
+  return hsvToHex({ h, s: 1, v: 1 });
+}
