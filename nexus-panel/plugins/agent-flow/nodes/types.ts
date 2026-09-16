@@ -98,6 +98,14 @@ export type NodeMeta = {
    * 不给则用 meta 生成单个预设（label/color 取 meta）。
    */
   presets?: () => Omit<NodePreset, 'type'>[];
+  /**
+   * 这个节点支持哪些参数卡片组（如 'github-repo'）。
+   *
+   * 声明了就会在属性面板自动出现对应的卡片选择器，并且**只有这些组**
+   * 的卡片能拖到这类节点上 —— 面板渲染与拖放校验共用这一份声明，
+   * 不会出现"面板上有选择器却不接受拖放"或反之的不一致。
+   */
+  cardGroups?: string[];
 };
 
 export type NodeDef = {

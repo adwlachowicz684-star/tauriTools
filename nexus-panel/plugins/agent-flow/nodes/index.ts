@@ -10,6 +10,14 @@
  * 删一种节点：删掉它的 def 文件与这里的 import 即可，
  * 历史画布里残留的该类型节点会退化成"未注册"占位，不会白屏。
  */
+/**
+ * 卡片组必须先于节点注册：BaseInspector 渲染面板时会按
+ * def.meta.cardGroups 去查组定义（取 label / keys / summary），
+ * 组没注册就查不到，选择器渲染不出来。
+ */
+import { registerBuiltinCardGroups } from './cardGroups';
+registerBuiltinCardGroups();
+
 import './defs/task';
 import './defs/genericHttp';
 import './defs/extract';
@@ -30,3 +38,6 @@ export {
 } from './registry';
 export type { NodeDef, NodePreset, NodeMeta, NodeCategory, NodeInspectorProps } from './types';
 export { NODE_CATEGORY_META } from './types';
+export {
+  getCardGroup, allCardGroups, checkCardForNode, patchForCard,
+} from '../engine/paramCards';

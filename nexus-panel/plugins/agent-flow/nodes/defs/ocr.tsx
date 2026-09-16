@@ -110,7 +110,9 @@ const fields: FieldDef[] = [
 registerNode({
   type: 'ocr',
   dataKind: 'ocr',
-  meta: { label: '图片识别 OCR', color: '#f472b6', category: 'ai', idPrefix: 'ocr' },
+  meta: {
+    cardGroups: ['llm-config'],
+    label: '图片识别 OCR', color: '#f472b6', category: 'ai', idPrefix: 'ocr' },
   create: (id, partial) => makeOcrNode(id, (partial ?? {}) as never).data,
   Canvas: OcrNode,
   fields: () => fields,

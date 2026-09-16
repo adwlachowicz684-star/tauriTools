@@ -41,6 +41,56 @@ export type ParamCard = {
 };
 
 /* ------------------------------------------------------------------ */
+/* 卡片组定义 —— 让卡片成为通用能力，而不是某几个节点的私有特性          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 一「组」卡片管辖哪些字段、在界面上怎么显示、值长什么样算合法。
+ *
+ * 为什么要有这张表：
+ * 最初卡片是 GitHub 节点私有的（组名、字段、摘要全写死在节点定义里），
+ * 于是"给另一个节点加卡片"要重写一遍同样的东西；
+ * 更关键的是**无法做类型验证** —— 不知道一组卡片该管哪些字段，
+ * 就只能凭 group 名字字符串相等来判断能不能拖到某个节点上，
+ * 而字符串是可以在两处各写一份、然后各改各的。
+ *
+ * 有了这张表之后：
+ *   · 节点只需声明 meta.cardGroups: ['github-repo']，面板自动渲染选择器
+ *   · 拖动卡片到节点时，能按 keys 校验卡片值是否真的适配这个节点
+ *   · 新增一组卡片 = 注册一条 CardGroupDef，不用碰任何节点
+ */
+export type CardGroupDef = {
+  group: string;
+  /** 面板上的字段名 */
+  label: string;
+  /** 这组卡片管辖的字段名。改其中任一字段 → 节点脱钩 */
+  keys: string[];
+  /** 卡片上显示的摘要，如 "acme/web" */
+  summary: (values: Record<string, unknown>) => string;
+  /** 新建卡片时的默认名字 */
+  name?: string;
+  /**
+   * 值合法性校验。返回错误说明，null 表示通过。
+   * 拖动卡片到节点时用它挡住"看着能拖、套上去是空的"这类错配。
+   */
+  validate?: (values: Record<string, unknown>) => string | null;
+};
+
+const CARD_GROUPS = new Map<string, CardGroupDef>();
+
+export function registerCardGroup(def: CardGroupDef): void {
+  CARD_GROUPS.set(def.group, def);
+}
+
+export function getCardGroup(group: string): CardGroupDef | null {
+  return CARD_GROUPS.get(group) ?? null;
+}
+
+export function allCardGroups(): CardGroupDef[] {
+  return [...CARD_GROUPS.values()];
+}
+
+/* ------------------------------------------------------------------ */
 /* 存储                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -246,6 +296,75 @@ export function isDetached(data: unknown, group: string): boolean {
 export function shouldDetach(patch: Record<string, unknown>, keys: string[]): boolean {
   if ('cardRefs' in patch) return false;
   return Object.keys(patch).some((k) => keys.indexOf(k) >= 0);
+}
+
+/* ------------------------------------------------------------------ */
+/* 复制卡片（Ctrl + 拖动）                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 复制一张卡片（按住 Ctrl 拖动时用）。
+ *
+ * 与节点复制同一套语义：副本是深拷贝，改副本不影响原件。
+ * 名字加「副本」后缀，避免列表里出现两张同名卡片无从分辨。
+ */
+export function duplicateCard(id: string, kv: KV = defaultKV()): ParamCard | null {
+  const src = findCard(id, kv);
+  if (!src) return null;
+  const copy: ParamCard = {
+    ...src,
+    id: newId(),
+    name: `${src.name} 副本`,
+    values: cloneData(src.values),
+    createdAt: Date.now(),
+  };
+  const list = loadParamCards(kv);
+  // 插在原件后面：副本紧挨着原件，比丢到列表末尾好找
+  const at = list.findIndex((c) => c.id === id);
+  list.splice(at >= 0 ? at + 1 : list.length, 0, copy);
+  saveParamCards(list, kv);
+  return copy;
+}
+
+/* ------------------------------------------------------------------ */
+/* 类型验证：卡片能不能套到这个节点上                                     */
+/* ------------------------------------------------------------------ */
+
+export type CheckResult = { ok: true } | { ok: false; reason: string };
+
+/**
+ * 判断一张卡片能否套到某个节点类型上。
+ *
+ * 三层校验，缺一不可：
+ *  1. 组必须已注册 —— 未注册的组没有 keys，无从校验，也无从套用
+ *  2. 节点必须声明支持这个组 —— 这是"类型验证"的核心。
+ *     没有这一层，把 HTTP 地址卡片拖到 GitHub 节点上会静默写进去，
+ *     节点上凭空多出几个用不到的字段
+ *  3. 卡片的值必须通过组自带的 validate —— 挡住"看着能拖、套上去是空的"
+ *
+ * @param supportedGroups 该节点类型声明支持的组（来自 def.meta.cardGroups）
+ */
+export function checkCardForNode(
+  card: ParamCard,
+  supportedGroups: string[] | undefined,
+  kv: KV = defaultKV(),
+): CheckResult {
+  const def = getCardGroup(card.group);
+  if (!def) {
+    return { ok: false, reason: `「${card.name}」属于未注册的分组 ${card.group}` };
+  }
+  if (!supportedGroups || supportedGroups.indexOf(card.group) < 0) {
+    return { ok: false, reason: `${def.label}不能套到这个节点上` };
+  }
+  const err = def.validate?.(card.values) ?? null;
+  if (err) return { ok: false, reason: `「${card.name}」${err}` };
+  return { ok: true };
+}
+
+/** 按组定义取出要写进节点的字段（组未注册时返回空 patch） */
+export function patchForCard(card: ParamCard): Record<string, unknown> {
+  const def = getCardGroup(card.group);
+  return def ? applyCardTo({}, card, def.keys) : {};
 }
 
 /* ------------------------------------------------------------------ */
