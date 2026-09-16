@@ -91,7 +91,11 @@ const isRingOrGlow = (v) => /^inset 0 0 0 /.test(v) || /^0 0 (?:0 )?\d+px var\(-
   || /^0 0 (?:0 )?\d+px currentColor$/.test(v) || /^inset 0 1px 0 /.test(v)
   // 单轴 + 零模糊 = 用阴影画的纯色块（挡条 / 缝隙遮挡），不是立体感；
   // 带不带 inset 都一样，颜色走变量就会跟着主题变
-  || /^(?:inset )?-?\d+px 0 0 /.test(v) || v === 'none';
+  || /^(?:inset )?-?\d+px 0 0 /.test(v) || v === 'none'
+  // 竖轴零模糊 + 主题色 = 用阴影画的**指示条**（页签下方的强调色横线）。
+  // 同理不是立体感：没有模糊就没有双向明暗，只是多画一条线，
+  // 颜色走变量就会跟着主题变（--accent 由用户可调）
+  || /^inset 0 -?\d+px 0 var\(--/.test(v);
 const hardShadow = [];
 for (const f of all) {
   for (const m of f.text.matchAll(/box-shadow\s*:\s*([^;]+);/g)) {

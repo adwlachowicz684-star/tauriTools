@@ -1497,7 +1497,8 @@ group('设置面板');
   };
 
   const dlg = openSettings(app);
-  const root = dlg.mask.querySelector('.mm-dialog');
+  /* 弹窗已统一到 js/dialog.js（.nx-dlg），不再是插件自写的 .mm-dialog */
+  const root = dlg.mask.querySelector('.nx-dlg');
 
   // 18.1 三段齐全
   const titles = [...root.querySelectorAll('h3')].map((x) => x.textContent);
@@ -1727,7 +1728,10 @@ group('A44/A46 备份闭环');
   // ---- 恢复必须有确认 ----
   const p = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
   const seg = p.slice(p.indexOf('export async function openBackups'), p.indexOf('/* ------------------------- 设置'));
-  ok(/window\.confirm\(/.test(seg), 'A46 恢复前有 window.confirm（覆盖全部画布，不可逆）');
+  /* 确认框已从 window.confirm 换成通用弹窗（js/dialog.js）：原生对话框
+     长相由浏览器决定、不跟随主题，且在 jsdom 里无法测试。 */
+  ok(/askConfirm\(|window\.confirm\(/.test(seg), 'A46 恢复前有确认框（覆盖全部画布，不可逆）');
+  ok(!/window\.confirm\(/.test(seg), 'A46 不再用原生 window.confirm（改用通用弹窗）');
   ok(/不可撤销/.test(seg), '确认文案说明不可撤销');
   ok(/safe\('恢复快照'/.test(seg), '恢复动作包了 safe()（异步失败要看得见）');
 }
@@ -2688,7 +2692,11 @@ group('P1 附件与视频');
 
   // ---- A23 替换/移除前确认 ----
   ok(/export function confirmDialog/.test(src), 'A23 新增 confirmDialog（Promise 版）');
-  ok(/return new Promise\(\(resolve\) => \{/.test(src), 'A23 confirmDialog 返回 Promise（调用点是 async 流程）');
+  /* confirmDialog 现在委托给全工具共用的 js/dialog.js —— 实现里不再自己
+     new Promise。要保证的是**调用点可以 await**，所以改看它返回的是不是
+     Promise（委托给 askConfirm 同样满足）。 */
+  ok(/return askConfirm\(|return new Promise\(\(resolve\) => \{/.test(src),
+    'A23 confirmDialog 返回 Promise（调用点是 async 流程）');
   const rmStart = src.indexOf('const remove = ');
   const rm = src.slice(rmStart, src.indexOf('/** 点附件卡片', rmStart));
   // 不能只断言「有没有 await confirmDialog」—— 把 `if (r)` 改成 `if (false)`

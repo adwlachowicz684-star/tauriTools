@@ -1,0 +1,161 @@
+/* ============================================================
+   通用弹窗
+   ============================================================
+   全工具共用一套：外壳（原生 / React）、插件（React / 原生 JS）都用它。
+
+   为什么单独一个文件、而不是并进 css/tokens.css
+   --------------------------------------------------------------------
+   tokens.css 只放变量和尺度令牌（外加滚动条这类"每个文档都必须有一份"
+   的全局规则）。弹窗是**组件**，体积大得多，不该塞进那份基础文件里
+   让所有引用它的地方都跟着变重 —— 用到弹窗的才引入。
+
+   引入方式：
+     · 外壳      —— css/neumorphism.css 里 @import，主文档与 settings 插件生效
+     · 插件      —— 自己 @import url('../../css/dialog.css')
+   插件是独立文档，外壳的样式表传不进去，必须各引各的；
+   test:dialog 会校验"引了 js/dialog.js 的文件也都引了这份 CSS"。
+
+   变量名全部走外壳主题（--surface-overlay / --text / --accent 等），
+   所以在深色、浅色、玻璃各风格下都跟着主题走。
+   ============================================================ */
+
+/* 遮罩：与 .mask 同层，但独立命名以免和外壳的老弹窗打架 */
+.nx-mask {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-mask);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: var(--mask);
+  /* 半透明遮罩配轻微模糊：让弹窗"浮"起来，同时不完全遮死背景 */
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  transition: opacity var(--dur-base) ease;
+}
+.nx-mask.on { opacity: 1; }
+/* 关闭瞬间由 JS 加上：淡出这 160ms 里遮罩虽透明但仍铺满整屏，
+   不停掉 pointer-events 就会吃掉用户对背后界面的第一次点击 */
+.nx-mask.closing { pointer-events: none; }
+
+.nx-dlg {
+  width: 420px;
+  max-width: 100%;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  border-radius: var(--r-lg);
+  /* --surface-overlay：弹窗盖在别的内容上，底板必须比普通卡片更实。
+     用 --surface 的话玻璃主题下只有 7% 白，后面的界面全透上来，
+     弹窗里的文字和背景文字叠在一起根本读不了（详见 .dialog 的说明）。 */
+  background: var(--surface-overlay);
+  /* 叠一层固定黑色投影：主题那组双向阴影在浅色主题下最弱
+     （纯白底没有"更亮"的空间），而弹窗是最需要浮起来的容器 */
+  box-shadow: var(--sh-out-lg), var(--sh-cast-md);
+  transform: translateY(8px) scale(.98);
+  transition: transform var(--dur-base) ease;
+}
+.nx-mask.on .nx-dlg { transform: none; }
+
+.nx-dlg-head { flex: none; margin-bottom: 12px; }
+.nx-dlg-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 内容区：可滚动。min-height:0 不能省 —— flex 子项默认 auto，
+   会被长内容顶开，导致这里的 overflow 失效、弹窗冲破视口 */
+.nx-dlg-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.nx-dlg-msg {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  /* 确认文案常有换行，用 pre-wrap 让 \n 直接生效 */
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* 提示框的状态色：alert() 的 type 参数 */
+.nx-dlg-msg.nx-ok { color: var(--ok); }
+.nx-dlg-msg.nx-err { color: var(--danger); }
+.nx-dlg-msg.nx-warn { color: var(--warn); }
+
+/* ---------- 输入框（prompt） ---------- */
+.nx-dlg-field { display: flex; flex-direction: column; gap: 8px; }
+.nx-dlg-label { font-size: 11.5px; color: var(--text-dim); }
+.nx-input {
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface-sunk);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-sm);
+  box-shadow: var(--sh-in-sm);
+  outline: none;
+  transition: border-color var(--dur-fast);
+}
+.nx-input:focus { border-color: var(--accent); }
+.nx-dlg-err {
+  min-height: 15px;
+  font-size: 11.5px;
+  color: var(--danger);
+}
+
+/* ---------- 底部按钮 ---------- */
+.nx-dlg-foot {
+  flex: none;
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.nx-btn {
+  height: 32px;
+  padding: 0 16px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  background: var(--surface-raised);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-sm);
+  box-shadow: var(--sh-out-sm);
+  cursor: pointer;
+  transition: color var(--dur-fast), border-color var(--dur-fast);
+}
+.nx-btn:hover { color: var(--text); border-color: var(--accent); }
+.nx-btn:active { box-shadow: var(--sh-in-sm); }
+
+/* 主按钮：用 --accent 实底，文字色固定为 --badge-fg
+   （那本来就是"叠在强调色上的文字色"，白/黑由主题自己决定，
+   不要写死 #fff —— 浅色强调色上白字会看不见） */
+.nx-btn.primary {
+  color: var(--badge-fg);
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: var(--sh-out-md);
+}
+.nx-btn.primary:hover { color: var(--badge-fg); filter: brightness(1.06); }
+/* 危险操作：确认按钮用状态色 --danger，而不是让用户把主题色误认成警告 */
+.nx-btn.danger {
+  color: var(--badge-fg);
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+/* 尊重系统「减少动效」：位移改为直接出现 */
+@media (prefers-reduced-motion: reduce) {
+  .nx-mask, .nx-dlg { transition: none; }
+  .nx-dlg { transform: none; }
+}

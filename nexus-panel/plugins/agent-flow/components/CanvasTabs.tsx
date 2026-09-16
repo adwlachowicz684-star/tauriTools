@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CanvasMeta } from '../engine/canvasStore';
+import { confirm } from '../../../js/dialog.js';
 
 type Props = {
   canvases: CanvasMeta[];
@@ -74,11 +75,14 @@ export default function CanvasTabs({
                     className="tab-close"
                     disabled={disabled}
                     title="删除这个工作流"
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       e.stopPropagation();
-                      if (confirm(`确定删除「${c.name}」？该工作流的节点和连线将一并移除。`)) {
-                        onDelete(c.id);
-                      }
+                      const ok = await confirm({
+                        title: '删除工作流',
+                        message: `确定删除「${c.name}」？该工作流的节点和连线将一并移除。`,
+                        danger: true,
+                      });
+                      if (ok) onDelete(c.id);
                     }}
                   >
                     ×

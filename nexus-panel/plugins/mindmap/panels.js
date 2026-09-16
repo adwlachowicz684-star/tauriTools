@@ -68,6 +68,7 @@ import * as mi from './mediainfo.js';
 import * as picons from './preset-icons.js';
 import * as tb from './tag-badges.js';
 
+import { show as showDialog, confirm as askConfirm, prompt as askPrompt } from '../../js/dialog.js';
 const FONTS = ['微软雅黑', '宋体', '黑体', '楷体', 'Arial', 'Consolas', 'sans-serif'];
 const SIZES = [12, 14, 16, 18, 20, 24, 28, 32, 40];
 
@@ -1142,28 +1143,29 @@ export function buildSide(app, opts = {}) {
 
 /**
  * 通用浮层。
+ *
+ * 现在**委托给全工具共用的 js/dialog.js**（原来这里自己拼了一份 .mm-mask /
+ * .mm-dialog）。两份实现并存会让观感随时间漂移 —— 改了主题这边忘了那边，
+ * 表现就是"某个弹窗跟别的不一样"。所以留的只是这层薄封装：
+ * 把老的 (title, children, onClose) 签名翻译成共用 API。
+ *
  * @param onClose 关闭时的清理钩子：点遮罩、点关闭按钮、外部调 close() 都会触发，
  *   用于释放 Blob URL 之类的一次性资源。
  */
 function dialog(title, children, onClose) {
-  const mask = h('div.mm-mask', {});
   let cleaned = false;
+  const d = showDialog({
+    title,
+    body: children,
+    actions: [{ label: '关闭' }],
+  });
   const close = () => {
     if (cleaned) return;
     cleaned = true;
-    mask.remove();
+    d.close();
     try { onClose?.(); } catch { /* 清理失败不该拦住关闭 */ }
   };
-  mask.appendChild(
-    h('div.mm-dialog', {},
-      h('h3', {}, title),
-      ...children,
-      h('div.mm-actions', {}, h('button.mm-btn', { onclick: close }, '关闭')),
-    ),
-  );
-  mask.addEventListener('click', (e) => { if (e.target === mask) close(); });
-  document.body.appendChild(mask);
-  return { mask, close };
+  return { mask: d.mask, dialog: d.dialog, close, settled: d.settled };
 }
 
 /**
@@ -1178,18 +1180,8 @@ function dialog(title, children, onClose) {
  * @returns {Promise<boolean>} true = 确认
  */
 export function confirmDialog(title, message, okText = '确定', danger = false) {
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = (v) => { if (!done) { done = true; dlg.close(); resolve(v); } };
-    const dlg = dialog(title, [
-      h('div.mm-hint', { style: { whiteSpace: 'pre-wrap', lineHeight: '1.6' } }, message),
-      h('div.mm-actions', {},
-        h('button.mm-btn' + (danger ? '.danger' : ''), { onclick: () => finish(true) }, okText),
-        h('button.mm-btn', { onclick: () => finish(false) }, '取消'),
-      ),
-    ], () => finish(false));
-    dlg.mask.addEventListener('click', (e) => { if (e.target === dlg.mask) finish(false); });
-  });
+  /* 委托给共用弹窗（js/dialog.js）—— 与外壳、其它插件同一套观感与行为 */
+  return askConfirm({ title, message, okText, danger });
 }
 
 /**
@@ -1442,10 +1434,15 @@ export async function openBackups(app) {
               // A46 恢复会覆盖**当前所有画布**且不可逆 —— 必须确认。
               // 不确认的话，误点一下整份工作就没了。
               const n = (b.sheets || []).length;
-              if (!window.confirm(
-                `恢复到 ${new Date(b.ts).toLocaleString()} 的快照？\n\n` +
-                `当前所有画布将被替换为该快照的 ${n} 张画布，此操作不可撤销。\n` +
-                `（恢复前的当前状态会自动另存一份快照，可再回滚）`)) return;
+              const restore = await askConfirm({
+                title: '恢复快照',
+                message: `恢复到 ${new Date(b.ts).toLocaleString()} 的快照？\n\n`
+                  + `当前所有画布将被替换为该快照的 ${n} 张画布，此操作不可撤销。\n`
+                  + `（恢复前的当前状态会自动另存一份快照，可再回滚）`,
+                okText: '恢复',
+                danger: true,
+              });
+              if (!restore) return;
               await app.api.restoreBackup(b);
               dlg.close();
             }, (m) => app.api.status(m, true)),
@@ -1551,7 +1548,7 @@ export async function openIconLibrary(app) {
 
   // ---- 分组管理 ----
   const newGroup = async () => {
-    const name = window.prompt('新分组名称', '新分组');
+    const name = await askPrompt({ title: '新建分组', label: '分组名称', defaultValue: '新分组' });
     if (name == null) return;
     const g = await picons.addGroup(name);
     if (!g) { app.api.status('新建分组失败', true); return; }
@@ -1564,7 +1561,7 @@ export async function openIconLibrary(app) {
     const g = groups.find((x) => x.id === activeId);
     if (!g) return;
     if (g.builtin) { app.api.status('内置分组不可重命名', true); return; }
-    const name = window.prompt('分组名称', g.name);
+    const name = await askPrompt({ title: '重命名分组', label: '分组名称', defaultValue: g.name });
     if (name == null || name === g.name) return;
     const r = await picons.renameGroup(g.id, name);
     if (!r.ok) { app.api.status(r.error, true); return; }
@@ -1577,7 +1574,12 @@ export async function openIconLibrary(app) {
     if (!g) return;
     if (g.builtin) { app.api.status('内置分组不可删除', true); return; }
     const n = (g.icons || []).length;
-    if (!window.confirm(`删除分组「${g.name}」？${n ? `组内 ${n} 个图标会一并删除。` : ''}`)) return;
+    const del = await askConfirm({
+      title: '删除分组',
+      message: `删除分组「${g.name}」？${n ? `组内 ${n} 个图标会一并删除。` : ''}`,
+      danger: true,
+    });
+    if (!del) return;
     const r = await picons.deleteGroup(g.id);
     if (!r.ok) { app.api.status(r.error, true); return; }
     await reload();

@@ -5,6 +5,7 @@ import {
   getAccent, saveAsCustom, deleteCustomTheme, ACCENT_SWATCHES,
 } from '../../js/theme-manager.js';
 import { styleLabel } from '../../js/themes.js';
+import { prompt as askPrompt } from '../../js/dialog.js';
 import {
   ADAPT_POLICIES, PLUGIN_THEMES,
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
@@ -192,8 +193,12 @@ export default definePlugin({
       accentRow,
       h('div.p-row', { style: { marginTop: '14px' } },
         h('button.p-btn', {
-          onclick: () => {
-            const name = prompt('给当前配色起个名字：', '我的主题');
+          onclick: async () => {
+            const name = await askPrompt({
+              title: '保存配色',
+              label: '给当前配色起个名字',
+              defaultValue: '我的主题',
+            });
             if (name === null) return;
             const t = saveAsCustom(name.trim() || '我的主题');
             applyTheme(t.id);

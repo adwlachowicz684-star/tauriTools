@@ -8,6 +8,7 @@
    ============================================================ */
 
 @import url('../../css/tokens.css');
+@import url('../../css/dialog.css');   /* 通用弹窗（js/dialog.js 依赖它） */
 
 :root {
   --bezel:         rgba(255, 255, 255, .12);   /* 输入控件的外圈 */
@@ -537,26 +538,10 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
 .mm-search-info { color: var(--text-mute); font-size: 11.5px; min-width: 74px; }
 
 /* 浮层（视频播放 / 自定义主题编辑） */
-.mm-mask {
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,.55);
-  display: flex; align-items: center; justify-content: center;
-  z-index: var(--z-float, 50);
-}
-.mm-dialog {
-  width: min(560px, 92vw);
-  max-height: 86vh;
-  overflow-y: auto;
-  padding: 16px;
-  border-radius: var(--r-lg, 18px);
-  background: var(--surface);
-  box-shadow: var(--sh-out-lg);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.mm-dialog h3 { margin: 0; font-size: 14px; }
-.mm-dialog .mm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* 通用浮层（.mm-mask / .mm-dialog）已删除：panels.js 的 dialog() 改为
+   委托给全工具共用的 js/dialog.js，用 .nx-mask / .nx-dlg。
+   样式留在 css/dialog.css，本插件通过顶部 @import 引入。 */
 
 
 /* 图片附件预览浮层 */

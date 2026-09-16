@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+import { prompt } from '../../../js/dialog.js';
   type Credential, type CredentialKind, type Capability,
   makeCredential, missingCapabilities, NODE_NEEDS, detectGithubCapabilities,
   scopeHintFor,
@@ -147,10 +148,15 @@ export function CredentialPanel({
             <button
               className="mini"
               style={{ marginLeft: 8 }}
-              onClick={() => {
+              onClick={async () => {
                 const target = mode === 'passphrase' ? 'auto' : 'passphrase';
                 if (target === 'passphrase') {
-                  const p = window.prompt('设置一个解锁口令（之后每次打开凭据都要输入）：');
+                  const p = await prompt({
+                    title: '设置解锁口令',
+                    message: '之后每次打开凭据都要输入这个口令。',
+                    placeholder: '解锁口令',
+                    validate: (v) => (v ? null : '口令不能为空'),
+                  });
                   if (p) onChangeMode('passphrase', p);
                 } else {
                   onChangeMode('auto', '');

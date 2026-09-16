@@ -652,7 +652,54 @@ border: 1px solid var(--border);          /* ✅ 卡片描边：跟着风格走 
 不进主题 `vars` —— 交给主题自己填就可能又被填成透明。
 `npm run test:tokens` 会校验这条契约（把某处分隔线改回 `--border` 会红）。
 
-**3.6 插件样式冲突会在设置页直接报出来**
+**3.6 弹窗统一走 `js/dialog.js`**
+
+全工具一套弹窗：外壳（原生 / React）、插件（React / 原生 JS）都调同一份实现。
+
+```js
+import { confirm, alert, prompt, open, show } from '../../js/dialog.js';
+
+if (await confirm({ message: '确定删除？', danger: true })) { ... }
+const name = await prompt({ title: '重命名', defaultValue: old, validate: ... });
+```
+
+全部返回 Promise（调用点大多是 async 流程，回调会多缩进一层）。
+React 侧另有 `src/components/Dialog.tsx`，但**只是同一套 CSS 上的 JSX 包装**，
+不另写样式 —— 两份实现并存会让观感随时间漂移。
+
+| API | 用途 |
+|---|---|
+| `confirm({message, danger})` | 确认框，返回 boolean |
+| `alert({message, type})` | 提示框（替代 `window.alert`） |
+| `prompt({label, defaultValue, validate})` | 输入框（替代 `window.prompt`） |
+| `open({title, body, actions})` | 自定义内容，Promise 版 |
+| `show(...)` | 同上但返回**同步句柄** `{close, mask, dialog, settled}`，内容里的按钮要自己关弹窗时用 |
+
+以前散着四种实现（shell 直接 `window.confirm`、project-group 自写 Modal、
+mindmap 自写 `dialog()`、另有 23 处原生调用）。原生对话框的问题是**长相由
+浏览器决定**（深色面板上是个突兀的白框）、不跟随主题、且 jsdom 里无法测试。
+现已全部替换，`npm run test:dialog` 会扫描代码确认没有残留。
+
+⚠️ **样式要一并引入**：弹窗样式在 `css/dialog.css`，插件是独立文档，
+外壳的样式表传不进去，必须各引各的（已接在 neumorphism.css 与各插件的
+样式里）。测试会跟着 `@import` 链校验"引了 JS 的地方也引了 CSS"。
+
+**3.7 控件清单（哪些是共享的、哪些是插件自建的）**
+
+| 层 | 前缀 | 位置 | 说明 |
+|---|---|---|---|
+| 尺度令牌 | `--sh-*` `--r-*` `--dur-*` `--z-*` | `css/tokens.css` | 各文档都要 @import 才能拿到 |
+| 通用弹窗 | `.nx-*` | `css/dialog.css` | 见上 |
+| 外壳控件 | `.p-btn` `.p-card` `.p-input` `.p-row` `.p-tag` `.p-muted` `.p-mono` `.p-range` `.p-stat` `.p-grid` | `css/neumorphism.css` | 引了该文件的插件可用（settings、agent-flow） |
+| 立体块 | `.nm-raised` `.nm-inset` `.nm-pressed` | 同上 | 新拟态的凸/凹/按下 |
+| 标题栏 | `.tb-btn` `.tb-brand` `.tb-title` | 同上 | 主窗口标题栏 |
+| 插件布局 | `.mm-*` `.fpx-*` | 各插件自己的 CSS | **暂未统一** —— 它们是各插件的布局组件，强并统一会牵动大量业务代码 |
+
+新增控件时优先复用 `.p-*`，确实需要自建就加插件前缀（`.mm-` / `.fpx-` / `.af-`），
+避免裸类名撞车。`npm run test:audit` 会检查变量与风格契约，
+`npm run test:tokens` 会检查是否走了令牌。
+
+**3.8 插件样式冲突会在设置页直接报出来**
 
 插件是**独立文档**，外壳的 CSS 规则到不了那边，插件只能靠"引入 + 变量映射"
 与面板保持一致。这条链上任何一环错位，都表现为"某个主题下突然看不清"，
@@ -681,7 +728,7 @@ border: 1px solid var(--border);          /* ✅ 卡片描边：跟着风格走 
 `npm run test:audit` 会校验规则本身（踩坑的 CSS 必须报、正确的不能误报），
 并顺带确认现有插件样式保持 0 error / 0 warn。
 
-**3.7 尺度走 `css/tokens.css`**
+**3.9 尺度走 `css/tokens.css`**
 阴影档位、圆角补档、过渡时长、字体、层级统一在这一个文件里，外壳与插件各自
 `@import` 拿到。以前同一个几何值在四五个文件里各写一遍，改一处忘三处。
 

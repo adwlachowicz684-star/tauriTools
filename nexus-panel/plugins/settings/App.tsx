@@ -18,6 +18,7 @@ import {
 import { auditPlugin, summarize, LEVEL_ORDER } from '../../js/style-audit.js';
 import ExternalCard from './ExternalCard';
 import FilesCard from './FilesCard';
+import { prompt } from '../../js/dialog.js';
 
 type TabKey = 'theme' | 'plugins' | 'external' | 'files' | 'about';
 
@@ -488,8 +489,12 @@ export default function Settings() {
           <div className="p-row" style={{ marginTop: 14 }}>
             <button
               className="p-btn"
-              onClick={() => {
-                const name = window.prompt('给当前配色起个名字：', '我的主题');
+              onClick={async () => {
+                const name = await prompt({
+                  title: '保存配色',
+                  label: '给当前配色起个名字',
+                  defaultValue: '我的主题',
+                });
                 if (name === null) return;
                 const t = saveAsCustom(name.trim() || '我的主题');
                 applyTheme(t.id);

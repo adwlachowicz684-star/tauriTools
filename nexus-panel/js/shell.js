@@ -20,6 +20,7 @@ import { openThemePicker } from './theme-picker.js';
 import { installTooltip } from './tooltip.js';
 import { installInspector, toggleInspector, isInspectorOn } from './inspector.js';
 
+import { confirm as askConfirm } from './dialog.js';
 const $ = (s) => document.querySelector(s);
 const state = { badges: {} };
 
@@ -465,10 +466,16 @@ function openAddDialog() {
     // A3：外域代码不该被当成本地插件装进来
     if (extPolicy.isExternal(entry)) {
       const host = extPolicy.hostOf(entry);
-      const go = confirm(
-        `⚠ 这个插件的入口是外域地址：\n\n${host}\n\n`
-        + `它的代码会由 ${host} 提供，并能访问本面板的数据。\n`
-        + `确定要安装吗？（建议只在完全信任该来源时继续）`);
+      /* 用通用弹窗而不是 window.confirm：原生对话框长相由浏览器决定，
+         深色面板上是个突兀的白框，也不跟随主题。 */
+      const go = await askConfirm({
+        title: '安装外域插件',
+        message: `⚠ 这个插件的入口是外域地址：\n\n${host}\n\n`
+          + `它的代码会由 ${host} 提供，并能访问本面板的数据。\n`
+          + `确定要安装吗？（建议只在完全信任该来源时继续）`,
+        okText: '仍然安装',
+        danger: true,
+      });
       if (!go) return;
     }
     const p = {

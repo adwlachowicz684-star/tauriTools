@@ -3,6 +3,7 @@ import type { Api } from '../api';
 import { errText } from '../api';
 import { PRESET_ICON_NAMES, presetIconUrl } from '../presetIcons';
 import type { IconGroup } from '../types';
+import { confirm, prompt } from '../../../js/dialog.js';
 
 /** 内置图标默认归入的组名（与原版一致）。 */
 const DEFAULT_GROUP = '默认';
@@ -60,9 +61,10 @@ export function PresetIconGrid({
     onGroupsChange(next);
   };
 
-  const renameGroup = () => {
+  const renameGroup = async () => {
     if (!current) return;
-    const name = (window.prompt('分组名', current.name) ?? '').trim();
+    const raw = await prompt({ title: '重命名分组', label: '分组名', defaultValue: current.name });
+    const name = (raw ?? '').trim();
     if (!name || name === current.name) return;
     if (effective.some((g) => g.name === name)) {
       onLog(`分组「${name}」已存在`, true);
@@ -72,8 +74,9 @@ export function PresetIconGrid({
     setActive(name);
   };
 
-  const addGroup = () => {
-    const name = (window.prompt('新分组名', `分组${effective.length + 1}`) ?? '').trim();
+  const addGroup = async () => {
+    const raw = await prompt({ title: '新建分组', label: '新分组名', defaultValue: `分组${effective.length + 1}` });
+    const name = (raw ?? '').trim();
     if (!name) return;
     if (effective.some((g) => g.name === name)) {
       onLog(`分组「${name}」已存在`, true);
@@ -83,10 +86,15 @@ export function PresetIconGrid({
     setActive(name);
   };
 
-  const deleteGroup = () => {
+  const deleteGroup = async () => {
     if (!current) return;
     if (effective.length <= 1) { onLog('至少保留一个分组', true); return; }
-    if (!window.confirm(`删除分组「${current.name}」？组内图标不会被删除，只是取消归类。`)) return;
+    const ok = await confirm({
+      title: '删除分组',
+      message: `删除分组「${current.name}」？组内图标不会被删除，只是取消归类。`,
+      danger: true,
+    });
+    if (!ok) return;
     commit(effective.filter((g) => g.name !== current.name));
   };
 

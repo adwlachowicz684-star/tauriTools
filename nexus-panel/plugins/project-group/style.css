@@ -1,6 +1,7 @@
 /* 项目组分配插件 · 样式（只用外壳主题变量，随主题自动适配） */
 
 @import url('../../css/tokens.css');
+@import url('../../css/dialog.css');   /* 通用弹窗（js/dialog.js 依赖它） */
 .fpx-root { padding: 4px 2px 24px; }
 
 /* ---------- 左操作栏 + 主区（对照 WPF：SidebarControl 纵跨含日志的整个内容区）---------- */
