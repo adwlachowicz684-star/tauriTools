@@ -40,7 +40,11 @@
     "test:tokens": "node style-tokens-test.mjs",
     "test:tooltip": "node tooltip-test.mjs",
     "test:xss": "node xss-test.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "config:sync": "node scripts/sync-config.mjs",
+    "config:check": "node scripts/sync-config.mjs --check",
+    "test:single-instance": "node single-instance-test.mjs",
+    "test:mcp-alias": "node mcp-alias-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

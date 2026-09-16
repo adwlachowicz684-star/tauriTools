@@ -371,10 +371,73 @@ pub fn tool_rows(cfg: &super::model::FpxConfig) -> Vec<super::model::McpToolRow>
         .collect()
 }
 
+/**
+ * 原版（WPF McpServer.cs）工具名 → 当前工具名 的兼容映射。
+ * ====================================================================
+ * 为什么需要：工具名改过，而用户侧的 AI 客户端配置 / 提示词里很可能
+ * 已经写死了旧名字。没有这层，旧名字会直接落到「未知工具」分支，
+ * 且错误不明显 —— 表现为"连上了但一直报错"，很难往工具名上想。
+ *
+ * 第三个元素是"改名后需要补的默认参数"：
+ * 原版按类型拆成多个工具，现在合成一个靠参数区分（scan_content 的 kind）。
+ * **只改名不补参数的话，list_agents 会返回 all（含 rule）** ——
+ * 语义错误但不报错，比直接失败更难排查。
+ *
+ * 只在 tools/call 时接受，**不**进 tools/list：
+ *   · 清单里冒出两套名字，AI 可能同时调两个，行为重复且难解释
+ *   · 用户关掉实名后，别名不该还挂在清单里显得能用
+ *
+ * 这张表同时是 manual_text 里「兼容别名」一节的唯一真源 ——
+ * 本文件一贯的做法是说明从清单推导，手写会与实际脱节。
+ */
+const ALIASES: &[(&str, &str, Option<(&str, &str)>)] = &[
+    ("backup_now", "backup", None),
+    ("lock_set", "set_lock", None),
+    ("list_agents", "scan_content", Some(("kind", "agent"))),
+    ("list_skills", "scan_content", Some(("kind", "skill"))),
+    // 原版建项目 / 建项目组是两个工具，当前合并成 create_folder。
+    // 注意：底层的 core_create_folder 本就不区分类型（第 5 参是 template
+    // 而非 kind），所以这两个别名落到同一行为是**既有语义**，不是别名
+    // 丢失了信息。要区分请用 add_card 指定 kind。
+    ("create_project", "create_folder", None),
+    ("create_group", "create_folder", None),
+];
+
+/// 把可能是原版名字的调用归一化成当前实名，返回 (实名, 需要补的默认参数)。
+/// 不是别名则原样返回。
+fn canonical_tool(name: &str) -> (&str, Option<(&str, &str)>) {
+    for (old, new, patch) in ALIASES {
+        if *old == name {
+            return (new, *patch);
+        }
+    }
+    (name, None)
+}
+
 fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
     let params = req.get("params").cloned().unwrap_or(json!({}));
-    let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
-    let args = params.get("arguments").cloned().unwrap_or(json!({}));
+    let raw = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
+    let mut args = params.get("arguments").cloned().unwrap_or(json!({}));
+
+    /* 别名归一化（原版工具名 → 当前实名）。
+       ------------------------------------------------------------------
+       **必须在查开关之前**：用实名查开关，才能保证"关掉 backup 之后
+       backup_now 也跟着用不了"。反过来就会出现绕过去的口子 ——
+       用户明明关了备份，换个旧名字照样能调。 */
+    let (name, patch) = canonical_tool(raw);
+    if let Some((k, v)) = patch {
+        // 只在调用方没给这个参数时才补，不覆盖显式传参
+        let missing = args.get(k).and_then(|x| x.as_str()).map(str::is_empty).unwrap_or(true);
+        if missing {
+            // 用 as_object_mut 而不是 args[k] = ...：
+            // 后者依赖 Value 的 IndexMut<&str>，写法更短但这里没法编译验证，
+            // 稳妥起见走明确分支。args 必是对象（来自 arguments 或 {}）。
+            if let Some(obj) = args.as_object_mut() {
+                obj.insert((*k).to_string(), json!(v));
+            }
+        }
+    }
+
     let s = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
 
     // 先过开关，再谈执行：总开关关着就整个拒绝，单工具关着就只拒绝那一个
@@ -383,7 +446,10 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
         return Err(err("MCP 服务已在设置中关闭"));
     }
     if !tool_enabled(&cfg, name) {
-        return Err(err(&format!("工具 {name} 已在设置中关闭")));
+        // 走别名进来时提示一下等价关系：用户看到的是旧名字，
+        // 配置里关的却是新名字，不给这句意会以为关错了工具。
+        let hint = if name != raw { format!("（{raw} 即 {name}）") } else { String::new() };
+        return Err(err(&format!("工具 {name} 已在设置中关闭{hint}")));
     }
 
     let out = match name {
@@ -685,7 +751,18 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
                 })).unwrap_or_default() }] })
             }
         }
-        other => return Err(err(&format!("未知工具: {other}"))),
+        other => {
+            /* 走到这里说明既不是实名、也没有落到任何已实现的分支。
+               若它是从某个别名归一化来的，把原名字一并报出来 ——
+               典型场景是"删了工具却忘了删 ALIASES 里的旧名"，
+               只报新名字的话很难看出是这条映射失效了。 */
+            let from = if other != raw {
+                format!("（由 {raw} 映射而来，该映射可能已失效）")
+            } else {
+                String::new()
+            };
+            return Err(err(&format!("未知工具: {other}{from}")));
+        }
     };
     Ok(out)
 }
@@ -712,8 +789,22 @@ fn manual_text(data_dir: &std::path::Path) -> String {
             if props.is_empty() { "无".to_string() } else { props },
             if req.is_empty() { "-".to_string() } else { req }));
     }
+    /* 兼容别名一节同样从 ALIASES 推导，而不是手写 ——
+       手写的话，将来加一条别名忘了改这里，AI 拿到的总览就是错的，
+       而它恰恰是 AI 判断"该调哪个工具"的依据。 */
+    let mut compat = String::new();
+    for (old, new, patch) in ALIASES {
+        let note = match patch {
+            Some((k, v)) => format!("等价于 `{new}`，并自动补 `{k}={v}`"),
+            None => format!("等价于 `{new}`"),
+        };
+        compat.push_str(&format!("- `{old}` — {note}\n"));
+    }
+
     format!(
-        "本 MCP 服务「项目组分配」工具能力总览：\n\n| 工具 | 说明 | 参数 | 必填 |\n|---|---|---|---|\n{rows}\n\n数据目录：{}\n用法：先 select_folder 指定操作对象，其后多数工具可省略 target。",
+        "本 MCP 服务「项目组分配」工具能力总览：\n\n| 工具 | 说明 | 参数 | 必填 |\n|---|---|---|---|\n{rows}\n\
+         兼容的旧版工具名（调用时会自动转换，不在上方清单中重复列出）：\n{compat}\n\
+         数据目录：{}\n用法：先 select_folder 指定操作对象，其后多数工具可省略 target。",
         data_dir.to_string_lossy()
     )
 }
