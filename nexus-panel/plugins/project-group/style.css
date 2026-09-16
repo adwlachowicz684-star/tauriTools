@@ -189,6 +189,13 @@
   border: 0; outline: none; border-radius: var(--r-xs);
   background: var(--surface); color: var(--text); font-size: 12px;
 }
+/* 页签拖动重排的落点提示。
+   与卡片拖进来的 .drop 区分开：两者落点语义不同（重排 vs 移动卡片），
+   用不同颜色，避免用户以为"要把卡片塞进页签"。 */
+.fpx-tab.tab-over {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
 
 /* ---------- 卡片 ---------- */
 .fpx-cards { display: flex; flex-direction: column; gap: 8px; min-height: 80px; }
@@ -640,3 +647,18 @@
 /* ---------- 说明 ---------- */
 .fpx-help { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.9; color: var(--text-dim); }
 .fpx-help b { color: var(--text); }
+
+/* ---------- 建链时选择链接名 ---------- */
+.fpx-pick-list {
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 260px; overflow: auto;
+  padding: 6px; border-radius: var(--r-sm);
+  background: var(--surface-sunk);
+}
+.fpx-pick-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: var(--r-sm);
+  font-size: 12px; cursor: pointer;
+}
+.fpx-pick-row:hover { background: var(--surface); }
+.fpx-pick-row input { flex: none; cursor: pointer; }

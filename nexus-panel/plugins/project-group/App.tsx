@@ -11,6 +11,7 @@ import {
   BackupDialog, ChainDialog, EditorDialog,
 } from './components/ToolsPanel';
 import { ConfirmDialog, ContextMenu, MenuLayerContext, type MenuItem } from './components/ui';
+import { LinkPickDialog } from './components/LinkPickDialog';
 import { normalizeKey } from './api';
 import { useFpx } from './hooks/useFpx';
 import { useCardHotkeys } from './hooks/useCardHotkeys';
@@ -709,6 +710,7 @@ export default function App() {
           onAddTab={() => s.addTab('project', `页签${(boot.projectTabs.length) + 1}`)}
               onRenameTab={(i, n) => s.renameTab('project', i, n)}
               onRemoveTab={(i) => requestRemoveTab('project', i)}
+              onMoveTab={(from, to) => void s.moveTab('project', from, to)}
               active={s.activeTab.project}
               onTab={(i) => s.setActiveTab((prev) => ({ ...prev, project: i }))}
               focused={focus === 'project'}
@@ -966,11 +968,16 @@ export default function App() {
       )}
 
       {confirmLink && (
-        <ConfirmDialog
-          title="确认创建链接"
-          message={`将为该项目建立指向项目组的链接：\n项目：${confirmLink.project}\n项目组：${confirmLink.group}\n\n可在「设置」里开启「快速链接」跳过此确认。`}
-          confirmText="创建链接"
-          onConfirm={() => void s.createLink(confirmLink.project, confirmLink.group)}
+        <LinkPickDialog
+          project={confirmLink.project}
+          group={confirmLink.group}
+          config={boot.config}
+          allNames={boot.allNames ?? []}
+          links={boot.links ?? []}
+          onConfirm={(names) => {
+            setConfirmLink(null);
+            void s.createLink(confirmLink.project, confirmLink.group, names);
+          }}
           onClose={() => setConfirmLink(null)}
         />
       )}
@@ -1010,7 +1017,7 @@ export default function App() {
 /** 一列（项目 / 项目组） */
 function Column({
   title, kind, tabs, cards, selected, onSelect, onOpen, onMove, onMoveToTab, onCrossDrop,
-  thumbs, menus, onAdd, onAddTab, onRenameTab, onRemoveTab, active, onTab, focused,
+  thumbs, menus, onAdd, onAddTab, onRenameTab, onRemoveTab, onMoveTab, active, onTab, focused,
   onJumpToGroup,
 }: {
   title: string;
@@ -1031,6 +1038,8 @@ function Column({
   onAddTab: () => void;
   onRenameTab: (i: number, n: string) => void;
   onRemoveTab: (i: number) => void;
+  /** 页签拖动重排 */
+  onMoveTab: (from: number, to: number) => void;
   active: number;
   onTab: (i: number) => void;
   /** 键盘焦点栏：卡片快捷键作用于此栏 */
@@ -1079,6 +1088,7 @@ function Column({
         editing={editingTab}
         onEditingDone={() => setEditingTab(-1)}
         onDropCard={(path, tabIndex) => onMoveToTab(path, tabIndex)}
+        onMoveTab={onMoveTab}
       />
 
       <CardGrid

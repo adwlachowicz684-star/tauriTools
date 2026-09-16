@@ -318,6 +318,34 @@ export function useFpx() {
     return {};
   }, [cardsOf]);
 
+  /**
+   * 页签拖动重排（原版页签可拖动排序，其他页签实时让位）。
+   *
+   * 顺序就是 config 里 tabs 数组的顺序，所以直接重排数组即可，不需要新命令。
+   *
+   * **活动页签要跟着走**，否则会出现"拖完之后停在别处"的错觉：
+   * - 拖的正是当前页签 → 活动索引 = 落点
+   * - 否则按插入方向平移：从左往右拖时，夹在中间的页签整体左移一位；反向则右移
+   */
+  const moveTab = useCallback(async (kind: CardKind, from: number, to: number) => {
+    if (from === to) return;
+    const snap = await updateConfig((d) => {
+      const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
+      if (from < 0 || from >= tabs.length) return;
+      if (to < 0 || to >= tabs.length) return;
+      const [moved] = tabs.splice(from, 1);
+      tabs.splice(to, 0, moved);
+    });
+    if (!snap) return;
+    setActiveTab((s) => {
+      const cur = s[kind];
+      if (cur === from) return { ...s, [kind]: to };
+      if (from < to && cur > from && cur <= to) return { ...s, [kind]: cur - 1 };
+      if (from > to && cur >= to && cur < from) return { ...s, [kind]: cur + 1 };
+      return s;
+    });
+  }, [updateConfig]);
+
   const removeTab = useCallback(async (kind: CardKind, index: number) => {
     const before = cardsOf(kind).length;
     if (before <= 1) {
@@ -481,7 +509,7 @@ export function useFpx() {
     activeTab, setActiveTab,
     content, contentKind, setContentKind, focusDir, scan,
     updateConfig, addCard, removeCard, moveCard, moveCardAcross, addTab, renameTab, removeTab,
-    tabRemoveCheck,
+    tabRemoveCheck, moveTab,
     createLink, removeLink, setTagColor, setIcon, saveStyle, saveCustomColors, setLock, refresh,
   };
 }

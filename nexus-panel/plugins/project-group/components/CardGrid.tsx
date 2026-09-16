@@ -4,6 +4,29 @@ import { isDark, shade } from '../utils/color';
 import { ContextMenu, type MenuItem } from './ui';
 
 export const DRAG_MIME = 'application/x-fpx-card';
+/** 页签自身的拖拽，与卡片拖拽分开：两者落点语义完全不同（一个移动卡片、一个重排页签） */
+export const TAB_DRAG_MIME = 'application/x-fpx-tab';
+
+export interface TabDragPayload {
+  kind: CardKind;
+  index: number;
+}
+
+/** 解析页签拖拽载荷（同样是任意来源，必须做结构校验）。 */
+export function parseTabDrag(raw: string | null | undefined): TabDragPayload | null {
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const { kind, index } = parsed as Partial<TabDragPayload>;
+  if (!isCardKind(kind)) return null;
+  if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) return null;
+  return { kind, index };
+}
 
 export interface DragPayload {
   kind: CardKind;
@@ -41,7 +64,7 @@ export function parseDragPayload(raw: string | null | undefined): DragPayload | 
 /** 页签条：切换 / 新增 / 双击重命名 / 右键删除 */
 export function TabBar({
   tabs, active, onSelect, onAdd, onRename, onRemove, kind,
-  editing: editingProp, onEditingDone, onDropCard,
+  editing: editingProp, onEditingDone, onDropCard, onMoveTab,
 }: {
   tabs: { name: string }[];
   active: number;
@@ -55,9 +78,13 @@ export function TabBar({
   onEditingDone?: () => void;
   /** 卡片拖到页签上时触发：把卡片移动到该页签末尾 */
   onDropCard?: (path: string, tabIndex: number) => void;
+  /** 页签拖到另一个页签上：重排页签顺序（原版页签可拖动排序） */
+  onMoveTab?: (from: number, to: number) => void;
 }) {
   const [selfEditing, setSelfEditing] = useState(-1);
   const [draft, setDraft] = useState('');
+  /** 页签拖拽的插入位置（-1 无） */
+  const [tabOver, setTabOver] = useState(-1);
   const [menu, setMenu] = useState<{ i: number; x: number; y: number } | null>(null);
   const [dropTarget, setDropTarget] = useState(-1);
 
@@ -83,11 +110,32 @@ export function TabBar({
       {tabs.map((t, i) => (
         <button
           key={`${t.name}-${i}`}
-          className={`fpx-tab${i === active ? ' active' : ''}${dropTarget === i ? ' drop' : ''}`}
+          className={[
+            'fpx-tab',
+            i === active ? 'active' : '',
+            dropTarget === i ? 'drop' : '',
+            tabOver === i ? 'tab-over' : '',
+          ].filter(Boolean).join(' ')}
           onClick={() => onSelect(i)}
           onDoubleClick={() => startEdit(i)}
           onContextMenu={(e) => { e.preventDefault(); setMenu({ i, x: e.clientX, y: e.clientY }); }}
+          // 页签自身可拖动排序；编辑中不拖（否则拖动会和输入框抢事件）
+          draggable={editing !== i && !!onMoveTab}
+          onDragStart={(e) => {
+            if (editing === i || !onMoveTab) return;
+            e.dataTransfer.setData(TAB_DRAG_MIME, JSON.stringify({ kind, index: i }));
+            e.dataTransfer.effectAllowed = 'move';
+            // 不阻止冒泡：外面没有卡片区监听页签拖拽，两种 MIME 互不干扰
+          }}
           onDragOver={(e) => {
+            // 页签重排
+            if (onMoveTab && e.dataTransfer.types.includes(TAB_DRAG_MIME)) {
+              e.preventDefault();
+              e.stopPropagation();
+              e.dataTransfer.dropEffect = 'move';
+              setTabOver(i);
+              return;
+            }
             if (!onDropCard) return;
             const has = e.dataTransfer.types.includes(DRAG_MIME);
             if (!has) return;
@@ -96,8 +144,21 @@ export function TabBar({
             e.dataTransfer.dropEffect = 'move';
             setDropTarget(i);
           }}
-          onDragLeave={() => setDropTarget(-1)}
+          onDragLeave={() => { setDropTarget(-1); setTabOver(-1); }}
           onDrop={(e) => {
+            // 先看是不是页签重排
+            if (onMoveTab) {
+              const rawTab = e.dataTransfer.getData(TAB_DRAG_MIME);
+              if (rawTab) {
+                e.preventDefault();
+                e.stopPropagation();
+                setTabOver(-1);
+                const t = parseTabDrag(rawTab);
+                // 只接受同栏的页签，且拖到自己身上无意义
+                if (t && t.kind === kind && t.index !== i) onMoveTab(t.index, i);
+                return;
+              }
+            }
             if (!onDropCard) return;
             const raw = e.dataTransfer.getData(DRAG_MIME);
             setDropTarget(-1);
