@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { PluginContext } from '../../../js/plugin-sdk.js';
 import type { CardKind } from '../types';
+import { effectiveMap, type HotkeyId } from '../utils/hotkeys';
 
 /**
  * `ctx.shortcut` 没写进 `js/plugin-sdk.d.ts`（那份 d.ts 在插件目录之外，
@@ -66,6 +67,8 @@ export function useCardHotkeys(
   ctx: PluginContext,
   actions: HotkeyActions,
   enabled: boolean,
+  /** 自定义键位（动作 id → combo；未包含的走默认） */
+  overrides?: Record<string, string> | null,
 ) {
   // 动作与开关都走 ref：不让每次渲染重建的回调把注册副作用反复解绑重绑
   // （与连锁动作那边的 selRef 同一个道理）。
@@ -90,31 +93,40 @@ export function useCardHotkeys(
       if (typeof off === 'function') offs.push(off);
     };
 
-    bind('mod+o', () => ref.current.open());
-    bind('mod+l', () => ref.current.lock());
-    bind('f2', () => ref.current.rename());
-    bind('f3', () => ref.current.move());
-    bind('f4', () => ref.current.color());
-    bind('f6', () => ref.current.icon());
-    bind('delete', () => ref.current.remove());
-    bind('f5', () => ref.current.refresh());
-    bind('f8', () => ref.current.clearInvalid());
+    // 键位来自注册表（可被用户覆盖），动作仍在这里挨个写清楚
+    const map = effectiveMap(overrides);
+    const run = (id: HotkeyId, fn: () => void) => {
+      const combo = map[id];
+      if (!combo) return;      // 空串 = 用户取消了这个绑定
+      bind(combo, fn);
+    };
+
+    run('open', () => ref.current.open());
+    run('lock', () => ref.current.lock());
+    run('rename', () => ref.current.rename());
+    run('move', () => ref.current.move());
+    run('color', () => ref.current.color());
+    run('icon', () => ref.current.icon());
+    run('remove', () => ref.current.remove());
+    run('refresh', () => ref.current.refresh());
+    run('clearInvalid', () => ref.current.clearInvalid());
 
     // Tab 组：shift 决定方向。两条分开注册——SDK 要求修饰键精确匹配，
     // 写 'mod+tab' 时 shift 必须没按下，反过来也一样。
-    bind('mod+tab', () => ref.current.cycleTab('group', 1));
-    bind('mod+shift+tab', () => ref.current.cycleTab('group', -1));
-    bind('mod+pagedown', () => ref.current.cycleTab('project', 1));
-    bind('mod+pageup', () => ref.current.cycleTab('project', -1));
+    run('cycleGroup', () => ref.current.cycleTab('group', 1));
+    run('cycleGroupBack', () => ref.current.cycleTab('group', -1));
+    run('cycleProject', () => ref.current.cycleTab('project', 1));
+    run('cycleProjectBack', () => ref.current.cycleTab('project', -1));
 
     // 左右列顺序与界面一致：项目在左，项目组在右
-    bind('mod+arrowleft', () => ref.current.focus('project'));
-    bind('mod+arrowright', () => ref.current.focus('group'));
+    run('focusProject', () => ref.current.focus('project'));
+    run('focusGroup', () => ref.current.focus('group'));
 
     return () => {
       for (const off of offs) {
         try { off(); } catch { /* 已随插件卸载而失效，忽略 */ }
       }
     };
-  }, [ctx]);
+    // overrides 变了要重新注册 —— 否则改完键位得重启才生效
+  }, [ctx, overrides]);
 }

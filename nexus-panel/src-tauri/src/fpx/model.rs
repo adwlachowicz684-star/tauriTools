@@ -163,6 +163,13 @@ pub struct FpxConfig {
     /// 分组只记录"名字归到哪一组"，名字本身在两个来源里都能解析。
     #[serde(default)]
     pub icon_groups: Vec<IconGroup>,
+    /// 常规快捷键的自定义覆盖（动作 id → combo 字符串，如 `"open": "mod+o"`）。
+    ///
+    /// 只存**改过的**项，没改过的走内置默认值 —— 这样将来调整默认键位时，
+    /// 老用户的自定义项不会被悄悄重置，未改的却能跟着更新。
+    /// `None` 与空表等价，都表示「全部用默认」。
+    #[serde(default)]
+    pub hotkeys: Option<HashMap<String, String>>,
 }
 
 /// 一个图标分组。
@@ -209,6 +216,7 @@ impl Default for FpxConfig {
             create_path_carries_hierarchy: false,
             preset_icons: vec![],
             icon_groups: vec![],
+            hotkeys: None,
             backup_dir: None,
             backup_append_only: true,
             backup_auto_minutes: 0,

@@ -15,6 +15,7 @@ import { LinkPickDialog } from './components/LinkPickDialog';
 import { normalizeKey } from './api';
 import { useFpx } from './hooks/useFpx';
 import { useCardHotkeys } from './hooks/useCardHotkeys';
+import { effectiveMap, type HotkeyId } from './utils/hotkeys';
 import { useIconThumbs } from './hooks/useIconThumbs';
 import type { CardInfo, CardKind, ChainAction } from './types';
 
@@ -529,7 +530,7 @@ export default function App() {
       actions: [
         {
           icon: '⟳', label: '刷新',
-          hotkey: 'F5',
+          hotkeyId: 'refresh' as HotkeyId,
           title: '刷新全部（F5）',
           onClick: () => { refreshChainActions(); s.refresh(); },
         },
@@ -540,7 +541,7 @@ export default function App() {
         },
         {
           icon: '🧹', label: '清无效',
-          hotkey: 'F8',
+          hotkeyId: 'clearInvalid' as HotkeyId,
           title: '清除无效项（F8）：摘掉页签里已不存在的路径',
           onClick: () => void s.clearInvalid(),
         },
@@ -551,19 +552,19 @@ export default function App() {
       actions: [
         {
           icon: '📂', label: '打开',
-          hotkey: 'mod+O',
+          hotkeyId: 'open' as HotkeyId,
           title: '打开选中文件夹（Ctrl/⌘+O）',
           onClick: needCard((c) => openPath(c.path, 'dir')),
         },
         {
           icon: '🔒', label: '保护',
-          hotkey: 'mod+L',
+          hotkeyId: 'lock' as HotkeyId,
           title: 'ACL 保护（Ctrl/⌘+L）',
           onClick: needCard((c) => setDialog({ type: 'lock', card: c })),
         },
         {
           icon: '✎', label: '改名',
-          hotkey: 'F2',
+          hotkeyId: 'rename' as HotkeyId,
           title: '改名（F2）',
           onClick: needCard((c) => setDialog({ type: 'rename', card: c, kind: focus })),
         },
@@ -574,13 +575,13 @@ export default function App() {
         },
         {
           icon: '🎨', label: '改色',
-          hotkey: 'F4',
+          hotkeyId: 'color' as HotkeyId,
           title: '图标与标签色（F4）',
           onClick: needCard((c) => setDialog({ type: 'style', card: c })),
         },
         {
           icon: '🖼', label: '改图标',
-          hotkey: 'F6',
+          hotkeyId: 'icon' as HotkeyId,
           title: '改图标（F6）',
           onClick: needCard((c) => void openIconPicker(c)),
         },
@@ -591,7 +592,7 @@ export default function App() {
       actions: [
         {
           icon: '🗑', label: '移除',
-          hotkey: 'Del',
+          hotkeyId: 'remove' as HotkeyId,
           title: '从当前分类 / 页签移除（Delete）',
           danger: true,
           onClick: needCard((c) => void s.removeCard(
@@ -619,7 +620,7 @@ export default function App() {
     cycleTab,
     focus: setFocus,
     // 有弹窗打开时整组让路：否则在对话框里按 Delete 会改到看不见的卡片
-  }, !!boot && dialog.type === 'none' && !help && !confirmLink);
+  }, !!boot && dialog.type === 'none' && !help && !confirmLink, boot?.config.hotkeys);
 
   if (s.loading) {
     return <div className="p-card"><div className="p-muted">正在加载项目组数据…</div></div>;
@@ -700,6 +701,7 @@ export default function App() {
           groups={railGroups}
           chainActions={chainActions.filter((a) => a.showSidebar)}
           onChainAction={runActionOnSelection}
+          hotkeys={boot.config.hotkeys}
         />
 
         <div className="fpx-main">

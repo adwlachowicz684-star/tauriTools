@@ -724,3 +724,25 @@
   color: var(--text-mute);
 }
 .fpx-foot-btn:hover { color: var(--text); }
+
+/* ---------- 快捷键设置 ---------- */
+.fpx-hotkey-list {
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 300px; overflow: auto;
+  padding: 6px; border-radius: var(--r-sm);
+  background: var(--surface-sunk);
+}
+.fpx-hotkey-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: var(--r-sm); font-size: 12px;
+}
+.fpx-hotkey-row:hover { background: var(--surface); }
+.fpx-hotkey-row.bad { box-shadow: inset 2px 0 0 var(--danger, #c8555a); }
+.fpx-hotkey-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fpx-hotkey-val { height: 26px; padding: 0 10px; font-family: var(--font-mono); font-size: 11px; min-width: 110px; }
+.fpx-hotkey-reset { height: 26px; padding: 0 8px; }
+.fpx-hotkey-note { color: var(--text-mute); cursor: help; }
+.fpx-hotkey-warn {
+  margin-bottom: 8px; padding: 6px 8px; border-radius: var(--r-sm);
+  background: var(--surface-sunk); color: var(--danger, #c8555a); font-size: 11.5px;
+}

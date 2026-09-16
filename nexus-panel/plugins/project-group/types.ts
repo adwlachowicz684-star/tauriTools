@@ -78,6 +78,8 @@ export interface FpxConfig {
    */
   chainActions: ChainAction[] | null;
   watchEnabled: boolean;
+  /** 快捷键覆盖（动作 id → combo）；只存改过的项，null = 全部默认 */
+  hotkeys: Record<string, string> | null;
   watchIntervalSecs: number;
 }
 

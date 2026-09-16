@@ -5,6 +5,7 @@ import type { BackupAutoStatus, FpxConfig, McpToolRow } from '../types';
 import { ChainActionsPanel } from './ChainActionsPanel';
 import { ChainClientsDialog } from './ChainClientsDialog';
 import { DirDialog } from './DirDialog';
+import { HotkeySettings } from './HotkeySettings';
 
 /** 自动备份档位（分钟）；0 = 关闭。与原版预设一致。 */
 const BACKUP_PRESETS: { value: number; label: string }[] = [
@@ -123,6 +124,8 @@ export function SettingsBody({
     </div>
   );
 
+  const [hotkeys, setHotkeys] = useState<Record<string, string> | null>(config.hotkeys ?? null);
+
   const [version, setVersion] = useState('');
 
   useEffect(() => {
@@ -144,6 +147,7 @@ export function SettingsBody({
         createProjectDir: createProjectDir.trim() || null,
         createGroupDir: createGroupDir.trim() || null,
         createGroupTemplateDir: groupTemplateDir.trim() || null,
+        hotkeys,
         createPathCarriesHierarchy: hierarchy,
         iconAffectExplorer: iconSync,
         backupAppendOnly: appendOnly,
@@ -237,6 +241,14 @@ export function SettingsBody({
           title="快速链接（拖项目组⇄项目时直接创建链接）"
           sub="关闭则跨栏拖放后还要再确认一次才建链"
         />
+      </div>
+
+      <div className="fpx-settings-sec">
+        <h3>快捷键</h3>
+        <div className="p-muted" style={{ fontSize: 11.5, marginBottom: 8 }}>
+          卡片与页签的键位。只记录改过的项，其余跟随内置默认。
+        </div>
+        <HotkeySettings value={hotkeys} onChange={setHotkeys} />
       </div>
 
       <div className="fpx-settings-sec">

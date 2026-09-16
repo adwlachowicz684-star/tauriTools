@@ -1,4 +1,5 @@
 import type { ChainAction } from '../types';
+import { effectiveCombo, formatCombo, type HotkeyId } from '../utils/hotkeys';
 
 /**
  * 左侧操作栏：图标在上、文字在下，宽度固定（不随文字长度变化）。
@@ -20,6 +21,11 @@ export interface RailAction {
    * 只给"真的绑了键"的项，没有就不显示，不拿灰字占位。
    */
   hotkey?: string;
+  /**
+   * 键位对应的**动作 id**（优先于 `hotkey` 字面量）。
+   * 走注册表解析，用户改了键位这里也跟着变；`hotkey` 只给没有对应动作的场景用。
+   */
+  hotkeyId?: string;
   title?: string;
   disabled?: boolean;
   danger?: boolean;
@@ -38,13 +44,22 @@ export interface RailGroup {
 }
 
 export function SideRail({
-  groups, chainActions, onChainAction,
+  groups, chainActions, onChainAction, hotkeys,
 }: {
   groups: RailGroup[];
   /** 连锁动作：每个一条，点击即对当前选中卡片执行 */
   chainActions: ChainAction[];
   onChainAction: (a: ChainAction) => void;
+  /** 用户自定义键位（动作 id → combo） */
+  hotkeys?: Record<string, string> | null;
 }) {
+  /** 动作 id → 生效键位；没绑（空串）就不显示 */
+  const keyOf = (a: RailAction): string => {
+    const raw = a.hotkeyId ? effectiveCombo(a.hotkeyId as HotkeyId, hotkeys) : a.hotkey;
+    if (!raw) return '';
+    return formatCombo(raw, IS_MAC);
+  };
+
   return (
     <div className="fpx-rail">
       {groups.map((g) => (
@@ -59,8 +74,8 @@ export function SideRail({
             >
               <span className="fpx-rail-icon">{a.icon}</span>
               <span className="fpx-rail-label">{a.label}</span>
-              {a.hotkey && (
-                <span className="fpx-rail-key">{a.hotkey.replace('mod', MOD)}</span>
+              {keyOf(a) && (
+                <span className="fpx-rail-key">{keyOf(a)}</span>
               )}
             </button>
           ))}
