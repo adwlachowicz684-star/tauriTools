@@ -1,0 +1,8 @@
+# Rust / Tauri 构建产物 —— 本地会涨到数 GB（本机实测 target/debug 就有 7.7G），
+# 绝不该入库；此前仓库没有这个文件，导致它一直挂在 git status 上，
+# 任何 `git add -A` 都会试图把整个 target/ 塞进仓库。
+/target/
+
+# Tauri 构建期自动生成的 ACL schema（capabilities / desktop / windows），
+# 每次编译按配置重建，没有手工内容。
+/gen/schemas
