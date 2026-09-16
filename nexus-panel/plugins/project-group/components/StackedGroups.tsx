@@ -13,7 +13,7 @@ import { ContextMenu, type MenuItem } from './ui';
  */
 export function StackedGroups({
   tabs, cardsOf, selected, thumbs, onSelect, onOpen,
-  onMove, onCrossDrop, menus, onRename, onRemove, onAdd,
+  onMove, onCrossDrop, menus, onRename, onRemove, onAdd, onMoveTab,
   emptyHint,
 }: {
   tabs: { name: string; items: CardInfo[] }[];
@@ -30,12 +30,17 @@ export function StackedGroups({
   onRemove: (i: number) => void;
   /** 在指定分类下添加项目组（传分类索引，否则会落到 activeTab 那一个分类里） */
   onAdd: (tabIndex: number) => void;
+  /** 分类框上下拖动重排（原版各分类可拖着换上下位置） */
+  onMoveTab: (from: number, to: number) => void;
   emptyHint: string;
 }) {
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState(-1);
   const [draft, setDraft] = useState('');
   const [menu, setMenu] = useState<{ i: number; x: number; y: number } | null>(null);
+  /** 分类框重排：拖起的分类索引、当前落点索引（-1 为无） */
+  const [dragFrom, setDragFrom] = useState(-1);
+  const [overIdx, setOverIdx] = useState(-1);
 
   const toggle = (i: number) => setCollapsed((s) => {
     const n = new Set(s);
@@ -51,8 +56,45 @@ export function StackedGroups({
         const cards = cardsOf(i);
         const open = !collapsed.has(i);
         return (
-          <div className="fpx-stack-box" key={`${t.name}-${i}`}>
-            <div className="fpx-stack-head">
+          <div
+            className={[
+              'fpx-stack-box',
+              dragFrom === i ? 'dragging' : '',
+              overIdx === i && dragFrom !== -1 && dragFrom !== i ? 'over' : '',
+            ].filter(Boolean).join(' ')}
+            key={`${t.name}-${i}`}
+            onDragOver={(e) => {
+              // 只响应分类框自身的重排；卡片拖拽交给下面的 CardGrid
+              if (dragFrom === -1) return;
+              e.preventDefault();
+              e.stopPropagation();
+              e.dataTransfer.dropEffect = 'move';
+              setOverIdx(i);
+            }}
+            onDragLeave={() => setOverIdx((v) => (v === i ? -1 : v))}
+            onDrop={(e) => {
+              if (dragFrom === -1) return;
+              e.preventDefault();
+              e.stopPropagation();
+              const from = dragFrom;
+              setDragFrom(-1);
+              setOverIdx(-1);
+              if (from !== i) onMoveTab(from, i);
+            }}
+          >
+            <div
+              className="fpx-stack-head"
+              // 只让头部可拖：整个框可拖会和里面的卡片拖拽抢事件
+              draggable={editing !== i}
+              onDragStart={(e) => {
+                if (editing === i) return;
+                e.dataTransfer.setData('text/plain', t.name);
+                e.dataTransfer.effectAllowed = 'move';
+                setDragFrom(i);
+              }}
+              onDragEnd={() => { setDragFrom(-1); setOverIdx(-1); }}
+              title="拖动标题栏可调整分类顺序"
+            >
               <button
                 className="fpx-stack-arrow"
                 title={open ? '折叠' : '展开'}

@@ -4,6 +4,17 @@ import { isDark, shade } from '../utils/color';
 import { ContextMenu, type MenuItem } from './ui';
 
 export const DRAG_MIME = 'application/x-fpx-card';
+
+/**
+ * 当前正在拖的卡片属于哪一栏（模块级临时量）。
+ *
+ * `dragover` 事件**读不到** dataTransfer 里的数据（浏览器安全限制），
+ * 只能读 types。于是跨栏落点无法在 dragover 时判断来源，
+ * 而"同栏=排序 / 跨栏=建链"的视觉必须在这时给出。
+ * 解法：dragstart 时（这里能拿到 kind）记到模块级，dragend 清掉。
+ * 同一时刻只可能有一个拖拽，不存在并发问题。
+ */
+let draggingKind: CardKind | null = null;
 /** 页签自身的拖拽，与卡片拖拽分开：两者落点语义完全不同（一个移动卡片、一个重排页签） */
 export const TAB_DRAG_MIME = 'application/x-fpx-tab';
 
@@ -223,6 +234,14 @@ export function CardGrid({
 }) {
   const [menu, setMenu] = useState<{ card: CardInfo; x: number; y: number } | null>(null);
   const [over, setOver] = useState(-1);
+  /**
+   * 悬停的这张卡片是不是**跨栏**拖来的。
+   *
+   * 同栏拖是排序、跨栏拖是建链，两种语义此前用同一个高亮（虚线框），
+   * 用户松手前分不清这次是"排到这儿"还是"连上它"。
+   * 这里单独记一个状态，给跨栏落点另一种视觉（实线 + 强调色）。
+   */
+  const [overCross, setOverCross] = useState(false);
 
   return (
     <div
@@ -232,6 +251,7 @@ export function CardGrid({
         e.preventDefault();
         const raw = e.dataTransfer.getData(DRAG_MIME);
         setOver(-1);
+        setOverCross(false);
         if (!raw) return;
         const drag = parseDragPayload(raw);
         if (!drag) return;
@@ -248,7 +268,7 @@ export function CardGrid({
             'fpx-card',
             selected === c.path ? 'selected' : '',
             !c.exists ? 'missing' : '',
-            over === i ? 'over' : '',
+            over === i ? (overCross ? 'over-link' : 'over') : '',
           ].filter(Boolean).join(' ')}
           style={c.tagColor ? ({
             borderLeft: `4px solid ${c.tagColor}`,
@@ -261,13 +281,21 @@ export function CardGrid({
           onDragStart={(e) => {
             e.dataTransfer.setData(DRAG_MIME, JSON.stringify({ kind, path: c.path } satisfies DragPayload));
             e.dataTransfer.effectAllowed = 'move';
+            draggingKind = kind;
           }}
-          onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setOver(i); }}
-          onDragLeave={() => setOver(-1)}
+          onDragEnd={() => { draggingKind = null; setOver(-1); setOverCross(false); }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setOver(i);
+            setOverCross(draggingKind !== null && draggingKind !== kind);
+          }}
+          onDragLeave={() => { setOver(-1); setOverCross(false); }}
           onDrop={(e) => {
             e.preventDefault();
             e.stopPropagation();
             setOver(-1);
+            setOverCross(false);
             const raw = e.dataTransfer.getData(DRAG_MIME);
             if (!raw) return;
             const drag = parseDragPayload(raw);

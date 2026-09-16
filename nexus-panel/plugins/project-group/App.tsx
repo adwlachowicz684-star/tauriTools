@@ -759,6 +759,7 @@ export default function App() {
                 onRename={(i, n) => s.renameTab('group', i, n)}
                 onRemove={(i) => requestRemoveTab('group', i)}
                 onAdd={(i) => setDialog({ type: 'pickDir', kind: 'group', tabIndex: i })}
+                onMoveTab={(from, to) => void s.moveTab('group', from, to)}
                 emptyHint="还没有项目组，点分类右侧的 ＋ 添加"
               />
             </div>
