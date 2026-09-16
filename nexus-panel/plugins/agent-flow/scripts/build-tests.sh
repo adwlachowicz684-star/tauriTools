@@ -10,7 +10,7 @@ S="python3 scripts/strip-ts.py"
 # 注意：每个文件都带上 ../types=./types.mjs。
 # condition.ts 会 import 运行时的 OP_META / DEFAULT_BRANCH（不只是 type），
 # 少了这条映射就会解析到 /tmp/types 而报 ERR_MODULE_NOT_FOUND。
-for f in topo template condition cron canvasOps parallel canvasStore loop updates files params llm credentials github credentialStore crypto tasks taskGroups history secretVault conversations customPresets; do
+for f in topo template condition cron canvasOps parallel canvasStore loop updates files params llm credentials github credentialStore crypto tasks taskGroups history secretVault conversations; do
   [ -f "engine/$f.ts" ] && $S "engine/$f.ts" "$OUT/$f.mjs" \
    --import-map ../types=./types.mjs >/dev/null
 done
@@ -86,3 +86,9 @@ $S engine/secretVault.ts "$OUT/secretVault.mjs" \
    --import-map ../types=./types.mjs >/dev/null
 $S engine/conversations.ts "$OUT/conversations.mjs" \
    --import-map ../types=./types.mjs >/dev/null
+# duplicate.ts 是纯逻辑（不 import 任何东西），单独生成即可
+$S engine/duplicate.ts "$OUT/duplicate.mjs" >/dev/null
+# customPresets 复用了 duplicate 的 stripRuntime，要指到生成物
+$S engine/customPresets.ts "$OUT/customPresets.mjs" \
+   --import-map ../types=./types.mjs \
+   --import-map ./duplicate=./duplicate.mjs >/dev/null

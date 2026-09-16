@@ -1,4 +1,5 @@
 import type { NodeData } from '../types';
+import { stripRuntime } from './duplicate';
 
 /**
  * 用户自定义节点（本质是「预设」）。
@@ -34,14 +35,11 @@ export type CustomPreset = {
 /* 剥离运行时状态                                                       */
 /* ------------------------------------------------------------------ */
 
-/**
- * 每次运行都会变的字段。
- *
- * 不剥掉的后果很具体：把跑过的 HTTP 节点存成预设，
- * 之后每次拖出来的新节点都带着上一次的 status='success' 和旧 output ——
- * 看起来"已经跑完了"，实际一次都没跑。
+/*
+ * 口径统一到 engine/duplicate.ts 的 stripRuntime ——
+ * 「复制节点」与「存成预设」要清掉的运行时字段是同一批，
+ * 分成两份写迟早会漂移（比如新增一个 lastXxx，只改了一边）。
  */
-const RUNTIME_KEYS = new Set(['status', 'output', 'error']);
 
 /**
  * 内联密钥字段。
@@ -109,14 +107,7 @@ function stripSecrets(data: Record<string, unknown>): Record<string, unknown> {
  * 副作用：往后会新增的运行时字段，只要沿用 last* 命名就自动被剥掉。
  */
 export function sanitizeForPreset(data: unknown): Record<string, unknown> {
-  const src = (data ?? {}) as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
-  for (const k of Object.keys(src)) {
-    if (RUNTIME_KEYS.has(k)) continue;
-    if (k.indexOf('last') === 0) continue;
-    out[k] = src[k];
-  }
-  return stripSecrets(out);
+  return stripSecrets(stripRuntime(data));
 }
 
 /* ------------------------------------------------------------------ */
