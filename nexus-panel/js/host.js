@@ -600,7 +600,16 @@ export function createHost(opts = {}) {
               // 插件可能自选了主题（见 varsForPlugin）；没有则等同全局
               type: 'init', manifest, theme: varsForPlugin(manifest.id), view,
               isolated,                         // 插件据此决定能力探测方式
-              reportBase: isolated && adaptTheme,  // 隔离且要适配 → 让插件自报基调
+              /* 让插件自报基调。两种场景：
+                 1) 隔离插件 —— 外壳读不到 contentDocument，采样会静默失败
+                 2) followsTheme 插件 —— 它自己跟随面板主题，基调该由它说了算。
+                    外壳采样反而会误判：变量已推过去、界面已变浅，
+                    但采样仍可能读到残留深色区域判成 dark，于是施加 invert
+                    把已变浅的部分二次翻转（"变白一秒后又变黑"）。
+                 上报值用 sampleOwnBase() 读插件自己的 body 背景：
+                 follow 模式 → 等于面板基调 → 不加滤镜；
+                 native 模式 → 固定深色 → 该加就加。 */
+              reportBase: (isolated || !!manifest.followsTheme) && adaptTheme,
               // 宿主自报 origin，供插件回发消息时用作 targetOrigin。
               // 隔离态下插件是 opaque origin，读不到 parent.location，
               // 只能靠这里告诉它 —— 否则它只能通配 '*'。

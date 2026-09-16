@@ -34,7 +34,17 @@ export const plugins = [
     entry: './plugins/agent-flow/index.html',
     // React + TSX，需要 Vite；无构建模式下自动隐藏
     requiresBuild: true,
-    description: '工作流编排画布（自带深色 UI）',
+    /* 自己跟随面板主题，不需要反转滤镜（L2/L3）。
+       agent-flow 默认就是 follow 模式：--af-* 直接读面板推来的 --bg /
+       --surface / --text，它**自己就会**跟着主题变浅，色彩原样保留。
+       不给这个标记的后果：切到浅色 → 界面已变浅（白）→ 适配系统照旧
+       采样判成"插件深色"→ 施加 invert → 已变浅的部分被二次翻转（黑）。
+       且 reAdapt 先 teardown 再异步采样，中间约 790ms 无滤镜，
+       于是看到"变白一秒后又变黑"，像切换了好几次。
+       native 模式（固定深色）仍需要滤镜 —— 所以不能写死"永不适配"，
+       要靠插件自报基调动态判定。详见 README 3.7.10。 */
+    followsTheme: true,
+    description: '工作流编排画布（跟随面板主题）',
   },
   {
     id: 'demo-react',

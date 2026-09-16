@@ -89,6 +89,27 @@
      与 10 处无底色控件会全部消失，侧边栏与画布连成一片。 */
   --af-divider: var(--divider, var(--af-native-line));
 
+  /* ---- 品牌 / 状态色的两档 ----
+     下面这批色是"浅色变体"：错误文字、代码段、文件名……
+     它们在**深色底**上对比度很好（7:1 以上），是刻意挑的。
+     但 follow 模式下切到浅色主题，页面底变成接近白，
+     这些色的对比度掉到 1.1~2.5 —— 基本看不见。
+     不能直接改成主题变量：它们是品牌标识，换了就失去辨识度。
+     所以按基调切两档：深色档 = 原值，浅色档 = 加深版本。
+     选择器限定 [data-af-mode="follow"] —— native 固定深色，不该切档。
+     data-nexus-base 由 plugin-sdk 在写主题变量时一并标上。 */
+  --af-t-err:    #ffb4b4;
+  --af-t-err2:   #ff9b9b;
+  --af-t-code:   #a5d6ff;
+  --af-t-warn:   #f0a35e;
+  --af-t-close:  #ff6b6b;
+  --af-t-loop:   #f472b6;
+  --af-t-loop-b: #f9a8d4;
+  --af-t-loop-d: #a5f3fc;
+  --af-t-cond-s: #38bdf8;
+  --af-t-cond-v: #c9a6f7;
+  --af-t-file:   #7dd3fc;
+
   /* 投射阴影：颜色故意不跟主题，理由同 css/tokens.css 里的说明 */
   --af-cast-sm: 0  8px 24px rgba(0, 0, 0, .45);
   --af-cast-lg: 0 20px 60px rgba(0, 0, 0, .50);
@@ -134,6 +155,22 @@
   /* 选中辉光固定不跟随：它是"选中反馈强度"而非配色，
      固定值同时保证原生/跟随两种模式观感一致 */
   --af-glow:   rgba(76, 141, 255, .25);
+}
+
+/* 浅色基调下的加深版本（仅 follow 模式生效）
+   取值标准：在接近白的底上对比度 ≥ 4.5，同时保持原来的色相。 */
+:root[data-af-mode="follow"][data-nexus-base="light"] {
+  --af-t-err:    #b91c1c;
+  --af-t-err2:   #c0392b;
+  --af-t-code:   #0b5fa5;
+  --af-t-warn:   #9a5b00;
+  --af-t-close:  #c92a2a;
+  --af-t-loop:   #a61e4d;
+  --af-t-loop-b: #ad2e6e;
+  --af-t-loop-d: #0b6e7e;
+  --af-t-cond-s: #0369a1;
+  --af-t-cond-v: #6d28d9;
+  --af-t-file:   #0b6e8f;
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
@@ -302,7 +339,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
   padding: 8px; font-size: 12px; max-height: 220px; overflow: auto;
   white-space: pre-wrap; word-break: break-all; line-height: 1.5; margin: 0;
 }
-.out.err { color: #ffb4b4; border-color: #4a2020; }
+.out.err { color: var(--af-t-err); border-color: #4a2020; }
 /* 空状态：基础表现（弱化色 / 行高 / 居中）已在 css/controls.css 的
    .nx-empty 组里，这里只留各自的尺寸差异 */
 .empty-hint { font-size: 13px; padding-top: 40px; }
@@ -362,7 +399,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
   border-radius: var(--af-r-sm); padding: 6px 9px; font-size: 13px; width: 100%;
 }
 .trg-edit input.invalid { border-color: var(--af-bad); }
-.trg-edit .err { color: #ff9b9b; font-size: 12px; margin-top: 4px; }
+.trg-edit .err { color: var(--af-t-err2); font-size: 12px; margin-top: 4px; }
 .trg-edit .ok-line { color: var(--af-ok); font-size: 12px; margin-top: 4px; }
 .trg-edit code {
   background: var(--af-raised); padding: 1px 4px; border-radius: 3px; font-family: var(--af-mono);
@@ -374,7 +411,7 @@ button.mini {
 }
 button.mini:hover:not(:disabled) { border-color: var(--af-accent); }
 button.mini:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
-button.mini.danger:hover { border-color: var(--af-bad); color: #ff9b9b; }
+button.mini.danger:hover { border-color: var(--af-bad); color: var(--af-t-err2); }
 
 /* 开关 */
 .switch { position: relative; width: 34px; height: 18px; flex: none; }
@@ -448,7 +485,7 @@ button.mini.danger:hover { border-color: var(--af-bad); color: #ff9b9b; }
   font-family: var(--af-mono); overflow: auto; white-space: nowrap; text-overflow: ellipsis;
 }
 .out.snippet {
-  color: #a5d6ff; font-size: 11px; line-height: 1.5;
+  color: var(--af-t-code); font-size: 11px; line-height: 1.5;
   margin-top: 4px; white-space: pre; max-height: 120px;
 }
 
@@ -478,7 +515,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 }
 .side-head { font-size: 13px; font-weight: 600; color: var(--af-fg); margin-bottom: 2px; }
 .side-hint { font-size: 11px; color: var(--af-dim); margin-bottom: 12px; line-height: 1.5; }
-.side-hint.warn { color: #f0a35e; margin-top: 10px; }
+.side-hint.warn { color: var(--af-t-warn); margin-top: 10px; }
 .side-group { margin-bottom: 14px; }
 .side-title {
   font-size: 11px; color: var(--af-dim); text-transform: uppercase;
@@ -523,7 +560,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   border: none; background: transparent; color: var(--af-dim);
   cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px;
 }
-.tab-close:hover { color: #ff6b6b; }
+.tab-close:hover { color: var(--af-t-close); }
 .tab-input {
   background: var(--af-sunk); border: 1px solid var(--accent, var(--af-accent));
   color: var(--af-fg); border-radius: var(--af-r-xs); padding: 2px 5px;
@@ -557,7 +594,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 .trig-icon { margin-right: 5px; }
 .trig-off {
   margin-left: 6px; font-size: 10px; background: #3a2d1f;
-  color: #f0a35e; border-radius: var(--af-r-xs); padding: 1px 5px;
+  color: var(--af-t-warn); border-radius: var(--af-r-xs); padding: 1px 5px;
 }
 .trig-last { font-size: var(--fs-11, 11px); color: var(--af-dim); margin-bottom: 4px; }
 
@@ -565,7 +602,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 .node-card.parallel { border-left-color: #06b6d4; }
 .par-summary {
   display: flex; align-items: center; gap: 7px; margin: 5px 0;
-  font-size: var(--fs-11, 11px); color: #a5f3fc;
+  font-size: var(--fs-11, 11px); color: var(--af-t-loop-d);
   background: #0e2026; border: 1px solid #1d4d5a;
   border-radius: 5px; padding: 4px 7px;
 }
@@ -592,14 +629,14 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   border-radius: 5px; padding: 4px 7px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.loop-icon { flex: none; font-size: 13px; color: #f472b6; }
+.loop-icon { flex: none; font-size: 13px; color: var(--af-t-loop); }
 .loop-ports { display: flex; gap: 6px; margin: 5px 0 2px; }
 .loop-port {
   font-size: 10px; padding: 1px 6px; border-radius: var(--af-r-xs);
   border: 1px solid var(--af-divider); color: var(--af-dim);
 }
-.loop-port.body { color: #f9a8d4; border-color: #4a2537; }
-.loop-port.done { color: #a5f3fc; border-color: #1d4d5a; }
+.loop-port.body { color: var(--af-t-loop-b); border-color: #4a2537; }
+.loop-port.done { color: var(--af-t-loop-d); border-color: #1d4d5a; }
 
 /* 循环节点的两个出口：颜色区分，避免接错 */
 .loop-handle { width: 9px !important; height: 9px !important; border: 2px solid var(--af-sunk) !important; }
@@ -783,8 +820,8 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   background: var(--af-panel); max-width: 45%;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.cond-chip.src { border-color: #38bdf8; color: #38bdf8; }
-.cond-chip.val { border-color: #a855f7; color: #c9a6f7; font-family: var(--af-mono); }
+.cond-chip.src { border-color: var(--af-t-cond-s); color: var(--af-t-cond-s); }
+.cond-chip.val { border-color: #a855f7; color: var(--af-t-cond-v); font-family: var(--af-mono); }
 .cond-chip.val.empty { border-color: var(--af-warn); color: var(--af-warn); border-style: dashed; }
 
 .cond-op-badge {
@@ -930,7 +967,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 
 /* 引用 chip 里文件相关的用另一种颜色，和输出区分开 */
 .chip.file {
-  border-color: #38bdf8; color: #7dd3fc;
+  border-color: var(--af-t-cond-s); color: #7dd3fc;
 }
 .chip.file:hover { background: rgba(56, 189, 248, .12); }
 
@@ -948,7 +985,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   font-size: 11px; padding: 2px 0; line-height: 1.45;
 }
 .file-preview-name {
-  flex: none; color: #7dd3fc; font-family: var(--af-mono);
+  flex: none; color: var(--af-t-file); font-family: var(--af-mono);
 }
 .file-preview-path {
   flex: 1; min-width: 0; color: var(--af-dim);
@@ -980,7 +1017,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap;
 }
 .param-preview code {
-  font-family: var(--af-mono); color: #7dd3fc;
+  font-family: var(--af-mono); color: var(--af-t-file);
   background: var(--af-panel); border: 1px solid var(--af-line);
   border-radius: var(--af-r-xs); padding: 1px 5px; word-break: break-all;
 }
@@ -988,7 +1025,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 /* 节点卡片上的文件标记 */
 .node-files {
   display: flex; align-items: center; gap: 4px;
-  font-size: var(--fs-11, 11px); color: #7dd3fc; margin-top: 3px;
+  font-size: var(--fs-11, 11px); color: var(--af-t-file); margin-top: 3px;
 }
 .node-files-badge {
   border: 1px solid currentColor; border-radius: var(--r-pill, 999px);
@@ -1506,7 +1543,7 @@ input.mono, textarea.mono {
 /* 选中＝嵌进凹槽：底色更深 + 内阴影，视觉上"陷下去" */
 .pc-card.on {
   background: var(--af-sunk); border-color: var(--af-accent);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sh-in-sm);   /* 内凹档：写死 rgba 换主题不会跟着变 */
 }
 .pc-card.is-custom {
   border-style: dashed; color: var(--af-dim); background: transparent;
@@ -1549,6 +1586,6 @@ input.mono, textarea.mono {
 }
 .node-chip.on {
   border-color: var(--af-accent); color: var(--af-fg);
-  background: var(--af-sunk); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+  background: var(--af-sunk); box-shadow: var(--sh-in-sm);   /* 同上 */
 }
 .node-chip.is-custom { border-style: dashed; }

@@ -453,6 +453,17 @@ function applyThemeVars(vars) {
   // 让表单控件、滚动条跟随外壳基调
   const base = vars['--text'] && isLightColor(vars['--bg']) ? 'light' : 'dark';
   document.documentElement.style.colorScheme = base;
+  /* 把基调也写成 data 属性，供插件 CSS 按基调切档。
+     光有 colorScheme 不够：那是给浏览器原生控件用的，CSS 选择器读不到。
+     而插件里常有些"品牌色的浅色变体"（错误文字、代码段…），
+     它们在深色底上对比度很好，放到浅色底上只有 1.1~2.5 —— 基本看不见。
+     这类色不能简单换成主题变量（失去品牌识别度），要按基调切两档，
+     方括号选择器便可在浅色下换成加深版本：
+         :root                     { --my-err: #ffb4b4; }   深色档
+         [data-nexus-base="light"] { --my-err: #b91c1c; }   浅色档
+     native 模式的插件不该吃这套（它固定深色），
+     所以 agent-flow 的选择器是 [data-af-mode="follow"][data-nexus-base="light"]。 */
+  try { document.documentElement.dataset.nexusBase = base; } catch { /* 忽略 */ }
 }
 
 /** 粗略判断一个颜色是浅是深，用于设置 color-scheme */
@@ -490,6 +501,10 @@ export function bootIframePlugin(mountFn, settingsFn) {
   let ctxReady;
   let resolveMount;
   let view = 'main';                 // 'main' | 'settings'
+  /* 宿主是否要求本插件自报基调（隔离插件 / followsTheme 插件）。
+     记下来是因为 theme 更新时也要重报 —— 只在 init 报一次的话，
+     切主题后外壳手上还是旧基调，判定必然错。 */
+  let needReportBase = false;
   let currentTheme = {};             // 外壳推来的主题变量，供 ctx.theme 读取
   let isolated = false;              // 是否处于功能隔离（去掉 allow-same-origin）
   let mounted = false;               // mount 只允许执行一次
@@ -532,6 +547,16 @@ export function bootIframePlugin(mountFn, settingsFn) {
         applyThemeVars(d.theme);
         // 回执：告诉外壳"新变量已生效，可以放心采样了"。
         // 没有它，外壳可能在变量落地前就采样 → 读到旧色 → 基调误判 → 反转错。
+        /* 基调变了要**重报**。
+           只在 init 时报一次是不够的：切主题后插件颜色已经变了，
+           reportedBase 却还是旧值，外壳会拿旧基调去判定 → 滤镜加反。
+           必须排在 theme-applied **之前**：外壳等 theme-applied 才采样，
+           先收到新基调，那一次采样才会用对，否则白等一轮还得多闪一次。 */
+        if (needReportBase && d.type === 'theme') {
+          post({ type: 'base-report', base: sampleOwnBase(), view });
+        }
+        // 回执：告诉外壳"新变量已生效，可以放心采样了"。
+        // 没有它，外壳可能在变量落地前就采样 → 读到旧色 → 基调误判 → 反转错。
         if (d.type === 'theme') post({ type: 'theme-applied' });
       }
       if (d.type !== 'init') return;             // 纯更新，不走挂载流程
@@ -548,6 +573,7 @@ export function bootIframePlugin(mountFn, settingsFn) {
       /* 隔离插件：外壳读不到 contentDocument，采样会静默失败 → 不反转 →
          深色面板上留一块刺眼的白。所以由插件自己采样并上报基调。 */
       if (d.reportBase) {
+        needReportBase = true;
         const report = () => post({ type: 'base-report', base: sampleOwnBase(), view });
         report();
         // 内容可能是异步渲染的，稍后再报一次；图片加载完再报一次
