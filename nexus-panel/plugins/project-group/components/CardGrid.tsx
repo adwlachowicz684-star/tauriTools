@@ -1,9 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CardInfo, CardKind } from '../types';
+import type { CardInfo, CardKind, LinkDetail } from '../types';
 import { isDark, shade } from '../utils/color';
 import { ContextMenu, type MenuItem } from './ui';
 
 export const DRAG_MIME = 'application/x-fpx-card';
+
+/**
+ * 链接明细排序：**有问题的排前面**。
+ *
+ * 展开一个连了十几条的卡片时，用户要找的是"哪条坏了"，
+ * 而不是从头看一遍。有效的那些按名字排序（稳定、可预期）。
+ */
+function sortedDetails(list: LinkDetail[]): LinkDetail[] {
+  const rank = (s: string) => (s === 'conflict' ? 0 : s === 'broken' ? 1 : 2);
+  return [...list].sort((a, b) =>
+    rank(a.state) - rank(b.state) || a.name.localeCompare(b.name));
+}
 
 /** 链接状态 → 说明 */
 const STATE_TITLE: Record<string, string> = {
@@ -330,6 +342,9 @@ export function CardGrid({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   /** 有链接明细的卡片数（决定要不要显示"展开全部"） */
   const linkableCount = cards.filter((c) => (c.linkDetails?.length ?? 0) > 0).length;
+  /** 有失效 / 冲突链接的卡片数：不展开也要能看见有问题 */
+  const badCount = cards.filter((c) => (c.linkDetails ?? []).some((d) => d.state === 'broken')).length;
+  const conflictCount = cards.filter((c) => (c.linkDetails ?? []).some((d) => d.state === 'conflict')).length;
   const allExpanded = linkableCount > 0 && expanded.size >= linkableCount;
 
   const toggleLinks = (path: string) => setExpanded((s) => {
@@ -405,6 +420,12 @@ export function CardGrid({
             {allExpanded ? '收起全部链接' : '展开全部链接'}
           </button>
           <span className="p-muted" style={{ fontSize: 11 }}>{linkableCount} 个有链接</span>
+          {(badCount > 0 || conflictCount > 0) && (
+            <span className="fpx-links-summary">
+              {conflictCount > 0 && <span className="bad">{conflictCount} 冲突</span>}
+              {badCount > 0 && <span className="warn">{badCount} 失效</span>}
+            </span>
+          )}
         </div>
       )}
 
@@ -543,7 +564,7 @@ export function CardGrid({
 
           {expanded.has(c.path) && (c.linkDetails?.length ?? 0) > 0 && (
             <div className="fpx-links">
-              {c.linkDetails!.map((d) => (
+              {sortedDetails(c.linkDetails!).map((d) => (
                 <div className={`fpx-link-row ${d.state}`} key={d.name + d.group}>
                   <span className="fpx-link-dot" title={STATE_TITLE[d.state]} />
                   <span className="fpx-link-name" title={d.name}>{d.name}</span>
