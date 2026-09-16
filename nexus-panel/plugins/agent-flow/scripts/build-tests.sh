@@ -39,11 +39,18 @@ RUNNER_IMPORTS="\
   --import-map ../loop=./loop.mjs \
   --import-map ../updates=./updates.mjs \
   --import-map ../extract=./extract.mjs \
-  --import-map ../runnerKit=./runnerKit.mjs"
-for f in task trigger condition parallel loop fs ocr translate update githubUpdate githubPush genericHttp extract; do
+  --import-map ../runnerKit=./runnerKit.mjs \
+  --import-map ../sleep=./sleep.mjs \
+  --import-map ../beep=./beep.mjs \
+  --import-map ../clock=./clock.mjs"
+for f in task trigger condition parallel loop fs ocr translate update githubUpdate githubPush genericHttp extract wait log beep playAudio clock const; do
   [ -f "engine/runners/$f.ts" ] && $S "engine/runners/$f.ts" "$OUT/runners_$f.mjs" $RUNNER_IMPORTS >/dev/null
 done
 $S engine/extract.ts "$OUT/extract.mjs" >/dev/null
+# 工具节点的两个支撑模块（纯逻辑，被执行器引用）
+$S engine/sleep.ts "$OUT/sleep.mjs" >/dev/null
+$S engine/beep.ts "$OUT/beep.mjs" --import-map ../types=./types.mjs >/dev/null
+$S engine/clock.ts "$OUT/clock.mjs" >/dev/null
 $S engine/nodeRequires.ts "$OUT/nodeRequires.mjs" >/dev/null
 $S engine/runnerKit.ts "$OUT/runnerKit.mjs" \
   --import-map ./nodeRequires=./nodeRequires.mjs >/dev/null
@@ -60,7 +67,8 @@ $S engine/runnerRegistry.ts "$OUT/runnerRegistry.mjs" \
   --import-map ./runners/githubUpdate=./runners_githubUpdate.mjs \
   --import-map ./runners/githubPush=./runners_githubPush.mjs \
   --import-map ./runners/genericHttp=./runners_genericHttp.mjs \
-  --import-map ./runners/extract=./runners_extract.mjs >/dev/null
+  --import-map ./runners/extract=./runners_extract.mjs \
+  --import-map ./runners/wait=./runners_wait.mjs --import-map ./runners/log=./runners_log.mjs --import-map ./runners/beep=./runners_beep.mjs --import-map ./runners/playAudio=./runners_playAudio.mjs --import-map ./runners/clock=./runners_clock.mjs --import-map ./runners/const=./runners_const.mjs >/dev/null
 $S engine/runner.ts "$OUT/runner.mjs" \
    --import-map ./runnerRegistry=./runnerRegistry.mjs \
    --import-map ./llm=./llm.mjs \

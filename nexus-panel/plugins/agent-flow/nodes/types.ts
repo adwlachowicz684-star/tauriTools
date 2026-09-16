@@ -28,7 +28,8 @@ import type { FieldFactory, FieldRenderProps } from '../components/inspectors/fi
  */
 
 /** 侧栏分组。顺序即展示顺序 */
-export type NodeCategory = 'trigger' | 'task' | 'flow' | 'data' | 'ai' | 'external' | 'custom';
+export type NodeCategory =
+  | 'trigger' | 'task' | 'flow' | 'data' | 'ai' | 'external' | 'tools' | 'custom';
 
 export const NODE_CATEGORY_META: Record<NodeCategory, { label: string }> = {
   trigger:  { label: '触发器（起点）' },
@@ -37,6 +38,12 @@ export const NODE_CATEGORY_META: Record<NodeCategory, { label: string }> = {
   data:     { label: '文件与数据' },
   ai:       { label: 'AI 能力' },
   external: { label: '外部服务' },
+  /*
+   * 工具类小节点单独成组：等待、日志、提示音、取当前时间、常量……
+   * 它们数量会持续增加，散进「流程控制」「数据」里会稀释那两组的主题
+   * （用户找"流程控制"时想的是条件/循环，不是"等两秒"）。
+   */
+  tools:    { label: '工具' },
   custom:   { label: '自定义' },
 };
 

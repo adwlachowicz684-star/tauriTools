@@ -41,7 +41,9 @@ for f in tests/*.test.ts; do
     --import-map ../engine/runnerKit=../runnerKit.mjs \
     --import-map ../engine/customPresets=../customPresets.mjs \
     --import-map ../engine/duplicate=../duplicate.mjs \
-    --import-map ../engine/paramCards=../paramCards.mjs >/dev/null
+    --import-map ../engine/clock=../clock.mjs \
+    --import-map ../engine/paramCards=../paramCards.mjs \
+    --import-map ../components/Sidebar=../Sidebar.mjs >/dev/null
 done
 
 # 源码级守卫测试（tests/inspectorRemount.test.ts）要读源文件，

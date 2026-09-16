@@ -4,6 +4,8 @@ import type {
   LoopNodeData, FsNodeData, UpdateNodeData, OcrNodeData, TranslateNodeData,
   GenericHttpNodeData, ExtractNodeData,
   GithubUpdateNodeData, GithubPushNodeData,
+  WaitNodeData, LogNodeData, BeepNodeData, PlayAudioNodeData,
+  ClockNodeData, ConstNodeData,
 } from './types';
 
 /** React Flow v12 的节点类型；data 承载我们自己的定义 */
@@ -22,6 +24,13 @@ export type OcrFlowNode = Node<OcrNodeData, 'ocr'>;
 export type TranslateFlowNode = Node<TranslateNodeData, 'translate'>;
 export type GithubUpdateFlowNode = Node<GithubUpdateNodeData, 'github-update'>;
 export type GithubPushFlowNode = Node<GithubPushNodeData, 'github-push'>;
+/* ---- 工具节点 ---- */
+export type WaitFlowNode = Node<WaitNodeData, 'wait'>;
+export type LogFlowNode = Node<LogNodeData, 'log'>;
+export type BeepFlowNode = Node<BeepNodeData, 'beep'>;
+export type PlayAudioFlowNode = Node<PlayAudioNodeData, 'play-audio'>;
+export type ClockFlowNode = Node<ClockNodeData, 'clock'>;
+export type ConstFlowNode = Node<ConstNodeData, 'const'>;
 
 /* 新增节点类型时必须同时加到这里。
    漏加的话，App.tsx 里 `as FlowNode` 会报 TS2352 ——
@@ -40,7 +49,13 @@ export type FlowNode =
   | OcrFlowNode
   | TranslateFlowNode
   | GithubUpdateFlowNode
-  | GithubPushFlowNode;
+  | GithubPushFlowNode
+  | WaitFlowNode
+  | LogFlowNode
+  | BeepFlowNode
+  | PlayAudioFlowNode
+  | ClockFlowNode
+  | ConstFlowNode;
 
 /** React Flow v12 的边类型；data.branch 标注所属分支 */
 export type FlowEdgeData = {

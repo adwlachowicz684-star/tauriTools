@@ -31,6 +31,13 @@ import './defs/translate';
 import './defs/github_update';
 import './defs/github_push';
 import './defs/bili';
+/* 工具节点：等待 / 日志 / 提示音 / 播放音频 / 当前时间 / 常量 */
+import './defs/wait';
+import './defs/log';
+import './defs/beep';
+import './defs/playAudio';
+import './defs/clock';
+import './defs/const';
 import './defs/wechat';
 
 export {
