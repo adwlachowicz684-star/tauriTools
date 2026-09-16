@@ -44,6 +44,62 @@ export type CustomPreset = {
 const RUNTIME_KEYS = new Set(['status', 'output', 'error']);
 
 /**
+ * 内联密钥字段。
+ *
+ * 与 canvasStore 的 SECRET_FIELDS 保持同一套口径（'token' 是 GitHub 节点的
+ * 内联令牌，'llm.apiKey' 是 OCR / 翻译的大模型密钥）。改一处请同步另一处。
+ *
+ * 为什么自定义预设也必须脱敏：预设存的是明文 localStorage，而画布里的密钥
+ * 走的是加密保险箱。若把内联令牌带进预设，等于新开一处明文密钥存放地，
+ * 比既有的保护还弱 —— 而导出成 JSON 分享出去时更是直接交了出去。
+ *
+ * 注意：**凭据引用（credentialId）不受影响，会正常保留**。
+ * 也就是说走凭据中心的用法可以完整复用与分享，被剥掉的只有
+ * "把令牌直接填在节点里"这种不推荐的做法。
+ */
+const SECRET_PATHS = ['token', 'llm.apiKey', 'config.token'] as const;
+
+/** 数据里是否含内联密钥（用于提示用户"这部分不会被存进去"） */
+export function hadInlineSecret(data: unknown): boolean {
+  const d = (data ?? {}) as Record<string, unknown>;
+  for (const path of SECRET_PATHS) {
+    const parts = path.split('.');
+    let cur: unknown = d;
+    for (const p of parts) {
+      cur = cur && typeof cur === 'object'
+        ? (cur as Record<string, unknown>)[p]
+        : undefined;
+    }
+    if (typeof cur === 'string' && cur.length > 0) return true;
+  }
+  return false;
+}
+
+/** 挖掉内联密钥，并在挖过的位置留下标记，让界面能提示原因 */
+function stripSecrets(data: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...data };
+  for (const path of SECRET_PATHS) {
+    const parts = path.split('.');
+    if (parts.length === 1) {
+      if (typeof out[parts[0]] === 'string' && out[parts[0]]) {
+        out[parts[0]] = '';
+      }
+      continue;
+    }
+    // 只处理一层嵌套（llm.apiKey / config.token）
+    const [head, tail] = parts;
+    const nested = out[head];
+    if (nested && typeof nested === 'object') {
+      const n = nested as Record<string, unknown>;
+      if (typeof n[tail] === 'string' && n[tail]) {
+        out[head] = { ...n, [tail]: '' };
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * 挑出配置部分。
  *
  * 用"status/output/error + last* 前缀"的黑名单而不是白名单：
@@ -60,7 +116,7 @@ export function sanitizeForPreset(data: unknown): Record<string, unknown> {
     if (k.indexOf('last') === 0) continue;
     out[k] = src[k];
   }
-  return out;
+  return stripSecrets(out);
 }
 
 /* ------------------------------------------------------------------ */
@@ -179,12 +235,18 @@ export function renameCustomPreset(id: string, name: string, kv: KV = defaultKV(
 /* 跨环境分享                                                          */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 导出成可分享的 JSON。
+ *
+ * 再脱一道敏：预设本身在存入时就已剥过内联密钥，但老数据（本次改动之前存的）
+ * 可能还带着。导出是"交给别人"的动作，在这一步兜住比指望历史数据干净更可靠。
+ */
 export function exportCustomPresets(kv: KV = defaultKV()): string {
-  return JSON.stringify(
-    { version: FORMAT_VERSION, presets: loadCustomPresets(kv) },
-    null,
-    2,
-  );
+  const presets = loadCustomPresets(kv).map((p) => ({
+    ...p,
+    data: sanitizeForPreset(p.data),
+  }));
+  return JSON.stringify({ version: FORMAT_VERSION, presets }, null, 2);
 }
 
 export type ImportResult = {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  sanitizeForPreset, addCustomPreset, removeCustomPreset, renameCustomPreset,
+  sanitizeForPreset, hadInlineSecret, addCustomPreset, removeCustomPreset, renameCustomPreset,
   loadCustomPresets, saveCustomPresets, exportCustomPresets, importCustomPresets,
   presetKey, presetIdOf, dataOf, type CustomPreset, type KV,
 } from '../engine/customPresets';
@@ -223,4 +223,69 @@ test('导入没有预设列表的文件要报错，而不是当空处理', () =>
     () => importCustomPresets('{"foo":1}', { isKnownType: () => true }, memKV()),
     /预设列表/,
   );
+});
+
+/* ---- 内联密钥脱敏 ---- */
+/*
+ * 预设存在明文 localStorage 里，而画布的密钥走的是加密保险箱。
+ * 不脱敏等于新开一处比既有保护更弱的明文密钥存放地，
+ * 导出成 JSON 分享时更是直接把令牌交出去。
+ */
+
+test('剥掉 GitHub 节点的内联令牌', () => {
+  const s = sanitizeForPreset({ label: 'A', owner: 'o', repo: 'r', token: 'ghp_xxx' });
+  assert.equal(s.token, '');
+  assert.equal(s.owner, 'o', '非密钥字段要保留');
+});
+
+test('剥掉大模型密钥（llm.apiKey 嵌套字段）', () => {
+  const s = sanitizeForPreset({ label: 'OCR', llm: { provider: 'openai', apiKey: 'sk-xxx' } });
+  const llm = s.llm as Record<string, unknown>;
+  assert.equal(llm.apiKey, '');
+  assert.equal(llm.provider, 'openai', '同层的其它字段要保留');
+});
+
+test('剥掉 webhook 校验令牌（config.token）', () => {
+  const s = sanitizeForPreset({ label: 'T', config: { port: 9000, token: 'abc' } });
+  const cfg = s.config as Record<string, unknown>;
+  assert.equal(cfg.token, '');
+  assert.equal(cfg.port, 9000);
+});
+
+test('凭据引用要保留（这是推荐的用法，必须能随预设复用）', () => {
+  const s = sanitizeForPreset({ label: 'A', credentialId: 'cred-1', token: '' });
+  assert.equal(s.credentialId, 'cred-1');
+});
+
+test('hadInlineSecret 能识别出各类内联密钥', () => {
+  assert.equal(hadInlineSecret({ token: 'ghp_x' }), true);
+  assert.equal(hadInlineSecret({ llm: { apiKey: 'sk-x' } }), true);
+  assert.equal(hadInlineSecret({ config: { token: 'x' } }), true);
+  assert.equal(hadInlineSecret({ token: '' }), false, '空串不算');
+  assert.equal(hadInlineSecret({ credentialId: 'c1' }), false, '凭据引用不算');
+  assert.equal(hadInlineSecret(null), false);
+  assert.equal(hadInlineSecret({ llm: null }), false, '嵌套为 null 不该崩');
+});
+
+test('导出时再脱一道敏（老数据可能还带着令牌）', () => {
+  const kv = memKV();
+  // 模拟本次改动之前存下的老数据：直接写进去，绕过保存时的剥除
+  saveCustomPresets([{
+    id: 'old', name: '旧的', baseType: 'github-push',
+    data: { label: '旧', owner: 'o', token: 'ghp_leak' }, createdAt: 1,
+  }], kv);
+
+  const exported = JSON.parse(exportCustomPresets(kv));
+  assert.equal(exported.presets[0].data.token, '', '导出是交给别人的动作，必须兜住');
+  assert.equal(exported.presets[0].data.owner, 'o');
+});
+
+test('存成预设后不再含内联令牌', () => {
+  const kv = memKV();
+  const p = addCustomPreset({
+    name: '推送', baseType: 'github-push',
+    data: { label: 'P', owner: 'o', token: 'ghp_xxx' },
+  }, kv);
+  assert.equal(p.data.token, '');
+  assert.equal(p.data.owner, 'o');
 });

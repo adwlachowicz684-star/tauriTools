@@ -6,9 +6,8 @@ import type { SecretPolicy } from '../../types';
 // 从 engine/files 直接拿，不绕 shared：shared 只是转手 import 进来用，
 // 并没有再导出，硬要从它拿就得让它多导出一次，平白加一层耦合
 import { FILE_FIELD_HINT } from '../../engine/files';
-import { addCustomPreset } from '../../engine/customPresets';
-import { prompt } from '../../../../js/dialog.js';
 import { CredentialPicker } from './shared';
+import SaveAsCustom from './SaveAsCustom';
 
 /**
  * 属性面板的**字段描述层**。
@@ -400,28 +399,7 @@ export function BasicInspector({
           onChange={(e) => onChange(node.id, { label: e.target.value })}
         />
         <span className="insp-kind">{def.meta.label}</span>
-        {/*
-          存为自定义节点：把当前这套参数存成侧栏里可复用的条目。
-          存的是配置（engine/customPresets 会剥掉 status / output / last* 等
-          运行时状态），所以之后拖出来的都是干净的、待运行的节点。
-        */}
-        <button
-          className="mini insp-save"
-          title="把当前配置存成自定义节点，之后可从左侧「自定义」分组直接拖出来用"
-          onClick={async () => {
-            const name = await prompt({
-              title: '存为自定义节点',
-              message: '之后可从左侧「自定义」分组里直接拖出来用。',
-              placeholder: '节点名称',
-              defaultValue: String(d.label ?? def.meta.label),
-              validate: (v: string) => (v && v.trim() ? null : '请填个名字'),
-            });
-            if (!name) return;
-            addCustomPreset({ name, baseType: node.type, data: node.data });
-          }}
-        >
-          存为自定义
-        </button>
+        <SaveAsCustom node={node} />
       </div>
 
       {list.map(({ f, i }) =>

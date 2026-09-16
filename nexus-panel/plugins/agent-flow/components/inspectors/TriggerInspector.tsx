@@ -46,6 +46,7 @@ import {
 } from '../../engine/llm';
 import { canReadImage } from '../../lib/tauri';
 import type { FlowEdge, FlowNode } from '../../flowTypes';
+import SaveAsCustom from './SaveAsCustom';
 
 export function TriggerInspector({ node, onChange, webhookTokens }: {
   node: FlowNode;
@@ -72,7 +73,10 @@ export function TriggerInspector({ node, onChange, webhookTokens }: {
   return (
     <aside className="inspector">
       <label className="field">
-        <span>节点名称</span>
+        <span className="field-label-row">
+          节点名称
+          <SaveAsCustom node={node} />
+        </span>
         <input value={d.label} onChange={(e) => onChange(node.id, { label: e.target.value })} />
       </label>
 

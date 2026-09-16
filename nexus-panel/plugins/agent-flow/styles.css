@@ -1476,5 +1476,11 @@ input.mono, textarea.mono {
 .side-title-ops { margin-left: auto; display: flex; gap: 6px; }
 .side-title-ops .link-btn { font-size: 11px; }
 
-/* 属性面板标题行的「存为自定义」 */
-.insp-save { flex: none; font-size: 11px; white-space: nowrap; }
+/* 属性面板的「存为自定义」。
+   字段型面板放在标题行，四个整体自定义面板放在「节点名称」那一行的标签里，
+   所以两者都要能排布：一个 flex 子项，一个嵌在 span 里靠 margin-left 顶到右边。 */
+.insp-save, .save-as-custom { flex: none; font-size: 11px; white-space: nowrap; }
+.field-label-row {
+  display: flex; align-items: center; gap: 8px;
+}
+.field-label-row .save-as-custom { margin-left: auto; }
