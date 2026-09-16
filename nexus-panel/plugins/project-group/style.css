@@ -207,6 +207,7 @@
 .fpx-cards { display: flex; flex-direction: column; gap: 8px; min-height: 80px; }
 .fpx-empty { padding: 14px; text-align: center; }
 .fpx-card {
+  position: relative;   /* 插入竖条用伪元素绝对定位，不占布局 */
   padding: 10px 12px;
   /* 标签色派生变量的默认值：没设标签色的卡片 hover / press 时边框色不变。
      设了标签色的卡片由 CardGrid 用内联 style 覆盖成算好的深/浅色。 */
@@ -228,12 +229,34 @@
   border-color: var(--accent);
 }
 .fpx-card.over { outline: 2px dashed var(--accent); outline-offset: -2px; }
+/* 插入位置竖条（原版「两卡缝隙处显示，指明插入点」）。
+   用伪元素 + 绝对定位：若用真实元素插进 flex 列，8px 的 gap 会让列表在
+   拖动过程中不断抖动，落点反而更难瞄。
+   -5px 正好落在两卡之间 8px 缝隙的中央。 */
+.fpx-card.drop-before::before,
+.fpx-card.drop-after::after {
+  content: '';
+  position: absolute; left: 0; right: 0;
+  height: 2px; border-radius: 1px;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+  z-index: 3;
+}
+.fpx-card.drop-before::before { top: -5px; }
+.fpx-card.drop-after::after { bottom: -5px; }
+/* 空列表时的落点线 */
+.fpx-drop-line {
+  height: 2px; border-radius: 1px; margin: 3px 0;
+  background: var(--accent); box-shadow: 0 0 6px var(--accent);
+}
 /* 跨栏落点 = 建链，与同栏排序（虚线）刻意区分：
    松手前要能一眼看出这次是"连上它"还是"排到这儿"。 */
 .fpx-card.over-link {
   outline: 2px solid var(--accent); outline-offset: -2px;
   box-shadow: var(--sh-in-md);
 }
+/* 正在被拖走的卡片：半透明 + 去掉 hover 抬升，明确"这张在移动中" */
+.fpx-card.dragging { opacity: .4; transform: none !important; }
 /* 缺失卡片：红框而非整体变淡。
    优先级必须高于 hover —— 一眼能看出哪个是缺的，
    而不是靠"稍微淡一点"这种要对比才看得出的差别。

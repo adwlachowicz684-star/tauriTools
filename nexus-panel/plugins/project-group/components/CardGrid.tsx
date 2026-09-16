@@ -233,33 +233,79 @@ export function CardGrid({
   onJumpToGroup?: (card: CardInfo) => void;
 }) {
   const [menu, setMenu] = useState<{ card: CardInfo; x: number; y: number } | null>(null);
+  /**
+   * 插入位置（对应原版"两卡缝隙处的竖条"）：**插到第 k 张之前**，取值 0..cards.length。
+   *
+   * 用"缝隙"而不是"悬停哪张卡"表达落点：整卡高亮只能告诉你"跟这张有关"，
+   * 说不清是插到它前面还是后面，松手前没法预判结果。
+   *
+   * null = 当前没有落点。
+   */
+  const [dropAt, setDropAt] = useState<number | null>(null);
+  /** 当前悬停的卡片索引（跨栏建链时用来整卡高亮） */
   const [over, setOver] = useState(-1);
+  /** 正在被拖走的卡片：给它半透明，否则分不清哪张在动 */
+  const [dragPath, setDragPath] = useState<string | null>(null);
   /**
    * 悬停的这张卡片是不是**跨栏**拖来的。
-   *
-   * 同栏拖是排序、跨栏拖是建链，两种语义此前用同一个高亮（虚线框），
-   * 用户松手前分不清这次是"排到这儿"还是"连上它"。
-   * 这里单独记一个状态，给跨栏落点另一种视觉（实线 + 强调色）。
+   * 跨栏语义是建链（落在卡片上），不是插入缝隙，所以此时不画竖条。
    */
   const [overCross, setOverCross] = useState(false);
+
+  /** 依据指针在卡片上的上下半区，算出插到它前面还是后面 */
+  const posOf = (e: React.DragEvent<HTMLElement>, i: number): number => {
+    const r = e.currentTarget.getBoundingClientRect();
+    return e.clientY < r.top + r.height / 2 ? i : i + 1;
+  };
+
+  /**
+   * 同栏移动时的**索引修正**——最容易写错的一处。
+   *
+   * 后端 moveCard 是「先把卡片从所有页签里摘掉，再插入到目标下标」。
+   * 所以在**当前数组**（还含被拖卡片）里算出的缝隙位置 k，
+   * 摘卡之后要换算：若被拖卡片原本在 k 之前，它一走后面的都前移一位，k 要减 1。
+   *
+   * 不减的话，往上拖会稳定"落点偏后一格"——表现为"明明插在 A 前面，结果跑到 A 后面"。
+   */
+  const resolveIndex = (dragPath: string, k: number): number => {
+    const from = cards.findIndex((c) => c.path === dragPath);
+    return from >= 0 && from < k ? k - 1 : k;
+  };
+
+  /** 拖拽结束（含被取消）一律清干净：拖到窗口外松手时 drop 不触发，
+   *  不靠 dragend 兜底的话竖条会残留在屏幕上。 */
+  const clearDrop = () => { setDropAt(null); setOverCross(false); setDragPath(null); };
 
   return (
     <div
       className="fpx-cards"
-      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        // 落在卡片区空白处：插到末尾（跨栏则是换栏，另有高亮，不画竖条）
+        if (draggingKind === kind) setDropAt(cards.length);
+      }}
+      onDragLeave={(e) => {
+        // 只有真正离开整个卡片区才清；移到子卡片上时 relatedTarget 仍在容器内
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) clearDrop();
+      }}
       onDrop={(e) => {
         e.preventDefault();
         const raw = e.dataTransfer.getData(DRAG_MIME);
-        setOver(-1);
-        setOverCross(false);
+        // 先取数再清状态：清早了就拿不到 data 了
+        const k = dropAt;
+        clearDrop();
         if (!raw) return;
         const drag = parseDragPayload(raw);
         if (!drag) return;
-        if (drag.kind === kind) onMove(drag.path, cards.length);
+        if (drag.kind === kind) onMove(drag.path, resolveIndex(drag.path, k ?? cards.length));
         else onCrossDrop(drag, null);
       }}
     >
       {cards.length === 0 && <div className="p-muted fpx-empty">{emptyHint}</div>}
+      {cards.length === 0 && dropAt === 0 && draggingKind === kind && (
+        <div className="fpx-drop-line" />
+      )}
 
       {cards.map((c, i) => (
         <div
@@ -268,7 +314,11 @@ export function CardGrid({
             'fpx-card',
             selected === c.path ? 'selected' : '',
             !c.exists ? 'missing' : '',
-            over === i ? (overCross ? 'over-link' : 'over') : '',
+            dragPath === c.path ? 'dragging' : '',
+            // 跨栏：整卡高亮（建链）；同栏：在缝隙处画竖条（插入）
+            overCross && over === i ? 'over-link' : '',
+            !overCross && dropAt === i ? 'drop-before' : '',
+            !overCross && dropAt === cards.length && i === cards.length - 1 ? 'drop-after' : '',
           ].filter(Boolean).join(' ')}
           style={c.tagColor ? ({
             borderLeft: `4px solid ${c.tagColor}`,
@@ -282,26 +332,36 @@ export function CardGrid({
             e.dataTransfer.setData(DRAG_MIME, JSON.stringify({ kind, path: c.path } satisfies DragPayload));
             e.dataTransfer.effectAllowed = 'move';
             draggingKind = kind;
+            setDragPath(c.path);
           }}
-          onDragEnd={() => { draggingKind = null; setOver(-1); setOverCross(false); }}
+          onDragEnd={() => {
+            draggingKind = null;
+            setDragPath(null);
+            clearDrop();
+            setOver(-1);
+          }}
           onDragOver={(e) => {
             e.preventDefault();
             e.stopPropagation();
+            const cross = draggingKind !== null && draggingKind !== kind;
+            setOverCross(cross);
             setOver(i);
-            setOverCross(draggingKind !== null && draggingKind !== kind);
+            // 跨栏是"连上这张卡"，没有插入位置的概念
+            setDropAt(cross ? null : posOf(e, i));
           }}
-          onDragLeave={() => { setOver(-1); setOverCross(false); }}
           onDrop={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            setOver(-1);
-            setOverCross(false);
             const raw = e.dataTransfer.getData(DRAG_MIME);
+            const k = dropAt;
+            const cross = overCross;
+            clearDrop();
+            setOver(-1);
             if (!raw) return;
             const drag = parseDragPayload(raw);
             if (!drag) return;
-            if (drag.kind === kind) onMove(drag.path, i);
-            else onCrossDrop(drag, c);
+            if (cross || drag.kind !== kind) onCrossDrop(drag, c);
+            else onMove(drag.path, resolveIndex(drag.path, k ?? i));
           }}
           onClick={() => onSelect(c.path)}
           onDoubleClick={() => onOpen(c.path)}
