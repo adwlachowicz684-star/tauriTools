@@ -39,6 +39,8 @@ export const REQUIRES: Table = {
   update: [{ key: 'fetcher', label: '网络请求', failOutput: 'false' }],
   'github-update': [{ key: 'githubFetch', label: 'GitHub 拉取', failOutput: 'false' }],
   'github-push': [{ key: 'githubPush', label: 'GitHub 推送' }],
+  // 提取节点不在此列：它是纯本地字符串处理，不需要任何执行器
+  'generic-http': [{ key: 'httpRequester', label: 'HTTP 请求', failOutput: '' }],
 };
 
 /** 取某节点数据所需的能力清单（已按 when 过滤） */

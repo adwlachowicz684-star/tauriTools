@@ -2,6 +2,7 @@ import type { Node } from '@xyflow/react';
 import type {
   TaskNodeData, ConditionNodeData, TriggerNodeData, ParallelNodeData,
   LoopNodeData, FsNodeData, UpdateNodeData, OcrNodeData, TranslateNodeData,
+  GenericHttpNodeData, ExtractNodeData,
   GithubUpdateNodeData, GithubPushNodeData,
 } from './types';
 
@@ -10,6 +11,8 @@ export type TaskFlowNode = Node<TaskNodeData, 'task'>;
 export type CondFlowNode = Node<ConditionNodeData, 'condition'>;
 export type TriggerFlowNode = Node<TriggerNodeData, 'trigger'>;
 export type ParallelFlowNode = Node<ParallelNodeData, 'parallel'>;
+export type GenericHttpFlowNode = Node<GenericHttpNodeData, 'generic-http'>;
+export type ExtractFlowNode = Node<ExtractNodeData, 'extract'>;
 export type LoopFlowNode = Node<LoopNodeData, 'loop'>;
 export type FsFlowNode = Node<FsNodeData, 'fs'>;
 /** B站与公众号共用同一种 data，靠 data.source 区分 */
@@ -29,6 +32,8 @@ export type FlowNode =
   | TriggerFlowNode
   | ParallelFlowNode
   | LoopFlowNode
+  | GenericHttpFlowNode
+  | ExtractFlowNode
   | FsFlowNode
   | BiliFlowNode
   | WechatFlowNode

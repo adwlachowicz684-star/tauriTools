@@ -38,10 +38,12 @@ RUNNER_IMPORTS="\
   --import-map ../parallel=./parallel.mjs \
   --import-map ../loop=./loop.mjs \
   --import-map ../updates=./updates.mjs \
+  --import-map ../extract=./extract.mjs \
   --import-map ../runnerKit=./runnerKit.mjs"
-for f in task trigger condition parallel loop fs ocr translate update githubUpdate githubPush; do
+for f in task trigger condition parallel loop fs ocr translate update githubUpdate githubPush genericHttp extract; do
   [ -f "engine/runners/$f.ts" ] && $S "engine/runners/$f.ts" "$OUT/runners_$f.mjs" $RUNNER_IMPORTS >/dev/null
 done
+$S engine/extract.ts "$OUT/extract.mjs" >/dev/null
 $S engine/nodeRequires.ts "$OUT/nodeRequires.mjs" >/dev/null
 $S engine/runnerKit.ts "$OUT/runnerKit.mjs" \
   --import-map ./nodeRequires=./nodeRequires.mjs >/dev/null
@@ -56,7 +58,9 @@ $S engine/runnerRegistry.ts "$OUT/runnerRegistry.mjs" \
   --import-map ./runners/translate=./runners_translate.mjs \
   --import-map ./runners/update=./runners_update.mjs \
   --import-map ./runners/githubUpdate=./runners_githubUpdate.mjs \
-  --import-map ./runners/githubPush=./runners_githubPush.mjs >/dev/null
+  --import-map ./runners/githubPush=./runners_githubPush.mjs \
+  --import-map ./runners/genericHttp=./runners_genericHttp.mjs \
+  --import-map ./runners/extract=./runners_extract.mjs >/dev/null
 $S engine/runner.ts "$OUT/runner.mjs" \
    --import-map ./runnerRegistry=./runnerRegistry.mjs \
    --import-map ./llm=./llm.mjs \

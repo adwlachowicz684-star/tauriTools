@@ -123,6 +123,24 @@ export type GithubUpdateInfo = {
   updated: boolean;
 };
 
+/**
+ * 通用 HTTP 执行器。
+ *
+ * 与 Fetcher 分开：Fetcher 只会 GET 且只回文本，而通用 HTTP 节点要能
+ * 指定方法 / 请求体 / 超时，还要拿到状态码与响应头（判断 4xx 是否算失败、
+ * 以及取 `Location` 这类头都要用）。塞进 Fetcher 会让它背上不属于它的参数。
+ */
+export type HttpRequester = (
+  url: string,
+  opts: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    timeoutSec?: number;
+    maxBytes?: number;
+  },
+) => Promise<{ status: number; ok: boolean; text: string; headers: Record<string, string> }>;
+
 export type RunOptions = {
   /** 同层并发上限。设为 1 即严格串行 */
   concurrency: number;
@@ -144,6 +162,8 @@ export type RunOptions = {
   githubFetch?: GithubUpdateRunner;
   /** GitHub 推送执行器；不提供时 GitHub 推送节点会失败并提示 */
   githubPush?: GithubPushRunner;
+  /** 通用 HTTP 执行器；不提供时 HTTP 请求节点会失败并提示 */
+  httpRequester?: HttpRequester;
   input?: string;
   onEvent: (e: RunEvent) => void;
   signal?: AbortSignal;

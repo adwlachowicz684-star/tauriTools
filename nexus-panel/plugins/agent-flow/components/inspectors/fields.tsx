@@ -60,9 +60,15 @@ export type FieldRenderProps = {
 export type FieldDef = {
   /** 存储用的字段名。note 类型不需要 */
   key?: string;
-  label?: string;
+  /**
+   * 标签文字。给函数是为了让它随其它字段变化 ——
+   * 数据提取节点的第二个参数在不同模式下叫"路径"/"正则"/"行规则"，
+   * 写死一个名字会让另外几种模式看不懂。
+   */
+  label?: string | ((d: Record<string, unknown>) => string);
   type: FieldType;
-  placeholder?: string;
+  /** 占位提示。同样支持随数据变化 */
+  placeholder?: string | ((d: Record<string, unknown>) => string);
   /** 字段下方的小字说明。给函数是为了让说明随其它字段变化 */
   hint?: ReactNode | ((d: Record<string, unknown>) => ReactNode);
   /** select/chips 的选项；给函数是为了让选项随其他字段动态变化 */
@@ -93,6 +99,20 @@ function optsOf(
   d: Record<string, unknown>,
 ): FieldOption[] {
   return typeof o === 'function' ? o(d) : o ?? [];
+}
+
+/**
+ * 取一个"可以是值也可以是函数"的字符串属性。
+ *
+ * 与 optsOf 同一套路：调用方不必关心拿到的是常量还是随数据变化的函数。
+ * 加这个函数是因为 label / placeholder 原先只支持常量，
+ * 遇到"标签要随模式变"就只能退回手写 custom 字段，白丢声明式的收益。
+ */
+function strOf(
+  v: string | ((d: Record<string, unknown>) => string) | undefined,
+  d: Record<string, unknown>,
+): string | undefined {
+  return typeof v === 'function' ? v(d) : v;
 }
 
 /* ------------------------------------------------------------------ */
@@ -205,7 +225,7 @@ function renderField(
             className="p-input"
             rows={f.rows ?? 4}
             value={String(value ?? '')}
-            placeholder={f.placeholder}
+            placeholder={strOf(f.placeholder, p.d)}
             onChange={(e) => set(e.target.value)}
           />
         );
@@ -218,7 +238,7 @@ function renderField(
             min={f.min}
             max={f.max}
             step={f.step}
-            placeholder={f.placeholder}
+            placeholder={strOf(f.placeholder, p.d)}
             onChange={(e) => set(e.target.value === '' ? undefined : Number(e.target.value))}
           />
         );
@@ -238,7 +258,7 @@ function renderField(
         return (
           <span className="check">
             <input type="checkbox" checked={Boolean(value)} onChange={(e) => set(e.target.checked)} />
-            <span>{f.placeholder ?? ''}</span>
+            <span>{strOf(f.placeholder, p.d) ?? ''}</span>
           </span>
         );
       case 'chips':
@@ -261,7 +281,7 @@ function renderField(
           <input
             className="p-input"
             value={String(value ?? '')}
-            placeholder={f.placeholder}
+            placeholder={strOf(f.placeholder, p.d)}
             onChange={(e) => set(e.target.value)}
           />
         );
@@ -270,7 +290,7 @@ function renderField(
 
   const hint = typeof f.hint === 'function' ? f.hint(p.d) : f.hint;
   return (
-    <Field key={f.key} label={f.label} hint={hint} inline={f.inline}>
+    <Field key={f.key} label={strOf(f.label, p.d)} hint={hint} inline={f.inline}>
       {body()}
     </Field>
   );
