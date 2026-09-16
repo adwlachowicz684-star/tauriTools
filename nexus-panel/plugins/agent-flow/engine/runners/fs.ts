@@ -5,7 +5,7 @@ import type {
 } from '../../types';
 import { DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt } from '../../types';
 import { resolveSecret } from '../credentials';
-import { renderTemplate } from '../template';
+
 import { extractFileRefs, parseManualPaths, buildFileFields, type FileRef } from '../files';
 import {
   resolveConfig, buildHeaders, parseResponse, extractContent,
@@ -21,41 +21,31 @@ import {
   BILI_REFERER, type FeedItem,
 } from '../updates';
 import type { RunContext } from '../runContext';
+import { withNodeRun, NodeFailError } from '../runnerKit';
 
 export async function runFs(ctx: RunContext): Promise<void> {
-  const {
-    id, node, graph, opts, scope, emit, setStatus, markFailed, markSkipped, sleep,
-    outputs, nodeFields, currentLoop, branches, parallels, loops, byId,
-    loopBodies, orderByLayers, loopStack, setConcurrency,
+    const {
+    id, node, opts, emit,
+    sleep, outputs, nodeFields, currentLoop,
   } = ctx;
 
-    setStatus(id, 'running');
-    const d = node.data as FsNodeData;
-    const p = renderTemplate(d.path, { outputs, input: opts.input, loop: currentLoop(), fields: nodeFields });
-    const t = renderTemplate(d.target, { outputs, input: opts.input, loop: currentLoop(), fields: nodeFields });
-    const c = renderTemplate(d.content, { outputs, input: opts.input, loop: currentLoop(), fields: nodeFields });
+  const d = node.data as FsNodeData;
 
-    if (!opts.fsExecutor) {
-      const msg = '未提供文件操作执行器（当前可能运行在浏览器模式）';
-      outputs[id] = '';
-      emit({ type: 'node-done', id, ok: false, output: '', error: msg });
-      markFailed(id, scope);
-      setStatus(id, 'failed');
-      return;
-    }
+  await withNodeRun(ctx, async () => {
+    const p = ctx.tpl(d.path);
+    const t = ctx.tpl(d.target);
+    const c = ctx.tpl(d.content);
 
-    emit({ type: 'node-start', id, rendered: `${d.op} ${p.text}` });
+
+    emit({ type: 'node-start', id, rendered: `${d.op} ${p}` });
+    let out = '';
     try {
-      const out = await opts.fsExecutor(node, { path: p.text, target: t.text, content: c.text });
-      outputs[id] = out;
-      emit({ type: 'node-done', id, ok: true, output: out });
-      setStatus(id, 'success');
+      out = await opts.fsExecutor(node, { path: p, target: t, content: c });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      emit({ type: 'node-done', id, ok: false, output: '', error: msg });
-      markFailed(id, scope);
-      setStatus(id, 'failed');
+      throw new NodeFailError(err instanceof Error ? err.message : String(err));
     }
-    await sleep(20);
-    return;
+    return { output: out };
+  });
+
+  await sleep(20);
 }

@@ -44,6 +44,17 @@ export type RunContext = {
   /** 循环上下文栈顶；不在循环体内时为 null */
   currentLoop: () => LoopCtx | null;
 
+  /**
+   * 渲染模板 —— 执行器一律用这个，不要自己调 renderTemplate。
+   *
+   * 底层已经带上了当前上下文（outputs / input / loop / fields），
+   * 执行器不用再逐个传那四个参数（原先 12 处调用全部重复这同一坨）。
+   *
+   * 更重要的是：以后底层给模板加缓存、加变量预解析、加缺失变量的
+   * 统一处理，所有节点自动受益 —— 这正是"底层优化，节点跟着变"的关键口子。
+   */
+  tpl: (text: string) => string;
+
   /* ---------- 结果收集器 ---------- */
   branches: BranchRecord[];
   parallels: ParallelRecord[];

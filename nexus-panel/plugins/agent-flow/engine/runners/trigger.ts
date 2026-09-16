@@ -5,7 +5,7 @@ import type {
 } from '../../types';
 import { DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt } from '../../types';
 import { resolveSecret } from '../credentials';
-import { renderTemplate } from '../template';
+
 import { extractFileRefs, parseManualPaths, buildFileFields, type FileRef } from '../files';
 import {
   resolveConfig, buildHeaders, parseResponse, extractContent,
@@ -21,17 +21,11 @@ import {
   BILI_REFERER, type FeedItem,
 } from '../updates';
 import type { RunContext } from '../runContext';
+import { withNodeRun } from '../runnerKit';
 
 export async function runTrigger(ctx: RunContext): Promise<void> {
-  const {
-    id, node, graph, opts, scope, emit, setStatus, markFailed, markSkipped, sleep,
-    outputs, nodeFields, currentLoop, branches, parallels, loops, byId,
-    loopBodies, orderByLayers, loopStack, setConcurrency,
-  } = ctx;
+    const { opts } = ctx;
 
-    setStatus(id, 'running');
-    outputs[id] = opts.input ?? '';
-    emit({ type: 'node-done', id, ok: true, output: outputs[id] });
-    setStatus(id, 'success');
-    return;
+  // 触发器只是起点标记：把外部输入透传给下游，不调任何 CLI
+  await withNodeRun(ctx, async () => ({ output: opts.input ?? '' }));
 }

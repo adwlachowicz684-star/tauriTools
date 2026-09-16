@@ -5,7 +5,7 @@ import type {
 } from '../../types';
 import { DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt } from '../../types';
 import { resolveSecret } from '../credentials';
-import { renderTemplate } from '../template';
+
 import { extractFileRefs, parseManualPaths, buildFileFields, type FileRef } from '../files';
 import {
   resolveConfig, buildHeaders, parseResponse, extractContent,
@@ -21,24 +21,31 @@ import {
   BILI_REFERER, type FeedItem,
 } from '../updates';
 import type { RunContext } from '../runContext';
+import { withNodeRun, NodeFailError } from '../runnerKit';
 import type { LlmCallResult } from '../runTypes';
 
 export async function runOcr(ctx: RunContext): Promise<void> {
-  const {
-    id, node, graph, opts, scope, emit, setStatus, markFailed, markSkipped, sleep,
-    outputs, nodeFields, currentLoop, branches, parallels, loops, byId,
-    loopBodies, orderByLayers, loopStack, setConcurrency,
+    const {
+    id, node, opts, emit,
+    outputs, nodeFields, currentLoop,
   } = ctx;
 
   const d = node.data as OcrNodeData;
-  setStatus(id, 'running');
 
-  const prompt = renderTemplate(
-    (d.prompt ?? '').trim() || defaultOcrPrompt(),
-    { outputs, input: opts.input, loop: currentLoop(), fields: nodeFields },
-  ).text;
-  const rawUrl = renderTemplate(d.url ?? '', { outputs, input: opts.input, loop: currentLoop(), fields: nodeFields }).text;
-  const rawPath = renderTemplate(d.path ?? '', { outputs, input: opts.input, loop: currentLoop(), fields: nodeFields }).text;
+  /*
+   * 失败一律转成抛异常，由 withNodeRun 统一收口。
+   * 以前这里要写「置空 + emit + markFailed + setStatus」四连，
+   * 少写一行就会出现"节点红了但下游照跑"的假失败。
+   */
+  function failOcr(msg: string): never {
+    throw new NodeFailError(msg, '', { text: '', chars: '0' });
+  }
+
+  await withNodeRun(ctx, async () => {
+
+  const prompt = ctx.tpl((d.prompt ?? '').trim() || defaultOcrPrompt());
+  const rawUrl = ctx.tpl(d.url ?? '');
+  const rawPath = ctx.tpl(d.path ?? '');
 
   /*
     图片地址要在使用前决定，因为两种来源的失败提示完全不同：
@@ -49,10 +56,6 @@ export async function runOcr(ctx: RunContext): Promise<void> {
     const p = rawPath.trim();
     if (!p) {
       failOcr('图片来源选的是「本地文件」，但没有填路径');
-      return;
-    }
-    if (!opts.imageReader) {
-      failOcr('当前环境无法读取本地图片（浏览器模式不支持，请用桌面端运行）');
       return;
     }
     emit({ type: 'node-start', id, rendered: `读取本地图片 ${p}` });
@@ -84,10 +87,6 @@ export async function runOcr(ctx: RunContext): Promise<void> {
   const body = { model: cfg.model, messages, temperature: 0, stream: false };
   emit({ type: 'node-start', id, rendered: `OCR ${cfg.model} · ${prompt.slice(0, 60)}` });
 
-  if (!opts.llmCaller) {
-    failOcr('未提供大模型调用执行器（当前可能运行在浏览器模式）');
-    return;
-  }
 
   let res: LlmCallResult;
   try {
@@ -109,16 +108,6 @@ export async function runOcr(ctx: RunContext): Promise<void> {
   }
 
   const text = parsed.text.trim();
-  outputs[id] = text;
-  nodeFields[id] = { text, chars: String(text.length) };
-  emit({ type: 'node-done', id, ok: true, output: text });
-  setStatus(id, 'success');
-
-  function failOcr(msg: string) {
-    outputs[id] = '';
-    nodeFields[id] = { text: '', chars: '0' };
-    emit({ type: 'node-done', id, ok: false, output: '', error: msg });
-    markFailed(id, scope);
-    setStatus(id, 'failed');
-  }
+  return { output: text, fields: { text, chars: String(text.length) } };
+  });
 }

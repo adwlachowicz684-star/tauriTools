@@ -88,7 +88,9 @@ fields: () => [
 - **B站 / 公众号**：倒是两个 type（`bili` / `wechat`），但共用同一份 data 与执行器，
   靠 `data.source` 区分 —— 它们的 `dataKind` 都是 `update`
 
-## 执行器在哪
+## 执行器在哪（务必用 withNodeRun）
+
+
 
 执行逻辑放 `engine/runners/` 下，一个节点一个文件，**不要写进 `engine/runner.ts`**。
 
@@ -101,6 +103,70 @@ fields: () => [
 > 写完执行器记得挂两处：`defs/xxx.ts` 的 `run` 字段，以及
 > `engine/runnerRegistry.ts` 的表。漏挂第二处该节点会静默"直通"——
 > 现有测试会失败，所以是能被发现的，但仍建议写完后立刻跑一次 `run-tests.sh`。
+
+### 底层能力：优先用，别自己写
+
+写执行器时，下面这些**不要自己实现**，用底层给的：
+
+| 能力 | 用法 | 别再写 |
+|---|---|---|
+| 模板渲染 | `ctx.tpl(d.path)` | `renderTemplate(x, { outputs, input: opts.input, loop: currentLoop(), fields: nodeFields })` |
+| 执行器前置校验 | 在 `engine/nodeRequires.ts` 声明需求 | `if (!opts.fsExecutor) throw ...` |
+
+**为什么**：这两样原先在 7~12 个执行器里各写一遍。一旦底层要优化
+（给模板加缓存、把缺失变量从 console.warn 改成发事件、统一执行器缺失的
+提示措辞），写死在各节点里的版本不会跟着变。
+
+下沉后的实际收益：
+- `ctx.tpl` 底层统一 warn 未解析变量 —— 原先只有任务节点有这个提示，
+  其他节点引用了不存在的变量完全没反馈，现在所有节点自动有了。
+- 执行器缺失的报错措辞统一为「未提供{能力}执行器（当前可能运行在浏览器模式）」，
+  失败时给下游的输出也由声明决定（更新检测类给 `'false'`，好让条件判断
+  走"无更新"分支而不是掉进兜底）。
+
+在 `engine/nodeRequires.ts` 加需求的写法：
+
+```ts
+REQUIRES = {
+  myNode: [
+    { key: 'fsExecutor', label: '文件操作' },                              // 总是需要
+    { key: 'imageReader', label: '图片读取', when: (d) => d.src === 'file' }, // 按需
+  ],
+};
+```
+
+`when` 用于"只在某种配置下才需要"的能力，例：OCR 选网络地址时不需要读图能力。
+
+### 不要手写"开始 / 成功 / 失败"三连
+
+一律用 `engine/runnerKit.ts` 的 `withNodeRun` 包起来：
+
+```ts
+export async function runXxx(ctx: RunContext): Promise<void> {
+  const d = node.data as XxxNodeData;
+  await withNodeRun(ctx, async () => {
+    if (!opts.fooExecutor) throw new NodeFailError('未提供 xx 执行器');
+    ...
+    return { output: text, fields: { ... } };
+  });
+}
+```
+
+前置校验直接 `throw new NodeFailError(msg)`，不用再写
+`setStatus('failed') / emit / markFailed / return` 四连。
+
+**为什么强制**：这四连少写一行就会出现"假失败" —— 节点变红、但下游照跑、
+整轮还报成功。仓库里 GitHub 两个执行器就漏过 `markFailed`，
+且因为 runGraph 层没有对应测试，一直没被发现（见 `tests/nodeFailure.test.ts`）。
+`withNodeRun` 让失败只有一条路径，不可能再漏。
+
+`NodeFailError` 第二个参数是失败时给下游的 output。更新检测类节点要传
+`'false'`，好让下游条件判断走"无更新"分支而不是掉进兜底。
+
+返回值支持 `output` / `fields` / `files` / `warn`：
+- `fields` 会写进 `nodeFields` 并自动发 `node-fields` 事件通知 UI
+- `warn` 挂在 `node-done` 的 error 上，但**不算失败**（解析有告警时用）
+
 
 ## 新增一种节点的完整清单
 

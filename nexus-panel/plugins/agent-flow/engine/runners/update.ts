@@ -5,7 +5,7 @@ import type {
 } from '../../types';
 import { DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt } from '../../types';
 import { resolveSecret } from '../credentials';
-import { renderTemplate } from '../template';
+
 import { extractFileRefs, parseManualPaths, buildFileFields, type FileRef } from '../files';
 import {
   resolveConfig, buildHeaders, parseResponse, extractContent,
@@ -21,16 +21,17 @@ import {
   BILI_REFERER, type FeedItem,
 } from '../updates';
 import type { RunContext } from '../runContext';
+import { withNodeRun, NodeFailError } from '../runnerKit';
 
 export async function runUpdate(ctx: RunContext): Promise<void> {
-  const {
-    id, node, graph, opts, scope, emit, setStatus, markFailed, markSkipped, sleep,
-    outputs, nodeFields, currentLoop, branches, parallels, loops, byId,
-    loopBodies, orderByLayers, loopStack, setConcurrency,
+    const {
+    id, node, opts, emit,
+    outputs, nodeFields, currentLoop,
   } = ctx;
 
   const d = node.data as UpdateNodeData;
-  setStatus(id, 'running');
+
+  await withNodeRun(ctx, async () => {
 
   const headers: Record<string, string> = {};
   if (d.userAgent) headers['User-Agent'] = d.userAgent;
@@ -68,12 +69,7 @@ export async function runUpdate(ctx: RunContext): Promise<void> {
   }
 
   // 渲染模板：允许用上游输出拼地址
-  const renderedUrl = renderTemplate(url, { outputs, input: opts.input, loop: currentLoop(), fields: nodeFields }).text;
-
-  if (!opts.fetcher) {
-    fail('未提供网络抓取执行器（当前可能运行在浏览器模式）');
-    return;
-  }
+  const renderedUrl = ctx.tpl(url);
 
   emit({ type: 'node-start', id, rendered: `GET ${renderedUrl}` });
 
@@ -112,9 +108,8 @@ export async function runUpdate(ctx: RunContext): Promise<void> {
         ? `true\n标题: ${latest?.title ?? ''}\n链接: ${latest?.url ?? ''}\n时间: ${latest?.date ?? ''}`
         : `false\n${latest ? `最新仍是: ${latest.title}` : '无更新'}`);
 
-  outputs[id] = out;
   const item = latest;
-  nodeFields[id] = {
+  const fields = {
     title: item?.title ?? '',
     url: item?.url ?? '',
     date: item?.date ?? '',
@@ -138,14 +133,14 @@ export async function runUpdate(ctx: RunContext): Promise<void> {
   });
 
   const warn = parsed.warnings.length ? `；${parsed.warnings.join('；')}` : '';
-  emit({ type: 'node-done', id, ok: true, output: out, error: warn || undefined });
-  setStatus(id, 'success');
+  return { output: out, fields, warn: warn || undefined };
+  });
 
-  function fail(msg: string) {
-    outputs[id] = 'false';
-    nodeFields[id] = { title: '', url: '', date: '', updated: 'false' };
-    emit({ type: 'node-done', id, ok: false, output: 'false', error: msg });
-    markFailed(id, scope);
-    setStatus(id, 'failed');
+  /*
+   * 失败也要输出 'false' 而不是空串：下游条件节点判「等于 true」时，
+   * 空串会让条件落进兜底分支，看起来像"没更新"，与真失败混在一起分不清。
+   */
+  function fail(msg: string): never {
+    throw new NodeFailError(msg, 'false', { title: '', url: '', date: '', updated: 'false' });
   }
 }

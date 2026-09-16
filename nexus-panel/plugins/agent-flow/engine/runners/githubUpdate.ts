@@ -5,7 +5,7 @@ import type {
 } from '../../types';
 import { DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt } from '../../types';
 import { resolveSecret } from '../credentials';
-import { renderTemplate } from '../template';
+
 import { extractFileRefs, parseManualPaths, buildFileFields, type FileRef } from '../files';
 import {
   resolveConfig, buildHeaders, parseResponse, extractContent,
@@ -21,38 +21,21 @@ import {
   BILI_REFERER, type FeedItem,
 } from '../updates';
 import type { RunContext } from '../runContext';
+import { withNodeRun, NodeFailError } from '../runnerKit';
 
 export async function runGithubUpdate(ctx: RunContext): Promise<void> {
-  const {
-    id, node, graph, opts, scope, emit, setStatus, markFailed, markSkipped, sleep,
-    outputs, nodeFields, currentLoop, branches, parallels, loops, byId,
-    loopBodies, orderByLayers, loopStack, setConcurrency,
+    const {
+    node, opts, outputs, nodeFields,
+    currentLoop,
   } = ctx;
-
   const d = node.data as GithubUpdateNodeData;
-  setStatus(id, 'running');
 
-  const owner = renderTemplate(d.owner ?? '', {
-    outputs, input: opts.input, loop: currentLoop(), fields: nodeFields,
-  }).text.trim();
-  const repo = renderTemplate(d.repo ?? '', {
-    outputs, input: opts.input, loop: currentLoop(), fields: nodeFields,
-  }).text.trim();
+  await withNodeRun(ctx, async () => {
+    const owner = ctx.tpl(d.owner ?? '').trim();
+    const repo = ctx.tpl(d.repo ?? '').trim();
 
-  if (!opts.githubFetch) {
-    setStatus(id, 'failed');
-    outputs[id] = 'false';
-    emit({ type: 'node-error', id, error: '未提供 GitHub 拉取执行器' });
-    return;
-  }
-  if (!owner || !repo) {
-    setStatus(id, 'failed');
-    outputs[id] = 'false';
-    emit({ type: 'node-error', id, error: '缺少 owner 或 repo' });
-    return;
-  }
+    if (!owner || !repo) throw new NodeFailError('缺少 owner 或 repo', 'false');
 
-  try {
     const r = await opts.githubFetch({
       owner, repo,
       branch: d.branch || undefined,
@@ -61,28 +44,20 @@ export async function runGithubUpdate(ctx: RunContext): Promise<void> {
       token: d.token || '',
       credentialId: d.credentialId,
     });
-    if (!r.ok || !r.info) {
-      setStatus(id, 'failed');
-      outputs[id] = 'false';
-      emit({ type: 'node-error', id, error: r.error || '拉取失败' });
-      return;
-    }
+    if (!r.ok || !r.info) throw new NodeFailError(r.error || '拉取失败', 'false');
+
     const info = r.info;
     // 主输出是 bool，好让条件节点直接判「等于 true」
-    outputs[id] = info.updated ? 'true' : 'false';
-    nodeFields[id] = {
-      sha: info.sha,
-      branch: info.branch,
-      message: info.message,
-      author: info.author,
-      date: info.date,
-      via: r.via || '',
+    return {
+      output: info.updated ? 'true' : 'false',
+      fields: {
+        sha: info.sha,
+        branch: info.branch,
+        message: info.message,
+        author: info.author,
+        date: info.date,
+        via: r.via || '',
+      },
     };
-    setStatus(id, 'success');
-    emit({ type: 'node-done', id, ok: true, output: outputs[id] });
-  } catch (e) {
-    setStatus(id, 'failed');
-    outputs[id] = 'false';
-    emit({ type: 'node-error', id, error: String(e) });
-  }
+  });
 }

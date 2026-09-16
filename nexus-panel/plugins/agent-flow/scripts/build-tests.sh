@@ -37,10 +37,14 @@ RUNNER_IMPORTS="\
   --import-map ../condition=./condition.mjs \
   --import-map ../parallel=./parallel.mjs \
   --import-map ../loop=./loop.mjs \
-  --import-map ../updates=./updates.mjs"
+  --import-map ../updates=./updates.mjs \
+  --import-map ../runnerKit=./runnerKit.mjs"
 for f in task trigger condition parallel loop fs ocr translate update githubUpdate githubPush; do
   [ -f "engine/runners/$f.ts" ] && $S "engine/runners/$f.ts" "$OUT/runners_$f.mjs" $RUNNER_IMPORTS >/dev/null
 done
+$S engine/nodeRequires.ts "$OUT/nodeRequires.mjs" >/dev/null
+$S engine/runnerKit.ts "$OUT/runnerKit.mjs" \
+  --import-map ./nodeRequires=./nodeRequires.mjs >/dev/null
 $S engine/runnerRegistry.ts "$OUT/runnerRegistry.mjs" \
   --import-map ./runners/task=./runners_task.mjs \
   --import-map ./runners/trigger=./runners_trigger.mjs \
