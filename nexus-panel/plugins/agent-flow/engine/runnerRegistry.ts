@@ -30,6 +30,12 @@ import { runGithubUpdate } from './runners/githubUpdate';
 import { runGithubPush } from './runners/githubPush';
 import { runGenericHttp } from './runners/genericHttp';
 import { runExtract } from './runners/extract';
+import { runWait } from './runners/wait';
+import { runLog } from './runners/log';
+import { runBeep } from './runners/beep';
+import { runPlayAudio } from './runners/playAudio';
+import { runClock } from './runners/clock';
+import { runConst } from './runners/const';
 
 export type NodeRunner = (ctx: RunContext) => Promise<void>;
 
@@ -48,6 +54,12 @@ const RUNNERS: Record<string, NodeRunner | undefined> = {
   'github-push': runGithubPush,
   'generic-http': runGenericHttp,
   extract: runExtract,
+  wait: runWait,
+  log: runLog,
+  beep: runBeep,
+  'play-audio': runPlayAudio,
+  clock: runClock,
+  const: runConst,
 };
 
 /**

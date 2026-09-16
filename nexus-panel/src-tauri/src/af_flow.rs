@@ -1566,6 +1566,71 @@ fn detect_mime(b: &[u8]) -> Option<&'static str> {
     None
 }
 
+/// 音频文件的大小上限。
+///
+/// 与图片不同，这里走 base64 是无奈之举（见下方函数注释），
+/// 膨胀 1/3 之后 30MB 的音频会变成 40MB 的字符串，
+/// 再大就会明显拖慢通道与解码，没有实用价值。
+const MAX_AUDIO_BYTES: usize = 30 * 1024 * 1024;
+
+/// 读取本地音频文件，返回可直接放进 `<audio src>` 的 data URL。
+///
+/// 与 af_read_image_data_url 的关系：那边按魔数判图片类型
+/// （截图工具常存成无扩展名的临时文件，只能靠魔数）；
+/// 音频格式靠魔数判断要处理 ID3/RIFF/fMP4 等多种容器，容易误判，
+/// 而音频文件几乎都有正确扩展名，所以这里按扩展名判。
+///
+/// 为什么读成 base64 而不是直接给路径：
+/// 本插件跑在 iframe 里，没有磁盘访问权限，所有文件访问必须经 Rust。
+/// 用 asset 协议（convertFileSrc）本可避免这次拷贝，
+/// 但它要求在配置里开启 scope，本项目没开，改配置的影响面更大。
+#[tauri::command]
+pub fn af_read_audio_data_url(path: String) -> Result<String, String> {
+    let p = path.trim();
+    if p.is_empty() {
+        return Err("音频路径为空".into());
+    }
+    let f = Path::new(p);
+    if !f.is_file() {
+        return Err(format!("文件不存在或不是普通文件: {p}"));
+    }
+
+    let bytes = std::fs::read(f).map_err(|e| format!("读取失败: {e}"))?;
+    if bytes.is_empty() {
+        return Err("文件为空".into());
+    }
+    if bytes.len() > MAX_AUDIO_BYTES {
+        return Err(format!(
+            "音频过大（约 {} MB），上限 30 MB。可先转码压缩",
+            bytes.len() / 1024 / 1024
+        ));
+    }
+
+    let ext = f
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    let mime = match ext.as_str() {
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" | "oga" => "audio/ogg",
+        "m4a" => "audio/mp4",
+        "aac" => "audio/aac",
+        "flac" => "audio/flac",
+        "opus" => "audio/opus",
+        "webm" => "audio/webm",
+        _ => {
+            return Err(format!(
+                "不支持的音频格式：.{ext}（支持 mp3 / wav / ogg / m4a / aac / flac / opus / webm）"
+            ))
+        }
+    };
+
+    Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
+}
+
 /// 标准 base64 编码（含末尾 = 填充）
 fn base64_encode(input: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

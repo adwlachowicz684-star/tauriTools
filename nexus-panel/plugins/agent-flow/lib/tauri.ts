@@ -740,6 +740,26 @@ export async function readImageDataUrl(path: string): Promise<string> {
   return await invoke<string>('af_read_image_data_url', { path });
 }
 
+/**
+ * 读取本地音频并转成 data URL。
+ *
+ * 与 readImageDataUrl 同构：都要经 Rust（iframe 没有磁盘权限）。
+ * 走 af_read_audio_data_url，那边按扩展名判格式，
+ * 不支持的后缀会直接给出可读的错误。
+ */
+export async function readAudioDataUrl(path: string): Promise<string> {
+  if (!hasTauri()) {
+    throw new Error('读取本地音频需要运行在桌面端（当前是浏览器模式）');
+  }
+  if (!path.trim()) throw new Error('音频路径为空');
+  return await invoke<string>('af_read_audio_data_url', { path });
+}
+
+/** 浏览器模式不支持读取本地音频 */
+export function canReadAudio(): boolean {
+  return hasTauri();
+}
+
 /** 浏览器模式不支持读取本地图片 */
 export function canReadImage(): boolean {
   return hasTauri();

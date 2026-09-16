@@ -20,6 +20,15 @@ export type RunEvent =
   /** 任务节点的参数字段已产出：{{id.file}} {{id.参数名}} 等可引用了 */
   | { type: 'node-fields'; id: string; files: string[]; fields: Record<string, string> }
   | { type: 'node-status'; id: string; status: NodeStatus }
+  /**
+   * 一条运行日志。
+   *
+   * 与 node-chunk 的区别：chunk 是某节点的流式输出片段，
+   * 而这是**节点主动要记的一句话**（日志标记节点用），
+   * 语义上属于"给人看的提示"而非"节点的产出"。
+   * 混用 chunk 会让界面把它当成输出内容显示，含义就错了。
+   */
+  | { type: 'log'; id?: string; message: string; level?: 'info' | 'warn' | 'error' }
   /** 条件节点判定完成：branchId 为走的分支，pruned 是被裁掉的节点 */
   | { type: 'branch-taken'; id: string; branchId: string | null; label: string; pruned: string[] }
   /** 并发节点解析完成：下游将以 concurrency 并发执行 */
@@ -164,6 +173,11 @@ export type RunOptions = {
   githubPush?: GithubPushRunner;
   /** 通用 HTTP 执行器；不提供时 HTTP 请求节点会失败并提示 */
   httpRequester?: HttpRequester;
+  /**
+   * 读取本地音频文件为 DataURL。
+   * 播放音频节点用；不提供时该节点会失败并提示（浏览器模式）。
+   */
+  playAudioReader?: (path: string) => Promise<string>;
   input?: string;
   onEvent: (e: RunEvent) => void;
   signal?: AbortSignal;

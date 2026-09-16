@@ -243,7 +243,14 @@ export type NodeData =
   | OcrNodeData
   | TranslateNodeData
   | GithubUpdateNodeData
-  | GithubPushNodeData;
+  | GithubPushNodeData
+  /* ---- 工具节点 ---- */
+  | WaitNodeData
+  | LogNodeData
+  | BeepNodeData
+  | PlayAudioNodeData
+  | ClockNodeData
+  | ConstNodeData;
 
 /** 算子分类，用于面板里分组展示 */
 export type OpCategory = 'text' | 'empty' | 'flow';
@@ -1144,6 +1151,211 @@ export function makeGenericHttpNode(id: string, partial: Partial<GenericHttpNode
       failOnHttpError: partial.failOnHttpError ?? true,
     } as GenericHttpNodeData,
   };
+}
+
+
+/* ================================================================== */
+/* 工具节点：等待 / 日志标记 / 提示音 / 播放音频 / 当前时间 / 常量      */
+/*                                                                    */
+/* 这些节点都不依赖外部能力（不需要 CLI、凭据、文件系统通道），         */
+/* 所以 engine/nodeRequires.ts 里没有它们 —— 也正因如此，             */
+/* 浏览器模式下同样可用。                                              */
+/* ================================================================== */
+
+export type WaitNodeData = {
+  kind: 'wait';
+  label: string;
+  /** 等待毫秒数。支持模板，如 {{上游.output}} */
+  ms: number;
+  status: NodeStatus;
+  output: string;
+  error: string;
+};
+
+/** 日志标记：把一段文本写进运行日志，并把输出原样传给下游 */
+export type LogNodeData = {
+  kind: 'log';
+  label: string;
+  /** 支持模板。留空则输出上游内容 */
+  text: string;
+  /** 日志级别。warn / error 会带醒目标记，但都不会让流程失败 */
+  level: 'info' | 'warn' | 'error';
+  status: NodeStatus;
+  output: string;
+  error: string;
+};
+
+/**
+ * 四种内置提示音。
+ *
+ * 刻意用 Web Audio **合成**而不是加载音频文件：
+ *   · 不需要打包任何资源，也不依赖用户机器上有对应文件
+ *   · 不读磁盘，因此不受 fs 授权目录限制
+ *   · 浏览器与 Tauri 都能用（AudioContext 两边都有）
+ */
+export type BeepPreset = 'success' | 'fail' | 'notice' | 'alarm';
+
+export const BEEP_PRESET_META: Record<BeepPreset, { label: string; hint: string }> = {
+  success: { label: '成功', hint: '两声上行短音，跑完了听这个' },
+  fail:    { label: '失败', hint: '两声下行低音，出错时听这个' },
+  notice:  { label: '提醒', hint: '一声中音，需要你看一眼时用' },
+  alarm:   { label: '警报', hint: '三声急促高音，别错过时用' },
+};
+
+export type BeepNodeData = {
+  kind: 'beep';
+  label: string;
+  preset: BeepPreset;
+  /** 音量 0~1 */
+  volume: number;
+  status: NodeStatus;
+  output: string;
+  error: string;
+};
+
+/** 播放本地音频文件。需要 fs 能力，浏览器模式下不可用 */
+export type PlayAudioNodeData = {
+  kind: 'play-audio';
+  label: string;
+  /** 支持模板，如 {{上游.output}} */
+  path: string;
+  volume: number;
+  /** 播完再往下走；关掉则立即返回（声音继续放） */
+  waitForEnd: boolean;
+  status: NodeStatus;
+  output: string;
+  error: string;
+};
+
+export type ClockNodeData = {
+  kind: 'clock';
+  label: string;
+  /**
+   * 格式串。支持的占位符：
+   *   YYYY MM DD HH mm ss SSS
+   * 其它字符原样输出，所以 "YYYY-MM-DD" 直接可用。
+   */
+  format: string;
+  status: NodeStatus;
+  output: string;
+  error: string;
+};
+
+export type ConstNodeData = {
+  kind: 'const';
+  label: string;
+  /** 固定输出。支持模板（模板在运行时求值，所以"常量"也可以是动态拼出来的） */
+  value: string;
+  status: NodeStatus;
+  output: string;
+  error: string;
+};
+
+export function makeWaitNode(id: string, partial: Partial<WaitNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'wait',
+      label: partial.label ?? '等待',
+      ms: partial.ms ?? 2000,
+      status: 'idle',
+      output: '',
+      error: '',
+    } as WaitNodeData,
+  };
+}
+
+export function makeLogNode(id: string, partial: Partial<LogNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'log',
+      label: partial.label ?? '日志标记',
+      text: partial.text ?? '',
+      level: partial.level ?? 'info',
+      status: 'idle',
+      output: '',
+      error: '',
+    } as LogNodeData,
+  };
+}
+
+export function makeBeepNode(id: string, partial: Partial<BeepNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'beep',
+      label: partial.label ?? '提示音',
+      preset: partial.preset ?? 'success',
+      volume: partial.volume ?? 0.6,
+      status: 'idle',
+      output: '',
+      error: '',
+    } as BeepNodeData,
+  };
+}
+
+export function makePlayAudioNode(id: string, partial: Partial<PlayAudioNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'play-audio',
+      label: partial.label ?? '播放音频',
+      path: partial.path ?? '',
+      volume: partial.volume ?? 0.8,
+      waitForEnd: partial.waitForEnd ?? true,
+      status: 'idle',
+      output: '',
+      error: '',
+    } as PlayAudioNodeData,
+  };
+}
+
+export function makeClockNode(id: string, partial: Partial<ClockNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'clock',
+      label: partial.label ?? '当前时间',
+      format: partial.format ?? 'YYYY-MM-DD HH:mm:ss',
+      status: 'idle',
+      output: '',
+      error: '',
+    } as ClockNodeData,
+  };
+}
+
+export function makeConstNode(id: string, partial: Partial<ConstNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'const',
+      label: partial.label ?? '常量',
+      value: partial.value ?? '',
+      status: 'idle',
+      output: '',
+      error: '',
+    } as ConstNodeData,
+  };
+}
+
+export function isWait(d: NodeData): d is WaitNodeData {
+  return (d as WaitNodeData).kind === 'wait';
+}
+export function isLog(d: NodeData): d is LogNodeData {
+  return (d as LogNodeData).kind === 'log';
+}
+export function isBeep(d: NodeData): d is BeepNodeData {
+  return (d as BeepNodeData).kind === 'beep';
+}
+export function isPlayAudio(d: NodeData): d is PlayAudioNodeData {
+  return (d as PlayAudioNodeData).kind === 'play-audio';
+}
+export function isClock(d: NodeData): d is ClockNodeData {
+  return (d as ClockNodeData).kind === 'clock';
+}
+export function isConst(d: NodeData): d is ConstNodeData {
+  return (d as ConstNodeData).kind === 'const';
 }
 
 export function makeExtractNode(id: string, partial: Partial<ExtractNodeData> = {}): GraphNode {

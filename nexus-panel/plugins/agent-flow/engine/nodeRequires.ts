@@ -41,6 +41,12 @@ export const REQUIRES: Table = {
   'github-push': [{ key: 'githubPush', label: 'GitHub 推送' }],
   // 提取节点不在此列：它是纯本地字符串处理，不需要任何执行器
   'generic-http': [{ key: 'httpRequester', label: 'HTTP 请求', failOutput: '' }],
+  /*
+   * 只有播放音频文件需要外部能力（读本地文件）。
+   * 等待 / 日志 / 提示音 / 时间 / 常量 都是纯本地逻辑，
+   * 不登记 —— 它们在浏览器模式下也能跑。
+   */
+  'play-audio': [{ key: 'playAudioReader', label: '音频读取' }],
 };
 
 /** 取某节点数据所需的能力清单（已按 when 过滤） */

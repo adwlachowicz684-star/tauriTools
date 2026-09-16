@@ -77,7 +77,7 @@ import { CLI_META, DEFAULT_TRIGGER_CONFIG, DEFAULT_BRANCH, type TaskNodeData, ma
   type Graph, type NodeData, type Trigger, type TriggerKind, type TriggerConfig } from './types';
 import type { FlowEdge, FlowNode } from './flowTypes';
 import { killCli, runCli, canWatch, startWatch, canWebhook, startWebhook,
-  fileOp, fsArgsOf, fetchText, httpRequest, postJson, readImageDataUrl,
+  fileOp, fsArgsOf, fetchText, httpRequest, postJson, readImageDataUrl, readAudioDataUrl,
   fetchDeviceSalt, tailFile, type DonePayload, type FsArgs } from './lib/tauri';
 import {
   deleteElements, nextSelection, hasAnythingToDelete,
@@ -1338,6 +1338,10 @@ export default function App() {
     /* 本地图片读取：桌面端才有，浏览器模式会抛错并由节点转成提示 */
     const imageReader: ImageReader = (path) => readImageDataUrl(path);
 
+    /* 本地音频读取（播放音频节点用）。经 Rust 命令，格式校验在那边做 */
+    const playAudioReader = async (path: string): Promise<string> =>
+      readAudioDataUrl(path);
+
     /*
      * GitHub 执行器。
      *
@@ -1412,7 +1416,7 @@ export default function App() {
 
     const result = await runGraph(graph, {
       concurrency, executor, fsExecutor, fetcher, llmCaller, imageReader,
-      githubFetch, githubPush, httpRequester, credentials,
+      githubFetch, githubPush, httpRequester, credentials, playAudioReader,
       input: effectiveInput, onEvent, signal: controller.signal,
     });
     setSummary(result);

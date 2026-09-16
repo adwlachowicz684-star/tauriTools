@@ -320,7 +320,7 @@ fn main() {
             af_flow::run_node, af_flow::kill_node, af_flow::check_cli,
             af_flow::watch_start, af_flow::watch_stop,
             af_flow::webhook_start, af_flow::webhook_stop,
-            af_flow::fs_op, af_flow::af_read_image_data_url,
+            af_flow::fs_op, af_flow::af_read_image_data_url, af_flow::af_read_audio_data_url,
             af_flow::af_fs_allow_root, af_flow::af_fs_list_roots, af_flow::af_fs_disallow_root,
             tray_toggle_window
         ])
