@@ -124,9 +124,15 @@ console.log('\n=== 5. 回归护栏：三处 onDrop 不得再有裸 JSON.parse ==
 {
   const src = fs.readFileSync(SRC, 'utf8');
   // 修复前的写法是 `const drag: DragPayload = JSON.parse(raw)`，三处各自 parse。
-  // 现在只允许 parseDragPayload 内部那一处。
+  // 守的是「onDrop 里不得再有裸解析」，不是「全文件只能有一处 JSON.parse」——
+  // 后来页签拖动（专用 MIME x-fpx-tab）带来了自己的载荷结构与 parseTabDrag()，
+  // 那一处同样是正规校验。所以按 export function 切段，要求每处解析都在
+  // parse* 函数体内；将来再新增 parseXxxDrag 也不会误红。
   const n = (src.match(/JSON\.parse\(raw\)/g) || []).length;
-  t('JSON.parse(raw) 在源码中仅剩 1 处（parseDragPayload 内）', n === 1, `实际 ${n} 处`);
+  const segs = src.split(/\nexport function /).slice(1);
+  const outside = segs.filter((x) => /JSON\.parse\(raw\)/.test(x) && !/^parse/.test(x)).length;
+  t('JSON.parse(raw) 只出现在 parse* 载荷解析函数内', n > 0 && outside === 0,
+    `共 ${n} 处，游离 ${outside} 处`);
   t('三处 onDrop 均走 parseDragPayload',
     (src.match(/parseDragPayload\(raw\)/g) || []).length === 3);
 }
