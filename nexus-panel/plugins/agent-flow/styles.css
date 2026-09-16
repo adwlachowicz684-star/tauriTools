@@ -89,7 +89,8 @@
   --af-z-base:  1;
   --af-z-float: 20;
   --af-z-mask:  60;
-  --af-z-modal: 100;
+  /* --af-z-modal 已删：它只被 .modal-mask 用过（那套自写浮层已移除），
+     现在没有任何 z-index 引用它。弹窗用 --z-mask / --z-dialog 那组。 */
 
 
   /*
@@ -313,33 +314,11 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
   border-radius: 999px; padding: 1px 6px;
 }
 
-.modal-mask {
-  position: fixed; inset: 0; background: rgba(0,0,0,.55);
-  display: flex; align-items: center; justify-content: center; z-index: var(--af-z-modal);
-}
-.modal {
-  width: min(760px, 92vw); max-height: 86vh; display: flex; flex-direction: column;
-  background: var(--af-panel); border: 1px solid var(--af-line); border-radius: 12px;
-  box-shadow: var(--af-cast-lg);
-}
-.modal-head {
-  display: flex; align-items: center; gap: 10px;
-  padding: 14px 16px; border-bottom: 1px solid var(--af-divider);
-}
-.modal-head strong { font-size: 15px; }
-.modal-head .x {
-  margin-left: auto; background: none; border: none; color: var(--af-dim);
-  font-size: 22px; cursor: pointer; line-height: 1;
-}
-.modal-body { padding: 14px 16px; overflow-y: auto; flex: 1; }
-.modal-foot {
-  padding: 12px 16px; border-top: 1px solid var(--af-divider);
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-}
-.modal-foot button {
-  background: var(--af-accent); border: none; color: #fff;
-  padding: 7px 18px; border-radius: var(--af-r-sm); cursor: pointer;
-}
+
+/* .modal-mask / .modal / .modal-head / .modal-body / .modal-foot 已删除：
+   引用数为 0（全插件搜不到 modal 这个词），是上一版自写浮层的遗留。
+   弹窗现在统一用 js/dialog.js + css/dialog.css（.nx-mask / .nx-dlg）。
+   留着只会让人误以为还有另一套弹窗可以改。 */
 
 .add-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 .kind-btn {

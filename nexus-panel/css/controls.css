@@ -434,11 +434,18 @@
   border-radius: 50%;
   border: 2px solid var(--sh-light);
   border-top-color: var(--accent);
-  animation: nx-spin .8s linear infinite;
+  animation: nx-spin var(--anim-spin) linear infinite;
 }
 /* 系统开了「减少动效」就不转了 —— 转圈是最典型的 vestibular 触发源 */
+/* 系统开了「减少动效」：tokens.css 里有全局兜底（拉长到 2s），
+   但那条兜底还带了 `animation-iteration-count: 1` —— 对转圈来说是错的：
+   只转一圈就停 = 看起来就是卡死了。
+   这里用 infinite 覆盖回来：转圈要传达的是"还在跑"，宁可慢也不能停。 */
 @media (prefers-reduced-motion: reduce) {
-  .nx-spinner, .spinner { animation-duration: 2s; }
+  .nx-spinner, .spinner {
+    animation-duration: 2s;
+    animation-iteration-count: infinite !important;
+  }
 }
 @keyframes nx-spin { to { transform: rotate(360deg); } }
 
@@ -497,7 +504,9 @@
   /* 与弹窗同理：用 --surface-overlay，玻璃主题下 --surface 只有 7% 白 */
   background: var(--surface-overlay);
   box-shadow: var(--sh-out-lg);
-  animation: nx-toast-in var(--dur-slow) ease;
+  /* 入场用 --anim-in 而不是 --dur-slow：这是连续播放的动画，
+     不是用户操作后的一次性过渡，两者时长策略不同 */
+  animation: nx-toast-in var(--anim-in) ease;
 }
 /* 成功用状态色 --ok 而非环境色：
    用环境色的话，用户把环境色调成红色，就会得到「红色的成功提示」 */

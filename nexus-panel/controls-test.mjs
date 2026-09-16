@@ -348,5 +348,58 @@ console.log('\n=== 10. 观感一致性：媒体底色跟随主题 ===');
     /用户自定义的频道色/.test(pg) || /明暗不定/.test(pg));
 }
 
+console.log('\n=== 11. 清理与规范：动画时长 / 减少动效 / 死代码 ===');
+{
+  /* ---- 动画时长令牌化 ----
+     此前 4 种硬编码：.8s（转圈）/ .6s（页签呼吸）/ .25s / .14s（入场）。
+     与过渡时长（--dur-*）分开是必要的：过渡是"操作后的反馈"，越短越
+     跟手；动画是"自己在那儿动的东西"，短了反而显得躁。混用同一组值
+     的话，为了让转圈不显急而调大 --dur-fast，整个界面按钮都变钝。 */
+  const tokens = read('css/tokens.css');
+  t('定义了 --anim-* 三档（与 --dur-* 分开）',
+    /--anim-spin\s*:/.test(tokens) && /--anim-pulse\s*:/.test(tokens)
+    && /--anim-in\s*:/.test(tokens));
+
+  const allFiles = ['css/controls.css', 'css/neumorphism.css', 'css/dialog.css',
+    'plugins/mindmap/styles.css', 'plugins/agent-flow/styles.css',
+    'plugins/project-group/style.css'];
+  const hardAnim = [];
+  for (const f of allFiles) {
+    for (const m of read(f).matchAll(/animation\s*:\s*([^;]+);/g)) {
+      /* 允许 var(--anim-*)，也允许 none */
+      if (/var\(--anim-/.test(m[1]) || /^\s*none\s*$/.test(m[1])) continue;
+      hardAnim.push(`${f}: ${m[1].trim().slice(0, 30)}`);
+    }
+  }
+  t('动画时长全部走 --anim-*（不留硬编码）',
+    hardAnim.length === 0, hardAnim.join(' | ').slice(0, 100) || '4 种硬编码已令牌化');
+
+  /* ---- 减少动效：全局兜底 ----
+     放在 tokens.css 而不是每个控件各写一份：新增动画时忘写是常态，
+     逐个补必然漏；且插件是独立文档，各自写会出现"这个尊重设置、那个不尊重"。 */
+  t('tokens.css 有全局减少动效兜底',
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,300}animation-duration/.test(tokens));
+  t('兜底覆盖伪元素（::before / ::after 也会动）',
+    /::before[\s\S]{0,200}::after/.test(tokens)
+    || /\*::before/.test(tokens));
+  t('兜底也处理了 transition 与 scroll-behavior',
+    /transition-duration/.test(tokens) && /scroll-behavior/.test(tokens));
+
+  /* 转圈不能只转一圈就停 —— 那看起来就是卡死 */
+  t('转圈在减少动效下仍持续转动（覆盖兜底的 iteration-count）',
+    /prefers-reduced-motion[\s\S]{0,200}nx-spinner[\s\S]{0,120}iteration-count:\s*infinite/.test(controls));
+  t('一次性入场动画在减少动效下直接去掉',
+    /prefers-reduced-motion[\s\S]{0,120}\.nx-toast[\s\S]{0,60}animation:\s*none/.test(controls));
+
+  /* ---- 死代码 ----
+     .modal-* 是上一版自写浮层的遗留，全插件搜不到引用。
+     留着只会让人误以为还有另一套弹窗可以改。 */
+  const af = read('plugins/agent-flow/styles.css');
+  t('agent-flow 的 .modal-* 死代码已删',
+    !/\.modal-mask\s*\{|\.modal-foot\s*\{|\.modal-body\s*\{/.test(af));
+  t('--af-z-modal 已删（无任何 z-index 引用它）',
+    !/--af-z-modal\s*:/.test(af) && !/var\(--af-z-modal\)/.test(af));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

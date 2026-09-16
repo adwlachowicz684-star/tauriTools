@@ -210,7 +210,7 @@
    不给这个提示的话，页面会毫无征兆地自己翻页，像是卡了一下。 */
 .fpx-tab.switch-hint {
   border-color: var(--accent);
-  animation: fpx-tab-pulse .6s linear;
+  animation: fpx-tab-pulse var(--anim-pulse) linear;
 }
 @keyframes fpx-tab-pulse {
   from { box-shadow: inset 0 -2px 0 var(--accent); }

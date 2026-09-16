@@ -1012,7 +1012,7 @@ html.theme-transition *:not(.spinner) {
   border: 1px solid var(--border);
   box-shadow: var(--sh-out-xl);
   overflow: hidden;
-  animation: pop-in .14s ease-out;
+  animation: pop-in var(--anim-in) ease-out;
 }
 .theme-pop:focus { outline: none; }
 @keyframes pop-in {

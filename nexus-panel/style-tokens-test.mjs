@@ -122,7 +122,8 @@ const af = read('plugins/agent-flow/styles.css');
 t('agent-flow 自成一套尺度令牌（不依赖外壳变量）',
   ['--af-mono', '--af-r-xs', '--af-r-sm', '--af-dur-fast',
    '--af-cast-sm', '--af-cast-lg', '--af-z-base', '--af-z-float',
-   '--af-z-mask', '--af-z-modal'].every((v) => new RegExp(`\\${v}\\s*:`).test(af)));
+   /* 不含 --af-z-modal：它随 .modal-* 死代码一并删了（无 z-index 引用） */
+   '--af-z-mask'].every((v) => new RegExp(`\\${v}\\s*:`).test(af)));
 
 console.log('\n=== 6. 圆角 / 时长 / 字体 / 层级 ===');
 /* 主档 --r-sm/--r/--r-md/--r-lg/--r-xl 由主题覆写（扁平/玻璃风格各一套），
@@ -146,7 +147,12 @@ for (const f of all) {
     }
   }
 }
-t('过渡时长不再写死', strayDur.length === 0, strayDur.slice(0, 4).join(', ') || '均走 --dur-* / --t');
+/* 减少动效兜底里的 .01ms 是**刻意的**：那不是"忘了走变量"，
+   而正是"把过渡关掉"的写法（写成 0 有些场景会跳过 transitionend 事件）。
+   别的硬编码时长才是真的漏网。 */
+const realStray = strayDur.filter((x) => !/\.01ms/.test(x));
+t('过渡时长不再写死', realStray.length === 0,
+  realStray.slice(0, 4).join(', ') || '均走 --dur-*（减少动效兜底的 .01ms 是刻意关掉）');
 
 const strayFont = all
   .filter((f) => !f.p.includes('agent-flow'))

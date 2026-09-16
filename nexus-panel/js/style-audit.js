@@ -60,6 +60,8 @@ export const TOKEN_VARS = [
   '--z-mask', '--z-dialog', '--z-pop', '--z-toast', '--z-tooltip',
   '--ring-neutral',
   '--z-inspector',
+  /* 动画时长：与 --dur-*（一次性过渡）分开的一档，见 tokens.css 的说明 */
+  '--anim-spin', '--anim-pulse', '--anim-in',
 ];
 
 /* 控件层（css/controls.css）定义的共享变量。
