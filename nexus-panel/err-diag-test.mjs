@@ -23,7 +23,8 @@ const dom = new JSDOM('<!doctype html><html><body><div id="stage"></div></body><
 const { window } = dom;
 globalThis.window = window;
 globalThis.document = window.document;
-globalThis.navigator = window.navigator;
+// Node 21+ 起 globalThis.navigator 是只读 getter，直接赋值会抛 TypeError
+Object.defineProperty(globalThis, 'navigator', { value: window.navigator, configurable: true, writable: true });
 globalThis.location = window.location;
 globalThis.localStorage = window.localStorage;
 globalThis.performance = window.performance;
