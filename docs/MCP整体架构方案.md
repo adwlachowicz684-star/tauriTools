@@ -93,13 +93,17 @@ main.rs → Builder.setup() 里处理 --mcp（关窗口 → serve）
 
 | 编号 | 项 | 说明 |
 |---|---|---|
-| S1 | **工具名兼容层** | 加 `backup_now → backup` 等别名，或在 README 列对照表 |
+| ~~S1~~ | ~~工具名兼容层~~ | ✅ **已实现**（`mcp.rs` 的 `ALIASES` 表）。设计要点：只在 `tools/call` 接受、不进 `tools/list`；且**必须在查开关之前**归一化，否则关掉 `backup` 后用 `backup_now` 还能调，是个绕过口子 |
 | S2 | **补 3 个缺失工具** | `pick_screen_color`、`folder_icon_set_dll`、`refresh_content` |
-| S3 | `create_folder` 补 `tab_index` | 让 AI 能指定加入哪个页签，多页签场景必需 |
+| S3 | `create_folder` 补 `tab_index` | 让 AI 能指定加入哪个页签，多页签场景必需。**注**：`add_card` 已有此参数，`create_folder` 还没有 |
 | S4 | **stdio 模式** | 必须挪到 `Builder` 之前；见差异 2 |
-| S5 | 跨进程锁编译验证 | 依赖本地 `cargo build` |
+| ~~S5~~ | ~~跨进程锁编译验证~~ | ✅ **已解决**（2026-09-16 本地 `cargo build` 通过） |
 
-**S1 建议优先**——它是唯一会造成"用户按文档配置完完全不能用"的问题，且改动小（别名映射或文档）。
+**当前未完成的是 S2 / S3 / S4**。其中 **S3 改动最小**（一个参数），
+**S4 是架构级**（`--mcp` 必须挪出 Tauri `Builder`，否则 stdout 被污染，
+表现为"连上了但一直报错"，极难定位）。
+
+> 最新完整状态见 `功能完成状态总览.md`。
 
 ---
 
