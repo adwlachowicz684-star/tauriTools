@@ -332,26 +332,34 @@
 }
 /* 正在被拖走的卡片：半透明 + 去掉 hover 抬升，明确"这张在移动中" */
 .fpx-card.dragging { opacity: .4; transform: none !important; }
-/* 缺失卡片：红框而非整体变淡。
-   优先级必须高于 hover —— 一眼能看出哪个是缺的，
-   而不是靠"稍微淡一点"这种要对比才看得出的差别。
-   保留一点降透明度表示"不可操作"，但主体识别靠红框。 */
 /**
- * 缺失卡片：**红框，且优先级高于 hover / active**（#233）。
+ * 缺失卡片：**红框 + 内圈红晕**，且优先级高于 hover / active（#233）。
  *
  * 原来用 opacity:.8 整体变淡 —— 问题是变淡的卡片和"未选中"看起来差不多，
  * 一眼扫过去分不出哪个是缺的，只能逐个看有没有「✗ 缺失」徽标。
  *
  * 改成红框：不透明度保持 1（文字仍清晰可读，方便看是哪个路径没了），
- * 靠边框颜色传达状态。放在 hover/active 规则**之后**声明，
- * 保证选择器优先级相同时后者胜出——悬停时红框不能被顶掉。
+ * 靠边框颜色传达状态。
+ *
+ * ⚠️ 关键：红晕只能用**叠加**，不能直接替换 box-shadow。
+ * 上一版写成 `box-shadow: inset 0 0 0 1px 红` ，把常态的 --sh-out-sm
+ * 整个顶掉了 —— 缺失卡片变成"平的"，在一排外凸卡片里反而更不显眼，
+ * 与本条目的目的正好相反。
+ * 所以这里三态各写一份"常态阴影 + 红环"，用 --miss-ring 避免重复。
  */
 .fpx-card.missing {
+  --miss-ring: inset 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent);
   border-color: var(--danger);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent);
+  box-shadow: var(--sh-out-sm), var(--miss-ring);
 }
-.fpx-card.missing:hover,
-.fpx-card.missing:active { border-color: var(--danger); }
+.fpx-card.missing:hover {
+  border-color: var(--danger);
+  box-shadow: var(--sh-out-md), var(--miss-ring);
+}
+.fpx-card.missing:active {
+  border-color: var(--danger);
+  box-shadow: var(--sh-in-sm), var(--miss-ring);
+}
 .fpx-card-top { display: flex; align-items: center; gap: 8px; }
 .fpx-card-icon {
   width: 26px; height: 26px; flex: none;
