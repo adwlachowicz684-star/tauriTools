@@ -3,13 +3,17 @@ import {
   ReactFlow, Background, Controls, MiniMap, addEdge,
   useNodesState, useEdgesState, useReactFlow,
   type Connection, type Edge, type NodeTypes, type ReactFlowInstance,
+  type NodeChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 import Inspector from './components/Inspector';
 // 副作用导入：把 nodes/defs/ 下的节点定义注册进表。
 // 放在这里是刻意的 —— 注册表必须先被填充，下面的 buildNodeTypes() 才有内容。
-import { buildNodeTypes, getDef, allPresets } from './nodes';
+import { buildNodeTypes, getDef, allPresets, type NodeDef } from './nodes';
+import {
+  duplicateElements, stripRuntime, type DupNode, type DupEdge,
+} from './engine/duplicate';
 import { CredentialPanel, canUse } from './components/CredentialPanel';
 import {
   type Credential, type CredentialKind,
@@ -768,7 +772,11 @@ export default function App() {
           ? (loopRole === 'done' ? '结束' : '循环体')
           : branchLabel(nodes, params.source, branch),
       };
-      setEdges((eds) => addEdge(newEdge as Edge, eds) as FlowEdge[]);
+      /*
+       * 不加 `as Edge`：newEdge 已经是 FlowEdge，断言反而把它降级成基础 Edge，
+       * 与 setEdges 期望的 FlowEdge[] 对不上（此前依赖不全时被 any 掩盖了）。
+       */
+      setEdges((eds) => addEdge(newEdge, eds));
     },
     [setEdges, nodes],
   );
@@ -907,6 +915,119 @@ export default function App() {
     },
     [nodes.length, setNodes],
   );
+
+  /* ---------------- 按住 Ctrl 拖动 = 复制 ---------------- */
+
+  /**
+   * 拖动复制期间的「原 id → 副本 id」映射。
+   *
+   * 为什么需要它：xyflow 的拖拽是按 dragStart 那一刻的节点 id 发位移的，
+   * 而我们要的是「副本跟着鼠标走、原件留在原地」。
+   * 所以复制完成后，把后续 position change 的 id 改写成副本 id。
+   */
+  const dupMapRef = useRef<Record<string, string> | null>(null);
+
+  const duplicateByIds = useCallback(
+    (ids: string[]): Record<string, string> | null => {
+      if (ids.length === 0) return null;
+
+      // 按原节点查定义：id 前缀与 create 都写在各自的定义里
+      const defOf: Record<string, NodeDef> = {};
+      for (const id of ids) {
+        const n = nodes.find((x) => x.id === id);
+        if (n) defOf[id] = getDef(n.type);
+      }
+
+      const result = duplicateElements({
+        nodes: nodes as unknown as DupNode[],
+        edges: edges as unknown as DupEdge[],
+        ids,
+        makeNodeId: (oldId) => {
+          seq.current += 1;
+          const s = `${Date.now().toString(36)}${seq.current}`;
+          return `${defOf[oldId]?.meta.idPrefix ?? 'n'}${s}`;
+        },
+        makeEdgeId: () => {
+          seq.current += 1;
+          return `e${Date.now().toString(36)}${seq.current}`;
+        },
+        /*
+         * 顺序与从侧栏新建时一致：create 先铺全字段默认值
+         * （status='idle'、output='' …），再用原件配置覆盖。
+         * 反过来写，stripRuntime 挖掉的运行时字段就没人补了，
+         * 副本会缺 status 而只能靠渲染处的 ?? 'idle' 兜底。
+         */
+        makeData: (newId, oldData, oldId) => ({
+          ...(defOf[oldId]?.create(newId) ?? {}),
+          ...stripRuntime(oldData),
+        }),
+      });
+
+      if (result.nodes.length === 0) return null;
+
+      setEdges((es) => [...es, ...(result.edges as unknown as FlowEdge[])]);
+      setNodes((ns) => [...ns, ...(result.nodes as unknown as FlowNode[])]);
+      return result.map;
+    },
+    [nodes, edges, setNodes, setEdges],
+  );
+
+  const onNodeDragStart = useCallback(
+    (e: unknown, node: unknown, dragged: unknown) => {
+      const ev = e as { ctrlKey?: boolean; metaKey?: boolean };
+      // 没按修饰键就是普通拖动。Mac 上 metaKey 才是习惯键位，一并认。
+      if (!ev?.ctrlKey && !ev?.metaKey) return;
+
+      const list = (dragged as FlowNode[]) ?? [];
+      const src = list.length > 0 ? list : [node as FlowNode];
+      const map = duplicateByIds(src.filter((n) => n?.id).map((n) => n.id));
+      if (map) dupMapRef.current = map;
+    },
+    [duplicateByIds],
+  );
+
+  /** 位移作用在副本上，原件不动 */
+  const handleNodesChange = useCallback(
+    (changes: NodeChange<FlowNode>[]) => {
+      const map = dupMapRef.current;
+      if (!map) {
+        onNodesChange(changes);
+        return;
+      }
+      onNodesChange(
+        changes.map((c) =>
+          c.type === 'position' && c.id && map[c.id] ? { ...c, id: map[c.id] } : c,
+        ),
+      );
+    },
+    [onNodesChange],
+  );
+
+  /**
+   * 收尾：选中副本、取消原件选中。
+   *
+   * 拖动期间原件一直是 selected（xyflow 拖动即选中），
+   * 这里才改，避免拖动过程中高亮来回跳。
+   */
+  const onNodeDragStop = useCallback(() => {
+    const map = dupMapRef.current;
+    dupMapRef.current = null;
+    if (!map) return;
+
+    const newIds: Record<string, boolean> = {};
+    for (const oldId of Object.keys(map)) newIds[map[oldId]] = true;
+
+    setNodes((ns) =>
+      ns.map((n) => {
+        if (newIds[n.id]) return { ...n, selected: true, dragging: false };
+        if (map[n.id]) return { ...n, selected: false, dragging: false };
+        return n;
+      }),
+    );
+    // 面板一次只显示一个节点，取第一个副本即可
+    const first = Object.keys(map).map((k) => map[k])[0];
+    if (first) setSelectedId(first);
+  }, [setNodes]);
 
   /** 拖放到画布：需要把屏幕坐标换算成画布坐标 */
   const onDrop = useCallback(
@@ -1648,12 +1769,15 @@ export default function App() {
           <ReactFlow
             nodes={nodes}
             edges={edges}
-            onNodesChange={onNodesChange}
+            onNodesChange={handleNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             nodeTypes={nodeTypes}
             onInit={(inst) => { rfInstance.current = inst; }}
             onNodeClick={(_, n) => setSelectedId(n.id)}
+            /* 按住 Ctrl / ⌘ 拖动 = 复制一份跟着鼠标走，原件留在原地 */
+            onNodeDragStart={onNodeDragStart}
+            onNodeDragStop={onNodeDragStop}
             /* xyflow v12 的 onBeforeDelete 传的是节点/边对象（内部按 id 处理，需转换），
                且签名要求返回 Promise，所以要 async */
             onBeforeDelete={async ({ nodes: dn, edges: de }) =>
