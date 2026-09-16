@@ -43,7 +43,24 @@ export function registerNode(def: NodeDef): void {
  * React 直接白屏 —— 用户连自己的画布都删不掉了。
  * 这里给一个"看得见但不能跑"的占位：能选中、能删、能看出缺了什么。
  */
+/**
+ * 按类型缓存兜底定义。
+ *
+ * getDef() 在渲染里被反复调用，未注册的类型每次都走到本函数。若不缓存，
+ * 每次都新造一份 def —— 它的 Canvas / Inspector 也都是新的函数引用，
+ * React 于是把画布卡片和属性面板当成"另一种组件"卸载重建：画布闪烁、
+ * 面板里的输入框失焦。已注册的类型返回的是 defs 里那份稳定引用，不受影响，
+ * 所以这个坑只在未注册节点上出现，很容易被漏掉。
+ */
+const fallbacks = new Map<string, NodeDef>();
+
 function makeFallback(type: string): NodeDef {
+  const hit = fallbacks.get(type);
+  if (hit) return hit;
+  return buildFallback(type);
+}
+
+function buildFallback(type: string): NodeDef {
   const Canvas = ({ selected }: NodeProps) => (
     <div className={`node-card kind-unknown ${selected ? 'is-selected' : ''}`}>
       <div className="node-head">
@@ -68,7 +85,7 @@ function makeFallback(type: string): NodeDef {
       </div>
     </aside>
   );
-  return {
+  const def: NodeDef = {
     type,
     dataKind: type,
     meta: { label: '未注册', color: '#64748b', category: 'flow', idPrefix: 'unk' },
@@ -76,6 +93,8 @@ function makeFallback(type: string): NodeDef {
     Canvas,
     Inspector,
   };
+  fallbacks.set(type, def);
+  return def;
 }
 
 /**
