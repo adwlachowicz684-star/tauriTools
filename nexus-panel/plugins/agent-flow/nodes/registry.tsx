@@ -3,6 +3,7 @@ import {
   NODE_CATEGORY_META,
   type NodeCategory, type NodeDef, type NodePreset, type NodeInspectorProps,
 } from './types';
+import { loadCustomPresets, presetKey, presetIdOf, dataOf } from '../engine/customPresets';
 
 /**
  * 注册表本体。
@@ -143,6 +144,30 @@ export function allPresets(): NodePreset[] {
     const list = presets?.() ?? [{ key: def.type, label, color, init: () => def.create('') }];
     for (const p of list) out.push({ ...p, type: def.type });
   }
+
+  /*
+   * 用户自定义节点。
+   *
+   * 复用基础类型的 type —— 执行器、画布卡片、属性面板因此全部自动继承，
+   * 差别只有初始参数。这是"自定义"该有的形态：配参数，不写代码。
+   *
+   * 基础类型不可用时（跨环境导入过来、而本机没这种节点）直接跳过：
+   * 显示一个拖出来就报错的条目，比不显示更糟。
+   */
+  for (const cp of loadCustomPresets()) {
+    if (!hasDef(cp.baseType)) continue;
+    const def = getDef(cp.baseType);
+    out.push({
+      key: presetKey(cp.id),
+      type: cp.baseType,
+      label: cp.name,
+      color: cp.color ?? def.meta.color,
+      hint: `自定义 · 基于${def.meta.label}`,
+      // 每次返回新对象：多个实例若共享同一份，改一个会串到另一个上
+      init: () => dataOf(cp),
+    });
+  }
+
   return out;
 }
 
@@ -151,7 +176,12 @@ export function presetsByCategory(): Array<{ category: NodeCategory; label: stri
   const groups = new Map<NodeCategory, NodePreset[]>();
   for (const p of allPresets()) {
     const def = getDef(p.type);
-    const cat = def.meta.category;
+    /*
+     * 自定义预设统一归到「自定义」组。
+     * 不归的话它会跟着基础类型混进"外部服务"之类的组里，
+     * 用户分不清哪条是自己存的、哪条是内置的，也就无从删除。
+     */
+    const cat: NodeCategory = presetIdOf(p.key) ? 'custom' : def.meta.category;
     if (!groups.has(cat)) groups.set(cat, []);
     groups.get(cat)!.push(p);
   }

@@ -38,7 +38,8 @@ for f in tests/*.test.ts; do
     --import-map ../engine/conversations=../conversations.mjs \
     --import-map ../types=../types.mjs \
     --import-map ../engine/extract=../extract.mjs \
-    --import-map ../engine/runnerKit=../runnerKit.mjs >/dev/null
+    --import-map ../engine/runnerKit=../runnerKit.mjs \
+    --import-map ../engine/customPresets=../customPresets.mjs >/dev/null
 done
 
 # 源码级守卫测试（tests/inspectorRemount.test.ts）要读源文件，

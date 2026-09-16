@@ -1,5 +1,10 @@
-import type { DragEvent } from 'react';
+import { useRef, useState, type DragEvent } from 'react';
 import { presetsByCategory, getDef } from '../nodes';
+import { hasDef } from '../nodes/registry';
+import { confirm, alert } from '../../../js/dialog.js';
+import {
+  presetIdOf, removeCustomPreset, exportCustomPresets, importCustomPresets,
+} from '../engine/customPresets';
 
 /**
  * 从边栏拖到画布上时携带的数据。
@@ -49,6 +54,57 @@ export default function Sidebar({ onAdd, disabled }: Props) {
   };
 
   /*
+   * 自定义节点是存在 localStorage 里的，增删改之后要让它重新读一次。
+   * 用本地计数触发重渲染即可 —— 预设列表本来就是每次渲染时从存储现读的，
+   * 不必再往上抛给 App 管一份状态。
+   */
+  const [tick, setTick] = useState(0);
+  const refresh = () => setTick((t) => t + 1);
+
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  const askRemove = async (key: string, label: string) => {
+    const id = presetIdOf(key);
+    if (!id) return;
+    const ok = await confirm({
+      title: `删除「${label}」？`,
+      message: '只删这个自定义节点。画布上已经放好的节点不受影响。',
+    });
+    if (!ok) return;
+    removeCustomPreset(id);
+    refresh();
+  };
+
+  const doExport = () => {
+    const json = exportCustomPresets();
+    const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'agent-flow-custom-nodes.json';
+    a.click();
+    // 不立刻回收：部分浏览器在 revoke 之后才真正开始下载
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const doImport = async (file: File) => {
+    try {
+      const text = await file.text();
+      const r = importCustomPresets(text, { isKnownType: (t) => hasDef(t) });
+      refresh();
+      const note = r.skipped.length ? `\n跳过 ${r.skipped.length} 条：${r.skipped.join('、')}` : '';
+      await alert({
+        title: '导入完成',
+        message: `新增 ${r.added} 条，更新 ${r.updated} 条。${note}`,
+      });
+    } catch (err) {
+      await alert({
+        title: '导入失败',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
+  /*
    * 侧栏条目、分组、配色、提示语全部来自注册表里各节点自己声明的 meta。
    *
    * 以前这里的每个条目都是手写的一段 JSX：加一种节点要在 DragPayload 联合、
@@ -59,15 +115,37 @@ export default function Sidebar({ onAdd, disabled }: Props) {
   const groups = presetsByCategory();
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" key={tick}>
       <div className="side-head">节点库</div>
       <div className="side-hint">拖到画布，或点击直接添加</div>
 
       {groups.map((g) => {
         const def = getDef(g.presets[0].type);
+        const isCustom = g.category === 'custom';
         return (
           <div className="side-group" key={g.category}>
-            <div className="side-title">{g.label}</div>
+            <div className="side-title">
+              {g.label}
+              {isCustom ? (
+                <span className="side-title-ops">
+                  <button
+                    className="link-btn"
+                    title="导出全部自定义节点为 JSON，可分享给别人"
+                    onClick={doExport}
+                  >
+                    导出
+                  </button>
+                  <button
+                    className="link-btn"
+                    title="从 JSON 导入自定义节点"
+                    onClick={() => fileRef.current?.click()}
+                  >
+                    导入
+                  </button>
+                </span>
+              ) : null}
+            </div>
+
             {g.presets.map((p) => (
               <div
                 key={p.key}
@@ -79,12 +157,39 @@ export default function Sidebar({ onAdd, disabled }: Props) {
               >
                 <span className="side-dot" style={{ background: p.color }} />
                 <span className="side-label">{p.label}</span>
+                {isCustom ? (
+                  <button
+                    className="side-del"
+                    title="删除这个自定义节点"
+                    onClick={(e) => {
+                      // 不阻止冒泡的话会顺带触发"点击添加"
+                      e.stopPropagation();
+                      void askRemove(p.key, p.label);
+                    }}
+                  >
+                    ×
+                  </button>
+                ) : null}
               </div>
             ))}
-            {def.meta.sub ? <div className="side-sub">{def.meta.sub}</div> : null}
+
+            {def.meta.sub && !isCustom ? <div className="side-sub">{def.meta.sub}</div> : null}
           </div>
         );
       })}
+
+      <input
+        ref={fileRef}
+        type="file"
+        accept="application/json,.json"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          // 清空 value，否则连选同一个文件不会再触发 change
+          e.target.value = '';
+          if (f) void doImport(f);
+        }}
+      />
     </aside>
   );
 }

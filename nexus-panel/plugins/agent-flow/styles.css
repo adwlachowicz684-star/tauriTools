@@ -1455,3 +1455,26 @@ input.mono, textarea.mono {
   outline: 2px solid var(--af-accent);
   outline-offset: 1px;
 }
+
+/* ---------------- 自定义节点（侧栏） ---------------- */
+/*
+ * 删除按钮只在 hover / focus 时显形：常驻会让每条都多一个红叉，
+ * 视觉噪声压过列表本身。键盘用户靠 :focus-visible 也能看到。
+ */
+.side-del {
+  margin-left: auto; flex: none;
+  border: none; background: none; cursor: pointer;
+  color: var(--af-mute); font-size: 14px; line-height: 1;
+  padding: 0 3px; border-radius: 4px;
+  opacity: 0; transition: opacity var(--af-dur-fast), color var(--af-dur-fast);
+}
+.side-item:hover .side-del,
+.side-del:focus-visible { opacity: 1; }
+.side-del:hover { color: var(--af-bad); background: var(--af-item); }
+
+/* 分组标题右侧的「导出 / 导入」 */
+.side-title-ops { margin-left: auto; display: flex; gap: 6px; }
+.side-title-ops .link-btn { font-size: 11px; }
+
+/* 属性面板标题行的「存为自定义」 */
+.insp-save { flex: none; font-size: 11px; white-space: nowrap; }
