@@ -35,20 +35,20 @@ export default function PluginSettings() {
     <>
       <div className="p-card">
         <h2>React 插件设置</h2>
-        <div className="p-muted" style={{ marginBottom: 12, lineHeight: 1.9 }}>
+        <div className="p-muted" style={{ marginBottom: 'var(--sp-6, 12px)', lineHeight: 1.9 }}>
           改动保存后会广播给主视图。这个面板跑在独立的沙箱 iframe 里，
           与主视图隔离，但共享同一份持久化数据。
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6, 12px)' }}>
           <div>
-            <div className="p-muted" style={{ marginBottom: 6 }}>计数器步长</div>
+            <div className="p-muted" style={{ marginBottom: 'var(--sp-3, 6px)' }}>计数器步长</div>
             <div className="p-row">
               {[1, 2, 5, 10].map((n) => (
                 <button
                   key={n}
                   className={'p-btn' + (step === n ? ' primary' : '')}
-                  style={{ height: 30, padding: '0 12px', fontSize: 12 }}
+                  style={{ height: 30, padding: '0 12px', fontSize: 'var(--fs-12, 12px)' }}
                   onClick={() => setStep(n)}
                 >
                   +{n}
@@ -58,7 +58,7 @@ export default function PluginSettings() {
           </div>
 
           <div>
-            <div className="p-muted" style={{ marginBottom: 6 }}>计数器名称</div>
+            <div className="p-muted" style={{ marginBottom: 'var(--sp-3, 6px)' }}>计数器名称</div>
             <input
               className="p-input"
               value={label}
@@ -68,7 +68,7 @@ export default function PluginSettings() {
           </div>
         </div>
 
-        <div className="p-row" style={{ marginTop: 16 }}>
+        <div className="p-row" style={{ marginTop: 'var(--sp-8, 16px)' }}>
           <button className="p-btn primary" onClick={save}>保存</button>
           <button className="p-btn" onClick={() => ctx.reload()}>重载插件</button>
         </div>
@@ -76,7 +76,7 @@ export default function PluginSettings() {
 
       <div className="p-card">
         <h2>关于这个面板</h2>
-        <div className="p-muted" style={{ lineHeight: 1.9, fontSize: 12 }}>
+        <div className="p-muted" style={{ lineHeight: 1.9, fontSize: 'var(--fs-12, 12px)' }}>
           模式：{ctx.mode} · 视图：settings<br />
           插件 ID：{ctx.id} · 版本：{ctx.version}
         </div>

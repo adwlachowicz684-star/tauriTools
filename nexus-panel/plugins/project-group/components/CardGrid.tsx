@@ -419,7 +419,7 @@ export function CardGrid({
             }}>
             {allExpanded ? '收起全部链接' : '展开全部链接'}
           </button>
-          <span className="p-muted" style={{ fontSize: 11 }}>{linkableCount} 个有链接</span>
+          <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>{linkableCount} 个有链接</span>
           {(badCount > 0 || conflictCount > 0) && (
             <span className="fpx-links-summary">
               {conflictCount > 0 && <span className="bad">{conflictCount} 冲突</span>}

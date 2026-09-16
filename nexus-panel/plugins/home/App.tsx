@@ -61,7 +61,7 @@ export default function Overview() {
           <Stat k="Rust 后端" v={rust} />
           <Stat k="面板" v="Nexus Panel" />
         </div>
-        <div className="p-row" style={{ marginTop: 16 }}>
+        <div className="p-row" style={{ marginTop: 'var(--sp-8, 16px)' }}>
           <button className="p-btn primary" onClick={ping} disabled={busy}>
             测试 Rust 通信 (rust_ping)
           </button>
@@ -81,10 +81,10 @@ export default function Overview() {
               title="点击切换"
             >
               <div className="k">{p.icon ?? '◌'} {p.name}</div>
-              <div className="v" style={{ fontSize: 13, fontWeight: 400, color: 'var(--text-dim)' }}>
+              <div className="v" style={{ fontSize: 'var(--fs-13, 13px)', fontWeight: 400, color: 'var(--text-dim)' }}>
                 {p.type === 'iframe' ? '沙箱挂载' : '同页挂载'}
               </div>
-              <div className="p-row" style={{ marginTop: 10, gap: 6 }}>
+              <div className="p-row" style={{ marginTop: 'var(--sp-5, 10px)', gap: 'var(--sp-3, 6px)' }}>
                 <span className="p-tag">{p.builtin ? '内置' : '自定义'}</span>
                 {p.requiresBuild ? <span className="p-tag">React</span> : null}
               </div>
@@ -92,7 +92,7 @@ export default function Overview() {
           ))}
         </div>
         {plugins.length ? null : (
-          <div className="p-muted" style={{ marginTop: 10 }}>
+          <div className="p-muted" style={{ marginTop: 'var(--sp-5, 10px)' }}>
             {pluginsUnknown
               ? '未连接到外壳（沙箱隔离态），无法读取插件列表'
               : '暂无插件'}
@@ -108,7 +108,7 @@ export default function Overview() {
           3. <b>vite.config.ts</b> 的 inputs 里登记该 HTML 入口<br />
           4. ⌘/Ctrl + R 热重载，无需重启应用
         </div>
-        <div className="p-row" style={{ marginTop: 14 }}>
+        <div className="p-row" style={{ marginTop: 'var(--sp-7, 14px)' }}>
           <button className="p-btn" onClick={() => ctx.openPlugin('demo-react')}>看 React 沙箱示例</button>
           <button className="p-btn" onClick={() => ctx.openPlugin('demo-iframe')}>看原生沙箱示例</button>
           <button className="p-btn" onClick={() => ctx.reload()}>重载本插件</button>

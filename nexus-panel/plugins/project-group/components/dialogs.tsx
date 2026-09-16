@@ -75,7 +75,7 @@ export function CreateDialog({
           两处都控制会变成"都勾上才生效"的隐性双闸门，用户很难理解为什么勾了没反应。
           这里只做现状说明 + 去设置页的提示。
         */}
-        <div className="p-muted" style={{ fontSize: 11.5, marginBottom: 12 }}>
+        <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginBottom: 'var(--sp-6, 12px)' }}>
           {hierarchyOn
             ? `将建在 父目录\\${tabName}\\ 下（「路径携带页签层级」已在设置中开启）`
             : `将直接建在父目录下。如需按页签分层，请到「设置」开启「新建时路径携带页签层级」`}
@@ -91,7 +91,7 @@ export function CreateDialog({
           </div>
         )}
 
-        {err && <div className="p-muted" style={{ color: 'var(--danger)', marginTop: 8 }}>{err}</div>}
+        {err && <div className="p-muted" style={{ color: 'var(--danger)', marginTop: 'var(--sp-4, 8px)' }}>{err}</div>}
       </Modal>
 
       {picking && (
@@ -131,10 +131,10 @@ export function LockDialog({
         </>
       }
     >
-      <div className="p-mono p-muted" style={{ marginBottom: 12, wordBreak: 'break-all' }}>{path}</div>
+      <div className="p-mono p-muted" style={{ marginBottom: 'var(--sp-6, 12px)', wordBreak: 'break-all' }}>{path}</div>
       <CheckLine checked={dd} onChange={setDd} title="防删除" subtitle="禁止删除该文件夹（重命名也会被拦）" />
       <CheckLine checked={dw} onChange={setDw} title="防写入" subtitle="禁止写入，目录变为只读" />
-      <div className="p-muted" style={{ marginTop: 10 }}>
+      <div className="p-muted" style={{ marginTop: 'var(--sp-5, 10px)' }}>
         Windows 走系统 icacls，非 Windows 平台退化为只读权限。受保护的目录在建链/删链时会自动临时摘锁。
       </div>
     </Modal>
@@ -194,7 +194,7 @@ export function IconPickDialog({
 
   return (
     <Modal title="选择图标" onClose={onClose} width={620}>
-      <div className="fpx-groupbar" style={{ marginBottom: 12 }}>
+      <div className="fpx-groupbar" style={{ marginBottom: 'var(--sp-6, 12px)' }}>
         <button
           className={`fpx-grouptab${tab === 'preset' ? ' active' : ''}`}
           onClick={() => setTab('preset')}
@@ -246,7 +246,7 @@ export function IconPickDialog({
         </div>
       ))}
 
-      <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
+      <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 'var(--sp-8, 16px)' }}>
         <button className="p-btn" onClick={() => setPicking(true)}>从目录导入…</button>
         <button className="p-btn" onClick={onClose}>取消</button>
       </div>
@@ -301,7 +301,7 @@ export function StyleDialog({
         </>
       }
     >
-      <div className="p-mono p-muted" style={{ marginBottom: 12, wordBreak: 'break-all' }}>{path}</div>
+      <div className="p-mono p-muted" style={{ marginBottom: 'var(--sp-6, 12px)', wordBreak: 'break-all' }}>{path}</div>
 
       <div className="fpx-field">
         <label>图标</label>
@@ -310,7 +310,7 @@ export function StyleDialog({
             <button key={e} className={`fpx-emoji${ic === e ? ' active' : ''}`} onClick={() => setIc(e)}>{e}</button>
           ))}
         </div>
-        <div className="p-row" style={{ marginTop: 8 }}>
+        <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)' }}>
           <input className="p-input" value={ic} placeholder="图标文件路径（.ico / 可留空用 emoji）"
             onChange={(e) => setIc(e.target.value)} />
           <button className="p-btn" onClick={onPickIconFile}>数据目录图标…</button>

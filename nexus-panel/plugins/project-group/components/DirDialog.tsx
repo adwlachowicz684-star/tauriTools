@@ -91,13 +91,13 @@ export function DirDialog({
         </>
       }
     >
-      <div className="p-row" style={{ marginBottom: 10 }}>
+      <div className="p-row" style={{ marginBottom: 'var(--sp-5, 10px)' }}>
         {roots.map((r) => (
           <button key={r.path} className="p-btn" onClick={() => load(r.path)}>{r.name}</button>
         ))}
       </div>
 
-      <div className="p-row" style={{ marginBottom: 10 }}>
+      <div className="p-row" style={{ marginBottom: 'var(--sp-5, 10px)' }}>
         <input
           className="p-input"
           value={input}
@@ -143,7 +143,7 @@ export function DirDialog({
       </div>
 
       {allowCreate && (
-        <div className="p-row" style={{ marginTop: 12 }}>
+        <div className="p-row" style={{ marginTop: 'var(--sp-6, 12px)' }}>
           <input
             className="p-input"
             value={newName}

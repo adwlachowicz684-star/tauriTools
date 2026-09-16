@@ -81,11 +81,11 @@ export function BackupDialog({
         <span>只新增 / 更新（取消勾选 = 镜像同步，会删除备份中多余的文件）</span>
       </label>
 
-      <div className="p-muted" style={{ fontSize: 11.5, marginTop: 6 }}>
+      <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-3, 6px)' }}>
         junction / 符号链接不会跟随，避免循环与重复内容；源与备份目录互相嵌套时会自动跳过该源。
       </div>
 
-      <div className="p-row" style={{ marginTop: 14 }}>
+      <div className="p-row" style={{ marginTop: 'var(--sp-7, 14px)' }}>
         <button className="p-btn primary" disabled={busy !== null} onClick={() => run('project')}>
           {busy === 'project' ? '备份中…' : '备份全部项目'}
         </button>
@@ -169,8 +169,8 @@ export function EditorDialog({
 
   return (
     <Modal title="选择编辑器（打开 .md 用）" onClose={onClose} width={560}>
-      <div className="p-row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
-        <span className="p-muted" style={{ fontSize: 11.5 }}>
+      <div className="p-row" style={{ justifyContent: 'space-between', marginBottom: 'var(--sp-4, 8px)' }}>
+        <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
           {loading ? '正在枚举…' : `共 ${list.length} 个候选`}
         </span>
         <button className="p-btn mini" disabled={loading} onClick={() => load(true)}>
@@ -196,7 +196,7 @@ export function EditorDialog({
         ))}
       </div>
 
-      <div className="fpx-field" style={{ marginTop: 12 }}>
+      <div className="fpx-field" style={{ marginTop: 'var(--sp-6, 12px)' }}>
         <label>手工指定</label>
         <div className="p-row">
           <input className="p-input" defaultValue={config.editToolPath ?? ''}
@@ -215,7 +215,7 @@ export function EditorDialog({
         </div>
       </div>
 
-      <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 12 }}>
+      <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 'var(--sp-6, 12px)' }}>
         <button className="p-btn" onClick={() => pick('')}>恢复系统默认</button>
         <button className="p-btn" onClick={onClose}>关闭</button>
       </div>
@@ -292,7 +292,7 @@ export function ChainDialog({
         </>
       }
     >
-      <div className="p-mono p-muted" style={{ marginBottom: 10, wordBreak: 'break-all' }}>
+      <div className="p-mono p-muted" style={{ marginBottom: 'var(--sp-5, 10px)', wordBreak: 'break-all' }}>
         对象：{target || '（未选中）'}
       </div>
 
@@ -335,7 +335,7 @@ export function ChainDialog({
             </option>
           ))}
         </select>
-        <div className="p-muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+        <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-2, 4px)' }}>
           {current?.client
             ? `该动作已固定使用「${current.client}」，此处可临时改用别的`
             : '此处选择的会写回全局默认客户端'}
@@ -354,7 +354,7 @@ export function ChainDialog({
         />
       </div>
 
-      <div className="p-muted" style={{ fontSize: 11.5 }}>
+      <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
         opencode / Cursor 支持深链接自动预填；VSCode 走命令行；
         Trae 等无外部预填路径的客户端会复制指令并唤起窗口，需手工粘贴。
         各动作的模板可在「设置 → 连锁动作」里改。
@@ -450,7 +450,7 @@ export function ServiceBody({
             <span className="p-mono">POST http://{addr}/mcp</span>
           )}
         </div>
-        <div className="p-muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+        <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-2, 4px)' }}>
           仅绑定 127.0.0.1。把上面的地址填进 AI 客户端的 MCP 配置即可调用本插件能力
           （列卡片、建链、扫内容、读文件、备份…）。
         </div>
@@ -466,7 +466,7 @@ export function ServiceBody({
             onChange={(e) => setInterval(Number(e.target.value))} />
           <span className="p-muted">秒（最小 5）</span>
         </div>
-        <div className="p-muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+        <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-2, 4px)' }}>
           轮询检查 ACL 保护目录的条目数与修改时间，被外部改动时在下方日志告警。
         </div>
       </div>
@@ -474,7 +474,7 @@ export function ServiceBody({
       <div className="fpx-field">
         <label>截图</label>
         <button className="p-btn" onClick={shot}>截取屏幕到数据目录 shots/</button>
-        <div className="p-muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+        <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-2, 4px)' }}>
           Windows 走 GDI 直出 BMP；macOS 用 screencapture，Linux 需 ImageMagick / gnome-screenshot / grim。
         </div>
       </div>

@@ -156,7 +156,7 @@ export function PresetIconGrid({
       </div>
 
       {addMode && (
-        <div className="p-muted" style={{ fontSize: 11.5, marginBottom: 6 }}>
+        <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginBottom: 'var(--sp-3, 6px)' }}>
           点图标即可加入「{current?.name}」
         </div>
       )}

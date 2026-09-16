@@ -114,21 +114,21 @@ export default function ExternalCard() {
   return (
     <div className="p-card">
       <h2>外链</h2>
-      <div className="p-muted" style={{ marginBottom: 12, lineHeight: 1.9 }}>
+      <div className="p-muted" style={{ marginBottom: 'var(--sp-6, 12px)', lineHeight: 1.9 }}>
         插件访问外部网络的分级管控。安装与更新时自动扫描入口文件，
         运行时被 CSP 拦下的请求也会登记到这里，可逐条放行或禁止。
         {api.channel === 'bridge' ? (
-          <span className="p-tag ok" style={{ marginLeft: 6 }}>桥接通道</span>
+          <span className="p-tag ok" style={{ marginLeft: 'var(--sp-3, 6px)' }}>桥接通道</span>
         ) : api.channel === 'direct' ? (
-          <span className="p-tag" style={{ marginLeft: 6 }}>直连通道</span>
+          <span className="p-tag" style={{ marginLeft: 'var(--sp-3, 6px)' }}>直连通道</span>
         ) : null}
       </div>
 
-      <div className="p-row" style={{ marginBottom: 10 }}>
-        <span style={{ minWidth: 60, fontSize: 13 }}>全局策略</span>
+      <div className="p-row" style={{ marginBottom: 'var(--sp-5, 10px)' }}>
+        <span style={{ minWidth: 60, fontSize: 'var(--fs-13, 13px)' }}>全局策略</span>
         <select
           className="p-input"
-          style={{ width: 160, height: 30, fontSize: 12, padding: '0 8px' }}
+          style={{ width: 160, height: 30, fontSize: 'var(--fs-12, 12px)', padding: '0 8px' }}
           value={policy.mode}
           onChange={(e) => act(() => api.savePolicy({ ...policy, mode: e.target.value as any }), '外链策略已更新')}
         >
@@ -136,12 +136,12 @@ export default function ExternalCard() {
             <option key={m.value} value={m.value}>{m.label}</option>
           ))}
         </select>
-        <span className="p-muted" style={{ fontSize: 11, flex: 1 }}>
+        <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', flex: 1 }}>
           {POLICY_MODES.find((m) => m.value === policy.mode)?.desc}
         </span>
         <button
           className="p-btn"
-          style={{ height: 30, padding: '0 12px', fontSize: 12 }}
+          style={{ height: 30, padding: '0 12px', fontSize: 'var(--fs-12, 12px)' }}
           onClick={() => act(() => api.rescan(), undefined)}
         >
           重新检查
@@ -149,9 +149,9 @@ export default function ExternalCard() {
       </div>
 
       {pending.length ? (
-        <div className="p-row" style={{ marginBottom: 12 }}>
+        <div className="p-row" style={{ marginBottom: 'var(--sp-6, 12px)' }}>
           <span className="p-tag danger" style={{ margin: 0 }}>{pending.length} 个待决定</span>
-          <span className="p-muted" style={{ fontSize: 11 }}>
+          <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
             智能提醒模式下，这些域名会被拦下并提示
           </span>
         </div>
@@ -166,14 +166,14 @@ export default function ExternalCard() {
           <div
             className="p-row"
             style={{
-              padding: '10px 12px', marginTop: 8, borderRadius: 'var(--r-sm)',
+              padding: '10px 12px', marginTop: 'var(--sp-4, 8px)', borderRadius: 'var(--r-sm)',
               background: 'var(--surface-sunk)',
               boxShadow: 'inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light)',
             }}
           >
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="p-mono" style={{ fontSize: 12 }}>{x.host}</div>
-              <div className="p-muted" style={{ fontSize: 10.5, marginTop: 2 }}>
+              <div className="p-mono" style={{ fontSize: 'var(--fs-12, 12px)' }}>{x.host}</div>
+              <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-1, 2px)' }}>
                 {(KIND_LABELS as Record<string, string>)[x.kind] || x.kind}
                 {x.pluginId ? ` · ${x.pluginId}` : ''}
               </div>
@@ -183,7 +183,7 @@ export default function ExternalCard() {
                 <button
                   key={status}
                   className={'p-btn' + (x.status === status ? ' ' + cls : '')}
-                  style={{ height: 26, padding: '0 9px', fontSize: 11 }}
+                  style={{ height: 26, padding: '0 9px', fontSize: 'var(--fs-11, 11px)' }}
                   onClick={() => act(() => api.setStatus(x.host, status))}
                 >
                   {label}
@@ -191,7 +191,7 @@ export default function ExternalCard() {
               ))}
             <button
               className="p-btn"
-              style={{ height: 26, padding: '0 8px', fontSize: 11 }}
+              style={{ height: 26, padding: '0 8px', fontSize: 'var(--fs-11, 11px)' }}
               title="从清单移除"
               onClick={() => act(() => api.removeHost(x.host))}
             >
@@ -202,7 +202,7 @@ export default function ExternalCard() {
             <div
               className="p-mono p-muted"
               style={{
-                fontSize: 10, marginTop: 2, marginLeft: 12,
+                fontSize: 'var(--fs-10, 10px)', marginTop: 'var(--sp-1, 2px)', marginLeft: 'var(--sp-6, 12px)',
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               }}
               title={x.sample}
@@ -215,13 +215,13 @@ export default function ExternalCard() {
 
       {csp ? (
         <>
-          <div className="p-muted" style={{ marginTop: 14, fontSize: 11 }}>
+          <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)', fontSize: 'var(--fs-11, 11px)' }}>
             已信任的域名需要写进 CSP 才真正放行：
           </div>
           <pre
             className="p-mono"
             style={{
-              marginTop: 6, padding: 10, fontSize: 10.5, whiteSpace: 'pre-wrap',
+              marginTop: 'var(--sp-3, 6px)', padding: 'var(--sp-5, 10px)', fontSize: 'var(--fs-11, 11px)', whiteSpace: 'pre-wrap',
               wordBreak: 'break-all', borderRadius: 'var(--r-sm)', background: 'var(--surface-sunk)',
               boxShadow: 'inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light)',
             }}

@@ -540,6 +540,10 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   border-bottom: 1px solid var(--af-divider);
 }
 .tabs-scroll { display: flex; gap: 5px; overflow-x: auto; flex: 1; min-width: 0; }
+/* 横向滚动条：宽度走外壳令牌的同一套。
+   本文件已 @import tokens.css，那里有完整的 ::-webkit-scrollbar 规则
+   （thumb / track / hover），这里只需覆盖"横向时的高度"——
+   横向滚动条用 height，纵向用 width，是两套不同的轴。 */
 .tabs-scroll::-webkit-scrollbar { height: var(--af-scroll-h); }
 .tab {
   display: flex; align-items: center; gap: 6px; flex: none;

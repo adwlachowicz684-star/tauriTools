@@ -13,6 +13,44 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const read = (p) => readFileSync(join(HERE, p), 'utf8');
+
+/**
+ * 极简 glob：支持 `**`（任意层）与 `*`（单层）。
+ * 测试脚本只用它挑文件，够用且不必引外部依赖。
+ */
+function glob(pattern) {
+  const seg = pattern.split('/');
+  const walk = (dir, i) => {
+    if (i >= seg.length) return [dir];
+    const part = seg[i];
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+    const out = [];
+    if (part === '**') {
+      if (i + 1 >= seg.length) return [];
+      out.push(...walk(dir, i + 1));
+      for (const e of entries) {
+        if (e.isDirectory()) out.push(...walk(join(dir, e.name), i));
+      }
+      return out;
+    }
+    for (const e of entries) {
+      /* 支持三种写法：
+           *        —— 任意名字
+           *.ext    —— 按后缀（'*.tsx' 不是 '*'，不能拿 === '*' 判断，
+                        之前就是这里写错导致匹配到 0 个文件、断言恒真）
+           name     —— 精确名字 */
+      const ok = part === '*' ? true
+        : part.startsWith('*.') ? e.name.endsWith(part.slice(1))
+          : e.name === part;
+      if (!ok) continue;
+      if (i + 1 >= seg.length) out.push(join(dir, e.name));
+      else if (e.isDirectory()) out.push(...walk(join(dir, e.name), i + 1));
+    }
+    return out;
+  };
+  return walk(HERE, 0).map((p) => p.slice(HERE.length + 1));
+}
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '');
 
 let pass = 0, fail = 0;
@@ -315,6 +353,50 @@ t('抽屉有滑入过渡，且尊重 prefers-reduced-motion',
 const scrollBlock = /\.drawer-scroll\s*\{([^}]*)\}/.exec(shellCss)?.[1] || '';
 t('内容区可滚动且写了 min-height:0（否则被内容顶开，滚动失效）',
   /overflow\s*:\s*auto/.test(scrollBlock) && /min-height\s*:\s*0/.test(scrollBlock));
+
+console.log('\n=== 11. 内联样式走令牌（审计盲区收口）===');
+{
+  /* 样式审计只能扫 CSS 文件 —— 全仓 253 处内联样式它既看不到也改不动。
+     所以内联值也必须走令牌，否则"CSS 里是整数、TSX 里还是半档"。 */
+  const tsx = [...glob('plugins/**/*.tsx'), ...glob('src/**/*.tsx')];
+  const bare = [];
+  for (const p of tsx) {
+    if (/node_modules/.test(p)) continue;
+    const text = read(p);
+    /* 半档字号：此前 fontSize: 11.5 出现 29 处、10.5 出现 4 处 */
+    for (const m of text.matchAll(/fontSize:\s*([\d.]+)/g)) {
+      if (/\.5$/.test(m[1])) bare.push(`${p}: fontSize ${m[1]}`);
+    }
+    /* 裸间距值：此前 marginTop: 8 ×19、marginTop: 10 ×13 … 全是凭手感写的 */
+    for (const m of text.matchAll(
+      /\b(marginTop|marginBottom|marginLeft|marginRight|gap|padding):\s*(\d+)\b/g)) {
+      bare.push(`${p}: ${m[1]} ${m[2]}`);
+    }
+  }
+  t('内联字号无半档、无裸间距值', bare.length === 0, bare.slice(0, 4).join(' | '));
+
+  /* 令牌必须真的存在，否则 var() 取不到值、声明直接失效 */
+  const tokens = read('css/tokens.css');
+  for (const v of ['--sp-1', '--sp-4', '--sp-8', '--field-label-w']) {
+    t(`间距令牌 ${v} 已定义`, new RegExp(`${v}:`).test(tokens));
+  }
+  /* 尺度要连续，缺一档就会有人去写裸值 */
+  const sps = [...tokens.matchAll(/--sp-(\d+):/g)].map((m) => +m[1]);
+  t('间距令牌 1~10 连续无缺档',
+    sps.length === 10 && Math.min(...sps) === 1 && Math.max(...sps) === 10,
+    `实际 ${sps.sort((a, b) => a - b).join(',')}`);
+
+  /* 插件不该再各自实现滚动条 —— tokens.css 里有完整一份
+     （thumb / track / hover），缺失任一都会露出 WebKit 默认浅色条。 */
+  const own = [];
+  for (const p of glob('plugins/*/style*.css')) {
+    const text = read(p);
+    const n = (text.match(/::-webkit-scrollbar/g) || []).length;
+    if (n > 1) own.push(`${p}: ${n} 条`);
+  }
+  t('插件没有各自实现滚动条（改用 tokens.css 那份）',
+    own.length === 0, own.join(' | '));
+}
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -46,20 +46,20 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
         key={key}
         className="p-row"
         style={{
-          padding: '12px 14px', marginTop: 10, borderRadius: 'var(--r)',
+          padding: '12px 14px', marginTop: 'var(--sp-5, 10px)', borderRadius: 'var(--r)',
           background: 'var(--surface-sunk)',
           boxShadow: 'inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light)',
         }}
       >
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13 }}>{label}</div>
-          <div className="p-muted" style={{ fontSize: 11, marginTop: 2, lineHeight: 1.7 }}>
+          <div style={{ fontSize: 'var(--fs-13, 13px)' }}>{label}</div>
+          <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-1, 2px)', lineHeight: 1.7 }}>
             {base === 'dark' ? '整体主题为深色时，本插件用这套' : '整体主题为浅色时，本插件用这套'}
           </div>
         </div>
         <select
           className="p-input"
-          style={{ height: 30, fontSize: 12, padding: '0 8px', flex: 'none', maxWidth: 190 }}
+          style={{ height: 30, fontSize: 'var(--fs-12, 12px)', padding: '0 8px', flex: 'none', maxWidth: 190 }}
           value={cfg[key] ?? ''}
           onChange={(e) => setCfg(setPluginConfig(manifest.id, { [key]: e.target.value || null }))}
         >
@@ -74,7 +74,7 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
     <>
       <div className="p-card">
         <h2>沙箱与主题</h2>
-        <div className="p-muted" style={{ lineHeight: 1.9, marginBottom: 4 }}>
+        <div className="p-muted" style={{ lineHeight: 1.9, marginBottom: 'var(--sp-2, 4px)' }}>
           两个开关互相独立。改动在下次加载该插件时生效。
         </div>
         {rows.map(([label, key, texts]) => (
@@ -82,20 +82,20 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
             key={key}
             className="p-row"
             style={{
-              padding: '12px 14px', marginTop: 10, borderRadius: 'var(--r)',
+              padding: '12px 14px', marginTop: 'var(--sp-5, 10px)', borderRadius: 'var(--r)',
               background: 'var(--surface-sunk)',
               boxShadow: 'inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light)',
             }}
           >
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13 }}>{label}</div>
-              <div className="p-muted" style={{ fontSize: 11, marginTop: 2, lineHeight: 1.7 }}>
+              <div style={{ fontSize: 'var(--fs-13, 13px)' }}>{label}</div>
+              <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-1, 2px)', lineHeight: 1.7 }}>
                 {cfg[key] ? texts.on : texts.off}
               </div>
             </div>
             <button
               className={'p-btn' + (cfg[key] ? ' primary' : '')}
-              style={{ height: 30, padding: '0 12px', fontSize: 12, flex: 'none' }}
+              style={{ height: 30, padding: '0 12px', fontSize: 'var(--fs-12, 12px)', flex: 'none' }}
               onClick={() => toggle(key)}
             >
               {cfg[key] ? '已开启' : '已关闭'}
@@ -103,14 +103,14 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
           </div>
         ))}
         {manifest.type !== 'iframe' ? (
-          <div className="p-muted" style={{ marginTop: 10, fontSize: 11 }}>
+          <div className="p-muted" style={{ marginTop: 'var(--sp-5, 10px)', fontSize: 'var(--fs-11, 11px)' }}>
             同页插件不受影响 —— 它本来就跑在主页面里。
           </div>
         ) : null}
         <div
           className="p-muted"
           style={{
-            marginTop: 12, paddingTop: 10, fontSize: 10.5, lineHeight: 1.8,
+            marginTop: 'var(--sp-6, 12px)', paddingTop: 10, fontSize: 'var(--fs-11, 11px)', lineHeight: 1.8,
             borderTop: '1px solid var(--hairline)',
           }}
         >
@@ -125,7 +125,7 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
           不再跟随用户在同基调里换哪套主题。 */}
       <div className="p-card">
         <h2>插件主题</h2>
-        <div className="p-muted" style={{ lineHeight: 1.9, marginBottom: 4 }}>
+        <div className="p-muted" style={{ lineHeight: 1.9, marginBottom: 'var(--sp-2, 4px)' }}>
           分别为深色 / 浅色各挑一套。选好后，本插件只跟随整体主题的<b>深浅</b>
           在自己这两套之间切换，不再跟随你在同基调里换哪套主题。留空则跟随全局。
           修改<b>立即生效</b>，无需重载。
@@ -137,7 +137,7 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
       {mine.length ? (
         <div className="p-card">
           <h2>外链 · {mine.length}</h2>
-          <div className="p-muted" style={{ marginBottom: 10, fontSize: 11 }}>
+          <div className="p-muted" style={{ marginBottom: 'var(--sp-5, 10px)', fontSize: 'var(--fs-11, 11px)' }}>
             扫描插件入口得到。全局策略与逐条放行在「设置 → 外链」里改。
           </div>
           {mine.map((x) => (
@@ -145,14 +145,14 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
               key={x.host}
               className="p-row"
               style={{
-                padding: '10px 12px', marginTop: 8, borderRadius: 'var(--r-sm)',
+                padding: '10px 12px', marginTop: 'var(--sp-4, 8px)', borderRadius: 'var(--r-sm)',
                 background: 'var(--surface-sunk)',
                 boxShadow: 'inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light)',
               }}
             >
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="p-mono" style={{ fontSize: 12 }}>{x.host}</div>
-                <div className="p-muted" style={{ fontSize: 10.5, marginTop: 2 }}>
+                <div className="p-mono" style={{ fontSize: 'var(--fs-12, 12px)' }}>{x.host}</div>
+                <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-1, 2px)' }}>
                   {(extPolicy.KIND_LABELS as Record<string, string>)[x.kind] || x.kind} · {
                     x.status === 'trusted' ? '已信任' : x.status === 'blocked' ? '已禁止' : '待决定'
                   }

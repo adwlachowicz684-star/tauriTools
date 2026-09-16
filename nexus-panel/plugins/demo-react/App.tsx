@@ -71,14 +71,14 @@ export default function Demo() {
           </div>
           <div className="p-stat">
             <div className="k">挂载模式</div>
-            <div className="v" style={{ fontSize: 15 }}>{ctx.mode}</div>
+            <div className="v" style={{ fontSize: 'var(--fs-15, 15px)' }}>{ctx.mode}</div>
           </div>
           <div className="p-stat">
             <div className="k">样式隔离</div>
-            <div className="v" style={{ fontSize: 15 }}>iframe</div>
+            <div className="v" style={{ fontSize: 'var(--fs-15, 15px)' }}>iframe</div>
           </div>
         </div>
-        <div className="p-row" style={{ marginTop: 16 }}>
+        <div className="p-row" style={{ marginTop: 'var(--sp-8, 16px)' }}>
           <button className="p-btn primary" onClick={bump}>＋ {step}</button>
           <button
             className="p-btn"
@@ -113,7 +113,7 @@ export default function Demo() {
             invoke("app_version")
           </button>
         </div>
-        <div className="p-muted" style={{ marginTop: 10 }}>
+        <div className="p-muted" style={{ marginTop: 'var(--sp-5, 10px)' }}>
           沙箱里不能直接访问 Tauri API，SDK 会自动经 postMessage 桥接转发，用法不变。
         </div>
       </div>
@@ -123,7 +123,7 @@ export default function Demo() {
         <div className="p-mono p-muted" style={{ maxHeight: 180, overflow: 'auto', lineHeight: 1.9 }}>
           {log.length ? log.map((l, i) => <div key={i}>{l}</div>) : <div>（暂无）</div>}
         </div>
-        <div className="p-row" style={{ marginTop: 14 }}>
+        <div className="p-row" style={{ marginTop: 'var(--sp-7, 14px)' }}>
           <button className="p-btn" onClick={() => ctx.toast('来自沙箱的提示')}>toast</button>
           <button className="p-btn" onClick={() => ctx.openPlugin('home')}>跳到概览</button>
           <button className="p-btn" onClick={() => ctx.reload()}>重载自己</button>

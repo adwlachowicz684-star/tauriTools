@@ -393,7 +393,7 @@ export function ConditionInspector({ node, edges, onChange }: {
       <div className="tip">
         条件节点不调用 CLI、不消耗积分。把各分支的连线接到节点右侧对应的出口上：
         每条规则对应一个出口，兜底单独一个出口。
-        <div style={{ marginTop: 6 }}>
+        <div style={{ marginTop: 'var(--sp-3, 6px)' }}>
           一条规则可含多条条件，用「且 / 或」组合；条件可单独开关，
           临时停一条比删了重建省事。
         </div>

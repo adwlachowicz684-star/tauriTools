@@ -63,12 +63,12 @@ export function Modal({
         style={{ width, maxHeight: '86vh', overflow: 'auto' }}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="p-row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
+        <div className="p-row" style={{ justifyContent: 'space-between', marginBottom: 'var(--sp-7, 14px)' }}>
           <h2 style={{ margin: 0 }}>{title}</h2>
           <button className="p-btn" style={{ height: 30, padding: '0 12px' }} onClick={ask}>✕</button>
         </div>
         {children}
-        {footer && <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 18 }}>{footer}</div>}
+        {footer && <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 'var(--sp-9, 18px)' }}>{footer}</div>}
       </div>
 
       {confirming && (
@@ -80,7 +80,7 @@ export function Modal({
           <div className="dialog p-card" style={{ width: 340 }} onMouseDown={(e) => e.stopPropagation()}>
             <h2 style={{ margin: '0 0 10px' }}>放弃未保存的改动？</h2>
             <div className="p-muted">当前有改动尚未保存，关闭后将丢失。</div>
-            <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
+            <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 'var(--sp-8, 16px)' }}>
               <button className="p-btn" onClick={() => setConfirming(false)}>继续编辑</button>
               <button className="p-btn primary" onClick={onClose}>放弃并关闭</button>
             </div>

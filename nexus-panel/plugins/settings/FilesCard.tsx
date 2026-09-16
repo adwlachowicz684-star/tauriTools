@@ -71,7 +71,7 @@ export default function FilesCard() {
   return (
     <div className="p-card">
       <h2>文件访问</h2>
-      <div className="p-muted" style={{ marginBottom: 12, lineHeight: 1.9 }}>
+      <div className="p-muted" style={{ marginBottom: 'var(--sp-6, 12px)', lineHeight: 1.9 }}>
         agent-flow 的文件节点只能读写这里列出的目录（含子目录）。
         <br />
         超出范围的操作会被拒绝 —— 这样插件就没法「读本地文件再发到网上」。
@@ -92,20 +92,20 @@ export default function FilesCard() {
           key={r}
           className="p-row"
           style={{
-            padding: '10px 12px', marginTop: 8, borderRadius: 'var(--r-sm)',
+            padding: '10px 12px', marginTop: 'var(--sp-4, 8px)', borderRadius: 'var(--r-sm)',
             background: 'var(--surface-sunk)',
             boxShadow: 'inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light)',
           }}
         >
           <div
             className="p-mono"
-            style={{ flex: 1, minWidth: 0, fontSize: 12, wordBreak: 'break-all' }}
+            style={{ flex: 1, minWidth: 0, fontSize: 'var(--fs-12, 12px)', wordBreak: 'break-all' }}
           >
             {r}
           </div>
           <button
             className="p-btn"
-            style={{ height: 26, padding: '0 9px', fontSize: 11 }}
+            style={{ height: 26, padding: '0 9px', fontSize: 'var(--fs-11, 11px)' }}
             title="撤销授权（应用数据目录不可撤销）"
             disabled={busy}
             onClick={() => remove(r)}
@@ -115,19 +115,19 @@ export default function FilesCard() {
         </div>
       ))}
 
-      <div className="p-row" style={{ marginTop: 12 }}>
+      <div className="p-row" style={{ marginTop: 'var(--sp-6, 12px)' }}>
         <input
           className="p-input"
           type="text"
           placeholder="粘贴要授权的目录完整路径，如 /Users/me/projects"
-          style={{ flex: 1, height: 30, fontSize: 12, padding: '0 10px', minWidth: 0 }}
+          style={{ flex: 1, height: 30, fontSize: 'var(--fs-12, 12px)', padding: '0 10px', minWidth: 0 }}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
         />
         <button
           className="p-btn primary"
-          style={{ height: 30, padding: '0 14px', fontSize: 12 }}
+          style={{ height: 30, padding: '0 14px', fontSize: 'var(--fs-12, 12px)' }}
           disabled={busy}
           onClick={add}
         >

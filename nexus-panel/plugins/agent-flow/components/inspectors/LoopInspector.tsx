@@ -179,12 +179,12 @@ export function LoopInspector({ node, edges, onChange }: {
 
       <div className="tip">
         <strong>循环体内可用变量</strong>
-        <div style={{ marginTop: 6 }}>
+        <div style={{ marginTop: 'var(--sp-3, 6px)' }}>
           <code>{'{{loop.item}}'}</code> 当前项 ·{' '}
           <code>{'{{loop.index}}'}</code> 下标（从 0）·{' '}
           <code>{'{{loop.count}}'}</code> 总轮数
         </div>
-        <div style={{ marginTop: 8 }}>
+        <div style={{ marginTop: 'var(--sp-4, 8px)' }}>
           节点右侧有<strong>两个出口</strong>：上方「循环体」每轮执行一次，
           下方「结束」在全部迭代完成后执行一次。
         </div>

@@ -87,12 +87,12 @@ export function HotkeySettings({
 
   return (
     <div>
-      <div className="p-row" style={{ marginBottom: 8 }}>
+      <div className="p-row" style={{ marginBottom: 'var(--sp-4, 8px)' }}>
         <button className="p-btn" onClick={resetAll}
           disabled={Object.keys(draft).length === 0}>
           全部恢复默认
         </button>
-        <span className="p-muted" style={{ fontSize: 11 }}>
+        <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
           已自定义 {Object.keys(draft).filter((k) => normalizeCombo(draft[k])).length} 项
         </span>
       </div>
@@ -134,7 +134,7 @@ export function HotkeySettings({
         })}
       </div>
 
-      <div className="p-muted" style={{ fontSize: 11, marginTop: 8 }}>
+      <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-4, 8px)' }}>
         点击键位后按下新组合键；Esc 放弃，Del / Backspace 取消绑定。
         {IS_MAC ? 'mod = ⌘' : 'mod = Ctrl'}。
         浏览器自身占用的键（如 F5、Ctrl+L）可能拦不住，标 ⚠ 的即是。

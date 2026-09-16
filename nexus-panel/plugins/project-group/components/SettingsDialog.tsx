@@ -245,7 +245,7 @@ export function SettingsBody({
 
       <div className="fpx-settings-sec">
         <h3>快捷键</h3>
-        <div className="p-muted" style={{ fontSize: 11.5, marginBottom: 8 }}>
+        <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginBottom: 'var(--sp-4, 8px)' }}>
           卡片与页签的键位。只记录改过的项，其余跟随内置默认。
         </div>
         <HotkeySettings value={hotkeys} onChange={setHotkeys} />
@@ -253,7 +253,7 @@ export function SettingsBody({
 
       <div className="fpx-settings-sec">
         <h3>目录</h3>
-        <div className="p-muted" style={{ fontSize: 11.5, marginBottom: 8 }}>
+        <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginBottom: 'var(--sp-4, 8px)' }}>
           下面几个目录决定**新建设在哪、跨栏搬家往哪搬**。留空则每次新建时自己选。
         </div>
         {dirRow('新建项目的预设父目录', createProjectDir, setCreateProjectDir, 'cp',
@@ -262,7 +262,7 @@ export function SettingsBody({
           '留空 = 每次新建时手动选')}
         {dirRow('项目组模板文件夹', groupTemplateDir, setGroupTemplateDir, 'gt',
           '新建项目组时把这里的内容复制过去（留空 = 不套模板）')}
-        <div className="p-muted" style={{ fontSize: 11.5, marginTop: 6 }}>
+        <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-3, 6px)' }}>
           「跨类别移动」里的<b>默认根目录</b>指的就是前两项：卡片换栏时若开启同步移动，
           文件夹会被搬到另一类别的预设父目录。两项都没设时，换栏只改归属、不搬文件夹。
         </div>
@@ -279,7 +279,7 @@ export function SettingsBody({
 
       <div className="fpx-settings-sec">
         <h3>Agent 连锁</h3>
-        <div className="p-muted" style={{ fontSize: 11.5, marginBottom: 6 }}>
+        <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginBottom: 'var(--sp-3, 6px)' }}>
           内置四项（自由任务 / 一键审查 / 快速归并 / 快速部署）+ 自定义动作，
           每个动作分别可设项目与项目组两份指令模板。
         </div>
@@ -305,7 +305,7 @@ export function SettingsBody({
               <option value="defaultRoots">仅默认根目录下的卡片（已在目标根内则保持原位）</option>
               <option value="anywhere">任意位置的卡片都搬</option>
             </select>
-            <div className="p-muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+            <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-2, 4px)' }}>
               「默认根目录」指「新建」里设置的预设父目录（项目/项目组各一个）。
               搬迁目标是另一类别的预设父目录；未设置时自动跳过物理搬家，只换卡片归属。
             </div>
@@ -315,12 +315,12 @@ export function SettingsBody({
 
       <div className="fpx-settings-sec">
         <h3>软件图标（外壳）</h3>
-        <div className="p-muted" style={{ fontSize: 11.5, marginBottom: 6 }}>
+        <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginBottom: 'var(--sp-3, 6px)' }}>
           更换本软件窗口在任务栏 / 标题栏上的图标。这是窗口级设置，不属于插件数据；
           重启软件后会回到打包时的默认图标。
         </div>
         {iconFiles.length === 0 ? (
-          <div className="p-muted" style={{ fontSize: 11.5 }}>
+          <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
             数据目录 icons/ 下还没有图标。可先在卡片的「图标与标签」里导入，再来这里选用。
           </div>
         ) : (
@@ -339,7 +339,7 @@ export function SettingsBody({
           </div>
         )}
         {iconMsg && (
-          <div className="p-muted" style={{ fontSize: 11.5, marginTop: 6 }}>{iconMsg}</div>
+          <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-3, 6px)' }}>{iconMsg}</div>
         )}
       </div>
 
@@ -372,7 +372,7 @@ export function SettingsBody({
               ))}
             </select>
           </div>
-          <div className="p-muted" style={{ fontSize: 11.5 }}>
+          <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
             {status?.lastRun
               ? `上次自动备份：${status.lastRun}${status.running ? '，运行中' : ''}`
               : '设置后由后台定时执行，改动在保存时生效'}
@@ -388,7 +388,7 @@ export function SettingsBody({
               打开项目组备份目录
             </button>
           </div>
-          <div className="p-muted" style={{ fontSize: 11.5 }}>
+          <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
             打开的就是备份实际写入的目录。还没备份过时目录可能不存在 —— 这里不自动创建，
             免得看到空目录反而困惑。
           </div>
@@ -402,7 +402,7 @@ export function SettingsBody({
           title="启用 MCP 服务"
           sub="关闭后外部 AI 工具的全部调用都会被拒绝（进程仍在跑，可随时改回）"
         />
-        <div className="p-muted" style={{ fontSize: 11.5, margin: '4px 0 8px' }}>
+        <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', margin: '4px 0 8px' }}>
           进程的启动 / 停止在「服务」面板；这里只管是否对外提供能力。
         </div>
         {toolRows.length > 0 && (
@@ -437,7 +437,7 @@ export function SettingsBody({
 
       {/* 保存按钮放在主体里而不是外层 Modal 的 footer：
           设置面板（外壳「⚙」）没有 Modal，只有主体，按钮必须自带。 */}
-      <div className="p-row" style={{ marginTop: 16 }}>
+      <div className="p-row" style={{ marginTop: 'var(--sp-8, 16px)' }}>
         <button className="p-btn primary" onClick={() => void save()} disabled={saving}>
           {saving ? '保存中…' : '保存设置'}
         </button>

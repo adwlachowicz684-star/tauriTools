@@ -79,7 +79,7 @@ export function ChainClientsDialog({
         </>
       }
     >
-      <div className="p-muted" style={{ marginBottom: 10, fontSize: 11.5 }}>
+      <div className="p-muted" style={{ marginBottom: 'var(--sp-5, 10px)', fontSize: 'var(--fs-11, 11px)' }}>
         自动检测扫不到时（装在非常规位置、或没有可预填的深链接）可在此登记。
         「标识」是内部用的唯一 id，「程序路径」优先用于打开目录，不可用则试「URL scheme」。
         两者都只能做到「唤起客户端 + 复制指令」，自动预填对话框需要客户端自己支持深链接。
@@ -103,7 +103,7 @@ export function ChainClientsDialog({
         </div>
       ))}
 
-      {err && <div className="p-muted" style={{ color: 'var(--danger)', marginTop: 8 }}>{err}</div>}
+      {err && <div className="p-muted" style={{ color: 'var(--danger)', marginTop: 'var(--sp-4, 8px)' }}>{err}</div>}
     </Modal>
   );
 }

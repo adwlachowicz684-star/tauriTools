@@ -89,7 +89,7 @@ function StyleAuditBadge({ audit, open, onToggle }: {
           ? '未检测：同页插件没有独立样式文件，或沙箱隔离态下读不到'
           : `${c.error} 处错误 / ${c.warn} 处警告 / ${c.info} 条提示`}
         style={{
-          height: 30, padding: '0 10px', fontSize: 12,
+          height: 30, padding: '0 10px', fontSize: 'var(--fs-12, 12px)',
           borderRadius: 'var(--r-xs)', cursor: 'pointer',
           border: `1px solid ${hover ? color : 'var(--divider)'}`,
           background: 'transparent', color,
@@ -107,7 +107,7 @@ function StyleAuditBadge({ audit, open, onToggle }: {
           background: 'var(--surface-overlay)',
           border: '1px solid var(--divider)',
           boxShadow: 'var(--sh-cast-md)',
-          fontSize: 11.5, lineHeight: 1.65,
+          fontSize: 'var(--fs-11, 11px)', lineHeight: 1.65,
         }}>
           {undetected ? (
             <div style={{ color: 'var(--text-dim)' }}>
@@ -120,7 +120,7 @@ function StyleAuditBadge({ audit, open, onToggle }: {
             </div>
           ) : (
             <>
-              <div style={{ color: 'var(--text-dim)', marginBottom: 6 }}>
+              <div style={{ color: 'var(--text-dim)', marginBottom: 'var(--sp-3, 6px)' }}>
                 扫描 {audit.files.join('、')} ·
                 {' '}{c.error} 错误 / {c.warn} 警告 / {c.info} 提示
               </div>
@@ -132,13 +132,13 @@ function StyleAuditBadge({ audit, open, onToggle }: {
                   <span style={{
                     color: x.level === 'error' ? 'var(--danger)'
                       : x.level === 'warn' ? 'var(--warn)' : 'var(--text-mute)',
-                    marginRight: 6,
+                    marginRight: 'var(--sp-3, 6px)',
                   }}>
                     {x.level === 'error' ? '✕' : x.level === 'warn' ? '⚠' : 'ⓘ'}
                   </span>
                   <span style={{ color: 'var(--text)' }}>{x.msg}</span>
                   {x.line ? (
-                    <span className="p-mono" style={{ color: 'var(--text-mute)', marginLeft: 6 }}>
+                    <span className="p-mono" style={{ color: 'var(--text-mute)', marginLeft: 'var(--sp-3, 6px)' }}>
                       L{x.line}
                     </span>
                   ) : null}
@@ -293,7 +293,7 @@ export default function Settings() {
         /* ---------------- 主题 ---------------- */
         <div className="p-card">
           <h2>主题</h2>
-          <div className="p-muted" style={{ marginBottom: 12, fontSize: 12 }}>
+          <div className="p-muted" style={{ marginBottom: 'var(--sp-6, 12px)', fontSize: 'var(--fs-12, 12px)' }}>
             点缩略图即切换。标题栏右上角的 ◐ 按钮也能快速切换，两处是同一套数据。
           </div>
           {(() => {
@@ -391,10 +391,10 @@ export default function Settings() {
             ));
           })()}
 
-          <div className="p-muted" style={{ marginTop: 16 }}>
+          <div className="p-muted" style={{ marginTop: 'var(--sp-8, 16px)' }}>
             强调色（叠加在当前主题之上 · 按钮 / 选中态 / 链接）
           </div>
-          <div className="p-row" style={{ marginTop: 8 }}>
+          <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)' }}>
             {swatchFor(getBase()).map(([c, label]) => {
               const cur = getAccent();
               return (
@@ -414,13 +414,13 @@ export default function Settings() {
             })}
           </div>
 
-          <div className="p-muted" style={{ marginTop: 14 }}>
+          <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)' }}>
             环境色（第二个主色 · 仅用于次要点缀）
           </div>
-          <div className="p-muted" style={{ fontSize: 12, marginTop: 2 }}>
+          <div className="p-muted" style={{ fontSize: 'var(--fs-12, 12px)', marginTop: 'var(--sp-1, 2px)' }}>
             成功 / 错误 / 运行中 / 警告 为固定语义色，不随这里变化
           </div>
-          <div className="p-row" style={{ marginTop: 8 }}>
+          <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)' }}>
             {swatchFor(getBase()).map(([c, label]) => {
               const cur = getEnvColor();
               return (
@@ -440,13 +440,13 @@ export default function Settings() {
             })}
           </div>
 
-          <div className="p-muted" style={{ marginTop: 14 }}>
+          <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)' }}>
             主题色调整（在主题自身配色上做整体偏移）
           </div>
-          <div className="p-muted" style={{ fontSize: 12, marginTop: 2 }}>
+          <div className="p-muted" style={{ fontSize: 'var(--fs-12, 12px)', marginTop: 'var(--sp-1, 2px)' }}>
             {`每套主题各记一份（当前：${getCurrent().name}）；只偏移主题配色，强调色、环境色与状态色不参与`}
           </div>
-          <div className="p-row" style={{ marginTop: 8, gap: 8 }}>
+          <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
             <span className="p-muted" style={{ width: 30, flex: 'none' }}>色相</span>
             <input
               className="p-range"
@@ -458,7 +458,7 @@ export default function Settings() {
               {getHueShift() > 0 ? '+' : ''}{getHueShift()}°
             </span>
           </div>
-          <div className="p-row" style={{ marginTop: 6, gap: 8 }}>
+          <div className="p-row" style={{ marginTop: 'var(--sp-3, 6px)', gap: 'var(--sp-4, 8px)' }}>
             <span className="p-muted" style={{ width: 30, flex: 'none' }}>明暗</span>
             <input
               className="p-range"
@@ -472,7 +472,7 @@ export default function Settings() {
           </div>
 
           {(getAccent() || getEnvColor() || getHueShift() || getLightShift()) ? (
-            <div className="p-row" style={{ marginTop: 10 }}>
+            <div className="p-row" style={{ marginTop: 'var(--sp-5, 10px)' }}>
               <button
                 className="p-btn"
                 onClick={() => { resetColors(); ctx.toast('已恢复主题自带配色', 'ok'); rerender(); void syncThemeToShell(); }}
@@ -488,7 +488,7 @@ export default function Settings() {
             </div>
           ) : null}
 
-          <div className="p-row" style={{ marginTop: 14 }}>
+          <div className="p-row" style={{ marginTop: 'var(--sp-7, 14px)' }}>
             <button
               className="p-btn"
               onClick={async () => {
@@ -516,7 +516,7 @@ export default function Settings() {
           {/* ---------------- 插件主题适配 ---------------- */}
           <div className="p-card">
             <h2>插件主题适配</h2>
-            <div className="p-muted" style={{ marginBottom: 12, lineHeight: 1.9 }}>
+            <div className="p-muted" style={{ marginBottom: 'var(--sp-6, 12px)', lineHeight: 1.9 }}>
               基调不一致的插件会自动反转并与面板统一：深色面板暗化浅色插件，浅色面板亮化深色插件。
               <br />
               图片/图表会二次反转还原，不会被误伤。
@@ -538,7 +538,7 @@ export default function Settings() {
                 ))}
               </select>
             </div>
-            <div className="p-muted" style={{ marginTop: 8 }}>
+            <div className="p-muted" style={{ marginTop: 'var(--sp-4, 8px)' }}>
               {ADAPT_POLICIES.find((p) => p.value === policy)?.desc}
             </div>
           </div>
@@ -546,7 +546,7 @@ export default function Settings() {
           {/* ---------------- 插件管理 ---------------- */}
           <div className="p-card">
             <h2>插件管理</h2>
-            <div className="p-muted" style={{ marginBottom: 6 }}>
+            <div className="p-muted" style={{ marginBottom: 'var(--sp-3, 6px)' }}>
               侧栏「＋」可安装新插件；右侧下拉为单个插件指定基调判定方式
             </div>
             {plugins.map((p) => (
@@ -554,15 +554,15 @@ export default function Settings() {
                 key={p.id}
                 className="p-row"
                 style={{
-                  padding: '12px 14px', marginTop: 10, borderRadius: 'var(--r)',
+                  padding: '12px 14px', marginTop: 'var(--sp-5, 10px)', borderRadius: 'var(--r)',
                   background: 'var(--surface-sunk)',
                   boxShadow: 'inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light)',
                 }}
               >
-                <span style={{ fontSize: 16, width: 24, textAlign: 'center' }}>{p.icon ?? '◌'}</span>
+                <span style={{ fontSize: 'var(--fs-15, 15px)', width: 24, textAlign: 'center' }}>{p.icon ?? '◌'}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13 }}>{p.name}</div>
-                  <div className="p-mono p-muted" style={{ fontSize: 11 }}>{p.entry}</div>
+                  <div style={{ fontSize: 'var(--fs-13, 13px)' }}>{p.name}</div>
+                  <div className="p-mono p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>{p.entry}</div>
                 </div>
                 <span className="p-tag">{p.type === 'iframe' ? '沙箱' : '同页'}</span>
                 <StyleAuditBadge
@@ -572,7 +572,7 @@ export default function Settings() {
                 />
                 <select
                   className="p-input"
-                  style={{ width: 130, height: 30, fontSize: 12, padding: '0 8px' }}
+                  style={{ width: 130, height: 30, fontSize: 'var(--fs-12, 12px)', padding: '0 8px' }}
                   value={getPluginOverride(p.id) ?? ''}
                   onChange={(e) => {
                     setPluginOverride(p.id, e.target.value || null);
@@ -591,7 +591,7 @@ export default function Settings() {
                 ) : (
                   <button
                     className="p-btn danger"
-                    style={{ height: 30, padding: '0 10px', fontSize: 12 }}
+                    style={{ height: 30, padding: '0 10px', fontSize: 'var(--fs-12, 12px)' }}
                     onClick={() => removePlugin(p)}
                   >
                     移除
@@ -600,7 +600,7 @@ export default function Settings() {
               </div>
             ))}
             {plugins.length ? null : (
-              <div className="p-muted" style={{ marginTop: 10 }}>
+              <div className="p-muted" style={{ marginTop: 'var(--sp-5, 10px)' }}>
                 {pluginsUnknown
                   ? '未连接到外壳（沙箱隔离态），读不到插件列表，移除功能不可用'
                   : '暂无可管理的插件'}
@@ -622,22 +622,22 @@ export default function Settings() {
           <div className="p-grid">
             <div className="p-stat">
               <div className="k">应用</div>
-              <div className="v" style={{ fontSize: 15 }}>Nexus Panel</div>
+              <div className="v" style={{ fontSize: 'var(--fs-15, 15px)' }}>Nexus Panel</div>
             </div>
             <div className="p-stat">
               <div className="k">版本</div>
-              <div className="v" style={{ fontSize: 15 }}>{version}</div>
+              <div className="v" style={{ fontSize: 'var(--fs-15, 15px)' }}>{version}</div>
             </div>
             <div className="p-stat">
               <div className="k">外壳</div>
-              <div className="v" style={{ fontSize: 15 }}>React + Vite + TS</div>
+              <div className="v" style={{ fontSize: 'var(--fs-15, 15px)' }}>React + Vite + TS</div>
             </div>
             <div className="p-stat">
               <div className="k">框架</div>
-              <div className="v" style={{ fontSize: 15 }}>Tauri 2.x</div>
+              <div className="v" style={{ fontSize: 'var(--fs-15, 15px)' }}>Tauri 2.x</div>
             </div>
           </div>
-          <div className="p-muted" style={{ marginTop: 14, lineHeight: 1.9 }}>
+          <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)', lineHeight: 1.9 }}>
             快捷键：⌘/Ctrl + B 收起侧边栏 · ⌘/Ctrl + R 重载当前插件
           </div>
         </div>

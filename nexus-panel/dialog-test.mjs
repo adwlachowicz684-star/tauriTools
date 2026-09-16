@@ -248,6 +248,11 @@ for (const f of files) {
     /* 排除我们自己的 API：await confirm( / await prompt( / const x = alert( ...
        原生调用的特征是**没有 await** 且带 window. 前缀或直接裸调 */
     if (/await\s+$/.test(before)) continue;
+    /* void alert(...) 也是我们自己的 API —— 它是 Promise 化的，
+       用 void 丢弃返回值表示"弹完就完，不等结果"。
+       原生 window.alert 返回 undefined，没人会写 void window.alert()。
+       （这行最初漏了，agent-flow 新增的 void alert 被误报成原生调用。） */
+    if (/void\s+$/.test(before)) continue;
     native.push(`${rel}:${text.slice(0, m.index).split('\n').length}`);
   }
 }

@@ -165,11 +165,11 @@ export function LinkAgentBody({
 
   return (
     <>
-      <div className="p-muted" style={{ marginBottom: 10 }}>
+      <div className="p-muted" style={{ marginBottom: 'var(--sp-5, 10px)' }}>
         分配项目组时，会在项目目录下为每个启用的名字创建一个指向项目组的链接（junction），
         各家 agent 打开项目时即可读到该项目组的 agent / skill。
       </div>
-      <div className="p-muted" style={{ marginBottom: 10, fontSize: 11.5 }}>
+      <div className="p-muted" style={{ marginBottom: 'var(--sp-5, 10px)', fontSize: 'var(--fs-11, 11px)' }}>
         改名只影响<b>之后</b>新建的链接：已经建好的链接目录不会跟着改名，
         改名后需要对相关项目<b>撤销链接再重新分配</b>才会生效。
       </div>
@@ -224,7 +224,7 @@ export function LinkAgentBody({
         })}
       </div>
 
-      <div className="p-row" style={{ marginTop: 12 }}>
+      <div className="p-row" style={{ marginTop: 'var(--sp-6, 12px)' }}>
         <input className="p-input" value={draft} placeholder="自定义链接名，如 .myagent"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustom(); } }} />
@@ -233,7 +233,7 @@ export function LinkAgentBody({
       {err && <div className="p-muted" style={{ color: 'var(--danger)' }}>{err}</div>}
 
       {custom.length > 0 && (
-        <div className="fpx-agent-grid" style={{ marginTop: 10 }}>
+        <div className="fpx-agent-grid" style={{ marginTop: 'var(--sp-5, 10px)' }}>
           {sortByPin(custom, (n) => n).map((n) => {
             const isPinned = pinned.includes(n);
             return (
@@ -272,7 +272,7 @@ export function LinkAgentBody({
         </div>
       )}
 
-      <div className="p-row" style={{ marginTop: 12 }}>
+      <div className="p-row" style={{ marginTop: 'var(--sp-6, 12px)' }}>
         <button className="p-btn primary" onClick={submit}>
           保存（已启用 {enabledCount}/{allNames.length}）
         </button>

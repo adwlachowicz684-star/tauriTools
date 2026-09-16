@@ -52,7 +52,7 @@ export function RenameDialog({
       >
         <h2>改名{kind === 'project' ? '项目' : '项目组'}</h2>
 
-        <div className="p-muted" style={{ fontSize: 11.5, marginBottom: 10, wordBreak: 'break-all' }}>
+        <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginBottom: 'var(--sp-5, 10px)', wordBreak: 'break-all' }}>
           {card.path}
         </div>
 
@@ -72,16 +72,16 @@ export function RenameDialog({
           />
         </div>
 
-        <div className="p-muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
+        <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-4, 8px)', lineHeight: 1.6 }}>
           会同时更新页签登记、链接记录、图标与标签色、ACL 保护记录里对应的路径。
           指向它的链接在改名后会失效，需要重新分配一次。
         </div>
 
         {error && (
-          <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 8 }}>{error}</div>
+          <div style={{ color: 'var(--danger)', fontSize: 'var(--fs-12, 12px)', marginTop: 'var(--sp-4, 8px)' }}>{error}</div>
         )}
 
-        <div className="p-row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
+        <div className="p-row" style={{ marginTop: 'var(--sp-8, 16px)', justifyContent: 'flex-end' }}>
           <button className="p-btn" disabled={busy} onClick={onClose}>取消</button>
           <button className="p-btn primary" disabled={busy || !name.trim()} onClick={() => void submit()}>
             {busy ? '改名中…' : '确定'}

@@ -66,7 +66,7 @@ export default function PluginSettings() {
       <div className="p-card">
         <h2>加载失败</h2>
         <div className="p-muted">{err}</div>
-        <button className="p-btn primary" style={{ marginTop: 12 }} onClick={() => void load()}>
+        <button className="p-btn primary" style={{ marginTop: 'var(--sp-6, 12px)' }} onClick={() => void load()}>
           重试
         </button>
       </div>
@@ -90,7 +90,7 @@ export default function PluginSettings() {
 
       <div className="p-card">
         <h2>Agent 链接名</h2>
-        <div className="p-muted" style={{ marginBottom: 10, fontSize: 11.5 }}>
+        <div className="p-muted" style={{ marginBottom: 'var(--sp-5, 10px)', fontSize: 'var(--fs-11, 11px)' }}>
           哪些 agent 目录会被建链、各自的显示名与厂商标注。改完在下面保存。
         </div>
         <LinkAgentBody

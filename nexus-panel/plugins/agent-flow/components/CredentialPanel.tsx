@@ -147,7 +147,7 @@ export function CredentialPanel({
           {onChangeMode ? (
             <button
               className="mini"
-              style={{ marginLeft: 8 }}
+              style={{ marginLeft: 'var(--sp-4, 8px)' }}
               onClick={async () => {
                 const target = mode === 'passphrase' ? 'auto' : 'passphrase';
                 if (target === 'passphrase') {
@@ -167,7 +167,7 @@ export function CredentialPanel({
             </button>
           ) : null}
           {mode === 'passphrase' && !locked && onUnlock ? (
-            <button className="mini" style={{ marginLeft: 6 }} onClick={() => onUnlock('')}>
+            <button className="mini" style={{ marginLeft: 'var(--sp-3, 6px)' }} onClick={() => onUnlock('')}>
               锁定
             </button>
           ) : null}
@@ -175,7 +175,7 @@ export function CredentialPanel({
 
         {locked ? (
           <div className="cred-edit">
-            <div className="p-muted" style={{ fontSize: 12 }}>
+            <div className="p-muted" style={{ fontSize: 'var(--fs-12, 12px)' }}>
               凭据已用口令加密。输入口令后才会解密到内存，磁盘上始终是密文。
             </div>
             <label className="p-row">
@@ -191,7 +191,7 @@ export function CredentialPanel({
                 placeholder="解锁口令"
               />
             </label>
-            <div className="p-row" style={{ marginTop: 8, gap: 8 }}>
+            <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
               <button
                 className="p-btn primary"
                 onClick={() => onUnlock && onUnlock(unlockPass)}
@@ -237,12 +237,12 @@ export function CredentialPanel({
                 placeholder={editing.kind === 'github' ? 'ghp_… 或 github_pat_…' : 'sk-…'}
               />
             </label>
-            <div className="p-muted" style={{ fontSize: 12 }}>
+            <div className="p-muted" style={{ fontSize: 'var(--fs-12, 12px)' }}>
               {KIND_META[editing.kind].hint}
               {editing.kind === 'github' ? `。${scopeHintFor(['github:write'])}` : ''}
             </div>
 
-            <div className="p-row" style={{ marginTop: 8, gap: 8 }}>
+            <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
               <button className="p-btn primary" onClick={save} disabled={busy}>
                 {busy ? '校验中…' : '校验并保存'}
               </button>
@@ -252,7 +252,7 @@ export function CredentialPanel({
             {msg ? <div className="cred-ok">{msg}</div> : null}
           </div>
         ) : (
-          <div className="p-row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <div className="p-row" style={{ gap: 'var(--sp-4, 8px)', flexWrap: 'wrap' }}>
             {(Object.keys(KIND_META) as CredentialKind[]).map((k) => (
               <button key={k} className="p-btn" onClick={() => startNew(k)}>
                 + {KIND_META[k].label}
@@ -286,7 +286,7 @@ export function CredentialPanel({
                     </span>
                   ) : null}
                 </div>
-                <div className="p-row" style={{ gap: 6 }}>
+                <div className="p-row" style={{ gap: 'var(--sp-3, 6px)' }}>
                   <button className="mini" onClick={() => { setEditing(c); setErr(''); setMsg(''); }}>
                     编辑
                   </button>

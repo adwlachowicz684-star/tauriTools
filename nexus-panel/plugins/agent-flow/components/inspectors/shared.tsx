@@ -527,7 +527,7 @@ export function OrderPicker({
     onChange({ order: next.length ? next : fallback });
   };
   return (
-    <div className="p-row" style={{ flexWrap: 'wrap', gap: 6 }}>
+    <div className="p-row" style={{ flexWrap: 'wrap', gap: 'var(--sp-3, 6px)' }}>
       <span className="p-muted" style={{ width: 64, flex: 'none' }}>方案</span>
       {(Object.keys(GH_STRATEGY_META) as GithubStrategy[]).map((s) => (
         <button
@@ -539,7 +539,7 @@ export function OrderPicker({
           {GH_STRATEGY_META[s].label}
         </button>
       ))}
-      <span className="p-muted" style={{ fontSize: 11 }}>
+      <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
         顺序即优先级，前面的失败自动换下一个
       </span>
     </div>

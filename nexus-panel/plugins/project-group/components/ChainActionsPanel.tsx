@@ -119,7 +119,7 @@ export function ChainActionsPanel({
         </>
       }
     >
-      <div className="p-muted" style={{ marginBottom: 10 }}>
+      <div className="p-muted" style={{ marginBottom: 'var(--sp-5, 10px)' }}>
         每个动作分别有「项目」和「项目组」两份指令模板，发送时按对象类型取用。
         留空表示使用内置默认模板；自定义动作若两份都空，发送时会提示先补写。
       </div>
@@ -135,7 +135,7 @@ export function ChainActionsPanel({
               <span className="fpx-ca-icon">{a.icon}</span>
               <span className="fpx-ca-name">
                 {a.name}
-                {!a.builtin && <span className="fpx-badge dim" style={{ marginLeft: 6 }}>自定义</span>}
+                {!a.builtin && <span className="fpx-badge dim" style={{ marginLeft: 'var(--sp-3, 6px)' }}>自定义</span>}
               </span>
               <span className="fpx-ca-ops">
                 <button title="上移" disabled={i === 0} onClick={(e) => { e.stopPropagation(); move(a.id, -1); }}>↑</button>
@@ -212,7 +212,7 @@ export function ChainActionsPanel({
                 </span>
               </label>
 
-              <div className="fpx-field" style={{ marginTop: 8 }}>
+              <div className="fpx-field" style={{ marginTop: 'var(--sp-4, 8px)' }}>
                 <label>快捷键（形如 Ctrl+Shift+1）</label>
                 <div className="p-row">
                   <input
@@ -242,13 +242,13 @@ export function ChainActionsPanel({
                     清除
                   </button>
                 </div>
-                <div className="p-muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+                <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-2, 4px)' }}>
                   在此框内直接按下组合键即可录入。属于「应用级」快捷键：
                   窗口在前台时生效，不是操作系统全局热键。
                 </div>
               </div>
 
-              <div className="fpx-field" style={{ marginTop: 10 }}>
+              <div className="fpx-field" style={{ marginTop: 'var(--sp-5, 10px)' }}>
                 <label>项目模板</label>
                 <textarea
                   className="p-input fpx-textarea"
@@ -270,13 +270,13 @@ export function ChainActionsPanel({
                 />
               </div>
 
-              <div className="p-muted" style={{ fontSize: 11.5 }}>
+              <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
                 占位符：{ '{path}' } 路径、{ '{name}' } 文件夹名。
                 也兼容原版写法 { '{项目路径}' } / { '{项目名称}' }。
               </div>
 
               {!cur.builtin && (
-                <button className="p-btn danger" style={{ marginTop: 12 }}
+                <button className="p-btn danger" style={{ marginTop: 'var(--sp-6, 12px)' }}
                   onClick={() => remove(cur.id)}>
                   删除该自定义动作
                 </button>

@@ -74,21 +74,21 @@ export function LinkPickDialog({
         </>
       }
     >
-      <div className="p-muted" style={{ fontSize: 12, marginBottom: 10 }}>
+      <div className="p-muted" style={{ fontSize: 'var(--fs-12, 12px)', marginBottom: 'var(--sp-5, 10px)' }}>
         项目：<span className="p-mono">{project}</span>
       </div>
-      <div className="p-muted" style={{ fontSize: 12, marginBottom: 12 }}>
+      <div className="p-muted" style={{ fontSize: 'var(--fs-12, 12px)', marginBottom: 'var(--sp-6, 12px)' }}>
         项目组：<span className="p-mono">{group}</span>
       </div>
 
-      <div className="p-row" style={{ marginBottom: 8 }}>
+      <div className="p-row" style={{ marginBottom: 'var(--sp-4, 8px)' }}>
         <button className="p-btn" style={{ height: 26, padding: '0 8px' }} onClick={toggleAll}>
           {all ? '全不选' : '全选'}
         </button>
         <button className="p-btn" style={{ height: 26, padding: '0 8px' }} onClick={reset}>
           回到默认
         </button>
-        <span className="p-muted" style={{ fontSize: 11 }}>
+        <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
           已选 {picked.size} / {allNames.length}
         </span>
       </div>
@@ -122,7 +122,7 @@ export function LinkPickDialog({
         })}
       </div>
 
-      <div className="p-muted" style={{ fontSize: 11, marginTop: 10 }}>
+      <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-5, 10px)' }}>
         「将换绑」表示该名字当前指向别的项目组，建立后会被改指到本项目组——
         原指向会断开。「设置」里开启「快速链接」可跳过此步，直接按默认名单建立。
       </div>

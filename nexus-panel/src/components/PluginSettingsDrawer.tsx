@@ -73,7 +73,7 @@ export default function PluginSettingsDrawer({
         <header className="drawer-head">
           <div className="drawer-title">
             <h2>⚙ {manifest.name}</h2>
-            <span className="p-muted" style={{ fontSize: 11 }}>
+            <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
               {manifest.type === 'iframe' ? '沙箱模式' : '同页模式'}
               {manifest.version ? ` · v${manifest.version}` : ''}
             </span>

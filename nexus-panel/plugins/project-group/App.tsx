@@ -630,7 +630,7 @@ export default function App() {
       <div className="p-card">
         <h2>加载失败</h2>
         <div className="p-muted">后端命令不可用。请确认在 Nexus Panel（Tauri 环境）中运行，且已重新编译 Rust 端。</div>
-        <button className="p-btn primary" style={{ marginTop: 12 }} onClick={() => s.refresh()}>重试</button>
+        <button className="p-btn primary" style={{ marginTop: 'var(--sp-6, 12px)' }} onClick={() => s.refresh()}>重试</button>
       </div>
     );
   }
@@ -1161,7 +1161,7 @@ function HelpDialog({ onClose, platform }: { onClose: () => void; platform: stri
             Ctrl/⌘+PageDown/PageUp 翻项目页签；
             F5 刷新、F8 清除无效项。打字时与弹窗打开时整组不触发。</li>
         </ul>
-        <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
+        <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 'var(--sp-8, 16px)' }}>
           <button className="p-btn primary" onClick={onClose}>知道了</button>
         </div>
       </div>
