@@ -6,8 +6,10 @@ import type { SecretPolicy } from '../../types';
 // 从 engine/files 直接拿，不绕 shared：shared 只是转手 import 进来用，
 // 并没有再导出，硬要从它拿就得让它多导出一次，平白加一层耦合
 import { FILE_FIELD_HINT } from '../../engine/files';
+import { shouldDetach, detachGroup } from '../../engine/paramCards';
 import { CredentialPicker } from './shared';
 import SaveAsCustom from './SaveAsCustom';
+import { ParamCardPicker } from './ParamCardPicker';
 
 /**
  * 属性面板的**字段描述层**。
@@ -39,6 +41,7 @@ export type FieldType =
   | 'switch' // 勾选
   | 'chips' // 按钮组（如目标语言）
   | 'credential' // 凭据选择（同时写 token 与 credentialId）
+  | 'paramCard' // 参数卡片：一组字段存成卡片，点一下整套套用
   | 'note' // 纯提示文本，不占字段
   | 'custom'; // 逃生口：完全自己渲染
 
@@ -90,6 +93,16 @@ export type FieldDef = {
   inline?: boolean;
   /** credential 类型用：决定需要哪些能力的凭据 */
   credentialKind?: string;
+
+  /* ---- paramCard 类型用 ---- */
+  /** 卡片组名。同组卡片跨节点类型共享，如 'github-repo' */
+  cardGroup?: string;
+  /** 这张卡片管辖的字段名。改这些字段会自动脱钩 */
+  cardKeys?: string[];
+  /** 卡片上显示的摘要文字，如 "acme/web" */
+  cardSummary?: (values: Record<string, unknown>) => string;
+  /** 新建卡片时的默认名字 */
+  cardName?: string;
   /** note 的内容 / custom 的渲染函数 */
   render?: (p: FieldRenderProps) => ReactNode;
   content?: ReactNode;
@@ -269,6 +282,27 @@ function renderField(
     );
   }
 
+  if (type === 'paramCard') {
+    const group = f.cardGroup ?? '';
+    const keys = f.cardKeys ?? [];
+    const cardHint = typeof f.hint === 'function' ? f.hint(p.d) : f.hint;
+    return (
+      <div className="field" key={`pc-${group}`}>
+        <span>{strOf(f.label, p.d)}</span>
+        <ParamCardPicker
+          group={group}
+          keys={keys}
+          summary={f.cardSummary ?? (() => '')}
+          d={p.d}
+          patch={p.onChangeNode}
+          defaultName={f.cardName}
+        />
+        {/* 与下面既有写法一致：hint 可以是函数，要按当前数据求值 */}
+        {cardHint ? <small className="dim">{cardHint}</small> : null}
+      </div>
+    );
+  }
+
   const value = f.toUI ? f.toUI(p.value) : p.value;
   const set = (raw: unknown) => p.onChange(f.fromUI ? f.fromUI(raw) : raw);
   const body = () => {
@@ -374,7 +408,28 @@ export function BasicInspector({
   const d = node.data as unknown as Record<string, unknown>;
   const def = getDef(node.type);
   const upstream = edges.filter((e) => e.target === node.id).map((e) => e.source);
-  const patchObj = (p: Record<string, unknown>) => onChange(node.id, p);
+
+  /*
+   * 卡片组 → 管辖字段。改这些字段时该组自动脱钩。
+   *
+   * 为什么要这一层：卡片是模板库、节点是实例，改实例必须脱钩，
+   * 否则节点上显示的"主仓库"和实际值对不上（值改了却还挂着卡片名）。
+   *
+   * 在这里统一拦截，而不是让每个字段自己记得调 detach ——
+   * 后者容易漏（改 branch 的字段和改 owner 的字段是两处代码），
+   * 漏一处就出现"值变了但仍显示卡片名"的假象，属于最难发现的那类不一致。
+   */
+  const cardGroups = fields(d)
+    .filter((f) => f.type === 'paramCard' && f.cardGroup && f.cardKeys?.length)
+    .map((f) => ({ group: f.cardGroup as string, keys: f.cardKeys as string[] }));
+
+  const patchObj = (p: Record<string, unknown>) => {
+    let merged = p;
+    for (const { group, keys } of cardGroups) {
+      if (shouldDetach(p, keys)) merged = { ...merged, ...detachGroup(d, group) };
+    }
+    onChange(node.id, merged);
+  };
 
   const base: FieldRenderProps = {
     d,

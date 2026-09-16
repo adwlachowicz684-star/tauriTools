@@ -1485,3 +1485,70 @@ input.mono, textarea.mono {
   display: flex; align-items: center; gap: 8px;
 }
 .field-label-row .save-as-custom { margin-left: auto; }
+
+/* ---------------- 参数卡片（属性面板里的选择器） ---------------- */
+/*
+ * 凹槽卡扣观感：卡片之间有缝、选中态凹陷（内阴影 + 更深的底），
+ * 未选中的浮起（浅底 + 外边框）。这样"嵌进去"和"没嵌"一眼能分。
+ */
+.pc-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 6px; border-radius: var(--af-r-sm);
+  background: var(--af-sunk); border: 1px solid var(--af-line);
+}
+.pc-card {
+  position: relative; display: inline-flex; align-items: stretch;
+  border: 1px solid var(--af-line); border-radius: 6px;
+  background: var(--af-item); overflow: hidden;
+  transition: border-color var(--af-dur-fast), background var(--af-dur-fast);
+}
+.pc-card:hover { border-color: var(--af-accent); }
+/* 选中＝嵌进凹槽：底色更深 + 内阴影，视觉上"陷下去" */
+.pc-card.on {
+  background: var(--af-sunk); border-color: var(--af-accent);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+.pc-card.is-custom {
+  border-style: dashed; color: var(--af-dim); background: transparent;
+}
+.pc-pick {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  border: none; background: none; cursor: pointer; color: inherit;
+  padding: 4px 8px; font-family: inherit; text-align: left;
+}
+.pc-name { font-size: 12px; font-weight: 600; }
+.pc-sum {
+  font-size: 10px; color: var(--af-mute); max-width: 150px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 重命名 / 删除：hover 才显形，常驻会盖过卡片本身 */
+.pc-ops { display: flex; align-items: center; gap: 1px; padding-right: 3px; }
+.pc-op {
+  border: none; background: none; cursor: pointer; color: var(--af-mute);
+  font-size: 11px; line-height: 1; padding: 2px 3px; border-radius: 3px;
+  opacity: 0; transition: opacity var(--af-dur-fast), color var(--af-dur-fast);
+}
+.pc-card:hover .pc-op, .pc-op:focus-visible { opacity: 1; }
+.pc-op:hover { color: var(--af-fg); background: var(--af-raised); }
+.pc-del:hover { color: var(--af-bad); }
+
+.pc-add, .pc-detach {
+  border: 1px dashed var(--af-line); border-radius: 6px; cursor: pointer;
+  background: transparent; color: var(--af-dim); font-family: inherit;
+  font-size: 12px; padding: 5px 9px;
+  transition: border-color var(--af-dur-fast), color var(--af-dur-fast);
+}
+.pc-add:hover, .pc-detach:hover { border-color: var(--af-accent); color: var(--af-fg); }
+
+/* ---------------- 画布节点上的卡扣 ---------------- */
+.node-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.node-chip {
+  font-size: 10px; line-height: 1.5; padding: 1px 6px; border-radius: 4px;
+  border: 1px solid var(--af-line); background: var(--af-item); color: var(--af-dim);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.node-chip.on {
+  border-color: var(--af-accent); color: var(--af-fg);
+  background: var(--af-sunk); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+.node-chip.is-custom { border-style: dashed; }

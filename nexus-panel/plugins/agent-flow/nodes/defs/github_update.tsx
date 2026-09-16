@@ -2,6 +2,16 @@ import { makeGithubUpdateNode } from '../../types';
 import { GithubUpdateNode } from '../../components/GithubNode';
 import { OrderPicker } from '../../components/inspectors/shared';
 import { Field, type FieldDef } from '../../components/inspectors/fields';
+
+const repoSummary = (v: Record<string, unknown>): string => {
+  const owner = String(v.owner ?? '').trim();
+  const repo = String(v.repo ?? '').trim();
+  if (!owner && !repo) return '（空）';
+  const base = repo ? `${owner}/${repo}` : owner;
+  const branch = String(v.branch ?? '').trim();
+  return branch ? `${base} · ${branch}` : base;
+};
+
 import { runGithubUpdate } from '../../engine/runners/githubUpdate';
 import { registerNode } from '../registry';
 
@@ -29,6 +39,20 @@ const fields: FieldDef[] = [
     ),
   },
   { type: 'text', key: 'branch', label: '分支', placeholder: '留空用默认分支', inline: true },
+  /*
+   * 仓库卡片：owner / repo / branch 三个字段打包成一张卡片。
+   * 组名 'github-repo' 是共享的 —— 推送节点也用这个组，
+   * 所以同一个仓库存一次，两个节点都能选到它。
+   */
+  {
+    type: 'paramCard',
+    label: '地址卡片',
+    cardGroup: 'github-repo',
+    cardKeys: ['owner', 'repo', 'branch'],
+    cardSummary: repoSummary,
+    cardName: '仓库',
+    hint: '存成卡片后可一键套到其它节点；改上面的字段会自动脱钩成自定义',
+  },
   {
     type: 'text',
     key: 'base',

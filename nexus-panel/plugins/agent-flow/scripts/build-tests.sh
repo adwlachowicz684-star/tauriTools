@@ -86,6 +86,9 @@ $S engine/secretVault.ts "$OUT/secretVault.mjs" \
    --import-map ../types=./types.mjs >/dev/null
 $S engine/conversations.ts "$OUT/conversations.mjs" \
    --import-map ../types=./types.mjs >/dev/null
+# paramCards / duplicate 是纯逻辑模块，单独生成
+$S engine/paramCards.ts "$OUT/paramCards.mjs" \
+   --import-map ./duplicate=./duplicate.mjs >/dev/null
 # duplicate.ts 是纯逻辑（不 import 任何东西），单独生成即可
 $S engine/duplicate.ts "$OUT/duplicate.mjs" >/dev/null
 # customPresets 复用了 duplicate 的 stripRuntime，要指到生成物
