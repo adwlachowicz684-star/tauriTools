@@ -64,20 +64,10 @@ const rsSrc = src('src-tauri/src/af_flow.rs');
 t('Rust: 定义了浏览器防护头常量', /const BROWSER_GUARD_HEADER/.test(rsSrc));
 t('Rust: 空 token 时不再无条件放行',
   !/if expected\.is_empty\(\) \{\s*return true;/.test(rsSrc));
-/* 窗口放宽到 400：is_empty 分支里夹了 6 行"为什么这么改"的注释，
-   原先 200 字符装不下，注释一多就误报成"没要求防护头"。
-   这里要守的是结论（空 token 时仍要防护头），不是注释长度。 */
 t('Rust: 空 token 时要求防护头',
-  /expected\.is_empty\(\)[\s\S]{0,400}?BROWSER_GUARD_HEADER/.test(rsSrc));
-/* 扫整个 components 树：上游把各节点的检查器拆进了 components/inspectors/，
-   写死 Inspector.tsx 会在重构后误报"防护头提示没了"，其实只是搬了家。 */
-const afCompText = (function walk(dir) {
-  return fs.readdirSync(path.join(HERE, dir), { withFileTypes: true }).flatMap((d) => {
-    const rel = `${dir}/${d.name}`;
-    return d.isDirectory() ? walk(rel) : [src(rel)];
-  }).join('\n');
-})('plugins/agent-flow/components');
-t('前端: 提示调用需带防护头', /X-Nexus-Webhook/.test(afCompText));
+  /expected\.is_empty\(\)[\s\S]{0,200}?BROWSER_GUARD_HEADER/.test(rsSrc));
+t('前端: 提示调用需带防护头',
+  /X-Nexus-Webhook/.test(src('plugins/agent-flow/components/Inspector.tsx')));
 
 /* ============ P1-4 · findTheme 不自递归 ============ */
 console.log('\n=== P1-4 findTheme 兜底 ===');
@@ -189,14 +179,22 @@ t('getTauri 失败不再写入缓存', !/_cache = null;\s*return _cache;/.test(c
 t('getTauri 命中判断用真值（null 会继续重探）', /if \(_cache\) return _cache;/.test(coreSrc));
 
 const core = await import('./js/tauri-core.js');
-// 无 Tauri 环境下反复调用：应始终返回 null 且不因缓存而行为改变
+/* 反复调用应得到**一致**的结果。
+   ------------------------------------------------------------------
+   这里刻意不断言 `a === null`。
+
+   `@tauri-apps/api` 是本项目的**正式依赖**（package.json dependencies），
+   所以只要装过依赖（npm ci，CI 就是这样），getTauri() 的 ② npm 包分支
+   就会命中，返回 { mode: 'npm', ... } 而不是 null。
+   原断言只在"恰好没装依赖"的环境里成立 —— 一旦 CI 加上这条测试就会红，
+   而这会被误读成 P2-8 回退了。
+
+   P2-8 真正在意的性质是「失败不被缓存，重复探测结果稳定」，
+   稳定才是可断言的那一条；具体是 null 还是 npm 模式取决于环境。 */
 const a = await core.getTauri();
 const b = await core.getTauri();
-/* 不能断言"一定是 null"：Node 下 node_modules 里装着 @tauri-apps/api，
-   ② 号 npm 分支会 import 成功并返回一个包装对象（真实浏览器里没有 Tauri 时
-   才会落到 null）。这条要守的是"反复探测拿到同一个引用"——
-   即缓存生效且结果稳定，换个环境值变了没关系，同一个环境里不能漂。 */
-t('反复探测返回同一实例（缓存稳定）', a === b, `mode=${a?.mode ?? a}`);
+t('反复探测结果稳定（同一对象/同为 null）', a === b,
+  a === null ? 'a=b=null（未装 @tauri-apps/api）' : `a=b=已解析（mode=${a?.mode ?? '?'}，装了依赖时的正常表现）`);
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

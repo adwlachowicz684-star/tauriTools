@@ -280,9 +280,10 @@ fn tools() -> Vec<Value> {
             "name": { "type": "string" },
             "hierarchy": { "type": "string", "description": "可选，页签名；受设置项 createPathCarriesHierarchy 控制" },
         }), vec!["parent", "name"]),
-        tool("add_card", "把文件夹加入页签", json!({
+        tool("add_card", "把文件夹加入页签（tab_index 省略时加到第一个页签）", json!({
             "kind": { "type": "string", "enum": ["project", "group"] },
             "path": { "type": "string" },
+            "tab_index": { "type": "integer", "description": "可选，页签序号（0 起）；省略则加到第一个页签" },
         }), vec!["kind", "path"]),
         tool("set_lock", "设置 ACL 保护（防删除 / 防写入）", json!({
             "path": { "type": "string" },
@@ -501,6 +502,9 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
             let kind = s("kind");
             let path = s("path");
             if path.is_empty() { return Err(err("path 必填")); }
+            // 用 as_u64 而不是 as_i64：JSON 里没有负数这种页签序号，
+            // as_u64 顺带挡掉 -1 这种（as_i64 会收下，然后转 usize 时溢出）。
+            let tab_index = args.get("tab_index").and_then(|v| v.as_u64()).map(|v| v as usize);
             let dir = data_dir_of(app)?;
             // 必须在事务内「读→改→写」。
             // 若先 load_cfg 改完再 core_save_config，传进去的是旧快照，
@@ -508,9 +512,27 @@ fn call_tool(req: &Value, app: &AppHandle) -> Result<Value, Value> {
             let (tab_name, already) = super::store::with_config(&dir, |cfg| {
                 let tabs = if kind == "group" { &mut cfg.group_tabs } else { &mut cfg.project_tabs };
                 if tabs.is_empty() { tabs.push(super::model::TabItem { name: "默认".into(), items: vec![] }); }
-                let tab_name = tabs[0].name.clone();
-                let already = tabs[0].items.iter().any(|x| x == &path);
-                if !already { tabs[0].items.push(path.clone()); }
+                /* tab_index 缺省时沿用旧行为（第一个页签），多页签场景下
+                   AI 才能指定目标 —— 此前写死 tabs[0]，只能往第一个页签加。
+
+                   越界判断必须放在闭包里：tabs 的长度只有这里拿得到，
+                   挪到外面就得先读一次配置，既多一次 IO 又可能读到已被
+                   别的进程改过的快照。 */
+                let idx = match tab_index {
+                    Some(i) => {
+                        if i >= tabs.len() {
+                            return Err(format!(
+                                "tab_index {i} 越界：{kind} 类当前只有 {} 个页签（有效范围 0..{}）",
+                                tabs.len(),
+                                tabs.len().saturating_sub(1)));
+                        }
+                        i
+                    }
+                    None => 0,
+                };
+                let tab_name = tabs[idx].name.clone();
+                let already = tabs[idx].items.iter().any(|x| x == &path);
+                if !already { tabs[idx].items.push(path.clone()); }
                 Ok((tab_name, already))
             }).map_err(|e| err(&e))?;
             let text = if already {
