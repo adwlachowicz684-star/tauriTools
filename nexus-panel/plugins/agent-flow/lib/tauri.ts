@@ -614,6 +614,7 @@ export async function fetchText(url: string, opts: FetchTextOptions = {}): Promi
   };
 
   // 1) 经 Rust 的 tauri-plugin-http（不受同源策略限制）
+  let tauriFailure: HttpFailure | undefined;
   if (hasTauri()) {
     const r = await tauriHttpRequest(url, {
       method: 'GET', headers, connectTimeout: timeoutMs, maxBytes: max,
@@ -621,6 +622,7 @@ export async function fetchText(url: string, opts: FetchTextOptions = {}): Promi
     if (r.ok) return { ok: r.value.ok, status: r.value.status, text: r.value.text.slice(0, max) };
     // 通道没走通：记下具体原因（插件未启用 / scope 未放行 / 请求出错），
     // 交给下面的浏览器路径再试一次；两条都不通时报出来，而不是一律甩锅 CORS
+    tauriFailure = r.failure;
     console.warn('[agent-flow] Tauri http 通道不可用：', describeHttpFailure(r.failure));
   }
 
@@ -637,11 +639,13 @@ export async function fetchText(url: string, opts: FetchTextOptions = {}): Promi
     return { ok: res.ok, status: res.status, text: raw.slice(0, max) };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `抓取失败（${msg}）。` + (hasTauri()
-        ? 'Tauri http 通道不可用，已退回浏览器请求，受 CORS 与 CSP connect-src 限制；多数订阅源会被拒绝（检查 Rust 侧是否启用了 tauri-plugin-http、capabilities 是否放行该域名）。'
-        : '浏览器模式下多数订阅源不允许跨域，请用桌面端运行。'),
-    );
+    /* 与 postJson 同一套降级文案：把 Tauri 通道的真实原因透出来
+       （插件未启用 / 域名未放行 / 请求失败），而不是一律甩锅 CORS ——
+       用户照着提示去查 CSP，其实该改的是 Rust 侧的插件注册或 scope。 */
+    const tauriHint = tauriFailure
+      ? `${describeHttpFailure(tauriFailure)}；已退回浏览器请求，又受 CORS 与 CSP connect-src 限制（${msg}）`
+      : `浏览器请求失败（${msg}）；浏览器模式下多数订阅源不允许跨域，请用桌面端运行`;
+    throw new Error(`${tauriHint}。`);
   } finally {
     clearTimeout(timer);
   }
