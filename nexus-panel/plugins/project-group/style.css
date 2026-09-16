@@ -210,7 +210,7 @@
    不给这个提示的话，页面会毫无征兆地自己翻页，像是卡了一下。 */
 .fpx-tab.switch-hint {
   border-color: var(--accent);
-  animation: fpx-tab-pulse .6s linear;
+  animation: fpx-tab-pulse var(--anim-pulse) linear;
 }
 @keyframes fpx-tab-pulse {
   from { box-shadow: inset 0 -2px 0 var(--accent); }
@@ -757,11 +757,11 @@
 /* 链接区顶部的问题计数：不展开也要能一眼看见"有问题" */
 .fpx-links-summary { display: inline-flex; gap: 5px; font-size: 10.5px; }
 .fpx-links-summary .bad {
-  padding: 1px 6px; border-radius: 999px;
+  padding: 1px 6px; border-radius: var(--r-pill);
   background: var(--danger, #c8555a); color: #fff;
 }
 .fpx-links-summary .warn {
-  padding: 1px 6px; border-radius: 999px;
+  padding: 1px 6px; border-radius: var(--r-pill);
   background: var(--surface); color: var(--text-mute);
   border: 1px solid var(--border);
 }
