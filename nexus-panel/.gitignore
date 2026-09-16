@@ -4,6 +4,10 @@ dist/
 dist-ssr/
 *.local
 
+# Vite 加载 TS 配置时生成的临时文件；构建被中断（Ctrl-C / 端口冲突）会残留，
+# 每次都污染 git status，还可能被误提交
+vite.config.ts.timestamp-*.mjs
+
 # 系统 / 编辑器
 .DS_Store
 Thumbs.db
