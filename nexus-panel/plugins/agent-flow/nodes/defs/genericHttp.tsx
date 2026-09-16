@@ -96,6 +96,7 @@ registerNode({
   type: 'generic-http',
   dataKind: 'generic-http',
   meta: {
+    cardGroups: ['http-endpoint'],
     label: 'HTTP 请求',
     color: '#0ea5e9',
     category: 'external',

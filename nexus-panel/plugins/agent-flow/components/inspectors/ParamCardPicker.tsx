@@ -1,7 +1,8 @@
-import { useState } from 'react';
-import { prompt, confirm } from '../../../../js/dialog.js';
+import { useState, type DragEvent } from 'react';
+import { prompt, confirm, alert } from '../../../../js/dialog.js';
+import { getCardGroup } from '../../nodes/registry';
 import {
-  cardsOfGroup, addParamCard, removeParamCard, renameParamCard,
+  cardsOfGroup, addParamCard, removeParamCard, renameParamCard, duplicateCard,
   cardIdOf, applyCardTo, detachGroup, type ParamCard,
 } from '../../engine/paramCards';
 
@@ -13,14 +14,34 @@ import {
  *   · 点卡片 → 拷贝一份值进节点
  *   · 之后改节点上的字段 → 自动脱钩成「自定义」，卡片与其它节点不受影响
  *   · 改卡片 → 不影响已套用过的节点
+ *
+ * 拖动：
+ *   · 拖到画布上的节点 → 套用（会做类型验证，不适配的组会被拒绝）
+ *   · 按住 Ctrl / ⌘ 拖动 → 复制一张新卡片（与节点复制同一套手感）
  */
+
+export const CARD_DRAG_MIME = 'application/x-agent-flow-card';
+
+export type CardDragPayload = { cardId: string; group: string };
+
+export function encodeCardDrag(p: CardDragPayload): string {
+  return JSON.stringify(p);
+}
+
+/** 解析卡片拖拽数据。只校验形状，真正的合法性在 drop 时按目标节点判断 */
+export function decodeCardDrag(raw: string | null | undefined): CardDragPayload | null {
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw) as CardDragPayload;
+    if (!p || typeof p.cardId !== 'string' || typeof p.group !== 'string') return null;
+    return p;
+  } catch {
+    return null;
+  }
+}
 
 type Props = {
   group: string;
-  /** 这张卡片管辖的字段名 */
-  keys: string[];
-  /** 卡片上显示的摘要，如 "acme/web" */
-  summary: (values: Record<string, unknown>) => string;
   /** 当前节点 data */
   d: Record<string, unknown>;
   /** 写入节点（可含多个字段） */
@@ -29,13 +50,17 @@ type Props = {
   defaultName?: string;
 };
 
-export function ParamCardPicker({ group, keys, summary, d, patch, defaultName }: Props) {
+export function ParamCardPicker({ group, d, patch, defaultName }: Props) {
   /*
    * 卡片存在 localStorage 里，增删改之后要重新读。
    * 用本地计数触发重渲染即可 —— 列表本来就是每次渲染现读的。
    */
   const [tick, setTick] = useState(0);
   const refresh = () => setTick((t) => t + 1);
+
+  const groupDef = getCardGroup(group);
+  const keys = groupDef?.keys ?? [];
+  const summary = groupDef?.summary ?? (() => '');
 
   const cards = cardsOfGroup(group);
   const activeId = cardIdOf(d, group);
@@ -67,11 +92,10 @@ export function ParamCardPicker({ group, keys, summary, d, patch, defaultName }:
       (v) => v !== undefined && v !== null && String(v).trim() !== '',
     );
     if (!hasAny) {
-      await confirm({
+      await alert({
         title: '还没有填内容',
         message: `先在上面填好${defaultName ?? '这些参数'}，再存成卡片。`,
-        cancel: false,
-      } as never);
+      });
       return;
     }
     const name = await prompt({
@@ -113,12 +137,43 @@ export function ParamCardPicker({ group, keys, summary, d, patch, defaultName }:
     refresh();
   };
 
+  /** 在面板内按住 Ctrl 拖动也能复制（落点就在这一行里） */
+  const onDropHere = (e: DragEvent) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const p = decodeCardDrag(e.dataTransfer.getData(CARD_DRAG_MIME))
+      ?? decodeCardDrag(e.dataTransfer.getData('text/plain'));
+    if (!p || p.group !== group) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const copy = duplicateCard(p.cardId);
+    refresh();
+    if (copy) void alert({ title: '已复制卡片', message: `「${copy.name}」已添加到这一组。` });
+  };
+
   return (
-    <div className="pc-row">
+    <div
+      className="pc-row"
+      onDrop={onDropHere}
+      onDragOver={(e) => {
+        if (e.ctrlKey || e.metaKey) e.preventDefault();
+      }}
+    >
       {cards.map((c) => {
         const on = c.id === activeId;
         return (
-          <span key={c.id} className={`pc-card${on ? ' on' : ''}`} title={summary(c.values)}>
+          <span
+            key={c.id}
+            className={`pc-card${on ? ' on' : ''}`}
+            title={`${summary(c.values)}\n点一下套用；拖到画布节点上也能套用；按住 Ctrl 拖动复制`}
+            draggable
+            onDragStart={(e) => {
+              const payload = encodeCardDrag({ cardId: c.id, group });
+              e.dataTransfer.setData(CARD_DRAG_MIME, payload);
+              // 同时放一份 text/plain，某些环境下自定义 MIME 会被过滤
+              e.dataTransfer.setData('text/plain', payload);
+              e.dataTransfer.effectAllowed = 'copy';
+            }}
+          >
             <button
               className="pc-pick"
               onClick={() => onPick(c)}
@@ -136,7 +191,7 @@ export function ParamCardPicker({ group, keys, summary, d, patch, defaultName }:
       })}
 
       {/* 脱钩态：明确告诉用户"这份值不再跟随卡片" */}
-      {detached && (d[keys[0]] !== undefined && String(d[keys[0]] ?? '').trim() !== '') ? (
+      {detached && keys.length > 0 && String(d[keys[0]] ?? '').trim() !== '' ? (
         <span className="pc-card is-custom" title="这份值已改过，不再跟随卡片">
           <span className="pc-name">自定义</span>
         </span>

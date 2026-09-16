@@ -7,6 +7,8 @@ import type { SecretPolicy } from '../../types';
 // 并没有再导出，硬要从它拿就得让它多导出一次，平白加一层耦合
 import { FILE_FIELD_HINT } from '../../engine/files';
 import { shouldDetach, detachGroup } from '../../engine/paramCards';
+// 从 registry 拿 getCardGroup，不能走 nodes/index（会与 defs 成环）
+import { getCardGroup } from '../../nodes/registry';
 import { CredentialPicker } from './shared';
 import SaveAsCustom from './SaveAsCustom';
 import { ParamCardPicker } from './ParamCardPicker';
@@ -283,21 +285,25 @@ function renderField(
   }
 
   if (type === 'paramCard') {
+    /*
+     * 保留作为逃生口：绝大多数节点走 meta.cardGroups 自动渲染即可，
+     * 需要特殊布局时才在 fields 里手写这一段。
+     * 组的 keys / summary 一律从卡片组定义取，不再由字段重复声明 ——
+     * 两处都能声明的话，改一处忘另一处就会出现"面板显示的卡片名
+     * 与拖上去套用的字段不是一回事"。
+     */
     const group = f.cardGroup ?? '';
-    const keys = f.cardKeys ?? [];
+    const gd = getCardGroup(group);
     const cardHint = typeof f.hint === 'function' ? f.hint(p.d) : f.hint;
     return (
       <div className="field" key={`pc-${group}`}>
-        <span>{strOf(f.label, p.d)}</span>
+        <span>{strOf(f.label, p.d) || gd?.label || '参数卡片'}</span>
         <ParamCardPicker
           group={group}
-          keys={keys}
-          summary={f.cardSummary ?? (() => '')}
           d={p.d}
           patch={p.onChangeNode}
-          defaultName={f.cardName}
+          defaultName={f.cardName ?? gd?.name}
         />
-        {/* 与下面既有写法一致：hint 可以是函数，要按当前数据求值 */}
         {cardHint ? <small className="dim">{cardHint}</small> : null}
       </div>
     );
@@ -410,23 +416,21 @@ export function BasicInspector({
   const upstream = edges.filter((e) => e.target === node.id).map((e) => e.source);
 
   /*
-   * 卡片组 → 管辖字段。改这些字段时该组自动脱钩。
+   * 参数卡片是**通用能力**：节点只需在 meta.cardGroups 里声明"我支持哪些组"，
+   * 这里就自动渲染出对应的选择器，不必在 fields 里写任何东西。
    *
-   * 为什么要这一层：卡片是模板库、节点是实例，改实例必须脱钩，
-   * 否则节点上显示的"主仓库"和实际值对不上（值改了却还挂着卡片名）。
-   *
-   * 在这里统一拦截，而不是让每个字段自己记得调 detach ——
-   * 后者容易漏（改 branch 的字段和改 owner 的字段是两处代码），
-   * 漏一处就出现"值变了但仍显示卡片名"的假象，属于最难发现的那类不一致。
+   * 与拖放校验共用同一份 meta.cardGroups —— 面板上有选择器的组，
+   * 才接受把该组卡片拖到节点上。反过来若两边各写一份，
+   * 就会出现"面板有选择器但拖放被拒"这类不一致。
    */
-  const cardGroups = fields(d)
-    .filter((f) => f.type === 'paramCard' && f.cardGroup && f.cardKeys?.length)
-    .map((f) => ({ group: f.cardGroup as string, keys: f.cardKeys as string[] }));
+  const cardGroups = (def.meta.cardGroups ?? [])
+    .map((g) => getCardGroup(g))
+    .filter((g): g is NonNullable<typeof g> => g !== null);
 
   const patchObj = (p: Record<string, unknown>) => {
     let merged = p;
-    for (const { group, keys } of cardGroups) {
-      if (shouldDetach(p, keys)) merged = { ...merged, ...detachGroup(d, group) };
+    for (const g of cardGroups) {
+      if (shouldDetach(p, g.keys)) merged = { ...merged, ...detachGroup(d, g.group) };
     }
     onChange(node.id, merged);
   };
@@ -480,6 +484,16 @@ export function BasicInspector({
           i,
         ),
       )}
+
+      {cardGroups.map((g) => (
+        <div className="field" key={`pc-${g.group}`}>
+          <span>{g.label}</span>
+          <ParamCardPicker group={g.group} d={d} patch={patchObj} defaultName={g.name} />
+          <small className="dim">
+            存成卡片后可一键套用，也能直接拖到画布上的节点；改上面的字段会自动脱钩
+          </small>
+        </div>
+      ))}
 
       {footer ? footer(base) : null}
     </aside>

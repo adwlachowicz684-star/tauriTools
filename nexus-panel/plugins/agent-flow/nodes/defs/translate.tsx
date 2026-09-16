@@ -97,6 +97,7 @@ registerNode({
   type: 'translate',
   dataKind: 'translate',
   meta: {
+    cardGroups: ['llm-config'],
     label: '翻译',
     color: '#38bdf8',
     category: 'ai',

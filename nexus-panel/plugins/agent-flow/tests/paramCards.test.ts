@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {
   addParamCard, loadParamCards, saveParamCards, removeParamCard, renameParamCard,
   cardsOfGroup, findCard, cardIdOf, applyCardTo, detachGroup, shouldDetach,
-  exportParamCards, importParamCards, type ParamCard, type KV,
+  exportParamCards, importParamCards, duplicateCard, checkCardForNode, patchForCard,
+  registerCardGroup, getCardGroup, type ParamCard, type CardGroupDef, type KV,
 } from '../engine/paramCards';
 
 function memKV() {
@@ -270,4 +271,125 @@ test('replace 模式清掉本机原有的', () => {
 test('导入非 JSON / 没有卡片列表都要给出可读错误', () => {
   assert.throws(() => importParamCards('不是JSON', undefined, memKV()), /JSON/);
   assert.throws(() => importParamCards('{"foo":1}', undefined, memKV()), /卡片列表/);
+});
+
+/* ================= 卡片组定义（通用化的基础） ================= */
+
+const REPO_GROUP: CardGroupDef = {
+  group: 'github-repo',
+  label: '地址卡片',
+  keys: ['owner', 'repo', 'branch'],
+  summary: (v) => `${String(v.owner ?? '')}/${String(v.repo ?? '')}`,
+  validate: (v) => (String(v.repo ?? '').trim() ? null : '没填仓库名'),
+};
+const HTTP_GROUP: CardGroupDef = {
+  group: 'http-endpoint',
+  label: '接口卡片',
+  keys: ['url', 'method'],
+  summary: (v) => String(v.url ?? ''),
+  validate: (v) => (String(v.url ?? '').trim() ? null : '没填地址'),
+};
+
+registerCardGroup(REPO_GROUP);
+registerCardGroup(HTTP_GROUP);
+
+test('组注册后能查到；未注册的组返回 null', () => {
+  assert.equal(getCardGroup('github-repo')?.label, '地址卡片');
+  assert.equal(getCardGroup('不存在的组'), null);
+});
+
+/* ================= 复制卡片（Ctrl + 拖动） ================= */
+
+test('复制卡片：新 id、名字带副本后缀', () => {
+  const kv = memKV();
+  const a = addParamCard({ group: 'github-repo', name: '主仓库', values: REPO_VALUES }, kv);
+  const copy = duplicateCard(a.id, kv);
+
+  assert.ok(copy);
+  assert.notEqual(copy!.id, a.id);
+  assert.equal(copy!.name, '主仓库 副本');
+  assert.deepEqual(copy!.values, REPO_VALUES);
+});
+
+test('复制出来的卡片紧挨着原件（好找，不是丢到末尾）', () => {
+  const kv = memKV();
+  const a = addParamCard({ group: 'g', name: 'A', values: {} }, kv);
+  addParamCard({ group: 'g', name: 'B', values: {} }, kv);
+  const copy = duplicateCard(a.id, kv);
+
+  const list = loadParamCards(kv);
+  assert.equal(list.length, 3);
+  assert.equal(list[1].id, copy!.id, '副本应插在原件之后');
+});
+
+test('复制的卡片是深拷贝：改副本不动原件', () => {
+  const kv = memKV();
+  const a = addParamCard({ group: 'g', name: 'A', values: { cfg: { host: 'a' } } }, kv);
+  const copy = duplicateCard(a.id, kv);
+
+  (copy!.values.cfg as Record<string, unknown>).host = 'b';
+  const orig = findCard(a.id, kv)!;
+  assert.equal((orig.values.cfg as Record<string, unknown>).host, 'a');
+});
+
+test('复制不存在的卡片返回 null，不抛异常', () => {
+  assert.equal(duplicateCard('不存在', memKV()), null);
+});
+
+/* ================= 类型验证：卡片能否套到某类节点 ================= */
+
+test('节点声明支持该组 → 通过', () => {
+  const kv = memKV();
+  const c = addParamCard({ group: 'github-repo', name: '主仓库', values: REPO_VALUES }, kv);
+  assert.equal(checkCardForNode(c, ['github-repo'], kv).ok, true);
+});
+
+test('节点不声明该组 → 拒绝，并说明是哪一类卡片套不上', () => {
+  const kv = memKV();
+  const c = addParamCard({ group: 'github-repo', name: '主仓库', values: REPO_VALUES }, kv);
+  const r = checkCardForNode(c, ['http-endpoint'], kv);
+  assert.equal(r.ok, false);
+  assert.match((r as { reason: string }).reason, /地址卡片/, '要说出是哪一类卡片');
+});
+
+test('节点完全不声明卡片组 → 拒绝', () => {
+  const kv = memKV();
+  const c = addParamCard({ group: 'github-repo', name: 'R', values: REPO_VALUES }, kv);
+  assert.equal(checkCardForNode(c, undefined, kv).ok, false);
+});
+
+test('组未注册 → 拒绝（没有 keys 无从套用）', () => {
+  const kv = memKV();
+  const c = addParamCard({ group: '野组', name: 'X', values: { a: 1 } }, kv);
+  const r = checkCardForNode(c, ['野组'], kv);
+  assert.equal(r.ok, false);
+  assert.match((r as { reason: string }).reason, /未注册/);
+});
+
+test('值不合法 → 拒绝（挡住"看着能拖、套上去是空的"）', () => {
+  const kv = memKV();
+  const c = addParamCard({ group: 'github-repo', name: '空仓库', values: { owner: 'a', repo: '' } }, kv);
+  const r = checkCardForNode(c, ['github-repo'], kv);
+  assert.equal(r.ok, false);
+  assert.match((r as { reason: string }).reason, /仓库名/);
+});
+
+test('patchForCard 按组定义的 keys 取字段，不多写', () => {
+  const kv = memKV();
+  const c = addParamCard({
+    group: 'github-repo', name: 'R',
+    values: { owner: 'a', repo: 'b', branch: 'main', 多余: 'x' },
+  }, kv);
+  const patch = patchForCard(c);
+  assert.equal(patch.owner, 'a');
+  assert.equal(patch.repo, 'b');
+  assert.equal(patch.branch, 'main');
+  assert.equal(patch['多余'], undefined, '组定义里没有的字段不该写进节点');
+  assert.deepEqual(patch.cardRefs, { 'github-repo': c.id });
+});
+
+test('patchForCard 对未注册的组返回空（不制造脏数据）', () => {
+  const kv = memKV();
+  const c = addParamCard({ group: '野组', name: 'X', values: { a: 1 } }, kv);
+  assert.deepEqual(patchForCard(c), {});
 });
