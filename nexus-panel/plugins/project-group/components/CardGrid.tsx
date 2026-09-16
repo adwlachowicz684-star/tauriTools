@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CardInfo, CardKind } from '../types';
 import { isDark, shade } from '../utils/color';
 import { ContextMenu, type MenuItem } from './ui';
@@ -15,6 +15,24 @@ export const DRAG_MIME = 'application/x-fpx-card';
  * 同一时刻只可能有一个拖拽，不存在并发问题。
  */
 let draggingKind: CardKind | null = null;
+
+/**
+ * 拖拽阈值（像素）—— #107。
+ *
+ * HTML5 的 `draggable` 由浏览器自行决定何时开始拖（Chrome 大约 4~5px），
+ * 我们**无法直接设定**，但可以在 `dragstart` 里**取消**它：
+ * 按下点与 dragstart 触发点的距离小于阈值就 `preventDefault()`。
+ *
+ * 为什么要这么做：**点击时手抖 2~3px 会被判定成拖拽**，
+ * 而一旦开始拖，`click` 就不会再触发 —— 用户点卡片想选中它，
+ * 结果既没选中、卡片还被拖走一点。这种"点了没反应又不是完全没反应"
+ * 正是"用起来别扭但说不出哪别扭"的典型。
+ *
+ * 取消 dragstart 后因为没有拖拽发生，mouseup 会正常触发 click，一切回到预期。
+ *
+ * 阈值取 5：略高于浏览器自带阈值，只拦真实的抖动，不干扰刻意拖拽。
+ */
+const DRAG_THRESHOLD = 5;
 /** 页签自身的拖拽，与卡片拖拽分开：两者落点语义完全不同（一个移动卡片、一个重排页签） */
 export const TAB_DRAG_MIME = 'application/x-fpx-tab';
 
@@ -96,6 +114,41 @@ export function TabBar({
   const [draft, setDraft] = useState('');
   /** 页签拖拽的插入位置（-1 无） */
   const [tabOver, setTabOver] = useState(-1);
+
+  /**
+   * 悬停自动切页签（原版：拖着卡片悬停在页签上一会儿，自动切过去）。
+   *
+   * 只切页签**不够**：原本只能把卡片丢到页签上（= 放到该页签末尾），
+   * 没法指定位置。切换之后目标页签的卡片列表直接铺开在眼前，就能拖到具体位置了。
+   *
+   * 延迟 600ms：立刻切会让"从页签上方扫过"变成一连串闪烁。
+   */
+  const hoverTimer = useRef<number | null>(null);
+  const [switchHint, setSwitchHint] = useState(-1);
+
+  const cancelHoverSwitch = useCallback(() => {
+    if (hoverTimer.current !== null) {
+      window.clearTimeout(hoverTimer.current);
+      hoverTimer.current = null;
+    }
+    setSwitchHint(-1);
+  }, []);
+
+  /**
+   * 拖拽被取消（按 Esc、拖到窗口外松手）时 **dragleave 不一定触发**，
+   * 只靠 leave 清理会留下一个待触发的切换，过一会儿页面自己翻了。
+   * 挂全局 dragend / drop 兜底。
+   */
+  useEffect(() => {
+    const clear = () => cancelHoverSwitch();
+    window.addEventListener('dragend', clear);
+    window.addEventListener('drop', clear);
+    return () => {
+      window.removeEventListener('dragend', clear);
+      window.removeEventListener('drop', clear);
+      clear();
+    };
+  }, [cancelHoverSwitch]);
   const [menu, setMenu] = useState<{ i: number; x: number; y: number } | null>(null);
   const [dropTarget, setDropTarget] = useState(-1);
 
@@ -126,6 +179,7 @@ export function TabBar({
             i === active ? 'active' : '',
             dropTarget === i ? 'drop' : '',
             tabOver === i ? 'tab-over' : '',
+            switchHint === i ? 'switch-hint' : '',
           ].filter(Boolean).join(' ')}
           onClick={() => onSelect(i)}
           onDoubleClick={() => startEdit(i)}
@@ -147,15 +201,23 @@ export function TabBar({
               setTabOver(i);
               return;
             }
-            if (!onDropCard) return;
             const has = e.dataTransfer.types.includes(DRAG_MIME);
             if (!has) return;
             e.preventDefault();
             e.stopPropagation();
             e.dataTransfer.dropEffect = 'move';
             setDropTarget(i);
+            // 悬停够久就切过去（拖到页签上仍是"移到末尾"，两者不冲突）
+            if (onSelect && i !== active && hoverTimer.current === null) {
+              setSwitchHint(i);
+              hoverTimer.current = window.setTimeout(() => {
+                hoverTimer.current = null;
+                setSwitchHint(-1);
+                onSelect(i);
+              }, 600);
+            }
           }}
-          onDragLeave={() => { setDropTarget(-1); setTabOver(-1); }}
+          onDragLeave={() => { setDropTarget(-1); setTabOver(-1); cancelHoverSwitch(); }}
           onDrop={(e) => {
             // 先看是不是页签重排
             if (onMoveTab) {
@@ -246,6 +308,8 @@ export function CardGrid({
   const [over, setOver] = useState(-1);
   /** 正在被拖走的卡片：给它半透明，否则分不清哪张在动 */
   const [dragPath, setDragPath] = useState<string | null>(null);
+  /** 按下时的指针位置，用于拖拽阈值判定（见 DRAG_THRESHOLD） */
+  const pressAt = useRef<{ x: number; y: number } | null>(null);
   /**
    * 悬停的这张卡片是不是**跨栏**拖来的。
    * 跨栏语义是建链（落在卡片上），不是插入缝隙，所以此时不画竖条。
@@ -328,7 +392,14 @@ export function CardGrid({
             '--tag-press': shade(c.tagColor, -0.12),
           } as React.CSSProperties) : undefined}
           draggable
+          onPointerDown={(e) => { pressAt.current = { x: e.clientX, y: e.clientY }; }}
           onDragStart={(e) => {
+            // 阈值判定：抖动不够 → 取消这次拖拽，让它退化成普通点击
+            const p = pressAt.current;
+            if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) < DRAG_THRESHOLD) {
+              e.preventDefault();
+              return;
+            }
             e.dataTransfer.setData(DRAG_MIME, JSON.stringify({ kind, path: c.path } satisfies DragPayload));
             e.dataTransfer.effectAllowed = 'move';
             draggingKind = kind;

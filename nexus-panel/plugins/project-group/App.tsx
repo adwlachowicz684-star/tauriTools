@@ -256,6 +256,20 @@ export default function App() {
   /** 「快速链接」关闭时，跨栏拖放先弹确认：待建链的项目 / 项目组 */
   const [confirmLink, setConfirmLink] = useState<{ project: string; group: string } | null>(null);
 
+  /**
+   * 活动页签的**实时镜像**（#708）。
+   *
+   * 拖拽过程中若发生自动切页签（悬停切页签），`onMove` 里闭包捕获的
+   * `s.activeTab.project` 可能是**切换前的旧值**——用户眼前看到的是新页签的卡片，
+   * 落点却算到旧页签去，卡片被移到完全不是他瞄准的那个页签里。
+   * 这类"移动成功但位置不对"比报错更难发现，因为它不会失败、只是东西不见了。
+   *
+   * ref 每次渲染同步，读取时永远是当前值。所有**在拖拽回调里读页签索引**的地方
+   * 都必须走这个 ref，不能直接用 state。
+   */
+  const activeTabRef = useRef(s.activeTab);
+  activeTabRef.current = s.activeTab;
+
   /** 连锁动作清单：右键菜单按需渲染，工具栏「发送到 AI」也用同一份 */
   const [chainActions, setChainActions] = useState<ChainAction[]>([]);
   /**
@@ -402,7 +416,7 @@ export default function App() {
     // 与"拖过去时看到的界面"一致，不会莫名其妙跑到别的分类里。
     if (!target) {
       const dst: CardKind = drag.kind === 'project' ? 'group' : 'project';
-      void s.moveCardAcross(drag.kind, drag.path, s.activeTab[dst] ?? 0);
+      void s.moveCardAcross(drag.kind, drag.path, activeTabRef.current[dst] ?? 0);
       return;
     }
     // 拖放方向决定谁是项目、谁是项目组
@@ -698,7 +712,7 @@ export default function App() {
               selected={s.selProject}
               onSelect={(p) => { setFocus('project'); s.setSelProject(p); }}
               onOpen={(p) => openPath(p, 'dir')}
-              onMove={(path, i) => s.moveCard('project', path, s.activeTab.project, i)}
+              onMove={(path, i) => s.moveCard('project', path, activeTabRef.current.project, i)}
               onMoveToTab={(path, tabIndex) => {
                 const n = boot.projectTabs[tabIndex]?.items.length ?? 0;
                 s.moveCard('project', path, tabIndex, n);
