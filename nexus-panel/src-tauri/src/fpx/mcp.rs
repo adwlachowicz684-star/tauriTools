@@ -424,6 +424,10 @@ fn tools() -> Vec<Value> {
             "title": { "type": "string" },
             "dir": { "type": "string", "description": "可选，保存目录" },
         }), vec!["title"]),
+        tool("pick_screen_color", "取屏幕上某点的颜色，返回 #RRGGBB；x/y 省略时取当前鼠标所在点（仅 Windows）", json!({
+            "x": { "type": "integer", "description": "可选，屏幕横坐标；与 y 一起省略则跟随鼠标" },
+            "y": { "type": "integer", "description": "可选，屏幕纵坐标" },
+        }), vec![]),
         tool("deploy_skill", "部署 skill：无 AI 命令时本地生成 SKILL.md 骨架，有则写入请求并拉起 AI", json!({
             "prompt": { "type": "string", "description": "skill 描述" },
             "target": { "type": "string", "description": "可选，目标目录；省略则用当前选择" },
@@ -507,6 +511,12 @@ const ALIASES: &[(&str, &str, Option<(&str, &str)>)] = &[
     // 丢失了信息。要区分请用 add_card 指定 kind。
     ("create_project", "create_folder", None),
     ("create_group", "create_folder", None),
+    /* 原版把「设图标」按来源拆成 ico 与 dll 两个工具。
+       当前只有一个 folder_icon_set —— 它的 icon 参数本就支持
+       `<ico 路径>` 与 `<dll 路径>|<索引>` 两种写法
+       （见 sys.rs 里 apply_icon 的注释），所以 dll 那个旧名不是"缺失的能力"，
+       只是旧名字。加一条别名即可，不必新建工具。 */
+    ("folder_icon_set_dll", "folder_icon_set", None),
 ];
 
 /// 把可能是原版名字的调用归一化成当前实名，返回 (实名, 需要补的默认参数)。
@@ -809,6 +819,36 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             };
             let r = super::screen::capture_window(&target, &title).map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": serde_json::to_string(&r).unwrap_or_default() }] })
+        }
+        /* 吸管取色。
+           ------------------------------------------------------------------
+           后端 `sys::pick_screen_color` 早已实现（色盘吸管在用），
+           命令 `fpx_pick_color` 也已注册 —— 这里只是把它接进 MCP。
+
+           两个要注意的点：
+
+           ① **非 Windows 必须明确报错**，不能静默给个默认值。
+              这一点 `sys.rs` 里已经做了（`#[cfg(not(windows))]` 版本返回 Err，
+              并提示改用 RGB/HEX 输入），这里直接透传即可，不要改成"返回空串"。
+
+           ② 坐标**可以省略**：省略时取当前鼠标所在的点。
+              这不是"参数缺失"的错误，而是一条真实且常用的路径 ——
+              AI 没法预知用户想取哪，跟随鼠标才是对的用法。
+              所以必填列表是空的，不写 vec!["x","y"]。 */
+        "pick_screen_color" => {
+            let coord = |k: &str| -> Result<Option<i32>, Value> {
+                match args.get(k).and_then(|v| v.as_i64()) {
+                    None => Ok(None),
+                    // 超范围就报错，不要静默回退成"跟随鼠标"——
+                    // 那样 AI 以为取了指定坐标，实际取的是鼠标处，错了还不知道
+                    Some(n) => i32::try_from(n).map(Some)
+                        .map_err(|_| err(&format!("{k} 超出有效范围: {n}"))),
+                }
+            };
+            let x = coord("x")?;
+            let y = coord("y")?;
+            let hex = super::sys::pick_screen_color(x, y).map_err(|e| err(&e))?;
+            json!({ "content": [{ "type": "text", "text": hex }] })
         }
         "deploy_skill" => {
             let prompt = s("prompt");

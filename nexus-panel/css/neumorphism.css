@@ -964,12 +964,27 @@ body.nx-inspecting * { cursor: crosshair !important; }
    但插件自己引入的本文件里 .p-card 仍在生效 —— 所以 .p-card 这一处
    对两种挂载模式都有效。
 */
+/* 玻璃主题下的毛玻璃容器。
+   ------------------------------------------------------------------
+   .dialog **刻意不在此列**：
+
+   `backdrop-filter` 只要计算值不是 none，就会同时造成两件不可分离的事：
+     ① 该元素成为层叠上下文 → 内部浮层的 z-index 被关在里面排序
+     ② 该元素成为其 position:fixed 后代的包含块 → fixed 相对它而非视口
+
+   .dialog 里会再开一层弹窗（IconPickDialog / BackupDialog 就是嵌套的），
+   而它们的遮罩 .mask 是 position:fixed; inset:0。
+   一旦 .dialog 带 backdrop-filter，嵌套的遮罩就只盖住父弹窗那一块，
+   而不是整个视口 —— 表现为"弹窗里再弹窗，外面那圈没被遮住"。
+
+   而模糊在这里**根本看不见**：.dialog 的底板是 --surface-overlay，
+   注释里写明"必须比普通卡片更实"（弹窗要承载阅读），背景已被完全遮住。
+   收益为零，代价是困住遮罩 —— 与 .p-card 那次是同一个判断。 */
 html[data-theme-style='glass'] #titlebar,
 html[data-theme-style='glass'] #sidebar,
 html[data-theme-style='glass'] #main-inner,
 html[data-theme-style='glass'] .toast,
-html[data-theme-style='glass'] .err-box,
-html[data-theme-style='glass'] .dialog {
+html[data-theme-style='glass'] .err-box {
   -webkit-backdrop-filter: blur(var(--blur));
   backdrop-filter: blur(var(--blur));
 }

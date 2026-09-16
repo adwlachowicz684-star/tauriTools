@@ -60,6 +60,7 @@ const need = [
   ['list_rules', 'scan_content'],
   ['create_project', 'create_folder'],
   ['create_group', 'create_folder'],
+  ['folder_icon_set_dll', 'folder_icon_set'],
 ];
 for (const [o, n] of need) {
   t(`  ${o} → ${n}`, byOld[o]?.neu === n, byOld[o]?.neu);

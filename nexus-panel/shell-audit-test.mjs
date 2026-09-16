@@ -146,11 +146,25 @@ const rawSel = bfIdx < 0 ? '' : css.slice(selStart, ruleOpen);
 const selector = rawSel.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\s+/g, ' ').trim();
 
 t('.p-card 不再带 backdrop-filter', !/\.p-card\b/.test(selector), selector.slice(0, 80) || '(空)');
+/* .dialog 同 .p-card 的理由：它里面会再开一层弹窗（IconPickDialog /
+   BackupDialog 就是嵌套的），而嵌套弹窗的遮罩 .mask 是 position:fixed。
+   一旦 .dialog 带 backdrop-filter，它就成为 fixed 后代的包含块，
+   遮罩只盖住父弹窗那一块而不是整个视口。
+
+   而模糊在 .dialog 上根本看不见 —— 底板是 --surface-overlay（注释写明
+   "必须比普通卡片更实"），背景已被完全遮住。收益为零，代价是困住遮罩。 */
+t('.dialog 不再带 backdrop-filter', !/\.dialog\b/.test(selector), selector.slice(0, 80) || '(空)');
 
 /* 逐段检查：只看"选择器里有 glass"是不够的 —— 破坏掉其中一段时，
    其余段仍带 glass，断言会照样通过。所以按逗号切分后要求每段都带限定。 */
 const parts = selector.split(',').map((x) => x.trim()).filter(Boolean);
-t('选择器按逗号切分成功', parts.length >= 5, parts.length + ' 段');
+/* 不写死段数（原先是 >=5，移除 .dialog 后合法地变成 4 段就红了）。
+   这条断言要防的是"切分失败"—— 只切出 0/1 段说明解析逻辑坏了，
+   于是下面的逐段检查会全绿却什么都没查。数量增减是正常的。
+
+   注：这与 mcp-alias-test 里「解析出 6 条映射」是**同一类坑** ——
+   把当下的数量写进断言，合法变化后测试就红。 */
+t('选择器按逗号切分成功', parts.length >= 2, parts.length + ' 段');
 const unguardedSel = parts.filter((x) => !x.includes("data-theme-style='glass'"));
 t('每一段选择器都带 glass 限定', unguardedSel.length === 0,
   unguardedSel.join(' | ').slice(0, 80) || (parts.length + ' 段均已限定'));
