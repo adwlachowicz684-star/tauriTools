@@ -247,7 +247,10 @@ export function createHost(opts = {}) {
       // 告诉外壳：这个插件有没有自己的设置面板（决定要不要显示「⚙ 设置」）
       hooks.onSettingsAvailable?.(instance ? hasSettings(instance) : false);
     } catch (err) {
-      if (state.mounting === token) showError(stage, manifest, err);
+      /* err.frameInfo 由 mountIframeView 在 iframe 还在时抓的现场快照，
+         取出来单独传给错误框 —— 它不属于 Error 的标准字段，
+         直接透传会让 formatDiagnostics 把它当成普通对象展开。 */
+      if (state.mounting === token) showError(stage, manifest, err, err?.frameInfo);
       hooks.onSettingsAvailable?.(false);
     } finally {
       clearTimeout(timer);
@@ -491,6 +494,7 @@ export function createHost(opts = {}) {
     iframe.dataset.isolated = isolated ? '1' : '0';
     iframe.className = 'plugin-frame';
     iframe.dataset.pluginId = manifest.id;
+    const t0 = performance.now?.() ?? Date.now();
     wrap.appendChild(iframe);
 
     const cleanupFns = [];
@@ -502,8 +506,38 @@ export function createHost(opts = {}) {
     // 握手阶段就要写 reportedBase，此时完整实例还没构造出来，先放一个可变壳
     const inst0 = {};
 
+    /* iframe 现场快照：失败时随错误一起带到错误框里。
+       必须在 iframe 还在的时候抓 —— 出错后 wrap 会被移除，届时只剩一个
+       被 detach 的 iframe，"有没有 load 过"这类运行时状态就丢了。 */
+    let loadedAt = null;
+    const frameSnapshot = () => {
+      try {
+        const r = {
+          'iframe src': iframe.getAttribute('src') || iframe.src || '(空)',
+          sandbox: iframe.getAttribute('sandbox') || '(无)',
+          隔离态: iframe.dataset.isolated === '1' ? '是' : '否',
+          已加载: loadedAt ? `是（耗时 ${loadedAt}ms）` : '否',
+          已握手: handshaked ? '是' : '否',
+        };
+        /* 同源（非隔离）时能读到内部文档，补充最能说明问题的两项：
+           页面到底渲染出东西没有、内部有没有自己报错。 */
+        try {
+          const doc = iframe.contentDocument;
+          if (doc) {
+            r['内部节点数'] = String(doc.body?.childElementCount ?? '(无 body)');
+            r['内部标题'] = doc.title || '(无)';
+          } else r['内部文档'] = '读不到（隔离态或尚未解析）';
+        } catch { r['内部文档'] = '读不到（跨源限制）'; }
+        return r;
+      } catch { return { 说明: '快照失败' }; }
+    };
+
     const ready = new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('iframe 插件握手超时（10s）')), 10000);
+      const timeout = setTimeout(() => {
+        const e = new Error('iframe 插件握手超时（10s）');
+        try { e.frameInfo = frameSnapshot(); } catch { /* 别让快照失败淹了真错 */ }
+        reject(e);
+      }, 10000);
 
       /**
        * 空页面快速失败。
@@ -520,6 +554,9 @@ export function createHost(opts = {}) {
        */
       let emptyCheck = null;
       const onLoad = () => {
+        if (loadedAt === null) {
+          try { loadedAt = Math.round(performance.now() - t0); } catch { loadedAt = -1; }
+        }
         if (handshaked || emptyCheck) return;
         emptyCheck = setTimeout(() => {
           if (handshaked) return;
@@ -530,7 +567,9 @@ export function createHost(opts = {}) {
               && !doc.body.textContent.trim());
           } catch { return; }        // 隔离态（opaque origin）读不到，放弃检测
           if (empty) {
-            reject(new Error('插件页面没有渲染出内容 —— 入口文件可能缺失，或该插件需要先执行构建'));
+            const e = new Error('插件页面没有渲染出内容 —— 入口文件可能缺失，或该插件需要先执行构建');
+            try { e.frameInfo = frameSnapshot(); } catch { /* 同上 */ }
+            reject(e);
           }
         }, 1500);
         cleanupFns.push(() => clearTimeout(emptyCheck));
@@ -950,12 +989,45 @@ export function createHost(opts = {}) {
   }
 
   /* ---- 错误边界 ---- */
-  function showError(stage, manifest, err) {
+  function showError(stage, manifest, err, extra) {
     console.error(`[plugin:${manifest?.id}]`, err);
     dismissLoading(stage, true);        // 立即摘掉，别挡着错误框
-    stage.innerHTML = renderErrorBox(manifest, err);
+
+    /* 诊断信息要在**清掉 DOM 之前**抓：err 里的堆栈此刻最完整，
+       而 iframe 相关的现场（src / sandbox）马上就要随 wrap 一起没了。 */
+    let diag = null;
+    try { diag = collectDiagnostics(manifest, err, extra); } catch { /* 诊断失败不影响报错 */ }
+    if (diag) console.error(`[plugin:${manifest?.id}] 诊断报告\n` + formatDiagnostics(diag));
+
+    stage.innerHTML = renderErrorBox(manifest, err, diag);
     stage.querySelector('#err-retry').onclick = () => mount(manifest?.id);
     stage.querySelector('#err-back').onclick = () => hooks.onOpen?.('home') ?? mount('home');
+
+    /* 复制 / 导出：把完整报告带走，方便贴 issue 或发给开发者 */
+    const body = stage.querySelector('#err-diag-body');
+    if (body) {
+      const btnCopy = stage.querySelector('#err-copy');
+      const btnExport = stage.querySelector('#err-export');
+      btnCopy.onclick = async () => {
+        const ok = await copyText(body.textContent || '');
+        hooks.toast?.(ok ? '诊断日志已复制' : '复制失败，请手动选中日志区复制', ok ? 'ok' : 'err');
+      };
+      btnExport.onclick = async () => {
+        /* 桌面对话框需要 fs/dialog 插件，本项目没启用（Cargo.toml 里只有
+           http + shell），所以导出走的是 web 的 Blob + a.download。
+           各平台 webview 对下载的支持并不一致，被拦下来时不能默默失败 ——
+           回落到复制，至少内容不会丢。 */
+        try {
+          const name = downloadText(body.textContent || '', diagnosticsFilename(manifest));
+          hooks.toast?.(`已导出 ${name}`, 'ok');
+        } catch {
+          const ok = await copyText(body.textContent || '');
+          hooks.toast?.(
+            ok ? '导出被环境拦截，已改为复制到剪贴板' : '导出失败，请手动选中日志区复制',
+            ok ? 'ok' : 'err');
+        }
+      };
+    }
   }
 
   /* ---- 窗口控制 ---- */
@@ -1137,6 +1209,115 @@ export function escapeHtml(s) {
 }
 
 /**
+ * 收集排错所需的上下文。
+ * --------------------------------------------------------------------
+ * 插件加载失败时，光有 `err.message` 通常不够判断：
+ *   · 同一个插件在别人机器上正常 —— 差在构建产物、隔离策略还是主题？
+ *   · 「握手超时」到底是插件没 build，还是沙箱把它拦了？
+ *   · 「页面空白」是入口路径写错，还是无构建模式下加载了 TSX？
+ * 这些都得靠环境信息才能定位，所以这里把相关状态一次性抓全。
+ *
+ * 设计上刻意**全部包 try/catch**：诊断代码本身绝不能抛出新错误，
+ * 否则用户会看到一个"收集诊断信息失败"的报错，把真正的错误盖掉。
+ *
+ * @param {{id?:string,name?:string,type?:string,entry?:string}} manifest
+ * @param {unknown} err
+ * @param {object} [extra] 调用方补充的现场信息（如 iframe 的 src / sandbox）
+ * @returns {object} 结构化诊断对象
+ */
+export function collectDiagnostics(manifest, err, extra = {}) {
+  const pick = (fn, fallback = '(未知)') => {
+    try { const v = fn(); return v == null || v === '' ? fallback : v; }
+    catch { return '(读取失败)'; }
+  };
+
+  const cfg = pick(() => (manifest?.id ? getPluginConfig(manifest.id) : null), null);
+  const th = pick(() => themeManager.getCurrent?.(), null);
+
+  return {
+    meta: {
+      时间: pick(() => new Date().toISOString()),
+      页面: pick(() => location.href),
+      UA: pick(() => navigator.userAgent),
+      视口: pick(() => `${window.innerWidth}×${window.innerHeight}`
+        + ` (DPR ${window.devicePixelRatio || 1})`),
+      语言: pick(() => navigator.language),
+    },
+    runtime: {
+      运行形态: pick(() => (isInsideTauri() ? 'Tauri 桌面端' : '浏览器')),
+      构建模式: pick(() => (isNoBuild() ? '无构建（直接使用源码）' : '已构建')),
+      协议: pick(() => location.protocol),
+      插件数量: pick(() => String(state.plugins?.length ?? 0), '0'),
+    },
+    plugin: {
+      名称: pick(() => manifest?.name),
+      ID: pick(() => manifest?.id),
+      类型: pick(() => (manifest?.type === 'iframe' ? 'iframe 沙箱' : '同页 module')),
+      入口: pick(() => manifest?.entry),
+      解析后入口: pick(() => (manifest?.entry ? resolveEntry(manifest.entry) : null)),
+      版本: pick(() => manifest?.version, '(未声明)'),
+      内置: pick(() => (manifest?.builtin ? '是' : '否')),
+      需要构建: pick(() => (manifest?.requiresBuild ? '是' : '否')),
+    },
+    config: cfg ? {
+      功能隔离: cfg.isolated ? '开启（不可访问 parent/localStorage）' : '关闭（同源直连）',
+      主题适配: cfg.adaptTheme ? '开启' : '关闭',
+      深色策略: cfg.themeDark || '(跟随全局)',
+      浅色策略: cfg.themeLight || '(跟随全局)',
+      适配策略: pick(() => normalizer.resolvePolicy?.(manifest?.id) ?? '(未取到)', '(未取到)'),
+    } : { 说明: '无插件配置（manifest 缺少 id）' },
+    theme: th ? {
+      主题: pick(() => `${th.name} (${th.id})`),
+      基调: pick(() => th.base),
+      风格: pick(() => th.style || '(未声明)'),
+      强调色: pick(() => themeManager.getAccent?.(), '(未设置)'),
+      环境色: pick(() => themeManager.getEnvColor?.(), '(未设置)'),
+      色相偏移: pick(() => String(themeManager.getHueShift?.(th.id) ?? 0)),
+      明暗偏移: pick(() => String(themeManager.getLightShift?.(th.id) ?? 0)),
+    } : { 说明: '主题未初始化' },
+    // iframe 现场：由 mountIframeView 传入，只在 iframe 插件失败时才有
+    frame: Object.keys(extra).length ? extra : null,
+    error: {
+      类型: pick(() => err?.constructor?.name || (typeof err), typeof err),
+      名称: pick(() => err?.name, '(无)'),
+      消息: pick(() => err?.message || String(err), '(无)'),
+      堆栈: pick(() => err?.stack, '(无堆栈)'),
+    },
+  };
+}
+
+/**
+ * 把诊断对象格式化成可复制 / 可导出的纯文本。
+ *
+ * 用 `键: 值` 的对齐排版而不是 JSON，因为这份内容是**给人读**的
+ * （贴到 issue 里、发给别人看），JSON 的引号和转义在这种场景里很碍眼。
+ */
+export function formatDiagnostics(diag) {
+  const out = [];
+  const LABEL = {
+    meta: '环境', runtime: '运行时', plugin: '插件',
+    config: '插件配置', theme: '主题', frame: 'iframe 现场', error: '错误',
+  };
+  const width = (k) => [...k].reduce((n, c) => n + (c.charCodeAt(0) > 127 ? 2 : 1), 0);
+  out.push('='.repeat(56));
+  out.push('Nexus Panel 插件加载失败诊断报告');
+  out.push('='.repeat(56));
+  for (const [sec, obj] of Object.entries(diag)) {
+    if (!obj) continue;
+    out.push('');
+    out.push(`【${LABEL[sec] || sec}】`);
+    const keys = Object.keys(obj);
+    const w = Math.max(...keys.map(width));
+    for (const k of keys) {
+      out.push(`  ${k}${' '.repeat(Math.max(0, w - width(k)))} : ${String(obj[k])}`);
+    }
+  }
+  out.push('');
+  out.push('='.repeat(56));
+  return out.join('\n');
+}
+
+/**
  * 渲染插件加载失败的错误框，返回 HTML 字符串。
  *
  * 单独抽出来是为了让测试能调真实渲染路径。此前 xss-test.mjs 里
@@ -1151,9 +1332,13 @@ export function escapeHtml(s) {
  * @param {unknown} err
  * @returns {string}
  */
-export function renderErrorBox(manifest, err) {
+export function renderErrorBox(manifest, err, diag) {
   const msg = String(err?.stack || err?.message || err);
   const title = escapeHtml(manifest?.name || manifest?.id || '未知插件');
+  /* 诊断报告：默认折叠，因为大部分用户只关心"重试能不能好"，
+     一大坨环境信息糊在脸上反而挡住了那行错误。
+     需要排查的人（或要贴给开发者时）再展开。 */
+  const report = escapeHtml(diag ? formatDiagnostics(diag) : '');
   return `
       <div class="err-box">
         <h3>⚠ 插件「${title}」加载失败</h3>
@@ -1162,7 +1347,73 @@ export function renderErrorBox(manifest, err) {
           <button class="p-btn primary" id="err-retry">重试</button>
           <button class="p-btn" id="err-back">返回概览</button>
         </div>
+        ${report ? `
+        <details class="err-diag">
+          <summary>诊断日志（环境 / 插件配置 / 主题 / 堆栈）</summary>
+          <div class="err-diag-actions">
+            <button class="p-btn" id="err-copy">复制</button>
+            <button class="p-btn" id="err-export">导出 .log</button>
+          </div>
+          <pre class="err-diag-body" id="err-diag-body">${report}</pre>
+        </details>` : ''}
       </div>`;
+}
+
+/**
+ * 把文本放进剪贴板。
+ *
+ * navigator.clipboard 有两个会踩的前提：
+ *   1. 需要安全上下文（https / localhost）—— 用 file:// 打开时不成立
+ *   2. 需要文档处于焦点 —— 弹窗刚渲染时未必满足
+ * 任一不满足都会 reject，所以必须回落到 execCommand（老 API 但在
+ * 非安全上下文里仍可用）。两种都不行就让用户手动选中。
+ *
+ * @returns {Promise<boolean>} 是否成功
+ */
+export async function copyText(text) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* 落到下面的兜底 */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    // 不能 display:none —— 那样选不中。挪到视口外即可
+    ta.style.cssText = 'position:fixed;top:-1000px;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch { return false; }
+}
+
+/**
+ * 触发文件下载。
+ *
+ * @returns {string} 实际使用的文件名
+ */
+export function downloadText(text, filename) {
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // 立刻 revoke 会让部分浏览器来不及取数据，留一帧
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return filename;
+}
+
+/** 诊断报告的文件名：带上插件 id 与时间，便于在多份报告里分辨 */
+export function diagnosticsFilename(manifest) {
+  const id = (manifest?.id || 'plugin').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  return `nexus-error-${id}-${ts}.log`;
 }
 
 /** 无构建模式下过滤掉需要编译器的插件（React/TSX） */

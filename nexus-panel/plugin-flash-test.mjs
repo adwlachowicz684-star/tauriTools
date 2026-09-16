@@ -121,8 +121,10 @@ t('该底色不是 transparent（曾写过，出错时就露出白底）',
    用户分不清是加载中还是坏了。现在 load 之后会再判一次空。 */
 t('load 后会检测空白页面并提前失败',
   /iframe\.addEventListener\('load', onLoad\)/.test(host));
+/* 现在 onLoad 里第一件事是记加载耗时（供诊断报告用），之后才判 handshaked。
+   所以不再要求 if (handshaked 紧跟在函数名后 —— 只要还在这个回调里即可。 */
 t('判空只在未握手时进行（已握手的插件不误伤）',
-  /const onLoad = \(\) => \{\s*\n\s*if \(handshaked/.test(host));
+  /const onLoad = \(\) => \{[\s\S]{0,220}if \(handshaked/.test(host));
 t('隔离态读不到 contentDocument 时跳过检测，不误报',
   /catch\s*\{\s*return;\s*\}/.test(host));
 
