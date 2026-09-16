@@ -9,7 +9,7 @@ import * as themeApi from '../js/theme-manager.js';
 import { getCloseAction, onCloseActionChange } from '../js/host.js';
 // 主题切换统一由 js/theme-picker.js 的弹出层处理（标题栏按钮 + 设置页共用），
 // 外壳不再自己维护"当前主题名"状态，避免两处各存一份、切完不同步。
-import Titlebar from './components/Titlebar';
+import Titlebar, { type WinAction } from './components/Titlebar';
 import Sidebar from './components/Sidebar';
 import Stage from './components/Stage';
 import Toasts, { type ToastItem } from './components/Toasts';
@@ -112,7 +112,7 @@ export default function App() {
   const [closeAction, setCloseAction] = useState<'hide' | 'close'>(() => getCloseAction());
   useEffect(() => onCloseActionChange((v) => setCloseAction(v)), []);
 
-  const handleWin = useCallback((a: string) => {
+  const handleWin = useCallback((a: WinAction) => {
     void hostRef.current?.win(a);
     /* 藏起来之后没有任何入口能唤回（窗口收不到键盘事件），
        必须明确告诉用户点托盘 —— 否则窗口凭空消失，只会以为程序崩了。 */

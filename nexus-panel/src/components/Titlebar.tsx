@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 import { openThemePicker } from '../../js/theme-picker.js';
 
-type WinAction = 'minimize' | 'maximize' | 'close' | 'topmost' | 'hide';
+export type WinAction = 'minimize' | 'maximize' | 'close' | 'topmost' | 'hide';
 
 export default function Titlebar({
   title,

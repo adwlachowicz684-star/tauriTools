@@ -66,7 +66,7 @@ t('Rust: 空 token 时不再无条件放行',
   !/if expected\.is_empty\(\) \{\s*return true;/.test(rsSrc));
 /* 先切出 token_ok 函数体再判断，**不要**用「N 个字符窗口」在整份源码上匹配。
 
-   原写法是 `expected\.is_empty\(\)[\s\S]{0,200}?BROWSER_GUARD_HEADER`，
+   原写法是 `expected\.is_empty\(\)[\s\S]{0,800}?BROWSER_GUARD_HEADER`，
    在整份 af_flow.rs 上搜：两者之间隔了一段中文注释，实际 319 字符，
    超出 200 窗口 → 恒红。于是出现最糟的一类假红：**代码是对的，测试是错的**，
    而且它会被当成"防护缺失"去追 —— 我正是据此误报过一次。

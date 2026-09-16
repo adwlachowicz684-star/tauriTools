@@ -64,7 +64,7 @@ export interface Host {
   mountSettings(container: HTMLElement, manifest?: PluginManifest): Promise<() => void>;
   /** 当前插件是否声明了设置面板 */
   hasSettings(): boolean;
-  win(action: 'minimize' | 'maximize' | 'close' | 'topmost'): Promise<void>;
+  win(action: 'minimize' | 'maximize' | 'close' | 'hide' | 'topmost'): Promise<void>;
   setBadge(id: string, n: number): void;
   readTheme(): Record<string, string>;
   getPlugins(): PluginManifest[];
@@ -82,6 +82,17 @@ export function createHost(opts: {
 }): Host;
 
 export function createBus(): Bus;
+/**
+ * ✕ 的行为：'hide' 藏到托盘（默认）/ 'close' 真正退出。
+ * 值存在 localStorage，跨会话保留。
+ */
+export type CloseAction = 'hide' | 'close';
+export function getCloseAction(): CloseAction;
+/** 传非 'close' 的值一律按 'hide' 处理；变化时会通知所有订阅者 */
+export function setCloseAction(v: CloseAction): CloseAction;
+/** 订阅变化，返回取消订阅的函数 */
+export function onCloseActionChange(fn: (v: CloseAction) => void): () => void;
+
 export function loadRegistry(): Promise<PluginManifest[]>;
 export function getCustomPlugins(): PluginManifest[];
 export function saveCustomPlugins(list: PluginManifest[]): void;
