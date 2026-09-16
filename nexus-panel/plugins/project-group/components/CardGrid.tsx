@@ -529,17 +529,42 @@ export function CardGrid({
             {/* 链接数兼展开开关：点一下展开逐条明细。
                 只在有明细可展时才可点——老版本后端不返回 linkDetails，
                 那时给一个不带按钮的普通徽标，点了没反应更糟。 */}
+            {/*
+              链接指示（视觉规范 #126 #127）：
+              原版**项目卡片**是「圆点 + 数字」，圆点颜色随状态变
+              （蓝有效 / 红破坏 / 黄冲突）；**项目组卡片**则是一个 8×8 小蓝点，
+              有项目链接到它时才出现。
+              此前两类都统一用 emoji「🔗 3」，既没有状态色，也分不出卡片类型。
+
+              改回圆点的理由不只是"对齐原版"：emoji 在不同系统上字形与配色不同，
+              且颜色无法随主题走；圆点是 CSS 画的，能跟随 --accent / --danger / --warn。
+            */}
             {(c.linkDetails?.length ?? 0) > 0 ? (
               <button
                 className="fpx-badge link expandable"
                 title="展开 / 收起链接明细"
                 onClick={(e) => { e.stopPropagation(); toggleLinks(c.path); }}
               >
-                🔗 {c.linkCount}
+                <span className={`fpx-link-dot ${
+                  c.hasConflict ? 'conflict' : c.hasBroken ? 'broken' : 'valid'
+                }`} />
+                {c.linkCount}
                 <span className={`fpx-link-arrow${expanded.has(c.path) ? ' open' : ''}`}>▸</span>
               </button>
             ) : (
-              c.hasLink && <span className="fpx-badge link" title="已建链接">🔗 {c.linkCount}</span>
+              c.hasLink && (
+                <span className="fpx-badge link" title="已建链接">
+                  <span className={`fpx-link-dot ${
+                    c.hasConflict ? 'conflict' : c.hasBroken ? 'broken' : 'valid'
+                  }`} />
+                  {c.linkCount}
+                </span>
+              )
+            )}
+            {/* 项目组卡片：有项目链接到它时显示一个小蓝点（#126）。
+                项目卡片不显示——它的链接数徽标已经在上面了，重复反而干扰。 */}
+            {kind === 'group' && c.hasLink && (
+              <span className="fpx-group-dot" title="有项目链接到这里" />
             )}
             {/* 链接到哪个项目组：光有「🔗 3」看不出连的是谁，必须把组名写出来。
                 只在项目卡片上显示——项目组卡片自己就是组，写自己没意义。 */}
