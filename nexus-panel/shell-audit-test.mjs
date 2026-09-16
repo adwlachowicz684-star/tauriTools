@@ -69,8 +69,15 @@ t('Rust: 空 token 时不再无条件放行',
    这里要守的是结论（空 token 时仍要防护头），不是注释长度。 */
 t('Rust: 空 token 时要求防护头',
   /expected\.is_empty\(\)[\s\S]{0,400}?BROWSER_GUARD_HEADER/.test(rsSrc));
-t('前端: 提示调用需带防护头',
-  /X-Nexus-Webhook/.test(src('plugins/agent-flow/components/Inspector.tsx')));
+/* 扫整个 components 树：上游把各节点的检查器拆进了 components/inspectors/，
+   写死 Inspector.tsx 会在重构后误报"防护头提示没了"，其实只是搬了家。 */
+const afCompText = (function walk(dir) {
+  return fs.readdirSync(path.join(HERE, dir), { withFileTypes: true }).flatMap((d) => {
+    const rel = `${dir}/${d.name}`;
+    return d.isDirectory() ? walk(rel) : [src(rel)];
+  }).join('\n');
+})('plugins/agent-flow/components');
+t('前端: 提示调用需带防护头', /X-Nexus-Webhook/.test(afCompText));
 
 /* ============ P1-4 · findTheme 不自递归 ============ */
 console.log('\n=== P1-4 findTheme 兜底 ===');

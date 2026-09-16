@@ -89,7 +89,9 @@ console.log('\n=== 4. 阴影走档位变量 ===');
    不允许：把 rgba(...) / #xxx 写进双向立体阴影 —— 换主题不会跟着变。 */
 const isRingOrGlow = (v) => /^inset 0 0 0 /.test(v) || /^0 0 (?:0 )?\d+px var\(--/.test(v)
   || /^0 0 (?:0 )?\d+px currentColor$/.test(v) || /^inset 0 1px 0 /.test(v)
-  || /^inset -?\d+px 0 0 /.test(v) || v === 'none';
+  // 单轴 + 零模糊 = 用阴影画的纯色块（挡条 / 缝隙遮挡），不是立体感；
+  // 带不带 inset 都一样，颜色走变量就会跟着主题变
+  || /^(?:inset )?-?\d+px 0 0 /.test(v) || v === 'none';
 const hardShadow = [];
 for (const f of all) {
   for (const m of f.text.matchAll(/box-shadow\s*:\s*([^;]+);/g)) {
