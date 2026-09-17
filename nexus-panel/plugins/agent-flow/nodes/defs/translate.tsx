@@ -15,6 +15,7 @@ import { registerNode } from '../registry';
 const fields: FieldDef[] = [
   {
     type: 'custom',
+    spec: { keys: ['sourceLang', 'targetLang', 'credentialId'], kind: 'text' },
     render: (p) => (
       <LlmConfigPanel
         nodeId={p.node.id}
@@ -55,6 +56,7 @@ const fields: FieldDef[] = [
 
   {
     type: 'custom',
+    spec: { keys: ['text', 'glossary'], kind: 'textarea' },
     key: 'text',
     render: (p) => (
       <Field label="待翻译内容">

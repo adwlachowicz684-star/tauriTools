@@ -49,6 +49,8 @@ import {
   parentIdOf, movedEnough, heightOf, STACK_GAP,
 } from './engine/stack';
 import { withDefault } from './engine/nodeDefaults';
+import { specOf, canConnect } from './engine/nodeSpec';
+import { getDefByDataKind } from './nodes/registry';
 import CanvasTabs from './components/CanvasTabs';
 import { TaskPanel } from './components/TaskPanel';
 import { HistoryPanel } from './components/HistoryPanel';
@@ -796,9 +798,32 @@ export default function App() {
        * 与 setEdges 期望的 FlowEdge[] 对不上（此前依赖不全时被 any 掩盖了）。
        */
       setEdges((eds) => addEdge(newEdge, eds));
+
+      /*
+       * 连完按契约校验一次。
+       *
+       * 刻意**不阻止** —— 契约描述的是"语义上能不能用"，
+       * 而用户可能有我没想到的用法。硬阻止会让"明明能连却连不上"，
+       * 比给一条提示更让人困惑。
+       *
+       * 例外是 block 级（比如连给自己），那种本来就不该成立。
+       */
+      const verdict = canConnect(
+        specOf(kindOfNode(nodes, params.source)),
+        specOf(kindOfNode(nodes, params.target)),
+      );
+      if (verdict.reason) pushLog(`⚠ ${verdict.reason}`);
     },
-    [setEdges, nodes],
+    [setEdges, nodes, pushLog],
   );
+
+  /** 取节点的 dataKind（契约按 dataKind 索引） */
+  const kindOfNode = useCallback((ns: FlowNode[], id: string | null): string | null => {
+    if (!id) return null;
+    const n = ns.find((x) => x.id === id);
+    if (!n) return null;
+    return getDefByDataKind(n.data)?.dataKind ?? null;
+  }, []);
 
   /** 记录删除前快照，并算出删除后是否留下悬空引用 */
   const beforeDelete = useCallback(
@@ -1313,7 +1338,17 @@ export default function App() {
               } as FlowNode
             : n
         )));
-        pushLog(`⇲ 已嵌合到 ${hit.parentId} 下方（可整体拖动，输出自动向下传递）`);
+        /*
+         * 嵌合 = 一条隐式边，连接判据与拉线一致。
+         * 只在有话要说时才打日志 —— 多数组合是正常的，
+         * 每次吸附都报一句成功会淹没真正的警告。
+         */
+        const verdict = canConnect(
+          specOf(kindOfNode(nodes, hit.parentId)),
+          specOf(kindOfNode(nodes, node.id)),
+        );
+        if (verdict.reason) pushLog(`⚠ ${verdict.reason}`);
+        else pushLog(`⇲ 已嵌合到 ${hit.parentId} 下方（可整体拖动，输出自动向下传递）`);
       } else if (hit && hit.parentId === oldParent && moved) {
         // 脱开后又吸回原处：保持关系，只归位
         setNodes((ns) => ns.map((n) => (
@@ -1327,7 +1362,7 @@ export default function App() {
         )));
       }
     },
-    [nodes, setNodes, pushLog],
+    [nodes, setNodes, pushLog, kindOfNode],
   );
 
   /*

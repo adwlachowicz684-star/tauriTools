@@ -10,6 +10,7 @@ const fields: FieldDef[] = [
   {
     // owner / repo 在同一行更像一个整体，用 custom 保住这个观感
     type: 'custom',
+    spec: { keys: ['owner', 'repo', 'order'], kind: 'text' },
     render: (p) => (
       <label className="p-row">
         <span className="p-muted" style={{ width: 64, flex: 'none' }}>仓库</span>
@@ -41,6 +42,7 @@ const fields: FieldDef[] = [
   { type: 'credential', key: 'credentialId', credentialKind: 'github-update' },
   {
     type: 'custom',
+    spec: { keys: ['order'], kind: 'switch' },
     render: (p) => <OrderPicker order={p.d.order as never} fallback={['api', 'atom', 'cli']} onChange={p.patch} />,
   },
   {

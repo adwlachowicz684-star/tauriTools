@@ -108,6 +108,22 @@ export type FieldDef = {
   /** note 的内容 / custom 的渲染函数 */
   render?: (p: FieldRenderProps) => ReactNode;
   content?: ReactNode;
+  /**
+   * custom 字段管着哪些参数。
+   *
+   * custom 是一段手写 JSX，从 FieldDef 上**看不出**它读写了哪些 key ——
+   * AI 扫 fields 时这些参数就是黑洞。所以在这里补一句声明。
+   *
+   * 例：HTTP 节点的地址行是个 custom（方法下拉 + 地址输入挤在一行），
+   * 它实际管着 method 与 url 两个参数。
+   */
+  spec?: {
+    keys: string[];
+    /** 参数类型，给 AI 看 */
+    kind?: 'text' | 'textarea' | 'number' | 'select' | 'switch';
+    /** 枚举取值 */
+    options?: string[];
+  };
 };
 
 /** 字段清单。给函数是为了支持 when 这类依赖当前数据的逻辑 */

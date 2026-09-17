@@ -15,6 +15,7 @@ const fields: FieldDef[] = [
   {
     // 方法与地址同行：地址是主信息，方法是个短前缀，分行会让地址被挤窄
     type: 'custom',
+    spec: { keys: ['method', 'url'], kind: 'select', options: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] },
     key: 'url',
     render: (p) => (
       <div className="p-row">
