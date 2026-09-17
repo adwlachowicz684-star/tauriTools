@@ -21,6 +21,8 @@ import { blockCatalog, SPECS, CAPABILITY_SIGNATURES } from '../engine/nodeSpec';
 const SRC = process.env.AF_SRC || '';
 const DOCS = path.join(SRC, 'docs');
 const nodesDir = path.join(DOCS, 'nodes');
+const cardsDir = path.join(DOCS, 'cards');
+const reuseDir = path.join(DOCS, 'reuse');
 
 test('AF_SRC 已设置（docs 在仓库里，测试在 $OUT/tests 下跑）', () => {
   assert.ok(SRC, 'AF_SRC 未设置：run-tests.sh 应导出仓库根路径');
@@ -144,7 +146,12 @@ test('索引里的分类标签都来自 NODE_CATEGORY_META（不手写）', () =
     .split('\n')
     .filter((l) => l.startsWith('## '))
     .map((l) => l.slice(3).trim());
-  const known = new Set([...labels, '连线判据（先看这个）', '模板变量', '边的写法', '能力签名']);
+  const known = new Set([
+    ...labels,
+    // 索引里的固定小节（不是分类）
+    '连线判据（先看这个）', '模板变量', '边的写法', '能力签名',
+    '参数卡片', '复用件',
+  ]);
   for (const h of headings) {
     assert.ok(known.has(h), `索引里出现了不在 NODE_CATEGORY_META 里的分类：${h}`);
   }
@@ -164,4 +171,109 @@ test('参数页说明不为空（聚合逻辑没退化）', () => {
     }
   }
   assert.ok(withHint > 0, '所有参数页都没说明 —— 字段聚合可能失效了');
+});
+
+/* ================= 卡片组 ================= */
+
+test('卡片组：内置的四组都有文档页', () => {
+  for (const g of ['github-repo', 'http-endpoint', 'llm-config', 'workdir']) {
+    assert.ok(fs.existsSync(path.join(cardsDir, `${g}.md`)), `缺 cards/${g}.md`);
+  }
+});
+
+test('卡片页说清了"管哪些字段"与"能用在哪些节点"', () => {
+  for (const f of fs.readdirSync(cardsDir)) {
+    const s = fs.readFileSync(path.join(cardsDir, f), 'utf-8');
+    assert.ok(s.includes('它管哪些字段'), `${f} 没说管哪些字段`);
+    assert.ok(s.includes('能用在哪些节点'), `${f} 没说能用在哪些节点`);
+    assert.ok(s.includes('脱钩'), `${f} 没说脱钩语义`);
+  }
+});
+
+/**
+ * 卡片组是注册进来的（nodes/cardGroups.ts），文档按注册项生成 ——
+ * 新增一组却没重新生成文档时，这里会红。
+ */
+test('卡片页数量与 cardGroups.ts 的注册项一致', () => {
+  const src = fs.readFileSync(path.join(SRC, 'nodes', 'cardGroups.ts'), 'utf-8');
+  const registered = [...src.matchAll(/group:\s*'([^']+)'/g)].map((m) => m[1]);
+  const files = fs.readdirSync(cardsDir).map((f) => f.replace(/\.md$/, ''));
+  assert.equal(files.length, registered.length,
+    `卡片页 ${files.length} 个，注册项 ${registered.length} 个 —— 改了 cardGroups.ts 要重新生成`);
+  for (const g of new Set(registered)) {
+    assert.ok(files.includes(g), `注册了 ${g} 但没有文档页`);
+  }
+});
+
+/* ================= 复用件 ================= */
+
+test('复用件：模块 / 自定义预设 / 默认值都有说明页', () => {
+  for (const n of ['module', 'custom-preset', 'defaults']) {
+    assert.ok(fs.existsSync(path.join(reuseDir, `${n}.md`)), `缺 reuse/${n}.md`);
+  }
+});
+
+/**
+ * 模块与自定义预设最容易混淆 —— 它们都是"存一份以后用"。
+ * 文档里必须明确对照，否则 AI（和人）会选错。
+ */
+test('模块与预设都写清了彼此的区别', () => {
+  const m = fs.readFileSync(path.join(reuseDir, 'module.md'), 'utf-8');
+  const p = fs.readFileSync(path.join(reuseDir, 'custom-preset.md'), 'utf-8');
+  assert.ok(m.includes('自定义预设'), 'module.md 没提自定义预设');
+  assert.ok(p.includes('模块'), 'custom-preset.md 没提模块');
+  // 两者的核心差别：能不能存连线、有没有自己的 type
+  assert.ok(m.includes('连线'), 'module.md 没说连线');
+  assert.ok(p.includes('连线'), 'custom-preset.md 没说连线（"不能存连线"是关键区别）');
+});
+
+test('模块页以接口为主：写清了入口/出口怎么推导', () => {
+  const m = fs.readFileSync(path.join(reuseDir, 'module.md'), 'utf-8');
+  assert.ok(m.includes('入口') && m.includes('出口'), '没说入口/出口');
+  assert.ok(m.includes('没有上游'), '没说入口 = 没有上游的内部节点');
+  assert.ok(m.includes('没有下游'), '没说出口 = 没有下游的内部节点');
+});
+
+test('预设页说清了存的时候剥掉什么（尤其是运行时与密钥）', () => {
+  const p = fs.readFileSync(path.join(reuseDir, 'custom-preset.md'), 'utf-8');
+  assert.ok(p.includes('last*'), '没提 last* 前缀的运行时字段');
+  assert.ok(p.includes('apiKey') || p.includes('密钥'), '没提密钥剥离');
+});
+
+/* ================= 统一索引 ================= */
+
+test('统一索引收录了全部五类', () => {
+  const idx = fs.readFileSync(path.join(DOCS, 'README.md'), 'utf-8');
+  for (const k of ['节点', '参数卡片', '模块', '自定义预设', '节点默认值']) {
+    assert.ok(idx.includes(k), `索引里漏了「${k}」`);
+  }
+});
+
+test('索引里五类的链接都指向真实存在的文件', () => {
+  const idx = fs.readFileSync(path.join(DOCS, 'README.md'), 'utf-8');
+  for (const m of idx.matchAll(/\]\(([a-zA-Z0-9._\/-]+\.md)\)/g)) {
+    const target = path.join(DOCS, m[1]);
+    assert.ok(fs.existsSync(target), `索引里链到了不存在的 ${m[1]}`);
+  }
+});
+
+/**
+ * 所有页面的回链都要能走通 —— 断链会让"分层路由"失去意义。
+ */
+test('所有页面的链接都不指向空文件', () => {
+  const files = [];
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const f = path.join(d, e.name);
+      if (e.isDirectory()) walk(f); else if (f.endsWith('.md')) files.push(f);
+    }
+  };
+  walk(DOCS);
+  for (const f of files) {
+    const s = fs.readFileSync(f, 'utf-8');
+    for (const m of s.matchAll(/\]\((\.{0,2}[a-zA-Z0-9._\/-]*\.md)\)/g)) {
+      const target = path.resolve(path.dirname(f), m[1]);
+      assert.ok(fs.existsSync(target), `${path.relative(DOCS, f)} 链到了不存在的 ${m[1]}`);
+    }
+  }
 });

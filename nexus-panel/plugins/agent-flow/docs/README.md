@@ -1,14 +1,20 @@
-# 控件索引
+# 可拖用的东西 — 统一索引
 
 > 自动生成，**不要手改**。改代码后跑：
 > `bash scripts/build-tests.sh && node scripts/gen-node-docs.mjs`
 
-这是**第一层**：只有分类与控件清单，外加「产出 / 接受」
-——这两项是决定两个控件能不能接的判据，所以放在索引里，
-不用进到第三层才知道。
+这是**第一层**。收录五类能拖出来用的东西：
 
-要看某个控件的说明 → 点进 `nodes/<kind>.md`
-要拿它的参数 → 再进 `nodes/<kind>.params.md`
+| 类别 | 装的是什么 | 入口 |
+|---|---|---|
+| **节点** | 一个积木（25 种） | 下面按分类的表 |
+| **参数卡片** | 一组参数（如某个仓库地址） | [卡片](#参数卡片)（4 组） |
+| **模块** | 多个节点编成的组合 | [module](reuse/module.md) |
+| **自定义预设** | 一个配好的节点 | [custom-preset](reuse/custom-preset.md) |
+| **节点默认值** | 决定新建节点长什么样 | [defaults](reuse/defaults.md) |
+
+后三样是**用户运行时创建**的，没有内置清单，
+所以这里只给「怎么用」的说明，不列具体条目（列了立刻过期）。
 
 ## 连线判据（先看这个）
 
@@ -81,6 +87,30 @@
 | [module](nodes/module.md) | `module` | any（透传上游） | any | — | 多个节点打包复用 |
 | [play-audio](nodes/play-audio.md) | `play-audio` | any（透传上游） | any | playAudioReader | 播放本地音频文件 |
 | [wait](nodes/wait.md) | `wait` | any（透传上游） | any | — | 暂停一段时间再往下跑 |
+
+## 参数卡片
+
+一组参数存成卡片，拖到节点上就套用。改了节点会**脱钩**成「自定义」。
+
+| 卡片组 | 管哪些字段 | 能用在 |
+|---|---|---|
+| [地址卡片](cards/github-repo.md) | `owner`, `repo`, `branch` | `github-push`, `github-update` |
+| [接口卡片](cards/http-endpoint.md) | `url`, `method` | `generic-http` |
+| [模型卡片](cards/llm-config.md) | `llm` | `ocr`, `translate` |
+| [目录卡片](cards/workdir.md) | `workdir` | `github-push` |
+
+拖到节点上会校验三件事：组已注册、节点声明支持这个组、值通过 validate。
+
+## 复用件
+
+| 名字 | 装的是什么 | 与另一个的区别 |
+|---|---|---|
+| [module](reuse/module.md) | **多个**节点 + 连线 | 与预设的区别：模块能存连线、有自己的 `module` 类型 |
+| [custom-preset](reuse/custom-preset.md) | **一个**节点 + 一套参数 | 与模块的区别：预设复用基础类型的 type，不能存连线 |
+| [defaults](reuse/defaults.md) | 新建节点的默认参数 | 不是能拖的积木，但它决定新建节点长什么样 |
+
+模块与预设都遵循「**库是库、实例是实例**」：改库 → 所有实例跟着变；
+改实例 → 该实例脱钩。
 
 ## 模板变量
 
