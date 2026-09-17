@@ -7,7 +7,7 @@
 
 import {
   loadBlueprints, saveBlueprints, visibleBlueprints, refreshAll,
-  describeRefresh, collectServers,
+  describeRefresh, collectServers, pruneByServers,
   type McpToolFetcher, type RefreshOutcome, type ServerRef,
 } from './mcpStore';
 import { registerBlueprints } from '../nodes/mcpGenerated';
@@ -76,9 +76,15 @@ export async function bootRefresh(
 ): Promise<BootRefreshResult> {
   const outcome = await refreshAll({ servers: serverList, previous, fetcher });
   if (outcome.ok) {
-    saveBlueprints(outcome.list);
-    // 刷完要重新注册 —— 新增/变更的节点得出现在侧栏
-    registerBlueprints(outcome.list);
+    /*
+     * 刷完按当前服务列表裁剪：服务已经从画布上删掉的，
+     * 它的工具标 stale（不在侧栏出现，但画布上的老节点照常显示）。
+     */
+    const pruned = pruneByServers(outcome.list, serverList);
+    saveBlueprints(pruned);
+    // 重新注册 —— 新增/变更的节点得出现在侧栏
+    registerBlueprints(pruned);
+    return { outcome: { ...outcome, list: pruned }, message: describeRefresh(outcome) };
   }
   return { outcome, message: describeRefresh(outcome) };
 }

@@ -145,6 +145,24 @@ export async function refreshAll(opts: RefreshOptions): Promise<RefreshOutcome> 
   for (const s of servers) {
     const name = String(s?.name ?? '').trim();
     if (!name) continue;
+
+    /*
+     * 还没填完的服务**跳过，不算失败**。
+     *
+     * 用户点「＋加一个服务」后，命令与地址都是空的，
+     * 这时候去连必然失败并报"连不上" —— 那是噪音，不是问题。
+     * 等他填了命令再刷新才连。
+     */
+    const hasCmd = !!(s?.command && String(s.command).trim());
+    const hasUrl = !!(s?.url && String(s.url).trim());
+    if (!hasCmd && !hasUrl) {
+      // 保留它的旧快照，但不报失败
+      for (const old of previous) {
+        if (old.server === name && !old.stale) fresh.push(old);
+      }
+      continue;
+    }
+
     try {
       const tools = await opts.fetcher(s);
       const { list, skipped } = buildBlueprints(name, tools ?? []);
@@ -220,6 +238,67 @@ export function describeRefresh(r: RefreshOutcome): string {
   if (changed) parts.push(`变更 ${changed}`);
   if (removed) parts.push(`移除 ${removed}`);
   return `✅ MCP 节点已刷新：${parts.join('、')}（共 ${r.list.length} 个）`;
+}
+
+/* ------------------------------------------------------------------ */
+/* 服务列表变了：把不再存在的服务标 stale                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 服务标识 —— 用来判断"这个服务改了没有"。
+ *
+ * 比 name + command + url：改命令就是换了个服务（连的是别处），
+ * 只比名字的话改了命令不会重新拉工具，用户会以为刷新失效了。
+ */
+export function serverKey(s: ServerRef): string {
+  return `${String(s?.name ?? '').trim()}\u0001${String(s?.command ?? '')}\u0001${String(s?.url ?? '')}`;
+}
+
+/** 服务列表是否变了（顺序无关） */
+export function serversChanged(a: ServerRef[], b: ServerRef[]): boolean {
+  const ka = (a ?? []).map(serverKey).sort();
+  const kb = (b ?? []).map(serverKey).sort();
+  if (ka.length !== kb.length) return true;
+  for (let i = 0; i < ka.length; i += 1) {
+    if (ka[i] !== kb[i]) return true;
+  }
+  return false;
+}
+
+/**
+ * 把"服务已经不在画布上"的蓝图标 stale。
+ *
+ * **不删除** —— 画布上可能还有用着这些工具的节点，
+ * 删了会让它们变成未知类型、参数面板变空，用户连修都没法修。
+ *
+ * 与刷新时的 stale 语义一致：不在侧栏出现，但老节点照常显示。
+ */
+export function pruneByServers(
+  list: NodeBlueprint[],
+  servers: ServerRef[],
+): NodeBlueprint[] {
+  const alive = new Set((servers ?? []).map((s) => String(s?.name ?? '').trim()));
+  return (list ?? []).map((b) =>
+    alive.has(String(b?.server ?? '').trim()) ? b : { ...b, stale: true });
+}
+
+/**
+ * 服务被删后，它的工具该不该从注册表注销。
+ *
+ * 这里返回**建议**，不直接执行 —— 注销会影响画布上的老节点，
+ * 属于 App 那边（它有画布状态）才能判断的事。
+ */
+export function serversToDrop(
+  previousServers: ServerRef[],
+  currentServers: ServerRef[],
+): string[] {
+  const now = new Set((currentServers ?? []).map((s) => String(s?.name ?? '').trim()));
+  const out: string[] = [];
+  for (const s of previousServers ?? []) {
+    const n = String(s?.name ?? '').trim();
+    if (n && !now.has(n)) out.push(n);
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ */

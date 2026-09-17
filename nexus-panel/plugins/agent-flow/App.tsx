@@ -74,7 +74,9 @@ import { exportFlow, EXPORT_FORMATS } from './engine/scriptExport';
 import {
   hydrateMcpNodes, mcpSidebarGroups, bootRefresh,
 } from './engine/mcpRegistry';
-import { collectServers } from './engine/mcpStore';
+import {
+  collectServers, serversChanged, serversToDrop, type ServerRef,
+} from './engine/mcpStore';
 import {
   makeCanvas, nextCanvasName, renameCanvas, removeCanvas, nextActiveId,
   updateCanvasContent, updateCanvasConfig, canvasConfigOf, sortForDisplay, toMeta,
@@ -773,10 +775,14 @@ export default function App() {
    * 并把"协议没接上"这句话报出来。
    * 不假装成功：假装成功会让用户以为工具已经是新的了。
    */
-  const doRefreshMcp = useCallback(async () => {
+  const doRefreshMcp = useCallback(async (overrideServers?: ServerRef[]) => {
     setMcpRefreshing(true);
     try {
-      const servers = collectServers(canvases);
+      /*
+       * 允许外部传服务列表 ——
+       * 配置刚改时 canvases 还没更新完，用传进来的这份才准。
+       */
+      const servers = overrideServers ?? collectServers(canvases);
       const r = await bootRefresh(servers, mcpBlueprints);
       if (r.outcome.ok) rebuildMcpGroups(mcpSidebarGroups(r.outcome.list));
       pushLog(r.message);
@@ -784,6 +790,29 @@ export default function App() {
       setMcpRefreshing(false);
     }
   }, [canvases, mcpBlueprints, rebuildMcpGroups, pushLog]);
+
+  /*
+   * 配了 MCP 服务就自动刷新一次。
+   *
+   * **带防抖**：服务名与命令都是输入框，onChange 每敲一个字符就触发。
+   * 不防抖的话，等接上协议后就是"每敲一个键起一次子进程"。
+   * 800ms 够用户停下笔，又不会让他等太久。
+   */
+  const mcpTimerRef = useRef<number | null>(null);
+  const mcpServersRef = useRef<ServerRef[]>(collectServers(canvases));
+
+  const scheduleMcpRefresh = useCallback((servers: ServerRef[]) => {
+    if (mcpTimerRef.current !== null) window.clearTimeout(mcpTimerRef.current);
+    mcpTimerRef.current = window.setTimeout(() => {
+      mcpTimerRef.current = null;
+      void doRefreshMcp(servers);
+    }, 800);
+  }, [doRefreshMcp]);
+
+  // 组件卸载时清掉定时器，避免在已卸载的组件上 setState
+  useEffect(() => () => {
+    if (mcpTimerRef.current !== null) window.clearTimeout(mcpTimerRef.current);
+  }, []);
 
   /*
    * 启动后自动刷新一次。
@@ -805,11 +834,41 @@ export default function App() {
    */
   const activeCanvas = canvases.find((c) => c.id === activeId) ?? null;
 
-  /** 存画布配置（MCP 服务 / 环境变量） */
+  /**
+   * 存画布配置（MCP 服务 / 环境变量）。
+   *
+   * **只有服务列表真的变了才刷新** ——
+   * 环境变量改动不该触发重连；而且这里是每次按键都进来的。
+   */
   const saveCanvasConfig = useCallback((next: CanvasConfig) => {
     if (!activeId) return;
     setCanvases((cs) => updateCanvasConfig(cs, activeId, next));
-  }, [activeId]);
+
+    const before = mcpServersRef.current;
+    /*
+     * 刷新是**全局**的（所有画布的并集），不是按当前画布 ——
+     * 否则切个画布就得重连一次。
+     *
+     * 所以这里要把 next 代进 canvases 里再算，不能只算 [{ config: next }]：
+     * 只算当前画布的话，别的画布配的服务会被判成"不在列表里"而标 stale，
+     * 侧栏里的它们会凭空消失。
+     */
+    const merged = canvases.map((c) =>
+      c.id === activeId ? { ...c, config: next } : c);
+    const after = collectServers(merged);
+    if (!serversChanged(before, after)) return;
+
+    mcpServersRef.current = after;
+    /*
+     * 服务被删时**立刻**把它的工具标 stale ——
+     * 不等刷新，免得侧栏还挂着已经不存在的服务。
+     */
+    const dropped = serversToDrop(before, after);
+    if (dropped.length > 0) {
+      setMcpGroups((gs) => gs.filter((g) => !dropped.includes(g.server)));
+    }
+    scheduleMcpRefresh(after);
+  }, [activeId, canvases, scheduleMcpRefresh]);
 
   /**
    * 把整张画布导出成脚本 / 说明。
