@@ -154,6 +154,10 @@ export class EditorBridge {
       case 'openfile':
         if (d.path) this.handlers.onOpenFile?.(d.path);
         break;
+      // 点击画布上的附件（多附件：带 kind + index + 原始引用）
+      case 'openattach':
+        this.handlers.onOpenAttach?.(d.kind, d.index, d.raw);
+        break;
       // 拖放附加：File 对象可被结构化克隆，能直接跨 iframe 传过来，
       // 不必在两边各读一次字节
       case 'dropfiles':
@@ -453,6 +457,32 @@ export class EditorBridge {
   setNote(text) { return this.exec('note', text ?? null); }
   setFile(path) { return this.exec('file', path ?? null); }
   setVideo(path) { return this.exec('video', path ?? null); }
+
+  /**
+   * 设置图片列表（dataURL 数组）。
+   * 1 张 → 内核的 image 字段（框内）；≥2 张 → images 横幅。由编辑器侧决定。
+   */
+  setImages(list) {
+    const arr = Array.isArray(list) ? list.filter(Boolean) : [];
+    return this.exec('images', arr.length ? JSON.stringify(arr) : null);
+  }
+
+  /** 读取选中节点的图片 dataURL 列表（合并 images 与老 image 字段） */
+  getSelectedImages() {
+    return this._safe('读取图片', (_m, km) => {
+      const n = km.getSelectedNode?.();
+      if (!n) return [];
+      const many = n.getData?.('images');
+      if (many) {
+        try {
+          const a = JSON.parse(many);
+          if (Array.isArray(a) && a.length) return a.filter(Boolean);
+        } catch { /* 坏数据退回单图 */ }
+      }
+      const one = n.getData?.('image');
+      return one ? [one] : [];
+    }) || [];
+  }
 
   /**
    * 读取选中节点的优先级 / 进度（A1/A2 徽章回显用）。

@@ -625,123 +625,177 @@ export function buildSide(app, opts = {}) {
     return { el: wrap, setDuration };
   }
 
+  /**
+   * 文件页（多附件）。
+   *
+   * 一个节点可挂**多个**文件、多个视频、多张图片，所以这里是列表而不是单个卡片。
+   * 关键变化：附加一律是**追加**（`appendRef`），不再有"顶掉原有附件"这回事，
+   * 因此也不再需要覆盖确认 —— 那条设置项一并取消。
+   *
+   * 详情区（A16/A17/A20 的目录、时间、时长）跟着"当前选中项"走：
+   * 全展开会让一个挂了 5 个附件的节点把侧栏撑到没法用。
+   */
   function pageFile() {
-    const ref = app.api.selectedRef('file');
-    const vref = app.api.selectedRef('video');
+    const files = app.api.selectedRefs('file');
+    const videos = app.api.selectedRefs('video');
+    const images = app.api.selectedImages();
+
+    // 详情区跟随选中项；索引越界（附件被删）时自动回到第 0 项
+    let curFile = 0;
+    let curVid = 0;
+    if (curFile >= files.length) curFile = 0;
+    if (curVid >= videos.length) curVid = 0;
+
     const fileMeta = h('div.mm-meta', {});
     const videoMeta = h('div.mm-meta', {});
-    const vprev = buildVideoPreview(vref);
-    // 两个都是 async（要读资产库、解析文件头），失败要可见而非静默
-    safe('读取文件信息', () => fillFileMeta(ref, fileMeta), (m) => { app.api.status(m, true); })();
-    safe('读取视频信息', () => fillVideoMeta(vref, videoMeta, vprev.setDuration), (m) => { app.api.status(m, true); })();
-    const info = fileMeta;
-    const vinfo = videoMeta;
+    const vprev = buildVideoPreview(videos[curVid] || null);
+    safe('读取文件信息', () => fillFileMeta(files[curFile], fileMeta),
+      (m) => { app.api.status(m, true); })();
+    safe('读取视频信息', () => fillVideoMeta(videos[curVid], videoMeta, vprev.setDuration),
+      (m) => { app.api.status(m, true); })();
 
+    /** 读当前某类的原始串（用于追加/删除后写回） */
+    const rawOf = (kind) => (kind === 'video' ? app.bridge.getSelectedVideo() : app.bridge.getSelectedFile());
+
+    const setList = (kind, list) => {
+      app.bridge[kind === 'video' ? 'setVideo' : 'setFile'](list.length ? io.encodeRefList(list) : null);
+    };
+
+    /** 附加（追加，不覆盖） */
     const attach = async (kind) => {
       const label = kind === 'video' ? '视频' : '文件';
-      // A23 替换前先告知（对照 WPF OnFileClick，:427 / OnVideoClick :458）。
-      //
-      // **不阻断、但也不静默**：C# 版弹的是「移除 or 取消（取消=继续选文件替换）」，
-      // 两个选项都指向同一个结果，用户读完反而不确定点了会怎样。
-      // 这里改成直白的「继续替换 / 取消」—— 继续就弹文件框，取消则什么都不做。
-      //
-      // 关键是不能静默覆盖：已挂着的附件被新文件顶掉是不可逆的，
-      // 用户若不知道原来有附件，就分不清「替换成功」和「附件丢了」。
-      const had = app.api.selectedRef(kind);
-      if (had) {
-        const ok = await confirmDialog(
-          `替换${label}附件`,
-          `该节点已附加${label}：\n${had.n || '（未命名）'}\n\n继续将用新选择的${label}替换它，原附件不可恢复。`,
-          '继续替换', true);
-        if (!ok) return;
-      }
       const f = await io.pickFile(kind === 'video' ? 'video/*' : '');
       if (!f) return;
       const id = await io.putAsset(f);
       if (!id) { app.api.status('附件保存失败', true); return; }
-      const payload = io.encodeRef({ n: f.name, a: id, s: f.size });
-      app.bridge[kind === 'video' ? 'setVideo' : 'setFile'](payload);
+      const list = io.decodeRefList(rawOf(kind));
+      list.push({ n: f.name, a: id, s: f.size });
+      setList(kind, list);
       app.api.commit();
       refresh();
-      // 说清「替换」而不是笼统的「已附加」：用户才知道旧附件已经没了
-      app.api.status(had ? `已替换${label}附件：${f.name}（原附件已移除）` : `已附加${label}：${f.name}`);
+      app.api.status(`已附加${label}：${f.name}`);
     };
 
-    const openOne = async (kind) => {
-      const r = app.api.selectedRef(kind);
-      if (!r?.a) { app.api.status('该附件来自旧版路径，无法在沙箱内打开', true); return; }
-      const asset = await io.getAsset(r.a);
-      if (!asset?.blob) { app.api.status('附件数据已丢失', true); return; }
-      // asset.name 与 index.js 的 rec.name 同源（来自导入的 .xmind），
-      // 同样要过 safeFileName —— M5 的同类路径，一起修掉保持实践一致。
-      io.downloadBlob(io.safeFileName(asset.name || r.n || '附件'), asset.blob);
-    };
-
-    const remove = async (kind) => {
+    /** 移除第 index 个（并同步删资产本体） */
+    const removeAt = async (kind, index) => {
       const label = kind === 'video' ? '视频' : '文件';
-      // A23 移除不可逆，先确认
-      const r = app.api.selectedRef(kind);
-      if (r) {
-        const ok = await confirmDialog(
-          `移除${label}附件`,
-          `确定移除该节点上的${label}附件？\n${r.n || '（未命名）'}\n\n附件本体将从本地库中删除，此操作不可恢复。`,
-          '移除', true);
-        if (!ok) return;
-      }
-      // 「移除文件不该动视频」这条边界必须守住，而且**失守时要让人看见**。
-      // 静默丢掉的话，用户只看到「侧栏空了」，无从判断是显示问题还是真丢了数据。
-      const other = kind === 'video' ? 'file' : 'video';
-      const hadOther = !!app.api.selectedRef(other);
-      app.bridge[kind === 'video' ? 'setVideo' : 'setFile'](null);
+      const list = io.decodeRefList(rawOf(kind));
+      const r = list[index];
+      if (!r) return;
+      const ok = await confirmDialog(
+        `移除${label}附件`,
+        `确定移除「${r.n || '（未命名）'}」？\n\n附件本体将从本地库中删除，此操作不可恢复。`,
+        '移除', true);
+      if (!ok) return;
+      list.splice(index, 1);
+      setList(kind, list);
+      if (r.a) await io.dropAsset(r.a);
       app.api.commit();
       refresh();
-      if (hadOther && !app.api.selectedRef(other)) {
-        app.api.status(`移除${label}时，${other === 'video' ? '视频' : '文件'}引用也一并丢失了（编辑器的 file/video 是各自独立的 data 字段，不应互相影响）`, true);
-      }
+      app.api.status(`已移除${label}：${r.n || '（未命名）'}`);
     };
 
-    /** 点附件卡片：图片就地预览，其余只能下载（沙箱拿不到真实路径） */
-    const openFileCard = () => {
-      const r = app.api.selectedRef('file');
-      if (!r?.a) { app.api.status('该附件来自旧版路径，无法在沙箱内打开', true); return; }
-      safe('打开附件', async () => {
-        const asset = await io.getAsset(r.a, true);
-        if (!asset?.blob) { app.api.status('附件数据已丢失', true); return; }
-        trackMediaUrl(asset.url);
-        if (isImageName(r.n) && asset.url) openPreview(app, asset);
-        else io.downloadBlob(io.safeFileName(asset.name || r.n || '附件'), asset.blob);
-      }, (m) => app.api.status(m, true))();
+    /** 打开第 index 个（图片预览 / 视频播放 / 其余下载） */
+    const openAt = async (kind, ref) => {
+      if (!ref?.a) { app.api.status('该附件来自旧版路径，无法在沙箱内打开', true); return; }
+      const asset = await io.getAsset(ref.a, true);
+      if (!asset?.blob) { app.api.status('附件数据已丢失', true); return; }
+      trackMediaUrl(asset.url);
+      if (kind === 'video') { openVideo(app, asset); return; }
+      if (isImageName(ref.n) && asset.url) openPreview(app, asset);
+      else io.downloadBlob(io.safeFileName(asset.name || ref.n || '附件'), asset.blob);
     };
+
+    const addImages = async () => {
+      const picked = await io.pickFiles('image/*');
+      if (!picked || !picked.length) return;
+      let big = 0;
+      const urls = [];
+      for (const f of picked) {
+        if (f.size > 2 * 1024 * 1024) big++;
+        const u = await new Promise((res) => {
+          const fr = new FileReader();
+          fr.onload = () => res(String(fr.result));
+          fr.onerror = () => res(null);
+          fr.readAsDataURL(f);
+        });
+        if (u) urls.push(u);
+      }
+      if (!urls.length) { app.api.status('图片读取失败', true); return; }
+      app.bridge.setImages([...images, ...urls]);
+      app.api.commit();
+      refresh();
+      if (big) app.api.status(`${big} 张图片超过 2MB，会让脑图文件明显变大`, true);
+      else app.api.status(`已添加 ${urls.length} 张图片`);
+    };
+
+    const removeImage = (index) => {
+      const list = images.slice();
+      list.splice(index, 1);
+      app.bridge.setImages(list);
+      app.api.commit();
+      refresh();
+    };
+
+    /** 一行附件：名字 + 右侧小按钮（下载 / 移除） */
+    const row = (kind, ref, index, label) => h('div.mm-arow', {
+      onclick: () => {
+        if (kind === 'file') curFile = index; else curVid = index;
+        refresh();
+      },
+      title: ref.n || '未命名',
+    },
+    h('span.mm-arow-icon', {}, kind === 'video' ? '🎬' : fileIcon(ref.n || '')),
+    h('span.mm-arow-name', {}, ref.n || '未命名'),
+    h('button.mm-mini', {
+      onclick: (e) => { e.stopPropagation(); safe('打开', () => openAt(kind, ref), (m) => app.api.status(m, true))(); },
+      title: '打开 / 下载',
+    }, '⤓'),
+    h('button.mm-mini', {
+      onclick: (e) => { e.stopPropagation(); removeAt(kind, index); },
+      title: `移除${label}`,
+    }, '✕'));
+
+    const listBox = (kind, list, label) => (list.length
+      ? h('div.mm-alist', {}, ...list.map((r, i) => row(kind, r, i, label)))
+      : h('div.mm-hint', {}, `当前节点没有${label}附件`));
 
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
-      section('文件附件',
-        buildFileCard(ref, openFileCard),
-        info,
+      section(`文件附件${files.length ? `（${files.length}）` : ''}`,
+        listBox('file', files, '文件'),
+        fileMeta,
         h('div.mm-row', {},
           h('button.mm-btn', {
             onclick: safe('附加文件', () => attach('file'), (m) => app.api.status(m, true)),
           }, '附加文件…'),
-          h('button.mm-btn', {
-            onclick: safe('下载附件', () => openOne('file'), (m) => app.api.status(m, true)),
-            disabled: !ref?.a,
-          }, '下载'),
-          h('button.mm-btn', { onclick: () => remove('file'), disabled: !ref }, '移除'),
         ),
       ),
-      section('视频附件',
-        // 预览区本身就是播放入口（点一下就地播），不再需要单独的「播放」按钮
+      section(`视频附件${videos.length ? `（${videos.length}）` : ''}`,
+        listBox('video', videos, '视频'),
         vprev.el,
-        vinfo,
+        videoMeta,
         h('div.mm-row', {},
           h('button.mm-btn', {
             onclick: safe('附加视频', () => attach('video'), (m) => app.api.status(m, true)),
           }, '附加视频…'),
-          h('button.mm-btn', {
-            onclick: safe('下载视频', () => openOne('video'), (m) => app.api.status(m, true)),
-            disabled: !vref?.a,
-          }, '下载'),
-          h('button.mm-btn', { onclick: () => remove('video'), disabled: !vref }, '移除'),
         ),
+      ),
+      section(`图片${images.length ? `（${images.length}）` : ''}`,
+        images.length
+          ? h('div.mm-thumbs', {}, ...images.map((u, i) => h('div.mm-thumb', {
+            onclick: () => openPreview(app, { url: u, name: `图片 ${i + 1}` }),
+            title: '点击放大',
+          },
+          h('img', { src: u, alt: `图片 ${i + 1}` }),
+          h('button.mm-thumb-x', {
+            onclick: (e) => { e.stopPropagation(); removeImage(i); },
+            title: '移除这张',
+          }, '✕'))))
+          : h('div.mm-hint', {}, '当前节点没有图片'),
+        h('div.mm-row', {},
+          h('button.mm-btn', { onclick: safe('添加图片', addImages, (m) => app.api.status(m, true)) }, '添加图片…'),
+        ),
+        h('div.mm-hint', {}, '单张图显示在节点框内；两张及以上自动变成可切换的横幅。'),
       ),
       // 备份间隔 / 最多保留 / 布局动画都已移到顶栏「设置」——
       // 它们是与当前节点无关的全局选项，不该挂在「文件」页下。
@@ -1773,19 +1827,6 @@ export function openSettings(app) {
     selected: s.pdfChannel === 'dialog',
   }, '打印对话框'));
 
-  // 拖放附加的覆盖提示。默认开：图片/视频/文件都是单值字段，
-  // 拖第二个上去会**静默**顶掉第一个，不可逆 —— 不提示等于埋雷。
-  // 关掉适合「我就是要批量替换」的场景。
-  const owBtn = h('button.mm-btn' + (s.confirmDropOverwrite !== false ? '.on' : ''), {
-    onclick: () => {
-      app.api.setConfirmDropOverwrite(app.settings?.confirmDropOverwrite === false);
-      const on = app.settings?.confirmDropOverwrite !== false;
-      owBtn.classList.toggle('on', on);
-      owBtn.textContent = on ? '已开启' : '已关闭';
-    },
-    title: '拖文件到节点上时，若该节点已有同类附件，是否先弹确认',
-  }, s.confirmDropOverwrite !== false ? '已开启' : '已关闭');
-
   return dialog('设置', [
     section('备份',
       h('div.mm-row', {}, h('span.mm-label', {}, '自动间隔'), intervalSel),
@@ -1826,11 +1867,10 @@ section('外观',
       h('div.mm-hint', {}, '开启后打开画布、展开/收起分支会播 300ms 过渡动画；关闭则直接显示最终布局。'),
     ),
     section('拖放附加',
-      h('div.mm-row', {}, h('span.mm-label', {}, '覆盖前提示'), owBtn),
       h('div.mm-hint', {},
-        '把图片 / 视频 / 文件拖到节点上即可附加；多个文件第一个挂该节点、其余各建子节点。',
+        '把图片 / 视频 / 文件拖到节点上即可附加，全部挂在该节点上（可多个）。',
         '\n',
-        '每类附件在一个节点上只能有一个，后挂的会顶掉先前的 —— 关闭提示后不再询问。'),
+        '图片显示为可切换的横幅，视频是一张带数字角标的卡片，文件每行一个。'),
     ),
     section('其它',
       h('div.mm-row', {},

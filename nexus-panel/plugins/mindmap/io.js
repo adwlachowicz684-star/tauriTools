@@ -724,6 +724,75 @@ export function encodeRef(ref) {
   return JSON.stringify(ref);
 }
 
+/**
+ * 附件**列表**序列化（多附件用）。
+ *
+ * 单个节点可挂多个文件 / 多个视频 / 多张图片，所以 data 里存的是 **JSON 数组串**。
+ *
+ * 兼容策略：**写一定是数组，读两者都认**。
+ * 老数据（C# 版迁移、旧 Web 版）的 `file`/`video` 是单个对象串或纯路径串，
+ * 读取时包成单元素数组 —— 这样画布、侧栏、xmind 导出三条路径都不用分支。
+ */
+export function encodeRefList(list) {
+  const arr = Array.isArray(list) ? list : (list ? [list] : []);
+  return JSON.stringify(arr.filter(Boolean));
+}
+
+/**
+ * 解析附件列表。
+ * @returns {Array} 元素为 ref 对象；空/无效返回 []
+ */
+export function decodeRefList(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.map(normOne).filter(Boolean);
+  let v = raw;
+  if (typeof v === 'string') {
+    const t = v.trim();
+    if (!t) return [];
+    // 只有数组串才按数组走；单个对象串/纯路径串走单值分支
+    if (t[0] === '[') {
+      try {
+        const p = JSON.parse(t);
+        if (Array.isArray(p)) return p.map(normOne).filter(Boolean);
+      } catch { /* 解析失败，退回单值 */ }
+    }
+  }
+  const one = normOne(v);
+  return one ? [one] : [];
+}
+
+/** 归一化单个元素：对象直接用，字符串走 decodeRef（含纯路径兜底） */
+function normOne(x) {
+  if (!x) return null;
+  if (typeof x === 'object') return x;
+  const s = String(x).trim();
+  if (!s) return null;
+  // 元素本身也可能是 JSON 串（数组里存了序列化后的 ref）
+  if (s[0] === '{') {
+    try { const o = JSON.parse(s); if (o && typeof o === 'object') return o; } catch { /* 退回路径 */ }
+  }
+  return decodeRef(s);
+}
+
+/**
+ * 往列表里追加一个引用（纯函数）。
+ * 追加而非覆盖 —— 单节点多附件是本次的核心改动，任何"设置"入口都不能再整体覆盖。
+ */
+export function appendRef(raw, ref) {
+  const list = decodeRefList(raw);
+  list.push(ref);
+  return encodeRefList(list);
+}
+
+/** 从列表里删掉第 index 个（纯函数） */
+export function removeRefAt(raw, index) {
+  const list = decodeRefList(raw);
+  const i = Number(index);
+  if (!(i >= 0 && i < list.length)) return encodeRefList(list);
+  list.splice(i, 1);
+  return encodeRefList(list);
+}
+
 export function decodeRef(raw) {
   if (!raw) return null;
   if (typeof raw === 'object') return raw;      // 已是对象（容错）

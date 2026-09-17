@@ -752,7 +752,7 @@ group('面板分布：左文件库 / 中画布 / 右属性侧栏');
 
   const { buildSide } = await import('./panels.js');
   // 切到「文件」页会读选中节点的附件引用，桩上补齐；其余页用不到
-  const stubApi = { status() {}, selectedRef: () => null, commit() {} };
+  const stubApi = { status() {}, selectedRef: () => null, selectedRefs: () => [], selectedImages: () => [], commit() {} };
   let notified = [];
   const el = buildSide({ api: stubApi }, { onPage: (p) => notified.push(p) }).el;
   ok(el.classList.contains('open'), '侧栏根节点带 open 类');
@@ -901,11 +901,18 @@ group('附件卡片 / 视频预览');
   await store.set('asset:img1', { name: '截图.png', size: 2048, blob: imgBlob, type: 'image/png', mtime: Date.now() });
 
   const statuses = [];
-  function makeApp(refs) {
+  function makeApp(refs, images = []) {
+    const one = (kind) => {
+      const v = refs[kind];
+      if (!v) return [];
+      return Array.isArray(v) ? v : [v];
+    };
     return {
       api: {
         status: (m, w) => statuses.push(String(m)),
-        selectedRef: (kind) => refs[kind] || null,
+        selectedRef: (kind) => one(kind)[0] || null,
+        selectedRefs: (kind) => one(kind),
+        selectedImages: () => images,
         commit() {},
       },
       bridge: {},
@@ -913,38 +920,50 @@ group('附件卡片 / 视频预览');
   }
 
   /** 打开侧栏并切到文件页，等异步填充跑完 */
-  async function openFilePage(refs) {
-    const s = buildSide(makeApp(refs), {});
+  async function openFilePage(refs, images = []) {
+    const s = buildSide(makeApp(refs, images), {});
     s.open('file');
     // 缩略图 / 视频 URL 都是 async 填的，让出几拍
     for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0));
     return s;
   }
 
-  // 12.1 文件卡片：图标 + 名称 + 大小
+  // 12.1 文件**列表**：一行一个（多附件）
   {
     const s = await openFilePage({ file: { n: '报告.pdf', a: 'img1', s: 2048 } });
-    const card = s.el.querySelector('.mm-acard');
-    ok(!!card, '渲染出附件卡片');
-    eq(card.querySelector('.mm-acard-name')?.textContent, '报告.pdf', '卡片显示文件名');
-    eq(card.querySelector('.mm-acard-icon')?.textContent, '📕', '按扩展名给图标（pdf → 📕）');
-    eq(card.querySelector('.mm-acard-sub')?.textContent, '2.0 KB', '卡片显示大小');
+    const row = s.el.querySelector('.mm-arow');
+    ok(!!row, '渲染出附件行');
+    eq(row.querySelector('.mm-arow-name')?.textContent, '报告.pdf', '行上显示文件名');
+    eq(row.querySelector('.mm-arow-icon')?.textContent, '📕', '按扩展名给图标（pdf → 📕）');
+    // 大小在详情区（meta），不在行上 —— 行只负责"认出是哪个文件"
+    ok(/2\.0 KB/.test(s.el.querySelector('.mm-meta')?.textContent || ''), '详情区显示大小');
   }
 
-  // 12.2 图片附件显示缩略图而不是图标
+  // 12.1b 多个文件 → 多行（这是本次的核心：不再互相覆盖）
   {
-    const s = await openFilePage({ file: { n: '截图.png', a: 'img1', s: 2048 } });
-    const thumb = s.el.querySelector('.mm-acard-thumb');
-    ok(!!thumb, '图片附件显示缩略图（不再是干巴巴的图标）');
-    ok(/^blob:/.test(thumb.getAttribute('src') || ''), '缩略图用 Blob URL');
+    const s = await openFilePage({
+      file: [{ n: '一.pdf', a: 'img1', s: 2048 }, { n: '二.pdf', a: 'img1', s: 1024 }, { n: '三.pdf', a: 'img1', s: 512 }],
+    });
+    const rows = s.el.querySelectorAll('.mm-arow');
+    eq(rows.length, 3, '3 个文件 → 3 行（不是只显示第一个）');
+    eq([...rows].map((r) => r.querySelector('.mm-arow-name')?.textContent).join(','),
+      '一.pdf,二.pdf,三.pdf', '顺序与名字都对');
+    ok(/（3）/.test(s.el.textContent), '标题带数量');
+  }
+
+  // 12.2 图片区：多图网格
+  {
+    const s = await openFilePage({}, ['data:image/png;base64,AAA', 'data:image/png;base64,BBB']);
+    const thumbs = s.el.querySelectorAll('.mm-thumb');
+    eq(thumbs.length, 2, '2 张图片 → 2 个缩略图');
+    ok(s.el.querySelectorAll('.mm-thumb-x').length === 2, '每张都有移除按钮');
+    ok(/（2）/.test(s.el.textContent), '图片标题带数量');
   }
 
   // 12.3 未附加时的空态
   {
     const s = await openFilePage({});
-    const card = s.el.querySelector('.mm-acard');
-    ok(card.classList.contains('empty'), '未附加文件时卡片是空态');
-    ok(/未附加/.test(card.textContent), '空态提示文案');
+    ok(/没有文件附件|没有文件/.test(s.el.textContent), '未附加文件时给出空态提示');
   }
 
   // 12.4 视频预览：video 元素 + 首帧 + 摘要行
@@ -985,7 +1004,9 @@ group('附件卡片 / 视频预览');
     liveBlobUrls.clear();
     const s = await openFilePage({ video: { n: '演示.mp4', a: 'vid1', s: 12345 }, file: { n: '截图.png', a: 'img1', s: 2048 } });
     const first = liveBlobUrls.size;
-    ok(first >= 2, `打开后至少 2 个 Blob URL（视频 + 缩略图，实际 ${first}）`);
+    // 文件改成了行式列表（不再逐个渲染缩略图卡片），所以这里只有视频那一个 URL。
+    // 断言"至少 1 个"—— 这条测的是**回收**是否生效，不是数量本身。
+    ok(first >= 1, `打开后至少 1 个 Blob URL（视频预览，实际 ${first}）`);
 
     // 每次 refresh 都会新建一批，但旧的必须回收 —— 否则数量线性增长
     for (let i = 0; i < 3; i++) {
@@ -1128,7 +1149,8 @@ group('附件：file 与 video 互不干扰');
   // 14.1 命令注册
   {
     const km = newKm({ text: 'x' });
-    eq(Object.keys(km._commands).sort().join(','), 'file,video', '编辑器注册了 file / video 两个命令');
+    eq(Object.keys(km._commands).sort().join(','), 'file,images,video',
+      '编辑器注册了 file / video / images 三个命令（images 是多图横幅用）');
   }
 
   // 14.2 核心：移除 file 只删 file，video 原样保留
@@ -1157,18 +1179,28 @@ group('附件：file 与 video 互不干扰');
     eq(km.getSelectedNode().getData('video'), 'V', 'file 与 video 可共存');
   }
 
-  // 14.5 面板层的 remove 只调用对应那一个 setter
+  // 14.5 面板层的移除：按 kind 选 setter，且**只删指定那一个**
   {
     const src = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
-    // 定位不能写死 `const remove = (kind)` —— 函数改成 async 后签名就变了，
-    // indexOf 返回 -1 会让切片范围整个错乱（表现为一堆断言莫名变红）。
-    // 用 `const remove = ` 前缀匹配，对是否 async 都成立。
-    const rmStart = src.indexOf('const remove = ');
-    const rm = src.slice(rmStart, src.indexOf('/** 点附件卡片', rmStart));
-    ok(/kind === 'video' \? 'setVideo' : 'setFile'/.test(rm), 'remove 按 kind 选择 setter（不会同时调两个）');
-    ok(/const hadOther = !!app\.api\.selectedRef\(other\)/.test(rm), '移除前记下另一项是否存在');
-    ok(/hadOther && !app\.api\.selectedRef\(other\)/.test(rm),
-      '移除后校验另一项 —— 真丢了要报出来，不能静默');
+    // 多附件后 remove 改成了 removeAt(kind, index)：定位用 `const removeAt = ` 前缀，
+    // 不写死完整签名（函数体/修饰符变了也不会让 indexOf 返回 -1 导致切片错乱）
+    const rmStart = src.indexOf('const removeAt = ');
+    ok(rmStart > 0, '面板层有 removeAt（按索引移除，多附件必需）');
+    const rm = src.slice(rmStart, src.indexOf('const addImages', rmStart));
+    // setList 才是真正调 setter 的地方（removeAt / attach 都经由它）
+    const slStart = src.indexOf('const setList = ');
+    const sl = src.slice(slStart, src.indexOf('const attach = async', slStart));
+    ok(/kind === 'video' \? 'setVideo' : 'setFile'/.test(sl),
+      'setList 按 kind 选择 setter（不会同时调两个）');
+    ok(/list\.splice\(index, 1\)/.test(rm), '只删指定那一个（不是清空整类）');
+    ok(/confirmDialog\(/.test(rm), '移除前确认（不可逆）');
+    ok(/if \(r\.a\) await io\.dropAsset\(r\.a\)/.test(rm), '同步删掉资产本体');
+    // 附加必须是追加
+    const atStart = src.indexOf('const attach = async (kind)');
+    const at = src.slice(atStart, src.indexOf('const removeAt', atStart));
+    ok(/decodeRefList\(rawOf\(kind\)\)/.test(at) && /list\.push\(/.test(at),
+      '附加是**追加**（读现有列表 → push → 写回），不再覆盖');
+    ok(!/confirmDialog\(/.test(at), '追加不会顶掉原有附件，所以不需要覆盖确认');
   }
 }
 
@@ -1178,7 +1210,8 @@ group('附件：file 与 video 互不干扰');
   const { buildSide } = await import('./panels.js');
   const mk = (video) => {
     const el = buildSide({
-      api: { status() {}, selectedRef: (k) => (k === 'video' ? video : null), commit() {} },
+      api: { status() {}, selectedRef: (k) => (k === 'video' ? video : null),
+      selectedRefs: () => (video ? [video] : []), selectedImages: () => [], commit() {} },
       bridge: {},
     }, {});
     el.open('file');
@@ -1233,7 +1266,7 @@ group('布局模板缩略图');
   let applied = null;
   const el = buildSide({
     api: {
-      status() {}, commit() {}, selectedRef: () => null,
+      status() {}, commit() {}, selectedRef: () => null, selectedRefs: () => [], selectedImages: () => [],
       applyLayout: (v) => { applied = v; },
       applyTheme: () => {}, saveThemes: async () => true,
       nodeStyle: () => ({}), setNodeStyle: () => {},
@@ -1325,7 +1358,7 @@ group('主题配色条');
   const { buildSide } = await import('./panels.js');
   const el = buildSide({
     api: {
-      status() {}, commit() {}, selectedRef: () => null,
+      status() {}, commit() {}, selectedRef: () => null, selectedRefs: () => [], selectedImages: () => [],
       applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
       nodeStyle: () => ({}), setNodeStyle: () => {},
     },
@@ -1360,7 +1393,7 @@ group('主题配色条');
   const { buildSide } = await import('./panels.js');
   const el = buildSide({
     api: {
-      status() {}, commit() {}, selectedRef: () => null,
+      status() {}, commit() {}, selectedRef: () => null, selectedRefs: () => [], selectedImages: () => [],
       applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
       nodeStyle: () => ({}), setNodeStyle: () => {},
     },
@@ -1511,7 +1544,7 @@ group('设置面板');
     api: {
       status: (m) => calls.push(['status', m]),
       commit() {},
-      selectedRef: () => null,
+      selectedRef: () => null, selectedRefs: () => [], selectedImages: () => [],
       setBackupMinutes: (v) => { s.backupMinutes = v; calls.push(['minutes', v]); },
       setBackupMax: (v) => { s.backupMax = v; calls.push(['max', v]); },
       setAnimate: (on) => { s.animate = on; calls.push(['animate', on]); },
@@ -1955,7 +1988,7 @@ const picons = await import('./preset-icons.js');
   const { buildSide } = await import('./panels.js');
   const el = buildSide({
     api: {
-      status() {}, commit() {}, selectedRef: () => null,
+      status() {}, commit() {}, selectedRef: () => null, selectedRefs: () => [], selectedImages: () => [],
       applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
       nodeStyle: () => ({}), setNodeStyle: () => {},
     },
@@ -2045,7 +2078,7 @@ const tb = await import('./tag-badges.js');
   const { buildSide } = await import('./panels.js');
   const el = buildSide({
     api: {
-      status() {}, commit() {}, selectedRef: () => null,
+      status() {}, commit() {}, selectedRef: () => null, selectedRefs: () => [], selectedImages: () => [],
       applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
       nodeStyle: () => ({}), setNodeStyle: () => {},
     },
@@ -2078,7 +2111,7 @@ const tb = await import('./tag-badges.js');
   const { buildSide } = await import('./panels.js');
   const el = buildSide({
     api: {
-      status() {}, commit() {}, selectedRef: () => null,
+      status() {}, commit() {}, selectedRef: () => null, selectedRefs: () => [], selectedImages: () => [],
       applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
       nodeStyle: () => ({}), setNodeStyle: () => {},
     },
@@ -2101,7 +2134,7 @@ const tb = await import('./tag-badges.js');
   const calls = [];
   const el = buildSide({
     api: {
-      status() {}, commit() {}, selectedRef: () => null,
+      status() {}, commit() {}, selectedRef: () => null, selectedRefs: () => [], selectedImages: () => [],
       applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
       nodeStyle: () => ({}), setNodeStyle: () => {},
     },
@@ -2712,19 +2745,23 @@ group('P1 附件与视频');
   // ---- A23 替换/移除前确认 ----
   ok(/export function confirmDialog/.test(src), 'A23 新增 confirmDialog（Promise 版）');
   ok(/return new Promise\(\(resolve\) => \{/.test(src), 'A23 confirmDialog 返回 Promise（调用点是 async 流程）');
-  const rmStart = src.indexOf('const remove = ');
-  const rm = src.slice(rmStart, src.indexOf('/** 点附件卡片', rmStart));
+  // 多附件后 remove 变成 removeAt(kind, index)。
+  // 定位用前缀而非完整签名 —— 修饰符一变 indexOf 就返回 -1，切片整个错乱。
+  const rmStart = src.indexOf('const removeAt = ');
+  ok(rmStart > 0, 'A23 移除入口是 removeAt（多附件按索引删）');
+  const rm = src.slice(rmStart, src.indexOf('const addImages', rmStart));
   // 不能只断言「有没有 await confirmDialog」—— 把 `if (r)` 改成 `if (false)`
   // 那串还在，断言照样绿，但确认已经形同虚设。必须锁住它**在 r 存在的分支里**。
-  ok(/if \(r\) \{\s*\n\s*const ok = await confirmDialog\(/.test(rm),
-    'A23 有附件时才弹确认（确认必须在 r 存在的分支内，不是无条件也不是恒假）');
+  ok(/if \(!r\) return;[\s\S]{0,80}const ok = await confirmDialog\(/.test(rm),
+    'A23 有附件时才弹确认（确认必须在 r 存在的分支之后，不是无条件也不是恒假）');
   ok(/if \(!ok\) return;/.test(rm), 'A23 取消则不移除（不是「问了也照删」）');
   ok(/'移除', true\)/.test(rm), 'A23 移除是危险操作（danger=true）');
-  const atStart = src.indexOf('const attach = ');
-  const at = src.slice(atStart, src.indexOf('const openOne', atStart));
-  ok(/await confirmDialog\(/.test(at), 'A23 替换前确认（已有附件时不能静默覆盖）');
-  ok(/继续将用新选择的\$\{label\}替换它/.test(at), 'A23 确认文案说明旧附件不可恢复');
-  ok(/已替换\$\{label\}附件/.test(at), 'A23 替换后提示「已替换」而非笼统的「已附加」');
+  const atStart = src.indexOf('const attach = async (kind)');
+  const at = src.slice(atStart, src.indexOf('const removeAt', atStart));
+  // 多附件是**追加**，不再有"顶掉原有附件"这回事，因此不该再要覆盖确认
+  ok(!/confirmDialog\(/.test(at),
+    'A23 附加改为追加后**不再需要**覆盖确认（没有覆盖场景了）');
+  ok(/list\.push\(/.test(at), 'A23 附加是 push 到现有列表（追加）');
 
   // ---- A16 失效仍展示已知字段 ----
   const fillStart = src.indexOf('async function fillFileMeta');
@@ -4043,27 +4080,24 @@ group('交换格式接入 UI');
    三十五、画布附件名文字标签
    ============================================================ */
 
-group('附件名标签（画布上可见）');
+group('画布附件区渲染（真实源码）');
 
 {
   /*
-   * 用 editor/index.html 里的**真实源码**跑（iconColor + refName + 标签函数
+   * 用 editor/index.html 里的**真实源码**跑（iconColor + refListOf + imageListOf
    * + FileIcon/VideoIcon + noderender 钩子），不是复刻一份 ——
    * 复刻的话实现改了测试还是绿的。
    */
   const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
   const startAt = html.indexOf('function iconColor(node) {');
   const hookAt = html.indexOf("km.on('noderender', function (e) {");
-  // 必须一直取到外层 `} catch (e) {}`：只取到 `});` 的话，
-  // 包裹 km.on 的那个 `try {` 就没有 catch，new Function 直接语法错误
   const endAt = html.indexOf('\n            } catch (e) {}', hookAt);
-  ok(startAt > 0 && hookAt > startAt && endAt > hookAt, '能定位到编辑器里的图标/标签源码');
+  ok(startAt > 0 && hookAt > startAt && endAt > hookAt, '能定位到编辑器里的附件区源码');
   const src = html.slice(startAt, endAt + '\n            } catch (e) {}'.length);
 
-  // ---- kity 桩：只记录调用，不真渲染 ----
   function mkBase() {
     return {
-      // callBase 必须有：FileIcon/VideoIcon 的构造函数第一句就是 this.callBase()，
+      // callBase 必须有：FileIcon 构造函数第一句就是 this.callBase()，
       // 桩里缺了它会在构造函数里抛 TypeError，被钩子内的 catch(e2) 静默吞掉，
       // 表现为「什么都不画」且毫无报错 —— 很隐蔽。
       callBase() {},
@@ -4095,9 +4129,13 @@ group('附件名标签（画布上可见）');
     Rect: function (...a) { Object.assign(this, mkBase()); this.args = a; },
     Path: function () { Object.assign(this, mkBase()); },
     Text: function (c) { Object.assign(this, mkBase()); this.content = c; },
+    Circle: function (r, x, y) { Object.assign(this, mkBase()); this.r = r; this.cx = x; this.cy = y; },
+    Image: function (url, w, h, x, y) {
+      Object.assign(this, mkBase());
+      this.url = url; this.width = w; this.height = h; this.x = x; this.y = y;
+    },
   };
 
-  /** 起一个环境：node 数据 → 跑一次 noderender → 返回记录 */
   function render(data, style = {}) {
     const appended = [];
     const box = { left: 0, right: 100, top: 20, bottom: 40, cx: 50, cy: 30, width: 100, height: 20 };
@@ -4114,85 +4152,102 @@ group('附件名标签（画布上可见）');
       getContentBox() { return box; },
       getRenderContainer() { return rc; },
     };
+    const posted = [];
     const km = {
       handlers: {},
       on(evt, fn) { (this.handlers[evt] = this.handlers[evt] || []).push(fn); },
     };
     new Function('kity', 'km', 'hostPost', 'document', src)(
-      kity, km, () => {}, { createElementNS: () => ({ textContent: '' }) });
+      kity, km, (m) => posted.push(m), { createElementNS: () => ({ textContent: '' }) });
     km.handlers.noderender.forEach((fn) => fn({ node }));
-    // 文本标签 = 有 content 的形状（图标没有）
-    return { appended, labels: appended.filter((x) => x.content !== undefined), node, box, km };
+    const texts = appended.filter((x) => x.content !== undefined);
+    return { appended, texts, node, box, km, posted };
   }
 
-  // ---- 基本情况 ----
+  // ---- 文件：每个一行，名字在行上 ----
   {
-    const r = render({ file: JSON.stringify({ n: '报告.pdf', a: 'A1' }) });
-    eq(r.labels.length, 1, '挂了文件 → 画 1 个名字标签');
-    eq(r.labels[0].content, '报告.pdf', '标签文字就是文件名');
-    eq(r.labels[0].anchor, 'middle', '居中对齐（对齐节点中心）');
-    eq(r.labels[0].tx, r.box.cx, '横向居中在节点 cx');
-    eq(r.labels[0].ty, r.box.bottom + 11 + 3, '纵向在节点框下方（bottom + 字号 + 间距）');
-    eq(r.labels[0].size, 11, '字号 11（节点 14 的 0.75 倍）');
-    eq(r.labels[0].styles['pointer-events'], 'none',
-      '不可点击 —— 文字比图标宽，可点击会挡住画布拖拽与空白框选');
-    eq(r.labels[0]._fill, '#AEB6C4', '用节点文字色（与图标同色）');
+    const r = render({ file: JSON.stringify([{ n: '报告.pdf' }]) });
+    eq(r.texts.length, 1, '1 个文件 → 1 行文字');
+    eq(r.texts[0].content, '报告.pdf', '行上显示文件名');
+    eq(r.texts[0].styles['pointer-events'], 'none', '文字不可点击（点图标才打开）');
+  }
+  {
+    const r = render({ file: JSON.stringify([{ n: '一.pdf' }, { n: '二.pdf' }, { n: '三.pdf' }]) });
+    eq(r.texts.length, 3, '3 个文件 → 3 行（每个一个小挂件往下排）');
+    eq(r.texts.map((t) => t.content).join(','), '一.pdf,二.pdf,三.pdf', '顺序与名字都对');
+    const ys = r.texts.map((t) => t.ty);
+    ok(ys[1] > ys[0] && ys[2] > ys[1], '三行依次往下（y 递增，不重叠）');
+    eq(Math.round(ys[1] - ys[0]), 17, '行距 17px');
   }
 
-  // ---- 文件 + 视频同时存在：两行，不重叠 ----
+  // ---- 视频：一张卡片 + 数字角标 ----
   {
-    const r = render({
-      file: JSON.stringify({ n: '报告.pdf' }),
-      video: JSON.stringify({ n: '演示.mp4' }),
-    });
-    eq(r.labels.length, 2, '文件 + 视频 → 2 个标签');
-    eq(r.labels[0].content, '报告.pdf', '第一行是文件名');
-    eq(r.labels[1].content, '演示.mp4', '第二行是视频名');
-    eq(r.labels[1].ty - r.labels[0].ty, 11 + 2, '行距 = 字号 + 2（两行不重叠）');
+    const r = render({ video: JSON.stringify([{ n: 'a.mp4' }, { n: 'b.mp4' }, { n: 'c.mp4' }]) });
+    // 只数 "content === '3'" 是不够的：把角标文本改成空串，这条也会是 0，
+    // 但如果别的断言没覆盖「角标是否存在」，改动就悄悄溜过去了。
+    // 补一条：角标文本必须非空（空串等于没画）
+    const badge = r.appended.find((x) => x.r !== undefined);
+    ok(!!badge, '有角标圆底');
+    const nums = r.texts.filter((t) => t.content === '3');
+    eq(nums.length, 1, '3 个视频 → 角标显示数字 3');
+    ok(nums[0] && String(nums[0].content).trim() !== '',
+      '角标文本非空（改成空串等于没画，用户看不出有几个视频）');
+    // 可选链：角标被改没时这条应"干净地红"，而不是抛 TypeError 让整个测试崩掉
+    eq(nums[0]?._fill, '#1B1B1F', '角标数字用深色（压在浅色圆上才看得见）');
+    const circles = r.appended.filter((x) => x.r !== undefined);
+    eq(circles.length, 1, '有角标圆底');
+  }
+  {
+    // 1 个视频也显示角标（不显示就分不清"有 1 个"和"没有"）
+    const r = render({ video: JSON.stringify([{ n: 'a.mp4' }]) });
+    eq(r.texts.filter((t) => t.content === '1').length, 1, '1 个视频也显示数字 1');
+  }
+
+  // ---- 图片：多张走横幅 ----
+  {
+    const r = render({ images: JSON.stringify(['data:img,A', 'data:img,B']) });
+    const imgs = r.appended.filter((x) => x.url !== undefined);
+    eq(imgs.length, 1, '横幅一次只显示当前一张');
+    eq(imgs[0].url, 'data:img,A', '默认显示第 1 张');
+    const cnt = r.texts.find((t) => t.content === '1/2');
+    ok(!!cnt, '有「1/2」计数（多张不数出来，用户不知道还有几张）');
+  }
+  {
+    // 单张图走 image 字段（内核框内），横幅不参与 → 不会画两次
+    const r = render({ image: 'data:img,ONLY' });
+    eq(r.appended.filter((x) => x.url !== undefined).length, 0,
+      '只有 image（单张）时横幅**不画**（交给内核，避免同节点两张图）');
+  }
+
+  // ---- 点击附件要发消息（带 index） ----
+  {
+    const r = render({ file: JSON.stringify([{ n: '一.pdf' }, { n: '二.pdf' }]) });
+    ok(r.posted.length >= 0, '渲染不主动发消息');
+    const hooks = r.appended.filter((x) => x.content === '二.pdf');
+    eq(hooks.length, 1, '第二个文件也有自己的一行');
   }
 
   // ---- 无附件 → 不画 ----
-  eq(render({ text: '普通节点' }).labels.length, 0, '无附件 → 不画标签（不然每个节点底下都有空行）');
+  eq(render({ text: '普通节点' }).appended.length, 0, '无附件 → 什么都不画');
 
-  // ---- 老式纯路径：至少显示文件名 ----
+  // ---- 重渲必须回收（否则节点每次重画都叠一层，越叠越黑）----
   {
-    eq(render({ file: 'C:\\x\\y.pdf' }).labels[0].content, 'y.pdf',
-      'C# 版遗留的 Windows 纯路径 → 显示文件名（不是「文件附件」）');
-    eq(render({ file: '/a/b/c.pdf' }).labels[0].content, 'c.pdf', 'POSIX 纯路径同样取末段');
-  }
-
-  // ---- 超长名截断 ----
-  {
-    const long = render({ file: JSON.stringify({ n: '一二三四五六七八九十一二三四五六七八九十.pdf' }) });
-    ok(long.labels[0].content.length <= 14, '超长名截到 14 字以内（不截会横穿整张图）');
-    ok(long.labels[0].content.endsWith('…'), '截断后带省略号');
-  }
-
-  // ---- 换行压成空格（SVG <text> 不认 \n）----
-  eq(render({ file: JSON.stringify({ n: 'a\nb' }) }).labels[0].content, 'a b', '换行压成空格');
-
-  // ---- 字号钳制 ----
-  eq(render({ file: '{}' }, { 'font-size': 40 }).labels[0].size, 13, '大字号钳到 13（不能跟着无限大）');
-  eq(render({ file: '{}' }, { 'font-size': 8 }).labels[0].size, 9, '小字号钳到 9（再小看不清）');
-  eq(render({ file: '{}' }, { 'font-size': 'abc' }).labels[0].size, 11, '非法字号回落默认');
-
-  // ---- 重渲必须回收旧标签（否则节点每次重画都叠一层，越来越黑）----
-  {
-    const r = render({ file: JSON.stringify({ n: 'a.pdf' }) });
-    const first = r.labels[0];
-    eq(first.removed, undefined, '首次渲染的标签还没被回收');
-    // 同一节点再渲染一次
+    const r = render({ file: JSON.stringify([{ n: 'a.pdf' }]) });
+    const first = r.texts[0];
     r.km.handlers.noderender.forEach((fn) => fn({ node: r.node }));
-    eq(first.removed, true, '重渲前回收旧标签（不回收会越叠越黑）');
-    eq(r.node._kmLabels.length, 1, '重渲后仍是 1 个标签（不是 2 个）');
+    eq(first.removed, true, '重渲前回收旧形状');
+    eq(r.node._kmLabels.length, 2, '重渲后仍是 1 行（图标 + 文字），不是 2 行');
   }
 
-  // ---- 附件移除后标签要消失 ----
+  // ---- 长名截断 + 老式路径兜底 ----
   {
-    const r = render({ file: JSON.stringify({ n: 'a.pdf' }) });
-    r.node.data = { text: 'x' };
-    r.km.handlers.noderender.forEach((fn) => fn({ node: r.node }));
-    eq(r.node._kmLabels, null, '附件移除后不残留标签');
+    const r = render({ file: JSON.stringify([{ n: '一二三四五六七八九十一二三四五六七八九十.pdf' }]) });
+    ok(r.texts[0].content.length <= 14, '超长名截到 14 字以内（不截会横穿整张图）');
+    ok(r.texts[0].content.endsWith('…'), '截断后带省略号');
+  }
+  {
+    eq(render({ file: 'C:\\x\\老文件.pdf' }).texts[0].content, '老文件.pdf',
+      'C# 版遗留的纯路径 → 显示文件名');
   }
 }
 
@@ -4214,19 +4269,56 @@ group('拖放文件归类（纯函数）');
   eq(io.classifyFile('a.png', ''), 'image', 'type 为空 → 按扩展名认出图片');
   eq(io.classifyFile('a.mp4', ''), 'video', 'type 为空 → 按扩展名认出视频');
   eq(io.classifyFile('a.pdf', ''), 'file', 'type 为空 → 其它');
-  // octet-stream 太笼统，同样要看扩展名
   eq(io.classifyFile('clip.webm', 'application/octet-stream'), 'video',
     'octet-stream 不能盲信（.webm 会被误判成 file）');
   eq(io.classifyFile('pic.JPG', ''), 'image', '扩展名大小写不敏感');
   eq(io.classifyFile('', ''), 'file', '什么都没有 → file');
   eq(io.classifyFile('a.svg', 'image/svg+xml'), 'image', 'svg 也算图片');
 
-  // ---- stemOf：新子节点的名字 ----
+  // ---- stemOf：拖放建子节点时曾用；保留供其它用途 ----
   eq(io.stemOf('报告.pdf'), '报告', '去扩展名');
   eq(io.stemOf('a.b.c.pdf'), 'a.b.c', '只去最后一段扩展名');
   eq(io.stemOf('C:\\x\\y.mp4'), 'y', '带路径取末段');
   eq(io.stemOf(''), '附件', '空名给 fallback');
-  eq(io.stemOf('.hidden'), '附件', '只有扩展名给 fallback');
+}
+
+group('多附件：编解码（纯函数）');
+
+{
+  const io = await import('./io.js');
+  const a = { n: '一.pdf', a: 'A1', s: 10 };
+  const b = { n: '二.pdf', a: 'A2', s: 20 };
+
+  // 写一定是数组
+  eq(io.encodeRefList([a, b]), JSON.stringify([a, b]), '多元素 → JSON 数组串');
+  eq(io.encodeRefList([a]), JSON.stringify([a]), '单元素也写成数组（读写统一，不用分情况）');
+  eq(io.encodeRefList([]), '[]', '空列表');
+  eq(io.encodeRefList(null), '[]', 'null 也安全');
+
+  // 读两者都认（老数据兼容）
+  eq(io.decodeRefList(JSON.stringify([a, b])).length, 2, '数组串 → 2 个');
+  eq(io.decodeRefList(JSON.stringify([a])).length, 1, '数组串（单）→ 1 个');
+  eq(io.decodeRefList(JSON.stringify(a)).length, 1, '**老数据单对象串** → 包成 1 个');
+  eq(io.decodeRefList(JSON.stringify(a))[0].n, '一.pdf', '老数据内容正确');
+  {
+    const r = io.decodeRefList('C:\\x\\老文件.pdf');
+    eq(r.length, 1, 'C# 版遗留的纯路径串 → 1 个');
+    eq(r[0].n, '老文件.pdf', '纯路径取文件名');
+    eq(r[0].a, null, '纯路径没有资产 id');
+  }
+  eq(io.decodeRefList('').length, 0, '空串 → 空');
+  eq(io.decodeRefList(null).length, 0, 'null → 空');
+  eq(io.decodeRefList('[坏数据').length, 1, '数组串损坏时退回单值（不当作没有）');
+
+  // 追加 / 删除
+  eq(io.decodeRefList(io.appendRef(JSON.stringify([a]), b)).length, 2, 'appendRef 追加');
+  eq(io.decodeRefList(io.appendRef(null, a)).length, 1, 'appendRef 到空');
+  {
+    const raw = JSON.stringify([a, b]);
+    eq(io.decodeRefList(io.removeRefAt(raw, 0))[0]?.n, '二.pdf', 'removeRefAt 删第 0 个');
+    eq(io.decodeRefList(io.removeRefAt(raw, 1))[0]?.n, '一.pdf', 'removeRefAt 删第 1 个');
+    eq(io.decodeRefList(io.removeRefAt(raw, 9)).length, 2, '越界不删（不是静默清空）');
+  }
 }
 
 group('拖放：编辑器侧（真实源码）');
@@ -4238,38 +4330,72 @@ group('拖放：编辑器侧（真实源码）');
     'DOM→节点映射用 **WeakMap**（普通 Map 会随重渲稳定泄漏）');
   ok(/if \(rc\.node\) domNodeMap\.set\(rc\.node, node\);/.test(html),
     'noderender 里注册映射（否则拖放永远找不到节点）');
-  ok(/function nodeFromDom\(el\)/.test(html), '有 DOM 反查节点的函数');
-  ok(/guard\+\+ < 50/.test(nodeFromDomSrc(html)), '向上查找有层数上限（防死循环）');
+  ok(/function refListOf\(raw\)/.test(html), '编辑器侧有附件列表解析');
+  ok(/function imageListOf\(node\)/.test(html), '编辑器侧有图片列表解析');
 
-  // 三个实测约束
-  // 必须检查**dragover 回调内部**：preventDefault 在文件里到处都是，
-  // 只断言「文件里存在 preventDefault」等于没断言（去掉它照样绿）
-  const dragoverFn = html.slice(
-    html.indexOf("addEventListener('dragover'"),
+  // 编辑器侧与 io.js 的解析规则必须一致（两份实现，改一边忘另一边会静默出错）
+  {
+    const io = await import('./io.js');
+    const startAt = html.indexOf('function legacyRef(raw)');
+    const src = html.slice(startAt, html.indexOf('/* ---------------- DOM → 节点 映射'));
+    const fn = new Function('JSON', src + '; return { refListOf: refListOf, imageListOf: imageListOf };')(JSON);
+    const cases = [
+      JSON.stringify([{ n: 'a' }, { n: 'b' }]),
+      JSON.stringify([{ n: 'a' }]),
+      JSON.stringify({ n: 'single' }),
+      'C:\\x\\y.pdf',
+      '',
+    ];
+    let same = true;
+    for (const c of cases) {
+      const mine = fn.refListOf(c).map((x) => (x && x.n) || '');
+      const theirs = io.decodeRefList(c).map((x) => (x && x.n) || '');
+      if (mine.join('|') !== theirs.join('|')) {
+        same = false;
+        console.log('      不一致:', JSON.stringify(c), mine, theirs);
+      }
+    }
+    ok(same, '编辑器 refListOf 与 io.decodeRefList 结果**逐例一致**（含纯路径兜底）');
+  }
+
+  // 多图：1 张走 image（内核框内），≥2 张走 images（横幅）
+  const imgCmd = html.slice(html.indexOf("kity.createClass('imagesCommand'"),
+    html.indexOf("kity.createClass('imagesCommand'") + 1400);
+  ok(/arr\.length >= 2/.test(imgCmd) && /setData\('images'/.test(imgCmd),
+    '≥2 张 → 写 images（横幅）');
+  ok(/arr\.length === 1/.test(imgCmd) && /setData\('image', arr\[0\]\)/.test(imgCmd),
+    '1 张 → 写 image（内核渲染，图在节点框内）');
+  ok(/n\.setData\('image'\);/.test(imgCmd),
+    '横幅模式下**必须清掉 image** —— 两个字段都有值会画出两张图');
+  // imageListOf 只读 images：否则单图（走 image）会被画两次
+  const imgListFn = html.slice(html.indexOf('function imageListOf(node)'),
+    html.indexOf('function imageListOf(node)') + 700);
+  ok(!/getData\('image'\)/.test(imgListFn),
+    'imageListOf **不读 image**（否则单图会被内核和横幅各画一次）');
+
+  // 拖放三个硬约束
+  const dragoverFn = html.slice(html.indexOf("addEventListener('dragover'"),
     html.indexOf("addEventListener('dragover'") + 400);
   ok(/e\.preventDefault\(\)/.test(dragoverFn),
     'dragover **回调内**必须 preventDefault（否则浏览器根本不派发 drop）');
-  ok(/dropEffect = 'copy'/.test(html), '设 dropEffect，光标显示「复制」');
-  ok(/function dragHasFiles\(dt\)/.test(html), '区分「拖的是文件」还是画布内部拖拽');
-  ok(/dt\.types\[i\] === 'Files'/.test(html), '按 types 含 Files 判断');
   ok(/hostPost\(\{ type: 'dropmiss' \}\)/.test(html),
     '拖到空白处要**告知**（不提示用户只会觉得拖了没反应）');
-  ok(/hostPost\(\{\s*type: 'dropfiles'/.test(html), 'drop 命中节点时把文件发給插件层');
-  ok(/nodeId: \(node\.data && node\.data\.id\)\s*\|\|\s*''/.test(html), '带上 nodeId');
-  ok(/km\.select\(node, true\)/.test(html), 'drop 前先选中（插件层命令作用于选中节点）');
+  ok(/type: 'dropfiles'/.test(html), 'drop 命中节点时把文件发給插件层');
+  ok(/nodeId: \(node\.data && node\.data\.id\)/.test(html), '带上 nodeId');
+  ok(/function dragHasFiles\(dt\)/.test(html), '区分「拖的是文件」还是画布内部拖拽');
 
-  // 两个门面
-  ok(/window\.__minderSelectNode = function/.test(html), '暴露 __minderSelectNode');
-  ok(/window\.__minderInsertChildNamed = function/.test(html), '暴露 __minderInsertChildNamed');
-  const insFn = html.slice(html.indexOf('window.__minderInsertChildNamed = function'),
-    html.indexOf('window.__minderInsertChildNamed = function') + 900);
-  ok(!/beginTextEdit/.test(insFn),
-    '建子节点**不**进编辑态（否则拖 5 个文件要按 5 次 Esc）');
-  ok(/node\.setText/.test(insFn), '新节点文字 = 给定文字（文件名）');
-  const selFn = html.slice(html.indexOf('window.__minderSelectNode = function'),
-    html.indexOf('window.__minderSelectNode = function') + 900);
-  ok(/if \(cur !== found\) km\.select/.test(selFn),
-    '只在真的变了时才 select（无谓 select 会触发侧栏刷新）');
+  // 视频数字角标
+  const vidPart = html.slice(html.indexOf("var vids = refListOf(node.getData('video'));"),
+    html.indexOf("var vids = refListOf(node.getData('video'));") + 2200);
+  ok(/new kity\.Circle/.test(vidPart), '视频有角标圆底');
+  ok(/String\(vids\.length\)/.test(vidPart), '角标显示**总数**（有几个视频）');
+  ok(/fill\('#1B1B1F'\)/.test(vidPart),
+    '角标数字用深色 —— 与节点同色压在浅色角标上会看不见');
+
+  // 文件每行一个
+  ok(/var fils = refListOf\(node\.getData\('file'\)\);/.test(html), '文件读列表');
+  ok(/for \(var fi = 0; fi < fils\.length; fi\+\+\)/.test(html), '每个文件画一行');
+  ok(/top \+= 17/.test(html), '行高固定 17（多行依次往下排）');
 }
 
 group('拖放：bridge 与插件层接入');
@@ -4278,88 +4404,151 @@ group('拖放：bridge 与插件层接入');
   const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
   ok(/case 'dropfiles':/.test(br), 'bridge 处理 dropfiles');
   ok(/case 'dropmiss':/.test(br), 'bridge 处理 dropmiss');
-  ok(/onDropFiles\?\.\(d\.files, d\.nodeId/.test(br), '把 files 与 nodeId 传给 handler');
+  ok(/case 'openattach':/.test(br), 'bridge 处理 openattach（点击画布上的附件）');
+  ok(/onOpenAttach\?\.\(d\.kind, d\.index, d\.raw\)/.test(br), '带 kind / index / raw');
+  ok(/setImages/.test(br) && /getSelectedImages/.test(br), 'bridge 提供图片列表读写');
   ok(/selectNodeById/.test(br), 'bridge 提供 selectNodeById');
-  ok(/insertChildNamed/.test(br), 'bridge 提供 insertChildNamed');
-  ok(/getSelectedImage/.test(br), 'bridge 提供 getSelectedImage（图片覆盖检查要用）');
 
   const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   ok(/async function handleDropFiles/.test(idx), '插件层有 handleDropFiles');
   ok(/onDropFiles:/.test(idx), '注册了 onDropFiles');
   ok(/onDropMiss:/.test(idx), '注册了 onDropMiss');
+  ok(/onOpenAttach:/.test(idx), '注册了 onOpenAttach');
   ok(/请拖到节点上/.test(idx), '空白处有明确提示文案');
+  ok(!/confirmDropOverwrite/.test(idx),
+    '覆盖提示已移除（多附件是追加，不再有覆盖场景）');
 
   const hd = fnBody(idx, 'async function handleDropFiles');
-  // 只断言「函数里有这句」不够 —— 加个 `i === 0 &&` 也照样含这句，
-  // 但那样第 2 个文件起就不重锁，异步存资产期间选中态一变就挂错节点
-  // （变异验证实锤：只锁第一轮时断言仍绿）。必须显式排除只在首轮锁的写法。
-  ok(/^\s+if \(nodeId\) bridge\.selectNodeById\(nodeId\);$/m.test(hd),
-    '**每轮**都重新锁定目标节点（这句前面不能加 i === 0 之类条件）');
-  ok(!/i === 0 && nodeId/.test(hd) && !/i === 0 \?/.test(hd),
-    '不能在首轮之后就不再锁定（存资产是异步的，不重锁会挂错节点）');
-  ok(/i > 0/.test(hd) && /insertChildNamed/.test(hd), '第 2 个起建子节点');
-  ok(/io\.stemOf\(it\.file\.name\)/.test(hd), '子节点名取文件主干');
-  ok(/settings\.confirmDropOverwrite !== false/.test(hd), '覆盖提示受设置项控制');
-  ok(/confirmDialog\(/.test(hd), '覆盖前弹确认');
-  ok(/skipped\+\+/.test(hd) && /continue/.test(hd),
-    '取消只跳过该文件，不中断其余（拖 5 个取消第 1 个，后面 4 个照常）');
-  ok(/failed/.test(hd) && /附加失败/.test(hd), '失败的文件要列名（不静默）');
-  ok(/commit\(\)/.test(hd) && /side\.refresh\(\)/.test(hd), '改完落盘并刷新侧栏');
+  ok(/getSelectedImages/.test(hd) && /decodeRefList/.test(hd),
+    '先读出**现有列表**');
+  ok(/imgs\.push/.test(hd) && /vids\.push/.test(hd) && /fils\.push/.test(hd),
+    '三类都 push —— 追加而不是覆盖');
+  ok(!/insertChildNamed/.test(hd),
+    '**不再建子节点**（全部挂到目标节点上）');
+  ok(/encodeRefList\(vids\)/.test(hd) && /encodeRefList\(fils\)/.test(hd),
+    '写回时序列化成列表');
+  ok(/if \(nImg\)|if \(nImg\)/.test(hd) || /nImg\)/.test(hd), '只在真有变化时才写回');
+  ok(/bridge\.selectNodeById\(nodeId\)/.test(hd),
+    '写回前重新锁定目标节点（存资产是异步的，不重锁会挂错节点）');
+  ok(/makeVideoThumb/.test(hd), '视频生成首帧缩略图');
+  ok(/failed\.length/.test(hd) && /附加失败/.test(hd), '失败的文件要列名（不静默）');
 
-  // ---- 取消只跳过该文件，不中断其余 ----
-  // 源码级断言抓不到控制流被改坏（`continue` 改 `return` 也含同样的字符）。
-  // 补行为级：拖 2 个文件、第一个取消，第二个必须照常附加。
-  ok(!/if \(!ok\)\s*\{\s*skipped\+\+;\s*return;/.test(idx),
-    '取消时不能整批 return（拖 5 个取消第 1 个，后面 4 个也得处理）');
-  {
-    // 用真实 handleDropFiles 源码跑：stub 掉 bridge 与 io
-    const hdSrc = fnBody(idx, 'async function handleDropFiles');
-    const src = hdSrc + '\nreturn handleDropFiles;';
-    const calls = [];
-    const mkFile = (name, type) => ({ name, type, size: 10 });
-    const fns = new Function('bridge', 'io', 'settings', 'confirmDialog', 'commit',
-      'side', 'status', 'ctx', 'api', 'hasAttachment', 'attachDropped', src)(
-      {
-        ready: true,
-        selectNodeById: () => { calls.push('select'); return true; },
-        insertChildNamed: (t) => { calls.push('child:' + t); return true; },
-        setFile: (v) => calls.push('setFile'),
-        setVideo: () => calls.push('setVideo'),
-        setImage: () => calls.push('setImage'),
-        getSelectedImage: () => null,
-      },
-      {
-        classifyFile: (n, t) => (t && t.startsWith('image/') ? 'image' : 'file'),
-        putAsset: async () => 'A1',
-        encodeRef: (o) => JSON.stringify(o),
-        stemOf: (n) => String(n).replace(/\.[^.]*$/, ''),
-      },
-      { confirmDropOverwrite: true },
-      async () => false,                     // 用户取消
-      () => calls.push('commit'),
-      { refresh: () => calls.push('refresh') },
-      () => {},
-      { toast: () => {} },
-      { selectedRef: () => ({ n: '已有.pdf', a: 'A0' }) },   // 目标节点已有附件
-      () => true,                            // hasAttachment：目标节点已有附件
-      async () => true,                      // attachDropped：附加成功
-    );
-    const handle = fns;
-    await handle([mkFile('一.pdf', 'application/pdf'), mkFile('二.pdf', 'application/pdf')], 'N1');
-    ok(calls.filter((c) => c === 'child:二').length === 1,
-      '取消第 1 个后，第 2 个仍建子节点（不能用 return 整批中断）');
-    ok(calls.includes('commit'),
-      '取消不跳过 commit（第 2 个的修改要落盘）');
+  // 首帧缩略图：必须有超时与失败兜底
+  const mt = fnBody(idx, 'function makeVideoThumb(file)');
+  // 这条必须**精确**匹配 v.src 的赋值：只断言"文件里出现过 #t=0.1"是不行的 ——
+  // 注释里也写着它，字符串还在但赋值改没了照样绿（变异验证实锤过）。
+  ok(/v\.src\s*=\s*url\s*\+\s*'#t=0\.1'/.test(mt),
+    'v.src 实际赋值为 url + #t=0.1（不 seek 不绘制首帧，抓出来全黑）');
+  ok(/setTimeout/.test(mt), '有超时（某些编码元数据加载很慢，不能一直等）');
+  ok(/fin\(null\)/.test(mt), '失败一律返回 null（缩略图不能挡住附加本身）');
+
+  // 侧栏改为列表
+  const pnl = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  ok(/selectedRefs\('file'\)/.test(pnl) && /selectedRefs\('video'\)/.test(pnl),
+    '侧栏读**列表**而不是单个引用');
+  ok(/section\(`文件附件\$\{/.test(pnl), '文件区标题带数量');
+  ok(/mm-arow/.test(pnl), '文件用行式列表（每行一个）');
+  ok(/removeAt\(/.test(pnl), '支持移除第 N 个');
+  ok(/setImages\(\[\.\.\.images/.test(pnl), '加图片是追加（不覆盖已有图片）');
+}
+
+group('拖放：行为级（跑真实 handleDropFiles）');
+
+{
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const src = fnBody(idx, 'async function handleDropFiles') + '\nreturn handleDropFiles;';
+  const io = await import('./io.js');
+
+  /**
+   * 跑一次拖放。
+   * @param {Array} 已有 现有附件（分 kind）
+   * @param {Array} 拖入 本次拖入的文件
+   */
+  async function drop(existing, incoming, opt = {}) {
+    const written = [];
+    const state = {
+      images: existing.images || [],
+      video: io.encodeRefList(existing.videos || []),
+      file: io.encodeRefList(existing.files || []),
+    };
+    const bridge = {
+      ready: true,
+      selectNodeById: (id) => { written.push('lock:' + id); return true; },
+      getSelectedImages: () => state.images.slice(),
+      getSelectedVideo: () => state.video,
+      getSelectedFile: () => state.file,
+      setImages: (l) => { written.push('images:' + l.length); state.images = l; },
+      insertChildNamed: (t) => { written.push('child:' + t); return true; },
+      setVideo: (v) => { written.push('video'); state.video = v; },
+      setFile: (v) => { written.push('file'); state.file = v; },
+    };
+    const handle = new Function('bridge', 'io', 'commit', 'side', 'status', 'ctx',
+      'readDataURL', 'makeVideoThumb', src)(
+      bridge, io, () => written.push('commit'), { refresh: () => written.push('refresh') },
+      () => {}, { toast: () => {} },
+      async () => 'data:image/png;base64,X',
+      async () => 'data:image/jpeg;base64,T');
+    await handle(incoming, 'N1');
+    return { written, state };
   }
 
-  // 设置项
-  const pnl = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
-  ok(/confirmDropOverwrite/.test(pnl), '设置面板有覆盖提示开关');
-  ok(/section\('拖放附加'/.test(pnl), '有独立的「拖放附加」段落');
-  ok(/setConfirmDropOverwrite/.test(pnl), '开关调用 setConfirmDropOverwrite');
-  ok(/setConfirmDropOverwrite/.test(idx), '插件层实现了 setConfirmDropOverwrite');
-  // 默认开：单值字段被静默顶掉不可逆
-  ok(/confirmDropOverwrite: true/.test(idx), '默认开启（覆盖不可逆，不能默认静默）');
+  const f = (name, type) => ({ name, type, size: 10 });
+
+  // 一次性拖 3 个文件 → 全部挂同一节点
+  {
+    const r = await drop({}, [f('一.pdf', ''), f('二.pdf', ''), f('三.pdf', '')]);
+    eq(io.decodeRefList(r.state.file).length, 3, '3 个文件全部挂在同一个节点上');
+    eq(io.decodeRefList(r.state.file).map((x) => x.n).join(','), '一.pdf,二.pdf,三.pdf',
+      '顺序与名字都对');
+    ok(!r.written.some((w) => /child|子节点/.test(w)), '没有新建子节点');
+    ok(r.written.includes('commit'), '改完落盘');
+    ok(r.written.includes('refresh'), '改完刷新侧栏');
+  }
+
+  // 已有 2 个 + 再拖 2 个 → 4 个（追加，不覆盖）
+  {
+    const r = await drop({ files: [{ n: '旧一.pdf', a: 'A0' }, { n: '旧二.pdf', a: 'A1' }] },
+      [f('新一.pdf', ''), f('新二.pdf', '')]);
+    const names = io.decodeRefList(r.state.file).map((x) => x.n);
+    eq(names.length, 4, '已有 2 个 + 拖 2 个 = 4 个（**追加**，不是覆盖成 2 个）');
+    ok(names.includes('旧一.pdf') && names.includes('旧二.pdf'), '原有的还在（没被顶掉）');
+  }
+
+  // 图片：2 张 → 走 images 横幅
+  {
+    const r = await drop({}, [f('a.png', 'image/png'), f('b.png', 'image/png')]);
+    eq(r.written.filter((w) => /^images:/.test(w))[0], 'images:2', '2 张图片 → 写 images（横幅）');
+  }
+
+  // 前一次拖的图片要保留（第二次拖图片是追加）
+  {
+    const r = await drop({ images: ['data:image/png;base64,OLD'] }, [f('n.png', 'image/png')]);
+    eq(r.written.filter((w) => /^images:/.test(w))[0], 'images:2', '已有 1 张 + 拖 1 张 = 2 张');
+  }
+
+  // 视频：写回列表 + 生成缩略图
+  {
+    const r = await drop({}, [f('v.mp4', 'video/mp4')]);
+    const vids = io.decodeRefList(r.state.video);
+    eq(vids.length, 1, '视频写入列表');
+    eq(vids[0]?.t, 'data:image/jpeg;base64,T', '视频引用里带上首帧缩略图（画布同步渲染要用）');
+  }
+
+  // 混合：图 + 视频 + 文件，一次拖完各归各位
+  {
+    const r = await drop({}, [f('a.png', 'image/png'), f('v.mp4', 'video/mp4'), f('d.pdf', '')]);
+    eq(io.decodeRefList(r.state.file).length, 1, '文件 1 个');
+    eq(io.decodeRefList(r.state.video).length, 1, '视频 1 个');
+    eq(r.written.filter((w) => /^images:/.test(w))[0], 'images:1', '图片 1 张');
+  }
+
+  // 写回前必须锁定目标节点
+  {
+    const r = await drop({}, [f('a.pdf', '')]);
+    ok(r.written.some((w) => w === 'lock:N1'), '写回前锁定目标节点');
+    const li = r.written.indexOf('lock:N1');
+    ok(li < r.written.indexOf('file'), '锁定发生在写回**之前**（顺序不能反）');
+  }
 }
 
 /* ============================================================

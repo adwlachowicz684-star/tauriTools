@@ -412,6 +412,25 @@ const isPackRef = (href) => {
   return !!s && /^resources\//i.test(s) && !s.includes('://');
 };
 
+/**
+ * 把节点的附件字段解析成**列表**。
+ *
+ * 与 io.js 的 decodeRefList 同构（xmind.js 不 import io，避免循环依赖）。
+ * 规则一致：写一定是数组串，读两者都认 —— 老数据（单对象串 / 纯路径串）
+ * 包成单元素数组，这样下面三处循环都不用分支。
+ */
+function refListOf(raw) {
+  const v = str(raw);
+  if (!v) return [];
+  if (v[0] === '[') {
+    try {
+      const p = JSON.parse(v);
+      if (Array.isArray(p)) return p.filter(Boolean);
+    } catch { /* 退回单值 */ }
+  }
+  return [raw];
+}
+
 const isVideoName = (n) => /\.(mp4|webm|ogg|ogv|mov|mkv|avi|wmv|flv|m4v)$/i.test(String(n || ''));
 
 /** 文件名净化：非法字符 → 下划线，去首尾空白/点，绝不返回空串 */
@@ -977,18 +996,22 @@ export async function writeXMind(sheets, activeId, loadAsset = null) {
         const d = node.data;
         if (!d) return;
         for (const key of ['file', 'video']) {
-          const p = str(d[key]);
-          if (!p || !p.trim() || packs.has(p)) continue;
-          // 用真实文件名（引用串取 n 字段 / 路径取 basename），不能直接拿引用串当名字
-          const base = stripPackSeq(assetFileName(p));
-          const extMatch = /(\.[a-zA-Z0-9]+)$/.exec(base);
-          const ext = extMatch ? extMatch[1] : '';
-          const baseSafe = sanitizeFileName(base.replace(/(\.[a-zA-Z0-9]+)$/, ''));
-          const packName = `resources/kma_${seq}_${baseSafe}${ext}`;
-          seq++;
-          // 立即读取；读不到就不打包（引用保持原样）
-          packs.set(p, packName);
-          resources.push({ name: packName, ref: p });
+          // 一个节点可挂多个（data 里是 JSON 数组串），逐个打包
+          const list = refListOf(d[key]);
+          for (const one of list) {
+            const p = str(one);
+            if (!p || !p.trim() || packs.has(p)) continue;
+            // 用真实文件名（引用串取 n 字段 / 路径取 basename），不能直接拿引用串当名字
+            const base = stripPackSeq(assetFileName(p));
+            const extMatch = /(\.[a-zA-Z0-9]+)$/.exec(base);
+            const ext = extMatch ? extMatch[1] : '';
+            const baseSafe = sanitizeFileName(base.replace(/(\.[a-zA-Z0-9]+)$/, ''));
+            const packName = `resources/kma_${seq}_${baseSafe}${ext}`;
+            seq++;
+            // 立即读取；读不到就不打包（引用保持原样）
+            packs.set(p, packName);
+            resources.push({ name: packName, ref: p });
+          }
         }
       });
     }
@@ -1014,8 +1037,16 @@ export async function writeXMind(sheets, activeId, loadAsset = null) {
       const d = node.data;
       if (!d) return;
       for (const key of ['file', 'video']) {
-        const p = str(d[key]);
-        if (p && packs.has(p)) d[key] = packs.get(p);
+        const list = refListOf(d[key]);
+        if (!list.length) continue;
+        // 数组串 → 逐项替换 → 写回数组串（保持"写一定是数组"的约定）
+        let changed = false;
+        const out = list.map((one) => {
+          const p = str(one);
+          if (p && packs.has(p)) { changed = true; return packs.get(p); }
+          return one;
+        });
+        if (changed) d[key] = JSON.stringify(out);
       }
     });
     return { id: s.id, title: s.title, theme: s.theme, layout: s.layout, content: pretty(km) };
@@ -1120,18 +1151,29 @@ export async function readXMind(input, saveAsset = null) {
         const d = node.data;
         if (!d) return;
         for (const key of ['file', 'video']) {
-          const v = str(d[key]);
-          if (!v || !isPackRef(v)) continue;
-          const data = entries.get(v);
-          if (!data) continue;
-          const name = stripPackSeq(sanitizeFileName(v.split('/').pop() || 'attach'));
-          tasks.push(
-            Promise.resolve(saveAsset(name, data, { video: key === 'video' }))
-              .then((ref) => {
-                if (ref) { d[key] = ref; attachments++; }
-              })
-              .catch(() => { /* 单个附件失败不影响整体导入 */ }),
-          );
+          // 多附件：数组里每一项单独还原；任一项失败不影响其它
+          const list = refListOf(d[key]);
+          if (!list.length) continue;
+          const out = new Array(list.length);
+          let any = false;
+          list.forEach((one, idx) => {
+            const v = str(one);
+            out[idx] = one;                       // 先原样占位，失败就保持原引用
+            if (!v || !isPackRef(v)) return;
+            const data = entries.get(v);
+            if (!data) return;
+            const name = stripPackSeq(sanitizeFileName(v.split('/').pop() || 'attach'));
+            any = true;
+            tasks.push(
+              Promise.resolve(saveAsset(name, data, { video: key === 'video' }))
+                .then((ref) => {
+                  if (ref) { out[idx] = ref; attachments++; }
+                })
+                .catch(() => { /* 单个附件失败不影响整体导入 */ }),
+            );
+          });
+          // 统一写回数组串（原先只写单值，多附件会被截断成第一个）
+          if (any) d[key] = JSON.stringify(out.filter(Boolean));
         }
       });
     }

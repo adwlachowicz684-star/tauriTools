@@ -236,6 +236,50 @@
             });
             try { km._commands['video'] = new VideoCommand(); } catch (e) {}
 
+            // 多图：data.images 存 **JSON 数组串**（dataURL 列表）。
+            // 不能复用内核的 image 字段 —— 它是单值，内核渲染器会把数组串当 URL，直接破图。
+            //
+            // **1 张时走 image（内核渲染，图在节点框内）；≥2 张时走 images（横幅，框外紧贴下沿）。**
+            // 这样单图保持老行为（「内联」观感），多图才有横幅 —— 代价是 1→2 张时
+            // 图片位置会从框内挪到框外，但换来的是两套逻辑永不重复渲染：
+            // 同时写 image 与 images 会让同一个节点画出两张图。
+            var ImagesCommand = kity.createClass('imagesCommand', {
+                base: kityminder.Command,
+                execute: function (m, value) {
+                    var arr = [];
+                    if (value) {
+                        try {
+                            var p = JSON.parse(value);
+                            if (p && Object.prototype.toString.call(p) === '[object Array]') arr = p;
+                        } catch (e) { arr = []; }
+                    }
+                    var nodes = m.getSelectedNodes();
+                    nodes.forEach(function (n) {
+                        if (arr.length >= 2) {
+                            n.setData('images', JSON.stringify(arr));
+                            n.setData('image');              // 清掉，避免内核再画一张
+                        } else if (arr.length === 1) {
+                            n.setData('images');             // 清掉，交给内核画（框内）
+                            n.setData('image', arr[0]);
+                        } else {
+                            n.setData('images');
+                            n.setData('image');
+                        }
+                        n._kmImgIdx = 0;
+                        n.render();
+                    });
+                    m.layout();
+                },
+                queryState: function () {
+                    return km.getSelectedNodes().length === 0 ? -1 : 0;
+                },
+                queryValue: function () {
+                    var n = km.getSelectedNode();
+                    return n ? (n.getData('images') || '') : '';
+                }
+            });
+            try { km._commands['images'] = new ImagesCommand(); } catch (e) {}
+
             /**
              * 附件图标的取色。
              * ============================================================
@@ -269,6 +313,65 @@
                 // 老式纯路径至少把文件名显示出来 —— 否则这类附件在画布上
                 // 只能显示「文件附件」，用户根本认不出挂的是哪个
                 return String(raw).split(/[\\/]/).pop() || '';
+            }
+
+            /* ---------------- 附件列表解析（与 io.js 的 decodeRefList 同构） ----------------
+             * 编辑器是独立 HTML，import 不了 io.js，只能内联一份。
+             * **两边行为必须一致**，测试里同时断言了两边（改一边忘另一边会立刻红）。
+             * 规则：写一定是数组串，读两者都认（老数据是单对象串或纯路径串）。
+             */
+
+            /** 纯路径（C# 版遗留）→ 单元素列表 */
+            function legacyRef(raw) {
+                return [{ n: String(raw).split(/[\\/]/).pop() || String(raw), a: null, legacyPath: String(raw) }];
+            }
+
+            function refListOf(raw) {
+                if (!raw) return [];
+                var v = raw;
+                if (typeof v === 'string') {
+                    var t = v.trim();
+                    if (!t) return [];
+                    if (t.charAt(0) === '[') {
+                        try {
+                            var p = JSON.parse(t);
+                            if (p && p.length && Object.prototype.toString.call(p) === '[object Array]') {
+                                var out = [];
+                                for (var k = 0; k < p.length; k++) if (p[k]) out.push(p[k]);
+                                return out;
+                            }
+                        } catch (e) { /* 退回单值分支 */ }
+                    }
+                    try {
+                        var o = JSON.parse(t);
+                        if (o && typeof o === 'object') return [o];
+                    } catch (e) { /* 纯路径 */ }
+                    return legacyRef(raw);
+                }
+                if (Object.prototype.toString.call(v) === '[object Array]') return v;
+                if (v && typeof v === 'object') return [v];
+                return [];
+            }
+
+            /**
+             * 节点上的**横幅**图片列表（只读 `images`）。
+             *
+             * 刻意**不**读 `image`：单张图存在 `image` 里、由内核渲染在节点框内，
+             * 这里再画一次就会变成同节点两张图。只有 ≥2 张时 `images` 才有值
+             * （见 ImagesCommand），此时才由横幅绘制。
+             */
+            function imageListOf(node) {
+                var many = node.getData('images');
+                if (!many) return [];
+                try {
+                    var a = JSON.parse(many);
+                    if (a && a.length && Object.prototype.toString.call(a) === '[object Array]') {
+                        var out = [];
+                        for (var k = 0; k < a.length; k++) if (a[k]) out.push(a[k]);
+                        return out;
+                    }
+                } catch (e) { /* 坏数据当没有 */ }
+                return [];
             }
 
             /* ---------------- DOM → 节点 映射（拖放命中测试用） ---------------- */
@@ -395,41 +498,155 @@
                             });
                             rc.appendShape(icon);
                         }
-                        if (node.getData('file')) {
-                            var fc = new FileIcon();
-                            attach(fc, node.getData('file'), baseX, refName(node.getData('file')) || '文件附件');
-                            node._kmFileIcon = fc;
-                            baseX += 20;
-                        }
-                        if (node.getData('video')) {
-                            var vc = new VideoIcon();
-                            attach(vc, node.getData('video'), baseX, refName(node.getData('video')) || '视频附件');
-                            node._kmVideoIcon = vc;
-                        }
-                        // 附件名文字：只画图标认不出挂的是哪个文件 ——
-                        // <title> 悬浮提示要鼠标停一会儿才出现，多数人根本不会发现。
-                        var texts = [];
-                        if (node.getData('file')) texts.push(attachmentLabel(node.getData('file'), '文件附件'));
-                        if (node.getData('video')) texts.push(attachmentLabel(node.getData('video'), '视频附件'));
-                        var shown = [];
-                        for (var qi = 0; qi < texts.length; qi++) { if (texts[qi]) shown.push(texts[qi]); }
-                        if (shown.length) {
-                            var fs = attachmentFontSize(node);
-                            var lineH = fs + 2;
-                            for (var ti = 0; ti < shown.length; ti++) {
-                                var lb = new kity.Text(shown[ti]);
+                        /* ================= 附件区（节点框**下沿之外**） =================
+                         * 一个节点可挂多张图片、多个视频、多个文件：
+                         *   图片 → 横幅（多张可左右切换）
+                         *   视频 → 一张缩略图卡片 + 右上角数字角标（总数）
+                         *   文件 → 每行一个（图标 + 文件名）
+                         *
+                         * 为什么画在框外而不是框内：kityminder 的 contentBox 由
+                         * _rendererClasses 计算，往里加渲染器会让 renderNodeBatch 按
+                         * b[0] 的渲染器数整体迭代时取到 undefined（"Cannot set properties
+                         * of undefined (setting 'contentBox')"），结果是子节点无法布局、
+                         * 全部堆在画布中心 —— 之前踩过，代价太大，不再碰。
+                         */
+                        var push = function (sh) {
+                            rc.appendShape(sh);
+                            (node._kmLabels = node._kmLabels || []).push(sh);
+                            return sh;
+                        };
+                        var openAttach = function (kind, index, raw) {
+                            hostPost({ type: 'openattach', kind: kind, index: index, raw: raw });
+                        };
+                        var top = box.bottom + 6;
+                        var cx = box.cx;
+
+                        /* ---- 图片横幅（多张可切换） ---- */
+                        var imgs = imageListOf(node);
+                        if (imgs.length) {
+                            var ii = node._kmImgIdx || 0;
+                            if (!(ii >= 0 && ii < imgs.length)) ii = 0;
+                            var iw = Math.max(64, Math.min(96, box.width || 96));
+                            var ih = 60;
+                            var ix = cx - iw / 2;
+                            push(new kity.Rect(iw, ih, ix, top, 4)
+                                .fill('rgba(255,255,255,0.07)').stroke(color, 1));
+                            try {
+                                var im = new kity.Image(imgs[ii], iw - 6, ih - 6, ix + 3, top + 3);
+                                im.setStyle('cursor', 'pointer');
+                                (function (idx, url) {
+                                    im.on('mousedown', function (ev) {
+                                        ev.preventDefault();
+                                        if (ev.stopPropagation) ev.stopPropagation();
+                                        openAttach('image', idx, url);
+                                    });
+                                })(ii, imgs[ii]);
+                                push(im);
+                            } catch (e3) {}
+                            if (imgs.length > 1) {
+                                var my = top + ih / 2;
+                                // 左右箭头：切换当前图（循环）
+                                var arrowL = (new kity.Path).setPathData(
+                                    'M' + (ix + 12) + ',' + my + ' L' + (ix + 20) + ',' + (my - 6) +
+                                    ' L' + (ix + 20) + ',' + (my + 6) + ' Z')
+                                    .fill('rgba(0,0,0,0.55)').stroke('rgba(255,255,255,0.85)', 1);
+                                var arrowR = (new kity.Path).setPathData(
+                                    'M' + (ix + iw - 12) + ',' + my + ' L' + (ix + iw - 20) + ',' + (my - 6) +
+                                    ' L' + (ix + iw - 20) + ',' + (my + 6) + ' Z')
+                                    .fill('rgba(0,0,0,0.55)').stroke('rgba(255,255,255,0.85)', 1);
+                                [[arrowL, -1], [arrowR, 1]].forEach(function (pair) {
+                                    var sh = pair[0], d = pair[1];
+                                    sh.setStyle('cursor', 'pointer');
+                                    sh.on('mousedown', function (ev) {
+                                        ev.preventDefault();
+                                        if (ev.stopPropagation) ev.stopPropagation();
+                                        var cur = node._kmImgIdx || 0;
+                                        node._kmImgIdx = (cur + d + imgs.length) % imgs.length;
+                                        node.render();
+                                    });
+                                    push(sh);
+                                });
+                                // 计数 "i/n"：多张时不数出来，用户不知道还有几张
+                                var cnt = new kity.Text((ii + 1) + '/' + imgs.length);
                                 try {
-                                    lb.setSize(fs);
-                                    lb.fill(color);
-                                    lb.setTextAnchor('middle');
-                                    // 文字比图标宽得多：可点击会挡住画布拖拽
-                                    // 与空白处框选，得不偿失
-                                    lb.setStyle('pointer-events', 'none');
-                                    lb.setTranslate(box.cx, box.bottom + fs + 3 + ti * lineH);
+                                    cnt.setSize(9).fill(color).setTextAnchor('middle');
+                                    cnt.setStyle('pointer-events', 'none');
+                                    cnt.setTranslate(cx, top + ih - 4);
                                 } catch (e3) {}
-                                rc.appendShape(lb);
-                                (node._kmLabels = node._kmLabels || []).push(lb);
+                                push(cnt);
                             }
+                            top += ih + 4;
+                        }
+
+                        /* ---- 视频组：一张卡片 + 右上角数字角标 ---- */
+                        var vids = refListOf(node.getData('video'));
+                        if (vids.length) {
+                            var vw = 96, vh = 54;
+                            var vx = cx - vw / 2;
+                            var vcard = new kity.Rect(vw, vh, vx, top, 4)
+                                .fill('#1B1B1F').stroke(color, 1);
+                            vcard.setStyle('cursor', 'pointer');
+                            (function (v0) {
+                                vcard.on('mousedown', function (ev) {
+                                    ev.preventDefault();
+                                    if (ev.stopPropagation) ev.stopPropagation();
+                                    openAttach('video', 0, v0);
+                                });
+                            })(vids[0]);
+                            push(vcard);
+                            // 首帧缩略图：附加时生成并存进 ref.t（同步可读，不阻塞渲染）
+                            var vt0 = vids[0] || {};
+                            if (vt0.t) {
+                                try {
+                                    var vt = new kity.Image(vt0.t, vw - 6, vh - 6, vx + 3, top + 3);
+                                    vt.setStyle('pointer-events', 'none');
+                                    push(vt);
+                                } catch (e3) {}
+                            }
+                            var vcy = top + vh / 2;
+                            push((new kity.Path).setPathData(
+                                'M' + (cx - 7) + ',' + (vcy - 8) + ' L' + (cx + 9) + ',' + vcy +
+                                ' L' + (cx - 7) + ',' + (vcy + 8) + ' Z')
+                                .fill('rgba(255,255,255,0.92)').stroke('rgba(0,0,0,0.4)', 1));
+                            // 角标：显示**总数**。只画三角认不出有几个视频
+                            var bx = vx + vw - 11, by = top + 11;
+                            var badge = new kity.Circle(10, bx, by).fill(color).stroke('#1B1B1F', 1.5);
+                            badge.setStyle('pointer-events', 'none');
+                            push(badge);
+                            // 数字用深色（压在浅色角标圆上）—— 与节点同色在浅色主题上会看不见
+                            var bnum = new kity.Text(String(vids.length));
+                            try {
+                                bnum.setSize(10).fill('#1B1B1F').setTextAnchor('middle');
+                                bnum.setStyle('pointer-events', 'none');
+                                bnum.setTranslate(bx, by + 3.5);
+                            } catch (e3) {}
+                            push(bnum);
+                            top += vh + 4;
+                        }
+
+                        /* ---- 文件：每行一个 ---- */
+                        var fils = refListOf(node.getData('file'));
+                        for (var fi = 0; fi < fils.length; fi++) {
+                            var fy = top + 8;
+                            var fic = new FileIcon();
+                            fic.paint(color);
+                            fic.setTranslate(cx - 46, fy);
+                            (function (idx, ref) {
+                                fic.on('mousedown', function (ev) {
+                                    ev.preventDefault();
+                                    if (ev.stopPropagation) ev.stopPropagation();
+                                    openAttach('file', idx, ref);
+                                });
+                            })(fi, fils[fi]);
+                            push(fic);
+                            var fn = new kity.Text(attachmentLabel(fils[fi], '文件附件'));
+                            try {
+                                fn.setSize(attachmentFontSize(node)).fill(color).setTextAnchor('start');
+                                fn.setStyle('pointer-events', 'none');
+                                fn.setTranslate(cx - 34, fy + 4);
+                            } catch (e3) {}
+                            push(fn);
+                            top += 17;
                         }
                     } catch (e2) {}
                 });
