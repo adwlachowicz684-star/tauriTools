@@ -620,6 +620,43 @@ export function base64ToBlob(b64, type = 'application/pdf') {
   }
 }
 
+/**
+ * 拖放文件归类（纯函数，可测）。
+ *
+ * @returns {'image'|'video'|'file'}
+ *   - image → 内联进节点的 `image` 字段（dataURL，导出的 .xmind 自带图片）
+ *   - video → 资产引用 `video`
+ *   - file  → 资产引用 `file`
+ *
+ * **不能只看 MIME**：部分环境（某些文件管理器、跨平台拖拽、老浏览器）拖进来的
+ * `File.type` 是空串，只看 type 会把 .png 当成"其它文件"存进资产库，
+ * 结果画布上不显示图片、只多一个文件图标。所以 type 为空时按扩展名兜底。
+ *
+ * 反过来也成立：有些环境把 .mkv 标成 `video/x-matroska`（能认），
+ * 但也有标成 `application/octet-stream` 的，同样要靠扩展名。
+ */
+const EXT_IMAGE = /\.(png|jpe?g|gif|bmp|webp|svg|ico|avif)$/i;
+const EXT_VIDEO = /\.(mp4|webm|og[gv]|mov|m4v|avi|mkv|flv)$/i;
+
+export function classifyFile(name, type) {
+  const t = String(type || '').toLowerCase();
+  if (t.startsWith('image/')) return 'image';
+  if (t.startsWith('video/')) return 'video';
+  // type 为空或太笼统（octet-stream）时按扩展名兜底
+  if (t && t !== 'application/octet-stream') return 'file';
+  const n = String(name || '').toLowerCase();
+  if (EXT_IMAGE.test(n)) return 'image';
+  if (EXT_VIDEO.test(n)) return 'video';
+  return 'file';
+}
+
+/** 拖放/附加时给新节点起的名字：文件名去掉扩展名 */
+export function stemOf(name, fallback = '附件') {
+  const s = String(name ?? '').trim().split(/[\\/]/).pop() || '';
+  const stem = s.replace(/\.[^.]*$/, '').trim();
+  return stem || fallback;
+}
+
 export function stampName(base, ext) {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');

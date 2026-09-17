@@ -271,6 +271,13 @@
                 return String(raw).split(/[\\/]/).pop() || '';
             }
 
+            /* ---------------- DOM → 节点 映射（拖放命中测试用） ---------------- */
+            // 内核在 initContainers 里给节点渲染容器设了 rc.minderNode = node，
+            // 但那是 kity Group 对象；拖放事件里拿到的是 SVG 元素，从 DOM 反查不到。
+            // 这里另建映射。用 WeakMap 而非普通对象：节点销毁后条目自动消失，
+            // 不会随每次重渲累积（画布重渲极其频繁，普通 Map 会稳定泄漏）。
+            var domNodeMap = new WeakMap();
+
             /* ---------------- 附件名文字标签（画布上可见） ---------------- */
 
             /** 标签最大字数：再长就横穿整张图、压住别的分支 */
@@ -365,6 +372,11 @@
                         var y = box.cy;
                         var rc = node.getRenderContainer();
                         if (!rc || !rc.appendShape) return;
+                        // 拖放命中测试要用：DOM 事件里拿到的是 SVG 元素，
+                        // 内核的 rc.minderNode 挂在 kity Group 对象上、DOM 上反查不到，
+                        // 所以这里另建 DOM → node 的映射。用 WeakMap：
+                        // 节点销毁后条目自动消失，不会随每次重渲累积。
+                        if (rc.node) domNodeMap.set(rc.node, node);
                         var color = iconColor(node);
                         function attach(icon, path, cursorX, tip) {
                             icon.paint(color);
@@ -420,6 +432,97 @@
                             }
                         }
                     } catch (e2) {}
+                });
+            } catch (e) {}
+
+            /* ---------------- 文件拖放附加 ----------------
+             * 把图片 / 视频 / 任意文件拖到节点上即附加，省去「选中 → 侧栏翻页 → 点按钮」。
+             *
+             * 三个前提，都是实测约束不是风格选择：
+             * 1. **dragover 必须 preventDefault**，否则浏览器不派发 drop（默认行为是打开文件）
+             * 2. **原生拖拽期间不派发 mousemove**，所以不能靠 km 的 mousemove 拿到
+             *    「当前悬停节点」，只能从 drop 的 target 反查 DOM
+             * 3. 拖到**空白处**按约定忽略（不建节点）—— 拖放容错差，
+             *    误建的空白节点清理起来很烦
+             */
+
+            /** 从 DOM 往上找所属节点（最多 50 层，防死循环） */
+            function nodeFromDom(el) {
+                var cur = el;
+                var guard = 0;
+                while (cur && guard++ < 50) {
+                    var n = domNodeMap.get(cur);
+                    if (n) return n;
+                    cur = cur.parentNode;
+                }
+                return null;
+            }
+
+            /**
+             * 拖拽里有没有文件。
+             * 必须判断：拖节点文字、拖浏览器里的选中内容也会触发 dragover，
+             * 不区分的话会把画布内部的正常拖拽也拦下来。
+             */
+            function dragHasFiles(dt) {
+                if (!dt || !dt.types) return false;
+                for (var i = 0; i < dt.types.length; i++) {
+                    if (dt.types[i] === 'Files') return true;
+                }
+                return false;
+            }
+
+            var dropTarget = null;
+
+            /** 高亮：直接选中该节点，复用内核自己的选中框，零坐标成本 */
+            function markTarget(node) {
+                if (dropTarget === node) return;
+                dropTarget = node;
+                if (!node) return;
+                try { km.select(node, true); } catch (e) {}
+            }
+            function clearTarget() {
+                if (!dropTarget) return;
+                dropTarget = null;
+            }
+
+            try {
+                var dropRoot = document.getElementById('minder-container') || document.body;
+                dropRoot.addEventListener('dragenter', function (e) {
+                    if (!dragHasFiles(e.dataTransfer)) return;
+                    e.preventDefault();
+                });
+                dropRoot.addEventListener('dragover', function (e) {
+                    if (!dragHasFiles(e.dataTransfer)) return;
+                    e.preventDefault();                       // 不 preventDefault 就没有 drop
+                    try { e.dataTransfer.dropEffect = 'copy'; } catch (e2) {}
+                    markTarget(nodeFromDom(e.target));
+                });
+                dropRoot.addEventListener('dragleave', function (e) {
+                    if (!dragHasFiles(e.dataTransfer)) return;
+                    clearTarget();
+                });
+                dropRoot.addEventListener('drop', function (e) {
+                    if (!dragHasFiles(e.dataTransfer)) return;
+                    e.preventDefault();
+                    clearTarget();
+                    var node = nodeFromDom(e.target);
+                    if (!node) {
+                        // 空白处：明确告知，否则用户只会觉得「拖了没反应」
+                        hostPost({ type: 'dropmiss' });
+                        return;
+                    }
+                    var files = [];
+                    var fl = e.dataTransfer.files;
+                    for (var i = 0; i < (fl ? fl.length : 0); i++) files.push(fl[i]);
+                    if (!files.length) return;
+                    // 先选中：插件层的命令一律作用于「当前选中节点」，
+                    // 且存资产是异步的，期间选中态若变了会挂错节点
+                    try { km.select(node, true); } catch (e2) {}
+                    hostPost({
+                        type: 'dropfiles',
+                        files: files,
+                        nodeId: (node.data && node.data.id) || '',
+                    });
                 });
             } catch (e) {}
         })();
@@ -2270,6 +2373,53 @@
              */
             window.__minderFocusCanvas = function () { try { km.focus(); } catch (e) {} };
             window.__minderInsertChild = insertChildNode;
+
+            /**
+             * 按 data.id 选中节点（拖放用）。
+             *
+             * 拖放流程里存资产是**异步**的（写 IndexedDB），期间用户可能点了别处、
+             * 选中态就变了。插件层每处理一个文件前调一次这个，确保挂到原目标上。
+             *
+             * 只在 uid 真的变了时才 select：无谓的 select 会触发 selectionchange，
+             * 让属性侧栏跟着刷新一遍。
+             */
+            window.__minderSelectNode = function (uid) {
+                if (!uid) return false;
+                try {
+                    var root = km.getRoot();
+                    if (!root) return false;
+                    var found = null;
+                    root.traverse(function (n) {
+                        if (!found && n.data && n.data.id === uid) found = n;
+                    });
+                    if (!found) return false;
+                    var cur = km.getSelectedNode();
+                    if (cur !== found) km.select(found, true);
+                    return true;
+                } catch (e) { return false; }
+            };
+
+            /**
+             * 在当前选中节点下插入一个**带文字**的子节点，并选中它。
+             *
+             * 与 insertChildNode 的差别是**不进入文字编辑态**：
+             * 拖放建子节点时文字已由文件名给定，进入编辑态反而会挡住后续命令，
+             * 还会让「拖了 5 个文件」变成「要按 5 次 Esc」。
+             */
+            window.__minderInsertChildNamed = function (text) {
+                try {
+                    var sel = km.getSelectedNode() || km.getRoot();
+                    if (!sel) return false;
+                    if (sel.isCollapsed && sel.isCollapsed()) { try { sel.expand(); } catch (e2) {} }
+                    var node = km.createNode(null, sel);
+                    km.appendNode(node, sel, sel.children ? sel.children.length : 0);
+                    try { node.setText(String(text == null ? '' : text)); } catch (e2) {}
+                    km.select(node, true);
+                    km.fire('contentchange');
+                    km.layout(100);
+                    return true;
+                } catch (e) { return false; }
+            };
             kmShortcut('Enter', function () {
                 var sel = km.getSelectedNode();
                 if (!sel) { insertNode(km.getRoot && km.getRoot(), null); return; }

@@ -45,6 +45,26 @@ function ok(cond, name, detail = '') {
 const eq = (a, b, name) => ok(a === b, name, a === b ? '' : `期望 ${JSON.stringify(b)}，实际 ${JSON.stringify(a)}`);
 const group = (t) => console.log('\n\x1b[1m' + t + '\x1b[0m');
 
+/**
+ * 取某个函数的**完整函数体**（到下一个顶层函数声明为止）。
+ *
+ * 用 `indexOf(sig) + N` 固定字符数切片会越界切到相邻函数，
+ * 于是断言测的是别人（已踩过 3 次，见 README）。这里一律按结构性边界切。
+ */
+function fnBody(src, sig) {
+  const i = src.indexOf(sig);
+  if (i < 0) return '';
+  const rest = src.slice(i + sig.length);
+  const m = rest.match(/\n  (?:async )?function /);
+  return src.slice(i, i + sig.length + (m ? m.index : rest.length));
+}
+
+/** 取 editor/index.html 里主 inline script 的源码 */
+function nodeFromDomSrc(html) {
+  const i = html.indexOf('function nodeFromDom(el)');
+  return i < 0 ? '' : html.slice(i, i + 400);
+}
+
 /* ============================================================
    一、jsdom 环境 + IndexedDB 内存桩
    ============================================================ */
@@ -4174,6 +4194,172 @@ group('附件名标签（画布上可见）');
     r.km.handlers.noderender.forEach((fn) => fn({ node: r.node }));
     eq(r.node._kmLabels, null, '附件移除后不残留标签');
   }
+}
+
+/* ============================================================
+   三十六、拖放附加（图片 / 视频 / 文件）
+   ============================================================ */
+
+group('拖放文件归类（纯函数）');
+
+{
+  const io = await import('./io.js');
+  eq(io.classifyFile('a.png', 'image/png'), 'image', 'MIME image/* → image');
+  eq(io.classifyFile('a.mp4', 'video/mp4'), 'video', 'MIME video/* → video');
+  eq(io.classifyFile('a.pdf', 'application/pdf'), 'file', '其它 MIME → file');
+
+  // **关键**：type 为空时按扩展名兜底。
+  // 部分环境（文件管理器、跨平台拖拽）拖进来的 File.type 是空串，
+  // 只看 type 会把 .png 存进资产库、画布上不显示图片。
+  eq(io.classifyFile('a.png', ''), 'image', 'type 为空 → 按扩展名认出图片');
+  eq(io.classifyFile('a.mp4', ''), 'video', 'type 为空 → 按扩展名认出视频');
+  eq(io.classifyFile('a.pdf', ''), 'file', 'type 为空 → 其它');
+  // octet-stream 太笼统，同样要看扩展名
+  eq(io.classifyFile('clip.webm', 'application/octet-stream'), 'video',
+    'octet-stream 不能盲信（.webm 会被误判成 file）');
+  eq(io.classifyFile('pic.JPG', ''), 'image', '扩展名大小写不敏感');
+  eq(io.classifyFile('', ''), 'file', '什么都没有 → file');
+  eq(io.classifyFile('a.svg', 'image/svg+xml'), 'image', 'svg 也算图片');
+
+  // ---- stemOf：新子节点的名字 ----
+  eq(io.stemOf('报告.pdf'), '报告', '去扩展名');
+  eq(io.stemOf('a.b.c.pdf'), 'a.b.c', '只去最后一段扩展名');
+  eq(io.stemOf('C:\\x\\y.mp4'), 'y', '带路径取末段');
+  eq(io.stemOf(''), '附件', '空名给 fallback');
+  eq(io.stemOf('.hidden'), '附件', '只有扩展名给 fallback');
+}
+
+group('拖放：编辑器侧（真实源码）');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+
+  ok(/var domNodeMap = new WeakMap\(\);/.test(html),
+    'DOM→节点映射用 **WeakMap**（普通 Map 会随重渲稳定泄漏）');
+  ok(/if \(rc\.node\) domNodeMap\.set\(rc\.node, node\);/.test(html),
+    'noderender 里注册映射（否则拖放永远找不到节点）');
+  ok(/function nodeFromDom\(el\)/.test(html), '有 DOM 反查节点的函数');
+  ok(/guard\+\+ < 50/.test(nodeFromDomSrc(html)), '向上查找有层数上限（防死循环）');
+
+  // 三个实测约束
+  // 必须检查**dragover 回调内部**：preventDefault 在文件里到处都是，
+  // 只断言「文件里存在 preventDefault」等于没断言（去掉它照样绿）
+  const dragoverFn = html.slice(
+    html.indexOf("addEventListener('dragover'"),
+    html.indexOf("addEventListener('dragover'") + 400);
+  ok(/e\.preventDefault\(\)/.test(dragoverFn),
+    'dragover **回调内**必须 preventDefault（否则浏览器根本不派发 drop）');
+  ok(/dropEffect = 'copy'/.test(html), '设 dropEffect，光标显示「复制」');
+  ok(/function dragHasFiles\(dt\)/.test(html), '区分「拖的是文件」还是画布内部拖拽');
+  ok(/dt\.types\[i\] === 'Files'/.test(html), '按 types 含 Files 判断');
+  ok(/hostPost\(\{ type: 'dropmiss' \}\)/.test(html),
+    '拖到空白处要**告知**（不提示用户只会觉得拖了没反应）');
+  ok(/hostPost\(\{\s*type: 'dropfiles'/.test(html), 'drop 命中节点时把文件发給插件层');
+  ok(/nodeId: \(node\.data && node\.data\.id\)\s*\|\|\s*''/.test(html), '带上 nodeId');
+  ok(/km\.select\(node, true\)/.test(html), 'drop 前先选中（插件层命令作用于选中节点）');
+
+  // 两个门面
+  ok(/window\.__minderSelectNode = function/.test(html), '暴露 __minderSelectNode');
+  ok(/window\.__minderInsertChildNamed = function/.test(html), '暴露 __minderInsertChildNamed');
+  const insFn = html.slice(html.indexOf('window.__minderInsertChildNamed = function'),
+    html.indexOf('window.__minderInsertChildNamed = function') + 900);
+  ok(!/beginTextEdit/.test(insFn),
+    '建子节点**不**进编辑态（否则拖 5 个文件要按 5 次 Esc）');
+  ok(/node\.setText/.test(insFn), '新节点文字 = 给定文字（文件名）');
+  const selFn = html.slice(html.indexOf('window.__minderSelectNode = function'),
+    html.indexOf('window.__minderSelectNode = function') + 900);
+  ok(/if \(cur !== found\) km\.select/.test(selFn),
+    '只在真的变了时才 select（无谓 select 会触发侧栏刷新）');
+}
+
+group('拖放：bridge 与插件层接入');
+
+{
+  const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+  ok(/case 'dropfiles':/.test(br), 'bridge 处理 dropfiles');
+  ok(/case 'dropmiss':/.test(br), 'bridge 处理 dropmiss');
+  ok(/onDropFiles\?\.\(d\.files, d\.nodeId/.test(br), '把 files 与 nodeId 传给 handler');
+  ok(/selectNodeById/.test(br), 'bridge 提供 selectNodeById');
+  ok(/insertChildNamed/.test(br), 'bridge 提供 insertChildNamed');
+  ok(/getSelectedImage/.test(br), 'bridge 提供 getSelectedImage（图片覆盖检查要用）');
+
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  ok(/async function handleDropFiles/.test(idx), '插件层有 handleDropFiles');
+  ok(/onDropFiles:/.test(idx), '注册了 onDropFiles');
+  ok(/onDropMiss:/.test(idx), '注册了 onDropMiss');
+  ok(/请拖到节点上/.test(idx), '空白处有明确提示文案');
+
+  const hd = fnBody(idx, 'async function handleDropFiles');
+  // 只断言「函数里有这句」不够 —— 加个 `i === 0 &&` 也照样含这句，
+  // 但那样第 2 个文件起就不重锁，异步存资产期间选中态一变就挂错节点
+  // （变异验证实锤：只锁第一轮时断言仍绿）。必须显式排除只在首轮锁的写法。
+  ok(/^\s+if \(nodeId\) bridge\.selectNodeById\(nodeId\);$/m.test(hd),
+    '**每轮**都重新锁定目标节点（这句前面不能加 i === 0 之类条件）');
+  ok(!/i === 0 && nodeId/.test(hd) && !/i === 0 \?/.test(hd),
+    '不能在首轮之后就不再锁定（存资产是异步的，不重锁会挂错节点）');
+  ok(/i > 0/.test(hd) && /insertChildNamed/.test(hd), '第 2 个起建子节点');
+  ok(/io\.stemOf\(it\.file\.name\)/.test(hd), '子节点名取文件主干');
+  ok(/settings\.confirmDropOverwrite !== false/.test(hd), '覆盖提示受设置项控制');
+  ok(/confirmDialog\(/.test(hd), '覆盖前弹确认');
+  ok(/skipped\+\+/.test(hd) && /continue/.test(hd),
+    '取消只跳过该文件，不中断其余（拖 5 个取消第 1 个，后面 4 个照常）');
+  ok(/failed/.test(hd) && /附加失败/.test(hd), '失败的文件要列名（不静默）');
+  ok(/commit\(\)/.test(hd) && /side\.refresh\(\)/.test(hd), '改完落盘并刷新侧栏');
+
+  // ---- 取消只跳过该文件，不中断其余 ----
+  // 源码级断言抓不到控制流被改坏（`continue` 改 `return` 也含同样的字符）。
+  // 补行为级：拖 2 个文件、第一个取消，第二个必须照常附加。
+  ok(!/if \(!ok\)\s*\{\s*skipped\+\+;\s*return;/.test(idx),
+    '取消时不能整批 return（拖 5 个取消第 1 个，后面 4 个也得处理）');
+  {
+    // 用真实 handleDropFiles 源码跑：stub 掉 bridge 与 io
+    const hdSrc = fnBody(idx, 'async function handleDropFiles');
+    const src = hdSrc + '\nreturn handleDropFiles;';
+    const calls = [];
+    const mkFile = (name, type) => ({ name, type, size: 10 });
+    const fns = new Function('bridge', 'io', 'settings', 'confirmDialog', 'commit',
+      'side', 'status', 'ctx', 'api', 'hasAttachment', 'attachDropped', src)(
+      {
+        ready: true,
+        selectNodeById: () => { calls.push('select'); return true; },
+        insertChildNamed: (t) => { calls.push('child:' + t); return true; },
+        setFile: (v) => calls.push('setFile'),
+        setVideo: () => calls.push('setVideo'),
+        setImage: () => calls.push('setImage'),
+        getSelectedImage: () => null,
+      },
+      {
+        classifyFile: (n, t) => (t && t.startsWith('image/') ? 'image' : 'file'),
+        putAsset: async () => 'A1',
+        encodeRef: (o) => JSON.stringify(o),
+        stemOf: (n) => String(n).replace(/\.[^.]*$/, ''),
+      },
+      { confirmDropOverwrite: true },
+      async () => false,                     // 用户取消
+      () => calls.push('commit'),
+      { refresh: () => calls.push('refresh') },
+      () => {},
+      { toast: () => {} },
+      { selectedRef: () => ({ n: '已有.pdf', a: 'A0' }) },   // 目标节点已有附件
+      () => true,                            // hasAttachment：目标节点已有附件
+      async () => true,                      // attachDropped：附加成功
+    );
+    const handle = fns;
+    await handle([mkFile('一.pdf', 'application/pdf'), mkFile('二.pdf', 'application/pdf')], 'N1');
+    ok(calls.filter((c) => c === 'child:二').length === 1,
+      '取消第 1 个后，第 2 个仍建子节点（不能用 return 整批中断）');
+    ok(calls.includes('commit'),
+      '取消不跳过 commit（第 2 个的修改要落盘）');
+  }
+
+  // 设置项
+  const pnl = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  ok(/confirmDropOverwrite/.test(pnl), '设置面板有覆盖提示开关');
+  ok(/section\('拖放附加'/.test(pnl), '有独立的「拖放附加」段落');
+  ok(/setConfirmDropOverwrite/.test(pnl), '开关调用 setConfirmDropOverwrite');
+  ok(/setConfirmDropOverwrite/.test(idx), '插件层实现了 setConfirmDropOverwrite');
+  // 默认开：单值字段被静默顶掉不可逆
+  ok(/confirmDropOverwrite: true/.test(idx), '默认开启（覆盖不可逆，不能默认静默）');
 }
 
 /* ============================================================

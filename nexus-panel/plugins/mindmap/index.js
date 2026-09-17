@@ -38,7 +38,10 @@ bootIframePlugin(async (ctx) => {
 
   /* ------------------------- 状态 ------------------------- */
 
-  let settings = (await store.settings.load()) || { animate: false, backupMinutes: 2, backupMax: 3, pdfChannel: 'vector' };
+  // confirmDropOverwrite：拖放附加时，若目标节点已有同类附件是否先确认。
+  // 默认开 —— 图片/视频/文件都是单值字段，挂上去会静默顶掉原来的，不可逆。
+  let settings = (await store.settings.load())
+    || { animate: false, backupMinutes: 2, backupMax: 3, pdfChannel: 'vector', confirmDropOverwrite: true };
   // filesOpen 默认关：文件库是 Web 版多文档功能，C# 原版没有左栏。
   // 收起时画布左右只剩「属性侧栏」一侧占位，更接近原版观感；需要切换脑图时
   // 点 📚 展开。老配置里没有这个字段时 undefined 会走 falsy 分支，正是想要的默认收起。
@@ -1138,6 +1141,103 @@ bootIframePlugin(async (ctx) => {
    * ref 可能是新版引用串（含 IndexedDB id，能取到字节），也可能是由 C# 版迁移过来的
    * 老式本地路径（沙箱拿不到文件本体），后者只能提示。
    */
+  /**
+   * 拖放附加。
+   *
+   * 设计取舍（都已与用户确认）：
+   * - **拖到空白处忽略**，不新建节点 —— 拖放容错差，误建的空白节点清理起来很烦。
+   *   但要明确提示，否则用户只会觉得"拖了没反应"
+   * - **多个文件**：第一个挂到目标节点，其余各建一个子节点（名字取文件名主干）
+   * - **覆盖前提示**：图片/视频/文件各自是单值字段，挂第二个会顶掉第一个。
+   *   提示开关放在设置里（`settings.confirmDropOverwrite`，默认开）
+   *
+   * 为什么每轮都要重新 selectNodeById：存资产要写 IndexedDB，是**异步**的，
+   * 期间用户可能点了别处、选中态就变了。不重锁的话第二个文件会挂到错误节点上。
+   */
+  async function handleDropFiles(files, nodeId) {
+    const list = Array.from(files || []);
+    if (!list.length) return;
+    if (!bridge?.ready) { status('编辑器未就绪，无法附加', true); return; }
+
+    const items = list.map((f) => ({ file: f, kind: io.classifyFile(f.name, f.type) }));
+    let done = 0;
+    const failed = [];
+    let skipped = 0;
+
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const label = { image: '图片', video: '视频', file: '文件' }[it.kind];
+
+      // 每轮重新锁定目标节点（见上方注释）
+      if (nodeId) bridge.selectNodeById(nodeId);
+
+      if (i > 0) {
+        // 其余各建子节点。名字用文件主干，否则一堆「新建节点」分不清谁是谁
+        if (!bridge.insertChildNamed(io.stemOf(it.file.name))) {
+          failed.push(it.file.name);
+          continue;
+        }
+      } else if (hasAttachment(it.kind)) {
+        // 第一个挂到目标节点：字段是单值，挂上去会顶掉原有的
+        if (settings.confirmDropOverwrite !== false) {
+          const ok = await confirmDialog(
+            `替换${label}`,
+            `该节点已有${label}。\n\n继续将用「${it.file.name}」替换它，原${label}不可恢复。`,
+            '继续替换', true);
+          if (!ok) { skipped++; continue; }
+        }
+      }
+
+      const ok = await attachDropped(it);
+      if (ok) done++; else failed.push(it.file.name);
+    }
+
+    commit();
+    side.refresh();
+
+    if (done) {
+      const extra = items.length > 1 ? `（${done} 个，其余建为子节点）` : '';
+      status(`已附加：${items[0].file.name}${extra}`);
+      ctx.toast(`已附加 ${done} 个`, 'ok');
+    }
+    if (skipped) status(`已跳过 ${skipped} 个（未替换已有附件）`);
+    if (failed.length) status(`以下文件附加失败：${failed.join('、')}`, true);
+  }
+
+  /** 当前选中节点上是否已有该类附件 */
+  function hasAttachment(kind) {
+    if (kind === 'image') return !!bridge?.getSelectedImage?.();
+    return !!api?.selectedRef?.(kind);
+  }
+
+  /** 把单个拖放文件附加到当前选中节点 */
+  async function attachDropped(it) {
+    try {
+      if (it.kind === 'image') {
+        // 与侧栏「浏览图片」一致：内联成 dataURL，随 .xmind 一起导出
+        if (it.file.size > 2 * 1024 * 1024) {
+          status(`「${it.file.name}」超过 2MB，会让脑图文件明显变大`, true);
+        }
+        const url = await new Promise((res) => {
+          const fr = new FileReader();
+          fr.onload = () => res(String(fr.result));
+          fr.onerror = () => res(null);
+          fr.readAsDataURL(it.file);
+        });
+        if (!url) return false;
+        bridge.setImage(url);
+        return true;
+      }
+      const id = await io.putAsset(it.file);
+      if (!id) return false;
+      const payload = io.encodeRef({ n: it.file.name, a: id, s: it.file.size });
+      if (it.kind === 'video') bridge.setVideo(payload); else bridge.setFile(payload);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async function openAttachment(raw) {
     const ref = io.decodeRef(raw);
     if (!ref) { status('附件引用无法识别', true); return; }
@@ -1764,6 +1864,13 @@ bootIframePlugin(async (ctx) => {
     },
     /** 当前选中节点的节点级样式（由编辑器 nodestyle 事件回传） */
     nodeStyle: () => nodeStyleCache,
+    /** 拖放附加时，目标节点已有同类附件是否先确认 */
+    setConfirmDropOverwrite: guard('设置覆盖提示', async (on) => {
+      settings.confirmDropOverwrite = !!on;
+      const ok = await store.settings.save(settings);
+      if (!ok) { status('设置保存失败', true); return; }
+      status(settings.confirmDropOverwrite ? '拖放覆盖前会提示' : '拖放覆盖前不再提示');
+    }),
     /** 修改设置项（自动快照间隔 / 布局动画），改完立即持久化并生效 */
     setBackupMinutes: guard('设置快照间隔', async (m) => {
       settings.backupMinutes = Number(m) || 0;
@@ -1882,6 +1989,9 @@ bootIframePlugin(async (ctx) => {
     // 视频直接在页签内播放。沙箱里拿不到真实路径、也无法调用系统默认程序打开，
     // 所以退化为「视频播浮层 / 文件另存为」，并把侧栏切到文件页以便查看信息。）
     onOpenFile: guard('打开附件', (path) => openAttachment(path)),
+    // 拖放附加（图片 / 视频 / 任意文件）
+    onDropFiles: (files, nodeId) => { guard('拖放附加', () => handleDropFiles(files, nodeId))(); },
+    onDropMiss: () => status('请拖到节点上（拖到空白处不会新建节点）'),
     onHostRequest: async (action, payload) => {
       // 编辑器的 callHost 通道：saveAs 直接落成文件
       if (action === 'saveAs') {

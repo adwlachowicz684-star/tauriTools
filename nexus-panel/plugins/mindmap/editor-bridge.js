@@ -154,6 +154,15 @@ export class EditorBridge {
       case 'openfile':
         if (d.path) this.handlers.onOpenFile?.(d.path);
         break;
+      // 拖放附加：File 对象可被结构化克隆，能直接跨 iframe 传过来，
+      // 不必在两边各读一次字节
+      case 'dropfiles':
+        if (d.files?.length) this.handlers.onDropFiles?.(d.files, d.nodeId || '');
+        break;
+      // 拖到了空白处 —— 按约定不建节点，但要说出来，否则用户以为坏了
+      case 'dropmiss':
+        this.handlers.onDropMiss?.();
+        break;
       // A71：内层 iframe 的错误/警告推给插件层收集。
       // 注意这里**不** return —— 诊断只是旁路记录，不影响其它消息的处理。
       case 'diagnostic':
@@ -345,6 +354,42 @@ export class EditorBridge {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * 选中指定 data.id 的节点（拖放用）。
+   * @returns {boolean} 找到了并选中为 true
+   */
+  selectNodeById(uid) {
+    try {
+      const w = this.iframe?.contentWindow;
+      if (!w || !uid) return false;
+      return !!w.__minderSelectNode?.(uid);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 在当前选中节点下插入一个带文字的子节点并选中它（拖放放多个文件时用）。
+   * 与 insertChild() 的差别是不进入文字编辑态。
+   */
+  insertChildNamed(text) {
+    try {
+      const w = this.iframe?.contentWindow;
+      if (!w) return false;
+      return !!w.__minderInsertChildNamed?.(text);
+    } catch {
+      return false;
+    }
+  }
+
+  /** 读取选中节点上的图片（dataURL，与 image 命令同源） */
+  getSelectedImage() {
+    return this._safe('读取图片', (_m, km) => {
+      const n = km.getSelectedNode?.();
+      return n?.getData?.('image') || null;
+    });
   }
 
   /** 搜索：返回 {total,index,text}，无匹配为 0 */
