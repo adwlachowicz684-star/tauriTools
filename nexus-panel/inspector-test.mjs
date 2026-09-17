@@ -194,7 +194,51 @@ t('React 侧已 import escInspector',
 t('快捷键是 Ctrl/Cmd+Shift+D（避开 webview 的 Ctrl+Shift+I）',
   /e\.key\.toLowerCase\(\) !== 'd'/.test(isrc) && /e\.shiftKey/.test(isrc));
 
-/* ---------- 9. 卸载 ---------- */
+/* ---------- 9. iframe 插件内部的鼠标 ---------- */
+console.log('\n=== 9. iframe 内的鼠标（转发回来）===');
+/*
+ * 根因：鼠标移到 iframe 上方时，事件**归 iframe 内部文档所有**，
+ * 主文档既收不到 mousemove 也收不到 click（事件不跨文档冒泡）。
+ *
+ * 于是 elementAt() 里那段"穿透 iframe"的递归**永远没机会执行** ——
+ * elementFromPoint 压根拿不到 iframe 元素，因为压根没触发过。
+ *
+ * 表现：外壳自己的控件（标题栏/侧边栏）都能选中，
+ * 而 iframe 插件（含设置页面板）里的一切都选不中 ——
+ * 看着像"有些控件坏了"，其实是整个 iframe 区域都够不着。
+ */
+const hostSrc = src('js/host.js');
+const sdkSrc2 = src('js/plugin-sdk.js');
+
+t('inspector 导出 moveInIframe（供宿主转发进来）',
+  /export function moveInIframe/.test(isrc));
+t('inspector 导出 clickInIframe', /export function clickInIframe/.test(isrc));
+/* 隔离插件（opaque origin）进不去，必须降级到 iframe 本身并标注，
+   而不是什么都不显示 —— 静默失败比报错更难排查。 */
+t('隔离 iframe 降级到 iframe 本身',
+  /function innerEl\(iframe, x, y\)[\s\S]{0,320}return iframe;/.test(isrc));
+
+t('宿主登记 iframe', /liveFrames\.add\(iframe\)/.test(hostSrc));
+t('宿主在 iframe 卸载时注销（否则泄漏 + 给空窗口发消息）',
+  /liveFrames\.delete\(iframe\)/.test(hostSrc));
+t('宿主监听检查器开关并广播给所有 iframe',
+  /nexus:inspector-toggle/.test(hostSrc) && /function broadcastInspect/.test(hostSrc));
+t('新挂载的 iframe 立刻同步检查器状态',
+  /if \(isInspectorOn\(\)\) \{[\s\S]{0,140}type: 'inspect', on: true/.test(hostSrc));
+t('宿主处理 inspect-move', /case 'inspect-move':/.test(hostSrc));
+t('宿主处理 inspect-click', /case 'inspect-click':/.test(hostSrc));
+
+t('插件侧接收 inspect 开关', /d\.type === 'inspect'/.test(sdkSrc2));
+t('插件侧转发 mousemove 坐标', /type: 'inspect-move', x, y/.test(sdkSrc2));
+t('插件侧转发 click 坐标', /type: 'inspect-click', x: e\.clientX/.test(sdkSrc2));
+/* mousemove 每秒上百次，不节流会白白吃掉主线程 */
+t('转发有节流（rAF）', /requestAnimationFrame/.test(sdkSrc2));
+/* 点击必须**同步**阻止：宿主回包是异步的，等它回来按钮早被触发了 */
+t('插件侧同步阻止 click（不等宿主异步回包）',
+  /const onClick = \(e\) => \{[\s\S]{0,140}e\.preventDefault\(\);/.test(sdkSrc2));
+t('插件卸载时停掉转发', /stopInspectRelay\?\.\(\);/.test(sdkSrc2));
+
+/* ---------- 10. 卸载 ---------- */
 console.log('\n=== 9. 卸载 ===');
 insp.setInspector(false);
 uninstall();

@@ -229,12 +229,8 @@ function onMove(e) {
   highlight(el);
 }
 
-/** 开发者模式下点击 = 锁定/解锁，并顺手阻止按钮被真的触发 */
-function onClick(e) {
-  if (!on) return;
-  e.preventDefault();
-  e.stopPropagation();
-  const el = elementAt(e.clientX, e.clientY);
+/** 选中（并复制路径）；再点同一个则解锁 */
+function pickAt(el) {
   if (!el) return;
   if (locked === el) {
     locked = null;                    // 再点一次解锁
@@ -250,6 +246,55 @@ function onClick(e) {
       document.dispatchEvent(new CustomEvent('nexus:inspector-copy', { detail: { text, ok } }));
     } catch { /* 测试环境可能没有 CustomEvent */ }
   });
+}
+
+/** 开发者模式下点击 = 锁定/解锁，并顺手阻止按钮被真的触发 */
+function onClick(e) {
+  if (!on) return;
+  e.preventDefault();
+  e.stopPropagation();
+  pickAt(elementAt(e.clientX, e.clientY));
+}
+
+/* ---------------------- iframe 内部的鼠标（转发回来） ---------------------- */
+
+/*
+ * 为什么需要这一整段：
+ *
+ * 鼠标移到 iframe 上方时，事件**归 iframe 内部文档所有** ——
+ * 主文档既收不到 mousemove 也收不到 click（事件不跨文档冒泡）。
+ * 于是 elementAt() 里那段"穿透 iframe"的递归**永远没机会执行**：
+ * elementFromPoint 压根拿不到 iframe 元素，因为根本没触发过。
+ *
+ * 表现就是：外壳自己的控件（标题栏/侧边栏）都能选中，
+ * 而 iframe 插件（含设置页面板）里的一切都选不中 ——
+ * 看着像"有些控件坏了"，其实是整个 iframe 区域都够不着。
+ *
+ * 解法与 ESC 同思路：让插件把自己视口内的鼠标位置转发回来，
+ * 外壳拿它去**该 iframe 自己的 document** 上做 elementFromPoint。
+ * 坐标不用换算 —— 插件给的本来就是它自己视口里的 x/y，正好对得上。
+ */
+function innerEl(iframe, x, y) {
+  const d = docOf(iframe);
+  if (!d || typeof d.elementFromPoint !== 'function') {
+    // 隔离插件（opaque origin）进不去：降级到 iframe 本身，信息条会标"隔离"
+    return iframe;
+  }
+  return d.elementFromPoint(x, y) || iframe;
+}
+
+/** iframe 内鼠标移动 —— 转发回来后由外壳高亮 */
+export function moveInIframe(iframe, x, y) {
+  if (!on || locked) return;
+  if (!iframe) return;
+  highlight(innerEl(iframe, x, y));
+}
+
+/** iframe 内点击 —— 转发回来后由外壳锁定并复制路径 */
+export function clickInIframe(iframe, x, y) {
+  if (!on) return;
+  if (!iframe) return;
+  pickAt(innerEl(iframe, x, y));
 }
 
 /**

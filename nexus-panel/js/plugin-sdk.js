@@ -628,6 +628,51 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
     window.parent.postMessage({ channel, ...msg }, hostOrigin);
   }
 
+  /* ---------------------------------------------------------------
+     元素检查器：把本 iframe 内的鼠标位置转发回外壳
+     ---------------------------------------------------------------
+     鼠标在本 iframe 上时，事件归本 iframe 的文档所有，
+     外壳**一个也收不到**（事件不跨文档冒泡）—— 于是外壳那边
+     的 elementFromPoint 永远拿不到 iframe，插件里的一切都选不中。
+
+     所以由插件自己监听，把位置转发回去，外壳再拿这个坐标去
+     本 iframe 的 document 上做命中。坐标不用换算：
+     这里给的本来就是本 iframe 视口里的 clientX/clientY。
+     --------------------------------------------------------------- */
+  let stopInspectRelay = null;
+  function setInspectRelay(on) {
+    stopInspectRelay?.();
+    stopInspectRelay = null;
+    if (!on) return;
+
+    /* 节流到每帧一次：mousemove 每秒能触发上百次，
+       每条都 postMessage 会白白吃掉主线程。检查器用不着那么高的采样率。 */
+    let raf = 0;
+    const onMove = (e) => {
+      if (raf) return;
+      const x = e.clientX, y = e.clientY;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        post({ type: 'inspect-move', x, y });
+      });
+    };
+    /* 点击必须**同步**阻止：外壳的回应是异步的（postMessage 往返），
+       等它回来再 preventDefault 已经晚了，按钮早就被真的触发了。 */
+    const onClick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      post({ type: 'inspect-click', x: e.clientX, y: e.clientY });
+    };
+
+    window.addEventListener('mousemove', onMove, true);
+    window.addEventListener('click', onClick, true);
+    stopInspectRelay = () => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener('mousemove', onMove, true);
+      window.removeEventListener('click', onClick, true);
+    };
+  }
+
   window.addEventListener('message', (e) => {
     const d = e.data;
     if (!d || d.channel !== channel) return;
@@ -738,6 +783,7 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
       const baseDestroy = ctx.__destroy;
       ctx.__destroy = async () => {
         shortcutCleanups.splice(0).forEach((off) => { try { off(); } catch {} });
+        stopInspectRelay?.();
         await baseDestroy();
       };
 
@@ -755,6 +801,13 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
 
       ctxReady = ctx;
       resolveMount(ctx);
+    }
+
+    /* 检查器开关。新挂载的插件（比如打开设置抽屉才挂的设置面板）
+       会在 mounted 后收到一条，见 host.js 里的广播。 */
+    if (d.type === 'inspect') {
+      setInspectRelay(!!d.on);
+      return;
     }
 
     if (d.type === 'res') {

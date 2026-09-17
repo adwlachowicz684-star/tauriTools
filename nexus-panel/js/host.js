@@ -6,6 +6,10 @@
  */
 
 import { getTauri, isInsideTauri } from './tauri-core.js';
+/* 元素检查器：iframe 内的鼠标事件收不到（不跨文档冒泡），
+   靠插件转发坐标回来，再由这两个函数去 iframe 自己的文档里命中。
+   引入它们而不是走事件，是因为需要同步读取"检查器是否开着"。 */
+import { isInspectorOn, moveInIframe, clickInIframe } from './inspector.js';
 import { createModuleContext, BRIDGE_CHANNEL } from './plugin-sdk.js';
 import { installAdapter } from './theme-normalizer.js';
 import * as normalizer from './theme-normalizer.js';
@@ -709,6 +713,7 @@ export function createHost(opts = {}) {
     iframe.dataset.pluginId = manifest.id;
     const t0 = performance.now?.() ?? Date.now();
     wrap.appendChild(iframe);
+    liveFrames.add(iframe);
 
     const cleanupFns = [];
     // 事件订阅登记表（见 case 'subscribe' 的说明）
@@ -838,6 +843,11 @@ export function createHost(opts = {}) {
             break;
           case 'mounted':
             clearTimeout(timeout);
+            /* 新挂载的 iframe 要立刻同步检查器状态 ——
+               设置面板正是"打开抽屉才挂载"的，少了这句它就永远收不到通知。 */
+            if (isInspectorOn()) {
+              try { send(iframe, { type: 'inspect', on: true }); } catch {}
+            }
             d.ok ? resolve() : reject(new Error(d.error));
             break;
           case 'error':
@@ -846,6 +856,15 @@ export function createHost(opts = {}) {
             break;
           case 'req':
             handleBridgeRequest(manifest, iframe, d);
+            break;
+          /* iframe 内的鼠标位置（见 broadcastInspect 的说明）。
+             x/y 是插件**自己视口**里的坐标，正好能直接喂给它的
+             document.elementFromPoint，不需要换算。 */
+          case 'inspect-move':
+            moveInIframe(iframe, d.x, d.y);
+            break;
+          case 'inspect-click':
+            clickInIframe(iframe, d.x, d.y);
             break;
           case 'subscribe': {
             const unsub = bus.on(d.event, (payload) => send(iframe, { type: 'event', event: d.event, payload }));
@@ -910,6 +929,10 @@ export function createHost(opts = {}) {
     /* 兜底显形：mounted 之后无论后面适配成功与否，最多 900ms 一定显示。
        没有它，reAdapt 抛错或插件自报基调迟迟不来时，插件会一直隐身。 */
     cleanupFns.push(armRevealFallback(iframe));
+
+    /* 卸载时注销，否则 liveFrames 会一直持有已移除的 iframe：
+       既泄漏，又会在广播时给一个没内容的窗口发消息。 */
+    cleanupFns.push(() => liveFrames.delete(iframe));
 
     try {
       await ready;
@@ -987,6 +1010,31 @@ export function createHost(opts = {}) {
       targetOriginFor(iframe),
     );
   }
+
+  /* ---------------------------------------------------------------
+     元素检查器：把开关状态广播给所有 iframe 插件
+     ---------------------------------------------------------------
+     鼠标在 iframe 上时主文档收不到 mousemove/click，所以必须让插件
+     自己在内部监听并转发坐标回来。
+
+     两个时机都要覆盖，缺一个就会出现"某些 iframe 查不了"：
+       · 检查器开关时 —— 广播给当前所有已挂载的 iframe
+       · iframe 新挂载时 —— 设置面板是打开抽屉才挂的，
+         若检查器已经开着，它必须一挂上就收到通知
+     --------------------------------------------------------------- */
+  const liveFrames = new Set();
+
+  function broadcastInspect(on) {
+    for (const f of liveFrames) {
+      try { send(f, { type: 'inspect', on: !!on }); } catch { /* 已卸载 */ }
+    }
+  }
+
+  /* 监听检查器开关。用事件而不是让 inspector 反向依赖 host，
+     保持"引擎不知道 UI"的方向不变。 */
+  document.addEventListener('nexus:inspector-toggle', (e) => {
+    broadcastInspect(!!e.detail?.on);
+  });
 
   /** iframe 插件的桥接服务端：转发 invoke / store 等请求 */
   async function handleBridgeRequest(manifest, iframe, d) {
