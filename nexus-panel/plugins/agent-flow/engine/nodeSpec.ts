@@ -302,6 +302,25 @@ export const SPECS: Record<string, NodeSpec> = {
   const: S('text', 'none', '常量值（支持模板）'),
   log: S('any', 'any', '原样透传上游 —— 插在链中间不破坏数据'),
 
+  // 运算
+  math: S('text', 'any', '运算结果（数字文本）'),
+  text: S('text', 'any', '运算后的文本'),
+  /*
+   * 比较输出的是 'true'/'false' 文本。
+   * 刻意不标 bool —— bool 是给条件节点判定的，
+   * 而比较的结果常常还要当文本传给下游显示。
+   */
+  compare: S('text', 'any', "比较结果 'true' / 'false'"),
+  random: S('text', 'any', '随机结果'),
+  /*
+   * 变量：写模式透传（写完后下游能接着用），
+   * 读模式产出的是变量的值。
+   * 统一记 any —— 它的接受侧其实无所谓，因为值来自上游或配置。
+   */
+  var: S('any', 'any', '写模式：写入的值；读模式：变量的值'),
+  stop: S('any', 'any', '透传上游（只是让流程停下）'),
+  ask: S('text', 'any', '人填的内容'),
+
   // 组合
   module: S('any', 'any', '模块内部最后一个节点的输出'),
 

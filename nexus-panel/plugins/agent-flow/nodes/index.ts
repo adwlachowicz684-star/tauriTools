@@ -41,6 +41,13 @@ import './defs/const';
 import './defs/module';
 import './defs/wechat';
 /* ---- 控制器 ---- */
+import './defs/math';
+import './defs/text';
+import './defs/compare';
+import './defs/random';
+import './defs/var';
+import './defs/stop';
+import './defs/ask';
 import './defs/join';
 import './defs/gate';
 import './defs/throttle';

@@ -167,6 +167,13 @@ export type RunOptions = {
    * 密钥不进图数据，导出画布时也不会跟着走。
    */
   credentials?: Credential[];
+  /**
+   * 等人填内容（「人工输入」节点用）。
+   *
+   * 返回 null = 用户取消。不提供时该节点会明确失败并说明原因 ——
+   * 静默返回空串会让下游拿着空值继续跑，那比报错难查得多。
+   */
+  askHuman?: (promptText: string, defaultValue?: string) => Promise<string | null>;
   /** GitHub 拉取执行器；不提供时 GitHub 更新节点会失败并提示 */
   githubFetch?: GithubUpdateRunner;
   /** GitHub 推送执行器；不提供时 GitHub 推送节点会失败并提示 */
@@ -205,6 +212,8 @@ export type RunSummary = {
   parallels: ParallelRecord[];
   /** 循环节点的执行结果 */
   loops: LoopRecord[];
+  /** 运行结束时的工作流变量表 */
+  vars: Record<string, string>;
 };
 
 

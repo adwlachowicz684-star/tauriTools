@@ -295,7 +295,12 @@ export type NodeData =
   | GateNodeData
   | ThrottleNodeData
   | TimeoutNodeData
-  | RetryNodeData;
+  | RetryNodeData
+  /* ---- 运算 ---- */
+  | OpNodeData
+  | VarNodeData
+  | StopNodeData
+  | AskNodeData;
 
 /** 算子分类，用于面板里分组展示 */
 export type OpCategory = 'text' | 'empty' | 'flow';
@@ -1779,6 +1784,131 @@ export function makeModuleNode(id: string, partial: Partial<ModuleNodeData> = {}
 
 export function isModule(d: NodeData): d is ModuleNodeData {
   return (d as ModuleNodeData).kind === 'module';
+}
+
+/* ------------------------------------------------------------------ */
+/* 运算、变量、停止、人工输入                                            */
+/* ------------------------------------------------------------------ */
+
+/** 四个运算节点共用的数据形状 */
+export type OpNodeData = {
+  size?: NodeSize;
+  stackParent?: string | null;
+  stackCollapsed?: boolean;
+  kind: 'math' | 'text' | 'compare' | 'random';
+  label: string;
+  /** 具体运算 */
+  op: string;
+  /** 参与运算的值，都支持模板 */
+  a?: string;
+  b?: string;
+  /** 只有文本运算用到第三个值（替换成什么 / 取到哪个位置） */
+  c?: string;
+  status?: string;
+  output?: string;
+  error?: string;
+};
+
+export type VarNodeData = {
+  size?: NodeSize;
+  stackParent?: string | null;
+  stackCollapsed?: boolean;
+  kind: 'var';
+  label: string;
+  /** 读还是写 */
+  mode: 'get' | 'set';
+  name: string;
+  /** set 模式下的值；留空则用上游输出 */
+  value?: string;
+  status?: string;
+  output?: string;
+  error?: string;
+};
+
+export type StopNodeData = {
+  size?: NodeSize;
+  stackParent?: string | null;
+  stackCollapsed?: boolean;
+  kind: 'stop';
+  label: string;
+  /** 停整个流程还是只停这条分支 */
+  mode: 'all' | 'branch';
+  status?: string;
+  output?: string;
+  error?: string;
+};
+
+export type AskNodeData = {
+  size?: NodeSize;
+  stackParent?: string | null;
+  stackCollapsed?: boolean;
+  kind: 'ask';
+  label: string;
+  prompt: string;
+  /** 预填内容 */
+  value?: string;
+  /** 是否必填 */
+  required?: boolean;
+  status?: string;
+  output?: string;
+  error?: string;
+};
+
+function mkOp(kind: 'math' | 'text' | 'compare' | 'random', id: string, label: string, op: string, partial: Record<string, unknown> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind, label, op,
+      a: partial.a ?? '', b: partial.b ?? '', c: partial.c ?? '',
+      status: 'idle', output: '', error: '',
+    } as OpNodeData,
+  };
+}
+
+export function makeMathNode(id: string, partial: Record<string, unknown> = {}): GraphNode {
+  return mkOp('math', id, '数学运算', 'add', partial);
+}
+export function makeTextNode(id: string, partial: Record<string, unknown> = {}): GraphNode {
+  return mkOp('text', id, '文本运算', 'concat', partial);
+}
+export function makeCompareNode(id: string, partial: Record<string, unknown> = {}): GraphNode {
+  return mkOp('compare', id, '比较', 'eq', partial);
+}
+export function makeRandomNode(id: string, partial: Record<string, unknown> = {}): GraphNode {
+  return mkOp('random', id, '随机', 'int', partial);
+}
+
+export function makeVarNode(id: string, partial: Record<string, unknown> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'var', label: '变量', mode: 'set', name: '',
+      value: '', status: 'idle', output: '', error: '',
+      ...partial,
+    } as VarNodeData,
+  };
+}
+
+export function makeStopNode(id: string, partial: Record<string, unknown> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'stop', label: '停止', mode: 'all',
+      status: 'idle', output: '', error: '',
+      ...partial,
+    } as StopNodeData,
+  };
+}
+
+export function makeAskNode(id: string, partial: Record<string, unknown> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'ask', label: '人工输入', prompt: '', value: '', required: true,
+      status: 'idle', output: '', error: '',
+      ...partial,
+    } as AskNodeData,
+  };
 }
 
 export function makeConstNode(id: string, partial: Partial<ConstNodeData> = {}): GraphNode {

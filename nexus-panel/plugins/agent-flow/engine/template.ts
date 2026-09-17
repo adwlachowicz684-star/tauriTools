@@ -21,6 +21,14 @@ export type RenderCtx = {
    */
   fields?: Record<string, Record<string, string>>;
   /**
+   * 工作流变量表，支持 {{var.名字}}。
+   *
+   * 与 outputs 的区别见 runner.ts 里的同名注释：
+   * 这里存的是"流程自己记下来的值"，名字由用户起，
+   * 因此比 {{节点id.output}} 稳定。
+   */
+  vars?: Record<string, string>;
+  /**
    * 嵌合（Scratch 式上下吸附）带来的两个变量。
    *
    *   {{input}}        直接上方的输出（未嵌合时仍是工作流全局输入）
@@ -72,6 +80,18 @@ export function renderTemplate(tpl: string, ctx: RenderCtx): RenderResult {
       if (field === 'output' || field === 'item') value = lp.item;
       else if (field === 'index') value = String(lp.index);
       else if (field === 'count') value = String(lp.count);
+    } else if (nodeId === 'var') {
+      const v = ctx.vars?.[field];
+      /*
+       * 变量没设过时当未解析（保留原样提示），
+       * 而不是给空串 —— 空串会让"还没赋值"和"赋了空值"看起来一样，
+       * 而这两者要修的方式完全不同。
+       */
+      if (v === undefined) {
+        missing.push(key);
+        return `{{${key}}}`;
+      }
+      value = v;
     } else if (field === 'output') value = ctx.outputs[nodeId];
     else value = ctx.fields?.[nodeId]?.[field];
 

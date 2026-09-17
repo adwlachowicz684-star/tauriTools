@@ -62,12 +62,63 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
 
   if (cyclic.length > 0) {
     emit({ type: 'run-error', message: `检测到环，无法执行：${cyclic.join(' → ')}` });
-    return { ok: false, outputs: {}, failed: cyclic, skipped: [], branches: [], parallels: [], loops: [] };
+    return {
+      ok: false, outputs: {}, failed: cyclic, skipped: [],
+      branches: [], parallels: [], loops: [], vars: {},
+    };
   }
 
   const runStartedAt = Date.now();
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   const outputs: Record<string, string> = {};
+  /*
+   * 工作流变量表。跨节点共享，{{var.名字}} 可读。
+   *
+   * 与 outputs 的区别：outputs 是"某个节点产出了什么"（id → 结果），
+   * vars 是"流程自己记了什么"（名字 → 值）。
+   * 后者能解决 outputs 解决不了的问题 ——
+   * 下游要拿上游**很远**的值时，{{id.output}} 得知道那个 id，
+   * 而流程一改 id 就变了；用变量存一个名字则稳定得多。
+   */
+  const vars: Record<string, string> = {};
+  /*
+   * 停止信号。由「停止」节点写入。
+   *
+   * 'all' = 整个流程到此为止（Scratch 的"停止全部脚本"）
+   * 'branch' = 只掐掉当前这条分支，别的分支照跑
+   */
+  let stopAll = false;
+  /*
+   * 「停止这条分支」的起点。
+   *
+   * 第一版写成了"停掉当前 scope"，那是错的 ——
+   * 单纯的分叉（A 同时连向 B 和 C）共用同一个全局 scope，
+   * 停一条会把另一条也停了，而这正是用户不期望的。
+   *
+   * 正确的粒度是**停止节点自己的下游链路**：
+   * 从它出发沿边能走到的都停，走不到的照跑。
+   */
+  const stoppedRoots = new Set<string>();
+  let stoppedDownstream: Set<string> | null = null;
+
+  /** 从停止节点出发，沿正向边能走到的全部节点（含自身） */
+  const computeStoppedDownstream = (): Set<string> => {
+    const out = new Set<string>();
+    const adj = new Map<string, string[]>();
+    for (const e of graph.edges) {
+      const cur = adj.get(e.source);
+      if (cur) cur.push(e.target);
+      else adj.set(e.source, [e.target]);
+    }
+    const stack = [...stoppedRoots];
+    while (stack.length > 0) {
+      const id = stack.pop() as string;
+      if (out.has(id)) continue;
+      out.add(id);
+      for (const nxt of adj.get(id) ?? []) stack.push(nxt);
+    }
+    return out;
+  };
   const failed: string[] = [];
   const skipped: string[] = [];
   const branches: BranchRecord[] = [];
@@ -164,6 +215,12 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
 
     for (const layer of localLayers) {
       if (opts.signal?.aborted) return;
+      // 停止全部：整个流程到此为止
+      if (stopAll) return;
+      // 停止这条分支：掐掉停止节点的下游链路，别的分支不受影响
+      if (stoppedRoots.size > 0) {
+        if (!stoppedDownstream) stoppedDownstream = computeStoppedDownstream();
+      }
 
       const runnable: string[] = [];
       for (const id of layer) {
@@ -207,7 +264,14 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
         const workers = Array.from({ length: workerCount }, async () => {
           while (queue.length > 0) {
             if (opts.signal?.aborted) return;
+            if (stopAll) return;
             const id = queue.shift()!;
+            /*
+             * 在停止节点的下游链路上 → 跳过。
+             * 不计入 skipped 也不算失败 —— "主动停下的"与"没跑成的"是两回事，
+             * 混在一起会让日志里出现一堆红色，排查时会往错误方向找。
+             */
+            if (stoppedDownstream && stoppedDownstream.has(id)) continue;
             await runNode(id, scope);
           }
         });
@@ -255,9 +319,42 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
      * 获得这个能力 —— 以后要改成发事件、或改成可配置的严格模式
      * （缺失即失败），也只需要动这一处。
      */
+    vars,
+    /*
+     * 发起停止。
+     *
+     * 不直接抛异常 —— 抛出的话当前节点会被记成 failed，
+     * 而"用户/流程主动停下"不是失败，日志里显示成红色会误导排查。
+     */
+    requestStop: (mode) => {
+      if (mode === 'all') {
+        stopAll = true;
+        return;
+      }
+      stoppedRoots.add(id);
+      // 新加了一个停止点，缓存失效
+      stoppedDownstream = null;
+    },
+    /** 停下来了吗（供节点决定要不要继续做无用功） */
+    isStopped: () => {
+      if (stopAll) return true;
+      if (stoppedRoots.size === 0) return false;
+      if (!stoppedDownstream) stoppedDownstream = computeStoppedDownstream();
+      return stoppedDownstream.has(id);
+    },
+    /*
+     * 等人填东西。
+     *
+     * 没有提供实现时返回 null，由执行器转成明确的失败 ——
+     * 静默返回空串会让下游拿着空值继续跑，那比报错难查。
+     */
+    askHuman: async (promptText, defaultValue) => {
+      if (!opts.askHuman) return null;
+      return opts.askHuman(promptText, defaultValue);
+    },
     tpl: (text) => {
       const r = renderTemplate(text, {
-        outputs, input: opts.input, loop: currentLoop(), fields: nodeFields,
+        outputs, input: opts.input, loop: currentLoop(), fields: nodeFields, vars,
         /*
          * 嵌合带来的 {{input}} / {{chain.output}}。
          * 没有嵌合关系时两者都不传 —— {{input}} 回落到全局输入，
@@ -312,5 +409,5 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
 
   const ok = failed.length === 0;
   emit({ type: 'run-done', ok });
-  return { ok, outputs, failed, skipped, branches, parallels, loops };
+  return { ok, outputs, failed, skipped, branches, parallels, loops, vars };
 }
