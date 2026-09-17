@@ -36,8 +36,16 @@ const MAX_CUSTOM = 24;
 
 /** 色盘：预设 24 色 + 自定义常用色（可增删持久化）+ RGB/HEX 输入 + 吸管 + 恢复默认 */
 export function ColorPicker({
-  value, customColors, onChange, onSaveCustom, onLog, compact,
+  value, customColors, onChange, onSaveCustom, onLog, compact, preset,
 }: {
+  /**
+   * 预设色（"常用色"那一排）。
+   *
+   * 不给则用共享的 PRESET_COLORS。
+   * 给的话由调用方决定 —— 不同调用方可能想给不同的一套
+   * （比如项目标签色一套、状态色一套）。
+   */
+  preset?: string[];
   /** 日志回调（可选）：不给的话就不记日志，取色失败也不报错 */
   onLog?: (msg: string, isError?: boolean) => void;
   value: string | null;
@@ -189,7 +197,7 @@ export function ColorPicker({
       {/* 预设色 */}
       <div className="fpx-picker-label">常用色</div>
       <div className="fpx-swatches">
-        {PRESET_COLORS.map((c) => (
+        {(preset ?? PRESET_COLORS).map((c) => (
           <button
             key={c}
             className={`fpx-swatch${current === c ? ' active' : ''}`}

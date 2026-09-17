@@ -48,19 +48,38 @@ export interface PluginContext {
      *   reject(错误)  —— 真出错（服务没装 / 挂载失败 / 超时 / 崩溃）
      *
      * 于是调用方无需 try/catch 就能一行调起：
-     *   const hex = await ctx.services.color.pick();
-     *   if (hex) apply(hex);
+     *   const r = await ctx.services.color.pick({ initial, custom: saved });
+     *   if (r.hex) apply(r.hex);
+     *   save(r.custom);          // 取消了也要存
+     *
+     * 只要颜色、不管收藏：
+     *   const hex = await ctx.services.color.pickHex();
      */
     /** 取色服务 */
     color: {
-      /** 打开取色面板，返回 '#RRGGBB'；**取消返回 null** */
+      /**
+       * 打开取色面板。
+       *
+       * 返回 `{ hex, custom }`：
+       *   · hex —— 选中的颜色，取消为 null
+       *   · custom —— 最新自定义色，**取消也要存**（用户可能刚收藏完就取消）
+       *
+       * 调用方把自己的 custom 传进来、把返回的 custom 存起来，
+       * 就能"下次打开还记住"，且各调用方互不干扰。
+       */
       pick(initial?: string | null, opts?: {
-        /** 给了就实时广播拖动中的颜色，配合 ctx.on 使用 */
+        /** 给了就实时广播拖动中的颜色（默认不需要：色盘自己的预览块就在变） */
         previewEvent?: string;
         /** 允许返回 null 表示"清除颜色" */
         allowNull?: boolean;
-        /** 自定义常用色（不给则读上次存下的） */
+        /** 自定义常用色：传进来 → 显示；返回时 → 存起来 */
         custom?: string[];
+        /** 覆盖默认 24 个预设色 */
+        preset?: string[];
+      }): Promise<{ hex: string | null; custom: string[] }>;
+      /** 只要颜色、不管自定义色时用这个（一行版） */
+      pickHex(initial?: string | null, opts?: {
+        previewEvent?: string; allowNull?: boolean; custom?: string[]; preset?: string[];
       }): Promise<string | null>;
       /** 归一化任意颜色输入，非法返回 null */
       normalize(color: string): Promise<string | null>;

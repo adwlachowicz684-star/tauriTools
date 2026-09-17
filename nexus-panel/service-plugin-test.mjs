@@ -253,6 +253,9 @@ t('色盘服务不依赖 project-group（代码里）', !/project-group/.test(cp
 
 console.log('\n=== 10e. 服务弹窗用共享组件（不是弱化版）===');
 const mainTsx = src('plugins/color-picker/main.tsx');
+const cpMain = mainTsx;
+const sdkDts2 = src('js/plugin-sdk.d.ts');
+
 t('服务入口是 React 版', /bootServiceReactPlugin/.test(mainTsx));
 t('服务渲染共享的 ColorPicker', /from '\.\/ColorPicker'/.test(mainTsx)
   && /<ColorPicker/.test(mainTsx));
@@ -267,6 +270,11 @@ t('共享色盘有吸管待命态（不是一点就取）',
    我第一版写错了写法 → 恒假。 */
 t('共享色盘有 RGB 数字输入',
   /type="number"/.test(src('plugins/color-picker/ColorPicker.tsx')));
+/* preset 可覆盖：不同调用方可以给不同的一套常用色 */
+t('色盘支持 preset 覆盖', /preset\?: string\[\]/.test(src('plugins/color-picker/ColorPicker.tsx')));
+t('色盘真的用传入的 preset 渲染',
+  /\(preset \?\? PRESET_COLORS\)\.map/.test(src('plugins/color-picker/ColorPicker.tsx')));
+t('服务把 preset 透传进去', /preset=\{view\.preset\}/.test(cpMain));
 
 console.log('\n=== 10g. 服务模态也能实时预览 ===');
 /*
@@ -282,8 +290,11 @@ console.log('\n=== 10g. 服务模态也能实时预览 ===');
 t('pick 支持 previewEvent', /previewEvent/.test(mainTsx));
 t('onChange 里真的 emit 了',
   /emitFn\(current\.previewEvent, hex\)/.test(mainTsx));
-t('pick 把 ctx.emit 与 ctx.store 传进会话',
-  /openSession\(args, ctx\?\.emit, ctx\?\.store\)/.test(mainTsx));
+t('pick 把 ctx.emit 传进会话',
+  /openSession\(args, ctx\?\.emit\)/.test(mainTsx));
+/* 不再传 ctx.store —— 持久化交给调用方了 */
+t('pick 不再依赖 ctx.store',
+  !/ctx\?\.store/.test(mainTsx));
 /* 不给就不发 —— 避免每个服务调用都往总线上广播 */
 t('未给 previewEvent 时不广播',
   /if \(current\?\.previewEvent && current\?\.emitFn\)/.test(mainTsx));
@@ -302,7 +313,6 @@ console.log('\n=== 10h. 服务与内联「体感一致」===');
  * 目标：别的插件调服务，跟 project-group 内联用，看到的东西要一样。
  * 下面每一条都是一个"不一样就会被用户察觉"的点。
  */
-const cpMain = src('plugins/color-picker/main.tsx');
 
 /* ① 起始色：两边必须同一个常量。
     此前内联 #7C8CFF、服务 #3E63DD —— 同一个"默认"两个颜色。 */
@@ -315,8 +325,28 @@ t('内联色盘也不再自带起始色定义',
 
 /* ② 自定义常用色要持久化。React 化时丢过一次 ——
     不存的话收藏的色关掉面板就没了，而内联是存进配置里的。 */
-t('服务会持久化自定义色', /storeSlot\?\.set\('custom'/.test(cpMain));
-t('服务会读取已存的自定义色', /store\.get\('custom'/.test(cpMain));
+/*
+ * 改了：**持久化交给调用方**。
+ *
+ * 服务是单例、被多个调用方共用，它自己存一份会让 A 的收藏串到 B 那里。
+ * 所以改为"传进来 → 显示；带回去 → 调用方存"。
+ */
+/*
+ * 破坏验证注意：我第一次用 `ctxStore?.set(...)` 去破坏，断言没红 ——
+ * 因为写死的检测串是 storeSlot / store.get，换个变量名就绕过了。
+ * 改成检测**任何往存储里写 custom 的行为**（形如 set('custom'）以及
+ * openSession 是否还接收 store 参数。
+ */
+t('服务不再自己存 custom（避免跨调用方串味）',
+  !/set\('custom'/.test(stripComments(cpMain))
+  && !/store\.get\('custom'/.test(stripComments(cpMain))
+  && !/ctx\?\.store/.test(stripComments(cpMain)));
+t('custom 传入后显示', /customColors=\{view\.custom\}/.test(cpMain));
+t('custom 会随结果带回去（含取消）',
+  /s\?\.resolve\(\{ hex, custom: customRef\.current/.test(cpMain));
+t('收摊走统一的 finish（确定与取消都带 custom）',
+  /const finish = \(hex: string \| null\)/.test(cpMain)
+  && /onClick=\{\(\) => finish\(null\)\}/.test(cpMain));
 
 /* ③ "未设置颜色"要显示「默认」标记，不能被归一化成一个具体色。
    必须钉**两处具体的赋值/渲染**，只钉 /showDefaultTag/ 是不行的：
@@ -361,7 +391,8 @@ const strip = (t) => {
 };
 const cpMainCode = strip(src('plugins/color-picker/main.tsx'));
 t('取色服务取消不 reject', !/reject\(new Error\('已取消'\)\)/.test(cpMainCode));
-t('取色服务取消 resolve(null)', /resolve\(null\)/.test(cpMainCode));
+t('取色服务取消走 finish(null)（仍带 custom）',
+  /onClick=\{\(\) => finish\(null\)\}/.test(cpMainCode));
 /* 另两个服务同样要遵守 —— 只改一个的话，调用方换个服务就又得 try/catch */
 for (const [f, label] of [['plugins/icon-picker/index.js', '图标'], ['plugins/md-editor/index.js', 'md']]) {
   const c = strip(src(f));
@@ -384,10 +415,13 @@ t('浮层收回在 finally 里（异常也不漏）',
 t('pick 薄封装支持第二参（previewEvent 等）',
   /pick: \(initial, opts\) => call\('color-picker', 'pick', \{ initial, \.\.\./.test(sdk));
 t('color 薄封装补齐 hsv', /hsv: \(color\) => call/.test(sdk));
+/* 只要颜色、不管收藏时，不该逼调用方从对象里取 */
+t('color 薄封装提供 pickHex 一行版', /pickHex:/.test(sdk));
+t('pickHex 类型可空', /pickHex\(initial\?: string \| null[\s\S]{0,300}Promise<string \| null>/.test(sdkDts2));
 /* 类型必须同步 —— 不同步的话 TS 侧拿到的是旧的 Promise<string>，
    写 if (hex) 会被告知"永远为真"，取消判断就被静默忽略了 */
-const sdkDts2 = src('js/plugin-sdk.d.ts');
-t('pick 类型返回 string | null', /pick\(initial\?: string \| null[\s\S]{0,400}Promise<string \| null>/.test(sdkDts2));
+
+t('pick 类型返回 { hex, custom }', /Promise<\{ hex: string \| null; custom: string\[\] \}>/.test(sdkDts2));
 t('browse 类型返回可空', /Promise<\{ name: string; url: string \} \| null>/.test(sdkDts2));
 t('edit 类型返回可空', /edit\(text\?: string, title\?: string\): Promise<string \| null>/.test(sdkDts2));
 

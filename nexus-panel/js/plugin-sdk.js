@@ -141,18 +141,30 @@ function withBuiltinShortcuts(services) {
      * 漏了就是 unhandled rejection。
      *
      * 于是调用方可以这样，无需 try/catch：
-     *   const hex = await ctx.services.color.pick();
-     *   if (hex) apply(hex);
+     *   const r = await ctx.services.color.pick({ initial, custom: saved });
+     *   if (r.hex) apply(r.hex);
+     *   save(r.custom);          // 取消了也要存
+     *
+     * 只要颜色、不管收藏：
+     *   const hex = await ctx.services.color.pickHex();
      */
     color: {
       /**
-       * 打开取色面板。返回 '#RRGGBB'；取消返回 null。
+       * 打开取色面板。返回 `{ hex, custom }`。
        *
-       * @param initial      起始色（可空）
-       * @param opts.previewEvent 给了就实时广播拖动中的颜色，配合 ctx.on 用
-       * @param opts.allowNull    允许返回 null 表示"清除颜色"
+       * hex —— 选中的颜色，取消为 null。
+       * custom —— 最新自定义色，**取消也要存**（用户可能刚收藏完就取消）。
+       *
+       * 传进来的 custom 会显示，返回的 custom 存起来，
+       * 就能"下次打开还记住"，且各调用方互不干扰。
        */
       pick: (initial, opts) => call('color-picker', 'pick', { initial, ...(opts || {}) }),
+      /**
+       * 一行版：只关心颜色时用这个。
+       * 内部取 PickResult.hex，丢掉 custom —— 需要记住自定义色就用 pick。
+       */
+      pickHex: async (initial, opts) =>
+        ((await call('color-picker', 'pick', { initial, ...(opts || {}) })) || {}).hex ?? null,
       /** 归一化任意颜色输入，非法返回 null */
       normalize: (color) => call('color-picker', 'normalize', { color }),
       /** 列出 24 个预设色 */
