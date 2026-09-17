@@ -16,6 +16,9 @@ import { snapshotGlobals, auditUnmount } from './unmount-audit.js';
    引入它们而不是走事件，是因为需要同步读取"检查器是否开着"。 */
 import { isInspectorOn, moveInIframe, clickInIframe } from './inspector.js';
 import { createModuleContext, BRIDGE_CHANNEL } from './plugin-sdk.js';
+/* 同页插件入口加载器：Vite 构建下走 import.meta.glob，
+   否则原来的动态 import 在无构建模式才不会被构建期丢掉。 */
+import { loadModuleEntry } from './plugin-entries.js';
 import { installAdapter } from './theme-normalizer.js';
 import * as normalizer from './theme-normalizer.js';
 import { getPluginConfig } from './plugin-config.js';
@@ -535,8 +538,17 @@ export function createHost(opts = {}) {
       };
     }
 
-    // module：动态 import 命中浏览器缓存，拿到的是同一个模块对象
-    const mod = await import(/* @vite-ignore */ resolveEntry(manifest.entry));
+    /*
+     * module 入口加载。
+     *
+     * 原先直接 `import(/* @vite-ignore *\/ entry)`，而 @vite-ignore 会让
+     * Vite 跳过静态分析 → 产物里没有该 chunk → 运行时 404。
+     * 这也是"Vite 模式下同页插件不可用"的根因。
+     *
+     * 现在走 loadModuleEntry：Vite 构建下用 import.meta.glob 的懒加载器
+     * （构建期已展开并重写路径），无构建模式退回动态 import（行为不变）。
+     */
+    const mod = await loadModuleEntry(manifest.entry);
     const def = mod.default || mod.plugin;
     if (typeof def?.settings !== 'function') {
       throw new Error(`插件「${manifest.name}」没有提供设置面板`);
@@ -649,7 +661,12 @@ export function createHost(opts = {}) {
 
     let mod;
     try {
-      mod = await import(/* @vite-ignore */ resolveEntry(manifest.entry));
+      /*
+       * 同页入口：走 loadModuleEntry（构建期 glob），
+       * 而不是直接 @vite-ignore 动态 import —— 后者在 Vite 产物里
+       * 不生成 chunk，会 404。详见 plugin-entries.js 头部。
+       */
+      mod = await loadModuleEntry(manifest.entry);
     } catch (err) {
       throw new Error(`无法加载插件入口：${manifest.entry}\n${err?.message || err}`);
     }

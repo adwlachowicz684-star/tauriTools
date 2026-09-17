@@ -33,8 +33,18 @@ export const plugins = [
     id: 'home',
     name: '概览',
     icon: '◈',
-    type: noBuild ? 'module' : 'iframe',
-    entry: noBuild ? './plugins/home/index.js' : './plugins/home/index.html',
+    /*
+     * 概览：**两种模式下都是同页（module）**，这是首个完成嵌合的插件。
+     *
+     * Vite 模式下也能同页，靠 js/plugin-entries.js 的 import.meta.glob
+     * 在构建期把 module.tsx 收进产物（此前 @vite-ignore 动态 import
+     * 会导致产物里根本没有该文件 → 404，只能走 iframe）。
+     *
+     * 它是内置插件（builtin: true），与宿主同文档不会引入不可信代码，
+     * 正好是分级模型里 L1（受信任、构建期扫过）的适用场景。
+     */
+    type: 'module',
+    entry: noBuild ? './plugins/home/index.js' : './plugins/home/module.tsx',
     theme: 'dark',
     requiresBuild: !noBuild,
     builtin: true,

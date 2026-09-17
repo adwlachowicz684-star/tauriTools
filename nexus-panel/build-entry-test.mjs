@@ -25,11 +25,20 @@
  *    直接加载，`../../js/plugin-sdk.js` 这类相对路径真实有效；
  *    Vite 构建后目录结构变了，只有被打包的入口才能解析依赖。
  *
- * 这个测试把上面第 6 条钉住，防止将来有人"顺手把 iframe 改成
- * module"而不知道会 404。
+ * 解法（已落地，方案 B：import.meta.glob）
+ * ------------------------------------------------------------
+ * js/plugin-entries.js 里写了 import.meta.glob('../plugins/&ast;/module.{js,mjs,ts,tsx}')。
+ *（上面用 &ast; 是因为 glob 里的星号加斜杠会提前闭合块注释）
+ * Vite 在**构建期静态展开**它：为每个匹配文件生成 chunk 并重写路径，
+ * 运行时只是一句动态 import —— 于是同页插件在 Vite 生产构建下也能加载，
+ * 且新增插件只要符合命名约定就自动纳入，不需要维护显式入口表。
  *
- * 如果将来要让 Vite 模式也支持同页嵌合，必须先解决打包
- * （见文件末尾的"解法方向"），并**同步更新本测试**。
+ * 于是约束从"Vite 下必须是 .html"变成：
+ *
+ *   Vite 模式下的 entry 必须是 .html（iframe 入口）
+ *   **或** module.{js,mjs,ts,tsx}（被 glob 收录的同页入口）
+ *
+ * 本测试钉住这条新约束 —— 用别的名字（如 index.tsx）仍然会 404。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -50,8 +59,25 @@ const viteCfg = src('vite.config.ts');
 const host = src('js/host.js');
 
 console.log('=== 1. 事实：同页插件是运行时动态 import（Vite 不打包）===');
-t('mountModule 用 @vite-ignore 动态 import',
-  /import\(\/\* @vite-ignore \*\/ resolveEntry\(manifest\.entry\)\)/.test(host));
+/*
+ * 这两条记录的是**改造前**的事实，现已改变，作为"为什么要有 glob"的
+ * 历史注脚保留断言：确认 @vite-ignore 的动态 import 确实只剩下的
+ * registry 那一处（它靠 copyPlainPlugins 原样拷贝，所以能跑）。
+ */
+t('module 挂载已改为 loadModuleEntry（不再 @vite-ignore 直连）',
+  /loadModuleEntry\(manifest\.entry\)/.test(host));
+/*
+ * 只查**代码**，不查注释 —— 注释里还留着 "@vite-ignore 会怎样" 的说明，
+ * 直接全文匹配会被注释命中（断言恒假）。
+ * 逐行剔掉注释再匹配，这是"别把说明当成实现"的老教训。
+ */
+t('mountModule 内的**代码**已无 @vite-ignore', (() => {
+  const i = host.indexOf('async function mountModule');
+  const seg = host.slice(i, i + 1400);
+  return seg.split('\n')
+    .filter((l) => !l.trim().startsWith('*') && !l.trim().startsWith('//') && !l.trim().startsWith('/*'))
+    .every((l) => !l.includes('@vite-ignore'));
+})());
 t('registry 同样是 @vite-ignore 动态 import',
   /import\(\/\* @vite-ignore \*\/ new URL\('\.\.\/plugins\/registry\.js'/.test(host));
 
@@ -73,13 +99,45 @@ console.log('\n=== 3. 核心约束：Vite 模式下插件入口必须是 HTML ==
 const entries = [...registry.matchAll(/entry:\s*(noBuild\s*\?\s*'([^']+)'\s*:\s*'([^']+)')/g)]
   .map((m) => ({ noBuild: m[2], vite: m[3] }));
 t('registry 里存在三元 entry（两种模式各一份）', entries.length > 0);
-const badVite = entries.filter((e) => !e.vite.endsWith('.html'));
-t('Vite 模式的所有 entry 都是 .html（否则 dist 里没有该文件）',
+
+/*
+ * 新约束：Vite 下 entry 必须是 .html（iframe）或 module.*（glob 收录）。
+ *
+ * 用别的名字（比如 index.tsx / main.tsx）**照样 404** ——
+ * glob 只匹配 module.{js,mjs,ts,tsx}，这个命名约定是硬约束，
+ * 所以必须钉住。
+ */
+const MODULE_RE = /module\.(js|mjs|ts|tsx)$/;
+const allowedVite = (e) => e.endsWith('.html') || MODULE_RE.test(e);
+const badVite = entries.filter((e) => !allowedVite(e.vite));
+t('Vite 模式的 entry 都是 .html 或 module.*（否则产物里没有该文件）',
   badVite.length === 0,
 );
 if (badVite.length) {
   for (const e of badVite) console.log(`     ↳ 违规: ${e.vite}`);
 }
+t('module.* 入口都放在 plugins/<id>/ 下（glob 的匹配范围）',
+  entries.filter((e) => MODULE_RE.test(e.vite))
+    .every((e) => /^\.\/plugins\/[^/]+\/module\./.test(e.vite)));
+
+console.log('\n=== 3b. glob 机制本身 ===');
+const pe = src('js/plugin-entries.js');
+t('用了 import.meta.glob（Vite 构建期静态展开）', /import\.meta\.glob\(/.test(pe));
+t('glob 模式匹配 module.{js,mjs,ts,tsx}',
+  /import\.meta\.glob\('\.\.\/plugins\/\*\/module\.\{js,mjs,ts,tsx\}'/.test(pe));
+t('eager:false（懒加载 chunk，不打开就不下载）', /eager: false/.test(pe));
+t('无构建模式下 try/catch 兜住（import.meta.glob 未定义不炸）',
+  /try \{[\s\S]{0,120}import\.meta\.glob[\s\S]{0,80}\} catch \{/.test(pe));
+t('Vite 下未收录时给出**明确错误**（而不是费解的 404）',
+  /同页入口未被构建期 glob 收录/.test(pe));
+t('无构建模式退回动态 import（行为一字不改）',
+  /return await import\(\/\* @vite-ignore \*\//.test(pe));
+
+console.log('\n=== 3c. 接线：host.js 走 loadModuleEntry ===');
+t('host.js 引入 loadModuleEntry',
+  /import \{ loadModuleEntry \} from '\.\/plugin-entries\.js'/.test(host));
+t('两处 module 加载都走 loadModuleEntry（主视图 + 设置面板）',
+  (host.match(/loadModuleEntry\(manifest\.entry\)/g) || []).length >= 2);
 
 console.log('\n=== 4. 核心约束：type 随模式切换 ===');
 /*
@@ -89,11 +147,18 @@ console.log('\n=== 4. 核心约束：type 随模式切换 ===');
  */
 const typeTriples = [...registry.matchAll(/type:\s*noBuild\s*\?\s*'(\w+)'\s*:\s*'(\w+)'/g)]
   .map((m) => ({ noBuild: m[1], vite: m[2] }));
-t('存在随模式切换的 type', typeTriples.length > 0);
+t('存在随模式切换的 type（大部分插件仍是 iframe + module 双模）',
+  typeTriples.length > 0);
 t('无构建模式走 module（同页嵌合）',
   typeTriples.every((x) => x.noBuild === 'module'));
 t('Vite 模式走 iframe（HTML 入口才被打包）',
   typeTriples.every((x) => x.vite === 'iframe'));
+/*
+ * 划时代的一条：home 已经**两种模式都是 module**。
+ * 钉住它，防止被改回 iframe 而没人发现（那等于嵌合又退回去）。
+ */
+t('home 在 Vite 模式下也是 module（首个完成嵌合的插件）',
+  /id: 'home',[\s\S]{0,600}?type: 'module',/.test(registry));
 
 /*
  * 下面两条是**破坏验证逼出来的**。
@@ -106,8 +171,23 @@ t('Vite 模式走 iframe（HTML 入口才被打包）',
  * 教训：用 every 做断言时，必须同时钉住**集合规模**，
  * 否则"被检查的对象消失了"会被当成"检查通过"。
  */
-t('三元 type 的数量与三元 entry 一致（没有被偷偷改掉）',
-  typeTriples.length === entries.length && typeTriples.length > 0);
+/*
+ * home 改成"两种模式都 module"后，三元 type 会比三元 entry 少一个
+ * （它的 entry 仍是三元，type 变成常量）。所以这里钉的是：
+ * **三元 entry 数 ≥ 三元 type 数**，且差出来的那些必须 type 是常量 'module'。
+ * 仍然是为了防止"被检查的对象消失"被当成通过。
+ */
+t('三元 entry 数 ≥ 三元 type 数（没有条目凭空消失）',
+  entries.length >= typeTriples.length && entries.length > 0);
+/*
+ * 常量 'module' 的条目里，部分是"两种模式都同页"（home），
+ * 部分是 demo 类本来就单模。这里钉的是**至少有一个**是双模同页的，
+ * 并且它带有说明为什么能这么做（否则下次又会有人以为是笔误改回去）。
+ */
+t('存在"两种模式都 module"的条目（嵌合已落地）',
+  (registry.match(/\n\s*type: 'module',/g) || []).length >= 1);
+t('该条目注释说明了靠 glob 才能在 Vite 下同页',
+  /id: 'home',[\s\S]{0,400}?import\.meta\.glob/.test(registry));
 t('module 型插件的 entry 一定不是 .html（module 会去 import 它）', (() => {
   /* 找出所有"不管什么模式都是 module"的条目：type 为常量 'module' */
   const constModule = [...registry.matchAll(/type:\s*'(module)'/g)].length;
@@ -141,23 +221,5 @@ t('vite.config 注释说明了不能整目录拷贝普通插件',
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 
-if (fail) {
-  console.log(`
-解法方向（若将来要让 Vite 模式也支持同页嵌合，三选一）：
-
-  A. 显式入口表 —— 把同页插件入口也写进 buildInputs，
-     并去掉 @vite-ignore 让 Vite 重写路径。
-     代价：运行时热插拔能力受限（入口要预先知道）。
-
-  B. import.meta.glob（业界标准）——
-     import.meta.glob('../plugins/*/entry.js') 会让 Vite
-     为每个文件生成 chunk 并重写路径，保留动态性。
-     代价：新增插件需符合 glob 命名约定。
-
-  C. 保持现状 —— Vite 下继续 iframe，只在无构建模式嵌合。
-     代价：嵌合的收益（主题继承、零桥接、owned 生效）
-     只在无构建模式拿到。
-
-无论选哪个，本测试都要同步更新 —— 它是"当前事实"的快照。`);
-}
+console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
