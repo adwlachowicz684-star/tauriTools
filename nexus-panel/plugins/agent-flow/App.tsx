@@ -48,6 +48,7 @@ import {
   stackEdges, findSnapTarget, descendantsOf, chainTopOf, chainOf,
   parentIdOf, movedEnough, heightOf, STACK_GAP,
 } from './engine/stack';
+import { withDefault } from './engine/nodeDefaults';
 import CanvasTabs from './components/CanvasTabs';
 import { TaskPanel } from './components/TaskPanel';
 import { HistoryPanel } from './components/HistoryPanel';
@@ -925,8 +926,14 @@ export default function App() {
          * 顺序有讲究：create 先铺全字段默认值，再用 preset.init() 覆盖
          * 变体差异（cli / source / label）。反过来写，init 里精心设的
          * 「WorkBuddy CLI任务」会被 create 的默认值盖掉。
+         *
+         * 用户设的默认放最后盖 —— 见 withDefault：按 preset.key 存，
+         * 所以 WorkBuddy 变体设的默认不会串到 TraeCode 变体上。
          */
-        data: { ...def.create(id), ...preset.init() },
+        data: withDefault(preset.key, {
+          ...def.create(id),
+          ...preset.init(),
+        } as Record<string, unknown>),
       } as FlowNode;
       setNodes((ns) => [...ns, node]);
       setSelectedId(node.id);
@@ -2339,6 +2346,7 @@ export default function App() {
               onChangeSecretPolicy={setSecretPolicy}
               webhookTokens={webhookTokens}
               onEditModule={(id) => enterInstanceEdit(id)}
+              onNote={pushLog}
             />
           </fieldset>
         </div>
