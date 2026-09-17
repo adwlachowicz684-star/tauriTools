@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Api } from '../api';
 import { errText } from '../api';
 import type { CardKind, IconGroup } from '../types';
-import { ColorPicker } from './ColorPicker';
+import { ColorPicker } from '../../color-picker/ColorPicker';
 import { DirDialog } from './DirDialog';
 import { PresetIconGrid } from './PresetIconGrid';
 import { CheckLine, Modal } from './ui';

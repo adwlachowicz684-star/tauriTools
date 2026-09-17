@@ -196,38 +196,62 @@ for (const [ns, m] of [['color', 'pick'], ['icon', 'browse'], ['md', 'edit']]) {
 t('底层通用 call 未被薄封装取代',
   /call: \(id, method, args\)/.test(sdkSrc) && /\.\.\.services/.test(sdkSrc));
 
-console.log('\n=== 10d. 共享定义不重复（防两份 PRESET_COLORS 漂移）===');
+console.log('\n=== 10d. 色盘：共享组件，不是两份实现 ===');
 /*
- * 原本内联色盘（project-group）与取色服务**各存一份** PRESET_COLORS ——
- * 改一处忘一处就会漂移：同一个"常用色"在两个界面显示成不同颜色。
- * 现在收敛到 utils/color，两边都从那里 import。
+ * 关键改动：完整色盘从 project-group 搬到 color-picker，
+ * 内联用法与服务用法**共用同一个组件**。
  *
- * 注意：只检查"有没有 import"是不够的 ——
- * 两边都定义、也都 import 的话照样通过。必须确认本地那份已删。
+ * 为什么不是"内联改成调服务"：内联的价值是实时预览（拖动时外面卡片跟着变），
+ * 模态弹窗拿不到中间态，改过去就是降级。
  */
-const utilsSrc = src('plugins/project-group/utils/color.ts');
-const pgSrc = src('plugins/project-group/components/ColorPicker.tsx');
-const cpSrc = src('plugins/color-picker/index.js');
-t('utils/color 导出 PRESET_COLORS', /export const PRESET_COLORS/.test(utilsSrc));
-t('内联色盘从 utils/color 取预设色',
-  /from '\.\.\/utils\/color'/.test(pgSrc) && /PRESET_COLORS/.test(pgSrc));
-t('内联色盘不再本地定义预设色',
-  !/export const PRESET_COLORS = \[/.test(pgSrc));
-t('取色服务从 utils/color 取预设色',
-  /from '\.\.\/project-group\/utils\/color'/.test(cpSrc));
-t('取色服务不再自带 colorUtils',
-  !/\.\/colorUtils/.test(cpSrc) && !has('plugins/color-picker/colorUtils.js'));
-/* 服务的颜色能力不该弱于内联版 —— 否则没人会用它。
-   内联版有 HSV（SV 面板 + 色相条），服务也要有。 */
-/* 必须钉**调用**而不只是"名字出现过"。
-   只用 /hexToHsv/ 的话，import 里写一行但代码从不用它也能通过 ——
-   这就是 B15 那个坑（钉声明行没钉调用行）。带左括号才是真调用。 */
-t('取色服务用了 HSV（与内联版同等能力）',
-  /hexToHsv\(/.test(cpSrc) && /hsvToHex\(/.test(cpSrc));
-t('HSV 状态真的参与取色（不是摆设）', /hsv = hexToHsv\(/.test(cpSrc));
-t('服务样式里有 SV 面板与色相条',
-  /\.sv\s*\{/.test(src('plugins/color-picker/index.html'))
-  && /\.hue\s*\{/.test(src('plugins/color-picker/index.html')));
+t('色盘组件已搬到 color-picker', has('plugins/color-picker/ColorPicker.tsx'));
+t('SV 面板/色相条也已搬过去', has('plugins/color-picker/SvPanel.tsx'));
+t('project-group 不再自带色盘组件',
+  !has('plugins/project-group/components/ColorPicker.tsx')
+  && !has('plugins/project-group/components/SvPanel.tsx'));
+t('project-group 改为引用共享组件',
+  /from '\.\.\/\.\.\/color-picker\/ColorPicker'/.test(src('plugins/project-group/components/dialogs.tsx')));
+
+/* 颜色定义只应有一份：在 color-picker/color.ts */
+const sharedColor = src('plugins/color-picker/color.ts');
+t('共享 color.ts 导出 PRESET_COLORS', /export const PRESET_COLORS/.test(sharedColor));
+t('project-group/utils/color 改为转发（不再自带定义）',
+  /export \* from/.test(src('plugins/project-group/utils/color.ts'))
+  && !/export const PRESET_COLORS = \[/.test(src('plugins/project-group/utils/color.ts')));
+
+/* 依赖方向必须单向：project-group → color-picker，不能有反向。
+   反向会让"服务"反过来依赖业务插件，将来独立分发时拆不开。
+
+   只查代码、不查注释（注释里提到 project-group 说明从哪搬来，正常）。
+   剥注释用逐字符状态机 —— 逐行正则治不了块注释跨行，我前两版都栽在这。 */
+const cpCode = (() => {
+  const t = src('plugins/color-picker/ColorPicker.tsx');
+  let out = '', i = 0;
+  while (i < t.length) {
+    if (t[i] === '/' && t[i + 1] === '*') { i += 2; while (i < t.length && !(t[i] === '*' && t[i + 1] === '/')) i += 1; i += 2; continue; }
+    if (t[i] === '/' && t[i + 1] === '/') { while (i < t.length && t[i] !== '\n') i += 1; continue; }
+    out += t[i]; i += 1;
+  }
+  return out;
+})();
+t('色盘服务不依赖 project-group（代码里）', !/project-group/.test(cpCode));
+
+console.log('\n=== 10e. 服务弹窗用共享组件（不是弱化版）===');
+const mainTsx = src('plugins/color-picker/main.tsx');
+t('服务入口是 React 版', /bootServiceReactPlugin/.test(mainTsx));
+t('服务渲染共享的 ColorPicker', /from '\.\/ColorPicker'/.test(mainTsx)
+  && /<ColorPicker/.test(mainTsx));
+t('服务引了共享样式', /import '\.\/style\.css'/.test(mainTsx));
+/* 纯计算不该走跨 iframe —— 直接 import 本地函数，零异步开销 */
+t('normalize 是本地计算不走消息', /normalizeHex\(color\)/.test(mainTsx));
+/* 吸管能力对齐：两段式待命在共享组件里，服务自然也有 */
+t('共享色盘有吸管待命态（不是一点就取）',
+  /armed/.test(src('plugins/color-picker/ColorPicker.tsx'))
+  && /fpx_pick_color/.test(src('plugins/color-picker/ColorPicker.tsx')));
+/* JSX 属性是 type="number"（双引号），不是 JS 对象的 type: 'number'。
+   我第一版写错了写法 → 恒假。 */
+t('共享色盘有 RGB 数字输入',
+  /type="number"/.test(src('plugins/color-picker/ColorPicker.tsx')));
 
 console.log('\n=== 10f. SDK 类型覆盖 services ===');
 const sdkDts = src('js/plugin-sdk.d.ts');
@@ -246,7 +270,7 @@ t('提供了方法', /async pick\(|async describe\(|async shade\(/.test(demoSrc)
 console.log('\n=== 12. 语法（node --check，权威）===');
 for (const f of ['js/host.js', 'js/plugin-sdk.js', 'plugins/registry.js',
   'js/shell.js', 'plugins/demo-service/index.js',
-  'plugins/color-picker/index.js', 'plugins/icon-picker/index.js',
+  'plugins/icon-picker/index.js',
   'plugins/md-editor/index.js',]) {
   let ok = true;
   try { execSync(`node --check ${JSON.stringify(f)}`, { cwd: HERE, stdio: 'pipe' }); }

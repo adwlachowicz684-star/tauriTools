@@ -134,9 +134,11 @@ export const plugins = [
     interactive: true,
     type: 'iframe',
     entry: './plugins/color-picker/index.html',
-    version: '1.0.0',
+    version: '2.0.0',
     theme: 'dark',
-    description: '预设 24 色 + RGB/HEX 输入 + 吸管；被所有插件共用',
+    // React + TSX（与 project-group 内联色盘共用同一份组件），需要 Vite
+    requiresBuild: true,
+    description: '完整色盘：SV 面板 + 色相条 + RGB/HEX + 吸管待命；与内联色盘共用同一份组件实现',
   },
   {
     id: 'icon-picker',
