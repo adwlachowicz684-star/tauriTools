@@ -342,6 +342,55 @@ t('dialogs 不再传 api（组件已不接受）', !/api=\{api\}/.test(pickerUse
 t('bootIframePlugin 声明含第三个参数',
   /serviceMethods\?:/.test(src('js/plugin-sdk.d.ts')));
 
+console.log('\n=== 10j. 调用约定：取消返回 null，不抛异常 ===');
+/*
+ * 目标：调用方能"一行调起"，不写 try/catch。
+ *
+ * 取消是正常流程（用户点了取消），用异常表达会逼得每个调用方都
+ * try/catch，漏了就是 unhandled rejection。所以统一为 resolve(null)。
+ * 真出错（服务没装/超时/崩溃）才 reject。
+ */
+const strip = (t) => {
+  let out = '', i = 0;
+  while (i < t.length) {
+    if (t[i] === '/' && t[i + 1] === '*') { i += 2; while (i < t.length && !(t[i] === '*' && t[i + 1] === '/')) i += 1; i += 2; continue; }
+    if (t[i] === '/' && t[i + 1] === '/') { while (i < t.length && t[i] !== '\n') i += 1; continue; }
+    out += t[i]; i += 1;
+  }
+  return out;
+};
+const cpMainCode = strip(src('plugins/color-picker/main.tsx'));
+t('取色服务取消不 reject', !/reject\(new Error\('已取消'\)\)/.test(cpMainCode));
+t('取色服务取消 resolve(null)', /resolve\(null\)/.test(cpMainCode));
+/* 另两个服务同样要遵守 —— 只改一个的话，调用方换个服务就又得 try/catch */
+for (const [f, label] of [['plugins/icon-picker/index.js', '图标'], ['plugins/md-editor/index.js', 'md']]) {
+  const c = strip(src(f));
+  t(`${label} 服务取消不 reject`, !/reject\(new Error\('已取消'\)\)/.test(c));
+  t(`${label} 服务取消 resolve(null)`, /resolve\(null\)/.test(c));
+}
+
+console.log('\n=== 10k. 薄封装：调用方不用做额外工作 ===');
+const sdk = strip(src('js/plugin-sdk.js'));
+/* 懒加载：谁被调才挂谁 —— 调用方不需要先 ensure/list */
+t('宿主侧服务懒加载（ensureService 自动挂载）',
+  /async function ensureService/.test(src('js/host.js')));
+/* 交互浮层的显示/收回由宿主按 interactive 自动处理，调用方不用管 */
+t('交互浮层由宿主自动显示/收回',
+  /const interactive = !!inst\.manifest\?\.interactive/.test(src('js/host.js'))
+  && /showServiceUi\(true\)/.test(src('js/host.js')));
+t('浮层收回在 finally 里（异常也不漏）',
+  /finally \{[\s\S]{0,120}showServiceUi\(false\)/.test(src('js/host.js')));
+/* 薄封装要能传 previewEvent，否则实时预览这个能力在薄封装下用不了 */
+t('pick 薄封装支持第二参（previewEvent 等）',
+  /pick: \(initial, opts\) => call\('color-picker', 'pick', \{ initial, \.\.\./.test(sdk));
+t('color 薄封装补齐 hsv', /hsv: \(color\) => call/.test(sdk));
+/* 类型必须同步 —— 不同步的话 TS 侧拿到的是旧的 Promise<string>，
+   写 if (hex) 会被告知"永远为真"，取消判断就被静默忽略了 */
+const sdkDts2 = src('js/plugin-sdk.d.ts');
+t('pick 类型返回 string | null', /pick\(initial\?: string \| null[\s\S]{0,400}Promise<string \| null>/.test(sdkDts2));
+t('browse 类型返回可空', /Promise<\{ name: string; url: string \} \| null>/.test(sdkDts2));
+t('edit 类型返回可空', /edit\(text\?: string, title\?: string\): Promise<string \| null>/.test(sdkDts2));
+
 console.log('\n=== 10f. SDK 类型覆盖 services ===');
 const sdkDts = src('js/plugin-sdk.d.ts');
 t('PluginContext 有 services', /services: \{/.test(sdkDts));

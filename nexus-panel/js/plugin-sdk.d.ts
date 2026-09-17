@@ -41,26 +41,45 @@ export interface PluginContext {
   services: {
     call(id: string, method: string, args?: Record<string, any>): Promise<any>;
     list(): Promise<Array<{ id: string; name: string; mounted: boolean }>>;
+    /*
+     * 统一约定（三个内置服务一致，第三方服务也建议照此）：
+     *   resolve(值)   —— 用户选了
+     *   resolve(null) —— **用户取消**（正常流程，不抛异常）
+     *   reject(错误)  —— 真出错（服务没装 / 挂载失败 / 超时 / 崩溃）
+     *
+     * 于是调用方无需 try/catch 就能一行调起：
+     *   const hex = await ctx.services.color.pick();
+     *   if (hex) apply(hex);
+     */
     /** 取色服务 */
     color: {
-      /** 打开取色面板，返回 '#RRGGBB'；用户取消则 reject */
-      pick(initial?: string): Promise<string>;
+      /** 打开取色面板，返回 '#RRGGBB'；**取消返回 null** */
+      pick(initial?: string | null, opts?: {
+        /** 给了就实时广播拖动中的颜色，配合 ctx.on 使用 */
+        previewEvent?: string;
+        /** 允许返回 null 表示"清除颜色" */
+        allowNull?: boolean;
+        /** 自定义常用色（不给则读上次存下的） */
+        custom?: string[];
+      }): Promise<string | null>;
       /** 归一化任意颜色输入，非法返回 null */
       normalize(color: string): Promise<string | null>;
       /** 24 个预设色 */
       presets(): Promise<string[]>;
+      /** 取当前色的 HSV（想自己画格子时用） */
+      hsv(color?: string): Promise<{ h: number; s: number; v: number }>;
     };
     /** 图标选择服务 */
     icon: {
-      /** 打开浏览面板，返回 { name, url }；取消则 reject */
-      browse(keyword?: string): Promise<{ name: string; url: string }>;
+      /** 打开浏览面板，返回 { name, url }；**取消返回 null** */
+      browse(keyword?: string): Promise<{ name: string; url: string } | null>;
       list(): Promise<string[]>;
       url(name: string): Promise<string>;
     };
     /** Markdown 编辑服务 */
     md: {
-      /** 打开编辑面板，返回编辑后的文本；取消则 reject */
-      edit(text?: string, title?: string): Promise<string>;
+      /** 打开编辑面板，返回编辑后的文本；**取消返回 null** */
+      edit(text?: string, title?: string): Promise<string | null>;
       /** 只要渲染结果 */
       render(text: string): Promise<string>;
     };

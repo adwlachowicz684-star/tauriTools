@@ -10,7 +10,7 @@ import './style.css';
  * 把完整色盘（与 project-group 内联用的是**同一个组件**）以模态弹窗的形式
  * 提供给所有插件：
  *
- *   const hex = await ctx.services.color.pick('#3E63DD');
+ *   const hex = await ctx.services.color.pick('#3E63DD');   // 取消返回 null，不用 try/catch
  *
  * 为什么是"共享组件 + 服务包壳"而不是"内联改成调服务"：
  *   内联色盘的价值在于**实时预览** —— 拖动时外面的卡片跟着变色；
@@ -92,8 +92,19 @@ function ServicePanel() {
         <button
           className="p-btn"
           onClick={() => {
-            /* 用户取消 —— 与"清掉颜色"是两回事，后者是 resolve(null) */
-            current?.reject(new Error('已取消'));
+            /*
+             * 取消**不用 reject**，而是 resolve(null)。
+             *
+             * 取消是正常流程（用户就是不想改），不是异常 ——
+             * 用异常表达会让每个调用方都得写 try/catch 才能"一行调起"，
+             * 漏了就是 unhandled rejection。
+             *
+             * 约定：
+             *   resolve(值)   —— 用户选了
+             *   resolve(null) —— 用户取消（或清除了颜色）
+             *   reject(错误)  —— 真出错（服务没装/挂载失败/超时/崩溃）
+             */
+            current?.resolve(null);
             current = null;
             setLocalView((v) => ({ ...v, open: false }));
           }}

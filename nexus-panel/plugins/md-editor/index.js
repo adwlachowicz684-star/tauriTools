@@ -146,7 +146,7 @@ async function edit({ text = '', title = 'Markdown' } = {}) {
       onclick: () => { const v = ta.value; ui.innerHTML = ''; resolve(v); },
     }, '确定');
     const cancelBtn = el('button', {
-      onclick: () => { ui.innerHTML = ''; reject(new Error('已取消')); },
+      onclick: () => { ui.innerHTML = ''; resolve(null); },
     }, '取消');
 
     ui.innerHTML = '';

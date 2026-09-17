@@ -129,16 +129,39 @@ function withBuiltinShortcuts(services) {
   const { call, list } = services;
   return {
     ...services,
+    /*
+     * 统一约定（三个内置服务一致，第三方服务也建议照此）：
+     *
+     *   resolve(值)   —— 用户选了
+     *   resolve(null) —— **用户取消**（正常流程，不是错误）
+     *   reject(错误)  —— 真出错（服务没装 / 挂载失败 / 超时 / 崩溃）
+     *
+     * 为什么取消不抛异常：取消是用户点了「取消」，是最常见的结果之一。
+     * 用异常表达会让每个调用方都得写 try/catch 才能"一行调起"，
+     * 漏了就是 unhandled rejection。
+     *
+     * 于是调用方可以这样，无需 try/catch：
+     *   const hex = await ctx.services.color.pick();
+     *   if (hex) apply(hex);
+     */
     color: {
-      /** 打开取色面板，返回 '#RRGGBB'；取消则 reject */
-      pick: (initial) => call('color-picker', 'pick', { initial }),
+      /**
+       * 打开取色面板。返回 '#RRGGBB'；取消返回 null。
+       *
+       * @param initial      起始色（可空）
+       * @param opts.previewEvent 给了就实时广播拖动中的颜色，配合 ctx.on 用
+       * @param opts.allowNull    允许返回 null 表示"清除颜色"
+       */
+      pick: (initial, opts) => call('color-picker', 'pick', { initial, ...(opts || {}) }),
       /** 归一化任意颜色输入，非法返回 null */
       normalize: (color) => call('color-picker', 'normalize', { color }),
       /** 列出 24 个预设色 */
       presets: () => call('color-picker', 'presets'),
+      /** 取当前色的 HSV（调用方想自己画格子时用） */
+      hsv: (color) => call('color-picker', 'hsv', { color }),
     },
     icon: {
-      /** 打开图标浏览面板，返回 { name, url } */
+      /** 打开图标浏览面板，返回 { name, url }；取消返回 null */
       browse: (keyword) => call('icon-picker', 'browse', { keyword }),
       /** 只要清单 */
       list: () => call('icon-picker', 'list'),
@@ -146,7 +169,7 @@ function withBuiltinShortcuts(services) {
       url: (name) => call('icon-picker', 'url', { name }),
     },
     md: {
-      /** 打开编辑面板，返回编辑后的文本 */
+      /** 打开编辑面板，返回编辑后的文本；取消返回 null */
       edit: (text, title) => call('md-editor', 'edit', { text, title }),
       /** 只要渲染结果（调用方自己做编辑框时用） */
       render: (text) => call('md-editor', 'render', { text }),

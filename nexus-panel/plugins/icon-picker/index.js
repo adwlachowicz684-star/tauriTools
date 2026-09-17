@@ -66,14 +66,15 @@ async function browse({ keyword = '' } = {}) {
     const okBtn = el('button', {
       className: 'primary',
       onclick: () => {
-        if (!cur) { reject(new Error('未选择图标')); return; }
+        /* 点确定但没选：按未选处理，与取消一致（返回 null） */
+        if (!cur) { resolve(null); return; }
         ui.innerHTML = '';
         resolve({ name: cur, url: iconUrl(cur) });
       },
     }, '确定');
 
     const cancelBtn = el('button', {
-      onclick: () => { ui.innerHTML = ''; reject(new Error('已取消')); },
+      onclick: () => { ui.innerHTML = ''; resolve(null); },
     }, '取消');
 
     ui.innerHTML = '';
