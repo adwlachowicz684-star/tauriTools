@@ -16,8 +16,8 @@
 
 ## 能用在哪些节点
 
-- [`ocr`](../nodes/ocr.md)
-- [`translate`](../nodes/translate.md) — 翻译
+- [`ocr`](../nodes/ocr.params.md)
+- [`translate`](../nodes/translate.params.md) — 翻译
 
 拖到节点上时会校验：节点必须**声明支持**这个组，否则拒绝并说明原因。
 

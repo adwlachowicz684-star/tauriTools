@@ -49,6 +49,7 @@ const CARDS_DIR = path.join(DOCS, 'cards');
 const REUSE_DIR = path.join(DOCS, 'reuse');
 
 const spec = await import(path.join(OUT, 'nodeSpec.mjs'));
+const api = await import(path.join(OUT, 'blockApi.mjs'));
 const req = await import(path.join(OUT, 'nodeRequires.mjs'));
 
 /* ================= 分类 meta ================= */
@@ -84,8 +85,21 @@ function parseFields(file) {
     const hint = seg.match(/hint:\s*'([^']*)'/)?.[1];
     const when = seg.match(/when:\s*\(([^)]*)\)\s*=>\s*([^,\n]+)/);
     const specKeys = seg.match(/spec:\s*\{\s*keys:\s*\[([^\]]+)\]/);
-    const opts = [...seg.matchAll(/value:\s*'([^']+)',\s*\n?\s*label:\s*'([^']+)'/g)]
+    /*
+     * options 有两种写法：
+     *   1. 字面量数组  value:'a', label:'甲'        → 能取到值
+     *   2. 函数        options: () => XXX.map(...)  → 取不到具体值
+     *
+     * 只处理第 1 种会让第 2 种显示成 "undefined / undefined"，
+     * 那比留空更糟（看着像有值，实际是 Bug）。所以第 2 种标出常量名，
+     * 读者知道去哪查。
+     */
+    let opts = [...seg.matchAll(/value:\s*'([^']+)',\s*\n?\s*label:\s*'([^']+)'/g)]
       .map((m) => ({ value: m[1], label: m[2], hint: '' }));
+    if (opts.length === 0) {
+      const dyn = seg.match(/options:\s*\(\)\s*=>\s*([A-Za-z_$][\w$.]*)/);
+      if (dyn) opts = [{ value: `动态（${dyn[1]}）`, label: '', hint: '' }];
+    }
     out.push({
       type: t,
       key: key ?? null,
@@ -129,6 +143,52 @@ for (const f of defFiles) {
  * 数据来自 nodes/cardGroups.ts 的 registerCardGroup(...)，
  * 加上各 defs 里 meta.cardGroups 的反向关联（哪些节点能用这组）。
  */
+/*
+ * 从 .ts 源文件提取类型定义的顶层字段。
+ *
+ * 复用件页面原先**硬编码**了 ModuleDef / CustomPreset 的结构 ——
+ * 那是副本，代码一改文档不变，测试也盯不到，等于我自己犯了那个
+ * "同一件事两处写"的老毛病。改成从源文件派生。
+ */
+function typeFieldsOf(file, typeName) {
+  const src = fs.readFileSync(path.join(ROOT, file), 'utf-8');
+  const i = src.indexOf(`export type ${typeName} = {`);
+  if (i < 0) return null;
+  const end = src.indexOf('\n};', i);
+  if (end < 0) return null;
+  const body = src.slice(i, end);
+  const rows = [];
+  for (const line of body.split('\n')) {
+    const t = line.trim();
+    if (!t || t.startsWith('/*') || t.startsWith('*') || t.startsWith('//')) continue;
+    const m = t.match(/^(\w+)(\??):\s*(.+?);?$/);
+    if (!m) continue;
+    let comment = '';
+    const ci = line.indexOf('//');
+    if (ci > 0) comment = line.slice(ci + 2).trim();
+    rows.push({ name: m[1], optional: m[2] === '?', type: m[3].replace(/;$/, ''), comment });
+  }
+  return rows;
+}
+
+/** 从 .ts 提取一个导出常量的值（字符串字面量） */
+function constValueOf(file, name) {
+  const src = fs.readFileSync(path.join(ROOT, file), 'utf-8');
+  /*
+   * 两个坑，都踩过：
+   *
+   * 1. **模板字符串里不能写 \s** —— 反斜杠被当转义符吃掉，
+   *    `\s` 变成 `s`，正则静默失配（不报错，只是匹配不到）。
+   *    所以这里用普通字符串拼接 + 双反斜杠。
+   * 2. 只有一个等号时，先试的那条（要求两个 `=`）必然落空，
+   *    要有兜底。
+   */
+  const r1 = new RegExp('export const ' + name + '\\s*[:=][^=]*?=\\s*\'([^\']+)\'');
+  const r2 = new RegExp('export const ' + name + '\\s*=\\s*\'([^\']+)\'');
+  const m = src.match(r1) ?? src.match(r2);
+  return m ? m[m.length - 1] : null;
+}
+
 function collectCardGroups() {
   const src = fs.readFileSync(path.join(ROOT, 'nodes', 'cardGroups.ts'), 'utf-8');
   const groups = [];
@@ -192,6 +252,10 @@ function collectCardGroups() {
  * 所以文档不列具体条目（列了立刻过期），只说明：
  * 结构长什么样、怎么用、以及它们之间容易混淆的区别。
  */
+const MOD_FILE = 'engine/modules.ts';
+const CP_FILE = 'engine/customPresets.ts';
+const ND_FILE = 'engine/nodeDefaults.ts';
+
 function writeReuse() {
   fs.mkdirSync(REUSE_DIR, { recursive: true });
 
@@ -208,16 +272,9 @@ function writeReuse() {
 
 ## 结构
 
-\`\`\`ts
-type ModuleDef = {
-  id: string;
-  name: string;
-  color: string;              // 默认 #f59e0b
-  nodes: Record<string, unknown>[];  // 内部节点（已剥离运行时状态）
-  edges: ModuleEdge[];
-  createdAt: number;
-};
-\`\`\`
+定义见 \`${MOD_FILE}\` 的 \`ModuleDef\`（**以源文件为准**，下面是自动派生的字段清单）：
+
+${(typeFieldsOf(MOD_FILE, 'ModuleDef') ?? []).map((r) => `- \`${r.name}\`: \`${r.type}\`${r.comment ? ` — ${r.comment}` : ''}`).join('\n') || '（未能解析，请直接读源文件）'}
 
 ## 接口：入口与出口（自动推导，不用手工标）
 
@@ -265,16 +322,9 @@ type ModuleDef = {
 
 ## 结构
 
-\`\`\`ts
-type CustomPreset = {
-  id: string;
-  name: string;            // 允许重名，靠 id 区分
-  baseType: string;        // 基础节点类型，如 'generic-http' / 'task'
-  color?: string;          // 不填则用基础类型的色
-  data: Record<string, unknown>;  // **已剥离运行时状态**的配置
-  createdAt: number;
-};
-\`\`\`
+定义见 \`${CP_FILE}\` 的 \`CustomPreset\`（**以源文件为准**，下面是自动派生的字段清单）：
+
+${(typeFieldsOf(CP_FILE, 'CustomPreset') ?? []).map((r) => `- \`${r.name}\`: \`${r.type}\`${r.comment ? ` — ${r.comment}` : ''}`).join('\n') || '（未能解析，请直接读源文件）'}
 
 ## 与模块的区别（最容易混淆）
 
@@ -349,7 +399,9 @@ TraeCode 变体的 cli 也改掉** —— 而用户根本没碰过那个变体�
 
 ## 存储键
 
-\`agent-flow.node-defaults.v1\`
+\`${constValueOf(ND_FILE, 'NODE_DEFAULTS_KEY') ?? '（未能解析，见源文件）'}\`
+
+（自动派生自 \`${ND_FILE}\` 的 \`NODE_DEFAULTS_KEY\`，避免手抄后漂移）
 `);
 }
 
@@ -375,7 +427,7 @@ ${g.desc || '（无额外说明）'}
 
 ## 能用在哪些节点
 
-${g.usedBy.length ? g.usedBy.map((u) => `- [\`${u.kind}\`](../nodes/${u.kind}.md)${u.label !== u.kind ? ` — ${u.label}` : ''}`).join('\n') : '（当前没有节点声明支持这组）'}
+${g.usedBy.length ? g.usedBy.map((u) => `- [\`${u.kind}\`](../nodes/${u.kind}.params.md)${u.label !== u.kind ? ` — ${u.label}` : ''}`).join('\n') : '（当前没有节点声明支持这组）'}
 
 拖到节点上时会校验：节点必须**声明支持**这个组，否则拒绝并说明原因。
 `;
@@ -425,39 +477,42 @@ function paramsOf(kind, b) {
   const seen = new Set();
   const defs = defOf[kind] ?? [];
   if (!spec.SPECS[kind]?.manualParams) {
-    /* 第一遍：把所有块摊平 */
-    const flat = [];
-    for (const d of defs) for (const f of parseFields(d.file)) flat.push(f);
-
-    /* 第二遍：按 key 聚合，后出现的块补充前块缺失的说明 */
-    const notes = flat.filter((f) => f.type === 'note').map((f) => f.hint);
-    const agg = new Map();
-    for (const f of flat) {
-      if (f.type === 'note') continue;
-      for (const k of [f.key, ...f.extraKeys].filter(Boolean)) {
-        const cur = agg.get(k) ?? {
-          key: k, type: f.type, label: null, placeholder: null,
-          hint: null, when: null, options: [],
-        };
-        // 优先用非 custom 的块：custom 是手写面板的逃生口，说不出字段语义
-        if (cur.type === 'custom' && f.type !== 'custom') cur.type = f.type;
-        cur.label ??= f.label;
-        cur.placeholder ??= f.placeholder;
-        cur.hint ??= f.hint;
-        cur.when ??= f.when;
-        if (f.options?.length && !cur.options.length) cur.options = f.options;
-        agg.set(k, cur);
+    /*
+     * 聚合逻辑**不在这里写** —— 调 engine/blockApi 的 deriveParams。
+     *
+     * 让文档与运行时 API 共用同一份逻辑，"文档里的参数表"和
+     * "运行时查到的参数表"才不可能对不上。各写一份必然漂移，
+     * 这是这个项目已经踩过四次的坑。
+     */
+    /*
+     * fields 常常**不在主 def 文件里**：
+     * bili.ts / wechat.ts 写的是 `fields: () => updateFields`，
+     * 真正的清单在同目录的 updateFields.tsx。
+     *
+     * 只看主文件会让参数表只剩 `source` 一项（那是从契约的 hiddenParams
+     * 补的），真正的 biliUid / feedUrl 全丢 —— AI 拼出来会缺参数，
+     * 报 "Cannot read properties of undefined (reading 'trim')"。
+     */
+    const fieldFiles = new Set();
+    for (const d of defs) {
+      fieldFiles.add(d.file);
+      const src = fs.readFileSync(path.join(ROOT, 'nodes', 'defs', d.file), 'utf-8');
+      for (const m of src.matchAll(/fields:\s*(?:\(\)\s*=>\s*)?([A-Za-z_$][\w$]*)/g)) {
+        const name = m[1];
+        for (const f of defFiles) {
+          const fs2 = fs.readFileSync(path.join(ROOT, 'nodes', 'defs', f), 'utf-8');
+          if (fs2.includes(`export const ${name}`)) fieldFiles.add(f);
+        }
       }
     }
-    for (const r of agg.values()) {
+    const flat = [];
+    for (const ff of fieldFiles) for (const f of parseFields(ff)) flat.push(f);
+    const derived = api.deriveParams(flat);
+    for (const r of derived.rows) {
       seen.add(r.key);
-      // custom 是"手写面板"逃生口，说不出字段语义，给个兜底说明
-      if (r.type === 'custom' && !r.hint && !r.label) {
-        r.hint = '由手写面板渲染（通常带上游变量插入按钮）';
-      }
       rows.push(r);
     }
-    if (notes.length) rows.notes = notes;
+    rows.notes = derived.notes;
   }
   // 契约里手写的（manualParams 或 hiddenParams）
   for (const p of spec.SPECS[kind]?.params ?? []) {
@@ -526,12 +581,18 @@ for (const cat of order) {
   const list = byCat.get(cat);
   if (!list?.length) continue;
   idx += `## ${CAT_META[cat]}\n\n`;
-  idx += `| 控件 | kind | 产出 | 接受 | 能力 | 说明 |\n|---|---|---|---|---|---|\n`;
+  /*
+   * 带「源文件」列是这套文档的立意所在 ——
+   * 索引是**路由表**，不是内容副本。要细节就去读源文件，
+   * 那里永远最新；这里只放"决定要不要进去"的判据。
+   */
+  idx += `| kind | 产出 | 接受 | 能力 | 说明 | 源文件 |\n|---|---|---|---|---|---|\n`;
   for (const b of list) {
     const d = (defOf[b.kind] ?? [])[0];
     const sub = d?.sub ?? b.producesDesc;
     const req = b.requires.length ? b.requires.join(', ') : '—';
-    idx += `| [${b.kind}](nodes/${b.kind}.md) | \`${b.kind}\` | ${port(b.produces)} | ${acc(b.accepts)} | ${req} | ${sub ?? ''} |\n`;
+    const src = d?.file ? `nodes/defs/${d.file}` : '—';
+    idx += `| [${b.kind}](nodes/${b.kind}.params.md) | ${port(b.produces)} | ${acc(b.accepts)} | ${req} | ${sub ?? ''} | \`${src}\` |\n`;
   }
   idx += '\n';
 }
@@ -591,39 +652,14 @@ for (const b of blocks) {
   const d = (defOf[b.kind] ?? [])[0];
   const types = (defOf[b.kind] ?? []).map((x) => x.type);
   const cat = d?.category ?? 'custom';
+  const srcFile = d?.file ? `nodes/defs/${d.file}` : '（无）';
 
-  /* ---- 第二层：控件说明 ---- */
-  let s = `# ${b.kind}${d?.sub ? ` — ${d.sub}` : ''}
-
-> 自动生成，不要手改。源文件：\`nodes/defs/${d?.file ?? '（无）'}\`
-
-- **分类**：${CAT_META[cat] ?? cat}
-- **node.type**：${types.map((t) => `\`${t}\``).join(' / ')}${types.length > 1 ? '（多个 type 共用一份 data）' : ''}
-- **产出**：${port(b.produces)}
-- **接受**：${acc(b.accepts)}
-- **需要的外部能力**：${b.requires.length ? b.requires.map((r) => `\`${r}\``).join(', ') : '无（纯本地，浏览器模式也能跑）'}
-
-## 它做什么
-
-${b.producesDesc ?? '（无说明）'}
-`;
-
-  if (b.requires.length) {
-    s += `\n## 能力签名\n\n${b.requires.map((r) => `- \`${r}\`: \`${spec.CAPABILITY_SIGNATURES[r] ?? '（缺签名说明）'}\``).join('\n')}\n`;
-    /*
-     * 有条件的能力（when）要标出来 ——
-     * 例：OCR 只在"本地文件"来源时才要 imageReader，网络地址走 URL 直传。
-     * 不标的话 AI 会以为任何用法都需要它，从而在浏览器模式下误判不可行。
-     */
-    for (const [kind, list] of Object.entries(req.REQUIRES ?? {})) {
-      if (kind !== b.kind) continue;
-      for (const r of list) {
-        if (!r.when) continue;
-        s += `\n> \`${r.key}\` 是**按需**的：只有在满足特定条件时才需要（见参数页）。\n`;
-      }
-    }
-  }
-
+  /* ---- 第三层：参数详情 ---- */
+  /*
+   * 说明页被压掉之后（见文件头的"为什么只有两层"），
+   * 它那点独有内容搬到参数页头部：分类、node.type、产出/接受、能力、
+   * 以及从产出类型推导出的坑。
+   */
   const warn = [];
   if (b.produces === 'mark') {
     warn.push('产出是**状态标记**，插在链中间会截断上游数据。下游若要处理上游内容，改用 `{{上游id.output}}` 直接取。');
@@ -632,29 +668,40 @@ ${b.producesDesc ?? '（无说明）'}
     warn.push('它**不需要输入**（`接受 = none`），通常作为链的起点。');
   }
   if (Array.isArray(b.accepts) && !b.accepts.includes('any')) {
-    warn.push(`它只接受 ${b.accepts.join(' / ')} 类型的数据，其余类型接上去会被告警。`);
-  }
-  if (warn.length) s += `\n## 注意\n\n${warn.map((w) => `- ${w}`).join('\n')}\n`;
-
-  const params = paramsOf(b.kind, b);
-  s += `\n## 参数概览\n\n共 ${params.length} 项。完整表格与用法见 → [${b.kind}.params.md](${b.kind}.params.md)\n`;
-  if (params.length) {
-    s += `\n${params.slice(0, 8).map((p) => `- \`${p.key}\`${p.label ? `（${p.label}）` : ''}`).join('\n')}`;
-    if (params.length > 8) s += `\n- …… 另 ${params.length - 8} 项`;
-    s += '\n';
+    warn.push(`它只接受 ${b.accepts.join(' / ')}，其余类型接上去会被告警。`);
   }
 
-  s += `\n---\n\n[← 回到索引](../README.md)\n`;
-  fs.writeFileSync(path.join(NODES_DIR, `${b.kind}.md`), s);
-
-  /* ---- 第三层：参数详情 ---- */
   let p = `# ${b.kind} — 参数与使用方式
 
-> 自动生成，不要手改。
+> 自动生成，**不要手改**。这是 \`${srcFile}\` 的**派生视图**：
+> 具体值以源文件为准，这里只做汇总。
 
-[← 上一层：控件说明](${b.kind}.md) ｜ [← 回到索引](../README.md)
+[← 回到索引](../README.md)
 
+- **分类**：${CAT_META[cat] ?? cat}
+- **node.type**：${types.map((t) => `\`${t}\``).join(' / ')}${types.length > 1 ? '（多个 type 共用一份 data）' : ''}
+- **源文件**：\`${srcFile}\`
+- **产出**：${port(b.produces)}　**接受**：${acc(b.accepts)}
+- **需要的外部能力**：${b.requires.length ? b.requires.map((r) => `\`${r}\``).join(', ') : '无（纯本地，浏览器模式也能跑）'}
+
+## 它做什么
+
+${b.producesDesc ?? '（无说明）'}
 `;
+
+  if (b.requires.length) {
+    p += `\n## 能力签名\n\n${b.requires.map((r) => `- \`${r}\`: \`${spec.CAPABILITY_SIGNATURES[r] ?? '（缺签名说明）'}\``).join('\n')}\n`;
+    for (const [k2, list] of Object.entries(req.REQUIRES ?? {})) {
+      if (k2 !== b.kind) continue;
+      for (const r of list) {
+        if (!r.when) continue;
+        p += `\n> \`${r.key}\` 是**按需**的：只有满足特定条件时才需要（见参数页）。\n`;
+      }
+    }
+  }
+  if (warn.length) p += `\n## 注意\n\n${warn.map((w) => `- ${w}`).join('\n')}\n`;
+  p += '\n';
+  const params = paramsOf(b.kind, b);
   if (params.notes?.length) {
     p += `## 面板上的提示\n\n${params.notes.map((x) => `> ${x}`).join('\n>\n> ')}\n\n`;
   }
@@ -664,24 +711,18 @@ ${b.producesDesc ?? '（无说明）'}
     p += `共 ${params.length} 项：\n\n`;
     p += `| 参数 | 类型 | 说明 | 取值 | 显示条件 |\n|---|---|---|---|---|\n`;
     for (const r of params) {
-      const opts = r.options?.length ? r.options.map((o) => `\`${o.value}\``).join(' / ') : '—';
+      /*
+       * deriveParams 返回的 options 是 string[]（不是 {value,label} 对象）——
+       * 按对象取 .value 会全变成 undefined，看起来像"有值但值是 undefined"，
+       * 比留空更容易误导。
+       */
+      const opts = r.options?.length
+        ? r.options.map((o) => `\`${typeof o === 'string' ? o : o.value}\``).join(' / ')
+        : '—';
       const hint = [r.label, r.hint, r.placeholder ? `占位：${r.placeholder}` : null]
         .filter(Boolean).join('；') || '—';
       p += `| \`${r.key}\`${r.required ? ' **必填**' : ''} | ${r.type} | ${hint} | ${opts} | ${r.when ? `\`${r.when}\`` : '—'} |\n`;
     }
-  }
-
-  p += `\n## 怎么用它
-
-1. 从侧栏「${CAT_META[cat] ?? cat}」分组拖到画布
-2. 在属性面板填参数（面板由 \`nodes/defs/${d?.file ?? ''}\` 的 fields 自动渲染）
-3. 用连线接到上下游；引用上游输出写 \`{{上游id.output}}\`
-`;
-
-  if (b.produces === 'text' || b.produces === 'json') {
-    p += `\n产出是${PORT_CN[b.produces]}，可以：\n- 直接给下游用（\`{{${b.kind}节点id.output}}\`）\n`;
-    if (b.produces === 'json') p += '- 接「extract」节点按 JSON 路径取值\n';
-    p += '- 接「condition」节点做判断\n';
   }
 
   p += `\n## 建节点的正确方式
@@ -698,4 +739,4 @@ writeCards(cards);
 writeReuse();
 
 fs.writeFileSync(path.join(DOCS, 'README.md'), idx);
-console.log(`✅ 已生成 docs/：统一索引 + ${n} 个节点（各 2 页）+ ${cards.length} 个卡片组 + 3 个复用件说明`);
+console.log(`✅ 已生成 docs/：索引 + ${n} 个参数页 + ${cards.length} 个卡片组 + 3 个复用件说明`);

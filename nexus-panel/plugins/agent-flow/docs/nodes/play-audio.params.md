@@ -1,8 +1,23 @@
 # play-audio — 参数与使用方式
 
-> 自动生成，不要手改。
+> 自动生成，**不要手改**。这是 `nodes/defs/playAudio.ts` 的**派生视图**：
+> 具体值以源文件为准，这里只做汇总。
 
-[← 上一层：控件说明](play-audio.md) ｜ [← 回到索引](../README.md)
+[← 回到索引](../README.md)
+
+- **分类**：工具
+- **node.type**：`play-audio`
+- **源文件**：`nodes/defs/playAudio.ts`
+- **产出**：any（透传上游）　**接受**：any
+- **需要的外部能力**：`playAudioReader`
+
+## 它做什么
+
+透传上游（只是播放音频）
+
+## 能力签名
+
+- `playAudioReader`: `(path) => Promise<string>（data URL）`
 
 ## 面板上的提示
 
@@ -15,12 +30,6 @@
 | `path` | text | 音频文件；支持模板，如 {{上游.output}}；建议 mp3 / wav / ogg；占位：/path/to/sound.mp3 | — | — |
 | `volume` | number | 音量 | — | — |
 | `waitForEnd` | switch | 占位：播完再往下走（关掉则立即继续，声音继续放） | — | — |
-
-## 怎么用它
-
-1. 从侧栏「工具」分组拖到画布
-2. 在属性面板填参数（面板由 `nodes/defs/playAudio.ts` 的 fields 自动渲染）
-3. 用连线接到上下游；引用上游输出写 `{{上游id.output}}`
 
 ## 建节点的正确方式
 

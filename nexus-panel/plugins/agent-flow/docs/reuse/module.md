@@ -11,16 +11,14 @@
 
 ## 结构
 
-```ts
-type ModuleDef = {
-  id: string;
-  name: string;
-  color: string;              // 默认 #f59e0b
-  nodes: Record<string, unknown>[];  // 内部节点（已剥离运行时状态）
-  edges: ModuleEdge[];
-  createdAt: number;
-};
-```
+定义见 `engine/modules.ts` 的 `ModuleDef`（**以源文件为准**，下面是自动派生的字段清单）：
+
+- `id`: `string`
+- `name`: `string`
+- `color`: `string`
+- `nodes`: `Record<string, unknown>[]`
+- `edges`: `ModuleEdge[]`
+- `createdAt`: `number`
 
 ## 接口：入口与出口（自动推导，不用手工标）
 
