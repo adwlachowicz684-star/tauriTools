@@ -100,6 +100,8 @@ $S engine/modules.ts "$OUT/modules.mjs" \
 $S engine/nodeValidate.ts "$OUT/nodeValidate.mjs" \
    --import-map ../types=./types.mjs >/dev/null
 $S engine/stack.ts "$OUT/stack.mjs" >/dev/null
+$S engine/nodeDefaults.ts "$OUT/nodeDefaults.mjs" \
+   --import-map ./duplicate=./duplicate.mjs --import-map ./customPresets=./customPresets.mjs >/dev/null
 # paramCards / duplicate 是纯逻辑模块，单独生成
 $S engine/paramCards.ts "$OUT/paramCards.mjs" \
    --import-map ./duplicate=./duplicate.mjs >/dev/null

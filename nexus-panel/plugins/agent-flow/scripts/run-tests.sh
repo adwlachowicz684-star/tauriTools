@@ -45,6 +45,8 @@ for f in tests/*.test.ts; do
     --import-map ../engine/paramCards=../paramCards.mjs \
     --import-map ../engine/modules=../modules.mjs \
     --import-map ../engine/nodeValidate=../nodeValidate.mjs \
+    --import-map ../engine/stack=../stack.mjs \
+    --import-map ../engine/nodeDefaults=../nodeDefaults.mjs \
     --import-map ../components/Sidebar=../Sidebar.mjs >/dev/null
 done
 

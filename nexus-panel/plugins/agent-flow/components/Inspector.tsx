@@ -5,6 +5,10 @@ import { getDef } from '../nodes/registry';
 import { inspectorOf } from './inspectors/inspectorOf';
 import { NODE_SIZE_META, normalizeSize, type NodeSize } from '../types';
 import { stackParentOf, descendantsOf, chainTopOf, chainOf } from '../engine/stack';
+import {
+  setDefault, clearDefault, hasDefault, matchPresetKey,
+} from '../engine/nodeDefaults';
+import { allPresets } from '../nodes/registry';
 
 /**
  * 属性面板 —— 现在只是一个分发器。
@@ -34,12 +38,15 @@ type Props = {
    * 拿不到 App 的画布状态，只能由外部注入。
    */
   onEditModule?: (nodeId: string) => void;
+  /** 给用户的即时反馈（走画布日志）。不传则静默但仍生效 */
+  onNote?: (msg: string) => void;
 };
 
 export default function Inspector({
   node, edges, onChange, credentials, onOpenCredentials, webhookTokens,
-  secretPolicy, onChangeSecretPolicy, onEditModule,
+  secretPolicy, onChangeSecretPolicy, onEditModule, onNote,
 }: Props) {
+  const pushNote = onNote;
   if (!node) {
     return (
       <aside className="inspector">
@@ -109,6 +116,66 @@ export default function Inspector({
     </div>
   ) : null;
 
+  /*
+   * 「设为默认」行。
+   *
+   * 同样放在分发器里 —— 条件 / 循环 / 并发 / 触发器用的是整体自定义面板，
+   * 塞进各面板要改 4 处；这里一次覆盖全部类型。
+   *
+   * 它也不属于"节点参数"（不影响本次执行），而是影响**以后新建的节点**，
+   * 所以没混进字段列表。
+   */
+  const presets = allPresets();
+  const presetKey = matchPresetKey(
+    presets as never, node.type, node.data as Record<string, unknown>,
+  ) ?? node.type;
+  const hasOwn = hasDefault(presetKey);
+
+  const onSetDefault = () => {
+    const r = setDefault(presetKey, node.data);
+    const label = presets.find((p) => p.key === presetKey)?.label ?? presetKey;
+    if (r.strippedSecrets) {
+      pushNote?.(
+        `已把当前参数设为「${label}」的默认。节点里直接填写的令牌不会被保存`
+        + '（默认值是明文存储），请改用凭据中心的凭据。',
+      );
+      return;
+    }
+    pushNote?.(`已把当前参数设为「${label}」的默认，之后新建的同类节点都用这套值。`);
+  };
+
+  const onClearDefault = () => {
+    clearDefault(presetKey);
+    const label = presets.find((p) => p.key === presetKey)?.label ?? presetKey;
+    pushNote?.(`已清除「${label}」的默认参数，恢复为出厂值。`);
+  };
+
+  const defaultRow = (
+    <div className="insp-size" style={{ marginBottom: 6, paddingBottom: 6 }}>
+      <span className="insp-size-label">
+        {hasOwn ? '已设默认' : '默认参数'}
+      </span>
+      <span className="insp-size-ops">
+        <button
+          className={`insp-size-btn${hasOwn ? ' on' : ''}`}
+          title="把当前参数存成这类节点的默认值，之后新建的同类节点都用这套值"
+          onClick={onSetDefault}
+        >
+          设为默认
+        </button>
+        {hasOwn ? (
+          <button
+            className="insp-size-btn"
+            title="恢复为出厂默认值"
+            onClick={onClearDefault}
+          >
+            清除
+          </button>
+        ) : null}
+      </span>
+    </div>
+  );
+
   const sizeRow = (
     <div className="insp-size">
       <span className="insp-size-label">显示高度</span>
@@ -131,6 +198,7 @@ export default function Inspector({
     <>
       {stackRow}
       {sizeRow}
+      {defaultRow}
       <Panel
         onEditModule={onEditModule}
       node={node}
