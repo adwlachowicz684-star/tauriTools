@@ -27,6 +27,9 @@ export const BRIDGE_CHANNEL = 'nexus-bridge-v1';
  * 带进插件，此时按 ESC 外壳根本收不到 —— 检查器就关不掉了。
  * 宿主侧只在"检查器开着"时才消费它，避免抢走插件自己的 ESC（关弹窗）。
  */
+/* ctx.invoke 的命令白名单（默认拒绝）。详见该文件头部说明。 */
+import { checkInvoke } from './invoke-policy.js';
+
 export const SHELL_SHORTCUTS = ['mod+b', 'mod+r', 'mod+,', 'esc'];
 
 /**
@@ -487,6 +490,15 @@ export function createModuleContext({
         case 'invoke': {
           const tauri = await getTauri();
           if (!tauri) throw new Error('当前不在 Tauri 环境中（浏览器调试模式无法调用 Rust 命令）');
+          /*
+           * 同页（module）插件与宿主**同文档**，理论上可以直接 import
+           * tauri-core 绕过这里 —— 所以这层不是硬边界，是纵深防御：
+           *   · 挡住"顺手调了没声明的命令"（绝大多数情况）
+           *   · 让违规在开发期就暴露，而不是等到出事
+           * 真正的硬边界在 iframe 侧（host.js 的 case 'invoke'）。
+           */
+          const v = checkInvoke(manifest?.id, payload?.cmd);
+          if (!v.ok) throw new Error(v.reason);
           return tauri.invoke(payload.cmd, payload.args);
         }
         case 'listen': {

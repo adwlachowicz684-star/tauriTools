@@ -6,6 +6,9 @@
  */
 
 import { getTauri, isInsideTauri } from './tauri-core.js';
+/* ctx.invoke 的命令白名单。此前是无条件透传（插件可调任意后端命令），
+   它是文件残留与安全上最大的口子，嵌合后会进一步放大。 */
+import { checkInvoke } from './invoke-policy.js';
 /* 元素检查器：iframe 内的鼠标事件收不到（不跨文档冒泡），
    靠插件转发坐标回来，再由这两个函数去 iframe 自己的文档里命中。
    引入它们而不是走事件，是因为需要同步读取"检查器是否开着"。 */
@@ -1045,6 +1048,20 @@ export function createHost(opts = {}) {
         case 'invoke': {
           const tauri = await getTauri();
           if (!tauri) throw new Error('当前不在 Tauri 环境中');
+          /*
+           * 白名单校验：**必须**在真正 invoke 之前。
+           *
+           * 此前这里是无条件透传 —— cmd 完全由插件传入，
+           * 于是插件能调后端全部 47 个命令，包括 fs_op（写删文件）、
+           * run_node（拉子进程）、af_fs_allow_root（给自己授权目录 = 提权）。
+           * 这是文件残留与安全上最大的口子。
+           */
+          const verdict = checkInvoke(manifest.id, payload?.cmd);
+          if (!verdict.ok) {
+            /* 拒绝时也要回包，不能只是抛错不回 ——
+               调用方在等 res，漏回会让它挂到超时，界面表现为"点了没反应"。 */
+            return reply(false, null, verdict.reason);
+          }
           return reply(true, await tauri.invoke(payload.cmd, payload.args));
         }
         case 'listen':
