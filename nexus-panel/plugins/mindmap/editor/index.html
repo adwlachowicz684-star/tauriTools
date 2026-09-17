@@ -264,8 +264,33 @@
                 if (!raw) return '';
                 try {
                     var o = typeof raw === 'string' ? JSON.parse(raw) : raw;
-                    return o && o.n ? String(o.n) : '';
-                } catch (e) { return ''; }
+                    if (o && o.n) return String(o.n);
+                } catch (e) { /* 不是 JSON：C# 版留下的纯路径字符串，走下面兜底 */ }
+                // 老式纯路径至少把文件名显示出来 —— 否则这类附件在画布上
+                // 只能显示「文件附件」，用户根本认不出挂的是哪个
+                return String(raw).split(/[\\/]/).pop() || '';
+            }
+
+            /* ---------------- 附件名文字标签（画布上可见） ---------------- */
+
+            /** 标签最大字数：再长就横穿整张图、压住别的分支 */
+            var LABEL_MAX = 14;
+
+            /**
+             * 附件引用 → 画布标签文字（纯函数，可测）。
+             * 换行压成空格（SVG <text> 不认 \n），超长截断加省略号。
+             */
+            function attachmentLabel(raw, fallback) {
+                var n = String(refName(raw) || fallback || '').replace(/\s+/g, ' ').trim();
+                if (!n) return '';
+                return n.length > LABEL_MAX ? n.slice(0, LABEL_MAX - 1) + '…' : n;
+            }
+
+            /** 标签字号：跟随节点字号但更小，钳在 [9,13] */
+            function attachmentFontSize(node) {
+                var fs = 14;
+                try { fs = parseFloat(node.getStyle('font-size')) || 14; } catch (e) { fs = 14; }
+                return Math.max(9, Math.min(13, Math.round(fs * 0.75)));
             }
 
             var FileIcon = kity.createClass('FileIcon', {
@@ -327,6 +352,13 @@
                         var old = node._kmFileIcon, oldv = node._kmVideoIcon;
                         if (old) { if (old.remove) old.remove(); node._kmFileIcon = null; }
                         if (oldv) { if (oldv.remove) oldv.remove(); node._kmVideoIcon = null; }
+                        var oldLabels = node._kmLabels || [];
+                        for (var li = 0; li < oldLabels.length; li++) {
+                            if (oldLabels[li] && oldLabels[li].remove) {
+                                try { oldLabels[li].remove(); } catch (e3) {}
+                            }
+                        }
+                        node._kmLabels = null;
                         var box = node.getContentBox();
                         if (!box) return;
                         var baseX = box.right + node.getStyle('space-left');
@@ -361,6 +393,31 @@
                             var vc = new VideoIcon();
                             attach(vc, node.getData('video'), baseX, refName(node.getData('video')) || '视频附件');
                             node._kmVideoIcon = vc;
+                        }
+                        // 附件名文字：只画图标认不出挂的是哪个文件 ——
+                        // <title> 悬浮提示要鼠标停一会儿才出现，多数人根本不会发现。
+                        var texts = [];
+                        if (node.getData('file')) texts.push(attachmentLabel(node.getData('file'), '文件附件'));
+                        if (node.getData('video')) texts.push(attachmentLabel(node.getData('video'), '视频附件'));
+                        var shown = [];
+                        for (var qi = 0; qi < texts.length; qi++) { if (texts[qi]) shown.push(texts[qi]); }
+                        if (shown.length) {
+                            var fs = attachmentFontSize(node);
+                            var lineH = fs + 2;
+                            for (var ti = 0; ti < shown.length; ti++) {
+                                var lb = new kity.Text(shown[ti]);
+                                try {
+                                    lb.setSize(fs);
+                                    lb.fill(color);
+                                    lb.setTextAnchor('middle');
+                                    // 文字比图标宽得多：可点击会挡住画布拖拽
+                                    // 与空白处框选，得不偿失
+                                    lb.setStyle('pointer-events', 'none');
+                                    lb.setTranslate(box.cx, box.bottom + fs + 3 + ti * lineH);
+                                } catch (e3) {}
+                                rc.appendShape(lb);
+                                (node._kmLabels = node._kmLabels || []).push(lb);
+                            }
                         }
                     } catch (e2) {}
                 });

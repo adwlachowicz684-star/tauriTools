@@ -4020,6 +4020,163 @@ group('交换格式接入 UI');
 }
 
 /* ============================================================
+   三十五、画布附件名文字标签
+   ============================================================ */
+
+group('附件名标签（画布上可见）');
+
+{
+  /*
+   * 用 editor/index.html 里的**真实源码**跑（iconColor + refName + 标签函数
+   * + FileIcon/VideoIcon + noderender 钩子），不是复刻一份 ——
+   * 复刻的话实现改了测试还是绿的。
+   */
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  const startAt = html.indexOf('function iconColor(node) {');
+  const hookAt = html.indexOf("km.on('noderender', function (e) {");
+  // 必须一直取到外层 `} catch (e) {}`：只取到 `});` 的话，
+  // 包裹 km.on 的那个 `try {` 就没有 catch，new Function 直接语法错误
+  const endAt = html.indexOf('\n            } catch (e) {}', hookAt);
+  ok(startAt > 0 && hookAt > startAt && endAt > hookAt, '能定位到编辑器里的图标/标签源码');
+  const src = html.slice(startAt, endAt + '\n            } catch (e) {}'.length);
+
+  // ---- kity 桩：只记录调用，不真渲染 ----
+  function mkBase() {
+    return {
+      // callBase 必须有：FileIcon/VideoIcon 的构造函数第一句就是 this.callBase()，
+      // 桩里缺了它会在构造函数里抛 TypeError，被钩子内的 catch(e2) 静默吞掉，
+      // 表现为「什么都不画」且毫无报错 —— 很隐蔽。
+      callBase() {},
+      styles: {},
+      node: { appendChild() {}, children: [] },
+      fill(v) { this._fill = v; return this; },
+      stroke(v, w) { this._stroke = v; this._strokeW = w; return this; },
+      setPathData(d) { this._d = d; return this; },
+      addShapes(list) { (this.shapes = this.shapes || []).push(...list); return this; },
+      on() { return this; },
+      setStyle(k, v) { this.styles[k] = v; return this; },
+      setTranslate(x, y) { this.tx = x; this.ty = y; return this; },
+      setSize(v) { this.size = v; return this; },
+      setTextAnchor(v) { this.anchor = v; return this; },
+      setContent(v) { this.content = v; return this; },
+      remove() { this.removed = true; return this; },
+    };
+  }
+  const kity = {
+    createClass(name, def) {
+      const proto = {};
+      for (const k of Object.keys(def)) if (k !== 'constructor' && k !== 'base') proto[k] = def[k];
+      Object.assign(proto, mkBase());
+      function C(...a) { Object.assign(this, mkBase()); if (def.constructor) def.constructor.apply(this, a); }
+      C.prototype = proto;
+      return C;
+    },
+    Group: function () { Object.assign(this, mkBase()); },
+    Rect: function (...a) { Object.assign(this, mkBase()); this.args = a; },
+    Path: function () { Object.assign(this, mkBase()); },
+    Text: function (c) { Object.assign(this, mkBase()); this.content = c; },
+  };
+
+  /** 起一个环境：node 数据 → 跑一次 noderender → 返回记录 */
+  function render(data, style = {}) {
+    const appended = [];
+    const box = { left: 0, right: 100, top: 20, bottom: 40, cx: 50, cy: 30, width: 100, height: 20 };
+    const rc = { appendShape(s) { appended.push(s); } };
+    const node = {
+      data,
+      getData(k) { return this.data[k]; },
+      getStyle(k) {
+        if (k === 'color') return style.color ?? '#AEB6C4';
+        if (k === 'font-size') return style['font-size'] ?? 14;
+        if (k === 'space-left') return 10;
+        return null;
+      },
+      getContentBox() { return box; },
+      getRenderContainer() { return rc; },
+    };
+    const km = {
+      handlers: {},
+      on(evt, fn) { (this.handlers[evt] = this.handlers[evt] || []).push(fn); },
+    };
+    new Function('kity', 'km', 'hostPost', 'document', src)(
+      kity, km, () => {}, { createElementNS: () => ({ textContent: '' }) });
+    km.handlers.noderender.forEach((fn) => fn({ node }));
+    // 文本标签 = 有 content 的形状（图标没有）
+    return { appended, labels: appended.filter((x) => x.content !== undefined), node, box, km };
+  }
+
+  // ---- 基本情况 ----
+  {
+    const r = render({ file: JSON.stringify({ n: '报告.pdf', a: 'A1' }) });
+    eq(r.labels.length, 1, '挂了文件 → 画 1 个名字标签');
+    eq(r.labels[0].content, '报告.pdf', '标签文字就是文件名');
+    eq(r.labels[0].anchor, 'middle', '居中对齐（对齐节点中心）');
+    eq(r.labels[0].tx, r.box.cx, '横向居中在节点 cx');
+    eq(r.labels[0].ty, r.box.bottom + 11 + 3, '纵向在节点框下方（bottom + 字号 + 间距）');
+    eq(r.labels[0].size, 11, '字号 11（节点 14 的 0.75 倍）');
+    eq(r.labels[0].styles['pointer-events'], 'none',
+      '不可点击 —— 文字比图标宽，可点击会挡住画布拖拽与空白框选');
+    eq(r.labels[0]._fill, '#AEB6C4', '用节点文字色（与图标同色）');
+  }
+
+  // ---- 文件 + 视频同时存在：两行，不重叠 ----
+  {
+    const r = render({
+      file: JSON.stringify({ n: '报告.pdf' }),
+      video: JSON.stringify({ n: '演示.mp4' }),
+    });
+    eq(r.labels.length, 2, '文件 + 视频 → 2 个标签');
+    eq(r.labels[0].content, '报告.pdf', '第一行是文件名');
+    eq(r.labels[1].content, '演示.mp4', '第二行是视频名');
+    eq(r.labels[1].ty - r.labels[0].ty, 11 + 2, '行距 = 字号 + 2（两行不重叠）');
+  }
+
+  // ---- 无附件 → 不画 ----
+  eq(render({ text: '普通节点' }).labels.length, 0, '无附件 → 不画标签（不然每个节点底下都有空行）');
+
+  // ---- 老式纯路径：至少显示文件名 ----
+  {
+    eq(render({ file: 'C:\\x\\y.pdf' }).labels[0].content, 'y.pdf',
+      'C# 版遗留的 Windows 纯路径 → 显示文件名（不是「文件附件」）');
+    eq(render({ file: '/a/b/c.pdf' }).labels[0].content, 'c.pdf', 'POSIX 纯路径同样取末段');
+  }
+
+  // ---- 超长名截断 ----
+  {
+    const long = render({ file: JSON.stringify({ n: '一二三四五六七八九十一二三四五六七八九十.pdf' }) });
+    ok(long.labels[0].content.length <= 14, '超长名截到 14 字以内（不截会横穿整张图）');
+    ok(long.labels[0].content.endsWith('…'), '截断后带省略号');
+  }
+
+  // ---- 换行压成空格（SVG <text> 不认 \n）----
+  eq(render({ file: JSON.stringify({ n: 'a\nb' }) }).labels[0].content, 'a b', '换行压成空格');
+
+  // ---- 字号钳制 ----
+  eq(render({ file: '{}' }, { 'font-size': 40 }).labels[0].size, 13, '大字号钳到 13（不能跟着无限大）');
+  eq(render({ file: '{}' }, { 'font-size': 8 }).labels[0].size, 9, '小字号钳到 9（再小看不清）');
+  eq(render({ file: '{}' }, { 'font-size': 'abc' }).labels[0].size, 11, '非法字号回落默认');
+
+  // ---- 重渲必须回收旧标签（否则节点每次重画都叠一层，越来越黑）----
+  {
+    const r = render({ file: JSON.stringify({ n: 'a.pdf' }) });
+    const first = r.labels[0];
+    eq(first.removed, undefined, '首次渲染的标签还没被回收');
+    // 同一节点再渲染一次
+    r.km.handlers.noderender.forEach((fn) => fn({ node: r.node }));
+    eq(first.removed, true, '重渲前回收旧标签（不回收会越叠越黑）');
+    eq(r.node._kmLabels.length, 1, '重渲后仍是 1 个标签（不是 2 个）');
+  }
+
+  // ---- 附件移除后标签要消失 ----
+  {
+    const r = render({ file: JSON.stringify({ n: 'a.pdf' }) });
+    r.node.data = { text: 'x' };
+    r.km.handlers.noderender.forEach((fn) => fn({ node: r.node }));
+    eq(r.node._kmLabels, null, '附件移除后不残留标签');
+  }
+}
+
+/* ============================================================
    结果
    ============================================================ */
 
