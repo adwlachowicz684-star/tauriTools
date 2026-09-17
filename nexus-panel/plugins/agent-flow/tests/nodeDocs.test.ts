@@ -30,20 +30,36 @@ test('AF_SRC 已设置（docs 在仓库里，测试在 $OUT/tests 下跑）', ()
 
 /* ---------------- 结构完整 ---------------- */
 
-test('三层结构齐全：索引 + 每个控件两页', () => {
+/*
+ * 只有两层：索引 + 参数页。
+ *
+ * 原先还有一层"控件说明页"，但它的独有内容只有 node.type 与从产出
+ * 类型推导出的"注意"，其余都和索引/参数页重复 —— 25 页里有大段
+ * 模板化填充（"从侧栏拖到画布…"），是噪音不是信息。
+ * 压掉后 58 → 33 个文件，信息不丢。
+ */
+test('两层结构：索引 + 每个控件一个参数页', () => {
   assert.ok(fs.existsSync(path.join(DOCS, 'README.md')), '缺 docs/README.md');
   for (const b of blockCatalog()) {
-    for (const suffix of ['', '.params']) {
-      const f = path.join(nodesDir, `${b.kind}${suffix}.md`);
-      assert.ok(fs.existsSync(f), `缺 ${b.kind}${suffix}.md`);
-    }
+    assert.ok(
+      fs.existsSync(path.join(nodesDir, `${b.kind}.params.md`)),
+      `缺 ${b.kind}.params.md`,
+    );
+  }
+});
+
+test('不再生成冗余的说明页（已压成两层）', () => {
+  for (const b of blockCatalog()) {
+    assert.ok(
+      !fs.existsSync(path.join(nodesDir, `${b.kind}.md`)),
+      `${b.kind}.md 是压掉的那层说明页，不该再生成`,
+    );
   }
 });
 
 test('文档都标了"自动生成"，避免手改后再被覆盖', () => {
   const files = [path.join(DOCS, 'README.md')];
   for (const b of blockCatalog()) {
-    files.push(path.join(nodesDir, `${b.kind}.md`));
     files.push(path.join(nodesDir, `${b.kind}.params.md`));
   }
   for (const f of files) {
@@ -54,9 +70,9 @@ test('文档都标了"自动生成"，避免手改后再被覆盖', () => {
 
 /* ---------------- 与契约一致（防"改了代码没重新生成"）---------------- */
 
-test('每个控件的说明页：产出 / 接受 / 能力与当前契约一致', () => {
+test('每个参数页头部：产出 / 接受 / 能力与当前契约一致', () => {
   for (const b of blockCatalog()) {
-    const s = fs.readFileSync(path.join(nodesDir, `${b.kind}.md`), 'utf-8');
+    const s = fs.readFileSync(path.join(nodesDir, `${b.kind}.params.md`), 'utf-8');
     assert.ok(
       s.includes(`**产出**：${b.produces}`),
       `${b.kind}.md 的产出写的是旧值（当前应为 ${b.produces}）—— `
@@ -82,7 +98,24 @@ test('每个控件的说明页：产出 / 接受 / 能力与当前契约一致',
 test('索引里收录了全部控件，一个都不能漏', () => {
   const idx = fs.readFileSync(path.join(DOCS, 'README.md'), 'utf-8');
   for (const b of blockCatalog()) {
-    assert.ok(idx.includes(`nodes/${b.kind}.md`), `索引里漏了 ${b.kind}`);
+    assert.ok(idx.includes(`nodes/${b.kind}.params.md`), `索引里漏了 ${b.kind}`);
+  }
+});
+
+/**
+ * 索引是**路由表**不是内容副本 —— 带源文件路径，
+ * 要细节就去读源文件（那里永远最新），这里只放"决定要不要进去"的判据。
+ */
+test('索引带源文件列（路由，不是副本）', () => {
+  const idx = fs.readFileSync(path.join(DOCS, 'README.md'), 'utf-8');
+  assert.ok(idx.includes('源文件'), '索引缺"源文件"列');
+  assert.ok(idx.includes('nodes/defs/'), '索引没给出 defs 路径');
+  for (const b of blockCatalog()) {
+    const d = fs.readdirSync(path.join(SRC, 'nodes', 'defs'))
+      .find((f) => fs.readFileSync(path.join(SRC, 'nodes', 'defs', f), 'utf-8')
+        .includes(`dataKind: '${b.kind}'`));
+    if (!d) continue;
+    assert.ok(idx.includes(`nodes/defs/${d}`), `索引里 ${b.kind} 的源文件路径不对`);
   }
 });
 
@@ -207,6 +240,23 @@ test('卡片页数量与 cardGroups.ts 的注册项一致', () => {
 
 /* ================= 复用件 ================= */
 
+/**
+ * 复用件页面原先**硬编码**了 ModuleDef / CustomPreset 的结构 ——
+ * 那是副本：代码一改文档不变，测试也盯不到。
+ * 改成从源文件派生后，这里盯着"解析成功"（解析失败会输出占位文案）。
+ */
+test('复用件页面的结构是从源文件派生的，不是硬编码副本', () => {
+  const m = fs.readFileSync(path.join(reuseDir, 'module.md'), 'utf-8');
+  const p = fs.readFileSync(path.join(reuseDir, 'custom-preset.md'), 'utf-8');
+  const d = fs.readFileSync(path.join(reuseDir, 'defaults.md'), 'utf-8');
+  for (const [name, s] of [['module', m], ['custom-preset', p], ['defaults', d]] as const) {
+    assert.ok(!s.includes('未能解析'), `${name}.md 的结构没解析出来 —— 派生失败会静默输出占位文案`);
+    assert.ok(s.includes('以源文件为准') || s.includes('自动派生'), `${name}.md 没说明是派生的`);
+  }
+  // ModuleDef 的字段得真解析出来
+  assert.ok(m.includes('`edges`'), 'module.md 没解析出 ModuleDef 的字段');
+});
+
 test('复用件：模块 / 自定义预设 / 默认值都有说明页', () => {
   for (const n of ['module', 'custom-preset', 'defaults']) {
     assert.ok(fs.existsSync(path.join(reuseDir, `${n}.md`)), `缺 reuse/${n}.md`);
@@ -275,5 +325,35 @@ test('所有页面的链接都不指向空文件', () => {
       const target = path.resolve(path.dirname(f), m[1]);
       assert.ok(fs.existsSync(target), `${path.relative(DOCS, f)} 链到了不存在的 ${m[1]}`);
     }
+  }
+});
+
+/**
+ * 参数表的"取值"列不能出现 undefined。
+ *
+ * 踩过两次：
+ *  1. options 是函数形式（options: () => XXX.map(...)）时取不到值
+ *  2. deriveParams 把 options 收敛成 string[] 后，渲染还按
+ *     {value,label} 对象取 .value —— 于是显示 "undefined / undefined"
+ *
+ * 这种"看着有值、实际是 undefined"比留空更误导。
+ */
+test('参数表的取值列不能出现 undefined', () => {
+  for (const f of fs.readdirSync(nodesDir)) {
+    const s = fs.readFileSync(path.join(nodesDir, f), 'utf-8');
+    assert.ok(!s.includes('undefined'), `${f} 的参数表里有 undefined`);
+  }
+});
+
+/**
+ * fields 常常不在主 def 文件里（bili.ts 写 `fields: () => updateFields`，
+ * 真清单在同目录的 updateFields.tsx）。
+ * 只看主文件会让参数表只剩一两项，真正的 biliUid / feedUrl 全丢 ——
+ * AI 拼出来会缺参数，报 "Cannot read properties of undefined (reading 'trim')"。
+ */
+test('fields 在别的文件里时也要解析到（update 是这类）', () => {
+  const s = fs.readFileSync(path.join(nodesDir, 'update.params.md'), 'utf-8');
+  for (const k of ['biliUid', 'feedUrl', 'biliMode']) {
+    assert.ok(s.includes(`\`${k}\``), `update.params.md 缺 ${k} —— fields 的间接引用没跟上`);
   }
 });

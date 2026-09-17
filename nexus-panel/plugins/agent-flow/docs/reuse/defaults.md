@@ -42,3 +42,5 @@ TraeCode 变体的 cli 也改掉** —— 而用户根本没碰过那个变体�
 ## 存储键
 
 `agent-flow.node-defaults.v1`
+
+（自动派生自 `engine/nodeDefaults.ts` 的 `NODE_DEFAULTS_KEY`，避免手抄后漂移）

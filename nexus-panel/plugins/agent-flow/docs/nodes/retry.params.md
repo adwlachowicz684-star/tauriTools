@@ -1,8 +1,19 @@
 # retry — 参数与使用方式
 
-> 自动生成，不要手改。
+> 自动生成，**不要手改**。这是 `nodes/defs/retry.tsx` 的**派生视图**：
+> 具体值以源文件为准，这里只做汇总。
 
-[← 上一层：控件说明](retry.md) ｜ [← 回到索引](../README.md)
+[← 回到索引](../README.md)
+
+- **分类**：控制器
+- **node.type**：`retry`
+- **源文件**：`nodes/defs/retry.tsx`
+- **产出**：any（透传上游）　**接受**：any
+- **需要的外部能力**：无（纯本地，浏览器模式也能跑）
+
+## 它做什么
+
+透传上游；上游内容不合格时重跑它
 
 ## 面板上的提示
 
@@ -17,12 +28,6 @@
 | `intervalMs` | number | 每次间隔；毫秒 | — | — |
 | `check` | select | 合格条件；有内容就行 | `nonempty` / `contains` / `notContains` / `regex` | — |
 | `value` | text | 比对值；占位：要包含的文本 / 正则表达式 | — | `d → d.check !== 'nonempty'` |
-
-## 怎么用它
-
-1. 从侧栏「控制器」分组拖到画布
-2. 在属性面板填参数（面板由 `nodes/defs/retry.tsx` 的 fields 自动渲染）
-3. 用连线接到上下游；引用上游输出写 `{{上游id.output}}`
 
 ## 建节点的正确方式
 

@@ -1,29 +1,38 @@
 # translate — 参数与使用方式
 
-> 自动生成，不要手改。
+> 自动生成，**不要手改**。这是 `nodes/defs/translate.tsx` 的**派生视图**：
+> 具体值以源文件为准，这里只做汇总。
 
-[← 上一层：控件说明](translate.md) ｜ [← 回到索引](../README.md)
+[← 回到索引](../README.md)
+
+- **分类**：AI 能力
+- **node.type**：`translate`
+- **源文件**：`nodes/defs/translate.tsx`
+- **产出**：text（文本）　**接受**：text
+- **需要的外部能力**：`llmCaller`
+
+## 它做什么
+
+翻译后的文本
+
+## 能力签名
+
+- `llmCaller`: `({ url, headers, body, timeoutSec }) => Promise<{ status, text }>`
+
+## 注意
+
+- 它只接受 text，其余类型接上去会被告警。
 
 共 6 项：
 
 | 参数 | 类型 | 说明 | 取值 | 显示条件 |
 |---|---|---|---|---|
 | `sourceLang` | text | 源语言；留空让模型自动判断；填了能减少误判（如「日语」）；占位：留空自动识别 | — | — |
-| `targetLang` | chips | 目标语言；占位：如「简练的文言文」 | — | `d → !TARGET_LANGS.some((l) => l.code === d.targetLang)` |
+| `targetLang` | chips | 目标语言；占位：如「简练的文言文」 | `动态（TARGET_LANGS.map）` | `d → !TARGET_LANGS.some((l) => l.code === d.targetLang)` |
 | `credentialId` | credential | — | — | — |
 | `text` | custom | 由手写面板渲染（通常带上游变量插入按钮） | — | — |
 | `glossary` | textarea | 术语表（可选）；每行一条「原文=译文」，保证专有名词译法一致；占位：GPU=图形处理器\nTransformer=变换器 | — | — |
 | `llm` | 隐藏（不在面板字段里） | 大模型配置 { url, model, apiKey, timeoutSec }。由 llm-config 卡片组提供，建节点时 def.create() 会填默认值 | — | — |
-
-## 怎么用它
-
-1. 从侧栏「AI 能力」分组拖到画布
-2. 在属性面板填参数（面板由 `nodes/defs/translate.tsx` 的 fields 自动渲染）
-3. 用连线接到上下游；引用上游输出写 `{{上游id.output}}`
-
-产出是文本，可以：
-- 直接给下游用（`{{translate节点id.output}}`）
-- 接「condition」节点做判断
 
 ## 建节点的正确方式
 

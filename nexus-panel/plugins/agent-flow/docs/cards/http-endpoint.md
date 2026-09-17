@@ -17,7 +17,7 @@ HTTP 请求地址：url / method
 
 ## 能用在哪些节点
 
-- [`generic-http`](../nodes/generic-http.md) — HTTP 请求
+- [`generic-http`](../nodes/generic-http.params.md) — HTTP 请求
 
 拖到节点上时会校验：节点必须**声明支持**这个组，否则拒绝并说明原因。
 

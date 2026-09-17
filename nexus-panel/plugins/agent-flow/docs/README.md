@@ -25,68 +25,68 @@
 
 ## 触发器（起点）
 
-| 控件 | kind | 产出 | 接受 | 能力 | 说明 |
+| kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
-| [trigger](nodes/trigger.md) | `trigger` | text（文本） | none | — | 流程的初始输入（手动文本 / 触发带来的内容） |
+| [trigger](nodes/trigger.params.md) | text（文本） | none | — | 流程的初始输入（手动文本 / 触发带来的内容） | `nodes/defs/trigger.ts` |
 
 ## 任务
 
-| 控件 | kind | 产出 | 接受 | 能力 | 说明 |
+| kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
-| [task](nodes/task.md) | `task` | text（文本） | any | — | CLI 的执行输出 |
+| [task](nodes/task.params.md) | text（文本） | any | — | CLI 的执行输出 | `nodes/defs/task.tsx` |
 
 ## 流程控制
 
-| 控件 | kind | 产出 | 接受 | 能力 | 说明 |
+| kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
-| [condition](nodes/condition.md) | `condition` | mark（状态标记） | any | — | 分支标记文本（如「[条件] 走「是」」）—— 作用是分流，不转换数据 |
-| [loop](nodes/loop.md) | `loop` | any（透传上游） | any | — | 透传（循环体每轮一次，done 出口汇总一次） |
-| [parallel](nodes/parallel.md) | `parallel` | any（透传上游） | any | — | 透传 |
+| [condition](nodes/condition.params.md) | mark（状态标记） | any | — | 分支标记文本（如「[条件] 走「是」」）—— 作用是分流，不转换数据 | `nodes/defs/condition.ts` |
+| [loop](nodes/loop.params.md) | any（透传上游） | any | — | 透传（循环体每轮一次，done 出口汇总一次） | `nodes/defs/loop.ts` |
+| [parallel](nodes/parallel.params.md) | any（透传上游） | any | — | 透传 | `nodes/defs/parallel.ts` |
 
 ## 控制器
 
-| 控件 | kind | 产出 | 接受 | 能力 | 说明 |
+| kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
-| [gate](nodes/gate.md) | `gate` | any（透传上游） | any | — | 满足条件才放行下游 |
-| [join](nodes/join.md) | `join` | text（文本） | any | — | 等所有输入都到齐了才放行下游 |
-| [retry](nodes/retry.md) | `retry` | any（透传上游） | any | — | 上游内容不合格就重跑它 |
-| [throttle](nodes/throttle.md) | `throttle` | any（透传上游） | any | — | 控制放行的节奏 |
-| [timeout](nodes/timeout.md) | `timeout` | any（透传上游） | any | — | 整条流程超预算就断在这里 |
+| [gate](nodes/gate.params.md) | any（透传上游） | any | — | 满足条件才放行下游 | `nodes/defs/gate.tsx` |
+| [join](nodes/join.params.md) | text（文本） | any | — | 等所有输入都到齐了才放行下游 | `nodes/defs/join.tsx` |
+| [retry](nodes/retry.params.md) | any（透传上游） | any | — | 上游内容不合格就重跑它 | `nodes/defs/retry.tsx` |
+| [throttle](nodes/throttle.params.md) | any（透传上游） | any | — | 控制放行的节奏 | `nodes/defs/throttle.tsx` |
+| [timeout](nodes/timeout.params.md) | any（透传上游） | any | — | 整条流程超预算就断在这里 | `nodes/defs/timeout.tsx` |
 
 ## 文件与数据
 
-| 控件 | kind | 产出 | 接受 | 能力 | 说明 |
+| kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
-| [extract](nodes/extract.md) | `extract` | text（文本） | text / json | — | JSON 路径 / 正则 / 按行 |
-| [fs](nodes/fs.md) | `fs` | files（文件列表） | any | fsExecutor | 文件引用列表（下游按文件处理） |
+| [extract](nodes/extract.params.md) | text（文本） | text / json | — | JSON 路径 / 正则 / 按行 | `nodes/defs/extract.tsx` |
+| [fs](nodes/fs.params.md) | files（文件列表） | any | fsExecutor | 文件引用列表（下游按文件处理） | `nodes/defs/fs.ts` |
 
 ## AI 能力
 
-| 控件 | kind | 产出 | 接受 | 能力 | 说明 |
+| kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
-| [ocr](nodes/ocr.md) | `ocr` | text（文本） | text / files / any | imageReader, llmCaller | 图片识别出的文字 |
-| [translate](nodes/translate.md) | `translate` | text（文本） | text | llmCaller | 需填自己的大模型 API Key |
+| [ocr](nodes/ocr.params.md) | text（文本） | text / files / any | imageReader, llmCaller | 图片识别出的文字 | `nodes/defs/ocr.tsx` |
+| [translate](nodes/translate.params.md) | text（文本） | text | llmCaller | 需填自己的大模型 API Key | `nodes/defs/translate.tsx` |
 
 ## 外部服务
 
-| 控件 | kind | 产出 | 接受 | 能力 | 说明 |
+| kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
-| [generic-http](nodes/generic-http.md) | `generic-http` | json（JSON） | any | httpRequester | 填地址与参数即可调任意接口 |
-| [github-push](nodes/github-push.md) | `github-push` | text（文本） | any | githubPush | 推送结果说明 |
-| [github-update](nodes/github-update.md) | `github-update` | json（JSON） | none | githubFetch | 在「凭据」里填一次令牌，两个节点共用 |
-| [update](nodes/update.md) | `update` | bool（是/否） | none | fetcher | 是否有更新（true / false）—— 给条件节点判断 |
+| [generic-http](nodes/generic-http.params.md) | json（JSON） | any | httpRequester | 填地址与参数即可调任意接口 | `nodes/defs/genericHttp.tsx` |
+| [github-push](nodes/github-push.params.md) | text（文本） | any | githubPush | 推送结果说明 | `nodes/defs/github_push.tsx` |
+| [github-update](nodes/github-update.params.md) | json（JSON） | none | githubFetch | 在「凭据」里填一次令牌，两个节点共用 | `nodes/defs/github_update.tsx` |
+| [update](nodes/update.params.md) | bool（是/否） | none | fetcher | 是否有更新（true / false）—— 给条件节点判断 | `nodes/defs/bili.ts` |
 
 ## 工具
 
-| 控件 | kind | 产出 | 接受 | 能力 | 说明 |
+| kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
-| [beep](nodes/beep.md) | `beep` | any（透传上游） | any | — | 跑完了响一声，适合长时间无人值守的流程 |
-| [clock](nodes/clock.md) | `clock` | text（文本） | none | — | 输出当前时间，常用于生成带时间戳的文件名 |
-| [const](nodes/const.md) | `const` | text（文本） | none | — | 输出一个固定值给下游 |
-| [log](nodes/log.md) | `log` | any（透传上游） | any | — | 往运行日志里写一条，不影响数据流 |
-| [module](nodes/module.md) | `module` | any（透传上游） | any | — | 多个节点打包复用 |
-| [play-audio](nodes/play-audio.md) | `play-audio` | any（透传上游） | any | playAudioReader | 播放本地音频文件 |
-| [wait](nodes/wait.md) | `wait` | any（透传上游） | any | — | 暂停一段时间再往下跑 |
+| [beep](nodes/beep.params.md) | any（透传上游） | any | — | 跑完了响一声，适合长时间无人值守的流程 | `nodes/defs/beep.ts` |
+| [clock](nodes/clock.params.md) | text（文本） | none | — | 输出当前时间，常用于生成带时间戳的文件名 | `nodes/defs/clock.ts` |
+| [const](nodes/const.params.md) | text（文本） | none | — | 输出一个固定值给下游 | `nodes/defs/const.ts` |
+| [log](nodes/log.params.md) | any（透传上游） | any | — | 往运行日志里写一条，不影响数据流 | `nodes/defs/log.ts` |
+| [module](nodes/module.params.md) | any（透传上游） | any | — | 多个节点打包复用 | `nodes/defs/module.ts` |
+| [play-audio](nodes/play-audio.params.md) | any（透传上游） | any | playAudioReader | 播放本地音频文件 | `nodes/defs/playAudio.ts` |
+| [wait](nodes/wait.params.md) | any（透传上游） | any | — | 暂停一段时间再往下跑 | `nodes/defs/wait.ts` |
 
 ## 参数卡片
 

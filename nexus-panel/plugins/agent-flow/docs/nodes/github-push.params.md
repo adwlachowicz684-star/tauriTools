@@ -1,8 +1,23 @@
 # github-push — 参数与使用方式
 
-> 自动生成，不要手改。
+> 自动生成，**不要手改**。这是 `nodes/defs/github_push.tsx` 的**派生视图**：
+> 具体值以源文件为准，这里只做汇总。
 
-[← 上一层：控件说明](github-push.md) ｜ [← 回到索引](../README.md)
+[← 回到索引](../README.md)
+
+- **分类**：外部服务
+- **node.type**：`github-push`
+- **源文件**：`nodes/defs/github_push.tsx`
+- **产出**：text（文本）　**接受**：any
+- **需要的外部能力**：`githubPush`
+
+## 它做什么
+
+推送结果说明
+
+## 能力签名
+
+- `githubPush`: `推送文件 => Promise<string>`
 
 共 8 项：
 
@@ -16,16 +31,6 @@
 | `credentialId` | credential | — | — | — |
 | `order` | custom | 由手写面板渲染（通常带上游变量插入按钮） | — | — |
 | `workdir` | text | 本地路径；占位：仅 git 方案需要 | — | — |
-
-## 怎么用它
-
-1. 从侧栏「外部服务」分组拖到画布
-2. 在属性面板填参数（面板由 `nodes/defs/github_push.tsx` 的 fields 自动渲染）
-3. 用连线接到上下游；引用上游输出写 `{{上游id.output}}`
-
-产出是文本，可以：
-- 直接给下游用（`{{github-push节点id.output}}`）
-- 接「condition」节点做判断
 
 ## 建节点的正确方式
 

@@ -16,7 +16,7 @@
 
 ## 能用在哪些节点
 
-- [`github-push`](../nodes/github-push.md) — 推送
+- [`github-push`](../nodes/github-push.params.md) — 推送
 
 拖到节点上时会校验：节点必须**声明支持**这个组，否则拒绝并说明原因。
 

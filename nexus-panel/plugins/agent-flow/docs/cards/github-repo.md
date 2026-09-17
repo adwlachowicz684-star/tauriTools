@@ -18,8 +18,8 @@ GitHub 仓库地址：owner / repo / branch
 
 ## 能用在哪些节点
 
-- [`github-push`](../nodes/github-push.md) — 推送
-- [`github-update`](../nodes/github-update.md) — 更新检测
+- [`github-push`](../nodes/github-push.params.md) — 推送
+- [`github-update`](../nodes/github-update.params.md) — 更新检测
 
 拖到节点上时会校验：节点必须**声明支持**这个组，否则拒绝并说明原因。
 

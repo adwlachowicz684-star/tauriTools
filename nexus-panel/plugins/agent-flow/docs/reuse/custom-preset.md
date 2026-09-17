@@ -11,16 +11,14 @@
 
 ## 结构
 
-```ts
-type CustomPreset = {
-  id: string;
-  name: string;            // 允许重名，靠 id 区分
-  baseType: string;        // 基础节点类型，如 'generic-http' / 'task'
-  color?: string;          // 不填则用基础类型的色
-  data: Record<string, unknown>;  // **已剥离运行时状态**的配置
-  createdAt: number;
-};
-```
+定义见 `engine/customPresets.ts` 的 `CustomPreset`（**以源文件为准**，下面是自动派生的字段清单）：
+
+- `id`: `string`
+- `name`: `string`
+- `baseType`: `string`
+- `color`: `string`
+- `data`: `Record<string, unknown>`
+- `createdAt`: `number`
 
 ## 与模块的区别（最容易混淆）
 
