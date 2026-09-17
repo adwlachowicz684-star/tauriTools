@@ -16,7 +16,7 @@ import Toasts, { type ToastItem } from './components/Toasts';
 import AddPluginDialog from './components/AddPluginDialog';
 import PluginSettingsDrawer from './components/PluginSettingsDrawer';
 import { installTooltip, refreshTooltip } from '../js/tooltip.js';
-import { installInspector, toggleInspector, isInspectorOn } from '../js/inspector.js';
+import { installInspector, toggleInspector, isInspectorOn, escInspector } from '../js/inspector.js';
 
 /**
  * 全局唯一 ID（toast / 自定义插件共用）
@@ -204,6 +204,23 @@ export default function App() {
           if (!has) setSettingsOpen(false);
         },
         onCspViolation: (info, manifest) => handleCspViolation(info, manifest),
+        /*
+         * 焦点在 iframe 插件里时，外壳收不到键盘事件（不跨文档冒泡），
+         * 靠插件转发回来。
+         *
+         * 这里只接 ESC：检查器开着时鼠标扫过插件里的控件会把焦点带进去，
+         * 于是 ESC 彻底失效、检查器关不掉。
+         * 只在检查器开着时消费 —— 否则会抢走插件自己的 ESC（它用来关弹窗）。
+         *
+         * UI 状态不用手动同步：escInspector 会派发 nexus:inspector-toggle，
+         * 上面的监听会跟着更新侧边栏按钮。
+         */
+        onShellShortcut: (combo) => {
+          if (String(combo).toLowerCase() !== 'esc') return false;
+          if (!isInspectorOn()) return false;
+          escInspector();
+          return true;
+        },
       },
     });
     hostRef.current = host;

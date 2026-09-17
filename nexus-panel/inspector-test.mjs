@@ -139,7 +139,26 @@ t('信息条 pointer-events:none',
 t('点击在捕获阶段拦截（顺手阻止误触发按钮）',
   /document\.addEventListener\('click', onClick, true\)/.test(isrc)
   && /e\.preventDefault\(\);/.test(isrc));
-t('Esc 解锁', /if \(e\.key === 'Escape' && locked\)/.test(isrc));
+/*
+ * ESC 必须是**两级**退出：
+ *   已锁定 → 解锁（回悬停）
+ *   没锁定 → 关闭检查器
+ *
+ * 此前只有"解锁"那一半（旧断言 `if (e.key === 'Escape' && locked)`），
+ * 于是悬停态下 ESC 毫无反应 —— 而悬停恰恰是最常用的状态，
+ * 用户开着扫完想退却退不掉，只能再按快捷键或点侧边栏按钮。
+ *
+ * 旧断言钉的是**旧契约**，功能一改就该跟着改，否则它会一直告诉
+ * 你"没变化"，把回归挡在门外。
+ */
+t('Esc 两级退出：先解锁', /if \(locked\) \{[\s\S]{0,80}locked = null;[\s\S]{0,60}clear\(\);/.test(isrc));
+t('Esc 两级退出：没锁定时关闭检查器',
+  /\} else \{[\s\S]{0,80}setInspector\(false\);/.test(isrc));
+t('Esc 消费后阻止继续传播', /if \(escInspector\(\)\) e\.stopPropagation\(\);/.test(isrc));
+/* 抽成导出函数：主文档 + iframe 转发两个入口共用，避免两边逻辑走偏 */
+t('退出逻辑抽成 escInspector 导出（供 iframe 转发复用）',
+  /export function escInspector\(\)/.test(isrc));
+t('escInspector 未开启时不消费', /if \(!on\) return false;/.test(isrc));
 t('复制有 execCommand 降级（file:// 下没有 clipboard API）',
   /document\.execCommand\('copy'\)/.test(isrc));
 
@@ -149,6 +168,29 @@ t('无构建版：shell.js 已安装', /installInspector\(\);/.test(src('js/shel
 t('无构建版：侧边栏有按钮', /id="btn-inspect"/.test(src('index.html')));
 t('Vite 版：App.tsx 已安装', /installInspector\(\)/.test(src('src/App.tsx')));
 t('Vite 版：Sidebar 有按钮', /onInspect/.test(src('src/components/Sidebar.tsx')));
+
+/* ---------- 9. 焦点在 iframe 里时 ESC 也要能退 ----------
+ * 鼠标扫过 iframe 插件里的控件会把焦点带进插件，
+ * 而键盘事件不跨文档冒泡 —— 外壳的 window keydown 收不到，ESC 彻底失效。
+ */
+console.log('\n=== 9. iframe 内的 ESC ===');
+const sdk = src('js/plugin-sdk.js');
+t('SHELL_SHORTCUTS 含 esc（否则 iframe 内 ESC 传不回来）',
+  /SHELL_SHORTCUTS = \[[^\]]*'esc'/.test(sdk));
+t('宿主侧只在检查器开着时消费 esc（不抢插件自己的 ESC）',
+  /esc: \(\) => \{[\s\S]{0,120}if \(!isInspectorOn\(\)\) return false;/.test(src('js/shell.js')));
+t('宿主侧 esc 走同一个 escInspector',
+  /esc: \(\) => \{[\s\S]{0,200}escInspector\(\);/.test(src('js/shell.js')));
+t('shell.js 已 import escInspector',
+  /import \{[^}]*escInspector[^}]*\} from '\.\/inspector\.js'/.test(src('js/shell.js')));
+/* 两个技术栈都要接 —— 只修一个的话，用另一个外壳的人照样退不掉 */
+const appSrc = src('src/App.tsx');
+t('React 侧也接了 onShellShortcut',
+  /onShellShortcut: \(combo\) => \{[\s\S]{0,300}escInspector\(\);/.test(appSrc));
+t('React 侧同样是"只在检查器开着时消费"',
+  /if \(!isInspectorOn\(\)\) return false;/.test(appSrc));
+t('React 侧已 import escInspector',
+  /import \{[^}]*escInspector[^}]*\} from '\.\.\/js\/inspector\.js'/.test(appSrc));
 t('快捷键是 Ctrl/Cmd+Shift+D（避开 webview 的 Ctrl+Shift+I）',
   /e\.key\.toLowerCase\(\) !== 'd'/.test(isrc) && /e\.shiftKey/.test(isrc));
 

@@ -19,7 +19,15 @@ export const BRIDGE_CHANNEL = 'nexus-bridge-v1';
  * 焦点一旦进入 iframe，这些键在父窗口就收不到了，
  * 所以由 SDK 在 iframe 内捕获后转发回外壳执行（见 bootIframePlugin）。
  */
-export const SHELL_SHORTCUTS = ['mod+b', 'mod+r', 'mod+,'];
+/*
+ * 焦点进入 iframe 后**外壳收不到任何键盘事件**（不跨文档冒泡），
+ * 所以这些组合键要靠插件转发回来执行。
+ *
+ * 'esc' 在列的原因：元素检查器开着时，鼠标扫过 iframe 里的控件会把焦点
+ * 带进插件，此时按 ESC 外壳根本收不到 —— 检查器就关不掉了。
+ * 宿主侧只在"检查器开着"时才消费它，避免抢走插件自己的 ESC（关弹窗）。
+ */
+export const SHELL_SHORTCUTS = ['mod+b', 'mod+r', 'mod+,', 'esc'];
 
 /**
  * 声明一个插件

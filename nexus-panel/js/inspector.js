@@ -252,12 +252,41 @@ function onClick(e) {
   });
 }
 
-function onKey(e) {
-  if (!on) return;
-  if (e.key === 'Escape' && locked) {
+/**
+ * 处理一次 ESC（两级退出）。
+ *
+ * 抽成导出函数是因为**有两个入口**都要走它：
+ *   · 主文档的 keydown（焦点在界面上）
+ *   · 插件 iframe 转发回来的 shell-shortcut（焦点在插件里）
+ * 不抽的话两边逻辑迟早写得不一样。
+ *
+ * @returns {boolean} 是否消费了这次按键（消费了就别再往下传）
+ */
+export function escInspector() {
+  if (!on) return false;
+  /*
+   * 两级退出，跟 DevTools 一个手感：
+   *   已锁定某个元素 → ESC 先解锁（回到悬停模式）
+   *   没锁定（悬停中）→ ESC 关闭检查器
+   *
+   * 此前只写了"解锁"那一半，于是悬停态下 ESC 毫无反应 ——
+   * 而这恰恰是最常用的状态（开着到处扫，看完想退）。
+   * 那时唯一的退路是再按一次快捷键或点侧边栏按钮，用户不知道就会被困住。
+   */
+  if (locked) {
     locked = null;
     clear();
+  } else {
+    setInspector(false);
   }
+  return true;
+}
+
+function onKey(e) {
+  if (!on) return;
+  if (e.key !== 'Escape') return;
+  /* 别让 ESC 继续往下走 —— 它可能同时是"关闭弹窗"之类的其它快捷键 */
+  if (escInspector()) e.stopPropagation();
 }
 
 /* ---------------------------- 开关 ---------------------------- */

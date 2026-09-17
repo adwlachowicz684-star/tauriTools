@@ -18,7 +18,7 @@ import * as extPolicy from './external-policy.js';
 import { getPluginConfig, setPluginConfig } from './plugin-config.js';
 import { openThemePicker } from './theme-picker.js';
 import { installTooltip, refreshTooltip } from './tooltip.js';
-import { installInspector, toggleInspector, isInspectorOn } from './inspector.js';
+import { installInspector, toggleInspector, isInspectorOn, escInspector } from './inspector.js';
 
 import { confirm as askConfirm } from './dialog.js';
 const $ = (s) => document.querySelector(s);
@@ -656,6 +656,20 @@ async function init() {
     'mod+`': () => {
       host.win('hide');
       toast('已隐藏到托盘 · 点击托盘图标可唤回', 'info');
+    },
+    /*
+     * ESC 由插件转发回来时的处理。
+     *
+     * 为什么需要这条：检查器开着时鼠标扫过 iframe 里的控件会把焦点带进插件，
+     * 而键盘事件**不跨文档冒泡** —— 外壳的那个 window keydown 收不到，
+     * ESC 就完全失效了，检查器关不掉。
+     *
+     * 只在检查器开着时才消费：否则会抢走插件自己的 ESC（插件用它关弹窗）。
+     */
+    esc: () => {
+      if (!isInspectorOn()) return false;
+      escInspector();
+      return true;
     },
   };
   const runShellShortcut = (combo) => shellCommands[String(combo).toLowerCase()]?.();
