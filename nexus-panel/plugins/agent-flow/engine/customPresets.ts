@@ -1,5 +1,7 @@
 import type { NodeData } from '../types';
 import { stripRuntime, cloneData } from './duplicate';
+import { hadInlineSecret, stripSecrets } from './sanitize';
+import { defaultKV, loadList, saveWrapped, type KV } from './kv';
 
 /**
  * 用户自定义节点（本质是「预设」）。
@@ -55,47 +57,7 @@ export type CustomPreset = {
  * 也就是说走凭据中心的用法可以完整复用与分享，被剥掉的只有
  * "把令牌直接填在节点里"这种不推荐的做法。
  */
-const SECRET_PATHS = ['token', 'llm.apiKey', 'config.token'] as const;
-
-/** 数据里是否含内联密钥（用于提示用户"这部分不会被存进去"） */
-export function hadInlineSecret(data: unknown): boolean {
-  const d = (data ?? {}) as Record<string, unknown>;
-  for (const path of SECRET_PATHS) {
-    const parts = path.split('.');
-    let cur: unknown = d;
-    for (const p of parts) {
-      cur = cur && typeof cur === 'object'
-        ? (cur as Record<string, unknown>)[p]
-        : undefined;
-    }
-    if (typeof cur === 'string' && cur.length > 0) return true;
-  }
-  return false;
-}
-
-/** 挖掉内联密钥，并在挖过的位置留下标记，让界面能提示原因 */
-function stripSecrets(data: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...data };
-  for (const path of SECRET_PATHS) {
-    const parts = path.split('.');
-    if (parts.length === 1) {
-      if (typeof out[parts[0]] === 'string' && out[parts[0]]) {
-        out[parts[0]] = '';
-      }
-      continue;
-    }
-    // 只处理一层嵌套（llm.apiKey / config.token）
-    const [head, tail] = parts;
-    const nested = out[head];
-    if (nested && typeof nested === 'object') {
-      const n = nested as Record<string, unknown>;
-      if (typeof n[tail] === 'string' && n[tail]) {
-        out[head] = { ...n, [tail]: '' };
-      }
-    }
-  }
-  return out;
-}
+/* 密钥清单与剥离统一走 ./sanitize —— 见那里关于复制两份会泄露的说明 */
 
 /**
  * 挑出配置部分。
@@ -115,36 +77,7 @@ export function sanitizeForPreset(data: unknown): Record<string, unknown> {
 /* ------------------------------------------------------------------ */
 
 /** 可注入的存储，便于测试与不支持 localStorage 的环境 */
-export type KV = {
-  get: (k: string) => string | null;
-  set: (k: string, v: string) => void;
-  remove?: (k: string) => void;
-};
-
-/**
- * 缺省读写。
- *
- * 用 try 包住是必要的：隐私模式下访问 localStorage 会直接抛异常，
- * 而这里跑在模块初始化路径上，一抛就是整个插件白屏。
- */
-function defaultKV(): KV {
-  return {
-    get: (k: string) => {
-      try {
-        return typeof localStorage === 'undefined' ? null : localStorage.getItem(k);
-      } catch {
-        return null;
-      }
-    },
-    set: (k: string, v: string) => {
-      try {
-        if (typeof localStorage !== 'undefined') localStorage.setItem(k, v);
-      } catch {
-        /* 存不下就算了，不该因此中断用户的操作 */
-      }
-    },
-  };
-}
+/* KV / defaultKV / loadList 统一走 ./kv */
 
 /** 读出来的东西不可信：可能是旧版本、手改过、或别的插件写坏的 */
 function isPreset(x: unknown): x is CustomPreset {
@@ -161,21 +94,11 @@ function isPreset(x: unknown): x is CustomPreset {
 }
 
 export function loadCustomPresets(kv: KV = defaultKV()): CustomPreset[] {
-  const raw = kv.get(STORAGE_KEY);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    const list = Array.isArray(parsed) ? parsed : parsed?.presets;
-    if (!Array.isArray(list)) return [];
-    return list.filter(isPreset);
-  } catch {
-    // 坏数据：宁可当没有，也不要让插件起不来。用户重新存一次即可。
-    return [];
-  }
+  return loadList(kv, STORAGE_KEY, 'presets', isPreset) as CustomPreset[];
 }
 
 export function saveCustomPresets(list: CustomPreset[], kv: KV = defaultKV()): void {
-  kv.set(STORAGE_KEY, JSON.stringify({ version: FORMAT_VERSION, presets: list }));
+  saveWrapped(kv, STORAGE_KEY, FORMAT_VERSION, 'presets', list);
 }
 
 /* ------------------------------------------------------------------ */

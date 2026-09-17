@@ -96,18 +96,21 @@ $S engine/secretVault.ts "$OUT/secretVault.mjs" \
 $S engine/conversations.ts "$OUT/conversations.mjs" \
    --import-map ../types=./types.mjs >/dev/null
 $S engine/modules.ts "$OUT/modules.mjs" \
-   --import-map ./duplicate=./duplicate.mjs >/dev/null
+   --import-map ./duplicate=./duplicate.mjs --import-map ./kv=./kv.mjs >/dev/null
 $S engine/nodeValidate.ts "$OUT/nodeValidate.mjs" \
    --import-map ../types=./types.mjs >/dev/null
+$S engine/kv.ts "$OUT/kv.mjs" >/dev/null
+$S engine/sanitize.ts "$OUT/sanitize.mjs" >/dev/null
 $S engine/stack.ts "$OUT/stack.mjs" >/dev/null
 $S engine/nodeDefaults.ts "$OUT/nodeDefaults.mjs" \
-   --import-map ./duplicate=./duplicate.mjs --import-map ./customPresets=./customPresets.mjs >/dev/null
+   --import-map ./duplicate=./duplicate.mjs --import-map ./sanitize=./sanitize.mjs --import-map ./kv=./kv.mjs >/dev/null
 # paramCards / duplicate 是纯逻辑模块，单独生成
 $S engine/paramCards.ts "$OUT/paramCards.mjs" \
-   --import-map ./duplicate=./duplicate.mjs >/dev/null
+   --import-map ./duplicate=./duplicate.mjs --import-map ./kv=./kv.mjs >/dev/null
 # duplicate.ts 是纯逻辑（不 import 任何东西），单独生成即可
 $S engine/duplicate.ts "$OUT/duplicate.mjs" >/dev/null
 # customPresets 复用了 duplicate 的 stripRuntime，要指到生成物
 $S engine/customPresets.ts "$OUT/customPresets.mjs" \
    --import-map ../types=./types.mjs \
-   --import-map ./duplicate=./duplicate.mjs >/dev/null
+   --import-map ./duplicate=./duplicate.mjs \
+   --import-map ./sanitize=./sanitize.mjs --import-map ./kv=./kv.mjs >/dev/null

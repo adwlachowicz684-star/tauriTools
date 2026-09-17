@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  sanitizeForPreset, hadInlineSecret, addCustomPreset, removeCustomPreset, renameCustomPreset,
+  sanitizeForPreset, addCustomPreset, removeCustomPreset, renameCustomPreset,
   loadCustomPresets, saveCustomPresets, exportCustomPresets, importCustomPresets,
   presetKey, presetIdOf, dataOf, type CustomPreset, type KV,
 } from '../engine/customPresets';
+import { hadInlineSecret } from '../engine/sanitize';
 
 /** 内存版存储，避免测试依赖 localStorage（Node 里没有） */
 function memKV() {

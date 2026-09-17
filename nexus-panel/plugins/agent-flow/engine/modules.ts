@@ -1,4 +1,5 @@
 import { cloneData } from './duplicate';
+import { defaultKV, loadList, saveWrapped, type KV } from './kv';
 
 /**
  * 模块 —— 把多个节点打包成一个可复用的块。
@@ -50,29 +51,7 @@ export type ModuleDef = {
   createdAt: number;
 };
 
-export type KV = {
-  get: (k: string) => string | null;
-  set: (k: string, v: string) => void;
-};
-
-function defaultKV(): KV {
-  return {
-    get: (k: string) => {
-      try {
-        return typeof localStorage === 'undefined' ? null : localStorage.getItem(k);
-      } catch {
-        return null;
-      }
-    },
-    set: (k: string, v: string) => {
-      try {
-        if (typeof localStorage !== 'undefined') localStorage.setItem(k, v);
-      } catch {
-        /* 存不下就算了 */
-      }
-    },
-  };
-}
+/* KV / defaultKV 统一走 ./kv */
 
 function isDef(x: unknown): x is ModuleDef {
   const o = x as ModuleDef;
@@ -86,20 +65,11 @@ function isDef(x: unknown): x is ModuleDef {
 }
 
 export function loadModules(kv: KV = defaultKV()): ModuleDef[] {
-  const raw = kv.get(MODULES_KEY);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    const list = Array.isArray(parsed) ? parsed : parsed?.modules;
-    if (!Array.isArray(list)) return [];
-    return list.filter(isDef);
-  } catch {
-    return [];
-  }
+  return loadList(kv, MODULES_KEY, 'modules', isDef) as ModuleDef[];
 }
 
 export function saveModules(list: ModuleDef[], kv: KV = defaultKV()): void {
-  kv.set(MODULES_KEY, JSON.stringify({ version: FORMAT_VERSION, modules: list }));
+  saveWrapped(kv, MODULES_KEY, FORMAT_VERSION, 'modules', list);
 }
 
 function newId(): string {
