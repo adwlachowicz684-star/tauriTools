@@ -29,6 +29,8 @@ export const BRIDGE_CHANNEL = 'nexus-bridge-v1';
  */
 /* ctx.invoke 的命令白名单（默认拒绝）。详见该文件头部说明。 */
 import { checkInvoke } from './invoke-policy.js';
+/* Owned 归属通道：让"卸载干净"从约定变成结构性保证。详见该文件头部。 */
+import { createOwned } from './owned.js';
 
 export const SHELL_SHORTCUTS = ['mod+b', 'mod+r', 'mod+,', 'esc'];
 
@@ -201,13 +203,26 @@ function withBuiltinShortcuts(services) {
 }
 
 function buildCtx(base) {
-  const { id, manifest, mode, root, container, transport, bus, onDestroy } = base;
+  const { id, manifest, mode, root, container, transport, bus, onDestroy, owned } = base;
   const destroyHooks = [];
 
   const ctx = {
     id,
     mode,                                  // 'module' | 'iframe'
     manifest,
+    /*
+     * owned —— 归属通道。
+     *
+     * 所有"会污染宿主文档"的动作都该走它：
+     *   ctx.owned.addListener(window, 'resize', fn)
+     *   ctx.owned.addNode(document.body, modalEl)
+     * 它当场记下归属，卸载时只撤本插件名下的，别的插件不受影响。
+     *
+     * iframe 插件也会拿到一份（保持 ctx 形状一致），
+     * 但它记的是 iframe **自己** window 上的东西，
+     * 随 iframe.remove() 一起消失 —— 记了也无害。
+     */
+    owned,
     /* 调用服务插件（kind:'service'）：
          await ctx.services.call('color-picker', 'pick', { from: '#3a7afe' })
        返回 Promise，拿到服务方法的返回值。
@@ -538,9 +553,23 @@ export function createModuleContext({
     notify(type, payload) { shellHooks?.[type]?.(payload); },
   };
 
+  /*
+   * Owned 归属句柄。
+   *
+   * 只发给**同页（module）插件** —— 它们与宿主同文档，
+   * 挂在 window / document.body 上的东西不会随容器移除而消失，
+   * 是残留的真正来源。
+   *
+   * 走通道 = 一定被记下 = dispose 一定撤；
+   * 没走通道的由静态准入兜底。两者叠加才成立，缺一层都不完整。
+   */
+  const owned = createOwned(manifest.id, {
+    warn: (...a) => console.warn('[owned]', ...a),
+  });
+
   const ctx = buildCtx({
     id: manifest.id, manifest, mode: 'module', root, container,
-    transport, bus, theme, bindShortcut,
+    transport, bus, theme, bindShortcut, owned,
     services,   // 同页插件与宿主同文档，宿主直接注入，不必绕桥接
   });
 
@@ -548,6 +577,13 @@ export function createModuleContext({
   const baseDestroy = ctx.__destroy;
   ctx.__destroy = async () => {
     shortcutCleanups.splice(0).forEach((off) => { try { off(); } catch {} });
+    /*
+     * owned 必须**先于** baseDestroy 撤销，且必须在 try 之外或最内层保证执行：
+     * 插件自己漏掉的清理，靠这一步兜底。
+     * 放在最前面：先撤它登记的句柄，再走插件自己的 unmount，
+     * 避免插件 unmount 里用到已撤销的东西时状态不一致。
+     */
+    try { owned.dispose(); } catch (e) { console.error('[owned dispose]', e); }
     await baseDestroy();
   };
   return ctx;

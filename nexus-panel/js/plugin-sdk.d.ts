@@ -1,11 +1,70 @@
 export const BRIDGE_CHANNEL: string;
 
+/**
+ * Owned 归属句柄。
+ *
+ * 所有"会污染宿主文档"的动作都该走它 —— 它当场记下归属，
+ * 卸载时**只撤本插件名下的**，别的插件不受影响。
+ *
+ * 为什么需要：卸载靠插件自己 push cleanupFns，漏一个就漏一片；
+ * 而事后差分只能看到"总量变了"，说不清是谁留的。
+ * 走通道 = 一定被记下 = dispose 一定撤。
+ */
+export interface Owned {
+  /** 归属插件 id */
+  readonly pluginId: string;
+
+  /** 通用：自己提供撤销函数。所有专用方法都是它的语法糖。 */
+  addUndo(capability: string, undo: () => void): () => void;
+
+  /** 在宿主全局目标（window / document / body）上挂监听 */
+  addListener(
+    target: EventTarget,
+    type: string,
+    handler: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions,
+  ): () => void;
+
+  /** 往宿主文档挂节点（浮层 / portal / 弹窗） */
+  addNode(parent: Node, node: Node): () => void;
+
+  /** 定时器句柄（kind: 'interval' | 'raf'） */
+  addTimer(kind: 'interval' | 'raf', id: number): () => void;
+
+  setInterval(fn: () => void, ms: number): number;
+  setTimeout(fn: () => void, ms: number): number;
+
+  /** 动态样式（挂到 document.head） */
+  addStyle(node: Node): () => void;
+
+  /** 带 disconnect / close 的句柄：Observer、WebSocket、BroadcastChannel… */
+  addHandle(capability: string, handle: { disconnect?: () => void; close?: () => void }): () => void;
+
+  /** 撤销全部。**幂等** —— 重复调用安全。 */
+  dispose(): { undone: number; failed: number };
+
+  /** 用到了哪些能力（供 manifest.capabilities 交叉校验） */
+  capabilities(): string[];
+
+  size(): number;
+  isDisposed(): boolean;
+}
+
 export interface PluginContext {
   /** 插件 id */
   id: string;
   /** 挂载模式 */
   mode: 'module' | 'iframe';
   manifest: PluginManifest;
+  /**
+   * 归属通道。**同页（module）插件必用** ——
+   * 它与宿主同文档，挂在 window / body 上的东西不会随容器移除而消失，
+   * 是残留的真正来源。
+   *
+   * iframe 插件也会拿到（保持 ctx 形状一致），
+   * 但它记的是 iframe 自己 window 上的东西，随 iframe 一起消失。
+   */
+  owned: Owned;
   /** 挂载点：HTMLElement 或 ShadowRoot */
   root: HTMLElement | ShadowRoot;
   /** 宿主元素（始终在文档流里） */
