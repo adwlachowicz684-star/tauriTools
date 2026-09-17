@@ -1,5 +1,5 @@
 import { makeJoinNode } from '../../types';
-import { JoinNode } from '../../components/JoinNode';
+import { JoinNode } from '../../components/ControlNode';
 import type { FieldDef } from '../../components/inspectors/fields';
 import { runJoin } from '../../engine/runners/join';
 import { registerNode } from '../registry';

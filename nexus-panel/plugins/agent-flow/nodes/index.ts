@@ -40,6 +40,12 @@ import './defs/clock';
 import './defs/const';
 import './defs/module';
 import './defs/wechat';
+/* ---- 控制器 ---- */
+import './defs/join';
+import './defs/gate';
+import './defs/throttle';
+import './defs/timeout';
+import './defs/retry';
 
 export {
   registerNode, getDef, hasDef, allDefs, allPresets, presetsByCategory, buildNodeTypes,

@@ -65,6 +65,7 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
     return { ok: false, outputs: {}, failed: cyclic, skipped: [], branches: [], parallels: [], loops: [] };
   }
 
+  const runStartedAt = Date.now();
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   const outputs: Record<string, string> = {};
   const failed: string[] = [];
@@ -241,7 +242,7 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
   };
 
   const makeCtx = (id: string, node: GraphNode, scope: Scope): RunContext => ({
-    id, node, graph, opts, scope,
+    id, node, graph, opts, scope, runStartedAt,
     emit, setStatus, sleep,
     markFailed: (i, s) => markFailed(i, s ?? scope),
     markSkipped: (i, s) => markSkipped(i, s ?? scope),

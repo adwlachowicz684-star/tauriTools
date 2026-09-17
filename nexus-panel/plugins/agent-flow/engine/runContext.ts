@@ -39,6 +39,13 @@ export type RunContext = {
 
   /* ---------- 共享累积状态（跨节点、跨轮次可见） ---------- */
   outputs: Record<string, string>;
+  /**
+   * 本次运行的起始时间戳（Date.now()）。
+   *
+   * 控制器要用它：超时熔断节点得知道"整条流程已经跑了多久"，
+   * 才知道预算还剩多少。执行器自己记不到 —— 它只活在自己那一段。
+   */
+  runStartedAt: number;
   /** {{nodeId.title}} 这类附加字段 */
   nodeFields: Record<string, Record<string, string>>;
   /** 循环上下文栈顶；不在循环体内时为 null */

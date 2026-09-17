@@ -6,6 +6,7 @@ import type {
   GithubUpdateNodeData, GithubPushNodeData,
   WaitNodeData, LogNodeData, BeepNodeData, PlayAudioNodeData,
   ClockNodeData, ConstNodeData, ModuleNodeData, JoinNodeData,
+  GateNodeData, ThrottleNodeData, TimeoutNodeData, RetryNodeData,
 } from './types';
 
 /** React Flow v12 的节点类型；data 承载我们自己的定义 */
@@ -34,6 +35,10 @@ export type ConstFlowNode = Node<ConstNodeData, 'const'>;
 export type ModuleFlowNode = Node<ModuleNodeData, 'module'>;
 /* ---- 控制器 ---- */
 export type JoinFlowNode = Node<JoinNodeData, 'join'>;
+export type GateFlowNode = Node<GateNodeData, 'gate'>;
+export type ThrottleFlowNode = Node<ThrottleNodeData, 'throttle'>;
+export type TimeoutFlowNode = Node<TimeoutNodeData, 'timeout'>;
+export type RetryFlowNode = Node<RetryNodeData, 'retry'>;
 
 /* 新增节点类型时必须同时加到这里。
    漏加的话，App.tsx 里 `as FlowNode` 会报 TS2352 ——
@@ -60,7 +65,11 @@ export type FlowNode =
   | ClockFlowNode
   | ConstFlowNode
   | ModuleFlowNode
-  | JoinFlowNode;
+  | JoinFlowNode
+  | GateFlowNode
+  | ThrottleFlowNode
+  | TimeoutFlowNode
+  | RetryFlowNode;
 
 /** React Flow v12 的边类型；data.branch 标注所属分支 */
 export type FlowEdgeData = {

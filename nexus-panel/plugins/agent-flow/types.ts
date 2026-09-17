@@ -291,7 +291,11 @@ export type NodeData =
   | ConstNodeData
   | ModuleNodeData
   /* ---- 控制器 ---- */
-  | JoinNodeData;
+  | JoinNodeData
+  | GateNodeData
+  | ThrottleNodeData
+  | TimeoutNodeData
+  | RetryNodeData;
 
 /** 算子分类，用于面板里分组展示 */
 export type OpCategory = 'text' | 'empty' | 'flow';
@@ -1311,6 +1315,97 @@ export function makeGenericHttpNode(id: string, partial: Partial<GenericHttpNode
  *   汇合·严格 —— 任何一条入边没产出（被剪枝 / 跳过 / 失败）就算没收集全，
  *                 直接失败并让下游跳过
  */
+/**
+ * 判定方式 —— 闸门与重试共用。
+ *
+ * 单独抽出来是因为两者都在回答同一个问题："这份输出算不算合格"。
+ * 各写一份的话，以后加一种判定方式要改两处。
+ */
+export type PassCheck =
+  /** 非空即可 */
+  | 'nonempty'
+  /** 包含指定文本 */
+  | 'contains'
+  /** 不包含指定文本（如"响应里没有 error"） */
+  | 'notContains'
+  /** 匹配正则 */
+  | 'regex';
+
+/** 闸门：满足条件才放行下游 */
+export type GateNodeData = {
+  size?: NodeSize;
+  stackParent?: string | null;
+  stackCollapsed?: boolean;
+  kind: 'gate';
+  label: string;
+  /** 等（轮询到超时）还是立刻判定（不满足直接失败） */
+  mode: 'wait' | 'now';
+  check: PassCheck;
+  /** contains / notContains / regex 的比对值 */
+  value?: string;
+  /** wait 模式下的最长等待；到点仍未满足按 onTimeout 处理 */
+  timeoutMs?: number;
+  /** wait 模式的轮询间隔 */
+  pollMs?: number;
+  /** 等到超时仍未满足时：fail=失败并阻断下游，pass=照样放行 */
+  onTimeout?: 'fail' | 'pass';
+  status: NodeStatus;
+  output: string;
+  error: string;
+};
+
+/** 限流：控制放行的节奏 */
+export type ThrottleNodeData = {
+  size?: NodeSize;
+  stackParent?: string | null;
+  stackCollapsed?: boolean;
+  kind: 'throttle';
+  label: string;
+  /** 两次放行之间的最小间隔（毫秒）。太快就等到够为止 */
+  minIntervalMs: number;
+  /** 本次运行最多放行几次；超出则失败。留空不限次 */
+  maxPerRun?: number;
+  status: NodeStatus;
+  output: string;
+  error: string;
+};
+
+/** 超时熔断：整条流程的预算超了就断在这里 */
+export type TimeoutNodeData = {
+  size?: NodeSize;
+  stackParent?: string | null;
+  stackCollapsed?: boolean;
+  kind: 'timeout';
+  label: string;
+  /** 从**运行开始**算起的预算（毫秒），不是本节点自己的耗时 */
+  budgetMs: number;
+  /** 超预算时：fail=失败并阻断下游，pass=放行但记一条警告 */
+  onExceed?: 'fail' | 'pass';
+  status: NodeStatus;
+  output: string;
+  error: string;
+};
+
+/** 重试：上游成功了但内容不合格时，重跑它直到合格 */
+export type RetryNodeData = {
+  size?: NodeSize;
+  stackParent?: string | null;
+  stackCollapsed?: boolean;
+  kind: 'retry';
+  label: string;
+  /** 要重跑的节点 id。通常填直接上游 */
+  target: string;
+  /** 最多重试几次（不含第一次） */
+  times: number;
+  /** 每次重试前的间隔 */
+  intervalMs?: number;
+  check: PassCheck;
+  value?: string;
+  status: NodeStatus;
+  output: string;
+  error: string;
+};
+
 export type JoinNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
@@ -1478,6 +1573,73 @@ export type ConstNodeData = {
   output: string;
   error: string;
 };
+
+export function makeGateNode(id: string, partial: Partial<GateNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'gate',
+      label: partial.label ?? '闸门',
+      mode: partial.mode ?? 'wait',
+      check: partial.check ?? 'nonempty',
+      value: partial.value ?? '',
+      timeoutMs: partial.timeoutMs ?? 10000,
+      pollMs: partial.pollMs ?? 500,
+      onTimeout: partial.onTimeout ?? 'fail',
+      status: 'idle',
+      output: '',
+      error: '',
+    } as unknown as GateNodeData,
+  } as unknown as GraphNode;
+}
+
+export function makeThrottleNode(id: string, partial: Partial<ThrottleNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'throttle',
+      label: partial.label ?? '限流',
+      minIntervalMs: partial.minIntervalMs ?? 1000,
+      maxPerRun: partial.maxPerRun,
+      status: 'idle',
+      output: '',
+      error: '',
+    } as unknown as ThrottleNodeData,
+  } as unknown as GraphNode;
+}
+
+export function makeTimeoutNode(id: string, partial: Partial<TimeoutNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'timeout',
+      label: partial.label ?? '超时熔断',
+      budgetMs: partial.budgetMs ?? 60000,
+      onExceed: partial.onExceed ?? 'fail',
+      status: 'idle',
+      output: '',
+      error: '',
+    } as unknown as TimeoutNodeData,
+  } as unknown as GraphNode;
+}
+
+export function makeRetryNode(id: string, partial: Partial<RetryNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'retry',
+      label: partial.label ?? '重试',
+      target: partial.target ?? '',
+      times: partial.times ?? 3,
+      intervalMs: partial.intervalMs ?? 1000,
+      check: partial.check ?? 'nonempty',
+      value: partial.value ?? '',
+      status: 'idle',
+      output: '',
+      error: '',
+    } as unknown as RetryNodeData,
+  } as unknown as GraphNode;
+}
 
 export function makeJoinNode(id: string, partial: Partial<JoinNodeData> = {}): GraphNode {
   return {
