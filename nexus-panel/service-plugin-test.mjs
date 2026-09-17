@@ -33,6 +33,31 @@ t('registry 声明了 kind 字段', /\*\s*kind\s+'app'（默认/.test(regSrc) ||
 t('有 demo-service 服务插件', /id: 'demo-service'/.test(regSrc));
 t('demo-service 标记 kind:service', /kind: 'service'/.test(regSrc));
 
+/* kind 写错（如 'services'）不会报任何错 ——
+   判定是 `kind !== 'service'`，写错就静默当成 app 显示在侧边栏。
+   这种"改了没反应、也不知道哪错了"的情况必须有测试挡住。 */
+const KIND_VALUES = [...regSrc.matchAll(/^\s*kind:\s*'([^']+)'/gm)].map((m) => m[1]);
+t('registry 里所有 kind 都是合法值',
+  KIND_VALUES.length > 0 && KIND_VALUES.every((v) => v === 'app' || v === 'service'),
+  KIND_VALUES.join(','));
+t('至少有一个 service', KIND_VALUES.includes('service'));
+
+/* interative / interactve 这类拼写错误同样静默失效：
+   宿主读 inst.manifest?.interactive，拼错就是 undefined → 服务永不显示，
+   用户看到"点了没反应"而代码毫无异常。
+
+   写法说明：先抠出 registry 里所有形如 `xxx:` 的键名，
+   再挑出"以 inter 开头但拼得不对 interactive"的那些。
+   不要试图用一条大正则同时表达"排除正确的 + 匹配错误的" ——
+   我上一版就是这么写的，结果破坏时它没红（被另一条断言红的掩盖了），
+   属于典型的"断言没真正生效"。 */
+const KEYS = [...regSrc.matchAll(/^\s*([a-zA-Z_][a-zA-Z0-9_]*):/gm)].map((m) => m[1]);
+const TYPOS = KEYS.filter((k) => k.toLowerCase().startsWith('inter') && k !== 'interactive');
+t('registry 没有 interactive 的拼写错误', TYPOS.length === 0, TYPOS.join(',') || '无');
+/* 反向确认：抠键名这条正则本身是有效的（registry 里本就有 interactive） */
+t('抠键名的正则有效（能取到 interactive）', KEYS.includes('interactive'),
+  `共 ${KEYS.length} 个键`);
+
 console.log('\n=== 2. 服务必须真实挂载（不能 display:none）===');
 /* iframe 只有在文档里才会加载运行。用 display:none 的话，
    部分浏览器会延迟甚至跳过加载 → 服务永远握不上手。
@@ -41,6 +66,15 @@ t('宿主创建了服务容器并插入 DOM', /serviceHost.*appendChild|appendCh
 t('容器用移出视口而非 display:none',
   /position:absolute;left:-99999px/.test(hostSrc) && !/display:\s*none/.test(hostSrc.slice(
     hostSrc.indexOf("serviceHost.style.cssText"), hostSrc.indexOf("serviceHost.style.cssText") + 200)));
+
+/* 类型定义要跟上 —— 不然 TS 侧写 p.kind 会报错，
+   或者更糟：有人用 any 绕过去，分类就又变成口头约定了。 */
+const dtsSrc = src('js/host.d.ts');
+t('PluginManifest 有 kind 类型', /kind\?: 'app' \| 'service';/.test(dtsSrc));
+t('PluginManifest 有 interactive 类型', /interactive\?: boolean;/.test(dtsSrc));
+/* 注释里要写明"不看目录位置" —— 这是本轮定的口径，
+   不写下来下次有人又会想按目录分。 */
+t('类型注释说明分类不看目录', /不看目录位置/.test(dtsSrc));
 
 console.log('\n=== 3. 懒加载 + 并发去重 ===');
 /* 服务可能有十几个，启动全挂会很慢。谁被调才挂谁。

@@ -14,6 +14,21 @@ export interface PluginManifest {
   /** 需要构建工具（React / TSX）才能运行，无构建模式下自动隐藏 */
   requiresBuild?: boolean;
   custom?: boolean;
+  /**
+   * 'app'（默认，显示在侧边栏） | 'service'（不进侧边栏，供其它插件调用）
+   *
+   * 分类只认这个字段，**不看目录位置** ——
+   * 服务插件与 app 插件一样平铺在 plugins/ 下。
+   * 目录再分一层就成了第二个真相源：移动目录忘了改这里，
+   * 服务就会出现在侧边栏（而判定逻辑只认 kind）。
+   */
+  kind?: 'app' | 'service';
+  /**
+   * 服务专用：调用时由宿主临时显示为居中浮层。
+   * 色盘 / 图标选择 / md 编辑这类服务**必须用户看得见才用得了**，
+   * 而服务平时挂在移出视口的常驻容器里。
+   */
+  interactive?: boolean;
 }
 
 export interface HostHooks {
