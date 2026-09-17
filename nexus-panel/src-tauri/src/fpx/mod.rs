@@ -14,6 +14,8 @@ pub mod chain;
 pub mod content;
 pub mod editor;
 pub mod fsutil;
+/// 路径收口：所有来自调用方的路径统一过 guard::must_be_under，见模块内说明。
+pub mod guard;
 pub mod junction;
 pub mod mcp;
 pub mod model;
@@ -53,6 +55,127 @@ pub(crate) fn snapshot(dir: &std::path::Path, cfg: &FpxConfig) -> Snapshot {
 pub(crate) fn core_snapshot(dir: &std::path::Path) -> Snapshot {
     let cfg = store::load_config(dir);
     snapshot(dir, &cfg)
+}
+
+/* ---------------------------- 允许操作的根目录 ---------------------------- */
+/*
+ * 为什么要有这一层：此前各命令直接吃调用方给的路径，
+ * `fpx_read_file` / `fpx_icon_data` / `af_fs_tail` 因此成了三条独立的
+ * 「任意文件读」通道（审查清单 P0-3 / P0-4 / P1-1）。根因不是某条命令写错了，
+ * 而是**没有统一的收口** —— 各写各的迟早漏一个。
+ *
+ * 所以白名单只有一份实现：`guard::must_be_under`，所有接收路径的入口都调它。
+ *
+ * 范围取"用户亲手登记过的地方"，不是全盘：
+ *   · 页签卡片（项目 / 项目组）—— 用户加进来的目录
+ *   · 用户显式配置的目录（新建落点 / 备份落点）
+ *   · 数据目录（兜底，保证列表永不为空，否则所有操作都会被拒）
+ */
+
+/// 本插件允许操作的根目录（已 canonicalize，可直接喂给 `guard::must_be_under`）。
+pub(crate) fn content_roots(dir: &std::path::Path, cfg: &FpxConfig) -> Vec<std::path::PathBuf> {
+    let mut out: Vec<std::path::PathBuf> = Vec::new();
+    let mut push = |raw: &str| {
+        if let Some(c) = guard::canonical_root(raw) {
+            if !out.contains(&c) {
+                out.push(c);
+            }
+        }
+    };
+
+    // 页签登记：同一路径可能出现在多个页签里，去重交给 push
+    for t in cfg.project_tabs.iter().chain(cfg.group_tabs.iter()) {
+        for item in &t.items {
+            push(item);
+        }
+    }
+    // 用户在设置里显式指定的目录（新建项目/项目组的落点、备份落点）
+    for opt in [
+        &cfg.create_project_dir,
+        &cfg.create_group_dir,
+        &cfg.create_group_template_dir,
+        &cfg.backup_dir,
+        &cfg.backup_project_dir,
+        &cfg.backup_group_dir,
+    ] {
+        if let Some(v) = opt {
+            push(v);
+        }
+    }
+    // 兜底：数据目录恒定在内
+    push(&dir.to_string_lossy());
+    out
+}
+
+/// 读取文件文本（目录型 skill 自动读其 SKILL.md），**先校验路径在允许范围内**。
+///
+/// 命令层与 MCP 共用：两边此前各自直连 `content::read_preview`，
+/// 一边补了校验另一边没补就会出现"前端通道堵上了、MCP 还能读全盘"。
+pub(crate) fn core_read_file(
+    dir: &std::path::Path,
+    path: &str,
+    max: Option<usize>,
+) -> Result<String, String> {
+    let cfg = store::load_config(dir);
+    let roots = content_roots(dir, &cfg);
+
+    let target = if std::path::Path::new(path).is_dir() {
+        // 目录先整体校验，再取它下面的 SKILL.md（自然也在范围内）
+        let canon = guard::must_be_under(path, &roots)?;
+        content::skill_md_of(&canon.to_string_lossy())
+            .ok_or_else(|| "该目录下没有 SKILL.md".to_string())?
+    } else {
+        guard::must_be_under(path, &roots)?.to_string_lossy().to_string()
+    };
+    content::read_preview(&target, max.unwrap_or(20000))
+}
+
+/// 图标引用可能是「<文件>|<索引>」（DLL 里多图标），取竖线前的真实文件路径。
+fn icon_file_part(raw: &str) -> String {
+    match raw.rsplit_once('|') {
+        Some((f, i)) if !i.trim().is_empty() && i.trim().chars().all(|c| c.is_ascii_digit()) => {
+            f.to_string()
+        }
+        _ => raw.to_string(),
+    }
+}
+
+/// 把图标文件读成 data URI。**只接受数据目录 icons/ 与用户已登记的图标引用**。
+///
+/// 此前唯一的"校验"是 `is_file()` + 2MB 上限 —— 任意 ≤2MB 的文件
+/// （私钥、cookie、配置）都能被读成 data URI 回传前端（清单 P0-4）。
+pub(crate) fn core_icon_data(dir: &std::path::Path, raw: &str) -> Result<String, String> {
+    let cfg = store::load_config(dir);
+    let file_part = icon_file_part(raw.trim());
+
+    let mut roots: Vec<std::path::PathBuf> = Vec::new();
+    let mut push = |p: &str| {
+        if let Some(c) = guard::canonical_root(p) {
+            if !roots.contains(&c) {
+                roots.push(c);
+            }
+        }
+    };
+    push(&dir.join("icons").to_string_lossy());
+    push(&dir.to_string_lossy());
+    // 用户自己选过的图标可以在任意位置：把它们逐个纳入白名单，
+    // 既保住"自定义图标在任意盘"的用法，又不至于退回"任意文件读"
+    for v in cfg.folder_icons.values() {
+        push(&icon_file_part(v));
+    }
+
+    let canon = guard::must_be_under(&file_part, &roots)?;
+    if !canon.is_file() {
+        return Err("图标文件不存在".into());
+    }
+    // 限制体积：图标不该很大，防止误传大文件把整包数据塞进 IPC
+    let meta = std::fs::metadata(&canon).map_err(|e| e.to_string())?;
+    if meta.len() > 2 * 1024 * 1024 {
+        return Err("图标文件超过 2MB，可能不是图标".into());
+    }
+    let bytes = std::fs::read(&canon).map_err(|e| e.to_string())?;
+    let ext = canon.extension().and_then(|e| e.to_str()).unwrap_or("");
+    Ok(base64::data_uri(&bytes, ext))
 }
 
 /* ---------------------------- 改名 / 清除无效项 ---------------------------- */
@@ -202,6 +325,8 @@ fn core_move_folder(
     if !fsutil::is_real_dir(dest) {
         return Err(format!("目标目录不存在：{dest_parent}"));
     }
+    // 目标父目录不能是系统目录 / 整块盘：把项目搬进 C:\Windows 只会留下烂摊子
+    guard::reject_forbidden_raw(dest_parent)?;
     let name = old
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -416,6 +541,9 @@ pub(crate) fn core_create_link(
     names: Option<Vec<String>>,
 ) -> Result<Snapshot, String> {
     let cfg = store::load_config(dir);
+    // 两端都不能是系统目录 / 整块盘：junction 指向系统目录等于给它开了一条写入通道
+    guard::reject_forbidden_raw(project)?;
+    guard::reject_forbidden_raw(group)?;
     let use_names = match names {
         Some(n) if !n.is_empty() => n,
         _ => junction::enabled_names(&cfg),
@@ -485,6 +613,10 @@ pub(crate) fn core_set_lock(
     deny_delete: bool,
     deny_write: bool,
 ) -> Result<Snapshot, String> {
+    /* ACL 是写操作：给系统目录设防删/防写，等于把系统锁死一半。
+       这一条不加会是什么后果 —— 用户误选了 C:\Windows 加锁，
+       界面上点"解锁"还不一定解得开（ACL 已被改写）。 */
+    guard::reject_forbidden_raw(path)?;
     store::with_config(dir, |cfg| {
         // 先落 ACL 再记配置：apply_lock 失败时闭包返回 Err，配置不会落盘
         sys::apply_lock(path, deny_delete, deny_write)?;
@@ -639,18 +771,18 @@ pub fn fpx_scan_content(root: String, kind: Option<String>) -> Vec<ContentItem> 
 }
 
 /// 读取文件文本（目录型 skill 自动读其 SKILL.md）。
+///
+/// 路径必须落在允许范围内（页签卡片 / 用户配置的目录 / 数据目录），
+/// 越权一律拒绝 —— 此前这里是裸透传，等于任意文件读。
 #[tauri::command(rename_all = "snake_case")]
-pub fn fpx_read_file(path: String, max: Option<usize>) -> Result<String, String> {
-    let p = std::path::Path::new(&path);
-    let target = if p.is_dir() {
-        match content::skill_md_of(&path) {
-            Some(f) => f,
-            None => return Err("该目录下没有 SKILL.md".into()),
-        }
-    } else {
-        path.clone()
-    };
-    content::read_preview(&target, max.unwrap_or(20000))
+pub fn fpx_read_file(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+    path: String,
+    max: Option<usize>,
+) -> Result<String, String> {
+    let dir = store::data_dir(&app, &state)?;
+    core_read_file(&dir, &path, max)
 }
 
 /// 打开路径。mode: auto | dir | containing | editor
@@ -701,6 +833,10 @@ pub(crate) fn core_create_folder(
     hierarchy: Option<&str>,
     template: Option<&str>,
 ) -> Result<String, String> {
+    /* 父目录不能是系统目录 / 整块盘。
+       为什么这条独立于白名单：用户在"选择目录"对话框里挑什么，
+       白名单随后就会把它加进去 —— 只有这张表拦得住（清单 P1-5/6/7 的护栏部分）。 */
+    guard::reject_forbidden_raw(parent)?;
     let cfg = store::load_config(dir);
     let h = if cfg.create_path_carries_hierarchy { hierarchy } else { None };
     sys::create_folder(parent, name, h, template)
@@ -827,18 +963,17 @@ pub fn fpx_list_icons(app: AppHandle, state: State<'_, FpxState>) -> Result<Vec<
 /// 把图标文件读成 data URI，供沙箱里的前端 <img> 直接显示。
 /// 数据目录是本地路径，iframe 内用 file:// 会被浏览器拦，只能这样传。
 /// 内置图标不走这里（它们随插件发布，前端用相对 URL 直接取）。
+///
+/// 只接受数据目录 icons/ 下的文件、以及配置里已登记过的图标引用 ——
+/// 此前只查 `is_file()`，任意 ≤2MB 的文件都能被读成 data URI。
 #[tauri::command(rename_all = "snake_case")]
-pub fn fpx_icon_data(path: String) -> Result<String, String> {
-    let p = std::path::Path::new(&path);
-    if !p.is_file() { return Err("图标文件不存在".into()); }
-    // 限制体积：图标不该很大，防止误传大文件把整包数据塞进 IPC
-    let meta = std::fs::metadata(p).map_err(|e| e.to_string())?;
-    if meta.len() > 2 * 1024 * 1024 {
-        return Err("图标文件超过 2MB，可能不是图标".into());
-    }
-    let bytes = std::fs::read(p).map_err(|e| e.to_string())?;
-    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-    Ok(base64::data_uri(&bytes, ext))
+pub fn fpx_icon_data(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+    path: String,
+) -> Result<String, String> {
+    let dir = store::data_dir(&app, &state)?;
+    core_icon_data(&dir, &path)
 }
 
 /// 把前端 fetch 到的内置图标内容存进数据目录 icons/，返回落盘路径。
@@ -1482,4 +1617,68 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     let y = if m <= 2 { y + 1 } else { y };
     (y, m, d)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 建一个本次测试专用的临时目录（进程内唯一，测完即删）。
+    fn tmpdir(tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let p = std::env::temp_dir()
+            .join(format!("nexus_fpx_{tag}_{}_{}", std::process::id(), nanos));
+        std::fs::create_dir_all(&p).expect("建临时目录失败");
+        p
+    }
+
+    /* 这两条对应审查清单的 P0-3 / P0-4：
+       改动前 `core_read_file` / `core_icon_data` 的前身可以读任意文件，
+       实测连 `C:/Windows/win.ini` 与应用自己的设备盐都能读出来。 */
+
+    #[test]
+    fn read_file_拒绝范围外的路径() {
+        let dir = tmpdir("read");
+        let inside = dir.join("note.md");
+        std::fs::write(&inside, "hello").unwrap();
+        // 数据目录内：放行（它是兜底 root）
+        assert!(core_read_file(&dir, &inside.to_string_lossy(), None).is_ok());
+
+        let outside = tmpdir("read_out");
+        let secret = outside.join("secret.txt");
+        std::fs::write(&secret, "top secret").unwrap();
+        let r = core_read_file(&dir, &secret.to_string_lossy(), None);
+        assert!(r.is_err(), "范围外的文件居然读到了: {r:?}");
+        let _ = std::fs::remove_dir_all(&outside);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn icon_data_只接受数据目录与已登记图标() {
+        let dir = tmpdir("icon");
+        let icons = dir.join("icons");
+        std::fs::create_dir_all(&icons).unwrap();
+        let mine = icons.join("a.ico");
+        std::fs::write(&mine, "fake-icon-bytes").unwrap();
+        assert!(core_icon_data(&dir, &mine.to_string_lossy()).is_ok());
+
+        let outside = tmpdir("icon_out");
+        let secret = outside.join("id_rsa");
+        std::fs::write(&secret, "PRIVATE KEY").unwrap();
+        let r = core_icon_data(&dir, &secret.to_string_lossy());
+        assert!(r.is_err(), "任意文件被当图标读走了: {r:?}");
+        let _ = std::fs::remove_dir_all(&outside);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn icon_file_part_拆掉索引后缀() {
+        assert_eq!(icon_file_part(r"C:\x\imageres.dll|3"), r"C:\x\imageres.dll");
+        // 竖线后不是纯数字时不拆（那是文件名的一部分）
+        assert_eq!(icon_file_part(r"C:\x\a|b.ico"), r"C:\x\a|b.ico");
+        assert_eq!(icon_file_part(r"C:\x\a.ico"), r"C:\x\a.ico");
+    }
 }

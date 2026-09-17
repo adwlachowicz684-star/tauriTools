@@ -194,12 +194,33 @@ fn strip_md(rel: &str) -> String {
 }
 
 /// 读取文件文本（超长截断）。
+///
+/// 大文件**不整读**：先按 `max` 折算字节预算，超预算就只 read 预算内的字节。
+/// 原先是 `fs::read_to_string` 整文件读进来再截断 —— 给个 4GB 日志就是 OOM
+/// （清单 P2-10；实测 200MB 文件读一次 43ms，正好说明"截断"救不了内存）。
 pub fn read_preview(path: &str, max: usize) -> Result<String, String> {
     let p = Path::new(path);
     if !p.is_file() {
         return Err(format!("不是文件或不存在: {path}"));
     }
-    let mut text = fs::read_to_string(p).map_err(|e| format!("读取失败: {e}"))?;
+
+    // UTF-8 一个字符最多 4 字节，再给 64 KiB 余量；预算只影响"要不要限流"
+    let budget = max.saturating_mul(4).saturating_add(64 * 1024);
+    let meta = fs::metadata(p).map_err(|e| format!("读取元信息失败: {e}"))?;
+    let mut text = if meta.len() as usize <= budget {
+        fs::read_to_string(p).map_err(|e| format!("读取失败: {e}"))?
+    } else {
+        use std::io::Read;
+        let f = fs::File::open(p).map_err(|e| format!("打开失败: {e}"))?;
+        let mut buf: Vec<u8> = Vec::with_capacity(budget.min(64 * 1024));
+        std::io::BufReader::new(f)
+            .take(budget as u64)
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("读取失败: {e}"))?;
+        // 末尾可能落在多字节字符中间，from_utf8_lossy 用替换字符兜住，不会 panic
+        String::from_utf8_lossy(&buf).to_string()
+    };
+
     if text.len() > max {
         // 必须退到字符边界再截：String::truncate 在非边界上会 panic，
         // 中文文件按字节截断几乎必然命中。

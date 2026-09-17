@@ -138,6 +138,14 @@ pub struct FpxConfig {
     /// MCP 工具开关：工具名 → 是否暴露（缺失视为开启，兼容旧配置）。
     #[serde(default)]
     pub mcp_tools: HashMap<String, bool>,
+    /// MCP 服务的访问令牌。空 / 缺失 = 首次启动时自动生成并落盘。
+    ///
+    /// HTTP 模式强制校验（`Authorization: Bearer <token>` 或 `X-Token`）；
+    /// stdio 模式由拉起方注入，不校验。
+    /// 生成后**不再变**：改了令牌，AI 客户端里配好的那条就失效了，
+    /// 而用户只会看到"连不上"，无从下手。
+    #[serde(default)]
+    pub mcp_token: Option<String>,
     /// Agent 连锁默认客户端 id（opencode / cursor / vscode / trae …）。
     #[serde(default)]
     pub chain_client: Option<String>,
@@ -223,6 +231,7 @@ impl Default for FpxConfig {
             mcp_enabled: true,
             close_mcp_on_exit: false,
             mcp_tools: HashMap::new(),
+            mcp_token: None,
             chain_client: None,
             chain_prompt: None,
             chain_actions: None,

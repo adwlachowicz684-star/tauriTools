@@ -19,6 +19,62 @@ use tauri::AppHandle;
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
+/* ---------------------------- 访问令牌 ---------------------------- */
+/*
+ * 为什么必须有：MCP 绑在 127.0.0.1，外部机器进不来，
+ * 但**本机任意进程**（含浏览器里的任意网页）都能调它的 26 个工具 ——
+ * 读写文件、改 ACL、建链接、拉起外部程序，一条凭据都不用带（清单 P0-1）。
+ * 同一份代码里 af_flow 的 webhook 早就做了 X-Token + 浏览器守卫头，
+ * MCP 这边一字未引，所以按同样的思路补上：
+ *
+ *   · HTTP 模式：强制令牌，取 `Authorization: Bearer <token>` 或 `X-Token`
+ *   · stdio 模式：客户端拉起的子进程，凭据由拉起方注入，**不校验**
+ *     （stdio 的 stdin/stdout 只有父子进程能碰，不存在"本机任意进程"问题）
+ *
+ * 令牌持久化在 config.mcpToken：重启后不能变 —— 变了的话
+ * AI 客户端里配好的令牌就全失效，而用户只会看到"连不上"。
+ */
+static TOKEN: Mutex<String> = Mutex::new(String::new());
+
+fn set_token(t: String) {
+    if let Ok(mut g) = TOKEN.lock() {
+        *g = t;
+    }
+}
+
+fn current_token() -> String {
+    TOKEN.lock().ok().map(|g| g.clone()).unwrap_or_default()
+}
+
+/// 供命令层查询（前端要在界面上告诉用户该用什么令牌调用）。
+pub fn token() -> String {
+    current_token()
+}
+
+/// 校验请求头里的令牌。头名在读取时已统一小写。
+fn check_auth(headers: &[(String, String)], expected: &str) -> bool {
+    for (k, v) in headers {
+        let v = v.trim();
+        match k.as_str() {
+            "x-token" => {
+                if super::safety::constant_time_eq(v, expected) {
+                    return true;
+                }
+            }
+            "authorization" => {
+                // Bearer / bearer 两种写法都认：真实客户端里都出现过
+                if let Some(bearer) = v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")) {
+                    if super::safety::constant_time_eq(bearer.trim(), expected) {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// 停服唤醒：accept 是非阻塞轮询，没有条件变量就得睡满一整拍才检查到 RUNNING。
 static WAKE: (Mutex<u64>, Condvar) = (Mutex::new(0), Condvar::new());
 
@@ -64,16 +120,39 @@ pub fn serve(app: AppHandle, port: u16) -> Result<String, String> {
     let listener = TcpListener::bind(("127.0.0.1", port)).map_err(|e| format!("绑定端口失败: {e}"))?;
     let addr = listener.local_addr().map_err(|e| e.to_string())?.to_string();
 
+    /* 数据目录在这里解析一次，之后整个 server 只认路径、不认句柄。
+       serve 仍收 AppHandle 是为了兼容现有调用方（setup 里传 app.handle()）。 */
+    let dir = super::store::resolve_data_dir(&app)
+        .map_err(|e| format!("无法定位数据目录: {e}"))?;
+
+    /* 令牌必须在 accept 之前算好：一旦有连接进来还没定下令牌，
+       就得在"放行"与"拒绝"之间二选一，两者都不对。
+       读取 + 生成 + 落盘走一次事务，避免与前端「保存设置」互相覆盖。 */
+    let token = super::store::with_config(&dir, |cfg| {
+        // 先取成自有 String 再改 cfg：借用与写在同一个闭包里容易互相打架
+        let cur = cfg.mcp_token.as_deref().map(str::trim).unwrap_or("").to_string();
+        if cur.is_empty() {
+            let generated = super::safety::random_token();
+            cfg.mcp_token = Some(generated.clone());
+            eprintln!("[mcp] 未配置访问令牌，已自动生成；HTTP 调用需带 Authorization: Bearer <token> 或 X-Token");
+            Ok(generated)
+        } else {
+            Ok(cur)
+        }
+    })
+    .map_err(|e| {
+        // 准备令牌失败就别占着"已在运行"这个标志 —— 否则本次失败后
+        // 之后的每次启动都会撞上"MCP server 已在运行"，再也起不来
+        RUNNING.store(false, Ordering::SeqCst);
+        format!("无法准备 MCP 访问令牌: {e}")
+    })?;
+    set_token(token);
+
     // 非阻塞 accept：阻塞式的 incoming() 不关掉 socket 就永远不会返回，
     // 那样 stop() 只是置了个标志，线程卡在 accept 里、旧端口一直被占着。
     // 改成非阻塞 + 短睡眠轮询，stop 后 100ms 内线程即可退出。
     listener.set_nonblocking(true)
         .map_err(|e| format!("设置非阻塞失败: {e}"))?;
-
-    /* 数据目录在这里解析一次，之后整个 server 只认路径、不认句柄。
-       serve 仍收 AppHandle 是为了兼容现有调用方（setup 里传 app.handle()）。 */
-    let dir = super::store::resolve_data_dir(&app)
-        .map_err(|e| format!("无法定位数据目录: {e}"))?;
 
     std::thread::spawn(move || {
         let live = Arc::new(AtomicUsize::new(0));
@@ -205,13 +284,16 @@ fn handle(mut stream: TcpStream, dir: PathBuf) {
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(10)));
 
     // 借用式 BufReader：作用域结束后即可再用 stream 写回
-    let (request_line, body, too_large) = {
+    let (request_line, body, too_large, headers) = {
         let mut reader = BufReader::new(&stream);
 
         let mut request_line = String::new();
         if BufRead::read_line(&mut reader, &mut request_line).is_err() { return; }
 
         let mut content_length = 0usize;
+        // 头名统一小写存下来：鉴权要按名字找 X-Token / Authorization，
+        // HTTP 头名是大小写不敏感的，不归一化的话 `x-token` 就匹配不上。
+        let mut headers: Vec<(String, String)> = Vec::new();
         loop {
             let mut line = String::new();
             match BufRead::read_line(&mut reader, &mut line) {
@@ -220,9 +302,14 @@ fn handle(mut stream: TcpStream, dir: PathBuf) {
                 Err(_) => break,
             }
             if line == "\r\n" || line == "\n" { break; }
-            if let Some(v) = line.to_lowercase().strip_prefix("content-length:") {
-                // 解析失败按 0 处理；超大值由下面的 MAX_BODY 拦下
-                content_length = v.trim().parse().unwrap_or(0);
+            if let Some(idx) = line.find(':') {
+                let k = line[..idx].trim().to_lowercase();
+                let v = line[idx + 1..].trim().to_string();
+                if k == "content-length" {
+                    // 解析失败按 0 处理；超大值由下面的 MAX_BODY 拦下
+                    content_length = v.parse().unwrap_or(0);
+                }
+                headers.push((k, v));
             }
         }
 
@@ -241,7 +328,7 @@ fn handle(mut stream: TcpStream, dir: PathBuf) {
         {
             return;
         }
-        (request_line, body, too_large)
+        (request_line, body, too_large, headers)
     };
 
     if too_large {
@@ -253,17 +340,44 @@ fn handle(mut stream: TcpStream, dir: PathBuf) {
     let method = parts.first().copied().unwrap_or("");
     let path = parts.get(1).copied().unwrap_or("/");
 
+    /* 鉴权：HTTP 模式一律要求令牌。
+       ------------------------------------------------------------------
+       为什么连 GET / 也要：它虽然只回工具数量，但那正好是
+       「这个端口是不是 MCP」的指纹，可被拿来做端口扫描识别。
+       校验放在**解析之后、分发之前**，这样未授权请求拿到的仍是
+       一条结构正确的 JSON-RPC 错误，而不是一个空包。 */
+    let expected = current_token();
+    let authed = !expected.is_empty() && check_auth(&headers, &expected);
+    let unauthorized = |id: Value| {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": -32001,
+                "message": "unauthorized：缺少或错误的访问令牌（Authorization: Bearer <token> 或 X-Token）",
+            }
+        })
+    };
+
     let (status, payload) = match method {
-        "GET" => (200, json!({
-            "service": "nexus-panel/项目组分配",
-            "running": true,
-            "tools": tools().len(),
-            "endpoint": "POST /mcp",
-        })),
+        "GET" => {
+            if !authed {
+                (401, unauthorized(Value::Null))
+            } else {
+                (200, json!({
+                    "service": "nexus-panel/项目组分配",
+                    "running": true,
+                    "tools": tools().len(),
+                    "endpoint": "POST /mcp",
+                }))
+            }
+        }
         "POST" if path.starts_with("/mcp") || path == "/" => {
             let req: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
-            // 通知（JSON-RPC 里没有 id 的请求）按规范不回包，回 204
-            if req.get("id").is_none() {
+            if !authed {
+                (401, unauthorized(req.get("id").cloned().unwrap_or(Value::Null)))
+            } else if req.get("id").is_none() {
+                // 通知（JSON-RPC 里没有 id 的请求）按规范不回包，回 204
                 (204, Value::Null)
             } else {
                 (200, dispatch(&req, &dir))
@@ -277,17 +391,24 @@ fn handle(mut stream: TcpStream, dir: PathBuf) {
     write_raw(&mut stream, status, &body_bytes);
 }
 
-/// 写 HTTP 响应（含 CORS 头，方便浏览器侧的 MCP 调试页直连）。
+/// 写 HTTP 响应。
+///
+/// **不带 CORS 头**（此前是 `Access-Control-Allow-Origin: *`）：
+/// 浏览器同源策略管的是"读响应"，加了它等于允许**任意网页**跨域读走
+/// MCP 的返回内容 —— 配合无鉴权就是完整的本机数据外泄（清单 P1-8）。
+/// 调试便利与安全边界冲突时，默认不放行；真要连调试页，用 curl 或
+/// 客户端直连即可（令牌已在 config.mcpToken 里，界面上看得到）。
 fn write_raw(stream: &mut TcpStream, status: u16, body: &[u8]) {
     let status_text = match status {
         200 => "OK",
         204 => "No Content",
+        401 => "Unauthorized",
         404 => "Not Found",
         413 => "Payload Too Large",
         _ => "Error",
     };
     let head = format!(
-        "HTTP/1.1 {status} {status_text}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: *\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status} {status_text}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     let mut out = Vec::with_capacity(head.len() + body.len());
@@ -542,6 +663,11 @@ fn canonical_tool(name: &str) -> (&str, Option<(&str, &str)>) {
     (name, None)
 }
 
+/// 字符串看起来是不是一条路径（含分隔符或盘符），而不是一个交给 PATH 解析的命令名。
+fn looks_like_path(s: &str) -> bool {
+    s.contains('/') || s.contains('\\') || (s.len() > 1 && s.as_bytes()[1] == b':')
+}
+
 fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
     let params = req.get("params").cloned().unwrap_or(json!({}));
     let raw = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
@@ -580,6 +706,21 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
         return Err(err(&format!("工具 {name} 已在设置中关闭{hint}")));
     }
 
+    /* 路径白名单：与命令层同一份实现（清单 P0-2）。
+       ------------------------------------------------------------------
+       这条**独立于鉴权**：就算令牌校验过了，合法客户端仍可能被提示词
+       诱导去读全盘。所以每个收路径的工具在这里再过一道。
+       范围 = 页签卡片 + 用户配置的目录 + 数据目录（见 content_roots）。 */
+    let roots = super::content_roots(dir, &cfg);
+    let within = |raw: &str| -> Result<std::path::PathBuf, Value> {
+        super::guard::must_be_under(raw, &roots).map_err(|e| err(&e))
+    };
+    // 只校验、不改写路径：登记/比对用的仍是调用方给的原始字符串
+    // （canonicalize 会带上 \\?\ 前缀，拿它当键会和已有登记对不上）
+    let within_raw = |raw: &str| -> Result<(), Value> {
+        super::guard::must_be_under(raw, &roots).map(|_| ()).map_err(|e| err(&e))
+    };
+
     let out = match name {
         "list_projects" | "list_groups" => {
             let snap = snapshot(dir)?;
@@ -594,12 +735,16 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             let project = s("project");
             let group = s("group");
             if project.is_empty() || group.is_empty() { return Err(err("project 与 group 必填")); }
+            // 两端都要在允许范围内：junction 的目标在任意位置 = 任意位置建链接
+            let project = within(&project)?.to_string_lossy().to_string();
+            let group = within(&group)?.to_string_lossy().to_string();
             let snap = super::core_create_link(&dir, &project, &group, None)
                 .map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": format!("已分配，当前链接 {} 条", snap.links.len()) }] })
         }
         "remove_link" => {
-            let snap = super::core_remove_link(&dir, &s("project"))
+            let project = within(&s("project"))?.to_string_lossy().to_string();
+            let snap = super::core_remove_link(&dir, &project)
                 .map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": format!("已撤销，剩余链接 {} 条", snap.links.len()) }] })
         }
@@ -617,11 +762,14 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
                 if !r.is_empty() { r }
                 else { resolve_target(&args, true).map_err(|e| err(&e))? }
             };
+            // 列目录也算"读"：越权列目录 = 目录结构泄露
+            let root = within(&root)?.to_string_lossy().to_string();
             let items = super::fpx_scan_content(root, Some(kind));
             json!({ "content": [{ "type": "text", "text": serde_json::to_string(&items).unwrap_or_default() }] })
         }
         "read_file" => {
-            let text = super::fpx_read_file(s("path"), Some(20000)).map_err(|e| err(&e))?;
+            // 走 core_read_file（内含路径白名单），不直接读 content::read_preview
+            let text = super::core_read_file(&dir, &s("path"), Some(20000)).map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": text }] })
         }
         "create_folder" => {
@@ -629,7 +777,9 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             // （那会建出 父目录\project\名称 这种错误层级）。
             // 层级走独立的 hierarchy 参数，未给则不拼。
             let hierarchy = args.get("hierarchy").and_then(|v| v.as_str()).map(str::to_string);
-            let p = super::core_create_folder(&dir, &s("parent"), &s("name"),
+            // 父目录必须在允许范围内：否则等于"在任意位置建目录"
+            let parent = within(&s("parent"))?.to_string_lossy().to_string();
+            let p = super::core_create_folder(&dir, &parent, &s("name"),
                 hierarchy.as_deref(), None)
                 .map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": p }] })
@@ -680,7 +830,9 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
         "set_lock" => {
             let dd = args.get("denyDelete").and_then(|v| v.as_bool()).unwrap_or(false);
             let dw = args.get("denyWrite").and_then(|v| v.as_bool()).unwrap_or(false);
-            super::core_set_lock(&dir, &s("path"), dd, dw).map_err(|e| err(&e))?;
+            // ACL 是写操作：能对任意路径改 ACL，就能把系统目录锁死或解锁
+            let path = within(&s("path"))?.to_string_lossy().to_string();
+            super::core_set_lock(&dir, &path, dd, dw).map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": format!("保护已更新：防删除={dd} 防写入={dw}") }] })
         }
         "set_tag_color" => {
@@ -724,6 +876,11 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
         "select_folder" => {
             let path = s("path");
             if path.is_empty() { return Err(err("缺少参数 path")); }
+            /* 选中对象是后续一批工具的**默认目标**（deploy_skill 就用它），
+               所以这里必须一并收口 —— 否则"先选中任意目录、再省略 target"
+               就能绕开逐个工具的校验。
+               只校验不改写：类别判定要拿原始字符串和页签登记比对。 */
+            within_raw(&path)?;
             // 用 symlink_metadata 判定，不跟随链接：项目目录里大量使用 junction，
             // 跟随判定会把链接背后的目录当成"另一个真实目录"登记进来，
             // 后续备份 / 递归遍历就可能顺着它绕回自身
@@ -775,6 +932,8 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             let path = s("path");
             let icon = s("icon");
             if path.is_empty() || icon.is_empty() { return Err(err("path 与 icon 必填")); }
+            // 会写 desktop.ini + 改目录属性：必须落在允许范围内
+            let path = within(&path)?.to_string_lossy().to_string();
             // 同上：不跟随符号链接
             if !super::fsutil::is_real_dir(std::path::Path::new(&path)) {
                 return Err(err(&format!("目录不存在: {path}")));
@@ -794,6 +953,7 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
         "folder_icon_get" => {
             let path = s("path");
             if path.is_empty() { return Err(err("缺少参数 path")); }
+            within_raw(&path)?;
             let cfg = super::store::load_config(&dir);
             let cur = cfg.folder_icons.get(&path).cloned()
                 .or_else(|| {
@@ -811,6 +971,7 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
         "folder_icon_restore" => {
             let path = s("path");
             if path.is_empty() { return Err(err("缺少参数 path")); }
+            let path = within(&path)?.to_string_lossy().to_string();
             super::store::with_config(&dir, |cfg| {
                 let key = super::store::normalize_key(&path);
                 cfg.folder_icons.retain(|k, _| super::store::normalize_key(k) != key);
@@ -824,8 +985,8 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
         }
         "capture_screen" => {
             let target = match args.get("dir").and_then(|v| v.as_str()) {
-                Some(d) if !d.trim().is_empty() => std::path::PathBuf::from(d.trim()),
-                _ => dir.join("shots"),
+                Some(d) if !d.trim().is_empty() => within(d)?,
+                _ => within(&dir.join("shots").to_string_lossy())?,
             };
             let r = super::screen::capture(&target).map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": serde_json::to_string(&r).unwrap_or_default() }] })
@@ -838,8 +999,8 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             let title = s("title");
             if title.is_empty() { return Err(err("缺少参数 title")); }
             let target = match args.get("dir").and_then(|v| v.as_str()) {
-                Some(d) if !d.trim().is_empty() => std::path::PathBuf::from(d.trim()),
-                _ => dir.join("shots"),
+                Some(d) if !d.trim().is_empty() => within(d)?,
+                _ => within(&dir.join("shots").to_string_lossy())?,
             };
             let r = super::screen::capture_window(&target, &title).map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": serde_json::to_string(&r).unwrap_or_default() }] })
@@ -879,6 +1040,8 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             if prompt.trim().is_empty() { return Err(err("缺少参数 prompt（skill 描述）")); }
             let target = resolve_target(&args, false).map_err(|e| err(&e))?
                 .ok_or_else(|| err("未指定目标文件夹，请先 select_folder 或传 target"))?;
+            // 会往目标里写 SKILL.md 与请求文件：必须落在允许范围内
+            let target = within(&target)?.to_string_lossy().to_string();
 
             let cfg = super::store::load_config(&dir);
             // 目标为项目组时自动落到其 skill 目录（与界面行为一致）
@@ -896,8 +1059,17 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             }
             drop(_guard);
 
-            // 有 AI 命令 → 写请求文件并拉起；否则本地生成 SKILL.md 骨架
+            /* 有 AI 命令 → 写请求文件并拉起；否则本地生成 SKILL.md 骨架。
+               ------------------------------------------------------------------
+               agentCmd 只接受**命令名**（走 PATH 解析），不接受路径：
+               底层 `chain::send_command` 会把入参直接当可执行文件 spawn，
+               传个路径就等于"执行任意程序"（清单 P1-3 的前半）。
+               配置里的 chain_client 同理 —— 它出自用户自己的设置，
+               那半由 `check_executable` 兜底（扩展名白名单 + 存在性）。 */
             let agent_cmd = s("agentCmd");
+            if !agent_cmd.trim().is_empty() && looks_like_path(agent_cmd.trim()) {
+                return Err(err("agentCmd 只接受命令名（走 PATH 解析），不接受可执行文件路径"));
+            }
             let cmd = if agent_cmd.trim().is_empty() { cfg.chain_client.clone().unwrap_or_default() } else { agent_cmd };
 
             if !cmd.trim().is_empty() {
@@ -1065,5 +1237,48 @@ fn snapshot(dir: &Path) -> Result<super::model::Snapshot, Value> {
 
 /// 供命令层查询运行状态（前端展示用）。
 pub fn status() -> Value {
-    json!({ "running": is_running() })
+    json!({
+        "running": is_running(),
+        // 令牌一并返回：用户界面上要显示"该用什么令牌调用"。
+        // 它不是额外泄露 —— config 整体（含 mcpToken）本就会随
+        // fpx_bootstrap 发给前端；令牌挡的是**本机其它进程与网页**，
+        // 不是同一页面里的插件。
+        "token": token(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn h(k: &str, v: &str) -> (String, String) { (k.to_string(), v.to_string()) }
+
+    #[test]
+    fn rejects_missing_and_wrong_token() {
+        let t = "0123456789abcdef0123456789abcdef";
+        assert!(!check_auth(&[], t));
+        assert!(!check_auth(&[h("x-token", "wrong")], t));
+        // 长度就不同的情况
+        assert!(!check_auth(&[h("x-token", "0123")], t));
+    }
+
+    #[test]
+    fn accepts_x_token_and_bearer_case_insensitive() {
+        let t = "0123456789abcdef0123456789abcdef";
+        assert!(check_auth(&[h("X-Token", t)], t));
+        assert!(check_auth(&[h("x-token", t)], t));
+        assert!(check_auth(&[h("Authorization", &format!("Bearer {t}"))], t));
+        assert!(check_auth(&[h("authorization", &format!("bearer {t}"))], t));
+        // 不带 Bearer 前缀的 Authorization 不算
+        assert!(!check_auth(&[h("authorization", t)], t));
+    }
+
+    #[test]
+    fn distinguishes_path_from_command_name() {
+        assert!(looks_like_path("C:\\Windows\\System32\\calc.exe"));
+        assert!(looks_like_path("/usr/bin/evil"));
+        assert!(looks_like_path(".\\local\\tool.exe"));
+        assert!(!looks_like_path("codebuddy"));
+        assert!(!looks_like_path("traecli"));
+    }
 }

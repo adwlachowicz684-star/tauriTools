@@ -472,6 +472,22 @@ pub fn send_command(cmd: &str, directory: &str, prompt: &str) -> ChainSendResult
             message: "AI 客户端命令为空".into(),
         };
     }
+    /* 先过可执行性校验，再 spawn。
+       ------------------------------------------------------------------
+       cmd 可能来自配置（chain_client）或 MCP 的 agentCmd —— 那都是"外部输入"，
+       直接 `Command::new(cmd)` 等于把"启动哪个程序"交给调用方（清单 P1-3）。
+       check_executable 挡两件事：
+         · 明确路径必须真实存在，且扩展名在白名单里（Windows 上挡 .ps1/.vbs 等
+           由解释器托管、spawn 行为不可控的脚本）
+         · 纯命令名（走 PATH）只校验字符集，存在性交给 spawn 失败去报 */
+    if let Err(e) = check_executable(std::path::Path::new(cmd)) {
+        return ChainSendResult {
+            ok: false,
+            client: cmd.to_string(),
+            needs_paste: false,
+            message: format!("已拒绝启动（{e}）"),
+        };
+    }
     // 命令里可能带自己的参数，这里只补上工作目录
     let exe = std::path::PathBuf::from(cmd);
     let ok = run(&exe, &[directory]);

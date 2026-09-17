@@ -322,6 +322,11 @@ fn main() {
             af_flow::webhook_start, af_flow::webhook_stop,
             af_flow::fs_op, af_flow::af_read_image_data_url, af_flow::af_read_audio_data_url,
             af_flow::af_fs_allow_root, af_flow::af_fs_list_roots, af_flow::af_fs_disallow_root,
+            /* 这两条此前**定义了却没注册**：带了 #[tauri::command] 但不在
+               generate_handler! 里 —— 编译不报错，只在运行时报
+               "command not found"，而前端确实在调它们
+               （plugins/agent-flow/lib/tauri.ts 的凭据加密与对话监听）。 */
+            af_flow::af_fs_tail, af_flow::af_device_salt,
             tray_toggle_window
         ])
         .setup(move |app| {

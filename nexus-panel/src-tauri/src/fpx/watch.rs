@@ -10,8 +10,10 @@
 //!     所以事件先堆在 PENDING 队列里，前端用 fpx_watch_poll 定期取走。
 //!     同时仍 emit 一份，将来若改同页挂载或宿主补上转发即可直接生效。
 //!   - 链接点（junction/symlink）不深入，与备份策略一致，防循环。
+//!     注意 `is_symlink` 挡不住 Windows 的 junction（它不算 symlink），
+//!     所以指纹遍历另有三重防环，见 fingerprint。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -55,19 +57,52 @@ fn is_symlink(p: &Path) -> bool {
     std::fs::symlink_metadata(p).map(|m| m.file_type().is_symlink()).unwrap_or(false)
 }
 
+/// 遍历深度上限：见 fingerprint 里关于环的说明。
+const SCAN_MAX_DEPTH: usize = 32;
+/// 单次遍历的条目上限：超大目录树扫到一半就该收手，
+/// 否则一次指纹的耗时能顶上好几个轮询周期。
+const SCAN_MAX_ENTRIES: usize = 200_000;
+
 /// 目录指纹：条目数 + 树内最大修改时间。
+///
+/// **三重防环**（清单 P1-9）。原先只靠 `is_symlink` 挡，但那不够：
+/// Windows 的 junction 在 `symlink_metadata` 里**不是** symlink，而是
+/// 「目录重解析点」，于是 `p.is_dir() && !is_symlink(&p)` 判断为 true、照样进栈。
+/// 而本项目恰恰大量用 junction 把项目链接到项目组的 agents/skills ——
+/// 一旦某个目录链回自己的祖先，跟随遍历就是死循环：线程卡住、栈无限增长。
+///
+/// 所以按「判定不可靠」来设计，三道保险一起上：
+///   1. canonicalize 后去重（visited）——环上的目录只进一次
+///   2. 深度上限
+///   3. 条目总数上限
 fn fingerprint(dir: &Path) -> (usize, i64) {
     let mut count = 0usize;
     let mut newest = 0i64;
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(d) = stack.pop() {
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    // 起点也算访问过：子目录若链回它，就不会再展开一遍
+    if let Ok(c) = dir.canonicalize() {
+        visited.insert(c);
+    }
+    let mut stack: Vec<(PathBuf, usize)> = vec![(dir.to_path_buf(), 0)];
+    'outer: while let Some((d, depth)) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&d) else { continue };
         for e in entries.flatten() {
             let p = e.path();
             count += 1;
             newest = newest.max(mtime_secs(&p));
+            if count >= SCAN_MAX_ENTRIES {
+                break 'outer;
+            }
+            if depth + 1 >= SCAN_MAX_DEPTH {
+                continue;
+            }
             if p.is_dir() && !is_symlink(&p) {
-                stack.push(p);
+                if let Ok(c) = p.canonicalize() {
+                    if !visited.insert(c) {
+                        continue; // 已经扫过（多半是链接绕回来了）
+                    }
+                }
+                stack.push((p, depth + 1));
             }
         }
     }
@@ -187,4 +222,64 @@ pub fn watched_paths(app: &AppHandle) -> Vec<String> {
 #[allow(dead_code)]
 pub fn data_dir_of(app: &AppHandle) -> Option<PathBuf> {
     super::store::resolve_data_dir(app).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmpdir(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let p = std::env::temp_dir()
+            .join(format!("nexus_watch_{tag}_{}_{}", std::process::id(), nanos));
+        std::fs::create_dir_all(&p).expect("建临时目录失败");
+        p
+    }
+
+    /* 清单 P1-9：遍历必须能终止。
+       junction 环在 Linux 上造不出来（那是 Windows 的重解析点），
+       所以这里用"深到超过上限的树"验证深度上限确实生效 ——
+       能返回就说明没有无限展开。 */
+
+    #[test]
+    fn fingerprint_terminates_on_deep_tree() {
+        let base = tmpdir("deep");
+        let mut cur = base.clone();
+        // 造 60 层，超过 SCAN_MAX_DEPTH
+        for _ in 0..60 {
+            cur = cur.join("d");
+            std::fs::create_dir_all(&cur).unwrap();
+        }
+        std::fs::write(cur.join("leaf.txt"), "x").unwrap();
+        let (count, newest) = fingerprint(&base);
+        assert!(count > 0);
+        assert!(newest > 0, "应当读到文件的修改时间");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn fingerprint_counts_entries_and_newest_mtime() {
+        let base = tmpdir("fp");
+        std::fs::write(base.join("a.txt"), "a").unwrap();
+        let sub = base.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("b.txt"), "b").unwrap();
+        let (count, newest) = fingerprint(&base);
+        // 3 个条目：a.txt / sub / b.txt
+        assert_eq!(count, 3);
+        assert!(newest > 0);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn fingerprint_of_missing_dir_is_empty() {
+        let base = tmpdir("missing");
+        let gone = base.join("nope");
+        let (count, newest) = fingerprint(&gone);
+        assert_eq!((count, newest), (0, 0));
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

@@ -415,19 +415,8 @@ fn token_ok(req: &MiniRequest, expected: &str) -> bool {
 /// （webhook 只绑 127.0.0.1）。熵来自 时间纳秒 + 进程号 + 调用序号，
 /// 用 FNV-1a 混成 128 位后输出 32 位十六进制。
 fn random_token() -> String {
-    static N: AtomicUsize = AtomicUsize::new(0);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let seq = N.fetch_add(1, Ordering::Relaxed) as u128;
-    let pid = std::process::id() as u128;
-    let mut h: u128 = 0xcbf2_9ce4_8422_2325;
-    for v in [nanos as u128, pid, seq, (nanos as u128).rotate_left(37)] {
-        h ^= v;
-        h = h.wrapping_mul(0x0100_0000_01b3);
-    }
-    format!("{h:032x}")
+    // 唯一实现在 safety 里（MCP 的令牌也用它），这里只保留调用点
+    crate::fpx::safety::random_token()
 }
 
 /// 处理单个 webhook 连接：解析请求 → 校验 → 回包。
@@ -993,25 +982,11 @@ fn persist_fs_roots(app: &AppHandle) {
 }
 
 /// 即便显式授权也拒绝的根：把整块盘或系统目录放进来等于没约束。
+///
+/// 实现已收敛到 `fpx::guard::forbidden_root`（全仓唯一一份，含回归测试），
+/// 这里保留同名包装只为不动调用点 —— 两份实现迟早漂移。
 fn is_forbidden_root(p: &Path) -> bool {
-    if p.parent().is_none() {
-        return true; // 文件系统根（/ 或 C:\）
-    }
-    let s = p.to_string_lossy().replace('\\', "/");
-    let s = s.trim_end_matches('/');
-    // 家目录根本身不放行（~/projects 这类具体子目录可以）
-    if let Ok(home) = std::env::var("HOME") {
-        let h = home.trim_end_matches('/');
-        if !h.is_empty() && s == h {
-            return true;
-        }
-    }
-    const DENY: &[&str] = &[
-        "/etc", "/usr", "/bin", "/sbin", "/boot", "/proc", "/sys", "/dev",
-        "/lib", "/lib64", "/var", "/System", "/Library", "/private",
-        "/Windows", "/Program Files", "/Program Files (x86)",
-    ];
-    DENY.iter().any(|d| s == *d || s.starts_with(&format!("{d}/")))
+    crate::fpx::guard::forbidden_root(p)
 }
 
 /// 取授权根目录快照。首次调用时把应用数据目录设为默认根，
@@ -1046,52 +1021,11 @@ fn fs_roots_snapshot(app: &AppHandle) -> Vec<PathBuf> {
 ///
 /// 目标不存在时（write 新建、copy 到新文件）canonicalize 会失败，
 /// 退化为「父目录 canonicalize + 文件名」——否则新建文件就能绕过校验。
+///
+/// 判定逻辑已经收敛到 `fpx::guard::must_be_under`（本插件唯一的路径收口实现），
+/// 这里保留同名包装只为不动调用点 —— 两份实现迟早漂移，现在只有一份。
 fn resolve_within(raw: &str, roots: &[PathBuf]) -> Result<PathBuf, String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err("路径不能为空".to_string());
-    }
-    if roots.is_empty() {
-        return Err(
-            "尚未授权任何目录，已拒绝本次操作。请先把要操作的目录加入授权列表。"
-                .to_string(),
-        );
-    }
-    let p = Path::new(trimmed);
-    let abs = if p.is_absolute() {
-        p.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map_err(|e| format!("无法读取当前工作目录: {e}"))?
-            .join(p)
-    };
-
-    let canon = abs.canonicalize().or_else(|_| {
-        let parent = abs
-            .parent()
-            .ok_or_else(|| format!("路径缺少父目录，无法校验: {trimmed}"))?;
-        let name = abs
-            .file_name()
-            .ok_or_else(|| format!("路径缺少文件名，无法校验: {trimmed}"))?;
-        parent
-            .canonicalize()
-            .map(|c| c.join(name))
-            .map_err(|e| format!("路径不存在且父目录无法解析: {trimmed}（{e}）"))
-    })?;
-
-    if !roots.iter().any(|r| canon.starts_with(r)) {
-        let allowed = roots
-            .iter()
-            .map(|r| r.display().to_string())
-            .collect::<Vec<_>>()
-            .join("\n  · ");
-        return Err(format!(
-            "路径越权，已拒绝：{}\n允许的范围：\n  · {}\n请先把所在目录加入授权列表。",
-            canon.display(),
-            allowed
-        ));
-    }
-    Ok(canon)
+    crate::fpx::guard::must_be_under(raw, roots)
 }
 
 /// 授权一个目录供 fs_op 使用。
@@ -1265,16 +1199,20 @@ const TAIL_MAX: u64 = 64 * 1024;
 /// 返回的内容**可能以半截行开头**（seek 落在行中间），
 /// 调用方负责丢掉第一行 —— 那行多半是半个 JSON，解析必然失败，
 /// 丢掉最多只漏一条消息，而它下一轮还会被完整读到。
+///
+/// 路径必须落在 fs_op 的授权根内：同模块的 `fs_op` 走 `resolve_within` 白名单，
+/// 而这里原先是裸 `std::fs` 读，等于给白名单开了个旁路（清单 P1-1）。
 #[tauri::command]
-pub fn af_fs_tail(path: String, max_bytes: Option<u64>) -> Result<String, String> {
+pub fn af_fs_tail(app: AppHandle, path: String, max_bytes: Option<u64>) -> Result<String, String> {
     use std::io::{Read, Seek, SeekFrom};
 
-    let p = Path::new(path.trim());
+    let roots = fs_roots_snapshot(&app);
+    let p = crate::fpx::guard::must_be_under(path.trim(), &roots)?;
     if !p.is_file() {
         return Err(format!("不是文件或不存在: {}", path));
     }
 
-    let meta = std::fs::metadata(p).map_err(|e| format!("读取元信息失败: {e}"))?;
+    let meta = std::fs::metadata(&p).map_err(|e| format!("读取元信息失败: {e}"))?;
     let want = max_bytes.unwrap_or(TAIL_MAX).clamp(1, TAIL_MAX);
     // 从末尾往前 want 字节；文件比 want 短就从头读
     let start = meta.len().saturating_sub(want);

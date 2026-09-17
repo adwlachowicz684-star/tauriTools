@@ -114,6 +114,52 @@ pub fn check_executable(p: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/* ---------------------------- 凭据比较与生成 ---------------------------- */
+
+/// 恒定时间比较：两个字符串是否相等。
+///
+/// 为什么不用 `a == b`：字符串比较在第一个不同的字节就返回，
+/// 耗时差可被用来逐字节爆破 token（哪怕是本机 127.0.0.1，
+/// 浏览器里的任意页面都能发起大量请求）。
+///
+/// 长度不等时仍需"做满"一次比较再返回，否则长度本身先泄漏；
+/// 这里对较短的一方按位异或一个常数，让两条路径的循环次数一致。
+pub fn constant_time_eq(a: &str, b: &str) -> bool {
+    let ab = a.as_bytes();
+    let bb = b.as_bytes();
+    let n = ab.len().max(bb.len());
+    let mut acc = ab.len() ^ bb.len();   // 长度差异先记进累加器，不提前返回
+    for i in 0..n {
+        let x = ab.get(i).copied().unwrap_or(0);
+        let y = bb.get(i).copied().unwrap_or(0);
+        acc |= (x ^ y) as usize;
+    }
+    acc == 0
+}
+
+/// 生成一个随机 token（32 位十六进制）。
+///
+/// 不引 rand / getrandom：它用于"MCP / webhook 未配置凭据时自动兜底"，
+/// 服务只绑 127.0.0.1，抗的不是网络攻击而是本机其它进程与网页的顺手调用。
+/// 熵来自 时间纳秒 + 进程号 + 调用序号，用 FNV-1a 混成 128 位后输出。
+pub fn random_token() -> String {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let seq = N.fetch_add(1, Ordering::Relaxed) as u128;
+    let pid = std::process::id() as u128;
+    let mut h: u128 = 0xcbf2_9ce4_8422_2325;
+    for v in [nanos as u128, pid, seq, (nanos as u128).rotate_left(37)] {
+        h ^= v;
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{h:032x}")
+}
+
 /// 起进程前的统一校验入口：命令与参数都查一遍。
 ///
 /// 任何"程序名或参数来自配置 / 用户输入"的 `Command::new` 都应先过这里，
