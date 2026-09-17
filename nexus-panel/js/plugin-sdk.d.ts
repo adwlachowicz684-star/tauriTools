@@ -31,6 +31,41 @@ export interface PluginContext {
     all(): Promise<Record<string, any>>;
   };
 
+  /**
+   * 服务插件调用（kind:'service'）。
+   *
+   * `call` 是通用入口 —— 第三方服务靠它接入，新增服务不用改 SDK。
+   * 下面几个是**内置服务的薄封装**，只做参数转换、不另起语义：
+   * 用起来顺手，但随时可以退回 call 写法。
+   */
+  services: {
+    call(id: string, method: string, args?: Record<string, any>): Promise<any>;
+    list(): Promise<Array<{ id: string; name: string; mounted: boolean }>>;
+    /** 取色服务 */
+    color: {
+      /** 打开取色面板，返回 '#RRGGBB'；用户取消则 reject */
+      pick(initial?: string): Promise<string>;
+      /** 归一化任意颜色输入，非法返回 null */
+      normalize(color: string): Promise<string | null>;
+      /** 24 个预设色 */
+      presets(): Promise<string[]>;
+    };
+    /** 图标选择服务 */
+    icon: {
+      /** 打开浏览面板，返回 { name, url }；取消则 reject */
+      browse(keyword?: string): Promise<{ name: string; url: string }>;
+      list(): Promise<string[]>;
+      url(name: string): Promise<string>;
+    };
+    /** Markdown 编辑服务 */
+    md: {
+      /** 打开编辑面板，返回编辑后的文本；取消则 reject */
+      edit(text?: string, title?: string): Promise<string>;
+      /** 只要渲染结果 */
+      render(text: string): Promise<string>;
+    };
+  };
+
   /** 修改内容区标题 */
   setTitle(text: string): void;
   /** 侧边栏角标，0/null 清除 */

@@ -6,6 +6,22 @@
  * （比如一处支持 #abc 简写、另一处不支持），所以收敛到这里。
  */
 
+/**
+ * 预设常用色 24 个（取自原 C# 版 ColorPickDialog 的 PresetColors，不可删改）。
+ *
+ * 放在这里而不是留在 ColorPicker 里，是因为取色服务（plugins/color-picker）
+ * 也要用同一份 —— 两处各存一份迟早漂移（一边改了另一边没改，
+ * 同一个"常用色"在两个界面里显示成不同颜色）。
+ */
+export const PRESET_COLORS = [
+  '#E5484D', '#D9A441', '#F5A623', '#B7C94A',
+  '#46A758', '#2FAE9B', '#12A594', '#0091FF',
+  '#3E63DD', '#6E56CF', '#8E4EC6', '#BF4AC8',
+  '#D6409F', '#E93D82', '#FF6B35', '#FFD23F',
+  '#8FD14F', '#00C2A8', '#4098D7', '#5B5BD6',
+  '#9D34DA', '#F472B6', '#B4B9C2', '#7C8698',
+];
+
 /** 归一化成 `#RRGGBB`（大写）；支持省略 `#` 与三位简写；非法返回 null。 */
 export function normalizeHex(hex: string): string | null {
   const s = (hex || '').trim();

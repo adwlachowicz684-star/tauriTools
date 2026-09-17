@@ -2,18 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Api } from '../api';
 import { errText } from '../api';
-import { hexToRgb, rgbToHex, normalizeHex, hexToHsv, hsvToRgb, hsvToHex, type Hsv } from '../utils/color';
+import {
+  hexToRgb, rgbToHex, normalizeHex, hexToHsv, hsvToRgb, hsvToHex, type Hsv, PRESET_COLORS,
+} from '../utils/color';
 import { SvPanel, HueBar } from './SvPanel';
 
-/** 预设常用色 24 个（取自原 C# 版 ColorPickDialog 的 PresetColors，不可删） */
-export const PRESET_COLORS = [
-  '#E5484D', '#D9A441', '#F5A623', '#B7C94A',
-  '#46A758', '#2FAE9B', '#12A594', '#0091FF',
-  '#3E63DD', '#6E56CF', '#8E4EC6', '#BF4AC8',
-  '#D6409F', '#E93D82', '#FF6B35', '#FFD23F',
-  '#8FD14F', '#00C2A8', '#4098D7', '#5B5BD6',
-  '#9D34DA', '#F472B6', '#B4B9C2', '#7C8698',
-];
+/* 预设色已搬到 ../utils/color —— 取色服务要用同一份，
+   两处各存一份迟早漂移。这里 re-export 是为了不破坏既有引用。 */
+export { PRESET_COLORS };
 
 const MAX_CUSTOM = 24;
 

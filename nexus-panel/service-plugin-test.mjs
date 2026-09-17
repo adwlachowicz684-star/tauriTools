@@ -196,6 +196,47 @@ for (const [ns, m] of [['color', 'pick'], ['icon', 'browse'], ['md', 'edit']]) {
 t('底层通用 call 未被薄封装取代',
   /call: \(id, method, args\)/.test(sdkSrc) && /\.\.\.services/.test(sdkSrc));
 
+console.log('\n=== 10d. 共享定义不重复（防两份 PRESET_COLORS 漂移）===');
+/*
+ * 原本内联色盘（project-group）与取色服务**各存一份** PRESET_COLORS ——
+ * 改一处忘一处就会漂移：同一个"常用色"在两个界面显示成不同颜色。
+ * 现在收敛到 utils/color，两边都从那里 import。
+ *
+ * 注意：只检查"有没有 import"是不够的 ——
+ * 两边都定义、也都 import 的话照样通过。必须确认本地那份已删。
+ */
+const utilsSrc = src('plugins/project-group/utils/color.ts');
+const pgSrc = src('plugins/project-group/components/ColorPicker.tsx');
+const cpSrc = src('plugins/color-picker/index.js');
+t('utils/color 导出 PRESET_COLORS', /export const PRESET_COLORS/.test(utilsSrc));
+t('内联色盘从 utils/color 取预设色',
+  /from '\.\.\/utils\/color'/.test(pgSrc) && /PRESET_COLORS/.test(pgSrc));
+t('内联色盘不再本地定义预设色',
+  !/export const PRESET_COLORS = \[/.test(pgSrc));
+t('取色服务从 utils/color 取预设色',
+  /from '\.\.\/project-group\/utils\/color'/.test(cpSrc));
+t('取色服务不再自带 colorUtils',
+  !/\.\/colorUtils/.test(cpSrc) && !has('plugins/color-picker/colorUtils.js'));
+/* 服务的颜色能力不该弱于内联版 —— 否则没人会用它。
+   内联版有 HSV（SV 面板 + 色相条），服务也要有。 */
+/* 必须钉**调用**而不只是"名字出现过"。
+   只用 /hexToHsv/ 的话，import 里写一行但代码从不用它也能通过 ——
+   这就是 B15 那个坑（钉声明行没钉调用行）。带左括号才是真调用。 */
+t('取色服务用了 HSV（与内联版同等能力）',
+  /hexToHsv\(/.test(cpSrc) && /hsvToHex\(/.test(cpSrc));
+t('HSV 状态真的参与取色（不是摆设）', /hsv = hexToHsv\(/.test(cpSrc));
+t('服务样式里有 SV 面板与色相条',
+  /\.sv\s*\{/.test(src('plugins/color-picker/index.html'))
+  && /\.hue\s*\{/.test(src('plugins/color-picker/index.html')));
+
+console.log('\n=== 10f. SDK 类型覆盖 services ===');
+const sdkDts = src('js/plugin-sdk.d.ts');
+t('PluginContext 有 services', /services: \{/.test(sdkDts));
+t('services 有通用 call', /call\(id: string, method: string/.test(sdkDts));
+for (const ns of ['color', 'icon', 'md']) {
+  t(`services 有 ${ns} 薄封装类型`, new RegExp(`${ns}: \\{`).test(sdkDts));
+}
+
 console.log('\n=== 11. 三个真实服务已就位 ===');
 t('demo-service 有 index.js', has('plugins/demo-service/index.js'));
 const demoSrc = src('plugins/demo-service/index.js');
@@ -206,7 +247,7 @@ console.log('\n=== 12. 语法（node --check，权威）===');
 for (const f of ['js/host.js', 'js/plugin-sdk.js', 'plugins/registry.js',
   'js/shell.js', 'plugins/demo-service/index.js',
   'plugins/color-picker/index.js', 'plugins/icon-picker/index.js',
-  'plugins/md-editor/index.js']) {
+  'plugins/md-editor/index.js',]) {
   let ok = true;
   try { execSync(`node --check ${JSON.stringify(f)}`, { cwd: HERE, stdio: 'pipe' }); }
   catch { ok = false; }
