@@ -47,6 +47,7 @@ for f in tests/*.test.ts; do
     --import-map ../engine/nodeValidate=../nodeValidate.mjs \
     --import-map ../engine/kv=../kv.mjs \
     --import-map ../engine/nodeSpec=../nodeSpec.mjs \
+    --import-map ../engine/nodeRequires=../nodeRequires.mjs \
     --import-map ../engine/sanitize=../sanitize.mjs \
     --import-map ../engine/stack=../stack.mjs \
     --import-map ../engine/nodeDefaults=../nodeDefaults.mjs \
