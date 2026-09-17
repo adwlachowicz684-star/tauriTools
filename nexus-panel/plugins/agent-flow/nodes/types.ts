@@ -35,7 +35,15 @@ export type NodeCategory =
    * 与 flow（条件/循环，靠数据决定走向）分开，
    * 因为控制器的判据是"到齐了没"，与数据内容无关。
    */
-  | 'control';
+  | 'control'
+  /**
+   * MCP 生成的节点。
+   *
+   * 单独一类而不是塞进 'external'：这类节点是**运行时生成**的，
+   * 数量与种类随连上的 server 变化，混进固定分组会让那组的含义变模糊。
+   * 侧栏里再按 server 折叠成小组。
+   */
+  | 'mcp';
 
 /*
  * 键序即侧栏分组的展示顺序。
@@ -55,6 +63,11 @@ export const NODE_CATEGORY_META: Record<NodeCategory, { label: string }> = {
    * （用户找"流程控制"时想的是条件/循环，不是"等两秒"）。
    */
   tools:    { label: '工具' },
+  /*
+   * MCP 节点按 server 折叠成小组，所以这一层只给个总标题。
+   * 放在 custom 之前：它是"别人提供的能力"，比用户自己存的更靠前。
+   */
+  mcp:      { label: 'MCP' },
   custom:   { label: '自定义' },
 };
 
