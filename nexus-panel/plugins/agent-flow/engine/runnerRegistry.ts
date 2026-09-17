@@ -41,6 +41,7 @@ import { runGate } from './runners/gate';
 import { runThrottle } from './runners/throttle';
 import { runTimeout } from './runners/timeout';
 import { runRetry } from './runners/retry';
+import { runMath, runText, runCompare, runRandom, runVar, runStop, runAsk } from './runners/ops';
 
 export type NodeRunner = (ctx: RunContext) => Promise<void>;
 
@@ -70,6 +71,13 @@ const RUNNERS: Record<string, NodeRunner | undefined> = {
   throttle: runThrottle,
   timeout: runTimeout,
   retry: runRetry,
+  math: runMath,
+  text: runText,
+  compare: runCompare,
+  random: runRandom,
+  var: runVar,
+  stop: runStop,
+  ask: runAsk,
 };
 
 /**

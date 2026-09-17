@@ -37,6 +37,15 @@ export type NodeCategory =
    */
   | 'control'
   /**
+   * 运算：数学 / 文本 / 比较 / 随机 / 变量。
+   *
+   * Scratch 里这是一整类积木（Operators），本插件此前完全没有 ——
+   * 要算个数只能靠模板拼字符串，而模板不会真的计算。
+   * 单独成类而不是塞进 tools：tools 是"做事的小工具"（等待、提示音），
+   * 运算是"算出一个值"，找起来是两种意图。
+   */
+  | 'ops'
+  /**
    * MCP 生成的节点。
    *
    * 单独一类而不是塞进 'external'：这类节点是**运行时生成**的，
@@ -54,6 +63,7 @@ export const NODE_CATEGORY_META: Record<NodeCategory, { label: string }> = {
   task:     { label: '任务' },
   flow:     { label: '流程控制' },
   control:  { label: '控制器' },
+  ops:      { label: '运算' },
   data:     { label: '文件与数据' },
   ai:       { label: 'AI 能力' },
   external: { label: '外部服务' },

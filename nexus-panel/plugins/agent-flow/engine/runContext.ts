@@ -50,6 +50,26 @@ export type RunContext = {
   nodeFields: Record<string, Record<string, string>>;
   /** 循环上下文栈顶；不在循环体内时为 null */
   currentLoop: () => LoopCtx | null;
+  /**
+   * 工作流变量表（跨节点共享）。
+   *
+   * 读用 {{var.名字}} 模板即可；这里是给执行器**写**用的。
+   */
+  vars: Record<string, string>;
+  /**
+   * 请求停止。
+   *
+   * 'all' = 整个流程停止；'branch' = 只停止当前这条分支。
+   * 不抛异常、不算失败 —— "主动停下"与"出错"是两回事。
+   */
+  requestStop: (mode: 'all' | 'branch') => void;
+  /** 当前是否已被请求停止 */
+  isStopped: () => boolean;
+  /**
+   * 等人填内容。返回 null 表示界面没提供这个能力。
+   * 执行器必须把 null 转成明确失败，不能当空串继续跑。
+   */
+  askHuman: (promptText: string, defaultValue?: string) => Promise<string | null>;
 
   /**
    * 渲染模板 —— 执行器一律用这个，不要自己调 renderTemplate。

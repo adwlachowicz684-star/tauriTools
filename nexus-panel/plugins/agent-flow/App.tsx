@@ -37,6 +37,7 @@ import { SECRET_POLICY_KEY, type SecretPolicy } from './types';
 import { checkChannel, type ChannelStatus } from './lib/channel';
 import { deviceSeed, clearKeyCache } from './engine/crypto';
 import Sidebar, { DRAG_MIME, decodeDrag, type DragPayload } from './components/Sidebar';
+import { prompt } from '../../../js/dialog.js';
 import ModuleLibrary, {
   MODULE_DRAG_MIME, decodeModuleDrag, askCreateModule,
 } from './components/ModuleLibrary';
@@ -2005,6 +2006,17 @@ export default function App() {
       concurrency, executor, fsExecutor, fetcher, llmCaller, imageReader,
       githubFetch, githubPush, httpRequester, credentials, playAudioReader,
       input: effectiveInput, onEvent, signal: controller.signal,
+      /*
+       * 人工输入：跑到该节点时弹框等人填。
+       *
+       * 用 dialog 的 prompt —— 它是外壳提供的模态输入，
+       * 与插件里其它确认框同一套外观。返回 null 表示取消。
+       */
+      askHuman: async (promptText, defaultValue) => {
+        const answer = await prompt(promptText, defaultValue ?? '');
+        // 取消时 dialog 给 undefined / null，统一成 null
+        return answer === undefined || answer === null ? null : String(answer);
+      },
       // 嵌合的输出传递要用到带位置的节点（含 stackParent 关系）
       stackNodes: nodes.map((n) => ({
         id: n.id,
