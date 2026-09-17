@@ -1,4 +1,5 @@
 import { cloneData } from './duplicate';
+import { defaultKV, loadList, saveWrapped, type KV } from './kv';
 
 /**
  * 参数卡片。
@@ -94,35 +95,7 @@ export function allCardGroups(): CardGroupDef[] {
 /* 存储                                                                */
 /* ------------------------------------------------------------------ */
 
-export type KV = {
-  get: (k: string) => string | null;
-  set: (k: string, v: string) => void;
-};
-
-/**
- * 缺省读写。
- *
- * 用 try 包住是必要的：隐私模式下访问 localStorage 会直接抛异常，
- * 而这条路径在模块初始化时就可能走到，一抛就是整个插件白屏。
- */
-function defaultKV(): KV {
-  return {
-    get: (k: string) => {
-      try {
-        return typeof localStorage === 'undefined' ? null : localStorage.getItem(k);
-      } catch {
-        return null;
-      }
-    },
-    set: (k: string, v: string) => {
-      try {
-        if (typeof localStorage !== 'undefined') localStorage.setItem(k, v);
-      } catch {
-        /* 存不下就算了，不该因此中断用户操作 */
-      }
-    },
-  };
-}
+/* KV / defaultKV 统一走 ./kv */
 
 /** 读出来的东西不可信：可能是旧版本、手改过、或别的插件写坏的 */
 function isCard(x: unknown): x is ParamCard {
@@ -137,21 +110,11 @@ function isCard(x: unknown): x is ParamCard {
 }
 
 export function loadParamCards(kv: KV = defaultKV()): ParamCard[] {
-  const raw = kv.get(PARAM_CARDS_KEY);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    const list = Array.isArray(parsed) ? parsed : parsed?.cards;
-    if (!Array.isArray(list)) return [];
-    return list.filter(isCard);
-  } catch {
-    // 坏数据宁可当没有，也不要让插件起不来
-    return [];
-  }
+  return loadList(kv, PARAM_CARDS_KEY, 'cards', isCard) as ParamCard[];
 }
 
 export function saveParamCards(list: ParamCard[], kv: KV = defaultKV()): void {
-  kv.set(PARAM_CARDS_KEY, JSON.stringify({ version: FORMAT_VERSION, cards: list }));
+  saveWrapped(kv, PARAM_CARDS_KEY, FORMAT_VERSION, 'cards', list);
 }
 
 /* ------------------------------------------------------------------ */

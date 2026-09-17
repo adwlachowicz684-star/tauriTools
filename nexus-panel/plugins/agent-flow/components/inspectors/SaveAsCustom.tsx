@@ -1,4 +1,5 @@
-import { addCustomPreset, hadInlineSecret } from '../../engine/customPresets';
+import { addCustomPreset } from '../../engine/customPresets';
+import { hadInlineSecret } from '../../engine/sanitize';
 import { prompt, alert } from '../../../../js/dialog.js';
 import { getDef } from '../../nodes/registry';
 

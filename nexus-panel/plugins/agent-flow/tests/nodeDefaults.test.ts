@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   loadAll, getDefault, hasDefault, setDefault, clearDefault,
-  sanitizeForDefault, withDefault, matchPresetKey, hadSecret,
-  NODE_DEFAULTS_KEY, type KV,
+  sanitizeForDefault, withDefault, matchPresetKey, NODE_DEFAULTS_KEY,
 } from '../engine/nodeDefaults';
+import { hadInlineSecret, VIEW_KEYS } from '../engine/sanitize';
 
 /*
  * 刻意不写返回类型注解：strip-ts.py 处理不了 `KV & { map: ... }`
@@ -113,9 +113,9 @@ test('嵌套的 llm.apiKey 也要剥', () => {
   assert.equal((out.llm as { model: string }).model, 'm', '同层其它字段保留');
 });
 
-test('hadSecret 能识别出内联密钥（用于提示用户）', () => {
-  assert.equal(hadSecret({ token: 'x' }), true);
-  assert.equal(hadSecret({ credentialId: 'c1' }), false);
+test('hadInlineSecret 能识别出内联密钥（用于提示用户）', () => {
+  assert.equal(hadInlineSecret({ token: 'x' }), true);
+  assert.equal(hadInlineSecret({ credentialId: 'c1' }), false);
 });
 
 test('setDefault 返回是否剥过密钥', () => {
@@ -181,4 +181,10 @@ test('改了变体字段后匹配不到（回落由调用方处理）', () => {
 
 test('类型完全没预设时返回 null', () => {
   assert.equal(matchPresetKey(PRESETS, '不在表里', {}), null);
+});
+
+test('显示状态清单非空（被误清空会导致 stackParent 存进默认值）', () => {
+  assert.ok(VIEW_KEYS.includes('stackParent'), 'stackParent 必须在剥离清单里');
+  assert.ok(VIEW_KEYS.includes('size'));
+  assert.ok(VIEW_KEYS.includes('stackCollapsed'));
 });

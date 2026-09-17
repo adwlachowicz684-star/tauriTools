@@ -1,5 +1,6 @@
 import { stripRuntime, cloneData } from './duplicate';
-import { hadInlineSecret } from './customPresets';
+import { hadInlineSecret, stripSecrets, stripViewKeys } from './sanitize';
+import { defaultKV, loadObject, type KV } from './kv';
 
 /**
  * 节点参数默认值 —— 「设为默认」按钮的背后。
@@ -34,55 +35,15 @@ import { hadInlineSecret } from './customPresets';
 
 export const NODE_DEFAULTS_KEY = 'agent-flow.node-defaults.v1';
 
-/** 显示与布局状态：不参与默认，理由见文件头 */
-const VIEW_KEYS = ['size', 'stackParent', 'stackCollapsed'];
+/* 密钥清单、显示状态清单与剥离统一走 ./sanitize —— 见那里的说明 */
 
-const SECRET_PATHS = ['token', 'llm.apiKey', 'config.token'] as const;
 
-export type KV = {
-  get: (k: string) => string | null;
-  set: (k: string, v: string) => void;
-  remove?: (k: string) => void;
-};
-
-function defaultKV(): KV {
-  return {
-    get: (k: string) => {
-      try {
-        return typeof localStorage === 'undefined' ? null : localStorage.getItem(k);
-      } catch {
-        return null; // 隐私模式下访问会抛异常
-      }
-    },
-    set: (k: string, v: string) => {
-      try {
-        if (typeof localStorage !== 'undefined') localStorage.setItem(k, v);
-      } catch {
-        /* 存不下就算了，不能让整个面板挂掉 */
-      }
-    },
-    remove: (k: string) => {
-      try {
-        if (typeof localStorage !== 'undefined') localStorage.removeItem(k);
-      } catch {
-        /* 同上 */
-      }
-    },
-  };
-}
+/* KV / defaultKV / loadObject 统一走 ./kv */
 
 export type DefaultsFile = Record<string, Record<string, unknown>>;
 
 export function loadAll(kv: KV = defaultKV()): DefaultsFile {
-  const raw = kv.get(NODE_DEFAULTS_KEY);
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    return parsed as DefaultsFile;
-  } catch {
-    return {};
-  }
+  return loadObject(kv, NODE_DEFAULTS_KEY) as DefaultsFile;
 }
 
 function saveAll(file: DefaultsFile, kv: KV = defaultKV()): void {
@@ -111,10 +72,6 @@ export function clearDefault(presetKey: string, kv: KV = defaultKV()): void {
 }
 
 /** 改动是否涉及内联密钥（用于提示"这部分不会被存"） */
-export function hadSecret(data: unknown): boolean {
-  return hadInlineSecret(data);
-}
-
 /* ------------------------------------------------------------------ */
 /* 存                                                                  */
 /* ------------------------------------------------------------------ */
@@ -126,32 +83,10 @@ export function hadSecret(data: unknown): boolean {
  * 三步互不依赖，但记在一个地方才能看出"总共剥了什么"。
  */
 export function sanitizeForDefault(data: unknown): Record<string, unknown> {
-  const stripped = stripRuntime(data) as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
-  for (const k of Object.keys(stripped)) {
-    if (VIEW_KEYS.indexOf(k) >= 0) continue;
-    out[k] = stripped[k];
-  }
-  return stripSecrets(out);
+  // 顺序：先剥运行时 → 再剥显示状态 → 最后挖密钥
+  return stripSecrets(stripViewKeys(stripRuntime(data)));
 }
 
-function stripSecrets(data: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...data };
-  for (const path of SECRET_PATHS) {
-    const parts = path.split('.');
-    if (parts.length === 1) {
-      if (typeof out[parts[0]] === 'string' && out[parts[0]]) out[parts[0]] = '';
-      continue;
-    }
-    const head = out[parts[0]];
-    if (head && typeof head === 'object' && !Array.isArray(head)) {
-      const nested = { ...(head as Record<string, unknown>) };
-      if (typeof nested[parts[1]] === 'string' && nested[parts[1]]) nested[parts[1]] = '';
-      out[parts[0]] = nested;
-    }
-  }
-  return out;
-}
 
 /**
  * 存为默认。
