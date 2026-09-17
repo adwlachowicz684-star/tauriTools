@@ -17,6 +17,9 @@ use std::sync::{Arc, Condvar, Mutex};
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
+// 与 safety 共用"像路径还是像命令名"的判定：两处各写一份迟早漂移
+use super::safety::looks_like_path;
+
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
 /* ---------------------------- 访问令牌 ---------------------------- */
@@ -51,11 +54,15 @@ pub fn token() -> String {
     current_token()
 }
 
-/// 校验请求头里的令牌。头名在读取时已统一小写。
+/// 校验请求头里的令牌。
+///
+/// 头名在这里**自己转小写**比较，不依赖调用方先归一化：HTTP 头名是
+/// 大小写不敏感的（RFC 7230），而这里只有一处入口、没有性能压力，
+/// 靠调用方保证的话，将来多一个调用点忘转就会静默鉴权失败。
 fn check_auth(headers: &[(String, String)], expected: &str) -> bool {
     for (k, v) in headers {
         let v = v.trim();
-        match k.as_str() {
+        match k.to_ascii_lowercase().as_str() {
             "x-token" => {
                 if super::safety::constant_time_eq(v, expected) {
                     return true;
@@ -664,10 +671,6 @@ fn canonical_tool(name: &str) -> (&str, Option<(&str, &str)>) {
 }
 
 /// 字符串看起来是不是一条路径（含分隔符或盘符），而不是一个交给 PATH 解析的命令名。
-fn looks_like_path(s: &str) -> bool {
-    s.contains('/') || s.contains('\\') || (s.len() > 1 && s.as_bytes()[1] == b':')
-}
-
 fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
     let params = req.get("params").cloned().unwrap_or(json!({}));
     let raw = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
@@ -769,7 +772,7 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
                只校验不改写：返回的路径会被前端当卡片路径显示并登记，
                带上 canonicalize 的前缀就和已有登记对不上了。 */
             within_raw(&root)?;
-            let items = super::fpx_scan_content(root, Some(kind));
+            let items = super::content::scan(&root, &kind);
             json!({ "content": [{ "type": "text", "text": serde_json::to_string(&items).unwrap_or_default() }] })
         }
         "read_file" => {
@@ -796,6 +799,11 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             if path.is_empty() { return Err(err("path 必填")); }
             // 用 as_u64 而不是 as_i64：JSON 里没有负数这种页签序号，
             // as_u64 顺带挡掉 -1 这种（as_i64 会收下，然后转 usize 时溢出）。
+            /* 加卡片不是"写文件"，但它把这条路径写进页签，而页签正是
+               content_roots 的来源之一 —— 等于**扩充白名单本身**。
+               所以至少要用黑名单挡住系统目录 / 整块盘，否则加一张
+               C:\Windows 卡片之后，后面所有收口都形同虚设。 */
+            super::guard::reject_forbidden_raw(&path).map_err(|e| err(&e))?;
             let tab_index = args.get("tab_index").and_then(|v| v.as_u64()).map(|v| v as usize);
             // 必须在事务内「读→改→写」。
             // 若先 load_cfg 改完再 core_save_config，传进去的是旧快照，
@@ -905,7 +913,7 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
                 .any(|c| super::store::normalize_key(&c.path) == key);
             let kind = if in_group { "group" } else if in_project { "project" } else { "other" };
             set_selection(&path, kind);
-            let items = super::fpx_scan_content(path.clone(), Some("all".to_string()));
+            let items = super::content::scan(&path, "all");
             json!({ "content": [{ "type": "text", "text": serde_json::to_string(&json!({
                 "selection": { "path": path, "kind": kind },
                 "content": items,
@@ -915,7 +923,7 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             match get_selection_inner() {
                 None => json!({ "content": [{ "type": "text", "text": "当前未选择任何文件夹，请先 select_folder" }] }),
                 Some((p, k)) => {
-                    let items = super::fpx_scan_content(p.clone(), Some("all".to_string()));
+                    let items = super::content::scan(&p, "all");
                     json!({ "content": [{ "type": "text", "text": serde_json::to_string(&json!({
                         "selection": { "path": p, "kind": k },
                         "content": items,

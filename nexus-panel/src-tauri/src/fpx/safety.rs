@@ -71,6 +71,18 @@ pub fn safe_url(u: &str) -> bool {
     }) && !u.chars().any(|c| c.is_control())
 }
 
+/// 这个字符串看起来像"明确路径"还是"纯命令名"。
+///
+/// 判断依据只有三条：含 `/`、含 `\`、或第二个字符是 `:`（Windows 盘符）。
+/// 反过来，不含这些的一律当作命令名交给 PATH 解析。
+///
+/// 为什么单独成函数：`check_executable` 与 MCP 的 `agentCmd` 校验都要用它，
+/// 各写一份的话，哪天一边改了另一边没跟上，就会出现
+/// "命令名校验放行了带路径的值"这种口子。
+pub fn looks_like_path(s: &str) -> bool {
+    s.contains('/') || s.contains('\\') || (s.len() > 1 && s.as_bytes()[1] == b':')
+}
+
 /// 可执行文件是否允许启动。
 ///
 /// 分两种情况：
@@ -88,9 +100,7 @@ pub fn check_executable(p: &Path) -> Result<(), String> {
         return Err(format!("可执行文件含不安全字符，已拒绝启动: {s}"));
     }
 
-    let looks_like_path =
-        s.contains('/') || s.contains('\\') || (s.len() > 1 && s.as_bytes()[1] == b':');
-    if !looks_like_path {
+    if !looks_like_path(s) {
         return Ok(()); // 走 PATH，spawn 失败会自然报错
     }
 
