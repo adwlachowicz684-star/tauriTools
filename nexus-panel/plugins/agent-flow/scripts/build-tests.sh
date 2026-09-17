@@ -107,7 +107,7 @@ $S engine/modules.ts "$OUT/modules.mjs" \
 $S engine/nodeValidate.ts "$OUT/nodeValidate.mjs" \
    --import-map ../types=./types.mjs >/dev/null
 $S engine/kv.ts "$OUT/kv.mjs" >/dev/null
-$S engine/nodeSpec.ts "$OUT/nodeSpec.mjs" >/dev/null
+$S engine/nodeSpec.ts "$OUT/nodeSpec.mjs" --import-map ./nodeRequires=./nodeRequires.mjs >/dev/null
 $S engine/upstream.ts "$OUT/upstream.mjs" >/dev/null
 $S engine/passCheck.ts "$OUT/passCheck.mjs" >/dev/null
 $S engine/sanitize.ts "$OUT/sanitize.mjs" >/dev/null
