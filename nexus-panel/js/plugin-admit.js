@@ -24,8 +24,8 @@
  * 一刀切拒绝会让它们全部挂掉 —— 那是"安全影响功能"。
  * review 的定位是**分诊队列**：先记下来，再逐个决定是补通道还是禁掉。
  *
- * 依赖：acorn（解析）+ acorn-walk（遍历）+ esbuild（TS/TSX → JS）。
- * 三者都是纯 JS / 项目既有工具链的一部分，不引入新的运行时负担。
+ * 依赖：**typescript**（项目已有的 devDependency）。
+ * 它原生解析 JS / JSX / TS / TSX，不引入任何新依赖。
  *
  * 已知局限（诚实列出，别把"没扫到"当成"没问题"）
  * ------------------------------------------------------------
@@ -34,13 +34,22 @@
  *    callee 是裸标识符，不做作用域分析就认不出来。
  *    （要堵需上作用域分析，成本与收益不成比例；iframe 兜底。）
  * 2. **只在构建/CI 期跑，不做运行时校验**：
- *    esbuild + acorn 进不了前端产物（体积），
+ *    typescript 编译器进不了前端产物（体积），
  *    所以这一层是**开发期闸门**，运行时的不可信插件仍靠 iframe 隔离。
  *    这正是分级模型的含义：L1 可信（CI 扫过）+ L2 不可信（沙箱）。
  */
-import * as acorn from 'acorn';
-import * as walk from 'acorn-walk';
-import esbuild from 'esbuild';
+/*
+ * 解析器选型：**用 typescript 而不是 acorn + esbuild**。
+ *
+ * 第一版用了 acorn（解析）+ esbuild（TS/TSX 转 JS），但实测发现
+ * acorn **不在项目依赖里**（vite 依赖 esbuild，rollup 的 acorn 是内置的），
+ * 于是这个脚本在干净环境里直接跑不起来。
+ * 而 typescript 是项目**已有**的 devDependency，且原生支持
+ * JS / JSX / TS / TSX，一步到位，不需要二次转换。
+ *
+ * 选择依赖已经存在的解析器，比引入新依赖更可靠。
+ */
+import ts from 'typescript';
 
 /* ------------------------------------------------------------------ */
 /* 规则表                                                              */
@@ -61,29 +70,28 @@ export const SEVERITY = { DENY: 'deny', REVIEW: 'review' };
 /* AST 辅助                                                            */
 /* ------------------------------------------------------------------ */
 
-/** 把 MemberExpression 链渲染成 `window.document.body` 这样的点号串 */
+/** 把属性访问链渲染成 `window.document.body` 这样的点号串 */
 export function renderMember(node) {
   const parts = [];
   let n = node;
   while (n) {
-    if (n.type === 'Identifier') {
-      parts.unshift(n.name);
+    if (ts.isIdentifier(n)) {
+      parts.unshift(n.text ?? n.escapedText);
       break;
     }
-    if (n.type === 'ThisExpression') {
+    if (n.kind === ts.SyntaxKind.ThisKeyword) {
       parts.unshift('this');
       break;
     }
-    if (n.type === 'MemberExpression') {
-      if (n.computed) {
-        /* 动态成员（a[b]）：静态无法判定，用 `[?]` 标记 */
-        parts.unshift('[?]');
-      } else if (n.property?.type === 'Identifier') {
-        parts.unshift(n.property.name);
-      } else {
-        parts.unshift('?');
-      }
-      n = n.object;
+    if (ts.isPropertyAccessExpression(n)) {
+      parts.unshift(n.name?.text ?? n.name?.escapedText ?? '?');
+      n = n.expression;
+      continue;
+    }
+    if (ts.isElementAccessExpression(n)) {
+      /* 动态成员（a[b]）：静态无法判定，用 `[?]` 标记 */
+      parts.unshift('[?]');
+      n = n.expression;
       continue;
     }
     return null;
@@ -94,18 +102,20 @@ export function renderMember(node) {
 /** 链的根是否是宿主全局对象 */
 export function isGlobalRoot(node) {
   let n = node;
-  while (n?.type === 'MemberExpression') n = n.object;
-  return !!n && n.type === 'Identifier' && GLOBAL_ROOTS.has(n.name);
+  while (n && (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n))) {
+    n = n.expression;
+  }
+  return !!n && ts.isIdentifier(n) && GLOBAL_ROOTS.has(n.text ?? n.escapedText);
 }
 
 /** 链里是否出现 X.prototype（原型修改 = 全局生效且影响其它插件） */
 function hasPrototype(node) {
   let n = node;
-  while (n?.type === 'MemberExpression') {
-    if (!n.computed && n.property?.type === 'Identifier' && n.property.name === 'prototype') {
+  while (n && (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n))) {
+    if (ts.isPropertyAccessExpression(n) && (n.name?.text ?? n.name?.escapedText) === 'prototype') {
       return true;
     }
-    n = n.object;
+    n = n.expression;
   }
   return false;
 }
@@ -115,139 +125,114 @@ function hasPrototype(node) {
 /* ------------------------------------------------------------------ */
 
 /**
- * 扫一段 JS 源码。
+ * 扫一段源码（JS / JSX / TS / TSX 皆可）。
  *
  * @param {string} code
  * @param {{file?: string}} [opts]
  * @returns {{deny: object[], review: object[], error?: string}}
  */
 export function scanCode(code, opts = {}) {
-  const file = opts.file || '';
+  const file = opts.file || 'inline.js';
   const deny = [];
   const review = [];
   const push = (arr, rule, node, detail) => {
-    arr.push({
-      rule,
-      file,
-      line: node?.loc?.start?.line ?? 0,
-      detail,
-    });
+    const pos = node ? ts.getLineAndCharacterOfPosition(sf, node.getStart(sf)) : { line: 0 };
+    arr.push({ rule, file, line: pos.line + 1, detail });
   };
 
-  let ast;
-  try {
-    ast = acorn.parse(code, { ecmaVersion: 2022, sourceType: 'module', locations: true });
-  } catch (e) {
-    return { deny, review, error: `解析失败: ${e.message}` };
+  const sf = ts.createSourceFile(
+    file,
+    code,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    scriptKindOf(file),
+  );
+
+  /*
+   * 语法错误：ts 不抛异常，而是产出诊断。必须**主动查** ——
+   * 静默当成"解析成功"会让危险代码藏在解析不了的文件里，
+   * 这是最大的假绿。
+   */
+  const diags = sf.parseDiagnostics || [];
+  if (diags.length) {
+    const first = diags[0];
+    return { deny, review, error: `解析失败: ${ts.flattenDiagnosticMessageText(first.messageText, ' ')}` };
   }
 
-  walk.full(ast, (node) => {
+  const visit = (node) => {
     /* ---------- 调用 ---------- */
-    if (node.type === 'CallExpression') {
-      const callee = node.callee;
-      if (callee?.type === 'MemberExpression') {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      if (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) {
         const path = renderMember(callee);
-        if (!path) return;
-
-        /* 自定义元素：**无法 undefine**，进程内永久残留 */
-        if (/(^|\.)customElements\.define$/.test(path)) {
-          push(deny, 'custom-element', node, path);
-          return;
-        }
-
-        /* Service Worker：注册到 origin，**跨会话残留** */
-        if (/serviceWorker\.register$/.test(path)) {
-          push(deny, 'service-worker', node, path);
-          return;
-        }
-
-        /* Object.defineProperty 到宿主对象：可能把宿主 API 锁死 */
-        if (/^Object\.(defineProperty|defineProperties|freeze|seal)$/.test(path)) {
-          const target = node.arguments?.[0];
-          const tp = target?.type === 'MemberExpression' ? renderMember(target) : null;
-          if (target && (isGlobalRoot(target) || hasPrototype(target))) {
-            push(deny, 'define-property-host', node, tp || path);
-            return;
+        if (path) {
+          /* 自定义元素：**无法 undefine**，进程内永久残留 */
+          if (/(^|\.)customElements\.define$/.test(path)) {
+            push(deny, 'custom-element', node, path);
+          } else if (/serviceWorker\.register$/.test(path)) {
+            push(deny, 'service-worker', node, path);
+          } else if (/^Object\.(defineProperty|defineProperties|freeze|seal)$/.test(path)) {
+            const target = node.arguments?.[0];
+            if (target && (isGlobalRoot(target) || hasPrototype(target))) {
+              push(deny, 'define-property-host', node, renderMember(target) || path);
+            }
+          } else if (/^history\.(pushState|replaceState)$/.test(path)) {
+            push(deny, 'history-navigate', node, path);
+          } else if (/^location\.(assign|replace)$/.test(path)) {
+            push(deny, 'location-navigate', node, path);
+          } else if (path.includes('[?]') && isGlobalRoot(callee)) {
+            /*
+             * 根是宿主全局的动态调用（window[x].define(...)）。
+             *
+             * 只挑这类，不对所有 `obj[x]()` 都报 ——
+             * 第一版太宽，一次扫出 23 条噪音（普通动态分发也算），
+             * 噪音会淹没队列，等于没有队列。
+             */
+            push(review, 'unresolvable-call', node, path);
+          } else if (/^(window|globalThis)\.(setInterval|setTimeout)$/.test(path)) {
+            push(review, 'timer-via-owned', node, path);
+          } else if (/^document\.(body|documentElement)\.appendChild$/.test(path)) {
+            push(review, 'portal-via-owned', node, path);
+          } else if (/^window\.open$/.test(path)) {
+            push(review, 'window-open', node, path);
           }
         }
-
-        /* 主面板被导航走 */
-        if (/^history\.(pushState|replaceState)$/.test(path)) {
-          push(deny, 'history-navigate', node, path);
-          return;
-        }
-        if (/^location\.(assign|replace)$/.test(path)) {
-          push(deny, 'location-navigate', node, path);
-          return;
-        }
-
-        /*
-         * 动态成员调用，如 `window['custom' + 'Elements'].define(...)`。
-         *
-         * 静态**证明不了它安全** —— 正则会直接放行（漏），
-         * 而这里必须把它挑出来进分诊队列。
-         * 「无法判定」绝不等于「没问题」：后者是最大的假绿来源。
-         */
-        /*
-         * 只挑**根是宿主全局**的动态调用（window[x].define(...)）。
-         *
-         * 第一版对**所有**动态成员调用都报（handlers[type]() 这种
-         * 普通动态分发也算），一次扫出 23 条噪音 ——
-         * 噪音会淹没队列，等于没有队列。
-         * 真正需要在意的是"往宿主全局上做静态看不懂的事"。
-         */
-        if (path.includes('[?]') && isGlobalRoot(callee)) {
-          push(review, 'unresolvable-call', node, path);
-          return;
-        }
-
-        /* 应走 owned 通道的（不阻断，进分诊队列） */
-        if (/^(window|globalThis)\.(setInterval|setTimeout)$/.test(path)) {
-          push(review, 'timer-via-owned', node, path);
-          return;
-        }
-        if (/^document\.(body|documentElement)\.appendChild$/.test(path)) {
-          push(review, 'portal-via-owned', node, path);
-          return;
-        }
-        if (/^window\.open$/.test(path)) {
-          push(review, 'window-open', node, path);
-          return;
-        }
       }
-      return;
     }
 
     /* ---------- 赋值 ---------- */
-    if (node.type === 'AssignmentExpression') {
+    if (ts.isBinaryExpression(node)
+      && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       const left = node.left;
-      if (left?.type !== 'MemberExpression') return;
-
-      /* 原型修改：全局生效，影响其它插件，且无法撤销 */
-      if (hasPrototype(left)) {
-        push(deny, 'prototype-mutation', node, renderMember(left) || '?');
-        return;
-      }
-
-      /* location.href = / window.location = —— 主面板被导航走 */
-      const path = renderMember(left);
-      if (path && /^((window|document|globalThis|top)\.)?location(\.href)?$/.test(path)) {
-        push(deny, 'location-navigate', node, path);
-        return;
-      }
-
-      /* 往宿主全局挂属性：应走 owned，不阻断 */
-      if (isGlobalRoot(left)) {
-        /* 动态成员（window[name] = ...）静态判定不了 ——
-           归到 review 并标注，绝不当成"没看见" */
-        const dynamic = path?.includes('[?]');
-        push(review, dynamic ? 'global-write-dynamic' : 'global-write', node, path || '?');
-        return;
+      if (ts.isPropertyAccessExpression(left) || ts.isElementAccessExpression(left)) {
+        if (hasPrototype(left)) {
+          push(deny, 'prototype-mutation', node, renderMember(left) || '?');
+        } else {
+          const path = renderMember(left);
+          if (path && /^((window|document|globalThis|top)\.)?location(\.href)?$/.test(path)) {
+            push(deny, 'location-navigate', node, path);
+          } else if (isGlobalRoot(left)) {
+            const dynamic = path?.includes('[?]');
+            push(review, dynamic ? 'global-write-dynamic' : 'global-write', node, path || '?');
+          }
+        }
       }
     }
-  });
 
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sf);
   return { deny, review };
+}
+
+/** 按扩展名选 ScriptKind —— 让 TS 直接吃 TSX，不需要二次转换 */
+function scriptKindOf(file) {
+  const ext = (file.split('.').pop() || 'js').toLowerCase();
+  if (ext === 'tsx' || ext === 'jsx') return ts.ScriptKind.TSX;
+  if (ext === 'ts' || ext === 'mts' || ext === 'cts') return ts.ScriptKind.TS;
+  if (ext === 'js' || ext === 'mjs' || ext === 'cjs') return ts.ScriptKind.JS;
+  return ts.ScriptKind.JS;
 }
 
 /* ------------------------------------------------------------------ */
@@ -255,31 +240,11 @@ export function scanCode(code, opts = {}) {
 /* ------------------------------------------------------------------ */
 
 /**
- * TS / TSX / JSX 先经 esbuild 转成 JS，再由 acorn 解析。
- * 直接让 acorn 吃 TSX 会解析失败 —— 而**解析失败若被当成"没问题"
- * 就是最大的假绿**：危险代码恰好藏在解析不了的文件里。
+ * 扫一个文件。typescript 原生支持 JS/JSX/TS/TSX，直接解析即可，
+ * 不需要先转成 JS —— 少一步就少一处"转换失败被当成没问题"的风险。
  */
-export function toJs(code, file = '') {
-  const ext = (file.split('.').pop() || 'js').toLowerCase();
-  if (!['ts', 'tsx', 'jsx', 'mts', 'cts'].includes(ext)) return { code, error: null };
-  try {
-    const r = esbuild.transformSync(code, {
-      loader: ext === 'tsx' || ext === 'jsx' ? 'tsx' : 'ts',
-      format: 'esm',
-      jsx: 'transform',
-      target: 'es2020',
-    });
-    return { code: r.code, error: null };
-  } catch (e) {
-    return { code: '', error: `转换失败: ${e.message}` };
-  }
-}
-
-/** 扫一个文件（含 TS/TSX 转换） */
 export function scanFileText(code, file = '') {
-  const { code: js, error } = toJs(code, file);
-  if (error) return { deny: [], review: [], error };
-  return scanCode(js, { file });
+  return scanCode(code, { file });
 }
 
 /** 准入判定：只要命中 deny 就拒绝 */

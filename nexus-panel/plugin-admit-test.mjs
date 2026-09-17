@@ -18,7 +18,7 @@ try {
   console.error('❌ 无法加载 plugin-admit.js（缺 acorn / esbuild？）:', e.message);
   process.exit(1);
 }
-const { scanCode, scanFileText, admit, renderMember, isGlobalRoot, toJs } = mod;
+const { scanCode, scanFileText, admit, renderMember, isGlobalRoot } = mod;
 
 let pass = 0;
 let fail = 0;
@@ -103,13 +103,20 @@ console.log('\n=== 7. 解析失败必须暴露，不能当"没问题" ===');
 
 console.log('\n=== 8. 辅助函数 ===');
 {
-  const ast = (await import('acorn')).parse('window.document.body', { ecmaVersion: 2022 });
-  const mem = ast.body[0].expression;
-  t('renderMember 渲染点号串', renderMember(mem) === 'window.document.body');
-  t('isGlobalRoot 认出宿主全局', isGlobalRoot(mem) === true);
-  t('isGlobalRoot 不认局部对象',
-    isGlobalRoot((await import('acorn')).parse('a.b.c', { ecmaVersion: 2022 }).body[0].expression) === false);
-  t('toJs 对 .js 原样返回', toJs('const a = 1;', 'x.js').code === 'const a = 1;');
+  /*
+   * 用 typescript 构造节点来测辅助函数（不再依赖 acorn）。
+   * 顺带验证"解析器就是项目已有的 typescript"这一选型 ——
+   * 如果哪天又换成 acorn 而它不在依赖里，这条会先报错。
+   */
+  const ts = (await import('typescript')).default;
+  const mk = (code) => {
+    const sf = ts.createSourceFile('t.js', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    return sf.statements[0].expression;
+  };
+  t('renderMember 渲染点号串', renderMember(mk('window.document.body')) === 'window.document.body');
+  t('isGlobalRoot 认出宿主全局', isGlobalRoot(mk('window.document.body')) === true);
+  t('isGlobalRoot 不认局部对象', isGlobalRoot(mk('a.b.c')) === false);
+  t('renderMember 对动态成员标记 [?]', renderMember(mk('window[name]')) === 'window.[?]');
 }
 
 console.log('\n=== 9. 现实：当前全部插件无 deny ===');
@@ -139,6 +146,8 @@ t('写明解构后调用绕得过', /解构后调用绕得过/.test(admit_src));
 t('写明只在构建/CI 期跑（esbuild 进不了前端产物）',
   /只在构建\/CI 期跑/.test(admit_src));
 t('写明运行时靠 iframe 兜底', /iframe/.test(admit_src));
+t('解析器用 typescript（项目已有依赖，不引入新的）',
+  /import ts from 'typescript'/.test(admit_src) && !/from 'acorn'|from 'esbuild'/.test(admit_src));
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
