@@ -59,22 +59,34 @@ test('blockCatalog 字段完整，可直接给 AI 消费', () => {
 /* ---------------- 核心：mark 会截断数据 ---------------- */
 
 /**
- * 这条守的是本文件存在的理由：
- * 「上游 → 等待2秒 → 提取」看着天经地义，
- * 但等待节点输出的是"已等待 2000ms"，提取节点取不到任何东西
- * —— 而且不报错（默认给空串）。
+ * 等待 / 提示音 / 播放音频 已改成**透传**（状态走运行日志），
+ * 所以「上游 → 等待 → 提取」现在是通的。
+ *
+ * 这两条守的是"别改回去" —— 一旦有人把 output 改回状态文本，
+ * 数据链会再次被静默截断：提取取不到东西却不报错。
  */
-test('等待节点接提取：要警告（mark 截断数据）', () => {
+test('等待节点接提取：正常（已改为透传）', () => {
   const v = canConnect(specOf('wait'), specOf('extract'));
-  assert.equal(v.level, 'warn');
-  assert.ok(v.reason && v.reason.includes('状态标记'));
+  assert.equal(v.level, 'ok', `不该告警：${v.reason}`);
+  assert.equal(specOf('wait')?.produces, 'any', 'wait 的产出必须是透传型');
 });
 
-test('提示音 / 播放音频 同样截断数据', () => {
+test('提示音 / 播放音频 也是透传，不再截断数据', () => {
   for (const k of ['beep', 'play-audio']) {
-    const v = canConnect(specOf(k), specOf('extract'));
-    assert.equal(v.level, 'warn', `${k} 应警告`);
+    assert.equal(specOf(k)?.produces, 'any', `${k} 应是透传`);
+    assert.equal(canConnect(specOf(k), specOf('extract')).level, 'ok');
   }
+});
+
+/**
+ * 对照：真正会截断数据的仍然是 mark 型（条件节点）。
+ * mark / any 两个种类还得留着 —— 条件节点的输出是分支标记，
+ * 不是数据，接到提取上依然是空的。
+ */
+test('mark 型（条件节点）依然会截断数据', () => {
+  const v = canConnect(specOf('condition'), specOf('extract'));
+  assert.equal(v.level, 'warn');
+  assert.ok(v.reason && v.reason.includes('状态标记'));
 });
 
 /**

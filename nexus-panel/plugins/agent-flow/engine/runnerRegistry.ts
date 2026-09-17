@@ -36,6 +36,7 @@ import { runBeep } from './runners/beep';
 import { runPlayAudio } from './runners/playAudio';
 import { runClock } from './runners/clock';
 import { runConst } from './runners/const';
+import { runJoin } from './runners/join';
 
 export type NodeRunner = (ctx: RunContext) => Promise<void>;
 
@@ -60,6 +61,7 @@ const RUNNERS: Record<string, NodeRunner | undefined> = {
   'play-audio': runPlayAudio,
   clock: runClock,
   const: runConst,
+  join: runJoin,
 };
 
 /**

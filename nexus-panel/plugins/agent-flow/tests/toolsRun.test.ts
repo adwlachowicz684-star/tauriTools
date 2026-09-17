@@ -38,17 +38,23 @@ async function run(nodes: unknown[], edges: unknown[] = [], input = ''): Promise
 
 test('等待节点：按毫秒延时后继续', async () => {
   const t0 = Date.now();
-  const { summary } = await run([mk('wait', 'w1', { ms: 120 })], []);
+  const { summary, events } = await run([mk('wait', 'w1', { ms: 120 })], []);
   const dt = Date.now() - t0;
   assert.equal(summary.ok, true);
   assert.ok(dt >= 100, `应至少等 100ms，实际 ${dt}ms`);
-  assert.match(summary.outputs.w1, /已等待 120ms/);
+  /*
+   * 状态改走日志了 —— output 现在是透传，不再承载「已等待 Nms」。
+   * 见 engine/runners/wait.ts 里关于"控制流不该改写数据流"的说明。
+   */
+  const logs = events.filter((e) => e.type === 'log').map((e) => String(e.message ?? ''));
+  assert.ok(logs.some((m) => /已等待 120ms/.test(m)), `日志里应有等待记录：${logs.join('|')}`);
 });
 
 test('等待节点：ms 支持模板', async () => {
-  const { summary } = await run([mk('wait', 'w1', { ms: '{{input}}' })], [], '50');
+  const { summary, events } = await run([mk('wait', 'w1', { ms: '{{input}}' })], [], '50');
   assert.equal(summary.ok, true);
-  assert.match(summary.outputs.w1, /已等待 50ms/);
+  const logs = events.filter((e) => e.type === 'log').map((e) => String(e.message ?? ''));
+  assert.ok(logs.some((m) => /已等待 50ms/.test(m)), `日志里应有等待记录：${logs.join('|')}`);
 });
 
 test('等待节点：不是数字要失败，而不是干等', async () => {

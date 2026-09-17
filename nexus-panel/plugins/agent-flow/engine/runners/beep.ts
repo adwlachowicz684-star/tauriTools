@@ -1,6 +1,7 @@
 import type { RunContext } from '../runContext';
 import { withNodeRun, NodeFailError } from '../runnerKit';
 import { playBeep } from '../beep';
+import { upstreamText } from '../upstream';
 import type { BeepNodeData } from '../../types';
 
 /**
@@ -33,8 +34,16 @@ export async function runBeep(ctx: RunContext): Promise<void> {
      * 所以失败只告警，输出仍算成功。
      */
     const err = await playBeep(d.preset ?? 'success', volume);
-    if (err) return { output: '', warn: err };
+    // 失败时也透传，不让下游拿到空串
+    if (err) {
+      return {
+        output: upstreamText(ctx.graph.edges, ctx.id, ctx.outputs, ctx.opts.input),
+        warn: err,
+      };
+    }
 
-    return { output: '已播放提示音' };
+    // 透传，理由同 wait —— 控制流不该改写数据流
+    ctx.emit({ type: 'log', message: '🔔 已播放提示音' });
+    return { output: upstreamText(ctx.graph.edges, ctx.id, ctx.outputs, ctx.opts.input) };
   });
 }

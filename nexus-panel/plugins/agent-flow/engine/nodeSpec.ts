@@ -156,16 +156,27 @@ export const SPECS: Record<string, NodeSpec> = {
   'github-push': S('text', 'any', '推送结果说明'),
   'generic-http': S('json', 'any', 'HTTP 响应正文'),
 
-  // 工具
-  wait: S('mark', 'any', '「已等待 Nms」—— 状态标记，会截断上游数据'),
-  beep: S('mark', 'any', '「已播放提示音」—— 状态标记，会截断上游数据'),
-  'play-audio': S('mark', 'any', '「已播放 xxx」—— 状态标记，会截断上游数据'),
+  /*
+   * 工具节点：全部**透传**上游。
+   *
+   * 原先 wait / beep / play-audio 输出的是状态文本（「已等待 2000ms」），
+   * 等于控制流节点顺手把数据流掐断 ——「上游 → 等待 → 提取」取不到任何东西
+   * 且不报错，是典型的静默失败。
+   *
+   * 现在状态改走运行日志，output 原样透传，与日志标记一致。
+   */
+  wait: S('any', 'any', '透传上游（只是延时，状态写进运行日志）'),
+  beep: S('any', 'any', '透传上游（只是响一声）'),
+  'play-audio': S('any', 'any', '透传上游（只是播放音频）'),
   clock: S('text', 'none', '格式化后的当前时间'),
   const: S('text', 'none', '常量值（支持模板）'),
   log: S('any', 'any', '原样透传上游 —— 插在链中间不破坏数据'),
 
   // 组合
   module: S('any', 'any', '模块内部最后一个节点的输出'),
+
+  // 控制器
+  join: S('text', 'any', '所有到齐输入按顺序拼接（宽松模式忽略未走到的分支）'),
 };
 
 /** 取契约。没声明的类型按"都能接"处理，不因此报错 */

@@ -29,12 +29,23 @@ import type { FieldFactory, FieldRenderProps } from '../components/inspectors/fi
 
 /** 侧栏分组。顺序即展示顺序 */
 export type NodeCategory =
-  | 'trigger' | 'task' | 'flow' | 'data' | 'ai' | 'external' | 'tools' | 'custom';
+  | 'trigger' | 'task' | 'flow' | 'data' | 'ai' | 'external' | 'tools' | 'custom'
+  /**
+   * 控制器：不产生数据，只管**何时放行、放不放行**。
+   * 与 flow（条件/循环，靠数据决定走向）分开，
+   * 因为控制器的判据是"到齐了没"，与数据内容无关。
+   */
+  | 'control';
 
+/*
+ * 键序即侧栏分组的展示顺序。
+ * 控制器紧挨流程控制 —— 它俩都是"管走向"的，放一起才好找。
+ */
 export const NODE_CATEGORY_META: Record<NodeCategory, { label: string }> = {
   trigger:  { label: '触发器（起点）' },
   task:     { label: '任务' },
   flow:     { label: '流程控制' },
+  control:  { label: '控制器' },
   data:     { label: '文件与数据' },
   ai:       { label: 'AI 能力' },
   external: { label: '外部服务' },

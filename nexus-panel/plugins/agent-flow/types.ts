@@ -289,7 +289,9 @@ export type NodeData =
   | PlayAudioNodeData
   | ClockNodeData
   | ConstNodeData
-  | ModuleNodeData;
+  | ModuleNodeData
+  /* ---- 控制器 ---- */
+  | JoinNodeData;
 
 /** 算子分类，用于面板里分组展示 */
 export type OpCategory = 'text' | 'empty' | 'flow';
@@ -1300,6 +1302,40 @@ export function makeGenericHttpNode(id: string, partial: Partial<GenericHttpNode
 /* 浏览器模式下同样可用。                                              */
 /* ================================================================== */
 
+/**
+ * 汇合（控制器）：等所有入边都到齐了才放行下游。
+ *
+ * 与"多入边节点默认的 OR 语义"的区别：
+ *   普通节点 —— 只要有一条入边活着就跑（分支后汇合，走任一分支都能继续）
+ *   汇合·宽松 —— 同上，但会把所有到齐的输入合并成一份输出
+ *   汇合·严格 —— 任何一条入边没产出（被剪枝 / 跳过 / 失败）就算没收集全，
+ *                 直接失败并让下游跳过
+ */
+export type JoinNodeData = {
+  /** 画布显示高度；不填按中号处理 */
+  size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
+  kind: 'join';
+  label: string;
+  /**
+   * 严格程度。
+   *   all    —— 宽松：活着的入边都到齐就放行（被剪枝的分支不算缺失）
+   *   strict —— 严格：任何一条入边没产出都算没收集全
+   */
+  mode: 'all' | 'strict';
+  /** 多个输入合并时的分隔符。支持 \n 之类的转义，默认换行 */
+  joinBy?: string;
+  status: NodeStatus;
+  output: string;
+  error: string;
+};
+
 export type WaitNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
@@ -1442,6 +1478,21 @@ export type ConstNodeData = {
   output: string;
   error: string;
 };
+
+export function makeJoinNode(id: string, partial: Partial<JoinNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'join',
+      label: partial.label ?? '汇合',
+      mode: partial.mode ?? 'all',
+      joinBy: partial.joinBy ?? '\\n',
+      status: 'idle',
+      output: '',
+      error: '',
+    } as unknown as JoinNodeData,
+  } as unknown as GraphNode;
+}
 
 export function makeWaitNode(id: string, partial: Partial<WaitNodeData> = {}): GraphNode {
   return {
