@@ -253,6 +253,35 @@ t('共享色盘有吸管待命态（不是一点就取）',
 t('共享色盘有 RGB 数字输入',
   /type="number"/.test(src('plugins/color-picker/ColorPicker.tsx')));
 
+console.log('\n=== 10g. 服务模态也能实时预览 ===');
+/*
+ * 此前有个误解要澄清：组件抽出来后，**内联用法本来就能实时预览**。
+ * 真正的限制只在"服务模态"这个用法 —— pick() 只在点确定时 resolve 一次，
+ * 中间的 onChange 没往外传。
+ *
+ * 但这不是架构死限制：服务 ctx.emit → 宿主 publish → 广播给调用方，
+ * 链路是通的。所以补了 previewEvent —— 给了就每次变化喊一声。
+ *
+ * 结论：**模态也能实时预览**，只要调用方订阅。
+ */
+t('pick 支持 previewEvent', /previewEvent/.test(mainTsx));
+t('onChange 里真的 emit 了',
+  /emitFn\(current\.previewEvent, hex\)/.test(mainTsx));
+t('pick 把 ctx.emit 传进会话',
+  /openSession\(args, ctx\?\.emit\)/.test(mainTsx));
+/* 不给就不发 —— 避免每个服务调用都往总线上广播 */
+t('未给 previewEvent 时不广播',
+  /if \(current\?\.previewEvent && current\?\.emitFn\)/.test(mainTsx));
+
+/* 链路两端都要在：服务侧 emit、调用侧 on。
+   只钉一边的话，另一边漏了照样没用。 */
+t('SDK 的 emit 会转发给宿主（publish）',
+  /type: 'publish'/.test(src('js/plugin-sdk.js')));
+t('宿主收到 publish 会广播',
+  /case 'publish':[\s\S]{0,120}bus\.emit/.test(src('js/host.js')));
+t('宿主会把订阅的事件发回 iframe',
+  /type: 'event', event: d\.event, payload/.test(src('js/host.js')));
+
 console.log('\n=== 10f. SDK 类型覆盖 services ===');
 const sdkDts = src('js/plugin-sdk.d.ts');
 t('PluginContext 有 services', /services: \{/.test(sdkDts));

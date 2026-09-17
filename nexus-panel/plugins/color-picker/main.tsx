@@ -29,6 +29,15 @@ type Session = {
   custom: string[];
   /** 是否允许返回 null（表示"清除颜色"） */
   allowNull: boolean;
+  /**
+   * 实时预览事件名。
+   *
+   * 给了的话，用户每拖动一次就 emit 一次当前色 —— 调用方
+   * `ctx.on(name, (hex) => ...)` 就能**实时看到外面在变**，
+   * 不必等确定。不给就不发（避免无谓广播）。
+   */
+  previewEvent?: string;
+  emitFn?: ((e: string, p: unknown) => void) | null;
 };
 
 /* 模块级：methods 是静态注册的，拿不到 React 的 setState，
@@ -57,7 +66,15 @@ function ServicePanel() {
       <ColorPicker
         value={view.initial}
         customColors={view.custom}
-        onChange={(hex) => { hexRef.current = hex; }}
+        onChange={(hex) => {
+          hexRef.current = hex;
+          /* 实时预览：拖到哪就广播到哪。
+             调用方 ctx.on(previewEvent, ...) 就能跟着变 ——
+             模态弹窗**也能**实时预览，只是要把变化"喊出去"。 */
+          if (current?.previewEvent && current?.emitFn) {
+            current.emitFn(current.previewEvent, hex);
+          }
+        }}
         onSaveCustom={(colors) => { customRef.current = colors; }}
         onLog={() => { /* 服务里没有日志面板，静默 */ }}
       />
@@ -94,7 +111,10 @@ function ServicePanel() {
 }
 
 /** 打开会话：返回一个在用户点确定/取消时才 settle 的 Promise */
-function openSession(args: { initial?: string; custom?: string[]; allowNull?: boolean } = {}) {
+function openSession(
+  args: { initial?: string; custom?: string[]; allowNull?: boolean; previewEvent?: string } = {},
+  emitFn?: ((e: string, p: unknown) => void) | null,
+) {
   const initial = normalizeHex(args.initial || '') || '#3E63DD';
   const custom = Array.isArray(args.custom) ? args.custom : [];
   setView?.({ open: true, initial, custom });
@@ -105,6 +125,7 @@ function openSession(args: { initial?: string; custom?: string[]; allowNull?: bo
       resolve: resolve as (v: unknown) => void,
       reject: reject as (e: Error) => void,
       initial, custom, allowNull: !!args.allowNull,
+      previewEvent: args.previewEvent, emitFn: emitFn ?? null,
     };
   });
 }
@@ -122,8 +143,13 @@ bootServiceReactPlugin(
       };
     },
 
-    /** 打开取色面板，返回 '#RRGGBB'；allowNull 时可返回 null 表示清除颜色 */
-    async pick(args = {}) { return openSession(args); },
+    /**
+     * 打开取色面板，返回 '#RRGGBB'；
+     * 传 previewEvent 可实时接收拖动中的颜色变化。
+     */
+    async pick(args = {}, ctx?: any) {
+      return openSession(args, ctx?.emit);
+    },
 
     /** 纯计算：归一化，非法返回 null */
     async normalize({ color } = {}) { return normalizeHex(color); },
