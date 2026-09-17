@@ -242,10 +242,44 @@ export function createHost(opts = {}) {
   const serviceHost = document.createElement('div');
   serviceHost.id = 'nexus-service-host';
   serviceHost.setAttribute('aria-hidden', 'true');
-  // 移出视口而非 display:none —— 见上面 ①
-  serviceHost.style.cssText =
+  /* 两种状态：
+     · 常驻（默认）—— 移出视口。iframe 只有在文档里才会加载运行，
+       所以用"看不见"而不是 display:none（后者部分浏览器会延迟/跳过加载）。
+     · 交互（调 interactive 服务时临时切）—— 居中浮层 + 遮罩，
+       服务画出的色盘/图标面板才看得见、点得着。 */
+  const SERVICE_HIDDEN_CSS =
     'position:absolute;left:-99999px;top:0;width:400px;height:300px;overflow:hidden;pointer-events:none;';
+  const SERVICE_SHOWN_CSS =
+    'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);' +
+    'width:min(560px,90vw);height:min(420px,80vh);z-index:9999;' +
+    'background:var(--surface,#222);border:1px solid var(--edge,#444);' +
+    'border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.45);overflow:hidden;';
+  serviceHost.style.cssText = SERVICE_HIDDEN_CSS;
   (opts.serviceHostParent || document.body).appendChild(serviceHost);
+
+  /* 交互服务弹出时的遮罩。单独建一个元素而不是给容器加 ::before ——
+     容器尺寸/定位两种状态完全不同，伪元素跟着变会很难调。 */
+  const serviceMask = document.createElement('div');
+  serviceMask.id = 'nexus-service-mask';
+  serviceMask.style.cssText =
+    'display:none;position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,.45);';
+  (opts.serviceHostParent || document.body).appendChild(serviceMask);
+
+  /** 显示/隐藏交互服务的浮层 */
+  function showServiceUi(on) {
+    serviceHost.style.cssText = on ? SERVICE_SHOWN_CSS : SERVICE_HIDDEN_CSS;
+    serviceMask.style.display = on ? '' : 'none';
+    serviceHost.setAttribute('aria-hidden', on ? 'false' : 'true');
+    // 焦点交给服务里的 iframe，否则键盘操作（如 Esc、输入框）落在主文档
+    if (on) {
+      try {
+        serviceHost.querySelector('iframe')?.contentWindow?.focus();
+      } catch { /* 隔离态拿不到 contentWindow，忽略 */ }
+    }
+  }
+  /* 点遮罩 = 取消。没有它，用户想放弃只能找服务自己的取消按钮，
+     而有些服务（比如只画了格子没放按钮的）就没给退路。 */
+  serviceMask.addEventListener('click', () => showServiceUi(false));
 
   /** id -> { promise, instance } */
   const services = new Map();
@@ -303,6 +337,22 @@ export function createHost(opts = {}) {
     if (typeof method !== 'string' || !method) {
       throw new Error('服务方法名不能为空');
     }
+    /* 交互服务（registry 里标 interactive:true）要先把它显示出来 ——
+       色盘、图标选择这类服务**必须用户看得见才用得了**，
+       而服务平时挂在移出视口的容器里。
+
+       用 try/finally 保证无论成功/失败/取消都收回浮层：
+       漏收会留一块永远盖在界面上的遮罩，只能刷新页面。 */
+    const interactive = !!inst.manifest?.interactive;
+    if (interactive) showServiceUi(true);
+    try {
+      return await dispatchServiceCall(inst, id, method, args);
+    } finally {
+      if (interactive) showServiceUi(false);
+    }
+  }
+
+  async function dispatchServiceCall(inst, id, method, args) {
     if (inst.iframe) {
       if (typeof inst.callService !== 'function') {
         throw new Error(`服务实例不支持调用: ${id}`);

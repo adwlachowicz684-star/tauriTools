@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>图标选择服务</title>
+  <style>
+    html, body { margin: 0; height: 100%; font: 12px/1.6 system-ui, sans-serif; }
+    body { padding: 10px; box-sizing: border-box; color: var(--text, #ddd); }
+    .search { width: 100%; margin-bottom: 6px; }
+    .grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px;
+            max-height: 300px; overflow: auto; margin: 6px 0; }
+    .cell { display: flex; flex-direction: column; align-items: center; gap: 3px;
+            padding: 6px 2px; border-radius: 4px; cursor: pointer;
+            border: 1px solid transparent; }
+    .cell:hover { background: var(--surface-sunk, #2a2a2a); }
+    .cell.sel { border-color: var(--accent, #3E63DD); background: var(--surface-sunk, #2a2a2a); }
+    .cell img { width: 24px; height: 24px; }
+    .cell span { font-size: 10px; opacity: .7; text-align: center;
+                 max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    input, button { background: var(--surface, #333); color: var(--text, #ddd);
+            border: 1px solid var(--edge, #444); border-radius: 3px;
+            height: 26px; padding: 0 8px; font-size: 12px; box-sizing: border-box; }
+    button.primary { background: var(--accent, #3E63DD); color: #fff; border-color: transparent; }
+    .row { display: flex; gap: 6px; margin-top: 8px; }
+    .hint { opacity: .65; font-size: 11px; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div id="ui"></div>
+  <script type="module" src="./index.js"></script>
+</body>
+</html>

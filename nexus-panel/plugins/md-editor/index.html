@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>Markdown 编辑服务</title>
+  <style>
+    html, body { margin: 0; height: 100%; font: 12px/1.6 system-ui, sans-serif; }
+    body { padding: 10px; box-sizing: border-box; color: var(--text, #ddd);
+           display: flex; flex-direction: column; }
+    .bar { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+    button { background: var(--surface, #333); color: var(--text, #ddd);
+             border: 1px solid var(--edge, #444); border-radius: 3px;
+             height: 24px; padding: 0 8px; cursor: pointer; font-size: 11px; }
+    button.primary { background: var(--accent, #3E63DD); color: #fff; border-color: transparent; }
+    .panes { display: flex; gap: 8px; flex: 1; min-height: 0; }
+    .pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .pane > .t { font-size: 11px; opacity: .6; margin-bottom: 3px; }
+    textarea { flex: 1; resize: none; background: var(--surface-sunk, #222);
+               color: var(--text, #ddd); border: 1px solid var(--edge, #444);
+               border-radius: 3px; padding: 6px; font: 12px/1.6 ui-monospace, monospace; }
+    .preview { flex: 1; overflow: auto; background: var(--surface-sunk, #222);
+               border: 1px solid var(--edge, #444); border-radius: 3px; padding: 8px; }
+    .preview h1,.preview h2,.preview h3 { margin: .6em 0 .3em; }
+    .preview code { background: rgba(128,128,128,.2); padding: 1px 4px; border-radius: 3px; }
+    .preview pre { background: rgba(128,128,128,.15); padding: 8px; border-radius: 4px; overflow: auto; }
+    .preview blockquote { margin: .5em 0; padding-left: 8px;
+                          border-left: 3px solid var(--accent, #3E63DD); opacity: .85; }
+    .foot { display: flex; gap: 6px; margin-top: 8px; }
+    .hint { opacity: .6; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <div id="ui" style="display:flex;flex-direction:column;height:100%;"></div>
+  <script type="module" src="./index.js"></script>
+</body>
+</html>

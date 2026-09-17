@@ -119,6 +119,41 @@ export function isMac() {
 /* ============================================================
    内部：通用 ctx 构造（两种模式共用）
    ============================================================ */
+/* 内置服务的**薄封装**。
+   底层仍是通用 call（第三方服务靠它接入），这里只给内置的几个服务
+   补上类型化快捷方式，让调用方写起来更顺手、也不容易拼错 method。
+
+   刻意保持"薄"：只做参数转换，不另起一套语义，也不隐藏 call ——
+   调用方随时可以退回通用写法，第三方服务也不受影响。 */
+function withBuiltinShortcuts(services) {
+  const { call, list } = services;
+  return {
+    ...services,
+    color: {
+      /** 打开取色面板，返回 '#RRGGBB'；取消则 reject */
+      pick: (initial) => call('color-picker', 'pick', { initial }),
+      /** 归一化任意颜色输入，非法返回 null */
+      normalize: (color) => call('color-picker', 'normalize', { color }),
+      /** 列出 24 个预设色 */
+      presets: () => call('color-picker', 'presets'),
+    },
+    icon: {
+      /** 打开图标浏览面板，返回 { name, url } */
+      browse: (keyword) => call('icon-picker', 'browse', { keyword }),
+      /** 只要清单 */
+      list: () => call('icon-picker', 'list'),
+      /** 名字 → URL */
+      url: (name) => call('icon-picker', 'url', { name }),
+    },
+    md: {
+      /** 打开编辑面板，返回编辑后的文本 */
+      edit: (text, title) => call('md-editor', 'edit', { text, title }),
+      /** 只要渲染结果（调用方自己做编辑框时用） */
+      render: (text) => call('md-editor', 'render', { text }),
+    },
+  };
+}
+
 function buildCtx(base) {
   const { id, manifest, mode, root, container, transport, bus, onDestroy } = base;
   const destroyHooks = [];
@@ -136,11 +171,11 @@ function buildCtx(base) {
            所以服务即使跑在另一个沙箱里也能被调用，隔离不影响能力。
          · 同页插件 —— 宿主直接注入（base.services），省掉消息往返。
            不注入就回退桥接，那时会报"未知请求"，错误信息明确。 */
-    services: base.services || {
+    services: withBuiltinShortcuts(base.services || {
       call: (id, method, args) =>
         transport.request('service.call', { id, method, args }),
       list: () => transport.request('service.list', {}),
-    },
+    }),
     root,                                  // 挂载点：HTMLElement 或 ShadowRoot
     container,                             // 宿主元素（始终在文档流里）
     version: manifest.version || '0.0.0',

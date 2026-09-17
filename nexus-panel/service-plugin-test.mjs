@@ -96,7 +96,8 @@ t('module ctx 接受注入的 services',
 /* buildCtx 要**优先用注入的** services —— 只加参数不生效的话，
    module 插件仍会走桥接，而 module 的 transport 没有 service.call 分支，
    表现为"调用服务报未知请求"。 */
-t('buildCtx 优先用注入的 services', /services: base\.services \|\|/.test(sdkSrc));
+t('buildCtx 优先用注入的 services',
+  /services: withBuiltinShortcuts\(base\.services \|\|/.test(sdkSrc));
 t('宿主给 module ctx 注入了 services',
   /services: \{\s*\n\s*call: \(id, method, args\) => callService/.test(hostSrc));
 t('宿主桥接转发 service.call（沙箱插件才能调）',
@@ -111,19 +112,57 @@ t('React 外壳用它设置列表', /setPlugins\(visiblePlugins\(/.test(appSrc))
 t('mount 本身拒绝服务插件（不只靠侧边栏）',
   /manifest\?\.kind === 'service'/.test(hostSrc));
 
-console.log('\n=== 10. 插件商店面板 ===');
-t('store 插件已注册', /id: 'store'/.test(regSrc));
-t('store 是内置应用插件（非服务）',
-  /id: 'store'[\s\S]{0,300}builtin: true/.test(regSrc));
-t('store 有入口文件', has('plugins/store/index.js') && has('plugins/store/index.html'));
-const storeSrc = src('plugins/store/index.js');
-t('store 分应用/服务两区展示',
-  /kind !== 'service'/.test(storeSrc) && /kind === 'service'/.test(storeSrc));
-t('store 说明服务插件的用途', /ctx\.services\.call/.test(storeSrc));
-t('store 有添加自定义插件入口', /添加自定义插件/.test(storeSrc));
-t('store 注明未来接联网商店', /联网商店|联网安装/.test(storeSrc));
+console.log('\n=== 10. 插件面板（替换原「添加插件」对话框）===');
+/* 用户选定：不新增侧边栏项，而是把「＋ 添加插件」对话框扩成完整面板。 */
+const dlgSrc = src('src/components/AddPluginDialog.tsx');
+t('registry 里不再有 store 侧边栏项', !/id: 'store'/.test(regSrc));
+t('对话框接收完整插件列表（含服务）', /plugins: PluginManifest\[\]/.test(dlgSrc));
+t('对话框支持移除插件', /onRemove: \(id: string\) => void/.test(dlgSrc));
+t('对话框分应用/服务两区',
+  /kind !== 'service'/.test(dlgSrc) && /kind === 'service'/.test(dlgSrc));
+t('对话框说明服务插件用途', /ctx\.services\.call/.test(dlgSrc));
+t('对话框预留联网商店', /在线目录|联网安装|在线插件目录/.test(dlgSrc));
+t('App 传入完整列表而非过滤后的',
+  /plugins=\{hostRef\.current\?\.state\.plugins/.test(appSrc));
+t('原生版也扩成了面板', /插件面板（商店）/.test(shellSrc));
+t('原生版也分两区', /应用插件/.test(shellSrc) && /服务插件/.test(shellSrc));
 
-console.log('\n=== 11. demo 服务可调用 ===');
+console.log('\n=== 10b. 交互服务必须能露面 ===');
+/* 色盘/图标/md 这类服务**必须用户看得见才用得了**，
+   而服务平时挂在移出视口的容器里 —— 不临时显示就是"点了没反应"。 */
+t('宿主有 showServiceUi', /function showServiceUi/.test(hostSrc));
+t('按 interactive 标记决定是否显示',
+  /const interactive = !!inst\.manifest\?\.interactive;/.test(hostSrc));
+/* 必须钉住"真的调用了 showServiceUi(true)"这一行。
+   上面那条只钉 const interactive 的声明 —— 我破坏时只改了调用行、
+   没改声明行，结果那条**没红**（是另一条红的），说明这里有覆盖盲区。
+   两条都要有：声明决定"要不要显示"，调用决定"真的显示了没"。 */
+t('真的调用了 showServiceUi(true)',
+  /if \(interactive\) showServiceUi\(true\);/.test(hostSrc));
+t('用 finally 保证收回浮层（漏收会永远盖住界面）',
+  /if \(interactive\) showServiceUi\(true\);[\s\S]{0,200}finally[\s\S]{0,120}showServiceUi\(false\)/.test(hostSrc));
+t('有遮罩元素', /nexus-service-mask/.test(hostSrc));
+t('点遮罩可退出（给服务没放取消按钮时留退路）',
+  /serviceMask\.addEventListener\('click'/.test(hostSrc));
+t('registry 里三个交互服务都标了 interactive',
+  /id: 'color-picker'[\s\S]{0,240}interactive: true/.test(regSrc)
+  && /id: 'icon-picker'[\s\S]{0,240}interactive: true/.test(regSrc)
+  && /id: 'md-editor'[\s\S]{0,240}interactive: true/.test(regSrc));
+
+console.log('\n=== 10c. 薄封装（用户选定：通用 call + 内置快捷方式）===');
+t('SDK 有 withBuiltinShortcuts', /function withBuiltinShortcuts/.test(sdkSrc));
+t('薄封装应用到了 services',
+  /services: withBuiltinShortcuts\(/.test(sdkSrc));
+for (const [ns, m] of [['color', 'pick'], ['icon', 'browse'], ['md', 'edit']]) {
+  t(`${ns}.${m} 快捷方式存在`,
+    new RegExp(`${ns}: \\{[\\s\\S]{0,400}${m}:`).test(sdkSrc));
+}
+/* 底层 call 必须**保留** —— 第三方服务靠它接入，
+   薄封装只是便利层，不能把通用入口盖掉。 */
+t('底层通用 call 未被薄封装取代',
+  /call: \(id, method, args\)/.test(sdkSrc) && /\.\.\.services/.test(sdkSrc));
+
+console.log('\n=== 11. 三个真实服务已就位 ===');
 t('demo-service 有 index.js', has('plugins/demo-service/index.js'));
 const demoSrc = src('plugins/demo-service/index.js');
 t('用 bootServicePlugin 声明', /bootServicePlugin\(\{/.test(demoSrc));
@@ -131,7 +170,9 @@ t('提供了方法', /async pick\(|async describe\(|async shade\(/.test(demoSrc)
 
 console.log('\n=== 12. 语法（node --check，权威）===');
 for (const f of ['js/host.js', 'js/plugin-sdk.js', 'plugins/registry.js',
-  'js/shell.js', 'plugins/store/index.js', 'plugins/demo-service/index.js']) {
+  'js/shell.js', 'plugins/demo-service/index.js',
+  'plugins/color-picker/index.js', 'plugins/icon-picker/index.js',
+  'plugins/md-editor/index.js']) {
   let ok = true;
   try { execSync(`node --check ${JSON.stringify(f)}`, { cwd: HERE, stdio: 'pipe' }); }
   catch { ok = false; }

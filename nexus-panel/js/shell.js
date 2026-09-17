@@ -431,14 +431,62 @@ async function route() {
   await host.mount(id);
 }
 
-/* ---------------------------- 安装插件 ---------------------------- */
+/* ---------------------------- 插件面板（商店） ---------------------------- */
+/*
+ * 原本只是一个"填表单装插件"的小对话框，现在扩成插件面板：
+ * 已安装（应用/服务两区）+ 添加。
+ *
+ * 服务插件单独一区，是因为它们**不显示在侧边栏** ——
+ * 不在这里给入口，用户根本不知道装了哪些服务。
+ */
 function openAddDialog() {
   const mask = document.createElement('div');
   mask.className = 'mask';
   const box = document.createElement('div');
   box.className = 'p-card dialog';
+  box.style.maxHeight = '84vh';
+  box.style.display = 'flex';
+  box.style.flexDirection = 'column';
+
+  /* 已安装列表：在表单上方直接列出，不另开分页 ——
+     原生版没有 React 的组件树，再套一层分页状态反而更绕。 */
+  const all = host.getPlugins ? host.getPlugins() : [];
+  const apps = visiblePlugins(all);
+  const svcs = (all || []).filter((p) => p.kind === 'service');
+  const rowHtml = (p) => {
+    const meta = [
+      p.version ? 'v' + p.version : null,
+      p.builtin ? '内置' : null,
+      p.custom ? '自定义' : null,
+      p.kind === 'service' ? '服务插件' : (p.type === 'iframe' ? '沙箱' : '同页'),
+      p.interactive ? '交互' : null,
+    ].filter(Boolean).join(' · ');
+    return `<div style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;
+        margin-top:8px;border-radius:var(--r-sm);background:var(--surface-sunk);
+        box-shadow:inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light)">
+      <div style="font-size:18px;line-height:1.4;width:24px;text-align:center">${p.icon || '◈'}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600">${escapeHtml(p.name)}</div>
+        <div class="p-muted" style="font-size:11px;margin-top:2px">${escapeHtml(meta)}</div>
+        ${p.description ? `<div class="p-muted" style="font-size:11px;margin-top:4px;line-height:1.6">${escapeHtml(p.description)}</div>` : ''}
+      </div></div>`;
+  };
+  const installedHtml = `
+    <div style="overflow-y:auto;flex:1;min-height:0;margin-bottom:12px">
+      <h3 style="font-size:13px;margin:4px 0 2px">应用插件</h3>
+      <div class="p-muted" style="font-size:11px;line-height:1.6">显示在侧边栏，点开即用。</div>
+      ${apps.length ? apps.map(rowHtml).join('') : '<div class="p-muted" style="padding:12px 0">还没有安装应用插件。</div>'}
+      <h3 style="font-size:13px;margin:16px 0 2px">服务插件</h3>
+      <div class="p-muted" style="font-size:11px;line-height:1.6">不显示在侧边栏，由其它插件通过 ctx.services.call 调用。</div>
+      ${svcs.length ? svcs.map(rowHtml).join('') : '<div class="p-muted" style="padding:12px 0">还没有服务插件。</div>'}
+    </div>`;
+
   box.innerHTML = `
-    <h2 style="margin-bottom:18px">安装插件</h2>
+    <h2 style="margin-bottom:12px">插件</h2>
+    ${installedHtml}
+    <div style="border-top:1px solid var(--edge);padding-top:12px">
+    <h3 style="font-size:13px;margin:0 0 10px">添加</h3>
+    <div style="display:flex;flex-direction:column;gap:12px">
     <div style="display:flex;flex-direction:column;gap:12px">
       <div><div class="p-muted" style="margin-bottom:6px">插件名称</div>
         <input class="p-input" id="p-name" placeholder="例如：日志查看器"></div>
@@ -458,8 +506,13 @@ function openAddDialog() {
           <option value="light">与面板相反（需适配）</option>
         </select></div>
     </div>
-    <div class="p-row" style="margin-top:20px;justify-content:flex-end">
-      <button class="p-btn" id="p-cancel">取消</button>
+    </div>
+    <div class="p-muted" style="font-size:11px;line-height:1.6;margin-top:10px">
+      未来可从此浏览在线插件目录并直接安装、卸载；当前版本仅支持手动添加。
+    </div>
+    </div>
+    <div class="p-row" style="margin-top:16px;justify-content:flex-end">
+      <button class="p-btn" id="p-cancel">关闭</button>
       <button class="p-btn primary" id="p-ok">添加</button>
     </div>`;
   mask.appendChild(box);

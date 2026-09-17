@@ -426,7 +426,16 @@ export default function App() {
           hasPluginSettings={hasSettings}
         />
       ) : null}
-      {dialogOpen && <AddPluginDialog onClose={() => setDialogOpen(false)} onSubmit={addPlugin} />}
+      {/* plugins 传完整列表（含服务插件）—— 服务不进侧边栏，
+          只能在这个面板里看到与管理，所以不能传过滤后的 setPlugins。 */}
+      {dialogOpen && (
+        <AddPluginDialog
+          onClose={() => setDialogOpen(false)}
+          onSubmit={addPlugin}
+          plugins={hostRef.current?.state.plugins ?? []}
+          onRemove={(id) => { removePlugin(id); setDialogOpen(false); }}
+        />
+      )}
     </div>
   );
 }

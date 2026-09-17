@@ -122,7 +122,46 @@ export const plugins = [
     theme: 'dark',
     description: 'kityminder 内核：多画布 / 主题 / 布局 / 附件 / XMind 互导，内容实时缓存',
   },
-  /* ---- 服务插件：不显示在侧边栏，供其它插件调用 ---- */
+  /* ---- 服务插件：不显示在侧边栏，供其它插件调用 ----
+     interactive:true —— 调用时宿主会把它临时显示成居中浮层，
+     因为色盘/图标选择这类服务**必须用户看得见才用得了**。
+     不加这个标记的服务（如 demo-service）纯计算，不需要露面。 */
+  {
+    id: 'color-picker',
+    name: '取色',
+    icon: '🎨',
+    kind: 'service',
+    interactive: true,
+    type: 'iframe',
+    entry: './plugins/color-picker/index.html',
+    version: '1.0.0',
+    theme: 'dark',
+    description: '预设 24 色 + RGB/HEX 输入 + 吸管；被所有插件共用',
+  },
+  {
+    id: 'icon-picker',
+    name: '图标选择',
+    icon: '🖼',
+    kind: 'service',
+    interactive: true,
+    type: 'iframe',
+    entry: './plugins/icon-picker/index.html',
+    version: '1.0.0',
+    theme: 'dark',
+    description: '内置 122 个预设图标的浏览与选择',
+  },
+  {
+    id: 'md-editor',
+    name: 'Markdown 编辑',
+    icon: '📝',
+    kind: 'service',
+    interactive: true,
+    type: 'iframe',
+    entry: './plugins/md-editor/index.html',
+    version: '1.0.0',
+    theme: 'dark',
+    description: '左编辑右预览的 md 编辑器，返回编辑后的文本',
+  },
   {
     id: 'demo-service',
     name: '示例·取色服务',
@@ -133,17 +172,6 @@ export const plugins = [
     version: '1.0.0',
     theme: 'dark',
     description: '示例服务插件：不进侧边栏，由其它插件通过 ctx.services.call 调用',
-  },
-  {
-    id: 'store',
-    name: '插件',
-    icon: '⊞',
-    type: noBuild ? 'module' : 'iframe',
-    entry: noBuild ? './plugins/store/index.js' : './plugins/store/index.html',
-    theme: 'dark',
-    requiresBuild: !noBuild,
-    builtin: true,
-    description: '插件商店：已安装插件与服务插件的管理，未来接联网安装卸载',
   },
   {
     id: 'settings',
