@@ -24,6 +24,7 @@ const fields: FieldDef[] = [
   },
   {
     type: 'custom',
+    spec: { keys: ['prompt', 'model', 'workdir'], kind: 'textarea' },
     key: 'prompt',
     render: (p) => (
       <Field label="提示词内容">
@@ -71,6 +72,7 @@ const fields: FieldDef[] = [
   },
   {
     type: 'custom',
+    spec: { keys: ['yolo'], kind: 'switch' },
     render: (p) => (
       <FileParamsPanel node={p.node as never} onChange={p.patch as never} />
     ),

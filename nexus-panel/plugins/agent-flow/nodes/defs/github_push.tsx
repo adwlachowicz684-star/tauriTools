@@ -8,6 +8,7 @@ import { registerNode } from '../registry';
 const fields: FieldDef[] = [
   {
     type: 'custom',
+    spec: { keys: ['owner', 'repo'], kind: 'text' },
     render: (p) => (
       <label className="p-row">
         <span className="p-muted" style={{ width: 64, flex: 'none' }}>仓库</span>
@@ -45,6 +46,7 @@ const fields: FieldDef[] = [
   { type: 'credential', key: 'credentialId', credentialKind: 'github-push' },
   {
     type: 'custom',
+    spec: { keys: ['order'], kind: 'switch' },
     render: (p) => <OrderPicker order={p.d.order as never} fallback={['api', 'cli']} onChange={p.patch} />,
   },
   {

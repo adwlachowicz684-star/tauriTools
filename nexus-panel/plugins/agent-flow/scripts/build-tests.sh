@@ -100,6 +100,7 @@ $S engine/modules.ts "$OUT/modules.mjs" \
 $S engine/nodeValidate.ts "$OUT/nodeValidate.mjs" \
    --import-map ../types=./types.mjs >/dev/null
 $S engine/kv.ts "$OUT/kv.mjs" >/dev/null
+$S engine/nodeSpec.ts "$OUT/nodeSpec.mjs" >/dev/null
 $S engine/sanitize.ts "$OUT/sanitize.mjs" >/dev/null
 $S engine/stack.ts "$OUT/stack.mjs" >/dev/null
 $S engine/nodeDefaults.ts "$OUT/nodeDefaults.mjs" \

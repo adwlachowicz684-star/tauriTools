@@ -11,6 +11,7 @@ import { registerNode } from '../registry';
 const fields: FieldDef[] = [
   {
     type: 'custom',
+    spec: { keys: ['imageSource', 'url'], kind: 'select', options: ['path', 'url'] },
     render: (p) => (
       <LlmConfigPanel
         nodeId={p.node.id}
@@ -38,6 +39,7 @@ const fields: FieldDef[] = [
 
   {
     type: 'custom',
+    spec: { keys: ['path'], kind: 'text' },
     key: 'url',
     when: (d) => (d.imageSource ?? 'url') === 'url',
     render: (p) => (
@@ -59,6 +61,7 @@ const fields: FieldDef[] = [
 
   {
     type: 'custom',
+    spec: { keys: ['prompt', 'detail'], kind: 'textarea' },
     key: 'path',
     when: (d) => d.imageSource === 'file',
     render: (p) => (
