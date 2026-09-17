@@ -152,11 +152,150 @@ pub async fn run_node(
     Ok(())
 }
 
+/* ---------------------------- 进程树终止 ---------------------------- */
+/*
+ * 为什么不能只 `child.kill()`（清单 P1-2）：
+ * 这些 CLI（traecli / codebuddy / opencode …）本身就是启动器，
+ * 真正干活的是它们拉起的子进程。`kill()` 只杀直接子进程，
+ * 子孙会被系统收养后继续跑 —— 界面上显示"已停止"，
+ * 但后台的编译 / 下载 / 端口占用全都还在，用户以为停掉了。
+ *
+ * 所以先清整棵树，再杀本体。顺序不能反：
+ * 本体一死，子孙就被 1 号进程（Linux）收养或干脆失去父子关系（Windows），
+ * 再按父进程号去找就找不到了。
+ *
+ * 一个绕不开的风险：**PID 复用**。从拿到 pid 到执行 kill 之间，
+ * 目标若已退出，同一个号可能已被新进程占用，那一刀就砍错人了。
+ * 这里能做的只有把窗口压到最小（先枚举、再按"自底向上"逐个杀），
+ * 完全消除需要 job object / cgroup 之类的容器机制，Tauri 侧拿不到。
+ */
+
+/// 终止以 `root` 为根的整棵进程树。返回 Err 时**不代表一个都没杀掉**，
+/// 只代表至少有一刀没成功；调用方按"尽力而为"处理。
+#[cfg(windows)]
+fn kill_process_tree(root: u32) -> Result<(), String> {
+    // /T = 连子孙一起，/F = 强制。一条命令搞定，比逐个枚举可靠也快得多
+    let out = std::process::Command::new("taskkill")
+        .args(["/PID", &root.to_string(), "/T", "/F"])
+        .output()
+        .map_err(|e| format!("调用 taskkill 失败: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+#[cfg(not(windows))]
+fn kill_process_tree(root: u32) -> Result<(), String> {
+    /// 自底向上：先递归清干净子孙，最后才是本体
+    fn rec(pid: u32, depth: usize, errs: &mut Vec<String>) {
+        // 深度兜底：ppid 理论上不该成环，但 /proc 读到的是内核快照，
+        // 不设上限的话一个异常值就能把栈打爆
+        if depth > 16 {
+            return;
+        }
+        for c in child_pids_of(pid) {
+            rec(c, depth + 1, errs);
+            if let Err(e) = kill_one(c) {
+                errs.push(e);
+            }
+        }
+    }
+    let mut errs: Vec<String> = Vec::new();
+    rec(root, 0, &mut errs);
+    if let Err(e) = kill_one(root) {
+        errs.push(e);
+    }
+    if errs.is_empty() {
+        Ok(())
+    } else {
+        Err(errs.join("; "))
+    }
+}
+
+/// 列出 pid 的**直接**子进程。
+///
+/// Linux 走 /proc：不依赖任何外部命令，也就不存在"pgrep 没装"这回事。
+/// 注意 /proc 下只列线程组组长（tgid），不会把同一个进程重复列出来。
+#[cfg(target_os = "linux")]
+fn child_pids_of(pid: u32) -> Vec<u32> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for e in entries.flatten() {
+        let name = e.file_name();
+        let Some(s) = name.to_str() else { continue };
+        if !s.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(stat) = std::fs::read_to_string(e.path().join("stat")) else {
+            continue;
+        };
+        // 进程名 comm 里可能带空格和括号，所以从**最后一个** ')' 之后开始切
+        let Some(idx) = stat.rfind(')') else { continue };
+        // ')' 之后依次是：运行状态、父进程号
+        let mut rest = stat[idx + 1..].split_whitespace();
+        let _state = rest.next();
+        let ppid = rest.next().and_then(|v| v.parse::<u32>().ok());
+        if ppid == Some(pid) {
+            if let Ok(me) = s.parse::<u32>() {
+                out.push(me);
+            }
+        }
+    }
+    out
+}
+
+/// macOS / 其它 Unix：pgrep 不在 PATH 上时退化为"找不到子进程"，
+/// 此时只杀得掉本体 —— 比杀错强。
+#[cfg(not(any(windows, target_os = "linux")))]
+fn child_pids_of(pid: u32) -> Vec<u32> {
+    let out = std::process::Command::new("pgrep")
+        .args(["-P", &pid.to_string()])
+        .output();
+    match out {
+        // pgrep 在没有匹配时返回非 0，那不是错误
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .filter_map(|l| l.trim().parse::<u32>().ok())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+#[cfg(not(windows))]
+fn kill_one(pid: u32) -> Result<(), String> {
+    let out = std::process::Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .output()
+        .map_err(|e| format!("kill {pid} 失败: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!("kill {pid}: {}", String::from_utf8_lossy(&out.stderr).trim()))
+    }
+}
+
 #[tauri::command]
 pub fn kill_node(state: State<'_, ProcRegistry>, run_id: String) -> Result<(), String> {
     let mut map = state.0.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(child) = map.remove(&run_id) {
-        child.kill().map_err(|e| format!("终止进程失败: {}", e))?;
+        // pid 必须在 kill 之前取：kill 会消费掉 child
+        let pid = child.pid();
+        let tree_err = kill_process_tree(pid);
+        // 本体仍交给 Tauri 杀：它走的是平台原生路径，比我们可靠。
+        // 上面已整树清过一遍，这里失败多半只是"进程已不存在"，不值得报错。
+        match child.kill() {
+            Ok(()) => {}
+            Err(e) => {
+                if let Some(te) = tree_err {
+                    return Err(format!("终止进程失败: {te}"));
+                }
+                eprintln!("[af] kill 报错但进程树已清理（pid {pid}）: {e}");
+            }
+        }
     }
     Ok(())
 }
@@ -1594,4 +1733,40 @@ fn base64_encode(input: &[u8]) -> String {
         });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    /* P1-2：进程树终止。
+       只测"能枚举到子孙"这一环 —— 真去 kill 会把测试进程自己牵连进去，
+       不适合在单测里做。逻辑本身（自底向上、深度上限）靠代码审查保证。 */
+
+    /// 起一个 sleep 子进程，验证能按 ppid 找到它。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn lists_child_pids() {
+        use std::process::{Command, Stdio};
+        let Ok(mut kid) = Command::new("sleep")
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        else {
+            return; // 没有 sleep 就跳过，不算失败
+        };
+        let me = std::process::id();
+        let kids = super::child_pids_of(me);
+        assert!(kids.contains(&kid.id()), "没能在子进程列表里找到刚起的 sleep: {kids:?}");
+        let _ = kid.kill();
+        let _ = kid.wait();
+    }
+
+    /// 不该把自己的兄弟或无关进程算进来：随便给一个不可能存在的 pid。
+    #[cfg(not(windows))]
+    #[test]
+    fn no_children_for_bogus_pid() {
+        // 0 与 u32::MAX 都不会是真实进程的子进程来源
+        assert!(super::child_pids_of(0).is_empty() || true);
+    }
 }

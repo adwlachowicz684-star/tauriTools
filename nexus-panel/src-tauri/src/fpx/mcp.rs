@@ -712,11 +712,10 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
        诱导去读全盘。所以每个收路径的工具在这里再过一道。
        范围 = 页签卡片 + 用户配置的目录 + 数据目录（见 content_roots）。 */
     let roots = super::content_roots(dir, &cfg);
-    let within = |raw: &str| -> Result<std::path::PathBuf, Value> {
-        super::guard::must_be_under(raw, &roots).map_err(|e| err(&e))
-    };
-    // 只校验、不改写路径：登记/比对用的仍是调用方给的原始字符串
-    // （canonicalize 会带上 \\?\ 前缀，拿它当键会和已有登记对不上）
+    /* 只校验、不改写路径：这些值大多要当配置键、或要原样交给 mklink /
+       PowerShell / 外部 AI 命令，换成 canonicalize 形态（Windows 上是
+       \\?\C:\…）会和已有登记对不上，外部命令也未必认。
+       真需要 canonical 的调用方自己去 must_be_under 拿返回值。 */
     let within_raw = |raw: &str| -> Result<(), Value> {
         super::guard::must_be_under(raw, &roots).map(|_| ()).map_err(|e| err(&e))
     };
@@ -735,15 +734,19 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             let project = s("project");
             let group = s("group");
             if project.is_empty() || group.is_empty() { return Err(err("project 与 group 必填")); }
-            // 两端都要在允许范围内：junction 的目标在任意位置 = 任意位置建链接
-            let project = within(&project)?.to_string_lossy().to_string();
-            let group = within(&group)?.to_string_lossy().to_string();
+            /* 两端都要在允许范围内：junction 的目标在任意位置 = 任意位置建链接。
+               只校验不改写：这两个值既是账本里的键、又要原样传给 mklink，
+               换成 canonicalize 形态（Windows 上是 \\?\C:\…）会和已有
+               登记对不上，mklink 也未必认。 */
+            within_raw(&project)?;
+            within_raw(&group)?;
             let snap = super::core_create_link(&dir, &project, &group, None)
                 .map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": format!("已分配，当前链接 {} 条", snap.links.len()) }] })
         }
         "remove_link" => {
-            let project = within(&s("project"))?.to_string_lossy().to_string();
+            let project = s("project");
+            within_raw(&project)?;
             let snap = super::core_remove_link(&dir, &project)
                 .map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": format!("已撤销，剩余链接 {} 条", snap.links.len()) }] })
@@ -762,8 +765,10 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
                 if !r.is_empty() { r }
                 else { resolve_target(&args, true).map_err(|e| err(&e))? }
             };
-            // 列目录也算"读"：越权列目录 = 目录结构泄露
-            let root = within(&root)?.to_string_lossy().to_string();
+            /* 列目录也算"读"：越权列目录 = 目录结构泄露。
+               只校验不改写：返回的路径会被前端当卡片路径显示并登记，
+               带上 canonicalize 的前缀就和已有登记对不上了。 */
+            within_raw(&root)?;
             let items = super::fpx_scan_content(root, Some(kind));
             json!({ "content": [{ "type": "text", "text": serde_json::to_string(&items).unwrap_or_default() }] })
         }
@@ -777,8 +782,9 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             // （那会建出 父目录\project\名称 这种错误层级）。
             // 层级走独立的 hierarchy 参数，未给则不拼。
             let hierarchy = args.get("hierarchy").and_then(|v| v.as_str()).map(str::to_string);
-            // 父目录必须在允许范围内：否则等于"在任意位置建目录"
-            let parent = within(&s("parent"))?.to_string_lossy().to_string();
+            // 父目录必须在允许范围内：否则等于"在任意位置建目录"（同样只校验）
+            let parent = s("parent");
+            within_raw(&parent)?;
             let p = super::core_create_folder(&dir, &parent, &s("name"),
                 hierarchy.as_deref(), None)
                 .map_err(|e| err(&e))?;
@@ -831,7 +837,8 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             let dd = args.get("denyDelete").and_then(|v| v.as_bool()).unwrap_or(false);
             let dw = args.get("denyWrite").and_then(|v| v.as_bool()).unwrap_or(false);
             // ACL 是写操作：能对任意路径改 ACL，就能把系统目录锁死或解锁
-            let path = within(&s("path"))?.to_string_lossy().to_string();
+            let path = s("path");
+            within_raw(&path)?;
             super::core_set_lock(&dir, &path, dd, dw).map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": format!("保护已更新：防删除={dd} 防写入={dw}") }] })
         }
@@ -932,8 +939,8 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             let path = s("path");
             let icon = s("icon");
             if path.is_empty() || icon.is_empty() { return Err(err("path 与 icon 必填")); }
-            // 会写 desktop.ini + 改目录属性：必须落在允许范围内
-            let path = within(&path)?.to_string_lossy().to_string();
+            // 会写 desktop.ini + 改目录属性：必须落在允许范围内（只校验，键要原样）
+            within_raw(&path)?;
             // 同上：不跟随符号链接
             if !super::fsutil::is_real_dir(std::path::Path::new(&path)) {
                 return Err(err(&format!("目录不存在: {path}")));
@@ -971,7 +978,7 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
         "folder_icon_restore" => {
             let path = s("path");
             if path.is_empty() { return Err(err("缺少参数 path")); }
-            let path = within(&path)?.to_string_lossy().to_string();
+            within_raw(&path)?;
             super::store::with_config(&dir, |cfg| {
                 let key = super::store::normalize_key(&path);
                 cfg.folder_icons.retain(|k, _| super::store::normalize_key(k) != key);
@@ -985,8 +992,9 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
         }
         "capture_screen" => {
             let target = match args.get("dir").and_then(|v| v.as_str()) {
-                Some(d) if !d.trim().is_empty() => within(d)?,
-                _ => within(&dir.join("shots").to_string_lossy())?,
+                // 只校验不改写：这个目录最终交给 PowerShell，\?\ 前缀它不认
+                Some(d) if !d.trim().is_empty() => { within_raw(d)?; std::path::PathBuf::from(d.trim()) }
+                _ => dir.join("shots"),
             };
             let r = super::screen::capture(&target).map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": serde_json::to_string(&r).unwrap_or_default() }] })
@@ -999,8 +1007,9 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             let title = s("title");
             if title.is_empty() { return Err(err("缺少参数 title")); }
             let target = match args.get("dir").and_then(|v| v.as_str()) {
-                Some(d) if !d.trim().is_empty() => within(d)?,
-                _ => within(&dir.join("shots").to_string_lossy())?,
+                // 同上：只校验
+                Some(d) if !d.trim().is_empty() => { within_raw(d)?; std::path::PathBuf::from(d.trim()) }
+                _ => dir.join("shots"),
             };
             let r = super::screen::capture_window(&target, &title).map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": serde_json::to_string(&r).unwrap_or_default() }] })
@@ -1040,8 +1049,10 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             if prompt.trim().is_empty() { return Err(err("缺少参数 prompt（skill 描述）")); }
             let target = resolve_target(&args, false).map_err(|e| err(&e))?
                 .ok_or_else(|| err("未指定目标文件夹，请先 select_folder 或传 target"))?;
-            // 会往目标里写 SKILL.md 与请求文件：必须落在允许范围内
-            let target = within(&target)?.to_string_lossy().to_string();
+            /* 会往目标里写 SKILL.md 与请求文件：必须落在允许范围内。
+               只校验不改写 —— 它要作为工作目录交给外部 AI 命令，
+               \\?\ 前缀那种形态命令行多半处理不了。 */
+            within_raw(&target)?;
 
             let cfg = super::store::load_config(&dir);
             // 目标为项目组时自动落到其 skill 目录（与界面行为一致）

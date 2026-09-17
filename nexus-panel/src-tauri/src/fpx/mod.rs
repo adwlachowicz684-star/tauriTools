@@ -107,6 +107,27 @@ pub(crate) fn content_roots(dir: &std::path::Path, cfg: &FpxConfig) -> Vec<std::
     out
 }
 
+/// 校验路径落在允许范围内。所有"操作已登记卡片"的入口都该先过这一句。
+///
+/// 为什么只对**已有卡片**用（清单 P1-5/6/7）：
+/// 卡片路径是用户亲手加进页签的，必然在 `content_roots` 里，收口不会误伤。
+/// 而"新建落点 / 搬家目标 / 备份目标"这类**引入新位置**的入口不能这么收 ——
+/// 目录是用户用选择器现挑的，还没登记过，收口等于禁止在任何新地方建项目。
+/// 那几个只过 `guard::reject_forbidden_raw`（系统目录 / 整块盘），理由见各自注释。
+pub(crate) fn ensure_path_allowed(dir: &std::path::Path, path: &str) -> Result<(), String> {
+    let cfg = store::load_config(dir);
+    guard::must_be_under(path, &content_roots(dir, &cfg)).map(|_| ())
+}
+
+/// 同上，但用调用方手上已有的配置，省一次读盘（core_* 里大多已 load 过）。
+pub(crate) fn ensure_path_in(
+    dir: &std::path::Path,
+    cfg: &FpxConfig,
+    path: &str,
+) -> Result<(), String> {
+    guard::must_be_under(path, &content_roots(dir, cfg)).map(|_| ())
+}
+
 /// 读取文件文本（目录型 skill 自动读其 SKILL.md），**先校验路径在允许范围内**。
 ///
 /// 命令层与 MCP 共用：两边此前各自直连 `content::read_preview`，
@@ -213,6 +234,8 @@ pub(crate) fn core_rename_folder(
     //   - 长度上限 120：同上，超长名能绕过新建检查。
     // 两处各写一份相同或相近的校验，迟早会漂移，所以收敛到唯一实现。
     let name = sys::validate_name(new_name)?;
+    // 改名的对象必须是已登记的卡片：凭空给任意目录改名不该发生
+    ensure_path_allowed(dir, path)?;
 
     let old = std::path::Path::new(path);
     // 不跟随链接：改名一个 junction 不该变成"给链接指向的目录改名"
@@ -316,6 +339,8 @@ fn core_move_folder(
     path: &str,
     dest_parent: &str,
 ) -> Result<model::RenameResult, String> {
+    // 被搬的必须是已登记的卡片
+    ensure_path_allowed(dir, path)?;
     let old = std::path::Path::new(path);
     // 与改名一致：不跟随链接。搬一个 junction 不该变成"搬链接指向的那个目录"。
     if !fsutil::is_real_dir(old) {
@@ -541,7 +566,10 @@ pub(crate) fn core_create_link(
     names: Option<Vec<String>>,
 ) -> Result<Snapshot, String> {
     let cfg = store::load_config(dir);
-    // 两端都不能是系统目录 / 整块盘：junction 指向系统目录等于给它开了一条写入通道
+    /* 两端都要在允许范围内：junction 的目标在任意位置 = 在任意位置建写入通道。
+       黑名单兜的是"用户把系统目录选成卡片"这种已登记但危险的情况。 */
+    ensure_path_in(dir, &cfg, project)?;
+    ensure_path_in(dir, &cfg, group)?;
     guard::reject_forbidden_raw(project)?;
     guard::reject_forbidden_raw(group)?;
     let use_names = match names {
@@ -587,6 +615,8 @@ pub(crate) fn core_create_link(
 
 pub(crate) fn core_remove_link(dir: &std::path::Path, project: &str) -> Result<Snapshot, String> {
     let cfg = store::load_config(dir);
+    // 断链会删 junction，同样是写操作：只认已登记的卡片
+    ensure_path_in(dir, &cfg, project)?;
     let key = store::normalize_key(project);
     // 只读一次账本，拿到要删的链接名（此处不改动，无需事务）
     let names: Vec<String> = store::load_records(dir)
@@ -617,6 +647,7 @@ pub(crate) fn core_set_lock(
        这一条不加会是什么后果 —— 用户误选了 C:\Windows 加锁，
        界面上点"解锁"还不一定解得开（ACL 已被改写）。 */
     guard::reject_forbidden_raw(path)?;
+    ensure_path_allowed(dir, path)?;
     store::with_config(dir, |cfg| {
         // 先落 ACL 再记配置：apply_lock 失败时闭包返回 Err，配置不会落盘
         sys::apply_lock(path, deny_delete, deny_write)?;
@@ -640,6 +671,8 @@ pub(crate) fn core_save_style(
     icon_ref: Option<String>,
     color: Option<String>,
 ) -> Result<Snapshot, String> {
+    // 会写 desktop.ini 与目录属性，只认已登记的卡片
+    ensure_path_allowed(dir, path)?;
     // 图标与标签色一次改完再落盘（避免前端分两次写入互相覆盖），
     // 且整段在事务里：期间不许 MCP 等其它写入者插入。
     store::with_config(dir, |cfg| {
@@ -808,6 +841,12 @@ pub fn fpx_open_path(
 ) -> Result<(), String> {
     let dir = store::data_dir(&app, &state)?;
     let cfg = store::load_config(&dir);
+    /* 必须收口：mode=auto 会交给系统默认程序打开，在 Windows 上
+       `start "" <path>` 对 .exe/.bat 就是**执行**，等于一条任意执行通道；
+       mode=editor 则用配置的编辑器打开任意文件。
+       前端的所有调用点传的都是"卡片路径 / 卡片下的内容项 / 数据目录"，
+       全在允许范围内，所以收口不会影响正常用法。 */
+    ensure_path_in(&dir, &cfg, &path)?;
     sys::open_path(&path, mode.as_deref().unwrap_or("auto"), cfg.edit_tool_path.as_deref().unwrap_or(""))
 }
 
@@ -892,6 +931,8 @@ pub fn fpx_set_icon(
     affect_explorer: Option<bool>,
 ) -> Result<Snapshot, String> {
     let dir = store::data_dir(&app, &state)?;
+    // 同 core_save_style：会写 desktop.ini，只认已登记的卡片
+    ensure_path_allowed(&dir, &path)?;
     let icon = icon_ref.unwrap_or_default();
     let key = store::normalize_key(&path);
 
@@ -1060,6 +1101,11 @@ pub async fn fpx_backup(
     // 目标目录是"顺带记住"，单独一次短事务，不与下面数秒的备份抢锁
     if let Some(t) = target {
         let t = t.trim().to_string();
+        /* 备份目标由用户现挑，可能尚未登记 → 只过黑名单（系统目录 / 整块盘）。
+           把整盘或 C:\Windows 设成备份落点会瞬间写满或污染系统目录。 */
+        if !t.is_empty() {
+            guard::reject_forbidden_raw(&t)?;
+        }
         store::with_config(&dir, |cfg| {
             cfg.backup_dir = if t.is_empty() { None } else { Some(t.clone()) };
             Ok(())
@@ -1144,6 +1190,9 @@ pub fn fpx_edit_file(
 ) -> Result<(), String> {
     let dir = store::data_dir(&app, &state)?;
     let cfg = store::load_config(&dir);
+    /* 会按配置里的编辑器路径拉起外部程序打开它 —— 那是"用别的程序打开
+       任意文件"，所以必须收口到已登记的卡片（清单 P1-5 的一类）。 */
+    ensure_path_in(&dir, &cfg, &path)?;
     let target = if std::path::Path::new(&path).is_dir() {
         content::skill_md_of(&path).unwrap_or(path.clone())
     } else {
@@ -1184,6 +1233,9 @@ pub fn fpx_move_card_across(
     if dst_kind != "project" && dst_kind != "group" { return Err("目标类别非法".into()); }
 
     let dir = store::data_dir(&app, &state)?;
+    /* 跨栏拖动可能触发物理搬家（sys::relocate_cross_move），
+       所以被拖的必须是已登记的卡片。 */
+    ensure_path_allowed(&dir, &path)?;
     let idx = dst_tab_index.unwrap_or(0);
 
     store::with_config(&dir, |cfg| {
@@ -1241,9 +1293,16 @@ pub fn fpx_move_folder(
 /// 只动磁盘，不涉及配置登记——内容条目不在页签 / 链接记录里留痕。
 #[tauri::command(rename_all = "snake_case")]
 pub fn fpx_rename_content_item(
+    app: AppHandle,
+    state: State<'_, FpxState>,
     path: String,
     new_name: String,
 ) -> Result<model::ContentRenameResult, String> {
+    /* AppHandle / State 由 Tauri 自动注入，前端不用改调用参数 ——
+       这里加上只为拿到数据目录做路径收口。 */
+    let dir = store::data_dir(&app, &state)?;
+    ensure_path_allowed(&dir, &path)?;
+
     // 同 core_rename_folder：与新建共用 sys::validate_name，
     // 补齐「. / .. / 纯点串」与「长度上限 120」两项此处漏掉的检查。
     let name = sys::validate_name(&new_name)?;
@@ -1640,7 +1699,7 @@ mod tests {
        实测连 `C:/Windows/win.ini` 与应用自己的设备盐都能读出来。 */
 
     #[test]
-    fn read_file_拒绝范围外的路径() {
+    fn read_file_rejects_path_outside_roots() {
         let dir = tmpdir("read");
         let inside = dir.join("note.md");
         std::fs::write(&inside, "hello").unwrap();
@@ -1657,7 +1716,7 @@ mod tests {
     }
 
     #[test]
-    fn icon_data_只接受数据目录与已登记图标() {
+    fn icon_data_only_accepts_data_dir_and_registered() {
         let dir = tmpdir("icon");
         let icons = dir.join("icons");
         std::fs::create_dir_all(&icons).unwrap();
@@ -1675,10 +1734,45 @@ mod tests {
     }
 
     #[test]
-    fn icon_file_part_拆掉索引后缀() {
+    fn icon_file_part_strips_index_suffix() {
         assert_eq!(icon_file_part(r"C:\x\imageres.dll|3"), r"C:\x\imageres.dll");
         // 竖线后不是纯数字时不拆（那是文件名的一部分）
         assert_eq!(icon_file_part(r"C:\x\a|b.ico"), r"C:\x\a|b.ico");
         assert_eq!(icon_file_part(r"C:\x\a.ico"), r"C:\x\a.ico");
+    }
+
+    /* ---- 根约束（清单 P1-5/6/7） ---- */
+
+    #[test]
+    fn content_roots_covers_data_dir_and_cards() {
+        let dir = tmpdir("roots");
+        let mut cfg = FpxConfig::default();
+        let card = dir.join("card");
+        std::fs::create_dir_all(&card).unwrap();
+        cfg.project_tabs[0].items.push(card.to_string_lossy().to_string());
+
+        let roots = content_roots(&dir, &cfg);
+        // 数据目录是兜底根，恒定在内
+        let d = guard::canonical_root(&dir.to_string_lossy()).unwrap();
+        assert!(roots.contains(&d), "数据目录应在允许范围内");
+        // 页签卡片也要在内，否则所有卡片操作都会被拒
+        let c = guard::canonical_root(&card.to_string_lossy()).unwrap();
+        assert!(roots.contains(&c), "页签卡片应在允许范围内");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ensure_path_allowed_rejects_outside() {
+        let dir = tmpdir("allow");
+        let inside = dir.join("card");
+        std::fs::create_dir_all(&inside).unwrap();
+        // 数据目录内的路径放行
+        assert!(ensure_path_allowed(&dir, &inside.to_string_lossy()).is_ok());
+
+        let outside = tmpdir("allow_out");
+        let r = ensure_path_allowed(&dir, &outside.to_string_lossy());
+        assert!(r.is_err(), "范围外的路径居然放行了: {r:?}");
+        let _ = std::fs::remove_dir_all(&outside);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
