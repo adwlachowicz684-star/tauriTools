@@ -4,6 +4,7 @@ import type { SecretPolicy } from '../types';
 import { getDef } from '../nodes/registry';
 import { inspectorOf } from './inspectors/inspectorOf';
 import { NODE_SIZE_META, normalizeSize, type NodeSize } from '../types';
+import { stackParentOf, descendantsOf, chainTopOf, chainOf } from '../engine/stack';
 
 /**
  * 属性面板 —— 现在只是一个分发器。
@@ -65,6 +66,49 @@ export default function Inspector({
    * 它也不属于"节点参数"（不影响执行结果），所以不该混进字段列表，
    * 单独一行放在标题下方更合适。
    */
+  /*
+   * 嵌合信息行。
+   *
+   * 放在这里而不是 NodeShell 里：折叠按钮要调 onChange，
+   * 卡片组件拿不到（它只收 data）。面板本来就有 onChange，顺理成章。
+   *
+   * 折叠标记打在**串顶**上 —— 打在中间某块上会出现
+   * "上半截显示、下半截隐藏"这种半吊子状态。
+   */
+  const stackParent = stackParentOf({ data: node.data as Record<string, unknown> });
+  const inStack = stackParent !== null || descendantsOf([node] as never, node.id).length > 0;
+  const stackRow = inStack ? (
+    <div className="insp-size" style={{ marginBottom: 6, paddingBottom: 6 }}>
+      <span className="insp-size-label">
+        {stackParent ? `嵌合于 ${stackParent}` : `串顶 · 共 ${chainOf([node] as never, node.id).length} 块`}
+      </span>
+      <span className="insp-size-ops">
+        <button
+          className="insp-size-btn"
+          title="折叠只隐藏显示，节点照常执行"
+          onClick={() => onChange(chainTopOf([node] as never, node.id), { stackCollapsed: true })}
+        >
+          折叠
+        </button>
+        <button
+          className="insp-size-btn"
+          onClick={() => onChange(chainTopOf([node] as never, node.id), { stackCollapsed: false })}
+        >
+          展开
+        </button>
+        {stackParent ? (
+          <button
+            className="insp-size-btn"
+            title="解除与上方节点的嵌合（也可以直接把它拖开）"
+            onClick={() => onChange(node.id, { stackParent: null })}
+          >
+            解除
+          </button>
+        ) : null}
+      </span>
+    </div>
+  ) : null;
+
   const sizeRow = (
     <div className="insp-size">
       <span className="insp-size-label">显示高度</span>
@@ -85,6 +129,7 @@ export default function Inspector({
 
   return (
     <>
+      {stackRow}
       {sizeRow}
       <Panel
         onEditModule={onEditModule}

@@ -20,6 +20,17 @@ export type RenderCtx = {
    * 但下游任务节点往往还想知道"更新的那条叫什么"。
    */
   fields?: Record<string, Record<string, string>>;
+  /**
+   * 嵌合（Scratch 式上下吸附）带来的两个变量。
+   *
+   *   {{input}}        直接上方的输出（未嵌合时仍是工作流全局输入）
+   *   {{chain.output}} 整条串上、本节点之前所有输出的拼接
+   *
+   * 由调用方算好传进来 —— 模板层是纯字符串处理，
+   * 不该知道节点图长什么样（测试要在 Node 下单跑它）。
+   */
+  stackInput?: string;
+  chainOutput?: string;
 };
 
 /**
@@ -41,7 +52,16 @@ export function renderTemplate(tpl: string, ctx: RenderCtx): RenderResult {
     const [nodeId, field] = path.split('.');
 
     let value: string | undefined;
-    if (nodeId === 'input') value = ctx.input ?? '';
+    if (nodeId === 'input') {
+      value = ctx.stackInput !== undefined ? ctx.stackInput : (ctx.input ?? '');
+    } else if (nodeId === 'chain') {
+      // 只在嵌合时可用；没嵌合就当未解析，保留原样提示用户
+      if (ctx.chainOutput === undefined) {
+        missing.push(key);
+        return `{{${key}}}`;
+      }
+      value = ctx.chainOutput;
+    }
     else if (nodeId === 'loop') {
       // 循环变量只在循环体内可用；外部引用视为未解析（保留原样提示用户）
       const lp = ctx.loop;

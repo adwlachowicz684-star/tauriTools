@@ -12,6 +12,7 @@ import { topoLayers } from './topo';
 import { getRunner } from './runnerRegistry';
 import type { RunContext } from './runContext';
 import { renderTemplate } from './template';
+import { inputValueFor, chainOutputAbove } from './stack';
 import {
   extractFileRefs, parseManualPaths, buildFileFields, type FileRef,
 } from './files';
@@ -220,6 +221,25 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
    * 只能在这里打包一份递过去。markFailed/markSkipped 包一层是为了让
    * 执行器可以省略 scope 参数 —— 绝大多数调用就是当前作用域。
    */
+  /*
+   * 嵌合链的输出传递。
+   * 只在真的有嵌合关系时才算 —— 绝大多数流程不用它，
+   * 没必要每次渲染都遍历一遍节点。
+   */
+  const hasStack = (opts.stackNodes ?? []).some((n) => String((n.data as Record<string, unknown>)?.stackParent ?? '') !== '');
+  const stackNodes = (opts.stackNodes ?? []) as Array<{
+    id: string; position: { x: number; y: number }; data?: Record<string, unknown>;
+  }>;
+  const stackOf = (id: string): { directOutput?: string; chainOutput?: string } | undefined => {
+    if (!hasStack) return undefined;
+    const self = stackNodes.find((n) => n.id === id);
+    if (!self || !String(self.data?.stackParent ?? '')) return undefined;
+    return {
+      directOutput: inputValueFor(stackNodes, id, outputs, opts.input),
+      chainOutput: chainOutputAbove(stackNodes, id, outputs),
+    };
+  };
+
   const makeCtx = (id: string, node: GraphNode, scope: Scope): RunContext => ({
     id, node, graph, opts, scope,
     emit, setStatus, sleep,
@@ -237,6 +257,13 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
     tpl: (text) => {
       const r = renderTemplate(text, {
         outputs, input: opts.input, loop: currentLoop(), fields: nodeFields,
+        /*
+         * 嵌合带来的 {{input}} / {{chain.output}}。
+         * 没有嵌合关系时两者都不传 —— {{input}} 回落到全局输入，
+         * {{chain.output}} 视为未解析（保留原样提示）。
+         */
+        stackInput: stackOf(id)?.directOutput,
+        chainOutput: stackOf(id)?.chainOutput,
       });
       if (r.missing.length > 0) {
         console.warn(`[${id}] 未解析的变量: ${r.missing.join(', ')}`);

@@ -44,6 +44,10 @@ import {
   expandModules, findModule, addModule, saveModules, loadModules,
   stripRuntimeNodes, type ModuleDef,
 } from './engine/modules';
+import {
+  stackEdges, findSnapTarget, descendantsOf, chainTopOf, chainOf,
+  parentIdOf, movedEnough, heightOf, STACK_GAP,
+} from './engine/stack';
 import CanvasTabs from './components/CanvasTabs';
 import { TaskPanel } from './components/TaskPanel';
 import { HistoryPanel } from './components/HistoryPanel';
@@ -1031,6 +1035,8 @@ export default function App() {
    * 当成另一个画布的内容存走，模块库里的东西就丢了。
    */
   const [editingModule, setEditingModule] = useState<string | null>(null);
+  /** 拖拽开始时的位置快照，用于整体拖动与"拖开即解嵌"的判定 */
+  const dragStartRef = useRef<Record<string, { x: number; y: number }> | null>(null);
   const moduleBackup = useRef<{ nodes: FlowNode[]; edges: FlowEdge[] } | null>(null);
 
   const enterModuleEdit = useCallback(
@@ -1200,6 +1206,152 @@ export default function App() {
    * 拖动期间原件一直是 selected（xyflow 拖动即选中），
    * 这里才改，避免拖动过程中高亮来回跳。
    */
+  /* ---------------------------------------------------------------- */
+  /* 嵌合（Scratch 式上下吸附）                                        */
+  /* ---------------------------------------------------------------- */
+
+  /*
+   * 拖动开始时记下"被拖节点 + 它下方整串"的起始位置。
+   *
+   * Scratch 的手感：拖动一块，它下面挂着的整串一起走。
+   * 所以快照要包含后代，不然下方节点会被落下、串就散了。
+   */
+  const onStackDragStart = useCallback(
+    (_e: unknown, node: { id: string }) => {
+      const kids = descendantsOf(nodes as never, node.id);
+      const snap: Record<string, { x: number; y: number }> = {};
+      for (const n of nodes) {
+        if (n.id === node.id || kids.includes(n.id)) {
+          snap[n.id] = { x: n.position.x, y: n.position.y };
+        }
+      }
+      dragStartRef.current = snap;
+    },
+    [nodes],
+  );
+
+  /** 拖动中：整串跟着走（用起始位置 + 被拖节点的位移量） */
+  const onStackDrag = useCallback(
+    (_e: unknown, node: { id: string; position: { x: number; y: number } }) => {
+      const start = dragStartRef.current;
+      if (!start || !start[node.id]) return;
+      const dx = node.position.x - start[node.id].x;
+      const dy = node.position.y - start[node.id].y;
+      if (dx === 0 && dy === 0) return;
+      setNodes((ns) => ns.map((n) => (
+        start[n.id] && n.id !== node.id
+          ? { ...n, position: { x: start[n.id].x + dx, y: start[n.id].y + dy } }
+          : n
+      )));
+    },
+    [setNodes],
+  );
+
+  /** 拖动结束：判定吸附 / 脱开 */
+  const onStackDragStop = useCallback(
+    (_e: unknown, node: { id: string; position: { x: number; y: number } }) => {
+      const start = dragStartRef.current;
+      dragStartRef.current = null;
+      if (!start) return;
+      /*
+       * 复制拖动时不处理嵌合：
+       * 移动的是副本，原件关系没变，此时改 stackParent 会把原件改坏。
+       */
+      if (dupMapRef.current) return;
+
+      const self = nodes.find((n) => n.id === node.id);
+      if (!self) return;
+
+      /*
+       * 先判脱开：只要被拖节点自己挪动了足够距离，就解除它和上方的关系。
+       * 这一步必须在吸附之前 —— 否则"从串里拖走再吸附到别处"
+       * 会变成"旧关系还在 + 新关系也加上"，一个节点有两个上级。
+       */
+      const oldParent = parentIdOf(self as never);
+      const moved = start[node.id] ? movedEnough(start[node.id], node.position) : false;
+      const exclude = new Set<string>([node.id, ...descendantsOf(nodes as never, node.id)]);
+
+      if (oldParent && moved) {
+        setNodes((ns) => ns.map((n) => (
+          n.id === node.id
+            ? { ...n, data: { ...(n.data as object), stackParent: null } } as FlowNode
+            : n
+        )));
+      }
+
+      const hit = findSnapTarget(
+        nodes.map((n) => ({
+          id: n.id,
+          position: { x: n.position.x, y: n.position.y },
+          measured: n.measured as { width?: number; height?: number } | undefined,
+          data: n.data as Record<string, unknown>,
+        })) as never,
+        {
+          id: node.id,
+          position: { x: node.position.x, y: node.position.y },
+          measured: self.measured as { width?: number; height?: number } | undefined,
+          data: self.data as Record<string, unknown>,
+        } as never,
+        exclude,
+      );
+
+      if (hit && hit.parentId !== oldParent) {
+        // 吸附：对齐 x、贴在目标下方
+        setNodes((ns) => ns.map((n) => (
+          n.id === node.id
+            ? {
+                ...n,
+                position: { x: hit.x, y: hit.y },
+                data: { ...(n.data as object), stackParent: hit.parentId },
+              } as FlowNode
+            : n
+        )));
+        pushLog(`⇲ 已嵌合到 ${hit.parentId} 下方（可整体拖动，输出自动向下传递）`);
+      } else if (hit && hit.parentId === oldParent && moved) {
+        // 脱开后又吸回原处：保持关系，只归位
+        setNodes((ns) => ns.map((n) => (
+          n.id === node.id
+            ? {
+                ...n,
+                position: { x: hit.x, y: hit.y },
+                data: { ...(n.data as object), stackParent: hit.parentId },
+              } as FlowNode
+            : n
+        )));
+      }
+    },
+    [nodes, setNodes, pushLog],
+  );
+
+  /*
+   * 折叠后的隐藏：派生一份渲染用的节点数组，而不是改 nodes。
+   * 直接写 hidden 进 nodes 会被保存 effect 落盘，
+   * 于是"折叠状态"变成了画布数据的一部分 —— 那是显示状态，不该进存档。
+   */
+  const displayNodes = useMemo(() => {
+    const tops = nodes.filter((n) => Boolean((n.data as Record<string, unknown>)?.stackCollapsed));
+    if (tops.length === 0) return nodes;
+    const hidden = new Set<string>();
+    for (const t of tops) {
+      for (const d of descendantsOf(nodes as never, t.id)) hidden.add(d);
+    }
+    return nodes.map((n) => (hidden.has(n.id) ? { ...n, hidden: true } : { ...n, hidden: false }));
+  }, [nodes]);
+
+  /** 折叠 / 展开整条串（只影响显示，不影响执行） */
+  const toggleStackCollapse = useCallback(
+    (nodeId: string) => {
+      const top = chainTopOf(nodes as never, nodeId);
+      const collapsed = Boolean((nodes.find((n) => n.id === top)?.data as Record<string, unknown>)?.stackCollapsed);
+      setNodes((ns) => ns.map((n) => (
+        n.id === top
+          ? { ...n, data: { ...(n.data as object), stackCollapsed: !collapsed } } as FlowNode
+          : n
+      )));
+    },
+    [nodes, setNodes],
+  );
+
   const onNodeDragStop = useCallback(() => {
     const map = dupMapRef.current;
     dupMapRef.current = null;
@@ -1485,14 +1637,23 @@ export default function App() {
      * 拿不到 localStorage 里的模块库（测试在 Node 下跑它）。
      * 所以由调用方注入 resolve —— 这是 App 才有的能力。
      */
+    /*
+     * 嵌合 = 一条隐式边（上方 → 下方）。拼进 edges 后，
+     * 拓扑排序、失败传播、跳过全部自动成立 ——
+     * 引擎里不需要为"嵌合"写任何专门逻辑。
+     */
+    const stackE = stackEdges(nodes as never);
     const rawGraph: Graph = {
       nodes: nodes.map((n) => ({ id: n.id, data: n.data })),
-      edges: edges.map((e) => ({
-        id: e.id, source: e.source, target: e.target,
-        // 条件分支用 branch，循环出口用 loopRole——两者语义不同，不能混
-        branch: e.data?.branch,
-        loopRole: e.data?.loopRole,
-      })),
+      edges: [
+        ...edges.map((e) => ({
+          id: e.id, source: e.source, target: e.target,
+          // 条件分支用 branch，循环出口用 loopRole——两者语义不同，不能混
+          branch: e.data?.branch,
+          loopRole: e.data?.loopRole,
+        })),
+        ...stackE.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+      ],
     };
 
     const graph = expandModules(rawGraph as never, (moduleId) => findModule(moduleId)) as unknown as Graph;
@@ -1641,6 +1802,12 @@ export default function App() {
       concurrency, executor, fsExecutor, fetcher, llmCaller, imageReader,
       githubFetch, githubPush, httpRequester, credentials, playAudioReader,
       input: effectiveInput, onEvent, signal: controller.signal,
+      // 嵌合的输出传递要用到带位置的节点（含 stackParent 关系）
+      stackNodes: nodes.map((n) => ({
+        id: n.id,
+        position: { x: n.position.x, y: n.position.y },
+        data: n.data as Record<string, unknown>,
+      })),
     });
     setSummary(result);
     const finishedId = currentTaskRef.current;
@@ -2097,7 +2264,7 @@ export default function App() {
         ) : null}
         <div className="canvas" ref={wrapperRef} onDrop={onDrop} onDragOver={onDragOver} style={view === 'flow' ? undefined : { display: 'none' }}>
           <ReactFlow
-            nodes={nodes}
+            nodes={displayNodes}
             edges={edges}
             onNodesChange={handleNodesChange}
             onEdgesChange={onEdgesChange}
@@ -2106,8 +2273,15 @@ export default function App() {
             onInit={(inst) => { rfInstance.current = inst; }}
             onNodeClick={(_, n) => setSelectedId(n.id)}
             /* 按住 Ctrl / ⌘ 拖动 = 复制一份跟着鼠标走，原件留在原地 */
-            onNodeDragStart={onNodeDragStart}
-            onNodeDragStop={onNodeDragStop}
+            /*
+             * 拖拽开始有两个用途，必须都挂在同一个回调上：
+             *  · Ctrl / ⌘ 拖动 → 复制（onNodeDragStart）
+             *  · 嵌合整串跟随 + 位置快照（onStackDragStart）
+             * 分开挂两个同名属性是语法错误，合成一个。
+             */
+            onNodeDragStart={(e, n, ns) => { onNodeDragStart(e, n, ns); onStackDragStart(e, n); }}
+            onNodeDragStop={(e, n, ns) => { onNodeDragStop(); onStackDragStop(e, n); }}
+            onNodeDrag={onStackDrag}
             /* xyflow v12 的 onBeforeDelete 传的是节点/边对象（内部按 id 处理，需转换），
                且签名要求返回 Promise，所以要 async */
             onBeforeDelete={async ({ nodes: dn, edges: de }) =>
