@@ -108,6 +108,11 @@ $S engine/nodeValidate.ts "$OUT/nodeValidate.mjs" \
    --import-map ../types=./types.mjs >/dev/null
 $S engine/kv.ts "$OUT/kv.mjs" >/dev/null
 $S engine/nodeSpec.ts "$OUT/nodeSpec.mjs" --import-map ./nodeRequires=./nodeRequires.mjs >/dev/null
+$S engine/topo.ts "$OUT/topo.mjs" >/dev/null
+$S engine/scriptExport.ts "$OUT/scriptExport.mjs" --import-map ./topo=./topo.mjs >/dev/null
+$S engine/mcp.ts "$OUT/mcp.mjs" >/dev/null
+$S engine/canvasConfig.ts "$OUT/canvasConfig.mjs" >/dev/null
+$S engine/blockApi.ts "$OUT/blockApi.mjs" --import-map ./nodeSpec=./nodeSpec.mjs >/dev/null
 $S engine/upstream.ts "$OUT/upstream.mjs" >/dev/null
 $S engine/passCheck.ts "$OUT/passCheck.mjs" >/dev/null
 $S engine/sanitize.ts "$OUT/sanitize.mjs" >/dev/null

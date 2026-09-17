@@ -69,9 +69,11 @@ import {
   type RunEvent, type RunSummary,
 } from './engine/runner';
 import { TriggerScheduler } from './engine/triggers';
+import type { CanvasConfig } from './engine/canvasConfig';
+import { exportFlow, EXPORT_FORMATS } from './engine/scriptExport';
 import {
   makeCanvas, nextCanvasName, renameCanvas, removeCanvas, nextActiveId,
-  updateCanvasContent, sortForDisplay, toMeta,
+  updateCanvasContent, updateCanvasConfig, canvasConfigOf, sortForDisplay, toMeta,
   loadFromStorage, saveToStorage, clearSecrets,
   collectSecrets, applySecrets, STORAGE_KEYS,
   type Canvas,
@@ -743,6 +745,55 @@ export default function App() {
     })();
     return () => { alive = false; };
   }, [canvases, activeId, secretPolicy, secretPass, secretsReady]);
+
+  /* ---------------- 画布级配置与导出 ---------------- */
+
+  /*
+   * 当前画布对象。派生值，不是 state ——
+   * 设成 state 就得跟着 canvases 同步，多一处可能忘更新的地方。
+   */
+  const activeCanvas = canvases.find((c) => c.id === activeId) ?? null;
+
+  /** 存画布配置（MCP 服务 / 环境变量） */
+  const saveCanvasConfig = useCallback((next: CanvasConfig) => {
+    if (!activeId) return;
+    setCanvases((cs) => updateCanvasConfig(cs, activeId, next));
+  }, [activeId]);
+
+  /**
+   * 把整张画布导出成脚本 / 说明。
+   *
+   * 产物写入剪贴板并下载 —— 光弹提示的话用户还得自己找文件。
+   * 下载失败（浏览器拦了）时退回剪贴板，两者都不行才提示。
+   */
+  const exportFlowAs = useCallback((fmt: string) => {
+    const meta = EXPORT_FORMATS.find((f) => f.id === fmt);
+    if (!meta) return;
+    const graph = { nodes, edges };
+    const r = exportFlow(graph, meta.id as never);
+    const fname = `flow-${activeCanvas?.name ?? 'canvas'}.${meta.ext}`;
+    try {
+      const blob = new Blob([r.text], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fname;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      // 下载被拦：退回剪贴板
+    }
+    /*
+     * 未翻译的节点**必须**告出来 ——
+     * 用户拿到一份"少了点什么"的脚本而毫无线索，是最坏的结果。
+     */
+    if (r.skipped.length > 0) {
+      const names = r.skipped.map((x) => `${x.id}(${x.kind || '?'})`).join('、');
+      pushLog(`⚠ ${meta.label}已导出，但 ${r.skipped.length} 个节点没能翻译：${names} —— 它们在结果里以 TODO 标出`);
+    } else {
+      pushLog(`✅ 已导出${meta.label}（${r.count} 个节点）→ ${fname}`);
+    }
+  }, [nodes, edges, activeCanvas, pushLog]);
 
   /* ---------------- 节点编辑 ---------------- */
 
@@ -2382,6 +2433,9 @@ export default function App() {
               webhookTokens={webhookTokens}
               onEditModule={(id) => enterInstanceEdit(id)}
               onNote={pushLog}
+              canvasConfig={canvasConfigOf(activeCanvas)}
+              onCanvasConfigChange={saveCanvasConfig}
+              onExportFlow={exportFlowAs}
             />
           </fieldset>
         </div>

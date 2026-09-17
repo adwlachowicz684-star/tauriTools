@@ -12,6 +12,29 @@
 export const SECRET_PATHS = ['token', 'llm.apiKey', 'config.token'] as const;
 
 /**
+ * 字段名里含这些词就当它是密钥 —— 用于**无法枚举路径**的场景。
+ *
+ * 典型就是画布配置里的 MCP 环境变量：变量名由用户随便起
+ * （`API_TOKEN` / `gh_secret` / `MY_PASSWORD`），没法写成固定路径。
+ *
+ * 宁可多剥（把 `tokenCount` 也剥了）也不要漏 ——
+ * 漏了是明文泄露且不报错，多剥只是让用户重填一次。
+ */
+export const SECRET_NAME_HINTS = [
+  'token', 'secret', 'password', 'passwd', 'apikey', 'api_key', 'accesskey',
+];
+
+/** 一个名字是否像密钥 */
+export function looksLikeSecretName(name: string): boolean {
+  const n = String(name ?? '').toLowerCase().replace(/[^a-z]/g, '');
+  if (!n) return false;
+  for (const h of SECRET_NAME_HINTS) {
+    if (n.includes(h)) return true;
+  }
+  return false;
+}
+
+/**
  * 显示与布局状态 —— 不是业务配置，不该被"存为默认"之类带走。
  *
  * 尤其 stackParent：存进默认值的话，每个新建节点都会"嵌合"到一个

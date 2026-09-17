@@ -1810,3 +1810,83 @@ input.mono, textarea.mono {
   padding: 0 5px; border-radius: 999px;
   background: var(--af-raised); color: var(--af-dim);
 }
+
+/* ------------------------------------------------------------------ */
+/* 画布设置面板（MCP 服务 / 环境变量 / 导出脚本）                        */
+/* ------------------------------------------------------------------ */
+
+.canvas-config { padding: 10px 12px; overflow-y: auto; }
+.canvas-config .cfg-head {
+  display: flex; flex-direction: column; gap: 2px;
+  padding-bottom: 8px; margin-bottom: 4px;
+  border-bottom: 1px solid var(--af-line, #2a2f3a);
+}
+.canvas-config .cfg-head strong { font-size: 13px; }
+.canvas-config .cfg-head small { font-size: 11px; color: var(--af-dim, #8b93a7); }
+
+.canvas-config .cfg-sec { margin-bottom: 6px; }
+.canvas-config .cfg-title {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 7px 0; border: 0; background: none; cursor: pointer;
+  font-size: 12.5px; color: var(--af-fg, #e6e9f0); text-align: left;
+}
+.canvas-config .cfg-title span { color: var(--af-dim, #8b93a7); width: 10px; }
+.canvas-config .cfg-title em {
+  margin-left: auto; font-style: normal; font-size: 11px;
+  color: var(--af-dim, #8b93a7);
+}
+.canvas-config .cfg-body { padding: 2px 0 10px 16px; }
+
+.canvas-config .cfg-hint,
+.canvas-config .cfg-empty { font-size: 11.5px; color: var(--af-dim, #8b93a7); margin: 0 0 6px; line-height: 1.5; }
+.canvas-config .cfg-warn {
+  font-size: 11.5px; color: #f0b429; margin: 0 0 8px; line-height: 1.5;
+  padding: 5px 7px; border-left: 2px solid #f0b429; background: rgba(240, 180, 41, .08);
+}
+.canvas-config .cfg-hint code {
+  padding: 0 3px; border-radius: 3px; background: rgba(255, 255, 255, .08);
+}
+
+.canvas-config .cfg-card {
+  border: 1px solid var(--af-line, #2a2f3a); border-radius: 6px;
+  padding: 7px; margin-bottom: 7px; display: flex; flex-direction: column; gap: 5px;
+}
+.canvas-config .cfg-row { display: flex; gap: 5px; align-items: center; }
+.canvas-config .cfg-row input { flex: 1; min-width: 0; }
+.canvas-config .cfg-k { flex: 0 0 92px !important; font-family: ui-monospace, monospace; }
+
+.canvas-config input[type=text] {
+  width: 100%; box-sizing: border-box;
+  background: var(--af-input, #171b24); border: 1px solid var(--af-line, #2a2f3a);
+  border-radius: 5px; padding: 5px 7px; font-size: 12px; color: var(--af-fg, #e6e9f0);
+}
+.canvas-config .cfg-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+
+.canvas-config .cfg-del {
+  flex: 0 0 22px; height: 22px; border: 0; border-radius: 4px; cursor: pointer;
+  background: transparent; color: var(--af-dim, #8b93a7); font-size: 15px; line-height: 1;
+}
+.canvas-config .cfg-del:hover { background: rgba(248, 81, 73, .16); color: #f85149; }
+
+.canvas-config .cfg-add {
+  width: 100%; padding: 6px; border: 1px dashed var(--af-line, #2a2f3a);
+  border-radius: 5px; background: none; cursor: pointer;
+  font-size: 12px; color: var(--af-dim, #8b93a7);
+}
+.canvas-config .cfg-add:hover { border-color: #4b8bf5; color: #4b8bf5; }
+
+.canvas-config .cfg-export {
+  display: flex; flex-direction: column; gap: 1px; align-items: flex-start;
+  width: 100%; padding: 7px 9px; margin-bottom: 5px;
+  border: 1px solid var(--af-line, #2a2f3a); border-radius: 5px;
+  background: none; cursor: pointer; font-size: 12.5px; color: var(--af-fg, #e6e9f0);
+}
+.canvas-config .cfg-export small { font-size: 10.5px; color: var(--af-dim, #8b93a7); }
+.canvas-config .cfg-export:hover { border-color: #4b8bf5; }
+
+.canvas-config .cfg-issues {
+  margin-top: 8px; padding: 7px 9px; border-radius: 6px;
+  background: rgba(248, 81, 73, .1); border-left: 2px solid #f85149;
+  font-size: 11.5px; line-height: 1.6; color: #ffa198;
+}
+.canvas-config .cfg-issues strong { display: block; margin-bottom: 3px; color: #f85149; }

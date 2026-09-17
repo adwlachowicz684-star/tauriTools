@@ -51,6 +51,10 @@ for f in tests/*.test.ts; do
     --import-map ../engine/sanitize=../sanitize.mjs \
     --import-map ../engine/stack=../stack.mjs \
     --import-map ../engine/nodeDefaults=../nodeDefaults.mjs \
+    --import-map ../engine/blockApi=../blockApi.mjs \
+    --import-map ../engine/canvasConfig=../canvasConfig.mjs \
+    --import-map ../engine/mcp=../mcp.mjs \
+    --import-map ../engine/scriptExport=../scriptExport.mjs \
     --import-map ../components/Sidebar=../Sidebar.mjs >/dev/null
 done
 

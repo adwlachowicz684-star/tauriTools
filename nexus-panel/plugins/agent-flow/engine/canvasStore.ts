@@ -5,12 +5,44 @@
  * 增删改名切换都在这层完成，UI 只负责调用与渲染。
  */
 
+/*
+ * 类型走 import type（编译后消失），值**不用静态 import**：
+ * strip-ts 生成的 .mjs 里裸模块名不带 .mjs 后缀，Node 加载不了。
+ * 用一个惰性取值绕开 —— 见下面 canvasConfigOf 的实现。
+ */
+import type { CanvasConfig } from './canvasConfig';
+
+/*
+ * 判断一个名字像不像密钥。
+ *
+ * 这里**内联**了一份，没有 import sanitize 那份 ——
+ * strip-ts 生成的 .mjs 里裸模块名不带 .mjs 后缀，Node 加载不了，
+ * 表现为运行时 "looksLikeSecretName is not defined"（不报编译错）。
+ * 两份的一致性由 tests/canvasConfig 里那条测试盯着。
+ */
+function looksLikeSecretName(name: string): boolean {
+  const n = String(name ?? '').toLowerCase().replace(/[^a-z]/g, '');
+  if (!n) return false;
+  const hints = ['token', 'secret', 'password', 'passwd', 'apikey', 'accesskey'];
+  for (const h of hints) {
+    if (n.includes(h)) return true;
+  }
+  return false;
+}
+
 export type Canvas = {
   id: string;
   name: string;
   /** 节点，元素类型由调用方决定（React Flow 节点） */
   nodes: unknown[];
   edges: unknown[];
+  /**
+   * 画布级配置：MCP 服务与全局环境变量。
+   *
+   * 属于**这张画布**，不是某个节点，也不做全局共享 ——
+   * 换一张画布该有各自的配法（不同流程要连不同的服务）。
+   */
+  config?: CanvasConfig;
   createdAt: number;
   updatedAt: number;
 };
@@ -281,6 +313,24 @@ export function redactNodes(nodes: unknown[]): unknown[] {
   return (nodes ?? []).map(redactNode);
 }
 
+
+/**
+ * 画布配置里的 MCP 环境变量脱敏。
+ *
+ * 变量名由用户随便起，没法用固定路径枚举 ——
+ * 所以按**名字像不像密钥**判断（见 sanitize 的 looksLikeSecretName）。
+ *
+ * 这是画布新增的一处明文存放地：env 是"最顺手填 token 的地方"，
+ * 不脱敏的话导出画布就会把密钥带出去。
+ */
+export function redactEnv(vars: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(vars ?? {})) {
+    out[k] = looksLikeSecretName(k) ? '' : v;
+  }
+  return out;
+}
+
 /** 整个持久化状态脱敏（每个画布的节点都过一遍） */
 export function redactSecrets(state: PersistedState): PersistedState {
   return {
@@ -288,6 +338,14 @@ export function redactSecrets(state: PersistedState): PersistedState {
     canvases: (state.canvases ?? []).map((c) => ({
       ...c,
       nodes: redactNodes(c.nodes),
+      ...(c.config
+        ? {
+            config: {
+              ...c.config,
+              env: { ...(c.config.env ?? { vars: {} }), vars: redactEnv(c.config.env?.vars ?? {}) },
+            },
+          }
+        : {}),
     })),
   };
 }
@@ -452,3 +510,34 @@ export const STORAGE_KEYS = {
   active: ACTIVE_KEY,
   secrets: KEYS_KEY,
 };
+
+/**
+ * 更新画布级配置。
+ *
+ * 与 updateCanvasContent 分开：内容（nodes/edges）几乎每次编辑都变，
+ * 配置很少动。混在一起会让"改一个 MCP 名字"触发整份内容比对。
+ *
+ * 同样是幂等的 —— 没变就原样返回，避免触发保存循环
+ * （那个 bug 修过一次，见 App.tsx 的保存 effect）。
+ */
+export function updateCanvasConfig(
+  list: Canvas[],
+  id: string,
+  config: CanvasConfig,
+): Canvas[] {
+  const target = list.find((c) => c.id === id);
+  if (!target) return list;
+  if (sameContent(target.config, config)) return list;
+  return list.map((c) => (c.id === id ? { ...c, config, updatedAt: Date.now() } : c));
+}
+
+/**
+ * 取画布配置；没存过给一份空的。
+ *
+ * 空配置的结构在这里内联给出，不 import ——
+ * 与 mcpServers / env 的形状保持一致的唯一保证是下面这条测试：
+ * tests/canvasStore 里的「空配置与 canvasConfig.emptyCanvasConfig 同构」。
+ */
+export function canvasConfigOf(c: Canvas | null | undefined): CanvasConfig {
+  return c?.config ?? { mcpServers: [], env: { vars: {} } };
+}

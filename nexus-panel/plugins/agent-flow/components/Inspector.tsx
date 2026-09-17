@@ -9,6 +9,8 @@ import {
   setDefault, clearDefault, hasDefault, matchPresetKey,
 } from '../engine/nodeDefaults';
 import { allPresets } from '../nodes/registry';
+import type { CanvasConfig } from '../engine/canvasConfig';
+import CanvasConfigPanel from './inspectors/CanvasConfigPanel';
 
 /**
  * 属性面板 —— 现在只是一个分发器。
@@ -40,14 +42,40 @@ type Props = {
   onEditModule?: (nodeId: string) => void;
   /** 给用户的即时反馈（走画布日志）。不传则静默但仍生效 */
   onNote?: (msg: string) => void;
+  /**
+   * 画布级配置（MCP 服务 / 环境变量）。
+   * 没选中节点时面板显示它 —— 配置属于整张画布，不属于某个节点。
+   */
+  canvasConfig?: CanvasConfig;
+  onCanvasConfigChange?: (next: CanvasConfig) => void;
+  /** 导出整张画布为脚本 */
+  onExportFlow?: (fmt: string) => void;
 };
 
 export default function Inspector({
   node, edges, onChange, credentials, onOpenCredentials, webhookTokens,
   secretPolicy, onChangeSecretPolicy, onEditModule, onNote,
+  canvasConfig, onCanvasConfigChange, onExportFlow,
 }: Props) {
   const pushNote = onNote;
   if (!node) {
+    /*
+     * 没选中节点时显示画布设置 ——
+     * 空面板除了提示"去选一个"什么都不给，浪费了这块地方，
+     * 而画布级的东西（MCP、环境变量、导出）恰好没有别的入口。
+     */
+    if (canvasConfig && onCanvasConfigChange && onExportFlow) {
+      return (
+        <aside className="inspector">
+          <CanvasConfigPanel
+            config={canvasConfig}
+            onChange={onCanvasConfigChange}
+            onExport={onExportFlow}
+            onNote={onNote}
+          />
+        </aside>
+      );
+    }
     return (
       <aside className="inspector">
         <div className="nx-empty empty-hint">
