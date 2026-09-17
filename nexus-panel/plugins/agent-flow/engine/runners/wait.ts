@@ -2,6 +2,7 @@ import type { RunContext } from '../runContext';
 import { withNodeRun, NodeFailError } from '../runnerKit';
 import { sleep } from '../sleep';
 import type { WaitNodeData } from '../../types';
+import { upstreamText } from '../upstream';
 
 /** 等待节点。就是 sleep，但把"支持模板"与"时间上限"收在自己这里 */
 export async function runWait(ctx: RunContext): Promise<void> {
@@ -31,6 +32,17 @@ export async function runWait(ctx: RunContext): Promise<void> {
     }
 
     await sleep(safe);
-    return { output: `已等待 ${safe}ms` };
+
+    /*
+     * 输出**透传**上游，不改写数据流。
+     *
+     * 原先这里返回 `已等待 ${safe}ms`，等于一个控制流节点顺手把数据流掐断了 ——
+     * 「上游 → 等待 → 提取」会取不到任何东西，而且不报错（取不到默认给空串），
+     * 是典型的静默失败。
+     *
+     * 状态改走运行日志：该看的人看得到，但不占 output。
+     */
+    ctx.emit({ type: 'log', message: `⏱ 已等待 ${safe}ms` });
+    return { output: upstreamText(ctx.graph.edges, ctx.id, ctx.outputs, ctx.opts.input) };
   });
 }

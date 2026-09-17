@@ -1,6 +1,7 @@
 import type { RunContext } from '../runContext';
 import { withNodeRun, NodeFailError } from '../runnerKit';
 import { extractText } from '../extract';
+import { upstreamText } from '../upstream';
 import type { ExtractNodeData } from '../../types';
 
 /**
@@ -10,12 +11,10 @@ import type { ExtractNodeData } from '../../types';
  * 没有上游（挂在触发器后面）则用整条流程的输入。
  * 写成一处是为了三边行为一致 —— 各写一份迟早会分叉。
  */
-function upstreamText(ctx: RunContext): string {
+/* 上游取值统一走 engine/upstream —— 那里有为什么抽出来的说明 */
+function upstreamOf(ctx: RunContext): string {
   const { id, graph, outputs, opts } = ctx;
-  const ups = graph.edges.filter((e) => e.target === id).map((e) => e.source);
-  return ups.length > 0
-    ? ups.map((u) => outputs[u] ?? '').join('\n')
-    : (opts.input ?? '');
+  return upstreamText(graph.edges, id, outputs, opts.input);
 }
 
 /**
@@ -29,7 +28,7 @@ export async function runExtract(ctx: RunContext): Promise<void> {
   const d = ctx.node.data as ExtractNodeData;
 
   await withNodeRun(ctx, async () => {
-    const r = extractText(upstreamText(ctx), d.mode, d.spec, d.group);
+    const r = extractText(upstreamOf(ctx), d.mode, d.spec, d.group);
 
     if (!r.ok) {
       /*

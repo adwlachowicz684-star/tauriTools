@@ -1,6 +1,7 @@
 import type { RunContext } from '../runContext';
 import { withNodeRun } from '../runnerKit';
 import type { LogNodeData } from '../../types';
+import { upstreamText } from '../upstream';
 
 /**
  * 日志标记：把一段文本写进运行日志，输出原样传给下游。
@@ -14,10 +15,7 @@ export async function runLog(ctx: RunContext): Promise<void> {
 
   await withNodeRun(ctx, async () => {
     const { id, graph, outputs, opts } = ctx;
-    const ups = graph.edges.filter((e) => e.target === id).map((e) => e.source);
-    const upstream = ups.length > 0
-      ? ups.map((u) => outputs[u] ?? '').join('\n')
-      : (opts.input ?? '');
+    const upstream = upstreamText(graph.edges, id, outputs, opts.input);
 
     // 留空则记上游内容，这样"想知道这里流过来的是什么"不用填任何东西
     const text = ctx.tpl(String(d.text ?? '')).trim() || upstream;

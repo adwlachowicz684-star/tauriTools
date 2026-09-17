@@ -2,6 +2,7 @@ import type { RunContext } from '../runContext';
 import { withNodeRun, NodeFailError } from '../runnerKit';
 import { playAudioFile } from '../beep';
 import type { PlayAudioNodeData } from '../../types';
+import { upstreamText } from '../upstream';
 
 /** 播放本地音频文件。需要 fs 与 audio 执行器，浏览器模式下不可用 */
 export async function runPlayAudio(ctx: RunContext): Promise<void> {
@@ -24,6 +25,8 @@ export async function runPlayAudio(ctx: RunContext): Promise<void> {
     });
 
     if (!res.ok) throw new NodeFailError(res.error ?? '播放失败');
-    return { output: `已播放 ${path}` };
+    // 透传，理由同 wait
+    ctx.emit({ type: 'log', message: `🎵 已播放 ${path}` });
+    return { output: upstreamText(ctx.graph.edges, ctx.id, ctx.outputs, ctx.opts.input) };
   });
 }

@@ -4,6 +4,7 @@ import type {
   GithubUpdateNodeData, GithubPushNodeData, GenericHttpNodeData,
   ExtractNodeData, TaskNodeData, WaitNodeData, BeepNodeData,
   PlayAudioNodeData, ClockNodeData, ConstNodeData, ModuleNodeData,
+  JoinNodeData,
 } from '../types';
 
 /**
@@ -212,6 +213,17 @@ function vHttp(d: GenericHttpNodeData): V {
   return ok();
 }
 
+/**
+ * 汇合节点：没有入边就是"永远收集不齐"，这是配置错误而非待填项。
+ * 但校验器拿不到边（它只看 data），所以只校验模式取值本身 ——
+ * 缺入边由执行器在运行时报（那里拿得到 graph）。
+ */
+function vJoin(d: JoinNodeData): V {
+  const m = String(d.mode ?? 'all');
+  if (m !== 'all' && m !== 'strict') return error('汇合模式取值不对');
+  return ok();
+}
+
 function vExtract(d: ExtractNodeData): V {
   if (blank(d.spec)) {
     return error(
@@ -283,6 +295,7 @@ const VALIDATORS: Table = {
   clock: vClock as never,
   const: vConst as never,
   module: vModule as never,
+  join: vJoin as never,
 };
 
 /** 校验单个节点。未知类型返回 ok —— 没规则时不要乱报红 */
