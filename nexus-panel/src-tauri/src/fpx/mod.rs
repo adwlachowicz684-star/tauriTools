@@ -798,9 +798,25 @@ pub fn fpx_remove_link(
 }
 
 /// 扫描项目组下的 agent / skill / rule。
+///
+/// 列目录也是"读"（目录结构本身就算信息），所以一并收口。
+/// 前端唯一的调用点传的是"内容区焦点目录" = 选中的项目/项目组卡片，
+/// 必然在允许范围内，收口不影响正常用法。
 #[tauri::command(rename_all = "snake_case")]
-pub fn fpx_scan_content(root: String, kind: Option<String>) -> Vec<ContentItem> {
-    content::scan(&root, kind.as_deref().unwrap_or("all"))
+pub fn fpx_scan_content(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+    root: String,
+    kind: Option<String>,
+) -> Vec<ContentItem> {
+    // 收口失败时返回空列表而不是报错：这是"浏览"接口，
+    // 空列表在界面上就是"没有内容"，比弹一个错误更贴合语义
+    match store::data_dir(&app, &state) {
+        Ok(dir) if ensure_path_allowed(&dir, &root).is_ok() => {
+            content::scan(&root, kind.as_deref().unwrap_or("all"))
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// 读取文件文本（目录型 skill 自动读其 SKILL.md）。

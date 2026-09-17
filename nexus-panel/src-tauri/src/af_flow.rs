@@ -287,14 +287,15 @@ pub fn kill_node(state: State<'_, ProcRegistry>, run_id: String) -> Result<(), S
         let tree_err = kill_process_tree(pid);
         // 本体仍交给 Tauri 杀：它走的是平台原生路径，比我们可靠。
         // 上面已整树清过一遍，这里失败多半只是"进程已不存在"，不值得报错。
-        match child.kill() {
-            Ok(()) => {}
-            Err(e) => {
-                if let Some(te) = tree_err {
-                    return Err(format!("终止进程失败: {te}"));
-                }
-                eprintln!("[af] kill 报错但进程树已清理（pid {pid}）: {e}");
+        let own_err = child.kill().err();
+        match (tree_err, own_err) {
+            // 树清干净了，本体这一刀失手多半是"已经死了"，不算失败
+            (Ok(()), None) => {}
+            (Ok(()), Some(e)) => {
+                eprintln!("[af] 进程树已清理，本体的 kill 报错（pid {pid}）: {e}");
             }
+            // 树没清干净：无论本体杀没杀掉，都要告诉用户有残留
+            (Err(te), _) => return Err(format!("终止进程树失败（可能有残留子进程）: {te}")),
         }
     }
     Ok(())
@@ -1760,13 +1761,5 @@ mod tests {
         assert!(kids.contains(&kid.id()), "没能在子进程列表里找到刚起的 sleep: {kids:?}");
         let _ = kid.kill();
         let _ = kid.wait();
-    }
-
-    /// 不该把自己的兄弟或无关进程算进来：随便给一个不可能存在的 pid。
-    #[cfg(not(windows))]
-    #[test]
-    fn no_children_for_bogus_pid() {
-        // 0 与 u32::MAX 都不会是真实进程的子进程来源
-        assert!(super::child_pids_of(0).is_empty() || true);
     }
 }

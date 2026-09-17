@@ -1267,7 +1267,9 @@ mod tests {
     #[test]
     fn rejects_missing_and_wrong_token() {
         let t = "0123456789abcdef0123456789abcdef";
-        assert!(!check_auth(&[], t));
+        // 不写 &[]：空数组字面量的元素类型靠推断，这里显式给出来更稳
+        let empty: Vec<(String, String)> = Vec::new();
+        assert!(!check_auth(&empty, t));
         assert!(!check_auth(&[h("x-token", "wrong")], t));
         // 长度就不同的情况
         assert!(!check_auth(&[h("x-token", "0123")], t));
