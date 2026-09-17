@@ -37,6 +37,10 @@ import { runPlayAudio } from './runners/playAudio';
 import { runClock } from './runners/clock';
 import { runConst } from './runners/const';
 import { runJoin } from './runners/join';
+import { runGate } from './runners/gate';
+import { runThrottle } from './runners/throttle';
+import { runTimeout } from './runners/timeout';
+import { runRetry } from './runners/retry';
 
 export type NodeRunner = (ctx: RunContext) => Promise<void>;
 
@@ -62,6 +66,10 @@ const RUNNERS: Record<string, NodeRunner | undefined> = {
   clock: runClock,
   const: runConst,
   join: runJoin,
+  gate: runGate,
+  throttle: runThrottle,
+  timeout: runTimeout,
+  retry: runRetry,
 };
 
 /**

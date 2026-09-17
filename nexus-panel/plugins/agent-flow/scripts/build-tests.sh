@@ -30,6 +30,7 @@ $S engine/loop.ts "$OUT/loop.mjs" \
 RUNNER_IMPORTS="\
   --import-map ../../types=./types.mjs \
   --import-map ../upstream=./upstream.mjs \
+  --import-map ../passCheck=./passCheck.mjs \
   --import-map ../credentials=./credentials.mjs \
   --import-map ../template=./template.mjs \
   --import-map ../files=./files.mjs \
@@ -44,7 +45,7 @@ RUNNER_IMPORTS="\
   --import-map ../sleep=./sleep.mjs \
   --import-map ../beep=./beep.mjs \
   --import-map ../clock=./clock.mjs"
-for f in task trigger condition parallel loop fs ocr translate update githubUpdate githubPush genericHttp extract wait log beep playAudio clock const join; do
+for f in task trigger condition parallel loop fs ocr translate update githubUpdate githubPush genericHttp extract wait log beep playAudio clock const join gate throttle timeout retry; do
   [ -f "engine/runners/$f.ts" ] && $S "engine/runners/$f.ts" "$OUT/runners_$f.mjs" $RUNNER_IMPORTS >/dev/null
 done
 $S engine/extract.ts "$OUT/extract.mjs" >/dev/null
@@ -70,7 +71,11 @@ $S engine/runnerRegistry.ts "$OUT/runnerRegistry.mjs" \
   --import-map ./runners/genericHttp=./runners_genericHttp.mjs \
   --import-map ./runners/extract=./runners_extract.mjs \
   --import-map ./runners/wait=./runners_wait.mjs --import-map ./runners/log=./runners_log.mjs --import-map ./runners/beep=./runners_beep.mjs --import-map ./runners/playAudio=./runners_playAudio.mjs --import-map ./runners/clock=./runners_clock.mjs --import-map ./runners/const=./runners_const.mjs \
-  --import-map ./runners/join=./runners_join.mjs >/dev/null
+  --import-map ./runners/join=./runners_join.mjs \
+  --import-map ./runners/gate=./runners_gate.mjs \
+  --import-map ./runners/throttle=./runners_throttle.mjs \
+  --import-map ./runners/timeout=./runners_timeout.mjs \
+  --import-map ./runners/retry=./runners_retry.mjs >/dev/null
 $S engine/runner.ts "$OUT/runner.mjs" \
    --import-map ./stack=./stack.mjs \
    --import-map ./runnerRegistry=./runnerRegistry.mjs \
@@ -104,6 +109,7 @@ $S engine/nodeValidate.ts "$OUT/nodeValidate.mjs" \
 $S engine/kv.ts "$OUT/kv.mjs" >/dev/null
 $S engine/nodeSpec.ts "$OUT/nodeSpec.mjs" >/dev/null
 $S engine/upstream.ts "$OUT/upstream.mjs" >/dev/null
+$S engine/passCheck.ts "$OUT/passCheck.mjs" >/dev/null
 $S engine/sanitize.ts "$OUT/sanitize.mjs" >/dev/null
 $S engine/stack.ts "$OUT/stack.mjs" >/dev/null
 $S engine/nodeDefaults.ts "$OUT/nodeDefaults.mjs" \

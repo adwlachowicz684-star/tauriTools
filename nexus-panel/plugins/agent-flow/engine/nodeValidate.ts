@@ -4,7 +4,7 @@ import type {
   GithubUpdateNodeData, GithubPushNodeData, GenericHttpNodeData,
   ExtractNodeData, TaskNodeData, WaitNodeData, BeepNodeData,
   PlayAudioNodeData, ClockNodeData, ConstNodeData, ModuleNodeData,
-  JoinNodeData,
+  JoinNodeData, GateNodeData, ThrottleNodeData, TimeoutNodeData, RetryNodeData,
 } from '../types';
 
 /**
@@ -224,6 +224,52 @@ function vJoin(d: JoinNodeData): V {
   return ok();
 }
 
+/**
+ * 控制器校验。
+ *
+ * 共同点：不产生数据，所以"配置不全"的判据是**能不能做出判定**，
+ * 而不是"内容填了没" —— 内容来自上游。
+ */
+function vGate(d: GateNodeData): V {
+  if (!['wait', 'now'].includes(String(d.mode ?? 'wait'))) return error('判定方式取值不对');
+  const c = String(d.check ?? 'nonempty');
+  if (!['nonempty', 'contains', 'notContains', 'regex'].includes(c)) return error('条件取值不对');
+  if (c !== 'nonempty' && !String(d.value ?? '').trim()) {
+    return error(`选了「${c}」但没填比对值`);
+  }
+  if (d.mode === 'wait') {
+    const t = Number(d.timeoutMs);
+    if (!Number.isFinite(t) || t < 0) return error('最长等待不是有效毫秒数');
+  }
+  return ok();
+}
+
+function vThrottle(d: ThrottleNodeData): V {
+  const m = Number(d.minIntervalMs);
+  if (!Number.isFinite(m) || m < 0) return error('最小间隔不是有效毫秒数');
+  const max = Number(d.maxPerRun ?? 0);
+  if (Number.isFinite(max) && max < 0) return error('放行次数不能为负');
+  return ok();
+}
+
+function vTimeout(d: TimeoutNodeData): V {
+  const b = Number(d.budgetMs);
+  if (!Number.isFinite(b) || b <= 0) return error('没填有效的预算时长');
+  return ok();
+}
+
+function vRetry(d: RetryNodeData): V {
+  if (!String(d.target ?? '').trim()) return error('没填要重试哪个节点');
+  const t = Number(d.times);
+  if (!Number.isFinite(t) || t < 0) return error('重试次数不是有效数字');
+  const c = String(d.check ?? 'nonempty');
+  if (!['nonempty', 'contains', 'notContains', 'regex'].includes(c)) return error('合格条件取值不对');
+  if (c !== 'nonempty' && !String(d.value ?? '').trim()) {
+    return error(`选了「${c}」但没填比对值`);
+  }
+  return ok();
+}
+
 function vExtract(d: ExtractNodeData): V {
   if (blank(d.spec)) {
     return error(
@@ -296,6 +342,10 @@ const VALIDATORS: Table = {
   const: vConst as never,
   module: vModule as never,
   join: vJoin as never,
+  gate: vGate as never,
+  throttle: vThrottle as never,
+  timeout: vTimeout as never,
+  retry: vRetry as never,
 };
 
 /** 校验单个节点。未知类型返回 ok —— 没规则时不要乱报红 */
