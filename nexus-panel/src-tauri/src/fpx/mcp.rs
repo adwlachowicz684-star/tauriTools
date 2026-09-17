@@ -853,6 +853,11 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
         "set_tag_color" => {
             let path = s("path");
             let color = s("color");
+            /* 它只写配置、不碰文件系统，危害是"污染自己的设置"而非越权读写。
+               但仍要收口：命令层的 fpx_save_style（会写 desktop.ini）已收，
+               两边不一致会让同一个操作在界面上能成、在 MCP 里被拒，
+               用户只会觉得"这工具时灵时不灵"。 */
+            within_raw(&path)?;
             // 用只改颜色的版本：不先读 folder_icons 再传回去，
             // 那样会把读到的旧图标写回，覆盖期间别人设的新图标。
             super::core_set_tag_color(&dir, &path,
@@ -1296,10 +1301,13 @@ mod tests {
 
     #[test]
     fn distinguishes_path_from_command_name() {
-        assert!(looks_like_path("C:\\Windows\\System32\\calc.exe"));
-        assert!(looks_like_path("/usr/bin/evil"));
-        assert!(looks_like_path(".\\local\\tool.exe"));
-        assert!(!looks_like_path("codebuddy"));
-        assert!(!looks_like_path("traecli"));
+        // 走完整路径而不是 glob 进来的名字：这条判定是安全边界，
+        // 断言必须明确指向 safety 里那一份实现
+        let f = super::safety::looks_like_path;
+        assert!(f("C:\\Windows\\System32\\calc.exe"));
+        assert!(f("/usr/bin/evil"));
+        assert!(f(".\\local\\tool.exe"));
+        assert!(!f("codebuddy"));
+        assert!(!f("traecli"));
     }
 }
