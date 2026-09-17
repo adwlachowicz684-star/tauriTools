@@ -112,6 +112,7 @@ $S engine/topo.ts "$OUT/topo.mjs" >/dev/null
 $S engine/scriptExport.ts "$OUT/scriptExport.mjs" --import-map ./topo=./topo.mjs >/dev/null
 $S engine/mcp.ts "$OUT/mcp.mjs" >/dev/null
 $S engine/mcpTools.ts "$OUT/mcpTools.mjs" >/dev/null
+$S engine/mcpStore.ts "$OUT/mcpStore.mjs" --import-map ./kv=./kv.mjs --import-map ./mcpTools=./mcpTools.mjs >/dev/null
 $S engine/canvasConfig.ts "$OUT/canvasConfig.mjs" >/dev/null
 $S engine/blockApi.ts "$OUT/blockApi.mjs" --import-map ./nodeSpec=./nodeSpec.mjs >/dev/null
 $S engine/upstream.ts "$OUT/upstream.mjs" >/dev/null

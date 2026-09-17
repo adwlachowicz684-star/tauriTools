@@ -45,6 +45,15 @@ type Props = {
   onAdd: (p: DragPayload) => void;
   disabled?: boolean;
   /**
+   * MCP 节点按 server 折叠后的分组。由 App 传入 ——
+   * 这一层要读注册表与存储，Sidebar 自己 import 会多一份状态。
+   */
+  mcpGroups?: { server: string; color: string; items: { key: string; label: string; hint?: string }[] }[];
+  /** 刷新 MCP 工具清单 */
+  onRefreshMcp?: () => void;
+  /** 正在刷新 */
+  mcpRefreshing?: boolean;
+  /**
    * 模块库面板。由 App 传入而不是这里直接 import ——
    * 它需要读写画布选中项与模块内部结构，依赖 App 的状态；
    * 若 Sidebar 直接 import 它，两边的画布状态会各存一份。
@@ -52,7 +61,67 @@ type Props = {
   modulePanel?: ReactNode;
 };
 
-export default function Sidebar({ onAdd, disabled, modulePanel }: Props) {
+/**
+ * 一个 MCP 服务下的所有工具。
+ *
+ * 默认**收起** —— 展开状态下，一个 40 工具的 server 会把侧栏撑爆，
+ * 用户反而找不到别的分组。
+ */
+function McpServerSection({
+  group, disabled, onDragStart, onItemClick, openKey,
+}: {
+  group: { server: string; color: string; items: { key: string; label: string; hint?: string }[] };
+  disabled?: boolean;
+  onDragStart: (e: DragEvent, p: DragPayload) => void;
+  onItemClick: (e: MouseEvent, p: { key: string }) => void;
+  openKey: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mcp-sec">
+      <button
+        className="mcp-sec-title"
+        onClick={() => setOpen(!open)}
+        title="展开/收起这个服务的工具"
+      >
+        <span className="side-dot" style={{ background: group.color }} />
+        <span className="mcp-sec-name">{group.server}</span>
+        <span className="mcp-sec-count">{group.items.length}</span>
+        <span className="mcp-sec-arrow">{open ? '▾' : '▸'}</span>
+      </button>
+      {open ? (
+        <div className="mcp-sec-body">
+          {group.items.map((it) => {
+            const isOpen = openKey === it.key;
+            return (
+              <div key={it.key}>
+                <div
+                  className={`side-item${isOpen ? ' is-open' : ''}`}
+                  draggable={!disabled}
+                  onDragStart={(e) => onDragStart(e, { kind: it.key })}
+                  onClick={(e) => onItemClick(e, { key: it.key })}
+                  title="点击展开说明；按住 Ctrl / ⌘ 点击直接添加；也可拖到画布"
+                >
+                  <span className="side-label">{it.label}</span>
+                </div>
+                {isOpen ? (
+                  <div className="side-desc">
+                    {it.hint || '这个工具没有额外说明'}
+                    <span className="side-desc-add">按住 Ctrl / ⌘ 点击添加</span>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export default function Sidebar({
+  onAdd, disabled, modulePanel, mcpGroups, onRefreshMcp, mcpRefreshing,
+}: Props) {
   const onDragStart = (e: DragEvent, p: DragPayload) => {
     e.dataTransfer.setData(DRAG_MIME, encodeDrag(p));
     // 同时放一份 text/plain，某些环境下自定义 MIME 会被过滤
@@ -149,6 +218,45 @@ export default function Sidebar({ onAdd, disabled, modulePanel }: Props) {
     }
   };
 
+  /** MCP 组：按 server 折叠，默认收起 */
+  const renderMcpGroup = (label: string) => {
+    const groups = mcpGroups ?? [];
+    return (
+      <div className="side-group" key="mcp">
+        <div className="side-title">
+          {label}
+          <span className="side-title-ops">
+            <button
+              className="link-btn"
+              title="重新拉取各服务的工具清单"
+              onClick={() => onRefreshMcp?.()}
+              disabled={mcpRefreshing}
+            >
+              {mcpRefreshing ? '刷新中…' : '刷新'}
+            </button>
+          </span>
+        </div>
+
+        {groups.length === 0 ? (
+          <div className="side-sub">
+            还没有节点 —— 在画布设置里配一个 MCP 服务，再点刷新
+          </div>
+        ) : null}
+
+        {groups.map((sg) => (
+          <McpServerSection
+            key={sg.server}
+            group={sg}
+            disabled={disabled}
+            onDragStart={onDragStart}
+            onItemClick={onItemClick}
+            openKey={openKey}
+          />
+        ))}
+      </div>
+    );
+  };
+
   /*
    * 侧栏条目、分组、配色、提示语全部来自注册表里各节点自己声明的 meta。
    *
@@ -196,6 +304,12 @@ export default function Sidebar({ onAdd, disabled, modulePanel }: Props) {
           {groups.map((g) => {
         const def = getDef(g.presets[0].type);
         const isCustom = g.category === 'custom';
+        /*
+         * MCP 组单独渲染：一工具一节点会让条目数直接等于工具总数，
+         * 平铺的话连一个 40 工具的 server 就能把侧栏撑爆。
+         * 所以按 server 再折一层，默认收起。
+         */
+        if (g.category === 'mcp') return renderMcpGroup(g.label);
         return (
           <div className="side-group" key={g.category}>
             <div className="side-title">

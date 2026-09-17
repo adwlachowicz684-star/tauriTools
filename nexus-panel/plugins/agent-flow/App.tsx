@@ -72,6 +72,10 @@ import { TriggerScheduler } from './engine/triggers';
 import type { CanvasConfig } from './engine/canvasConfig';
 import { exportFlow, EXPORT_FORMATS } from './engine/scriptExport';
 import {
+  hydrateMcpNodes, mcpSidebarGroups, bootRefresh,
+} from './engine/mcpRegistry';
+import { collectServers } from './engine/mcpStore';
+import {
   makeCanvas, nextCanvasName, renameCanvas, removeCanvas, nextActiveId,
   updateCanvasContent, updateCanvasConfig, canvasConfigOf, sortForDisplay, toMeta,
   loadFromStorage, saveToStorage, clearSecrets,
@@ -745,6 +749,53 @@ export default function App() {
     })();
     return () => { alive = false; };
   }, [canvases, activeId, secretPolicy, secretPass, secretsReady]);
+
+  /* ---------------- MCP 节点 ---------------- */
+
+  /*
+   * 启动时先把存下来的蓝图注册进注册表 —— **同步**完成。
+   * 这是"先用快照立刻可用"的关键：不等网络，界面一上来就有这些节点。
+   */
+  const [mcpBlueprints] = useState(() => hydrateMcpNodes());
+
+  const [mcpGroups, setMcpGroups] = useState(() => mcpSidebarGroups(mcpBlueprints));
+  const [mcpRefreshing, setMcpRefreshing] = useState(false);
+  const mcpBootedRef = useRef(false);
+
+  const rebuildMcpGroups = useCallback((list: ReturnType<typeof mcpSidebarGroups>) => {
+    setMcpGroups(list);
+  }, []);
+
+  /*
+   * 刷新。
+   *
+   * fetcher 暂时不传 —— MCP 协议还没接上，所以这次刷新会退化成用快照，
+   * 并把"协议没接上"这句话报出来。
+   * 不假装成功：假装成功会让用户以为工具已经是新的了。
+   */
+  const doRefreshMcp = useCallback(async () => {
+    setMcpRefreshing(true);
+    try {
+      const servers = collectServers(canvases);
+      const r = await bootRefresh(servers, mcpBlueprints);
+      if (r.outcome.ok) rebuildMcpGroups(mcpSidebarGroups(r.outcome.list));
+      pushLog(r.message);
+    } finally {
+      setMcpRefreshing(false);
+    }
+  }, [canvases, mcpBlueprints, rebuildMcpGroups, pushLog]);
+
+  /*
+   * 启动后自动刷新一次。
+   *
+   * 用 ref 守一次 —— 不然每次重渲染都会刷，
+   * 而刷新是要连外部进程的（将来接上协议后更是如此）。
+   */
+  useEffect(() => {
+    if (mcpBootedRef.current) return;
+    mcpBootedRef.current = true;
+    void doRefreshMcp();
+  }, [doRefreshMcp]);
 
   /* ---------------- 画布级配置与导出 ---------------- */
 
@@ -2183,6 +2234,9 @@ export default function App() {
         <Sidebar
           onAdd={(p) => spawnNode(p)}
           disabled={running}
+          mcpGroups={mcpGroups}
+          onRefreshMcp={() => void doRefreshMcp()}
+          mcpRefreshing={mcpRefreshing}
           modulePanel={
             <ModuleLibrary
               onCreateFromSelection={() => void createModuleFromSelection()}

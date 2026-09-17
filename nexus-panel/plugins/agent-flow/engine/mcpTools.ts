@@ -84,6 +84,14 @@ export type NodeBlueprint = {
   fields: BlueprintField[];
   /** 生成时间。工具签名变了要靠它判断是否需要刷新 */
   generatedAt: number;
+  /**
+   * 这个工具在 server 上已经不存在了。
+   *
+   * **仍然注册**（画布上已有节点照常显示，否则它们会变成未知类型、
+   * 参数面板变空，用户连修都没法修），但**不在侧栏出现**
+   * —— 已经不存在的工具不该还能新建。
+   */
+  stale?: boolean;
 };
 
 export const MCP_DATaKIND = 'mcp';
