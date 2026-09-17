@@ -23,10 +23,10 @@ import * as io from './io.js';
 import { buildSide, openVideo, openPreview, openSettings, confirmDialog, popupMenu,
   openPrintSettings, openDiagnostics, searchStatusText } from './panels.js';
 import { attachTabDrag } from './tab-drag.js';
+import * as fmt from './formats.js';
 import { buildFileList } from './filelist.js';
 import * as xmind from './xmind.js';
 
-import { confirm, prompt } from '../../js/dialog.js';
 /** 外壳桥接频道（plugin-sdk 的 BRIDGE_CHANNEL），用于捕获运行时主题切换 */
 const SHELL_CHANNEL = 'nexus-bridge-v1';
 const AUTOSAVE_MS = 800;        // 停止编辑多久后写入本地库
@@ -322,6 +322,13 @@ bootIframePlugin(async (ctx) => {
       { label: 'JSON（.json）', hint: hint.json, onSelect: () => exportJson() },
       { label: 'TXT（.txt）', hint: hint.txt, onSelect: () => exportTxt() },
       { label: 'Markdown（.md）', hint: hint.md, onSelect: () => exportMarkdown() },
+      '-',
+      // 交换格式：给别的软件用。都是**单画布**，只导当前这张。
+      { label: 'FreeMind（.mm）', hint: 'FreeMind / Freeplane / XMind 可导入', onSelect: () => exportExchange('freemind') },
+      { label: 'OPML（.opml）', hint: 'OmniOutliner / Workflowy / 幕布 等大纲工具', onSelect: () => exportExchange('opml') },
+      { label: 'Mermaid（.mmd）', hint: 'GitHub / GitLab / Notion / Obsidian 原生渲染', onSelect: () => exportExchange('mermaid') },
+      { label: 'PlantUML（.puml）', hint: 'PlantUML / Confluence / 多数 Wiki', onSelect: () => exportExchange('plantuml') },
+      '-',
       { label: 'SVG（.svg）', hint: hint.svg, onSelect: () => exportSvg() },
       '-',
       { label: 'PDF（矢量，直接保存）', hint: hint.pdf, onSelect: () => exportPdf() },
@@ -581,10 +588,10 @@ bootIframePlugin(async (ctx) => {
     await persist();
   }
 
-  async function renameSheet(id) {
+  function renameSheet(id) {
     const s = workbook.sheets.find((x) => x.id === id);
     if (!s) return;
-    const name = await prompt({ title: '重命名画布', label: '画布名称', defaultValue: s.title });
+    const name = window.prompt('画布名称', s.title);
     if (name == null) return;
     s.title = name.trim() || s.title;
     renderTabs();
@@ -701,10 +708,10 @@ bootIframePlugin(async (ctx) => {
     await openFile(id);
   }
 
-  async function renameFile(id) {
+  function renameFile(id) {
     const f = fileIndex.find((x) => x.id === id);
     if (!f) return;
-    const name = await prompt({ title: '重命名脑图', label: '脑图名称', defaultValue: f.name });
+    const name = window.prompt('脑图名称', f.name);
     if (name == null) return;
     f.name = name.trim() || f.name;
     store.files.save(fileIndex);
@@ -719,12 +726,7 @@ bootIframePlugin(async (ctx) => {
   async function deleteFile(id) {
     const f = fileIndex.find((x) => x.id === id);
     if (!f) return;
-    const ok = await confirm({
-      title: '删除脑图',
-      message: `删除「${f.name}」？该脑图下的所有画布都会一并删除。`,
-      danger: true,
-    });
-    if (!ok) return;
+    if (!window.confirm(`删除「${f.name}」？该脑图下的所有画布都会一并删除。`)) return;
     fileIndex = fileIndex.filter((x) => x.id !== id);
     await store.files.save(fileIndex);
     await store.doc(id).del();
@@ -737,7 +739,7 @@ bootIframePlugin(async (ctx) => {
   }
 
   async function createFolder() {
-    const name = await prompt({ title: '新建文件夹', label: '文件夹名称', defaultValue: '新建文件夹' });
+    const name = window.prompt('文件夹名称', '新建文件夹');
     if (name == null) return;
     foldersList.push({ id: newFolderId(), name: name.trim() || '新建文件夹', collapsed: false });
     await store.folders.save(foldersList);
@@ -745,10 +747,10 @@ bootIframePlugin(async (ctx) => {
     status('已新建文件夹');
   }
 
-  async function renameFolder(id) {
+  function renameFolder(id) {
     const fo = foldersList.find((x) => x.id === id);
     if (!fo) return;
-    const name = await prompt({ title: '重命名文件夹', label: '文件夹名称', defaultValue: fo.name });
+    const name = window.prompt('文件夹名称', fo.name);
     if (name == null) return;
     fo.name = name.trim() || fo.name;
     store.folders.save(foldersList);
@@ -760,12 +762,7 @@ bootIframePlugin(async (ctx) => {
     const fo = foldersList.find((x) => x.id === id);
     if (!fo) return;
     const n = fileIndex.filter((f) => f.folderId === id).length;
-    const ok = await confirm({
-      title: '删除文件夹',
-      message: `删除文件夹「${fo.name}」？里面 ${n} 个脑图会移到根目录，不会被删除。`,
-      danger: true,
-    });
-    if (!ok) return;
+    if (!window.confirm(`删除文件夹「${fo.name}」？里面 ${n} 个脑图会移到根目录，不会被删除。`)) return;
     for (const f of fileIndex) if (f.folderId === id) f.folderId = null;
     foldersList = foldersList.filter((x) => x.id !== id);
     await store.files.save(fileIndex);
@@ -1339,6 +1336,46 @@ bootIframePlugin(async (ctx) => {
   }
 
   /**
+   * 交换格式导出（FreeMind / OPML / Mermaid / PlantUML）。
+   *
+   * **这些都是单画布格式** —— 顶层只有一个根，装不下多画布工作簿。
+   * 所以只导出当前画布，并且**必须明确说出来**：
+   * 用户有 3 张画布时静默只导 1 张，会以为另外 2 张丢了。
+   *
+   * 另一处诚实点：这些格式只带「文字 + 层级 + 折叠状态」，
+   * 图标/优先级/进度/附件一概不带。塞进自定义属性只会在别的软件里变乱码。
+   */
+  async function exportExchange(kind) {
+    const meta = fmt.FORMAT_META[kind];
+    if (!meta) { status('未知导出格式', true); return; }
+    const s = sheet();
+    if (!s) { status('没有可导出的画布', true); return; }
+    capture();
+
+    let text = '';
+    if (kind === 'freemind') text = fmt.toFreemind(s.content);
+    else if (kind === 'opml') text = fmt.toOpml(s.content, s.title || '脑图');
+    else if (kind === 'mermaid') text = fmt.toMermaid(s.content);
+    else if (kind === 'plantuml') text = fmt.toPlantUml(s.content);
+
+    if (!text) { status(`${meta.label} 导出失败：画布内容无法解析`, true); return; }
+
+    // 画布标题是用户随手起的，可能含 / : 等文件名非法字符 —— 必须安全化
+    const r = await io.saveText(
+      io.stampName(io.safeFileName(s.title || '脑图'), meta.ext),
+      text,
+      `${meta.mime};charset=utf-8`,
+    );
+    reportSave(r, meta.label);
+
+    // 多画布时补一句说明，放在保存之后 —— 先让人看到文件存好了
+    const extra = workbook.sheets?.length > 1
+      ? `（仅当前画布；${meta.label} 是单画布格式，其余 ${workbook.sheets.length - 1} 张请用 .xmind 或 .json 导出）`
+      : '';
+    if (extra) status(extra);
+  }
+
+  /**
    * .txt 导出：C# 版这个分支写的就是工作簿 JSON（多画布）或单画布内容，
    * 与 .json 完全同内容、仅扩展名不同，这里原样对齐，不做额外格式化。
    */
@@ -1515,7 +1552,9 @@ bootIframePlugin(async (ctx) => {
   }
 
   async function importFile() {
-    const f = await io.pickFile('.xmind,.json,.md,.markdown,application/json,text/markdown');
+    // 交换格式一并收进来：用户常把 .opml 存成 .xml、把 .mmd 存成 .txt，
+    // 所以后缀放宽，真正的判断交给 detectFormat 按**内容**嗅探（见下）。
+    const f = await io.pickFile('.xmind,.json,.md,.markdown,.mm,.opml,.xml,.mmd,.puml,.txt,application/json,text/markdown,application/xml,text/xml,text/plain');
     if (!f) return;
 
     // .xmind：二进制 zip，走独立分支（附件会解包进 IndexedDB）
@@ -1555,7 +1594,25 @@ bootIframePlugin(async (ctx) => {
     let sheets = null;
     let form = '';
 
-    if (/\.(md|markdown|txt)$/i.test(f.name)) {
+    // 先嗅探**内容**再决定走哪条路。
+    // 只按扩展名判断会大面积误判：.opml 常被存成 .xml、.mmd 常被存成 .txt，
+    // 而 .mm 既是 FreeMind 也可能是别人导出的 Markdown。
+    const kind = fmt.detectFormat(text, f.name);
+
+    if (kind === 'freemind' || kind === 'opml' || kind === 'mermaid' || kind === 'plantuml') {
+      const content = kind === 'freemind' ? fmt.fromFreemind(text)
+        : kind === 'opml' ? fmt.fromOpml(text)
+          : kind === 'mermaid' ? fmt.fromMermaid(text)
+            : fmt.fromPlantUml(text);
+      if (!content) {
+        ctx.toast(`无法解析为 ${fmt.FORMAT_META[kind].label}`, 'err');
+        status(`${fmt.FORMAT_META[kind].label} 解析失败：文件结构不符合预期`, true);
+        return;
+      }
+      // 交换格式只带一张画布 —— 用文件名做标题，用户才认得出是哪张
+      sheets = [{ id: wb.newSheetId(), title: fmt.baseTitle(f.name), content, theme: null, layout: null }];
+      form = kind;
+    } else if (kind === 'markdown' || /\.(md|markdown|txt)$/i.test(f.name)) {
       sheets = wb.markdownToWorkbook(text);
       form = 'markdown';
     } else {
@@ -1586,7 +1643,9 @@ bootIframePlugin(async (ctx) => {
     await loadSheet();
     await persist();
     // A31 把识别到的形态说出来
-    const formTip = { workbook: '多画布包', single: '单画布', markdown: 'Markdown', 'markdown(兜底)': 'Markdown（未按 JSON 解析，走了兜底）' }[form] || form;
+    const formTip = { workbook: '多画布包', single: '单画布', markdown: 'Markdown',
+      'markdown(兜底)': 'Markdown（未按 JSON 解析，走了兜底）',
+      freemind: 'FreeMind', opml: 'OPML', mermaid: 'Mermaid', plantuml: 'PlantUML' }[form] || form;
     status(`已导入 ${sheets.length} 张画布（识别为：${formTip}）`);
     ctx.toast(`已导入 ${sheets.length} 张画布`, 'ok');
 
