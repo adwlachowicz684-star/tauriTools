@@ -9,6 +9,8 @@ import { getTauri, isInsideTauri } from './tauri-core.js';
 /* ctx.invoke 的命令白名单。此前是无条件透传（插件可调任意后端命令），
    它是文件残留与安全上最大的口子，嵌合后会进一步放大。 */
 import { checkInvoke } from './invoke-policy.js';
+/* 卸载残留校验（只读 · 不阻断 · 同步）。见该文件头部说明。 */
+import { snapshotGlobals, auditUnmount } from './unmount-audit.js';
 /* 元素检查器：iframe 内的鼠标事件收不到（不跨文档冒泡），
    靠插件转发坐标回来，再由这两个函数去 iframe 自己的文档里命中。
    引入它们而不是走事件，是因为需要同步读取"检查器是否开着"。 */
@@ -567,6 +569,20 @@ export function createHost(opts = {}) {
 
   async function safeTeardown(inst) {
     if (!inst) return;
+
+    /*
+     * 卸载残留校验。
+     *
+     * **只在最前/最后各拍一张快照，中间不改任何流程** ——
+     * 这是"安全不影响功能"的关键：校验是只读的观察，
+     * 不做清理、不抛错、不 await，因此不可能阻断或拖慢卸载。
+     *
+     * before 必须在任何 await 之前拍：一旦进入 await，
+     * 其它并发流程（切插件、主题重算）就可能已经改了全局，
+     * 快照baseline 就脏了。
+     */
+    const auditBefore = snapshotGlobals();
+
     // 清掉该插件注册的应用级快捷键与注入的侧边栏条目，避免残留
     try { clearAppShortcuts(inst.manifest?.id); clearSidebarItems(inst.manifest?.id); } catch {}
     try { await inst.ctx?.__destroy?.(); } catch (e) { console.error(e); }
@@ -577,6 +593,10 @@ export function createHost(opts = {}) {
     }
     try { inst.wrap?.remove(); } catch {}
     inst.cleanupFns?.forEach((fn) => { try { fn(); } catch {} });
+
+    /* 末尾同步跑，永不 throw（auditUnmount 内部已全包 try）。
+       不放进上面的 try：它是独立的一步，失败也不该影响任何既有清理。 */
+    auditUnmount(inst.manifest?.id, auditBefore);
   }
 
   /* ---- 主题适配：可重复执行（切换主题后要重算） ----

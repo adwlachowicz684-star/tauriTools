@@ -41,6 +41,7 @@
     "test:tooltip": "node tooltip-test.mjs",
     "test:xss": "node xss-test.mjs",
     "test:invoke-policy": "node invoke-policy-test.mjs",
+    "test:unmount-audit": "node unmount-audit-test.mjs",
     "test:window-action": "node window-action-test.mjs",
     "scan:invoke": "node scripts/scan-invoke.mjs",
     "typecheck": "tsc --noEmit",
