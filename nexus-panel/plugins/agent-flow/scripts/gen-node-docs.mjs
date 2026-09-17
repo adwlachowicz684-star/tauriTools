@@ -13,15 +13,28 @@
  * 前三次都是"漏改一处"，第四次直接让 AI 拼装失败。
  * 所以这份文档**只能**从代码派生，且要有测试盯着一致。
  *
- * ================= 三层结构（像 skill）=================
+ * ================= 结构（像 skill）=================
  *
- *   docs/README.md              分类索引 —— 只给分类与控件名，外加
- *                               "产出/接受"（决定能不能接的关键判据）
- *   docs/nodes/<kind>.md        控件层 —— 说明、能力、何时用、坑
- *   docs/nodes/<kind>.params.md 参数层 —— 完整参数表、用法示例
+ *   docs/README.md              统一索引 —— 五类可拖用的东西都在这里
+ *   docs/nodes/<kind>.md        节点说明层：分类、产出/接受、能力、坑
+ *   docs/nodes/<kind>.params.md 节点参数层：完整参数表 + 用法
+ *   docs/cards/<group>.md       参数卡片组：管哪些字段、用在哪些节点
+ *   docs/reuse/*.md             复用件：模块 / 自定义预设 / 默认值
  *
- * 分三跳的理由：不用一次加载全部。AI 在第一层就能做连接判断
- * （产出/接受都在索引里），只有真要用某个控件时才进第三层取参数。
+ * 分层的理由：不用一次加载全部。AI 在第一层就能做连接判断
+ * （产出/接受都在索引里），只有真要用某个控件时才进下一层取参数。
+ *
+ * ================= 收录的五类 =================
+ *
+ * 除了节点，还有四样也是"能拖出来用的"，一并收录 —— 用户可以不用，
+ * 但不能没有，而且它们不占多少上下文：
+ *
+ *   参数卡片   一组参数（如某个仓库地址），拖用后脱钩
+ *   模块       多个节点编成的组合，改库全体跟着变
+ *   自定义预设 一个配好的节点，从侧栏拖出来用
+ *   节点默认值 决定新建的同类节点长什么样
+ *
+ * 其中「模块」与「自定义预设」最容易混淆，文档里专门做了对照。
  *
  * 用法：bash scripts/build-tests.sh && node scripts/gen-node-docs.mjs
  */
@@ -31,6 +44,9 @@ import path from 'node:path';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const OUT = '/tmp/aftest';          // build-tests.sh 的产物目录
 const DOCS = path.join(ROOT, 'docs');
+const NODES_DIR = path.join(DOCS, 'nodes');
+const CARDS_DIR = path.join(DOCS, 'cards');
+const REUSE_DIR = path.join(DOCS, 'reuse');
 
 const spec = await import(path.join(OUT, 'nodeSpec.mjs'));
 const req = await import(path.join(OUT, 'nodeRequires.mjs'));
@@ -104,7 +120,292 @@ for (const f of defFiles) {
   });
 }
 
+/*
+ * ================= 参数卡片组 =================
+ *
+ * 收录理由：卡片也是"能拖出来用的" —— 拖到节点上就套用一组参数。
+ * 用户可以把当前值存成卡片，之后从面板或卡片库里选。
+ *
+ * 数据来自 nodes/cardGroups.ts 的 registerCardGroup(...)，
+ * 加上各 defs 里 meta.cardGroups 的反向关联（哪些节点能用这组）。
+ */
+function collectCardGroups() {
+  const src = fs.readFileSync(path.join(ROOT, 'nodes', 'cardGroups.ts'), 'utf-8');
+  const groups = [];
+
+  // 逐个 `const X_GROUP: CardGroupDef = { ... };`
+  const blocks = src.split(/const\s+\w+_GROUP\s*:\s*CardGroupDef\s*=\s*\{/).slice(1);
+  for (const b of blocks) {
+    const g = {
+      group: (b.match(/group:\s*'([^']+)'/) ?? [])[1],
+      label: (b.match(/label:\s*'([^']+)'/) ?? [])[1],
+      name: (b.match(/name:\s*'([^']+)'/) ?? [])[1],
+      keys: [...(b.match(/keys:\s*\[([^\]]+)\]/) ?? ['', ''])[1].matchAll(/'([^']+)'/g)].map((m) => m[1]),
+    };
+    if (!g.group) continue;
+
+    // 注释里的说明：取块之前紧邻的 /** ... */（更贴近人写的意图）
+    const idx = src.indexOf(b.slice(0, 60));
+    const before = src.slice(Math.max(0, idx - 700), idx);
+    const cm = [...before.matchAll(/\/\*\*([\s\S]*?)\*\//g)].pop();
+    g.desc = cm
+      ? cm[1].split('\n').map((l) => l.replace(/^\s*\*\s?/, '').trim()).filter(Boolean).join(' ')
+      : '';
+
+    /*
+     * validate 的失败文案 = "什么情况下这张卡片不能用"。
+     *
+     * 匹配到块结尾（下一个顶层字段或块结束）为止，而不是找分号 ——
+     * 箭头函数体常以逗号结尾（\`validate: (v) => (... ? null : '...'),\`），
+     * 按分号找会什么都匹配不到。
+     */
+    const vIdx = b.indexOf('validate:');
+    if (vIdx >= 0) {
+      let cut = b.indexOf('\n  };', vIdx);
+      if (cut < 0) cut = b.indexOf('\n};', vIdx);
+      if (cut < 0) cut = b.length;
+      g.invalid = b.slice(vIdx, cut).replace(/\s+/g, ' ').trim();
+    } else {
+      g.invalid = null;
+    }
+
+    // 反向关联：哪些节点声明支持这组
+    g.usedBy = [];
+    for (const f of fs.readdirSync(path.join(ROOT, 'nodes', 'defs'))) {
+      const ds = fs.readFileSync(path.join(ROOT, 'nodes', 'defs', f), 'utf-8');
+      const cg = ds.match(/cardGroups:\s*\[([^\]]+)\]/);
+      if (!cg) continue;
+      const list = [...cg[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+      if (!list.includes(g.group)) continue;
+      const dk = ds.match(/dataKind:\s*'([^']+)'/)?.[1];
+      const lab = ds.match(/label:\s*'([^']+)',\s*\n\s*color/)?.[1];
+      if (dk) g.usedBy.push({ kind: dk, label: lab ?? dk });
+    }
+    groups.push(g);
+  }
+  return groups;
+}
+
+/* ================= 复用件（模块 / 预设 / 默认值）================= */
+/*
+ * 这三样都是**用户运行时创建**的，没有内置清单 ——
+ * 所以文档不列具体条目（列了立刻过期），只说明：
+ * 结构长什么样、怎么用、以及它们之间容易混淆的区别。
+ */
+function writeReuse() {
+  fs.mkdirSync(REUSE_DIR, { recursive: true });
+
+  fs.writeFileSync(path.join(REUSE_DIR, 'module.md'), `# 模块 — 多个节点编成的一组
+
+> 自动生成，不要手改。源文件：\`engine/modules.ts\`
+
+[← 回到索引](../README.md)
+
+## 它是什么
+
+把画布上多个节点编成一个可复用的模块，之后从侧栏「自定义」分组
+直接拖出来用。模块**有自己的节点类型** \`module\`。
+
+## 结构
+
+\`\`\`ts
+type ModuleDef = {
+  id: string;
+  name: string;
+  color: string;              // 默认 #f59e0b
+  nodes: Record<string, unknown>[];  // 内部节点（已剥离运行时状态）
+  edges: ModuleEdge[];
+  createdAt: number;
+};
+\`\`\`
+
+## 接口：入口与出口（自动推导，不用手工标）
+
+**入口** = 模块内没有上游的内部节点
+**出口** = 模块内没有下游的内部节点
+
+由内部结构推导，加删节点时接口自动跟着变 ——
+不会出现"手工标了入口但那个节点已经删了"这种对不上的情况。
+
+连线时：外部边接到入口；多入口时连到每个入口；
+模块接模块是笛卡尔积。
+
+## 改了会怎样（这是最容易搞混的地方）
+
+| 改哪里 | 结果 |
+|---|---|
+| 改模块库里的定义 | **所有实例跟着变** |
+| 改某个实例内部的节点 | 该实例**脱钩**成独立副本，不再跟随 |
+
+「库是库、实例是实例」 —— 与参数卡片、自定义预设是同一套语义。
+
+## 执行时
+
+展开成内部节点参与拓扑，日志能看到内部每一步、出错能定位到具体节点。
+内部节点 id 加实例前缀（\`inst__A\`），内部模板 \`{{A.output}}\`
+会自动改写成 \`{{inst__A.output}}\`。
+
+## 注意
+
+- 模块编辑是**借用主画布**做的：进入时把模块内容载入画布，改完存回。
+  编辑期间不要切换画布标签 —— 切换会把模块内容当成另一个画布存走。
+- 折叠只是隐藏，**节点照常执行**。
+`);
+
+  fs.writeFileSync(path.join(REUSE_DIR, 'custom-preset.md'), `# 自定义节点预设 — 一个配好的节点
+
+> 自动生成，不要手改。源文件：\`engine/customPresets.ts\`
+
+[← 回到索引](../README.md)
+
+## 它是什么
+
+把「某个已存在的节点配好一份参数」存成侧栏可复用的条目。
+它与基础类型**共用 node.type**，所以执行器、卡片、属性面板全部自动继承。
+
+## 结构
+
+\`\`\`ts
+type CustomPreset = {
+  id: string;
+  name: string;            // 允许重名，靠 id 区分
+  baseType: string;        // 基础节点类型，如 'generic-http' / 'task'
+  color?: string;          // 不填则用基础类型的色
+  data: Record<string, unknown>;  // **已剥离运行时状态**的配置
+  createdAt: number;
+};
+\`\`\`
+
+## 与模块的区别（最容易混淆）
+
+| | 自定义预设 | 模块 |
+|---|---|---|
+| 装的是什么 | **一个**节点 + 一套参数 | **多个**节点 + 它们之间的连线 |
+| node.type | 复用基础类型的 type | 有自己的 \`module\` 类型 |
+| 能存连线 | 不能 | 能 |
+
+简单说：预设是"配好的一个积木"，模块是"编好的一组积木"。
+
+## 存的时候会剥掉什么
+
+- 运行时字段：\`status\` / \`output\` / \`error\` / 所有 \`last*\` 前缀
+- 显示与布局：\`size\` / \`stackParent\` / \`stackCollapsed\`
+- 内联密钥：\`token\` / \`llm.apiKey\` / \`config.token\`
+
+**剥运行时的理由**：不剥的话，把跑过的 HTTP 节点存成预设，
+之后每次拖出来的新节点都带着上一次的 \`status='success'\` 和旧 output ——
+看起来"已经跑完了"，实际一次都没跑。
+
+**剥密钥的理由**：预设明文存 localStorage，不能当密钥仓库用。
+凭据引用（\`credentialId\`）会保留，它只是个 id。
+
+## 导入时会校验
+
+基础节点在本机不存在就跳过，并带回原因（"本机没有「xxx」这种节点"）——
+硬塞进去侧栏会出现一个点了没反应的条目，那比不显示更糟。
+同 id 视为同一条走更新，重复导入不会堆副本。
+`);
+
+  fs.writeFileSync(path.join(REUSE_DIR, 'defaults.md'), `# 节点默认值 — 新建节点长什么样
+
+> 自动生成，不要手改。源文件：\`engine/nodeDefaults.ts\`
+
+[← 回到索引](../README.md)
+
+## 它是什么
+
+属性面板的「设为默认」把当前节点的参数存成这类节点的默认值，
+之后**新建**的同类节点都用这套值。已有节点不受影响。
+
+严格说它不是"能拖出来的积木"，但它决定新建节点长什么样，
+所以一并收录。
+
+## 按 preset.key 存，不按 node.type
+
+这一点很关键：任务节点有两个变体（WorkBuddy / TraeCode），
+侧栏是两条独立预设，靠 \`preset.init()\` 写入不同的 \`cli\`。
+
+若按 type 存一份默认，给 WorkBuddy 变体设的默认会**连带把
+TraeCode 变体的 cli 也改掉** —— 而用户根本没碰过那个变体。
+
+存的时候反查节点属于哪条预设（type 相同 + \`init()\` 写进去的字段
+都与当前 data 一致）。改过那些字段的节点不属于任何预设，回落到 \`node.type\`。
+
+## 叠加顺序
+
+\`create() → init() → defaults()\`
+
+默认放**最后**盖。反过来会被出厂值盖掉。
+
+## 存之前剥三类字段
+
+1. **运行时**（status / output / error / last*）—— 不剥的话新建节点
+   带着 \`status='success'\` 和旧输出，看起来"已经跑完了"
+2. **显示与布局**（size / stackParent / stackCollapsed）
+   —— 尤其 \`stackParent\`：不剥的话每个新建节点都"嵌合"到一个
+   不存在的父节点上，引擎把它转成边，**新节点莫名跑不起来**
+3. **内联密钥**（token / llm.apiKey / config.token）——
+   默认值明文存 localStorage，不能当密钥仓库用
+
+## 存储键
+
+\`agent-flow.node-defaults.v1\`
+`);
+}
+
+/* ================= 生成卡片页 ================= */
+function writeCards(groups) {
+  fs.mkdirSync(CARDS_DIR, { recursive: true });
+  for (const g of groups) {
+    let s = `# ${g.label}（${g.group}）
+
+> 自动生成，不要手改。源文件：\`nodes/cardGroups.ts\`
+
+[← 回到索引](../README.md)
+
+## 它管哪些字段
+
+${g.keys.map((k) => `- \`${k}\``).join('\n')}
+
+改其中任一字段 → 节点脱钩成「自定义」。
+
+## 说明
+
+${g.desc || '（无额外说明）'}
+
+## 能用在哪些节点
+
+${g.usedBy.length ? g.usedBy.map((u) => `- [\`${u.kind}\`](../nodes/${u.kind}.md)${u.label !== u.kind ? ` — ${u.label}` : ''}`).join('\n') : '（当前没有节点声明支持这组）'}
+
+拖到节点上时会校验：节点必须**声明支持**这个组，否则拒绝并说明原因。
+`;
+
+    if (g.invalid) {
+      s += `
+## 什么情况下这张卡片不能用
+
+校验规则：\`${g.invalid}\`
+
+返回非空即拒绝 —— 这是为了挡住"看着能拖、套上去是空的"这类错配。
+`;
+    }
+
+    s += `
+## 语义
+
+卡片是**模板库**，节点上的是**实例**：
+
+- 点卡片 → 深拷贝一份值进节点
+- 之后改节点上的字段 → 该组自动脱钩成「自定义」，卡片本身不变
+- 删掉正在用的卡片 → 节点降级为「自定义」，值保留
+`;
+    fs.writeFileSync(path.join(CARDS_DIR, `${g.group}.md`), s);
+  }
+}
+
 /* ================= 组装 ================= */
+const cards = collectCardGroups();
+
 const blocks = spec.blockCatalog();
 const byKind = new Map(blocks.map((b) => [b.kind, b]));
 
@@ -192,17 +493,23 @@ for (const b of blocks) {
   (byCat.get(cat) ?? byCat.set(cat, []).get(cat)).push(b);
 }
 
-let idx = `# 控件索引
+let idx = `# 可拖用的东西 — 统一索引
 
 > 自动生成，**不要手改**。改代码后跑：
 > \`bash scripts/build-tests.sh && node scripts/gen-node-docs.mjs\`
 
-这是**第一层**：只有分类与控件清单，外加「产出 / 接受」
-——这两项是决定两个控件能不能接的判据，所以放在索引里，
-不用进到第三层才知道。
+这是**第一层**。收录五类能拖出来用的东西：
 
-要看某个控件的说明 → 点进 \`nodes/<kind>.md\`
-要拿它的参数 → 再进 \`nodes/<kind>.params.md\`
+| 类别 | 装的是什么 | 入口 |
+|---|---|---|
+| **节点** | 一个积木（${blocks.length} 种） | 下面按分类的表 |
+| **参数卡片** | 一组参数（如某个仓库地址） | [卡片](#参数卡片)（${cards.length} 组） |
+| **模块** | 多个节点编成的组合 | [module](reuse/module.md) |
+| **自定义预设** | 一个配好的节点 | [custom-preset](reuse/custom-preset.md) |
+| **节点默认值** | 决定新建节点长什么样 | [defaults](reuse/defaults.md) |
+
+后三样是**用户运行时创建**的，没有内置清单，
+所以这里只给「怎么用」的说明，不列具体条目（列了立刻过期）。
 
 `;
 
@@ -229,6 +536,29 @@ for (const cat of order) {
   idx += '\n';
 }
 
+idx += `## 参数卡片
+
+一组参数存成卡片，拖到节点上就套用。改了节点会**脱钩**成「自定义」。
+
+| 卡片组 | 管哪些字段 | 能用在 |
+|---|---|---|
+${cards.map((g) => `| [${g.label}](cards/${g.group}.md) | ${g.keys.map((k) => `\`${k}\``).join(', ')} | ${g.usedBy.map((u) => `\`${u.kind}\``).join(', ') || '—'} |`).join('\n')}
+
+拖到节点上会校验三件事：组已注册、节点声明支持这个组、值通过 validate。
+
+## 复用件
+
+| 名字 | 装的是什么 | 与另一个的区别 |
+|---|---|---|
+| [module](reuse/module.md) | **多个**节点 + 连线 | 与预设的区别：模块能存连线、有自己的 \`module\` 类型 |
+| [custom-preset](reuse/custom-preset.md) | **一个**节点 + 一套参数 | 与模块的区别：预设复用基础类型的 type，不能存连线 |
+| [defaults](reuse/defaults.md) | 新建节点的默认参数 | 不是能拖的积木，但它决定新建节点长什么样 |
+
+模块与预设都遵循「**库是库、实例是实例**」：改库 → 所有实例跟着变；
+改实例 → 该实例脱钩。
+
+`;
+
 idx += `## 模板变量
 
 | 写法 | 含义 |
@@ -253,7 +583,9 @@ ${Object.entries(spec.CAPABILITY_SIGNATURES).map(([k, v]) => `| \`${k}\` | \`${v
 `;
 
 /* ================= 第二、三层：每个控件 ================= */
-fs.mkdirSync(path.join(DOCS, 'nodes'), { recursive: true });
+fs.mkdirSync(NODES_DIR, { recursive: true });
+fs.mkdirSync(CARDS_DIR, { recursive: true });
+fs.mkdirSync(REUSE_DIR, { recursive: true });
 let n = 0;
 for (const b of blocks) {
   const d = (defOf[b.kind] ?? [])[0];
@@ -313,7 +645,7 @@ ${b.producesDesc ?? '（无说明）'}
   }
 
   s += `\n---\n\n[← 回到索引](../README.md)\n`;
-  fs.writeFileSync(path.join(DOCS, 'nodes', `${b.kind}.md`), s);
+  fs.writeFileSync(path.join(NODES_DIR, `${b.kind}.md`), s);
 
   /* ---- 第三层：参数详情 ---- */
   let p = `# ${b.kind} — 参数与使用方式
@@ -358,9 +690,12 @@ ${b.producesDesc ?? '（无说明）'}
 手工拼 \`{ kind: '${b.kind}' }\` 会缺默认字段 ——
 ${b.hiddenParams.length ? `本控件尤其要注意 ${b.hiddenParams.map((h) => `\`${h.key}\``).join(' / ')}，它不在面板字段里。` : '本控件没有隐藏字段，但用 create() 仍是推荐做法。'}
 `;
-  fs.writeFileSync(path.join(DOCS, 'nodes', `${b.kind}.params.md`), p);
+  fs.writeFileSync(path.join(NODES_DIR, `${b.kind}.params.md`), p);
   n++;
 }
 
+writeCards(cards);
+writeReuse();
+
 fs.writeFileSync(path.join(DOCS, 'README.md'), idx);
-console.log(`✅ 已生成 docs/：1 个索引 + ${n} 个控件（各含说明页与参数页）`);
+console.log(`✅ 已生成 docs/：统一索引 + ${n} 个节点（各 2 页）+ ${cards.length} 个卡片组 + 3 个复用件说明`);
