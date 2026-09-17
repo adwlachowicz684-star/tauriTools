@@ -1764,3 +1764,49 @@ input.mono, textarea.mono {
 .insp-size-btn.on {
   color: var(--af-fg); border-color: var(--af-accent); background: var(--af-raised);
 }
+
+
+/* ---------------- 嵌合（Scratch 式上下吸附）---------------- */
+/*
+ * 嵌合的两块之间不留缝隙（STACK_GAP = 0），靠下面这些改动看起来像咬合：
+ * 上方块压掉下圆角与下边框，下方块压掉上圆角，
+ * 于是两块拼在一起是一条连续的直筒。
+ */
+.node-card.is-stack-top {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom-color: transparent;
+}
+.node-card.is-stacked {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  margin-top: -1px;   /* 压掉两块之间的双边框 */
+}
+/*
+ * 下方块顶部加一道浅凹槽，模仿积木的咬合口。
+ * 用 inset 阴影而不是边框：不占布局，不会让卡片高度变化。
+ */
+.node-card.is-stacked::before {
+  content: ''; position: absolute; left: 8px; right: 8px; top: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--af-line) 15%, var(--af-line) 85%, transparent);
+}
+.node-card { position: relative; }
+
+/* 串顶的折叠按钮与串长标记 */
+.stack-bar {
+  display: flex; align-items: center; gap: 5px;
+  margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--af-line);
+  font-size: 10px; color: var(--af-dim);
+}
+.stack-bar-btn {
+  border: 1px solid var(--af-line); border-radius: 4px; cursor: pointer;
+  background: transparent; color: var(--af-dim); font-family: inherit;
+  font-size: 10px; padding: 0 6px;
+  transition: color var(--af-dur-fast), border-color var(--af-dur-fast);
+}
+.stack-bar-btn:hover { color: var(--af-fg); border-color: var(--af-accent); }
+.stack-count {
+  font-variant-numeric: tabular-nums;
+  padding: 0 5px; border-radius: 999px;
+  background: var(--af-raised); color: var(--af-dim);
+}

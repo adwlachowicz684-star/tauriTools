@@ -179,6 +179,17 @@ export type RunOptions = {
    */
   playAudioReader?: (path: string) => Promise<string>;
   input?: string;
+  /**
+   * 带位置的节点列表，用于嵌合（Scratch 式上下吸附）的输出传递。
+   *
+   * 为什么单独传而不是让引擎从 graph 里推：graph 是执行用的最小结构
+   * （只有 id + data），执行顺序与坐标都靠它；而嵌合要用到测量的高度，
+   * 那是画布层才有的信息。由调用方（App）补给即可。
+   *
+   * 不传时嵌合节点拿不到 {{input}} / {{chain.output}} —— 但嵌合产生的
+   * 虚拟边是调用方拼进 edges 的，所以**执行顺序与失败传播照常工作**。
+   */
+  stackNodes?: Array<{ id: string; position: { x: number; y: number }; data?: Record<string, unknown> }>;
   onEvent: (e: RunEvent) => void;
   signal?: AbortSignal;
 };

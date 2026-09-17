@@ -32,6 +32,13 @@ export type TaskFileOutput = {
 export type TaskNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   label: string;
   cli: CliKind;
   /** 节点内编辑的提示词，支持 {{nodeId.output}} 引用上游输出 */
@@ -243,6 +250,13 @@ export function ruleConditions(rule: ConditionRule): ConditionItem[] {
 export type ConditionNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'condition';
   label: string;
   /** 从上到下依次判定，命中第一条即走对应分支 */
@@ -416,6 +430,13 @@ export function makeConditionNode(id: string, partial: Partial<ConditionNodeData
 export type TriggerNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'trigger';
   label: string;
   /**
@@ -478,6 +499,13 @@ export type ParallelRule = {
 export type ParallelNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'parallel';
   label: string;
   mode: ParallelMode;
@@ -573,6 +601,13 @@ export type LoopOnError = 'continue' | 'stop';
 export type LoopNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'loop';
   label: string;
   mode: LoopMode;
@@ -666,6 +701,13 @@ export const HTTP_METHODS: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELET
 export type GenericHttpNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'generic-http';
   label: string;
   /** 请求地址，支持 {{模板变量}} */
@@ -722,6 +764,13 @@ export const EXTRACT_MODE_META: Record<ExtractMode, { label: string; spec: strin
 export type ExtractNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'extract';
   label: string;
   mode: ExtractMode;
@@ -738,6 +787,13 @@ export type ExtractNodeData = {
 export type FsNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'fs';
   label: string;
   op: FsOp;
@@ -805,6 +861,13 @@ export type BiliMode =
 export type UpdateNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'update';
   source: UpdateSource;
   label: string;
@@ -889,6 +952,13 @@ export type GithubStrategy = 'api' | 'atom' | 'cli';
 export type GithubUpdateNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'github-update';
   label: string;
   owner: string;
@@ -915,6 +985,13 @@ export type GithubUpdateNodeData = {
 export type GithubPushNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'github-push';
   label: string;
   owner: string;
@@ -1040,6 +1117,13 @@ export const IMAGE_SOURCE_META: Record<ImageSource, { label: string; hint: strin
 export type OcrNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'ocr';
   label: string;
   /** 大模型配置（与翻译节点共用） */
@@ -1068,6 +1152,13 @@ export type OcrNodeData = {
 export type TranslateNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'translate';
   label: string;
   llm: LlmConfig;
@@ -1212,6 +1303,13 @@ export function makeGenericHttpNode(id: string, partial: Partial<GenericHttpNode
 export type WaitNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'wait';
   label: string;
   /** 等待毫秒数。支持模板，如 {{上游.output}} */
@@ -1225,6 +1323,13 @@ export type WaitNodeData = {
 export type LogNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'log';
   label: string;
   /** 支持模板。留空则输出上游内容 */
@@ -1256,6 +1361,13 @@ export const BEEP_PRESET_META: Record<BeepPreset, { label: string; hint: string 
 export type BeepNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'beep';
   label: string;
   preset: BeepPreset;
@@ -1270,6 +1382,13 @@ export type BeepNodeData = {
 export type PlayAudioNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'play-audio';
   label: string;
   /** 支持模板，如 {{上游.output}} */
@@ -1285,6 +1404,13 @@ export type PlayAudioNodeData = {
 export type ClockNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'clock';
   label: string;
   /**
@@ -1301,6 +1427,13 @@ export type ClockNodeData = {
 export type ConstNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'const';
   label: string;
   /** 固定输出。支持模板（模板在运行时求值，所以"常量"也可以是动态拼出来的） */
@@ -1398,6 +1531,13 @@ export function makeClockNode(id: string, partial: Partial<ClockNodeData> = {}):
 export type ModuleNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
+  /**
+   * 嵌合在哪个节点下面（Scratch 式上下吸附）。
+   * null / 缺省表示不在串里。关系只存在子节点上，见 engine/stack.ts 的说明。
+   */
+  stackParent?: string | null;
+  /** 串顶节点折叠了整条串（只是隐藏，不影响执行） */
+  stackCollapsed?: boolean;
   kind: 'module';
   label: string;
   /** 跟随的模块 id；脱钩后为空串 */

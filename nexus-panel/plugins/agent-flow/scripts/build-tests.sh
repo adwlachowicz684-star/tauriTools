@@ -70,6 +70,7 @@ $S engine/runnerRegistry.ts "$OUT/runnerRegistry.mjs" \
   --import-map ./runners/extract=./runners_extract.mjs \
   --import-map ./runners/wait=./runners_wait.mjs --import-map ./runners/log=./runners_log.mjs --import-map ./runners/beep=./runners_beep.mjs --import-map ./runners/playAudio=./runners_playAudio.mjs --import-map ./runners/clock=./runners_clock.mjs --import-map ./runners/const=./runners_const.mjs >/dev/null
 $S engine/runner.ts "$OUT/runner.mjs" \
+   --import-map ./stack=./stack.mjs \
    --import-map ./runnerRegistry=./runnerRegistry.mjs \
    --import-map ./llm=./llm.mjs \
    --import-map ./files=./files.mjs \
@@ -98,6 +99,7 @@ $S engine/modules.ts "$OUT/modules.mjs" \
    --import-map ./duplicate=./duplicate.mjs >/dev/null
 $S engine/nodeValidate.ts "$OUT/nodeValidate.mjs" \
    --import-map ../types=./types.mjs >/dev/null
+$S engine/stack.ts "$OUT/stack.mjs" >/dev/null
 # paramCards / duplicate 是纯逻辑模块，单独生成
 $S engine/paramCards.ts "$OUT/paramCards.mjs" \
    --import-map ./duplicate=./duplicate.mjs >/dev/null

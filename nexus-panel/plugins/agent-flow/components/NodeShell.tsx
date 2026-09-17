@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { getDef } from '../nodes/registry';
 import { validateNode, LEVEL_COLOR, LEVEL_TEXT, type IssueLevel } from '../engine/nodeValidate';
 import { normalizeSize, type NodeSize } from '../types';
+import { stackParentOf } from '../engine/stack';
 
 /**
  * 节点卡片外壳 —— 10 种画布卡片共用的骨架。
@@ -80,10 +81,11 @@ export function NodeShell({
    */
   const issue = validateNode({ data });
   const dot: IssueLevel = issue.level;
+  const stacked = stackParentOf({ data: data as Record<string, unknown> }) !== null;
 
   return (
     <div
-      className={`node-card size-${size} ${className ?? ''} status-${status} ${selected ? 'is-selected' : ''}`}
+      className={`node-card size-${size} ${stacked ? 'is-stacked' : ''} ${className ?? ''} status-${status} ${selected ? 'is-selected' : ''}`}
       style={{ borderLeftColor: color }}
     >
       {hasTarget ? <Handle type="target" position={Position.Left} /> : null}
