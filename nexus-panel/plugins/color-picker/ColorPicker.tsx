@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import {
-  hexToRgb, rgbToHex, normalizeHex, hexToHsv, hsvToRgb, hsvToHex, type Hsv, PRESET_COLORS,
+  hexToRgb, rgbToHex, normalizeHex, hexToHsv, hsvToRgb, hsvToHex, type Hsv, PRESET_COLORS, DEFAULT_COLOR,
 } from './color';
 import { SvPanel, HueBar } from './SvPanel';
 import { useNexus } from '../../src/nexus-react';
@@ -33,7 +33,6 @@ const MAX_CUSTOM = 24;
  * 只是给用户一个能看的起点：直接拖面板就是在它基础上调，
  * 不必先盲选一个预设色块再微调。
  */
-const DEFAULT_COLOR = '#7C8CFF';
 
 /** 色盘：预设 24 色 + 自定义常用色（可增删持久化）+ RGB/HEX 输入 + 吸管 + 恢复默认 */
 export function ColorPicker({

@@ -38,6 +38,18 @@ export const PRESET_COLORS = [
   '#9D34DA', '#F472B6', '#B4B9C2', '#7C8698',
 ];
 
+/**
+ * 未设标签色时色盘的**起始色**。
+ *
+ * 它不代表"卡片是这个颜色"（没设色就是没设色，预览块上会标「默认」），
+ * 只是给用户一个能看的起点：直接拖面板就是在它基础上调，
+ * 不必先盲选一个预设色块再微调。
+ *
+ * 放在这里是因为内联用法与服务用法必须用**同一个**起始色 ——
+ * 否则同一个"默认"在两个入口是两个颜色。
+ */
+export const DEFAULT_COLOR = '#7C8CFF';
+
 /** 归一化成 `#RRGGBB`（大写）；支持省略 `#` 与三位简写；非法返回 null。 */
 export function normalizeHex(hex: string): string | null {
   const s = (hex || '').trim();

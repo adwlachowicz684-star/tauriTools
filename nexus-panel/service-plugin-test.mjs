@@ -14,6 +14,21 @@ import { execSync } from 'node:child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const src = (p) => fs.readFileSync(path.join(HERE, p), 'utf8');
+
+/** 剥掉注释，只留代码。
+ * 为什么需要：源码里"提到某个字符串"（比如注释里写"此前是 #3E63DD"）
+ * 与"代码里真的用了它"是两回事。断言必须只匹配后者，
+ * 否则会出现"改了代码但注释还在 → 断言仍红"或反过来"注释蒙混过关"。
+ * 逐行正则治不了块注释跨行，所以用状态机。 */
+const stripComments = (t) => {
+  let out = '', i = 0;
+  while (i < t.length) {
+    if (t[i] === '/' && t[i + 1] === '*') { i += 2; while (i < t.length && !(t[i] === '*' && t[i + 1] === '/')) i += 1; i += 2; continue; }
+    if (t[i] === '/' && t[i + 1] === '/') { while (i < t.length && t[i] !== '\n') i += 1; continue; }
+    out += t[i]; i += 1;
+  }
+  return out;
+};
 const has = (p) => fs.existsSync(path.join(HERE, p));
 
 const hostSrc = src('js/host.js');
@@ -267,8 +282,8 @@ console.log('\n=== 10g. 服务模态也能实时预览 ===');
 t('pick 支持 previewEvent', /previewEvent/.test(mainTsx));
 t('onChange 里真的 emit 了',
   /emitFn\(current\.previewEvent, hex\)/.test(mainTsx));
-t('pick 把 ctx.emit 传进会话',
-  /openSession\(args, ctx\?\.emit\)/.test(mainTsx));
+t('pick 把 ctx.emit 与 ctx.store 传进会话',
+  /openSession\(args, ctx\?\.emit, ctx\?\.store\)/.test(mainTsx));
 /* 不给就不发 —— 避免每个服务调用都往总线上广播 */
 t('未给 previewEvent 时不广播',
   /if \(current\?\.previewEvent && current\?\.emitFn\)/.test(mainTsx));
@@ -281,6 +296,51 @@ t('宿主收到 publish 会广播',
   /case 'publish':[\s\S]{0,120}bus\.emit/.test(src('js/host.js')));
 t('宿主会把订阅的事件发回 iframe',
   /type: 'event', event: d\.event, payload/.test(src('js/host.js')));
+
+console.log('\n=== 10h. 服务与内联「体感一致」===');
+/*
+ * 目标：别的插件调服务，跟 project-group 内联用，看到的东西要一样。
+ * 下面每一条都是一个"不一样就会被用户察觉"的点。
+ */
+const cpMain = src('plugins/color-picker/main.tsx');
+
+/* ① 起始色：两边必须同一个常量。
+    此前内联 #7C8CFF、服务 #3E63DD —— 同一个"默认"两个颜色。 */
+t('DEFAULT_COLOR 在共享模块里', /export const DEFAULT_COLOR/.test(sharedColor));
+/* 注释里提到 '#3E63DD' 是说明历史，不算 —— 必须剥注释后看代码 */
+t('服务不再硬编码别的起始色',
+  !/'#3E63DD'/.test(stripComments(cpMain)) && /DEFAULT_COLOR/.test(cpMain));
+t('内联色盘也不再自带起始色定义',
+  !/const DEFAULT_COLOR = /.test(src('plugins/color-picker/ColorPicker.tsx')));
+
+/* ② 自定义常用色要持久化。React 化时丢过一次 ——
+    不存的话收藏的色关掉面板就没了，而内联是存进配置里的。 */
+t('服务会持久化自定义色', /storeSlot\?\.set\('custom'/.test(cpMain));
+t('服务会读取已存的自定义色', /store\.get\('custom'/.test(cpMain));
+
+/* ③ "未设置颜色"要显示「默认」标记，不能被归一化成一个具体色。
+   必须钉**两处具体的赋值/渲染**，只钉 /showDefaultTag/ 是不行的：
+   类型定义、useState 里也会出现这个词（我第一版就是这么写的，
+   破坏时删掉赋值那行，断言仍被别处的出现蒙混 → 假绿）。 */
+t('服务保留未设置态：把 isUnset 传进 view',
+  /showDefaultTag: isUnset/.test(cpMain));
+t('服务保留未设置态：真正影响 ColorPicker 的 value',
+  /value=\{view\.showDefaultTag \? null : view\.initial\}/.test(cpMain));
+
+/* ④ 吸管、RGB 输入框这些能力（已在 10e 验证共享组件自带）——
+    这里只钉"服务没有把它们关掉" */
+t('服务没有传 compact 关掉功能', !/compact/.test(cpMain));
+
+console.log('\n=== 10i. 搬迁没留下悬空引用 ===');
+/* dialogs.tsx 曾残留 api={api} —— 组件已不接受这个 prop，
+   传了是 TS 错（也是"以为传了其实没用"的错觉来源）。 */
+const dlgSrc2 = src('plugins/project-group/components/dialogs.tsx');
+const pickerUse = dlgSrc2.slice(dlgSrc2.indexOf('<ColorPicker'));
+t('dialogs 不再传 api（组件已不接受）', !/api=\{api\}/.test(pickerUse));
+/* bootIframePlugin 的 d.ts 曾只有 2 个参数，而 JS 实现有 3 个 ——
+   声明落后于实现会让"其实能跑"的代码看起来是错的。 */
+t('bootIframePlugin 声明含第三个参数',
+  /serviceMethods\?:/.test(src('js/plugin-sdk.d.ts')));
 
 console.log('\n=== 10f. SDK 类型覆盖 services ===');
 const sdkDts = src('js/plugin-sdk.d.ts');

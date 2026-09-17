@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { bootServiceReactPlugin } from '../../src/nexus-react';
-import { PRESET_COLORS, normalizeHex, hexToHsv } from './color';
+import { PRESET_COLORS, DEFAULT_COLOR, normalizeHex, hexToHsv } from './color';
 import { ColorPicker } from './ColorPicker';
 import './style.css';
 
@@ -44,13 +44,17 @@ type Session = {
    所以用一个可变的"当前会话"槽位做桥 ——
    服务同一时刻只处理一次调用，不存在并发问题。 */
 let current: Session | null = null;
-let setView: ((s: { open: boolean; initial: string; custom: string[] }) => void) | null = null;
+let setView: ((s: { open: boolean; initial: string; custom: string[]; showDefaultTag?: boolean }) => void) | null = null;
+/* ctx.store 由 openSession 注入到模块级槽位。
+   方法表是静态注册的，拿不到 React 组件内的 ref，
+   所以与 setView 一样用模块级变量中转。 */
+let storeSlot: { set: (k: string, v: unknown) => Promise<boolean> } | null = null;
 
 /** 服务面板：只在有会话时渲染色盘，其余时间留空（容器平时移出视口） */
 function ServicePanel() {
-  const [view, setLocalView] = useState<{ open: boolean; initial: string; custom: string[] }>({
-    open: false, initial: '#3E63DD', custom: [],
-  });
+  const [view, setLocalView] = useState<{
+    open: boolean; initial: string; custom: string[]; showDefaultTag?: boolean;
+  }>({ open: false, initial: DEFAULT_COLOR, custom: [] });
   const hexRef = useRef<string | null>(view.initial);
   const customRef = useRef<string[]>(view.custom);
 
@@ -64,7 +68,7 @@ function ServicePanel() {
   return (
     <div className="cp-shell">
       <ColorPicker
-        value={view.initial}
+        value={view.showDefaultTag ? null : view.initial}
         customColors={view.custom}
         onChange={(hex) => {
           hexRef.current = hex;
@@ -75,7 +79,13 @@ function ServicePanel() {
             current.emitFn(current.previewEvent, hex);
           }
         }}
-        onSaveCustom={(colors) => { customRef.current = colors; }}
+        onSaveCustom={(colors) => {
+          customRef.current = colors;
+          /* 持久化！React 化时丢过一次这个能力 ——
+             不存的话用户收藏的色关掉面板就没了，
+             而内联用法是会存进配置里的，两边体感就不一样了。 */
+          storeSlot?.set('custom', colors).catch(() => {});
+        }}
         onLog={() => { /* 服务里没有日志面板，静默 */ }}
       />
       <div className="cp-actions">
@@ -111,20 +121,46 @@ function ServicePanel() {
 }
 
 /** 打开会话：返回一个在用户点确定/取消时才 settle 的 Promise */
-function openSession(
-  args: { initial?: string; custom?: string[]; allowNull?: boolean; previewEvent?: string } = {},
+async function openSession(
+  args: { initial?: string | null; custom?: string[]; allowNull?: boolean; previewEvent?: string } = {},
   emitFn?: ((e: string, p: unknown) => void) | null,
+  store?: { get: (k: string, d?: unknown) => Promise<unknown>; set: (k: string, v: unknown) => Promise<boolean> } | null,
 ) {
-  const initial = normalizeHex(args.initial || '') || '#3E63DD';
+  /* 调用方没给起始色时用共享的 DEFAULT_COLOR ——
+   此前这里硬编码 '#3E63DD'，与内联的 '#7C8CFF' 不一致：
+   同一个"默认"在两个入口是两个颜色。 */
+  const initial = normalizeHex(args.initial || '') || DEFAULT_COLOR;
+  /*
+   * 起始值要能表达"没设色"。
+   *
+   * 内联用法直接传 null，ColorPicker 内部用它作两件事：
+   *   · 预览块上显示「默认」标记
+   *   · 面板起点仍用 DEFAULT_COLOR（不然用户没得可拖）
+   *
+   * 服务此前把 null 归一化成一个具体色，于是「默认」标记不显示 ——
+   * 同一个"未设置"状态，两个入口长得不一样。
+   */
+  const isUnset = args.initial === null || args.initial === undefined;
   const custom = Array.isArray(args.custom) ? args.custom : [];
-  setView?.({ open: true, initial, custom });
+  /* 没传 custom 就读持久化的 —— 让"我的常用色"与内联一样跨调用保留。
+     内联是存进插件配置里的，服务用 ctx.store，行为对齐。 */
+  const saved = store ? ((await store.get('custom', [])) as string[]) || [] : [];
+  const effective = custom.length ? custom : saved;
+  storeSlot = store ?? null;
+
+  setView?.({
+    open: true,
+    initial,
+    custom: effective,
+    showDefaultTag: isUnset,
+  });
   return new Promise((resolve, reject) => {
     /* 必须先建会话再开面板 ——
        反过来（先开再建）会有一帧窗口，用户极快点确定会拿到 null。 */
     current = {
       resolve: resolve as (v: unknown) => void,
       reject: reject as (e: Error) => void,
-      initial, custom, allowNull: !!args.allowNull,
+      initial, custom: effective, allowNull: !!args.allowNull,
       previewEvent: args.previewEvent, emitFn: emitFn ?? null,
     };
   });
@@ -148,7 +184,7 @@ bootServiceReactPlugin(
      * 传 previewEvent 可实时接收拖动中的颜色变化。
      */
     async pick(args = {}, ctx?: any) {
-      return openSession(args, ctx?.emit);
+      return openSession(args, ctx?.emit, ctx?.store);
     },
 
     /** 纯计算：归一化，非法返回 null */
@@ -158,6 +194,6 @@ bootServiceReactPlugin(
     async presets() { return [...PRESET_COLORS]; },
 
     /** 取当前色的 HSV（调用方想自己画格子时用） */
-    async hsv({ color } = {}) { return hexToHsv(normalizeHex(color) || '#3E63DD'); },
+    async hsv({ color } = {}) { return hexToHsv(normalizeHex(color) || DEFAULT_COLOR); },
   },
 );

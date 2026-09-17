@@ -323,7 +323,6 @@ export function StyleDialog({
           {inherited && <span className="p-muted">（当前继承自所链接的项目组，改后即为自有颜色）</span>}
         </label>
         <ColorPicker
-          api={api}
           value={cl}
           customColors={customColors}
           onChange={setCl}

@@ -127,6 +127,12 @@ export function h(
  * iframe 插件引导
  * bootIframePlugin(mainFn)              —— 只有主视图
  * bootIframePlugin(mainFn, settingsFn)  —— 额外提供设置面板
+ * bootIframePlugin(mountFn, settingsFn, serviceMethods) —— 服务插件专用，
+ *   第三个参数注册方法表，供宿主 ctx.services.call 调进来。
+ *
+ * 注意：第三个参数**JS 实现早就支持**，但声明里一直没写，
+ * 导致 TS 侧（nexus-react.tsx 的 bootServiceReactPlugin）传 3 个参数报
+ * TS2554。声明落后于实现会让"其实能跑"的代码看起来是错的。
  */
 export const SHELL_SHORTCUTS: string[];
 export function parseCombo(combo: string): { key: string; mod: boolean; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean } | null;
@@ -135,7 +141,9 @@ export function isMac(): boolean;
 
 export function bootIframePlugin(
   mountFn: (ctx: PluginContext) => Promise<(() => void) | void> | ((() => void) | void),
-  settingsFn?: (ctx: PluginContext) => Promise<(() => void) | void> | ((() => void) | void),
+  settingsFn?: (ctx: PluginContext) => Promise<(() => void) | void> | ((() => void) | void) | null,
+  /** 服务插件（kind:'service'）的方法表；普通插件不传 */
+  serviceMethods?: Record<string, (args: any, ctx: PluginContext) => Promise<any> | any>,
 ): Promise<PluginContext>;
 
 export function scopeCss(css: string, scope: string): string;
