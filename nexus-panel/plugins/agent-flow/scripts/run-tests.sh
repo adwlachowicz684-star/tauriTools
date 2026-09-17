@@ -55,6 +55,7 @@ for f in tests/*.test.ts; do
     --import-map ../engine/canvasConfig=../canvasConfig.mjs \
     --import-map ../engine/mcp=../mcp.mjs \
     --import-map ../engine/scriptExport=../scriptExport.mjs \
+    --import-map ../engine/mcpTools=../mcpTools.mjs \
     --import-map ../components/Sidebar=../Sidebar.mjs >/dev/null
 done
 
