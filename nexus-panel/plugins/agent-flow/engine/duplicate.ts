@@ -31,30 +31,12 @@ export type DupEdge = {
  *
  * 与 engine/customPresets.ts 共用同一套口径（那边用于存预设）。
  */
-const RUNTIME_KEYS = ['status', 'output', 'error'];
-
-/**
- * 去掉运行时状态，只留配置。
- *
- * 用「三个固定键 + last* 前缀」的黑名单而不是白名单：
- * 各节点配置字段差异太大，白名单既长又容易漏；
- * 而运行时字段的命名是收敛的（都是 last 开头，或就那三个）。
- * 副作用：往后新增的运行时字段，只要沿用 last* 命名就自动被清掉。
- *
- * 注意它**不**补 status/output/error 的默认值 ——
- * 调用方应当先用 def.create(newId) 铺一遍全字段默认值，再叠这里的结果。
- * 这样默认值只有一处（节点定义），不会在这里抄第二份。
+/*
+ * 运行时字段清单收口在 engine/runtimeKeys.ts —— 全项目只有那一处。
+ * 这里 re-export 是为了让既有 import 不用改，
+ * 但**新代码请直接从 runtimeKeys 引**。
  */
-export function stripRuntime(data: unknown): Record<string, unknown> {
-  const src = (data ?? {}) as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
-  for (const k of Object.keys(src)) {
-    if (RUNTIME_KEYS.indexOf(k) >= 0) continue;
-    if (k.indexOf('last') === 0) continue;
-    out[k] = src[k];
-  }
-  return out;
-}
+export { RUNTIME_KEYS, stripRuntime } from './runtimeKeys';
 
 /**
  * 深拷贝节点数据。

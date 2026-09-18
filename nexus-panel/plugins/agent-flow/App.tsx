@@ -47,7 +47,8 @@ import {
   type GlobalTrigger,
 } from './engine/triggerRegistry';
 import {
-  loadGroups, saveGroups, pruneGroups, nextGroupName, addToGroup, removeFromGroup,
+  loadGroups, saveGroups, pruneGroupsIfChanged, dropEmptyGroups,
+  nextGroupName, addToGroup, removeFromGroup,
   type CanvasGroup,
 } from './engine/canvasGroups';
 import CanvasLibrary from './components/CanvasLibrary';
@@ -622,12 +623,25 @@ export default function App() {
    * 删除画布时必须 pruneGroups —— 不然组里会留着孤儿 id，
    * 界面上显示一个空条目，点它什么也不会发生。
    */
-  const [canvasGroups, setCanvasGroups] = useState<CanvasGroup[]>(() => loadGroups());
+  /*
+   * 加载时清一次空组（dropEmptyGroups）。
+   *
+   * 平时**不能**删空组 —— 会连刚新建的空组一起删掉，
+   * 表现为"点新建组没反应"（见 canvasGroups.pruneGroups 的说明）。
+   */
+  const [canvasGroups, setCanvasGroups] = useState<CanvasGroup[]>(
+    () => dropEmptyGroups(loadGroups()),
+  );
 
   useEffect(() => { saveGroups(canvasGroups); }, [canvasGroups]);
 
   useEffect(() => {
-    setCanvasGroups((gs) => pruneGroups(gs, canvases.map((c) => c.id)));
+    /*
+     * 用 IfChanged 版本：canvases 是高频变化的（编辑一下就变），
+     * 而这个 effect 依赖它 —— 不加守卫的话每次都会 setState，
+     * 进而每次都写一遍 localStorage。
+     */
+    setCanvasGroups((gs) => pruneGroupsIfChanged(gs, canvases.map((c) => c.id)));
   }, [canvases]);
 
   const handleAddGroup = useCallback(() => {

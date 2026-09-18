@@ -1,5 +1,5 @@
 import type { NodeProps } from '@xyflow/react';
-import { NodeShell } from './NodeShell';
+import { NodeShell, NODE_STATUS_TEXT } from './NodeShell';
 
 /**
  * 跨画布相关的三个节点共用的卡片。
@@ -14,10 +14,7 @@ export function CanvasRefNode({ id, type, data, selected }: NodeProps) {
       type={type}
       data={d}
       selected={selected}
-      statusText={{
-        idle: '待运行', running: '运行中', success: '已完成',
-        failed: '已失败', skipped: '已跳过',
-      }}
+      statusText={NODE_STATUS_TEXT}
     >
       <div className="node-brief">{briefOf(type, d)}</div>
     </NodeShell>

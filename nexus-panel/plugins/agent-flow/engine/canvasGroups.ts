@@ -95,16 +95,66 @@ export function removeFromGroup(groups: CanvasGroup[], canvasId: string): Canvas
 }
 
 /**
- * 清理指向已删除画布的成员。
+ * 清理指向已删除画布的成员引用。
  *
  * 删画布时必须调一次 —— 不清的话组里会留着孤儿 id，
  * 界面上显示一个空条目，点它什么也不会发生。
+ *
+ * ================= 为什么不顺手删掉变空的组 =================
+ *
+ * 早期版本会一并删掉"成员清空了的组"，结果**刚新建的空组被立刻删掉**：
+ * 点「新建组」→ 组出现 → 清理 effect 发现它成员为空 → 删掉，
+ * 用户看到的就是"点了没反应"。
+ *
+ * "刚建的、还没拖东西进去的空组"与"成员被删光了的空组"
+ * 从数据上完全一样，分不开。所以只在**加载存档时**做一次清理
+ * （见 dropEmptyGroups），运行时只清引用、不动组的存亡。
+ *
+ * 空组留着是可接受的：界面上能看到，用户自己知道怎么处理。
+ * 而"组凭空消失"是没有任何线索的。
  */
 export function pruneGroups(groups: CanvasGroup[], aliveIds: string[]): CanvasGroup[] {
   const alive = new Set(aliveIds ?? []);
-  return (groups ?? [])
-    .map((g) => ({ ...g, members: (g.members ?? []).filter((x) => alive.has(x)) }))
-    .filter((g) => (g.members ?? []).length > 0 || g.id === '');
+  const out: CanvasGroup[] = [];
+  for (const g of groups ?? []) {
+    const kept = (g.members ?? []).filter((x) => alive.has(x));
+    /*
+     * 成员没变就不换对象 ——
+     * 每次都返回新数组会让调用方的 setState 每次都触发，
+     * 进而每次都写一遍 localStorage。
+     * 画布内容是高频变化的（编辑一下就变），这个 effect 跑得非常勤。
+     */
+    if (kept.length === (g.members ?? []).length) {
+      out.push(g);
+      continue;
+    }
+    out.push({ ...g, members: kept });
+  }
+  return out;
+}
+
+/** 成员没变时返回原数组（引用相等），调用方可用它避免无谓的 setState */
+export function pruneGroupsIfChanged(
+  groups: CanvasGroup[],
+  aliveIds: string[],
+): CanvasGroup[] {
+  const alive = new Set(aliveIds ?? []);
+  let changed = false;
+  const out = (groups ?? []).map((g) => {
+    const kept = (g.members ?? []).filter((x) => alive.has(x));
+    if (kept.length !== (g.members ?? []).length) changed = true;
+    return kept.length === (g.members ?? []).length ? g : { ...g, members: kept };
+  });
+  return changed ? out : groups;
+}
+
+/**
+ * 删掉成员为空的组 —— **只在加载存档时调一次**。
+ *
+ * 运行时调用会删掉刚新建的空组（见 pruneGroups 的说明）。
+ */
+export function dropEmptyGroups(groups: CanvasGroup[]): CanvasGroup[] {
+  return (groups ?? []).filter((g) => (g.members ?? []).length > 0);
 }
 
 /**

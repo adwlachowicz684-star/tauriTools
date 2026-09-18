@@ -1,5 +1,6 @@
 import type { NodeProps } from '@xyflow/react';
 import { NodeShell } from './NodeShell';
+import { getDef } from '../nodes/registry';
 import type { ModuleFlowNode } from '../flowTypes';
 import type { ModuleNodeData } from '../types';
 
@@ -13,6 +14,15 @@ import type { ModuleNodeData } from '../types';
 export function ModuleNode({ id, data, selected }: NodeProps<ModuleFlowNode>) {
   const d = data as ModuleNodeData;
   const detached = !!d.inner;
+  /*
+   * 颜色从注册表取，不在这里硬编码 ——
+   *
+   * 以前这里写死 '#f59e0b'，与 nodes/defs/module.ts 里的 color 是两份。
+   * 改注册表配色时卡片不会跟着变，而**没有任何提示**，
+   * 只会表现为"改了没生效"。
+   * 类型色只有注册表一处真相（其余卡片都是这么做的）。
+   */
+  const base = getDef('module')?.meta.color ?? '#f59e0b';
   return (
     <NodeShell
       id={id}
@@ -20,7 +30,7 @@ export function ModuleNode({ id, data, selected }: NodeProps<ModuleFlowNode>) {
       data={d}
       selected={selected}
       tag="模块"
-      typeColor={detached ? '#94a3b8' : '#f59e0b'}
+      typeColor={detached ? '#94a3b8' : base}
       statusText={{
         idle: detached ? '已脱钩' : '跟随模块库',
       }}
