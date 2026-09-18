@@ -118,6 +118,8 @@ $S engine/mcp.ts "$OUT/mcp.mjs" >/dev/null
 $S engine/mcpTools.ts "$OUT/mcpTools.mjs" >/dev/null
 $S engine/ops.ts "$OUT/ops.mjs" >/dev/null
 $S engine/expr.ts "$OUT/expr.mjs" >/dev/null
+      $S engine/excelBatch.ts "$OUT/excelBatch.mjs" --import-map ./mcpTools=./mcpTools.mjs >/dev/null
+      $S engine/mcpClient.ts "$OUT/mcpClient.mjs" --import-map ./mcpTools=./mcpTools.mjs >/dev/null
 $S engine/table.ts "$OUT/table.mjs" --import-map ./expr=./expr.mjs >/dev/null
 $S engine/mcpStore.ts "$OUT/mcpStore.mjs" --import-map ./kv=./kv.mjs --import-map ./mcpTools=./mcpTools.mjs >/dev/null
 $S engine/canvasConfig.ts "$OUT/canvasConfig.mjs" >/dev/null
