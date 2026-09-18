@@ -47,6 +47,7 @@
     "test:build-entry": "node build-entry-test.mjs",
     "test:service-available": "node service-available-test.mjs",
     "test:native-assets": "node native-assets-test.mjs",
+    "check:dist": "node dist-integrity-test.mjs",
     "scan:admit": "node scripts/scan-admit.mjs",
     "test:window-action": "node window-action-test.mjs",
     "scan:invoke": "node scripts/scan-invoke.mjs",
