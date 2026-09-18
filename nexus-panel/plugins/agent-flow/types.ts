@@ -300,7 +300,12 @@ export type NodeData =
   | OpNodeData
   | VarNodeData
   | StopNodeData
-  | AskNodeData;
+  | AskNodeData
+  /* ---- 表格 ---- */
+  | TableReadNodeData
+  | DeriveNodeData
+  | FilterNodeData
+  | AggNodeData;
 
 /** 算子分类，用于面板里分组展示 */
 export type OpCategory = 'text' | 'empty' | 'flow';
@@ -1784,6 +1789,113 @@ export function makeModuleNode(id: string, partial: Partial<ModuleNodeData> = {}
 
 export function isModule(d: NodeData): d is ModuleNodeData {
   return (d as ModuleNodeData).kind === 'module';
+}
+
+/* ------------------------------------------------------------------ */
+/* 表格（数值推导）                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 表格以 **CSV 文本** 在节点间流动，没有隐藏状态 ——
+ * 理由见 engine/table.ts 文件头。
+ */
+
+export type TableReadNodeData = {
+  size?: NodeSize;
+  stackParent?: string | null;
+  stackCollapsed?: boolean;
+  kind: 'tableRead';
+  label: string;
+  /** CSV / TSV 文件路径 */
+  path: string;
+  /** 分隔符；留空自动判断 */
+  delim?: string;
+  status?: string;
+  output?: string;
+  error?: string;
+};
+
+export type DeriveNodeData = {
+  size?: NodeSize;
+  stackParent?: string | null;
+  stackCollapsed?: boolean;
+  kind: 'derive';
+  label: string;
+  /** 新列名 */
+  newCol: string;
+  /** 公式，用列名直接引用该行的值 */
+  expr: string;
+  /** 列名已存在时是否覆盖 */
+  replace?: boolean;
+  status?: string;
+  output?: string;
+  error?: string;
+};
+
+export type FilterNodeData = {
+  size?: NodeSize;
+  stackParent?: string | null;
+  stackCollapsed?: boolean;
+  kind: 'filter';
+  label: string;
+  /** 条件表达式；结果非 0 的行保留 */
+  cond: string;
+  status?: string;
+  output?: string;
+  error?: string;
+};
+
+export type AggNodeData = {
+  size?: NodeSize;
+  stackParent?: string | null;
+  stackCollapsed?: boolean;
+  kind: 'agg';
+  label: string;
+  col: string;
+  op: 'sum' | 'avg' | 'min' | 'max' | 'count';
+  status?: string;
+  output?: string;
+  error?: string;
+};
+
+export function makeTableReadNode(id: string, partial: Record<string, unknown> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'tableRead', label: '读表格', path: '', delim: '',
+      status: 'idle', output: '', error: '', ...partial,
+    } as TableReadNodeData,
+  };
+}
+
+export function makeDeriveNode(id: string, partial: Record<string, unknown> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'derive', label: '推导列', newCol: '', expr: '', replace: false,
+      status: 'idle', output: '', error: '', ...partial,
+    } as DeriveNodeData,
+  };
+}
+
+export function makeFilterNode(id: string, partial: Record<string, unknown> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'filter', label: '筛选行', cond: '',
+      status: 'idle', output: '', error: '', ...partial,
+    } as FilterNodeData,
+  };
+}
+
+export function makeAggNode(id: string, partial: Record<string, unknown> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'agg', label: '汇总', col: '', op: 'sum',
+      status: 'idle', output: '', error: '', ...partial,
+    } as AggNodeData,
+  };
 }
 
 /* ------------------------------------------------------------------ */

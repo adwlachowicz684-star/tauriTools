@@ -1908,6 +1908,23 @@ export default function App() {
       return res.text;
     };
 
+    /*
+     * 读表格执行器：走 Rust 的 fs_op（浏览器里没有磁盘权限）。
+     *
+     * 用 read 操作读文本，不复用 fsExecutor ——
+     * 后者要 node.data 是 FsNodeData（带 op 字段），
+     * 而表格节点的 data 形状不同，硬套会拿到 undefined 的 op。
+     */
+    const tableReader = async (path: string): Promise<string> => {
+      const res = await fileOp({
+        op: 'read', path, target: '', content: '',
+        recursive: false, force: false, dryRun: false,
+        maxBytes: 20 * 1024 * 1024, exts: [],
+      });
+      if (!res.ok) throw new Error(res.text || `读不到文件：${path}`);
+      return res.text;
+    };
+
     /* 网络抓取执行器：更新检测节点用，经 Tauri 的 http 插件发出 */
     const fetcher: Fetcher = async (_node, url, o) => {
       const res = await fetchText(url, {
@@ -2004,7 +2021,7 @@ export default function App() {
 
     const result = await runGraph(graph, {
       concurrency, executor, fsExecutor, fetcher, llmCaller, imageReader,
-      githubFetch, githubPush, httpRequester, credentials, playAudioReader,
+      githubFetch, githubPush, httpRequester, credentials, playAudioReader, tableReader,
       input: effectiveInput, onEvent, signal: controller.signal,
       /*
        * 人工输入：跑到该节点时弹框等人填。
