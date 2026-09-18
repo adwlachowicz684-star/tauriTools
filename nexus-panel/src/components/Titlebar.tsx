@@ -29,14 +29,24 @@ export default function Titlebar({
     });
   };
 
+  /*
+   * 标题栏拖拽 —— 与 index.html（原生外壳）**必须保持一致**。
+   *
+   * ="deep"：整个子树都能拖。裸属性只有点击目标本身才拖，
+   * 点在 logo / 品牌文字 / 标题这些子元素上会失效。
+   * 按钮不用额外标 ="false"：drag.js 自动跳过可点击元素。
+   *
+   * 两个外壳同一套写法，改一处就要改另一处 —— 否则会出现
+   * "这个外壳能拖、那个不能"，很难往这方面想。
+   */
   return (
-    <header id="titlebar" data-tauri-drag-region>
-      <div className="tb-brand" data-tauri-drag-region>
+    <header id="titlebar" data-tauri-drag-region="deep">
+      <div className="tb-brand">
         <div className="tb-logo">◈</div>
         <span>Nexus Panel</span>
       </div>
       <span className="tb-title">{title}</span>
-      <div className="tb-spacer" data-tauri-drag-region />
+      <div className="tb-spacer" />
       <div className="tb-btns">
         <button
           ref={themeBtn}

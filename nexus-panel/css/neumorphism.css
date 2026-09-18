@@ -228,6 +228,18 @@ body {
   box-shadow: 0 4px 10px var(--sh-dark);
   z-index: var(--z-sticky);
   position: relative;
+  /*
+   * 标题栏整体可拖（data-tauri-drag-region="deep"），
+   * 拖动时若不禁用选中，会把「Nexus Panel」品牌文字和窗口标题
+   * 一起刷成蓝色选区 —— 松手后还留着。
+   * 按钮文字本来也不需要选中，整条标题栏禁用是安全的。
+   *
+   * 不要用 -webkit-app-region: drag 代替：那会让区域内所有
+   * 子元素失去点击能力，标题栏六个按钮会全部失效。
+   * Tauri 2 走 JS 方案（drag.js），不需要这个 CSS。
+   */
+  user-select: none;
+  -webkit-user-select: none;
 }
 .tb-brand {
   display: flex;

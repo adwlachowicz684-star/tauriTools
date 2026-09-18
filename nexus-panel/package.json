@@ -45,6 +45,7 @@
     "test:owned": "node owned-test.mjs",
     "test:owned-timer": "node owned-timer-test.mjs",
     "test:file-claims": "node file-claims-test.mjs",
+    "test:titlebar-drag": "node titlebar-drag-test.mjs",
     "test:plugin-admit": "node plugin-admit-test.mjs",
     "test:build-entry": "node build-entry-test.mjs",
     "test:service-available": "node service-available-test.mjs",
