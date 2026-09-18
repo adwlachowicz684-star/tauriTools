@@ -77,7 +77,9 @@ import {
 } from './engine/mcpRegistry';
 import {
   collectServers, serversChanged, serversToDrop, type ServerRef,
+  type McpToolFetcher,
 } from './engine/mcpStore';
+import { listTools, transportOf, stdioSupported } from './engine/mcpClient';
 import {
   makeCanvas, nextCanvasName, renameCanvas, removeCanvas, nextActiveId,
   updateCanvasContent, updateCanvasConfig, canvasConfigOf, sortForDisplay, toMeta,
@@ -188,6 +190,37 @@ function applyThemeMode(mode: ThemeMode) {
   document.documentElement.dataset.afMode = mode;
   try { localStorage.setItem(THEME_MODE_KEY, mode); } catch { /* 忽略 */ }
 }
+
+/**
+ * MCP 协议实现：把 engine/mcpClient 的 HTTP 传输接到刷新流程上。
+ *
+ * 放在**模块级**而不是组件里 —— 它不依赖任何 state，
+ * 放组件里会因为每次渲染重建而让 useCallback 的依赖数组被迫带上它。
+ *
+ * 用 postJson 是因为它已经处理了 Tauri 与浏览器两条路径，
+ * 不必为 MCP 再开一条通道。
+ *
+ * 只支持 HTTP 传输：stdio 要起子进程 + 双向管道，那是 Rust 侧的活。
+ * 目前 stdioSupported() 为 false，只填 command 的服务会拿到一条
+ * 明确的"还没接上"，而不是静默失败。
+ */
+const mcpFetcher: McpToolFetcher = async (server) => {
+  if (transportOf(server) === 'stdio' && !stdioSupported()) {
+    throw new Error(
+      `MCP 服务「${server.name}」用的是 stdio 传输（command 方式），还没接上 —— 请改用 HTTP 地址`,
+    );
+  }
+  const tools = await listTools(
+    { name: server.name, url: server.url, command: server.command },
+    async (url, body, headers, timeoutSec) => await postJson(url, body, headers, timeoutSec),
+    20,
+  );
+  return tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+  }));
+};
 
 export default function App() {
   const init = useMemo(loadCanvases, []);
@@ -784,7 +817,7 @@ export default function App() {
        * 配置刚改时 canvases 还没更新完，用传进来的这份才准。
        */
       const servers = overrideServers ?? collectServers(canvases);
-      const r = await bootRefresh(servers, mcpBlueprints);
+      const r = await bootRefresh(servers, mcpBlueprints, mcpFetcher);
       if (r.outcome.ok) rebuildMcpGroups(mcpSidebarGroups(r.outcome.list));
       pushLog(r.message);
     } finally {

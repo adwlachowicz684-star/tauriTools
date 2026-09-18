@@ -60,6 +60,8 @@ for f in tests/*.test.ts; do
     --import-map ../engine/ops=../ops.mjs \
     --import-map ../engine/expr=../expr.mjs \
     --import-map ../engine/table=../table.mjs \
+    --import-map ../engine/excelBatch=../excelBatch.mjs \
+    --import-map ../engine/mcpClient=../mcpClient.mjs \
     --import-map ../components/Sidebar=../Sidebar.mjs >/dev/null
 done
 
