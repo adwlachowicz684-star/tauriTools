@@ -50,6 +50,14 @@
  * 选择依赖已经存在的解析器，比引入新依赖更可靠。
  */
 import ts from 'typescript';
+/*
+ * 模式感知：`window.xxx =` 是否算污染，取决于插件跑在哪个文档里。
+ * 同页（module）与宿主同文档 → 真残留；沙箱（iframe）是它自己的
+ * window，随 iframe 移除而消失 → **不算污染**。
+ * 不区分的话会把 iframe 插件内部的正常写法全报成 review（实测 14 条，
+ * 全是误报）。详见 plugin-modes.js 头部。
+ */
+import { parsePluginModes, mayRunAsModule, pluginIdFromPath } from './plugin-modes.js';
 
 /* ------------------------------------------------------------------ */
 /* 规则表                                                              */
@@ -133,6 +141,17 @@ function hasPrototype(node) {
  */
 export function scanCode(code, opts = {}) {
   const file = opts.file || 'inline.js';
+  /*
+   * `sameDoc`：这段代码是否运行在**宿主文档**里。
+   *
+   *   true  —— 同页（module）：污染的是主文档，卸不下 → 报 review
+   *   false —— 沙箱（iframe）：是它自己的文档，随 iframe 消失 → 不报
+   *
+   * **默认 true（保守）**：拿不到模式信息时按"会污染"处理。
+   * 宁可多报一条让人去确认，也不能漏掉真残留 ——
+   * 这个方向的错误代价是不对称的。
+   */
+  const sameDoc = opts.sameDoc !== false;
   const deny = [];
   const review = [];
   const push = (arr, rule, node, detail) => {
@@ -180,7 +199,7 @@ export function scanCode(code, opts = {}) {
             push(deny, 'history-navigate', node, path);
           } else if (/^location\.(assign|replace)$/.test(path)) {
             push(deny, 'location-navigate', node, path);
-          } else if (path.includes('[?]') && isGlobalRoot(callee)) {
+          } else if (sameDoc && path.includes('[?]') && isGlobalRoot(callee)) {
             /*
              * 根是宿主全局的动态调用（window[x].define(...)）。
              *
@@ -189,11 +208,11 @@ export function scanCode(code, opts = {}) {
              * 噪音会淹没队列，等于没有队列。
              */
             push(review, 'unresolvable-call', node, path);
-          } else if (/^(window|globalThis)\.(setInterval|setTimeout)$/.test(path)) {
+          } else if (sameDoc && /^(window|globalThis)\.(setInterval|setTimeout)$/.test(path)) {
             push(review, 'timer-via-owned', node, path);
-          } else if (/^document\.(body|documentElement)\.appendChild$/.test(path)) {
+          } else if (sameDoc && /^document\.(body|documentElement)\.appendChild$/.test(path)) {
             push(review, 'portal-via-owned', node, path);
-          } else if (/^window\.open$/.test(path)) {
+          } else if (sameDoc && /^window\.open$/.test(path)) {
             push(review, 'window-open', node, path);
           }
         }
@@ -211,7 +230,7 @@ export function scanCode(code, opts = {}) {
           const path = renderMember(left);
           if (path && /^((window|document|globalThis|top)\.)?location(\.href)?$/.test(path)) {
             push(deny, 'location-navigate', node, path);
-          } else if (isGlobalRoot(left)) {
+          } else if (sameDoc && isGlobalRoot(left)) {
             const dynamic = path?.includes('[?]');
             push(review, dynamic ? 'global-write-dynamic' : 'global-write', node, path || '?');
           }
@@ -244,8 +263,20 @@ function scriptKindOf(file) {
  * 不需要先转成 JS —— 少一步就少一处"转换失败被当成没问题"的风险。
  */
 export function scanFileText(code, file = '') {
-  return scanCode(code, { file });
+  /*
+   * 自动模式判定：从路径推出插件 id，再查 registry 里的 type。
+   *
+   * 用 `mayRunAsModule`（可能跑同页）而不是"必然同页" ——
+   * 三元写法 `noBuild ? 'module' : 'iframe'` 意味着无构建下就是同页，
+   * 那种模式下确实会污染，必须报。
+   */
+  const id = pluginIdFromPath(file);
+  const sameDoc = id ? mayRunAsModule(id, MODES) : true;
+  return scanCode(code, { file, sameDoc });
 }
+
+/** 模块级缓存：registry 解析一次即可，不用每个文件重读 */
+const MODES = parsePluginModes();
 
 /** 准入判定：只要命中 deny 就拒绝 */
 export function admit(result) {

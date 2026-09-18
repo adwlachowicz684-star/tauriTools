@@ -140,7 +140,57 @@ console.log('\n=== 9. 现实：当前全部插件无 deny ===');
     /解析失败 \$\{errors\.length\} 个/.test(out));
 }
 
-console.log('\n=== 10. 局限已写明（不夸大能力）===');
+console.log('\n=== 10. 模式感知：同一段代码放不同插件下判定不同 ===');
+/*
+ * 这是本轮（N56）的核心。
+ *
+ * 扫描器必须知道插件跑在哪个文档里：
+ *   同页（module）→ 污染主文档 → 报
+ *   沙箱（iframe）→ 是它自己的 window → **不报**
+ * 第一版不区分，把 14 条 iframe 内部的正常写法全报了。
+ *
+ * 但"改成不报"必须证明**不是一刀切** ——
+ * 所以下面的断言同时验证"该报的仍报"。
+ */
+{
+  const pm = await import('./js/plugin-modes.js');
+  const code = 'window.leak = 1; document.body.appendChild(document.createElement("div"));'
+    + ' window.setInterval(() => {}, 100);';
+
+  const nHome = mod.scanFileText(code, 'plugins/home/x.js').review.length;
+  const nMind = mod.scanFileText(code, 'plugins/mindmap/x.js').review.length;
+
+  t('home（同页 module）→ 报（真会污染宿主）', nHome > 0);
+  t('mindmap（沙箱 iframe）→ 不报（污染的是它自己的文档）', nMind === 0);
+  t('settings（module | iframe 双模）→ 报（无构建下确实是同页）',
+    mod.scanFileText(code, 'plugins/settings/x.js').review.length > 0);
+
+  t('mayRunAsModule 对 iframe 插件返回 false',
+    pm.mayRunAsModule('mindmap') === false);
+  t('mayRunAsModule 对 module 插件返回 true',
+    pm.mayRunAsModule('home') === true);
+  t('未知插件**保守按同页**处理（宁可多报不漏）',
+    pm.mayRunAsModule('brand-new-plugin') === true);
+  t('未知插件的污染代码会被报出来',
+    mod.scanFileText(code, 'plugins/brand-new-plugin/x.js').review.length > 0);
+  t('非 plugins/ 路径默认按同页（宿主代码更要受约束）',
+    mod.scanFileText(code, 'js/host.js').review.length > 0);
+
+  console.log('\n=== 10b. 红区不受模式影响 ===');
+  t('同页插件的 customElements.define 被拒',
+    mod.scanFileText("customElements.define('x', class{});", 'plugins/home/x.js').deny.length === 1);
+  t('沙箱插件的 customElements.define **同样**被拒',
+    mod.scanFileText("customElements.define('x', class{});", 'plugins/mindmap/x.js').deny.length === 1);
+  t('原型修改不受模式影响',
+    mod.scanFileText('Array.prototype.foo = 1;', 'plugins/mindmap/x.js').deny.length === 1);
+  /*
+   * 为什么红区不看模式：这些行为即便在 iframe 里也是"不该碰宿主"的信号
+   * （location.href 会把**主窗口**导航走），而且将来该插件若迁成同页
+   * 就是真事故。提前拦住的成本远低于事后排查。
+   */
+}
+
+console.log('\n=== 11. 局限已写明（不夸大能力）===');
 const admit_src = src('js/plugin-admit.js');
 t('写明解构后调用绕得过', /解构后调用绕得过/.test(admit_src));
 t('写明只在构建/CI 期跑（esbuild 进不了前端产物）',
