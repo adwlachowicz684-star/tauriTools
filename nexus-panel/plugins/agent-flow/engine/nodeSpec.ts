@@ -87,6 +87,14 @@ export type PortKind =
    * 插在链中间会截断数据流，是最容易踩的坑。
    */
   | 'mark'
+  /**
+   * 表格（CSV 文本）。
+   *
+   * 单独一个种类是因为它**只能被表格类节点消费**：
+   * 把一张表接到翻译节点上没有任何意义，而按 'text' 判定的话
+   * 这种接法会被判成合法，用户会拿到一串 CSV 原文而不知所以。
+   */
+  | 'table'
   /** 透传上游（日志标记）。上游没数据时等于空 */
   | 'any'
   /** 不产出任何内容 */
@@ -150,6 +158,7 @@ export const PORT_LABEL: Record<PortKind, string> = {
   bool: '是/否',
   files: '文件',
   mark: '状态标记（非数据）',
+  table: '表格（CSV）',
   any: '透传上游',
   none: '无输出',
 };
@@ -320,6 +329,12 @@ export const SPECS: Record<string, NodeSpec> = {
   var: S('any', 'any', '写模式：写入的值；读模式：变量的值'),
   stop: S('any', 'any', '透传上游（只是让流程停下）'),
   ask: S('text', 'any', '人填的内容'),
+
+  // 表格
+  tableRead: S('table', 'none', '表格内容（CSV 文本）'),
+  derive: S('table', ['table'], '加了新列的表格'),
+  filter: S('table', ['table'], '筛选后的表格'),
+  agg: S('text', ['table'], '汇总出来的一个数'),
 
   // 组合
   module: S('any', 'any', '模块内部最后一个节点的输出'),

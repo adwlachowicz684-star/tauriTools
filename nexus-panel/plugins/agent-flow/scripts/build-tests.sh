@@ -44,8 +44,10 @@ RUNNER_IMPORTS="\
   --import-map ../runnerKit=./runnerKit.mjs \
   --import-map ../sleep=./sleep.mjs \
   --import-map ../beep=./beep.mjs \
-  --import-map ../clock=./clock.mjs"
-for f in task trigger condition parallel loop fs ocr translate update githubUpdate githubPush genericHttp extract wait log beep playAudio clock const join gate throttle timeout retry; do
+  --import-map ../clock=./clock.mjs \
+  --import-map ../ops=./ops.mjs \
+  --import-map ../table=./table.mjs"
+for f in task trigger condition parallel loop fs ocr translate update githubUpdate githubPush genericHttp extract wait log beep playAudio clock const join gate throttle timeout retry ops table; do
   [ -f "engine/runners/$f.ts" ] && $S "engine/runners/$f.ts" "$OUT/runners_$f.mjs" $RUNNER_IMPORTS >/dev/null
 done
 $S engine/extract.ts "$OUT/extract.mjs" >/dev/null
@@ -75,7 +77,9 @@ $S engine/runnerRegistry.ts "$OUT/runnerRegistry.mjs" \
   --import-map ./runners/gate=./runners_gate.mjs \
   --import-map ./runners/throttle=./runners_throttle.mjs \
   --import-map ./runners/timeout=./runners_timeout.mjs \
-  --import-map ./runners/retry=./runners_retry.mjs >/dev/null
+  --import-map ./runners/retry=./runners_retry.mjs \
+  --import-map ./runners/ops=./runners_ops.mjs \
+  --import-map ./runners/table=./runners_table.mjs >/dev/null
 $S engine/runner.ts "$OUT/runner.mjs" \
    --import-map ./stack=./stack.mjs \
    --import-map ./runnerRegistry=./runnerRegistry.mjs \
@@ -112,6 +116,9 @@ $S engine/topo.ts "$OUT/topo.mjs" >/dev/null
 $S engine/scriptExport.ts "$OUT/scriptExport.mjs" --import-map ./topo=./topo.mjs >/dev/null
 $S engine/mcp.ts "$OUT/mcp.mjs" >/dev/null
 $S engine/mcpTools.ts "$OUT/mcpTools.mjs" >/dev/null
+$S engine/ops.ts "$OUT/ops.mjs" >/dev/null
+$S engine/expr.ts "$OUT/expr.mjs" >/dev/null
+$S engine/table.ts "$OUT/table.mjs" --import-map ./expr=./expr.mjs >/dev/null
 $S engine/mcpStore.ts "$OUT/mcpStore.mjs" --import-map ./kv=./kv.mjs --import-map ./mcpTools=./mcpTools.mjs >/dev/null
 $S engine/canvasConfig.ts "$OUT/canvasConfig.mjs" >/dev/null
 $S engine/blockApi.ts "$OUT/blockApi.mjs" --import-map ./nodeSpec=./nodeSpec.mjs >/dev/null

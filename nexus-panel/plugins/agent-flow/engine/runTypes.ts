@@ -168,6 +168,14 @@ export type RunOptions = {
    */
   credentials?: Credential[];
   /**
+   * 读表格文件（读表格节点用）。
+   *
+   * 走 Rust 的 fs_op —— 浏览器里没有磁盘权限。
+   * 不提供时读表格节点会明确失败，不做模拟：
+   * "假装读到一张空表"会让下游算出一堆 0，比报错难查得多。
+   */
+  tableReader?: (path: string) => Promise<string>;
+  /**
    * 等人填内容（「人工输入」节点用）。
    *
    * 返回 null = 用户取消。不提供时该节点会明确失败并说明原因 ——
