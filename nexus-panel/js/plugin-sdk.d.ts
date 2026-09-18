@@ -101,6 +101,17 @@ export interface PluginContext {
     call(id: string, method: string, args?: Record<string, any>): Promise<any>;
     list(): Promise<Array<{ id: string; name: string; mounted: boolean }>>;
     /*
+     * 服务**当前是否可用**（返回 Promise<boolean>）。
+     *
+     * 为什么要先问一句：color-picker 这类服务是 React/TSX 写的
+     * （requiresBuild: true），**无构建模式下会被过滤掉**，直接调用会 throw。
+     * 调用方可以据此降级，例如退化成 <input type="color">。
+     *
+     * 统一返回 Promise 而不是 boolean：沙箱插件要走桥接（异步），
+     * 两种模式写法必须一致，否则调用方要分叉。
+     */
+    available(id: string): Promise<boolean>;
+    /*
      * 统一约定（三个内置服务一致，第三方服务也建议照此）：
      *   resolve(值)   —— 用户选了
      *   resolve(null) —— **用户取消**（正常流程，不抛异常）
@@ -146,6 +157,8 @@ export interface PluginContext {
       presets(): Promise<string[]>;
       /** 取当前色的 HSV（想自己画格子时用） */
       hsv(color?: string): Promise<{ h: number; s: number; v: number }>;
+      /** 当前环境能否用（**无构建模式下不可用**，先问再调） */
+      available(): Promise<boolean>;
     };
     /** 图标选择服务 */
     icon: {
@@ -153,6 +166,8 @@ export interface PluginContext {
       browse(keyword?: string): Promise<{ name: string; url: string } | null>;
       list(): Promise<string[]>;
       url(name: string): Promise<string>;
+      /** 当前环境能否用 */
+      available(): Promise<boolean>;
     };
     /** Markdown 编辑服务 */
     md: {
@@ -160,6 +175,8 @@ export interface PluginContext {
       edit(text?: string, title?: string): Promise<string | null>;
       /** 只要渲染结果 */
       render(text: string): Promise<string>;
+      /** 当前环境能否用 */
+      available(): Promise<boolean>;
     };
   };
 

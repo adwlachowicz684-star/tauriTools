@@ -8,7 +8,7 @@
 |---|---|---|
 | `resolve(值)` | 用户选了 | 用这个值 |
 | `resolve(null)` | **用户取消**（正常流程） | 判空即可 |
-| `reject(错误)` | 真出错（没装/挂载失败/超时/崩溃） | 可选 try/catch |
+| `reject(错误)` | 真出错（没装/不可用/挂载失败/超时/崩溃） | 可选 try/catch |
 
 **取消不抛异常**是关键。取消是最常见的结果之一，用异常表达会逼得每个调用方都写 `try/catch`，漏了就是 unhandled rejection。
 
@@ -38,6 +38,52 @@ if (text !== null) save(text);
 
 - 不需要先挂载服务（宿主懒加载，谁被调才挂谁）
 - 不需要处理浮层显示/收回（宿主按 `interactive` 自动做，且在 `finally` 里收回）
+- 不需要为**取消**写 try/catch
+
+## 服务不可用时怎么降级
+
+**取色服务（color-picker）是用 React + TSX 写的**（与 project-group 的内联色盘
+共用同一份组件），因此 `requiresBuild: true`。
+
+而宿主在无构建模式下会执行 `plugins.filter(p => !p.requiresBuild)` ——
+**该服务整个不存在**，直接调 `pick()` 会 throw。
+
+这时错误信息会明确说明原因（不会只说"未找到服务插件"）：
+
+```
+服务「color-picker」需要 Vite 构建（React/TSX 实现），当前是无构建模式不可用。
+调用方请先 ctx.services.available(id) 判断，再自行降级
+```
+
+**先问一句再调**，就能优雅降级：
+
+```js
+if (await ctx.services.color.available()) {
+  const hex = await ctx.services.color.pickHex(cl);
+  if (hex) apply(hex);
+} else {
+  // 降级方案：比如退化成原生 <input type="color">，或干脆不提供取色
+  fallbackColorInput();
+}
+```
+
+三个内置服务都有对应的快捷方式：
+
+```js
+await ctx.services.color.available()
+await ctx.services.icon.available()
+await ctx.services.md.available()
+```
+
+通用的（第三方服务也能用）：
+
+```js
+await ctx.services.available('my-service')
+```
+
+> 统一返回 `Promise<boolean>` 而不是 `boolean` ——
+> 沙箱插件要走桥接（异步），两种挂载模式写法必须一致，
+> 否则调用方要分叉成两套代码。
 - 不需要为「取消」写 try/catch
 
 ## 预设色与自定义色（每个调用方各自独立）

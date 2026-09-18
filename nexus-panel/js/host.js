@@ -186,6 +186,25 @@ export function createBus() {
 }
 
 /* ---------------------------- 注册表 ---------------------------- */
+/*
+ * 最近一次加载的**未过滤**插件清单。
+ *
+ * 为什么需要它：`filterByRuntime` 在无构建模式下会把 requiresBuild 的
+ * 插件（React/TSX 写的，如 color-picker）整个丢掉。于是调用方调
+ * `ctx.services.color.pick()` 时只能得到一句"未找到服务插件" ——
+ * 它无法区分"我 id 拼错了"和"这个服务需要构建、当前模式用不了"。
+ *
+ * 在这里（唯一的清单出口）缓存一份原始清单，就能给出准确原因。
+ * 刻意不改调用方：三处赋值点（host/shell/App）都走 loadRegistry，
+ * 在这一处缓存就不会漏。
+ */
+let lastRawRegistry = [];
+
+/** 未过滤的原始清单（含被运行时过滤掉的），仅供诊断 */
+export function rawRegistry() {
+  return lastRawRegistry;
+}
+
 export async function loadRegistry() {
   let list = [];
   try {
@@ -207,6 +226,7 @@ export async function loadRegistry() {
     const ids = new Set(list.map((p) => p.id));
     list = list.concat(custom.filter((p) => !ids.has(p.id)));
   } catch { /* ignore */ }
+  lastRawRegistry = list;
   return list;
 }
 
@@ -300,12 +320,39 @@ export function createHost(opts = {}) {
     return state.plugins.find((p) => p.id === id && p.kind === 'service');
   }
 
+  /*
+   * 服务不可用时的**准确原因**（可用返回 null）。
+   *
+   * 只在已过滤清单里查不到时才调用，去原始清单里找，区分三种情况：
+   *   ① registry 里根本没有   → null（真·拼错了，用笼统错误）
+   *   ② 有，但不是 service     → 提示 kind 不对
+   *   ③ 有，但 requiresBuild   → **提示需要 Vite 构建，当前是无构建模式**
+   *
+   * ③ 是 N28 的核心：color-picker 是 React + TSX，无构建模式下被
+   *   filterByRuntime 过滤掉。原先只报"未找到服务插件"，调用方
+   *   会以为是自己的问题（去检查 id 拼写），实际是环境限制。
+   */
+  function serviceUnavailableReason(id) {
+    const raw = rawRegistry().find((p) => p.id === id);
+    if (!raw) return null;
+    if (raw.kind !== 'service') {
+      return `插件「${id}」不是服务（kind=${raw.kind || 'app'}），不能通过 ctx.services 调用`;
+    }
+    if (raw.requiresBuild && isNoBuild()) {
+      return `服务「${id}」需要 Vite 构建（React/TSX 实现），当前是无构建模式不可用。`
+        + '调用方请先 ctx.services.available(id) 判断，再自行降级';
+    }
+    return null;
+  }
+
   async function ensureService(id) {
     const existing = services.get(id);
     if (existing) return existing;
 
     const manifest = serviceManifest(id);
-    if (!manifest) throw new Error(`未找到服务插件: ${id}`);
+    if (!manifest) {
+      throw new Error(serviceUnavailableReason(id) || `未找到服务插件: ${id}`);
+    }
 
     const entry = {
       promise: (async () => {
@@ -685,6 +732,17 @@ export function createHost(opts = {}) {
       services: {
         call: (id, method, args) => callService(id, method, args),
         list: () => listServices(),
+        /*
+         * 服务可用性查询（返回 Promise<boolean>）。
+         *
+         * 存在的理由：无构建模式下 color-picker 这类 requiresBuild 的服务
+         * 会被 filterByRuntime 过滤掉，直接调用会 throw。调用方需要先问
+         * 一句再决定降级方案（N28）。
+         *
+         * 刻意返回 Promise 而不是 boolean —— 沙箱插件要走桥接（异步），
+         * 两种模式写法必须一致，否则调用方要分叉。
+         */
+        available: (id) => Promise.resolve(!!serviceManifest(id)),
       },
     });
 
@@ -1125,6 +1183,9 @@ export function createHost(opts = {}) {
         }
         case 'service.list':
           return reply(true, listServices());
+        /* 服务可用性查询（沙箱插件专用通路，同页插件由宿主直接注入） */
+        case 'service.available':
+          return reply(true, !!serviceManifest(payload.id));
         case 'store.all': {
           const out = {}, pre = `nexus:${manifest.id}:`;
           // 逐键 try：一个键坏掉不该让整份配置拿不到（此前会整体抛错）

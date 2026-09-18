@@ -45,6 +45,7 @@
     "test:owned": "node owned-test.mjs",
     "test:plugin-admit": "node plugin-admit-test.mjs",
     "test:build-entry": "node build-entry-test.mjs",
+    "test:service-available": "node service-available-test.mjs",
     "scan:admit": "node scripts/scan-admit.mjs",
     "test:window-action": "node window-action-test.mjs",
     "scan:invoke": "node scripts/scan-invoke.mjs",

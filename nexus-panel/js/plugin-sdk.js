@@ -139,7 +139,19 @@ export function isMac() {
    刻意保持"薄"：只做参数转换，不另起一套语义，也不隐藏 call ——
    调用方随时可以退回通用写法，第三方服务也不受影响。 */
 function withBuiltinShortcuts(services) {
-  const { call, list } = services;
+  const { call, list, available } = services;
+  /*
+   * 每个内置服务都补一个 `available()`。
+   *
+   * 为什么值得单独给：无构建模式下 color-picker（React/TSX,
+   * requiresBuild）会被过滤掉，调用方若直接 pick() 会 throw。
+   * 有了这个就能先问一句再降级：
+   *
+   *   if (!(await ctx.services.color.available())) {
+   *     // 退化成 <input type="color"> 或直接跳过
+   *   }
+   */
+  const whenAvailable = (id) => () => Promise.resolve(available ? available(id) : true);
   return {
     ...services,
     /*
@@ -184,6 +196,8 @@ function withBuiltinShortcuts(services) {
       presets: () => call('color-picker', 'presets'),
       /** 取当前色的 HSV（调用方想自己画格子时用） */
       hsv: (color) => call('color-picker', 'hsv', { color }),
+      /** 当前环境能否用（无构建模式下该服务不可用，见 N28） */
+      available: whenAvailable('color-picker'),
     },
     icon: {
       /** 打开图标浏览面板，返回 { name, url }；取消返回 null */
@@ -192,12 +206,16 @@ function withBuiltinShortcuts(services) {
       list: () => call('icon-picker', 'list'),
       /** 名字 → URL */
       url: (name) => call('icon-picker', 'url', { name }),
+      /** 当前环境能否用 */
+      available: whenAvailable('icon-picker'),
     },
     md: {
       /** 打开编辑面板，返回编辑后的文本；取消返回 null */
       edit: (text, title) => call('md-editor', 'edit', { text, title }),
       /** 只要渲染结果（调用方自己做编辑框时用） */
       render: (text) => call('md-editor', 'render', { text }),
+      /** 当前环境能否用 */
+      available: whenAvailable('md-editor'),
     },
   };
 }
@@ -236,6 +254,12 @@ function buildCtx(base) {
       call: (id, method, args) =>
         transport.request('service.call', { id, method, args }),
       list: () => transport.request('service.list', {}),
+      /*
+       * 沙箱通路：走桥接问宿主。
+       * 与同页那条（宿主直接注入）返回类型一致 —— 都是 Promise<boolean>，
+       * 调用方不用分叉。
+       */
+      available: (id) => transport.request('service.available', { id }),
     }),
     root,                                  // 挂载点：HTMLElement 或 ShadowRoot
     container,                             // 宿主元素（始终在文档流里）
