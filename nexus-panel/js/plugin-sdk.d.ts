@@ -91,6 +91,32 @@ export interface PluginContext {
   };
 
   /**
+   * 文件清单制 —— 声明"这个文件/目录是我产出的"。
+   *
+   * DOM 残留能靠快照差分自动发现，**文件残留发现不了**：文件名不带
+   * 来源信息，无法从磁盘现状反推归属。而卸载要清理就必须先回答归属，
+   * 答错会删掉用户文件 —— 所以只能事前声明。
+   *
+   * 记账在**宿主侧**（插件不可信，不能让它自报"删干净了"）。
+   * claim 失败不抛：那只是"不再被记账"，不该让插件写不了文件。
+   *
+   * 三种方法都返回 Promise —— 沙箱模式走桥接、同页模式宿主直注，
+   * 形状必须一致，否则调用方要按模式分叉。
+   */
+  fs: {
+    /**
+     * 声明归属。重复声明**不会**新增条目（只更新时间），
+     * 所以可以放心地每次写文件都调。
+     * @param meta.kind 'file' | 'dir'，供 UI 展示时区分
+     */
+    claim(path: string, meta?: { kind?: 'file' | 'dir'; note?: string }): Promise<{ ok: boolean; deduped?: boolean; reason?: string }>;
+    /** 本插件声明过的全部路径 */
+    claims(): Promise<{ path: string; kind: string; note: string; at: number }[]>;
+    /** 撤回声明（自己删掉了就用它） */
+    release(path: string): Promise<{ ok: boolean; removed?: number; reason?: string }>;
+  };
+
+  /**
    * 服务插件调用（kind:'service'）。
    *
    * `call` 是通用入口 —— 第三方服务靠它接入，新增服务不用改 SDK。

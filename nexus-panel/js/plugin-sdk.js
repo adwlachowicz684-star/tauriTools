@@ -31,6 +31,7 @@ export const BRIDGE_CHANNEL = 'nexus-bridge-v1';
 import { checkInvoke } from './invoke-policy.js';
 /* Owned 归属通道：让"卸载干净"从约定变成结构性保证。详见该文件头部。 */
 import { createOwned } from './owned.js';
+import { claimPath, readClaims, releasePath } from './plugin-fs.js';
 
 export const SHELL_SHORTCUTS = ['mod+b', 'mod+r', 'mod+,', 'esc'];
 
@@ -289,6 +290,30 @@ function buildCtx(base) {
       set: (k, v) => transport.request('store.set', { k, v }),
       del: (k) => transport.request('store.del', { k }),
       all: () => transport.request('store.all', {}),
+    },
+
+    /*
+     * 文件清单制（D3）—— 声明"这个文件/目录是我产出的"。
+     *
+     * DOM 残留能靠快照差分发现，**文件残留发现不了**：文件名不带
+     * 来源信息，没有任何办法从磁盘现状反推归属。而卸载要清理就
+     * 必须先回答归属，答错会删掉用户文件 —— 删错比不删更糟。
+     * 所以只能事前声明。
+     *
+     * 用法：
+     *   await ctx.fs.claim(outDir, { kind: 'dir', note: '缩略图缓存' });
+     *   await ctx.fs.claims();            // 我自己声明过哪些
+     *   await ctx.fs.release(path);       // 我删掉了，撤回声明
+     *
+     * 三种返回都是 Promise —— **沙箱模式走桥接、同页模式宿主直注**，
+     * 形状必须一致，否则调用方要按模式分叉。
+     *
+     * claim 失败**不抛**：那只是"不再被记账"，不该让插件写不了文件。
+     */
+    fs: {
+      claim: (path, meta = {}) => transport.request('fs.claim', { path, meta }),
+      claims: () => transport.request('fs.claims', {}),
+      release: (path) => transport.request('fs.release', { path }),
     },
 
     /** 修改标题栏 / 内容区标题 */
@@ -570,6 +595,22 @@ export function createModuleContext({
           }
           return out;
         }
+        /*
+         * 文件清单（D3）—— **同页模式必须自己实现这一支**。
+         *
+         * 这个 switch 没有 default 兜底（未命中会抛"未知请求"），
+         * 所以 ctx.fs.* 在这里不加分支的话，同页插件调 claim 会
+         * **抛错**，而 iframe 插件走宿主桥接却正常 ——
+         * 同一个 API 两种模式行为不同，是最难排查的那类问题。
+         *
+         * 记账函数两边共用（js/plugin-fs.js），保证语义一致。
+         */
+        case 'fs.claim':
+          return claimPath(manifest?.id, payload.path, payload.meta);
+        case 'fs.claims':
+          return readClaims(manifest?.id);
+        case 'fs.release':
+          return releasePath(manifest?.id, payload.path);
         default:
           throw new Error('未知请求: ' + method);
       }

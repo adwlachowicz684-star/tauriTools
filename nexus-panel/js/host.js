@@ -11,6 +11,8 @@ import { getTauri, isInsideTauri } from './tauri-core.js';
 import { checkInvoke } from './invoke-policy.js';
 /* 卸载残留校验（只读 · 不阻断 · 同步）。见该文件头部说明。 */
 import { snapshotGlobals, auditUnmount } from './unmount-audit.js';
+/* 文件清单制（D3）：插件产出文件的归属记账，账本在宿主侧。 */
+import { claimPath, readClaims, releasePath, clearClaims } from './plugin-fs.js';
 /* 元素检查器：iframe 内的鼠标事件收不到（不跨文档冒泡），
    靠插件转发坐标回来，再由这两个函数去 iframe 自己的文档里命中。
    引入它们而不是走事件，是因为需要同步读取"检查器是否开着"。 */
@@ -656,6 +658,49 @@ export function createHost(opts = {}) {
     /* 末尾同步跑，永不 throw（auditUnmount 内部已全包 try）。
        不放进上面的 try：它是独立的一步，失败也不该影响任何既有清理。 */
     auditUnmount(inst.manifest?.id, auditBefore);
+
+    /*
+     * 文件清单报告（D3）。
+     *
+     * 与上面的 DOM 差分并列，但性质不同：DOM 差分能**自己发现**残留，
+     * 文件残留**发现不了** —— 只能靠插件事先声明的账本。
+     * 所以这里做的是"把账本念出来"，不是"检测"。
+     *
+     * **刻意不删**（N42）：声明的是目录时里面可能混着用户文件，
+     * 删错无法撤销。只报告，删不删交给 UI / 用户。
+     * 要真删，由 UI 显式调 purgePluginFiles(id) + clearClaims(id)。
+     */
+    try {
+      const claims = readClaims(inst.manifest?.id);
+      if (claims.length) {
+        console.info(`[file-claims] 插件 ${inst.manifest?.id} 声明过 ${claims.length} 个路径，未自动删除：`, claims);
+      }
+    } catch { /* 报告失败绝不影响卸载 */ }
+  }
+
+  /**
+   * 显式清理某插件声明过的文件（**不自动调用**，由 UI 在用户确认后调）。
+   *
+   * 逐条走 fs_op delete，失败**记下来继续** —— 一条失败就中断的话，
+   * 后面的文件会全部留下，且用户以为都删了。
+   *
+   * @returns {{ok: boolean, deleted: string[], failed: {path: string, error: string}[]}}
+   */
+  async function purgePluginFiles(pluginId) {
+    const claims = readClaims(pluginId);
+    const deleted = [];
+    const failed = [];
+    for (const c of claims) {
+      try {
+        await tauri.invoke('fs_op', { op: 'delete', path: c.path });
+        deleted.push(c.path);
+      } catch (e) {
+        failed.push({ path: c.path, error: String(e?.message || e) });
+      }
+    }
+    /* 只清成功的那部分账：失败的留着，下次还能重试 */
+    for (const p of deleted) releasePath(pluginId, p);
+    return { ok: failed.length === 0, deleted, failed };
   }
 
   /* ---- 主题适配：可重复执行（切换主题后要重算） ----
@@ -1186,6 +1231,22 @@ export function createHost(opts = {}) {
         /* 服务可用性查询（沙箱插件专用通路，同页插件由宿主直接注入） */
         case 'service.available':
           return reply(true, !!serviceManifest(payload.id));
+        /*
+         * 文件清单制（D3）：插件声明"这个文件/目录是我产出的"。
+         *
+         * 记账**必须放在宿主侧**：插件不可信，不能让它自报
+         * "我已经删干净了"就信以为真。宿主记账还有个好处 ——
+         * 卸载时不需要问插件（它可能已经销毁），直接读账本。
+         *
+         * 失败一律**不抛**：声明失败只意味着"不再被记账"，
+         * 不该让插件连文件都写不了（那是功能倒退）。
+         */
+        case 'fs.claim':
+          return reply(true, claimPath(manifest.id, payload.path, payload.meta));
+        case 'fs.claims':
+          return reply(true, readClaims(manifest.id));
+        case 'fs.release':
+          return reply(true, releasePath(manifest.id, payload.path));
         case 'store.all': {
           const out = {}, pre = `nexus:${manifest.id}:`;
           // 逐键 try：一个键坏掉不该让整份配置拿不到（此前会整体抛错）
