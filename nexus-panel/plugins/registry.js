@@ -189,8 +189,19 @@ export const plugins = [
     id: 'settings',
     name: '设置',
     icon: '⚙',
-    type: noBuild ? 'module' : 'iframe',
-    entry: noBuild ? './plugins/settings/index.js' : './plugins/settings/index.html',
+    /*
+     * 设置页：**两种模式下都是同页（module）**，是第二个完成嵌合的插件。
+     *
+     * 它本来就是双模（无构建下走 index.js 同页），所以同页这条路
+     * 对它不是新东西 —— 风险比 home 更低。迁成常量 'module' 后，
+     * Vite 模式也走同页，靠 js/plugin-entries.js 的 import.meta.glob
+     * 把 module.tsx 收进产物。
+     *
+     * index.html / main.tsx（iframe 入口）**刻意保留**：
+     * 删掉它们会让"想用沙箱隔离设置页"变成不可能。
+     */
+    type: 'module',
+    entry: noBuild ? './plugins/settings/index.js' : './plugins/settings/module.tsx',
     theme: 'dark',
     requiresBuild: !noBuild,
     builtin: true,

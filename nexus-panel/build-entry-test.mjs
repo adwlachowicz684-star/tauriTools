@@ -139,20 +139,81 @@ t('host.js 引入 loadModuleEntry',
 t('两处 module 加载都走 loadModuleEntry（主视图 + 设置面板）',
   (host.match(/loadModuleEntry\(manifest\.entry\)/g) || []).length >= 2);
 
-console.log('\n=== 4. 核心约束：type 随模式切换 ===');
+console.log('\n=== 4. 核心约束：type 与 entry 的匹配 ===');
 /*
- * `noBuild ? 'module' : 'iframe'` —— 不是历史遗留，是必然：
- * · 无构建：源码直出，同页 module 可行（相对路径有效）
- * · Vite  ：只有 iframe（HTML 入口被打包）能保证依赖解析
+ * **本轮（D1）发现的事实变化**：远端 registry 已把 type 从
+ * `noBuild ? 'module' : 'iframe'` 逐个改成**常量**，settings 是最后一个。
+ * 把它改成常量 'module' 后，registry 里**不再有任何**随模式切换的 type。
+ *
+ * 这是"嵌合推进"的直接后果：以前"Vite 下只能 iframe"是被打包机制逼的，
+ * 方案 B（import.meta.glob）解掉之后，同页与否就不再由模式决定，
+ * 而是按插件**逐个**决定 —— 所以 type 变成常量是合理的。
+ *
+ * 但 **entry 仍随模式切换**：home / settings 无构建下走 index.js（原生 JS），
+ * Vite 下走 module.tsx（React）。两入口并存，见 registry 注释。
+ *
+ * 下面的断言按**新现实**重写。刻意不钉"三元 type 必须存在"——
+ * 那会在每次推进嵌合时假红，逼人改回去。
  */
 const typeTriples = [...registry.matchAll(/type:\s*noBuild\s*\?\s*'(\w+)'\s*:\s*'(\w+)'/g)]
   .map((m) => ({ noBuild: m[1], vite: m[2] }));
-t('存在随模式切换的 type（大部分插件仍是 iframe + module 双模）',
-  typeTriples.length > 0);
-t('无构建模式走 module（同页嵌合）',
+const entryTriples = [...registry.matchAll(/entry:\s*noBuild\s*\?\s*'([^']+)'\s*:\s*'([^']+)'/g)]
+  .map((m) => ({ noBuild: m[1], vite: m[2] }));
+
+/*
+ * 三元 type 若**又出现**（有人加回双模插件），两侧的语义仍要成立。
+ * 用 every 而非断言 >0：空集合时 every 为真，不会假红。
+ */
+t('三元 type 若存在：无构建侧必须是 module',
   typeTriples.every((x) => x.noBuild === 'module'));
-t('Vite 模式走 iframe（HTML 入口才被打包）',
+t('三元 type 若存在：Vite 侧必须是 iframe',
   typeTriples.every((x) => x.vite === 'iframe'));
+t('entry 三元仍存在（home/settings 两入口并存）',
+  entryTriples.length >= 2);
+t('entry 三元：两侧都不能是 .html（module 会去 import 它）',
+  entryTriples.every((x) => !x.noBuild.endsWith('.html') && !x.vite.endsWith('.html')));
+
+/*
+ * 真正的核心约束（不随模式变化，永远成立）：
+ *   module 型 → entry 必须是脚本
+ *   iframe 型 → entry 必须是 .html
+ * 这条比"三元"重要得多 —— 它直接决定会不会 404。
+ */
+/*
+ * 切块方式：按 `id: 'xxx'` 定位每个条目，边界到下一个条目为止。
+ *
+ * **不能用 `split(/\n  \{\n/)`** —— 实测切出来块数不对（缩进/空行
+ * 不完全一致），于是 every 落在错误的块上，断言**恒真**。
+ * 这正是破坏2（settings entry 改 .html）没被抓到的原因：
+ * 断言写了，但它根本没看对对象。
+ */
+function entriesByBlock() {
+  const marks = [...registry.matchAll(/\{\s*id:\s*'([^']+)'/g)]
+    .map((m) => ({ id: m[1], at: m.index }));
+  return marks.map((mk, i) => ({
+    id: mk.id,
+    block: registry.slice(mk.at, i + 1 < marks.length ? marks[i + 1].at : registry.length),
+  }));
+}
+const blocks = entriesByBlock();
+t('切块数与插件数一致（切对了才谈后面）',
+  blocks.length >= 12 && blocks.every((b) => b.id));
+t('所有 iframe 型插件的 entry 都是 .html',
+  blocks.every((b) => {
+    const ty = b.block.match(/type:\s*'(\w+)'/);
+    if (!ty || ty[1] !== 'iframe') return true;
+    const en = b.block.match(/entry:\s*(?:noBuild\s*\?\s*'[^']+'\s*:\s*)?'([^']+)'/);
+    return !en || en[1].endsWith('.html');
+  }));
+t('所有 module 型插件的 entry 都不是 .html',
+  blocks.every((b) => {
+    const ty = b.block.match(/type:\s*'(\w+)'/);
+    if (!ty || ty[1] !== 'module') return true;
+    /* module 型：取三元 Vite 侧，没有三元就取常量 */
+    const tri = b.block.match(/entry:\s*noBuild\s*\?\s*'[^']+'\s*:\s*'([^']+)'/);
+    const en = tri || b.block.match(/entry:\s*'([^']+)'/);
+    return !en || !en[1].endsWith('.html');
+  }));
 /*
  * 划时代的一条：home 已经**两种模式都是 module**。
  * 钉住它，防止被改回 iframe 而没人发现（那等于嵌合又退回去）。
@@ -177,8 +238,8 @@ t('home 在 Vite 模式下也是 module（首个完成嵌合的插件）',
  * **三元 entry 数 ≥ 三元 type 数**，且差出来的那些必须 type 是常量 'module'。
  * 仍然是为了防止"被检查的对象消失"被当成通过。
  */
-t('三元 entry 数 ≥ 三元 type 数（没有条目凭空消失）',
-  entries.length >= typeTriples.length && entries.length > 0);
+t('entry 条目没有凭空消失（集合规模钉住）',
+  entryTriples.length > 0 && entries.length >= entryTriples.length);
 /*
  * 常量 'module' 的条目里，部分是"两种模式都同页"（home），
  * 部分是 demo 类本来就单模。这里钉的是**至少有一个**是双模同页的，
@@ -188,6 +249,53 @@ t('存在"两种模式都 module"的条目（嵌合已落地）',
   (registry.match(/\n\s*type: 'module',/g) || []).length >= 1);
 t('该条目注释说明了靠 glob 才能在 Vite 下同页',
   /id: 'home',[\s\S]{0,400}?import\.meta\.glob/.test(registry));
+/*
+ * 本轮（D1）：settings 成为第二个嵌合插件。
+ *
+ * 选它的理由写在 registry 注释里：它是**内置插件**，而且**本来就是双模**
+ * （无构建下走 index.js 同页），所以同页这条路对它不是新东西。
+ */
+t('settings 两种模式都是 module（第二个嵌合插件）',
+  /id: 'settings',[\s\S]{0,900}?type: 'module',/.test(registry));
+t('settings 的 Vite entry 是 module.tsx（符合 glob 命名约定）',
+  /id: 'settings',[\s\S]{0,900}?entry:\s*noBuild\s*\?\s*'[^']+'\s*:\s*'[^']*\/module\.tsx'/.test(registry));
+t('settings 的注释说明了 iframe 入口刻意保留',
+  /id: 'settings',[\s\S]{0,900}?刻意保留/.test(registry));
+t('至少两个插件完成嵌合（home + settings）',
+  (registry.match(/\n\s*type: 'module',/g) || []).length >= 1
+  && /id: 'home',[\s\S]{0,600}?type: 'module',/.test(registry)
+  && /id: 'settings',[\s\S]{0,900}?type: 'module',/.test(registry));
+
+/*
+ * **同页嵌合最容易踩的坑：iframe 的 CSS 搬到同页会污染宿主**
+ *
+ * settings.css 里有一条 `#root { display:flex; flex-direction:column }`，
+ * 那是给 iframe 内部重建滚动链用的。但同页插件与宿主**共享全局样式表**，
+ * 而 React 外壳的根容器**就叫 #root**（src/main.tsx）——
+ * 于是它会命中宿主自己，把整个外壳改成 flex 列。
+ *
+ * 所以同页入口**必须不引入** settings.css。钉住这条，
+ * 防止有人"顺手把 main.tsx 的 import 抄过来"。
+ */
+{
+  const modSrc = fs.readFileSync(path.join(HERE, 'plugins/settings/module.tsx'), 'utf8');
+  /* 剔注释后再查 import —— 注释里反复提到 settings.css，直接搜会误命中 */
+  const code = modSrc
+    .split('\n')
+    .filter((l) => !l.trim().startsWith('*') && !l.trim().startsWith('/*'))
+    .join('\n');
+  t('同页入口没有 import settings.css（否则会污染宿主 #root）',
+    !/import\s+['"].*settings\.css/.test(code));
+  t('注释里写明了为什么不引（不是忘了引）',
+    /刻意不引入 settings\.css/.test(modSrc));
+  t('注释点出了 #root 会被宿主命中这个具体风险',
+    /React 外壳的根容器/.test(modSrc) || /就叫 #root/.test(modSrc));
+  t('说清了同页下滚动由 #stage-scroll 负责（不需要补丁）',
+    /#stage-scroll/.test(modSrc));
+  t('体感差异已写明（分页条会随内容滚）',
+    /分页条/.test(modSrc));
+}
+
 t('module 型插件的 entry 一定不是 .html（module 会去 import 它）', (() => {
   /* 找出所有"不管什么模式都是 module"的条目：type 为常量 'module' */
   const constModule = [...registry.matchAll(/type:\s*'(module)'/g)].length;
