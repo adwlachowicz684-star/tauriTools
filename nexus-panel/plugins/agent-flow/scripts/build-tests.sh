@@ -10,6 +10,7 @@ mkdir -p "$OUT"
 # 这里按源目录结构一次性建好。
 mkdir -p "$OUT/runners" "$OUT/tests" "$OUT/defs"
 S="python3 scripts/strip-ts.py"
+      $S engine/exportDir.ts "$OUT/exportDir.mjs" --import-map ./kv=./kv.mjs >/dev/null
       $S engine/runtimeKeys.ts "$OUT/runtimeKeys.mjs" >/dev/null
       $S engine/moduleTypes.ts "$OUT/moduleTypes.mjs" >/dev/null
       $S engine/canvasRef.ts "$OUT/canvasRef.mjs" --import-map ./moduleTypes=./moduleTypes.mjs >/dev/null
@@ -117,7 +118,8 @@ $S engine/secretVault.ts "$OUT/secretVault.mjs" \
 $S engine/conversations.ts "$OUT/conversations.mjs" \
    --import-map ../types=./types.mjs >/dev/null
 $S engine/modules.ts "$OUT/modules.mjs" --import-map ./runtimeKeys=./runtimeKeys.mjs \
-   --import-map ./duplicate=./duplicate.mjs --import-map ./kv=./kv.mjs >/dev/null
+   --import-map ./duplicate=./duplicate.mjs --import-map ./kv=./kv.mjs \
+   --import-map ./sanitize=./sanitize.mjs >/dev/null
 $S engine/nodeValidate.ts "$OUT/nodeValidate.mjs" \
    --import-map ../types=./types.mjs >/dev/null
 $S engine/kv.ts "$OUT/kv.mjs" >/dev/null

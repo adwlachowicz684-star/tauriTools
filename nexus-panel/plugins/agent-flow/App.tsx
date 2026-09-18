@@ -3,8 +3,7 @@ import {
   ReactFlow, Background, Controls, MiniMap, addEdge,
   useNodesState, useEdgesState, useReactFlow,
   type Connection, type Edge, type NodeTypes, type ReactFlowInstance,
-  type NodeChange,
-} from '@xyflow/react';
+  type NodeChange, SelectionMode } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 import Inspector from './components/Inspector';
@@ -38,6 +37,8 @@ import { checkChannel, type ChannelStatus } from './lib/channel';
 import { deviceSeed, clearKeyCache } from './engine/crypto';
 import Sidebar, { DRAG_MIME, decodeDrag, type DragPayload } from './components/Sidebar';
 import { prompt } from '../../../js/dialog.js';
+import DirPicker from './components/DirPicker';
+import { writeTextFile, fsAllowRoot, canExportToFile } from './lib/tauri';
 import ModuleLibrary, {
   MODULE_DRAG_MIME, decodeModuleDrag, askCreateModule,
 } from './components/ModuleLibrary';
@@ -83,6 +84,10 @@ import {
 import { TriggerScheduler } from './engine/triggers';
 import type { CanvasConfig } from './engine/canvasConfig';
 import { exportFlow, EXPORT_FORMATS } from './engine/scriptExport';
+import {
+  loadExportDir as loadExportDirSetting, saveExportDir as persistExportDir,
+  resolveExportTarget, parentOf,
+} from './engine/exportDir';
 import {
   hydrateMcpNodes, mcpSidebarGroups, bootRefresh,
 } from './engine/mcpRegistry';
@@ -936,6 +941,21 @@ export default function App() {
     void doRefreshMcp();
   }, [doRefreshMcp]);
 
+  /* ---------------- 导出目录 ---------------- */
+
+  /*
+   * 默认导出目录 —— **全局偏好**，不是画布级配置。
+   * 导出到哪跟"这是哪张画布"无关，是用户习惯。
+   */
+  const [exportDir, setExportDirState] = useState<string>(() => loadExportDirSetting());
+  /** 待导出的格式：等用户选完目录再真正写 */
+  const [pendingExport, setPendingExport] = useState<string | null>(null);
+
+  const setExportDir = useCallback((d: string) => {
+    setExportDirState(d);
+    persistExportDir(d);
+  }, []);
+
   /* ---------------- 画布级配置与导出 ---------------- */
 
   /*
@@ -983,37 +1003,119 @@ export default function App() {
   /**
    * 把整张画布导出成脚本 / 说明。
    *
-   * 产物写入剪贴板并下载 —— 光弹提示的话用户还得自己找文件。
-   * 下载失败（浏览器拦了）时退回剪贴板，两者都不行才提示。
+   * ================= 为什么不走浏览器下载了 =================
+   *
+   * 以前用 <a download>：文件落到系统默认下载目录，
+   * **插件自己也不知道在哪**，日志里只有文件名没有目录 ——
+   * 用户找不到文件，也不知道该去哪找。
+   *
+   * 更糟的是 try/catch 的 catch 是空的（注释说"退回剪贴板"但没实现），
+   * 下载被拦时日志照样打印"✅ 已导出"，**失败伪装成成功**。
+   *
+   * 现在改走 fs_op 写文件：路径由我们决定，结果能确认，
+   * 失败就明确报失败。
    */
+  const writeExport = useCallback(
+    async (fmt: string, dir: string | null) => {
+      const meta = EXPORT_FORMATS.find((f) => f.id === fmt);
+      if (!meta) return;
+      const graph = { nodes, edges };
+      const r = exportFlow(graph, meta.id as never);
+      const target = resolveExportTarget(exportDir, dir, activeCanvas?.name ?? 'canvas', meta.ext);
+
+      /*
+       * 没有目录可用（浏览器模式，或未设目录也没选）→ 退回下载。
+       * 这时**必须**明说路径不受控，不能让用户以为写到了某处。
+       */
+      if (target.source === 'download') {
+        try {
+          const blob = new Blob([r.text], { type: 'text/plain;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = target.path;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+          pushLog(`✅ 已导出${meta.label}（${r.count} 个节点）→ ${target.path}（浏览器下载目录，非软件目录）`);
+        } catch (e) {
+          /* 这里**不能**再静默 —— 失败就要说失败 */
+          pushLog(`✗ 导出失败：${String((e as Error)?.message ?? e)}`);
+        }
+        reportSkipped(r, meta.label, pushLog);
+        return;
+      }
+
+      try {
+        /*
+         * fs_op 只写授权根目录内的路径（防"读任意文件 + 外传"的收敛点）。
+         * 目录不在授权内时先申请，并明确告诉用户 ——
+         * 静默放行等于把这道防线抹掉。
+         */
+        let out = await writeTextFile(target.path, r.text);
+        if (!out.ok) {
+          await fsAllowRoot(parentOf(target.path));
+          out = await writeTextFile(target.path, r.text);
+        }
+        if (!out.ok) {
+          pushLog(`✗ 导出失败：${out.text || '目标目录不可写'}`);
+          return;
+        }
+        const how = target.source === 'picked' ? '（本次选的目录）' : '（默认导出目录）';
+        pushLog(`✅ 已导出${meta.label}（${r.count} 个节点）→ ${target.path} ${how}`);
+      } catch (e) {
+        pushLog(`✗ 导出失败：${String((e as Error)?.message ?? e)}`);
+        return;
+      }
+      reportSkipped(r, meta.label, pushLog);
+    },
+    [nodes, edges, activeCanvas, exportDir, pushLog],
+  );
+
+  /** 导出入口：没设默认目录就先让用户选一个 */
   const exportFlowAs = useCallback((fmt: string) => {
-    const meta = EXPORT_FORMATS.find((f) => f.id === fmt);
-    if (!meta) return;
-    const graph = { nodes, edges };
-    const r = exportFlow(graph, meta.id as never);
-    const fname = `flow-${activeCanvas?.name ?? 'canvas'}.${meta.ext}`;
-    try {
-      const blob = new Blob([r.text], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fname;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch {
-      // 下载被拦：退回剪贴板
+    /* 浏览器模式写不了文件，直接走下载，弹选择器也没意义 */
+    if (!canExportToFile()) {
+      void writeExport(fmt, null);
+      return;
     }
+    if (exportDir) {
+      void writeExport(fmt, null);
+      return;
+    }
+    setPendingExport(fmt);
+  }, [exportDir, writeExport]);
+
+  /** 目录选择器选完之后 */
+  const onPickExportDir = useCallback((dir: string, asDefault: boolean) => {
+    const fmt = pendingExport;
+    setPendingExport(null);
     /*
-     * 未翻译的节点**必须**告出来 ——
-     * 用户拿到一份"少了点什么"的脚本而毫无线索，是最坏的结果。
+     * '__browse__' 表示"只是从设置里点浏览来填目录"，不是要导出 ——
+     * 这时只把目录填进设置框，不写文件。
+     * 不区分的话，用户在设置里选个目录会莫名导出一份文件。
      */
-    if (r.skipped.length > 0) {
-      const names = r.skipped.map((x) => `${x.id}(${x.kind || '?'})`).join('、');
-      pushLog(`⚠ ${meta.label}已导出，但 ${r.skipped.length} 个节点没能翻译：${names} —— 它们在结果里以 TODO 标出`);
-    } else {
-      pushLog(`✅ 已导出${meta.label}（${r.count} 个节点）→ ${fname}`);
-    }
-  }, [nodes, edges, activeCanvas, pushLog]);
+    const browsing = fmt === BROWSE_ONLY;
+    if (asDefault || browsing) setExportDir(dir);
+    if (fmt && !browsing) void writeExport(fmt, dir);
+  }, [pendingExport, writeExport, setExportDir]);
+
+
+/** 目录选择器只用于"填设置"，不代表要导出 */
+const BROWSE_ONLY = '__browse__';
+
+/**
+ * 未翻译的节点**必须**告出来 ——
+ * 用户拿到一份"少了点什么"的脚本而毫无线索，是最坏的结果。
+ */
+function reportSkipped(
+  r: { skipped: Array<{ id: string; kind?: string }> },
+  label: string,
+  pushLog: (m: string) => void,
+): void {
+  if (r.skipped.length === 0) return;
+  const names = r.skipped.map((x) => `${x.id}(${x.kind || '?'})`).join('、');
+  pushLog(`⚠ ${label}已导出，但 ${r.skipped.length} 个节点没能翻译：${names} —— 它们在结果里以 TODO 标出`);
+}
 
   /* ---------------- 节点编辑 ---------------- */
 
@@ -2710,6 +2812,22 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
               beforeDelete({ nodeIds: dn.map((n) => n.id), edgeIds: de.map((e) => e.id) })}
             onNodesDelete={handleNodesDelete}
             deleteKeyCode={running ? null : ['Delete', 'Backspace']}
+            /*
+             * 拖画布空白处 = 框选（不用按 Shift）。
+             *
+             * 原来要 Shift+拖，但**没人知道** —— 而"打包成模块"必须框选
+             * 多个节点，等于这个功能一直在被这条隐藏操作卡住。
+             * 现在与 Figma / Sketch 一致：拖空白就是框选。
+             *
+             * 代价是平移要换键：空格+拖，或中键拖。
+             * 这是有意的取舍 —— 框选是高频操作（打包、批量删、批量移动），
+             * 平移有滚轮和右下角导航图兜底。首次进入时在日志里说一声。
+             */
+            panOnDrag={[1, 2]}
+            selectionOnDrag
+            selectionMode={SelectionMode.Partial}
+            /* 多选仍可用 Ctrl / ⌘ 点选，与框选互补 */
+            multiSelectionKeyCode={['Control', 'Meta']}
             fitView
           >
             <Background />
@@ -2717,6 +2835,20 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
             <MiniMap pannable zoomable />
           </ReactFlow>
         </div>
+
+        {/*
+           目录选择器 —— 没设默认导出目录时弹出来。
+           选完直接落盘，并把来源标成"本次选的"（与默认目录区分开）。
+         */}
+        {pendingExport ? (
+          <DirPicker
+            initial={exportDir}
+            title="导出到哪个目录？"
+            onPick={(d) => onPickExportDir(d, false)}
+            onPickAsDefault={(d) => onPickExportDir(d, true)}
+            onCancel={() => setPendingExport(null)}
+          />
+        ) : null}
 
         {deleteNotice && (
           <div className="delete-notice">
@@ -2762,6 +2894,10 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
               webhookTokens={webhookTokens}
               onEditModule={(id) => enterInstanceEdit(id)}
               onNote={pushLog}
+              exportDir={exportDir}
+              onChangeExportDir={setExportDir}
+              onBrowseExportDir={() => setPendingExport(BROWSE_ONLY)}
+              canExportToFile={canExportToFile()}
               canvasConfig={canvasConfigOf(activeCanvas)}
               onCanvasConfigChange={saveCanvasConfig}
               onExportFlow={exportFlowAs}

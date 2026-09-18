@@ -18,6 +18,14 @@ type Props = {
   onExport: (fmt: string) => void;
   /** 给用户的即时反馈 */
   onNote?: (msg: string) => void;
+  /* ---- 导出目录 ---- */
+  /** 当前默认导出目录；空串表示没设 */
+  exportDir: string;
+  onChangeExportDir: (dir: string) => void;
+  /** 弹目录选择器 */
+  onBrowseExportDir: () => void;
+  /** 能不能真正写文件（浏览器模式下为 false） */
+  canExportToFile: boolean;
 };
 
 function newServer(): McpServer {
@@ -31,8 +39,9 @@ function newServer(): McpServer {
   };
 }
 
-export default function CanvasConfigPanel({
+function CanvasConfigPanel({
   config, onChange, onExport, onNote,
+  exportDir, onChangeExportDir, onBrowseExportDir, canExportToFile,
 }: Props) {
   const [openMcp, setOpenMcp] = useState(true);
   const [openEnv, setOpenEnv] = useState(false);
@@ -217,6 +226,44 @@ export default function CanvasConfigPanel({
               把整张画布生成一份文件。条件、循环、并发这些翻译不了的部分会
               在生成结果里明确标出，不会静默丢掉。
             </p>
+            {/*
+               默认导出目录。
+
+               不放的话导出走浏览器下载，落到系统默认下载目录，
+               **插件也不知道在哪**，用户找不到文件也不知道该去哪找。
+             */}
+            <div className="cfg-row">
+              <label>默认导出目录</label>
+              <div className="cfg-dir">
+                <input
+                  value={exportDir}
+                  onChange={(e) => onChangeExportDir(e.target.value)}
+                  placeholder="留空则每次导出时手选"
+                />
+                <button
+                  type="button"
+                  className="mini"
+                  onClick={onBrowseExportDir}
+                  disabled={!canExportToFile}
+                  title={canExportToFile ? '浏览选择目录' : '浏览器模式不能写文件，只能下载'}
+                >
+                  浏览
+                </button>
+                {exportDir ? (
+                  <button type="button" className="mini" onClick={() => onChangeExportDir('')}>
+                    清除
+                  </button>
+                ) : null}
+              </div>
+              <p className="cfg-hint">
+                {canExportToFile
+                  ? (exportDir
+                    ? '导出时直接写到这里，日志会显示完整路径。'
+                    : '没设的话，每次导出会弹目录选择器让你选。')
+                  : '当前是浏览器模式，写不了磁盘 —— 导出会走浏览器下载，文件名只有名字、路径不受控。'}
+              </p>
+            </div>
+
             {EXPORT_FORMATS.map((f) => (
               <button
                 type="button"
@@ -244,3 +291,5 @@ export default function CanvasConfigPanel({
     </div>
   );
 }
+
+export default CanvasConfigPanel;

@@ -50,12 +50,21 @@ type Props = {
   onCanvasConfigChange?: (next: CanvasConfig) => void;
   /** 导出整张画布为脚本 */
   onExportFlow?: (fmt: string) => void;
+  /* ---- 导出目录 ---- */
+  /** 当前默认导出目录；空串表示没设 */
+  exportDir?: string;
+  onChangeExportDir?: (dir: string) => void;
+  /** 弹目录选择器 */
+  onBrowseExportDir?: () => void;
+  /** 能不能真正写文件（浏览器模式为 false） */
+  canExportToFile?: boolean;
 };
 
 export default function Inspector({
   node, edges, onChange, credentials, onOpenCredentials, webhookTokens,
   secretPolicy, onChangeSecretPolicy, onEditModule, onNote,
   canvasConfig, onCanvasConfigChange, onExportFlow,
+  exportDir = '', onChangeExportDir, onBrowseExportDir, canExportToFile = false,
 }: Props) {
   const pushNote = onNote;
   if (!node) {
@@ -72,6 +81,10 @@ export default function Inspector({
             onChange={onCanvasConfigChange}
             onExport={onExportFlow}
             onNote={onNote}
+            exportDir={exportDir}
+            onChangeExportDir={onChangeExportDir ?? (() => {})}
+            onBrowseExportDir={onBrowseExportDir ?? (() => {})}
+            canExportToFile={canExportToFile}
           />
         </aside>
       );
