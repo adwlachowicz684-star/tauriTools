@@ -635,16 +635,22 @@ export function buildSide(app, opts = {}) {
    * 详情区（A16/A17/A20 的目录、时间、时长）跟着"当前选中项"走：
    * 全展开会让一个挂了 5 个附件的节点把侧栏撑到没法用。
    */
+  // 「详情区显示第几个」必须存在 **pageFile 之外**。
+  // pageFile 每次 refresh 都会重新执行，写在里面等于每次刷新都归 0 ——
+  // 点第 3 个文件想看它的详情，refresh 完又跳回第 1 个，点了没反应。
+  let _curFile = 0;
+  let _curVid = 0;
+
   function pageFile() {
     const files = app.api.selectedRefs('file');
     const videos = app.api.selectedRefs('video');
     const images = app.api.selectedImages();
 
-    // 详情区跟随选中项；索引越界（附件被删）时自动回到第 0 项
-    let curFile = 0;
-    let curVid = 0;
-    if (curFile >= files.length) curFile = 0;
-    if (curVid >= videos.length) curVid = 0;
+    // 换节点 / 删了附件之后索引可能越界，钳回 0（不是显示 undefined）
+    if (_curFile >= files.length) _curFile = 0;
+    if (_curVid >= videos.length) _curVid = 0;
+    const curFile = _curFile;
+    const curVid = _curVid;
 
     const fileMeta = h('div.mm-meta', {});
     const videoMeta = h('div.mm-meta', {});
@@ -738,9 +744,12 @@ export function buildSide(app, opts = {}) {
     };
 
     /** 一行附件：名字 + 右侧小按钮（下载 / 移除） */
-    const row = (kind, ref, index, label) => h('div.mm-arow', {
+    // 选中态必须**看得见**：详情区在下方，不加高亮的话用户点完
+    // 根本不知道自己选的是哪一行（尤其同名文件多的时候）
+    const row = (kind, ref, index, label) => h(
+      `div.mm-arow${index === (kind === 'file' ? curFile : curVid) ? '.on' : ''}`, {
       onclick: () => {
-        if (kind === 'file') curFile = index; else curVid = index;
+        if (kind === 'file') _curFile = index; else _curVid = index;
         refresh();
       },
       title: ref.n || '未命名',

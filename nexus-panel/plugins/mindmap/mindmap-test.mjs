@@ -4452,6 +4452,154 @@ group('拖放：bridge 与插件层接入');
   ok(/setImages\(\[\.\.\.images/.test(pnl), '加图片是追加（不覆盖已有图片）');
 }
 
+group('多附件：XMind 往返（导出再导回）');
+
+{
+  const xmind = await import('./xmind.js');
+  const io = await import('./io.js');
+
+  // 节点上挂 3 个文件 + 2 个视频（带首帧缩略图）
+  const km = {
+    root: {
+      data: {
+        text: '根',
+        file: JSON.stringify([
+          { n: '一.pdf', a: 'A1', s: 100 },
+          { n: '二.pdf', a: 'A2', s: 200 },
+          { n: '三.pdf', a: 'A3', s: 300 },
+        ]),
+        video: JSON.stringify([
+          { n: 'v1.mp4', a: 'V1', s: 900, t: 'data:image/jpeg;base64,T1' },
+          { n: 'v2.mp4', a: 'V2', s: 800, t: 'data:image/jpeg;base64,T2' },
+        ]),
+      },
+      children: [],
+    },
+    template: 'default',
+    theme: 'fresh-blue',
+    version: '1.4.43',
+  };
+
+  // 资产库：导出时按 id 取字节，导入时按名字存回
+  const lib = {
+    A1: new TextEncoder().encode('PDF-ONE'),
+    A2: new TextEncoder().encode('PDF-TWO'),
+    A3: new TextEncoder().encode('PDF-THREE'),
+    V1: new TextEncoder().encode('VIDEO-ONE'),
+    V2: new TextEncoder().encode('VIDEO-TWO'),
+  };
+  const idOfRaw = (raw) => {
+    const o = io.decodeRef(raw);
+    return o && o.a;
+  };
+  const loadAsset = async (ref) => lib[idOfRaw(ref)] || null;
+
+  const blob = await xmind.writeXMind([{ id: 'sh1', title: '画布1', theme: null, layout: null, content: JSON.stringify(km) }], 'sh1', loadAsset);
+  ok(!!blob, '导出成功');
+  // writeXMind 返回的是 Blob（要落盘/下载），readXMind 要的是字节 —— 必须转
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  ok(buf.byteLength > 0, '导出出字节');
+
+  // 记录导入时存回了哪些资产（名字 → 字节），用来验证 5 个附件都在
+  const saved = [];
+  const saveAsset = async (name, bytes, opt) => {
+    saved.push({ name, bytes, video: !!opt?.video });
+    const id = 'N' + saved.length;
+    return io.encodeRef({ n: name, a: id, s: bytes?.length || 0 });
+  };
+
+  const r = await xmind.readXMind(buf, saveAsset);
+  ok(r.sheets?.length === 1, '导入出 1 张画布');
+  const back = JSON.parse(r.sheets[0].content);
+  const d = back.root.data;
+
+  const files = io.decodeRefList(d.file);
+  const videos = io.decodeRefList(d.video);
+  eq(files.length, 3, '往返后仍是 3 个文件（不是只剩 1 个）');
+  eq(videos.length, 2, '往返后仍是 2 个视频');
+  eq(files.map((x) => x.n).join(','), '一.pdf,二.pdf,三.pdf', '文件名与顺序都保留');
+  eq(videos.map((x) => x.n).join(','), 'v1.mp4,v2.mp4', '视频名与顺序都保留');
+  // 引用必须换成本地资产 id；仍是 resources/… 说明导入没还原，附件会全部打不开
+  ok(files.every((x) => x.a), '文件的引用已换成本地资产 id（不是包内路径）');
+  ok(videos.every((x) => x.a), '视频的引用已换成本地资产 id');
+  ok(!JSON.stringify(d.file).includes('resources/'),
+    '往返后 file 里不再有 resources/ 路径（否则 decodeRef 会当成旧版路径，打不开）');
+  eq(saved.length, 5, '5 个附件的本体都进了包（3 文件 + 2 视频）');
+  eq(saved.filter((x) => x.video).length, 2, '其中 2 个被标为视频');
+
+  // 字节内容也要对得上（不能张冠李戴）
+  {
+    const byName = {};
+    for (const x of saved) byName[x.name] = new TextDecoder().decode(x.bytes);
+    eq(byName['一.pdf'], 'PDF-ONE', '一.pdf 的字节内容正确（不能张冠李戴）');
+    eq(byName['三.pdf'], 'PDF-THREE', '三.pdf 的字节内容正确');
+    eq(byName['v1.mp4'], 'VIDEO-ONE', 'v1.mp4 的字节内容正确');
+    eq(byName['v2.mp4'], 'VIDEO-TWO', 'v2.mp4 的字节内容正确');
+  }
+
+  // 缩略图在导出时被替换掉了（本体进包，t 不进包）—— 这是已知的取舍，
+  // 导入后由 index.js 的 saveAssetWithThumb 重新生成，这里只确认不会崩
+  ok(true, '（已知）ref.t 不随包带走，导入后重新生成首帧');
+}
+
+group('多附件：画布点击的分发');
+
+{
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const seg = idx.slice(idx.indexOf('onOpenAttach:'), idx.indexOf('onOpenAttach:') + 700);
+  // 图片是 dataURL，走 openAttachment 会被 decodeRef 兜底成 legacyPath（a 为 null），
+  // 于是报「旧版本地路径，无法打开」—— 点画布上的图却打不开，是明显的错
+  ok(/kind === 'image'/.test(seg) && /openPreview\(/.test(seg),
+    '图片单独走 openPreview（不能交给 openAttachment，会被判成旧路径）');
+  ok(!/openAttachment\(raw, kind\)/.test(seg), '不再把 kind 当第二参数传（函数只收 raw）');
+
+  // 侧栏详情区选中索引：必须存在 pageFile 之外
+  const pnl = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const pf = pnl.slice(pnl.indexOf('function pageFile()'), pnl.indexOf('function pageFile()') + 900);
+  ok(/let _curFile = 0;/.test(pnl), '选中索引是模块级变量（在 pageFile 外）');
+  ok(!/let curFile = 0;\s*\n\s*let curVid = 0;/.test(pf),
+    'pageFile 内**不再**初始化选中索引（refresh 会重建，写在里面等于每次归 0）');
+  ok(/_curFile = index/.test(pnl), '点行写的是模块级变量');
+}
+
+group('多附件：侧栏选中跨 refresh 保持（行为级）');
+
+{
+  const { buildSide } = await import('./panels.js');
+  const io = await import('./io.js');
+  const files = [
+    { n: '一.pdf', a: 'A1', s: 100 },
+    { n: '二.pdf', a: 'A2', s: 200 },
+    { n: '三.pdf', a: 'A3', s: 300 },
+  ];
+  let api;
+  const s = buildSide({
+    get api() { return api; },
+    bridge: {},
+  }, {});
+  api = {
+    status() {}, commit() {},
+    selectedRef: (k) => (k === 'file' ? files[0] : null),
+    selectedRefs: (k) => (k === 'file' ? files : []),
+    selectedImages: () => [],
+  };
+  s.open('file');
+  const rows = s.el.querySelectorAll('.mm-arow');
+  eq(rows.length, 3, '3 行（文件区；视频区为空不算进来）');
+
+  // 选中态要看得见 —— 详情区在下方，不高亮用户不知道点了哪行
+  eq(s.el.querySelectorAll('.mm-arow.on').length, 1, '默认选中第 1 行');
+  eq(s.el.querySelector('.mm-arow.on')?.querySelector('.mm-arow-name')?.textContent,
+    '一.pdf', '默认选中第 1 行');
+
+  // 点第 3 行 → refresh 重建后仍应停在第 3 行
+  rows[2].dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  const after = s.el.querySelectorAll('.mm-arow.on');
+  eq(after.length, 1, '点第 3 行后有且只有一行是选中态');
+  eq(after[0]?.querySelector('.mm-arow-name')?.textContent, '三.pdf',
+    'refresh 之后选中仍停在第 3 行（索引不能存在 pageFile 内，否则每次刷新归 0）');
+}
+
 group('拖放：行为级（跑真实 handleDropFiles）');
 
 {

@@ -1140,6 +1140,8 @@ export async function readXMind(input, saveAsset = null) {
   // 序列化时必须复用同一个对象。若最后再 parseKm(s.content) 一次，
   // 拿到的是未改写的副本，附件引用会原样留在资源包路径上。
   const touched = [];
+  // 多附件：每个节点的每个字段一组「等齐了再写回」的占位
+  const pending = [];
   let attachments = 0;
 
   if (saveAsset) {
@@ -1155,7 +1157,8 @@ export async function readXMind(input, saveAsset = null) {
           const list = refListOf(d[key]);
           if (!list.length) continue;
           const out = new Array(list.length);
-          let any = false;
+          // 写回必须等所有 saveAsset 都返回后再做（见下方 pending）
+          pending.push({ d: d, key: key, out: out });
           list.forEach((one, idx) => {
             const v = str(one);
             out[idx] = one;                       // 先原样占位，失败就保持原引用
@@ -1163,7 +1166,6 @@ export async function readXMind(input, saveAsset = null) {
             const data = entries.get(v);
             if (!data) return;
             const name = stripPackSeq(sanitizeFileName(v.split('/').pop() || 'attach'));
-            any = true;
             tasks.push(
               Promise.resolve(saveAsset(name, data, { video: key === 'video' }))
                 .then((ref) => {
@@ -1172,13 +1174,19 @@ export async function readXMind(input, saveAsset = null) {
                 .catch(() => { /* 单个附件失败不影响整体导入 */ }),
             );
           });
-          // 统一写回数组串（原先只写单值，多附件会被截断成第一个）
-          if (any) d[key] = JSON.stringify(out.filter(Boolean));
+          // 注意：**不能在这里写回**。out[idx] 此刻还是占位值（包内路径），
+          // saveAsset 尚未 resolve —— 写进去就把路径固化了，
+          // 结果是「导出再导入后附件引用仍是 resources/…，全部打不开」。
         }
       });
     }
   }
   await Promise.all(tasks);
+  // **所有引用都回来了才写回** —— 顺序不能反，反了就是路径固化（附件全打不开）
+  for (const q of pending) {
+    const filled = q.out.filter(Boolean);
+    if (filled.length) q.d[q.key] = JSON.stringify(filled);
+  }
   for (const t of touched) t.sheet.content = pretty(t.km);
 
   return {

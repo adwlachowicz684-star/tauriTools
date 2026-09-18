@@ -1203,6 +1203,28 @@ bootIframePlugin(async (ctx) => {
     if (failed.length) status(`以下文件附加失败：${failed.join('、')}`, true);
   }
 
+  /**
+   * 导入 .xmind 时的存资产回调：视频额外补一张首帧缩略图。
+   *
+   * 不补的话，导进来的视频在画布上是一块**纯色卡片** —— 三角还在，
+   * 但看着像"图没加载出来"。缩略图存在引用里（ref.t），导出时随 JSON 走。
+   *
+   * 失败一律静默返回原引用：缩略图只是显示增强，不能因为它丢掉附件本体。
+   */
+  async function saveAssetWithThumb(name, bytes, opt) {
+    const ref = await io.saveAssetBytes(name, bytes, opt);
+    if (!ref || !opt?.video) return ref;
+    try {
+      const t = await makeVideoThumb(new Blob([bytes], { type: 'video/*' }));
+      if (!t) return ref;
+      const o = JSON.parse(ref);
+      o.t = t;
+      return JSON.stringify(o);
+    } catch {
+      return ref;
+    }
+  }
+
   /** File → dataURL（图片内联用） */
   function readDataURL(file) {
     return new Promise((res) => {
@@ -1679,7 +1701,7 @@ bootIframePlugin(async (ctx) => {
       try {
         status('正在解析 XMind…');
         const buf = await io.readBytes(f);
-        const r = await xmind.readXMind(buf, io.saveAssetBytes);
+        const r = await xmind.readXMind(buf, saveAssetWithThumb);
         if (!r.sheets?.length) { ctx.toast('文件里没有可用画布', 'err'); return; }
         // A30 同上：XMind 导入同样是整体替换，先确认
         const hadSheets = workbook.sheets?.length || 0;
@@ -2008,7 +2030,17 @@ bootIframePlugin(async (ctx) => {
     onOpenFile: guard('打开附件', (path) => openAttachment(path)),
     // 点击画布上的附件（多附件：kind + index + 原始引用）
     onOpenAttach: (kind, index, raw) => {
-      guard('打开附件', () => openAttachment(raw, kind))();
+      // 图片是 **dataURL**，不是资产引用 —— 交给 openAttachment 会被
+      // decodeRef 兜底成 legacyPath（实测：a 为 null），于是报
+      // 「旧版本地路径，无法打开」。点画布上的图理应直接预览。
+      if (kind === 'image') {
+        guard('预览图片', () => {
+          if (!raw) { status('图片数据为空', true); return; }
+          openPreview(app, { url: raw, name: `图片 ${Number(index) + 1}` });
+        })();
+        return;
+      }
+      guard('打开附件', () => openAttachment(raw))();
     },
     // 拖放附加（图片 / 视频 / 任意文件）
     onDropFiles: (files, nodeId) => { guard('拖放附加', () => handleDropFiles(files, nodeId))(); },

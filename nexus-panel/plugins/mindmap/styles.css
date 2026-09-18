@@ -962,3 +962,9 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
   opacity: 0;
 }
 .mm-thumb:hover .mm-thumb-x { opacity: 1; }
+
+/* 选中的附件行（详情区显示的就是它）—— 不加高亮用户不知道点了哪一行 */
+.mm-arow.on {
+  background: var(--accent-soft, var(--surface-sunk, var(--surface)));
+  color: var(--accent);
+}

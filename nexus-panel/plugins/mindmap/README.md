@@ -659,6 +659,24 @@ import 不了 io.js），测试里逐例比对两边结果 —— 改一边忘�
 
 `src` 必须带 `#t=0.1`：不 seek 的话不少浏览器不绘制首帧，抓出来是全黑。
 
+### 审查（功能 → 显示）后补的三处
+
+**1. 点画布上的图片会误报「旧版本地路径」。**
+图片是 dataURL，`openAttachment` 里的 `decodeRef` 会把它兜底成
+`legacyPath`（`a` 为 null），于是走进"旧版路径打不开"分支。
+现在 `onOpenAttach` 对 `kind === 'image'` 单独走 `openPreview`。
+
+**2. XMind 导入的附件写回时机。**
+`out[idx]` 在 `saveAsset` resolve 前还是**占位值**（包内路径）。
+若在 `await Promise.all(tasks)` 之前就 `JSON.stringify(out)` 写回，
+引用会被固化成 `resources/kma_0_…` —— 导出再导入后**所有附件都打不开**。
+必须等全部 resolve 再写回（`pending` 队列）。
+
+**3. 侧栏"详情区显示第几个"的索引。**
+写成 `pageFile` 内的局部变量的话，`refresh()` 重建 DOM 时每次都归 0 ——
+点第 3 个文件想看它的详情，刷新完又跳回第 1 个，表现为"点了没反应"。
+必须提到模块级。另外选中行要有高亮，否则用户不知道自己选的是哪一行。
+
 ### 覆盖提示设置项已取消
 
 原来是"单值字段被顶掉"才需要提示；现在一律是**追加**，没有覆盖场景了。
