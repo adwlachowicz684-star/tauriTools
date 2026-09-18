@@ -10,6 +10,7 @@ mkdir -p "$OUT"
 # 这里按源目录结构一次性建好。
 mkdir -p "$OUT/runners" "$OUT/tests" "$OUT/defs"
 S="python3 scripts/strip-ts.py"
+      $S engine/runtimeKeys.ts "$OUT/runtimeKeys.mjs" >/dev/null
       $S engine/moduleTypes.ts "$OUT/moduleTypes.mjs" >/dev/null
       $S engine/canvasRef.ts "$OUT/canvasRef.mjs" --import-map ./moduleTypes=./moduleTypes.mjs >/dev/null
       $S engine/canvasGroups.ts "$OUT/canvasGroups.mjs" --import-map ./kv=./kv.mjs >/dev/null
@@ -115,7 +116,7 @@ $S engine/secretVault.ts "$OUT/secretVault.mjs" \
    --import-map ../types=./types.mjs >/dev/null
 $S engine/conversations.ts "$OUT/conversations.mjs" \
    --import-map ../types=./types.mjs >/dev/null
-$S engine/modules.ts "$OUT/modules.mjs" \
+$S engine/modules.ts "$OUT/modules.mjs" --import-map ./runtimeKeys=./runtimeKeys.mjs \
    --import-map ./duplicate=./duplicate.mjs --import-map ./kv=./kv.mjs >/dev/null
 $S engine/nodeValidate.ts "$OUT/nodeValidate.mjs" \
    --import-map ../types=./types.mjs >/dev/null
@@ -143,7 +144,7 @@ $S engine/nodeDefaults.ts "$OUT/nodeDefaults.mjs" \
 $S engine/paramCards.ts "$OUT/paramCards.mjs" \
    --import-map ./duplicate=./duplicate.mjs --import-map ./kv=./kv.mjs >/dev/null
 # duplicate.ts 是纯逻辑（不 import 任何东西），单独生成即可
-$S engine/duplicate.ts "$OUT/duplicate.mjs" >/dev/null
+$S engine/duplicate.ts "$OUT/duplicate.mjs" --import-map ./runtimeKeys=./runtimeKeys.mjs >/dev/null
 # customPresets 复用了 duplicate 的 stripRuntime，要指到生成物
 $S engine/customPresets.ts "$OUT/customPresets.mjs" \
    --import-map ../types=./types.mjs \

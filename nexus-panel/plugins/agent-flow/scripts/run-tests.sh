@@ -66,6 +66,7 @@ for f in tests/*.test.ts; do
     --import-map ../engine/canvasGroups=../canvasGroups.mjs \
     --import-map ../engine/triggerRegistry=../triggerRegistry.mjs \
     --import-map ../engine/moduleTypes=../moduleTypes.mjs \
+    --import-map ../engine/runtimeKeys=../runtimeKeys.mjs \
     --import-map ../components/Sidebar=../Sidebar.mjs >/dev/null
 done
 

@@ -140,26 +140,11 @@ export function modulePorts(def: ModuleDef): ModulePorts {
 /* 运行时字段清理                                                       */
 /* ------------------------------------------------------------------ */
 
-const RUNTIME_KEYS = ['status', 'output', 'error'];
-
-/**
- * 存进模块前剥掉运行时字段。
- *
- * 与 duplicate.stripRuntime 同一套口径：不剥的话，把跑过的节点存成模块，
- * 之后拖出来的实例都带着 status='success' 和旧 output ——
- * **看起来"已经跑完了"，实际一次都没跑**。
+/*
+ * 运行时字段清单与剥离逻辑收口在 engine/runtimeKeys.ts。
+ * 这里 re-export 保持既有 import 可用。
  */
-export function stripRuntimeNodes(nodes: Record<string, unknown>[]): Record<string, unknown>[] {
-  return nodes.map((n) => {
-    const data = { ...((n.data ?? {}) as Record<string, unknown>) };
-    for (const k of RUNTIME_KEYS) delete data[k];
-    // 运行时字段还有一批 last* 前缀的（lastSha / lastCommit …）
-    for (const k of Object.keys(data)) {
-      if (k.startsWith('last')) delete data[k];
-    }
-    return { ...n, data };
-  });
-}
+export { stripRuntimeNodes } from './runtimeKeys';
 
 /* ------------------------------------------------------------------ */
 /* 展开：把模块实例替换成内部节点                                        */
