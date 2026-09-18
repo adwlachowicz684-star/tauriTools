@@ -2,6 +2,8 @@ import { invoke as tauriInvoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { CliKind, FsOp, FsNodeData } from '../types';
 import { isHttpUrl } from '../engine/llm';
+import { withinRoots } from '../engine/exportDir';
+export { withinRoots };
 
 /* ---------------- Tauri 通道：桥接优先，直连兜底 ----------------
    本插件跑在 iframe（沙箱）里，能不能直接调 Tauri 取决于沙箱强度：
@@ -356,6 +358,12 @@ export async function ensureDir(path: string): Promise<FsOutcome> {
     maxBytes: 0,
     exts: [],
   });
+}
+
+/** 当前已授权的根目录（fs_op 只接受落在这些目录内的路径） */
+export async function listFsRoots(): Promise<string[]> {
+  const r = await invoke<string[]>('af_fs_list_roots');
+  return Array.isArray(r) ? r : [];
 }
 
 /** 目录选择能不能用：只有桌面端有（fpx 是 Rust 侧能力） */

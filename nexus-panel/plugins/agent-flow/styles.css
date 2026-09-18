@@ -2165,3 +2165,11 @@ input.mono, textarea.mono {
   opacity: 0.6;
   line-height: 1.5;
 }
+.dirpicker-item.ok {
+  color: #86efac;
+}
+.dirpicker-item .ok-tag {
+  font-size: 10px;
+  opacity: 0.8;
+  margin-left: 4px;
+}

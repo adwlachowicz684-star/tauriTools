@@ -118,3 +118,33 @@ export function looksAbsolute(path: string): boolean {
   if (s.startsWith('/')) return true;
   return /^[A-Za-z]:[\\/]/.test(s);
 }
+
+/**
+ * 判断路径是否落在已授权根目录范围内。
+ *
+ * ================= 为什么放这里 =================
+ *
+ * 它是纯逻辑（不碰 Tauri），放 engine 才能被单测覆盖。
+ * 而这类"前缀比较"最容易在 Windows 上出错：
+ * `\\?\` 前缀、大小写、尾部斜杠，少处理一个就会误判。
+ *
+ * 注意它**只用于"要不要先申请授权"的决策** ——
+ * 真正的放行由 Rust 侧的 canonicalize + starts_with 说了算，
+ * 前端判断不算数，不能拿它当安全边界。
+ */
+function norm(p: string): string {
+  let s = String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
+  /* Windows canonicalize 后带 \\?\ 前缀，比较前要去掉 */
+  s = s.replace(/^\/\/\?\//, '');
+  return s.toLowerCase();
+}
+
+export function withinRoots(path: string, roots: string[]): boolean {
+  const p = norm(path);
+  if (!p) return false;
+  return (roots ?? []).some((r) => {
+    const rr = norm(r);
+    if (!rr) return false;
+    return p === rr || p.startsWith(rr + '/');
+  });
+}

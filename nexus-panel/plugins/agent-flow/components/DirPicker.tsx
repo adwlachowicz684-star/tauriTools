@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { listDirs, listQuickRoots, type DirEntryLite } from '../lib/tauri';
+import { listDirs, listQuickRoots, listFsRoots, type DirEntryLite } from '../lib/tauri';
+import { withinRoots } from '../engine/exportDir';
 
 /**
  * 应用内目录选择器。
@@ -32,6 +33,12 @@ export default function DirPicker({
   const [roots, setRoots] = useState<DirEntryLite[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  /*
+   * 已授权目录 —— fs_op 只写这些目录内的路径。
+   * 标出来让用户优先选它们：选了未授权目录会写失败，
+   * 而"选的时候看不出来"比失败本身更让人困惑。
+   */
+  const [authorized, setAuthorized] = useState<string[]>([]);
   const alive = useRef(true);
 
   useEffect(() => {
@@ -43,6 +50,9 @@ export default function DirPicker({
     void listQuickRoots()
       .then((r) => { if (alive.current) setRoots(r); })
       .catch(() => { /* 起点列不出来不影响手动输入 */ });
+    void listFsRoots()
+      .then((r) => { if (alive.current) setAuthorized(r); })
+      .catch(() => { /* 查不到就当全部未授权，不影响使用 */ });
   }, []);
 
   const load = useCallback(async (p: string) => {
@@ -127,18 +137,27 @@ export default function DirPicker({
           {entries.map((d) => (
             <button
               key={d.path}
-              className="dirpicker-item"
+              className={`dirpicker-item${withinRoots(d.path, authorized) ? ' ok' : ''}`}
               onClick={() => void load(d.path)}
               onDoubleClick={() => onPick(d.path)}
+              title={withinRoots(d.path, authorized) ? '这个目录已授权，可直接写' : '未授权，选中后会自动申请授权'}
             >
               📁 {d.name}
+              {withinRoots(d.path, authorized) ? <small className="ok-tag">已授权</small> : null}
               {d.has_child ? <small>▸</small> : null}
             </button>
           ))}
         </div>
 
         <div className="dirpicker-foot">
-          <span className="dirpicker-cur">当前：{cwd || '（未选）'}</span>
+          <span className="dirpicker-cur">
+            当前：{cwd || '（未选）'}
+            {cwd ? (
+              withinRoots(cwd, authorized)
+                ? ' · 已授权'
+                : ' · 未授权（选中后会自动申请）'
+            ) : null}
+          </span>
           <span className="dirpicker-ops">
             {onPickAsDefault ? (
               <button
@@ -155,7 +174,8 @@ export default function DirPicker({
           </span>
         </div>
         <p className="dirpicker-hint">
-          双击文件夹可直接选中。目录若不在授权范围内会打不开 —— 那时点「设为默认」会自动申请授权。
+          双击文件夹可直接选中。标「已授权」的目录可以直接写；未授权的会自动申请，
+          申请失败会在日志里说明原因。
         </p>
       </div>
     </div>
