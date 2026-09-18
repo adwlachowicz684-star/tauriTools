@@ -79,7 +79,28 @@ function copyPlainPlugins(): Plugin {
   // 它 index.js 里是 `import ... from '../../js/plugin-sdk.js'`，
   // 必须靠 Vite 打包才解析得到；整目录原样拷贝会盖掉打包产物，
   // 插件连开都开不了（比画布空白更糟）。两种产物的职责不能混。
-  const NATIVE_SUBDIRS = [{ plugin: 'mindmap', dir: 'editor' }];
+  /*
+   * 两个目录，成因**完全相同**：都是靠相对 URL 在运行时直接引用的原生资源，
+   * Vite 处理不了（见下方说明），必须在打包后原样拷过去。
+   *
+   * · mindmap/editor —— kityminder 的 4 个原文件，靠 <script src> 加载
+   * · project-group/preseticons —— **122 个 .ico**，靠 <img src> 加载
+   *
+   * preseticons 这一条是实测发现的真 bug：
+   *   dist 里 .ico 数量 = **0**，而产物 JS 里仍保留着
+   *   `./preseticons/${encodeURIComponent(t)}.ico` 这段引用。
+   *   于是 Vite 生产构建下 122 个预设图标**全部 404**
+   *   （<img> 走 error 分支隐藏，表现为「图标位一片空白」）。
+   *
+   * 同一个目录同时服务于两处引用，一条拷贝规则都覆盖：
+   *   · project-group 自己    → ./preseticons/x.ico
+   *   · icon-picker 服务      → ../project-group/preseticons/x.ico
+   * 两者解析到同一个 dist 路径，同 origin，都能访问。
+   */
+  const NATIVE_SUBDIRS = [
+    { plugin: 'mindmap', dir: 'editor' },
+    { plugin: 'project-group', dir: 'preseticons' },
+  ];
   return {
     name: 'nexus-copy-plain-plugins',
     apply: 'build',

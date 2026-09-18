@@ -10,9 +10,21 @@ import { PRESET_ICON_NAMES } from './iconNames.js';
  * 这里用相对路径 ../project-group/preseticons/ 引用，
  * 与宿主同 origin 的 iframe 可以直接访问。
  *
- * **这是一个已知的设计妥协**（见 README）：服务本该自带资源、不依赖别的插件，
- * 但 122 个 .ico 复制一份会让仓库凭空多出一堆二进制。
- * 等后续真的要把图标服务独立分发时，再把资源搬进来。
+ * **为什么最终决定不把资源搬进本服务（N22 的处理结论）**
+ *
+ * 直觉上服务该自带资源、不依赖别的插件。但核实后不改，三个理由：
+ *
+ *   1. **project-group 才是主用户**。它的 PresetIconGrid 用
+ *      `./preseticons/x.ico` 显示同一批图标。搬走要么断它的引用，
+ *      要么复制 122 个二进制（747 KB）—— 都不划算。
+ *   2. **搬走解决不了真问题**。真正的风险是「Vite 构建后图标全部 404」
+ *      （动态拼路径 Vite 分析不了，见 native-assets-test.mjs），
+ *      而这与资源放在哪个插件目录下**无关**，靠 vite.config 的
+ *      NATIVE_SUBDIRS 拷贝规则解决（已修，两条引用同一份拷贝）。
+ *   3. 两处引用解析到**同一个** dist 路径，同 origin，本来就没有隔离问题。
+ *
+ * 结论：资源归属保持不变，等真的要独立分发（比如图标服务单独提供给
+ * 第三方）时再搬 —— 那时应该连 project-group 的引用一起改成走服务。
  */
 
 const ICON_DIR = '../project-group/preseticons/';
