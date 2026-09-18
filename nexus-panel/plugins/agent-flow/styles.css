@@ -2050,3 +2050,118 @@ input.mono, textarea.mono {
   padding: 0;
   text-decoration: underline;
 }
+
+/* ---------------- 导出目录设置 ---------------- */
+.cfg-dir {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.cfg-dir input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---------------- 目录选择器 ---------------- */
+.dirpicker-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+.dirpicker {
+  width: min(560px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--panel, #1b1d23);
+  border: 1px solid var(--line, #333);
+  color: var(--fg, #e6e6e6);
+}
+.dirpicker-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.dirpicker-path {
+  display: flex;
+  gap: 6px;
+}
+.dirpicker-path input {
+  flex: 1;
+  min-width: 0;
+}
+.dirpicker-err {
+  color: #f87171;
+  font-size: 12px;
+}
+.dirpicker-roots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.dirpicker-roots .chip.on {
+  background: var(--accent, #3b82f6);
+  color: #fff;
+}
+.dirpicker-list {
+  flex: 1;
+  overflow: auto;
+  border: 1px solid var(--line, #333);
+  border-radius: 8px;
+  padding: 4px;
+  min-height: 160px;
+}
+.dirpicker-item {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.dirpicker-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.dirpicker-item.up {
+  opacity: 0.75;
+}
+.dirpicker-empty {
+  padding: 10px;
+  opacity: 0.6;
+  font-size: 12px;
+}
+.dirpicker-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.dirpicker-cur {
+  font-size: 12px;
+  opacity: 0.75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dirpicker-ops {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.dirpicker-hint {
+  margin: 0;
+  font-size: 11px;
+  opacity: 0.6;
+  line-height: 1.5;
+}

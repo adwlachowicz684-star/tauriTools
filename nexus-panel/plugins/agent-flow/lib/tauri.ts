@@ -295,6 +295,79 @@ export function canFs(): boolean {
   return hasTauri();
 }
 
+/* ---------------- 目录浏览 / 导出落盘 ---------------- */
+
+/**
+ * 目录条目 —— 与 Rust 侧 fpx::model::DirEntryLite 对应。
+ *
+ * 刻意只取这三个字段：目录选择器只需要能显示名字、能往下钻。
+ */
+export type DirEntryLite = { name: string; path: string; has_child: boolean };
+
+/**
+ * 常用起点（桌面、文档、下载……），给目录选择器当首页。
+ *
+ * 走 fpx 的现成命令而不是新加 Rust ——
+ * 为"选个目录"去引 tauri-plugin-dialog（要改 Cargo、重新编译、过打包），
+ * 代价远大于复用已有的目录浏览能力。
+ */
+export async function listQuickRoots(): Promise<DirEntryLite[]> {
+  const r = await invoke<DirEntryLite[]>('fpx_quick_roots');
+  return Array.isArray(r) ? r : [];
+}
+
+/** 列某目录下的子目录 */
+export async function listDirs(path: string): Promise<DirEntryLite[]> {
+  const r = await invoke<DirEntryLite[]>('fpx_list_dirs', { path });
+  return Array.isArray(r) ? r : [];
+}
+
+/**
+ * 写文本文件到磁盘。
+ *
+ * 返回 ok —— 调用方**必须**看它，不能假定成功：
+ * 以前导出用 <a download> 且 catch 是空的，
+ * 下载被拦时日志照样打印"✅ 已导出"，失败伪装成成功。
+ */
+export async function writeTextFile(path: string, content: string): Promise<FsOutcome> {
+  return await fileOp({
+    op: 'write',
+    path,
+    target: '',
+    content,
+    recursive: false,
+    force: true,
+    dryRun: false,
+    maxBytes: 0,
+    exts: [],
+  });
+}
+
+/** 确认目录存在（不存在则建）—— fs_op 的 write 不会自动建父目录 */
+export async function ensureDir(path: string): Promise<FsOutcome> {
+  return await fileOp({
+    op: 'mkdir',
+    path,
+    target: '',
+    content: '',
+    recursive: true,
+    force: false,
+    dryRun: false,
+    maxBytes: 0,
+    exts: [],
+  });
+}
+
+/** 目录选择能不能用：只有桌面端有（fpx 是 Rust 侧能力） */
+export function canPickDir(): boolean {
+  return hasTauri();
+}
+
+/** 导出能不能真正落盘到指定目录 */
+export function canExportToFile(): boolean {
+  return canFs();
+}
+
 /* ---------------- 网络抓取（B站 / 公众号节点用） ---------------- */
 
 export type FetchTextOptions = {
