@@ -41,6 +41,16 @@ import { prompt } from '../../../js/dialog.js';
 import ModuleLibrary, {
   MODULE_DRAG_MIME, decodeModuleDrag, askCreateModule,
 } from './components/ModuleLibrary';
+import { expandCanvasRefs } from './engine/canvasRef';
+import {
+  collectGlobalTriggers, activeTriggers, dedupeWatchDirs,
+  type GlobalTrigger,
+} from './engine/triggerRegistry';
+import {
+  loadGroups, saveGroups, pruneGroups, nextGroupName, addToGroup, removeFromGroup,
+  type CanvasGroup,
+} from './engine/canvasGroups';
+import CanvasLibrary from './components/CanvasLibrary';
 import {
   expandModules, findModule, addModule, saveModules, loadModules,
   stripRuntimeNodes, type ModuleDef,
@@ -570,32 +580,84 @@ export default function App() {
    * "cron 下次时刻""防抖定时器"，展开后天然互不覆盖。
    * 同时带上 nodeId，触发完才能把状态写回画布上那一个节点。
    */
-  const triggers = useMemo<Trigger[]>(
-    () =>
-      nodes
-        .filter((n) => isTrigger(n.data))
-        .flatMap((n) => {
-          const d = n.data as {
-            triggers?: TriggerKind[]; trigger?: TriggerKind;
-            config: Record<string, unknown>; input: string;
-            enabled: boolean; label: string;
-          };
-          const kinds = triggerKindsOf(d as never);
-          const base = { ...DEFAULT_TRIGGER_CONFIG, ...(d.config ?? {}) } as TriggerConfig;
-          return kinds.map((kind) => ({
-            id: `${n.id}:${kind}`,
-            nodeId: n.id,
-            name: d.label,
-            kind,
-            enabled: d.enabled !== false,
-            config: base,
-            input: d.input ?? '',
-            lastFiredAt: null,
-            lastResult: null,
-          } as Trigger));
-        }),
-    [nodes],
+  /*
+   * 触发器**扫描所有画布**，不只是当前这张。
+   *
+   * 原来只从当前画布收集，于是切走一张画布，它的目录监听、
+   * webhook、周期任务就全停了 —— 而且没有任何提示，
+   * 用户会以为监听还在。
+   *
+   * 后台开关（默认开）决定要不要由全局代管；关掉的只在
+   * 它的画布处于激活态时才接管（见 triggerRegistry.splitByScope）。
+   */
+  const allGlobalTriggers = useMemo<GlobalTrigger[]>(
+    () => collectGlobalTriggers(
+      canvases.map((c) => ({
+        id: c.id,
+        name: c.name,
+        nodes: (c.nodes ?? []) as { id: string; data?: Record<string, unknown> }[],
+      })),
+      DEFAULT_TRIGGER_CONFIG,
+    ),
+    [canvases],
   );
+
+  const triggers = useMemo<Trigger[]>(
+    () => {
+      const act = activeTriggers(allGlobalTriggers, activeId);
+      // 同目录重复监听会改一次文件触发两遍，在数值推导里代价很大
+      return dedupeWatchDirs(act) as unknown as Trigger[];
+    },
+    [allGlobalTriggers, activeId],
+  );
+
+  /** 触发器面板要能看出"哪些是别的画布的"，所以保留完整信息 */
+  const triggersWithCanvas = allGlobalTriggers;
+
+
+  /*
+   * 画布组。
+   *
+   * 存 localStorage，与画布同一套口径（见 engine/kv.ts）。
+   * 删除画布时必须 pruneGroups —— 不然组里会留着孤儿 id，
+   * 界面上显示一个空条目，点它什么也不会发生。
+   */
+  const [canvasGroups, setCanvasGroups] = useState<CanvasGroup[]>(() => loadGroups());
+
+  useEffect(() => { saveGroups(canvasGroups); }, [canvasGroups]);
+
+  useEffect(() => {
+    setCanvasGroups((gs) => pruneGroups(gs, canvases.map((c) => c.id)));
+  }, [canvases]);
+
+  const handleAddGroup = useCallback(() => {
+    setCanvasGroups((gs) => [
+      ...gs,
+      { id: `g_${Date.now().toString(36)}`, name: nextGroupName(gs), members: [], collapsed: false },
+    ]);
+  }, []);
+
+  const handleRenameGroup = useCallback((id: string, name: string) => {
+    setCanvasGroups((gs) => gs.map((g) => (g.id === id ? { ...g, name } : g)));
+  }, []);
+
+  const handleDeleteGroup = useCallback((id: string) => {
+    setCanvasGroups((gs) => gs.filter((g) => g.id !== id));
+  }, []);
+
+  const handleDropToGroup = useCallback((groupId: string, canvasId: string) => {
+    setCanvasGroups((gs) => addToGroup(gs, groupId, canvasId));
+  }, []);
+
+  const handleRemoveFromGroup = useCallback((canvasId: string) => {
+    setCanvasGroups((gs) => removeFromGroup(gs, canvasId));
+  }, []);
+
+  const handleToggleCollapse = useCallback((groupId: string) => {
+    setCanvasGroups((gs) => gs.map((g) =>
+      (g.id === groupId ? { ...g, collapsed: !(g.collapsed === true) } : g)));
+  }, []);
+
   const [watchSupported] = useState(() => canWatch());
   const [webhookSupported] = useState(() => canWebhook());
   // 外观：跟随面板主题 / 固定 Agent Flow 原生样式
@@ -1840,19 +1902,46 @@ export default function App() {
    * 跑一轮工作流。
    * @param inputOverride 触发器注入的全局输入，优先级高于工具栏里的输入框
    */
-  const run = useCallback(async (inputOverride?: string, source: TaskSource = 'unknown'): Promise<boolean> => {
+  /**
+   * @param targetCanvasId 跑哪张画布。
+   *
+   * 不传 = 跑当前激活的画布（手动点运行时是这种）。
+   * 传了 = 跑指定画布 —— **全局触发器靠这个**：
+   * 后台触发器可能属于一张根本没打开的画布，
+   * 不指定就变成"跑当前这张"，于是半夜自己跑起来的其实是错的流程。
+   */
+  const run = useCallback(async (
+    inputOverride?: string,
+    source: TaskSource = 'unknown',
+    targetCanvasId?: string,
+  ): Promise<boolean> => {
     if (running) {
       pushLog('已有任务在运行，本次触发被跳过');
       return false;
     }
     setRunning(true);
 
+    /* 目标画布 ≠ 当前画布时，用那张画布的内容跑 */
+    const tgtId = targetCanvasId && targetCanvasId !== activeId ? targetCanvasId : activeId;
+    const tgtCanvas = canvases.find((c) => c.id === tgtId);
+    if (targetCanvasId && !tgtCanvas) {
+      pushLog(`⚠ 触发的画布「${targetCanvasId}」找不到，本次跳过`);
+      setRunning(false);
+      return false;
+    }
+    const runNodes = tgtCanvas && tgtCanvas.id !== activeId
+      ? (tgtCanvas.nodes as FlowNode[])
+      : nodes;
+    const runEdges = tgtCanvas && tgtCanvas.id !== activeId
+      ? (tgtCanvas.edges as Edge[])
+      : edges;
+
     // 建一条任务记录。total 先按节点数估，运行时以实际出现的节点为准
     const task = makeTask({
-      canvasId: activeId ?? '',
-      canvasName: canvases.find((c) => c.id === activeId)?.name ?? '未命名流程',
+      canvasId: tgtId ?? '',
+      canvasName: tgtCanvas?.name ?? canvases.find((c) => c.id === activeId)?.name ?? '未命名流程',
       source,
-      total: nodes.length,
+      total: runNodes.length,
     });
     currentTaskRef.current = task.id;
     setTasks((list) => [task, ...list]);
@@ -1879,11 +1968,11 @@ export default function App() {
      * 拓扑排序、失败传播、跳过全部自动成立 ——
      * 引擎里不需要为"嵌合"写任何专门逻辑。
      */
-    const stackE = stackEdges(nodes as never);
+    const stackE = stackEdges(runNodes as never);
     const rawGraph: Graph = {
-      nodes: nodes.map((n) => ({ id: n.id, data: n.data })),
+      nodes: runNodes.map((n) => ({ id: n.id, data: n.data })),
       edges: [
-        ...edges.map((e) => ({
+        ...runEdges.map((e) => ({
           id: e.id, source: e.source, target: e.target,
           // 条件分支用 branch，循环出口用 loopRole——两者语义不同，不能混
           branch: e.data?.branch,
@@ -1893,7 +1982,33 @@ export default function App() {
       ],
     };
 
-    const graph = expandModules(rawGraph as never, (moduleId) => findModule(moduleId)) as unknown as Graph;
+    /*
+     * 先展开模块，再展开跨画布引用 —— 顺序不能反。
+     *
+     * 模块展开后才会出现内部的画布引用节点；反过来先把画布展开了，
+     * 模块内部那些引用节点就漏掉了。
+     */
+    const afterModules = expandModules(rawGraph as never, (moduleId) => findModule(moduleId));
+
+    const canvasExpanded = expandCanvasRefs(afterModules as never, (canvasId) => {
+      const c = canvases.find((x) => x.id === canvasId);
+      if (!c) return null;
+      return {
+        id: c.id,
+        name: c.name,
+        nodes: (c.nodes ?? []) as never,
+        edges: (c.edges ?? []) as never,
+      };
+    });
+    /*
+     * 跨画布展开的问题**必须说出来** ——
+     * 找不到画布或成环时，被跳过的是一个整块，
+     * 静默跳过会让用户看到"下游没输出"却毫无线索。
+     */
+    for (const p of canvasExpanded.problems) {
+      pushLog(`⚠ 跨画布调用「${p.instanceId}」被跳过：${p.reason}`);
+    }
+    const graph = canvasExpanded as unknown as Graph;
 
     /*
      * 模块被删了但画布上还留着实例 —— 展开时会退化成一个空壳节点，
@@ -2099,8 +2214,10 @@ export default function App() {
   const historyRef = useRef(historyFile);
   useEffect(() => { historyRef.current = historyFile; }, [historyFile]);
 
+const globalTriggersRef = useRef<GlobalTrigger[]>([]);
   const triggersRef = useRef(triggers);
   useEffect(() => { triggersRef.current = triggers; }, [triggers]);
+  useEffect(() => { globalTriggersRef.current = allGlobalTriggers; }, [allGlobalTriggers]);
 
   /* ---------------- 触发器调度 ---------------- */
 
@@ -2120,7 +2237,12 @@ export default function App() {
                 : t.kind === 'webhook' ? 'webhook'
                   : t.kind === 'chat' ? 'chat'
                     : 'manual';
-        const ok = await runRef.current(injected, src);
+        /*
+         * 带上触发器所属画布 —— 后台触发器可能属于一张没打开的画布，
+         * 不指定就变成"跑当前这张"，半夜自己跑起来的会是错的流程。
+         */
+        const gt = globalTriggersRef.current.find((x) => x.id === t.id);
+        const ok = await runRef.current(injected, src, gt?.canvasId);
         // 触发记录写回画布上的触发器节点，直接在节点卡片上就能看到"上次触发时间"
         const targetId = t.nodeId ?? t.id;
         setNodes((ns) => ns.map((n) =>
@@ -2414,6 +2536,24 @@ export default function App() {
         disabled={running}
       />
 
+      <div className="af-body-row">
+        <CanvasLibrary
+          canvases={canvases.map(toMeta)}
+          groups={canvasGroups}
+          activeId={activeId}
+          triggers={allGlobalTriggers}
+          onSelect={setActiveId}
+          onAdd={handleAddCanvas}
+          onAddGroup={handleAddGroup}
+          onRenameGroup={handleRenameGroup}
+          onDeleteGroup={handleDeleteGroup}
+          onDropToGroup={handleDropToGroup}
+          onRemoveFromGroup={handleRemoveFromGroup}
+          onToggleCollapse={handleToggleCollapse}
+          disabled={running}
+        />
+        <div className="af-body-main">
+
       <div className="toolbar">
         <div className="view-switch">
           <button className={view === 'flow' ? 'on' : ''} onClick={() => setView('flow')}>
@@ -2649,7 +2789,8 @@ export default function App() {
           </div>
         </div>
       </div>
-
+        </div>
+      </div>
       </div>
     </div>
   );

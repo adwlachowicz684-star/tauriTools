@@ -41,6 +41,7 @@ import { runGate } from './runners/gate';
 import { runThrottle } from './runners/throttle';
 import { runTimeout } from './runners/timeout';
 import { runRetry } from './runners/retry';
+import { runCanvasIn, runCanvasOut } from './runners/canvasPort';
 import { runTableRead, runDerive, runFilter, runAgg } from './runners/table';
 import { runMath, runText, runCompare, runRandom, runVar, runStop, runAsk } from './runners/ops';
 
@@ -79,6 +80,8 @@ const RUNNERS: Record<string, NodeRunner | undefined> = {
   var: runVar,
   stop: runStop,
   ask: runAsk,
+  canvasIn: runCanvasIn,
+  canvasOut: runCanvasOut,
   tableRead: runTableRead,
   derive: runDerive,
   filter: runFilter,

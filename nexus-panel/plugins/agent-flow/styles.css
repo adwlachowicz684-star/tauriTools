@@ -1910,3 +1910,143 @@ input.mono, textarea.mono {
 .mcp-sec-arrow { flex: 0 0 10px; color: var(--af-dim, #8b93a7); font-size: 10px; }
 .mcp-sec-body { padding: 2px 0 4px 14px; }
 .mcp-sec-body .side-item { padding: 4px 8px; font-size: 12px; }
+
+/* ---------- 左侧画布库 ---------- */
+
+.af-lib {
+  display: flex;
+  flex-direction: column;
+  width: 180px;
+  flex: 0 0 180px;
+  border-right: 1px solid var(--af-line, #2a2f3a);
+  background: var(--af-panel, #161a21);
+  overflow: hidden;
+}
+
+.af-lib-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 8px 6px;
+  border-bottom: 1px solid var(--af-line, #2a2f3a);
+}
+
+.af-lib-title { font-size: 12px; font-weight: 600; opacity: .8; }
+.af-lib-spacer { flex: 1 1 auto; }
+
+.af-lib-btn {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: .6;
+}
+.af-lib-btn:hover:not(:disabled) { opacity: 1; background: rgba(255, 255, 255, .07); }
+.af-lib-btn:disabled { cursor: not-allowed; opacity: .25; }
+
+.af-lib-body { flex: 1 1 auto; overflow-y: auto; padding: 4px; }
+
+.af-lib-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  user-select: none;
+}
+.af-lib-item:hover { background: rgba(255, 255, 255, .05); }
+.af-lib-item.is-active {
+  background: rgba(122, 162, 247, .16);
+  color: #9db8ff;
+}
+
+.af-lib-dot { opacity: .5; width: 8px; }
+.af-lib-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 后台监听指示：这张画布没打开也在跑 */
+.af-lib-bg {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: #30d158;
+  opacity: .85;
+}
+
+.af-lib-group { margin: 2px 0; }
+
+.af-lib-group-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.af-lib-group.is-hover .af-lib-group-head {
+  background: rgba(122, 162, 247, .14);
+  outline: 1px dashed rgba(122, 162, 247, .5);
+}
+
+.af-lib-fold {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 10px;
+  width: 14px;
+  opacity: .6;
+}
+
+.af-lib-group-name {
+  flex: 1 1 auto;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: .85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.af-lib-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  background: rgba(0, 0, 0, .3);
+  color: inherit;
+  border: 1px solid var(--af-line, #2a2f3a);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.af-lib-group-body { padding-left: 10px; }
+
+.af-lib-empty {
+  font-size: 11px;
+  opacity: .45;
+  padding: 6px 8px;
+}
+
+.af-lib-tip {
+  border-top: 1px solid var(--af-line, #2a2f3a);
+  padding: 6px 8px;
+  font-size: 11px;
+  opacity: .7;
+}
+
+.af-lib-link {
+  border: none;
+  background: transparent;
+  color: #9db8ff;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+  text-decoration: underline;
+}
