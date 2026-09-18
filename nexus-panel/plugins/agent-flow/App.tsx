@@ -38,7 +38,10 @@ import { deviceSeed, clearKeyCache } from './engine/crypto';
 import Sidebar, { DRAG_MIME, decodeDrag, type DragPayload } from './components/Sidebar';
 import { prompt } from '../../../js/dialog.js';
 import DirPicker from './components/DirPicker';
-import { writeTextFile, fsAllowRoot, canExportToFile } from './lib/tauri';
+import {
+  writeTextFile, fsAllowRoot, listFsRoots, canExportToFile,
+} from './lib/tauri';
+import { withinRoots } from './engine/exportDir';
 import ModuleLibrary, {
   MODULE_DRAG_MIME, decodeModuleDrag, askCreateModule,
 } from './components/ModuleLibrary';
@@ -1047,15 +1050,41 @@ export default function App() {
 
       try {
         /*
-         * fs_op 只写授权根目录内的路径（防"读任意文件 + 外传"的收敛点）。
-         * 目录不在授权内时先申请，并明确告诉用户 ——
-         * 静默放行等于把这道防线抹掉。
+         * fs_op 只写**授权根目录内**的路径 —— 这是"读任意文件 + 外传"
+         * 这条风险链的收敛点，不能绕。
+         *
+         * 所以写之前先看目录在不在授权列表里，不在就申请。
+         *
+         * 为什么不能像第一版那样"失败了偷偷授权再试一次"：
+         *   · 用户完全不知道发生过授权
+         *   · 授权失败时看到的是笼统的"路径越权"，
+         *     而不是真正的原因（目录不存在 / 不允许授权 / 加进去没生效），
+         *     排查只能靠猜
          */
-        let out = await writeTextFile(target.path, r.text);
-        if (!out.ok) {
-          await fsAllowRoot(parentOf(target.path));
-          out = await writeTextFile(target.path, r.text);
+        const dir = parentOf(target.path);
+        let roots = await listFsRoots().catch(() => [] as string[]);
+        if (!withinRoots(dir, roots)) {
+          pushLog(`· 目录还没授权，正在申请：${dir}`);
+          try {
+            await fsAllowRoot(dir);
+          } catch (e) {
+            /*
+             * 授权失败**必须**说清原因 ——
+             * 最常见的是"目录不存在"或"不允许把这么大的范围加进来"，
+             * 笼统报"路径越权"会让人以为是路径写错了。
+             */
+            pushLog(`✗ 授权目录失败：${String((e as Error)?.message ?? e)}`);
+            return;
+          }
+          /* 回读一次：确认真的加进去了，别把"调用了但没生效"当成成功 */
+          roots = await listFsRoots().catch(() => [] as string[]);
+          if (!withinRoots(dir, roots)) {
+            pushLog(`✗ 授权已提交但目录仍不在授权列表里：${dir} —— 请换一个目录，或到设置里检查授权列表`);
+            return;
+          }
         }
+
+        const out = await writeTextFile(target.path, r.text);
         if (!out.ok) {
           pushLog(`✗ 导出失败：${out.text || '目标目录不可写'}`);
           return;
