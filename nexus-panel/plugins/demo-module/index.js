@@ -25,15 +25,44 @@ export default definePlugin({
       logEl.prepend(h('div', {}, `[${t}] ${msg}`));
     };
 
-    // 定时器演示清理；间隔来自插件自己的设置面板（0 = 关闭心跳）
+    /*
+     * 定时器演示 —— **走 ctx.owned 通道**，不用手写清理。
+     * 间隔来自插件自己的设置面板（0 = 关闭心跳）。
+     *
+     * 为什么必须走 owned（这是本通道存在的核心理由，已实证）：
+     *
+     *   卸载残留校验（S2）靠的是**全局快照差分**：拍 window keys、
+     *   head / body 子节点、styleSheets 数量。**定时器不体现在任何一项上**。
+     *
+     *   实测：忘了 clearInterval 时，差分报告 suspect = 0 ——
+     *   **完全静默**。插件卸载了，定时器还在跑，回调继续执行，
+     *   而它操作的 DOM 已经没了（表现为控制台里一堆无害的报错，
+     *   或者更糟：什么都没有，只是每秒空转一次）。
+     *
+     *   对照：DOM 节点残留 suspect = 1、window 属性残留 suspect = 1，
+     *   这两类差分**抓得到**。唯独定时器这类"只有副作用、不留痕迹"
+     *   的资源抓不到。
+     *
+     * 所以定时器**必须**走通道记账，由宿主在卸载时按账本撤销。
+     *
+     * 用 addTimer 而不是 setInterval 便捷写法：这里会**反复重启**
+     * （改设置时），addTimer 返回撤销函数，重启时先撤掉上一条，
+     * 记账不会累积。用 setInterval 的话每改一次设置就多留一条账，
+     * 虽然 dispose 时重复 clear 无害，但账本会越长越离谱。
+     */
     let heartbeat = await ctx.store.get('heartbeat', 5000);
-    let timer = null;
+    let stopTimer = null;
     const restartTimer = () => {
-      clearInterval(timer);
-      if (heartbeat > 0) timer = setInterval(() => log('心跳 tick'), heartbeat);
+      stopTimer?.();
+      stopTimer = null;
+      if (heartbeat > 0) {
+        const id = setInterval(() => log('心跳 tick'), heartbeat);
+        stopTimer = ctx.owned.addTimer('interval', id);
+      }
     };
     restartTimer();
-    ctx.onDestroy(() => clearInterval(timer));
+    /* 注意：**不再需要** ctx.onDestroy(() => clearInterval(timer)) ——
+       走了通道就由宿主兜底。重复清理不但多余，还会掩盖"通道没生效"。 */
     ctx.onDestroy(removeStyle);
 
     // 设置面板改了配置会广播过来，主视图即时响应
