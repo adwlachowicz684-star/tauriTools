@@ -46,6 +46,13 @@ export type NodeCategory =
    */
   | 'ops'
   /**
+   * 表格：数值推导。
+   *
+   * 单独成类 —— 它处理的是"一张表"而不是"一个值"，
+   * 找起来是另一种意图（与运算并列，因为都是算，但对象不同）。
+   */
+  | 'table'
+  /**
    * MCP 生成的节点。
    *
    * 单独一类而不是塞进 'external'：这类节点是**运行时生成**的，
@@ -64,6 +71,7 @@ export const NODE_CATEGORY_META: Record<NodeCategory, { label: string }> = {
   flow:     { label: '流程控制' },
   control:  { label: '控制器' },
   ops:      { label: '运算' },
+  table:    { label: '表格' },
   data:     { label: '文件与数据' },
   ai:       { label: 'AI 能力' },
   external: { label: '外部服务' },
