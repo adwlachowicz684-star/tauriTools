@@ -330,6 +330,11 @@ export const SPECS: Record<string, NodeSpec> = {
   stop: S('any', 'any', '透传上游（只是让流程停下）'),
   ask: S('text', 'any', '人填的内容'),
 
+  // 跨画布
+  canvasRef: S('any', 'any', '被调用画布的出口结果'),
+  canvasIn: S('any', 'any', '外部传进来的内容（原样透传）'),
+  canvasOut: S('any', 'any', '要送出画布的内容'),
+
   // 表格
   tableRead: S('table', 'none', '表格内容（CSV 文本）'),
   derive: S('table', ['table'], '加了新列的表格'),

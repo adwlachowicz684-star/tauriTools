@@ -305,7 +305,11 @@ export type NodeData =
   | TableReadNodeData
   | DeriveNodeData
   | FilterNodeData
-  | AggNodeData;
+  | AggNodeData
+  /* ---- 跨画布 ---- */
+  | CanvasRefNodeData
+  | CanvasInNodeData
+  | CanvasOutNodeData;
 
 /** 算子分类，用于面板里分组展示 */
 export type OpCategory = 'text' | 'empty' | 'flow';
@@ -1789,6 +1793,92 @@ export function makeModuleNode(id: string, partial: Partial<ModuleNodeData> = {}
 
 export function isModule(d: NodeData): d is ModuleNodeData {
   return (d as ModuleNodeData).kind === 'module';
+}
+
+/* ------------------------------------------------------------------ */
+/* 跨画布                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 画布引用节点 —— 调用另一张画布。
+ *
+ * 执行时会被目标画布的内部节点替换（见 engine/canvasRef.ts），
+ * 所以它在画布上是"一个节点"，在引擎里是"一整张图"。
+ */
+export type CanvasRefNodeData = {
+  size?: NodeSize;
+  stackParent?: string | null;
+  stackCollapsed?: boolean;
+  kind: 'canvasRef';
+  label: string;
+  /** 要调用哪张画布 */
+  canvasId: string;
+  status?: string;
+  output?: string;
+  error?: string;
+};
+
+/**
+ * 画布输入节点 —— 显式标注"这里是这张画布的入口"。
+ *
+ * 不放也能用（自动推导无上游的节点），放它是为了自己定接口：
+ * 比如画布内部其实有多个独立起点，只想暴露其中一部分。
+ */
+export type CanvasInNodeData = {
+  size?: NodeSize;
+  stackParent?: string | null;
+  stackCollapsed?: boolean;
+  kind: 'canvasIn';
+  label: string;
+  /** 端口名，多入口时用来区分 */
+  portName?: string;
+  status?: string;
+  output?: string;
+  error?: string;
+};
+
+export type CanvasOutNodeData = {
+  size?: NodeSize;
+  stackParent?: string | null;
+  stackCollapsed?: boolean;
+  kind: 'canvasOut';
+  label: string;
+  portName?: string;
+  /** 没接上游时输出这个兜底值 */
+  fallback?: string;
+  status?: string;
+  output?: string;
+  error?: string;
+};
+
+export function makeCanvasRefNode(id: string, partial: Record<string, unknown> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'canvasRef', label: '调用画布', canvasId: '',
+      status: 'idle', output: '', error: '', ...partial,
+    } as CanvasRefNodeData,
+  };
+}
+
+export function makeCanvasInNode(id: string, partial: Record<string, unknown> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'canvasIn', label: '画布输入', portName: '',
+      status: 'idle', output: '', error: '', ...partial,
+    } as CanvasInNodeData,
+  };
+}
+
+export function makeCanvasOutNode(id: string, partial: Record<string, unknown> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'canvasOut', label: '画布输出', portName: '', fallback: '',
+      status: 'idle', output: '', error: '', ...partial,
+    } as CanvasOutNodeData,
+  };
 }
 
 /* ------------------------------------------------------------------ */

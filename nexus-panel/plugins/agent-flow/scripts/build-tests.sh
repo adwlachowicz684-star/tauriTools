@@ -5,7 +5,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT="${OUT:-/tmp/aftest}"
 mkdir -p "$OUT"
+# strip-ts.py 不会自动建子目录，输出路径带子目录时会直接报
+# FileNotFoundError —— 在全新环境（/tmp 被清空）第一次跑必炸。
+# 这里按源目录结构一次性建好。
+mkdir -p "$OUT/runners" "$OUT/tests" "$OUT/defs"
 S="python3 scripts/strip-ts.py"
+      $S engine/moduleTypes.ts "$OUT/moduleTypes.mjs" >/dev/null
+      $S engine/canvasRef.ts "$OUT/canvasRef.mjs" --import-map ./moduleTypes=./moduleTypes.mjs >/dev/null
+      $S engine/canvasGroups.ts "$OUT/canvasGroups.mjs" --import-map ./kv=./kv.mjs >/dev/null
+      $S engine/triggerRegistry.ts "$OUT/triggerRegistry.mjs" >/dev/null
 
 # 注意：每个文件都带上 ../types=./types.mjs。
 # condition.ts 会 import 运行时的 OP_META / DEFAULT_BRANCH（不只是 type），
@@ -58,7 +66,8 @@ $S engine/clock.ts "$OUT/clock.mjs" >/dev/null
 $S engine/nodeRequires.ts "$OUT/nodeRequires.mjs" >/dev/null
 $S engine/runnerKit.ts "$OUT/runnerKit.mjs" \
   --import-map ./nodeRequires=./nodeRequires.mjs >/dev/null
-$S engine/runnerRegistry.ts "$OUT/runnerRegistry.mjs" \
+$S engine/runners/canvasPort.ts "$OUT/runners/canvasPort.mjs" --import-map ../runnerKit=../runnerKit.mjs --import-map ../upstream=../upstream.mjs >/dev/null
+      $S engine/runnerRegistry.ts "$OUT/runnerRegistry.mjs" --import-map ./runners/canvasPort=./runners/canvasPort.mjs \
   --import-map ./runners/task=./runners_task.mjs \
   --import-map ./runners/trigger=./runners_trigger.mjs \
   --import-map ./runners/condition=./runners_condition.mjs \
