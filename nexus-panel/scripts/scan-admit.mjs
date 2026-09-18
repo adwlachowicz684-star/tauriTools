@@ -22,8 +22,12 @@ let scanFileText;
 try {
   ({ scanFileText } = await import('../js/plugin-admit.js'));
 } catch (e) {
-  console.error('❌ 静态准入扫描无法启动：缺少 acorn / acorn-walk / esbuild');
-  console.error('   先 npm install 再跑。二者通常已随 vite / rollup 装好。');
+  /*
+   * 提示文案要跟着解析器走。改用 typescript 后这里还写着 acorn/esbuild ——
+   * 真缺依赖时看到的是一条**指错方向**的提示（又一处"说明落后于实现"）。
+   */
+  console.error('❌ 静态准入扫描无法启动：缺少 typescript');
+  console.error('   它是项目已有的 devDependency，先 npm install 再跑。');
   console.error('   原始错误:', e.message);
   process.exit(2);
 }
