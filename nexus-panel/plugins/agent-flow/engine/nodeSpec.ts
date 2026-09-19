@@ -567,7 +567,7 @@ export function blockCatalog(): BlockInfo[] {
  * @param keyOf 从字段取参数名
  */
 /*
- * 刻意不写 `readonly X[]`：strip-ts.py 处理不了 readonly 修饰符，
+ * 不写 `readonly X[]`：这里不需要只读约束，写了反而让入参类型变复杂，
  * 会原样留下导致生成的 .mjs 语法错误。
  */
 export function deriveParams(fields: unknown[]): ParamRow[] {

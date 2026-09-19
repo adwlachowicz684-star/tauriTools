@@ -41,7 +41,7 @@ const BP_FIELD = 'blueprints';
  * 服务的最小引用 —— 刷新只需要名字与连法，不需要画布上的其它字段。
  *
  * 写成**类型别名**而不是到处内联对象类型：
- * 返回注解里写 `{ name: string; command?: string }` 时 strip-ts.py
+ * 返回注解里写 `{ name: string; command?: string }` 时
  * 剥不干净 `?:`，生成的 .mjs 直接语法错误（这个脚本的第六个坑）。
  */
 export type ServerRef = { name: string; command?: string; url?: string };
@@ -316,10 +316,9 @@ export function serversToDrop(
  * 留两个会让刷新结果取决于遍历顺序（不确定行为）。
  */
 /*
- * 参数刻意写成 unknown[] —— 内联的嵌套对象类型
- * （`{ config?: { mcpServers?: {...}[] } }[]`）strip-ts.py 处理不了，
- * 会把 `?:` 原样留下，生成的 .mjs 直接语法错误。
- * 用 unknown[] + 内部断言绕开（这是这个脚本的第五个坑了）。
+ * 参数刻意写成 unknown[] + 内部断言，而不是内联嵌套对象类型
+ * （`{ config?: { mcpServers?: {...}[] } }[]`）——
+ * 后者写在签名里太长，会盖掉这个函数真正要说的事。
  */
 export function collectServers(
   canvases: unknown[],

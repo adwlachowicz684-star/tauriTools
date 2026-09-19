@@ -36,21 +36,28 @@
  *
  * 其中「模块」与「自定义预设」最容易混淆，文档里专门做了对照。
  *
- * 用法：bash scripts/build-tests.sh && node scripts/gen-node-docs.mjs
+ * 用法：bash scripts/run-tests.sh && node scripts/gen-node-docs.mjs
+ *
+ * （要先跑 run-tests.sh —— 它负责把 TS 编译成 JS，本脚本读的是编译产物。
+ *   以前读的是 strip-ts.py 生成的 .mjs，那套已废弃。）
  */
 import fs from 'node:fs';
 import path from 'node:path';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const OUT = '/tmp/aftest';          // build-tests.sh 的产物目录
+/*
+ * run-tests.sh 的 tsc 产物目录。CJS 也能被 await import() 正常导入，
+ * 所以这里不用改调用方式，只换目录与扩展名。
+ */
+const OUT = process.env.AF_OUT || '/tmp/afts';
 const DOCS = path.join(ROOT, 'docs');
 const NODES_DIR = path.join(DOCS, 'nodes');
 const CARDS_DIR = path.join(DOCS, 'cards');
 const REUSE_DIR = path.join(DOCS, 'reuse');
 
-const spec = await import(path.join(OUT, 'nodeSpec.mjs'));
-const api = await import(path.join(OUT, 'blockApi.mjs'));
-const req = await import(path.join(OUT, 'nodeRequires.mjs'));
+const spec = await import(path.join(OUT, 'engine', 'nodeSpec.js'));
+const api = await import(path.join(OUT, 'engine', 'blockApi.js'));
+const req = await import(path.join(OUT, 'engine', 'nodeRequires.js'));
 
 /* ================= 分类 meta ================= */
 /* 从 nodes/types.ts 正则取 —— 它是 tsx-free 的纯类型文件 */

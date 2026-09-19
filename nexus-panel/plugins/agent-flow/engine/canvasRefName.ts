@@ -93,9 +93,8 @@ export function canvasRefOptions(
 /*
  * 入参写成 `NodeLike[]` 而**不用泛型** `<T extends ...>`。
  *
- * strip-ts.py 剥不掉函数上的泛型参数列表，会把 `<T ...>` 原样留在
- * 生成的 .mjs 里 —— 直接语法错误。这是这个脚本的第十一个坑。
- * 用类型别名收住约束，效果一样且能被测到。
+ * 用类型别名收住约束而不是在函数上写泛型参数列表：
+ * 效果一样，且类型别名本身能被单独引用。
  */
 type NodeLike = { data: Record<string, unknown> };
 

@@ -434,7 +434,7 @@ export function isPackableSelected(nodes: PackableNode[]): boolean {
  */
 /**
  * 返回值写成类型别名而不是内联对象 ——
- * strip-ts.py 剥不掉「返回类型注解里的对象类型」，
+ * 「返回类型注解里的对象类型」写法较长，
  * 内联写会原样留下 `: { ok: boolean; reason?: string }`，
  * 生成的 .mjs 直接语法错误（这个脚本的第九个坑）。
  */

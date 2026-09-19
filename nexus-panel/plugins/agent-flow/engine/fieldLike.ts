@@ -4,8 +4,7 @@
  * ================= 为什么抽出来 =================
  *
  * 这两件都是**纯逻辑**，但原先写在 NodeDesc.tsx 里。
- * 那个文件有 JSX，测试环境跑不了（strip-ts.py 剥离不了带类型注解的
- * 组件签名），于是这两段就完全没有测试覆盖。
+ * 那个文件有 JSX，测试环境跑不了，于是这两段就完全没有测试覆盖。
  *
  * 而它们恰恰是最容易出错的地方：FieldDef 的 label / hint / options
  * 都允许是函数，漏处理一种就会显示 `[object Object]` ——
@@ -18,7 +17,7 @@ import { PORT_LABEL, type PortKind } from './nodeSpec';
 /*
  * 断言用的函数类型**必须写成类型别名**，不能内联在表达式里。
  *
- * strip-ts.py 处理 `(v as (d: Record<string, unknown>) => unknown)(data)`
+ * 写成先取到变量再调用，而不是内联断言后直接调用
  * 时会把箭头函数的返回类型当成函数体边界，剥出
  * `(v ) => unknown)(data)` —— 生成的 .mjs 直接语法错误。
  * 这是这个脚本的第九个坑。

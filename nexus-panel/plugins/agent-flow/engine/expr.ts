@@ -175,7 +175,7 @@ export function evalExpr(src: string, vars: VarLookup | Record<string, number> =
 
     /*
      * 递归下降解析写成**闭包函数**而不是 class ——
-     * strip-ts.py 处理不了 class 里带类型注解的方法签名
+     * 用闭包而不是 class：class 里带类型注解的方法签名写法更重，
      * （会原样留下 `peek(): Tok | undefined {`，生成的 .mjs 直接语法错误）。
      * 这是这个脚本的第七个坑，改用闭包绕开。
      */

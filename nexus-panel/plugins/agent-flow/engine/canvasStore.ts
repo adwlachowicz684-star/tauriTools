@@ -7,8 +7,7 @@
 
 /*
  * 类型走 import type（编译后消失），值**不用静态 import**：
- * strip-ts 生成的 .mjs 里裸模块名不带 .mjs 后缀，Node 加载不了。
- * 用一个惰性取值绕开 —— 见下面 canvasConfigOf 的实现。
+ * 用惰性取值而不是在模块顶层直接 import —— 见下面 canvasConfigOf 的实现。
  */
 import type { CanvasConfig } from './canvasConfig';
 import { SECRET_PATHS } from './sanitize';
@@ -17,8 +16,8 @@ import { SECRET_PATHS } from './sanitize';
  * 判断一个名字像不像密钥。
  *
  * 这里**内联**了一份，没有 import sanitize 那份 ——
- * strip-ts 生成的 .mjs 里裸模块名不带 .mjs 后缀，Node 加载不了，
- * 表现为运行时 "looksLikeSecretName is not defined"（不报编译错）。
+ * 若在模块顶层直接取，会出现运行时 "looksLikeSecretName is not defined"
+ * （且不报编译错，只在加载顺序不对时才炸）。
  * 两份的一致性由 tests/canvasConfig 里那条测试盯着。
  */
 function looksLikeSecretName(name: string): boolean {
