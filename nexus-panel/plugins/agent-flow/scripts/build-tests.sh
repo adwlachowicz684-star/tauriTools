@@ -142,6 +142,7 @@ $S engine/blockApi.ts "$OUT/blockApi.mjs" --import-map ./nodeSpec=./nodeSpec.mjs
 $S engine/upstream.ts "$OUT/upstream.mjs" >/dev/null
 $S engine/passCheck.ts "$OUT/passCheck.mjs" >/dev/null
 $S engine/sanitize.ts "$OUT/sanitize.mjs" >/dev/null
+$S engine/canvasRefName.ts "$OUT/canvasRefName.mjs" >/dev/null
 $S engine/fieldLike.ts "$OUT/fieldLike.mjs" --import-map ./blockApi=./blockApi.mjs \
    --import-map ./nodeSpec=./nodeSpec.mjs >/dev/null
 $S engine/mcpServers.ts "$OUT/mcpServers.mjs" --import-map ./kv=./kv.mjs \

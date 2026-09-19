@@ -1813,6 +1813,14 @@ export type CanvasRefNodeData = {
   label: string;
   /** 要调用哪张画布 */
   canvasId: string;
+  /**
+   * 卡片上的显示名（用户可手填）。
+   *
+   * 空串 = 用目标画布的名字（并跟着改名）。
+   * 有这个字段是因为同一张画布可能被多处引用，
+   * 各引用节点想显示不同的名字来区分用途。
+   */
+  displayName?: string;
   status?: string;
   output?: string;
   error?: string;

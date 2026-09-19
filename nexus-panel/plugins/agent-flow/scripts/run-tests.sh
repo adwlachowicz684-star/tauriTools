@@ -58,6 +58,7 @@ for f in tests/*.test.ts; do
     --import-map ../engine/mcpTools=../mcpTools.mjs \
     --import-map ../engine/mcpStore=../mcpStore.mjs \
     --import-map ../engine/mcpServers=../mcpServers.mjs \
+    --import-map ../engine/canvasRefName=../canvasRefName.mjs \
     --import-map ../engine/fieldLike=../fieldLike.mjs \
     --import-map ../engine/ops=../ops.mjs \
     --import-map ../engine/expr=../expr.mjs \

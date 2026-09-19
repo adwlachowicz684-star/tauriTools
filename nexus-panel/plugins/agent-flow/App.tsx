@@ -56,6 +56,7 @@ import ModuleLibrary, {
   MODULE_DRAG_MIME, decodeModuleDrag, askCreateModule,
 } from './components/ModuleLibrary';
 import { expandCanvasRefs } from './engine/canvasRef';
+import { syncCanvasesRefNames, snapshotCanvasName } from './engine/canvasRefName';
 import {
   collectGlobalTriggers, activeTriggers, dedupeWatchDirs,
   type GlobalTrigger,
@@ -1258,11 +1259,25 @@ function reportSkipped(
   /* ---------------- 节点编辑 ---------------- */
 
   const patchNode = useCallback((id: string, patch: Record<string, unknown>) => {
-    setNodes((ns) => ns.map((n) =>
+    setNodes((ns) => ns.map((n) => {
+      if (n.id !== id) return n;
+      /*
+       * 选了画布就顺带落一份名字快照。
+       *
+       * 卡片显示只能读 data（拿不到画布列表），没有快照的话
+       * 刚选完一张有名字的画布，卡片上却显示"未命名画布"——
+       * 明明选了，看着像没生效。
+       */
+      const next = { ...n.data, ...patch } as Record<string, unknown>;
+      if (patch.canvasId !== undefined && !patch.canvasName) {
+        const snap = snapshotCanvasName(patch.canvasId, canvases);
+        if (snap) next.canvasName = snap;
+      }
       // 断言放在整体而非 data 上：若把 data 单独断言成联合类型 NodeData，
       // 展开后就无法落回 FlowNode 的任何一个具体分支（task/condition/…）。
-      (n.id === id ? ({ ...n, data: { ...n.data, ...patch } } as FlowNode) : n)));
-  }, [setNodes]);
+      return { ...n, data: next } as FlowNode;
+    }));
+  }, [setNodes, canvases]);
 
   /** 工具栏「+ 任务」。走注册表，与从侧栏添加走同一条路径 */
   const addTask = () => {
@@ -1412,7 +1427,19 @@ function reportSkipped(
   }, [canvases]);
 
   const handleRenameCanvas = useCallback((id: string, name: string) => {
-    setCanvases((cs) => renameCanvas(cs, id, name).list);
+    setCanvases((cs) => {
+      const renamed = renameCanvas(cs, id, name).list;
+      /*
+       * 改名要回写到**引用了这张画布的节点**。
+       *
+       * 那些节点显示的是名字快照（卡片只收 data，拿不到画布列表），
+       * 不回写的话改名后卡片还显示旧名 ——
+       * 表现为"我明明改了名，这个节点还叫旧的"，且没有任何提示。
+       *
+       * 要扫全部画布：引用节点可能在别的画布上。
+       */
+      return syncCanvasesRefNames(renamed as never) as typeof renamed;
+    });
   }, []);
 
   const handleDeleteCanvas = useCallback((id: string) => {
@@ -3124,6 +3151,8 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
               canvasConfig={canvasConfigOf(activeCanvas)}
               onCanvasConfigChange={saveCanvasConfig}
               onExportFlow={exportFlowAs}
+              canvases={canvases}
+              activeCanvasId={activeId ?? undefined}
             />
           </fieldset>
         </div>
