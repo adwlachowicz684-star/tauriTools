@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Api } from '../api';
 import { errText } from '../api';
+import { canRemove, defaultIconOf, defaultNameOf } from '../utils/chainBuiltins';
 import type { ChainAction, ChainClient } from '../types';
+import { PlaceholderBar } from './PlaceholderBar';
 import { Modal } from './ui';
 
 /** 自定义动作的候选图标（内置四个动作的图标不在此列，避免重复观感）。 */
@@ -17,19 +19,26 @@ const uid = () => `c${Math.random().toString(16).slice(2, 10)}`;
  * 自定义动作可以改模板后保留、也可删除。
  */
 export function ChainActionsPanel({
-  api, onClose, onLog, onChanged,
+  api, onClose, onLog, onChanged, devMode = false,
 }: {
   api: Api;
   onClose: () => void;
   onLog: (m: string, isError?: boolean) => void;
   /** 保存成功后通知外层重新拉清单（右键菜单 / 侧边栏用的是外层的那份） */
   onChanged?: () => void;
+  /** 开发者模式（#46）：开启后才允许删除内置动作 */
+  devMode?: boolean;
 }) {
   const [list, setList] = useState<ChainAction[]>([]);
   const [clients, setClients] = useState<ChainClient[]>([]);
   const [active, setActive] = useState<string>('chain');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  /* 两个模板编辑框的 ref：占位符要插到光标处，必须拿到元素读 selectionStart。
+     各自一份，否则在项目模板里点按钮会插到项目组模板的光标位置。 */
+  const projectTplRef = useRef<HTMLTextAreaElement>(null);
+  const groupTplRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     api.chainActions()
@@ -66,9 +75,18 @@ export function ChainActionsPanel({
     setDirty(true);
   };
 
+  /**
+   * 删除（#46）。
+   *
+   * 内置动作默认拦住：`ensure_actions` 只在清单**为空**时才重建内置四项，
+   * 所以删掉一个之后它不会自己回来 —— 用户只会看到常用入口少了，
+   * 且无从恢复（除非开开发者模式再手工建一个同 id 的）。
+   * 开发者模式是那道"我知道我在做什么"的闸门。
+   */
   const remove = (id: string) => {
     const t = list.find((a) => a.id === id);
-    if (!t || t.builtin) return;
+    if (!t) return;
+    if (!canRemove(t.builtin, devMode)) return;
     setList((l) => l.filter((a) => a.id !== id));
     if (active === id) setActive(list.find((a) => a.id !== id)?.id ?? '');
     setDirty(true);
@@ -152,12 +170,38 @@ export function ChainActionsPanel({
             <>
               <div className="fpx-field">
                 <label>名称</label>
-                <input className="p-input" value={cur.name}
-                  onChange={(e) => patch(cur.id, { name: e.target.value })} />
+                <div className="p-row">
+                  <input className="p-input" value={cur.name}
+                    onChange={(e) => patch(cur.id, { name: e.target.value })} />
+                  {/* 只有内置动作有"默认名"可回退；自定义动作的名字就是用户自己起的 */}
+                  {defaultNameOf(cur.builtin) && (
+                    <button
+                      className="p-btn"
+                      style={{ height: 32, padding: '0 10px' }}
+                      title={`恢复为默认名称「${defaultNameOf(cur.builtin)}」`}
+                      onClick={() => patch(cur.id, { name: defaultNameOf(cur.builtin) })}
+                    >
+                      恢复默认
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="fpx-field">
-                <label>图标</label>
+                {/* 图标 + 恢复默认（#47）。
+                    网格直接铺在这里而不是再开一层弹窗：动作不多、图标就十来个，
+                    多一次点击只会更烦。真正的缺口是"改乱了没法回退"，所以补恢复默认。 */}
+                <div className="p-row" style={{ justifyContent: 'space-between' }}>
+                  <label style={{ margin: 0 }}>图标</label>
+                  <button
+                    className="p-btn"
+                    style={{ height: 26, padding: '0 8px' }}
+                    title="把图标恢复为默认值（内置动作回到出厂图标，自定义动作回到 🧩）"
+                    onClick={() => patch(cur.id, { icon: defaultIconOf(cur.builtin) })}
+                  >
+                    恢复默认
+                  </button>
+                </div>
                 <div className="fpx-emojis">
                   {ICONS.map((em) => (
                     <button
@@ -251,34 +295,48 @@ export function ChainActionsPanel({
               <div className="fpx-field" style={{ marginTop: 'var(--sp-5, 10px)' }}>
                 <label>项目模板</label>
                 <textarea
+                  ref={projectTplRef}
                   className="p-input fpx-textarea"
                   rows={6}
                   placeholder="留空使用内置默认模板"
                   value={cur.project ?? ''}
                   onChange={(e) => patch(cur.id, { project: e.target.value || null })}
                 />
+                <PlaceholderBar
+                  targetRef={projectTplRef}
+                  value={cur.project ?? ''}
+                  onChange={(v) => patch(cur.id, { project: v || null })}
+                />
               </div>
 
               <div className="fpx-field">
                 <label>项目组模板</label>
                 <textarea
+                  ref={groupTplRef}
                   className="p-input fpx-textarea"
                   rows={6}
                   placeholder="留空使用内置默认模板"
                   value={cur.group ?? ''}
                   onChange={(e) => patch(cur.id, { group: e.target.value || null })}
                 />
+                <PlaceholderBar
+                  targetRef={groupTplRef}
+                  value={cur.group ?? ''}
+                  onChange={(v) => patch(cur.id, { group: v || null })}
+                />
               </div>
 
               <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
-                占位符：{ '{path}' } 路径、{ '{name}' } 文件夹名。
-                也兼容原版写法 { '{项目路径}' } / { '{项目名称}' }。
+                点上面的按钮可在光标处插入占位符（有选中时替换选中部分）。
+                <code>{ '{path}' }</code> / <code>{ '{name}' }</code> 是本插件写法，
+                原版写法 <code>{ '{项目路径}' }</code> / <code>{ '{项目名称}' }</code> 同样支持，
+                可直接粘贴旧模板过来。未识别的 <code>{ '{\u2026}' }</code> 原样保留。
               </div>
 
-              {!cur.builtin && (
+              {canRemove(cur.builtin, devMode) && (
                 <button className="p-btn danger" style={{ marginTop: 'var(--sp-6, 12px)' }}
                   onClick={() => remove(cur.id)}>
-                  删除该自定义动作
+                  {cur.builtin ? '删除该内置动作（开发者模式）' : '删除该自定义动作'}
                 </button>
               )}
             </>

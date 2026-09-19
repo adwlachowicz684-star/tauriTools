@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  HOTKEYS, hotkeysByGroup, comboFromEvent, findConflicts, formatCombo,
+  HOTKEYS, GROUP_LABEL, comboFromEvent, findConflicts, formatCombo, hotkeysByGroup,
   normalizeCombo, type HotkeyId,
 } from '../utils/hotkeys';
 
@@ -107,16 +107,12 @@ export function HotkeySettings({
         </div>
       )}
 
-      {/*
-        按 group 分组展示（#229）。组序由 hotkeysByGroup 固定为
-        常规 → 项目操作 → 页签切换，不在这里另排一遍 ——
-        两处都排序的话，将来加组很容易排得不一致。
-      */}
-      {hotkeysByGroup().map((g) => (
-        <div className="fpx-hotkey-group" key={g.key}>
-          <div className="fpx-hotkey-group-title">{g.label}</div>
-          <div className="fpx-hotkey-list">
-            {g.items.map((h) => {
+      {/* 分三组展示（#229）：键位已 20 条，摊平一长条很难找到要改的那条 */}
+      <div className="fpx-hotkey-list">
+        {hotkeysByGroup().map(({ group, items }) => (
+          <div className="fpx-hotkey-group" key={group}>
+            <div className="fpx-hotkey-group-title">{GROUP_LABEL[group]}</div>
+            {items.map((h) => {
               const cur = draft[h.id] !== undefined ? draft[h.id] : h.combo;
               const isDefault = normalizeCombo(cur) === normalizeCombo(h.combo);
               const bad = conflictIds.has(h.id);
@@ -141,8 +137,8 @@ export function HotkeySettings({
               );
             })}
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
 
       <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-4, 8px)' }}>
         点击键位后按下新组合键；Esc 放弃，Del / Backspace 取消绑定。

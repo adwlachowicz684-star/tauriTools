@@ -120,9 +120,10 @@ pub fn enabled_names(cfg: &FpxConfig) -> Vec<String> {
         .filter(|n| cfg.link_agents.get(n).copied().unwrap_or(true))
         .collect();
     for n in custom {
-        if cfg.link_agents.get(&n).copied().unwrap_or(true) {
-            names.push(n);
-        }
+        if !cfg.link_agents.get(&n).copied().unwrap_or(true) { continue; }
+        // 与已收录的名字（含改名后的预设显示名）大小写不敏感去重
+        if names.iter().any(|x| x.eq_ignore_ascii_case(&n)) { continue; }
+        names.push(n);
     }
     names
 }
@@ -133,8 +134,13 @@ pub fn custom_names(cfg: &FpxConfig) -> Vec<String> {
     for n in &cfg.custom_link_agents {
         let n = n.trim();
         if n.is_empty() { continue; }
-        if PRESET_AGENTS.iter().any(|(p, _)| *p == n) { continue; }
-        if out.iter().any(|x| x == n) { continue; }
+        /* #91 都改成大小写不敏感：Windows 文件系统本身不敏感，
+           `.OpenCode` 与 `.opencode` 是同一个目录。
+           精确比较会放过前者，于是两个链接名指向同一个 junction，
+           创建时后一个覆盖前一个，其中一个必然失效 ——
+           且界面上两个名字都在、都显示"已启用"，没有任何报错。 */
+        if PRESET_AGENTS.iter().any(|(p, _)| (*p).eq_ignore_ascii_case(n)) { continue; }
+        if out.iter().any(|x| x.eq_ignore_ascii_case(n)) { continue; }
         out.push(n.to_string());
     }
     out

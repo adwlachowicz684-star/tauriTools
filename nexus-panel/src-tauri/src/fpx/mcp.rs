@@ -499,10 +499,12 @@ fn tools() -> Vec<Value> {
         tool("read_file", "读取文件内容（目录型 skill 自动读 SKILL.md）", json!({
             "path": { "type": "string" },
         }), vec!["path"]),
-        tool("create_folder", "新建项目 / 项目组文件夹（hierarchy 仅在设置里开启「路径携带层级」时生效）", json!({
+        tool("create_folder", "新建项目 / 项目组文件夹。传 kind 会一并登记到页签（否则只建目录，需再调 add_card 才会出现在界面上）", json!({
             "parent": { "type": "string" },
             "name": { "type": "string" },
             "hierarchy": { "type": "string", "description": "可选，页签名；受设置项 createPathCarriesHierarchy 控制" },
+            "kind": { "type": "string", "enum": ["project", "group"], "description": "可选。给了就建完立即登记进该类的页签；不给则只建目录" },
+            "tab_index": { "type": "integer", "description": "可选，页签序号（0 起）；省略则加到第一个页签。仅在给了 kind 时有效" },
         }), vec!["parent", "name"]),
         tool("add_card", "把文件夹加入页签（tab_index 省略时加到第一个页签）", json!({
             "kind": { "type": "string", "enum": ["project", "group"] },
@@ -697,6 +699,70 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
 
     let s = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
 
+    /**
+     * 把一条路径登记进指定页签（#S3 抽出共用）。
+     *
+     * `add_card` 与 `create_folder` 都要往页签里塞卡片，**共用这一份** ——
+     * 各写一遍的话，越界提示的措辞、越界时的行为迟早会分叉，
+     * 而这类分叉的表现是"同一个序号在一个工具里报错、在另一个里静默改到别处"。
+     *
+     * 返回 (页签名, 是否原本已在其中)。
+     */
+    /** 某类页签的数量。空清单按 1 算 —— 登记时会自动补一个「默认」。 */
+    fn tab_count_of(dir: &Path, kind: &str) -> usize {
+        let cfg = super::store::load_config(dir);
+        let n = if kind == "group" { cfg.group_tabs.len() } else { cfg.project_tabs.len() };
+        if n == 0 { 1 } else { n }
+    }
+
+    /**
+     * 越界提示文案，**只有这一份**。
+     *
+     * create_folder 的"建前预检"与 register_card 的"登记时校验"共用它：
+     * 各写一遍的话，改措辞必然只改一处，于是同一个序号在两个工具里
+     * 报出两种说法 —— 用户会以为是两个不同的问题。
+     */
+    fn oob_msg(kind: &str, i: usize, n: usize) -> String {
+        format!(
+            "tab_index {i} 越界：{kind} 类当前只有 {n} 个页签（有效范围 0..{}）",
+            n.saturating_sub(1))
+    }
+
+    fn register_card(
+        dir: &Path,
+        kind: &str,
+        path: &str,
+        tab_index: Option<u64>,
+    ) -> Result<(String, bool), String> {
+        super::guard::reject_forbidden_raw(path)?;
+        let idx = tab_index.map(|v| v as usize);
+        // 必须在事务内「读→改→写」。
+        // 若先 load_cfg 改完再 core_save_config，传进去的是旧快照，
+        // core_save_config 会拿它整份覆盖磁盘 —— 期间别人的改动就丢了。
+        super::store::with_config(dir, |cfg| {
+            let tabs = if kind == "group" { &mut cfg.group_tabs } else { &mut cfg.project_tabs };
+            if tabs.is_empty() { tabs.push(super::model::TabItem { name: "默认".into(), items: vec![] }); }
+            /* tab_index 缺省时沿用旧行为（第一个页签），多页签场景下
+               调用方才能指定目标 —— 此前写死 tabs[0]，只能往第一个页签加。
+
+               越界判断必须放在闭包里：tabs 的长度只有这里拿得到，
+               挪到外面就得先读一次配置，既多一次 IO 又可能读到已被
+               别的进程改过的快照。 */
+            let i = match idx {
+                Some(i) => {
+                    if i >= tabs.len() { return Err(oob_msg(kind, i, tabs.len())); }
+                    i
+                }
+                None => 0,
+            };
+            let tab_name = tabs[i].name.clone();
+            let already = tabs[i].items.iter().any(|x| x == path);
+            if !already { tabs[i].items.push(path.to_string()); }
+            Ok((tab_name, already))
+        })
+    }
+
+
     // 先过开关，再谈执行：总开关关着就整个拒绝，单工具关着就只拒绝那一个
     let cfg = load_cfg(dir)?;
     if !service_enabled(&cfg) {
@@ -789,16 +855,55 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             json!({ "content": [{ "type": "text", "text": text }] })
         }
         "create_folder" => {
-            // 注意：kind 是 project/group，不是页签名，绝不能当 hierarchy 传
+            // 注意：hierarchy 是页签名，不是 kind，绝不能拿 kind 当 hierarchy 传
             // （那会建出 父目录\project\名称 这种错误层级）。
             // 层级走独立的 hierarchy 参数，未给则不拼。
             let hierarchy = args.get("hierarchy").and_then(|v| v.as_str()).map(str::to_string);
             // 父目录必须在允许范围内：否则等于"在任意位置建目录"（同样只校验）
             let parent = s("parent");
             within_raw(&parent)?;
+
+            /* 可选地"建好就登记进页签"（S3）。
+               kind 不传 = 旧行为（只建目录、不登记），调用方可随后自行 add_card；
+               传了就一并登记 —— 省一次往返，也避开"建完忘了登记"导致
+               目录存在、界面上却找不到的孤儿。 */
+            let kind_raw = s("kind");
+            let kind = match kind_raw.as_str() {
+                "" => None,
+                "project" | "group" => Some(kind_raw.clone()),
+                other => return Err(err(&format!(
+                    "kind 只能是 project 或 group，收到「{other}」（不传则只建目录、不登记）"))),
+            };
+            let tab_index = args.get("tab_index").and_then(|v| v.as_u64());
+
+            /* 越界**先查再建**：目录一旦建出来，这条命令里没法回滚。
+               先查能让"序号填错"什么都不留下 —— 否则会得到一个建好了
+               却没登记、界面上也找不到的孤儿目录。 */
+            if let (Some(k), Some(i)) = (&kind, tab_index) {
+                let n = tab_count_of(dir, k);
+                if i as usize >= n {
+                    return Err(err(&oob_msg(k, i as usize, n)));
+                }
+            }
+
             let p = super::core_create_folder(&dir, &parent, &s("name"),
                 hierarchy.as_deref(), None)
                 .map_err(|e| err(&e))?;
+
+            if let Some(k) = &kind {
+                // 目录已成事实，登记失败必须如实报出（此时目录存在但不在页签里）
+                return match register_card(&dir, k, &p, tab_index) {
+                    Ok((tab_name, already)) => {
+                        let t = if already {
+                            format!("已创建 {p}（它本就已在页签「{tab_name}」中）")
+                        } else {
+                            format!("已创建 {p} 并加入页签「{tab_name}」")
+                        };
+                        Ok(json!({ "content": [{ "type": "text", "text": t }] }))
+                    }
+                    Err(e) => Err(err(&format!("已创建 {p}，但登记到页签失败：{e}"))),
+                };
+            }
             json!({ "content": [{ "type": "text", "text": p }] })
         }
         "add_card" => {
@@ -807,41 +912,9 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             if path.is_empty() { return Err(err("path 必填")); }
             // 用 as_u64 而不是 as_i64：JSON 里没有负数这种页签序号，
             // as_u64 顺带挡掉 -1 这种（as_i64 会收下，然后转 usize 时溢出）。
-            /* 加卡片不是"写文件"，但它把这条路径写进页签，而页签正是
-               content_roots 的来源之一 —— 等于**扩充白名单本身**。
-               所以至少要用黑名单挡住系统目录 / 整块盘，否则加一张
-               C:\Windows 卡片之后，后面所有收口都形同虚设。 */
-            super::guard::reject_forbidden_raw(&path).map_err(|e| err(&e))?;
-            let tab_index = args.get("tab_index").and_then(|v| v.as_u64()).map(|v| v as usize);
-            // 必须在事务内「读→改→写」。
-            // 若先 load_cfg 改完再 core_save_config，传进去的是旧快照，
-            // core_save_config 会拿它整份覆盖磁盘 —— 期间别人的改动就丢了。
-            let (tab_name, already) = super::store::with_config(&dir, |cfg| {
-                let tabs = if kind == "group" { &mut cfg.group_tabs } else { &mut cfg.project_tabs };
-                if tabs.is_empty() { tabs.push(super::model::TabItem { name: "默认".into(), items: vec![] }); }
-                /* tab_index 缺省时沿用旧行为（第一个页签），多页签场景下
-                   AI 才能指定目标 —— 此前写死 tabs[0]，只能往第一个页签加。
-
-                   越界判断必须放在闭包里：tabs 的长度只有这里拿得到，
-                   挪到外面就得先读一次配置，既多一次 IO 又可能读到已被
-                   别的进程改过的快照。 */
-                let idx = match tab_index {
-                    Some(i) => {
-                        if i >= tabs.len() {
-                            return Err(format!(
-                                "tab_index {i} 越界：{kind} 类当前只有 {} 个页签（有效范围 0..{}）",
-                                tabs.len(),
-                                tabs.len().saturating_sub(1)));
-                        }
-                        i
-                    }
-                    None => 0,
-                };
-                let tab_name = tabs[idx].name.clone();
-                let already = tabs[idx].items.iter().any(|x| x == &path);
-                if !already { tabs[idx].items.push(path.clone()); }
-                Ok((tab_name, already))
-            }).map_err(|e| err(&e))?;
+            let tab_index = args.get("tab_index").and_then(|v| v.as_u64());
+            let (tab_name, already) = register_card(&dir, &kind, &path, tab_index)
+                .map_err(|e| err(&e))?;
             let text = if already {
                 format!("{path} 已在页签「{tab_name}」中，未重复添加")
             } else {
@@ -852,11 +925,14 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
         "set_lock" => {
             let dd = args.get("denyDelete").and_then(|v| v.as_bool()).unwrap_or(false);
             let dw = args.get("denyWrite").and_then(|v| v.as_bool()).unwrap_or(false);
+            /* #21 / #138 账面固定：仅登记，不落系统权限。
+               老调用方不带这个参数，默认 false（行为不变）。 */
+            let ao = args.get("accountOnly").and_then(|v| v.as_bool()).unwrap_or(false);
             // ACL 是写操作：能对任意路径改 ACL，就能把系统目录锁死或解锁
             let path = s("path");
             within_raw(&path)?;
-            super::core_set_lock(&dir, &path, dd, dw).map_err(|e| err(&e))?;
-            json!({ "content": [{ "type": "text", "text": format!("保护已更新：防删除={dd} 防写入={dw}") }] })
+            super::core_set_lock(&dir, &path, dd, dw, ao).map_err(|e| err(&e))?;
+            json!({ "content": [{ "type": "text", "text": format!("保护已更新：防删除={dd} 防写入={dw} 账面固定={ao}") }] })
         }
         "set_tag_color" => {
             let path = s("path");
@@ -970,7 +1046,10 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             let note = super::store::with_config(&dir, |cfg| {
                 cfg.folder_icons.insert(path.clone(), icon.clone());
                 if cfg.icon_affect_explorer {
-                    super::sys::apply_icon(&path, &icon)?;
+                    /* #427：写 desktop.ini 是往这个目录里写点，
+                       目录被自己设了「防写入」时会被拦（自伤），
+                       所以放进临时摘锁窗口。 */
+                    super::with_unlock(&dir, &path, || super::sys::apply_icon(&path, &icon))?;
                     Ok("已写入 desktop.ini，资源管理器同步生效".to_string())
                 } else {
                     Ok("已记录到配置（界面内生效，未写入资源管理器）".to_string())
@@ -1004,8 +1083,9 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
                 let key = super::store::normalize_key(&path);
                 cfg.folder_icons.retain(|k, _| super::store::normalize_key(k) != key);
                 if cfg.icon_affect_explorer {
-                    // 空 icon_ref = 恢复默认（删除 desktop.ini 并去掉 +s）
-                    let _ = super::sys::apply_icon(&path, "");
+                    /* #427：恢复默认同样要写这个目录（删 ini、去 +s），
+                       受保护时一样会被自己拦住。 */
+                    let _ = super::with_unlock(&dir, &path, || super::sys::apply_icon(&path, ""));
                 }
                 Ok(())
             }).map_err(|e| err(&e))?;
@@ -1083,13 +1163,20 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
                 std::path::Path::new(&target).join("skill")
             };
 
-            // 摘锁创建：skill 目录可能是受保护项目组的子孙，直接 CreateDir 会被拒绝
+            /* 摘锁窗口（#427）：deploy_base 是受保护目录的子孙，
+               ACL 靠继承生效，直接 CreateDir / 写文件都会被**自己**拦住。
+
+               窗口必须盖住 CreateDir **和** 写请求文件 ——
+               只盖 CreateDir 的话，写入请求文件时锁已经恢复，照样自伤。
+
+               但**不能**盖住后面 spawn 出去的 AI 命令：那可能跑几秒到几分钟，
+               期间目录处于无保护状态，等于我们自己开了个口子。
+               所以 spawn 之前必须恢复（下面 drop 的位置就是为此）。 */
             let _guard = super::LockGuard::new(&target, super::store::lock_of(&cfg, &target));
             if !deploy_base.is_dir() {
                 std::fs::create_dir_all(&deploy_base)
                     .map_err(|e| err(&format!("创建 skill 目录失败: {e}")))?;
             }
-            drop(_guard);
 
             /* 有 AI 命令 → 写请求文件并拉起；否则本地生成 SKILL.md 骨架。
                ------------------------------------------------------------------
@@ -1109,6 +1196,8 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
                 let body = json!({ "prompt": prompt, "target": deploy_base.to_string_lossy() });
                 std::fs::write(&req, serde_json::to_string_pretty(&body).unwrap_or_default())
                     .map_err(|e| err(&format!("写入请求文件失败: {e}")))?;
+                // 写点已完成，恢复保护再做耗时的事（spawn 期间目录不该是无保护的）
+                drop(_guard);
                 // 注意用 send_command 而非 send：这里拿到的是一条命令行，不是客户端 id
                 let r = super::chain::send_command(&cmd, &deploy_base.to_string_lossy(), &prompt);
                 json!({ "content": [{ "type": "text", "text": serde_json::to_string(&json!({
@@ -1119,6 +1208,9 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
                     "message": r.message,
                 })).unwrap_or_default() }] })
             } else {
+                /* 本地骨架同样要写文件（SKILL.md），所以仍在这个摘锁窗口内。
+                   注意此时 _guard 还活着 —— 上面那个分支的 `drop` 只在
+                   "有 AI 命令"时执行，本分支不会走到。 */
                 let r = local_skill_scaffold(&deploy_base, &prompt).map_err(|e| err(&e))?;
                 json!({ "content": [{ "type": "text", "text": serde_json::to_string(&json!({
                     "mode": "local",

@@ -216,6 +216,15 @@ pub const CLIENTS: &[(&str, &str, &str)] = &[
     ("claude", "Claude", "claude"),
     ("windsurf", "Windsurf", "windsurf"),
     ("kimi", "Kimi", "kimi"),
+    /*
+     * WorkBuddy（#41）。
+     *
+     * 它走内置的降级路径（`paste_and_open` = 复制指令 + 唤起客户端 + 提示粘贴），
+     * 这不是"没接完"：WorkBuddy 的 deep link（`workbuddy://home`、`workbuddy://chat/`
+     * 等）**只做界面导航、不接收任务**，它也没有对外"提交任务并取回结果"的公开接口。
+     * 所以能做的就只有"唤起 + 把指令放进剪贴板"，与 Kimi / Windsurf 等一视同仁。
+     */
+    ("workbuddy", "WorkBuddy", "workbuddy"),
 ];
 
 #[derive(Debug, Clone, serde::Serialize)]

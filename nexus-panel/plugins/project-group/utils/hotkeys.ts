@@ -14,98 +14,58 @@ export type HotkeyId =
   | 'refresh' | 'clearInvalid'
   | 'cycleGroup' | 'cycleGroupBack' | 'cycleProject' | 'cycleProjectBack'
   | 'focusProject' | 'focusGroup'
-  // —— 以下 5 条为补齐项（#221~#226）：注册表里原先只有 15 条，
-  //    原版 ShortcutCatalog 有 22 条，去掉归主窗口的 HideToTray 与
-  //    已有独立机制的 ToggleSettings 后正好 20 条。
+  /* 以下 5 条是照原版 ShortcutCatalog 补齐的（#221 #222 #223 #225 #226）。
+     键位取原版默认值，用户可在设置里改。
+     #224 HideToTray（Ctrl+~）不在此列 —— 托盘属宿主能力，已随 P8-3 移交
+     主窗口任务，插件内注册也调不动。 */
   | 'toggleTips' | 'backupNow' | 'toggleMcp' | 'toggleSidebar' | 'openMarkdown';
 
-/**
- * 设置面板里的分组。
- *
- * 组序**固定**为 常规 → 项目操作 → 页签切换（对应原版 Group 1/2/3），
- * 由 `HOTKEY_GROUPS` 数组的顺序决定，不是靠 sort ——
- * 排序会随字典序漂移，而组序是界面承诺。
- */
+/** 设置面板的分组（#229：原版按用途分三组展示） */
 export type HotkeyGroup = 'general' | 'card' | 'tab';
 
-/** 分组显示名。界面与任何未来消费点共用这一份，别在各处写字面量。 */
 export const GROUP_LABEL: Record<HotkeyGroup, string> = {
   general: '常规',
   card: '项目操作',
   tab: '页签切换',
 };
 
-/** 组序：常规 → 项目操作 → 页签切换 */
-export const HOTKEY_GROUPS: HotkeyGroup[] = ['general', 'card', 'tab'];
-
 export interface HotkeyDef {
   id: HotkeyId;
   label: string;
   /** 默认 combo（`mod` 在 macOS 解析为 ⌘，其它平台为 Ctrl） */
   combo: string;
-  /** 设置面板里的归属分组 */
+  /** 设置面板里归到哪一组（#229） */
   group: HotkeyGroup;
   /** 该键位是否被浏览器/系统占用，界面上给个提醒 */
   note?: string;
   /** 是否允许取消绑定（留空 = 不响应） */
   allowEmpty?: boolean;
-  /**
-   * **切换类**动作：不受「有弹窗时整组让路」的门控限制。
-   *
-   * 为什么需要：门控条件里含 `!help`（使用说明打开时整组让路）。
-   * 若 toggleTips 也受门控，F1 打开说明后 enabled 变 false，
-   * **再按 F1 就关不掉了** —— 用户被困在使用说明里。
-   * 同理，用它打开的东西必须能用同一个键关掉。
-   *
-   * 仅豁免「弹窗门控」，**不豁免**输入框让路（打字时仍然不响应）。
-   */
-  toggle?: boolean;
 }
 
-/**
- * 注册表。**按组序排列**（常规 → 项目操作 → 页签切换），
- * 这样 `hotkeysByGroup` 只需顺序过滤，不必再排序。
- *
- * 20 条 = 原版 ShortcutCatalog 的 22 条
- *       − HideToTray（隐藏到托盘归主窗口，不进插件注册表）
- *       − ToggleSettings（设置开关已有独立机制）
- */
 export const HOTKEYS: HotkeyDef[] = [
-  // —— 常规 ——
-  {
-    id: 'toggleTips', label: '使用说明', combo: 'f1', group: 'general',
-    toggle: true,   // 见 HotkeyDef.toggle：开了要能用同一个键关掉
-  },
+  /* ---- 常规 ---- */
+  { id: 'refresh', label: '刷新', combo: 'f5', group: 'general', note: '浏览器占用 f5 刷新页面，可能无效' },
+  { id: 'clearInvalid', label: '清除无效项', combo: 'f8', group: 'general' },
   { id: 'backupNow', label: '一键备份', combo: 'f7', group: 'general' },
-  { id: 'toggleMcp', label: '启停 MCP', combo: 'mod+m', group: 'general' },
-  /*
-   * 默认键必须是 `shift+~`，不能只写 `~`。
-   *
-   * `~` 在物理键盘上要靠 Shift 才能打出来，`comboFromEvent` 对这一下
-   * 产出的就是 `shift+~`。默认值写成 `~` 的话，用户什么都没改、
-   * 只是重新录入一次，就会与默认不一致 → 界面显示"已自定义"的假差异。
-   */
-  { id: 'toggleSidebar', label: '收起/展开左栏', combo: 'shift+~', group: 'general' },
-  { id: 'openMarkdown', label: '编辑文件', combo: 'mod+d', group: 'general' },
+  { id: 'toggleTips', label: '使用说明', combo: 'f1', group: 'general', note: 'F1 在部分浏览器里是自带帮助' },
+  { id: 'toggleMcp', label: 'MCP 服务面板', combo: 'mod+m', group: 'general' },
+  { id: 'openMarkdown', label: '编辑当前文件', combo: 'mod+d', group: 'general',
+    note: '内置 Markdown 编辑器归共用组件，当前落到外部编辑器' },
+  /* 原版记的是 `~`（WPF 的 Key 枚举里 shift 隐含在字符中）。
+     Web 不行：`matchCombo` 要求 shift **精确匹配**，而按出 `~` 必然带 shift，
+     写裸 `~` 会让默认键位永远匹配不上。所以显式写 shift。 */
+  { id: 'toggleSidebar', label: '展开/收起左栏', combo: 'shift+~', group: 'general' },
 
-  // —— 项目操作 ——
+  /* ---- 项目操作 ---- */
   { id: 'open', label: '打开文件夹', combo: 'mod+o', group: 'card' },
-  {
-    id: 'lock', label: 'ACL 保护', combo: 'mod+l', group: 'card',
-    note: '浏览器占用 mod+l 定位地址栏，可能无效',
-  },
+  { id: 'lock', label: 'ACL 保护', combo: 'mod+l', group: 'card', note: '浏览器占用 mod+l 定位地址栏，可能无效' },
   { id: 'rename', label: '改名', combo: 'f2', group: 'card' },
   { id: 'move', label: '转为另一类别', combo: 'f3', group: 'card' },
   { id: 'color', label: '图标与标签色', combo: 'f4', group: 'card' },
   { id: 'icon', label: '改图标', combo: 'f6', group: 'card' },
   { id: 'remove', label: '从页签移除', combo: 'delete', group: 'card' },
-  {
-    id: 'refresh', label: '刷新', combo: 'f5', group: 'card',
-    note: '浏览器占用 f5 刷新页面，可能无效',
-  },
-  { id: 'clearInvalid', label: '清除无效项', combo: 'f8', group: 'card' },
 
-  // —— 页签切换 ——
+  /* ---- 页签切换 ---- */
   { id: 'cycleGroup', label: '下一个项目组页签', combo: 'mod+tab', group: 'tab' },
   { id: 'cycleGroupBack', label: '上一个项目组页签', combo: 'mod+shift+tab', group: 'tab' },
   { id: 'cycleProject', label: '下一个项目页签', combo: 'mod+pagedown', group: 'tab' },
@@ -114,18 +74,10 @@ export const HOTKEYS: HotkeyDef[] = [
   { id: 'focusGroup', label: '焦点切到项目组栏', combo: 'mod+arrowright', group: 'tab' },
 ];
 
-/**
- * 按组取注册表，组序固定为 `HOTKEY_GROUPS`（常规 → 项目操作 → 页签切换）。
- *
- * 设置界面用它分组渲染；`HOTKEYS` 本身已按组序排列，这里只做切分，
- * 不再排序 —— 排序会让组序随字典序漂移，而组序是界面承诺。
- */
-export function hotkeysByGroup(): { key: HotkeyGroup; label: string; items: HotkeyDef[] }[] {
-  return HOTKEY_GROUPS.map((key) => ({
-    key,
-    label: GROUP_LABEL[key],
-    items: HOTKEYS.filter((h) => h.group === key),
-  }));
+/** 按设置面板的分组顺序取键位（#229）。组序固定，组内保持注册表顺序。 */
+export function hotkeysByGroup(): { group: HotkeyGroup; items: HotkeyDef[] }[] {
+  const order: HotkeyGroup[] = ['general', 'card', 'tab'];
+  return order.map((g) => ({ group: g, items: HOTKEYS.filter((h) => h.group === g) }));
 }
 
 export const HOTKEY_BY_ID: Record<string, HotkeyDef> =
@@ -246,3 +198,14 @@ function keyNameFromEvent(e: KeyboardEvent): string | null {
   if (k.length === 1) return lower;
   return null;
 }
+
+/**
+ * 是否 macOS。键位提示要按平台显示 ⌘ 还是 Ctrl。
+ *
+ * **全项目只此一份**：工具栏按钮与说明弹窗都要用它，
+ * 两份各自算的话，在测试环境（navigator 不存在）下都会得到 false，
+ * 而在真实环境一旦某处换了判定方式，就会出现
+ * "按钮显示 ⌘、说明里写 Ctrl"——用户照其中一个按却没反应。
+ */
+export const IS_MAC = typeof navigator !== 'undefined'
+  && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);

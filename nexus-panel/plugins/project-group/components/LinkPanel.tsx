@@ -1,5 +1,8 @@
 import { useMemo, useState } from 'react';
 import type { PresetAgent, FpxConfig } from '../types';
+import {
+  allEnabled, hasNameCI, invertEnabled, resetToPreset, setAllEnabled,
+} from '../utils/linkAgents';
 import { CheckLine } from './ui';
 
 /** 链接名开关主体（不带 Modal）：预设 + 自定义，缺失视为开启；支持改名 / 厂商标注 / 备注 */
@@ -47,8 +50,29 @@ export function LinkAgentBody({
     [presetRows, custom],
   );
   const enabledCount = allNames.filter((n) => map[n] ?? true).length;
+  /** 是否已全启用：决定"全选"还是"全不选"该置灰 */
+  const everyOn = allEnabled(allNames, map);
 
   const toggle = (n: string) => setMap((m) => ({ ...m, [n]: !(m[n] ?? true) }));
+
+  /**
+   * 恢复预设（#64）：清空改名与厂商标注，名字回到预设原名。
+   *
+   * 置顶与备注**保持不变**，但它们的键是"显示名" ——
+   * 名字变回原名后键必须跟着迁，否则置顶会静默失效、备注会被 submit() 当成
+   * 幽灵项丢掉。这段迁移规则在 utils/linkAgents.ts 里，有测试钉着。
+   */
+  const restorePreset = () => {
+    const rows = presetRows.map((p) => ({ original: p.original, shown: p.shown }));
+    const next = resetToPreset(rows, { renames, vendors, remarks, pinned, map });
+    setRenames(next.renames);
+    setVendors(next.vendors);
+    setRemarks(next.remarks);
+    setPinned(next.pinned);
+    setMap(next.map);
+    setErr('');
+    onLog?.('已恢复预设名称与厂商标注（置顶与备注保持不变）');
+  };
 
   /**
    * 置顶：pin 追加到末尾（多个置顶项按点击顺序排），unpin 直接移除。
@@ -128,7 +152,9 @@ export function LinkAgentBody({
     const name = raw.startsWith('.') ? raw : `.${raw}`;
     if (!name.slice(1).trim()) { setErr('名称不能只有点号'); return; }
     if (/[\\/:*?"<>|]/.test(name)) { setErr('名称含有非法字符'); return; }
-    if (allNames.includes(name)) { setErr('该链接名已存在'); return; }
+    /* #91 大小写不敏感：Windows 下 `.OpenCode` 与 `.opencode` 是同一个目录，
+       精确比较拦不住，会建出两个指向同一 junction 的链接名。 */
+    if (hasNameCI(allNames, name)) { setErr('该链接名已存在（不区分大小写）'); return; }
     setCustom((c) => [...c, name]);
     setDraft('');
     setErr('');
@@ -272,7 +298,43 @@ export function LinkAgentBody({
         </div>
       )}
 
+      {/* 批量操作（#65 全选/全不选、#64 恢复预设）。
+          放在保存按钮同一行：它们改的都是同一批草稿，分开摆反而像两件事。 */}
       <div className="p-row" style={{ marginTop: 'var(--sp-6, 12px)' }}>
+        <button
+          className="p-btn"
+          title={`把所有链接名设为启用（共 ${allNames.length} 个）`}
+          disabled={everyOn}
+          onClick={() => setMap(setAllEnabled(allNames, map, true))}
+        >
+          全选
+        </button>
+        <button
+          className="p-btn"
+          title="把所有链接名设为停用"
+          disabled={enabledCount === 0}
+          onClick={() => setMap(setAllEnabled(allNames, map, false))}
+        >
+          全不选
+        </button>
+        {/* 反选（#96）：链接名往往一开就是几十个，
+            想"只留某几个"时全不选再一个个勾更慢，
+            反选是这种场景最短的路径。 */}
+        <button
+          className="p-btn"
+          title={`启用的关掉、关掉的启用（当前已启用 ${enabledCount} 个）`}
+          disabled={allNames.length === 0}
+          onClick={() => setMap(invertEnabled(allNames, map))}
+        >
+          反选
+        </button>
+        <button
+          className="p-btn"
+          title="清空改名与厂商标注，名字回到预设原名；置顶与备注保持不变"
+          onClick={restorePreset}
+        >
+          恢复预设
+        </button>
         <button className="p-btn primary" onClick={submit}>
           保存（已启用 {enabledCount}/{allNames.length}）
         </button>

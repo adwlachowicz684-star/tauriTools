@@ -17,15 +17,6 @@
   align-items: start;
 }
 .fpx-main { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
-/* 左栏收起：首列从 72px 压到 28px。不重写列宽的话收起了也留一大块空白。 */
-.fpx-body.rail-collapsed { grid-template-columns: 28px minmax(0, 1fr); }
-.fpx-rail-toggle {
-  position: sticky; top: 4px; align-self: start;
-  height: 46px; padding: 0; border-radius: var(--r-lg);
-  border: 1px solid var(--border); background: var(--surface-sunk);
-  color: var(--text-mute); cursor: pointer; font-size: 13px;
-}
-.fpx-rail-toggle:hover { background: var(--surface); }
 
 .fpx-rail {
   position: sticky; top: 4px;
@@ -36,6 +27,16 @@
   border: 1px solid var(--border);
   align-self: start;
 }
+/* 收起态（#58 #225）：留一条窄栏 + 展开按钮，宽度从 72px 收到 40px。
+   不做 display:none —— 那样 Shift+~ 收起后就没有可见的回头路了。 */
+.fpx-rail.collapsed {
+  width: 40px; min-width: 40px;
+  padding: 8px 4px;
+  align-items: center;
+}
+.fpx-rail.collapsed .fpx-rail-btn { width: 30px; padding: 6px 0; }
+.fpx-rail.collapsed .fpx-rail-icon { font-size: var(--fs-16, 16px); }
+
 .fpx-rail-group { display: flex; flex-direction: column; gap: 4px; }
 /* 组间分隔线：最后一组不加 */
 .fpx-rail-group + .fpx-rail-group { border-top: 1px solid var(--divider); padding-top: 8px; }
@@ -141,16 +142,109 @@
 .fpx-stack-toggleall { margin-top: 2px; height: 28px; font-size: var(--fs-11, 11px); }
 
 /* ---------- 底部日志（对照 WPF 的 140px 日志行）---------- */
-.fpx-logcard .fpx-log { max-height: 132px; }
+/* 高度由布局记忆（#55）经 inline style 给出；这里只留退路 ——
+   万一高度值异常大，也不该把三栏挤出屏幕。 */
+.fpx-logcard .fpx-log { max-height: 60vh; }
 
 /* ---------- 三栏 ---------- */
+/*
+  grid → flex（#54）：分隔条要夹在栏与栏之间，用 grid 它会去占一个单元格
+  把布局挤歪。star 值改由 .fpx-colwrap 的 flexGrow 承担，效果与 fr 一致。
+*/
 .fpx-cols {
-  display: grid;
-  /* 左栏已独立占一列，这里只在主区内分三栏 */
-  grid-template-columns: minmax(240px, 1fr) minmax(240px, 1fr) minmax(320px, 1.4fr);
-  gap: 16px;
-  align-items: start;
+  display: flex;
+  align-items: stretch;
+  /* gap 交给分隔条的宽度承担，这里不再额外留空 */
 }
+.fpx-colwrap {
+  /* 必须给 min-width:0：flex 子项默认 min-width:auto，
+     内容一长就会把整行撑开，三栏比例完全失效 */
+  min-width: 0;
+  flex-basis: 0;
+}
+
+/*
+  拖动分隔条（#54 #55 #56）。
+  视觉上细（1px），但要给足命中区（横向 8px / 纵向 8px）——
+  1px 的条子根本抓不住，用户会以为这功能坏了。
+*/
+.fpx-splitter {
+  flex: none;
+  position: relative;
+  background: transparent;
+  transition: background var(--dur-fast, .15s);
+}
+.fpx-splitter.horizontal { width: 8px; cursor: col-resize; margin: 0 4px; }
+.fpx-splitter.vertical { height: 8px; cursor: row-resize; margin: 4px 0; }
+/* 中间那条 1px 的线：平时几乎看不见，悬停/拖动时才显形 */
+.fpx-splitter::after {
+  content: ''; position: absolute;
+  background: var(--border);
+  transition: background var(--dur-fast, .15s);
+}
+.fpx-splitter.horizontal::after { top: 8px; bottom: 8px; left: 3px; width: 1px; }
+.fpx-splitter.vertical::after { left: 8px; right: 8px; top: 3px; height: 1px; }
+/* #284 分隔条三态：待命（几乎看不见）→ 悬停（显形）→ 拖动（加粗+辉光）。
+
+   此前三态挤在同一条规则里、都给同一个 --accent，
+   于是"悬停"和"正在拖"看起来一样 —— 用户松手后以为还在拖。
+   拖动态必须**肉眼可辨**：加粗并给一点辉光。 */
+.fpx-splitter:hover::after { background: var(--accent); }
+.fpx-splitter:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.fpx-splitter:focus-visible::after { background: var(--accent); }
+.fpx-splitter.dragging::after {
+  background: var(--accent);
+  /* 拖动中：加粗到 3px 并给辉光。只改宽度的话在浅色主题上仍不明显。 */
+  box-shadow: 0 0 4px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.fpx-splitter.horizontal.dragging::after { width: 3px; left: 2px; }
+.fpx-splitter.vertical.dragging::after { height: 3px; top: 2px; }
+/* 拖动中整条区域也染色，扩大"正在操作"的视觉范围 */
+.fpx-splitter.dragging { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+/* 拖动时禁掉全局文字选中：否则一路框选文字，视觉上像整页被选中 */
+.fpx-no-select { user-select: none !important; }
+
+/* 发送前确认（#43）：指令全文要能一眼看全、能改，
+   高度给足但不顶到屏幕底（下面还有「不再提示」与按钮） */
+.fpx-confirm-text {
+  width: 100%; min-height: 220px; max-height: 46vh;
+  resize: vertical; font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--fs-12, 12px); line-height: 1.6;
+}
+.fpx-confirm-skip {
+  margin-top: var(--sp-5, 10px);
+  gap: 6px; font-size: var(--fs-12, 12px); color: var(--text-dim);
+  cursor: pointer; user-select: none;
+}
+.fpx-confirm-skip input { cursor: pointer; }
+
+/* 按钮上的键位提示（#50）：做成小号弱化文字跟在按钮文案后面，
+   不做成角标 —— 按钮本来就不宽，角标会把文字挤没 */
+.fpx-key {
+  margin-left: var(--sp-4, 8px);
+  font-size: var(--fs-10, 10px);
+  opacity: .62;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+/* 检测结果（#48）：跟在按钮下面，不要抢戏 */
+.fpx-detect {
+  margin-top: var(--sp-4, 8px);
+  padding: var(--sp-4, 8px) var(--sp-5, 10px);
+  border-radius: var(--r-sm, 6px);
+  background: var(--surface-2, rgba(255, 255, 255, .04));
+  word-break: break-word;
+}
+
+/* 浮层底边把手（#56）：贴着弹窗下沿，覆盖 dialog 自身的 padding 区 */
+.dialog { position: relative; }
+.dialog > .fpx-splitter.vertical {
+  position: absolute;
+  left: 0; right: 0; bottom: 2px;
+  height: 8px; margin: 0;
+}
+.dialog > .fpx-splitter.vertical::after { left: 12px; right: 12px; }
 /*
   必须清零外壳的 `.p-card + .p-card { margin-top: 16px }`。
 
@@ -163,8 +257,12 @@
 */
 .fpx-cols > .p-card,
 .fpx-main > .p-card { margin-top: 0; }
+.fpx-cols > .fpx-colwrap > .p-card { margin-top: 0; }
+/* 窄屏：三栏堆叠，分隔条此时没有意义（拖了也看不出差别），直接隐藏 */
 @media (max-width: 1180px) {
-  .fpx-cols { grid-template-columns: 1fr; }
+  .fpx-cols { flex-direction: column; }
+  .fpx-cols .fpx-splitter.horizontal { display: none; }
+  .fpx-colwrap { width: 100%; }
 }
 /* 窄屏：左栏转为横向条，避免吃掉本就不多的宽度 */
 @media (max-width: 900px) {
@@ -218,16 +316,50 @@
   font-size: 12px; cursor: pointer;
   display: inline-flex; align-items: center; gap: 6px;
 }
-.fpx-tab:hover { color: var(--text); }
+/* #279 软键三态：常态外凸 → 悬停抬升 → 选中/按下内凹。
+
+   此前常态**没有阴影**、hover 只改文字颜色，于是页签看着是平的，
+   只有选中那一个"凹进去" —— 用户分不清哪些是可点的软键。
+   三态共用同一套几何、只改方向，才像同一排键被按下去一个。 */
+.fpx-tab { box-shadow: var(--sh-out-sm); transition: box-shadow var(--dur-fast) ease, color var(--dur-fast) ease; }
+.fpx-tab:hover { color: var(--text); box-shadow: var(--sh-out-md); }
+.fpx-tab:active { box-shadow: var(--sh-in-sm); }
 .fpx-tab.active {
   color: var(--accent);
   box-shadow: var(--sh-in-sm);
 }
 .fpx-tab.add { color: var(--text-mute); }
+/* ---------------- 页签 × 关闭按钮（#27）----------------
+ * **平时不显形**：删页签会连带清掉里面登记的所有卡片，
+ * 常显的 × 太容易误点。hover 或键盘聚焦才出来。
+ */
+.fpx-tab-x {
+  width: 15px; height: 15px; line-height: 13px; padding: 0;
+  border: 0; border-radius: 50%;
+  background: transparent; color: var(--text-mute);
+  font-size: 13px; cursor: pointer; opacity: 0;
+  /* 与图标删除按钮同理：只压 opacity 的话看不见的按钮**仍然可点** */
+  pointer-events: none;
+  flex-shrink: 0;
+}
+.fpx-tab:hover .fpx-tab-x,
+.fpx-tab.active .fpx-tab-x { opacity: .55; pointer-events: auto; }
+.fpx-tab-x:hover { opacity: 1; color: var(--danger); background: var(--surface); }
+.fpx-tab-x:focus-visible { opacity: 1; pointer-events: auto; outline: 1px solid var(--accent); }
 .fpx-tab-kind {
   font-size: 10px; opacity: .6;
   border: 1px solid var(--border); border-radius: var(--r-xs); padding: 0 4px;
 }
+/* #297 条目数：与类别标记（P/G）区分开 —— 数字用等宽且不加边框，
+   它是"量"，不是"类别"。加边框会让两个徽标看起来是同类标签。 */
+.fpx-tab-count {
+  font-family: var(--font-mono);
+  font-size: 10px; opacity: .55;
+  min-width: 14px; text-align: center;
+}
+/* 空页签把数字压到几乎看不见：提示"这里面没东西"，
+   不用换颜色也不用加图标 —— 换颜色会和选中态的强调色打架。 */
+.fpx-tab-count.zero { opacity: .3; }
 .fpx-tab-input {
   width: 90px; height: 22px; padding: 0 6px;
   border: 0; outline: none; border-radius: var(--r-xs);
@@ -330,11 +462,6 @@
 }
 .fpx-card.drop-before::before { top: -5px; }
 .fpx-card.drop-after::after { bottom: -5px; }
-/* 空列表时的落点线 */
-.fpx-drop-line {
-  height: 2px; border-radius: var(--r-pill); margin: 3px 0;
-  background: var(--accent); box-shadow: 0 0 6px var(--accent);
-}
 /* 跨栏落点 = 建链，与同栏排序（虚线）刻意区分：
    松手前要能一眼看出这次是"连上它"还是"排到这儿"。 */
 .fpx-card.over-link {
@@ -437,30 +564,43 @@
 .fpx-badge.group {
   position: relative;
   padding-left: 9px;
-  border-color: var(--accent);
-  color: var(--accent);
+  /* #293：跟随所属项目组的颜色。
+
+     **必须用 var 带兜底的写法**：没设标签色的卡片由 JSX 不写内联样式，
+     于是 --grp-* 全部未定义，这里退回主题强调色；
+     设了标签色的则由 CardGrid 写进 --grp-*，自动接管。
+
+     写成"要么全用 --grp-*、要么全用 --accent"的两套类是错的：
+     那要 JSX 判断有没有颜色并切类名，而类名与样式一旦分开维护就会漂移。 */
+  border-color: var(--grp-base, var(--accent));
+  color: var(--grp-base, var(--accent));
 }
 .fpx-badge.group.jump {
   cursor: pointer;
   /* 兜底：不支持 color-mix 时退回纯描边，仍是个可点的徽标 */
   box-shadow: inset 2px 0 0 var(--border);
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--accent) 30%, transparent),   /* 顶部高光刻线 */
+    inset 0 1px 0 color-mix(in srgb, var(--grp-hover, var(--accent)) 30%, transparent),  /* 顶部高光刻线 */
     inset 0 -1px 0 color-mix(in srgb, var(--bg) 40%, transparent),      /* 底部暗影线 */
     inset 2px 0 0 color-mix(in srgb, var(--bg) 55%, transparent);       /* 左缘插销槽 */
 }
 .fpx-badge.group.jump:hover {
-  /* 悬停：插销槽变浅，像被"拔出"一点 */
+  /* 悬停：插销槽变浅，像被"拔出"一点。
+     用 --grp-hover 派生色：组色与强调色不同时，这才跟得上。 */
+  border-color: var(--grp-hover, var(--accent));
+  color: var(--grp-hover, var(--accent));
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--accent) 45%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--grp-hover, var(--accent)) 45%, transparent),
     inset 0 -1px 0 color-mix(in srgb, var(--bg) 30%, transparent),
     inset 2px 0 0 color-mix(in srgb, var(--bg) 35%, transparent);
 }
 .fpx-badge.group.jump:active {
   /* 按下：整体内凹，像插销被按进槽里 */
+  border-color: var(--grp-press, var(--accent));
+  color: var(--grp-press, var(--accent));
   box-shadow:
     inset 1px 1px 3px color-mix(in srgb, var(--bg) 60%, transparent),
-    inset -1px -1px 2px color-mix(in srgb, var(--accent) 20%, transparent),
+    inset -1px -1px 2px color-mix(in srgb, var(--grp-press, var(--accent)) 20%, transparent),
     inset 2px 0 0 color-mix(in srgb, var(--bg) 70%, transparent);
 }
 .fpx-badge.warn { color: var(--warn); border-color: var(--warn); }
@@ -673,8 +813,16 @@
   border: 1px solid var(--border); border-radius: 50%;
   background: var(--surface); color: var(--text-mute);
   font-size: 12px; cursor: pointer; opacity: 0;
+  /* #116 只压 opacity 是不够的：看不见的按钮**仍然可点**，
+     用户以为点的是图标（选用），实际点到了删除 ——
+     而且没有任何确认，图标直接从本组消失。
+     必须连 pointer-events 一起关掉。 */
+  pointer-events: none;
 }
-.fpx-icongrid-item:hover .fpx-icon-del { opacity: 1; }
+.fpx-icongrid-item:hover .fpx-icon-del { opacity: 1; pointer-events: auto; }
+/* 键盘用户也要能看见：否则 tab 到一个不可见的按钮上，
+   按回车删掉了东西却不知道删的是谁。 */
+.fpx-icon-del:focus-visible { opacity: 1; pointer-events: auto; }
 .fpx-icon-del:hover { color: var(--danger); border-color: var(--danger); }
 
 .p-btn.mini { height: 26px; padding: 0 10px; font-size: var(--fs-11, 11px); }
@@ -696,6 +844,70 @@
 .fpx-toollist .fpx-check-title { font-family: var(--font-mono); font-size: var(--fs-11, 11px); }
 
 .fpx-select { height: 32px; width: auto; min-width: 140px; padding: 0 8px; }
+/* 数值输入（#32）：窄一点，与旁边的「恢复默认」按钮同高 */
+.fpx-num { height: 32px; width: 90px; }
+
+/* 未置顶的图钉平时藏起来（#66）：几十行全是 ☆，置顶那几个反而看不出来。
+   已置顶的常显（★ 是有效信息）；悬停或键盘聚焦到该行时再显形 ——
+   用 :focus-within 保证键盘用户也能摸到它，不能只靠鼠标悬停。 */
+.fpx-agent-row .fpx-pin { opacity: 0; transition: opacity var(--dur-fast, .15s); }
+.fpx-agent-row:hover .fpx-pin,
+.fpx-agent-row:focus-within .fpx-pin,
+.fpx-agent-row.pinned .fpx-pin { opacity: 1; }
+.fpx-agent-row .fpx-pin:focus-visible { opacity: 1; outline: 1px solid var(--accent); }
+
+/* 页签管理面板（#23 / 清单 #26） */
+.fpx-tabmgr-sec + .fpx-tabmgr-sec {
+  margin-top: var(--sp-6, 12px);
+  padding-top: var(--sp-5, 10px);
+  border-top: 1px solid var(--divider);
+}
+.fpx-tabmgr-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: var(--sp-4, 8px);
+}
+.fpx-tabmgr-head h3 { margin: 0; font-size: var(--fs-13, 13px); }
+.fpx-tabmgr-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: var(--r-sm);
+}
+.fpx-tabmgr-row:hover { background: var(--surface); }
+.fpx-tabmgr-row.editing { background: var(--surface-sunk); }
+.fpx-tabmgr-idx {
+  width: 18px; flex: none; text-align: right;
+  color: var(--text-mute); font-size: var(--fs-11, 11px);
+}
+/* 名字占满剩余宽度并左对齐：整行都是改名入口，点哪都能改 */
+.fpx-tabmgr-name {
+  flex: 1; min-width: 0; text-align: left;
+  background: none; border: none; padding: 4px 2px;
+  color: inherit; font: inherit; cursor: text;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fpx-tabmgr-input { flex: 1; min-width: 0; height: 28px; padding: 0 6px; }
+.fpx-tabmgr-count {
+  flex: none; font-size: var(--fs-11, 11px); color: var(--text-mute);
+}
+.fpx-tabmgr-lock {
+  flex: none; font-size: var(--fs-11, 11px); color: var(--danger);
+}
+.fpx-tabmgr-ops { flex: none; display: flex; gap: 3px; }
+.fpx-tabmgr-ops .p-btn { height: 26px; padding: 0 7px; }
+
+/* 占位符插入栏（#501）：贴在模板编辑框下方，一行放不下自动换行 */
+.fpx-ph-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
+  margin-top: var(--sp-3, 6px);
+}
+.fpx-ph-group { display: flex; align-items: center; gap: 3px; }
+.fpx-ph-group-title {
+  font-size: var(--fs-11, 11px); color: var(--text-mute);
+  margin-right: 2px;
+}
+.fpx-ph-btn {
+  height: 24px; padding: 0 8px;
+  font-family: var(--font-mono); font-size: var(--fs-11, 11px);
+}
 
 /* ---------- 链接名置顶 ---------- */
 .fpx-pin {
@@ -862,20 +1074,35 @@
 .fpx-foot-btn:hover { color: var(--text); }
 
 /* ---------- 快捷键设置 ---------- */
-/* 分组（#229）：每组一块，组标题 + 组内列表。
-   max-height 放在**组内**列表上而不是整体容器上 ——
-   20 条分三组后每组都很短，整体限高会让组与组挤在一起滚动，
-   读起来反而比一列到底更难找。 */
-.fpx-hotkey-group { margin-bottom: var(--sp-5, 10px); }
-.fpx-hotkey-group-title {
-  font-size: 11px; font-weight: 600; color: var(--text-mute);
-  padding: 0 2px 4px;
-}
 .fpx-hotkey-list {
   display: flex; flex-direction: column; gap: 2px;
   max-height: 300px; overflow: auto;
   padding: 6px; border-radius: var(--r-sm);
   background: var(--surface-sunk);
+}
+/* 使用说明里的键位表（#222）：从注册表动态生成，与设置面板共用同一份 */
+.fpx-help-keys {
+  display: flex; flex-wrap: wrap; gap: 14px;
+  margin-top: var(--sp-5, 10px);
+  padding-top: var(--sp-5, 10px);
+  border-top: 1px solid var(--divider);
+}
+.fpx-help-keygroup { min-width: 150px; flex: 1; }
+.fpx-help-keytitle {
+  font-size: var(--fs-11, 11px); font-weight: 600;
+  color: var(--text-mute); margin-bottom: 4px;
+}
+.fpx-help-keygroup table { width: 100%; border-collapse: collapse; font-size: var(--fs-12, 12px); }
+.fpx-help-keygroup td { padding: 2px 6px 2px 0; vertical-align: top; }
+.fpx-help-keygroup td + td { text-align: right; color: var(--text-mute); white-space: nowrap; }
+
+/* 分组小标题（#229）：不抢行的浅色标签，组间留一点呼吸 */
+.fpx-hotkey-group { display: flex; flex-direction: column; gap: 2px; }
+.fpx-hotkey-group + .fpx-hotkey-group { margin-top: 8px; }
+.fpx-hotkey-group-title {
+  padding: 4px 8px 2px;
+  font-size: var(--fs-11, 11px); color: var(--text-mute);
+  font-weight: 600; letter-spacing: .3px;
 }
 .fpx-hotkey-row {
   display: flex; align-items: center; gap: 8px;
@@ -896,8 +1123,6 @@
 .fpx-links-summary { display: inline-flex; gap: 5px; font-size: var(--fs-11, 11px); }
 .fpx-links-summary .bad {
   padding: 1px 6px; border-radius: var(--r-pill);
-  /* 压在语义色（--danger）之上 —— 白字必须硬编码，
-     跟随主题会在浅色危险色上整个消失 */
   background: var(--danger, #c8555a); color: #fff;
 }
 .fpx-links-summary .warn {
@@ -929,4 +1154,208 @@
   align-self: center;
   background: var(--accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+
+/* ---------------- 滚动条全自定义（#283）----------------
+ * 此前用系统默认滚动条：在深色拟态主题里是一条突兀的亮灰，
+ * 且与卡片的内凹承载区完全不是一个材质。
+ *
+ * 只写 ::-webkit-scrollbar：本项目跑在 WebView2 / WKWebView 上，
+ * 二者都支持；Firefox 的 scrollbar-color 由主题层提供，这里不重复写，
+ * 免得两套规则互相覆盖。
+ *
+ * 宽度刻意做窄（8px）：滚动条是"背景里的工具"，不该抢内容的位置。
+ */
+.fpx-cards::-webkit-scrollbar,
+.fpx-log::-webkit-scrollbar,
+.fpx-links::-webkit-scrollbar,
+.fpx-rail::-webkit-scrollbar { width: 8px; height: 8px; }
+
+.fpx-cards::-webkit-scrollbar-track,
+.fpx-log::-webkit-scrollbar-track,
+.fpx-links::-webkit-scrollbar-track,
+.fpx-rail::-webkit-scrollbar-track {
+  /* 轨道内凹：与"承载区"是同一种材质，滚动条像嵌在槽里 */
+  background: var(--surface-sunk);
+  border-radius: var(--r-sm, 4px);
+}
+
+.fpx-cards::-webkit-scrollbar-thumb,
+.fpx-log::-webkit-scrollbar-thumb,
+.fpx-links::-webkit-scrollbar-thumb,
+.fpx-rail::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--r-sm, 4px);
+  /* 滑块外凸：与轨道的内凹形成对比，才像"可以抓的东西" */
+  box-shadow: var(--sh-out-sm);
+}
+.fpx-cards::-webkit-scrollbar-thumb:hover,
+.fpx-log::-webkit-scrollbar-thumb:hover,
+.fpx-links::-webkit-scrollbar-thumb:hover,
+.fpx-rail::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+.fpx-cards::-webkit-scrollbar-thumb:active,
+.fpx-log::-webkit-scrollbar-thumb:active,
+.fpx-links::-webkit-scrollbar-thumb:active,
+.fpx-rail::-webkit-scrollbar-thumb:active { box-shadow: var(--sh-in-sm); }
+
+/* ---------------- 预览框去聚焦蓝边（#288）----------------
+ * 浏览器给 :focus-visible 的默认蓝边在拟态主题里极其突兀，
+ * 且它盖在卡片圆角外侧，看着像"画错了的一圈"。
+ *
+ * **只去掉本插件自有的、有自定义焦点表现的元素**：
+ * 全站 `*:focus-visible { outline: none }` 会让键盘用户彻底失去焦点指示 ——
+ * 那是把"不好看"换成了"不可用"。
+ */
+.fpx-card:focus-visible,
+.fpx-badge:focus-visible,
+.fpx-rail-btn:focus-visible {
+  outline: none;
+  /* 换成与主题一致的表现：内凹 + 强调色描边 */
+  box-shadow: var(--sh-in-sm), inset 0 0 0 1px var(--accent);
+}
+
+/* ---------------- 虚线添加框（#287）----------------
+ * 卡片列表末尾的「＋」：虚线框 + 悬停才显形。
+ *
+ * 为什么放在列表末尾而不是只在工具栏：卡片区是用户**视线所在**，
+ * 手也在这附近；跑到顶部工具栏点一次再回来，是两次定位。
+ * 且空列表时它是唯一的入口 —— 那时工具栏的按钮很容易被忽略。
+ *
+ * 平时用虚线且压低不透明度：它是"建议"而不是"当前要做的事"，
+ * 不该和实心卡片抢注意力。
+ */
+.fpx-add-card {
+  min-height: 44px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px dashed var(--border); border-radius: var(--r-sm);
+  background: transparent; color: var(--text-mute);
+  font-size: var(--fs-12, 12px);
+  cursor: pointer;
+  opacity: .65;
+  transition: opacity var(--dur-fast) ease, border-color var(--dur-fast) ease,
+              color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.fpx-add-card:hover,
+.fpx-add-card:focus-visible {
+  opacity: 1;
+  color: var(--accent);
+  border-color: var(--accent);
+  /* 内凹：与卡片被按下去是同一种表现，才像"这一格也是可以点的" */
+  box-shadow: var(--sh-in-sm);
+}
+.fpx-add-card:active { box-shadow: var(--sh-in-md); }
+
+/* ---------------- 空列表拖拽落点（#105）----------------
+ * 整区高亮而不是画一条竖条：列表里一张卡都没有时，
+ * 竖条没有"插在哪两张之间"的参照，看着像界面坏了。
+ */
+.fpx-cards.empty-over {
+  outline: 1px dashed var(--accent);
+  outline-offset: -3px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+/* ---------------- 图标排序（#114）----------------
+ * 落点提示用**左缘竖条**而不是整格高亮：图标是密集的网格，
+ * 整格高亮会被相邻格的边框糊在一起，看不出到底插在哪。
+ * 竖条只占 2px，明确指出"插到这里"。
+ * （`position: relative` 在上方已有，这里不重复声明。）
+ */
+.fpx-icongrid-item.over::before {
+  content: ''; position: absolute; left: -3px; top: 2px; bottom: 2px;
+  width: 2px; background: var(--accent); border-radius: 1px;
+}
+.fpx-icongrid-item[draggable='true'] .fpx-icontile { cursor: grab; }
+.fpx-icongrid-item[draggable='true'] .fpx-icontile:active { cursor: grabbing; }
+
+/* ---------------- 分组重排（#73）----------------
+ * 落点用**左缘竖条**：分组栏是横排的一行，相邻按钮紧贴，
+ * 整格高亮会和按钮自身的选中态（active 的内凹）混淆 ——
+ * 分不清"这是落点提示"还是"这是当前选中的组"。
+ * 竖条只占 2px 且用强调色，与选中态的表现是两回事，不会认错。
+ */
+.fpx-grouptab { position: relative; }
+.fpx-grouptab.gap-before::before,
+.fpx-grouptab.gap-after::after {
+  content: ''; position: absolute; top: 2px; bottom: 2px;
+  width: 2px; background: var(--accent); border-radius: 1px;
+  z-index: 1;
+}
+.fpx-grouptab.gap-before::before { left: -3px; }
+.fpx-grouptab.gap-after::after { right: -3px; }
+/* 被拖的那个压暗：明确"这一组正在移动"，否则界面上没有任何反馈，
+   用户会以为拖拽没生效（拖起来和原地看起来一样）。 */
+.fpx-grouptab.dragging { opacity: .5; }
+.fpx-grouptab[draggable='true'] { cursor: grab; }
+.fpx-grouptab[draggable='true']:active { cursor: grabbing; }
+
+/* ---------------- ACL 预设档位（#22）----------------
+ * 四个档位横排、互斥单选。用**内凹**表示选中（与页签一致）：
+ * 这里选中的是"当前所处档位"，内凹才像被按下去的那一个。
+ * 不能用强调色填底 —— 那会和「应用」这类主按钮抢注意力。
+ */
+.fpx-lock-presets {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin-bottom: var(--sp-3, 6px);
+}
+.fpx-lock-preset {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  min-width: 84px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface-sunk); color: var(--text-dim);
+  font-size: var(--fs-12, 12px); cursor: pointer;
+  box-shadow: var(--sh-out-sm);
+  transition: box-shadow var(--dur-fast) ease, color var(--dur-fast) ease,
+              border-color var(--dur-fast) ease;
+}
+.fpx-lock-preset:hover { color: var(--text); box-shadow: var(--sh-out-md); }
+.fpx-lock-preset.active {
+  color: var(--accent); border-color: var(--accent);
+  box-shadow: var(--sh-in-sm);
+}
+.fpx-lock-preset-name { font-weight: 600; }
+.fpx-lock-preset-flags { font-size: 10px; opacity: .65; }
+
+/* ---------------- 面板内操作反馈条（#9）----------------
+ * **吸顶**：面板可能很长，操作发生在底部时，
+ * 不吸顶的反馈条等于不存在（用户在底部操作，反馈在顶部屏幕外）。
+ */
+.fpx-feedback {
+  position: sticky; top: 0; z-index: 5;
+  margin-bottom: var(--sp-5, 10px);
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-out-md);
+  overflow: hidden;
+}
+.fpx-feedback-row {
+  display: flex; align-items: flex-start; gap: 6px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-12, 12px);
+}
+.fpx-feedback-row:last-of-type { border-bottom: 0; }
+.fpx-feedback-icon { flex-shrink: 0; }
+.fpx-feedback-row .fpx-feedback-icon { color: var(--ok, var(--accent)); }
+.fpx-feedback-row.err .fpx-feedback-icon { color: var(--danger); }
+.fpx-feedback-row.err .fpx-feedback-text { color: var(--danger); }
+.fpx-feedback-text { flex: 1; min-width: 0; word-break: break-word; }
+.fpx-feedback-at {
+  flex-shrink: 0; opacity: .5; font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.fpx-feedback-x {
+  flex-shrink: 0; width: 14px; height: 14px; line-height: 12px; padding: 0;
+  border: 0; border-radius: 50%; background: transparent;
+  color: var(--text-mute); font-size: 12px; cursor: pointer; opacity: .5;
+}
+.fpx-feedback-x:hover { opacity: 1; background: var(--surface); }
+.fpx-feedback-x:focus-visible { opacity: 1; outline: 1px solid var(--accent); }
+.fpx-feedback-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
 }

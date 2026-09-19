@@ -6,6 +6,7 @@ import { ColorPicker } from '../../color-picker/ColorPicker';
 import { DirDialog } from './DirDialog';
 import { PresetIconGrid } from './PresetIconGrid';
 import { CheckLine, Modal } from './ui';
+import { LOCK_PRESETS, applyPreset, presetOf, CUSTOM_PRESET_ID } from '../utils/lockPresets';
 
 const EMOJIS = ['📁', '🤖', '🧠', '⚙', '🎨', '📦', '🧩', '🚀', '🧪', '📚', '🔧', '💡', '🛠', '🧭', '🏷', '🗂'];
 
@@ -109,16 +110,41 @@ export function CreateDialog({
 
 /** ACL 文件夹保护 */
 export function LockDialog({
-  path, denyDelete, denyWrite, onClose, onApply,
+  path, denyDelete, denyWrite, accountOnly, onClose, onApply,
+  watchEnabled, onWatchChange,
 }: {
   path: string;
   denyDelete: boolean;
   denyWrite: boolean;
+  /** 「账面固定」（#21）：与 ACL 是两件事，可选以兼容旧调用点 */
+  accountOnly?: boolean;
   onClose: () => void;
-  onApply: (denyDelete: boolean, denyWrite: boolean) => void;
+  onApply: (denyDelete: boolean, denyWrite: boolean, accountOnly: boolean) => void;
+  /* #23 弹窗内的「监控告警」开关。
+     设为可选：这个弹窗也可能在没有监控上下文的地方被复用。
+     不传就不渲染，而不是渲染一个点了没用的开关 ——
+     后者会让用户以为点了生效，实际什么也没发生。 */
+  watchEnabled?: boolean;
+  onWatchChange?: (on: boolean) => void;
 }) {
   const [dd, setDd] = useState(denyDelete);
   const [dw, setDw] = useState(denyWrite);
+  const [ao, setAo] = useState(!!accountOnly);
+  /** 当前档位由开关推导，不单独存 state —— 存了就会和开关漂移 */
+  const cur = presetOf(dd, dw, ao);
+
+  /**
+   * 点档位 = **整体设为这一档**（含清掉档外选项），不是叠加。
+   * 若只叠加，从「防删除」切到「防写入」会变成两个都开，
+   * 用户以为切了档，实际保护越来越重，而且界面上看不出来。
+   */
+  const pick = (id: string) => {
+    const next = applyPreset(id);
+    if (!next) return;
+    setDd(next.denyDelete);
+    setDw(next.denyWrite);
+    setAo(next.accountOnly);
+  };
 
   return (
     <Modal
@@ -127,11 +153,63 @@ export function LockDialog({
       footer={
         <>
           <button className="p-btn" onClick={onClose}>取消</button>
-          <button className="p-btn primary" onClick={() => { onApply(dd, dw); onClose(); }}>应用</button>
+          <button className="p-btn primary" onClick={() => { onApply(dd, dw, ao); onClose(); }}>应用</button>
         </>
       }
     >
       <div className="p-mono p-muted" style={{ marginBottom: 'var(--sp-6, 12px)', wordBreak: 'break-all' }}>{path}</div>
+
+      {/* #22 预设档位：四个组合都有名字，比"随便勾两个框"好认。 */}
+      <div className="fpx-lock-presets">
+        {LOCK_PRESETS.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            className={`fpx-lock-preset${cur === p.id ? ' active' : ''}`}
+            title={p.hint}
+            onClick={() => pick(p.id)}
+          >
+            <span className="fpx-lock-preset-name">{p.label}</span>
+            <span className="fpx-lock-preset-flags">
+              {p.accountOnly ? '仅标记' : ''}
+              {!p.accountOnly && p.denyDelete ? '防删' : ''}
+              {!p.accountOnly && p.denyDelete && p.denyWrite ? ' · ' : ''}
+              {!p.accountOnly && p.denyWrite ? '防写' : ''}
+              {!p.accountOnly && !p.denyDelete && !p.denyWrite ? '—' : ''}
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginBottom: 'var(--sp-5, 10px)' }}>
+        {cur === CUSTOM_PRESET_ID
+          ? '当前是自定义组合（不在预设档位内）'
+          : (LOCK_PRESETS.find((p) => p.id === cur)?.hint ?? '')}
+      </div>
+
+      {/* #23 监控告警：与保护设置放在一起才顺手 ——
+          设完保护接着就会想"要不要盯着它"。
+          放在弹窗里而不是只在设置页：那两件事本来就是一次决定的。 */}
+      {onWatchChange && (
+        <div className="fpx-lock-watch">
+          <CheckLine
+            checked={!!watchEnabled}
+            onChange={onWatchChange}
+            title="监控告警"
+            subtitle="定期轮询该目录，被外部改动时告警"
+          />
+        </div>
+      )}
+
+      {/* #21 账面固定：与两个 ACL 档位并列但含义不同 ——
+          它不改系统权限，只是登记一个"别乱动"的标记。
+          两者**互不排斥**（可以既固定又上 ACL），故做成独立勾选项
+          而不是一个互斥档位，避免用户以为"选了固定就不能上锁"。 */}
+      <CheckLine
+        checked={ao}
+        onChange={setAo}
+        title="账面固定（仅登记，不设系统权限）"
+        subtitle="不动 ACL，也不需要管理员权限；只在界面上标出这一项已定下来"
+      />
       <CheckLine checked={dd} onChange={setDd} title="防删除" subtitle="禁止删除该文件夹（重命名也会被拦）" />
       <CheckLine checked={dw} onChange={setDw} title="防写入" subtitle="禁止写入，目录变为只读" />
       <div className="p-muted" style={{ marginTop: 'var(--sp-5, 10px)' }}>
@@ -322,6 +400,9 @@ export function StyleDialog({
           标签颜色
           {inherited && <span className="p-muted">（当前继承自所链接的项目组，改后即为自有颜色）</span>}
         </label>
+        {/* 不传 api：色盘已移到共享插件，取色走它自己的 ctx.invoke。
+            继续传会是 TS 报错（组件 props 里没有这一项），
+            也是"插件已交出去、调用方还按旧签名用"的残留。 */}
         <ColorPicker
           value={cl}
           customColors={customColors}

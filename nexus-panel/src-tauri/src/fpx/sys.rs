@@ -361,7 +361,10 @@ pub fn apply_icon(dir: &str, icon_ref: &str) -> Result<String, String> {
         // 读原有内容（不存在则 None）；读失败时 `?` 直接放弃写入
         let content = match read_ini_text(&ini)? {
             Some(t) => set_icon_resource(&t, &file, index),
-            None => format!("[.ShellClassInfo]\r\nIconResource={file},{index}\r\n"),
+            None => format!(
+                "[.ShellClassInfo]\r\n{}\r\n",
+                build_icon_resource_line(&file, index)
+            ),
         };
         let _ = run_cmd("attrib", &["-s".to_string(), "-h".to_string(), ini_arg()]);
         write_ini_text(&ini, &content)?;
@@ -378,6 +381,35 @@ fn split_icon_ref(icon_ref: &str) -> (String, i32) {
     let file = parts.next().unwrap_or("").trim().to_string();
     let index = parts.next().and_then(|s| s.trim().parse::<i32>().ok()).unwrap_or(0);
     (file, index)
+}
+
+/**
+ * 拼 `IconResource=…` 这一行（`#304` `#512`）。
+ *
+ * **路径含空格或逗号时必须用双引号包裹**，写成：
+ *
+ *   IconResource="C:\My Icons\folder.ico",0
+ *
+ * 不包裹的话 Shell 会按空格把路径截断，图标**静默失效** ——
+ * 不报错、不提示，用户只会看到"图标没换"，完全无从下手。
+ * 而含空格的路径恰恰是常态（`C:\Users\张三\My Projects\…`）。
+ *
+ * 只在需要时才加引号：不带空格/逗号的路径保持原样输出，
+ * 与修复前的字节完全一致，避免对已生效的用户造成任何变化。
+ *
+ * 逗号也要加引号：`IconResource=a,b.ico,0` 里哪个逗号是索引分隔符
+ * 取决于解析方式，加了引号后分隔符就是最后一个逗号，语义才唯一。
+ *
+ * 路径里的双引号不必转义 —— Windows 文件名本就不允许这个字符。
+ */
+#[cfg(windows)]
+fn build_icon_resource_line(file: &str, index: i32) -> String {
+    let needs_quote = file.contains(' ') || file.contains(',');
+    if needs_quote {
+        format!("IconResource=\"{file}\",{index}")
+    } else {
+        format!("IconResource={file},{index}")
+    }
 }
 
 /* ---------------------------- desktop.ini 的读写（编码安全 + 合并式修改） ---------------------------- */
@@ -454,7 +486,7 @@ fn write_ini_text(path: &Path, text: &str) -> Result<(), String> {
  */
 #[cfg(windows)]
 fn set_icon_resource(text: &str, file: &str, index: i32) -> String {
-    merge_icon_line(text, Some(&format!("IconResource={file},{index}")))
+    merge_icon_line(text, Some(&build_icon_resource_line(file, index)))
 }
 
 /// 删掉 IconResource / IconIndex 行（清除图标用）；段因此变空则连带删掉段。

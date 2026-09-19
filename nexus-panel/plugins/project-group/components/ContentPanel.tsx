@@ -54,7 +54,7 @@ function buildTree(items: ContentItem[]): TreeNode[] {
 const KIND_LABEL: Record<string, string> = { agent: 'Agent', skill: 'Skill', rule: 'Rule' };
 
 export function ContentPanel({
-  api, root, items, kind, onKind, onLog, onRename, onRefresh, onSelect,
+  api, root, items, kind, onKind, onLog, onRename, onRefresh, selected, onSelect,
 }: {
   api: Api;
   root: string;
@@ -67,16 +67,16 @@ export function ContentPanel({
   /** 重新扫描当前目录 */
   onRefresh: () => void;
   /**
-   * 当前预览条目变化时通知外面（对应原版 MainViewModel.Content.LastPreviewFile）。
+   * 当前选中的条目。**受控** —— 由 App 持有。
    *
-   * 快捷键 `openMarkdown` 需要知道"上次预览的是哪个文件" ——
-   * 这个状态原本只活在组件内部，外部拿不到就只能猜，
-   * 而猜错会打开一个跟用户预期毫不相干的文件。
+   * 原本是这里的内部 state，但 mod+D（原版 OpenMarkdown）要编辑"当前选中的文件"，
+   * 而快捷键注册在 App 层，拿不到组件内部状态。提升之后快捷键与界面共用同一份，
+   * 不会出现"界面选中了 A、快捷键却说没选中"。
    */
-  onSelect?: (item: ContentItem | null) => void;
+  selected: ContentItem | null;
+  onSelect: (item: ContentItem | null) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [selected, setSelected] = useState<ContentItem | null>(null);
   const [text, setText] = useState('');
 
   const tree = useMemo(() => buildTree(items), [items]);
@@ -86,18 +86,21 @@ export function ContentPanel({
     rule: items.filter((i) => i.kind === 'rule').length,
   }), [items]);
 
-  useEffect(() => { setSelected(null); setText(''); }, [root, kind]);
-
   /*
-   * 把"当前预览的是哪个文件"报给外面（openMarkdown 快捷键要用）。
+   * 把"当前预览的是哪个文件"报给外面（mod+D 编辑快捷键要用）。
    *
-   * 走 ref 而不是把 onSelect 放进依赖数组：调用方多半传内联箭头函数，
-   * 放进依赖的话每次渲染都会重跑这个 effect，而它又会触发父组件 setState
-   * → 无限循环。ref 保证只在 selected 真的变了时才通知一次。
+   * **走 ref，不把 onSelect 放进依赖数组**：调用方多半传内联箭头函数
+   * （`onSelect={(it) => setX(it)}`），放进依赖的话这个 effect 每次渲染都重跑，
+   * 而它又会触发父组件 setState → **无限循环**。
+   *
+   * 为什么不用"要求调用方传稳定引用（useCallback）"：那是**靠约定的保证** ——
+   * 谁都能在改调用方时顺手写成内联函数，于是界面突然卡死，
+   * 而报错信息（"Maximum update depth exceeded"）指向不到这里。
+   * ref 把它变成结构性保证：调用方怎么写都不会循环。
    */
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
-  useEffect(() => { onSelectRef.current?.(selected); }, [selected]);
+  useEffect(() => { onSelectRef.current?.(null); setText(''); }, [root, kind]);
 
   /**
    * 某类资源的**实际基目录**（对应原版 OpenAgentDir / OpenSkillDir / OpenRuleDir）。
@@ -121,7 +124,7 @@ export function ContentPanel({
   };
 
   const read = async (item: ContentItem) => {
-    setSelected(item);
+    onSelect(item);
     setText('');
     try {
       // 目录型 skill 传的是目录，后端会自动改读其下的 SKILL.md
@@ -142,7 +145,17 @@ export function ContentPanel({
       const row = (
         <div
           key={key}
-          className={`fpx-node${selected?.path === n.item?.path ? ' selected' : ''}`}
+          /* #262 只高亮**叶子**，目录节点不高亮。
+
+             这里的坑不是"要不要高亮目录"，而是**怎么判断**：
+             原式 `selected?.path === n.item?.path` 在**还没选中任何东西时**
+             两边都是 undefined —— `undefined === undefined` 为真，
+             于是**所有目录节点会一起被判为选中**，整棵树刷成强调色。
+
+             这类 bug 只在"什么都还没选"时出现，而那时用户刚打开、
+             最容易以为"界面本来就这样"，根本不会意识到是错的。
+             所以必须显式要求 selected 存在，再比路径。 */
+          className={`fpx-node${selected && n.item && selected.path === n.item.path ? ' selected' : ''}`}
           style={{ paddingLeft: 8 + depth * 14 }}
           onClick={() => {
             if (n.item) {
@@ -156,7 +169,17 @@ export function ContentPanel({
               });
             }
           }}
-          onDoubleClick={() => n.item && api.openPath(n.item.path, 'auto').catch((e) => onLog(errText(e), true))}
+          onDoubleClick={() => {
+            if (!n.item) return;
+            /* 目录型 skill（#31）：双击要打开它里面的 SKILL.md，而不是目录本身。
+               走 openPath 会在资源管理器里打开这层目录，用户还得自己再点进去
+               找 SKILL.md —— 而"打开 skill"想看的本来就是那份文件。
+               editFile 后端会做目录 → SKILL.md 的解析（见 fpx_edit_file）。 */
+            const go = n.item.isDir
+              ? api.editFile(n.item.path)
+              : api.openPath(n.item.path, 'auto');
+            go.catch((e) => onLog(errText(e), true));
+          }}
         >
           <span className="fpx-node-arrow">{n.item ? '' : (open ? '▾' : '▸')}</span>
           <span className="fpx-node-icon">{isDir ? '📂' : '📄'}</span>

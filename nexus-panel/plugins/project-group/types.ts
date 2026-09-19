@@ -9,6 +9,8 @@ export interface LockItem {
   path: string;
   denyDelete: boolean;
   denyWrite: boolean;
+  /** 「账面固定」（#21）：仅登记在案，不落系统权限 */
+  accountOnly?: boolean;
 }
 
 export interface IconGroup {
@@ -17,6 +19,8 @@ export interface IconGroup {
 }
 
 export interface FpxConfig {
+  /** config schema 版本。老配置没有这个键，后端按 1 处理并在加载时升级 */
+  schemaVersion: number;
   projectTabs: TabItem[];
   groupTabs: TabItem[];
   linkAgents: Record<string, boolean>;
@@ -58,13 +62,6 @@ export interface FpxConfig {
   iconGroups: IconGroup[];
   backupDir: string | null;
   backupAppendOnly: boolean;
-  /**
-   * MCP 访问令牌。HTTP 模式强制校验（Authorization: Bearer / X-Token），
-   * stdio 模式由拉起方注入、不校验。
-   * 生成后**不再变** —— 改了令牌，AI 客户端里配好的那条就失效，
-   * 而用户只会看到"连不上"，无从下手。
-   */
-  mcpToken: string | null;
   /** 自动备份间隔（分钟）；0 = 关闭 */
   backupAutoMinutes: number;
   mcpEnabled: boolean;
@@ -88,6 +85,34 @@ export interface FpxConfig {
   /** 快捷键覆盖（动作 id → combo）；只存改过的项，null = 全部默认 */
   hotkeys: Record<string, string> | null;
   watchIntervalSecs: number;
+  /**
+   * 日志区最多保留多少条（#32）。同时决定显示与"复制全部"能拿到多少。
+   * 后端会在读取时夹回 10~2000，这里只负责展示与提交。
+   */
+  logMaxLines: number;
+  /** 三栏宽度 star 值（#54）。null = 用默认 */
+  colStars: number[] | null;
+  /** 日志区高度 px（#55）。null = 用默认 */
+  logRowHeight: number | null;
+  /** 设置浮层高度 px（#56）。null = 自适应内容高度 */
+  settingsPanelHeight: number | null;
+  /** MCP 服务浮层高度 px（#56） */
+  mcpPanelHeight: number | null;
+  /** 使用说明浮层高度 px（#56） */
+  tipsPanelHeight: number | null;
+  /**
+   * MCP 访问令牌（后端生成）。**前端不展示、不编辑，但必须原样带回去**。
+   *
+   * 保存配置是整份覆盖：JSON 里缺这个键，serde 走 default 得到 null，
+   * 后端下次启动就会重新生成一枚新令牌 —— 而 AI 客户端里配好的那条旧令牌
+   * 从此失效，用户只看到"连不上"，无从下手。
+   * 与 chainActions 同理（见那里的注释）。
+   */
+  mcpToken: string | null;
+  /** 开发者模式（#46）：开启后允许删除内置连锁动作 */
+  devMode: boolean;
+  /** 按钮上显示快捷键提示（#50），默认开 */
+  showShortcuts: boolean;
 }
 
 export interface CardInfo {
@@ -102,6 +127,8 @@ export interface CardInfo {
   locked: boolean;
   denyDelete: boolean;
   denyWrite: boolean;
+  /** 「账面固定」（#21）：仅登记在案，无系统权限。与 locked（ACL）是两件事。 */
+  accountFixed?: boolean;
   icon: string | null;
   tagColor: string | null;
   /** 颜色是否继承自所链接的项目组 */
@@ -147,6 +174,8 @@ export interface PresetAgent {
 export interface Bootstrap {
   dataDir: string;
   platform: string;
+  /** config.json 的体检结果（未知键、迁移记录）。空 = 正常 */
+  configNotices: string[];
   config: FpxConfig;
   projectTabs: TabInfo[];
   groupTabs: TabInfo[];

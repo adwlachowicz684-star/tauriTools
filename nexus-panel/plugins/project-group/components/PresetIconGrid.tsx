@@ -4,6 +4,10 @@ import { errText } from '../api';
 import { PRESET_ICON_NAMES, presetIconUrl } from '../presetIcons';
 import type { IconGroup } from '../types';
 import { confirm, prompt } from '../../../js/dialog.js';
+/* 图标排序（#72）与卡片/页签排序用的是同一套"先移除再插入"的索引纠偏，
+   走 utils/dragSort 的 resolveMoveIndex，不另写一份 ——
+   另写一份的话，改了那边的边界处理这里就会悄悄不一致。 */
+import { resolveMoveIndex, clampIndex, gapIndexAtX } from '../utils/dragSort';
 
 /** 内置图标默认归入的组名（与原版一致）。 */
 const DEFAULT_GROUP = '默认';
@@ -98,6 +102,77 @@ export function PresetIconGrid({
     commit(effective.filter((g) => g.name !== current.name));
   };
 
+  /**
+   * 图标拖到某个位置（#72）。
+   *
+   * 走 `resolveMoveIndex`：从 from 移到 k 时，因为"先移除再插入"，
+   * 插入下标与原始缝隙下标错开一位 —— 不纠偏就会落到隔壁。
+   * 这个坑在卡片和页签那里都踩过，这里直接复用同一个函数。
+   */
+  const [iconDrag, setIconDrag] = useState<string | null>(null);
+  const [iconOver, setIconOver] = useState<number | null>(null);
+
+  /* ---------------- 分组重排（#73）---------------- */
+  const [groupDrag, setGroupDrag] = useState<string | null>(null);
+  const [groupGap, setGroupGap] = useState<number | null>(null);
+
+  /**
+   * 分组拖到第 k 个缝隙。
+   *
+   * **拖完必须把被拖的组设为 active**：否则当前查看的组会跳成落点处的那个，
+   * 下面显示的图标全变了 —— 用户会以为"刚才那组的东西丢了"。
+   * 他拖的是**顺序**，不是想切换正在看哪一组。
+   */
+  const moveGroup = (name: string, k: number) => {
+    const from = effective.findIndex((g) => g.name === name);
+    if (from < 0) return;
+    const to = clampIndex(resolveMoveIndex(from, k, effective.length), effective.length - 1);
+    if (to === from) return;
+    const next = [...effective];
+    const [g] = next.splice(from, 1);
+    next.splice(to, 0, g);
+    commit(next);
+    setActive(name);
+  };
+
+  /** 键盘可达：Alt+←/→ 挪动整个分组（纯鼠标才能用的功能对键盘用户等于没有） */
+  const nudgeGroup = (name: string, dir: -1 | 1) => {
+    const from = effective.findIndex((g) => g.name === name);
+    if (from < 0) return;
+    const to = from + dir;
+    if (to < 0 || to >= effective.length) return;
+    const next = [...effective];
+    const [g] = next.splice(from, 1);
+    next.splice(to, 0, g);
+    commit(next);
+    setActive(name);
+  };
+
+  const moveIcon = (icon: string, k: number) => {
+    if (!current) return;
+    const from = current.icons.indexOf(icon);
+    if (from < 0) return;
+    const to = clampIndex(resolveMoveIndex(from, k, current.icons.length), current.icons.length - 1);
+    if (to === from) return;
+    const next = [...current.icons];
+    next.splice(from, 1);
+    next.splice(to, 0, icon);
+    commit(effective.map((g) => (g.name === current.name ? { ...g, icons: next } : g)));
+  };
+
+  /** 键盘可达的排序：← → 微调整个位置（纯鼠标才能用的功能对键盘用户等于没有） */
+  const nudgeIcon = (icon: string, dir: -1 | 1) => {
+    if (!current) return;
+    const from = current.icons.indexOf(icon);
+    if (from < 0) return;
+    const to = from + dir;
+    if (to < 0 || to >= current.icons.length) return;
+    const next = [...current.icons];
+    next.splice(from, 1);
+    next.splice(to, 0, icon);
+    commit(effective.map((g) => (g.name === current.name ? { ...g, icons: next } : g)));
+  };
+
   const removeFromGroup = (icon: string) => {
     if (!current) return;
     commit(effective.map((g) =>
@@ -129,13 +204,47 @@ export function PresetIconGrid({
   return (
     <div className="fpx-preset">
       <div className="fpx-groupbar">
-        {effective.map((g) => (
+        {effective.map((g, i) => (
           <button
             key={g.name}
-            className={`fpx-grouptab${g.name === active ? ' active' : ''}`}
+            className={[
+              'fpx-grouptab',
+              g.name === active ? 'active' : '',
+              groupDrag === g.name ? 'dragging' : '',
+              groupGap === i && groupDrag ? 'gap-before' : '',
+              groupGap === effective.length && groupDrag && i === effective.length - 1
+                ? 'gap-after' : '',
+            ].filter(Boolean).join(' ')}
             onClick={() => { setActive(g.name); setAddMode(false); }}
             onDoubleClick={renameGroup}
-            title="双击可重命名"
+            onKeyDown={(e) => {
+              /* 重排也要能靠键盘，否则纯键盘用户根本调不了顺序 */
+              if (!e.altKey) return;
+              if (e.key === 'ArrowLeft') { e.preventDefault(); nudgeGroup(g.name, -1); }
+              if (e.key === 'ArrowRight') { e.preventDefault(); nudgeGroup(g.name, 1); }
+            }}
+            /* #73 分组可拖动重排。只有多于一个组时才可拖 ——
+               一个组拖不出任何结果，却会让人以为是坏了。 */
+            draggable={effective.length > 1}
+            onDragStart={() => setGroupDrag(g.name)}
+            onDragOver={(e) => {
+              if (!groupDrag) return;
+              e.preventDefault();
+              const r = e.currentTarget.getBoundingClientRect();
+              setGroupGap(gapIndexAtX({ left: r.left, width: r.width }, e.clientX, i));
+            }}
+            onDragLeave={() => { if (groupGap !== null) setGroupGap(null); }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const src = groupDrag;
+              const k = groupGap ?? i;
+              setGroupGap(null);
+              setGroupDrag(null);
+              if (!src || src === g.name) return;
+              moveGroup(src, k);
+            }}
+            onDragEnd={() => { setGroupDrag(null); setGroupGap(null); }}
+            title="双击可重命名 · 拖动可排序 · Alt+←/→ 移动位置"
           >
             {g.name}
             <span className="fpx-groupcount">{g.icons.length}</span>
@@ -167,13 +276,41 @@ export function PresetIconGrid({
         </div>
       ) : (
         <div className="fpx-icongrid">
-          {shown.map((n) => (
-            <div key={n} className="fpx-icongrid-item">
+          {shown.map((n, i) => (
+            <div
+              key={n}
+              className={`fpx-icongrid-item${iconOver === i && iconDrag && iconDrag !== n ? ' over' : ''}`}
+              /* 加入模式下不排序：那时这格是"待加入的候选"，
+                 拖它排序会让人误以为已经在本组里了。 */
+              draggable={!addMode}
+              onDragStart={(e) => {
+                if (addMode) return;
+                setIconDrag(n);
+                e.dataTransfer.effectAllowed = 'move';
+              }}
+              onDragOver={(e) => { if (iconDrag) { e.preventDefault(); setIconOver(i); } }}
+              onDragLeave={() => { if (iconOver === i) setIconOver(null); }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const src = iconDrag;
+                setIconOver(null);
+                setIconDrag(null);
+                if (!src || src === n) return;
+                moveIcon(src, i);
+              }}
+              onDragEnd={() => { setIconDrag(null); setIconOver(null); }}
+            >
               <button
                 className="fpx-icontile"
                 title={n}
                 disabled={busy !== ''}
                 onClick={() => (addMode ? addToGroup(n) : void use(n))}
+                onKeyDown={(e) => {
+                  /* 排序也要能靠键盘：否则纯键盘用户根本没法调顺序 */
+                  if (addMode || e.altKey === false) return;
+                  if (e.key === 'ArrowLeft') { e.preventDefault(); nudgeIcon(n, -1); }
+                  if (e.key === 'ArrowRight') { e.preventDefault(); nudgeIcon(n, 1); }
+                }}
               >
                 <img src={presetIconUrl(n)} alt={n} loading="lazy" />
                 <span className="fpx-iconcap">{n}</span>

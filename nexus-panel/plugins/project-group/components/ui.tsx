@@ -2,6 +2,8 @@ import {
   createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { Splitter } from './Splitter';
+import { clampPanelHeight } from '../utils/layout';
 
 /**
  * 菜单图层：所有右键菜单 / 「⋯」菜单统一渲染到这里，而不是留在各自的卡片里。
@@ -31,6 +33,7 @@ export const MenuLayerContext = createContext<HTMLElement | null>(null);
  */
 export function Modal({
   title, onClose, children, width = 440, footer, guardClose = false,
+  height, onHeightCommit,
 }: {
   title: string;
   onClose: () => void;
@@ -38,12 +41,25 @@ export function Modal({
   width?: number;
   footer?: ReactNode;
   guardClose?: boolean;
+  /**
+   * 受控高度（#56 浮层高度记忆）。给了就能拖底边调高。
+   * null = 自适应内容高度（此时底边不可拖 —— 拖了也不知道该存什么基准）。
+   */
+  height?: number | null;
+  /** 松手时的最终高度；调用方在这里落盘 */
+  onHeightCommit?: (h: number) => void;
 }) {
   const [confirming, setConfirming] = useState(false);
   const ask = useCallback(() => {
     if (guardClose) setConfirming(true);
     else onClose();
   }, [guardClose, onClose]);
+
+  /* 拖动中的高度。起点在 pointerdown 时记下，onDelta 给的是相对起点的总位移 ——
+     逐帧累加会舍入漂移，拖久了数字对不上。 */
+  const baseRef = useRef(height ?? 0);
+  const [dragH, setDragH] = useState<number | null>(null);
+  const shownH = dragH ?? height ?? null;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -60,7 +76,12 @@ export function Modal({
     <div className="mask" onMouseDown={ask}>
       <div
         className="dialog p-card"
-        style={{ width, maxHeight: '86vh', overflow: 'auto' }}
+        style={{
+          width,
+          // 拖过之后就是固定高度；没拖过时留 maxHeight 让它自适应内容
+          ...(shownH ? { height: shownH } : { maxHeight: '86vh' }),
+          overflow: 'auto',
+        }}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="p-row" style={{ justifyContent: 'space-between', marginBottom: 'var(--sp-7, 14px)' }}>
@@ -69,6 +90,24 @@ export function Modal({
         </div>
         {children}
         {footer && <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 'var(--sp-9, 18px)' }}>{footer}</div>}
+
+        {/* 底边拖动把手（#56）。只有受控高度时才渲染 ——
+            自适应高度的弹窗不存在"当前高度"这个基准，拖了存什么都不对。 */}
+        {height != null && onHeightCommit && (
+          <Splitter
+            dir="vertical"
+            ariaLabel="调整面板高度"
+            onDelta={(d) => setDragH(clampPanelHeight(baseRef.current + d) ?? baseRef.current)}
+            onEnd={() => {
+              const next = dragH;
+              setDragH(null);
+              if (next != null) {
+                baseRef.current = next;
+                onHeightCommit(next);
+              }
+            }}
+          />
+        )}
       </div>
 
       {confirming && (

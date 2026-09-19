@@ -63,8 +63,11 @@ export function makeApi(ctx: PluginContext) {
         parent, name, hierarchy: hierarchy ?? null, template: template ?? null,
       }),
 
-    setLock: (path: string, denyDelete: boolean, denyWrite: boolean) =>
-      call<Snapshot>('fpx_set_lock', { path, deny_delete: denyDelete, deny_write: denyWrite }),
+    /* #21 accountOnly = 仅账面固定，不落系统权限。可选，默认 false。 */
+    setLock: (path: string, denyDelete: boolean, denyWrite: boolean, accountOnly?: boolean) =>
+      call<Snapshot>('fpx_set_lock', {
+        path, deny_delete: denyDelete, deny_write: denyWrite, account_only: accountOnly ?? false,
+      }),
 
     setIcon: (path: string, iconRef: string | null, affectExplorer?: boolean) =>
       call<Snapshot>('fpx_set_icon', {
@@ -100,6 +103,10 @@ export function makeApi(ctx: PluginContext) {
     setEditor: (path: string) => call<Snapshot>('fpx_set_editor', { path }),
 
     editFile: (path: string) => call<null>('fpx_edit_file', { path }),
+    /** 读文本文件原始内容（#33：内置 md 编辑器载入）。二进制会报错 */
+    readText: (path: string) => call<string>('fpx_read_text', { path }),
+    /** 写回文本文件（#33：内置 md 编辑器保存）。原子写；只能写回已存在的文件 */
+    writeText: (path: string, text: string) => call<null>('fpx_write_text', { path, text }),
 
     chainClients: () => call<ChainClient[]>('fpx_chain_clients'),
 
@@ -119,6 +126,13 @@ export function makeApi(ctx: PluginContext) {
       call<ChainAction[]>('fpx_save_chain_actions', { actions }),
 
     /** 按动作发送；prompt 传入则临时覆盖模板（不落盘）；client 传入则临时覆盖客户端 */
+    /**
+     * 预览某动作将要发出的指令全文（#43 确认弹窗用）。
+     * 占位符替换在后端，前端拿不到"实际会发出去的那段文字"，
+     * 只能显示模板原文的话等于没确认。
+     */
+    chainPreview: (actionId: string, kind: CardKind, path: string) =>
+      call<string>('fpx_chain_preview', { action_id: actionId, kind, path }),
     chainSendAction: (
       actionId: string, kind: CardKind, path: string,
       prompt?: string | null, client?: string | null,

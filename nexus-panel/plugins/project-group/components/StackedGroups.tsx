@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { CardInfo } from '../types';
 import { CardGrid, type DragPayload } from './CardGrid';
+import { BOX_DRAG_MIME, parseBoxDrag } from '../utils/dragSort';
 import { ContextMenu, type MenuItem } from './ui';
 
 /**
@@ -14,7 +15,7 @@ import { ContextMenu, type MenuItem } from './ui';
 export function StackedGroups({
   tabs, cardsOf, selected, thumbs, onSelect, onOpen,
   onMove, onCrossDrop, menus, onRename, onRemove, onAdd, onMoveTab,
-  emptyHint,
+  emptyHint, reveal,
 }: {
   tabs: { name: string; items: CardInfo[] }[];
   /** 取某个页签的卡片（含后端补齐的 exists / 链接状态等） */
@@ -33,6 +34,11 @@ export function StackedGroups({
   /** 分类框上下拖动重排（原版各分类可拖着换上下位置） */
   onMoveTab: (from: number, to: number) => void;
   emptyHint: string;
+  /**
+   * 要"滚进视野"的卡片（#19）。由外层在跳转时设置。
+   * `seq` 是自增序号：连着跳同一张卡时对象引用必变，effect 才会重跑。
+   */
+  reveal?: { path: string; seq: number } | null;
 }) {
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState(-1);
@@ -41,6 +47,40 @@ export function StackedGroups({
   /** 分类框重排：拖起的分类索引、当前落点索引（-1 为无） */
   const [dragFrom, setDragFrom] = useState(-1);
   const [overIdx, setOverIdx] = useState(-1);
+
+  /**
+   * 跳转后把这张卡滚进视野（#19，原版 BringIntoView）。
+   *
+   * 光"选中"是不够的：项目组栏是**所有分类纵向堆叠**，卡片一多，
+   * 目标往往在折叠的分类里或屏幕外 —— 选中的高亮用户根本看不到，
+   * 于是以为"跳转没反应"。
+   *
+   * 所以要做两件事，缺一不可：
+   *   1. 目标所在分类若是折叠的，先展开（否则滚过去也只是一片空白）
+   *   2. 等这一帧渲染完，再把它滚进视野
+   */
+  useEffect(() => {
+    if (!reveal) return;
+    const idx = tabs.findIndex((_, i) => cardsOf(i).some((c) => c.path === reveal.path));
+    if (idx === -1) return;
+    // 折叠着就先展开
+    setCollapsed((s) => {
+      if (!s.has(idx)) return s;
+      const n = new Set(s);
+      n.delete(idx);
+      return n;
+    });
+    /* 必须等渲染完：展开是 state 变更，同一帧里 DOM 还没长出来，
+       立刻 querySelector 会拿到 null，滚动静默失效。
+       用 rAF 而不是 setTimeout(0)：后者在后台标签页会被节流到秒级。 */
+    const id = requestAnimationFrame(() => {
+      const sel = window.CSS && CSS.escape ? CSS.escape(reveal.path) : reveal.path;
+      const el = document.querySelector<HTMLElement>(`[data-card-path="${sel}"]`);
+      // block:'nearest' —— 已经可见时不要动，避免无谓地整页跳动
+      el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [reveal, tabs, cardsOf]);
 
   const toggle = (i: number) => setCollapsed((s) => {
     const n = new Set(s);
@@ -65,7 +105,7 @@ export function StackedGroups({
             key={`${t.name}-${i}`}
             onDragOver={(e) => {
               // 只响应分类框自身的重排；卡片拖拽交给下面的 CardGrid
-              if (dragFrom === -1) return;
+              if (dragFrom === -1 || !e.dataTransfer.types.includes(BOX_DRAG_MIME)) return;
               e.preventDefault();
               e.stopPropagation();
               e.dataTransfer.dropEffect = 'move';
@@ -74,11 +114,18 @@ export function StackedGroups({
             onDragLeave={() => setOverIdx((v) => (v === i ? -1 : v))}
             onDrop={(e) => {
               if (dragFrom === -1) return;
-              e.preventDefault();
-              e.stopPropagation();
+              const raw = e.dataTransfer.getData(BOX_DRAG_MIME);
+              // 先取数再清状态：清早了就拿不到 data 了
               const from = dragFrom;
               setDragFrom(-1);
               setOverIdx(-1);
+              e.preventDefault();
+              e.stopPropagation();
+              /* 载荷同样来自"任意来源"，必须校验。
+                 这里真正用的是组件内的 dragFrom（它是权威），
+                 但校验能让"伪造载荷"与"状态意外残留"两种情况都落空而不是误动。 */
+              const box = parseBoxDrag(raw);
+              if (!box || box.index !== from) return;
               if (from !== i) onMoveTab(from, i);
             }}
           >
@@ -88,7 +135,12 @@ export function StackedGroups({
               draggable={editing !== i}
               onDragStart={(e) => {
                 if (editing === i) return;
-                e.dataTransfer.setData('text/plain', t.name);
+                /* 此前用 `text/plain`，隐患有两处：
+                   ① 它是通用类型，从别的应用拖进来的文本也匹配，
+                      只靠"组件内状态 != -1"守卫是脆弱的（状态会因重渲染丢失，MIME 不会）；
+                   ② 标题双击会进内联重命名（那里有 <input>），
+                      拖着 text/plain 经过输入框松手，浏览器默认行为是把文本插进去。 */
+                e.dataTransfer.setData(BOX_DRAG_MIME, JSON.stringify({ index: i }));
                 e.dataTransfer.effectAllowed = 'move';
                 setDragFrom(i);
               }}

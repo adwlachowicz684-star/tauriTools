@@ -1,9 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CardInfo, CardKind, LinkDetail } from '../types';
-import { isDark, shade } from '../utils/color';
+import { isDark } from '../utils/color';
+import { brushVars } from '../utils/visual';
 import { ContextMenu, type MenuItem } from './ui';
+import { useEdgeAutoScroll } from '../hooks/useEdgeAutoScroll';
+import { canRemove } from '../utils/tabs';
 
-export const DRAG_MIME = 'application/x-fpx-card';
+export { DRAG_MIME, TAB_DRAG_MIME } from '../utils/dragSort';
+/**
+ * 拖拽的 MIME、载荷编解码、阈值、索引纠偏都收在 `utils/dragSort` 里 ——
+ * 本插件有四套拖拽（卡片排序 / 跨栏建链 / 页签重排 / 分框重排），
+ * 骨架相同、落点语义不同。公共部分只应有一份，否则兜底逻辑
+ * （阈值、载荷校验、取消时清状态）改一处漏三处，而漏了恰好不报错。
+ */
+/* 下面同时 import 了两个类型：再导出语句（见文件顶部）**并不引入本地绑定** ——
+   少了它们，正文里用到 DragPayload 的地方会编译失败。
+   括号平衡检查抓不到这类错误，只有 tsc 会报。
+
+   注意别把注释写进花括号里：花括号内的注释会把按逗号切分的静态检查搞乱，
+   tsc 虽然没事，但检查脚本会误报（本轮踩到过）。 */
+import {
+  BOX_DRAG_MIME, DRAG_MIME, TAB_DRAG_MIME,
+  DRAG_THRESHOLD, movedEnough,
+  parseDragPayload, parseTabDrag,
+  gapIndexAt, resolveMoveIndex,
+  type DragPayload, type TabDragPayload,
+} from '../utils/dragSort';
 
 /**
  * 链接明细排序：**有问题的排前面**。
@@ -55,63 +77,9 @@ let draggingKind: CardKind | null = null;
  *
  * 阈值取 5：略高于浏览器自带阈值，只拦真实的抖动，不干扰刻意拖拽。
  */
-const DRAG_THRESHOLD = 5;
-/** 页签自身的拖拽，与卡片拖拽分开：两者落点语义完全不同（一个移动卡片、一个重排页签） */
-export const TAB_DRAG_MIME = 'application/x-fpx-tab';
+export type { TabDragPayload } from '../utils/dragSort';
 
-export interface TabDragPayload {
-  kind: CardKind;
-  index: number;
-}
-
-/** 解析页签拖拽载荷（同样是任意来源，必须做结构校验）。 */
-export function parseTabDrag(raw: string | null | undefined): TabDragPayload | null {
-  if (!raw) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null) return null;
-  const { kind, index } = parsed as Partial<TabDragPayload>;
-  if (!isCardKind(kind)) return null;
-  if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) return null;
-  return { kind, index };
-}
-
-export interface DragPayload {
-  kind: CardKind;
-  path: string;
-}
-
-function isCardKind(v: unknown): v is CardKind {
-  return v === 'project' || v === 'group';
-}
-
-/**
- * 解析拖拽载荷，失败返回 null。
- *
- * `raw` 取自 dataTransfer，内容可以是**任意文本**（从别的应用拖进来，或人为伪造）：
- * 直接 JSON.parse 会抛异常中断拖拽处理；更隐蔽的是解析成功但结构不对（没有 kind / path），
- * 后续 `drag.path` 为 undefined 会造成静默错乱。所以这里既要兜住解析异常，也要做结构校验。
- */
-export function parseDragPayload(raw: string | null | undefined): DragPayload | null {
-  if (!raw) return null;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-
-  if (typeof parsed !== 'object' || parsed === null) return null;
-  const { kind, path } = parsed as Partial<DragPayload>;
-  if (!isCardKind(kind)) return null;
-  if (typeof path !== 'string' || path === '') return null;
-  return { kind, path };
-}
+export type { DragPayload } from '../utils/dragSort';
 
 /** 页签条：切换 / 新增 / 双击重命名 / 右键删除 */
 export function TabBar({
@@ -206,7 +174,15 @@ export function TabBar({
           ].filter(Boolean).join(' ')}
           onClick={() => onSelect(i)}
           onDoubleClick={() => startEdit(i)}
-          onContextMenu={(e) => { e.preventDefault(); setMenu({ i, x: e.clientX, y: e.clientY }); }}
+          /* 同样要先选中：页签右键菜单里的「重命名当前页签 / 删除当前页签」
+             作用于**活动页签**。若右键非活动页签时不先切过去，
+             删掉的就是用户没打算动的那一个 —— 比卡片那处更危险，
+             因为删页签会连带清掉里面登记的所有卡片。 */
+          onContextMenu={(e) => {
+            e.preventDefault();
+            onSelect(i);
+            setMenu({ i, x: e.clientX, y: e.clientY });
+          }}
           // 页签自身可拖动排序；编辑中不拖（否则拖动会和输入框抢事件）
           draggable={editing !== i && !!onMoveTab}
           onDragStart={(e) => {
@@ -283,6 +259,42 @@ export function TabBar({
           ) : (
             <>
               {t.name}
+              {/* #27 页签上的 × 关闭按钮。
+                  此前只能走 ⋮ 右键菜单或页签管理面板 —— 删页签是常用操作，
+                  每次都绕一层菜单很烦。
+
+                  两个硬约束：
+                  1. **平时不显形**（hover / 聚焦才出来）。删页签会连带清掉
+                     里面登记的所有卡片，常显的 × 太容易误点。
+                  2. **只剩一个页签时不显示**。点了会失败，按钮却在那儿，
+                     用户会以为是坏了 —— 不如干脆不给。 */}
+              {onRemoveTab && canRemove(tabs.length) && editing !== i && (
+                <button
+                  type="button"
+                  className="fpx-tab-x"
+                  title={t.items.length > 0
+                    ? `删除页签「${t.name}」（连同里面 ${t.items.length} 项）`
+                    : `删除页签「${t.name}」`}
+                  onClick={(e) => {
+                    /* 必须阻止冒泡：否则会先触发页签的 onClick（选中），
+                       双击时还会和 startEdit 抢 —— 表现为"点了 × 却进了重命名"。 */
+                    e.stopPropagation();
+                    onRemoveTab(i);
+                  }}
+                  /* 拖动中不删：拖拽期间误触会把页签连同卡片一起删掉 */
+                  onDragStart={(e) => e.preventDefault()}
+                >
+                  ×
+                </button>
+              )}
+              {/* #297 页签上显示条目数。
+                  此前只标 P/G（类别），看不出这个页签里有几张卡 ——
+                  而"这个分类有多少东西"正是切页签前最想知道的：
+                  空的页签点进去只有一句空提示，白点一次。 */}
+              <span
+                className={`fpx-tab-count${t.items.length === 0 ? ' zero' : ''}`}
+                title={`${t.items.length} 项`}
+              >{t.items.length}</span>
               <span className="fpx-tab-kind">{kind === 'project' ? 'P' : 'G'}</span>
             </>
           )}
@@ -297,7 +309,7 @@ export function TabBar({
 /** 卡片网格：选中 / 打开 / 右键菜单 / 拖拽（跨栏=分配，同栏=排序） */
 export function CardGrid({
   kind, cards, selected, thumbs, onSelect, onOpen, onMove, onCrossDrop, menus,
-  emptyHint, onJumpToGroup,
+  emptyHint, onJumpToGroup, onAdd, addHint,
 }: {
   kind: CardKind;
   cards: CardInfo[];
@@ -310,6 +322,11 @@ export function CardGrid({
   onCrossDrop: (drag: DragPayload, target: CardInfo | null) => void;
   menus: (card: CardInfo) => MenuItem[];
   emptyHint: string;
+  /* #287 卡片区末尾的「＋」虚线框。
+     可选：不传就不渲染（内容区等不需要添加入口的地方不该多出一个框）。 */
+  onAdd?: () => void;
+  /** 虚线框上的文案；不传则用默认值 */
+  addHint?: string;
   /**
    * 点卡片上的项目组名就跳过去选中它（对照 WPF 的 SelectLinkedGroupCommand）。
    * 传整张卡片而不是组名：CardInfo 里只有组**名**、没有组**路径**，
@@ -359,10 +376,9 @@ export function CardGrid({
   const [overCross, setOverCross] = useState(false);
 
   /** 依据指针在卡片上的上下半区，算出插到它前面还是后面 */
-  const posOf = (e: React.DragEvent<HTMLElement>, i: number): number => {
-    const r = e.currentTarget.getBoundingClientRect();
-    return e.clientY < r.top + r.height / 2 ? i : i + 1;
-  };
+  /** 上半区插到它前面、下半区插到后面（算术在 utils/dragSort 里，那里有穷举测试） */
+  const posOf = (e: React.DragEvent<HTMLElement>, i: number): number =>
+    gapIndexAt(e.currentTarget.getBoundingClientRect(), e.clientY, i);
 
   /**
    * 同栏移动时的**索引修正**——最容易写错的一处。
@@ -373,19 +389,45 @@ export function CardGrid({
    *
    * 不减的话，往上拖会稳定"落点偏后一格"——表现为"明明插在 A 前面，结果跑到 A 后面"。
    */
-  const resolveIndex = (dragPath: string, k: number): number => {
-    const from = cards.findIndex((c) => c.path === dragPath);
-    return from >= 0 && from < k ? k - 1 : k;
-  };
+  /**
+   * 同栏移动时的索引修正——算术在 `utils/dragSort::resolveMoveIndex` 里，
+   * 与页签重排、分框重排共用同一份（这三处此前各写一套，必有漂移）。
+   */
+  const resolveIndex = (p: string, k: number): number =>
+    resolveMoveIndex(cards.findIndex((c) => c.path === p), k, cards.length);
 
   /** 拖拽结束（含被取消）一律清干净：拖到窗口外松手时 drop 不触发，
    *  不靠 dragend 兜底的话竖条会残留在屏幕上。 */
   const clearDrop = () => { setDropAt(null); setOverCross(false); setDragPath(null); };
 
+  /* 贴边自动滚动（#104）：拖到卡片区上下边缘时列表自己滚。
+     卡片多的时候（几十项）不这样就没法把卡片拖到另一头。
+     注意必须在 clearDrop 里一起 stop —— 忘了停的话容器会一直自己滚。 */
+  const cardsRef = useRef<HTMLDivElement>(null);
+  const { onDragOver: onEdgeDragOver, stop: stopEdgeScroll } =
+    useEdgeAutoScroll(cardsRef, dragPath !== null);
+
+  const clearDropWithScroll = () => {
+    clearDrop();
+    stopEdgeScroll();
+  };
+
   return (
     <div
-      className="fpx-cards"
+      /* #105 空列表时不画孤零零一条竖条，改为**整区高亮**：
+         列表里一张卡都没有，竖条没有"插在哪两张之间"的参照，
+         看着像界面坏了。整区高亮才能表达"会落到这里面"。 */
+      className={`fpx-cards${cards.length === 0 && dropAt === 0 && draggingKind === kind ? ' empty-over' : ''}`}
+      ref={cardsRef}
       onDragOver={(e) => {
+        /* 分类框重排时（BOX_DRAG_MIME）会经过这里的卡片区 ——
+           此时不能显示卡片落点，否则用户只是在调分类顺序，
+           界面却冒出一条"卡片要插到这儿"的竖条，看着像要误操作。
+           这是把四套拖拽收进同一份内核时才发现的互相干扰。 */
+        if (e.dataTransfer.types.includes(BOX_DRAG_MIME)) return;
+        /* 记指针位置给贴边自动滚动（#104）。放在守卫**之后**：
+           调分类框顺序时不该连带把卡片区滚起来。 */
+        onEdgeDragOver(e);
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         // 落在卡片区空白处：插到末尾（跨栏则是换栏，另有高亮，不画竖条）
@@ -393,14 +435,14 @@ export function CardGrid({
       }}
       onDragLeave={(e) => {
         // 只有真正离开整个卡片区才清；移到子卡片上时 relatedTarget 仍在容器内
-        if (!e.currentTarget.contains(e.relatedTarget as Node)) clearDrop();
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) clearDropWithScroll();
       }}
       onDrop={(e) => {
         e.preventDefault();
         const raw = e.dataTransfer.getData(DRAG_MIME);
         // 先取数再清状态：清早了就拿不到 data 了
         const k = dropAt;
-        clearDrop();
+        clearDropWithScroll();
         if (!raw) return;
         const drag = parseDragPayload(raw);
         if (!drag) return;
@@ -430,13 +472,20 @@ export function CardGrid({
       )}
 
       {cards.length === 0 && <div className="nx-empty fpx-empty">{emptyHint}</div>}
-      {cards.length === 0 && dropAt === 0 && draggingKind === kind && (
-        <div className="fpx-drop-line" />
-      )}
 
-      {cards.map((c, i) => (
+      {cards.map((c, i) => {
+        /* 标签色的三态派生**只算一次**：派生结果既要写进 CSS 变量，
+           又要给左边框用基色。算两次既浪费，也让"两处拿到不同值"
+           成为可能 —— 正是要避免的那种漂移。 */
+        const tag = brushVars(c.tagColor ?? '', 'tag');
+        return (
         <div
           key={c.path}
+          /* 给"跳转后滚到这张卡"用（#19）。
+             用 data 属性而不是 ref：卡片在子组件里层层嵌套，
+             App 层拿不到它们的 ref，而选择器在需要时查一次就够了。
+             路径里可能含引号，用 CSS.escape 兜住。 */
+          data-card-path={c.path}
           className={[
             'fpx-card',
             selected === c.path ? 'selected' : '',
@@ -448,18 +497,18 @@ export function CardGrid({
             !overCross && dropAt === cards.length && i === cards.length - 1 ? 'drop-after' : '',
           ].filter(Boolean).join(' ')}
           style={c.tagColor ? ({
-            borderLeft: `4px solid ${c.tagColor}`,
-            // hover / press 用派生色：自定义色的卡片原先移上去毫无变化，
-            // 看着像没选中。派生色算好存进 CSS 变量，交给 CSS 做状态切换。
-            '--tag-hover': shade(c.tagColor, 0.18),
-            '--tag-press': shade(c.tagColor, -0.12),
+            /* 三态派生色交给 `brushVars`（utils/visual）统一算：
+               此前这里是两个内联魔数（0.18 / -0.12），而链接按钮完全没有
+               派生 —— 于是"卡片有悬停反馈、链接按钮没有"。
+               收进一处后两者必然同步，改配色也只改一处。 */
+            ...tag,
+            borderLeft: `4px solid ${tag['--tag-base'] ?? c.tagColor}`,
           } as React.CSSProperties) : undefined}
           draggable
           onPointerDown={(e) => { pressAt.current = { x: e.clientX, y: e.clientY }; }}
           onDragStart={(e) => {
             // 阈值判定：抖动不够 → 取消这次拖拽，让它退化成普通点击
-            const p = pressAt.current;
-            if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) < DRAG_THRESHOLD) {
+            if (!movedEnough(pressAt.current, e.clientX, e.clientY, DRAG_THRESHOLD)) {
               e.preventDefault();
               return;
             }
@@ -471,10 +520,12 @@ export function CardGrid({
           onDragEnd={() => {
             draggingKind = null;
             setDragPath(null);
-            clearDrop();
+            clearDropWithScroll();
             setOver(-1);
           }}
           onDragOver={(e) => {
+            // 同上：分类框重排经过时不参与
+            if (e.dataTransfer.types.includes(BOX_DRAG_MIME)) return;
             e.preventDefault();
             e.stopPropagation();
             const cross = draggingKind !== null && draggingKind !== kind;
@@ -489,7 +540,7 @@ export function CardGrid({
             const raw = e.dataTransfer.getData(DRAG_MIME);
             const k = dropAt;
             const cross = overCross;
-            clearDrop();
+            clearDropWithScroll();
             setOver(-1);
             if (!raw) return;
             const drag = parseDragPayload(raw);
@@ -499,7 +550,17 @@ export function CardGrid({
           }}
           onClick={() => onSelect(c.path)}
           onDoubleClick={() => onOpen(c.path)}
-          onContextMenu={(e) => { e.preventDefault(); setMenu({ card: c, x: e.clientX, y: e.clientY }); }}
+          /* #261 右键**先把这张卡选中**，再弹菜单。
+             否则用户右键完看到的菜单里写着"改名/搬家/删除"，
+             却不知道它作用于谁 —— 而卡片此时并没有任何选中反馈，
+             一旦菜单项作用于另一张（上一次选中的）卡，就是删错了东西。
+             先选中还顺带解决另一个问题：菜单项里不少是"对当前选中项操作"，
+             不先选中的话它们会作用到一张用户没打算动的卡上。 */
+          onContextMenu={(e) => {
+            e.preventDefault();
+            onSelect(c.path);
+            setMenu({ card: c, x: e.clientX, y: e.clientY });
+          }}
         >
           <div className="fpx-card-top">
             <span className="fpx-card-icon">
@@ -571,6 +632,12 @@ export function CardGrid({
             {kind === 'project' && c.linkedGroup && (c.hasLink || c.hasBroken) && (
               <span
                 className={`fpx-badge group${onJumpToGroup ? ' jump' : ''}`}
+                /* #293：链接按钮跟随所属项目组的颜色派生三态。
+                   此前它是个普通 badge，卡片有颜色反馈而它没有 ——
+                   用户会觉得这个"看起来能点的东西"点不动。
+                   用的是本卡片的 tagColor：当 tagColorInherited 为真时
+                   它正是所链接项目组的颜色，语义上刚好对。 */
+                style={c.tagColor ? (brushVars(c.tagColor, 'grp') as React.CSSProperties) : undefined}
                 title={`链接到项目组：${c.linkedGroup}${onJumpToGroup ? '（点击定位）' : ''}`}
                 onClick={(e) => {
                   if (!onJumpToGroup) return;
@@ -583,7 +650,17 @@ export function CardGrid({
             )}
             {c.hasConflict && <span className="fpx-badge warn" title="同名位置被普通目录/文件占用">⚠ 冲突</span>}
             {c.hasBroken && !c.hasLink && <span className="fpx-badge dim" title="链接失效">∅ 未链接</span>}
-            {c.locked && <span className="fpx-badge lock" title="ACL 已保护">🔒</span>}
+            {/* #84 / #128 锁与盾牌**互斥**：
+                · 有 ACL → 盾牌 🛡（真的拦得住，是"硬"保护）
+                · 仅账面固定、无 ACL → 小锁 🔒（只是登记在案）
+                两者都显示的话，用户分不清哪个是真拦着 ——
+                而"以为被拦着其实没有"比"以为没拦其实有"更危险：
+                前者会让人放心去删，然后撞上一条看不见的权限。 */}
+            {c.locked ? (
+              <span className="fpx-badge lock" title="ACL 已保护·防删除/防写入">🛡</span>
+            ) : (c.accountFixed ? (
+              <span className="fpx-badge pin" title="账面固定（仅登记，无系统权限）">🔒</span>
+            ) : null)}
             {!c.exists && <span className="fpx-badge warn" title="文件夹不存在">✗ 缺失</span>}
           </div>
 
@@ -597,6 +674,8 @@ export function CardGrid({
                     <>
                       <span className="fpx-link-to">→</span>
                       <span className="fpx-link-group"
+                        /* #293：同上，明细里的组名也跟随组色派生 */
+                        style={c.tagColor ? (brushVars(c.tagColor, 'grp') as React.CSSProperties) : undefined}
                         title={d.group || d.groupName}
                         onClick={(e) => {
                           if (!onJumpToGroup) return;
@@ -613,7 +692,21 @@ export function CardGrid({
             </div>
           )}
         </div>
-      ))}
+        );
+      })}
+
+      {/* 虚线添加框（#287）：放在列表末尾，手就在附近，不必跑到顶部工具栏。
+          空列表时它还是唯一入口 —— 那时工具栏按钮很容易被忽略。 */}
+      {onAdd && (
+        <button
+          type="button"
+          className="fpx-add-card"
+          onClick={(e) => { e.stopPropagation(); onAdd(); }}
+          title={addHint ?? '添加'}
+        >
+          ＋ {addHint ?? '添加'}
+        </button>
+      )}
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menus(menu.card)} onClose={() => setMenu(null)} />}
     </div>

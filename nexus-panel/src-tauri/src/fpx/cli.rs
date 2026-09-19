@@ -6,6 +6,9 @@
 //!   --self-check <config> <record> <outDir>   数据层自检（只读真实文件，写临时副本）
 //!   --migrate-hierarchy [config] [record]     项目搬到「新建项目父目录\页签名\名称」
 //!   --migrate-groups-hierarchy [config] [record]  项目组同上，搬完重建指向它的链接
+//!       ↑ 两条都可加 --dry-run：只打印计划、不动任何东西。
+//!         迁移会物理搬目录并覆写 config，跑之前先预演一次。
+//!         执行前还会自动把 config / link-record 各留一份 .bak 副本。
 //!   --mcp [port]                              只跑 MCP server，不开界面（见 main.rs）
 //!
 //! 参数里的路径都显式传入，不依赖 AppHandle —— 命令行模式下拿不到 Tauri 的 State，
@@ -139,10 +142,21 @@ struct MigItem {
  *
  * exclude_roots 里的路径一律不搬（工具自身目录、exe 目录等）。
  */
+/**
+ * 层级迁移：把页签里的目录搬到「新建父目录\页签名\名称」。
+ *
+ * `dry_run` = true 时**只输出计划、不动任何东西**。
+ *
+ * 为什么必须有这个开关：迁移会**物理搬目录**并**覆写 config**，
+ * 是不可逆操作。没有预演的话，用户只能"跑了才知道会发生什么" ——
+ * 而那时候目录已经搬走了。给一个只看不做的通道，成本极低，
+ * 却是这类命令唯一能让人放心按下去的东西。
+ */
 fn migrate(
     cfg_path: &str,
     rec_path: &str,
     kind: &str,
+    dry_run: bool,
 ) -> String {
     let cfg: FpxConfig = match store::read_json_any::<FpxConfig>(Path::new(cfg_path)) {
         Ok(c) => c,
@@ -175,6 +189,44 @@ fn migrate(
             plan.push((t.name.clone(), p.clone()));
         }
     }
+
+    /* 预演：只报计划，不做任何事。
+       放在"计划算完、动手之前" —— 计划本身是纯计算（不碰磁盘），
+       所以 dry-run 能完整展示"哪些会搬、哪些会跳过、为什么跳过"。 */
+    if dry_run {
+        let mut pre: Vec<MigItem> = Vec::new();
+        for (seg, src) in &plan {
+            let name = Path::new(src).file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if name.is_empty() {
+                pre.push(MigItem { src: src.clone(), dst: String::new(), note: "跳过：无法解析文件夹名".into() });
+                continue;
+            }
+            let dst = root.join(seg).join(&name);
+            let note = if reloc_key(src).eq_ignore_ascii_case(&reloc_key(&dst.to_string_lossy())) {
+                "跳过：已在目标位置".to_string()
+            } else if dst.exists() {
+                "跳过：目标已存在同名目录".to_string()
+            } else {
+                "将搬迁".to_string()
+            };
+            pre.push(MigItem { src: src.clone(), dst: dst.to_string_lossy().to_string(), note });
+        }
+        let yes = pre.iter().filter(|i| i.note == "将搬迁").count();
+        return format!("预演（未做任何改动）：共 {} 项，其中将搬迁 {} 项\n{}",
+            pre.len(), yes, render(yes, pre.len() - yes, 0, 0, &pre));
+    }
+
+    /* 动手之前先把两份数据文件的**副本**留下来。
+       迁移会物理搬目录 + 覆写 config，中途失败就是半完成状态：
+       目录搬了一半、config 已改、链接可能已重建。
+       没有副本的话唯一能抢救的原文就被覆盖掉了 ——
+       这个代价和收益完全不成比例（复制两个几 KB 的文件而已）。 */
+    let backup_note = match backup_before_migrate(cfg_path, rec_path) {
+        Ok(paths) => format!("已备份原文件：{}", paths.join("、")),
+        Err(e) => format!("[警告] 备份失败（仍继续）：{e}"),
+    };
 
     let mut items: Vec<MigItem> = Vec::new();
     let (mut moved, mut skipped, mut failed) = (0, 0, 0);
@@ -281,7 +333,33 @@ fn migrate(
         return format!("搬迁完成但写回 link-record 失败: {e}\n{}", render(moved, skipped, failed, relinked, &items));
     }
 
-    render(moved, skipped, failed, relinked, &items)
+    format!("{}\n{}", backup_note, render(moved, skipped, failed, relinked, &items))
+}
+
+/// 迁移前把 config 与 link-record 各复制一份带时间戳的副本。
+///
+/// 刻意**不覆盖**已有的备份。
+/// 连着跑两次迁移时，第二次要是把第一次的备份盖了，就等于没有备份 ——
+/// 而第一次搬完的那份才是有用的现场。
+/// 所以撞名就换一个后缀，不删旧的。
+fn backup_before_migrate(cfg_path: &str, rec_path: &str) -> Result<Vec<String>, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut out = Vec::new();
+    for src in [cfg_path, rec_path] {
+        let p = Path::new(src);
+        if !p.exists() { continue; }
+        for n in 0..100 {
+            let dst = p.with_extension(format!("mig-{stamp}{}.bak", if n == 0 { String::new() } else { format!("-{n}") }));
+            if dst.exists() { continue; }
+            std::fs::copy(p, &dst).map_err(|e| format!("复制 {} 失败: {e}", p.display()))?;
+            out.push(dst.to_string_lossy().to_string());
+            break;
+        }
+    }
+    Ok(out)
 }
 
 fn remap(
@@ -329,13 +407,16 @@ pub fn try_handle(args: &[String]) -> Option<String> {
         "--self-check" | "--roundtrip" if args.len() >= 5 => {
             Some(self_check(&args[2], &args[3], &args[4]))
         }
+        /* 两条迁移命令都认 --dry-run：它是这类不可逆命令唯一的"看一眼"通道。
+           放在迁移名之后任意位置都行（扫全参而不是只看第 3 个），
+           免得用户记不清顺序。 */
         "--migrate-hierarchy" => {
             let (c, r) = default_paths(&args[2..]);
-            Some(migrate(&c, &r, "project"))
+            Some(migrate(&c, &r, "project", args.iter().any(|a| a == "--dry-run")))
         }
         "--migrate-groups-hierarchy" => {
             let (c, r) = default_paths(&args[2..]);
-            Some(migrate(&c, &r, "group"))
+            Some(migrate(&c, &r, "group", args.iter().any(|a| a == "--dry-run")))
         }
         _ => None,
     }

@@ -1,40 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ContentPanel } from './components/ContentPanel';
-import { RenameDialog } from './components/RenameDialog';
-import { RenameContentDialog } from './components/RenameContentDialog';
+import { Dialogs, type Dialog, type PendingSend } from './components/Dialogs';
 import { CardGrid, TabBar, type DragPayload } from './components/CardGrid';
-import { CreateDialog, IconPickDialog, LockDialog, StyleDialog } from './components/dialogs';
-import { DirDialog } from './components/DirDialog';
 import { SideRail } from './components/SideRail';
 import { StackedGroups } from './components/StackedGroups';
-import {
-  BackupDialog, ChainDialog, EditorDialog,
-} from './components/ToolsPanel';
-import { ConfirmDialog, ContextMenu, MenuLayerContext, type MenuItem } from './components/ui';
-import { LinkPickDialog } from './components/LinkPickDialog';
-import { errText, normalizeKey } from './api';
+import { ContextMenu, MenuLayerContext, type MenuItem } from './components/ui';
+import { normalizeKey, errText } from './api';
 import { useFpx } from './hooks/useFpx';
 import { useCardHotkeys } from './hooks/useCardHotkeys';
-import { effectiveMap, type HotkeyId } from './utils/hotkeys';
-import { useIconThumbs } from './hooks/useIconThumbs';
-import type { CardInfo, CardKind, ChainAction } from './types';
+import { useChainActions } from './hooks/useChainActions';
+import { useLayoutMemory } from './hooks/useLayoutMemory';
+import {
+  effectiveCombo, formatCombo, IS_MAC, type HotkeyId,
+} from './utils/hotkeys';
+import { clampLogMax } from './utils/log';
+import { skipDropToTab } from './utils/tabs';
 
-type Dialog =
-  | { type: 'none' }
-  /** 选目录加入页签；tabIndex 用于项目组栏堆叠后指定落到哪个分类 */
-  | { type: 'pickDir'; kind: CardKind; tabIndex?: number }
-  | { type: 'create'; kind: CardKind }
-  | { type: 'lock'; card: CardInfo }
-  | { type: 'style'; card: CardInfo }
-  | { type: 'icons'; card: CardInfo }
-  | { type: 'backup' }
-  | { type: 'editor' }
-  | { type: 'chain'; target: string; kind: CardKind }
-  | { type: 'rename'; card: CardInfo; kind: CardKind }
-  /** 搬家：选目标父目录 */
-  | { type: 'move'; card: CardInfo; kind: CardKind }
-  /** 内容区条目改名 */
-  | { type: 'renameContent'; path: string; name: string };
+
+
+import { Splitter } from './components/Splitter';
+import { useIconThumbs } from './hooks/useIconThumbs';
+import type {
+  CardInfo, CardKind, ChainAction, ContentItem,
+} from './types';
+
+
 
 export default function App() {
   const s = useFpx();
@@ -96,23 +86,6 @@ export default function App() {
   const [help, setHelp] = useState(false);
 
   /**
-   * 左栏（SideRail）是否收起 —— Shift+~ 切换（#225）。
-   *
-   * 对应原版 `MainWindow.SidebarExpanded`（默认 false，即收起）。
-   * 这里默认**展开**（false = 不收起），因为当前的左栏是主操作入口，
-   * 一进来就收起会让"刷新/备份/打开"这些高频操作凭空消失。
-   */
-  const [railCollapsed, setRailCollapsed] = useState(false);
-
-  /**
-   * 内容浏览当前预览的文件 —— Ctrl/⌘+D 编辑它（#223）。
-   *
-   * 对应原版 `Content.LastPreviewFile`。由 ContentPanel 通过 onSelect 报上来；
-   * 状态必须放在这一层：快捷键回调在 App 里，拿不到子组件的内部 state。
-   */
-  const [previewFile, setPreviewFile] = useState<string | null>(null);
-
-  /**
    * 菜单图层的宿主节点。
    * 必须是 state 而不是 ref：ref 在首次渲染时还是 null，
    * 用 state 才能在挂载完成后触发一次重渲染，把节点交给 ContextMenu。
@@ -137,6 +110,147 @@ export default function App() {
    * 不存 store —— 只是本次会话的落点，重进默认给「项目」。
    */
   const [focus, setFocus] = useState<CardKind>('project');
+
+  /**
+   * 左操作栏是否收起（#58 #225）。
+   *
+   * 只影响本插件自己的那一栏，不动外壳侧边栏 —— 后者归主窗口任务。
+   * 收起后仍要能展开，否则就成了"关掉容易打开难"，所以栏底留一个展开按钮。
+   */
+  const [railCollapsed, setRailCollapsed] = useState(false);
+
+  /**
+   * 内容区当前选中的条目（受控于本组件）。
+   *
+   * 提升到这一层是为了给 mod+D（原版 OpenMarkdown）：快捷键注册在 App 层，
+   * 而选中项原本是 ContentPanel 的内部 state，拿不到。
+   */
+  const [contentSel, setContentSel] = useState<ContentItem | null>(null);
+  /* 稳定引用**已不是必须**：ContentPanel 内部走 ref 通知，
+     调用方传内联箭头函数也不会无限渲染。留着只为少一次子组件更新。 */
+  const onContentSelect = useCallback((it: ContentItem | null) => setContentSel(it), []);
+
+  /** F7 一键备份：直接开备份对话框（与工具栏按钮同一个入口） */
+  const openBackup = useCallback(() => setDialog({ type: 'backup' }), []);
+
+  /**
+   * 日志保留条数（#32）。
+   * 显示与"复制全部"都按它截断 —— 所见即所得，复制到的就是看到的那些。
+   */
+  const logMax = clampLogMax(boot?.config.logMaxLines);
+
+  /* ---------------- 布局记忆（#54 #55 #56 #193）----------------
+   * 三栏宽度 / 日志高度 / 浮层高度都收在 `hooks/useLayoutMemory`。
+   * 它们原本被别的逻辑隔开（tipsHeight 与三栏相距 70 行），
+   * 改一处容易漏看另一处。 */
+  const {
+    colStars, logHeight, tipsHeight,
+    colsRef, saveLayout,
+    onColResize, onColResizeEnd, onLogResize, onLogResizeEnd,
+  } = useLayoutMemory({ s, config: boot?.config });
+
+  /** 侧边栏/快捷键入口的待确认发送（#43） */
+  /* 类型从 Dialogs 引入而不是在这里抄一份：
+     两边各写一份的话，加字段时会漏改一边，
+     而漏的那边表现为"某个字段永远是 undefined"——不报错，最难查。 */
+  const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
+  /** 跳转定位目标（#19）：path + 自增序号（序号保证连跳同一张卡也能触发） */
+  const [reveal, setReveal] = useState<{ path: string; seq: number } | null>(null);
+  const revealSeq = useRef(0);
+
+  /* 快捷键提示（#50）：是否显示 + 当前生效的键位。
+     键位从 HOTKEYS 动态取（含用户覆盖），不手抄 —— 手抄的话改了键位
+     按钮上还是旧值，用户照着按却没反应。 */
+  const showHints = boot?.config.showShortcuts ?? true;
+  const comboHint = useCallback(
+    (id: string) => (showHints ? effectiveCombo(id, boot?.config.hotkeys ?? null) : ''),
+    [showHints, boot?.config.hotkeys],
+  );
+
+
+  /**
+   * Ctrl/⌘ + M 启停 MCP server（#221 ToggleMcp）。
+   *
+   * 这里走"先查状态再反向操作"而不是本地记一个布尔：MCP 也可能被
+   * `--mcp` 独立进程或上一次会话留着，本地布尔会与实际状态脱节。
+   */
+  const toggleMcp = useCallback(async () => {
+    try {
+      const st = await s.api.mcpStatus();
+      if (st.running) {
+        await s.api.mcpStop();
+        s.pushLog('MCP server 已停止');
+        ctx.toast('MCP server 已停止', 'ok');
+      } else {
+        const a = await s.api.mcpStart(0);
+        s.pushLog(`MCP server 已启动：${a}/mcp`);
+        ctx.toast(`MCP server 已启动：${a}/mcp`, 'ok');
+      }
+    } catch (e) {
+      const m = `MCP 操作失败：${errText(e)}`;
+      s.pushLog(m, true);
+      ctx.toast(m, 'err');
+    }
+  }, [ctx, s]);
+
+  /**
+   * Ctrl/⌘ + D 编辑内容区选中的文件（#223 OpenMarkdown）。
+   *
+   * 走内置的 Markdown 编辑器（#33，共享服务 `md-editor`）：
+   * 读文本 → 编辑 → 写回，全程不出本工具。
+   *
+   * **取消的两种形态都要认**：服务约定是 resolve(null)（见 plugin-sdk 注释），
+   * 但当前三个内置服务的实现都是 reject('已取消')。
+   * 只认一种的话，服务哪天改成另一种就会变成 unhandled rejection ——
+   * 用户点个取消，控制台一片红。
+   *
+   * 内置编辑器没返回结果时**退回外部编辑器**：辅助功能不该把主路径堵死。
+   * 此时分不清"用户取消"和"真出错"（同一个 reject 通道），
+   * 所以不报红，只记日志 —— 用户点了取消也会开外部编辑器，略显多余，
+   * 但比把取消当成崩溃要好。
+   */
+  const openMarkdown = useCallback(async () => {
+    if (!contentSel) {
+      ctx.toast('请先在内容浏览里选中一个条目', 'err');
+      return;
+    }
+    const fail = (where: string, e: unknown) => {
+      const m = `${where}：${errText(e)}`;
+      s.pushLog(m, true);
+      ctx.toast(m, 'err');
+    };
+    let text: string;
+    try {
+      text = await s.api.readText(contentSel.path);
+    } catch (e) {
+      fail('读取文件失败', e);
+      return;
+    }
+    let edited: string | null = null;
+    try {
+      edited = await ctx.services.md.edit(text, contentSel.name);
+    } catch (e) {
+      s.pushLog(`内置编辑器未返回结果（${errText(e)}），改用外部编辑器`);
+    }
+    /* null/undefined = 取消 → 退回外部编辑器（用户可能就是想用外部的）；
+       等于原文 = 没改 → 不写盘也不必再开外部编辑器。 */
+    if (edited === text) {
+      s.pushLog('内容未变，未写盘');
+      return;
+    }
+    if (edited === null || edited === undefined) {
+      s.api.editFile(contentSel.path).catch((e) => fail('打开编辑器失败', e));
+      return;
+    }
+    try {
+      await s.api.writeText(contentSel.path, edited);
+      s.pushLog(`已保存：${contentSel.path}`);
+      ctx.toast('已保存', 'ok');
+      s.refresh();
+    } catch (e) {
+      fail('写回失败', e);
+    }
+  }, [contentSel, ctx, s]);
 
   const projectCards = useMemo(
     () => boot?.projectTabs[s.activeTab.project]?.items ?? [],
@@ -307,23 +421,34 @@ export default function App() {
   /**
    * 点项目卡片上的「→ 项目组名」跳过去选中它（对照 WPF 的 SelectLinkedGroupCommand）。
    *
-   * CardInfo 里只有组**名**（linkedGroup），定位却要**路径**，
-   * 所以从链接记录里按项目路径反查。
+   * CardInfo 里只有组**名**（linkedGroup），定位却要**路径**。
+   * 首选链接记录（最可靠）；记录缺失时退回卡片明细里那条 `group` ——
+   * 那是后端扫磁盘上的真实链接反查出来的（#181 #215）。
    *
-   * 查不到就明说，而不是静默不动：那通常意味着链接记录缺失
-   * （手改过 config、或从未在这台机器上登记过），此时组名仍在卡片上显示，
-   * 但点它跳不过去 —— 说清楚比让人反复点要强。
+   * 为什么必须补这条退回：磁盘兜底让卡片**显示**出了组名，
+   * 若跳转仍只认账本，就会出现"名字看得见、点了却报错"——
+   * 比干脆不显示更让人困惑。
+   *
+   * 两处都没有才明说，而不是静默不动：那意味着链接确实断了或指向已不存在的目录。
    */
   const jumpToGroup = useCallback((card: CardInfo) => {
     const ci = boot?.platform === 'windows';
     const key = normalizeKey(card.path, ci);
     const row = boot?.links.find((l) => normalizeKey(l.project, ci) === key);
-    if (!row?.group) {
+    const group = row?.group
+      || card.linkDetails?.find((d) => d.state === 'valid' && d.group)?.group
+      || '';
+    if (!group) {
       ctx.toast(`找不到「${card.linkedGroup}」的路径：链接记录里没有这一条`, 'err');
       return;
     }
     setFocus('group');
-    s.setSelGroup(row.group);
+    s.setSelGroup(group);
+    /* 光选中不够：项目组栏是所有分类纵向堆叠，目标常在折叠的分类里或屏幕外，
+       高亮了也看不见，用户会以为"跳转没反应"。交给 StackedGroups 展开 + 滚动（#19）。
+       带一个自增序号：连着跳**同一张**卡时，若只存路径，值没变 → useEffect 不重跑
+       → 第二次跳转不滚动。这是"看似多余的字段"，缺了就是一个难查的偶发 bug。 */
+    setReveal({ path: group, seq: ++revealSeq.current });
   }, [boot, ctx, s, setFocus]);
 
   /**
@@ -350,80 +475,11 @@ export default function App() {
   }, [bootReady, s.api, chainVersion]);
 
   /* ---------------- 连锁动作：快捷键 + 侧边栏 ----------------
-   * 两者都属于外壳能力，插件只能「注册 + 监听事件」，不能直接画到外壳上。
-   * 动作清单变化时先撤再注册，避免残留指向已删除动作的条目。
-   */
-  const shortcutEvent = (id: string) => `fpx:chain:${id}`;
-  const sidebarEvent = (id: string) => `fpx:sidebar:${id}`;
-
-  /**
-   * 当前选中项用 ref 传给事件处理，而不是直接进 useEffect 依赖。
-   * 否则每点一张卡片都会重跑注册副作用：侧边栏被整体重建（闪烁、丢焦点），
-   * 快捷键也要反复注销再注册。
-   */
-  const selRef = useRef<{ path: string; kind: CardKind } | null>(null);
-  selRef.current = s.selProject
-    ? { path: s.selProject, kind: 'project' }
-    : s.selGroup ? { path: s.selGroup, kind: 'group' } : null;
-
-  /** 对当前选中的卡片执行连锁动作；没选中就提示 */
-  const runActionOnSelection = (a: ChainAction) => {
-    const sel = selRef.current;
-    if (!sel) {
-      ctx.toast(`「${a.name}」需要选中一个项目或项目组`, 'err');
-      return;
-    }
-    void sendAction(a.id, sel.kind, sel.path);
-  };
-
-  useEffect(() => {
-    if (!bootReady) return;
-    const unsubs: Array<() => void> = [];
-    const registered: string[] = [];
-    const sidebarIds: string[] = [];
-
-    for (const a of chainActions) {
-      if (a.shortcut && a.shortcut.trim()) {
-        ctx.registerShortcut(a.shortcut.trim(), shortcutEvent(a.id), a.name);
-        registered.push(a.shortcut.trim());
-      }
-      if (a.showSidebar) {
-        ctx.addSidebarItem({
-          id: a.id, label: a.name, icon: a.icon || '▶', event: sidebarEvent(a.id),
-        });
-        sidebarIds.push(a.id);
-      }
-    }
-
-    // 两类事件都指向同一个处理：对当前选中的卡片执行该动作
-    for (const a of chainActions) {
-      unsubs.push(ctx.on(shortcutEvent(a.id), () => runActionOnSelection(a)));
-      unsubs.push(ctx.on(sidebarEvent(a.id), () => runActionOnSelection(a)));
-    }
-
-    return () => {
-      for (const u of unsubs) { try { u(); } catch { /* 忽略已失效的订阅 */ } }
-      for (const acc of registered) ctx.unregisterShortcut(acc);
-      for (const id of sidebarIds) ctx.removeSidebarItem(id);
-    };
-    // 只在动作清单变化时重建；选中项走 selRef，不进依赖。
-    // 这里同样不能放 boot：它每次快照都是新对象，会让侧边栏与快捷键
-    // 在所有写操作后被反复拆装（见上面 refreshChainActions 的注释）。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bootReady, chainActions, ctx]);
-
-  /** 直接按动作发送（右键菜单用），失败记日志 + toast */
-  const sendAction = async (actionId: string, kind: CardKind, path: string) => {
-    try {
-      const r = await s.api.chainSendAction(actionId, kind, path);
-      s.pushLog(r.message, !r.ok);
-      ctx.toast(r.message, r.ok ? 'ok' : 'err');
-    } catch (e) {
-      const msg = `发送失败：${String((e as Error)?.message ?? e)}`;
-      s.pushLog(msg, true);
-      ctx.toast(msg, 'err');
-    }
-  };
+   * 接线（注册 + 事件订阅 + 三个发送入口）收在 `hooks/useChainActions`。
+   * 它与卡片、布局、日志都无关，只是"把动作清单接到外壳上"这一件事。 */
+  const { runActionOnSelection, sendAction, requestSendAction } = useChainActions({
+    ctx, s, chainActions, bootReady, setPendingSend,
+  });
 
   const onCrossDrop = (drag: DragPayload, target: CardInfo | null) => {
     // 跨栏拖到卡片区**空白** = 换栏移动（项目 ⇄ 项目组），不是错误。
@@ -636,53 +692,14 @@ export default function App() {
     clearInvalid: () => void s.clearInvalid(),
     cycleTab,
     focus: setFocus,
-
-    // —— 补齐项（#221~#226）的功能接线 ——
-    // 只往注册表加条目不加这些，结果就是"设置里看得见、按下去没反应"。
-
-    /** F1：用函数式更新，避免闭包里的 help 是上一次渲染的旧值 */
-    toggleTips: () => setHelp((h) => !h),
-
-    backupNow: () => setDialog({ type: 'backup' }),
-
-    /*
-     * Mod+M：改 config.mcpEnabled 并落盘。
-     *
-     * 不能只改 SettingsDialog 里那份局部 state —— 那份只在设置框打开时
-     * 存在，关掉就丢，按了快捷键会毫无效果。
-     * 走 updateConfig 才会真正写进配置（MCP 后台进程读的是配置文件）。
-     * 新值在 mutate 里捕获：mutate 之后 draft 会被保存，
-     * 此时再读 boot.config 拿到的还是旧值。
-     */
-    toggleMcp: () => {
-      let next = false;
-      void s.updateConfig((d) => { d.mcpEnabled = !d.mcpEnabled; next = d.mcpEnabled; })
-        .then(() => s.pushLog(next ? 'MCP 已开启' : 'MCP 已关闭'));
-    },
-
-    toggleSidebar: () => setRailCollapsed((c) => !c),
-
-    /*
-     * Mod+D：编辑当前预览的文件。
-     *
-     * 目标优先级：内容浏览里选中的文件 → 焦点栏里选中的卡片
-     * （fpx_edit_file 对目录会自己取该目录下的 SKILL.md）。
-     *
-     * **走外部编辑器而不是内置 md-editor 服务**：
-     * 后端目前只有"打开"命令（fpx_edit_file），**没有写文件内容的命令**，
-     * 接内置编辑器的话只能看不能存 —— 那比直接交给外部编辑器更糟，
-     * 用户会以为保存成功了。等后端补了写入命令再换回内置。
-     */
-    openMarkdown: () => {
-      const target = previewFile || focusedCard?.path;
-      if (!target) {
-        ctx.toast?.('先选中一个文件（内容浏览）或一张卡片');
-        return;
-      }
-      s.api.editFile(target)
-        .catch((e) => s.pushLog(`打开编辑器失败：${errText(e)}`, true));
-    },
+    // 补齐的 5 条（原版 ShortcutCatalog）
+    toggleTips: () => setHelp((v) => !v),
+    backupNow: openBackup,
+    toggleMcp: () => void toggleMcp(),
+    toggleSidebar: () => setRailCollapsed((v) => !v),
+    openMarkdown,
     // 有弹窗打开时整组让路：否则在对话框里按 Delete 会改到看不见的卡片
+    // （开关类的三条不受此限，见 useCardHotkeys 的 ALWAYS_ON）
   }, !!boot && dialog.type === 'none' && !help && !confirmLink, boot?.config.hotkeys);
 
   if (s.loading) {
@@ -719,7 +736,9 @@ export default function App() {
             >
               发送到 AI
             </button>
-            <button className="p-btn" onClick={() => setDialog({ type: 'backup' })}>备份</button>
+            <button className="p-btn" onClick={() => setDialog({ type: 'backup' })}>
+              备份{comboHint('backupNow') && <span className="fpx-key">{formatCombo(comboHint('backupNow'), IS_MAC)}</span>}
+            </button>
             <button
               className="p-btn"
               title="基础设置 / 链接名 / 服务已移到外壳右上角的「⚙ 设置」"
@@ -736,16 +755,27 @@ export default function App() {
                 s.refresh();
               }}
             >
-              刷新
+              刷新{comboHint('refresh') && <span className="fpx-key">{formatCombo(comboHint('refresh'), IS_MAC)}</span>}
             </button>
             <button
               className="p-btn"
               title="摘掉页签里已不存在的路径（F8）"
               onClick={() => void s.clearInvalid()}
             >
-              清除无效项
+              清除无效项{comboHint('clearInvalid') && <span className="fpx-key">{formatCombo(comboHint('clearInvalid'), IS_MAC)}</span>}
             </button>
-            <button className="p-btn" onClick={() => setHelp(true)}>使用说明</button>
+            <button className="p-btn" onClick={() => setHelp(true)}>
+              使用说明{comboHint('toggleTips') && <span className="fpx-key">{formatCombo(comboHint('toggleTips'), IS_MAC)}</span>}
+            </button>
+            {/* 页签管理（#23）：两栏页签集中一处增删改序。
+                页签条上的 ⋮ 菜单仍在（就地改更顺手），这里给的是"整理"入口 */}
+            <button
+              className="p-btn"
+              title="统一管理项目 / 项目组页签：改名、排序、删除"
+              onClick={() => setDialog({ type: 'tabManager' })}
+            >
+              页签管理
+            </button>
           </div>
           <div className="p-row">
             <span className="p-mono p-muted" title={boot.dataDir}>数据：{boot.dataDir}</span>
@@ -759,30 +789,22 @@ export default function App() {
       {/* ---------------- 左侧操作栏 + 三栏 + 日志 ----------------
         对照 WPF 原版：SidebarControl 纵跨整个内容区（含日志行），
         主区则是「三栏行 + 日志行」两行。 */}
-      {/*
-        左栏可收起（#225）。收起时仍保留一个窄的展开按钮 ——
-        否则收起后只剩 Shift+~ 这一个入口，忘了快捷键就等于左栏永久消失。
-        收起态靠 `rail-collapsed` 把 grid 首列从 72px 压到 28px，
-        不这么做的话列宽还在，会空出一大块。
-      */}
-      <div className={`fpx-body${railCollapsed ? ' rail-collapsed' : ''}`}>
-        {railCollapsed ? (
-          <button
-            className="fpx-rail-toggle"
-            title="展开左栏（Shift+~）"
-            onClick={() => setRailCollapsed(false)}
-          >»</button>
-        ) : (
-          <SideRail
-            groups={railGroups}
-            chainActions={chainActions.filter((a) => a.showSidebar)}
-            onChainAction={runActionOnSelection}
-            hotkeys={boot.config.hotkeys}
-          />
-        )}
+      <div className="fpx-body">
+        <SideRail
+          groups={railGroups}
+          chainActions={chainActions.filter((a) => a.showSidebar)}
+          onChainAction={runActionOnSelection}
+          hotkeys={boot.config.hotkeys}
+          collapsed={railCollapsed}
+          onToggleCollapsed={() => setRailCollapsed((v) => !v)}
+        />
 
         <div className="fpx-main">
-          <div className="fpx-cols">
+          {/* 三栏宽度可调（#54）：grid 改 flex —— 分隔条要夹在栏与栏之间，
+              用 grid 的话它会去占一个单元格，把布局挤歪。
+              star 值走 flexGrow，与 grid 的 fr 效果一致。 */}
+          <div className="fpx-cols" ref={colsRef}>
+            <div className="fpx-colwrap" style={{ flexGrow: colStars[0] ?? 1 }}>
             <Column
               title="项目"
               kind="project"
@@ -793,6 +815,10 @@ export default function App() {
               onOpen={(p) => openPath(p, 'dir')}
               onMove={(path, i) => s.moveCard('project', path, activeTabRef.current.project, i)}
               onMoveToTab={(path, tabIndex) => {
+                /* #103 拖回自己所在的页签 = 取消，不做任何事。
+                   不守卫的话会被 moveCard 移到该页签末尾 ——
+                   用户以为取消了，实际改了顺序，且没有任何提示。 */
+                if (skipDropToTab(boot.projectTabs, tabIndex, path)) return;
                 const n = boot.projectTabs[tabIndex]?.items.length ?? 0;
                 s.moveCard('project', path, tabIndex, n);
               }}
@@ -809,7 +835,16 @@ export default function App() {
               focused={focus === 'project'}
               onJumpToGroup={jumpToGroup}
             />
+            </div>
 
+            <Splitter
+              dir="horizontal"
+              ariaLabel="调整「项目」与「项目组」两栏的宽度比例"
+              onDelta={onColResize(0)}
+              onEnd={onColResizeEnd}
+            />
+
+            <div className="fpx-colwrap" style={{ flexGrow: colStars[1] ?? 1 }}>
             {/*
               项目组栏：所有分类纵向堆叠、各自可折叠（对照 WPF 原版 groupBoxes 与截图形态）。
               项目栏仍用页签切换 —— 原版就是这样：项目组是分区框，项目是横向页签条。
@@ -853,10 +888,20 @@ export default function App() {
                 onRemove={(i) => requestRemoveTab('group', i)}
                 onAdd={(i) => setDialog({ type: 'pickDir', kind: 'group', tabIndex: i })}
                 onMoveTab={(from, to) => void s.moveTab('group', from, to)}
+                reveal={reveal}
                 emptyHint="还没有项目组，点分类右侧的 ＋ 添加"
               />
             </div>
+            </div>
 
+            <Splitter
+              dir="horizontal"
+              ariaLabel="调整「项目组」与「内容浏览」两栏的宽度比例"
+              onDelta={onColResize(1)}
+              onEnd={onColResizeEnd}
+            />
+
+            <div className="fpx-colwrap" style={{ flexGrow: colStars[2] ?? 1.4 }}>
             <div className="p-card fpx-col fpx-col-content">
               {/*
                 与左右两栏用同一套头部结构（.fpx-col-head）：
@@ -875,17 +920,32 @@ export default function App() {
                 onLog={s.pushLog}
                 onRename={(it) => setDialog({ type: 'renameContent', path: it.path, name: it.name })}
                 onRefresh={() => void s.scan(s.focusDir)}
-                // 报给 openMarkdown 快捷键：它要知道"上次预览的是哪个文件"。
-                // 传路径而不是整个 item —— 只用到 path，且不持有过期对象。
-                onSelect={(it) => setPreviewFile(it?.path ?? null)}
+                selected={contentSel}
+                onSelect={onContentSelect}
               />
             </div>
+            </div>
           </div>
+
+          {/* 日志区高度可调（#55）：拖这条分隔条改高度，松手才写配置 */}
+          <Splitter
+            dir="vertical"
+            ariaLabel="调整日志区高度"
+            onDelta={onLogResize}
+            onEnd={onLogResizeEnd}
+          />
 
           {/* ---------------- 日志（对照 WPF 底部的 140px 日志行）---------------- */}
           <div className="p-card fpx-logcard">
             <div className="p-row fpx-col-head">
-              <h2>日志</h2>
+              <h2>
+                日志
+                {/* 显示"当前/上限"：条数满了之后新日志会挤掉最旧的，
+                    不给这个数的话，用户只会觉得"日志怎么自己变短了" */}
+                <span className="p-muted" style={{ fontWeight: 400, fontSize: 'var(--fs-11, 11px)', marginLeft: 6 }}>
+                  {s.log.length}/{logMax}
+                </span>
+              </h2>
               <div className="p-row fpx-col-head-ops">
                 <button
                   className="p-btn"
@@ -893,7 +953,7 @@ export default function App() {
                   title="复制全部日志（含时间戳）"
                   disabled={s.log.length === 0}
                   onClick={() => copyText(
-                    s.log.slice(0, 40).map((l) => `[${l.at}] ${l.text}`).join('\n'))}
+                    s.log.slice(0, logMax).map((l) => `[${l.at}] ${l.text}`).join('\n'))}
                 >
                   复制全部
                 </button>
@@ -908,9 +968,10 @@ export default function App() {
                 </button>
               </div>
             </div>
-            <div className="fpx-log">
+            {/* 高度来自布局记忆（#55）。原先 CSS 里写死 132px，这里覆盖它 */}
+            <div className="fpx-log" style={{ height: logHeight }}>
               {s.log.length === 0 && <div className="p-muted">（暂无）</div>}
-              {s.log.slice(0, 40).map((l, i) => (
+              {s.log.slice(0, logMax).map((l, i) => (
                 <div
                   key={i}
                   className={l.isError ? 'fpx-log-line err' : 'fpx-log-line'}
@@ -928,171 +989,30 @@ export default function App() {
         </div>
       </div>
 
-      {/* ---------------- 弹窗 ---------------- */}
-      {dialog.type === 'pickDir' && (
-        <DirDialog
-          api={s.api}
-          title={dialog.kind === 'project' ? '添加项目文件夹' : '添加项目组文件夹'}
-          allowCreate
-          onClose={() => setDialog({ type: 'none' })}
-          onPick={(p) => s.addCard(dialog.kind, p)}
-        />
-      )}
-
-      {dialog.type === 'create' && (
-        <CreateDialog
-          api={s.api}
-          kind={dialog.kind}
-          defaultParent={dialog.kind === 'project' ? boot.config.createProjectDir : boot.config.createGroupDir}
-          defaultTemplate={boot.config.createGroupTemplateDir}
-          tabName={dialog.kind === 'project'
-            ? (boot.projectTabs[s.activeTab.project]?.name ?? '默认')
-            : (boot.groupTabs[s.activeTab.group]?.name ?? '默认')}
-          hierarchyOn={boot.config.createPathCarriesHierarchy}
-          onClose={() => setDialog({ type: 'none' })}
-          onCreated={(p) => s.addCard(dialog.kind, p)}
-          onLog={s.pushLog}
-        />
-      )}
-
-      {dialog.type === 'lock' && (
-        <LockDialog
-          path={dialog.card.path}
-          denyDelete={dialog.card.denyDelete}
-          denyWrite={dialog.card.denyWrite}
-          onClose={() => setDialog({ type: 'none' })}
-          onApply={(dd, dw) => s.setLock(dialog.card.path, dd, dw)}
-        />
-      )}
-
-      {dialog.type === 'rename' && (
-        <RenameDialog
-          card={dialog.card}
-          kind={dialog.kind}
-          onClose={() => setDialog({ type: 'none' })}
-          onSubmit={async (newName) => {
-            const r = await s.renameFolder(dialog.kind, dialog.card.path, newName);
-            return !!r;
-          }}
-        />
-      )}
-
-      {dialog.type === 'move' && (
-        <DirDialog
-          api={s.api}
-          title={`选择「${dialog.card.name}」的新位置（搬家）`}
-          allowCreate
-          onClose={() => setDialog({ type: 'none' })}
-          onPick={(p) => {
-            setDialog({ type: 'none' });
-            void doMove(dialog.card, dialog.kind, p);
-          }}
-        />
-      )}
-
-      {dialog.type === 'renameContent' && (
-        <RenameContentDialog
-          name={dialog.name}
-          onClose={() => setDialog({ type: 'none' })}
-          onSubmit={async (n) => {
-            await doRenameContent(dialog.path, n);
-            return true;
-          }}
-        />
-      )}
-
-      {dialog.type === 'style' && (
-        <StyleDialog
-          api={s.api}
-          path={dialog.card.path}
-          icon={dialog.card.icon}
-          color={dialog.card.tagColor}
-          inherited={dialog.card.tagColorInherited}
-          customColors={boot.config.customColors}
-          onClose={() => setDialog({ type: 'none' })}
-          onApply={(icon, color) => s.saveStyle(dialog.card.path, icon, color)}
-          onSaveCustom={(colors) => s.saveCustomColors(colors)}
-          onPickIconFile={() => openIconPicker(dialog.card)}
-          onLog={s.pushLog}
-        />
-      )}
-
-      {dialog.type === 'icons' && (
-        <IconPickDialog
-          api={s.api}
-          files={iconFiles}
-          groups={boot.config.iconGroups}
-          onGroupsChange={(groups) => s.updateConfig((d) => { d.iconGroups = groups; })}
-          onClose={() => setDialog({ type: 'none' })}
-          onPick={(p) => s.setIcon(dialog.card.path, p)}
-          onImported={setIconFiles}
-          onLog={s.pushLog}
-        />
-      )}
-
-      {dialog.type === 'backup' && (
-        <BackupDialog
-          api={s.api}
-          config={boot.config}
-          onClose={() => setDialog({ type: 'none' })}
-          onLog={s.pushLog}
-          // 备份要遍历整棵树，好几秒。这期间磁盘上的配置可能已被改过
-          // （MCP server 直接写文件，不经前端），所以存之前重读一次再改。
-          onSaved={(patch) => s.updateConfig((d) => Object.assign(d, patch), { fresh: true })}
-        />
-      )}
-
-      {dialog.type === 'editor' && (
-        <EditorDialog
-          api={s.api}
-          config={boot.config}
-          onClose={() => setDialog({ type: 'none' })}
-          onLog={s.pushLog}
-          onSaved={(patch) => s.updateConfig((d) => Object.assign(d, patch))}
-        />
-      )}
-
-      {dialog.type === 'chain' && (
-        <ChainDialog
-          api={s.api}
-          config={boot.config}
-          target={dialog.target}
-          kind={dialog.kind}
-          onClose={() => setDialog({ type: 'none' })}
-          onLog={s.pushLog}
-          onSaved={(patch) => s.updateConfig((d) => Object.assign(d, patch))}
-        />
-      )}
-
-      {confirmLink && (
-        <LinkPickDialog
-          project={confirmLink.project}
-          group={confirmLink.group}
-          config={boot.config}
-          allNames={boot.allNames ?? []}
-          links={boot.links ?? []}
-          onConfirm={(names) => {
-            setConfirmLink(null);
-            void s.createLink(confirmLink.project, confirmLink.group, names);
-          }}
-          onClose={() => setConfirmLink(null)}
-        />
-      )}
-
-      {confirmRemoveTab && (
-        <ConfirmDialog
-          title="删除分类"
-          message={confirmRemoveTab.message}
-          confirmText="删除"
-          danger
-          onConfirm={() => void s.removeTab(confirmRemoveTab.kind, confirmRemoveTab.index)}
-          onClose={() => setConfirmRemoveTab(null)}
-        />
-      )}
-
-      {help && (
-        <HelpDialog onClose={() => setHelp(false)} platform={boot.platform} />
-      )}
+      {/* ---------------- 弹窗 ----------------
+          全部形态集中在 `components/Dialogs.tsx`（约 200 行）。
+          App 是组装层，不该再塞这么多彼此无关的条件渲染。 */}
+      <Dialogs
+        s={s}
+        dialog={dialog}
+        setDialog={setDialog}
+        doMove={doMove}
+        doRenameContent={doRenameContent}
+        chainActions={chainActions}
+        pendingSend={pendingSend}
+        setPendingSend={setPendingSend}
+        confirmLink={confirmLink}
+        setConfirmLink={setConfirmLink}
+        confirmRemoveTab={confirmRemoveTab}
+        setConfirmRemoveTab={setConfirmRemoveTab}
+        help={help}
+        setHelp={setHelp}
+        tipsHeight={tipsHeight}
+        saveLayout={saveLayout}
+        openIconPicker={openIconPicker}
+        iconFiles={iconFiles}
+        setIconFiles={setIconFiles}
+      />
 
       {/* 日志行右键：复制这一条（原版日志区支持复制单项） */}
       {logMenu && (
@@ -1197,8 +1117,13 @@ function Column({
         onMove={onMove}
         onCrossDrop={onCrossDrop}
         menus={menus}
-        emptyHint={`还没有${title}，点「＋ 添加」选一个文件夹`}
+        /* 这句提示此前是**空头承诺**：它让用户点「＋ 添加」，
+           而卡片区里当时并没有这个按钮（只有页签条上有一个 ＋）。
+           加了末尾的虚线添加框（#287）之后才名副其实。 */
+        emptyHint={`还没有${title}，点下面的「＋ 添加${title}」选一个文件夹`}
         onJumpToGroup={onJumpToGroup}
+        onAdd={onAdd}
+        addHint={`添加${title}`}
       />
 
       {menu && (
@@ -1214,37 +1139,6 @@ function Column({
           onClose={() => setMenu(null)}
         />
       )}
-    </div>
-  );
-}
-
-function HelpDialog({ onClose, platform }: { onClose: () => void; platform: string }) {
-  return (
-    <div className="mask" onMouseDown={onClose}>
-      <div className="dialog p-card" style={{ width: 560 }} onMouseDown={(e) => e.stopPropagation()}>
-        <h2>使用说明</h2>
-        <ul className="fpx-help">
-          <li><b>分配</b>：把「项目」卡片拖到「项目组」卡片上（或反向拖），
-            会在项目目录下为每个启用的 agent 链接名建立指向项目组的链接。
-            建链只有拖放这一条路，没有按钮。</li>
-          <li><b>撤销链接</b>：在「项目」卡片上右键 →「撤销链接」。</li>
-          <li><b>链接名 / 服务 / 基础设置</b>：都在外壳右上角的「⚙ 设置」里（重载按钮左侧）——
-            链接名开关、MCP 与目录监听、备份与交互选项等。</li>
-          <li><b>内容浏览</b>：选中项目组后，右栏列出其 agent / skill / rule（读 <span className="p-mono">agent(s)/ skill(s)/ rules</span> 目录），点条目看内容。</li>
-          <li><b>新建</b>：直接创建文件夹并加入页签（项目组可带模板目录）。</li>
-          <li><b>保护 / 图标</b>：卡片右键可设 ACL 保护、自定义图标与标签颜色。</li>
-          <li><b>数据</b>：独立存于 {platform === 'windows' ? '%APPDATA%' : '应用数据目录'} 下的 <span className="p-mono">project-group/</span>，
-            与原 C# 版数据目录互不干扰。</li>
-          <li><b>快捷键</b>：栏目标题上标「焦点」的那栏就是键盘操作的对象（Ctrl/⌘+←/→ 切换，或点该栏卡片）。
-            对其选中的卡片：Ctrl/⌘+O 打开、Ctrl/⌘+L 保护、F2 改名、F3 换栏、F4 改色、F6 改图标、Delete 移除；
-            Ctrl/⌘+Tab 与 Ctrl/⌘+Shift+Tab 在项目组分类间跳（选中该分类第一张卡片），
-            Ctrl/⌘+PageDown/PageUp 翻项目页签；
-            F5 刷新、F8 清除无效项。打字时与弹窗打开时整组不触发。</li>
-        </ul>
-        <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 'var(--sp-8, 16px)' }}>
-          <button className="p-btn primary" onClick={onClose}>知道了</button>
-        </div>
-      </div>
     </div>
   );
 }

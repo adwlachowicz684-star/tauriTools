@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { PluginContext } from '../../../js/plugin-sdk.js';
 import type { CardKind } from '../types';
-import { effectiveMap, HOTKEY_BY_ID, type HotkeyId } from '../utils/hotkeys';
+import { effectiveMap, type HotkeyId } from '../utils/hotkeys';
 
 /**
  * `ctx.shortcut` 没写进 `js/plugin-sdk.d.ts`（那份 d.ts 在插件目录之外，
@@ -44,18 +44,33 @@ export interface HotkeyActions {
   /** Ctrl/⌘ + ←/→ 切焦点栏 */
   focus: (kind: CardKind) => void;
 
-  // —— 补齐项（#221~#226）——
-  /** F1 打开/关闭使用说明 */
+  /* ---- 以下 5 条是照原版 ShortcutCatalog 补齐的（#221 #222 #223 #225 #226）---- */
+  /** F1 打开/关闭使用说明（ToggleTips） */
   toggleTips: () => void;
-  /** F7 打开一键备份 */
+  /** F7 一键备份（BackupNow） */
   backupNow: () => void;
-  /** Ctrl/⌘ + M 启停 MCP */
+  /** Ctrl/⌘ + M 启停 MCP server（ToggleMcp） */
   toggleMcp: () => void;
-  /** Shift+~ 收起/展开左栏 */
+  /** Shift+~ 展开/收起左操作栏（ToggleSidebar） */
   toggleSidebar: () => void;
-  /** Ctrl/⌘ + D 打开 Markdown 编辑器 */
+  /** Ctrl/⌘ + D 编辑内容区当前选中的文件（OpenMarkdown） */
   openMarkdown: () => void;
 }
+
+/**
+ * 不受「有弹窗打开」限制的动作。
+ *
+ * 卡片类动作必须让路：对话框开着时按 Delete，删的是看不见的卡片。
+ * 但这三个是**开关**——若也跟着让路，F1 打开说明后就再也关不掉
+ * （help 一开，enabled 即 false，F1 自己把自己废了），收起左栏同理。
+ * 所以它们只受 isTyping 约束，其余时候始终响应。
+ *
+ * F7（备份）与 mod+D（编辑）不在此列：前者会开新弹窗、后者要作用于选中项，
+ * 都该在已有弹窗时让路，否则会出现弹窗叠弹窗。
+ */
+const ALWAYS_ON: ReadonlySet<HotkeyId> = new Set<HotkeyId>([
+  'toggleTips', 'toggleMcp', 'toggleSidebar',
+]);
 
 /** 在输入框 / 文本域里打字时，整组快捷键让路 */
 function isTyping(target: EventTarget | null): boolean {
@@ -94,26 +109,17 @@ export function useCardHotkeys(
     if (typeof sc !== 'function') return;
 
     const offs: Array<() => void> = [];
-    /**
-     * @param always 是否豁免「有弹窗时整组让路」的门控。
-     *
-     * 切换类动作（注册表里标了 `toggle: true` 的）必须豁免：
-     * 门控条件含 `!help`，若 toggleTips 也受门控，F1 打开使用说明后
-     * enabled 变 false，**再按 F1 就关不掉** —— 用户被困在里面。
-     * 用它打开的东西，必须能用同一个键关掉。
-     *
-     * 仅豁免弹窗门控；输入框让路**照旧**生效（打字时不响应）。
-     */
     const bind = (
       combo: string | string[],
       run: (e: KeyboardEvent) => void,
-      always = false,
+      opts?: { always?: boolean },
     ) => {
       const off = sc.call(ctx, combo, (e: KeyboardEvent) => {
         // 打字优先：否则在改名框里按 Delete 会把卡片从页签里删掉
         if (isTyping(e.target)) return;
         // 有弹窗打开时整组让路，避免半途改到看不见的卡片
-        if (!always && !enabledRef.current) return;
+        // （开关类动作例外，见 ALWAYS_ON 的说明）
+        if (!enabledRef.current && !opts?.always) return;
         run(e);
       });
       if (typeof off === 'function') offs.push(off);
@@ -121,10 +127,25 @@ export function useCardHotkeys(
 
     // 键位来自注册表（可被用户覆盖），动作仍在这里挨个写清楚
     const map = effectiveMap(overrides);
-    const run = (id: HotkeyId, fn: () => void) => {
+    /**
+     * 允许 fn 是异步的（openMarkdown 要读文件、等服务、再写盘）。
+     *
+     * 返回值统一 void 掉，并**兜底 catch**：异步动作里只要有一处漏了
+     * try/catch，rejection 就会变成 unhandled rejection ——
+     * 控制台一片红，而用户只看到"按了没反应"。
+     * 各函数内部已各自处理错误，这里是最后一道网。
+     */
+    const run = (id: HotkeyId, fn: () => void | Promise<void>) => {
       const combo = map[id];
       if (!combo) return;      // 空串 = 用户取消了这个绑定
-      bind(combo, fn, HOTKEY_BY_ID[id]?.toggle === true);
+      bind(combo, () => {
+        try {
+          const r = fn();
+          if (r && typeof (r as Promise<void>).catch === 'function') {
+            (r as Promise<void>).catch(() => {});
+          }
+        } catch { /* 内部已各自处理，这里只防漏网 */ }
+      }, { always: ALWAYS_ON.has(id) });
     };
 
     run('open', () => ref.current.open());
@@ -148,8 +169,7 @@ export function useCardHotkeys(
     run('focusProject', () => ref.current.focus('project'));
     run('focusGroup', () => ref.current.focus('group'));
 
-    // —— 补齐项（#221~#226）——
-    // 只注册不接线的话，设置里看得见、按下去没反应，比没有还困惑。
+    // 补齐的 5 条（原版 ToggleTips / BackupNow / ToggleMcp / ToggleSidebar / OpenMarkdown）
     run('toggleTips', () => ref.current.toggleTips());
     run('backupNow', () => ref.current.backupNow());
     run('toggleMcp', () => ref.current.toggleMcp());

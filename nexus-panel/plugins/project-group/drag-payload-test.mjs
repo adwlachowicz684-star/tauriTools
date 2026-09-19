@@ -17,11 +17,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 
-/** esbuild 可能在本地 node_modules，也可能只有全局副本（沙盒 / CI），逐个试 */
+/**
+ * esbuild 的候选来源。
+ *
+ * 只保留两类：环境变量指定的路径，以及常规依赖解析（本地 node_modules 或全局副本）。
+ * 此前这里写死过一条本机绝对路径（某沙盒的 .deps 目录），在别的机器上永远解析不到 ——
+ * 无害，但属于环境耦合，不该进仓库。缺依赖时报下面的错即可，本来就是缺依赖。
+ */
 function resolveEsbuild() {
-  for (const c of [process.env.ESBUILD_PATH, 'esbuild',
-                   '/data/workspace/.deps/node_modules/esbuild',
-                   '/usr/local/lib/node_modules/esbuild'].filter(Boolean)) {
+  for (const c of [process.env.ESBUILD_PATH, 'esbuild'].filter(Boolean)) {
     try { return require.resolve(c); } catch { /* 换下一个候选 */ }
   }
   throw new Error('找不到 esbuild：请先 npm install，或用 ESBUILD_PATH 指定路径');

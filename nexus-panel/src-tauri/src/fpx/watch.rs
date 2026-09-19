@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::thread;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use tauri::{AppHandle, Emitter};
 
@@ -33,6 +33,19 @@ static GEN: AtomicU64 = AtomicU64::new(0);
 /// 待前端取走的事件（后进先出无所谓，前端按序展示即可）。
 static PENDING: Mutex<Vec<WatchEvent>> = Mutex::new(Vec::new());
 
+/// 当前轮询间隔（秒）。抑制时长按它推算，见 `suppress`。
+static INTERVAL_SECS: AtomicU64 = AtomicU64::new(30);
+
+/**
+ * 被临时抑制的路径（归一化键 → 抑制到什么时候）。
+ *
+ * **为什么需要它**：自己搬家 / 改名会改变自己正在监控的目录，
+ * 于是监控器把"你刚做的事"当成"有人动了受保护的文件夹"，
+ * 弹一堆告警 —— 用户改个名就被自己吓一次，久了只能把告警整个关掉，
+ * 那监控就形同虚设了（#411）。
+ */
+static SUPPRESSED: Mutex<Vec<(String, Instant)>> = Mutex::new(Vec::new());
+
 /// 单次拉取上限：防止长期没人取导致一次返回巨量数据。
 const PULL_LIMIT: usize = 200;
 
@@ -43,6 +56,19 @@ pub struct WatchEvent {
     /// added | removed | changed
     pub kind: String,
     pub at: String,
+}
+
+/// 该路径当前是否处于抑制窗口内（过期视为未抑制）。
+fn suppressed(p: &str) -> bool {
+    let key = super::store::normalize_key(p);
+    match SUPPRESSED.lock() {
+        Ok(v) => v
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, u)| *u > Instant::now())
+            .unwrap_or(false),
+        Err(_) => false,
+    }
 }
 
 fn mtime_secs(p: &Path) -> i64 {
@@ -127,6 +153,7 @@ pub fn start(app: AppHandle, interval_secs: u64, paths: Vec<String>) {
     let gen = GEN.fetch_add(1, Ordering::SeqCst) + 1;
     RUNNING.store(true, Ordering::SeqCst);
     let interval = Duration::from_secs(interval_secs.max(5));
+    INTERVAL_SECS.store(interval.as_secs().max(1), Ordering::SeqCst);
     let mut last: HashMap<String, (usize, i64)> = HashMap::new();
     for p in &paths {
         last.insert(p.clone(), fingerprint(Path::new(p)));
@@ -148,6 +175,19 @@ pub fn start(app: AppHandle, interval_secs: u64, paths: Vec<String>) {
             let mut changed: Vec<WatchEvent> = Vec::new();
             for p in &cfg_paths {
                 let path = Path::new(p);
+                /* 搬家 / 改名期间抑制（#411）。
+                   **关键：抑制期间照常更新指纹，只是不报事件。**
+                   若这里跳过不更新，抑制结束后第一次比对会看到
+                   "搬家造成的全部差异"，一次性弹出一大堆 ——
+                   那只是把误报推迟，问题一点没解决。 */
+                if suppressed(p) {
+                    if path.exists() {
+                        last.insert(p.clone(), fingerprint(path));
+                    } else {
+                        last.remove(p);
+                    }
+                    continue;
+                }
                 let fp = fingerprint(path);
                 match last.get(p) {
                     None => {
@@ -195,6 +235,31 @@ pub fn stop() {
 
 pub fn is_running() -> bool {
     RUNNING.load(Ordering::SeqCst)
+}
+
+/// 登记「这些路径在接下来一段时间内不要报事件」。
+///
+/// 抑制时长 = 当前轮询间隔 + 10 秒余量：目的是盖住**下一次轮询**，
+/// 因为事件是在轮询那一刻比对出来的。给足一个周期，
+/// 搬家 / 改名这种秒级操作无论落在周期的哪个位置都能被盖住。
+pub fn suppress(paths: &[String]) {
+    if paths.is_empty() { return; }
+    let secs = INTERVAL_SECS.load(Ordering::SeqCst).saturating_add(10);
+    let until = Instant::now() + Duration::from_secs(secs);
+    let keys: Vec<String> = paths
+        .iter()
+        .map(|p| super::store::normalize_key(p))
+        .collect();
+    if let Ok(mut v) = SUPPRESSED.lock() {
+        // 顺手清掉已过期的，否则这个列表会无限增长
+        v.retain(|(_, u)| *u > Instant::now());
+        for k in keys {
+            match v.iter_mut().find(|(p, _)| *p == k) {
+                Some(e) => e.1 = until,   // 连续两次搬家：按最后一次顺延
+                None => v.push((k, until)),
+            }
+        }
+    }
 }
 
 /// 取走待处理事件（取完即清空）。前端轮询用。

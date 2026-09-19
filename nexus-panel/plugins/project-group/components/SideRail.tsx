@@ -44,7 +44,7 @@ export interface RailGroup {
 }
 
 export function SideRail({
-  groups, chainActions, onChainAction, hotkeys,
+  groups, chainActions, onChainAction, hotkeys, collapsed, onToggleCollapsed,
 }: {
   groups: RailGroup[];
   /** 连锁动作：每个一条，点击即对当前选中卡片执行 */
@@ -52,6 +52,9 @@ export function SideRail({
   onChainAction: (a: ChainAction) => void;
   /** 用户自定义键位（动作 id → combo） */
   hotkeys?: Record<string, string> | null;
+  /** 收起态（#58 #225）：只留一条窄条与展开按钮 */
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }) {
   /** 动作 id → 生效键位；没绑（空串）就不显示 */
   const keyOf = (a: RailAction): string => {
@@ -59,6 +62,23 @@ export function SideRail({
     if (!raw) return '';
     return formatCombo(raw, IS_MAC);
   };
+
+  /* 收起态：栏还在，只是窄成一条，并保留唯一的"展开"入口。
+     不做成彻底隐藏 —— 那样 Shift+~ 收起之后就没有任何可见的回头路，
+     用户只能靠记得这个快捷键才能找回来。 */
+  if (collapsed) {
+    return (
+      <div className="fpx-rail collapsed">
+        <button
+          className="fpx-rail-btn"
+          title="展开左操作栏（Shift+~）"
+          onClick={onToggleCollapsed}
+        >
+          <span className="fpx-rail-icon">»</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="fpx-rail">
@@ -100,6 +120,17 @@ export function SideRail({
           ))}
         </div>
       )}
+
+      {/* 收起入口置底：与"展开"成对，避免收起后没有回头路 */}
+      <div className="fpx-rail-group">
+        <button
+          className="fpx-rail-btn"
+          title="收起左操作栏（Shift+~）"
+          onClick={onToggleCollapsed}
+        >
+          <span className="fpx-rail-icon">«</span>
+        </button>
+      </div>
     </div>
   );
 }

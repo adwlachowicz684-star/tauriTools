@@ -1,5 +1,6 @@
 //! 配置与链接记录的持久化（插件独立的一份数据，存在 Tauri appDataDir 下）
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -261,12 +262,122 @@ fn ensure_default_tabs(cfg: &mut FpxConfig) {
     }
 }
 
+/**
+ * 把配置里"手改越界"的数值夹回合法区间（目前只有日志条数，#32）。
+ *
+ * 为什么加载时要夹，而不是只靠 `#[serde(default)]`：
+ * `default` 只管**字段缺失**。用户手改 config.json 写成 `logMaxLines: 99999`
+ * 能正常反序列化，随后界面会真的尝试渲染近十万行 —— 卡的是用户自己。
+ * 所以读进来就统一夹一次，写回时自然也是合法值。
+ */
+fn ensure_ranges(cfg: &mut FpxConfig) {
+    use super::model as m;
+    cfg.log_max_lines = m::clamp_log_max_lines(cfg.log_max_lines);
+    // 布局三项：None 原样保留（界面走自适应 / 默认比例），只夹"手改过界"的值
+    cfg.col_stars = m::normalize_col_stars(cfg.col_stars.take());
+    cfg.log_row_height = m::clamp_px(cfg.log_row_height, m::LOG_HEIGHT_MIN, m::LOG_HEIGHT_MAX);
+    cfg.settings_panel_height =
+        m::clamp_px(cfg.settings_panel_height, m::PANEL_HEIGHT_MIN, m::PANEL_HEIGHT_MAX);
+    cfg.mcp_panel_height =
+        m::clamp_px(cfg.mcp_panel_height, m::PANEL_HEIGHT_MIN, m::PANEL_HEIGHT_MAX);
+    cfg.tips_panel_height =
+        m::clamp_px(cfg.tips_panel_height, m::PANEL_HEIGHT_MIN, m::PANEL_HEIGHT_MAX);
+}
+
 /// 只读用途的宽松加载：损坏时给默认值（界面仍能出快照），
 /// 但**损坏状态已被记下**，随后的任何写入都会被 guard 拦住。
+/**
+ * config.json 的合法字段名集合。
+ *
+ * **由 `FpxConfig::default()` 序列化推导，不是手写清单**。
+ * 手写的清单必然与实际字段漂移（加了字段忘了补清单），
+ * 而漂移在"未知键检测"上的表现最坏：要么漏报（旧键照样静默丢），
+ * 要么误报（新字段被当成未知，每次启动都弹提示）。
+ * 序列化自身则永远与实际一致 —— 加字段自动进集合，删字段自动出集合。
+ */
+pub fn known_config_keys() -> HashSet<String> {
+    serde_json::to_value(FpxConfig::default())
+        .ok()
+        .and_then(|v| v.as_object().map(|o| o.keys().cloned().collect()))
+        .unwrap_or_default()
+}
+
+/// 找出 JSON 里出现、但 `FpxConfig` 不认识的键。
+///
+/// 这些键会被 serde 静默忽略 —— 用户以为存了，其实没读进来。
+/// 常见于：字段改名后留下的旧键、别的版本写进去的键、手改 config 写错的名字。
+/// 报出来比当没看见好：至少用户知道该去看一眼。
+pub fn unknown_config_keys(raw: &serde_json::Value) -> Vec<String> {
+    let known = known_config_keys();
+    let mut out: Vec<String> = raw
+        .as_object()
+        .map(|o| o.keys().filter(|k| !known.contains(*k)).cloned().collect())
+        .unwrap_or_default();
+    out.sort();
+    out
+}
+
+/// 把配置从它自己的版本逐级升到 `CURRENT_SCHEMA`。
+///
+/// 返回做过的事（供日志）；已是最新版则返回空 ——
+/// 启动时不该每次都刷一句"已迁移"，那会淹没真正的提示。
+///
+/// 现在只有 v1→v2 一级，且它**不做任何数据搬运**（v2 只是加了版本号本身）。
+/// 框架先立起来：以后真要改字段名/语义，在这里加一级即可，
+/// 不用再去每个读配置的地方补丁。
+pub fn migrate_config(cfg: &mut FpxConfig) -> Vec<String> {
+    let mut done: Vec<String> = Vec::new();
+    while cfg.schema_version < model::CURRENT_SCHEMA {
+        let from = cfg.schema_version;
+        match from {
+            // v1 → v2：只打版本标记。此前所有字段都带着 #[serde(default)]，
+            // 老配置缺任何新字段都能正常读出默认值，没有真实的数据要搬。
+            1 => {}
+            // 走到这里说明有人加了 CURRENT_SCHEMA 却忘了写迁移
+            other => {
+                done.push(format!("未知的配置版本 {other}，已直接标记为最新"));
+            }
+        }
+        cfg.schema_version = from + 1;
+        done.push(format!("配置 schema {from} → {}", cfg.schema_version));
+    }
+    done
+}
+
 pub fn load_config(dir: &Path) -> FpxConfig {
     let mut cfg = load_config_strict(dir).unwrap_or_else(FpxConfig::default);
     ensure_default_tabs(&mut cfg);
+    ensure_ranges(&mut cfg);
+    migrate_config(&mut cfg);
     cfg
+}
+
+/// 加载时顺带体检：返回值得提醒用户的事（未知键、迁移记录）。
+///
+/// 与"读配置"分开，是因为**读路径不该顺手改文件** ——
+/// 只读的地方（MCP、后台线程）拿这个看一眼就行，写回由调用方决定。
+pub fn config_issues(dir: &Path) -> Vec<String> {
+    let p = dir.join("config.json");
+    if !p.exists() { return Vec::new(); }
+    let text = match read_text(&p) { Ok(t) => t, Err(_) => return Vec::new() };
+    let raw: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),   // 解析失败由加载路径负责报错，这里不重复
+    };
+    let mut out = Vec::new();
+    let unknown = unknown_config_keys(&raw);
+    if !unknown.is_empty() {
+        /* 点名"会被忽略"，不说用户听不懂的 serde 术语。
+           列出键名而不是只报数量 —— 用户得知道是哪个键才有得改。 */
+        out.push(format!(
+            "config.json 里有 {} 个不被识别的键，它们会被忽略：{}",
+            unknown.len(),
+            unknown.join("、")));
+    }
+    if let Ok(mut cfg) = serde_json::from_value::<FpxConfig>(raw) {
+        out.extend(migrate_config(&mut cfg));
+    }
+    out
 }
 
 /// 严格加载：写入路径必须用它，损坏时返回 Corrupted 而不是默认值。
@@ -275,6 +386,7 @@ pub fn load_config_strict(dir: &Path) -> LoadOutcome<FpxConfig> {
     match load_strict::<FpxConfig>(&p) {
         LoadOutcome::Ok(mut cfg) => {
             ensure_default_tabs(&mut cfg);
+            ensure_ranges(&mut cfg);
             LoadOutcome::Ok(cfg)
         }
         LoadOutcome::Corrupted { backup, reason } => {
@@ -475,6 +587,28 @@ pub fn lock_of<'a>(cfg: &'a FpxConfig, path: &str) -> Option<&'a super::model::L
     cfg.locks.iter().find(|l| normalize_key(&l.path) == key)
 }
 
+/**
+ * 找出所有「保护范围覆盖 path」的锁（`#427`）。
+ *
+ * **为什么不能只用 `lock_of`（精确相等）**：ACL 是加在目录根上、靠继承传播的，
+ * 所以 `locks` 里记的可能是**祖先目录**。而要写入的文件常常在更深的层级 ——
+ * 比如保护的是 `<组>/skill/`，要写的是 `<组>/skill/foo/SKILL.md`。
+ * 按精确相等去查，一条都查不到，于是锁没被摘、写入被自己拦住（自伤）。
+ *
+ * 判定：锁的路径是 path 本身，或 path 位于它之下（按分隔符边界，
+ * 避免 `/foo` 被当成 `/foobar` 的祖先）。
+ */
+pub fn locks_covering<'a>(cfg: &'a FpxConfig, path: &str) -> Vec<&'a super::model::LockItem> {
+    let key = normalize_key(path);
+    cfg.locks
+        .iter()
+        .filter(|l| {
+            let lk = normalize_key(&l.path);
+            lk == key || key.starts_with(&format!("{lk}/"))
+        })
+        .collect()
+}
+
 /// Windows 下路径比较忽略大小写与尾斜杠。
 /// 路径比较用的规范化 key —— **全项目唯一一套规则**，任何按路径查表的地方都必须用它。
 ///
@@ -504,12 +638,14 @@ pub fn build_tabs(
     preset_names: &[String],
     kind: &str,
 ) -> Vec<TabInfo> {
+    // 组路径清单算一次、逐卡复用（见 collect_group_paths 的注释）
+    let group_paths = collect_group_paths(cfg);
     tabs.iter()
         .map(|t| TabInfo {
             name: t.name.clone(),
             items: t.items
                 .iter()
-                .map(|p| build_card(p, cfg, records, preset_names, kind))
+                .map(|p| build_card(p, cfg, records, preset_names, kind, &group_paths))
                 .collect(),
         })
         .collect()
@@ -534,6 +670,67 @@ fn resolve_tag_color(path: &str, cfg: &FpxConfig, records: &[LinkRecord], kind: 
     (None, false)
 }
 
+/// 收集配置里登记的全部项目组路径（去重、去尾部分隔符）。
+///
+/// 给磁盘兜底反查用。放在 `build_tabs` 里算一次、逐张卡片复用 ——
+/// 若每张卡都重扫一遍页签，卡片上百时就是几百次无谓的字符串分配。
+fn collect_group_paths(cfg: &FpxConfig) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for t in &cfg.group_tabs {
+        for g in &t.items {
+            let g = g.trim().trim_end_matches(|c| c == '\\' || c == '/');
+            if g.is_empty() { continue; }
+            if seen.insert(normalize_key(g)) { out.push(g.to_string()); }
+        }
+    }
+    out
+}
+
+/**
+ * 磁盘兜底（#181 #215）：账本里没有这条记录时，扫描项目目录下真实存在的链接，
+ * 用它的指向反查项目组。
+ *
+ * 为什么需要：junction 可以在本工具之外被创建 —— 手工 mklink、别的脚本、
+ * 旧版本迁移遗漏。那种情况下账本没有记录，卡片就显示不出"链到了哪个项目组"，
+ * 而链接明明在磁盘上好好存在着，用户只会觉得"这软件没认出来"。
+ *
+ * 代价可控：只在账本确实没记录时才扫，且**找到就停**。
+ * `link_state` 的探测在 `build_card` 里本来就要做，这里只是顺带读一次目标。
+ *
+ * 返回 (组名, 组路径)。组路径**优先取已登记的那条**：junction 里的原始值
+ * 可能与登记值差一个结尾分隔符或大小写，用已登记的更利于后续比对与跳转。
+ * 指向的不是已登记项目组时，仍如实给出目标本身 —— 链接确实存在，
+ * 显示出来比空着有用。
+ */
+fn disk_group_of(
+    project: &str,
+    names: &[String],
+    group_paths: &[String],
+) -> Option<(String, String)> {
+    for n in names {
+        if super::junction::link_state(project, n) != super::junction::LinkState::Valid {
+            continue;
+        }
+        let lp = super::junction::link_path(project, n);
+        let Some(target) = super::junction::resolve_target(&lp) else { continue };
+        let raw = target.trim().trim_end_matches(|c| c == '\\' || c == '/').to_string();
+        if raw.is_empty() { continue; }
+        let tk = normalize_key(&raw);
+        let path = group_paths
+            .iter()
+            .find(|g| normalize_key(g) == tk)
+            .cloned()
+            .unwrap_or(raw);
+        let name = Path::new(&path)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+        return Some((name, path));
+    }
+    None
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_card(
     path: &str,
@@ -541,6 +738,7 @@ fn build_card(
     records: &[LinkRecord],
     preset_names: &[String],
     kind: &str,
+    group_paths: &[String],
 ) -> CardInfo {
     let key = normalize_key(path);
     let rec = records.iter().find(|r| normalize_key(&r.project) == key);
@@ -548,6 +746,11 @@ fn build_card(
         Some(r) => r.link_names(),
         None => preset_names.to_vec(),
     };
+    /* 账本没记录时，靠磁盘上真实存在的链接反查项目组（#181 #215）。
+       有记录就**不覆盖** —— 显式登记过的信息优先于推断出来的。 */
+    let fb = if rec.is_none() { disk_group_of(path, &names, group_paths) } else { None };
+    let fb_name = fb.as_ref().map(|f| f.0.clone());
+    let fb_path = fb.as_ref().map(|f| f.1.clone());
     let mut has_link = 0usize;
     let mut broken = 0usize;
     let mut conflict = 0usize;
@@ -560,9 +763,14 @@ fn build_card(
         };
         details.push(LinkDetail {
             name: n.clone(),
-            group_name: rec.map(|r| r.group.clone()).unwrap_or_default(),
-            group: rec.map(|r| r.lib.clone()).unwrap_or_default(),
+            group_name: rec.map(|r| r.group.clone())
+                .or_else(|| fb_name.clone())
+                .unwrap_or_default(),
+            group: rec.map(|r| r.lib.clone())
+                .or_else(|| fb_path.clone())
+                .unwrap_or_default(),
             state: state.to_string(),
+            // 创建时间只有账本知道，磁盘上读不出来 —— 空着比编一个强
             created: rec.map(|r| r.created.clone()).unwrap_or_default(),
         });
     }
@@ -579,8 +787,12 @@ fn build_card(
         has_broken: broken > 0,
         has_conflict: conflict > 0,
         link_count: has_link,
-        linked_group: rec.map(|r| r.group.clone()).filter(|s| !s.is_empty()),
+        linked_group: rec.map(|r| r.group.clone()).filter(|s| !s.is_empty())
+            .or_else(|| fb_name.filter(|s| !s.is_empty())),
         locked: lock.map(|l| l.deny_delete || l.deny_write).unwrap_or(false),
+        /* #21 账面固定：与 ACL 是两件事，单独给一个字段，
+           界面据此决定显示盾牌（有 ACL）还是小锁（仅固定）。 */
+        account_fixed: lock.map(|l| l.account_only).unwrap_or(false),
         deny_delete: lock.map(|l| l.deny_delete).unwrap_or(false),
         deny_write: lock.map(|l| l.deny_write).unwrap_or(false),
         icon: cfg.folder_icons.get(path).cloned(),

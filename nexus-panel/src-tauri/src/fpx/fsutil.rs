@@ -332,17 +332,46 @@ fn lock_is_stale(path: &Path) -> bool {
     now.saturating_sub(age.as_secs()) > LOCK_STALE_SECS
 }
 
+/// 本次持锁的唯一标识。
+///
+/// 为什么需要：guard 释放时要能认出"这把锁还是不是我的"。
+/// 只用 pid 不够——pid 会复用，本进程退出后新进程可能拿到同一个 pid；
+/// 所以再拼上纳秒时间戳与进程内单调序号。
+fn owner_token() -> String {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let ns = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{}-{}-{}", std::process::id(), ns, n)
+}
+
 /// 尝试原子地创建锁文件；成功即视为拿到锁。
 ///
 /// 用 `create_new(true)`（底层 `O_EXCL|O_CREAT`）而不是"先 exists 再 create"：
 /// 后者存在 TOCTOU 窗口——两个进程都看到"没有"，然后都去创建，都以为自己拿到了。
-fn try_lock(path: &Path) -> std::io::Result<Option<fs::File>> {
+///
+/// 拿到后立刻把 owner token 写进文件：guard 释放时靠它认领，
+/// 否则分不清"自己的锁"与"别人刚建的锁"（见 `FileLockGuard::drop`）。
+fn try_lock(path: &Path, token: &str) -> std::io::Result<Option<fs::File>> {
     match fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)
     {
-        Ok(f) => Ok(Some(f)),
+        Ok(mut f) => {
+            use std::io::Write;
+            let _ = writeln!(f, "token={token}");
+            let _ = writeln!(
+                f,
+                "pid={} at={:?}",
+                std::process::id(),
+                std::time::SystemTime::now()
+            );
+            let _ = f.flush();
+            Ok(Some(f))
+        }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
         Err(e) => Err(e),
     }
@@ -378,15 +407,16 @@ impl FileLock {
     /// 拿到锁，返回 RAII guard（drop 时自动释放）。
     pub fn lock(&self) -> Result<FileLockGuard, String> {
         let started = std::time::Instant::now();
+        // 每次尝试都换新 token：被回收后重抢的那次也带着自己的身份，
+        // 不会与别人（或自己上一次）的锁混淆。
+        let token = owner_token();
         loop {
-            match try_lock(&self.path) {
-                Ok(Some(mut f)) => {
-                    // 记下 owner，纯诊断用；写失败无所谓，不影响持锁
-                    use std::io::Write;
-                    let _ = writeln!(f, "pid={} at={:?}", std::process::id(),
-                                     std::time::SystemTime::now());
-                    let _ = f.flush();
-                    return Ok(FileLockGuard { path: self.path.clone() });
+            match try_lock(&self.path, &token) {
+                Ok(Some(_f)) => {
+                    return Ok(FileLockGuard {
+                        path: self.path.clone(),
+                        token: token.clone(),
+                    });
                 }
                 Ok(None) => {
                     // 锁存在：判断是否废弃，废弃就删掉重来
@@ -418,16 +448,46 @@ impl FileLock {
 ///
 /// 自己持有路径副本（不借用 `FileLock`），因此可以自由传递、存入结构体，
 /// 也让调用方能做"重入计数"这类包装而不受生命周期限制。
+///
+/// `token` 是这次持锁的身份，用于释放时认领——见 `Drop` 里的说明。
 pub struct FileLockGuard {
     path: PathBuf,
+    token: String,
+}
+
+/// 读锁文件里的 owner token；读不到或格式不对返回 None。
+///
+/// 只认第一行 `token=...`。其余行（pid / 时间）是给人看的诊断信息，
+/// 不做判定依据——它们可能写到一半，也可能被别的程序改过。
+fn read_owner_token(path: &Path) -> Option<String> {
+    let text = fs::read_to_string(path).ok()?;
+    let first = text.lines().next()?;
+    first.strip_prefix("token=").map(|s| s.trim().to_string())
 }
 
 impl Drop for FileLockGuard {
     fn drop(&mut self) {
-        // 只删自己创建的那份；已被别人接管时（超时被回收）不误删
-        if lock_is_stale(&self.path) {
-            return;
+        /* 只删自己创建的那一份。
+           ------------------------------------------------------------------
+           早先这里只判"锁文件是否 stale"就删，那把两个完全不同的情况混在了一起：
+
+             · 我的锁还在，但已经超过 60 秒（我这边卡了 / 被挂起 / 断点调试）
+               → 别人判定为废弃，回收并重建了锁，现在的锁是**他的**
+             · 我的锁好端端在那儿
+
+           只判 stale 的话，第一种情况下我会把别人刚建的锁删掉 —— 于是出现了
+           两个进程同时持锁，互斥失效，而这类失效的代价是整份登记被覆盖。
+
+           所以真正要问的是"这把锁还是不是我的"：比对 token，不一致就不碰。
+           文件已经没了（别人释放了 / 手动删了）同样不碰，删操作本身无害但没必要。
+
+           顺带说明：token 是必需的，不能只靠 pid —— pid 会复用；
+           也不能只靠时间戳 —— 同一进程内两次拿锁可能落在同一纳秒区间。 */
+        match read_owner_token(&self.path) {
+            Some(t) if t == self.token => {
+                fs::remove_file(&self.path).ok();
+            }
+            _ => { /* 不是我的锁（或已被别人接管 / 已消失）：不删 */ }
         }
-        fs::remove_file(&self.path).ok();
     }
 }

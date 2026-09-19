@@ -26,15 +26,46 @@ pub struct LockItem {
     pub deny_delete: bool,
     #[serde(default)]
     pub deny_write: bool,
+    /*
+     * 「账面固定」（#21）：只是**登记在案**，不落任何系统权限。
+     *
+     * 与 ACL 是两件事：ACL 是真的拦住删除/写入，账面固定只是标记
+     * "这个目录别乱动"。它存在的意义是给用户一个**轻量**的选择 ——
+     * 不动系统权限（不会把自己锁死、也不需要管理员权限），
+     * 但界面上能看出哪些是"定下来的"。
+     *
+     * 两者可以同时存在（既固定又上 ACL），互不排斥。
+     */
+    #[serde(default)]
+    pub account_only: bool,
 }
 
 /// 文件夹图标引用：路径 → "图标文件路径" 或 "DLL路径|索引"。
 pub type IconMap = HashMap<String, String>;
 
+/// config.json 的 schema 版本。
+///
+/// **为什么要有它**：此前全靠 `#[serde(default)]` 兼容旧配置，
+/// 那只解决了"新字段缺失"，解决不了"旧字段被悄悄丢掉" ——
+/// 字段改名或废弃后，JSON 里那个旧键还在，而新结构没有对应字段，
+/// serde 默认忽略未知键，于是用户的数据**静默消失**（清单 #454 记过
+/// 一次 clusters 就这么丢的，查了好久才发现）。
+///
+/// 有了版本号，就能知道"这份配置是哪个版本写的"，从而：
+///   · 逐级跑迁移函数，把旧键搬到新字段
+///   · 发现"我不认识的键"时提示，而不是当没看见
+///
+/// 缺失 = 1（这个字段本身是新加的，老配置里没有它）。
+pub const CURRENT_SCHEMA: u32 = 2;
+
 /// 插件独立配置（对应 data-dir/config.json）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FpxConfig {
+    /// schema 版本；老配置里没有这个键，反序列化时按 1 处理。
+    /// 加载路径会把它升到 `CURRENT_SCHEMA` 并写回。
+    #[serde(default = "default_schema")]
+    pub schema_version: u32,
     /// 项目页签。
     #[serde(default)]
     pub project_tabs: Vec<TabItem>,
@@ -163,6 +194,48 @@ pub struct FpxConfig {
     /// 监听轮询间隔（秒，最小 5）。
     #[serde(default = "default_watch_interval")]
     pub watch_interval_secs: u64,
+    /// 日志区最多保留多少条（#32）。
+    ///
+    /// 同时决定「界面显示」与「复制全部能拿到多少」——两者合一，
+    /// 显示多少就是能复制多少，语义自洽。早先是"存 200、显示 40"，
+    /// 多存的那 160 条既显示不出来也复制不到（日志是内存态，重启即失），
+    /// 属于无效占用。
+    ///
+    /// 范围在设置界面与 `store` 侧双重夹取（见 LOG_MAX_LINES_MIN / MAX），
+    /// 这里只给默认值；手改 config.json 写出界也会被夹回合法区间。
+    #[serde(default = "default_log_max_lines")]
+    pub log_max_lines: u32,
+    /// 三栏宽度比例（star 值，依次 项目 / 项目组 / 内容浏览）。
+    ///
+    /// null = 用默认。写盘前已在前端夹取，这里再夹一次是为了挡住
+    /// "手改 config.json" 的情形（与 log_max_lines 同理）。
+    #[serde(default)]
+    pub col_stars: Option<Vec<f64>>,
+    /// 日志区高度（px）。null = 用默认。
+    #[serde(default)]
+    pub log_row_height: Option<u32>,
+    /// 设置浮层高度（px）。null = 自适应内容高度。
+    #[serde(default)]
+    pub settings_panel_height: Option<u32>,
+    /// MCP 服务浮层高度（px）。null = 自适应。
+    #[serde(default)]
+    pub mcp_panel_height: Option<u32>,
+    /// 使用说明浮层高度（px）。null = 自适应。
+    #[serde(default)]
+    pub tips_panel_height: Option<u32>,
+    /// 在按钮上显示快捷键提示（#50）。默认开。
+    ///
+    /// 关掉它的理由是"按钮变挤"，所以默认开着 —— 原版也是默认开：
+    /// 快捷键看不见就等于不存在，用户根本不会去按。
+    #[serde(default = "default_show_shortcuts")]
+    pub show_shortcuts: bool,
+    /// 开发者模式（#46）。
+    ///
+    /// 开启后允许删除内置连锁动作 —— 那四个是常用入口，
+    /// 而 `ensure_actions` 只在清单为空时才重建，删错了用户会以为软件坏了。
+    /// 这道闸门的意义是"我知道我在做什么"。
+    #[serde(default)]
+    pub dev_mode: bool,
     /// 预设图标（内置名，前端兜底展示用）。
     #[serde(default)]
     pub preset_icons: Vec<String>,
@@ -190,12 +263,78 @@ pub struct IconGroup {
 }
 
 fn default_true() -> bool { true }
+
+/// 老配置没有 schemaVersion 键 → 视为 1。
+fn default_schema() -> u32 {
+    1
+}
 fn default_watch_interval() -> u64 { 30 }
 fn default_move_scope() -> String { "defaultRootsFlatten".to_string() }
+
+/* ---------------- 日志条数（#32）----------------
+ * 数值与前端 utils/log.ts 一一对应，log-test.mjs 会比对两边。
+ */
+
+/// 日志保留条数的合法区间。
+///
+/// 下限 10：再少就失去"流水"的意义，出错时看不到前因。
+/// 上限 2000：日志每条都带时间戳字符串，且界面一次全渲染，
+/// 上万条会明显拖慢渲染；2000 足够回溯，也是 render 能承受的量级。
+pub const LOG_MAX_LINES_MIN: u32 = 10;
+pub const LOG_MAX_LINES_MAX: u32 = 2000;
+pub const LOG_MAX_LINES_DEFAULT: u32 = 40;
+
+fn default_log_max_lines() -> u32 { LOG_MAX_LINES_DEFAULT }
+
+fn default_show_shortcuts() -> bool { true }
+
+/// 把任意输入夹回合法区间（含非数字配置、越界手改）。
+pub fn clamp_log_max_lines(v: u32) -> u32 {
+    v.clamp(LOG_MAX_LINES_MIN, LOG_MAX_LINES_MAX)
+}
+
+/* ---------------- 布局记忆（#54 #55 #56 #193）----------------
+ * 数值与前端 utils/layout.ts 一一对应，layout-test.mjs 会比对两边。
+ * 改任一侧都要同步另一侧。
+ */
+
+/// 三栏 star 默认/下限/上限
+pub const COL_STAR_MIN: f64 = 0.4;
+pub const COL_STAR_MAX: f64 = 4.0;
+pub const COL_STARS_DEFAULT: [f64; 3] = [1.0, 1.0, 1.4];
+
+/// 日志区高度（px）
+pub const LOG_HEIGHT_MIN: u32 = 60;
+pub const LOG_HEIGHT_MAX: u32 = 600;
+pub const LOG_HEIGHT_DEFAULT: u32 = 132;
+
+/// 浮层面板高度（px）：设置 / MCP / 使用说明三个共用同一范围
+pub const PANEL_HEIGHT_MIN: u32 = 200;
+pub const PANEL_HEIGHT_MAX: u32 = 2000;
+
+/// 星值归一化：数量不对就整体回默认（栏数是布局结构的一部分，
+/// 补零会造出"某一栏消失"），逐项夹取。
+pub fn normalize_col_stars(v: Option<Vec<f64>>) -> Option<Vec<f64>> {
+    let arr = v?;
+    if arr.len() != COL_STARS_DEFAULT.len() {
+        return None; // None = 用默认
+    }
+    Some(
+        arr.into_iter()
+            .map(|x| if x.is_finite() { x.clamp(COL_STAR_MIN, COL_STAR_MAX) } else { COL_STAR_MIN })
+            .collect(),
+    )
+}
+
+/// 高度夹取；None 表示"未设置"，原样保留（界面走自适应）。
+pub fn clamp_px(v: Option<u32>, lo: u32, hi: u32) -> Option<u32> {
+    v.map(|x| x.clamp(lo, hi))
+}
 
 impl Default for FpxConfig {
     fn default() -> Self {
         Self {
+            schema_version: CURRENT_SCHEMA,
             project_tabs: vec![TabItem { name: "默认".into(), items: vec![] }],
             group_tabs: vec![TabItem { name: "默认".into(), items: vec![] }],
             link_agents: HashMap::new(),
@@ -237,6 +376,16 @@ impl Default for FpxConfig {
             chain_actions: None,
             watch_enabled: false,
             watch_interval_secs: 30,
+            log_max_lines: LOG_MAX_LINES_DEFAULT,
+            // 布局三项一律 None = 用前端默认；写了具体值反而会
+            // 把"改过默认"这件事冻结在首次保存那一刻
+            col_stars: None,
+            log_row_height: None,
+            settings_panel_height: None,
+            mcp_panel_height: None,
+            tips_panel_height: None,
+            dev_mode: false,
+            show_shortcuts: default_show_shortcuts(),
         }
     }
 }
@@ -402,6 +551,9 @@ pub struct CardInfo {
     pub locked: bool,
     pub deny_delete: bool,
     pub deny_write: bool,
+    /// 「账面固定」（#21）：仅登记在案，无系统权限。
+    #[serde(default)]
+    pub account_fixed: bool,
     pub icon: Option<String>,
     pub tag_color: Option<String>,
     /// tag_color 是否为继承自所链接项目组的颜色（界面上淡化显示，避免误以为改过）。
@@ -470,6 +622,10 @@ pub struct Snapshot {
 pub struct Bootstrap {
     pub data_dir: String,
     pub platform: String,
+    /// config.json 的体检结果：未知键、迁移记录等（见 `config_issues`）。
+    /// 空 = 一切正常。由前端在启动时提示一次。
+    #[serde(default)]
+    pub config_notices: Vec<String>,
     pub config: FpxConfig,
     pub project_tabs: Vec<TabInfo>,
     pub group_tabs: Vec<TabInfo>,

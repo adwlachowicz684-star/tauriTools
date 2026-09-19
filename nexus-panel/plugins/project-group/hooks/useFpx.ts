@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNexus } from '../../../src/nexus-react';
 import { errText, makeApi, normalizeKey } from '../api';
+import { LOG_MAX_LINES_DEFAULT, clampLogMax } from '../utils/log';
+import { activeAfterMove, activeAfterRemove } from '../utils/tabs';
 import type {
   Bootstrap, CardKind, ContentItem, FpxConfig, LinkRow, Snapshot, TabInfo,
 } from '../types';
@@ -35,8 +37,15 @@ export function useFpx() {
     return () => { alive.current = false; };
   }, []);
 
+  /* 日志上限（#32）走 ref：pushLog 是 useCallback([]) —— 依赖一变，
+     所有把它写进依赖数组的 useEffect 都会重跑（App 里有七八处，
+     包括"恢复监听"这类只该跑一次的）。用 ref 读最新值即可，语义不变。 */
+  const logMaxRef = useRef(LOG_MAX_LINES_DEFAULT);
+  logMaxRef.current = clampLogMax(boot?.config.logMaxLines);
+
   const pushLog = useCallback((text: string, isError = false) => {
-    setLog((l) => [{ at: now(), text, isError }, ...l].slice(0, 200));
+    const max = logMaxRef.current;
+    setLog((l) => [{ at: now(), text, isError }, ...l].slice(0, max));
   }, []);
 
   /** 清空日志（原版 ClearCommand）。
@@ -129,6 +138,26 @@ export function useFpx() {
     if (alive.current) setLoading(false);
     return b;
   }, [api, run]);
+
+  /**
+   * config.json 的体检结果，提示**一次**即可。
+   *
+   * 单独一个 effect、不塞进 refresh：refresh 的依赖数组是精心保持稳定的
+   * （pushLog 注释里写过，它一变就会让「恢复监听」这类只该跑一次的
+   * effect 重跑）。这里只依赖 boot，用 ref 保证不重复提示 ——
+   * 否则用户改一次设置就被同一句话刷一次屏。
+   */
+  const noticedRef = useRef(false);
+  useEffect(() => {
+    const notes = boot?.configNotices;
+    if (!notes?.length || noticedRef.current) return;
+    noticedRef.current = true;
+    /* 写进日志而不是只弹 toast：toast 一闪而过，而这些内容
+       （"有几个键不被识别"）用户多半要照着去改 config，得能回头看。
+       首条另外弹一次，保证不会被直接略过。 */
+    for (const n of notes) pushLog(`配置提醒：${n}`);
+    ctx.toast(notes[0], 'err');
+  }, [boot, ctx, pushLog]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -337,13 +366,8 @@ export function useFpx() {
       tabs.splice(to, 0, moved);
     });
     if (!snap) return;
-    setActiveTab((s) => {
-      const cur = s[kind];
-      if (cur === from) return { ...s, [kind]: to };
-      if (from < to && cur > from && cur <= to) return { ...s, [kind]: cur - 1 };
-      if (from > to && cur >= to && cur < from) return { ...s, [kind]: cur + 1 };
-      return s;
-    });
+    // 索引平移交给纯函数：见 utils/tabs.ts 的说明（这段算术写错很隐蔽）
+    setActiveTab((s) => ({ ...s, [kind]: activeAfterMove(s[kind], from, to) }));
   }, [updateConfig]);
 
   const removeTab = useCallback(async (kind: CardKind, index: number) => {
@@ -360,9 +384,7 @@ export function useFpx() {
       tabs.splice(index, 1);
     });
     if (!snap) return;
-    // 删除后最大合法索引 = 原长度 - 2；被删的不是最后一个时保持当前位置即可
-    const maxIndex = before - 2;
-    setActiveTab((s) => ({ ...s, [kind]: Math.max(0, Math.min(s[kind] > index ? s[kind] - 1 : s[kind], maxIndex)) }));
+    setActiveTab((s) => ({ ...s, [kind]: activeAfterRemove(s[kind], index, before) }));
   }, [cardsOf, ctx, updateConfig]);
 
   /* ---------------- 链接 ---------------- */
@@ -427,8 +449,10 @@ export function useFpx() {
     if (snap) applySnapshot(snap);
   }, [api, applySnapshot, run]);
 
-  const setLock = useCallback(async (path: string, denyDelete: boolean, denyWrite: boolean) => {
-    const snap = await run('设置保护', () => api.setLock(path, denyDelete, denyWrite));
+  const setLock = useCallback(async (
+    path: string, denyDelete: boolean, denyWrite: boolean, accountOnly = false,
+  ) => {
+    const snap = await run('设置保护', () => api.setLock(path, denyDelete, denyWrite, accountOnly));
     if (snap) {
       applySnapshot(snap);
       pushLog(`${path} 保护：防删除=${denyDelete} 防写入=${denyWrite}`);

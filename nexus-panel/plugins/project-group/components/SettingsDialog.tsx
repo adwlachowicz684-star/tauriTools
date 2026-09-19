@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
 import type { Api } from '../api';
 import { errText } from '../api';
-import type { BackupAutoStatus, FpxConfig, McpToolRow } from '../types';
+import type { BackupAutoStatus, ChainClient, FpxConfig, McpToolRow } from '../types';
 import { ChainActionsPanel } from './ChainActionsPanel';
+import { summarizeDetection } from '../utils/clientDetect';
 import { ChainClientsDialog } from './ChainClientsDialog';
 import { DirDialog } from './DirDialog';
 import { HotkeySettings } from './HotkeySettings';
+import {
+  LOG_MAX_LINES_DEFAULT, LOG_MAX_LINES_MAX, LOG_MAX_LINES_MIN, clampLogMax,
+} from '../utils/log';
 
 /** 自动备份档位（分钟）；0 = 关闭。与原版预设一致。 */
 const BACKUP_PRESETS: { value: number; label: string }[] = [
@@ -30,7 +34,7 @@ const BACKUP_PRESETS: { value: number; label: string }[] = [
  * 那一页本身就是个独立页面，再套 Modal 会多一层无意义的遮罩。
  */
 export function SettingsBody({
-  api, config, dataDir, onLog, onSaved, onChainActionsChanged,
+  api, config, dataDir, onLog, onSaved, onChainActionsChanged, onResetLayout, onDevModeChange, onShowShortcutsChange,
 }: {
   api: Api;
   config: FpxConfig;
@@ -45,6 +49,10 @@ export function SettingsBody({
    * 用户刚加的自定义动作要等到下一次别的写操作才冒出来。
    */
   onChainActionsChanged?: () => void;
+  /** 恢复默认布局（三栏比例 / 日志高度）；拖乱了给个回头路 */
+  onResetLayout?: () => void;
+  /** 开发者模式开关（#46） */
+  onDevModeChange?: (on: boolean) => void;
   /**
    * 写入配置；传的对象会与当前草稿合并。
    * 返回 Promise 是因为后面要紧接着通知后端重算定时器——
@@ -64,12 +72,24 @@ export function SettingsBody({
   const [appendOnly, setAppendOnly] = useState(config.backupAppendOnly);
   const [autoMinutes, setAutoMinutes] = useState(config.backupAutoMinutes);
 
+  /* 日志保留条数（#32）。草稿存的是**字符串**：输入框允许自由编辑，
+     若存数字，用户清空输入框的瞬间会被夹成 10，反而改不动。
+     提交时才 clamp —— 见 save() 里的 logMaxLines。 */
+  const [logMaxDraft, setLogMaxDraft] = useState(String(
+    clampLogMax(config.logMaxLines),
+  ));
+
   /* 目录设置（#49 #578）：config 里早有这些字段、后端也一直在读，
      但界面上从来没有入口，想改只能手改 JSON。 */
   const [createProjectDir, setCreateProjectDir] = useState(config.createProjectDir ?? '');
   const [createGroupDir, setCreateGroupDir] = useState(config.createGroupDir ?? '');
   const [groupTemplateDir, setGroupTemplateDir] = useState(config.createGroupTemplateDir ?? '');
-  const [dirPicker, setDirPicker] = useState<'cp' | 'cg' | 'gt' | null>(null);
+  /* 备份目录（#595）：与「新建」那三项同理 —— 字段与后端早都有了，
+     此前只有「一键备份」弹窗里能改，设置页一直缺入口。 */
+  const [backupDir, setBackupDir] = useState(config.backupDir ?? '');
+  const [backupProjectDir, setBackupProjectDir] = useState(config.backupProjectDir ?? '');
+  const [backupGroupDir, setBackupGroupDir] = useState(config.backupGroupDir ?? '');
+  const [dirPicker, setDirPicker] = useState<'cp' | 'cg' | 'gt' | 'bu' | 'bp' | 'bg' | null>(null);
 
   const [moveFolder, setMoveFolder] = useState(config.moveFolderOnCrossMove);
   const [moveScope, setMoveScope] = useState(config.moveFolderScope || 'defaultRootsFlatten');
@@ -110,7 +130,7 @@ export function SettingsBody({
     label: string,
     value: string,
     onChange: (v: string) => void,
-    which: 'cp' | 'cg' | 'gt',
+    which: 'cp' | 'cg' | 'gt' | 'bu' | 'bp' | 'bg',
     hint: string,
   ) => (
     <div className="fpx-field">
@@ -152,10 +172,15 @@ export function SettingsBody({
         iconAffectExplorer: iconSync,
         backupAppendOnly: appendOnly,
         backupAutoMinutes: autoMinutes,
+        // 空串一律写 null：后端按"未设置"处理，与「一键备份」弹窗的写法一致
+        backupDir: backupDir.trim() || null,
+        backupProjectDir: backupProjectDir.trim() || null,
+        backupGroupDir: backupGroupDir.trim() || null,
         moveFolderOnCrossMove: moveFolder,
         moveFolderScope: moveScope,
         mcpEnabled,
         mcpTools,
+        logMaxLines: clampLogMax(logMaxDraft),
       });
       const running = await api.backupAutoSync();
       onLog(autoMinutes === 0 ? '已停止自动备份' : `自动备份已启用（每 ${autoMinutes} 分钟）`);
@@ -204,6 +229,9 @@ export function SettingsBody({
   // 管理页自己带 Modal，嵌进来会叠成两层遮罩。
   const [managing, setManaging] = useState(false);
   const [clientsOpen, setClientsOpen] = useState(false);
+  /** 刷新检测（#48）：结果 + 加载态。默认 null = 还没点过，不显示 */
+  const [detected, setDetected] = useState<ChainClient[] | null>(null);
+  const [detecting, setDetecting] = useState(false);
 
   if (managing) {
     return (
@@ -212,9 +240,29 @@ export function SettingsBody({
         onClose={() => setManaging(false)}
         onLog={onLog}
         onChanged={onChainActionsChanged}
+        devMode={config.devMode}
       />
     );
   }
+
+  /**
+   * 重新检测已安装的客户端（#48）。
+   *
+   * 为什么需要这个按钮：检测发生在后端 `detect()`，而界面上的下拉
+   * 是打开面板时拉一次就缓存了。用户装完新客户端回来，看到的还是旧列表，
+   * 会以为"软件没认出来"。
+   */
+  const refreshDetect = async () => {
+    setDetecting(true);
+    try {
+      setDetected(await api.chainClients());
+    } catch (e) {
+      onLog(`检测失败：${errText(e)}`, true);
+      setDetected(null);
+    } finally {
+      setDetecting(false);
+    }
+  };
 
   if (clientsOpen) {
     return (
@@ -286,7 +334,19 @@ export function SettingsBody({
         <div className="p-row">
           <button className="p-btn" onClick={() => setManaging(true)}>管理连锁动作…</button>
           <button className="p-btn" onClick={() => setClientsOpen(true)}>自定义客户端…</button>
+          <button className="p-btn" disabled={detecting} onClick={() => void refreshDetect()}>
+            {detecting ? '检测中…' : '刷新检测'}
+          </button>
         </div>
+        {detected && (() => {
+          const r = summarizeDetection(detected);
+          return (
+            <div className="p-muted fpx-detect" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+              检测到 {r.count} 个{r.count > 0 && <>：{r.names}</>}
+              {r.hint && <div style={{ color: r.count === 0 ? 'var(--danger)' : 'var(--warn, #c98a00)', marginTop: 4 }}>{r.hint}</div>}
+            </div>
+          );
+        })()}
       </div>
 
       <div className="fpx-settings-sec">
@@ -353,6 +413,85 @@ export function SettingsBody({
       </div>
 
       <div className="fpx-settings-sec">
+        <h3>布局</h3>
+        <div className="fpx-field">
+          <div className="p-row">
+            <button className="p-btn" onClick={() => void onResetLayout()}>
+              恢复默认布局
+            </button>
+          </div>
+          <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+            三栏宽度与日志区高度可拖动栏间的分隔条调整，松手即记忆。
+            拖乱了就点这里回到默认比例。
+          </div>
+        </div>
+      </div>
+
+      <div className="fpx-settings-sec">
+        <h3>界面</h3>
+        <label className="fpx-check">
+          <input type="checkbox" checked={config.showShortcuts}
+            onChange={(e) => onShowShortcutsChange?.(e.target.checked)} />
+          <span className="fpx-check-box">{config.showShortcuts ? '✓' : ''}</span>
+          <span>
+            <span className="fpx-check-title">在按钮上显示快捷键</span>
+            <span className="fpx-check-sub">
+              关闭后工具栏按钮只显示文字（鼠标悬停的提示里仍会带键位）。
+              显示的键位取自「快捷键」设置的当前值，改了键位这里会跟着变。
+            </span>
+          </span>
+        </label>
+      </div>
+
+      {/* 开发者模式（#46）：默认关。它解锁的是"删除内置连锁动作"这类
+          不可逆操作，摆在显眼处反而容易被顺手打开 —— 所以放在靠后的位置。 */}
+      <div className="fpx-settings-sec">
+        <h3>高级</h3>
+        <label className="fpx-check">
+          <input type="checkbox" checked={config.devMode}
+            onChange={(e) => onDevModeChange?.(e.target.checked)} />
+          <span className="fpx-check-box">{config.devMode ? '✓' : ''}</span>
+          <span>
+            <span className="fpx-check-title">开发者模式</span>
+            <span className="fpx-check-sub">
+              开启后允许删除内置连锁动作（自由任务 / 一键审查 / 快速归并 / 快速部署）。
+              删掉后只有把动作清单清空才会重新生成，请谨慎。
+            </span>
+          </span>
+        </label>
+      </div>
+
+      <div className="fpx-settings-sec">
+        <h3>日志</h3>
+        <div className="fpx-field">
+          <label>最多保留条数</label>
+          <div className="p-row">
+            <input
+              className="p-input fpx-num"
+              type="number"
+              min={LOG_MAX_LINES_MIN}
+              max={LOG_MAX_LINES_MAX}
+              value={logMaxDraft}
+              onChange={(e) => setLogMaxDraft(e.target.value)}
+              onBlur={() => setLogMaxDraft(String(clampLogMax(logMaxDraft)))}
+            />
+            <button
+              className="p-btn"
+              title={`恢复默认（${LOG_MAX_LINES_DEFAULT} 条）`}
+              onClick={() => setLogMaxDraft(String(LOG_MAX_LINES_DEFAULT))}
+            >
+              恢复默认
+            </button>
+          </div>
+          <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+            范围 {LOG_MAX_LINES_MIN}–{LOG_MAX_LINES_MAX}，超出会自动夹回。
+            同时决定界面显示多少条与「复制全部」能拿到多少条 —— 所见即所复制。
+            日志只是本次会话的操作流水，重启即清空，调大不占磁盘。
+          </div>
+        </div>
+      </div>
+
+      <div className="fpx-settings-sec">
         <h3>备份</h3>
         <Check
           checked={appendOnly} onChange={setAppendOnly}
@@ -378,6 +517,12 @@ export function SettingsBody({
               : '设置后由后台定时执行，改动在保存时生效'}
           </div>
         </div>
+        {dirRow('备份根目录（两类共用）', backupDir, setBackupDir, 'bu',
+          '留空 = 用数据目录下的 backup/')}
+        {dirRow('项目备份目录（优先）', backupProjectDir, setBackupProjectDir, 'bp',
+          '指定后项目备份不再进根目录的子层')}
+        {dirRow('项目组备份目录（优先）', backupGroupDir, setBackupGroupDir, 'bg',
+          '指定后项目组备份不再进根目录的子层')}
         <div className="fpx-field">
           <label>备份位置</label>
           <div className="p-row">
@@ -429,6 +574,9 @@ export function SettingsBody({
           onPick={(p) => {
             if (dirPicker === 'cp') setCreateProjectDir(p);
             else if (dirPicker === 'cg') setCreateGroupDir(p);
+            else if (dirPicker === 'bu') setBackupDir(p);
+            else if (dirPicker === 'bp') setBackupProjectDir(p);
+            else if (dirPicker === 'bg') setBackupGroupDir(p);
             else setGroupTemplateDir(p);
             setDirPicker(null);
           }}

@@ -5,6 +5,10 @@ import { LinkAgentBody } from './components/LinkPanel';
 import { SettingsBody } from './components/SettingsDialog';
 import { ServiceBody } from './components/ToolsPanel';
 import type { Bootstrap, FpxConfig } from './types';
+import {
+  FEEDBACK_MAX, clearFeedback, dismissFeedback, feedbackTime, pushFeedback,
+  type FeedbackItem,
+} from './utils/feedback';
 
 /**
  * 插件设置面板（外壳「⚙ 设置」打开的那一页）。
@@ -26,6 +30,8 @@ export default function PluginSettings() {
 
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [err, setErr] = useState('');
+  /* #9 面板内的反馈条 */
+  const [fbs, setFbs] = useState<FeedbackItem[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -39,8 +45,13 @@ export default function PluginSettings() {
   useEffect(() => { void load(); }, [load]);
 
   const log = useCallback((m: string, isError = false) => {
-    // 设置页没有日志区：错误用 toast 说清楚，正常提示也一并给（否则点了没反馈）
-    ctx.toast(m, isError ? 'err' : 'ok');
+    /* #9 两处都给：
+       · 反馈条 —— 能回看，但**固定在面板顶部**，操作发生在底部时它在屏幕外
+       · toast  —— 一闪而过，但立刻出现在视线里
+       所以错误**必须**同时 toast（错了要马上知道），普通提示以反馈条为主。
+       两者分工不同，不是重复。 */
+    setFbs((prev) => pushFeedback(prev, m, isError));
+    if (isError) ctx.toast(m, 'err');
   }, [ctx]);
 
   /**
@@ -77,12 +88,48 @@ export default function PluginSettings() {
 
   return (
     <>
+      {/* #9 操作反馈条：放在**面板最顶部**且吸顶，
+          否则滚到下面操作时它就看不见了。
+          空列表不渲染（不留一块空白占位）。 */}
+      {fbs.length > 0 && (
+        <div className="fpx-feedback">
+          {fbs.map((f) => (
+            <div key={f.id} className={`fpx-feedback-row${f.isError ? ' err' : ''}`}>
+              <span className="fpx-feedback-icon">{f.isError ? '⚠' : '✓'}</span>
+              <span className="fpx-feedback-text">{f.text}</span>
+              <span className="fpx-feedback-at">{feedbackTime(f.at)}</span>
+              <button
+                type="button"
+                className="fpx-feedback-x"
+                title="关掉这条"
+                onClick={() => setFbs((prev) => dismissFeedback(prev, f.id))}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <div className="fpx-feedback-foot">
+            <span className="p-muted">
+              最近 {fbs.length} 条（最多 {FEEDBACK_MAX} 条）
+            </span>
+            <button className="p-btn" onClick={() => setFbs(clearFeedback())}>清空</button>
+          </div>
+        </div>
+      )}
+
       <div className="p-card">
         <h2>基础设置</h2>
         <SettingsBody
           api={api}
           config={boot.config}
           dataDir={boot.dataDir}
+          onShowShortcutsChange={(on) => void save({ showShortcuts: on })}
+          onDevModeChange={(on) => void save({ devMode: on })}
+          onResetLayout={() => void save({
+            colStars: null,
+            logRowHeight: null,
+            tipsPanelHeight: null,
+          })}
           onLog={log}
           onSaved={save}
         />

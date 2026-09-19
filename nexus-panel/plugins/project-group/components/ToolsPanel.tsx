@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { Api } from '../api';
 import { errText } from '../api';
+import { needConfirm, setSkipConfirm } from '../utils/confirmOnce';
+import { ChainConfirmDialog } from './ChainConfirmDialog';
 import type {
   BackupResult, CardKind, ChainAction, ChainClient, CaptureResult, EditorCandidate, FpxConfig,
 } from '../types';
@@ -219,9 +221,28 @@ export function EditorDialog({
         <button className="p-btn" onClick={() => pick('')}>恢复系统默认</button>
         <button className="p-btn" onClick={onClose}>关闭</button>
       </div>
+
+      {/* 发送前确认（#43）：**显示并可编辑实际要发出的全文**。
+          只显示模板原文（满屏 {项目名称}）等于没确认 —— 用户看到的是
+          占位符，发出去的是替换后的真值，两者对不上就失去了确认的意义。 */}
+      {confirm && (
+        <ChainConfirmDialog
+          actionName={current?.name ?? ''}
+          clientName={clients.find((c) => c.id === chosen)?.name ?? chosen}
+          text={confirm.text}
+          busy={sending}
+          onCancel={() => setConfirm(null)}
+          onConfirm={(finalText, skip) => {
+            if (skip) setSkipConfirm(true);
+            setConfirm(null);
+            void doSend(finalText);
+          }}
+        />
+      )}
     </Modal>
   );
 }
+
 
 /* ---------------------------- Agent 连锁 ---------------------------- */
 
@@ -246,6 +267,9 @@ export function ChainDialog({
   const [override, setOverride] = useState('');
   const [sending, setSending] = useState(false);
   const [tip, setTip] = useState('');
+  /** 发送前确认（#43）：null = 不弹；否则是要确认的指令全文 */
+  const [confirm, setConfirm] = useState<{ text: string; skip: boolean } | null>(null);
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     api.chainClients().then(setClients).catch((e) => onLog(errText(e), true));
@@ -261,12 +285,12 @@ export function ChainDialog({
   // 本次实际使用的客户端：手动选择优先，其次动作专属，最后全局默认
   const chosen = client || current?.client || config.chainClient || 'opencode';
 
-  const send = async () => {
-    if (!target) { onLog('请先选中一个项目或项目组', true); return; }
+  /** 真正发出去。confirmText 非空 = 用户在确认框里编辑后的最终文本 */
+  const doSend = async (finalText: string) => {
     setSending(true);
     setTip('');
     try {
-      const r = await api.chainSendAction(actionId, kind, target, override || null, chosen);
+      const r = await api.chainSendAction(actionId, kind, target, finalText || null, chosen);
       setTip(r.message);
       onLog(r.message, !r.ok);
       // 本次用的客户端写回全局默认，下次开就是它（与旧行为一致）
@@ -278,6 +302,28 @@ export function ChainDialog({
     }
   };
 
+  const send = async () => {
+    if (!target) { onLog('请先选中一个项目或项目组', true); return; }
+    /* 已经勾了"本次不再提示"就直接发。
+       注意：勾选项在确认框里，这里读的是**上一次**的选择 —— 首次必然要确认一次，
+       这正是它的语义（看过一次才谈得上"不用再看了"）。 */
+    if (!needConfirm()) { await doSend(override); return; }
+    setConfirming(true);
+    try {
+      /* 预览走后端，与真正发送用同一套解析（resolve_prompt）：
+         两边各写一套的话，"看到的"和"发出的"迟早会漂。 */
+      const text = override.trim()
+        || await api.chainPreview(actionId, kind, target);
+      setConfirm({ text, skip: false });
+    } catch (e) {
+      // 预览失败不该拦住发送：退回原来的"直接发"，并把原因记进日志
+      onLog(`指令预览失败，直接发送：${errText(e)}`, true);
+      await doSend(override);
+    } finally {
+      setConfirming(false);
+    }
+  };
+
   return (
     <Modal
       title="发送到 AI 客户端"
@@ -286,8 +332,8 @@ export function ChainDialog({
       footer={
         <>
           <button className="p-btn" onClick={onClose}>关闭</button>
-          <button className="p-btn primary" disabled={sending || !current} onClick={send}>
-            {sending ? '发送中…' : `发送「${current?.name ?? ''}」`}
+          <button className="p-btn primary" disabled={sending || confirming || !current} onClick={send}>
+            {sending ? '发送中…' : confirming ? '准备中…' : `发送「${current?.name ?? ''}」`}
           </button>
         </>
       }

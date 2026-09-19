@@ -261,6 +261,12 @@ pub(crate) fn core_rename_folder(
     // 期间不能被别的写入者（MCP 线程 / 其它命令）插进来，否则两边各自基于
     // 旧快照写回，后写的会把先写的整份覆盖。
     store::with_config(dir, |cfg| {
+        /* 抑制监控器（#411）：接下来要改名，而这个目录可能正被监控着。
+           不抑制的话，监控线程下一次轮询会把它当成"有人动了受保护的文件夹"，
+           弹一堆告警 —— 用户改个名就被自己吓一次。
+           **必须在动手之前**登记，事后再补就漏掉了中间那次轮询。
+           新旧路径都要登记：抑制键是路径，改名后监控的是新路径。 */
+        watch::suppress(&[path.to_string(), new_path.clone()]);
         // 摘锁后才能 rename：受 ACL 保护的目录 rename 会被系统拒绝
         let _guard = LockGuard::new(path, store::lock_of(cfg, path));
         // 跨卷时 rename 必然失败，回退到"复制 + 删除"；
@@ -301,19 +307,24 @@ pub(crate) fn core_rename_folder(
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        let mut records = store::load_records(dir);
-        let mut rec_hits = 0usize;
-        for r in records.iter_mut() {
-            if store::normalize_key(&r.project) == old_key {
-                r.project = new_path.clone();
-                rec_hits += 1;
+        // 走 with_records：与 core_create_link / core_remove_link 保持一致。
+        // 手写的 load → 改 → save 拿不到跨进程锁，AI 侧（--mcp 实例）若同时改账本，
+        // 两边各自的整份写回会互相覆盖。
+        // 这里嵌套在 with_config 内，acquire_data_lock 支持重入，复用外层已持有的锁。
+        let rec_hits = store::with_records(dir, |records| {
+            let mut hits = 0usize;
+            for r in records.iter_mut() {
+                if store::normalize_key(&r.project) == old_key {
+                    r.project = new_path.clone();
+                    hits += 1;
+                }
+                if store::normalize_key(&r.lib) == old_key {
+                    r.lib = new_path.clone();
+                    if !new_name.is_empty() { r.group = new_name.clone(); }
+                }
             }
-            if store::normalize_key(&r.lib) == old_key {
-                r.lib = new_path.clone();
-                if !new_name.is_empty() { r.group = new_name.clone(); }
-            }
-        }
-        store::save_records(dir, &records)?;
+            Ok(hits)
+        })?;
 
         Ok(model::RenameResult {
             snapshot: snapshot(dir, cfg),
@@ -398,13 +409,54 @@ fn core_move_folder(
         ));
     }
 
-    store::with_config(dir, |cfg| {
-        // 与改名同理：先摘锁再移动，顺序反过来会被系统拒绝
-        let _guard = LockGuard::new(path, store::lock_of(cfg, path));
-        std::fs::rename(old, &new_path).map_err(|e| format!("移动文件夹失败：{e}"))?;
-        drop(_guard);
+    /* 搬家拆成两段，中间不持跨进程锁。
+       ------------------------------------------------------------------
+       junction 的删与建是实打实的磁盘 IO：项目组被十个项目引用就是二十次，
+       加上 rename，整段做下来是秒级。若整段塞进 with_config，跨进程锁会被
+       占住好几秒，而 `--mcp` 拉起的那个实例会因此等锁超时报错
+       （本文件里 fpx_list_editors 那段注释讲过同一个道理）。
 
-        // ---- 同步所有以旧路径为键的登记（与改名完全一致）----
+       所以：耗时 IO 在外面做，只有"读 → 改 → 写"那一小段进临界区。 */
+
+    // ---- 阶段一：摘 ACL 锁 + 物理移动（不持数据锁）----
+    // lock_of 只需要读配置判断受保护与否，用只读快照即可，不必进事务。
+    let cfg0 = store::load_config(dir);
+    // 抑制监控器（#411），理由同上；源与目标都登记
+    watch::suppress(&[path.to_string(), new_path.clone()]);
+    let _guard = LockGuard::new(path, store::lock_of(&cfg0, path));
+    std::fs::rename(old, &new_path).map_err(|e| format!("移动文件夹失败：{e}"))?;
+    drop(_guard);
+
+    // ---- 阶段二：junction 重建（不持数据锁）----
+    // 项目组搬家：所有指向旧路径的 junction 全断了，必须逐个重建到新路径
+    // （WPF RelocateCard / cli.rs 迁移脚本都是这么做的）。
+    // 项目搬家则无需重建 —— junction 是项目目录的子项，随目录一起挪过去了。
+    //
+    // 只读一份账本来指路（谁引用了它）；写回在阶段三的事务里做。
+    let guide = store::load_records(dir);
+    let mut relinked = 0usize;
+    let mut relink_errors: Vec<String> = Vec::new();
+
+    // 只有项目组搬家需要重建（项目搬家时 lib 不指向它）
+    if kind_is_group {
+        for r in guide.iter() {
+            if store::normalize_key(&r.lib) != old_key { continue; }
+            if !std::path::Path::new(&r.project).is_dir() { continue; }
+            let names = r.link_names();
+            if names.is_empty() { continue; }
+            // 先删旧的（可能已断），再建指向新路径的。
+            // 失败不中断：记录下来一并回传，让前端提示用户手动复查。
+            let _ = junction::remove(&r.project, &names);
+            match junction::create(&r.project, &new_path, &names) {
+                Ok(_) => relinked += 1,
+                Err(e) => relink_errors.push(format!("{}：{e}", r.project)),
+            }
+        }
+    }
+    drop(guide);
+
+    // ---- 阶段三：事务内同步 config 与账本（临界区只有这段）----
+    let (snap, tab_hits, rec_hits) = store::with_config(dir, |cfg| {
         let mut tab_hits = 0usize;
         for list in [&mut cfg.project_tabs, &mut cfg.group_tabs] {
             for t in list.iter_mut() {
@@ -425,52 +477,33 @@ fn core_move_folder(
             }
         }
 
-        // ---- 链接记录 + junction 重建 ----
-        // 项目组搬家：所有指向旧路径的 junction 全断了，必须逐个重建到新路径
-        // （WPF RelocateCard / cli.rs 迁移脚本都是这么做的）。
-        // 项目搬家则无需重建 —— junction 是项目目录的子项，随目录一起挪过去了。
-        let mut records = store::load_records(dir);
-        let mut rec_hits = 0usize;
-        let mut relinked = 0usize;
-        let mut relink_errors: Vec<String> = Vec::new();
-
-        for r in records.iter_mut() {
-            if store::normalize_key(&r.project) == old_key {
-                r.project = new_path.clone();
-                rec_hits += 1;
-            }
-            if store::normalize_key(&r.lib) == old_key {
-                r.lib = new_path.clone();
-            }
-        }
-
-        // 只有项目组搬家需要重建（项目搬家时 lib 不指向它）
-        if kind_is_group {
-            for r in records.iter() {
-                if store::normalize_key(&r.lib) != old_key { continue; }
-                if !std::path::Path::new(&r.project).is_dir() { continue; }
-                let names = r.link_names();
-                if names.is_empty() { continue; }
-                // 先删旧的（可能已断），再建指向新路径的。
-                // 失败不中断：记录下来一并回传，让前端提示用户手动复查。
-                let _ = junction::remove(&r.project, &names);
-                match junction::create(&r.project, &new_path, &names) {
-                    Ok(_) => relinked += 1,
-                    Err(e) => relink_errors.push(format!("{}：{e}", r.project)),
+        // 账本同样走事务，理由与改名那条注释一致：手写 load → 改 → save
+        // 拿不到跨进程锁，AI 侧的改动会被这里的整份写回盖掉。
+        // 嵌套在 with_config 内，acquire_data_lock 支持重入，复用外层已持有的锁。
+        let rec_hits = store::with_records(dir, |records| {
+            let mut hits = 0usize;
+            for r in records.iter_mut() {
+                if store::normalize_key(&r.project) == old_key {
+                    r.project = new_path.clone();
+                    hits += 1;
+                }
+                if store::normalize_key(&r.lib) == old_key {
+                    r.lib = new_path.clone();
                 }
             }
-        }
+            Ok(hits)
+        })?;
 
-        store::save_records(dir, &records)?;
+        Ok((snapshot(dir, cfg), tab_hits, rec_hits))
+    })?;
 
-        Ok(model::RenameResult {
-            snapshot: snapshot(dir, cfg),
-            new_path: new_path.clone(),
-            tab_hits,
-            rec_hits,
-            relinked,
-            relink_errors,
-        })
+    Ok(model::RenameResult {
+        snapshot: snap,
+        new_path: new_path.clone(),
+        tab_hits,
+        rec_hits,
+        relinked,
+        relink_errors,
     })
 }
 
@@ -526,12 +559,15 @@ pub(crate) fn core_clear_invalid(dir: &std::path::Path) -> Result<model::ClearRe
       }
 
       // 链接记录：项目目录没了，记录自然失效，一并清掉
-      let mut records = store::load_records(dir);
-      let rec_before = records.len();
-      records.retain(|r| std::path::Path::new(&r.project).exists());
-      let rec_hits = rec_before - records.len();
-
-      store::save_records(dir, &records)?;
+      //
+      // 走 with_records 而不是手写的 load → 改 → save：后者只在 save 那一刻
+      // 碰得到磁盘，挡不住"过期快照覆盖"——MCP 侧若在此期间新增/删除了链接，
+      // 这里的整份写回会把它的改动盖掉，且没有任何提示。
+      let rec_hits = store::with_records(dir, |records| {
+          let before = records.len();
+          records.retain(|r| std::path::Path::new(&r.project).exists());
+          Ok(before - records.len())
+      })?;
 
       Ok(model::ClearResult {
           snapshot: snapshot(dir, cfg),
@@ -555,6 +591,10 @@ pub(crate) fn core_save_config(dir: &std::path::Path, config: &FpxConfig) -> Res
         let cache = std::mem::take(&mut cfg.editor_pick_cache);
         *cfg = config.clone();
         cfg.editor_pick_cache = cache;   // 以磁盘值为准，不受前端草稿影响
+        /* 版本号一律改写为**当前**的，不沿用前端传来的值。
+           前端拿到的快照可能是旧版本（比如刚从 v1 配置读出来还没写回），
+           照抄就会把"未迁移"这个状态一直传下去。 */
+        cfg.schema_version = model::CURRENT_SCHEMA;
         Ok(snapshot(dir, cfg))
     })
 }
@@ -642,6 +682,7 @@ pub(crate) fn core_set_lock(
     path: &str,
     deny_delete: bool,
     deny_write: bool,
+    account_only: bool,
 ) -> Result<Snapshot, String> {
     /* ACL 是写操作：给系统目录设防删/防写，等于把系统锁死一半。
        这一条不加会是什么后果 —— 用户误选了 C:\Windows 加锁，
@@ -649,15 +690,32 @@ pub(crate) fn core_set_lock(
     guard::reject_forbidden_raw(path)?;
     ensure_path_allowed(dir, path)?;
     store::with_config(dir, |cfg| {
-        // 先落 ACL 再记配置：apply_lock 失败时闭包返回 Err，配置不会落盘
-        sys::apply_lock(path, deny_delete, deny_write)?;
         let key = store::normalize_key(path);
+        let prev = cfg.locks.iter()
+            .find(|l| store::normalize_key(&l.path) == key)
+            .map(|l| (l.deny_delete, l.deny_write));
+
+        /*
+         * **账面固定不落 ACL**（#21）：只登记，不碰系统权限。
+         *
+         * 但**从 ACL 切回账面固定时，原来那条 ACL 必须真的撤掉** ——
+         * 否则系统会拦着删/写，界面却显示"仅固定、没保护"，
+         * 用户照着界面去删，撞上一条看不见的权限。
+         * 这正是"两件事"最容易出错的接缝处。
+         */
+        let want_acl = deny_delete || deny_write;
+        if want_acl || prev.unwrap_or((false, false)).0 || prev.unwrap_or((false, false)).1 {
+            // 先落 ACL 再记配置：apply_lock 失败时闭包返回 Err，配置不会落盘
+            sys::apply_lock(path, deny_delete, deny_write)?;
+        }
+
         cfg.locks.retain(|l| store::normalize_key(&l.path) != key);
-        if deny_delete || deny_write {
+        if want_acl || account_only {
             cfg.locks.push(model::LockItem {
                 path: path.to_string(),
                 deny_delete,
                 deny_write,
+                account_only,
             });
         }
         Ok(snapshot(dir, cfg))
@@ -695,7 +753,11 @@ pub(crate) fn core_save_style(
 
     // desktop.ini 是 Windows 资源管理器专属机制，其它平台只记在配置里（界面内仍生效）
     if cfg.icon_affect_explorer && cfg!(windows) {
-        sys::apply_icon(path, &icon)?;
+        /* #427：写 desktop.ini 就是往这个目录里写点。
+           目录自己被设了「防写入」的话，这次写入会被**自己的锁**拦掉 ——
+           用户设了保护之后就再也换不了图标，且报错信息完全指向不了原因。
+           所以要放进临时摘锁窗口。 */
+        with_unlock(dir, path, || sys::apply_icon(path, &icon))?;
     }
 
     Ok(snapshot(dir, cfg))
@@ -751,6 +813,8 @@ pub fn fpx_bootstrap(app: AppHandle, state: State<'_, FpxState>) -> Result<Boots
     let records = store::load_records(&dir);
     let names = junction::enabled_names(&cfg);
     Ok(Bootstrap {
+        // 体检放在构造里算一次：启动只读一处，不值得单独暴露成命令
+        config_notices: store::config_issues(&dir),
         data_dir: dir.to_string_lossy().to_string(),
         platform: std::env::consts::OS.to_string(),
         config: cfg.clone(),
@@ -919,9 +983,12 @@ pub fn fpx_set_lock(
     path: String,
     deny_delete: bool,
     deny_write: bool,
+    account_only: Option<bool>,
 ) -> Result<Snapshot, String> {
     let dir = store::data_dir(&app, &state)?;
-    core_set_lock(&dir, &path, deny_delete, deny_write)
+    /* Option 而非 bool：MCP 等旧调用方不带这个参数，
+       用 Option 才不会让它们直接报错（默认 false = 不固定）。 */
+    core_set_lock(&dir, &path, deny_delete, deny_write, account_only.unwrap_or(false))
 }
 
 /// 一次性保存卡片外观（图标 + 标签色），避免前端分两次写入互相覆盖。
@@ -964,7 +1031,8 @@ pub fn fpx_set_icon(
         // desktop.ini 是 Windows 资源管理器专属机制，其它平台只记在配置里（界面内仍生效）
         let mut warn: Option<String> = None;
         if affect && cfg!(windows) {
-            if let Err(e) = sys::apply_icon(&path, &icon) {
+            // #427：同 core_save_style，写 desktop.ini 要进临时摘锁窗口
+            if let Err(e) = with_unlock(&dir, &path, || sys::apply_icon(&path, &icon)) {
                 warn = Some(e);
             }
         }
@@ -1195,6 +1263,86 @@ pub fn fpx_set_editor(
         cfg.edit_tool_path = if p.is_empty() { None } else { Some(p.clone()) };
         Ok(snapshot(&dir, cfg))
     })
+}
+
+/// 读一个文本文件内容（#33：供内置 Markdown 编辑器载入）。
+///
+/// 为什么单独加一条、而不是复用已有的读取：已有的内容读取都假设
+/// "要解析成条目清单"，而编辑器要的是**原始文本** —— 任何加工
+/// （补 BOM、裁剪空行）都会让"打开→保存"悄悄改掉文件。
+///
+/// 只收文本文件：二进制文件读进来是乱码，编辑后再写回等于损坏它。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_read_text(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+    path: String,
+) -> Result<String, String> {
+    let dir = store::data_dir(&app, &state)?;
+    let cfg = store::load_config(&dir);
+    ensure_path_in(&dir, &cfg, &path)?;
+    // 目录 → 取其下的 SKILL.md（与 fpx_edit_file 同一个解析规则，别两处各写一套）
+    let target = if std::path::Path::new(&path).is_dir() {
+        content::skill_md_of(&path).unwrap_or(path.clone())
+    } else {
+        path.clone()
+    };
+    let bytes = std::fs::read(&target).map_err(|e| format!("读取失败: {e}"))?;
+    if bytes.contains(&0u8) {
+        return Err("不是文本文件（含二进制内容），已拒绝打开".to_string());
+    }
+    /* BOM 要剥掉再交给编辑器，否则用户看到开头一个不可见字符，
+       且保存时会被当成内容写回去。剥的是**副本**，落盘仍按原样判断。 */
+    let text = String::from_utf8(bytes).map_err(|_| "不是 UTF-8 文本，已拒绝打开".to_string())?;
+    Ok(text.strip_prefix('\u{feff}').unwrap_or(&text).to_string())
+}
+
+/// 写回文本文件（#33：内置 Markdown 编辑器保存）。
+///
+/// **原子写**：先写同目录临时文件再 rename。理由与配置写入一样 ——
+/// 写到一半崩溃会把文件变成半截，而这里写的是用户的 skill / rule 正文，
+/// 代价不比丢配置小。
+///
+/// 不顺带改编码：读进来是什么就写回什么（UTF-8 无 BOM），
+/// 自作主张补 BOM 会让某些工具把它们当不同文件。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_write_text(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+    path: String,
+    text: String,
+) -> Result<(), String> {
+    let dir = store::data_dir(&app, &state)?;
+    let cfg = store::load_config(&dir);
+    // 写操作比读更该收口：读错了只是看到乱码，写错了是损坏用户文件
+    ensure_path_in(&dir, &cfg, &path)?;
+    let target = if std::path::Path::new(&path).is_dir() {
+        content::skill_md_of(&path).unwrap_or(path.clone())
+    } else {
+        path.clone()
+    };
+    if !std::path::Path::new(&target).is_file() {
+        return Err(format!("只能写回已存在的文件，不能新建: {}", target));
+    }
+    let parent = std::path::Path::new(&target).parent().unwrap_or(std::path::Path::new("."));
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = parent.join(format!(
+        ".{}.{}.tmp",
+        std::path::Path::new(&target).file_name().map(|s| s.to_string_lossy()).unwrap_or_default(),
+        stamp
+    ));
+    /* #427：写 SKILL.md / rule 正文同样是往受保护目录里写点。
+       保护的是 `<组>/skill/` 而要写 `<组>/skill/foo/SKILL.md` 时，
+       ACL 靠继承生效，写入会被自己拦住 —— 这正是需要 `with_unlock`
+       按**祖先**摘锁的原因（精确相等查不到这一条）。 */
+    with_unlock(&dir, &target, || {
+        std::fs::write(&tmp, text.as_bytes()).map_err(|e| format!("写入临时文件失败: {e}"))?;
+        fsutil::replace_file(&tmp, std::path::Path::new(&target))
+    })
+        .map_err(|e| format!("写回失败: {e}"))
 }
 
 /// 用配置里的编辑器打开文件（未配置则退回系统默认打开方式）。
@@ -1489,6 +1637,34 @@ pub fn fpx_chain_send_action(
     Ok(chain::send(&client, &path, &text, &cfg.custom_chain_clients))
 }
 
+/// 预览某动作将要发出的**指令全文**（#43 发送前确认弹窗用）。
+///
+/// 为什么要有这一条：占位符替换发生在后端（`fill_all` / `resolve_prompt`），
+/// 前端拿不到"实际会发出去的那段文字"。没有它，确认弹窗就只能显示模板原文
+/// —— 满屏 `{项目名称}` 让用户去脑补替换结果，等于没确认。
+///
+/// 与 `fpx_chain_send_action` 用**同一套**解析（resolve_prompt），
+/// 保证"看到的"与"发出的"是同一份。两边各写一套迟早会漂。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_chain_preview(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+    action_id: String,
+    kind: String,
+    path: String,
+) -> Result<String, String> {
+    let dir = store::data_dir(&app, &state)?;
+    let mut cfg = store::load_config(&dir);
+    let list = chain::ensure_actions(&mut cfg);
+    let item = chain::find(&list, &action_id)
+        .ok_or_else(|| format!("找不到连锁动作：{action_id}"))?;
+    // path 只用于占位符替换，不落到磁盘 —— 但仍要在允许范围内，
+    // 否则可以靠"预览"把任意路径的内容读进指令里（略过路径收口）。
+    guard::must_be_under(&path, &content_roots(&dir, &cfg))?;
+    let dir_str = dir.to_string_lossy().to_string();
+    Ok(chain::resolve_prompt(item, &kind, &path, &dir_str))
+}
+
 /* ---------------------------- 截图 ---------------------------- */
 
 /// 截取屏幕，保存到数据目录 shots/ 下。
@@ -1628,6 +1804,93 @@ impl Drop for LockGuard {
         if let Err(e) = sys::apply_lock(&self.path, self.deny_delete, self.deny_write) {
             eprintln!("[fpx] 恢复 ACL 保护失败: {e}");
         }
+    }
+}
+
+/**
+ * 在「临时摘锁窗口」内执行一次写入（`#427`）。
+ *
+ * **为什么要它**：防写入档的 ACL 会把**工具自己**也拦在外面 ——
+ * 写 SKILL.md、写 desktop.ini 都是往受保护目录里写点，于是操作失败，
+ * 用户看到的是"我明明是自己设的锁，却连自己也改不动了"。
+ *
+ * 与 `LockGuard` 的区别：
+ *   · `LockGuard` 摘的是**精确相等**的那一条，用于 rename / 移动这种
+ *     "路径本身就是锁的路径"的场景；
+ *   · `with_unlock` 摘的是**所有覆盖该路径的祖先锁**（见 `locks_covering`），
+ *     用于往受保护目录的**子层级**里写文件的场景。
+ *
+ * 两个必须守住的点：
+ *
+ * 1. **窗口要小**。f 里只能放毫秒级的文件写入，不能放秒级 IO ——
+ *    期间目录是**无保护**的，任何第三方（包括 AI 会话进程）都能写进去。
+ *
+ * 2. **恢复失败绝不静默**。摘了锁没恢复 = 目录**永久**失去保护，
+ *    这比写入失败严重得多。所以恢复失败时返回 `Err`，
+ *    且错误信息明说"内容已写入" —— 否则用户会以为写入没成功，
+ *    然后重试一次，造成重复写入。
+ */
+pub(crate) fn with_unlock<T, F>(
+    dir: &std::path::Path,
+    path: &str,
+    f: F,
+) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String>,
+{
+    let cfg = store::load_config(dir);
+    let covering = store::locks_covering(&cfg, path);
+    // 没有任何保护时直接执行，连一次 icacls 都不跑（省一次外部进程）
+    if covering.is_empty() {
+        return f();
+    }
+
+    /* 注意是 `model::` 不是 `super::model::`：本文件就是 fpx/mod.rs，
+       它的 super 是 crate 根，那里没有 model。store.rs 里才用 super::model。 */
+    let mut taken: Vec<model::LockItem> = Vec::new();
+    for l in covering {
+        match sys::apply_lock(&l.path, false, false) {
+            Ok(_) => taken.push(model::LockItem {
+                path: l.path.clone(),
+                deny_delete: l.deny_delete,
+                deny_write: l.deny_write,
+            }),
+            Err(e) => {
+                // 摘不下来：把已经摘掉的先恢复回去，再让写入按原状尝试 ——
+                // 这样失败原因是真实的（"没有权限"），而不是"我们弄丢了一半锁"
+                for d in taken.iter().rev() {
+                    let _ = sys::apply_lock(&d.path, d.deny_delete, d.deny_write);
+                }
+                return Err(format!("临时摘锁失败，已放弃写入（保护未被改动）: {e}"));
+            }
+        }
+    }
+
+    let r = f();
+
+    // 无论 f 成功与否都必须恢复：否则一次失败的写入也会让目录失去保护
+    let mut errs: Vec<String> = Vec::new();
+    for d in taken.iter().rev() {
+        let mut ok = sys::apply_lock(&d.path, d.deny_delete, d.deny_write);
+        if ok.is_err() {
+            // 重试一次：icacls 偶尔会因资源管理器持有句柄而短暂失败
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            ok = sys::apply_lock(&d.path, d.deny_delete, d.deny_write);
+        }
+        if let Err(e) = ok {
+            errs.push(format!("{}（{e}）", d.path));
+        }
+    }
+
+    match (r, errs.is_empty()) {
+        (Ok(v), true) => Ok(v),
+        (Ok(v), false) => Err(format!(
+            "内容已写入，但 ACL 保护未能恢复：{}。请到「保护」里重新加锁，否则该目录当前不受保护。",
+            errs.join("、")
+        )),
+        // 写入本身就失败：恢复情况一并说明，但主因是写入失败
+        (Err(e), true) => Err(e),
+        (Err(e), false) => Err(format!("{e}；且 ACL 保护未能恢复：{}", errs.join("、"))),
     }
 }
 
