@@ -1,13 +1,13 @@
 # 可拖用的东西 — 统一索引
 
 > 自动生成，**不要手改**。改代码后跑：
-> `bash scripts/build-tests.sh && node scripts/gen-node-docs.mjs`
+> `bash scripts/run-tests.sh && node scripts/gen-node-docs.mjs`
 
 这是**第一层**。收录五类能拖出来用的东西：
 
 | 类别 | 装的是什么 | 入口 |
 |---|---|---|
-| **节点** | 一个积木（25 种） | 下面按分类的表 |
+| **节点** | 一个积木（39 种） | 下面按分类的表 |
 | **参数卡片** | 一组参数（如某个仓库地址） | [卡片](#参数卡片)（4 组） |
 | **模块** | 多个节点编成的组合 | [module](reuse/module.md) |
 | **自定义预设** | 一个配好的节点 | [custom-preset](reuse/custom-preset.md) |
@@ -39,6 +39,9 @@
 
 | kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
+| [canvasIn](nodes/canvasIn.params.md) | any（透传上游） | any | — | 标注这张画布的入口 | `nodes/defs/canvasIn.ts` |
+| [canvasOut](nodes/canvasOut.params.md) | any（透传上游） | any | — | 标注这张画布的出口 | `nodes/defs/canvasOut.ts` |
+| [canvasRef](nodes/canvasRef.params.md) | any（透传上游） | any | — | 把另一张画布当一个节点用 | `nodes/defs/canvasRef.ts` |
 | [condition](nodes/condition.params.md) | mark（状态标记） | any | — | 分支标记文本（如「[条件] 走「是」」）—— 作用是分流，不转换数据 | `nodes/defs/condition.ts` |
 | [loop](nodes/loop.params.md) | any（透传上游） | any | — | 透传（循环体每轮一次，done 出口汇总一次） | `nodes/defs/loop.ts` |
 | [parallel](nodes/parallel.params.md) | any（透传上游） | any | — | 透传 | `nodes/defs/parallel.ts` |
@@ -47,11 +50,32 @@
 
 | kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
+| [ask](nodes/ask.params.md) | text（文本） | any | — | 停下来等人填内容 | `nodes/defs/ask.ts` |
 | [gate](nodes/gate.params.md) | any（透传上游） | any | — | 满足条件才放行下游 | `nodes/defs/gate.tsx` |
 | [join](nodes/join.params.md) | text（文本） | any | — | 等所有输入都到齐了才放行下游 | `nodes/defs/join.tsx` |
 | [retry](nodes/retry.params.md) | any（透传上游） | any | — | 上游内容不合格就重跑它 | `nodes/defs/retry.tsx` |
+| [stop](nodes/stop.params.md) | any（透传上游） | any | — | 到此为止，不再往下跑 | `nodes/defs/stop.ts` |
 | [throttle](nodes/throttle.params.md) | any（透传上游） | any | — | 控制放行的节奏 | `nodes/defs/throttle.tsx` |
 | [timeout](nodes/timeout.params.md) | any（透传上游） | any | — | 整条流程超预算就断在这里 | `nodes/defs/timeout.tsx` |
+
+## 运算
+
+| kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
+|---|---|---|---|---|---|
+| [compare](nodes/compare.params.md) | text（文本） | any | — | 比大小、判断是否包含 | `nodes/defs/compare.ts` |
+| [math](nodes/math.params.md) | text（文本） | any | — | 加减乘除、取整、取最值 | `nodes/defs/math.ts` |
+| [random](nodes/random.params.md) | text（文本） | any | — | 随机数、随机选一个、打乱 | `nodes/defs/random.ts` |
+| [text](nodes/text.params.md) | text（文本） | any | — | 拼接、替换、截取、大小写 | `nodes/defs/text.ts` |
+| [var](nodes/var.params.md) | any（透传上游） | any | — | 存一个值，之后按名字取 | `nodes/defs/var.ts` |
+
+## 表格
+
+| kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
+|---|---|---|---|---|---|
+| [agg](nodes/agg.params.md) | text（文本） | table | — | 对一列求和 / 平均 / 最大 | `nodes/defs/agg.ts` |
+| [derive](nodes/derive.params.md) | table（table） | table | — | 对每一行套公式，算出新的一列 | `nodes/defs/derive.ts` |
+| [filter](nodes/filter.params.md) | table（table） | table | — | 只保留满足条件的行 | `nodes/defs/filter.ts` |
+| [tableRead](nodes/tableRead.params.md) | table（table） | none | — | 读一个 CSV / TSV 表格 | `nodes/defs/tableRead.ts` |
 
 ## 文件与数据
 
