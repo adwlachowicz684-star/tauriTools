@@ -20,8 +20,9 @@ import ExternalCard from './ExternalCard';
 import FilesCard from './FilesCard';
 import WindowCard from './WindowCard';
 import { prompt } from '../../js/dialog.js';
+import { SHELL_SHORTCUT_SPECS, shellComboSet, normCombo } from '../../js/shell-shortcuts.js';
 
-type TabKey = 'theme' | 'plugins' | 'external' | 'files' | 'window' | 'about';
+type TabKey = 'theme' | 'plugins' | 'external' | 'files' | 'shortcuts' | 'window' | 'about';
 
 /**
  * 取外壳全局单例：本设置页是 iframe 插件，开启严格沙箱后 window.__NEXUS__
@@ -43,6 +44,7 @@ const TABS: [TabKey, string][] = [
   ['plugins', '插件'],
   ['external', '外链'],
   ['files', '文件'],
+  ['shortcuts', '快捷键'],
   ['window', '窗口'],
   ['about', '关于'],
 ];
@@ -148,6 +150,193 @@ function StyleAuditBadge({ audit, open, onToggle }: {
           )}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * 插件管理里的一行。
+ *
+ * 抽成组件是因为插件管理要**按 app / service 分两区渲染**，
+ * 两区用的是同一套行渲染逻辑 —— 复制两份的话，
+ * 将来给行加一个按钮就只会加在一处，另一区悄悄少一个。
+ */
+function PluginRow({ p, audit, auditOpen, onToggleAudit, onOverride, onRemove }: {
+  p: PluginManifest;
+  audit: any;
+  auditOpen: boolean;
+  onToggleAudit: () => void;
+  onOverride: (v: string) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div
+      className="p-row"
+      style={{
+        padding: '12px 14px', marginTop: 'var(--sp-5, 10px)', borderRadius: 'var(--r)',
+        background: 'var(--surface-sunk)',
+        boxShadow: 'inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light)',
+      }}
+    >
+      <span style={{ fontSize: 'var(--fs-15, 15px)', width: 24, textAlign: 'center' }}>{p.icon ?? '◌'}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 'var(--fs-13, 13px)' }}>{p.name}</div>
+        <div className="p-mono p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>{p.entry}</div>
+      </div>
+      <span className="p-tag">{p.type === 'iframe' ? '沙箱' : '同页'}</span>
+      <StyleAuditBadge audit={audit} open={auditOpen} onToggle={onToggleAudit} />
+      <select
+        className="p-input"
+        style={{ width: 130, height: 30, fontSize: 'var(--fs-12, 12px)', padding: '0 8px' }}
+        value={getPluginOverride(p.id) ?? ''}
+        onChange={(e) => { onOverride(e.target.value || null); }}
+      >
+        <option value="">跟随全局</option>
+        {PLUGIN_THEMES.map((t) => (
+          <option key={t.value} value={t.value}>{t.label}</option>
+        ))}
+      </select>
+      {p.builtin ? (
+        <span className="p-tag">内置</span>
+      ) : (
+        <button
+          className="p-btn danger"
+          style={{ height: 30, padding: '0 10px', fontSize: 'var(--fs-12, 12px)' }}
+          onClick={onRemove}
+        >
+          移除
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 快捷键总览。
+ *
+ * 分成两类的理由：**来源不同，生效范围也不同**。
+ *   · 外壳快捷键 —— 外壳自己装，任何界面下都生效
+ *   · 全局快捷键 —— 插件通过 ctx.registerShortcut 注册，插件未挂载也可能生效
+ *
+ * 第三类（插件**内部**快捷键，如 project-group 那 20 条）这里**列不出来**：
+ * 它们由插件自己在激活时绑定、只在插件内生效，外壳无从得知。
+ * 必须在页面上说明这件事 —— 否则用户配了快捷键却在这里看不到，
+ * 只会以为页面漏了，不会想到要去插件自己的设置里找。
+ *
+ * 撞车是这页真正有价值的部分：插件注册的 accel 若与外壳键相同，
+ * 两边都会 window.addEventListener('keydown')，谁先注册谁先跑，
+ * 而插件那侧会 preventDefault + stopPropagation —— 外壳的键就**静默失效**。
+ * 用户只会觉得"这个快捷键有时候不管用"，很难联想到是撞车。
+ */
+function ShortcutsCard({ unknown }: { unknown: boolean }) {
+  const shell = shellGlobal();
+  const raw = (typeof shell?.getShortcuts === 'function')
+    ? (shell.getShortcuts() as Record<string, any>) : null;
+  const entries = raw ? Object.entries(raw) : [];
+  const taken = shellComboSet();
+
+  const clashes = entries.filter(([accel]) => taken.has(normCombo(accel)));
+  /* 撞车集合**只在这里算一次**：行内再各判一遍的话，
+     两处判据迟早写得不一样（一处展开 mod、一处不展开），
+     于是列表里标红了而计数说 0 处 —— 这种自相矛盾比漏判更难发现。 */
+  const clashSet = new Set(clashes.map(([accel]) => accel));
+  /* 插件之间撞车：同一个 accel 出现多次（Map 已按 pluginId+accel 去重，
+     所以这里指的是**不同插件**用了同一个键） */
+  const byNorm = new Map<string, string[]>();
+  for (const [accel, v] of entries) {
+    const n = normCombo(accel);
+    byNorm.set(n, [...(byNorm.get(n) ?? []), v?.pluginId ?? '?']);
+  }
+  const interClash = [...byNorm.entries()].filter(([, ids]) => ids.length > 1);
+
+  return (
+    <div className="p-card">
+      <h2>快捷键</h2>
+
+      <div style={{ fontSize: 'var(--fs-12, 12px)', fontWeight: 600, marginTop: 'var(--sp-5, 10px)' }}>
+        外壳快捷键 · {SHELL_SHORTCUT_SPECS.length}
+      </div>
+      <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: '2px' }}>
+        由外壳提供，任何界面下都生效
+      </div>
+      <div style={{ marginTop: 'var(--sp-4, 8px)' }}>
+        {SHELL_SHORTCUT_SPECS.map((s) => (
+          <div key={s.combo} className="p-row" style={{ padding: '6px 0' }}>
+            <kbd className="p-mono" style={{
+              minWidth: 132, flex: 'none', padding: '2px 8px', fontSize: 'var(--fs-11, 11px)',
+              borderRadius: 'var(--r-xs)', background: 'var(--surface-sunk)',
+              border: '1px solid var(--divider)', color: 'var(--text)',
+            }}>{s.keys}</kbd>
+            <span style={{ fontSize: 'var(--fs-12, 12px)' }}>{s.desc}</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 'var(--fs-12, 12px)', fontWeight: 600, marginTop: 'var(--sp-8, 16px)' }}>
+        全局快捷键（插件注册） · {entries.length}
+      </div>
+      <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: '2px' }}>
+        由插件通过 ctx.registerShortcut 注册；插件未挂载时也可能生效
+      </div>
+      {unknown ? (
+        <div className="p-muted" style={{ marginTop: 'var(--sp-4, 8px)' }}>
+          未连接到外壳（沙箱隔离态），读不到插件注册的快捷键
+        </div>
+      ) : entries.length === 0 ? (
+        <div className="p-muted" style={{ marginTop: 'var(--sp-4, 8px)' }}>
+          暂无插件注册全局快捷键
+        </div>
+      ) : (
+        <div style={{ marginTop: 'var(--sp-4, 8px)' }}>
+          {entries.map(([accel, v]) => {
+            const clash = clashSet.has(accel);
+            return (
+              <div key={accel} className="p-row" style={{ padding: '6px 0' }}>
+                <kbd className="p-mono" style={{
+                  minWidth: 132, flex: 'none', padding: '2px 8px', fontSize: 'var(--fs-11, 11px)',
+                  borderRadius: 'var(--r-xs)', background: 'var(--surface-sunk)',
+                  border: `1px solid ${clash ? 'var(--danger)' : 'var(--divider)'}`,
+                  color: clash ? 'var(--danger)' : 'var(--text)',
+                }}>{accel}</kbd>
+                <span style={{ fontSize: 'var(--fs-12, 12px)' }}>
+                  {v?.label || v?.event || '（未命名）'}
+                </span>
+                <span className="p-mono p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+                  {v?.pluginId}
+                </span>
+                {clash ? (
+                  <span style={{ fontSize: 'var(--fs-11, 11px)', color: 'var(--danger)' }}>
+                    ⚠ 与外壳快捷键撞车，外壳那个会失效
+                  </span>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {interClash.length ? (
+        <div style={{
+          marginTop: 'var(--sp-5, 10px)', padding: '8px 10px', borderRadius: 'var(--r-sm)',
+          background: 'var(--surface-sunk)', fontSize: 'var(--fs-11, 11px)', color: 'var(--warn)',
+        }}>
+          {interClash.map(([n, ids]) => (
+            <div key={n}>⚠ {n} 被多个插件注册（{ids.join('、')}），只有先注册的那个会响应</div>
+          ))}
+        </div>
+      ) : null}
+
+      {/*
+        第三类必须说明，不然用户在这里找不到自己配的键会以为页面漏了。
+        project-group 那 20 条就是这一类 —— 它们有自己的快捷键设置页。
+      */}
+      <div className="p-muted" style={{ marginTop: 'var(--sp-8, 16px)', fontSize: 'var(--fs-11, 11px)', lineHeight: 1.7 }}>
+        插件内部的快捷键（只在插件激活时生效，例如 project-group 的项目操作键）
+        由插件自己管理，请在对应插件的设置里配置 —— 外壳看不到，这里也列不出来。
+      </div>
+      <div className="p-muted" style={{ marginTop: 'var(--sp-3, 6px)', fontSize: 'var(--fs-11, 11px)', color: 'var(--text-dim)' }}>
+        撞车共 {clashes.length + interClash.length} 处
+      </div>
     </div>
   );
 }
@@ -273,6 +462,10 @@ export default function Settings() {
 
   return (
     <>
+      {/* 竖排导航放在 .set-wrap 里与内容区并排。
+          原来标签横排在顶部：7 个标签挤一行，且占掉内容区顶部一条；
+          竖排后内容区能占满宽度（主题缩略图因此能排更多列）。 */}
+      <div className="set-wrap">
       {/* ---------------- 分页导航 ---------------- */}
       <div className="set-tabs">
         {TABS.map(([key, label]) => (
@@ -549,56 +742,67 @@ export default function Settings() {
             <div className="p-muted" style={{ marginBottom: 'var(--sp-3, 6px)' }}>
               侧栏「＋」可安装新插件；右侧下拉为单个插件指定基调判定方式
             </div>
-            {plugins.map((p) => (
-              <div
-                key={p.id}
-                className="p-row"
-                style={{
-                  padding: '12px 14px', marginTop: 'var(--sp-5, 10px)', borderRadius: 'var(--r)',
-                  background: 'var(--surface-sunk)',
-                  boxShadow: 'inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light)',
-                }}
-              >
-                <span style={{ fontSize: 'var(--fs-15, 15px)', width: 24, textAlign: 'center' }}>{p.icon ?? '◌'}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 'var(--fs-13, 13px)' }}>{p.name}</div>
-                  <div className="p-mono p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>{p.entry}</div>
+            {/*
+              按 app / service 分区：
+              服务插件**不显示在侧边栏**，用户点不到也看不到它装没装。
+              混在一列里的话，它和其它插件长得一样，唯一区别只是那个
+              「同页/沙箱」标签 —— 完全不足以说明"为什么我在侧边栏找不到它"。
+            */}
+            {(() => {
+              const apps = plugins.filter((p) => p.kind !== 'service');
+              const svcs = plugins.filter((p) => p.kind === 'service');
+              const sub = (label: string, hint?: string) => (
+                <div style={{
+                  display: 'flex', alignItems: 'baseline', gap: 'var(--sp-4, 8px)',
+                  marginTop: 'var(--sp-6, 12px)',
+                }}>
+                  <span style={{ fontSize: 'var(--fs-12, 12px)', fontWeight: 600 }}>{label}</span>
+                  {hint ? (
+                    <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>{hint}</span>
+                  ) : null}
                 </div>
-                <span className="p-tag">{p.type === 'iframe' ? '沙箱' : '同页'}</span>
-                <StyleAuditBadge
-                  audit={audits[p.id]}
-                  open={auditOpen === p.id}
-                  onToggle={() => setAuditOpen((cur) => (cur === p.id ? null : p.id))}
-                />
-                <select
-                  className="p-input"
-                  style={{ width: 130, height: 30, fontSize: 'var(--fs-12, 12px)', padding: '0 8px' }}
-                  value={getPluginOverride(p.id) ?? ''}
-                  onChange={(e) => {
-                    setPluginOverride(p.id, e.target.value || null);
-                    void syncPolicyToShell(() => (ctx as any)?.shell?.normalizer
-                      ?.setPluginOverride(p.id, e.target.value || null));
-                    ctx.toast(`「${p.name}」适配策略已更新`, 'ok');
-                  }}
-                >
-                  <option value="">跟随全局</option>
-                  {PLUGIN_THEMES.map((t) => (
-                    <option key={t.value} value={t.value}>{t.label}</option>
+              );
+              return (
+                <>
+                  {apps.length ? sub(`应用插件 · ${apps.length}`, '显示在侧边栏') : null}
+                  {apps.map((p) => (
+                    <PluginRow
+                      key={p.id}
+                      p={p}
+                      audit={audits[p.id]}
+                      auditOpen={auditOpen === p.id}
+                      onToggleAudit={() => setAuditOpen((cur) => (cur === p.id ? null : p.id))}
+                      onOverride={(v) => {
+                        setPluginOverride(p.id, v || null);
+                        void syncPolicyToShell(() => (ctx as any)?.shell?.normalizer
+                          ?.setPluginOverride(p.id, v || null));
+                        ctx.toast(`「${p.name}」适配策略已更新`, 'ok');
+                      }}
+                      onRemove={() => removePlugin(p)}
+                    />
                   ))}
-                </select>
-                {p.builtin ? (
-                  <span className="p-tag">内置</span>
-                ) : (
-                  <button
-                    className="p-btn danger"
-                    style={{ height: 30, padding: '0 10px', fontSize: 'var(--fs-12, 12px)' }}
-                    onClick={() => removePlugin(p)}
-                  >
-                    移除
-                  </button>
-                )}
-              </div>
-            ))}
+                  {svcs.length
+                    ? sub(`服务插件 · ${svcs.length}`, '不显示在侧边栏，由其它插件通过 ctx.services.call 调用')
+                    : null}
+                  {svcs.map((p) => (
+                    <PluginRow
+                      key={p.id}
+                      p={p}
+                      audit={audits[p.id]}
+                      auditOpen={auditOpen === p.id}
+                      onToggleAudit={() => setAuditOpen((cur) => (cur === p.id ? null : p.id))}
+                      onOverride={(v) => {
+                        setPluginOverride(p.id, v || null);
+                        void syncPolicyToShell(() => (ctx as any)?.shell?.normalizer
+                          ?.setPluginOverride(p.id, v || null));
+                        ctx.toast(`「${p.name}」适配策略已更新`, 'ok');
+                      }}
+                      onRemove={() => removePlugin(p)}
+                    />
+                  ))}
+                </>
+              );
+            })()}
             {plugins.length ? null : (
               <div className="p-muted" style={{ marginTop: 'var(--sp-5, 10px)' }}>
                 {pluginsUnknown
@@ -610,9 +814,11 @@ export default function Settings() {
         </>
       ) : null}
 
+
       {/* ---------------- 外链 ---------------- */}
       {tab === 'external' ? <ExternalCard /> : null}
       {tab === 'files' ? <FilesCard /> : null}
+      {tab === 'shortcuts' ? <ShortcutsCard unknown={pluginsUnknown} /> : null}
       {tab === 'window' ? <WindowCard /> : null}
 
       {/* ---------------- 关于 ---------------- */}
@@ -638,10 +844,12 @@ export default function Settings() {
             </div>
           </div>
           <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)', lineHeight: 1.9 }}>
-            快捷键：⌘/Ctrl + B 收起侧边栏 · ⌘/Ctrl + R 重载当前插件
+            快捷键：⌘/Ctrl + B 收起侧边栏 · ⌘/Ctrl + R 重载当前插件。
+            完整列表见「快捷键」标签页。
           </div>
         </div>
       ) : null}
+      </div>
       </div>
     </>
   );

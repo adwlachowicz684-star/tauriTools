@@ -1155,16 +1155,41 @@ html.theme-transition *:not(.spinner) {
 .theme-pop .theme-desc { padding: 0 10px 9px; font-size: 10px; }
 .theme-pop .theme-badge { font-size: var(--fs-10, 10px); padding: 1px 5px; }
 
-/* ---------- 设置页分页 ---------- */
+/* ---------- 设置页分页 ----------
+   由横排改为**左竖排**：
+     · 7 个标签横排要折行，且白占内容区顶部一条
+     · 竖排后内容区能占满宽度 —— 主题缩略图因此能多排一列
+
+   为什么放 neumorphism.css 而不是 settings.css：
+   设置页**两种模式下都是同页插件**（type:'module'），
+   而 settings.css 是给 iframe 写的补丁、同页下刻意不加载（它那条
+   #root 规则会命中宿主自己的根容器）。放那里等于没写。
+
+   同页下不需要滚动容器：设置页挂在 .plugin-root 里，滚动由宿主的
+   #stage-scroll 负责。这里刻意**不给 .set-body 设 overflow**，
+   否则会出现"内容区自己滚、宿主也在滚"的双滚动条。
+   iframe 下由 settings.css 的 #root 滚动链接管（.set-wrap 的
+   flex:1 / min-height:0 正是为那条链准备的）。 */
+.set-wrap {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+}
 .set-tabs {
   display: flex;
-  gap: 8px;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 4px;
+  flex: none;
+  width: 116px;
+  position: sticky;
+  top: 0;
 }
 .set-tab {
   height: 32px;
-  padding: 0 16px;
+  padding: 0 12px;
+  text-align: left;
   border: 0;
   border-radius: var(--r-sm);
   background: var(--surface);
@@ -1174,6 +1199,7 @@ html.theme-transition *:not(.spinner) {
   cursor: pointer;
   box-shadow: var(--sh-out-md);
   transition: all var(--t);
+  white-space: nowrap;
 }
 .set-tab:hover { color: var(--text); }
 .set-tab.active {
@@ -1181,6 +1207,10 @@ html.theme-transition *:not(.spinner) {
   font-weight: 600;          /* 12.5px 的强调色文字，加粗才吃得住 */
   box-shadow: var(--sh-in-md);
 }
+/* 内容区：占满剩余宽度。min-width:0 不可省 ——
+   flex 子项默认 min-width:auto，里面的 p-mono 长路径会把这一列撑破，
+   表现为内容区越来越宽、把导航挤出去。 */
+.set-body { flex: 1; min-width: 0; }
 /* ---------- 主题卡片 ---------- */
 .theme-card {
   position: relative;

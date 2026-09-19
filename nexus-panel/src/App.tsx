@@ -371,6 +371,10 @@ export default function App() {
       navigate: (id: string) => setActiveId(id),
       removePlugin,
       getPlugins: () => plugins,
+      /* 已注册的**全局**快捷键（accel → { pluginId, event, label }）。
+         设置页的「快捷键」页要靠它列出插件注册的键并做撞车判断 ——
+         拿不到就显示"未连接外壳"，而不是假装没有插件注册过。 */
+      getShortcuts: () => hostRef.current?.getShortcuts?.() ?? {},
       mountPlugin: (id: string) => hostRef.current?.mount(id) ?? Promise.resolve(),
       getInstance: () => hostRef.current?.state.instance,
       openPluginSettings,

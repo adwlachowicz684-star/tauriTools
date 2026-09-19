@@ -203,6 +203,97 @@ await sleep(60);
 t('未提供 settingsFn：hasSettings=false', sdkDom3.window.__hasSettings === false);
 t('未提供 settingsFn：回退到主视图而非开空面板', onlyMain === 1, `调用 ${onlyMain} 次`);
 
+/* ============================================================
+   D. 设置页：快捷键总览 + 插件分区 + 竖排导航
+   ============================================================ */
+console.log('\n--- D. 设置页内容与显示 ---');
+const src = (p) => fs.readFileSync(path.join(HERE, p), 'utf8');
+const app = src('plugins/settings/App.tsx');
+const idx = src('plugins/settings/index.js');
+const css = src('css/neumorphism.css');
+const scSrc = src('js/shell-shortcuts.js');
+
+/* ---------- D1. 外壳快捷键单一数据源 ---------- */
+t('存在外壳快捷键清单模块', scSrc.includes('SHELL_SHORTCUT_SPECS'));
+t('React 设置页 import 了该清单', /from '\.\.\/\.\.\/js\/shell-shortcuts\.js'/.test(app));
+t('原生设置页也 import 了（两个设置页不能只改一边）',
+  /from '\.\.\/\.\.\/js\/shell-shortcuts\.js'/.test(idx));
+/* 执行逻辑仍在各自外壳 —— 表只管展示，注释里必须写清，
+   否则后来者会以为改表就能改行为 */
+t('清单模块声明自己不参与执行', /不参与执行/.test(scSrc));
+
+/* ---------- D2. 两个外壳暴露 getShortcuts ---------- */
+t('React 外壳 __NEXUS__ 暴露 getShortcuts',
+  /getShortcuts: \(\) => hostRef\.current\?\.getShortcuts\?\.\(\)/.test(src('src/App.tsx')));
+t('原生外壳 __NEXUS__ 暴露 getShortcuts', /getShortcuts:/.test(src('js/shell.js')));
+t('读不到时设置页显示「未连接到外壳」而不是假装没有',
+  /未连接到外壳（沙箱隔离态），读不到插件注册的快捷键/.test(app)
+  && /未连接到外壳（沙箱隔离态），读不到插件注册的快捷键/.test(idx));
+
+/* ---------- D3. 撞车判断 ---------- */
+t('有撞车检测（与外壳键）', /taken\.has\(normCombo\(accel\)\)/.test(app));
+/* 撞车只能**算一次**：行内各判一遍的话，两边判据迟早写得不一样，
+   于是列表标红而计数说 0 处 —— 自相矛盾比漏判更难发现。 */
+t('撞车集合只算一次，行内复用（不各判一遍）',
+  /const clashSet = new Set\(clashes\.map/.test(app)
+  && /const clash = clashSet\.has\(accel\);/.test(app)
+  && !/const clash = taken\.has\(normCombo\(accel\)\);/.test(app));
+t('有插件之间撞车检测', /ids\.length > 1/.test(app) && /ids\.length > 1/.test(idx));
+t('撞车会给出后果说明（外壳那个会失效）', /外壳那个会失效/.test(app));
+/* mod 必须按平台展开，否则 Windows 上 Ctrl+B 与 mod+B 判成两个键 */
+t('normCombo 把 mod 按平台展开（非 Mac 展开成 ctrl）', /p === 'mod' \? \(isMac\(\) \? 'meta' : 'ctrl'\)/.test(scSrc));
+
+/* ---------- D4. 第三类必须说明 ---------- */
+t('说明插件内部快捷键不在此列出（否则用户以为页面漏了）',
+  /外壳看不到，这里也列不出来/.test(app) && /外壳看不到，这里也列不出来/.test(idx));
+
+/* ---------- D5. 插件按 app / service 分区 ---------- */
+t('React 版按 kind 分成两区', /p\.kind !== 'service'/.test(app) && /p\.kind === 'service'/.test(app));
+t('原生版同样分区', /p\.kind !== 'service'/.test(idx) && /p\.kind === 'service'/.test(idx));
+t('服务区说明不进侧边栏的调用方式', /ctx\.services\.call 调用/.test(app));
+
+/* ---------- D6. 竖排导航 ---------- */
+/*
+ * 跨块匹配的大跨度正则会被**下一个块**蒙混：
+ * `\.set-wrap \{[\s\S]{0,200}display: flex;` 在 set-wrap 改成 block 之后，
+ * 仍能匹配到紧随其后的 `.set-tabs { display: flex;` —— 断言永远绿。
+ * 所以必须先**切出这一块**再匹配。
+ */
+const block = (sel) => {
+  const i = css.indexOf(sel + ' {');
+  if (i < 0) return '';
+  return css.slice(i, css.indexOf('}', i));
+};
+t('标签栏竖排（flex-direction: column）',
+  /flex-direction: column;/.test(block('.set-tabs')));
+t('有横向包裹容器', /display: flex;/.test(block('.set-wrap')));
+t('内容区 min-width:0（否则长路径把这一列撑破、挤走导航）',
+  /min-width: 0;/.test(block('.set-body')));
+t('React 页渲染了 set-wrap', /className="set-wrap"/.test(app));
+/* CSS 必须放 neumorphism.css —— settings.css 是 iframe 专用、同页不加载 */
+t('CSS 放在 neumorphism.css 而非 settings.css',
+  /\.set-wrap/.test(css) && !/\.set-wrap/.test(src('plugins/settings/settings.css')));
+
+/* ---------- D7. 标签页新增「快捷键」 ---------- */
+t('React 版 TabKey 含 shortcuts', /'shortcuts'/.test(app));
+t('原生版 TABS 含 shortcuts', /'\[shortcuts', '快捷键'\]/.test(idx) || /\['shortcuts', '快捷键'\]/.test(idx));
+t('原生版 pages 含 shortcuts（否则点标签是空白）', /shortcuts: h\('div', \{\}\)/.test(idx));
+t('「关于」页指向完整列表', /完整列表见「快捷键」标签页/.test(app));
+
+/* ---------- D8. 行为验证：撞车真的能被判出来 ---------- */
+{
+  const mod = await import('./js/shell-shortcuts.js');
+  const set = mod.shellComboSet();
+  t('外壳键集合非空', set.size >= 5, String(set.size));
+  // 非 Mac 环境下 mod+b 归一化后应为 ctrl+b
+  const n = mod.normCombo('mod+b');
+  t('mod+b 归一化后是 ctrl+b 或 meta+b（按平台）',
+    n === 'ctrl+b' || n === 'meta+b', n);
+  t('Ctrl+B 与 mod+b 在非 Mac 上判定为同一键',
+    mod.isMac() ? set.has(mod.normCombo('mod+b')) : set.has(mod.normCombo('Ctrl+B')));
+  t('不相关的键不误报', !set.has(mod.normCombo('ctrl+shift+k')));
+}
+
 globalThis.window = savedWindow;
 globalThis.document = savedDoc;
 

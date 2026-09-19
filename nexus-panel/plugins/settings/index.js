@@ -10,6 +10,7 @@ import {
   ADAPT_POLICIES, PLUGIN_THEMES,
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
 } from '../../js/theme-normalizer.js';
+import { SHELL_SHORTCUT_SPECS, shellComboSet, normCombo } from '../../js/shell-shortcuts.js';
 
 /**
  * 取外壳全局单例：同页模式挂在 window 上，沙箱（iframe）模式挂在宿主窗口上。
@@ -43,6 +44,7 @@ export default definePlugin({
       plugins: h('div', {}),
       external: h('div', {}),
       files: h('div', {}),
+      shortcuts: h('div', {}),
       window: h('div', {}),
       about: h('div', {}),
     };
@@ -51,6 +53,7 @@ export default definePlugin({
       ['plugins', '插件'],
       ['external', '外链'],
       ['files', '文件'],
+      ['shortcuts', '快捷键'],
       ['window', '窗口'],
       ['about', '关于'],
     ];
@@ -285,16 +288,112 @@ export default definePlugin({
       );
     });
 
+    /*
+      按 app / service 分区：服务插件**不显示在侧边栏**，
+      混在一列里用户看不出它为什么在侧边栏找不到。
+      与 React 版（App.tsx）保持一致 —— 两个设置页行为不同会很难解释。
+    */
+    const sub = (label, hint) => h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '12px' } },
+      h('span', { style: { fontSize: '12px', fontWeight: '600' } }, label),
+      h('span.p-muted', { style: { fontSize: '11px' } }, hint));
+
+    const appRows = (plugins || []).filter((p) => p.kind !== 'service').map((p) => rows[(plugins || []).indexOf(p)]);
+    const svcRows = (plugins || []).filter((p) => p.kind === 'service').map((p) => rows[(plugins || []).indexOf(p)]);
+
     pages.plugins.appendChild(
       h('div.p-card', {},
         h('h2', {}, '插件管理'),
         h('div.p-muted', { style: { marginBottom: '6px' } },
           '侧栏「＋」可安装新插件；右侧下拉为单个插件指定主题判定方式'),
-        ...rows,
+        appRows.length ? sub(`应用插件 · ${appRows.length}`, '显示在侧边栏') : null,
+        ...appRows,
+        svcRows.length ? sub(`服务插件 · ${svcRows.length}`, '不显示在侧边栏，由其它插件通过 ctx.services.call 调用') : null,
+        ...svcRows,
         plugins && plugins.length ? null : h('div.p-muted', { style: { marginTop: '8px' } },
           plugins ? '暂无可管理的插件' : '未连接到外壳（沙箱隔离态），读不到插件列表，移除功能不可用'),
       ),
     );
+
+    /* ============ 3.2 快捷键总览 ============ */
+    /*
+      分两类：外壳快捷键（外壳自己装，任何界面生效）与
+      全局快捷键（插件 ctx.registerShortcut 注册）。
+      第三类——插件**内部**快捷键——外壳看不到，必须在这里说明，
+      否则用户配了键却在这里找不到，只会以为页面漏了。
+
+      撞车是这页真正的价值：插件的 accel 若与外壳键相同，
+      两边都 addEventListener，插件那侧会 stopPropagation ——
+      外壳的键**静默失效**，用户只会觉得"有时候不管用"。
+    */
+    {
+      const shell = shellGlobal();
+      const raw = (typeof shell?.getShortcuts === 'function') ? shell.getShortcuts() : null;
+      const entries = raw ? Object.entries(raw) : [];
+      const taken = shellComboSet();
+
+      const kbd = (text, danger) => h('kbd.p-mono', {
+        style: {
+          minWidth: '132px', flex: 'none', padding: '2px 8px', fontSize: '11px',
+          borderRadius: 'var(--r-xs)', background: 'var(--surface-sunk)',
+          border: `1px solid ${danger ? 'var(--danger)' : 'var(--divider)'}`,
+          color: danger ? 'var(--danger)' : 'var(--text)',
+        },
+      }, text);
+
+      const byNorm = new Map();
+      for (const [accel, v] of entries) {
+        const n = normCombo(accel);
+        byNorm.set(n, [...(byNorm.get(n) || []), v?.pluginId || '?']);
+      }
+      const interClash = [...byNorm.entries()].filter(([, ids]) => ids.length > 1);
+
+      const card = h('div.p-card', {},
+        h('h2', {}, '快捷键'),
+        h('div', { style: { fontSize: '12px', fontWeight: '600', marginTop: '10px' } },
+          `外壳快捷键 · ${SHELL_SHORTCUT_SPECS.length}`),
+        h('div.p-muted', { style: { fontSize: '11px', marginTop: '2px' } },
+          '由外壳提供，任何界面下都生效'),
+        ...SHELL_SHORTCUT_SPECS.map((sc) => h('div.p-row', { style: { padding: '6px 0' } },
+          kbd(sc.keys, false),
+          h('span', { style: { fontSize: '12px' } }, sc.desc))),
+        h('div', { style: { fontSize: '12px', fontWeight: '600', marginTop: '16px' } },
+          `全局快捷键（插件注册） · ${entries.length}`),
+        h('div.p-muted', { style: { fontSize: '11px', marginTop: '2px' } },
+          '由插件通过 ctx.registerShortcut 注册；插件未挂载时也可能生效'),
+      );
+
+      if (!shell) {
+        card.appendChild(h('div.p-muted', { style: { marginTop: '8px' } },
+          '未连接到外壳（沙箱隔离态），读不到插件注册的快捷键'));
+      } else if (!entries.length) {
+        card.appendChild(h('div.p-muted', { style: { marginTop: '8px' } }, '暂无插件注册全局快捷键'));
+      } else {
+        for (const [accel, v] of entries) {
+          const clash = taken.has(normCombo(accel));
+          card.appendChild(h('div.p-row', { style: { padding: '6px 0' } },
+            kbd(accel, clash),
+            h('span', { style: { fontSize: '12px' } }, v?.label || v?.event || '（未命名）'),
+            h('span.p-mono.p-muted', { style: { fontSize: '11px' } }, v?.pluginId),
+            clash ? h('span', { style: { fontSize: '11px', color: 'var(--danger)' } },
+              '⚠ 与外壳快捷键撞车，外壳那个会失效') : null));
+        }
+      }
+
+      for (const [n, ids] of interClash) {
+        card.appendChild(h('div', {
+          style: {
+            marginTop: '10px', padding: '8px 10px', borderRadius: 'var(--r-sm)',
+            background: 'var(--surface-sunk)', fontSize: '11px', color: 'var(--warn)',
+          },
+        }, `⚠ ${n} 被多个插件注册（${ids.join('、')}），只有先注册的那个会响应`));
+      }
+
+      card.appendChild(h('div.p-muted', {
+        style: { marginTop: '16px', fontSize: '11px', lineHeight: '1.7' },
+      }, '插件内部的快捷键（只在插件激活时生效，例如 project-group 的项目操作键）由插件自己管理，请在对应插件的设置里配置 —— 外壳看不到，这里也列不出来。'));
+
+      pages.shortcuts.appendChild(card);
+    }
 
     /* ============ 3.5 外链管理 ============ */
     // 同页模式用 window.__NEXUS__；沙箱模式取 parent（设置页默认不隔离）

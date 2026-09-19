@@ -102,7 +102,15 @@ console.log('\n=== 8. 两个技术栈的分栏都加了 ===');
 t('原生设置页有 window 分页', /window: h\('div', \{\}\),/.test(setJs));
 t('原生设置页有「窗口」标签', /\['window', '窗口'\]/.test(setJs));
 t('React 设置页有「窗口」标签', /\['window', '窗口'\]/.test(setTsx));
-t('React 的 TabKey 含 window', /'files' \| 'window' \| 'about'/.test(setTsx));
+/*
+ * 不能钉完整的 TabKey 字面量（`'files' | 'window' | 'about'`）——
+ * 那是**旧契约**：新增「快捷键」分栏后顺序一变就假红，
+ * 而假红会让人去"修"本来正确的代码。
+ * 改为抠出 TabKey 声明行再看是否含 window：只钉"有这个分栏"，
+ * 不钉它排第几。
+ */
+const tabKeyLine = (setTsx.match(/type TabKey = [^;]+;/) || [''])[0];
+t('React 的 TabKey 含 window', /'window'/.test(tabKeyLine), tabKeyLine.slice(0, 80));
 t('React 设置页渲染 WindowCard', /tab === 'window' \? <WindowCard \/>/.test(setTsx));
 
 console.log('\n=== 9. 文案要让用户看懂差别 ===');

@@ -698,6 +698,10 @@ async function init() {
     state: host.state, bus: host.bus, toast, navigate,
     mountPlugin: (id) => host.mount(id),
     getPlugins: () => host.getPlugins(),
+    /* 已注册的**全局**快捷键（accel → { pluginId, event, label }）。
+       与 React 侧同名同形 —— 两个外壳暴露给设置页的接口必须一致，
+       否则设置页要分叉处理，而分叉迟早只改一边。 */
+    getShortcuts: () => host.getShortcuts?.() ?? {},
     getInstance: () => host.state.instance,
     removePlugin: (id) => window.__nexusRemovePlugin(id),
     openPluginSettings,
