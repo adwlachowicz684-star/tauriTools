@@ -343,7 +343,7 @@ export function SettingsBody({
           return (
             <div className="p-muted fpx-detect" style={{ fontSize: 'var(--fs-11, 11px)' }}>
               检测到 {r.count} 个{r.count > 0 && <>：{r.names}</>}
-              {r.hint && <div style={{ color: r.count === 0 ? 'var(--danger)' : 'var(--warn, #c98a00)', marginTop: 4 }}>{r.hint}</div>}
+              {r.hint && <div style={{ color: r.count === 0 ? 'var(--danger)' : 'var(--warn, #c98a00)', marginTop: 'var(--sp-2, 4px)' }}>{r.hint}</div>}
             </div>
           );
         })()}

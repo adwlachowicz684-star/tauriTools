@@ -110,9 +110,15 @@
   --af-t-cond-v: #c9a6f7;
   --af-t-file:   #7dd3fc;
 
-  /* 投射阴影：颜色故意不跟主题，理由同 css/tokens.css 里的说明 */
-  --af-cast-sm: 0  8px 24px rgba(0, 0, 0, .45);
-  --af-cast-lg: 0 20px 60px rgba(0, 0, 0, .50);
+  /* 投射阴影：颜色故意不跟主题（叠在内容上的投影得是"暗"，
+     浅色主题下换成浅色就等于没有投影），理由同 css/tokens.css 的说明。
+
+     值原先在这里各写一份，与 tokens.css 的 --sh-cast-sm / --sh-cast-lg
+     **完全相同** —— 两份定义必然各自漂移。本文件已 @import tokens.css，
+     直接引用那一档即可，改一处两边都跟着变。
+     保留 --af-cast-* 作为别名，是为了不让已有引用一次性全改。 */
+  --af-cast-sm: var(--sh-cast-sm);
+  --af-cast-lg: var(--sh-cast-lg);
   --af-z-base:  1;
   --af-z-float: 20;
   --af-z-mask:  60;
@@ -192,7 +198,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
 .toolbar button, .btn-like {
   background: var(--af-raised); color: var(--af-fg); border: 1px solid var(--af-line);
   padding: 6px 12px; border-radius: var(--af-r-sm); cursor: pointer; font-size: var(--fs-13, 13px);
-}
+  box-shadow: var(--ctl-shadow);}
 .toolbar button:hover:not(:disabled), .btn-like:hover { border-color: var(--af-accent); }
 .toolbar button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 .toolbar button.primary { background: var(--af-accent); border-color: var(--af-accent); color: #fff; }
@@ -425,7 +431,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
   background: transparent; color: var(--af-dim); font-family: inherit;
   font-size: var(--fs-10, 10px); padding: 0 6px; line-height: 1.6;
   transition: color var(--af-dur-fast), border-color var(--af-dur-fast);
-}
+  box-shadow: var(--ctl-shadow-sm);}
 .field-def-btn:hover { color: var(--af-fg); border-color: var(--af-accent); }
 /* 已设过默认：高亮 + 文案变"默认·已设"，点一下是清除 */
 .field-def-btn.on {
@@ -500,7 +506,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 .chip {
   font-size: var(--fs-11, 11px); background: var(--af-raised); border: 1px solid var(--af-line);
   color: var(--af-accent); border-radius: var(--af-r-xs); padding: 2px 6px; cursor: pointer; font-family: var(--af-mono);
-}
+  box-shadow: var(--ctl-shadow-sm);}
 .out {
   background: var(--af-sunk); border: 1px solid var(--af-line); border-radius: var(--af-r-sm);
   padding: 8px; font-size: var(--fs-12, 12px); max-height: 220px; overflow: auto;
@@ -561,7 +567,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
   display: inline-flex; align-items: center; gap: 6px;
   background: var(--af-raised); border: 1px solid var(--af-line); color: var(--af-fg);
   padding: 7px 12px; border-radius: 8px; cursor: pointer; font-size: var(--fs-13, 13px);
-}
+  box-shadow: var(--ctl-shadow);}
 .kind-btn:hover:not(:disabled) { border-color: var(--af-accent); }
 .kind-btn:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 .kind-icon { font-size: var(--fs-14, 14px); }
@@ -601,7 +607,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 button.mini {
   background: var(--af-raised); border: 1px solid var(--af-line); color: var(--af-fg);
   font-size: var(--fs-12, 12px); padding: 3px 9px; border-radius: 5px; cursor: pointer;
-}
+  box-shadow: var(--ctl-shadow);}
 button.mini:hover:not(:disabled) { border-color: var(--af-accent); }
 button.mini:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 button.mini.danger:hover { border-color: var(--af-bad); color: var(--af-t-err2); }
@@ -959,7 +965,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   background: var(--af-sunk);
   font-size: var(--fs-12, 12px); color: var(--af-dim);
   transition: border-color var(--af-dur-fast), background var(--af-dur-fast);
-}
+  box-shadow: var(--ctl-shadow);}
 .trig-check:hover { border-color: var(--af-soft); }
 .trig-check.on {
   border-color: #eab308;
@@ -1115,7 +1121,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   font-size: var(--fs-11, 11px); color: var(--af-dim);
   border: 1px solid var(--af-line); background: var(--af-sunk);
   transition: border-color var(--af-dur-fast), color var(--af-dur-fast), background var(--af-dur-fast);
-}
+  box-shadow: var(--ctl-shadow-sm);}
 .cond-op-btn:hover { border-color: var(--af-soft); color: var(--af-fg); }
 .cond-op-btn.on { font-weight: 600; }
 .cond-op-btn-icon { font-family: var(--af-mono); font-size: var(--fs-11, 11px); }
@@ -1177,7 +1183,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   font-size: var(--fs-11, 11px); padding: 2px 9px; border-radius: 5px; cursor: pointer;
   border: 1px solid var(--af-line); background: var(--af-sunk); color: var(--af-dim);
   transition: border-color var(--af-dur-fast), color var(--af-dur-fast), background var(--af-dur-fast);
-}
+  box-shadow: var(--ctl-shadow-sm);}
 .cond-logic-btn:hover { border-color: var(--af-soft); color: var(--af-fg); }
 .cond-logic-btn.on { font-weight: 600; }
 
@@ -1218,7 +1224,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   font-size: var(--fs-11, 11px); padding: 3px 9px; border-radius: 5px; cursor: pointer;
   border: 1px dashed var(--af-divider); background: transparent; color: var(--af-dim);
   transition: border-color var(--af-dur-fast), color var(--af-dur-fast);
-}
+  box-shadow: var(--ctl-shadow-sm);}
 .cond-add:hover { border-color: var(--af-accent); color: var(--af-accent); }
 
 /* 关闭的元素：chip 也跟着变淡 */
@@ -1380,8 +1386,15 @@ input.mono, textarea.mono {
 .view-switch { display: flex; gap: 2px; margin-right: 8px;
   border: 1px solid var(--af-divider); border-radius: 7px; padding: 2px; }
 .view-switch button { background: none; border: none; color: var(--af-mute);
-  font-size: var(--fs-13, 13px); padding: 3px 12px; border-radius: 5px; cursor: pointer; }
-.view-switch button.on { background: var(--af-accent); color: #fff; }
+  font-size: var(--fs-13, 13px); padding: 3px 12px; border-radius: 5px; cursor: pointer;
+  box-shadow: var(--ctl-shadow);}
+.view-switch button.on {
+  background: var(--af-accent); color: #fff;
+  /* 选中态转内凹：与 project-group 的 .fpx-tab.active 同一语义 ——
+     页签常态是平的（贴在容器上），选中的那个像"按下去了"。
+     用 --ctl-shadow-press 而不是写死 --sh-in-md，档位由共享层统一管。 */
+  box-shadow: var(--ctl-shadow-press);
+}
 .view-badge { display: inline-block; margin-left: 5px; min-width: 15px;
   padding: 0 4px; border-radius: var(--r-pill, 999px); background: var(--af-ok); color: #06210f;
   font-size: var(--fs-10, 10px); line-height: 15px; }
@@ -1793,7 +1806,7 @@ input.mono, textarea.mono {
   color: var(--af-mute); font-size: var(--fs-13, 13px); line-height: 1;
   padding: 0 3px; border-radius: 4px;
   opacity: 0; transition: opacity var(--af-dur-fast), color var(--af-dur-fast);
-}
+  box-shadow: var(--ctl-shadow-sm);}
 .side-item:hover .side-op,
 .side-op:focus-visible { opacity: 1; }
 
@@ -1868,7 +1881,7 @@ input.mono, textarea.mono {
   border: none; background: none; cursor: pointer; color: var(--af-mute);
   font-size: var(--fs-11, 11px); line-height: 1; padding: 2px 3px; border-radius: 3px;
   opacity: 0; transition: opacity var(--af-dur-fast), color var(--af-dur-fast);
-}
+  box-shadow: var(--ctl-shadow-sm);}
 .pc-card:hover .pc-op, .pc-op:focus-visible { opacity: 1; }
 .pc-op:hover { color: var(--af-fg); background: var(--af-raised); }
 .pc-del:hover { color: var(--af-bad); }
@@ -1878,7 +1891,7 @@ input.mono, textarea.mono {
   background: transparent; color: var(--af-dim); font-family: inherit;
   font-size: var(--fs-12, 12px); padding: 5px 9px;
   transition: border-color var(--af-dur-fast), color var(--af-dur-fast);
-}
+  box-shadow: var(--ctl-shadow);}
 .pc-add:hover, .pc-detach:hover { border-color: var(--af-accent); color: var(--af-fg); }
 
 /* ---------------- 画布节点上的卡扣 ---------------- */
@@ -1940,7 +1953,7 @@ input.mono, textarea.mono {
   background: transparent; color: #fbbf24; cursor: pointer;
   font-family: inherit; font-size: var(--fs-12, 12px); padding: 3px 11px;
   transition: background var(--af-dur-fast);
-}
+  box-shadow: var(--ctl-shadow);}
 .mod-btn:hover { background: rgba(245, 158, 11, 0.22); }
 .mod-btn.primary { background: rgba(245, 158, 11, 0.3); font-weight: 600; }
 .mod-btn.primary:hover { background: rgba(245, 158, 11, 0.45); }
@@ -2016,7 +2029,7 @@ input.mono, textarea.mono {
   background: transparent; color: var(--af-dim); font-family: inherit;
   font-size: var(--fs-12, 12px); padding: 2px 10px;
   transition: color var(--af-dur-fast), border-color var(--af-dur-fast);
-}
+  box-shadow: var(--ctl-shadow);}
 .insp-size-btn:hover { color: var(--af-fg); }
 .insp-size-btn.on {
   color: var(--af-fg); border-color: var(--af-accent); background: var(--af-raised);
@@ -2058,7 +2071,7 @@ input.mono, textarea.mono {
   background: transparent; color: var(--af-dim); font-family: inherit;
   font-size: var(--fs-10, 10px); padding: 0 6px;
   transition: color var(--af-dur-fast), border-color var(--af-dur-fast);
-}
+  box-shadow: var(--ctl-shadow-sm);}
 .stack-bar-btn:hover { color: var(--af-fg); border-color: var(--af-accent); }
 .stack-count {
   font-variant-numeric: tabular-nums;
@@ -2129,7 +2142,7 @@ input.mono, textarea.mono {
   width: 100%; padding: 6px; border: 1px dashed var(--af-line, #2a2f3a);
   border-radius: 5px; background: none; cursor: pointer;
   font-size: var(--fs-12, 12px); color: var(--af-dim, #8b93a7);
-}
+  box-shadow: var(--ctl-shadow-sm);}
 .canvas-config .cfg-add:hover { border-color: var(--af-accent); color: var(--af-accent); }
 
 .canvas-config .cfg-export {
@@ -2137,7 +2150,7 @@ input.mono, textarea.mono {
   width: 100%; padding: 7px 9px; margin-bottom: 5px;
   border: 1px solid var(--af-line, #2a2f3a); border-radius: 5px;
   background: none; cursor: pointer; font-size: var(--fs-13, 13px); color: var(--af-fg, #e6e9f0);
-}
+  box-shadow: var(--ctl-shadow);}
 .canvas-config .cfg-export small { font-size: var(--fs-11, 11px); color: var(--af-dim, #8b93a7); }
 .canvas-config .cfg-export:hover { border-color: #4b8bf5; }
 
@@ -2201,7 +2214,7 @@ input.mono, textarea.mono {
   padding: 2px 4px;
   border-radius: 4px;
   opacity: .6;
-}
+  box-shadow: var(--ctl-shadow-sm);}
 .af-lib-btn:hover:not(:disabled) { opacity: 1; background: rgba(255, 255, 255, .07); }
 .af-lib-btn:disabled { cursor: not-allowed; opacity: var(--ctl-disabled-opacity); }
 
@@ -2391,7 +2404,7 @@ input.mono, textarea.mono {
   color: inherit;
   text-align: left;
   cursor: pointer;
-}
+  box-shadow: var(--ctl-shadow);}
 .dirpicker-item:hover {
   background: rgba(255, 255, 255, 0.08);
 }
@@ -2537,6 +2550,7 @@ input.mono, textarea.mono {
 .mcp-tab:hover { color: var(--af-fg); }
 .mcp-tab.on {
   color: var(--af-fg); border-color: var(--af-accent); background: var(--af-raised);
+  box-shadow: var(--ctl-shadow-press);   /* 同上：选中态内凹 */
 }
 .mcp-tab-count {
   font-variant-numeric: tabular-nums; font-size: var(--fs-10, 10px);
@@ -2588,7 +2602,7 @@ input.mono, textarea.mono {
   border: 1px solid var(--af-line); background: var(--af-sunk);
   position: relative; padding: 0; flex: none;
   transition: background var(--af-dur-fast), border-color var(--af-dur-fast);
-}
+  box-shadow: var(--ctl-shadow);}
 .mcp-switch.on { background: var(--af-ok); border-color: var(--af-ok); }
 .mcp-knob {
   position: absolute; top: 1px; left: 1px; width: 13px; height: 13px;

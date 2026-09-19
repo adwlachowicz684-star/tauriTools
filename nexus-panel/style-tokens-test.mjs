@@ -175,6 +175,10 @@ for (const f of all) {
     const v = m[1].replace(/\s+/g, ' ').trim();
     if (isRingOrGlow(v)) continue;
     if (/var\(--sh-(out|in|cast)/.test(v)) continue;
+    /* --ctl-shadow* 是控件层档位，定义在 :root，指向 --sh-out-md 等，
+       最终仍由主题的 --sh-dark / --sh-light 驱动 —— 属于"跟主题"，
+       不是写死。判成写死会让"各插件按钮共用一档"无从落地。 */
+    if (/var\(--ctl-shadow/.test(v)) continue;
     // agent-flow 用自己的 --af-* 令牌（含辉光与状态色描边），等价且自洽
     if (/var\(--af-(cast|glow|ok|accent)/.test(v)) continue;
     if (/var\(--glow|var\(--accent-glow/.test(v)) continue;
@@ -405,6 +409,79 @@ t('抽屉有滑入过渡，且尊重 prefers-reduced-motion',
 const scrollBlock = /\.drawer-scroll\s*\{([^}]*)\}/.exec(shellCss)?.[1] || '';
 t('内容区可滚动且写了 min-height:0（否则被内容顶开，滚动失效）',
   /overflow\s*:\s*auto/.test(scrollBlock) && /min-height\s*:\s*0/.test(scrollBlock));
+
+console.log('\n=== 10a. 各插件按钮阴影统一（由主题管） ===');
+/* 事故：agent-flow 的按钮**一个立体阴影都没有**。
+   不是配色差异，而是 --ctl-shadow 原先只定义在 `.nx-btn,.p-btn,.mm-btn`
+   那条规则**内部** —— 是局部变量，agent-flow 自成的 26 个按钮类
+   （.toolbar button / .kind-btn / .af-lib-btn …）根本取不到。
+
+   于是同一个界面里：脑图 .mm-btn 走共享组有阴影，agent-flow 按钮没有。
+   修法是把档位提到 :root，各插件按钮引用同一档。 */
+{
+  const shadowOf = (css, sel) => {
+    let last = null;
+    for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const parts = m[1].split(',').map((x) => x.trim());
+      if (!parts.includes(sel)) continue;
+      const sh = /box-shadow\s*:\s*([^;]+)/.exec(m[2]);
+      if (sh) last = sh[1].trim();
+    }
+    return last;
+  };
+  /* 必须展开 @import：mindmap 的 .mm-btn 阴影来自 controls.css，
+     只读它自己的文件会误判成"没有阴影来源"。 */
+  const expand = (p, seen = new Set()) => {
+    if (seen.has(p)) return '';
+    seen.add(p);
+    const t = read(p);
+    const pre = [...t.matchAll(/@import\s+url\(['"]?([^'")]+)['"]?\);/g)]
+      .map((m) => expand(join(dirname(p), m[1]), seen)).join('\n');
+    return pre + '\n' + t;
+  };
+  const af = expand('plugins/agent-flow/styles.css');
+  const mm = expand('plugins/mindmap/styles.css');
+  const pg = expand('plugins/project-group/style.css');
+  const ctl = read('css/controls.css');
+
+  /* 档位必须定义在 :root —— 否则又变回"只有组内按钮拿得到" */
+  const rootBlock = /:root\s*\{([^{}]*)\}/.exec(ctl)?.[1] || '';
+  for (const v of ['--ctl-shadow', '--ctl-shadow-sm', '--ctl-shadow-press']) {
+    t(`按钮阴影档位 ${v} 定义在 :root`, new RegExp(`${v}\\s*:`).test(rootBlock));
+  }
+  t('档位指向 --sh-out-*（阴影随主题变）',
+    /--ctl-shadow:\s*var\(--sh-out-md\)/.test(rootBlock));
+
+  /* 关键对照：agent-flow 与 mindmap 的按钮必须来自同一档位 */
+  const afBtns = ['.toolbar button', '.kind-btn', '.af-lib-btn', '.mod-btn', '.btn-like'];
+  /* .mm-mini 不在内：它是**透明背景**的图标按钮（background: transparent），
+     没有"面"可以凸起 —— 常态就该是平的，hover 时才显出背景。
+     给透明元素加外凸阴影只会得到一个漂浮的影子，反而更怪。 */
+  const mmBtns = ['.mm-btn'];
+  for (const b of afBtns) {
+    const v = shadowOf(af, b);
+    t(`agent-flow ${b} 有阴影来源`, v && /var\(--ctl-shadow/.test(v), v || '无');
+  }
+  for (const b of mmBtns) {
+    const v = shadowOf(mm, b);
+    t(`mindmap ${b} 有阴影来源`, v && /var\(--ctl-shadow/.test(v), v || '无');
+  }
+  /* 两边必须指向同一族变量 —— 这才是"统一" */
+  const afV = afBtns.map((b) => (shadowOf(af, b) || '').replace(/var\((--ctl-shadow[^)]*)\)/, '$1'));
+  const mmV = mmBtns.map((b) => (shadowOf(mm, b) || '').replace(/var\((--ctl-shadow[^)]*)\)/, '$1'));
+  t('agent-flow 与 mindmap 按钮阴影同族（都走 --ctl-shadow-*）',
+    afV.every((v) => v.startsWith('--ctl-shadow')) && mmV.every((v) => v.startsWith('--ctl-shadow')),
+    `af=${afV.join('/')} mm=${mmV.join('/')}`);
+
+  /* 投射阴影不再各写一份：--af-cast-* 必须指向共享的 --sh-cast-* */
+  t('--af-cast-* 收敛到 --sh-cast-*（两份定义必然漂移）',
+    /--af-cast-sm:\s*var\(--sh-cast-sm\)/.test(af)
+    && !/--af-cast-sm:\s*0\s+8px/.test(af));
+
+  /* 页签常态保持平（整排浮起来很吵），选中态转内凹 */
+  t('页签选中态用内凹档（不是写死 --sh-in-*）',
+    /\.view-switch button\.on[\s\S]{0,200}--ctl-shadow-press/.test(af));
+}
 
 console.log('\n=== 10b. 标题三档统一 ===');
 /* 此前各插件各写一套栏标题：agent-flow 13/600、画布库 12/600 再叠

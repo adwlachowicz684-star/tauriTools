@@ -344,7 +344,7 @@ html, body {
   cursor: pointer;
   border-radius: var(--r-xs, 6px);
   line-height: 0;
-}
+  box-shadow: var(--ctl-shadow);}
 .mm-badge .mm-badge-face {
   display: inline-flex;
   align-items: center;
@@ -708,7 +708,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: var(-
   font-size: var(--fs-12, 12px);
   text-align: left;
   cursor: pointer;
-}
+  box-shadow: var(--ctl-shadow);}
 .mm-menu-item:hover { background: var(--surface-sunk); }
 .mm-menu-sep {
   height: 1px;
@@ -891,7 +891,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: var(-
   padding: 2px 4px;
   border-radius: var(--r-sm, 6px);
   opacity: 0;
-}
+  box-shadow: var(--ctl-shadow-sm);}
 .mm-arow:hover .mm-mini { opacity: 1; }
 .mm-mini:hover { color: var(--accent); background: var(--surface-sunk, var(--surface)); }
 
@@ -929,7 +929,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: var(-
   cursor: pointer;
   padding: 0;
   opacity: 0;
-}
+  box-shadow: var(--ctl-shadow-sm);}
 .mm-thumb:hover .mm-thumb-x { opacity: 1; }
 
 /* 选中的附件行（详情区显示的就是它）—— 不加高亮用户不知道点了哪一行 */

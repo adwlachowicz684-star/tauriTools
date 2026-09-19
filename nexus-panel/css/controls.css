@@ -51,6 +51,24 @@
 :root {
   --ctl-disabled-opacity: .45;
   --ctl-disabled-cursor: not-allowed;
+
+  /* ---------- 控件阴影档位 ----------
+     此前 --ctl-shadow 只定义在 `.nx-btn, .p-btn, .mm-btn` 那条规则**内部**，
+     是局部变量 —— 别的按钮类（agent-flow 的 .toolbar button / .kind-btn /
+     .af-lib-btn 等 26 个）根本取不到，于是那些按钮**完全没有立体阴影**。
+
+     这就是"agent-flow 与脑图按钮阴影不一样"的根因：
+       脑图 .mm-btn     → 在共享组里 → 有 var(--ctl-shadow)
+       agent-flow 按钮  → 自成一套类，不在组里 → 一个阴影都没有
+     不是配色差异，是那 26 个类压根没写 box-shadow。
+
+     提到 :root 后，任何插件的按钮都能引用同一档位；
+     档位本身仍指向 tokens.css 的 --sh-out-*，而 --sh-out-* 又取主题的
+     --sh-dark / --sh-light —— 于是换主题时所有插件的阴影一起变，
+     这才是"由主题统一管理"。 */
+  --ctl-shadow: var(--sh-out-md);        /* 标准按钮：外凸 */
+  --ctl-shadow-sm: var(--sh-out-sm);     /* 紧凑 / 图标按钮 */
+  --ctl-shadow-press: var(--sh-in-md);   /* 按下 / 选中：内凹 */
 }
 
 .nx-btn,
@@ -59,8 +77,6 @@
   --ctl-h: 38px;
   --ctl-pad: 18px;
   --ctl-fs: 13px;
-  --ctl-shadow: var(--sh-out-md);
-
   height: var(--ctl-h);
   padding: 0 var(--ctl-pad);
   font: inherit;
@@ -87,7 +103,7 @@
   --ctl-h: 28px;
   --ctl-pad: 9px;
   --ctl-fs: 12.5px;
-  --ctl-shadow: var(--sh-out-sm);
+  --ctl-shadow: var(--ctl-shadow-sm);
 }
 
 /* hover 只换色、不加粗：并排多个按钮时字重一变宽度就跟着变，整行会抖 */

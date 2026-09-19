@@ -87,6 +87,10 @@ export const TOKEN_VARS = [
    必须全部出现在这个列表里。 */
 export const CONTROLS_VARS = [
   '--ctl-disabled-opacity', '--ctl-disabled-cursor',
+  /* 控件阴影档位。定义在 :root 而不是按钮规则内部 —— 见下。
+     **新增变量必须同步登记到这里**：本轮就因为漏登记，把规范的写法
+     误报成"变量未定义"（这是同一个坑第三次了）。 */
+  '--ctl-shadow', '--ctl-shadow-sm', '--ctl-shadow-press',
 ];
 
 const KNOWN = new Set([...SHELL_VARS, ...TOKEN_VARS, ...CONTROLS_VARS]);
