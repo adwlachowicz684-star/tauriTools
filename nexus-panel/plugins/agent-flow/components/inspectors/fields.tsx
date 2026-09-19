@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { getDef } from '../../nodes';
+import { allPresets } from '../../nodes/registry';
 import type { FlowNode, FlowEdge } from '../../flowTypes';
 import type { Credential } from '../../engine/credentials';
 import type { SecretPolicy } from '../../types';
@@ -12,6 +13,9 @@ import { getCardGroup } from '../../nodes/registry';
 import { CredentialPicker } from './shared';
 import SaveAsCustom from './SaveAsCustom';
 import { ParamCardPicker } from './ParamCardPicker';
+import {
+  matchPresetKey, isSecretField, setFieldsDefault, clearFieldsDefault, hasFieldDefault,
+} from '../../engine/nodeDefaults';
 
 /**
  * 属性面板的**字段描述层**。
@@ -64,6 +68,13 @@ export type FieldRenderProps = {
   onOpenCredentials?: (kind: string) => void;
   secretPolicy?: SecretPolicy;
   onChangeSecretPolicy?: (p: SecretPolicy) => void;
+  /**
+   * 预设键。逐字段「设为默认」按它存 ——
+   * 与整节点那个按钮同一套键，两边看到的默认值才是同一份。
+   */
+  presetKey?: string;
+  /** 写一条运行日志（存成功 / 被拒绝时告诉用户） */
+  onNote?: (msg: string) => void;
 };
 
 export type FieldDef = {
@@ -165,20 +176,39 @@ function strOf(
  * 汇总函数、定位不到具体 input，所以走容器级而不是逐个设 aria-invalid。
  */
 export function Field({
-  label, hint, inline, error, children,
+  label, hint, inline, error, ops, children,
 }: {
   label?: string;
   hint?: ReactNode;
   inline?: boolean;
   /** 字段级错误说明；传了即进入错误态 */
   error?: string;
+  /** 标签行右侧的小功能钮（如"设为默认"） */
+  ops?: ReactNode;
   children: ReactNode;
 }) {
+  /*
+   * 标签行：有 ops 时套一层 row。
+   * 外层 .field > span 的样式（12px / dim）落在 row 上，
+   * 内层 span 继承 —— 所以标签长相不变，只是右边多出按钮。
+   */
+  const labelRow = label ? (
+    ops ? (
+      <span className="field-label-row">
+        <span>{label}</span>
+        {ops}
+      </span>
+    ) : (
+      <span>{label}</span>
+    )
+  ) : null;
+
   if (inline) {
     return (
       <label className={'p-row' + (error ? ' has-error' : '')}>
         {label ? <span className="p-muted" style={{ width: 64, flex: 'none' }}>{label}</span> : null}
         {children}
+        {ops}
         {hint ? <small className="dim" style={{ flexBasis: '100%' }}>{hint}</small> : null}
         {error ? <small className="nx-field-error" style={{ flexBasis: '100%' }}>{error}</small> : null}
       </label>
@@ -186,11 +216,73 @@ export function Field({
   }
   return (
     <label className={'field' + (error ? ' has-error' : '')}>
-      {label ? <span>{label}</span> : null}
+      {labelRow}
       {children}
       {hint ? <small className="dim">{hint}</small> : null}
       {error ? <small className="nx-field-error">{error}</small> : null}
     </label>
+  );
+}
+
+/**
+ * 单个参数的「设为默认」小按钮。
+ *
+ * 以前只有一个"管整个节点"的按钮：想只改一个字段的默认，
+ * 得先把整个节点配成想要的样子再整份存 ——
+ * 而这会顺带把其它字段**当前的值**也一起定死（哪怕你只是路过改了一下）。
+ *
+ * 密钥字段不给存（默认值是明文落盘的），但按钮**保留并置灰**：
+ * 直接不渲染的话，用户看到别的字段有按钮、这个没有，只会以为是漏做。
+ */
+function FieldDefaultButton({
+  presetKey, fieldKey, value, label, onNote,
+}: {
+  presetKey: string;
+  fieldKey: string;
+  value: unknown;
+  label: string;
+  onNote?: (msg: string) => void;
+}) {
+  // 每次渲染都读一次：点了别的字段的按钮后，这里要跟着变
+  const [tick, setTick] = useState(0);
+  const secret = isSecretField(fieldKey);
+  const on = hasFieldDefault(presetKey, fieldKey);
+  void tick;
+
+  const title = secret
+    ? '密钥不存进默认值（默认值是明文保存的），请改用凭据中心'
+    : on
+      ? `已把「${label}」设为默认，点击清除`
+      : `把当前的「${label}」设为这类节点的默认值（只影响这一个参数）`;
+
+  const click = () => {
+    if (secret) return;
+    if (on) {
+      clearFieldsDefault(presetKey, [fieldKey]);
+      onNote?.(`已清除「${label}」的默认，之后新建的同类节点用出厂值。`);
+    } else {
+      const r = setFieldsDefault(presetKey, { [fieldKey]: value });
+      if (!r.ok) {
+        onNote?.(r.skipped.length
+          ? `✗ 没能存下「${label}」：该字段属于密钥或不适合存默认值`
+          : `✗ 没能存下「${label}」：当前没有值`);
+        return;
+      }
+      onNote?.(`已把「${label}」设为默认，之后新建的同类节点都用这个值。`);
+    }
+    setTick((t) => t + 1);
+  };
+
+  return (
+    <button
+      type="button"
+      className={`field-def-btn${on ? ' on' : ''}`}
+      title={title}
+      disabled={secret}
+      onClick={click}
+    >
+      {secret ? '密钥' : on ? '默认·已设' : '设为默认'}
+    </button>
   );
 }
 
@@ -399,8 +491,28 @@ function renderField(
   };
 
   const hint = typeof f.hint === 'function' ? f.hint(p.d) : f.hint;
+
+  /*
+   * 逐字段「设为默认」的小按钮。
+   *
+   * 只给**描述层**的字段加（有 key 且不是 note / custom / credential）：
+   *   · custom 是一整块手写 JSX，标签在它自己内部，
+   *     按钮浮在块外面会看不出是给哪个参数的
+   *   · credential 本身就是要走凭据中心的，不需要默认
+   * 这几类仍用面板顶部那个"管整个节点"的按钮。
+   */
+  const ops = p.presetKey && f.key ? (
+    <FieldDefaultButton
+      presetKey={p.presetKey}
+      fieldKey={f.key}
+      value={p.d[f.key]}
+      label={strOf(f.label, p.d) || f.key}
+      onNote={p.onNote}
+    />
+  ) : null;
+
   return (
-    <Field key={f.key} label={strOf(f.label, p.d)} hint={hint} inline={f.inline}>
+    <Field key={f.key} label={strOf(f.label, p.d)} hint={hint} inline={f.inline} ops={ops}>
       {body()}
     </Field>
   );
@@ -414,7 +526,7 @@ function renderField(
  */
 export function BasicInspector({
   node, edges, onChange, credentials, onOpenCredentials,
-  secretPolicy, onChangeSecretPolicy, fields, footer, onEditModule,
+  secretPolicy, onChangeSecretPolicy, fields, footer, onEditModule, onNote,
 }: {
   node: FlowNode;
   edges: FlowEdge[];
@@ -428,6 +540,8 @@ export function BasicInspector({
   footer?: (p: FieldRenderProps) => ReactNode;
   /** 进入模块实例的内部编辑 */
   onEditModule?: (nodeId: string) => void;
+  /** 逐字段「设为默认」用它写日志 */
+  onNote?: (msg: string) => void;
 }) {
   const d = node.data as unknown as Record<string, unknown>;
   const def = getDef(node.type);
@@ -453,6 +567,15 @@ export function BasicInspector({
     onChange(node.id, merged);
   };
 
+  /*
+   * 预设键必须与面板顶部那个"管整个节点"的按钮**同一套算法**。
+   * 各算一次的话，两边会存到不同的键下 ——
+   * 表现为"我单独设了某个字段的默认，顶部却显示没设过默认"。
+   */
+  const presetKey = matchPresetKey(
+    allPresets() as never, node.type, node.data as Record<string, unknown>,
+  ) ?? node.type;
+
   const base: FieldRenderProps = {
     d,
     value: undefined,
@@ -465,6 +588,8 @@ export function BasicInspector({
     onOpenCredentials,
     secretPolicy,
     onChangeSecretPolicy,
+    presetKey,
+    onNote,
   };
 
   /*

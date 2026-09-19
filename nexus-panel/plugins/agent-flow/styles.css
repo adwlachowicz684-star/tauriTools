@@ -398,6 +398,34 @@ body { background: var(--af-bg); color: var(--af-fg); }
 }
 .inspector .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
 .inspector .field > span { font-size: 12px; color: var(--af-dim); }
+
+/*
+ * 逐字段「设为默认」的小按钮。
+ *
+ * 放在标签行右侧而不是输入框旁边：按钮属于"这个参数的默认值"，
+ * 贴着输入框会让人以为是"填值"的一部分。
+ *
+ * 标签行复用既有的 .field-label-row（四个整体自定义面板也在用），
+ * 靠 margin-left:auto 顶到右边 —— 不再为它新起一条 row 规则：
+ * 同一件事两处定义，改一处忘另一处就又多一套平行样式。
+ */
+.field-def-btn {
+  flex: none; cursor: pointer; margin-left: auto;
+  border: 1px solid var(--af-line); border-radius: var(--r-pill, 999px);
+  background: transparent; color: var(--af-dim); font-family: inherit;
+  font-size: 10px; padding: 0 6px; line-height: 1.6;
+  transition: color var(--af-dur-fast), border-color var(--af-dur-fast);
+}
+.field-def-btn:hover { color: var(--af-fg); border-color: var(--af-accent); }
+/* 已设过默认：高亮 + 文案变"默认·已设"，点一下是清除 */
+.field-def-btn.on {
+  color: var(--af-fg); border-color: var(--af-accent); background: var(--af-raised);
+}
+/* 密钥字段：保留按钮但置灰 —— 直接不渲染会被当成"漏做" */
+.field-def-btn:disabled {
+  cursor: not-allowed; opacity: .5; border-style: dashed;
+}
+.field-def-btn:disabled:hover { color: var(--af-dim); border-color: var(--af-line); }
 .inspector input[type=text], .inspector input:not([type]), .inspector select, .inspector textarea {
   background: var(--af-sunk); border: 1px solid var(--af-line); color: var(--af-fg);
   border-radius: var(--af-r-sm); padding: 7px 9px; font-size: 13px; font-family: inherit;

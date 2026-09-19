@@ -204,3 +204,47 @@ test('.node-chip 只允许参数卡片用', () => {
   }
   assert.deepEqual(bad, [], '.node-chip 是参数卡片专用，胶囊标签请用 .node-pill');
 });
+
+/* ================= 逐字段「设为默认」 ================= */
+
+/**
+ * 字段渲染层必须按 presetKey 逐字段存默认。
+ *
+ * 以前只有一个"管整个节点"的按钮：想只改一个字段的默认，
+ * 得先把整个节点配成想要的样子再整份存 —— 顺带把其它字段当前的值
+ * 也一起定死。下面是这条能力的存在性守卫。
+ */
+test('字段渲染层接了逐字段设为默认', () => {
+  if (!hasSrc) return;
+  const src = read(path.join(ROOT, 'components/inspectors/fields.tsx'));
+  for (const fn of ['setFieldsDefault', 'clearFieldsDefault', 'hasFieldDefault']) {
+    assert.ok(src.includes(fn), `fields.tsx 必须用到 ${fn}`);
+  }
+});
+
+/**
+ * presetKey 必须与整节点那个按钮同一套算法。
+ *
+ * 各算一次的话两边会存到不同的键下 ——
+ * 表现为"我单独设了某个字段的默认，顶部却显示没设过默认"。
+ */
+test('逐字段与整节点用同一个 presetKey 算法', () => {
+  if (!hasSrc) return;
+  const f = read(path.join(ROOT, 'components/inspectors/fields.tsx'));
+  const i = read(path.join(ROOT, 'components/Inspector.tsx'));
+  for (const src of [f, i]) {
+    assert.ok(src.includes('matchPresetKey'), '两边都该用 matchPresetKey 算键');
+    assert.ok(src.includes('allPresets'), '两边都该传 allPresets');
+  }
+});
+
+/** 密钥字段必须被挡住 —— 默认值是明文落盘的 */
+test('逐字段存默认要挡密钥', () => {
+  if (!hasSrc) return;
+  const src = read(path.join(ROOT, 'engine/nodeDefaults.ts'));
+  assert.ok(src.includes('isSecretField'), '缺少 isSecretField');
+  assert.ok(
+    /setFieldsDefault[\s\S]{0,400}isSecretField/.test(src),
+    'setFieldsDefault 里必须过一遍 isSecretField',
+  );
+});

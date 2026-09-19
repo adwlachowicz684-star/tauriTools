@@ -111,6 +111,11 @@ export type NodeInspectorProps = {
   onChangeSecretPolicy?: (p: SecretPolicy) => void;
   /** 后端为「未填 Token」的 webhook 触发器自动生成的校验 Token，按触发器 id 索引 */
   webhookTokens?: Record<string, string>;
+  /**
+   * 写一条运行日志。逐字段「设为默认」用它告诉用户存了 / 为什么没存。
+   * 可选：不传时按钮仍能用，只是不写日志（靠按钮自身的"已设"态反馈）。
+   */
+  onNote?: (msg: string) => void;
 };
 
 /**

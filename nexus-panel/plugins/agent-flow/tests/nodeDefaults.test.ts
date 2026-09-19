@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   loadAll, getDefault, hasDefault, setDefault, clearDefault,
   sanitizeForDefault, withDefault, matchPresetKey, NODE_DEFAULTS_KEY,
+  isSecretField, setFieldsDefault, clearFieldsDefault, hasFieldDefault,
 } from '../engine/nodeDefaults';
 import { hadInlineSecret, VIEW_KEYS } from '../engine/sanitize';
 
@@ -187,4 +188,118 @@ test('显示状态清单非空（被误清空会导致 stackParent 存进默认�
   assert.ok(VIEW_KEYS.includes('stackParent'), 'stackParent 必须在剥离清单里');
   assert.ok(VIEW_KEYS.includes('size'));
   assert.ok(VIEW_KEYS.includes('stackCollapsed'));
+});
+
+
+/* ---------------- 单字段默认值 ---------------- */
+
+/*
+ * 「设为默认」以前是一个按钮管整个节点：想只改一个字段的默认，
+ * 得先把整个节点配成想要的样子再整份存 —— 顺带把其它字段当前的值
+ * 也一起定死。下面这组是逐字段存的能力。
+ */
+
+test('只存指定字段，不动其它字段', () => {
+  const kv = memKV();
+  setDefault('task:codebuddy', { prompt: 'old', workdir: '/old', model: 'm1' }, kv);
+  const r = setFieldsDefault('task:codebuddy', { prompt: 'new' }, kv);
+  assert.equal(r.ok, true);
+  const d = getDefault('task:codebuddy', kv);
+  assert.equal(d.prompt, 'new');
+  // 整份存会连带把这两个也盖成当前值 —— 单字段存不该动它们
+  assert.equal(d.workdir, '/old');
+  assert.equal(d.model, 'm1');
+});
+
+test('单字段存能被 withDefault 应用', () => {
+  const kv = memKV();
+  setFieldsDefault('task:codebuddy', { model: 'gpt' }, kv);
+  const out = withDefault('task:codebuddy', { model: '出厂值', prompt: 'p' }, kv);
+  assert.equal(out.model, 'gpt');
+  assert.equal(out.prompt, 'p');
+});
+
+test('密钥字段不进默认值', () => {
+  const kv = memKV();
+  const r = setFieldsDefault('github', { token: 'ghp_xxx', owner: 'acme' }, kv);
+  assert.equal(r.skipped.includes('token'), true);
+  const d = getDefault('github', kv);
+  assert.equal(d.token, undefined);
+  assert.equal(d.owner, 'acme');
+});
+
+test('全是密钥则一个都不存', () => {
+  const kv = memKV();
+  const r = setFieldsDefault('github', { token: 'ghp_xxx' }, kv);
+  assert.equal(r.ok, false);
+  assert.equal(hasDefault('github', kv), false);
+});
+
+test('嵌套密钥的首段也算（llm 整个对象不能存）', () => {
+  assert.equal(isSecretField('llm'), true);
+  assert.equal(isSecretField('config'), true);
+  assert.equal(isSecretField('token'), true);
+  // 常见字段不能被误伤
+  assert.equal(isSecretField('prompt'), false);
+  assert.equal(isSecretField('model'), false);
+  assert.equal(isSecretField('owner'), false);
+});
+
+test('undefined 不存：分不清"想设成空"还是"压根没值"', () => {
+  const kv = memKV();
+  const r = setFieldsDefault('task:codebuddy', { model: undefined }, kv);
+  assert.equal(r.ok, false);
+  assert.equal(hasDefault('task:codebuddy', kv), false);
+});
+
+test('空字符串是可以存的（就是要让它默认留空）', () => {
+  const kv = memKV();
+  const r = setFieldsDefault('task:codebuddy', { model: '' }, kv);
+  assert.equal(r.ok, true);
+  assert.equal(getDefault('task:codebuddy', kv).model, '');
+});
+
+test('hasFieldDefault 只看这一个字段', () => {
+  const kv = memKV();
+  setFieldsDefault('task:codebuddy', { model: 'gpt' }, kv);
+  assert.equal(hasFieldDefault('task:codebuddy', 'model', kv), true);
+  assert.equal(hasFieldDefault('task:codebuddy', 'prompt', kv), false);
+});
+
+test('清除单个字段只删它自己', () => {
+  const kv = memKV();
+  setFieldsDefault('task:codebuddy', { model: 'gpt', prompt: 'p' }, kv);
+  clearFieldsDefault('task:codebuddy', ['model'], kv);
+  const d = getDefault('task:codebuddy', kv);
+  assert.equal('model' in d, false);
+  assert.equal(d.prompt, 'p');
+});
+
+test('最后一个字段清掉后不留空壳', () => {
+  const kv = memKV();
+  setFieldsDefault('task:codebuddy', { model: 'gpt' }, kv);
+  clearFieldsDefault('task:codebuddy', ['model'], kv);
+  assert.equal(hasDefault('task:codebuddy', kv), false);
+  // 整个键都该被删掉，而不是留一个 {}
+  assert.equal(kv.get(NODE_DEFAULTS_KEY), null);
+});
+
+test('清除不存在的字段不出错', () => {
+  const kv = memKV();
+  setFieldsDefault('task:codebuddy', { model: 'gpt' }, kv);
+  clearFieldsDefault('task:codebuddy', ['nope'], kv);
+  assert.equal(getDefault('task:codebuddy', kv).model, 'gpt');
+});
+
+/*
+ * 字段名刻意不用 config / llm —— 那两个是嵌套密钥路径的首段，
+ * 会被 isSecretField 挡掉，测出来的是"被跳过"而不是"没深拷贝"。
+ */
+test('单字段存的值要深拷贝（嵌套对象不能共享）', () => {
+  const kv = memKV();
+  const opts = { a: 1 };
+  setFieldsDefault('task:codebuddy', { opts }, kv);
+  opts.a = 999;
+  // 改原对象不该影响已存的默认值
+  assert.equal((getDefault('task:codebuddy', kv).opts as { a: number }).a, 1);
 });
