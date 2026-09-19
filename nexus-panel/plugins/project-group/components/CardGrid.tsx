@@ -300,7 +300,7 @@ export function TabBar({
           )}
         </button>
       ))}
-      <button className="fpx-tab add" title="新建页签" onClick={onAdd}>＋</button>
+      <button className="fpx-tab add" title="新增页签" onClick={onAdd}>＋</button>
       {menu && <ContextMenu x={menu.x} y={menu.y} items={items} onClose={() => setMenu(null)} />}
     </div>
   );

@@ -866,7 +866,7 @@ export default function App() {
                   <button
                     className="p-btn"
                     style={{ height: 30, padding: '0 12px' }}
-                    title="新建分类"
+                    title="新增分类"
                 onClick={() => s.addTab('group', `页签${(boot.groupTabs.length) + 1}`)}
                   >
                     ＋ 分类
@@ -942,7 +942,7 @@ export default function App() {
                 日志
                 {/* 显示"当前/上限"：条数满了之后新日志会挤掉最旧的，
                     不给这个数的话，用户只会觉得"日志怎么自己变短了" */}
-                <span className="p-muted" style={{ fontWeight: 400, fontSize: 'var(--fs-11, 11px)', marginLeft: 'var(--sp-3, 6px)' }}>
+                <span className="p-muted" style={{ fontWeight: 400, fontSize: 'var(--fs-11, 11px)', marginLeft: 6 }}>
                   {s.log.length}/{logMax}
                 </span>
               </h2>
@@ -1131,7 +1131,7 @@ function Column({
           x={menu.x}
           y={menu.y}
           items={[
-            { label: '新建页签', onClick: onAddTab },
+            { label: '新增页签', onClick: onAddTab },
             // 走 TabBar 的内联输入框，不用浏览器 prompt()（沙箱里样式割裂且体验差）
             { label: '重命名当前页签', onClick: () => setEditingTab(active) },
             { label: '删除当前页签', danger: true, onClick: () => onRemoveTab(active) },

@@ -8,6 +8,8 @@ import { confirm, prompt } from '../../../js/dialog.js';
    走 utils/dragSort 的 resolveMoveIndex，不另写一份 ——
    另写一份的话，改了那边的边界处理这里就会悄悄不一致。 */
 import { resolveMoveIndex, clampIndex, gapIndexAtX } from '../utils/dragSort';
+/* #12 清理失效项：判定与清理都是纯函数，放在 utils 里好测 */
+import { pruneGroups, staleByList, staleByProbe, totalRemoved } from '../utils/iconGroups';
 
 /** 内置图标默认归入的组名（与原版一致）。 */
 const DEFAULT_GROUP = '默认';
@@ -88,6 +90,57 @@ export function PresetIconGrid({
     }
     commit([...effective, { name, icons: [] }]);
     setActive(name);
+  };
+
+  /**
+   * #12 清理失效项。
+   *
+   * 两路判据都要走：
+   *   · 清单里已经没有这个名字（插件更新删了图标）
+   *   · 名字在清单里、但物理文件没发出来（两种表现都是破图，用户分不清）
+   *
+   * **默认组不适用**：config 还没分组时用的是动态生成的默认组，
+   * 它就是"全部有效名"，不存在失效概念。硬要清会清出 0 项，
+   * 用户会以为功能坏了。
+   */
+  const hasStoredGroups = groups.length > 0;
+
+  const cleanStale = async () => {
+    if (!hasStoredGroups) return;
+    const byList = staleByList(effective, PRESET_ICON_NAMES);
+    /* 只对"清单里有"的名字做文件探测 —— 清单里没有的已经确定失效，不必再探。 */
+    const probeTargets: string[] = [];
+    for (const g of effective) {
+      for (const n of g.icons) {
+        if (PRESET_ICON_NAMES.includes(n) && !probeTargets.includes(n)) probeTargets.push(n);
+      }
+    }
+    const byProbe = await staleByProbe(probeTargets, (n) => new Promise<boolean>((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve(true);
+      img.onerror = () => resolve(false);
+      img.src = presetIconUrl(n);
+    }));
+
+    const all = [...byList, ...byProbe];
+    if (all.length === 0) {
+      /* **明确说"没有"，而不是静默** —— 点了没反应用户会以为功能坏了 */
+      onLog('没有失效项');
+      return;
+    }
+    const { groups: next, removed } = pruneGroups(effective, all);
+    const detail = effective
+      .map((g, i) => (removed[i] > 0 ? `${g.name} ${removed[i]} 个` : ''))
+      .filter(Boolean).join('、');
+    const ok = await confirm({
+      title: '清理失效项',
+      message: `以下 ${all.length} 个图标已失效（文件不存在）：${all.slice(0, 8).join('、')}`
+        + `${all.length > 8 ? ' 等' : ''}\n\n将清理：${detail}\n\n确认清理？`,
+      danger: true,
+    });
+    if (!ok) return;
+    commit(next);
+    onLog(`已清理 ${totalRemoved(removed)} 个失效项（${detail}）`);
   };
 
   const deleteGroup = async () => {
@@ -254,6 +307,13 @@ export function PresetIconGrid({
         <span style={{ flex: 1 }} />
         {current && effective.length > 1 && (
           <button className="p-btn mini" onClick={deleteGroup}>删除分组</button>
+        )}
+        {/* #12 只在真的存了分组时才显示 —— 默认组是动态生成的、没有失效项，
+            给一个永远清出 0 项的按钮只会让人以为功能坏了 */}
+        {hasStoredGroups && (
+          <button className="p-btn mini" onClick={() => void cleanStale()} title="移除各分组中文件已不存在的图标">
+            清理失效
+          </button>
         )}
         <button
           className={`p-btn mini${addMode ? ' primary' : ''}`}
