@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkInvoke, PLUGIN_COMMANDS, HARD_DENY } from './js/invoke-policy.js';
+import { checkInvoke, PLUGIN_COMMANDS, HARD_DENY, registerBuiltinIds, resetBuiltinIds, isTrusted } from './js/invoke-policy.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const src = (p) => fs.readFileSync(path.join(HERE, p), 'utf8');
@@ -64,6 +64,18 @@ t('未声明命令 → 拒绝', checkInvoke('home', 'fs_op').ok === false);
 
 console.log('\n=== 3. 关键安全口子被挡住 ===');
 /*
+ * ⚠️ 必须先注册内置 id。
+ *
+ * 不注册的话，agent-flow 等会被当成第三方，于是命中红色组合的命令
+ * 被组合拦截挡下 —— 那是**新机制正确工作**的表现，却会让下面
+ * "agent-flow 调 fs_op 放行" 这类断言失败。
+ *
+ * 别为了让它变绿就删断言：断言本身是对的（内置插件确实该放行），
+ * 缺的是测试环境没把信任关系建起来。
+ */
+registerBuiltinIds(Object.keys(PLUGIN_COMMANDS));
+t('内置 id 已注册（否则下面全被当成第三方）', isTrusted('agent-flow') === true);
+/*
  * 这几条是本次的**起因**：此前无条件透传，插件可以调后端任意命令。
  * 现在每个插件只拿到自己声明的那几个。
  */
@@ -77,6 +89,19 @@ t('demo-iframe 调 fpx_backup 被挡', checkInvoke('demo-iframe', 'fpx_backup').
 t('agent-flow 调 fs_op 放行（它确实要用）', checkInvoke('agent-flow', 'fs_op').ok === true);
 t('settings 调 fs_op 被挡（它没声明）', checkInvoke('settings', 'fs_op').ok === false);
 
+/*
+ * 反向：不注册内置 id 时，命中红色组合的插件会被拦。
+ * 这条是上面"注册后放行"的对照 —— 只测一半的话，
+ * "注册"这个动作到底有没有起作用其实没被验证。
+ */
+resetBuiltinIds();
+t('未注入内置 id 时，agent-flow 的 fs_op 被组合拦截挡下',
+  checkInvoke('agent-flow', 'fs_op').ok === false,
+  `ok=${checkInvoke('agent-flow', 'fs_op').ok}`);
+t('未注入时 R 类命令仍放行（不搞一刀切）',
+  checkInvoke('agent-flow', 'app_version').ok === true);
+registerBuiltinIds(Object.keys(PLUGIN_COMMANDS));   // 恢复，别污染后续用例
+
 console.log('\n=== 4. 全局硬禁止闸门 ===');
 t('HARD_DENY 存在（即使为空也保留闸门）', HARD_DENY instanceof Set);
 /* 往里塞一条验证它真的生效 —— 否则这个闸门就是摆设 */
@@ -87,7 +112,13 @@ HARD_DENY.delete('__test_deny__');
 
 console.log('\n=== 5. 接线：iframe 侧（host.js）===');
 const host = src('js/host.js');
-t('host.js 引入 checkInvoke', /import \{ checkInvoke \} from '\.\/invoke-policy\.js'/.test(host));
+/*
+ * 允许同一条 import 里带更多命名导入（现在还引入了 registerBuiltinIds）——
+ * 钉死成 `import { checkInvoke }` 会在每次新增导入时假红，
+ * 而假红会诱使人去"修"本来正确的代码。
+ */
+t('host.js 引入 checkInvoke',
+  /import \{[^}]*\bcheckInvoke\b[^}]*\} from '\.\/invoke-policy\.js'/.test(host));
 t('校验发生在真正 invoke **之前**', (() => {
   const i = host.indexOf("case 'invoke': {");
   const seg = host.slice(i, i + 1400);

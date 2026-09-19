@@ -316,34 +316,50 @@ console.log('\n--- 11. 死条目：能力表里写了不存在的命令必须报
 }
 
 /* ---------------------------------------------------------------- */
-console.log('\n--- 12. 「只登记不拦截」必须被钉住 ---');
+console.log('\n--- 12. 能力拦截必须**按信任等级**分别生效 ---');
 {
   /*
    * 这节是整个决策的护栏。
    *
-   * 现在的"不拦截"是因为**没接上**，而不是因为有保证 ——
-   * 任何人（包括将来的我）顺手把 caps 接进 checkInvoke，
-   * agent-flow / project-group 立刻不可用，而症状会表现为
-   * "某些功能突然没反应"，很难联想到是安全策略变了。
-   *
-   * 所以这里钉三件事：常量值、源码不引用、**行为上真的放行**。
+   * 同一个组合风险，对内置插件是"正常工作"，对第三方是"外传通道"。
+   * 差别不在组合，在信任 —— 所以必须两头都钉住：
+   *   内置 → 不拦（否则核心功能残废）
+   *   第三方 → 拦（否则这层约束只是好看）
+   * 只钉一头的话，另一头会悄悄倒退。
    */
-  const { CAP_ENFORCEMENT, checkInvoke } = await import('./js/invoke-policy.js');
-  const { capsOf, worstLevel } = await import('./js/command-caps.js');
+  const ip = await import('./js/invoke-policy.js');
+  const { CAP_ENFORCEMENT, checkInvoke, registerBuiltinIds, resetBuiltinIds, isTrusted } = ip;
+  const { capsOf, worstLevel, capOf } = await import('./js/command-caps.js');
   const fs2 = await import('node:fs');
 
-  t('策略常量是 report-only', CAP_ENFORCEMENT === 'report-only', CAP_ENFORCEMENT);
+  t('内置走 report-only', CAP_ENFORCEMENT.builtin === 'report-only', JSON.stringify(CAP_ENFORCEMENT));
+  t('第三方走 enforce', CAP_ENFORCEMENT.third === 'enforce');
 
-  /* 静态：checkInvoke 所在文件不得引入能力表 */
+  /* 信任判定必须宿主注入，不能插件自报 */
+  resetBuiltinIds();
+  t('没注入时不可信（fail-closed）', isTrusted('home') === false);
+  registerBuiltinIds(['home', 'agent-flow']);
+  t('注入后内置可信', isTrusted('agent-flow') === true);
+  t('未注入的 id 仍不可信', isTrusted('some-third-party') === false);
+
+  /*
+   * ⚠️ 插件自报 builtin 不能拿到豁免 —— 恶意插件写一句 builtin:true
+   * 就绕过整个拦截的话，这层等于没有。
+   */
+  /*
+   * 真调一次，而不是只查 isTrusted —— 只查后者的话，
+   * 万一 checkInvoke 里另外读了 manifest.builtin，这条根本发现不了。
+   */
+  resetBuiltinIds();
+  const evilCmds = ['run_node', 'fpx_read_file'];   // M + S = 红
+  const evilManifest = { id: 'evil', builtin: true, commands: evilCmds };
+  const evilRes = checkInvoke('evil', 'run_node', evilManifest);
+  t('manifest.builtin:true 不产生豁免（真的被拦）', evilRes.ok === false,
+    `ok=${evilRes.ok} reason=${(evilRes.reason || '').slice(0, 50)}`);
+  t('自报 builtin 仍被当作第三方', isTrusted('evil') === false);
+
+  /* 取真实白名单 */
   const src = fs2.readFileSync(path.join(root, 'js', 'invoke-policy.js'), 'utf8');
-  const codeOnly = src
-    .replace(/\/\*[\s\S]*?\*\//g, '')   // 块注释（说明里会提到它）
-    .replace(/\/\/.*$/gm, '')                  // 行注释
-    .replace(/^\s*\*.*$/gm, '');               // 块注释里的 * 行
-  t('执行侧没有 import 能力表', !/command-caps/.test(codeOnly),
-    (codeOnly.match(/.*command-caps.*/) || [''])[0].slice(0, 60));
-
-  /* 行为：命中红色组合的插件，其白名单内的命令**仍然放行** */
   const m = src.match(/export const PLUGIN_COMMANDS\s*=\s*\{([\s\S]*?)\}\s*;/);
   const by = new Map();
   for (const blk of m[1].matchAll(/'?([\u4e00-\u9fa5a-z_0-9-]+)'?\s*:\s*\[([\s\S]*?)\]/g)) {
@@ -353,24 +369,85 @@ console.log('\n--- 12. 「只登记不拦截」必须被钉住 ---');
   const reds = [...by.entries()].filter(([, cs]) => worstLevel(capsOf(cs)) === 'red');
   t('确实存在命中红色组合的插件（否则这节测了个空）', reds.length > 0, `红色 ${reds.length} 个`);
 
-  let blocked = [];
+  /* ① 内置插件：即便命中红色，白名单命令**全部放行** */
+  resetBuiltinIds();
+  registerBuiltinIds([...by.keys()]);   // 注册表里的都算内置
+  let blockedBuiltin = [];
   for (const [id, cs] of reds) {
     for (const c of cs) {
       const r = checkInvoke(id, c, null);
-      if (!r.ok) blocked.push(`${id} → ${c}: ${r.reason}`);
+      if (!r.ok) blockedBuiltin.push(`${id} → ${c}: ${r.reason}`);
     }
   }
   /*
-   * 这是最关键的一条：**红色组合不代表拒绝**。
-   * 若哪天有人接上拦截，这里会立刻红，而且会报出具体是哪条命令被挡了。
+   * 最关键的一条：**红色组合对内置插件不代表拒绝**。
+   * 若哪天有人把内置也接上拦截，这里立刻红，并报出被挡的是哪条。
    */
-  t('红色插件的白名单命令全部放行（未被组合拦截）', blocked.length === 0,
-    blocked.slice(0, 3).join(' | '));
+  t('内置插件命中红色也全部放行', blockedBuiltin.length === 0, blockedBuiltin.slice(0, 2).join(' | '));
 
-  /* 反向确认：白名单外的命令仍然拒绝 —— 别为了"不拦截"把闸拆了 */
+  /* ② 第三方插件：命中红色组合时，参与该组合的等级被拒 */
+  resetBuiltinIds();   // 谁都不注入 → 全部按第三方
+  const [redId, redCmds] = reds[0];
+  const profile = capsOf(redCmds);
+  const banned = new Set();
+  for (const r of profile.combos.filter((c) => c.level === 'red')) for (const lv of r.need) banned.add(lv);
+  t('红色组合确实圈出了要拦的等级', banned.size > 0, [...banned].join(','));
+
+  let blockedThird = [];
+  let allowedThird = [];
+  for (const c of redCmds) {
+    const r = checkInvoke(redId, c, { id: redId, commands: redCmds });
+    if (banned.has(capOf(c))) {
+      if (r.ok) blockedThird.push(`该拦却放行: ${c}`);
+    } else if (!r.ok) {
+      allowedThird.push(`不该拦却拦了: ${c} → ${r.reason}`);
+    }
+  }
+  t('第三方：参与红色组合的命令被拒', blockedThird.length === 0, blockedThird.slice(0, 2).join(' | '));
+  /*
+   * 反向同样重要：不能一刀切全拒。
+   * R 类（读版本号/查状态）必须放行，否则第三方插件连基本查询都做不了，
+   * 就成了"安全对了、功能死了"。
+   */
+  t('第三方：未参与组合的命令仍放行（不搞一刀切）', allowedThird.length === 0, allowedThird.slice(0, 2).join(' | '));
+
+  /* ③ 拒绝信息要能看出原因，否则无从排查 */
+  const one = redCmds.find((c) => banned.has(capOf(c)));
+  const rej = checkInvoke(redId, one, { id: redId, commands: redCmds });
+  t('拒绝时说明了原因', !rej.ok && /红区|组合/.test(rej.reason), rej.reason?.slice(0, 60));
+
+  /* ④ 闸门没被拆：白名单外的命令仍然拒绝 */
   t('白名单外的命令仍然拒绝', checkInvoke('agent-flow', 'zzz_not_listed', null).ok === false);
-  t('HARD_DENY 优先级最高（即便当前为空集也保留判定）',
-    checkInvoke('agent-flow', '', null).ok === false);
+  t('空命令名仍然拒绝', checkInvoke('agent-flow', '', null).ok === false);
+
+  /* ⑤ 没命中红色组合的第三方插件不该被误伤 */
+  resetBuiltinIds();
+  const safeCmds = ['app_version', 'rust_ping'];
+  t('纯 R 类的第三方插件不受影响',
+    safeCmds.every((c) => checkInvoke('safe-plugin', c, { id: 'safe-plugin', commands: safeCmds }).ok));
+
+  resetBuiltinIds();
+}
+
+/* ---------------------------------------------------------------- */
+console.log('\n--- 13. 宿主必须在 concat 自定义插件**之前**注入内置 id ---');
+{
+  /*
+   * 顺序反了的话，用户后来装的第三方插件也会被当成内置，
+   * 于是"只对第三方生效"的拦截形同虚设 —— 而且不报错，
+   * 只是静静地不生效。这是最难发现的一类失效。
+   */
+  const fs2 = await import('node:fs');
+  const s2 = fs2.readFileSync(path.join(root, 'js', 'host.js'), 'utf8');
+  const codeOnly = s2.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+  const iReg = codeOnly.indexOf('registerBuiltinIds(list.map');
+  const iConcat = codeOnly.indexOf("localStorage.getItem('nexus:custom-plugins')");
+  t('host.js 里有注入调用', iReg > 0);
+  t('注入发生在读取自定义插件之前', iReg > 0 && iConcat > 0 && iReg < iConcat,
+    `注入@${iReg} concat@${iConcat}`);
+  t('注入的是静态清单（不是含 custom 的 list）',
+    /registerBuiltinIds\(list\.map\(\(p\) => p\.id\)\)/.test(codeOnly));
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);

@@ -34,6 +34,8 @@
  *
  * 等绿/黄/红分区定稿后，红区命令进这里。
  */
+import { capsOf, capOf } from './command-caps.js';
+
 export const HARD_DENY = new Set([
   /* 例：'window_action', 'tray_toggle_window', 'mm_open_devtools' */
 ]);
@@ -162,21 +164,68 @@ export const PLUGIN_COMMANDS = {
 export const SAFE_COMMANDS = ['app_version', 'rust_ping'];
 
 /**
- * 能力分级是否参与拦截。
+ * 能力分级按**信任等级**分别生效。
  *
- * ⚠️ 当前是 'report-only'（只登记不拦截），这是**刻意的选择**，不是没做完。
+ * 同一个组合风险，对不同来源的插件含义完全不同：
  *
- * 理由：能力画像显示 agent-flow 和 project-group 现在就命中红色组合
- * （M+S 外传通道、M+W 可远程改写）。它们是核心插件 ——
- * 一旦按组合拦截，功能立刻不可用，等于"安全对了、功能死了"。
+ *   agent-flow 同时持有 M（起进程/网络）与 S（读图片）——
+ *   它是**内置插件**，这组合是它的正常工作方式：读图给 AI 看、跑 CLI。
+ *   拦它等于把核心功能弄残。
  *
- * 所以顺序是：先让风险可见 → 给插件做降级改造（拆分命令或加护栏）
- * → 改造完成后才把这里改成 'enforce'。
+ *   一个第三方装进来的插件持有同样的组合 ——
+ *   它"需要"不构成豁免理由，因为无从判断它拿这些能力去干什么。
  *
- * 写成常量而不是散在注释里，是为了让这个决策**可断言**：
- * 测试钉住它是 'report-only'，谁顺手接上拦截都会被挡回去。
+ * 所以差别不在组合本身，而在**信任**。
+ *
+ *   builtin → 'report-only'  内置插件：只登记，不拦
+ *   third   → 'enforce'      第三方插件：命中红色组合即拦
+ *
+ * ⚠️ 这对应之前定的 L0/L1/L2 分级：L2（不可信）才需要这一层。
+ * 对第三方插件来说，iframe 沙箱是第一层，这里是第二层。
  */
-export const CAP_ENFORCEMENT = 'report-only';
+export const CAP_ENFORCEMENT = {
+  builtin: 'report-only',
+  third: 'enforce',
+};
+
+/**
+ * 内置插件 id 集合 —— 由**宿主**注入，不由插件自报。
+ *
+ * ⚠️ 为什么不能用 manifest.builtin
+ * 那是插件自己写的字段，恶意插件只要写 `builtin: true` 就能拿到豁免。
+ * 信任判定必须在宿主侧、且来源是**静态注册表**（不含用户后来装的）。
+ *
+ * 宿主在 loadRegistry() 拿到静态清单后调用 registerBuiltinIds()。
+ */
+const BUILTIN_IDS = new Set();
+
+/**
+ * @param {string[]} ids 内置插件 id（来自 registry.js 的静态部分）
+ */
+export function registerBuiltinIds(ids) {
+  BUILTIN_IDS.clear();
+  for (const id of ids || []) BUILTIN_IDS.add(String(id));
+  return BUILTIN_IDS.size;
+}
+
+/** 清空（仅测试用） */
+export function resetBuiltinIds() {
+  BUILTIN_IDS.clear();
+}
+
+/**
+ * 插件是否可信。
+ *
+ * ⚠️ 未注入时**保守按不可信**（fail-closed）。
+ * 漏注入属于"机制没接上"，此时若按可信放行，安全会静默失效——
+ * 那种失败看不见。按不可信则会立刻表现为第三方插件受限，
+ * 而内置插件也会一起受限……那正是"功能死"的味道。
+ *
+ * 所以宿主**必须**注入；测试钉住了 host.js 那条注入语句。
+ */
+export function isTrusted(pluginId) {
+  return BUILTIN_IDS.has(String(pluginId));
+}
 
 /**
  * 校验一次 invoke 是否被允许。
@@ -191,8 +240,8 @@ export const CAP_ENFORCEMENT = 'report-only';
  * 注意 2 与 3 是**并集**不是替换：内置插件在 manifest 里补声明也能生效，
  * 将来给某个内置插件临时加命令不必改这张静态表。
  *
- * 本函数**刻意不引用 command-caps.js**。能力等级只用于报告，
- * 不参与这里的判定 —— 见 CAP_ENFORCEMENT 的说明。
+ * 本函数引用 command-caps.js，但**只用于第三方插件**。
+ * 内置插件的能力组合不参与判定 —— 见 CAP_ENFORCEMENT 的说明。
  *
  * @param {string} pluginId 插件 id
  * @param {string} cmd      要调用的命令
@@ -207,17 +256,48 @@ export function checkInvoke(pluginId, cmd, manifest) {
   if (HARD_DENY.has(name)) {
     return { ok: false, reason: `命令已被全局禁止: ${name}` };
   }
+
   /* 插件自带声明。自定义插件靠这条获得授权 ——
      这是"用户自己决定给这个插件什么权限"，与静态表的区别只是来源。 */
   const own = Array.isArray(manifest?.commands) ? manifest.commands : null;
-  if (own && own.includes(name)) return { ok: true };
-
   const allow = PLUGIN_COMMANDS[pluginId];
-  if (allow && allow.includes(name)) return { ok: true };
+  const declared = (own && own.includes(name)) || (allow && allow.includes(name));
 
-  if (SAFE_COMMANDS.includes(name)) return { ok: true };
+  if (!declared && !SAFE_COMMANDS.includes(name)) {
+    /* 未登记且不在安全集合 —— 默认拒绝。
+       未来联网安装插件时，这一条仍是最主要的一道闸。 */
+    return { ok: false, reason: `插件 ${pluginId} 未声明命令: ${name}` };
+  }
 
-  /* 未登记且不在安全集合 —— 默认拒绝。
-     未来联网安装插件时，这一条仍是最主要的一道闸。 */
-  return { ok: false, reason: `插件 ${pluginId} 未声明命令: ${name}` };
+  /*
+   * 组合风险拦截 —— **只对第三方生效**。
+   *
+   * 判据用"这个插件一共被授予了哪些命令"，而不是"当前这一条"。
+   * 单条命令永远看不出外传通道：run_node 像正常功能，
+   * fpx_read_file 也像正常功能，合起来才是问题。
+   */
+  if (!isTrusted(pluginId)) {
+    const granted = [...new Set([...(allow || []), ...(own || [])])];
+    const profile = capsOf(granted);
+    const red = (profile.combos || []).filter((c) => c.level === 'red');
+    if (red.length) {
+      /*
+       * 只拦**参与红色组合的那些等级**，不是一刀切全拒。
+       * 例：M+S 红了，则 M 与 S 类的命令被拒，但 R（读版本号）仍放行 ——
+       * 这样第三方插件至少能正常查询状态，而不是整个瘫掉。
+       */
+      const banned = new Set();
+      for (const r of red) for (const lv of r.need) banned.add(lv);
+      const cap = capOf(name);
+      if (banned.has(cap)) {
+        return {
+          ok: false,
+          reason: `第三方插件 ${pluginId} 的能力组合命中红区（${red.map((r) => r.why).join('；')}），`
+            + `已拒绝 ${cap} 类命令 ${name}。`,
+        };
+      }
+    }
+  }
+
+  return { ok: true };
 }

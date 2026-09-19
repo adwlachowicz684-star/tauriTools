@@ -8,7 +8,7 @@
 import { getTauri, isInsideTauri } from './tauri-core.js';
 /* ctx.invoke 的命令白名单。此前是无条件透传（插件可调任意后端命令），
    它是文件残留与安全上最大的口子，嵌合后会进一步放大。 */
-import { checkInvoke } from './invoke-policy.js';
+import { checkInvoke, registerBuiltinIds } from './invoke-policy.js';
 /* 卸载残留校验（只读 · 不阻断 · 同步）。见该文件头部说明。 */
 import { snapshotGlobals, auditUnmount } from './unmount-audit.js';
 /* 文件清单制（D3）：插件产出文件的归属记账，账本在宿主侧。 */
@@ -223,6 +223,14 @@ export async function loadRegistry() {
     // 删掉它，改由下面的控制台输出把失败暴露出来。
     console.error('[registry] registry.js 未能提供插件列表，面板将没有插件可显示');
   }
+  /*
+   * ⚠️ 必须在 concat custom **之前**注入。
+   *
+   * 顺序反了的话，用户后来装的第三方插件也会被当成内置，
+   * 于是"只对第三方生效"的组合拦截形同虚设 ——
+   * 而它不会报错，只是静静地不生效。
+   */
+  registerBuiltinIds(list.map((p) => p.id));
   try {
     const custom = JSON.parse(localStorage.getItem('nexus:custom-plugins') || '[]');
     const ids = new Set(list.map((p) => p.id));
