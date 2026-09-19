@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { loadRegistry } from '../../js/host.js';
 import { loadModuleEntry } from '../../js/plugin-entries.js';
-import { loadToolbarPlugins, mountToolbar } from '../../js/toolbar-plugin.js';
+import {
+  loadToolbarPlugins, mountToolbar, TOOLBAR_EVENT,
+} from '../../js/toolbar-plugin.js';
 /* 工具栏插件要用检查器状态，由这里注入（插件自行 import 会拿到第二份单例） */
 import { toggleInspector, isInspectorOn } from '../../js/inspector.js';
 
@@ -38,16 +40,19 @@ export default function Titlebar({
 
   useEffect(() => {
     let alive = true;
-    (async () => {
+    const load = async () => {
       try {
         /*
          * loadRegistry 是 async —— 必须 await。
          * 不 await 拿到的是 Promise，.filter 不存在，会抛 TypeError。
          */
         const all = (await loadRegistry()) || [];
-        await loadToolbarPlugins(
-          all.filter((p) => (p as { kind?: string }).kind === 'toolbar'),
-          {
+        /*
+         * 传**全部**清单，由 loadToolbarPlugins 自己筛。
+         * 只传 kind==='toolbar' 的话，应用插件声明的入口、
+         * 以及用户在设置里手动添加的入口都不会被加载。
+         */
+        await loadToolbarPlugins(all, {
             loadModule: (m) => loadModuleEntry(m as never),
             onError: (id, e) => {
               console.warn('[toolbar] 加载失败', id, e);
@@ -59,8 +64,20 @@ export default function Titlebar({
       } catch (e) {
         onToast?.(`工具栏加载失败：${(e as Error)?.message || e}`, 'err');
       }
-    })();
-    return () => { alive = false; };
+    };
+    void load();
+    /*
+     * 设置页改了可见性 / 顺序 / 新增入口后要**立刻**重渲染。
+     * 不监听的话，用户点了"显示"却要重启应用才生效 —— 那就是"设置了没用"。
+     *
+     * 重新 load（而不只是重新 mount）是因为新增的入口需要重新生成 def。
+     */
+    const onChange = () => { void load(); };
+    document.addEventListener(TOOLBAR_EVENT, onChange);
+    return () => {
+      alive = false;
+      document.removeEventListener(TOOLBAR_EVENT, onChange);
+    };
   }, [onToast]);
 
   useEffect(() => {

@@ -19,7 +19,9 @@ import { getPluginConfig, setPluginConfig } from './plugin-config.js';
 import { openThemePicker } from './theme-picker.js';
 import { installTooltip, refreshTooltip } from './tooltip.js';
 import { installInspector, toggleInspector, isInspectorOn, escInspector } from './inspector.js';
-import { loadToolbarPlugins, mountToolbar } from './toolbar-plugin.js';
+import {
+  loadToolbarPlugins, mountToolbar, TOOLBAR_EVENT,
+} from './toolbar-plugin.js';
 import { loadModuleEntry } from './plugin-entries.js';
 
 import { confirm as askConfirm } from './dialog.js';
@@ -589,28 +591,44 @@ async function initToolbar() {
    * 失败**（不只是少一排按钮）。
    */
   const all = (await loadRegistry()) || [];
-  const manifests = all.filter((p) => p.kind === 'toolbar');
-  await loadToolbarPlugins(manifests, {
-    loadModule: (m) => loadModuleEntry(m),
-    onError: (id, e) => {
-      console.warn('[toolbar] 加载失败', id, e);
-      toast(`工具栏插件「${id}」加载失败：${e?.message || e}`, 'err');
-    },
-  });
-  mountToolbar(slot, {
-    toast,
-    win: (a) => host.win(a),
-    navigate,
-    /*
-     * 检查器能力注入给工具栏插件。
-     * 插件**不要**自己 import inspector.js —— 它会被打进独立 chunk，
-     * 那份模块级单例（on / locked）就成了第二份，按钮高亮永远不同步。
-     */
-    inspector: { isOn: isInspectorOn, toggle: toggleInspector },
-    /* 工具栏插件走宿主总线。bus 是外壳与插件共用的那一套，
-       agent-flow 用 ctx.on 订阅的就是它。 */
-    emit: (ev, payload) => host.bus?.emit?.(ev, payload),
-  });
+  /*
+   * 传**全部**清单，由 loadToolbarPlugins 自己筛：
+   * 除了 kind:'toolbar'，还要处理"应用插件声明了 toolbar 入口"
+   * 和"用户在设置里手动添加的插件"两类。
+   * 在这里 filter 掉的话，后两种永远不会出现 ——
+   * 表现就是"设置里加了入口，右上角却没反应"。
+   */
+  const reload = async () => {
+    await loadToolbarPlugins(all, {
+      loadModule: (m) => loadModuleEntry(m),
+      onError: (id, e) => {
+        console.warn('[toolbar] 加载失败', id, e);
+        toast(`工具栏插件「${id}」加载失败：${e?.message || e}`, 'err');
+      },
+    });
+    mountToolbar(slot, {
+      toast,
+      win: (a) => host.win(a),
+      navigate,
+      /*
+       * 检查器能力注入给工具栏插件。
+       * 插件**不要**自己 import inspector.js —— 它会被打进独立 chunk，
+       * 那份模块级单例（on / locked）就成了第二份，按钮高亮永远不同步。
+       */
+      inspector: { isOn: isInspectorOn, toggle: toggleInspector },
+      /* 工具栏插件走宿主总线。bus 是外壳与插件共用的那一套，
+         agent-flow 用 ctx.on 订阅的就是它。 */
+      emit: (ev, payload) => host.bus?.emit?.(ev, payload),
+    });
+  };
+
+  await reload();
+  /*
+   * 设置页改了可见性 / 顺序 / 新增入口后要**立刻**重渲染。
+   * 不监听的话，用户点了"显示"要重启才生效 —— 那就是"设置了没用"。
+   * 重新 load（不只重新 mount）是因为新增入口要重新生成 def。
+   */
+  document.addEventListener(TOOLBAR_EVENT, () => { void reload(); });
 }
 
 (async function () {

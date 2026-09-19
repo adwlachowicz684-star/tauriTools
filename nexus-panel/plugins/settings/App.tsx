@@ -1,4 +1,8 @@
 import { useEffect, useState } from 'react';
+import {
+  toolbarEntriesOf, wantsEntry, hiddenIds, extraIds,
+  toggleHidden, moveEntry, addExtra, removeExtra,
+} from '../../js/toolbar-plugin.js';
 import { useNexus } from '../../src/nexus-react';
 import type { PluginManifest } from '../../js/host.js';
 import {
@@ -221,6 +225,147 @@ function PluginRow({ p, audit, auditOpen, onToggleAudit, onOverride, onRemove }:
         )}
       </span>
     </div>
+  );
+}
+
+/**
+ * 右上角按钮（工具栏入口）管理。
+ *
+ * 之前这一区只是把 kind:'toolbar' 的插件列出来，**没有任何开关**：
+ * 想隐藏某个按钮没地方点、想排序没地方拖、想把某个应用插件
+ * 放到右上角更是没入口 —— 也就是"找不到地方添加按钮入口"。
+ *
+ * 这里提供三件事：显示/隐藏、上移/下移、把应用插件添加为入口。
+ * 改完立刻生效（toolbar-plugin.js 派发事件，标题栏重新渲染）。
+ *
+ * ⚠️ 入口列表用 toolbarEntriesOf() 推导，与加载器**共用同一份判断** ——
+ * 两边各写一遍必然漂移，表现是"设置里关掉了、右上角还在"。
+ */
+function ToolbarSection({ plugins, ctx }: { plugins: any[]; ctx: any }) {
+  const [, force] = useState(0);
+  const rerender = () => force((v) => v + 1);
+
+  const entries = toolbarEntriesOf(plugins);
+  const hidden = new Set(hiddenIds());
+  const extra = new Set(extraIds());
+  /* 可以加进来的：应用插件里还没成为入口的那些 */
+  const candidates = (plugins || []).filter(
+    (p) => (!p.kind || p.kind === 'app') && !wantsEntry(p));
+  const [pick, setPick] = useState('');
+
+  const rowStyle: React.CSSProperties = {
+    padding: '12px 14px', marginTop: 'var(--sp-5, 10px)', borderRadius: 'var(--r)',
+    background: 'var(--surface-sunk)',
+    boxShadow: 'inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light)',
+  };
+  const btn = (
+    label: string, title: string, onClick: () => void,
+    danger?: boolean, disabled?: boolean,
+  ) => (
+    <button
+      className={'p-btn' + (danger ? ' danger' : '')}
+      title={title}
+      disabled={disabled}
+      onClick={() => { onClick(); rerender(); }}
+      style={{
+        height: 30, minWidth: 30, padding: '0 8px',
+        fontSize: 'var(--fs-12, 12px)', cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.45 : 1,
+      }}
+    >
+      {label}
+    </button>
+  );
+
+  const head = (
+    <div style={{
+      display: 'flex', alignItems: 'baseline', gap: 'var(--sp-4, 8px)',
+      marginTop: 'var(--sp-6, 12px)',
+    }}>
+      <span style={{ fontSize: 'var(--fs-12, 12px)', fontWeight: 600 }}>
+        {`右上角按钮 · ${entries.length}`}
+      </span>
+      <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+        显示在标题栏右侧，可隐藏与排序
+      </span>
+    </div>
+  );
+
+  return (
+    <>
+      {head}
+      {entries.length ? null : (
+        <div className="p-muted" style={{ marginTop: 'var(--sp-4, 8px)', fontSize: 'var(--fs-11, 11px)' }}>
+          还没有任何入口。可在下方把应用插件加进来。
+        </div>
+      )}
+      {entries.map((e, i) => (
+        <div className="p-row" style={rowStyle} key={e.id}>
+          <span style={{ fontSize: 'var(--fs-15, 15px)', width: 24, textAlign: 'center' }}>
+            {e.label}
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 'var(--fs-13, 13px)' }}>
+              {e.name}
+              {hidden.has(e.id) ? (
+                <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}> · 已隐藏</span>
+              ) : null}
+            </div>
+            <div className="p-mono p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+              {e.source === 'toolbar' ? '工具栏插件' : '应用插件入口（点了切过去）'}
+            </div>
+          </div>
+          {btn(hidden.has(e.id) ? '显示' : '隐藏',
+            hidden.has(e.id) ? '重新显示到右上角' : '从右上角隐藏',
+            () => toggleHidden(e.id))}
+          {btn('↑', '上移', () => moveEntry(e.id, -1), false, i === 0)}
+          {btn('↓', '下移', () => moveEntry(e.id, 1), false, i === entries.length - 1)}
+          {e.source === 'entry' && !e.builtin
+            ? btn('移除', '从右上角移除这个入口', () => removeExtra(e.pluginId), true)
+            : null}
+        </div>
+      ))}
+
+      {/* 添加入口：这是"找不到地方添加按钮入口"的直接答案 */}
+      {candidates.length ? (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 'var(--sp-4, 8px)',
+          marginTop: 'var(--sp-5, 10px)',
+        }}>
+          <select
+            className="p-input"
+            style={{ flex: 1, height: 30, fontSize: 'var(--fs-12, 12px)', padding: '0 8px' }}
+            value={pick}
+            onChange={(ev) => setPick(ev.target.value)}
+          >
+            <option value="">把应用插件添加到右上角…</option>
+            {candidates.map((p) => (
+              <option key={p.id} value={p.id}>{p.icon ?? '◌'} {p.name}</option>
+            ))}
+          </select>
+          <button
+            className="p-btn"
+            style={{ height: 30, padding: '0 10px', fontSize: 'var(--fs-12, 12px)' }}
+            disabled={!pick}
+            onClick={() => {
+              if (!pick) return;
+              addExtra(pick);
+              setPick('');
+              rerender();
+              const p = (plugins || []).find((x) => x.id === pick);
+              ctx?.toast?.(`已把「${p?.name ?? pick}」添加到右上角`, 'ok');
+            }}
+          >
+            添加
+          </button>
+        </div>
+      ) : null}
+      {extra.size ? (
+        <div className="p-muted" style={{ marginTop: 'var(--sp-4, 8px)', fontSize: 'var(--fs-11, 11px)' }}>
+          手动添加的入口点了会切到对应插件；移除只是去掉右上角按钮，不会卸载插件。
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -769,7 +914,6 @@ export default function Settings() {
             {(() => {
               const apps = plugins.filter((p) => !p.kind || p.kind === 'app');
               const svcs = plugins.filter((p) => p.kind === 'service');
-              const tbs = plugins.filter((p) => p.kind === 'toolbar');
               const sub = (label: string, hint?: string) => (
                 <div style={{
                   display: 'flex', alignItems: 'baseline', gap: 'var(--sp-4, 8px)',
@@ -819,25 +963,7 @@ export default function Settings() {
                       onRemove={() => removePlugin(p)}
                     />
                   ))}
-                  {tbs.length
-                    ? sub(`工具栏插件 · ${tbs.length}`, '显示在标题栏右上角，不在侧边栏')
-                    : null}
-                  {tbs.map((p) => (
-                    <PluginRow
-                      key={p.id}
-                      p={p}
-                      audit={audits[p.id]}
-                      auditOpen={auditOpen === p.id}
-                      onToggleAudit={() => setAuditOpen((cur) => (cur === p.id ? null : p.id))}
-                      onOverride={(v) => {
-                        setPluginOverride(p.id, v || null);
-                        void syncPolicyToShell(() => (ctx as any)?.shell?.normalizer
-                          ?.setPluginOverride(p.id, v || null));
-                        ctx.toast(`「${p.name}」适配策略已更新`, 'ok');
-                      }}
-                      onRemove={() => removePlugin(p)}
-                    />
-                  ))}
+                  <ToolbarSection plugins={plugins} ctx={ctx} />
                 </>
               );
             })()}

@@ -391,13 +391,28 @@ console.log('\n--- G. 插件按 kind 三分区 ---');
 
   t('React 版不用 kind!==service 分 app（会把 toolbar 算进去）',
     !/kind\s*!==\s*'service'/.test(r));
-  t('React 版按 app/service/toolbar 三区',
-    /p\.kind === 'app'/.test(r) && /p\.kind === 'service'/.test(r) && /p\.kind === 'toolbar'/.test(r));
-  t('原生版不用 kind!==service 分 app',
-    !/kind\s*!==\s*'service'/.test(n));
-  t('原生版按三区', /kind === 'toolbar'/.test(n) && /tbRows/.test(n));
-  t('两版都有工具栏分区标题',
-    /工具栏插件/.test(react) && /工具栏插件/.test(native));
+  /*
+   * 工具栏那一区现在由 ToolbarSection / buildToolbarSection 渲染
+   * （不再是简单的 filter + map），因为它还要管显示、排序、添加。
+   * 断言跟着契约走：查这两个函数被定义且被引用。
+   */
+  t('React 版有工具栏管理组件', /function ToolbarSection/.test(react));
+  t('React 版引用了它', /<ToolbarSection /.test(react));
+  t('原生版有工具栏管理函数', /function buildToolbarSection/.test(native));
+  /*
+   * 钉**调用点**（前面有缩进、以逗号结尾），不是定义处 ——
+   * 定义处也有同样的字符串，只查它会让"没接上"也能通过。
+   */
+  t('原生版引用了它', /\n\s+buildToolbarSection\(ctx, plugins, sub\),/.test(native));
+  /*
+   * 入口列表必须与加载器**共用同一个推导函数**。
+   * 两边各写一遍判断必然漂移 —— 表现是"设置里关掉了，右上角还在"。
+   */
+  t('两版都用 toolbarEntriesOf 推导入口（与加载器同源）',
+    /toolbarEntriesOf/.test(react) && /toolbarEntriesOf/.test(native));
+  t('两版都能隐藏/排序/添加',
+    ['toggleHidden', 'moveEntry', 'addExtra', 'removeExtra']
+      .every((fn) => react.includes(fn) && native.includes(fn)));
 
   /*
    * 引用了就得有定义。
@@ -409,12 +424,12 @@ console.log('\n--- G. 插件按 kind 三分区 ---');
    */
   const defCount = (txt, name) => (txt.match(new RegExp(`(?:const|let)\\s+${name}\\s*=`, 'g')) || []).length;
   const useCount = (txt, name) => (txt.match(new RegExp(`\\b${name}\\b`, 'g')) || []).length;
-  for (const nm of ['apps', 'svcs', 'tbs']) {
+  for (const nm of ['apps', 'svcs']) {
     t(`React 版 ${nm} 有定义且被引用`,
       defCount(r, nm) === 1 && useCount(r, nm) > 1,
       `定义 ${defCount(r, nm)} / 出现 ${useCount(r, nm)}`);
   }
-  for (const nm of ['appRows', 'svcRows', 'tbRows']) {
+  for (const nm of ['appRows', 'svcRows']) {
     t(`原生版 ${nm} 有定义且被引用`,
       defCount(n, nm) >= 1 && useCount(n, nm) > 1,
       `定义 ${defCount(n, nm)} / 出现 ${useCount(n, nm)}`);
@@ -441,6 +456,52 @@ console.log('\n--- H. 检查器提示按平台 ---');
     && /⌘/.test(code) && /Ctrl/.test(code));
   t('平台判断有 try/catch（无 navigator 环境不能抛）',
     /function isMac\(\)[\s\S]{0,160}try\s*\{/.test(code));
+}
+
+/* ================================================================
+   I. 右上角按钮入口：能隐藏、能排序、能添加
+   ================================================================
+   之前的缺口：这一区只是把 kind:'toolbar' 的插件列出来，没有任何开关 ——
+   想隐藏某个按钮没地方点、想把应用插件放到右上角更是没入口
+   （这就是"找不到地方添加按钮入口"）。 */
+console.log('\n--- I. 右上角入口管理 ---');
+{
+  const tb = src('js/toolbar-plugin.js');
+  const react = src('plugins/settings/App.tsx');
+  const native = src('plugins/settings/index.js');
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  /* 持久化存 localStorage：设置页与标题栏是两份模块实例，
+     模块级变量会有第二份副本，改了这边那边不知道 */
+  t('可见性/顺序存 localStorage（不是模块变量）',
+    /localStorage/.test(tb) && /nexus:toolbar-hidden/.test(tb) && /nexus:toolbar-order/.test(tb));
+  t('有手动添加入口的存储', /nexus:toolbar-extra/.test(tb));
+
+  /* 排序函数不能依赖 defs —— 设置页那份实例里 defs 是空的 */
+  t('sortIds 不读 defs（设置页那份实例里 defs 为空）',
+    /export function sortIds\(ids\)/.test(strip(tb))
+    && !/function sortIds[\s\S]{0,200}defs\.keys/.test(strip(tb)));
+
+  /* 加载器要接受全部清单（否则应用插件的入口永远加载不到） */
+  t('加载器按 kind / 声明 / extra 三类收口',
+    /kind !== 'toolbar'/.test(strip(tb)) && /wantsEntry/.test(strip(tb)));
+  t('两个外壳传**全部**清单给加载器（不能只 filter toolbar）',
+    /loadToolbarPlugins\(all,/.test(strip(src('src/components/Titlebar.tsx')))
+      && /loadToolbarPlugins\(all,/.test(strip(src('js/shell.js'))));
+
+  /* 改完要立刻生效 */
+  /*
+   * 必须钉 `addEventListener(TOOLBAR_EVENT`：只查名字的话，
+   * import 语句里也有它 —— 删掉监听断言照样绿（实测踩到）。
+   */
+  t('两个外壳都监听 toolbar 变更事件',
+    /addEventListener\(TOOLBAR_EVENT/.test(strip(src('src/components/Titlebar.tsx')))
+    && /addEventListener\(TOOLBAR_EVENT/.test(strip(src('js/shell.js'))));
+  t('变更会派发事件', /function notifyToolbarChanged/.test(strip(tb)));
+
+  /* 设置页两版都要能添加 */
+  t('React 版有"添加为右上角按钮"入口', /addExtra/.test(react));
+  t('原生版同样有', /addExtra/.test(native));
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);

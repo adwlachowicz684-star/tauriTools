@@ -30,7 +30,8 @@ globalThis.getComputedStyle = dom.window.getComputedStyle;
 globalThis.CustomEvent = dom.window.CustomEvent;
 
 const {
-  resetToolbar, toolbarDefs, validateToolbarDef, loadToolbarPlugins, mountToolbar,
+  resetToolbar, toolbarDefs, allToolbarDefs, validateToolbarDef, loadToolbarPlugins, mountToolbar,
+  setHidden, moveEntry, addExtra, removeExtra, toolbarEntriesOf, hiddenIds,
 } = await import('./js/toolbar-plugin.js');
 
 /* ---------------------------------------------------------------- */
@@ -83,7 +84,7 @@ console.log('\n=== 3. 加载：iframe 必须被拒绝 ===');
 resetToolbar();
 let errId = null, errMsg = '';
 const n = await loadToolbarPlugins(
-  [{ id: 'bad', type: 'iframe', entry: 'x' }],
+  [{ id: 'bad', kind: 'toolbar', type: 'iframe', entry: 'x' }],
   {
     loadModule: async () => ({ default: { id: 'bad', label: 'B', onClick() {} } }),
     onError: (id, e) => { errId = id; errMsg = String(e?.message || e); },
@@ -96,7 +97,7 @@ t('被拒绝的插件不会进登记表', toolbarDefs().length === 0);
 /* 加载失败不能连带整排按钮消失 */
 resetToolbar();
 const n2 = await loadToolbarPlugins(
-  [{ id: 'ok', type: 'module' }, { id: 'boom', type: 'module' }],
+  [{ id: 'ok', kind: 'toolbar', type: 'module' }, { id: 'boom', kind: 'toolbar', type: 'module' }],
   {
     loadModule: async (m) => {
       if (m.id === 'boom') throw new Error('入口炸了');
@@ -112,7 +113,7 @@ console.log('\n=== 4. order 排序 ===');
 
 resetToolbar();
 await loadToolbarPlugins(
-  [{ id: 'c' }, { id: 'a' }, { id: 'b' }],
+  [{ id: 'c', kind: 'toolbar' }, { id: 'a', kind: 'toolbar' }, { id: 'b', kind: 'toolbar' }],
   {
     loadModule: async (m) => ({
       default: { id: m.id, label: m.id, order: { c: 30, a: 10, b: 20 }[m.id], onClick() {} },
@@ -130,7 +131,7 @@ console.log('\n=== 5. 渲染与点击 ===');
 resetToolbar();
 const clicked = [];
 await loadToolbarPlugins(
-  [{ id: 'p1' }, { id: 'p2' }],
+  [{ id: 'p1', kind: 'toolbar' }, { id: 'p2', kind: 'toolbar' }],
   {
     loadModule: async (m) => ({
       default: {
@@ -158,7 +159,7 @@ t('setActive 加了 on 类', btns[0].classList.contains('on'));
 let toastMsg = '';
 resetToolbar();
 await loadToolbarPlugins(
-  [{ id: 'boom2' }],
+  [{ id: 'boom2', kind: 'toolbar' }],
   {
     loadModule: async () => ({
       default: { id: 'boom2', label: 'B', onClick() { throw new Error('插件内部炸了'); } },
@@ -179,7 +180,7 @@ console.log('\n=== 6. 菜单：取消返回 null，不是抛异常 ===');
 resetToolbar();
 let menuResult = 'unset';
 await loadToolbarPlugins(
-  [{ id: 'm' }],
+  [{ id: 'm', kind: 'toolbar' }],
   {
     loadModule: async () => ({
       default: {
@@ -437,6 +438,87 @@ console.log('\n=== 10.6 真实挂载：onInit 清理 + 检查器状态同步 ===
   for (const fn of [...c1, ...c2]) { try { fn(); } catch { /* ignore */ } }
   setInspector(false);
   void insp;
+}
+
+/* ---------------------------------------------------------------- */
+console.log('\n=== 10.8 入口管理：隐藏 / 排序 / 添加（走真实存储） ===');
+/*
+ * 用真实 localStorage 跑，不查源码字符串。
+ * "隐藏了还在不在"、"排了序生效没"是运行期行为，
+ * 字符串匹配证明不了。
+ */
+{
+  resetToolbar();
+  const manifests = [
+    { id: 'toolbar-theme', kind: 'toolbar', name: '主题', icon: '◐' },
+    { id: 'toolbar-pin', kind: 'toolbar', name: '置顶', icon: '⇱' },
+    { id: 'home', kind: 'app', name: '概览', icon: '◈' },
+  ];
+  const n = await loadToolbarPlugins(manifests, {
+    loadModule: async (m) => ({ default: { id: m.id, label: m.icon, order: 10, onClick() {} } }),
+    onError: () => {},
+  });
+  /* 2 个 toolbar 插件；home 没声明 toolbar、也没被手动加 → 不生成入口 */
+  t('只加载 kind:toolbar 的（应用插件默认不占右上角）', n === 2, `加载 ${n}`);
+
+  let ids = toolbarDefs().map((d) => d.id);
+  t('两个按钮都在', ids.length === 2, ids.join(','));
+
+  /* 隐藏 */
+  setHidden('toolbar-theme', true);
+  ids = toolbarDefs().map((d) => d.id);
+  t('隐藏后不再出现在渲染列表', !ids.includes('toolbar-theme') && ids.length === 1, ids.join(','));
+  t('但仍在全部列表里（设置页要能再显示出来）',
+    allToolbarDefs().some((d) => d.id === 'toolbar-theme'));
+
+  /* 排序 */
+  setHidden('toolbar-theme', false);
+  moveEntry('toolbar-pin', -1);
+  ids = toolbarDefs().map((d) => d.id);
+  t('上移生效', ids[0] === 'toolbar-pin', ids.join(','));
+  t('排序持久化到 localStorage',
+    JSON.parse(localStorage.getItem('nexus:toolbar-order') || '[]')[0] === 'toolbar-pin');
+
+  /* 手动添加应用插件入口 */
+  addExtra('home');
+  await loadToolbarPlugins(manifests, {
+    loadModule: async (m) => ({ default: { id: m.id, label: m.icon, order: 10, onClick() {} } }),
+    onError: () => {},
+  });
+  ids = toolbarDefs().map((d) => d.id);
+  t('手动添加的入口出现了', ids.includes('tb-entry:home'), ids.join(','));
+
+  const homeDef = toolbarDefs().find((d) => d.id === 'tb-entry:home');
+  let navigated = null;
+  homeDef.onClick({ navigate: (id) => { navigated = id; } });
+  t('点了切到对应插件', navigated === 'home', String(navigated));
+
+  /* 移除入口 */
+  removeExtra('home');
+  await loadToolbarPlugins(manifests, {
+    loadModule: async (m) => ({ default: { id: m.id, label: m.icon, order: 10, onClick() {} } }),
+    onError: () => {},
+  });
+  t('移除后入口消失', !toolbarDefs().some((d) => d.id === 'tb-entry:home'));
+
+  /* 入口推导：设置页与加载器同源 */
+  addExtra('home');
+  /*
+   * 必须重新 load 一次：addExtra 只改存储，def 要重新生成。
+   * 少了这一步，两边比的就是"存储里的 3 个"和"内存里的 2 个"——
+   * 那是测试自己写错了，不是代码有问题。
+   */
+  await loadToolbarPlugins(manifests, {
+    loadModule: async (m) => ({ default: { id: m.id, label: m.icon, order: 10, onClick() {} } }),
+    onError: () => {},
+  });
+  const entries = toolbarEntriesOf(manifests);
+  t('toolbarEntriesOf 列出全部入口（含隐藏的）',
+    entries.length === 3, entries.map((e) => e.id).join(','));
+  t('入口顺序与渲染一致',
+    entries.map((e) => e.id).join(',') === allToolbarDefs().map((d) => d.id).join(','),
+    entries.map((e) => e.id).join(','));
+  resetToolbar();
 }
 
 /* ---------------------------------------------------------------- */

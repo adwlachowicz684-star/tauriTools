@@ -57,14 +57,212 @@
 /** 已加载的工具栏定义：id -> def */
 const defs = new Map();
 
-/** 仅供测试：清空登记表 */
-export function resetToolbar() {
-  defs.clear();
+/* ------------------------------------------------------------------
+ * 可见性 / 顺序 / 额外入口 —— 都存在 localStorage
+ * ------------------------------------------------------------------
+ *
+ * ⚠️ 为什么用 localStorage 而不是模块内变量
+ * 设置页与标题栏是**两个不同的模块实例**（设置页是同页插件、
+ * 标题栏是宿主组件，各自 import 本文件 → 可能被打进不同 chunk）。
+ * 模块级变量在这种结构下会有第二份副本，改了这边那边不知道。
+ * localStorage 是同源共享的，天然只有一份。
+ *
+ * 顺序与可见性的读写都走下面这几个函数，别直接碰 key。
+ */
+
+const HIDDEN_KEY = 'nexus:toolbar-hidden';
+const ORDER_KEY = 'nexus:toolbar-order';
+const EXTRA_KEY = 'nexus:toolbar-extra';
+/** 顺序/可见性变化后派发，让标题栏重新渲染 */
+export const TOOLBAR_EVENT = 'nexus:toolbar-changed';
+
+function readArr(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const j = JSON.parse(raw);
+    return Array.isArray(j) ? j.filter((x) => typeof x === 'string') : [];
+  } catch {
+    /* 坏了就当没配过，不要让整排按钮加载失败 */
+    return [];
+  }
 }
 
-/** 已注册的定义（按 order 升序）。测试与渲染共用 */
+function writeArr(key, arr) {
+  try { localStorage.setItem(key, JSON.stringify(arr)); } catch { /* ignore */ }
+}
+
+/** 被隐藏的入口 id */
+export function hiddenIds() {
+  return readArr(HIDDEN_KEY);
+}
+
+/** 用户自定义顺序（排在前面的先显示；没列到的按 def.order 排后面） */
+export function orderIds() {
+  return readArr(ORDER_KEY);
+}
+
+/** 用户在设置里手动加进来的插件 id（"添加按钮入口"） */
+export function extraIds() {
+  return readArr(EXTRA_KEY);
+}
+
+export function isHidden(id) {
+  return hiddenIds().includes(id);
+}
+
+/** @param {string} id @param {boolean} hidden */
+export function setHidden(id, hidden) {
+  const cur = new Set(hiddenIds());
+  if (hidden) cur.add(id); else cur.delete(id);
+  writeArr(HIDDEN_KEY, [...cur]);
+  notifyToolbarChanged();
+}
+
+export function toggleHidden(id) {
+  setHidden(id, !isHidden(id));
+}
+
+/** 往右上角添加一个入口（用户手动添加的插件 id） */
+export function addExtra(pluginId) {
+  const cur = new Set(extraIds());
+  cur.add(pluginId);
+  writeArr(EXTRA_KEY, [...cur]);
+  /* 加进来时若在隐藏列表里，顺手取消隐藏 —— 否则"添加了却看不见" */
+  setHidden(entryIdOf(pluginId), false);
+}
+
+export function removeExtra(pluginId) {
+  const cur = new Set(extraIds());
+  cur.delete(pluginId);
+  writeArr(EXTRA_KEY, [...cur]);
+  notifyToolbarChanged();
+}
+
+/** 手动入口的 id 前缀（与 kind:'toolbar' 插件的 id 区分开） */
+export const EXTRA_PREFIX = 'tb-entry:';
+export function entryIdOf(pluginId) {
+  return EXTRA_PREFIX + pluginId;
+}
+
+/** 该插件是否要占一个右上角入口（自己声明的，或用户手动加的） */
+export function wantsEntry(m, extra) {
+  if (!m) return false;
+  if (m.kind === 'toolbar') return true;
+  const set = extra || new Set(extraIds());
+  return !!m.toolbar || set.has(m.id);
+}
+
+/**
+ * 从插件清单推导出**全部**右上角入口（含被隐藏的）。
+ *
+ * 设置页和加载器都用它 —— 两边各写一遍判断必然漂移，
+ * 表现就是"设置里关掉了、右上角还在"或反之。
+ *
+ * @param {object[]} manifests 全部插件清单
+ * @returns {{id:string,label:string,name:string,source:'toolbar'|'entry',pluginId:string,builtin:boolean}[]}
+ */
+export function toolbarEntriesOf(manifests) {
+  const extra = new Set(extraIds());
+  const out = [];
+  for (const m of manifests || []) {
+    if (!wantsEntry(m, extra)) continue;
+    const isTb = m.kind === 'toolbar';
+    out.push({
+      id: isTb ? m.id : entryIdOf(m.id),
+      label: (isTb ? null : m.toolbar?.label) || m.icon || '◌',
+      name: m.name || m.id,
+      source: isTb ? 'toolbar' : 'entry',
+      pluginId: m.id,
+      builtin: !!m.builtin,
+    });
+  }
+  const order = sortIds(out.map((e) => e.id));
+  return out.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+}
+
+/**
+ * 把某个入口上移/下移一位。
+ * @param {string} id
+ * @param {-1|1} dir  -1 上移，1 下移
+ */
+export function moveEntry(id, dir) {
+  const all = orderedIds();
+  const i = all.indexOf(id);
+  if (i < 0) return false;
+  const j = i + dir;
+  if (j < 0 || j >= all.length) return false;
+  [all[i], all[j]] = [all[j], all[i]];
+  writeArr(ORDER_KEY, all);
+  notifyToolbarChanged();
+  return true;
+}
+
+/**
+ * 把一组 id 按保存的顺序排好（没记录的排最后）。
+ *
+ * ⚠️ 刻意**不依赖 defs**：设置页 import 到的是本模块的另一份实例，
+ * 那份 defs 是空的（它没加载过插件）。若这里读 defs.keys()，
+ * 设置页拿到的顺序永远是空 —— 表现为"排了序不生效"。
+ * 所以把 id 集合作为参数传进来。
+ *
+ * @param {string[]} ids
+ */
+export function sortIds(ids) {
+  const saved = orderIds();
+  const out = saved.filter((x) => ids.includes(x));
+  for (const k of ids) if (!out.includes(k)) out.push(k);
+  return out;
+}
+
+/** 当前所有入口 id（含隐藏的），按最终显示顺序 */
+export function orderedIds(known) {
+  /*
+   * 没传 known 时，按 def.order 排好再交给 sortIds ——
+   * sortIds 只认保存过的顺序，没保存过的保持**传入顺序**。
+   * 若这里直接给 defs.keys()（插入顺序），插件自己写的 order 就被忽略了，
+   * 表现是"order:10 的排到了 order:50 后面"。
+   */
+  const ids = known
+    || [...defs.values()]
+      .sort((a, b) => (a.order ?? 100) - (b.order ?? 100))
+      .map((d) => d.id);
+  return sortIds(ids);
+}
+
+/** 通知标题栏重渲染 */
+export function notifyToolbarChanged() {
+  try {
+    document.dispatchEvent(new CustomEvent(TOOLBAR_EVENT));
+  } catch { /* ignore */ }
+}
+
+/** 仅供测试：清空登记表与持久化状态 */
+export function resetToolbar() {
+  defs.clear();
+  try {
+    localStorage.removeItem(HIDDEN_KEY);
+    localStorage.removeItem(ORDER_KEY);
+    localStorage.removeItem(EXTRA_KEY);
+  } catch { /* ignore */ }
+}
+
+/**
+ * 已注册的定义，**按最终显示顺序**、且排除被隐藏的。
+ * 测试与渲染共用 —— 渲染不该自己再过滤一遍，否则两处口径会分叉。
+ */
 export function toolbarDefs() {
-  return [...defs.values()].sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
+  const hidden = new Set(hiddenIds());
+  const order = orderedIds();
+  return [...defs.values()]
+    .filter((d) => !hidden.has(d.id))
+    .sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+}
+
+/** 全部定义（含隐藏的），供设置页列出开关用 */
+export function allToolbarDefs() {
+  const order = orderedIds();
+  return [...defs.values()].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 }
 
 /**
@@ -81,9 +279,18 @@ export function validateToolbarDef(def) {
 }
 
 /**
- * 加载一批工具栏插件。
+ * 加载工具栏入口。
  *
- * @param {object[]} manifests  kind==='toolbar' 的插件清单
+ * 三种来源，统一在这里收口（调用方直接传**全部**插件清单即可）：
+ *
+ *   1. kind:'toolbar' 的插件  —— 真正的工具栏插件，有自己的 module.js
+ *   2. 插件在清单里声明 `toolbar: { label, tip, order }` —— 应用插件也要
+ *      一个右上角入口（这就是"插件入口可以定义在此处"）
+ *   3. 用户在设置里手动"添加"的插件 —— 存在 localStorage，按钮点了切过去
+ *
+ * 2 和 3 都不需要插件写代码：宿主生成一个"点了就切到该插件"的入口。
+ *
+ * @param {object[]} manifests  全部插件清单（内部自己筛，传全量最省心）
  * @param {object}   opts
  * @param {(m: object) => Promise<any>} opts.loadModule 加载 module 入口
  * @param {(id: string, err: any) => void} [opts.onError]
@@ -92,8 +299,12 @@ export function validateToolbarDef(def) {
 export async function loadToolbarPlugins(manifests, opts) {
   const load = opts?.loadModule;
   if (typeof load !== 'function') return 0;
+  const all = manifests || [];
+  const extra = new Set(extraIds());
   let ok = 0;
-  for (const m of manifests || []) {
+
+  for (const m of all) {
+    if (m?.kind !== 'toolbar') continue;
     /*
      * 配置自相矛盾时**明确报错**，而不是让按钮静默消失。
      * iframe 下这些按钮永远点不动（拿不到 Tauri），
@@ -116,6 +327,38 @@ export async function loadToolbarPlugins(manifests, opts) {
     } catch (e) {
       opts?.onError?.(m.id, e);
     }
+  }
+
+  /* 2 + 3：插件声明的入口 / 用户手动添加的入口 */
+  /*
+   * 先清掉上一轮生成的动态入口。
+   * 不清的话：用户在设置里"移除"某个入口，只是改了 localStorage，
+   * 而这里重建时不会删旧 def —— 按钮**还在**，要重启才消失。
+   * 那就是"点了移除没反应"。
+   */
+  for (const k of [...defs.keys()]) {
+    if (k.startsWith(EXTRA_PREFIX)) defs.delete(k);
+  }
+  for (const m of all) {
+    if (!m || m.kind === 'toolbar') continue;
+    const declared = !!m.toolbar;
+    if (!declared && !extra.has(m.id)) continue;
+    const t = m.toolbar || {};
+    const id = entryIdOf(m.id);
+    defs.set(id, {
+      id,
+      /* label 是按钮上那一个字符：优先声明的，其次插件图标 */
+      label: t.label || m.icon || '◌',
+      tip: t.tip || m.name || m.id,
+      order: t.order ?? 100,
+      /*
+       * 点击 = 切到该插件。
+       * 这是"入口"而不是"动作"：它做的是导航，跟 kind:'toolbar'
+       * 那类执行动作的插件不同，但对外长得一样（都是一个按钮）。
+       */
+      onClick: (api) => api.navigate?.(m.id),
+    });
+    ok += 1;
   }
   return ok;
 }

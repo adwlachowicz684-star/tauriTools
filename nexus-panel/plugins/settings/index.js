@@ -11,6 +11,107 @@ import {
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
 } from '../../js/theme-normalizer.js';
 import { SHELL_SHORTCUT_SPECS, shellComboSet, normCombo } from '../../js/shell-shortcuts.js';
+import {
+  toolbarEntriesOf, wantsEntry, hiddenIds, extraIds,
+  toggleHidden, moveEntry, addExtra, removeExtra,
+} from '../../js/toolbar-plugin.js';
+
+/**
+ * 右上角按钮（工具栏入口）管理 —— 与 React 版 ToolbarSection 同能力。
+ *
+ * 之前这里只是把 kind:'toolbar' 的插件列出来，没有任何开关：
+ * 想隐藏、想排序、想把应用插件放到右上角都没地方点。
+ *
+ * @param {object} ctx
+ * @param {object[]|null} plugins
+ * @param {(label:string, hint?:string)=>object} sub 小节标题渲染器
+ */
+function buildToolbarSection(ctx, plugins, sub) {
+  const list = plugins || [];
+  const render = () => {
+    const entries = toolbarEntriesOf(list);
+    const hidden = new Set(hiddenIds());
+    const extra = new Set(extraIds());
+    const candidates = list.filter((p) => (!p.kind || p.kind === 'app') && !wantsEntry(p));
+
+    const btn = (label, title, onclick, danger, disabled) => h('button', {
+      class: 'p-btn' + (danger ? ' danger' : ''),
+      title,
+      disabled: disabled ? 'disabled' : null,
+      onclick: disabled ? null : () => { onclick(); rerender(); },
+      style: {
+        height: '30px', minWidth: '30px', padding: '0 8px', fontSize: '12px',
+        cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? '0.45' : '1',
+      },
+    }, label);
+
+    const rows = entries.map((e, i) => h('div.p-row', {
+      style: {
+        display: 'flex', alignItems: 'center', gap: '10px',
+        padding: '12px 14px', marginTop: '10px', borderRadius: 'var(--r, 12px)',
+        background: 'var(--surface-sunk)',
+        boxShadow: 'inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light)',
+      },
+    },
+      h('span', { style: { fontSize: '15px', width: '24px', textAlign: 'center' } }, e.label),
+      h('div', { style: { flex: 1, minWidth: 0 } },
+        h('div', { style: { fontSize: '13px' } },
+          e.name + (hidden.has(e.id) ? ' · 已隐藏' : '')),
+        h('div.p-mono.p-muted', { style: { fontSize: '11px' } },
+          e.source === 'toolbar' ? '工具栏插件' : '应用插件入口（点了切过去）')),
+      btn(hidden.has(e.id) ? '显示' : '隐藏',
+        hidden.has(e.id) ? '重新显示到右上角' : '从右上角隐藏',
+        () => toggleHidden(e.id)),
+      btn('↑', '上移', () => moveEntry(e.id, -1), false, i === 0),
+      btn('↓', '下移', () => moveEntry(e.id, 1), false, i === entries.length - 1),
+      e.source === 'entry' && !e.builtin
+        ? btn('移除', '从右上角移除这个入口', () => removeExtra(e.pluginId), true)
+        : null));
+
+    /* 添加入口 */
+    let sel = null;
+    const addRow = candidates.length ? h('div', {
+      style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px' },
+    },
+      sel = h('select.p-input', {
+        style: { flex: 1, height: '30px', fontSize: '12px', padding: '0 8px' },
+      },
+        h('option', { value: '' }, '把应用插件添加到右上角…'),
+        ...candidates.map((p) => h('option', { value: p.id }, `${p.icon || '◌'} ${p.name}`))),
+      h('button.p-btn', {
+        style: { height: '30px', padding: '0 10px', fontSize: '12px' },
+        onclick: () => {
+          const id = sel && sel.value;
+          if (!id) return;
+          addExtra(id);
+          const p = list.find((x) => x.id === id);
+          ctx.toast(`已把「${p?.name || id}」添加到右上角`, 'ok');
+          rerender();
+        },
+      }, '添加')) : null;
+
+    return [
+      sub(`右上角按钮 · ${entries.length}`, '显示在标题栏右侧，可隐藏与排序'),
+      entries.length ? null : h('div.p-muted', {
+        style: { marginTop: '8px', fontSize: '11px' },
+      }, '还没有任何入口。可在下方把应用插件加进来。'),
+      ...rows,
+      addRow,
+      extra.size ? h('div.p-muted', {
+        style: { marginTop: '8px', fontSize: '11px' },
+      }, '手动添加的入口点了会切到对应插件；移除只是去掉右上角按钮，不会卸载插件。') : null,
+    ].filter(Boolean);
+  };
+
+  /* 用一个容器承载，改动后就地重画 */
+  const box = h('div', {});
+  const rerender = () => {
+    box.textContent = '';
+    for (const node of render()) box.appendChild(node);
+  };
+  rerender();
+  return box;
+}
 
 /**
  * 取外壳全局单例：同页模式挂在 window 上，沙箱（iframe）模式挂在宿主窗口上。
@@ -323,7 +424,7 @@ export default definePlugin({
     const idx = (p) => rows[(plugins || []).indexOf(p)];
     const appRows = (plugins || []).filter((p) => !p.kind || p.kind === 'app').map(idx);
     const svcRows = (plugins || []).filter((p) => p.kind === 'service').map(idx);
-    const tbRows = (plugins || []).filter((p) => p.kind === 'toolbar').map(idx);
+
 
     pages.plugins.appendChild(
       h('div.p-card', {},
@@ -334,8 +435,13 @@ export default definePlugin({
         ...appRows,
         svcRows.length ? sub(`服务插件 · ${svcRows.length}`, '不显示在侧边栏，由其它插件通过 ctx.services.call 调用') : null,
         ...svcRows,
-        tbRows.length ? sub(`工具栏插件 · ${tbRows.length}`, '显示在标题栏右上角，不在侧边栏') : null,
-        ...tbRows,
+        /*
+         * 右上角按钮管理：显示/隐藏、排序、把应用插件添加为入口。
+         * 与 React 版（App.tsx 的 ToolbarSection）同一套能力 ——
+         * 两个设置页行为不同会很难解释。
+         * 入口列表用 toolbarEntriesOf() 推导，与加载器共用判断。
+         */
+        buildToolbarSection(ctx, plugins, sub),
         plugins && plugins.length ? null : h('div.p-muted', { style: { marginTop: '8px' } },
           plugins ? '暂无可管理的插件' : '未连接到外壳（沙箱隔离态），读不到插件列表，移除功能不可用'),
       ),
