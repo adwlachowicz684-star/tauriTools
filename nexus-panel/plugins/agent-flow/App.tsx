@@ -39,6 +39,12 @@ import Sidebar, { DRAG_MIME, decodeDrag, type DragPayload } from './components/S
 import { prompt } from '../../js/dialog.js';
 import DirPicker from './components/DirPicker';
 import {
+  LEFT_TABS, LEFT_TAB_LABEL,
+  normalizeLeftTab, normalizeLogHeight, coerceForView,
+} from './engine/layout';
+import type { LeftTab } from './engine/layout';
+import { defaultKV as kvStore } from './engine/kv';
+import {
   writeTextFile, fsAllowRoot, listFsRoots, canExportToFile,
 } from './lib/tauri';
 import { withinRoots } from './engine/exportDir';
@@ -698,6 +704,36 @@ export default function App() {
 
   const selected = nodes.find((n) => n.id === selectedId) ?? null;
 
+  /* ---------------- 布局：左中右三栏的标签 ---------------- */
+
+  /*
+   * 左右两栏都用可切标签而不是上下平分 ——
+   * 分栏的话每栏都偏窄：属性面板挤到看不全，日志只看得到几行。
+   * 切换的代价是"看日志时看不到属性"，但这两件事本来就不会同时做。
+   */
+  const [leftTabRaw, setLeftTabRaw] = useState<LeftTab>(() => normalizeLeftTab(kvStore().get('agent-flow.leftTab.v1')));
+  /*
+   * 右栏日志区高度（可拖）。
+   *
+   * 右栏是"设置在上、日志在下"的上下分栏而不是可切标签：
+   * 跑流程时盯着日志还得能改参数，切成标签就得来回切。
+   */
+  const [logH, setLogH] = useState<number>(() => normalizeLogHeight(kvStore().get('agent-flow.logH.v1')));
+
+  useEffect(() => { kvStore().set('agent-flow.leftTab.v1', leftTabRaw); }, [leftTabRaw]);
+  useEffect(() => { kvStore().set('agent-flow.logH.v1', String(logH)); }, [logH]);
+
+  /*
+   * 切到任务 / 历史时左边栏要隐藏 ——
+   * 那些视图下画布都藏起来了，节点拖不出去，留着就是死栏。
+   */
+  const coerced = coerceForView(view, leftTabRaw);
+  const leftTab = coerced.left;
+
+  /*
+   * 日志区现在**一直可见**（右栏下半部分），
+   * 所以不再需要"出错时自动切过去"—— 报错藏不起来，也就没有切的动作。
+   */
   const pushLog = useCallback((msg: string) => {
     const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
     setLog((l) => [`${ts} ${msg}`, ...l].slice(0, 100));
@@ -943,6 +979,7 @@ export default function App() {
     mcpBootedRef.current = true;
     void doRefreshMcp();
   }, [doRefreshMcp]);
+
 
   /* ---------------- 导出目录 ---------------- */
 
@@ -2616,27 +2653,6 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
   return (
     <div className="app-shell">
       {/*
-        节点库只在流程视图出现。
-        任务 / 历史是查看态，画布都藏起来了，节点拖不出去 —— 留着它
-        就是一条死栏。隐藏之后，任务 / 历史的列表正好顶上这条栏的位置。
-      */}
-      {view === 'flow' ? (
-        <Sidebar
-          onAdd={(p) => spawnNode(p)}
-          disabled={running}
-          mcpGroups={mcpGroups}
-          onRefreshMcp={() => void doRefreshMcp()}
-          mcpRefreshing={mcpRefreshing}
-          modulePanel={
-            <ModuleLibrary
-              onCreateFromSelection={() => void createModuleFromSelection()}
-              onEdit={(id) => enterModuleEdit(id)}
-              disabled={running || editingModule !== null}
-            />
-          }
-        />
-      ) : null}
-      {/*
        * 模块编辑条。
        * 编辑模块内部时借用主画布，所以必须明确告诉用户"你现在不在流程画布上" ——
        * 否则改了半天以为在改流程，其实是改模块。
@@ -2663,6 +2679,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
       ) : null}
 
       <div className="app">
+      <div className="app-inner">
       {channel && !channel.ok ? (
         <div className="chan-banner" role="alert">
           <span>⚠ {channel.reason}</span>
@@ -2673,6 +2690,14 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
           ) : null}
         </div>
       ) : null}
+      {/*
+        上边栏：画布页签 + 工具栏，横跨全宽。
+
+        工具栏原本在中间栏内，于是它只从节点库右边开始，看起来像
+        "画布的工具栏" —— 而里面大半按钮（运行 / 保存 / 导入导出 / 外观）
+        作用的都是全局，不是画布。
+      */}
+      <div className="af-topbar">
       <CanvasTabs
         canvases={canvases.map(toMeta)}
         activeId={activeId}
@@ -2682,25 +2707,6 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
         onDelete={handleDeleteCanvas}
         disabled={running}
       />
-
-      <div className="af-body-row">
-        <CanvasLibrary
-          canvases={canvases.map(toMeta)}
-          groups={canvasGroups}
-          activeId={activeId}
-          triggers={allGlobalTriggers}
-          onSelect={setActiveId}
-          onAdd={handleAddCanvas}
-          onAddGroup={handleAddGroup}
-          onRenameGroup={handleRenameGroup}
-          onDeleteGroup={handleDeleteGroup}
-          onDropToGroup={handleDropToGroup}
-          onRemoveFromGroup={handleRemoveFromGroup}
-          onToggleCollapse={handleToggleCollapse}
-          disabled={running}
-        />
-        <div className="af-body-main">
-
       <div className="toolbar">
         <div className="view-switch">
           <button className={view === 'flow' ? 'on' : ''} onClick={() => setView('flow')}>
@@ -2783,6 +2789,73 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
             onChange={(e) => e.target.files?.[0] && importJson(e.target.files[0])} />
         </label>
       </div>
+      </div>
+
+
+      {/*
+        左中右三栏（在横跨全宽的上边栏之下）。
+
+        左＝节点库·模块库 / 画布库（可切标签）
+        中＝画布
+        右＝设置 / 日志（可切标签）
+
+        左栏与画布**同高**：节点库是"从这儿拖东西到画布"的入口，
+        比画布矮一截的话，往画布下半部分拖就得先滚节点库。
+
+        左右两栏都做成**可切标签**而不是上下平分：
+        分栏的话每栏都偏窄 —— 属性面板挤到看不全，日志只看得到几行。
+        切换的代价是"看日志时看不到属性"，但这两件事本来就不会同时做。
+      */}
+      <div className="af-body-row">
+        <div className="af-left-pane">
+          <div className="pane-tabs">
+            {LEFT_TABS.map((t) => (
+              <button
+                key={t}
+                className={leftTab === t ? 'on' : ''}
+                onClick={() => setLeftTabRaw(t)}
+              >
+                {LEFT_TAB_LABEL[t]}
+              </button>
+            ))}
+          </div>
+          <div className="pane-body">
+            {leftTab === 'library' ? (
+              <Sidebar
+                onAdd={(p) => spawnNode(p)}
+                disabled={running}
+                mcpGroups={mcpGroups}
+                onRefreshMcp={() => void doRefreshMcp()}
+                mcpRefreshing={mcpRefreshing}
+                modulePanel={
+                  <ModuleLibrary
+                    onCreateFromSelection={() => void createModuleFromSelection()}
+                    onEdit={(id) => enterModuleEdit(id)}
+                    disabled={running || editingModule !== null}
+                  />
+                }
+              />
+            ) : (
+              <CanvasLibrary
+                canvases={canvases.map(toMeta)}
+                groups={canvasGroups}
+                activeId={activeId}
+                triggers={allGlobalTriggers}
+                onSelect={setActiveId}
+                onAdd={handleAddCanvas}
+                onAddGroup={handleAddGroup}
+                onRenameGroup={handleRenameGroup}
+                onDeleteGroup={handleDeleteGroup}
+                onDropToGroup={handleDropToGroup}
+                onRemoveFromGroup={handleRemoveFromGroup}
+                onToggleCollapse={handleToggleCollapse}
+                disabled={running}
+              />
+            )}
+          </div>
+        </div>
+        <div className="af-body-main">
+
 
       <div className="body">
         {view === 'history' ? (
@@ -2896,6 +2969,16 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
           fieldset 的 disabled 会原生禁用所有后代控件，连键盘 Tab 进去改
           也一并挡住 —— 这是 CSS 的 pointer-events 做不到的。
         */}
+      </div>
+      </div>
+        {/*
+          右栏：设置在上、日志在下，中间一条可拖的分隔条。
+
+          不做成可切标签：跑流程时盯着日志还得能改参数，
+          切成标签就得来回切 —— 那两件事恰恰经常同时发生。
+        */}
+        <div className="af-right-pane">
+          <div className="af-right-insp">
         <div className="insp-slot">
           {view !== 'flow' ? (
             <div className="insp-ro-bar">
@@ -2955,6 +3038,34 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
           />
         ) : null}
 
+          </div>
+
+          {/*
+            分隔条：按住上下拖改日志区高度。
+            向上拖 = 日志变高（鼠标往上、日志在下方，所以取反）。
+          */}
+          <div
+            className="af-right-split"
+            role="separator"
+            aria-orientation="horizontal"
+            title="拖动调整日志区高度"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const startY = e.clientY;
+              const startH = logH;
+              const move = (ev: MouseEvent) => {
+                setLogH(normalizeLogHeight(startH - (ev.clientY - startY)));
+              };
+              const up = () => {
+                window.removeEventListener('mousemove', move);
+                window.removeEventListener('mouseup', up);
+              };
+              window.addEventListener('mousemove', move);
+              window.addEventListener('mouseup', up);
+            }}
+          />
+
+          <div className="af-right-log" style={{ height: logH }}>
         <div className="logpane">
           <div className="log-head">
             运行日志
@@ -2969,8 +3080,9 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
             {log.map((l, i) => <div key={i}>{l}</div>)}
           </div>
         </div>
-      </div>
+          </div>
         </div>
+      </div>
       </div>
       </div>
     </div>
