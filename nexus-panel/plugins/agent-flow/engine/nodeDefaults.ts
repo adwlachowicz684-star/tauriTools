@@ -1,5 +1,7 @@
 import { stripRuntime, cloneData } from './duplicate';
-import { hadInlineSecret, stripSecrets, stripViewKeys } from './sanitize';
+import {
+  hadInlineSecret, stripSecrets, stripViewKeys, SECRET_PATHS, looksLikeSecretName,
+} from './sanitize';
 import { defaultKV, loadObject, type KV } from './kv';
 
 /**
@@ -75,6 +77,98 @@ export function clearDefault(presetKey: string, kv: KV = defaultKV()): void {
 /* ------------------------------------------------------------------ */
 /* 存                                                                  */
 /* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* 单字段默认值                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 某个字段能不能进默认值。
+ *
+ * 密钥一律不进 —— 默认值是**明文**存 localStorage 的，不能当密钥仓库用。
+ * 判定与 bulk 存共用 SECRET_PATHS：'llm.apiKey' 这种嵌套路径，
+ * 字段名等于首段（'llm'）也算命中，否则整个 llm 对象会被存进去
+ * 而里面的 apiKey 一起泄露。
+ */
+export function isSecretField(fieldKey: string): boolean {
+  const k = String(fieldKey ?? '');
+  if (!k) return false;
+  for (const path of SECRET_PATHS) {
+    if (path === k) return true;
+    if (path.split('.')[0] === k) return true;
+  }
+  return looksLikeSecretName(k);
+}
+
+/**
+ * 只把**指定的几个字段**存成默认，不动其它字段。
+ *
+ * 以前「设为默认」是一个按钮管整个节点：想只改一个字段的默认，
+ * 得先把整个节点配成想要的样子再整份存 —— 而这会顺带把其它字段
+ * 当前的值也一并定死（哪怕你只是路过改了一下）。
+ *
+ * @returns ok 是否真的存了；skipped 是因为密钥 / 空值被跳过的字段名
+ */
+export function setFieldsDefault(
+  presetKey: string,
+  patch: Record<string, unknown>,
+  kv: KV = defaultKV(),
+): { ok: boolean; skipped: string[] } {
+  const clean: Record<string, unknown> = {};
+  const skipped: string[] = [];
+  for (const k of Object.keys(patch ?? {})) {
+    const v = patch[k];
+    if (isSecretField(k)) { skipped.push(k); continue; }
+    // undefined 不存：分不清是"想设成空"还是"这个字段压根没值"
+    if (v === undefined) { skipped.push(k); continue; }
+    clean[k] = cloneData(v);
+  }
+  if (Object.keys(clean).length === 0) return { ok: false, skipped };
+
+  const file = loadAll(kv);
+  file[presetKey] = { ...(file[presetKey] ?? {}), ...clean };
+  saveAll(file, kv);
+  return { ok: true, skipped };
+}
+
+/** 清掉某几个字段的默认值。整份空了就把键删掉，别留一个 {} */
+export function clearFieldsDefault(
+  presetKey: string,
+  fieldKeys: string[],
+  kv: KV = defaultKV(),
+): void {
+  const file = loadAll(kv);
+  const cur = file[presetKey];
+  if (!cur) return;
+  const next: Record<string, unknown> = { ...cur };
+  let touched = false;
+  for (const k of fieldKeys ?? []) {
+    if (k in next) { delete next[k]; touched = true; }
+  }
+  if (!touched) return;
+
+  if (Object.keys(next).length === 0) {
+    delete file[presetKey];
+    if (Object.keys(file).length === 0) {
+      kv.remove?.(NODE_DEFAULTS_KEY);
+      return;
+    }
+    saveAll(file, kv);
+    return;
+  }
+  file[presetKey] = next;
+  saveAll(file, kv);
+}
+
+/** 这个字段有没有单独设过默认 */
+export function hasFieldDefault(
+  presetKey: string,
+  fieldKey: string,
+  kv: KV = defaultKV(),
+): boolean {
+  const cur = loadAll(kv)[presetKey];
+  return !!cur && Object.prototype.hasOwnProperty.call(cur, fieldKey);
+}
 
 /**
  * 把一份节点数据净化成可当默认值的内容。

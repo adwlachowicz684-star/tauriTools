@@ -242,6 +242,7 @@ export default function Inspector({
       {defaultRow}
       <Panel
         onEditModule={onEditModule}
+        onNote={onNote}
       node={node}
       edges={edges}
       onChange={onChange}
