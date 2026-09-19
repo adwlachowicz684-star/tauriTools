@@ -1,5 +1,6 @@
 import { cloneData } from './duplicate';
 import { defaultKV, loadList, saveWrapped, type KV } from './kv';
+import { stripViewKeys } from './sanitize';
 
 /**
  * 模块 —— 把多个节点打包成一个可复用的块。
@@ -142,9 +143,17 @@ export function modulePorts(def: ModuleDef): ModulePorts {
 
 /*
  * 运行时字段清单与剥离逻辑收口在 engine/runtimeKeys.ts。
- * 这里 re-export 保持既有 import 可用。
+ *
+ * 这里必须 import 而不能只 re-export ——
+ * 只 re-export 的话本模块作用域里**没有这个绑定**，
+ * 而 packSelection 内部要调它，运行时会报
+ * "stripRuntimeNodes is not defined"。
+ * export 一行是为了让既有的 `import { stripRuntimeNodes } from './modules'`
+ * 不用改。
  */
-export { stripRuntimeNodes } from './runtimeKeys';
+import { stripRuntimeNodes } from './runtimeKeys';
+import { stackEdges } from './stack';
+export { stripRuntimeNodes };
 
 /* ------------------------------------------------------------------ */
 /* 展开：把模块实例替换成内部节点                                        */
@@ -363,4 +372,242 @@ export function importModules(
 
   saveModules(current, kv);
   return result;
+}
+
+/* ------------------------------------------------------------------ */
+/* 打包：把画布上一批选中节点合成一个模块                                */
+/* ------------------------------------------------------------------ */
+
+export type PackableNode = {
+  id: string;
+  position?: { x: number; y: number };
+  data?: Record<string, unknown>;
+};
+
+export type PackableEdge = {
+  id: string;
+  source: string;
+  target: string;
+  branch?: string;
+  loopRole?: 'body' | 'done' | undefined;
+};
+
+export type PackResult = {
+  /** 模块内部节点（已剥运行时与显示状态） */
+  nodes: Record<string, unknown>[];
+  /** 模块内部边：两端都在选中集合里 */
+  edges: ModuleEdge[];
+  /** 内部节点相对模块内部的坐标原点 */
+  innerOrigin: { x: number; y: number };
+  /** 模块节点该放在哪（选中集合的视觉中心） */
+  at: { x: number; y: number };
+  /** 跨边界的边：需要转成模块实例对外接线 */
+  crossing: CrossingEdge[];
+};
+
+/**
+ * 跨边界的边。
+ *
+ * 选中集合内部连着外面 —— 这类边**不能丢进模块**（会连到不存在的节点），
+ * 也不能直接删掉（那样外部接线就断了）。
+ * 必须在替换成模块节点后重新挂到模块实例上。
+ */
+export type CrossingEdge = {
+  kind: 'in' | 'out';
+  /** 模块外面的那一端 */
+  outer: string;
+  /** 模块内部的那一端 */
+  inner: string;
+  branch?: string;
+  loopRole?: 'body' | 'done' | undefined;
+};
+
+export function isPackableSelected(nodes: PackableNode[]): boolean {
+  return (nodes ?? []).length > 0;
+}
+
+/**
+ * 判断一批节点能不能打包。
+ *
+ * 空集合不行，只有一个节点也建议别打 —— 那是"参数预设"的活儿，
+ * 模块是给"多个节点编成一组"用的。
+ */
+/**
+ * 返回值写成类型别名而不是内联对象 ——
+ * strip-ts.py 剥不掉「返回类型注解里的对象类型」，
+ * 内联写会原样留下 `: { ok: boolean; reason?: string }`，
+ * 生成的 .mjs 直接语法错误（这个脚本的第九个坑）。
+ */
+export type CanPackResult = { ok: boolean; reason?: string };
+
+export function canPack(nodes: PackableNode[]): CanPackResult {
+  const list = (nodes ?? []).filter((n) => String(n?.id ?? '') !== '');
+  if (list.length === 0) return { ok: false, reason: '还没选节点' };
+  return { ok: true };
+}
+
+/**
+ * 把选中的节点们打包成一个模块。
+ *
+ * 三件容易漏的事，都在这里处理：
+ *
+ * ① **跨边界的边要单独摘出来**。
+ *    直接把"两端都在集合里"的边留下、其余丢掉，是最自然的写法，
+ *    但那样外部接线会静默断掉 —— 用户会看到"跑不通了"却找不到原因。
+ *
+ * ② **内部坐标要减去原点**。
+ *    模块拖到别处时，内部结构应该保持相对位置；
+ *    不减原点的话每次拖出来的内部布局都在画布左上角。
+ *
+ * ③ **显示状态也要剥**（size / stackParent / stackCollapsed）。
+ *    stackParent 尤其关键 —— 不剥的话模块内部节点还"嵌合"在
+ *    某个外部节点上，展开时那条边指向不存在的地方，
+ *    表现为"新模块莫名其妙跑不起来"。
+ */
+export function packSelection(
+  picked: PackableNode[],
+  allEdges: PackableEdge[],
+  /**
+   * 全图节点。**嵌合的跨边界连接需要它**才能算全：
+   * 父被选中、子没被选中时，"父→子"这条隐式边要变成模块的出边，
+   * 而光看选中集合发现不了（子上才存着 stackParent，而它不在集合里）。
+   * 不传则只补"父子都被选中"的那部分 —— 整串一起存模块时够用。
+   */
+  allNodes?: PackableNode[],
+): PackResult {
+  const list = (picked ?? []).filter((n) => String(n?.id ?? '') !== '');
+  const ids = new Set(list.map((n) => String(n.id)));
+
+  /* 内部坐标原点：取选中集合的左上角 */
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const n of list) {
+    const p = (n?.position ?? { x: 0, y: 0 }) as { x: number; y: number };
+    const x = Number(p?.x ?? 0);
+    const y = Number(p?.y ?? 0);
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  }
+  if (!Number.isFinite(minX)) { minX = 0; minY = 0; maxX = 0; maxY = 0; }
+
+  const innerOrigin = { x: minX, y: minY };
+  // 模块节点放在原选中区域的视觉中心，避免"打包完跳到别处"
+  const at = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+
+  const nodes = stripRuntimeNodes(list.map((n) => ({
+    id: String(n.id),
+    position: {
+      x: Number((n.position as { x: number })?.x ?? 0) - minX,
+      y: Number((n.position as { y: number })?.y ?? 0) - minY,
+    },
+    data: stripViewKeys((n.data ?? {}) as Record<string, unknown>),
+  })));
+
+  const edges: ModuleEdge[] = [];
+  const crossing: CrossingEdge[] = [];
+
+  /*
+   * 已经收进去的连接（source→target 对），用于给嵌合边去重。
+   * 嵌合与拉线可能表达同一条连接 —— 显式拉的线带 branch / loopRole，
+   * 是更明确的意图，所以**已有真实边就不再补嵌合边**。
+   * 两条都留的话同一对节点间会多出一条边，执行时表现为重复触发。
+   */
+  const linked = new Set<string>();
+
+  const pushInner = (
+    id: string, source: string, target: string,
+    branch?: string, loopRole?: 'body' | 'done' | undefined,
+  ) => {
+    edges.push({ id, source, target, branch, loopRole });
+    linked.add(`${source}->${target}`);
+  };
+
+  for (const e of allEdges ?? []) {
+    const s = String(e?.source ?? '');
+    const t = String(e?.target ?? '');
+    const inS = ids.has(s);
+    const inT = ids.has(t);
+
+    if (inS && inT) {
+      pushInner(String(e?.id ?? `${s}-${t}`), s, t, e?.branch, e?.loopRole);
+      continue;
+    }
+    /* 一端在里面、一端在外面 —— 摘出来，替换后重新挂到实例上 */
+    if (inS && !inT) {
+      crossing.push({
+        kind: 'out', outer: t, inner: s,
+        branch: e?.branch, loopRole: e?.loopRole,
+      });
+      continue;
+    }
+    if (!inS && inT) {
+      crossing.push({
+        kind: 'in', outer: s, inner: t,
+        branch: e?.branch, loopRole: e?.loopRole,
+      });
+    }
+  }
+
+  /*
+   * 嵌合产生的隐式边（父 → 子）也要收进模块。
+   *
+   * 不补的话：嵌合成串的几个节点存成模块后，串内连接**全没了** ——
+   * 节点还在，但彼此不再相连。拖出来的模块表现为"莫名其妙跑不起来"，
+   * 而存的时候没有任何提示。根因是嵌合关系存在 stackParent 上，
+   * 打包时会当作显示状态剥掉，而它同时又是执行语义（等价于一条边）。
+   */
+  for (const e of stackEdges((allNodes ?? list) as never)) {
+    const s = String(e?.source ?? '');
+    const t = String(e?.target ?? '');
+    const inS = ids.has(s);
+    const inT = ids.has(t);
+    // 已经拉过线（或已经收过）就不重复补
+    if (inS && inT) {
+      if (!linked.has(`${s}->${t}`)) pushInner(String(e?.id ?? `stack:${s}->${t}`), s, t);
+      continue;
+    }
+    /* 嵌合的两端只有一个在选中集合里 —— 同样算跨边界 */
+    if (inS && !inT) crossing.push({ kind: 'out', outer: t, inner: s });
+    else if (!inS && inT) crossing.push({ kind: 'in', outer: s, inner: t });
+  }
+
+  return { nodes, edges, innerOrigin, at, crossing };
+}
+
+/**
+ * 替换成模块节点后，外部边该怎么接。
+ *
+ * 跨边界的边全部改挂到模块实例上：
+ *   进来 → 外部源 → 模块实例
+ *   出去 → 模块实例 → 外部目标
+ *
+ * **必须去重**：多个内部节点连到同一个外部节点时，
+ * 会产生多条完全相同的边，xyflow 里表现为"看起来一条、实际叠了几条"，
+ * 删的时候要删好几次。
+ */
+export function rewireCrossing(
+  instanceId: string,
+  crossing: CrossingEdge[],
+): PackableEdge[] {
+  const seen = new Set<string>();
+  const out: PackableEdge[] = [];
+  for (const c of crossing ?? []) {
+    const source = c.kind === 'in' ? c.outer : instanceId;
+    const target = c.kind === 'in' ? instanceId : c.outer;
+    const key = `${source}->${target}|${c.branch ?? ''}|${c.loopRole ?? ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      id: `x_${instanceId}_${seen.size}`,
+      source,
+      target,
+      branch: c.branch,
+      loopRole: c.loopRole,
+    });
+  }
+  return out;
 }

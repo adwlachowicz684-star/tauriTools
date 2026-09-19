@@ -122,7 +122,7 @@ $S engine/conversations.ts "$OUT/conversations.mjs" \
    --import-map ../types=./types.mjs >/dev/null
 $S engine/modules.ts "$OUT/modules.mjs" --import-map ./runtimeKeys=./runtimeKeys.mjs \
    --import-map ./duplicate=./duplicate.mjs --import-map ./kv=./kv.mjs \
-   --import-map ./sanitize=./sanitize.mjs >/dev/null
+   --import-map ./sanitize=./sanitize.mjs --import-map ./stack=./stack.mjs >/dev/null
 $S engine/nodeValidate.ts "$OUT/nodeValidate.mjs" \
    --import-map ../types=./types.mjs >/dev/null
 $S engine/kv.ts "$OUT/kv.mjs" >/dev/null

@@ -100,6 +100,38 @@ export function descendantsOf(nodes: AnyNode[], id: string): string[] {
   return out;
 }
 
+/**
+ * 哪些节点下面挂着块（即"是串中某一环的上半截"）。
+ *
+ * 直筒观感需要它：CSS 只能给下方块压掉上圆角（.is-stacked，
+ * 从 stackParent 就能看出来），而"压掉下圆角"必须知道**下面有没有块** ——
+ * 光看自己看不出来，得扫全图。
+ *
+ * 返回 Set 而不是给每个节点打标记：调用方（App 渲染时）拿着它
+ * 决定要不要给某个节点加类名，不需要改动 nodes 数组本身。
+ */
+export function stackParentIds(nodes: AnyNode[]): string[] {
+  const ids = new Set(nodes.map((n) => n.id));
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const n of nodes) {
+    const p = parentIdOf(n);
+    // 父不存在就丢弃（父被删了，这条关系是脏的）
+    if (!p || p === n.id || !ids.has(p) || seen.has(p)) continue;
+    seen.add(p);
+    out.push(p);
+  }
+  return out;
+}
+
+/** 这个节点下面有没有挂着块 */
+export function hasStackChild(nodes: AnyNode[], id: string): boolean {
+  for (const n of nodes) {
+    if (parentIdOf(n) === id && n.id !== id) return true;
+  }
+  return false;
+}
+
 /** 串顶（一直往上找，直到没有上级） */
 export function chainTopOf(nodes: AnyNode[], id: string): string {
   const byId = new Map(nodes.map((n) => [n.id, n]));

@@ -211,6 +211,9 @@ body { background: var(--af-bg); color: var(--af-fg); }
 .node-card {
   width: 240px; background: var(--af-panel); border: 1px solid var(--af-line);
   border-left: 4px solid var(--af-dim); border-radius: 10px; padding: 10px 12px;
+  /* position:relative 供 .is-stacked::before（嵌合咬合口）绝对定位 ——
+     原先单独写在"嵌合"那节，与这里相隔 1700 行，容易被漏改 */
+  position: relative;
 }
 .node-card.is-selected { border-color: var(--af-accent); box-shadow: 0 0 0 2px var(--af-glow); }
 /*
@@ -745,7 +748,6 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 }
 
 /* 中间：画布 + 右栏 —— body 内再分 */
-.body { flex: 1; display: flex; min-height: 0; }
 .af-body-row { flex: 1; min-height: 0; display: flex; }
 .af-body-main {
   flex: 1; min-width: 0; display: flex; flex-direction: column;
@@ -1351,8 +1353,15 @@ input.mono, textarea.mono {
   font-size: 10px; line-height: 15px; }
 
 .task-view { display: flex; flex: 1; min-height: 0; overflow: hidden; }
-.task-list { width: 300px; flex: none; border-right: 1px solid var(--af-divider);
-  overflow: auto; display: flex; flex-direction: column; }
+/*
+ * width / background / overflow 原本在「任务·历史视图」那节**又写了一遍**
+ * （300px 与 var(--af-side-w) 冲突、auto 与 hidden 冲突）。
+ * 同选择器两处写不同值，后写的赢，前面那块就成了死代码 ——
+ * 而且改了它没反应，很容易被误判成"CSS 没生效"。
+ * 现按实际生效的值合并到这一处，结果不变。
+ */
+.task-list { width: var(--af-side-w); flex: none; border-right: 1px solid var(--af-divider);
+  overflow: hidden; background: var(--af-bg); display: flex; flex-direction: column; }
 .task-list-head { display: flex; align-items: center; gap: 8px;
   padding: 9px 12px; border-bottom: 1px solid var(--af-divider);
   position: sticky; top: 0; background: var(--af-panel); }
@@ -1476,13 +1485,17 @@ input.mono, textarea.mono {
 /* 任务 / 历史的列表顶上它的位置与宽度，视觉上就是同一条栏换了内容。     */
 /* ------------------------------------------------------------------ */
 
-/* 宽度、背景、边框与 .sidebar 对齐 —— 同一个变量，不可能各自漂移 */
-.task-list {
-  width: var(--af-side-w);
-  background: var(--af-bg);
-  overflow: hidden;
-}
+/* 宽度、背景、边框与 .sidebar 对齐 —— 同一个变量，不可能各自漂移。
+   这几条已合并进上面 .task-list 的定义（原来这里重复写了一遍）。 */
 
+/*
+ * 声明：本节往下会出现 .task-list-head / .task-item-meta / .hist-filter
+ * 等与前面**同名**的选择器 —— 那是有意的窄栏覆盖，不是重复定义。
+ *
+ * 与"散落两处、值冲突、前面那块成死代码"的区别在于：
+ * 这里每条都只覆盖窄栏下必须改的那一两个属性，且有说明为什么改。
+ * 别把它们当重复合并掉 —— 合并后窄栏下就会挤成一团。
+ */
 /* 列表头对齐 .side-head 的观感：更矮、更轻 */
 .task-list-head {
   padding: 11px 12px 8px;
@@ -1507,12 +1520,17 @@ input.mono, textarea.mono {
 /* 属性面板：查看态只读                                                 */
 /* ------------------------------------------------------------------ */
 
+/*
+ * 原先这一块自己就矛盾：先写 flex:1，末尾又写 flex:none ——
+ * 同一块里后者覆盖前者，flex:1 是死代码。
+ * 按实际生效的值整理（flex:none：宽度固定，见下面 width）。
+ */
 .insp-slot {
-  flex: 1;
+  flex: none;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  display: flex; flex-direction: column; flex: none; min-height: 0;
+  width: 340px;
 }
 
 /* fieldset 默认带边框与内边距，重置掉让它"看起来不存在" */
@@ -1541,10 +1559,16 @@ input.mono, textarea.mono {
 .insp-lock[disabled] .inspector textarea,
 .insp-lock[disabled] .inspector button { pointer-events: none; }
 
-/* --- 侧栏宽度下的收尾（280px） --- */
+/*
+ * --- 侧栏宽度下的收尾（280px） ---
+ *
+ * 同上：这里的 .task-group-* / .task-row / .hist-row 都是**有意覆盖**
+ * 上面的同名规则（只改窄栏下放不下的那几项），不是重复定义。
+ */
 
-/* 属性面板整体宽度固定，否则只读提示条会把这条栏撑宽 */
-.insp-slot { width: 340px; }
+
+/* 属性面板整体宽度固定，否则只读提示条会把这条栏撑宽。
+   这条 width 已合并进上面 .insp-slot 的定义（原来这里重复写了一遍）。 */
 
 /* 分组头在窄栏里一行放不下：允许换行，别让"运行/失败"标签被挤出视野 */
 .task-group-head { flex-wrap: wrap; gap: 3px 7px; padding: 6px 12px; }
@@ -1966,8 +1990,6 @@ input.mono, textarea.mono {
   content: ''; position: absolute; left: 8px; right: 8px; top: 0; height: 1px;
   background: linear-gradient(90deg, transparent, var(--af-line) 15%, var(--af-line) 85%, transparent);
 }
-.node-card { position: relative; }
-
 /* 串顶的折叠按钮与串长标记 */
 .stack-bar {
   display: flex; align-items: center; gap: 5px;
