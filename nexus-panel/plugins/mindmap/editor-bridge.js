@@ -156,7 +156,7 @@ export class EditorBridge {
         break;
       // 点击画布上的附件（多附件：带 kind + index + 原始引用 + 所在节点 id）
       case 'openattach':
-        this.handlers.onOpenAttach?.(d.kind, d.index, d.raw, d.nodeId || '');
+        this.handlers.onOpenAttach?.(d.kind, d.index, d.raw, d.nodeId || '', d.list || null);
         break;
       // 附件在节点间拖拽移动
       case 'moveattach':

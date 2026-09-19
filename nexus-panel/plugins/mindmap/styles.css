@@ -571,6 +571,18 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
   border-radius: var(--r-xs, 6px);
   background: var(--bg);
 }
+/* 图片预览：多张时的切换条（单张时不渲染，见 panels.js） */
+.mm-preview-nav {
+  display: flex; align-items: center; justify-content: center;
+  gap: 10px; margin-top: 8px;
+}
+/* 计数用等宽数字：切换时宽度不跳，不会左右抖 */
+.mm-preview-count {
+  font-variant-numeric: tabular-nums;
+  min-width: 44px; text-align: center;
+  color: var(--fg-dim, #9aa4b2); font-size: 12px;
+}
+
 
 /* 快捷键说明里的按键样式：仿键盘按键，等宽字体 */
 .mm-kbd {

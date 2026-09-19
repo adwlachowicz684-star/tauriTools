@@ -882,7 +882,12 @@ export function buildSide(app, opts = {}) {
       section(`图片${images.length ? `（${images.length}）` : ''}`,
         images.length
           ? h('div.mm-thumbs', {}, ...images.map((u, i) => h('div.mm-thumb', {
-            onclick: () => openPreview(app, { url: u, name: `图片 ${i + 1}` }),
+            onclick: () => openPreview(app, { url: u, name: `图片 ${i + 1}` }, {
+              // 传**整张列表**：这样预览里能左右切换、有 i/n 计数。
+              // 只传单张的话，看第二张还得关掉浮层再点一次缩略图。
+              list: images.map((x, k) => ({ url: x, name: `图片 ${k + 1}` })),
+              index: i,
+            }),
             title: '点击放大',
           },
           h('img', { src: u, alt: `图片 ${i + 1}` }),
@@ -1675,13 +1680,94 @@ export function openVideo(app, asset, opt = {}) {
 }
 
 /** 图片附件预览浮层（点节点图标时，图片比直接下载更直观） */
-export function openPreview(app, asset) {
-  const img = h('img.mm-preview', { src: asset.url, alt: asset.name || '附件' });
+/**
+ * 图片预览。
+ *
+ * 支持**多张切换**：传 `opts.list` 就有左右按钮和「i/n」计数，
+ * 同时支持 ← → 快捷键。单张时不显示这些（没必要占地方）。
+ *
+ * 为什么快捷键要能关掉：预览是模态浮层，但键盘监听挂在 document 上 ——
+ * 关掉浮层时必须解绑，否则残留的监听会拦住后续画布上的 ← →
+ * （那两个键在 kityminder 里是有用的）。
+ *
+ * @param {object} opts.list 可选，`[{ url, name, blob }]`
+ * @param {number} opts.index 可选，起始下标
+ */
+export function openPreview(app, asset, opts) {
+  const items = (opts && opts.list && opts.list.length)
+    ? opts.list
+    : [{ url: asset.url, name: asset.name, blob: asset.blob }];
+  let idx = Number(opts && opts.index) || 0;
+  if (!(idx >= 0 && idx < items.length)) idx = 0;
+
+  const img = h('img.mm-preview', { src: items[idx].url, alt: items[idx].name || '图片' });
+  const counter = h('span.mm-preview-count', {});
+  const many = items.length > 1;
+
+  /** 当前项的 blob：dataURL 没有 blob，现转（「另存为」要的是字节） */
+  const blobOf = (it) => {
+    if (it.blob) return it.blob;
+    try { return io.dataUrlToBlob(String(it.url || '')); } catch { return null; }
+  };
   const save = h('button.mm-btn', {
-    onclick: () => io.downloadBlob(io.safeFileName(asset.name || '附件'), asset.blob),
+    onclick: () => {
+      const b = blobOf(items[idx]);
+      if (!b) { app.api.status('另存为失败：拿不到图片数据', true); return; }
+      io.downloadBlob(io.safeFileName(items[idx].name || '图片'), b);
+    },
   }, '另存为');
-  const release = () => { if (asset.url) URL.revokeObjectURL(asset.url); };
-  return dialog(`预览：${asset.name || '附件'}`, [h('div', {}, img, h('div.mm-actions', {}, save))], release);
+
+  const setIdx = (n) => {
+    // 循环：到第 1 张再往左跳到最后一张，反之亦然（与画布横幅一致）
+    idx = (n + items.length) % items.length;
+    img.src = items[idx].url;
+    img.alt = items[idx].name || '图片';
+    counter.textContent = `${idx + 1}/${items.length}`;
+    // 必须改**浮层里那个** h3。改到一个游离元素上的话标题纹丝不动，
+    // 「i/n」变了标题没变，看着像切失败了
+    if (titleNode) titleNode.textContent = `预览：${items[idx].name || '图片'}`;
+  };
+
+  const nav = many ? h('div.mm-preview-nav', {},
+    h('button.mm-btn', { onclick: () => setIdx(idx - 1), title: '上一张（←）' }, '◀'),
+    counter,
+    h('button.mm-btn', { onclick: () => setIdx(idx + 1), title: '下一张（→）' }, '▶'),
+  ) : null;
+
+  // dialog 返回的 mask 里第一个 h3 就是标题，换张时同步改掉
+  let titleNode = null;
+
+  const dlg = dialog(`预览：${items[idx].name || '图片'}`, [
+    h('div', {}, img, nav, h('div.mm-actions', {}, save)),
+  ], () => {
+    offKeys();
+    // 逐项释放：切换过的每一项都可能是一个 blob: URL
+    for (const it of items) {
+      try { if (it.url && /^blob:/.test(String(it.url))) URL.revokeObjectURL(it.url); } catch { /* ignore */ }
+    }
+  });
+
+  titleNode = dlg.mask.querySelector('h3');
+  if (many) {
+    counter.textContent = `${idx + 1}/${items.length}`;
+    if (titleNode) titleNode.textContent = `预览：${items[idx].name || '图片'}`;
+  }
+
+  // ---- ← → 切换 ----
+  function onKey(e) {
+    if (!many) return;
+    // 输入框里不要抢（预览浮层里没有输入，但保险一点）
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); setIdx(idx - 1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); setIdx(idx + 1); }
+  }
+  function offKeys() {
+    try { document.removeEventListener('keydown', onKey, true); } catch { /* ignore */ }
+  }
+  if (many) document.addEventListener('keydown', onKey, true);
+
+  return dlg;
 }
 
 /** 历史快照列表 */
