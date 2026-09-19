@@ -22,6 +22,10 @@ import {
 } from './engine/duplicate';
 import { CredentialPanel, canUse } from './components/CredentialPanel';
 import {
+  loadServers as loadMcpServers, saveServers as saveMcpServers,
+  migrateFromCanvases, toServerRefs, type GlobalMcpServer,
+} from './engine/mcpServers';
+import {
   type Credential, type CredentialKind,
   pickFor, needsOf, kindForNeed, missingCapabilities, resolveSecret,
 } from './engine/credentials';
@@ -251,6 +255,30 @@ export default function App() {
   const init = useMemo(loadCanvases, []);
   const [canvases, setCanvases] = useState<Canvas[]>(init.canvases);
   const [activeId, setActiveId] = useState<string | null>(init.activeId);
+
+  /*
+   * MCP 服务改由**全局库**管（一处配置，全图可用）。
+   *
+   * 以前每张画布各存一份，同一服务在五张画布上要用就配五遍 ——
+   * 改个地址要改五处，漏一处表现为"这张画布连的是旧地址"，且不报错。
+   */
+  const [mcpServers, setMcpServers] = useState<GlobalMcpServer[]>(
+    () => migrateFromCanvases(init.canvases).list,
+  );
+
+  /*
+   * 刷新管线要的服务形状。用 ref 而不是 state：
+   * doRefreshMcp 是个 useCallback，依赖里放数组会让它每次配置改动都重建，
+   * 进而让用它做依赖的防抖 effect 反复重新注册。
+   */
+  const mcpRefsRef = useRef<ServerRef[]>(toServerRefs(mcpServers) as ServerRef[]);
+  mcpRefsRef.current = toServerRefs(mcpServers) as ServerRef[];
+
+  const commitMcp = useCallback((next: GlobalMcpServer[]) => {
+    setMcpServers(next);
+    saveMcpServers(next);
+  }, []);
+
 
   const active = canvases.find((c) => c.id === activeId) ?? null;
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(
@@ -922,6 +950,17 @@ export default function App() {
     setMcpGroups(list);
   }, []);
 
+  /** 每个服务已生成的工具节点数，按服务名索引 */
+  const mcpToolCount = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const b of mcpBlueprints) {
+      const k = String(b?.server ?? '').trim();
+      if (k) out[k] = (out[k] ?? 0) + 1;
+    }
+    return out;
+  }, [mcpBlueprints]);
+
+
   /*
    * 刷新。
    *
@@ -936,7 +975,11 @@ export default function App() {
        * 允许外部传服务列表 ——
        * 配置刚改时 canvases 还没更新完，用传进来的这份才准。
        */
-      const servers = overrideServers ?? collectServers(canvases);
+      /*
+       * 服务取自**全局库**，不再扫各张画布的配置 ——
+       * 见上面 mcpServers 的说明。
+       */
+      const servers = overrideServers ?? mcpRefsRef.current;
       const r = await bootRefresh(servers, mcpBlueprints, mcpFetcher);
       if (r.outcome.ok) rebuildMcpGroups(mcpSidebarGroups(r.outcome.list));
       pushLog(r.message);
@@ -953,7 +996,7 @@ export default function App() {
    * 800ms 够用户停下笔，又不会让他等太久。
    */
   const mcpTimerRef = useRef<number | null>(null);
-  const mcpServersRef = useRef<ServerRef[]>(collectServers(canvases));
+  const mcpServersRef = useRef<ServerRef[]>(toServerRefs(mcpServers) as ServerRef[]);
 
   const scheduleMcpRefresh = useCallback((servers: ServerRef[]) => {
     if (mcpTimerRef.current !== null) window.clearTimeout(mcpTimerRef.current);
@@ -967,6 +1010,30 @@ export default function App() {
   useEffect(() => () => {
     if (mcpTimerRef.current !== null) window.clearTimeout(mcpTimerRef.current);
   }, []);
+
+  /*
+   * 全局 MCP 服务库变了 → 防抖刷新一次。
+   *
+   * 比对只认 name / command / url（顺序无关）：
+   *  · 改环境变量不触发重连 —— 那跟工具清单无关
+   *  · 改命令要算变化 —— 那是换了个服务，只比名字的话改了命令不会重新拉
+   */
+  useEffect(() => {
+    const after = toServerRefs(mcpServers) as ServerRef[];
+    const before = mcpServersRef.current;
+    if (!serversChanged(before, after)) return;
+
+    mcpServersRef.current = after;
+    /*
+     * 服务被删时**立刻**把它的工具标 stale ——
+     * 不等刷新，免得侧栏还挂着已经不存在的服务。
+     */
+    const dropped = serversToDrop(before, after);
+    if (dropped.length > 0) {
+      setMcpGroups((gs) => gs.filter((g) => !dropped.includes(g.server)));
+    }
+    scheduleMcpRefresh(after);
+  }, [mcpServers, scheduleMcpRefresh]);
 
   /*
    * 启动后自动刷新一次。
@@ -1014,31 +1081,15 @@ export default function App() {
     if (!activeId) return;
     setCanvases((cs) => updateCanvasConfig(cs, activeId, next));
 
-    const before = mcpServersRef.current;
     /*
-     * 刷新是**全局**的（所有画布的并集），不是按当前画布 ——
-     * 否则切个画布就得重连一次。
+     * MCP 服务已经**不再存在画布配置里**了 —— 它由全局库管
+     * （见上面 mcpServers 的说明）。所以这里不再为它触发刷新，
+     * 改由下面那个监听全局库的 effect 负责。
      *
-     * 所以这里要把 next 代进 canvases 里再算，不能只算 [{ config: next }]：
-     * 只算当前画布的话，别的画布配的服务会被判成"不在列表里"而标 stale，
-     * 侧栏里的它们会凭空消失。
+     * 留着这段代码的话：改画布上的环境变量也会触发一次 MCP 刷新，
+     * 而服务根本没变。
      */
-    const merged = canvases.map((c) =>
-      c.id === activeId ? { ...c, config: next } : c);
-    const after = collectServers(merged);
-    if (!serversChanged(before, after)) return;
-
-    mcpServersRef.current = after;
-    /*
-     * 服务被删时**立刻**把它的工具标 stale ——
-     * 不等刷新，免得侧栏还挂着已经不存在的服务。
-     */
-    const dropped = serversToDrop(before, after);
-    if (dropped.length > 0) {
-      setMcpGroups((gs) => gs.filter((g) => !dropped.includes(g.server)));
-    }
-    scheduleMcpRefresh(after);
-  }, [activeId, canvases, scheduleMcpRefresh]);
+  }, [activeId]);
 
   /**
    * 把整张画布导出成脚本 / 说明。
@@ -3072,6 +3123,9 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
             onChangeMode={changeVaultMode}
             cryptoWarn={cryptoWarn}
             unlockError={unlockErr}
+            mcpServers={mcpServers}
+            onMcpChange={commitMcp}
+            mcpToolCount={mcpToolCount}
           />
         ) : null}
 

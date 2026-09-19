@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import McpServersPanel from './McpServersPanel';
+import type { GlobalMcpServer } from '../engine/mcpServers';
 import { prompt } from '../../../js/dialog.js';
 import {
   type Credential, type CredentialKind, type Capability,
@@ -50,6 +52,7 @@ export type VerifyFn = (kind: CredentialKind, secret: string) => Promise<{
 export function CredentialPanel({
   credentials, onChange, onClose, verify,
   locked, mode, onUnlock, onChangeMode, cryptoWarn, unlockError,
+  mcpServers, onMcpChange, mcpProtocolReady, mcpToolCount, onMcpRefresh, mcpRefreshing,
 }: {
   credentials: Credential[];
   onChange: (next: Credential[]) => void;
@@ -64,7 +67,24 @@ export function CredentialPanel({
   cryptoWarn?: string;
   /** 上一次解锁失败的原因 */
   unlockError?: string;
+  /* ---- MCP 服务（全局库，与凭据同一处管） ---- */
+  mcpServers?: GlobalMcpServer[];
+  onMcpChange?: (next: GlobalMcpServer[]) => void;
+  /** MCP 协议是否已接入。未接入时状态位明说，不给假绿勾 */
+  mcpProtocolReady?: boolean;
+  /** 每个服务已生成的节点数，按服务名索引 */
+  mcpToolCount?: Record<string, number>;
+  onMcpRefresh?: () => void;
+  mcpRefreshing?: boolean;
 }) {
+  /*
+   * 顶部分「凭据 / MCP 服务」两页。
+   *
+   * 两者性质一致：都是"这台机器上有什么外部能力"，
+   * 都是全局的、都不随画布导出。分开两个入口的话，
+   * 配 MCP 时要先想起来该去哪儿找。
+   */
+  const [page, setPage] = useState<'cred' | 'mcp'>('cred');
   const [editing, setEditing] = useState<Credential | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
@@ -126,9 +146,43 @@ export function CredentialPanel({
       <div className="cred-panel" onClick={(e) => e.stopPropagation()}>
         <div className="cred-head">
           <strong>凭据中心</strong>
+          <span className="mcp-tabs" style={{ marginLeft: 'auto' }}>
+            <button
+              type="button"
+              className={'mcp-tab' + (page === 'cred' ? ' on' : '')}
+              onClick={() => setPage('cred')}
+            >
+              凭据
+            </button>
+            <button
+              type="button"
+              className={'mcp-tab' + (page === 'mcp' ? ' on' : '')}
+              onClick={() => setPage('mcp')}
+            >
+              MCP 服务
+              {mcpServers && mcpServers.length > 0 ? (
+                <span className="mcp-tab-count">{mcpServers.length}</span>
+              ) : null}
+            </button>
+          </span>
           <button className="mini" onClick={onClose}>关闭</button>
         </div>
 
+        {page === 'mcp' ? (
+          mcpServers && onMcpChange ? (
+            <McpServersPanel
+              servers={mcpServers}
+              onChange={onMcpChange}
+              protocolReady={mcpProtocolReady}
+              toolCount={mcpToolCount}
+              onRefresh={onMcpRefresh}
+              refreshing={mcpRefreshing}
+            />
+          ) : (
+            <div className="p-muted">MCP 服务库还没接上。</div>
+          )
+        ) : (
+          <>
         <div className="cred-tip">
           密钥只存在本机，不会随画布导出 —— 导出的文件里只有凭据 ID。
         </div>
@@ -301,6 +355,8 @@ export function CredentialPanel({
             ))
           )}
         </div>
+          </>
+        )}
       </div>
     </div>
   );
