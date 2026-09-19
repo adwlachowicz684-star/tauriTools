@@ -31,7 +31,7 @@ function Card({
 }) {
   return (
     <NodeShell id={id} type={type} data={data} selected={selected} tag={tag}>
-      {tagExtra ? <div className="fs-summary"><code className="fs-path" title={tagExtra}>{tagExtra}</code></div> : null}
+      {tagExtra ? <div className="node-line node-line--path"><code className="node-line__code" title={tagExtra}>{tagExtra}</code></div> : null}
     </NodeShell>
   );
 }

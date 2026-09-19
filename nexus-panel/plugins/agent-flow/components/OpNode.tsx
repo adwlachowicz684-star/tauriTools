@@ -22,7 +22,7 @@ export function OpNode({ id, type, data, selected }: NodeProps) {
       selected={selected}
       statusText={{ ...NODE_STATUS_TEXT, running: '运算中' }}
     >
-      <div className="node-brief">{brief}</div>
+      <div className="node-line node-line--brief">{brief}</div>
     </NodeShell>
   );
 }
