@@ -308,6 +308,26 @@ function onClick(e) {
    * 只要调了 stopPropagation，事件就到不了按钮自己的监听器。
    */
   if (e.target?.closest?.('.nx-insp-copy')) return;
+  /*
+   * 标题栏上的按钮也要放行 —— 包括检查器自己的 ⌖。
+   *
+   * 不放行的后果（实测）：检查器开启后点 ⌖，这一下被这里吃掉，
+   * 变成"把 ⌖ 按钮锁定为选中元素"，检查器**关不掉**。
+   * 窗口控制（最小化 / 最大化 / ✕）同样点不动 ——
+   * 开了检查器就只能用 ESC 退出，连窗口都关不了。
+   *
+   * 这些是外壳自身的元操作，不是"被检查的页面内容"，
+   * 被检查器吞掉是纯粹的 bug。
+   *
+   * 只放行**点击**，悬浮高亮仍然生效 —— 所以照样能看它们的名字、
+   * 用 ⧉ 复制路径，只是点了会真的触发。
+   *
+   * 用 closest('#titlebar') 而不是逐个 class：两个外壳的标题栏
+   * 都是 <header id="titlebar">，将来往右上角加工具栏插件也不用改这里。
+   * 判断 tagName 而不是"在标题栏内就全放行"：标题栏空白处仍可检查
+   * （点了会选中标题栏本身，这是合理的）。
+   */
+  if (e.target?.closest?.('#titlebar') && e.target?.tagName === 'BUTTON') return;
   e.preventDefault();
   e.stopPropagation();
   pickAt(elementAt(e.clientX, e.clientY));

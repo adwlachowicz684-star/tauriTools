@@ -18,7 +18,7 @@ import * as extPolicy from './external-policy.js';
 import { getPluginConfig, setPluginConfig } from './plugin-config.js';
 import { openThemePicker } from './theme-picker.js';
 import { installTooltip, refreshTooltip } from './tooltip.js';
-import { installInspector, isInspectorOn, escInspector } from './inspector.js';
+import { installInspector, toggleInspector, isInspectorOn, escInspector } from './inspector.js';
 import { loadToolbarPlugins, mountToolbar } from './toolbar-plugin.js';
 import { loadModuleEntry } from './plugin-entries.js';
 
@@ -601,6 +601,12 @@ async function initToolbar() {
     toast,
     win: (a) => host.win(a),
     navigate,
+    /*
+     * 检查器能力注入给工具栏插件。
+     * 插件**不要**自己 import inspector.js —— 它会被打进独立 chunk，
+     * 那份模块级单例（on / locked）就成了第二份，按钮高亮永远不同步。
+     */
+    inspector: { isOn: isInspectorOn, toggle: toggleInspector },
     /* 工具栏插件走宿主总线。bus 是外壳与插件共用的那一套，
        agent-flow 用 ctx.on 订阅的就是它。 */
     emit: (ev, payload) => host.bus?.emit?.(ev, payload),

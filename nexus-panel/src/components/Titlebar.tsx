@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { loadRegistry } from '../../js/host.js';
 import { loadModuleEntry } from '../../js/plugin-entries.js';
 import { loadToolbarPlugins, mountToolbar } from '../../js/toolbar-plugin.js';
+/* 工具栏插件要用检查器状态，由这里注入（插件自行 import 会拿到第二份单例） */
+import { toggleInspector, isInspectorOn } from '../../js/inspector.js';
 
 export type WinAction = 'minimize' | 'maximize' | 'close' | 'topmost' | 'hide';
 
@@ -64,14 +66,23 @@ export default function Titlebar({
   useEffect(() => {
     const el = slotRef.current;
     if (!el) return;
-    /* toolbar-plugin.js 是 .js，没有类型声明 —— 这四个回调的参数在
-       noImplicitAny 下全都是隐式 any（TS7006）。签名照着上面的 props 抄，
-       别用 `as` 糊过去：这里一旦漂移，插件传进来的东西对不上是运行时才炸。 */
+    /*
+     * toolbar-plugin.js 是 .js，没有类型声明 —— 这四个回调的参数在
+     * noImplicitAny 下全都是隐式 any（TS7006）。签名照着上面的 props 抄，
+     * 别用 `as` 糊过去：这里一旦漂移，插件传进来的东西对不上是运行时才炸。
+     */
     const cleanups = mountToolbar(el, {
       toast: (msg: string, type?: string) => onToast?.(msg, type),
       win: (a: WinAction) => onWin(a),
       navigate: (id: string) => onNavigate?.(id),
       emit: (ev: string, payload?: unknown) => onEmit?.(ev, payload),
+      /*
+       * 检查器能力注入给工具栏插件。
+       * 插件不要自己 import inspector.js —— 它会被打进独立 chunk，
+       * 那份模块级单例就成了第二份，按钮高亮永远不同步
+       * （详见 js/toolbar-plugin.js 里的说明）。
+       */
+      inspector: { isOn: isInspectorOn, toggle: toggleInspector },
     });
     /*
      * 必须回收：本 effect 的依赖里有 onWin / onToast 等回调，

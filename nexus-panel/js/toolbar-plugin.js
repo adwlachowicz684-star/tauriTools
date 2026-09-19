@@ -44,6 +44,7 @@
  *   win(a)                                   minimize|maximize|topmost|hide|close
  *   invoke(cmd, args)                        调后端（受 invoke 白名单约束）
  *   navigate(pluginId)                       切到某个插件
+ *   inspector.isOn() / .toggle()             检查器（宿主注入，勿自行 import）
  *   menu(items)                              弹菜单，返回选中项的 value
  *
  * menu 的取消语义
@@ -162,6 +163,24 @@ export function mountToolbar(el, opts = {}) {
       },
       navigate: (id) => opts.navigate?.(id),
       emit: (ev, payload) => opts.emit?.(ev, payload),
+      /*
+       * 检查器能力：**必须由宿主注入，插件不要自己 import inspector.js**。
+       *
+       * 原因（这是嵌合架构里很容易踩的一个坑）：
+       *   · inspector.js 的状态（on / locked）是**模块级单例**；
+       *   · 工具栏插件由 import.meta.glob 动态 import，会生成**独立 chunk**；
+       *   · 一旦 inspector.js 被内联/复制进那个 chunk，
+       *     插件读到的就是**另一份 on** —— 按钮高亮永远同步不上，
+       *     而代码不报错、类型检查也看不出来。
+       *
+       * 走 api 注入则天然只有宿主这一份状态。
+       * 宿主没提供时明确报错，而不是 undefined 调用（那只会是个
+       * TypeError，看不出是"宿主没接"还是"插件写错了"）。
+       */
+      inspector: opts.inspector ?? {
+        isOn: () => { throw new Error('宿主未提供 inspector 能力'); },
+        toggle: () => { throw new Error('宿主未提供 inspector 能力'); },
+      },
       menu: (items) => openMenu(btn, items, opts),
     };
 

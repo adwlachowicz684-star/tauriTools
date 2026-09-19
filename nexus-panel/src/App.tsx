@@ -217,7 +217,7 @@ export default function App() {
          * 只在检查器开着时消费 —— 否则会抢走插件自己的 ESC（它用来关弹窗）。
          *
          * UI 状态不用手动同步：escInspector 会派发 nexus:inspector-toggle，
-         * 上面的监听会跟着更新侧边栏按钮。
+         * 工具栏里的检查器插件（toolbar-inspector）监听它更新自己的高亮态。
          */
         onShellShortcut: (combo) => {
           if (String(combo).toLowerCase() !== 'esc') return false;

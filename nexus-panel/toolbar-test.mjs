@@ -296,6 +296,19 @@ const tb = src('src/components/Titlebar.tsx');
  * 它的 effect 依赖里有 onWin/onToast 等回调，每次渲染都是新引用 → 反复重跑；
  * 不回收就是每重跑一次多一个 document 监听（检查器按钮会闪、提示会重复弹）。
  */
+/*
+ * mountToolbar 的回调必须带类型注解。
+ * toolbar-plugin.js 是 .js 无类型声明，noImplicitAny 下这些参数
+ * 会变成隐式 any（TS7006）；签名对不上时是**运行时**才炸。
+ *
+ * 加这条是因为实测踩过：改 mountToolbar 这个块时整块替换，
+ * 把远端有意写的注解连同注释一起抹掉了。
+ */
+t('Titlebar 的 mountToolbar 回调带类型注解',
+  /toast: \(msg: string, type\?: string\)/.test(tb)
+  && /win: \(a: WinAction\)/.test(tb)
+  && /navigate: \(id: string\)/.test(tb)
+  && /emit: \(ev: string, payload\?: unknown\)/.test(tb));
 t('Titlebar 接住了 mountToolbar 的清理函数',
   /const cleanups = mountToolbar\(/.test(tb) && /for \(const fn of cleanups/.test(tb));
 t('Titlebar 里 await 了 loadRegistry（不是同步调用）',
@@ -363,7 +376,7 @@ console.log('\n=== 10.6 真实挂载：onInit 清理 + 检查器状态同步 ===
 {
   resetToolbar();
   const insp = await import('./plugins/toolbar-inspector/module.js');
-  const { setInspector } = await import('./js/inspector.js');
+  const { setInspector, isInspectorOn: isOn } = await import('./js/inspector.js');
 
   /* 走真实加载路径（loadToolbarPlugins），而不是把 def 塞进登记表 ——
      后者会绕过 validateToolbarDef 与 iframe 校验，测不到真加载链路 */
@@ -376,7 +389,11 @@ console.log('\n=== 10.6 真实挂载：onInit 清理 + 检查器状态同步 ===
   const box = document.createElement('div');
   document.body.appendChild(box);
 
-  const cleanups = mountToolbar(box, { toast: () => {} });
+  const cleanups = mountToolbar(box, {
+    toast: () => {},
+    /* 与宿主一致的注入方式 */
+    inspector: { isOn: () => setInspector.__probe ?? isOn(), toggle: () => setInspector(!isOn()) },
+  });
   const btn = box.querySelector('[data-toolbar-id="toolbar-inspector"]');
   t('检查器按钮已渲染', !!btn, btn ? btn.textContent : '（没有）');
 
@@ -404,8 +421,9 @@ console.log('\n=== 10.6 真实挂载：onInit 清理 + 检查器状态同步 ===
    * 不回收的话事件处理跟着跑 N 遍。
    */
   resetToolbar();
-  const c1 = mountToolbar(box, { toast: () => {} });
-  const c2 = mountToolbar(box, { toast: () => {} });
+  const api1 = { toast: () => {}, inspector: { isOn, toggle: () => setInspector(!isOn()) } };
+  const c1 = mountToolbar(box, api1);
+  const c2 = mountToolbar(box, api1);
   const btn2 = box.querySelector('[data-toolbar-id="toolbar-inspector"]');
   let hits = 0;
   const probe = () => { hits++; };
@@ -419,6 +437,28 @@ console.log('\n=== 10.6 真实挂载：onInit 清理 + 检查器状态同步 ===
   for (const fn of [...c1, ...c2]) { try { fn(); } catch { /* ignore */ } }
   setInspector(false);
   void insp;
+}
+
+/* ---------------------------------------------------------------- */
+console.log('\n=== 10.7 插件不得自行 import 宿主单例模块 ===');
+/*
+ * inspector.js 的 on/locked 是模块级单例。工具栏插件走 import.meta.glob
+ * 动态 import → 独立 chunk。若它自己 import，inspector.js 可能被复制一份，
+ * 按钮读到的就是另一份 on —— 高亮永远同步不上，且不报错、类型检查也看不出。
+ *
+ * 沙盒装不上 vite，无法实测产物；所以这条断言是**事前约束**：
+ * 强制走宿主注入，从根上排除这种可能。
+ */
+{
+  const m = src('plugins/toolbar-inspector/module.js');
+  const code = m.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  t('检查器插件不 import inspector.js（状态走宿主注入）',
+    !/from\s+['"][^'"]*inspector\.js['"]/.test(code));
+  t('检查器插件用 api.inspector', /api\.inspector\.isOn\(\)/.test(code) && /api\.inspector\.toggle\(\)/.test(code));
+  t('宿主侧：shell.js 注入了 inspector',
+    /inspector:\s*\{\s*isOn:\s*isInspectorOn,\s*toggle:\s*toggleInspector/.test(src('js/shell.js')));
+  t('宿主侧：Titlebar 注入了 inspector',
+    /inspector:\s*\{\s*isOn:\s*isInspectorOn,\s*toggle:\s*toggleInspector/.test(src('src/components/Titlebar.tsx')));
 }
 
 /* ---------------------------------------------------------------- */

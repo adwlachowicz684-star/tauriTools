@@ -174,7 +174,36 @@ t('无构建版：侧边栏不再有按钮', !/id="btn-inspect"/.test(src('index
 t('Vite 版：App.tsx 已安装', /installInspector\(\)/.test(src('src/App.tsx')));
 t('Vite 版：Sidebar 不再接 inspector', !/onInspect/.test(src('src/components/Sidebar.tsx')));
 t('已注册 toolbar-inspector 插件', /id: 'toolbar-inspector'/.test(src('plugins/registry.js')));
-t('插件文件存在', /toggleInspector/.test(src('plugins/toolbar-inspector/module.js')));
+t('插件文件存在', /api\.inspector\.toggle\(\)/.test(src('plugins/toolbar-inspector/module.js')));
+
+/* ---------- 8.5 标题栏按钮必须能被点到 ----------
+ * 检查器的 click 监听挂在**捕获阶段**并 stopPropagation，
+ * 任何点击都会被它吃掉去做"锁定/解锁"。
+ *
+ * 于是：检查器一开，右上角的 ⌖ 就点不动了 —— 那一下变成
+ * "把按钮锁定为选中元素"，检查器**关不掉**；
+ * 最小化 / ✕ 同样点不动，连窗口都关不了，只剩 ESC 一条退路。
+ *
+ * 这些是外壳自身的元操作，不是被检查的内容，必须放行。 */
+{
+  const insp = src('js/inspector.js');
+  /* 剥注释：块注释 + 行注释。注释里提到这些选择器不算实现 */
+  const code = insp
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|\s)\/\/.*$/gm, '');
+  /*
+   * 实际写法 `e.target?.closest?.('...')` —— 正则要写全 `\?\.\(`。
+   * 漏掉那个点会恒假：断言永远不通过，而它想保护的回退也永远不会被发现。
+   */
+  t('点击放行复制按钮', /closest\?\.\(\s*'\.nx-insp-copy'\s*\)/.test(code));
+  t('点击放行标题栏按钮（否则检查器开了就关不掉）',
+    /closest\?\.\(\s*'#titlebar'\s*\)/.test(code)
+    && /tagName\s*===\s*'BUTTON'/.test(code));
+  /* 两个外壳的标题栏都得是 <header id="titlebar">，放行规则才生效 */
+  t('两个外壳都有 #titlebar',
+    /<header id="titlebar"/.test(src('index.html'))
+    && /id="titlebar"/.test(src('src/components/Titlebar.tsx')));
+}
 
 /* ---------- 9. 焦点在 iframe 里时 ESC 也要能退 ----------
  * 鼠标扫过 iframe 插件里的控件会把焦点带进插件，
