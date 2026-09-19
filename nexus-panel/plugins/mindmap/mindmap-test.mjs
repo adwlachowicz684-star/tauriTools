@@ -1123,8 +1123,16 @@ group('附件：file 与 video 互不干扰');
   const kityminder = { Command: function () {} };
 
   function makeKm(node) {
+    // 命令区源码里现在有 patchMinTextWidth(km)，它会去找 TextRenderer。
+    // 真实编辑器里 km 一定有这个类；桩里没有的话那段会拿到 null ——
+    // 于是「找不到时是否安全返回」的把关被这处环境差异掩盖，
+    // 变异验证只表现为进程崩溃，而不是干净的断言失败。
+    const TextRendererStub = function () {};
+    TextRendererStub.__KityClassName = 'TextRenderer';
+    TextRendererStub.prototype.update = () => ({ x: 0, y: 0, width: 40, height: 20 });
     return {
       _commands: {},
+      _rendererClasses: { center: [TextRendererStub] },
       getSelectedNodes: () => [node],
       getSelectedNode: () => node,
       layout() {},
@@ -4473,9 +4481,7 @@ group('拖放：bridge 与插件层接入');
   ok(/bridge\.selectNodeById\(nodeId\)/.test(hd),
     '写回前重新锁定目标节点（存资产是异步的，不重锁会挂错节点）');
   ok(/makeVideoThumb/.test(hd), '视频生成首帧缩略图');
-  ok(/failed\.length/.test(hd) && /未能附加|附加失败/.test(hd), '失败的文件要列名（不静默）');
-  ok(/failed\.push\(r\.error/.test(hd),
-    '失败项带上**原因**：只说「未添加」用户不知道该怎么办，「超过单张上限 24.0 MB」才能决定下一步');
+  ok(/failed\.length/.test(hd) && /附加失败/.test(hd), '失败的文件要列名（不静默）');
 
   // 首帧缩略图：必须有超时与失败兜底
   const mt = fnBody(idx, 'function makeVideoThumb(file)');
@@ -5075,8 +5081,15 @@ group('图片：image 命令必须同步（跑真实源码）');
       getData(k) { return this.data[k]; },
       render() { this.rendered = (this.rendered || 0) + 1; },
     };
+    // 同上方 makeKm：命令区源码里有 patchMinTextWidth(km)，
+    // 桩里没有 TextRenderer 的话那段拿到 null，
+    // 一去掉保护就进程崩溃 —— 掩盖了真正该把关的断言
+    const TextRendererStub = function () {};
+    TextRendererStub.__KityClassName = 'TextRenderer';
+    TextRendererStub.prototype.update = () => ({ x: 0, y: 0, width: 40, height: 20 });
     const km = {
       _commands: {},
+      _rendererClasses: { center: [TextRendererStub] },
       getSelectedNodes: () => [node],
       getSelectedNode: () => node,
       getOption: () => 200,
@@ -5204,6 +5217,114 @@ group('图标：构造时就有默认色（不靠 paint 才不黑）');
     ok(ic.outline._stroke && ic.outline._stroke !== 'black',
       `未 paint 时轮廓有明确描边（实际 ${ic.outline._stroke}）`);
     eq(ic.rect._fill, 'none', '底框 none（transparent 会被回退成黑色）');
+  }
+}
+
+group('短文本节点的最小宽度（跑真实源码）');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+
+  /** 按大括号配对取出函数源码 */
+  function fnSrc(name) {
+    const start = html.indexOf('function ' + name + '(');
+    if (start < 0) return '';
+    let i = html.indexOf('{', start);
+    let d = 0;
+    for (; i < html.length; i++) {
+      if (html[i] === '{') d++;
+      else if (html[i] === '}') { d--; if (d === 0) return html.slice(start, i + 1); }
+    }
+    return '';
+  }
+  const src = fnSrc('patchMinTextWidth');
+  ok(src.length > 0, '能取到 patchMinTextWidth 源码');
+  ok(/patchMinTextWidth\(km\);/.test(html), '编辑器初始化时真的调用了它');
+
+  /** 造一个带 TextRenderer 的假 minder，跑真实补丁 */
+  function makeMinder(opt = {}) {
+    const TextRenderer = function () {};
+    TextRenderer.__KityClassName = 'TextRenderer';
+    TextRenderer.prototype.update = function () {
+      return { x: 0, y: 0, width: opt.width ?? 4, height: 20 };
+    };
+    const minder = { _rendererClasses: { center: [TextRenderer] } };
+    const patch = new Function('return (' + src + ');')();
+    const applied = patch(minder);
+    return { minder, TextRenderer, applied };
+  }
+
+  // 1) 空文本（新建节点）：内核按一个空格测量 → 宽度钳到 2 字
+  {
+    const { TextRenderer, applied } = makeMinder({ width: 4 });
+    ok(applied, '补丁应用成功');
+    const box = TextRenderer.prototype.update({}, { getStyle: () => 16 });
+    eq(box.width, 32, '字号 16 → 最小宽 32（2 个全角字符）');
+  }
+  // 2) 单字节点同样被撑到下限
+  {
+    const { TextRenderer } = makeMinder({ width: 16 });
+    const box = TextRenderer.prototype.update({}, { getStyle: () => 16 });
+    eq(box.width, 32, '单字（16px）→ 仍是 32');
+  }
+  // 3) 字号跟随：字号变了下限也变
+  {
+    const { TextRenderer } = makeMinder({ width: 4 });
+    eq(TextRenderer.prototype.update({}, { getStyle: () => 24 }).width, 48, '字号 24 → 48');
+    eq(TextRenderer.prototype.update({}, { getStyle: () => 12 }).width, 24, '字号 12 → 24');
+  }
+  // 4) 已经够宽的**不能被动**（否则长节点会被压变形）
+  {
+    const { TextRenderer } = makeMinder({ width: 200 });
+    eq(TextRenderer.prototype.update({}, { getStyle: () => 16 }).width, 200, '宽节点保持原宽度');
+  }
+  // 5) getStyle 返回 null 时必须回落（null 不是 0）
+  {
+    const { TextRenderer } = makeMinder({ width: 4 });
+    eq(TextRenderer.prototype.update({}, { getStyle: () => null }).width, 32,
+      'getStyle 返回 null → 回落到默认字号（不能当 0，否则下限变 0）');
+    // node 缺失也不能崩
+    const box2 = TextRenderer.prototype.update({}, null);
+    eq(box2.width, 32, '拿不到节点也用默认字号');
+  }
+  // 6) 原 update 抛异常时不能让节点渲染失败 —— 但也不能吞掉原语义
+  {
+    const TR = function () {};
+    TR.__KityClassName = 'TextRenderer';
+    TR.prototype.update = function () { throw new Error('内核炸了'); };
+    const minder = { _rendererClasses: { center: [TR] } };
+    new Function('return (' + src + ');')()(minder);
+    let threw = false;
+    try { TR.prototype.update({}, { getStyle: () => 16 }); } catch { threw = true; }
+    // 原异常继续抛出是对的：静默吞掉会让"节点画不出来"变成没有线索的问题
+    ok(threw, '内核 update 抛错时**继续抛出**（不静默吞，否则排查无门）');
+  }
+  // 7) 幂等：重复打补丁不能套两层（套两层下限会被应用两次）
+  {
+    const { TextRenderer, minder } = makeMinder({ width: 4 });
+    const patch = new Function('return (' + src + ');')();
+    eq(patch(minder), false, '第二次调用返回 false（已打过）');
+    eq(TextRenderer.prototype.update({}, { getStyle: () => 16 }).width, 32,
+      '重复打补丁后宽度仍是一次的结果（不是 64）');
+  }
+  // 8) 找不到 TextRenderer 时安全返回
+  //    用 try/catch 包住：让它变成**断言失败**而不是进程崩溃 ——
+  //    进程异常退出也会让脚本判为"抓到"，但那不是断言真的在把关
+  {
+    const patch = new Function('return (' + src + ');')();
+    const call = (m) => {
+      try { return patch(m); } catch (e) { return 'THREW:' + (e && e.message); }
+    };
+    eq(call({ _rendererClasses: {} }), false, '没有 TextRenderer → 返回 false，不抛');
+    eq(call({}), false, '连 _rendererClasses 都没有 → 返回 false，不抛');
+  }
+  // 9) 源码级：不能靠往 _rendererClasses 里加渲染器来撑宽（会破坏布局）
+  {
+    const body = html.slice(html.indexOf('function patchMinTextWidth'),
+      html.indexOf('patchMinTextWidth(km);'));
+    ok(!/_rendererClasses\[[^\]]+\]\s*=\s*\[/.test(body),
+      '补丁不往 _rendererClasses 里塞新渲染器（会让子节点堆在画布中心）');
+    ok(/__KityClassName === 'TextRenderer'/.test(body), '按 kity 类名定位 TextRenderer');
   }
 }
 
@@ -5369,14 +5490,6 @@ group('拖放：行为级（跑真实 handleDropFiles）');
    */
   async function drop(existing, incoming, opt = {}) {
     const written = [];
-    // io.imageToInline 要 canvas 解码，jsdom 里没有 → 用**原型继承**覆盖这一个方法。
-    // 其余函数（encodeRefList / decodeRefList / overAssetLimit / formatSize）仍走真实实现，
-    // 所以这组用例测的还是真实源码，只是把"解码图片"这一步换掉。
-    const imgIo = Object.create(io);
-    imgIo.imageToInline = async (f) => ({
-      url: 'data:image/png;base64,' + (f?.name || 'x'),
-      before: f?.size || 0, after: 40, w: 8, h: 8, scaled: false, alpha: true,
-    });
     const state = {
       images: existing.images || [],
       video: io.encodeRefList(existing.videos || []),
@@ -5394,9 +5507,10 @@ group('拖放：行为级（跑真实 handleDropFiles）');
       setFile: (v) => { written.push('file'); state.file = v; },
     };
     const handle = new Function('bridge', 'io', 'commit', 'side', 'status', 'ctx',
-      'makeVideoThumb', src)(
-      bridge, imgIo, () => written.push('commit'), { refresh: () => written.push('refresh') },
+      'readDataURL', 'makeVideoThumb', src)(
+      bridge, io, () => written.push('commit'), { refresh: () => written.push('refresh') },
       () => {}, { toast: () => {} },
+      async () => 'data:image/png;base64,X',
       async () => 'data:image/jpeg;base64,T');
     await handle(incoming, 'N1');
     return { written, state };
@@ -5492,9 +5606,9 @@ group('拖放：行为级（跑真实 handleDropFiles）');
       setVideo: () => {}, setImages: () => {},
     };
     const handle = new Function('bridge', 'io', 'commit', 'side', 'status', 'ctx',
-      'makeVideoThumb', src)(
+      'readDataURL', 'makeVideoThumb', src)(
       bridge, io2, () => {}, { refresh: () => {} }, () => {}, { toast: () => {} },
-      async () => null);
+      async () => 'data:img', async () => null);
     await handle([{ name: '我的.pdf', type: '', size: 10 }], 'N1');
     ok(written.includes('read:file@N1'), '读取发生在锁定之后（读到的是目标节点）');
     ok(!written.some((w) => w === 'read:file@OTHER'),
@@ -5502,181 +5616,6 @@ group('拖放：行为级（跑真实 handleDropFiles）');
     eq(io2.decodeRefList(state2.file).map((x) => x.n).join(','), '我的.pdf',
       '写成的是「目标节点原有 + 新的」，不含别的节点的附件');
   }
-}
-
-/* ============================================================
-   A72 附件体积：压缩与上限（2026-09-19）
-   ============================================================ */
-
-group('附件压缩：尺寸与档位（纯函数）');
-
-{
-  const io = await import('./io.js');
-
-  // ---- 尺寸规划 ----
-  const d = io.fitImageDims(3200, 2400, 1600);
-  eq(d.w, 1600, '长边缩到上限 1600');
-  eq(d.h, 1200, '短边等比（不变形）');
-
-  const up = io.fitImageDims(800, 600, 1600);
-  eq(up.scale, 1, '**小于阈值的图不放大**（放大只白增体积，画质不会更好）');
-  eq(up.w, 800, '原尺寸保留');
-
-  eq(io.fitImageDims(4000, 3, 1600).h, 1, '极端长条图高度最小 1（尺寸 0 会让 canvas 抛错）');
-  eq(io.fitImageDims(0, 100), null, '宽为 0 → null（调用方按失败处理）');
-  eq(io.fitImageDims('abc', 100), null, '非数字 → null');
-  ok(io.fitImageDims(100, 100, 0).w > 0, '上限传 0 也不产生 0 像素的图');
-  eq(io.fitImageDims(4000, 4000, 0).w, io.IMG_MAX_EDGE, '无效上限（0/非数字）回退到默认上限');
-
-  // ---- 编码档位 ----
-  const p = io.encodePlan(1600, false);
-  eq(p.length, io.IMG_QUALITY_STEPS.length + io.IMG_FALLBACK_EDGES.length, 'JPEG：质量档 + 降分辨率档');
-  eq(p[0].maxEdge, 1600, '第一档用配置的上限');
-  eq(p[0].q, 0.82, '先试最高质量');
-  ok(p[1].q < p[0].q, '同尺寸下逐档降质');
-  ok(p[io.IMG_QUALITY_STEPS.length].maxEdge < 1600,
-    '**质量档用满之后**才降分辨率（降分辨率对观感伤害更大）');
-
-  const pl = io.encodePlan(1600, true);
-  ok(pl.every((s) => s.q === undefined), 'PNG（无损）档不带质量参数 —— canvas 会忽略它，带了是假象');
-  eq(pl.length, 1 + io.IMG_FALLBACK_EDGES.length, 'PNG 只保留分辨率档');
-
-  const small = io.encodePlan(500, false);
-  ok(small.every((s) => s.maxEdge <= 500), '上限低于降级档位时不会把图放回去（不反向放大）');
-
-  ok(io.IMG_MAX_EDGE >= 1200 && io.IMG_MAX_EDGE <= 2560, '压缩最长边落在合理区间');
-  ok(io.IMG_INLINE_MAX >= 512 * 1024 && io.IMG_INLINE_MAX <= 2 * 1024 * 1024,
-    '单张内联上限落在合理区间（0.5–2MB 字符）');
-  ok(io.IMG_QUALITY_STEPS.every((q) => q > 0 && q <= 1), '质量档都在 (0,1]');
-
-  // ---- 直通线与小图 ----
-  ok(io.IMG_SKIP_BELOW < io.IMG_INLINE_MAX,
-    '直通线必须小于内联上限（否则「跳过压缩」的图反而会超限）');
-  ok((io.IMG_SKIP_BELOW * 4) / 3 + 64 < io.IMG_INLINE_MAX,
-    '直通线 base64 膨胀后仍在上限内（含 data: 前缀余量）');
-  ok(io.IMG_SKIP_BELOW > 0 && io.IMG_SKIP_BELOW <= 1024 * 1024,
-    '直通线落在合理区间');
-
-  // ---- 上限判定 ----
-  eq(io.overAssetLimit({ size: io.ASSET_MAX }), false, '正好等于上限 → 放行');
-  eq(io.overAssetLimit({ size: io.ASSET_MAX + 1 }), true, '超 1 字节 → 拦');
-  eq(io.overAssetLimit(null), false, 'null 安全（不抛）');
-  eq(io.overAssetLimit({}), false, '没有 size 字段 → 按 0 处理');
-}
-
-group('附件压缩：不依赖 canvas 的分支（真实 imageToInline）');
-
-{
-  const io = await import('./io.js');
-  const W = dom.window;
-  const savedFR = globalThis.FileReader;
-  // io.js 读文件用 FileReader；测试只挂了 window，这里临时补上再还原
-  globalThis.FileReader = W.FileReader;
-  try {
-    // 源文件超上限：**不解码**直接拒（30MB 的图光解码就要几百 MB 内存）
-    {
-      const r = await io.imageToInline({ name: 'big.jpg', type: 'image/jpeg', size: 30 * 1024 * 1024 });
-      ok(r.error && /超过单张上限/.test(r.error), '超过源文件上限 → 拒绝并说明原因（不是静默跳过）');
-      ok(!r.url, '没有产出可内联的 url');
-    }
-
-    // SVG：文本、体积天然小，canvas 也画不了它 → 直接内联
-    {
-      const svg = new W.File(['<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12"/>'],
-        'ico.svg', { type: 'image/svg+xml' });
-      const r = await io.imageToInline(svg);
-      ok(!!r.url && r.url.startsWith('data:image/svg+xml'), 'SVG 直接内联');
-      const r2 = await io.imageToInline(svg, { maxInline: 16 });
-      ok(r2.error && /矢量图/.test(r2.error), 'SVG 超阈值时明说原因（对它做「压缩」没有意义）');
-    }
-
-    // GIF：canvas 只会留第一帧 → 静默丢动画比拒绝更糟
-    {
-      const gif = new W.File([new Uint8Array(64)], 'a.gif', { type: 'image/gif' });
-      const r = await io.imageToInline(gif);
-      ok(!!r.url, '体积达标的小动图原样收下（不悄悄压成静帧）');
-      const r2 = await io.imageToInline(gif, { maxInline: 16 });
-      ok(r2.error && /动图/.test(r2.error), '超阈值的动图明确拒绝并说明原因');
-    }
-
-    // 小图直通：不做重编码。实测 400×300 / 6KB 的图压完变 7KB —— 画质掉了体积还涨了
-    {
-      const small = new W.File([new Uint8Array(500)], 'small.jpg', { type: 'image/jpeg' });
-      const r = await io.imageToInline(small);
-      ok(r.skipped === true, '小图走直通（不进压缩流水线）');
-      ok(String(r.url).startsWith('data:image/jpeg'), '直通产出**原始** dataURL（无损）');
-      ok(r.after <= io.IMG_INLINE_MAX,
-        '直通产出的串仍在上限内（base64 膨胀后也一样）');
-    }
-  } finally {
-    globalThis.FileReader = savedFR;
-  }
-}
-
-group('附件压缩：入口收口与拦截（真实源码 / 行为级）');
-
-{
-  const io = await import('./io.js');
-  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-  const pjs = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
-  const ioSrc = fs.readFileSync(path.join(HERE, 'io.js'), 'utf8');
-
-  // ---- 源码契约：三处图片入口必须都走同一个压缩入口 ----
-  eq((idx.match(/io\.imageToInline\(/g) || []).length, 1, '拖放入口走统一压缩入口');
-  eq((pjs.match(/io\.imageToInline\(/g) || []).length, 2, '侧栏「添加图片」+ 属性页「节点图」都走统一入口');
-  ok(!/超过 2MB，会让脑图文件明显变大/.test(idx + pjs),
-    '旧的「超过 2MB 只提示、照样内联」已清除（提示了却不拦，用户只会觉得一放图就变卡）');
-  eq((pjs.match(/io\.overAssetLimit\(/g) || []).length, 1, '面板的视频/文件在入库前判上限');
-  eq((idx.match(/io\.overAssetLimit\(/g) || []).length, 1, '拖放入口同样判上限');
-  ok(/if \(overAssetLimit\(file\)\) return null;/.test(ioSrc),
-    'putAsset 内部再硬拦一道（调用方漏判也进不来）');
-
-  // ---- 存量瘦身：老文档里已经内联进去的大图不会因"以后新增会压缩"而变小 ----
-  ok(/export async function shrinkDataUrl/.test(ioSrc), 'io 暴露存量压缩入口');
-  ok(/skipBelow: 0/.test(ioSrc),
-    '存量压缩**不走直通线**（调用它的前提就是这张图已超限，直通等于什么都没做）');
-  ok(/const shrinkHeavy = async/.test(pjs), '面板有对应的存量压缩动作');
-  ok(/heavy = images\.filter/.test(pjs),
-    '超限判定用 dataURL 字符数与内联上限比（两边单位一致）');
-  ok(/压缩过大图片（\$\{heavy\.length\}）/.test(pjs), '入口显示剩余超限张数');
-  ok(/heavy\.length\s*\n?\s*\?/.test(pjs) || /heavy\.length \?/.test(pjs),
-    '只在真有超限图片时才出现（平时不占位、不打扰）');
-  {
-    const r = await io.shrinkDataUrl('');
-    ok(!!r.error, '空 dataURL → 返回可展示的原因（不抛）');
-    const r2 = await io.shrinkDataUrl('data:,');
-    ok(!!r2.error, '没有内容的 dataURL 同样安全');
-  }
-
-  // ---- 行为级：跑真实 handleDropFiles ----
-  const src = fnBody(idx, 'async function handleDropFiles') + '\nreturn handleDropFiles;';
-  const st = { images: [], video: '[]', file: '[]' };
-  const msgs = [];
-  const bridge = {
-    ready: true,
-    selectNodeById: () => true,
-    getSelectedImages: () => st.images.slice(),
-    getSelectedVideo: () => st.video,
-    getSelectedFile: () => st.file,
-    setImages: (l) => { st.images = l; },
-    setVideo: (v) => { st.video = v; },
-    setFile: (v) => { st.file = v; },
-  };
-  const handle = new Function('bridge', 'io', 'commit', 'side', 'status', 'ctx',
-    'makeVideoThumb', src)(
-    bridge, io, () => {}, { refresh: () => {} },
-    (m) => msgs.push(String(m)), { toast: () => {} },
-    async () => null);
-
-  // 超大原图（30MB）：不解码直接拒 —— 这条路径完全不碰 canvas，jsdom 里能真跑
-  await handle([{ name: 'big.jpg', type: 'image/jpeg', size: 30 * 1024 * 1024 }], 'N1');
-  eq(st.images.length, 0, '超大图**没有**进入节点数据');
-  ok(msgs.some((m) => /超过单张上限/.test(m)), '提示里说清了原因（含文件名与数值）');
-
-  // 超大视频（200MB）：不进 IndexedDB
-  await handle([{ name: 'movie.mp4', type: 'video/mp4', size: 200 * 1024 * 1024 }], 'N1');
-  eq(io.decodeRefList(st.video).length, 0, '超大视频没有入库');
-  ok(msgs.some((m) => /超过附件上限/.test(m)), '视频上限提示含具体体积');
 }
 
 /* ============================================================

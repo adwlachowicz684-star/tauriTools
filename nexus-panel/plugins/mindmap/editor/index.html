@@ -331,6 +331,70 @@
             // 覆盖内核同名命令 —— 必须在内核 _commands 建好之后（DOMContentLoaded 内）
             try { km._commands['image'] = new ImageCommand(); } catch (e) {}
 
+            /* ---------------- 短文本节点的最小宽度 ----------------
+             * 新建节点（文本为空）或只有一两个字的节点，内核算出来的框非常窄 ——
+             * 窄到看着不像一个「节点」，点中也困难。
+             *
+             * 内核 TextRenderer 对空文本用 `[" "]`（一个空格）来测量，
+             * 所以宽度就是一个空格宽；单字节点同理只有一个字的宽。
+             *
+             * 做法：包装 TextRenderer.update，把返回的 box 宽度**钳到下限**。
+             * 只改宽度、不动 x —— center 渲染器本身按 box 居中，节点变宽后
+             * 文本自然还是居中的。
+             *
+             * ⚠️ **不能**往 _rendererClasses 里加新渲染器来"撑宽"：
+             * core 的 renderNodeBatch 按 b[0] 的渲染器数整体迭代，
+             * 根节点与子节点渲染器数不一致时会取到 undefined 抛错，
+             * 结果是子节点全部堆在画布中心（之前踩过，代价很大）。
+             */
+            /** 由测试直接取源码执行，所以写成命名函数而不是立即执行 */
+            function patchMinTextWidth(minder) {
+                var MIN_CHARS = 2;      // 最短按 2 个全角字符算
+                var DEFAULT_FS = 16;    // 取不到字号时的回落
+
+                /** 从已注册的渲染器类里找出 TextRenderer（按 kity 记的类名） */
+                function findTextRenderer() {
+                    var groups = minder._rendererClasses || {};
+                    var keys = ['center', 'left', 'right', 'top', 'bottom', 'outside', 'outline'];
+                    for (var i = 0; i < keys.length; i++) {
+                        var arr = groups[keys[i]];
+                        if (!arr) continue;
+                        for (var j = 0; j < arr.length; j++) {
+                            // kity.createClass 把名字记在 __KityClassName 上
+                            if (arr[j] && arr[j].__KityClassName === 'TextRenderer') return arr[j];
+                        }
+                    }
+                    return null;
+                }
+
+                var TR = findTextRenderer();
+                if (!TR) return false;
+                // 幂等：编辑器重复初始化时不再多套一层
+                // （套两层会让下限被应用两次，宽度翻倍）
+                if (TR.__kmMinWidthPatched) return false;
+                TR.__kmMinWidthPatched = true;
+                var origUpdate = TR.prototype.update;
+
+                TR.prototype.update = function () {
+                    var box = origUpdate.apply(this, arguments);
+                    try {
+                        // update(container, node, ...) —— node 是第 2 个参数
+                        if (box && typeof box.width === 'number') {
+                            var node = arguments[1];
+                            var fs = DEFAULT_FS;
+                            var got = node && node.getStyle ? node.getStyle('font-size') : null;
+                            // getStyle 查不到时返回 null（不是 0），必须回落
+                            if (got) fs = Number(got) || DEFAULT_FS;
+                            var min = Math.round(MIN_CHARS * fs);
+                            if (box.width < min) box.width = min;
+                        }
+                    } catch (e) { /* 拿不到就保持原宽度，不能让节点渲染失败 */ }
+                    return box;
+                };
+                return true;
+            }
+            patchMinTextWidth(km);
+
             // 多图：data.images 存 **JSON 数组串**（dataURL 列表）。
             // 不能复用内核的 image 字段 —— 它是单值，内核渲染器会把数组串当 URL，直接破图。
             //
