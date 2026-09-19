@@ -1,5 +1,6 @@
 import type { NodeProps } from '@xyflow/react';
 import { NodeShell, NODE_STATUS_TEXT } from './NodeShell';
+import { canvasRefDisplayName } from '../engine/canvasRefName';
 
 /**
  * 跨画布相关的三个节点共用的卡片。
@@ -8,6 +9,12 @@ import { NodeShell, NODE_STATUS_TEXT } from './NodeShell';
  */
 export function CanvasRefNode({ id, type, data, selected }: NodeProps) {
   const d = (data ?? {}) as Record<string, unknown>;
+  /*
+   * 卡片拿不到画布列表（只收 data），所以显示名只能用**快照** canvasName。
+   *
+   * 快照是在创建 / 选画布时写的，目标画布后来改名会不同步 ——
+   * 这事由 App 在改名时回写（见 syncCanvasNames），卡片这边不猜。
+   */
   return (
     <NodeShell
       id={id}
@@ -23,10 +30,18 @@ export function CanvasRefNode({ id, type, data, selected }: NodeProps) {
 
 function briefOf(type: string, d: Record<string, unknown>): string {
   if (type === 'canvasRef') {
+    /*
+     * 绝不再显示 canvasId 的片段。
+     *
+     * 以前这里写 `调用画布 ${cid.slice(0, 8)}…` ——
+     * 画布没名字时用户看到的是 `cvmamu7obyv93` 这种内部 id，
+     * 看着像乱码，且完全无法对应到哪张画布。
+     * 内部 id 对用户没有任何意义，显示它只会让人以为是故障。
+     */
+    const name = canvasRefDisplayName(d);
     const cid = String(d.canvasId ?? '').trim();
-    const name = String(d.canvasName ?? '').trim();
-    if (!cid) return '还没选要调用哪张画布';
-    return name ? `调用「${name}」` : `调用画布 ${cid.slice(0, 8)}…`;
+    if (!cid) return name; // '还没选要调用哪张画布'
+    return `调用「${name}」`;
   }
   if (type === 'canvasIn') {
     const p = String(d.portName ?? '').trim();

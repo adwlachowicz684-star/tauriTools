@@ -116,6 +116,16 @@ export type NodeInspectorProps = {
    * 可选：不传时按钮仍能用，只是不写日志（靠按钮自身的"已设"态反馈）。
    */
   onNote?: (msg: string) => void;
+  /**
+   * 全部画布的 id 与名字。
+   *
+   * 「调用画布」节点要用它渲染"选哪张画布"的下拉框 ——
+   * 面板是纯展示层，拿不到 App 的画布列表，只能外部注入。
+   * 不传时下拉框退化成"没得选"，并说明原因。
+   */
+  canvases?: { id: string; name: string }[];
+  /** 当前画布 id —— 用来在下拉框里标出"不能调自己" */
+  activeCanvasId?: string;
 };
 
 /**

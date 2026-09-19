@@ -455,3 +455,39 @@ test('没契约时仍有兜底文案', () => {
   const nd = read(path.join(ROOT, 'components/NodeDesc.tsx'));
   assert.ok(nd.includes('这个节点没有额外说明'), '缺兜底：展开后空白会让人以为界面坏了');
 });
+
+/* ================= 「调用画布」不露内部 id ================= */
+
+/*
+ * 起因：画布没名字时卡片显示 `cvmamu7obyv93` ——
+ * 内部 id 的片段。用户看着像乱码，且完全无法对应到哪张画布。
+ *
+ * 内部 id 对用户没有任何意义，显示它只会让人以为是故障。
+ */
+test('画布卡片不再显示 canvasId 的片段', () => {
+  if (!hasSrc) return;
+  const f = read(path.join(ROOT, 'components/CanvasRefNode.tsx'));
+  /*
+   * 整份文件里不许出现 .slice( ——
+   * 只匹配 `canvasId.slice(` 抓不到：注入时用的是局部变量 cid。
+   * 这个文件只有 briefOf 一处文案，禁掉截断不会有副作用。
+   */
+  assert.ok(!/\.slice\(/.test(f), '不能再截断任何字段来显示');
+  assert.ok(!/调用画布 \$\{/.test(f), '不能再有"调用画布 xxx"这种拼 id 的写法');
+  assert.ok(f.includes('canvasRefDisplayName'), '显示名要走 engine/canvasRefName');
+});
+
+/** 下拉框必须真存在 —— 以前只有一句"在下拉框里选"的说明，控件根本没有 */
+test('有真的「选哪张画布」控件', () => {
+  if (!hasSrc) return;
+  const f = read(path.join(ROOT, 'nodes/defs/canvasRef.ts'));
+  assert.ok(/type:\s*'select'/.test(f) && /key:\s*'canvasId'/.test(f),
+    'canvasRef 必须有 canvasId 下拉框，否则节点拖出来就配不了');
+});
+
+/** 改名要回写，否则显示旧名且无任何提示 */
+test('画布改名会同步到引用节点', () => {
+  if (!hasSrc) return;
+  const f = read(path.join(ROOT, 'App.tsx'));
+  assert.ok(f.includes('syncCanvasesRefNames'), '改名后要回写引用节点的名字快照');
+});

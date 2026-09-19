@@ -42,6 +42,9 @@ type Props = {
   onEditModule?: (nodeId: string) => void;
   /** 给用户的即时反馈（走画布日志）。不传则静默但仍生效 */
   onNote?: (msg: string) => void;
+  /** 全部画布；「调用画布」节点靠它渲染下拉框 */
+  canvases?: { id: string; name: string }[];
+  activeCanvasId?: string;
   /**
    * 画布级配置（MCP 服务 / 环境变量）。
    * 没选中节点时面板显示它 —— 配置属于整张画布，不属于某个节点。
@@ -65,6 +68,7 @@ export default function Inspector({
   secretPolicy, onChangeSecretPolicy, onEditModule, onNote,
   canvasConfig, onCanvasConfigChange, onExportFlow,
   exportDir = '', onChangeExportDir, onBrowseExportDir, canExportToFile = false,
+  canvases, activeCanvasId,
 }: Props) {
   const pushNote = onNote;
   if (!node) {
@@ -251,6 +255,8 @@ export default function Inspector({
       secretPolicy={secretPolicy}
       onChangeSecretPolicy={onChangeSecretPolicy}
         webhookTokens={webhookTokens}
+        canvases={canvases}
+        activeCanvasId={activeCanvasId}
       />
     </>
   );

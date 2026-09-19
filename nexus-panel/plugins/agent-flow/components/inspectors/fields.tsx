@@ -73,6 +73,10 @@ export type FieldRenderProps = {
    * 与整节点那个按钮同一套键，两边看到的默认值才是同一份。
    */
   presetKey?: string;
+  /** 全部画布（「调用画布」节点的下拉框要用） */
+  canvases?: { id: string; name: string }[];
+  /** 当前画布 id（下拉框里要排除它） */
+  activeCanvasId?: string;
   /** 写一条运行日志（存成功 / 被拒绝时告诉用户） */
   onNote?: (msg: string) => void;
 };
@@ -138,7 +142,17 @@ export type FieldDef = {
 };
 
 /** 字段清单。给函数是为了支持 when 这类依赖当前数据的逻辑 */
-export type FieldFactory = (d: Record<string, unknown>) => FieldDef[];
+/*
+ * 第二个参数是**渲染上下文**（画布列表等运行时状态）。
+ *
+ * 只有 d 的话，"选哪张画布"这种下拉框写不出来 ——
+ * 它的选项来自全部画布，而那是 App 的状态，节点定义里拿不到。
+ * 以前的 canvasRef 就因此只有一个说明文字、没有真控件。
+ */
+export type FieldFactory = (
+  d: Record<string, unknown>,
+  ctx?: FieldRenderProps,
+) => FieldDef[];
 
 function optsOf(
   o: FieldDef['options'],
@@ -596,7 +610,7 @@ export function BasicInspector({
    * 带上过滤前的原始下标：when 条件隐藏某个字段时，后面字段的下标不该平移。
    * 平移会让 React 把 key 对到另一个字段上，造成"输到一半的内容跳到别的框"。
    */
-  const list = fields(d)
+  const list = fields(d, base)
     .map((f, i) => ({ f, i }))
     .filter(({ f }) => (f.when ? f.when(d) : true));
 

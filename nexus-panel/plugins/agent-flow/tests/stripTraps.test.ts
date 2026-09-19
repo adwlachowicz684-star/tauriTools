@@ -7,7 +7,7 @@ import path from 'node:path';
  * strip-ts.py 的已知陷阱守卫。
  *
  * 这个脚本把 TS 剥成 ESM 给测试跑，但它对类型语法的处理很粗糙，
- * 已经踩过十次坑。其中**最危险的一类不是语法错误，而是静默改变数据** ——
+ * 已经踩过十一次坑。其中**最危险的一类不是语法错误，而是静默改变数据** ——
  * 生成的 .mjs 能跑、测试也可能过，但算出来的值是错的。
  *
  * 这里把每次踩过的坑都钉一条用例：
@@ -78,4 +78,20 @@ test('陷阱十：内联对象类型注解不能带分号（要写成类型别�
    */
   const bad = /:\s*\{[^}]*;[^}]*\}\s*\[\]/.test(flCode);
   assert.equal(bad, false, '对象类型注解要写成 type 别名，不能内联');
+});
+
+
+/* ---------------- 陷阱十一：函数上的泛型参数列表 ---------------- */
+
+const CRN = fs.readFileSync(
+  path.join(process.env.AF_SRC ?? '.', 'engine/canvasRefName.ts'), 'utf8',
+);
+
+test('陷阱十一：函数不能带泛型参数列表（要用类型别名）', () => {
+  /*
+   * `export function f<T extends X>(...)` 的 `<T ...>` 剥不掉，
+   * 会原样留在 .mjs 里 → SyntaxError: Unexpected token '<'
+   */
+  const bad = /function\s+\w+\s*</.test(stripComments(CRN));
+  assert.equal(bad, false, '函数泛型剥不掉，改用 type 别名收住约束');
 });
