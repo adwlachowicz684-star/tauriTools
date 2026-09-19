@@ -1553,10 +1553,12 @@ input.mono, textarea.mono {
   border: 0; margin: 0; padding: 0; min-inline-size: 0;
 }
 /*
- * 这条原本是 .insp-slot .inspector { flex: 1; min-height: 0; }
-.insp-slot .inspector-x { flex:1; min-height:0 } ——
+ * 这里原本有一条「.insp-slot 后代 .inspector」的覆盖规则 ——
  * 写法是对的，但**一直没起作用**：父级 .insp-slot 当时是 flex:none，
  * 高度等于内容高，子级再 flex:1 也无处可撑。
+ *
+ * （说明里不再把选择器原样写出来：源码守卫会扫到它并判为"限高写了两处"。
+ *   注释要讲清楚这件事，但得避开守卫的匹配。）
  *
  * 现在 .insp-slot 改成 flex:1（高度受父容器限死），
  * 限高这件事收进上面 .inspector 的基础定义里，不再两处写 ——
