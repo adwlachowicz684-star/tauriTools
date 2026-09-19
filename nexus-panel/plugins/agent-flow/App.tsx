@@ -72,8 +72,9 @@ import {
   stripRuntimeNodes, packSelection, type ModuleDef,
 } from './engine/modules';
 import {
-  stackEdges, findSnapTarget, descendantsOf, chainTopOf, chainOf,
+  stackEdges, descendantsOf, chainTopOf, chainOf,
   parentIdOf, movedEnough, heightOf, STACK_GAP, stackParentIds,
+  planStackDrop,
 } from './engine/stack';
 import { withDefault } from './engine/nodeDefaults';
 import { specOf, canConnect } from './engine/nodeSpec';
@@ -1850,23 +1851,20 @@ function reportSkipped(
       if (!self) return;
 
       /*
-       * 先判脱开：只要被拖节点自己挪动了足够距离，就解除它和上方的关系。
-       * 这一步必须在吸附之前 —— 否则"从串里拖走再吸附到别处"
-       * 会变成"旧关系还在 + 新关系也加上"，一个节点有两个上级。
+       * 落位决定交给 engine/stack 的 planStackDrop ——
+       *
+       * 以前这里写的是 `if (hit && hit.parentId !== oldParent)`，
+       * 于是**已经是嵌合态、只挪动了一点点**（不到脱开阈值）时：
+       *   · 没到脱开距离 → 不解除
+       *   · 命中的还是原来那个父，条件不成立 → 不吸附
+       * 节点就停在偏移后的位置：关系还在，看着却是歪的。
+       * 用户挪一点点显然不是想解开，而是想让它归位。
        */
       const oldParent = parentIdOf(self as never);
       const moved = start[node.id] ? movedEnough(start[node.id], node.position) : false;
       const exclude = new Set<string>([node.id, ...descendantsOf(nodes as never, node.id)]);
 
-      if (oldParent && moved) {
-        setNodes((ns) => ns.map((n) => (
-          n.id === node.id
-            ? { ...n, data: { ...(n.data as object), stackParent: null } } as FlowNode
-            : n
-        )));
-      }
-
-      const hit = findSnapTarget(
+      const plan = planStackDrop(
         nodes.map((n) => ({
           id: n.id,
           position: { x: n.position.x, y: n.position.y },
@@ -1879,42 +1877,38 @@ function reportSkipped(
           measured: self.measured as { width?: number; height?: number } | undefined,
           data: self.data as Record<string, unknown>,
         } as never,
-        exclude,
+        { oldParent, moved, exclude },
       );
 
-      if (hit && hit.parentId !== oldParent) {
-        // 吸附：对齐 x、贴在目标下方
-        setNodes((ns) => ns.map((n) => (
-          n.id === node.id
-            ? {
-                ...n,
-                position: { x: hit.x, y: hit.y },
-                data: { ...(n.data as object), stackParent: hit.parentId },
-              } as FlowNode
-            : n
-        )));
-        /*
-         * 嵌合 = 一条隐式边，连接判据与拉线一致。
-         * 只在有话要说时才打日志 —— 多数组合是正常的，
-         * 每次吸附都报一句成功会淹没真正的警告。
-         */
+      if (!plan.position && plan.stackParent === undefined) return;
+
+      setNodes((ns) => ns.map((n) => {
+        if (n.id !== node.id) return n;
+        const data = { ...(n.data as object) } as Record<string, unknown>;
+        // 覆盖式写入，不会出现"一个节点有两个上级"
+        if (plan.stackParent !== undefined) data.stackParent = plan.stackParent;
+        return {
+          ...n,
+          ...(plan.position ? { position: plan.position } : null),
+          data,
+        } as FlowNode;
+      }));
+
+      /*
+       * 嵌合 = 一条隐式边，连接判据与拉线一致。
+       * 只在**换了上级**时才打日志 —— 归位与解除都是"维持现状"，
+       * 每次都报一句会淹没真正的警告。
+       */
+      const nextParent = plan.stackParent !== undefined ? plan.stackParent : oldParent;
+      if (plan.stackParent && plan.stackParent !== oldParent) {
         const verdict = canConnect(
-          specOf(kindOfNode(nodes, hit.parentId)),
+          specOf(kindOfNode(nodes, plan.stackParent)),
           specOf(kindOfNode(nodes, node.id)),
         );
         if (verdict.reason) pushLog(`⚠ ${verdict.reason}`);
-        else pushLog(`⇲ 已嵌合到 ${hit.parentId} 下方（可整体拖动，输出自动向下传递）`);
-      } else if (hit && hit.parentId === oldParent && moved) {
-        // 脱开后又吸回原处：保持关系，只归位
-        setNodes((ns) => ns.map((n) => (
-          n.id === node.id
-            ? {
-                ...n,
-                position: { x: hit.x, y: hit.y },
-                data: { ...(n.data as object), stackParent: hit.parentId },
-              } as FlowNode
-            : n
-        )));
+        else pushLog(`⇲ 已嵌合到 ${plan.stackParent} 下方（可整体拖动，输出自动向下传递）`);
+      } else if (nextParent === null && oldParent) {
+        pushLog(`⇱ 已解除与 ${oldParent} 的嵌合`);
       }
     },
     [nodes, setNodes, pushLog, kindOfNode],
