@@ -96,7 +96,19 @@ export const plugins = [
     name: '示例·同页',
     icon: '◉',
     type: 'module',
-    entry: './plugins/demo-module/index.js',
+    /*
+     * 双模 entry —— 与 home / settings 同一写法，别写死成 index.js。
+     *
+     * 写死 './plugins/demo-module/index.js' 的后果：Vite 构建下入口必须被
+     * js/plugin-entries.js 的 glob（plugins/<id>/module.(js|mjs|ts|tsx)）收录
+     * 才会生成 chunk，index.js **不在** glob 里 → 产物没有该入口 →
+     * 打开插件报「同页入口未被构建期 glob 收录」+ 运行时 404。
+     * 无构建模式仍用 index.js（源码直出，动态 import 本就能跑）。
+     *
+     * 这里别把 glob 模式原文抄进注释：`*` 紧跟 `/` 会提前闭合块注释，
+     * 整个 registry.js 直接语法错误（上游在 plugin-entries.js 里已踩过一次）。
+     */
+    entry: noBuild ? './plugins/demo-module/index.js' : './plugins/demo-module/module.js',
     theme: 'dark',
     version: '1.0.0',
     description: '同页挂载，可直接调用 Rust',
