@@ -36,10 +36,10 @@ export function ModuleNode({ id, data, selected }: NodeProps<ModuleFlowNode>) {
       }}
       footExtra={detached ? null : '改库则跟着变'}
     >
-      <div className="fs-summary">
-        <code className="fs-path" title={d.label}>{d.label}</code>
+      <div className="node-line node-line--path">
+        <code className="node-line__code" title={d.label}>{d.label}</code>
       </div>
-      <div className="node-brief">
+      <div className="node-line node-line--brief">
         {detached ? '独立副本 · 不跟随模块库' : '来自模块库'}
       </div>
     </NodeShell>

@@ -48,7 +48,7 @@ export default function UpdateNode({ id, data, selected }: NodeProps<BiliFlowNod
         success: '已检查',
         failed: '检查失败',
       }}
-      footExtra={<span className="node-model">更新检测</span>}
+      footExtra={<span className="node-line--foot">更新检测</span>}
       tag={
         <>
           <span className="upd-icon">{meta.icon}</span>

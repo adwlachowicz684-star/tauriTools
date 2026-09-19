@@ -26,12 +26,12 @@ export default function OcrNode({ id, data, selected }: NodeProps<OcrFlowNode>) 
       }}
       footExtra={
         d.lastChars != null && d.lastChars > 0 ? (
-          <span className="node-model">{d.lastChars} 字</span>
+          <span className="node-line--foot">{d.lastChars} 字</span>
         ) : null
       }
     >
-      <div className="node-prompt">
-        <span className="node-tag">{SOURCE_LABEL[d.imageSource] ?? d.imageSource}</span>
+      <div className="node-line node-line--preview">
+        <span className="node-pill">{SOURCE_LABEL[d.imageSource] ?? d.imageSource}</span>
         {src}
       </div>
     </NodeShell>

@@ -16,7 +16,7 @@ export function CanvasRefNode({ id, type, data, selected }: NodeProps) {
       selected={selected}
       statusText={NODE_STATUS_TEXT}
     >
-      <div className="node-brief">{briefOf(type, d)}</div>
+      <div className="node-line node-line--brief">{briefOf(type, d)}</div>
     </NodeShell>
   );
 }

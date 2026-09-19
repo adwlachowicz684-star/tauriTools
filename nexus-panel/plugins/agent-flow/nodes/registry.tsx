@@ -74,11 +74,11 @@ function buildFallback(type: string): NodeDef {
   const Canvas = ({ selected }: NodeProps) => (
     <div className={`node-card kind-unknown ${selected ? 'is-selected' : ''}`}>
       <div className="node-head">
-        <span className="node-kind">未知</span>
+        <span className="node-pill">未知</span>
       </div>
       <div className="node-title">未注册的节点</div>
-      <div className="node-brief">{type}</div>
-      <div className="node-err">本机没有这个节点类型，无法运行（可安全删除）</div>
+      <div className="node-line node-line--brief">{type}</div>
+      <div className="node-line--err">本机没有这个节点类型，无法运行（可安全删除）</div>
     </div>
   );
   const Inspector = ({ node }: NodeInspectorProps) => (

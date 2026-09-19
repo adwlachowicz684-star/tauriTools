@@ -56,7 +56,7 @@ function GithubCard({
     <>
       <Handle type="target" position={Position.Left} />
       <div className="node-head">
-        <span className="node-kind">GitHub</span>
+        <span className="node-pill">GitHub</span>
         <span
           className={`node-dot level-${issue.level}`}
           style={{ background: LEVEL_COLOR[issue.level] }}
@@ -65,19 +65,19 @@ function GithubCard({
         <StatusDot status={d.status} />
       </div>
       <div className="node-title">{d.label || fallbackLabel}</div>
-      {size === 'sm' ? null : <div className="node-brief">{target}</div>}
+      {size === 'sm' ? null : <div className="node-line node-line--brief">{target}</div>}
       {/*
        * 参数卡片在矮卡片上保留。
        * 它是"这个节点用的是哪套配置"的关键信息 ——
        * 一片矮卡片里若看不出各自套用了哪张卡，模块就没法快速核对了。
        */}
       <NodeCardChips data={d} groups={[{ group: 'github-repo', fallback: '地址' }]} />
-      {size === 'sm' ? null : <div className="node-meta">{meta}</div>}
+      {size === 'sm' ? null : <div className="node-line node-line--meta">{meta}</div>}
       {size === 'sm' ? null : out}
       {issue.level === 'error' && issue.messages.length ? (
-        <div className="node-alert">{issue.messages[0]}</div>
+        <div className="node-line--alert">{issue.messages[0]}</div>
       ) : null}
-      {d.error ? <div className="node-err">{d.error}</div> : null}
+      {d.error ? <div className="node-line--err">{d.error}</div> : null}
       <Handle type="source" position={Position.Right} />
     </>
   );
@@ -104,7 +104,7 @@ export function GithubUpdateNode({ data, selected }: NodeProps) {
         }
         out={
           d.lastSha ? (
-            <div className="node-out">
+            <div className="node-line--mono">
               {d.lastBranch ? `${d.lastBranch} @ ` : ''}
               {d.lastSha.slice(0, 7)}
               {d.lastVia ? ` · ${d.lastVia}` : ''}
@@ -142,7 +142,7 @@ export function GithubPushNode({ data, selected }: NodeProps) {
         }
         out={
           d.lastCommit ? (
-            <div className="node-out">
+            <div className="node-line--mono">
               {d.lastCommit.slice(0, 7)}
               {d.lastVia ? ` · ${d.lastVia}` : ''}
             </div>

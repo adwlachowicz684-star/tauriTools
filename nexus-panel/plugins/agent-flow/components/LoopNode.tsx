@@ -39,7 +39,7 @@ export default function LoopNode({ id, data, selected }: NodeProps<LoopFlowNode>
         failed: '有轮次失败',
       }}
       footExtra={
-        <span className="node-model">
+        <span className="node-line--foot">
           上限 {d.maxIterations} · {d.onError === 'stop' ? '遇错停止' : '遇错继续'}
         </span>
       }

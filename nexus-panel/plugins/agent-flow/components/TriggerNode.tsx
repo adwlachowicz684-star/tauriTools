@@ -53,7 +53,7 @@ export default function TriggerNode({ id, data, selected }: NodeProps<TriggerFlo
           {!d.enabled && <span className="trig-off">已停用</span>}
         </>
       }
-      footExtra={<span className="node-model">触发器起点</span>}
+      footExtra={<span className="node-line--foot">触发器起点</span>}
     >
 
       <div className="trig-list">
