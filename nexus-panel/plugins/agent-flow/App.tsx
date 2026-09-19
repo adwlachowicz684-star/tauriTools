@@ -36,7 +36,7 @@ import { SECRET_POLICY_KEY, type SecretPolicy } from './types';
 import { checkChannel, type ChannelStatus } from './lib/channel';
 import { deviceSeed, clearKeyCache } from './engine/crypto';
 import Sidebar, { DRAG_MIME, decodeDrag, type DragPayload } from './components/Sidebar';
-import { prompt } from '../../../js/dialog.js';
+import { prompt } from '../../js/dialog.js';
 import DirPicker from './components/DirPicker';
 import {
   writeTextFile, fsAllowRoot, listFsRoots, canExportToFile,
@@ -2323,7 +2323,9 @@ function reportSkipped(
        * 与插件里其它确认框同一套外观。返回 null 表示取消。
        */
       askHuman: async (promptText, defaultValue) => {
-        const answer = await prompt(promptText, defaultValue ?? '');
+        /* dialog.prompt 收**对象**不是位置参数（写成位置参数时 message 是 undefined，
+           弹框会没有提示语，而且 tsc 查不出来 —— dialog.js 是 js 不查参）。 */
+        const answer = await prompt({ message: promptText, defaultValue: defaultValue ?? '' });
         // 取消时 dialog 给 undefined / null，统一成 null
         return answer === undefined || answer === null ? null : String(answer);
       },

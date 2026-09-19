@@ -1795,7 +1795,7 @@ input.mono, textarea.mono {
 /* 串顶的折叠按钮与串长标记 */
 .stack-bar {
   display: flex; align-items: center; gap: 5px;
-  margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--af-line);
+  margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--af-divider);
   font-size: 10px; color: var(--af-dim);
 }
 .stack-bar-btn {
