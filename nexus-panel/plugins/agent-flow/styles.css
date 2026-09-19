@@ -396,8 +396,15 @@ body { background: var(--af-bg); color: var(--af-fg); }
    卡片撑破（策略链如「API → git」本身就不短） */
 /* 属性面板 */
 .inspector {
-  width: 340px; flex: none; background: var(--af-panel);
-  border-left: 1px solid var(--af-divider); padding: 14px; overflow-y: auto;
+  /*
+   * flex:1 + min-height:0 —— 高度受父级约束，overflow-y:auto 才可能生效。
+   * 写 flex:none 的话高度由内容决定，永远不溢出、也就永远不滚动，
+   * 表现为内容顶出右栏盖住日志。
+   *
+   * 宽度 100%：右栏已有左边框，这里再加一条会变成双线。
+   */
+  flex: 1; min-height: 0; width: 100%; background: var(--af-panel);
+  padding: 14px; overflow-y: auto;
 }
 .inspector .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
 .inspector .field > span { font-size: 12px; color: var(--af-dim); }
@@ -1521,16 +1528,23 @@ input.mono, textarea.mono {
 /* ------------------------------------------------------------------ */
 
 /*
- * 原先这一块自己就矛盾：先写 flex:1，末尾又写 flex:none ——
- * 同一块里后者覆盖前者，flex:1 是死代码。
- * 按实际生效的值整理（flex:none：宽度固定，见下面 width）。
+ * flex:1 —— 撑满上层，高度由父容器限死。
+ *
+ * 这里踩过一次：早先这块写成 `flex:1` 后面又写 `flex:none`，
+ * 后者覆盖前者。整理时我按"实际生效的值"挑了 flex:none，
+ * 结果**把真正的修法当死代码删了** ——
+ * flex:none 让高度变成内容高，父级的限高就管不住它，
+ * 内容一多就溢出盖住下面的日志。
+ *
+ * 宽度用 100% 而不是 340px：右栏本身 340px 且带 1px 左边框，
+ * 内容区其实是 339px，写死 340px 会横向溢出 1px。
  */
 .insp-slot {
   flex: none;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  width: 340px;
+  width: 100%;
 }
 
 /* fieldset 默认带边框与内边距，重置掉让它"看起来不存在" */
@@ -1538,14 +1552,23 @@ input.mono, textarea.mono {
   display: flex; flex-direction: column; flex: 1; min-height: 0;
   border: 0; margin: 0; padding: 0; min-inline-size: 0;
 }
-.insp-slot .inspector { flex: 1; min-height: 0; }
+/*
+ * 这条原本是 .insp-slot .inspector { flex:1; min-height:0 } ——
+ * 写法是对的，但**一直没起作用**：父级 .insp-slot 当时是 flex:none，
+ * 高度等于内容高，子级再 flex:1 也无处可撑。
+ *
+ * 现在 .insp-slot 改成 flex:1（高度受父容器限死），
+ * 限高这件事收进上面 .inspector 的基础定义里，不再两处写 ——
+ * 两处写的话，改一处忘另一处就又变回"内容顶出右栏盖住日志"。
+ */
 
 .insp-ro-bar {
   display: flex; align-items: center; gap: 8px;
   padding: 6px 10px; flex: none;
   font-size: 11px; line-height: 1.5;
   color: var(--af-mute); background: var(--af-item);
-  border-left: 1px solid var(--af-divider); border-bottom: 1px solid var(--af-divider);
+  /* 左边框由 .af-right-pane 统一给 —— 这里再加一条会变成双线 */
+  border-bottom: 1px solid var(--af-divider);
 }
 .insp-ro-tag {
   flex: none; font-size: 10px; padding: 1px 6px; border-radius: var(--r-pill, 999px);
@@ -1567,8 +1590,8 @@ input.mono, textarea.mono {
  */
 
 
-/* 属性面板整体宽度固定，否则只读提示条会把这条栏撑宽。
-   这条 width 已合并进上面 .insp-slot 的定义（原来这里重复写了一遍）。 */
+/* 属性面板宽度由 .af-right-pane 定（340px），
+   上面 .insp-slot / .inspector 都用 100% 跟随，不再各写一份固定值。 */
 
 /* 分组头在窄栏里一行放不下：允许换行，别让"运行/失败"标签被挤出视野 */
 .task-group-head { flex-wrap: wrap; gap: 3px 7px; padding: 6px 12px; }
@@ -2422,6 +2445,13 @@ input.mono, textarea.mono {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /*
+   * 必须有 overflow:hidden ——
+   * 少了它，上层内容一多就**溢出盖到下面的日志上**（表现为两块叠一起）。
+   * 光靠子级限高不够：任何一处漏了 flex/min-height 都会漏出来，
+   * 这里兜底才不会让布局退化成"看不见日志"。
+   */
+  overflow: hidden;
 }
 
 /* 可拖分隔条 */
