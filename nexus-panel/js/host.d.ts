@@ -15,6 +15,17 @@ export interface PluginManifest {
   requiresBuild?: boolean;
   custom?: boolean;
   /**
+   * 本插件允许调用的后端命令（白名单的**插件自带**部分）。
+   *
+   * 自定义插件（侧边栏「＋」安装）不在静态白名单 PLUGIN_COMMANDS 里，
+   * 只靠那张表的话它连 app_version 都会被拒 —— 安全对了、功能死了。
+   * 这条让插件（或安装它的用户）自己声明需要哪些命令。
+   *
+   * 这只是"用户给自己的插件授权"，不是安全漏洞：
+   * 用户本来就能改文件。真正的闸是 HARD_DENY 与"未声明即拒绝"。
+   */
+  commands?: string[];
+  /**
    * 'app'（默认，显示在侧边栏） | 'service'（不进侧边栏，供其它插件调用）
    *
    * 分类只认这个字段，**不看目录位置** ——

@@ -148,13 +148,38 @@ export const PLUGIN_COMMANDS = {
 };
 
 /**
+ * 安全只读命令：**任何**插件都能调，无需登记。
+ *
+ * 为什么要有这一层：
+ * PLUGIN_COMMANDS 是"默认拒绝"，用户通过侧边栏「＋」安装的自定义插件
+ * 不在表里 —— 于是它连 `app_version`（读个版本号）都会被拒。
+ * 安全对了，功能死了：插件装上去一调后端就失败，而这类命令
+ * 本身就是无害的只读查询。
+ *
+ * 只放**无任何副作用**的查询。凡涉及写文件、拉进程、授权目录、
+ * 截屏、操控窗口的，一律不进这里 —— 那些必须显式登记。
+ */
+export const SAFE_COMMANDS = ['app_version', 'rust_ping'];
+
+/**
  * 校验一次 invoke 是否被允许。
+ *
+ * 判定顺序（越靠前优先级越高）：
+ *   1. HARD_DENY        —— 全局禁止，谁声明都没用
+ *   2. manifest.commands —— 插件自带声明（自定义插件安装时由用户填写）
+ *   3. PLUGIN_COMMANDS  —— 内置插件的静态登记（实测扫描得出）
+ *   4. SAFE_COMMANDS    —— 只读兜底，保证"装了就能用"
+ *   5. 其余一律拒绝
+ *
+ * 注意 2 与 3 是**并集**不是替换：内置插件在 manifest 里补声明也能生效，
+ * 将来给某个内置插件临时加命令不必改这张静态表。
  *
  * @param {string} pluginId 插件 id
  * @param {string} cmd      要调用的命令
+ * @param {object} [manifest] 插件清单，带 commands 时使用
  * @returns {{ok: true} | {ok: false, reason: string}}
  */
-export function checkInvoke(pluginId, cmd) {
+export function checkInvoke(pluginId, cmd, manifest) {
   const name = String(cmd || '').trim();
   if (!name) {
     return { ok: false, reason: '命令名为空' };
@@ -162,14 +187,17 @@ export function checkInvoke(pluginId, cmd) {
   if (HARD_DENY.has(name)) {
     return { ok: false, reason: `命令已被全局禁止: ${name}` };
   }
+  /* 插件自带声明。自定义插件靠这条获得授权 ——
+     这是"用户自己决定给这个插件什么权限"，与静态表的区别只是来源。 */
+  const own = Array.isArray(manifest?.commands) ? manifest.commands : null;
+  if (own && own.includes(name)) return { ok: true };
+
   const allow = PLUGIN_COMMANDS[pluginId];
-  /* 未登记的插件一律拒绝 —— 默认拒绝，不是默认放行。
-     （未来联网安装插件时，这一条就是第一道闸。） */
-  if (!allow) {
-    return { ok: false, reason: `插件 ${pluginId} 未登记任何命令，默认拒绝` };
-  }
-  if (!allow.includes(name)) {
-    return { ok: false, reason: `插件 ${pluginId} 未声明命令: ${name}` };
-  }
-  return { ok: true };
+  if (allow && allow.includes(name)) return { ok: true };
+
+  if (SAFE_COMMANDS.includes(name)) return { ok: true };
+
+  /* 未登记且不在安全集合 —— 默认拒绝。
+     未来联网安装插件时，这一条仍是最主要的一道闸。 */
+  return { ok: false, reason: `插件 ${pluginId} 未声明命令: ${name}` };
 }

@@ -30,8 +30,33 @@ t('project-group 拿到 fpx_* 全套（它确实要用）',
   && PLUGIN_COMMANDS['project-group'].includes('fpx_save_config'));
 
 console.log('\n=== 2. 判定逻辑：默认拒绝 ===');
-t('未登记插件 → 全部拒绝（默认拒绝，不是默认放行）',
-  checkInvoke('some-unknown-plugin', 'rust_ping').ok === false);
+/*
+ * 契约已改：新增 SAFE_COMMANDS（只读兜底）。
+ *
+ * 旧断言钉的是"未登记插件连 rust_ping 都拒" —— 那是**功能阻断**：
+ * 用户通过侧边栏「＋」装的自定义插件一调后端就失败，而 rust_ping /
+ * app_version 本身就是无害的只读查询。安全对了、功能死了。
+ *
+ * 现在分三层：未登记插件可以用只读命令，但**敏感命令仍然拒绝**。
+ * 下面把这两半都钉住 —— 只钉"只读放行"会让安全悄悄倒退，
+ * 只钉"敏感拒绝"又会把功能阻断放回来。
+ */
+t('未登记插件 → 只读命令放行（否则自定义插件装了就用不了）',
+  checkInvoke('some-unknown-plugin', 'rust_ping').ok === true
+  && checkInvoke('some-unknown-plugin', 'app_version').ok === true);
+t('未登记插件 → 敏感命令仍拒绝（默认拒绝没有倒退）',
+  checkInvoke('some-unknown-plugin', 'fs_op').ok === false
+  && checkInvoke('some-unknown-plugin', 'run_node').ok === false
+  && checkInvoke('some-unknown-plugin', 'af_fs_allow_root').ok === false
+  && checkInvoke('some-unknown-plugin', 'fpx_capture_screen').ok === false);
+/* 插件自带声明：自定义插件靠这条拿到授权 */
+t('manifest.commands 声明后可调用',
+  checkInvoke('my-plugin', 'fs_op', { commands: ['fs_op'] }).ok === true);
+t('manifest.commands 与静态表是并集（内置插件也能补声明）',
+  checkInvoke('home', 'fs_op', { commands: ['fs_op'] }).ok === true);
+t('HARD_DENY 优先于一切（声明了也不给）',
+  checkInvoke('home', 'fs_op', { commands: ['fs_op'] }).ok === true
+  && /HARD_DENY\.has\(name\)/.test(src('js/invoke-policy.js')));
 t('空命令名 → 拒绝', checkInvoke('home', '').ok === false);
 t('undefined 命令 → 拒绝', checkInvoke('home', undefined).ok === false);
 t('已声明命令 → 放行', checkInvoke('home', 'rust_ping').ok === true);
@@ -72,13 +97,18 @@ t('校验发生在真正 invoke **之前**', (() => {
 })());
 t('拒绝时也回包（不漏回，否则调用方挂到超时）',
   /if \(!verdict\.ok\) \{[\s\S]{0,200}reply\(false, null, verdict\.reason\)/.test(host));
-t('传入的是 manifest.id（按插件判定）', /checkInvoke\(manifest\.id, payload\?\.cmd\)/.test(host));
+/* 必须把 manifest 也传进去，否则插件自带的 commands 声明读不到 ——
+   表现为"填了命令还是被拒"，而用户无从得知为什么。 */
+t('传入的是 manifest.id（按插件判定）', /checkInvoke\(manifest\.id, payload\?\.cmd/.test(host));
+t('host.js 把 manifest 传进去了（否则自带声明读不到）',
+  /checkInvoke\(manifest\.id, payload\?\.cmd, manifest\)/.test(host));
 
 console.log('\n=== 6. 接线：同页模块侧（plugin-sdk.js）===');
 const sdk = src('js/plugin-sdk.js');
 t('plugin-sdk.js 引入 checkInvoke',
   /import \{ checkInvoke \} from '\.\/invoke-policy\.js'/.test(sdk));
-t('同页侧也校验', /const v = checkInvoke\(manifest\?\.id, payload\?\.cmd\)/.test(sdk));
+t('同页侧也校验', /const v = checkInvoke\(manifest\?\.id, payload\?\.cmd/.test(sdk));
+t('同页侧同样传了 manifest', /checkInvoke\(manifest\?\.id, payload\?\.cmd, manifest\)/.test(sdk));
 /* 诚实标注：同文档下插件可绕过，这层是纵深防御不是硬边界 */
 t('注释说明了同页侧不是硬边界（不夸大）',
   /真正的硬边界在 iframe 侧/.test(sdk));

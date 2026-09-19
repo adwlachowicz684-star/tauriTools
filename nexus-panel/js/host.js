@@ -1196,7 +1196,7 @@ export function createHost(opts = {}) {
            * run_node（拉子进程）、af_fs_allow_root（给自己授权目录 = 提权）。
            * 这是文件残留与安全上最大的口子。
            */
-          const verdict = checkInvoke(manifest.id, payload?.cmd);
+          const verdict = checkInvoke(manifest.id, payload?.cmd, manifest);
           if (!verdict.ok) {
             /* 拒绝时也要回包，不能只是抛错不回 ——
                调用方在等 res，漏回会让它挂到超时，界面表现为"点了没反应"。 */

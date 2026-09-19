@@ -561,7 +561,7 @@ export function createModuleContext({
            *   · 让违规在开发期就暴露，而不是等到出事
            * 真正的硬边界在 iframe 侧（host.js 的 case 'invoke'）。
            */
-          const v = checkInvoke(manifest?.id, payload?.cmd);
+          const v = checkInvoke(manifest?.id, payload?.cmd, manifest);
           if (!v.ok) throw new Error(v.reason);
           return tauri.invoke(payload.cmd, payload.args);
         }

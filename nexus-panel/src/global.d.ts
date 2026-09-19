@@ -18,6 +18,14 @@ declare global {
       navigate?: (id: string) => void;
       removePlugin?: (id: string) => void;
       getPlugins?: () => PluginManifest[];
+      /**
+       * 已注册的**全局**快捷键（accel → { pluginId, event, label }）。
+       * 设置页「快捷键」页靠它列出插件注册的键并做撞车判断；
+       * 两个外壳都要提供（设置页不该为其中一个分叉处理）。
+       */
+      getShortcuts?: () => Record<string, {
+        pluginId: string; event: string; label?: string;
+      }>;
       /** 按 id 挂载（= 切换到）插件 */
       mountPlugin?: (id: string) => Promise<void>;
       /** 当前插件实例，未挂载时为 null；仅调试观测用，勿依赖内部结构 */

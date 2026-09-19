@@ -71,6 +71,11 @@ export default function AddPluginDialog({
   const [tab, setTab] = useState<Tab>('installed');
   const [name, setName] = useState('');
   const [entry, setEntry] = useState('');
+  /* 该插件需要调用的后端命令（逗号分隔）。
+     不给这一项的话，自定义插件只能用 app_version / rust_ping 两个只读命令，
+     一调别的就会被白名单挡下 —— 而用户只会看到"插件没反应"，
+     完全想不到是权限问题。 */
+  const [cmds, setCmds] = useState('');
   const [icon, setIcon] = useState('');
   const [type, setType] = useState<'iframe' | 'module'>('iframe');
 
@@ -173,6 +178,21 @@ export default function AddPluginDialog({
                     <option value="module">同页模块（可直调 Rust）</option>
                   </select>
                 </div>
+                <div>
+                  <div className="p-muted" style={{ marginBottom: 'var(--sp-3, 6px)' }}>
+                    需要的后端命令（可选，逗号分隔）
+                  </div>
+                  <input
+                    className="p-input"
+                    value={cmds}
+                    onChange={(e) => setCmds(e.target.value)}
+                    placeholder="app_version, fs_op"
+                  />
+                  <div className="p-muted" style={{ marginTop: 'var(--sp-3, 6px)', fontSize: 'var(--fs-11, 11px)', lineHeight: 1.6 }}>
+                    不填则只能用 app_version / rust_ping 两个只读命令。
+                    填了就等于**你把这项能力授权给这个插件**，只装信得过的插件。
+                  </div>
+                </div>
               </div>
 
               {/* 联网商店的位置。先放占位，等后端目录与安装流程就绪再接。
@@ -202,6 +222,7 @@ export default function AddPluginDialog({
                 onSubmit({
                   name: name.trim(), entry: entry.trim(), type,
                   icon: icon.trim() || '◌', kind: 'app',
+                  commands: cmds.split(',').map((x) => x.trim()).filter(Boolean),
                 });
               }}
             >
