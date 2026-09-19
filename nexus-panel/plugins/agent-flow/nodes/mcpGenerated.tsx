@@ -115,7 +115,7 @@ function McpNodeCard({ id, type, data, selected }: NodeProps) {
         idle: '待运行', running: '调用中', success: '已完成',
         failed: '已失败', skipped: '已跳过',
       }}
-      footExtra={<span className="mcp-tag">{server}</span>}
+      footExtra={<span className="node-model">{server}</span>}
     >
       <div className="node-brief">{tool || 'MCP 工具'}</div>
     </NodeShell>

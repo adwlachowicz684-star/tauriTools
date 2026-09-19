@@ -65,7 +65,7 @@ function GithubCard({
         <StatusDot status={d.status} />
       </div>
       <div className="node-title">{d.label || fallbackLabel}</div>
-      {size === 'sm' ? null : <div className="node-sub">{target}</div>}
+      {size === 'sm' ? null : <div className="node-brief">{target}</div>}
       {/*
        * 参数卡片在矮卡片上保留。
        * 它是"这个节点用的是哪套配置"的关键信息 ——

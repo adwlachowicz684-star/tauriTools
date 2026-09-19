@@ -252,12 +252,29 @@ body { background: var(--af-bg); color: var(--af-fg); }
  */
 .node-card.kind-unknown { border-left-color: #64748b; border-style: dashed; }
 
+/*
+ * 胶囊小标签 —— .node-tag 与 .node-kind 是同一个东西的两份定义。
+ *
+ * 抄两份的代价：改一个忘另一个，同类标签就会长得不一样，
+ * 而且**不报错、测试也抓不到**。合成一条规则，容器差异用上下文选择器补。
+ */
+.node-tag,
 .node-kind {
   font-size: 10px; padding: 0 6px; border-radius: var(--r-pill, 999px); flex: none;
   border: 1px solid var(--af-line); color: var(--af-dim);
 }
-/* owner/repo：仓库名可能很长，单行截断而不是把卡片撑高 */
-.node-sub {
+/* 在正文里内联使用时才需要 inline-block 与右侧间距（node-head 是 flex 容器，不需要） */
+.node-prompt .node-tag { display: inline-block; margin-right: 5px; }
+
+/*
+ * 卡片主体里的一行摘要 —— 所有卡片的"第二行"统一用它。
+ *
+ * 以前这里有两套类名：.node-brief 与 .node-sub，而 .node-brief
+ * **根本没有样式定义**（被 4 个卡片用了），于是那几张卡片的摘要行
+ * 是裸文本：字号、颜色、截断全都走浏览器默认 —— 长内容还会把卡片撑破。
+ * 现在合成一套 .node-brief。
+ */
+.node-brief {
   font-size: 12px; color: var(--af-soft); margin: 3px 0 5px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }

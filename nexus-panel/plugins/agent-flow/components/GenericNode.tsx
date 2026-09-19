@@ -25,7 +25,7 @@ function Card({
           {summary.text}
         </code>
       </div>
-      {title ? <div className="node-sub">{title}</div> : null}
+      {title ? <div className="node-brief">{title}</div> : null}
     </NodeShell>
   );
 }
