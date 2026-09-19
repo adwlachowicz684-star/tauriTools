@@ -64,12 +64,24 @@ export default function Titlebar({
   useEffect(() => {
     const el = slotRef.current;
     if (!el) return;
-    mountToolbar(el, {
+    const cleanups = mountToolbar(el, {
       toast: (msg, type) => onToast?.(msg, type),
       win: (a) => onWin(a as WinAction),
       navigate: (id) => onNavigate?.(id),
       emit: (ev, payload) => onEmit?.(ev, payload),
     });
+    /*
+     * 必须回收：本 effect 的依赖里有 onWin / onToast 等回调，
+     * 它们每次渲染都是新引用 —— 于是 effect 会反复重跑、反复挂载。
+     * 按钮随容器清空一起没了，但插件在 onInit 里挂到 document 上的
+     * 监听器不会自己消失：不注销就是每重跑一次多一个，
+     * 事件处理跟着跑 N 遍（检查器按钮会"闪"、提示会重复弹）。
+     */
+    return () => {
+      for (const fn of cleanups || []) {
+        try { fn(); } catch { /* 单个插件清不掉不该连累其余 */ }
+      }
+    };
   }, [ready, onWin, onToast, onNavigate, onEmit]);
 
   /*

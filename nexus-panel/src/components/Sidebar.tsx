@@ -8,8 +8,6 @@ export default function Sidebar({
   onToggle,
   onSelect,
   onAdd,
-  onInspect,
-  inspecting = false,
   injected = [],
   onInjected,
 }: {
@@ -20,10 +18,6 @@ export default function Sidebar({
   onToggle: () => void;
   onSelect: (id: string) => void;
   onAdd: () => void;
-  /** 开发者模式：元素检查器开关 */
-  onInspect: () => void;
-  /** 检查器是否开启（用于给按钮加激活态） */
-  inspecting?: boolean;
   /** 插件注入的侧边栏条目 */
   injected?: { id: string; pluginId: string; label: string; icon?: string; event: string }[];
   onInjected?: (it: { id: string; pluginId: string; event: string }) => void;
@@ -81,14 +75,7 @@ export default function Sidebar({
           <span className="nav-icon">⚙</span>
           <span className="nav-label">设置</span>
         </button>
-        <button
-          className={'nav-item' + (inspecting ? ' active' : '')}
-          onClick={onInspect}
-          title="开发者模式：元素检查器（Ctrl+Shift+D）"
-        >
-          <span className="nav-icon">⌖</span>
-          <span className="nav-label">元素检查器</span>
-        </button>
+        {/* 元素检查器已移到标题栏右上角（toolbar-inspector 插件） */}
       </div>
     </aside>
   );

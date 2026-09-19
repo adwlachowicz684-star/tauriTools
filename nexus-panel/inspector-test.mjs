@@ -165,9 +165,16 @@ t('复制有 execCommand 降级（file:// 下没有 clipboard API）',
 /* ---------- 8. 入口接线 ---------- */
 console.log('\n=== 8. 入口 ===');
 t('无构建版：shell.js 已安装', /installInspector\(\);/.test(src('js/shell.js')));
-t('无构建版：侧边栏有按钮', /id="btn-inspect"/.test(src('index.html')));
+/*
+ * 入口已从侧边栏搬到标题栏右上角（toolbar-inspector 插件），
+ * 断言跟着契约走 —— 继续钉 btn-inspect / onInspect 会一直假红，
+ * 而假红会诱使人去"修"本来正确的代码。
+ */
+t('无构建版：侧边栏不再有按钮', !/id="btn-inspect"/.test(src('index.html')));
 t('Vite 版：App.tsx 已安装', /installInspector\(\)/.test(src('src/App.tsx')));
-t('Vite 版：Sidebar 有按钮', /onInspect/.test(src('src/components/Sidebar.tsx')));
+t('Vite 版：Sidebar 不再接 inspector', !/onInspect/.test(src('src/components/Sidebar.tsx')));
+t('已注册 toolbar-inspector 插件', /id: 'toolbar-inspector'/.test(src('plugins/registry.js')));
+t('插件文件存在', /toggleInspector/.test(src('plugins/toolbar-inspector/module.js')));
 
 /* ---------- 9. 焦点在 iframe 里时 ESC 也要能退 ----------
  * 鼠标扫过 iframe 插件里的控件会把焦点带进插件，

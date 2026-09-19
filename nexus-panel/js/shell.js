@@ -18,7 +18,7 @@ import * as extPolicy from './external-policy.js';
 import { getPluginConfig, setPluginConfig } from './plugin-config.js';
 import { openThemePicker } from './theme-picker.js';
 import { installTooltip, refreshTooltip } from './tooltip.js';
-import { installInspector, toggleInspector, isInspectorOn, escInspector } from './inspector.js';
+import { installInspector, isInspectorOn, escInspector } from './inspector.js';
 import { loadToolbarPlugins, mountToolbar } from './toolbar-plugin.js';
 import { loadModuleEntry } from './plugin-entries.js';
 
@@ -642,20 +642,8 @@ async function initToolbar() {
   $('#btn-add').onclick = openAddDialog;
   $('#btn-settings').onclick = () => navigate('settings');
 
-  /* 开发者模式 · 元素检查器：开启后鼠标悬浮即高亮控件并显示名称。
-     按钮自身的激活态（.active）与检查器状态保持同步 ——
-     否则按快捷键开启后，按钮看起来还是关着的。 */
-  const inspectBtn = $('#btn-inspect');
-  if (inspectBtn) {
-    inspectBtn.onclick = () => {
-      toggleInspector();
-      inspectBtn.classList.toggle('active', isInspectorOn());
-    };
-    inspectBtn.classList.toggle('active', isInspectorOn());
-    document.addEventListener('nexus:inspector-toggle', () => {
-      inspectBtn.classList.toggle('active', isInspectorOn());
-    });
-  }
+  /* 开发者模式 · 元素检查器已抽成工具栏插件（toolbar-inspector），
+     按钮渲染与高亮态同步都归它自己。这里只剩快捷键（installInspector）。 */
   $('#bar-reload').onclick = () => host.state.activeId && host.mount(host.state.activeId);
   $('#bar-plugin-settings').onclick = openPluginSettings;
 

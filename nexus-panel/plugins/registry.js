@@ -269,4 +269,14 @@ export const plugins = [
     builtin: true,
     description: '显示 MCP 服务数量，可打开凭据中心管理',
   },
+  {
+    id: 'toolbar-inspector',
+    name: '元素检查器',
+    icon: '⌖',
+    kind: 'toolbar',
+    type: 'module',
+    entry: './plugins/toolbar-inspector/module.js',
+    builtin: true,
+    description: '鼠标悬浮高亮控件并复制路径（Ctrl+Shift+D）',
+  },
 ];

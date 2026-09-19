@@ -1234,35 +1234,109 @@ html.theme-transition *:not(.spinner) {
   flex-direction: column;
   gap: 4px;
   flex: none;
-  width: 116px;
+  width: 136px;
   position: sticky;
   top: 0;
+  /*
+   * 整条导航放进一个内凹槽里。
+   * 竖排后它是一条**侧栏**，不再只是"顶上一排按钮"——
+   * 有个容器边界才看得出"这是导航、那边是内容"。
+   */
+  padding: 5px;
+  border-radius: var(--r);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-md);
 }
 .set-tab {
-  height: 32px;
-  padding: 0 12px;
+  /*
+   * 38px 而不是横排时的 32px。
+   * 横排时一行挤 7 个，高度必须压着；竖排后每个独占一行，
+   * 沿用 32px 会显得又扁又挤（尤其带 13px 文字时上下留白只剩 6px）。
+   */
+  position: relative;
+  height: 38px;
+  padding: 0 12px 0 16px;
+  display: flex;
+  align-items: center;
   text-align: left;
   border: 0;
   border-radius: var(--r-sm);
-  background: var(--surface);
+  background: transparent;
   color: var(--text-dim);
   font-family: inherit;
-  font-size: var(--fs-12, 12px);
+  font-size: var(--fs-13, 13px);
   cursor: pointer;
-  box-shadow: var(--sh-out-md);
-  transition: all var(--t);
+  transition: color var(--t), background var(--t), box-shadow var(--t);
   white-space: nowrap;
 }
-.set-tab:hover { color: var(--text); }
+.set-tab:hover {
+  color: var(--text);
+  background: var(--surface);
+}
 .set-tab.active {
   color: var(--accent);
-  font-weight: 600;          /* 12.5px 的强调色文字，加粗才吃得住 */
-  box-shadow: var(--sh-in-md);
+  font-weight: 600;          /* 13px 的强调色文字，加粗才吃得住 */
+  background: var(--surface);
+  box-shadow: var(--sh-out-sm);
+}
+/*
+ * 选中态左侧的强调色竖条。
+ * 只靠"变个颜色"在竖排里不够显眼 —— 7 个灰字排一列时，
+ * 视线扫过去很难立刻定位当前在哪一页。
+ * 用 ::before 而不是改 border-left：border 会把文字往右推 3px，
+ * 选中的那一项会因此和其余项错位。
+ */
+.set-tab.active::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--accent);
 }
 /* 内容区：占满剩余宽度。min-width:0 不可省 ——
    flex 子项默认 min-width:auto，里面的 p-mono 长路径会把这一列撑破，
    表现为内容区越来越宽、把导航挤出去。 */
 .set-body { flex: 1; min-width: 0; }
+
+/* ---------- 插件行：末尾两格定宽 ----------
+   插件管理里每行是「图标 · 名称(弹性) · 沙箱 · 样式 · 主题下拉 · 内置/移除」。
+
+   ⚠️ 为什么必须定宽，不能靠内容自然撑开
+   名称那一列是 flex:1，它吃掉**所有剩余空间**。于是末尾任何一格宽度
+   发生变化，被挤掉的宽度都由它承担 —— 结果是它前面（右侧）的所有格子
+   整体左右挪动。
+
+   实测表现：「内置」是 .p-tag（11px + padding 3/9），「移除」是
+   .p-btn.danger（12px + padding 0/10 + 边框），同一个位置两种宽度 ≈ 差 6px。
+   内置行与非内置行之间，主题下拉框（就是那个「跟随全局」的下拉）
+   会左右错位；样式徽标「样式 ✓」与「样式 12」同理也会跳。
+
+   所以这两格写死宽度，与里面放什么无关。数值取两种形态里较宽的那一档：
+     · 样式徽标：最宽是「样式 12」≈ 62px
+     · 末尾动作：最宽是「移除」按钮 ≈ 46px
+   内容居中右对齐，短的那个（如「内置」）靠右排，视觉上仍是同一列。 */
+.p-slot-audit {
+  flex: none;
+  width: 64px;
+  display: flex;
+  justify-content: flex-end;
+}
+.p-slot-act {
+  flex: none;
+  width: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+/* 格内的按钮撑满格子，宽度就与格子一致，不再随字数变 */
+.p-slot-audit > button { width: 100%; }
+/* 「内置」这类标签放进格子后不要被压缩，也不要撑破格子 */
+.p-slot-act > .p-tag { flex: none; max-width: 100%; }
+
 /* ---------- 主题卡片 ---------- */
 .theme-card {
   position: relative;

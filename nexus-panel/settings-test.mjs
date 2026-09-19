@@ -297,5 +297,78 @@ t('「关于」页指向完整列表', /完整列表见「快捷键」标签页/
 globalThis.window = savedWindow;
 globalThis.document = savedDoc;
 
+/* ================================================================
+   E. 插件行对齐：内置 / 移除 必须同宽
+   ================================================================
+   名称列是 flex:1，会吃掉所有剩余空间。末尾一格宽度一变，
+   被挤掉的量全部转成右侧各格的位移 —— 表现为「跟随全局」下拉框
+   在内置行与非内置行之间左右错位。 */
+console.log('\n--- E. 插件行末尾定宽 ---');
+{
+  const css = src('css/neumorphism.css');
+  const react = src('plugins/settings/App.tsx');
+  const native = src('plugins/settings/index.js');
+
+  /*
+   * CSS 要按**块**取：整份文件里 .set-tabs / .set-body 各有多处提及，
+   * 直接 /width:\s*\d+/ 全文匹配会命中别的规则（假绿）。
+   */
+  const block = (sel) => {
+    const i = css.indexOf(sel + ' {');
+    if (i < 0) return '';
+    return css.slice(i, css.indexOf('}', i));
+  };
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  const act = strip(block('.p-slot-act'));
+  const audit = strip(block('.p-slot-audit'));
+  t('CSS 有 .p-slot-act 定宽', /width:\s*\d+px/.test(act), act.match(/width:[^;]*/)?.[0] || '（无）');
+  t('.p-slot-act 不参与伸缩（flex:none）', /flex:\s*none/.test(act));
+  t('CSS 有 .p-slot-audit 定宽', /width:\s*\d+px/.test(audit), audit.match(/width:[^;]*/)?.[0] || '（无）');
+
+  /* 两个外壳都要真的套上这个格子 —— 只改 CSS 不套类是没效果的 */
+  t('React 版：内置/移除 套进 .p-slot-act', /className="p-slot-act"/.test(react));
+  t('原生版：内置/移除 套进 .p-slot-act', /span\.p-slot-act/.test(native));
+  t('React 版：样式徽标套进 .p-slot-audit', /className="p-slot-audit"/.test(react));
+  t('徽标按钮撑满格子（宽度不再随字数变）',
+    /\.p-slot-audit > button\s*\{\s*width:\s*100%/.test(strip(css)));
+}
+
+/* ================================================================
+   F. 竖排导航：两个外壳同结构 + 高度够
+   ================================================================ */
+console.log('\n--- F. 设置页竖排导航 ---');
+{
+  const css = src('css/neumorphism.css');
+  const react = src('plugins/settings/App.tsx');
+  const native = src('plugins/settings/index.js');
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+  const block = (sel) => {
+    const i = css.indexOf(sel + ' {');
+    if (i < 0) return '';
+    return css.slice(i, css.indexOf('}', i));
+  };
+  const tab = strip(block('.set-tab'));
+
+  const h = Number((tab.match(/height:\s*(\d+)px/) || [])[1] || 0);
+  /*
+   * 32px 是横排时代的高度（一行挤 7 个必须压着）。
+   * 竖排后每个独占一行，沿用它会显得又扁又挤。
+   */
+  t('竖排页签高度高于横排时代的 32px', h > 32, `${h}px`);
+  t('选中态有左侧强调色竖条（用 ::before，不用 border-left）',
+    /\.set-tab\.active::before/.test(css) && /content:\s*''/.test(css));
+  t('不用 border-left（会把文字往右推、与其余项错位）',
+    !/border-left/.test(strip(block('.set-tab.active'))));
+  t('导航条竖排', /flex-direction:\s*column/.test(strip(block('.set-tabs'))));
+
+  /* 两个外壳结构必须一致，否则一个并排一个堆叠 */
+  t('React 版用 .set-wrap + .set-body', /className="set-wrap"/.test(react) && /className="set-body"/.test(react));
+  t('原生版也用 .set-wrap + .set-body（不能平铺进 root）',
+    /div\.set-wrap/.test(native) && /div\.set-body/.test(native));
+  t('原生版不再把 tabBar 直接挂到 root',
+    !/ctx\.root\.appendChild\(tabBar\)/.test(strip(native)));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -73,8 +73,20 @@ export default definePlugin({
         onclick: () => { curTab = key; syncTabs(); },
       }, label));
     }
-    ctx.root.appendChild(tabBar);
-    for (const el of Object.values(pages)) ctx.root.appendChild(el);
+    /*
+     * 与 React 版（App.tsx）同一套结构：.set-wrap > [.set-tabs, .set-body]。
+     *
+     * 之前这里把 tabBar 和各页**平铺**进 root，于是 CSS 里那条
+     * `flex-direction: column` 生效、而 `.set-wrap` 的横向并排完全没用上 ——
+     * 表现是 7 个按钮竖着堆在内容**上方**（不是左侧）。
+     * 两个模式长得不一样，正是本项目一直要避免的漂移。
+     */
+    const wrap = h('div.set-wrap', {});
+    wrap.appendChild(tabBar);
+    const body = h('div.set-body', {});
+    for (const el of Object.values(pages)) body.appendChild(el);
+    wrap.appendChild(body);
+    ctx.root.appendChild(wrap);
     syncTabs();
 
     /* ============ 1. 主题 ============ */
@@ -268,23 +280,30 @@ export default definePlugin({
         ),
         h('span.p-tag', {}, p.type === 'iframe' ? '沙箱' : '同页'),
         sel,
-        p.builtin
-          ? h('span.p-tag', {}, '内置')
-          : h('button.p-btn.danger', {
-              style: { height: '30px', padding: '0 10px', fontSize: '12px' },
-              onclick: () => {
-                // 原来直接 window.__nexusRemovePlugin(p.id)：沙箱下该全局不存在，
-                // 点了「移除」要么抛 ReferenceError、要么毫无反应。这里走外壳降级，
-                // 取不到就显式提示，不静默。
-                const shell = shellGlobal();
-                if (typeof shell?.removePlugin !== 'function') {
-                  ctx.toast('移除失败：未连接到外壳，请用侧栏的插件管理操作', 'err');
-                  return;
-                }
-                shell.removePlugin(p.id);
-                ctx.toast(`已移除「${p.name}」`, 'ok');
-              },
-            }, '移除'),
+        /*
+         * p-slot-act：定宽格（与 React 版 App.tsx 同一条规则）。
+         * 「内置」是 .p-tag、「移除」是 .p-btn.danger，两种形态宽度不同，
+         * 而左侧名称列是 flex:1 —— 宽度差会全部转成右侧各格的位移，
+         * 表现为「跟随全局」下拉框在内置行与非内置行之间左右错位。
+         */
+        h('span.p-slot-act', {},
+          p.builtin
+            ? h('span.p-tag', {}, '内置')
+            : h('button.p-btn.danger', {
+                style: { height: '30px', padding: '0 10px', fontSize: '12px' },
+                onclick: () => {
+                  // 原来直接 window.__nexusRemovePlugin(p.id)：沙箱下该全局不存在，
+                  // 点了「移除」要么抛 ReferenceError、要么毫无反应。这里走外壳降级，
+                  // 取不到就显式提示，不静默。
+                  const shell = shellGlobal();
+                  if (typeof shell?.removePlugin !== 'function') {
+                    ctx.toast('移除失败：未连接到外壳，请用侧栏的插件管理操作', 'err');
+                    return;
+                  }
+                  shell.removePlugin(p.id);
+                  ctx.toast(`已移除「${p.name}」`, 'ok');
+                },
+              }, '移除')),
       );
     });
 

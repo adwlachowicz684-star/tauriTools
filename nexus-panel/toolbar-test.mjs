@@ -291,6 +291,13 @@ t('shell.js 不再引用已删掉的 btn-top', !/\$\('#btn-top'\)/.test(shell));
 t('shell.js 不再引用已删掉的 btn-hide', !/\$\('#btn-hide'\)/.test(shell));
 
 const tb = src('src/components/Titlebar.tsx');
+/*
+ * React 外壳必须接住 mountToolbar 返回的清理函数。
+ * 它的 effect 依赖里有 onWin/onToast 等回调，每次渲染都是新引用 → 反复重跑；
+ * 不回收就是每重跑一次多一个 document 监听（检查器按钮会闪、提示会重复弹）。
+ */
+t('Titlebar 接住了 mountToolbar 的清理函数',
+  /const cleanups = mountToolbar\(/.test(tb) && /for \(const fn of cleanups/.test(tb));
 t('Titlebar 里 await 了 loadRegistry（不是同步调用）',
   /await loadRegistry\(\)/.test(tb) && !/(?:const|let|var)\s+\w+\s*=\s*loadRegistry\(\)/.test(tb));
 t('React 外壳有工具栏插槽', /tb-toolbar/.test(tb));
@@ -337,9 +344,82 @@ t('loadRegistry 返回 Promise（必须 await）',
 t('Promise resolve 后是数组（能 .filter）',
   Array.isArray(await lr), String(Object.prototype.toString.call(await lr)));
 const list = await hostMod.loadRegistry();
-t('清单里含 4 个 toolbar 插件',
-  list.filter((p) => p.kind === 'toolbar').length === 4,
-  String(list.filter((p) => p.kind === 'toolbar').map((p) => p.id).join(',')));
+const tbIds = list.filter((p) => p.kind === 'toolbar').map((p) => p.id);
+/* 5 个：主题 / 置顶 / 托盘 / MCP 状态 / 元素检查器 */
+t('清单里含 5 个 toolbar 插件', tbIds.length === 5, String(tbIds.join(',')));
+t('元素检查器也在工具栏里（已从侧边栏搬走）', tbIds.includes('toolbar-inspector'));
+t('每个 toolbar 插件都有 module.js 入口（不引 settings.css 那类 iframe 补丁）',
+  list.filter((p) => p.kind === 'toolbar')
+    .every((p) => /\/module\.js$/.test(p.entry || '')),
+  String(list.filter((p) => p.kind === 'toolbar').map((p) => p.entry).join(' ')));
+
+/* ---------------------------------------------------------------- */
+console.log('\n=== 10.6 真实挂载：onInit 清理 + 检查器状态同步 ===');
+/*
+ * 用真实 DOM 挂载而不是查源码字符串。
+ * "按钮高亮跟不跟得上快捷键"是运行期行为，
+ * 字符串匹配证明不了它；"监听器有没有重复注册"更是如此。
+ */
+{
+  resetToolbar();
+  const insp = await import('./plugins/toolbar-inspector/module.js');
+  const { setInspector } = await import('./js/inspector.js');
+
+  /* 走真实加载路径（loadToolbarPlugins），而不是把 def 塞进登记表 ——
+     后者会绕过 validateToolbarDef 与 iframe 校验，测不到真加载链路 */
+  const n = await loadToolbarPlugins(
+    [{ id: 'toolbar-inspector', kind: 'toolbar', type: 'module' }],
+    { loadModule: async () => insp },
+  );
+  t('检查器插件能被真实加载链路加载', n === 1, `加载 ${n} 个`);
+
+  const box = document.createElement('div');
+  document.body.appendChild(box);
+
+  const cleanups = mountToolbar(box, { toast: () => {} });
+  const btn = box.querySelector('[data-toolbar-id="toolbar-inspector"]');
+  t('检查器按钮已渲染', !!btn, btn ? btn.textContent : '（没有）');
+
+  /* 快捷键开 → 按钮要跟着亮（这是搬运后最容易丢的一条） */
+  setInspector(true);
+  t('外部开启后按钮高亮（快捷键/ESC 也能同步）',
+    btn.classList.contains('on'));
+  setInspector(false);
+  t('外部关闭后按钮灭掉', !btn.classList.contains('on'));
+
+  /* 清理：onInit 返回的函数要被 collect */
+  t('mountToolbar 回收了 onInit 的清理函数',
+    Array.isArray(cleanups) && cleanups.length >= 1, `${cleanups?.length} 个`);
+
+  for (const fn of cleanups) { try { fn(); } catch { /* ignore */ } }
+
+  /* 注销后再开检查器，按钮不该再被改（证明监听真摘掉了） */
+  btn.classList.remove('on');
+  setInspector(true);
+  t('注销监听后按钮不再被改（证明真摘掉了）', !btn.classList.contains('on'));
+
+  /*
+   * 重复挂载不该让监听器翻倍。
+   * React 外壳的 effect 依赖里有回调，每次渲染都是新引用 → 会反复重跑。
+   * 不回收的话事件处理跟着跑 N 遍。
+   */
+  resetToolbar();
+  const c1 = mountToolbar(box, { toast: () => {} });
+  const c2 = mountToolbar(box, { toast: () => {} });
+  const btn2 = box.querySelector('[data-toolbar-id="toolbar-inspector"]');
+  let hits = 0;
+  const probe = () => { hits++; };
+  document.addEventListener('nexus:inspector-toggle', probe);
+  /* 只回收第二批：第一批若没被回收，这里会数到 2 */
+  for (const fn of c2) { try { fn(); } catch { /* ignore */ } }
+  setInspector(false);
+  setInspector(true);
+  t('重复挂载后只留一个监听（旧的被回收）', hits === 2, `事件派发 ${hits} 次`);
+  document.removeEventListener('nexus:inspector-toggle', probe);
+  for (const fn of [...c1, ...c2]) { try { fn(); } catch { /* ignore */ } }
+  setInspector(false);
+  void insp;
+}
 
 /* ---------------------------------------------------------------- */
 console.log('\n=== 11. CSS ===');

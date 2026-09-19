@@ -192,11 +192,22 @@ export function mountToolbar(el, opts = {}) {
      * 可选的初始化钩子：MCP 状态这类插件要在挂载后更新一次显示
      * （读当前有几个服务启用），没有这个钩子就只能等用户点开才知道。
      * 同样包进 catch —— 初始化炸了不该连累整排按钮。
+     *
+     * **可以返回一个清理函数**（同步返回，不接 Promise）：
+     * 需要监听宿主事件的插件（如检查器要跟着快捷键/ESC 改高亮态）用它注销。
+     *
+     * 为什么必须有：按钮本身随 `el.textContent=''` 一起被回收，
+     * 但挂在 document / window 上的监听器**不会**。
+     * React 外壳的 mountToolbar 在依赖变化时会重跑 ——
+     * 不注销就是每重跑一次多一个监听器，事件处理跟着跑 N 遍。
      */
     if (typeof def.onInit === 'function') {
-      Promise.resolve()
-        .then(() => def.onInit(api))
-        .catch((e) => opts.toast?.(`「${def.label}」初始化失败：${e?.message || e}`, 'err'));
+      try {
+        const c = def.onInit(api);
+        if (typeof c === 'function') cleanups.push(c);
+      } catch (e) {
+        opts.toast?.(`「${def.label}」初始化失败：${e?.message || e}`, 'err');
+      }
     }
   }
   return cleanups;

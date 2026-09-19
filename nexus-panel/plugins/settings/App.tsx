@@ -81,7 +81,9 @@ function StyleAuditBadge({ audit, open, onToggle }: {
     : `样式 ${bad}`;
 
   return (
-    <div style={{ position: 'relative' }}>
+    /* p-slot-audit：定宽格。徽标文案在「样式 ✓」「样式 12」「样式 —」之间变化，
+       不锁宽的话右侧的主题下拉框会跟着左右跳 —— 详见 neumorphism.css。 */
+    <div className="p-slot-audit" style={{ position: 'relative' }}>
       <button
         type="button"
         onClick={onToggle}
@@ -196,17 +198,25 @@ function PluginRow({ p, audit, auditOpen, onToggleAudit, onOverride, onRemove }:
           <option key={t.value} value={t.value}>{t.label}</option>
         ))}
       </select>
-      {p.builtin ? (
-        <span className="p-tag">内置</span>
-      ) : (
-        <button
-          className="p-btn danger"
-          style={{ height: 30, padding: '0 10px', fontSize: 'var(--fs-12, 12px)' }}
-          onClick={onRemove}
-        >
-          移除
-        </button>
-      )}
+      {/*
+        p-slot-act：定宽格。
+        「内置」是 .p-tag、「移除」是 .p-btn.danger，两种形态宽度不同；
+        而左侧名称列是 flex:1，会把这点宽度差全部转成右侧各格的位移 ——
+        表现就是同一列的下拉框在内置行与非内置行之间左右错位。
+      */}
+      <span className="p-slot-act">
+        {p.builtin ? (
+          <span className="p-tag">内置</span>
+        ) : (
+          <button
+            className="p-btn danger"
+            style={{ height: 30, padding: '0 10px', fontSize: 'var(--fs-12, 12px)' }}
+            onClick={onRemove}
+          >
+            移除
+          </button>
+        )}
+      </span>
     </div>
   );
 }
