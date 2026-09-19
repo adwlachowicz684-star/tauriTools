@@ -292,6 +292,8 @@ pub(crate) fn core_rename_folder(
 
         // 图标 / 标签色 / ACL 锁：OrdinalIgnoreCase 语义的键需要整体重建
         cfg.folder_icons = remap_keys(std::mem::take(&mut cfg.folder_icons), &old_key, &new_path);
+        /* #13 同上：改名后 GUI 图标若不跟着换键，等于静默丢掉 */
+        cfg.folder_gui_icons = remap_keys(std::mem::take(&mut cfg.folder_gui_icons), &old_key, &new_path);
         cfg.tag_colors = remap_keys(std::mem::take(&mut cfg.tag_colors), &old_key, &new_path);
         for l in cfg.locks.iter_mut() {
             if store::normalize_key(&l.path) == old_key {
@@ -1005,7 +1007,15 @@ pub fn fpx_save_style(
     core_save_style(&dir, &path, icon_ref, color)
 }
 
-/// 设置文件夹图标（写入配置；Windows 下还会写 desktop.ini）。
+/// 设置文件夹图标。
+///
+/// #13 两套图标：
+///   · `gui_only = false`（默认）→ 写 `folder_icons`，并按 `affect_explorer`
+///     决定是否同步到资源管理器（desktop.ini）
+///   · `gui_only = true`         → 只写 `folder_gui_icons`，**从不碰 desktop.ini**
+///
+/// 后者是原版 `SetGuiOnlyIconFile` 的语义：想在界面里换一套好看的图标，
+/// 但不想动资源管理器里那个 —— 两套互不覆盖。
 #[tauri::command(rename_all = "snake_case")]
 pub fn fpx_set_icon(
     app: AppHandle,
@@ -1013,25 +1023,42 @@ pub fn fpx_set_icon(
     path: String,
     icon_ref: Option<String>,
     affect_explorer: Option<bool>,
+    gui_only: Option<bool>,
 ) -> Result<Snapshot, String> {
     let dir = store::data_dir(&app, &state)?;
     // 同 core_save_style：会写 desktop.ini，只认已登记的卡片
     ensure_path_allowed(&dir, &path)?;
     let icon = icon_ref.unwrap_or_default();
     let key = store::normalize_key(&path);
+    let gui = gui_only.unwrap_or(false);
 
     // desktop.ini 写入失败只算警告：配置改动仍要落盘，所以不做成闭包 Err
     // （闭包返回 Err 会跳过保存），而是带出来交给外层决定。
     let (snap, warn) = store::with_config(&dir, |cfg| {
         let affect = affect_explorer.unwrap_or(cfg.icon_affect_explorer);
-        cfg.folder_icons.retain(|k, _| store::normalize_key(k) != key);
-        if !icon.trim().is_empty() {
-            cfg.folder_icons.insert(path.clone(), icon.clone());
+
+        /*
+         * 只清**目标那套**的旧键，另一套保持不动 ——
+         * 两套是独立的，设 GUI 图标不该把资源管理器那套也抹掉。
+         * （清空图标 icon 为空串时，删的是对应那套的登记。）
+         */
+        if gui {
+            cfg.folder_gui_icons.retain(|k, _| store::normalize_key(k) != key);
+            if !icon.trim().is_empty() {
+                cfg.folder_gui_icons.insert(path.clone(), icon.clone());
+            }
+        } else {
+            cfg.folder_icons.retain(|k, _| store::normalize_key(k) != key);
+            if !icon.trim().is_empty() {
+                cfg.folder_icons.insert(path.clone(), icon.clone());
+            }
         }
 
         // desktop.ini 是 Windows 资源管理器专属机制，其它平台只记在配置里（界面内仍生效）
         let mut warn: Option<String> = None;
-        if affect && cfg!(windows) {
+        /* **GUI 专属图标不写 desktop.ini** —— 它的定义就是"不影响资源管理器"。
+           这里若也写，两套图标就没区别了。 */
+        if affect && !gui && cfg!(windows) {
             // #427：同 core_save_style，写 desktop.ini 要进临时摘锁窗口
             if let Err(e) = with_unlock(&dir, &path, || sys::apply_icon(&path, &icon)) {
                 warn = Some(e);
@@ -1147,7 +1174,7 @@ pub fn fpx_save_icon_data(
  *
  * 两件必须一起做的事：
  *   1. 物理改名文件
- *   2. **同步 `folder_icons` 里引用了它的卡片**
+ *   2. **同步引用了它的卡片**（#13 两套图标：`folder_icons` 与 `folder_gui_icons`）
  *
  * 只做 1 不做 2 会怎样：卡片上配的图标路径还指向旧文件名，
  * 文件已经不在这个名字下了 —— **卡片图标全部显示不出来**，
@@ -1206,7 +1233,15 @@ pub(crate) fn core_rename_icon(
         /* **精确匹配，不能子串替换**：
            `icons/foo.ico` 与 `icons/foo2.ico` 若用子串替换会互相污染。
            按规范化后的路径相等来比，确保只动真正引用了这一个图标的卡片。 */
+        /* #13 两套图标都要同步。只同步 folder_icons 的话，
+           被当作界面专属图标用的那些会**静默断链**（同一类问题）。 */
         for v in cfg.folder_icons.values_mut() {
+            if store::normalize_key(v) == old_key {
+                *v = new_path.clone();
+                n += 1;
+            }
+        }
+        for v in cfg.folder_gui_icons.values_mut() {
             if store::normalize_key(v) == old_key {
                 *v = new_path.clone();
                 n += 1;

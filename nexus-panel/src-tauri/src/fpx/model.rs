@@ -97,9 +97,19 @@ pub struct FpxConfig {
     /// 用户在色盘里保存的自定义常用色（#RRGGBB，最多 24 个）。
     #[serde(default)]
     pub custom_colors: Vec<String>,
-    /// 文件夹图标：路径 → 图标引用。
+    /// 文件夹图标（**会同步到资源管理器**的那套）：路径 → 图标引用。
     #[serde(default)]
     pub folder_icons: IconMap,
+    /// #13 界面专属图标：路径 → 图标引用。
+    ///
+    /// 与 `folder_icons` 是**两套、互不覆盖**：
+    ///   · `folder_icons` 写进 desktop.ini，资源管理器里看得见
+    ///   · `folder_gui_icons` 只在界面内生效，**从不碰 desktop.ini**
+    ///
+    /// 界面上**优先显示这一套**（原版 SetGuiOnlyIconFile 的语义）：
+    /// 想在界面里用一套好看的图标、又不想动资源管理器的显示时用它。
+    #[serde(default)]
+    pub folder_gui_icons: IconMap,
     /// ACL 保护清单。
     #[serde(default)]
     pub locks: Vec<LockItem>,
@@ -346,6 +356,7 @@ impl Default for FpxConfig {
             tag_colors: HashMap::new(),
             custom_colors: Vec::new(),
             folder_icons: HashMap::new(),
+            folder_gui_icons: HashMap::new(),
             locks: vec![],
             create_project_dir: None,
             create_group_dir: None,
@@ -554,7 +565,11 @@ pub struct CardInfo {
     /// 「账面固定」（#21）：仅登记在案，无系统权限。
     #[serde(default)]
     pub account_fixed: bool,
+    /// 资源管理器那套图标（会写进 desktop.ini）
     pub icon: Option<String>,
+    /// #13 界面专属图标。**界面上优先显示这一套**，为空则回退到 `icon`。
+    #[serde(default)]
+    pub gui_icon: Option<String>,
     pub tag_color: Option<String>,
     /// tag_color 是否为继承自所链接项目组的颜色（界面上淡化显示，避免误以为改过）。
     #[serde(default)]

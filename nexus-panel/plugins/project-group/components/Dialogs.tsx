@@ -308,7 +308,8 @@ export function Dialogs(props: DialogsProps) {
           target={{ path: iconTargetPath, name: iconTargetName }}
           following={iconFollow}
           onFollowChange={setIconFollow}
-          onPick={(p) => s.setIcon(iconTargetPath, p)}
+          /* #13 第二个参数传 guiOnly：决定写哪一套 */
+          onPick={(p, g) => s.setIcon(iconTargetPath, p, undefined, g)}
           onImported={setIconFiles}
           /* #10 改名：后端返回的图标列表要替换掉本地的，
              否则界面还显示旧文件名（文件已经不在那个名字下了）。 */

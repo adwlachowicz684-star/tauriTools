@@ -288,6 +288,9 @@ fn migrate(
         if !it.note.is_empty() { continue; }
         let key = store::normalize_key(&it.src);
         cfg.folder_icons = remap(cfg.folder_icons.clone(), &key, &it.dst);
+        /* #13 两套图标都要挪。只挪 folder_icons 的话，
+           搬完家界面专属图标**静默失效**（卡片显示回默认图标且无任何报错）。 */
+        cfg.folder_gui_icons = remap(cfg.folder_gui_icons.clone(), &key, &it.dst);
         cfg.tag_colors = remap(cfg.tag_colors.clone(), &key, &it.dst);
         for l in cfg.locks.iter_mut() {
             if store::normalize_key(&l.path) == key { l.path = it.dst.clone(); }

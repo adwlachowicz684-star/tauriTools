@@ -62,8 +62,10 @@ console.log('\n=== 4. 宿主：跟随与 setIcon 必须用同一个目标 ===');
   t('选中路径取自 selProject/selGroup', /s\.selProject \?\? s\.selGroup/.test(host));
 
   /* **onPick 不能用 dialog.card** —— 那是打开时那张，跟随模式下已过期 */
-  t('onPick 用跟随后的目标', /onPick=\{\(p\) => s\.setIcon\(iconTargetPath, p\)\}/.test(host));
-  t('onPick 没有用 dialog.card.path', !/onPick=\{\(p\) => s\.setIcon\(dialog\.card\.path, p\)\}/.test(host));
+  /* 断言到**目标参数**而不是整个箭头函数：onPick 的签名会随功能扩展变化
+     （#13 后多了一个 guiOnly 形参），写死整条会一改就误报。 */
+  t('onPick 用跟随后的目标', /onPick=\{\([^)]*\) => s\.setIcon\(\s*iconTargetPath/.test(host));
+  t('onPick 没有用 dialog.card.path', !/onPick=\{\([^)]*\) => s\.setIcon\(\s*dialog\.card\.path/.test(host));
 
   /* target 与 onPick 必须是同一个表达式，否则显示与目标不一致 */
   t('target 用同一目标路径', /target=\{\{ path: iconTargetPath/.test(host));

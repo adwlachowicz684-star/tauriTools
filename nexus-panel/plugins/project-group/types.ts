@@ -42,6 +42,8 @@ export interface FpxConfig {
   tagColors: Record<string, string>;
   customColors: string[];
   folderIcons: Record<string, string>;
+  /** #13 界面专属图标（不写 desktop.ini）。界面上优先显示这一套 */
+  folderGuiIcons: Record<string, string>;
   locks: LockItem[];
   createProjectDir: string | null;
   createGroupDir: string | null;
@@ -137,7 +139,10 @@ export interface CardInfo {
   denyWrite: boolean;
   /** 「账面固定」（#21）：仅登记在案，无系统权限。与 locked（ACL）是两件事。 */
   accountFixed?: boolean;
+  /** 资源管理器那套图标（会写 desktop.ini） */
   icon: string | null;
+  /** #13 界面专属图标。界面上**优先显示**这一套，为空则回退到 icon */
+  guiIcon: string | null;
   tagColor: string | null;
   /** 颜色是否继承自所链接的项目组 */
   tagColorInherited: boolean;

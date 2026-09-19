@@ -74,9 +74,13 @@ export function makeApi(ctx: PluginContext) {
     renameIcon: (oldPath: string, newName: string) =>
       call<RenameIconResult>('fpx_rename_icon', { old_path: oldPath, new_name: newName }),
 
-    setIcon: (path: string, iconRef: string | null, affectExplorer?: boolean) =>
+    /* #13 guiOnly=true → 只改界面那套，不写 desktop.ini */
+    setIcon: (
+      path: string, iconRef: string | null, affectExplorer?: boolean, guiOnly?: boolean,
+    ) =>
       call<Snapshot>('fpx_set_icon', {
         path, icon_ref: iconRef, affect_explorer: affectExplorer ?? null,
+        gui_only: guiOnly ?? null,
       }),
 
     /** 图标与标签色一次保存（避免两次写入互相覆盖） */

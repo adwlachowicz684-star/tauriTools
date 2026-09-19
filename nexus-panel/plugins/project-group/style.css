@@ -34,9 +34,8 @@
   padding: 8px 4px;
   align-items: center;
 }
-.fpx-rail.collapsed .fpx-rail-btn { width: 30px; padding: 6px 0;
-  box-shadow: var(--ctl-shadow-sm);}
-.fpx-rail.collapsed .fpx-rail-icon { font-size: var(--fs-15, 15px); }
+.fpx-rail.collapsed .fpx-rail-btn { width: 30px; padding: 6px 0; }
+.fpx-rail.collapsed .fpx-rail-icon { font-size: var(--fs-16, 16px); }
 
 .fpx-rail-group { display: flex; flex-direction: column; gap: 4px; }
 /* 组间分隔线：最后一组不加 */
@@ -77,9 +76,9 @@
 .fpx-rail-icon { font-size: var(--fs-18, 18px); line-height: 1.1; }
 /* 名称：不换行、超长省略。栏宽固定，靠 title 提示补全 */
 .fpx-rail-label {
-  font-size: var(--title-3-fs); line-height: 1.2;
+  font-size: var(--fs-11, 11px); line-height: 1.2;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-weight: var(--title-3-fw);}
+}
 /* 键位提示：比标签更小更淡，只在有绑定时占位，不撑高按钮 */
 .fpx-rail-key {
   font-size: var(--fs-10, 10px); line-height: 1.1;
@@ -234,7 +233,7 @@
   margin-top: var(--sp-4, 8px);
   padding: var(--sp-4, 8px) var(--sp-5, 10px);
   border-radius: var(--r-sm, 6px);
-  background: var(--surface-raised, rgba(255, 255, 255, .04));
+  background: var(--surface-2, rgba(255, 255, 255, .04));
   word-break: break-word;
 }
 
@@ -342,7 +341,7 @@
   /* 与图标删除按钮同理：只压 opacity 的话看不见的按钮**仍然可点** */
   pointer-events: none;
   flex-shrink: 0;
-  box-shadow: var(--ctl-shadow);}
+}
 .fpx-tab:hover .fpx-tab-x,
 .fpx-tab.active .fpx-tab-x { opacity: .55; pointer-events: auto; }
 .fpx-tab-x:hover { opacity: 1; color: var(--danger); background: var(--surface); }
@@ -573,35 +572,35 @@
 
      写成"要么全用 --grp-*、要么全用 --accent"的两套类是错的：
      那要 JSX 判断有没有颜色并切类名，而类名与样式一旦分开维护就会漂移。 */
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--grp-base, var(--accent));
+  color: var(--grp-base, var(--accent));
 }
 .fpx-badge.group.jump {
   cursor: pointer;
   /* 兜底：不支持 color-mix 时退回纯描边，仍是个可点的徽标 */
   box-shadow: inset 2px 0 0 var(--border);
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--accent) 30%, transparent),  /* 顶部高光刻线 */
+    inset 0 1px 0 color-mix(in srgb, var(--grp-hover, var(--accent)) 30%, transparent),  /* 顶部高光刻线 */
     inset 0 -1px 0 color-mix(in srgb, var(--bg) 40%, transparent),      /* 底部暗影线 */
     inset 2px 0 0 color-mix(in srgb, var(--bg) 55%, transparent);       /* 左缘插销槽 */
 }
 .fpx-badge.group.jump:hover {
   /* 悬停：插销槽变浅，像被"拔出"一点。
      用 --grp-hover 派生色：组色与强调色不同时，这才跟得上。 */
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--grp-hover, var(--accent));
+  color: var(--grp-hover, var(--accent));
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--accent) 45%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--grp-hover, var(--accent)) 45%, transparent),
     inset 0 -1px 0 color-mix(in srgb, var(--bg) 30%, transparent),
     inset 2px 0 0 color-mix(in srgb, var(--bg) 35%, transparent);
 }
 .fpx-badge.group.jump:active {
   /* 按下：整体内凹，像插销被按进槽里 */
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--grp-press, var(--accent));
+  color: var(--grp-press, var(--accent));
   box-shadow:
     inset 1px 1px 3px color-mix(in srgb, var(--bg) 60%, transparent),
-    inset -1px -1px 2px color-mix(in srgb, var(--accent) 20%, transparent),
+    inset -1px -1px 2px color-mix(in srgb, var(--grp-press, var(--accent)) 20%, transparent),
     inset 2px 0 0 color-mix(in srgb, var(--bg) 70%, transparent);
 }
 .fpx-badge.warn { color: var(--warn); border-color: var(--warn); }
@@ -672,8 +671,8 @@
 /* ---------- 表单 ---------- */
 .fpx-field { margin-bottom: 12px; }
 .fpx-field > label {
-  display: block; margin-bottom: 6px; font-size: var(--title-3-fs); color: var(--text-dim);
-  font-weight: var(--title-3-fw);}
+  display: block; margin-bottom: 6px; font-size: 12px; color: var(--text-dim);
+}
 .fpx-check {
   display: flex; align-items: flex-start; gap: 8px;
   padding: 7px 8px; border-radius: var(--r-sm); cursor: pointer;
@@ -687,8 +686,7 @@
   background: var(--surface-sunk); color: var(--accent); font-size: 12px;
 }
 .fpx-check input:checked + .fpx-check-box { border-color: var(--accent); }
-.fpx-check-title { display: block; font-size: var(--title-3-fs); color: var(--text);
-  font-weight: var(--title-3-fw);}
+.fpx-check-title { display: block; font-size: var(--fs-12, 12px); color: var(--text); }
 .fpx-check-sub { display: block; font-size: 11px; color: var(--text-mute); }
 
 .fpx-agent-grid {
@@ -748,12 +746,12 @@
   width: 34px; height: 34px; font-size: var(--fs-15, 15px); cursor: pointer;
   border: 1px solid var(--border); border-radius: var(--r-sm);
   background: var(--surface-sunk);
-  box-shadow: var(--ctl-shadow);}
+}
 .fpx-emoji.active { border-color: var(--accent); box-shadow: var(--glow-sm); }
 .fpx-color {
   width: 34px; height: 34px; padding: 0; border: 1px solid var(--border);
   border-radius: var(--r-sm); background: transparent; cursor: pointer;
-  box-shadow: var(--ctl-shadow);}
+}
 
 /* ---------- 色盘 ---------- */
 .fpx-preview-def { color: var(--text-mute); text-shadow: none; }
@@ -820,7 +818,7 @@
      而且没有任何确认，图标直接从本组消失。
      必须连 pointer-events 一起关掉。 */
   pointer-events: none;
-  box-shadow: var(--ctl-shadow);}
+}
 .fpx-icongrid-item:hover .fpx-icon-del { opacity: 1; pointer-events: auto; }
 /* 键盘用户也要能看见：否则 tab 到一个不可见的按钮上，
    按回车删掉了东西却不知道删的是谁。 */
@@ -852,8 +850,7 @@
 /* 未置顶的图钉平时藏起来（#66）：几十行全是 ☆，置顶那几个反而看不出来。
    已置顶的常显（★ 是有效信息）；悬停或键盘聚焦到该行时再显形 ——
    用 :focus-within 保证键盘用户也能摸到它，不能只靠鼠标悬停。 */
-.fpx-agent-row .fpx-pin { opacity: 0; transition: opacity var(--dur-fast, .15s);
-  box-shadow: var(--ctl-shadow);}
+.fpx-agent-row .fpx-pin { opacity: 0; transition: opacity var(--dur-fast, .15s); }
 .fpx-agent-row:hover .fpx-pin,
 .fpx-agent-row:focus-within .fpx-pin,
 .fpx-agent-row.pinned .fpx-pin { opacity: 1; }
@@ -932,7 +929,7 @@
   border: 1px solid var(--border); border-radius: var(--r-sm);
   background: var(--surface-sunk); color: var(--text-dim);
   font-size: 12px; cursor: pointer;
-  box-shadow: var(--ctl-shadow);}
+}
 .fpx-actionchip:hover { color: var(--text); }
 .fpx-actionchip.on { color: var(--accent); border-color: var(--accent); }
 .fpx-actionicon { font-size: 13px; }
@@ -961,7 +958,7 @@
   border: 1px solid var(--border); border-radius: var(--r-xs);
   background: var(--surface); color: var(--text-mute);
   font-size: 11px; cursor: pointer;
-  box-shadow: var(--ctl-shadow-sm);}
+}
 .fpx-ca-ops button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 
 .fpx-ca-detail { flex: 1; min-width: 0; }
@@ -1126,8 +1123,6 @@
 .fpx-links-summary { display: inline-flex; gap: 5px; font-size: var(--fs-11, 11px); }
 .fpx-links-summary .bad {
   padding: 1px 6px; border-radius: var(--r-pill);
-  /* 压在语义色（--danger）之上 —— 白字必须硬编码，
-     跟随主题会在浅色危险色上整个消失 */
   background: var(--danger, #c8555a); color: #fff;
 }
 .fpx-links-summary .warn {
@@ -1240,7 +1235,7 @@
   opacity: .65;
   transition: opacity var(--dur-fast) ease, border-color var(--dur-fast) ease,
               color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
-  box-shadow: var(--ctl-shadow);}
+}
 .fpx-add-card:hover,
 .fpx-add-card:focus-visible {
   opacity: 1;
@@ -1270,7 +1265,7 @@
  */
 .fpx-icongrid-item.over::before {
   content: ''; position: absolute; left: -3px; top: 2px; bottom: 2px;
-  width: 2px; background: var(--accent); border-radius: var(--r-pill, 1px);
+  width: 2px; background: var(--accent); border-radius: 1px;
 }
 .fpx-icongrid-item[draggable='true'] .fpx-icontile { cursor: grab; }
 .fpx-icongrid-item[draggable='true'] .fpx-icontile:active { cursor: grabbing; }
@@ -1285,8 +1280,8 @@
 .fpx-grouptab.gap-before::before,
 .fpx-grouptab.gap-after::after {
   content: ''; position: absolute; top: 2px; bottom: 2px;
-  width: 2px; background: var(--accent); border-radius: var(--r-pill, 1px);
-  z-index: var(--z-base, 1);
+  width: 2px; background: var(--accent); border-radius: 1px;
+  z-index: 1;
 }
 .fpx-grouptab.gap-before::before { left: -3px; }
 .fpx-grouptab.gap-after::after { right: -3px; }
@@ -1328,7 +1323,7 @@
  * 不吸顶的反馈条等于不存在（用户在底部操作，反馈在顶部屏幕外）。
  */
 .fpx-feedback {
-  position: sticky; top: 0; z-index: var(--z-base, 5);
+  position: sticky; top: 0; z-index: 5;
   margin-bottom: var(--sp-5, 10px);
   border: 1px solid var(--border); border-radius: var(--r-sm);
   background: var(--surface-sunk);
@@ -1338,7 +1333,7 @@
 .fpx-feedback-row {
   display: flex; align-items: flex-start; gap: 6px;
   padding: 5px 8px;
-  border-bottom: 1px solid var(--divider);
+  border-bottom: 1px solid var(--border);
   font-size: var(--fs-12, 12px);
 }
 .fpx-feedback-row:last-of-type { border-bottom: 0; }
@@ -1355,13 +1350,13 @@
   flex-shrink: 0; width: 14px; height: 14px; line-height: 12px; padding: 0;
   border: 0; border-radius: 50%; background: transparent;
   color: var(--text-mute); font-size: 12px; cursor: pointer; opacity: .5;
-  box-shadow: var(--ctl-shadow);}
+}
 .fpx-feedback-x:hover { opacity: 1; background: var(--surface); }
 .fpx-feedback-x:focus-visible { opacity: 1; outline: 1px solid var(--accent); }
 .fpx-feedback-foot {
   display: flex; align-items: center; justify-content: space-between;
   padding: 4px 8px;
-  border-top: 1px solid var(--divider);
+  border-top: 1px solid var(--border);
   font-size: 10px;
 }
 
@@ -1376,10 +1371,10 @@
   width: 15px; height: 15px; line-height: 13px; padding: 0;
   border: 1px solid var(--border); border-radius: 50%;
   background: var(--surface); color: var(--text-dim);
-  font-size: var(--fs-10, 10px); cursor: pointer;
+  font-size: 9px; cursor: pointer;
   opacity: 0; pointer-events: none;
   transition: opacity var(--dur-fast) ease, color var(--dur-fast) ease;
-  box-shadow: var(--ctl-shadow-sm);}
+}
 .fpx-iconwrap:hover .fpx-icon-rename,
 .fpx-icon-rename:focus-visible { opacity: 1; pointer-events: auto; }
 .fpx-icon-rename:hover { color: var(--accent); }
@@ -1414,3 +1409,14 @@
   font-weight: 600;
 }
 .fpx-icontarget-none { flex: 1; color: var(--danger); opacity: .8; }
+
+/* ---------------- 图标面板 · 两套图标开关（#13）---------------- */
+.fpx-icongui {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: var(--sp-4, 8px);
+  font-size: var(--fs-12, 12px);
+  cursor: pointer;
+  user-select: none;
+}
+.fpx-icongui input { cursor: pointer; }
+.fpx-icongui-hint { opacity: .6; }

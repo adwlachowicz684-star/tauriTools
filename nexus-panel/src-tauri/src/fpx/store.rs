@@ -796,6 +796,7 @@ fn build_card(
         deny_delete: lock.map(|l| l.deny_delete).unwrap_or(false),
         deny_write: lock.map(|l| l.deny_write).unwrap_or(false),
         icon: cfg.folder_icons.get(path).cloned(),
+        gui_icon: cfg.folder_gui_icons.get(path).cloned(),
         tag_color,
         tag_color_inherited,
         link_details: details,

@@ -233,7 +233,8 @@ export function IconPickDialog({
   groups: IconGroup[];
   onGroupsChange: (next: IconGroup[]) => void;
   onClose: () => void;
-  onPick: (path: string) => void;
+  /** 选中一个图标。第二个参数是 #13 的「仅界面内生效」 */
+  onPick: (path: string, guiOnly: boolean) => void;
   onImported: (files: string[]) => void;
   onLog: (m: string, isError?: boolean) => void;
   /** 改名成功：回传新图标列表与同步了多少张卡片 */
@@ -256,6 +257,8 @@ export function IconPickDialog({
   modeless?: boolean;
 }) {
   const [tab, setTab] = useState<'preset' | 'mine'>('preset');
+  /* #13 两套图标的选择。默认 false = 资源管理器那套（保持原有行为）。 */
+  const [guiOnly, setGuiOnly] = useState(false);
   const [picking, setPicking] = useState(false);
   // 自定义图标是本地路径，沙箱里显示不了，逐个问后端要 data URI
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
@@ -320,6 +323,27 @@ export function IconPickDialog({
         非模态下点背后的卡片就会换目标，看不见的话
         用户以为在给 A 设图标，实际设到了 B —— 而且没有任何提示。
       */}
+      {/*
+        #13 两套图标的开关。
+        **必须让用户知道自己在改哪一套**：改错了表现为
+        "界面变了、资源管理器没变"或反之，而用户只会以为功能没生效。
+      */}
+      <label className="fpx-icongui">
+        <input
+          type="checkbox"
+          checked={guiOnly}
+          onChange={(e) => setGuiOnly(e.target.checked)}
+        />
+        <span>
+          仅界面内生效
+          <span className="fpx-icongui-hint">
+            （{guiOnly
+              ? '只改界面这套，资源管理器图标不变'
+              : '改资源管理器这套，界面同步显示'}）
+          </span>
+        </span>
+      </label>
+
       <div className="fpx-icontarget">
         <span className="fpx-icontarget-label">当前目标</span>
         {target
@@ -355,7 +379,7 @@ export function IconPickDialog({
           api={api}
           groups={groups}
           onGroupsChange={onGroupsChange}
-          onPick={(p) => { onPick(p); onClose(); }}
+          onPick={(p) => { onPick(p, guiOnly); onClose(); }}
           onLog={onLog}
         />
       )}
@@ -375,7 +399,7 @@ export function IconPickDialog({
               <button
                 className="fpx-icontile"
                 title={f}
-                onClick={() => { onPick(f); onClose(); }}
+                onClick={() => { onPick(f, guiOnly); onClose(); }}
               >
                 {thumbs[f]
                   ? <img src={thumbs[f]} alt={name} />

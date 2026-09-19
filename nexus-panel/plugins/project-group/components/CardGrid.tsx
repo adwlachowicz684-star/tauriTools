@@ -5,6 +5,7 @@ import { brushVars } from '../utils/visual';
 import { ContextMenu, type MenuItem } from './ui';
 import { useEdgeAutoScroll } from '../hooks/useEdgeAutoScroll';
 import { canRemove } from '../utils/tabs';
+import { displayIcon } from '../utils/icons';
 
 export { DRAG_MIME, TAB_DRAG_MIME } from '../utils/dragSort';
 /**
@@ -564,8 +565,8 @@ export function CardGrid({
         >
           <div className="fpx-card-top">
             <span className="fpx-card-icon">
-              {c.icon && thumbs?.[c.icon]
-                ? <img src={thumbs[c.icon]} alt="" />
+              {displayIcon(c) && thumbs?.[displayIcon(c) as string]
+                ? <img src={thumbs[displayIcon(c) as string]} alt="" />
                 : iconOf(c)}
             </span>
             {c.tagColor && (
@@ -713,11 +714,13 @@ export function CardGrid({
   );
 }
 
+/* #13 显示图标的选取规则在 utils/icons.ts：缩略图与兜底字形共用同一份 */
 /** 卡片图标：自定义图标路径取文件名首字，否则按类型兜底 emoji */
 function iconOf(c: CardInfo): string {
-  if (c.icon) {
-    if (c.icon.length <= 2) return c.icon;          // emoji / 字形
-    const base = c.icon.split(/[\\/]/).pop() ?? c.icon;
+  const icon = displayIcon(c);
+  if (icon) {
+    if (icon.length <= 2) return icon;              // emoji / 字形
+    const base = icon.split(/[\\/]/).pop() ?? icon;
     return base.slice(0, 1).toUpperCase();
   }
   return c.name.startsWith('.') ? '⚙' : '📁';
