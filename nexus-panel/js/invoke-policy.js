@@ -37,8 +37,54 @@
 import { capsOf, capOf } from './command-caps.js';
 
 export const HARD_DENY = new Set([
-  /* 例：'window_action', 'tray_toggle_window', 'mm_open_devtools' */
+  /*
+   * ⚠️ 刻意**保持空集**。这不是"没做完"，是查过之后的选择。
+   *
+   * HARD_DENY 的语义是"连内置插件都不给"，所以只该收
+   * "任何插件都绝无合法用途"的命令。实测 8 条当前无人声明的命令里，
+   * 没有一条符合 —— 逐条看下来：
+   *
+   *   af_device_salt        agent-flow 在调（凭据加密要用），且 Rust 侧
+   *                         注释写明是**有意提供**的能力。禁掉会废掉
+   *                         凭据加密。目前调不通只是因为它在 iframe 里，
+   *                         将来嵌合成同页就会活过来 —— 属于典型的
+   *                         "现在用不了、将来会活"，最容易被误判成废弃。
+   *   af_fs_tail            读文件尾部（看日志），有合法用途
+   *   af_read_audio_data_url 读音频为 data URL，有合法用途
+   *   window_action / tray_toggle_window   窗口与托盘控制，有合法用途
+   *   mm_print_support / mm_pdf_vector_support  编译期 cfg 常量，无害
+   *   check_cli             检查 CLI 是否可用，无害
+   *
+   * 强行塞一条进去，就是在给将来的嵌合埋雷。
+   *
+   * 真正该给第三方划的边界在 THIRD_DENY_CAPS —— 按等级禁，见下。
+   */
 ]);
+
+/**
+ * 第三方插件**一律不给**的能力等级。
+ *
+ * M = 提权 / 宿主操控 / 进程 / 网络监听。第三方插件不该有能力：
+ *   · 给自己授权目录（af_fs_allow_root）
+ *   · 拉起子进程（run_node）
+ *   · 开网络监听（webhook_start / fpx_mcp_start）
+ *   · 操控窗口（window_action / tray_toggle_window / mm_open_devtools）
+ *
+ * 为什么按**等级**禁而不是列命令名：
+ *   新增的 M 类命令自动纳入，不用手工维护名单，也不会漏。
+ *   列命令名的话，每加一条危险命令都要记得回来补一次 ——
+ *   而"忘了补"不会报错，只会静默放行。
+ *
+ * 为什么不连带禁 S / W：
+ *   那是正常插件的日常工作（读文件内容、写用户数据）。
+ *   没了 M 就没有外传通道 —— S 与 W 单独存在的风险是可接受的。
+ *
+ * ⚠️ 这会覆盖用户在安装对话框里填的 manifest.commands。
+ *    用户填了 run_node 也会被拒，理由是：这类能力的风险（开网络监听
+ *    听起来无害，实际构成外传通道）不是普通用户能评估的。
+ *    但错误信息必须说清原因，不能让"填了没用"变成无解释的失败。
+ */
+export const THIRD_DENY_CAPS = ['M'];
 
 /**
  * 各插件允许的命令。
@@ -255,6 +301,25 @@ export function checkInvoke(pluginId, cmd, manifest) {
   }
   if (HARD_DENY.has(name)) {
     return { ok: false, reason: `命令已被全局禁止: ${name}` };
+  }
+
+  /*
+   * 第三方能力硬禁止 —— 放在**声明检查之前**。
+   *
+   * 放后面的话，第三方声明 run_node 会先命中"已声明"而放行，
+   * 这条禁令就形同虚设；而且放前面能让报错直接说清
+   * "这类能力不给第三方"，比"未声明"好排查得多。
+   */
+  if (!isTrusted(pluginId)) {
+    const cap = capOf(name);
+    if (THIRD_DENY_CAPS.includes(cap)) {
+      return {
+        ok: false,
+        reason: `第三方插件 ${pluginId} 不能声明 ${cap} 类命令 ${name}`
+          + '（提权/进程/网络监听/宿主操控类一律不授予第三方）。'
+          + '若确实需要，请把它作为内置插件提供。',
+      };
+    }
   }
 
   /* 插件自带声明。自定义插件靠这条获得授权 ——

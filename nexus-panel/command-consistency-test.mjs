@@ -450,5 +450,71 @@ console.log('\n--- 13. 宿主必须在 concat 自定义插件**之前**注入内
     /registerBuiltinIds\(list\.map\(\(p\) => p\.id\)\)/.test(codeOnly));
 }
 
+/* ---------------------------------------------------------------- */
+console.log('\n--- 14. 第三方能力硬禁止（第二道锁）---');
+{
+  const { checkInvoke, registerBuiltinIds, resetBuiltinIds, HARD_DENY, THIRD_DENY_CAPS } =
+    await import('./js/invoke-policy.js');
+  const { capOf } = await import('./js/command-caps.js');
+
+  t('THIRD_DENY_CAPS 含 M', THIRD_DENY_CAPS.includes('M'), JSON.stringify(THIRD_DENY_CAPS));
+  t('不连带禁 S 与 W（否则第三方没法干正事）',
+    !THIRD_DENY_CAPS.includes('S') && !THIRD_DENY_CAPS.includes('W'));
+
+  /* ⚠️ HARD_DENY 必须保持空集 —— 见源码注释里的逐条理由。
+     有人顺手塞一条时这里会红，逼他先读那段说明。 */
+  t('HARD_DENY 保持空集（当前无任何"插件绝不该有"的命令）',
+    HARD_DENY.size === 0, [...HARD_DENY].join(','));
+  t('af_device_salt 不在 HARD_DENY（agent-flow 凭据加密在用，且是有意提供的能力）',
+    !HARD_DENY.has('af_device_salt'));
+
+  /* ① 不阻断：内置的 M 类命令照常放行 */
+  resetBuiltinIds();
+  registerBuiltinIds(['agent-flow', 'settings', 'mindmap', 'home']);
+  for (const [id, c] of [
+    ['agent-flow', 'run_node'],
+    ['agent-flow', 'af_fs_allow_root'],
+    ['settings', 'af_fs_allow_root'],
+    ['mindmap', 'mm_open_devtools'],
+  ]) {
+    const r = checkInvoke(id, c, null);
+    t(`内置 ${id} 的 ${c} 仍放行（不能被第二道锁误伤）`, r.ok === true, `ok=${r.ok} ${r.reason || ''}`.slice(0, 60));
+  }
+
+  /* ② 第三方：M 类一律拒绝，即便用户显式声明 */
+  resetBuiltinIds();
+  const mCmds = ['run_node', 'af_fs_allow_root', 'webhook_start', 'window_action',
+    'mm_open_devtools', 'fpx_mcp_start', 'kill_node', 'tray_toggle_window'];
+  let leaked = [];
+  for (const c of mCmds) {
+    /* 显式声明也该被拒 —— 这正是"第二道锁"的意义 */
+    const r = checkInvoke('third-party', c, { id: 'third-party', commands: mCmds });
+    if (r.ok) leaked.push(c);
+  }
+  t('第三方声明 M 类也全部被拒', leaked.length === 0, `漏了: ${leaked.join(',')}`);
+  t('这些命令确实都是 M 类（否则测了个空）', mCmds.every((c) => capOf(c) === 'M'),
+    mCmds.filter((c) => capOf(c) !== 'M').join(','));
+
+  /* ③ 不搞一刀切：非 M 类仍可用，否则第三方插件什么都干不了 */
+  resetBuiltinIds();
+  for (const c of ['app_version', 'rust_ping']) {
+    t(`第三方 ${c} 放行（装了就能查）`, checkInvoke('third-party', c, null).ok === true);
+  }
+  for (const c of ['fpx_read_file', 'fs_op']) {
+    t(`第三方 ${c}（S/W 类）放行`, checkInvoke('third-party', c, { id: 'third-party', commands: [c] }).ok === true);
+  }
+
+  /* ④ 报错要说清原因 —— "填了没用"必须有解释 */
+  resetBuiltinIds();
+  const rej = checkInvoke('third-party', 'run_node', { id: 'third-party', commands: ['run_node'] });
+  t('拒绝信息说明了是哪类能力', /M 类/.test(rej.reason), rej.reason?.slice(0, 50));
+  t('拒绝信息给了出路（作为内置插件提供）', /内置/.test(rej.reason), rej.reason?.slice(0, 60));
+
+  /* ⑤ 用户填了也拒 —— 这条是"安全覆盖用户意图"，必须明说 */
+  t('用户在安装框里填 run_node 也照样被拒（风险非用户可评估）', rej.ok === false);
+
+  resetBuiltinIds();
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
