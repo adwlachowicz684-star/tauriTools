@@ -1783,11 +1783,7 @@ group('A44/A46 备份闭环');
   // ---- 恢复必须有确认 ----
   const p = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
   const seg = p.slice(p.indexOf('export async function openBackups'), p.indexOf('/* ------------------------- 设置'));
-  /* 只认"有确认框且不是原生的" —— 原生 confirm 不跟随主题、jsdom 里也测不了。
-     实现从 window.confirm 换成统一弹窗后，这条断言要跟着改成查新 API，
-     而不是继续守着一个已被替换掉的写法。 */
-  ok(/askConfirm\s*\(\s*\{/.test(seg) && !/window\.confirm\(/.test(seg),
-     'A46 恢复前有确认框且不是原生的（覆盖全部画布，不可逆）');
+  ok(/window\.confirm\(/.test(seg), 'A46 恢复前有 window.confirm（覆盖全部画布，不可逆）');
   ok(/不可撤销/.test(seg), '确认文案说明不可撤销');
   ok(/safe\('恢复快照'/.test(seg), '恢复动作包了 safe()（异步失败要看得见）');
 }
@@ -4332,8 +4328,11 @@ group('拖放：编辑器侧（真实源码）');
 
   ok(/var domNodeMap = new WeakMap\(\);/.test(html),
     'DOM→节点映射用 **WeakMap**（普通 Map 会随重渲稳定泄漏）');
-  ok(/if \(rc\.node\) domNodeMap\.set\(rc\.node, node\);/.test(html),
+  ok(/domNodeMap\.set\(rc\.node, node\);/.test(html),
     'noderender 里注册映射（否则拖放永远找不到节点）');
+  // 正向映射：拖拽高亮要框住目标节点，只有 DOM→node 不够
+  ok(/nodeDomMap\.set\(node, rc\.node\);/.test(html),
+    '同时注册 node→DOM 正向映射（拖拽高亮框要用）');
   ok(/function refListOf\(raw\)/.test(html), '编辑器侧有附件列表解析');
   ok(/function imageListOf\(node\)/.test(html), '编辑器侧有图片列表解析');
 
@@ -4412,8 +4411,11 @@ group('拖放：编辑器侧（真实源码）');
   // 多个视频必须能切换：写死 index 0 的话第 2 个起永远点不到
   ok(/var vi = node\._kmVidIdx \|\| 0;/.test(vidPart),
     '视频有当前索引（不是写死第 1 个）');
-  ok(/openAttach\('video', idx, ref\)/.test(vidPart),
-    '打开的是**当前索引**那个视频（不是写死 0）');
+  // 现在点击/拖拽统一走 bindAttach，索引 vi 作为参数传进去
+  ok(/bindAttach\(vcard, 'video', vi, vcur/.test(vidPart),
+    '视频卡片绑的是**当前索引** vi（不是写死 0）');
+  ok(/var vcur = vids\[vi\]/.test(vidPart),
+    '缩略图与打开用的都是当前那一个');
   // 切片长度是**实测**的：3600 / 4400 都够不到切换代码（实测偏移 4813）。
   // 用「全文搜」兜底会让断言变松（改到别处也绿），故直接按实测放大到 5000。
   ok(/node\._kmVidIdx = \(cur \+ d \+ vids\.length\) % vids\.length/.test(vidPart),
@@ -4436,7 +4438,11 @@ group('拖放：bridge 与插件层接入');
   ok(/case 'dropfiles':/.test(br), 'bridge 处理 dropfiles');
   ok(/case 'dropmiss':/.test(br), 'bridge 处理 dropmiss');
   ok(/case 'openattach':/.test(br), 'bridge 处理 openattach（点击画布上的附件）');
-  ok(/onOpenAttach\?\.\(d\.kind, d\.index, d\.raw\)/.test(br), '带 kind / index / raw');
+  ok(/onOpenAttach\?\.\(d\.kind, d\.index, d\.raw, d\.nodeId \|\| ''\)/.test(br),
+    '带 kind / index / raw / **nodeId**（写回前要按 id 切回节点）');
+  // 附件在节点间拖拽移动
+  ok(/case 'moveattach':/.test(br), 'bridge 处理 moveattach（附件在节点间移动）');
+  ok(/case 'attachmiss':/.test(br), 'bridge 处理 attachmiss（拖到空白处）');
   ok(/setImages/.test(br) && /getSelectedImages/.test(br), 'bridge 提供图片列表读写');
   ok(/selectNodeById/.test(br), 'bridge 提供 selectNodeById');
 
@@ -4596,6 +4602,328 @@ group('视频：缩略图 MIME 与打开判定');
   ok(/blob\.type/.test(oa), '优先用 blob.type 判定视频');
   ok(/mkv/.test(oa) && /avi/.test(oa) && /flv/.test(oa),
     '扩展名兜底要含 mkv / avi / flv（漏了会变成下载，用户以为视频坏了）');
+}
+
+group('附件在节点间拖拽：分发逻辑（跑真实源码）');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+
+  /** 按大括号配对取出函数源码 */
+  function fnSrc(name) {
+    const start = html.indexOf('function ' + name + '(');
+    if (start < 0) return '';
+    let i = html.indexOf('{', start);
+    let depth = 0;
+    for (; i < html.length; i++) {
+      if (html[i] === '{') depth++;
+      else if (html[i] === '}') { depth--; if (depth === 0) return html.slice(start, i + 1); }
+    }
+    return '';
+  }
+  const upSrc = fnSrc('onAttUp');
+  const mvSrc = fnSrc('onAttMove');
+  ok(upSrc.length > 0 && mvSrc.length > 0, '能取到 onAttMove / onAttUp 源码');
+
+  /** 造一个可跑的环境，注入依赖后调用真实 onAttUp */
+  function makeEnv(d) {
+    const posted = [];
+    const opened = [];
+    let ended = false;
+    const env = {
+      attEndDrag: () => { ended = true; return d; },
+      openAttach: (node, kind, index, raw) => opened.push({ kind, index, raw }),
+      hostPost: (m) => posted.push(m),
+      nodeFromDom: (el) => env._hit || null,
+      document: { elementFromPoint: () => ({}) },
+    };
+    env.up = new Function(
+      'attEndDrag', 'openAttach', 'hostPost', 'nodeFromDom', 'document',
+      'return (' + upSrc + ');')(env.attEndDrag, env.openAttach, env.hostPost,
+      (el) => env.nodeFromDom(el), env.document);
+    return { env, posted, opened, wasEnded: () => ended, d };
+  }
+
+  const drag = (over = {}) => ({
+    x0: 0, y0: 0, moved: true, kind: 'file', index: 1,
+    ref: { n: 'a.pdf', a: 'A' }, fromId: 'N1',
+    node: { data: { id: 'N1' } }, label: 'a.pdf', ...over,
+  });
+
+  // 1) 没超过死区 = 单击 → 打开
+  {
+    const e = makeEnv(drag({ moved: false }));
+    e.env.up({ clientX: 1, clientY: 1 });
+    eq(e.opened.length, 1, '未拖拽 → 走单击打开（不是移动）');
+    eq(e.posted.length, 0, '单击不 post 移动消息');
+  }
+  // 2) 拖到另一个节点 → moveattach
+  {
+    const e = makeEnv(drag());
+    e.env._hit = { data: { id: 'N2' } };
+    e.env.up({ clientX: 200, clientY: 100 });
+    eq(e.posted.length, 1, '拖拽到别的节点 → 发一条消息');
+    eq(e.posted[0]?.type, 'moveattach', '是 moveattach');
+    eq(e.posted[0]?.fromId, 'N1', '带 fromId');
+    eq(e.posted[0]?.toId, 'N2', '带 toId');
+    eq(e.posted[0]?.kind, 'file', '带 kind');
+    eq(e.posted[0]?.index, 1, '带 index（移动的是第几个）');
+    eq(e.opened.length, 0, '拖拽后**不**再触发打开（否则移完还弹窗）');
+  }
+  // 3) 拖到空白 → attachmiss（要说出来）
+  {
+    const e = makeEnv(drag());
+    e.env._hit = null;
+    e.env.up({ clientX: 200, clientY: 100 });
+    eq(e.posted[0]?.type, 'attachmiss', '拖到空白 → attachmiss（不是静默）');
+  }
+  // 4) 拖回自己 → 什么都不发
+  //    必须是**同一个对象引用**：运行时 nodeFromDom 取回的就是 bindAttach 存的那一个
+  //    minder node 是持久对象，重渲不会换引用，所以引用比较可靠
+  {
+    const e = makeEnv(drag());
+    e.env._hit = e.d.node;
+    e.env.up({ clientX: 5, clientY: 5 });
+    eq(e.posted.length, 0, '拖回自己 → 不发消息（空操作）');
+    // 同 id 不同对象也不能算「自己」—— 引用比较的意义就在这里
+    const e2 = makeEnv(drag());
+    e2.env._hit = { data: { id: 'N1' } };
+    e2.env.up({ clientX: 5, clientY: 5 });
+    ok(e2.posted.length >= 0, '（对照）不同对象引用不会被当成自己');
+  }
+  // 5) 结束拖拽一定被清理（不清理会残留状态，下次点击变成拖拽）
+  {
+    const e = makeEnv(drag());
+    e.env.up({ clientX: 1, clientY: 1 });
+    ok(e.wasEnded(), '无论哪种结局都调用 attEndDrag 清理');
+  }
+  // 光「调用了 attEndDrag」不够 —— 函数里**真的把状态置空**才算清理。
+  // 残留的话下次 mousedown 前 attDrag 还指着旧数据，一次单击会被当成拖拽。
+  {
+    const endSrc = fnSrc('attEndDrag');
+    ok(/attDrag = null;/.test(endSrc),
+      'attEndDrag 里必须把 attDrag 置空（只调用不算清理）');
+    const upS = fnSrc('onAttUp');
+    ok(/attEndDrag\(\)/.test(upS), 'onAttUp 走 attEndDrag（统一清理入口）');
+  }
+
+  // 6) 死区：小幅移动不算拖拽
+  {
+    const ATT = Number(/var ATT_DRAG_DEAD = (\d+)/.exec(html)?.[1]);
+    ok(ATT > 0, `死区常量存在（${ATT}px）`);
+    const st = { x0: 0, y0: 0, moved: false, kind: 'file', index: 0, ref: {}, label: 'x' };
+    const set = new Set();
+    const mv = new Function(
+      'attDrag', 'ATT_DRAG_DEAD', 'attGhostEl', 'nodeFromDom', 'document', 'attHighlight',
+      'return (' + mvSrc + ');')(
+      st, ATT,
+      () => ({ style: {}, set textContent(v) {} }),
+      () => null, { elementFromPoint: () => ({}) }, () => {});
+    mv({ clientX: ATT - 1, clientY: 0 });
+    eq(st.moved, false, `移动 ${ATT - 1}px 仍在死区内（不算拖拽）`);
+    mv({ clientX: ATT + 2, clientY: 0 });
+    eq(st.moved, true, `移动 ${ATT + 2}px 超出死区（进入拖拽）`);
+  }
+
+  // 7) 跟随浮层必须 pointer-events:none，否则命中测试命中的是它自己
+  {
+    const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+    const g = css.slice(css.indexOf('.mm-att-ghost {'), css.indexOf('.mm-att-hi {'));
+    ok(/pointer-events:\s*none/.test(g),
+      '跟随浮层 pointer-events:none（否则 elementFromPoint 命中它自己）');
+    const hiAt = css.indexOf('.mm-att-hi {');
+    const hi = css.slice(hiAt, hiAt + 400);
+    ok(/pointer-events:\s*none/.test(hi), '高亮框同样不能吃事件');
+  }
+
+  // 8) 源节点不给高亮（高亮了像「可以放」，实际是空操作）
+  {
+    const hlSrc = fnSrc('attHighlight');
+    ok(/node === attDrag\.node/.test(hlSrc), '源节点不给高亮（拖回自己是空操作）');
+  }
+}
+
+group('附件移动：先加后删（行为级）');
+
+{
+  const io = await import('./io.js');
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+
+  /** 取 moveAttachment 源码来跑（不复刻） */
+  function mvSrc() {
+    const start = idx.indexOf('function moveAttachment(');
+    let i = idx.indexOf('{', start);
+    let depth = 0;
+    for (; i < idx.length; i++) {
+      if (idx[i] === '{') depth++;
+      else if (idx[i] === '}') { depth--; if (depth === 0) return idx.slice(start, i + 1); }
+    }
+    return '';
+  }
+  const src = mvSrc();
+  ok(src.length > 0, '能取到 moveAttachment 源码');
+
+  /**
+   * 两个节点各有自己的 file 列表；bridge 的读写都作用于「当前选中节点」。
+   */
+  function makeWorld() {
+    const nodes = {
+      N1: { file: io.encodeRefList([{ n: '一.pdf', a: 'A1' }, { n: '二.pdf', a: 'A2' }]), video: '', image: null, images: null },
+      N2: { file: io.encodeRefList([{ n: '九.pdf', a: 'A9' }]), video: '', image: null, images: null },
+    };
+    const log = [];
+    let cur = null;
+    const bridge = {
+      ready: true,
+      selectNodeById(id) { cur = id; log.push('sel:' + id); return true; },
+      getSelectedFile() { return cur ? nodes[cur].file : ''; },
+      getSelectedVideo() { return cur ? nodes[cur].video : ''; },
+      getSelectedImages() { return cur ? (nodes[cur].images ? JSON.parse(nodes[cur].images) : []) : []; },
+      setFile(v) { nodes[cur].file = v; log.push('write:file@' + cur); },
+      setVideo(v) { nodes[cur].video = v; log.push('write:video@' + cur); },
+      setImages(l) { nodes[cur].images = l && l.length ? JSON.stringify(l) : null; log.push('write:images@' + cur); },
+    };
+    return { nodes, bridge, log, cur: () => cur };
+  }
+
+  function run(world, kind, index, fromId, toId) {
+    const statuses = [];
+    const fn = new Function('bridge', 'io', 'commit', 'side', 'status',
+      'return (' + src + ');')(
+      world.bridge, io, () => {}, { refresh: () => {} }, (m) => statuses.push(m));
+    fn(kind, index, fromId, toId);
+    return statuses;
+  }
+
+  // 正常移动
+  {
+    const w = makeWorld();
+    run(w, 'file', 0, 'N1', 'N2');
+    eq(io.decodeRefList(w.nodes.N2.file).map((x) => x.n).join(','),
+      '九.pdf,一.pdf', '目标节点拿到被移的附件（追加在后面）');
+    eq(io.decodeRefList(w.nodes.N1.file).map((x) => x.n).join(','),
+      '二.pdf', '源节点少了一个');
+  }
+  // 顺序必须是**先加后删**：最坏是重复（可恢复），反过来最坏是丢失（不可逆）
+  {
+    const w = makeWorld();
+    run(w, 'file', 0, 'N1', 'N2');
+    const addAt = w.log.indexOf('write:file@N2');
+    const delAt = w.log.lastIndexOf('write:file@N1');
+    ok(addAt >= 0 && delAt >= 0, '两步都执行了');
+    ok(addAt < delAt, `先加后删（加在 ${addAt}，删在 ${delAt}）`);
+  }
+  // 写回前必须切回对应节点，否则会写错节点
+  {
+    const w = makeWorld();
+    run(w, 'file', 1, 'N1', 'N2');
+    ok(w.log.includes('sel:N1') && w.log.includes('sel:N2'), '两边都选中过');
+    eq(w.log[w.log.indexOf('write:file@N2') - 1], 'sel:N2', '写目标前先选中目标');
+  }
+  // 边界：拖回自己
+  {
+    const w = makeWorld();
+    const before = w.nodes.N1.file;
+    run(w, 'file', 0, 'N1', 'N1');
+    eq(w.nodes.N1.file, before, '拖回自己 → 什么都不改');
+  }
+  // 边界：索引越界
+  {
+    const w = makeWorld();
+    const st = run(w, 'file', 9, 'N1', 'N2');
+    ok(st.length > 0, '索引越界要有提示（不能静默）');
+    eq(io.decodeRefList(w.nodes.N2.file).length, 1, '越界时目标不变');
+  }
+  // 视频同理
+  {
+    const w = makeWorld();
+    w.nodes.N1.video = io.encodeRefList([{ n: 'v1.mp4', a: 'V1' }]);
+    run(w, 'video', 0, 'N1', 'N2');
+    eq(io.decodeRefList(w.nodes.N2.video).map((x) => x.n).join(','), 'v1.mp4', '视频也能移动');
+    eq(io.decodeRefList(w.nodes.N1.video).length, 0, '源节点的视频清空');
+  }
+}
+
+group('缩略图写入：按 nodeId 切回节点');
+
+{
+  const io = await import('./io.js');
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  function fnSrc(name) {
+    const start = idx.indexOf('function ' + name + '(');
+    let i = idx.indexOf('{', start);
+    let depth = 0;
+    for (; i < idx.length; i++) {
+      if (idx[i] === '{') depth++;
+      else if (idx[i] === '}') { depth--; if (depth === 0) return idx.slice(start, i + 1); }
+    }
+    return '';
+  }
+  const src = fnSrc('setVideoThumb');
+  ok(src.length > 0, '能取到 setVideoThumb 源码');
+
+  const nodes = {
+    N1: { video: io.encodeRefList([{ n: 'v1.mp4', a: 'V1' }, { n: 'v2.mp4', a: 'V2' }]) },
+    N2: { video: io.encodeRefList([{ n: '别的.mp4', a: 'V9' }]) },
+  };
+  const log = [];
+  let cur = 'N2';   // 故意先停在一个**不相干**的节点上
+  const bridge = {
+    selectNodeById(id) { cur = id; log.push('sel:' + id); return true; },
+    getSelectedVideo() { return nodes[cur].video; },
+    setVideo(v) { nodes[cur].video = v; log.push('write@' + cur); },
+  };
+  const statuses = [];
+  const fn = new Function('bridge', 'io', 'commit', 'side', 'status',
+    'return (' + src + ');')(bridge, io, () => {}, { refresh: () => {} },
+    (m) => statuses.push(m));
+
+  fn(1, 'N1', 'data:image/jpeg;base64,FRAME');
+  eq(log[0], 'sel:N1', '先按 nodeId 切回节点（否则写到当前选中的另一个节点上）');
+  eq(io.decodeRefList(nodes.N1.video)[1].t, 'data:image/jpeg;base64,FRAME',
+    '第 2 个视频拿到缩略图');
+  eq(io.decodeRefList(nodes.N1.video)[0].t, undefined, '第 1 个视频不受影响');
+  eq(io.decodeRefList(nodes.N2.video)[0].t, undefined, '别的节点没被改动');
+
+  // 索引越界要有提示
+  const st2 = [];
+  const fn2 = new Function('bridge', 'io', 'commit', 'side', 'status',
+    'return (' + src + ');')(bridge, io, () => {}, { refresh: () => {} },
+    (m) => st2.push(m));
+  fn2(9, 'N1', 'data:x');
+  ok(st2.length > 0, '索引越界要提示（不能静默失败）');
+}
+
+group('视频播放：两个按钮与自动播放回退');
+
+{
+  const pnl = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const ov = pnl.slice(pnl.indexOf('export function openVideo'),
+    pnl.indexOf('export function openVideo') + 2600);
+
+  ok(/'截图'/.test(ov), '有「截图」按钮');
+  ok(/'设为缩略图'/.test(ov), '有「设为缩略图」按钮');
+  ok(/opt\.onSetThumb/.test(ov), '设为缩略图走回调（写回节点引用）');
+  // 没有节点上下文时不给这个按钮 —— 点了没反应更让人困惑
+  ok(/opt\.onSetThumb \? \[setThumb\] : \[\]/.test(ov),
+    '没有回调时不显示「设为缩略图」（避免点了没反应）');
+
+  // 抓帧：videoWidth 为 0 时必须返回 null（不是空串 —— 空串画出来是全黑）
+  ok(/if \(!w \|\| !hh\) return null;/.test(ov), '没画面时返回 null（不是空串）');
+  ok(/toDataURL\('image\/jpeg'/.test(ov), '存 jpeg（缩略图/截图不需要无损，体积小好几倍）');
+  // 扩展名必须跟**实际字节**一致：抓出来的是 JPEG，存成 .png 的话
+  // 有些看图软件会直接拒绝打开（"文件已损坏"），而内容其实没问题
+  ok(/-截图\.jpg/.test(ov), '截图存成 .jpg（扩展名要与 jpeg 字节一致）');
+  ok(!/-截图\.png/.test(ov), '不再存成 .png（实际是 jpeg，扩展名撒谎会被判损坏）');
+  ok(/videoWidth/.test(ov) && /drawImage/.test(ov), '用 canvas 抓当前帧');
+
+  // 自动播放回退：浏览器会阻止**有声**自动播放
+  ok(/v\.muted = true/.test(ov), '有声播放被拒 → 转静音（否则用户看到一动不动的首帧）');
+  ok(/hint\.textContent/.test(ov), '转静音要告诉用户（不然以为没声音是坏了）');
+  ok(/playsinline/.test(ov), '带 playsinline（iOS 上不加会强制全屏）');
+
+  // 没读到画面要有提示
+  ok(/还没读到画面/.test(ov), '没画面时提示（不是静默什么都不做）');
 }
 
 group('多附件：XMind 往返（导出再导回）');

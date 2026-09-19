@@ -11,7 +11,6 @@
  */
 
 import { h } from '../../js/plugin-sdk.js';
-import { confirm as askConfirm, alert as askAlert, prompt as askText } from '../../js/dialog.js';
 import { THEMES, LAYOUTS, blankTheme, DEFAULT_THEME, themeSeed, sanitizePalette } from './themes.js';
 
 /**
@@ -533,17 +532,17 @@ export function buildSide(app, opts = {}) {
      */
     if (!vref) {
       box.classList.add('empty');
-      box.appendChild(h('div.nx-empty.mm-vthumb-empty', {}, '未附加视频'));
+      box.appendChild(h('div.mm-vthumb-empty', {}, '未附加视频'));
       return { el: wrap, setDuration };
     }
     if (!vref.a) {
       box.classList.add('empty');
-      box.appendChild(h('div.nx-empty.mm-vthumb-empty', {}, '旧版本地路径，沙箱内读不到本体'));
+      box.appendChild(h('div.mm-vthumb-empty', {}, '旧版本地路径，沙箱内读不到本体'));
       return { el: wrap, setDuration };
     }
     // 加载中先给个说法：整块纯黑会被当成「没了」
     box.classList.add('loading');
-    box.appendChild(h('div.nx-empty.mm-vthumb-empty', {}, '读取中…'));
+    box.appendChild(h('div.mm-vthumb-empty', {}, '读取中…'));
 
     const start = () => {
       if (!video) return;
@@ -585,7 +584,7 @@ export function buildSide(app, opts = {}) {
         box.classList.remove('loading');
         box.classList.add('broken');
         box.innerHTML = '';
-        box.appendChild(h('div.nx-empty.mm-vthumb-empty', {}, '视频数据已丢失'));
+        box.appendChild(h('div.mm-vthumb-empty', {}, '视频数据已丢失'));
         return;
       }
       trackMediaUrl(asset.url);
@@ -1496,10 +1495,82 @@ export function openThemeEditor(app, theme, seedTheme) {
  * 关闭时释放 Blob URL —— getAsset() 每次调用都会新建一个，不释放就是内存泄漏
  * （反复点开附件会一直堆积）。
  */
-export function openVideo(app, asset) {
-  const v = h('video.mm-video', { src: asset.url, controls: true, autoplay: true });
+/**
+ * 视频播放浮层。
+ *
+ * 两个新增按钮：
+ * - **截图**：把当前画面存成图片（下载）
+ * - **设为缩略图**：把当前画面写回该视频的引用（ref.t），节点卡片上立刻换成这张
+ *
+ * 自动播放的坑：浏览器会阻止**有声**自动播放。点画布上的视频是一次用户手势，
+ * 但 postMessage 是异步的，浮层建好时手势可能已过期 —— 表现为「点开了但不动」。
+ * 所以先试有声播放，被拒就转静音（能看，用户再手动点取消静音）。
+ */
+export function openVideo(app, asset, opt = {}) {
+  const v = h('video.mm-video', { src: asset.url, controls: true, autoplay: true, playsinline: true });
+  const hint = h('div.mm-hint', {});
   const release = () => { if (asset.url) URL.revokeObjectURL(asset.url); };
-  return dialog(`播放：${asset.name || '视频'}`, [v], release);
+
+  /** 抓当前画面。视频还没加载出画面时返回 null（不是空串 —— 空串画出来是全黑） */
+  function grab() {
+    try {
+      const w = v.videoWidth;
+      const hh = v.videoHeight;
+      if (!w || !hh) return null;
+      const c = document.createElement('canvas');
+      c.width = w; c.height = hh;
+      c.getContext('2d').drawImage(v, 0, 0, w, hh);
+      // jpeg：缩略图与截图都不需要无损，体积差好几倍
+      return c.toDataURL('image/jpeg', 0.72);
+    } catch {
+      return null;
+    }
+  }
+
+  function withFrame(fn, okMsg) {
+    const d = grab();
+    if (!d) { app.api?.status?.('还没读到画面，等视频播起来再试', true); return; }
+    fn(d);
+    if (okMsg) app.api?.status?.(okMsg);
+  }
+
+  const shot = h('button.mm-btn', {
+    onclick: () => withFrame((d) => {
+      const base = String(asset.name || '视频').replace(/\.[^.]+$/, '');
+      // 扩展名必须跟**实际字节**一致：抓出来的是 JPEG，存成 .png 的话
+      // 有些看图软件会直接拒绝打开（"文件已损坏"），而内容其实没问题。
+      io.downloadBlob(io.safeFileName(`${base}-截图.jpg`), io.dataUrlToBlob(d));
+    }, '已保存截图'),
+  }, '截图');
+
+  const setThumb = h('button.mm-btn', {
+    onclick: () => withFrame((d) => { opt.onSetThumb?.(d); }, '已设为该视频的缩略图'),
+    title: '把当前画面设为节点卡片上显示的封面',
+  }, '设为缩略图');
+
+  const actions = h('div.mm-actions', {},
+    shot,
+    // 没有节点上下文时不给这个按钮（点了没反应更让人困惑）
+    ...(opt.onSetThumb ? [setThumb] : []));
+
+  // 有声自动播放被拒 → 转静音。不处理的话用户看到的就是一动不动的首帧
+  const tryPlay = () => {
+    try {
+      const p = v.play?.();
+      if (!p || typeof p.catch !== 'function') return;
+      p.catch(() => {
+        v.muted = true;
+        const p2 = v.play?.();
+        if (p2 && typeof p2.catch === 'function') p2.catch(() => {});
+        hint.textContent = '浏览器阻止了有声自动播放，已静音播放（可点右下角取消静音）';
+      });
+    } catch { /* 不支持 play() 就交给 autoplay 属性 */ }
+  };
+  // 要等元素进 DOM 且元数据就绪；过早调 play 会被当成无手势
+  v.addEventListener?.('loadedmetadata', tryPlay, { once: true });
+  setTimeout(tryPlay, 0);
+
+  return dialog(`播放：${asset.name || '视频'}`, [v, hint, actions], release);
 }
 
 /** 图片附件预览浮层（点节点图标时，图片比直接下载更直观） */
@@ -1534,15 +1605,10 @@ export async function openBackups(app) {
               // A46 恢复会覆盖**当前所有画布**且不可逆 —— 必须确认。
               // 不确认的话，误点一下整份工作就没了。
               const n = (b.sheets || []).length;
-              const ok = await askConfirm({
-                title: '恢复快照',
-                message:
-                  `恢复到 ${new Date(b.ts).toLocaleString()} 的快照？\n\n` +
-                  `当前所有画布将被替换为该快照的 ${n} 张画布，此操作不可撤销。\n` +
-                  `（恢复前的当前状态会自动另存一份快照，可再回滚）`,
-                danger: true,
-              });
-              if (!ok) return;
+              if (!window.confirm(
+                `恢复到 ${new Date(b.ts).toLocaleString()} 的快照？\n\n` +
+                `当前所有画布将被替换为该快照的 ${n} 张画布，此操作不可撤销。\n` +
+                `（恢复前的当前状态会自动另存一份快照，可再回滚）`)) return;
               await app.api.restoreBackup(b);
               dlg.close();
             }, (m) => app.api.status(m, true)),
@@ -1648,7 +1714,7 @@ export async function openIconLibrary(app) {
 
   // ---- 分组管理 ----
   const newGroup = async () => {
-    const name = await askText({ label: '新分组名称', defaultValue: '新分组' });
+    const name = window.prompt('新分组名称', '新分组');
     if (name == null) return;
     const g = await picons.addGroup(name);
     if (!g) { app.api.status('新建分组失败', true); return; }
@@ -1661,7 +1727,7 @@ export async function openIconLibrary(app) {
     const g = groups.find((x) => x.id === activeId);
     if (!g) return;
     if (g.builtin) { app.api.status('内置分组不可重命名', true); return; }
-    const name = await askText({ label: '分组名称', defaultValue: g.name });
+    const name = window.prompt('分组名称', g.name);
     if (name == null || name === g.name) return;
     const r = await picons.renameGroup(g.id, name);
     if (!r.ok) { app.api.status(r.error, true); return; }
@@ -1674,7 +1740,7 @@ export async function openIconLibrary(app) {
     if (!g) return;
     if (g.builtin) { app.api.status('内置分组不可删除', true); return; }
     const n = (g.icons || []).length;
-    if (!await askConfirm({ message: `删除分组「${g.name}」？${n ? `组内 ${n} 个图标会一并删除。` : ''}`, danger: true })) return;
+    if (!window.confirm(`删除分组「${g.name}」？${n ? `组内 ${n} 个图标会一并删除。` : ''}`)) return;
     const r = await picons.deleteGroup(g.id);
     if (!r.ok) { app.api.status(r.error, true); return; }
     await reload();

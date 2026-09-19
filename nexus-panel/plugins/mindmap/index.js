@@ -14,8 +14,6 @@
  */
 
 import { bootIframePlugin, h } from '../../js/plugin-sdk.js';
-import '../../css/dialog.css';
-import { confirm as askConfirm, alert as askAlert, prompt as askText } from '../../js/dialog.js';
 import { EditorBridge } from './editor-bridge.js';
 import { DEFAULT_THEME, DEFAULT_LAYOUT, isBuiltinTheme, deriveCanvasTheme } from './themes.js';
 import * as wb from './workbook.js';
@@ -594,7 +592,7 @@ bootIframePlugin(async (ctx) => {
   function renameSheet(id) {
     const s = workbook.sheets.find((x) => x.id === id);
     if (!s) return;
-    const name = await askText({ label: '画布名称', defaultValue: s.title });
+    const name = window.prompt('画布名称', s.title);
     if (name == null) return;
     s.title = name.trim() || s.title;
     renderTabs();
@@ -714,7 +712,7 @@ bootIframePlugin(async (ctx) => {
   function renameFile(id) {
     const f = fileIndex.find((x) => x.id === id);
     if (!f) return;
-    const name = await askText({ label: '脑图名称', defaultValue: f.name });
+    const name = window.prompt('脑图名称', f.name);
     if (name == null) return;
     f.name = name.trim() || f.name;
     store.files.save(fileIndex);
@@ -729,7 +727,7 @@ bootIframePlugin(async (ctx) => {
   async function deleteFile(id) {
     const f = fileIndex.find((x) => x.id === id);
     if (!f) return;
-    if (!await askConfirm({ message: `删除「${f.name}」？该脑图下的所有画布都会一并删除。`, danger: true })) return;
+    if (!window.confirm(`删除「${f.name}」？该脑图下的所有画布都会一并删除。`)) return;
     fileIndex = fileIndex.filter((x) => x.id !== id);
     await store.files.save(fileIndex);
     await store.doc(id).del();
@@ -742,7 +740,7 @@ bootIframePlugin(async (ctx) => {
   }
 
   async function createFolder() {
-    const name = await askText({ label: '文件夹名称', defaultValue: '新建文件夹' });
+    const name = window.prompt('文件夹名称', '新建文件夹');
     if (name == null) return;
     foldersList.push({ id: newFolderId(), name: name.trim() || '新建文件夹', collapsed: false });
     await store.folders.save(foldersList);
@@ -753,7 +751,7 @@ bootIframePlugin(async (ctx) => {
   function renameFolder(id) {
     const fo = foldersList.find((x) => x.id === id);
     if (!fo) return;
-    const name = await askText({ label: '文件夹名称', defaultValue: fo.name });
+    const name = window.prompt('文件夹名称', fo.name);
     if (name == null) return;
     fo.name = name.trim() || fo.name;
     store.folders.save(foldersList);
@@ -765,7 +763,7 @@ bootIframePlugin(async (ctx) => {
     const fo = foldersList.find((x) => x.id === id);
     if (!fo) return;
     const n = fileIndex.filter((f) => f.folderId === id).length;
-    if (!await askConfirm({ message: `删除文件夹「${fo.name}」？里面 ${n} 个脑图会移到根目录，不会被删除。`, danger: true })) return;
+    if (!window.confirm(`删除文件夹「${fo.name}」？里面 ${n} 个脑图会移到根目录，不会被删除。`)) return;
     for (const f of fileIndex) if (f.folderId === id) f.folderId = null;
     foldersList = foldersList.filter((x) => x.id !== id);
     await store.files.save(fileIndex);
@@ -1163,7 +1161,8 @@ bootIframePlugin(async (ctx) => {
     // 但从那时到这里的 postMessage 是异步的，期间选中态可能已被改变）。
     // 读错节点 → 把别的节点的整份附件列表复制过来，是数据错乱级别的 bug。
 
-    // （变异）读之前不再锁定
+    if (nodeId) bridge.selectNodeById(nodeId);
+
     // 现有列表**只在开头读一次**：循环里不写回，读到的永远是同一份，
     // 全部攒在本地数组里、最后一次性写回（写三次会触发三次重排与三次历史记录）
     const imgs = bridge.getSelectedImages?.() || [];
@@ -1287,7 +1286,84 @@ bootIframePlugin(async (ctx) => {
   }
 
 
-  async function openAttachment(raw) {
+  /**
+   * 把一帧画面设为节点上第 index 个视频的缩略图（ref.t）。
+   *
+   * 必须按 nodeId **切回**该节点：浮层开着的时候用户完全可能点别的节点，
+   * 直接写「当前选中」会改到不相干的视频上。
+   */
+  function setVideoThumb(index, nodeId, dataUrl) {
+    if (!dataUrl) return false;
+    if (nodeId) bridge.selectNodeById(nodeId);
+    const list = io.decodeRefList(bridge?.getSelectedVideo?.());
+    const i = Number(index);
+    if (!(i >= 0 && i < list.length)) { status('找不到对应的视频', true); return false; }
+    list[i] = { ...list[i], t: dataUrl };
+    bridge.setVideo(io.encodeRefList(list));
+    commit();
+    side.refresh();
+    return true;
+  }
+
+  /**
+   * 把一个附件从一个节点移到另一个节点（画布上拖拽）。
+   *
+   * 顺序是**先加后删**：最坏情况是重复（用户手动删一个就行），
+   * 反过来最坏是丢失 —— 附件丢不可逆，重复可恢复。
+   *
+   * 图片比较特殊：1 张存 image 字段、≥2 张存 images 数组，
+   * 读写都走 bridge 的 getSelectedImages / setImages（它内部处理互斥）。
+   */
+  function moveAttachment(kind, index, fromId, toId) {
+    if (!bridge?.ready) { status('编辑器未就绪，无法移动', true); return; }
+    const i = Number(index);
+    if (!(i >= 0)) { status('附件索引无效', true); return; }
+    if (!fromId || !toId) { status('缺少节点信息', true); return; }
+    if (fromId === toId) return;   // 拖回自己，什么都不做
+
+    // 图片的列表元素是 dataURL 字符串，视频/文件是 ref 对象 —— 读写方式不同
+    const isImg = kind === 'image';
+    const read = () => (isImg
+      ? (bridge.getSelectedImages?.() || [])
+      : io.decodeRefList(kind === 'video' ? bridge?.getSelectedVideo?.() : bridge?.getSelectedFile?.()));
+    const write = (list) => {
+      if (isImg) bridge.setImages(list);
+      else if (kind === 'video') bridge.setVideo(io.encodeRefList(list));
+      else bridge.setFile(io.encodeRefList(list));
+    };
+
+    // 1) 源：取出要移走的那一项（**不急着删**）
+    bridge.selectNodeById(fromId);
+    const src = read();
+    const one = src[i];
+    if (one === undefined) { status('找不到要移动的附件', true); return; }
+
+    // 2) 目标：先加上
+    bridge.selectNodeById(toId);
+    const dst = read();
+    dst.push(one);
+    write(dst);
+
+    // 3) 源：确认加成功了再删
+    bridge.selectNodeById(fromId);
+    const src2 = read();
+    src2.splice(i, 1);
+    write(src2);
+
+    commit();
+    side.refresh();
+    status('已把 1 个附件移到另一个节点');
+  }
+
+  /**
+   * 打开节点上的一个附件。
+   *
+   * @param raw    引用（对象或 JSON 串）
+   * @param index  它是该节点这一类附件里的第几个（「设为缩略图」要靠它定位）
+   * @param nodeId 所在节点 id —— 浮层打开期间用户可能点别的节点，
+   *               写回前必须靠 id 切回来，否则会写到错误的节点上
+   */
+  async function openAttachment(raw, index, nodeId) {
     const ref = io.decodeRef(raw);
     if (!ref) { status('附件引用无法识别', true); return; }
 
@@ -1319,7 +1395,12 @@ bootIframePlugin(async (ctx) => {
     if (isVideo) {
       const asset = await io.getAsset(ref.a, true);
       if (!asset?.url) { status('视频数据已丢失', true); return; }
-      openVideo(app, { ...asset, name });
+      openVideo(app, { ...asset, name }, {
+        index: index,
+        onSetThumb: (dataUrl) => {
+          guard('设为缩略图', () => setVideoThumb(index, nodeId, dataUrl))();
+        },
+      });
       status('正在播放：' + name);
       return;
     }
@@ -2045,7 +2126,7 @@ bootIframePlugin(async (ctx) => {
     // 所以退化为「视频播浮层 / 文件另存为」，并把侧栏切到文件页以便查看信息。）
     onOpenFile: guard('打开附件', (path) => openAttachment(path)),
     // 点击画布上的附件（多附件：kind + index + 原始引用）
-    onOpenAttach: (kind, index, raw) => {
+    onOpenAttach: (kind, index, raw, nodeId) => {
       // 图片是 **dataURL**，不是资产引用 —— 交给 openAttachment 会被
       // decodeRef 兜底成 legacyPath（实测：a 为 null），于是报
       // 「旧版本地路径，无法打开」。点画布上的图理应直接预览。
@@ -2056,11 +2137,16 @@ bootIframePlugin(async (ctx) => {
         })();
         return;
       }
-      guard('打开附件', () => openAttachment(raw))();
+      guard('打开附件', () => openAttachment(raw, index, nodeId))();
     },
     // 拖放附加（图片 / 视频 / 任意文件）
     onDropFiles: (files, nodeId) => { guard('拖放附加', () => handleDropFiles(files, nodeId))(); },
     onDropMiss: () => status('请拖到节点上（拖到空白处不会新建节点）'),
+    // 附件在节点间拖拽移动
+    onMoveAttach: (kind, index, fromId, toId) => {
+      guard('移动附件', () => moveAttachment(kind, index, fromId, toId))();
+    },
+    onAttachMiss: () => status('请拖到另一个节点上（拖到空白处不会移动附件）'),
     onHostRequest: async (action, payload) => {
       // 编辑器的 callHost 通道：saveAs 直接落成文件
       if (action === 'saveAs') {

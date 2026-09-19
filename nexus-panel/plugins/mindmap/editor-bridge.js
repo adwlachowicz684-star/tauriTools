@@ -154,9 +154,17 @@ export class EditorBridge {
       case 'openfile':
         if (d.path) this.handlers.onOpenFile?.(d.path);
         break;
-      // 点击画布上的附件（多附件：带 kind + index + 原始引用）
+      // 点击画布上的附件（多附件：带 kind + index + 原始引用 + 所在节点 id）
       case 'openattach':
-        this.handlers.onOpenAttach?.(d.kind, d.index, d.raw);
+        this.handlers.onOpenAttach?.(d.kind, d.index, d.raw, d.nodeId || '');
+        break;
+      // 附件在节点间拖拽移动
+      case 'moveattach':
+        this.handlers.onMoveAttach?.(d.kind, d.index, d.fromId, d.toId);
+        break;
+      // 附件拖到了空白处（不是另一个节点）
+      case 'attachmiss':
+        this.handlers.onAttachMiss?.();
         break;
       // 拖放附加：File 对象可被结构化克隆，能直接跨 iframe 传过来，
       // 不必在两边各读一次字节

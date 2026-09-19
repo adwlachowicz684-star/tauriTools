@@ -368,6 +368,7 @@
             // 这里另建映射。用 WeakMap 而非普通对象：节点销毁后条目自动消失，
             // 不会随每次重渲累积（画布重渲极其频繁，普通 Map 会稳定泄漏）。
             var domNodeMap = new WeakMap();
+            var nodeDomMap = new WeakMap();
 
             /* ---------------- 附件名文字标签（画布上可见） ---------------- */
 
@@ -378,6 +379,28 @@
              * 附件引用 → 画布标签文字（纯函数，可测）。
              * 换行压成空格（SVG <text> 不认 \n），超长截断加省略号。
              */
+            var ATT_DRAG_DEAD = 6;   // 死区（px）
+            var attDrag = null;      // { x0, y0, moved, kind, index, ref, fromId, label }
+
+            function bindAttach(sh, kind, index, ref, label, node) {
+                sh.setStyle('cursor', 'pointer');
+                sh.on('mousedown', function (ev) {
+                    var e = ev && ev.originEvent ? ev.originEvent : ev;
+                    if (!e) return;
+                    if (e.button != null && e.button !== 0) return;
+                    // 阻止内核把这次按下当成「拖节点」或「选中」
+                    if (e.preventDefault) e.preventDefault();
+                    if (e.stopPropagation) e.stopPropagation();
+                    attDrag = {
+                        x0: e.clientX, y0: e.clientY, moved: false,
+                        kind: kind, index: index, ref: ref,
+                        label: label || '',
+                        node: node,
+                        fromId: (node && node.data && node.data.id) || '',
+                    };
+                });
+            }
+
             function attachmentLabel(raw, fallback) {
                 var n = String(refName(raw) || fallback || '').replace(/\s+/g, ' ').trim();
                 if (!n) return '';
@@ -467,7 +490,11 @@
                         // 内核的 rc.minderNode 挂在 kity Group 对象上、DOM 上反查不到，
                         // 所以这里另建 DOM → node 的映射。用 WeakMap：
                         // 节点销毁后条目自动消失，不会随每次重渲累积。
-                        if (rc.node) domNodeMap.set(rc.node, node);
+                        if (rc.node) {
+                            domNodeMap.set(rc.node, node);
+                            // 正向映射：拖拽高亮要框住目标节点，需要 node → DOM
+                            nodeDomMap.set(node, rc.node);
+                        }
                         var color = iconColor(node);
                         function attach(icon, path, cursorX, tip) {
                             icon.paint(color);
@@ -503,9 +530,6 @@
                             (node._kmLabels = node._kmLabels || []).push(sh);
                             return sh;
                         };
-                        var openAttach = function (kind, index, raw) {
-                            hostPost({ type: 'openattach', kind: kind, index: index, raw: raw });
-                        };
                         var top = box.bottom + 6;
                         var cx = box.cx;
 
@@ -521,14 +545,7 @@
                                 .fill('rgba(255,255,255,0.07)').stroke(color, 1));
                             try {
                                 var im = new kity.Image(imgs[ii], iw - 6, ih - 6, ix + 3, top + 3);
-                                im.setStyle('cursor', 'pointer');
-                                (function (idx, url) {
-                                    im.on('mousedown', function (ev) {
-                                        ev.preventDefault();
-                                        if (ev.stopPropagation) ev.stopPropagation();
-                                        openAttach('image', idx, url);
-                                    });
-                                })(ii, imgs[ii]);
+                                bindAttach(im, 'image', ii, imgs[ii], '图片 ' + (ii + 1), node);
                                 push(im);
                             } catch (e3) {}
                             if (imgs.length > 1) {
@@ -579,14 +596,7 @@
                             var vcur = vids[vi] || {};
                             var vcard = new kity.Rect(vw, vh, vx, top, 4)
                                 .fill('#1B1B1F').stroke(color, 1);
-                            vcard.setStyle('cursor', 'pointer');
-                            (function (idx, ref) {
-                                vcard.on('mousedown', function (ev) {
-                                    ev.preventDefault();
-                                    if (ev.stopPropagation) ev.stopPropagation();
-                                    openAttach('video', idx, ref);
-                                });
-                            })(vi, vcur);
+                            bindAttach(vcard, 'video', vi, vcur, refName(vcur) || '视频', node);
                             push(vcard);
                             // 首帧缩略图：附加时生成并存进 ref.t（同步可读，不阻塞渲染）
                             if (vcur.t) {
@@ -656,13 +666,7 @@
                             var fic = new FileIcon();
                             fic.paint(color);
                             fic.setTranslate(cx - 46, fy);
-                            (function (idx, ref) {
-                                fic.on('mousedown', function (ev) {
-                                    ev.preventDefault();
-                                    if (ev.stopPropagation) ev.stopPropagation();
-                                    openAttach('file', idx, ref);
-                                });
-                            })(fi, fils[fi]);
+                            bindAttach(fic, 'file', fi, fils[fi], attachmentLabel(fils[fi], '附件'), node);
                             push(fic);
                             var fn = new kity.Text(attachmentLabel(fils[fi], '文件附件'));
                             try {
@@ -687,6 +691,154 @@
              * 3. 拖到**空白处**按约定忽略（不建节点）—— 拖放容错差，
              *    误建的空白节点清理起来很烦
              */
+
+            /* ---------------- 附件在节点间拖拽移动 ----------------
+             * 点一下 = 打开；按住拖到别的节点 = 移过去。
+             *
+             * 不用 HTML5 Drag & Drop（与页签拖拽同样的理由）：
+             * 1. kity 画的是 SVG 元素，没有 draggable 属性
+             * 2. 原生拖拽期间不派发 mousemove，拿不到「当前悬停的是哪个节点」
+             * 3. 拖影由浏览器绘制，无法自定义
+             * 所以用 mousedown + document 上的 mousemove / mouseup 自建状态机。
+             *
+             * **死区是必须的**：没有它，手抖 1px 就被当成拖拽，
+             * 于是「点一下打开」永远触发不了。
+             */
+
+            var attGhost = null;     // 跟随指针的浮层
+            var attHi = null;        // 目标节点高亮框
+            var attHiNode = null;
+
+            function attGhostEl() {
+                if (!attGhost) {
+                    attGhost = document.createElement('div');
+                    attGhost.className = 'mm-att-ghost';
+                    // **必须 none**：否则 elementFromPoint 命中的是浮层自己
+                    attGhost.style.pointerEvents = 'none';
+                    document.body.appendChild(attGhost);
+                }
+                return attGhost;
+            }
+
+            function attHiEl() {
+                if (!attHi) {
+                    attHi = document.createElement('div');
+                    attHi.className = 'mm-att-hi';
+                    attHi.style.pointerEvents = 'none';
+                    document.body.appendChild(attHi);
+                }
+                return attHi;
+            }
+
+            /** 把高亮框套在目标节点上；传 null 收起 */
+            function attHighlight(node) {
+                var el = attHiEl();
+                if (!node) {
+                    el.style.display = 'none';
+                    attHiNode = null;
+                    return;
+                }
+                // 拖到自己身上不给高亮 —— 高亮了像是「可以放」，实际会空操作
+                if (attDrag && node === attDrag.node) {
+                    el.style.display = 'none';
+                    attHiNode = null;
+                    return;
+                }
+                var dom = nodeDomMap.get(node);
+                if (!dom || !dom.getBoundingClientRect) {
+                    el.style.display = 'none';
+                    attHiNode = null;
+                    return;
+                }
+                var r = dom.getBoundingClientRect();
+                if (!r.width && !r.height) {
+                    el.style.display = 'none';
+                    attHiNode = null;
+                    return;
+                }
+                el.style.display = 'block';
+                el.style.left = (r.left - 3) + 'px';
+                el.style.top = (r.top - 3) + 'px';
+                el.style.width = (r.width + 6) + 'px';
+                el.style.height = (r.height + 6) + 'px';
+                attHiNode = node;
+            }
+
+            function attEndDrag() {
+                if (attGhost) attGhost.style.display = 'none';
+                attHighlight(null);
+                var d = attDrag;
+                attDrag = null;
+                return d;
+            }
+
+            /**
+             * 给一个附件图形绑定「点击打开 + 拖拽移动」。
+             * 替换掉原先只处理点击的 mousedown。
+             */
+
+            /** 提成的命名函数：既便于注册，也便于测试直接取源码跑 */
+            function onAttMove(e) {
+                if (!attDrag) return;
+                var dx = e.clientX - attDrag.x0;
+                var dy = e.clientY - attDrag.y0;
+                if (!attDrag.moved) {
+                    // 死区：**没有它就没有单击** —— 手抖 1px 也算拖拽的话，
+                    // 「点一下打开」永远触发不了
+                    if (Math.abs(dx) + Math.abs(dy) < ATT_DRAG_DEAD) return;
+                    attDrag.moved = true;
+                    var g = attGhostEl();
+                    g.textContent = attDrag.label;
+                    g.style.display = 'block';
+                }
+                var g2 = attGhostEl();
+                g2.style.left = (e.clientX + 12) + 'px';
+                g2.style.top = (e.clientY + 12) + 'px';
+                var target = nodeFromDom(document.elementFromPoint(e.clientX, e.clientY));
+                attHighlight(target);
+            }
+
+            function onAttUp(e) {
+                var d = attEndDrag();
+                if (!d) return;
+                if (!d.moved) {
+                    // 没超过死区 = 单击：走原来的打开行为
+                    openAttach(d.node, d.kind, d.index, d.ref);
+                    return;
+                }
+                var target = nodeFromDom(document.elementFromPoint(e.clientX, e.clientY));
+                if (!target) {
+                    // 拖到空白处要**说出来**，否则用户以为坏了
+                    hostPost({ type: 'attachmiss' });
+                    return;
+                }
+                if (target === d.node) return;   // 拖回自己，什么都不做
+                hostPost({
+                    type: 'moveattach',
+                    kind: d.kind, index: d.index,
+                    fromId: d.fromId,
+                    toId: (target.data && target.data.id) || '',
+                });
+            }
+
+            document.addEventListener('mousemove', onAttMove);
+            document.addEventListener('mouseup', onAttUp);
+
+            /**
+             * 打开某个节点上的一个附件。
+             *
+             * 打开前**先选中该节点**：宿主的命令一律作用于「当前选中节点」，
+             * 而点附件本身不会改变选中态（mousedown 被 preventDefault 了）。
+             * 不选中会导致后续「设为缩略图」写到别的节点上。
+             */
+            function openAttach(node, kind, index, raw) {
+                try { km.select(node, true); } catch (e) {}
+                hostPost({
+                    type: 'openattach',
+                    kind: kind, index: index, raw: raw,
+                    nodeId: (node && node.data && node.data.id) || '',
+                });
+            }
 
             /** 从 DOM 往上找所属节点（最多 50 层，防死循环） */
             function nodeFromDom(el) {
@@ -2029,119 +2181,6 @@
             }
         }
 
-        /* ==== 关键色派生：画布怎么变，骨架都看得见 ====
-           为什么需要：画布底色跟随外壳主题，节点配色却是**自带主题的固定
-           调色板**，两者由不同的人选，必然出现错配。最典型的是 fresh-*：
-           main 节点 #EEF3F6 配 white 连接线，在它自己的 #FBFBFB 底上靠
-           投影区分；画布一变，连接线与节点边界就可能消失。
-
-           实现与 plugins/mindmap/themes.js 的 criticalOverrides() 同源。
-           之所以复制一份而不是 import：本页是传统 <script> 加载的内核页，
-           走 ES module 在部分协议下会被 CORS 挡住。canvas-theme-test 里有
-           「两处实现必须一致」的比对断言，防止它们各自漂移。 */
-        function _kmParseColor(c) {
-            var m = String(c || '').match(/rgba?\(([^)]+)\)/);
-            var r, g, b;
-            if (m) {
-                var p = m[1].split(/[,\s\/]+/).filter(Boolean).map(Number);
-                r = p[0]; g = p[1]; b = p[2];
-            } else {
-                var h = String(c || '').trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
-                if (!h) return null;
-                var t = h[1];
-                if (t.length === 3) t = t.split('').map(function (x) { return x + x; }).join('');
-                r = parseInt(t.slice(0, 2), 16);
-                g = parseInt(t.slice(2, 4), 16);
-                b = parseInt(t.slice(4, 6), 16);
-            }
-            if ([r, g, b].some(function (v) { return typeof v !== 'number' || isNaN(v); })) return null;
-            return [r, g, b];
-        }
-        function _kmRelLum(c) {
-            var rgb = _kmParseColor(c);
-            if (!rgb) return 0;
-            var f = function (n) { var v = n / 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
-            return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
-        }
-        function _kmContrast(a, b) {
-            var la = _kmRelLum(a), lb = _kmRelLum(b);
-            var hi = Math.max(la, lb), lo = Math.min(la, lb);
-            return (hi + 0.05) / (lo + 0.05);
-        }
-        function _kmClamp255(n) { return Math.max(0, Math.min(255, n)); }
-        function _kmToHex(rgb) {
-            return '#' + rgb.map(function (n) {
-                return _kmClamp255(n).toString(16).padStart(2, '0');
-            }).join('');
-        }
-        function _kmShift(c, d) {
-            var rgb = _kmParseColor(c);
-            if (!rgb) return c;
-            return _kmToHex(rgb.map(function (n) { return _kmClamp255(n + d); }));
-        }
-        function _kmIsLight(c) {
-            var rgb = _kmParseColor(c);
-            if (!rgb) return false;
-            return (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) > 140;
-        }
-        /* 只调亮度、不动色相饱和度 —— 派生出来的线/文字仍是同一色调家族 */
-        function _kmAwayFrom(base, ratio) {
-            var light = _kmIsLight(base);
-            var dir = light ? -1 : 1;
-            for (var i = 1; i <= 64; i++) {
-                var c = _kmShift(base, dir * i * 4);
-                if (_kmContrast(c, base) >= ratio) return c;
-            }
-            return light ? '#141418' : '#f2f2f4';
-        }
-        function _kmPaintable(v) {
-            var s = String(v || '').trim().toLowerCase();
-            if (!s || s === 'none' || s === 'transparent') return false;
-            return /^(#|rgb|hsl)/.test(s);
-        }
-        function _kmCriticalOverrides(canvasBg, items) {
-            var out = {};
-            if (!canvasBg || !items) return out;
-            var cc = items['connect-color'];
-            if (!cc || cc === 'none' || !_kmPaintable(cc) || _kmContrast(cc, canvasBg) < 2.5) {
-                out['connect-color'] = _kmAwayFrom(canvasBg, 3);
-            }
-            var subBg = String(items['sub-background'] || '').toLowerCase();
-            if (!subBg || subBg === 'transparent' || subBg === 'none') {
-                var sc = items['sub-color'];
-                if (!sc || !_kmPaintable(sc) || _kmContrast(sc, canvasBg) < 3) {
-                    out['sub-color'] = _kmAwayFrom(canvasBg, 4.5);
-                }
-            }
-            var types = ['root', 'main', 'sub'];
-            for (var i = 0; i < types.length; i++) {
-                var type = types[i];
-                var fill = items[type + '-background'];
-                var stroke = items[type + '-stroke'];
-                if (!fill || !_kmPaintable(fill)) continue;
-                if (_kmContrast(fill, canvasBg) >= 1.8) continue;
-                if (_kmPaintable(stroke) && _kmContrast(stroke, canvasBg) >= 2.5) continue;
-                out[type + '-stroke'] = _kmAwayFrom(canvasBg, 3);
-            }
-            return out;
-        }
-
-        /** 把覆盖写回内核当前主题项 —— getThemeItems() 返回的是活对象 */
-        function _kmApplyCritical() {
-            if (!km || !km.getThemeItems) return;
-            var items;
-            try { items = km.getThemeItems(); } catch (e) { return; }
-            if (!items) return;
-            var bg = (_canvasVars && _canvasVars.canvasBg) || _CANVAS_DEFAULTS.canvasBg;
-            var ov = _kmCriticalOverrides(bg, items);
-            var n = 0;
-            for (var k in ov) {
-                if (!Object.prototype.hasOwnProperty.call(ov, k)) continue;
-                items[k] = ov[k]; n++;
-            }
-            if (n) { try { km.refresh(); } catch (e) { /* ignore */ } }
-        }
-
         function _applyCanvasTheme() {
             var v = _canvasVars || _CANVAS_DEFAULTS;
             var root = document.documentElement;
@@ -2153,8 +2192,6 @@
             // 覆盖内核在 setTheme 时写入的内联底色（内联优先级高于 CSS 变量）
             var rt = km.getRenderTarget && km.getRenderTarget();
             if (rt) rt.style.background = v.canvasBg || _CANVAS_DEFAULTS.canvasBg;
-            // 画布底色变了 → 骨架色的"够不够对比"要重新判断
-            _kmApplyCritical();
         }
 
         window.__minder = {
