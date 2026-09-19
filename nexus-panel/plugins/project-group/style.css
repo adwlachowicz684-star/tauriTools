@@ -1378,3 +1378,34 @@
 .fpx-iconwrap:hover .fpx-icon-rename,
 .fpx-icon-rename:focus-visible { opacity: 1; pointer-events: auto; }
 .fpx-icon-rename:hover { color: var(--accent); }
+
+/* ---------------- 非模态弹窗（#8）----------------
+ * 两处必须成对，缺一个就还是模态：
+ *   · 遮罩 pointer-events: none —— 否则点不到背后的卡片
+ *   · 面板本体恢复 auto      —— 否则连面板自己都点不了
+ * 遮罩背景保留一层极淡的阴影，是为了让面板"浮"在界面上、看得出边界，
+ * 但不能浓到看不清背后的内容（那还不如模态）。
+ */
+.mask.modeless { pointer-events: none; background: transparent; }
+.mask.modeless .dialog { pointer-events: auto; box-shadow: var(--sh-out-lg); }
+
+/* ---------------- 图标面板 · 目标条（#8）----------------
+ * 非模态下点背后的卡片就会换目标，**必须让用户看见当前作用于谁**。
+ * 看不见的话：以为在给 A 设图标，实际设到了 B，且没有任何提示。
+ */
+.fpx-icontarget {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: var(--sp-5, 10px);
+  padding: 5px 8px;
+  border-radius: var(--r-sm);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-sm);
+  font-size: var(--fs-12, 12px);
+}
+.fpx-icontarget-label { flex-shrink: 0; opacity: .6; }
+.fpx-icontarget-name {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 600;
+}
+.fpx-icontarget-none { flex: 1; color: var(--danger); opacity: .8; }

@@ -226,6 +226,7 @@ export function LockDialog({
  */
 export function IconPickDialog({
   api, files, groups, onGroupsChange, onClose, onPick, onImported, onLog, onRenamed,
+  target, following, onFollowChange, modeless,
 }: {
   api: Api;
   files: string[];
@@ -237,6 +238,22 @@ export function IconPickDialog({
   onLog: (m: string, isError?: boolean) => void;
   /** 改名成功：回传新图标列表与同步了多少张卡片 */
   onRenamed: (icons: string[], affected: number) => void;
+  /**
+   * 当前作用对象（#8 `UpdateTarget`）。
+   *
+   * **换目标时浏览状态一律保留**：正在看哪个页签、哪个分组、滚到哪，
+   * 都不该因为换了张卡片就重置 —— 否则给一批卡片连续设图标时，
+   * 每点一张就要重新找一遍分组，非模态反而更累。
+   *
+   * 这也是为什么**宿主不能用 `key={target.path}` 渲染本组件**：
+   * key 一变 React 会整个重建实例，state 全丢，上面那段就白写了。
+   */
+  target: { path: string; name: string } | null;
+  /** 是否跟随选中卡片变化 */
+  following: boolean;
+  onFollowChange: (v: boolean) => void;
+  /** 非模态常驻：开着也能点背后的卡片 */
+  modeless?: boolean;
 }) {
   const [tab, setTab] = useState<'preset' | 'mine'>('preset');
   const [picking, setPicking] = useState(false);
@@ -297,7 +314,27 @@ export function IconPickDialog({
   };
 
   return (
-    <Modal title="选择图标" onClose={onClose} width={620}>
+    <Modal title="选择图标" onClose={onClose} width={620} modeless={modeless}>
+      {/*
+        #8 目标条：**必须让用户看见当前作用于谁**。
+        非模态下点背后的卡片就会换目标，看不见的话
+        用户以为在给 A 设图标，实际设到了 B —— 而且没有任何提示。
+      */}
+      <div className="fpx-icontarget">
+        <span className="fpx-icontarget-label">当前目标</span>
+        {target
+          ? <span className="fpx-icontarget-name" title={target.path}>{target.name}</span>
+          : <span className="fpx-icontarget-none">未选中卡片</span>}
+        <button
+          className={`p-btn mini${following ? ' primary' : ''}`}
+          onClick={() => onFollowChange(!following)}
+          title={following
+            ? '正在跟随选中的卡片：点卡片即可换目标。点此锁定为当前卡片'
+            : '已锁定：换选中卡片也不会换目标。点此恢复跟随'}
+        >
+          {following ? '跟随中' : '已锁定'}
+        </button>
+      </div>
       <div className="fpx-groupbar" style={{ marginBottom: 'var(--sp-6, 12px)' }}>
         <button
           className={`fpx-grouptab${tab === 'preset' ? ' active' : ''}`}

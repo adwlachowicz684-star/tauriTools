@@ -96,7 +96,8 @@
     "test:pg-feedback": "node plugins/project-group/feedback-test.mjs",
     "scan:commands": "node scripts/scan-commands.mjs",
     "test:pg-icon-rename": "node plugins/project-group/icon-rename-test.mjs",
-    "test:pg-icon-prune": "node plugins/project-group/icon-prune-test.mjs"
+    "test:pg-icon-prune": "node plugins/project-group/icon-prune-test.mjs",
+    "test:pg-icon-modeless": "node plugins/project-group/icon-modeless-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import { RenameDialog } from './RenameDialog';
 import { RenameContentDialog } from './RenameContentDialog';
 import { CreateDialog, IconPickDialog, LockDialog, StyleDialog } from './dialogs';
@@ -107,6 +108,17 @@ export function Dialogs(props: DialogsProps) {
   const { s } = props;
   const { ctx, boot } = s;
 
+  /*
+   * #8 图标面板的目标跟随（原版 `UpdateTarget`）。
+   *
+   * 默认**跟随**：这是非模态常驻的全部意义 ——
+   * 开着面板点下一张卡片，图标就设到那张上，不用来回开关弹窗。
+   *
+   * 还要给"锁定"是因为：连续给同一张卡试几个图标时，
+   * 点到别的卡片就换目标会很恼人。锁定后目标固定。
+   */
+  const [iconFollow, setIconFollow] = useState(true);
+
   const {
     dialog,
     setDialog,
@@ -127,6 +139,24 @@ export function Dialogs(props: DialogsProps) {
     iconFiles,
     setIconFiles,
   } = props;
+
+  const selPath = s.selProject ?? s.selGroup;
+  /*
+   * 找出当前选中卡片的 CardInfo。
+   *
+   * 跟随模式下 `dialog.card` 是**打开面板那一刻**的那张，已经过期 ——
+   * setIcon 必须用选中卡片的路径，否则跟随只是"显示跟着变"，
+   * 实际图标仍设到打开时的那张上。**显示与目标不一致**比不跟随更糟。
+   */
+  const selCard = useMemo(() => {
+    if (!selPath || !s.boot) return null;
+    const all = [...(s.boot.projectTabs ?? []), ...(s.boot.groupTabs ?? [])];
+    return all.flatMap((t) => t.items ?? []).find((c) => c.path === selPath) ?? null;
+  }, [selPath, s.boot]);
+
+  /* 跟随且选中已变 → 用选中的；否则用打开时那张（含锁定、以及选中为空的情况） */
+  const iconTargetPath = iconFollow ? (selCard?.path ?? dialog.type === 'icons' ? dialog.card.path : '') : (dialog.type === 'icons' ? dialog.card.path : '');
+  const iconTargetName = iconFollow ? (selCard?.name ?? (dialog.type === 'icons' ? dialog.card.name : '')) : (dialog.type === 'icons' ? dialog.card.name : '');
 
   return (
     <>
@@ -273,7 +303,12 @@ export function Dialogs(props: DialogsProps) {
           groups={boot.config.iconGroups}
           onGroupsChange={(groups) => s.updateConfig((d) => { d.iconGroups = groups; })}
           onClose={() => setDialog({ type: 'none' })}
-          onPick={(p) => s.setIcon(dialog.card.path, p)}
+          /* 非模态常驻（#8）：开着也能点背后的卡片 */
+          modeless
+          target={{ path: iconTargetPath, name: iconTargetName }}
+          following={iconFollow}
+          onFollowChange={setIconFollow}
+          onPick={(p) => s.setIcon(iconTargetPath, p)}
           onImported={setIconFiles}
           /* #10 改名：后端返回的图标列表要替换掉本地的，
              否则界面还显示旧文件名（文件已经不在那个名字下了）。 */

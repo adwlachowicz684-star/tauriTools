@@ -33,7 +33,7 @@ export const MenuLayerContext = createContext<HTMLElement | null>(null);
  */
 export function Modal({
   title, onClose, children, width = 440, footer, guardClose = false,
-  height, onHeightCommit,
+  height, onHeightCommit, modeless = false,
 }: {
   title: string;
   onClose: () => void;
@@ -41,6 +41,18 @@ export function Modal({
   width?: number;
   footer?: ReactNode;
   guardClose?: boolean;
+  /**
+   * 非模态（#8）：**不拦截背后的界面**。
+   *
+   * 图标面板要常驻：给一批卡片连续设图标时，
+   * 每设一张就开关一次弹窗是不可接受的。开着面板点别的卡片，
+   * 目标跟着换（`UpdateTarget`）。
+   *
+   * 两个必须一起改的地方，缺一个就还是模态：
+   *   · 遮罩 `pointer-events: none` —— 否则点不到背后的卡片
+   *   · **点遮罩不再关闭** —— 否则点背后卡片时面板直接没了
+   */
+  modeless?: boolean;
   /**
    * 受控高度（#56 浮层高度记忆）。给了就能拖底边调高。
    * null = 自适应内容高度（此时底边不可拖 —— 拖了也不知道该存什么基准）。
@@ -73,7 +85,11 @@ export function Modal({
   }, [ask, confirming]);
 
   return (
-    <div className="mask" onMouseDown={ask}>
+    <div
+      className={`mask${modeless ? ' modeless' : ''}`}
+      /* 非模态时点背景不关闭 —— 面板要常驻，点了背后的卡片就没了是不对的 */
+      onMouseDown={modeless ? undefined : ask}
+    >
       <div
         className="dialog p-card"
         style={{
