@@ -1,4 +1,5 @@
 import { useRef, useState, type DragEvent, type MouseEvent } from 'react';
+import NodeDesc from './NodeDesc';
 import { presetsByCategory, getDef } from '../nodes';
 import { hasDef } from '../nodes/registry';
 import { confirm, alert, prompt } from '../../../js/dialog.js';
@@ -347,12 +348,16 @@ export default function Sidebar({
                       </span>
                     ) : null}
                   </div>
-                  {/* 展开的说明块；没内容时给个兜底文案，避免点了像没反应 */}
+                  {/*
+                   * 展开的说明块。
+                   *
+                   * 以前只有一句话（def.meta.sub），而"能不能用"取决于
+                   * 三件那句话里没有的事：产出/接受（能跟谁连）、
+                   * 需要的外部能力（浏览器模式下缺了直接失败）、哪些参数必填。
+                   * 这三样数据契约里都有，只是没接到界面上 —— NodeDesc 负责接。
+                   */}
                   {open ? (
-                    <div className="side-desc">
-                      {desc || '这个节点没有额外说明'}
-                      <span className="side-desc-add">按住 Ctrl / ⌘ 点击添加</span>
-                    </div>
+                    <NodeDesc presetKey={p.key} type={p.type} hint={desc} sub={def.meta.sub} />
                   ) : null}
                 </div>
               );

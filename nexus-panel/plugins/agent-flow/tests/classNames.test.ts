@@ -348,3 +348,40 @@ test('MCP 状态位不假装', () => {
     '状态必须由 !protocolReady 分支决定，不能写死成功',
   );
 });
+
+/* ================= 侧栏节点说明 ================= */
+
+/*
+ * 以前展开只有一句话（def.meta.sub）。而节点能不能用，取决于
+ * 三件那句话里没有的事：产出/接受（能跟谁连）、需要的外部能力
+ * （浏览器模式下缺了直接失败）、哪些参数必填。
+ * 这三样契约里都有，只是没接到界面上 —— 下面是"确实接上了"的守卫。
+ */
+test('侧栏展开的是结构化说明，不是一句话', () => {
+  if (!hasSrc) return;
+  const sb = read(path.join(ROOT, 'components/Sidebar.tsx'));
+  assert.ok(sb.includes('NodeDesc'), '侧栏没有用 NodeDesc');
+
+  const nd = read(path.join(ROOT, 'components/NodeDesc.tsx'));
+  assert.ok(nd.includes('describeBlock'), '说明要取自契约（describeBlock）');
+  assert.ok(nd.includes('PORT_LABEL'), '产出要显示可读的端口名');
+  assert.ok(nd.includes('requires'), '要显示需要的外部能力');
+});
+
+/**
+ * 参数表必须与文档 / 运行时 API 同一个函数 ——
+ * 各写一份的话"界面上看到的"和"AI 查到的"会不一样。
+ */
+test('说明里的参数走 deriveParams，不自己拼', () => {
+  if (!hasSrc) return;
+  const nd = read(path.join(ROOT, 'components/NodeDesc.tsx'));
+  assert.ok(nd.includes('fieldLikeOf'), '要经 fieldLikeOf 转换');
+  assert.ok(!nd.includes('function fieldLikeOf'), '转换逻辑该在 engine/fieldLike.ts，不在组件里');
+});
+
+/** 没契约的节点（模块、MCP 生成节点）展开后也不能一片空白 */
+test('没契约时仍有兜底文案', () => {
+  if (!hasSrc) return;
+  const nd = read(path.join(ROOT, 'components/NodeDesc.tsx'));
+  assert.ok(nd.includes('这个节点没有额外说明'), '缺兜底：展开后空白会让人以为界面坏了');
+});

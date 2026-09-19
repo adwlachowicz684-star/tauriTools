@@ -7,7 +7,7 @@ import path from 'node:path';
  * strip-ts.py 的已知陷阱守卫。
  *
  * 这个脚本把 TS 剥成 ESM 给测试跑，但它对类型语法的处理很粗糙，
- * 已经踩过八次坑。其中**最危险的一类不是语法错误，而是静默改变数据** ——
+ * 已经踩过十次坑。其中**最危险的一类不是语法错误，而是静默改变数据** ——
  * 生成的 .mjs 能跑、测试也可能过，但算出来的值是错的。
  *
  * 这里把每次踩过的坑都钉一条用例：
@@ -46,4 +46,36 @@ test('陷阱二：class 里带类型注解的方法签名不能用', () => {
    */
   assert.ok(!/^\s+\w+\s*\(\s*\)\s*:\s*\w+\s*\|\s*undefined\s*\{/m.test(stripComments(EXPR)),
     '别在 class 方法上写类型注解 —— strip-ts.py 剥不干净');
+});
+
+
+/* ---------------- 陷阱九 / 十：断言与对象类型注解 ---------------- */
+
+/*
+ * 这两条都属于"生成的 .mjs 直接语法错误"，
+ * 比陷阱一（静默改数据）好查，但每次新写带类型的函数都可能撞上。
+ */
+
+const FL = fs.readFileSync(
+  path.join(process.env.AF_SRC ?? '.', 'engine/fieldLike.ts'), 'utf8',
+);
+
+const flCode = stripComments(FL);
+
+test('陷阱九：函数类型断言不能内联（要写成类型别名）', () => {
+  /*
+   * `(v as (d: Record<string, unknown>) => unknown)(data)` 会被剥成
+   * `(v ) => unknown)(data)` —— 箭头函数的返回类型被当成函数体边界。
+   */
+  const bad = /as\s*\(\s*\w+\s*:\s*[^)]*=>/.test(flCode);
+  assert.equal(bad, false, '函数类型断言要写成 type 别名，不能内联');
+});
+
+test('陷阱十：内联对象类型注解不能带分号（要写成类型别名）', () => {
+  /*
+   * `let x: { value: string; label: string }[]` 会被剥成
+   * `let x; label: string }[]` —— 分号让脚本误判语句边界。
+   */
+  const bad = /:\s*\{[^}]*;[^}]*\}\s*\[\]/.test(flCode);
+  assert.equal(bad, false, '对象类型注解要写成 type 别名，不能内联');
 });
