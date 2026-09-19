@@ -8,7 +8,7 @@
        （插件 HTML 内联脚本是 iframe 插件的标准写法，不能禁）
        外链白名单见 README「外链管理」。 -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; media-src 'self' asset: http://asset.localhost blob:; frame-src 'self'" />
+        content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; media-src 'self' asset: http://asset.localhost blob:; frame-src 'self'" />
   <title>Nexus Panel</title>
   <link rel="stylesheet" href="./css/neumorphism.css" />
   <script>

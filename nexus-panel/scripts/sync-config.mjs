@@ -20,6 +20,7 @@ import {
   DEV_SERVER,
   TAURI_CONFIGS,
   cspPolicies,
+  DISABLE_ASSET_CSP_MODIFICATION,
 } from '../config/nexus.config.mjs';
 
 const CHECK_ONLY = process.argv.includes('--check');
@@ -62,7 +63,14 @@ function syncTauriCsp() {
     json.app ??= {};
     json.app.security ??= {};
 
-    for (const [key, want] of [['csp', csp], ['devCsp', devCsp]]) {
+    /* dangerousDisableAssetCspModification 一并维护：它是 CSP 能不能按我们
+       写的生效的前提（Tauri 注入 nonce/hash 会让 'unsafe-inline' 失效，
+       插件 HTML 的内联脚本全被拦）。原因见 config/nexus.config.mjs。 */
+    for (const [key, want] of [
+      ['csp', csp],
+      ['devCsp', devCsp],
+      ['dangerousDisableAssetCspModification', DISABLE_ASSET_CSP_MODIFICATION],
+    ]) {
       const cur = json.app.security[key] ?? null;
       if (cur === want) {
         report('ok', target, `${key} 与共享源一致（${label}）`);

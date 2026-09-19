@@ -51,12 +51,29 @@ export const TAURI_CONFIGS = {
  *
  * - script-src 必须带 'unsafe-inline'：首屏防闪脚本、插件 HTML 里的内联
  *   <script type="module"> 都靠它，去掉会被静默拦掉。
+ * - script-src 必须带 'unsafe-eval'：思维导图插件的 kityminder 内核
+ *   （plugins/mindmap/editor/kity.min.js）内部用 eval/Function 做特性探测，
+ *   禁掉会让它整条链断掉 —— 实测症状见文末。
  * - img-src / media-src 带 asset: 与 http://asset.localhost：Tauri 资源协议。
  * - connect-src 带 ipc: 与 http://ipc.localhost：Tauri 2 的 IPC。
+ *
+ * 关于这两个 'unsafe-*'：本应用是**本地桌面容器**，加载的全是同源的本地
+ * 插件（没有远程内容），安全边界是「插件 vs 外壳」的沙箱（见 plugin-config
+ * 的 isolated 开关），不是 CSP 的来源白名单。CSP 在这里的作用是拦住
+ * 意外外链，而不是防 XSS —— 所以这两个开关对本项目是必要成本，不是疏漏。
+ *
+ * 实测症状（2026-09-19，Tauri 生产构建下打开「思维导图」）：
+ *   外壳报「iframe 插件握手超时（10s）」，但诊断报告里「已握手: 是」——
+ *   真正断在插件嵌的编辑器里：
+ *     EvalError: 'unsafe-eval' ...   @ editor/kity.min.js:10
+ *     TypeError: ... reading 'Utils' @ editor/kityminder.core.min.js:10
+ *     ReferenceError: kityminder ... @ editor/index.html:174
+ *   缺了 unsafe-eval → kity 未定义 → 编辑器初始化抛错 → 插件 mount 永不返回。
+ *   普通浏览器里看不到：那边没有 Tauri 注入的响应头 CSP，编辑器帧不受约束。
  */
 export const BASE_CSP = {
   'default-src': ["'self'"],
-  'script-src': ["'self'", "'unsafe-inline'"],
+  'script-src': ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
   'style-src': ["'self'", "'unsafe-inline'"],
   'img-src': ["'self'", 'data:', 'asset:', 'http://asset.localhost', 'blob:'],
   'font-src': ["'self'", 'data:'],
@@ -64,6 +81,30 @@ export const BASE_CSP = {
   'media-src': ["'self'", 'asset:', 'http://asset.localhost', 'blob:'],
   'frame-src': ["'self'"],
 };
+
+/**
+ * Tauri 的「资产 CSP 修饰」必须关掉（写进两份 tauri 配置的 app.security）。
+ *
+ * 默认情况下 Tauri 会替我们修饰每个 HTML 资产的 CSP：给 index.html 里每个
+ * 内联 <script>/<style> 算 sha256 塞进 script-src，并给 <style> 和外链脚本
+ * 注入 nonce。按 CSP 规范，**只要 sources 里出现 nonce 或 hash，
+ * 'unsafe-inline' 就被整体忽略** —— 而本项目的 CSP 是刻意依赖
+ * 'unsafe-inline' 的（见 BASE_CSP 的说明）。后果实测如下：
+ *
+ *   · 插件的 HTML（plugins/<id>/index.html，内联 <script type="module">
+ *     是 iframe 插件的标准写法）没有那个 nonce，脚本被静默拦掉；
+ *   · 任何 `el.style.x = ...` 内联样式属性也会被拦。
+ *
+ * 具体炸点（思维导图，2026-09-19）：插件本身握手正常，但它嵌的 kityminder
+ * 编辑器（plugins/mindmap/editor/index.html，160KB 内联脚本）被拦 →
+ * `kityminder is not defined` → 挂载卡住 → 外壳报「iframe 插件握手超时」。
+ * 普通浏览器里复现不出来：那边只有 index.html 的 meta CSP，没有 nonce/hash。
+ *
+ * 注意 tauri.conf.json / tauri.vite.conf.json **不允许写注释**（构建脚本直接
+ * 报 `key must be a string`），所以原因记在这里，值由 sync-config.mjs 落到
+ * 两份配置里，`npm run config:check` 会挡住漂移。
+ */
+export const DISABLE_ASSET_CSP_MODIFICATION = true;
 
 /**
  * Vite 模式额外放行：dev server 自身与 HMR 的 WebSocket。
