@@ -289,3 +289,62 @@ test('hasStackChild 进了 VIEW_KEYS（不落盘、复制时剥掉）', () => {
   assert.ok(m, '找不到 VIEW_KEYS');
   assert.ok(m[1].includes('hasStackChild'), 'VIEW_KEYS 缺 hasStackChild');
 });
+
+/* ================= MCP 服务：全局库，不是画布级 ================= */
+
+/*
+ * 以前每张画布各存一份 mcpServers：同一服务在五张画布上要用就配五遍，
+ * 改个地址漏一处 → "这张画布连的是旧地址"，**且不报错**。
+ * 下面是"归全局库管"的存在性守卫。
+ */
+test('MCP 服务由全局库管', () => {
+  if (!hasSrc) return;
+  const store = read(path.join(ROOT, 'engine/mcpServers.ts'));
+  assert.ok(store.includes('MCP_SERVERS_KEY'), '缺少全局存储键');
+  assert.ok(store.includes('migrateFromCanvases'), '缺迁移：老画布上的服务不能丢');
+});
+
+/** 画布配置改动不该再触发 MCP 刷新（改环境变量也会触发就太吵了） */
+test('saveCanvasConfig 不再为 MCP 触发刷新', () => {
+  if (!hasSrc) return;
+  const app = read(path.join(ROOT, 'App.tsx'));
+  const i = app.indexOf('const saveCanvasConfig');
+  assert.ok(i > 0, '找不到 saveCanvasConfig');
+  const body = app.slice(i, i + 1200);
+  assert.ok(!body.includes('scheduleMcpRefresh'), 'saveCanvasConfig 里不该再调 scheduleMcpRefresh');
+  assert.ok(!body.includes('collectServers'), '不该再从画布配置里扫服务');
+});
+
+/** 服务库变了要防抖刷新 —— 改命令算变化（那是换了个服务） */
+test('全局服务库变了要触发刷新', () => {
+  if (!hasSrc) return;
+  const app = read(path.join(ROOT, 'App.tsx'));
+  assert.ok(/mcpServers,\s*scheduleMcpRefresh/.test(app), 'effect 要依赖 mcpServers');
+  assert.ok(app.includes('toServerRefs'), '要用 toServerRefs 转形状');
+});
+
+/** 凭据中心要能看到 MCP 那页 */
+test('凭据中心有 MCP 服务页', () => {
+  if (!hasSrc) return;
+  const p = read(path.join(ROOT, 'components/CredentialPanel.tsx'));
+  assert.ok(p.includes('MCP 服务'), '凭据中心缺 MCP 页签');
+  assert.ok(p.includes('McpServersPanel'), '没有渲染 MCP 面板');
+});
+
+/**
+ * 协议没接上时状态位要明说，不能给假绿勾 ——
+ * 假绿勾会让用户以为服务已经在跑了。
+ */
+test('MCP 状态位不假装', () => {
+  if (!hasSrc) return;
+  const m = read(path.join(ROOT, 'components/McpServersPanel.tsx'));
+  assert.ok(m.includes('未接入协议'), '缺"未接入协议"的明确状态');
+  /*
+   * 必须**真的读 protocolReady**来分支，不能只在 props 里声明了它、
+   * 渲染时却写死成功 —— 那样界面上照样是假绿勾，而守卫看不出来。
+   */
+  assert.ok(
+    /!protocolReady\s*\?/.test(m),
+    '状态必须由 !protocolReady 分支决定，不能写死成功',
+  );
+});
