@@ -6,6 +6,7 @@ import { ColorPicker } from '../../color-picker/ColorPicker';
 import { DirDialog } from './DirDialog';
 import { PresetIconGrid } from './PresetIconGrid';
 import { CheckLine, Modal } from './ui';
+import { prompt } from '../../../js/dialog.js';
 import { LOCK_PRESETS, applyPreset, presetOf, CUSTOM_PRESET_ID } from '../utils/lockPresets';
 
 const EMOJIS = ['📁', '🤖', '🧠', '⚙', '🎨', '📦', '🧩', '🚀', '🧪', '📚', '🔧', '💡', '🛠', '🧭', '🏷', '🗂'];
@@ -224,7 +225,7 @@ export function LockDialog({
  * DirDialog 只能选目录，不能用来选图标文件，所以自定义图标仍在这里列。
  */
 export function IconPickDialog({
-  api, files, groups, onGroupsChange, onClose, onPick, onImported, onLog,
+  api, files, groups, onGroupsChange, onClose, onPick, onImported, onLog, onRenamed,
 }: {
   api: Api;
   files: string[];
@@ -234,6 +235,8 @@ export function IconPickDialog({
   onPick: (path: string) => void;
   onImported: (files: string[]) => void;
   onLog: (m: string, isError?: boolean) => void;
+  /** 改名成功：回传新图标列表与同步了多少张卡片 */
+  onRenamed: (icons: string[], affected: number) => void;
 }) {
   const [tab, setTab] = useState<'preset' | 'mine'>('preset');
   const [picking, setPicking] = useState(false);
@@ -267,6 +270,29 @@ export function IconPickDialog({
       setTab('mine');
     } catch (e) {
       onLog(errText(e), true);
+    }
+  };
+
+  /**
+   * #10 图标改名。
+   *
+   * 后端会同步 `folder_icons` 里引用了这个图标的卡片 ——
+   * 所以提示里**必须报出 affected**：用户改一个图标名，
+   * 可能有 N 张卡片的图标跟着改了。静默完成会让人以为只有这个文件动了。
+   */
+  const renameIcon = async (full: string) => {
+    const cur = (full.split(/[\\/]/).pop() ?? full).replace(/\.(ico|png|jpe?g|bmp)$/i, '');
+    const raw = await prompt({ title: '重命名图标', label: '图标名', defaultValue: cur });
+    const name = (raw ?? '').trim();
+    if (!name || name === cur) return;
+    try {
+      const r = await api.renameIcon(full, name);
+      onRenamed(r.icons, r.affected);
+      onLog(r.affected > 0
+        ? `已改名为「${name}」，并同步更新 ${r.affected} 张卡片的图标引用`
+        : `已改名为「${name}」`);
+    } catch (e) {
+      onLog(`改名失败：${errText(e)}`, true);
     }
   };
 
@@ -308,8 +334,8 @@ export function IconPickDialog({
           {files.map((f) => {
             const name = f.split(/[\\/]/).pop() ?? f;
             return (
+              <div className="fpx-iconwrap" key={f}>
               <button
-                key={f}
                 className="fpx-icontile"
                 title={f}
                 onClick={() => { onPick(f); onClose(); }}
@@ -319,6 +345,20 @@ export function IconPickDialog({
                   : <span className="fpx-icontile-ph">{(name.slice(0, 1)).toUpperCase()}</span>}
                 <span className="fpx-iconcap">{name.replace(/\.(ico|png|jpe?g|bmp)$/i, '')}</span>
               </button>
+              {/*
+                #10 改名按钮。
+                **平时必须 pointer-events: none** —— 只压 opacity 的话，
+                看不见的按钮依然可以点（与 #116 同一个坑）：
+                用户以为点的是图标（选用），实际触发了改名。
+              */}
+              <button
+                className="fpx-icon-rename"
+                title="重命名这个图标"
+                onClick={(e) => { e.stopPropagation(); e.preventDefault(); void renameIcon(f); }}
+              >
+                ✎
+              </button>
+              </div>
             );
           })}
         </div>

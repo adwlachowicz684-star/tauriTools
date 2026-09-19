@@ -13,6 +13,14 @@ export interface LockItem {
   accountOnly?: boolean;
 }
 
+/** 图标改名结果（#10）：affected 是同步更新的卡片引用数，必须让用户看见 */
+export interface RenameIconResult {
+  path: string;
+  affected: number;
+  icons: string[];
+  snapshot: Snapshot;
+}
+
 export interface IconGroup {
   name: string;
   icons: string[];

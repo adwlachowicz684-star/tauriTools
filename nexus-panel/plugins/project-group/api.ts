@@ -4,6 +4,7 @@ import type {
   ChainAction, ChainSendResult, ContentItem, CustomChainClient, DirEntryLite,
   ClearResult, EditorCandidate, FpxConfig, McpToolRow, MoveAcrossResult,
   ContentRenameResult, RenameResult, Snapshot, WatchEvent,
+  RenameIconResult,
 } from './types';
 
 /**
@@ -68,6 +69,10 @@ export function makeApi(ctx: PluginContext) {
       call<Snapshot>('fpx_set_lock', {
         path, deny_delete: denyDelete, deny_write: denyWrite, account_only: accountOnly ?? false,
       }),
+
+    /* #10 图标改名：返回新路径 + 同步了多少张卡片 + 新图标列表 */
+    renameIcon: (oldPath: string, newName: string) =>
+      call<RenameIconResult>('fpx_rename_icon', { old_path: oldPath, new_name: newName }),
 
     setIcon: (path: string, iconRef: string | null, affectExplorer?: boolean) =>
       call<Snapshot>('fpx_set_icon', {

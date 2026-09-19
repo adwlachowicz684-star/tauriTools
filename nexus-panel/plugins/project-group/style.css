@@ -1359,3 +1359,22 @@
   border-top: 1px solid var(--border);
   font-size: 10px;
 }
+
+/* ---------------- 我的图标 · 改名按钮（#10）----------------
+ * 定位在 tile 右上角。**平时 pointer-events: none** ——
+ * 只压 opacity 的话，看不见的按钮依然可以点（与 #116 同一个坑）：
+ * 用户以为点的是图标（选用），实际触发了改名。
+ */
+.fpx-iconwrap { position: relative; display: inline-flex; }
+.fpx-icon-rename {
+  position: absolute; top: 2px; right: 2px;
+  width: 15px; height: 15px; line-height: 13px; padding: 0;
+  border: 1px solid var(--border); border-radius: 50%;
+  background: var(--surface); color: var(--text-dim);
+  font-size: 9px; cursor: pointer;
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.fpx-iconwrap:hover .fpx-icon-rename,
+.fpx-icon-rename:focus-visible { opacity: 1; pointer-events: auto; }
+.fpx-icon-rename:hover { color: var(--accent); }

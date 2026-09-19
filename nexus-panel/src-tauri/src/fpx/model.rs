@@ -602,6 +602,24 @@ pub struct LinkRow {
     pub state: String, // valid | broken | conflict | partial
 }
 
+/// 图标改名结果（#10）。
+///
+/// `affected` 是**同步了多少张卡片的引用** —— 必须回报给前端。
+/// 它不为 0 说明这次改名连带改了别人的配置，
+/// 用户应当知道"有 N 张卡片的图标跟着更新了"，而不是静默完成。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameIconResult {
+    /// 改名后的图标路径（绝对路径）
+    pub path: String,
+    /// 同步更新的卡片图标引用数
+    pub affected: usize,
+    /// 改名后的图标文件列表（省一次往返）
+    pub icons: Vec<String>,
+    /// 最新快照
+    pub snapshot: Snapshot,
+}
+
 /// 一次操作后的状态快照：配置 + 两侧页签 + 链接表。
 ///
 /// 放在 model.rs 而不是命令层：它和 Bootstrap / LinkRow / TabInfo 同为发给前端的 DTO。

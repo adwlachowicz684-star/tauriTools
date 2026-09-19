@@ -275,6 +275,9 @@ export function Dialogs(props: DialogsProps) {
           onClose={() => setDialog({ type: 'none' })}
           onPick={(p) => s.setIcon(dialog.card.path, p)}
           onImported={setIconFiles}
+          /* #10 改名：后端返回的图标列表要替换掉本地的，
+             否则界面还显示旧文件名（文件已经不在那个名字下了）。 */
+          onRenamed={(icons) => setIconFiles(icons)}
           onLog={s.pushLog}
         />
       )}

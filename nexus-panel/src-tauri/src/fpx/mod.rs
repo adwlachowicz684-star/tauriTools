@@ -31,6 +31,7 @@ use tauri::{AppHandle, State};
 
 use model::{
     Bootstrap, ContentItem, DirEntryLite, FpxConfig, LinkRecord, LinkRow, Snapshot, TabInfo,
+    RenameIconResult,
 };
 use store::FpxState;
 
@@ -1101,6 +1102,21 @@ pub fn fpx_icon_data(
     core_icon_data(&dir, &path)
 }
 
+/**
+ * 清洗图标文件名：防路径穿越与非法字符。
+ *
+ * 抽出来是因为**改名和保存都要用**。抄两份的话，
+ * 哪天改了清洗规则（比如允许某个字符），另一个就会悄悄用旧规则 ——
+ * 表现为"能保存但不能改名"，或反之。
+ */
+pub(crate) fn sanitize_icon_name(name: &str) -> String {
+    name.chars()
+        .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
 /// 把前端 fetch 到的内置图标内容存进数据目录 icons/，返回落盘路径。
 /// 内置图标随插件发布，若要"同步到资源管理器"（写 desktop.ini）就必须有真实文件，
 /// 所以选用内置图标时会先固化一份到这里。
@@ -1115,11 +1131,8 @@ pub fn fpx_save_icon_data(
     let dest_dir = dir.join("icons");
     std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
 
-    // 清洗文件名，防路径穿越与非法字符
-    let safe: String = name.chars()
-        .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
-        .collect();
-    let safe = safe.trim().to_string();
+    // 清洗文件名，防路径穿越与非法字符（与改名共用同一套规则）
+    let safe = sanitize_icon_name(&name);
     if safe.is_empty() { return Err("图标名为空".into()); }
 
     let path = dest_dir.join(format!("{safe}.ico"));
@@ -1127,6 +1140,112 @@ pub fn fpx_save_icon_data(
     if bytes.len() > 2 * 1024 * 1024 { return Err("图标数据超过 2MB".into()); }
     std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().to_string())
+}
+
+/**
+ * 重命名数据目录 icons/ 下的图标（#10）。
+ *
+ * 两件必须一起做的事：
+ *   1. 物理改名文件
+ *   2. **同步 `folder_icons` 里引用了它的卡片**
+ *
+ * 只做 1 不做 2 会怎样：卡片上配的图标路径还指向旧文件名，
+ * 文件已经不在这个名字下了 —— **卡片图标全部显示不出来**，
+ * 而界面上没有任何报错，用户只会看到图标位置空了一块。
+ * 这类"静默断链"比报错难查得多，且改名这个操作本身看起来毫无风险。
+ *
+ * 只做 2 不做 1 同样是断链（路径指到不存在的文件），所以两者必须在同一事务里。
+ */
+pub(crate) fn core_rename_icon(
+    dir: &std::path::Path,
+    old_path: &str,
+    new_name: &str,
+) -> Result<RenameIconResult, String> {
+    let icons_dir = dir.join("icons");
+
+    /*
+     * **old 必须落在数据目录 icons/ 下**。
+     *
+     * 不校验的话，这个命令就变成"重命名任意文件" ——
+     * 配合 MCP 或注入，能把系统文件挪走。
+     */
+    let old_canon = guard::must_be_under(
+        old_path.trim(),
+        &[guard::canonical_root(&icons_dir.to_string_lossy())
+            .ok_or_else(|| "图标目录不可用".to_string())?],
+    )?;
+
+    let safe = sanitize_icon_name(new_name);
+    if safe.is_empty() { return Err("图标名为空".into()); }
+
+    /* **保留原扩展名**：原来是 .png 的图标改完名还是 .png。
+       一律写成 .ico 的话，PNG 内容被当成 ICO 解析，图标直接显示不出来。 */
+    let ext = old_canon.extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_else(|| ".ico".to_string());
+    let dest = icons_dir.join(format!("{safe}{ext}"));
+
+    if !old_canon.is_file() { return Err("图标文件不存在".into()); }
+    if dest.exists() {
+        return Err(format!("已存在同名图标「{safe}{ext}」"));
+    }
+
+    let new_path = dest.to_string_lossy().to_string();
+    let old_key = store::normalize_key(&old_canon.to_string_lossy());
+
+    /*
+     * 物理改名**先做**，失败就直接返回：配置一行未动，状态是一致的。
+     *
+     * 反过来（先改配置再改文件）更糟 ——
+     * 配置改了、文件改名失败，全部引用指向不存在的文件，且无从回滚。
+     */
+    std::fs::rename(&old_canon, &dest).map_err(|e| format!("改名失败：{e}"))?;
+
+    let r = store::with_config(dir, |cfg| {
+        let mut n = 0usize;
+        /* **精确匹配，不能子串替换**：
+           `icons/foo.ico` 与 `icons/foo2.ico` 若用子串替换会互相污染。
+           按规范化后的路径相等来比，确保只动真正引用了这一个图标的卡片。 */
+        for v in cfg.folder_icons.values_mut() {
+            if store::normalize_key(v) == old_key {
+                *v = new_path.clone();
+                n += 1;
+            }
+        }
+        Ok((snapshot(dir, cfg), n))
+    });
+
+    /*
+     * 配置写入失败（磁盘满 / 锁冲突）时**必须把文件改名回去**：
+     * 否则配置还指向旧路径、文件已经在新名字下 —— 又是断链，
+     * 而且是用户完全不知道的一次操作造成的。
+     */
+    let (snap, affected) = match r {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = std::fs::rename(&dest, &old_canon);
+            return Err(e);
+        }
+    };
+
+    Ok(RenameIconResult {
+        path: new_path,
+        affected,
+        icons: sys::list_icons(dir),
+        snapshot: snap,
+    })
+}
+
+/// 重命名数据目录 icons/ 下的图标（#10），并同步已引用它的卡片。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_rename_icon(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+    old_path: String,
+    new_name: String,
+) -> Result<model::RenameIconResult, String> {
+    let dir = store::data_dir(&app, &state)?;
+    core_rename_icon(&dir, &old_path, &new_name)
 }
 
 /// 屏幕取色（色盘吸管）。坐标省略时取当前鼠标位置。
