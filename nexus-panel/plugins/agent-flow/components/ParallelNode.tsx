@@ -31,7 +31,7 @@ export default function ParallelNode({ id, data, selected }: NodeProps<ParallelF
         success: '已解析',
         failed: '解析异常',
       }}
-      footExtra={<span className="node-model">作用于下游</span>}
+      footExtra={<span className="node-line--foot">作用于下游</span>}
     >
       <div className="par-summary">
         <span className="par-bars" aria-hidden>

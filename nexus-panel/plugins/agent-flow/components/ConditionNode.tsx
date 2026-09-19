@@ -22,7 +22,7 @@ export default function ConditionNode({ id, data, selected }: NodeProps<CondFlow
         success: '已判定',
         failed: '判定异常',
       }}
-      footExtra={<span className="node-model">菱形决策</span>}
+      footExtra={<span className="node-line--foot">菱形决策</span>}
       /*
        * 出口是每条规则各一个（分支手柄在 children 里逐个渲染），
        * 不是统一的一个右侧出口，所以关掉外壳默认那个。

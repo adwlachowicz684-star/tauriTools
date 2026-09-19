@@ -26,27 +26,27 @@ export default function FsNode({ id, data, selected }: NodeProps<FsFlowNode>) {
       className="fs"
       tag="文件操作 · 经 Rust 执行"
       footExtra={
-        <span className="node-model">{meta?.destructive ? '会改动磁盘' : '只读'}</span>
+        <span className="node-line--foot">{meta?.destructive ? '会改动磁盘' : '只读'}</span>
       }
     >
 
-      <div className={`fs-summary ${meta?.destructive ? 'is-danger' : ''}`}>
-        <span className="fs-op">{meta?.label ?? d.op}</span>
-        <code className="fs-path" title={d.path}>
+      <div className={`node-line node-line--path ${meta?.destructive ? 'is-danger' : ''}`}>
+        <span className="node-line__op">{meta?.label ?? d.op}</span>
+        <code className="node-line__code" title={d.path}>
           {shortPath(d.path)}
         </code>
       </div>
 
       {(d.op === 'copy' || d.op === 'move') && (
-        <div className="fs-summary sub">
-          <span className="fs-arrow">→</span>
-          <code className="fs-path" title={d.target}>
+        <div className="node-line node-line--path is-sub">
+          <span className="node-line__arrow">→</span>
+          <code className="node-line__code" title={d.target}>
             {shortPath(d.target) || '（未填目标）'}
           </code>
         </div>
       )}
 
-      {d.dryRun && <div className="fs-flag">演练模式 · 不会真正改动磁盘</div>}
+      {d.dryRun && <div className="node-line--flag">演练模式 · 不会真正改动磁盘</div>}
     </NodeShell>
   );
 }

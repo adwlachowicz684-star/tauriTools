@@ -227,12 +227,134 @@ body { background: var(--af-bg); color: var(--af-fg); }
 .node-badge { font-size: 11px; padding: 1px 6px; border-radius: var(--r-pill, 999px); background: var(--af-raised); color: var(--af-dim); }
 .badge-success { color: var(--af-ok); } .badge-failed { color: var(--af-bad); }
 .badge-skipped { color: var(--af-warn); } .badge-running { color: var(--af-running); }
-.node-cli { font-size: 11px; color: var(--af-dim); margin: 4px 0 6px; }
-.node-prompt {
-  font-size: 12px; color: var(--af-soft); background: var(--af-sunk); border-radius: var(--af-r-sm);
+.node-foot { display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; color: var(--af-dim); }
+
+/* ==================================================================
+   卡片信息行 —— 统一到 node-line 一族
+   ==================================================================
+
+   以前各起各的名字：node-brief / fs-summary / node-prompt / node-meta /
+   node-out / node-cli / node-model / node-files / node-alert / node-err /
+   fs-op / fs-path / fs-arrow / fs-flag / node-tag / node-kind。
+
+   名字之间**看不出是一类东西**，后果有两个，都属于"不报错、难发现"：
+     · 同类信息分裂成两套（node-brief 与 node-sub），其中一套整个忘了定义
+     · 新起的名字漏定义也没人知道（.node-brief 被 4 张卡片用了却无样式）
+
+   现在统一命名：块 = node-line，变体 = --xxx，行内零件 = __xxx。
+   **各自的样式全部保留**（等宽、蓝底、最小预览高度、危险红…），
+   只是归到同一族里，一眼能看出哪些是同一类东西、各自又差在哪。
+
+   变体一览：
+     --lead     说明行（最淡，卡片顶部那行 tag）
+     --brief    一行摘要，单行截断
+     --path     路径 / 命令，等宽 + 蓝底
+     --preview  多行预览，有底框与最小高度
+     --meta     横排多项，每项可截断
+     --mono     等宽单行输出（成功结果，绿）
+     --foot     页脚补充小字（模型名 / 字数 / server 名）
+     --files    改了哪些文件
+     --flag     黄色提示（演练模式这类）
+     --alert    配置缺失原因（红底，写清缺什么）
+     --err      运行错误（红字）
+   ================================================================== */
+
+.node-line { margin: 3px 0 5px; font-size: 12px; color: var(--af-soft); }
+
+.node-line--lead { font-size: 11px; color: var(--af-dim); margin: 4px 0 6px; }
+
+.node-line--brief { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/*
+ * 路径 / 命令：等宽 + 蓝底。
+ * 与 --preview 的"有底框"不同色，是为了让"这是路径"能被一眼认出 ——
+ * 一条命令和一段提示词长得一样的话，扫视卡片时容易看错。
+ */
+.node-line--path {
+  display: flex; align-items: center; gap: 7px; margin: 5px 0;
+  font-size: var(--fs-11, 11px); color: #bae6fd;
+  background: #0e202e; border: 1px solid #1d4d5a;
+  border-radius: 5px; padding: 4px 7px;
+}
+/* 复制 / 移动的第二条路径：视觉上并入同一组，不另起一块 */
+.node-line--path.is-sub { margin-top: -2px; opacity: .85; }
+/* 会改动磁盘的操作换红底 —— 扫一眼就知道这组不是只读 */
+.node-line--path.is-danger { color: #fecaca; background: #2a1414; border-color: #5a2020; }
+
+.node-line__op {
+  flex: none; background: #1d4d5a; color: #bae6fd;
+  border-radius: var(--af-r-xs); padding: 1px 6px; font-size: 11px;
+}
+.node-line--path.is-danger .node-line__op { background: #5a2020; color: #fecaca; }
+.node-line__code {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--af-mono); font-size: 11px;
+}
+.node-line__arrow { flex: none; color: var(--af-dim); }
+
+.node-line--preview {
+  background: var(--af-sunk); border-radius: var(--af-r-sm);
   padding: 6px 8px; min-height: 42px; line-height: 1.45;
 }
-.node-foot { display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; color: var(--af-dim); }
+
+.node-line--meta { display: flex; gap: 10px; font-size: 11px; color: var(--af-dim); }
+/* min-width:0 不可省：flex 子项默认 min-width:auto，几个 span 一起会把卡片撑破 */
+.node-line--meta > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.node-line--mono {
+  font-size: 11px; color: var(--af-ok); font-family: var(--af-mono);
+  margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.node-line--foot {
+  font-size: var(--fs-11, 11px); color: var(--af-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.node-line--files {
+  display: flex; align-items: center; gap: 4px;
+  font-size: var(--fs-11, 11px); color: var(--af-t-file); margin-top: 3px;
+}
+.node-line__badge {
+  border: 1px solid currentColor; border-radius: var(--r-pill, 999px);
+  padding: 0 6px; font-family: var(--af-mono);
+}
+
+.node-line--flag { margin-top: 4px; font-size: var(--fs-11, 11px); color: var(--af-warn); }
+
+/* 配置缺失原因直接写在卡片上 —— 只靠一个小红点，用户不知道缺什么 */
+.node-line--alert {
+  margin-top: 5px; font-size: 11px; line-height: 1.45;
+  color: #fca5a5; background: rgba(239, 68, 68, 0.12);
+  border-left: 2px solid rgba(239, 68, 68, 0.55);
+  border-radius: 3px; padding: 3px 6px;
+}
+
+.node-line--err { font-size: 11px; color: var(--af-bad); margin-top: 4px; line-height: 1.45; }
+
+/* ------------------------------------------------------------------ */
+/* 胶囊小标签                                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * node-tag（OCR / 翻译的源语言）与 node-kind（GitHub 的种类标记）以前是
+ * 两份几乎相同的定义 —— 抄两份 → 改一个忘另一个 → 同类标签长得不一样，
+ * 而且不报错。现在合成一个 .node-pill。
+ *
+ * 名字不能叫 .node-chip —— 那是**参数卡片**（NodeCardChips，会换色/虚线）
+ * 已经在用的类名，撞上去两边样式会互相覆盖。
+ *
+ * 右边距只在正文里才需要：node-head 是 flex 容器，它自己有 gap。
+ */
+.node-pill {
+  font-size: 10px; padding: 0 6px; border-radius: var(--r-pill, 999px); flex: none;
+  border: 1px solid var(--af-line); color: var(--af-dim);
+  background: var(--af-sunk); white-space: nowrap; text-overflow: ellipsis;
+}
+.node-line--preview .node-pill { display: inline-block; margin-right: 5px; }
+
+/* ------------------------------ */
+
 /* ---------- GitHub 节点卡片（拉取 / 推送共用）----------
  *
  * 这一组此前完全没有样式：卡片内部的 node-kind / node-sub / node-meta /
@@ -258,14 +380,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
  * 抄两份的代价：改一个忘另一个，同类标签就会长得不一样，
  * 而且**不报错、测试也抓不到**。合成一条规则，容器差异用上下文选择器补。
  */
-.node-tag,
-.node-kind {
-  font-size: 10px; padding: 0 6px; border-radius: var(--r-pill, 999px); flex: none;
-  border: 1px solid var(--af-line); color: var(--af-dim);
-}
 /* 在正文里内联使用时才需要 inline-block 与右侧间距（node-head 是 flex 容器，不需要） */
-.node-prompt .node-tag { display: inline-block; margin-right: 5px; }
-
 /*
  * 卡片主体里的一行摘要 —— 所有卡片的"第二行"统一用它。
  *
@@ -274,21 +389,8 @@ body { background: var(--af-bg); color: var(--af-fg); }
  * 是裸文本：字号、颜色、截断全都走浏览器默认 —— 长内容还会把卡片撑破。
  * 现在合成一套 .node-brief。
  */
-.node-brief {
-  font-size: 12px; color: var(--af-soft); margin: 3px 0 5px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.node-meta { display: flex; gap: 10px; font-size: 11px; color: var(--af-dim); }
 /* min-width:0 不可省：flex 子项默认 min-width:auto，三个 span 一起会把
    卡片撑破（策略链如「API → git」本身就不短） */
-.node-meta > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.node-out {
-  font-size: 11px; color: var(--af-ok); font-family: var(--af-mono);
-  margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.node-err { font-size: 11px; color: var(--af-bad); margin-top: 4px; line-height: 1.45; }
-
-
 /* 属性面板 */
 .inspector {
   width: 340px; flex: none; background: var(--af-panel);
@@ -769,30 +871,6 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 
 /* ---------------- 文件操作节点 ---------------- */
 .node-card.fs { border-left-color: #38bdf8; }
-.fs-summary {
-  display: flex; align-items: center; gap: 7px; margin: 5px 0;
-  font-size: var(--fs-11, 11px); color: #bae6fd;
-  background: #0e202e; border: 1px solid #1d4d5a;
-  border-radius: 5px; padding: 4px 7px;
-}
-.fs-summary.sub { margin-top: -2px; opacity: .85; }
-.fs-summary.is-danger {
-  color: #fecaca; background: #2a1414; border-color: #5a2020;
-}
-.fs-op {
-  flex: none; background: #1d4d5a; color: #bae6fd;
-  border-radius: var(--af-r-xs); padding: 1px 6px; font-size: 11px;
-}
-.fs-summary.is-danger .fs-op { background: #5a2020; color: #fecaca; }
-.fs-path {
-  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: var(--af-mono); font-size: 11px;
-}
-.fs-arrow { flex: none; color: var(--af-dim); }
-.fs-flag {
-  margin-top: 4px; font-size: var(--fs-11, 11px); color: var(--af-warn);
-}
-
 /* 提示条：警告态 */
 .tip.warn {
   color: #fecaca; background: #2a1414; border-color: #5a2020;
@@ -1147,28 +1225,12 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 }
 
 /* 节点卡片上的文件标记 */
-.node-files {
-  display: flex; align-items: center; gap: 4px;
-  font-size: var(--fs-11, 11px); color: var(--af-t-file); margin-top: 3px;
-}
-.node-files-badge {
-  border: 1px solid currentColor; border-radius: var(--r-pill, 999px);
-  padding: 0 6px; font-family: var(--af-mono);
-}
-
 /* ---------------- OCR / 翻译节点 ---------------- */
 
 .node-card.ocr { border-left-color: #f472b6; }
 .node-card.translate { border-left-color: #38bdf8; }
 
 /* 节点卡片里的来源 / 目标语言小标签 */
-.node-tag {
-  display: inline-block; margin-right: 5px;
-  font-size: 10px; padding: 0 6px; border-radius: var(--r-pill, 999px);
-  border: 1px solid var(--af-line); color: var(--af-dim);
-  background: var(--af-sunk); white-space: nowrap; text-overflow: ellipsis;
-}
-
 /* 等宽输入：地址、模型名、Key 这类 */
 input.mono, textarea.mono {
   font-family: var(--af-mono); font-size: var(--fs-11, 11px);
@@ -1192,15 +1254,6 @@ input.mono, textarea.mono {
 }
 
 /* 节点底部右侧：补充说明（模型名 / 字数 / 只读标记等） */
-.node-model {
-  font-size: var(--fs-11, 11px);
-  color: var(--af-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 60%;
-}
-
 /* 工具栏里的触发器计数：现在是画布上的节点，这里只作静态展示 */
 .trg-btn-static {
   display: inline-flex;
@@ -1811,14 +1864,6 @@ input.mono, textarea.mono {
 }
 
 /* 阻断原因直接写在卡片上 —— 只靠一个小红点，用户不知道缺什么 */
-.node-alert {
-  margin-top: 5px; font-size: 11px; line-height: 1.45;
-  color: #fca5a5; background: rgba(239, 68, 68, 0.12);
-  border-left: 2px solid rgba(239, 68, 68, 0.55);
-  border-radius: 3px; padding: 3px 6px;
-}
-
-
 /* ---------------- 节点显示高度（矮 / 中 / 高）---------------- */
 /*
  * 只改高度与内边距，**宽度保持 240px 不变** ——

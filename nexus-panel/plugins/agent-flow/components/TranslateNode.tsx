@@ -20,12 +20,12 @@ export default function TranslateNode({ id, data, selected }: NodeProps<Translat
       tag={`${meta?.label ?? '自定义'} · ${d.llm?.model || '未选模型'}`}
       footExtra={
         d.lastChars != null && d.lastChars > 0 ? (
-          <span className="node-model">{d.lastChars} 字</span>
+          <span className="node-line--foot">{d.lastChars} 字</span>
         ) : null
       }
     >
-      <div className="node-prompt">
-        <span className="node-tag">→ {targetText || '未指定语言'}</span>
+      <div className="node-line node-line--preview">
+        <span className="node-pill">→ {targetText || '未指定语言'}</span>
         {d.text ? d.text.slice(0, 70) + (d.text.length > 70 ? '…' : '') : '（未填写待翻译内容）'}
       </div>
     </NodeShell>

@@ -20,12 +20,12 @@ function Card({
 }) {
   return (
     <NodeShell id={id} type={type} data={data} selected={selected} tag={tag}>
-      <div className="fs-summary">
-        <code className="fs-path" title={summary.full ?? summary.text}>
+      <div className="node-line node-line--path">
+        <code className="node-line__code" title={summary.full ?? summary.text}>
           {summary.text}
         </code>
       </div>
-      {title ? <div className="node-brief">{title}</div> : null}
+      {title ? <div className="node-line node-line--brief">{title}</div> : null}
     </NodeShell>
   );
 }

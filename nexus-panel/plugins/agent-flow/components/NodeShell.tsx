@@ -103,11 +103,11 @@ export function NodeShell({
 
       {/* 红色时把原因写出来 —— 只靠一个小红点，用户不知道缺什么 */}
       {dot === 'error' && issue.messages.length ? (
-        <div className="node-alert">{issue.messages[0]}</div>
+        <div className="node-line--alert">{issue.messages[0]}</div>
       ) : null}
 
       {/* 矮卡片隐去说明行与主体，只留"这是什么 + 跑得怎么样" */}
-      {size !== 'sm' && tag ? <div className="node-cli">{tag}</div> : null}
+      {size !== 'sm' && tag ? <div className="node-line--lead">{tag}</div> : null}
 
       {size !== 'sm' ? children : null}
 

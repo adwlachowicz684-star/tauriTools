@@ -17,7 +17,7 @@ export function TableNode({ id, type, data, selected }: NodeProps) {
       selected={selected}
       statusText={{ ...NODE_STATUS_TEXT, running: '计算中' }}
     >
-      <div className="node-brief">{briefOf(type, d)}</div>
+      <div className="node-line node-line--brief">{briefOf(type, d)}</div>
     </NodeShell>
   );
 }
