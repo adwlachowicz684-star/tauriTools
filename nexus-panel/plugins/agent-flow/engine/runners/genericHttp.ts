@@ -61,9 +61,9 @@ export async function runGenericHttp(ctx: RunContext): Promise<void> {
     emit({ type: 'node-start', id, rendered: `${d.method} ${url}` });
 
     /*
-     * 不用 `opts.httpRequester!`：非空断言剥不掉（scripts/strip-ts.py 不处理 `!`，
-     * 留在 .mjs 里 Node 直接语法错误）。而这里其实也不需要断言 ——
+     * 不用 `opts.httpRequester!` 非空断言 —— 这里其实不需要：
      * 能力缺失时 withNodeRun 已经抛过了，能走到这儿说明一定存在。
+     * 用 as 收住类型即可，断言反而会掩盖"其实可能没注入"的情况。
      */
     const requester = opts.httpRequester as HttpRequester;
     const res = await requester(url, {

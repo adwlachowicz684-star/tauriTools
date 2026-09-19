@@ -28,7 +28,8 @@ import { requiresOf } from './nodeRequires';
  * 不带则留空。
  */
 /**
- * 下面两个别名纯粹是为了迁就 scripts/strip-ts.py：
+ * 下面两个别名用来收住内联对象的形状（早年也顺带绕开了类型剥离脚本的限制，
+ * 那条限制已随脚本废弃而解除）：
  * 它剥不掉带尖括号的类型（`Record<string, string>` 会原样留在 .mjs 里，
  * Node 直接语法错误）。用别名把尖括号隔离在这两行里即可。
  */
@@ -38,7 +39,7 @@ type FileList = string[];
 export class NodeFailError extends Error {
   /*
    * 写法刻意避开 TS 类字段的 `?` 修饰符与类型注解：
-   * scripts/strip-ts.py（沙盒里用来把 TS 剥成 ESM 跑单测）不认这些，
+   * 早期沙盒里用正则剥离 TS 的脚本不认这些，
    * 会把 `fields?: Record<...>` 原样留在 .mjs 里，Node 直接语法错误。
    * 字段一律在构造函数里赋初值。
    */

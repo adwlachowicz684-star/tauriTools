@@ -108,10 +108,7 @@ export function deriveParams(fields: FieldLike[]): DerivedParams {
       else if (f.hint) notes.push(f.hint);
       continue;
     }
-    /*
-     * 不用类型谓词 `(k): k is string` —— strip-ts.py 处理不了，
-     * 会把后半段截掉，生成的 .mjs 直接语法错误。
-     */
+    /* 过滤成字符串数组；用 filter + 断言而不是类型谓词，写法更短 */
     const raw: (string | null | undefined)[] = [f.key, ...(f.extraKeys ?? [])];
     const keys: string[] = [];
     for (const r of raw) {
@@ -225,8 +222,7 @@ export function describeAll(): { kind: string; produces: string; accepts: string
 /**
  * 拼装时容易踩的几条全局约定。
  *
- * 刻意**不写返回类型注解**：多行的对象类型注解 strip-ts.py 处理不了
- * （会把 `{` 后面的内容截断，生成的 .mjs 直接语法错误）。
+ * 不写返回类型注解：这个对象的形状很长，写出来反而盖掉真正的说明。
  * 靠 TS 推断，调用方拿到的形状是一样的。
  */
 export function conventions() {

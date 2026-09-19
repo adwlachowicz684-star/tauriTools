@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runGraph } from '../runner.mjs';
-import { makeNode } from '../types.mjs';
+/*
+ * 以前这里 import 的是 '../runner.mjs' / '../types.mjs' ——
+ * 那是 strip-ts.py 的**生成物**，于是测试与构建脚本耦合死了：
+ * 换个编译方式就得回来改路径。现在直接用源码路径，
+ * 由 tsc 编译成 .js 后同目录解析。
+ */
+import { runGraph } from '../engine/runner';
+import { makeNode } from '../types';
 
 /**
  * 节点注册表相关的引擎侧行为。

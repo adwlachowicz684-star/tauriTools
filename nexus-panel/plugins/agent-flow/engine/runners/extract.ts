@@ -42,7 +42,7 @@ export async function runExtract(ctx: RunContext): Promise<void> {
 
     /*
      * 刻意不用 `d.trim ? r.text.trim() : r.text` 这种单行三元：
-     * scripts/strip-ts.py 会把其中的 `:` 当成类型注解剥掉，
+     * 早期正则剥离脚本会把其中的 `:` 当成类型注解剥掉，
      * 生成的 .mjs 语法错误。多写两行换一个不会踩坑的写法。
      */
     let text = r.text;

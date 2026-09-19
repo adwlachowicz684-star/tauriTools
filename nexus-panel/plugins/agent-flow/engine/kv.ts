@@ -57,9 +57,9 @@ export function defaultKV(): KV {
  * @param isValid 元素校验；不传则只做数组判断
  */
 /*
- * 刻意不用泛型：strip-ts.py 会把 `loadList<CustomPreset>(...)` 里的
- * 类型实参**留下来**，生成的 .mjs 里出现裸的 `CustomPreset`，
- * 运行时直接 ReferenceError。改用返回值 unknown[] + 调用方 as 断言。
+ * 返回值用 unknown[] + 调用方 as 断言，而不是泛型。
+ * （早年是为了绕开类型剥离脚本的限制，那条限制已随脚本废弃而解除；
+ *   这个写法本身也没问题，保留。）
  */
 export function loadList(
   kv: KV,
@@ -76,8 +76,8 @@ export function loadList(
       : (parsed as Record<string, unknown> | null)?.[field];
     if (!Array.isArray(list)) return [];
     /*
-     * 刻意不写三元 + as 的组合：strip-ts.py 处理 `a as T[] : b as T[]`
-     * 时会把三元后半段一起吃掉，生成 `... {` 这种语法错误的代码。
+     * 写成两个 if 而不是三元 + as 的组合：
+     * 三元里两段都有 as 时读起来绕，拆开更直白。
      */
     if (isValid) return list.filter(isValid);
     return list;
@@ -89,8 +89,8 @@ export function loadList(
 /**
  * 读一个"整个对象就是内容"的存储（如节点默认值表）。
  *
- * 刻意不写 `<T extends Record<...>>`：strip-ts.py 处理不了带 extends 的
- * 泛型约束，会原样留下 `<T extends ...>` 导致生成的 .mjs 语法错误。
+ * 不用 `<T extends Record<...>>` 而是收一个窄一点的入参类型：
+ * 约束写在这里容易和调用方的推断打架，放外面更好读。
  */
 export function loadObject(kv: KV, key: string): unknown {
   const raw = kv.get(key);

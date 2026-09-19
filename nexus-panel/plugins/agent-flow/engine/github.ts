@@ -74,8 +74,7 @@ export type Attempt<T> = { ok: true; value: T } | { ok: false; error: string };
 
 /**
  * 以下结果类型一律用别名，不写成内联的多行对象字面量。
- * 一是签名更好读，二是剥离类型的脚本处理不了跨行返回类型
- * （会把 `): Promise<{ ... }> {` 切坏）。
+ * 一是签名更好读，二是跨行返回类型写在签名里会盖住函数体。
  */
 export type AtomEntry = {
   sha: string;
