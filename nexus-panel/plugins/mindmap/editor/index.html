@@ -1013,10 +1013,22 @@
              */
             function openAttach(node, kind, index, raw) {
                 try { km.select(node, true); } catch (e) {}
+                // 点画布上的图时把**整组**一起发给宿主：预览里要能左右/滚轮切换。
+                // 只发单张的话，看下一张就得关掉浮层回来再点一次。
+                //
+                // 只在这条路径带上（图片是 dataURL、不进资产库），
+                // 视频/文件仍然只发引用 —— 它们本体在 IndexedDB，
+                // 整包发过来等于把整个文件复制一遍。
+                var list = null;
+                if (kind === 'image') {
+                    try { list = imageListOf(node); } catch (e) { list = null; }
+                    if (list && list.length < 2) list = null;
+                }
                 hostPost({
                     type: 'openattach',
                     kind: kind, index: index, raw: raw,
                     nodeId: (node && node.data && node.data.id) || '',
+                    list: list,
                 });
             }
 

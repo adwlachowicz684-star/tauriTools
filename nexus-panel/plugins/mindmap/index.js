@@ -591,7 +591,7 @@ bootIframePlugin(async (ctx) => {
     await persist();
   }
 
-  function renameSheet(id) {
+  async function renameSheet(id) {
     const s = workbook.sheets.find((x) => x.id === id);
     if (!s) return;
     const name = await askText({ label: '画布名称', defaultValue: s.title });
@@ -711,7 +711,7 @@ bootIframePlugin(async (ctx) => {
     await openFile(id);
   }
 
-  function renameFile(id) {
+  async function renameFile(id) {
     const f = fileIndex.find((x) => x.id === id);
     if (!f) return;
     const name = await askText({ label: '脑图名称', defaultValue: f.name });
@@ -750,7 +750,7 @@ bootIframePlugin(async (ctx) => {
     status('已新建文件夹');
   }
 
-  function renameFolder(id) {
+  async function renameFolder(id) {
     const fo = foldersList.find((x) => x.id === id);
     if (!fo) return;
     const name = await askText({ label: '文件夹名称', defaultValue: fo.name });
@@ -2138,14 +2138,20 @@ bootIframePlugin(async (ctx) => {
     // 所以退化为「视频播浮层 / 文件另存为」，并把侧栏切到文件页以便查看信息。）
     onOpenFile: guard('打开附件', (path) => openAttachment(path)),
     // 点击画布上的附件（多附件：kind + index + 原始引用）
-    onOpenAttach: (kind, index, raw, nodeId) => {
+    onOpenAttach: (kind, index, raw, nodeId, list) => {
       // 图片是 **dataURL**，不是资产引用 —— 交给 openAttachment 会被
       // decodeRef 兜底成 legacyPath（实测：a 为 null），于是报
       // 「旧版本地路径，无法打开」。点画布上的图理应直接预览。
       if (kind === 'image') {
         guard('预览图片', () => {
           if (!raw) { status('图片数据为空', true); return; }
-          openPreview(app, { url: raw, name: `图片 ${Number(index) + 1}` });
+          // list 由编辑器随消息带过来（该节点上的全部图片），
+          // 有它预览里才能左右切换 / 滚轮切换
+          const arr = Array.isArray(list) ? list : null;
+          openPreview(app, { url: raw, name: `图片 ${Number(index) + 1}` }, {
+            list: arr ? arr.map((u, k) => ({ url: u, name: `图片 ${k + 1}` })) : null,
+            index: Number(index) || 0,
+          });
         })();
         return;
       }

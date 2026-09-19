@@ -976,3 +976,15 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: var(-
   .mm-icon-side { width: 44px; }
   .mm-side { width: 210px; }
 }
+
+/* 图片预览：多张时的切换条（单张时不渲染，见 panels.js） */
+.mm-preview-nav {
+  display: flex; align-items: center; justify-content: center;
+  gap: 10px; margin-top: 8px;
+}
+/* 计数用等宽数字：切换时宽度不跳，不会左右抖 */
+.mm-preview-count {
+  font-variant-numeric: tabular-nums;
+  min-width: 44px; text-align: center;
+  color: var(--text-dim, #9aa4b2); font-size: var(--fs-12, 12px);
+}
