@@ -2452,7 +2452,7 @@ input.mono, textarea.mono {
    * 光靠子级限高不够：任何一处漏了 flex/min-height 都会漏出来，
    * 这里兜底才不会让布局退化成"看不见日志"。
    */
-  
+  overflow: hidden;
 }
 
 /* 可拖分隔条 */
