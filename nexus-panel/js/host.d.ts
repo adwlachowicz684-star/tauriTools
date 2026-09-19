@@ -26,14 +26,15 @@ export interface PluginManifest {
    */
   commands?: string[];
   /**
-   * 'app'（默认，显示在侧边栏） | 'service'（不进侧边栏，供其它插件调用）
+   * 'app'（默认，侧边栏可见） | 'service'（供其它插件调用）
+   * | 'toolbar'（标题栏右上角的小按钮）
    *
    * 分类只认这个字段，**不看目录位置** ——
-   * 服务插件与 app 插件一样平铺在 plugins/ 下。
+   * 三类插件都平铺在 plugins/ 下。
    * 目录再分一层就成了第二个真相源：移动目录忘了改这里，
    * 服务就会出现在侧边栏（而判定逻辑只认 kind）。
    */
-  kind?: 'app' | 'service';
+  kind?: 'app' | 'service' | 'toolbar';
   /**
    * 服务专用：调用时由宿主临时显示为居中浮层。
    * 色盘 / 图标选择 / md 编辑这类服务**必须用户看得见才用得了**，
@@ -131,5 +132,7 @@ export function filterByRuntime(plugins: PluginManifest[]): PluginManifest[];
    所以单独导出，别在各处各写一遍 filter。 */
 export function visiblePlugins(plugins: PluginManifest[]): PluginManifest[];
 export function isService(p: PluginManifest | null | undefined): boolean;
+/** 是否是工具栏插件（显示在标题栏右上角，不进侧边栏） */
+export function isToolbar(p: PluginManifest | null | undefined): boolean;
 export function isInsideTauri(): boolean;
 export const THEME_VARS: string[];

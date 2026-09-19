@@ -58,6 +58,13 @@ export interface FpxConfig {
   iconGroups: IconGroup[];
   backupDir: string | null;
   backupAppendOnly: boolean;
+  /**
+   * MCP 访问令牌。HTTP 模式强制校验（Authorization: Bearer / X-Token），
+   * stdio 模式由拉起方注入、不校验。
+   * 生成后**不再变** —— 改了令牌，AI 客户端里配好的那条就失效，
+   * 而用户只会看到"连不上"，无从下手。
+   */
+  mcpToken: string | null;
   /** 自动备份间隔（分钟）；0 = 关闭 */
   backupAutoMinutes: number;
   mcpEnabled: boolean;

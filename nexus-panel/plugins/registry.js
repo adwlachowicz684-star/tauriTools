@@ -219,4 +219,54 @@ export const plugins = [
     builtin: true,
     description: '主题、强调色、插件主题适配、插件管理',
   },
+
+  /* ---- 工具栏插件：显示在标题栏右上角，不进侧边栏 ----
+     kind:'toolbar' 与另两类的区别见 js/toolbar-plugin.js 头部。
+
+     只支持 type:'module'：这几个按钮必须直接调 Tauri（置顶要用
+     窗口 API、托盘要用 host.win），iframe 里拿不到。配成 iframe
+     会被加载器拒绝 —— 那是"配置了却永远没反应"。
+
+     入口统一叫 module.js（纯 JS，无 React 依赖），
+     所以两种模式下同一份文件都能跑，不用各写一套。 */
+  {
+    id: 'toolbar-theme',
+    name: '切换主题',
+    icon: '◐',
+    kind: 'toolbar',
+    type: 'module',
+    entry: './plugins/toolbar-theme/module.js',
+    builtin: true,
+    description: '打开主题选择器（缩略图选择）',
+  },
+  {
+    id: 'toolbar-pin',
+    name: '窗口置顶',
+    icon: '⇱',
+    kind: 'toolbar',
+    type: 'module',
+    entry: './plugins/toolbar-pin/module.js',
+    builtin: true,
+    description: '窗口置顶开关',
+  },
+  {
+    id: 'toolbar-tray',
+    name: '隐藏到托盘',
+    icon: '⇲',
+    kind: 'toolbar',
+    type: 'module',
+    entry: './plugins/toolbar-tray/module.js',
+    builtin: true,
+    description: '把窗口藏到托盘（托盘图标可唤回）',
+  },
+  {
+    id: 'toolbar-mcp',
+    name: 'MCP 状态',
+    icon: '⬡',
+    kind: 'toolbar',
+    type: 'module',
+    entry: './plugins/toolbar-mcp/module.js',
+    builtin: true,
+    description: '显示 MCP 服务数量，可打开凭据中心管理',
+  },
 ];

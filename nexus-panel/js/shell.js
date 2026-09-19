@@ -19,6 +19,8 @@ import { getPluginConfig, setPluginConfig } from './plugin-config.js';
 import { openThemePicker } from './theme-picker.js';
 import { installTooltip, refreshTooltip } from './tooltip.js';
 import { installInspector, toggleInspector, isInspectorOn, escInspector } from './inspector.js';
+import { loadToolbarPlugins, mountToolbar } from './toolbar-plugin.js';
+import { loadModuleEntry } from './plugin-entries.js';
 
 import { confirm as askConfirm } from './dialog.js';
 const $ = (s) => document.querySelector(s);
@@ -569,6 +571,42 @@ async function init() {
   renderSidebar();
 }
 
+/**
+ * 加载并渲染工具栏插件（右上角那一排）。
+ *
+ * 放在这里而不是塞进 init()，是因为它依赖 toast / navigate 这些
+ * 已经建好的外壳能力；插件拿到的 api 就是这几个。
+ */
+async function initToolbar() {
+  const slot = $('#tb-toolbar');
+  if (!slot) return;
+  /*
+   * loadRegistry 是 **async**（它要动态 import registry.js 并合并自定义插件），
+   * 必须 await —— 不 await 拿到的是 Promise，下面的 .filter 会直接抛
+   * TypeError: all.filter is not a function。
+   *
+   * 而 initToolbar 是在 IIFE 里 await 的，这个错会冒上去让**整个外壳初始化
+   * 失败**（不只是少一排按钮）。
+   */
+  const all = (await loadRegistry()) || [];
+  const manifests = all.filter((p) => p.kind === 'toolbar');
+  await loadToolbarPlugins(manifests, {
+    loadModule: (m) => loadModuleEntry(m),
+    onError: (id, e) => {
+      console.warn('[toolbar] 加载失败', id, e);
+      toast(`工具栏插件「${id}」加载失败：${e?.message || e}`, 'err');
+    },
+  });
+  mountToolbar(slot, {
+    toast,
+    win: (a) => host.win(a),
+    navigate,
+    /* 工具栏插件走宿主总线。bus 是外壳与插件共用的那一套，
+       agent-flow 用 ctx.on 订阅的就是它。 */
+    emit: (ev, payload) => host.bus?.emit?.(ev, payload),
+  });
+}
+
 (async function () {
   await init();
 
@@ -580,13 +618,6 @@ async function init() {
     localStorage.setItem('nexus:sidebar-open', open ? '1' : '0');
     // 收起→展开时，正挂着的 nav-item 提示要立刻收掉：名字已显示出来了
     refreshTooltip();
-  };
-  /* 隐藏到托盘：与 Ctrl+~ 同一个动作。
-     放在"置顶"与"最小化"之间 —— 它俩都是窗口级操作，
-     ✕ 在最右单独一档（危险操作）。 */
-  $('#btn-hide').onclick = () => {
-    host.win('hide');
-    toast('已隐藏到托盘 · 点击托盘图标可唤回', 'info');
   };
   $('#btn-min').onclick = () => host.win('minimize');
   $('#btn-max').onclick = () => host.win('maximize');
@@ -603,13 +634,11 @@ async function init() {
     host.win(act);
     if (act === 'hide') toast('已隐藏到托盘 · 点击托盘图标可唤回', 'info');
   };
-  $('#btn-top').onclick = (e) => { e.currentTarget.classList.toggle('on'); host.win('topmost'); };
-  $('#btn-theme').onclick = (e) => {
-    openThemePicker({
-      anchor: e.currentTarget,
-      onPick: (t) => { if (t) toast(`已切换到「${t.name}」`, 'ok'); },
-    });
-  };
+  /*
+   * 主题 / 置顶 / 托盘 三个按钮**已抽成工具栏插件**（kind:'toolbar'），
+   * 在 IIFE 末尾统一加载渲染（见文件底部）。这里不再直接接线 ——
+   * 否则会出现"插件渲染一份 + 硬编码一份"的两套按钮。
+   */
   $('#btn-add').onclick = openAddDialog;
   $('#btn-settings').onclick = () => navigate('settings');
 
@@ -714,4 +743,22 @@ async function init() {
     },
     theme: { applyTheme, setAccent, getCurrent, exportVars, getBase },
   };
+
+  /*
+   * 工具栏放在 __NEXUS__ 挂载**之后**。
+   *
+   * 它要 await loadRegistry（动态 import），比后面的同步初始化慢得多。
+   * 放在前面的话，等它返回期间 window.__NEXUS__ 还不存在 ——
+   * 设置页读 getShortcuts()、插件读 external 都会拿到 undefined，
+   * 表现为"外壳起来了但各功能都空的"。
+   *
+   * 再包一层 try/catch：工具栏是**附加功能**，
+   * 它挂了不该连累已经初始化好的外壳核心。
+   */
+  try {
+    await initToolbar();
+  } catch (e) {
+    console.warn('[toolbar] 初始化失败', e);
+    toast(`工具栏加载失败：${e?.message || e}`, 'err');
+  }
 })();

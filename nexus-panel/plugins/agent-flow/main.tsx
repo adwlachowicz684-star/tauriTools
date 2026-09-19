@@ -19,5 +19,19 @@ bootIframeReactPlugin((ctx) => {
   // ctx 到这里才第一次拿到，转交 lib/tauri.ts 统一持有。
   // 那里是普通模块，不在 React 树里，拿不到 useNexus()
   setTauriBridge(ctx);
+
+  /*
+   * 工具栏上的 MCP 状态插件要能打开凭据中心。
+   *
+   * 凭据中心的开关是 App 里的 state，总线事件到不了 React 树内部，
+   * 所以这里把它转成一个 window 事件，App 那边再接住。
+   * 用 window 事件而不是模块级回调，是为了避免再引入一份
+   * "谁注册谁监听"的可变全局。
+   */
+  ctx.on?.('nexus:open-credentials', (payload?: unknown) => {
+    const page = (payload as { page?: string } | undefined)?.page;
+    window.dispatchEvent(new CustomEvent('nexus:open-credentials', { detail: { page } }));
+  });
+
   return <App />;
 });

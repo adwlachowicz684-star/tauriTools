@@ -56,10 +56,16 @@
       </div>
       <span class="tb-title" id="tb-title"></span>
       <div class="tb-spacer"></div>
+      <!--
+        右上角分两段：
+          tb-toolbar —— 工具栏插件的显示口（主题 / 置顶 / 托盘 / MCP 状态）
+          后面三个   —— 窗口控制，属于窗口不属于插件，不插件化
+
+        ✕ 不进插件口：它的行为由设置决定（隐藏 / 退出），
+        做成"可插拔"反而会让用户不确定点下去会不会退出。
+      -->
       <div class="tb-btns">
-        <button class="tb-btn" id="btn-theme"  title="切换主题（缩略图选择）">◐</button>
-        <button class="tb-btn" id="btn-top"    title="窗口置顶">⇱</button>
-        <button class="tb-btn" id="btn-hide"   title="隐藏到托盘（点托盘图标唤回）">⇲</button>
+        <span class="tb-toolbar" id="tb-toolbar"></span>
         <button class="tb-btn" id="btn-min"    title="最小化">─</button>
         <button class="tb-btn" id="btn-max"    title="最大化">□</button>
         <button class="tb-btn danger" id="btn-close" title="关闭">✕</button>

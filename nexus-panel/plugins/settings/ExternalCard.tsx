@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNexus } from '../../src/nexus-react';
 import {
   POLICY_MODES, KIND_LABELS,
@@ -72,17 +72,35 @@ export default function ExternalCard() {
   const [csp, setCsp] = useState('');
   const [err, setErr] = useState<string | null>(null);
 
+  /*
+   * ⚠️ api 每次渲染都是**新对象**（useExternalApi 返回的是对象字面量，
+   * 没做 memo，里面的 savePolicy 等也都是内联箭头函数）。
+   *
+   * 若把 api 写进依赖，refresh 每次渲染都是新引用，
+   * 而下面的 effect 依赖 refresh —— 于是 effect 每次渲染后都重跑，
+   * 里面的 setPolicy(新对象) 又触发一次重渲染：
+   *   effect → refresh → setPolicy(新对象) → 重渲染 → refresh 变 → effect …
+   * 无限循环，界面直接卡死（实测渲染 300+ 次不收敛）。
+   *
+   * 用 ref 持有：refresh 的依赖变空，effect 只在挂载时跑一次。
+   * ref.current 每次渲染都更新，refresh 里拿到的仍是最新 api ——
+   * 通道从 bridge 切到 direct 后不用重新挂载也生效。
+   */
+  const apiRef = useRef(api);
+  apiRef.current = api;
+
   const refresh = useCallback(async () => {
+    const a = apiRef.current;
     try {
-      const { policy: p, hosts: hs } = await api.load();
+      const { policy: p, hosts: hs } = await a.load();
       setPolicy(p);
       setHosts(hs);
       setErr(null);
-      try { setCsp((await api.suggestCsp(p)) || ''); } catch { setCsp(''); }
+      try { setCsp((await a.suggestCsp(p)) || ''); } catch { setCsp(''); }
     } catch (e: any) {
       setErr(String(e?.message ?? e));
     }
-  }, [api]);
+  }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
 

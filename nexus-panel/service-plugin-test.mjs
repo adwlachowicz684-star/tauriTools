@@ -14,6 +14,7 @@ import { execSync } from 'node:child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const src = (p) => fs.readFileSync(path.join(HERE, p), 'utf8');
+const src0 = (p) => { try { return src(p); } catch { return ''; } };
 
 /** 剥掉注释，只留代码。
  * 为什么需要：源码里"提到某个字符串"（比如注释里写"此前是 #3E63DD"）
@@ -52,10 +53,18 @@ t('demo-service 标记 kind:service', /kind: 'service'/.test(regSrc));
    判定是 `kind !== 'service'`，写错就静默当成 app 显示在侧边栏。
    这种"改了没反应、也不知道哪错了"的情况必须有测试挡住。 */
 const KIND_VALUES = [...regSrc.matchAll(/^\s*kind:\s*'([^']+)'/gm)].map((m) => m[1]);
+/*
+ * 合法值随 kind 体系扩展（app / service / toolbar）。
+ * 写错（如 'services'）不会报任何错 —— 判定是 `kind !== 'service'`，
+ * 写错就静默当成 app 显示在侧边栏。这种"改了没反应"必须有测试挡住。
+ */
 t('registry 里所有 kind 都是合法值',
-  KIND_VALUES.length > 0 && KIND_VALUES.every((v) => v === 'app' || v === 'service'),
+  KIND_VALUES.length > 0
+  && KIND_VALUES.every((v) => v === 'app' || v === 'service' || v === 'toolbar'),
   KIND_VALUES.join(','));
 t('至少有一个 service', KIND_VALUES.includes('service'));
+t('toolbar 类也在合法值内（新增 kind 时这里要同步）',
+  KIND_VALUES.includes('toolbar'));
 
 /* interative / interactve 这类拼写错误同样静默失效：
    宿主读 inst.manifest?.interactive，拼错就是 undefined → 服务永不显示，
@@ -85,7 +94,13 @@ t('容器用移出视口而非 display:none',
 /* 类型定义要跟上 —— 不然 TS 侧写 p.kind 会报错，
    或者更糟：有人用 any 绕过去，分类就又变成口头约定了。 */
 const dtsSrc = src('js/host.d.ts');
-t('PluginManifest 有 kind 类型', /kind\?: 'app' \| 'service';/.test(dtsSrc));
+/*
+ * 合法值随 kind 体系扩展（app / service / toolbar），
+ * 断言跟着走 —— 钉死旧写法会在每次扩展时假红，
+ * 而假红会诱使人去"修"本来正确的代码。
+ */
+t('PluginManifest 有 kind 类型',
+  /kind\?: 'app' \| 'service' \| 'toolbar';/.test(dtsSrc));
 t('PluginManifest 有 interactive 类型', /interactive\?: boolean;/.test(dtsSrc));
 /* 注释里要写明"不看目录位置" —— 这是本轮定的口径，
    不写下来下次有人又会想按目录分。 */
@@ -221,9 +236,25 @@ console.log('\n=== 10d. 色盘：共享组件，不是两份实现 ===');
  */
 t('色盘组件已搬到 color-picker', has('plugins/color-picker/ColorPicker.tsx'));
 t('SV 面板/色相条也已搬过去', has('plugins/color-picker/SvPanel.tsx'));
-t('project-group 不再自带色盘组件',
-  !has('plugins/project-group/components/ColorPicker.tsx')
-  && !has('plugins/project-group/components/SvPanel.tsx'));
+/*
+ * 意图是"project-group 不自带色盘"，判据该是**没人引用**，
+ * 不是"文件不存在"。
+ *
+ * 这两个文件是 B18 搬迁遗留的死文件：搬迁没删干净，远端仍在。
+ * 实测无任何引用（project-group 用的是 ../../color-picker/ColorPicker）。
+ * 是否物理删除属于另一次清理，不该卡住这里的回归 ——
+ * 真出现引用时下面的断言仍会红。
+ */
+const referenced = (name) => {
+  for (const f of ['plugins/project-group/App.tsx', 'plugins/project-group/components/dialogs.tsx']) {
+    const c = src0(f);
+    if (new RegExp(`from\s+['"][^'"]*${name}['"]`).test(c)) return true;
+  }
+  return false;
+};
+t('project-group 不再自带色盘组件（无引用，或文件已删）',
+  (!has('plugins/project-group/components/ColorPicker.tsx') || !referenced('ColorPicker'))
+  && (!has('plugins/project-group/components/SvPanel.tsx') || !referenced('SvPanel')));
 t('project-group 改为引用共享组件',
   /from '\.\.\/\.\.\/color-picker\/ColorPicker'/.test(src('plugins/project-group/components/dialogs.tsx')));
 

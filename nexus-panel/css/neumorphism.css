@@ -878,6 +878,58 @@ body.nx-inspecting * { cursor: crosshair !important; }
   box-shadow: var(--sh-in-sm);
 }
 
+/* ---------- 工具栏插件（右上角那一排） ----------
+   主题 / 置顶 / 托盘 / MCP 状态 已抽成 kind:'toolbar' 插件，
+   由 js/toolbar-plugin.js 渲染进这个容器。
+   用 flex 而不是让按钮直接进 .tb-btns：插件那一排与窗口控制按钮
+   之间要留出间隔，且插件数量会变。 */
+.tb-toolbar {
+  display: flex;
+  gap: var(--sp-4, 8px);
+  margin-right: var(--sp-3, 6px);
+}
+
+/* 工具栏插件弹出的小菜单。
+   层级取 --z-tooltip 同档：菜单是"点开就消失"的临时层，
+   不必压过检查器（1500），但要压过普通内容。 */
+.tb-menu-layer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-tooltip, 1200);
+}
+.tb-menu {
+  min-width: 160px;
+  padding: var(--sp-3, 6px);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--sh-out);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1, 2px);
+}
+.tb-menu-item {
+  border: 0;
+  border-radius: var(--r-sm);
+  padding: var(--sp-3, 6px) var(--sp-4, 8px);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-12, 12px);
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tb-menu-item:hover:not(:disabled) { background: var(--accent-soft, var(--surface-2)); }
+.tb-menu-item:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+.tb-menu-sep {
+  height: 1px;
+  margin: var(--sp-2, 4px) 0;
+  background: var(--border, var(--text-dim));
+  opacity: 0.4;
+}
+
 /* ---------------- 插件设置抽屉 ----------------
    这一整套 class（.drawer / .drawer-head / ...）此前**完全没有样式定义** ——
    两个外壳（React 的 PluginSettingsDrawer.tsx 与原生 js/shell.js）都在用，

@@ -53,6 +53,7 @@ export function CredentialPanel({
   credentials, onChange, onClose, verify,
   locked, mode, onUnlock, onChangeMode, cryptoWarn, unlockError,
   mcpServers, onMcpChange, mcpProtocolReady, mcpToolCount, onMcpRefresh, mcpRefreshing,
+  initialPage,
 }: {
   credentials: Credential[];
   onChange: (next: Credential[]) => void;
@@ -76,6 +77,12 @@ export function CredentialPanel({
   mcpToolCount?: Record<string, number>;
   onMcpRefresh?: () => void;
   mcpRefreshing?: boolean;
+  /**
+   * 打开时停在哪一页。由外部（工具栏 MCP 状态插件）指定 ——
+   * 从 MCP 状态点进来就该直接看到 MCP 服务，而不是先看到凭据列表
+   * 再让用户自己找标签页。
+   */
+  initialPage?: 'cred' | 'mcp';
 }) {
   /*
    * 顶部分「凭据 / MCP 服务」两页。
@@ -84,7 +91,9 @@ export function CredentialPanel({
    * 都是全局的、都不随画布导出。分开两个入口的话，
    * 配 MCP 时要先想起来该去哪儿找。
    */
-  const [page, setPage] = useState<'cred' | 'mcp'>('cred');
+  /* 面板是条件渲染的（credOpen 时才挂载），所以初始值就够了，
+     不需要再写 effect 同步 —— 每次打开都是一次新挂载。 */
+  const [page, setPage] = useState<'cred' | 'mcp'>(initialPage ?? 'cred');
   const [editing, setEditing] = useState<Credential | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');

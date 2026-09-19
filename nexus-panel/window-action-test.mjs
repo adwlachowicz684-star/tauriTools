@@ -23,6 +23,10 @@ const shellSrc = src('js/shell.js');
 const htmlSrc = src('index.html');
 const tbSrc = src('src/components/Titlebar.tsx');
 const appSrc = src('src/App.tsx');
+const regSrc = src('plugins/registry.js');
+/* ⇲ 已从硬编码按钮抽成工具栏插件，断言跟着契约走 ——
+   继续钉 btn-hide 会在每次推进插件化时假红 */
+const traySrc = src('plugins/toolbar-tray/module.js');
 const setJs = src('plugins/settings/index.js');
 const setTsx = src('plugins/settings/App.tsx');
 const winCard = src('plugins/settings/WindowCard.tsx');
@@ -66,24 +70,38 @@ t('原生版隐藏后提示', /已隐藏到托盘/.test(shellSrc));
 t('React 版隐藏后提示', /已隐藏到托盘/.test(appSrc));
 t('提示里说明点托盘图标', /点击托盘图标可唤回/.test(shellSrc) && /点击托盘图标可唤回/.test(appSrc));
 
-console.log('\n=== 5. ⇲ 按钮 ===');
-t('index.html 有 btn-hide', /id="btn-hide"/.test(htmlSrc));
-t('原生外壳接了 btn-hide', /\$\('#btn-hide'\)\.onclick/.test(shellSrc));
-t('React 标题栏有 hide 按钮', /onClick=\{\(\) => onWin\('hide'\)\}/.test(tbSrc));
-t('React 的 WinAction 类型含 hide', /'topmost' \| 'hide'/.test(tbSrc));
+console.log('\n=== 5. ⇲ 隐藏到托盘（已抽成工具栏插件） ===');
+/* 意图不变：这个按钮必须在、点了要真藏、藏完要说怎么回来。
+   只是实现从硬编码按钮变成了 kind:'toolbar' 插件。 */
+t('注册表里有 toolbar-tray 插件', /id: 'toolbar-tray'/.test(regSrc));
+t('它是 toolbar 类型', /kind: 'toolbar'[\s\S]{0,200}toolbar-tray/.test(regSrc)
+  || /toolbar-tray[\s\S]{0,300}kind: 'toolbar'/.test(regSrc));
+t('托盘插件调 win("hide")', /api\.win\('hide'\)/.test(traySrc));
+t('托盘插件提示怎么唤回（否则窗口凭空消失）', /点击托盘图标可唤回/.test(traySrc));
+t('两个外壳都接了工具栏插槽',
+  /id="tb-toolbar"/.test(htmlSrc) && /tb-toolbar/.test(tbSrc));
+t('React 的 WinAction 类型仍含 hide', /'topmost' \| 'hide'/.test(tbSrc));
 
 console.log('\n=== 6. 按钮位置：主题 与 最小化 之间 ===');
 /* 只取标题栏那一块：页面后面还有 btn-add / btn-settings / btn-inspect
    等侧边栏按钮，在整份 HTML 上取会让"✕ 在最右"这条恒假。
    —— 与 theme-bridge / tray-test 那几次是同一类坑：断言要先切出范围。 */
 const tbBlock = htmlSrc.slice(htmlSrc.indexOf('id="titlebar"'), htmlSrc.indexOf('</header>'));
-const btns = [...tbBlock.matchAll(/id="(btn-[a-z]+)"/g)].map((m) => m[1]);
-const iTheme = btns.indexOf('btn-theme');
-const iHide = btns.indexOf('btn-hide');
+const btns = [...tbBlock.matchAll(/id="([\w-]+)"/g)].map((m) => m[1]);
+const iSlot = btns.indexOf('tb-toolbar');
 const iMin = btns.indexOf('btn-min');
-t('顺序为 主题 → … → 隐藏 → 最小化', iTheme >= 0 && iHide > iTheme && iMin > iHide,
-  btns.join(' → '));
+/*
+ * 主题/置顶/托盘现在是插件，顺序由插件自己的 order 决定（见 toolbar-test），
+ * 这里只守住两条**与插件无关的**布局契约：
+ *   · 工具栏插槽在窗口控制按钮左侧（插件不该挤到 ✕ 右边）
+ *   · ✕ 仍在最右（它是"可能退出"的那个，必须单独一档）
+ */
+t('工具栏插槽在窗口控制按钮左侧', iSlot >= 0 && iMin > iSlot, btns.join(' → '));
 t('✕ 仍在最右（危险操作单独一档）', btns[btns.length - 1] === 'btn-close', btns[btns.length - 1]);
+/* 窗口控制按钮不进插件口：它们属于窗口不属于插件，
+   且 ✕ 可能是退出，做成可插拔会让用户不确定点下去会发生什么 */
+t('窗口控制按钮仍是硬编码（不插件化）',
+  /id="btn-min"/.test(htmlSrc) && /id="btn-max"/.test(htmlSrc));
 
 console.log('\n=== 7. 设置页：走桥接而非直接写 localStorage ===');
 /* 设置页在 Vite 模式下是 iframe，隔离态（opaque origin）下 localStorage

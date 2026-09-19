@@ -439,13 +439,17 @@ export function createHost(opts = {}) {
     /* 服务插件不该被用户直接打开：它没有主视图，打开是空白。
        拦在这里而不是只靠侧边栏不显示 —— 侧边栏只是 UI，
        快捷键、恢复上次插件等路径都可能绕过它。 */
-    if (manifest?.kind === 'service') {
+    if (manifest?.kind === 'service' || manifest?.kind === 'toolbar') {
+      const why =
+        manifest.kind === 'service'
+          ? '是服务插件，供其它插件调用，不能直接打开'
+          : '是工具栏插件，显示在标题栏右上角，不能直接打开';
       await unmount();
       state.activeId = null;
       const stage0 = getStage();
       if (stage0) {
         stage0.innerHTML = `<div class="nx-empty lg"><div class="nx-empty-mark">◈</div>
-          <p>「${manifest.name}」是服务插件，供其它插件调用，不能直接打开</p></div>`;
+          <p>「${manifest.name}」${why}</p></div>`;
       }
       hooks.onActive?.(null);
       return;
@@ -1922,12 +1926,27 @@ export function filterByRuntime(plugins) {
  * 别的路径迟早会把服务塞进主舞台。
  */
 export function visiblePlugins(plugins) {
-  return (plugins || []).filter((p) => p.kind !== 'service');
+  /*
+   * 侧边栏只放 kind:'app'。
+   *
+   * 用"不等于 service / toolbar"而不是"等于 app"，是为了让没写 kind
+   * 的插件（默认 app）照常显示 —— 反过来写会把一大批老插件滤掉。
+   *
+   * toolbar 必须在这里拦：它显示在标题栏右上角，
+   * 若同时出现在侧边栏，点它会去挂载一个没有页面的插件，
+   * 表现为"切过去一片空白"。
+   */
+  return (plugins || []).filter((p) => p.kind !== 'service' && p.kind !== 'toolbar');
 }
 
 /** 是否是服务插件 */
 export function isService(p) {
   return p?.kind === 'service';
+}
+
+/** 是否是工具栏插件（显示在标题栏右上角，不进侧边栏） */
+export function isToolbar(p) {
+  return p?.kind === 'toolbar';
 }
 
 export { isInsideTauri };

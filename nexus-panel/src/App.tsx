@@ -119,6 +119,14 @@ export default function App() {
     if (a === 'hide') pushToast('已隐藏到托盘 · 点击托盘图标可唤回', 'info');
   }, [pushToast]);
 
+  /* 工具栏插件要切插件 / 发事件时走这两个（MCP 状态用它打开凭据中心） */
+  const handleNavigate = useCallback((id: string) => {
+    void hostRef.current?.mount(id);
+  }, []);
+  const handleEmit = useCallback((ev: string, payload?: unknown) => {
+    hostRef.current?.bus?.emit?.(ev, payload);
+  }, []);
+
   /* ---------- 外链：被 CSP 拦下的请求统一登记 ---------- */
   const handleCspViolation = useCallback((d: ViolationInfo, manifest?: PluginManifest) => {
     const uri = d?.blockedURI || d?.sample || (d?.host ? `https://${d.host}` : '');
@@ -404,6 +412,8 @@ export default function App() {
         title={title}
         onWin={handleWin}
         onToast={pushToast}
+        onNavigate={handleNavigate}
+        onEmit={handleEmit}
         closeAction={closeAction}
       />
       <div id="body" className={sidebarOpen ? 'open' : ''}>

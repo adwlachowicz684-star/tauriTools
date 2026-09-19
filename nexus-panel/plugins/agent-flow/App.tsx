@@ -425,6 +425,8 @@ export default function App() {
   const [vaultKey, setVaultKey] = useState<string | null>(null);
   const [credOpen, setCredOpen] = useState(false);
   const [credFocus, setCredFocus] = useState<string>('');
+  /** 凭据中心打开时停在哪一页（'mcp' = 从工具栏 MCP 状态插件进来） */
+  const [credPage, setCredPage] = useState<'cred' | 'mcp'>('cred');
   const [unlockErr, setUnlockErr] = useState('');
   const [cryptoWarn, setCryptoWarn] = useState('');
 
@@ -600,6 +602,25 @@ export default function App() {
   const openCredentials = useCallback((kind: string) => {
     setCredFocus(kind);
     setCredOpen(true);
+  }, []);
+
+  /*
+   * 外部（工具栏 MCP 状态插件）要打开凭据中心时走这里。
+   *
+   * 状态在组件内部，外面调不到，所以由 main.tsx 把插件总线上的事件
+   * 转成一个 window 事件，这里再接住。多绕一层是因为
+   * ctx 只在 bootIframeReactPlugin 的回调里拿得到，
+   * 而 App 是普通 React 组件树，拿不到那个 ctx。
+   */
+  useEffect(() => {
+    const h = (e: Event) => {
+      const d = (e as CustomEvent<{ page?: string }>).detail || {};
+      setCredPage(d.page === 'mcp' ? 'mcp' : 'cred');
+      setCredFocus('');
+      setCredOpen(true);
+    };
+    window.addEventListener('nexus:open-credentials', h);
+    return () => window.removeEventListener('nexus:open-credentials', h);
   }, []);
 
 
@@ -3112,7 +3133,8 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
           <CredentialPanel
             credentials={credentials}
             onChange={(next) => setCredentials(next)}
-            onClose={() => { setCredOpen(false); setCredFocus(''); }}
+            onClose={() => { setCredOpen(false); setCredFocus(''); setCredPage('cred'); }}
+            initialPage={credPage}
             verify={verifyCredential}
             locked={vaultKey === null}
             mode={store.mode}
