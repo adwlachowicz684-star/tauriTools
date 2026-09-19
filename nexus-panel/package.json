@@ -68,7 +68,8 @@
     "test:follow-theme": "node follow-theme-test.mjs",
     "test:responsive": "node responsive-test.mjs",
     "test:service-plugin": "node service-plugin-test.mjs",
-    "test:drag-payload": "node plugins/project-group/drag-payload-test.mjs"
+    "test:drag-payload": "node plugins/project-group/drag-payload-test.mjs",
+    "scan:commands": "node scripts/scan-commands.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
