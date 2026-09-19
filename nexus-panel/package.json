@@ -93,7 +93,8 @@
     "test:pg-structure": "node plugins/project-group/structure-test.mjs",
     "test:pg-select": "node plugins/project-group/select-test.mjs",
     "test:pg-lock": "node plugins/project-group/lock-preset-test.mjs",
-    "test:pg-feedback": "node plugins/project-group/feedback-test.mjs"
+    "test:pg-feedback": "node plugins/project-group/feedback-test.mjs",
+    "scan:commands": "node scripts/scan-commands.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

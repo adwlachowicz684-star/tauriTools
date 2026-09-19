@@ -21,7 +21,14 @@ const t = (name, cond, extra) => {
 };
 
 /** 造一个最小 Rust 工程，跑扫描器，返回输出 */
-function run({ mainRs, extra = {}, policy }) {
+/*
+ * caps：临时工程用的能力表内容。
+ * 默认复制真实那份（63 条）—— 但最小工程只注册 1~3 条命令，
+ * 于是 ⑥b 会报出几十条"死条目"。那不是代码有问题，
+ * 是**测试环境**与能力表不匹配。
+ * 所以每个用例给一张与它注册命令相称的表。
+ */
+function run({ mainRs, extra = {}, policy, caps }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cmds-'));
   const rsRoot = path.join(dir, 'src-tauri', 'src');
   fs.mkdirSync(rsRoot, { recursive: true });
@@ -37,6 +44,36 @@ function run({ mainRs, extra = {}, policy }) {
   const shim = path.join(dir, 'scripts');
   fs.mkdirSync(shim, { recursive: true });
   fs.copyFileSync(scanner, path.join(shim, 'scan-commands.mjs'));
+  /*
+   * 扫描器现在会 import ../js/command-caps.js —— 临时工程里也得有，
+   * 否则它一崩就什么结论都拿不到（而崩溃和"抓到问题"是两回事）。
+   */
+  fs.mkdirSync(path.join(shim, '..', 'js'), { recursive: true });
+  if (caps === 'real') {
+    fs.copyFileSync(path.join(root, 'js', 'command-caps.js'), path.join(dir, 'js', 'command-caps.js'));
+  } else {
+    /* 生成一张只含指定条目的表 */
+    const body = Object.entries(caps || {})
+      .map(([k, v]) => `  ${k}: '${v}',`)
+      .join('\n');
+    fs.writeFileSync(
+      path.join(dir, 'js', 'command-caps.js'),
+      `export const COMMAND_CAPS = {\n${body}\n};\n`
+        + 'export const COMBO_RULES = ['
+        + "{id:'exfil',level:'red',need:['M','S'],why:'x'},"
+        + "{id:'full-control',level:'red',need:['M','W'],why:'x'},"
+        + "{id:'destructive',level:'yellow',need:['W'],why:'x'},"
+        + "{id:'sensitive-read',level:'yellow',need:['S'],why:'x'}];\n"
+        + `export function capOf(c){return COMMAND_CAPS[c]||'unknown';}\n`
+        + `export function capsOf(cmds){const counts={M:0,W:0,S:0,R:0,unknown:0};const unknown=[];`
+        + `for(const c of cmds||[]){const k=capOf(c);counts[k]=(counts[k]||0)+1;if(k==='unknown')unknown.push(c);}`
+        + `const levels=Object.keys(counts).filter(k=>counts[k]>0);`
+        + `const combos=COMBO_RULES.filter(r=>r.need.every(n=>counts[n]>0)).map(r=>({...r}));`
+        + `return {counts,levels,unknown,combos};}\n`
+        + `export function worstLevel(p){const ls=(p.combos||[]).map(c=>c.level);`
+        + `if(ls.includes('red'))return 'red';if(ls.includes('yellow'))return 'yellow';return 'none';}\n`,
+    );
+  }
   let out = '', code = 0;
   try {
     out = execFileSync('node', [path.join(shim, 'scan-commands.mjs')], { encoding: 'utf8' });
@@ -62,6 +99,7 @@ console.log('\n--- 1. 干净工程：没有问题 ---');
     mainRs: `mod a;\nfn main(){}\n.invoke_handler(tauri::generate_handler![\n  app_version,\n])\n`,
     extra: { 'a.rs': '#[tauri::command]\npub fn app_version() -> String { "1".into() }\n' },
     policy: POLICY,
+    caps: { app_version: 'R' },
   });
   t('干净工程退出码 0', code === 0, `code=${code}`);
   t('报告"一致"', /三份清单一致/.test(out));
@@ -77,6 +115,7 @@ console.log('\n--- 2. 标了但没注册（af_device_salt 的真实形态）---'
       'b.rs': '#[tauri::command]\npub fn af_device_salt() -> String { "x".into() }\n',
     },
     policy: POLICY,
+    caps: { app_version: 'R' },
   });
   t('退出码非 0', code !== 0, `code=${code}`);
   t('报出了这条', /af_device_salt/.test(out));
@@ -95,6 +134,7 @@ console.log('\n--- 3. async 与带参属性必须认（否则全是假报告）-
       'c.rs': '#[tauri::command(rename_all = "snake_case")]\npub fn fpx_scan_content() -> String { "1".into() }\n',
     },
     policy: POLICY,
+    caps: { app_version: 'R', run_node: 'M', fpx_scan_content: 'S' },
   });
   t('async 没被当成"没标注"', !/②[\s\S]*run_node/.test(out), out.match(/②[\s\S]{0,120}/)?.[0]);
   t('带参属性没被当成"没标注"', !/②[\s\S]*fpx_scan_content/.test(out));
@@ -108,6 +148,7 @@ console.log('\n--- 4. 白名单里有、Rust 侧没注册（有权限却调不�
     mainRs: `fn main(){}\n.invoke_handler(tauri::generate_handler![\n  app_version,\n])\n`,
     extra: { 'a.rs': '#[tauri::command]\npub fn app_version() -> String { "1".into() }\n' },
     policy: `export const PLUGIN_COMMANDS = { home: ['app_version', 'ghost_cmd'] };\n`,
+    caps: { app_version: 'R' },
   });
   t('报出 ghost_cmd', /ghost_cmd/.test(out));
   t('归到 ③', /③[\s\S]*ghost_cmd/.test(out));
@@ -124,6 +165,7 @@ console.log('\n--- 5. 同名定义多份 ---');
       'b.rs': '#[tauri::command]\npub fn dup_cmd() -> String { "2".into() }\n',
     },
     policy: POLICY,
+    caps: { dup_cmd: 'R' },
   });
   t('报出重复', /⑤[\s\S]*dup_cmd/.test(out));
   t('两个文件都列出来了', /a\.rs/.test(out) && /b\.rs/.test(out));
@@ -136,6 +178,7 @@ console.log('\n--- 6. 解析失败必须报错，不能当"没问题" ---');
     mainRs: `fn main(){} // 根本没有 generate_handler\n`,
     extra: {},
     policy: POLICY,
+    caps: {},
   });
   t('退出码 2（扫描器失效）', code === 2, `code=${code}`);
   t('明确说"扫描器失效"', /扫描器失效/.test(out), out.slice(0, 120));
@@ -176,10 +219,100 @@ console.log('\n--- 8. 白名单解析不出来必须报错（不能静默当 0 �
     extra: { 'a.rs': '#[tauri::command]\npub fn app_version() -> String { "1".into() }\n' },
     /* 故意不给 PLUGIN_COMMANDS：静默返回空集的话，③ 会永远报 0 条 */
     policy: 'export const SAFE_COMMANDS = new Set([]);\n',
+    caps: { app_version: 'R' },
   });
   t('退出码 2', code === 2, `code=${code}`);
   t('说清了是扫描器失效', /扫描器失效/.test(out), out.slice(0, 100));
   t('没输出"一致"', !/三份清单一致/.test(out));
+}
+
+/* ---------------------------------------------------------------- */
+console.log('\n--- 9. 能力分级：未列出必须是 unknown，不是"安全" ---');
+{
+  const { capOf, capsOf, worstLevel, COMBO_RULES } = await import('./js/command-caps.js');
+  /*
+   * 这条是本表的**核心约定**。若哪天被改成默认值 'R'，
+   * 所有没归类的危险命令会一夜之间变成"安全" ——
+   * 而报告会看起来比现在还干净。
+   */
+  t('没归类 → unknown', capOf('zzz_not_a_real_command') === 'unknown', capOf('zzz_not_a_real_command'));
+  t('unknown 不等于 R', capOf('zzz_not_a_real_command') !== 'R');
+
+  /* 已知条目 */
+  t('af_fs_allow_root 是 M（提权）', capOf('af_fs_allow_root') === 'M');
+  t('run_node 是 M（起进程）', capOf('run_node') === 'M');
+  t('af_device_salt 是 S（凭据盐）', capOf('af_device_salt') === 'S');
+  t('fpx_capture_screen 是 S（截屏）', capOf('fpx_capture_screen') === 'S');
+  t('fpx_pick_color 是 S（吸管读屏幕像素）', capOf('fpx_pick_color') === 'S');
+  t('fs_op 是 W', capOf('fs_op') === 'W');
+  t('app_version 是 R', capOf('app_version') === 'R');
+
+  /* 组合：单看没事，合起来才危险 */
+  const onlyM = capsOf(['run_node']);
+  t('只有 M 不判红', worstLevel(onlyM) !== 'red', JSON.stringify(onlyM.combos.map((c) => c.id)));
+  const onlyS = capsOf(['fpx_read_file']);
+  t('只有 S 不判红（判黄）', worstLevel(onlyS) === 'yellow', worstLevel(onlyS));
+  const both = capsOf(['run_node', 'fpx_read_file']);
+  t('M + S 判红（外传通道）', worstLevel(both) === 'red', worstLevel(both));
+  t('红色组合带 id=exfil', both.combos.some((c) => c.id === 'exfil' && c.level === 'red'));
+  const mw = capsOf(['run_node', 'fs_op']);
+  t('M + W 判红（可远程改写）', worstLevel(mw) === 'red');
+  t('红色组合带 id=full-control', mw.combos.some((c) => c.id === 'full-control'));
+
+  /* 组合规则必须带 why —— 报告里要能看出为什么红 */
+  t('每条组合规则都说明了原因', COMBO_RULES.every((r) => typeof r.why === 'string' && r.why.length > 5));
+
+  /* unknown 要单独列出来（不能混在 R 里） */
+  const mix = capsOf(['app_version', 'zzz_x']);
+  t('unknown 单独计数', mix.counts.unknown === 1 && mix.counts.R === 1, JSON.stringify(mix.counts));
+  t('unknown 进了队列', mix.unknown.includes('zzz_x'));
+}
+
+/* ---------------------------------------------------------------- */
+console.log('\n--- 10. 真实仓库：扫描器输出的能力画像 ---');
+{
+  /*
+   * ⚠️ 必须断言**扫描器自己的输出**，不能用测试另写一份同款正则去解析。
+   * 第一版就是这样：测试自己解析得挺好，于是把扫描器的分组正则
+   * 改回"只认不带引号的 key"也照样全绿 —— 而真实报告里
+   * agent-flow 恰恰会消失（它带引号），最该看的那个没了。
+   */
+  let out = '', code = 0;
+  try {
+    out = execFileSync('node', [path.join(root, 'scripts', 'scan-commands.mjs')], { encoding: 'utf8' });
+  } catch (e) { out = (e.stdout || '') + (e.stderr || ''); code = e.status ?? 1; }
+  t('扫描器输出里有能力画像节', /能力画像/.test(out));
+  t('agent-flow 出现在画像里（key 带引号也要解析到）', /agent-flow/.test(out), out.match(/能力画像[\s\S]{0,300}/)?.[0]);
+  t('project-group 出现在画像里', /project-group/.test(out));
+  t('agent-flow 被判红', /🔴 agent-flow/.test(out), out.match(/🔴[^\n]*/g)?.slice(0, 3)?.join(' | '));
+  t('未归类队列有内容或明确为空', /未归类命令 \d+ 条/.test(out));
+  /*
+   * 解析出的插件数：真实仓库有 8~9 个。
+   * 只认不带引号的 key 时只剩 3 个 —— 这个断言直接挡住那种回退。
+   */
+  const rows = (out.match(/🔴 |🟡 |   [a-z-]+\s+M\d/g) || []).length;
+  t('画像行数 >= 6（不是只有不带引号的那 3 个）', rows >= 6, `只有 ${rows} 行`);
+}
+
+/* ---------------------------------------------------------------- */
+console.log('\n--- 11. 死条目：能力表里写了不存在的命令必须报 ---');
+{
+  /* 直接校验扫描器那节的逻辑：拿真实注册表比对能力表 */
+  const { COMMAND_CAPS } = await import('./js/command-caps.js');
+  const fs2 = await import('node:fs');
+  const mainRs = fs2.readFileSync(path.join(root, 'src-tauri', 'src', 'main.rs'), 'utf8');
+  const m = mainRs.match(/generate_handler!\s*\[([\s\S]*?)\n\s*\]/);
+  const reg = new Set(m[1].split(',').map((x) => x.trim()).filter(Boolean).map((x) => x.split('::').pop()));
+  const dead = Object.keys(COMMAND_CAPS).filter((c) => !reg.has(c));
+  t('能力表里没有死条目', dead.length === 0, dead.join(','));
+  /*
+   * 这条同时是回归保护：watch_start/stop 与 fpx_watch_start/stop
+   * 是**两组**命令，第一版只写了前者，导致 project-group 那两条
+   * 一直挂 unknown、能力被低估。
+   */
+  t('两组 watch 命令都定了级',
+    'watch_start' in COMMAND_CAPS && 'fpx_watch_start' in COMMAND_CAPS
+    && 'watch_stop' in COMMAND_CAPS && 'fpx_watch_stop' in COMMAND_CAPS);
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);

@@ -20,6 +20,24 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+/*
+ * 能力表是**可选依赖**：加载失败就跳过能力画像，
+ * 但①②③ 那些核心对账必须照常跑完。
+ * 硬依赖的话，一个增值功能的缺失会拖垮整个扫描器 ——
+ * 而它偏偏是安全扫描，静默不跑比报错更糟。
+ */
+let CAPS = null;
+try {
+  CAPS = await import('../js/command-caps.js');
+} catch (e) {
+  console.warn('⚠ 未加载 command-caps.js，跳过能力画像：', e?.message || e);
+}
+const { capsOf, worstLevel, capOf, COMMAND_CAPS } = CAPS || {
+  capsOf: () => ({ counts: {}, levels: [], unknown: [], combos: [] }),
+  worstLevel: () => 'none',
+  capOf: () => 'unknown',
+  COMMAND_CAPS: {},
+};
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const rsRoot = path.join(root, 'src-tauri', 'src');
@@ -115,6 +133,11 @@ function collectPolicy(src) {
   /* 三条来源都算：PLUGIN_COMMANDS / SAFE_COMMANDS / manifest.commands */
   const names = new Set();
   /*
+   * 同时按插件分组 —— 能力画像是**按插件**看的：
+   * "agent-flow 同时有 M 和 S" 才有意义，混在一起看不出来。
+   */
+  const byPlugin = new Map();
+  /*
    * 只取**字符串字面量**里的命令名。
    * 别用 /'[a-z_0-9]+'/g 全扫 —— 注释和 HARD_DENY 示例里也有，
    * 会把"示例"当成"已放行"。
@@ -133,7 +156,20 @@ function collectPolicy(src) {
     console.error('✗ 没解析到 PLUGIN_COMMANDS —— 扫描器失效，不要当成"没问题"');
     process.exit(2);
   }
-  return names;
+  /* 按 `插件id: [...]` 逐块切，避免跨块串味 */
+  /*
+   * key 可能带引号（'agent-flow':）也可能不带（home:）。
+   * 只写不带引号的版本会**静默漏掉一半插件** ——
+   * 实测第一版只解析出 3 个（home/mindmap/settings），
+   * 而真正的重点 agent-flow 恰恰是带引号的那个。
+   * 表现是"报告看着很干净，其实漏了最该看的那个"。
+   */
+  for (const blk of m[1].matchAll(/'?([一-龥a-z_0-9-]+)'?\s*:\s*\[([\s\S]*?)\]/g)) {
+    const id = blk[1];
+    const cs = [...blk[2].matchAll(/'([a-z_0-9]{3,})'/g)].map((x) => x[1]);
+    if (cs.length) byPlugin.set(id, cs);
+  }
+  return { names, byPlugin };
 }
 
 /* ---------------------------------------------------------------- */
@@ -145,7 +181,7 @@ const annotated = collectAnnotated(files);
 const mainSrc = fs.readFileSync(mainRs, 'utf8');
 const registered = collectRegistered(mainSrc);
 const policySrc = fs.readFileSync(policy, 'utf8');
-const allowed = collectPolicy(policySrc);
+const { names: allowed, byPlugin: cmdsByPlugin } = collectPolicy(policySrc);
 
 let problems = 0;
 const say = (title, list, hint) => {
@@ -223,6 +259,72 @@ say('⑤ 同名命令定义了多份（只有一份会被注册）', dups,
     .sort();
   say('⑥ .rs 文件没有对应的 mod 声明（不参与编译）', orphans,
     '整个文件都不会被编译 —— 在里面改代码不会有任何效果');
+}
+
+/* ⑥b 能力表里的死条目：写了但 Rust 侧没这个命令 */
+/*
+ * 表里的 key 若是笔误（或命令已改名/删除），它**永远不会被匹配到** ——
+ * 于是那条命令一直挂着 unknown，看上去只是"还没归类"，
+ * 实际是"分级表写错了"。这比漏一条更隐蔽：报告依然很干净。
+ */
+{
+  const dead = Object.keys(COMMAND_CAPS).filter((c) => !registered.has(c)).sort();
+  if (dead.length) {
+    problems += dead.length;
+    console.log(`\n⑥b 能力表里有 ${dead.length} 条命令 Rust 侧并不存在（死条目）`);
+    for (const c of dead) console.log(`   ${c}   ← 标为 ${COMMAND_CAPS[c]}，但没这个命令`);
+    console.log('   → 笔误或已改名。它会让真正的命令一直挂着 unknown 而被低估');
+  }
+}
+
+/* ⑦ 能力画像：按插件看**组合**风险 */
+/*
+ * 单条能力未必危险，组合才危险。例如同时有 M（能起网络/进程）
+ * 和 S（能读文件正文/截屏）就构成外传通道 —— 单看任何一条
+ * 都像正常功能。
+ *
+ * ⚠️ 这一节**不拦截**，只登记。拦截会立刻让核心插件不可用
+ * （agent-flow 现在就是 M+S+W 全占），所以先把风险摆出来，
+ * 等降级改造做完再谈启用。
+ */
+console.log('\n=== 能力画像（不拦截，仅登记）===');
+{
+  const rows = [...cmdsByPlugin.entries()]
+    .map(([id, cmds]) => ({ id, cmds, p: capsOf(cmds) }))
+    .map((r) => ({ ...r, worst: worstLevel(r.p) }))
+    .sort((a, b) => {
+      const rank = { red: 0, yellow: 1, none: 2 };
+      return rank[a.worst] - rank[b.worst] || a.id.localeCompare(b.id);
+    });
+  for (const r of rows) {
+    const c = r.p.counts;
+    const flag = r.worst === 'red' ? '🔴' : r.worst === 'yellow' ? '🟡' : '  ';
+    console.log(
+      `${flag} ${r.id.padEnd(14)} M${c.M} W${c.W} S${c.S} R${c.R} ?${c.unknown}`,
+      r.p.combos.length ? `  ← ${r.p.combos.map((x) => x.id).join(', ')}` : '',
+    );
+  }
+  const red = rows.filter((r) => r.worst === 'red');
+  if (red.length) {
+    console.log(`\n   🔴 ${red.length} 个插件命中红色组合（先看，不要急着一刀切拦截）：`);
+    for (const r of red) {
+      for (const cb of r.p.combos.filter((x) => x.level === 'red')) {
+        console.log(`      ${r.id}: ${cb.why}`);
+      }
+    }
+  }
+}
+
+/* 待归类队列：unknown 的命令，按被多少个插件持有排序 */
+{
+  const cnt = new Map();
+  for (const cmds of cmdsByPlugin.values()) {
+    for (const c of cmds) if (capOf(c) === 'unknown') cnt.set(c, (cnt.get(c) || 0) + 1);
+  }
+  const q = [...cnt.entries()].sort((a, b) => b[1] - a[1]);
+  console.log(`\n   未归类命令 ${q.length} 条（默认 unknown，不是"安全"）：`);
+  for (const [c, n] of q) console.log(`      ${c}  ← ${n} 个插件在用`);
+  if (!q.length) console.log('      （无）');
 }
 
 const strict = process.argv.includes('--strict');
