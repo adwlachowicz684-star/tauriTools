@@ -453,18 +453,50 @@ export class EditorBridge {
 
   /** 附件：null 表示移除 */
   setHyperlink(url) { return this.exec('hyperlink', url ?? null); }
-  setImage(url) { return this.exec('image', url ?? null); }
+  /**
+   * 设置单张图片 / 节点图标。
+   *
+   * **必须同时清掉 `images`（多图横幅）**：两者互斥，同时有值会让
+   * 同一个节点既显示框内图标又显示框外横幅。
+   * 不清的话，「清除图标」按钮点不掉多图（只清了 image，横幅还在）。
+   */
+  setImage(url) {
+    const r = this.exec('image', url ?? null);
+    this.exec('images', null);
+    return r;
+  }
   setNote(text) { return this.exec('note', text ?? null); }
   setFile(path) { return this.exec('file', path ?? null); }
   setVideo(path) { return this.exec('video', path ?? null); }
 
   /**
    * 设置图片列表（dataURL 数组）。
-   * 1 张 → 内核的 image 字段（框内）；≥2 张 → images 横幅。由编辑器侧决定。
+   *
+   * `image`（单张 / 节点图标，内核画在框内）与 `images`（多图横幅，框外）
+   * **互斥** —— 两个字段同时有值，同一个节点会画出两张图。
+   * 互斥规则统一在这里处理，images 命令本身只写 images 字段。
+   *
+   * | 传入 | image | images |
+   * |---|---|---|
+   * | 0 张 | 清 | 清 |
+   * | 1 张 | 该张 | 清（交给内核画在框内） |
+   * | ≥2 张 | 清 | 全部（横幅） |
    */
   setImages(list) {
-    const arr = Array.isArray(list) ? list.filter(Boolean) : [];
-    return this.exec('images', arr.length ? JSON.stringify(arr) : null);
+    const arr = (Array.isArray(list) ? list : []).filter(Boolean);
+    if (!arr.length) {
+      this.exec('image', null);
+      this.exec('images', null);
+      return true;
+    }
+    if (arr.length === 1) {
+      this.exec('image', arr[0]);
+      this.exec('images', null);
+      return true;
+    }
+    this.exec('images', JSON.stringify(arr));
+    this.exec('image', null);
+    return true;
   }
 
   /** 读取选中节点的图片 dataURL 列表（合并 images 与老 image 字段） */

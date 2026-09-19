@@ -1155,6 +1155,13 @@ bootIframePlugin(async (ctx) => {
     if (!list.length) return;
     if (!bridge?.ready) { status('编辑器未就绪，无法附加', true); return; }
 
+    // 读现有列表之前**必须先锁定目标节点**。
+    // 三条 getSelectedX 读的都是「当前选中节点」，而拖放的目标节点
+    // 与当前选中节点并不必然相同（drop 事件里虽然 select 了一次，
+    // 但从那时到这里的 postMessage 是异步的，期间选中态可能已被改变）。
+    // 读错节点 → 把别的节点的整份附件列表复制过来，是数据错乱级别的 bug。
+
+    // （变异）读之前不再锁定
     // 现有列表**只在开头读一次**：循环里不写回，读到的永远是同一份，
     // 全部攒在本地数组里、最后一次性写回（写三次会触发三次重排与三次历史记录）
     const imgs = bridge.getSelectedImages?.() || [];
@@ -1215,7 +1222,8 @@ bootIframePlugin(async (ctx) => {
     const ref = await io.saveAssetBytes(name, bytes, opt);
     if (!ref || !opt?.video) return ref;
     try {
-      const t = await makeVideoThumb(new Blob([bytes], { type: 'video/*' }));
+      // type 必须是**具体**类型（video/* 这种通配会让 <video> 加载失败）
+      const t = await makeVideoThumb(new Blob([bytes], { type: io.videoMimeOf(name) }));
       if (!t) return ref;
       const o = JSON.parse(ref);
       o.t = t;
@@ -1300,7 +1308,13 @@ bootIframePlugin(async (ctx) => {
     // （:446 / :477）——即：点了节点图标才自动播，刚选完文件不播，先看首帧。
     // 这条区分是有道理的：附加时用户还在整理素材，突然出声很干扰；
     // 主动点开才是明确的播放意图。Web 版沿用同一套。
-    if (/\.(mp4|webm|ogg|ogv|mov|m4v)$/i.test(name)) {
+    //
+    // 判断不能**只看扩展名**：.mkv / .avi / .flv / .ts 都是常见视频，
+    // 漏掉的话点开会变成「下载」而不是播放，用户会以为视频坏了。
+    // blob.type 是入库时记的真实 MIME，优先信它；取不到再退回扩展名。
+    const isVideo = /^video\//i.test(rec.blob.type || '')
+      || /\.(mp4|m4v|webm|ogg|ogv|mov|mkv|avi|wmv|flv|mpg|mpeg|3gp|ts)$/i.test(name);
+    if (isVideo) {
       const asset = await io.getAsset(ref.a, true);
       if (!asset?.url) { status('视频数据已丢失', true); return; }
       openVideo(app, { ...asset, name });

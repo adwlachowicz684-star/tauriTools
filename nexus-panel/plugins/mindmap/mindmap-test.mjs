@@ -4358,15 +4358,31 @@ group('拖放：编辑器侧（真实源码）');
     ok(same, '编辑器 refListOf 与 io.decodeRefList 结果**逐例一致**（含纯路径兜底）');
   }
 
-  // 多图：1 张走 image（内核框内），≥2 张走 images（横幅）
+  // 多图互斥：规则集中在 EditorBridge.setImages（命令本身只写 images）
+  //
+  // 曾经把「清 image」也写进 images 命令，结果 setImage(url) 为了清横幅调
+  // exec('images', null)，反过来把刚设好的 image 一起清掉 —— 图标设不上。
+  // 一个命令同时改两个字段，调用方就组合不出正确语义。
   const imgCmd = html.slice(html.indexOf("kity.createClass('imagesCommand'"),
-    html.indexOf("kity.createClass('imagesCommand'") + 1400);
-  ok(/arr\.length >= 2/.test(imgCmd) && /setData\('images'/.test(imgCmd),
-    '≥2 张 → 写 images（横幅）');
-  ok(/arr\.length === 1/.test(imgCmd) && /setData\('image', arr\[0\]\)/.test(imgCmd),
-    '1 张 → 写 image（内核渲染，图在节点框内）');
-  ok(/n\.setData\('image'\);/.test(imgCmd),
-    '横幅模式下**必须清掉 image** —— 两个字段都有值会画出两张图');
+    html.indexOf("kity.createClass('imagesCommand'") + 1200);
+  ok(/setData\('images'/.test(imgCmd), 'images 命令写 images 字段');
+  ok(!/setData\('image'/.test(imgCmd),
+    'images 命令**绝不动 image**（互斥交给 bridge，否则 setImage 会被反向清掉）');
+
+  {
+    const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+    const si = br.slice(br.indexOf('setImages(list)'), br.indexOf('setImages(list)') + 900);
+    ok(/arr\.length === 1/.test(si) && /exec\('image', arr\[0\]\)/.test(si),
+      '1 张 → 写 image（内核渲染，图在节点框内）');
+    ok(/exec\('images', JSON\.stringify\(arr\)\)/.test(si),
+      '≥2 张 → 写 images（横幅）');
+    ok(/exec\('image', null\)/.test(si),
+      '横幅模式下清掉 image —— 两个字段都有值会画出两张图');
+    // setImage 必须清横幅，否则「清除图标」点不掉多图
+    const setImg = br.slice(br.indexOf('setImage(url)'), br.indexOf('setImage(url)') + 500);
+    ok(/exec\('images', null\)/.test(setImg),
+      'setImage 同时清 images（否则多图时「清除图标」点不掉）');
+  }
   // imageListOf 只读 images：否则单图（走 image）会被画两次
   const imgListFn = html.slice(html.indexOf('function imageListOf(node)'),
     html.indexOf('function imageListOf(node)') + 700);
@@ -4386,9 +4402,20 @@ group('拖放：编辑器侧（真实源码）');
 
   // 视频数字角标
   const vidPart = html.slice(html.indexOf("var vids = refListOf(node.getData('video'));"),
-    html.indexOf("var vids = refListOf(node.getData('video'));") + 2200);
+    html.indexOf("var vids = refListOf(node.getData('video'));") + 5000);
   ok(/new kity\.Circle/.test(vidPart), '视频有角标圆底');
   ok(/String\(vids\.length\)/.test(vidPart), '角标显示**总数**（有几个视频）');
+  // 多个视频必须能切换：写死 index 0 的话第 2 个起永远点不到
+  ok(/var vi = node\._kmVidIdx \|\| 0;/.test(vidPart),
+    '视频有当前索引（不是写死第 1 个）');
+  ok(/openAttach\('video', idx, ref\)/.test(vidPart),
+    '打开的是**当前索引**那个视频（不是写死 0）');
+  // 切片长度是**实测**的：3600 / 4400 都够不到切换代码（实测偏移 4813）。
+  // 用「全文搜」兜底会让断言变松（改到别处也绿），故直接按实测放大到 5000。
+  ok(/node\._kmVidIdx = \(cur \+ d \+ vids\.length\) % vids\.length/.test(vidPart),
+    '多个视频可左右切换（循环）');
+  ok(/\(vi \+ 1\) \+ '\/' \+ vids\.length/.test(vidPart),
+    '卡片上有「i/n」序号（角标是总数，当前是第几个要另说）');
   ok(/fill\('#1B1B1F'\)/.test(vidPart),
     '角标数字用深色 —— 与节点同色压在浅色角标上会看不见');
 
@@ -4450,6 +4477,121 @@ group('拖放：bridge 与插件层接入');
   ok(/mm-arow/.test(pnl), '文件用行式列表（每行一个）');
   ok(/removeAt\(/.test(pnl), '支持移除第 N 个');
   ok(/setImages\(\[\.\.\.images/.test(pnl), '加图片是追加（不覆盖已有图片）');
+}
+
+group('图片互斥：image 与 images 不能同时有值（行为级）');
+
+{
+  const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+
+  /** 按大括号配对取出某个方法的**完整源码**（不靠 indexOf + 固定长度，那种切片会错位） */
+  function methodSrc(name) {
+    const start = br.indexOf(name + '(');
+    if (start < 0) return '';
+    let i = br.indexOf('{', start);
+    let depth = 0;
+    for (; i < br.length; i++) {
+      if (br[i] === '{') depth++;
+      else if (br[i] === '}') { depth--; if (depth === 0) return br.slice(start, i + 1); }
+    }
+    return '';
+  }
+  const si = methodSrc('setImages');
+  const setImg = methodSrc('setImage');
+  ok(si.length > 0 && setImg.length > 0, '能取出 setImages / setImage 源码');
+
+  /**
+   * 跑真实方法：把它们当**对象字面量的方法简写**求值。
+   * 用 `new Function('return (' + src + ')')` 不行 —— 方法简写不是表达式。
+   */
+  function makeRunner(src, name) {
+    return new Function('return ({ ' + src + ' });')()[name];
+  }
+  function runSetImages(list) {
+    const log = [];
+    const self = { exec(name2, value) { log.push([name2, value]); return true; } };
+    makeRunner(si, 'setImages').call(self, list);
+    return log;
+  }
+  function runSetImage(url) {
+    const log = [];
+    const self = { exec(name2, value) { log.push([name2, value]); return true; } };
+    makeRunner(setImg, 'setImage').call(self, url);
+    return log;
+  }
+
+  // 0 张 → 两个字段都清
+  {
+    const log = runSetImages([]);
+    const got = JSON.stringify(log);
+    ok(/\["image",null\]/.test(got), '0 张 → 清 image');
+    ok(/\["images",null\]/.test(got), '0 张 → 清 images');
+  }
+  // 1 张 → image 收下，images 清掉（交给内核画在框内）
+  {
+    const log = runSetImages(['A']);
+    const got = JSON.stringify(log);
+    ok(/\["image","A"\]/.test(got), '1 张 → image = 该张（框内）');
+    ok(/\["images",null\]/.test(got), '1 张 → images 清空（避免与 image 重复画）');
+  }
+  // ≥2 张 → images 收下，image 清掉
+  {
+    const log = runSetImages(['A', 'B']);
+    const got = JSON.stringify(log);
+    ok(/\["images","\[\\"A\\",\\"B\\"\]"\]/.test(got) || got.includes('["images","[\\"A\\",\\"B\\"]"]'),
+      '≥2 张 → images = 数组（横幅）');
+    ok(/\["image",null\]/.test(got), '≥2 张 → image 清空（否则同节点两张图）');
+  }
+  // setImage 必须清横幅 —— 否则「清除图标」点不掉多图
+  {
+    const log = runSetImage('ICON');
+    const got = JSON.stringify(log);
+    ok(/\["image","ICON"\]/.test(got), 'setImage 设置 image');
+    ok(/\["images",null\]/.test(got),
+      'setImage **同时清 images**（否则多图时「清除图标」点不掉，图还在）');
+    // 顺序不能反：先设 image 再清 images。反过来会把刚设的 image 一起清掉
+    eq(log[0][0], 'image', 'setImage 先设 image（顺序反了会被随后的清 images 连带清掉）');
+  }
+  {
+    const log = runSetImage(null);
+    ok(JSON.stringify(log).includes('["images",null]'),
+      'setImage(null) 也清 images（清除图标要清得干净）');
+  }
+  // 关键回归：清 images 时**不能**连带清 image
+  // （曾经把「清 image」写进 images 命令，setImage 就被自己的清除干掉了）
+  {
+    const imgCmd = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+    const cmd = imgCmd.slice(imgCmd.indexOf("kity.createClass('imagesCommand'"),
+      imgCmd.indexOf("kity.createClass('imagesCommand'") + 1200);
+    ok(!/setData\('image'/.test(cmd),
+      'images 命令不碰 image（碰了会让 setImage 被反向清掉）');
+  }
+}
+
+group('视频：缩略图 MIME 与打开判定');
+
+{
+  const io = await import('./io.js');
+  eq(io.videoMimeOf('a.mp4'), 'video/mp4', '.mp4 → video/mp4');
+  eq(io.videoMimeOf('a.mkv'), 'video/x-matroska', '.mkv → 具体类型（不能给通配）');
+  eq(io.videoMimeOf('a.webm'), 'video/webm', '.webm');
+  eq(io.videoMimeOf('a.MP4'), 'video/mp4', '大小写不敏感');
+  eq(io.videoMimeOf('a.xyz'), '', '未知扩展名 → 空串（宁可让浏览器嗅探，也别给错的）');
+  eq(io.videoMimeOf(''), '', '空输入 → 空串');
+  eq(io.videoMimeOf(null), '', 'null → 空串');
+
+  // 通配类型不能出现在代码里 —— 部分浏览器给 Blob 设这种 type 后
+  // <video> 加载 blob: URL 会直接失败，首帧永远抓不到
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  ok(!/type:\s*'video\/\*'/.test(idx),
+    '不再用 type: video/* 通配符（会让 <video> 加载失败，首帧抓不到）');
+  ok(/type:\s*io\.videoMimeOf\(name\)/.test(idx), '用真实 MIME 建 Blob');
+
+  // 打开判定不能只看扩展名：.mkv/.avi/.flv 漏掉会变成「下载」而非播放
+  const oa = idx.slice(idx.indexOf('const isVideo ='), idx.indexOf('const isVideo =') + 400);
+  ok(/blob\.type/.test(oa), '优先用 blob.type 判定视频');
+  ok(/mkv/.test(oa) && /avi/.test(oa) && /flv/.test(oa),
+    '扩展名兜底要含 mkv / avi / flv（漏了会变成下载，用户以为视频坏了）');
 }
 
 group('多附件：XMind 往返（导出再导回）');
@@ -4622,9 +4764,9 @@ group('拖放：行为级（跑真实 handleDropFiles）');
     const bridge = {
       ready: true,
       selectNodeById: (id) => { written.push('lock:' + id); return true; },
-      getSelectedImages: () => state.images.slice(),
-      getSelectedVideo: () => state.video,
-      getSelectedFile: () => state.file,
+      getSelectedImages: () => { written.push('read:images'); return state.images.slice(); },
+      getSelectedVideo: () => { written.push('read:video'); return state.video; },
+      getSelectedFile: () => { written.push('read:file'); return state.file; },
       setImages: (l) => { written.push('images:' + l.length); state.images = l; },
       insertChildNamed: (t) => { written.push('child:' + t); return true; },
       setVideo: (v) => { written.push('video'); state.video = v; },
@@ -4690,12 +4832,55 @@ group('拖放：行为级（跑真实 handleDropFiles）');
     eq(r.written.filter((w) => /^images:/.test(w))[0], 'images:1', '图片 1 张');
   }
 
-  // 写回前必须锁定目标节点
+  // 锁定目标节点：读**和**写之前都要有
   {
     const r = await drop({}, [f('a.pdf', '')]);
-    ok(r.written.some((w) => w === 'lock:N1'), '写回前锁定目标节点');
+    ok(r.written.some((w) => w === 'lock:N1'), '锁定目标节点');
     const li = r.written.indexOf('lock:N1');
     ok(li < r.written.indexOf('file'), '锁定发生在写回**之前**（顺序不能反）');
+
+    // 更要紧的是**读取**之前也要锁定：三条 getSelectedX 读的都是「当前选中节点」，
+    // 而拖放目标与当前选中并不必然相同。读错节点 = 把别的节点的整份附件复制过来。
+    const firstRead = Math.min(
+      r.written.indexOf('read:images'),
+      r.written.indexOf('read:video'),
+      r.written.indexOf('read:file'),
+    );
+    ok(firstRead >= 0, '确实读了现有列表');
+    ok(li < firstRead,
+      `锁定必须在**读取之前**（lock 在 ${li}，首次读取在 ${firstRead}）`);
+  }
+
+  // 读到的是目标节点的列表，不是别的节点的
+  {
+    // 桩里让「当前选中」一开始指向别的节点（模拟异步期间选中态被改），
+    // 锁定后应切回目标节点 —— 读到的必须是目标节点的附件
+    const io2 = await import('./io.js');
+    const written = [];
+    let selected = 'OTHER';
+    const state2 = { file: '' };
+    const bridge = {
+      ready: true,
+      selectNodeById: () => { selected = 'N1'; written.push('lock'); return true; },
+      getSelectedImages: () => { written.push('read:images@' + selected); return []; },
+      getSelectedVideo: () => { written.push('read:video@' + selected); return ''; },
+      getSelectedFile: () => {
+        written.push('read:file@' + selected);
+        return selected === 'N1' ? state2.file : io2.encodeRefList([{ n: '别人的文件.pdf', a: 'X' }]);
+      },
+      setFile: (v) => { written.push('write:file'); state2.file = v; },
+      setVideo: () => {}, setImages: () => {},
+    };
+    const handle = new Function('bridge', 'io', 'commit', 'side', 'status', 'ctx',
+      'readDataURL', 'makeVideoThumb', src)(
+      bridge, io2, () => {}, { refresh: () => {} }, () => {}, { toast: () => {} },
+      async () => 'data:img', async () => null);
+    await handle([{ name: '我的.pdf', type: '', size: 10 }], 'N1');
+    ok(written.includes('read:file@N1'), '读取发生在锁定之后（读到的是目标节点）');
+    ok(!written.some((w) => w === 'read:file@OTHER'),
+      '不会读到别的节点的列表（否则会把别人的附件复制过来）');
+    eq(io2.decodeRefList(state2.file).map((x) => x.n).join(','), '我的.pdf',
+      '写成的是「目标节点原有 + 新的」，不含别的节点的附件');
   }
 }
 

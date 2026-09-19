@@ -819,6 +819,33 @@ export function dirOf(path) {
   return i > 0 ? p.slice(0, i) : '';
 }
 
+/**
+ * 从文件名推断视频的 MIME。
+ *
+ * 不能用通配 `video/*` —— 那是**不是**合法的具体类型，
+ * 部分浏览器给 Blob 设这种 type 后，<video> 加载 blob: URL 会直接失败，
+ * 结果是首帧永远抓不到（卡片上一片纯色，看着像图没加载出来）。
+ * 抓不到真实类型时返回空串（宁可让浏览器按内容嗅探，也别给错的）。
+ */
+const VIDEO_EXT_MIME = {
+  mp4: 'video/mp4', m4v: 'video/mp4',
+  webm: 'video/webm',
+  ogg: 'video/ogg', ogv: 'video/ogg',
+  mov: 'video/quicktime',
+  mkv: 'video/x-matroska',
+  avi: 'video/x-msvideo',
+  wmv: 'video/x-ms-wmv',
+  flv: 'video/x-flv',
+  mpg: 'video/mpeg', mpeg: 'video/mpeg',
+  '3gp': 'video/3gpp',
+  ts: 'video/mp2t',
+};
+
+export function videoMimeOf(name) {
+  const m = /\.([a-zA-Z0-9]+)\s*$/.exec(String(name || ''));
+  return (m && VIDEO_EXT_MIME[m[1].toLowerCase()]) || '';
+}
+
 export function formatSize(n) {
   const v = Number(n) || 0;
   if (v < 1024) return v + ' B';

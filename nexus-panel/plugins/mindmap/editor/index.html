@@ -240,31 +240,19 @@
             // 不能复用内核的 image 字段 —— 它是单值，内核渲染器会把数组串当 URL，直接破图。
             //
             // **1 张时走 image（内核渲染，图在节点框内）；≥2 张时走 images（横幅，框外紧贴下沿）。**
-            // 这样单图保持老行为（「内联」观感），多图才有横幅 —— 代价是 1→2 张时
-            // 图片位置会从框内挪到框外，但换来的是两套逻辑永不重复渲染：
-            // 同时写 image 与 images 会让同一个节点画出两张图。
+            //
+            // 本命令**只管 images 字段，绝不动 image**。互斥逻辑统一放在
+            // EditorBridge.setImages 里（那里知道全貌）。
+            // 曾经把「清 image」写在这里，结果 setImage(url) 为了清横幅调
+            // exec('images', null)，反过来把刚设好的 image 也清掉了 —— 图标设不上。
+            // 一个命令同时改两个字段，调用方就很难组合出正确语义。
             var ImagesCommand = kity.createClass('imagesCommand', {
                 base: kityminder.Command,
                 execute: function (m, value) {
-                    var arr = [];
-                    if (value) {
-                        try {
-                            var p = JSON.parse(value);
-                            if (p && Object.prototype.toString.call(p) === '[object Array]') arr = p;
-                        } catch (e) { arr = []; }
-                    }
                     var nodes = m.getSelectedNodes();
                     nodes.forEach(function (n) {
-                        if (arr.length >= 2) {
-                            n.setData('images', JSON.stringify(arr));
-                            n.setData('image');              // 清掉，避免内核再画一张
-                        } else if (arr.length === 1) {
-                            n.setData('images');             // 清掉，交给内核画（框内）
-                            n.setData('image', arr[0]);
-                        } else {
-                            n.setData('images');
-                            n.setData('image');
-                        }
+                        if (value) n.setData('images', value);
+                        else n.setData('images');
                         n._kmImgIdx = 0;
                         n.render();
                     });
@@ -583,22 +571,27 @@
                         if (vids.length) {
                             var vw = 96, vh = 54;
                             var vx = cx - vw / 2;
+                            // 当前显示第几个。写死 0 的话，节点挂了 3 个视频
+                            // 却永远只能打开第 1 个 —— 角标显示 3 但点开是第 1 个，
+                            // 用户会以为后面两个坏了。
+                            var vi = node._kmVidIdx || 0;
+                            if (!(vi >= 0 && vi < vids.length)) vi = 0;
+                            var vcur = vids[vi] || {};
                             var vcard = new kity.Rect(vw, vh, vx, top, 4)
                                 .fill('#1B1B1F').stroke(color, 1);
                             vcard.setStyle('cursor', 'pointer');
-                            (function (v0) {
+                            (function (idx, ref) {
                                 vcard.on('mousedown', function (ev) {
                                     ev.preventDefault();
                                     if (ev.stopPropagation) ev.stopPropagation();
-                                    openAttach('video', 0, v0);
+                                    openAttach('video', idx, ref);
                                 });
-                            })(vids[0]);
+                            })(vi, vcur);
                             push(vcard);
                             // 首帧缩略图：附加时生成并存进 ref.t（同步可读，不阻塞渲染）
-                            var vt0 = vids[0] || {};
-                            if (vt0.t) {
+                            if (vcur.t) {
                                 try {
-                                    var vt = new kity.Image(vt0.t, vw - 6, vh - 6, vx + 3, top + 3);
+                                    var vt = new kity.Image(vcur.t, vw - 6, vh - 6, vx + 3, top + 3);
                                     vt.setStyle('pointer-events', 'none');
                                     push(vt);
                                 } catch (e3) {}
@@ -621,6 +614,38 @@
                                 bnum.setTranslate(bx, by + 3.5);
                             } catch (e3) {}
                             push(bnum);
+                            if (vids.length > 1) {
+                                // 多个视频要能切换，否则第 2 个起永远点不到。
+                                // 角标已经占用「总数」，当前序号放左下角小字。
+                                var vseq = new kity.Text((vi + 1) + '/' + vids.length);
+                                try {
+                                    vseq.setSize(9).fill('rgba(255,255,255,0.92)').setTextAnchor('start');
+                                    vseq.setStyle('pointer-events', 'none');
+                                    vseq.setTranslate(vx + 4, top + vh - 4);
+                                } catch (e3) {}
+                                push(vseq);
+                                var vmy = top + vh / 2;
+                                var vaL = (new kity.Path).setPathData(
+                                    'M' + (vx + 10) + ',' + vmy + ' L' + (vx + 18) + ',' + (vmy - 6) +
+                                    ' L' + (vx + 18) + ',' + (vmy + 6) + ' Z')
+                                    .fill('rgba(0,0,0,0.55)').stroke('rgba(255,255,255,0.85)', 1);
+                                var vaR = (new kity.Path).setPathData(
+                                    'M' + (vx + vw - 10) + ',' + vmy + ' L' + (vx + vw - 18) + ',' + (vmy - 6) +
+                                    ' L' + (vx + vw - 18) + ',' + (vmy + 6) + ' Z')
+                                    .fill('rgba(0,0,0,0.55)').stroke('rgba(255,255,255,0.85)', 1);
+                                [[vaL, -1], [vaR, 1]].forEach(function (pair) {
+                                    var sh = pair[0], d = pair[1];
+                                    sh.setStyle('cursor', 'pointer');
+                                    sh.on('mousedown', function (ev) {
+                                        ev.preventDefault();
+                                        if (ev.stopPropagation) ev.stopPropagation();
+                                        var cur = node._kmVidIdx || 0;
+                                        node._kmVidIdx = (cur + d + vids.length) % vids.length;
+                                        node.render();
+                                    });
+                                    push(sh);
+                                });
+                            }
                             top += vh + 4;
                         }
 
