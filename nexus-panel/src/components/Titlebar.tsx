@@ -64,11 +64,14 @@ export default function Titlebar({
   useEffect(() => {
     const el = slotRef.current;
     if (!el) return;
+    /* toolbar-plugin.js 是 .js，没有类型声明 —— 这四个回调的参数在
+       noImplicitAny 下全都是隐式 any（TS7006）。签名照着上面的 props 抄，
+       别用 `as` 糊过去：这里一旦漂移，插件传进来的东西对不上是运行时才炸。 */
     const cleanups = mountToolbar(el, {
-      toast: (msg, type) => onToast?.(msg, type),
-      win: (a) => onWin(a as WinAction),
-      navigate: (id) => onNavigate?.(id),
-      emit: (ev, payload) => onEmit?.(ev, payload),
+      toast: (msg: string, type?: string) => onToast?.(msg, type),
+      win: (a: WinAction) => onWin(a),
+      navigate: (id: string) => onNavigate?.(id),
+      emit: (ev: string, payload?: unknown) => onEmit?.(ev, payload),
     });
     /*
      * 必须回收：本 effect 的依赖里有 onWin / onToast 等回调，
