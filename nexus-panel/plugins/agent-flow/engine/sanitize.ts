@@ -41,7 +41,13 @@ export function looksLikeSecretName(name: string): boolean {
  * 不存在的父节点上，引擎把它转成边，于是新节点莫名跑不起来。
  * （这类字段以后还会加，加的时候记得同步这里。）
  */
-export const VIEW_KEYS = ['size', 'stackParent', 'stackCollapsed'];
+/*
+ * hasStackChild 是**渲染时算出来的**（是否有节点嵌合在本节点下方），
+ * 不落盘。列进来是为了让复制节点时把它剥掉 ——
+ * 否则只复制串顶（下级没一起选中）时，副本会继承"我下面有块"，
+ * 底部被压平而实际下面什么都没有。
+ */
+export const VIEW_KEYS = ['size', 'stackParent', 'stackCollapsed', 'hasStackChild'];
 
 /** 数据里是否含内联密钥 —— 用于提示用户"这部分不会被存进去" */
 export function hadInlineSecret(data: unknown): boolean {

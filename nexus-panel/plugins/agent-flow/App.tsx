@@ -64,11 +64,11 @@ import {
 import CanvasLibrary from './components/CanvasLibrary';
 import {
   expandModules, findModule, addModule, saveModules, loadModules,
-  stripRuntimeNodes, type ModuleDef,
+  stripRuntimeNodes, packSelection, type ModuleDef,
 } from './engine/modules';
 import {
   stackEdges, findSnapTarget, descendantsOf, chainTopOf, chainOf,
-  parentIdOf, movedEnough, heightOf, STACK_GAP,
+  parentIdOf, movedEnough, heightOf, STACK_GAP, stackParentIds,
 } from './engine/stack';
 import { withDefault } from './engine/nodeDefaults';
 import { specOf, canConnect } from './engine/nodeSpec';
@@ -1626,16 +1626,33 @@ function reportSkipped(
       pushLog('✗ 还没选节点：先在画布上框选或点选要打包的节点');
       return;
     }
-    const ids = new Set(picked.map((n) => n.id));
-    // 只保留两端都在选中集合里的边，否则模块内部会连到外面的节点
-    const innerEdges = edges.filter((e) => ids.has(e.source) && ids.has(e.target));
-
-    const def = await askCreateModule({
-      nodes: picked.map((n) => ({ ...n })) as unknown as Record<string, unknown>[],
-      edges: innerEdges.map((e) => ({
+    /*
+     * 走 packSelection，不再自己拼。
+     *
+     * 以前这里手写了一份，比 packSelection 少干三件事：
+     *   · 不归一化坐标 → 拖出来的模块内部布局跑到了画布左上角
+     *   · 不剥运行时（status / output / error）→ 存进去的模块带着
+     *     "已经跑完"的状态，拖出来看起来像是执行过了
+     *   · 不补嵌合的隐式边 → 嵌合成串的节点存进去后彼此不再相连，
+     *     拖出来的模块"莫名其妙跑不起来"，而存的时候没有任何提示
+     *
+     * 同一件事两处写，必然有一处残缺 —— 所以统一到 engine 那一份。
+     *
+     * 第三参数传全图节点：嵌合的跨边界连接（父选中、子没选中）
+     * 要靠它才算得出来。
+     */
+    const packed = packSelection(
+      picked as never,
+      edges.map((e) => ({
         id: e.id, source: e.source, target: e.target,
         branch: e.data?.branch, loopRole: e.data?.loopRole,
-      })) as unknown as Record<string, unknown>[],
+      })) as never,
+      nodes as never,
+    );
+
+    const def = await askCreateModule({
+      nodes: packed.nodes as Record<string, unknown>[],
+      edges: packed.edges as unknown as Record<string, unknown>[],
     });
     if (def) pushLog(`✓ 已存成模块「${def.name}」，可从模块库拖出来复用`);
   }, [nodes, edges, pushLog]);
@@ -1811,12 +1828,33 @@ function reportSkipped(
    */
   const displayNodes = useMemo(() => {
     const tops = nodes.filter((n) => Boolean((n.data as Record<string, unknown>)?.stackCollapsed));
-    if (tops.length === 0) return nodes;
+    /*
+     * 下面挂着块的节点：直筒观感要给它们压掉下圆角与下边框。
+     * 这个标记塞进 data 而不是另开一条通道 —— NodeShell 只拿得到自己
+     * 这一个节点，扫不到全图。不落盘（见 engine/sanitize 的 VIEW_KEYS）。
+     */
+    const withChild = new Set(stackParentIds(nodes as never));
+
+    // 既没嵌合也没折叠：原样返回，不重建数组（xyflow 会因此全量重渲染）
+    if (tops.length === 0 && withChild.size === 0) return nodes;
+
     const hidden = new Set<string>();
     for (const t of tops) {
       for (const d of descendantsOf(nodes as never, t.id)) hidden.add(d);
     }
-    return nodes.map((n) => (hidden.has(n.id) ? { ...n, hidden: true } : { ...n, hidden: false }));
+    return nodes.map((n) => {
+      let out = n;
+      if (withChild.has(n.id)) {
+        const merged = { ...(out.data as Record<string, unknown>), hasStackChild: true };
+        // 双重断言：FlowNode 是联合类型，各成员的 data 形状不同，
+        // 展开后加字段没法直接对上任何一个成员
+        out = { ...out, data: merged } as unknown as typeof n;
+      }
+      if (tops.length > 0) {
+        out = { ...out, hidden: hidden.has(n.id) } as typeof n;
+      }
+      return out;
+    });
   }, [nodes]);
 
   /** 折叠 / 展开整条串（只影响显示，不影响执行） */

@@ -248,3 +248,44 @@ test('逐字段存默认要挡密钥', () => {
     'setFieldsDefault 里必须过一遍 isSecretField',
   );
 });
+
+/* ================= 嵌合的直筒观感 ================= */
+
+/*
+ * 直筒需要**两块**配合：下方压掉上圆角（.is-stacked）、上方压掉下圆角
+ * （.is-stack-top）。只做一半的话两块之间会留一个圆角缺口，看着不像积木。
+ *
+ * .is-stack-top 以前定义了却没人接上 —— 正是"定义了没用"这类反向问题，
+ * 光查"用了没定义"逮不到。
+ */
+test('.is-stack-top 有定义且被接上', () => {
+  if (!hasSrc) return;
+  const m = stripComments(css).match(/\.node-card\.is-stack-top\s*\{[^}]*\}/);
+  assert.ok(m, '.is-stack-top 必须有样式定义');
+  assert.ok(m[0].includes('border-bottom-left-radius'), '缺下圆角压制');
+
+  const shell = read(path.join(ROOT, 'components/NodeShell.tsx'));
+  assert.ok(shell.includes('is-stack-top'), 'NodeShell 没有接上 is-stack-top');
+  assert.ok(shell.includes('hasStackChild'), 'NodeShell 要读 hasStackChild 才能知道下面有没有块');
+});
+
+/** 标记必须算出来塞进 data，否则 NodeShell 扫不到全图 */
+test('App 在渲染时算 hasStackChild', () => {
+  if (!hasSrc) return;
+  const app = read(path.join(ROOT, 'App.tsx'));
+  assert.ok(app.includes('stackParentIds'), 'App 要用 stackParentIds 算出下面挂着块的节点');
+  assert.ok(app.includes('hasStackChild'), '要把 hasStackChild 塞进 data');
+});
+
+/*
+ * 不落盘：hasStackChild 是渲染时算的，进了存档就是脏数据。
+ * 复制节点会整体 clone data —— 只复制串顶（下级没选中）时，
+ * 副本会继承"我下面有块"，底部被压平而实际下面什么都没有。
+ */
+test('hasStackChild 进了 VIEW_KEYS（不落盘、复制时剥掉）', () => {
+  if (!hasSrc) return;
+  const san = read(path.join(ROOT, 'engine/sanitize.ts'));
+  const m = san.match(/VIEW_KEYS\s*=\s*\[([^\]]*)\]/);
+  assert.ok(m, '找不到 VIEW_KEYS');
+  assert.ok(m[1].includes('hasStackChild'), 'VIEW_KEYS 缺 hasStackChild');
+});

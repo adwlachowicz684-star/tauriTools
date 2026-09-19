@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   addModule, loadModules, saveModules, removeModule, renameModule, findModule,
   modulePorts, stripRuntimeNodes, expandModules, innerId,
+  packSelection, rewireCrossing, canPack,
   exportModules, importModules, type ModuleDef, type ModuleEdge, type KV,
 } from '../engine/modules';
 
@@ -317,4 +318,242 @@ test('replace 模式清掉本机原有的', () => {
 test('导入非 JSON / 没有模块列表都要给出可读错误', () => {
   assert.throws(() => importModules('不是JSON', undefined, memKV()), /JSON/);
   assert.throws(() => importModules('{"foo":1}', undefined, memKV()), /模块列表/);
+});
+
+/* ================= 打包（把选中节点合成模块） ================= */
+
+const PN = (id: string, x: number, y: number, data: Record<string, unknown> = { kind: 'task' }) =>
+  ({ id, position: { x, y }, data });
+
+test('canPack：空集合不行', () => {
+  assert.equal(canPack([]).ok, false);
+  assert.ok(canPack([]).reason?.includes('还没选'));
+});
+
+test('canPack：有节点就行', () => {
+  assert.equal(canPack([PN('a', 0, 0)]).ok, true);
+});
+
+test('内部边两端都在集合里才保留', () => {
+  const r = packSelection(
+    [PN('a', 0, 0), PN('b', 100, 0), PN('c', 200, 0)],
+    [
+      { id: 'e1', source: 'a', target: 'b' },
+      { id: 'e2', source: 'b', target: 'c' },
+      { id: 'e3', source: 'a', target: 'c' },
+    ],
+  );
+  assert.equal(r.edges.length, 3);
+  assert.equal(r.crossing.length, 0);
+});
+
+/** 跨边界的边必须摘出来 —— 丢掉会让外部接线静默断掉 */
+test('跨边界的边被摘成 crossing', () => {
+  const r = packSelection(
+    [PN('a', 0, 0), PN('b', 100, 0)],
+    [
+      { id: 'e1', source: 'a', target: 'b' },
+      { id: 'e2', source: 'outer1', target: 'a' },
+      { id: 'e3', source: 'b', target: 'outer2' },
+    ],
+  );
+  assert.equal(r.edges.length, 1, '只剩内部那条');
+  assert.equal(r.crossing.length, 2);
+  assert.deepEqual(r.crossing.map((c) => c.kind).sort(), ['in', 'out']);
+});
+
+test('crossing 分清里外端', () => {
+  const r = packSelection(
+    [PN('a', 0, 0)],
+    [
+      { id: 'e1', source: 'outer1', target: 'a' },
+      { id: 'e2', source: 'a', target: 'outer2' },
+    ],
+  );
+  const inc = r.crossing.find((c) => c.kind === 'in');
+  const outc = r.crossing.find((c) => c.kind === 'out');
+  assert.equal(inc?.outer, 'outer1');
+  assert.equal(inc?.inner, 'a');
+  assert.equal(outc?.outer, 'outer2');
+  assert.equal(outc?.inner, 'a');
+});
+
+/** 不减原点的后果：模块拖到别处时内部布局全挤在左上角 */
+test('内部坐标减去原点', () => {
+  const r = packSelection(
+    [PN('a', 500, 300), PN('b', 700, 300)],
+    [],
+  );
+  const a = r.nodes[0] as { position: { x: number; y: number } };
+  assert.equal(a.position.x, 0);
+  assert.equal(a.position.y, 0);
+  const b = r.nodes[1] as { position: { x: number; y: number } };
+  assert.equal(b.position.x, 200, '相对距离要保留');
+});
+
+test('模块节点放在选中区域中心，不跳位', () => {
+  const r = packSelection([PN('a', 0, 0), PN('b', 200, 100)], []);
+  assert.equal(r.at.x, 100);
+  assert.equal(r.at.y, 50);
+});
+
+/** stackParent 不剥的话，内部节点还"嵌合"在外部节点上，展开时指向不存在的地方 */
+test('剥掉显示状态：stackParent / size / stackCollapsed', () => {
+  const r = packSelection(
+    [PN('a', 0, 0, { kind: 'task', stackParent: '外面的节点', size: 'tall', stackCollapsed: true })],
+    [],
+  );
+  const d = (r.nodes[0] as { data: Record<string, unknown> }).data;
+  assert.equal(d.stackParent, undefined);
+  assert.equal(d.size, undefined);
+  assert.equal(d.stackCollapsed, undefined);
+  assert.equal(d.kind, 'task', '配置字段得留着');
+});
+
+test('剥掉运行时字段', () => {
+  const r = packSelection(
+    [PN('a', 0, 0, { kind: 'task', status: 'success', output: '旧输出', lastSha: 'x' })],
+    [],
+  );
+  const d = (r.nodes[0] as { data: Record<string, unknown> }).data;
+  assert.equal(d.status, undefined);
+  assert.equal(d.output, undefined);
+  assert.equal(d.lastSha, undefined);
+});
+
+/* ================= 跨边界边重新接线 ================= */
+
+test('进来的边改挂到实例上', () => {
+  const out = rewireCrossing('m1', [{ kind: 'in', outer: 'x', inner: 'a' }]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].source, 'x');
+  assert.equal(out[0].target, 'm1');
+});
+
+test('出去的边改挂到实例上', () => {
+  const out = rewireCrossing('m1', [{ kind: 'out', outer: 'y', inner: 'a' }]);
+  assert.equal(out[0].source, 'm1');
+  assert.equal(out[0].target, 'y');
+});
+
+/** 不去重会叠出多条一样的边，删的时候要删好几次 */
+test('多条内部节点连到同一个外部节点时要去重', () => {
+  const out = rewireCrossing('m1', [
+    { kind: 'out', outer: 'y', inner: 'a' },
+    { kind: 'out', outer: 'y', inner: 'b' },
+    { kind: 'out', outer: 'y', inner: 'c' },
+  ]);
+  assert.equal(out.length, 1, '三条应合成一条');
+});
+
+test('不同目标不去重', () => {
+  const out = rewireCrossing('m1', [
+    { kind: 'out', outer: 'y', inner: 'a' },
+    { kind: 'out', outer: 'z', inner: 'a' },
+  ]);
+  assert.equal(out.length, 2);
+});
+
+/** 条件分支用的 branch 必须带过去，否则分支信息丢失 */
+test('branch / loopRole 跟着边一起迁移', () => {
+  const out = rewireCrossing('m1', [
+    { kind: 'out', outer: 'y', inner: 'a', branch: 'yes' },
+    { kind: 'out', outer: 'y', inner: 'b', branch: 'no' },
+  ]);
+  assert.equal(out.length, 2, 'branch 不同就该是两条边');
+  assert.deepEqual(out.map((e) => e.branch).sort(), ['no', 'yes']);
+});
+
+test('空输入不炸', () => {
+  assert.deepEqual(rewireCrossing('m1', []), []);
+  const r = packSelection([], []);
+  assert.equal(r.nodes.length, 0);
+  assert.equal(r.crossing.length, 0);
+});
+
+
+/* ---------------- 嵌合的串存成模块不能丢连接 ---------------- */
+
+/*
+ * 嵌合关系存在 stackParent 上，而打包时它被当作显示状态剥掉。
+ * 不把隐式边补成真实边的话：存进模块的几个节点彼此不再相连，
+ * 拖出来表现为"莫名其妙跑不起来"，而存的时候没有任何提示。
+ */
+
+test('嵌合成串的节点存成模块后仍有连接', () => {
+  const ns = [
+    { id: 'A', position: { x: 0, y: 0 }, data: { kind: 'a' } },
+    { id: 'B', position: { x: 0, y: 90 }, data: { kind: 'b', stackParent: 'A' } },
+    { id: 'C', position: { x: 0, y: 180 }, data: { kind: 'c', stackParent: 'B' } },
+  ];
+  const r = packSelection(ns as never, [] as never, ns as never);
+  const pairs = r.edges.map((e) => `${e.source}->${e.target}`).sort();
+  assert.deepEqual(pairs, ['A->B', 'B->C']);
+});
+
+test('已经拉过线就不再补嵌合边（避免重复触发）', () => {
+  const ns = [
+    { id: 'A', position: { x: 0, y: 0 }, data: {} },
+    { id: 'B', position: { x: 0, y: 90 }, data: { stackParent: 'A' } },
+  ];
+  // A→B 既嵌合又拉了线：只保留显式那条（它可能带 branch 信息）
+  const r = packSelection(ns as never, [{ id: 'e1', source: 'A', target: 'B' }] as never, ns as never);
+  assert.equal(r.edges.length, 1);
+  assert.equal(r.edges[0].id, 'e1');
+});
+
+test('嵌合的跨边界连接要变成 crossing', () => {
+  const ns = [
+    { id: 'A', position: { x: 0, y: 0 }, data: {} },
+    { id: 'B', position: { x: 0, y: 90 }, data: { stackParent: 'A' } },
+  ];
+  // 只选中 A：B 在外面，"A → B" 该算模块的出边
+  const r = packSelection([ns[0]] as never, [] as never, ns as never);
+  const outs = r.crossing.filter((c) => c.kind === 'out');
+  assert.equal(outs.length, 1);
+  assert.equal(outs[0].inner, 'A');
+  assert.equal(outs[0].outer, 'B');
+});
+
+test('不传全图节点时，跨边界的嵌合边算不出来（退化为只补内部）', () => {
+  const ns = [
+    { id: 'A', position: { x: 0, y: 0 }, data: {} },
+    { id: 'B', position: { x: 0, y: 90 }, data: { stackParent: 'A' } },
+  ];
+  // 只选中 A，且不传 allNodes —— 子上才存着 stackParent，而 B 不在集合里
+  const r = packSelection([ns[0]] as never, [] as never);
+  assert.deepEqual(r.crossing, []);
+  assert.deepEqual(r.edges, []);
+});
+
+test('存进模块的节点不带运行时状态', () => {
+  const ns = [
+    { id: 'A', position: { x: 0, y: 0 }, data: { status: 'success', output: '旧输出' } },
+  ];
+  const r = packSelection(ns as never, [] as never, ns as never);
+  const d = r.nodes[0] as { data: Record<string, unknown> };
+  // 带着"已跑完"存进去，拖出来会看起来像执行过了
+  assert.equal('status' in d.data, false);
+  assert.equal('output' in d.data, false);
+});
+
+test('存进模块的节点不带 stackParent（否则展开时指向不存在的父）', () => {
+  const ns = [
+    { id: 'A', position: { x: 0, y: 0 }, data: {} },
+    { id: 'B', position: { x: 0, y: 90 }, data: { stackParent: 'A' } },
+  ];
+  const r = packSelection(ns as never, [] as never, ns as never);
+  const d = r.nodes[1] as { data: Record<string, unknown> };
+  assert.equal('stackParent' in d.data, false);
+});
+
+test('内部坐标要减原点（否则拖出来跑到画布左上角）', () => {
+  const ns = [
+    { id: 'A', position: { x: 500, y: 300 }, data: {} },
+    { id: 'B', position: { x: 500, y: 390 }, data: { stackParent: 'A' } },
+  ];
+  const r = packSelection(ns as never, [] as never, ns as never);
+  assert.equal((r.nodes[0] as { position: { x: number } }).position.x, 0);
+  assert.equal((r.nodes[0] as { position: { y: number } }).position.y, 0);
+  assert.equal((r.nodes[1] as { position: { y: number } }).position.y, 90);
 });

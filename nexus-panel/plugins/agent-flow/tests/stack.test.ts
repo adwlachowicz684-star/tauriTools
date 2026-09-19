@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   parentIdOf, stackParentOf, childrenOf, descendantsOf, chainTopOf, chainOf,
   stackEdges, findSnapTarget, movedEnough, chainOutputAbove, inputValueFor,
-  heightOf, SNAP_TOLERANCE,
+  heightOf, SNAP_TOLERANCE, stackParentIds, hasStackChild,
 } from '../engine/stack';
 
 /**
@@ -181,4 +181,50 @@ test('inputValueFor：上方还没产出时回落到全局', () => {
 test('inputValueFor：上方节点已删除时回落，不报错', () => {
   const orphan: N[] = [{ id: 'B', position: { x: 0, y: 0 }, data: { stackParent: '没了' } }];
   assert.equal(inputValueFor(orphan, 'B', {}, '全局'), '全局');
+});
+
+
+/* ---------------- 直筒观感需要的"下面有没有块" ---------------- */
+
+/*
+ * .is-stacked（压掉上圆角）光看自己就够 —— stackParent 写在自己身上。
+ * .is-stack-top（压掉下圆角）必须知道**下面有没有块**，
+ * 而那要扫全图。缺了它，嵌合的两块之间会留一个圆角缺口，不是直筒。
+ */
+
+test('stackParentIds 找出所有下面挂着块的节点', () => {
+  const ns = chain(); // A → B → C
+  const ids = stackParentIds(ns);
+  // A 下面挂着 B，B 下面挂着 C；C 下面没有
+  assert.deepEqual(ids.slice().sort(), ['A', 'B']);
+});
+
+test('父被删掉的脏关系不算', () => {
+  const ns: N[] = [
+    { id: 'A', position: { x: 0, y: 0 }, data: {} },
+    // B 声称嵌在已被删掉的 X 上
+    { id: 'B', position: { x: 0, y: 90 }, data: { stackParent: 'X' } },
+  ];
+  assert.deepEqual(stackParentIds(ns), []);
+});
+
+test('自环不算', () => {
+  const ns: N[] = [{ id: 'A', position: { x: 0, y: 0 }, data: { stackParent: 'A' } }];
+  assert.deepEqual(stackParentIds(ns), []);
+});
+
+test('hasStackChild 只看直接下级', () => {
+  const ns = chain(); // A → B → C
+  assert.equal(hasStackChild(ns, 'A'), true);
+  assert.equal(hasStackChild(ns, 'B'), true);
+  assert.equal(hasStackChild(ns, 'C'), false);
+});
+
+test('同一父下挂多块只算一次', () => {
+  const ns: N[] = [
+    { id: 'A', position: { x: 0, y: 0 }, data: {} },
+    { id: 'B', position: { x: 0, y: 90 }, data: { stackParent: 'A' } },
+    { id: 'C', position: { x: 0, y: 180 }, data: { stackParent: 'A' } },
+  ];
+  assert.deepEqual(stackParentIds(ns), ['A']);
 });

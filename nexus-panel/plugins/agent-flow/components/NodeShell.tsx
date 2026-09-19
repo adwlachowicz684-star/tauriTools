@@ -82,10 +82,18 @@ export function NodeShell({
   const issue = validateNode({ data });
   const dot: IssueLevel = issue.level;
   const stacked = stackParentOf({ data: data as Record<string, unknown> }) !== null;
+  /*
+   * "下面挂着块"要压掉下圆角与下边框 —— 与 stacked 一起才能拼成直筒。
+   *
+   * 这个值由 App 在渲染时算好塞进 data（不落盘，见 VIEW_KEYS 的说明）：
+   * NodeShell 只拿到自己这一个节点，扫不到全图，而"下面有没有块"
+   * 光看自己看不出来。
+   */
+  const hasChild = Boolean((data as Record<string, unknown>).hasStackChild);
 
   return (
     <div
-      className={`node-card size-${size} ${stacked ? 'is-stacked' : ''} ${className ?? ''} status-${status} ${selected ? 'is-selected' : ''}`}
+      className={`node-card size-${size} ${stacked ? 'is-stacked' : ''} ${hasChild ? 'is-stack-top' : ''} ${className ?? ''} status-${status} ${selected ? 'is-selected' : ''}`}
       style={{ borderLeftColor: color }}
     >
       {hasTarget ? <Handle type="target" position={Position.Left} /> : null}
