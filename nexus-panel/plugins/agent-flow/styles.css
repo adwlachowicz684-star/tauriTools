@@ -517,6 +517,32 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 .log-head .ok { color: var(--af-ok); font-weight: 500; } .log-head .bad { color: var(--af-bad); font-weight: 500; }
 .log-body { flex: 1; overflow: auto; padding: 10px 12px; font-size: 12px; color: var(--af-dim); line-height: 1.7; }
 
+/* ---------------- 渲染出错的兜底块 ----------------
+ *
+ * 出现在这里说明某个节点 / 面板渲染时抛错了。
+ * 以前没有这层兜底：一次抛错会让**整棵 React 树崩掉**，
+ * 表现为"画布整个消失"，连删掉出错节点的机会都没有。
+ */
+.af-crash {
+  display: flex; flex-direction: column; gap: 5px;
+  padding: 8px 10px;
+  border: 1px solid var(--af-bad, #ef4444);
+  border-radius: var(--af-r-sm, 6px);
+  background: rgba(239, 68, 68, 0.12);
+  font-size: 11px; line-height: 1.5;
+  color: var(--af-fg);
+  overflow: hidden;
+}
+.af-crash-tag {
+  font-weight: 600; color: var(--af-bad, #ef4444);
+}
+.af-crash-msg {
+  color: var(--af-dim);
+  word-break: break-all;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* ---------------- 触发器 ---------------- */
 .toolbar .trg-btn { position: relative; background: #2a2036; border-color: #4a3a5e; }
 .toolbar .trg-btn .dot {

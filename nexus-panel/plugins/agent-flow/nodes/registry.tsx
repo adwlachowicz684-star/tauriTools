@@ -4,6 +4,7 @@ import {
   type NodeCategory, type NodeDef, type NodePreset, type NodeInspectorProps,
 } from './types';
 import { loadCustomPresets, presetKey, presetIdOf, dataOf } from '../engine/customPresets';
+import { withCrashGuard } from '../components/ErrorBoundary';
 
 /*
  * re-export 卡片组的查询函数。
@@ -203,6 +204,17 @@ export function presetsByCategory(): Array<{ category: NodeCategory; label: stri
 /** 画布的 nodeTypes 映射（xyflow 要的就是 type → 组件） */
 export function buildNodeTypes(): NodeTypes {
   const map: NodeTypes = {};
-  for (const def of defs.values()) map[def.type] = def.Canvas;
+  /*
+   * 每个节点卡片单独套一层错误边界。
+   *
+   * 不套的话，某一个节点的 data 不合法 → 它的卡片渲染抛错 →
+   * **整棵 React 树崩掉**，整张画布消失（别的节点也一起没了）。
+   * 那是最糟的一种失败：连把出错节点删掉的机会都没有。
+   *
+   * 套上之后，崩的只有那一个节点 —— 显示一行错误，其余照常可操作。
+   */
+  for (const def of defs.values()) {
+    map[def.type] = withCrashGuard(def.Canvas, `节点 ${def.type}`);
+  }
   return map;
 }
