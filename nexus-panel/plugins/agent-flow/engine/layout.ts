@@ -1,5 +1,9 @@
 /**
- * 上 / 左中右 三段布局的面板标签状态（纯逻辑层）。
+ * 上边栏 + 左中右三栏的布局状态（纯逻辑层）。
+ *
+ * 右栏是「设置在上、日志在下」的**上下分栏**（可拖分隔条调高度），
+ * 不是可切标签 —— 跑流程时盯着日志还得能改参数，
+ * 切成标签就得来回切，那两件事恰恰经常同时发生。
  *
  * ================= 为什么抽出来 =================
  *
@@ -17,22 +21,6 @@
 /** 左边栏的两个标签 */
 export type LeftTab = 'library' | 'canvas';
 
-/**
- * 右栏的两个标签。
- *
- * 做成**可切标签**而不是上下平分：
- * 分栏的话每栏都只有一半高 —— 属性面板挤到看不全，日志只看得到几行。
- * 切换的代价是"看日志时看不到属性"，但用「运行时自动切到日志」
- * 补上了这个代价：跑起来自然就看到日志，不用手动切。
- */
-export type RightTab = 'inspector' | 'log';
-
-export const RIGHT_TABS: RightTab[] = ['inspector', 'log'];
-
-export const RIGHT_TAB_LABEL: Record<RightTab, string> = {
-  inspector: '设置',
-  log: '日志',
-};
 
 /** 主视图 */
 export type MainView = 'flow' | 'tasks' | 'history';
@@ -85,9 +73,6 @@ export function normalizeLeftTab(v: unknown): LeftTab {
   return v === 'canvas' ? 'canvas' : 'library';
 }
 
-export function normalizeRightTab(v: unknown): RightTab {
-  return v === 'log' ? 'log' : 'inspector';
-}
 
 /* ------------------------------------------------------------------ */
 /* 可见性                                                              */
