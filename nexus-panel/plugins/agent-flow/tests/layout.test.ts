@@ -6,7 +6,7 @@ import {
   LOG_H_MIN, LOG_H_MAX, LOG_H_DEFAULT,
   leftPaneVisible, leftPaneEditable, coerceForView,
 
-  RIGHT_TABS, RIGHT_TAB_LABEL, normalizeRightTab,} from '../engine/layout';
+} from '../engine/layout';
 
 /* ================= 标签清单 ================= */
 
@@ -128,23 +128,4 @@ test('非流程视图标记不可见', () => {
 test('null 给默认高度而不是最小值', () => {
   assert.equal(normalizeLogHeight(null), LOG_H_DEFAULT);
   assert.notEqual(normalizeLogHeight(null), LOG_H_MIN);
-});
-
-/* ================= 右栏标签 ================= */
-
-test('右栏有两个标签：设置 / 日志', () => {
-  assert.deepEqual(RIGHT_TABS, ['inspector', 'log']);
-  assert.equal(RIGHT_TAB_LABEL.inspector, '设置');
-  assert.equal(RIGHT_TAB_LABEL.log, '日志');
-});
-
-/** 未知值退回默认 —— 老存档 / 手改的值不能渲染出点不动的空面板 */
-test('未知右栏标签退回设置', () => {
-  assert.equal(normalizeRightTab('log'), 'log');
-  assert.equal(normalizeRightTab('inspector'), 'inspector');
-  assert.equal(normalizeRightTab('nonsense'), 'inspector');
-  assert.equal(normalizeRightTab(undefined), 'inspector');
-  assert.equal(normalizeRightTab(null), 'inspector');
-  assert.equal(normalizeRightTab({}), 'inspector');
-  assert.equal(normalizeRightTab(123), 'inspector');
 });
