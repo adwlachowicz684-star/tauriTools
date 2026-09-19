@@ -179,7 +179,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
 .app { display: flex; flex-direction: column; height: 100%; }
 
 .toolbar {
-  flex: none;          /* 同上：空间不足让画布去让，别压扁按钮 */
+  flex: none;          /* 不参与高度收缩：空间不足该由画布让，别压扁这一行 */
   display: flex; align-items: center; gap: 8px;
   padding: 10px 14px; background: var(--af-panel); border-bottom: 1px solid var(--af-divider);
   /* 必须能换行：这条工具栏 11 个按钮 + 1 下拉，实测最小需要约 920px，
@@ -355,7 +355,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 .empty-hint { font-size: 13px; padding-top: 40px; }
 
 /* 日志面板 */
-.logpane { width: 280px; flex: none; background: var(--af-panel); border-left: 1px solid var(--af-divider); display: flex; flex-direction: column; }
+.logpane { flex: 1; min-height: 0; background: var(--af-panel); display: flex; flex-direction: column; }
 .log-head { padding: 10px 12px; border-bottom: 1px solid var(--af-divider); font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; }
 .log-head .ok { color: var(--af-ok); font-weight: 500; } .log-head .bad { color: var(--af-bad); font-weight: 500; }
 .log-body { flex: 1; overflow: auto; padding: 10px 12px; font-size: 12px; color: var(--af-dim); line-height: 1.7; }
@@ -514,45 +514,105 @@ button.mini.danger:hover { border-color: var(--af-bad); color: var(--af-t-err2);
 button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 
 /* ---------------- 整体布局：边栏 + 主区 ---------------- */
+/* ------------------------------------------------------------------ */
+/* 上 / 左中右 三段布局                                                */
+/*                                                                     */
+/* 上：画布页签 + 工具栏（横跨全宽）                                   */
+/* 下：左＝节点库·模块库 / 画布库，中＝画布，右＝设置 / 日志           */
+/* ------------------------------------------------------------------ */
 .app-shell { display: flex; height: 100vh; overflow: hidden; }
 .app-shell > .app { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.app-inner { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
-/* ---------------- 主体行：画布库 + 主区 ----------------
- *
- * 这两个类**此前完全没有样式**（裸 div），是"画布撑不开"的根因。
- * 与 .drawer-* 那次是同一类病：TSX 里写了类名，CSS 里忘了建规则，
- * 界面看着像"布局没生效"，实际是整层骨架都没参与布局。
- *
- * 断掉的两环：
- *   ① .af-body-row 在 .app（column flex）里是 flex: 0 1 auto
- *      → 高度只到内容高度，撑不满 100vh
- *   ② 它是 display: block → 画布库（180px 宽）与主区**上下堆叠**，
- *      而不是左右并排
- *   ③ .af-body-main 不是 flex 容器 → 里面 .body 的 flex: 1 完全失效
- *      （flex 属性只对 flex 子项有意义）
- *   ④ 高度一路 auto → 画布里的 ReactFlow `.react-flow{height:100%}`
- *      的 100% 解析为 auto，内容又全是绝对定位 → **高度塌陷成 0**
- *
- * 所以画布不是"差一点没铺满"，而是整条高度链从这一层就断了。 */
-.af-body-row {
-  flex: 1;            /* 撑满 .app 的剩余高度 */
-  min-height: 0;      /* 不加这条，内部滚动区会被内容顶开、overflow 失效 */
-  display: flex;      /* 画布库与主区左右并排 */
-}
-
-.af-body-main {
-  flex: 1;            /* 占满画布库之外的宽度 */
-  min-width: 0;       /* 允许内部横向滚动区生效（页签栏会横向滚动） */
+/* 左边栏：与画布一样高 —— 高度由父级 flex 决定，不写死 */
+.af-left-pane {
+  width: 260px;
+  flex-shrink: 0;
   display: flex;
-  flex-direction: column;   /* 页签 / 工具栏 / 画布 自上而下 */
-  min-height: 0;      /* 同理：让 .body 的 flex: 1 拿得到确定高度 */
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--af-line, #333);
+  background: var(--af-panel, #16181d);
 }
+
+/* 右边栏 */
+.af-right-pane {
+  width: 340px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--af-line, #333);
+  background: var(--af-panel, #16181d);
+}
+
+/* 面板标签条 —— 左右两栏共用 */
+.pane-tabs {
+  display: flex;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--af-line, #333);
+}
+.pane-tabs button {
+  flex: 1;
+  padding: 7px 4px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--af-dim, #9aa);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.pane-tabs button:hover { color: var(--af-fg, #e6e6e6); }
+.pane-tabs button.on {
+  color: var(--af-fg, #e6e6e6);
+  border-bottom-color: var(--af-accent, #3b82f6);
+  background: rgba(255, 255, 255, 0.04);
+}
+.pane-dot {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--af-accent, #3b82f6);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+/* 标签内容区：吃掉剩余高度，自己滚动 */
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.pane-body > .sidebar,
+.pane-body > .canvas-library {
+  flex: 1;
+  min-height: 0;
+  border: 0;
+}
+
+/* 中间：画布 + 右栏 —— body 内再分 */
+.body { flex: 1; display: flex; min-height: 0; }
+.af-body-row { flex: 1; min-height: 0; display: flex; }
+.af-body-main {
+  flex: 1; min-width: 0; display: flex; flex-direction: column;
+  /* min-height:0 —— flex 子项默认 min-height:auto，内容一多会把主区撑爆，
+     里面 .body 的滚动区就被顶出可视区。与 .af-body-row 那条同理。 */
+  min-height: 0;
+}
+.app-shell > .app { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
 /* ---------------- 左侧节点边栏 ---------------- */
 .sidebar {
-  width: var(--af-side-w); flex: none; min-height: 0;
+  /* 宽度由 .af-left-pane 定 —— 这里写死的话，左栏会与节点库宽度打架 */
+  width: 100%; flex: 1; min-height: 0;
   background: var(--af-bg);
-  border-right: 1px solid var(--af-divider);
   display: flex; flex-direction: column; overflow-y: auto; padding: 12px 10px;
 }
 .side-head { font-size: 13px; font-weight: 600; color: var(--af-fg); margin-bottom: 2px; }
@@ -577,9 +637,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 
 /* ---------------- 画布标签栏 ---------------- */
 .canvas-tabs {
-  /* flex:none —— 主区是 column flex，空间不足时该由画布（.body flex:1）
-     去让，而不是把这一行压扁 */
-  flex: none;
+  flex: none;          /* 不参与高度收缩：空间不足该由画布让，别压扁这一行 */
   display: flex; align-items: center; gap: 8px;
   padding: 7px 12px; background: var(--af-bg);
   border-bottom: 1px solid var(--af-divider);
@@ -1352,6 +1410,10 @@ input.mono, textarea.mono {
 /* ------------------------------------------------------------------ */
 
 .insp-slot {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   display: flex; flex-direction: column; flex: none; min-height: 0;
 }
 
@@ -1949,11 +2011,12 @@ input.mono, textarea.mono {
 /* ---------- 左侧画布库 ---------- */
 
 .af-lib {
+  /* 放进左栏标签里后，宽度与高度都由父级定 */
+  width: 100%;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  width: 180px;
-  flex: 0 0 180px;
-  border-right: 1px solid var(--af-line, #2a2f3a);
   background: var(--af-panel, #161a21);
   overflow: hidden;
 }
@@ -2212,4 +2275,77 @@ input.mono, textarea.mono {
   font-size: 10px;
   opacity: 0.8;
   margin-left: 4px;
+}
+
+/* ---------------- 上边栏 + 左中右三栏 ---------------- */
+
+/*
+ * 上边栏横跨全宽：画布页签与工具栏。
+ * 工具栏里大半按钮（运行 / 保存 / 导入导出 / 外观）作用于全局，
+ * 放在画布那一栏里会让人以为只作用于当前画布。
+ */
+.af-topbar {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--af-line, #333);
+}
+
+/* 左栏与画布同高 —— 由 .af-body-row 的 stretch 保证，不另设高度 */
+.af-body-row > .af-left-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.af-body-row > .af-right-pane {
+  min-height: 0;
+}
+
+/* 中间栏：画布吃掉剩余空间，任务 / 历史面板同理 */
+.af-body-main > .body {
+  flex: 1;
+  min-height: 0;
+}
+
+
+/* ---------------- 右栏：设置在上、日志在下 ---------------- */
+
+/*
+ * 设置区吃掉剩余空间。
+ * min-height:0 不能少 —— flex 子项默认 min-height:auto，
+ * 内容一多就会把右栏撑爆，日志区被挤出可视区。
+ */
+.af-right-insp {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 可拖分隔条 */
+.af-right-split {
+  flex: 0 0 6px;
+  cursor: row-resize;
+  background: var(--af-line, #333);
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+}
+.af-right-split:hover {
+  background: var(--af-accent, #3b82f6);
+}
+
+/* 日志区：高度由拖动决定，不参与 flex 伸缩 */
+.af-right-log {
+  flex: 0 0 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.af-right-log .logpane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
