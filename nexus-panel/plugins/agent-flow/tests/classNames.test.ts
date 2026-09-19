@@ -491,3 +491,30 @@ test('画布改名会同步到引用节点', () => {
   const f = read(path.join(ROOT, 'App.tsx'));
   assert.ok(f.includes('syncCanvasesRefNames'), '改名后要回写引用节点的名字快照');
 });
+
+/* ================= 嵌合落位 ================= */
+
+/*
+ * 表现：嵌合后只挪动一点点 → 既不解除、也不归位，
+ * 节点停在偏移处，关系还在却看着歪的。
+ *
+ * 这类问题测不出来（要拖一下才看得到），且改判定条件极易回退，
+ * 所以钉一条源码守卫。
+ */
+test('落位交给 planStackDrop，App 里不再自己判 hit.parentId !== oldParent', () => {
+  if (!hasSrc) return;
+  const app = read(path.join(ROOT, 'App.tsx'));
+  assert.ok(app.includes('planStackDrop'), '要走 engine 的落位规划');
+  assert.ok(
+    !/hit\.parentId\s*!==\s*oldParent/.test(app),
+    '这个条件正是"挪一点点既不解除也不归位"的根因，不能再出现',
+  );
+});
+
+/** 归位与吸附必须同一个函数算位置，否则"吸上去"和"拖回来"位置不一致 */
+test('snapPosOf 只算一次位置（findSnapTarget 复用它）', () => {
+  if (!hasSrc) return;
+  const st = read(path.join(ROOT, 'engine/stack.ts'));
+  assert.ok(/function snapPosOf/.test(st), '要有 snapPosOf');
+  assert.ok(/const at = snapPosOf\(n\)/.test(st), 'findSnapTarget 要复用 snapPosOf');
+});

@@ -225,11 +225,83 @@ export function findSnapTarget(
     if (d < bestGap) {
       bestGap = d;
       // 吸附时对齐 x —— 串里各块左对齐才像积木
-      best = { parentId: n.id, y: bottom + STACK_GAP, x: nx1 };
+      const at = snapPosOf(n);
+      best = { parentId: n.id, y: at.y, x: at.x };
     }
   }
 
   return best;
+}
+
+/**
+ * 吸附后的位置：对齐 x、贴在父节点下方。
+ *
+ * findSnapTarget 与"归位"都要用 —— 两处各算一次的话，
+ * 吸附和归位可能给出不同的 y，表现为"吸上去和拖回来位置不一样"。
+ */
+export function snapPosOf(parent: AnyNode): { x: number; y: number } {
+  return {
+    x: posOf(parent).x,
+    y: posOf(parent).y + heightOf(parent) + STACK_GAP,
+  };
+}
+
+/** 松手后的落位决定。undefined = 这一项不动 */
+export type StackDropPlan = {
+  position?: { x: number; y: number };
+  /** 显式给 null 表示解除嵌合 */
+  stackParent?: string | null;
+};
+
+/**
+ * 松手时该怎么落位。
+ *
+ * ================= 为什么要单独一个函数 =================
+ *
+ * 以前这段写在 App 里，条件是 `if (hit && hit.parentId !== oldParent)`。
+ * 于是**已经是嵌合态、只挪动了一点点**（不到脱开阈值 26px）时：
+ *   · moved = false → 不解除
+ *   · 命中的还是原来那个父，条件不成立 → 不吸附
+ * 结果节点停在偏移后的位置，关系还在却看着歪的 ——
+ * 正是"没取消嵌合，也没回到嵌合位置"。
+ *
+ * 用户挪一点点显然不是想解开，而是想让它归位。
+ *
+ * ================= 优先级 =================
+ *
+ *   1. 命中吸附目标 → 吸附（覆盖式设 stackParent，不会出现双父）
+ *   2. 拖开了且没命中 → 解除
+ *   3. 没拖开但没命中（横向挪了点，重叠不够）→ 归位，关系不变
+ */
+export function planStackDrop(
+  all: AnyNode[],
+  dragged: AnyNode,
+  opts: { oldParent: string | null; moved: boolean; exclude: Set<string> },
+): StackDropPlan {
+  const hit = findSnapTarget(all, dragged, opts.exclude);
+  if (hit) {
+    return { position: { x: hit.x, y: hit.y }, stackParent: hit.parentId };
+  }
+
+  const { oldParent, moved } = opts;
+  if (!oldParent) return {};
+
+  if (moved) {
+    /*
+     * 拖开了、且没吸上任何东西 —— 解除。
+     * 位置不动：用户是主动拖走的，不该被拽回去。
+     */
+    return { stackParent: null };
+  }
+
+  /*
+   * 没拖开，但也没命中（水平重叠不够 / 父节点已经被删了）。
+   * 仍是嵌合态，就把它放回该在的位置。
+   * 父节点找不到了（被删）则什么都不做 —— 关系是别处清理的。
+   */
+  const parent = all.find((n) => n.id === oldParent);
+  if (!parent) return {};
+  return { position: snapPosOf(parent) };
 }
 
 /** 判断拖动是否把节点拖离了原位足够远（用于"拖开即解除嵌合"） */
