@@ -238,8 +238,100 @@ t('插件侧同步阻止 click（不等宿主异步回包）',
   /const onClick = \(e\) => \{[\s\S]{0,140}e\.preventDefault\(\);/.test(sdkSrc2));
 t('插件卸载时停掉转发', /stopInspectRelay\?\.\(\);/.test(sdkSrc2));
 
-/* ---------- 10. 卸载 ---------- */
-console.log('\n=== 9. 卸载 ===');
+/* ---------- 10. 锁定后的一键复制按钮 ---------- */
+console.log('\n=== 10. 一键复制完整路径 ===');
+/*
+ * 背景：点元素时**已经**复制过一次路径，但那次是静默的 ——
+ * 用户拿不准到底成功了没有。而"再点一下"是**解锁**，路径反而丢了。
+ * 所以给一个显式按钮，点完还能看到 ✓ / ✗。
+ *
+ * 三个不做就会错的点，都在下面的断言里：
+ *   1. 捕获阶段的点击拦截必须放行这个按钮，否则"看得见、点了没反应"
+ *   2. 按钮要 pointer-events:auto（信息条整体是 none）
+ *   3. 光标要压过 `body.nx-inspecting *` 的 crosshair !important
+ */
+insp.setInspector(true);
+insp.__lock(reload);
+const badgeLocked = document.querySelector('.nx-insp-badge');
+const copyBtn = badgeLocked.querySelector('.nx-insp-copy');
+t('锁定后出现复制按钮', !!copyBtn);
+
+{
+  // 按钮必须紧跟在"已锁定"文字**后面**，不是塞在别的位置
+  const kids = [...badgeLocked.children];
+  const li = kids.findIndex((n) => n.classList.contains('nx-insp-locked'));
+  t('信息条上有「已锁定·再点解锁」', li >= 0);
+  t('按钮就在锁定文字右侧（紧邻其后）',
+    li >= 0 && kids[li + 1] === copyBtn);
+  t('按钮有说明性 title', copyBtn?.title === '复制控件完整路径');
+}
+
+t('未锁定时不显示按钮（此时没什么可复制）', (() => {
+  insp.setInspector(false);          // 关掉会清掉 locked
+  insp.setInspector(true);
+  const other = document.getElementById('nav-home');
+  insp.__inspect(other);
+  const has = !!document.querySelector('.nx-insp-badge .nx-insp-copy');
+  return has === false;
+})());
+
+/* 行为验证：走真实事件路径，确认捕获阶段的拦截确实放行了按钮 */
+insp.setInspector(false);
+insp.setInspector(true);
+insp.__lock(reload);
+{
+  const btn = document.querySelector('.nx-insp-badge .nx-insp-copy');
+  /*
+   * 验证"捕获阶段的拦截放行了按钮"。
+   *
+   * 两种看起来合理但**测不出东西**的写法，都试过了：
+   *   · 看 defaultPrevented —— 按钮自己的处理器也调了 preventDefault，恒为 true
+   *   · document 上挂冒泡监听 —— 按钮处理器调了 stopPropagation，收不到
+   *
+   * 真正能证明的是**按钮自己的处理器跑了**：事件若真被捕获阶段掐断，
+   * 根本到不了 target，也就不会有下面的复制结果与 ✓/✗ 反馈。
+   */
+  const ev = new dom.window.MouseEvent('click', { bubbles: true, cancelable: true });
+  btn.dispatchEvent(ev);
+  t('点按钮不会顺手解锁（锁定状态保持）',
+    insp.__debug().locked === insp.labelOf(reload), String(insp.__debug().locked));
+  // 复制是异步的，等一拍再看结果
+  await new Promise((r) => setTimeout(r, 0));
+  const rec = globalThis.__NEXUS_INSPECTOR_COPY__;
+  t('复制的内容就是该元素的完整路径',
+    rec?.text === insp.pathOf(reload), String(rec?.text));
+  t('按钮自己收到点击并给出反馈（✓ 或 ✗）',
+    btn.textContent === '✓' || btn.textContent === '✗', btn.textContent);
+}
+
+/* 源码级 */
+t('onClick 放行 .nx-insp-copy（不放行就永远点不动）',
+  /if \(e\.target\?\.closest\?\('\.'?nx-insp-copy'\)\) return;/.test(isrc)
+  || /nx-insp-copy'\)\) return;/.test(isrc));
+t('按钮复用 copyPath，不另写一份路径生成',
+  /copyPath\(el\)\.then/.test(isrc)
+  && /function copyPath\(target\)/.test(isrc));
+t('pickAt 也走同一个 copyPath（两处不会复制出不一样的东西）',
+  /locked = el;\s*\n\s*highlight\(el\);\s*\n\s*copyPath\(el\);/.test(isrc));
+t('复制后有 ✓ / ✗ 反馈（用户才知道成功没有）',
+  /btn\.textContent = ok \? '✓' : '✗';/.test(isrc));
+t('反馈会复原（isConnected 保护，防止信息条已重渲染）',
+  /if \(btn\.isConnected\) btn\.textContent = '⧉';/.test(isrc));
+t('onMove 忽略信息条的后代（按钮是 auto，会被 elementFromPoint 命中）',
+  /el === badge \|\| badge\?\.contains\(el\)/.test(isrc));
+
+/* CSS：两个类的选择器才压得过 crosshair !important */
+const cssCopy = css.slice(css.indexOf('.nx-insp-badge .nx-insp-copy {'));
+t('按钮 pointer-events:auto（信息条整体是 none）',
+  /pointer-events: auto;/.test(cssCopy.slice(0, 400)));
+t('光标带 !important（否则被 crosshair 覆盖，看着不像能点）',
+  /cursor: pointer !important;/.test(cssCopy.slice(0, 400)));
+t('选择器是两个类（单个类压不过 body.nx-inspecting *）',
+  /\.nx-insp-badge \.nx-insp-copy \{/.test(css));
+insp.setInspector(false);
+
+/* ---------- 11. 卸载 ---------- */
+console.log('\n=== 11. 卸载 ===');
 insp.setInspector(false);
 uninstall();
 t('卸载后关闭', insp.isInspectorOn() === false);

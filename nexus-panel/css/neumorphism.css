@@ -704,6 +704,28 @@ body {
 .nx-insp-warn   { color: #ff9d9d; }
 .nx-insp-locked { color: #9ae6a0; }
 
+/* 锁定后的一键复制按钮。
+   **必须** pointer-events:auto —— 信息条整体是 none（否则它挡在光标下会
+   抢走 hover 目标，元素反复切换、疯狂闪烁），按钮要能点就得单独打开。
+   选择器写成 `.nx-insp-badge .nx-insp-copy`（两个类）而不是单个类：
+   上面 `body.nx-inspecting *` 把光标强制成 crosshair 且带 !important，
+   单个类的优先级压不过它，按钮会显示成十字光标，看着不像能点。 */
+.nx-insp-badge .nx-insp-copy {
+  pointer-events: auto;
+  cursor: pointer !important;
+  flex: none;
+  padding: 0 5px;
+  margin-left: -2px;
+  font: inherit;
+  line-height: 1.4;
+  color: #9ae6a0;
+  background: rgba(154, 230, 160, .12);
+  border: 1px solid rgba(154, 230, 160, .45);
+  border-radius: var(--r-xs, 3px);
+}
+.nx-insp-badge .nx-insp-copy:hover { background: rgba(154, 230, 160, .24); }
+.nx-insp-badge .nx-insp-copy.ok { color: #b9f6bd; }
+
 /* 开启时把光标换成十字，给一个"当前在检查模式"的明确信号。
    用 !important 是因为插件自己的 CSS 可能给按钮设了 cursor:pointer。 */
 body.nx-inspecting,

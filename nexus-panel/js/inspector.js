@@ -184,7 +184,37 @@ function highlight(el) {
   add('nx-insp-size', size);
   if (pid) add('nx-insp-plugin', pid);
   if (isolated) add('nx-insp-warn', '隔离·无法深入');
-  if (locked === el) add('nx-insp-locked', '已锁定·再点解锁');
+  if (locked === el) {
+    add('nx-insp-locked', '已锁定·再点解锁');
+    /*
+     * 一键复制完整路径。
+     *
+     * 为什么还要一个按钮：点元素时确实已经复制过一次了，但那次**没有任何反馈**
+     * （复制是静默的）。用户拿不准到底复制成功没有，或者想再复制一次时，
+     * 只能再点一下元素 —— 而那一下是**解锁**，路径反而丢了。
+     * 给一个显式的按钮，点完还能看到 ✓ / ✗，才知道结果。
+     *
+     * 按钮必须 `pointer-events: auto`：信息条整体是 `none`
+     * （不然它挡在光标下会抢走 hover 目标，元素疯狂闪烁）。
+     */
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'nx-insp-copy';
+    btn.title = '复制控件完整路径';
+    btn.textContent = '⧉';
+    btn.addEventListener('click', (ev) => {
+      // 阻止冒泡不是必需的（已在捕获阶段放行），但别让这一下变成"解锁"
+      ev.preventDefault();
+      ev.stopPropagation();
+      copyPath(el).then((ok) => {
+        btn.textContent = ok ? '✓' : '✗';
+        btn.classList.toggle('ok', !!ok);
+        // 1 秒后复原；这期间信息条可能已被重新渲染掉，先确认还在文档里
+        setTimeout(() => { if (btn.isConnected) btn.textContent = '⧉'; }, 1000);
+      });
+    });
+    badge.appendChild(btn);
+  }
 
   badge.classList.add('on');
   // 贴着高亮框左上角；上方放不下就翻到框内顶部
@@ -225,8 +255,31 @@ function onMove(e) {
   if (!on || locked) return;
   const el = elementAt(e.clientX, e.clientY);
   if (!el) { clear(); return; }
-  if (el === overlay || overlay?.contains(el) || el === badge) return;
+  // 信息条的后代也要忽略：复制按钮是 pointer-events:auto 的，
+  // 鼠标移到它上面时 elementFromPoint 会返回按钮本身。
+  if (el === overlay || overlay?.contains(el)
+    || el === badge || badge?.contains(el)) return;
   highlight(el);
+}
+
+/**
+ * 复制某元素的面包屑路径。
+ *
+ * 点击选中与"⧉"按钮共用这一条 —— 两处各写一份的话，
+ * 将来改路径生成方式（比如加到 8 层、带上更多属性）只会改到一处，
+ * 另一处悄悄复制出不一样的东西。
+ *
+ * @returns {Promise<boolean>} 是否复制成功
+ */
+function copyPath(target) {
+  const text = pathOf(target);
+  return copy(text).then((ok) => {
+    globalThis.__NEXUS_INSPECTOR_COPY__ = { text, ok };
+    try {
+      document.dispatchEvent(new CustomEvent('nexus:inspector-copy', { detail: { text, ok } }));
+    } catch { /* 测试环境可能没有 CustomEvent */ }
+    return ok;
+  });
 }
 
 /** 选中（并复制路径）；再点同一个则解锁 */
@@ -239,18 +292,22 @@ function pickAt(el) {
   }
   locked = el;
   highlight(el);
-  const text = pathOf(el);
-  copy(text).then((ok) => {
-    globalThis.__NEXUS_INSPECTOR_COPY__ = { text, ok };
-    try {
-      document.dispatchEvent(new CustomEvent('nexus:inspector-copy', { detail: { text, ok } }));
-    } catch { /* 测试环境可能没有 CustomEvent */ }
-  });
+  copyPath(el);
 }
 
 /** 开发者模式下点击 = 锁定/解锁，并顺手阻止按钮被真的触发 */
 function onClick(e) {
   if (!on) return;
+  /*
+   * 复制按钮必须放行。
+   *
+   * 这个监听挂在**捕获阶段**，会把点击拦下来做"锁定/解锁"，
+   * 不在这里放行的话按钮永远收不到这次点击 ——
+   * 表现为"按钮看得见、点了没反应"，而控制台没有任何报错。
+   * 注意是 return 而不是只跳过 preventDefault：
+   * 只要调了 stopPropagation，事件就到不了按钮自己的监听器。
+   */
+  if (e.target?.closest?.('.nx-insp-copy')) return;
   e.preventDefault();
   e.stopPropagation();
   pickAt(elementAt(e.clientX, e.clientY));
@@ -419,6 +476,12 @@ export function __debug() {
 export function __inspect(el) {
   if (!el) return;
   highlight(el);
+}
+
+/** 测试用：模拟"点中并锁定"某个元素（jsdom 没有 elementFromPoint） */
+export function __lock(el) {
+  if (!el) return;
+  pickAt(el);
 }
 
 export { labelOf, pathOf, pluginOf, absRect, elementAt };
