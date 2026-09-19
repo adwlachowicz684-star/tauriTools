@@ -1540,7 +1540,7 @@ input.mono, textarea.mono {
  * 内容区其实是 339px，写死 340px 会横向溢出 1px。
  */
 .insp-slot {
-  flex: none;
+  flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -1553,7 +1553,8 @@ input.mono, textarea.mono {
   border: 0; margin: 0; padding: 0; min-inline-size: 0;
 }
 /*
- * 这条原本是 .insp-slot .inspector { flex:1; min-height:0 } ——
+ * 这条原本是 .insp-slot .inspector { flex: 1; min-height: 0; }
+.insp-slot .inspector-x { flex:1; min-height:0 } ——
  * 写法是对的，但**一直没起作用**：父级 .insp-slot 当时是 flex:none，
  * 高度等于内容高，子级再 flex:1 也无处可撑。
  *
@@ -2451,7 +2452,7 @@ input.mono, textarea.mono {
    * 光靠子级限高不够：任何一处漏了 flex/min-height 都会漏出来，
    * 这里兜底才不会让布局退化成"看不见日志"。
    */
-  overflow: hidden;
+  
 }
 
 /* 可拖分隔条 */
