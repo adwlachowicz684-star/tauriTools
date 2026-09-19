@@ -1,4 +1,4 @@
-import { useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
+import { useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import { presetsByCategory, getDef } from '../nodes';
 import { hasDef } from '../nodes/registry';
 import { confirm, alert, prompt } from '../../../js/dialog.js';
@@ -53,12 +53,6 @@ type Props = {
   onRefreshMcp?: () => void;
   /** 正在刷新 */
   mcpRefreshing?: boolean;
-  /**
-   * 模块库面板。由 App 传入而不是这里直接 import ——
-   * 它需要读写画布选中项与模块内部结构，依赖 App 的状态；
-   * 若 Sidebar 直接 import 它，两边的画布状态会各存一份。
-   */
-  modulePanel?: ReactNode;
 };
 
 /**
@@ -120,7 +114,7 @@ function McpServerSection({
 }
 
 export default function Sidebar({
-  onAdd, disabled, modulePanel, mcpGroups, onRefreshMcp, mcpRefreshing,
+  onAdd, disabled, mcpGroups, onRefreshMcp, mcpRefreshing,
 }: Props) {
   const onDragStart = (e: DragEvent, p: DragPayload) => {
     e.dataTransfer.setData(DRAG_MIME, encodeDrag(p));
@@ -140,7 +134,6 @@ export default function Sidebar({
    * 静默会让人以为界面坏了，进而反复点击，反而更容易触发误添加。
    */
   const [openKey, setOpenKey] = useState<string | null>(null);
-  const [tab, setTab] = useState<'node' | 'module'>('node');
 
   const onItemClick = (e: MouseEvent, p: { key: string }) => {
     if (disabled) return;
@@ -269,39 +262,18 @@ export default function Sidebar({
 
   return (
     <aside className="sidebar" key={tick}>
-      <div className="side-head">
-        {/*
-         * 两个库共用这一栏，用一个 tab 切。
-         * 并排放两条栏会把画布挤窄 —— 280px 变 560px，中等屏幕上没法用。
-         */}
-        {modulePanel ? (
-          <span className="side-tabs">
-            <button
-              className={`side-tab${tab === 'node' ? ' on' : ''}`}
-              onClick={() => setTab('node')}
-            >
-              节点库
-            </button>
-            <button
-              className={`side-tab${tab === 'module' ? ' on' : ''}`}
-              onClick={() => setTab('module')}
-            >
-              模块库
-            </button>
-          </span>
-        ) : (
-          '节点库'
-        )}
-      </div>
+      {/*
+        节点库**只管节点**。
+        模块库原先嵌在这里用二级 tab 切，现在提到左栏顶层与它并列 ——
+        两处都能切同一件事会造成割裂：在一处切了，另一处状态不动，
+        看起来像点了没反应。
+      */}
+      <div className="side-head">节点库</div>
       <div className="side-hint">
-        {tab === 'node'
-          ? '拖到画布添加；点击展开说明，按住 Ctrl / ⌘ 点击直接添加'
-          : '拖到画布使用；改模块库里的内容，所有实例跟着变'}
+        拖到画布添加；点击展开说明，按住 Ctrl / ⌘ 点击直接添加
       </div>
 
-      {tab === 'module' ? modulePanel : (
-        <>
-          {groups.map((g) => {
+        {groups.map((g) => {
         const def = getDef(g.presets[0].type);
         const isCustom = g.category === 'custom';
         /*
@@ -403,7 +375,6 @@ export default function Sidebar({
               if (f) void doImport(f);
             }}
           />
-        </> )}
     </aside>
   );
 }

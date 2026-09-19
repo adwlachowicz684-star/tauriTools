@@ -10,33 +10,50 @@ import {
 
 /* ================= 标签清单 ================= */
 
-test('左边两个标签', () => {
-  assert.equal(LEFT_TABS.length, 2);
-  assert.deepEqual(LEFT_TABS, ['library', 'canvas']);
+test('左栏三个标签：节点库 / 模块库 / 画布库', () => {
+  assert.equal(LEFT_TABS.length, 3);
+  assert.deepEqual(LEFT_TABS, ['node', 'module', 'canvas']);
+});
+
+/** 节点库与模块库并列，不再把模块库嵌在节点库里用二级 tab 切 */
+test('节点库与模块库是两个独立标签', () => {
+  assert.ok(LEFT_TABS.includes('node'));
+  assert.ok(LEFT_TABS.includes('module'));
+  assert.notEqual(normalizeLeftTab('node'), normalizeLeftTab('module'));
 });
 
 test('每个标签都有中文名', () => {
   for (const t of LEFT_TABS) assert.ok(LEFT_TAB_LABEL[t], `${t} 缺名字`);
+  assert.equal(LEFT_TAB_LABEL.node, '节点库');
+  assert.equal(LEFT_TAB_LABEL.module, '模块库');
+  assert.equal(LEFT_TAB_LABEL.canvas, '画布');
 });
 
 /* ================= 归一 ================= */
 
 test('合法值原样通过', () => {
+  assert.equal(normalizeLeftTab('node'), 'node');
+  assert.equal(normalizeLeftTab('module'), 'module');
   assert.equal(normalizeLeftTab('canvas'), 'canvas');
-  assert.equal(normalizeLeftTab('library'), 'library');
 });
 
 /** 存档里的脏值不能渲染出一个点不动的面板 */
 test('未知值退回默认', () => {
-  assert.equal(normalizeLeftTab('xxx'), 'library');
-  assert.equal(normalizeLeftTab(null), 'library');
-  assert.equal(normalizeLeftTab(undefined), 'library');
-  assert.equal(normalizeLeftTab(123), 'library');
-  assert.equal(normalizeLeftTab({}), 'library');
+  assert.equal(normalizeLeftTab('xxx'), 'node');
+  assert.equal(normalizeLeftTab(null), 'node');
+  assert.equal(normalizeLeftTab(undefined), 'node');
+  assert.equal(normalizeLeftTab(123), 'node');
+  assert.equal(normalizeLeftTab({}), 'node');
+  assert.equal(normalizeLeftTab([]), 'node');
+});
+
+/** 老存档里存的是 'library'（两标签时期），必须能落到一个存在的标签上 */
+test('老存档的 library 退回 node', () => {
+  assert.equal(normalizeLeftTab('library'), 'node');
 });
 
 test('空串退回默认', () => {
-  assert.equal(normalizeLeftTab(''), 'library');
+  assert.equal(normalizeLeftTab(''), 'node');
 });
 
 /* ================= 右栏日志高度 ================= */
@@ -115,8 +132,14 @@ test('流程视图保持当前标签', () => {
   assert.equal(r.visible, true);
 });
 
+test('流程视图停在模块库也保持', () => {
+  const r = coerceForView('flow', 'module');
+  assert.equal(r.left, 'module');
+  assert.equal(r.visible, true);
+});
+
 test('非流程视图标记不可见', () => {
-  const r = coerceForView('history', 'library');
+  const r = coerceForView('history', 'node');
   assert.equal(r.visible, false);
 });
 

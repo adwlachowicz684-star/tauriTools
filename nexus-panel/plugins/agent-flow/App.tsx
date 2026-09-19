@@ -2820,20 +2820,19 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
             ))}
           </div>
           <div className="pane-body">
-            {leftTab === 'library' ? (
+            {leftTab === 'node' ? (
               <Sidebar
                 onAdd={(p) => spawnNode(p)}
                 disabled={running}
                 mcpGroups={mcpGroups}
                 onRefreshMcp={() => void doRefreshMcp()}
                 mcpRefreshing={mcpRefreshing}
-                modulePanel={
-                  <ModuleLibrary
-                    onCreateFromSelection={() => void createModuleFromSelection()}
-                    onEdit={(id) => enterModuleEdit(id)}
-                    disabled={running || editingModule !== null}
-                  />
-                }
+              />
+            ) : leftTab === 'module' ? (
+              <ModuleLibrary
+                onCreateFromSelection={() => void createModuleFromSelection()}
+                onEdit={(id) => enterModuleEdit(id)}
+                disabled={running || editingModule !== null}
               />
             ) : (
               <CanvasLibrary

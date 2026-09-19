@@ -1768,17 +1768,6 @@ input.mono, textarea.mono {
 .mod-btn.primary:hover { background: rgba(245, 158, 11, 0.45); }
 
 /* 侧栏的「节点库 / 模块库」切换 */
-.side-tabs { display: inline-flex; gap: 2px; }
-.side-tab {
-  border: 1px solid transparent; border-radius: 5px; cursor: pointer;
-  background: transparent; color: var(--af-dim); font-family: inherit;
-  font-size: 12px; padding: 2px 9px;
-  transition: color var(--af-dur-fast), border-color var(--af-dur-fast);
-}
-.side-tab:hover { color: var(--af-fg); }
-.side-tab.on {
-  color: var(--af-fg); border-color: var(--af-line); background: var(--af-raised);
-}
 
 
 /* ---------------- 配置预警圆点 ---------------- */

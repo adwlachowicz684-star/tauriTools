@@ -18,17 +18,25 @@
  * 各判一次迟早分叉（这个项目的老问题）。
  */
 
-/** 左边栏的两个标签 */
-export type LeftTab = 'library' | 'canvas';
+/**
+ * 左边栏的三个标签。
+ *
+ * 节点库与模块库**分开**，不再把模块库嵌在节点库里用二级 tab 切：
+ *   · 顶层切一次就到，比"先切节点库、再在里面切模块库"少一层
+ *   · 更要紧的是，两处都能切同一件事会造成割裂 ——
+ *     在一处切了，另一处的状态不动，看起来像没生效
+ */
+export type LeftTab = 'node' | 'module' | 'canvas';
 
 
 /** 主视图 */
 export type MainView = 'flow' | 'tasks' | 'history';
 
-export const LEFT_TABS: LeftTab[] = ['library', 'canvas'];
+export const LEFT_TABS: LeftTab[] = ['node', 'module', 'canvas'];
 
 export const LEFT_TAB_LABEL: Record<LeftTab, string> = {
-  library: '节点库',
+  node: '节点库',
+  module: '模块库',
   canvas: '画布',
 };
 
@@ -70,7 +78,7 @@ export function normalizeLogHeight(v: unknown): number {
  * 而不是渲染出一个点不动的空面板。
  */
 export function normalizeLeftTab(v: unknown): LeftTab {
-  return v === 'canvas' ? 'canvas' : 'library';
+  return v === 'module' ? 'module' : v === 'canvas' ? 'canvas' : 'node';
 }
 
 
