@@ -2530,3 +2530,56 @@ input.mono, textarea.mono {
   transition: transform var(--af-dur-fast), background var(--af-dur-fast);
 }
 .mcp-switch.on .mcp-knob { transform: translateX(13px); background: var(--af-bg); }
+
+/* ---------------- 侧栏节点的展开说明 ---------------- */
+/*
+ * 结构化：一句话 → 产出/接受 → 需要的能力 → 参数 → 面板提示。
+ * 以前只有一句话，"能不能用"全靠猜。
+ */
+.nd { display: flex; flex-direction: column; gap: 6px; }
+.nd-line { font-size: 12px; line-height: 1.5; color: var(--af-fg); }
+
+.nd-ports { display: flex; gap: 6px; flex-wrap: wrap; }
+.nd-port {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; padding: 1px 8px; border-radius: var(--r-pill, 999px);
+  background: var(--af-raised); color: var(--af-fg);
+  border: 1px solid var(--af-line);
+}
+.nd-port-k { font-size: 10px; color: var(--af-dim); flex: none; }
+
+.nd-req { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.nd-cap {
+  font-size: 10px; padding: 0 6px; border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--af-line); color: var(--af-dim);
+  font-family: var(--af-mono, monospace);
+}
+.nd-cap.ok { color: var(--af-ok); border-color: var(--af-ok); }
+.nd-req-note { font-size: 10px; color: var(--af-dim); }
+.nd-hidden { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+
+.nd-params {
+  display: flex; flex-direction: column; gap: 3px;
+  border-top: 1px dashed var(--af-divider); padding-top: 5px;
+}
+.nd-param { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
+.nd-key { font-size: 11px; color: var(--af-fg); font-weight: 600; }
+.nd-raw {
+  font-size: 10px; color: var(--af-dim);
+  font-family: var(--af-mono, monospace);
+}
+.nd-reqdot {
+  font-size: 9px; padding: 0 5px; border-radius: var(--r-pill, 999px);
+  color: var(--af-warn); border: 1px solid var(--af-warn);
+}
+.nd-hint { font-size: 10px; color: var(--af-dim); flex: 1; min-width: 0; }
+.nd-more { font-size: 10px; color: var(--af-dim); }
+
+.nd-notes {
+  display: flex; flex-direction: column; gap: 2px;
+  border-top: 1px dashed var(--af-divider); padding-top: 5px;
+}
+.nd-note {
+  font-size: 10px; line-height: 1.5; color: var(--af-warn);
+  padding-left: 8px; border-left: 2px solid var(--af-warn);
+}
