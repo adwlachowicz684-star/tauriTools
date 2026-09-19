@@ -76,7 +76,7 @@ export default function CanvasLibrary({
   };
 
   return (
-    <div className="af-lib">
+    <div className="af-lib canvas-library">
       <div className="af-lib-head">
         <span className="af-lib-title">画布</span>
         <span className="af-lib-spacer" />
