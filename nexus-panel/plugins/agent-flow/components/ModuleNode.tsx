@@ -39,7 +39,7 @@ export function ModuleNode({ id, data, selected }: NodeProps<ModuleFlowNode>) {
       <div className="fs-summary">
         <code className="fs-path" title={d.label}>{d.label}</code>
       </div>
-      <div className="node-sub">
+      <div className="node-brief">
         {detached ? '独立副本 · 不跟随模块库' : '来自模块库'}
       </div>
     </NodeShell>
