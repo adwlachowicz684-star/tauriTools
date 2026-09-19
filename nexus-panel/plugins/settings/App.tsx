@@ -756,14 +756,20 @@ export default function Settings() {
               侧栏「＋」可安装新插件；右侧下拉为单个插件指定基调判定方式
             </div>
             {/*
-              按 app / service 分区：
-              服务插件**不显示在侧边栏**，用户点不到也看不到它装没装。
-              混在一列里的话，它和其它插件长得一样，唯一区别只是那个
-              「同页/沙箱」标签 —— 完全不足以说明"为什么我在侧边栏找不到它"。
+              按 app / service / toolbar 分区：
+              · 服务插件不显示在侧边栏，由其它插件 ctx.services.call 调用
+              · 工具栏插件显示在标题栏右上角，也不在侧边栏
+
+              两者混进"应用插件"里都会误导 —— 用户装了却在侧边栏找不到，
+              「同页/沙箱」那个标签完全不足以说明原因。
+
+              ⚠️ 用 kind 精确分类，不要写 `kind !== 'service'`：
+              那会把 toolbar 也算成 app（实测过）。
             */}
             {(() => {
-              const apps = plugins.filter((p) => p.kind !== 'service');
+              const apps = plugins.filter((p) => !p.kind || p.kind === 'app');
               const svcs = plugins.filter((p) => p.kind === 'service');
+              const tbs = plugins.filter((p) => p.kind === 'toolbar');
               const sub = (label: string, hint?: string) => (
                 <div style={{
                   display: 'flex', alignItems: 'baseline', gap: 'var(--sp-4, 8px)',
@@ -798,6 +804,25 @@ export default function Settings() {
                     ? sub(`服务插件 · ${svcs.length}`, '不显示在侧边栏，由其它插件通过 ctx.services.call 调用')
                     : null}
                   {svcs.map((p) => (
+                    <PluginRow
+                      key={p.id}
+                      p={p}
+                      audit={audits[p.id]}
+                      auditOpen={auditOpen === p.id}
+                      onToggleAudit={() => setAuditOpen((cur) => (cur === p.id ? null : p.id))}
+                      onOverride={(v) => {
+                        setPluginOverride(p.id, v || null);
+                        void syncPolicyToShell(() => (ctx as any)?.shell?.normalizer
+                          ?.setPluginOverride(p.id, v || null));
+                        ctx.toast(`「${p.name}」适配策略已更新`, 'ok');
+                      }}
+                      onRemove={() => removePlugin(p)}
+                    />
+                  ))}
+                  {tbs.length
+                    ? sub(`工具栏插件 · ${tbs.length}`, '显示在标题栏右上角，不在侧边栏')
+                    : null}
+                  {tbs.map((p) => (
                     <PluginRow
                       key={p.id}
                       p={p}

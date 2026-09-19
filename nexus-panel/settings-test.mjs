@@ -247,9 +247,15 @@ t('normCombo 把 mod 按平台展开（非 Mac 展开成 ctrl）', /p === 'mod' 
 t('说明插件内部快捷键不在此列出（否则用户以为页面漏了）',
   /外壳看不到，这里也列不出来/.test(app) && /外壳看不到，这里也列不出来/.test(idx));
 
-/* ---------- D5. 插件按 app / service 分区 ---------- */
-t('React 版按 kind 分成两区', /p\.kind !== 'service'/.test(app) && /p\.kind === 'service'/.test(app));
-t('原生版同样分区', /p\.kind !== 'service'/.test(idx) && /p\.kind === 'service'/.test(idx));
+/* ---------- D5. 插件按 kind 分区 ----------
+ * 原断言钉的是 `kind !== 'service'`（两区）。
+ * 加了 kind:'toolbar' 后那种写法会把工具栏插件算成 app ——
+ * 它不在侧边栏，却被列在"应用插件 · 显示在侧边栏"下面。
+ * 所以改为按 kind 精确三分区（详见 G 节）。 */
+t('React 版按 kind 分区（不是"非 service 即 app"）',
+  !/p\.kind !== 'service'/.test(app) && /p\.kind === 'app'/.test(app));
+t('原生版同样分区',
+  !/p\.kind !== 'service'/.test(idx) && /p\.kind === 'app'/.test(idx));
 t('服务区说明不进侧边栏的调用方式', /ctx\.services\.call 调用/.test(app));
 
 /* ---------- D6. 竖排导航 ---------- */
@@ -368,6 +374,73 @@ console.log('\n--- F. 设置页竖排导航 ---');
     /div\.set-wrap/.test(native) && /div\.set-body/.test(native));
   t('原生版不再把 tabBar 直接挂到 root',
     !/ctx\.root\.appendChild\(tabBar\)/.test(strip(native)));
+}
+
+/* ================================================================
+   G. 插件分区：toolbar 不能被算成 app
+   ================================================================
+   实测踩过：`plugins.filter(p => p.kind !== 'service')` 会把
+   kind:'toolbar' 也算进"应用插件 · 显示在侧边栏"，
+   而工具栏插件根本不在侧边栏 —— 用户装了却找不到，且说明不了原因。 */
+console.log('\n--- G. 插件按 kind 三分区 ---');
+{
+  const react = src('plugins/settings/App.tsx');
+  const native = src('plugins/settings/index.js');
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '');
+  const r = strip(react), n = strip(native);
+
+  t('React 版不用 kind!==service 分 app（会把 toolbar 算进去）',
+    !/kind\s*!==\s*'service'/.test(r));
+  t('React 版按 app/service/toolbar 三区',
+    /p\.kind === 'app'/.test(r) && /p\.kind === 'service'/.test(r) && /p\.kind === 'toolbar'/.test(r));
+  t('原生版不用 kind!==service 分 app',
+    !/kind\s*!==\s*'service'/.test(n));
+  t('原生版按三区', /kind === 'toolbar'/.test(n) && /tbRows/.test(n));
+  t('两版都有工具栏分区标题',
+    /工具栏插件/.test(react) && /工具栏插件/.test(native));
+
+  /*
+   * 引用了就得有定义。
+   * 这里差点出事：加了 {tbs.map(...)} 却没加 `const tbs = ...`，
+   * 而字符串断言只查"有没有出现 tbs"—— 引用也算出现，于是漏过。
+   * 结果是打开设置页插件页签直接 ReferenceError 白屏。
+   *
+   * 判断：const/let 定义恰好 1 处，且总出现次数 > 1（有真实引用）。
+   */
+  const defCount = (txt, name) => (txt.match(new RegExp(`(?:const|let)\\s+${name}\\s*=`, 'g')) || []).length;
+  const useCount = (txt, name) => (txt.match(new RegExp(`\\b${name}\\b`, 'g')) || []).length;
+  for (const nm of ['apps', 'svcs', 'tbs']) {
+    t(`React 版 ${nm} 有定义且被引用`,
+      defCount(r, nm) === 1 && useCount(r, nm) > 1,
+      `定义 ${defCount(r, nm)} / 出现 ${useCount(r, nm)}`);
+  }
+  for (const nm of ['appRows', 'svcRows', 'tbRows']) {
+    t(`原生版 ${nm} 有定义且被引用`,
+      defCount(n, nm) >= 1 && useCount(n, nm) > 1,
+      `定义 ${defCount(n, nm)} / 出现 ${useCount(n, nm)}`);
+  }
+  /*
+   * 侧边栏也应该只放 app —— 否则设置页分对了、侧边栏还是错的。
+   * visiblePlugins 的口径在 js/host.js。
+   */
+  const host = src('js/host.js');
+  t('visiblePlugins 排除 toolbar（不只是 service）',
+    /export function visiblePlugins/.test(host)
+    && /kind\s*!==\s*'toolbar'/.test(host));
+}
+
+/* ================================================================
+   H. 检查器插件：提示按平台
+   ================================================================ */
+console.log('\n--- H. 检查器提示按平台 ---');
+{
+  const m = src('plugins/toolbar-inspector/module.js');
+  const code = m.replace(/\/\*[\s\S]*?\*\//g, '');
+  t('tip 不写死 Ctrl（Mac 上应为 ⌘）', !/tip:\s*'[^']*Ctrl/.test(code));
+  t('tip 按平台生成', /get tip\(\)/.test(code) && /isMac\(\)/.test(code)
+    && /⌘/.test(code) && /Ctrl/.test(code));
+  t('平台判断有 try/catch（无 navigator 环境不能抛）',
+    /function isMac\(\)[\s\S]{0,160}try\s*\{/.test(code));
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);

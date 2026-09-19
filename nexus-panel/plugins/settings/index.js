@@ -308,16 +308,22 @@ export default definePlugin({
     });
 
     /*
-      按 app / service 分区：服务插件**不显示在侧边栏**，
-      混在一列里用户看不出它为什么在侧边栏找不到。
+      按 app / service / toolbar 分区。
+      服务插件和工具栏插件都**不显示在侧边栏**，混进"应用插件"里会误导 ——
+      用户装了却在侧边栏找不到，而「同页/沙箱」那个标签说明不了原因。
+
+      ⚠️ 不要写 `kind !== 'service'`：那会把 kind:'toolbar' 也算成 app
+      （实测过：工具栏插件因此被列在"应用插件 · 显示在侧边栏"下面）。
       与 React 版（App.tsx）保持一致 —— 两个设置页行为不同会很难解释。
     */
     const sub = (label, hint) => h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '12px' } },
       h('span', { style: { fontSize: '12px', fontWeight: '600' } }, label),
       h('span.p-muted', { style: { fontSize: '11px' } }, hint));
 
-    const appRows = (plugins || []).filter((p) => p.kind !== 'service').map((p) => rows[(plugins || []).indexOf(p)]);
-    const svcRows = (plugins || []).filter((p) => p.kind === 'service').map((p) => rows[(plugins || []).indexOf(p)]);
+    const idx = (p) => rows[(plugins || []).indexOf(p)];
+    const appRows = (plugins || []).filter((p) => !p.kind || p.kind === 'app').map(idx);
+    const svcRows = (plugins || []).filter((p) => p.kind === 'service').map(idx);
+    const tbRows = (plugins || []).filter((p) => p.kind === 'toolbar').map(idx);
 
     pages.plugins.appendChild(
       h('div.p-card', {},
@@ -328,6 +334,8 @@ export default definePlugin({
         ...appRows,
         svcRows.length ? sub(`服务插件 · ${svcRows.length}`, '不显示在侧边栏，由其它插件通过 ctx.services.call 调用') : null,
         ...svcRows,
+        tbRows.length ? sub(`工具栏插件 · ${tbRows.length}`, '显示在标题栏右上角，不在侧边栏') : null,
+        ...tbRows,
         plugins && plugins.length ? null : h('div.p-muted', { style: { marginTop: '8px' } },
           plugins ? '暂无可管理的插件' : '未连接到外壳（沙箱隔离态），读不到插件列表，移除功能不可用'),
       ),

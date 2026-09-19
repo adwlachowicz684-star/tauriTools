@@ -32,12 +32,32 @@
  * 不注销就每重跑一次多一个监听器。
  */
 
+/** 与 js/shell-shortcuts.js 同源的平台判断 */
+function isMac() {
+  try {
+    return /mac|iphone|ipad/i.test(
+      globalThis.navigator?.platform || globalThis.navigator?.userAgent || '');
+  } catch {
+    return false;
+  }
+}
+
 export const INSPECTOR_EVENT = 'nexus:inspector-toggle';
 
 export default {
   id: 'toolbar-inspector',
   label: '⌖',
-  tip: '元素检查器（Ctrl+Shift+D）',
+  /*
+   * 提示里的键位按平台显示：Mac 是 ⌘，Windows/Linux 是 Ctrl。
+   * 安装时就算一次而不是写在 tip 里 —— 写死 'Ctrl+Shift+D' 的话，
+   * Mac 用户看到的是错的键，按 ⌘ 能生效但提示说 Ctrl。
+   *
+   * 与 js/shell-shortcuts.js 的 isMac 同源（同一个 navigator 判断）。
+   */
+  get tip() {
+    const mod = isMac() ? '⌘' : 'Ctrl';
+    return `元素检查器（${mod}+Shift+D）`;
+  },
   order: 50,
 
   onInit(api) {
