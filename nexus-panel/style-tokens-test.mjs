@@ -342,6 +342,38 @@ t('标题框下边线用 --divider（不是风格开关 --border）',
 t('关闭按钮不参与收缩（标题过长时不会被挤变形）',
   /\.drawer-head \.tb-btn[\s\S]{0,120}flex\s*:\s*none/.test(shellCss));
 
+
+/* ---- agent-flow 主体行：同样的病，第二次犯 ----
+   画布撑不满的根因不是"差一点没铺满"，而是 .af-body-row / .af-body-main
+   这两个类**在 CSS 里一条规则都没有**。断掉的链条：
+     ① .af-body-row 在 column flex 里 flex:0 1 auto → 高度只到内容
+     ② 它是 display:block → 画布库与主区上下堆叠，不是左右并排
+     ③ .af-body-main 不是 flex 容器 → 里面 .body 的 flex:1 完全失效
+     ④ 高度一路 auto → ReactFlow 的 height:100% 解析为 auto → 塌成 0
+   所以这里守的不只是"有规则"，还得守住两层的 flex 方向与 min-*:0。 */
+const afUsed = ['af-body-row', 'af-body-main'];
+const afUndef = afUsed.filter((c) => !(new RegExp(`\\.${c}\\s*\\{`)).test(afCss));
+t('agent-flow 主体行的 class 都有样式定义', afUndef.length === 0,
+  afUndef.join(', ') || `${afUsed.length} 个全部有定义`);
+
+const rowBlock = /\.af-body-row\s*\{([^}]*)\}/.exec(afCss)?.[1] || '';
+t('主体行撑满剩余高度（flex:1，否则画布只有内容那么高）',
+  /flex\s*:\s*1/.test(rowBlock), rowBlock.trim() || '无');
+t('主体行左右并排（画布库与主区不是上下堆叠）',
+  /display\s*:\s*flex/.test(rowBlock) && !/flex-direction\s*:\s*column/.test(rowBlock));
+t('主体行有 min-height:0（否则内部滚动区被内容顶开、overflow 失效）',
+  /min-height\s*:\s*0/.test(rowBlock));
+
+const mainBlock = /\.af-body-main\s*\{([^}]*)\}/.exec(afCss)?.[1] || '';
+t('主区占满剩余宽度（flex:1 + min-width:0）',
+  /flex\s*:\s*1/.test(mainBlock) && /min-width\s*:\s*0/.test(mainBlock), mainBlock.trim() || '无');
+/* 必须是 flex 容器 —— 不是的话里面 .body 的 flex:1 就失效，
+   高度链从这里断掉，画布塌成 0 */
+t('主区是 column flex 容器（.body 的 flex:1 才拿得到高度）',
+  /display\s*:\s*flex/.test(mainBlock) && /flex-direction\s*:\s*column/.test(mainBlock));
+t('主区有 min-height:0（高度链不能断在这一层）',
+  /min-height\s*:\s*0/.test(mainBlock));
+
 /* 抽屉是右侧滑出，必须覆盖 .mask 的居中（place-items:center 是弹窗用的） */
 const maskBlock = /\.drawer-mask\s*\{([^}]*)\}/.exec(shellCss)?.[1] || '';
 t('抽屉遮罩靠右满高（覆盖了 .mask 的居中）',
