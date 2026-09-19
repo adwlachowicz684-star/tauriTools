@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use tauri::AppHandle;
 
 // 与 safety 共用"像路径还是像命令名"的判定：两处各写一份迟早漂移
-use super::safety::looks_like_path;
+use crate::fpx::safety::looks_like_path;
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
@@ -766,7 +766,15 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             let root = {
                 let r = s("root");
                 if !r.is_empty() { r }
-                else { resolve_target(&args, true).map_err(|e| err(&e))? }
+                else {
+                    /* resolve_target 的签名是 Result<Option<String>, _>：
+                       传 require=true 时**语义上**必为 Some，但类型上仍是 Option，
+                       不能直接当 String 用（E0308）。这里显式收口 —— 用 ok_or_else
+                       而不是 unwrap：万一 require 语义将来被改，也是返回错误而不是 panic。 */
+                    resolve_target(&args, true)
+                        .map_err(|e| err(&e))?
+                        .ok_or_else(|| err("未选择文件夹，请先 select_folder 或传 target"))?
+                }
             };
             /* 列目录也算"读"：越权列目录 = 目录结构泄露。
                只校验不改写：返回的路径会被前端当卡片路径显示并登记，
@@ -1303,7 +1311,7 @@ mod tests {
     fn distinguishes_path_from_command_name() {
         // 走完整路径而不是 glob 进来的名字：这条判定是安全边界，
         // 断言必须明确指向 safety 里那一份实现
-        let f = super::safety::looks_like_path;
+        let f = crate::fpx::safety::looks_like_path;
         assert!(f("C:\\Windows\\System32\\calc.exe"));
         assert!(f("/usr/bin/evil"));
         assert!(f(".\\local\\tool.exe"));

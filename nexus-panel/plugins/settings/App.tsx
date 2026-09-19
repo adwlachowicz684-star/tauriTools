@@ -187,11 +187,14 @@ function PluginRow({ p, audit, auditOpen, onToggleAudit, onOverride, onRemove }:
       </div>
       <span className="p-tag">{p.type === 'iframe' ? '沙箱' : '同页'}</span>
       <StyleAuditBadge audit={audit} open={auditOpen} onToggle={onToggleAudit} />
+      {/* 空串就是「跟随全局」：onOverride 的签名是 (v: string) => void，
+          两处调用点再用 `v || null` 把它转成 null —— 这里补 `|| null` 是多余的，
+          且会让 tsc 报「string | null 不能赋给 string」（上游 56f2607b 带进来的） */}
       <select
         className="p-input"
         style={{ width: 130, height: 30, fontSize: 'var(--fs-12, 12px)', padding: '0 8px' }}
         value={getPluginOverride(p.id) ?? ''}
-        onChange={(e) => { onOverride(e.target.value || null); }}
+        onChange={(e) => onOverride(e.target.value)}
       >
         <option value="">跟随全局</option>
         {PLUGIN_THEMES.map((t) => (

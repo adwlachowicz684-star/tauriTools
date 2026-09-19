@@ -275,7 +275,7 @@ mod tests {
         let outside = base.join("outside");
         fs::create_dir_all(&allowed).unwrap();
         fs::create_dir_all(&outside).unwrap();
-        let roots = roots_of(&[allowed]);
+        let roots = roots_of(&[allowed.clone()]);
         let attack = format!("{}/../outside", allowed.to_string_lossy());
         let r = must_be_under(&attack, &roots);
         assert!(r.is_err(), ".. 穿越居然放行了: {r:?}");
