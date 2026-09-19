@@ -132,16 +132,35 @@
 
 .nx-btn:active,
 .p-btn:active,
-.mm-btn:active { box-shadow: var(--sh-in-md); }
+.mm-btn:active { box-shadow: var(--ctl-shadow-press); }
 
-/* 选中态：外壳叫 .primary，脑图叫 .on —— 语义都是"当前选中" */
+/* ---------- 突出显示（primary）与选中态（on）必须分开 ----------
+   此前这两者被塞进同一组规则、共用内凹 —— 于是「＋ 新建项目」
+   这类主按钮看着像被按下去了。
+
+   两者语义完全不同：
+     primary  强调"推荐点这里"  → 保持**外凸**，靠强调色与字重突出
+     on       当前生效中/已按下 → **内凹**
+
+   判据：凸 = "作用于它"，凹 = "它已是当前状态"。
+   把强调画成凹，等于把"请点我"画成"我已经被点了"。 */
 .nx-btn.primary,
-.p-btn.primary,
+.p-btn.primary {
+  color: var(--accent);
+  font-weight: 600;
+  /* 刻意不加大阴影：它已靠强调色 + 字重突出了，
+     再加大只会变成"漂浮"，而不是"更醒目"。 */
+  box-shadow: var(--ctl-shadow);
+}
+
+/* 选中态：内凹（按下去了）。
+   放在 primary **之后** —— 一个按钮若同时是主要与选中，
+   选中是更具体的状态，应覆盖突出显示。 */
 .nx-btn.on,
 .mm-btn.on {
   color: var(--accent);
   font-weight: 600;
-  box-shadow: var(--sh-in-md);
+  box-shadow: var(--ctl-shadow-press);
 }
 
 .nx-btn.danger,

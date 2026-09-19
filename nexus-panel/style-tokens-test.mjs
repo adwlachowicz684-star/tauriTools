@@ -473,6 +473,24 @@ console.log('\n=== 10a. 各插件按钮阴影统一（由主题管） ===');
     afV.every((v) => v.startsWith('--ctl-shadow')) && mmV.every((v) => v.startsWith('--ctl-shadow')),
     `af=${afV.join('/')} mm=${mmV.join('/')}`);
 
+  /* ---------- 突出显示（primary）与选中态（on）必须分开 ----------
+     事故：这两者曾被塞进**同一组规则**共用内凹，于是「＋ 新建项目」
+     这类主按钮看着像被按下去了。
+
+     语义完全不同：
+       primary  强调"推荐点这里"  → 凸
+       on       当前生效中/已按下 → 凹
+     判据：凸 = "作用于它"，凹 = "它已是当前状态"。
+     把强调画成凹，等于把"请点我"画成"我已经被点了"。 */
+  const primarySh = shadowOf(ctl, '.p-btn.primary');
+  const onSh = shadowOf(ctl, '.mm-btn.on');
+  t('primary 用外凸档（突出显示不该画成按下）',
+    primarySh === 'var(--ctl-shadow)', primarySh || '无');
+  t('on 用内凹档（选中 / 按下）',
+    onSh === 'var(--ctl-shadow-press)', onSh || '无');
+  t('primary 与 on 不是同一档（防止再次被合并成一组）',
+    primarySh && onSh && primarySh !== onSh, `primary=${primarySh} on=${onSh}`);
+
   /* 投射阴影不再各写一份：--af-cast-* 必须指向共享的 --sh-cast-* */
   t('--af-cast-* 收敛到 --sh-cast-*（两份定义必然漂移）',
     /--af-cast-sm:\s*var\(--sh-cast-sm\)/.test(af)
