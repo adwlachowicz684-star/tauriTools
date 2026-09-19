@@ -100,6 +100,18 @@ bootIframePlugin(async (ctx) => {
     });
   }
   let nodeStyleCache = {};
+  // 上次刷新侧栏时对应的节点 id（用于判断选中是否真的变了）
+  let lastSelNodeId = null;
+
+  /**
+   * 选中节点变了之后刷新侧栏。
+   *
+   * 只刷**当前停在文件页**的情况：别的页切回来时 open() 本身会 render，
+   * 读的就是最新选中，不用在这里多刷一次。
+   */
+  function refreshSideIfNeeded() {
+    try { if (side?.current?.() === 'file') side.refresh(); } catch { /* ignore */ }
+  }
   let saveTimer = null;
   let lastBackupAt = 0;
   let lastBackupFp = null;      // 最新快照的指纹，用于「内容没变就不重复备份」
@@ -2127,6 +2139,14 @@ bootIframePlugin(async (ctx) => {
     onStatus: status,
     onDirty,
     onNodeStyle: (st) => { nodeStyleCache = st || {}; side.refresh(); },
+    // 选中节点变了 → 文件页要跟着换节点。
+    // 只在**节点真的换了**时刷新：拖选会连发多次 selectionchange，
+    // 每次都重建 DOM 会让缩略图反复闪。
+    onSelectionChange: (nodeId) => {
+      if (nodeId === lastSelNodeId) return;
+      lastSelNodeId = nodeId;
+      refreshSideIfNeeded();
+    },
     // A71：内层 iframe 的错误/警告。kityminder 跑在 iframe 里，那边的报错
     // 不进外壳控制台 —— 不收集的话，用户侧「点了没反应」就查不到任何线索。
     onDiagnostic: (d) => {

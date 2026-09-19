@@ -151,6 +151,11 @@ export class EditorBridge {
       case 'nodestyle':
         this.handlers.onNodeStyle?.(d.style || {});
         break;
+      // 选中节点变了（含「变成没选中」）。文件面板要跟着换节点，
+      // 否则显示的还是上一个节点的附件 —— 得手动切页签再切回来才更新。
+      case 'selchange':
+        this.handlers.onSelectionChange?.(d.nodeId || '');
+        break;
       case 'openfile':
         if (d.path) this.handlers.onOpenFile?.(d.path);
         break;

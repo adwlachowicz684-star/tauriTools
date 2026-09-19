@@ -754,7 +754,7 @@ group('面板分布：左文件库 / 中画布 / 右属性侧栏');
   // 切到「文件」页会读选中节点的附件引用，桩上补齐；其余页用不到
   const stubApi = { status() {}, selectedRef: () => null, selectedRefs: () => [], selectedImages: () => [], commit() {} };
   let notified = [];
-  const el = buildSide({ api: stubApi }, { onPage: (p) => notified.push(p) }).el;
+  const el = buildSide({ api: stubApi, bridge: { getSelectedNodeId: () => 'n1' } }, { onPage: (p) => notified.push(p) }).el;
   ok(el.classList.contains('open'), '侧栏根节点带 open 类');
   eq(el.dataset.page, 'theme', '默认停在「主题」页（对齐 C# ShowSidePage("theme")）');
   ok(!el.querySelector('.mm-side-tabs'), '侧栏内没有页签条 —— 页签在顶栏，不占侧栏高度');
@@ -772,7 +772,7 @@ group('面板分布：左文件库 / 中画布 / 右属性侧栏');
   ok(/margin-left:\s*auto/.test(topCss), '页签组用 margin-left:auto 推到顶栏最右');
 
   // 10.7 行为：侧栏自行切页（点节点附件→跳「文件」页）时顶栏也跟着变
-  const side2 = buildSide({ api: stubApi }, { onPage: (p) => notified.push(p) });
+  const side2 = buildSide({ api: stubApi, bridge: { getSelectedNodeId: () => 'n1' } }, { onPage: (p) => notified.push(p) });
   side2.open('file');
   eq(side2.el.dataset.page, 'file', '切到文件页');
   eq(notified[notified.length - 1], 'file', 'onPage 回调收到 file（顶栏据此改高亮）');
@@ -915,7 +915,7 @@ group('附件卡片 / 视频预览');
         selectedImages: () => images,
         commit() {},
       },
-      bridge: {},
+      bridge: { getSelectedNodeId: () => 'n1' },
     };
   }
 
@@ -1217,7 +1217,7 @@ group('附件：file 与 video 互不干扰');
     const el = buildSide({
       api: { status() {}, selectedRef: (k) => (k === 'video' ? video : null),
       selectedRefs: () => (video ? [video] : []), selectedImages: () => [], commit() {} },
-      bridge: {},
+      bridge: { getSelectedNodeId: () => 'n1' },
     }, {});
     el.open('file');
     return el.el.querySelector('.mm-vthumb');
@@ -1276,7 +1276,7 @@ group('布局模板缩略图');
       applyTheme: () => {}, saveThemes: async () => true,
       nodeStyle: () => ({}), setNodeStyle: () => {},
     },
-    bridge: {},
+    bridge: { getSelectedNodeId: () => 'n1' },
     customThemes: [],
   }, {});
   el.open('theme');
@@ -1367,7 +1367,7 @@ group('主题配色条');
       applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
       nodeStyle: () => ({}), setNodeStyle: () => {},
     },
-    bridge: {},
+    bridge: { getSelectedNodeId: () => 'n1' },
     customThemes: [],
   }, {});
   el.open('theme');
@@ -1402,7 +1402,7 @@ group('主题配色条');
       applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
       nodeStyle: () => ({}), setNodeStyle: () => {},
     },
-    bridge: {},
+    bridge: { getSelectedNodeId: () => 'n1' },
     customThemes: [{
       id: 'custom-1',
       name: '我的主题',
@@ -1997,7 +1997,7 @@ const picons = await import('./preset-icons.js');
       applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
       nodeStyle: () => ({}), setNodeStyle: () => {},
     },
-    bridge: {}, customThemes: [],
+    bridge: { getSelectedNodeId: () => 'n1' }, customThemes: [],
   }, {});
   el.open('tag');
   const btns = [...el.el.querySelectorAll('button')].map((b) => b.textContent);
@@ -5041,8 +5041,12 @@ group('附件操作：写回前必须切回节点（选中丢失防护）');
   // 能力检测：bridge 没这个方法就别瞎判断，否则会把「没附件」误报成「没选中」
   ok(/typeof app\.bridge\?\.getSelectedNodeId === 'function'/.test(tipSrc),
     '提示只在**能确认**没选中时才出现（能力检测，避免误报）');
-  ok(/!files\.length && !videos\.length && !images\.length/.test(tipSrc),
-    '提示只在三类都为空时才出现（有附件就照常渲染）');
+  // 提示落在**空列表**的位置（不再整页替换）：
+  // 文件栏空 → 换成引导语；别的栏仍显示各自的空提示
+  ok(/noSel && label === '文件'/.test(tipSrc),
+    '未选中时只在**文件栏**换文案（三栏都换会重复三遍）');
+  ok(/return `当前节点没有\$\{label\}附件`/.test(tipSrc),
+    '其余情况仍是「当前节点没有 X 附件」');
 
   // 5) 移除类操作同样要切回（confirmDialog 也是异步的）
   const rmAt = pnl.indexOf('const removeAt = async (kind, index) => {');
@@ -5502,6 +5506,115 @@ group('图片预览：左右切换 + ← → 快捷键');
   }
 }
 
+group('文件面板：随选中节点实时更新 + 未选中提示落在空列表处');
+
+{
+  const { buildSide } = await import('./panels.js');
+
+  /** 造一个可切换"选中节点"的假 bridge */
+  function mkApp(sel) {
+    const state = { sel };
+    return {
+      app: {
+        settings: {},
+        api: {
+          status() {}, commit() {},
+          // 按当前"选中"返回附件
+          selectedRefs: (kind) => {
+            const n = state.sel;
+            return n ? ((kind === 'video' ? n.videos : n.files) || []) : [];
+          },
+          selectedImages: () => (state.sel ? (state.sel.images || []) : []),
+        },
+        bridge: { getSelectedNodeId: () => (state.sel ? state.sel.id : '') },
+      },
+      state,
+    };
+  }
+
+  const A = { id: 'A', files: [{ n: '甲.pdf', a: 'a1' }], videos: [], images: [] };
+  const B = { id: 'B', files: [], videos: [{ n: '乙.mp4', a: 'v1' }], images: [] };
+
+  // 1) 未选中 + 三个列表都空 → 文件栏显示引导语
+  {
+    const { app } = mkApp(null);
+    const el = buildSide(app, {});
+    el.open('file');
+    const hints = [...el.el.querySelectorAll('.mm-hint')].map((x) => x.textContent);
+    ok(hints.some((t) => /当前没有选中节点/.test(t)), '未选中时显示「请先选节点」');
+    ok(hints.filter((t) => /当前没有选中节点/.test(t)).length === 1,
+      '**只出现一次**（不三栏重复）');
+    // 关键：不是整页替换 —— 按钮还在
+    const btns = [...el.el.querySelectorAll('button')].map((b) => b.textContent);
+    ok(btns.includes('附加文件…'), '按钮仍在（提示落在空列表处，不是整页替换）');
+  }
+
+  // 2) 未选中时，视频/图片栏仍是各自的空提示
+  {
+    const { app } = mkApp(null);
+    const el = buildSide(app, {});
+    el.open('file');
+    const hints = [...el.el.querySelectorAll('.mm-hint')].map((x) => x.textContent);
+    ok(hints.some((t) => /当前节点没有视频附件/.test(t)), '视频栏仍是「没有视频附件」');
+    // 图片栏实际文案是「当前节点没有图片」（不带"附件"二字）
+    ok(hints.some((t) => /当前节点没有图片/.test(t)), '图片栏仍是「没有图片」');
+  }
+
+  // 3) 已选中 + 没附件 → 显示「当前节点没有文件附件」（不是"请先选节点"）
+  {
+    const { app } = mkApp({ id: 'C', files: [], videos: [], images: [] });
+    const el = buildSide(app, {});
+    el.open('file');
+    const hints = [...el.el.querySelectorAll('.mm-hint')].map((x) => x.textContent);
+    ok(!hints.some((t) => /当前没有选中节点/.test(t)), '已选中时不显示「请先选节点」');
+    ok(hints.some((t) => /当前节点没有文件附件/.test(t)), '显示「当前节点没有文件附件」');
+  }
+
+  // 4) 换节点 → refresh 后显示**新节点**的附件（核心需求）
+  {
+    const { app, state } = mkApp(A);
+    const el = buildSide(app, {});
+    el.open('file');
+    ok(/甲\.pdf/.test(el.el.textContent), '初始显示 A 的附件');
+    // 切到 B 再刷新（模拟 selchange → refresh）
+    state.sel = B;
+    el.refresh();
+    ok(/乙\.mp4/.test(el.el.textContent), '换节点后显示 **B** 的附件（不是还停在 A）');
+    ok(!/甲\.pdf/.test(el.el.textContent), 'A 的附件已消失');
+  }
+
+  // 5) 源码级：编辑器要发 selchange（无选中也发）
+  {
+    const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+    const i = html.indexOf("hostPost({ type: 'selchange'");
+    ok(i > 0, '编辑器发送 selchange');
+    // 切片要**覆盖到后面**的 km.on 注册（它们在 hostPost 之后），
+    // 只往后取 200 字符会漏掉，导致断言静默失效
+    const src = html.slice(i - 1400, i + 800);
+    ok(/km\.on\('selectionchange', notifySelChanged\)/.test(src), '监听 selectionchange');
+    ok(/km\.on\('selectionclear',  notifySelChanged\)/.test(src),
+      '也监听 selectionclear（取消选中也要通知，否则面板停在旧节点）');
+    ok(/nodeId: id/.test(src), '带上 nodeId（宿主据此判断是否真的换了节点）');
+    // 合并连发：拖选一帧内可能好几次
+    ok(/setTimeout\(function \(\) \{/.test(src), '有合并连发的节流');
+  }
+
+  // 6) 源码级：bridge 与宿主
+  {
+    const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+    ok(/case 'selchange':/.test(br), 'bridge 处理 selchange');
+    ok(/onSelectionChange\?\.\(d\.nodeId \|\| ''\)/.test(br), '透传 nodeId');
+
+    const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+    ok(/onSelectionChange: \(nodeId\) =>/.test(idx), '宿主接 onSelectionChange');
+    // 关键：只在节点**真的变了**时才刷新
+    ok(/if \(nodeId === lastSelNodeId\) return;/.test(idx),
+      '节点没变时不刷新（拖选会连发多次，否则缩略图一直闪）');
+    ok(/side\?\.current\?\.\(\) === 'file'/.test(idx),
+      '只刷当前停在文件页的情况（别的页切回来时 open 会 render）');
+  }
+}
+
 group('多附件：XMind 往返（导出再导回）');
 
 {
@@ -5625,7 +5738,7 @@ group('多附件：侧栏选中跨 refresh 保持（行为级）');
   let api;
   const s = buildSide({
     get api() { return api; },
-    bridge: {},
+    bridge: { getSelectedNodeId: () => 'n1' },
   }, {});
   api = {
     status() {}, commit() {},

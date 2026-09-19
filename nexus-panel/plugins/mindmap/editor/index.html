@@ -2167,6 +2167,33 @@
                             try { km.on('noderender',      notifySelectedStyle); } catch (e) {}
                         })();
 
+                        /* ---- 选中变化通知宿主（文件面板要跟着节点走）----
+                         * notifySelectedStyle 在**无选中时会直接 return**不发消息
+                         * （那样会把面板上的样式清成空），所以另发一条独立的。
+                         * 没有它，侧栏文件页显示的还是上一个节点的附件 ——
+                         * 得手动切到别的页签再切回来才更新。
+                         *
+                         * 带上 nodeId：宿主只在**真的换了节点**时才刷新。
+                         * 同一次拖选会连发多次 selectionchange，
+                         * 不加这个判断会让面板反复重建 DOM（缩略图会闪）。
+                         */
+                        (function () {
+                            var timer = null;
+                            function notifySelChanged() {
+                                if (timer) return;
+                                // 合并连发：拖选时一帧内可能有好几次
+                                timer = setTimeout(function () {
+                                    timer = null;
+                                    var n = null;
+                                    try { n = km.getSelectedNode && km.getSelectedNode(); } catch (e) { n = null; }
+                                    var id = (n && n.data && n.data.id) || '';
+                                    try { hostPost({ type: 'selchange', nodeId: id }); } catch (e) {}
+                                }, 60);
+                            }
+                            try { km.on('selectionchange', notifySelChanged); } catch (e) {}
+                            try { km.on('selectionclear',  notifySelChanged); } catch (e) {}
+                        })();
+
                         // ---- 内容变更通知 WPF（用于标题栏 * 号 / 自动保存）----
         function notifyDirty() {
             hostPost({ type: 'contentchange' });
