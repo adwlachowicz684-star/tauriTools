@@ -315,5 +315,63 @@ console.log('\n--- 11. 死条目：能力表里写了不存在的命令必须报
     && 'watch_stop' in COMMAND_CAPS && 'fpx_watch_stop' in COMMAND_CAPS);
 }
 
+/* ---------------------------------------------------------------- */
+console.log('\n--- 12. 「只登记不拦截」必须被钉住 ---');
+{
+  /*
+   * 这节是整个决策的护栏。
+   *
+   * 现在的"不拦截"是因为**没接上**，而不是因为有保证 ——
+   * 任何人（包括将来的我）顺手把 caps 接进 checkInvoke，
+   * agent-flow / project-group 立刻不可用，而症状会表现为
+   * "某些功能突然没反应"，很难联想到是安全策略变了。
+   *
+   * 所以这里钉三件事：常量值、源码不引用、**行为上真的放行**。
+   */
+  const { CAP_ENFORCEMENT, checkInvoke } = await import('./js/invoke-policy.js');
+  const { capsOf, worstLevel } = await import('./js/command-caps.js');
+  const fs2 = await import('node:fs');
+
+  t('策略常量是 report-only', CAP_ENFORCEMENT === 'report-only', CAP_ENFORCEMENT);
+
+  /* 静态：checkInvoke 所在文件不得引入能力表 */
+  const src = fs2.readFileSync(path.join(root, 'js', 'invoke-policy.js'), 'utf8');
+  const codeOnly = src
+    .replace(/\/\*[\s\S]*?\*\//g, '')   // 块注释（说明里会提到它）
+    .replace(/\/\/.*$/gm, '')                  // 行注释
+    .replace(/^\s*\*.*$/gm, '');               // 块注释里的 * 行
+  t('执行侧没有 import 能力表', !/command-caps/.test(codeOnly),
+    (codeOnly.match(/.*command-caps.*/) || [''])[0].slice(0, 60));
+
+  /* 行为：命中红色组合的插件，其白名单内的命令**仍然放行** */
+  const m = src.match(/export const PLUGIN_COMMANDS\s*=\s*\{([\s\S]*?)\}\s*;/);
+  const by = new Map();
+  for (const blk of m[1].matchAll(/'?([\u4e00-\u9fa5a-z_0-9-]+)'?\s*:\s*\[([\s\S]*?)\]/g)) {
+    const cs = [...blk[2].matchAll(/'([a-z_0-9]{3,})'/g)].map((x) => x[1]);
+    if (cs.length) by.set(blk[1], cs);
+  }
+  const reds = [...by.entries()].filter(([, cs]) => worstLevel(capsOf(cs)) === 'red');
+  t('确实存在命中红色组合的插件（否则这节测了个空）', reds.length > 0, `红色 ${reds.length} 个`);
+
+  let blocked = [];
+  for (const [id, cs] of reds) {
+    for (const c of cs) {
+      const r = checkInvoke(id, c, null);
+      if (!r.ok) blocked.push(`${id} → ${c}: ${r.reason}`);
+    }
+  }
+  /*
+   * 这是最关键的一条：**红色组合不代表拒绝**。
+   * 若哪天有人接上拦截，这里会立刻红，而且会报出具体是哪条命令被挡了。
+   */
+  t('红色插件的白名单命令全部放行（未被组合拦截）', blocked.length === 0,
+    blocked.slice(0, 3).join(' | '));
+
+  /* 反向确认：白名单外的命令仍然拒绝 —— 别为了"不拦截"把闸拆了 */
+  t('白名单外的命令仍然拒绝', checkInvoke('agent-flow', 'zzz_not_listed', null).ok === false);
+  t('HARD_DENY 优先级最高（即便当前为空集也保留判定）',
+    checkInvoke('agent-flow', '', null).ok === false);
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -162,6 +162,23 @@ export const PLUGIN_COMMANDS = {
 export const SAFE_COMMANDS = ['app_version', 'rust_ping'];
 
 /**
+ * 能力分级是否参与拦截。
+ *
+ * ⚠️ 当前是 'report-only'（只登记不拦截），这是**刻意的选择**，不是没做完。
+ *
+ * 理由：能力画像显示 agent-flow 和 project-group 现在就命中红色组合
+ * （M+S 外传通道、M+W 可远程改写）。它们是核心插件 ——
+ * 一旦按组合拦截，功能立刻不可用，等于"安全对了、功能死了"。
+ *
+ * 所以顺序是：先让风险可见 → 给插件做降级改造（拆分命令或加护栏）
+ * → 改造完成后才把这里改成 'enforce'。
+ *
+ * 写成常量而不是散在注释里，是为了让这个决策**可断言**：
+ * 测试钉住它是 'report-only'，谁顺手接上拦截都会被挡回去。
+ */
+export const CAP_ENFORCEMENT = 'report-only';
+
+/**
  * 校验一次 invoke 是否被允许。
  *
  * 判定顺序（越靠前优先级越高）：
@@ -173,6 +190,9 @@ export const SAFE_COMMANDS = ['app_version', 'rust_ping'];
  *
  * 注意 2 与 3 是**并集**不是替换：内置插件在 manifest 里补声明也能生效，
  * 将来给某个内置插件临时加命令不必改这张静态表。
+ *
+ * 本函数**刻意不引用 command-caps.js**。能力等级只用于报告，
+ * 不参与这里的判定 —— 见 CAP_ENFORCEMENT 的说明。
  *
  * @param {string} pluginId 插件 id
  * @param {string} cmd      要调用的命令
