@@ -57,6 +57,25 @@ tauri-plugin-http = "2"
 tauri-plugin-single-instance = "2"
 notify = "6"
 
+# ---- OS 凭据管理器（保险箱主密钥）----
+# 主密钥存进 OS 凭据管理器，而不是应用数据目录 ——
+# 这样"拷走整个目录"解不开凭据。
+#
+# 按平台分别指定 feature，而不是一次性开三个：
+# Windows 上拉 dbus/openssl 纯属浪费，且 Linux 的 Secret Service
+# 依赖在每个发行版上的可用性都不一样，没必要让其它平台承担。
+#
+# keyring 3.x 要求显式指定至少一个 credential store feature，
+# 不指定会编译失败。
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service"] }
+
 [profile.release]
 codegen-units = 1
 lto = true

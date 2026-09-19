@@ -7,6 +7,8 @@ import {
   makeCredential, missingCapabilities, NODE_NEEDS, detectGithubCapabilities,
   scopeHintFor,
 } from '../engine/credentials';
+import { VAULT_MODE_META } from '../types';
+import type { VaultMode } from '../engine/credentialStore';
 
 /**
  * 凭据中心。
@@ -61,9 +63,9 @@ export function CredentialPanel({
   verify: VerifyFn;
   /** true 表示还没解锁，此时应展示解锁表单而不是列表 */
   locked?: boolean;
-  mode?: 'auto' | 'passphrase';
+  mode?: VaultMode;
   onUnlock?: (pass: string) => void;
-  onChangeMode?: (mode: 'auto' | 'passphrase', pass: string) => void;
+  onChangeMode?: (mode: VaultMode, pass: string) => void;
   /** 环境不支持加密时的提示 */
   cryptoWarn?: string;
   /** 上一次解锁失败的原因 */
@@ -200,35 +202,41 @@ export function CredentialPanel({
 
         <div className="cred-vault">
           <span className="p-muted">存储方式：</span>
-          {mode === 'passphrase' ? (
-            <span className="cred-cap">口令加密 · 每次打开要解锁</span>
-          ) : (
-            <span className="cred-cap" title="密钥绑定本机特征，防外部工具直接读取存储文件；同源脚本仍可解密">
-              本机加密 · 自动解锁
-            </span>
-          )}
-          {onChangeMode ? (
-            <button
-              className="mini"
-              style={{ marginLeft: 'var(--sp-4, 8px)' }}
-              onClick={async () => {
-                const target = mode === 'passphrase' ? 'auto' : 'passphrase';
-                if (target === 'passphrase') {
-                  const p = await prompt({
-                    title: '设置解锁口令',
-                    message: '之后每次打开凭据都要输入这个口令。',
-                    placeholder: '解锁口令',
-                    validate: (v) => (v ? null : '口令不能为空'),
-                  });
-                  if (p) onChangeMode('passphrase', p);
-                } else {
-                  onChangeMode('auto', '');
-                }
-              }}
-            >
-              改成{mode === 'passphrase' ? '本机加密' : '口令加密'}
-            </button>
-          ) : null}
+          {/*
+            三选一，而不是一个"切换"按钮。
+
+            以前只有两种，一个按钮在两态间翻就够了；
+            三种之后按钮只能循环，用户得连点才知道会到哪 ——
+            而且循环按钮看不出"一共有几种"，第四种加进来还得改。
+          */}
+          <div className="mcp-tabs" style={{ marginLeft: 'var(--sp-4, 8px)' }}>
+            {(Object.keys(VAULT_MODE_META) as VaultMode[]).map((m) => (
+              <button
+                key={m}
+                className={'mcp-tab' + (m === mode ? ' on' : '')}
+                title={VAULT_MODE_META[m].hint}
+                onClick={async () => {
+                  if (!onChangeMode || m === mode) return;
+                  if (m === 'passphrase') {
+                    const p = await prompt({
+                      title: '设置解锁口令',
+                      message: '之后每次打开凭据都要输入这个口令。忘了就只能重新填一遍所有凭据。',
+                      placeholder: '解锁口令',
+                      validate: (v) => (v ? null : '口令不能为空'),
+                    });
+                    if (p) onChangeMode('passphrase', p);
+                    return;
+                  }
+                  onChangeMode(m, '');
+                }}
+              >
+                {VAULT_MODE_META[m].label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="p-muted" style={{ marginTop: 'var(--sp-2, 4px)', fontSize: 11 }}>
+          {VAULT_MODE_META[mode ?? 'auto'].hint}
           {mode === 'passphrase' && !locked && onUnlock ? (
             <button className="mini" style={{ marginLeft: 'var(--sp-3, 6px)' }} onClick={() => onUnlock('')}>
               锁定

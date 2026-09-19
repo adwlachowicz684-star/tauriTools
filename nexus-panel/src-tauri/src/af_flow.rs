@@ -1743,6 +1743,86 @@ mod tests {
        不适合在单测里做。逻辑本身（自底向上、深度上限）靠代码审查保证。 */
 
     /// 起一个 sleep 子进程，验证能按 ppid 找到它。
+
+/* ================================================================== */
+/* OS 凭据管理器 —— 保险箱主密钥                                      */
+/* ================================================================== */
+
+/*
+ * 为什么要有这个。
+ *
+ * 保险箱主密钥原本只有两个来源：
+ *
+ *   auto        本机特征派生（UA/语言/时区/屏幕/核数 + 盐）
+ *               盐就明文躺在应用数据目录里 —— **谁拷走整个目录，
+ *               谁就能离线复现密钥、解开全部凭据**。
+ *   passphrase  用户每次输口令（能防，但每次都要输）
+ *
+ * 第三条路：把主密钥交给 OS 保管 ——
+ *   Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service。
+ *   钥匙不在数据目录里，而在 OS 手里，且与用户登录态绑定。
+ *   既不用每次输口令，又防得住"拷走整个目录"。
+ *
+ * ------------------------------------------------------------------ */
+
+/// 在 OS 凭据管理器里的定位。service + account 一起确定一条记录。
+const OS_KEYRING_SERVICE: &str = "nexus-panel.agent-flow";
+const OS_KEYRING_ACCOUNT: &str = "credential-vault-key";
+
+/// 取主密钥。Ok(None) = 还没存过（**不是错误**）。
+#[tauri::command]
+pub fn af_os_keyring_get() -> Result<Option<String>, String> {
+    let entry = keyring::Entry::new(OS_KEYRING_SERVICE, OS_KEYRING_ACCOUNT)
+        .map_err(|e| format!("OS 凭据管理器不可用: {e}"))?;
+
+    match entry.get_password() {
+        Ok(v) => {
+            /*
+             * 空串当"没有"。
+             * 有些后端在记录不存在时返回空串而不是 NoEntry；
+             * 若当成真密钥去解密，会得到"口令不对"的错，
+             * 而正确的处理是"新建一条" —— 两者要修的方向完全不同。
+             */
+            if v.trim().is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(v))
+            }
+        }
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(format!("读取 OS 凭据管理器失败: {e}")),
+    }
+}
+
+/// 存主密钥。
+#[tauri::command]
+pub fn af_os_keyring_set(value: String) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err("拒绝写入空的主密钥".to_string());
+    }
+    let entry = keyring::Entry::new(OS_KEYRING_SERVICE, OS_KEYRING_ACCOUNT)
+        .map_err(|e| format!("OS 凭据管理器不可用: {e}"))?;
+
+    entry
+        .set_password(&value)
+        .map_err(|e| format!("写入 OS 凭据管理器失败: {e}"))
+}
+
+/// 删主密钥。切换模式离开 OS 凭据管理器时调用 ——
+/// 留着等于在数据目录之外又留了一把能解开旧密文的钥匙，而用户以为已经换掉了。
+#[tauri::command]
+pub fn af_os_keyring_delete() -> Result<(), String> {
+    let entry = keyring::Entry::new(OS_KEYRING_SERVICE, OS_KEYRING_ACCOUNT)
+        .map_err(|e| format!("OS 凭据管理器不可用: {e}"))?;
+
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        // 本来就没有 —— 正是想要的结果，不算失败
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!("删除 OS 凭据管理器记录失败: {e}")),
+    }
+}
+
     #[cfg(target_os = "linux")]
     #[test]
     fn lists_child_pids() {

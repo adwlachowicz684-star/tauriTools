@@ -1,4 +1,5 @@
 import { invoke as tauriInvoke, isTauri } from '@tauri-apps/api/core';
+import { toOsKeyringRead, type OsKeyringRead } from '../engine/osKeyring';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { CliKind, FsOp, FsNodeData } from '../types';
 import { isHttpUrl } from '../engine/llm';
@@ -859,6 +860,84 @@ export function canReadImage(): boolean {
  * 注意它挡不住什么：盐文件在应用数据目录里明文明放，
  * 整个用户数据目录被拷走的人照样能拿到。它防的是"同页面其它代码顺手读"。
  */
+/* ------------------------------------------------------------------ */
+/* OS 凭据管理器（保险箱主密钥）                                        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 主密钥存进 OS 凭据管理器：Windows 凭据管理器 / macOS 钥匙串 /
+ * Linux Secret Service。钥匙不在应用数据目录里，拷走目录也解不开。
+ *
+ * 三个函数都**不吞异常** —— 拿不到就是拿不到，要让上层明确知道，
+ * 由它决定是否降级、怎么告诉用户。在这里静默返回 null 的话，
+ * 上层会以为是"没存过"，于是新建一个密钥覆盖 —— 凭据永久丢失。
+ */
+export type OsKeyringResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; reason: string };
+
+/**
+ * 读主密钥。
+ *
+ * 直接返回 OsKeyringRead，让调用方能把它原样交给 planOsKeyringStart ——
+ * 中间不经过任何"自己再判一遍"的转换，省掉一处可能写错的地方。
+ */
+export async function osKeyringGet(): Promise<OsKeyringRead> {
+  /*
+   * 用 hasTauri() 而不是 isTauri()：
+   * 隔离态下 isTauri() 是 false，可桥接其实还通着（见 hasTauri 的说明）。
+   * 照 isTauri 判断会把明明能用的桌面端误判成浏览器模式，
+   * 于是用户无缘无故被告知"没有 OS 凭据管理器"。
+   */
+  if (!hasTauri()) {
+    return { ok: false, reason: '浏览器模式下没有 OS 凭据管理器' };
+  }
+  try {
+    const v = await invoke<string | null>('af_os_keyring_get');
+    // 后端用 Option<String> 表示"没有"，到前端是 null
+    return toOsKeyringRead(v);
+  } catch (e) {
+    return { ok: false, reason: describeInvokeErr(e, '读取 OS 凭据管理器失败') };
+  }
+}
+
+/** 写主密钥 */
+export async function osKeyringSet(value: string): Promise<OsKeyringResult<true>> {
+  if (!hasTauri()) {
+    return { ok: false, reason: '浏览器模式下没有 OS 凭据管理器' };
+  }
+  try {
+    await invoke<void>('af_os_keyring_set', { value });
+    return { ok: true, value: true };
+  } catch (e) {
+    return { ok: false, reason: describeInvokeErr(e, '写入 OS 凭据管理器失败') };
+  }
+}
+
+/** 删除主密钥。切换模式离开 OS 凭据管理器时调用，不留残余 */
+export async function osKeyringDelete(): Promise<OsKeyringResult<true>> {
+  if (!hasTauri()) {
+    return { ok: false, reason: '浏览器模式下没有 OS 凭据管理器' };
+  }
+  try {
+    await invoke<void>('af_os_keyring_delete');
+    return { ok: true, value: true };
+  } catch (e) {
+    /*
+     * 删不掉**不当失败**：记录不存在时后端也会报 NoEntry，
+     * 而"没有这条"本来就是我们想要的结果。
+     */
+    return { ok: true, value: true };
+  }
+}
+
+/** 把 Rust 侧透传的错误变成一句能看的话 */
+function describeInvokeErr(e: unknown, prefix: string): string {
+  const raw = e instanceof Error ? e.message : String(e ?? '');
+  const m = raw.trim();
+  return m ? `${prefix}：${m}` : prefix;
+}
+
 export async function fetchDeviceSalt(): Promise<string | null> {
   if (!isTauri()) return null;
   try {

@@ -39,6 +39,10 @@ import {
 import { SECRET_POLICY_KEY, type SecretPolicy } from './types';
 import { checkChannel, type ChannelStatus } from './lib/channel';
 import { deviceSeed, clearKeyCache } from './engine/crypto';
+import {
+  newOsKeyringKey, planOsKeyringStart, judgeOsKeyringWrite,
+} from './engine/osKeyring';
+import { osKeyringGet, osKeyringSet, osKeyringDelete } from './lib/tauri';
 import Sidebar, { DRAG_MIME, decodeDrag, type DragPayload } from './components/Sidebar';
 import { prompt } from '../../js/dialog.js';
 import DirPicker from './components/DirPicker';
@@ -481,6 +485,66 @@ export default function App() {
       }
     };
 
+    /*
+     * oskeyring 模式：主密钥不在数据目录里，去 OS 凭据管理器取。
+     *
+     * 与 auto 完全无关，所以**不走盐那条路** —— 混着走的话，
+     * 一旦拿了设备盐派生出的密钥去解 OS 密钥加密的数据，
+     * 一条都解不开，而界面只会显示"口令不对"（其实根本没有口令）。
+     */
+    if (file.mode === 'oskeyring') {
+      void (async () => {
+        const read = await osKeyringGet();
+        if (!alive) return;
+        const plan = planOsKeyringStart(read);
+
+        if (plan.action === 'use') {
+          setVaultKey(plan.key);
+          return;
+        }
+
+        if (plan.action === 'unavailable') {
+          /*
+           * 不静默退回 auto。
+           *
+           * 静默降级会让人以为密钥受 OS 保护，实际还是本机特征派生 ——
+           * 假的安全感比没有更糟。明确说出来，让他自己决定换哪种。
+           */
+          setCryptoWarn(
+            `OS 凭据管理器不可用（${plan.reason}）。当前**没有**启用任何主密钥，`
+            + '请在凭据中心改用「本机加密」或「口令加密」。',
+          );
+          return;
+        }
+
+        // create：生成 → 写入 → **回读验证** → 才用它加密
+        const key = newOsKeyringKey((n) => be.randomBytes(n));
+        const wrote = await osKeyringSet(key);
+        if (!alive) return;
+        if (!wrote.ok) {
+          setCryptoWarn(`无法把主密钥写进 OS 凭据管理器（${wrote.reason}）。`
+            + '为了避免凭据永久解不开，本次**没有**启用加密。'
+            + '请在凭据中心改用「本机加密」或「口令加密」。');
+          return;
+        }
+        const back = await osKeyringGet();
+        if (!alive) return;
+        const check = judgeOsKeyringWrite(back, key);
+        if (!check.ok) {
+          /*
+           * 存进去却读不回来（Linux 钥匙串锁着时很常见）。
+           * 此时若拿它加密，下次再也解不开 —— 那是数据丢失，不是报错能挽回的。
+           * 所以宁可不加密，也要把话说清楚。
+           */
+          setCryptoWarn(`${check.reason}。为避免凭据永久解不开，本次**没有**启用加密。`
+            + '请在凭据中心改用「本机加密」或「口令加密」。');
+          return;
+        }
+        setVaultKey(key);
+      })();
+      return () => { alive = false; };
+    }
+
     if (file.deviceSalt) {
       // 老数据：沿用存盘的盐，绝不重新生成
       useSalt(file.deviceSalt, false);
@@ -570,19 +634,56 @@ export default function App() {
     setCredentials(r.credentials);
   }, [store]);
 
-  /** 切换加密方式：用新口令重新加密全部凭据 */
-  const changeVaultMode = useCallback(async (mode: 'auto' | 'passphrase', pass: string) => {
+  /**
+   * 切换加密方式：用新的主密钥重新加密全部凭据。
+   *
+   * 三种模式的主密钥来源完全不同，所以这里必须**分别取**：
+   *   auto        设备特征派生（要盐）
+   *   oskeyring   OS 凭据管理器（要写进去并回读验证）
+   *   passphrase  用户口令
+   * 拿错一种去加密，结果是下次一条都解不开 —— 且界面上只会显示"口令不对"。
+   */
+  const changeVaultMode = useCallback(async (mode: VaultMode, pass: string) => {
     const be = beRef.current;
     if (!be) return;
-    let salt = store.deviceSalt;
-    if (!salt) { salt = newDeviceSalt(be); }
-    const newKey = mode === 'auto' ? deviceSeed(collectDeviceSignals(salt)) : pass;
-    const base: StoredFile = { ...store, mode, deviceSalt: salt };
+
+    let newKey: string;
+    if (mode === 'oskeyring') {
+      const key = newOsKeyringKey((n) => be.randomBytes(n));
+      const wrote = await osKeyringSet(key);
+      if (!wrote.ok) { pushLog(`✗ 无法写入 OS 凭据管理器：${wrote.reason}`); return; }
+      const back = await osKeyringGet();
+      const check = judgeOsKeyringWrite(back, key);
+      if (!check.ok) { pushLog(`✗ ${check.reason}。为避免凭据永久解不开，未切换。`); return; }
+      newKey = key;
+    } else if (mode === 'auto') {
+      let salt = store.deviceSalt;
+      if (!salt) { salt = newDeviceSalt(be); }
+      newKey = deviceSeed(collectDeviceSignals(salt));
+    } else {
+      newKey = pass;
+    }
+
+    /*
+     * 离开 oskeyring 时把 OS 里那条删掉 ——
+     * 留着等于在数据目录之外又留了一把能解开旧密文的钥匙，
+     * 而用户以为已经换掉了。
+     */
+    if (store.mode === 'oskeyring' && mode !== 'oskeyring') {
+      await osKeyringDelete();
+    }
+
+    const base: StoredFile = {
+      ...store,
+      mode,
+      deviceSalt: store.deviceSalt || newDeviceSalt(be),
+    };
     const next = await encryptStore(be, base, credentials, newKey);
     setStore(next);
     setVaultKey(newKey);
     try { localStorage.setItem(CRED_KEY, serializeStore(next)); } catch { /* 忽略 */ }
-  }, [store, credentials]);
+    pushLog(`✓ 凭据存储方式已改为${VAULT_MODE_META[mode].label}`);
+  }, [store, credentials, pushLog]);
 
   /**
    * 保存凭据前的校验。
