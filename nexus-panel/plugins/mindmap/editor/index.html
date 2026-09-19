@@ -236,6 +236,101 @@
             });
             try { km._commands['video'] = new VideoCommand(); } catch (e) {}
 
+            /**
+             * 按内核规则把原尺寸缩到 maxW×maxH 内。
+             * 复刻内核 ImageCommand 里的算法 —— 换成自己写的一套会让同一张图
+             * 在内核渲染器里算出不一样的大小。
+             */
+            function fitImageSize(w, h, maxW, maxH) {
+                var r = w / h, mr = maxW / maxH;
+                if (w > maxW && r > mr) { w = maxW; h = w / r; }
+                else if (h > maxH) { h = maxH; w = h * r; }
+                return { width: 0 | w, height: 0 | h };
+            }
+
+            /** 异步取真实尺寸；失败返回 null（保留占位尺寸，图照样能画） */
+            function loadFitSize(url, m, cb) {
+                try {
+                    var mw = 200, mh = 200;
+                    try { mw = m.getOption('maxImageWidth') || 200; } catch (e) {}
+                    try { mh = m.getOption('maxImageHeight') || 200; } catch (e) {}
+                    // typeof 对未声明变量是安全的（不抛 ReferenceError）——
+                    // 测试用 new Function 跑这段时不一定注入 document
+                    if (typeof document === 'undefined' || !document.createElement) { cb(null); return; }
+                    var img = document.createElement('img');
+                    img.onload = function () { cb(fitImageSize(img.width, img.height, mw, mh)); };
+                    img.onerror = function () { cb(null); };
+                    img.src = url;
+                } catch (e) { cb(null); }
+            }
+
+            // ---- 同步 image 命令（**覆盖**内核自带的异步版本）----
+            //
+            // 内核的 image 命令是**异步**的：先 new Image() 加载出宽高，
+            // 拿到后才 setData('image') / setData('imageSize')。实测后果：
+            //
+            //   1. 设完**立刻读**读不到 —— 面板刷新出来是空的；
+            //      而侧栏 pageFile 里 images 是打开面板那一刻的快照，
+            //      于是第二次添加时基数还是空的，新图把第一张**顶掉了**。
+            //   2. 传 null 清除时 src=null 会 404，靠 onerror 回调生效，同样异步 ——
+            //      images 已写好、image 还没清，两个字段并存 → 节点画出两张图。
+            //
+            // 另外内核 ImageRenderer 是 `if (imageSize) { ... }`：
+            // **没有 imageSize 就完全不画**，所以自己写时必须连尺寸一起给。
+            var ImageCommand = kity.createClass('imageCommand', {
+                base: kityminder.Command,
+                execute: function (m, value) {
+                    var nodes = m.getSelectedNodes();
+                    if (!value) {
+                        // 清除：同步，不等回调
+                        nodes.forEach(function (n) {
+                            n.setData('image');
+                            n.setData('imageTitle');
+                            n.setData('imageSize');
+                            n.render();
+                        });
+                        m.layout();
+                        try { m.fire('saveScene'); } catch (e) {}
+                        return;
+                    }
+                    // 设置：先同步写上（含占位尺寸）让**读取立即生效**，
+                    // 真实尺寸异步补上后再 render 一次
+                    var url = String(value);
+                    var ph = { width: 120, height: 120 };
+                    nodes.forEach(function (n) {
+                        n.setData('image', url);
+                        n.setData('imageSize', ph);
+                        n.render();
+                    });
+                    m.layout();
+                    try { m.fire('saveScene'); } catch (e) {}
+                    loadFitSize(url, m, function (sz) {
+                        if (!sz) return;
+                        nodes.forEach(function (n) {
+                            // 期间换了图就别覆盖 —— 异步回来时可能已经不是这张了
+                            if (n.getData('image') !== url) return;
+                            n.setData('imageSize', sz);
+                            n.render();
+                        });
+                        m.layout();
+                    });
+                },
+                queryState: function () {
+                    var nodes = km.getSelectedNodes(), result = 0;
+                    if (nodes.length === 0) return -1;
+                    nodes.forEach(function (n) {
+                        if (n && n.getData('image')) { result = 1; return false; }
+                    });
+                    return result;
+                },
+                queryValue: function () {
+                    var n = km.getSelectedNode();
+                    return n ? { url: n.getData('image'), title: n.getData('imageTitle') } : { url: '', title: '' };
+                }
+            });
+            // 覆盖内核同名命令 —— 必须在内核 _commands 建好之后（DOMContentLoaded 内）
+            try { km._commands['image'] = new ImageCommand(); } catch (e) {}
+
             // 多图：data.images 存 **JSON 数组串**（dataURL 列表）。
             // 不能复用内核的 image 字段 —— 它是单值，内核渲染器会把数组串当 URL，直接破图。
             //
@@ -420,18 +515,36 @@
                     this.callBase();
                     this.width = 16;
                     this.height = 20;
-                    this.rect = new kity.Rect(16, 20, 0, -10, 3).fill('transparent');
-                    // fill 保持 none：实心的话会盖住折角那条线，看不出是「文件」
-                    this.path = (new kity.Path).setPathData('M-8,-10 L-1,-10 L3,-6 L3,10 L-8,10 Z M-1,-10 L-1,-6 L3,-6')
-                        .fill('none');
-                    this.addShapes([this.rect, this.path]);
+                    // **必须是 'none' 不能用 'transparent'**：SVG 1.1 的 fill 属性
+                    // 不接受 transparent 这个 CSS 关键字，渲染器认不出来就回退成
+                    // 默认黑色 —— 整个 16×20 的矩形糊成一个黑块，把线全盖住。
+                    // none 是标准值，所有渲染器都认。
+                    // ⚠️ 这里曾经用的是 CSS 关键字 transparent，与上面注释**自相矛盾**：
+                    // SVG 1.1 的 fill 属性不认 transparent 这个 CSS 关键字，
+                    // 渲染器回退成默认黑色 —— 于是文件附件在画布上就是一块
+                    // 16×20 的**纯黑矩形**，把折角和描边全盖住（"黑图标"）。
+                    // 只有鼠标移上去再移开（mouseout 会设成 none）才恢复正常，
+                    // 所以表现为「一开始是黑的，划一下就好了」。
+                    this.rect = new kity.Rect(16, 20, 0, -10, 3).fill('none');
+                    // 轮廓与折角**拆成两条 path**：合成一条时 fill 会把折角那条
+                    // 开放线段也当闭合区域填掉，看不出是「文件」。
+                    // 轮廓带一层淡填充 —— 纯描边在深色画布上太细，认不出形状。
+                    this.outline = (new kity.Path).setPathData('M-8,-10 L-1,-10 L3,-6 L3,10 L-8,10 Z')
+                        .fill('rgba(150, 165, 190, 0.30)').stroke('#AEB6C4', 1.4);
+                    this.fold = (new kity.Path).setPathData('M-1,-10 L-1,-6 L3,-6')
+                        .fill('none').stroke('#AEB6C4', 1.2);
+                    this.addShapes([this.rect, this.outline, this.fold]);
                     this.on('mouseover', function () { this.rect.fill('rgba(90, 141, 214, 0.25)'); })
-                        .on('mouseout', function () { this.rect.fill('transparent'); });
+                        .on('mouseout', function () { this.rect.fill('none'); });
                     this.setStyle('cursor', 'pointer');
                 },
                 /** 描边色 = 节点文字色（取不到则由 iconColor 回落） */
                 paint: function (color) {
-                    try { this.path.stroke(color, 1.3); } catch (e) {}
+                    try {
+                        // 构造时已有默认色：即使这里没跑到也不会是黑块
+                        this.outline.stroke(color, 1.4);
+                        this.fold.stroke(color, 1.2);
+                    } catch (e) {}
                     return this;
                 }
             });
@@ -442,12 +555,15 @@
                     this.callBase();
                     this.width = 20;
                     this.height = 16;
-                    this.frame = new kity.Rect(20, 16, 0, -8, 3).fill('transparent');
-                    // 三角同样是实心填充，不显式上色就是黑的
-                    this.path = (new kity.Path).setPathData('M-6,-6 L6,0 L-6,6 Z');
+                    // 同 FileIcon：底框用 none，不能用 transparent（会变黑块）
+                    this.frame = new kity.Rect(20, 16, 0, -8, 3).fill('none');
+                    // 三角是实心填充，不显式上色就是黑的。
+                    // 构造时就给默认色：paint 万一没跑到也不会变成黑三角。
+                    this.path = (new kity.Path).setPathData('M-6,-6 L6,0 L-6,6 Z')
+                        .fill('#AEB6C4').stroke('#AEB6C4', 1);
                     this.addShapes([this.frame, this.path]);
                     this.on('mouseover', function () { this.frame.fill('rgba(90, 141, 214, 0.25)'); })
-                        .on('mouseout', function () { this.frame.fill('transparent'); });
+                        .on('mouseout', function () { this.frame.fill('none'); });
                     this.setStyle('cursor', 'pointer');
                 },
                 paint: function (color) {

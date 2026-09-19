@@ -508,6 +508,22 @@ export class EditorBridge {
   }
 
   /** 读取选中节点的图片 dataURL 列表（合并 images 与老 image 字段） */
+  /**
+   * 当前选中节点的 id（没有选中则返回 ''）。
+   *
+   * 用途：宿主侧凡是**先弹文件选择框、再写回**的操作（附加文件/视频/图片），
+   * 都要在异步之前记住它、写回之前切回来。
+   * 选择框期间焦点离开 iframe，选中态可能丢 —— 丢了的后果是写回被静默丢弃
+   * （命令作用于「当前选中节点」，没有选中就什么都不做），
+   * 表现为「点了没反应，而且面板读不到任何附件」。
+   */
+  getSelectedNodeId() {
+    return this._safe('读取节点 id', (_m, km) => {
+      const n = km.getSelectedNode?.();
+      return (n && n.data && n.data.id) || '';
+    }) || '';
+  }
+
   getSelectedImages() {
     return this._safe('读取图片', (_m, km) => {
       const n = km.getSelectedNode?.();

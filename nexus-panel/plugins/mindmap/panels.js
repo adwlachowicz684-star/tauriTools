@@ -640,6 +640,8 @@ export function buildSide(app, opts = {}) {
   // 点第 3 个文件想看它的详情，refresh 完又跳回第 1 个，点了没反应。
   let _curFile = 0;
   let _curVid = 0;
+  // 弹文件选择框**之前**记住的节点 id（见 focusNode 的说明）
+  let _pendingNodeId = '';
 
   function pageFile() {
     const files = app.api.selectedRefs('file');
@@ -660,6 +662,25 @@ export function buildSide(app, opts = {}) {
     safe('读取视频信息', () => fillVideoMeta(videos[curVid], videoMeta, vprev.setDuration),
       (m) => { app.api.status(m, true); })();
 
+    /**
+     * 写回前**切回目标节点**。
+     *
+     * 文件选择框是异步的：弹框期间焦点离开 iframe，选中态可能已经丢了。
+     * 而所有命令都作用于「当前选中节点」—— 没有选中就**静默什么都不做**，
+     * 表现为「点了没反应，而且面板读不到任何附件」。
+     * 所以异步之前记住 nodeId，写回之前切回来。
+     *
+     * @returns {boolean} 切回成功（false = 现在没有选中节点，调用方应提示）
+     */
+    const focusNode = () => {
+      const id = _pendingNodeId || app.bridge?.getSelectedNodeId?.() || '';
+      if (!id) return false;
+      app.bridge?.selectNodeById?.(id);
+      return true;
+    };
+    /** 弹选择框**之前**调用：把当前节点 id 存下来 */
+    const rememberNode = () => { _pendingNodeId = app.bridge?.getSelectedNodeId?.() || ''; };
+
     /** 读当前某类的原始串（用于追加/删除后写回） */
     const rawOf = (kind) => (kind === 'video' ? app.bridge.getSelectedVideo() : app.bridge.getSelectedFile());
 
@@ -670,10 +691,13 @@ export function buildSide(app, opts = {}) {
     /** 附加（追加，不覆盖） */
     const attach = async (kind) => {
       const label = kind === 'video' ? '视频' : '文件';
+      rememberNode();                       // 必须在**弹框之前**
       const f = await io.pickFile(kind === 'video' ? 'video/*' : '');
       if (!f) return;
       const id = await io.putAsset(f);
       if (!id) { app.api.status('附件保存失败', true); return; }
+      // 写回前切回：putAsset 和 pickFile 都是异步的，期间选中可能已丢
+      if (!focusNode()) { app.api.status('请先选中一个节点再附加', true); return; }
       const list = io.decodeRefList(rawOf(kind));
       list.push({ n: f.name, a: id, s: f.size });
       setList(kind, list);
@@ -685,6 +709,7 @@ export function buildSide(app, opts = {}) {
     /** 移除第 index 个（并同步删资产本体） */
     const removeAt = async (kind, index) => {
       const label = kind === 'video' ? '视频' : '文件';
+      rememberNode();
       const list = io.decodeRefList(rawOf(kind));
       const r = list[index];
       if (!r) return;
@@ -693,6 +718,7 @@ export function buildSide(app, opts = {}) {
         `确定移除「${r.n || '（未命名）'}」？\n\n附件本体将从本地库中删除，此操作不可恢复。`,
         '移除', true);
       if (!ok) return;
+      if (!focusNode()) { app.api.status('请先选中一个节点再移除附件', true); return; }
       list.splice(index, 1);
       setList(kind, list);
       if (r.a) await io.dropAsset(r.a);
@@ -713,8 +739,13 @@ export function buildSide(app, opts = {}) {
     };
 
     const addImages = async () => {
+      rememberNode();                       // 必须在**弹框之前**
       const picked = await io.pickFiles('image/*');
       if (!picked || !picked.length) return;
+      // 写回前切回节点；并且**实时**重读列表 ——
+      // 不能用页面构建时的 images 快照：期间选中/内容都可能变过
+      if (!focusNode()) { app.api.status('请先选中一个节点再添加图片', true); return; }
+      const images = app.api.selectedImages();
       let big = 0;
       const urls = [];
       for (const f of picked) {
@@ -736,7 +767,8 @@ export function buildSide(app, opts = {}) {
     };
 
     const removeImage = (index) => {
-      const list = images.slice();
+      if (!focusNode()) { app.api.status('请先选中一个节点再移除图片', true); return; }
+      const list = app.api.selectedImages().slice();
       list.splice(index, 1);
       app.bridge.setImages(list);
       app.api.commit();
@@ -768,6 +800,20 @@ export function buildSide(app, opts = {}) {
     const listBox = (kind, list, label) => (list.length
       ? h('div.mm-alist', {}, ...list.map((r, i) => row(kind, r, i, label)))
       : h('div.mm-hint', {}, `当前节点没有${label}附件`));
+
+    // 没选中节点时三个列表必然都是空的，但界面上和「这个节点没附件」
+    // **长得一模一样** —— 用户会以为附件数据丢了。必须区分开说出来。
+    //
+    // 只在**能确认**没选中时才提示（能力检测）：
+    // bridge 没提供 getSelectedNodeId 就当"不知道"，照常渲染。
+    // 否则会把「节点确实没附件」误报成「没选中节点」，反而更误导。
+    const canTell = typeof app.bridge?.getSelectedNodeId === 'function';
+    const selId = canTell ? (app.bridge.getSelectedNodeId() || '') : null;
+    if (canTell && !selId && !files.length && !videos.length && !images.length) {
+      return h('div', {},
+        h('div.mm-hint', {},
+          '当前没有选中节点。附件是挂在节点上的 —— 请先在画布上点选一个节点。'));
+    }
 
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
       section(`文件附件${files.length ? `（${files.length}）` : ''}`,

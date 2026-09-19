@@ -1042,7 +1042,9 @@ group('画布附件图标配色');
 
   // 13.3 文件图标：fill none + 描边（实心会盖住折角线，认不出是文件）
   ok(/\.fill\('none'\);/.test(icons), 'FileIcon 的 path fill 为 none');
-  ok(/this\.path\.stroke\(color,\s*1\.3\)/.test(icons), 'FileIcon 用 paint() 上描边');
+  // paint() 现在给轮廓和折角**分别**上色（拆成两条 path 后各自 stroke）
+  ok(/this\.outline\.stroke\(color/.test(icons) && /this\.fold\.stroke\(color/.test(icons),
+    'FileIcon 用 paint() 给轮廓与折角上描边');
 
   // 13.4 视频图标：外框与三角都要显式上色（原来三角没设 fill → 默认黑）
   ok(/this\.frame\.stroke\(color,\s*1\.2\)/.test(icons), 'VideoIcon 外框上色');
@@ -1149,8 +1151,11 @@ group('附件：file 与 video 互不干扰');
   // 14.1 命令注册
   {
     const km = newKm({ text: 'x' });
-    eq(Object.keys(km._commands).sort().join(','), 'file,images,video',
+    // image 是**覆盖内核**的自有命令（内核版是异步的，见下方分组）
+    eq(Object.keys(km._commands).sort().join(','), 'file,image,images,video',
       '编辑器注册了 file / video / images 三个命令（images 是多图横幅用）');
+    ok(/km\._commands\['image'\] = new ImageCommand\(\)/.test(html),
+      'image 命令是**自有实现**（覆盖内核的异步版本）');
   }
 
   // 14.2 核心：移除 file 只删 file，video 原样保留
@@ -4924,6 +4929,280 @@ group('视频播放：两个按钮与自动播放回退');
 
   // 没读到画面要有提示
   ok(/还没读到画面/.test(ov), '没画面时提示（不是静默什么都不做）');
+}
+
+group('附件图标不能是黑块：fill 必须用 none 而不是 transparent');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  const fiAt = html.indexOf("var FileIcon = kity.createClass('FileIcon'");
+  const fiEnd = html.indexOf("var VideoIcon = kity.createClass('VideoIcon'");
+  const viEnd = html.indexOf("var FileIcon", fiEnd + 10) > 0
+    ? html.indexOf("var FileIcon", fiEnd + 10) : html.length;
+  const fi = html.slice(fiAt, fiEnd);
+  const vi = html.slice(fiEnd, Math.min(fiEnd + 1200, viEnd));
+  ok(fiAt > 0 && fiEnd > fiAt, '能定位到 FileIcon / VideoIcon 源码');
+
+  // 核心：SVG 1.1 的 fill 不接受 transparent（那是 CSS 关键字），
+  // 渲染器认不出就回退默认黑色 —— 整个矩形糊成黑块。none 才是标准值。
+  // 只断言「rect 用的是 none」而不是「全文不含 transparent」——
+  // 后者会命中注释里的说明文字，属于假阳性（注释改了代码没改也照样绿）
+  ok(/new kity\.Rect\(16, 20, 0, -10, 3\)\.fill\('none'\)/.test(fi),
+    'FileIcon 的矩形底用 fill(none)（transparent 会被渲染器回退成黑色）');
+  ok(!/\.fill\('transparent'\)/.test(fi.replace(/\/\*[\s\S]*?\*\//g, '')),
+    'FileIcon 代码里不再出现 fill(transparent)');
+  ok(!/fill\('transparent'\)/.test(vi), 'VideoIcon 不再用 fill(transparent)');
+  ok(/\.fill\('none'\)/.test(fi), 'FileIcon 底框用 fill(none)');
+  ok(/\.fill\('none'\)/.test(vi), 'VideoIcon 底框用 fill(none)');
+
+  // 注释曾写着「fill 保持 none」而代码写 transparent —— 注释与实现不符，
+  // 这类不一致必须靠断言锁住，不能只靠注释
+  ok(!/fill\('transparent'\)/.test(html.slice(html.indexOf("var domNodeMap"), html.indexOf("var ATT_DRAG_DEAD"))),
+    '附件图标区域整体不再出现 transparent');
+
+  // mouseout 恢复态同样不能用 transparent（悬停过一次之后就会变黑块）
+  ok(/mouseout', function \(\) \{ this\.rect\.fill\('none'\)/.test(fi),
+    'FileIcon mouseout 恢复到 none（不是 transparent）');
+  ok(/mouseout', function \(\) \{ this\.frame\.fill\('none'\)/.test(vi),
+    'VideoIcon mouseout 恢复到 none');
+
+  // 对照：kity 的 fill 实现是 `a && setAttribute('fill', a.toString())`
+  // 传 'none' 会正确写入属性；这正是要的
+  const kity = fs.readFileSync(path.join(HERE, 'editor', 'kity.min.js'), 'utf8');
+  ok(/fill:function\(a\)\{return a&&this\.node\.setAttribute\("fill",a\.toString\(\)\)/.test(kity),
+    '（对照）kity fill 只对真值写属性 —— 所以值本身必须合法');
+}
+
+group('附件操作：写回前必须切回节点（选中丢失防护）');
+
+{
+  const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+  const pnl = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+
+  // 1) bridge 提供 getSelectedNodeId
+  ok(/getSelectedNodeId\(\)/.test(br), 'bridge 有 getSelectedNodeId（能记住当前节点）');
+  {
+    function methodSrc(name) {
+      const start = br.indexOf(name + '(');
+      if (start < 0) return '';
+      let i = br.indexOf('{', start);
+      let d = 0;
+      for (; i < br.length; i++) {
+        if (br[i] === '{') d++;
+        else if (br[i] === '}') { d--; if (d === 0) return br.slice(start, i + 1); }
+      }
+      return '';
+    }
+    const src = methodSrc('getSelectedNodeId');
+    ok(/getSelectedNode\?\.\(\)/.test(src), '读的是选中节点');
+    ok(/\|\| ''/.test(src), '读不到返回空串（不是 undefined，调用方好判断）');
+  }
+
+  // 2) 顺序：rememberNode 必须**在弹选择框之前**
+  //    放在之后就没用了 —— 那时选中已经丢了，记到的是空
+  const attachAt = pnl.indexOf('const attach = async (kind) => {');
+  const attachSrc = pnl.slice(attachAt, pnl.indexOf('const removeAt', attachAt));
+  ok(attachAt > 0, '能定位到 attach');
+  ok(attachSrc.indexOf('rememberNode()') < attachSrc.indexOf('pickFile('),
+    'attach：先 rememberNode 再弹选择框（顺序反了就记不到节点）');
+  ok(attachSrc.indexOf('focusNode()') > attachSrc.indexOf('pickFile('),
+    'attach：写回前调 focusNode 切回');
+  ok(/请先选中一个节点再附加/.test(attachSrc), 'attach：切不回时有提示（不静默）');
+
+  const addAt = pnl.indexOf('const addImages = async () => {');
+  const addSrc = pnl.slice(addAt, pnl.indexOf('const removeImage', addAt));
+  ok(addAt > 0, '能定位到 addImages');
+  ok(addSrc.indexOf('rememberNode()') < addSrc.indexOf('pickFiles('),
+    'addImages：先记住节点再弹选择框');
+  ok(addSrc.indexOf('focusNode()') > addSrc.indexOf('pickFiles('),
+    'addImages：写回前切回节点');
+  // 关键：**实时重读**，不能用页面构建时的 images 快照
+  ok(/const images = app\.api\.selectedImages\(\);/.test(addSrc),
+    'addImages：切回后**实时**重读列表（不能用页面构建时的快照，会丢第一张）');
+  ok(/请先选中一个节点再添加图片/.test(addSrc), 'addImages：切不回时有提示');
+
+  // 3) focusNode / rememberNode 的定义
+  const focusAt = pnl.indexOf('const focusNode = () => {');
+  const focusSrc = pnl.slice(focusAt, focusAt + 700);
+  ok(focusAt > 0, '有 focusNode');
+  ok(/_pendingNodeId \|\|/.test(focusSrc), 'focusNode 优先用记住的 nodeId');
+  ok(/selectNodeById\?\.\(id\)/.test(focusSrc), 'focusNode 真的调用了 selectNodeById');
+  ok(/const rememberNode = \(\) =>/.test(pnl), '有 rememberNode');
+
+  // 4) 未选中节点时要说清楚 —— 否则和「这个节点没附件」长得一样，
+  //    用户会以为附件数据丢了
+  const tipAt = pnl.indexOf('当前没有选中节点');
+  ok(tipAt > 0, '有「未选中节点」提示');
+  const tipSrc = pnl.slice(tipAt - 900, tipAt + 260);
+  // 能力检测：bridge 没这个方法就别瞎判断，否则会把「没附件」误报成「没选中」
+  ok(/typeof app\.bridge\?\.getSelectedNodeId === 'function'/.test(tipSrc),
+    '提示只在**能确认**没选中时才出现（能力检测，避免误报）');
+  ok(/!files\.length && !videos\.length && !images\.length/.test(tipSrc),
+    '提示只在三类都为空时才出现（有附件就照常渲染）');
+
+  // 5) 移除类操作同样要切回（confirmDialog 也是异步的）
+  const rmAt = pnl.indexOf('const removeAt = async (kind, index) => {');
+  const rmSrc = pnl.slice(rmAt, pnl.indexOf('const openAt', rmAt));
+  ok(/rememberNode\(\)/.test(rmSrc), 'removeAt 也记住节点');
+  ok(/focusNode\(\)/.test(rmSrc), 'removeAt 确认后切回节点');
+}
+
+group('图片：image 命令必须同步（跑真实源码）');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+
+  // 取命令区源码（FileCommand → FileRenderer 注释前），含我们覆盖的 image 命令
+  const start = html.indexOf("var FileCommand = kity.createClass('fileCommand'");
+  const end = html.indexOf('// 不能把 FileRenderer 挂进');
+  const cmdSrc = html.slice(start, end);
+
+  const kity = {
+    createClass(name, def) {
+      function C() { if (def.constructor) def.constructor.apply(this, arguments); }
+      Object.assign(C.prototype, def);
+      return C;
+    },
+  };
+  const kityminder = { Command: function () {} };
+
+  function newKm() {
+    const node = {
+      data: { text: 'x' },
+      setData(k, v) { this.data[k] = v; },
+      getData(k) { return this.data[k]; },
+      render() { this.rendered = (this.rendered || 0) + 1; },
+    };
+    const km = {
+      _commands: {},
+      getSelectedNodes: () => [node],
+      getSelectedNode: () => node,
+      getOption: () => 200,
+      layout() {},
+      fire() {},
+      queryCommandState(name) {
+        const b = this._commands[name];
+        return b ? b.queryState.apply(b, [this]) : -1;
+      },
+      execCommand(name, ...args) {
+        const b = this._commands[name];
+        if (!b) return null;
+        if (!~this.queryCommandState(name)) return null;
+        return b.execute.apply(b, [this, ...args]);
+      },
+    };
+    new Function('kity', 'kityminder', 'km', cmdSrc)(kity, kityminder, km);
+    return { node, km };
+  }
+
+  // 1) 设置：**同步**就能读到（内核版要等 img.onload，读不到）
+  {
+    const { node, km } = newKm();
+    km.execCommand('image', 'data:image/png;base64,AAA');
+    eq(node.getData('image'), 'data:image/png;base64,AAA',
+      '设完**立刻**能读到 image（内核版是异步的，此刻还是空的）');
+    // 内核 ImageRenderer 是 `if (imageSize)` —— 没尺寸就**完全不画**
+    ok(node.getData('imageSize') && node.getData('imageSize').width > 0,
+      '同时给出 imageSize（内核渲染器没尺寸就不画）');
+  }
+  // 2) 清除：**同步**生效（内核版靠 src=null 的 onerror，异步）
+  {
+    const { node, km } = newKm();
+    km.execCommand('image', 'data:image/png;base64,AAA');
+    km.execCommand('image', null);
+    eq(node.getData('image'), undefined, '清除**立刻**生效（不等 onerror）');
+    eq(node.getData('imageSize'), undefined, 'imageSize 一并清掉');
+  }
+  // 3) 关键回归：先写 images 再清 image，不能留下两个字段并存
+  //    （并存 = 节点上画出两张图）
+  {
+    const { node, km } = newKm();
+    km.execCommand('image', 'A');
+    km.execCommand('images', JSON.stringify(['A', 'B']));
+    km.execCommand('image', null);
+    ok(!node.getData('image'), '清 image 之后不再有 image（不会两张并存）');
+    ok(node.getData('images'), 'images 仍然在');
+  }
+  // 4) queryState：没选中节点时 -1（保持内核语义）
+  {
+    const { km } = newKm();
+    km.getSelectedNodes = () => [];
+    eq(km.queryCommandState('image'), -1, '无选中 → -1（与内核一致）');
+  }
+  // 5) 源码级：清除分支不能有异步依赖
+  {
+    const iSrc = html.slice(html.indexOf("kity.createClass('imageCommand'"),
+      html.indexOf("kity.createClass('imageCommand'") + 1600);
+    ok(/km\._commands\['image'\] = new ImageCommand\(\)/.test(html),
+      'image 命令被**覆盖**注册（否则用的还是内核异步版）');
+    ok(/if \(!value\)/.test(iSrc), '有「空值 → 清除」分支');
+    // 占位尺寸 + 异步补真实尺寸
+    ok(/loadFitSize\(url, m,/.test(iSrc), '真实尺寸异步补（不阻塞写入）');
+    ok(/n\.getData\('image'\) !== url/.test(iSrc),
+      '异步回来时若已换图就不覆盖（否则会把新图的尺寸写成旧图的）');
+  }
+}
+
+group('图标：构造时就有默认色（不靠 paint 才不黑）');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  const fiAt = html.indexOf('var FileIcon = kity.createClass');
+  const fiEnd = html.indexOf('var VideoIcon = kity.createClass');
+  const viEnd = html.indexOf('var FileIcon = kity.createClass', fiEnd);
+  const fi = html.slice(fiAt, fiEnd);
+  const vi = html.slice(fiEnd, viEnd < 0 ? fiEnd + 1400 : viEnd);
+
+  // FileIcon：轮廓自带填充 + 描边（paint 漏了也不会是黑块）
+  ok(/this\.outline[\s\S]{0,200}\.fill\('rgba/.test(fi),
+    'FileIcon 轮廓**构造时**就有填充（不是靠 paint）');
+  ok(/\.stroke\('#AEB6C4'/.test(fi), 'FileIcon 构造时就有描边色（不是靠 paint）');
+  // 折角单独一条 path，且 fill none —— 合在一起会被填充盖住
+  ok(/this\.fold[\s\S]{0,160}\.fill\('none'\)/.test(fi),
+    '折角是独立 path 且 fill none（合并会被填充盖掉）');
+  // VideoIcon 三角：实心填充，不设就是 SVG 默认黑
+  ok(/setPathData\('M-6,-6 L6,0 L-6,6 Z'\)[\s\S]{0,120}\.fill\('#AEB6C4'\)/.test(vi),
+    'VideoIcon 三角构造时就有填充色（不设就是默认黑）');
+
+  // 行为级：真的跑一遍 FileIcon，确认不 paint 也不是黑
+  {
+    function mkBase() {
+      return {
+        styles: {},
+        callBase() {},
+        node: { appendChild() {}, children: [] },
+        fill(v) { this._fill = v; return this; },
+        stroke(v, w) { this._stroke = v; this._strokeW = w; return this; },
+        setPathData(d) { this._d = d; return this; },
+        addShapes(list) { (this.shapes = this.shapes || []).push(...list); return this; },
+        on() { return this; },
+        setStyle(k, v) { this.styles[k] = v; return this; },
+        setTranslate() { return this; },
+      };
+    }
+    const kity = {
+      createClass(name, def) {
+        const proto = {};
+        for (const k of Object.keys(def)) if (k !== 'constructor' && k !== 'base') proto[k] = def[k];
+        Object.assign(proto, mkBase());
+        function C(...a) { Object.assign(this, mkBase()); if (def.constructor) def.constructor.apply(this, a); }
+        C.prototype = proto;
+        return C;
+      },
+      Group: function () { Object.assign(this, mkBase()); },
+      Rect: function () { Object.assign(this, mkBase()); },
+      Path: function () { Object.assign(this, mkBase()); },
+    };
+    const src = html.slice(fiAt, fiEnd).replace(/^var FileIcon = /, 'return ').replace(/;\s*$/, ';');
+    const FileIcon = new Function('kity', src + '\n')(kity);
+    const ic = new FileIcon();
+    // 不调 paint 也不能是黑：SVG 缺 fill 就是 black
+    ok(ic.outline._fill && ic.outline._fill !== 'black',
+      `未 paint 时轮廓有明确填充（实际 ${ic.outline._fill}）`);
+    ok(ic.outline._stroke && ic.outline._stroke !== 'black',
+      `未 paint 时轮廓有明确描边（实际 ${ic.outline._stroke}）`);
+    eq(ic.rect._fill, 'none', '底框 none（transparent 会被回退成黑色）');
+  }
 }
 
 group('多附件：XMind 往返（导出再导回）');
