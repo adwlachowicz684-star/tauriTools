@@ -116,5 +116,9 @@ export function readTheme(): Record<string, string>;
 export function escapeHtml(s: string): string;
 export function isNoBuild(): boolean;
 export function filterByRuntime(plugins: PluginManifest[]): PluginManifest[];
+/* 排除服务插件（kind:'service'）—— 侧边栏/恢复上次插件/快捷键切换都要用，
+   所以单独导出，别在各处各写一遍 filter。 */
+export function visiblePlugins(plugins: PluginManifest[]): PluginManifest[];
+export function isService(p: PluginManifest | null | undefined): boolean;
 export function isInsideTauri(): boolean;
 export const THEME_VARS: string[];
