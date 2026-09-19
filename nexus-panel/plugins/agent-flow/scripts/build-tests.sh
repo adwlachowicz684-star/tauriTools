@@ -11,6 +11,8 @@ mkdir -p "$OUT"
 mkdir -p "$OUT/runners" "$OUT/tests" "$OUT/defs"
 S="python3 scripts/strip-ts.py"
       $S engine/exportDir.ts "$OUT/exportDir.mjs" --import-map ./kv=./kv.mjs >/dev/null
+      $S engine/githubEvents.ts "$OUT/githubEvents.mjs" >/dev/null
+      $S engine/githubHook.ts "$OUT/githubHook.mjs" >/dev/null
       $S engine/runtimeKeys.ts "$OUT/runtimeKeys.mjs" >/dev/null
       $S engine/moduleTypes.ts "$OUT/moduleTypes.mjs" >/dev/null
       $S engine/canvasRef.ts "$OUT/canvasRef.mjs" --import-map ./moduleTypes=./moduleTypes.mjs >/dev/null
