@@ -647,6 +647,9 @@ export function buildSide(app, opts = {}) {
     const files = app.api.selectedRefs('file');
     const videos = app.api.selectedRefs('video');
     const images = app.api.selectedImages();
+    // 存量过大图片：单位是 dataURL 字符数，与 images 元素本身一致（不是原文件字节数）。
+    // 压缩是这一版新加的，老文档里那些过去塞进去的大图只能靠这个入口瘦。
+    const heavy = images.filter((u) => String(u).length > io.IMG_INLINE_MAX);
 
     // 换节点 / 删了附件之后索引可能越界，钳回 0（不是显示 undefined）
     if (_curFile >= files.length) _curFile = 0;
@@ -694,6 +697,12 @@ export function buildSide(app, opts = {}) {
       rememberNode();                       // 必须在**弹框之前**
       const f = await io.pickFile(kind === 'video' ? 'video/*' : '');
       if (!f) return;
+      // 体积上限：附件本体在 IndexedDB 不进文档，但导出 .xmind 会连字节打包，
+      // 让一个 2GB 的视频进来等于把导出变成必然失败
+      if (io.overAssetLimit(f)) {
+        app.api.status(`「${f.name}」${io.formatSize(f.size)} 超过附件上限 ${io.formatSize(io.ASSET_MAX)}`, true);
+        return;
+      }
       const id = await io.putAsset(f);
       if (!id) { app.api.status('附件保存失败', true); return; }
       // 写回前切回：putAsset 和 pickFile 都是异步的，期间选中可能已丢
@@ -745,25 +754,29 @@ export function buildSide(app, opts = {}) {
       // 写回前切回节点；并且**实时**重读列表 ——
       // 不能用页面构建时的 images 快照：期间选中/内容都可能变过
       if (!focusNode()) { app.api.status('请先选中一个节点再添加图片', true); return; }
+      // 原上游在这里数「>2MB 的张数」再提示；现在压缩是在入口做的
+      // （io.imageToInline），压不动的那张会走下面 failed 分支并给出原因，
+      // 不会再有「已添加但仍超 2MB」这种事后警告，所以 big 计数去掉。
       const images = app.api.selectedImages();
-      let big = 0;
       const urls = [];
+      const failed = [];
+      let srcBytes = 0; let outBytes = 0;
       for (const f of picked) {
-        if (f.size > 2 * 1024 * 1024) big++;
-        const u = await new Promise((res) => {
-          const fr = new FileReader();
-          fr.onload = () => res(String(fr.result));
-          fr.onerror = () => res(null);
-          fr.readAsDataURL(f);
-        });
-        if (u) urls.push(u);
+        // 与拖放走**同一个**入口（io.imageToInline）：压缩 + 体积上限。
+        // 两处各写一份读文件逻辑的话，改了一处忘另一处就是长期的漂移源。
+        const r = await io.imageToInline(f);
+        if (!r.url) { failed.push(r.error || `「${f.name}」未能添加`); continue; }
+        urls.push(r.url);
+        srcBytes += r.before; outBytes += r.after;
       }
-      if (!urls.length) { app.api.status('图片读取失败', true); return; }
+      if (!urls.length) { app.api.status(failed[0] || '图片读取失败', true); return; }
       app.bridge.setImages([...images, ...urls]);
       app.api.commit();
       refresh();
-      if (big) app.api.status(`${big} 张图片超过 2MB，会让脑图文件明显变大`, true);
-      else app.api.status(`已添加 ${urls.length} 张图片`);
+      const shrink = outBytes < srcBytes
+        ? `（${io.formatSize(srcBytes)} → ${io.formatSize(outBytes)}）` : '';
+      const tail = failed.length ? `，${failed.length} 张未添加：${failed.join('；')}` : '';
+      app.api.status(`已添加 ${urls.length} 张图片${shrink}${tail}`, failed.length > 0);
     };
 
     const removeImage = (index) => {
@@ -773,6 +786,37 @@ export function buildSide(app, opts = {}) {
       app.bridge.setImages(list);
       app.api.commit();
       refresh();
+    };
+
+    /**
+     * 把节点上**已经内联**的过大图片重新压一遍。
+     *
+     * 逐张处理、一次写回：中途失败的那张保持原样（压不动总比丢了强），
+     * 最后把"压了几张、从小到多小、哪张没成"一并说出来。
+     */
+    const shrinkHeavy = async () => {
+      const list = images.slice();
+      const idx = list
+        .map((u, i) => (String(u).length > io.IMG_INLINE_MAX ? i : -1))
+        .filter((i) => i >= 0);
+      if (!idx.length) { app.api.status('没有超过上限的图片'); return; }
+      let srcBytes = 0; let outBytes = 0;
+      const failed = [];
+      for (const i of idx) {
+        const r = await io.shrinkDataUrl(list[i]);
+        if (!r.url) { failed.push(r.error || `第 ${i + 1} 张`); continue; }
+        srcBytes += String(list[i]).length;
+        outBytes += r.url.length;
+        list[i] = r.url;
+      }
+      const done = idx.length - failed.length;
+      if (!done) { app.api.status(failed[0] || '压缩失败', true); return; }
+      app.bridge.setImages(list);
+      app.api.commit();
+      refresh();
+      const tail = failed.length ? `，${failed.length} 张未能压缩：${failed.join('；')}` : '';
+      app.api.status(`已压缩 ${done} 张图片：${io.formatSize(srcBytes)} → ${io.formatSize(outBytes)}${tail}`,
+        failed.length > 0);
     };
 
     /** 一行附件：名字 + 右侧小按钮（下载 / 移除） */
@@ -849,8 +893,18 @@ export function buildSide(app, opts = {}) {
           : h('div.mm-hint', {}, '当前节点没有图片'),
         h('div.mm-row', {},
           h('button.mm-btn', { onclick: safe('添加图片', addImages, (m) => app.api.status(m, true)) }, '添加图片…'),
+          // 只在真有超限图片时才出现 —— 平时不占位、不打扰
+          heavy.length
+            ? h('button.mm-btn', {
+              onclick: safe('压缩图片', shrinkHeavy, (m) => app.api.status(m, true)),
+              title: '这些图是过去内联进来的，重压到上限以内',
+            }, `压缩过大图片（${heavy.length}）`)
+            : null,
         ),
         h('div.mm-hint', {}, '单张图显示在节点框内；两张及以上自动变成可切换的横幅。'),
+        heavy.length
+          ? h('div.mm-hint', {}, `${heavy.length} 张图片超过内联上限（共 ${io.formatSize(heavy.reduce((s, u) => s + String(u).length, 0))}），可点「压缩过大图片」瘦身。`)
+          : null,
       ),
       // 备份间隔 / 最多保留 / 布局动画都已移到顶栏「设置」——
       // 它们是与当前节点无关的全局选项，不该挂在「文件」页下。
@@ -1041,16 +1095,17 @@ export function buildSide(app, opts = {}) {
     const pickImage = async () => {
       const f = await io.pickFile('image/*');
       if (!f) return;
-      if (f.size > 2 * 1024 * 1024) app.api.status('图片超过 2MB，会让脑图文件明显变大', true);
-      const url = await new Promise((res) => {
-        const fr = new FileReader();
-        fr.onload = () => res(String(fr.result));
-        fr.onerror = () => res(null);
-        fr.readAsDataURL(f);
-      });
-      if (!url) { app.api.status('图片读取失败', true); return; }
-      app.bridge.setImage(url);
+      // 与拖放 / 侧栏共用压缩入口。注意这里写的是**老字段 image**（单个槽位），
+      // 不走 images 数组 —— bridge.setImage 内部会处理两者的互斥。
+      const r = await io.imageToInline(f);
+      if (!r.url) { app.api.status(r.error || '图片读取失败', true); return; }
+      app.bridge.setImage(r.url);
       app.api.commit();
+      // 压过就说一句：否则中间那几百毫秒用户不知道发生了什么，
+      // 事后发现图变小了会怀疑是分辨率被偷走了
+      if (r.scaled) {
+        app.api.status(`图片已压缩至 ${r.w}×${r.h}（${io.formatSize(r.before)} → ${io.formatSize(r.after)}）`);
+      }
     };
 
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },

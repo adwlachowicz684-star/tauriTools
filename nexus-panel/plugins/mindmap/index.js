@@ -1169,18 +1169,35 @@ bootIframePlugin(async (ctx) => {
     const vids = io.decodeRefList(bridge?.getSelectedVideo?.());
     const fils = io.decodeRefList(bridge?.getSelectedFile?.());
 
+    // failed 里放的是**可展示的原因**（含文件名与体积），不是光秃秃的文件名 ——
+    // 「xx.png 未添加」用户不知道该怎么办，「超过单张上限 24.0 MB」才能决定下一步
     const failed = [];
     let nImg = 0; let nVid = 0; let nFile = 0;
+    // 压缩前后字节数，最后一次性说出来：脑图体积直接受它影响，
+    // 用户有权知道图被处理过（不然会以为"我的图怎么变小了"）
+    let srcBytes = 0; let outBytes = 0;
 
     for (const f of list) {
       const kind = io.classifyFile(f.name, f.type);
       if (kind === 'image') {
-        if (f.size > 2 * 1024 * 1024) status(`「${f.name}」超过 2MB，会让脑图文件明显变大`, true);
-        const url = await readDataURL(f);
-        if (url) { imgs.push(url); nImg++; } else failed.push(f.name);
+        // 统一走 io.imageToInline：**压缩 + 体积上限**，压不进阈值就不收。
+        // 旧版这里是「提示一句超过 2MB，然后原样内联」—— 提示了却不拦，
+        // 结果就是一张 2.1MB 的图变成 2.8MB 字符常驻文档、撤销栈和导出。
+        const r = await io.imageToInline(f);
+        if (r.url) {
+          imgs.push(r.url); nImg++;
+          srcBytes += r.before; outBytes += r.after;
+        } else {
+          failed.push(r.error || `「${f.name}」未能添加`);
+        }
       } else {
+        // 视频/文件先判上限：放进 putAsset 只会返回 null，那时就说不出「哪个、多大」了
+        if (io.overAssetLimit(f)) {
+          failed.push(`「${f.name}」${io.formatSize(f.size)} 超过附件上限 ${io.formatSize(io.ASSET_MAX)}`);
+          continue;
+        }
         const id = await io.putAsset(f);
-        if (!id) { failed.push(f.name); continue; }
+        if (!id) { failed.push(`「${f.name}」保存失败`); continue; }
         const ref = { n: f.name, a: id, s: f.size };
         if (kind === 'video') {
           // 首帧缩略图存进 ref.t：画布渲染是同步的，查 IndexedDB 来不及，
@@ -1205,10 +1222,15 @@ bootIframePlugin(async (ctx) => {
 
     const done = nImg + nVid + nFile;
     if (done) {
-      status(`已附加 ${done} 个到该节点`);
+      // 压缩率要说出来：只报「已附加 3 个」的话，用户看不出图被压过，
+      // 等导出发现脑图小了 10 倍反而会怀疑是不是丢了画质
+      const shrink = nImg && outBytes < srcBytes
+        ? `，图片 ${io.formatSize(srcBytes)} → ${io.formatSize(outBytes)}`
+        : '';
+      status(`已附加 ${done} 个到该节点${shrink}`);
       ctx.toast(`已附加 ${done} 个`, 'ok');
     }
-    if (failed.length) status(`以下文件附加失败：${failed.join('、')}`, true);
+    if (failed.length) status(`以下文件未能附加：${failed.join('；')}`, true);
   }
 
   /**
@@ -1232,18 +1254,6 @@ bootIframePlugin(async (ctx) => {
     } catch {
       return ref;
     }
-  }
-
-  /** File → dataURL（图片内联用） */
-  function readDataURL(file) {
-    return new Promise((res) => {
-      try {
-        const fr = new FileReader();
-        fr.onload = () => res(String(fr.result));
-        fr.onerror = () => res(null);
-        fr.readAsDataURL(file);
-      } catch { res(null); }
-    });
   }
 
   /**

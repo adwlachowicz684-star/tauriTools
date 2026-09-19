@@ -663,6 +663,310 @@ export function stampName(base, ext) {
   return `${base}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.${ext}`;
 }
 
+/* --------------------- 图片内联：压缩与体积上限 --------------------- */
+
+/**
+ * 脑图把图片以 **dataURL 内联进节点数据**（图片不走 IndexedDB，只有视频/文件走），
+ * 于是每张图的体积 1:1 进文档，base64 还要再膨胀 4/3。一张手机原图 4MB →
+ * 内联后 5.3MB 字符，代价是三重的：
+ *   · B1 撤销栈存的是**整份 JSON 快照**，改一个字就要复制一遍这 5MB；
+ *   · 节点渲染要把整串塞进 SVG `<image>`，每次重排都要过一遍；
+ *   · 自动落盘 / 导出 .xmind 反复序列化。
+ * 实测用户那张 2.1MB 的 JPEG（内联 2.8MB 字符）在点开预览时有肉眼可见的卡顿。
+ *
+ * 策略：**先压缩到阈值内再内联；压不进去就拒绝**（并说明原因），
+ * 而不是像旧版那样只提示一句「超过 2MB」，然后把 2.8MB 原样塞进去 ——
+ * 提示了但没拦，用户只会觉得"这软件一放图就变卡"。
+ *
+ * 阈值单位注意：IMG_INLINE_MAX 是 **dataURL 字符数**（进文档的就是它）；
+ * IMG_SOURCE_MAX / ASSET_MAX 是**原文件字节数**（判断要不要解码/入库）。
+ */
+export const IMG_MAX_EDGE = 1600;                       // 压缩后最长边：脑图里图片是横幅，1600 足够清晰
+export const IMG_QUALITY_STEPS = [0.82, 0.72, 0.62];    // 同尺寸下依次降质
+export const IMG_FALLBACK_EDGES = [1024, 800, 640];     // 质量降到底仍超阈值时，再降分辨率
+export const IMG_INLINE_MAX = 1.2 * 1024 * 1024;        // 单张内联上限（dataURL 字符数）
+export const IMG_SOURCE_MAX = 24 * 1024 * 1024;         // 原文件上限，超了**不解码**（解码本身要几百 MB 内存）
+/**
+ * 低于这个体积**原样内联、不进压缩流水线**。
+ *
+ * 实测（3000×2000 与 400×300 各一组，见 .workbuddy/memory 的 09-19 实测表）：
+ * 小图重编码是**负优化** —— 400×300 / 6KB 的图压完变 7KB（重编码本身的量化损失），
+ * 画质掉了、体积还涨了。而 300KB 以内的图哪怕一点不压，对文档体积也无感。
+ * 上界同时要保证 base64 后仍在内联上限内（÷3×4 再留点富余），
+ * 否则"跳过压缩"会产出超限文档 —— 这个不变式由测试锁住。
+ */
+export const IMG_SKIP_BELOW = 300 * 1024;
+export const ASSET_MAX = 100 * 1024 * 1024;             // 视频/文件附件上限（字节）
+
+/**
+ * 等比缩放到最长边 ≤ maxEdge（纯函数，可单测）。
+ *
+ * 只缩不放：本来就在阈值内的图，放大只会白增体积、画质不会更好。
+ * 返回整数像素，最小 1 —— 极端长条图（如 4000×3）缩完高度会算成 0，
+ * canvas 尺寸为 0 会直接抛异常。
+ */
+export function fitImageDims(w, h, maxEdge = IMG_MAX_EDGE) {
+  const W = Math.floor(Number(w) || 0);
+  const H = Math.floor(Number(h) || 0);
+  if (!(W > 0) || !(H > 0)) return null;
+  const edge = Math.max(1, Math.floor(Number(maxEdge) || IMG_MAX_EDGE));
+  const scale = Math.min(1, edge / Math.max(W, H));
+  return {
+    w: Math.max(1, Math.round(W * scale)),
+    h: Math.max(1, Math.round(H * scale)),
+    scale,
+  };
+}
+
+/**
+ * 编码尝试序列（纯函数，可单测）：先降质，再降分辨率。
+ *
+ * 顺序不能反 —— 降分辨率对观感的伤害比降质大得多（JPEG q0.62 在 1600px 上
+ * 基本看不出差别，而 800px 放到全屏一眼就糊），所以质量档必须先用满。
+ *
+ * @param {number} maxEdge 首次尝试的最长边
+ * @param {boolean} lossless 无损（PNG）时质量参数被忽略，只保留分辨率档
+ */
+export function encodePlan(maxEdge = IMG_MAX_EDGE, lossless = false) {
+  const edge = Math.max(1, Math.floor(Number(maxEdge) || IMG_MAX_EDGE));
+  const plan = lossless
+    ? [{ maxEdge: edge, q: undefined }]
+    : IMG_QUALITY_STEPS.map((q) => ({ maxEdge: edge, q }));
+  // 降分辨率的每一档只配最低质量：此时体积已是硬约束，再在同分辨率上试中档纯属浪费一次编码
+  const q = IMG_QUALITY_STEPS[IMG_QUALITY_STEPS.length - 1];
+  for (const e of IMG_FALLBACK_EDGES) {
+    if (e < edge) plan.push({ maxEdge: e, q: lossless ? undefined : q });
+  }
+  return plan;
+}
+
+/** 视频/文件附件是否超上限（调用方先判断，好给出「哪个文件、多大」的提示） */
+export function overAssetLimit(file) {
+  return (Number(file?.size) || 0) > ASSET_MAX;
+}
+
+/** File → dataURL。读失败返回 null（调用方按"跳过这一张"处理） */
+function readDataURL(file) {
+  return new Promise((res) => {
+    try {
+      const fr = new FileReader();
+      fr.onload = () => res(String(fr.result));
+      fr.onerror = () => res(null);
+      fr.readAsDataURL(file);
+    } catch { res(null); }
+  });
+}
+
+/**
+ * 解码成可绘制对象。
+ * 优先 `createImageBitmap`（不建 DOM、不占一份 objectURL，且后续 drawImage 更快）；
+ * 老 WebView 没有它，退回 `<img>`。
+ * 返回 { width, height, src, bitmap?, url? } —— 调用方负责释放（bitmap.close / revokeObjectURL）。
+ */
+async function decodeImage(file) {
+  try {
+    if (typeof createImageBitmap === 'function') {
+      const bmp = await createImageBitmap(file);
+      if (bmp && bmp.width && bmp.height) {
+        return { width: bmp.width, height: bmp.height, src: bmp, bitmap: bmp };
+      }
+    }
+  } catch { /* 落到 <img> 兜底 */ }
+  return new Promise((res) => {
+    let url = '';
+    let done = false;
+    const fin = (v) => { if (done) return; done = true; res(v); };
+    try {
+      url = URL.createObjectURL(file);
+      const img = new Image();
+      // 8 秒超时：损坏的图（扩展名与实际格式不符等）偶尔既不 load 也不 error，
+      // 没有超时的话整批拖放会卡死在这一张上 —— 视频首帧缩略图踩过同一个坑。
+      setTimeout(() => {
+        try { URL.revokeObjectURL(url); } catch { /* 已释放 */ }
+        fin(null);
+      }, 8000);
+      img.onload = () => {
+        if (!img.naturalWidth || !img.naturalHeight) {
+          try { URL.revokeObjectURL(url); } catch { /* 已释放 */ }
+          fin(null);
+          return;
+        }
+        fin({ width: img.naturalWidth, height: img.naturalHeight, src: img, url });
+      };
+      img.onerror = () => {
+        try { URL.revokeObjectURL(url); } catch { /* 已释放 */ }
+        fin(null);
+      };
+      img.src = url;
+    } catch { fin(null); }
+  });
+}
+
+/**
+ * 采样判断是否含透明像素 —— 只为决定编码格式。
+ *
+ * PNG 带 alpha 的图转 JPEG，透明区会被**填黑**（不是变白），看上去就是图坏了；
+ * 反过来给不透明的图用 PNG，体积白白大一截。
+ * 抽样 64×64 足够：有透明区的图几乎不会只在 4 个像素里透明。
+ * 取不到像素时按"不透明"处理 —— JPEG 更小，是更安全的兜底。
+ */
+function hasAlphaPixels(src) {
+  try {
+    const c = document.createElement('canvas');
+    c.width = 64; c.height = 64;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    if (!g) return false;
+    g.drawImage(src, 0, 0, 64, 64);
+    const d = g.getImageData(0, 0, 64, 64).data;
+    for (let i = 3; i < d.length; i += 4) if (d[i] < 250) return true;
+    return false;
+  } catch { return false; }
+}
+
+/** 按档位绘制并编码；失败返回 null（不抛 —— 调用方在循环里） */
+function encodeCanvas(src, dims, mime, q) {
+  try {
+    const c = document.createElement('canvas');
+    c.width = dims.w;
+    c.height = dims.h;
+    const g = c.getContext('2d');
+    if (!g) return null;
+    // 缩小时默认的低质量插值会有明显锯齿，脑图里图片一旦放大看就露出来
+    g.imageSmoothingEnabled = true;
+    g.imageSmoothingQuality = 'high';
+    // JPEG 没有 alpha 通道，半透明像素会被合成到**黑底**上 —— 先铺白底
+    if (mime === 'image/jpeg') {
+      g.fillStyle = '#fff';
+      g.fillRect(0, 0, c.width, c.height);
+    }
+    g.drawImage(src, 0, 0, c.width, c.height);
+    return mime === 'image/jpeg' ? c.toDataURL(mime, q) : c.toDataURL(mime);
+  } catch { return null; }
+}
+
+/**
+ * 图片文件 → 可内联的 dataURL（压缩 + 体积上限的唯一入口）。
+ *
+ * 返回成功：{ url, w, h, before, after, scaled, alpha }
+ * 返回失败：{ error } —— 中文原因，调用方直接展示给用户。
+ *
+ * **绝不抛异常**：调用方在拖放循环里，一张坏图不能挡住整批附件。
+ */
+export async function imageToInline(file, opt = {}) {
+  if (!file) return { error: '文件为空' };
+  const name = String(file.name || '图片');
+  const size = Number(file.size) || 0;
+  const maxInline = Number(opt.maxInline) > 0 ? Number(opt.maxInline) : IMG_INLINE_MAX;
+  const maxSource = Number(opt.maxSource) > 0 ? Number(opt.maxSource) : IMG_SOURCE_MAX;
+  const maxEdge = Number(opt.maxEdge) > 0 ? Number(opt.maxEdge) : IMG_MAX_EDGE;
+  // skipBelow 传 0 = 任何体积都进压缩流水线。存量瘦身必须这样：
+  // 调用它的前提就是"这张图已经过大"，直通等于什么都不做。
+  const skipBelow = opt.skipBelow === undefined
+    ? IMG_SKIP_BELOW
+    : Math.max(0, Number(opt.skipBelow) || 0);
+
+  if (size > maxSource) {
+    return { error: `「${name}」${formatSize(size)} 超过单张上限 ${formatSize(maxSource)}，未添加` };
+  }
+
+  const type = String(file.type || '').toLowerCase();
+  const extM = /\.([^.]+)$/.exec(name);
+  const ext = extM ? extM[1].toLowerCase() : '';
+
+  // SVG 是文本，体积天然小，且 canvas 画不了（尺寸可能只写在 viewBox 里）；直接内联
+  if (type === 'image/svg+xml' || ext === 'svg') {
+    const url = await readDataURL(file);
+    if (!url) return { error: `「${name}」读取失败` };
+    if (url.length > maxInline) {
+      return { error: `「${name}」矢量图 ${formatSize(url.length)} 超过内联上限 ${formatSize(maxInline)}，未添加` };
+    }
+    return { url, w: 0, h: 0, before: size, after: url.length, scaled: false, alpha: true };
+  }
+
+  // GIF：过 canvas 只会留下**第一帧**，那是静默丢数据，比拒绝更糟。
+  // 小动图（本来就在阈值内）原样收下；超了就明说压缩不了，让用户自己决定。
+  if (type === 'image/gif' || ext === 'gif') {
+    const url = await readDataURL(file);
+    if (!url) return { error: `「${name}」读取失败` };
+    if (url.length <= maxInline) {
+      return { url, w: 0, h: 0, before: size, after: url.length, scaled: false, alpha: true };
+    }
+    return { error: `「${name}」是动图（${formatSize(size)}），压缩会丢掉动画，未添加` };
+  }
+
+  // 小图直通：压缩收益只有几十 KB，却要付出一次重编码的画质损失
+  // （PNG 截图转 JPEG 的文字振铃尤其明显），实测还会**变大**
+  if (size <= skipBelow) {
+    const raw = await readDataURL(file);
+    if (raw && raw.length <= maxInline) {
+      return { url: raw, w: 0, h: 0, before: size, after: raw.length, scaled: false, alpha: false, skipped: true };
+    }
+    // 读失败或（极端情况下）超上限 → 落到下面的压缩流水线
+  }
+
+  const dec = await decodeImage(file);
+  if (!dec) return { error: `「${name}」无法解码（可能不是图片或文件已损坏）` };
+
+  try {
+    const alpha = hasAlphaPixels(dec.src);
+    const mime = alpha ? 'image/png' : 'image/jpeg';
+    let best = null;
+
+    for (const step of encodePlan(maxEdge, alpha)) {
+      const dims = fitImageDims(dec.width, dec.height, step.maxEdge);
+      if (!dims) break;
+      const url = encodeCanvas(dec.src, dims, mime, step.q);
+      if (!url) continue;
+      best = { url, dims };
+      if (url.length <= maxInline) {
+        return {
+          url,
+          w: dims.w,
+          h: dims.h,
+          before: size,
+          after: url.length,
+          scaled: dims.scale < 1,
+          alpha,
+        };
+      }
+    }
+
+    // 走到这里说明所有档位都压不进阈值。**要把实测的最小值说出来** ——
+    // 只说"失败"用户无从判断该把图裁多小
+    const got = best ? `（已压到 ${formatSize(best.url.length)}）` : '';
+    return { error: `「${name}」压缩后仍超过内联上限 ${formatSize(maxInline)}${got}，未添加` };
+  } finally {
+    // 必须释放：一次拖 20 张图，不释放会把解码后的整张位图全留在内存里
+    try { dec.bitmap?.close?.(); } catch { /* 已关闭 */ }
+    try { if (dec.url) URL.revokeObjectURL(dec.url); } catch { /* 已释放 */ }
+  }
+}
+
+/**
+ * 把**已经内联在文档里**的 dataURL 重新压一遍（存量过大图片瘦身）。
+ *
+ * 为什么要单独一个入口：压缩是这一版新加的，老文档里已经躺着过去塞进去的
+ * 2.8MB 字符内联图 —— 它们不会因为"以后新增会自动压缩"而变小，
+ * 得有一个显式动作去清。实测用户那张 2.1MB 的 JPEG 就是这么躺在那儿的。
+ *
+ * 与新增路径的差别：**不设直通线**（skipBelow: 0）。
+ * 调用它的前提就是"这张图超了阈值"，直通等于什么都不做；
+ * 而且这里的 size 是解码后的字节数，与 dataURL 字符数不是一回事。
+ */
+export async function shrinkDataUrl(dataUrl, opt = {}) {
+  const blob = dataUrlToBlob(dataUrl);
+  if (!blob || !blob.size) return { error: '图片数据已损坏，无法压缩' };
+  const type = blob.type || 'image/png';
+  const ext = type === 'image/png' ? 'png' : 'jpg';
+  let f;
+  try {
+    f = new File([blob], 'inline.' + ext, { type });
+  } catch {
+    return { error: '当前环境不支持重新压缩图片' };
+  }
+  return imageToInline(f, { ...opt, skipBelow: 0 });
+}
+
 /* --------------------------- 附件 Blob 存储 --------------------------- */
 
 /**
@@ -671,6 +975,10 @@ export function stampName(base, ext) {
  * 节点 data 里只记引用 { n:文件名, a:assetId, s:字节数 } —— 代价是导出文件不含附件内容。
  */
 export async function putAsset(file) {
+  // 上限硬拦一道。附件本体在 IndexedDB、不进节点数据，但**导出 .xmind 会连字节一起打包**，
+  // 单个几百 MB 的视频会让导出直接失败（还是在整个流程最后一步才失败）。
+  // 调用方一般已先用 overAssetLimit 提示过，这里只是不让它漏进来。
+  if (overAssetLimit(file)) return null;
   const id = 'as' + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
   const ok = await store.set('asset:' + id, {
     name: file.name,
