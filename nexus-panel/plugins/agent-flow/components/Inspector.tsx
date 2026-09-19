@@ -126,7 +126,7 @@ export default function Inspector({
   const stackParent = stackParentOf({ data: node.data as Record<string, unknown> });
   const inStack = stackParent !== null || descendantsOf([node] as never, node.id).length > 0;
   const stackRow = inStack ? (
-    <div className="insp-size" style={{ marginBottom: 6, paddingBottom: 6 }}>
+    <div className="insp-size" style={{ marginBottom: 'var(--sp-3, 6px)', paddingBottom: 6 }}>
       <span className="insp-size-label">
         {stackParent ? `嵌合于 ${stackParent}` : `串顶 · 共 ${chainOf([node] as never, node.id).length} 块`}
       </span>
@@ -192,7 +192,7 @@ export default function Inspector({
   };
 
   const defaultRow = (
-    <div className="insp-size" style={{ marginBottom: 6, paddingBottom: 6 }}>
+    <div className="insp-size" style={{ marginBottom: 'var(--sp-3, 6px)', paddingBottom: 6 }}>
       <span className="insp-size-label">
         {hasOwn ? '已设默认' : '默认参数'}
       </span>

@@ -4,6 +4,19 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>取色服务</title>
+  <script>
+    /* 首帧底色：iframe 内是独立文档，UA 默认画布是白的且不吃父级
+       color-scheme —— 切换插件时会闪一下白底。
+       这里读外壳缓存的底色先铺上，读不到（隔离态抛 SecurityError、
+       或首次运行）就交给宿主侧 .plugin-frame 的 --bg 底板兜底。 */
+    try {
+      var _bg = localStorage.getItem('nexus:preload-bg');
+      var _base = localStorage.getItem('nexus:preload-base');
+      var _r = document.documentElement;
+      if (_bg) { _r.style.setProperty('--bg', _bg); _r.style.background = _bg; }
+      if (_base) _r.style.colorScheme = _base;
+    } catch (_e) { /* 隔离态无 localStorage，忽略 */ }
+  </script>
 </head>
 <body>
   <!-- 服务没有"主视图"：平时挂在宿主移出视口的容器里，

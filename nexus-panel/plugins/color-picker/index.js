@@ -1,4 +1,6 @@
 import { bootServicePlugin } from '../../js/plugin-sdk.js';
+import { alert as showAlert } from '../../js/dialog.js';
+import '../../css/dialog.css';
 import {
   PRESET_COLORS, normalizeHex, hexToRgb, rgbToHex, hexToHsv, hsvToRgb, hsvToHex,
 } from '../project-group/utils/color';
@@ -131,7 +133,7 @@ async function open({ initial = '#3E63DD' } = {}, ctx) {
           const hex = await ctx.invoke('fpx_pick_color', {});
           const v = normalizeHex(hex);
           if (v) { hsv = hexToHsv(v); paint(); }
-        } catch (e) { alert('屏幕取色失败：' + (e?.message || e)); }
+        } catch (e) { void showAlert({ title: '取色失败', message: '屏幕取色失败：' + (e?.message || e) }); }
       },
     }, '吸管');
 

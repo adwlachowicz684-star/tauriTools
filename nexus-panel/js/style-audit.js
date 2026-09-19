@@ -150,7 +150,12 @@ export function auditCss(css, file = 'styles.css', opt = {}) {
     const t = m[1].trim();
     if (/var\(--sh-(out|in|cast)/.test(t) || /var\(--af-cast/.test(t)) continue;
     if (/var\(--glow|var\(--accent-glow/.test(t)) continue;
-    if (/0 0 0 [\d.]+px var\(/.test(t)) continue;                  // 描边环
+    /* 描边环 / 状态光环：三轴全零 + 无模糊，只是"多画一个圈"，
+       不产生明暗，也就不是立体感 —— 颜色写死与否都不影响这一定性。
+       状态光环（节点外的 warn/error 圈）刻意保留状态色：
+       红色的错误圈不该因为换主题变成蓝色。
+       注意别写成 `var\(` 限定：那样写死颜色的环会被漏过来误报。 */
+    if (/0 0 0 [\d.]+px /.test(t)) continue;
     if (/^inset 0 0 0 /.test(t) || t === 'none') continue;
     if (/^0 \d+px \d+px var\(--sh-dark\)$/.test(t)) continue;      // 标题栏向下投
     if (/^\d+px 0 \d+px var\(--sh-dark\)$/.test(t)) continue;      // 侧边栏向右投

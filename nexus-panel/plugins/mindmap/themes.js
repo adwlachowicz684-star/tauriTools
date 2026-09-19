@@ -297,6 +297,137 @@ export function shiftColor(color, delta) {
   return toHex(rgb.map((n) => clamp255(n + delta)));
 }
 
+/** WCAG 相对亮度（0~1），用于算对比度 */
+function relLum(color) {
+  const rgb = parseColor(color);
+  if (!rgb) return 0;
+  const f = (n) => {
+    const c = n / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+}
+
+/** 两色对比度（1~21） */
+export function contrastRatio(a, b) {
+  const la = relLum(a), lb = relLum(b);
+  const hi = Math.max(la, lb), lo = Math.min(la, lb);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/**
+ * 把颜色的感知亮度夹进 [min, max]。
+ *
+ * 画布不能走到纯白 / 纯黑 —— 两端都没有给"骨架色"留余量：
+ * 画布越接近白，浅色节点（fresh 系的 #EEF3F6）越糊；越接近黑，
+ * 深色节点越糊。夹到中间区间后，下面派生的描边与文字才有地方可去。
+ *
+ * 用**加性**偏移而不是按比例缩放：缩放对纯黑无效（0 × k 还是 0），
+ * 而纯黑底的暗色主题恰恰是最需要抬起来的那一类。
+ */
+export function clampLuma(color, min = 38, max = 214) {
+  if (!parseColor(color)) return color;
+  const l = luma(color);
+  if (l >= min && l <= max) return color;
+  const dir = l < min ? 1 : -1;
+  for (let i = 1; i <= 128; i++) {
+    const c = shiftColor(color, dir * i * 2);
+    const cl = luma(c);
+    if (cl >= min && cl <= max) return c;
+  }
+  return shiftColor(color, dir * 256);
+}
+
+/**
+ * 画布表面色：外壳底色的**色相与色温** + 固定的「画布档」亮度。
+ *
+ * ============================================================
+ * 为什么画布不能跟着外壳的明暗走
+ * ============================================================
+ * 实测 14 套外壳 × 10 个节点主题（取 root / main 与画布的对比度，
+ * 两者取小），两种取向的结果天差地别：
+ *
+ *   画布深色（现在的做法）   最差 2.89   —— 全部可读
+ *   画布跟着外壳变浅（旧）   最差 1.08   —— 全部糊在一起
+ *
+ * 根因不是配色没调好，而是**不可能调好**：
+ *   fresh-* 的 main 是 #EEF3F6 这类近白色，snow / classic / fish 的
+ *   root 是 #E9DF98 这类浅黄 —— 它们都是**浅色填充**。
+ *   画布一旦变浅，浅填充 vs 浅画布的对比度必然趋近 1。
+ *
+ * 有人说"那就把画布压暗一点、留出差值"：试过（旧实现的 clampLuma
+ * 上限 214），浅色外壳 #f4f6fa 被压到 #d4d6da，亮度掉了 26 ——
+ * 换来的是一块与界面对不上的脏灰，而对比度仍只有 1.08。
+ * 既没解决问题，又制造了新的观感问题。
+ *
+ * 所以正确的取向是：**画布是一块独立的绘图表面，不是界面的一部分**。
+ * 它的亮度固定在"深色画布档"（这是 kityminder 自带的默认，也是
+ * Figma / PS 等工具里画布的样子），跟随外壳的是**色相与色温** ——
+ * rose-noir 的画布偏暖褐、ocean-deep 偏青、sakura 偏品红。
+ * 这样既"跟着主题"，又保证所有节点主题都浮得起来。
+ *
+ * 饱和度要压（上限 0.16、且只取原饱和的 6 成）：画布是背景，
+ * 太艳会跟节点抢注意力。
+ */
+export function canvasSurface(bg, opts = {}) {
+  const rgb = parseColor(bg);
+  if (!rgb) return bg;
+  const L = opts.lightness ?? 0.20;
+  const sMax = opts.saturationMax ?? 0.16;
+  const sKeep = opts.saturationKeep ?? 0.6;
+  const [h, s] = rgbToHsl(rgb);
+  return hslToHex(h, Math.min(s * sKeep, sMax), L);
+}
+
+/** RGB(0~255) → HSL，h 为 0~1 */
+function rgbToHsl([r0, g0, b0]) {
+  const r = r0 / 255, g = g0 / 255, b = b0 / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  const l = (mx + mn) / 2;
+  const d = mx - mn;
+  if (d === 0) return [0, 0, l];
+  const s = d / (1 - Math.abs(2 * l - 1));
+  let h;
+  if (mx === r) h = ((g - b) / d) % 6;
+  else if (mx === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  h /= 6;
+  if (h < 0) h += 1;
+  return [h, s, l];
+}
+
+/** HSL(0~1) → hex */
+function hslToHex(h, s, l) {
+  const hue = ((h % 1) + 1) % 1 * 6;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs((hue % 2) - 1));
+  let rgb;
+  if (hue < 1) rgb = [c, x, 0];
+  else if (hue < 2) rgb = [x, c, 0];
+  else if (hue < 3) rgb = [0, c, x];
+  else if (hue < 4) rgb = [0, x, c];
+  else if (hue < 5) rgb = [x, 0, c];
+  else rgb = [c, 0, x];
+  const m = l - c / 2;
+  return toHex(rgb.map((n) => clamp255(Math.round((n + m) * 255))));
+}
+
+/**
+ * 从 base 出发，朝"远离"的方向偏移，直到对比度达标。
+ *
+ * 只调亮度、不动色相饱和度 —— 与本项目修主题对比度时的一贯做法一致：
+ * 这样派生出来的线/文字仍是"同一个色调家族"，不会横空出现一个陌生色。
+ */
+export function awayFrom(base, ratio = 3) {
+  const light = isLightColor(base);
+  const dir = light ? -1 : 1;
+  for (let i = 1; i <= 64; i++) {
+    const c = shiftColor(base, dir * i * 4);
+    if (contrastRatio(c, base) >= ratio) return c;
+  }
+  return light ? '#141418' : '#f2f2f4';
+}
+
 /** 感知亮度（0-255），用于判断深/浅底 */
 export function luma(color) {
   const rgb = parseColor(color);
@@ -316,26 +447,103 @@ export function deriveCanvasTheme(vars) {
   if (!bg) return null;
   const light = isLightColor(bg);
 
-  // 画布底板：比外壳背景略沉一点，做出「凹进去一块画布」的层次
-  const canvasBg = shiftColor(bg, light ? -6 : -5);
+  /* 画布底板：外壳的色相 / 色温 + 固定的深色画布档（见 canvasSurface 注释）。
+     再沉一档做出「凹进去一块画布」的层次 —— 深浅两端都用同一个偏移，
+     不再按基调分叉，避免"凹进去"在深色主题下变成"凸出来"。 */
+  const canvasBg = shiftColor(canvasSurface(bg), -5);
   const border = light ? 'rgba(0,0,0,.12)' : 'rgba(255,255,255,.09)';
 
-  // 画布上的浮层（搜索面板）：比画布浮起一档
-  const panelBg = shiftColor(canvasBg, light ? 6 : 11);
-  const panelHeadBg = shiftColor(panelBg, light ? 3 : 5);
-  const panelHover = shiftColor(panelBg, light ? -6 : 9);
-  const panelCloseHover = shiftColor(panelBg, light ? -10 : 14);
+  /* 画布上的浮层（搜索面板）：比画布浮起一档。
+     画布恒为深色档，所以这里不再按外壳基调分叉 —— 统一走"深色上浮起"的偏移。 */
+  const panelBg = shiftColor(canvasBg, 11);
+  const panelHeadBg = shiftColor(panelBg, 5);
+  const panelHover = shiftColor(panelBg, 9);
+  const panelCloseHover = shiftColor(panelBg, 14);
 
   return {
     canvasBg,
     canvasBorder: border,
     panelBg,
     panelHeadBg,
-    panelText: light ? '#2c313c' : '#CFCFCF',
-    panelDim: light ? '#6a7183' : '#9A9AA0',
+    /* 浮层压在**画布**上，画布恒为深色档 → 文字一律走深色档的浅色值。
+       这里若还按外壳基调选，浅色外壳会给出深色文字，压在深色画布上直接消失。 */
+    panelText: '#CFCFCF',
+    panelDim: '#9A9AA0',
     panelHover,
     panelCloseHover,
-    loadingBg: light ? 'rgba(233,236,242,.88)' : 'rgba(27,27,31,.9)',
-    loadingText: light ? '#5a6070' : '#AFAFAF',
+    loadingBg: 'rgba(27,27,31,.9)',
+    loadingText: '#AFAFAF',
+    /* ---- 骨架色：连接线 / 无填充节点文字 / 描边兜底 ----
+       派生自画布底色，保证"画布怎么变，骨架都看得见"。
+       只提供**兜底值**，是否采用由 criticalOverrides() 判断 ——
+       节点主题自带的颜色只要本来就够对比，一律保留不动。 */
+    connectColor: awayFrom(canvasBg, 3),
+    canvasText: awayFrom(canvasBg, 4.5),
+    nodeStroke: awayFrom(canvasBg, 3),
   };
+}
+
+/**
+ * 判断需要对当前节点主题施加哪些关键色覆盖。
+ *
+ * 为什么需要这个（而不是无条件改）：
+ *   画布底色跟随外壳，节点配色却是**自带主题的固定调色板** ——
+ *   两者由不同的人选，必然会出现错配。最典型的是 fresh-* 系列：
+ *   main 节点 #EEF3F6 配 white 连接线，在它自己的 #FBFBFB 底上靠
+ *   投影区分；一旦画布跟着外壳跑到更浅或更深，连接线与节点边界
+ *   就直接消失。
+ *
+ * 取舍：三种色各自独立判断，**达标的保留原值**。
+ *   无条件覆盖会把用户自定义主题（registerCustomTheme）里精心挑的
+ *   连接线色也冲掉 —— 那是"为了不出错而牺牲偏好"，过头了。
+ *
+ * @param {string} canvasBg 画布底色
+ * @param {Object} items    内核当前主题项（getThemeItems()）
+ * @returns {Object} 需要覆盖的键（空对象表示无需改动）
+ */
+export function criticalOverrides(canvasBg, items) {
+  if (!canvasBg || !items) return {};
+  const out = {};
+
+  /* 1) 连接线：在画布上画，必须跟画布比 */
+  const cc = items['connect-color'];
+  if (!cc || cc === 'none' || !isPaintable(cc) || contrastRatio(cc, canvasBg) < 2.5) {
+    out['connect-color'] = awayFrom(canvasBg, 3);
+  }
+
+  /* 2) 子节点文字：只有"子节点没填充"时才压在画布上。
+        snow / fish 的 sub-background 是 #FFFFFF，文字跟白底比，
+        跟画布无关 —— 那种情况下改它反而会破坏原本的可读性。 */
+  const subBg = String(items['sub-background'] || '').toLowerCase();
+  const subOnCanvas = !subBg || subBg === 'transparent' || subBg === 'none';
+  if (subOnCanvas) {
+    const sc = items['sub-color'];
+    if (!sc || !isPaintable(sc) || contrastRatio(sc, canvasBg) < 3) {
+      out['sub-color'] = awayFrom(canvasBg, 4.5);
+    }
+  }
+
+  /* 3) 描边兜底：节点填充与画布太接近时，补一圈可见边界。
+     阈值 1.8 是量出来的，不是拍的：
+       fresh root #73A1BF vs 浅色画布 = 1.90  → 够区分，不动
+       fresh main #EEF3F6 同底          = 1.30  → 糊，补描边
+     再往上抬（比如 2.5）会把本来靠投影就分得清的节点也加上一圈线，
+     整张图变得很"框"；再往下压则糊的照样糊。 */
+  for (const type of ['root', 'main', 'sub']) {
+    const fill = items[type + '-background'];
+    const stroke = items[type + '-stroke'];
+    if (!fill || !isPaintable(fill)) continue;      // 无填充 → 靠文字，不补描边
+    if (contrastRatio(fill, canvasBg) >= 1.8) continue;   // 填充本身够区分
+    if (isPaintable(stroke) && contrastRatio(stroke, canvasBg) >= 2.5) continue;
+    out[type + '-stroke'] = awayFrom(canvasBg, 3);
+  }
+
+  return out;
+}
+
+/** 是否可渲染的真实色值（排除 none / transparent / 空） */
+function isPaintable(v) {
+  const s = String(v || '').trim().toLowerCase();
+  if (!s || s === 'none' || s === 'transparent') return false;
+  return /^(#|rgb|hsl)/.test(s);
 }

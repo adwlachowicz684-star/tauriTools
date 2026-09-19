@@ -1783,7 +1783,11 @@ group('A44/A46 备份闭环');
   // ---- 恢复必须有确认 ----
   const p = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
   const seg = p.slice(p.indexOf('export async function openBackups'), p.indexOf('/* ------------------------- 设置'));
-  ok(/window\.confirm\(/.test(seg), 'A46 恢复前有 window.confirm（覆盖全部画布，不可逆）');
+  /* 只认"有确认框且不是原生的" —— 原生 confirm 不跟随主题、jsdom 里也测不了。
+     实现从 window.confirm 换成统一弹窗后，这条断言要跟着改成查新 API，
+     而不是继续守着一个已被替换掉的写法。 */
+  ok(/askConfirm\s*\(\s*\{/.test(seg) && !/window\.confirm\(/.test(seg),
+     'A46 恢复前有确认框且不是原生的（覆盖全部画布，不可逆）');
   ok(/不可撤销/.test(seg), '确认文案说明不可撤销');
   ok(/safe\('恢复快照'/.test(seg), '恢复动作包了 safe()（异步失败要看得见）');
 }

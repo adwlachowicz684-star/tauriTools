@@ -63,7 +63,12 @@
     "test:mcp-tab-index": "node mcp-tab-index-test.mjs",
     "test:fs-roots-persist": "node fs-roots-persist-test.mjs",
     "test:mcp-stdio": "node mcp-stdio-test.mjs",
-    "test:tray": "node tray-test.mjs"
+    "test:tray": "node tray-test.mjs",
+    "test:canvas-theme": "node canvas-theme-test.mjs",
+    "test:follow-theme": "node follow-theme-test.mjs",
+    "test:responsive": "node responsive-test.mjs",
+    "test:service-plugin": "node service-plugin-test.mjs",
+    "test:drag-payload": "node plugins/project-group/drag-payload-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

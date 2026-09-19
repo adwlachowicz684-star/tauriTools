@@ -281,6 +281,12 @@ console.log('\n=== 9. 观感一致性：禁用态 / 键盘焦点 ===');
   const hardOpacity = [];
   for (const { f, text } of allCss) {
     for (const m of text.matchAll(/:disabled[^{}]*\{([^}]*)\}/g)) {
+      /* :not(:disabled) 里也有 ":disabled" 子串 —— 那是**启用**态，
+         不是禁用态。不排除的话会把 .x:hover:not(:disabled){opacity:1}
+         判成"禁用态写死了值"。 */
+      /* 注意 m[0] 是从 ":disabled" 开始切的，":not(" 在它**前面**，
+         所以要看 m.index 之前的字符，不能查 m[0]。 */
+      if (/:not\(\s*$/.test(text.slice(Math.max(0, m.index - 8), m.index))) continue;
       const body = m[1];
       const om = /opacity\s*:\s*([^;]+)/.exec(body);
       if (!om) continue;
@@ -344,8 +350,11 @@ console.log('\n=== 10. 观感一致性：媒体底色跟随主题 ===');
   const pg = read('plugins/project-group/style.css');
   t('危险色不再写死（改用 --danger）',
     !/\.fpx-rail-btn\.danger\s*\{[^}]*#[0-9a-f]{3,8}/i.test(pg));
-  t('频道色块上的白字保留了原因说明',
-    /用户自定义的频道色/.test(pg) || /明暗不定/.test(pg));
+  /* 元素已改名（原"频道色块" → 链接区问题计数 .bad），断言的关键词
+     要跟着走，否则会永远通过但什么也没守到。
+     守的是同一件事：白字压在**非底板**上，硬编码必须写明原因。 */
+  t('语义色上的白字保留了原因说明',
+    /压在语义色|明暗不定|用户自定义的频道色/.test(pg));
 }
 
 console.log('\n=== 11. 清理与规范：动画时长 / 减少动效 / 死代码 ===');

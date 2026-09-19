@@ -878,6 +878,8 @@
 .fpx-links-summary { display: inline-flex; gap: 5px; font-size: var(--fs-11, 11px); }
 .fpx-links-summary .bad {
   padding: 1px 6px; border-radius: var(--r-pill);
+  /* 压在语义色（--danger）之上 —— 白字必须硬编码，
+     跟随主题会在浅色危险色上整个消失 */
   background: var(--danger, #c8555a); color: #fff;
 }
 .fpx-links-summary .warn {

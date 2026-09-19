@@ -11,13 +11,27 @@
        一来 iframe 是隐藏容器里的，本就看不见；
        二来某些浏览器对完全隐藏的 iframe 会延迟/跳过加载，
        服务就永远握不上手。 */
-    html, body { margin: 0; height: 100%; font: 12px/1.6 system-ui, sans-serif; }
+    html, body { margin: 0; height: 100%; font: 12px/1.6 system-ui, sans-serif;
+      background: var(--bg, transparent); }
     body {
       display: flex; align-items: center; justify-content: center;
       color: var(--text-muted, #888);
     }
     .hint { opacity: .6; text-align: center; padding: 12px; }
   </style>
+  <script>
+    /* 首帧底色：iframe 内是独立文档，UA 默认画布是白的且不吃父级
+       color-scheme —— 切换插件时会闪一下白底。
+       这里读外壳缓存的底色先铺上，读不到（隔离态抛 SecurityError、
+       或首次运行）就交给宿主侧 .plugin-frame 的 --bg 底板兜底。 */
+    try {
+      var _bg = localStorage.getItem('nexus:preload-bg');
+      var _base = localStorage.getItem('nexus:preload-base');
+      var _r = document.documentElement;
+      if (_bg) { _r.style.setProperty('--bg', _bg); _r.style.background = _bg; }
+      if (_base) _r.style.colorScheme = _base;
+    } catch (_e) { /* 隔离态无 localStorage，忽略 */ }
+  </script>
 </head>
 <body>
   <div class="hint">

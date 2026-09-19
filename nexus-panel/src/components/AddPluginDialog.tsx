@@ -27,26 +27,26 @@ function Card({
   return (
     <div
       style={{
-        display: 'flex', gap: 10, alignItems: 'flex-start',
-        padding: '10px 12px', marginTop: 8, borderRadius: 'var(--r-sm)',
+        display: 'flex', gap: 'var(--sp-5, 10px)', alignItems: 'flex-start',
+        padding: '10px 12px', marginTop: 'var(--sp-4, 8px)', borderRadius: 'var(--r-sm)',
         background: 'var(--surface-sunk)',
         boxShadow: 'inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light)',
       }}
     >
-      <div style={{ fontSize: 18, lineHeight: 1.4, width: 24, textAlign: 'center', flex: '0 0 auto' }}>
+      <div style={{ fontSize: 'var(--fs-18, 18px)', lineHeight: 1.4, width: 24, textAlign: 'center', flex: '0 0 auto' }}>
         {icon}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>{name}</div>
-        {meta ? <div className="p-muted" style={{ fontSize: 11, marginTop: 'var(--sp-2, 2px)' }}>{meta}</div> : null}
+        <div style={{ fontSize: 'var(--fs-13, 13px)', fontWeight: 600 }}>{name}</div>
+        {meta ? <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-2, 2px)' }}>{meta}</div> : null}
         {desc ? (
-          <div className="p-muted" style={{ fontSize: 11, marginTop: 4, lineHeight: 1.6 }}>{desc}</div>
+          <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-2, 4px)', lineHeight: 1.6 }}>{desc}</div>
         ) : null}
       </div>
       {onRemove ? (
         <button
           className="p-btn"
-          style={{ height: 26, padding: '0 9px', fontSize: 11, color: 'var(--danger)', flex: '0 0 auto' }}
+          style={{ height: 26, padding: '0 9px', fontSize: 'var(--fs-11, 11px)', color: 'var(--danger)', flex: '0 0 auto' }}
           onClick={onRemove}
         >
           移除
@@ -97,7 +97,7 @@ export default function AddPluginDialog({
     <div
       style={{
         position: 'fixed', inset: 0, background: 'rgba(20,22,27,.55)',
-        display: 'grid', placeItems: 'center', zIndex: 900, padding: 20,
+        display: 'grid', placeItems: 'center', zIndex: 900, padding: 'var(--sp-10, 20px)',
       }}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
@@ -107,13 +107,13 @@ export default function AddPluginDialog({
       >
         {/* 分页条固定在顶部，内容区自己滚 ——
             否则切到「已安装」后要换个页得先滚回顶部。 */}
-        <div style={{ display: 'flex', gap: 6, marginBottom: 12, flex: '0 0 auto' }}>
+        <div style={{ display: 'flex', gap: 'var(--sp-3, 6px)', marginBottom: 'var(--sp-6, 12px)', flex: '0 0 auto' }}>
           {([['installed', `已安装（${apps.length + svcs.length}）`], ['add', '添加']] as [Tab, string][])
             .map(([k, label]) => (
               <button
                 key={k}
                 className={'p-btn' + (tab === k ? ' primary' : '')}
-                style={{ height: 28, padding: '0 12px', fontSize: 12 }}
+                style={{ height: 28, padding: '0 12px', fontSize: 'var(--fs-12, 12px)' }}
                 onClick={() => setTab(k)}
               >
                 {label}
@@ -124,8 +124,8 @@ export default function AddPluginDialog({
         <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
           {tab === 'installed' ? (
             <>
-              <h3 style={{ fontSize: 13, margin: '4px 0 2px' }}>应用插件</h3>
-              <div className="p-muted" style={{ fontSize: 11, lineHeight: 1.6 }}>
+              <h3 style={{ fontSize: 'var(--fs-13, 13px)', margin: '4px 0 2px' }}>应用插件</h3>
+              <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', lineHeight: 1.6 }}>
                 显示在侧边栏，点开即用。
               </div>
               {apps.length
@@ -141,8 +141,8 @@ export default function AddPluginDialog({
                   ))
                 : <div className="p-muted" style={{ padding: '12px 0' }}>还没有安装应用插件。</div>}
 
-              <h3 style={{ fontSize: 13, margin: '16px 0 2px' }}>服务插件</h3>
-              <div className="p-muted" style={{ fontSize: 11, lineHeight: 1.6 }}>
+              <h3 style={{ fontSize: 'var(--fs-13, 13px)', margin: '16px 0 2px' }}>服务插件</h3>
+              <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', lineHeight: 1.6 }}>
                 不显示在侧边栏，由其它插件通过 <code>ctx.services.call</code> 调用。
               </div>
               {svcs.length
@@ -180,10 +180,10 @@ export default function AddPluginDialog({
                   而不是等有人问起来才发现没规划。 */}
               <div
                 className="p-card"
-                style={{ marginTop: 16, background: 'var(--surface-sunk)', boxShadow: 'none' }}
+                style={{ marginTop: 'var(--sp-8, 16px)', background: 'var(--surface-sunk)', boxShadow: 'none' }}
               >
-                <div style={{ fontSize: 13, fontWeight: 600 }}>在线目录</div>
-                <div className="p-muted" style={{ fontSize: 11, lineHeight: 1.6, marginTop: 'var(--sp-3, 4px)' }}>
+                <div style={{ fontSize: 'var(--fs-13, 13px)', fontWeight: 600 }}>在线目录</div>
+                <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', lineHeight: 1.6, marginTop: 'var(--sp-3, 4px)' }}>
                   未来可从此浏览在线插件目录并直接安装、卸载。
                   当前版本仅支持手动添加本地插件。
                 </div>
@@ -192,7 +192,7 @@ export default function AddPluginDialog({
           )}
         </div>
 
-        <div className="p-row" style={{ marginTop: 16, justifyContent: 'flex-end', flex: '0 0 auto' }}>
+        <div className="p-row" style={{ marginTop: 'var(--sp-8, 16px)', justifyContent: 'flex-end', flex: '0 0 auto' }}>
           <button className="p-btn" onClick={onClose}>关闭</button>
           {tab === 'add' ? (
             <button

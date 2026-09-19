@@ -8,6 +8,7 @@
    ============================================================ */
 
 @import url('../../css/tokens.css');
+@import url('../../css/controls.css');
 
 :root {
   --bezel:         rgba(255, 255, 255, .12);   /* 输入控件的外圈 */
@@ -41,58 +42,20 @@ html, body {
 .mm-mono { font-family: var(--font-mono); }
 
 /* 迷你按钮：比 .p-btn 更紧凑，工具栏用 */
-.mm-btn {
-  min-width: 28px;
-  height: 28px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: var(--r-sm, 8px);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 12.5px;
-  cursor: pointer;
-  box-shadow: var(--sh-out-sm);
-  transition: box-shadow var(--dur-fast), color var(--dur-fast);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  white-space: nowrap;
-}
 .mm-btn:hover { color: var(--accent); }
 .mm-btn:active {
   box-shadow: var(--sh-in-md);
 }
 .mm-btn.on { color: var(--accent); box-shadow: var(--sh-in-md); }
-.mm-btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+.mm-btn:disabled { opacity: var(--ctl-disabled-opacity); cursor: not-allowed; box-shadow: none; }
 
 .mm-btn.wide { min-width: 0; }
 .mm-btn.icon { padding: 0 7px; font-weight: 600; }
 
-.mm-input {
-  height: 28px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: var(--r-sm, 8px);
-  background: var(--surface-sunk, var(--surface));
-  color: var(--text);
-  font-size: 12.5px;
-  box-shadow: var(--sh-in-md);
-  outline: none;
-}
+
 .mm-input::placeholder { color: var(--text-mute); }
 
-.mm-select {
-  height: 28px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: var(--r-sm, 8px);
-  background: var(--surface-sunk, var(--surface));
-  color: var(--text);
-  font-size: 12.5px;
-  outline: none;
-  box-shadow: var(--sh-in-md);
-}
+
 
 /* 色块（颜色选择按钮） */
 .mm-swatch {
@@ -175,10 +138,10 @@ html, body {
   font-weight: 600;
   color: var(--text);
 }
-.mm-side .mm-hint { color: var(--text-mute); font-size: 11.5px; line-height: 1.6; }
+.mm-side .mm-hint { color: var(--text-mute); font-size: var(--fs-12, 12px); line-height: 1.6; }
 
 .mm-field { display: flex; flex-direction: column; gap: 5px; }
-.mm-field > .mm-label { font-size: 11.5px; }
+.mm-field > .mm-label { font-size: var(--fs-12, 12px); }
 
 /* 画布容器：内层 iframe 由 JS 注入 */
 .mm-canvas {
@@ -187,15 +150,15 @@ html, body {
   position: relative;
   border-radius: var(--r, 14px);
   overflow: hidden;
-  background: #1E1E1E;
+  background: var(--surface-sunk, var(--surface));
   box-shadow: var(--sh-out-md);
 }
 
 .mm-loading {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
-  color: #AFAFAF; font-size: 13px;
-  background: #1E1E1E;
+  color: var(--text-dim); font-size: 13px;
+  background: var(--surface-sunk, var(--surface));
   z-index: var(--z-raised, 5);
 }
 
@@ -286,7 +249,7 @@ html, body {
      两个 auto margin 会平分剩余空间，把「＋」挤到一行中间。
      这里只需固定宽度、紧跟在「＋」后面即可。 */
   color: var(--text-mute);
-  font-size: 11.5px;
+  font-size: var(--fs-12, 12px);
   white-space: nowrap;
   flex: 0 0 auto;
 }
@@ -306,7 +269,7 @@ html, body {
   border-radius: var(--r-xs, 7px);
   background: var(--surface);
   color: var(--text-dim);
-  font-size: 11.5px;
+  font-size: var(--fs-12, 12px);
   cursor: pointer;
   box-shadow: var(--sh-out-sm);
 }
@@ -409,6 +372,7 @@ html, body {
   flex-direction: column;
   gap: 4px;
   max-height: 320px;
+  min-height: 0;
   overflow-y: auto;
 }
 .mm-icon-groups { display: flex; flex-direction: column; gap: 3px; }
@@ -449,7 +413,7 @@ html, body {
 /* 图标取不到时给个可见占位 —— 空白会被当成「没有这个图标」 */
 .mm-icon-broken { font-size: 18px; color: var(--text-mute); }
 .mm-icon-name {
-  font-size: 10.5px;
+  font-size: var(--fs-11, 11px);
   line-height: 1.2;
   max-width: 100%;
   overflow: hidden;
@@ -496,7 +460,7 @@ html, body {
   justify-content: center;
   border-radius: var(--r-xs, 6px);
   overflow: hidden;
-  background: #1B1B1F;
+  background: var(--surface-sunk, var(--surface));
 }
 .mm-layout-thumb img {
   max-width: 100%;
@@ -507,7 +471,7 @@ html, body {
 .mm-layout-nothumb { color: var(--text-mute); font-size: 18px; }
 
 .mm-layout-name {
-  font-size: 11.5px;
+  font-size: var(--fs-12, 12px);
   line-height: 1.3;
   text-align: center;
   max-width: 100%;
@@ -520,7 +484,8 @@ html, body {
 .mm-colors { display: grid; grid-template-columns: repeat(9, 1fr); gap: 4px; }
 .mm-colors .mm-swatch { width: 100%; height: 20px; border-radius: var(--r-xs, 5px); }
 
-.mm-list { display: flex; flex-direction: column; gap: 5px; max-height: 220px; overflow-y: auto; }
+.mm-list { display: flex; flex-direction: column; gap: 5px; max-height: 220px; min-height: 0;
+  overflow-y: auto; }
 .mm-item {
   display: flex; align-items: center; gap: 7px;
   padding: 6px 8px;
@@ -531,10 +496,10 @@ html, body {
 }
 .mm-item .name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000; }
+video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: var(--surface-sunk); }
 
 /* 搜索结果提示 */
-.mm-search-info { color: var(--text-mute); font-size: 11.5px; min-width: 74px; }
+.mm-search-info { color: var(--text-mute); font-size: var(--fs-12, 12px); min-width: 74px; }
 /* A29：没输入关键字 / 编辑器未就绪 —— 这两种是「没搜成」，不是「搜不到」，
    必须和「无匹配」在视觉上分开，否则用户会以为脑图里真没有那个词。 */
 .mm-search-info.warn { color: var(--warn, #E0A33A); }
@@ -610,7 +575,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
 .mm-acard.empty {
   cursor: default;
   color: var(--text-mute);
-  font-size: 11.5px;
+  font-size: var(--fs-12, 12px);
   justify-content: center;
 }
 .mm-acard.empty:hover { color: var(--text-mute); }
@@ -651,7 +616,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
   aspect-ratio: 16 / 9;
   border-radius: var(--r-sm, 8px);
   overflow: hidden;
-  background: #000;
+  background: var(--surface-sunk);
   box-shadow: var(--sh-in-sm);
 }
 .mm-vthumb.ready { cursor: pointer; }
@@ -668,6 +633,8 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
   align-items: center;
   justify-content: center;
   font-size: 22px;
+  /* 叠在视频帧上：底下的画面明暗不定，换成主题变量会在浅色主题下
+     变成"浅底 + 白三角"，整个消失 —— 所以必须硬编码纯白。 */
   color: #fff;
   pointer-events: none;                 /* 关键：不拦点击 */
   background: rgba(0, 0, 0, .25);
@@ -684,7 +651,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
   background: var(--surface-sunk, var(--surface));
   cursor: default;
 }
-.mm-vthumb-empty { color: var(--text-mute); font-size: 11.5px; }
+.mm-vthumb-empty { color: var(--text-mute); font-size: var(--fs-12, 12px); }
 /* 加载中：不能是一块纯黑 —— 那会被当成「附件没了」 */
 .mm-vthumb.loading { background: var(--surface-sunk, var(--surface)); }
 .mm-vthumb.loading .mm-vthumb-empty { opacity: .8; }
@@ -759,7 +726,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
   accent-color: var(--accent);
   cursor: pointer;
 }
-.mm-vseek:disabled { opacity: .35; cursor: default; }
+.mm-vseek:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor, not-allowed); }
 
 /* 失效提示（A16）：warn 变体之前没有，缺了就只能用普通灰字，
    在深色面板上和说明文字一个样，看不出是问题。 */
@@ -805,6 +772,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
   border-radius: var(--r, 14px);
   background: var(--surface);
   box-shadow: var(--sh-out-md);
+  min-height: 0;
   overflow-y: auto;
 }
 .mm-files.open { display: flex; }
@@ -878,7 +846,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
 .mm-folder-head:hover { background: var(--surface-sunk, var(--surface)); }
 .mm-file-count {
   flex: 0 0 auto;
-  font-size: 10.5px;
+  font-size: var(--fs-11, 11px);
   color: var(--text-mute);
   padding: 0 5px;
   border-radius: var(--r-pill);
@@ -942,7 +910,7 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
   overflow: hidden;
   background: var(--surface-sunk, var(--surface));
   cursor: pointer;
-  border: 1px solid var(--line, transparent);
+  border: 1px solid var(--divider, transparent);
 }
 .mm-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .mm-thumb-x {
@@ -965,6 +933,26 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: #000;
 
 /* 选中的附件行（详情区显示的就是它）—— 不加高亮用户不知道点了哪一行 */
 .mm-arow.on {
-  background: var(--accent-soft, var(--surface-sunk, var(--surface)));
+  background: var(--surface-raised, var(--surface-sunk, var(--surface)));
   color: var(--accent);
+}
+
+
+/* ============================================================
+   响应式：窄屏收窄侧栏
+   ============================================================
+   断点按 iframe 宽度定（不是窗口宽度）—— 详见 neumorphism.css
+   顶部的「响应式断点」说明。
+
+   .mm-side 固定 276px，在 686px 的可用宽度下会吃掉 40%，
+   画布只剩约 340px，节点一多就互相挤压。
+   ============================================================ */
+@media (max-width: 1000px) {
+  .mm-side { flex: 0 0 210px; padding: 10px; }
+  .mm-icon-side { flex: 0 0 96px; }
+}
+@media (max-width: 760px) {
+  /* 极窄：侧栏转为可滚动的横向条，画布拿回全部宽度 */
+  .mm-body { flex-wrap: wrap; }
+  .mm-side { flex: 1 1 100%; max-height: 220px; overflow-y: auto; }
 }

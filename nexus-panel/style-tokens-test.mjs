@@ -147,7 +147,10 @@ const isRingOrGlow = (v) => /^inset 0 0 0 /.test(v) || /^0 0 (?:0 )?\d+px var\(-
     }
     parts.push(cur.trim());
     return parts.length > 0
-      && parts.every((x) => /^(?:inset )?0 0 0 1px /.test(x));
+      /* 宽度不限 1px：2px 的彩色光环（状态点外的 warn / error 圈）同样是
+         "没有模糊就没有明暗"，只是更粗一点的环，性质不变。
+         写死 1px 会让 2px 的同类写法被误报。 */
+      && parts.every((x) => /^(?:inset )?0 0 0 \d+px /.test(x));
   })()
   || /^0 0 (?:0 )?\d+px currentColor$/.test(v) || /^inset 0 1px 0 /.test(v)
   // 单轴 + 零模糊 = 用阴影画的纯色块（挡条 / 缝隙遮挡），不是立体感；
