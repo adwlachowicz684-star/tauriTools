@@ -73,9 +73,15 @@ const fields: FieldDef[] = [
   {
     type: 'custom',
     spec: { keys: ['yolo'], kind: 'switch' },
+    /*
+     * 不用 as never —— 它把类型检查整个绕过，签名对不上也照样编译过。
+     * 两侧都改成单参数后，这里的类型是真对上了。
+     *
+     * 注释只能放在箭头函数**之前**：放在 `=> (` 与 JSX 之间时，
+     * 那段注释会被当成 JSX 表达式容器（花括号加注释的形式），
+     * 而容器里只有注释、没有表达式，于是整段变成语法错误。
+     */
     render: (p) => (
-      {/* 不用 as never —— 它把类型检查整个绕过，签名对不上也照样编译过。
-          两侧都改成单参数后，这里的类型是真对上了。 */}
       <FileParamsPanel node={p.node} onChange={p.patch} />
     ),
   },

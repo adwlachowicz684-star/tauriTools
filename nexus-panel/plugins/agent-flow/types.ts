@@ -1,5 +1,6 @@
 import type { NodeParam } from './engine/params';
 import type { LlmConfig } from './engine/llm';
+import type { VaultMode } from './engine/credentialStore';
 
 export type CliKind = 'traecli' | 'codebuddy';
 
@@ -1281,6 +1282,30 @@ export type SecretPolicy = 'device' | 'session';
 
 /** 存策略的键。UI 与 App 共用同一个名字，免得两边各写一份字符串 */
 export const SECRET_POLICY_KEY = 'agent-flow.secret-policy.v1';
+
+/**
+ * 三种存储方式的界面文案。
+ *
+ * 刻意写清每种"防得住什么、防不住什么" ——
+ * 只写"更安全"会让人以为是无敌的。
+ */
+export const VAULT_MODE_META: Record<VaultMode, { label: string; hint: string }> = {
+  oskeyring: {
+    label: 'OS 凭据管理器',
+    hint: '主密钥存在 Windows 凭据管理器 / macOS 钥匙串里，不在应用数据目录 —— '
+      + '拷走整个数据目录也解不开，且不用每次输口令。'
+      + '能登录这台机器的人仍可取到，要防那个请用口令模式',
+  },
+  auto: {
+    label: '本机加密',
+    hint: '主密钥由本机特征派生，自动解锁。盐明文存在数据目录里 —— '
+      + '拿到整个目录的人仍能离线解开，只防"别的脚本顺手读"',
+  },
+  passphrase: {
+    label: '口令加密',
+    hint: '每次打开要输口令，钥匙只在你自己脑子里 —— 唯一能防"整台机器被拿走"的方式',
+  },
+};
 
 export const SECRET_POLICY_META: Record<SecretPolicy, { label: string; hint: string }> = {
   device: {

@@ -330,6 +330,10 @@ fn main() {
                "command not found"，而前端确实在调它们
                （plugins/agent-flow/lib/tauri.ts 的凭据加密与对话监听）。 */
             af_flow::af_fs_tail, af_flow::af_device_salt,
+            /* OS 凭据管理器：保险箱主密钥不再落在应用数据目录里。
+               漏注册的话编译不报错，只在运行时报 command not found。 */
+            af_flow::af_os_keyring_get, af_flow::af_os_keyring_set,
+            af_flow::af_os_keyring_delete,
             tray_toggle_window
         ])
         .setup(move |app| {

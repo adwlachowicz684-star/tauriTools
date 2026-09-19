@@ -23,10 +23,19 @@ export type StoredCredential = Omit<Credential, 'secret'> & {
   secret: CipherBundle | '';
 };
 
+/**
+ * 保险箱主密钥从哪来。
+ *
+ *   auto        本机特征派生 —— 盐明文躺在数据目录里，拷走目录即可离线解开
+ *   oskeyring   OS 凭据管理器 —— 钥匙在 OS 手里，拷走目录解不开，且不用每次输口令
+ *   passphrase  用户口令     —— 每次打开要输，钥匙只在用户脑子里
+ */
+export type VaultMode = 'auto' | 'oskeyring' | 'passphrase';
+
 export type StoredFile = {
   v: number;
-  /** 'auto' 绑定本机；'passphrase' 每次输口令 */
-  mode: 'auto' | 'passphrase';
+  /** 'auto' 绑定本机；'oskeyring' 存 OS 凭据管理器；'passphrase' 每次输口令 */
+  mode: VaultMode;
   /** auto 模式用的设备盐。不是秘密，但缺了它无法离线复现密钥 */
   deviceSalt: string;
   credentials: StoredCredential[];
@@ -35,7 +44,7 @@ export type StoredFile = {
 export const STORE_VERSION = 1;
 export const CRED_STORE_KEY = 'agent-flow.credentials.v1';
 
-export function emptyStore(deviceSalt: string, mode: 'auto' | 'passphrase' = 'auto'): StoredFile {
+export function emptyStore(deviceSalt: string, mode: VaultMode = 'auto'): StoredFile {
   return { v: STORE_VERSION, mode, deviceSalt, credentials: [] };
 }
 
@@ -58,7 +67,18 @@ export function parseStore(raw: string | null): StoredFile {
   if (!parsed || typeof parsed !== 'object') return emptyStore('');
   const o = parsed as Record<string, unknown>;
 
-  const mode = o.mode === 'passphrase' ? 'passphrase' : 'auto';
+  /*
+   * 认三种，不认识的退回 'auto'。
+   *
+   * 以前只判了 passphrase —— 加了 oskeyring 之后，不补这里的话
+   * 存的是 oskeyring、读回来变 auto，于是用**设备特征**去解
+   * 用 OS 密钥加密的数据，一条都解不开，且界面上没有任何提示。
+   * 老存档（只有 auto / passphrase）不受影响。
+   */
+  const mode: VaultMode =
+    o.mode === 'passphrase' ? 'passphrase'
+      : o.mode === 'oskeyring' ? 'oskeyring'
+        : 'auto';
   const deviceSalt = typeof o.deviceSalt === 'string' ? o.deviceSalt : '';
   const list = Array.isArray(o.credentials) ? o.credentials : [];
 
