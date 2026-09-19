@@ -491,9 +491,30 @@ export type TriggerNodeData = {
  */
 export function triggerKindsOf(d: Pick<TriggerNodeData, 'triggers' | 'trigger'>): TriggerKind[] {
   const raw = (d as TriggerNodeData).triggers;
-  if (Array.isArray(raw) && raw.length > 0) return raw;
+  if (Array.isArray(raw)) {
+    /*
+     * 必须**逐项校验**，不能只看 length > 0。
+     *
+     * 曾经 nodes/defs/trigger.ts 的 create 把数据补丁当成第二个参数
+     * 传给 makeTriggerNode（那个参数是**触发方式**，不是补丁），
+     * 于是 triggers 里存的是 undefined（落盘后变成 null），
+     * 甚至整个数据对象。
+     *
+     * 那时 `raw.length > 0` 为真，直接原样返回 ——
+     * 属性面板第 105 行的 `TRIGGER_META[selected[0]].hint`
+     * 于是当场抛 TypeError，整棵 React 树崩掉，
+     * 表现为「把触发器拖进画布后，画布整个消失」。
+     *
+     * 过滤掉不认识的项：宁可退回 manual，
+     * 也不要把一个非法值交给渲染层。
+     */
+    const ok = raw.filter(
+      (k): k is TriggerKind => typeof k === 'string' && k in TRIGGER_META,
+    );
+    if (ok.length > 0) return ok;
+  }
   const legacy = (d as TriggerNodeData).trigger;
-  if (legacy) return [legacy];
+  if (typeof legacy === 'string' && legacy in TRIGGER_META) return [legacy as TriggerKind];
   return ['manual'];
 }
 

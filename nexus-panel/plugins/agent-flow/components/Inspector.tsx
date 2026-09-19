@@ -5,6 +5,7 @@ import { getDef } from '../nodes/registry';
 import { inspectorOf } from './inspectors/inspectorOf';
 import { NODE_SIZE_META, normalizeSize, type NodeSize } from '../types';
 import { stackParentOf, descendantsOf, chainTopOf, chainOf } from '../engine/stack';
+import { ErrorBoundary } from './ErrorBoundary';
 import {
   setDefault, clearDefault, hasDefault, matchPresetKey,
 } from '../engine/nodeDefaults';
@@ -244,6 +245,13 @@ export default function Inspector({
       {stackRow}
       {sizeRow}
       {defaultRow}
+      {/*
+        面板也要兜住。
+        曾经触发器的数据不合法 → 面板渲染抛错 → 整棵树崩，
+        表现为"画布消失"（其实崩的是右栏面板，但整棵树一起没了）。
+        兜住之后只损失这一块面板，画布还在。
+      */}
+      <ErrorBoundary label={`属性面板 ${node.type ?? '?'}`}>
       <Panel
         onEditModule={onEditModule}
         onNote={onNote}
@@ -258,6 +266,7 @@ export default function Inspector({
         canvases={canvases}
         activeCanvasId={activeCanvasId}
       />
+      </ErrorBoundary>
     </>
   );
 }

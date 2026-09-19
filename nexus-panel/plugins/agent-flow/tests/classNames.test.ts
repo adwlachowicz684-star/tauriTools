@@ -518,3 +518,47 @@ test('snapPosOf 只算一次位置（findSnapTarget 复用它）', () => {
   assert.ok(/function snapPosOf/.test(st), '要有 snapPosOf');
   assert.ok(/const at = snapPosOf\(n\)/.test(st), 'findSnapTarget 要复用 snapPosOf');
 });
+
+/* ================= 拖入触发器后画布消失 ================= */
+
+/*
+ * 起因：create 把数据补丁当成"触发方式"传给 makeTriggerNode，
+ * 于是 triggers = [undefined]（落盘后 [null]）；
+ * 而 triggerKindsOf 只看 length > 0 就原样返回，
+ * 面板取 TRIGGER_META[selected[0]].hint 时抛 TypeError，
+ * 整棵 React 树崩掉 —— 表现为"画布整个消失"。
+ */
+test('create 不再把补丁当触发方式传给 makeTriggerNode', () => {
+  if (!hasSrc) return;
+  const f = read(path.join(ROOT, 'nodes/defs/trigger.ts'));
+  assert.ok(
+    !/makeTriggerNode\(id,\s*\(?partial/.test(f),
+    'makeTriggerNode 的第二个参数是 triggers，不是数据补丁',
+  );
+});
+
+/** 一个节点渲染出错不该让整张画布跟着消失 */
+test('每个节点卡片都套了渲染兜底', () => {
+  if (!hasSrc) return;
+  const f = read(path.join(ROOT, 'nodes/registry.tsx'));
+  /*
+   * 必须匹配**赋值处**而不是整份文件含这个词 ——
+   * 只查字符串的话，import 语句里也有 withCrashGuard，
+   * 把真正的兜底删掉检查依然通过（假阴性）。
+   */
+  assert.ok(
+    /map\[def\.type\]\s*=\s*withCrashGuard/.test(f),
+    'buildNodeTypes 要给每个节点套错误边界',
+  );
+});
+
+/** 面板同样要兜住 —— 崩在面板里会让整棵树一起没 */
+test('属性面板也套了渲染兜底', () => {
+  if (!hasSrc) return;
+  const f = read(path.join(ROOT, 'components/Inspector.tsx'));
+  // 同样要匹配包裹处：import 里也有 ErrorBoundary
+  assert.ok(
+    /<ErrorBoundary[\s\S]*?<Panel/.test(f),
+    '面板崩了不该带走整张画布',
+  );
+});
