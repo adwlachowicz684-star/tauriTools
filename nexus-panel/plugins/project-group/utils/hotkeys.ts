@@ -13,36 +13,120 @@ export type HotkeyId =
   | 'open' | 'lock' | 'rename' | 'move' | 'color' | 'icon' | 'remove'
   | 'refresh' | 'clearInvalid'
   | 'cycleGroup' | 'cycleGroupBack' | 'cycleProject' | 'cycleProjectBack'
-  | 'focusProject' | 'focusGroup';
+  | 'focusProject' | 'focusGroup'
+  // —— 以下 5 条为补齐项（#221~#226）：注册表里原先只有 15 条，
+  //    原版 ShortcutCatalog 有 22 条，去掉归主窗口的 HideToTray 与
+  //    已有独立机制的 ToggleSettings 后正好 20 条。
+  | 'toggleTips' | 'backupNow' | 'toggleMcp' | 'toggleSidebar' | 'openMarkdown';
+
+/**
+ * 设置面板里的分组。
+ *
+ * 组序**固定**为 常规 → 项目操作 → 页签切换（对应原版 Group 1/2/3），
+ * 由 `HOTKEY_GROUPS` 数组的顺序决定，不是靠 sort ——
+ * 排序会随字典序漂移，而组序是界面承诺。
+ */
+export type HotkeyGroup = 'general' | 'card' | 'tab';
+
+/** 分组显示名。界面与任何未来消费点共用这一份，别在各处写字面量。 */
+export const GROUP_LABEL: Record<HotkeyGroup, string> = {
+  general: '常规',
+  card: '项目操作',
+  tab: '页签切换',
+};
+
+/** 组序：常规 → 项目操作 → 页签切换 */
+export const HOTKEY_GROUPS: HotkeyGroup[] = ['general', 'card', 'tab'];
 
 export interface HotkeyDef {
   id: HotkeyId;
   label: string;
   /** 默认 combo（`mod` 在 macOS 解析为 ⌘，其它平台为 Ctrl） */
   combo: string;
+  /** 设置面板里的归属分组 */
+  group: HotkeyGroup;
   /** 该键位是否被浏览器/系统占用，界面上给个提醒 */
   note?: string;
   /** 是否允许取消绑定（留空 = 不响应） */
   allowEmpty?: boolean;
+  /**
+   * **切换类**动作：不受「有弹窗时整组让路」的门控限制。
+   *
+   * 为什么需要：门控条件里含 `!help`（使用说明打开时整组让路）。
+   * 若 toggleTips 也受门控，F1 打开说明后 enabled 变 false，
+   * **再按 F1 就关不掉了** —— 用户被困在使用说明里。
+   * 同理，用它打开的东西必须能用同一个键关掉。
+   *
+   * 仅豁免「弹窗门控」，**不豁免**输入框让路（打字时仍然不响应）。
+   */
+  toggle?: boolean;
 }
 
+/**
+ * 注册表。**按组序排列**（常规 → 项目操作 → 页签切换），
+ * 这样 `hotkeysByGroup` 只需顺序过滤，不必再排序。
+ *
+ * 20 条 = 原版 ShortcutCatalog 的 22 条
+ *       − HideToTray（隐藏到托盘归主窗口，不进插件注册表）
+ *       − ToggleSettings（设置开关已有独立机制）
+ */
 export const HOTKEYS: HotkeyDef[] = [
-  { id: 'open', label: '打开文件夹', combo: 'mod+o' },
-  { id: 'lock', label: 'ACL 保护', combo: 'mod+l', note: '浏览器占用 mod+l 定位地址栏，可能无效' },
-  { id: 'rename', label: '改名', combo: 'f2' },
-  { id: 'move', label: '转为另一类别', combo: 'f3' },
-  { id: 'color', label: '图标与标签色', combo: 'f4' },
-  { id: 'icon', label: '改图标', combo: 'f6' },
-  { id: 'remove', label: '从页签移除', combo: 'delete' },
-  { id: 'refresh', label: '刷新', combo: 'f5', note: '浏览器占用 f5 刷新页面，可能无效' },
-  { id: 'clearInvalid', label: '清除无效项', combo: 'f8' },
-  { id: 'cycleGroup', label: '下一个项目组页签', combo: 'mod+tab' },
-  { id: 'cycleGroupBack', label: '上一个项目组页签', combo: 'mod+shift+tab' },
-  { id: 'cycleProject', label: '下一个项目页签', combo: 'mod+pagedown' },
-  { id: 'cycleProjectBack', label: '上一个项目页签', combo: 'mod+pageup' },
-  { id: 'focusProject', label: '焦点切到项目栏', combo: 'mod+arrowleft' },
-  { id: 'focusGroup', label: '焦点切到项目组栏', combo: 'mod+arrowright' },
+  // —— 常规 ——
+  {
+    id: 'toggleTips', label: '使用说明', combo: 'f1', group: 'general',
+    toggle: true,   // 见 HotkeyDef.toggle：开了要能用同一个键关掉
+  },
+  { id: 'backupNow', label: '一键备份', combo: 'f7', group: 'general' },
+  { id: 'toggleMcp', label: '启停 MCP', combo: 'mod+m', group: 'general' },
+  /*
+   * 默认键必须是 `shift+~`，不能只写 `~`。
+   *
+   * `~` 在物理键盘上要靠 Shift 才能打出来，`comboFromEvent` 对这一下
+   * 产出的就是 `shift+~`。默认值写成 `~` 的话，用户什么都没改、
+   * 只是重新录入一次，就会与默认不一致 → 界面显示"已自定义"的假差异。
+   */
+  { id: 'toggleSidebar', label: '收起/展开左栏', combo: 'shift+~', group: 'general' },
+  { id: 'openMarkdown', label: '编辑文件', combo: 'mod+d', group: 'general' },
+
+  // —— 项目操作 ——
+  { id: 'open', label: '打开文件夹', combo: 'mod+o', group: 'card' },
+  {
+    id: 'lock', label: 'ACL 保护', combo: 'mod+l', group: 'card',
+    note: '浏览器占用 mod+l 定位地址栏，可能无效',
+  },
+  { id: 'rename', label: '改名', combo: 'f2', group: 'card' },
+  { id: 'move', label: '转为另一类别', combo: 'f3', group: 'card' },
+  { id: 'color', label: '图标与标签色', combo: 'f4', group: 'card' },
+  { id: 'icon', label: '改图标', combo: 'f6', group: 'card' },
+  { id: 'remove', label: '从页签移除', combo: 'delete', group: 'card' },
+  {
+    id: 'refresh', label: '刷新', combo: 'f5', group: 'card',
+    note: '浏览器占用 f5 刷新页面，可能无效',
+  },
+  { id: 'clearInvalid', label: '清除无效项', combo: 'f8', group: 'card' },
+
+  // —— 页签切换 ——
+  { id: 'cycleGroup', label: '下一个项目组页签', combo: 'mod+tab', group: 'tab' },
+  { id: 'cycleGroupBack', label: '上一个项目组页签', combo: 'mod+shift+tab', group: 'tab' },
+  { id: 'cycleProject', label: '下一个项目页签', combo: 'mod+pagedown', group: 'tab' },
+  { id: 'cycleProjectBack', label: '上一个项目页签', combo: 'mod+pageup', group: 'tab' },
+  { id: 'focusProject', label: '焦点切到项目栏', combo: 'mod+arrowleft', group: 'tab' },
+  { id: 'focusGroup', label: '焦点切到项目组栏', combo: 'mod+arrowright', group: 'tab' },
 ];
+
+/**
+ * 按组取注册表，组序固定为 `HOTKEY_GROUPS`（常规 → 项目操作 → 页签切换）。
+ *
+ * 设置界面用它分组渲染；`HOTKEYS` 本身已按组序排列，这里只做切分，
+ * 不再排序 —— 排序会让组序随字典序漂移，而组序是界面承诺。
+ */
+export function hotkeysByGroup(): { key: HotkeyGroup; label: string; items: HotkeyDef[] }[] {
+  return HOTKEY_GROUPS.map((key) => ({
+    key,
+    label: GROUP_LABEL[key],
+    items: HOTKEYS.filter((h) => h.group === key),
+  }));
+}
 
 export const HOTKEY_BY_ID: Record<string, HotkeyDef> =
   Object.fromEntries(HOTKEYS.map((h) => [h.id, h]));

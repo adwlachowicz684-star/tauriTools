@@ -17,6 +17,15 @@
   align-items: start;
 }
 .fpx-main { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+/* 左栏收起：首列从 72px 压到 28px。不重写列宽的话收起了也留一大块空白。 */
+.fpx-body.rail-collapsed { grid-template-columns: 28px minmax(0, 1fr); }
+.fpx-rail-toggle {
+  position: sticky; top: 4px; align-self: start;
+  height: 46px; padding: 0; border-radius: var(--r-lg);
+  border: 1px solid var(--border); background: var(--surface-sunk);
+  color: var(--text-mute); cursor: pointer; font-size: 13px;
+}
+.fpx-rail-toggle:hover { background: var(--surface); }
 
 .fpx-rail {
   position: sticky; top: 4px;
@@ -853,6 +862,15 @@
 .fpx-foot-btn:hover { color: var(--text); }
 
 /* ---------- 快捷键设置 ---------- */
+/* 分组（#229）：每组一块，组标题 + 组内列表。
+   max-height 放在**组内**列表上而不是整体容器上 ——
+   20 条分三组后每组都很短，整体限高会让组与组挤在一起滚动，
+   读起来反而比一列到底更难找。 */
+.fpx-hotkey-group { margin-bottom: var(--sp-5, 10px); }
+.fpx-hotkey-group-title {
+  font-size: 11px; font-weight: 600; color: var(--text-mute);
+  padding: 0 2px 4px;
+}
 .fpx-hotkey-list {
   display: flex; flex-direction: column; gap: 2px;
   max-height: 300px; overflow: auto;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  HOTKEYS, comboFromEvent, findConflicts, formatCombo, normalizeCombo,
-  type HotkeyId,
+  HOTKEYS, hotkeysByGroup, comboFromEvent, findConflicts, formatCombo,
+  normalizeCombo, type HotkeyId,
 } from '../utils/hotkeys';
 
 const IS_MAC = typeof navigator !== 'undefined'
@@ -107,32 +107,42 @@ export function HotkeySettings({
         </div>
       )}
 
-      <div className="fpx-hotkey-list">
-        {HOTKEYS.map((h) => {
-          const cur = draft[h.id] !== undefined ? draft[h.id] : h.combo;
-          const isDefault = normalizeCombo(cur) === normalizeCombo(h.combo);
-          const bad = conflictIds.has(h.id);
-          return (
-            <div className={`fpx-hotkey-row${bad ? ' bad' : ''}`} key={h.id}>
-              <span className="fpx-hotkey-label">{h.label}</span>
-              <button
-                className="p-btn fpx-hotkey-val"
-                onClick={() => setCapturing(h.id)}
-                title="点击后按下新键位；Esc 取消，Del 取消绑定"
-              >
-                {capturing === h.id ? '请按键…' : formatCombo(cur, IS_MAC)}
-              </button>
-              {!isDefault && (
-                <button className="p-btn fpx-hotkey-reset" title="恢复默认"
-                  onClick={() => resetOne(h.id)}>↺</button>
-              )}
-              {h.note && (
-                <span className="fpx-hotkey-note" title={h.note}>⚠</span>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      {/*
+        按 group 分组展示（#229）。组序由 hotkeysByGroup 固定为
+        常规 → 项目操作 → 页签切换，不在这里另排一遍 ——
+        两处都排序的话，将来加组很容易排得不一致。
+      */}
+      {hotkeysByGroup().map((g) => (
+        <div className="fpx-hotkey-group" key={g.key}>
+          <div className="fpx-hotkey-group-title">{g.label}</div>
+          <div className="fpx-hotkey-list">
+            {g.items.map((h) => {
+              const cur = draft[h.id] !== undefined ? draft[h.id] : h.combo;
+              const isDefault = normalizeCombo(cur) === normalizeCombo(h.combo);
+              const bad = conflictIds.has(h.id);
+              return (
+                <div className={`fpx-hotkey-row${bad ? ' bad' : ''}`} key={h.id}>
+                  <span className="fpx-hotkey-label">{h.label}</span>
+                  <button
+                    className="p-btn fpx-hotkey-val"
+                    onClick={() => setCapturing(h.id)}
+                    title="点击后按下新键位；Esc 取消，Del 取消绑定"
+                  >
+                    {capturing === h.id ? '请按键…' : formatCombo(cur, IS_MAC)}
+                  </button>
+                  {!isDefault && (
+                    <button className="p-btn fpx-hotkey-reset" title="恢复默认"
+                      onClick={() => resetOne(h.id)}>↺</button>
+                  )}
+                  {h.note && (
+                    <span className="fpx-hotkey-note" title={h.note}>⚠</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
 
       <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-4, 8px)' }}>
         点击键位后按下新组合键；Esc 放弃，Del / Backspace 取消绑定。

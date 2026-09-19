@@ -12,7 +12,7 @@ import {
 } from './components/ToolsPanel';
 import { ConfirmDialog, ContextMenu, MenuLayerContext, type MenuItem } from './components/ui';
 import { LinkPickDialog } from './components/LinkPickDialog';
-import { normalizeKey } from './api';
+import { errText, normalizeKey } from './api';
 import { useFpx } from './hooks/useFpx';
 import { useCardHotkeys } from './hooks/useCardHotkeys';
 import { effectiveMap, type HotkeyId } from './utils/hotkeys';
@@ -94,6 +94,23 @@ export default function App() {
   }, [boot?.config.watchEnabled, boot?.config.watchIntervalSecs, s.api, s.pushLog]);
 
   const [help, setHelp] = useState(false);
+
+  /**
+   * 左栏（SideRail）是否收起 —— Shift+~ 切换（#225）。
+   *
+   * 对应原版 `MainWindow.SidebarExpanded`（默认 false，即收起）。
+   * 这里默认**展开**（false = 不收起），因为当前的左栏是主操作入口，
+   * 一进来就收起会让"刷新/备份/打开"这些高频操作凭空消失。
+   */
+  const [railCollapsed, setRailCollapsed] = useState(false);
+
+  /**
+   * 内容浏览当前预览的文件 —— Ctrl/⌘+D 编辑它（#223）。
+   *
+   * 对应原版 `Content.LastPreviewFile`。由 ContentPanel 通过 onSelect 报上来；
+   * 状态必须放在这一层：快捷键回调在 App 里，拿不到子组件的内部 state。
+   */
+  const [previewFile, setPreviewFile] = useState<string | null>(null);
 
   /**
    * 菜单图层的宿主节点。
@@ -619,6 +636,52 @@ export default function App() {
     clearInvalid: () => void s.clearInvalid(),
     cycleTab,
     focus: setFocus,
+
+    // —— 补齐项（#221~#226）的功能接线 ——
+    // 只往注册表加条目不加这些，结果就是"设置里看得见、按下去没反应"。
+
+    /** F1：用函数式更新，避免闭包里的 help 是上一次渲染的旧值 */
+    toggleTips: () => setHelp((h) => !h),
+
+    backupNow: () => setDialog({ type: 'backup' }),
+
+    /*
+     * Mod+M：改 config.mcpEnabled 并落盘。
+     *
+     * 不能只改 SettingsDialog 里那份局部 state —— 那份只在设置框打开时
+     * 存在，关掉就丢，按了快捷键会毫无效果。
+     * 走 updateConfig 才会真正写进配置（MCP 后台进程读的是配置文件）。
+     * 新值在 mutate 里捕获：mutate 之后 draft 会被保存，
+     * 此时再读 boot.config 拿到的还是旧值。
+     */
+    toggleMcp: () => {
+      let next = false;
+      void s.updateConfig((d) => { d.mcpEnabled = !d.mcpEnabled; next = d.mcpEnabled; })
+        .then(() => s.pushLog(next ? 'MCP 已开启' : 'MCP 已关闭'));
+    },
+
+    toggleSidebar: () => setRailCollapsed((c) => !c),
+
+    /*
+     * Mod+D：编辑当前预览的文件。
+     *
+     * 目标优先级：内容浏览里选中的文件 → 焦点栏里选中的卡片
+     * （fpx_edit_file 对目录会自己取该目录下的 SKILL.md）。
+     *
+     * **走外部编辑器而不是内置 md-editor 服务**：
+     * 后端目前只有"打开"命令（fpx_edit_file），**没有写文件内容的命令**，
+     * 接内置编辑器的话只能看不能存 —— 那比直接交给外部编辑器更糟，
+     * 用户会以为保存成功了。等后端补了写入命令再换回内置。
+     */
+    openMarkdown: () => {
+      const target = previewFile || focusedCard?.path;
+      if (!target) {
+        ctx.toast?.('先选中一个文件（内容浏览）或一张卡片');
+        return;
+      }
+      s.api.editFile(target)
+        .catch((e) => s.pushLog(`打开编辑器失败：${errText(e)}`, true));
+    },
     // 有弹窗打开时整组让路：否则在对话框里按 Delete 会改到看不见的卡片
   }, !!boot && dialog.type === 'none' && !help && !confirmLink, boot?.config.hotkeys);
 
@@ -696,13 +759,27 @@ export default function App() {
       {/* ---------------- 左侧操作栏 + 三栏 + 日志 ----------------
         对照 WPF 原版：SidebarControl 纵跨整个内容区（含日志行），
         主区则是「三栏行 + 日志行」两行。 */}
-      <div className="fpx-body">
-        <SideRail
-          groups={railGroups}
-          chainActions={chainActions.filter((a) => a.showSidebar)}
-          onChainAction={runActionOnSelection}
-          hotkeys={boot.config.hotkeys}
-        />
+      {/*
+        左栏可收起（#225）。收起时仍保留一个窄的展开按钮 ——
+        否则收起后只剩 Shift+~ 这一个入口，忘了快捷键就等于左栏永久消失。
+        收起态靠 `rail-collapsed` 把 grid 首列从 72px 压到 28px，
+        不这么做的话列宽还在，会空出一大块。
+      */}
+      <div className={`fpx-body${railCollapsed ? ' rail-collapsed' : ''}`}>
+        {railCollapsed ? (
+          <button
+            className="fpx-rail-toggle"
+            title="展开左栏（Shift+~）"
+            onClick={() => setRailCollapsed(false)}
+          >»</button>
+        ) : (
+          <SideRail
+            groups={railGroups}
+            chainActions={chainActions.filter((a) => a.showSidebar)}
+            onChainAction={runActionOnSelection}
+            hotkeys={boot.config.hotkeys}
+          />
+        )}
 
         <div className="fpx-main">
           <div className="fpx-cols">
@@ -798,6 +875,9 @@ export default function App() {
                 onLog={s.pushLog}
                 onRename={(it) => setDialog({ type: 'renameContent', path: it.path, name: it.name })}
                 onRefresh={() => void s.scan(s.focusDir)}
+                // 报给 openMarkdown 快捷键：它要知道"上次预览的是哪个文件"。
+                // 传路径而不是整个 item —— 只用到 path，且不持有过期对象。
+                onSelect={(it) => setPreviewFile(it?.path ?? null)}
               />
             </div>
           </div>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Api } from '../api';
 import { errText } from '../api';
 import type { ContentItem } from '../types';
@@ -54,7 +54,7 @@ function buildTree(items: ContentItem[]): TreeNode[] {
 const KIND_LABEL: Record<string, string> = { agent: 'Agent', skill: 'Skill', rule: 'Rule' };
 
 export function ContentPanel({
-  api, root, items, kind, onKind, onLog, onRename, onRefresh,
+  api, root, items, kind, onKind, onLog, onRename, onRefresh, onSelect,
 }: {
   api: Api;
   root: string;
@@ -66,6 +66,14 @@ export function ContentPanel({
   onRename: (item: ContentItem) => void;
   /** 重新扫描当前目录 */
   onRefresh: () => void;
+  /**
+   * 当前预览条目变化时通知外面（对应原版 MainViewModel.Content.LastPreviewFile）。
+   *
+   * 快捷键 `openMarkdown` 需要知道"上次预览的是哪个文件" ——
+   * 这个状态原本只活在组件内部，外部拿不到就只能猜，
+   * 而猜错会打开一个跟用户预期毫不相干的文件。
+   */
+  onSelect?: (item: ContentItem | null) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<ContentItem | null>(null);
@@ -79,6 +87,17 @@ export function ContentPanel({
   }), [items]);
 
   useEffect(() => { setSelected(null); setText(''); }, [root, kind]);
+
+  /*
+   * 把"当前预览的是哪个文件"报给外面（openMarkdown 快捷键要用）。
+   *
+   * 走 ref 而不是把 onSelect 放进依赖数组：调用方多半传内联箭头函数，
+   * 放进依赖的话每次渲染都会重跑这个 effect，而它又会触发父组件 setState
+   * → 无限循环。ref 保证只在 selected 真的变了时才通知一次。
+   */
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  useEffect(() => { onSelectRef.current?.(selected); }, [selected]);
 
   /**
    * 某类资源的**实际基目录**（对应原版 OpenAgentDir / OpenSkillDir / OpenRuleDir）。
