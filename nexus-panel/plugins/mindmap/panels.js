@@ -11,7 +11,6 @@
  */
 
 import { h } from '../../js/plugin-sdk.js';
-import { confirm as askConfirm, alert as askAlert, prompt as askText } from '../../js/dialog.js';
 import { THEMES, LAYOUTS, blankTheme, DEFAULT_THEME, themeSeed, sanitizePalette } from './themes.js';
 
 /**
@@ -533,17 +532,17 @@ export function buildSide(app, opts = {}) {
      */
     if (!vref) {
       box.classList.add('empty');
-      box.appendChild(h('div.nx-empty.mm-vthumb-empty', {}, '未附加视频'));
+      box.appendChild(h('div.mm-vthumb-empty', {}, '未附加视频'));
       return { el: wrap, setDuration };
     }
     if (!vref.a) {
       box.classList.add('empty');
-      box.appendChild(h('div.nx-empty.mm-vthumb-empty', {}, '旧版本地路径，沙箱内读不到本体'));
+      box.appendChild(h('div.mm-vthumb-empty', {}, '旧版本地路径，沙箱内读不到本体'));
       return { el: wrap, setDuration };
     }
     // 加载中先给个说法：整块纯黑会被当成「没了」
     box.classList.add('loading');
-    box.appendChild(h('div.nx-empty.mm-vthumb-empty', {}, '读取中…'));
+    box.appendChild(h('div.mm-vthumb-empty', {}, '读取中…'));
 
     const start = () => {
       if (!video) return;
@@ -585,7 +584,7 @@ export function buildSide(app, opts = {}) {
         box.classList.remove('loading');
         box.classList.add('broken');
         box.innerHTML = '';
-        box.appendChild(h('div.nx-empty.mm-vthumb-empty', {}, '视频数据已丢失'));
+        box.appendChild(h('div.mm-vthumb-empty', {}, '视频数据已丢失'));
         return;
       }
       trackMediaUrl(asset.url);
@@ -883,7 +882,12 @@ export function buildSide(app, opts = {}) {
       section(`图片${images.length ? `（${images.length}）` : ''}`,
         images.length
           ? h('div.mm-thumbs', {}, ...images.map((u, i) => h('div.mm-thumb', {
-            onclick: () => openPreview(app, { url: u, name: `图片 ${i + 1}` }),
+            onclick: () => openPreview(app, { url: u, name: `图片 ${i + 1}` }, {
+              // 传**整张列表**：这样预览里能左右切换、有 i/n 计数。
+              // 只传单张的话，看第二张还得关掉浮层再点一次缩略图。
+              list: images.map((x, k) => ({ url: x, name: `图片 ${k + 1}` })),
+              index: i,
+            }),
             title: '点击放大',
           },
           h('img', { src: u, alt: `图片 ${i + 1}` }),
@@ -1676,13 +1680,142 @@ export function openVideo(app, asset, opt = {}) {
 }
 
 /** 图片附件预览浮层（点节点图标时，图片比直接下载更直观） */
-export function openPreview(app, asset) {
-  const img = h('img.mm-preview', { src: asset.url, alt: asset.name || '附件' });
+/**
+ * 图片预览。
+ *
+ * 支持**多张切换**：传 `opts.list` 就有左右按钮和「i/n」计数，
+ * 同时支持 ← → 快捷键。单张时不显示这些（没必要占地方）。
+ *
+ * 为什么快捷键要能关掉：预览是模态浮层，但键盘监听挂在 document 上 ——
+ * 关掉浮层时必须解绑，否则残留的监听会拦住后续画布上的 ← →
+ * （那两个键在 kityminder 里是有用的）。
+ *
+ * @param {object} opts.list 可选，`[{ url, name, blob }]`
+ * @param {number} opts.index 可选，起始下标
+ */
+export function openPreview(app, asset, opts) {
+  const WHEEL_STEP = 40;    // 累积到这个位移才切一张（触控板一划会发几十个事件）
+  const WHEEL_GAP = 90;     // 两次切换的最小间隔（ms），挡住惯性滚动
+  const items = (opts && opts.list && opts.list.length)
+    ? opts.list
+    : [{ url: asset.url, name: asset.name, blob: asset.blob }];
+  let idx = Number(opts && opts.index) || 0;
+  if (!(idx >= 0 && idx < items.length)) idx = 0;
+
+  const img = h('img.mm-preview', { src: items[idx].url, alt: items[idx].name || '图片' });
+  const counter = h('span.mm-preview-count', {});
+  const many = items.length > 1;
+
+  /** 当前项的 blob：dataURL 没有 blob，现转（「另存为」要的是字节） */
+  const blobOf = (it) => {
+    if (it.blob) return it.blob;
+    try { return io.dataUrlToBlob(String(it.url || '')); } catch { return null; }
+  };
   const save = h('button.mm-btn', {
-    onclick: () => io.downloadBlob(io.safeFileName(asset.name || '附件'), asset.blob),
+    onclick: () => {
+      const b = blobOf(items[idx]);
+      if (!b) { app.api.status('另存为失败：拿不到图片数据', true); return; }
+      io.downloadBlob(io.safeFileName(items[idx].name || '图片'), b);
+    },
   }, '另存为');
-  const release = () => { if (asset.url) URL.revokeObjectURL(asset.url); };
-  return dialog(`预览：${asset.name || '附件'}`, [h('div', {}, img, h('div.mm-actions', {}, save))], release);
+
+  const setIdx = (n) => {
+    // 循环：到第 1 张再往左跳到最后一张，反之亦然（与画布横幅一致）
+    idx = (n + items.length) % items.length;
+    img.src = items[idx].url;
+    img.alt = items[idx].name || '图片';
+    counter.textContent = `${idx + 1}/${items.length}`;
+    // 必须改**浮层里那个** h3。改到一个游离元素上的话标题纹丝不动，
+    // 「i/n」变了标题没变，看着像切失败了
+    if (titleNode) titleNode.textContent = `预览：${items[idx].name || '图片'}`;
+  };
+
+  const nav = many ? h('div.mm-preview-nav', {},
+    h('button.mm-btn', { onclick: () => setIdx(idx - 1), title: '上一张（←）' }, '◀'),
+    counter,
+    h('button.mm-btn', { onclick: () => setIdx(idx + 1), title: '下一张（→）' }, '▶'),
+  ) : null;
+
+  // dialog 返回的 mask 里第一个 h3 就是标题，换张时同步改掉
+  let titleNode = null;
+
+  const dlg = dialog(`预览：${items[idx].name || '图片'}`, [
+    h('div', {}, img, nav, h('div.mm-actions', {}, save)),
+  ], () => {
+    offKeys();
+    // 逐项释放：切换过的每一项都可能是一个 blob: URL
+    for (const it of items) {
+      try { if (it.url && /^blob:/.test(String(it.url))) URL.revokeObjectURL(it.url); } catch { /* ignore */ }
+    }
+  });
+
+  titleNode = dlg.mask.querySelector('h3');
+  if (many) {
+    counter.textContent = `${idx + 1}/${items.length}`;
+    if (titleNode) titleNode.textContent = `预览：${items[idx].name || '图片'}`;
+  }
+
+  // ---- ← → 切换 ----
+  function onKey(e) {
+    if (!many) return;
+    // 输入框里不要抢（预览浮层里没有输入，但保险一点）
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); setIdx(idx - 1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); setIdx(idx + 1); }
+  }
+  /**
+   * 滚轮切换。
+   *
+   * 三个必须处理的点：
+   *
+   * 1. **一次手势只切一张**。滚轮事件远比按键密集 —— 触控板轻轻一划就是
+   *    几十个事件，不处理的话三张图会被瞬间切好几圈。所以触发一次后**上锁**，
+   *    等滚轮停下来（WHEEL_GAP 内不再有事件）才解锁。
+   *    （不用"累积量/阈值"那套：惯性滚动的 delta 能攒到几百，会一次切很多张。）
+   * 2. **要 preventDefault**，否则浮层背后的页面跟着一起滚。
+   * 3. **只拦浮层内的滚动** —— 浮层外的滚轮不该被吃掉。
+   */
+  let acc = 0;
+  let locked = false;
+  let idleTimer = 0;
+  function onWheel(e) {
+    if (!many) return;
+    if (!dlg.mask.contains(e.target)) return;
+    e.preventDefault();
+    // 有输入焦点时不抢（预览里没有输入框，但别把行为写死）
+    acc += (e.deltaY || 0) + (e.deltaX || 0);
+    if (Math.abs(acc) < WHEEL_STEP) return;
+    if (locked) return;
+    locked = true;
+    // **先取方向再清零** —— 顺序反了的话 acc 已经是 0，
+    // `acc > 0` 永远为假，于是向下滚也变成往上一张
+    const dir = acc > 0 ? 1 : -1;
+    acc = 0;
+    setIdx(idx + dir);
+    clearTimeout(idleTimer);
+    // 滚轮停下才解锁：这样「滑一次 = 切一张」，连滑两下是两张
+    idleTimer = setTimeout(() => { locked = false; }, WHEEL_GAP);
+  }
+  function offWheel() {
+    clearTimeout(idleTimer);
+    locked = false;
+    acc = 0;
+  }
+
+  function offKeys() {
+    try { document.removeEventListener('keydown', onKey, true); } catch { /* ignore */ }
+    try { document.removeEventListener('wheel', onWheel, { capture: true }); } catch { /* ignore */ }
+    offWheel();
+  }
+  if (many) {
+    document.addEventListener('keydown', onKey, true);
+    // **必须 passive:false**：wheel 默认按 passive 注册，此时 preventDefault()
+    // 会被忽略（浏览器还会打警告），浮层背后就会跟着一起滚。
+    document.addEventListener('wheel', onWheel, { passive: false, capture: true });
+  }
+
+  return dlg;
 }
 
 /** 历史快照列表 */
@@ -1707,15 +1840,10 @@ export async function openBackups(app) {
               // A46 恢复会覆盖**当前所有画布**且不可逆 —— 必须确认。
               // 不确认的话，误点一下整份工作就没了。
               const n = (b.sheets || []).length;
-              const ok = await askConfirm({
-                title: '恢复快照',
-                message:
-                  `恢复到 ${new Date(b.ts).toLocaleString()} 的快照？\n\n` +
-                  `当前所有画布将被替换为该快照的 ${n} 张画布，此操作不可撤销。\n` +
-                  `（恢复前的当前状态会自动另存一份快照，可再回滚）`,
-                danger: true,
-              });
-              if (!ok) return;
+              if (!window.confirm(
+                `恢复到 ${new Date(b.ts).toLocaleString()} 的快照？\n\n` +
+                `当前所有画布将被替换为该快照的 ${n} 张画布，此操作不可撤销。\n` +
+                `（恢复前的当前状态会自动另存一份快照，可再回滚）`)) return;
               await app.api.restoreBackup(b);
               dlg.close();
             }, (m) => app.api.status(m, true)),
@@ -1821,7 +1949,7 @@ export async function openIconLibrary(app) {
 
   // ---- 分组管理 ----
   const newGroup = async () => {
-    const name = await askText({ label: '新分组名称', defaultValue: '新分组' });
+    const name = window.prompt('新分组名称', '新分组');
     if (name == null) return;
     const g = await picons.addGroup(name);
     if (!g) { app.api.status('新建分组失败', true); return; }
@@ -1834,7 +1962,7 @@ export async function openIconLibrary(app) {
     const g = groups.find((x) => x.id === activeId);
     if (!g) return;
     if (g.builtin) { app.api.status('内置分组不可重命名', true); return; }
-    const name = await askText({ label: '分组名称', defaultValue: g.name });
+    const name = window.prompt('分组名称', g.name);
     if (name == null || name === g.name) return;
     const r = await picons.renameGroup(g.id, name);
     if (!r.ok) { app.api.status(r.error, true); return; }
@@ -1847,7 +1975,7 @@ export async function openIconLibrary(app) {
     if (!g) return;
     if (g.builtin) { app.api.status('内置分组不可删除', true); return; }
     const n = (g.icons || []).length;
-    if (!await askConfirm({ message: `删除分组「${g.name}」？${n ? `组内 ${n} 个图标会一并删除。` : ''}`, danger: true })) return;
+    if (!window.confirm(`删除分组「${g.name}」？${n ? `组内 ${n} 个图标会一并删除。` : ''}`)) return;
     const r = await picons.deleteGroup(g.id);
     if (!r.ok) { app.api.status(r.error, true); return; }
     await reload();

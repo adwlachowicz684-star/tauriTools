@@ -1788,11 +1788,7 @@ group('A44/A46 备份闭环');
   // ---- 恢复必须有确认 ----
   const p = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
   const seg = p.slice(p.indexOf('export async function openBackups'), p.indexOf('/* ------------------------- 设置'));
-  /* 只认"有确认框且不是原生的" —— 原生 confirm 不跟随主题、jsdom 里也测不了。
-     实现从 window.confirm 换成统一弹窗后，这条断言要跟着改成查新 API，
-     而不是继续守着一个已被替换掉的写法。 */
-  ok(/askConfirm\s*\(\s*\{/.test(seg) && !/window\.confirm\(/.test(seg),
-     'A46 恢复前有确认框且不是原生的（覆盖全部画布，不可逆）');
+  ok(/window\.confirm\(/.test(seg), 'A46 恢复前有 window.confirm（覆盖全部画布，不可逆）');
   ok(/不可撤销/.test(seg), '确认文案说明不可撤销');
   ok(/safe\('恢复快照'/.test(seg), '恢复动作包了 safe()（异步失败要看得见）');
 }
@@ -4447,8 +4443,10 @@ group('拖放：bridge 与插件层接入');
   ok(/case 'dropfiles':/.test(br), 'bridge 处理 dropfiles');
   ok(/case 'dropmiss':/.test(br), 'bridge 处理 dropmiss');
   ok(/case 'openattach':/.test(br), 'bridge 处理 openattach（点击画布上的附件）');
-  ok(/onOpenAttach\?\.\(d\.kind, d\.index, d\.raw, d\.nodeId \|\| ''\)/.test(br),
+  ok(/onOpenAttach\?\.\(d\.kind, d\.index, d\.raw, d\.nodeId \|\| ''/.test(br),
     '带 kind / index / raw / **nodeId**（写回前要按 id 切回节点）');
+  // list：点画布上的图时把整组一起带过来，预览里才能左右切换
+  ok(/d\.list \|\| null/.test(br), '带上 list（该节点上的全部图片，用于预览切换）');
   // 附件在节点间拖拽移动
   ok(/case 'moveattach':/.test(br), 'bridge 处理 moveattach（附件在节点间移动）');
   ok(/case 'attachmiss':/.test(br), 'bridge 处理 attachmiss（拖到空白处）');
@@ -5316,6 +5314,191 @@ group('短文本节点的最小宽度（跑真实源码）');
     ok(!/_rendererClasses\[[^\]]+\]\s*=\s*\[/.test(body),
       '补丁不往 _rendererClasses 里塞新渲染器（会让子节点堆在画布中心）');
     ok(/__KityClassName === 'TextRenderer'/.test(body), '按 kity 类名定位 TextRenderer');
+  }
+}
+
+group('图片预览：左右切换 + ← → 快捷键');
+
+{
+  const { openPreview } = await import('./panels.js');
+  const app = { api: { status: () => {} } };
+
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({
+    url: 'data:image/png;base64,IMG' + (i + 1), name: '图' + (i + 1),
+  }));
+
+  // 1) 多张：有左右按钮 + i/n 计数
+  {
+    const d = openPreview(app, mk(3)[0], { list: mk(3), index: 0 });
+    const btns = [...d.mask.querySelectorAll('button')].map((b) => b.textContent);
+    ok(btns.includes('◀') && btns.includes('▶'), '多张时有左右切换按钮');
+    eq(d.mask.querySelector('.mm-preview-count')?.textContent, '1/3', '计数显示 1/3');
+    eq(d.mask.querySelector('img.mm-preview')?.getAttribute('src'),
+      'data:image/png;base64,IMG1', '显示第 1 张');
+    d.close();
+  }
+
+  // 2) 单张：不显示切换条（没必要占地方）
+  {
+    const d = openPreview(app, mk(1)[0]);
+    ok(!d.mask.querySelector('.mm-preview-nav'), '单张时不渲染切换条');
+    ok(!d.mask.querySelector('.mm-preview-count'), '单张时不显示计数');
+    d.close();
+  }
+
+  // 3) 点 ▶ / ◀ 真的换图，且标题同步（只换图不换标题看着像切失败了）
+  {
+    const d = openPreview(app, mk(3)[0], { list: mk(3), index: 0 });
+    const imgEl = d.mask.querySelector('img.mm-preview');
+    const h3 = d.mask.querySelector('h3');
+    const find = (t) => [...d.mask.querySelectorAll('button')].find((b) => b.textContent === t);
+    find('▶').click();
+    eq(imgEl.getAttribute('src'), 'data:image/png;base64,IMG2', '点 ▶ → 第 2 张');
+    eq(d.mask.querySelector('.mm-preview-count').textContent, '2/3', '计数变 2/3');
+    eq(h3.textContent, '预览：图2', '**标题同步**（改到游离元素上就没这效果）');
+    find('◀').click();
+    eq(imgEl.getAttribute('src'), 'data:image/png;base64,IMG1', '点 ◀ → 回到第 1 张');
+    d.close();
+  }
+
+  // 4) 循环：第 1 张往左跳到最后一
+  {
+    const d = openPreview(app, mk(3)[0], { list: mk(3), index: 0 });
+    const imgEl = d.mask.querySelector('img.mm-preview');
+    const find = (t) => [...d.mask.querySelectorAll('button')].find((b) => b.textContent === t);
+    find('◀').click();
+    eq(imgEl.getAttribute('src'), 'data:image/png;base64,IMG3', '第 1 张往左 → 最后一张（循环）');
+    find('▶').click();
+    eq(imgEl.getAttribute('src'), 'data:image/png;base64,IMG1', '最后一张往右 → 第 1 张');
+    d.close();
+  }
+
+  // 5) ← → 快捷键
+  {
+    const d = openPreview(app, mk(3)[0], { list: mk(3), index: 0 });
+    const imgEl = d.mask.querySelector('img.mm-preview');
+    const key = (k) => document.dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+    key('ArrowRight');
+    eq(imgEl.getAttribute('src'), 'data:image/png;base64,IMG2', '→ 切下一张');
+    key('ArrowRight');
+    eq(imgEl.getAttribute('src'), 'data:image/png;base64,IMG3', '再按 → 切到第 3 张');
+    key('ArrowLeft');
+    eq(imgEl.getAttribute('src'), 'data:image/png;base64,IMG2', '← 切上一张');
+    d.close();
+  }
+
+  // 6) 关键：**关闭后必须解绑**。残留的监听会拦住画布上的 ← →
+  //    （那两个键在 kityminder 里是有用的）
+  {
+    const d = openPreview(app, mk(3)[0], { list: mk(3), index: 0 });
+    const imgEl = d.mask.querySelector('img.mm-preview');
+    d.close();
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    eq(imgEl.getAttribute('src'), 'data:image/png;base64,IMG1',
+      '关闭后按 → 不再切换（监听已解绑）');
+  }
+
+  // 7) 输入框里不抢键
+  {
+    const d = openPreview(app, mk(3)[0], { list: mk(3), index: 0 });
+    const imgEl = d.mask.querySelector('img.mm-preview');
+    const inp = document.createElement('input');
+    document.body.appendChild(inp);
+    inp.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    eq(imgEl.getAttribute('src'), 'data:image/png;base64,IMG1', '输入框里按 → 不切换');
+    inp.remove();
+    d.close();
+  }
+
+  // 8) 起始下标生效（点第 2 张缩略图就该从第 2 张开始）
+  {
+    const d = openPreview(app, mk(3)[1], { list: mk(3), index: 1 });
+    eq(d.mask.querySelector('.mm-preview-count').textContent, '2/3', '起始下标生效');
+    d.close();
+  }
+
+  // 8.5) 滚轮切换
+  {
+    const d = openPreview(app, mk(3)[0], { list: mk(3), index: 0 });
+    const imgEl = d.mask.querySelector('img.mm-preview');
+    // 只在浮层内触发：浮层外的滚轮不该被吃掉
+    const wheel = (dy, target) => {
+      const ev = new window.WheelEvent('wheel', { deltaY: dy, bubbles: true, cancelable: true });
+      (target || d.mask.querySelector('img.mm-preview')).dispatchEvent(ev);
+      return ev;
+    };
+    const ev1 = wheel(60);
+    eq(imgEl.getAttribute('src'), 'data:image/png;base64,IMG2', '向下滚 → 下一张');
+    ok(ev1.defaultPrevented, '**preventDefault**（否则浮层背后的页面跟着滚）');
+    // 真实手势之间有停顿：等过解锁窗口（WHEEL_GAP）再滚第二次
+    await new Promise((r) => setTimeout(r, 130));
+    wheel(60);
+    eq(imgEl.getAttribute('src'), 'data:image/png;base64,IMG3', '停一下再滚 → 第 3 张');
+    await new Promise((r) => setTimeout(r, 130));
+    wheel(-60);
+    eq(imgEl.getAttribute('src'), 'data:image/png;base64,IMG2', '向上滚 → 上一张');
+    d.close();
+  }
+
+  // 8.6) 节流：触控板一划会发几十个小 delta 事件，不能每个都切一张
+  {
+    const d = openPreview(app, mk(3)[0], { list: mk(3), index: 0 });
+    const imgEl = d.mask.querySelector('img.mm-preview');
+    const el = d.mask.querySelector('img.mm-preview');
+    // 连续 10 个 deltaY=10 的小事件（模拟触控板）
+    for (let i = 0; i < 10; i++) {
+      el.dispatchEvent(new window.WheelEvent('wheel', { deltaY: 10, bubbles: true, cancelable: true }));
+    }
+    // 累积到阈值 + 最小间隔，最多只该切 1 张（不是 10 张）
+    eq(imgEl.getAttribute('src'), 'data:image/png;base64,IMG2',
+      '连续小 delta 只切 1 张（有节流，不是每个事件切一张）');
+    d.close();
+  }
+
+  // 8.65) 浮层**外**的滚轮不该被吃掉 —— 监听挂在 document 上，
+  //        不判断 target 的话页面滚动会被预览浮层劫持
+  {
+    const d = openPreview(app, mk(3)[0], { list: mk(3), index: 0 });
+    const imgEl = d.mask.querySelector('img.mm-preview');
+    const outside = document.createElement('div');
+    document.body.appendChild(outside);
+    const ev = new window.WheelEvent('wheel', { deltaY: 60, bubbles: true, cancelable: true });
+    outside.dispatchEvent(ev);
+    eq(imgEl.getAttribute('src'), 'data:image/png;base64,IMG1', '浮层外滚轮不切换');
+    ok(!ev.defaultPrevented, '浮层外的滚动**不** preventDefault（不劫持页面滚动）');
+    outside.remove();
+    d.close();
+  }
+
+  // 8.7) 关闭后解绑滚轮（残留会拦住页面滚动）
+  {
+    const d = openPreview(app, mk(3)[0], { list: mk(3), index: 0 });
+    const imgEl = d.mask.querySelector('img.mm-preview');
+    d.close();
+    imgEl.dispatchEvent(new window.WheelEvent('wheel', { deltaY: 60, bubbles: true, cancelable: true }));
+    eq(imgEl.getAttribute('src'), 'data:image/png;base64,IMG1', '关闭后滚轮不再切换');
+  }
+
+  // 8.8) 源码级：wheel 必须 passive:false
+  {
+    const pnl = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+    const oi = pnl.indexOf('export function openPreview');
+    const src = pnl.slice(oi, pnl.indexOf('/** 历史快照列表 */', oi));
+    ok(/addEventListener\('wheel', onWheel, \{ passive: false/.test(src),
+      'wheel 用 passive:false 注册（否则 preventDefault 被忽略，背后跟着滚）');
+    ok(/removeEventListener\('wheel', onWheel/.test(src), '关闭时解绑 wheel');
+    ok(/WHEEL_STEP/.test(src) && /WHEEL_GAP/.test(src), '有节流阈值与最小间隔');
+  }
+
+  // 9) 源码级：编辑器点画布上的图要带整组
+  {
+    const html2 = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+    const oi = html2.indexOf('function openAttach(');
+    const oa = html2.slice(oi, oi + 1200);
+    ok(/kind === 'image'/.test(oa), '只在图片这条路径带列表');
+    ok(/imageListOf\(node\)/.test(oa), '取的是该节点上的全部图片');
+    // 单张就不必发（省一次大数组拷贝）
+    ok(/list\.length < 2/.test(oa), '只有 1 张时 list 置空（不白拷一次）');
   }
 }
 
