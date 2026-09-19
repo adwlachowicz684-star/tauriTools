@@ -335,6 +335,76 @@ test('凭据中心有 MCP 服务页', () => {
  * 协议没接上时状态位要明说，不能给假绿勾 ——
  * 假绿勾会让用户以为服务已经在跑了。
  */
+/* ================= 右栏：上层必须限高 ================= */
+
+/*
+ * 曾经的表现：参数设置与运行日志**叠在一起**。
+ *
+ * 链条是：
+ *   .af-right-insp  flex:1 min-height:0   ← 限高了
+ *     └ .insp-slot  flex:none             ← 高度=内容高，父级限高失效
+ *         └ .inspector  overflow-y:auto   ← 永远不触发（高度没被约束）
+ *
+ * 于是内容一多就撑出 .af-right-insp，而它没有 overflow:hidden，
+ * 直接盖到下面的日志上。
+ *
+ * 这类问题**测不出来**（要肉眼看到），而且改 CSS 时极易回退 ——
+ * 尤其是"整理重复选择器"时按最后生效的值挑，很容易把 flex:none 留下、
+ * 把 flex:1 当死代码删掉（我就是这么弄出来的）。
+ */
+
+/** 取某个选择器的声明块（剥注释后匹配） */
+function ruleOf(sel: string): string {
+  const c = stripComments(css);
+  const m = c.match(new RegExp('(?:^|\\n)\\s*' + sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}'));
+  return m ? m[1] : '';
+}
+
+test('.af-right-insp 有 overflow:hidden（缺了就会盖住日志）', () => {
+  if (!hasSrc) return;
+  const r = ruleOf('.af-right-insp');
+  assert.ok(r, '找不到 .af-right-insp');
+  assert.ok(/overflow\s*:\s*hidden/.test(r), '.af-right-insp 必须有 overflow:hidden 兜底');
+});
+
+/** 高度必须受父级约束，否则子级限高全部失效 */
+test('.insp-slot 是 flex:1（flex:none 会让内容顶出右栏）', () => {
+  if (!hasSrc) return;
+  const r = ruleOf('.insp-slot');
+  assert.ok(r, '找不到 .insp-slot');
+  assert.ok(/flex\s*:\s*1/.test(r), '.insp-slot 必须 flex:1');
+  assert.ok(!/flex\s*:\s*none/.test(r), '.insp-slot 不能是 flex:none —— 内容会溢出盖住日志');
+  assert.ok(/min-height\s*:\s*0/.test(r), '缺 min-height:0');
+});
+
+test('.inspector 自身要能滚动（限高 + overflow-y）', () => {
+  if (!hasSrc) return;
+  const r = ruleOf('.inspector');
+  assert.ok(r, '找不到 .inspector');
+  assert.ok(/flex\s*:\s*1/.test(r), '.inspector 必须 flex:1，否则高度不受父级约束');
+  assert.ok(/min-height\s*:\s*0/.test(r), '缺 min-height:0');
+  assert.ok(/overflow-y\s*:\s*auto/.test(r), '缺 overflow-y:auto');
+});
+
+/*
+ * 限高只能有一处 —— 以前 .inspector 写 flex:none、
+ * 又靠 .insp-slot .inspector 覆盖成 flex:1，两处写就容易漏改一处。
+ */
+test('限高不写两处（没有 .insp-slot .inspector 这类覆盖）', () => {
+  if (!hasSrc) return;
+  assert.ok(
+    !/\.insp-slot\s+\.inspector\s*\{/.test(stripComments(css)),
+    '限高应只在 .inspector 基础定义里，不要再有一条 .insp-slot .inspector 覆盖',
+  );
+});
+
+test('日志区自己也要能裁剪（内容多时不外溢）', () => {
+  if (!hasSrc) return;
+  const r = ruleOf('.af-right-log');
+  assert.ok(r, '找不到 .af-right-log');
+  assert.ok(/overflow\s*:\s*hidden/.test(r), '.af-right-log 缺 overflow:hidden');
+});
+
 test('MCP 状态位不假装', () => {
   if (!hasSrc) return;
   const m = read(path.join(ROOT, 'components/McpServersPanel.tsx'));
