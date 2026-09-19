@@ -182,7 +182,7 @@ body {
   background-attachment: fixed;
   color: var(--text);
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: var(--fs-14, 14px);
   -webkit-font-smoothing: antialiased;
   user-select: none;
 }
@@ -247,22 +247,23 @@ body {
   gap: 9px;
   font-weight: 600;
   letter-spacing: .4px;
-  font-size: 13px;
+  font-size: var(--fs-13, 13px);
   min-width: 0;
 }
 .tb-logo {
   width: 24px; height: 24px;
   border-radius: var(--r-sm);
   display: grid; place-items: center;
-  font-size: 12px;
+  font-size: var(--fs-12, 12px);
   color: var(--accent);
   background: var(--surface);
   box-shadow: var(--sh-in-sm);
 }
 .tb-title {
   color: var(--text-dim);
-  font-weight: 500;
-  font-size: 12px;
+  /* 三档标题制：这是分组标题档。原先 12/500 是自成一格的写法 */
+  font-weight: var(--title-2-fw, 600);
+  font-size: var(--title-2-fs, 12px);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -281,7 +282,7 @@ body {
   display: grid; place-items: center;
   box-shadow: var(--sh-out-sm);
   transition: all var(--t);
-  font-size: 12px;
+  font-size: var(--fs-12, 12px);
   line-height: 1;
 }
 .tb-btn:hover { color: var(--text); }
@@ -350,11 +351,11 @@ body {
   box-shadow: var(--sh-out-md);
   transition: all var(--t);
   display: flex; align-items: center; justify-content: center; gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-13, 13px);
   flex: none;
 }
 .side-toggle:active { box-shadow: var(--sh-in-md); }
-.side-toggle span { white-space: nowrap; text-overflow: ellipsis; opacity: 0; width: 0; transition: opacity var(--t); font-size: 12px; }
+.side-toggle span { white-space: nowrap; text-overflow: ellipsis; opacity: 0; width: 0; transition: opacity var(--t); font-size: var(--fs-12, 12px); }
 #body.open .side-toggle span { opacity: 1; width: auto; }
 #body.open .side-toggle { justify-content: flex-start; padding: 0 12px; }
 
@@ -410,7 +411,7 @@ body {
   display: grid; place-items: center;
 }
 .nav-label {
-  font-size: 13px;
+  font-size: var(--title-1-fs, 13px);
   white-space: nowrap; text-overflow: ellipsis;
   opacity: 0;
   transform: translateX(-4px);
@@ -427,7 +428,7 @@ body {
   border-radius: var(--r-sm);
   background: var(--danger);
   color: var(--badge-fg);
-  font-size: 10px;
+  font-size: var(--fs-10, 10px);
   display: none;
   place-items: center;
   font-weight: 600;
@@ -465,7 +466,7 @@ body {
   border-bottom: 1px solid var(--hairline);
 }
 #plugin-bar h1 {
-  font-size: 15px;
+  font-size: var(--fs-15, 15px);
   font-weight: 600;
   min-width: 0;
   overflow: hidden;
@@ -474,7 +475,7 @@ body {
   flex: 0 1 auto;
   letter-spacing: .3px;
 }
-#plugin-bar .sub { font-size: 12px; min-width: 0;
+#plugin-bar .sub { font-size: var(--fs-12, 12px); min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -487,7 +488,7 @@ body {
   border: 0; border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12, 12px);
   cursor: pointer;
   box-shadow: var(--sh-out-sm);
   transition: all var(--t);
@@ -513,7 +514,7 @@ body {
    .nx-empty.lg / .nx-empty-mark —— host.js 改用新类名，旧定义删除。
    .drawer-empty 保留在这里：它是抽屉里的提示块（凹陷底板），
    与全屏空态不是一个东西。 */
-.nx-empty.lg p { font-size: 13px; }
+.nx-empty.lg p { font-size: var(--fs-13, 13px); }
 
 .err-box {
   max-width: 620px;
@@ -523,7 +524,7 @@ body {
   background: var(--surface-overlay);
   box-shadow: var(--sh-out-lg);
 }
-.err-box h3 { color: var(--danger); font-size: 14px; margin-bottom: 10px; }
+.err-box h3 { color: var(--danger); font-size: var(--fs-14, 14px); margin-bottom: 10px; }
 .err-box pre {
   font-size: var(--fs-11, 11px);
   line-height: 1.7;
@@ -544,13 +545,13 @@ body {
    反而挡住了那行错误。需要排查或要贴给开发者时再展开。 */
 .err-diag { margin-top: 16px; border-top: 1px solid var(--divider); padding-top: 12px; }
 .err-diag > summary {
-  cursor: pointer; font-size: 12px; color: var(--text-dim);
+  cursor: pointer; font-size: var(--fs-12, 12px); color: var(--text-dim);
   list-style: none; display: flex; align-items: center; gap: 6px;
   user-select: none;
 }
 .err-diag > summary::-webkit-details-marker { display: none; }
 .err-diag > summary::before {
-  content: '▸'; font-size: 10px; transition: transform var(--dur-fast);
+  content: '▸'; font-size: var(--fs-10, 10px); transition: transform var(--dur-fast);
 }
 .err-diag[open] > summary::before { transform: rotate(90deg); }
 .err-diag > summary:hover { color: var(--text); }
@@ -558,7 +559,7 @@ body {
 .err-diag-actions /* 日志正文：等宽 + 限制高度，长堆栈不会把整个错误框撑到屏幕外 */
 .err-diag-body {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-11, 11px);
   line-height: 1.65;
   color: var(--text-dim);
   white-space: pre-wrap;
@@ -575,7 +576,7 @@ body {
 .loader {
   height: 100%;
   display: flex; align-items: center; justify-content: center; gap: 10px;
-  color: var(--text-mute); font-size: 12px;
+  color: var(--text-mute); font-size: var(--fs-12, 12px);
 }
 
 /* ---------- 插件加载覆盖层 ----------
@@ -629,7 +630,7 @@ body {
   max-width: 280px;
   padding: 6px 10px;
   border-radius: var(--r-sm);
-  font-size: 12px;
+  font-size: var(--fs-12, 12px);
   line-height: 1.6;
   color: var(--text);
   background: var(--surface-overlay, var(--surface-raised));
@@ -742,7 +743,7 @@ body.nx-inspecting * { cursor: crosshair !important; }
 }
 .p-card + .p-card { margin-top: 16px; }
 .p-card h2 {
-  font-size: 13px;
+  font-size: var(--fs-13, 13px);
   font-weight: 600;
   color: var(--text);
   margin-bottom: 14px;
@@ -780,7 +781,7 @@ body.nx-inspecting * { cursor: crosshair !important; }
      两者都是"标签"，但长相有意区分，所以这里保留差异 */
   border-radius: var(--r-pill);
   padding: 3px 9px;
-  font-size: 11px;
+  font-size: var(--fs-11, 11px);
   box-shadow: var(--sh-in-sm);
 }
 .p-stat {
@@ -789,8 +790,8 @@ body.nx-inspecting * { cursor: crosshair !important; }
   background: var(--surface-sunk);
   box-shadow: var(--sh-in-lg);
 }
-.p-stat .k { font-size: 11px; color: var(--text-mute); }
-.p-stat .v { font-size: 22px; font-weight: 600; color: var(--accent); margin-top: 4px; }
+.p-stat .k { font-size: var(--fs-11, 11px); color: var(--text-mute); }
+.p-stat .v { font-size: var(--fs-22, 22px); font-weight: 600; color: var(--accent); margin-top: 4px; }
 
 /* ============================================================
    插件容器与主题适配层
@@ -921,7 +922,7 @@ body.nx-inspecting * { cursor: crosshair !important; }
 .tb-menu-item:hover:not(:disabled) { background: var(--accent-soft, var(--surface-2)); }
 .tb-menu-item:disabled {
   color: var(--text-dim);
-  cursor: default;
+  cursor: var(--ctl-disabled-cursor, not-allowed);
 }
 .tb-menu-sep {
   height: 1px;
@@ -981,8 +982,8 @@ body.nx-inspecting * { cursor: crosshair !important; }
 .drawer-title { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .drawer-title h2 {
   margin: 0;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--title-1-fs, 13px);
+  font-weight: var(--title-1-fw, 600);
   color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -991,7 +992,7 @@ body.nx-inspecting * { cursor: crosshair !important; }
 .drawer-head .tb-btn {
   flex: none;
   width: 32px; height: 30px;
-  font-size: 14px;
+  font-size: var(--fs-14, 14px);
   background: var(--surface-raised);
 }
 
@@ -1007,7 +1008,7 @@ body.nx-inspecting * { cursor: crosshair !important; }
   padding: 14px 16px;
   border-radius: var(--r);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12, 12px);
   line-height: 1.7;
   background: var(--surface-sunk);
   box-shadow: var(--sh-in-sm);
@@ -1166,8 +1167,8 @@ html.theme-transition *:not(.spinner) {
   min-width: 0;
   gap: 8px;
   padding: 13px 16px 9px;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--title-1-fs, 13px);
+  font-weight: var(--title-1-fw, 600);
   border-bottom: 1px solid var(--hairline);
 }
 /* 键盘提示右对齐，不抢标题的位置 */
@@ -1191,8 +1192,8 @@ html.theme-transition *:not(.spinner) {
 .theme-group-title {
   margin: 0 0 10px;
   padding-left: 2px;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--title-2-fs, 12px);
+  font-weight: var(--title-2-fw, 600);
   letter-spacing: .3px;
   color: var(--text-dim);
 }
@@ -1203,8 +1204,8 @@ html.theme-transition *:not(.spinner) {
 .theme-pop .theme-prev { height: 48px; padding: 8px 10px; gap: 7px; }
 .theme-pop .theme-prev .sw { width: 26px; height: 26px; border-radius: var(--r-sm); }
 .theme-pop .theme-foot { padding: 7px 10px 1px; }
-.theme-pop .theme-name { font-size: 12px; }
-.theme-pop .theme-desc { padding: 0 10px 9px; font-size: 10px; }
+.theme-pop .theme-name { font-size: var(--fs-12, 12px); }
+.theme-pop .theme-desc { padding: 0 10px 9px; font-size: var(--fs-10, 10px); }
 .theme-pop .theme-badge { font-size: var(--fs-10, 10px); padding: 1px 5px; }
 
 /* ---------- 设置页分页 ----------
@@ -1294,7 +1295,7 @@ html.theme-transition *:not(.spinner) {
   transform: translateY(-50%);
   width: 3px;
   height: 18px;
-  border-radius: 2px;
+  border-radius: var(--r-xs, 2px);
   background: var(--accent);
 }
 /* 内容区：占满剩余宽度。min-width:0 不可省 ——
@@ -1393,7 +1394,7 @@ html.theme-transition *:not(.spinner) {
   position: absolute; top: 5px; left: 5px;
   width: 15px; height: 15px; border-radius: 50%;
   display: grid; place-items: center;
-  font-size: 10px; line-height: 1; color: var(--badge-fg);
+  font-size: var(--fs-10, 10px); line-height: 1; color: var(--badge-fg);
   background: var(--accent);
   box-shadow: var(--sh-cast-xs);
 }
@@ -1439,7 +1440,7 @@ html.theme-transition *:not(.spinner) {
   position: absolute; top: 6px; right: 6px;
   width: 20px; height: 20px; border: 0; border-radius: 50%;
   background: var(--danger); color: var(--badge-fg); cursor: pointer;
-  font-size: 12px; line-height: 1; display: none; place-items: center;
+  font-size: var(--fs-12, 12px); line-height: 1; display: none; place-items: center;
 }
 .theme-card:hover .theme-del { display: grid; }
 
@@ -1449,7 +1450,7 @@ html.theme-transition *:not(.spinner) {
   opacity: .88;
   font-size: var(--fs-12, 12px);
 }
-.nav-item.nav-item-injected .nav-icon { opacity: .8; font-size: 12px; }
+.nav-item.nav-item-injected .nav-icon { opacity: .8; font-size: var(--fs-12, 12px); }
 .nav-item.nav-item-injected:hover { opacity: 1; }
 .nav-item.nav-item-injected::before {
   content: '';

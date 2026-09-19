@@ -35,7 +35,7 @@
   align-items: center;
 }
 .fpx-rail.collapsed .fpx-rail-btn { width: 30px; padding: 6px 0; }
-.fpx-rail.collapsed .fpx-rail-icon { font-size: var(--fs-16, 16px); }
+.fpx-rail.collapsed .fpx-rail-icon { font-size: var(--fs-15, 15px); }
 
 .fpx-rail-group { display: flex; flex-direction: column; gap: 4px; }
 /* 组间分隔线：最后一组不加 */
@@ -76,9 +76,9 @@
 .fpx-rail-icon { font-size: var(--fs-18, 18px); line-height: 1.1; }
 /* 名称：不换行、超长省略。栏宽固定，靠 title 提示补全 */
 .fpx-rail-label {
-  font-size: var(--fs-11, 11px); line-height: 1.2;
+  font-size: var(--title-3-fs, 11px); line-height: 1.2;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
+  font-weight: var(--title-3-fw);}
 /* 键位提示：比标签更小更淡，只在有绑定时占位，不撑高按钮 */
 .fpx-rail-key {
   font-size: var(--fs-10, 10px); line-height: 1.1;
@@ -107,20 +107,20 @@
 .fpx-stack-arrow {
   width: 18px; height: 22px; flex-shrink: 0;
   background: transparent; border: 0; color: var(--text-dim);
-  cursor: pointer; font-size: 11px;
+  cursor: pointer; font-size: var(--fs-11, 11px);
 }
 .fpx-stack-name {
   flex: 1; min-width: 0;
   display: flex; align-items: center; gap: 6px;
   height: 22px; padding: 0;
   background: transparent; border: 0; color: var(--text);
-  font-size: 12px; font-weight: 600; text-align: left;
+  font-size: var(--fs-12, 12px); font-weight: 600; text-align: left;
   cursor: pointer; overflow: hidden;
 }
 .fpx-stack-name > span { flex-shrink: 0; font-weight: 400; }
 .fpx-stack-edit {
   flex: 1; min-width: 0; height: 24px;
-  font-size: 12px;
+  font-size: var(--fs-12, 12px);
 }
 /**
  * 这个 spacer 原本是 flex:1，会和 .fpx-stack-name 平分剩余宽度 ——
@@ -134,7 +134,7 @@
 .fpx-stack-op {
   width: 22px; height: 22px; flex-shrink: 0;
   background: transparent; border: 1px solid var(--border); border-radius: var(--r-xs);
-  color: var(--text-dim); cursor: pointer; font-size: 12px; line-height: 1;
+  color: var(--text-dim); cursor: pointer; font-size: var(--fs-12, 12px); line-height: 1;
 }
 .fpx-stack-op:hover { color: var(--text); border-color: var(--accent); }
 /* 折叠后卡片区不渲染，这里只给展开态补内边距 */
@@ -233,7 +233,7 @@
   margin-top: var(--sp-4, 8px);
   padding: var(--sp-4, 8px) var(--sp-5, 10px);
   border-radius: var(--r-sm, 6px);
-  background: var(--surface-2, rgba(255, 255, 255, .04));
+  background: var(--surface-raised, rgba(255, 255, 255, .04));
   word-break: break-word;
 }
 
@@ -313,7 +313,7 @@
   height: 30px; padding: 0 12px;
   border: 1px solid var(--border); border-radius: var(--r-sm);
   background: var(--surface-sunk); color: var(--text-dim);
-  font-size: 12px; cursor: pointer;
+  font-size: var(--fs-12, 12px); cursor: pointer;
   display: inline-flex; align-items: center; gap: 6px;
 }
 /* #279 软键三态：常态外凸 → 悬停抬升 → 选中/按下内凹。
@@ -337,7 +337,7 @@
   width: 15px; height: 15px; line-height: 13px; padding: 0;
   border: 0; border-radius: 50%;
   background: transparent; color: var(--text-mute);
-  font-size: 13px; cursor: pointer; opacity: 0;
+  font-size: var(--fs-13, 13px); cursor: pointer; opacity: 0;
   /* 与图标删除按钮同理：只压 opacity 的话看不见的按钮**仍然可点** */
   pointer-events: none;
   flex-shrink: 0;
@@ -347,14 +347,14 @@
 .fpx-tab-x:hover { opacity: 1; color: var(--danger); background: var(--surface); }
 .fpx-tab-x:focus-visible { opacity: 1; pointer-events: auto; outline: 1px solid var(--accent); }
 .fpx-tab-kind {
-  font-size: 10px; opacity: .6;
+  font-size: var(--fs-10, 10px); opacity: .6;
   border: 1px solid var(--border); border-radius: var(--r-xs); padding: 0 4px;
 }
 /* #297 条目数：与类别标记（P/G）区分开 —— 数字用等宽且不加边框，
    它是"量"，不是"类别"。加边框会让两个徽标看起来是同类标签。 */
 .fpx-tab-count {
   font-family: var(--font-mono);
-  font-size: 10px; opacity: .55;
+  font-size: var(--fs-10, 10px); opacity: .55;
   min-width: 14px; text-align: center;
 }
 /* 空页签把数字压到几乎看不见：提示"这里面没东西"，
@@ -363,7 +363,7 @@
 .fpx-tab-input {
   width: 90px; height: 22px; padding: 0 6px;
   border: 0; outline: none; border-radius: var(--r-xs);
-  background: var(--surface); color: var(--text); font-size: 12px;
+  background: var(--surface); color: var(--text); font-size: var(--fs-12, 12px);
 }
 /* 页签拖动重排的落点提示。
    与卡片拖进来的 .drop 区分开：两者落点语义不同（重排 vs 移动卡片），
@@ -510,7 +510,7 @@
   width: 26px; height: 26px; flex: none;
   display: grid; place-items: center;
   border-radius: var(--r-sm); background: var(--surface);
-  font-size: 14px;
+  font-size: var(--fs-14, 14px);
   box-shadow: var(--sh-in-xs);
 }
 
@@ -526,7 +526,7 @@
  * 浮雕只是叠加的一层质感，不参与对比度计算，**不会破坏可读性**。
  */
 .fpx-card-name {
-  font-size: 13px; color: var(--text); font-weight: 600;
+  font-size: var(--fs-13, 13px); color: var(--text); font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   text-shadow: 0 1px 0 color-mix(in srgb, var(--text) 0%, transparent),
                0 1px 1px color-mix(in srgb, var(--sh-light) 55%, transparent);
@@ -537,13 +537,13 @@
   text-shadow: 0 1px 1px color-mix(in srgb, var(--sh-light) 45%, transparent);
 }
 .fpx-card-path {
-  margin-top: 3px; font-size: 11px; color: var(--text-mute);
+  margin-top: 3px; font-size: var(--fs-11, 11px); color: var(--text-mute);
   font-family: var(--font-mono);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .fpx-card-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .fpx-badge {
-  font-size: 10px; padding: 1px 6px; border-radius: var(--r-pill);
+  font-size: var(--fs-10, 10px); padding: 1px 6px; border-radius: var(--r-pill);
   border: 1px solid var(--border); color: var(--text-dim);
 }
 .fpx-badge.link { color: var(--accent); border-color: var(--accent); }
@@ -572,35 +572,35 @@
 
      写成"要么全用 --grp-*、要么全用 --accent"的两套类是错的：
      那要 JSX 判断有没有颜色并切类名，而类名与样式一旦分开维护就会漂移。 */
-  border-color: var(--grp-base, var(--accent));
-  color: var(--grp-base, var(--accent));
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .fpx-badge.group.jump {
   cursor: pointer;
   /* 兜底：不支持 color-mix 时退回纯描边，仍是个可点的徽标 */
   box-shadow: inset 2px 0 0 var(--border);
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--grp-hover, var(--accent)) 30%, transparent),  /* 顶部高光刻线 */
+    inset 0 1px 0 color-mix(in srgb, var(--accent) 30%, transparent),  /* 顶部高光刻线 */
     inset 0 -1px 0 color-mix(in srgb, var(--bg) 40%, transparent),      /* 底部暗影线 */
     inset 2px 0 0 color-mix(in srgb, var(--bg) 55%, transparent);       /* 左缘插销槽 */
 }
 .fpx-badge.group.jump:hover {
   /* 悬停：插销槽变浅，像被"拔出"一点。
      用 --grp-hover 派生色：组色与强调色不同时，这才跟得上。 */
-  border-color: var(--grp-hover, var(--accent));
-  color: var(--grp-hover, var(--accent));
+  border-color: var(--accent);
+  color: var(--accent);
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--grp-hover, var(--accent)) 45%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--accent) 45%, transparent),
     inset 0 -1px 0 color-mix(in srgb, var(--bg) 30%, transparent),
     inset 2px 0 0 color-mix(in srgb, var(--bg) 35%, transparent);
 }
 .fpx-badge.group.jump:active {
   /* 按下：整体内凹，像插销被按进槽里 */
-  border-color: var(--grp-press, var(--accent));
-  color: var(--grp-press, var(--accent));
+  border-color: var(--accent);
+  color: var(--accent);
   box-shadow:
     inset 1px 1px 3px color-mix(in srgb, var(--bg) 60%, transparent),
-    inset -1px -1px 2px color-mix(in srgb, var(--grp-press, var(--accent)) 20%, transparent),
+    inset -1px -1px 2px color-mix(in srgb, var(--accent) 20%, transparent),
     inset 2px 0 0 color-mix(in srgb, var(--bg) 70%, transparent);
 }
 .fpx-badge.warn { color: var(--warn); border-color: var(--warn); }
@@ -622,7 +622,7 @@
   display: flex; flex-direction: column; gap: 2px;
 }
 .fpx-menu-item {
-  text-align: left; padding: 7px 10px; font-size: 12px;
+  text-align: left; padding: 7px 10px; font-size: var(--fs-12, 12px);
   border: 0; border-radius: var(--r-xs); background: transparent; color: var(--text);
   cursor: pointer;
 }
@@ -643,7 +643,7 @@
 }
 .fpx-node {
   display: flex; align-items: center; gap: 6px;
-  padding: 3px 6px; border-radius: var(--r-xs); font-size: 12px;
+  padding: 3px 6px; border-radius: var(--r-xs); font-size: var(--fs-12, 12px);
   color: var(--text-dim); cursor: pointer; white-space: nowrap; text-overflow: ellipsis;
 }
 .fpx-node:hover { background: var(--surface); color: var(--text); }
@@ -651,7 +651,7 @@
 .fpx-node-arrow { width: 10px; color: var(--text-mute); }
 .fpx-node-name { overflow: hidden; text-overflow: ellipsis; }
 .fpx-node-kind {
-  margin-left: auto; font-size: 10px; color: var(--text-mute);
+  margin-left: auto; font-size: var(--fs-10, 10px); color: var(--text-mute);
   border: 1px solid var(--border); border-radius: var(--r-xs); padding: 0 4px;
 }
 .fpx-preview { display: flex; flex-direction: column; gap: 6px; }
@@ -671,8 +671,8 @@
 /* ---------- 表单 ---------- */
 .fpx-field { margin-bottom: 12px; }
 .fpx-field > label {
-  display: block; margin-bottom: 6px; font-size: 12px; color: var(--text-dim);
-}
+  display: block; margin-bottom: 6px; font-size: var(--title-3-fs, 11px); color: var(--text-dim);
+  font-weight: var(--title-3-fw);}
 .fpx-check {
   display: flex; align-items: flex-start; gap: 8px;
   padding: 7px 8px; border-radius: var(--r-sm); cursor: pointer;
@@ -683,11 +683,12 @@
   width: 18px; height: 18px; flex: none; margin-top: 1px;
   display: grid; place-items: center;
   border: 1px solid var(--border); border-radius: var(--r-xs);
-  background: var(--surface-sunk); color: var(--accent); font-size: 12px;
+  background: var(--surface-sunk); color: var(--accent); font-size: var(--fs-12, 12px);
 }
 .fpx-check input:checked + .fpx-check-box { border-color: var(--accent); }
-.fpx-check-title { display: block; font-size: var(--fs-12, 12px); color: var(--text); }
-.fpx-check-sub { display: block; font-size: 11px; color: var(--text-mute); }
+.fpx-check-title { display: block; font-size: var(--title-3-fs, 11px); color: var(--text);
+  font-weight: var(--title-3-fw);}
+.fpx-check-sub { display: block; font-size: var(--fs-11, 11px); color: var(--text-mute); }
 
 .fpx-agent-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -712,20 +713,20 @@
 .fpx-iconitem:hover { border-color: var(--accent); }
 .fpx-iconthumb {
   width: 26px; height: 26px; flex: none; display: grid; place-items: center;
-  border-radius: var(--r-xs); background: var(--surface); font-size: 12px; color: var(--accent);
+  border-radius: var(--r-xs); background: var(--surface); font-size: var(--fs-12, 12px); color: var(--accent);
 }
 .fpx-iconname {
-  font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-11, 11px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 /* ---------- 目录选择器 ---------- */
 .fpx-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin-bottom: 8px; }
 .fpx-crumb {
   border: 0; background: transparent; color: var(--text-dim);
-  font-size: 12px; cursor: pointer; padding: 2px 4px; border-radius: var(--r-xs);
+  font-size: var(--fs-12, 12px); cursor: pointer; padding: 2px 4px; border-radius: var(--r-xs);
 }
 .fpx-crumb:hover { color: var(--accent); background: var(--surface-sunk); }
-.fpx-crumb-sep { color: var(--text-mute); font-size: 11px; }
+.fpx-crumb-sep { color: var(--text-mute); font-size: var(--fs-11, 11px); }
 .fpx-dirlist {
   max-height: 320px; overflow: auto; padding: 6px;
   border-radius: var(--r-sm); background: var(--surface-sunk);
@@ -756,7 +757,7 @@
 /* ---------- 色盘 ---------- */
 .fpx-preview-def { color: var(--text-mute); text-shadow: none; }
 .fpx-hex { width: 110px; flex: none; }
-.fpx-mini { height: 24px; padding: 0 8px; font-size: 11px; }
+.fpx-mini { height: 24px; padding: 0 8px; font-size: var(--fs-11, 11px); }
 
 /* 卡片上的标签色点 */
 .fpx-color-dot {
@@ -772,7 +773,7 @@
   height: 28px; padding: 0 12px;
   border: 1px solid var(--border); border-radius: var(--r-sm);
   background: var(--surface-sunk); color: var(--text-dim);
-  font-size: 12px; cursor: pointer;
+  font-size: var(--fs-12, 12px); cursor: pointer;
 }
 .fpx-grouptab:hover { color: var(--text); }
 .fpx-grouptab.active { color: var(--accent); border-color: var(--accent); }
@@ -797,7 +798,7 @@
 .fpx-icontile img, .fpx-icontile-ph {
   width: 28px; height: 28px; object-fit: contain;
   display: flex; align-items: center; justify-content: center;
-  font-size: 13px; color: var(--text-mute);
+  font-size: var(--fs-13, 13px); color: var(--text-mute);
 }
 .fpx-iconcap {
   font-size: var(--fs-11, 11px); line-height: 1.2; max-width: 100%;
@@ -812,7 +813,7 @@
   width: 18px; height: 18px; line-height: 16px; padding: 0;
   border: 1px solid var(--border); border-radius: 50%;
   background: var(--surface); color: var(--text-mute);
-  font-size: 12px; cursor: pointer; opacity: 0;
+  font-size: var(--fs-12, 12px); cursor: pointer; opacity: 0;
   /* #116 只压 opacity 是不够的：看不见的按钮**仍然可点**，
      用户以为点的是图标（选用），实际点到了删除 ——
      而且没有任何确认，图标直接从本组消失。
@@ -830,7 +831,7 @@
 /* ---------- 基础设置面板 ---------- */
 .fpx-settings-sec { margin-bottom: 16px; }
 .fpx-settings-sec h3 {
-  margin: 0 0 6px; font-size: 12px; font-weight: 600;
+  margin: 0 0 6px; font-size: var(--fs-12, 12px); font-weight: 600;
   color: var(--accent); letter-spacing: .04em;
 }
 .fpx-settings-sec .fpx-check { margin-bottom: 4px; }
@@ -914,7 +915,7 @@
   flex: none; width: 24px; height: 24px; padding: 0;
   border: 1px solid var(--border); border-radius: var(--r-sm);
   background: var(--surface-sunk); color: var(--text-mute);
-  font-size: 12px; line-height: 22px; cursor: pointer;
+  font-size: var(--fs-12, 12px); line-height: 22px; cursor: pointer;
 }
 .fpx-pin:hover { color: var(--text); }
 .fpx-pin.on { color: var(--accent); border-color: var(--accent); }
@@ -928,11 +929,11 @@
   height: 30px; padding: 0 12px;
   border: 1px solid var(--border); border-radius: var(--r-sm);
   background: var(--surface-sunk); color: var(--text-dim);
-  font-size: 12px; cursor: pointer;
+  font-size: var(--fs-12, 12px); cursor: pointer;
 }
 .fpx-actionchip:hover { color: var(--text); }
 .fpx-actionchip.on { color: var(--accent); border-color: var(--accent); }
-.fpx-actionicon { font-size: 13px; }
+.fpx-actionicon { font-size: var(--fs-13, 13px); }
 
 /* 管理面板：左列表 + 右详情 */
 .fpx-ca-wrap { display: flex; gap: 12px; align-items: flex-start; }
@@ -945,11 +946,11 @@
 .fpx-ca-item {
   display: flex; align-items: center; gap: 6px;
   padding: 6px 8px; border-radius: var(--r-sm);
-  cursor: pointer; font-size: 12px; color: var(--text-dim);
+  cursor: pointer; font-size: var(--fs-12, 12px); color: var(--text-dim);
 }
 .fpx-ca-item:hover { color: var(--text); }
 .fpx-ca-item.on { background: var(--surface); color: var(--text); }
-.fpx-ca-icon { flex: none; font-size: 14px; }
+.fpx-ca-icon { flex: none; font-size: var(--fs-14, 14px); }
 .fpx-ca-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fpx-ca-ops { flex: none; display: flex; gap: 2px; opacity: 0; }
 .fpx-ca-item:hover .fpx-ca-ops { opacity: 1; }
@@ -957,7 +958,7 @@
   width: 20px; height: 20px; padding: 0; line-height: 18px;
   border: 1px solid var(--border); border-radius: var(--r-xs);
   background: var(--surface); color: var(--text-mute);
-  font-size: 11px; cursor: pointer;
+  font-size: var(--fs-11, 11px); cursor: pointer;
 }
 .fpx-ca-ops button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 
@@ -967,7 +968,7 @@
 .fpx-emoji {
   width: 30px; height: 30px; padding: 0;
   border: 1px solid var(--border); border-radius: var(--r-sm);
-  background: var(--surface-sunk); font-size: 15px; cursor: pointer;
+  background: var(--surface-sunk); font-size: var(--fs-15, 15px); cursor: pointer;
 }
 .fpx-emoji.on { border-color: var(--accent); }
 
@@ -985,11 +986,11 @@
   flex: 1; display: grid;
   grid-template-columns: 1fr 1fr; gap: 6px;
 }
-.fpx-cc-grid .p-input { height: 30px; font-size: 12px; }
+.fpx-cc-grid .p-input { height: 30px; font-size: var(--fs-12, 12px); }
 
 /* ---------- 通用表单块 ---------- */
 .fpx-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
-.fpx-field > label { font-size: 12px; color: var(--text-dim); }
+.fpx-field > label { font-size: var(--fs-12, 12px); color: var(--text-dim); }
 
 /* 一行复选框（整行可点，与 CheckLine 区分：这里不带副标题） */
 .fpx-checkline {
@@ -1008,7 +1009,7 @@
   margin-top: 12px; padding: 10px 12px;
   border: 1px solid var(--border); border-radius: var(--r-sm);
   background: var(--surface-sunk);
-  font-size: 12px; color: var(--text-dim); line-height: 1.7;
+  font-size: var(--fs-12, 12px); color: var(--text-dim); line-height: 1.7;
 }
 .fpx-result details { margin-top: 6px; }
 .fpx-result summary { cursor: pointer; }
@@ -1027,7 +1028,7 @@
 }
 .fpx-editoritem:hover { border-color: var(--accent); }
 .fpx-editoritem.active { border-color: var(--accent); box-shadow: var(--glow-sm); }
-.fpx-editorname { font-size: 13px; }
+.fpx-editorname { font-size: var(--fs-13, 13px); }
 .fpx-editorexe {
   font-size: var(--fs-11, 11px); color: var(--text-mute);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1054,7 +1055,7 @@
 .fpx-pick-row {
   display: flex; align-items: center; gap: 8px;
   padding: 5px 8px; border-radius: var(--r-sm);
-  font-size: 12px; cursor: pointer;
+  font-size: var(--fs-12, 12px); cursor: pointer;
 }
 .fpx-pick-row:hover { background: var(--surface); }
 .fpx-pick-row input { flex: none; cursor: pointer; }
@@ -1064,11 +1065,11 @@
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   margin-top: 14px; padding-top: 10px;
   border-top: 1px solid var(--divider);
-  font-size: 11px; color: var(--text-mute);
+  font-size: var(--fs-11, 11px); color: var(--text-mute);
 }
 .fpx-foot-sep { opacity: .5; }
 .fpx-foot-btn {
-  height: 22px; padding: 0 8px; font-size: 11px;
+  height: 22px; padding: 0 8px; font-size: var(--fs-11, 11px);
   color: var(--text-mute);
 }
 .fpx-foot-btn:hover { color: var(--text); }
@@ -1106,12 +1107,12 @@
 }
 .fpx-hotkey-row {
   display: flex; align-items: center; gap: 8px;
-  padding: 5px 8px; border-radius: var(--r-sm); font-size: 12px;
+  padding: 5px 8px; border-radius: var(--r-sm); font-size: var(--fs-12, 12px);
 }
 .fpx-hotkey-row:hover { background: var(--surface); }
 .fpx-hotkey-row.bad { box-shadow: inset 2px 0 0 var(--danger); }
 .fpx-hotkey-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fpx-hotkey-val { height: 26px; padding: 0 10px; font-family: var(--font-mono); font-size: 11px; min-width: 110px; }
+.fpx-hotkey-val { height: 26px; padding: 0 10px; font-family: var(--font-mono); font-size: var(--fs-11, 11px); min-width: 110px; }
 .fpx-hotkey-reset { height: 26px; padding: 0 8px; }
 .fpx-hotkey-note { color: var(--text-mute); cursor: help; }
 .fpx-hotkey-warn {
@@ -1123,6 +1124,8 @@
 .fpx-links-summary { display: inline-flex; gap: 5px; font-size: var(--fs-11, 11px); }
 .fpx-links-summary .bad {
   padding: 1px 6px; border-radius: var(--r-pill);
+  /* 压在语义色（--danger）之上 —— 白字必须硬编码，
+     跟随主题会在浅色危险色上整个消失 */
   background: var(--danger, #c8555a); color: #fff;
 }
 .fpx-links-summary .warn {
@@ -1265,7 +1268,7 @@
  */
 .fpx-icongrid-item.over::before {
   content: ''; position: absolute; left: -3px; top: 2px; bottom: 2px;
-  width: 2px; background: var(--accent); border-radius: 1px;
+  width: 2px; background: var(--accent); border-radius: var(--r-pill, 1px);
 }
 .fpx-icongrid-item[draggable='true'] .fpx-icontile { cursor: grab; }
 .fpx-icongrid-item[draggable='true'] .fpx-icontile:active { cursor: grabbing; }
@@ -1280,8 +1283,8 @@
 .fpx-grouptab.gap-before::before,
 .fpx-grouptab.gap-after::after {
   content: ''; position: absolute; top: 2px; bottom: 2px;
-  width: 2px; background: var(--accent); border-radius: 1px;
-  z-index: 1;
+  width: 2px; background: var(--accent); border-radius: var(--r-pill, 1px);
+  z-index: var(--z-base, 1);
 }
 .fpx-grouptab.gap-before::before { left: -3px; }
 .fpx-grouptab.gap-after::after { right: -3px; }
@@ -1316,14 +1319,14 @@
   box-shadow: var(--sh-in-sm);
 }
 .fpx-lock-preset-name { font-weight: 600; }
-.fpx-lock-preset-flags { font-size: 10px; opacity: .65; }
+.fpx-lock-preset-flags { font-size: var(--fs-10, 10px); opacity: .65; }
 
 /* ---------------- 面板内操作反馈条（#9）----------------
  * **吸顶**：面板可能很长，操作发生在底部时，
  * 不吸顶的反馈条等于不存在（用户在底部操作，反馈在顶部屏幕外）。
  */
 .fpx-feedback {
-  position: sticky; top: 0; z-index: 5;
+  position: sticky; top: 0; z-index: var(--z-base, 5);
   margin-bottom: var(--sp-5, 10px);
   border: 1px solid var(--border); border-radius: var(--r-sm);
   background: var(--surface-sunk);
@@ -1333,7 +1336,7 @@
 .fpx-feedback-row {
   display: flex; align-items: flex-start; gap: 6px;
   padding: 5px 8px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--divider);
   font-size: var(--fs-12, 12px);
 }
 .fpx-feedback-row:last-of-type { border-bottom: 0; }
@@ -1343,21 +1346,21 @@
 .fpx-feedback-row.err .fpx-feedback-text { color: var(--danger); }
 .fpx-feedback-text { flex: 1; min-width: 0; word-break: break-word; }
 .fpx-feedback-at {
-  flex-shrink: 0; opacity: .5; font-size: 10px;
+  flex-shrink: 0; opacity: .5; font-size: var(--fs-10, 10px);
   font-variant-numeric: tabular-nums;
 }
 .fpx-feedback-x {
   flex-shrink: 0; width: 14px; height: 14px; line-height: 12px; padding: 0;
   border: 0; border-radius: 50%; background: transparent;
-  color: var(--text-mute); font-size: 12px; cursor: pointer; opacity: .5;
+  color: var(--text-mute); font-size: var(--fs-12, 12px); cursor: pointer; opacity: .5;
 }
 .fpx-feedback-x:hover { opacity: 1; background: var(--surface); }
 .fpx-feedback-x:focus-visible { opacity: 1; outline: 1px solid var(--accent); }
 .fpx-feedback-foot {
   display: flex; align-items: center; justify-content: space-between;
   padding: 4px 8px;
-  border-top: 1px solid var(--border);
-  font-size: 10px;
+  border-top: 1px solid var(--divider);
+  font-size: var(--fs-10, 10px);
 }
 
 /* ---------------- 我的图标 · 改名按钮（#10）----------------
@@ -1371,7 +1374,7 @@
   width: 15px; height: 15px; line-height: 13px; padding: 0;
   border: 1px solid var(--border); border-radius: 50%;
   background: var(--surface); color: var(--text-dim);
-  font-size: 9px; cursor: pointer;
+  font-size: var(--fs-10, 10px); cursor: pointer;
   opacity: 0; pointer-events: none;
   transition: opacity var(--dur-fast) ease, color var(--dur-fast) ease;
 }

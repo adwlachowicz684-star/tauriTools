@@ -1013,22 +1013,10 @@
              */
             function openAttach(node, kind, index, raw) {
                 try { km.select(node, true); } catch (e) {}
-                // 点画布上的图时把**整组**一起发给宿主：预览里要能左右切换。
-                // 只发单张的话，看下一张就得关掉浮层回来再点一次。
-                //
-                // 只在这条路径带上（图片是 dataURL、不进资产库），
-                // 视频/文件仍然只发引用 —— 它们本体在 IndexedDB，
-                // 整包发过来等于把整个文件复制一遍。
-                var list = null;
-                if (kind === 'image') {
-                    try { list = imageListOf(node); } catch (e) { list = null; }
-                    if (list && list.length < 2) list = null;
-                }
                 hostPost({
                     type: 'openattach',
                     kind: kind, index: index, raw: raw,
                     nodeId: (node && node.data && node.data.id) || '',
-                    list: list,
                 });
             }
 
@@ -3114,6 +3102,126 @@
                 })(_lv);
             }
         })();
+
+
+        /* ============================================================
+           关键色派生：画布怎么变，骨架都看得见
+
+           为什么需要：画布底色跟随外壳主题，节点配色却是**自带主题的固定
+           调色板**，两者由不同的人选，必然出现错配。典型是 fresh-*：
+           main 节点 #EEF3F6 配 white 连接线，在它自己的 #FBFBFB 底上靠
+           投影区分；画布一变，连接线与节点边界就可能消失。
+
+           实现与 plugins/mindmap/themes.js 的 criticalOverrides() 同源。
+           之所以复制一份而不是 import：本页是传统 <script> 加载，走 ES
+           module 在部分协议下会被 CORS 挡住。canvas-theme-test 里有
+           「两处实现必须一致」的比对断言，防止它们各自漂移。
+           ============================================================ */
+
+function _kmParseColor(c) {
+            var m = String(c || '').match(/rgba?\(([^)]+)\)/);
+            var r, g, b;
+            if (m) {
+                var p = m[1].split(/[,\s\/]+/).filter(Boolean).map(Number);
+                r = p[0]; g = p[1]; b = p[2];
+            } else {
+                var h = String(c || '').trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+                if (!h) return null;
+                var t = h[1];
+                if (t.length === 3) t = t.split('').map(function (x) { return x + x; }).join('');
+                r = parseInt(t.slice(0, 2), 16);
+                g = parseInt(t.slice(2, 4), 16);
+                b = parseInt(t.slice(4, 6), 16);
+            }
+            if ([r, g, b].some(function (v) { return typeof v !== 'number' || isNaN(v); })) return null;
+            return [r, g, b];
+        }
+        function _kmRelLum(c) {
+            var rgb = _kmParseColor(c);
+            if (!rgb) return 0;
+            var f = function (n) { var v = n / 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+            return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+        }
+        function _kmContrast(a, b) {
+            var la = _kmRelLum(a), lb = _kmRelLum(b);
+            var hi = Math.max(la, lb), lo = Math.min(la, lb);
+            return (hi + 0.05) / (lo + 0.05);
+        }
+        function _kmClamp255(n) { return Math.max(0, Math.min(255, n)); }
+        function _kmToHex(rgb) {
+            return '#' + rgb.map(function (n) {
+                return _kmClamp255(n).toString(16).padStart(2, '0');
+            }).join('');
+        }
+        function _kmShift(c, d) {
+            var rgb = _kmParseColor(c);
+            if (!rgb) return c;
+            return _kmToHex(rgb.map(function (n) { return _kmClamp255(n + d); }));
+        }
+        function _kmIsLight(c) {
+            var rgb = _kmParseColor(c);
+            if (!rgb) return false;
+            return (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) > 140;
+        }
+        /* 只调亮度、不动色相饱和度 —— 派生出来的线/文字仍是同一色调家族 */
+        function _kmAwayFrom(base, ratio) {
+            var light = _kmIsLight(base);
+            var dir = light ? -1 : 1;
+            for (var i = 1; i <= 64; i++) {
+                var c = _kmShift(base, dir * i * 4);
+                if (_kmContrast(c, base) >= ratio) return c;
+            }
+            return light ? '#141418' : '#f2f2f4';
+        }
+        function _kmPaintable(v) {
+            var s = String(v || '').trim().toLowerCase();
+            if (!s || s === 'none' || s === 'transparent') return false;
+            return /^(#|rgb|hsl)/.test(s);
+        }
+        function _kmCriticalOverrides(canvasBg, items) {
+            var out = {};
+            if (!canvasBg || !items) return out;
+            var cc = items['connect-color'];
+            if (!cc || cc === 'none' || !_kmPaintable(cc) || _kmContrast(cc, canvasBg) < 2.5) {
+                out['connect-color'] = _kmAwayFrom(canvasBg, 3);
+            }
+            var subBg = String(items['sub-background'] || '').toLowerCase();
+            if (!subBg || subBg === 'transparent' || subBg === 'none') {
+                var sc = items['sub-color'];
+                if (!sc || !_kmPaintable(sc) || _kmContrast(sc, canvasBg) < 3) {
+                    out['sub-color'] = _kmAwayFrom(canvasBg, 4.5);
+                }
+            }
+            var types = ['root', 'main', 'sub'];
+            for (var i = 0; i < types.length; i++) {
+                var type = types[i];
+                var fill = items[type + '-background'];
+                var stroke = items[type + '-stroke'];
+                if (!fill || !_kmPaintable(fill)) continue;
+                if (_kmContrast(fill, canvasBg) >= 1.8) continue;
+                if (_kmPaintable(stroke) && _kmContrast(stroke, canvasBg) >= 2.5) continue;
+                out[type + '-stroke'] = _kmAwayFrom(canvasBg, 3);
+            }
+            return out;
+        }
+
+        
+/** 把覆盖写回内核当前主题项 —— getThemeItems() 返回的是活对象 */
+        function _kmApplyCritical() {
+            if (!km || !km.getThemeItems) return;
+            var items;
+            try { items = km.getThemeItems(); } catch (e) { return; }
+            if (!items) return;
+            var bg = (_canvasVars && _canvasVars.canvasBg) || _CANVAS_DEFAULTS.canvasBg;
+            var ov = _kmCriticalOverrides(bg, items);
+            var n = 0;
+            for (var k in ov) {
+                if (!Object.prototype.hasOwnProperty.call(ov, k)) continue;
+                items[k] = ov[k]; n++;
+            }
+            if (n && km.refresh) { try { km.refresh(); } catch (e) { /* 重排失败不影响已写入的色值 */ } }
+            return n;
+        }
 
         hostPost({ type: 'request', id: 0, action: 'log', payload: 'kityminder 就绪' });
     })();

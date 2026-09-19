@@ -74,7 +74,9 @@ const fields: FieldDef[] = [
     type: 'custom',
     spec: { keys: ['yolo'], kind: 'switch' },
     render: (p) => (
-      <FileParamsPanel node={p.node as never} onChange={p.patch as never} />
+      {/* 不用 as never —— 它把类型检查整个绕过，签名对不上也照样编译过。
+          两侧都改成单参数后，这里的类型是真对上了。 */}
+      <FileParamsPanel node={p.node} onChange={p.patch} />
     ),
   },
 ];

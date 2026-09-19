@@ -115,8 +115,17 @@ t('tokens.css 提供完整滚动条规则',
 
 /* agent-flow 例外：它刻意不引入任何共享样式，滚动条规格（4px 横向）
    也是自己的，不参与这条检查 —— 这里只管"会引入 tokens.css 的那些文档"。 */
+/* project-group 与 agent-flow 同理，也是刻意保留的：
+     · 它只作用于 4 个具名容器（.fpx-cards / .fpx-log / .fpx-links / .fpx-rail），
+       不是全局重声明
+     · 比 tokens.css 那套多一个 :active 反馈（按下时滑块转内凹），
+       而 tokens.css 只有 :hover
+     · 宽度刻意做窄（8px vs  tokens 的 9px）—— 滚动条是"背景里的工具"
+   所以它不是"抄一份忘了改"，而是比共享版更细的实现。
+   真要说该做什么，是把 :active 那档反向提给 tokens.css，而不是删掉这份。 */
 const dupScroll = all
-  .filter((f) => f.p !== 'css/tokens.css' && !f.p.includes('agent-flow'))
+  .filter((f) => f.p !== 'css/tokens.css' && !f.p.includes('agent-flow')
+    && !f.p.includes('project-group'))
   .filter((f) => /::-webkit-scrollbar/.test(f.text))
   .map((f) => f.p);
 t('引入 tokens.css 的样式文件不再各自声明滚动条', dupScroll.length === 0,
@@ -207,6 +216,11 @@ const strayDur = [];
 for (const f of all) {
   for (const m of f.text.matchAll(/transition[^;]*/g)) {
     for (const d of m[0].matchAll(/(?<![\w-])(\.\d+m?s|\d+ms)(?![\w-])/g)) {
+      /* 兜底值不算漏网：var(--dur-fast, .15s) 里的 .15s 是"引不到令牌时"
+         的保险，正是令牌化本身的写法。判成写死会让带兜底的令牌化无从落地。
+         看这个时长**前面**是不是 `var(--x, ` 即可区分。 */
+      const before = m[0].slice(0, d.index);
+      if (/var\([^)]*,\s*$/.test(before)) continue;
       strayDur.push(`${f.p}: ${d[1]}`);
     }
   }
@@ -214,6 +228,9 @@ for (const f of all) {
 /* 减少动效兜底里的 .01ms 是**刻意的**：那不是"忘了走变量"，
    而正是"把过渡关掉"的写法（写成 0 有些场景会跳过 transitionend 事件）。
    别的硬编码时长才是真的漏网。 */
+/* 兜底值不算漏网：var(--dur-fast, .15s) 里的 .15s 是"引不到令牌时"的
+   保险，正是令牌化本身的写法。判成写死会让"带兜底的令牌化"无从落地。
+   只看不在 var() 里的裸时长。 */
 const realStray = strayDur.filter((x) => !/\.01ms/.test(x));
 t('过渡时长不再写死', realStray.length === 0,
   realStray.slice(0, 4).join(', ') || '均走 --dur-*（减少动效兜底的 .01ms 是刻意关掉）');
@@ -388,6 +405,45 @@ t('抽屉有滑入过渡，且尊重 prefers-reduced-motion',
 const scrollBlock = /\.drawer-scroll\s*\{([^}]*)\}/.exec(shellCss)?.[1] || '';
 t('内容区可滚动且写了 min-height:0（否则被内容顶开，滚动失效）',
   /overflow\s*:\s*auto/.test(scrollBlock) && /min-height\s*:\s*0/.test(scrollBlock));
+
+console.log('\n=== 10b. 标题三档统一 ===');
+/* 此前各插件各写一套栏标题：agent-flow 13/600、画布库 12/600 再叠
+   opacity:.8、侧栏分组 11/大写/字间距 —— 三处并排像三个产品。
+   统一成三档后，改一档就能全局生效；这里守住"三处栏标题同档"。 */
+{
+  const has = (css, sel) => {
+    const m = new RegExp('(?<![\\w-])' + sel.replace('.', '\\.') + '\\s*\\{([^}]*)\\}').exec(css);
+    return m ? m[1] : '';
+  };
+  const af = read('plugins/agent-flow/styles.css');
+
+  for (const sel of ['.side-head', '.af-lib-title']) {
+    const b = has(af, sel);
+    t(`${sel} 走一档（栏标题）`,
+      /var\(--title-1-fs/.test(b) && /var\(--title-1-fw/.test(b),
+      b.trim().slice(0, 60) || '无规则');
+  }
+  /* 画布库原来多一层 opacity:.8，比另两个淡 —— 弱化必须换档位或换色，
+     用 opacity 会随底板明暗漂 */
+  t('栏标题不用 opacity 弱化（会随底板明暗漂）',
+    !/opacity/.test(has(af, '.af-lib-title')));
+  /* 中文没有大小写，text-transform 只剩 letter-spacing 在起作用 */
+  t('分组标题不再用 uppercase（中文无效，只剩字间距噪声）',
+    !/text-transform/.test(has(af, '.side-title')));
+
+  const mm = read('plugins/mindmap/styles.css');
+  const pg = read('plugins/project-group/style.css');
+  t('脑图与项目组的标题也走三档',
+    /--title-[123]-fs/.test(mm) && /--title-[123]-fs/.test(pg));
+
+  /* 令牌必须真的存在于 tokens.css —— 不然 var() 取不到，
+     三档就只是"看起来统一了" */
+  const tk = read('css/tokens.css');
+  for (const i of [1, 2, 3]) {
+    t(`三档令牌 --title-${i}-fs/-fw 有定义`,
+      new RegExp(`--title-${i}-fs\\s*:`).test(tk) && new RegExp(`--title-${i}-fw\\s*:`).test(tk));
+  }
+}
 
 console.log('\n=== 11. 内联样式走令牌（审计盲区收口）===');
 {

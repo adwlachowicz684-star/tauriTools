@@ -307,13 +307,13 @@
 .p-muted,
 .mm-hint {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12, 12px);
 }
 .nx-mono,
 .p-mono,
 .mm-mono {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-12, 12px);
 }
 
 /* ------------------------------------------------------------
@@ -417,7 +417,7 @@
   border-radius: 50%;
   display: grid;
   place-items: center;
-  font-size: 30px;
+  font-size: var(--fs-30, 30px);
   color: var(--text-mute);
   background: var(--surface);
   box-shadow: var(--sh-out-lg);
@@ -458,7 +458,7 @@
   gap: 10px;
   padding: 14px 20px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12, 12px);
 }
 
 /* 覆盖式加载层：盖在插件之上，插件在下面照常加载。
@@ -472,7 +472,7 @@
   justify-content: center;
   background: var(--bg);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12, 12px);
   transition: opacity var(--dur-base) ease;
 }
 .nx-loading .nx-loading-inner {

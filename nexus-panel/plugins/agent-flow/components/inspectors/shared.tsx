@@ -67,18 +67,29 @@ export type TestState =
  * 独立成组件是因为它有两块内容（文件参数 + 自定义参数），
  * 塞进上面的主面板会让那个函数长到看不清结构。
  */
+/* onChange 与 FieldRenderProps.patch 同为**单参数**（只收 patch）——
+   节点 id 由调用方的 patchObj 自带，不需要再传一次。
+
+   这里原先写成 (id, patch) 双参数，而 task.tsx 传的是 p.patch（单参数）。
+   于是「+ 添加参数」点下去时，第二个实参被丢弃，patch 变成了节点 id
+   字符串 —— params 一个都没写进去，反而把 "task1a2b" 展开成
+   {0:'t',1:'a',…} 污染了节点 data。表现是"点了没反应"，
+   实际还在悄悄写脏数据。
+
+   而 task.tsx 那边的 `as never` 把类型检查整个绕过，编译器也拦不住。
+   两侧都改回单参数，类型才是真对上了。 */
 export function FileParamsPanel({ node, onChange }: {
   node: FlowNode;
-  onChange: (id: string, patch: Record<string, unknown>) => void;
+  onChange: (patch: Record<string, unknown>) => void;
 }) {
   const d = node.data as TaskNodeData;
   const cfg = d.fileOutput ?? defaultFileOutput();
   const params = d.params ?? [];
 
   const patchCfg = (patch: Partial<TaskFileOutput>) =>
-    onChange(node.id, { fileOutput: { ...cfg, ...patch } });
+    onChange({ fileOutput: { ...cfg, ...patch } });
 
-  const patchParams = (next: NodeParam[]) => onChange(node.id, { params: next });
+  const patchParams = (next: NodeParam[]) => onChange({ params: next });
 
   /* 预览：用上次输出模拟一次识别，让用户立刻看到效果 */
   const previewRefs = cfg.mode === 'manual'

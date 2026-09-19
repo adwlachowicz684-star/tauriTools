@@ -61,7 +61,7 @@
 .nx-dlg-head { flex: none; margin-bottom: 12px; }
 .nx-dlg-title {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-13, 13px);
   font-weight: 600;
   color: var(--text);
   display: flex;
@@ -97,7 +97,7 @@
   width: 100%;
   padding: 8px 10px;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-13, 13px);
   color: var(--text);
   background: var(--surface-sunk);
   border: 1px solid var(--divider);
