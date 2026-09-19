@@ -11,6 +11,7 @@
  * 用一个惰性取值绕开 —— 见下面 canvasConfigOf 的实现。
  */
 import type { CanvasConfig } from './canvasConfig';
+import { SECRET_PATHS } from './sanitize';
 
 /*
  * 判断一个名字像不像密钥。
@@ -239,8 +240,49 @@ export type PersistedState = {
  * 后者权限更大：一个带 repo 的令牌能直接改别人的仓库，
  * 所以两个字段一起脱敏，不因为"清单里只提了 apiKey"就放过它。
  */
-const SECRET_FIELDS = ['llm.apiKey', 'token'] as const;
-export type SecretField = (typeof SECRET_FIELDS)[number];
+/*
+ * 密钥字段清单**直接复用 sanitize 的 SECRET_PATHS**，不再自己抄一份。
+ *
+ * 以前这里是 `['llm.apiKey', 'token']` —— 比 SECRET_PATHS 少了
+ * 'config.token'（webhook 触发器的校验密钥）。
+ *
+ * 后果：那个 token 会被 stripSecrets 认出来（面板上提示"不会存"），
+ * 却**不会被挖进保险箱**，于是明文留在画布存档与导出文件里。
+ * 而 webhook token 泄露意味着别人能伪造请求触发你的工作流 ——
+ * 工作流能起 CLI、读写授权目录。
+ *
+ * 这正是"同一件事两处写"的老问题，只是这次抄的是安全清单。
+ * 以后新增密钥字段只改 SECRET_PATHS 一处。
+ */
+const SECRET_FIELDS = SECRET_PATHS;
+export type SecretField = (typeof SECRET_PATHS)[number];
+
+/** 按点号路径取值。路径不存在或不是非空字符串则返回 null */
+function pathGet(data: Record<string, unknown>, path: string): string | null {
+  const parts = path.split('.');
+  let cur: unknown = data;
+  for (const p of parts) {
+    if (!cur || typeof cur !== 'object') return null;
+    cur = (cur as Record<string, unknown>)[p];
+  }
+  return typeof cur === 'string' && cur !== '' ? cur : null;
+}
+
+/** 按点号路径写值，返回新的 data。只改这一条路径，其余保持原引用 */
+function pathSet(
+  data: Record<string, unknown>,
+  path: string,
+  value: string,
+): Record<string, unknown> {
+  const parts = path.split('.');
+  if (parts.length === 1) return { ...data, [parts[0]]: value };
+  const head = data[parts[0]];
+  if (!head || typeof head !== 'object' || Array.isArray(head)) return data;
+  return {
+    ...data,
+    [parts[0]]: { ...(head as Record<string, unknown>), [parts[1]]: value },
+  };
+}
 
 /** 节点 id + 字段名 → 保险箱里的键。带上字段名，回填时才知道该写回哪个字段 */
 function vaultKey(nodeId: string, field: SecretField): string {
@@ -249,14 +291,7 @@ function vaultKey(nodeId: string, field: SecretField): string {
 
 /** 取节点上某个密钥字段的值；不存在或不是字符串则返回 null */
 function getSecretField(data: Record<string, unknown>, field: SecretField): string | null {
-  if (field === 'token') {
-    const v = data.token;
-    return typeof v === 'string' && v !== '' ? v : null;
-  }
-  const llm = data.llm;
-  if (!llm || typeof llm !== 'object') return null;
-  const v = (llm as Record<string, unknown>).apiKey;
-  return typeof v === 'string' && v !== '' ? v : null;
+  return pathGet(data, field);
 }
 
 /** 把某个密钥字段写成空串，返回新的 data */
@@ -264,10 +299,7 @@ function blankSecretField(
   data: Record<string, unknown>,
   field: SecretField,
 ): Record<string, unknown> {
-  if (field === 'token') return { ...data, token: '' };
-  const llm = data.llm;
-  if (!llm || typeof llm !== 'object') return data;
-  return { ...data, llm: { ...(llm as Record<string, unknown>), apiKey: '' } };
+  return pathSet(data, field, '');
 }
 
 /** 把某个密钥字段写成指定值，返回新的 data */
@@ -276,10 +308,7 @@ function setSecretField(
   field: SecretField,
   value: string,
 ): Record<string, unknown> {
-  if (field === 'token') return { ...data, token: value };
-  const llm = data.llm;
-  if (!llm || typeof llm !== 'object') return data;
-  return { ...data, llm: { ...(llm as Record<string, unknown>), apiKey: value } };
+  return pathSet(data, field, value);
 }
 
 /**

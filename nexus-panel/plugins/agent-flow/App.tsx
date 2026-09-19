@@ -166,6 +166,25 @@ function branchLabel(nodes: FlowNode[], sourceId: string, branch?: string | null
   return data.rules?.find((r) => r.id === branch)?.label ?? branch;
 }
 
+/**
+ * 把未知类型的异常变成一句能看的话。
+ *
+ * 各处 catch 拿到的可能是 Error、字符串、或 Rust 侧透传的对象
+ * （形如 { error: 'xxx' }）。直接 `${err}` 会打出 [object Object]，
+ * 用户看了也不知道哪里错了。
+ */
+function describeErr(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  if (err && typeof err === 'object') {
+    const e = (err as Record<string, unknown>).error;
+    if (typeof e === 'string' && e) return e;
+    const m = (err as Record<string, unknown>).message;
+    if (typeof m === 'string' && m) return m;
+  }
+  return String(err);
+}
+
 /** 首次使用时的示例画布 */
 function makeSeedCanvas(): Canvas {
   return makeCanvas('工作流 1', {
@@ -991,7 +1010,24 @@ export default function App() {
    * 并把"协议没接上"这句话报出来。
    * 不假装成功：假装成功会让用户以为工具已经是新的了。
    */
+  /*
+   * 刷新代号。
+   *
+   * 刷新是**异步**的（要连 MCP server 拉工具清单），而触发它的时机有三个：
+   * 启动后一次、侧栏手动点、服务配置变了防抖一次。
+   *
+   * 没有代号的话，两次并发刷新可能"后发的先返回"：
+   * 用户改了服务 → 新刷新发出；上一次旧刷新这时才返回 →
+   * 用**旧的服务列表**覆盖掉刚算好的结果，侧栏显示回一批过期工具。
+   * 而且不报错，只表现为"我明明改了，怎么还是老的"。
+   *
+   * 与存档那边的 saveSeq 是同一套做法。
+   */
+  const mcpRefreshSeq = useRef(0);
+
   const doRefreshMcp = useCallback(async (overrideServers?: ServerRef[]) => {
+    const seq = mcpRefreshSeq.current + 1;
+    mcpRefreshSeq.current = seq;
     setMcpRefreshing(true);
     try {
       /*
@@ -1004,10 +1040,14 @@ export default function App() {
        */
       const servers = overrideServers ?? mcpRefsRef.current;
       const r = await bootRefresh(servers, mcpBlueprints, mcpFetcher);
+      // 被更新的刷新取代了就丢弃结果 —— 它反映的是过期的服务列表
+      if (seq !== mcpRefreshSeq.current) return;
       if (r.outcome.ok) rebuildMcpGroups(mcpSidebarGroups(r.outcome.list));
       pushLog(r.message);
     } finally {
-      setMcpRefreshing(false);
+      // 只有仍是最新那次才收起"刷新中" ——
+      // 否则旧刷新返回时会把新刷新还在跑的状态提前清掉
+      if (seq === mcpRefreshSeq.current) setMcpRefreshing(false);
     }
   }, [canvases, mcpBlueprints, rebuildMcpGroups, pushLog]);
 
@@ -2600,10 +2640,23 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
     // 新开缺失的
     for (const [id, t] of wanted) {
       if (watchCleanups.current.has(id)) continue;
+      /*
+       * 必须 catch。
+       *
+       * 以前这里只有 .then 没有 .catch ——
+       * 目录不存在、没授权、后端不支持时 startWatch 会 reject，
+       * 于是产生一个 unhandled rejection：**错误被静默吞掉**。
+       *
+       * 后果是用户配了一个监听，界面上看起来在跑（开关是开的），
+       * 实际上根本没起来，而且没有任何提示 ——
+       * 他会一直等一个永远不会来的触发。
+       */
       void startWatch(id, t.config.watchDir, t.config.watchRecursive, (path) => {
         scheduler.notifyWatch(path);
       }).then((cleanup) => {
         if (cleanup) watchCleanups.current.set(id, cleanup);
+      }).catch((err: unknown) => {
+        pushLog(`✗ 目录监听启动失败（${t.config.watchDir || '未填目录'}）：${describeErr(err)}`);
       });
     }
   }, [triggers, watchSupported, scheduler]);

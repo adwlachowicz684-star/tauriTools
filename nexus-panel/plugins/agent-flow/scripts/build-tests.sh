@@ -142,6 +142,10 @@ $S engine/blockApi.ts "$OUT/blockApi.mjs" --import-map ./nodeSpec=./nodeSpec.mjs
 $S engine/upstream.ts "$OUT/upstream.mjs" >/dev/null
 $S engine/passCheck.ts "$OUT/passCheck.mjs" >/dev/null
 $S engine/sanitize.ts "$OUT/sanitize.mjs" >/dev/null
+# canvasStore 复用 sanitize 的 SECRET_PATHS（保险箱与脱敏共用一份清单），
+# 所以要多带一条映射。循环里那条只给了 ../types，覆盖不到。
+$S engine/canvasStore.ts "$OUT/canvasStore.mjs" \
+   --import-map ../types=./types.mjs --import-map ./sanitize=./sanitize.mjs >/dev/null
 $S engine/stack.ts "$OUT/stack.mjs" >/dev/null
 $S engine/canvasRefName.ts "$OUT/canvasRefName.mjs" >/dev/null
 $S engine/fieldLike.ts "$OUT/fieldLike.mjs" --import-map ./blockApi=./blockApi.mjs \

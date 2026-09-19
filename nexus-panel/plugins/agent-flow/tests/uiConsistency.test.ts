@@ -100,3 +100,69 @@ test('存储键统一 agent-flow 前缀', () => {
   }
   assert.deepEqual(bad, [], `这些存储键没有 agent-flow 前缀：${bad.join(', ')}`);
 });
+
+
+/* ================= 密钥清单必须同源 ================= */
+
+/*
+ * 保险箱（canvasStore 的 SECRET_FIELDS）与脱敏（sanitize 的 SECRET_PATHS）
+ * 曾经是**抄成两份**的清单，而前者少了 'config.token'。
+ *
+ * 后果：webhook 校验 token 被认出来是密钥，却不会被挖进保险箱 ——
+ * 明文留在画布存档与导出文件里，且不报错、测试不红。
+ *
+ * 这是"同一件事两处写"最危险的一种：抄的是安全清单。
+ */
+test('SECRET_FIELDS 直接复用 SECRET_PATHS，不再自己抄一份', () => {
+  /*
+   * 必须先剥注释 —— 本文件的 read() 不剥。
+   * 而注释里为说明"以前漏了什么"会把旧数组原样写出来，
+   * 不剥的话**把清单改回错的检查依然通过**（假阴性）。
+   * 这与 classNames 那条守卫踩的是同一个坑。
+   */
+  /*
+   * 正则用**拼接**构造，不写字面量：
+   * 字面量里的 /* 与 *​/ 会被 strip-ts.py 当成注释边界吃掉，
+   * 生成的 .mjs 直接语法错误（这是这个脚本第四次带来这类麻烦）。
+   */
+  const blockComment = new RegExp('/' + '\\*' + '[\\s\\S]*?' + '\\*' + '/', 'g');
+  const f = read(path.join(ROOT, 'engine/canvasStore.ts')).replace(blockComment, '');
+  assert.ok(
+    /const SECRET_FIELDS = SECRET_PATHS;/.test(f),
+    '保险箱必须直接用 sanitize 的清单，抄一份就会漏字段',
+  );
+  assert.ok(
+    !/const SECRET_FIELDS = \['llm\.apiKey'/.test(f),
+    '不能再出现手写的密钥字段数组',
+  );
+  assert.ok(
+    /import \{ SECRET_PATHS \} from '\.\/sanitize';/.test(f),
+    '要从 sanitize 引入',
+  );
+});
+
+/* ================= 并发刷新要有代号守卫 ================= */
+
+test('MCP 刷新用 seq 守卫，避免旧结果覆盖新结果', () => {
+  const app = read(path.join(ROOT, 'App.tsx'));
+  assert.ok(/mcpRefreshSeq/.test(app), '并发刷新要有代号');
+  /*
+   * 匹配**具体那一条** return 语句，不能只查"文件里有这个比较" ——
+   * finally 里还有一处 `seq === mcpRefreshSeq.current`，
+   * 只查子串的话，把真正的守卫删掉检查依然通过（假阴性）。
+   */
+  assert.ok(
+    /if \(seq !== mcpRefreshSeq\.current\) return;/.test(app),
+    '拿到结果后要先确认自己还是最新那次，否则旧刷新会覆盖新结果',
+  );
+});
+
+/* ================= 异步失败不能被静默吞掉 ================= */
+
+test('startWatch 必须 catch（否则监听失败无任何提示）', () => {
+  const app = read(path.join(ROOT, 'App.tsx'));
+  const i = app.indexOf('startWatch(');
+  assert.ok(i > 0, '要有 startWatch 调用');
+  const tail = app.slice(i, i + 600);
+  assert.ok(/\.catch\(/.test(tail), 'startWatch 的 Promise 必须 catch');
+});
