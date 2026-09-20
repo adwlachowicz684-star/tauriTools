@@ -320,12 +320,22 @@ export function FileParamsPanel({ node, onChange }: {
  * needVision 为 true 时会校验"该服务商是否支持图片"，
  * 免得用户配完才发现选了个不支持视觉的模型。
  */
+/*
+ * onChange 统一为**单参数**（只收 patch），与 FileParamsPanel / OrderPicker
+ * 一致 —— 见下面 FileParamsPanel 关于"双参数被静默丢弃"的说明。
+ *
+ * 三个组件签名不一致本身就是这类 bug 的温床：
+ * 调用方每次都得先想"这个组件是接一个还是两个参数"，
+ * 想错一次就是"点了没反应"，而 `as never` 还会让编译器闭嘴。
+ * 统一之后调用方一律写 onChange={p.patch}，没有记错的余地。
+ *
+ * nodeId 因此不再需要 —— 它本来只是为了让调用方凑出双参数而传的。
+ */
 export function LlmConfigPanel({
-  nodeId, cfg, onChange, needVision, secretPolicy, onChangeSecretPolicy,
+  cfg, onChange, needVision, secretPolicy, onChangeSecretPolicy,
 }: {
-  nodeId: string;
   cfg: LlmConfig;
-  onChange: (id: string, patch: Record<string, unknown>) => void;
+  onChange: (patch: Record<string, unknown>) => void;
   needVision: boolean;
   /** 当前密钥落盘策略；不传则不显示这一项 */
   secretPolicy?: SecretPolicy;
@@ -336,7 +346,7 @@ export function LlmConfigPanel({
   const issues = validateConfig(c, needVision);
   const preset = PROVIDER_META[c.provider] ?? PROVIDER_META.custom;
 
-  const set = (p: Partial<LlmConfig>) => onChange(nodeId, { llm: { ...c, ...p } });
+  const set = (p: Partial<LlmConfig>) => onChange({ llm: { ...c, ...p } });
 
   return (
     <div className="field">
