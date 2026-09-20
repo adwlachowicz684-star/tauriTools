@@ -16,6 +16,7 @@ registerNode({
     color: UPDATE_SOURCE_META.wechat.color,
     category: 'external',
     idPrefix: 'wx',
+    sub: UPDATE_SOURCE_META.wechat.hint,
   },
   create: (id, partial) =>
     makeUpdateNode(id, 'wechat', (partial ?? {}) as Partial<UpdateNodeData>).data,

@@ -114,7 +114,8 @@ registerNode({
   dataKind: 'ocr',
   meta: {
     cardGroups: ['llm-config'],
-    label: '图片识别 OCR', color: '#f472b6', category: 'ai', idPrefix: 'ocr' },
+    label: '图片识别 OCR', color: '#f472b6', category: 'ai', idPrefix: 'ocr',
+    sub: '把图片里的文字读出来（需视觉大模型）' },
   create: (id, partial) => makeOcrNode(id, (partial ?? {}) as never).data,
   Canvas: OcrNode,
   fields: () => fields,

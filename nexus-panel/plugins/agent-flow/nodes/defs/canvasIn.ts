@@ -30,7 +30,7 @@ registerNode({
   dataKind: 'canvasIn',
   meta: {
     label: '画布输入', color: '#a78bfa', category: 'flow',
-    idPrefix: 'ci', sub: '标注这张画布的入口',
+    idPrefix: 'ci', sub: '画布的入口 —— 外部数据从这里进来',
   },
   create: (id, partial) => makeCanvasInNode(id, partial ?? {}).data,
   Canvas: CanvasRefNode,

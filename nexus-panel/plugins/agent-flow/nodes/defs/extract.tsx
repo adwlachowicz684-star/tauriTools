@@ -71,7 +71,7 @@ registerNode({
     color: '#38bdf8',
     category: 'data',
     idPrefix: 'ex',
-    sub: 'JSON 路径 / 正则 / 按行',
+    sub: '从上游内容里抠出想要的那个值',
   },
   create: (id, partial) => makeExtractNode(id, (partial ?? {}) as never).data,
   Canvas: ExtractCard,

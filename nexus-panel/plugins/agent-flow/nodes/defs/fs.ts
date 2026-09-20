@@ -86,7 +86,10 @@ const fields: FieldDef[] = [
 registerNode({
   type: 'fs',
   dataKind: 'fs',
-  meta: { label: '文件操作', color: '#38bdf8', category: 'data', idPrefix: 'f' },
+  meta: {
+    label: '文件操作', color: '#38bdf8', category: 'data', idPrefix: 'f',
+    sub: '读 / 写 / 复制 / 移动 / 列目录 / 判断存在',
+  },
   create: (id, partial) => makeFsNode(id, (partial ?? {}) as never).data,
   Canvas: FsNode,
   fields: () => fields,

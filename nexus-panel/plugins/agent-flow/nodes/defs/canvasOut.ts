@@ -32,7 +32,7 @@ registerNode({
   dataKind: 'canvasOut',
   meta: {
     label: '画布输出', color: '#a78bfa', category: 'flow',
-    idPrefix: 'co', sub: '标注这张画布的出口',
+    idPrefix: 'co', sub: '画布的出口 —— 结果从这里交回调用方',
   },
   create: (id, partial) => makeCanvasOutNode(id, partial ?? {}).data,
   Canvas: CanvasRefNode,

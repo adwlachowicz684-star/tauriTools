@@ -16,6 +16,8 @@ registerNode({
     color: UPDATE_SOURCE_META.bilibili.color,
     category: 'external',
     idPrefix: 'bl',
+    // 复用 UPDATE_SOURCE_META 里那句 —— 不另写一份，免得两处漂移
+    sub: UPDATE_SOURCE_META.bilibili.hint,
   },
   create: (id, partial) =>
     makeUpdateNode(id, 'bilibili', (partial ?? {}) as Partial<UpdateNodeData>).data,

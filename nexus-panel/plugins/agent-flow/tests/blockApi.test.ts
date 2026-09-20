@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  deriveParams, describeBlock, describeAll, conventions, type FieldLike,
+  deriveParams, describeBlock, describeAll, conventions, pickBrief, producesDescOf,
+  type FieldLike,
 } from '../engine/blockApi';
 
 /**
@@ -114,4 +115,36 @@ test('deriveParams 与文档生成器共用逻辑（改一处两边同时生效�
   assert.equal(rows.length, 2);
   assert.equal(rows.find((r) => r.key === 'a')?.label, '甲');
   assert.equal(rows.find((r) => r.key === 'b')?.label, null);
+});
+
+/* ================= 一句话说明 ================= */
+
+/*
+ * 侧栏那行短说明与展开块顶行**必须取同一句**。
+ *
+ * 两处各排各的序时，同一个节点点开与不点开会看到两句话 ——
+ * 两句都没错，错的是排了两处。
+ */
+test('pickBrief：预设说明 > 用途 > 产出', () => {
+  assert.equal(pickBrief({ hint: '自定义 · 基于任务', sub: '用途', produces: '产出' }), '自定义 · 基于任务');
+  assert.equal(pickBrief({ hint: '', sub: '用途', produces: '产出' }), '用途');
+  // 产出只作兜底：没写用途时总比整行空白好
+  assert.equal(pickBrief({ hint: '', sub: '', produces: '产出' }), '产出');
+  assert.equal(pickBrief({}), '');
+});
+
+test('pickBrief：空白串不算有值（不会顶掉后面的来源）', () => {
+  /*
+   * 用 || 而不是 ?? 的理由就在这里：
+   * 空串当"有值"的话，一个空 hint 会把整行说明变成空白，
+   * 而界面上看不出是没写还是写空了。
+   */
+  assert.equal(pickBrief({ hint: '   ', sub: '用途' }), '用途');
+});
+
+test('产出说明取得到（fallback 用）', () => {
+  assert.equal(producesDescOf('canvasIn'), '外部传进来的内容（原样透传）');
+  // 未知 kind 给空串，不能抛
+  assert.equal(producesDescOf('nope'), '');
+  assert.equal(producesDescOf(undefined), '');
 });

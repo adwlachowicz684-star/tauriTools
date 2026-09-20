@@ -2695,6 +2695,14 @@ input.mono, textarea.mono {
 }
 .nd-port-k { font-size: var(--fs-10, 10px); color: var(--af-dim); flex: none; }
 
+/*
+ * 产出说明独占一行。
+ *
+ * 以前它顶在第一行当"节点说明"用，于是「循环」的说明写着
+ * "透传（循环体每轮一次…）"——那是产出，不是用途。
+ * 现在用途归用途（顶行 sub），产出归产出（这一行）。
+ */
+.nd-out { font-size: var(--fs-11, 11px); color: var(--af-dim); margin-top: 2px; }
 .nd-req { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .nd-cap {
   font-size: var(--fs-10, 10px); padding: 0 6px; border-radius: var(--r-pill, 999px);

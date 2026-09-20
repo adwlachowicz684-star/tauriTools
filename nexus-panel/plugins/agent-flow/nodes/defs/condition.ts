@@ -12,6 +12,7 @@ registerNode({
     color: '#a855f7',
     category: 'flow',
     idPrefix: 'c',
+    sub: '按规则分流，从上往下命中第一条就走',
   },
   create: (id, partial) => makeConditionNode(id, (partial ?? {}) as never).data,
   Canvas: ConditionNode,

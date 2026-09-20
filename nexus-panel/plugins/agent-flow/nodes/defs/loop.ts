@@ -12,6 +12,7 @@ registerNode({
     color: '#f472b6',
     category: 'flow',
     idPrefix: 'lp',
+    sub: '把上游内容重复跑若干轮，或逐条跑',
   },
   create: (id, partial) => makeLoopNode(id, (partial ?? {}) as never).data,
   Canvas: LoopNode,

@@ -67,6 +67,7 @@ registerNode({
     color: '#34d399',
     category: 'external',
     idPrefix: 'gp',
+    sub: '把改动提交并推到远端分支',
   },
   create: (id, partial) => makeGithubPushNode(id, (partial ?? {}) as never).data,
   Canvas: GithubPushNode,
