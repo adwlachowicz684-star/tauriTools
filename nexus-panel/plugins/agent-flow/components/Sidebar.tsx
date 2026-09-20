@@ -63,23 +63,29 @@ type Props = {
  * 用户反而找不到别的分组。
  */
 function McpServerSection({
-  group, disabled, onDragStart, onItemClick, openKey,
+  group, disabled, onDragStart, onItemClick, openKey, showAllDesc,
 }: {
   group: { server: string; color: string; items: { key: string; label: string; hint?: string }[] };
   disabled?: boolean;
   onDragStart: (e: DragEvent, p: DragPayload) => void;
   onItemClick: (e: MouseEvent, p: { key: string }) => void;
   openKey: string | null;
+  /** 「显示说明」开着时，每个工具下面也铺一行说明 */
+  showAllDesc?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="mcp-sec">
       <button
         className="mcp-sec-title"
+        /*
+         * 左边条用服务色 —— 与这个服务的工具在画布上的卡片同色
+         * （都由 mcpColorOf(server) 得出），侧栏与画布因此能对上。
+         */
+        style={{ borderLeftColor: group.color }}
         onClick={() => setOpen(!open)}
         title="展开/收起这个服务的工具"
       >
-        <span className="side-dot" style={{ background: group.color }} />
         <span className="mcp-sec-name">{group.server}</span>
         <span className="mcp-sec-count">{group.items.length}</span>
         <span className="mcp-sec-arrow">{open ? '▾' : '▸'}</span>
@@ -92,6 +98,8 @@ function McpServerSection({
               <div key={it.key}>
                 <div
                   className={`side-item${isOpen ? ' is-open' : ''}`}
+                  /* 同一 server 的工具同色，与它们在画布上的卡片一致 */
+                  style={{ borderLeftColor: group.color }}
                   draggable={!disabled}
                   onDragStart={(e) => onDragStart(e, { kind: it.key })}
                   onClick={(e) => onItemClick(e, { key: it.key })}
@@ -104,6 +112,8 @@ function McpServerSection({
                     {it.hint || '这个工具没有额外说明'}
                     <span className="side-desc-add">按住 Ctrl / ⌘ 点击添加</span>
                   </div>
+                ) : showAllDesc && it.hint ? (
+                  <div className="side-desc-brief">{it.hint}</div>
                 ) : null}
               </div>
             );
@@ -153,6 +163,15 @@ export default function Sidebar({
    */
   const [tick, setTick] = useState(0);
   const refresh = () => setTick((t) => t + 1);
+
+  /*
+   * 「显示说明」：一次把每个节点下面那句说明都铺开，再点收起。
+   *
+   * 与 openKey（点单个条目展开完整说明）是**两个独立开关**：
+   * 前者是"整列速览"，后者是"看这一条的详情"。
+   * 合成一个的话，点开某一条就会把所有条都展开 —— 那不是用户要的。
+   */
+  const [showAllDesc, setShowAllDesc] = useState(false);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -245,6 +264,7 @@ export default function Sidebar({
             onDragStart={onDragStart}
             onItemClick={onItemClick}
             openKey={openKey}
+            showAllDesc={showAllDesc}
           />
         ))}
       </div>
@@ -269,13 +289,23 @@ export default function Sidebar({
         两处都能切同一件事会造成割裂：在一处切了，另一处状态不动，
         看起来像点了没反应。
       */}
-      <div className="side-head">节点库</div>
+      <div className="side-head">
+        节点库
+        <span className="side-head-spacer" />
+        <button
+          type="button"
+          className={'side-head-btn' + (showAllDesc ? ' is-on' : '')}
+          title={showAllDesc ? '收起所有节点的说明' : '在每个节点下面显示一句说明'}
+          onClick={() => setShowAllDesc((v) => !v)}
+        >
+          {showAllDesc ? '隐藏说明' : '显示说明'}
+        </button>
+      </div>
       <div className="side-hint">
         拖到画布添加；点击展开说明，按住 Ctrl / ⌘ 点击直接添加
       </div>
 
         {groups.map((g) => {
-        const def = getDef(g.presets[0].type);
         const isCustom = g.category === 'custom';
         /*
          * MCP 组单独渲染：一工具一节点会让条目数直接等于工具总数，
@@ -309,18 +339,32 @@ export default function Sidebar({
 
             {g.presets.map((p) => {
               const open = openKey === p.key;
-              // 说明优先用预设自带的 hint，没有则退回节点定义里的 sub
-              const desc = p.hint ?? def.meta.sub ?? '';
+              /*
+               * 说明优先用预设自带的 hint，没有则退回节点定义里的 sub。
+               *
+               * 这里必须用 **p.type 自己** 的 def：
+               * 以前写的是 def（= g.presets[0].type，分组第一条的），
+               * 于是同组里没有 hint 的预设会显示**别的节点**的说明 ——
+               * 说明张冠李戴，而它看起来完全正常，是最难发现的那一类。
+               */
+              const pSub = getDef(p.type).meta.sub;
+              const desc = p.hint ?? pSub ?? '';
               return (
                 <div key={p.key}>
                   <div
                     className={`side-item${open ? ' is-open' : ''}`}
+                    /*
+                     * 类型色走左边条，与画布上的节点卡片同一套视觉语言。
+                     * 以前这里是一个彩色圆球（.side-dot）——
+                     * 圆球与边条指同一件事，两套语言并存会让人
+                     * "看颜色认类型"的本能失效，得先在脑子里换算一次。
+                     */
+                    style={{ borderLeftColor: p.color }}
                     draggable={!disabled}
                     onDragStart={(e) => onDragStart(e, { kind: p.key })}
                     onClick={(e) => onItemClick(e, p)}
                     title={disabled ? '运行中不可添加' : '点击展开说明；按住 Ctrl / ⌘ 点击直接添加；也可拖到画布'}
                   >
-                    <span className="side-dot" style={{ background: p.color }} />
                     <span className="side-label">{p.label}</span>
                     {isCustom ? (
                       <span className="side-ops">
@@ -357,13 +401,20 @@ export default function Sidebar({
                    * 这三样数据契约里都有，只是没接到界面上 —— NodeDesc 负责接。
                    */}
                   {open ? (
-                    <NodeDesc presetKey={p.key} type={p.type} hint={desc} sub={def.meta.sub} />
+                    <NodeDesc presetKey={p.key} type={p.type} hint={desc} sub={pSub} />
+                  ) : null}
+                  {/*
+                   * 「显示说明」开着时铺一行。
+                   *
+                   * 只在这一条**没被点开**时铺 ——
+                   * 点开的那条已经有 NodeDesc 完整版了，再叠一行就是重复。
+                   */}
+                  {!open && showAllDesc && desc ? (
+                    <div className="side-desc-brief" title={desc}>{desc}</div>
                   ) : null}
                 </div>
               );
             })}
-
-            {def.meta.sub && !isCustom ? <div className="side-sub">{def.meta.sub}</div> : null}
           </div>
         );
       })}

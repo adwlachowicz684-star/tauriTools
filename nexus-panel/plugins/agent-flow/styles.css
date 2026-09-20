@@ -803,7 +803,39 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   background: var(--af-bg);
   display: flex; flex-direction: column; overflow-y: auto; padding: 12px 10px;
 }
-.side-head { font-size: var(--title-1-fs, 13px); font-weight: var(--title-1-fw); color: var(--af-fg); margin-bottom: 2px; }
+/*
+ * 标题行右侧要放「显示说明」按钮，所以改成 flex。
+ * 只有节点库这一处用到，不会被别处的布局影响。
+ */
+.side-head {
+  display: flex; align-items: center; gap: 8px;
+  font-size: var(--title-1-fs, 13px); font-weight: var(--title-1-fw); color: var(--af-fg); margin-bottom: 2px;
+}
+.side-head-spacer { flex: 1 1 auto; }
+.side-head-btn {
+  flex: none; border: 1px solid var(--af-line); background: none; color: var(--af-dim);
+  font-size: var(--fs-11, 11px); padding: 1px 7px; border-radius: var(--r-pill, 999px);
+  cursor: pointer; font-weight: normal;
+}
+.side-head-btn:hover { color: var(--af-fg); border-color: var(--af-accent); }
+/* 开着时用实色底，一眼看出这个开关是开着的 */
+.side-head-btn.is-on {
+  color: var(--af-fg); border-color: var(--af-accent); background: var(--af-raised);
+}
+
+/*
+ * 「显示说明」打开时，每个节点下面那行说明。
+ *
+ * 刻意比 .side-desc（点单项展开那个）**更轻**：
+ * 没有左边条也没有背景，只是一行小灰字。
+ * 因为这是"全部展开"的态 —— 几十条节点一起铺开时，
+ * 每条都带左边条和色块会非常吵，反而看不清列表结构。
+ */
+.side-desc-brief {
+  font-size: var(--fs-11, 11px); line-height: 1.5; color: var(--af-mute);
+  padding: 0 9px 5px 9px; margin: -1px 0 5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .side-hint { font-size: var(--fs-11, 11px); color: var(--af-dim); margin-bottom: 12px; line-height: 1.5; }
 .side-hint.warn { color: var(--af-t-warn); margin-top: 10px; }
 .side-group { margin-bottom: 14px; }
