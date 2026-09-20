@@ -2140,13 +2140,16 @@ function reportSkipped(
 
       setNodes((ns) => {
         /*
-         * 反向吸附要动的是**别人**：把它（和它的整串）挪到被拖节点下面。
-         * 被拖节点自己停在用户放的位置，不动。
+         * 反向吸附：动的是**被拖节点自己**（往上靠到对方上边缘），
+         * 对方原地不动，只改 stackParent —— 所以 moves 恒为空。
          */
-        const moves = plan.attach
+        const moves = plan.attach?.moves?.length
           ? new Map(plan.attach.moves.map((m) => [m.id, m.position]))
           : null;
-        const attachParent = plan.attach?.childId ?? null;
+        /** 反向吸附时要改 stackParent 的那个节点（对方） */
+        const attachChild = plan.attach?.childId ?? null;
+        /** 它挂在谁下面 —— 被拖节点有串时是串尾 */
+        const attachParent = plan.attach?.parentId ?? null;
         /*
          * 位移类落位（吸附 / 归位）时下级跟随的新位置。
          * 少了它：挪动串中间的一环，只有它自己归位，
@@ -2159,16 +2162,18 @@ function reportSkipped(
         return ns.map((n) => {
           const isDragged = n.id === node.id;
           const at = moves?.get(n.id) ?? follow?.get(n.id);
-          if (!isDragged && !at) return n;
+          const isAttachChild = attachChild === n.id;
+          if (!isDragged && !at && !isAttachChild) return n;
 
           const data = { ...(n.data as object) } as Record<string, unknown>;
           /*
            * 覆盖式写入，不会出现"一个节点有两个上级"。
-           * 反向吸附时被拖节点是**父**，自己不动 stackParent，
+           * 反向吸附时被拖节点（或它的串尾）是**父**，自己不动 stackParent，
            * 只把对方改成指向自己。
            */
           if (isDragged && plan.stackParent !== undefined) data.stackParent = plan.stackParent;
-          if (at && attachParent === n.id) data.stackParent = node.id;
+          // 对方不动位置，所以不能挂靠在 `at` 上 —— 它恒为空
+          if (isAttachChild && attachParent) data.stackParent = attachParent;
 
           return {
             ...n,
@@ -2201,11 +2206,11 @@ function reportSkipped(
          * 没有提示的话用户会以为只是自己挪了个位置。
          */
         const verdict = canConnect(
-          specOf(kindOfNode(nodes, node.id)),
+          specOf(kindOfNode(nodes, plan.attach.parentId)),
           specOf(kindOfNode(nodes, plan.attach.childId)),
         );
         if (verdict.reason) pushLog(`⚠ ${verdict.reason}`);
-        else pushLog(`⇲ 已把 ${plan.attach.childId} 嵌到自己下方（拖动它会带着整串走）`);
+        else pushLog(`⇲ 已嵌合到 ${plan.attach.childId} 上方（拖动它会带着整串走）`);
       }
     },
     [nodes, setNodes, pushLog, kindOfNode],

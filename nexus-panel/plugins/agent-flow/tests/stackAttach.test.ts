@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  planStackDrop, findStackChild, snapPosOf, heightOf, widthOf, descendantsOf,
+  planStackDrop, findStackChild, heightOf, widthOf, descendantsOf,
 } from '../engine/stack';
 
 /**
@@ -13,6 +13,14 @@ import {
  * 于是只有"把 A 拖到 B 下方"才嵌合；
  * 用户把 A 拖到 B **上方**时不生效 ——
  * 从他的视角看两块是上下贴着的，功能却像坏了。
+ *
+ * ================= 谁动（后补的一条） ====================
+ *
+ * 第一版做反了：把**对方**拖到被拖节点下面。
+ * 用户拖 A 到 B 上方，看到的却是 B 跳到 A 下面 —— 动的是他没碰的那个。
+ *
+ * 嵌合的语义是"被拖的节点去靠别人"，所以现在移动的是**被拖节点自己**：
+ * 它往上靠，贴到对方上边缘，对方原地不动、只改 stackParent。
  */
 
 type N = {
@@ -33,7 +41,7 @@ function n(id: string, x: number, y: number, parent?: string): N {
 }
 
 /** 拖 A 到 B 正上方：A 底边离 B 顶边 GAP 以内 */
-test('拖到别人上方 → 对方挂到自己下面', () => {
+test('拖到别人上方 → 自己往上靠，对方不动', () => {
   const A = n('A', 0, 0);            // 被拖动：放在 y=0
   const B = n('B', 0, H + 10);       // 静止：顶边在 A 底边下方 10px
   const plan = planStackDrop([A, B], A, {
@@ -41,29 +49,56 @@ test('拖到别人上方 → 对方挂到自己下面', () => {
   });
   assert.ok(plan.attach, '应当反向吸附');
   assert.equal(plan.attach!.childId, 'B');
-  // B 要对齐 A 的左边缘、贴在 A 下方
-  assert.deepEqual(
-    plan.attach!.moves[0],
-    { id: 'B', position: snapPosOf(A) },
-  );
+  assert.equal(plan.attach!.parentId, 'A');
+
+  // 动的是 A：往下挪 10px，底边正好贴上 B 的顶边
+  assert.deepEqual(plan.position, { x: 0, y: 10 });
+  assert.equal(B.position.y, H + 10, 'B 原地不动');
+  assert.equal(plan.attach!.moves?.length ?? 0, 0, '对方不产生位移');
 });
 
-test('反向吸附带整串平移 —— 少了会把串拆散', () => {
+test('反向吸附时串尾去贴对方 —— 不是被拖节点自己', () => {
   /*
-   * B 下面挂着 C。只挪 B 的话，C 留在原地，
-   * 中间空出一大截，看着像串散了而关系还在。
+   * A 下面挂着 C（A→C）。把 A 拖到 B 上方时，
+   * 真正要贴到 B 上边缘的是 **C** 的底边。
+   * 按 A 的底边算，C 会被压在 B 身上，两块叠在一起。
    */
   const A = n('A', 0, 0);
-  const B = n('B', 0, H + 10);
-  const C = n('C', 0, H + 10 + H, 'B');
-  const plan = planStackDrop([A, B, C], A, {
-    oldParent: null, moved: true, exclude: new Set(['A']),
+  const C = n('C', 0, H, 'A');        // 串尾：底边在 152
+  const B = n('B', 0, H + H + 10);    // 顶边 162，离串尾底边 10px
+  const plan = planStackDrop([A, C, B], A, {
+    oldParent: null, moved: true, exclude: new Set(['A', 'C']),
+  });
+  assert.ok(plan.attach, '按串尾底边判定，应当吸上');
+  assert.equal(plan.attach!.childId, 'B');
+  assert.equal(plan.attach!.parentId, 'C', '挂到串尾下面，不是挂到 A 下面');
+
+  assert.deepEqual(plan.position, { x: 0, y: 10 }, 'A 下移 10，让串尾贴上 B');
+  const follow = new Map((plan.followers ?? []).map((m) => [m.id, m.position]));
+  assert.deepEqual(follow.get('C'), { x: 0, y: H + 10 }, 'C 跟着平移');
+  assert.equal(H + 10 + H, B.position.y, '串尾底边与 B 顶边相接');
+});
+
+test('反向吸附时被拖节点的整串跟着平移 —— 少了会散', () => {
+  /*
+   * A 下面挂着 C。只挪 A 的话 C 留在原地，中间空一大截，
+   * 看着像串散了而关系还在。
+   */
+  const A = n('A', 0, 0);
+  const C = n('C', 0, H, 'A');
+  const D = n('D', 0, H * 2, 'C');         // 串尾：底边 228
+  const B = n('B', 0, H * 3 + 10);         // 顶边 238，离串尾底边 10px
+  const plan = planStackDrop([A, C, D, B], A, {
+    oldParent: null, moved: true, exclude: new Set(['A', 'C', 'D']),
   });
   assert.ok(plan.attach);
-  const moves = new Map(plan.attach!.moves.map((m) => [m.id, m.position]));
-  assert.equal(moves.size, 2, 'B 和 C 都要动');
-  const gap = moves.get('C')!.y - moves.get('B')!.y;
-  assert.equal(gap, H, '平移后 B、C 的相对位置不变');
+  assert.equal(plan.attach!.parentId, 'D', '挂在串尾 D 下面');
+  const follow = new Map((plan.followers ?? []).map((m) => [m.id, m.position]));
+  assert.equal(follow.size, 2, 'C、D 都要跟着动');
+  assert.deepEqual(plan.position, { x: 0, y: 10 });
+  assert.deepEqual(follow.get('C'), { x: 0, y: H + 10 });
+  assert.deepEqual(follow.get('D'), { x: 0, y: H * 2 + 10 });
+  assert.equal(H * 3 + 10, B.position.y, '串尾底边贴上 B 顶边');
 });
 
 test('已经挂在自己下面的不重挂', () => {

@@ -110,6 +110,26 @@ export function descendantsOf(nodes: AnyNode[], id: string): string[] {
  * 返回 Set 而不是给每个节点打标记：调用方（App 渲染时）拿着它
  * 决定要不要给某个节点加类名，不需要改动 nodes 数组本身。
  */
+/**
+ * 一串的最下面那块。
+ *
+ * 反向吸附要用它：被拖节点下面本来就挂着块时（A→B），
+ * 真正要贴到对方上边缘的是 **B** 的底边，不是 A 的。
+ * 按 A 算会把 B 压在对方身上。
+ */
+export function stackTailOf(nodes: AnyNode[], id: string): string {
+  let cur = id;
+  const seen = new Set<string>([id]);
+  for (;;) {
+    const kids = childrenOf(nodes, cur);
+    if (kids.length === 0) return cur;
+    // 下面并排挂两块时取第一个；万一成环就地停下
+    if (seen.has(kids[0])) return cur;
+    seen.add(kids[0]);
+    cur = kids[0];
+  }
+}
+
 export function stackParentIds(nodes: AnyNode[]): string[] {
   const ids = new Set(nodes.map((n) => n.id));
   const out: string[] = [];
@@ -279,7 +299,15 @@ export function findStackChild(
   const dw = widthOf(dragged);
   const dx1 = posOf(dragged).x;
   const dx2 = dx1 + dw;
-  const bottom = posOf(dragged).y + heightOf(dragged);
+  /*
+   * 用**串尾**的底边，不是被拖节点自己的底边。
+   *
+   * 拖一整串（A→C）时，视觉上靠近对方的那个边是 C 的下边缘 ——
+   * 按 A 的底边判定的话，串越长越吸不上（A 的底边离对方还差一整块的高度），
+   * 表现为"明明贴得很近却没反应"。
+   */
+  const tail = nodes.find((n) => n.id === stackTailOf(nodes, dragged.id)) ?? dragged;
+  const bottom = posOf(tail).y + heightOf(tail);
 
   /*
    * 祖先必须排除：把祖先挂到自己下面会成环。
@@ -343,13 +371,31 @@ export type StackDropPlan = {
   /** 显式给 null 表示解除嵌合 */
   stackParent?: string | null;
   /**
-   * **反向**吸附：把别的节点挂到被拖节点**下面**。
+   * **反向**吸附（拖到别人上方）：把对方挂到自己**下面**。
    *
-   * moves[0] 是直接子节点（要改 stackParent 的那个），
-   * 其余是它原来的下级 —— 整串跟着平移，否则串会被拆散
-   * （父挪走了、子还在原地，中间空一大截）。
+   * ================= 谁动 =================
+   *
+   * 移动的是**被拖节点自己** —— 它往上靠，贴到对方上边缘。
+   *
+   * 以前是反过来：把对方（和它的整串）拖到被拖节点下面。
+   * 用户拖 A 到 B 上方，看到的却是**B 跳到 A 下面** ——
+   * 动的是他没碰的那个，很反直觉。
+   * 嵌合的语义是"被拖的节点去靠别人"，不该让别人来靠它。
+   *
+   * 所以 moves 恒为空：对方原地不动，只改 stackParent。
    */
-  attach?: { childId: string; moves: { id: string; position: { x: number; y: number } }[] };
+  attach?: {
+    /** 要挂上去的那个节点 —— 改的是它自己的 stackParent */
+    childId: string;
+    /**
+     * 挂在谁下面。
+     *
+     * 通常是被拖节点自己，但它下面本来就挂着块时（A→B）是**串尾 B** ——
+     * 写成 A 的话 A、B、对方三块会在同一个位置叠起来。
+     */
+    parentId: string;
+    moves?: { id: string; position: { x: number; y: number } }[];
+  };
 };
 
 /**
@@ -369,7 +415,7 @@ export type StackDropPlan = {
  * ================= 优先级 =================
  *
  *   1. 下方命中 → 自己嵌到它下面（拖到别人下方）
- *   2. 上方命中 → 把它挂到自己下面（拖到别人上方，反向吸附）
+ *   2. 上方命中 → **自己**靠上去，对方挂到自己下面（反向吸附）
  *   3. 拖开了且都没命中 → 解除
  *   4. 没拖开但没命中（横向挪了点，重叠不够）→ 归位，关系不变
  */
@@ -399,21 +445,31 @@ export function planStackDrop(
    */
   if (moved) {
     const child = findStackChild(all, dragged, opts.exclude);
-    // 本来就已经挂在自己下面的不必重挂
-    if (child && parentIdOf(all.find((n) => n.id === child.parentId) ?? ({ id: '' } as AnyNode)) !== dragged.id) {
-      const target = all.find((n) => n.id === child.parentId)!;
-      const to = snapPosOf(dragged);
-      const dx = to.x - posOf(target).x;
-      const dy = to.y - posOf(target).y;
-      const moves = [
-        { id: target.id, position: to },
-        // 整串跟随平移 —— 少了这段，父挪走了子还在原地，串会散
-        ...descendantsOf(all, target.id).map((id) => {
-          const n = all.find((m) => m.id === id)!;
-          return { id, position: { x: posOf(n).x + dx, y: posOf(n).y + dy } };
-        }),
-      ];
-      return { attach: { childId: target.id, moves } };
+    const target = child ? all.find((n) => n.id === child.parentId) : null;
+    /*
+     * 挂到**串尾**下面，而不是被拖节点自己下面：
+     * 被拖节点下方本来就挂着块（A→B）时，接上去的应该是 B 的下级。
+     */
+    const tail = all.find((n) => n.id === stackTailOf(all, dragged.id)) ?? dragged;
+    // 本来就已经挂在串尾下面的不必重挂
+    if (target && parentIdOf(target) !== tail.id) {
+      /*
+       * 被拖节点（连同它下方整串）**往上靠**，让串尾贴住对方上边缘。
+       *
+       * 用**串尾**而不是被拖节点自己的底边：
+       * 被拖节点下面本来就挂着块（A→B）时，真正要贴上去的是 B 的底边；
+       * 按 A 的底边算会把 B 压在对方身上，两块叠在一起。
+       */
+      const bottom = posOf(tail).y + heightOf(tail);
+      const dy = posOf(target).y - (bottom + STACK_GAP);
+      const to = { x: posOf(target).x, y: posOf(dragged).y + dy };
+
+      return {
+        position: to,
+        // 整串跟随平移 —— 少了这段，自己挪走了下级还在原地，串会散
+        followers: followersFor(all, dragged.id, posOf(dragged), to),
+        attach: { childId: target.id, parentId: tail.id, moves: [] },
+      };
     }
   }
 

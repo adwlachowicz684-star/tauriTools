@@ -306,3 +306,27 @@ test('运行时地址与密钥优先取自凭据', () => {
     assert.match(src, /findCredential\(/, `${f} 要按 credentialId 找凭据`);
   }
 });
+
+/* ================= 反向吸附：动的是被拖节点 ================= */
+
+/*
+ * 反向吸附（拖 A 到 B 上方）第一版做反了：
+ * 把**对方 B**（和它的整串）挪到 A 下面。
+ * 用户拖 A，看到的却是 B 跳走 —— 动的是他没碰的那个。
+ *
+ * 现在移动的是被拖节点自己，对方原地不动、只改 stackParent。
+ * 这条守卫盯住消费端不把 stackParent 的写入挂在"有没有位移"上 ——
+ * 对方没有位移，挂上去就永远写不进去，表现为"看着嵌上了但没连"。
+ */
+test('反向吸附时对方的 stackParent 不受"有没有位移"影响', () => {
+  const src = read(path.join(ROOT, 'App.tsx'));
+  assert.ok(
+    /if \(isAttachChild && attachParent\) data\.stackParent = attachParent;/.test(src),
+    'App.tsx 必须无条件给反向吸附的对方写 stackParent（不能包在 `at &&` 里）',
+  );
+  // 反向分支不得再给对方生成位移
+  assert.ok(
+    !/attach:\s*\{\s*childId:[^}]*moves:\s*\[[^\]]+\]/.test(read(path.join(ROOT, 'engine', 'stack.ts'))),
+    'engine/stack.ts 的反向吸附不得再给对方生成 moves',
+  );
+});
