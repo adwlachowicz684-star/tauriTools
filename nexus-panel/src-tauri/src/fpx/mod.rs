@@ -2024,6 +2024,9 @@ where
                 path: l.path.clone(),
                 deny_delete: l.deny_delete,
                 deny_write: l.deny_write,
+                /* 账面固定是**登记性**字段（不落系统权限），摘锁/回滚都碰不到它，
+                   必须原样带过来 —— 丢了等于把用户标记的"这个目录别乱动"抹掉。 */
+                account_only: l.account_only,
             }),
             Err(e) => {
                 // 摘不下来：把已经摘掉的先恢复回去，再让写入按原状尝试 ——

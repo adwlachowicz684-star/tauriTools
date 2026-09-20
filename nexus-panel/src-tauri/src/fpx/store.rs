@@ -7,7 +7,7 @@ use std::sync::Mutex;
 
 use tauri::{AppHandle, Manager};
 
-use super::model::{FpxConfig, LinkRecord, LinkRow, TabInfo, CardInfo, LinkDetail};
+use super::model::{CURRENT_SCHEMA, FpxConfig, LinkRecord, LinkRow, TabInfo, CardInfo, LinkDetail};
 
 /// 数据目录缓存：插件子目录 <appDataDir>/project-group
 pub struct FpxState {
@@ -327,7 +327,9 @@ pub fn unknown_config_keys(raw: &serde_json::Value) -> Vec<String> {
 /// 不用再去每个读配置的地方补丁。
 pub fn migrate_config(cfg: &mut FpxConfig) -> Vec<String> {
     let mut done: Vec<String> = Vec::new();
-    while cfg.schema_version < model::CURRENT_SCHEMA {
+    /* 直接写 CURRENT_SCHEMA：本文件的 use 里带的就是 super::model 下的名字，
+       加 `model::` 前缀会找不到模块（model 没被引入作用域）。 */
+    while cfg.schema_version < CURRENT_SCHEMA {
         let from = cfg.schema_version;
         match from {
             // v1 → v2：只打版本标记。此前所有字段都带着 #[serde(default)]，
