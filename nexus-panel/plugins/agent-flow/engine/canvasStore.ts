@@ -208,18 +208,19 @@ export function sortForDisplay(list: Canvas[]): Canvas[] {
 const STORAGE_KEY = 'agent-flow.canvases.v1';
 const ACTIVE_KEY = 'agent-flow.activeCanvas.v1';
 
-/**
- * 密钥单独存放的键。
+/*
+ * ⚠️ 密钥**不再单独落盘**（原 `agent-flow.llm-keys.v1` 保险箱已移除）。
  *
- * LLM 的 apiKey 不随画布走：画布会被导出成 agent-flow.json 分享给别人，
- * 一旦带进去就是把密钥交出去了。所以 apiKey 存这里（按节点 id 索引），
- * 画布里只留空字符串，刷新后由调用方回填 —— 既不用每次重填，也导不出去。
+ * 原先的做法：把节点上内联填的 apiKey / token 挖出来加密存一份，刷新后回填。
+ * 那条路的问题是加密用的盐与本机特征都在本机，拿到整个数据目录的人
+ * 照样能复现钥匙 —— 是"抬成本"不是"上锁"。
  *
- * 这里存的是**密文**：加解密在 engine/secretVault.ts。
- * 本模块只负责"挖出来 / 填回去"，不碰加密细节，
- * 这样它可以继续当纯同步逻辑来单测。
+ * 现在统一走**凭据中心**：节点只存 credentialId 引用，密钥本体由凭据库保管，
+ * 可选 OS 凭据管理器 / 本机加密 / 口令模式三种，其中口令模式的钥匙不落盘。
+ *
+ * 节点上内联填写的字段仍然保留（兼容旧画布），但**只活在内存里** ——
+ * redactSecrets 保证它既不写进画布存档、也不随导出走，刷新后为空。
  */
-const KEYS_KEY = 'agent-flow.llm-keys.v1';
 
 export type PersistedState = {
   canvases: Canvas[];
@@ -283,11 +284,6 @@ function pathSet(
   };
 }
 
-/** 节点 id + 字段名 → 保险箱里的键。带上字段名，回填时才知道该写回哪个字段 */
-function vaultKey(nodeId: string, field: SecretField): string {
-  return `${nodeId}#${field}`;
-}
-
 /** 取节点上某个密钥字段的值；不存在或不是字符串则返回 null */
 function getSecretField(data: Record<string, unknown>, field: SecretField): string | null {
   return pathGet(data, field);
@@ -299,15 +295,6 @@ function blankSecretField(
   field: SecretField,
 ): Record<string, unknown> {
   return pathSet(data, field, '');
-}
-
-/** 把某个密钥字段写成指定值，返回新的 data */
-function setSecretField(
-  data: Record<string, unknown>,
-  field: SecretField,
-  value: string,
-): Record<string, unknown> {
-  return pathSet(data, field, value);
 }
 
 /**
@@ -374,58 +361,6 @@ export function redactSecrets(state: PersistedState): PersistedState {
             },
           }
         : {}),
-    })),
-  };
-}
-
-/**
- * 收集所有节点上的密钥，按「节点 id + 字段名」索引。
- *
- * 只收集当前存在的节点，等于顺手清掉了已删节点的残留。
- */
-export function collectSecrets(state: PersistedState): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const c of state.canvases ?? []) {
-    for (const n of c.nodes ?? []) {
-      if (!n || typeof n !== 'object') continue;
-      const o = n as Record<string, unknown>;
-      if (typeof o.id !== 'string') continue;
-      const d = o.data as Record<string, unknown> | undefined;
-      if (!d || typeof d !== 'object') continue;
-      for (const f of SECRET_FIELDS) {
-        const v = getSecretField(d, f);
-        if (v !== null) out[vaultKey(o.id, f)] = v;
-      }
-    }
-  }
-  return out;
-}
-
-/** 把密钥回填到节点上。找不到对应密钥的节点保持空字符串，不报错。 */
-export function applySecrets(
-  state: PersistedState,
-  keys: Record<string, string>,
-): PersistedState {
-  if (!keys || Object.keys(keys).length === 0) return state;
-  return {
-    ...state,
-    canvases: (state.canvases ?? []).map((c) => ({
-      ...c,
-      nodes: (c.nodes ?? []).map((n) => {
-        if (!n || typeof n !== 'object') return n;
-        const o = n as Record<string, unknown>;
-        if (typeof o.id !== 'string') return n;
-        const d = o.data as Record<string, unknown> | undefined;
-        if (!d || typeof d !== 'object') return n;
-
-        let next = d;
-        for (const f of SECRET_FIELDS) {
-          const v = keys[vaultKey(o.id, f)];
-          if (typeof v === 'string' && v !== '') next = setSecretField(next, f, v);
-        }
-        if (next === d) return n;
-        return { ...o, data: next };
-      }),
     })),
   };
 }
@@ -504,9 +439,10 @@ export function deserialize(raw: string | null): PersistedState {
 /**
  * 读取：只管画布（已脱敏）。
  *
- * 密钥不在这里回填 —— 它是密文，解不开要提示用户而不是静默返回空，
- * 那是异步的事，交给调用方（App）用 secretVault 处理。
- * 旧版本存在画布里的明文 apiKey 不受影响：applySecrets 从不删已有值。
+ * 密钥不在这里回填 —— 内联填写的密钥只活在内存里，刷新后为空。
+ * 要跨会话保留，请在凭据中心建条目、节点里填 credentialId 引用。
+ *
+ * 旧画布里残留的明文 apiKey 不受影响：这里只做脱敏，不删已有值。
  */
 export function loadFromStorage(
   get: (k: string) => string | null,
@@ -517,8 +453,7 @@ export function loadFromStorage(
 /**
  * 保存画布。
  *
- * 刻意**不碰** KEYS_KEY：密钥的写入走 secretVault 加密后单独落盘，
- * 在这一行里顺手写会把密文覆盖成明文，等于白加密。
+ * 只写画布与当前激活 id。密钥一律不落盘（见本文件顶部说明）。
  */
 export function saveToStorage(
   set: (k: string, v: string) => void,
@@ -528,15 +463,9 @@ export function saveToStorage(
   if (state.activeId) set(ACTIVE_KEY, state.activeId);
 }
 
-/** 清空密钥保险箱（用户选了"不保存密钥"时调用） */
-export function clearSecrets(remove: (k: string) => void): void {
-  remove(KEYS_KEY);
-}
-
 export const STORAGE_KEYS = {
   canvases: STORAGE_KEY,
   active: ACTIVE_KEY,
-  secrets: KEYS_KEY,
 };
 
 /**

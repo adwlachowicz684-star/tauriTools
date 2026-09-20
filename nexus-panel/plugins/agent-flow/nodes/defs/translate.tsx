@@ -18,12 +18,9 @@ const fields: FieldDef[] = [
     spec: { keys: ['sourceLang', 'targetLang', 'credentialId'], kind: 'text' },
     render: (p) => (
       <LlmConfigPanel
-        nodeId={p.node.id}
         cfg={p.d.llm as never}
-        onChange={(id, patch) => p.patch(patch)}
+        onChange={p.patch}
         needVision={false}
-        secretPolicy={p.secretPolicy}
-        onChangeSecretPolicy={p.onChangeSecretPolicy}
       />
     ),
   },

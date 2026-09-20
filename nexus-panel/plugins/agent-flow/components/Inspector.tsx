@@ -1,6 +1,5 @@
 import type { FlowEdge, FlowNode } from '../flowTypes';
 import type { Credential } from '../engine/credentials';
-import type { SecretPolicy } from '../types';
 import { getDef } from '../nodes/registry';
 import { inspectorOf } from './inspectors/inspectorOf';
 import { NODE_SIZE_META, normalizeSize, type NodeSize } from '../types';
@@ -31,8 +30,6 @@ type Props = {
   /** 打开凭据中心，并聚焦到指定类型 */
   onOpenCredentials?: (kind: string) => void;
   /** 内联密钥的落盘策略 */
-  secretPolicy?: SecretPolicy;
-  onChangeSecretPolicy?: (p: SecretPolicy) => void;
   /** 后端为「未填 Token」的 webhook 触发器自动生成的校验 Token，按触发器 id 索引 */
   webhookTokens?: Record<string, string>;
   /**
@@ -66,7 +63,7 @@ type Props = {
 
 export default function Inspector({
   node, edges, onChange, credentials, onOpenCredentials, webhookTokens,
-  secretPolicy, onChangeSecretPolicy, onEditModule, onNote,
+  onEditModule, onNote,
   canvasConfig, onCanvasConfigChange, onExportFlow,
   exportDir = '', onChangeExportDir, onBrowseExportDir, canExportToFile = false,
   canvases, activeCanvasId,
@@ -260,8 +257,6 @@ export default function Inspector({
       onChange={onChange}
       credentials={credentials}
       onOpenCredentials={onOpenCredentials}
-      secretPolicy={secretPolicy}
-      onChangeSecretPolicy={onChangeSecretPolicy}
         webhookTokens={webhookTokens}
         canvases={canvases}
         activeCanvasId={activeCanvasId}

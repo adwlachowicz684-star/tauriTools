@@ -3,7 +3,6 @@ import { getDef } from '../../nodes';
 import { allPresets } from '../../nodes/registry';
 import type { FlowNode, FlowEdge } from '../../flowTypes';
 import type { Credential } from '../../engine/credentials';
-import type { SecretPolicy } from '../../types';
 // 从 engine/files 直接拿，不绕 shared：shared 只是转手 import 进来用，
 // 并没有再导出，硬要从它拿就得让它多导出一次，平白加一层耦合
 import { FILE_FIELD_HINT } from '../../engine/files';
@@ -66,8 +65,6 @@ export type FieldRenderProps = {
   upstream: string[];
   credentials?: Credential[];
   onOpenCredentials?: (kind: string) => void;
-  secretPolicy?: SecretPolicy;
-  onChangeSecretPolicy?: (p: SecretPolicy) => void;
   /**
    * 预设键。逐字段「设为默认」按它存 ——
    * 与整节点那个按钮同一套键，两边看到的默认值才是同一份。
@@ -540,15 +537,13 @@ function renderField(
  */
 export function BasicInspector({
   node, edges, onChange, credentials, onOpenCredentials,
-  secretPolicy, onChangeSecretPolicy, fields, footer, onEditModule, onNote,
+  fields, footer, onEditModule, onNote,
 }: {
   node: FlowNode;
   edges: FlowEdge[];
   onChange: (id: string, patch: Record<string, unknown>) => void;
   credentials?: Credential[];
   onOpenCredentials?: (kind: string) => void;
-  secretPolicy?: SecretPolicy;
-  onChangeSecretPolicy?: (p: SecretPolicy) => void;
   fields: FieldFactory;
   /** 追加在字段之后的自定义内容（如 OCR 的"测试"按钮） */
   footer?: (p: FieldRenderProps) => ReactNode;
@@ -600,8 +595,6 @@ export function BasicInspector({
     upstream,
     credentials,
     onOpenCredentials,
-    secretPolicy,
-    onChangeSecretPolicy,
     presetKey,
     onNote,
   };
@@ -700,8 +693,6 @@ type InspectorComponent = (props: {
   onChange: (id: string, patch: Record<string, unknown>) => void;
   credentials?: Credential[];
   onOpenCredentials?: (kind: string) => void;
-  secretPolicy?: SecretPolicy;
-  onChangeSecretPolicy?: (p: SecretPolicy) => void;
 }) => JSX.Element;
 
 const inspectorCache = new WeakMap<FieldFactory, Map<unknown, InspectorComponent>>();

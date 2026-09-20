@@ -36,7 +36,7 @@ import {
   parseStore, serializeStore, encryptStore, decryptStore, newDeviceSalt,
   collectDeviceSignals, defaultBackend, type StoredFile, type VaultMode,
 } from './engine/credentialStore';
-import { SECRET_POLICY_KEY, VAULT_MODE_META, type SecretPolicy } from './types';
+import { VAULT_MODE_META } from './types';
 import { checkChannel, type ChannelStatus } from './lib/channel';
 import { deviceSeed, clearKeyCache } from './engine/crypto';
 import {
@@ -118,14 +118,10 @@ import { listTools, transportOf, stdioSupported } from './engine/mcpClient';
 import {
   makeCanvas, nextCanvasName, renameCanvas, removeCanvas, nextActiveId,
   updateCanvasContent, updateCanvasConfig, canvasConfigOf, sortForDisplay, toMeta,
-  loadFromStorage, saveToStorage, clearSecrets,
-  collectSecrets, applySecrets, STORAGE_KEYS,
+  loadFromStorage, saveToStorage,
   type Canvas,
   redactNodes,
 } from './engine/canvasStore';
-import {
-  sealSecrets, unsealSecrets, type SecretMap,
-} from './engine/secretVault';
 import {
   parseKeywords, parseMessages, matchKeywords, takeNew, newSeenState,
   type SeenState, type KeywordHit,
@@ -441,8 +437,8 @@ export default function App() {
    * 加密一旦散落到各处，总会有人忘了调。                               *
    * ---------------------------------------------------------------- */
   const CRED_KEY = 'agent-flow.credentials.v1';
-  /** 保险箱自己的盐。与凭据库分开：两者解锁方式不同，混在一起分不清是谁解不开 */
-  const SECRETS_SALT_KEY = 'agent-flow.secrets-salt.v1';
+  /** 历史遗留的内联密钥存档键。不再写入，只在启动时清一次（见下方 effect） */
+  const LEGACY_KEYS_KEY = 'agent-flow.llm-keys.v1';
   const beRef = useRef(defaultBackend());
   const [store, setStore] = useState<StoredFile>(() => parseStore(localStorage.getItem(CRED_KEY)));
   const [credentials, setCredentials] = useState<Credential[]>([]);
@@ -941,153 +937,30 @@ export default function App() {
   }, [pushLog]);
 
   /* ---------------------------------------------------------------- */
-  /* 内联密钥的落盘（加密）                                            */
+  /* 内联密钥：不再落盘                                                */
   /*                                                                  */
-  /* 节点里手填的 apiKey 不在画布存档里（serialize 已脱敏），           */
-  /* 但要"刷新后还在"，所以单独存一份 —— 这一份必须是密文。            */
+  /* 原先这里有一整套"把节点手填的 apiKey 加密存本机、刷新后回填"的      */
+  /* 逻辑（engine/secretVault.ts + agent-flow.llm-keys.v1）。           */
+  /*                                                                  */
+  /* 它挡不住真正的威胁：加密用的盐与本机特征都在本机，拿到整个数据      */
+  /* 目录的人能复现钥匙 —— 是"抬成本"不是"上锁"。现在统一走凭据中心，   */
+  /* 节点只存 credentialId 引用，密钥由凭据库保管（可选 OS 凭据管理器、 */
+  /* 本机加密、口令模式三种，其中口令模式的钥匙不落盘）。                */
+  /*                                                                  */
+  /* 下面只做一件事：把历史上留下的那份存档**删掉**，不留残骸。          */
   /* ---------------------------------------------------------------- */
 
-  const [secretPolicy, setSecretPolicy] = useState<SecretPolicy>(() => {
+  const legacyKeysPurged = useRef(false);
+  useEffect(() => {
+    if (legacyKeysPurged.current) return;
+    legacyKeysPurged.current = true;
     try {
-      return localStorage.getItem(SECRET_POLICY_KEY) === 'session' ? 'session' : 'device';
-    } catch { return 'device'; }
-  });
-
-  const secretsSaltRef = useRef<string | null>(null);
-  const secretSaltInflight = useRef<Promise<string> | null>(null);
-
-  /**
-   * 定下保险箱用的盐。
-   *
-   * 与凭据库同理（见上面那段注释）：优先取 Rust 侧的盐，
-   * 但**已经存过盐的必须继续用旧的** —— 换盐等于把已存的密钥全锁死。
-   */
-  const resolveSecretSalt = useCallback(async (): Promise<string> => {
-    let legacy = '';
-    try { legacy = localStorage.getItem(SECRETS_SALT_KEY) ?? ''; } catch { legacy = ''; }
-    if (legacy) return legacy;              // 老用户：沿用，不换
-
-    const rust = await fetchDeviceSalt();
-    if (rust) return rust;                  // 新安装：盐不落 localStorage
-
-    // 拿不到 Rust 的盐：退回本地生成 + 落盘（与旧行为一致）
-    const be = defaultBackend();
-    const local = be ? newDeviceSalt(be) : 'no-crypto';
-    try { localStorage.setItem(SECRETS_SALT_KEY, local); } catch { /* 忽略 */ }
-    return local;
-  }, []);
-
-  /** 保险箱钥匙：本机特征派生，与凭据库的口令互不牵连 */
-  const secretPass = useCallback(async (): Promise<string> => {
-    if (secretsSaltRef.current === null) {
-      // 同一会话里并发调用只问一次
-      if (!secretSaltInflight.current) {
-        secretSaltInflight.current = resolveSecretSalt()
-          .then((s) => { secretsSaltRef.current = s; return s; })
-          .finally(() => { secretSaltInflight.current = null; });
+      if (localStorage.getItem(LEGACY_KEYS_KEY) !== null) {
+        localStorage.removeItem(LEGACY_KEYS_KEY);
+        pushLog('已清除本机遗留的内联密钥存档（密钥今后只存凭据中心）');
       }
-      await secretSaltInflight.current;
-    }
-    return deviceSeed(collectDeviceSignals(secretsSaltRef.current ?? ''));
-  }, [resolveSecretSalt]);
-
-  // 策略变化时落盘；选"仅本次会话"就把已存的密文一起清掉
-  const policyFirstRun = useRef(true);
-  useEffect(() => {
-    try { localStorage.setItem(SECRET_POLICY_KEY, secretPolicy); } catch { /* 忽略 */ }
-    if (secretPolicy === 'session') {
-      try { clearSecrets((k) => localStorage.removeItem(k)); } catch { /* 忽略 */ }
-      if (!policyFirstRun.current) pushLog('密钥不再保存到本机，仅本次会话有效');
-    }
-    policyFirstRun.current = false;
-  }, [secretPolicy, pushLog]);
-
-  /*
-   * 读取完成前不许写。
-   *
-   * 少了这道闸会出事：启动时画布里的密钥还是空的，
-   * 保存副作用会算出"没有密钥"→ 清掉保险箱 —— 用户存的密钥就这么没了，
-   * 而那正是它正要读出来的东西。
-   */
-  const [secretsReady, setSecretsReady] = useState(false);
-
-  // 启动时把密钥解回节点。只跑一次 —— 解不开要提示，不能反复重试刷屏
-  const secretsLoaded = useRef(false);
-  useEffect(() => {
-    if (secretsLoaded.current) return;
-    secretsLoaded.current = true;
-    const done = () => setSecretsReady(true);
-
-    if (secretPolicy === 'session') { done(); return; }
-    const be = beRef.current;
-    if (!be) { done(); return; }
-    let raw = '';
-    try { raw = localStorage.getItem(STORAGE_KEYS.secrets) ?? ''; } catch { done(); return; }
-    if (!raw) { done(); return; }
-
-    let alive = true;
-    // 盐要异步取（可能要问 Rust），所以包一层 async IIFE
-    void (async () => {
-      const pass = await secretPass();
-      if (!alive) return;
-      try {
-        const r = await unsealSecrets(be, raw, pass);
-        if (!alive) return;
-        if (r.failed) {
-          pushLog('⚠ 本机保存的密钥解不开（设备特征变了或数据损坏），请重新填写');
-          return;
-        }
-        if (Object.keys(r.keys).length === 0) return;
-        setCanvases((cs) => applySecrets({ canvases: cs, activeId: activeId ?? '' }, r.keys).canvases);
-        if (r.legacyPlaintext) pushLog('⚠ 检测到旧版本明文保存的密钥，已读入，保存后自动加密');
-      } catch {
-        if (alive) pushLog('⚠ 读取本机密钥失败');
-      } finally {
-        if (alive) setSecretsReady(true);
-      }
-    })();
-    return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [secretPolicy, secretPass]);
-
-  /*
-   * 画布变化 → 重新加密落盘。
-   *
-   * 这个 effect 依赖 canvases，而**拖一下节点**就会触发它（防抖 400ms 后）。
-   * 若不加判断地每次都加密，等于每拖一下就白跑一次 PBKDF2（约 50ms），
-   * 界面会明显发涩 —— 而密钥其实一个字都没变。
-   * 所以先比对：密钥集合与上次一致就整段跳过。
-   */
-  const saveSeq = useRef(0);
-  const lastSealedRef = useRef<string | null>(null);
-  /** 序列化成与键顺序无关的形式：节点重排不该被误判成"变了" */
-  const sealSig = (keys: SecretMap) =>
-    Object.keys(keys).sort().map((k) => `${k}=${keys[k]}`).join('\u0000');
-
-  useEffect(() => {
-    if (secretPolicy !== 'device') return;
-    if (!secretsReady) return;   // 还没读完就写，会把保险箱清掉
-    const be = beRef.current;
-    if (!be) return;
-    const keys: SecretMap = collectSecrets({ canvases, activeId });
-    const sig = sealSig(keys);
-    if (sig === lastSealedRef.current) return;
-
-    const seq = saveSeq.current + 1;
-    saveSeq.current = seq;
-    let alive = true;
-    void (async () => {
-      try {
-        const raw = await sealSecrets(be, keys, await secretPass());
-        if (!alive || seq !== saveSeq.current) return;
-        if (raw) localStorage.setItem(STORAGE_KEYS.secrets, raw);
-        else clearSecrets((k) => localStorage.removeItem(k));
-        // 写成功才记账：写失败的话下次得重试，不能假装已经存过
-        lastSealedRef.current = sig;
-      } catch { /* 忽略：下次画布变化会再试 */ }
-    })();
-    return () => { alive = false; };
-  }, [canvases, activeId, secretPolicy, secretPass, secretsReady]);
+    } catch { /* 忽略：删不掉也不影响使用 */ }
+  }, [pushLog]);
 
   /* ---------------- MCP 节点 ---------------- */
 
@@ -3340,8 +3213,6 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
               onChange={patchNode}
               credentials={credentials}
               onOpenCredentials={openCredentials}
-              secretPolicy={secretPolicy}
-              onChangeSecretPolicy={setSecretPolicy}
               webhookTokens={webhookTokens}
               onEditModule={(id) => enterInstanceEdit(id)}
               onNote={pushLog}

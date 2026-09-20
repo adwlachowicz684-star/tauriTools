@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   makeCanvas, nextCanvasName, renameCanvas, removeCanvas, nextActiveId,
   updateCanvasContent, sortForDisplay, serialize, deserialize, toMeta,
-  redactNodes, redactSecrets, collectSecrets, applySecrets,
-  saveToStorage, loadFromStorage, clearSecrets, STORAGE_KEYS,
+  redactNodes, redactSecrets,
+  saveToStorage, loadFromStorage, STORAGE_KEYS,
 } from '../engine/canvasStore';
 
 const C = (id: string, name: string, nodes: number = 0, updatedAt: number = 0) => ({
@@ -194,7 +196,7 @@ test('持久化: 无画布时 activeId 为 null', () => {
   assert.equal(deserialize(raw).activeId, null);
 });
 
-/* ---------- 脱敏与密钥保险箱 ---------- */
+/* ---------- 脱敏（密钥不再落盘，脱敏是唯一防线） ---------- */
 
 /** 造一个带 apiKey 的 OCR 节点 */
 const llmNode = (id: string, apiKey: string) => ({
@@ -275,70 +277,16 @@ test('脱敏: redactSecrets 覆盖每个画布', () => {
 });
 
 
-test('保险箱: 按节点 id 收集密钥', () => {
-  const state = {
-    canvases: [{ ...makeCanvas('A', { id: 'a' }), nodes: [llmNode('n1', 'k1'), llmNode('n2', 'k2')] }],
-    activeId: 'a',
-  };
-  assert.deepEqual(collectSecrets(state), {
-    'n1#llm.apiKey': 'k1', 'n2#llm.apiKey': 'k2',
-  });
-});
 
 
-test('保险箱: 跳过空密钥与无 llm 的节点', () => {
-  const state = {
-    canvases: [{
-      ...makeCanvas('A', { id: 'a' }),
-      nodes: [llmNode('n1', ''), { id: 't1', data: { kind: 'task' } }, llmNode('n2', 'k2')],
-    }],
-    activeId: 'a',
-  };
-  assert.deepEqual(collectSecrets(state), { 'n2#llm.apiKey': 'k2' });
-});
 
 
-test('保险箱: 回填密钥到对应节点', () => {
-  const state = {
-    canvases: [{ ...makeCanvas('A', { id: 'a' }), nodes: [llmNode('n1', ''), llmNode('n2', '')] }],
-    activeId: 'a',
-  };
-  const r = applySecrets(state, { 'n2#llm.apiKey': 'real-key' });
-  assert.equal((r.canvases[0].nodes[0] as any).data.llm.apiKey, '');
-  assert.equal((r.canvases[0].nodes[1] as any).data.llm.apiKey, 'real-key');
-});
 
 
-test('保险箱: 空密钥表时原样返回', () => {
-  const state = {
-    canvases: [{ ...makeCanvas('A', { id: 'a' }), nodes: [llmNode('n1', '')] }],
-    activeId: 'a',
-  };
-  assert.deepEqual(applySecrets(state, {}), state);
-});
 
 
-test('保险箱: 往返一致（收集 → 脱敏 → 回填 得到原密钥）', () => {
-  const state = {
-    canvases: [{ ...makeCanvas('A', { id: 'a' }), nodes: [llmNode('n1', 'sk-round')] }],
-    activeId: 'a',
-  };
-  const keys = collectSecrets(state);
-  const stripped = redactSecrets(state);
-  assert.equal((stripped.canvases[0].nodes[0] as any).data.llm.apiKey, '');
-  const back = applySecrets(stripped, keys);
-  assert.equal((back.canvases[0].nodes[0] as any).data.llm.apiKey, 'sk-round');
-});
 
 
-test('保险箱: 已删节点的密钥不会被收集（自动清理）', () => {
-  const state = {
-    canvases: [{ ...makeCanvas('A', { id: 'a' }), nodes: [llmNode('n2', 'k2')] }],
-    activeId: 'a',
-  };
-  // 只收集当前存在的节点，所以 n1 的旧密钥不会留在存储里
-  assert.deepEqual(collectSecrets(state), { 'n2#llm.apiKey': 'k2' });
-});
 
 
 test('A3: 画布存档里不含明文密钥', () => {
@@ -352,7 +300,7 @@ test('A3: 画布存档里不含明文密钥', () => {
     '画布存档里不应有明文密钥');
 });
 
-test('A3: saveToStorage 不再往保险箱写明文（密钥由 secretVault 单独加密落盘）', () => {
+test('A3: saveToStorage 只写画布，不产生任何密钥存档', () => {
   const store: Record<string, string> = {};
   const state = {
     canvases: [{ ...makeCanvas('A', { id: 'a' }), nodes: [llmNode('n1', 'sk-persist')] }],
@@ -360,16 +308,19 @@ test('A3: saveToStorage 不再往保险箱写明文（密钥由 secretVault 单�
   };
   saveToStorage((k: string, v: string) => { store[k] = v; }, state);
   assert.equal('agent-flow.llm-keys.v1' in store, false,
-    '画布保存时绝不能碰保险箱 —— 否则会把密文覆盖成明文');
+    '密钥不再落盘：保存时不应产生任何密钥存档');
+  assert.deepEqual(Object.keys(store).sort(),
+    ['agent-flow.activeCanvas.v1', 'agent-flow.canvases.v1'],
+    '落盘的面只有画布与当前激活 id');
 });
 
-test('A3: 保险箱里是密文时，loadFromStorage 不会把它误读成密钥', () => {
+test('A3: 历史遗留的密钥存档不会被读成节点密钥', () => {
   const store: Record<string, string> = {
     'agent-flow.canvases.v1': JSON.stringify({
       canvases: [{ ...makeCanvas('A', { id: 'a' }), nodes: [llmNode('n1', '')] }],
       activeId: 'a',
     }),
-    // 加密后的保险箱：字段都是字符串，老式"明文 map"读法会把它们当成密钥
+    // 历史遗留的保险箱：字段都是字符串，老式"明文 map"读法会把它们当成密钥
     'agent-flow.llm-keys.v1': JSON.stringify({
       v: 1, alg: 'AES-GCM', iter: 310000,
       salt: 'AAAA', iv: 'BBBB', data: 'CCCC',
@@ -381,7 +332,7 @@ test('A3: 保险箱里是密文时，loadFromStorage 不会把它误读成密钥
   assert.equal(key === 'AAAA' || key === '1', false);
 });
 
-test('保险箱: GitHub 节点的内联令牌同样被收集与脱敏', () => {
+test('脱敏: GitHub 节点的内联令牌同样被挖空', () => {
   const ghNode = (id: string, token: string) => ({
     id, data: { kind: 'github-push', label: 'push', token, output: 'x' },
   });
@@ -389,17 +340,12 @@ test('保险箱: GitHub 节点的内联令牌同样被收集与脱敏', () => {
     canvases: [{ ...makeCanvas('A', { id: 'a' }), nodes: [ghNode('g1', 'ghp_write_token')] }],
     activeId: 'a',
   };
-  assert.deepEqual(collectSecrets(state), { 'g1#token': 'ghp_write_token' });
-
   const stripped = redactSecrets(state);
   assert.equal((stripped.canvases[0].nodes[0] as any).data.token, '',
     '带写权限的令牌更不能跟着导出去');
-
-  const back = applySecrets(stripped, { 'g1#token': 'ghp_write_token' });
-  assert.equal((back.canvases[0].nodes[0] as any).data.token, 'ghp_write_token');
 });
 
-test('保险箱: llm 密钥与 GitHub 令牌互不串字段', () => {
+test('脱敏: llm 密钥与 GitHub 令牌互不串字段', () => {
   const state = {
     canvases: [{
       ...makeCanvas('A', { id: 'a' }),
@@ -410,16 +356,15 @@ test('保险箱: llm 密钥与 GitHub 令牌互不串字段', () => {
     }],
     activeId: 'a',
   };
-  const keys = collectSecrets(state);
-  const back = applySecrets(redactSecrets(state), keys);
-  assert.equal((back.canvases[0].nodes[0] as any).data.llm.apiKey, 'sk-1');
-  assert.equal((back.canvases[0].nodes[1] as any).data.token, 'ghp-1');
+  const red = redactSecrets(state).canvases[0].nodes;
+  assert.equal((red[0] as any).data.llm.apiKey, '');
+  assert.equal((red[1] as any).data.token, '');
   // 不能把令牌写到 apiKey 上，反之亦然
-  assert.equal((back.canvases[0].nodes[0] as any).data.token, undefined);
-  assert.equal((back.canvases[0].nodes[1] as any).data.llm, undefined);
+  assert.equal((red[0] as any).data.token, undefined);
+  assert.equal((red[1] as any).data.llm, undefined);
 });
 
-test('保险箱: 导出 JSON 里不含任何密钥（脱敏覆盖两个字段）', () => {
+test('脱敏: 导出 JSON 里不含任何密钥（覆盖两个字段）', () => {
   const state = {
     canvases: [{
       ...makeCanvas('A', { id: 'a' }),
@@ -435,12 +380,85 @@ test('保险箱: 导出 JSON 里不含任何密钥（脱敏覆盖两个字段）
   assert.equal(json.includes('ghp-secret-456'), false);
 });
 
-test('保险箱: clearSecrets 只删密钥，不动画布', () => {
-  const store: Record<string, string> = {
-    'agent-flow.canvases.v1': '{}',
-    'agent-flow.llm-keys.v1': '{"n1":"k1"}',
+
+/* ------------------------------------------------------------------ */
+/* 清理护栏：内联密钥保险箱不得复活                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 保险箱（engine/secretVault.ts + agent-flow.llm-keys.v1）已整体移除 ——
+ * 它挡不住真正的威胁（加密用的盐与本机特征都在本机），现在统一走凭据中心。
+ *
+ * 但"删掉"很容易被无意撤销：有人从旧分支合回一个文件，或为了修别的问题
+ * 把 collectSecrets 加回来。所以扫一遍源码，出现任何一个旧标识符就失败。
+ */
+function collectTs(dir: string, out: string[] = []): string[] {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, e.name);
+    if (e.isDirectory()) { collectTs(full, out); continue; }
+    if (/\.(ts|tsx)$/.test(e.name)) out.push(full);
+  }
+  return out;
+}
+
+/*
+ * 插件根目录。
+ *
+ * 本文件跑在两处：源码下（tests/）与编译产物下（.cache/tsout/tests/）。
+ * 编译产物里没有源码，所以用 NEXUS_AF_ROOT 显式指定；没给就沿 __dirname
+ * 往上找，找不着**直接抛错** —— 静默跳过会让这条护栏形同虚设。
+ */
+function pluginRoot(): string {
+  if (process.env.NEXUS_AF_ROOT) return process.env.NEXUS_AF_ROOT;
+  let d = __dirname;
+  for (let i = 0; i < 6; i++) {
+    if (existsSync(join(d, 'App.tsx')) && existsSync(join(d, 'engine'))) return d;
+    const up = join(d, '..');
+    if (up === d) break;
+    d = up;
+  }
+  throw new Error('找不到 agent-flow 插件根目录，请设 NEXUS_AF_ROOT');
+}
+
+test('清理护栏: 源码里不再出现内联密钥保险箱的任何标识符', () => {
+  const banned = ['secretVault', 'collectSecrets', 'applySecrets', 'clearSecrets',
+    'SecretPolicy', 'SECRET_POLICY_META', 'SECRET_POLICY_KEY'];
+  const root = pluginRoot();
+  const files = collectTs(join(root, 'engine'))
+    .concat(collectTs(join(root, 'components')))
+    .concat(collectTs(join(root, 'nodes')))
+    .concat([join(root, 'App.tsx'), join(root, 'types.ts')]);
+
+  const hits: string[] = [];
+  for (const f of files) {
+    /* 剔掉注释再匹配 —— 说明文字不该把自己判失败 */
+    const src = readFileSync(f, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|\s)\/\/[^\n]*/g, '$1');
+    for (const b of banned) {
+      if (src.includes(b)) hits.push(`${f.split('/').pop()} → ${b}`);
+    }
+  }
+  assert.deepEqual(hits, [], `出现了已废弃的内联密钥标识符: ${hits.slice(0, 5).join(', ')}`);
+  assert.ok(files.length > 20, `扫描到的文件太少（${files.length}），护栏可能没覆盖到`);
+});
+
+test('清理护栏: STORAGE_KEYS 里不再有密钥存档位', () => {
+  assert.deepEqual(Object.keys(STORAGE_KEYS).sort(), ['active', 'canvases'],
+    '密钥不再落盘，落盘面只有画布与当前激活 id');
+});
+
+test('清理护栏: 脱敏依然生效（密钥不进存档、不随导出走）', () => {
+  const state = {
+    canvases: [{
+      ...makeCanvas('A', { id: 'a' }),
+      nodes: [llmNode('n1', 'sk-must-not-persist')],
+    }],
+    activeId: 'a',
   };
-  clearSecrets((k: string) => { delete store[k]; });
-  assert.equal('agent-flow.llm-keys.v1' in store, false);
-  assert.equal('agent-flow.canvases.v1' in store, true);
+  const store: Record<string, string> = {};
+  saveToStorage((k: string, v: string) => { store[k] = v; }, state);
+  const dumped = Object.values(store).join('');
+  assert.equal(dumped.includes('sk-must-not-persist'), false,
+    '这是移除保险箱后**唯一**还在防泄漏的机制，绝不能退化');
 });
