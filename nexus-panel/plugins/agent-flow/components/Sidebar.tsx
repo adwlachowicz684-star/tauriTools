@@ -71,7 +71,7 @@ type Props = {
  * 用户反而找不到别的分组。
  */
 function McpServerSection({
-  group, disabled, onDragStart, onItemClick, tipKey, showAllDesc,
+  group, disabled, onDragStart, onItemClick, tipKey,
   onHover, onHoverOut,
 }: {
   group: { server: string; color: string; items: { key: string; label: string; hint?: string }[] };
@@ -80,8 +80,6 @@ function McpServerSection({
   onItemClick: (e: MouseEvent, p: { key: string }) => void;
   /** 当前浮层指向的条目（用它是为了给条目加高亮） */
   tipKey: string | null;
-  /** 「显示说明」开着时，每个工具下面也铺一行说明 */
-  showAllDesc?: boolean;
   onHover: (key: string, anchor: TipAnchor) => void;
   onHoverOut: () => void;
 }) {
@@ -121,13 +119,6 @@ function McpServerSection({
                 >
                   <span className="side-label">{it.label}</span>
                 </div>
-                {/*
-                 * 「显示说明」铺的那行 brief 保留 ——
-                 * 那是"整列速览"，与浮层（看这一条的详情）是两件事。
-                 */}
-                {showAllDesc && it.hint ? (
-                  <div className="side-desc-brief">{it.hint}</div>
-                ) : null}
               </div>
             );
           })}
@@ -186,6 +177,8 @@ export default function Sidebar({
 
   const onHover = (key: string, anchor: TipAnchor) => {
     cancelTimers();
+    // 开关关着时只有点击能打开 —— 掠过即弹正是扫列表时最容易被误触发的方式
+    if (!hoverDesc) return;
     // 已经钉住某一条时，悬停不抢 —— 否则鼠标扫过会把在读的那条换掉
     if (tip?.pinned) return;
     hoverTimer.current = window.setTimeout(
@@ -224,13 +217,27 @@ export default function Sidebar({
   const refresh = () => setTick((t) => t + 1);
 
   /*
-   * 「显示说明」：一次把每个节点下面那句说明都铺开，再点收起。
+   * 「悬停说明」开关。
    *
-   * 与浮层（看单条的完整说明）是**两个独立开关**：
-   * 前者是"整列速览"，后者是"看这一条的详情"。
-   * 合成一个的话，点开某一条就会把所有条都展开 —— 那不是用户要的。
+   * ================= 为什么不再是"在列表里铺一行" =================
+   *
+   * 以前点它会在**每个节点下面各铺一行**简版说明。那有两个问题：
+   *   ① 列表整体变长、条目错位 —— 铺开前找到的位置全变了
+   *   ② 一行 260px 放不下，说明被截断成半句，反而更想点开看
+   *
+   * 说明已经能悬浮显示了（见 NodeTip），所以这个开关改成：
+   *   开 → 鼠标掠过条目即弹说明浮层（预览）
+   *   关 → 只有点击才打开（钉住）
+   *
+   * 列表里因此彻底不再有内联说明 —— 位置稳定，宽度也不受侧栏限制。
+   *
+   * ================= 点击不受这个开关影响 =================
+   *
+   * 点击是明确的主动操作，"我要看这个"，不该被一个开关挡住。
+   * 受它控制的只有"掠过即弹"这种**被动**触发 ——
+   * 那正是扫列表时最容易被误触发的方式。
    */
-  const [showAllDesc, setShowAllDesc] = useState(false);
+  const [hoverDesc, setHoverDesc] = useState(true);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -325,7 +332,6 @@ export default function Sidebar({
             tipKey={tip?.key ?? null}
             onHover={onHover}
             onHoverOut={onHoverOut}
-            showAllDesc={showAllDesc}
           />
         ))}
       </div>
@@ -359,11 +365,15 @@ export default function Sidebar({
         <span className="side-head-spacer" />
         <button
           type="button"
-          className={'side-head-btn' + (showAllDesc ? ' is-on' : '')}
-          title={showAllDesc ? '收起所有节点的说明' : '在每个节点下面显示一句说明'}
-          onClick={() => setShowAllDesc((v) => !v)}
+          className={'side-head-btn' + (hoverDesc ? ' is-on' : '')}
+          title={
+            hoverDesc
+              ? '关掉后，鼠标掠过不再弹说明，只有点击才打开'
+              : '打开后，鼠标掠过节点即弹说明浮层'
+          }
+          onClick={() => setHoverDesc((v) => !v)}
         >
-          {showAllDesc ? '隐藏说明' : '显示说明'}
+          {hoverDesc ? '悬停说明 开' : '悬停说明 关'}
         </button>
       </div>
 
@@ -442,7 +452,19 @@ export default function Sidebar({
                     onClick={(e) => onItemClick(e, p)}
                     onMouseEnter={(e) => onHover(p.key, rectOf(e.currentTarget))}
                     onMouseLeave={onHoverOut}
-                    title={disabled ? '运行中不可添加' : '悬停或点击看说明；按住 Ctrl / ⌘ 点击直接添加；也可拖到画布'}
+                    /*
+                     * 原生 title 带上那一句说明。
+                     *
+                     * 「悬停说明」关着时不弹浮层，但至少掠过时还能看到一句 ——
+                     * 否则关掉开关等于说明彻底消失。
+                     * 浏览器原生提示有延迟、样式不受控，所以只放一句话，
+                     * 完整说明仍走浮层。
+                     */
+                    title={
+                      disabled
+                        ? '运行中不可添加'
+                        : `${desc}｜点击看完整说明；按住 Ctrl / ⌘ 点击直接添加；也可拖到画布`
+                    }
                   >
                     <span className="side-label">{p.label}</span>
                     {isCustom ? (
@@ -482,13 +504,7 @@ export default function Sidebar({
                    * 需要的外部能力、哪些参数必填 —— 这三样数据契约里都有，
                    * 只是以前没接到界面上。
                    */}
-                  {/*
-                   * 「显示说明」铺的那行 brief 保留 ——
-                   * 那是"整列速览"，与浮层（看这一条的详情）是两件事。
-                   */}
-                  {!open && showAllDesc && desc ? (
-                    <div className="side-desc-brief" title={desc}>{desc}</div>
-                  ) : null}
+
                 </div>
               );
             })}

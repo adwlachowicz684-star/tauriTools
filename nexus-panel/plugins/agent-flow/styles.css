@@ -824,18 +824,12 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 /* 外壳统一叫 .side-pane —— 定义见「左栏三个库共用的底板」一节 */
 
 /*
- * 「显示说明」打开时，每个节点下面那行说明。
+ * .side-desc-brief 已删除。
  *
- * 刻意比 .side-desc（点单项展开那个）**更轻**：
- * 没有左边条也没有背景，只是一行小灰字。
- * 因为这是"全部展开"的态 —— 几十条节点一起铺开时，
- * 每条都带左边条和色块会非常吵，反而看不清列表结构。
+ * 它原是「显示说明」在每个节点下面铺的一行简版说明。
+ * 现在说明一律走悬浮窗（.node-tip），列表里不再内联铺行 ——
+ * 铺行会让列表整体错位，且 260px 一行放不下、说明被截成半句。
  */
-.side-desc-brief {
-  font-size: var(--fs-11, 11px); line-height: 1.5; color: var(--af-mute);
-  padding: 0 9px 5px 9px; margin: -1px 0 5px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 .side-hint { font-size: var(--fs-11, 11px); color: var(--af-dim); margin-bottom: 12px; line-height: 1.5; }
 .side-hint.warn { color: var(--af-t-warn); margin-top: 10px; }
 .side-group { margin-bottom: 14px; }
@@ -2269,7 +2263,6 @@ input.mono, textarea.mono {
  *         .side-title   分组标题（右侧可放操作）
  *         .side-item    条目（左边条 = 类型 / 状态色）
  *         .side-desc    点开一条的完整说明
- *         .side-desc-brief  「显示说明」铺开的一行
  *       .side-empty    空态
  *
  * 画布库因为要折叠、拖放归类、重命名，**DOM 比另两个复杂** ——
