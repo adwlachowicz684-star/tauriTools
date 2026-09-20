@@ -562,3 +562,86 @@ test('属性面板也套了渲染兜底', () => {
     '面板崩了不该带走整张画布',
   );
 });
+
+/* ------------------------------------------------------------------ */
+/* 左栏三个库：底板与文字样式必须统一                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 节点库、模块库、画布库曾经各有一套外壳与条目类名，
+ * 切一次标签整个左栏的观感就变一次。
+ *
+ * 这类不一致**测不出来也看不出报错**，只有人工比对才发现，
+ * 所以钉在源码上：三个库必须共用同一组类名。
+ */
+const LIBS = [
+  'components/Sidebar.tsx',
+  'components/ModuleLibrary.tsx',
+  'components/CanvasLibrary.tsx',
+];
+
+function srcOf(rel: string): string {
+  return fs.readFileSync(path.join(ROOT, rel), 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+test('三个库共用同一个外壳 .side-pane', () => {
+  for (const f of LIBS) {
+    const t = srcOf(f);
+    assert.match(t, /className="side-pane"/, `${f} 要用 .side-pane 作外壳`);
+  }
+});
+
+test('三个库都有 .side-head 标题行（标题不随内容滚）', () => {
+  /*
+   * 以前模块库把标题塞在 .side-title（分组级），
+   * 于是它的标题比节点库矮一档、颜色更淡 —— 三个库三种标题。
+   */
+  for (const f of LIBS) {
+    const t = srcOf(f);
+    assert.match(t, /className="side-head"/, `${f} 要有 .side-head`);
+    assert.match(t, /className="side-body"/, `${f} 要有 .side-body 滚动区`);
+  }
+});
+
+test('三个库的条目都用 .side-item（同一块底板）', () => {
+  for (const f of LIBS) {
+    assert.match(srcOf(f), /side-item/, `${f} 的条目要用 .side-item`);
+  }
+});
+
+test('空态统一用 .side-empty，不再拿 .side-sub 当空态', () => {
+  /*
+   * .side-sub 的本职是"分组下面的一句补充说明"（有缩进与换行规则），
+   * 拿它当空态用就是一件事两个语义 —— 改一个会连累另一个。
+   */
+  const css = fs.readFileSync(path.join(ROOT, 'styles.css'), 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(css, /\.side-empty\s*\{/, '要有 .side-empty');
+  for (const f of LIBS) {
+    const t = srcOf(f);
+    // 三个库都可能出现空态，出现了就必须用 .side-empty
+    assert.ok(!/className="side-sub"/.test(t), `${f} 不该再用 .side-sub 当空态`);
+  }
+});
+
+test('不再有画布库专属的一套类名（af-lib / canvas-library）', () => {
+  for (const f of LIBS) {
+    const t = srcOf(f);
+    assert.ok(!/af-lib/.test(t), `${f} 还残留 af-lib`);
+    assert.ok(!/canvas-library/.test(t), `${f} 还残留 canvas-library`);
+  }
+});
+
+test('.side-head / .side-title / .side-title-ops 在 CSS 里各只有一处定义', () => {
+  /*
+   * 同一选择器两处写不同值 → 后写的赢，前面那块是死代码，
+   * 而且改了没反应会让人以为 CSS 没生效。
+   * 统一三库时这三处都撞过，钉住。
+   */
+  const css = fs.readFileSync(path.join(ROOT, 'styles.css'), 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const sel of ['.side-head', '.side-title', '.side-title-ops', '.side-pane']) {
+    const n = (css.match(new RegExp(`^\\${sel}\\s*\\{`, 'gm')) ?? []).length;
+    assert.equal(n, 1, `.${sel} 应当只有一处定义，实际 ${n} 处`);
+  }
+});

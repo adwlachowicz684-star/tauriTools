@@ -94,36 +94,59 @@ export default function ModuleLibrary({ onCreateFromSelection, onEdit, disabled 
     }
   };
 
+  /*
+   * 外壳与头部跟节点库、画布库同一套（.side-pane / .side-head）。
+   *
+   * 以前模块库把标题塞在 .side-title（分组级）里，
+   * 于是它的标题比节点库的 .side-head **矮一档、颜色也更淡** ——
+   * 同一个左栏里三个库，标题却三种样子。
+   * 「＋选中 / 导出 / 导入」移到头部，与节点库的按钮同一组样式。
+   */
   return (
-    <div className="side-group" key={tick}>
-      <div className="side-title">
+    <aside className="side-pane" key={tick}>
+      <div className="side-head">
         模块库
-        <span className="side-title-ops">
-          <button className="link-btn" title="把画布上选中的节点存成一个模块" onClick={onCreateFromSelection} disabled={disabled}>
-            ＋选中
-          </button>
-          <button className="link-btn" title="导出全部模块为 JSON" onClick={doExport}>
-            导出
-          </button>
-          <label className="link-btn" title="从 JSON 导入模块" style={{ cursor: 'pointer' }}>
-            导入
-            <input
-              type="file"
-              accept="application/json,.json"
-              style={{ display: 'none' }}
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                e.target.value = '';
-                if (f) void f.text().then(doImport);
-              }}
-            />
-          </label>
-        </span>
+        <span className="side-head-spacer" />
+        <button
+          type="button"
+          className="side-head-btn"
+          title="把画布上选中的节点存成一个模块"
+          onClick={onCreateFromSelection}
+          disabled={disabled}
+        >
+          ＋选中
+        </button>
+        <button type="button" className="side-head-btn" title="导出全部模块为 JSON" onClick={doExport}>
+          导出
+        </button>
+        <label
+          className="side-head-btn"
+          title="从 JSON 导入模块"
+          style={{ cursor: 'pointer' }}
+        >
+          导入
+          <input
+            type="file"
+            accept="application/json,.json"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = '';
+              if (f) void f.text().then(doImport);
+            }}
+          />
+        </label>
       </div>
 
-      {mods.length === 0 ? (
-        <div className="side-sub">还没有模块。选中几个节点后点「＋选中」。</div>
-      ) : null}
+      <div className="side-body">
+      <div className="side-hint">
+        拖到画布使用；改库里的模块，画布上所有实例跟着变
+      </div>
+
+      <div className="side-group">
+        {mods.length === 0 ? (
+          <div className="side-empty">还没有模块。选中几个节点后点右上「＋选中」。</div>
+        ) : null}
 
       {mods.map((m) => {
         const ports = modulePorts(m);
@@ -132,6 +155,8 @@ export default function ModuleLibrary({ onCreateFromSelection, onEdit, disabled 
           <div key={m.id}>
             <div
               className={`side-item${open ? ' is-open' : ''}`}
+              /* 模块色走左边条，与节点库、画布卡片同一套视觉语言 */
+              style={{ borderLeftColor: m.color }}
               draggable={!disabled}
               onDragStart={(e: DragEvent) => {
                 const payload = encodeModuleDrag({ moduleId: m.id });
@@ -142,7 +167,6 @@ export default function ModuleLibrary({ onCreateFromSelection, onEdit, disabled 
               onClick={() => setOpenId((k) => (k === m.id ? null : m.id))}
               title="拖到画布上使用；点击展开说明"
             >
-              <span className="side-dot" style={{ background: m.color }} />
               <span className="side-label">{m.name}</span>
               <span className="side-ops">
                 <button
@@ -176,7 +200,9 @@ export default function ModuleLibrary({ onCreateFromSelection, onEdit, disabled 
           </div>
         );
       })}
-    </div>
+      </div>
+      </div>
+    </aside>
   );
 }
 
