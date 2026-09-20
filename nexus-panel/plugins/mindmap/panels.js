@@ -316,10 +316,101 @@ export function buildSide(app, opts = {}) {
     if (current) render();
   }
 
+  /* ------------------------- 导入导出页 ------------------------- */
+
+  /**
+   * 导入导出页。
+   *
+   * 界面上**所有**导入导出入口集中在这里 —— 顶栏那 7 个按钮
+   * （导入 / 导出▾ / XMIND / TXT / MD / SVG / PNG）已移除，
+   * 主题页与历史快照弹窗里的导入导出按钮也一并收过来。
+   *
+   * 为什么集中：原先分散在顶栏、文件页、主题页、快照弹窗四处，
+   * 同一个「导出」在不同地方能点到的格式还不一样（顶栏有 PNG 倍率、
+   * 文件页只有 JSON/MD），用户不知道去哪儿找某个格式。
+   */
+  function pageExchange() {
+    const btn = (label, onclick, title) => h('button.mm-btn', {
+      onclick: safe(label, onclick, (m) => app.api.status(m, true)),
+      title: title || '',
+    }, label);
+
+    /** 一行按钮（自动换行，格式多时不至于挤成一团） */
+    const row = (...els) => h('div.mm-row', {}, ...els);
+    const hint = (t) => h('div.mm-hint', {}, t);
+
+    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
+      section('导入',
+        hint('支持 XMind / JSON / Markdown / FreeMind / OPML / Mermaid / PlantUML。'
+          + '按文件内容嗅探格式 —— 把 .opml 存成 .xml、把 .mmd 存成 .txt 也能认出来。'),
+        row(btn('导入文件…', () => app.api.importFile(), '选择文件导入（会替换全部画布，导入前有确认）')),
+        hint('⚠ 导入会替换当前所有画布，且不可撤销 —— 建议先导出或备份。'),
+      ),
+
+      section('导出为文档',
+        hint('XMind 与官方互通（多画布、主题、外框、附件一并打包，换机可还原）；'
+          + 'JSON 保留全部私有字段，本工具无损往返；Markdown 便于人读与 diff。'),
+        row(
+          btn('XMind', () => app.api.exportXMind(), '导出为 .xmind（含附件打包）'),
+          btn('JSON', () => app.api.exportJson(), '导出为 .json（本工具无损往返）'),
+          btn('TXT', () => app.api.exportTxt(), '导出为 .txt（与 JSON 同内容，仅扩展名不同）'),
+          btn('Markdown', () => app.api.exportMarkdown(), '导出为 .md（多画布按「## 画布：」分块）'),
+        ),
+      ),
+
+      section('导出为交换格式',
+        hint('给别的软件用。这些格式顶层只有一个根，装不下多画布 —— '
+          + '**只导当前画布**，其余画布不写入。'),
+        row(
+          btn('FreeMind', () => app.api.exchange('freemind'), 'FreeMind / Freeplane / XMind 可导入'),
+          btn('OPML', () => app.api.exchange('opml'), 'OmniOutliner / Workflowy / 幕布 等大纲工具'),
+          btn('Mermaid', () => app.api.exchange('mermaid'), 'GitHub / GitLab / Notion / Obsidian 原生渲染'),
+          btn('PlantUML', () => app.api.exchange('plantuml'), 'PlantUML / Confluence / 多数 Wiki'),
+        ),
+        hint('只交换「文字 + 层级 + 折叠状态」；图标、优先级、进度、附件一概不写 —— '
+          + '塞进自定义属性只会在别的软件里变乱码。'),
+      ),
+
+      section('导出为图像 / PDF',
+        row(
+          btn('SVG', () => app.api.exportSvg(), '矢量图，可无损放大'),
+          btn('PDF（矢量）', () => app.api.exportPdf(), '不经浏览器、不弹对话框，直接保存；失败时自动改用打印对话框'),
+          btn('打印 / 存为 PDF…', () => openPrintSettings(app, (o) => app.api.printMap(o)),
+            '用系统打印对话框，可在其中选「另存为 PDF」'),
+        ),
+        row(
+          btn('PNG · 1 倍', () => app.api.exportPng(1), '位图，1 倍 = 画布原尺寸'),
+          btn('PNG · 2 倍', () => app.api.exportPng(2), '像素密度翻倍，文字与连线不糊'),
+          btn('PNG · 3 倍', () => app.api.exportPng(3), '体积较大，适合打印或大屏'),
+        ),
+        hint('PNG 倍率要你主动选：默认 3 倍的话一个普通脑图会导出几十 MB，多数人并不需要。'),
+      ),
+
+      section('主题',
+        hint('导入/导出仅针对自定义主题；内置主题无法导出。'),
+        row(
+          btn('导入主题…', () => importThemeFile(), '从 JSON 文件导入自定义主题（重新生成 id，不会覆盖同名）'),
+          btn('导出当前主题', () => exportThemeFile(), '把当前画布正在用的自定义主题导出为 JSON'),
+        ),
+      ),
+
+      section('快照备份',
+        hint('快照是自动/手动保存的历史副本，误操作后可回滚。'),
+        row(
+          btn('立即备份', async () => { await app.api.backupNow(); refresh(); }, '立刻保存一份当前状态'),
+          btn('历史快照…', () => openBackups(app), '查看 / 恢复快照'),
+          btn('导出快照', () => app.api.exportBackups(), '把所有快照导出为 JSON 文件（换机迁移用）'),
+          btn('导入快照…', () => app.api.importBackups(), '从 JSON 文件导入快照（按时间戳去重）'),
+        ),
+      ),
+    );
+  }
+
   pages.file = pageFile;
   pages.style = pageStyle;
   pages.tag = pageTag;
   pages.theme = pageTheme;
+  pages.exchange = pageExchange;
 
   /* ------------------------- 文件页 ------------------------- */
 
@@ -922,16 +1013,9 @@ export function buildSide(app, opts = {}) {
           ? h('div.mm-hint', {}, `${heavy.length} 张图片超过内联上限（共 ${io.formatSize(heavy.reduce((s, u) => s + String(u).length, 0))}），可点「压缩过大图片」瘦身。`)
           : null,
       ),
-      // 备份间隔 / 最多保留 / 布局动画都已移到顶栏「设置」——
-      // 它们是与当前节点无关的全局选项，不该挂在「文件」页下。
-      section('导入导出',
-        h('div.mm-hint', {}, '导出为文件是主要存档方式。XMind 与官方互通（多画布、主题、外框、附件一并打包，换机可还原）；JSON 保留全部私有字段；Markdown 便于人读。'),
-        h('div.mm-row', {},
-          h('button.mm-btn', { onclick: () => app.api.exportJson() }, '导出 JSON'),
-          h('button.mm-btn', { onclick: () => app.api.exportMarkdown() }, '导出 MD'),
-          h('button.mm-btn', { onclick: () => app.api.importFile() }, '导入…'),
-        ),
-      ),
+      // 导入导出已全部移到侧栏「导入导出」页 —— 原先这里只有 3 个按钮
+      // （JSON / MD / 导入），而顶栏有全套，同一件事两个入口且能力不一致，
+      // 用户不知道该去哪儿找某个格式。
     );
   }
 
@@ -1301,16 +1385,9 @@ export function buildSide(app, opts = {}) {
             onclick: () => openThemeEditor(app, null, cur),
             title: `以当前主题「${curName}」为起点新建`,
           }, '＋ 新建'),
-          h('button.mm-btn', {
-            onclick: safe('导入主题', () => importThemeFile(), (m) => app.api.status(m, true)),
-            title: '从 JSON 文件导入自定义主题',
-          }, '导入'),
-          h('button.mm-btn', {
-            onclick: safe('导出主题', () => exportThemeFile(), (m) => app.api.status(m, true)),
-            title: '把当前画布使用的自定义主题导出为 JSON',
-          }, '导出'),
         ),
-        h('div.mm-hint', {}, '导入/导出仅针对自定义主题；内置主题无法导出。'),
+        // 主题的导入/导出已移到侧栏「导入导出」页（与其余导入导出入口集中）
+        h('div.mm-hint', {}, '自定义的导入/导出在侧栏「导入导出」页；内置主题无法导出。'),
       ),
       section('布局模板',
         // 两列缩略图网格 + 名称，对齐 WPF 原版（UniformGrid Columns="2" + 100×58 缩略图）
@@ -2174,18 +2251,9 @@ export function openSettings(app) {
           onclick: safe('打开快照', () => openBackups(app), (m) => app.api.status(m, true)),
         }, '历史快照…'),
       ),
-      // A42 换机迁移：导出成文件带走 / 从文件合并回来
-      h('div.mm-row', { style: { marginTop: '2px' } },
-        h('button.mm-btn', {
-          onclick: safe('导出快照', () => app.api.exportBackups(), (m) => app.api.status(m, true)),
-          title: '把所有快照导出成一个 JSON 文件（用于换机器/备份到别处）',
-        }, '导出全部'),
-        h('button.mm-btn', {
-          onclick: safe('导入快照', () => app.api.importBackups(), (m) => app.api.status(m, true)),
-          title: '从 JSON 文件合并快照；重复时间戳的会跳过，本机现有快照保留',
-        }, '从文件导入'),
-      ),
-      h('div.mm-hint', {}, 'C# 版这里是「备份目录」；Web 版存储不可见，改用文件导出/导入实现同等的换机迁移。'),
+      // 快照的**导出/导入文件**已移到侧栏「导入导出」页（与其余导入导出入口集中）。
+      // 这里只留备份策略（间隔 / 暂停 / 保留份数）与历史快照入口。
+      h('div.mm-hint', {}, '换机迁移（把快照导出成文件带走 / 从文件合并回来）在侧栏「导入导出」页。'),
     ),
         section('导出',
       h('div.mm-row', {}, h('span.mm-label', {}, 'PDF 通道'), pdfSel),

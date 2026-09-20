@@ -764,8 +764,9 @@ group('面板分布：左文件库 / 中画布 / 右属性侧栏');
   const src2 = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
   const tb = src2.slice(src2.indexOf('function buildToolbar'), src2.indexOf('/* ------------------------- 侧栏'));
   ok(/toolbar\.appendChild\(buildSideTabs\(\)\)/.test(tb), '顶栏 append 页签组');
-  ok(/const SIDE_TABS = \[\['theme', '主题'\], \['tag', '标签'\], \['style', '样式'\], \['file', '文件'\]\]/.test(src2),
-    '页签顺序：主题 → 标签 → 样式 → 文件（与 C# 一致）');
+  // 顺序：C# 的四个在前，新增「导入导出」放最后（低频，不挤远常用页）
+  ok(/\['theme', '主题'\], \['tag', '标签'\], \['style', '样式'\], \['file', '文件'\],\s*\n?\s*\['exchange', '导入导出'\]/.test(src2),
+    '页签顺序：主题 → 标签 → 样式 → 文件 → 导入导出');
   ok(/buildSide\(app, \{ onPage: syncSideTabs \}\)/.test(src2), '侧栏切页回灌给顶栏页签（同步高亮）');
 
   const topCss = css.slice(css.indexOf('.mm-top-tabs {'), css.indexOf('/* 底部状态条'));
@@ -1613,8 +1614,10 @@ group('设置面板');
   ok(!/section\('布局动画'/.test(filePage), '文件页不再有「布局动画」段');
   ok(!/setBackupMinutes/.test(filePage), '文件页不再直接改备份间隔');
   ok(!/setAnimate/.test(filePage), '文件页不再直接改动动画开关');
-  ok(/section\('导入导出'/.test(filePage), '文件页保留「导入导出」（文档级操作，不是设置）');
-  ok(/已移到顶栏「设置」/.test(filePage), '留有注释说明搬去哪了');
+  // 导入导出已从文件页移到侧栏「导入导出」页（与顶栏那套合并）
+  ok(!/section\('导入导出'/.test(filePage), '文件页不再有「导入导出」段（已并入新页签）');
+  ok(/导入导出/.test(filePage) && /导入导出页|已全部移到/.test(filePage),
+    '留有注释说明搬去哪了');
 }
 
 {
@@ -2990,13 +2993,54 @@ group('P2 导入导出');
   ok(/setAttribute\('width', String\(dims\.W\)\)/.test(scaleFn), 'A38 用钳制后的尺寸重设 width');
 
   // ---- A39 导出格式菜单 ----
+  // 原 openExportMenu（顶栏下拉）已删除：入口全部并入侧栏「导入导出」页。
+  // 断言随之改为校验那一页 —— 格式一个都不能少，否则就是搬漏了。
   const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
-  ok(/export function popupMenu/.test(pn), 'A39 新增 popupMenu');
-  ok(/function openExportMenu/.test(idx), 'A39 新增 openExportMenu');
-  ok(/oncontextmenu/.test(idx), 'A39 右键也能打开菜单');
-  ok(/PNG · 2 倍（高清）/.test(idx) && /PNG · 3 倍（超清）/.test(idx), 'A39 菜单里列出 PNG 倍率');
-  ok(/document\.addEventListener\('pointerdown', onDoc, true\)/.test(pn),
-    'A39 菜单用捕获阶段监听（否则点画布会被画布先处理，菜单关不掉）');
+  ok(/pages\.exchange = pageExchange/.test(pn), 'A39 侧栏注册了「导入导出」页');
+  ok(/function pageExchange\(/.test(pn), 'A39 新增 pageExchange');
+
+  // 页签列表里要有它（否则顶栏点不到）
+  ok(/\['exchange', '导入导出'\]/.test(idx), 'A39 顶栏页签含「导入导出」');
+
+  // 顶栏的导入导出按钮必须**真的移除**了，不能只是多了一个页签
+  ok(!/B\('导入', \(\) => importFile\(\)/.test(idx), 'A39 顶栏「导入」按钮已移除');
+  ok(!/B\('XMIND'/.test(idx) && !/B\('TXT'/.test(idx) && !/B\('MD'/.test(idx),
+    'A39 顶栏 XMIND / TXT / MD 按钮已移除');
+  ok(!/B\('SVG'/.test(idx) && !/B\('PNG'/.test(idx), 'A39 顶栏 SVG / PNG 按钮已移除');
+  ok(!/function openExportMenu/.test(idx), 'A39 openExportMenu 已删除（不留死代码）');
+
+  // 新页签里**每一种格式**都要在（搬漏一个就在这里报出来）
+  const ex = pn.slice(pn.indexOf('function pageExchange('),
+    pn.indexOf('pages.file = pageFile;'));
+  for (const [label, kw] of [
+    ['导入', "app.api.importFile()"],
+    ['XMind', 'app.api.exportXMind()'],
+    ['JSON', 'app.api.exportJson()'],
+    ['TXT', 'app.api.exportTxt()'],
+    ['Markdown', 'app.api.exportMarkdown()'],
+    ['FreeMind', "app.api.exchange('freemind')"],
+    ['OPML', "app.api.exchange('opml')"],
+    ['Mermaid', "app.api.exchange('mermaid')"],
+    ['PlantUML', "app.api.exchange('plantuml')"],
+    ['SVG', 'app.api.exportSvg()'],
+    ['PDF', 'app.api.exportPdf()'],
+    ['打印', 'app.api.printMap(o)'],
+    ['PNG 1 倍', 'app.api.exportPng(1)'],
+    ['PNG 2 倍', 'app.api.exportPng(2)'],
+    ['PNG 3 倍', 'app.api.exportPng(3)'],
+    ['主题导入', 'importThemeFile()'],
+    ['主题导出', 'exportThemeFile()'],
+    ['快照导出', 'app.api.exportBackups()'],
+    ['快照导入', 'app.api.importBackups()'],
+  ]) {
+    ok(ex.includes(kw), `A39 导入导出页含「${label}」`);
+  }
+
+  // 其余三处旧入口必须清掉，否则同一个功能还是有两个地方能点
+  ok(!/onclick: \(\) => app\.api\.exportJson\(\)/.test(pn),
+    'A39 文件页的导出按钮已移除');
+  ok(!/'导入主题'/.test(pn) || !/'导出主题'/.test(pn),
+    'A39 主题页的导入/导出按钮已移除');
   const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
   ok(/\.mm-menu-item/.test(css), 'A39 菜单有样式');
 }
@@ -3190,7 +3234,10 @@ group('P3 打印与 PDF');
   ok(/const ok = await io\.printSvg/.test(pm), 'A34 调用 io.printSvg');
   ok(/status\(`已发起打印/.test(pm), 'A34 成功时给出状态提示');
   ok(/当前环境不支持打印/.test(pm), 'A36 不支持时明确提示（printSvg 返回 false 不能被忽略）');
-  ok(/打印 \/ 存为 PDF…/.test(idx), 'A39 导出菜单里有打印入口');
+  // 打印入口在侧栏「导入导出」页（原顶栏下拉菜单已删除）
+  const pn2 = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const ex2 = pn2.slice(pn2.indexOf('function pageExchange('), pn2.indexOf('pages.file = pageFile;'));
+  ok(/打印 \/ 存为 PDF…/.test(ex2), 'A39 导入导出页里有打印入口');
 }
 
 /* ============================================================
@@ -4050,10 +4097,16 @@ group('交换格式接入 UI');
   const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
 
   ok(/async function exportExchange/.test(idx), '新增 exportExchange');
-  ok(/exportExchange\('freemind'\)/.test(idx), '导出菜单接了 FreeMind');
-  ok(/exportExchange\('opml'\)/.test(idx), '导出菜单接了 OPML');
-  ok(/exportExchange\('mermaid'\)/.test(idx), '导出菜单接了 Mermaid');
-  ok(/exportExchange\('plantuml'\)/.test(idx), '导出菜单接了 PlantUML');
+  // 入口从顶栏下拉菜单搬到了侧栏「导入导出」页
+  const pnx = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const exx = pnx.slice(pnx.indexOf('function pageExchange('),
+    pnx.indexOf('pages.file = pageFile;'));
+  ok(exx.includes("app.api.exchange('freemind')"), '导入导出页接了 FreeMind');
+  ok(exx.includes("app.api.exchange('opml')"), '导入导出页接了 OPML');
+  ok(exx.includes("app.api.exchange('mermaid')"), '导入导出页接了 Mermaid');
+  ok(exx.includes("app.api.exchange('plantuml')"), '导入导出页接了 PlantUML');
+  // api 上要有对应的转发（面板只持有 app.api，不直接碰插件内部函数）
+  ok(/exchange: guard\('导出交换格式'/.test(idx), 'api 暴露 exchange');
 
   // 用「下一个顶层函数声明」当边界，而不是固定字符数 ——
   // 固定 1500 会越界切到后面的 exportTxt，那里也有 capture()，
@@ -5674,6 +5727,86 @@ group('样式：侧栏不能被共享控件样式层叠成居中');
   //    @import 那一行，删了注释照样绿（假阳性）
   ok(/面板内容全部居中/.test(css),
     '注释里写明了踩坑原因（不显式写 align-items 会导致面板内容全部居中）');
+}
+
+group('导入导出页：行为级（真实 render）');
+
+{
+  const { buildSide } = await import('./panels.js');
+
+  /** 记录调用，验证按钮真的接到了对应的 api */
+  function mkApp() {
+    const calls = [];
+    const rec = (name) => (...a) => { calls.push([name, ...a]); };
+    const api = new Proxy({}, {
+      get: (_, k) => {
+        if (k === 'status') return () => {};
+        if (k === 'settings') return {};
+        // 文件页要读这些（返回空列表）；若走 Proxy 默认分支会被记成"调用"，
+        // 且返回 Promise 而不是数组 —— 文件页 .length 直接炸
+        if (k === 'selectedRefs' || k === 'selectedImages') return () => [];
+        if (k === 'selectedRef') return () => null;
+        return (...a) => { calls.push([String(k), ...a]); return Promise.resolve(); };
+      },
+    });
+    return { app: { api, settings: {}, bridge: { getSelectedNodeId: () => 'n1' } }, calls, rec };
+  }
+
+  // 1) 页能打开
+  {
+    const { app } = mkApp();
+    const el = buildSide(app, {});
+    el.open('exchange');
+    eq(el.el.dataset.page, 'exchange', '能切到「导入导出」页');
+    // 页签文字在顶栏（index.js），页内是各节标题 ——
+    // 断言"页内含'导入导出'"会假失败
+    ok(el.el.querySelectorAll('button').length > 10, '页里有成排的导入导出按钮');
+  }
+
+  // 2) 每一类都在（标题层面）—— 少一个 category 用户就找不到那类功能
+  {
+    const { app } = mkApp();
+    const el = buildSide(app, {});
+    el.open('exchange');
+    const heads = [...el.el.querySelectorAll('h3')].map((x) => x.textContent);
+    for (const t of ['导入', '导出为文档', '导出为交换格式', '导出为图像 / PDF', '主题', '快照备份']) {
+      ok(heads.includes(t), `有「${t}」这一节`);
+    }
+  }
+
+  // 3) 点按钮真的调对应 api —— 逐个点，防止"按钮在但接错"
+  {
+    const { app, calls } = mkApp();
+    const el = buildSide(app, {});
+    el.open('exchange');
+    const find = (t) => [...el.el.querySelectorAll('button')].find((b) => b.textContent === t);
+
+    find('XMind')?.click();
+    ok(calls.some((c) => c[0] === 'exportXMind'), '点 XMind → api.exportXMind');
+
+    find('PNG · 2 倍')?.click();
+    ok(calls.some((c) => c[0] === 'exportPng' && c[1] === 2),
+      '点 PNG·2倍 → api.exportPng(2)（倍率要传对，传错就导成 1 倍）');
+
+    find('Mermaid')?.click();
+    ok(calls.some((c) => c[0] === 'exchange' && c[1] === 'mermaid'),
+      '点 Mermaid → api.exchange("mermaid")');
+
+    find('导入文件…')?.click();
+    ok(calls.some((c) => c[0] === 'importFile'), '点导入文件 → api.importFile');
+
+    find('导出快照')?.click();
+    ok(calls.some((c) => c[0] === 'exportBackups'), '点导出快照 → api.exportBackups');
+  }
+
+  // 4) 与旧入口不重复：文件页/主题页/设置里不该再有这些按钮
+  {
+    const { app } = mkApp();
+    const el = buildSide(app, {});
+    el.open('file');
+    const fileTxt = el.el.textContent;
+    ok(!fileTxt.includes('导入导出'), '文件页不再有「导入导出」段');
+  }
 }
 
 group('多附件：XMind 往返（导出再导回）');

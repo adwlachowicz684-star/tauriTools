@@ -22,7 +22,7 @@ import * as wb from './workbook.js';
 import * as diag from './diagnostics.js';
 import * as store from './store.js';
 import * as io from './io.js';
-import { buildSide, openVideo, openPreview, openSettings, confirmDialog, popupMenu,
+import { buildSide, openVideo, openPreview, openSettings, confirmDialog,
   openPrintSettings, openDiagnostics, searchStatusText } from './panels.js';
 import { attachTabDrag } from './tab-drag.js';
 import * as fmt from './formats.js';
@@ -316,44 +316,8 @@ bootIframePlugin(async (ctx) => {
    * opt.refocus:false 用于「点击后焦点不该回画布」的按钮 ——
    * 典型是打开模态浮层：焦点还留在画布的话，画布会在浮层背后继续吃快捷键。
    */
-  /**
-   * A39 导出格式菜单。
-   *
-   * PNG 单独列出 1/2/3 倍 —— 高分辨率是要用户主动选的：
-   * 默认 3 倍的话，一个普通脑图会导出几十 MB，多数人并不需要。
-   */
-  function openExportMenu(anchorEl) {
-    const hint = {
-      xmind: '与 XMind 官方互通，多画布 + 主题 + 外框 + 附件一并打包，换机器可还原',
-      json: '保留全部私有字段，本工具无损往返',
-      txt: '与 JSON 同内容，仅扩展名不同（对齐 C# 版）',
-      md: '多画布按「## 画布：」分块，便于人读与 diff',
-      svg: '矢量图，可无损放大',
-      png: '位图，1 倍=画布原尺寸',
-      pdf: '矢量图，不经浏览器、不弹对话框，直接保存；失败时自动改用打印对话框',
-    };
-    popupMenu(anchorEl, [
-      { label: 'XMind（.xmind）', hint: hint.xmind, onSelect: () => exportXMind() },
-      { label: 'JSON（.json）', hint: hint.json, onSelect: () => exportJson() },
-      { label: 'TXT（.txt）', hint: hint.txt, onSelect: () => exportTxt() },
-      { label: 'Markdown（.md）', hint: hint.md, onSelect: () => exportMarkdown() },
-      '-',
-      // 交换格式：给别的软件用。都是**单画布**，只导当前这张。
-      { label: 'FreeMind（.mm）', hint: 'FreeMind / Freeplane / XMind 可导入', onSelect: () => exportExchange('freemind') },
-      { label: 'OPML（.opml）', hint: 'OmniOutliner / Workflowy / 幕布 等大纲工具', onSelect: () => exportExchange('opml') },
-      { label: 'Mermaid（.mmd）', hint: 'GitHub / GitLab / Notion / Obsidian 原生渲染', onSelect: () => exportExchange('mermaid') },
-      { label: 'PlantUML（.puml）', hint: 'PlantUML / Confluence / 多数 Wiki', onSelect: () => exportExchange('plantuml') },
-      '-',
-      { label: 'SVG（.svg）', hint: hint.svg, onSelect: () => exportSvg() },
-      '-',
-      { label: 'PDF（矢量，直接保存）', hint: hint.pdf, onSelect: () => exportPdf() },
-      { label: '打印 / 存为 PDF…', hint: '用系统打印对话框，可在其中选「另存为 PDF」', onSelect: () => openPrintSettings(app, (o) => printMap(o)) },
-      '-',
-      { label: 'PNG · 1 倍', hint: hint.png, onSelect: () => exportPng(1) },
-      { label: 'PNG · 2 倍（高清）', hint: '像素密度翻倍，文字与连线不糊', onSelect: () => exportPng(2) },
-      { label: 'PNG · 3 倍（超清）', hint: '体积较大，适合打印或大屏', onSelect: () => exportPng(3) },
-    ]);
-  }
+  // 导出格式菜单（原 openExportMenu）已删除：入口全部并入侧栏「导入导出」页，
+  // 这里是死代码。保留它只会让「去哪儿找某个格式」继续分裂成两处。
 
   const B = (label, onclick, opt = {}) =>
     h('button.mm-btn' + (opt.icon ? '.icon' : ''), {
@@ -376,7 +340,9 @@ bootIframePlugin(async (ctx) => {
    *   2. 不占侧栏高度 —— 侧栏只有 276px 宽、纵向空间本就紧张，
    *      顶部再压一条页签条等于凭空少一屏内容的 1/10。
    */
-  const SIDE_TABS = [['theme', '主题'], ['tag', '标签'], ['style', '样式'], ['file', '文件']];
+  // 「导入导出」放最后：它是低频操作，放在高频页后面免得把常用页签挤远
+  const SIDE_TABS = [['theme', '主题'], ['tag', '标签'], ['style', '样式'], ['file', '文件'],
+    ['exchange', '导入导出']];
   let sideTabsEl = null;
 
   function buildSideTabs() {
@@ -413,24 +379,9 @@ bootIframePlugin(async (ctx) => {
       },
     });
 
+    // 导入导出按钮已全部移到侧栏「导入导出」页（原 openExportMenu 一并删除）。
+    // 顶栏只留画布级操作（新建 / 复制），格式相关的入口统一收进那一页。
     toolbar.appendChild(group(
-      B('导入', () => importFile(), { title: '导入 XMind / JSON / Markdown' }),
-      // A39 导出格式菜单：原先「导出」直接导出 JSON，
-      // 但按钮上写的是「导出」而不是「导出 JSON」—— 点了才知道出来的是什么格式。
-      // 里出全部格式（含 PNG 倍率），左键点开、右键也出。
-      (() => {
-        const btn = h('button.mm-btn', {
-          title: '导出为……（左键或右键都能打开格式菜单）',
-          onclick: (e) => { e.preventDefault(); openExportMenu(btn); },
-          oncontextmenu: (e) => { e.preventDefault(); openExportMenu(btn); },
-        }, '导出 ▾');
-        return btn;
-      })(),
-      B('XMIND', () => exportXMind(), { title: '导出为 .xmind（含 XMind 官方 content.json + 本工具无损快照，附件一并打包）' }),
-      B('TXT', () => exportTxt(), { title: '导出为 .txt（内容与 JSON 相同，仅扩展名不同，对齐 C# 版）' }),
-      B('MD', () => exportMarkdown(), { title: '导出为 Markdown' }),
-      B('SVG', () => exportSvg(), { title: '导出为矢量 SVG' }),
-      B('PNG', () => exportPng(), { title: '导出整幅 PNG' }),
       B('新建', guard('新建画布', () => addSheet()), { title: '新建画布' }),
       B('复制', guard('复制画布', () => duplicateSheet(workbook.activeId)),
         { title: '复制当前画布（含内容与主题布局）' }),
@@ -2013,6 +1964,16 @@ bootIframePlugin(async (ctx) => {
     exportJson: guard('导出 JSON', exportJson),
     exportMarkdown: guard('导出 Markdown', exportMarkdown),
     importFile: guard('导入', importFile),
+    // —— 导入导出页（新页签）需要的其余入口 ——
+    // 这些此前只在顶栏按钮里出现；顶栏收拢后必须走 api 暴露，
+    // 否则新页签拿不到它们（面板只持有 app.api，不直接碰插件内部函数）
+    exportXMind: guard('导出 XMind', exportXMind),
+    exportTxt: guard('导出 TXT', exportTxt),
+    exportSvg: guard('导出 SVG', exportSvg),
+    exportPng: guard('导出 PNG', (scale) => exportPng(scale)),
+    exportPdf: guard('导出 PDF', (opts) => exportPdf(opts)),
+    printMap: guard('打印', (opts) => printMap(opts)),
+    exchange: guard('导出交换格式', (kind) => exportExchange(kind)),
     saveThemes: guard('保存主题', saveThemes),
     applyTheme: guard('应用主题', applyTheme),
     applyLayout: guard('应用布局', applyLayout),
