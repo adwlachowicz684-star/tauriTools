@@ -430,6 +430,39 @@ export class EditorBridge {
     return { ok: true, total: r.total || 0, index: r.index || 0, text: r.text || '' };
   }
 
+  /**
+   * 取当前搜索结果列表，供外壳左侧面板渲染。
+   *
+   * 与 search() 分开是有意的：search() 每调一次就**推进到下一个匹配**，
+   * 若顺带返回列表，外壳每次想刷新列表都会让画布上的定位多跳一格。
+   * 两者职责分开后，"刷新列表"和"下一个"互不干扰。
+   *
+   * @returns {{kw:string, total:number, active:number, items:string[]}}
+   *   未搜索 / 关键字为空时 items 为空数组
+   */
+  getSearchResults() {
+    const r = this._safe('读取搜索结果', (m) => m.getSearchResults());
+    // 空结果不是错误：关键字为空、编辑器未就绪、真没匹配，都是"没有可显示的"
+    if (!r || !Array.isArray(r.items)) return { kw: '', total: 0, active: 0, items: [] };
+    return {
+      kw: String(r.kw || ''),
+      total: Number(r.total) || 0,
+      active: Number(r.active) || 0,
+      items: r.items.map((t) => String(t ?? '')),
+    };
+  }
+
+  /**
+   * 定位到第 idx 个搜索结果（0 起）。
+   *
+   * 返回 false 表示**没定位成**（索引越界 / 未搜索 / 编辑器未就绪）。
+   * 这个区分很重要：内容变化后列表会重建，外壳手里的旧索引可能已失效，
+   * 此时宁可失败并提示"请重新搜索"，也不能跳到一个不相干的节点。
+   */
+  gotoSearchResult(idx) {
+    return this._safe('定位搜索结果', (m) => m.gotoSearchResult(idx)) === true;
+  }
+
   /** 按选中节点展开到第 N 层（0/负数=全部） */
   expandToLevel(levels) {
     return this._safe('展开', (m) => m.expandSelectedToLevel(levels));

@@ -26,21 +26,123 @@ export function buildFileList(app) {
   let dragId = null;      // 当前被拖动的文件 id
 
   const bodyEl = h('div.mm-files-body', {});
+  // 搜索结果区与文件列表**共用同一个底框**（同一个 .mm-files 容器、
+  // 同样 186px 宽），两者互斥显示 —— 尺寸天然一致，不用另写一套面板样式
+  const searchBodyEl = h('div.mm-files-body', { style: { display: 'none' } });
+
+  const titleEl = h('span.mm-files-title', {}, '脑图文件');
+  const newFileBtn = h('button.mm-btn.icon', {
+    title: '新建脑图文件',
+    onclick: () => api.createFile(null),
+  }, '＋');
+  const newFolderBtn = h('button.mm-btn.icon', {
+    title: '新建文件夹',
+    onclick: () => api.createFolder(),
+  }, '📁');
+
   const el = h('div.mm-files', {},
     h('div.mm-files-head', {},
-      h('span.mm-files-title', {}, '脑图文件'),
+      titleEl,
       h('span', { style: { flex: '1 1 auto' } }),
-      h('button.mm-btn.icon', {
-        title: '新建脑图文件',
-        onclick: () => api.createFile(null),
-      }, '＋'),
-      h('button.mm-btn.icon', {
-        title: '新建文件夹',
-        onclick: () => api.createFolder(),
-      }, '📁'),
+      newFileBtn,
+      newFolderBtn,
     ),
     bodyEl,
+    searchBodyEl,
   );
+
+  /* ---------------------- 搜索结果模式 ---------------------- */
+
+  let searchMode = false;
+  let searchItems = [];
+  let searchKw = '';
+  let searchActive = 0;
+
+  /**
+   * 渲染搜索结果条目。
+   *
+   * 命中片段用 <mark> 高亮，但**全程用文本节点构造，不拼 innerHTML** ——
+   * 节点文字是用户输入，含 `<img onerror=...>` 时拼字符串就是 XSS。
+   */
+  function renderSearchItems() {
+    searchBodyEl.innerHTML = '';
+    const kw = String(searchKw || '').toLowerCase();
+    if (!searchItems.length) {
+      searchBodyEl.appendChild(h('div.mm-hint', {}, '没有匹配的节点'));
+      return;
+    }
+    searchItems.forEach((text, i) => {
+      const item = h('div.mm-search-item' + (i === searchActive ? '.active' : ''), {
+        onclick: () => jumpTo(i),
+        title: text,
+      });
+      const src = String(text ?? '');
+      const low = src.toLowerCase();
+      let pos = 0;
+      // kw 为空时绝不能进 indexOf('') 的循环 —— 那是死循环
+      if (kw) {
+        let hit;
+        while ((hit = low.indexOf(kw, pos)) !== -1) {
+          if (hit > pos) item.appendChild(document.createTextNode(src.slice(pos, hit)));
+          item.appendChild(h('mark', {}, src.slice(hit, hit + kw.length)));
+          pos = hit + kw.length;
+        }
+      }
+      if (pos < src.length) item.appendChild(document.createTextNode(src.slice(pos)));
+      searchBodyEl.appendChild(item);
+    });
+  }
+
+  /** 点条目 → 定位到该节点 */
+  function jumpTo(i) {
+    const ok = app.bridge?.gotoSearchResult(i);
+    // 定位失败多半是内容变了、旧索引已失效。这时**不要**假装成功，
+    // 否则高亮停在旧项上，用户会以为跳过去的就是这一条。
+    if (!ok) { api.status('定位失败：结果已失效，请重新搜索', true); return; }
+    searchActive = i;
+    renderSearchItems();
+  }
+
+  /**
+   * 切到搜索结果 / 退出。
+   *
+   * @param {object|null} res `{kw,total,active,items}`；null 或空列表 = 退出
+   */
+  function setSearch(res) {
+    const items = res?.items;
+    const has = Array.isArray(items) && items.length > 0;
+
+    if (!has) {
+      if (!searchMode) return;      // 本来就不在搜索态，别白重建一次
+      searchMode = false;
+      searchItems = [];
+      searchKw = '';
+      titleEl.textContent = '脑图文件';
+      newFileBtn.style.display = '';
+      newFolderBtn.style.display = '';
+      searchBodyEl.style.display = 'none';
+      // 真的清空 DOM，不能只靠 display:none —— 残留条目占内存，
+      // 且任何按 .mm-search-item 查询的逻辑都会查到上一轮的旧结果
+      searchBodyEl.innerHTML = '';
+      bodyEl.style.display = '';
+      setOpen(!!app.settings?.filesOpen);
+      return;
+    }
+
+    searchMode = true;
+    searchItems = items;
+    searchKw = String(res.kw || '');
+    searchActive = Number(res.active) || 0;
+    // 标题显示**真实总数**（编辑器侧超过 200 条只回传前 200 条）
+    titleEl.textContent = `搜索结果 ${Number(res.total) || items.length} 项`;
+    newFileBtn.style.display = 'none';
+    newFolderBtn.style.display = 'none';
+    bodyEl.style.display = 'none';
+    searchBodyEl.style.display = '';
+    renderSearchItems();
+    // 文件库默认是收起的 —— 搜完结果藏在收起的框里等于没显示
+    setOpen(true);
+  }
 
   /* ---------------------- 单个文件项 ---------------------- */
 
@@ -112,6 +214,8 @@ export function buildFileList(app) {
   /* ---------------------- 渲染 ---------------------- */
 
   function refresh() {
+    // 搜索态下文件列表是隐藏的，重建它纯属白费（还会把搜索区挤下去）
+    if (searchMode) return;
     const { files, folders, currentId } = api.fileState();
     bodyEl.innerHTML = '';
 
@@ -167,5 +271,5 @@ export function buildFileList(app) {
     el.classList.toggle('open', !!on);
   }
 
-  return { el, refresh, setOpen };
+  return { el, refresh, setOpen, setSearch, isSearchMode: () => searchMode };
 }

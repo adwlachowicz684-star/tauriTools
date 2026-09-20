@@ -49,39 +49,7 @@
         }
         /* 隐藏鼠标按下时的蓝色选中框，桌面应用里很碍眼 */
         #minder-container * { user-select: none; }
-        /* ---- 搜索结果面板：画布左侧浮层，匹配数 >3 时由 JS 显示；条目可点击聚焦 ---- */
-        #search-panel {
-            position: absolute; left: 10px; top: 10px;
-            width: 232px; max-height: calc(100% - 20px);
-            display: none; flex-direction: column;
-            background: var(--km-panel-bg);
-            border: 1px solid var(--km-canvas-border); border-radius: 8px;
-            box-shadow: 0 4px 16px rgba(0,0,0,.45);
-            overflow: hidden;
-            font: 12px/1.7 "Segoe UI","Microsoft YaHei",sans-serif;
-            user-select: none; z-index: 500;   /* 画布之上、加载遮罩(9999)之下 */
-        }
-        #search-panel.sp-visible { display: flex; }
-        #search-panel .sp-head {
-            flex: none; display: flex; align-items: center;
-            padding: 5px 8px 5px 10px;
-            color: var(--km-panel-text); background: var(--km-panel-head-bg);
-            border-bottom: 1px solid var(--km-canvas-border);
-        }
-        #search-panel .sp-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        #search-panel .sp-close {
-            flex: none; cursor: pointer; color: var(--km-panel-dim);
-            width: 18px; height: 18px; line-height: 16px; text-align: center; border-radius: 4px;
-        }
-        #search-panel .sp-close:hover { background: var(--km-panel-close-hover); color: var(--km-panel-text); }
-        #search-panel .sp-list { flex: 1; overflow-y: auto; padding: 4px 0; }
-        #search-panel .sp-item {
-            padding: 3px 10px; color: var(--km-panel-text); cursor: pointer;
-            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        }
-        #search-panel .sp-item:hover { background: var(--km-panel-hover); }
-        #search-panel .sp-item.sp-active { background: #0A84FF; color: #FFFFFF; }
-        #search-panel .sp-item mark { background: transparent; color: #FFD60A; font-weight: 600; }
+        /* 搜索结果面板已移到外壳左侧（与文件库共用底框），画布内不再自绘浮层 */
     </style>
 </head>
 <body>
@@ -2277,100 +2245,43 @@
             } catch (e) { return false; }
         }
 
-        // ---- 搜索结果面板：匹配数 >3 时在画布左侧浮出，列出全部结果，点击条目聚焦对应节点 ----
-        var _spEl = null;                          // 面板根元素（惰性创建）
-        function spPanel() {
-            if (_spEl) return _spEl;
-            var el = document.createElement('div');
-            el.id = 'search-panel';
-            el.innerHTML =
-                '<div class="sp-head"><span class="sp-title"></span><span class="sp-close" title="关闭搜索面板">×</span></div>' +
-                '<div class="sp-list"></div>';
-            el.querySelector('.sp-close').addEventListener('click', function () { spHide(); });
-            document.body.appendChild(el);
-            _spEl = el;
-            return el;
-        }
-        function spIsVisible() { return !!(_spEl && _spEl.classList.contains('sp-visible')); }
-        function spHide() {
-            if (_spEl) _spEl.classList.remove('sp-visible');
-            _searchList = null; _searchKw = ''; _searchPos = 0;   // 复位：下次搜索从第一个匹配开始
+        // ---- 搜索结果：列表不再在画布内自绘面板 ----
+        // 面板已移到外壳左侧（与文件库共用底框），这里只保留匹配**数据**与
+        // 定位能力：外壳用 getSearchResults() 取列表渲染，用 gotoSearchResult(i)
+        // 请求定位。
+        function resetSearch() {
             clearSearchMark();
+            _searchList = null; _searchKw = ''; _searchPos = 0;
         }
-        // 全量渲染结果条目（关键字片段高亮；超过 200 条只渲染前 200 条防卡顿，标题仍显示总数）
-        function spRender(kw) {
-            var el = spPanel();
-            var list = _searchList || [];
-            el.querySelector('.sp-title').textContent = '搜索结果 ' + list.length + ' 项';
-            var box = el.querySelector('.sp-list');
-            box.innerHTML = '';
-            var lowKw = String(kw || '').toLowerCase();
-            var count = Math.min(list.length, 200);
-            for (var i = 0; i < count; i++) {
-                var text = '';
-                try { text = (list[i].getText && list[i].getText()) || ''; } catch (e) {}
-                var item = document.createElement('div');
-                item.className = 'sp-item';
-                // 先按原始文本切出命中片段，再逐段 HTML 转义，避免转义实体串被关键字截断
-                var segs = [], lowText = String(text).toLowerCase(), pos = 0, hit;
-                if (lowKw) {
-                    while ((hit = lowText.indexOf(lowKw, pos)) !== -1) {
-                        if (hit > pos) segs.push([text.slice(pos, hit), false]);
-                        segs.push([text.slice(hit, hit + lowKw.length), true]);
-                        pos = hit + lowKw.length;
-                    }
-                }
-                if (pos < text.length) segs.push([text.slice(pos), false]);
-                var html = '';
-                for (var j = 0; j < segs.length; j++) {
-                    var t2 = String(segs[j][0]).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                    html += segs[j][1] ? '<mark>' + t2 + '</mark>' : t2;
-                }
-                item.innerHTML = html;
-                (function (idx) {
-                    item.addEventListener('click', function () { spFocus(idx); });
-                })(i);
-                box.appendChild(item);
-            }
-            el.classList.toggle('sp-visible', list.length > 3);   // 需求：结果数 >3 才显示面板
-            spSyncActive();
+        // 按当前关键字重建匹配列表（内容变化后旧列表会过期：节点可能已删/已改名）
+        function rebuildSearchList() {
+            if (!_searchKw) return false;
+            var prev = _searchPos;
+            _searchList = []; _searchPos = 0;
+            try { km.getRoot().traverse(function (n) {
+                var t = n && n.getText ? (n.getText() || '') : '';
+                if (String(t).toLowerCase().indexOf(_searchKw) !== -1) _searchList.push(n);
+            }); } catch (e) {}
+            if (!_searchList.length) { resetSearch(); return false; }
+            _searchPos = (prev >= 1 && prev <= _searchList.length) ? prev : 0;
+            return true;
         }
-        // 点击条目：选中并聚焦该节点（选中态同步 WPF 样式面板 + 高亮框 + 视野外时居中），焦点交还画布
-        function spFocus(idx) {
+        // 定位到第 idx 个匹配（0 起）：选中 + 高亮框 + 视野外时居中
+        function focusSearchResult(idx) {
             var list = _searchList || [];
-            if (idx < 0 || idx >= list.length) return;
+            if (idx < 0 || idx >= list.length) return false;
             _searchPos = idx + 1;                 // 与 search() 的 1 起下标保持一致
             var node = list[idx];
             try { km.clearSelect && km.clearSelect(); } catch (e) {}
             try { km.select && km.select(node); } catch (e) {}
             markSearchNode(node);
             try { km.focus && km.focus(); } catch (e) {}
-            spSyncActive();
+            return true;
         }
-        // 面板当前项与 _searchPos 同步（逐个搜索/点击条目后调用），并滚动到可视区
-        function spSyncActive() {
-            if (!_spEl || !spIsVisible()) return;
-            var items = _spEl.querySelectorAll('.sp-item');
-            for (var i = 0; i < items.length; i++) {
-                var on = (i === _searchPos - 1);
-                items[i].classList.toggle('sp-active', on);
-                if (on) { try { items[i].scrollIntoView({ block: 'nearest' }); } catch (e) {} }
-            }
-        }
-        // 内容变化后面板结果会过期：面板可见时按当前关键字静默重建；原聚焦节点被删则回落到第一个
+        // 内容变化后旧结果会过期：按当前关键字静默重建，避免外壳点条目时定位到已删节点
         try { km.on('contentchange', function () {
-            if (!spIsVisible() || !_searchKw) return;
-            var kw = _searchKw, prev = _searchPos;
-            _searchList = []; _searchPos = 0;
-            try { km.getRoot().traverse(function (n) {
-                var t = n && n.getText ? (n.getText() || '') : '';
-                if (String(t).toLowerCase().indexOf(kw) !== -1) _searchList.push(n);
-            }); } catch (e) {}
-            if (!_searchList.length) { spHide(); return; }
-            _searchPos = (prev >= 1 && prev <= _searchList.length) ? prev : 0;
-            spRender(kw);
-            if (_searchPos === 0) { _searchPos = 1; spFocus(0); }
-            else { try { markSearchNode(_searchList[_searchPos - 1]); } catch (e) {} spSyncActive(); }
+            if (!_searchKw) return;
+            rebuildSearchList();
         }); } catch (e) {}
 
         // ---- 画布主题（Nexus Panel 移植新增）：外壳亮/暗 → 画布配色 ----
@@ -2631,12 +2542,12 @@
                 return true;
             },
             // 搜索：按文本匹配全部节点，逐个循环定位。同一关键字再次调用跳到下一个匹配；
-            // 关键字变更（或面板关闭后列表已复位）则重新搜索。返回 {total,index,text}（index 为 1 起；无匹配均为 0）。
-            // 匹配数 >3 时在画布左侧弹出搜索结果面板，列出全部结果，点击条目聚焦。
+            // 关键字变更（或已复位）则重新搜索。返回 {total,index,text}（index 为 1 起；无匹配均为 0）。
+            // 结果列表本身由 getSearchResults() 提供给外壳渲染（左侧面板）。
             search: function (keyword) {
                 try {
                     var kw = String(keyword == null ? '' : keyword).trim().toLowerCase();
-                    if (!kw) { clearSearchMark(); spHide(); return { total: 0, index: 0, text: '' }; }
+                    if (!kw) { resetSearch(); return { total: 0, index: 0, text: '' }; }
                     if (!_searchList || _searchKw !== kw) {
                         _searchList = [];
                         _searchKw = kw;
@@ -2645,11 +2556,9 @@
                             var t = n && n.getText ? (n.getText() || '') : '';
                             if (String(t).toLowerCase().indexOf(kw) !== -1) _searchList.push(n);
                         }); } catch (e) {}
-                        spRender(kw);          // 重建后刷新面板（内部按 >3 决定显示/隐藏）
                     }
                     if (!_searchList || _searchList.length === 0) {
-                        clearSearchMark();
-                        spHide();
+                        resetSearch();
                         return { total: 0, index: 0, text: '' };
                     }
                     var total = _searchList.length;
@@ -2657,9 +2566,28 @@
                     if (_searchPos === 0) _searchPos = 1;
                     var node = _searchList[_searchPos - 1];
                     markSearchNode(node);
-                    spSyncActive();            // 面板当前项跟随逐个搜索推进
                     return { total: total, index: _searchPos, text: node.getText ? (node.getText() || '') : '' };
                 } catch (e) { return { total: 0, index: 0, text: '' }; }
+            },
+            // 把当前匹配列表交给外壳渲染（左侧搜索结果面板）。
+            // 只在**真的搜过**之后才有内容；关键字为空返回空列表，外壳据此清空面板。
+            // 超过 200 条只给前 200 条（防卡顿），但 total 仍是真实总数。
+            getSearchResults: function () {
+                var list = _searchList || [];
+                var out = [];
+                var n = Math.min(list.length, 200);
+                for (var i = 0; i < n; i++) {
+                    var t = '';
+                    try { t = (list[i].getText && list[i].getText()) || ''; } catch (e) {}
+                    out.push(String(t));
+                }
+                return { kw: _searchKw || '', total: list.length, active: Math.max(0, _searchPos - 1), items: out };
+            },
+            // 外壳点结果条目时定位。索引越界返回 false ——
+            // 内容变化后列表会重建，外壳的旧列表可能与当前不一致，
+            // 越界时宁可失败也不能定位到错误的节点。
+            gotoSearchResult: function (idx) {
+                try { return focusSearchResult(Number(idx) | 0); } catch (e) { return false; }
             },
             // 按选中节点展开其子树到指定层数（供 WPF 侧边栏「展开一级/二级/全部」按钮调用）。
             // levels=1 展开选中节点本身（显示子节点）；2=再展开子节点（显示孙节点）；0 或负数=全部展开。
