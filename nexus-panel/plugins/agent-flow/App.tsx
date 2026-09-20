@@ -634,6 +634,23 @@ export default function App() {
     setCredentials(r.credentials);
   }, [store]);
 
+  /* 运行日志。**必须定义在这里**，不能跟其它 useState 堆在一起：
+     changeVaultMode 的 useCallback 依赖数组里带着 pushLog，而依赖数组是
+     渲染期求值的 —— 定义晚于第一个引用点就是 TDZ（渲染即 ReferenceError）。
+
+     同时**必须用 useCallback**：换成普通函数声明虽然靠提升躲过 TDZ，
+     但每次渲染都是新引用，凡是把它写进依赖数组的 effect 都会反复重跑。
+     踩过的坑：通道体检那个 effect 依赖 [pushLog]、内部 setChannel(新对象)
+     → 重渲染 → 新 pushLog → effect 重跑 → 死循环；表现为渲染进程 CPU
+     打满、内存一路涨到 GB 级，界面完全点不动。
+
+     函数体只用到 setLog（useState 的 setter，引用天然稳定），依赖数组留空。 */
+  const [log, setLog] = useState<string[]>([]);
+  const pushLog = useCallback((msg: string) => {
+    const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    setLog((l) => [`${ts} ${msg}`, ...l].slice(0, 100));
+  }, []);
+
   /**
    * 切换加密方式：用新的主密钥重新加密全部凭据。
    *
@@ -749,7 +766,6 @@ export default function App() {
   const [concurrency, setConcurrency] = useState(1);
   const [globalInput, setGlobalInput] = useState('');
   const [summary, setSummary] = useState<RunSummary | null>(null);
-  const [log, setLog] = useState<string[]>([]);
   /** 后端通道体检结果；null 表示还没探完 */
   const [channel, setChannel] = useState<ChannelStatus | null>(null);
 
@@ -905,15 +921,6 @@ export default function App() {
    * 日志区现在**一直可见**（右栏下半部分），
    * 所以不再需要"出错时自动切过去"—— 报错藏不起来，也就没有切的动作。
    */
-  /* 这里刻意用**函数声明**而不是 useCallback：changeVaultMode 定义在本行之前
-     （约 646 行），它的 useCallback 依赖数组里带着 pushLog —— 依赖数组是渲染期求值的，
-     const 在那个位置还没初始化，一渲染就是 TDZ（TS2448/TS2454 + 运行时崩）。
-     函数声明有提升，正好跨过这个顺序问题；函数体只用到 setLog（useState 的 setter，
-     引用稳定），换成函数声明没有闭包陷阱。 */
-  function pushLog(msg: string) {
-    const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-    setLog((l) => [`${ts} ${msg}`, ...l].slice(0, 100));
-  }
 
   /*
    * 启动时探一次后端通道（审查项 A-01）。
