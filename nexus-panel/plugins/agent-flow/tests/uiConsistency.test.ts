@@ -185,3 +185,28 @@ test('startWatch 必须 catch（否则监听失败无任何提示）', () => {
   const tail = app.slice(i, i + 600);
   assert.ok(/\.catch\(/.test(tail), 'startWatch 的 Promise 必须 catch');
 });
+
+/* ================= 节点 id ================= */
+
+/*
+ * 节点 id 形如 `ma` + 时间戳乱码（mamu7obyv93）——
+ * 对用户没有意义，看不出是哪个节点，还像出错信息。
+ * 它只该出现在**排查的位置**（属性面板），不该占每一张卡片的一行。
+ */
+test('卡片上不再渲染节点 id', () => {
+  const shell = read(path.join(COMP, DEFINER));
+  /*
+   * 匹配的是"把 id 当文本渲染"这个动作。
+   * 不能只查"文件里含 node-id"—— 注释里为了说明为什么挪走，
+   * 正好要把这个类名原样写出来，那样检查永远失败（假阴性）。
+   */
+  const bad = /node-id|\{[^{}]*\bid\b[^{}]*\}\s*<\/span>/.test(shell);
+  assert.equal(bad, false, 'NodeShell 又渲染了节点 id');
+});
+
+test('节点 id 只在属性面板里可查（可复制）', () => {
+  const insp = read(path.join(COMP, 'Inspector.tsx'));
+  assert.match(insp, /节点 id/, '属性面板要有「节点 id」行');
+  // 能复制才算真能用于排查：光显示一串乱码，还得手打
+  assert.match(insp, /clipboard[\s\S]{0,120}writeText/, '「节点 id」要能点一下复制');
+});
