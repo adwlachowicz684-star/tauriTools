@@ -117,7 +117,7 @@ console.log('\n=== 6. 界面开关与参数传递 ===');
 {
   const dlg = fs.readFileSync(path.join(HERE, 'components/dialogs.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
-  const host = fs.readFileSync(path.join(HERE, 'components/Dialogs.tsx'), 'utf8')
+  const host = fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
   const api = fs.readFileSync(path.join(HERE, 'api.ts'), 'utf8');
   const types = fs.readFileSync(path.join(HERE, 'types.ts'), 'utf8');

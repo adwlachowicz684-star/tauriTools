@@ -18,8 +18,8 @@ const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
 const grid = strip(fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8'));
 const app = strip(fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8'));
 const css = strip(fs.readFileSync(path.join(HERE, 'style.css'), 'utf8'));
-/* 弹窗渲染在 Dialogs.tsx（App 只传状态），两个文件都要看 */
-const dlg = strip(fs.readFileSync(path.join(HERE, 'components/Dialogs.tsx'), 'utf8'));
+/* 弹窗渲染在 DialogsHub.tsx（App 只传状态），两个文件都要看 */
+const dlg = strip(fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8'));
 
 console.log('\n=== 1. 链接名可点 ===');
 {
@@ -49,7 +49,7 @@ console.log('\n=== 4. 接线 ===');
   t('App 传入 onEditLink', /onEditLink=\{\(project, group\) => setConfirmLink\(\{ project, group \}\)\}/.test(app));
   /* 复用已有的建链弹窗，不另起一套 */
   t('复用 confirmLink 弹窗', /confirmLink=\{confirmLink\}/.test(app));
-  t('弹窗已渲染（在 Dialogs.tsx）', /\{confirmLink && \(/.test(dlg));
+  t('弹窗已渲染（在 DialogsHub.tsx）', /\{confirmLink && \(/.test(dlg));
   t('弹窗用 confirmLink 的 project/group', /project=\{confirmLink\.project\}/.test(dlg) && /group=\{confirmLink\.group\}/.test(dlg));
 }
 

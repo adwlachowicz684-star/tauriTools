@@ -55,7 +55,7 @@ console.log('\n=== 3. 目标条：必须让用户看见当前作用于谁 ===');
 
 console.log('\n=== 4. 宿主：跟随与 setIcon 必须用同一个目标 ===');
 {
-  const host = strip(fs.readFileSync(path.join(HERE, 'components/Dialogs.tsx'), 'utf8'));
+  const host = strip(fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8'));
 
   t('默认跟随', /useState\(true\)/.test(host));
   t('算了当前选中卡片', /const selCard = useMemo/.test(host));
@@ -75,7 +75,7 @@ console.log('\n=== 4. 宿主：跟随与 setIcon 必须用同一个目标 ===');
 
 console.log('\n=== 5. 不重建组件（换目标不能丢状态）===');
 {
-  const host = fs.readFileSync(path.join(HERE, 'components/Dialogs.tsx'), 'utf8');
+  const host = fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8');
   /* 用 key={目标} 会让 React 整个重建实例，state 全丢 */
   t('没有用 key 绑目标', !/key=\{iconTarget|key=\{selCard|key=\{dialog\.card/.test(host));
 }

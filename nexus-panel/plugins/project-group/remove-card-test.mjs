@@ -79,7 +79,7 @@ console.log('\n=== 6. 三处入口都走弹窗 ===');
   /* **不再有直接 removeCard 的调用** —— 否则会绕过确认 */
   t('没有直接调 s.removeCard', !/s\.removeCard\(/.test(app));
 
-  const host = strip(fs.readFileSync(path.join(HERE, 'components/Dialogs.tsx'), 'utf8'));
+  const host = strip(fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8'));
   t('弹窗已渲染', /dialog\.type === 'remove' && \(/.test(host));
   t('确认后调 removeCardFull', /s\.removeCardFull\(/.test(host));
 }

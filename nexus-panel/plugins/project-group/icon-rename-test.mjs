@@ -73,7 +73,7 @@ console.log('\n=== 3. 界面接线 ===');
 {
   const dlg = fs.readFileSync(path.join(HERE, 'components/dialogs.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
-  const host = fs.readFileSync(path.join(HERE, 'components/Dialogs.tsx'), 'utf8')
+  const host = fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
   const cssNC = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');

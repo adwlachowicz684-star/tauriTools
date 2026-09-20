@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ContentPanel } from './components/ContentPanel';
-import { Dialogs, type Dialog, type PendingSend } from './components/Dialogs';
+import { Dialogs, type Dialog, type PendingSend } from './components/DialogsHub';
 import { CardGrid, TabBar, type DragPayload } from './components/CardGrid';
 import { SideRail } from './components/SideRail';
 import { StackedGroups } from './components/StackedGroups';
@@ -986,7 +986,7 @@ export default function App() {
       </div>
 
       {/* ---------------- 弹窗 ----------------
-          全部形态集中在 `components/Dialogs.tsx`（约 200 行）。
+          全部形态集中在 `components/DialogsHub.tsx`（约 200 行）。
           App 是组装层，不该再塞这么多彼此无关的条件渲染。 */}
       <Dialogs
         s={s}
