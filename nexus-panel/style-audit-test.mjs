@@ -163,6 +163,32 @@ t('summarize 支持任意 level 键（不会 TS7053）',
   summarize([{ level: 'error' }, { level: 'warn' }]).warn === 1);
 
 console.log('\n=== 8. 共享变量列表不漂移 ===');
+console.log('\n=== 运行时注入变量（brushVars）不被误判 ===');
+/* --grp-* 曾被判成"从未定义"，照着这个误报去"修"会破坏双态设计：
+   设了组色的卡片靠 JSX 注入 --grp-* 用组色，没设的靠兜底回 --accent。
+   改成 var(--accent) 之后，设了组色的卡片会失去自己的组色。 */
+{
+  const audit = await import('./js/style-audit.js');
+  const pg = readFileSync('plugins/project-group/style.css', 'utf8');
+  const hits = audit.auditCss(pg, 'x').filter((x) => /--grp-/.test(x.msg));
+  t('--grp-* 不再被判成未定义', hits.length === 0,
+    hits.map((x) => x.msg.slice(0, 40)).join(' | '));
+
+  /* prefix 列表是手工维护的 —— 源码里新增 brushVars(…,'xxx') 必须同步，
+     否则新前缀又会开始误报。这条断言盯着漂移。 */
+  const src = ['plugins/project-group/components/CardGrid.tsx',
+               'plugins/project-group/components/PresetIconGrid.tsx']
+    .map((f) => (existsSync(f) ? readFileSync(f, 'utf8') : '')).join('\n');
+  /* 用索引 m[1] 而不是 m.group(1)：本环境下 matchAll 返回的 match
+     对象是数组子类但**没有 .group 方法**（实测 typeof === undefined）。 */
+  const used = [...new Set([...src.matchAll(/brushVars\([^,]+,\s*'([^']+)'/g)]
+    .map((m) => m[1]).filter(Boolean))];
+  const missing = used.filter((u) => !audit.BRUSH_PREFIXES.includes(u));
+  t('源码里的 brushVars 前缀已全部登记', missing.length === 0,
+    missing.join(', ') || `用到：${used.join(', ')}`);
+}
+
+
 {
   /* style-audit 在浏览器里跑，不能读文件，所以 TOKEN_VARS / CONTROLS_VARS
      是手工维护的列表。手工列表必然漂移 —— 共享 CSS 里加了新变量、

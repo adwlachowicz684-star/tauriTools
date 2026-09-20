@@ -93,7 +93,32 @@ export const CONTROLS_VARS = [
   '--ctl-shadow', '--ctl-shadow-sm', '--ctl-shadow-press',
 ];
 
-const KNOWN = new Set([...SHELL_VARS, ...TOKEN_VARS, ...CONTROLS_VARS]);
+/* 运行时由 JSX **内联注入**的变量（brushVars，见 utils/visual.ts）。
+   --------------------------------------------------------------------
+   它们由 `brushVars(raw, prefix)` 生成 `--{prefix}-base / -hover /
+   -press / -on / -edge`，通过 `style={{...}}` 写到元素上：
+
+     CardGrid.tsx:641  style={c.tagColor ? brushVars(c.tagColor, 'grp') : …}
+
+   所以在 CSS 文件里**永远搜不到定义** —— 静态扫描会把它判成
+   "从未定义，只有兜底在生效"。
+
+   这不是误报的借口，而是**设计如此的双态**：
+     · 设了组色的卡片 → JSX 写入 --grp-* → 用组色
+     · 没设组色的卡片 → 变量未定义 → 兜底到 var(--accent)
+   一条规则同时覆盖两种卡片，靠的正是 var() 的兜底能力。
+
+   照着误报去"修"（把 var(--grp-base, var(--accent)) 改成 var(--accent)）
+   会让设了组色的卡片**失去自己的组色** —— 这个错犯过一次。
+
+   prefix 列表手工维护（同 CONTROLS_VARS 的理由：浏览器里读不到文件），
+   由 style-audit-test 盯着它与源码里的 brushVars 调用是否一致。 */
+export const BRUSH_PREFIXES = ['tag', 'grp'];
+const BRUSH_SUFFIXES = ['base', 'hover', 'press', 'on', 'edge'];
+export const BRUSH_VARS = BRUSH_PREFIXES.flatMap(
+  (p) => BRUSH_SUFFIXES.map((s) => `--${p}-${s}`));
+
+const KNOWN = new Set([...SHELL_VARS, ...TOKEN_VARS, ...CONTROLS_VARS, ...BRUSH_VARS]);
 
 /* ------------------------------------------------------------------ */
 
