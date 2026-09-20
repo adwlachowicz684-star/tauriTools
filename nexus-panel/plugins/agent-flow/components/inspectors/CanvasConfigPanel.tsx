@@ -2,9 +2,6 @@ import { useState } from 'react';
 import type { CanvasConfig, McpServer } from '../../engine/canvasConfig';
 import { validateCanvasConfig } from '../../engine/canvasConfig';
 import { mcpChoiceRequired } from '../../engine/canvasConfig';
-import {
-  type CanvasParam, paramRefsOfNodes, diffParamIssue, ensureParams, isValidParamName,
-} from '../../engine/canvasParams';
 import { EXPORT_FORMATS } from '../../engine/scriptExport';
 
 /**
@@ -17,16 +14,6 @@ import { EXPORT_FORMATS } from '../../engine/scriptExport';
 type Props = {
   config: CanvasConfig;
   onChange: (next: CanvasConfig) => void;
-  /**
-   * 当前画布的节点 —— 用来扫出"引用了哪些参数、哪些还没定义"。
-   *
-   * 不给的话面板就只是个普通的参数表，
-   * 而缺失检测才是这个功能真正省事的地方：
-   * 模块拖进来后一眼看到还缺哪几个。
-   */
-  nodes?: unknown[];
-  /** 模块引用到的参数名（模块本身不在 nodes 里，要单独给） */
-  moduleParamRefs?: string[];
   /** 导出脚本；fmt 为空表示让用户选 */
   onExport: (fmt: string) => void;
   /** 给用户的即时反馈 */
@@ -55,7 +42,6 @@ function newServer(): McpServer {
 function CanvasConfigPanel({
   config, onChange, onExport, onNote,
   exportDir, onChangeExportDir, onBrowseExportDir, canExportToFile,
-  nodes, moduleParamRefs,
 }: Props) {
   const [openMcp, setOpenMcp] = useState(true);
   const [openEnv, setOpenEnv] = useState(false);
@@ -64,24 +50,6 @@ function CanvasConfigPanel({
   const servers = config.mcpServers ?? [];
   const issues = validateCanvasConfig(config);
   const mustPick = mcpChoiceRequired(servers);
-
-  const params: CanvasParam[] = config.params ?? [];
-  const setParams = (next: CanvasParam[]) => onChange({ ...config, params: next });
-
-  /*
-   * 引用了哪些参数 —— 画布上的节点 + 模块声明的。
-   *
-   * 模块单独算：模块内部节点不在画布 nodes 里（只有展开时才在），
-   * 所以拖一个模块进来，画布侧扫不到它引用的参数 ——
-   * 而那恰恰是最该提醒的场景。
-   */
-  const used = [
-    ...new Set([...paramRefsOfNodes(nodes ?? []), ...(moduleParamRefs ?? [])]),
-  ];
-  const { missing } = diffParamIssue(params, used);
-  const badNames = params
-    .map((p) => p.name)
-    .filter((n) => n.trim() && !isValidParamName(n));
 
   const patchServer = (id: string, patch: Partial<McpServer>) => {
     onChange({
@@ -177,113 +145,69 @@ function CanvasConfigPanel({
         )}
       </div>
 
-      {/* ---------- 画布参数 ---------- */}
+      {/* ---------- 环境变量 ---------- */}
       <div className="cfg-sec">
         <button type="button" className="cfg-title" onClick={() => setOpenEnv(!openEnv)}>
           <span>{openEnv ? '▾' : '▸'}</span>
-          画布参数
-          <em>{params.length} 个{missing.length ? ` · 缺 ${missing.length}` : ''}</em>
+          全局环境变量
+          <em>{Object.keys(config.env?.vars ?? {}).length} 个</em>
         </button>
 
         {openEnv && (
           <div className="cfg-body">
             <p className="cfg-hint">
-              节点里用 <code>{'{{params.名字}}'}</code> 引用。名字可以用中文 ——
-              <code>{'{{params.输出目录}}'}</code> 比拼音清楚。
+              节点里用 <code>{'{{env.NAME}}'}</code> 引用。
             </p>
-            <p className="cfg-hint">
-              模块跨画布复用就靠它：同一句 <code>{'{{params.输出目录}}'}</code>，
-              每张画布各填各的值，模块本身不用改。
-            </p>
-
             {/*
-              缺失清单 —— 这个功能最省事的一块。
-
-              模块拖进一张新画布，它要的参数这张画布还没定义。
-              不列出来的话，用户看到的是"跑出来的路径不对"
-              而不是"这个参数没填"—— 排查方向完全不同。
+              密钥提示必须写在**填之前** ——
+              环境变量是最顺手的填 token 的地方，而这里明文存 localStorage。
             */}
-            {missing.length ? (
-              <div className="cfg-warn">
-                <div>这些参数被引用了，但这张画布还没定义：</div>
-                <div className="cfg-miss-list">
-                  {missing.map((n) => <code key={n}>{n}</code>)}
-                </div>
-                <button
-                  type="button"
-                  className="cfg-add"
-                  onClick={() => setParams(ensureParams(params, missing))}
-                >
-                  一键补齐（{missing.length} 个）
-                </button>
-              </div>
-            ) : null}
+            <p className="cfg-warn">
+              不要在这里直接填密钥。要用密钥就填凭据中心的引用，
+              明文值会跟着画布存档一起落盘。
+            </p>
 
-            {params.map((p, i) => (
-              <div className="cfg-row" key={`${p.name}#${i}`}>
-                <input
-                  type="text"
-                  className="cfg-k"
-                  value={p.name}
-                  placeholder="参数名"
-                  onChange={(ev) => {
-                    const next = [...params];
-                    next[i] = { ...p, name: ev.target.value };
-                    setParams(next);
-                  }}
-                />
+            {Object.entries(config.env?.vars ?? {}).map(([k, val]) => (
+              <div className="cfg-row" key={k}>
+                <input type="text" className="cfg-k" value={k} readOnly />
                 <input
                   type="text"
                   className="cfg-mono"
-                  value={p.value}
+                  value={val}
                   placeholder="值"
                   onChange={(ev) => {
-                    const next = [...params];
-                    next[i] = { ...p, value: ev.target.value };
-                    setParams(next);
-                  }}
-                />
-                <input
-                  type="text"
-                  className="cfg-note"
-                  value={p.note ?? ''}
-                  placeholder="说明（可选）"
-                  title="写给复用的人看：这个参数该填什么"
-                  onChange={(ev) => {
-                    const next = [...params];
-                    next[i] = { ...p, note: ev.target.value };
-                    setParams(next);
+                    const vars = { ...(config.env?.vars ?? {}) };
+                    vars[k] = ev.target.value;
+                    onChange({ ...config, env: { ...(config.env ?? { vars: {} }), vars } });
                   }}
                 />
                 <button
                   type="button"
                   className="cfg-del"
                   title="删除"
-                  onClick={() => setParams(params.filter((_, k) => k !== i))}
+                  onClick={() => {
+                    const vars = { ...(config.env?.vars ?? {}) };
+                    delete vars[k];
+                    onChange({ ...config, env: { ...(config.env ?? { vars: {} }), vars } });
+                  }}
                 >
                   ×
                 </button>
               </div>
             ))}
 
-            {/*
-              名字不合法要当场说 ——
-              模板里 {{params.a.b}} 这种写法解析不出来，
-              而不提示的话用户只会看到"没生效"。
-            */}
-            {badNames.length ? (
-              <p className="cfg-warn">
-                这些名字用不了：{badNames.join('、')}
-                （只能用中文/字母/数字/下划线，且不能以数字开头）
-              </p>
-            ) : null}
-
             <button
               type="button"
               className="cfg-add"
-              onClick={() => setParams([...params, { name: '', value: '', note: '' }])}
+              onClick={() => {
+                const vars = { ...(config.env?.vars ?? {}) };
+                let i = 1;
+                while (`VAR_${i}` in vars) i += 1;
+                vars[`VAR_${i}`] = '';
+                onChange({ ...config, env: { ...(config.env ?? { vars: {} }), vars } });
+              }}
             >
-              ＋ 加一个参数
+              ＋ 加一个变量
             </button>
           </div>
         )}

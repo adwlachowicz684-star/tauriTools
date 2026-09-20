@@ -1,6 +1,5 @@
 import type { FlowEdge, FlowNode } from '../flowTypes';
 import type { Credential } from '../engine/credentials';
-import type { SecretPolicy } from '../types';
 import { getDef } from '../nodes/registry';
 import { inspectorOf } from './inspectors/inspectorOf';
 import { NODE_SIZE_META, normalizeSize, type NodeSize } from '../types';
@@ -31,8 +30,6 @@ type Props = {
   /** 打开凭据中心，并聚焦到指定类型 */
   onOpenCredentials?: (kind: string) => void;
   /** 内联密钥的落盘策略 */
-  secretPolicy?: SecretPolicy;
-  onChangeSecretPolicy?: (p: SecretPolicy) => void;
   /** 后端为「未填 Token」的 webhook 触发器自动生成的校验 Token，按触发器 id 索引 */
   webhookTokens?: Record<string, string>;
   /**
@@ -52,10 +49,6 @@ type Props = {
    */
   canvasConfig?: CanvasConfig;
   onCanvasConfigChange?: (next: CanvasConfig) => void;
-  /** 当前画布的节点 —— 画布设置里的参数面板靠它扫出"引用了但没定义的参数" */
-  nodes?: unknown[];
-  /** 画布上模块节点引用到的参数名（模块内部节点平时不在 nodes 里） */
-  moduleParamRefs?: string[];
   /** 导出整张画布为脚本 */
   onExportFlow?: (fmt: string) => void;
   /* ---- 导出目录 ---- */
@@ -70,10 +63,10 @@ type Props = {
 
 export default function Inspector({
   node, edges, onChange, credentials, onOpenCredentials, webhookTokens,
-  secretPolicy, onChangeSecretPolicy, onEditModule, onNote,
+  onEditModule, onNote,
   canvasConfig, onCanvasConfigChange, onExportFlow,
   exportDir = '', onChangeExportDir, onBrowseExportDir, canExportToFile = false,
-  canvases, activeCanvasId, nodes, moduleParamRefs,
+  canvases, activeCanvasId,
 }: Props) {
   const pushNote = onNote;
   if (!node) {
@@ -94,8 +87,6 @@ export default function Inspector({
             onChangeExportDir={onChangeExportDir ?? (() => {})}
             onBrowseExportDir={onBrowseExportDir ?? (() => {})}
             canExportToFile={canExportToFile}
-            nodes={nodes}
-            moduleParamRefs={moduleParamRefs}
           />
         </aside>
       );
@@ -303,8 +294,6 @@ export default function Inspector({
       onChange={onChange}
       credentials={credentials}
       onOpenCredentials={onOpenCredentials}
-      secretPolicy={secretPolicy}
-      onChangeSecretPolicy={onChangeSecretPolicy}
         webhookTokens={webhookTokens}
         canvases={canvases}
         activeCanvasId={activeCanvasId}
