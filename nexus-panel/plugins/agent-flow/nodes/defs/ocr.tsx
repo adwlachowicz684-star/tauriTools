@@ -14,9 +14,8 @@ const fields: FieldDef[] = [
     spec: { keys: ['imageSource', 'url'], kind: 'select', options: ['path', 'url'] },
     render: (p) => (
       <LlmConfigPanel
-        nodeId={p.node.id}
         cfg={p.d.llm as never}
-        onChange={(id, patch) => p.patch(patch)}
+        onChange={p.patch}
         needVision
         secretPolicy={p.secretPolicy}
         onChangeSecretPolicy={p.onChangeSecretPolicy}

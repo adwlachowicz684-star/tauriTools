@@ -132,6 +132,8 @@ export default function ModuleLibrary({ onCreateFromSelection, onEdit, disabled 
           <div key={m.id}>
             <div
               className={`side-item${open ? ' is-open' : ''}`}
+              /* 模块色走左边条，与节点库、画布卡片同一套视觉语言 */
+              style={{ borderLeftColor: m.color }}
               draggable={!disabled}
               onDragStart={(e: DragEvent) => {
                 const payload = encodeModuleDrag({ moduleId: m.id });
@@ -142,7 +144,6 @@ export default function ModuleLibrary({ onCreateFromSelection, onEdit, disabled 
               onClick={() => setOpenId((k) => (k === m.id ? null : m.id))}
               title="拖到画布上使用；点击展开说明"
             >
-              <span className="side-dot" style={{ background: m.color }} />
               <span className="side-label">{m.name}</span>
               <span className="side-ops">
                 <button

@@ -76,10 +76,14 @@ function McpServerSection({
     <div className="mcp-sec">
       <button
         className="mcp-sec-title"
+        /*
+         * 左边条用服务色 —— 与这个服务的工具在画布上的卡片同色
+         * （都由 mcpColorOf(server) 得出），侧栏与画布因此能对上。
+         */
+        style={{ borderLeftColor: group.color }}
         onClick={() => setOpen(!open)}
         title="展开/收起这个服务的工具"
       >
-        <span className="side-dot" style={{ background: group.color }} />
         <span className="mcp-sec-name">{group.server}</span>
         <span className="mcp-sec-count">{group.items.length}</span>
         <span className="mcp-sec-arrow">{open ? '▾' : '▸'}</span>
@@ -92,6 +96,8 @@ function McpServerSection({
               <div key={it.key}>
                 <div
                   className={`side-item${isOpen ? ' is-open' : ''}`}
+                  /* 同一 server 的工具同色，与它们在画布上的卡片一致 */
+                  style={{ borderLeftColor: group.color }}
                   draggable={!disabled}
                   onDragStart={(e) => onDragStart(e, { kind: it.key })}
                   onClick={(e) => onItemClick(e, { key: it.key })}
@@ -315,12 +321,18 @@ export default function Sidebar({
                 <div key={p.key}>
                   <div
                     className={`side-item${open ? ' is-open' : ''}`}
+                    /*
+                     * 类型色走左边条，与画布上的节点卡片同一套视觉语言。
+                     * 以前这里是一个彩色圆球（.side-dot）——
+                     * 圆球与边条指同一件事，两套语言并存会让人
+                     * "看颜色认类型"的本能失效，得先在脑子里换算一次。
+                     */
+                    style={{ borderLeftColor: p.color }}
                     draggable={!disabled}
                     onDragStart={(e) => onDragStart(e, { kind: p.key })}
                     onClick={(e) => onItemClick(e, p)}
                     title={disabled ? '运行中不可添加' : '点击展开说明；按住 Ctrl / ⌘ 点击直接添加；也可拖到画布'}
                   >
-                    <span className="side-dot" style={{ background: p.color }} />
                     <span className="side-label">{p.label}</span>
                     {isCustom ? (
                       <span className="side-ops">

@@ -84,7 +84,7 @@ export function updateFooter(p: {
   return (
     <UpdateTestPanel
       node={p.node as never}
-      onChange={(id, patch) => p.patch(patch)}
+      onChange={p.patch}
     />
   );
 }
