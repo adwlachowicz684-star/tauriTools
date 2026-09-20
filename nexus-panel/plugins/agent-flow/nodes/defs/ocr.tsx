@@ -17,6 +17,9 @@ const fields: FieldDef[] = [
         cfg={p.d.llm as never}
         onChange={p.patch}
         needVision
+        credentials={p.credentials}
+        credentialId={p.d.credentialId as string}
+        onOpenCredentials={p.onOpenCredentials}
       />
     ),
   },

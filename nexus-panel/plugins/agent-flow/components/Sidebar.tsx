@@ -169,12 +169,13 @@ export default function Sidebar({
    */
   const [tip, setTip] = useState<{ key: string; anchor: TipAnchor; pinned: boolean } | null>(null);
 
-  /* 悬停延迟出现 / 移开延迟关闭。直接跟手的话扫列表会一路刷浮层 */
-  const hoverTimer = useRef<number | null>(null);
+  /*
+   * 只剩移开后的关闭延迟：鼠标从条目移到浮层上的途中会短暂离开两者，
+   * 没有缓冲的话浮层会在半路消失。
+   */
   const closeTimer = useRef<number | null>(null);
 
   const cancelTimers = () => {
-    if (hoverTimer.current !== null) { window.clearTimeout(hoverTimer.current); hoverTimer.current = null; }
     if (closeTimer.current !== null) { window.clearTimeout(closeTimer.current); closeTimer.current = null; }
   };
 
@@ -189,10 +190,17 @@ export default function Sidebar({
     if (!hoverDesc) return;
     // 已经钉住某一条时，悬停不抢 —— 否则鼠标扫过会把在读的那条换掉
     if (tip?.pinned) return;
-    hoverTimer.current = window.setTimeout(
-      () => setTip({ key, anchor, pinned: false }),
-      380,
-    );
+    /*
+     * 立即弹出，不延迟。
+     *
+     * 原先等 380ms —— 那是"怕扫列表时一路刷浮层"的顾虑。
+     * 实际用起来更糟：鼠标停住了还要等一下才出，
+     * 看着像没反应，于是又移开、再移回来，反而更慢。
+     *
+     * 而"一路刷"本来就不会发生：浮层只有一个，
+     * 鼠标扫过就换内容，不存在层层堆叠。
+     */
+    setTip({ key, anchor, pinned: false });
   };
 
   const onHoverOut = () => {

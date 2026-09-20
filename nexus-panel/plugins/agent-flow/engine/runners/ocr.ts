@@ -4,7 +4,8 @@ import type {
   FsNodeData, ConditionNodeData, ParallelNodeData, TriggerNodeData,
 } from '../../types';
 import { DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt } from '../../types';
-import { resolveSecret } from '../credentials';
+import { resolveSecret, findCredential } from '../credentials';
+import { resolveLlmFromCredential } from '../llmCredential';
 
 import { extractFileRefs, parseManualPaths, buildFileFields, type FileRef } from '../files';
 import {
@@ -73,7 +74,15 @@ export async function runOcr(ctx: RunContext): Promise<void> {
     }
   }
 
-  const cfg = resolveConfig(d.llm);
+  /*
+   * 地址与密钥**优先取自凭据**。
+   *
+   * 节点上那份旧 llm 配置只作兜底（老画布迁移前）——
+   * 反过来的话，改了凭据的地址不生效，表现为"改了没反应"。
+   */
+  const cfg = resolveLlmFromCredential(
+    findCredential(opts.credentials ?? [], d.credentialId), d.llm?.model, { fallback: d.llm },
+  );
   const parts: ContentPart[] = [
     { type: 'text', text: prompt },
     { type: 'image_url', image_url: { url: imageUrl, detail: d.detail } },

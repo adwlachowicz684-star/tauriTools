@@ -4,7 +4,8 @@ import type {
   FsNodeData, ConditionNodeData, ParallelNodeData, TriggerNodeData,
 } from '../../types';
 import { DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt } from '../../types';
-import { resolveSecret } from '../credentials';
+import { resolveSecret, findCredential } from '../credentials';
+import { resolveLlmFromCredential } from '../llmCredential';
 
 import { extractFileRefs, parseManualPaths, buildFileFields, type FileRef } from '../files';
 import {
@@ -64,7 +65,10 @@ export async function runTranslate(ctx: RunContext): Promise<void> {
     d.glossary,
   );
 
-  const cfg = resolveConfig(d.llm);
+  /* 同 OCR：地址与密钥优先取自凭据，节点上那份只作兜底 */
+  const cfg = resolveLlmFromCredential(
+    findCredential(opts.credentials ?? [], d.credentialId), d.llm?.model, { fallback: d.llm },
+  );
   const messages: ChatMessage[] = [
     { role: 'system', content: system },
     { role: 'user', content: src },
