@@ -71,7 +71,7 @@ type Props = {
  * 用户反而找不到别的分组。
  */
 function McpServerSection({
-  group, disabled, onDragStart, onItemClick, tipKey,
+  group, disabled, onDragStart, onItemClick, tipKey, hoverDesc,
   onHover, onHoverOut,
 }: {
   group: { server: string; color: string; items: { key: string; label: string; hint?: string }[] };
@@ -80,6 +80,8 @@ function McpServerSection({
   onItemClick: (e: MouseEvent, p: { key: string }) => void;
   /** 当前浮层指向的条目（用它是为了给条目加高亮） */
   tipKey: string | null;
+  /** 悬停说明开关（关着时不弹浮层，靠原生 title 兜底） */
+  hoverDesc: boolean;
   onHover: (key: string, anchor: TipAnchor) => void;
   onHoverOut: () => void;
 }) {
@@ -115,7 +117,13 @@ function McpServerSection({
                   onClick={(e) => onItemClick(e, { key: it.key })}
                   onMouseEnter={(e) => onHover(it.key, rectOf(e.currentTarget))}
                   onMouseLeave={onHoverOut}
-                  title="悬停或点击看说明；按住 Ctrl / ⌘ 点击直接添加；也可拖到画布"
+                  title={
+                    hoverDesc && !disabled
+                      ? undefined
+                      : disabled
+                        ? '运行中不可添加'
+                        : `${it.hint || '这个工具没有额外说明'}｜点击查看；按住 Ctrl / ⌘ 点击添加`
+                  }
                 >
                   <span className="side-label">{it.label}</span>
                 </div>
@@ -330,6 +338,7 @@ export default function Sidebar({
             onDragStart={onDragStart}
             onItemClick={onItemClick}
             tipKey={tip?.key ?? null}
+            hoverDesc={hoverDesc}
             onHover={onHover}
             onHoverOut={onHoverOut}
           />
@@ -453,17 +462,24 @@ export default function Sidebar({
                     onMouseEnter={(e) => onHover(p.key, rectOf(e.currentTarget))}
                     onMouseLeave={onHoverOut}
                     /*
-                     * 原生 title 带上那一句说明。
+                     * 原生 title **只在浮层不会弹出时才挂**。
                      *
-                     * 「悬停说明」关着时不弹浮层，但至少掠过时还能看到一句 ——
-                     * 否则关掉开关等于说明彻底消失。
-                     * 浏览器原生提示有延迟、样式不受控，所以只放一句话，
-                     * 完整说明仍走浮层。
+                     * 两者都给的话，悬停一处会同时冒两个提示：
+                     * 浏览器的原生 tooltip + 我们的浮层，互相挡、还错位。
+                     *
+                     * 所以：
+                     *   浮层会弹（开关开 且 未禁用）→ 不挂 title，一切交给浮层
+                     *   否则                        → 挂 title 兜底（含那一句说明）
+                     *
+                     * 兜底不能省：关掉开关后浮层不弹，若 title 也没有，
+                     * 说明就彻底看不见了 —— 用户会以为功能坏了。
                      */
                     title={
-                      disabled
-                        ? '运行中不可添加'
-                        : `${desc}｜点击看完整说明；按住 Ctrl / ⌘ 点击直接添加；也可拖到画布`
+                      hoverDesc && !disabled
+                        ? undefined
+                        : disabled
+                          ? '运行中不可添加'
+                          : `${desc}｜点击查看完整说明；按住 Ctrl / ⌘ 点击直接添加`
                     }
                   >
                     <span className="side-label">{p.label}</span>
@@ -546,6 +562,15 @@ export default function Sidebar({
             onLeave={onHoverOut}
           >
             {t.body}
+            {/*
+             * 操作引导统一在这里收尾。
+             *
+             * 以前它写在条目的原生 title 里 —— 但浮层弹出时 title 不挂了
+             * （避免双重提示），引导就跟着没了。所以搬进浮层。
+             */}
+            <span className="side-desc-add">
+              {disabled ? '运行中不可添加' : '按住 Ctrl / ⌘ 点击添加；也可拖到画布'}
+            </span>
           </NodeTip>
         );
       })() : null}
@@ -583,10 +608,7 @@ function tipBodyOf(
       return {
         title: it.label,
         body: (
-          <div className="side-desc">
-            {it.hint || '这个工具没有额外说明'}
-            <span className="side-desc-add">按住 Ctrl / ⌘ 点击添加</span>
-          </div>
+          <div className="side-desc">{it.hint || '这个工具没有额外说明'}</div>
         ),
       };
     }
