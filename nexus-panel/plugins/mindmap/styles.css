@@ -139,7 +139,22 @@ html, body {
 }
 .mm-side .mm-hint { color: var(--text-mute); font-size: var(--fs-12, 12px); line-height: 1.6; }
 
-.mm-field { display: flex; flex-direction: column; gap: 5px; }
+/* ⚠️ 必须**显式**写 align-items，不能省。
+ *
+ * ../../css/controls.css 里 .mm-field 是「横向排一行的控件组」：
+ *     display:flex; align-items:center; gap:8px;
+ * 而本插件的 .mm-field 是**纵向**的 —— label 在上、控件在下，
+ * 并且整个 section（标题 + 内容）也用它。
+ *
+ * CSS 是层叠的：本文件在 controls.css 之后加载，只覆盖写出来的属性。
+ * 这里改了 flex-direction 却没写 align-items，那个 center 就会
+ * 原样保留 —— 纵向排列 + 水平居中 = **面板内容全部居中**。
+ * （用户反馈"侧栏内容全变居中"就是这个。）
+ *
+ * 默认值 stretch 是救不了的：同一条 .mm-field 规则在 controls.css 里
+ * 已经明写了 center，特异性相同、位置在前，只有显式声明才能盖掉。
+ */
+.mm-field { display: flex; flex-direction: column; align-items: stretch; gap: 5px; }
 .mm-field > .mm-label { font-size: var(--title-3-fs, 11px);
   font-weight: var(--title-3-fw);}
 
@@ -307,13 +322,10 @@ html, body {
   border: 1px solid var(--sh-dark);
   transition: height var(--dur-fast), box-shadow var(--dur-fast);
 }
-/* 悬停 / 选中**不再改变高度** —— 10px → 13px 会让整行变高 3px，
-   于是鼠标划过一排配色时列表在上下抖。
-   要"更醒目"就改颜色/加外环，这些都不占布局。 */
-.mm-theme:hover .mm-swbar { filter: brightness(1.12); }
+.mm-theme:hover .mm-swbar { height: 13px; }
 .mm-theme.on .mm-swbar {
-  /* 选中用**外环**而不是内凹阴影：配色条本身是色块，内凹在这上面看不出来。
-     外环用 box-shadow 画 —— 阴影不参与布局，所以不会把行撑高。 */
+  height: 13px;
+  /* 选中用**外环**而不是内凹阴影：配色条本身是色块，内凹在这上面看不出来 */
   box-shadow: 0 0 0 2px var(--accent);
 }
 

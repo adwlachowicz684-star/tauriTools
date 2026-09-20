@@ -1439,6 +1439,28 @@ core 的 `renderNodeBatch` 按 `b[0]` 的渲染器数整体迭代，
 
 按钮照常保留：提示是提示，不该把操作入口一起干掉。
 
+## 侧栏内容全部居中：CSS 层叠导致的（.mm-field）
+
+现象：右侧面板内容整片水平居中。
+
+根因是**同名类在两个样式表里语义不同**：
+
+· `../../css/controls.css`（共享控件样式，先加载）里
+  `.mm-field` 是「横向排一行的控件组」：`display:flex; align-items:center`
+· 本插件 `styles.css`（后加载）里 `.mm-field` 是**纵向**的：
+  label 在上、控件在下
+
+CSS 是层叠的：本文件只覆盖**写出来**的属性。这里改了 `flex-direction: column`
+却没写 `align-items`，那个 `center` 就原样保留 ——
+**纵向排列 + 水平居中 = 面板内容全居中**。
+
+默认值 `stretch` 救不了：controls.css 那条规则特异性相同、位置在前，
+只有**显式声明**才能盖掉。所以必须写明 `align-items: stretch`。
+
+通用防线：凡是本插件改了 `flex-direction` 却没写 `align-items` 的纵向容器，
+只要类名也被 controls.css 定义，就会被层叠成居中。测试里有自动扫描，
+新增这类容器会立刻报出来。
+
 ## 附件卡片与视频预览（文件页）
 
 早先的形态是「两行文字 + 三个按钮」，文件长什么样完全看不出来，视频也只剩一个

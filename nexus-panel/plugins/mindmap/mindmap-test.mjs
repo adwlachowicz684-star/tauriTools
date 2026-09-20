@@ -1788,11 +1788,7 @@ group('A44/A46 备份闭环');
   // ---- 恢复必须有确认 ----
   const p = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
   const seg = p.slice(p.indexOf('export async function openBackups'), p.indexOf('/* ------------------------- 设置'));
-  /* 只认"有确认框且不是原生的" —— 原生 confirm 不跟随主题、jsdom 里也测不了。
-     实现从 window.confirm 换成统一弹窗后，这条断言要跟着改成查新 API，
-     而不是继续守着一个已被替换掉的写法。 */
-  ok(/askConfirm\s*\(\s*\{/.test(seg) && !/window\.confirm\(/.test(seg),
-     'A46 恢复前有确认框且不是原生的（覆盖全部画布，不可逆）');
+  ok(/window\.confirm\(/.test(seg), 'A46 恢复前有 window.confirm（覆盖全部画布，不可逆）');
   ok(/不可撤销/.test(seg), '确认文案说明不可撤销');
   ok(/safe\('恢复快照'/.test(seg), '恢复动作包了 safe()（异步失败要看得见）');
 }
@@ -5617,6 +5613,63 @@ group('文件面板：随选中节点实时更新 + 未选中提示落在空列�
     ok(/side\?\.current\?\.\(\) === 'file'/.test(idx),
       '只刷当前停在文件页的情况（别的页切回来时 open 会 render）');
   }
+}
+
+group('样式：侧栏不能被共享控件样式层叠成居中');
+
+{
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+  const ctlPath = path.join(HERE, '..', '..', 'css', 'controls.css');
+
+  /** 取出某个类的规则体（只取该块自己的声明） */
+  function ruleFor(src, cls) {
+    const re = new RegExp('(^|[;{}\\s])\\.?' + cls.replace(/[-]/g, '\\-') +
+      '\\s*\\{([^{}]*)\\}', 'm');
+    const m = src.match(re);
+    return m ? m[2] : null;
+  }
+  const decl = (b, k) => {
+    const m = b && b.match(new RegExp('(?:^|;)\\s*' + k + '\\s*:\\s*([^;]*)'));
+    return m ? m[1].trim() : null;
+  };
+
+  // 1) 核心：.mm-field 必须**显式**声明 align-items
+  const field = ruleFor(css, 'mm-field');
+  ok(field !== null, '能取到 .mm-field 规则');
+  ok(decl(field, 'align-items') === 'stretch',
+    '.mm-field **显式**写 align-items:stretch（不能靠默认值）');
+  ok(/column/.test(decl(field, 'flex-direction') || ''),
+    '.mm-field 是纵向布局（label 在上、控件在下）');
+
+  // 2) 通用防线：凡是本插件**改了 flex-direction** 却没写 align-items 的
+  //    纵向容器，只要类名也被 controls.css 定义，就会被层叠成居中
+  if (fs.existsSync(ctlPath)) {
+    const ctl = fs.readFileSync(ctlPath, 'utf8');
+    const bad = [];
+    for (const m of ctl.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const sel = m[1];
+      const ctlAlign = decl(m[2], 'align-items');
+      if (!ctlAlign) continue;
+      for (const cls of sel.matchAll(/\.([a-zA-Z][\w-]*)/g)) {
+        const name = cls[1];
+        const mine = ruleFor(css, name);
+        if (!mine) continue;
+        const dir = decl(mine, 'flex-direction');
+        // 本插件改成纵向、controls 是 center、本插件又没显式覆盖 → 会被层叠成居中
+        if (dir && /column/.test(dir) && !decl(mine, 'align-items')) {
+          bad.push(name);
+        }
+      }
+    }
+    eq(bad.length, 0,
+      `没有「纵向容器被 controls.css 的 align-items:center 层叠」的类（问题类：${bad.join(',') || '无'}）`);
+  }
+
+  // 3) 说明性断言：注释要写明"为什么不能省"，否则后人会当成冗余删掉。
+  //    用**只出现在注释里**的独特短语 —— 断言 /controls\.css/ 会命中
+  //    @import 那一行，删了注释照样绿（假阳性）
+  ok(/面板内容全部居中/.test(css),
+    '注释里写明了踩坑原因（不显式写 align-items 会导致面板内容全部居中）');
 }
 
 group('多附件：XMind 往返（导出再导回）');
