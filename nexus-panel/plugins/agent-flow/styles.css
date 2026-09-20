@@ -486,12 +486,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 }
 .p-btn:hover { border-color: var(--af-accent); }
 .p-btn:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
-.p-btn.primary {
-  color: var(--af-accent);
-  /* 强调不改 font-weight：字重会改字形宽度 → 按钮宽度变 → 整排布局跳动。
-     改用描边模拟"变实"，描边不参与布局计算（见 :root 的 --ctl-faux-bold） */
-  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
-}
+.p-btn.primary { color: var(--af-accent); font-weight: 600; }
 .p-btn.danger { color: var(--af-bad); }
 
 /* 面板标题行：左侧可改名的输入框 + 右侧节点类型标签 */
@@ -816,16 +811,31 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   font-size: var(--title-2-fs, 12px); font-weight: var(--title-2-fw);
   color: var(--af-dim); margin-bottom: 6px;
 }
+/*
+ * 侧栏项 = 画布节点的"极矮版"：只有标题行，类型用**左边条**表示。
+ *
+ * 以前用彩色圆球（.side-dot），而画布上的节点卡片用左边条 ——
+ * 两套不同的视觉语言指同一件事（节点类型），
+ * 用户得先在脑子里做一次换算，"看颜色认类型"这件事就废了。
+ * 现在统一成边条，侧栏看到的就是画布上那个卡片的缩略版。
+ *
+ * 三条细节：
+ *   · 左边条默认 **transparent 而不是省略** ——
+ *     省掉的话，有色的项会比无色的项窄 3px，整列文字对不齐。
+ *   · 边条 3px（画布卡片是 4px）：项更小，同宽度的条显得更粗。
+ *   · padding 压到 5px：只留标题行，比画布"矮"档还要矮一档。
+ */
 .side-item {
   display: flex; align-items: center; gap: 8px;
-  padding: 7px 9px; margin-bottom: 4px;
-  background: var(--af-item); border: 1px solid var(--af-line); border-radius: 7px;
+  padding: 5px 9px; margin-bottom: 4px;
+  background: var(--af-item); border: 1px solid var(--af-line);
+  border-left: 3px solid transparent; border-radius: 7px;
   cursor: grab; user-select: none; font-size: var(--fs-12, 12px);
   transition: border-color var(--af-dur-fast), background var(--af-dur-fast);
 }
 .side-item:hover { border-color: var(--af-accent); background: var(--af-raised); }
 .side-item:active { cursor: grabbing; }
-.side-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+/* .side-dot 已删除：类型改由左边条表示，圆球是另一套视觉语言 */
 .side-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------------- 画布标签栏 ---------------- */
@@ -1128,11 +1138,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   transition: border-color var(--af-dur-fast), color var(--af-dur-fast), background var(--af-dur-fast);
   box-shadow: var(--ctl-shadow-sm);}
 .cond-op-btn:hover { border-color: var(--af-soft); color: var(--af-fg); }
-.cond-op-btn.on {
-  /* 强调不改 font-weight：字重会改字形宽度 → 按钮宽度变 → 整排布局跳动。
-     改用描边模拟"变实"，描边不参与布局计算（见 :root 的 --ctl-faux-bold） */
-  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
-}
+.cond-op-btn.on { font-weight: 600; }
 .cond-op-btn-icon { font-family: var(--af-mono); font-size: var(--fs-11, 11px); }
 
 /* 算子语义提示 */
@@ -1194,11 +1200,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   transition: border-color var(--af-dur-fast), color var(--af-dur-fast), background var(--af-dur-fast);
   box-shadow: var(--ctl-shadow-sm);}
 .cond-logic-btn:hover { border-color: var(--af-soft); color: var(--af-fg); }
-.cond-logic-btn.on {
-  /* 强调不改 font-weight：字重会改字形宽度 → 按钮宽度变 → 整排布局跳动。
-     改用描边模拟"变实"，描边不参与布局计算（见 :root 的 --ctl-faux-bold） */
-  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
-}
+.cond-logic-btn.on { font-weight: 600; }
 
 /* 条件列表 */
 .cond-list {
@@ -1824,7 +1826,15 @@ input.mono, textarea.mono {
 .side-op:focus-visible { opacity: 1; }
 
 /* 展开态：底色略亮 + 左侧强调条，让"这一条是展开的"一眼可见 */
-.side-item.is-open { background: var(--af-item); border-left: 2px solid var(--af-accent); }
+/*
+ * 展开态**不再用左边条** —— 左边条现在是类型色，被占用了。
+ * 改用一圈内描边 + 更亮的背景：既不抢类型色的位置，
+ * 又比单纯背景更明确（背景色与 hover 态很接近，只靠它分不清）。
+ */
+.side-item.is-open {
+  background: var(--af-raised);
+  box-shadow: inset 0 0 0 1px var(--af-accent);
+}
 .side-item.is-open .side-label { color: var(--af-fg); }
 
 /* 点击展开的说明块 */
@@ -1968,12 +1978,7 @@ input.mono, textarea.mono {
   transition: background var(--af-dur-fast);
   box-shadow: var(--ctl-shadow);}
 .mod-btn:hover { background: rgba(245, 158, 11, 0.22); }
-.mod-btn.primary {
-  background: rgba(245, 158, 11, 0.3);
-  /* 强调不改 font-weight：字重会改字形宽度 → 按钮宽度变 → 整排布局跳动。
-     改用描边模拟"变实"，描边不参与布局计算（见 :root 的 --ctl-faux-bold） */
-  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
-}
+.mod-btn.primary { background: rgba(245, 158, 11, 0.3); font-weight: 600; }
 .mod-btn.primary:hover { background: rgba(245, 158, 11, 0.45); }
 
 /* 侧栏的「节点库 / 模块库」切换 */
@@ -2187,6 +2192,9 @@ input.mono, textarea.mono {
 .mcp-sec-title {
   display: flex; align-items: center; gap: 6px; width: 100%;
   padding: 5px 8px; border: 0; border-radius: 5px; background: none;
+  /* 左边条 = 这个 server 的色，与该项工具在画布上的卡片同色。
+     以前这里也是圆球，同样会与画布的边条语言打架。 */
+  border-left: 3px solid transparent;
   cursor: pointer; font-size: var(--title-2-fs, 12px); color: var(--af-fg, #e6e9f0); text-align: left;
   font-weight: var(--title-2-fw);}
 .mcp-sec-title:hover { background: rgba(255, 255, 255, .06); }
