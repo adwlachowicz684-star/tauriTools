@@ -1268,6 +1268,22 @@ export function makeTranslateNode(id: string, partial: Partial<TranslateNodeData
 }
 
 /**
+ * 节点里手填的 apiKey（区别于凭据中心里的凭据）怎么保存。
+ *
+ * device  —— 加密后存在本机，刷新后自动填回
+ * session —— 只在内存里，关掉面板就没
+ *
+ * 两者的差别**不是**"安全 / 不安全"，而是"便利性 vs 落盘痕迹"：
+ * device 只是把明文变成密文，属于抬成本；密钥派生的盐与本机特征都
+ * 存在本机 / 是公开信息，拿到整个数据目录的人照样能复现钥匙
+ * （见 engine/secretVault.ts 顶部）。要真挡住，用凭据中心 + 口令模式。
+ */
+export type SecretPolicy = 'device' | 'session';
+
+/** 存策略的键。UI 与 App 共用同一个名字，免得两边各写一份字符串 */
+export const SECRET_POLICY_KEY = 'agent-flow.secret-policy.v1';
+
+/**
  * 三种存储方式的界面文案。
  *
  * 刻意写清每种"防得住什么、防不住什么" ——
@@ -1288,6 +1304,18 @@ export const VAULT_MODE_META: Record<VaultMode, { label: string; hint: string }>
   passphrase: {
     label: '口令加密',
     hint: '每次打开要输口令，钥匙只在你自己脑子里 —— 唯一能防"整台机器被拿走"的方式',
+  },
+};
+
+export const SECRET_POLICY_META: Record<SecretPolicy, { label: string; hint: string }> = {
+  device: {
+    label: '存本机（加密）',
+    hint: '加密后存在本机，刷新后自动填回。只是抬高偷看成本 —— 拿到整个数据目录的人仍能解开，'
+      + '要真隔离请用凭据中心的口令模式',
+  },
+  session: {
+    label: '仅本次会话',
+    hint: '只留在内存里，关掉面板即清空，本机不留任何痕迹。代价是下次打开要重新填写',
   },
 };
 

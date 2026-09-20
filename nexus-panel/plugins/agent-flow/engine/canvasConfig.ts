@@ -1,5 +1,5 @@
 /**
- * 画布级配置 —— MCP 服务与全局环境变量。
+ * 画布级配置 —— MCP 服务与画布参数。
  *
  * ================= 为什么放在画布上 =================
  *
@@ -24,6 +24,8 @@
  */
 
 /** MCP 服务的配置。命令与地址二选一 */
+import type { CanvasParam } from './canvasParams';
+
 export type McpServer = {
   id: string;
   /** 展示名，也是节点里引用的名字 */
@@ -41,18 +43,32 @@ export type McpServer = {
   note?: string;
 };
 
+/*
+ * 旧的环境变量表。
+ *
+ * 界面上承诺过 {{env.NAME}} 可用，但模板层从没实现 —— 填了也没用。
+ * 现在统一到下面的 params；这一份只为**不丢老存档的值**而保留，
+ * 读取时由 migrateEnvVars 搬进 params。
+ */
 export type CanvasEnv = {
-  /** 全局环境变量；节点里用 {{env.NAME}} 引用 */
   vars: Record<string, string>;
 };
 
 export type CanvasConfig = {
   mcpServers: McpServer[];
   env: CanvasEnv;
+  /**
+   * 画布参数 —— 画布范围的局部变量。
+   *
+   * 节点里写 {{params.名字}}，每张画布各填各的值。
+   * 一个模块拖到不同画布上，靠它取到不同的路径 / 账号 / 项目名，
+   * 而模块本身不用改。详见 engine/canvasParams.ts 的头部说明。
+   */
+  params?: CanvasParam[];
 };
 
 export function emptyCanvasConfig(): CanvasConfig {
-  return { mcpServers: [], env: { vars: {} } };
+  return { mcpServers: [], env: { vars: {} }, params: [] };
 }
 
 /* ------------------------------------------------------------------ */

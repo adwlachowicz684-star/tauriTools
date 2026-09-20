@@ -195,6 +195,15 @@ export type RunOptions = {
   playAudioReader?: (path: string) => Promise<string>;
   input?: string;
   /**
+   * 画布参数（{{params.名字}}）。
+   *
+   * 由调用方（App）从当前画布的 config.params 传入 ——
+   * 引擎不知道"画布"这个概念，它只跑一张图。
+   * 模块展开后内部节点也是这张图的节点，于是自动取到
+   * 当前画布的值 —— 同一模块在不同画布取到不同值，靠的就是这一层。
+   */
+  params?: Record<string, string>;
+  /**
    * 带位置的节点列表，用于嵌合（Scratch 式上下吸附）的输出传递。
    *
    * 为什么单独传而不是让引擎从 graph 里推：graph 是执行用的最小结构

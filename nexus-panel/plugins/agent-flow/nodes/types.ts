@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { NodeProps, NodeTypes } from '@xyflow/react';
-import type { NodeData, GraphNode } from '../types';
+import type { NodeData, GraphNode, SecretPolicy } from '../types';
 import type { FlowNode, FlowEdge } from '../flowTypes';
 import type { Credential } from '../engine/credentials';
 import type { RunContext } from '../engine/runContext';
@@ -107,6 +107,8 @@ export type NodeInspectorProps = {
   /** 打开凭据中心，并聚焦到指定类型 */
   onOpenCredentials?: (kind: string) => void;
   /** 内联密钥的落盘策略 */
+  secretPolicy?: SecretPolicy;
+  onChangeSecretPolicy?: (p: SecretPolicy) => void;
   /** 后端为「未填 Token」的 webhook 触发器自动生成的校验 Token，按触发器 id 索引 */
   webhookTokens?: Record<string, string>;
   /**

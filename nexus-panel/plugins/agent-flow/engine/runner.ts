@@ -355,6 +355,7 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
     tpl: (text) => {
       const r = renderTemplate(text, {
         outputs, input: opts.input, loop: currentLoop(), fields: nodeFields, vars,
+        params: opts.params,
         /*
          * 嵌合带来的 {{input}} / {{chain.output}}。
          * 没有嵌合关系时两者都不传 —— {{input}} 回落到全局输入，

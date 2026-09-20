@@ -17,6 +17,8 @@ const fields: FieldDef[] = [
         cfg={p.d.llm as never}
         onChange={p.patch}
         needVision
+        secretPolicy={p.secretPolicy}
+        onChangeSecretPolicy={p.onChangeSecretPolicy}
       />
     ),
   },
