@@ -367,15 +367,33 @@ bootIframePlugin(async (ctx) => {
 
     // 搜索
     const searchInfo = h('span.mm-search-info', {}, '');
+    /**
+     * 执行一次搜索：定位到下一个匹配 + 顶栏状态 + 左侧结果面板。
+     *
+     * 三件事必须一起做：只更新状态文字的话，用户看不到有哪些匹配；
+     * 只填面板的话，画布上的定位又不动。
+     */
+    function runSearch() {
+      const kw = searchInput.value;
+      const st = searchStatusText(kw, bridge?.search(kw));
+      searchInfo.textContent = st.text;
+      searchInfo.classList.toggle('warn', st.warn);
+      // 结果列表单独取：search() 每调一次就推进到下一个匹配，
+      // 若让它顺带返回列表，"刷新列表"就会连带多跳一格
+      fileList?.setSearch(bridge?.getSearchResults?.() || null);
+    }
     const searchInput = h('input.mm-input', {
       placeholder: '搜索节点…',
       style: { width: '150px' },
+      oninput: () => {
+        // 关键字被删空 → 立刻退出搜索态。
+        // 等回车才清的话，面板会一直挂着上一次的结果，看着像"搜索坏了"
+        if (!searchInput.value.trim()) fileList?.setSearch(null);
+      },
       onkeydown: (e) => {
         if (e.key !== 'Enter') return;
         e.preventDefault();
-        const st = searchStatusText(searchInput.value, bridge?.search(searchInput.value));
-        searchInfo.textContent = st.text;
-        searchInfo.classList.toggle('warn', st.warn);
+        runSearch();
       },
     });
 
@@ -425,11 +443,8 @@ bootIframePlugin(async (ctx) => {
 
     toolbar.appendChild(h('div.mm-sep', {}));
 
-    toolbar.appendChild(group(searchInput, B('定位', () => {
-      const st = searchStatusText(searchInput.value, bridge?.search(searchInput.value));
-      searchInfo.textContent = st.text;
-      searchInfo.classList.toggle('warn', st.warn);
-    }), searchInfo));
+    toolbar.appendChild(group(searchInput, B('定位', () => runSearch(),
+      { title: '定位到下一个匹配，并在左侧列出全部结果' }), searchInfo));
 
     toolbar.appendChild(group(
       // 设置放在重载左边。
@@ -860,6 +875,9 @@ bootIframePlugin(async (ctx) => {
     bridge?.historyClear();
     undoStack = [];
     redoStack = [];
+    // 换画布后旧搜索结果全部失效（节点都换了），不清会让用户点到一个
+    // 根本不在这张画布上的"结果"，然后定位失败
+    fileList?.setSearch(null);
     // 切换/重载画布会重置编辑器历史基线，锁必须解 ——
     // 否则会拿旧栈标记去操作新画布（与 resetHistory 同理）
     pendingRedo = null;

@@ -55,6 +55,25 @@ html, body {
 
 .mm-input::placeholder { color: var(--text-mute); }
 
+/* 输入框 / 下拉必须跟按钮同一档（28px）
+   ============================================================
+   ../../css/controls.css 把 .mm-input / .mm-select 统一成了 38px
+   （那是外壳设置页的标准档），但脑图工具栏与右侧栏是**紧凑布局**，
+   按钮一直是 28px。不覆盖的话：
+     · 顶栏搜索框比旁边的按钮高 10px，整行看着是错开的
+     · 样式页里字号/字体/对齐等一排下拉全是 38px，比按钮高一截
+   历史版本这里就是 28px（与 .mm-btn 一致），是控件统一时被带高的。
+
+   用**变量**覆盖而不是重写 height —— controls.css 的规则本身就用的
+   --ctl-h / --ctl-pad / --ctl-fs，改变量才是同一套机制；
+   直接写 height 会和变量打架（谁在后谁赢，改动就变得不可预测）。
+   ============================================================ */
+.mm-input, .mm-select {
+  --ctl-h: 28px;
+  --ctl-pad: 9px;
+  --ctl-fs: 12.5px;
+}
+
 
 /* 色块（颜色选择按钮） */
 .mm-swatch {
@@ -93,6 +112,8 @@ html, body {
   display: flex;
   gap: 10px;
   min-height: 0;
+  /* 文件库是覆盖式抽屉的定位基准（见 .mm-files 注释） */
+  position: relative;
 }
 
 /* 侧边栏：图标条 + 可折叠页面 */
@@ -794,17 +815,37 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: var(-
    左侧文件库（脑图文件列表 / 文件夹）
    ============================================================ */
 
+/* 文件库（含搜索结果）：**覆盖式抽屉**，不参与 flex 流。
+   ============================================================
+   原来是 `flex: 0 0 186px` 的 flex 子项，展开时会把画布挤窄 196px。
+   代价不只是"画布变窄"，而是**画布内容会跟着左右移动**：
+     画布变窄 → 内层 iframe 尺寸变 → iframe 内 window 派发 resize
+     → kityminder core 的 view 模块监听 resize，把视图平移
+       (新宽-旧宽)/2 重新居中 → 内容在屏幕上左右晃一下。
+   每次展开/收起都晃，很干扰（用户明确反馈过）。
+
+   改成绝对定位浮在画布左侧之上后，画布尺寸**完全不变**，
+   iframe 不触发 resize，内容一动不动。只要画布宽度变了，
+   靠"事后反向补偿"是补不干净的 —— 用户拖过画布或缩放过之后，
+   补偿基准就乱了。
+   ============================================================ */
 .mm-files {
-  flex: 0 0 186px;
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 186px;
   display: none;
   flex-direction: column;
   gap: 8px;
   padding: 10px;
   border-radius: var(--r, 14px);
   background: var(--surface);
-  box-shadow: var(--sh-out-md);
+  /* 比画布更重的阴影：它浮在画布之上，压不出层次就会像
+     "把画布切掉一块"，看着像布局坏了 */
+  box-shadow: var(--sh-out-lg, 0 8px 24px rgba(0, 0, 0, .35));
   overflow-y: auto;
-  min-height: 0;   /* flex 子项默认 min-height:auto，滚动区会被内容顶开、overflow 失效 */}
+  min-height: 0;   /* flex 子项默认 min-height:auto，滚动区会被内容顶开、overflow 失效 */
+  z-index: var(--z-raised, 6);
+}
 .mm-files.open { display: flex; }
 
 .mm-files-head { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
@@ -839,6 +880,25 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: var(-
   font-size: var(--fs-12, 12px);
   color: var(--text);
 }
+/* 搜索结果条目：与文件项同一底框，故尺寸/间距对齐 .mm-file-item */
+.mm-search-item {
+  display: flex;
+  align-items: center;
+  padding: 5px 6px;
+  border-radius: var(--r-sm, 8px);
+  cursor: pointer;
+  font-size: var(--fs-12, 12px);
+  color: var(--text);
+  /* 节点文字可能很长（整段备注），不截断会把底框撑宽 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mm-search-item:hover { background: var(--surface-sunk, var(--surface)); }
+.mm-search-item.active { color: var(--accent); box-shadow: var(--sh-in-sm); }
+/* 命中片段：只染色不铺底 —— 铺底会跟 active 的底色打架，反而看不清 */
+.mm-search-item mark { background: transparent; color: var(--accent); font-weight: 600; }
+
 .mm-file-item:hover { background: var(--surface-sunk, var(--surface)); }
 .mm-file-item.active {
   color: var(--accent);

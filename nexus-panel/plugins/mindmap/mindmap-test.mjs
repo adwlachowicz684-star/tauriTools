@@ -3828,8 +3828,16 @@ group('A29 搜索失败状态三态分流');
   ok(/ok: true, total: r\.total/.test(sf), 'A29 成功时带 ok:true');
 
   const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-  eq((idx.match(/searchStatusText\(searchInput\.value/g) || []).length, 2,
-    'A29 两处调用点（回车 + 定位按钮）都改了 —— 只改一处会不一致');
+  // 原先断言"searchStatusText(searchInput.value 出现 2 次"，
+  // 那是**两处各写一遍**时代的检查。现在两处都调同一个 runSearch()，
+  // 比各写一遍更强（不可能不一致），所以改断言两处都调它。
+  ok(/function runSearch\(/.test(idx), 'A29 抽出 runSearch（回车与定位共用）');
+  {
+    const tb = idx.slice(idx.indexOf('const searchInput = h('), idx.indexOf('toolbar.appendChild(h(\'div.mm-sep\''));
+    ok(/onkeydown[\s\S]{0,200}runSearch\(\)/.test(tb), 'A29 回车调 runSearch');
+  }
+  eq((idx.match(/B\('定位', \(\) => runSearch\(\)/g) || []).length, 1,
+    'A29 定位按钮调 runSearch（与回车同一实现）');
   ok(/classList\.toggle\('warn', st\.warn\)/.test(idx), 'A29 提醒状态要反映到样式上');
 
   const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
@@ -5839,6 +5847,201 @@ group('展开层级按钮：移到左侧图标条');
   // 4) 层级按钮要落 commit（否则撤销栈不记，改动也存不住）
   ok(/bridge\?\.expandToLevel\(lv\);\s*\n\s*commit\(\);/.test(rail),
     '展开后 commit（进撤销栈并持久化）');
+}
+
+group('左侧搜索结果面板（复用文件库底框）');
+
+{
+  const fl = fs.readFileSync(path.join(HERE, 'filelist.js'), 'utf8');
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+
+  // ---- 1) 复用同一个底框，不是另起一个面板 ----
+  ok(/searchBodyEl = h\('div\.mm-files-body'/.test(fl),
+    '搜索区用同一个 .mm-files-body 类（与文件列表同底框、同尺寸）');
+  ok(/const el = h\('div\.mm-files'[\s\S]{0,400}bodyEl,[\s\S]{0,60}searchBodyEl/.test(fl),
+    '搜索区挂在**同一个** .mm-files 容器里（两者互斥，不会同时占宽）');
+  ok(!/\.mm-search-files|\.mm-search-panel/.test(css),
+    '没有另建一个 186px 面板（那样两个框会一起把画布挤窄）');
+
+  // ---- 2) 编辑器侧：列表与定位能力 ----
+  ok(/getSearchResults: function/.test(html), '编辑器暴露 getSearchResults');
+  ok(/gotoSearchResult: function/.test(html), '编辑器暴露 gotoSearchResult');
+  ok(/getSearchResults\(\)/.test(br), 'bridge 转发 getSearchResults');
+  // 必须断言**方法定义**（带缩进的 `gotoSearchResult(idx) {`）——
+  // 只断言 `gotoSearchResult(idx)` 会命中它函数体里 `m.gotoSearchResult(idx)`
+  // 那一行，方法被改名照样绿
+  ok(/^  gotoSearchResult\(idx\) \{/m.test(br), 'bridge 定义 gotoSearchResult 方法');
+  ok(/^  getSearchResults\(\) \{/m.test(br), 'bridge 定义 getSearchResults 方法');
+  // 画布内的旧浮层必须删掉 —— 否则画布上一个、左侧一个，两个结果列表
+  ok(!/#search-panel/.test(html), '编辑器内不再有 #search-panel 浮层');
+  ok(!/spRender|spSyncActive|spIsVisible/.test(html), '编辑器内浮层相关函数已清理');
+
+  // ---- 3) 外壳：搜索时填充，清空/换画布时退出 ----
+  ok(/fileList\?\.setSearch\(bridge\?\.getSearchResults/.test(idx),
+    'runSearch 把结果填进左侧面板');
+  // 注意：index.js 里有**两处** setSearch(null)（换画布 / 清空输入）。
+  // 只断言"文件里出现过 setSearch(null)"是假阳性 —— 删掉任何一处，
+  // 另一处还在，断言照样绿。必须各自限定在自己的函数片段内。
+  const loadSeg = idx.slice(idx.indexOf('async function loadSheet()'),
+    idx.indexOf('function applyOptions()'));
+  ok(/fileList\?\.setSearch\(null\)/.test(loadSeg), '换画布后清空（旧结果已失效）');
+  const inputSeg = idx.slice(idx.indexOf("const searchInput = h('input.mm-input'"),
+    idx.indexOf("toolbar.appendChild(group(searchInput"));
+  ok(/oninput[\s\S]{0,220}setSearch\(null\)/.test(inputSeg),
+    '关键字删空后立刻退出搜索态（不等回车）');
+
+  // ---- 4) 越界不能"假装成功" ----
+  ok(/if \(!ok\) \{ api\.status\(/.test(fl),
+    '定位失败要提示（不能把高亮停在旧项上假装跳过去了）');
+  ok(/return focusSearchResult\(Number\(idx\)/.test(html), '编辑器侧索引越界返回 false');
+  // 越界**必须真的挡住**。只断言"返回 boolean"是抓不到去掉边界检查的：
+  // 越界时 list[idx] 是 undefined，后面 km.select(undefined) 会静默不动，
+  // 表现为"点了没反应且毫无报错"。
+  {
+    const fr = html.slice(html.indexOf('function focusSearchResult('),
+      html.indexOf('function focusSearchResult(') + 400);
+    ok(/idx >= list\.length/.test(fr), 'focusSearchResult 有上界检查（越界不能静默）');
+    ok(/idx < 0/.test(fr), 'focusSearchResult 有下界检查');
+  }
+
+  // ---- 5) 安全：节点文字是用户输入，不能拼 innerHTML ----
+  ok(/document\.createTextNode/.test(fl), '高亮用文本节点构造（不是 innerHTML 拼串）');
+  ok(!/item\.innerHTML\s*\+?=/.test(fl), '没有用 innerHTML 拼节点文字（XSS）');
+}
+
+{
+  // ---- 行为级：真实 render ----
+  const { buildFileList } = await import('./filelist.js');
+
+  function mkApp(jumpOk = true) {
+    const jumped = [];
+    const st = [];
+    const api = {
+      fileState: () => ({ files: [], folders: [], currentId: null }),
+      status: (m) => st.push(m),
+      createFile: () => {}, createFolder: () => {},
+    };
+    const bridge = { gotoSearchResult: (i) => { jumped.push(i); return jumpOk; } };
+    return { app: { api, bridge, settings: { filesOpen: false } }, jumped, st };
+  }
+
+  // a) 有结果 → 自动展开 + 标题显示总数
+  {
+    const { app } = mkApp();
+    const fl = buildFileList(app);
+    fl.setSearch({ kw: 'abc', total: 7, active: 0, items: ['abc', 'xabcx', 'ABC'] });
+    eq(fl.el.classList.contains('open'), true, 'a 搜索时自动展开（文件库默认收起）');
+    ok(fl.el.textContent.includes('搜索结果 7 项'), 'a 标题显示真实总数 7');
+    eq(fl.el.querySelectorAll('.mm-search-item').length, 3, 'a 渲染 3 条');
+    eq(fl.isSearchMode(), true, 'a 进入搜索模式');
+  }
+
+  // b) 点条目 → 定位 + 高亮跟随
+  {
+    const { app, jumped } = mkApp();
+    const fl = buildFileList(app);
+    fl.setSearch({ kw: 'ab', total: 3, active: 0, items: ['ab1', 'ab2', 'ab3'] });
+    fl.el.querySelectorAll('.mm-search-item')[2].click();
+    eq(jumped.length, 1, 'b 点了第 3 条就请求定位一次');
+    eq(jumped[0], 2, 'b 传的索引是 2（0 起）');
+    const items = fl.el.querySelectorAll('.mm-search-item');
+    eq(items[2].classList.contains('active'), true, 'b 高亮跟到第 3 条');
+    eq(items[0].classList.contains('active'), false, 'b 旧的高亮已取消');
+  }
+
+  // c) 定位失败 → 提示，且高亮不乱跳
+  {
+    const { app, st } = mkApp(false);
+    const fl = buildFileList(app);
+    fl.setSearch({ kw: 'ab', total: 2, active: 0, items: ['ab1', 'ab2'] });
+    fl.el.querySelectorAll('.mm-search-item')[1].click();
+    ok(st.some((m) => /失效|重新搜索/.test(m)), 'c 定位失败给出提示');
+    eq(fl.el.querySelectorAll('.mm-search-item')[1].classList.contains('active'), false,
+      'c 失败时高亮不跳（避免"以为跳过去了"）');
+  }
+
+  // d) 退出搜索 → 恢复文件列表与原来的展开状态
+  {
+    const { app } = mkApp();
+    const fl = buildFileList(app);
+    fl.setSearch({ kw: 'ab', total: 1, active: 0, items: ['ab'] });
+    fl.setSearch(null);
+    eq(fl.isSearchMode(), false, 'd 退出搜索模式');
+    ok(fl.el.textContent.includes('脑图文件'), 'd 标题恢复「脑图文件」');
+    eq(fl.el.querySelectorAll('.mm-search-item').length, 0, 'd 搜索条目已清空');
+    eq(fl.el.classList.contains('open'), false, 'd 恢复到原来的收起状态（settings.filesOpen=false）');
+  }
+
+  // e) 空列表 = 退出（搜索无结果时不该留着一个空面板）
+  {
+    const { app } = mkApp();
+    const fl = buildFileList(app);
+    fl.setSearch({ kw: 'zz', total: 0, active: 0, items: [] });
+    eq(fl.isSearchMode(), false, 'e 空结果 → 不进搜索模式');
+  }
+
+  // f) 高亮安全：节点文字含标签也不能变成 HTML
+  {
+    const { app } = mkApp();
+    const fl = buildFileList(app);
+    fl.setSearch({ kw: 'b', total: 1, active: 0, items: ['a<b>c'] });
+    const it = fl.el.querySelector('.mm-search-item');
+    ok(it.querySelector('b') === null, 'f 文字里的 <b> 没有被解析成标签');
+    ok(it.textContent.includes('<b>'), 'f 原文照常显示');
+  }
+
+  // g) 关键字大小写不敏感高亮
+  {
+    const { app } = mkApp();
+    const fl = buildFileList(app);
+    fl.setSearch({ kw: 'ab', total: 1, active: 0, items: ['xxABxx'] });
+    const mk = fl.el.querySelector('.mm-search-item mark');
+    ok(mk && mk.textContent === 'AB', 'g 命中片段被 <mark> 标出（大小写不敏感）');
+  }
+}
+
+group('布局：文件库展开时画布内容不能移动 + 控件档位');
+
+{
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '');   // 先剥注释，避免命中说明文字
+  const cs = strip(css);
+
+  // ---- 1) 文件库是覆盖式抽屉，不参与 flex 流 ----
+  const filesRule = cs.slice(cs.indexOf('.mm-files {'), cs.indexOf('.mm-files.open'));
+  ok(/position:\s*absolute/.test(filesRule),
+    '.mm-files 是绝对定位抽屉（不是 flex 子项）');
+  ok(!/flex:\s*0\s+0\s+186px/.test(filesRule),
+    '.mm-files 不再占 flex 流宽度（否则展开会把画布挤窄）');
+  ok(/width:\s*186px/.test(filesRule), '.mm-files 宽度仍是 186px');
+
+  // 抽屉必须有定位基准：少了它，absolute 会相对更外层定位，位置就飘了
+  const bodyRule = cs.slice(cs.indexOf('.mm-body {'), cs.indexOf('.mm-body {') + 200);
+  ok(/position:\s*relative/.test(bodyRule), '.mm-body 提供定位基准（抽屉靠它定位）');
+
+  // 阴影要比画布重 —— 它是浮在画布之上的，压不出层次就像"画布被切掉一块"
+  ok(/z-index/.test(filesRule), '.mm-files 有 z-index（浮在画布之上）');
+
+  // ---- 2) 控件档位：输入框/下拉必须与按钮同为 28px ----
+  //
+  // ../../css/controls.css 把 .mm-input/.mm-select 统一成 38px（外壳标准档），
+  // 而脑图是紧凑布局、按钮一直 28px。不覆盖的话顶栏搜索框比按钮高 10px，
+  // 样式页一排下拉也全比按钮高一截。
+  const ctlRule = cs.slice(cs.indexOf('.mm-input, .mm-select {'),
+    cs.indexOf('.mm-input, .mm-select {') + 200);
+  ok(/--ctl-h:\s*28px/.test(ctlRule), '输入框/下拉用 28px 档（与 .mm-btn 同高）');
+  // 必须改**变量**而不是硬写 height：controls.css 用的就是这套变量，
+  // 直接写 height 会与变量打架（谁在后谁赢，改动变得不可预测）
+  ok(!/height:\s*28px/.test(ctlRule), '用变量覆盖而非硬写 height（避免与变量打架）');
+
+  // ---- 3) 侧栏字段纵向排列且**不居中** ----
+  const fieldRule = cs.slice(cs.indexOf('.mm-field {'), cs.indexOf('.mm-field {') + 200);
+  ok(/flex-direction:\s*column/.test(fieldRule), '.mm-field 纵向排列');
+  ok(/align-items:\s*stretch/.test(fieldRule),
+    '.mm-field 显式 stretch（不写就会被 controls.css 的 center 层叠成居中）');
 }
 
 group('多附件：XMind 往返（导出再导回）');
