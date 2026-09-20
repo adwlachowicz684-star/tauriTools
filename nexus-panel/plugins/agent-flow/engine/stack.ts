@@ -356,6 +356,92 @@ export function snapPosOf(parent: AnyNode): { x: number; y: number } {
   };
 }
 
+/**
+ * 高度变化后，把下方的串重新贴回去。
+ *
+ * ================= 为什么要它 ====================
+ *
+ * 嵌合位置是**落位那一刻**按当时的高度算出来的绝对值。
+ * 之后改「显示高度」（矮 / 中 / 高），被改的节点长高了，
+ * 而它下面挂着的块还停在原来的 y ——
+ * 于是串在显示上裂开（或叠在一起），`stackParent` 关系却还在。
+ *
+ * 这正是"嵌合看着坏了"的另一种成因，而且比拖动更难自查：
+ * 用户改的是高度滑块，不会想到要去挪下面的节点。
+ *
+ * ================= 为什么用位移量 =================
+ *
+ * 不逐个重算贴合位置（y = 父底边 + GAP）：
+ * 那样会把用户**故意**留的小缝隙一并抹平，等于偷偷改了他摆好的相对位置。
+ *
+ * 用位移量则只补偿"高度差"，其余相对关系原样保留。
+ *
+ * ================= 高度为什么事后才量 =================
+ *
+ * 新高度取决于内容（标题、参数行、字体），改完 size 的**当下**还不知道，
+ * 要等浏览器渲染完才拿得到 measured。
+ * 所以这里只接收"谁变了多少"，由调用方在渲染后比对得出。
+ */
+export function planStackReflow(
+  all: AnyNode[],
+  deltas: Map<string, number>,
+): { id: string; position: { x: number; y: number } }[] {
+  if (deltas.size === 0) return [];
+
+  const byId = new Map(all.map((n) => [n.id, n]));
+
+  /*
+   * 每个节点要挪多少 = 它**所有上级**的高度变化之和。
+   *
+   * 串中间那块长高了：它自己不动（顶边对齐父节点），
+   * 它下面的每一块都要往下挪，且再下面的要叠加上去。
+   */
+  const shiftOf = (id: string): number => {
+    let total = 0;
+    let cur = id;
+    const seen = new Set<string>([id]);
+    for (;;) {
+      const n = byId.get(cur);
+      if (!n) break;
+      const p = parentIdOf(n);
+      if (!p || seen.has(p)) break; // 没有上级，或成环
+      seen.add(p);
+      total += deltas.get(p) ?? 0;
+      cur = p;
+    }
+    return total;
+  };
+
+  const out: { id: string; position: { x: number; y: number } }[] = [];
+  for (const n of all) {
+    /*
+     * 注意：自己高度变了**不代表不用挪**。
+     * 一块可以同时"自己长高了"和"被上级的变化推着走" ——
+     * 少算后者会出现"改了中间那块，它自己不跟着串走"的怪状态。
+     * shiftOf 只累加**上级**的变化，所以这里不必排除自己。
+     */
+    const dy = shiftOf(n.id);
+    if (dy === 0) continue;
+    out.push({ id: n.id, position: { x: posOf(n).x, y: posOf(n).y + dy } });
+  }
+  return out;
+}
+
+/**
+ * 当前各节点的高度快照。
+ *
+ * 没有测量值的（还没渲染过 / 折叠隐藏了）不写进去 ——
+ * 写进去等于认为它高度是 0，下一次量到真实高度时会算出一个巨大的位移。
+ */
+export function measureHeights(all: AnyNode[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const n of all) {
+    const h = n.measured?.height;
+    if (typeof h === 'number' && h > 0) out.set(n.id, h);
+  }
+  return out;
+}
+
 /** 松手后的落位决定。undefined = 这一项不动 */
 export type StackDropPlan = {
   position?: { x: number; y: number };
