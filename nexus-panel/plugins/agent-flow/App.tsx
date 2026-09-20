@@ -123,6 +123,9 @@ import {
   redactNodes,
 } from './engine/canvasStore';
 import {
+  type CanvasParam, migrateEnvVars, paramRefsOfNodes, paramsToRecord,
+} from './engine/canvasParams';
+import {
   parseKeywords, parseMessages, matchKeywords, takeNew, newSeenState,
   type SeenState, type KeywordHit,
 } from './engine/conversations';
@@ -308,6 +311,34 @@ export default function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>(
     (active?.edges ?? []) as FlowEdge[],
   );
+
+  /*
+   * 当前画布的参数表 —— {{params.名字}} 的取值来源。
+   *
+   * env.vars 是旧称：界面上早就承诺过 {{env.NAME}} 可用，
+   * 但模板层从没真正接过值。老存档里填过的值在这里一并搬进 params，不会丢。
+   */
+  const activeParams: CanvasParam[] = useMemo(
+    () => migrateEnvVars(active?.config?.params, active?.config?.env?.vars),
+    [active?.config?.params, active?.config?.env?.vars],
+  );
+
+  /*
+   * 画布上「模块」节点引用到的参数名。
+   *
+   * 必须单独算：模块内部节点平时不在 nodes 里（只有运行时才展开），
+   * 画布侧扫不到 —— 而"刚把模块拖进来、还没填参数"恰恰是最该提醒的时刻。
+   */
+  const moduleParamRefs = useMemo(() => {
+    const out = new Set<string>();
+    for (const n of nodes) {
+      const d = (n.data ?? {}) as Record<string, unknown>;
+      if (String(d.kind ?? d.type ?? '') !== 'module') continue;
+      const def = findModule(String(d.moduleId ?? ''));
+      for (const name of def?.paramRefs ?? []) out.add(name);
+    }
+    return [...out].sort();
+  }, [nodes]);
 
   /**
    * 切换画布时同步 React Flow 的内容。
@@ -2547,10 +2578,43 @@ function reportSkipped(
       return { status: r.status, ok: r.ok, text: r.text, headers: r.headers };
     };
 
+    /*
+     * 画布参数 → 模板里的 {{params.名字}}。
+     *
+     * 传进引擎前先转成查表：渲染时每个变量都要查一次，
+     * 数组 find 是线性扫描，长流程里会白跑很多次。
+     */
+    const paramsForRun = paramsToRecord(activeParams);
+
+    /*
+     * 运行前先查一遍：有没有引用了却没定义的画布参数。
+     *
+     * 不查的话，缺失的参数在模板里**原样保留** ——
+     * 于是路径变成字面量 "{{params.输出目录}}/a.md"，
+     * 文件真被写到了一个奇怪的地方，而日志里没有任何提示。
+     * 这类"跑了但结果是错的"比直接失败难查得多。
+     */
+    const paramUsed = new Set<string>([
+      ...paramRefsOfNodes(nodes),
+      ...moduleParamRefs,
+    ]);
+    const paramMissing = [...paramUsed].filter((n) => !(n in paramsForRun)).sort();
+    if (paramMissing.length > 0) {
+      pushLog(`⚠ 这些画布参数被引用了但没定义：${paramMissing.join('、')} —— 会原样留在文本里`);
+    }
+
     const result = await runGraph(graph, {
       concurrency, executor, fsExecutor, fetcher, llmCaller, imageReader,
       githubFetch, githubPush, httpRequester, credentials, playAudioReader, tableReader,
       input: effectiveInput, onEvent, signal: controller.signal,
+      /*
+       * 画布参数（{{params.名字}}）。
+       *
+       * 传的是**当前画布**的那一份 —— 模块展开后内部节点也在这张图上，
+       * 于是自动取到本画布的值：同一个模块在 A、B 两张画布上
+       * 用同一句 {{params.输出目录}}，各取各的。
+       */
+      params: paramsForRun,
       /*
        * 人工输入：跑到该节点时弹框等人填。
        *

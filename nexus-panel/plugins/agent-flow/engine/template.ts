@@ -144,3 +144,27 @@ export function renderTemplate(tpl: string, ctx: RenderCtx): RenderResult {
   });
   return { text, missing: [...new Set(missing)] };
 }
+
+/**
+ * 一段文本里引用到的画布参数名（`{{params.名字}}` / 旧称 `{{env.名字}}`）。
+ *
+ * 放在这里、而不是让用到它的地方各写一份正则，是因为**引用规则只能有一处真源**：
+ * 扫出来的名字必须和渲染时认的完全一致，否则会出现
+ * "面板说没定义、跑起来却能用"（或反过来）这种两边都自查无误的 bug，
+ * 而排查它只能靠人工比对两处正则的字符类。
+ *
+ * 只认 `params` / `env` 两个命名空间 —— 与上面 renderTemplate 的分支一致。
+ * `{{params}}` 这种没写名字的不算引用（渲染时同样取不到值）。
+ */
+export function paramRefsIn(text: string): string[] {
+  const out = new Set<string>();
+  for (const m of text.matchAll(TOKEN)) {
+    const key = String(m[1] ?? '').trim();
+    const dot = key.indexOf('.');
+    const ns = dot < 0 ? key : key.slice(0, dot);
+    if (ns !== 'params' && ns !== 'env') continue;
+    const name = dot < 0 ? '' : key.slice(dot + 1).trim();
+    if (name) out.add(name);
+  }
+  return [...out];
+}
