@@ -2021,19 +2021,40 @@ function reportSkipped(
         { oldParent, moved, exclude },
       );
 
-      if (!plan.position && plan.stackParent === undefined) return;
+      if (!plan.position && plan.stackParent === undefined && !plan.attach) return;
 
-      setNodes((ns) => ns.map((n) => {
-        if (n.id !== node.id) return n;
-        const data = { ...(n.data as object) } as Record<string, unknown>;
-        // 覆盖式写入，不会出现"一个节点有两个上级"
-        if (plan.stackParent !== undefined) data.stackParent = plan.stackParent;
-        return {
-          ...n,
-          ...(plan.position ? { position: plan.position } : null),
-          data,
-        } as FlowNode;
-      }));
+      setNodes((ns) => {
+        /*
+         * 反向吸附要动的是**别人**：把它（和它的整串）挪到被拖节点下面。
+         * 被拖节点自己停在用户放的位置，不动。
+         */
+        const moves = plan.attach
+          ? new Map(plan.attach.moves.map((m) => [m.id, m.position]))
+          : null;
+        const attachParent = plan.attach?.childId ?? null;
+
+        return ns.map((n) => {
+          const isDragged = n.id === node.id;
+          const at = moves?.get(n.id);
+          if (!isDragged && !at) return n;
+
+          const data = { ...(n.data as object) } as Record<string, unknown>;
+          /*
+           * 覆盖式写入，不会出现"一个节点有两个上级"。
+           * 反向吸附时被拖节点是**父**，自己不动 stackParent，
+           * 只把对方改成指向自己。
+           */
+          if (isDragged && plan.stackParent !== undefined) data.stackParent = plan.stackParent;
+          if (at && attachParent === n.id) data.stackParent = node.id;
+
+          return {
+            ...n,
+            ...(at ? { position: at } : null),
+            ...(isDragged && plan.position ? { position: plan.position } : null),
+            data,
+          } as FlowNode;
+        });
+      });
 
       /*
        * 嵌合 = 一条隐式边，连接判据与拉线一致。
@@ -2050,6 +2071,18 @@ function reportSkipped(
         else pushLog(`⇲ 已嵌合到 ${plan.stackParent} 下方（可整体拖动，输出自动向下传递）`);
       } else if (nextParent === null && oldParent) {
         pushLog(`⇱ 已解除与 ${oldParent} 的嵌合`);
+      } else if (plan.attach) {
+        /*
+         * 反向吸附也要报一句 ——
+         * 它是"我把别人接到了自己下面"，画面变化在**对方**身上，
+         * 没有提示的话用户会以为只是自己挪了个位置。
+         */
+        const verdict = canConnect(
+          specOf(kindOfNode(nodes, node.id)),
+          specOf(kindOfNode(nodes, plan.attach.childId)),
+        );
+        if (verdict.reason) pushLog(`⚠ ${verdict.reason}`);
+        else pushLog(`⇲ 已把 ${plan.attach.childId} 嵌到自己下方（拖动它会带着整串走）`);
       }
     },
     [nodes, setNodes, pushLog, kindOfNode],
