@@ -16,9 +16,16 @@ import type { TestState } from './shared';
  * 测试**不推进基线**：如果点了测试就把基线改了，用户再正式运行
  * 就永远看不到"有更新"了。
  */
+/*
+ * onChange 统一为单参数（只收 patch）——
+ * 与 FileParamsPanel / LlmConfigPanel / OrderPicker 一致。
+ * 详见 tests/customRenderSignature.test.ts 里关于"双参数被静默丢弃"的说明：
+ * 签名不一致会让调用方每次都要现想"这个组件接几个参数"，
+ * 想错就是"点了没反应"。node 仍要传，是因为这里要读它的 data 与 id。
+ */
 export function UpdateTestPanel({ node, onChange }: {
   node: FlowNode;
-  onChange: (id: string, patch: Record<string, unknown>) => void;
+  onChange: (patch: Record<string, unknown>) => void;
 }) {
   const d = node.data as UpdateNodeData;
   const meta = UPDATE_SOURCE_META[d.source];
@@ -86,7 +93,7 @@ export function UpdateTestPanel({ node, onChange }: {
   };
 
   const resetBaseline = () => {
-    onChange(node.id, { lastSeenId: '', lastSeenTitle: '', lastUpdated: null, lastCheckedAt: null });
+    onChange({ lastSeenId: '', lastSeenTitle: '', lastUpdated: null, lastCheckedAt: null });
     setTest({ phase: 'idle' });
   };
 
