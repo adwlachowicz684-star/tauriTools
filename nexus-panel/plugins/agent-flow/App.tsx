@@ -79,7 +79,7 @@ import {
 import {
   stackEdges, descendantsOf, chainTopOf, chainOf,
   parentIdOf, movedEnough, heightOf, STACK_GAP, stackParentIds,
-  planStackDrop,
+  planStackDrop, planStackReflow, measureHeights,
 } from './engine/stack';
 import { withDefault } from './engine/nodeDefaults';
 import { specOf, canConnect } from './engine/nodeSpec';
@@ -1001,6 +1001,48 @@ export default function App() {
 
   useEffect(() => { kvStore().set('agent-flow.leftTab.v1', leftTabRaw); }, [leftTabRaw]);
   useEffect(() => { kvStore().set('agent-flow.logH.v1', String(logH)); }, [logH]);
+
+  /*
+   * 节点高度变了就把下方的串重新贴回去。
+   *
+   * ================= 为什么必须事后做 ====================
+   *
+   * 嵌合位置是**落位那一刻**按当时的高度算的绝对值。
+   * 之后改「显示高度」（矮 / 中 / 高），被改的那块长高了，
+   * 下面挂着的还停在原来的 y —— 串在显示上裂开，关系却还在。
+   *
+   * 而新高度取决于内容（标题、参数行、字号），改完的**当下**还不知道，
+   * 要等浏览器渲染完才拿得到 measured —— 所以只能在渲染后比对。
+   *
+   * ================= 为什么不逐个重算贴合位置 =================
+   *
+   * 那样会把用户故意留的小缝隙一并抹平。
+   * 这里只补偿"高度差"（见 planStackReflow），其余相对关系原样保留。
+   *
+   * ================= 不会死循环 =================
+   *
+   * 挪动位置不改变高度，所以下一轮 deltas 必为空，effect 直接返回。
+   */
+  const heightsRef = useRef<Map<string, number>>(new Map());
+  useEffect(() => {
+    const next = measureHeights(nodes as never);
+    const deltas = new Map<string, number>();
+    for (const [id, h] of next) {
+      const old = heightsRef.current.get(id);
+      // 1px 以内的抖动不算 —— 频繁整串位移会让画布看着在抖
+      if (old !== undefined && Math.abs(h - old) >= 1) deltas.set(id, h - old);
+    }
+    heightsRef.current = next;
+    if (deltas.size === 0) return;
+
+    const moves = planStackReflow(nodes as never, deltas);
+    if (moves.length === 0) return;
+    const at = new Map(moves.map((m) => [m.id, m.position]));
+    setNodes((ns) => ns.map((n) => {
+      const p = at.get(n.id);
+      return p ? ({ ...n, position: p } as FlowNode) : n;
+    }));
+  }, [nodes, setNodes]);
 
   /*
    * 切到任务 / 历史时左边栏要隐藏 ——
