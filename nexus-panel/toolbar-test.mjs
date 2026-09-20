@@ -554,5 +554,43 @@ t('复用已存在的 .tb-btn.on（没有另写一套激活态）',
   (css.match(/\.tb-btn\.on \{/g) || []).length === 1);
 
 /* ---------------------------------------------------------------- */
+console.log('\n=== 12. loadModule 的入参契约 ===');
+
+/*
+ * toolbar-plugin.js 往下传的是**整个 manifest**，入口路径在 m.entry 上，
+ * 调用方（宿主）负责取出来交给 loadModuleEntry。
+ *
+ * 两个真实调用点曾经直接透传 manifest 给 loadModuleEntry（后者要的是路径
+ * 字符串），路径归一化得到 "[object Object]"、在 glob 表里永远匹配不到，
+ * 结果是 5 个内置工具栏按钮**全部加载失败**。
+ *
+ * 这个 bug 之前能溜过去，是因为测试全都 mock 掉了 loadModule 这一层 ——
+ * 恰好在被 mock 掉的地方出问题。所以除了运行时契约，这里再静态盯住
+ * 两个宿主调用点，防止有人把 m.entry 又写回成 m。
+ */
+resetToolbar();
+let handed = null;
+await loadToolbarPlugins(
+  [{ id: 'shape', kind: 'toolbar', type: 'module', entry: './plugins/shape/module.js' }],
+  {
+    loadModule: async (m) => {
+      handed = m;
+      return { default: { id: 'shape', label: 'S', onClick() {} } };
+    },
+    onError: () => {},
+  },
+);
+t('loadModule 收到的是 manifest 对象（不是路径字符串）',
+  handed !== null && typeof handed === 'object' && handed.id === 'shape');
+t('manifest 上带着 entry —— 调用方据此取路径',
+  handed !== null && handed.entry === './plugins/shape/module.js');
+
+for (const f of ['src/components/Titlebar.tsx', 'js/shell.js']) {
+  const code = src(f);
+  t(f + '：loadModule 取的是 m.entry，不是透传 manifest',
+    /loadModule:\s*\([^)]*\)\s*=>\s*loadModuleEntry\(\s*m\??\.entry/.test(code));
+}
+
+/* ---------------------------------------------------------------- */
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

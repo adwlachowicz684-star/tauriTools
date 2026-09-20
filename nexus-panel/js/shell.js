@@ -600,7 +600,10 @@ async function initToolbar() {
    */
   const reload = async () => {
     await loadToolbarPlugins(all, {
-      loadModule: (m) => loadModuleEntry(m),
+      /* 传 m.entry 而不是 m：loadToolbarPlugins 给的是整个 manifest，
+         loadModuleEntry 要的是入口路径字符串 —— 透传 manifest 会让
+         路径归一化得到 "[object Object]"，所有工具栏插件都加载失败。 */
+      loadModule: (m) => loadModuleEntry(m.entry),
       onError: (id, e) => {
         console.warn('[toolbar] 加载失败', id, e);
         toast(`工具栏插件「${id}」加载失败：${e?.message || e}`, 'err');

@@ -292,7 +292,9 @@ export function validateToolbarDef(def) {
  *
  * @param {object[]} manifests  全部插件清单（内部自己筛，传全量最省心）
  * @param {object}   opts
- * @param {(m: object) => Promise<any>} opts.loadModule 加载 module 入口
+ * @param {(m: object) => Promise<any>} opts.loadModule 加载 module 入口（传的是 manifest 本身，入口路径在 m.entry）
+ *        注意：实现方要自己取 m.entry 再交给 loadModuleEntry —— 后者要的是
+ *        路径字符串，直接透传 manifest 会得到 "[object Object]" 匹配失败。
  * @param {(id: string, err: any) => void} [opts.onError]
  * @returns {Promise<number>} 成功加载的个数
  */
@@ -315,6 +317,14 @@ export async function loadToolbarPlugins(manifests, opts) {
       continue;
     }
     try {
+      /*
+       * 传的是**整个 manifest**（下面的 JSDoc 契约），加载器自己取 .entry。
+       * 之前两个调用点直接把参数转给了 loadModuleEntry（它要的是 entry
+       * 路径字符串），于是路径归一化时 String(manifest) 变成 "[object
+       * Object]"，永远匹配不上 glob 表 —— 5 个内置工具栏按钮全部
+       * "加载失败"，报错还写着"未被构建期 glob 收录：[object Object]"，
+       * 看着像构建配置问题。调用点已改为传 m.entry。
+       */
       const mod = await load(m);
       const def = mod?.default || mod?.toolbar;
       const errs = validateToolbarDef(def);

@@ -53,7 +53,10 @@ export default function Titlebar({
          * 以及用户在设置里手动添加的入口都不会被加载。
          */
         await loadToolbarPlugins(all, {
-            loadModule: (m) => loadModuleEntry(m as never),
+            /* loadModule 收到的是 manifest 本身，loadModuleEntry 要的是
+               entry 路径 —— 直接透传会把 "[object Object]" 当成路径去
+               glob 表里找，5 个工具栏按钮全加载失败。取 m.entry 再传。 */
+            loadModule: (m: { entry?: string }) => loadModuleEntry(m?.entry ?? ''),
             onError: (id, e) => {
               console.warn('[toolbar] 加载失败', id, e);
               onToast?.(`工具栏插件「${id}」加载失败：${(e as Error)?.message || e}`, 'err');
