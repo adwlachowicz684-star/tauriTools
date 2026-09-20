@@ -85,8 +85,9 @@ import { withDefault } from './engine/nodeDefaults';
 import { specOf, canConnect } from './engine/nodeSpec';
 import { getDefByDataKind } from './nodes/registry';
 import CanvasTabs from './components/CanvasTabs';
-import { TaskPanel } from './components/TaskPanel';
-import { HistoryPanel } from './components/HistoryPanel';
+import { TaskList } from './components/TaskPanel';
+import { TaskDetail } from './components/TaskDetail';
+import { HistoryList } from './components/HistoryPanel';
 import {
   parseHistory, serializeHistory, addToHistory, removeFromHistory,
   clearCanvasHistory, emptyHistory, HISTORY_STORE_KEY, type HistoryEntry,
@@ -441,6 +442,14 @@ export default function App() {
     这里不做人为截断，否则"刚跑完的被挤掉了"会让人以为任务丢了。
   */
   const [view, setView] = useState<'flow' | 'tasks' | 'history'>('flow');
+  /*
+   * 任务 / 历史的选中项要**提升到这里**。
+   *
+   * 列表在左栏、详情在中间，是两个组件 ——
+   * 各自 useState 的话点左栏不会让中间跟着变，看着就是"点了没反应"。
+   */
+  const [taskSel, setTaskSel] = useState<string | null>(null);
+  const [histSel, setHistSel] = useState<string | null>(null);
 
   /* ---------------- 历史（跨会话归档）---------------- */
   const [historyFile, setHistoryFile] = useState(() => parseHistory(localStorage.getItem(HISTORY_STORE_KEY)));
@@ -997,6 +1006,13 @@ export default function App() {
    * 切到任务 / 历史时左边栏要隐藏 ——
    * 那些视图下画布都藏起来了，节点拖不出去，留着就是死栏。
    */
+  /*
+   * 列表顶替节点库后，详情要能自己挑一条 ——
+   * 没选过就取第一条，否则右侧一进来是空的，得先点一下才有东西看。
+   */
+  const activeTask = tasks.find((t) => t.id === taskSel) || tasks[0] || null;
+  const activeHist = history.find((e) => e.id === histSel) || history[0] || null;
+
   const coerced = coerceForView(view, leftTabRaw);
   const leftTab = coerced.left;
 
@@ -3271,19 +3287,49 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
       */}
       <div className="af-body-row">
         <div className="af-left-pane">
-          <div className="pane-tabs">
-            {LEFT_TABS.map((t) => (
-              <button
-                key={t}
-                className={leftTab === t ? 'on' : ''}
-                onClick={() => setLeftTabRaw(t)}
-              >
-                {LEFT_TAB_LABEL[t]}
-              </button>
-            ))}
-          </div>
+          {/*
+            左栏内容随视图换：
+              流程   → 节点库 / 模块库 / 画布库（三个标签）
+              任务   → 任务列表
+              历史   → 历史列表
+
+            任务 / 历史下画布是隐藏的，节点库拖不出东西 ——
+            留着它是一条"点了没反应"的死栏。所以列表顶上同一条栏，
+            位置、宽度、底板（.side-pane）全都与节点库一致。
+          */}
+          {view !== 'flow' ? null : (
+            <div className="pane-tabs">
+              {LEFT_TABS.map((t) => (
+                <button
+                  key={t}
+                  className={leftTab === t ? 'on' : ''}
+                  onClick={() => setLeftTabRaw(t)}
+                >
+                  {LEFT_TAB_LABEL[t]}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="pane-body">
-            {leftTab === 'node' ? (
+            {view === 'tasks' ? (
+              <TaskList
+                tasks={tasks}
+                now={tick}
+                onClear={() => setTasks((list) => list.filter((t) => t.status === 'running'))}
+                selectedId={taskSel}
+                onSelect={setTaskSel}
+              />
+            ) : view === 'history' ? (
+              <HistoryList
+                entries={history}
+                now={tick}
+                onDelete={(id) => saveHistory(removeFromHistory(historyFile, id))}
+                onClearAll={() => saveHistory(emptyHistory())}
+                onClearCanvas={(canvasId) => saveHistory(clearCanvasHistory(historyFile, canvasId))}
+                selectedId={histSel}
+                onSelect={setHistSel}
+              />
+            ) : leftTab === 'node' ? (
               <Sidebar
                 onAdd={(p) => spawnNode(p)}
                 disabled={running}
@@ -3320,37 +3366,50 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
 
 
       <div className="body">
+        {/*
+          列表已移到左栏（与节点库共用底板），这里只放**详情**。
+        */}
         {view === 'history' ? (
-          <HistoryPanel
-            entries={history}
-            now={tick}
-            onDelete={(id) => saveHistory(removeFromHistory(historyFile, id))}
-            onClearAll={() => saveHistory(emptyHistory())}
-            onClearCanvas={(canvasId) => saveHistory(clearCanvasHistory(historyFile, canvasId))}
-            onJumpToCanvas={(canvasId) => {
-              if (canvasId && canvases.some((c) => c.id === canvasId)) {
-                setActiveId(canvasId);
-                setView('flow');
-              }
-            }}
-          />
+          <div className="task-detail">
+            {!activeHist ? (
+              <div className="nx-empty task-empty">选一条记录看细节。</div>
+            ) : (
+              <TaskDetail
+                task={activeHist}
+                now={tick}
+                showDate
+                archived
+                onJumpToCanvas={(canvasId) => {
+                  if (canvasId && canvases.some((c) => c.id === canvasId)) {
+                    setActiveId(canvasId);
+                    setView('flow');
+                  }
+                }}
+              />
+            )}
+          </div>
         ) : null}
         {view === 'tasks' ? (
-          <TaskPanel
-            tasks={tasks}
-            now={tick}
-            onCancel={(id) => {
-              // 只允许停当前那条；历史记录没有可停的东西
-              if (id === currentTaskRef.current) stop();
-            }}
-            onClear={() => setTasks((list) => list.filter((t) => t.status === 'running'))}
-            onJumpToCanvas={(canvasId) => {
-              if (canvasId && canvases.some((c) => c.id === canvasId)) {
-                setActiveId(canvasId);
-                setView('flow');
-              }
-            }}
-          />
+          <div className="task-detail">
+            {!activeTask ? (
+              <div className="nx-empty task-empty">选一条任务看细节。</div>
+            ) : (
+              <TaskDetail
+                task={activeTask}
+                now={tick}
+                onCancel={(id) => {
+                  // 只允许停当前那条；历史记录没有可停的东西
+                  if (id === currentTaskRef.current) stop();
+                }}
+                onJumpToCanvas={(canvasId) => {
+                  if (canvasId && canvases.some((c) => c.id === canvasId)) {
+                    setActiveId(canvasId);
+                    setView('flow');
+                  }
+                }}
+              />
+            )}
+          </div>
         ) : null}
         <div className="canvas" ref={wrapperRef} onDrop={onDrop} onDragOver={onDragOver} style={view === 'flow' ? undefined : { display: 'none' }}>
           <ReactFlow

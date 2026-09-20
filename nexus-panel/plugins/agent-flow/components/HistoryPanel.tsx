@@ -6,10 +6,9 @@ import {
 } from '../engine/history';
 import { progressOf, elapsedOf, formatDuration, STATUS_LABEL, SOURCE_LABEL } from '../engine/tasks';
 import { windowSlice, rowOffsets } from '../engine/tasks';
-import { TaskDetail } from './TaskDetail';
 
 /**
- * 历史面板 —— 跨会话的运行归档。
+ * 历史列表 —— 占**左栏**，与节点库共用底板（同 TaskList，见那边的说明）。
  *
  * 与任务窗口的区别：那边是当前会话的实时态，这边是落盘的归档。
  * 归档内容经过裁剪（见 engine/history.ts 的 compactTask），
@@ -36,20 +35,21 @@ const STATUS_OPTIONS: { v: StatusKey; label: string }[] = [
   { v: 'cancelled', label: '已取消' },
 ];
 
-export function HistoryPanel({
-  entries, now, onDelete, onClearAll, onClearCanvas, onJumpToCanvas,
+export function HistoryList({
+  entries, now, onDelete, onClearAll, onClearCanvas, selectedId, onSelect,
 }: {
   entries: HistoryEntry[];
   now: number;
   onDelete: (id: string) => void;
   onClearAll: () => void;
   onClearCanvas: (canvasId: string) => void;
-  onJumpToCanvas?: (canvasId: string) => void;
+  /** 选中项由外层持有 —— 列表在左栏、详情在中间，两边必须同步 */
+  selectedId: string | null;
+  onSelect: (id: string) => void;
 }) {
   const [range, setRange] = useState<RangeKey>('all');
   const [status, setStatus] = useState<StatusKey>('');
   const [kw, setKw] = useState('');
-  const [sel, setSel] = useState<string | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(600);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -93,12 +93,24 @@ export function HistoryPanel({
   }, []);
 
   const stats = useMemo(() => historyStats(entries), [entries]);
-  const active = entries.find((e) => e.id === sel) || filtered[0] || null;
+  const activeId = selectedId ?? filtered[0]?.id ?? null;
 
   return (
-    <div className="task-view">
-      <div className="task-list">
-        <div className="hist-filter">
+    <aside className="side-pane">
+      <div className="side-head">
+        <span>历史</span>
+        <span className="side-head-spacer" />
+        <button
+          type="button"
+          className="side-head-btn"
+          onClick={onClearAll}
+          disabled={entries.length === 0}
+        >
+          清空全部
+        </button>
+      </div>
+
+      <div className="hist-filter">
           <div className="hist-filter-row">
             <select className="p-input hist-sel" value={range} onChange={(e) => setRange(e.target.value as RangeKey)}>
               {(Object.keys(RANGE_LABEL) as RangeKey[]).map((k) => (
@@ -141,7 +153,7 @@ export function HistoryPanel({
               : '没有符合筛选条件的记录。换个时间范围或清空搜索词试试。'}
           </div>
         ) : (
-          <div className="task-scroll" ref={listRef} onScroll={onScroll}>
+          <div className="side-body side-body-flush task-scroll" ref={listRef} onScroll={onScroll}>
             <div style={{ height: win.totalHeight, position: 'relative' }}>
               <div style={{ transform: `translateY(${win.padTop}px)` }}>
                 {rows.slice(win.start, win.end).map((row) =>
@@ -190,21 +202,6 @@ export function HistoryPanel({
             </div>
           </div>
         )}
-      </div>
-
-      <div className="task-detail">
-        {!active ? (
-          <div className="nx-empty task-empty">选一条记录看细节。</div>
-        ) : (
-          <TaskDetail
-            task={active}
-            now={now}
-            showDate
-            archived
-            onJumpToCanvas={onJumpToCanvas}
-          />
-        )}
-      </div>
-    </div>
+    </aside>
   );
 }

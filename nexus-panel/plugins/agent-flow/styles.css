@@ -1428,16 +1428,7 @@ input.mono, textarea.mono {
   padding: 0 4px; border-radius: var(--r-pill, 999px); background: var(--af-ok); color: #06210f;
   font-size: var(--fs-10, 10px); line-height: 15px; }
 
-.task-view { display: flex; flex: 1; min-height: 0; overflow: hidden; }
-/*
- * width / background / overflow 原本在「任务·历史视图」那节**又写了一遍**
- * （300px 与 var(--af-side-w) 冲突、auto 与 hidden 冲突）。
- * 同选择器两处写不同值，后写的赢，前面那块就成了死代码 ——
- * 而且改了它没反应，很容易被误判成"CSS 没生效"。
- * 现按实际生效的值合并到这一处，结果不变。
- */
-.task-list { width: var(--af-side-w); flex: none; border-right: 1px solid var(--af-divider);
-  overflow: hidden; background: var(--af-bg); display: flex; flex-direction: column; }
+/* 列表头 —— 现在列表在左栏，头部就是 .side-head，这条只留空态文案用的间距 */
 .task-list-head { display: flex; align-items: center; gap: 8px;
   padding: 9px 12px; border-bottom: 1px solid var(--af-divider);
   position: sticky; top: 0; background: var(--af-panel);
@@ -2312,6 +2303,15 @@ input.mono, textarea.mono {
   overflow-y: auto;
   padding: 10px;
 }
+
+/*
+ * 不留内边距的变体。
+ *
+ * 虚拟滚动用它：列表行的高度是**算出来的**，
+ * 容器多一圈 padding 会让可视高度与算出来的行数对不上，
+ * 表现为底部空一截或者少渲染一行。
+ */
+.side-body-flush { padding: 0; }
 
 /* 分组标题。做成 flex —— 右侧要放操作按钮 */
 .side-title {

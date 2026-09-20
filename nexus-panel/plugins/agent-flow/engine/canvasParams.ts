@@ -1,20 +1,41 @@
 /**
  * 画布参数 —— 画布范围的局部变量。
  *
- * ============ 为什么要有这一层 ============
+ * ================= 解决什么 ====================
  *
- * 节点里写 `{{params.输出目录}}`，值填在**画布**上，每张画布各一套。
- * 于是同一个模块拖到 A、B 两张画布上，用同一句模板各取各的值，
- * 而模块本身一个字都不用改 —— 这是模块能跨画布复用的前提。
+ * 一个模块（几个节点编成的一组）要在多张画布上复用，
+ * 而每张画布的**具体值不同**：输出目录、项目名、账号……
  *
- * 和「变量」节点（{{var.名字}}）的区别必须说清，否则很容易合成一个：
+ * 把这些写死在节点里，复用一次就得改一次；
+ * 做成画布参数后，节点只写**名字**（{{params.输出目录}}），
+ * 每张画布各填各的值 —— 模块本身一个字都不用改。
+ *
+ *   画布 A：输出目录 = D:\项目甲\out
+ *   画布 B：输出目录 = D:\项目乙\out
+ *   同一个模块，同一句 {{params.输出目录}}，各自取到自己的值。
+ *
+ * ================= 与「变量」节点的区别 =================
+ *
+ * 和 vars（{{var.名字}}）必须分清，否则很容易合成一个：
  *
  *   vars    运行中被「变量」节点写进去的 —— 每次运行从空开始
  *   params  画布上预先填好的 —— 跟着画布存档走，运行不改写它
  *
  * 合成一个会出现"这次运行改了、下次居然还在"这种说不清的行为。
  *
- * ============ 为什么单独一个文件 ============
+ * ================= 为什么天然成立 =================
+ *
+ * 不需要为"模块里的参数"另做一套机制：
+ * 模块展开后，内部节点就是当前画布上的普通节点，
+ * 于是 {{params.x}} 取"当前运行画布"的值 —— 复用自动成立。
+ *
+ * 真正要补的是**缺失检测**：
+ * 模块拖进一张新画布，那张画布还没定义它要的参数 ——
+ * 不检测的话引用会原样留下（或取到空值），
+ * 用户看到的是"跑出来的路径不对"而不是"这个参数没填"。
+ * 所以本模块的核心是 scan / report 这一组函数。
+ *
+ * ================= 为什么单独一个文件 =================
  *
  * 参数名要被三处用到，且三处必须一致：
  *
@@ -26,76 +47,25 @@
  * 所以扫名字的函数放这里，大家共用同一份。
  */
 
-import { paramRefsIn } from './template';
+/* ------------------------------------------------------------------ */
+/* 类型                                                                */
+/* ------------------------------------------------------------------ */
+
+/** 模板里的前缀 */
+export const PARAM_PREFIX = 'params';
+
+/** 旧称，仍要认 —— 早期注释里承诺过 {{env.NAME}} */
+export const PARAM_ALIASES = ['params', 'env'] as const;
 
 export type CanvasParam = {
-  /** 参数名。节点里写 `{{params.名字}}`；可以用中文 —— 中文名比拼音清楚 */
+  /** 参数名。允许中文 —— 中文用户写 {{params.输出目录}} 比拼音清楚得多 */
   name: string;
-  /**
-   * 值。渲染时填进模板。
-   *
-   * 可选：一键补齐出来的参数还没填值，那是正常的中间状态，
-   * 不该为了凑类型给个空串再到处判断。
-   */
-  value?: string;
-  /** 说明。写给复用这个模块的人看：这个参数该填什么 */
+  value: string;
+  /** 说明：这个参数是干什么的。复用给别人时靠它知道该填什么 */
   note?: string;
 };
 
-/*
- * 合法名字：中文 / 字母 / 数字 / 下划线，且不以数字开头。
- *
- * 为什么卡这么死：模板按 `.` 切成「命名空间.名字」两段，
- * 名字里带点（`{{params.a.b}}`）会被切成 a，b 被丢掉 ——
- * 渲染出来是错的，而用户只会看到"没生效"。
- * 所以不合法的名字要在**填的时候**就提示，而不是等跑完。
- */
-const NAME_RE = /^[A-Za-z_一-龥][A-Za-z0-9_一-龥]*$/;
-
-export function isValidParamName(name: string): boolean {
-  return NAME_RE.test(String(name ?? '').trim());
-}
-
-/* ------------------------------------------------------------------ */
-/* 扫描引用                                                            */
-/* ------------------------------------------------------------------ */
-
-/**
- * 扫一批节点里引用到的画布参数名（去重、排序后返回）。
- *
- * 为什么递归翻整个 data 而不是只看某几个字段：
- * 节点种类几十个、字段各有各的名字，逐字段列举一定会有漏的，
- * 而漏掉的那个参数会**静默失效**（模板原样留下，文件被写到奇怪的地方）。
- * 节点 data 是纯 JSON，没有环，递归是安全的。
- *
- * 参数是 React Flow 的节点数组（含 data），也接受模块存档里的裸节点对象。
- */
-export function paramRefsOfNodes(nodes: readonly unknown[]): string[] {
-  const out = new Set<string>();
-  for (const n of nodes ?? []) walk(n, out, 0);
-  return [...out].sort();
-}
-
-function walk(v: unknown, out: Set<string>, depth: number): void {
-  // 深度只是防御病态嵌套；正常节点 data 不超过 5 层
-  if (depth > 8) return;
-  if (typeof v === 'string') {
-    for (const name of paramRefsIn(v)) out.add(name);
-    return;
-  }
-  if (Array.isArray(v)) {
-    for (const x of v) walk(x, out, depth + 1);
-    return;
-  }
-  if (v && typeof v === 'object') {
-    for (const x of Object.values(v as Record<string, unknown>)) walk(x, out, depth + 1);
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/* 定义 vs 引用                                                        */
-/* ------------------------------------------------------------------ */
-
+/** 定义了哪些 vs 引用了哪些 的比对结果 */
 export type ParamIssue = {
   /** 引用了但没定义的 */
   missing: string[];
@@ -103,39 +73,106 @@ export type ParamIssue = {
   unused: string[];
 };
 
+/* ------------------------------------------------------------------ */
+/* 名称                                                                */
+/* ------------------------------------------------------------------ */
+
 /**
- * 比对「定义了哪些」与「引用了哪些」。
+ * 参数名是否合法。
  *
- * missing 是要命的那一边（跑起来会原样留在文本里）；
- * unused 只是提示（可能是留着给将来用的模块，不该当错误处理）。
+ * 允许中文、字母、数字、下划线，不能以数字开头。
+ * 不含 `.` —— 点号是模板里的路径分隔符（{{params.a}} 的首段即参数名）。
  */
-export function diffParamIssue(params: readonly CanvasParam[], used: readonly string[]): ParamIssue {
-  const defined = namesOf(params);
-  const usedSet = new Set(norm(used));
-  return {
-    missing: [...usedSet].filter((n) => !defined.has(n)).sort(),
-    unused: [...defined].filter((n) => !usedSet.has(n)).sort(),
-  };
+export function isValidParamName(name: string): boolean {
+  const s = String(name ?? '').trim();
+  if (!s) return false;
+  return /^[A-Za-z_\u4e00-\u9fa5][A-Za-z0-9_\u4e00-\u9fa5]*$/.test(s);
+}
+
+/* ------------------------------------------------------------------ */
+/* 扫描引用                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 一个字符串里引用了哪些参数名。
+ *
+ * 只认 params / env 两个前缀 ——
+ * 不加前缀地扫描所有 {{xxx}} 的话，{{input}}、{{loop.item}}、
+ * {{节点id.output}} 全会被误当成参数，缺失清单里会冒出一堆假警报。
+ */
+export function scanParamRefs(text: string): string[] {
+  const out = new Set<string>();
+  const TOKEN = /\{\{\s*([^}\s]+)\s*\}\}/g;
+  const raw = String(text ?? '');
+  let m: RegExpExecArray | null;
+  TOKEN.lastIndex = 0;
+  while ((m = TOKEN.exec(raw)) !== null) {
+    const key = m[1].trim();
+    const dot = key.indexOf('.');
+    if (dot <= 0) continue; // 没有点号 = 不是 params.x 这种写法
+    const head = key.slice(0, dot);
+    const rest = key.slice(dot + 1);
+    if (!rest) continue;
+    if (!(PARAM_ALIASES as readonly string[]).includes(head)) continue;
+    // 参数名本身不再含点 —— {{params.a.b}} 视为不合法引用，跳过
+    if (rest.includes('.')) continue;
+    out.add(rest);
+  }
+  return [...out];
 }
 
 /**
- * 把缺失的名字补进参数表（值留空，等用户填）。
+ * 递归收集一个对象里所有字符串值（节点 data 的字段形状不定）。
  *
- * 逐个手加的话名字容易打错 —— 打错一个字就是**又一个**缺失，
- * 于是"补齐"这个动作永远做不完。
+ * 跳过运行时产物（output / error / lastFiles）：
+ * 上一次运行的输出里可能带着模板原文，扫进去会凭空多出一批"引用"。
  */
-export function ensureParams(
-  params: readonly CanvasParam[],
-  names: readonly string[],
-): CanvasParam[] {
-  const out = params.map(cloneParam);
-  const defined = namesOf(out);
-  for (const n of norm(names)) {
-    if (defined.has(n)) continue;
-    out.push({ name: n, value: '', note: '' });
-    defined.add(n);
+export function collectStrings(v: unknown, out: string[] = [], depth = 0): string[] {
+  if (depth > 8) return out; // 防御：万一存成了环
+  if (typeof v === 'string') {
+    out.push(v);
+    return out;
+  }
+  if (Array.isArray(v)) {
+    for (const x of v) collectStrings(x, out, depth + 1);
+    return out;
+  }
+  if (v && typeof v === 'object') {
+    for (const k of Object.keys(v as Record<string, unknown>)) {
+      if (k === 'output' || k === 'error' || k === 'lastFiles') continue;
+      collectStrings((v as Record<string, unknown>)[k], out, depth + 1);
+    }
   }
   return out;
+}
+
+/** 一组节点引用到的全部参数名（去重、排序 —— 顺序稳定才好对比） */
+export function paramRefsOfNodes(nodes: readonly unknown[]): string[] {
+  const out = new Set<string>();
+  for (const n of nodes ?? []) {
+    const data = (n as { data?: unknown })?.data;
+    for (const s of collectStrings(data)) {
+      for (const name of scanParamRefs(s)) out.add(name);
+    }
+  }
+  return [...out].sort();
+}
+
+/* ------------------------------------------------------------------ */
+/* 参数表                                                              */
+/* ------------------------------------------------------------------ */
+
+/** 取参数值。没定义返回 undefined（调用方据此区分"没定义"与"定义了空串"） */
+export function paramValue(
+  params: CanvasParam[] | undefined,
+  name: string,
+): string | undefined {
+  const hit = (params ?? []).find((p) => p.name === name);
+  return hit ? hit.value : undefined;
+}
+
+export function paramNamesOf(params: CanvasParam[] | undefined): string[] {
+  return namesOf(params);
 }
 
 /** 参数表 → 渲染用的查表。渲染时每个变量都查一次，数组 find 是线性扫描 */
@@ -149,22 +186,83 @@ export function paramsToRecord(params: readonly CanvasParam[]): Record<string, s
   return out;
 }
 
+/**
+ * 比对「定义了哪些」与「引用了哪些」。
+ *
+ * missing 是要命的那一边（跑起来会原样留在文本里）；
+ * unused 只是提示（可能是留着给将来用的模块，不该当错误处理）。
+ */
+export function diffParamIssue(
+  params: CanvasParam[] | undefined,
+  used: readonly string[],
+): ParamIssue {
+  const defined = namesOf(params);
+  const usedSet = new Set(norm(used));
+  return {
+    // 引用了但没定义 —— 这才是会出问题的
+    missing: [...usedSet].filter((n) => !defined.has(n)).sort(),
+    // 定义了但没人用 —— 只提示，不阻断（可能是给将来预留的）
+    unused: [...defined].filter((n) => !usedSet.has(n)).sort(),
+  };
+}
+
 /* ------------------------------------------------------------------ */
-/* 老存档                                                              */
+/* 默认值：从引用反推一份待填清单                                        */
 /* ------------------------------------------------------------------ */
 
 /**
- * 把旧的「全局环境变量」搬进画布参数。
+ * 给一批缺失的参数名生成待填条目。
  *
- * env.vars 是旧称：界面上早就承诺过 `{{env.NAME}}` 可用，但模板层从没实现，
- * 填了也没用。老存档里填过的值不能丢，所以读的时候搬过来 ——
- * 已经存在同名参数的，以 params 为准（它才是现在生效的那份）。
+ * 用于"一键补齐"：模块拖进来后画布上缺三个参数，
+ * 点一下就生成三个空条目，用户只需填值。
+ * 逐个手加的话，名字容易打错 —— 打错一个字就是又一个"缺失"。
+ */
+export function makeParamsFor(names: string[]): CanvasParam[] {
+  return norm(names)
+    .filter((n) => isValidParamName(n))
+    .map((n) => ({ name: n, value: '', note: '' }));
+}
+
+/**
+ * 补齐：把缺失的参数名加进现有参数表（已存在的不动）。
+ *
+ * 不改已有条目的值 —— 用户可能已经填了一半，
+ * 覆盖掉会让他以为自己没填。
+ */
+export function ensureParams(
+  params: CanvasParam[] | undefined,
+  names: readonly string[],
+): CanvasParam[] {
+  const out = (params ?? []).map(cloneParam);
+  const defined = namesOf(out);
+  for (const n of norm(names)) {
+    if (defined.has(n)) continue;
+    if (!isValidParamName(n)) continue;
+    out.push({ name: n, value: '', note: '' });
+    defined.add(n);
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* 旧存档迁移                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 把旧的 env.vars 搬进 params。
+ *
+ * env.vars 是「画布环境变量」，界面上承诺过 {{env.NAME}} 可用
+ * （见 canvasConfig.ts 与 CanvasConfigPanel 的提示文案），
+ * 但模板层从来没实现它 —— 填了也没用。
+ * 现在统一到 params，老存档里的值搬过来即可，不丢。
+ *
+ * 已经存在同名参数的以 params 为准 —— 它才是现在生效的那份。
  */
 export function migrateEnvVars(
-  params: readonly CanvasParam[] | undefined,
+  params: CanvasParam[] | undefined,
   envVars: Record<string, string> | undefined,
 ): CanvasParam[] {
-  const out: CanvasParam[] = (params ?? []).map(cloneParam).filter((p) => p.name);
+  const out = (params ?? []).map(cloneParam).filter((p) => p.name);
   const defined = namesOf(out);
   for (const [k, v] of Object.entries(envVars ?? {})) {
     const name = String(k ?? '').trim();
