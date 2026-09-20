@@ -263,3 +263,46 @@ test('浮层关闭有兜底：Esc / 点外面 / 滚动', () => {
    */
   assert.match(tip, /addEventListener\('scroll'[\s\S]{0,40}true\)/, '滚动要用 capture 捕获');
 });
+
+/* ================= 大模型参数只留两个框 ================= */
+
+/*
+ * 以前每个用到大模型的节点各存一份：服务商、API 地址、模型、API Key、超时。
+ * 同一个 key 要填好几遍，换 key 要改好几处，
+ * 漏一处表现为"这个节点连的还是旧 key"，且不报错。
+ *
+ * 现在节点只存「哪个凭据」+「哪个模型」，
+ * 地址 / 密钥 / 服务商全在凭据里。
+ */
+test('大模型面板不再内联填 API Key / 地址 / 服务商', () => {
+  const sh = read(path.join(COMP, 'inspectors', 'shared.tsx'));
+  /*
+   * 匹配"渲染一个输入框绑定 apiKey / baseUrl"这个动作。
+   * 不能只查子串 —— 注释里为说明为什么挪走，正好要写这些字段名（假阴性）。
+   */
+  const inline = /<input[\s\S]{0,400}?\.(apiKey|baseUrl)\b/.test(sh);
+  assert.equal(inline, false, '大模型面板又内联填密钥或地址了');
+  // 该有的是这两个
+  assert.match(sh, /凭据（含 API 地址与密钥）/, '要有凭据选择');
+  assert.match(sh, /去凭据中心填写|填写凭据/, '要有去凭据中心填的入口');
+});
+
+test('凭据面板能填大模型的地址与模型清单', () => {
+  const cp = read(path.join(COMP, 'CredentialPanel.tsx'));
+  assert.match(cp, /LLM_META\.baseUrl/, '凭据里要能填 API 地址');
+  assert.match(cp, /LLM_META\.models/, '凭据里要能填模型清单');
+  // 拉不到时还能手填 —— 只给按钮等于网络一断就没法配
+  assert.match(cp, /textarea/, '模型清单要能手填（不能只有拉取按钮）');
+});
+
+test('运行时地址与密钥优先取自凭据', () => {
+  /*
+   * 反过来（节点优先）的话，改凭据的地址不生效，
+   * 表现为"改了没反应"，且看不出是节点上那份还在起作用。
+   */
+  for (const f of ['ocr.ts', 'translate.ts']) {
+    const src = read(path.join(ROOT, 'engine', 'runners', f));
+    assert.match(src, /resolveLlmFromCredential\(/, `${f} 要从凭据解析配置`);
+    assert.match(src, /findCredential\(/, `${f} 要按 credentialId 找凭据`);
+  }
+});

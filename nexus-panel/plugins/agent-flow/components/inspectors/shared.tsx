@@ -26,7 +26,8 @@ import {
   CONV_SOURCE_META, type ProbeResult,
 } from '../../engine/conversations';
 import { fileOp, tailFile, type FsArgs } from '../../lib/tauri';
-import { DEFAULT_TRIGGER_CONFIG } from '../../types';
+import { SECRET_POLICY_META, DEFAULT_TRIGGER_CONFIG, type SecretPolicy } from '../../types';
+import { llmModelsOf, visionHintOf } from '../../engine/llmCredential';
 import { fetchText } from '../../lib/tauri';
 import {
   validateRule, validateCondition, simulateCondition, describeRuleExpression,
@@ -332,104 +333,168 @@ export function FileParamsPanel({ node, onChange }: {
  * nodeId 因此不再需要 —— 它本来只是为了让调用方凑出双参数而传的。
  */
 export function LlmConfigPanel({
-  cfg, onChange, needVision,
+  cfg, onChange, needVision, credentials, credentialId, onOpenCredentials,
 }: {
+  /**
+   * 节点上那份旧格式的配置。
+   *
+   * 只作**兜底**：没有凭据时用它（老画布迁移前），
+   * 有凭据时地址与密钥一律取自凭据，这份里的对应字段不再起作用。
+   */
   cfg: LlmConfig;
   onChange: (patch: Record<string, unknown>) => void;
   needVision: boolean;
+  /** 凭据中心的全部凭据（只列 llm 的） */
+  credentials?: Credential[];
+  /** 节点当前选中的凭据 */
+  credentialId?: string;
+  onOpenCredentials?: (kind: string) => void;
 }) {
-  const [showKey, setShowKey] = useState(false);
+  /*
+   * ================= 为什么只剩两个框 ====================
+   *
+   * 以前这里有服务商、API 地址、模型、API Key、超时五样，
+   * 每个用到大模型的节点各存一份。于是同一个 key 要填好几遍，
+   * 换 key 要改好几处 —— 漏一处表现为"这个节点连的还是旧 key"，且不报错。
+   *
+   * 现在只剩：
+   *   ① 用哪个凭据（地址 + 密钥 + 服务商都在凭据里）
+   *   ② 用哪个模型（下拉框列该凭据的模型清单）
+   *
+   * 改凭据 = 所有引用它的节点同时生效。
+   */
   const c = cfg ?? defaultLlmConfig();
-  const issues = validateConfig(c, needVision);
-  const preset = PROVIDER_META[c.provider] ?? PROVIDER_META.custom;
+  const llmCreds = (credentials ?? []).filter((x) => x.kind === 'llm');
+  const cred = llmCreds.find((x) => x.id === credentialId) ?? null;
+  const models = llmModelsOf(cred);
+  const model = String(c.model ?? '').trim();
 
-  const set = (p: Partial<LlmConfig>) => onChange({ llm: { ...c, ...p } });
+  /*
+   * 选中的模型不在清单里时，把它补进选项里。
+   *
+   * 不补的话下拉框会"跳到第一项"，看着像模型被改掉了，
+   * 而实际上节点上存的还是原来那个 —— 界面与数据不一致。
+   */
+  const options = models.slice();
+  if (model && options.indexOf(model) < 0) options.unshift(model);
+
+  const setModel = (m: string) => onChange({ llm: { ...c, model: m } });
 
   return (
     <div className="field">
       <span>大模型</span>
 
+      {/* ① 凭据 */}
       <label className="field">
-        <small className="dim">服务商</small>
+        <small className="dim">凭据（含 API 地址与密钥）</small>
         <select
-          value={c.provider}
-          onChange={(e) => set({ provider: e.target.value as LlmProvider, baseUrl: '', model: '' })}
+          value={credentialId || ''}
+          onChange={(e) => {
+            const id = e.target.value;
+            const next = llmCreds.find((x) => x.id === id) ?? null;
+            /*
+             * 换凭据时**不自动改模型**：
+             * 两家服务商的模型名通常不通用，自动改会挑一个对方没有的，
+             * 那还不如留空让用户自己选（留空时运行时取清单第一个）。
+             */
+            onChange({ credentialId: id, llm: { ...c, model: '' } });
+            void next;
+          }}
         >
-          {(Object.keys(PROVIDER_META) as LlmProvider[]).map((k) => (
-            <option key={k} value={k}>{PROVIDER_META[k].label}</option>
+          <option value="">（还没选凭据）</option>
+          {llmCreds.map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.name}{x.identity ? ` (@${x.identity})` : ''}
+            </option>
           ))}
         </select>
       </label>
 
-      <label className="field">
-        <small className="dim">API 地址{` `}
-          <span className="dim">（留空用上方服务商的默认值）</span>
-        </small>
-        <input
-          className="mono"
-          value={c.baseUrl}
-          placeholder={preset.baseUrl || 'https://.../v1/chat/completions'}
-          onChange={(e) => set({ baseUrl: e.target.value })}
-        />
-      </label>
+      {llmCreds.length === 0 ? (
+        <div className="llm-note">
+          还没有大模型凭据。API Key、API 地址、服务商都在凭据里填一次就够，
+          之后每个节点只选一下凭据和模型。
+          {onOpenCredentials ? (
+            <button className="link-btn" onClick={() => onOpenCredentials('llm')}>
+              去凭据中心填写 →
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
-      <label className="field">
-        <small className="dim">模型</small>
-        <input
-          className="mono"
-          value={c.model}
-          placeholder={preset.model}
-          onChange={(e) => set({ model: e.target.value })}
-        />
-        {preset.hint && <div className="cond-hint">{preset.hint}</div>}
-      </label>
+      {/*
+        「填写凭据」按钮常驻，不只在没有凭据时出现。
 
-      <label className="field">
-        <small className="dim">API Key</small>
-        <div className="key-row">
-          <input
-            className="mono"
-            type={showKey ? 'text' : 'password'}
-            value={c.apiKey}
-            placeholder="sk-..."
-            onChange={(e) => set({ apiKey: e.target.value })}
-          />
-          <button className="mini" onClick={() => setShowKey(!showKey)}>
-            {showKey ? '隐藏' : '显示'}
+        想再加一把 key、或改现有凭据的地址时，
+        如果按钮只在"一个凭据都没有"时才有，就得先把唯一的凭据删掉才能看到它。
+      */}
+      {onOpenCredentials ? (
+        <div className="p-row">
+          <button className="p-btn" onClick={() => onOpenCredentials('llm')}>
+            填写凭据
           </button>
         </div>
-      </label>
+      ) : null}
 
+      {/* ② 模型 */}
       <label className="field">
-        <small className="dim">超时（秒）</small>
-        <input
-          className="param-index"
-          type="number"
-          min={5}
-          value={c.timeoutSec}
-          onChange={(e) => set({ timeoutSec: Number(e.target.value) || 60 })}
-        />
+        <small className="dim">模型</small>
+        {/*
+          用 select 而不是 input：模型名长且易拼错，
+          手打错一个字符要等到运行时才报 404。
+        */}
+        <select
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          disabled={!cred}
+        >
+          <option value="">{cred ? '（选一个模型）' : '（先选凭据）'}</option>
+          {options.map((m) => (
+            /*
+              已知的"不支持视觉"模型在名字后标注。
+              只对确认的说话 —— 认不出就闭嘴，误报比漏报更糟。
+            */
+            <option key={m} value={m}>
+              {m}{needVision ? visionHintOf(m) : ''}
+            </option>
+          ))}
+        </select>
+        {cred ? null : (
+          <div className="cond-hint">选了凭据才会列出它的模型清单</div>
+        )}
       </label>
 
-      {issues.length > 0 && (
+      {/*
+        没有凭据时退回节点上那份旧配置 —— 老画布迁移前会走这条路。
+        直接报"必失败"的话，老节点会突然不能跑，而界面上只说是没凭据。
+      */}
+      {!cred && !String(c.apiKey ?? '').trim() ? (
         <div className="cond-issues">
           <div className="cond-issues-title">配置提示</div>
-          {issues.map((it, k) => (
-            <div key={k} className={'cond-issue ' + it.level}>{it.message}</div>
-          ))}
+          <div className="cond-issue error">没选凭据，节点上也没有旧密钥，调用模型会失败</div>
+        </div>
+      ) : null}
+
+      {needVision && model && visionHintOf(model) ? (
+        <div className="cond-issues">
+          <div className="cond-issues-title">配置提示</div>
+          <div className="cond-issue warn">
+            {model} 可能不支持图片。识图节点请换一个视觉模型（名称通常含 vl / vision / 4v）
+          </div>
+        </div>
+      ) : null}
+
+      {cred ? (
+        <div className="tip">
+          地址与密钥取自「{cred.name}」。改地址或换 key 去凭据中心改一次，
+          所有用这条凭据的节点同时生效。
+        </div>
+      ) : (
+        <div className="tip">
+          节点上还留着一份旧配置（服务商 / 地址 / 密钥）。它只作兜底 ——
+          选了凭据后就以凭据为准。建议去凭据中心收进一条凭据，改一处即可。
         </div>
       )}
-
-      <div className="tip">
-        {c.apiKey ? (
-          '已填的密钥只在本次会话有效：不会写进画布存档、也不会随导出走，'
-            + '但刷新后需要重新填写。要跨会话保留，请改用上面的凭据引用 —— '
-            + '密钥存进凭据中心，可选 OS 凭据管理器 / 本机加密 / 口令模式，'
-            + '其中口令模式的钥匙不落盘。'
-        ) : (
-          '密钥不随画布导出（导出时自动挖空）。想多台机器共用或统一改一处，用上面的凭据更省事。'
-        )}
-      </div>
     </div>
   );
 }

@@ -8,6 +8,11 @@ import {
   scopeHintFor,
 } from '../engine/credentials';
 import { VAULT_MODE_META } from '../types';
+import {
+  LLM_META, llmProviderOf, llmModelsOf, modelsTextOf, mergeModels,
+  modelsEndpointOf, extractModelIds,
+} from '../engine/llmCredential';
+import { PROVIDER_META, type LlmProvider } from '../engine/llm';
 import type { VaultMode } from '../engine/credentialStore';
 
 /**
@@ -52,7 +57,7 @@ export type VerifyFn = (kind: CredentialKind, secret: string) => Promise<{
 }>;
 
 export function CredentialPanel({
-  credentials, onChange, onClose, verify,
+  credentials, onChange, onClose, verify, fetchModels,
   locked, mode, onUnlock, onChangeMode, cryptoWarn, unlockError,
   mcpServers, onMcpChange, mcpProtocolReady, mcpToolCount, onMcpRefresh, mcpRefreshing,
   initialPage,
@@ -61,6 +66,14 @@ export function CredentialPanel({
   onChange: (next: Credential[]) => void;
   onClose: () => void;
   verify: VerifyFn;
+  /**
+   * 拉取模型清单：给地址与密钥，返回 /v1/models 的原始响应。
+   *
+   * 由外部注入（走 Tauri http 或浏览器 fetch）——
+   * 本模块保持可以在 node --test 里验证、不碰网络。
+   * 不传则「拉取模型」按钮不出现，只能手填。
+   */
+  fetchModels?: (url: string, apiKey: string) => Promise<unknown>;
   /** true 表示还没解锁，此时应展示解锁表单而不是列表 */
   locked?: boolean;
   mode?: VaultMode;
@@ -102,6 +115,9 @@ export function CredentialPanel({
   const [err, setErr] = useState('');
   const [unlockPass, setUnlockPass] = useState('');
   const [unlockErr, setUnlockErr] = useState('');
+  /** 拉取模型清单的状态：'idle' | 'busy' | 'ok' | 'fail' */
+  const [modelState, setModelState] = useState<'idle' | 'busy' | 'ok' | 'fail'>('idle');
+  const [modelMsg, setModelMsg] = useState('');
 
   const startNew = (kind: CredentialKind) => {
     setEditing(makeCredential({ kind, name: KIND_META[kind].label, secret: '' }));
@@ -312,6 +328,129 @@ export function CredentialPanel({
               {KIND_META[editing.kind].hint}
               {editing.kind === 'github' ? `。${scopeHintFor(['github:write'])}` : ''}
             </div>
+
+            {/*
+              大模型凭据要多收三样：服务商、API 地址、模型清单。
+
+              以前这三样（外加密钥）每个用到的节点上各存一份 ——
+              同一个 key 要在每个节点填一遍，换 key 要改好几处，
+              漏一处表现为"这个节点连的还是旧 key"且不报错。
+
+              现在节点只存"用哪个凭据 + 用哪个模型"。
+            */}
+            {editing.kind === 'llm' ? (
+              <>
+                <label className="p-row">
+                  <span className="p-muted" style={{ width: 64, flex: 'none' }}>服务商</span>
+                  <select
+                    className="p-input"
+                    value={llmProviderOf(editing) ?? 'custom'}
+                    onChange={(e) => {
+                      const p = e.target.value as LlmProvider;
+                      const meta = { ...(editing.meta ?? {}) };
+                      meta[LLM_META.provider] = p;
+                      // 换服务商时清掉旧地址：留着会连到上一家的地址上
+                      delete meta[LLM_META.baseUrl];
+                      setEditing({ ...editing, meta });
+                    }}
+                  >
+                    {(Object.keys(PROVIDER_META) as LlmProvider[]).map((k) => (
+                      <option key={k} value={k}>{PROVIDER_META[k].label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="p-row">
+                  <span className="p-muted" style={{ width: 64, flex: 'none' }}>API 地址</span>
+                  <input
+                    className="p-input"
+                    value={editing.meta?.[LLM_META.baseUrl] ?? ''}
+                    placeholder={PROVIDER_META[llmProviderOf(editing) ?? 'custom'].baseUrl || 'https://.../v1/chat/completions'}
+                    onChange={(e) => setEditing({
+                      ...editing,
+                      meta: { ...(editing.meta ?? {}), [LLM_META.baseUrl]: e.target.value },
+                    })}
+                  />
+                </label>
+                <div className="p-muted" style={{ fontSize: 'var(--fs-12, 12px)' }}>
+                  留空用上方服务商的官方地址。中转 / 自建网关填完整地址。
+                </div>
+
+                <div className="p-row" style={{ alignItems: 'flex-start' }}>
+                  <span className="p-muted" style={{ width: 64, flex: 'none' }}>模型清单</span>
+                  <textarea
+                    className="p-input"
+                    rows={4}
+                    value={editing.meta?.[LLM_META.models] ?? ''}
+                    placeholder={'一行一个，如：\ngpt-4o\ngpt-4o-mini'}
+                    onChange={(e) => setEditing({
+                      ...editing,
+                      meta: { ...(editing.meta ?? {}), [LLM_META.models]: e.target.value },
+                    })}
+                  />
+                </div>
+
+                {/*
+                  拉取按钮只在外部注入了 fetchModels 时出现。
+                  不注入就隐藏 —— 给一个点了必然失败的按钮更糟。
+                */}
+                {fetchModels ? (
+                  <div className="p-row" style={{ gap: 'var(--sp-4, 8px)', flexWrap: 'wrap' }}>
+                    <button
+                      className="p-btn"
+                      disabled={modelState === 'busy'}
+                      onClick={async () => {
+                        const url = modelsEndpointOf(
+                          (editing.meta?.[LLM_META.baseUrl] ?? '').trim()
+                            || PROVIDER_META[llmProviderOf(editing) ?? 'custom'].baseUrl,
+                        );
+                        /*
+                         * 地址认不出结尾时直接说明，不去拼一个必然 404 的地址 ——
+                         * 那种报错看起来像"密钥不对"，排查方向完全是错的。
+                         */
+                        if (!url) {
+                          setModelState('fail');
+                          setModelMsg('认不出列表地址，请在上面手填模型名');
+                          return;
+                        }
+                        setModelState('busy');
+                        setModelMsg('');
+                        try {
+                          const raw = await fetchModels(url, editing.secret.trim());
+                          const ids = extractModelIds(raw);
+                          if (ids.length === 0) {
+                            setModelState('fail');
+                            setModelMsg('没读到模型列表，请手填（响应格式可能不是 OpenAI 的）');
+                            return;
+                          }
+                          // 手填的保持在前：常用模型排在前面是刻意的
+                          const merged = mergeModels(llmModelsOf(editing), ids);
+                          setEditing({
+                            ...editing,
+                            meta: { ...(editing.meta ?? {}), [LLM_META.models]: modelsTextOf(merged) },
+                          });
+                          setModelState('ok');
+                          setModelMsg(`拉到 ${ids.length} 个，已合并进列表`);
+                        } catch (e) {
+                          setModelState('fail');
+                          setModelMsg(`拉取失败：${String(e)}`);
+                        }
+                      }}
+                    >
+                      {modelState === 'busy' ? '拉取中…' : '拉取模型清单'}
+                    </button>
+                    {modelMsg ? (
+                      <span className={modelState === 'fail' ? 'cred-err' : 'cred-ok'}>{modelMsg}</span>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <div className="p-muted" style={{ fontSize: 'var(--fs-12, 12px)' }}>
+                  节点上的模型下拉框就列这里的东西。服务商上新模型后可再来拉一次，
+                  也可以直接在上面补一行。
+                </div>
+              </>
+            ) : null}
 
             <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
               <button className="p-btn primary" onClick={save} disabled={busy}>
