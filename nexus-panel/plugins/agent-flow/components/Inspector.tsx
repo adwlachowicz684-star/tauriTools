@@ -202,6 +202,42 @@ export default function Inspector({
     pushNote?.(`已清除「${label}」的默认参数，恢复为出厂值。`);
   };
 
+  /*
+   * 「节点 id」行。
+   *
+   * ================= 为什么挪到这里 =================
+   *
+   * 以前 id 显示在**卡片底部**（`ma` + 时间戳乱码，如 mamu7obyv93）。
+   * 那串字符对用户没有意义 —— 看不出是哪个节点，还像出错信息，
+   * 却占了每一张卡片的一行。
+   *
+   * 但它是**排查的钥匙**：运行日志里写的是 id（`开始：mamu7obyv93`），
+   * 没有它就对不上是哪个节点。所以不能直接删，要挪到该看的地方 ——
+   * 选中节点，这里就能看到、能点一下复制。
+   *
+   * 放在面板最上面而不是混进参数列表：它不是参数，改它没意义。
+   */
+  const idRow = (
+    <div className="insp-size">
+      <span className="insp-size-label">节点 id</span>
+      <span className="insp-size-ops">
+        <button
+          className="insp-size-btn insp-id-btn"
+          title="点一下复制。运行日志里写的就是这个 id"
+          onClick={() => {
+            const t = String(node.id ?? '');
+            void navigator.clipboard?.writeText(t).then(
+              () => pushNote?.(`已复制节点 id：${t}`),
+              () => pushNote?.(`复制失败，请手动选中：${t}`),
+            );
+          }}
+        >
+          {String(node.id ?? '')}
+        </button>
+      </span>
+    </div>
+  );
+
   const defaultRow = (
     <div className="insp-size" style={{ marginBottom: 'var(--sp-3, 6px)', paddingBottom: 6 }}>
       <span className="insp-size-label">
@@ -250,6 +286,7 @@ export default function Inspector({
     <>
       {stackRow}
       {sizeRow}
+      {idRow}
       {defaultRow}
       {/*
         面板也要兜住。

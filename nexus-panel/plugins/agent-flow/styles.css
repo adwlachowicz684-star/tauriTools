@@ -1357,14 +1357,6 @@ input.mono, textarea.mono {
    导致节点底部信息与工具栏的触发器计数没有任何样式。            */
 /* ------------------------------------------------------------------ */
 
-/* 节点底部左侧：节点 id */
-.node-id {
-  font-family: var(--af-mono);
-  font-size: var(--fs-11, 11px);
-  color: var(--af-dim);
-  opacity: .75;
-}
-
 /* 节点底部右侧：补充说明（模型名 / 字数 / 只读标记等） */
 /* 工具栏里的触发器计数：现在是画布上的节点，这里只作静态展示 */
 .trg-btn-static {
@@ -2078,6 +2070,18 @@ input.mono, textarea.mono {
   transition: color var(--af-dur-fast), border-color var(--af-dur-fast);
   box-shadow: var(--ctl-shadow);}
 .insp-size-btn:hover { color: var(--af-fg); }
+/*
+ * 节点 id 那个按钮。
+ *
+ * id 是 `ma` + 时间戳乱码（如 mamu7obyv93），比普通按钮文案长得多 ——
+ * 不限制宽度的话会把「节点 id」标签挤出面板。
+ * 等宽字体：这串字符是要跟日志逐字对照的，比例字体下 l/1、0/O 分不清。
+ */
+.insp-id-btn {
+  font-family: var(--af-mono);
+  max-width: 62%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .insp-size-btn.on {
   color: var(--af-fg); border-color: var(--af-accent); background: var(--af-raised);
 }

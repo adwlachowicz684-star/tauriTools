@@ -124,14 +124,19 @@ export function NodeShell({
       {size !== 'sm' ? children : null}
 
       {/*
-       * 底部 id 行在矮卡片上保留。
-       * 隐掉它虽然更干净，但排查日志时找不到节点对应关系 ——
-       * 而矮卡片正是给模块内部的一堆节点用的，那里最容易需要对照日志。
+       * 底部只在**有补充信息**时才渲染。
+       *
+       * 以前这里恒显示节点 id（`ma` + 时间戳乱码，如 mamu7obyv93）。
+       * 那串字符对用户没有任何意义 —— 看不出是哪个节点，还像出错信息，
+       * 而它占了每一张卡片的一行。
+       *
+       * 去掉后"日志里的 id 对应画布上哪个节点"靠属性面板那行
+       * 「节点 id」（可点复制）。那里才是排查的位置 ——
+       * 选中节点就能看，不用在画布上找一小行灰字。
        */}
-      <div className="node-foot">
-        <span className="node-id">{id}</span>
-        {size === 'sm' ? null : footExtra}
-      </div>
+      {size === 'sm' ? null : footExtra ? (
+        <div className="node-foot">{footExtra}</div>
+      ) : null}
     </div>
   );
 }
