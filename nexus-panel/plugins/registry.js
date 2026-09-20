@@ -4,6 +4,10 @@
  * type  'module' 同页挂载  |  'iframe' 沙箱挂载（默认推荐）
  * entry 入口文件，相对项目根目录
  * theme 'dark' 与面板同基调(不适配) | 'light' 相反(需适配) | 'auto'/省略 运行时检测
+ * followsTheme true = 该插件的观感**由外壳主题变量驱动**（CSS 里读 --bg/--surface/
+ *               --text/--accent），基调该由它自己上报，外壳采样反而会误判。
+ *               判据：只给"真的跟随"的插件标 —— 标错会导致该加的滤镜没加
+ *               （深色面板上留一块刺眼的白）。
  * requiresBuild  true = 用 React/TSX 编写，需要 Vite；无构建模式下自动隐藏
  * kind   'app'（默认，显示在侧边栏） | 'service'（不进侧边栏，供其它插件调用）
  *
@@ -132,6 +136,7 @@ export const plugins = [
     // React + TSX，需要 Vite；无构建模式下自动隐藏
     requiresBuild: true,
     theme: 'dark',
+    followsTheme: true,
     description: '项目 / 项目组双栏管理：agent 链接分配、内容浏览、连锁指令、内置图标与备份',
   },
   {
@@ -142,6 +147,7 @@ export const plugins = [
     entry: './plugins/mindmap/index.html',
     version: '1.0.0',
     theme: 'dark',
+    followsTheme: true,
     description: 'kityminder 内核：多画布 / 主题 / 布局 / 附件 / XMind 互导，内容实时缓存',
   },
   /* ---- 服务插件：不显示在侧边栏，供其它插件调用 ----
@@ -158,6 +164,7 @@ export const plugins = [
     entry: './plugins/color-picker/index.html',
     version: '2.0.0',
     theme: 'dark',
+    followsTheme: true,
     // React + TSX（与 project-group 内联色盘共用同一份组件），需要 Vite
     requiresBuild: true,
     description: '完整色盘：SV 面板 + 色相条 + RGB/HEX + 吸管待命；与内联色盘共用同一份组件实现',
@@ -172,6 +179,7 @@ export const plugins = [
     entry: './plugins/icon-picker/index.html',
     version: '1.0.0',
     theme: 'dark',
+    followsTheme: true,
     description: '内置 122 个预设图标的浏览与选择',
   },
   {
@@ -184,6 +192,7 @@ export const plugins = [
     entry: './plugins/md-editor/index.html',
     version: '1.0.0',
     theme: 'dark',
+    followsTheme: true,
     description: '左编辑右预览的 md 编辑器，返回编辑后的文本',
   },
   {

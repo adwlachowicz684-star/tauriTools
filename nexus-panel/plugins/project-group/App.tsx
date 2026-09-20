@@ -942,7 +942,7 @@ export default function App() {
                 日志
                 {/* 显示"当前/上限"：条数满了之后新日志会挤掉最旧的，
                     不给这个数的话，用户只会觉得"日志怎么自己变短了" */}
-                <span className="p-muted" style={{ fontWeight: 400, fontSize: 'var(--fs-11, 11px)', marginLeft: 6 }}>
+                <span className="p-muted" style={{ fontWeight: 400, fontSize: 'var(--fs-11, 11px)', marginLeft: 'var(--sp-3, 6px)' }}>
                   {s.log.length}/{logMax}
                 </span>
               </h2>

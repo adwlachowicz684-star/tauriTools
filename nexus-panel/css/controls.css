@@ -626,9 +626,14 @@ input[type='radio']:checked,
    会裁掉**整个元素**（含背景），结果只剩一个"勾形状的色块"，
    而不是"方块底 + 勾"。
 
-   SVG data URI 里拿不到 CSS 变量，所以勾色只能硬编码。选白色是因为
-   勾叠在 --accent 上，而 --badge-fg（强调色上的文字色）在深浅主题下
-   基本都是白或近白 —— 这两者本来就该一致。 */
+   SVG data URI 里拿不到 CSS 变量，所以勾色只能硬编码两套（白 / 黑），
+   由 html[data-badge-fg] 决定用哪一套。
+
+   这里曾经只写白色，理由写的是"--badge-fg 基本都是白或近白"——
+   但 --badge-fg 改成**按强调色明暗派生**之后，这句话就不成立了：
+   21 套主题的强调色是亮色（cyberpunk 亮黄、terminal 亮绿…），
+   badge-fg 变成黑色，而勾还是白的 → 白勾压亮黄底，对比度 1.09，
+   勾**完全看不见**。所以必须跟着切。 */
 input[type='checkbox']:checked,
 .nx-check:checked {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
@@ -641,6 +646,13 @@ input[type='checkbox']:checked,
 input[type='radio']:checked,
 .nx-check.radio:checked {
   box-shadow: var(--sh-in-sm), inset 0 0 0 3px var(--surface-sunk, var(--surface));
+}
+
+/* 亮色强调色 → 前景色为黑，勾也要换成黑的。
+   data-badge-fg 由 theme-manager 按 --accent 明暗写入。 */
+html[data-badge-fg='dark'] input[type='checkbox']:checked,
+html[data-badge-fg='dark'] .nx-check:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 input[type='checkbox']:focus-visible,

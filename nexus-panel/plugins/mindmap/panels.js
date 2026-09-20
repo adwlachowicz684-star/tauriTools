@@ -11,6 +11,7 @@
  */
 
 import { h } from '../../js/plugin-sdk.js';
+import { confirm as askConfirm, alert as askAlert, prompt as askText } from '../../js/dialog.js';
 import { THEMES, LAYOUTS, blankTheme, DEFAULT_THEME, themeSeed, sanitizePalette } from './themes.js';
 
 /**
@@ -532,17 +533,17 @@ export function buildSide(app, opts = {}) {
      */
     if (!vref) {
       box.classList.add('empty');
-      box.appendChild(h('div.mm-vthumb-empty', {}, '未附加视频'));
+      box.appendChild(h('div.nx-empty.mm-vthumb-empty', {}, '未附加视频'));
       return { el: wrap, setDuration };
     }
     if (!vref.a) {
       box.classList.add('empty');
-      box.appendChild(h('div.mm-vthumb-empty', {}, '旧版本地路径，沙箱内读不到本体'));
+      box.appendChild(h('div.nx-empty.mm-vthumb-empty', {}, '旧版本地路径，沙箱内读不到本体'));
       return { el: wrap, setDuration };
     }
     // 加载中先给个说法：整块纯黑会被当成「没了」
     box.classList.add('loading');
-    box.appendChild(h('div.mm-vthumb-empty', {}, '读取中…'));
+    box.appendChild(h('div.nx-empty.mm-vthumb-empty', {}, '读取中…'));
 
     const start = () => {
       if (!video) return;
@@ -584,7 +585,7 @@ export function buildSide(app, opts = {}) {
         box.classList.remove('loading');
         box.classList.add('broken');
         box.innerHTML = '';
-        box.appendChild(h('div.mm-vthumb-empty', {}, '视频数据已丢失'));
+        box.appendChild(h('div.nx-empty.mm-vthumb-empty', {}, '视频数据已丢失'));
         return;
       }
       trackMediaUrl(asset.url);
@@ -1850,10 +1851,15 @@ export async function openBackups(app) {
               // A46 恢复会覆盖**当前所有画布**且不可逆 —— 必须确认。
               // 不确认的话，误点一下整份工作就没了。
               const n = (b.sheets || []).length;
-              if (!window.confirm(
-                `恢复到 ${new Date(b.ts).toLocaleString()} 的快照？\n\n` +
-                `当前所有画布将被替换为该快照的 ${n} 张画布，此操作不可撤销。\n` +
-                `（恢复前的当前状态会自动另存一份快照，可再回滚）`)) return;
+              const ok = await askConfirm({
+                title: '恢复快照',
+                message:
+                  `恢复到 ${new Date(b.ts).toLocaleString()} 的快照？\n\n` +
+                  `当前所有画布将被替换为该快照的 ${n} 张画布，此操作不可撤销。\n` +
+                  `（恢复前的当前状态会自动另存一份快照，可再回滚）`,
+                danger: true,
+              });
+              if (!ok) return;
               await app.api.restoreBackup(b);
               dlg.close();
             }, (m) => app.api.status(m, true)),
@@ -1959,7 +1965,7 @@ export async function openIconLibrary(app) {
 
   // ---- 分组管理 ----
   const newGroup = async () => {
-    const name = window.prompt('新分组名称', '新分组');
+    const name = await askText({ label: '新分组名称', defaultValue: '新分组' });
     if (name == null) return;
     const g = await picons.addGroup(name);
     if (!g) { app.api.status('新建分组失败', true); return; }
@@ -1972,7 +1978,7 @@ export async function openIconLibrary(app) {
     const g = groups.find((x) => x.id === activeId);
     if (!g) return;
     if (g.builtin) { app.api.status('内置分组不可重命名', true); return; }
-    const name = window.prompt('分组名称', g.name);
+    const name = await askText({ label: '分组名称', defaultValue: g.name });
     if (name == null || name === g.name) return;
     const r = await picons.renameGroup(g.id, name);
     if (!r.ok) { app.api.status(r.error, true); return; }
@@ -1985,7 +1991,7 @@ export async function openIconLibrary(app) {
     if (!g) return;
     if (g.builtin) { app.api.status('内置分组不可删除', true); return; }
     const n = (g.icons || []).length;
-    if (!window.confirm(`删除分组「${g.name}」？${n ? `组内 ${n} 个图标会一并删除。` : ''}`)) return;
+    if (!await askConfirm({ message: `删除分组「${g.name}」？${n ? `组内 ${n} 个图标会一并删除。` : ''}`, danger: true })) return;
     const r = await picons.deleteGroup(g.id);
     if (!r.ok) { app.api.status(r.error, true); return; }
     await reload();

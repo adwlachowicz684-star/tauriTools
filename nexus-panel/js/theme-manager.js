@@ -208,6 +208,28 @@ function fmtColor(c) {
 }
 
 /**
+ * 在某个底色上挑一个可读的前景色：黑白两端各算一遍，取对比度更高的。
+ *
+ * 为什么不做"往目标色插值"：角标压在**品牌强调色**上，
+ * 把强调色改深/改浅等于改了品牌色，那是另一件事。
+ * 换前景色（黑↔白）不动底色，是这类场景的标准做法。
+ */
+function pickOnColor(bgHex) {
+  const bg = parseColor(bgHex);
+  if (!bg) return '#ffffff';
+  const white = { r: 255, g: 255, b: 255, a: 1 };
+  const black = { r: 0, g: 0, b: 0, a: 1 };
+  return contrastRatio(white, bg) >= contrastRatio(black, bg) ? '#ffffff' : '#000000';
+}
+
+/** 颜色是否偏暗（用于决定叠在它上面的前景色用黑还是白） */
+function isDarkish(hex) {
+  const c = parseColor(hex);
+  if (!c) return false;
+  return relLum(c) < 0.4;
+}
+
+/**
  * 明暗偏移把正文和底色一起推，浅色主题大幅提亮时对比度会掉到 3 左右 ——
  * 正文就糊了。这里在「偏移后的正文」与「原始正文」之间插值回拉，
  * 直到对比度回到 4.65（WCAG 正文 AA 是 4.5，留一点余量抵消取整误差）。
@@ -309,8 +331,17 @@ function deriveVars(theme) {
   // 遮罩
   v['--mask'] = dark ? 'rgba(10,12,16,.62)' : 'rgba(90,96,110,.32)';
 
-  // 角标文字
-  v['--badge-fg'] = '#ffffff';
+  /* 角标文字：压在 --accent 之上，必须按强调色自己的明暗选黑白。
+     ------------------------------------------------------------------
+     此前写死 '#ffffff' —— 实测 23 套里有 **13 套不可读**：
+
+       cyberpunk   #f7ff3c 亮黄 → 1.09    terminal    #8affc1 亮绿 → 1.22
+       glass-aurora#8ce0ff 亮青 → 1.48    celadon     #6fcf97 → 1.90
+       amber-dusk  #ffa94d 亮橙 → 1.90    …
+
+     根因：白字只在**深色强调色**上成立，而这些主题的强调色本身就是亮色。
+     取黑白两端里对比度更高的那个即可 —— 与 ensureTextReadable() 同思路。 */
+  v['--badge-fg'] = pickOnColor(v['--accent']);
 
   // 未定义的兜底
   v['--bg-image'] = v['--bg-image'] || 'none';
@@ -542,6 +573,11 @@ function applyTo(theme, accent, envColor) {
   root.dataset.theme = theme.id;
   root.dataset.themeBase = theme.base;
   root.dataset.themeStyle = theme.style || 'neumorph';
+  /* 叠在 --accent 上的前景色现在是按强调色明暗派生的（黑或白），
+     而 SVG data URI **读不到 CSS 变量** —— 勾选标记只能硬编码颜色。
+     用这个根属性把"该用黑勾还是白勾"告诉 CSS。
+     否则亮色强调色（cyberpunk 的亮黄）上会是一个白勾，对比度 1.09，等于没有。 */
+  root.dataset.badgeFg = isDarkish(vars['--badge-fg']) ? 'dark' : 'light';
   // 让浏览器表单控件、滚动条跟随主题
   root.style.colorScheme = theme.base;
   return { ...theme, vars };

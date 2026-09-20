@@ -24,6 +24,144 @@ const t = (name, cond, extra = '') => {
 const cssVar = (k) => document.documentElement.style.getPropertyValue(k).trim();
 const root = document.documentElement;
 
+/* ============================================================
+   0. 主题体系的三个结构性检查
+   ------------------------------------------------------------
+   这三节是"主题梳理"时补的，各自对应一类曾经出过的问题。
+   ============================================================ */
+
+/* ---------- 0a. 风格 × 基调 的覆盖（笛卡尔积不能有洞） ---------- */
+{
+  const bases = [...new Set(PRESET_THEMES.map((x) => x.base))];
+  const styles = [...new Set(PRESET_THEMES.map((x) => x.style))];
+  const holes = [];
+  for (const b of bases) {
+    for (const st of styles) {
+      const n = PRESET_THEMES.filter((x) => x.base === b && x.style === st).length;
+      if (n === 0) holes.push(`${b}×${st}`);
+    }
+  }
+  t('风格 × 基调 每种组合至少有一套主题', holes.length === 0,
+    holes.join(', ') || `${bases.length} 基调 × ${styles.length} 风格 = ${bases.length * styles.length} 格全满`);
+
+  // 分布：不要求均匀，但要看得见偏斜（浅色扁平/浅色玻璃都只有 1 套）
+  const dist = {};
+  for (const x of PRESET_THEMES) {
+    const k = `${x.base}×${x.style}`;
+    dist[k] = (dist[k] || 0) + 1;
+  }
+  console.log('   分布：' + Object.entries(dist).map(([k, v]) => `${k}=${v}`).join('  '));
+  t('每种风格都有深浅两套以上（不是单一基调撑着）',
+    styles.every((st) => PRESET_THEMES.filter((x) => x.style === st && x.base === 'dark').length > 0
+      && PRESET_THEMES.filter((x) => x.style === st && x.base === 'light').length > 0));
+}
+
+/* ---------- 0b. 全对比面自检（不只算 --bg） ----------
+   此前只验了 --text / --text-dim 在 --bg 上，于是"卡片面""强调色"
+   这些承载面完全没进视野 —— 角标白字压亮黄强调色（cyberpunk 1.09）
+   就这样漏了 13 套。 */
+{
+  const hex2rgb = (h) => { const x = h.replace('#', ''); return [0, 2, 4].map((i) => parseInt(x.slice(i, i + 2), 16)); };
+  const lum = (h) => {
+    const [r, g, b] = hex2rgb(h).map((v) => { const y = v / 255; return y <= 0.03928 ? y / 12.92 : ((y + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const cr = (a, b) => { const la = lum(a), lb = lum(b); const [hi, lo] = la > lb ? [la, lb] : [lb, la]; return (hi + 0.05) / (lo + 0.05); };
+  const solid = (c) => c && /^#[0-9a-f]{6}$/i.test(c);
+
+  /* [前景, 承载面, 最低对比度, 说明]
+     --surface 在玻璃主题下是 rgba，跳过（半透明无法算亮度）。 */
+  const PAIRS = [
+    ['--text', '--bg', 4.5, '正文@底色'],
+    ['--text-soft', '--bg', 4.5, '次级正文@底色'],
+    ['--text-dim', '--bg', 3.0, '弱化文字@底色'],
+    ['--text-mute', '--bg', 3.0, '三级文字@底色'],
+    ['--accent', '--bg', 3.0, '强调色@底色'],
+    ['--text', '--surface', 4.5, '正文@卡片面'],
+    ['--text-dim', '--surface', 3.0, '弱化@卡片面'],
+    ['--text-mute', '--surface', 3.0, '三级@卡片面'],
+    ['--text', '--surface-raised', 4.5, '正文@浮起面'],
+  ];
+  const dimBad = [];
+  for (const th of PRESET_THEMES) {
+    for (const [fg, bgc, min, label] of PAIRS) {
+      if (!solid(th.vars[fg]) || !solid(th.vars[bgc])) continue;
+      const c = cr(th.vars[fg], th.vars[bgc]);
+      if (c < min) dimBad.push(`${th.id} ${label} ${c.toFixed(2)}<${min}`);
+    }
+  }
+  t('文字/强调色在所有承载面上达标', dimBad.length === 0, dimBad.slice(0, 4).join(' | ') || '全部达标');
+
+  /* 角标文字：压在 --accent 上，必须按强调色明暗选黑白。
+     曾写死 #ffffff → 23 套里 13 套不可读（最低 1.09）。
+
+     这里**必须读真实派生结果**（applyTheme 后取 CSS 变量），
+     不能在测试里自己复现 pickOn 的逻辑 —— 那等于用"我认为该怎么算"
+     去验证"代码怎么算"，把 badge-fg 改回写死白也不会变红。 */
+  const badgeBad = [];
+  let improved = 0;
+  for (const th of PRESET_THEMES) {
+    tm.applyTheme(th.id);
+    const fg = cssVar('--badge-fg');
+    const ac = cssVar('--accent');
+    if (!solid(fg) || !solid(ac)) continue;
+    const c = cr(fg, ac);
+    const asWhite = cr('#ffffff', ac);
+    if (c > asWhite + 0.01) improved++;
+    if (c < 4.5) badgeBad.push(`${th.id}(${fg}@${ac} ${c.toFixed(2)})`);
+  }
+  t('角标文字（--badge-fg）在强调色上 ≥ 4.5', badgeBad.length === 0,
+    badgeBad.slice(0, 5).join(' | ') || `全部达标（${improved} 套由白字改善而来）`);
+  /* 派生而非写死：至少要在亮色强调色那几套上转成黑字 */
+  const lightAccent = PRESET_THEMES.filter((x) => solid(x.vars['--accent']) && lum(x.vars['--accent']) > 0.5);
+  let flipped = 0;
+  for (const th of lightAccent) {
+    tm.applyTheme(th.id);
+    if (cssVar('--badge-fg').toLowerCase() === '#000000') flipped++;
+  }
+  t('亮色强调色上角标文字翻成黑色（不是一律白）',
+    lightAccent.length > 0 && flipped === lightAccent.length,
+    `${flipped}/${lightAccent.length} 套`);
+  /* 勾是硬编码 SVG，读不到 CSS 变量 —— 必须有黑勾那套，否则白勾压亮色底 */
+  const ctl = readFileSync('css/controls.css', 'utf8');
+  t('勾选标记备了黑勾（data-badge-fg=dark 时切换）',
+    /data-badge-fg='dark'/.test(ctl));
+}
+
+/* ---------- 0c. 插件的 followsTheme 与"是否真的跟随"一致 ---------- */
+{
+  const reg = readFileSync('plugins/registry.js', 'utf8');
+  /* 按 "id: '" 切成块，避免用含换行的正则（会被当成真实换行截断） */
+  const marks = reg.split("id: '").slice(1)
+    .map((chunk) => ({ id: chunk.slice(0, chunk.indexOf("'")), body: chunk.slice(0, 900) }))
+    .filter((x) => /followsTheme:\s*true/.test(x.body))
+    .map((x) => x.id);
+  /* 真跟随 = 插件的 CSS/HTML 里读外壳主题变量。
+     判据量化：≥3 处引用 --bg/--surface/--text/--accent 之一。 */
+  const SHELL = ['--bg', '--surface', '--surface-raised', '--surface-sunk', '--text', '--text-dim', '--accent'];
+  const follows = [];
+  const { readdirSync, existsSync } = await import('node:fs');
+  for (const dir of readdirSync('plugins')) {
+    let hits = 0;
+    for (const f of ['styles.css', 'style.css', 'index.html']) {
+      const fp = `plugins/${dir}/${f}`;
+      if (!existsSync(fp)) continue;
+      const txt = readFileSync(fp, 'utf8');
+      /* 'var\\(' —— 少一层转义的话 JS 里就是 var( ，( 会被当成分组起点 */
+      for (const v of SHELL) hits += (txt.match(new RegExp('var\\(' + v + '[),]', 'g')) || []).length;
+    }
+    if (hits >= 3) follows.push({ id: dir, hits });
+  }
+  const missing = follows.filter((x) => !marks.includes(x.id)).map((x) => `${x.id}(${x.hits}处)`);
+  t('读了外壳变量的插件都标了 followsTheme', missing.length === 0,
+    missing.join(', ') || `已标：${marks.join(', ')}`);
+
+  /* 反向：标了却几乎不读外壳变量的（标错 → 该加的滤镜没加） */
+  const wrong = marks.filter((id) => !follows.some((f) => f.id === id));
+  t('标了 followsTheme 的插件确实读外壳变量（无错标）', wrong.length === 0, wrong.join(', '));
+  console.log('   跟随主题的插件：' + follows.map((f) => `${f.id}(${f.hits})`).join('  '));
+}
+
 /* ---------- 1. 预设完整性 ---------- */
 console.log(`\n预设主题：${PRESET_THEMES.map((x) => x.name).join(' / ')}\n`);
 t('预设主题数量 ≥ 20', PRESET_THEMES.length >= 20, String(PRESET_THEMES.length));
