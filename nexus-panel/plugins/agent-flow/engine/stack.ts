@@ -331,6 +331,15 @@ export function snapPosOf(parent: AnyNode): { x: number; y: number } {
 /** 松手后的落位决定。undefined = 这一项不动 */
 export type StackDropPlan = {
   position?: { x: number; y: number };
+  /**
+   * 被拖节点**下方整串**的新位置。
+   *
+   * 少了它：挪动串中间的一环时，只有它自己归位/吸附，
+   * 下级停在原地或停在拖动跟随后的偏移处 ——
+   * 于是两块在显示上裂开，而 `stackParent` 关系还在，
+   * 看着像"嵌合坏了"，其实是位置没同步。
+   */
+  followers?: { id: string; position: { x: number; y: number } }[];
   /** 显式给 null 表示解除嵌合 */
   stackParent?: string | null;
   /**
@@ -371,7 +380,12 @@ export function planStackDrop(
 ): StackDropPlan {
   const hit = findSnapTarget(all, dragged, opts.exclude);
   if (hit) {
-    return { position: { x: hit.x, y: hit.y }, stackParent: hit.parentId };
+    const to = { x: hit.x, y: hit.y };
+    return {
+      position: to,
+      followers: followersFor(all, dragged.id, posOf(dragged), to),
+      stackParent: hit.parentId,
+    };
   }
 
   const { oldParent, moved } = opts;
@@ -420,7 +434,33 @@ export function planStackDrop(
    */
   const parent = all.find((n) => n.id === oldParent);
   if (!parent) return {};
-  return { position: snapPosOf(parent) };
+  const to = snapPosOf(parent);
+  return { position: to, followers: followersFor(all, dragged.id, posOf(dragged), to) };
+}
+
+/**
+ * 位移类落位（吸附 / 归位）时，下级的跟随位置。
+ *
+ * 用"位移量"而不是重新算贴合位置：
+ * 下级之间可能各自有偏移（比如整串被拖歪了一点），
+ * 逐个重算会把串压成严丝合缝，等于偷偷改了用户摆好的相对位置。
+ */
+function followersFor(
+  all: AnyNode[],
+  draggedId: string,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): { id: string; position: { x: number; y: number } }[] {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (dx === 0 && dy === 0) return [];
+  const out: { id: string; position: { x: number; y: number } }[] = [];
+  for (const id of descendantsOf(all, draggedId)) {
+    const n = all.find((m) => m.id === id);
+    if (!n) continue;
+    out.push({ id, position: { x: posOf(n).x + dx, y: posOf(n).y + dy } });
+  }
+  return out;
 }
 
 /** 判断拖动是否把节点拖离了原位足够远（用于"拖开即解除嵌合"） */

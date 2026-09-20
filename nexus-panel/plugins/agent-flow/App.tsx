@@ -2044,10 +2044,18 @@ function reportSkipped(
           ? new Map(plan.attach.moves.map((m) => [m.id, m.position]))
           : null;
         const attachParent = plan.attach?.childId ?? null;
+        /*
+         * 位移类落位（吸附 / 归位）时下级跟随的新位置。
+         * 少了它：挪动串中间的一环，只有它自己归位，
+         * 下级停在偏移处 —— 两块裂开而关系还在。
+         */
+        const follow = plan.followers?.length
+          ? new Map(plan.followers.map((m) => [m.id, m.position]))
+          : null;
 
         return ns.map((n) => {
           const isDragged = n.id === node.id;
-          const at = moves?.get(n.id);
+          const at = moves?.get(n.id) ?? follow?.get(n.id);
           if (!isDragged && !at) return n;
 
           const data = { ...(n.data as object) } as Record<string, unknown>;
