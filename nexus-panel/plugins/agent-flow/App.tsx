@@ -34,9 +34,9 @@ import {
 } from './engine/github';
 import {
   parseStore, serializeStore, encryptStore, decryptStore, newDeviceSalt,
-  collectDeviceSignals, defaultBackend, type StoredFile,
+  collectDeviceSignals, defaultBackend, type StoredFile, type VaultMode,
 } from './engine/credentialStore';
-import { SECRET_POLICY_KEY, type SecretPolicy } from './types';
+import { SECRET_POLICY_KEY, VAULT_MODE_META, type SecretPolicy } from './types';
 import { checkChannel, type ChannelStatus } from './lib/channel';
 import { deviceSeed, clearKeyCache } from './engine/crypto';
 import {
@@ -905,10 +905,15 @@ export default function App() {
    * 日志区现在**一直可见**（右栏下半部分），
    * 所以不再需要"出错时自动切过去"—— 报错藏不起来，也就没有切的动作。
    */
-  const pushLog = useCallback((msg: string) => {
+  /* 这里刻意用**函数声明**而不是 useCallback：changeVaultMode 定义在本行之前
+     （约 646 行），它的 useCallback 依赖数组里带着 pushLog —— 依赖数组是渲染期求值的，
+     const 在那个位置还没初始化，一渲染就是 TDZ（TS2448/TS2454 + 运行时崩）。
+     函数声明有提升，正好跨过这个顺序问题；函数体只用到 setLog（useState 的 setter，
+     引用稳定），换成函数声明没有闭包陷阱。 */
+  function pushLog(msg: string) {
     const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
     setLog((l) => [`${ts} ${msg}`, ...l].slice(0, 100));
-  }, []);
+  }
 
   /*
    * 启动时探一次后端通道（审查项 A-01）。

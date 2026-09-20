@@ -87,7 +87,10 @@ export function TabBar({
   tabs, active, onSelect, onAdd, onRename, onRemove, kind,
   editing: editingProp, onEditingDone, onDropCard, onMoveTab,
 }: {
-  tabs: { name: string }[];
+  /* items 是页签里的条目（App 传的是 TabInfo）。
+     类型写窄成 { name: string } 会让下面读 t.items.length 报 TS2339 —— 页签上要显示
+     「里面有几项」，这个字段是必须的。 */
+  tabs: { name: string; items: CardInfo[] }[];
   active: number;
   onSelect: (i: number) => void;
   onAdd: () => void;
@@ -269,7 +272,7 @@ export function TabBar({
                      里面登记的所有卡片，常显的 × 太容易误点。
                   2. **只剩一个页签时不显示**。点了会失败，按钮却在那儿，
                      用户会以为是坏了 —— 不如干脆不给。 */}
-              {onRemoveTab && canRemove(tabs.length) && editing !== i && (
+              {onRemove && canRemove(tabs.length) && editing !== i && (
                 <button
                   type="button"
                   className="fpx-tab-x"
@@ -280,7 +283,7 @@ export function TabBar({
                     /* 必须阻止冒泡：否则会先触发页签的 onClick（选中），
                        双击时还会和 startEdit 抢 —— 表现为"点了 × 却进了重命名"。 */
                     e.stopPropagation();
-                    onRemoveTab(i);
+                    onRemove(i);
                   }}
                   /* 拖动中不删：拖拽期间误触会把页签连同卡片一起删掉 */
                   onDragStart={(e) => e.preventDefault()}

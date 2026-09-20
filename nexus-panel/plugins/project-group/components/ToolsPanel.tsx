@@ -222,27 +222,9 @@ export function EditorDialog({
         <button className="p-btn" onClick={onClose}>关闭</button>
       </div>
 
-      {/* 发送前确认（#43）：**显示并可编辑实际要发出的全文**。
-          只显示模板原文（满屏 {项目名称}）等于没确认 —— 用户看到的是
-          占位符，发出去的是替换后的真值，两者对不上就失去了确认的意义。 */}
-      {confirm && (
-        <ChainConfirmDialog
-          actionName={current?.name ?? ''}
-          clientName={clients.find((c) => c.id === chosen)?.name ?? chosen}
-          text={confirm.text}
-          busy={sending}
-          onCancel={() => setConfirm(null)}
-          onConfirm={(finalText, skip) => {
-            if (skip) setSkipConfirm(true);
-            setConfirm(null);
-            void doSend(finalText);
-          }}
-        />
-      )}
     </Modal>
   );
 }
-
 
 /* ---------------------------- Agent 连锁 ---------------------------- */
 
@@ -407,6 +389,28 @@ export function ChainDialog({
       </div>
 
       {tip && <div className="fpx-result">{tip}</div>}
+
+      {/* 发送前确认（#43）：**显示并可编辑实际要发出的全文**。
+          只显示模板原文（满屏 {项目名称}）等于没确认 —— 用户看到的是
+          占位符，发出去的是替换后的真值，两者对不上就失去了确认的意义。
+
+          这段上游误插进了 EditorDialog —— 那里的 current / clients /
+          chosen / sending / doSend 全都未定义（clients 在整个文件里都不存在）。
+          按它用到的变量移回真正所属的 ChainDialog。 */}
+      {confirm && (
+        <ChainConfirmDialog
+          actionName={current?.name ?? ''}
+          clientName={clients.find((c) => c.id === chosen)?.name ?? chosen}
+          text={confirm.text}
+          busy={sending}
+          onCancel={() => setConfirm(null)}
+          onConfirm={(finalText, skip) => {
+            if (skip) setSkipConfirm(true);
+            setConfirm(null);
+            void doSend(finalText);
+          }}
+        />
+      )}
     </Modal>
   );
 }
