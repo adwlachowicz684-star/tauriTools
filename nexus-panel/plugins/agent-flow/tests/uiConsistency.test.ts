@@ -30,34 +30,53 @@ function comps(): string[] {
   return fs.readdirSync(COMP).filter((f) => f.endsWith('.tsx'));
 }
 
-/* ================= 状态文案 ================= */
+/* ================= 配置状态徽章 ================= */
 
 /*
- * NodeShell 是**定义处**，本身就是那份真相，排除掉 ——
- * 不排除的话这两条永远失败，进而逼人为了过测试去改坏定义。
+ * 以前每个卡片都能传 statusText 覆盖"待运行 / 执行中 / 已完成"，
+ * 于是这套文案在十几个组件里各摊一份（还夹杂整份重抄）。
+ *
+ * 现在卡片**只显示配置状态**（就绪 / 缺项 / 缺参数），
+ * 运行状态一律看任务窗口 —— statusText 这个口子整个取消。
+ *
+ * 留着它会变成"能传但没人读"的参数：改它没有任何效果，
+ * 而后来的人看不出为什么没效果。
  */
 const DEFINER = 'NodeShell.tsx';
 
-test('状态文案不整份重抄（要用 NODE_STATUS_TEXT 展开）', () => {
-  const bad = comps().filter((f) => {
-    if (f === DEFINER) return false;
-    const s = read(path.join(COMP, f));
-    // 完整抄一遍默认五档 = 两份真相
-    return /idle:\s*'待运行'[\s\S]{0,200}running:/.test(s);
-  });
-  assert.deepEqual(bad, [], `这些组件整份抄了 statusText：${bad.join(', ')}`);
+test('没有组件再传 statusText（运行状态不在卡片上显示）', () => {
+  const bad = comps().filter((f) => /statusText/.test(read(path.join(COMP, f))));
+  assert.deepEqual(bad, [], `这些组件还在传 statusText：${bad.join(', ')}`);
 });
 
-test('覆盖写法的组件都从 NodeShell 引 NODE_STATUS_TEXT', () => {
-  for (const f of comps()) {
-    if (f === DEFINER) continue;
-    const s = read(path.join(COMP, f));
-    if (!s.includes('NODE_STATUS_TEXT')) continue;
-    assert.ok(
-      /import\s*\{[^}]*NODE_STATUS_TEXT/.test(s),
-      `${f} 用了 NODE_STATUS_TEXT 却没 import`,
-    );
-  }
+test('没有组件再引 NODE_STATUS_TEXT（它已随运行状态一起取消）', () => {
+  const bad = comps().filter((f) => /NODE_STATUS_TEXT/.test(read(path.join(COMP, f))));
+  assert.deepEqual(bad, [], `这些组件还引着 NODE_STATUS_TEXT：${bad.join(', ')}`);
+});
+
+test('配置状态的短文案全项目只有一处定义（LEVEL_SHORT）', () => {
+  /*
+   * 三个词写在卡片组件里的话，改一个词要改十几处；
+   * 而这类"同一句话多个副本"的漂移没有任何报错。
+   */
+  const files = ['engine/nodeValidate.ts', 'components/NodeShell.tsx'];
+  const defs = files.filter((f) => /const\s+LEVEL_SHORT\s*(?::[^=]*)?=/.test(read(path.join(ROOT, f))));
+  assert.deepEqual(defs, ['engine/nodeValidate.ts'], `LEVEL_SHORT 抄了多份：${defs.join(', ')}`);
+  // 卡片必须用它来显示，而不是自己写字面量
+  const shell = read(path.join(COMP, DEFINER));
+  assert.match(shell, /LEVEL_SHORT\[dot\]/, 'NodeShell 要用 LEVEL_SHORT 显示配置状态');
+});
+
+test('圆点在徽章里，不在标题行上当独立元素', () => {
+  /*
+   * 圆点与徽章说的是同一件事。分开摆时圆点像第二个状态 ——
+   * warn 的圆点带光环，视觉上比徽章本身还抢眼。
+   */
+  const shell = read(path.join(COMP, DEFINER));
+  const head = shell.slice(shell.indexOf('node-head'), shell.indexOf('node-line--alert'));
+  assert.ok(/node-badge[\s\S]{0,200}node-dot/.test(head), '圆点应在徽章内部');
+  // 徽章要在标题之前
+  assert.ok(head.indexOf('node-badge') < head.indexOf('node-title'), '徽章应在标题左边');
 });
 
 /* ================= 颜色 ================= */

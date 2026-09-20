@@ -1,7 +1,7 @@
 import type { NodeProps } from '@xyflow/react';
 import { UPDATE_SOURCE_META, type UpdateNodeData } from '../types';
 import type { BiliFlowNode, WechatFlowNode } from '../flowTypes';
-import { NodeShell, NODE_STATUS_TEXT } from './NodeShell';
+import { NodeShell } from './NodeShell';
 
 /** 卡片上显示"要检测谁" */
 function targetOf(d: UpdateNodeData): string {
@@ -41,13 +41,6 @@ export default function UpdateNode({ id, data, selected }: NodeProps<BiliFlowNod
       data={d}
       selected={selected}
       className="update"
-      statusText={{
-        ...NODE_STATUS_TEXT,
-        idle: '待检查',
-        running: '检查中',
-        success: '已检查',
-        failed: '检查失败',
-      }}
       footExtra={<span className="node-line--foot">更新检测</span>}
       tag={
         <>

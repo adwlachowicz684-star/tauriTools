@@ -375,6 +375,25 @@ export const LEVEL_TEXT: Record<IssueLevel, string> = {
   error: '配置不全，会阻断',
 };
 
+/**
+ * 配置状态在卡片徽章上的短文案。
+ *
+ * 卡片只回答"这个节点能不能跑"（配置完整度）——
+ * **运行状态一律不显示在卡片上**：跑起来看任务窗口。
+ *
+ * 以前徽章显示的是"待运行 / 执行中 / 已完成"，于是整张画布
+ * 每跑一次就整片刷新一遍文字，而那些信息任务窗口里全都有。
+ * 配置状态才是画布上真正缺的那一项：没跑之前就要能看出缺什么。
+ *
+ * 具体缺什么由徽章下方的红色提示行给出（issue.messages[0]），
+ * 徽章里只放一个词 —— 长句子会把标题挤没。
+ */
+export const LEVEL_SHORT: Record<IssueLevel, string> = {
+  ok: '就绪',
+  warn: '缺项',
+  error: '缺参',
+};
+
 export const LEVEL_COLOR: Record<IssueLevel, string> = {
   ok: '#22c55e',
   warn: '#f59e0b',

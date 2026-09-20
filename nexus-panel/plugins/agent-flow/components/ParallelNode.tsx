@@ -2,7 +2,7 @@ import type { NodeProps } from '@xyflow/react';
 import type { ParallelNodeData } from '../types';
 import type { ParallelFlowNode } from '../flowTypes';
 import { describeRule } from '../engine/parallel';
-import { NodeShell, NODE_STATUS_TEXT } from './NodeShell';
+import { NodeShell } from './NodeShell';
 
 export default function ParallelNode({ id, data, selected }: NodeProps<ParallelFlowNode>) {
   const d: ParallelNodeData = data;
@@ -25,12 +25,6 @@ export default function ParallelNode({ id, data, selected }: NodeProps<ParallelF
       selected={selected}
       className="parallel"
       tag="并发控制 · 不调用 CLI"
-      statusText={{
-        ...NODE_STATUS_TEXT,
-        running: '解析中',
-        success: '已解析',
-        failed: '解析异常',
-      }}
       footExtra={<span className="node-line--foot">作用于下游</span>}
     >
       <div className="par-summary">

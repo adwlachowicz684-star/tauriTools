@@ -31,9 +31,6 @@ export function ModuleNode({ id, data, selected }: NodeProps<ModuleFlowNode>) {
       selected={selected}
       tag="模块"
       typeColor={detached ? '#94a3b8' : base}
-      statusText={{
-        idle: detached ? '已脱钩' : '跟随模块库',
-      }}
       footExtra={detached ? null : '改库则跟着变'}
     >
       <div className="node-line node-line--path">

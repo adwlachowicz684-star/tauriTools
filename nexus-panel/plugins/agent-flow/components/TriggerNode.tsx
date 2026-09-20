@@ -1,7 +1,7 @@
 import type { NodeProps } from '@xyflow/react';
 import { TRIGGER_META, triggerKindsOf, type TriggerKind, type TriggerNodeData } from '../types';
 import type { TriggerFlowNode } from '../flowTypes';
-import { NodeShell, NODE_STATUS_TEXT } from './NodeShell';
+import { NodeShell } from './NodeShell';
 
 /** 某种触发方式的简短摘要 */
 function summaryOf(d: TriggerNodeData, k: TriggerKind): string {
@@ -35,13 +35,6 @@ export default function TriggerNode({ id, data, selected }: NodeProps<TriggerFlo
       selected={selected}
       // is-disabled 是触发器独有的（停用态），外壳不认识，这里自己加
       className={`trigger ${d.enabled ? '' : 'is-disabled'}`}
-      statusText={{
-        ...NODE_STATUS_TEXT,
-        idle: '待触发',
-        running: '触发中',
-        success: '已触发',
-        failed: '异常',
-      }}
       /* 触发器是起点，没有输入端口 */
       hasTarget={false}
       tag={

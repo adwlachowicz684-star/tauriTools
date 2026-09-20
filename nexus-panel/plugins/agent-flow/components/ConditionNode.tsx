@@ -2,7 +2,7 @@ import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { DEFAULT_BRANCH, OP_META, type ConditionNodeData } from '../types';
 import type { CondFlowNode } from '../flowTypes';
 import { describeRule } from '../engine/condition';
-import { NodeShell, NODE_STATUS_TEXT } from './NodeShell';
+import { NodeShell } from './NodeShell';
 
 export default function ConditionNode({ id, data, selected }: NodeProps<CondFlowNode>) {
   const d: ConditionNodeData = data;
@@ -16,12 +16,6 @@ export default function ConditionNode({ id, data, selected }: NodeProps<CondFlow
       selected={selected}
       className="cond"
       tag="条件分支 · 不调用 CLI"
-      statusText={{
-        ...NODE_STATUS_TEXT,
-        running: '判定中',
-        success: '已判定',
-        failed: '判定异常',
-      }}
       footExtra={<span className="node-line--foot">菱形决策</span>}
       /*
        * 出口是每条规则各一个（分支手柄在 children 里逐个渲染），

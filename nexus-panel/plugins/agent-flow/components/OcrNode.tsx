@@ -1,5 +1,5 @@
 import type { NodeProps } from '@xyflow/react';
-import { NodeShell, NODE_STATUS_TEXT } from './NodeShell';
+import { NodeShell } from './NodeShell';
 import type { OcrNodeData } from '../types';
 import { PROVIDER_META } from '../engine/llm';
 import type { OcrFlowNode } from '../flowTypes';
@@ -19,11 +19,6 @@ export default function OcrNode({ id, data, selected }: NodeProps<OcrFlowNode>) 
       selected={selected}
       className="ocr"
       tag={`${meta?.label ?? '自定义'} · ${d.llm?.model || '未选模型'}`}
-      statusText={{
-        ...NODE_STATUS_TEXT,
-        running: '识别中',
-        success: '已识别',
-      }}
       footExtra={
         d.lastChars != null && d.lastChars > 0 ? (
           <span className="node-line--foot">{d.lastChars} 字</span>

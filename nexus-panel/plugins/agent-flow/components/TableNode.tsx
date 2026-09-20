@@ -1,5 +1,5 @@
 import type { NodeProps } from '@xyflow/react';
-import { NodeShell, NODE_STATUS_TEXT } from './NodeShell';
+import { NodeShell } from './NodeShell';
 
 /**
  * 表格节点共用的卡片。
@@ -15,7 +15,6 @@ export function TableNode({ id, type, data, selected }: NodeProps) {
       type={type}
       data={d}
       selected={selected}
-      statusText={{ ...NODE_STATUS_TEXT, running: '计算中' }}
     >
       <div className="node-line node-line--brief">{briefOf(type, d)}</div>
     </NodeShell>

@@ -25,10 +25,7 @@ import { registerNode } from './registry';
 import { withNodeRun, NodeFailError } from '../engine/runnerKit';
 import { missingRequired } from '../engine/mcpTools';
 import type { RunContext } from '../engine/runContext';
-import {
-  createMcpData, mcpColorOf, slugify,
-  type NodeBlueprint,
-} from '../engine/mcpTools';
+import { createMcpData, mcpColorOf, slugify, type NodeBlueprint } from '../engine/mcpTools';
 
 /** 蓝图 → 字段清单 */
 export function fieldsOf(bp: NodeBlueprint): FieldDef[] {
@@ -111,10 +108,6 @@ function McpNodeCard({ id, type, data, selected }: NodeProps) {
       type={type}
       data={d}
       selected={selected}
-      statusText={{
-        idle: '待运行', running: '调用中', success: '已完成',
-        failed: '已失败', skipped: '已跳过',
-      }}
       footExtra={<span className="node-line--foot">{server}</span>}
     >
       <div className="node-line node-line--brief">{tool || 'MCP 工具'}</div>
