@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { getDef } from '../nodes';
-import { describeBlock, type FieldLike, type BlockDesc } from '../engine/blockApi';
+import { describeBlock, pickBrief, type FieldLike, type BlockDesc } from '../engine/blockApi';
 import { fieldLikeOf, acceptsTextOf } from '../engine/fieldLike';
 import { PORT_LABEL, type PortKind } from '../engine/nodeSpec';
 
@@ -94,7 +94,11 @@ export default function NodeDesc({ presetKey, type, hint, sub }: Props) {
     );
   }
 
-  const one = hint || desc.desc || sub || '';
+  /*
+   * 与侧栏那行短说明**同一个函数、同一套来源** ——
+   * 各排各的序会出现"点开与不点开看到两句话"。
+   */
+  const one = pickBrief({ hint, sub, produces: desc.desc });
 
   // 必填优先，其次按声明顺序；最多列 8 条，多了侧栏放不下
   const rows = [...desc.params].sort((a, b) => {
@@ -118,6 +122,15 @@ export default function NodeDesc({ presetKey, type, hint, sub }: Props) {
           {acceptsTextOf(desc.accepts)}
         </span>
       </div>
+
+      {/*
+       * 产出说明有它自己的位置。
+       *
+       * 以前它顶在第一行当"节点说明"用（因为 desc.desc 排得比 sub 前），
+       * 于是"循环"的说明写着"透传（循环体每轮一次…）"——
+       * 那是产出，不是用途，挑节点时看这句只会更糊涂。
+       */}
+      {desc.desc ? <div className="nd-out">{desc.desc}</div> : null}
 
       {desc.requires.length > 0 ? (
         <div className="nd-req">

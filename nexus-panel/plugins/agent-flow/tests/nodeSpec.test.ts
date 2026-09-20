@@ -374,3 +374,41 @@ test('分支边示例可直接照抄（branch 在顶层）', () => {
     '示例里 branch 必须在顶层，不能套在 data 里',
   );
 });
+
+/* ================= 侧栏一句话说明 ================= */
+
+/*
+ * 「显示说明」会把每个节点下面铺一行说明，那行取的是 meta.sub。
+ * 缺了 sub 的节点**整行空白** —— 用户看到别人有、它没有，
+ * 只会以为是界面漏了。
+ *
+ * 这类缺失测试跑不出来（界面看着也正常），只能扫源码。
+ */
+const DEFS = path.join(process.env.AF_SRC || '.', 'nodes', 'defs');
+
+test('每个节点定义都写了 sub（否则「显示说明」下整行空白）', () => {
+  if (!fs.existsSync(DEFS)) return;
+  const files = fs.readdirSync(DEFS).filter((f) => /\.tsx?$/.test(f));
+  const bad: string[] = [];
+  for (const f of files) {
+    const src = fs.readFileSync(path.join(DEFS, f), 'utf-8');
+    // 只看注册了节点的那些文件；纯字段模块（如 updateFields）不在此列
+    if (!/registerNode\(/.test(src)) continue;
+    if (!/sub:/.test(src)) bad.push(f);
+  }
+  assert.deepEqual(bad, [], `这些节点没写 sub：${bad.join(', ')}`);
+});
+
+/*
+ * 两处排序必须走同一个 pickBrief —— 各排各的序会出现
+ * "点开与不点开看到两句话"，而两句都没错，错的是排了两处。
+ */
+test('侧栏短说明与展开块顶行都走 pickBrief', () => {
+  const root = process.env.AF_SRC || '.';
+  for (const rel of ['components/Sidebar.tsx', 'components/NodeDesc.tsx']) {
+    const full = path.join(root, rel);
+    if (!fs.existsSync(full)) continue;
+    const src = fs.readFileSync(full, 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '');
+    assert.match(src, /pickBrief\(/, `${rel} 要调用 pickBrief 取一句话说明`);
+  }
+});

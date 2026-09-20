@@ -60,7 +60,7 @@ registerNode({
     color: '#a78bfa',
     category: 'external',
     idPrefix: 'gu',
-    sub: '在「凭据」里填一次令牌，两个节点共用',
+    sub: '检测仓库有没有新提交 / 新 Release（令牌填一次共用）',
   },
   create: (id, partial) => makeGithubUpdateNode(id, (partial ?? {}) as never).data,
   Canvas: GithubUpdateNode,

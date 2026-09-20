@@ -95,6 +95,7 @@ registerNode({
      侧栏只剩一条「任务」，用户再也选不到另一种 CLI。 */
   meta: {
     label: '任务', color: '#f97316', category: 'task', idPrefix: 't',
+    sub: '让命令行工具干一件事，拿它的输出',
     presets: () =>
       (Object.keys(CLI_META) as CliKind[]).map((k) => ({
         key: `task:${k}`,

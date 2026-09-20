@@ -15,7 +15,12 @@ registerNode({
     color: '#eab308',
     category: 'trigger',
     idPrefix: 'tr',
-    sub: Object.values(TRIGGER_META).map((m) => m.label).join(' / '),
+    /*
+     * 以前这里列的是"手动 / 定时 / Cron / …"——那是**有哪些方式**，
+     * 不是"这个节点是干什么的"。挑节点时前者没用（面板里本来就列着），
+     * 后者才有用。
+     */
+    sub: '流程的起点 —— 决定什么时候开跑',
   },
   /*
    * makeTriggerNode 的签名是 (id, **triggers**, partial) ——

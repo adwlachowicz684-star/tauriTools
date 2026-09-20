@@ -103,7 +103,7 @@ registerNode({
     color: '#38bdf8',
     category: 'ai',
     idPrefix: 'ty',
-    sub: '需填自己的大模型 API Key',
+    sub: '把文本翻成另一种语言（需自己的 API Key）',
   },
   create: (id, partial) => makeTranslateNode(id, (partial ?? {}) as never).data,
   Canvas: TranslateNode,

@@ -7,6 +7,7 @@ import {
   presetIdOf, removeCustomPreset, renameCustomPreset,
   exportCustomPresets, importCustomPresets,
 } from '../engine/customPresets';
+import { pickBrief, producesDescOf } from '../engine/blockApi';
 
 /**
  * 从边栏拖到画布上时携带的数据。
@@ -354,7 +355,17 @@ export default function Sidebar({
                * 说明张冠李戴，而它看起来完全正常，是最难发现的那一类。
                */
               const pSub = getDef(p.type).meta.sub;
-              const desc = p.hint ?? pSub ?? '';
+              /*
+               * 与展开块顶行**同一个函数**（pickBrief）——
+               * 两处各排各的序会出现"点开与不点开看到两句话"。
+               *
+               * produces 兜底：少数节点没写 sub，那时总比整行空白好。
+               */
+              const desc = pickBrief({
+                hint: p.hint,
+                sub: pSub,
+                produces: producesDescOf(p.type),
+              });
               return (
                 <div key={p.key}>
                   <div

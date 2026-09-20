@@ -209,6 +209,52 @@ export function describeBlock(kind: string, fields?: FieldLike[]): BlockDesc | n
   };
 }
 
+/**
+ * 一句话说明**取哪一个** —— 侧栏那行短说明与展开块顶行唯一共用的排序。
+ *
+ * ================= 为什么必须抽出来 =================
+ *
+ * 这两个位置以前各排各的序：
+ *
+ *   侧栏短说明：hint ?? sub                  （11 个节点没 sub → 整行空白）
+ *   展开块顶行：hint || desc.desc || sub     （desc.desc 其实是**产出说明**）
+ *
+ * 于是同一个节点，点开与不点开看到的是两句不同的话 ——
+ * 而两句都没错，错的是排了两处。这正是这个项目反复踩的那一类。
+ *
+ * ================= 为什么 sub 优先于 produces =================
+ *
+ * producesDesc 说的是"这个节点**产出什么**"（如"外部传进来的内容
+ * （原样透传）"），不是"这个节点**是干什么的**"。
+ * 挑节点时后者才有用；前者有它自己的位置（展开块里的「产出」那行）。
+ *
+ * produces 只作兜底：少数节点确实没写 sub，那时总比整行空白好。
+ */
+export function pickBrief(p: {
+  /** 预设自带的说明（如「自定义 · 基于任务」）—— 它描述的是这一个预设 */
+  hint?: string | null;
+  /** 节点定义里的 sub：这个节点是干什么的 */
+  sub?: string | null;
+  /** 契约里的产出说明，兜底用 */
+  produces?: string | null;
+}): string {
+  /*
+   * 先各自 trim 再取舍 —— 直接 `a || b` 的话，
+   * 一个全是空格的 hint 会把整行说明变成空白，
+   * 而界面上看不出那是"没写"还是"写了空的"。
+   */
+  const hint = (p.hint ?? '').trim();
+  const sub = (p.sub ?? '').trim();
+  const produces = (p.produces ?? '').trim();
+  return hint || sub || produces;
+}
+
+/** 某个 kind 的产出说明（契约里手写的那句） */
+export function producesDescOf(kind: string | undefined | null): string {
+  if (!kind) return '';
+  return (specOf(kind) ?? SPECS[kind])?.producesDesc ?? '';
+}
+
 /** 全部积木的契约（不含参数 —— 参数要传 fields 才有） */
 export function describeAll(): { kind: string; produces: string; accepts: string | string[]; desc: string }[] {
   return Object.entries(SPECS).map(([kind, s]) => ({

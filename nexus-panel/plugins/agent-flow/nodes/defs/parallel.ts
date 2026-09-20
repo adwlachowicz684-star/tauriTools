@@ -12,6 +12,7 @@ registerNode({
     color: '#06b6d4',
     category: 'flow',
     idPrefix: 'p',
+    sub: '限制同时跑的数量，别一次全放开',
   },
   create: (id, partial) => makeParallelNode(id, (partial ?? {}) as never).data,
   Canvas: ParallelNode,
