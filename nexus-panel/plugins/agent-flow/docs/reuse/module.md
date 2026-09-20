@@ -19,6 +19,7 @@
 - `nodes`: `Record<string, unknown>[]`
 - `edges`: `ModuleEdge[]`
 - `createdAt`: `number`
+- `paramRefs`: `string[]`
 
 ## 接口：入口与出口（自动推导，不用手工标）
 

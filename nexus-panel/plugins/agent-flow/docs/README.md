@@ -1,7 +1,7 @@
 # 可拖用的东西 — 统一索引
 
 > 自动生成，**不要手改**。改代码后跑：
-> `bash scripts/run-tests.sh && node scripts/gen-node-docs.mjs`
+> `bash scripts/build-tests.sh && node scripts/gen-node-docs.mjs`
 
 这是**第一层**。收录五类能拖出来用的东西：
 
@@ -27,24 +27,24 @@
 
 | kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
-| [trigger](nodes/trigger.params.md) | text（文本） | none | — | 流程的初始输入（手动文本 / 触发带来的内容） | `nodes/defs/trigger.ts` |
+| [trigger](nodes/trigger.params.md) | text（文本） | none | — | 流程的起点 —— 决定什么时候开跑 | `nodes/defs/trigger.ts` |
 
 ## 任务
 
 | kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
-| [task](nodes/task.params.md) | text（文本） | any | — | CLI 的执行输出 | `nodes/defs/task.tsx` |
+| [task](nodes/task.params.md) | text（文本） | any | — | 让命令行工具干一件事，拿它的输出 | `nodes/defs/task.tsx` |
 
 ## 流程控制
 
 | kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
-| [canvasIn](nodes/canvasIn.params.md) | any（透传上游） | any | — | 标注这张画布的入口 | `nodes/defs/canvasIn.ts` |
-| [canvasOut](nodes/canvasOut.params.md) | any（透传上游） | any | — | 标注这张画布的出口 | `nodes/defs/canvasOut.ts` |
+| [canvasIn](nodes/canvasIn.params.md) | any（透传上游） | any | — | 画布的入口 —— 外部数据从这里进来 | `nodes/defs/canvasIn.ts` |
+| [canvasOut](nodes/canvasOut.params.md) | any（透传上游） | any | — | 画布的出口 —— 结果从这里交回调用方 | `nodes/defs/canvasOut.ts` |
 | [canvasRef](nodes/canvasRef.params.md) | any（透传上游） | any | — | 把另一张画布当一个节点用 | `nodes/defs/canvasRef.ts` |
-| [condition](nodes/condition.params.md) | mark（状态标记） | any | — | 分支标记文本（如「[条件] 走「是」」）—— 作用是分流，不转换数据 | `nodes/defs/condition.ts` |
-| [loop](nodes/loop.params.md) | any（透传上游） | any | — | 透传（循环体每轮一次，done 出口汇总一次） | `nodes/defs/loop.ts` |
-| [parallel](nodes/parallel.params.md) | any（透传上游） | any | — | 透传 | `nodes/defs/parallel.ts` |
+| [condition](nodes/condition.params.md) | mark（状态标记） | any | — | 按规则分流，从上往下命中第一条就走 | `nodes/defs/condition.ts` |
+| [loop](nodes/loop.params.md) | any（透传上游） | any | — | 把上游内容重复跑若干轮，或逐条跑 | `nodes/defs/loop.ts` |
+| [parallel](nodes/parallel.params.md) | any（透传上游） | any | — | 限制同时跑的数量，别一次全放开 | `nodes/defs/parallel.ts` |
 
 ## 控制器
 
@@ -81,23 +81,23 @@
 
 | kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
-| [extract](nodes/extract.params.md) | text（文本） | text / json | — | JSON 路径 / 正则 / 按行 | `nodes/defs/extract.tsx` |
-| [fs](nodes/fs.params.md) | files（文件列表） | any | fsExecutor | 文件引用列表（下游按文件处理） | `nodes/defs/fs.ts` |
+| [extract](nodes/extract.params.md) | text（文本） | text / json | — | 从上游内容里抠出想要的那个值 | `nodes/defs/extract.tsx` |
+| [fs](nodes/fs.params.md) | files（文件列表） | any | fsExecutor | 读 / 写 / 复制 / 移动 / 列目录 / 判断存在 | `nodes/defs/fs.ts` |
 
 ## AI 能力
 
 | kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
-| [ocr](nodes/ocr.params.md) | text（文本） | text / files / any | imageReader, llmCaller | 图片识别出的文字 | `nodes/defs/ocr.tsx` |
-| [translate](nodes/translate.params.md) | text（文本） | text | llmCaller | 需填自己的大模型 API Key | `nodes/defs/translate.tsx` |
+| [ocr](nodes/ocr.params.md) | text（文本） | text / files / any | imageReader, llmCaller | 把图片里的文字读出来（需视觉大模型） | `nodes/defs/ocr.tsx` |
+| [translate](nodes/translate.params.md) | text（文本） | text | llmCaller | 把文本翻成另一种语言（需自己的 API Key） | `nodes/defs/translate.tsx` |
 
 ## 外部服务
 
 | kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
 | [generic-http](nodes/generic-http.params.md) | json（JSON） | any | httpRequester | 填地址与参数即可调任意接口 | `nodes/defs/genericHttp.tsx` |
-| [github-push](nodes/github-push.params.md) | text（文本） | any | githubPush | 推送结果说明 | `nodes/defs/github_push.tsx` |
-| [github-update](nodes/github-update.params.md) | json（JSON） | none | githubFetch | 在「凭据」里填一次令牌，两个节点共用 | `nodes/defs/github_update.tsx` |
+| [github-push](nodes/github-push.params.md) | text（文本） | any | githubPush | 把改动提交并推到远端分支 | `nodes/defs/github_push.tsx` |
+| [github-update](nodes/github-update.params.md) | json（JSON） | none | githubFetch | 检测仓库有没有新提交 / 新 Release（令牌填一次共用） | `nodes/defs/github_update.tsx` |
 | [update](nodes/update.params.md) | bool（是/否） | none | fetcher | 是否有更新（true / false）—— 给条件节点判断 | `nodes/defs/bili.ts` |
 
 ## 工具

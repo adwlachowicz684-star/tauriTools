@@ -43,6 +43,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 /*
@@ -55,9 +56,19 @@ const NODES_DIR = path.join(DOCS, 'nodes');
 const CARDS_DIR = path.join(DOCS, 'cards');
 const REUSE_DIR = path.join(DOCS, 'reuse');
 
-const spec = await import(path.join(OUT, 'engine', 'nodeSpec.js'));
-const api = await import(path.join(OUT, 'engine', 'blockApi.js'));
-const req = await import(path.join(OUT, 'engine', 'nodeRequires.js'));
+/*
+ * 必须转成 file:// URL 再 import。
+ *
+ * 直接 import 一个 Windows 绝对路径（'C:\\…\\nodeSpec.js'）会报
+ * ERR_UNSUPPORTED_ESM_URL_SCHEME：盘符被当成协议名。
+ * 这不是本脚本的写法问题，而是 ESM 只认 URL —— 所以统一过一遍
+ * pathToFileURL（Linux 下它是不变的恒等变换，两边都能跑）。
+ */
+const outFile = (...parts) => pathToFileURL(path.join(OUT, ...parts)).href;
+
+const spec = await import(outFile('engine', 'nodeSpec.js'));
+const api = await import(outFile('engine', 'blockApi.js'));
+const req = await import(outFile('engine', 'nodeRequires.js'));
 
 /* ================= 分类 meta ================= */
 /* 从 nodes/types.ts 正则取 —— 它是 tsx-free 的纯类型文件 */
