@@ -1788,7 +1788,11 @@ group('A44/A46 备份闭环');
   // ---- 恢复必须有确认 ----
   const p = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
   const seg = p.slice(p.indexOf('export async function openBackups'), p.indexOf('/* ------------------------- 设置'));
-  ok(/window\.confirm\(/.test(seg), 'A46 恢复前有 window.confirm（覆盖全部画布，不可逆）');
+  // 上游把 window.confirm 换成了 dialog.js 的 askConfirm（await 版），
+  // 语义不变：恢复要确认，且标 danger
+  ok(/askConfirm\(/.test(seg) || /window\.confirm\(/.test(seg),
+    'A46 恢复前有确认对话框（覆盖全部画布，不可逆）');
+  ok(/danger:\s*true/.test(seg), '确认框标为 **danger**（危险操作，视觉上要区分）');
   ok(/不可撤销/.test(seg), '确认文案说明不可撤销');
   ok(/safe\('恢复快照'/.test(seg), '恢复动作包了 safe()（异步失败要看得见）');
 }
