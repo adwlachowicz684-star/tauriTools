@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SECRET_PATHS } from '../engine/sanitize';
-import { redactNodes } from '../engine/canvasStore';
+import { redactNodes, collectSecrets } from '../engine/canvasStore';
 
 /**
- * 脱敏必须覆盖完整的一份密钥清单 —— 这是密钥**唯一**的防线。
+ * 保险箱与脱敏必须共用同一份密钥清单。
  *
  * 以前 engine/canvasStore.ts 自己抄了一份 SECRET_FIELDS：
  *   ['llm.apiKey', 'token']        ← 少了 'config.token'
@@ -13,11 +13,8 @@ import { redactNodes } from '../engine/canvasStore';
  *
  * 于是 webhook 触发器的校验 token（存在 data.config.token）：
  *   · 被 stripSecrets 认出来（面板提示"不会存进默认"）
- *   · 却**不会被挖空**
+ *   · 却**不会被挖进保险箱**
  * → 明文留在画布存档与导出文件里。
- *
- * 现在内联密钥**不再落盘**（原保险箱已移除），所以脱敏是唯一的防线：
- * 漏掉一个字段，那个密钥就直接以明文进存档、进导出文件。
  *
  * webhook token 泄露意味着别人能伪造请求触发你的工作流，
  * 而工作流能起 CLI、读写授权目录。
@@ -47,25 +44,33 @@ test('llm.apiKey 仍会被脱敏', () => {
   assert.equal(llm.model, 'm', '同层的非密钥字段要保留');
 });
 
-test('三种密钥都会被挖空（脱敏是唯一防线）', () => {
+test('三种密钥都会被收进保险箱（不只脱敏）', () => {
   /*
-   * 内联密钥不再落盘，所以"被挖空"就是它不出存档的全部保障：
-   * 少挖一个字段，那个密钥就以明文进了画布存档与导出文件。
+   * 脱敏与"收进保险箱"是两件事：
+   * 只脱敏不收集 → 密钥直接没了（用户得重填）；
+   * 只收集不脱敏 → 明文留在存档里（就是这次的漏洞）。
    */
-  const nodes = [
-    N('g1', { kind: 'githubUpdate', token: 'TOK_A' }),
-    N('o1', { kind: 'ocr', llm: { apiKey: 'TOK_B' } }),
-    N('t1', { kind: 'trigger', config: { token: 'TOK_C' } }),
-  ];
-  const json = JSON.stringify(redactNodes(nodes));
-  assert.equal(json.includes('TOK_A'), false, 'token 要被挖空');
-  assert.equal(json.includes('TOK_B'), false, 'llm.apiKey 要被挖空');
-  assert.equal(json.includes('TOK_C'), false, 'config.token 要被挖空（以前漏的就是这条）');
+  const state = {
+    canvases: [
+      { id: 'c1', name: 'x', nodes: [
+        N('g1', { kind: 'githubUpdate', token: 'TOK_A' }),
+        N('o1', { kind: 'ocr', llm: { apiKey: 'TOK_B' } }),
+        N('t1', { kind: 'trigger', config: { token: 'TOK_C' } }),
+      ] as never, edges: [] },
+    ],
+  } as never;
+  const got = collectSecrets(state);
+  const vals = Object.values(got);
+  assert.ok(vals.includes('TOK_A'), 'token 要进保险箱');
+  assert.ok(vals.includes('TOK_B'), 'llm.apiKey 要进保险箱');
+  assert.ok(vals.includes('TOK_C'), 'config.token 要进保险箱（以前漏的就是这条）');
 });
 
-test('没有密钥时脱敏不改动内容', () => {
-  const nodes = [N('n1', { kind: 'log', msg: 'hi' })];
-  assert.deepEqual(redactNodes(nodes), nodes);
+test('没有密钥时不产生保险箱条目', () => {
+  const state = {
+    canvases: [{ id: 'c1', name: 'x', nodes: [N('n1', { kind: 'log', msg: 'hi' })] as never, edges: [] }],
+  } as never;
+  assert.deepEqual(collectSecrets(state), {});
 });
 
 test('非节点形态的数据不会被误改（避免误伤用户文本）', () => {

@@ -1,6 +1,8 @@
 import test from 'node:test';
+import fs from 'node:fs';
+import path from 'node:path';
 import assert from 'node:assert/strict';
-import { mathOp, textOp, compareOp, randomOp, num, fmt, opSummary } from '../engine/ops';
+import { mathOp, textOp, compareOp, randomOp, num, fmt, opSummary, opBrief, briefArg } from '../engine/ops';
 
 const v = (r: { ok: boolean; value?: string; error?: string }) =>
   (r as { ok: true; value: string }).value;
@@ -152,4 +154,122 @@ test('摘要覆盖四类运算', () => {
   assert.equal(opSummary('text', 'concat'), '拼接');
   assert.equal(opSummary('compare', 'gt'), '大于');
   assert.equal(opSummary('random', 'pick'), '随机选一个');
+});
+
+/* ------------------------------------------------------------------ */
+
+test('opBrief 把参数写进摘要 —— 改了参数摘要就要跟着变', () => {
+  /*
+   * 起因：摘要以前只显示运算名（"＋"），改了 a / b 卡片上毫无变化，
+   * 用户以为没生效。这条直接钉住"参数必须出现在摘要里"。
+   */
+  assert.equal(opBrief('math', { op: 'add', a: '10', b: '5' }), '10 ＋ 5');
+  assert.equal(opBrief('math', { op: 'add', a: '1', b: '2' }), '1 ＋ 2');
+  assert.equal(opBrief('compare', { op: 'gt', a: '生命值', b: '100' }), '生命值 > 100');
+  assert.equal(opBrief('random', { op: 'int', a: '1', b: '100' }), '随机整数 1~100');
+  assert.equal(opBrief('text', { op: 'concat', a: 'a', b: 'b' }), 'a ＋ b');
+});
+
+test('opBrief 缺参数显示 ? —— 要能看出缺的是哪一个', () => {
+  /*
+   * `10 ＋ ?` 一眼知道第二个数没填；
+   * 如果只写"参数待填"，还得点开面板去找。
+   */
+  assert.equal(opBrief('math', { op: 'add', a: '10' }), '10 ＋ ?');
+  assert.equal(opBrief('math', { op: 'add' }), '? ＋ ?');
+});
+
+test('opBrief 单目运算不显示第二个数', () => {
+  assert.equal(opBrief('math', { op: 'round', a: '3.7' }), 'round(3.7)');
+  assert.equal(opBrief('math', { op: 'abs', a: '-5' }), 'abs(-5)');
+});
+
+test('opBrief 保留模板原样 —— 用户要确认引用的是哪个上游', () => {
+  /*
+   * 替用户把 {{task1.output}} 渲染掉的话，
+   * 他反而看不出自己引用的是哪一个。
+   */
+  const b = opBrief('math', { op: 'mul', a: '{{task1.output}}', b: '2' });
+  assert.match(b, /\{\{task1\.output\}\}/);
+});
+
+test('opBrief 长参数截断', () => {
+  const long = 'x'.repeat(50);
+  const b = opBrief('math', { op: 'add', a: long, b: '1' });
+  assert.ok(b.length < 50, `摘要应当截断，实际：${b}`);
+  assert.ok(b.endsWith('1'), '第二个数要保留');
+});
+
+test('briefArg 空值返回 ?', () => {
+  assert.equal(briefArg(''), '?');
+  assert.equal(briefArg(undefined), '?');
+  assert.equal(briefArg('  '), '?');
+  assert.equal(briefArg('abc'), 'abc');
+});
+
+test('未知运算退回运算名，不返回空串', () => {
+  /*
+   * 摘要是空的会让卡片少一行、高度跳动；
+   * 未来新增运算忘了补摘要时，至少还能看出是什么运算。
+   */
+  assert.equal(opBrief('math', { op: 'futureOp' }), 'futureOp');
+});
+
+/* ------------------------------------------------------------------ */
+
+test('每个运算都有摘要 —— 新增运算忘了补，这条会红', () => {
+  /*
+   * 从 ops.ts 的**类型定义**里读出全部字面量，逐个验证。
+   *
+   * 手写一份清单的话，新增运算时两边不同步 ——
+   * 清单里没有，检查也就看不见它，正是这类守卫最容易漏的情况。
+   * 从类型定义读，新增一个 op 就必须有对应摘要，否则这里立刻红。
+   */
+  const t = fs.readFileSync(
+    path.join(process.env.AF_SRC ?? path.resolve(__dirname, '..'), 'engine/ops.ts'),
+    'utf-8',
+  );
+  const kinds: { type: string; kind: string }[] = [
+    { type: 'MathOp', kind: 'math' },
+    { type: 'TextOp', kind: 'text' },
+    { type: 'CompareOp', kind: 'compare' },
+    { type: 'RandomOp', kind: 'random' },
+  ];
+
+  /*
+   * 真的没有参数的运算。目前只有随机真假 ——
+   * 它不读 a / b，硬要求摘要里出现参数反而是错的。
+   */
+  const NO_ARG_OP: Record<string, string[]> = { random: ['bool'] };
+
+  let n = 0;
+  for (const { type, kind } of kinds) {
+    const block = t.match(new RegExp(`export type ${type} =([\\s\\S]*?);`));
+    assert.ok(block, `ops.ts 里找不到 ${type}`);
+    const lits = block[1].match(/'([a-zA-Z]+)'/g) ?? [];
+    assert.ok(lits.length > 0, `${type} 一个运算都没有，正则是不是写错了`);
+    for (const raw of lits) {
+      const op = raw.replace(/'/g, '');
+      n += 1;
+      const brief = opBrief(kind, { op, a: '1', b: '2', c: '3' });
+      assert.ok(brief, `${kind}/${op} 的摘要是空的`);
+      assert.notEqual(brief, op, `${kind}/${op} 没有对应摘要（原样返回了运算名）`);
+      /*
+       * 关键的一条：摘要里必须出现参数本身。
+       *
+       * 只查"非空且不等于运算名"是不够的 ——
+       * 删掉 opBrief 里的分支后它退回 opSummary，而 opSummary
+       * 也有全部运算名，于是检查照样通过，而摘要里没有参数，
+       * 改了参数卡片上还是没变化（正是要防的那个问题）。
+       * 是故障注入时发现这个假阴性的。
+       */
+      if (!NO_ARG_OP[kind]?.includes(op)) {
+        assert.ok(
+          brief.includes('1'),
+          `${kind}/${op} 的摘要里没有参数（"${brief}"）—— 改了参数卡片上看不出变化`,
+        );
+      }
+    }
+  }
+  assert.ok(n >= 30, `只检查了 ${n} 个运算，类型定义可能没读到`);
 });

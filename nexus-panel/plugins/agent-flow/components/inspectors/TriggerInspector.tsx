@@ -26,7 +26,7 @@ import {
   CONV_SOURCE_META, type ProbeResult,
 } from '../../engine/conversations';
 import { fileOp, tailFile, type FsArgs } from '../../lib/tauri';
-import { DEFAULT_TRIGGER_CONFIG } from '../../types';
+import { SECRET_POLICY_META, DEFAULT_TRIGGER_CONFIG, type SecretPolicy } from '../../types';
 import { fetchText } from '../../lib/tauri';
 import {
   validateRule, validateCondition, simulateCondition, describeRuleExpression,
