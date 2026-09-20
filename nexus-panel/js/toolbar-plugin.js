@@ -199,6 +199,36 @@ export function moveEntry(id, dir) {
 }
 
 /**
+ * 把某个入口移到**指定位置**（拖拽排序用）。
+ *
+ * 与 `moveEntry` 的区别：那个只走 ±1（按钮），拖拽一次可能跨好几项，
+ * 且落点是「在已让位的列表里算出的下标」，逐次 ±1 既慢又会累积偏移。
+ *
+ * 用 splice 的「先摘掉再插入」而不是连续 swap：
+ *   · 与 WPF `ObservableCollection.Move` 同语义 —— 保留实例，让位动画能追踪
+ *   · 一次到位，不会在中途产生多次中间顺序
+ *
+ * ⚠️ 索引语义：`toIndex` 是**目标最终下标**（0..len-1），
+ * 本函数内部已完成「摘掉后下标左移」的纠偏，调用方不必再 -1。
+ * 这一步写错的表现是「往上拖落点偏后一格」，很难靠手测发现。
+ *
+ * @param {string} id
+ * @param {number} toIndex
+ */
+export function moveEntryTo(id, toIndex) {
+  const all = orderedIds();
+  const i = all.indexOf(id);
+  if (i < 0) return false;
+  const j = Math.max(0, Math.min(all.length - 1, Math.trunc(toIndex)));
+  if (i === j) return false;
+  const [item] = all.splice(i, 1);
+  all.splice(j, 0, item);
+  writeArr(ORDER_KEY, all);
+  notifyToolbarChanged();
+  return true;
+}
+
+/**
  * 把一组 id 按保存的顺序排好（没记录的排最后）。
  *
  * ⚠️ 刻意**不依赖 defs**：设置页 import 到的是本模块的另一份实例，

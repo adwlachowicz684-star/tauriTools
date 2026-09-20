@@ -356,6 +356,9 @@
   font-family: var(--font-mono);
   font-size: 10px; opacity: .55;
   min-width: 14px; text-align: center;
+  /* 等宽数字：默认的**比例数字**里 "1" 比 "0" 窄，
+     计数从 9→10、5→12 时宽度就变 → 徽章变宽 → 后面的元素被推着走。 */
+  font-variant-numeric: tabular-nums;
 }
 /* 空页签把数字压到几乎看不见：提示"这里面没东西"，
    不用换颜色也不用加图标 —— 换颜色会和选中态的强调色打架。 */
@@ -778,7 +781,7 @@
 .fpx-grouptab:hover { color: var(--text); }
 .fpx-grouptab.active { color: var(--accent); border-color: var(--accent); }
 .fpx-grouptab.add { padding: 0 10px; }
-.fpx-groupcount { font-size: var(--fs-11, 11px); opacity: .7; }
+.fpx-groupcount { font-size: var(--fs-11, 11px); opacity: .7; font-variant-numeric: tabular-nums;}
 
 /* 图标宫格：每项固定宽，超长名截断 */
 .fpx-icongrid {
@@ -887,8 +890,7 @@
 }
 .fpx-tabmgr-input { flex: 1; min-width: 0; height: 28px; padding: 0 6px; }
 .fpx-tabmgr-count {
-  flex: none; font-size: var(--fs-11, 11px); color: var(--text-mute);
-}
+  flex: none; font-size: var(--fs-11, 11px); color: var(--text-mute); font-variant-numeric: tabular-nums;}
 .fpx-tabmgr-lock {
   flex: none; font-size: var(--fs-11, 11px); color: var(--danger);
 }
@@ -1179,17 +1181,39 @@
 .fpx-log::-webkit-scrollbar-track,
 .fpx-links::-webkit-scrollbar-track,
 .fpx-rail::-webkit-scrollbar-track {
-  /* 轨道内凹：与"承载区"是同一种材质，滚动条像嵌在槽里 */
-  background: var(--surface-sunk);
+  /* 轨道内凹：与"承载区"是同一种材质，滚动条像嵌在槽里。
+     但**平时透明** —— 否则那条槽一直看得见，"隐形"就只是滑块隐形了。
+     悬停时由下面 :hover 规则补上。 */
+  background: transparent;
   border-radius: var(--r-sm, 4px);
 }
+.fpx-cards:hover::-webkit-scrollbar-track,
+.fpx-log:hover::-webkit-scrollbar-track,
+.fpx-links:hover::-webkit-scrollbar-track,
+.fpx-rail:hover::-webkit-scrollbar-track { background: var(--surface-sunk); }
 
+/* 与 tokens.css 的全局规则保持同一套行为：**平时隐形、悬停才显形**。
+   ------------------------------------------------------------------
+   为什么这里要再写一遍 ::-webkit-scrollbar：这三个容器是**内凹承载区**，
+   滚动条要"嵌在槽里"才对得上材质（轨道用 --surface-sunk），
+   与全局那条透明轨道不是一个观感。
+
+   但**显隐逻辑必须一致**：thumb 常态 transparent，悬停容器才上色。
+   常态就上色的话，滚动条会常驻 —— 与用户在别处看到的"隐形"对不上，
+   而且滚动条出现/消失时还会挤窄内容（容器宽度是固定的）。 */
 .fpx-cards::-webkit-scrollbar-thumb,
 .fpx-log::-webkit-scrollbar-thumb,
 .fpx-links::-webkit-scrollbar-thumb,
 .fpx-rail::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: transparent;
   border-radius: var(--r-sm, 4px);
+  transition: background var(--dur-fast, .15s);
+}
+.fpx-cards:hover::-webkit-scrollbar-thumb,
+.fpx-log:hover::-webkit-scrollbar-thumb,
+.fpx-links:hover::-webkit-scrollbar-thumb,
+.fpx-rail:hover::-webkit-scrollbar-thumb {
+  background: var(--border);
   /* 滑块外凸：与轨道的内凹形成对比，才像"可以抓的东西" */
   box-shadow: var(--sh-out-sm);
 }

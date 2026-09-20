@@ -424,7 +424,13 @@ console.log('\n--- G. 插件按 kind 三分区 ---');
    */
   const defCount = (txt, name) => (txt.match(new RegExp(`(?:const|let)\\s+${name}\\s*=`, 'g')) || []).length;
   const useCount = (txt, name) => (txt.match(new RegExp(`\\b${name}\\b`, 'g')) || []).length;
-  for (const nm of ['apps', 'svcs']) {
+  /*
+   * 变量名在加拖拽排序时改过：原先 apps/svcs 定义在 JSX 的 IIFE 里，
+   * 而拖拽的 hook **必须在组件顶层无条件调用**，写在 IIFE 中会报
+   * hook 顺序错误 —— 所以提到顶层并改名为 appPlugins / svcPlugins。
+   * 断言跟着改名，守的还是同一件事：引用了就得有定义。
+   */
+  for (const nm of ['appPlugins', 'svcPlugins']) {
     t(`React 版 ${nm} 有定义且被引用`,
       defCount(r, nm) === 1 && useCount(r, nm) > 1,
       `定义 ${defCount(r, nm)} / 出现 ${useCount(r, nm)}`);

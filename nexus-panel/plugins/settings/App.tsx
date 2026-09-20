@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   toolbarEntriesOf, wantsEntry, hiddenIds, extraIds,
-  toggleHidden, moveEntry, addExtra, removeExtra,
+  toggleHidden, moveEntry, moveEntryTo, addExtra, removeExtra,
 } from '../../js/toolbar-plugin.js';
 import { useNexus } from '../../src/nexus-react';
 import type { PluginManifest } from '../../js/host.js';
+import { setPluginOrder } from '../../js/host.js';
+import { useDragReorder } from '../../js/drag-reorder-react.js';
 import {
   listThemes, applyTheme, setAccent, setEnvColor, resetColors,
   getThemeId, getAccent, getEnvColor, getBase,
@@ -167,23 +169,32 @@ function StyleAuditBadge({ audit, open, onToggle }: {
  * 两区用的是同一套行渲染逻辑 —— 复制两份的话，
  * 将来给行加一个按钮就只会加在一处，另一区悄悄少一个。
  */
-function PluginRow({ p, audit, auditOpen, onToggleAudit, onOverride, onRemove }: {
+function PluginRow({ p, audit, auditOpen, onToggleAudit, onOverride, onRemove, dragProps, dragging }: {
   p: PluginManifest;
   audit: any;
   auditOpen: boolean;
   onToggleAudit: () => void;
   onOverride: (v: string) => void;
   onRemove: () => void;
+  /** 拖拽排序属性。服务插件区**不传** —— 它不在侧边栏，排了也没处生效 */
+  dragProps?: Record<string, any>;
+  dragging?: boolean;
 }) {
   return (
     <div
-      className="p-row"
+      {...dragProps}
+      /* className 放在 spread **之后**：内核也会返回 className（拖拽态），
+         写在前面会被它覆盖，整行会丢掉 p-row 的样式。 */
+      className={'p-row' + (dragging ? ' nx-drag-dragging' : '')}
       style={{
         padding: '12px 14px', marginTop: 'var(--sp-5, 10px)', borderRadius: 'var(--r)',
         background: 'var(--surface-sunk)',
         boxShadow: 'inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light)',
       }}
     >
+      {dragProps ? (
+        <span className="nx-drag-handle" title="按住这里上下拖动可调整顺序">⠿</span>
+      ) : null}
       <span style={{ fontSize: 'var(--fs-15, 15px)', width: 24, textAlign: 'center' }}>{p.icon ?? '◌'}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 'var(--fs-13, 13px)' }}>{p.name}</div>
@@ -246,6 +257,29 @@ function ToolbarSection({ plugins, ctx }: { plugins: any[]; ctx: any }) {
   const rerender = () => force((v) => v + 1);
 
   const entries = toolbarEntriesOf(plugins);
+
+  /*
+   * 拖拽排序：与项目组集群、WPF 集群同一套内核（js/drag-reorder.js），
+   * 死区 / 阈值 / 贴边滚动的数值都从那里来 —— 三处手感才可能对得上。
+   *
+   * 只给容器而不是每行挂 onDragOver：换位判定要**测量所有子项**的中心，
+   * 内核靠 containerRef 找子项；不给容器则测不到，表现是「拖了不让位」。
+   */
+  const tbRef = useRef<HTMLDivElement>(null);
+  const tbDrag = useDragReorder({
+    count: entries.length,
+    containerRef: tbRef,
+    mimeKey: 'toolbar-entry',
+    onMove: (from: number, to: number) => {
+      /* 用 id 而不是下标：让位后 entries 还是旧数组，但顺序已写进存储，
+         用 id 定位才是准的。索引纠偏由 moveEntryTo 内部完成。 */
+      const id = entries[from]?.id;
+      if (!id) return;
+      moveEntryTo(id, to);
+      rerender();
+    },
+  });
+
   const hidden = new Set(hiddenIds());
   const extra = new Set(extraIds());
   /* 可以加进来的：应用插件里还没成为入口的那些 */
@@ -299,8 +333,17 @@ function ToolbarSection({ plugins, ctx }: { plugins: any[]; ctx: any }) {
           还没有任何入口。可在下方把应用插件加进来。
         </div>
       )}
+      <div ref={tbRef}>
       {entries.map((e, i) => (
-        <div className="p-row" style={rowStyle} key={e.id}>
+        <div
+          style={rowStyle}
+          key={e.id}
+          {...tbDrag.getItemProps(i)}
+          /* className 刻意放在 spread **之后**：内核也会返回 className
+             （拖拽态），写在前面会被它覆盖掉 p-row。 */
+          className={'p-row' + (tbDrag.dragFrom === i ? ' nx-drag-dragging' : '')}
+        >
+          <span className="nx-drag-handle" title="按住这里上下拖动可调整顺序">⠿</span>
           <span style={{ fontSize: 'var(--fs-15, 15px)', width: 24, textAlign: 'center' }}>
             {e.label}
           </span>
@@ -325,6 +368,7 @@ function ToolbarSection({ plugins, ctx }: { plugins: any[]; ctx: any }) {
             : null}
         </div>
       ))}
+      </div>
 
       {/* 添加入口：这是"找不到地方添加按钮入口"的直接答案 */}
       {candidates.length ? (
@@ -510,6 +554,50 @@ export default function Settings() {
   /* 样式审计结果：id → { issues, files }；拿不到样式（隔离态 / module 插件）为 null */
   const [audits, setAudits] = useState<Record<string, any>>({});
   const [auditOpen, setAuditOpen] = useState<string | null>(null);
+
+  /*
+   * 应用插件（侧边栏里那些）—— 拖动排序**只作用于这一类**。
+   * 服务插件不在侧边栏，给它们排序没有意义，还会让用户以为排了能用。
+   *
+   * 分成 appPlugins / svcPlugins 两个数组放在组件顶层，
+   * 是因为拖拽的 hook **不能写在 JSX 里的 IIFE 中** ——
+   * hook 必须在组件顶层无条件调用，写在条件分支里会报顺序错误。
+   */
+  const appPlugins = (plugins || []).filter((p) => !p.kind || p.kind === 'app');
+  const svcPlugins = (plugins || []).filter((p) => p.kind === 'service');
+
+  const appsRef = useRef<HTMLDivElement>(null);
+  const appsDrag = useDragReorder({
+    count: appPlugins.length,
+    containerRef: appsRef,
+    mimeKey: 'plugin-app',
+    onMove: (from: number, to: number) => {
+      /*
+       * 实时让位：只改本地数组让视觉立刻跟上，
+       * **存储与通知留到 dragend**（onDrop）才做 ——
+       * 每跨一项就写一次 localStorage + 派发事件，
+       * 拖到底要写十几次，既没必要也会让通知刷屏。
+       */
+      setPlugins((cur) => {
+        const isApp = (p: PluginManifest) => !p.kind || p.kind === 'app';
+        const mask = cur.map(isApp);
+        const apps = cur.filter(isApp);
+        const item = apps[from];
+        if (!item) return cur;
+        const nextApps = [...apps];
+        nextApps.splice(from, 1);
+        nextApps.splice(Math.max(0, Math.min(nextApps.length, to)), 0, item);
+        /* 按原数组的「是否 app」掩码填回，非 app 项的相对位置不变 */
+        let ai = 0;
+        return cur.map((p, idx) => (mask[idx] ? nextApps[ai++] : p));
+      });
+    },
+    onDrop: () => {
+      const ids = (plugins || []).filter((p) => !p.kind || p.kind === 'app').map((p) => p.id);
+      setPluginOrder(ids);
+      ctx.toast('已保存插件顺序', 'ok');
+    },
+  });
 
   useEffect(() => {
     const list = shellGlobal()?.getPlugins?.();
@@ -912,8 +1000,8 @@ export default function Settings() {
               那会把 toolbar 也算成 app（实测过）。
             */}
             {(() => {
-              const apps = plugins.filter((p) => !p.kind || p.kind === 'app');
-              const svcs = plugins.filter((p) => p.kind === 'service');
+              /* apps / svcs 提到组件顶层定义（appPlugins / svcPlugins），
+                 因为拖拽 hook 必须在顶层调用，不能写在这个 IIFE 里 */
               const sub = (label: string, hint?: string) => (
                 <div style={{
                   display: 'flex', alignItems: 'baseline', gap: 'var(--sp-4, 8px)',
@@ -927,11 +1015,16 @@ export default function Settings() {
               );
               return (
                 <>
-                  {apps.length ? sub(`应用插件 · ${apps.length}`, '显示在侧边栏') : null}
-                  {apps.map((p) => (
+                  {appPlugins.length
+                    ? sub(`应用插件 · ${appPlugins.length}`, '显示在侧边栏 · 可上下拖动排序')
+                    : null}
+                  <div ref={appsRef}>
+                  {appPlugins.map((p, i) => (
                     <PluginRow
                       key={p.id}
                       p={p}
+                      dragProps={appsDrag.getItemProps(i)}
+                      dragging={appsDrag.dragFrom === i}
                       audit={audits[p.id]}
                       auditOpen={auditOpen === p.id}
                       onToggleAudit={() => setAuditOpen((cur) => (cur === p.id ? null : p.id))}
@@ -944,10 +1037,11 @@ export default function Settings() {
                       onRemove={() => removePlugin(p)}
                     />
                   ))}
-                  {svcs.length
-                    ? sub(`服务插件 · ${svcs.length}`, '不显示在侧边栏，由其它插件通过 ctx.services.call 调用')
+                  </div>
+                  {svcPlugins.length
+                    ? sub(`服务插件 · ${svcPlugins.length}`, '不显示在侧边栏，由其它插件通过 ctx.services.call 调用')
                     : null}
-                  {svcs.map((p) => (
+                  {svcPlugins.map((p) => (
                     <PluginRow
                       key={p.id}
                       p={p}

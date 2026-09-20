@@ -338,9 +338,10 @@ html, body {
   border: 1px solid var(--sh-dark);
   transition: height var(--dur-fast), box-shadow var(--dur-fast);
 }
-.mm-theme:hover .mm-swbar { height: 13px; }
+/* 悬停不再改高度 —— 10px->13px 会让整行高 3px，
+   鼠标划过一排配色时列表在上下抖。要"更醒目"就改亮度。 */
+.mm-theme:hover .mm-swbar { filter: brightness(1.12); }
 .mm-theme.on .mm-swbar {
-  height: 13px;
   /* 选中用**外环**而不是内凹阴影：配色条本身是色块，内凹在这上面看不出来 */
   box-shadow: 0 0 0 2px var(--accent);
 }
@@ -880,6 +881,9 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: var(-
   padding: 0 5px;
   border-radius: var(--r-pill);
   background: var(--surface-sunk, var(--surface));
+  /* 等宽数字：默认的**比例数字**里 "1" 比 "0" 窄，
+     计数从 9→10、5→12 时宽度就变 → 徽章变宽 → 后面的元素被推着走。 */
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---------- 多附件列表（一个节点可挂多个文件 / 视频 / 图片） ---------- */

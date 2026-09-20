@@ -510,7 +510,13 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 }
 .p-btn:hover { border-color: var(--af-accent); }
 .p-btn:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
-.p-btn.primary { color: var(--af-accent); font-weight: 600; }
+.p-btn.primary {
+  color: var(--af-accent);
+  /* 强调不改 font-weight：字重会改字形宽度 -> 按钮宽度变 -> 整排布局跳动。
+     改用描边模拟"变实"，描边不参与布局计算（见 :root 的 --ctl-faux-bold） */
+  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
+
+}
 .p-btn.danger { color: var(--af-bad); }
 
 /* 面板标题行：左侧可改名的输入框 + 右侧节点类型标签 */
@@ -833,6 +839,10 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 .side-hint { font-size: var(--fs-11, 11px); color: var(--af-dim); margin-bottom: 12px; line-height: 1.5; }
 .side-hint.warn { color: var(--af-t-warn); margin-top: 10px; }
 .side-group { margin-bottom: 14px; }
+.side-title {
+  font-size: var(--title-2-fs, 12px); font-weight: var(--title-2-fw);
+  color: var(--af-dim); margin-bottom: 6px;
+}
 /*
  * 侧栏项 = 画布节点的"极矮版"：只有标题行，类型用**左边条**表示。
  *
@@ -873,6 +883,10 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
    （thumb / track / hover），这里只需覆盖"横向时的高度"——
    横向滚动条用 height，纵向用 width，是两套不同的轴。 */
 .tabs-scroll::-webkit-scrollbar { height: var(--af-scroll-h); }
+/* 横向滚动条同样**平时隐形**：标签栏下方的 4px 条平时不该有常驻灰杠。
+   thumb 的透明底色已由 tokens.css 的全局规则给出（本文件 @import 了它），
+   这里只需让悬停时显形 —— 与纵向条保持同一套行为。 */
+.tabs-scroll:hover::-webkit-scrollbar-thumb { background: var(--scroll-thumb); }
 .tab {
   display: flex; align-items: center; gap: 6px; flex: none;
   padding: 5px 9px; border-radius: var(--af-r-sm); cursor: pointer;
@@ -887,6 +901,9 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 .tab-count {
   font-size: var(--fs-10, 10px); background: var(--af-raised); color: var(--af-dim);
   border-radius: 8px; padding: 0 5px;
+  /* 等宽数字：默认的**比例数字**里 "1" 比 "0" 窄，
+     计数从 9→10、5→12 时宽度就变 → 徽章变宽 → 后面的元素被推着走。 */
+  font-variant-numeric: tabular-nums;
 }
 .tab-close {
   border: none; background: transparent; color: var(--af-dim);
@@ -1160,7 +1177,12 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   transition: border-color var(--af-dur-fast), color var(--af-dur-fast), background var(--af-dur-fast);
   box-shadow: var(--ctl-shadow-sm);}
 .cond-op-btn:hover { border-color: var(--af-soft); color: var(--af-fg); }
-.cond-op-btn.on { font-weight: 600; }
+.cond-op-btn.on {
+  /* 强调不改 font-weight：字重会改字形宽度 -> 按钮宽度变 -> 整排布局跳动。
+     改用描边模拟"变实"，描边不参与布局计算（见 :root 的 --ctl-faux-bold） */
+  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
+
+}
 .cond-op-btn-icon { font-family: var(--af-mono); font-size: var(--fs-11, 11px); }
 
 /* 算子语义提示 */
@@ -1222,7 +1244,12 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   transition: border-color var(--af-dur-fast), color var(--af-dur-fast), background var(--af-dur-fast);
   box-shadow: var(--ctl-shadow-sm);}
 .cond-logic-btn:hover { border-color: var(--af-soft); color: var(--af-fg); }
-.cond-logic-btn.on { font-weight: 600; }
+.cond-logic-btn.on {
+  /* 强调不改 font-weight：字重会改字形宽度 -> 按钮宽度变 -> 整排布局跳动。
+     改用描边模拟"变实"，描边不参与布局计算（见 :root 的 --ctl-faux-bold） */
+  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
+
+}
 
 /* 条件列表 */
 .cond-list {
@@ -1443,7 +1470,7 @@ input.mono, textarea.mono {
   position: sticky; top: 0; background: var(--af-panel);
   font-size: var(--title-1-fs, 13px);
   font-weight: var(--title-1-fw);}
-.task-count { font-size: var(--fs-11, 11px); color: var(--af-mute); margin-right: auto; }
+.task-count { font-size: var(--fs-11, 11px); color: var(--af-mute); margin-right: auto; font-variant-numeric: tabular-nums;}
 .task-item { padding: 9px 12px; border-bottom: 1px solid var(--af-divider); cursor: pointer; }
 .task-item.is-active { background: var(--af-item); }
 .task-item-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
@@ -1517,7 +1544,11 @@ input.mono, textarea.mono {
 .task-group-name { font-size: var(--fs-13, 13px); font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-group-count { font-size: var(--fs-11, 11px); color: var(--af-mute);
-  padding: 0 6px; border-radius: var(--r-pill, 999px); background: var(--af-bg); }
+  padding: 0 6px; border-radius: var(--r-pill, 999px); background: var(--af-bg);
+  /* 等宽数字：默认的**比例数字**里 "1" 比 "0" 窄，
+     计数从 9→10、5→12 时宽度就变 → 徽章变宽 → 后面的元素被推着走。 */
+  font-variant-numeric: tabular-nums;
+}
 .task-group-dur { margin-left: auto; font-size: var(--fs-11, 11px); color: var(--af-mute); }
 .task-row { padding: 7px 12px 7px 24px; border-bottom: 1px solid var(--af-divider);
   cursor: pointer; overflow: hidden; }
@@ -1671,7 +1702,7 @@ input.mono, textarea.mono {
 /* 分组头在窄栏里一行放不下：允许换行，别让"运行/失败"标签被挤出视野 */
 .task-group-head { flex-wrap: wrap; gap: 3px 7px; padding: 6px 12px; }
 .task-group-name { max-width: 100%; }
-.task-group-count { margin-left: auto; }
+.task-group-count { margin-left: auto; font-variant-numeric: tabular-nums;}
 /* 换行后"平均耗时"不再靠 margin-left:auto 顶到行尾，恢复常规间距 */
 .task-group-dur { margin-left: 0; }
 
@@ -1988,7 +2019,13 @@ input.mono, textarea.mono {
   transition: background var(--af-dur-fast);
   box-shadow: var(--ctl-shadow);}
 .mod-btn:hover { background: rgba(245, 158, 11, 0.22); }
-.mod-btn.primary { background: rgba(245, 158, 11, 0.3); font-weight: 600; }
+.mod-btn.primary {
+  background: rgba(245, 158, 11, 0.3);
+  /* 强调不改 font-weight：字重会改字形宽度 -> 按钮宽度变 -> 整排布局跳动。
+     改用描边模拟"变实"，描边不参与布局计算（见 :root 的 --ctl-faux-bold） */
+  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
+
+}
 .mod-btn.primary:hover { background: rgba(245, 158, 11, 0.45); }
 
 /* 侧栏的「节点库 / 模块库」切换 */
@@ -2237,6 +2274,9 @@ input.mono, textarea.mono {
 .mcp-sec-count {
   flex: 0 0 auto; font-size: var(--fs-11, 11px); padding: 0 5px; border-radius: 8px;
   background: rgba(255, 255, 255, .1); color: var(--af-dim, #8b93a7);
+  /* 等宽数字：默认的**比例数字**里 "1" 比 "0" 窄，
+     计数从 9→10、5→12 时宽度就变 → 徽章变宽 → 后面的元素被推着走。 */
+  font-variant-numeric: tabular-nums;
 }
 .mcp-sec-arrow { flex: 0 0 10px; color: var(--af-dim, #8b93a7); font-size: var(--fs-10, 10px); }
 .mcp-sec-body { padding: 2px 0 4px 14px; }

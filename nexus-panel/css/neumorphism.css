@@ -274,6 +274,8 @@ body {
 
 .tb-btns { display: flex; gap: 8px; }
 .tb-btn {
+  /* 不用 transition: all —— 它连 width / padding / font-size 一起动画，
+     将来谁加个尺寸属性就会变成"缓慢变形"。显式列出只让颜色与阴影过渡。 */
   width: 30px; height: 26px;
   border: 0; border-radius: var(--r-sm);
   background: var(--surface);
@@ -281,7 +283,7 @@ body {
   cursor: pointer;
   display: grid; place-items: center;
   box-shadow: var(--sh-out-sm);
-  transition: all var(--t);
+  transition: color, background-color, box-shadow var(--t);
   font-size: var(--fs-12, 12px);
   line-height: 1;
 }
@@ -343,13 +345,15 @@ body {
 }
 
 .side-toggle {
+  /* 不用 transition: all —— 它连 width / padding / font-size 一起动画，
+     将来谁加个尺寸属性就会变成"缓慢变形"。显式列出只让颜色与阴影过渡。 */
   height: 34px;
   border: 0; border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--text-dim);
   cursor: pointer;
   box-shadow: var(--sh-out-md);
-  transition: all var(--t);
+  transition: color, background-color, box-shadow, padding var(--t);
   display: flex; align-items: center; justify-content: center; gap: 8px;
   font-size: var(--fs-13, 13px);
   flex: none;
@@ -371,6 +375,8 @@ body {
 }
 
 .nav-item {
+  /* 不用 transition: all —— 它连 width / padding / font-size 一起动画，
+     将来谁加个尺寸属性就会变成"缓慢变形"。显式列出只让颜色与阴影过渡。 */
   position: relative;
   height: 52px;
   flex: none;
@@ -384,7 +390,7 @@ body {
   color: var(--text-dim);
   cursor: pointer;
   box-shadow: var(--sh-out-md);
-  transition: all var(--t);
+  transition: color, background-color, box-shadow var(--t);
   overflow: hidden;
 }
 .nav-item:hover { color: var(--text); }
@@ -486,6 +492,8 @@ body {
 .bar-actions { margin-left: auto; display: flex; flex: none;
   gap: 8px; }
 .bar-btn {
+  /* 不用 transition: all —— 它连 width / padding / font-size 一起动画，
+     将来谁加个尺寸属性就会变成"缓慢变形"。显式列出只让颜色与阴影过渡。 */
   height: 30px; padding: 0 12px;
   border: 0; border-radius: var(--r-sm);
   background: var(--surface);
@@ -493,7 +501,7 @@ body {
   font-size: var(--fs-12, 12px);
   cursor: pointer;
   box-shadow: var(--sh-out-sm);
-  transition: all var(--t);
+  transition: color, background-color, box-shadow var(--t);
 }
 .bar-btn:hover { color: var(--text); }
 .bar-btn:active { box-shadow: var(--sh-in-md); }

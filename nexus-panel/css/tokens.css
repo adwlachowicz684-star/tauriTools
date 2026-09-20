@@ -172,14 +172,39 @@
    默认的浅色滚动条 —— 深色面板下非常刺眼。
    此前 mindmap 自己抄了一半（只写宽度与 thumb 底色，漏了 track 与 hover），
    既不一致又没覆盖全；放进本文件后，引入它的文档都能拿到完整一份。 */
+/* 三个目标同时满足：
+   1) **始终占位** —— 滚动条出现/消失时不挤窄内容（否则列表从 3 项变 15 项
+      时整排会挪 9px，这是"列表变长就跳一下"的常见来源）
+   2) **平时隐形** —— 不想要常驻的那条灰杠挡视线
+   3) **悬停才显形** —— 鼠标移到区域上就浮现，仍可拖动、仍看得出位置
+
+   实现：thumb 常态 transparent（但宽度保留），悬停容器时上色。
+   track 也透明，所以轨道完全看不见。
+
+   为什么不用 scrollbar-width: none：那是**彻底不显示**，代价是失去
+   "这里还能往下滚"的提示、看不出滚动位置、也不能拖动滑块。
+   为什么不用 scrollbar-gutter: stable：它只解决占位，滚动条依然常驻可见。 */
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: var(--scroll-thumb);
+  background: transparent;
   border-radius: var(--r-xs);
   border: 2px solid transparent;
+  transition: background var(--dur-fast, .15s);
 }
+/* 悬停滚动容器 → thumb 显形。
+   :hover 会作用在**滚动容器**上（::-webkit-scrollbar 属于它的伪元素），
+   所以无需给每个容器加类。 */
+*:hover::-webkit-scrollbar-thumb { background: var(--scroll-thumb); }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-mute); }
+
+/* Firefox：::-webkit-* 无效，得用标准属性。
+   它做不到"悬停才显形"，所以选 thin + 主题色（不留常驻灰杠，
+   也不至于完全看不见）。这里同样**始终占位**，所以不会跳动。 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
 
   /* ---------- 层级 ----------
      外壳与插件在各自文档里，数值不跨文档比较；

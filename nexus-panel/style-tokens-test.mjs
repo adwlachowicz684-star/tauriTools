@@ -543,6 +543,84 @@ console.log('\n=== 10a. 各插件按钮阴影统一（由主题管） ===');
   const onBlk = block('.mm-btn.on');
   t('选中态同样不写 font-weight', onBlk !== '' && !/font-weight/.test(onBlk), onBlk.slice(0, 80));
 
+  /* ---------- 动态数字必须等宽 ----------
+     默认字体是**比例数字**："1" 比 "0" 窄。所以计数 9→10、5→12 时
+     整体宽度就变 → 徽章变宽 → 后面的元素被推着走。
+
+     font-variant-numeric: tabular-nums 让所有数字等宽，位数变化不改宽度。
+     项目里 .mcp-tab-count / .stack-count 早就是这么写的，只是没推广。 */
+  const NUM_TARGETS = [
+    ['plugins/agent-flow/styles.css', '.tab-count'],
+    ['plugins/agent-flow/styles.css', '.task-count'],
+    ['plugins/agent-flow/styles.css', '.task-group-count'],
+    ['plugins/agent-flow/styles.css', '.mcp-sec-count'],
+    ['plugins/mindmap/styles.css', '.mm-file-count'],
+    ['plugins/project-group/style.css', '.fpx-tab-count'],
+    ['plugins/project-group/style.css', '.fpx-groupcount'],
+    ['plugins/project-group/style.css', '.fpx-tabmgr-count'],
+  ];
+  const numMiss = [];
+  for (const [f, sel] of NUM_TARGETS) {
+    const css = read(f).replace(/\/\*[\s\S]*?\*\//g, '');
+    const m = css.match(new RegExp('(?:^|\\})[^}]*?' + sel.replace(/\./g, '\\.') + '\\s*\\{([^}]*)\\}'));
+    /* 注意：同一选择器可能有多条规则（.task-group-count 有主规则 +
+       响应式补充），只要**任一**条带 tabular-nums 即可（继承得到）。 */
+    const all = [...css.matchAll(new RegExp('(?:^|\\})[^}]*?' + sel.replace(/\./g, '\\.') + '\\s*\\{([^}]*)\\}', 'g'))];
+    if (!all.length) { numMiss.push(sel + '(未找到)'); continue; }
+    if (!all.some((x) => /tabular-nums/.test(x[1]))) numMiss.push(sel);
+  }
+  t('动态计数用等宽数字（位数变化不改宽度）', numMiss.length === 0,
+    numMiss.join(', ') || `${NUM_TARGETS.length} 处全部等宽`);
+
+  /* ---------- 不用 transition: all ----------
+     all 会把 width / padding / font-size 一起动画 —— 将来谁加个尺寸属性
+     就变成"缓慢变形"，而且当前也白白让浏览器监听所有属性。
+
+     查之前**必须先剥 CSS 注释**：我们自己写的说明里就含
+     "transition: all" 这个字符串，不剥会把注释当成实现（断言恒真）。 */
+  const allBad = [];
+  for (const f of ['css/controls.css', 'css/dialog.css', 'css/neumorphism.css',
+                   'plugins/project-group/style.css', 'plugins/agent-flow/styles.css',
+                   'plugins/mindmap/styles.css']) {
+    const css = read(f).replace(/\/\*[\s\S]*?\*\//g, '');
+    if (/transition:\s*all/.test(css)) allBad.push(f.split('/').pop());
+  }
+  t('不用 transition: all（会连尺寸一起动画）', allBad.length === 0,
+    allBad.join(', ') || '全部显式列出过渡属性');
+
+  /* ---------- 滚动条：始终占位 + 平时隐形 ----------
+     两个诉求要同时满足，缺一个都会出问题：
+       · 只占位不隐形 → 常驻一条灰杠挡视线
+       · 只隐形不占位 → 滚动条出现/消失时内容被挤窄（列表变长就跳一下）
+
+     所以 thumb 常态 transparent（**宽度仍在**），悬停容器才上色。 */
+  const tk = read('css/tokens.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  t('滚动条始终占位（有 width/height，不会挤动内容）',
+    /::-webkit-scrollbar\s*\{[^}]*width:\s*\d/.test(tk));
+  t('滑块平时透明（隐形）',
+    /::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*transparent/.test(tk));
+  t('悬停容器时滑块显形', /:hover::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*var\(--scroll-thumb\)/.test(tk));
+  t('不用 scrollbar-width: none（那会丢掉可滚动提示与拖动）',
+    !/scrollbar-width:\s*none/.test(tk));
+  /* Firefox 走标准属性：它做不到悬停显形，但同样要始终占位 */
+  t('Firefox 侧也给了 scrollbar-color', /scrollbar-color:/.test(tk));
+
+  /* 插件里自己写的滚动条必须**同样的显隐逻辑**，
+     否则会出现"这边隐形、那边常驻"的不一致。 */
+  const pgCss = read('plugins/project-group/style.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  /* 只看**常态**规则：:hover / :active 变体本来就该上色，把它们算进来
+     会让断言永远失败。用"选择器里不含 :"来筛。 */
+  /* 抓完整选择器组（可能跨多行），再排除含 :hover / :active 的变体。
+     只查 `([.\w-]+)` 会漏掉逗号分隔的后续行，于是 ":hover" 那组里
+     后面的 `.fpx-log:hover` 被单抓出来当成常态规则。 */
+  const pgThumbs = [...pgCss.matchAll(/((?:[.\w-]+(?::hover|:active)?,?\s*)+::-webkit-scrollbar-thumb)\s*\{([^}]*)\}/g)]
+    .filter((m) => !/:hover|:active/.test(m[1]));
+  t('project-group 滑块平时透明（与全局一致）',
+    pgThumbs.length > 0 && pgThumbs.every((m) => /background:\s*transparent/.test(m[2])),
+    pgThumbs.map((m) => m[1] + (/background:\s*transparent/.test(m[2]) ? '✓' : '✗')).join(', ') || '未找到');
+  t('project-group 悬停时显形',
+    /:hover::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*var\(--border\)/.test(pg));
+
   /* 投射阴影不再各写一份：--af-cast-* 必须指向共享的 --sh-cast-* */
   t('--af-cast-* 收敛到 --sh-cast-*（两份定义必然漂移）',
     /--af-cast-sm:\s*var\(--sh-cast-sm\)/.test(af)

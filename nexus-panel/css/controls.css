@@ -930,3 +930,49 @@ input[type='range']:disabled {
 .has-error .no-error select {
   border-color: var(--divider);
 }
+
+/* ============================================================
+   拖拽排序的通用视觉（js/drag-reorder.js 的配套）
+   ------------------------------------------------------------
+   放在这里而不是各插件自己的样式：拖动手感要**各处一致**，
+   手柄的样子、拖拽中的弱化透明度若各自写，就会出现
+   「这个列表的手柄是灰的、那个是蓝的」「这里拖起来半透明、那里完全不变」。
+
+   交互数值与判定依据见 js/drag-reorder.js ——
+   那里记了 WPF 原版（fenpei-xiangmuzu-qianyi）的对应参数。
+   ============================================================ */
+
+/* 拖动手柄：只作**视觉提示**，真正可拖的是**整行**（draggable 挂在行上）。
+
+   为什么整行可拖而不是只有手柄能拖：
+   手柄很小，非得瞄准它才拖得动，是最难用的一类设计 ——
+   而整行可拖时，手柄退化成「这里可以拖」的提示，容错大得多。
+
+   同理，手柄不设 cursor:grab 覆盖整行：整行本来就是可拖区，
+   光标交给行自己，手柄保持朴素。 */
+.nx-drag-handle {
+  flex: none;
+  padding: 0 2px;
+  color: var(--text-mute);
+  font-size: var(--fs-13, 13px);
+  line-height: 1;
+  /* 手柄只是个图标：别让选区选到它，也别让它抢走焦点 */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.nx-drag-handle:hover { color: var(--text-dim); }
+
+/* 拖拽中被拿起来的那一行：弱化，让视线跟着「空位」走。
+
+   用 opacity 而不是 display:none —— 行仍在原位占位，
+   布局不跳，用户看得出「这项正被拿起来、其余的在让位」。 */
+.nx-drag-dragging {
+  opacity: var(--ctl-disabled-opacity, .45);
+}
+
+/* 尊重「减少动效」：拖拽期间的过渡全部去掉。
+   让位本身不是装饰动画，但若叠了过渡，
+   对前庭敏感的用户来说比不动更难受。 */
+@media (prefers-reduced-motion: reduce) {
+  .nx-drag-dragging { transition: none; }
+}

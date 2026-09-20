@@ -1944,7 +1944,77 @@ export function visiblePlugins(plugins) {
    * 若同时出现在侧边栏，点它会去挂载一个没有页面的插件，
    * 表现为"切过去一片空白"。
    */
-  return (plugins || []).filter((p) => p.kind !== 'service' && p.kind !== 'toolbar');
+  const list = (plugins || []).filter((p) => p.kind !== 'service' && p.kind !== 'toolbar');
+  /* 应用用户在设置里拖出来的顺序（没排过的保持原序跟在后面） */
+  return applyPluginOrder(list);
+}
+
+/* ------------------------------------------------------------------ */
+/* 插件顺序（设置面板里拖动排序的结果）                                */
+/* ------------------------------------------------------------------ */
+
+const PLUGIN_ORDER_KEY = 'nexus:plugin-order';
+/** 顺序变化后派发，让侧边栏重排 */
+export const PLUGIN_ORDER_EVENT = 'nexus:plugin-order-changed';
+
+/**
+ * 用户在设置里排的插件 id 顺序。
+ *
+ * 与工具栏顺序（`nexus:toolbar-order`）分开存：两者是**不同的列表**
+ * （侧边栏 vs 右上角按钮），共用一份会互相污染 ——
+ * 表现为「排了侧边栏，右上角按钮顺序也跟着乱了」。
+ */
+export function pluginOrder() {
+  try {
+    const raw = localStorage.getItem(PLUGIN_ORDER_KEY);
+    if (!raw) return [];
+    const j = JSON.parse(raw);
+    return Array.isArray(j) ? j.filter((x) => typeof x === 'string') : [];
+  } catch {
+    /* 坏了就当没排过，别让整个侧边栏加载失败 */
+    return [];
+  }
+}
+
+/**
+ * 写入插件顺序并通知外壳重排。
+ *
+ * 通知发两处，因为设置面板有两种形态：
+ *   · 同页（module）→ document 就是外壳的，一次即可
+ *   · 沙箱 iframe → document 是自己的，要往 parent 发；
+ *     隔离态（opaque origin）下访问 parent 会抛，必须 try/catch
+ */
+export function setPluginOrder(ids) {
+  try {
+    localStorage.setItem(PLUGIN_ORDER_KEY, JSON.stringify(ids));
+  } catch { /* ignore */ }
+  try {
+    document.dispatchEvent(new CustomEvent(PLUGIN_ORDER_EVENT));
+  } catch { /* ignore */ }
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.document?.dispatchEvent(new CustomEvent(PLUGIN_ORDER_EVENT));
+    }
+  } catch { /* ignore */ }
+}
+
+/**
+ * 按保存的顺序排好（没记录的排最后）—— 与工具栏的 `sortIds` 同思路。
+ *
+ * 刻意**不改动原数组**：调用方手里的引用往往是宿主持有的完整列表，
+ * 就地排序会牵连到别的路径（比如服务插件的挂载顺序）。
+ */
+export function applyPluginOrder(plugins) {
+  const list = [...(plugins || [])];
+  const saved = pluginOrder();
+  if (!saved.length) return list;
+  const out = [];
+  for (const id of saved) {
+    const hit = list.find((p) => p && p.id === id);
+    if (hit) out.push(hit);
+  }
+  for (const p of list) if (!out.includes(p)) out.push(p);
+  return out;
 }
 
 /** 是否是服务插件 */

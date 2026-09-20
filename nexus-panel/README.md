@@ -1348,6 +1348,53 @@ CardGrid.tsx:641  style={c.tagColor ? brushVars(c.tagColor, 'grp') : undefined}
 
 已由 `style-tokens-test` 断言扫描全部状态规则（伪元素 `::before/::after`
 除外 —— 它们撑的是自己不是宿主）。
+
+**3.7.19 两类"看不见的跳动"：数字不等宽 / 滚动条占位**
+
+继字重跳动之后，又两类同源问题 —— **尺寸不该随内容或状态变化**。
+
+**一、动态数字必须等宽**
+
+默认字体是**比例数字**："1" 比 "0" 窄。所以计数 9→10、5→12 时整体宽度
+就变 → 徽章变宽 → 后面的元素被推着走。
+
+```
+.tab-count     画布节点数     .mm-file-count  文件数
+.fpx-tab-count 页签条目数     .fpx-groupcount 图标数
+.fpx-tabmgr-count            .mcp-sec-count
+.task-count / .task-group-count
+```
+
+`font-variant-numeric: tabular-nums` 让所有数字等宽，位数变化不改宽度。
+项目里 `.mcp-tab-count` / `.stack-count` 早就是这么写的，**只是没推广**
+—— 所以这次是补齐而非新发明。
+
+**二、滚动条：隐形而非消失**
+
+需求是"只滚动不显示"。两种做法差别很大：
+
+| 做法 | 能否拖动 | 能否看出位置 | 是否跳动 |
+|---|---|---|---|
+| `scrollbar-width: none` | ❌ | ❌ | 不跳（因为没了） |
+| `scrollbar-gutter: stable` | ✅ | ✅ | 不跳，但**常驻可见** |
+| **隐形 + 悬停显形（采用）** | ✅ | ✅ | 不跳 |
+
+采用方案：thumb 常态 `transparent` 但**宽度保留**（所以始终占位、不挤内容），
+`:hover` 到滚动容器时上色。track 也透明，轨道完全看不见。
+
+Firefox 的 `::-webkit-*` 无效，用标准属性 `scrollbar-width: thin` +
+主题色 —— 做不到悬停显形，但同样始终占位，所以不跳动。
+
+> 判据：**"不显示"不等于"不存在"**。彻底隐藏会失去"这里还能往下滚"的
+> 提示、看不出滚动位置、也拖不动滑块。隐形保留了全部功能。
+
+**三、不用 `transition: all`**
+
+它连 `width` / `padding` / `font-size` 一起动画 —— 将来谁加个尺寸属性就
+变成"缓慢变形"。4 处改为显式列出（`color, background-color, box-shadow`）。
+
+> 判据（与本节同源）：**状态可以改颜色、阴影、描边、滤镜，不能改尺寸。**
+> `transition: all` 是把这条约束往后推给未来某个不知情的人。
 **3.8 控件清单（哪些是共享的、哪些是插件自建的）**
 
 | 层 | 前缀 | 位置 | 说明 |
