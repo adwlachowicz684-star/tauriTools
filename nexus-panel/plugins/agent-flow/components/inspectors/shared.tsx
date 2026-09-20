@@ -26,7 +26,7 @@ import {
   CONV_SOURCE_META, type ProbeResult,
 } from '../../engine/conversations';
 import { fileOp, tailFile, type FsArgs } from '../../lib/tauri';
-import { SECRET_POLICY_META, DEFAULT_TRIGGER_CONFIG, type SecretPolicy } from '../../types';
+import { DEFAULT_TRIGGER_CONFIG } from '../../types';
 import { fetchText } from '../../lib/tauri';
 import {
   validateRule, validateCondition, simulateCondition, describeRuleExpression,
@@ -332,14 +332,11 @@ export function FileParamsPanel({ node, onChange }: {
  * nodeId 因此不再需要 —— 它本来只是为了让调用方凑出双参数而传的。
  */
 export function LlmConfigPanel({
-  cfg, onChange, needVision, secretPolicy, onChangeSecretPolicy,
+  cfg, onChange, needVision,
 }: {
   cfg: LlmConfig;
   onChange: (patch: Record<string, unknown>) => void;
   needVision: boolean;
-  /** 当前密钥落盘策略；不传则不显示这一项 */
-  secretPolicy?: SecretPolicy;
-  onChangeSecretPolicy?: (p: SecretPolicy) => void;
 }) {
   const [showKey, setShowKey] = useState(false);
   const c = cfg ?? defaultLlmConfig();
@@ -423,27 +420,12 @@ export function LlmConfigPanel({
         </div>
       )}
 
-      {onChangeSecretPolicy ? (
-        <label className="field">
-          <small className="dim">密钥保存方式</small>
-          <select
-            value={secretPolicy ?? 'device'}
-            onChange={(e) => onChangeSecretPolicy(e.target.value as SecretPolicy)}
-          >
-            {(Object.keys(SECRET_POLICY_META) as SecretPolicy[]).map((k) => (
-              <option key={k} value={k}>{SECRET_POLICY_META[k].label}</option>
-            ))}
-          </select>
-          <div className="cond-hint">{SECRET_POLICY_META[secretPolicy ?? 'device'].hint}</div>
-        </label>
-      ) : null}
-
       <div className="tip">
         {c.apiKey ? (
-          (secretPolicy ?? 'device') === 'session'
-            ? '已填的密钥只留在内存里，关掉面板即清空，本机不留任何痕迹。'
-            : '已填的密钥加密存在本机，且不会写进导出的 JSON。注意：这只是抬高偷看成本，'
-              + '并非绝对安全 —— 拿到整个数据目录的人仍能解开。要真正隔离，请用凭据中心的口令模式。'
+          '已填的密钥只在本次会话有效：不会写进画布存档、也不会随导出走，'
+            + '但刷新后需要重新填写。要跨会话保留，请改用上面的凭据引用 —— '
+            + '密钥存进凭据中心，可选 OS 凭据管理器 / 本机加密 / 口令模式，'
+            + '其中口令模式的钥匙不落盘。'
         ) : (
           '密钥不随画布导出（导出时自动挖空）。想多台机器共用或统一改一处，用上面的凭据更省事。'
         )}
