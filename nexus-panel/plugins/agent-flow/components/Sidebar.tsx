@@ -251,8 +251,8 @@ export default function Sidebar({
         </div>
 
         {groups.length === 0 ? (
-          <div className="side-sub">
-            还没有节点 —— 在画布设置里配一个 MCP 服务，再点刷新
+          <div className="side-empty">
+            还没有节点 —— 在凭据中心配一个 MCP 服务，再点刷新
           </div>
         ) : null}
 
@@ -282,7 +282,11 @@ export default function Sidebar({
   const groups = presetsByCategory();
 
   return (
-    <aside className="sidebar" key={tick}>
+    /*
+     * 外壳用 .side-pane —— 模块库、画布库用同一套底板，
+     * 切标签时左栏的标题、内边距、滚动方式不再变。
+     */
+    <aside className="side-pane" key={tick}>
       {/*
         节点库**只管节点**。
         模块库原先嵌在这里用二级 tab 切，现在提到左栏顶层与它并列 ——
@@ -301,6 +305,8 @@ export default function Sidebar({
           {showAllDesc ? '隐藏说明' : '显示说明'}
         </button>
       </div>
+
+      <div className="side-body">
       <div className="side-hint">
         拖到画布添加；点击展开说明，按住 Ctrl / ⌘ 点击直接添加
       </div>
@@ -431,6 +437,7 @@ export default function Sidebar({
               if (f) void doImport(f);
             }}
           />
+      </div>
     </aside>
   );
 }
