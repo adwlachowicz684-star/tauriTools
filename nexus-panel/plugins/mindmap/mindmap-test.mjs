@@ -5809,6 +5809,38 @@ group('导入导出页：行为级（真实 render）');
   }
 }
 
+group('展开层级按钮：移到左侧图标条');
+
+{
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+
+  // 1) 左侧图标条里要有这三个层级
+  const rail = idx.slice(idx.indexOf('function buildRail()'),
+    idx.indexOf("  /* ------------------------- 保存抑制"));
+  ok(/bridge\?\.expandToLevel\(/.test(rail), '左侧图标条调 expandToLevel');
+  // 三个层级一个都不能少，且 0=全部
+  ok(/\[1, '1级'/.test(rail) && /\[2, '2级'/.test(rail) && /\[0, '全'/.test(rail),
+    '三个层级都在：1级 / 2级 / 全（0 = 全部）');
+  ok(/for \(const \[lv, label, tip\] of/.test(rail),
+    '用循环生成（新增层级时不用复制三份）');
+  // 图标条宽 34px，文字必须压短 —— 写全「展开一级」会溢出换行
+  ok(!/'展开一级'/.test(rail), '按钮文字是短标（不是「展开一级」，会溢出 34px）');
+
+  // 2) 右侧样式页的「视图」节必须**删掉**，不能两处都能点
+  ok(!/section\('视图'/.test(pn), '样式页不再有「视图」节');
+  ok(!/app\.bridge\.expandToLevel/.test(pn), '右侧栏不再调 expandToLevel（无第二处入口）');
+
+  // 3) 图标条要有分隔线与小标题，否则一串等距按钮看不出是两组
+  ok(/\.mm-rail-sep/.test(css) && /\.mm-rail-label/.test(css), '有分隔线与「层级」小标题样式');
+  ok(/mm-rail-sep/.test(rail) && /mm-rail-label/.test(rail), '图标条里渲染了分隔线与小标题');
+
+  // 4) 层级按钮要落 commit（否则撤销栈不记，改动也存不住）
+  ok(/bridge\?\.expandToLevel\(lv\);\s*\n\s*commit\(\);/.test(rail),
+    '展开后 commit（进撤销栈并持久化）');
+}
+
 group('多附件：XMind 往返（导出再导回）');
 
 {

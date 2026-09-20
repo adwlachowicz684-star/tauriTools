@@ -1406,14 +1406,11 @@ export function buildSide(app, opts = {}) {
         ),
       ),
       // 注：这里原先有个「整理布局」用 exec('arrange') —— 那是内核拖拽排序模块的内部命令
-      // （需要 index 参数），单独执行无效。真正的整理布局是 resetlayout，已在样式页「外观」段。
-      section('视图',
-        h('div.mm-row', {},
-          h('button.mm-btn', { onclick: () => { app.bridge.expandToLevel(1); app.api.commit(); } }, '展开一级'),
-          h('button.mm-btn', { onclick: () => { app.bridge.expandToLevel(2); app.api.commit(); } }, '二级'),
-          h('button.mm-btn', { onclick: () => { app.bridge.expandToLevel(0); app.api.commit(); } }, '全部'),
-        ),
-      ),
+      // （需要 index 参数），单独执行无效。真正的整理布局是 resetlayout，已在本页「外观」段。
+      //
+      // 「展开层级」已移到左侧图标条：它是**看整幅图**的操作，跟
+      // 「样式（针对选中节点）」不是一类事，放这儿每次用都要先切页再往下翻。
+      // 整节删掉，不留空节也不留第二处入口。
     );
   }
 

@@ -108,6 +108,22 @@ html, body {
 }
 .mm-rail .mm-btn { width: 34px; padding: 0; }
 
+/* 图标条里的「展开层级」：与文件库开关之间隔一条分隔线，
+   否则一串等距按钮看不出是两组（会以为「层级」也是文件库的操作） */
+.mm-rail-sep {
+  align-self: stretch;
+  height: 1px;
+  margin: 2px 0;
+  background: var(--bezel, rgba(255, 255, 255, .12));
+}
+.mm-rail-label {
+  font-size: var(--fs-11, 11px);
+  color: var(--text-mute);
+  text-align: center;
+}
+/* 按钮宽只有 34px，「1级」是两个字 —— 字号收到 11px 才不会溢出换行 */
+.mm-rail .mm-btn { font-size: var(--fs-11, 11px); }
+
 /* 右侧属性侧栏：对齐 C# MindMapPanel 的 Column 1（Width="276"），常驻不折叠。
    页签在顶栏最右，不占这里的高度，所以整栏都是内容区。 */
 .mm-side {

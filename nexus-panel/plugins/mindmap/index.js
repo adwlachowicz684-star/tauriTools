@@ -456,6 +456,25 @@ bootIframePlugin(async (ctx) => {
       title: settings.filesOpen ? '隐藏脑图文件列表' : '显示脑图文件列表',
       onclick: () => toggleFiles(),
     }, '📚'));
+
+    // ---- 展开层级 ----
+    // 原先在右侧栏「样式」页的「视图」节里。那位置很别扭：
+    // 展开层级是**看整幅图**的操作，跟「样式（针对选中节点）」不是一类事，
+    // 而且每次用都要先切到样式页再往下翻。左侧图标条常驻可见，一步就到。
+    //
+    // 按钮宽 34px，所以文字压成「1级 / 2级 / 全」—— 写全「展开一级」会溢出。
+    rail.appendChild(h('div.mm-rail-sep', {}));
+    rail.appendChild(h('span.mm-rail-label', {}, '层级'));
+    for (const [lv, label, tip] of [
+      [1, '1级', '从选中节点展开 1 级（更深层收起）'],
+      [2, '2级', '从选中节点展开 2 级（更深层收起）'],
+      [0, '全', '展开所有层级'],
+    ]) {
+      rail.appendChild(B(label, () => {
+        bridge?.expandToLevel(lv);
+        commit();
+      }, { title: tip }));
+    }
   }
 
   /* ------------------------- 页签 ------------------------- */
