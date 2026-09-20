@@ -132,6 +132,22 @@ export function hasStackChild(nodes: AnyNode[], id: string): boolean {
   return false;
 }
 
+/** 全部祖先（上方挂着的整串），自下而上 */
+export function ancestorsOf(nodes: AnyNode[], id: string): string[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const out: string[] = [];
+  const seen = new Set<string>([id]);
+  let cur = id;
+  for (let i = 0; i < nodes.length + 1; i += 1) {
+    const p = parentIdOf(byId.get(cur) ?? ({ id: cur } as AnyNode));
+    if (!p || !byId.has(p) || seen.has(p)) return out;
+    seen.add(p);
+    out.push(p);
+    cur = p;
+  }
+  return out;
+}
+
 /** 串顶（一直往上找，直到没有上级） */
 export function chainTopOf(nodes: AnyNode[], id: string): string {
   const byId = new Map(nodes.map((n) => [n.id, n]));
@@ -234,6 +250,72 @@ export function findSnapTarget(
 }
 
 /**
+ * **反向**吸附：被拖节点的**底边**贴近另一个节点的**顶边**。
+ *
+ * ================= 为什么需要它 =================
+ *
+ * findSnapTarget 只认"被拖节点的顶边贴近目标底边"，
+ * 于是只有**把 A 拖到 B 下方**才会嵌合；
+ * 而用户把 A 拖到 B **上方**（想把 B 接到 A 下面）时不生效。
+ *
+ * 从用户视角看，两块上下贴着就该成串 ——
+ * 谁是被拖的那一个不该影响结果。只支持一个方向会让人以为功能坏了。
+ *
+ * ================= 谁能被挂上来 =================
+ *
+ * ① 不能是被拖节点自己 / 后代 / **祖先**
+ *    祖先挂到自己下面会成环 —— 引擎的环检测会拒绝执行**整张图**，
+ *    而用户看不出是哪一块造成的。
+ * ② 自身不能有上级
+ *    从一条现成串的中间把节点抽走，会把原串断成两截：
+ *    它的上级没了下级、它的下级没了上级，而两截都还在画布上。
+ *    串顶（或独立节点）整串平移过来才不会拆散任何东西。
+ */
+export function findStackChild(
+  nodes: AnyNode[],
+  dragged: AnyNode,
+  exclude: Set<string>,
+): SnapHit | null {
+  const dw = widthOf(dragged);
+  const dx1 = posOf(dragged).x;
+  const dx2 = dx1 + dw;
+  const bottom = posOf(dragged).y + heightOf(dragged);
+
+  /*
+   * 祖先必须排除：把祖先挂到自己下面会成环。
+   * exclude 里只有"自己 + 后代"，不含祖先 —— 这里补上。
+   */
+  const blocked = new Set(exclude);
+  for (const a of ancestorsOf(nodes, dragged.id)) blocked.add(a);
+
+  let best: SnapHit | null = null;
+  let bestGap = Infinity;
+
+  for (const n of nodes) {
+    if (n.id === dragged.id || blocked.has(n.id)) continue;
+    // 已是串中间的一环：挂过来会把原串拆断
+    if (parentIdOf(n)) continue;
+
+    const nx1 = posOf(n).x;
+    const nx2 = nx1 + widthOf(n);
+    const overlap = Math.min(dx2, nx2) - Math.max(dx1, nx1);
+    if (overlap <= 0) continue;
+    if (overlap / Math.min(dw, nx2 - nx1) < SNAP_OVERLAP_RATIO) continue;
+
+    const gap = posOf(n).y - (bottom + STACK_GAP);
+    if (gap > SNAP_TOLERANCE || gap < -SNAP_TOLERANCE) continue;
+
+    const d = Math.abs(gap);
+    if (d < bestGap) {
+      bestGap = d;
+      best = { parentId: n.id, y: 0, x: 0 };
+    }
+  }
+
+  return best;
+}
+
+/**
  * 吸附后的位置：对齐 x、贴在父节点下方。
  *
  * findSnapTarget 与"归位"都要用 —— 两处各算一次的话，
@@ -251,6 +333,14 @@ export type StackDropPlan = {
   position?: { x: number; y: number };
   /** 显式给 null 表示解除嵌合 */
   stackParent?: string | null;
+  /**
+   * **反向**吸附：把别的节点挂到被拖节点**下面**。
+   *
+   * moves[0] 是直接子节点（要改 stackParent 的那个），
+   * 其余是它原来的下级 —— 整串跟着平移，否则串会被拆散
+   * （父挪走了、子还在原地，中间空一大截）。
+   */
+  attach?: { childId: string; moves: { id: string; position: { x: number; y: number } }[] };
 };
 
 /**
@@ -269,9 +359,10 @@ export type StackDropPlan = {
  *
  * ================= 优先级 =================
  *
- *   1. 命中吸附目标 → 吸附（覆盖式设 stackParent，不会出现双父）
- *   2. 拖开了且没命中 → 解除
- *   3. 没拖开但没命中（横向挪了点，重叠不够）→ 归位，关系不变
+ *   1. 下方命中 → 自己嵌到它下面（拖到别人下方）
+ *   2. 上方命中 → 把它挂到自己下面（拖到别人上方，反向吸附）
+ *   3. 拖开了且都没命中 → 解除
+ *   4. 没拖开但没命中（横向挪了点，重叠不够）→ 归位，关系不变
  */
 export function planStackDrop(
   all: AnyNode[],
@@ -284,6 +375,34 @@ export function planStackDrop(
   }
 
   const { oldParent, moved } = opts;
+
+  /*
+   * 反向吸附只在**真的拖动过**时才考虑。
+   *
+   * 没拖动（只挪了一点点）时节点还在原位，而它下方本来就紧邻着
+   * 自己的下级 —— 此时若触发反向吸附，会把已经挂在下面的节点
+   * 又"重新挂一次"，表现为位置和关系莫名被改。
+   */
+  if (moved) {
+    const child = findStackChild(all, dragged, opts.exclude);
+    // 本来就已经挂在自己下面的不必重挂
+    if (child && parentIdOf(all.find((n) => n.id === child.parentId) ?? ({ id: '' } as AnyNode)) !== dragged.id) {
+      const target = all.find((n) => n.id === child.parentId)!;
+      const to = snapPosOf(dragged);
+      const dx = to.x - posOf(target).x;
+      const dy = to.y - posOf(target).y;
+      const moves = [
+        { id: target.id, position: to },
+        // 整串跟随平移 —— 少了这段，父挪走了子还在原地，串会散
+        ...descendantsOf(all, target.id).map((id) => {
+          const n = all.find((m) => m.id === id)!;
+          return { id, position: { x: posOf(n).x + dx, y: posOf(n).y + dy } };
+        }),
+      ];
+      return { attach: { childId: target.id, moves } };
+    }
+  }
+
   if (!oldParent) return {};
 
   if (moved) {
