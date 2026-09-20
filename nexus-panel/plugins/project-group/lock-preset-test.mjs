@@ -97,7 +97,7 @@ console.log('\n=== #23 弹窗内监控告警开关 ===');
 {
   const dlg = fs.readFileSync(path.join(HERE, 'components/dialogs.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
-  const host = fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8')
+  const host = fs.readFileSync(path.join(HERE, 'components/Dialogs.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
 
   /* 必须是可选参数：弹窗在没有监控上下文的地方也能复用 */
@@ -119,7 +119,7 @@ console.log('\n=== #21 账面固定（与 ACL 是两件事）===');
 {
   const dlg = fs.readFileSync(path.join(HERE, 'components/dialogs.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
-  const host = fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8')
+  const host = fs.readFileSync(path.join(HERE, 'components/Dialogs.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
   const grid = fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');

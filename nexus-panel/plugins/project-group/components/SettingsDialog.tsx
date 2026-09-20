@@ -716,6 +716,26 @@ export function SettingsBody({
         </button>
       </div>
 
+      {/*
+        数据目录（只读展示）。
+
+        **必须显示实际路径本身，不能只有"打开"按钮**：
+        出问题时（要发日志、要手改 config、要告诉别人配置在哪），
+        用户需要的是**这个路径字符串** —— 光有按钮他还是不知道在哪。
+        主界面左栏那行能显示，但设置页才是"找配置"的第一去处。
+
+        它是 Tauri 的 app_data_dir 决定的，**不可改**，所以只读、不做成输入框。
+      */}
+      <div className="fpx-settings-datadir">
+        <span className="fpx-settings-datadir-label">数据目录</span>
+        {dataDir ? (
+          <code className="fpx-settings-datadir-path" title={dataDir}>{dataDir}</code>
+        ) : (
+          /* 外壳命令没编译进来时给个明确占位，不要留空 —— 留空会被当成加载失败 */
+          <span className="fpx-settings-datadir-path p-muted">（未取到）</span>
+        )}
+      </div>
+
       {/* 版本与数据目录：出问题（要发日志、要手改 config）时第一件事就是找这两个。
           外壳命令不存在时（旧版 Rust 未编译进来）显示占位，不阻塞设置页。 */}
       <div className="fpx-settings-foot">

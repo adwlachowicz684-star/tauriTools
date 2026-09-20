@@ -85,6 +85,20 @@ export function makeApi(ctx: PluginContext) {
 
     /** 图标与标签色一次保存（避免两次写入互相覆盖） */
     /* #13/#113 guiOnly=true → 只改界面那套（图标 + 标签色） */
+    /**
+     * #83 移除卡片。
+     * keep* 都是"保留"语义（**默认 true** = 与改造前一致，不会有人升级就丢数据）。
+     */
+    removeCard: (
+      path: string,
+      kind: string,
+      tabIndex: number | null,
+      keep: { link: boolean; icon: boolean; color: boolean },
+    ) =>
+      call<Snapshot>('fpx_remove_card', {
+        path, kind, tab_index: tabIndex,
+        keep_link: keep.link, keep_icon: keep.icon, keep_color: keep.color,
+      }),
     saveStyle: (
       path: string, iconRef: string | null, color: string | null, guiOnly?: boolean,
     ) =>

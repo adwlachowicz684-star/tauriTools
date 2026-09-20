@@ -164,9 +164,10 @@ console.log('\n=== #27 页签 × 关闭按钮 ===');
 
   t('页签上有 × 按钮', /fpx-tab-x/.test(g));
   /* 必须走同一个 onRemoveTab（带 tabRemoveCheck 保护），不能自己删 */
-  t('走 onRemoveTab（受保护）', /onClick=\{\(e\) => \{[\s\S]{0,200}?onRemoveTab\(i\)/.test(g));
+  /* 远端把这个回调从 onRemoveTab 改名为 onRemove，两种都接受 */
+  t('走页签移除回调（受保护）', /onClick=\{\(e\) => \{[\s\S]{0,200}?onRemove(Tab)?\(i\)/.test(g));
   /* 阻止冒泡：否则点击会先触发页签选中，双击时还会和重命名抢 */
-  t('阻止冒泡', /e\.stopPropagation\(\);[\s\S]{0,120}?onRemoveTab\(i\)/.test(g));
+  t('阻止冒泡', /e\.stopPropagation\(\);[\s\S]{0,120}?onRemove(Tab)?\(i\)/.test(g));
 
   /* 只剩一个页签时不显示 —— 点了会失败，按钮却在那儿，像是坏了 */
   t('用 canRemove 判定', /canRemove\(tabs\.length\)/.test(g));

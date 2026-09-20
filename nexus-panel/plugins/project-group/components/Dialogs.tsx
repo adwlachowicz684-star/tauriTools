@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { RemoveCardDialog } from './dialogs';
 import { RenameDialog } from './RenameDialog';
 import { RenameContentDialog } from './RenameContentDialog';
 import { CreateDialog, IconPickDialog, LockDialog, StyleDialog } from './dialogs';
@@ -50,6 +51,8 @@ export type Dialog =
   | { type: 'editor' }
   | { type: 'chain'; target: string; kind: CardKind }
   | { type: 'rename'; card: CardInfo; kind: CardKind }
+  /** #83 移除卡片：三个"保留"勾选 */
+  | { type: 'remove'; card: CardInfo; kind: CardKind }
   /** 搬家：选目标父目录 */
   | { type: 'move'; card: CardInfo; kind: CardKind }
   /** 内容区条目改名 */
@@ -204,6 +207,25 @@ export function Dialogs(props: DialogsProps) {
         />
       )}
 
+      {/* #83 移除卡片：先问保留什么，再真的移除 */}
+      {dialog.type === 'remove' && (
+        <RemoveCardDialog
+          card={dialog.card}
+          kind={dialog.kind}
+          onClose={() => setDialog({ type: 'none' })}
+          onConfirm={(keep) => {
+            const idx = (dialog.kind === 'group'
+              ? (s.boot?.groupTabs ?? []).findIndex(
+                (t) => (t.items ?? []).some((c) => c.path === dialog.card.path),
+              )
+              : undefined);
+            void s.removeCardFull(
+              dialog.kind, dialog.card.path,
+              idx === undefined || idx < 0 ? null : idx, keep,
+            );
+          }}
+        />
+      )}
       {dialog.type === 'rename' && (
         <RenameDialog
           card={dialog.card}

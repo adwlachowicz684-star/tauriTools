@@ -55,11 +55,11 @@ console.log('\n=== 2. 两个入口都要确认 ===');
   t('面板入口会先取预览', /chainPreview\(/.test(panel));
   t('侧边栏/快捷键入口也有 needConfirm 判断', /if \(!needConfirm\(\)\)/.test(app));
   t('侧边栏入口也会取预览', /chainPreview\(/.test(app));
-  /* 侧边栏入口的确认框已随弹窗块移到 `components/DialogsHub.tsx` ——
+  /* 侧边栏入口的确认框已随弹窗块移到 `components/Dialogs.tsx` ——
      断言必须跟着走，否则重构一次就误报一次"功能没了"。 */
   t('侧边栏入口会渲染确认框',
     /ChainConfirmDialog/.test(app) || /ChainConfirmDialog/.test(
-      fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8')));
+      fs.readFileSync(path.join(HERE, 'components/Dialogs.tsx'), 'utf8')));
   /* 只做一个入口的漏洞：runActionOnSelection 若直接调 sendAction 就绕过了 */
   const runBody = app.match(/const runActionOnSelection = \([\s\S]*?\n  \};/);
   t('runActionOnSelection 走的是带确认的入口',
@@ -109,7 +109,7 @@ console.log('\n=== 5. 确认框本身 ===');
   /* 两个入口共用同一个组件，避免改一处忘一处 */
   const panel = fs.readFileSync(path.join(HERE, 'components/ToolsPanel.tsx'), 'utf8');
   const app = fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8')
-    + fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8');
+    + fs.readFileSync(path.join(HERE, 'components/Dialogs.tsx'), 'utf8');
   t('面板与侧边栏共用同一个确认框组件',
     /ChainConfirmDialog/.test(panel) && /ChainConfirmDialog/.test(app));
   t('确认框独立成文件（不是各写一份）',

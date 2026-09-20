@@ -1460,3 +1460,27 @@
   font-size: var(--fs-11, 11px);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* ---------------- 设置页：数据目录只读展示 ----------------
+ * 路径可能很长，**必须能完整看到**：靠 title 悬停 + 省略号截断，
+ * 不做成输入框（它是 app_data_dir 决定的，改不了）。
+ */
+.fpx-settings-datadir {
+  display: flex; align-items: baseline; gap: var(--sp-4, 8px);
+  margin-top: var(--sp-6, 12px);
+  font-size: var(--fs-11, 11px);
+}
+.fpx-settings-datadir-label {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+.fpx-settings-datadir-path {
+  flex: 1; min-width: 0;
+  font-family: var(--font-mono, monospace);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  cursor: default;
+  user-select: text;
+}
+
+/* ---------------- 移除卡片的保留勾选（#83）---------------- */
+.fpx-removekeep { display: flex; flex-direction: column; gap: var(--sp-3, 6px); }

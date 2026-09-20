@@ -70,7 +70,10 @@ console.log('\n=== 4. 迁移框架 ===');
 {
   t('migrate_config 存在', /pub fn migrate_config\(cfg: &mut FpxConfig\)/.test(store));
   const fn = store.slice(store.indexOf('pub fn migrate_config'), store.indexOf('pub fn load_config'));
-  t('逐级升（while 而非 if）', /while cfg\.schema_version < model::CURRENT_SCHEMA/.test(fn));
+  /* 常量名改为直接引入（不再带 model:: 前缀），两种写法都接受 ——
+     断言绑死某一种写法会在改名后误报"功能没了"。 */
+  t('逐级升（while 而非 if）',
+    /while cfg\.schema_version < (model::)?CURRENT_SCHEMA/.test(fn));
   t('已是最新版则返回空（不每次刷一句"已迁移"）',
     /已是最新版则返回空/.test(store));
   t('未知版本有兜底提示', /未知的配置版本 \{other\}/.test(fn));

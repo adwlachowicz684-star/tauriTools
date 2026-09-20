@@ -442,6 +442,69 @@ export function IconPickDialog({
   );
 }
 
+/**
+ * #83 移除卡片：三个"保留"勾选。
+ *
+ * 默认是**全保留** —— 与改造前行为一致（此前只摘页签、其它一律留着）。
+ * 不这么做的话，用户升级后按老习惯移除，会连带删掉链接和图标，而界面上无从察觉。
+ *
+ * 「保留链接」只对项目卡显示：链接是项目→项目组的 junction，项目组卡没有。
+ */
+export function RemoveCardDialog({
+  card, kind, onClose, onConfirm,
+}: {
+  card: { path: string; name: string };
+  kind: 'project' | 'group';
+  onClose: () => void;
+  onConfirm: (keep: { link: boolean; icon: boolean; color: boolean }) => void;
+}) {
+  const [keepLink, setKeepLink] = useState(true);
+  const [keepIcon, setKeepIcon] = useState(true);
+  const [keepColor, setKeepColor] = useState(true);
+
+  return (
+    <Modal title="移除卡片" onClose={onClose} width={420}>
+      <div className="p-mono p-muted" style={{ marginBottom: 'var(--sp-6, 12px)', wordBreak: 'break-all' }}>
+        {card.name}
+      </div>
+      <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginBottom: 'var(--sp-5, 10px)' }}>
+        取消勾选即同时清理对应痕迹。
+      </div>
+      <div className="fpx-removekeep">
+        {kind === 'project' && (
+          <CheckLine
+            checked={keepLink}
+            onChange={() => setKeepLink(!keepLink)}
+            title="保留链接"
+            subtitle="取消则撤销该项目到项目组的链接（删 junction）"
+          />
+        )}
+        <CheckLine
+          checked={keepIcon}
+          onChange={() => setKeepIcon(!keepIcon)}
+          title="保留图标"
+          subtitle="取消则清除该卡片的图标登记（两套一起清）"
+        />
+        <CheckLine
+          checked={keepColor}
+          onChange={() => setKeepColor(!keepColor)}
+          title="保留标签色"
+          subtitle="取消则清除该卡片的标签色（两套一起清）"
+        />
+      </div>
+      <div className="p-row" style={{ marginTop: 'var(--sp-6, 12px)', justifyContent: 'flex-end' }}>
+        <button className="p-btn" onClick={onClose}>取消</button>
+        <button
+          className="p-btn danger"
+          onClick={() => { onConfirm({ link: keepLink, icon: keepIcon, color: keepColor }); onClose(); }}
+        >
+          移除
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 /** 图标 + 标签颜色（色盘为完整版：预设 24 色 / 自定义常用色 / RGB / HEX / 吸管） */
 export function StyleDialog({
   api, path, icon, color, inherited, customColors,

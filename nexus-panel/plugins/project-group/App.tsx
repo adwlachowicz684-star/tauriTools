@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ContentPanel } from './components/ContentPanel';
-import { Dialogs, type Dialog, type PendingSend } from './components/DialogsHub';
+import { Dialogs, type Dialog, type PendingSend } from './components/Dialogs';
 import { CardGrid, TabBar, type DragPayload } from './components/CardGrid';
 import { SideRail } from './components/SideRail';
 import { StackedGroups } from './components/StackedGroups';
@@ -380,7 +380,7 @@ export default function App() {
     base.push({
       label: '从页签移除',
       danger: true,
-      onClick: () => s.removeCard(kind, card.path),
+      onClick: () => setDialog({ type: 'remove', card, kind }),
     });
     return base;
   };
@@ -668,9 +668,7 @@ export default function App() {
           hotkeyId: 'remove' as HotkeyId,
           title: '从当前分类 / 页签移除（Delete）',
           danger: true,
-          onClick: needCard((c) => void s.removeCard(
-            focus, c.path, focus === 'group' ? groupTabIndexOf(c.path) : undefined,
-          )),
+          onClick: needCard((c) => setDialog({ type: 'remove', card: c, kind: focus })),
         },
       ],
     },
@@ -685,9 +683,7 @@ export default function App() {
     )),
     color: needCard((c) => setDialog({ type: 'style', card: c })),
     icon: needCard((c) => void openIconPicker(c)),
-    remove: needCard((c) => void s.removeCard(
-      focus, c.path, focus === 'group' ? groupTabIndexOf(c.path) : undefined,
-    )),
+    remove: needCard((c) => setDialog({ type: 'remove', card: c, kind: focus })),
     refresh: () => { refreshChainActions(); s.refresh(); },
     clearInvalid: () => void s.clearInvalid(),
     cycleTab,
@@ -990,7 +986,7 @@ export default function App() {
       </div>
 
       {/* ---------------- 弹窗 ----------------
-          全部形态集中在 `components/DialogsHub.tsx`（约 200 行）。
+          全部形态集中在 `components/Dialogs.tsx`（约 200 行）。
           App 是组装层，不该再塞这么多彼此无关的条件渲染。 */}
       <Dialogs
         s={s}

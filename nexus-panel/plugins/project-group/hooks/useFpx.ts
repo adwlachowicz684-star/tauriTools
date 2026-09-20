@@ -256,6 +256,22 @@ export function useFpx() {
    * tabIndex 与 addCard 同理：项目组栏堆叠后，卡片所在分类不一定等于 activeTab。
    * 不传就用 activeTab（项目栏仍是页签形态，行为不变）。
    */
+  /**
+   * #83 移除卡片并按需清理痕迹（链接 / 图标 / 标签色）。
+   *
+   * 走专门的 `fpx_remove_card` 而不是先改 config 再补几次删除，
+   * 是因为"是否还登记在别的页签里"只有后端在同一事务里才判得准 ——
+   * 分开做的话，中途另一个写入者插进来就会判错。
+   */
+  const removeCardFull = useCallback(async (
+    kind: CardKind, path: string, tabIndex: number | null,
+    keep: { link: boolean; icon: boolean; color: boolean },
+  ) => {
+    await api.removeCard(path, kind, tabIndex, keep);
+    await refresh();
+    pushLog(`已移除：${path}`);
+  }, [api, refresh, pushLog]);
+
   const removeCard = useCallback(async (kind: CardKind, path: string, tabIndex?: number) => {
     const idx = tabIndex ?? activeTab[kind];
     await updateConfig((d) => {
@@ -539,7 +555,7 @@ export function useFpx() {
     selProject, setSelProject, selGroup, setSelGroup,
     activeTab, setActiveTab,
     content, contentKind, setContentKind, focusDir, scan,
-    updateConfig, addCard, removeCard, moveCard, moveCardAcross, addTab, renameTab, removeTab,
+    updateConfig, addCard, removeCard, removeCardFull, moveCard, moveCardAcross, addTab, renameTab, removeTab,
     tabRemoveCheck, moveTab,
     createLink, removeLink, setTagColor, setIcon, saveStyle, saveCustomColors, setLock, refresh,
   };

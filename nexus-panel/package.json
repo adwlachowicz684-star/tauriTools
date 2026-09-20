@@ -100,7 +100,9 @@
     "test:pg-icon-modeless": "node plugins/project-group/icon-modeless-test.mjs",
     "test:pg-icon-gui": "node plugins/project-group/icon-gui-test.mjs",
     "test:pg-win-icon": "node plugins/project-group/win-icon-test.mjs",
-    "test:pg-link-rename": "node plugins/project-group/link-rename-test.mjs"
+    "test:pg-link-rename": "node plugins/project-group/link-rename-test.mjs",
+    "test:pg-remove-card": "node plugins/project-group/remove-card-test.mjs",
+    "test:pg-settings-datadir": "node plugins/project-group/settings-datadir-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

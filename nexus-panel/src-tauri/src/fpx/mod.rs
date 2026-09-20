@@ -876,6 +876,77 @@ pub fn fpx_remove_link(
     core_remove_link(&dir, &project)
 }
 
+/// 移除卡片（#83）。
+///
+/// 除了把它从页签里摘掉，还可以一并清理**它留下的痕迹**：
+/// 链接（junction）、图标登记、标签色。
+///
+/// 三个开关都是"**保留**"语义且默认 true —— 与改造前的行为一致
+/// （此前移除只摘页签、其它一律留着），不会有人因为升级就丢数据。
+///
+/// ## 一个必须守住的约束：只在"已经不在任何页签里"时才清理
+///
+/// 同一张卡片可以同时登记在多个页签里。从页签 A 移除时若顺手清掉图标，
+/// **页签 B 里那张卡也跟着没了图标**，而用户只要求移除 A 里的那张。
+/// 这种"改了不该改的地方"没有报错，用户只会觉得图标莫名其妙丢了。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_remove_card(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+    path: String,
+    kind: Option<String>,
+    tab_index: Option<usize>,
+    keep_link: Option<bool>,
+    keep_icon: Option<bool>,
+    keep_color: Option<bool>,
+) -> Result<Snapshot, String> {
+    let dir = store::data_dir(&app, &state)?;
+    let kind = kind.as_deref().unwrap_or("project");
+    let key = store::normalize_key(&path);
+    let still = |cfg: &FpxConfig| -> bool {
+        let tabs = if kind == "group" { &cfg.group_tabs } else { &cfg.project_tabs };
+        tabs.iter().any(|t| t.items.iter().any(|p| store::normalize_key(p) == key))
+    };
+
+    // 1) 摘页签 + 清图标 / 标签色（一个事务）
+    let (snap, need_unlink) = store::with_config(&dir, |cfg| {
+        let tabs = if kind == "group" { &mut cfg.group_tabs } else { &mut cfg.project_tabs };
+        match tab_index {
+            Some(i) => {
+                if let Some(t) = tabs.get_mut(i) {
+                    t.items.retain(|p| store::normalize_key(p) != key);
+                }
+            }
+            None => {
+                for t in tabs.iter_mut() {
+                    t.items.retain(|p| store::normalize_key(p) != key);
+                }
+            }
+        }
+
+        if !still(cfg) {
+            if !keep_icon.unwrap_or(true) {
+                cfg.folder_icons.retain(|k, _| store::normalize_key(k) != key);
+                cfg.folder_gui_icons.retain(|k, _| store::normalize_key(k) != key);
+            }
+            if !keep_color.unwrap_or(true) {
+                cfg.tag_colors.retain(|k, _| store::normalize_key(k) != key);
+                cfg.tag_gui_colors.retain(|k, _| store::normalize_key(k) != key);
+            }
+        }
+        let unlink = !still(cfg)
+            && !keep_link.unwrap_or(true)
+            && kind == "project";
+        Ok((snapshot(&dir, cfg), unlink))
+    })?;
+
+    // 2) 断链会删 junction（动文件系统），单独一步；失败直接抛给前端
+    if need_unlink {
+        return core_remove_link(&dir, &path);
+    }
+    Ok(snap)
+}
+
 /// 扫描项目组下的 agent / skill / rule。
 ///
 /// 列目录也是"读"（目录结构本身就算信息），所以一并收口。
