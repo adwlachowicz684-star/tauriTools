@@ -1,7 +1,7 @@
 import { Handle, Position } from '@xyflow/react';
 import type { ReactNode } from 'react';
 import { getDef } from '../nodes/registry';
-import { validateNode, LEVEL_COLOR, LEVEL_TEXT, type IssueLevel } from '../engine/nodeValidate';
+import { validateNode, LEVEL_COLOR, LEVEL_TEXT, LEVEL_SHORT, type IssueLevel } from '../engine/nodeValidate';
 import { normalizeSize, type NodeSize } from '../types';
 import { stackParentOf } from '../engine/stack';
 
@@ -9,7 +9,7 @@ import { stackParentOf } from '../engine/stack';
  * 节点卡片外壳 —— 10 种画布卡片共用的骨架。
  *
  * 抽它的直接原因：每个卡片组件都各自抄了一遍
- * `Handle + node-head（圆点/标题/状态徽章）+ node-cli + node-foot`，
+ * `Handle + node-head（状态徽章/标题）+ node-line--lead + node-foot`，
  * 而且**颜色写了两份** —— 节点定义里声明了 meta.color，卡片里又硬编码了一遍：
  *
  *   nodes/defs/ocr.tsx        color: '#f472b6'
@@ -26,16 +26,6 @@ import { stackParentOf } from '../engine/stack';
  * components/inspectors/inspectorOf.tsx 的注释。
  */
 
-/** 状态文案。各卡片默认用这套，需要更贴切措辞的可按状态覆盖 */
-export const NODE_STATUS_TEXT: Record<string, string> = {
-  idle: '待运行',
-  pending: '排队中',
-  running: '执行中',
-  success: '已完成',
-  failed: '失败',
-  skipped: '已跳过',
-};
-
 export type NodeShellProps = {
   id: string;
   /** 节点类型（'ocr' / 'task' …），用于取 meta.color */
@@ -44,10 +34,8 @@ export type NodeShellProps = {
   selected?: boolean;
   /** 附加在 node-card 上的类名（如 'ocr'、'parallel'），用于各卡片自己的样式钩子 */
   className?: string;
-  /** node-cli 里的一行说明 */
+  /** node-line--lead 里的一行说明 */
   tag?: ReactNode;
-  /** 覆盖状态文案（如 OCR 的「识别中 / 已识别」比「执行中 / 已完成」更贴切） */
-  statusText?: Record<string, string>;
   /**
    * 覆盖左边条颜色（节点类型色）。
    * 默认取 def.meta.color；只有"同类型不同变体用不同色"才需要传，
@@ -63,21 +51,21 @@ export type NodeShellProps = {
 };
 
 export function NodeShell({
-  id, type, data, selected, className, tag, statusText, typeColor,
+  id, type, data, selected, className, tag, typeColor,
   hasTarget = true, hasSource = true, footExtra, children,
 }: NodeShellProps) {
   const status = data.status ?? 'idle';
   const size: NodeSize = normalizeSize((data as { size?: unknown }).size);
-  const text = statusText?.[status] ?? NODE_STATUS_TEXT[status] ?? status;
   // 节点类型色的唯一来源：注册表里那份。未注册的类型走兜底定义（灰色），不会崩
   const color = typeColor ?? getDef(type).meta.color;
 
   /*
-   * 圆点是**配置预警**，不是运行状态（运行状态由右侧徽章呈现）。
+   * 圆点是**配置预警**，它在徽章里（徽章写的是配置状态，不是运行状态）。
    *
    * 以前圆点用类型色、左边条被 status 覆盖，结果"哪种节点"和"跑得怎么样"
    * 混在一起：节点一跑起来，左边条就变色，类型反而认不出了。
-   * 现在分开 —— 左边条恒为类型色（认种类），圆点报配置完整度（认能不能跑）。
+   * 现在分开 —— 左边条恒为类型色（认种类），徽章报配置完整度（认能不能跑），
+   * 运行状态一律看任务窗口。
    */
   const issue = validateNode({ data });
   const dot: IssueLevel = issue.level;
@@ -99,14 +87,30 @@ export function NodeShell({
       {hasTarget ? <Handle type="target" position={Position.Left} /> : null}
       {hasSource ? <Handle type="source" position={Position.Right} /> : null}
 
+      {/*
+       * 标题行：**配置状态在左、标题在右**。
+       *
+       * 两处改动都是为了把"能不能跑"和"跑得怎么样"分开：
+       *
+       *   · 徽章里写的是**配置状态**（就绪 / 缺项 / 缺参数），
+       *     不再写"待运行 / 执行中 / 已完成" —— 运行状态一律看任务窗口，
+       *     画布上刷那些字只会每跑一次整片抖一遍。
+       *
+       *   · 圆点**放进徽章里**：它俩说的是同一件事（配置完整度），
+       *     分开摆会让圆点像第二个状态、不知道跟徽章是一回事。
+       *
+       * 徽章放左边而不是右边：它是"看这个节点之前先看它"的信息，
+       * 而且标题长短不一时，靠右的徽章会被挤得左右跳。
+       */}
       <div className="node-head">
         <span
-          className={`node-dot level-${dot}`}
-          style={{ background: LEVEL_COLOR[dot] }}
+          className={`node-badge level-${dot}`}
           title={issue.messages.length ? issue.messages.join('；') : LEVEL_TEXT[dot]}
-        />
+        >
+          <span className={`node-dot level-${dot}`} style={{ background: LEVEL_COLOR[dot] }} />
+          {LEVEL_SHORT[dot]}
+        </span>
         <span className="node-title">{data.label}</span>
-        <span className={`node-badge badge-${status}`}>{text}</span>
       </div>
 
       {/* 红色时把原因写出来 —— 只靠一个小红点，用户不知道缺什么 */}

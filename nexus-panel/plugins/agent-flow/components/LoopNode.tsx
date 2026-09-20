@@ -2,7 +2,7 @@ import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { LoopNodeData } from '../types';
 import { LOOP_MODE_META } from '../types';
 import type { LoopFlowNode } from '../flowTypes';
-import { NodeShell, NODE_STATUS_TEXT } from './NodeShell';
+import { NodeShell } from './NodeShell';
 
 /** 把分隔符显示成人能看懂的样子 */
 function sepLabel(sep: string): string {
@@ -32,12 +32,6 @@ export default function LoopNode({ id, data, selected }: NodeProps<LoopFlowNode>
       selected={selected}
       className="loop"
       tag={`循环 · ${LOOP_MODE_META[d.mode]?.label ?? d.mode} · 不调用 CLI`}
-      statusText={{
-        ...NODE_STATUS_TEXT,
-        running: '循环进行中',
-        success: '循环完成',
-        failed: '有轮次失败',
-      }}
       footExtra={
         <span className="node-line--foot">
           上限 {d.maxIterations} · {d.onError === 'stop' ? '遇错停止' : '遇错继续'}

@@ -1,5 +1,5 @@
 import type { NodeProps } from '@xyflow/react';
-import { NodeShell, NODE_STATUS_TEXT } from './NodeShell';
+import { NodeShell } from './NodeShell';
 import { opBrief, briefArg } from '../engine/ops';
 
 /**
@@ -21,7 +21,6 @@ export function OpNode({ id, type, data, selected }: NodeProps) {
       type={type}
       data={d}
       selected={selected}
-      statusText={{ ...NODE_STATUS_TEXT, running: '运算中' }}
     >
       <div className="node-line node-line--brief">{brief}</div>
     </NodeShell>

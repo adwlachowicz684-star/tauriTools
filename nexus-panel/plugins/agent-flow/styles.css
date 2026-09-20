@@ -225,17 +225,41 @@ body { background: var(--af-bg); color: var(--af-fg); }
 /*
  * 左边条现在**只表示节点类型**（由 NodeShell 用内联样式注入 def.meta.color），
  * 不再被运行状态覆盖 —— 以前一跑起来左边条就变色，反而认不出是哪类节点了。
- * 运行状态改由右侧徽章（.node-badge 的文字与颜色）呈现。
- *
- * 下面这几条规则因此不再需要。留着的话会被内联样式压过、不生效，
- * 却会让人误以为还在起作用。
+ * 运行状态**完全不在卡片上呈现** —— 跑起来看任务窗口。
  */
 .node-head { display: flex; align-items: center; gap: 6px; }
 .node-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .node-title { font-weight: 600; font-size: var(--fs-14, 14px); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.node-badge { font-size: var(--fs-11, 11px); padding: 1px 6px; border-radius: var(--r-pill, 999px); background: var(--af-raised); color: var(--af-dim); }
-.badge-success { color: var(--af-ok); } .badge-failed { color: var(--af-bad); }
-.badge-skipped { color: var(--af-warn); } .badge-running { color: var(--af-running); }
+
+/*
+ * 配置状态徽章 —— 放在标题**左边**，圆点装在里面。
+ *
+ * ================= 为什么写配置状态而不是运行状态 =================
+ *
+ * 以前徽章写"待运行 / 执行中 / 已完成"，而那些信息任务窗口里全都有。
+ * 画布上刷运行状态的结果是：每跑一次，整片卡片的文字抖一遍，
+ * 而用户真正需要在画布上知道的其实是"没跑之前能不能跑"。
+ *
+ * 现在只写配置完整度（就绪 / 缺项 / 缺参数）——
+ * 这是画布上唯一缺的那一项。缺什么由徽章下方的红色提示行给出。
+ *
+ * ================= 为什么圆点放进徽章 =================
+ *
+ * 圆点与徽章说的是同一件事（配置完整度）。分开摆时圆点像第二个状态，
+ * 看不出它跟右边的徽章是一回事 —— 尤其 warn 的圆点带光环、
+ * 在视觉上比旁边的文字更抢眼。
+ */
+.node-badge {
+  flex: none;
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: var(--fs-11, 11px); padding: 1px 6px; border-radius: var(--r-pill, 999px);
+  background: var(--af-raised); color: var(--af-dim);
+}
+/* 徽章里的圆点比独立摆放时小一号：它现在是徽章的一部分，不是主角 */
+.node-badge .node-dot { width: 6px; height: 6px; }
+.node-badge.level-ok { color: var(--af-ok); }
+.node-badge.level-warn { color: var(--af-warn); }
+.node-badge.level-error { color: var(--af-bad); background: rgba(239, 68, 68, .12); }
 .node-foot { display: flex; justify-content: space-between; margin-top: 6px; font-size: var(--fs-11, 11px); color: var(--af-dim); }
 
 /* ==================================================================
