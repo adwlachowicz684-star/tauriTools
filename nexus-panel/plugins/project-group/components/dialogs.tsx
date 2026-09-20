@@ -160,6 +160,18 @@ export function LockDialog({
     >
       <div className="p-mono p-muted" style={{ marginBottom: 'var(--sp-6, 12px)', wordBreak: 'break-all' }}>{path}</div>
 
+      {/* #13/#113 必须让用户知道自己在改哪一套 —— 改错了表现为
+          "界面变了资源管理器没变"或反之，而用户只会以为功能没生效。 */}
+      <label className="fpx-icongui">
+        <input type="checkbox" checked={guiOnly} onChange={(e) => setGuiOnly(e.target.checked)} />
+        <span>
+          仅界面内生效
+          <span className="fpx-icongui-hint">
+            （{guiOnly ? '只改界面这套，资源管理器显示不变' : '改资源管理器这套，界面同步显示'}）
+          </span>
+        </span>
+      </label>
+
       {/* #22 预设档位：四个组合都有名字，比"随便勾两个框"好认。 */}
       <div className="fpx-lock-presets">
         {LOCK_PRESETS.map((p) => (
@@ -454,13 +466,16 @@ export function StyleDialog({
   inherited: boolean;
   customColors: string[];
   onClose: () => void;
-  onApply: (icon: string | null, color: string | null) => void;
+  /** #13/#113 第二个参数是 guiOnly：决定改界面那套还是资源管理器那套 */
+  onApply: (icon: string | null, color: string | null, guiOnly: boolean) => void;
   onSaveCustom: (colors: string[]) => void;
   onPickIconFile: () => void;
   onLog: (msg: string, isError?: boolean) => void;
 }) {
   const [ic, setIc] = useState(icon ?? '');
   const [cl, setCl] = useState<string | null>(color);
+  /* #13/#113 两套：默认改资源管理器那套（保持原有行为） */
+  const [guiOnly, setGuiOnly] = useState(false);
   // 与进入时相比有变化才算"未保存"，避免只是打开看一眼也弹确认
   const dirty = (ic.trim() || null) !== (icon ?? null) || cl !== color;
 
@@ -472,9 +487,9 @@ export function StyleDialog({
       guardClose={dirty}
       footer={
         <>
-          <button className="p-btn" onClick={() => { onApply(null, null); onClose(); }}>清除</button>
+          <button className="p-btn" onClick={() => { onApply(null, null, guiOnly); onClose(); }}>清除</button>
           <button className="p-btn" onClick={onClose}>取消</button>
-          <button className="p-btn primary" onClick={() => { onApply(ic.trim() || null, cl); onClose(); }}>
+          <button className="p-btn primary" onClick={() => { onApply(ic.trim() || null, cl, guiOnly); onClose(); }}>
             应用
           </button>
         </>

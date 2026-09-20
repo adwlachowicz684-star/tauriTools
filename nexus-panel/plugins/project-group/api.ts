@@ -84,9 +84,12 @@ export function makeApi(ctx: PluginContext) {
       }),
 
     /** 图标与标签色一次保存（避免两次写入互相覆盖） */
-    saveStyle: (path: string, iconRef: string | null, color: string | null) =>
+    /* #13/#113 guiOnly=true → 只改界面那套（图标 + 标签色） */
+    saveStyle: (
+      path: string, iconRef: string | null, color: string | null, guiOnly?: boolean,
+    ) =>
       call<Snapshot>('fpx_save_style', {
-        path, icon_ref: iconRef, color,
+        path, icon_ref: iconRef, color, gui_only: guiOnly ?? null,
       }),
 
     listIcons: () => call<string[]>('fpx_list_icons'),

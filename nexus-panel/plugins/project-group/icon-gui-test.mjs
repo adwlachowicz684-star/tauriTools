@@ -79,14 +79,48 @@ console.log('\n=== 4. 显示优先界面那套 ===');
   t('没有直接用 c.icon 取缩略图', !/thumbs\?\.\[c\.icon\]/.test(grid));
 }
 
-console.log('\n=== 5. 界面开关与参数传递 ===');
+console.log('\n=== 5. 标签色的两套（#113）===');
+{
+  const model = fs.readFileSync(path.join(RS, 'model.rs'), 'utf8');
+  const store = fs.readFileSync(path.join(RS, 'store.rs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const mod = fs.readFileSync(path.join(RS, 'mod.rs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const cli = fs.readFileSync(path.join(RS, 'cli.rs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const types = fs.readFileSync(path.join(HERE, 'types.ts'), 'utf8');
+
+  t('有 tag_gui_colors 字段', /pub tag_gui_colors: HashMap<String, String>/.test(model));
+  t('默认值已初始化', /tag_gui_colors: HashMap::new\(\)/.test(model));
+  t('types 有 tagGuiColors', /tagGuiColors/.test(types));
+
+  /* **GUI 那套优先**，且继承也要按同一优先级 */
+  t('自身 GUI 优先', /tag_gui_colors\.get\(path\)\.or_else\(\|\| cfg\.tag_colors\.get\(path\)\)/.test(store));
+  t('继承先看组的 GUI 色', /cfg\.tag_gui_colors\.get\(&rec\.lib\)/.test(store));
+  t('继承再看组的普通色', /if let Some\(c\) = cfg\.tag_colors\.get\(&rec\.lib\)/.test(store));
+
+  /* 只动目标那一套 */
+  t('save_style 选表', /let color_table = if gui_only \{ &mut cfg\.tag_gui_colors \} else \{ &mut cfg\.tag_colors \}/.test(mod));
+  t('set_tag_color 选表', /let table = if gui_only \{ &mut cfg\.tag_gui_colors \} else \{ &mut cfg\.tag_colors \}/.test(mod));
+
+  /* 搬家 / 改名换键两套都要挪 */
+  t('搬家挪 GUI 色', /remap\(cfg\.tag_gui_colors\.clone\(\), &key, &it\.dst\)/.test(cli));
+  t('改名换键挪 GUI 色', /remap_keys\(std::mem::take\(&mut cfg\.tag_gui_colors\)/.test(mod));
+
+  /* 命令参数 */
+  t('save_style 有 gui_only', /gui_only: Option<bool>/.test(mod));
+  t('MCP 侧走普通那套', /, false\)\s*\n\s*\.map_err\(\|e\| err\(&e\)\)/.test(
+    fs.readFileSync(path.join(RS, 'mcp.rs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')));
+
+  const api = fs.readFileSync(path.join(HERE, 'api.ts'), 'utf8');
+  t('前端 saveStyle 传 gui_only', /gui_only: guiOnly \?\? null/.test(api));
+}
+
+console.log('\n=== 6. 界面开关与参数传递 ===');
 {
   const dlg = fs.readFileSync(path.join(HERE, 'components/dialogs.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
   const host = fs.readFileSync(path.join(HERE, 'components/Dialogs.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
-  const types = fs.readFileSync(path.join(HERE, 'types.ts'), 'utf8');
   const api = fs.readFileSync(path.join(HERE, 'api.ts'), 'utf8');
+  const types = fs.readFileSync(path.join(HERE, 'types.ts'), 'utf8');
 
   t('有「仅界面内生效」开关', /仅界面内生效/.test(dlg));
   t('开关是 checkbox', /type="checkbox"/.test(dlg));
@@ -103,7 +137,12 @@ console.log('\n=== 5. 界面开关与参数传递 ===');
   t('api 有 guiOnly 参数', /guiOnly\?: boolean/.test(api));
   t('api 传 gui_only', /gui_only: guiOnly \?\? null/.test(api));
   t('types 有 folderGuiIcons', /folderGuiIcons/.test(types));
-  t('types CardInfo 有 guiIcon', /guiIcon: string \| null/.test(types));
+  t('types CardInfo 有 guiIcon', /guiIcon: string \| null/.test(
+    fs.readFileSync(path.join(HERE, 'types.ts'), 'utf8')));
+  /* 样式弹窗（图标+标签色）也要有同一个开关 */
+  t('样式弹窗也有该开关', /仅界面内生效/.test(dlg));
+  t('样式弹窗 onApply 传 guiOnly', /onApply\(ic\.trim\(\) \|\| null, cl, guiOnly\)/.test(dlg));
+  t('宿主透传第三个参数', /s\.saveStyle\(dialog\.card\.path, icon, color, gui\)/.test(host));
 }
 
 done();

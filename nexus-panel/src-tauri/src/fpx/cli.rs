@@ -292,6 +292,8 @@ fn migrate(
            搬完家界面专属图标**静默失效**（卡片显示回默认图标且无任何报错）。 */
         cfg.folder_gui_icons = remap(cfg.folder_gui_icons.clone(), &key, &it.dst);
         cfg.tag_colors = remap(cfg.tag_colors.clone(), &key, &it.dst);
+        /* #113 同 #13：两套都要挪，漏了静默失效 */
+        cfg.tag_gui_colors = remap(cfg.tag_gui_colors.clone(), &key, &it.dst);
         for l in cfg.locks.iter_mut() {
             if store::normalize_key(&l.path) == key { l.path = it.dst.clone(); }
         }

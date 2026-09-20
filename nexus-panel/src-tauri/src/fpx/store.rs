@@ -655,13 +655,25 @@ pub fn build_tabs(
 fn resolve_tag_color(path: &str, cfg: &FpxConfig, records: &[LinkRecord], kind: &str)
     -> (Option<String>, bool)
 {
-    if let Some(c) = cfg.tag_colors.get(path) {
+    /*
+     * #113 两套标签色，界面上**GUI 那套优先**。
+     *
+     * 继承（项目组 → 项目）也按同一优先级走：
+     * 自身 GUI > 自身普通 > 组 GUI > 组普通。
+     * 不这么排的话，"组设了 GUI 色而项目设了普通色"会显示错的那个。
+     */
+    if let Some(c) = cfg.tag_gui_colors.get(path).or_else(|| cfg.tag_colors.get(path)) {
         return (Some(c.clone()), false);
     }
     // 项目组变色传播到所有引用它的项目（与原 C# 版 PropagateGroupColor 一致）
     if kind == "project" {
         let key = normalize_key(path);
         if let Some(rec) = records.iter().find(|r| normalize_key(&r.project) == key) {
+            let from_gui = cfg.tag_gui_colors.get(&rec.lib)
+                .or_else(|| cfg.tag_gui_colors.get(&rec.group));
+            if let Some(c) = from_gui {
+                return (Some(c.clone()), true);
+            }
             if let Some(c) = cfg.tag_colors.get(&rec.lib).or_else(|| cfg.tag_colors.get(&rec.group)) {
                 return (Some(c.clone()), true);
             }

@@ -944,8 +944,10 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             within_raw(&path)?;
             // 用只改颜色的版本：不先读 folder_icons 再传回去，
             // 那样会把读到的旧图标写回，覆盖期间别人设的新图标。
+            /* #113 MCP 侧走普通那套（guiOnly 默认 false）——
+               AI 设的颜色应当与"界面默认那套"一致，否则用户会以为没生效。 */
             super::core_set_tag_color(&dir, &path,
-                if color.is_empty() { None } else { Some(color) })
+                if color.is_empty() { None } else { Some(color) }, false)
                 .map_err(|e| err(&e))?;
             json!({ "content": [{ "type": "text", "text": "标签颜色已保存" }] })
         }

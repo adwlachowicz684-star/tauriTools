@@ -1420,3 +1420,29 @@
 }
 .fpx-icongui input { cursor: pointer; }
 .fpx-icongui-hint { opacity: .6; }
+
+/* ---------------- 软件图标：拖放区 / 待应用条（#110 #111 #112）---------------- */
+.fpx-windrop {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 46px; padding: 6px 10px; margin-bottom: var(--sp-4, 8px);
+  border: 1px dashed var(--border); border-radius: var(--r-sm);
+  background: var(--surface-sunk);
+  font-size: var(--fs-11, 11px); opacity: .75;
+  cursor: pointer;
+  transition: opacity var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.fpx-windrop:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* 拖到上面才强调，平时不抢注意力 */
+.fpx-windrop.over { opacity: 1; box-shadow: var(--sh-in-md); }
+.fpx-settings-iconbtn.pending { box-shadow: var(--sh-in-sm); }
+.fpx-winapply {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: var(--sp-4, 8px); padding: 5px 8px;
+  border-radius: var(--r-sm); background: var(--surface-sunk);
+  box-shadow: var(--sh-in-sm); font-size: var(--fs-11, 11px);
+}
+.fpx-winapply-img { width: 20px; height: 20px; object-fit: contain; flex-shrink: 0; }
+.fpx-winapply-name {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}

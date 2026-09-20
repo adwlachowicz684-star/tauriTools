@@ -94,6 +94,13 @@ pub struct FpxConfig {
     /// 卡片标签颜色：路径 → #RRGGBB。
     #[serde(default)]
     pub tag_colors: HashMap<String, String>,
+    /// #113 界面专属标签色：路径 → 颜色。
+    ///
+    /// 与 `tag_colors` 两套、互不覆盖。界面上**优先显示这一套**，
+    /// 它是原版 GuiFolderColors 的语义：界面里用一套配色，
+    /// 但不影响以颜色为语义的其它用途（比如把颜色当分类标记传给外部脚本）。
+    #[serde(default)]
+    pub tag_gui_colors: HashMap<String, String>,
     /// 用户在色盘里保存的自定义常用色（#RRGGBB，最多 24 个）。
     #[serde(default)]
     pub custom_colors: Vec<String>,
@@ -354,6 +361,7 @@ impl Default for FpxConfig {
             link_agent_renames: HashMap::new(),
             link_agents_pinned: vec![],
             tag_colors: HashMap::new(),
+            tag_gui_colors: HashMap::new(),
             custom_colors: Vec::new(),
             folder_icons: HashMap::new(),
             folder_gui_icons: HashMap::new(),

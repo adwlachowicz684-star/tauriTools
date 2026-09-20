@@ -64,6 +64,17 @@ export function SettingsBody({
   const [iconFiles, setIconFiles] = useState<string[]>([]);
   const [iconThumbs, setIconThumbs] = useState<Record<string, string>>({});
   const [iconMsg, setIconMsg] = useState('');
+  /*
+   * #110 两步确认：点图标只是**暂存**，要再点「应用」才真的换。
+   *
+   * 为什么不能点了就换：换软件图标是**窗口级**操作，
+   * 每点一次窗口图标就变一次。用户想试几个图标时窗口一直在闪，
+   * 而且没有"取消"的余地 —— 只能再点回原来那个（还得记得是哪个）。
+   */
+  const [pendingIcon, setPendingIcon] = useState<{ path: string; thumb?: string } | null>(null);
+  /* #111 拖放区：拖到上面才高亮，平时不抢注意力 */
+  const [winDropOver, setWinDropOver] = useState(false);
+  const [winBusy, setWinBusy] = useState('');
 
   const [autoSelect, setAutoSelect] = useState(config.autoSelect);
   const [quickLink, setQuickLink] = useState(config.quickLink);
@@ -197,19 +208,69 @@ export function SettingsBody({
    * 把数据目录 icons/ 里的某个图标设为软件窗口图标。
    * 后端要的是绝对路径，而 icons/ 就在数据目录下，用 bootstrap 给的 dataDir 拼出来。
    */
-  const applyWindowIcon = async (name: string) => {
-    setIconMsg('');
+  const iconsAbs = (name: string) => {
     const base = dataDir.replace(/[\\/]+$/, '');
     const sep = base.includes('\\') ? '\\' : '/';
-    const full = `${base}${sep}icons${sep}${name}`;
+    return `${base}${sep}icons${sep}${name}`;
+  };
+
+  /** #110 第一步：只暂存，不动窗口 */
+  const stageWindowIcon = (path: string, thumb?: string) => {
+    setIconMsg('');
+    setPendingIcon({ path, thumb });
+  };
+
+  /** #110 第二步：真正应用 */
+  const applyWindowIcon = async () => {
+    if (!pendingIcon) return;
+    const name = pendingIcon.path.split(/[\\/]/).pop() ?? pendingIcon.path;
     try {
-      await api.setWindowIcon(full);
+      await api.setWindowIcon(pendingIcon.path);
       setIconMsg(`已把「${name}」设为软件图标（重启后恢复默认）`);
-      onLog(`已更换软件图标：${full}`);
+      onLog(`已更换软件图标：${pendingIcon.path}`);
+      setPendingIcon(null);
     } catch (e) {
       const msg = errText(e);
       setIconMsg(msg);
       onLog(`设置软件图标失败：${msg}`, true);
+    }
+  };
+
+  /**
+   * #111 拖放 / #112 粘贴进来的图片：先存进数据目录 icons/，再暂存待应用。
+   *
+   * **为什么不直接拿拖进来的路径去 setWindowIcon**：
+   * 拖放拿到的是文件内容（前端在沙箱里，拿不到本地绝对路径），
+   * 所以只能先落盘到 icons/ —— 顺带也让它成为"我的图标"的一员，
+   * 之后在卡片图标里也能直接选用。
+   */
+  const ingestImage = async (file: File, srcLabel: string) => {
+    const lower = file.name.toLowerCase();
+    /* 后端只认图片；把别的东西当图标传过去会得到一条看不懂的报错 */
+    if (!/\.(ico|png|jpe?g|bmp)$/.test(lower)) {
+      onLog(`「${file.name}」不是图片（只支持 .ico / .png / .jpg / .bmp）`, true);
+      return;
+    }
+    setWinBusy(srcLabel);
+    try {
+      const b64 = await new Promise<string>((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => {
+          /* dataURL 形如 `data:image/png;base64,xxx`，后端要的是纯 base64 */
+          const v = String(fr.result ?? '').split(',')[1] ?? '';
+          v ? resolve(v) : reject(new Error('读取内容为空'));
+        };
+        fr.onerror = () => reject(new Error('读取文件失败'));
+        fr.readAsDataURL(file);
+      });
+      const saved = await api.saveIconData(file.name, b64);
+      setIconFiles((prev) => (prev.includes(saved) ? prev : [...prev, saved]));
+      stageWindowIcon(saved, `data:image/png;base64,${b64}`);
+      onLog(`已收入「${file.name}」，点「应用」生效`);
+    } catch (e) {
+      onLog(`${srcLabel}失败：${errText(e)}`, true);
+    } finally {
+      setWinBusy('');
     }
   };
 
@@ -379,23 +440,80 @@ export function SettingsBody({
           更换本软件窗口在任务栏 / 标题栏上的图标。这是窗口级设置，不属于插件数据；
           重启软件后会回到打包时的默认图标。
         </div>
+        {/*
+          #111 拖放区 + #112 粘贴。
+          两者共用 ingestImage：拖放与粘贴在前端拿到的都是**文件内容**，
+          落盘后的处理完全一致，没必要分开写。
+        */}
+        <div
+          className={`fpx-windrop${winDropOver ? ' over' : ''}`}
+          onDragOver={(e) => { e.preventDefault(); setWinDropOver(true); }}
+          onDragLeave={() => setWinDropOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setWinDropOver(false);
+            const f = e.dataTransfer?.files?.[0];
+            if (f) void ingestImage(f, '拖入');
+          }}
+          /* 粘贴要挂在这块上：window 级监听会与本页其它输入框的粘贴打架
+             （在别处复制路径时也会往这里塞图）。限定在软件图标这一区，
+             用户点了这里再粘贴，意图就明确了。 */
+          onPaste={(e) => {
+            const item = Array.from(e.clipboardData?.items ?? [])
+              .find((it) => it.type.startsWith('image/'));
+            if (!item) return;
+            const f = item.getAsFile();
+            if (f) { e.preventDefault(); void ingestImage(f, '粘贴'); }
+          }}
+          tabIndex={0}
+          role="button"
+          title="把 .ico / .png 拖到这里，或在此处粘贴剪贴板里的图片"
+        >
+          {winBusy
+            ? `${winBusy}处理中…`
+            : '把图标文件拖到这里，或点此处后粘贴剪贴板图片'}
+        </div>
+
         {iconFiles.length === 0 ? (
           <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
-            数据目录 icons/ 下还没有图标。可先在卡片的「图标与标签」里导入，再来这里选用。
+            数据目录 icons/ 下还没有图标。可先拖入 / 粘贴一个，或在卡片的「图标与标签」里导入。
           </div>
         ) : (
           <div className="fpx-settings-icons">
-            {iconFiles.map((n) => (
-              <button
-                key={n}
-                className="fpx-settings-iconbtn"
-                title={`设为软件图标：${n}`}
-                onClick={() => void applyWindowIcon(n)}
-              >
-                {iconThumbs[n] ? <img src={iconThumbs[n]} alt="" /> : '◆'}
-                <span>{n}</span>
-              </button>
-            ))}
+            {iconFiles.map((n) => {
+              const abs = iconsAbs(n);
+              const on = pendingIcon?.path === abs;
+              return (
+                <button
+                  key={n}
+                  /* #110 选中的是**待应用**，不是"已应用" */
+                  className={`fpx-settings-iconbtn${on ? ' pending' : ''}`}
+                  title={on ? `待应用：${n}` : `暂存为软件图标：${n}`}
+                  onClick={() => stageWindowIcon(abs, iconThumbs[n])}
+                >
+                  {iconThumbs[n] ? <img src={iconThumbs[n]} alt="" /> : '◆'}
+                  <span>{n}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* #110 第二步：确认才真的换窗口图标 */}
+        {pendingIcon && (
+          <div className="fpx-winapply">
+            <img
+              className="fpx-winapply-img"
+              src={pendingIcon.thumb ?? iconThumbs[pendingIcon.path] ?? ''}
+              alt=""
+            />
+            <span className="fpx-winapply-name">
+              待应用：{pendingIcon.path.split(/[\\/]/).pop()}
+            </span>
+            <button className="p-btn mini primary" onClick={() => void applyWindowIcon()}>
+              应用
+            </button>
+            <button className="p-btn mini" onClick={() => setPendingIcon(null)}>取消</button>
           </div>
         )}
         {iconMsg && (

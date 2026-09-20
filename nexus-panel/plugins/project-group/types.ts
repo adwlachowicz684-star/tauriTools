@@ -44,6 +44,8 @@ export interface FpxConfig {
   folderIcons: Record<string, string>;
   /** #13 界面专属图标（不写 desktop.ini）。界面上优先显示这一套 */
   folderGuiIcons: Record<string, string>;
+  /** #113 界面专属标签色（另一套，与普通标签色互不覆盖） */
+  tagGuiColors: Record<string, string>;
   locks: LockItem[];
   createProjectDir: string | null;
   createGroupDir: string | null;

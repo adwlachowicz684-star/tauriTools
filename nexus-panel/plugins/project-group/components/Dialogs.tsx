@@ -289,7 +289,8 @@ export function Dialogs(props: DialogsProps) {
           inherited={dialog.card.tagColorInherited}
           customColors={boot.config.customColors}
           onClose={() => setDialog({ type: 'none' })}
-          onApply={(icon, color) => s.saveStyle(dialog.card.path, icon, color)}
+          /* #13/#113 第三个参数透传 guiOnly */
+          onApply={(icon, color, gui) => s.saveStyle(dialog.card.path, icon, color, gui)}
           onSaveCustom={(colors) => s.saveCustomColors(colors)}
           onPickIconFile={() => openIconPicker(dialog.card)}
           onLog={s.pushLog}

@@ -295,6 +295,8 @@ pub(crate) fn core_rename_folder(
         /* #13 同上：改名后 GUI 图标若不跟着换键，等于静默丢掉 */
         cfg.folder_gui_icons = remap_keys(std::mem::take(&mut cfg.folder_gui_icons), &old_key, &new_path);
         cfg.tag_colors = remap_keys(std::mem::take(&mut cfg.tag_colors), &old_key, &new_path);
+        /* #113 同上：改名换键两套都要跟着 */
+        cfg.tag_gui_colors = remap_keys(std::mem::take(&mut cfg.tag_gui_colors), &old_key, &new_path);
         for l in cfg.locks.iter_mut() {
             if store::normalize_key(&l.path) == old_key {
                 l.path = new_path.clone();
@@ -731,6 +733,7 @@ pub(crate) fn core_save_style(
     path: &str,
     icon_ref: Option<String>,
     color: Option<String>,
+    gui_only: bool,
 ) -> Result<Snapshot, String> {
     // 会写 desktop.ini 与目录属性，只认已登记的卡片
     ensure_path_allowed(dir, path)?;
@@ -741,9 +744,11 @@ pub(crate) fn core_save_style(
     let color = color.unwrap_or_default();
     let color = color.trim();
     let color = if color.is_empty() { None } else { Some(color.to_uppercase()) };
+    /* #113 两套标签色：只动目标那一套（与 core_set_tag_color 同一规则） */
+    let color_table = if gui_only { &mut cfg.tag_gui_colors } else { &mut cfg.tag_colors };
     match color {
-        Some(c) => { cfg.tag_colors.insert(path.to_string(), c); }
-        None => { cfg.tag_colors.remove(path); }
+        Some(c) => { color_table.insert(path.to_string(), c); }
+        None => { color_table.remove(path); }
     }
 
     let icon = icon_ref.unwrap_or_default();
@@ -777,14 +782,21 @@ pub(crate) fn core_set_tag_color(
     dir: &std::path::Path,
     path: &str,
     color: Option<String>,
+    gui_only: bool,
 ) -> Result<Snapshot, String> {
     store::with_config(dir, |cfg| {
         // 空串 / null 视为恢复默认（删除记录）
         let c = color.as_deref().unwrap_or_default().trim().to_uppercase();
+        /*
+         * #113 两套标签色：**只动目标那一套**。
+         * 设 GUI 色不该把普通色也删掉（反之亦然）——
+         * 两套是独立的，清空其中一套不能影响另一套。
+         */
+        let table = if gui_only { &mut cfg.tag_gui_colors } else { &mut cfg.tag_colors };
         if c.is_empty() {
-            cfg.tag_colors.remove(path);
+            table.remove(path);
         } else {
-            cfg.tag_colors.insert(path.to_string(), c);
+            table.insert(path.to_string(), c);
         }
         Ok(snapshot(dir, cfg))
     })
@@ -995,6 +1007,9 @@ pub fn fpx_set_lock(
 }
 
 /// 一次性保存卡片外观（图标 + 标签色），避免前端分两次写入互相覆盖。
+///
+/// #13/#113 `gui_only` 决定改的是界面那套还是资源管理器那套
+/// （两套图标 + 两套标签色，互不覆盖）。
 #[tauri::command(rename_all = "snake_case")]
 pub fn fpx_save_style(
     app: AppHandle,
@@ -1002,9 +1017,10 @@ pub fn fpx_save_style(
     path: String,
     icon_ref: Option<String>,
     color: Option<String>,
+    gui_only: Option<bool>,
 ) -> Result<Snapshot, String> {
     let dir = store::data_dir(&app, &state)?;
-    core_save_style(&dir, &path, icon_ref, color)
+    core_save_style(&dir, &path, icon_ref, color, gui_only.unwrap_or(false))
 }
 
 /// 设置文件夹图标。
