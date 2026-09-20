@@ -52,6 +52,28 @@
   --ctl-disabled-opacity: .45;
   --ctl-disabled-cursor: not-allowed;
 
+  /* ---------- 选中态的"加粗"：用描边，不改 font-weight ----------
+     --------------------------------------------------------------------
+     事故：选中/突出态用 `font-weight: 600` 表示强调。字重一变，字形
+     宽度就变 → 按钮整体宽度变 → 整排按钮互相推挤、布局跳动。
+
+     实测（13px system-ui）：「运算符」「AND」「OR」这类短标签加粗后
+     每个宽 2~4px；一排按钮就累积出十几 px 的位移。
+
+     而宽度跳动在两类场景下尤其刺眼：
+       · 页签/开关组（kind === k ? ' primary' : ''）—— 点一下整排挪位
+       · 密集排布的工具栏 —— 按钮被挤到换行，整行高度也跟着变
+
+     改用 **-webkit-text-stroke 描边**模拟"字变实了"：描边绘制在字形
+     轮廓外侧，**不参与布局计算**，所以宽度纹丝不动。
+
+     为什么不用真字重 + 预留宽度（data-text + ::before 撑开）？
+     那要给每个按钮加属性、改约 20 处 JSX，且所有按钮常态都会宽 2~4%。
+     描边方案零 JSX 改动、零常态代价，视觉上"变实"与"变粗"难以分辨。
+
+     0.4px 是实测值：0.2 看不出来，0.6 以上描边开始互相粘连、糊成一团。 */
+  --ctl-faux-bold: 0.4px;
+
   /* ---------- 控件阴影档位 ----------
      此前 --ctl-shadow 只定义在 `.nx-btn, .p-btn, .mm-btn` 那条规则**内部**，
      是局部变量 —— 别的按钮类（agent-flow 的 .toolbar button / .kind-btn /
@@ -147,10 +169,12 @@
 .nx-btn.primary,
 .p-btn.primary {
   color: var(--accent);
-  font-weight: 600;
-  /* 刻意不加大阴影：它已靠强调色 + 字重突出了，
+  /* 刻意不加大阴影：它已靠强调色 + 文字描边突出了，
      再加大只会变成"漂浮"，而不是"更醒目"。 */
   box-shadow: var(--ctl-shadow);
+  /* 强调不改 font-weight：字重会改字形宽度 → 按钮宽度变 → 整排布局跳动。
+     改用描边模拟"变实"，描边不参与布局计算（见 :root 的 --ctl-faux-bold） */
+  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
 }
 
 /* 选中态：内凹（按下去了）。
@@ -159,8 +183,10 @@
 .nx-btn.on,
 .mm-btn.on {
   color: var(--accent);
-  font-weight: 600;
   box-shadow: var(--ctl-shadow-press);
+  /* 强调不改 font-weight：字重会改字形宽度 → 按钮宽度变 → 整排布局跳动。
+     改用描边模拟"变实"，描边不参与布局计算（见 :root 的 --ctl-faux-bold） */
+  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
 }
 
 .nx-btn.danger,

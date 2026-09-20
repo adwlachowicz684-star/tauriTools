@@ -91,6 +91,9 @@ export const CONTROLS_VARS = [
      **新增变量必须同步登记到这里**：本轮就因为漏登记，把规范的写法
      误报成"变量未定义"（这是同一个坑第三次了）。 */
   '--ctl-shadow', '--ctl-shadow-sm', '--ctl-shadow-press',
+  /* 选中态的"加粗"改用描边（不占布局）。同样是新增变量 → 必须登记，
+     否则会被判成"变量未定义"（这是同一个坑第四次了）。 */
+  '--ctl-faux-bold',
 ];
 
 /* 运行时由 JSX **内联注入**的变量（brushVars，见 utils/visual.ts）。

@@ -390,8 +390,10 @@ body {
 .nav-item:hover { color: var(--text); }
 .nav-item.active {
   color: var(--accent);
-  font-weight: 600;          /* 强调色文字 ≥ 12.5px 时加粗，见顶部规范五 */
   box-shadow: var(--sh-in-lg);
+  /* 强调不改 font-weight：字重会改字形宽度 → 按钮宽度变 → 整排布局跳动。
+     改用描边模拟"变实"，描边不参与布局计算（见 :root 的 --ctl-faux-bold） */
+  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
 }
 .nav-item.active::before {
   content: "";
@@ -1276,9 +1278,11 @@ html.theme-transition *:not(.spinner) {
 }
 .set-tab.active {
   color: var(--accent);
-  font-weight: 600;          /* 13px 的强调色文字，加粗才吃得住 */
   background: var(--surface);
   box-shadow: var(--sh-out-sm);
+  /* 强调不改 font-weight：字重会改字形宽度 → 按钮宽度变 → 整排布局跳动。
+     改用描边模拟"变实"，描边不参与布局计算（见 :root 的 --ctl-faux-bold） */
+  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
 }
 /*
  * 选中态左侧的强调色竖条。

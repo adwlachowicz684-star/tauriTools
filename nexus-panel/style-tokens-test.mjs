@@ -491,6 +491,58 @@ console.log('\n=== 10a. 各插件按钮阴影统一（由主题管） ===');
   t('primary 与 on 不是同一档（防止再次被合并成一组）',
     primarySh && onSh && primarySh !== onSh, `primary=${primarySh} on=${onSh}`);
 
+  /* ---------- 状态切换不得改变盒模型尺寸 ----------
+     事故：选中/突出态用 `font-weight: 600` 表示强调，而字重会改**字形宽度**
+     → 按钮整体变宽 → 整排互相推挤、布局跳动（project-group 的 kind 切换、
+     agent-flow 的 AND/OR 切换都在跳）。
+
+     正确做法：用 -webkit-text-stroke 描边模拟"变实"。描边画在字形轮廓
+     外侧，**不参与布局计算**。
+
+     这条断言扫**所有**状态规则，不只按钮 —— 宽度/内边距/边框在 hover、
+     .on、.active 上变化都是同一类问题。 */
+  const SIZE_PROPS = ['font-weight', 'font-size', 'padding', 'border-width',
+                      'letter-spacing', 'width', 'height', 'min-width', 'min-height', 'margin'];
+  const STATE_SEL = /:(hover|active|focus)|(\.on\b)|(\.active\b)|(\.primary\b)|(\.sel\b)|(\.selected\b)|(\.current\b)|(\.checked\b)|\[aria-selected/;
+  const layoutShift = [];
+  for (const f of ['css/controls.css', 'css/dialog.css', 'css/neumorphism.css',
+                   'plugins/project-group/style.css', 'plugins/agent-flow/styles.css',
+                   'plugins/mindmap/styles.css']) {
+    const raw = read(f);
+    const css = raw.replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const m of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+      const sel = m[1].trim();
+      if (!STATE_SEL.test(sel)) continue;
+      const body = m[2];
+      for (const prop of SIZE_PROPS) {
+        if (!new RegExp('(?:^|;|\\s)' + prop + '\\s*:').test(body)) continue;
+        /* ::before/::after 是装饰性伪元素，撑的是自己不是宿主 → 不算布局位移 */
+        if (/::(before|after)\s*$/.test(sel)) continue;
+        layoutShift.push(`${f.split('/').pop()} ${sel.slice(0, 34).replace(/\s+/g, ' ')} → ${prop}`);
+      }
+    }
+  }
+  t('状态切换不改变盒模型尺寸（字重/内边距/宽高都不能变）',
+    layoutShift.length === 0, layoutShift.slice(0, 5).join(' | ') || '全部稳定');
+
+  /* 强调改用描边，而不是真字重。
+     注意必须先剥掉 CSS 注释再查 —— 我们刚写进去的说明里就含
+     "font-weight" 这个词，不剥会把注释当成实现，断言永远为假。 */
+  const ctlNc = read('css/controls.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  const block = (sel) => {
+    const m = ctlNc.match(new RegExp('(?:^|\\})([^}]*?' + sel.replace(/\./g, '\\.')
+      + '[^}]*?)\\{([^}]*)\\}', 's'));
+    return m ? m[2] : '';
+  };
+  const prim = block('.p-btn.primary');
+  t('强调态用 --ctl-faux-bold 描边模拟加粗',
+    /--ctl-faux-bold:/.test(ctlNc) && /-webkit-text-stroke:\s*var\(--ctl-faux-bold/.test(prim),
+    prim.slice(0, 80));
+  t('强调态不再写 font-weight（会改字形宽度）',
+    prim !== '' && !/font-weight/.test(prim), prim.slice(0, 80));
+  const onBlk = block('.mm-btn.on');
+  t('选中态同样不写 font-weight', onBlk !== '' && !/font-weight/.test(onBlk), onBlk.slice(0, 80));
+
   /* 投射阴影不再各写一份：--af-cast-* 必须指向共享的 --sh-cast-* */
   t('--af-cast-* 收敛到 --sh-cast-*（两份定义必然漂移）',
     /--af-cast-sm:\s*var\(--sh-cast-sm\)/.test(af)
