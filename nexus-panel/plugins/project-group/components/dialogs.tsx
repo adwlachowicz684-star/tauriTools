@@ -160,18 +160,6 @@ export function LockDialog({
     >
       <div className="p-mono p-muted" style={{ marginBottom: 'var(--sp-6, 12px)', wordBreak: 'break-all' }}>{path}</div>
 
-      {/* #13/#113 必须让用户知道自己在改哪一套 —— 改错了表现为
-          "界面变了资源管理器没变"或反之，而用户只会以为功能没生效。 */}
-      <label className="fpx-icongui">
-        <input type="checkbox" checked={guiOnly} onChange={(e) => setGuiOnly(e.target.checked)} />
-        <span>
-          仅界面内生效
-          <span className="fpx-icongui-hint">
-            （{guiOnly ? '只改界面这套，资源管理器显示不变' : '改资源管理器这套，界面同步显示'}）
-          </span>
-        </span>
-      </label>
-
       {/* #22 预设档位：四个组合都有名字，比"随便勾两个框"好认。 */}
       <div className="fpx-lock-presets">
         {LOCK_PRESETS.map((p) => (

@@ -54,6 +54,13 @@ export function SettingsBody({
   /** 开发者模式开关（#46） */
   onDevModeChange?: (on: boolean) => void;
   /**
+   * 「显示快捷键」开关（#22）。
+   *
+   * Settings.tsx 已经在传这个回调了，但类型里一直没写 —— 解构出来是
+   * `any`，调用点又用了 `?.()`，于是开关点了不报错也没反应。
+   */
+  onShowShortcutsChange?: (on: boolean) => void;
+  /**
    * 写入配置；传的对象会与当前草稿合并。
    * 返回 Promise 是因为后面要紧接着通知后端重算定时器——
    * 后端是读磁盘上的配置，必须等这次写入落盘，否则读到的是旧间隔。

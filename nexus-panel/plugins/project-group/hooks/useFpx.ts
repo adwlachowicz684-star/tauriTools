@@ -420,8 +420,13 @@ export function useFpx() {
    * 图标 + 标签色一次保存。
    * 两者必须合并：分开调会各自基于同一份旧配置草稿并发写回，后一次覆盖前一次。
    */
-  const saveStyle = useCallback(async (path: string, iconRef: string | null, color: string | null) => {
-    const snap = await run('保存外观', () => api.saveStyle(path, iconRef, color));
+  /* #13/#113 guiOnly=true → 只改界面那套（图标 + 标签色），不写 desktop.ini。
+     必须原样透传给 api，否则调用方传了也白传：用户勾「仅界面内生效」没反应，
+     而界面上又看不出哪一步丢了。 */
+  const saveStyle = useCallback(async (
+    path: string, iconRef: string | null, color: string | null, guiOnly?: boolean,
+  ) => {
+    const snap = await run('保存外观', () => api.saveStyle(path, iconRef, color, guiOnly));
     if (snap) {
       applySnapshot(snap);
       pushLog(`已保存外观：${path}`);
@@ -436,8 +441,10 @@ export function useFpx() {
    * 「删除颜色」，而 boot 可能还没刷到刚保存的颜色（尤其继承自项目组的情况），
    * 那样回传 null 会把颜色直接抹掉。所以走 fpx_set_icon 这个只改图标的命令。
    */
-  const setIcon = useCallback(async (path: string, iconRef: string | null) => {
-    const snap = await run('保存图标', () => api.setIcon(path, iconRef));
+  const setIcon = useCallback(async (
+    path: string, iconRef: string | null, affectExplorer?: boolean, guiOnly?: boolean,
+  ) => {
+    const snap = await run('保存图标', () => api.setIcon(path, iconRef, affectExplorer, guiOnly));
     if (snap) {
       applySnapshot(snap);
       pushLog(`已保存图标：${path}`);
