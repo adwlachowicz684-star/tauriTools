@@ -1484,3 +1484,23 @@
 
 /* ---------------- 移除卡片的保留勾选（#83）---------------- */
 .fpx-removekeep { display: flex; flex-direction: column; gap: var(--sp-3, 6px); }
+
+/* ---------------- 链接名可点（#82）----------------
+ * 做成按钮：光标与键盘可达都要有反馈，否则用户不知道能点。
+ * 下划线用虚线（区别于普通链接），hover 才转实线。
+ */
+.fpx-link-name.edit {
+  background: none; border: 0; padding: 0;
+  font: inherit; color: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.fpx-link-name.edit:hover {
+  text-decoration-style: solid;
+  color: var(--accent);
+}
+.fpx-link-name.edit:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}

@@ -1118,6 +1118,10 @@ function Column({
            加了末尾的虚线添加框（#287）之后才名副其实。 */
         emptyHint={`还没有${title}，点下面的「＋ 添加${title}」选一个文件夹`}
         onJumpToGroup={onJumpToGroup}
+        /* #82：点明细里的链接名 → 直接编辑那条链接。
+           用**行里的 group** 而不是卡片的汇总 linkedGroup ——
+           一个项目可以有多条链接记录，只传卡片会改错对象。 */
+        onEditLink={(project, group) => setConfirmLink({ project, group })}
         onAdd={onAdd}
         addHint={`添加${title}`}
       />

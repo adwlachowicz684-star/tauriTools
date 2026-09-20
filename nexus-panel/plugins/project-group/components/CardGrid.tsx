@@ -313,7 +313,7 @@ export function TabBar({
 /** 卡片网格：选中 / 打开 / 右键菜单 / 拖拽（跨栏=分配，同栏=排序） */
 export function CardGrid({
   kind, cards, selected, thumbs, onSelect, onOpen, onMove, onCrossDrop, menus,
-  emptyHint, onJumpToGroup, onAdd, addHint,
+  emptyHint, onJumpToGroup, onEditLink, onAdd, addHint,
 }: {
   kind: CardKind;
   cards: CardInfo[];
@@ -337,6 +337,16 @@ export function CardGrid({
    * 而定位要的是路径，得由外层从链接记录里反查。
    */
   onJumpToGroup?: (card: CardInfo) => void;
+  /**
+   * #82 点链接名→编辑该项目的链接。
+   *
+   * 传的是「项目路径 + 这一行指向的项目组路径」，不是整张卡片：
+   * 明细里每一行的 group 可能不同（一个项目可以有多条链接记录），
+   * 只传卡片会拿到 `linkedGroup`（汇总值），编辑的就不是用户点的那一条。
+   *
+   * 不传就不渲染成可点 —— 比渲染一个点了没反应的按钮好。
+   */
+  onEditLink?: (project: string, group: string) => void;
 }) {
   const [menu, setMenu] = useState<{ card: CardInfo; x: number; y: number } | null>(null);
   /**
@@ -673,7 +683,21 @@ export function CardGrid({
               {sortedDetails(c.linkDetails!).map((d) => (
                 <div className={`fpx-link-row ${d.state}`} key={d.name + d.group}>
                   <span className="fpx-link-dot" title={STATE_TITLE[d.state]} />
-                  <span className="fpx-link-name" title={d.name}>{d.name}</span>
+                  {/* #82 点链接名直接编辑这条链接。
+                      看清某一行不对（失效 / 链错组）时，
+                      最短路径就是点那一行本身，而不是回到卡片菜单里找。 */}
+                  {onEditLink ? (
+                    <button
+                      className="fpx-link-name edit"
+                      title={`编辑这条链接：${d.name}${d.groupName ? ` → ${d.groupName}` : ''}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEditLink(c.path, d.group);
+                      }}
+                    >{d.name}</button>
+                  ) : (
+                    <span className="fpx-link-name" title={d.name}>{d.name}</span>
+                  )}
                   {kind === 'project' && d.groupName && (
                     <>
                       <span className="fpx-link-to">→</span>
