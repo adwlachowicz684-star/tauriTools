@@ -267,3 +267,104 @@ export function opSummary(kind: string, op: string): string {
   };
   return map[kind]?.[op] ?? op;
 }
+
+/* ------------------------------------------------------------------ */
+/* 卡片摘要                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 摘要里一个参数的显示。
+ *
+ * 空值统一显示成 `?` —— 不写"待填"，是因为摘要要能看出
+ * **缺的是哪一个**：`10 ＋ ?` 一眼就知道第二个数没填，
+ * 而"参数待填"还得再点开面板去找。
+ *
+ * 模板（如 `{{task1.output}}`）原样显示 ——
+ * 用户要确认的正是"我引用的是哪个上游"，替他渲染掉反而看不出来。
+ */
+export function briefArg(v: unknown, max = 16): string {
+  const s = String(v ?? '').trim().replace(/\s+/g, ' ');
+  if (!s) return '?';
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+/** 二元算术在摘要里的写法 */
+const MATH_SIGN: Record<string, string> = {
+  add: '＋', sub: '－', mul: '×', div: '÷', mod: 'mod',
+};
+
+/** 比较运算在摘要里的写法 */
+const COMPARE_SIGN: Record<string, string> = {
+  eq: '＝', neq: '≠', gt: '>', gte: '≥', lt: '<', lte: '≤',
+};
+
+/**
+ * 带参数的一句话摘要（卡片与导出说明共用）。
+ *
+ * ================= 为什么必须带参数 ====================
+ *
+ * 以前只显示运算名（如"＋"），改了参数在卡片上看不出任何变化 ——
+ * 用户改完以为没生效，只好点开面板再确认一遍。
+ * 现在把参数写进摘要，改一个字卡片就跟着变。
+ *
+ * ================= 谁在用 ====================
+ *
+ * 卡片（OpNode）与导出的 Markdown 说明（scriptExport）共用这一份。
+ * 两处各写一份的话，会出现"卡片上写着 1＋2、导出说明里只有'加'"——
+ * 同一件事两种说法，而两边都没错，错的是分了两处。
+ */
+export function opBrief(kind: string, d: Record<string, unknown>): string {
+  const op = String(d.op ?? '');
+  const a = briefArg(d.a);
+  const b = briefArg(d.b);
+  const c = briefArg(d.c);
+
+  if (kind === 'math') {
+    const sign = MATH_SIGN[op];
+    if (sign) return `${a} ${sign} ${b}`;
+    // min / max 是函数名写法，写成 `min(1, 2)` 比 `1 min 2` 好认
+    if (op === 'min' || op === 'max') return `${op}(${a}, ${b})`;
+    // 单目：取整、绝对值 —— 没有第二个数
+    if (op === 'round' || op === 'floor' || op === 'ceil' || op === 'abs') return `${op}(${a})`;
+    return opSummary(kind, op);
+  }
+
+  if (kind === 'text') {
+    switch (op) {
+      case 'concat': return `${a} ＋ ${b}`;
+      case 'length': return `长度(${a})`;
+      case 'upper': return `转大写(${a})`;
+      case 'lower': return `转小写(${a})`;
+      case 'trim': return `去空格(${a})`;
+      // 替换要三个参数才说得清，用箭头表示"换成"
+      case 'replace': return `${a}：${b} → ${c}`;
+      case 'substr': return `${a}[${b}~${c}]`;
+      case 'split': return `${a} 第 ${c} 段`;
+      case 'join': return `连接 ${a}（用「${b}」）`;
+      case 'repeat': return `${a} × ${b}`;
+      default: return opSummary(kind, op);
+    }
+  }
+
+  if (kind === 'compare') {
+    const sign = COMPARE_SIGN[op];
+    if (sign) return `${a} ${sign} ${b}`;
+    if (op === 'contains') return `${a} 包含 ${b}`;
+    if (op === 'startsWith') return `${a} 以 ${b} 开头`;
+    if (op === 'endsWith') return `${a} 以 ${b} 结尾`;
+    return opSummary(kind, op);
+  }
+
+  if (kind === 'random') {
+    switch (op) {
+      case 'int': return `随机整数 ${a}~${b}`;
+      case 'float': return `随机小数 ${a}~${b}`;
+      case 'pick': return `随机选一个：${a}`;
+      case 'shuffle': return `打乱：${a}`;
+      case 'bool': return '随机真假';
+      default: return opSummary(kind, op);
+    }
+  }
+
+  return opSummary(kind, op);
+}

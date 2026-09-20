@@ -22,6 +22,7 @@
 
 import type { Graph, GraphNode } from '../types';
 import { topoLayers } from './topo';
+import { opBrief } from './ops';
 
 export type ExportFormat = 'shell' | 'python' | 'json' | 'markdown';
 
@@ -391,6 +392,14 @@ function toMarkdown(g: Graph): ExportResult {
 }
 
 function briefOf(d: Record<string, unknown>, kind: string): string {
+  /*
+   * 四个运算节点与画布卡片共用 opBrief ——
+   * 各写一份的话，会出现"卡片上写着 1 ＋ 2、导出说明里只写了'加'"，
+   * 同一件事两种说法，而两边单看都没错。
+   */
+  if (kind === 'math' || kind === 'text' || kind === 'compare' || kind === 'random') {
+    return opBrief(kind, d);
+  }
   switch (kind) {
     case 'wait': return `等待 ${num(d.ms, 1000)} 毫秒`;
     case 'log': return `记录一条日志：${str(d.text).slice(0, 60)}`;

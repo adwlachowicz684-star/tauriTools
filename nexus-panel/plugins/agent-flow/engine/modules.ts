@@ -32,6 +32,8 @@ export const MODULES_KEY = 'agent-flow.modules.v1';
 const FORMAT_VERSION = 1;
 
 /** 模块内部的一条边。结构与画布边相同，但 id 只在模块内唯一 */
+import { paramRefsOfNodes } from './canvasParams';
+
 export type ModuleEdge = {
   id: string;
   source: string;
@@ -50,6 +52,16 @@ export type ModuleDef = {
   nodes: Record<string, unknown>[];
   edges: ModuleEdge[];
   createdAt: number;
+  /**
+   * 模块内部引用到的画布参数名。
+   *
+   * 存它而不是每次现扫的原因：模块拖到一张画布上时，
+   * 内部节点**不在画布的 nodes 里**（只有运行时才展开），
+   * 于是画布侧扫不出它引用了什么 ——
+   * 而"刚拖进来、还没填参数"恰恰是最该提醒的时刻。
+   * 由 addModule 从内部节点算好存下来。
+   */
+  paramRefs?: string[];
 };
 
 /* KV / defaultKV 统一走 ./kv */
@@ -90,6 +102,8 @@ export function addModule(
     nodes: cloneData(input.nodes) as unknown as Record<string, unknown>[],
     edges: cloneData(input.edges) as unknown as ModuleEdge[],
     createdAt: Date.now(),
+    // 从内部节点扫出来 —— 见 ModuleDef.paramRefs 的说明
+    paramRefs: paramRefsOfNodes(input.nodes ?? []),
   };
   list.push(def);
   saveModules(list, kv);
