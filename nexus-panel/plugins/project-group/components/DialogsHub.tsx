@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { RenameDialog } from './RenameDialog';
 import { RenameContentDialog } from './RenameContentDialog';
 import { CreateDialog, IconPickDialog, LockDialog, StyleDialog } from './dialogs';
@@ -390,6 +390,7 @@ export function Dialogs(props: DialogsProps) {
 
 }
 
+/**
  * 使用说明（F1，#222 ToggleTips）。
  *
  * 键位表**从注册表动态生成**，不手抄一份：抄的那份改天就与实际键位脱节
