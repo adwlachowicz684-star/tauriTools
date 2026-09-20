@@ -1,1 +1,79 @@
-LyoqCiAqIOmTvuaOpeWQjeaUueWQjeeahOi+k+WFpeWPjemmiO+8iCM2M++8jOmbtuS+nei1lu+8iQogKiAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KICog55So5rOV77yabm9kZSBwbHVnaW5zL3Byb2plY3QtZ3JvdXAvbGluay1yZW5hbWUtdGVzdC5tanMKICoKICogIzYzIOecn+ato+eahOS7t+WAvOS4jeaYryLlgZrmiJDlvLnnqpci77yM6ICM5piv5L+u5o6J5LiA5LiqKirmmL7npLrkuI7lrp7pmYXkuI3kuIDoh7QqKueahCBidWfvvJoKICogICDmraTliY3nlKggZGVmYXVsdFZhbHVl77yI5LiN5Y+X5o6n77yJKyDkuIDkuKrlhajlsYAgZXJyIOKAlOKAlAogKiAgIOagoemqjOWksei0peaXtuWHveaVsOebtOaOpSByZXR1cm7vvIzkvYYqKui+k+WFpeahhumHjOeahOmdnuazleWAvOS4jeS8muWbnua7mioq44CCCiAqICAg55WM6Z2i5o+Q56S6IuWQjeensOWQq+aciemdnuazleWtl+espiLvvIzmoYbph4zljbTov5jnlZnnnYDpgqPkuKrpnZ7ms5XlgLzvvIwKICogICDogIzlrp7pmYXnlJ/mlYjnmoTku43mmK/ljp/lkI3jgILnlKjmiLfku6XkuLrmlLnmiJDlip/kuobjgIIKICoKICog5Y+m5LiA5Liq6Zeu6aKY77ya5YWo5bGA5Y+q5pyJ5LiA5LiqIGVycu+8jOWkmuihjOWQjOaXtuWHuumUmeaXtioq5a6a5L2N5LiN5Yiw5piv5ZOq5LiA6KGMKirjgIIKICovCmltcG9ydCBmcyBmcm9tICdub2RlOmZzJzsKaW1wb3J0IHBhdGggZnJvbSAnbm9kZTpwYXRoJzsKaW1wb3J0IHsgZmlsZVVSTFRvUGF0aCB9IGZyb20gJ25vZGU6dXJsJzsKaW1wb3J0IHsgbWFrZVQgfSBmcm9tICcuL3Rlc3RraXQubWpzJzsKCmNvbnN0IEhFUkUgPSBwYXRoLmRpcm5hbWUoZmlsZVVSTFRvUGF0aChpbXBvcnQubWV0YS51cmwpKTsKY29uc3QgeyB0LCBkb25lIH0gPSBtYWtlVCgpOwpjb25zdCBzdHJpcCA9ICh4KSA9PiB4LnJlcGxhY2UoL1wvXCpbXHNcU10qP1wqXC8vZywgJycpOwpjb25zdCBzcmMgPSBzdHJpcChmcy5yZWFkRmlsZVN5bmMocGF0aC5qb2luKEhFUkUsICdjb21wb25lbnRzL0xpbmtQYW5lbC50c3gnKSwgJ3V0ZjgnKSk7CmNvbnN0IGNzcyA9IHN0cmlwKGZzLnJlYWRGaWxlU3luYyhwYXRoLmpvaW4oSEVSRSwgJ3N0eWxlLmNzcycpLCAndXRmOCcpKTsKCmNvbnNvbGUubG9nKCdcbj09PSAxLiDlj5fmjqfovpPlhaXvvIjkuI3lho3nlKggZGVmYXVsdFZhbHVl77yJPT09Jyk7CnsKICB0KCfmlLnlkI3moYbmmK/lj5fmjqfnmoQnLCAvY2xhc3NOYW1lPSJwLWlucHV0IGZweC1yZW5hbWUiW1xzXFNdezAsMzAwfT92YWx1ZT1ce3JlbmFtZURyYWZ0XFtwXC5vcmlnaW5hbFxdIFw/XD8gcFwuc2hvd25cfS8udGVzdChzcmMpKTsKICAvKiBkZWZhdWx0VmFsdWUg5pivIuWAvOS4jeWbnua7miLnmoTmoLnmupAgKi8KICB0KCfmlLnlkI3moYbkuI3lho3nlKggZGVmYXVsdFZhbHVlJywgIS9jbGFzc05hbWU9InAtaW5wdXQgZnB4LXJlbmFtZSJbXHNcU117MCwyMDB9P2RlZmF1bHRWYWx1ZS8udGVzdChzcmMpKTsKICB0KCfmnInmr4/ooYzojYnnqL/nirbmgIEnLCAvdXNlU3RhdGU8UmVjb3JkPHN0cmluZywgc3RyaW5nPj5cKFx7XH1cKVtcc1xTXXswLDgwfT91c2VTdGF0ZTxSZWNvcmQ8c3RyaW5nLCBzdHJpbmc+Pi8udGVzdChzcmMpKTsKICB0KCdvbkNoYW5nZSDlhpnojYnnqL8nLCAvb25DaGFuZ2U9XHtcKGVcKSA9PiBzZXRSZW5hbWVEcmFmdFwoLy50ZXN0KHNyYykpOwp9Cgpjb25zb2xlLmxvZygnXG49PT0gMi4g5qCh6aqM5aSx6LSl6KaB5Zue5rua5pi+56S65YC8ID09PScpOwp7CiAgLyogKirml6DorrrmiJDotKXpg73muIXojYnnqL8qKu+8muaIkOWKn+WbnuiQveWIsOaWsOWQje+8jOWksei0peWbnua7muWIsOaXp+WQjSAqLwogIHQoJ29uQmx1ciDlkI7muIXojYnnqL8nLCAvb25CbHVyPVx7XChlXCkgPT4gXHtccypcblxzKnJlbmFtZVwocFwub3JpZ2luYWwsIHBcLnNob3duLCBlXC50YXJnZXRcLnZhbHVlXCk7Ly50ZXN0KHNyYykpOwogIC8qIOWcqCBvbkJsdXIg5Z2X5YaF5pat6KiAInJlbmFtZSDkuYvlkI7ntKfmjqXnnYDmuIXojYnnqL8i44CCCiAgICAg57uI54K55b+F6aG7Kirku47otbfngrnkuYvlkI4qKuaJvu+8muaWh+S7tumHjOWJjemdouWwseacieWIq+eahCBvbktleURvd27vvIjmt7vliqDoh6rlrprkuYnpgqPkuKrvvInvvIwKICAgICDnm7TmjqXnlKggaW5kZXhPZiDkvJrmi7/liLDmm7Tml6nnmoTkvY3nva4g4oaSIOWIh+eJh+S4uuepuiDihpIg5pat6KiA6Z2Z6buY5aSx6LSl44CCICovCiAgY29uc3QgYlN0YXJ0ID0gc3JjLmluZGV4T2YoJ29uQmx1cj17KGUpID0+IHsnKTsKICBjb25zdCBibHVyID0gc3JjLnNsaWNlKGJTdGFydCwgc3JjLmluZGV4T2YoJ29uS2V5RG93bj17KGUpID0+IHsnLCBiU3RhcnQpKTsKICB0KCfmuIXojYnnqL/lnKggcmVuYW1lIOS5i+WQjuaXoOadoeS7tuaJp+ihjCcsCiAgICAvcmVuYW1lXChwXC5vcmlnaW5hbCwgcFwuc2hvd24sIGVcLnRhcmdldFwudmFsdWVcKTtbXHNcU10qZGVsZXRlIG5cW3BcLm9yaWdpbmFsXF0vLnRlc3QoYmx1cikpOwogIHQoJ3JlbmFtZSDov5Tlm57mmK/lkKbmiJDlip8nLCAvY29uc3QgcmVuYW1lID0gXChvcmlnaW5hbDogc3RyaW5nLCBjdXJyZW50U2hvd246IHN0cmluZywgdG86IHN0cmluZ1wpOiBib29sZWFuLy50ZXN0KHNyYykpOwogIHQoJ+Wksei0peaXtiByZXR1cm4gZmFsc2UnLCAvcmV0dXJuIGZhbHNlOy8udGVzdChzcmMpKTsKICB0KCfmiJDlip/ml7YgcmV0dXJuIHRydWUnLCAvcmV0dXJuIHRydWU7XHMqXG4gIFx9Oy8udGVzdChzcmMpKTsKfQoKY29uc29sZS5sb2coJ1xuPT09IDMuIOmUmeivr+WwseWcsOaYvuekuu+8iOS4jeaYr+WFqOWxgOS4gOS4qu+8iT09PScpOwp7CiAgdCgn5pyJ5q+P6KGM6ZSZ6K+v54q25oCBJywgL2NvbnN0IFxbcmVuYW1lRXJyLCBzZXRSZW5hbWVFcnJcXS8udGVzdChzcmMpKTsKICB0KCfplJnor6/mjInljp/lkI3ntKLlvJUnLCAvc2V0UmVuYW1lRXJyXChcKHhcKSA9PiBcKFx7IFwuXC5cLngsIFxbb3JpZ2luYWxcXTovLnRlc3Qoc3JjKSk7CiAgdCgn5riy5p+T5Zyo5a+55bqU6KGMJywgL1x7cmVuYW1lRXJyXFtwXC5vcmlnaW5hbFxdICYmIFwoLy50ZXN0KHNyYykpOwogIHQoJ+mUmeivr+acieagt+W8jycsIC9cLmZweC1yZW5hbWUtZXJyIFx7Ly50ZXN0KGNzcykpOwogIC8qIOWFqOWxgCBlcnIg5LuN55WZ57uZIua3u+WKoOiHquWumuS5iSIgKi8KICB0KCflhajlsYAgZXJyIOS7jeWtmOWcqO+8iOe7mea3u+WKoOiHquWumuS5ieeUqO+8iScsIC9jb25zdCBcW2Vyciwgc2V0RXJyXF0gPSB1c2VTdGF0ZVwoJydcKS8udGVzdChzcmMpKTsKICAvKiDmlLnlkI0qKuS4jeWGjSoq5YaZ5YWo5bGAIGVyciDigJTigJQg5ZCm5YiZ5Y+I5re35Zyo5LiA6LW3ICovCiAgdCgn5pS55ZCN5LiN5YaZ5YWo5bGAIGVycicsICEvc2V0RXJyXChg44CMXCRce25leHRcfeOAjeW3suiiq+WNoOeUqGBcKS8udGVzdChzcmMpKTsKfQoKY29uc29sZS5sb2coJ1xuPT09IDQuIOagoemqjOmhuem9kOWFqCA9PT0nKTsKewogIHQoJ+afpemHjeWQjScsIC9hbGxOYW1lc1wuaW5jbHVkZXNcKG5leHRcKS8udGVzdChzcmMpICYmIC/lt7LooqvljaDnlKgvLnRlc3Qoc3JjKSk7CiAgLyog55u05o6l5p+l5a2X56ym6ZuG5ZCI5a2X6Z2i6YeP77yM6YG/5YWN5Li6Iuato+WImemHjOeahOato+WImSLlhpnkuIDloIbovazkuYkgKi8KICB0KCfmn6XpnZ7ms5XlrZfnrKYnLCAv5ZCN56ew5ZCr5pyJ6Z2e5rOV5a2X56ymLy50ZXN0KHNyYykgJiYgc3JjLmluY2x1ZGVzKCcqPyI8PnwnKSk7CiAgLyogIzkx77ya5LiOIua3u+WKoOiHquWumuS5iSLlkIzkuIDliKTmja7vvIzlkKbliJnmlLnlkI3og73nu5Xov4cgKi8KICB0KCfmn6XlpKflsI/lhpnph43lkI3vvIgjOTEg5ZCM5LiA5Yik5o2u77yJJywgL2hhc05hbWVDSVwoYWxsTmFtZXMsIG5leHRcKS8udGVzdChzcmMpKTsKICB0KCfmuIXnqbo95oGi5aSN5Y6f5ZCNJywgL2NvbnN0IG5leHQgPSBuYW1lIFx8XHwgb3JpZ2luYWw7Ly50ZXN0KHNyYykpOwp9Cgpjb25zb2xlLmxvZygnXG49PT0gNS4gRXNjIOWPlua2iCA9PT0nKTsKewogIHQoJ0VzYyDmuIXojYnnqL/vvIjlm57liLDlvZPliY3lgLzvvIknLCAvZVwua2V5ID09PSAnRXNjYXBlJy8udGVzdChzcmMpKTsKICB0KCdFc2Mg5ZCM5pe25riF5o6J6L+Z6KGM6ZSZ6K+vJywgL2NsZWFyUmVuYW1lRXJyXChwXC5vcmlnaW5hbFwpLy50ZXN0KHNyYykpOwogIHQoJ0VudGVyIOaPkOS6pCcsIC9lXC5rZXkgPT09ICdFbnRlcicvLnRlc3Qoc3JjKSk7Cn0KCmRvbmUoKTsK
+/**
+ * 链接名改名的输入反馈（#63，零依赖）
+ * ------------------------------------------------------------------
+ * 用法：node plugins/project-group/link-rename-test.mjs
+ *
+ * #63 真正的价值不是"做成弹窗"，而是修掉一个**显示与实际不一致**的 bug：
+ *   此前用 defaultValue（不受控）+ 一个全局 err ——
+ *   校验失败时函数直接 return，但**输入框里的非法值不会回滚**。
+ *   界面提示"名称含有非法字符"，框里却还留着那个非法值，
+ *   而实际生效的仍是原名。用户以为改成功了。
+ *
+ * 另一个问题：全局只有一个 err，多行同时出错时**定位不到是哪一行**。
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { makeT } from './testkit.mjs';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const { t, done } = makeT();
+const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+const src = strip(fs.readFileSync(path.join(HERE, 'components/LinkPanel.tsx'), 'utf8'));
+const css = strip(fs.readFileSync(path.join(HERE, 'style.css'), 'utf8'));
+
+console.log('\n=== 1. 受控输入（不再用 defaultValue）===');
+{
+  t('改名框是受控的', /className="p-input fpx-rename"[\s\S]{0,300}?value=\{renameDraft\[p\.original\] \?\? p\.shown\}/.test(src));
+  /* defaultValue 是"值不回滚"的根源 */
+  t('改名框不再用 defaultValue', !/className="p-input fpx-rename"[\s\S]{0,200}?defaultValue/.test(src));
+  t('有每行草稿状态', /useState<Record<string, string>>\(\{\}\)[\s\S]{0,80}?useState<Record<string, string>>/.test(src));
+  t('onChange 写草稿', /onChange=\{\(e\) => setRenameDraft\(/.test(src));
+}
+
+console.log('\n=== 2. 校验失败要回滚显示值 ===');
+{
+  /* **无论成败都清草稿**：成功回落到新名，失败回滚到旧名 */
+  t('onBlur 后清草稿', /onBlur=\{\(e\) => \{\s*\n\s*rename\(p\.original, p\.shown, e\.target\.value\);/.test(src));
+  /* 在 onBlur 块内断言"rename 之后紧接着清草稿"。
+     终点必须**从起点之后**找：文件里前面就有别的 onKeyDown（添加自定义那个），
+     直接用 indexOf 会拿到更早的位置 → 切片为空 → 断言静默失败。 */
+  const bStart = src.indexOf('onBlur={(e) => {');
+  const blur = src.slice(bStart, src.indexOf('onKeyDown={(e) => {', bStart));
+  t('清草稿在 rename 之后无条件执行',
+    /rename\(p\.original, p\.shown, e\.target\.value\);[\s\S]*delete n\[p\.original\]/.test(blur));
+  t('rename 返回是否成功', /const rename = \(original: string, currentShown: string, to: string\): boolean/.test(src));
+  t('失败时 return false', /return false;/.test(src));
+  t('成功时 return true', /return true;\s*\n  \};/.test(src));
+}
+
+console.log('\n=== 3. 错误就地显示（不是全局一个）===');
+{
+  t('有每行错误状态', /const \[renameErr, setRenameErr\]/.test(src));
+  t('错误按原名索引', /setRenameErr\(\(x\) => \(\{ \.\.\.x, \[original\]:/.test(src));
+  t('渲染在对应行', /\{renameErr\[p\.original\] && \(/.test(src));
+  t('错误有样式', /\.fpx-rename-err \{/.test(css));
+  /* 全局 err 仍留给"添加自定义" */
+  t('全局 err 仍存在（给添加自定义用）', /const \[err, setErr\] = useState\(''\)/.test(src));
+  /* 改名**不再**写全局 err —— 否则又混在一起 */
+  t('改名不写全局 err', !/setErr\(`「\$\{next\}」已被占用`\)/.test(src));
+}
+
+console.log('\n=== 4. 校验项齐全 ===');
+{
+  t('查重名', /allNames\.includes\(next\)/.test(src) && /已被占用/.test(src));
+  /* 直接查字符集合字面量，避免为"正则里的正则"写一堆转义 */
+  t('查非法字符', /名称含有非法字符/.test(src) && src.includes('*?"<>|'));
+  /* #91：与"添加自定义"同一判据，否则改名能绕过 */
+  t('查大小写重名（#91 同一判据）', /hasNameCI\(allNames, next\)/.test(src));
+  t('清空=恢复原名', /const next = name \|\| original;/.test(src));
+}
+
+console.log('\n=== 5. Esc 取消 ===');
+{
+  t('Esc 清草稿（回到当前值）', /e\.key === 'Escape'/.test(src));
+  t('Esc 同时清掉这行错误', /clearRenameErr\(p\.original\)/.test(src));
+  t('Enter 提交', /e\.key === 'Enter'/.test(src));
+}
+
+done();
