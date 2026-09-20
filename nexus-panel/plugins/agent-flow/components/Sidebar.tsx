@@ -1,6 +1,6 @@
-import { useRef, useState, type DragEvent, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import NodeDesc from './NodeDesc';
-import { presetsByCategory, getDef } from '../nodes';
+import { presetsByCategory, getDef, allPresets } from '../nodes';
 import { hasDef } from '../nodes/registry';
 import { confirm, alert, prompt } from '../../../js/dialog.js';
 import {
@@ -8,6 +8,7 @@ import {
   exportCustomPresets, importCustomPresets,
 } from '../engine/customPresets';
 import { pickBrief, producesDescOf } from '../engine/blockApi';
+import NodeTip, { type TipAnchor } from './NodeTip';
 
 /**
  * 从边栏拖到画布上时携带的数据。
@@ -32,6 +33,12 @@ export function encodeDrag(p: DragPayload): string {
  * 白名单的问题是新注册的类型忘了加进来就会被静默丢弃，
  * 而真正的合法性判断在 App 那边：查不到预设就忽略，行为一致。
  */
+/** 取元素在**视口**里的矩形，给浮层当锚点 */
+function rectOf(el: HTMLElement): TipAnchor {
+  const r = el.getBoundingClientRect();
+  return { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+}
+
 export function decodeDrag(raw: string | null | undefined): DragPayload | null {
   if (!raw) return null;
   try {
@@ -64,15 +71,19 @@ type Props = {
  * 用户反而找不到别的分组。
  */
 function McpServerSection({
-  group, disabled, onDragStart, onItemClick, openKey, showAllDesc,
+  group, disabled, onDragStart, onItemClick, tipKey, showAllDesc,
+  onHover, onHoverOut,
 }: {
   group: { server: string; color: string; items: { key: string; label: string; hint?: string }[] };
   disabled?: boolean;
   onDragStart: (e: DragEvent, p: DragPayload) => void;
   onItemClick: (e: MouseEvent, p: { key: string }) => void;
-  openKey: string | null;
+  /** 当前浮层指向的条目（用它是为了给条目加高亮） */
+  tipKey: string | null;
   /** 「显示说明」开着时，每个工具下面也铺一行说明 */
   showAllDesc?: boolean;
+  onHover: (key: string, anchor: TipAnchor) => void;
+  onHoverOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -94,7 +105,7 @@ function McpServerSection({
       {open ? (
         <div className="mcp-sec-body">
           {group.items.map((it) => {
-            const isOpen = openKey === it.key;
+            const isOpen = tipKey === it.key;
             return (
               <div key={it.key}>
                 <div
@@ -104,16 +115,17 @@ function McpServerSection({
                   draggable={!disabled}
                   onDragStart={(e) => onDragStart(e, { kind: it.key })}
                   onClick={(e) => onItemClick(e, { key: it.key })}
-                  title="点击展开说明；按住 Ctrl / ⌘ 点击直接添加；也可拖到画布"
+                  onMouseEnter={(e) => onHover(it.key, rectOf(e.currentTarget))}
+                  onMouseLeave={onHoverOut}
+                  title="悬停或点击看说明；按住 Ctrl / ⌘ 点击直接添加；也可拖到画布"
                 >
                   <span className="side-label">{it.label}</span>
                 </div>
-                {isOpen ? (
-                  <div className="side-desc">
-                    {it.hint || '这个工具没有额外说明'}
-                    <span className="side-desc-add">按住 Ctrl / ⌘ 点击添加</span>
-                  </div>
-                ) : showAllDesc && it.hint ? (
+                {/*
+                 * 「显示说明」铺的那行 brief 保留 ——
+                 * 那是"整列速览"，与浮层（看这一条的详情）是两件事。
+                 */}
+                {showAllDesc && it.hint ? (
                   <div className="side-desc-brief">{it.hint}</div>
                 ) : null}
               </div>
@@ -145,7 +157,50 @@ export default function Sidebar({
    * 普通点击给个有用的反馈（展开说明）而不是静默无反应：
    * 静默会让人以为界面坏了，进而反复点击，反而更容易触发误添加。
    */
-  const [openKey, setOpenKey] = useState<string | null>(null);
+  /*
+   * 说明浮层的状态。
+   *
+   * ================= 为什么钉住态与悬停态要分开 =================
+   *
+   * 悬停出现的浮层，鼠标一移开就该消失 —— 否则扫列表时浮层会一直挡着。
+   * 但点击打开的浮层是"我要读它"，鼠标移到浮层上去滚内容时不能消失。
+   *
+   * 合成一个开关的话，两者必居其一：
+   * 要么悬停后浮层赖着不走，要么点开的浮层一移鼠标就没了。
+   */
+  const [tip, setTip] = useState<{ key: string; anchor: TipAnchor; pinned: boolean } | null>(null);
+
+  /* 悬停延迟出现 / 移开延迟关闭。直接跟手的话扫列表会一路刷浮层 */
+  const hoverTimer = useRef<number | null>(null);
+  const closeTimer = useRef<number | null>(null);
+
+  const cancelTimers = () => {
+    if (hoverTimer.current !== null) { window.clearTimeout(hoverTimer.current); hoverTimer.current = null; }
+    if (closeTimer.current !== null) { window.clearTimeout(closeTimer.current); closeTimer.current = null; }
+  };
+
+  // 卸载时清干净：setTimeout 会活得比组件久，回调里 setTip 会打到已卸载的组件上
+  useEffect(() => cancelTimers, []);
+
+  const closeTip = () => { cancelTimers(); setTip(null); };
+
+  const onHover = (key: string, anchor: TipAnchor) => {
+    cancelTimers();
+    // 已经钉住某一条时，悬停不抢 —— 否则鼠标扫过会把在读的那条换掉
+    if (tip?.pinned) return;
+    hoverTimer.current = window.setTimeout(
+      () => setTip({ key, anchor, pinned: false }),
+      380,
+    );
+  };
+
+  const onHoverOut = () => {
+    cancelTimers();
+    if (tip && !tip.pinned) {
+      // 留一点缓冲：鼠标从条目移到浮层上的途中会短暂离开两者
+      closeTimer.current = window.setTimeout(() => setTip(null), 150);
+    }
+  };
 
   const onItemClick = (e: MouseEvent, p: { key: string }) => {
     if (disabled) return;
@@ -153,8 +208,11 @@ export default function Sidebar({
       onAdd({ kind: p.key });
       return;
     }
+    const anchor = rectOf(e.currentTarget as HTMLElement);
     // 再点一次收起
-    setOpenKey((k) => (k === p.key ? null : p.key));
+    if (tip?.key === p.key && tip.pinned) { closeTip(); return; }
+    cancelTimers();
+    setTip({ key: p.key, anchor, pinned: true });
   };
 
   /*
@@ -168,7 +226,7 @@ export default function Sidebar({
   /*
    * 「显示说明」：一次把每个节点下面那句说明都铺开，再点收起。
    *
-   * 与 openKey（点单个条目展开完整说明）是**两个独立开关**：
+   * 与浮层（看单条的完整说明）是**两个独立开关**：
    * 前者是"整列速览"，后者是"看这一条的详情"。
    * 合成一个的话，点开某一条就会把所有条都展开 —— 那不是用户要的。
    */
@@ -264,7 +322,9 @@ export default function Sidebar({
             disabled={disabled}
             onDragStart={onDragStart}
             onItemClick={onItemClick}
-            openKey={openKey}
+            tipKey={tip?.key ?? null}
+            onHover={onHover}
+            onHoverOut={onHoverOut}
             showAllDesc={showAllDesc}
           />
         ))}
@@ -309,7 +369,7 @@ export default function Sidebar({
 
       <div className="side-body">
       <div className="side-hint">
-        拖到画布添加；点击展开说明，按住 Ctrl / ⌘ 点击直接添加
+        拖到画布添加；悬停或点击看说明，按住 Ctrl / ⌘ 点击直接添加
       </div>
 
         {groups.map((g) => {
@@ -345,7 +405,7 @@ export default function Sidebar({
             </div>
 
             {g.presets.map((p) => {
-              const open = openKey === p.key;
+              const open = tip?.key === p.key;
               /*
                * 说明优先用预设自带的 hint，没有则退回节点定义里的 sub。
                *
@@ -380,7 +440,9 @@ export default function Sidebar({
                     draggable={!disabled}
                     onDragStart={(e) => onDragStart(e, { kind: p.key })}
                     onClick={(e) => onItemClick(e, p)}
-                    title={disabled ? '运行中不可添加' : '点击展开说明；按住 Ctrl / ⌘ 点击直接添加；也可拖到画布'}
+                    onMouseEnter={(e) => onHover(p.key, rectOf(e.currentTarget))}
+                    onMouseLeave={onHoverOut}
+                    title={disabled ? '运行中不可添加' : '悬停或点击看说明；按住 Ctrl / ⌘ 点击直接添加；也可拖到画布'}
                   >
                     <span className="side-label">{p.label}</span>
                     {isCustom ? (
@@ -410,21 +472,19 @@ export default function Sidebar({
                     ) : null}
                   </div>
                   {/*
-                   * 展开的说明块。
+                   * 说明不再撑在列表里 —— 改成浮层（见文件末尾的 NodeTip）。
                    *
-                   * 以前只有一句话（def.meta.sub），而"能不能用"取决于
-                   * 三件那句话里没有的事：产出/接受（能跟谁连）、
-                   * 需要的外部能力（浏览器模式下缺了直接失败）、哪些参数必填。
-                   * 这三样数据契约里都有，只是没接到界面上 —— NodeDesc 负责接。
+                   * 原先点开一条会把下面所有条目往下推，收起又跳回来，
+                   * 扫列表时很烦；而且侧栏只有 260px，结构化说明挤在里面
+                   * 要折好几行。
+                   *
+                   * 内容还是 NodeDesc 那套：能不能用取决于产出/接受、
+                   * 需要的外部能力、哪些参数必填 —— 这三样数据契约里都有，
+                   * 只是以前没接到界面上。
                    */}
-                  {open ? (
-                    <NodeDesc presetKey={p.key} type={p.type} hint={desc} sub={pSub} />
-                  ) : null}
                   {/*
-                   * 「显示说明」开着时铺一行。
-                   *
-                   * 只在这一条**没被点开**时铺 ——
-                   * 点开的那条已经有 NodeDesc 完整版了，再叠一行就是重复。
+                   * 「显示说明」铺的那行 brief 保留 ——
+                   * 那是"整列速览"，与浮层（看这一条的详情）是两件事。
                    */}
                   {!open && showAllDesc && desc ? (
                     <div className="side-desc-brief" title={desc}>{desc}</div>
@@ -449,6 +509,71 @@ export default function Sidebar({
             }}
           />
       </div>
+
+      {/*
+       * 说明浮层。
+       *
+       * 放在 .side-pane 之外（NodeTip 内部用 portal 挂到 body）——
+       * 侧栏滚动区有 overflow-y:auto，浮层渲染在里面会被裁掉。
+       */}
+      {tip ? (() => {
+        const t = tipBodyOf(tip.key, mcpGroups);
+        if (!t) return null;
+        return (
+          <NodeTip
+            key={tip.key}
+            anchor={tip.anchor}
+            title={t.title}
+            pinned={tip.pinned}
+            onClose={closeTip}
+            onEnter={cancelTimers}
+            onLeave={onHoverOut}
+          >
+            {t.body}
+          </NodeTip>
+        );
+      })() : null}
     </aside>
   );
+}
+
+/**
+ * 按 key 取浮层内容。
+ *
+ * 先在预设里找（普通节点 / 自定义节点），再在 MCP 工具里找。
+ * 查不到就不渲染 —— 宁可没浮层，也不要弹一个空框。
+ */
+function tipBodyOf(
+  key: string,
+  mcpGroups?: { server: string; items: { key: string; label: string; hint?: string }[] }[],
+): { title: string; body: React.ReactNode } | null {
+  const preset = allPresets().find((p) => p.key === key);
+  if (preset) {
+    return {
+      title: preset.label,
+      body: (
+        <NodeDesc
+          presetKey={preset.key}
+          type={preset.type}
+          hint={preset.hint}
+          sub={getDef(preset.type).meta.sub}
+        />
+      ),
+    };
+  }
+  for (const g of mcpGroups ?? []) {
+    const it = g.items.find((i) => i.key === key);
+    if (it) {
+      return {
+        title: it.label,
+        body: (
+          <div className="side-desc">
+            {it.hint || '这个工具没有额外说明'}
+            <span className="side-desc-add">按住 Ctrl / ⌘ 点击添加</span>
+          </div>
+        ),
+      };
+    }
+  }
+  return null;
 }

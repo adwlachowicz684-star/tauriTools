@@ -2173,6 +2173,19 @@ input.mono, textarea.mono {
   padding: 7px; margin-bottom: 7px; display: flex; flex-direction: column; gap: 5px;
 }
 .canvas-config .cfg-row { display: flex; gap: 5px; align-items: center; }
+/* 参数说明：可选填，所以视觉上比值更轻，不能抢主次 */
+.cfg-note {
+  flex: 1 1 90px; min-width: 0; font-size: var(--fs-11, 11px);
+  background: var(--af-bg); color: var(--af-mute);
+  border: 1px solid var(--af-line); border-radius: var(--r-sm, 4px); padding: 3px 6px;
+}
+/* 缺失清单：每个名字一个 code，横排换行 */
+.cfg-miss-list { display: flex; flex-wrap: wrap; gap: 4px; margin: 5px 0; }
+.cfg-miss-list code {
+  font-size: var(--fs-11, 11px); padding: 1px 6px; border-radius: var(--r-pill, 999px);
+  background: var(--af-raised); color: var(--af-fg); border: 1px solid var(--af-line);
+}
+
 .canvas-config .cfg-row input { flex: 1; min-width: 0; }
 .canvas-config .cfg-k { flex: 0 0 92px !important; font-family: ui-monospace, monospace; }
 
@@ -2694,6 +2707,58 @@ input.mono, textarea.mono {
  * 现在用途归用途（顶行 sub），产出归产出（这一行）。
  */
 .nd-out { font-size: var(--fs-11, 11px); color: var(--af-dim); margin-top: 2px; }
+
+/* ------------------------------------------------------------------ */
+/* 节点说明悬浮窗                                                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 说明浮层。
+ *
+ * 位置由 NodeTip 用视口坐标算好后写进 style（left/top），
+ * 这里只管尺寸与外观。
+ *
+ * z-index 用 --af-z-mask 那一档：它要盖住画布、右栏面板，
+ * 但不必盖住确认对话框（那类弹窗更靠前）。
+ */
+.node-tip {
+  position: fixed;
+  z-index: var(--af-z-mask, 60);
+  width: min(360px, calc(100vw - 16px));
+  /* 高内容自己滚：说明很长时不能把浮层撑出屏幕 */
+  max-height: min(70vh, 520px);
+  display: flex;
+  flex-direction: column;
+  background: var(--af-panel, #1c1c1e);
+  border: 1px solid var(--af-line, #333);
+  border-radius: var(--af-r, 8px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .45);
+  overflow: hidden;
+}
+
+/*
+ * 头部固定。
+ * 内容区滚动时标题要一直可见 —— 否则滚两段就不知道在看哪个节点的说明了。
+ */
+.node-tip-head {
+  flex: none;
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 8px 7px 10px;
+  border-bottom: 1px solid var(--af-line, #333);
+}
+.node-tip-title {
+  flex: 1; min-width: 0;
+  font-size: var(--fs-12, 12px); font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.node-tip-close {
+  flex: none;
+  border: none; background: none; cursor: pointer;
+  color: var(--af-dim); font-size: 14px; line-height: 1; padding: 2px 4px;
+}
+.node-tip-close:hover { color: var(--af-fg); }
+
+.node-tip-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px 10px; }
 .nd-req { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .nd-cap {
   font-size: var(--fs-10, 10px); padding: 0 6px; border-radius: var(--r-pill, 999px);

@@ -210,3 +210,56 @@ test('节点 id 只在属性面板里可查（可复制）', () => {
   // 能复制才算真能用于排查：光显示一串乱码，还得手打
   assert.match(insp, /clipboard[\s\S]{0,120}writeText/, '「节点 id」要能点一下复制');
 });
+
+/* ================= 节点说明浮层 ================= */
+
+/*
+ * 说明原先**撑在侧栏列表里**：点开一条把下面的条目整体下推，
+ * 收起又跳回来，扫列表时很烦；侧栏只有 260px，结构化说明挤着要折好几行。
+ *
+ * 现在改成浮层（NodeTip）。守的是"说明**只**在浮层里"——
+ * 两处都渲染的话，列表里那块就会自己长回来。
+ */
+test('侧栏条目下不再内联展开说明块', () => {
+  const sb = read(path.join(COMP, 'Sidebar.tsx'));
+  /*
+   * 匹配"条目 open 就渲染 NodeDesc"这个动作。
+   * 不能只查"文件里含 NodeDesc" —— 浮层内容用的就是 NodeDesc，
+   * 那样检查永远失败（假阴性）。
+   */
+  const inline = /\{open \?\s*[\s\S]{0,120}<NodeDesc/.test(sb);
+  assert.equal(inline, false, 'Sidebar 又把说明块内联展开了');
+});
+
+test('说明浮层用 portal 挂到 body（否则被侧栏滚动区裁掉）', () => {
+  const tip = read(path.join(COMP, 'NodeTip.tsx'));
+  /*
+   * .side-body 有 overflow-y:auto。浮层若渲染在条目下面，
+   * 哪怕 position:fixed 也会被它裁剪 —— 只露出侧栏内那一条。
+   */
+  assert.match(tip, /createPortal\(/, 'NodeTip 必须挂到 document.body');
+  assert.match(tip, /position:\s*fixed|className="node-tip"/);
+});
+
+test('浮层两种打开方式都通：点击钉住 / 悬停预览', () => {
+  const sb = read(path.join(COMP, 'Sidebar.tsx'));
+  assert.match(sb, /onMouseEnter[\s\S]{0,80}onHover\(/, '悬停要能打开浮层');
+  assert.match(sb, /onClick[\s\S]{0,120}onItemClick\(/, '点击要能打开浮层');
+  /*
+   * 钉住态与悬停态必须分开：
+   * 合成一个开关的话，要么悬停后浮层赖着不走，
+   * 要么点开的浮层鼠标一移就没了。
+   */
+  assert.match(sb, /pinned/, '要区分钉住态与悬停态');
+});
+
+test('浮层关闭有兜底：Esc / 点外面 / 滚动', () => {
+  const tip = read(path.join(COMP, 'NodeTip.tsx'));
+  assert.match(tip, /Escape/, 'Esc 要能关');
+  assert.match(tip, /mousedown/, '点浮层外面要能关');
+  /*
+   * 滚动时锚点失效 —— 用 capture 捕获，
+   * 否则侧栏滚动区的滚动事件在冒泡阶段收不到。
+   */
+  assert.match(tip, /addEventListener\('scroll'[\s\S]{0,40}true\)/, '滚动要用 capture 捕获');
+});
