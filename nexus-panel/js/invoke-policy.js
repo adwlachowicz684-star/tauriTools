@@ -274,17 +274,126 @@ export function isTrusted(pluginId) {
 }
 
 /**
+ * 用户放行白名单 —— 与"插件声明"是**两回事**。
+ *
+ * ================= 为什么要有第二张表 =================
+ *
+ * `manifest.commands` 是**插件说自己需要什么**，写进插件自己的配置里；
+ * 而"用户同意给它什么"此前根本没有记录 —— 声明即生效。
+ * 两者的区别在安全上是实质性的：
+ *
+ *   声明 = 索取，授权 = 给予。
+ *   插件可以随意改自己的 manifest（那是它自己的文件），
+ *   若声明即生效，那么"插件想多要一条命令"和"用户同意多给一条"
+ *   之间没有任何区别 —— 授权这件事等于不存在。
+ *
+ * 所以这里单独记一份**用户放行过什么**，并且：
+ *   · 内置插件不走这张表（它们是自带的，见下）；
+ *   · 非内置插件必须**声明 + 用户放行**同时满足；
+ *   · 放行记录可撤销（revokeGrant），也能逐条查看（userGrants）。
+ *
+ * 持久化的理由与 toolbar 顺序那条同源：模块变量会有第二份副本，
+ * 宿主侧改了、插件侧不知道 —— 存 localStorage 才只有一份。
+ */
+const USER_GRANT_KEY = 'nexus:invoke-grants';
+
+/** @returns {Record<string, string[]>} pluginId → 用户放行的命令 */
+export function loadUserGrants() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(USER_GRANT_KEY) || '{}');
+    /* 只认 string→string[] 的形态：手改坏了不该让整个白名单崩掉 */
+    const out = {};
+    for (const [k, v] of Object.entries(raw || {})) {
+      if (Array.isArray(v)) out[k] = v.filter((x) => typeof x === 'string');
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function saveUserGrants(map) {
+  try {
+    localStorage.setItem(USER_GRANT_KEY, JSON.stringify(map));
+  } catch { /* 隐私模式下写不进去：本次会话仍有效，重启后退回未放行 */ }
+}
+
+/**
+ * 用户放行若干命令。
+ *
+ * ⚠️ 这是**唯一的授权入口**。UI（安装对话框、设置页）必须走它，
+ * 不能直接写 localStorage —— 否则规范化与去重没人做，
+ * 同一条命令大小写不同会占两格（收藏色那个坑的同类）。
+ */
+export function grantCommands(pluginId, cmds) {
+  const id = String(pluginId || '').trim();
+  if (!id) return [];
+  const map = loadUserGrants();
+  const cur = new Set(map[id] || []);
+  for (const c of cmds || []) {
+    const n = String(c || '').trim();
+    if (n) cur.add(n);
+  }
+  const list = [...cur];
+  map[id] = list;
+  saveUserGrants(map);
+  return list;
+}
+
+/** 撤销某条放行（保留其余） */
+export function revokeGrant(pluginId, cmd) {
+  const id = String(pluginId || '').trim();
+  const n = String(cmd || '').trim();
+  if (!id || !n) return [];
+  const map = loadUserGrants();
+  const list = (map[id] || []).filter((x) => x !== n);
+  if (list.length) map[id] = list; else delete map[id];
+  saveUserGrants(map);
+  return list;
+}
+
+/** 撤销该插件的全部放行（卸载时用） */
+export function revokeAllGrants(pluginId) {
+  const id = String(pluginId || '').trim();
+  const map = loadUserGrants();
+  delete map[id];
+  saveUserGrants(map);
+}
+
+/** @returns {string[]} 该插件已被用户放行的命令 */
+export function userGrants(pluginId) {
+  return loadUserGrants()[String(pluginId || '').trim()] || [];
+}
+
+/** 清空（仅测试用） */
+export function resetUserGrants() {
+  try { localStorage.removeItem(USER_GRANT_KEY); } catch { /* ignore */ }
+}
+
+/**
  * 校验一次 invoke 是否被允许。
+ *
+ * ================= 两种白名单 =================
+ *
+ *   ┌ 内置插件（registry 静态清单里的）→ **全权限放行**
+ *   │   它们是本面板自带的一部分，与用户后来装的东西不同源。
+ *   │   逐条登记对它们没有意义：project-group 要用二十多条命令，
+ *   │   漏一条就是"点了没反应"，而它本来就随本仓库一同发布。
+ *   │   仅保留 HARD_DENY 作为兜底闸门。
+ *   │
+ *   └ 其他插件 → **声明 + 用户放行**双重满足
+ *       ① 声明：manifest.commands 或 PLUGIN_COMMANDS（此前的行为）
+ *       ② 放行：USER_GRANTS 里必须有这条（本轮新增）
+ *       ③ SAFE_COMMANDS 例外：只读命令不必用户放行，
+ *          否则"装了就用不了"—— 那是安全对了、功能死了。
  *
  * 判定顺序（越靠前优先级越高）：
  *   1. HARD_DENY        —— 全局禁止，谁声明都没用
- *   2. manifest.commands —— 插件自带声明（自定义插件安装时由用户填写）
- *   3. PLUGIN_COMMANDS  —— 内置插件的静态登记（实测扫描得出）
- *   4. SAFE_COMMANDS    —— 只读兜底，保证"装了就能用"
- *   5. 其余一律拒绝
- *
- * 注意 2 与 3 是**并集**不是替换：内置插件在 manifest 里补声明也能生效，
- * 将来给某个内置插件临时加命令不必改这张静态表。
+ *   2. 内置插件          —— 直接放行
+ *   3. 第三方能力硬禁止   —— M 类一律不给
+ *   4. SAFE_COMMANDS    —— 只读兜底
+ *   5. 声明 + 用户放行   —— 两条都要满足
+ *   6. 组合风险拦截      —— 只对第三方生效
  *
  * 本函数引用 command-caps.js，但**只用于第三方插件**。
  * 内置插件的能力组合不参与判定 —— 见 CAP_ENFORCEMENT 的说明。
@@ -301,6 +410,20 @@ export function checkInvoke(pluginId, cmd, manifest) {
   }
   if (HARD_DENY.has(name)) {
     return { ok: false, reason: `命令已被全局禁止: ${name}` };
+  }
+
+  /*
+   * 内置插件：全权限放行。
+   *
+   * ⚠️ 这意味着 project-group / agent-flow 可以调**任何**已注册命令，
+   * 包括将来新增的。这是"自带插件"的固有代价 —— 它们与宿主同源，
+   * 逐条登记挡不住有意的代码，只会挡住正常开发。
+   *
+   * 保留 HARD_DENY 是唯一的兜底：它按命令名禁，与信任无关，
+   * 将来真出现"任何插件都绝无合法用途"的命令时还有这道闸。
+   */
+  if (isTrusted(pluginId)) {
+    return { ok: true };
   }
 
   /*
@@ -322,8 +445,7 @@ export function checkInvoke(pluginId, cmd, manifest) {
     }
   }
 
-  /* 插件自带声明。自定义插件靠这条获得授权 ——
-     这是"用户自己决定给这个插件什么权限"，与静态表的区别只是来源。 */
+  /* 插件自带声明（索取） */
   const own = Array.isArray(manifest?.commands) ? manifest.commands : null;
   const allow = PLUGIN_COMMANDS[pluginId];
   const declared = (own && own.includes(name)) || (allow && allow.includes(name));
@@ -332,6 +454,29 @@ export function checkInvoke(pluginId, cmd, manifest) {
     /* 未登记且不在安全集合 —— 默认拒绝。
        未来联网安装插件时，这一条仍是最主要的一道闸。 */
     return { ok: false, reason: `插件 ${pluginId} 未声明命令: ${name}` };
+  }
+
+  /*
+   * 用户放行（给予）—— **与"声明"必须同时满足**。
+   *
+   * 只查声明不查放行的话，插件改自己的 manifest 就能拿到新命令，
+   * 授权这件事等于不存在。反过来只查放行不查声明也不行：
+   * 那等于任何命令只要被放行过一次就永久可用，
+   * 而放行记录是"用户当时同意"，不该无限外推。
+   *
+   * SAFE_COMMANDS 例外：只读命令无需放行。
+   * 否则装完一个插件连 app_version 都要先授权一次 ——
+   * 那是安全对了、功能死了的老毛病。
+   */
+  if (!SAFE_COMMANDS.includes(name)) {
+    const granted = userGrants(pluginId);
+    if (!granted.includes(name)) {
+      return {
+        ok: false,
+        reason: `命令 ${name} 尚未经用户放行（插件 ${pluginId}）。`
+          + '请在设置 → 插件里为该插件放行此命令后再试。',
+      };
+    }
   }
 
   /*

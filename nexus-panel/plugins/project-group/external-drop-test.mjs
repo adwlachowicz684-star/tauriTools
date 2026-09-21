@@ -63,11 +63,49 @@ console.log('\n=== 2. 卡片区：整区高亮，不画竖条 ===');
 console.log('\n=== 3. 接到正规流程，而不是静默 ===');
 {
   /* 现状是"拖外部文件进来没反应" —— 用户拖了、松手了、毫无变化 */
-  t('drop 里调 onExternalDrop', /if \(onExternalDrop\) onExternalDrop\(externalDropName\(e\.dataTransfer\.files\)\);/.test(grid));
-  t('App 项目栏接了', /onExternalDrop=\{\(n\) => setDialog\(\{ type: 'pickDir', kind: 'project', droppedName: n \}\)\}/.test(app));
-  t('App 项目组栏接了', /onExternalDrop=\{\(n\) => setDialog\(\{ type: 'pickDir', kind: 'group', droppedName: n \}\)\}/.test(app));
+    /*
+   * 契约变更：拖入文件夹要**直接导入**，不再弹对话框。
+   *
+   * 下面钉的是新的接线方式：拿到绝对路径 → 调 onExternalDrop(target, true)；
+   * 不是文件夹 → 只提示，不弹框。
+   */
+  t('drop 里区分了文件夹与非文件夹',
+    /classifyExternalDrop\(/.test(grid) && /onExternalNotice\?\./.test(grid));
+  t('拿到路径就标记 direct（调用方据此决定要不要弹框）',
+    /dirPathOf\(/.test(grid) && /onExternalDrop\?\.\(path \|\| name, !!path\)/.test(grid));
+  t('App 项目栏接了', /onExternalDrop=\{externalDrop\('project'\)\}/.test(app));
+  t('App 项目组栏接了', /onExternalDrop=\{externalDrop\('group'\)\}/.test(app));
   t('Column 透传', /onExternalDrop=\{onExternalDrop\}/.test(app));
-  t('StackedGroups 透传', /onExternalDrop=\{onExternalDrop\}/.test(stack));
+  t('StackedGroups 透传时带上分类索引',
+    /onExternalDrop\?\.\(target, direct, i\)/.test(stack));
+  /* 非文件夹时提示"请拖入文件夹即可" —— 不弹框 */
+  t('提示语直接说要拖文件夹', /请拖入文件夹即可/.test(app));
+  /* 直接导入走 addCard，且带 tabIndex（项目组堆叠时落到拖中的那个分类） */
+  t('直接导入走 addCard 并带 tabIndex',
+    /s\.addCard\(kind, target, tabIndex\)/.test(app));
+  /*
+   * 宿主开了 dragDropEnabled —— 没有它，File 上没有 path，
+   * 直接导入永远走不到。这条必须钉，否则改动会静默退化成"总是弹框"。
+   */
+  const conf = R('../../src-tauri/tauri.conf.json');
+  t('宿主已开启 dragDropEnabled（否则拿不到路径）', /"dragDropEnabled"\s*:\s*true/.test(conf));
+  /*
+   * 开了 dragDropEnabled 就必须有**文档级**拖放守卫。
+   *
+   * 没有它：webview 开始接收拖放，而对拖入文件的默认行为是**打开它** ——
+   * 整个界面导航走。各插件只在自己那一小块区域 preventDefault，
+   * 拖到标题栏 / 侧边栏 / 空白处就没人拦，而那恰恰最容易误拖。
+   *
+   * 这条与上面那条是**一对**：只开配置不装守卫比不开更糟，
+   * 因为不开至少什么都不发生。
+   */
+  const host = R('../../js/host.js');
+  t('宿主装了文档级拖放守卫', /addEventListener\('drop', stop\)/.test(host));
+  /* 调用点必须在 createHost 内、且在插件挂载之前；找不到调用点直接判失败而不是跳过 */
+  const gi = host.indexOf('installDropGuard();');
+  const ci = host.indexOf('const bus = createBus();');
+  t('守卫在插件挂载前安装（createHost 内）', gi > 0 && ci > 0 && gi > ci && gi - ci < 400,
+    `gi=${gi} ci=${ci}`);
 }
 
 console.log('\n=== 4. 提示要解释"为什么还要再选一次" ===');
@@ -95,6 +133,35 @@ console.log('\n=== 5. 行为 ===');
   t('取名字', externalDropName([{ name: 'MyFolder' }]) === 'MyFolder');
   t('没文件返回空', externalDropName([]) === '');
   t('null 返回空', externalDropName(null) === '');
+
+  /*
+   * 分类与路径 —— **真跑函数**，不查字符串。
+   * "拖文件夹能不能直接导入"是运行期行为，字符串匹配证明不了。
+   */
+  const { classifyExternalDrop, dirPathOf, entriesOf } = await loadTs(path.join(HERE, 'utils/dragSort.ts'));
+  const dirEn = [{ isDirectory: true }];
+  const fileEn = [{ isDirectory: false }];
+  t('文件夹 → dir', classifyExternalDrop([{ name: 'A' }], dirEn) === 'dir');
+  t('文件 → file', classifyExternalDrop([{ name: 'a.txt' }], fileEn) === 'file');
+  t('拖文字（无 files）→ empty', classifyExternalDrop([], null) === 'empty');
+  t('拖文字（null files）→ empty', classifyExternalDrop(null, null) === 'empty');
+  t('拿不到 entry 信息仍按目录（宁可多试，不误杀文件夹）',
+    classifyExternalDrop([{ name: 'A' }], null) === 'dir');
+
+  t('有 path 的目录 → 返回绝对路径',
+    dirPathOf([{ name: 'A', path: '/home/u/A' }], dirEn) === '/home/u/A');
+  t('明确是文件 → 不给路径（不能把文件路径当目录导入）',
+    dirPathOf([{ name: 'a.txt', path: '/home/u/a.txt' }], fileEn) === '');
+  t('没 path → 空（调用方退回对话框，而不是静默）',
+    dirPathOf([{ name: 'A', path: null }], dirEn) === '');
+  t('没文件 → 空', dirPathOf([], dirEn) === '');
+
+  /* entriesOf：方法不存在时返回空数组，不抛 */
+  t('entriesOf 遇无 webkitGetAsEntry 的环境返回空、不抛',
+    entriesOf([{}]).length === 0);
+  t('entriesOf 正常取出 isDirectory',
+    entriesOf([{ webkitGetAsEntry: () => ({ isDirectory: true }) }])[0].isDirectory === true);
+  t('entriesOf 对 null 返回空', entriesOf(null).length === 0);
 }
 
 done();

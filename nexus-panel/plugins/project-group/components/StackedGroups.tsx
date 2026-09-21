@@ -34,8 +34,14 @@ export function StackedGroups({
   onAdd: (tabIndex: number) => void;
   /** 分类框上下拖动重排（原版各分类可拖着换上下位置） */
   onMoveTab: (from: number, to: number) => void;
-  /** #14 从文件管理器拖入（只有名字，没有路径） */
-  onExternalDrop?: (name: string) => void;
+  /**
+   * #14 从文件管理器拖入文件夹。
+   * @param tabIndex 拖到**哪个分类框**里 —— 项目组是纵向堆叠的，
+   *   每个框都有自己的「＋」，拖到哪个就该加到哪个。
+   *   不传的话一律落到 activeTab 那一个分类，而堆叠布局看不到页签切换，
+   *   用户拖到「创作」却加进了「政策」，且完全无从察觉。
+   */
+  onExternalDrop?: (target: string, direct: boolean, tabIndex: number) => void;
   emptyHint: string;
   /**
    * 要"滚进视野"的卡片（#19）。由外层在跳转时设置。
@@ -285,7 +291,7 @@ export function StackedGroups({
                 onCrossDrop={onCrossDrop}
                 menus={menus}
                 emptyHint={emptyHint}
-                onExternalDrop={onExternalDrop}
+                onExternalDrop={(target, direct) => onExternalDrop?.(target, direct, i)}
               />
             )}
           </div>

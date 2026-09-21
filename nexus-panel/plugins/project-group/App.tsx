@@ -472,6 +472,54 @@ export default function App() {
     ctx, s, chainActions, bootReady, setPendingSend,
   });
 
+  /*
+   * #14 拖进来的东西不是文件夹时，说清楚**为什么**没接上。
+   *
+   * 三种情形要分开说，混成一句会让用户不知道自己错在哪：
+   *   · 拖了单个文件  → 要的是文件夹，他要加的是这一个文件
+   *   · 拖了一段文字  → 根本不是文件系统的东西（比如从网页上选的词）
+   *
+   * 都不弹选目录框：拖文字弹框是纯粹的误导。但也不能静默 ——
+   * "拖了、松手了、毫无变化"正是 #14 要修的原痛点，
+   * 静默等于把这个功能又退回去。
+   */
+  /*
+   * #14 拖入文件夹 → 直接导入到这一栏。
+   *
+   * 拿到绝对路径就落库，不再弹对话框：那次重选是浏览器沙箱不给路径时
+   * 被迫加的，不是本意。拿不到路径才退回对话框 —— 否则"拖了、松手了、
+   * 毫无变化"这个原痛点又会回来。
+   *
+   * 按 kind 生成而不是两处各写一个：两处逻辑必须一致，
+   * 写两遍就会出现"项目栏直接导入、项目组栏却弹框"这类不一致。
+   */
+  const externalDrop = (kind: CardKind) => (
+    target: string, direct: boolean, tabIndex?: number,
+  ) => {
+    if (direct) {
+      /*
+       * 成功**不额外 toast**：addCard 内部已经 pushLog、自动选中，
+       * 且重复时会自己提示"该文件夹已在当前页签中"。
+       * 这里再加一句"已添加"就会出现"已添加"与"已存在"同时弹出的矛盾，
+       * 反而让人不知道到底成没成。与「＋ 添加」那条路保持一致即可。
+       */
+      void s.addCard(kind, target, tabIndex)
+        .catch((e: unknown) => ctx.toast(`添加失败：${String(e)}`, 'err'));
+      return;
+    }
+    setDialog({ type: 'pickDir', kind, tabIndex, droppedName: target });
+  };
+
+  const externalNotice = (kind: 'file' | 'empty', _name: string) => {
+    /*
+     * 一句话，不解释原理。
+     *
+     * 用户此刻只想知道"我该怎么做"，不是浏览器为什么不给路径。
+     * 拖的是文件还是文字，对他来说下一步都一样：换个文件夹拖进来。
+     */
+    ctx.toast('请拖入文件夹即可', 'err');
+  };
+
   const onCrossDrop = (drag: DragPayload, target: CardInfo | null) => {
     // 跨栏拖到卡片区**空白** = 换栏移动（项目 ⇄ 项目组），不是错误。
     //
@@ -798,7 +846,8 @@ export default function App() {
               title="项目"
               kind="project"
               onEditLink={(p, g) => setConfirmLink({ project: p, group: g })}
-              onExternalDrop={(n) => setDialog({ type: 'pickDir', kind: 'project', droppedName: n })}
+              onExternalDrop={externalDrop('project')}
+              onExternalNotice={externalNotice}
               tabs={boot.projectTabs}
               cards={projectCards}
               selected={s.selProject}
@@ -879,7 +928,9 @@ export default function App() {
                 onRemove={(i) => requestRemoveTab('group', i)}
                 onAdd={(i) => setDialog({ type: 'pickDir', kind: 'group', tabIndex: i })}
                 onMoveTab={(from, to) => void s.moveTab('group', from, to)}
-                onExternalDrop={(n) => setDialog({ type: 'pickDir', kind: 'group', droppedName: n })}                reveal={reveal}
+                onExternalDrop={externalDrop('group')}
+                onExternalNotice={externalNotice}
+                reveal={reveal}
                 emptyHint="还没有项目组，点分类右侧的 ＋ 添加"
               />
             </div>
@@ -1026,7 +1077,7 @@ export default function App() {
 function Column({
   title, kind, tabs, cards, selected, onSelect, onOpen, onMove, onMoveToTab, onCrossDrop,
   thumbs, menus, onAdd, onAddTab, onRenameTab, onRemoveTab, onMoveTab, active, onTab, focused,
-  onJumpToGroup, onEditLink, onExternalDrop,
+  onJumpToGroup, onEditLink, onExternalDrop, onExternalNotice,
 }: {
   title: string;
   kind: CardKind;
@@ -1056,8 +1107,21 @@ function Column({
   onJumpToGroup?: (card: CardInfo) => void;
   /* #82 必须外层传入（Column 里没有 App 的 setter） */
   onEditLink?: (project: string, group: string) => void;
-  /** #14 从文件管理器拖入（只有名字，没有路径） */
-  onExternalDrop?: (name: string) => void;
+  /**
+   * #14 从文件管理器拖入文件夹。
+   * @param target 绝对路径（direct=true）或名字（direct=false，拿不到路径时兜底）
+   * @param direct true = 直接导入，不要再弹对话框
+   */
+  onExternalDrop?: (target: string, direct: boolean) => void;
+  /**
+   * #14 拖进来的东西**不是文件夹**时告知用户。
+   *
+   * 为什么不能省：拖一段文字或单个文件也会命中"外部拖入"的判定
+   * （它们 types 里一个内部 MIME 都没有），若一律弹选目录框，
+   * 用户拖文字却弹框，只会觉得这个功能莫名其妙。
+   * 但也不能静默 —— 静默正是 #14 要修的原痛点。
+   */
+  onExternalNotice?: (kind: 'file' | 'empty', name: string) => void;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   // 由「⋯」菜单触发的内联重命名：-1 表示不在编辑
@@ -1118,6 +1182,7 @@ function Column({
                 /* #82：用行里的 group，不用卡片汇总的 linkedGroup */
         onEditLink={onEditLink}
         onExternalDrop={onExternalDrop}
+        onExternalNotice={onExternalNotice}
         onAdd={onAdd}
         addHint={`添加${title}`}
       />

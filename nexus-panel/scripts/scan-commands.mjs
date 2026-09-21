@@ -149,7 +149,18 @@ function collectPolicy(src) {
    */
   const m = src.match(/export const PLUGIN_COMMANDS\s*=\s*\{([\s\S]*?)\}\s*;/);
   if (m) for (const s of m[1].matchAll(/'([a-z_0-9]{3,})'/g)) names.add(s[1]);
-  const m2 = src.match(/export const SAFE_COMMANDS\s*=\s*(?:new Set\(\s*\[|\[)([\s\S]*?)\]\s*\)\s*;/);
+  /*
+   * 结尾的 `\)` 必须写成可选的。
+   *
+   * SAFE_COMMANDS 是**普通数组** `['app_version', 'rust_ping'];`；
+   * 而这里原本照搬 PLUGIN_COMMANDS 那套写法要求结尾有 `)`。
+   * 匹配不到就一路往后找，把后面的注释也吞进捕获组 ——
+   * 于是 CAP_ENFORCEMENT 注释里的 'enforce'、'string' 被当成"白名单命令"，
+   * 报出两条"有权限但 Rust 侧没注册"的假问题。
+   *
+   * 假报告最危险的地方不是多报，而是把真问题稀释掉。
+   */
+  const m2 = src.match(/export const SAFE_COMMANDS\s*=\s*(?:new Set\(\s*\[|\[)([\s\S]*?)\]\s*\)?\s*;/);
   if (m2) for (const s of m2[1].matchAll(/'([a-z_0-9]{3,})'/g)) names.add(s[1]);
   /* 解析不到就当失效 —— 静默返回空集会掩盖真实问题 */
   if (!m) {

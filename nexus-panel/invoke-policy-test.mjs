@@ -6,10 +6,30 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkInvoke, PLUGIN_COMMANDS, HARD_DENY, registerBuiltinIds, resetBuiltinIds, isTrusted } from './js/invoke-policy.js';
+import { checkInvoke, PLUGIN_COMMANDS, HARD_DENY, registerBuiltinIds, resetBuiltinIds, isTrusted, grantCommands, revokeGrant, revokeAllGrants, userGrants } from './js/invoke-policy.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const src = (p) => fs.readFileSync(path.join(HERE, p), 'utf8');
+
+/*
+ * 用户放行白名单要**持久化**（理由见 invoke-policy.js 里的说明：
+ * 模块变量会有第二份副本）。node 环境没有 localStorage，
+ * 而 invoke-policy.js 对它的访问全都包了 try/catch ——
+ * 于是写入静默失败、读取返回空，表现为"用户从未放行"。
+ *
+ * 那是 fail-closed（安全方向对的），但会让下面"放行后可调用"
+ * 这类断言全部假红 —— 而且看不出是环境缺的。
+ * 所以这里补一个内存版，让持久化路径真的被走到。
+ */
+if (typeof globalThis.localStorage === 'undefined') {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(String(k)) ? mem.get(String(k)) : null),
+    setItem: (k, v) => { mem.set(String(k), String(v)); },
+    removeItem: (k) => { mem.delete(String(k)); },
+    clear: () => mem.clear(),
+  };
+}
 
 let pass = 0;
 let fail = 0;
@@ -50,13 +70,34 @@ t('未登记插件 → 敏感命令仍拒绝（默认拒绝没有倒退）',
   && checkInvoke('some-unknown-plugin', 'af_fs_allow_root').ok === false
   && checkInvoke('some-unknown-plugin', 'fpx_capture_screen').ok === false);
 /* 插件自带声明：自定义插件靠这条拿到授权 */
-t('manifest.commands 声明后可调用',
+/*
+ * 契约又进一层：声明 ≠ 授权。
+ *
+ * manifest.commands 是**插件说自己需要什么**，写在插件自己的配置里；
+ * 它改自己的 manifest 就能多要命令 —— 若声明即生效，授权这件事等于不存在。
+ * 所以现在要**声明 + 用户放行**同时满足。
+ *
+ * 下面两半都钉：只钉"放行后可调用"会让"未放行也放行"悄悄回来，
+ * 只钉"未放行被拒"又会让"放行了也没用"漏掉。
+ */
+grantCommands('my-plugin', ['fs_op']);
+t('声明 + 用户放行 → 可调用',
   checkInvoke('my-plugin', 'fs_op', { commands: ['fs_op'] }).ok === true);
-t('manifest.commands 与静态表是并集（内置插件也能补声明）',
-  checkInvoke('home', 'fs_op', { commands: ['fs_op'] }).ok === true);
-t('HARD_DENY 优先于一切（声明了也不给）',
-  checkInvoke('home', 'fs_op', { commands: ['fs_op'] }).ok === true
-  && /HARD_DENY\.has\(name\)/.test(src('js/invoke-policy.js')));
+revokeGrant('my-plugin', 'fs_op');
+t('只有声明、用户未放行 → 拒绝（声明不等于授权）',
+  checkInvoke('my-plugin', 'fs_op', { commands: ['fs_op'] }).ok === false);
+/*
+ * 用户已放行这条命令后，HARD_DENY 仍应优先 ——
+ * 用第三方插件验证：它同时满足"声明 + 放行"，
+ * 若 HARD_DENY 不生效就会被放行，那才是闸门失效。
+ * （不能用内置插件验证：内置全放行，绕过了声明与放行两层，
+ *   HARD_DENY 对它才真正起作用 —— 那条在第 4 节。）
+ */
+grantCommands('my-plugin', ['__will_be_denied__']);
+t('HARD_DENY 优先于声明与放行（源码里有这道判）',
+  /HARD_DENY\.has\(name\)/.test(src('js/invoke-policy.js'))
+  && /if \(HARD_DENY\.has\(name\)\)/.test(src('js/invoke-policy.js')));
+revokeAllGrants('my-plugin');
 t('空命令名 → 拒绝', checkInvoke('home', '').ok === false);
 t('undefined 命令 → 拒绝', checkInvoke('home', undefined).ok === false);
 t('已声明命令 → 放行', checkInvoke('home', 'rust_ping').ok === true);
@@ -79,15 +120,41 @@ t('内置 id 已注册（否则下面全被当成第三方）', isTrusted('agent
  * 这几条是本次的**起因**：此前无条件透传，插件可以调后端任意命令。
  * 现在每个插件只拿到自己声明的那几个。
  */
-t('home 调 fs_op（写删文件）被挡', checkInvoke('home', 'fs_op').ok === false);
-t('home 调 run_node（拉子进程）被挡', checkInvoke('home', 'run_node').ok === false);
-t('mindmap 调 af_fs_allow_root（给自己授权目录=提权）被挡',
-  checkInvoke('mindmap', 'af_fs_allow_root').ok === false);
-t('project-group 调 af_fs_allow_root 被挡（授权只归 settings）',
-  checkInvoke('project-group', 'af_fs_allow_root').ok === false);
-t('demo-iframe 调 fpx_backup 被挡', checkInvoke('demo-iframe', 'fpx_backup').ok === false);
-t('agent-flow 调 fs_op 放行（它确实要用）', checkInvoke('agent-flow', 'fs_op').ok === true);
-t('settings 调 fs_op 被挡（它没声明）', checkInvoke('settings', 'fs_op').ok === false);
+/*
+ * ⚠️ 契约变更：内置插件**全权限放行**。
+ *
+ * 上面几条（home 调 fs_op 被挡 等）钉的是"每个插件只拿到自己声明的"。
+ * 现在内置插件不再逐条卡 —— project-group 这类自带插件要用二十多条命令，
+ * 漏一条就是"点了没反应"，而它本来就随本仓库一同发布、与宿主同源。
+ *
+ * 这不是安全倒退的借口，而是**换了一道闸**：
+ * 原来靠"逐条登记"挡内置插件（挡不住有意的代码，只挡正常开发），
+ * 现在靠"来源可信"—— 真正要防的是用户后来装进来的东西。
+ * HARD_DENY 保留为兜底（见第 4 节）。
+ */
+t('内置插件全放行：project-group 调 af_fs_allow_root',
+  checkInvoke('project-group', 'af_fs_allow_root').ok === true);
+t('内置插件全放行：agent-flow 调 fs_op',
+  checkInvoke('agent-flow', 'fs_op').ok === true);
+t('内置插件全放行：settings 调 fs_op',
+  checkInvoke('settings', 'fs_op').ok === true);
+t('内置插件不用用户放行（它是自带的，不该弹授权）',
+  checkInvoke('home', 'fs_op').ok === true);
+
+/*
+ * 真正的安全断言在**第三方**身上 —— 上面放开了内置，
+ * 这里必须证明第三方没有跟着一起放开。
+ * 只测"内置放行"而不测这个，等于把闸门拆了还报告绿灯。
+ */
+t('第三方插件 fs_op 未放行 → 仍被拒',
+  checkInvoke('third-party-x', 'fs_op', { commands: ['fs_op'] }).ok === false);
+t('第三方插件 run_node（M 类）→ 一律拒（与放行无关）',
+  checkInvoke('third-party-x', 'run_node', { commands: ['run_node'] }).ok === false
+  && grantCommands('third-party-x', ['run_node'])
+  && checkInvoke('third-party-x', 'run_node', { commands: ['run_node'] }).ok === false);
+revokeAllGrants('third-party-x');
+t('第三方插件未声明的敏感命令 → 拒',
+  checkInvoke('third-party-x', 'fpx_capture_screen').ok === false);
 
 /*
  * 反向：不注册内置 id 时，命中红色组合的插件会被拦。

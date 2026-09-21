@@ -327,8 +327,27 @@ console.log('\n--- 12. 能力拦截必须**按信任等级**分别生效 ---');
    *   第三方 → 拦（否则这层约束只是好看）
    * 只钉一头的话，另一头会悄悄倒退。
    */
+  /*
+   * 用户放行白名单存 localStorage，而 node 里没有它 ——
+   * 缺了桩，grantCommands 会静默失效（写不进去、读出来是空），
+   * 于是每条命令都以"尚未经用户放行"被拒。
+   *
+   * 这个失败很隐蔽：它长得跟"组合层一刀切全拒"一模一样，
+   * 照着它去改拦截规则，就会把真正正确的代码改坏。
+   * 必须在 import **之前**装好，模块加载时就读。
+   */
+  if (typeof globalThis.localStorage === 'undefined') {
+    const mem = new Map();
+    globalThis.localStorage = {
+      getItem: (k) => (mem.has(String(k)) ? mem.get(String(k)) : null),
+      setItem: (k, v) => { mem.set(String(k), String(v)); },
+      removeItem: (k) => { mem.delete(String(k)); },
+      clear: () => mem.clear(),
+    };
+  }
   const ip = await import('./js/invoke-policy.js');
-  const { CAP_ENFORCEMENT, checkInvoke, registerBuiltinIds, resetBuiltinIds, isTrusted } = ip;
+  const { CAP_ENFORCEMENT, checkInvoke, registerBuiltinIds, resetBuiltinIds, isTrusted,
+    grantCommands, revokeGrant } = ip;
   const { capsOf, worstLevel, capOf } = await import('./js/command-caps.js');
   const fs2 = await import('node:fs');
 
@@ -388,6 +407,16 @@ console.log('\n--- 12. 能力拦截必须**按信任等级**分别生效 ---');
   /* ② 第三方插件：命中红色组合时，参与该组合的等级被拒 */
   resetBuiltinIds();   // 谁都不注入 → 全部按第三方
   const [redId, redCmds] = reds[0];
+  /*
+   * 第三方现在走**双白名单**：插件声明 + 用户放行，缺一不可。
+   *
+   * 所以这里必须先帮它把命令放行一遍，再检验"组合拦截"。
+   * 不放行的话，每条都会以"尚未经用户放行"被拒 —— 那是**声明/放行**这一层
+   * 拦的，不是组合层，测出来的结论会完全对不上（看着像"组合层一刀切全拒"）。
+   *
+   * 与 invoke-policy-test 保持一致：两层要分开测，混在一起就分不清是谁拦的。
+   */
+  grantCommands(redId, redCmds);
   const profile = capsOf(redCmds);
   const banned = new Set();
   for (const r of profile.combos.filter((c) => c.level === 'red')) for (const lv of r.need) banned.add(lv);
@@ -411,6 +440,32 @@ console.log('\n--- 12. 能力拦截必须**按信任等级**分别生效 ---');
    */
   t('第三方：未参与组合的命令仍放行（不搞一刀切）', allowedThird.length === 0, allowedThird.slice(0, 2).join(' | '));
 
+  /*
+   * 用户撤回放行后，命令应重新被拒 —— 放行是可撤销的，不是一次性的。
+   *
+   * ⚠️ 挑命令时**必须避开 SAFE_COMMANDS**（只读兜底那两条）。
+   * 它们不经过放行表，撤销了也照样放行 —— 拿它们测撤销会得到恒假的
+   * "撤销没生效"，而去改撤销逻辑就会把正确的实现改坏。
+   */
+  /*
+   * 还要**避开红区圈出的等级**：那些命令即便放行了也会被组合层拦下，
+   * 用它测"放行后可用"会恒假。
+   */
+  const revokable = redCmds.find(
+    (c) => !ip.SAFE_COMMANDS.includes(c) && !banned.has(capOf(c)),
+  );
+  if (revokable) {
+    grantCommands(redId, [revokable]);
+    t('放行后该命令可用',
+      checkInvoke(redId, revokable, { id: redId, commands: redCmds }).ok === true);
+    revokeGrant(redId, revokable);
+    t('撤回放行后该命令重新被拒',
+      checkInvoke(redId, revokable, { id: redId, commands: redCmds }).ok === false);
+    grantCommands(redId, redCmds);
+  } else {
+    t('存在可测撤销的非兜底命令（否则这节测了个空）', false);
+  }
+
   /* ③ 拒绝信息要能看出原因，否则无从排查 */
   const one = redCmds.find((c) => banned.has(capOf(c)));
   const rej = checkInvoke(redId, one, { id: redId, commands: redCmds });
@@ -423,6 +478,7 @@ console.log('\n--- 12. 能力拦截必须**按信任等级**分别生效 ---');
   /* ⑤ 没命中红色组合的第三方插件不该被误伤 */
   resetBuiltinIds();
   const safeCmds = ['app_version', 'rust_ping'];
+  grantCommands('safe-plugin', safeCmds);
   t('纯 R 类的第三方插件不受影响',
     safeCmds.every((c) => checkInvoke('safe-plugin', c, { id: 'safe-plugin', commands: safeCmds }).ok));
 
@@ -453,8 +509,8 @@ console.log('\n--- 13. 宿主必须在 concat 自定义插件**之前**注入内
 /* ---------------------------------------------------------------- */
 console.log('\n--- 14. 第三方能力硬禁止（第二道锁）---');
 {
-  const { checkInvoke, registerBuiltinIds, resetBuiltinIds, HARD_DENY, THIRD_DENY_CAPS } =
-    await import('./js/invoke-policy.js');
+  const { checkInvoke, registerBuiltinIds, resetBuiltinIds, HARD_DENY, THIRD_DENY_CAPS,
+    grantCommands } = await import('./js/invoke-policy.js');
   const { capOf } = await import('./js/command-caps.js');
 
   t('THIRD_DENY_CAPS 含 M', THIRD_DENY_CAPS.includes('M'), JSON.stringify(THIRD_DENY_CAPS));
@@ -500,6 +556,12 @@ console.log('\n--- 14. 第三方能力硬禁止（第二道锁）---');
   for (const c of ['app_version', 'rust_ping']) {
     t(`第三方 ${c} 放行（装了就能查）`, checkInvoke('third-party', c, null).ok === true);
   }
+  /*
+   * 第三方现在要**声明 + 用户放行**双满足。
+   * 这里测的是"M 类被禁、非 M 类不受牵连"，
+   * 所以得先把放行补上，否则拦它的是放行层而不是能力层，结论会错位。
+   */
+  grantCommands('third-party', ['fpx_read_file', 'fs_op']);
   for (const c of ['fpx_read_file', 'fs_op']) {
     t(`第三方 ${c}（S/W 类）放行`, checkInvoke('third-party', c, { id: 'third-party', commands: [c] }).ok === true);
   }

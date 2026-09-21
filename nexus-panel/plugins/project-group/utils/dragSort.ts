@@ -236,73 +236,6 @@ export function gapIndexAt(
 }
 
 /**
- * 带死区的半区判定（`gapIndexAt` 的滞后版本）。
- *
- * **返回 null 表示"落在死区内，请保持现状"** ——
- * 这是它比 `gapIndexAt` 多的那一点，也正是死区的意义所在：
- * 手抖一两个像素不该让插入条在两格之间反复横跳。
- *
- * 做成"返回 null 由调用方保持"而不是函数内部记住上次的值：
- * 纯函数才穷举得完，而记住状态的函数在测试里要额外造上下文。
- *
- * @param fixedDeadZone 死区基准像素（原版连锁动作页签是 14）
- */
-export function gapIndexAtDeadZone(
-  rect: BoxRect,
-  clientY: number,
-  i: number,
-  fixedDeadZone: number,
-  ratio = 0.2,
-) {
-  const dz = deadZone(rect.height, fixedDeadZone, ratio);
-  const center = rect.top + rect.height / 2;
-  if (clientY > center + dz) return i + 1;
-  if (clientY < center - dz) return i;
-  return null;
-}
-
-/**
- * 内置项视为**固定墙**：自定义项不能越过它们（原版 `AcIsCustom`
- * 与注释"内置页签视为固定墙不可借位"）。
- *
- * 为什么要它：后端 `ensure_actions` 按**固定顺序**重建内置项，
- * 于是自定义项就算被拖到了内置项之间，刷新后也会弹回去 ——
- * 用户看到的是"拖成功了，刷新又变回去"，而刷新前没有任何提示。
- * 与其做一个会失效的拖拽，不如一开始就不让位。
- *
- * 判定用**原始列表**的下标：传进来的 from/to 都是移除前的索引。
- *
- * @param isFixed 各项是否为固定项（内置），按原始顺序
- */
-export function clampAcrossFixedWall(
-  from: number,
-  to: number,
-  isFixed: boolean[],
-) {
-  if (from === to) return from;
-  /*
-   * 上/下界都夹在数组内：调用方给的 to 理论上已在范围内（来自
-   * `resolveMoveIndex`），但夹住之后即使传错也只是停在边上，
-   * 不会返回一个**越界下标**让 splice 插出一个空洞。
-   */
-  const n = isFixed.length;
-  if (to > from) {
-    let t = from;
-    for (let i = from + 1; i <= to && i < n; i++) {
-      if (isFixed[i]) break;   // 不能越过这个固定项
-      t = i;
-    }
-    return t;
-  }
-  let t = from;
-  for (let i = from - 1; i >= to && i >= 0; i--) {
-    if (isFixed[i]) break;
-    t = i;
-  }
-  return t;
-}
-
-/**
  * 横向版本（分组栏 / 页签条）：判定指针在元素**左半还是右半**。
  *
  * 为什么不用 `offsetX`：`offsetX` 是相对**事件目标**的，
@@ -391,12 +324,145 @@ export function isExternalDrag(types: DragTypes | null): boolean {
  *
  * 拿不到绝对路径 —— 见下面 `externalDropName` 的说明。
  */
-export type DropNameFile = { name: string };
+/**
+ * 带 `path` 的 File 形态。
+ *
+ * `path` 是 **Tauri 在开启 dragDropEnabled 后**附加到 File 对象上的磁盘绝对路径，
+ * 标准浏览器里没有这个字段。有它，拖进来的文件夹才能**直接**加成卡片，
+ * 不必再让用户去对话框里重选一次。
+ */
+export type DropNameFile = { name: string; path: string | null };
 /** 别名包住 readonly 数组：内联写 `readonly X[]` 时类型剥离器处理不了 */
 export type DropNameFiles = readonly DropNameFile[];
 
 export function externalDropName(files: DropNameFiles | null): string {
   return files && files.length > 0 ? files[0].name : '';
+}
+
+/**
+ * 拖进来的文件夹的**磁盘绝对路径**（拿不到则返回空串）。
+ *
+ * --------------------------------------------------------------------
+ * 这是"拖入即导入"能不能成立的关键。
+ *
+ * 浏览器沙箱只给 File 对象、不给路径 —— 所以此前只能弹对话框让用户重选，
+ * 那一步是**被迫**的，不是设计。宿主开启 `dragDropEnabled` 之后，
+ * Tauri 会把绝对路径挂到 File 上，这一步就不需要了。
+ *
+ * 判据：
+ *   · 明确是文件（isDirectory === false）→ 不给路径
+ *   · 拿不到 entry 信息 → 仍按目录处理（与 classifyExternalDrop 同源），
+ *     宁可多试一次，也不能把真正的文件夹误判成文件
+ *
+ * @returns 绝对路径；空串表示本次拿不到路径（调用方应退回对话框）
+ */
+export function dirPathOf(
+  files: DropNameFiles | null,
+  entries: DropEntriesArg,
+): string {
+  if (!files || files.length === 0) return '';
+  const first = entries && entries.length > 0 ? entries[0] : null;
+  if (first && first.isDirectory === false) return '';
+  const p = String(files[0]?.path ?? '').trim();
+  return p;
+}
+
+/**
+ * 拖进来的到底是什么。
+ *
+ * --------------------------------------------------------------------
+ * 为什么必须分得清：`isExternalDrag` 只看 **types**（dragover 阶段
+ * 浏览器屏蔽了 dataTransfer 的内容，只能读 types），它分不出：
+ *
+ * | 拖进来 | types | files | 期望 |
+ * |---|---|---|---|
+ * | 文件夹 | `Files` | 有 | 接进选目录流程 |
+ * | 单个文件 | `Files` | 有 | **不是文件夹**，不该弹选目录框 |
+ * | 一段文字 | `text/plain` | **空** | 不该弹任何框 |
+ *
+ * 前两版只看 types，于是**拖一段选中的文字进来也会弹「选择目录」** ——
+ * 用户拖的是文字，弹个选目录框完全莫名其妙。files 为空是最好判的一种，
+ * 却因为判据里根本没检查 files 而漏掉了。
+ *
+ * 文件夹与文件的区分靠 `webkitGetAsEntry().isDirectory`：
+ * 它是标准 API，且 **drop 阶段同步可读**（不必等异步 FileSystem 操作），
+ * 所以能在这里给出确定答案。
+ */
+export type DropKind = 'dir' | 'file' | 'empty';
+
+/**
+ * 一个 FileSystemEntry 的最小形态（只需要 isDirectory）。
+ *
+ * ⚠️ 字段**不写 `?`**：源码要被静态剥离器转成 .mjs 才能跑测试，
+ * 而 `?:` 它会处理坏 —— 残留的 `};` 让 node 直接 SyntaxError，
+ * 且报错指向转换后的临时文件，很难看出是这里的写法导致的。
+ * 需要表达"可能没有"时用 `| null` 或调用处的 `!!` 兜住。
+ */
+export type DropEntryLite = { isDirectory: boolean };
+
+/** DataTransferItem 的最小形态 */
+/** DataTransferItem 的最小形态（同样要写成**单行**：多行 type 也会让剥离器留下孤立的 `};`） */
+export type DropItemLite = { webkitGetAsEntry: () => DropEntryLite | null };
+
+export type DropItems = readonly DropItemLite[];
+
+/*
+ * 参数类型的别名 —— **不能**内联写 `entries?: readonly X[] | null`。
+ *
+ * 这段源码要被静态剥离器转成 .mjs 才能在 node 里跑测试（见 testkit.mjs），
+ * 而 `?.` 式的可选参数标记剥离不掉，会原样留在 JS 里：
+ * 那不是合法 JS（JS 里参数可选靠默认值，没有 `param?:` 语法），
+ * 于是 node 直接 SyntaxError —— 而报错指向转换后的临时文件，
+ * 很难一眼看出是这里的类型写法导致的。
+ */
+export type DropEntriesArg = readonly DropEntryLite[] | null;
+
+/**
+ * 从 dataTransfer.items 取出各条的"是不是目录"。
+ *
+ * 抽成函数是因为 `webkitGetAsEntry` 在部分环境（测试、个别平台）不存在，
+ * 那种情况下**返回空数组**而不是抛错 —— 拿不到信息是"不知道"，
+ * 不是"拖了个文件"，两者不能混。
+ */
+export function entriesOf(items: DropItems | null): DropEntryLite[] {
+  if (!items || items.length === 0) return [];
+  const out: DropEntryLite[] = [];
+  for (const it of items) {
+    const get = it?.webkitGetAsEntry;
+    if (typeof get !== 'function') continue;
+    try {
+      const en = get.call(it);
+      if (en) out.push({ isDirectory: !!en.isDirectory });
+    } catch { /* 个别平台会抛，跳过这一条 */ }
+  }
+  return out;
+}
+
+/**
+ * @param files  dataTransfer.files（只用来判"有没有真的拖了东西"）
+ * @param entries dataTransfer.items 取出的 entry 信息（可空）
+ */
+export function classifyExternalDrop(
+  files: DropNameFiles | null,
+  entries: DropEntriesArg,
+): DropKind {
+  /* files 为空 = 拖的是纯文本 / 链接，不是文件系统的东西。
+     这一条最确定，也最该拦 —— 弹选目录框在这种场景完全是误导。 */
+  if (!files || files.length === 0) return 'empty';
+
+  const first = entries && entries.length > 0 ? entries[0] : null;
+  if (first && typeof first.isDirectory === 'boolean') {
+    return first.isDirectory ? 'dir' : 'file';
+  }
+  /*
+   * 拿不到 entry 信息（平台不支持 / 环境缺失）：**按目录处理**。
+   *
+   * 为什么不按文件：#14 要支持的正是拖文件夹，
+   * "拿不到信息就拒绝"会让这个功能在那些平台上直接失效，
+   * 而失效的表现是"拖了没反应" —— 恰好是本功能要修的那个痛点。
+   * 宁可多弹一次框，也不能错杀。
+   */
+  return 'dir';
 }
 
 /* --------------------------- 贴边自动滚动（#104）--------------------------- */

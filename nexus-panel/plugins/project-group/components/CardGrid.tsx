@@ -26,7 +26,8 @@ import {
   parseDragPayload, parseTabDrag,
   gapIndexAt, resolveMoveIndex,
   isExternalDrag, externalDropName,
-  type DragPayload, type TabDragPayload,
+  classifyExternalDrop, entriesOf, dirPathOf,
+  type DragPayload, type TabDragPayload, type DropItems,
 } from '../utils/dragSort';
 
 /**
@@ -341,7 +342,7 @@ export function TabBar({
 /** 卡片网格：选中 / 打开 / 右键菜单 / 拖拽（跨栏=分配，同栏=排序） */
 export function CardGrid({
   kind, cards, selected, thumbs, onSelect, onOpen, onMove, onCrossDrop, menus,
-  onExternalDrop,
+  onExternalDrop, onExternalNotice,
   emptyHint, onJumpToGroup, onEditLink, onAdd, addHint,
 }: {
   kind: CardKind;
@@ -357,7 +358,21 @@ export function CardGrid({
    * #14 从文件管理器拖进来的东西（只有名字，没有路径 —— 见 TabBar 同名注释）。
    * 沉默地什么都不做是最糟的：用户拖了、松手了、界面毫无变化。
    */
-  onExternalDrop?: (name: string) => void;
+  /**
+   * #14 从文件管理器拖入文件夹。
+   *
+   * @param target 绝对路径（拿得到时）或名字（拿不到时的兜底）
+   * @param direct true = 拿到了真实路径，调用方应**直接导入**，不要再弹对话框
+   */
+  onExternalDrop?: (target: string, direct: boolean) => void;
+  /**
+   * 拖进来的东西**不是文件夹**时的告知（拖了单个文件，或拖了一段文字）。
+   *
+   * 与 onExternalDrop 分开：那边是"接到正规流程上"，这边是"说清楚为什么
+   * 没接"。合成一个回调的话，调用方得靠参数自己分派，
+   * 而这两件事的处理方式完全不同（弹框 vs 提示一句话）。
+   */
+  onExternalNotice?: (kind: 'file' | 'empty', name: string) => void;
   menus: (card: CardInfo) => MenuItem[];
   emptyHint: string;
   /* #287 卡片区末尾的「＋」虚线框。
@@ -549,7 +564,37 @@ export function CardGrid({
         if (isExternalDrag(e.dataTransfer.types)) {
           e.preventDefault();
           setExternalOver(false);
-          if (onExternalDrop) onExternalDrop(externalDropName(e.dataTransfer.files));
+          /*
+           * 分类后再决定做什么 —— **不能**一律弹选目录框。
+           *
+           * 拖一段选中的文字进来也会命中 isExternalDrag（它的 types 里
+           * 一个内部 MIME 都没有），files 却是空的。此时弹「选择目录」
+           * 是纯粹的误导：用户拖的是文字，界面却问他要哪个目录。
+           *
+           * 拖单个文件同理 —— 他要加的是文件夹，弹框也接不上。
+           * 这两种都给一句明确的话，而不是干脆静默（静默正是 #14 要修的）。
+           */
+          const name = externalDropName(e.dataTransfer.files);
+          const entries = entriesOf(e.dataTransfer.items as unknown as DropItems | null);
+          const kind = classifyExternalDrop(e.dataTransfer.files, entries);
+          if (kind !== 'dir') {
+            /* 拖单个文件或一段文字：一句话说清，不弹框。
+               弹「选择目录」在这种场景是纯粹的误导。 */
+            onExternalNotice?.(kind === 'file' ? 'file' : 'empty', name);
+            return;
+          }
+          /*
+           * 是文件夹。拿到绝对路径就**直接导入**，不再让用户重选一次。
+           *
+           * 那次重选（`droppedName` 提示那段）是浏览器沙箱拿不到路径时
+           * 被迫加的，不是本意 —— 现在宿主开了 dragDropEnabled，
+           * 路径就在 File 上，能直接导入就该直接导入。
+           *
+           * 仍拿不到路径时（比如运行在纯浏览器里调试）才退回对话框，
+           * 否则"拖了没反应"这个原痛点又会回来。
+           */
+          const path = dirPathOf(e.dataTransfer.files, entries);
+          onExternalDrop?.(path || name, !!path);
           return;
         }
         const raw = e.dataTransfer.getData(DRAG_MIME);

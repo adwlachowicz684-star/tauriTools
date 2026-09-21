@@ -8,7 +8,7 @@
 import { getTauri, isInsideTauri } from './tauri-core.js';
 /* ctx.invoke 的命令白名单。此前是无条件透传（插件可调任意后端命令），
    它是文件残留与安全上最大的口子，嵌合后会进一步放大。 */
-import { checkInvoke, registerBuiltinIds } from './invoke-policy.js';
+import { checkInvoke, registerBuiltinIds, revokeAllGrants } from './invoke-policy.js';
 /* 卸载残留校验（只读 · 不阻断 · 同步）。见该文件头部说明。 */
 import { snapshotGlobals, auditUnmount } from './unmount-audit.js';
 /* 文件清单制（D3）：插件产出文件的归属记账，账本在宿主侧。 */
@@ -248,6 +248,36 @@ export function saveCustomPlugins(list) {
 }
 
 /* ---------------------------- 宿主 ---------------------------- */
+/**
+ * 拖放守卫（宿主级，随 dragDropEnabled 一起开）
+ * ============================================================
+ * `dragDropEnabled` 之前是 false —— 那时拖文件进窗口**什么都不触发**，
+ * 于是只能拿到浏览器给的 File 对象（没有磁盘路径），
+ * 拖个文件夹进来还得再弹对话框让用户重选一次。
+ *
+ * 改成 true 之后，Tauri 会把**绝对路径**挂到 File 上（`file.path`），
+ * 拖入即导入才可能成立。
+ *
+ * ⚠️ 但开启它有一个必须一并处理的代价：
+ *    webview 从此**接收**拖放，而它对拖入文件的默认行为是**打开它**
+ *    —— 也就是整个界面导航到那个文件，应用内容全部消失。
+ *
+ * 而各插件只在自己那一小块区域里 preventDefault（卡片区拖放就是这么写的），
+ * 拖到标题栏、侧边栏、空白处的那一部分没人拦 —— 那才是最容易误拖的地方。
+ *
+ * 所以这里在**文档级**兜住：任何位置拖入都不让浏览器走默认行为。
+ * 只 preventDefault、不做别的 —— 具体区域该干什么仍由各自的 handler 决定，
+ * 且它们的监听在 root 容器上，比 document 先跑，不会被这里抢走。
+ */
+let dropGuardInstalled = false;
+function installDropGuard() {
+  if (dropGuardInstalled) return;   // createHost 可能被调用多次，只装一次
+  dropGuardInstalled = true;
+  const stop = (e) => { e.preventDefault(); };
+  document.addEventListener('dragover', stop);
+  document.addEventListener('drop', stop);
+}
+
 export function createHost(opts = {}) {
   /** @type {() => HTMLElement|null} */
   const getStage = opts.getStage || (() => null);
@@ -267,6 +297,23 @@ export function createHost(opts = {}) {
     state.activeId === id && !state.shortcutsPaused;
 
   const bus = createBus();
+
+  /*
+   * 拖放守卫必须在**插件挂载之前**装好。
+   *
+   * 插件 mount 期间如果用户正好拖了个文件进来，而守卫还没生效，
+   * 那一下就会走浏览器默认行为（导航离开）—— 时机虽窄，
+   * 但后果是整个界面没了，不值得为省一行去赌。
+   */
+  installDropGuard();
+
+  /*
+   * 拖放守卫必须在**插件挂载之前**装好。
+   *
+   * 插件 mount 期间如果用户正好拖了个文件进来，而守卫还没生效，
+   * 那一下就会走浏览器默认行为（导航离开）—— 时机虽窄，
+   * 但后果是整个界面没了，不值得为省一行去赌。
+   */
 
   /* ---- 服务插件运行时（kind:'service'） ----
      服务不进侧边栏，用户不直接打开；它们被挂到一个隐藏的常宿容器里，
@@ -1624,6 +1671,15 @@ export function createHost(opts = {}) {
     },
     removePlugin(id) {
       saveCustomPlugins(getCustomPlugins().filter((p) => p.id !== id));
+      /*
+       * 卸载必须**连带撤销该插件的用户放行**。
+       *
+       * 留着的话：插件数据没了，授权记录还在。将来有人用同名 id
+       * （id 是 custom-时间戳，重装不会撞，但手工改配置会）
+       * 装上另一个插件，就会继承上一次的授权 ——
+       * 而"谁放行过什么"本该随插件一起消失。
+       */
+      revokeAllGrants(id);
     },
   };
 }
