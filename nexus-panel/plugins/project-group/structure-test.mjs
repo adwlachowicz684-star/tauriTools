@@ -7,7 +7,7 @@
  * 而里面塞的东西彼此无关（弹窗 / 使用说明 / 布局 / 右键菜单…）。
  *
  * 这里守的是**拆分本身不腐化**：
- *   · 弹窗与使用说明必须在 DialogsHub.tsx，不许再搬回 App
+ *   · 弹窗与使用说明必须在 Dialogs.tsx，不许再搬回 App
  *   · IS_MAC 只能有一份（两份会让按钮与说明显示不同的修饰键）
  *   · 不许出现 App ⇄ Dialogs 的循环依赖
  *
@@ -72,7 +72,9 @@ console.log('\n=== 4. 不许循环依赖 ===');
   /* Dialogs → App 会成环：App 引 Dialogs，Dialogs 又引 App。
      ESM 通常能跑，但在某些加载顺序下拿到 undefined，极难查。 */
   t('Dialogs 不引 App', !/from '\.\.\/App'/.test(dialogs) && !/from '\.\/App'/.test(dialogs));
-  t('App 引 Dialogs（单向）', /from '\.\/components\/DialogsHub'/.test(app));
+  /* 文件名两种都接受：上游用 DialogsHub.tsx，本地曾用 Dialogs.tsx。
+     断言绑死一种会在改名后误报"循环依赖"（实际只是换了名字）。 */
+  t('App 引 Dialogs（单向）', /from '\.\/components\/Dialogs(Hub)?'/.test(app));
 }
 
 console.log('\n=== 5. 连锁接线已抽成钩子 ===');
@@ -112,7 +114,7 @@ console.log('\n=== 7. 规模护栏 ===');
   const n = app.split('\n').length;
   t('App.tsx < 1150 行（拆分前 1599）', n < 1150, `${n} 行`);
   /* 只设上限不设下限：不许再涨回去，但也不阻止继续拆 */
-  t('DialogsHub.tsx 已成形', dialogs.split('\n').length > 200);
+  t('Dialogs.tsx 已成形', dialogs.split('\n').length > 200);
 }
 
 
