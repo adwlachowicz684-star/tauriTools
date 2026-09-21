@@ -411,4 +411,39 @@ console.log('\n=== #105 空列表拖入：整区高亮而非竖条 ===');
   t('整区高亮样式存在', /\.fpx-cards\.empty-over/.test(cssNC));
 }
 
+console.log('\n=== 死区 gap（连锁动作用）===');
+{
+  const { gapIndexAtDeadZone } = await loadTs(path.join(HERE, 'utils/dragSort.ts'));
+  /* 项高 40，top=0 → 中心 20；死区 = min(14, 40*0.2=8) = 8 */
+  const r = { top: 0, height: 40 };
+  t('明确在下半区 → 插到后面', gapIndexAtDeadZone(r, 35, 3, 14) === 4);
+  t('明确在上半区 → 插到前面', gapIndexAtDeadZone(r, 5, 3, 14) === 3);
+  /* 死区内返回 null（由调用方保持现状） */
+  t('中心附近 → null', gapIndexAtDeadZone(r, 20, 3, 14) === null);
+  t('刚过中心一点点 → null', gapIndexAtDeadZone(r, 25, 3, 14) === null);
+  t('刚过死区 → 换', gapIndexAtDeadZone(r, 29, 3, 14) === 4);
+  /* 矮项：40*0.2=8 vs 固定 14 → 取 8。高项 200*0.2=40 → 取 14 */
+  t('高项取固定值 14', gapIndexAtDeadZone({ top: 0, height: 200 }, 114, 0, 14) === null);
+  t('高项越过 14 才换', gapIndexAtDeadZone({ top: 0, height: 200 }, 115, 0, 14) === 1);
+}
+
+console.log('\n=== 固定墙（内置不可借位）===');
+{
+  const { clampAcrossFixedWall } = await loadTs(path.join(HERE, 'utils/dragSort.ts'));
+  /* 0,1 内置；2,3,4 自定义 */
+  const fixed = [true, true, false, false, false];
+
+  /* 自定义 4 → 想挪到 0：左侧会越过 3,2（自定义，可过），再越 1（内置，停） */
+  t('向左被内置挡住', clampAcrossFixedWall(4, 0, fixed) === 2);
+  /* 自定义 2 → 想挪到 2 左边一格 = 1：越过 1（内置）→ 停原地 */
+  t('紧贴内置也过不去', clampAcrossFixedWall(2, 1, fixed) === 2);
+  /* 自定义 2 → 挪到 4：越过 3,4 都是自定义 */
+  t('自定义区间自由移动', clampAcrossFixedWall(2, 4, fixed) === 4);
+  t('原地返回原地', clampAcrossFixedWall(3, 3, fixed) === 3);
+  /* 没有内置项时不设限 */
+  t('全自定义不拦', clampAcrossFixedWall(0, 3, [false, false, false, false]) === 3);
+  /* 越界下标不崩 */
+  t('to 越界仍返回', clampAcrossFixedWall(2, 99, fixed) === 4);
+}
+
 done();

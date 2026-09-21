@@ -9,7 +9,8 @@ import { useAvailableHeight } from '../hooks/useAvailableHeight';
 /* #148 连锁动作重排：与卡片/页签/图标共用同一套索引纠偏与半区判定，
    不另写一份 —— 各写一份的话改了那边的边界处理这里就会悄悄不一致。 */
 import {
-  ACTION_DRAG_MIME, parseActionDrag, resolveMoveIndex, gapIndexAt,
+  ACTION_DRAG_MIME, parseActionDrag, resolveMoveIndex,
+  gapIndexAtDeadZone, clampAcrossFixedWall,
 } from '../utils/dragSort';
 import { Modal } from './ui';
 
@@ -17,6 +18,14 @@ import { Modal } from './ui';
 const ICONS = ['💬', '🔍', '🗜', '🚀', '🧪', '📦', '🧹', '📝', '🔧', '🧭', '⚡', '🧩'];
 
 const uid = () => `c${Math.random().toString(16).slice(2, 10)}`;
+
+/**
+ * 连锁动作换位死区基准（原版 `AcSwapDeadZone = 14.0`）。
+ *
+ * 与分类框那个（默认 8）不同：连锁动作是纵向列表、项更矮，
+ * 死区太小起不到"防手抖"的作用。
+ */
+const AC_SWAP_DEAD_ZONE = 14;
 
 /**
  * 连锁动作管理：内置四项 + 自定义，增删改排序，每个动作可分别设项目/项目组两份模板。
@@ -113,30 +122,58 @@ export function ChainActionsPanel({
   const [dragId, setDragId] = useState<string | null>(null);
   const [actGap, setActGap] = useState(-1);
 
+  /*
+   * 固定墙的下界：最后一个内置项之后。
+   *
+   * 用"最后一个内置项 + 1"而不是"内置项个数"——
+   * 万一顺序被打乱（开发者模式删过内置项），按个数算会把自定义项
+   * 硬挤到错误的位置。
+   */
+  const minGap = (l: ChainAction[]): number => {
+    let last = -1;
+    for (let k = 0; k < l.length; k++) if (l[k].builtin) last = k;
+    return last + 1;
+  };
+
   /** 把某个 id 移到落点缝隙 k（复用卡片/页签那套"先移除再插入"的纠偏） */
   const dropActionAt = (id: string, k: number) => {
     setList((l) => {
       const from = l.findIndex((a) => a.id === id);
       if (from < 0 || k < 0 || k > l.length) return l;
       const to = resolveMoveIndex(from, k, l.length);
-      if (to === from) return l;   // 原地放下：什么都不做（#103 同源）
+      const fixed = l.map((a) => !!a.builtin);
+      const to2 = clampAcrossFixedWall(from, to, fixed);
+      if (to2 === from) return l;   // 原地放下：什么都不做（#103 同源）
       const n = [...l];
       const [it] = n.splice(from, 1);
-      n.splice(to, 0, it);
+      n.splice(to2, 0, it);
       return n;
     });
     setDirty(true);
   };
 
+  /*
+   * ↑↓ 按钮也受固定墙约束。
+   *
+   * 两条路（按钮 / 拖拽）规则必须一致：若按钮能把自定义项挪到内置项之间
+   * 而拖拽不能，用户会用按钮做到一个"刷新就弹回"的状态，
+   * 且永远不会知道为什么 —— 那比两条路都不能更糟。
+   *
+   * 越界的方向由 delta 决定：上移越过 i-1，下移越过 i+1。
+   */
+  const crossedIsFixed = (l: ChainAction[], i: number, delta: number): boolean => {
+    const c = delta < 0 ? i - 1 : i + 1;
+    return c >= 0 && c < l.length && !!l[c].builtin;
+  };
+
   const move = (id: string, delta: number) => {
-    setList((l) => {
-      const i = l.findIndex((a) => a.id === id);
-      const j = i + delta;
-      if (i < 0 || j < 0 || j >= l.length) return l;
-      const n = [...l];
-      [n[i], n[j]] = [n[j], n[i]];
-      return n;
-    });
+    const i = list.findIndex((a) => a.id === id);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    if (crossedIsFixed(list, i, delta)) return;
+    const n = [...list];
+    [n[i], n[j]] = [n[j], n[i]];
+    setList(n);
     setDirty(true);
   };
 
@@ -190,9 +227,12 @@ export function ChainActionsPanel({
                 className={`fpx-ca-item${a.id === active ? ' on' : ''}${
                   dragId === a.id ? ' dragging' : ''}`}
                 /* #148 除了 ↑↓ 按钮，还可以直接拖 —— 按钮调一次动一格，
-                   跨好几格要点很多次。 */
-                draggable
+                   跨好几格要点很多次。
+                   内置项不可拖：后端按固定顺序重建它们，拖了也会弹回去。 */
+                draggable={!a.builtin}
+                title={a.builtin ? '内置动作位置固定，不可拖动' : '拖动可调整顺序'}
                 onDragStart={(e) => {
+                  if (a.builtin) return;
                   e.dataTransfer.setData(ACTION_DRAG_MIME, JSON.stringify({ id: a.id }));
                   /* 拖影用默认即可，但必须设 effect，否则部分浏览器不触发 drop */
                   e.dataTransfer.effectAllowed = 'move';
@@ -208,7 +248,17 @@ export function ChainActionsPanel({
                   /* 用 rect 判定前后半区，不用 offsetY —— 项里有 <span>，
                      指针落在它上面时 offsetY 会跳变（与 #115 同一个坑） */
                   const r = e.currentTarget.getBoundingClientRect();
-                  setActGap(gapIndexAt({ top: r.top, height: r.height }, e.clientY, i));
+                  /*
+                   * 死区（原版 AcSwapDeadZone）：**返回 null 就不更新**。
+                   * 直接 setActGap(null) 会把插入条清掉，
+                   * 表现是"拖着不动时插入条一闪一闪"，反而更晃眼。
+                   */
+                  const g = gapIndexAtDeadZone(
+                    { top: r.top, height: r.height }, e.clientY, i, AC_SWAP_DEAD_ZONE,
+                  );
+                  if (g === null) return;
+                  /* 夹紧到固定墙之后：插入条也不该出现在内置区域的缝隙上 */
+                  setActGap(Math.max(minGap(list), g));
                 }}
                 onDrop={(e) => {
                   const id = parseActionDrag(e.dataTransfer.getData(ACTION_DRAG_MIME));
@@ -219,7 +269,12 @@ export function ChainActionsPanel({
                   e.preventDefault();
                   e.stopPropagation();
                   const r = e.currentTarget.getBoundingClientRect();
-                  const k = gapIndexAt({ top: r.top, height: r.height }, e.clientY, i);
+                  const g = gapIndexAtDeadZone(
+                    { top: r.top, height: r.height }, e.clientY, i, AC_SWAP_DEAD_ZONE,
+                  );
+                  /* 死区内没算出新落点 → 用保持着的那个；一个都没有就是原地 */
+                  const k = g === null ? actGap : Math.max(minGap(list), g);
+                  if (k < 0) return;
                   dropActionAt(id, k);
                   setDragId(null);
                   setActGap(-1);
@@ -232,8 +287,18 @@ export function ChainActionsPanel({
                   {!a.builtin && <span className="fpx-badge dim" style={{ marginLeft: 'var(--sp-3, 6px)' }}>自定义</span>}
                 </span>
                 <span className="fpx-ca-ops">
-                  <button title="上移" disabled={i === 0} onClick={(e) => { e.stopPropagation(); move(a.id, -1); }}>↑</button>
-                  <button title="下移" disabled={i === list.length - 1} onClick={(e) => { e.stopPropagation(); move(a.id, 1); }}>↓</button>
+                  {/* 到边、或那一侧是内置项 → 直接灰掉。
+                      灰掉比"点了没反应"好：后者用户会以为界面坏了。 */}
+                  <button
+                    title={i > 0 && list[i - 1].builtin ? '上一位是内置动作，位置固定' : '上移'}
+                    disabled={i === 0 || (i > 0 && !!list[i - 1].builtin)}
+                    onClick={(e) => { e.stopPropagation(); move(a.id, -1); }}
+                  >↑</button>
+                  <button
+                    title={i < list.length - 1 && list[i + 1].builtin ? '下一位是内置动作，位置固定' : '下移'}
+                    disabled={i === list.length - 1 || (i < list.length - 1 && !!list[i + 1].builtin)}
+                    onClick={(e) => { e.stopPropagation(); move(a.id, 1); }}
+                  >↓</button>
                 </span>
               </div>
             </div>

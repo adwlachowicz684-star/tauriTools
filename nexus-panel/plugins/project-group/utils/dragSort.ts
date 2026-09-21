@@ -236,6 +236,73 @@ export function gapIndexAt(
 }
 
 /**
+ * 带死区的半区判定（`gapIndexAt` 的滞后版本）。
+ *
+ * **返回 null 表示"落在死区内，请保持现状"** ——
+ * 这是它比 `gapIndexAt` 多的那一点，也正是死区的意义所在：
+ * 手抖一两个像素不该让插入条在两格之间反复横跳。
+ *
+ * 做成"返回 null 由调用方保持"而不是函数内部记住上次的值：
+ * 纯函数才穷举得完，而记住状态的函数在测试里要额外造上下文。
+ *
+ * @param fixedDeadZone 死区基准像素（原版连锁动作页签是 14）
+ */
+export function gapIndexAtDeadZone(
+  rect: BoxRect,
+  clientY: number,
+  i: number,
+  fixedDeadZone: number,
+  ratio = 0.2,
+) {
+  const dz = deadZone(rect.height, fixedDeadZone, ratio);
+  const center = rect.top + rect.height / 2;
+  if (clientY > center + dz) return i + 1;
+  if (clientY < center - dz) return i;
+  return null;
+}
+
+/**
+ * 内置项视为**固定墙**：自定义项不能越过它们（原版 `AcIsCustom`
+ * 与注释"内置页签视为固定墙不可借位"）。
+ *
+ * 为什么要它：后端 `ensure_actions` 按**固定顺序**重建内置项，
+ * 于是自定义项就算被拖到了内置项之间，刷新后也会弹回去 ——
+ * 用户看到的是"拖成功了，刷新又变回去"，而刷新前没有任何提示。
+ * 与其做一个会失效的拖拽，不如一开始就不让位。
+ *
+ * 判定用**原始列表**的下标：传进来的 from/to 都是移除前的索引。
+ *
+ * @param isFixed 各项是否为固定项（内置），按原始顺序
+ */
+export function clampAcrossFixedWall(
+  from: number,
+  to: number,
+  isFixed: boolean[],
+) {
+  if (from === to) return from;
+  /*
+   * 上/下界都夹在数组内：调用方给的 to 理论上已在范围内（来自
+   * `resolveMoveIndex`），但夹住之后即使传错也只是停在边上，
+   * 不会返回一个**越界下标**让 splice 插出一个空洞。
+   */
+  const n = isFixed.length;
+  if (to > from) {
+    let t = from;
+    for (let i = from + 1; i <= to && i < n; i++) {
+      if (isFixed[i]) break;   // 不能越过这个固定项
+      t = i;
+    }
+    return t;
+  }
+  let t = from;
+  for (let i = from - 1; i >= to && i >= 0; i--) {
+    if (isFixed[i]) break;
+    t = i;
+  }
+  return t;
+}
+
+/**
  * 横向版本（分组栏 / 页签条）：判定指针在元素**左半还是右半**。
  *
  * 为什么不用 `offsetX`：`offsetX` 是相对**事件目标**的，
