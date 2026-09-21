@@ -6662,6 +6662,88 @@ group('文件库 / 搜索结果：两个独立页签共用一个底框');
   }
 }
 
+group('文件库展开导致画布内容位移：补内核漏掉的半个 Δ');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+  const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const fl = fs.readFileSync(path.join(HERE, 'filelist.js'), 'utf8');
+
+  // ---- 1) 编辑器有 panBy 门面 ----
+  ok(/panBy: function \(dx, dy\)/.test(html), '编辑器门面暴露 panBy');
+  ok(/km\._viewDragger/.test(html), 'panBy 走 _viewDragger（内核无公开平移命令）');
+  // 不传 duration：带动画的话两次平移会互相打断，落点不是两者之和
+  ok(/d\.move\(new kity\.Point\(Number\(dx\) \| 0, Number\(dy\) \| 0\)\)/.test(html),
+    'panBy 不传 duration（与内核 resize 一致，避免动画互相打断）');
+  ok(/panBy\(dx, dy\) \{/.test(br), '桥接转发 panBy');
+
+  // ---- 2) 补偿量是 Δ/2，不是 Δ ----
+  // 内核 resize 已补 (新宽-旧宽)/2，只补剩下的半个。补 Δ 会过冲。
+  ok(/bridge\?\.panBy\(Math\.round\(d \/ 2\), 0\)/.test(ix),
+    '补偿量是 Δ/2（内核已补另外一半，补 Δ 会过冲）');
+  // 宽度必须**实测**：padding/gap/box-sizing 变了硬编码值就补错
+  ok(/canvasEl\.clientWidth - before/.test(ix), 'Δ 用实测（不硬编码 216）');
+  ok(!/panBy\(-108|panBy\(108/.test(ix), '没有硬编码 ±108 之类的位移量');
+  // 等一帧：class 刚改完布局还没更新，此时读 clientWidth 仍是旧值、Δ 恒 0
+  ok(/requestAnimationFrame/.test(ix), '等一帧再测宽度（否则 Δ 恒为 0）');
+  ok(/if \(!d\) return;/.test(ix), 'Δ 为 0 时不补（搜索↔文件切换宽度不变）');
+
+  // ---- 3) 只在底框「开↔合」时回调，不是每次 apply ----
+  ok(/wasOpen !== !!p/.test(fl), '只在开合状态**变化**时回调 onPanelToggle');
+  ok(/onToggle && wasOpen !== !!p/.test(fl), '回调受 onToggle 存在性保护');
+  ok(/onPanelToggle: compensateCanvasPan/.test(ix), '外壳注册了 onPanelToggle');
+
+  // ---- 4) 几何账：216 = flex-basis 186 + padding 10×2 + gap 10 ----
+  {
+    const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+    const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
+    ok(/flex:\s*0 0 186px/.test(filesBlk), '.mm-files flex-basis 186');
+    ok(/padding:\s*10px/.test(filesBlk), '.mm-files padding 10（左右合计 20）');
+    const bodyBlk = css.slice(css.indexOf('.mm-body {'), css.indexOf('.mm-body {') + 200);
+    ok(/gap:\s*10px/.test(bodyBlk), '.mm-body gap 10');
+    // 右侧栏必须**不可收缩**：它若可收缩，画布宽度变化量就不再固定，
+    // 内核的半量补偿会与实际位移脱钩（历史上 .mm-side 样式失效时正是如此）
+    const sideBlk = css.slice(css.indexOf('.mm-side {'), css.indexOf('.mm-side h3'));
+    ok(/flex:\s*0 0 276px/.test(sideBlk), '.mm-side 固定 276px 不可收缩');
+  }
+
+  // ---- 5) CSS「规则被截断」检测 ----
+  //
+  // 历史上出过一次：补丁里 `.mm-rail { ... }` 被截成只剩 `.mm-rail`
+  // （没有 { }），CSS 解析器会继续往后找，把紧跟其后的注释忽略掉、
+  // 与下一个选择器拼成 `.mm-rail .mm-side` —— 而 DOM 里 .mm-side 不在
+  // .mm-rail 内部，导致**整套样式静默失效**（表现为"侧栏全居中"）。
+  //
+  // 现有测试全是行为断言，恰好覆盖不到这种语法级损伤，故单列一条。
+  {
+    const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+    // 检测**截断形态本身**：一个类选择器独立成行，后面不跟 `{` 而直接
+    // 换行跟注释。正常写法里选择器后面要么同行跟 `{`，要么跟逗号继续；
+    // 绝不会"写完选择器就换行去写注释"。
+    //
+    // 不能改成"剥注释后数 token"——那样后代选择器（.mm-sec-head .mm-help）
+    // 与截断形态（.mm-rail 换行 注释 换行 .mm-side）在剥完注释后长得一样，
+    // 会把 65 条合法规则全判为异常。
+    const truncated = [...css.matchAll(/^\s*(\.[A-Za-z][\w-]*)\s*\n\s*\/\*/gm)]
+      .map((m) => m[1]);
+    eq(truncated.length, 0, `无「选择器后无 { 直接换行写注释」的截断（发现 ${truncated.join(' | ')}）`);
+
+    // 关键规则块必须解析得到**关键属性** —— 截断时整块失效，这些属性会丢。
+    // 历史上 .mm-side 被吞成后代选择器后，下面这几条全部消失，
+    // 后果是侧栏可收缩、画布宽度变化量不再固定，才引出本组这条位移 bug。
+    const blk = (sel, until) => {
+      const i = css.indexOf(sel + ' {');
+      return i < 0 ? '' : css.slice(i, css.indexOf(until, i));
+    };
+    const sideBlk = blk('.mm-side', '.mm-side h3');
+    ok(/flex:\s*0 0 276px/.test(sideBlk), '.mm-side 保留 flex: 0 0 276px（丢了就可收缩）');
+    ok(/display:\s*flex/.test(sideBlk), '.mm-side 保留 display:flex');
+    ok(/overflow-y:\s*auto/.test(sideBlk), '.mm-side 保留 overflow-y:auto');
+    ok(/min-height:\s*0/.test(sideBlk), '.mm-side 保留 min-height:0');
+  }
+}
+
 group('多附件：XMind 往返（导出再导回）');
 
 {
