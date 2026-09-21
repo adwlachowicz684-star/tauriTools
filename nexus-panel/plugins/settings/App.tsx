@@ -756,6 +756,46 @@ export default function Settings() {
     );
   };
 
+  /*
+   * 收藏色：在设置页直接摆出来。
+   *
+   * 为什么要显示：色盘的收藏是"调用方传进去、返回时再带出来"的，
+   * 持久化全靠设置页。存了却不在设置页显示的话，用户完全看不到成果 ——
+   * 收藏了几个色，回到设置页面板毫无变化，只会以为没生效。
+   *
+   * 删除走右键：色点是 22px，上面再叠一个 × 会挤得看不清，
+   * 而这是桌面应用（Tauri），右键是自然的交互。title 里写明。
+   */
+  const customSwatchRow = (slot: 'accent' | 'env') => {
+    const list = getCustomColors(slot);
+    if (!list.length) return null;
+    return (
+      <div className="p-row" style={{ marginTop: 'var(--sp-3, 6px)', alignItems: 'center' }}>
+        <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', flex: 'none' }}>
+          收藏
+        </span>
+        {list.map((c) => (
+          <button
+            key={c}
+            className="p-btn"
+            title={`${c} · 点击应用，右键从收藏中删除`}
+            onClick={() => { applyColor(slot, c); }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              saveCustomColors(slot, getCustomColors(slot).filter((x) => x !== c));
+              rerender();
+            }}
+            style={{
+              background: c,
+              width: '22px', height: '22px', minWidth: '22px',
+              padding: 0, flex: 'none', borderRadius: 'var(--r-xs, 6px)',
+            }}
+          />
+        ))}
+      </div>
+    );
+  };
+
   /* 样式审计：拉每个插件的 CSS，跑一遍与外壳变量契约的规则。
      插件是独立文档，外壳的 CSS 到不了那边，只能靠"引入 + 变量映射"保持一致；
      这条链上任何一环错位，表现都是某个主题下突然看不清，很难联想到是接错了。
@@ -1012,6 +1052,7 @@ export default function Settings() {
               title="恢复为当前主题自带的强调色"
             />
           </div>
+          {customSwatchRow('accent')}
 
           <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)' }}>
             环境色（第二个主色 · 仅用于次要点缀）
@@ -1044,6 +1085,7 @@ export default function Settings() {
               title="恢复为当前主题自带的环境色"
             />
           </div>
+          {customSwatchRow('env')}
 
           <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)' }}>
             主题色调整（在主题自身配色上做整体偏移）

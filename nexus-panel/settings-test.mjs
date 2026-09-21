@@ -560,6 +560,25 @@ console.log('\n--- I. 右上角入口管理 ---');
     /ref=\{accentInput\}/.test(sa) && /ref=\{envInput\}/.test(sa));
 
   /*
+   * 收藏色必须在设置页显示。
+   *
+   * 色盘的收藏是"调用方传进去、返回时带出来"的，持久化全靠设置页。
+   * 存了却不在设置页显示，用户看不到成果 —— 收藏了几个色，
+   * 回到设置页面板毫无变化，只会以为没生效。
+   */
+  t('设置页摆出收藏色（两个槽位）',
+    /customSwatchRow\('accent'\)/.test(sa) && /customSwatchRow\('env'\)/.test(sa));
+  t('没有收藏时不渲染空排', /if \(!list\.length\) return null/.test(sa));
+
+  /* 删除走右键，且必须 preventDefault（否则弹出系统菜单盖住界面） */
+  t('右键删除收藏色', /onContextMenu=/.test(sa) && /e\.preventDefault\(\)/.test(sa));
+  t('删除后写回并刷新',
+    /saveCustomColors\(slot, getCustomColors\(slot\)\.filter/.test(sa));
+
+  /* 点击直接应用，不必再打开色盘 */
+  t('点收藏色直接应用', /onClick=\{\(\) => \{ applyColor\(slot, c\); \}\}/.test(sa));
+
+  /*
    * **不传 preset**。
    *
    * preset 是"覆盖色盘自带的预设色"。早先为了"跟上面那排一致"
@@ -630,6 +649,33 @@ console.log('\n--- I. 右上角入口管理 ---');
     TM.getCustomColors('accent')[0] === '#aabbcc',
     JSON.stringify(TM.getCustomColors('accent')));
   localStorage.removeItem('nexus:accent-custom');
+
+  /* 右键删除：过滤掉指定色后写回，剩下的保持原顺序 */
+  TM.saveCustomColors('accent', ['#111111', '#222222', '#333333']);
+  TM.saveCustomColors('accent', TM.getCustomColors('accent').filter((x) => x !== '#222222'));
+  t('删除收藏色后剩 2 个且顺序不变',
+    JSON.stringify(TM.getCustomColors('accent')) === '["#111111","#333333"]',
+    JSON.stringify(TM.getCustomColors('accent')));
+
+  /* 删除全部后为空 —— 设置页据此不渲染那一排 */
+  TM.saveCustomColors('accent', TM.getCustomColors('accent').filter(() => false));
+  t('清空后为空数组', TM.getCustomColors('accent').length === 0);
+
+  /*
+   * 上限：两侧都要截断。
+   *
+   * 只测"读出来是 24"是**假绿** —— 读侧有 slice，写侧即使不截断，
+   * 读出来照样是 24（实测踩到）。但那样 localStorage 里存的是 40 个，
+   * 会无限增长。必须绕过读取，直接看存进去的原始数据。
+   */
+  TM.saveCustomColors('accent', Array.from({ length: 40 }, (_, i) =>
+    '#' + (i + 1).toString(16).padStart(6, '0')));
+  t('读出来截断到 24', TM.getCustomColors('accent').length === 24,
+    String(TM.getCustomColors('accent').length));
+  const rawLen = JSON.parse(localStorage.getItem('nexus:accent-custom') || '[]').length;
+  t('写进去也截断到 24（否则 localStorage 无限增长）', rawLen === 24, String(rawLen));
+  localStorage.removeItem('nexus:accent-custom');
+  localStorage.removeItem('nexus:env-custom');
   localStorage.removeItem('nexus:accent-custom');
   localStorage.removeItem('nexus:env-custom');
 }
