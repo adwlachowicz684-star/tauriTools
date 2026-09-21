@@ -33,10 +33,23 @@ registerNode({
    */
   create: (id, partial) => {
     const p = (partial ?? {}) as Partial<TriggerNodeData>;
-    const kinds = Array.isArray(p.triggers) && p.triggers.length > 0
+    const kinds: TriggerKind[] = Array.isArray(p.triggers) && p.triggers.length > 0
       ? p.triggers
       : ['manual'];
-    return makeTriggerNode(id, kinds as TriggerKind[], p).data;
+    const data = makeTriggerNode(id, kinds, p).data;
+    /*
+     * 顺带落一份**条目**（触发条件卡片）。
+     *
+     * 不落的话新节点只有老的 `triggers` 数组，界面上会显示卡片、
+     * 但一改动才发现条目不存在 —— 而迁移是"读时才算"，
+     * 此刻看不出来有没有，等出问题时已经改了一半。
+     */
+    const entries = (data as unknown as Record<string, unknown>).entries;
+    if (!Array.isArray(entries)) {
+      (data as unknown as Record<string, unknown>).entries =
+        kinds.map((k, i) => ({ id: `te${id}${i}`, kind: k, enabled: true, config: {} }));
+    }
+    return data;
   },
   Canvas: TriggerNode,
   Inspector: TriggerInspector,

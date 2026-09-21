@@ -2277,6 +2277,31 @@ export type TriggerConfig = {
   chatTemplate: string;
 };
 
+/**
+ * 一个**触发条件卡片**。
+ *
+ * ================= 为什么要有条目 ====================
+ *
+ * 以前一个触发器节点是「一份共享 config + 一个 kind 数组」：
+ * 选了周期和监听两种方式，两者共用同一份 `config`，
+ * 界面上则挤成一个多选勾选组 + 一堆"选中才显示"的字段。
+ *
+ * 后果有两个：
+ *   1. 改周期秒数会顺带改到别的触发方式用到的字段（它们共用一份）
+ *   2. 看不出"这个节点到底配了几个触发条件"，因为它们没有各自的边界
+ *
+ * 现在每种触发方式是**一张独立的卡**，各带自己的 config。
+ */
+export type TriggerEntry = {
+  /** 卡片自身的 id —— 同一个 kind 可以配多张（比如两个不同端口的调用触发） */
+  id: string;
+  kind: TriggerKind;
+  /** 这张卡单独停用（不影响节点上其它卡） */
+  enabled?: boolean;
+  /** 只覆盖这张卡关心的字段，其余用节点默认 config 兜底 */
+  config?: Partial<TriggerConfig>;
+};
+
 export type Trigger = {
   /** 展开后的唯一标识：多选时形如 `${nodeId}:${kind}` */
   id: string;

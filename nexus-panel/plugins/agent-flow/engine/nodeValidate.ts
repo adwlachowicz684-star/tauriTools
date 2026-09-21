@@ -6,6 +6,7 @@ import type {
   PlayAudioNodeData, ClockNodeData, ConstNodeData, ModuleNodeData,
   JoinNodeData, GateNodeData, ThrottleNodeData, TimeoutNodeData, RetryNodeData,
 } from '../types';
+import { triggerEntriesOf, entryEnabled, mergeConfig } from './triggerEntries';
 
 /**
  * 节点配置校验 —— 画布圆点的三色预警。
@@ -83,14 +84,25 @@ function vCondition(d: ConditionNodeData): V {
 }
 
 function vTrigger(d: TriggerNodeData): V {
-  const kinds: string[] = d.triggers ?? (d.trigger ? [d.trigger] : []);
-  if (kinds.length === 0) return error('没选任何触发方式');
+  /*
+   * 按**触发条件卡片**逐个校验。
+   *
+   * 以前是"一份共享 config + 一个 kind 数组"，于是两张卡共用同一份配置：
+   * 「周期」卡填了秒数、「监听」卡没填目录，两者会互相掩盖 ——
+   * 共享字段被其中一张填上了，另一张就查不出自己缺什么。
+   */
+  const entries = triggerEntriesOf(d as unknown as Record<string, unknown>);
+  if (entries.length === 0) return error('还没添加触发条件');
 
-  const cfg = d.config ?? ({} as never);
+  const base = d.config ?? ({} as never);
   const msgs: string[] = [];
   let blocked = false;
 
-  for (const k of kinds) {
+  for (const e of entries) {
+    // 停用的卡不参与校验 —— 它会让人以为"配好了却跑不起来"
+    if (!entryEnabled(e)) continue;
+    const cfg = mergeConfig(base, e.config);
+    const k = e.kind;
     if (k === 'cron' && blank(cfg.cronExpr)) {
       msgs.push('cron 没填表达式');
       blocked = true;
@@ -110,6 +122,11 @@ function vTrigger(d: TriggerNodeData): V {
         blocked = true;
       }
     }
+  }
+
+  // 全部停用 = 这个节点永远不会触发，要说清楚
+  if (entries.every((e) => !entryEnabled(e))) {
+    msgs.push('所有触发条件都已停用');
   }
 
   if (blocked) return error(...msgs);

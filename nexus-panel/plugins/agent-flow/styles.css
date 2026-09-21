@@ -1586,6 +1586,27 @@ input.mono, textarea.mono {
 /* 筛选区同样按侧栏内边距对齐 */
 .hist-filter { padding: 9px 12px; }
 
+/* 触发条件卡片 —— 每种触发方式各占一块，独立配置 */
+.trig-cards { display: flex; flex-direction: column; gap: 8px; }
+.trig-card {
+  border: 1px solid var(--af-line, #2a2f3a);
+  border-radius: var(--r-card, 8px);
+  padding: 8px 10px;
+  background: var(--af-raised, rgba(255, 255, 255, 0.03));
+}
+/* 停用的卡整块变淡 —— 只把按钮变灰不够，扫一眼看不出哪张是关的 */
+.trig-card.is-off { opacity: 0.55; }
+.trig-card-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.trig-card-icon { font-size: var(--fs-13, 13px); }
+.trig-card-name { font-size: var(--fs-12, 12px); font-weight: 600; color: var(--af-fg); }
+.trig-add { display: flex; flex-wrap: wrap; gap: 4px; }
+.trig-empty {
+  font-size: var(--fs-11, 11px); color: var(--af-mute);
+  padding: 8px 10px; border: 1px dashed var(--af-line, #2a2f3a);
+  border-radius: var(--r-card, 8px);
+}
+.trig-row.is-off { opacity: 0.5; }
+
 /* ------------------------------------------------------------------ */
 /* 属性面板：查看态只读                                                 */
 /* ------------------------------------------------------------------ */

@@ -1,11 +1,11 @@
 import type { NodeProps } from '@xyflow/react';
-import { TRIGGER_META, triggerKindsOf, type TriggerKind, type TriggerNodeData } from '../types';
+import { TRIGGER_META, type TriggerConfig, type TriggerKind, type TriggerNodeData } from '../types';
+import { triggerEntriesOf, entryEnabled, mergeConfig } from '../engine/triggerEntries';
 import type { TriggerFlowNode } from '../flowTypes';
 import { NodeShell } from './NodeShell';
 
 /** 某种触发方式的简短摘要 */
-function summaryOf(d: TriggerNodeData, k: TriggerKind): string {
-  const c = d.config;
+function summaryOf(c: TriggerConfig, k: TriggerKind): string {
   switch (k) {
     case 'manual':
       return '点「运行」时触发';
@@ -24,8 +24,11 @@ function summaryOf(d: TriggerNodeData, k: TriggerKind): string {
 
 export default function TriggerNode({ id, data, selected }: NodeProps<TriggerFlowNode>) {
   const d: TriggerNodeData = data;
-  // 一个节点可以挂多种触发方式，兼容旧的单值字段
-  const kinds: TriggerKind[] = triggerKindsOf(d);
+  /*
+   * 每个触发条件是一张卡 —— 逐张显示，停用的也显示（标出来），
+   * 不显示的话用户会以为那个条件不存在。
+   */
+  const entries = triggerEntriesOf(d as unknown as Record<string, unknown>);
 
   return (
     <NodeShell
@@ -40,9 +43,9 @@ export default function TriggerNode({ id, data, selected }: NodeProps<TriggerFlo
       tag={
         <>
           <span className="trig-icon">⚡</span>
-          {kinds.length === 1
-            ? (TRIGGER_META[kinds[0]]?.label ?? kinds[0])
-            : `${kinds.length} 种触发方式`}
+          {entries.length === 1
+            ? (TRIGGER_META[entries[0].kind]?.label ?? entries[0].kind)
+            : `${entries.length} 个触发条件`}
           {!d.enabled && <span className="trig-off">已停用</span>}
         </>
       }
@@ -50,12 +53,14 @@ export default function TriggerNode({ id, data, selected }: NodeProps<TriggerFlo
     >
 
       <div className="trig-list">
-        {kinds.length === 0 && <div className="trig-row dim">未选择触发方式</div>}
-        {kinds.map((k) => (
-          <div key={k} className="trig-row">
-            <span className="trig-kind-icon">{TRIGGER_META[k]?.icon ?? '⚡'}</span>
-            <span className="trig-kind">{TRIGGER_META[k]?.label ?? k}</span>
-            <span className="trig-detail">{summaryOf(d, k)}</span>
+        {entries.length === 0 && <div className="trig-row dim">还没有触发条件</div>}
+        {entries.map((e) => (
+          <div key={e.id} className={'trig-row' + (entryEnabled(e) ? '' : ' is-off')}>
+            <span className="trig-kind-icon">{TRIGGER_META[e.kind]?.icon ?? '⚡'}</span>
+            <span className="trig-kind">{TRIGGER_META[e.kind]?.label ?? e.kind}</span>
+            {/* 用这张卡自己的配置做摘要 —— 读共享 config 会显示成别的条件的值 */}
+            <span className="trig-detail">{summaryOf(mergeConfig(d.config, e.config), e.kind)}</span>
+            {!entryEnabled(e) && <span className="trig-off">停用</span>}
           </div>
         ))}
       </div>
