@@ -174,6 +174,27 @@ export default function Inspector({
    * 现在合成面板最上面一行，右边对齐 id。
    * 高度那三个按钮仍带 title，鼠标停一下就知道各档是干什么的。
    */
+  /*
+   * 关闭开关。
+   *
+   * 左右拨动的样式（不是勾选框）：它是"这一步现在算不算数"的总开关，
+   * 勾选框看着像"某个参数要不要勾"，容易和下面的参数混在一起。
+   */
+  const off = (node.data as Record<string, unknown>)?.disabled === true;
+  const offRow = (
+    <button
+      type="button"
+      className={'insp-switch' + (off ? ' is-off' : '')}
+      title={off ? '已关闭 —— 这一步不参与执行，下游也会跟着停' : '开启 —— 这一步正常执行'}
+      onClick={() => onChange(node.id, { disabled: !off })}
+    >
+      <span className="insp-switch-track">
+        <span className="insp-switch-knob" />
+      </span>
+      <span className="insp-switch-text">{off ? '已关闭' : '开启'}</span>
+    </button>
+  );
+
   const sizeRow = (
     <div className="insp-topbar">
       <span className="insp-topbar-group">
@@ -209,6 +230,7 @@ export default function Inspector({
     <>
       {sizeRow}
       {stackRow}
+      {offRow}
       {/*
         面板也要兜住。
         曾经触发器的数据不合法 → 面板渲染抛错 → 整棵树崩，

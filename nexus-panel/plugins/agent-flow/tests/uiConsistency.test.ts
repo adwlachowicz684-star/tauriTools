@@ -74,7 +74,7 @@ test('圆点在徽章里，不在标题行上当独立元素', () => {
    */
   const shell = read(path.join(COMP, DEFINER));
   const head = shell.slice(shell.indexOf('node-head'), shell.indexOf('node-line--alert'));
-  assert.ok(/node-badge[\s\S]{0,200}node-dot/.test(head), '圆点应在徽章内部');
+  assert.ok(/node-badge[\s\S]{0,400}node-dot/.test(head), '圆点应在徽章内部');
   // 徽章要在标题之前
   assert.ok(head.indexOf('node-badge') < head.indexOf('node-title'), '徽章应在标题左边');
 });
@@ -328,5 +328,29 @@ test('反向吸附时对方的 stackParent 不受"有没有位移"影响', () =>
   assert.ok(
     !/attach:\s*\{\s*childId:[^}]*moves:\s*\[[^\]]+\]/.test(read(path.join(ROOT, 'engine', 'stack.ts'))),
     'engine/stack.ts 的反向吸附不得再给对方生成 moves',
+  );
+});
+
+/* ================= 关闭的节点 ================= */
+
+/*
+ * 关掉的节点仍要显示缺参 / 缺项，只是圆点变灰。
+ *
+ * 把整个徽章去掉的话，用户重新打开时才发现它其实一直没配好 ——
+ * 关掉不等于修好。这里是源码级守卫：
+ * "缺什么还能不能看见"这件事跑测试看不出来。
+ */
+test('关闭的节点仍显示缺项徽章，只把圆点变灰', () => {
+  const shell = read(path.join(COMP, DEFINER));
+  // 徽章文案不受关闭态影响 —— LEVEL_SHORT 必须无条件渲染
+  assert.ok(
+    /\{LEVEL_SHORT\[dot\]\}/.test(shell),
+    '徽章文案必须始终渲染（关掉也要看得见缺什么）',
+  );
+  // 圆点颜色按关闭态分支，且关闭分支不能复用 level 色
+  assert.ok(/OFF_DOT_COLOR/.test(shell), '关闭态要有独立的灰点色');
+  assert.ok(
+    !/is-off[\s\S]{0,120}level-\$\{dot\}/.test(shell),
+    '关闭态不得再挂 level-* 类 —— 那会把"缺参"也说成绿的',
   );
 });

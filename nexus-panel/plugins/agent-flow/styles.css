@@ -1607,6 +1607,31 @@ input.mono, textarea.mono {
   border-radius: 4px; background: none; cursor: pointer;
 }
 
+/* 关闭开关：左右拨动 */
+.insp-switch {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; margin-bottom: var(--sp-3, 6px);
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--af-fg);
+}
+.insp-switch-track {
+  position: relative; width: 30px; height: 16px; flex: none;
+  border-radius: 8px; background: var(--af-accent, #3b82f6);
+  transition: background 0.15s;
+}
+.insp-switch.is-off .insp-switch-track { background: var(--af-line, #2a2f3a); }
+.insp-switch-knob {
+  position: absolute; top: 2px; left: 2px;
+  width: 12px; height: 12px; border-radius: 50%; background: #fff;
+  transition: transform 0.15s;
+}
+.insp-switch.is-off .insp-switch-knob { transform: translateX(14px); }
+.insp-switch-text { font-size: var(--fs-11, 11px); color: var(--af-mute); }
+.insp-switch:not(.is-off) .insp-switch-text { color: var(--af-fg); }
+
+/* 关闭的节点：卡片整块变淡，但徽章与缺项文案照常显示 */
+.node-card.is-off { opacity: 0.6; }
+
 /* 属性面板顶栏：显示高度 + 节点 id 合成一行（都不是参数，不该各占一块） */
 .insp-topbar {
   display: flex; align-items: center; gap: 6px;
