@@ -87,7 +87,7 @@ export function parseStore(raw: string | null): StoredFile {
     .map((x, i) => ({
       id: typeof x.id === 'string' ? x.id : `cred_restored_${i}`,
       name: typeof x.name === 'string' && x.name.trim() !== '' ? x.name : `凭据 ${i + 1}`,
-      kind: (x.kind === 'github' || x.kind === 'llm' || x.kind === 'generic')
+      kind: (x.kind === 'github' || x.kind === 'llm' || x.kind === 'generic' || x.kind === 'cli')
         ? x.kind as Credential['kind'] : 'generic',
       // 明文兼容：老数据进来直接保留，由 migrate 决定是否加密
       secret: isCipherBundle(x.secret) ? x.secret : (typeof x.secret === 'string' ? '' : ''),

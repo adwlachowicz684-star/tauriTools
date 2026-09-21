@@ -323,6 +323,67 @@ test('运行时地址与密钥优先取自凭据', () => {
   }
 });
 
+/* ================= 任务记录要存判据 ================= */
+
+/*
+ * 比较 / 条件节点只输出 true / false。
+ * 任务窗口里看到 `true` 却不知道"拿什么跟什么比出来的"，
+ * 流程排查到这一步就断了 —— 输出必须带上判据。
+ */
+test('运算节点产出判据（不只是裸值）', () => {
+  const src = read(path.join(ROOT, 'engine', 'runners', 'ops.ts'));
+  assert.match(src, /detail:/, '运算要给出 detail');
+  assert.match(src, /function opDetail/, '要有判据构造函数');
+});
+
+test('条件节点产出判据（命中哪条 + 依据什么）', () => {
+  const src = read(path.join(ROOT, 'engine', 'runners', 'condition.ts'));
+  assert.match(src, /detail:/, '条件要给出 detail');
+  assert.match(src, /function condDetail/, '要有判据构造函数');
+});
+
+test('判据能一路存到任务记录并显示出来', () => {
+  // 事件 → 任务状态 → 界面，三处少一处就等于没做
+  const rt = read(path.join(ROOT, 'engine', 'runTypes.ts'));
+  assert.match(rt, /type: 'node-done'[\s\S]{0,200}?detail\?:/, 'node-done 事件要带 detail');
+  const tk = read(path.join(ROOT, 'engine', 'tasks.ts'));
+  assert.match(tk, /detail\?: string/, 'TaskNodeState 要有 detail');
+  assert.match(tk, /n\.detail\s*=/, 'reduce 要把 detail 存下来');
+  const td = read(path.join(ROOT, 'components', 'TaskDetail.tsx'));
+  assert.match(td, /n\.detail/, '任务详情要显示 detail');
+});
+
+/* ================= 凭据中心有 CLI 模型清单 ================= */
+
+/*
+ * CLI 走自己的登录态，不需要密钥 —— 但模型名一样要统一管理：
+ * 各处手填一份，改模型时要改好几处，漏一处表现为"这个节点还是旧名字"。
+ * 所以给它一条**只存模型清单**的凭据。
+ */
+test('凭据种类里有 CLI 模型清单（不需要密钥）', () => {
+  const cr = read(path.join(ROOT, 'engine', 'credentials.ts'));
+  assert.match(cr, /'cli'/, 'CredentialKind 要有 cli');
+  assert.match(cr, /function isSecretlessKind/, '要有"不需要密钥"的判断');
+});
+
+test('无密钥凭据不要求填密钥、也不去校验', () => {
+  /*
+   * 这两条少一条，用户点保存就会看到一个"密钥不能为空"或"校验失败"，
+   * 而这一栏本来就不需要填 —— 卡在这里根本出不去。
+   */
+  const cp = read(path.join(ROOT, 'components', 'CredentialPanel.tsx'));
+  assert.match(cp, /isSecretlessKind\(editing\.kind\)/, '保存时要按种类区分');
+  const store = read(path.join(ROOT, 'engine', 'credentialStore.ts'));
+  assert.match(store, /x\.kind === 'cli'/, '落盘时要认 cli 种类（否则读回来变成 generic）');
+});
+
+test('CLI 的模型下拉同时列 llm 与 cli 两种凭据', () => {
+  const sh = read(path.join(COMP, 'inspectors', 'shared.tsx'));
+  const body = sh.slice(sh.indexOf('export function CliModelPanel'));
+  const panel = body.slice(0, body.indexOf('\nexport function '));
+  assert.match(panel, /kind === 'llm' \|\| x\.kind === 'cli'/, '两种凭据都要能提供模型清单');
+});
+
 /* ================= CLI 节点：模型不选手填 ================= */
 
 /*

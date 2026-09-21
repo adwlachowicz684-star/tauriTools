@@ -67,7 +67,8 @@ export default function LoopNode({ id, data, selected }: NodeProps<LoopFlowNode>
         <span className="loop-icon" aria-hidden>
           ⟲
         </span>
-        {detail}
+        {/* 包一层：裸文本会被浏览器变成匿名 flex 项，容器上的省略号对它无效 */}
+        <span className="loop-text">{detail}</span>
       </div>
 
       <div className="loop-ports">

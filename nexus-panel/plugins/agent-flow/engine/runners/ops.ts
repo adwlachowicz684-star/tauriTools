@@ -14,6 +14,41 @@ import {
 
 type Args = { a: unknown; b: unknown; c: unknown };
 
+/** 运算符号：与卡片摘要同一套写法，两边说法不一致会让人看不懂 */
+const DETAIL_SIGN: Record<string, string> = {
+  add: '＋', sub: '－', mul: '×', div: '÷', mod: 'mod',
+  eq: '＝', neq: '≠', gt: '>', gte: '≥', lt: '<', lte: '≤',
+};
+
+/**
+ * 「这个值是这么算出来的」一句话。
+ *
+ * 截断到 40 字符：参数是用户填的，可能是一整段文本，
+ * 而这一行要能在任务窗口里一眼扫完。完整值在输出里。
+ */
+function cut(v: string): string {
+  const s = String(v ?? '');
+  return s.length > 40 ? `${s.slice(0, 39)}…` : s;
+}
+
+function opDetail(
+  kind: string, op: string, a: string, b: string, c: string, value: string,
+): string {
+  const sign = DETAIL_SIGN[op] ?? op;
+  if (kind === 'math' || kind === 'compare') {
+    if (op === 'min' || op === 'max' || op === 'round' || op === 'floor'
+      || op === 'ceil' || op === 'abs') {
+      return `${op}(${cut(a)}${b ? `, ${cut(b)}` : ''}) ＝ ${cut(value)}`;
+    }
+    return `${cut(a)} ${sign} ${cut(b)} ＝ ${cut(value)}`;
+  }
+  if (kind === 'text') {
+    const tail = c ? `, ${cut(c)}` : '';
+    return `${op}(${cut(a)}${b ? `, ${cut(b)}` : ''}${tail}) ＝ ${cut(value)}`;
+  }
+  return `${op}(${cut(a)}${b ? `, ${cut(b)}` : ''}) ＝ ${cut(value)}`;
+}
+
 function runOp(
   ctx: RunContext,
   kind: 'math' | 'text' | 'compare' | 'random',
@@ -39,7 +74,14 @@ function runOp(
     else r = randomOp(op as RandomOp, ra, rb);
 
     if (!r.ok) throw new NodeFailError(r.error);
-    return { output: r.value };
+    /*
+     * 判据与输出并排。
+     *
+     * 只存 `true` 的话，事后回看完全无从判断"当时拿什么跟什么比" ——
+     * 尤其是参数里带 {{上游.output}} 时，渲染后的实际值根本看不出来。
+     * 任务窗口里这一行就是排查流程的依据。
+     */
+    return { output: r.value, detail: opDetail(kind, op, ra, rb, rc, r.value) };
   });
 }
 

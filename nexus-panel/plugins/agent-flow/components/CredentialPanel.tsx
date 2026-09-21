@@ -3,7 +3,7 @@ import McpServersPanel from './McpServersPanel';
 import type { GlobalMcpServer } from '../engine/mcpServers';
 import { prompt } from '../../../js/dialog.js';
 import {
-  type Credential, type CredentialKind, type Capability,
+  type Credential, type CredentialKind, type Capability, isSecretlessKind,
   makeCredential, missingCapabilities, NODE_NEEDS, detectGithubCapabilities,
   scopeHintFor,
 } from '../engine/credentials';
@@ -27,6 +27,7 @@ import type { VaultMode } from '../engine/credentialStore';
 const KIND_META: Record<CredentialKind, { label: string; hint: string }> = {
   github: { label: 'GitHub 令牌', hint: '用于拉取 / 推送节点' },
   llm: { label: '大模型 API Key', hint: '用于图片识别 / 翻译节点' },
+  cli: { label: 'CLI 模型清单', hint: '不需要密钥 —— 只维护一份模型名，供任务（CLI）节点选' },
   generic: { label: '通用密钥', hint: '其它服务' },
 };
 
@@ -127,15 +128,24 @@ export function CredentialPanel({
 
   const save = async () => {
     if (!editing) return;
-    if (!editing.secret.trim()) {
+    /*
+     * 无密钥种类（CLI 模型清单）没有可校验的东西 ——
+     * 拿空密钥去 verify 必然失败，而界面上只说"校验失败"，
+     * 看不出是这一栏本来就不需要填。
+     */
+    const secretless = isSecretlessKind(editing.kind);
+    if (!secretless && !editing.secret.trim()) {
       setErr('密钥不能为空');
+
       return;
     }
     setBusy(true);
     setErr('');
     setMsg('');
     try {
-      const r = await verify(editing.kind, editing.secret.trim());
+      const r = secretless
+        ? { ok: true, message: '已保存', identity: '' }
+        : await verify(editing.kind, editing.secret.trim());
       if (!r.ok) {
         setErr(`校验失败：${r.message}`);
         setBusy(false);
@@ -314,16 +324,22 @@ export function CredentialPanel({
                 ))}
               </select>
             </label>
-            <label className="p-row">
-              <span className="p-muted" style={{ width: 64, flex: 'none' }}>密钥</span>
-              <input
-                className="p-input"
-                type="password"
-                value={editing.secret}
-                onChange={(e) => setEditing({ ...editing, secret: e.target.value })}
-                placeholder={editing.kind === 'github' ? 'ghp_… 或 github_pat_…' : 'sk-…'}
-              />
-            </label>
+            {/*
+              无密钥种类（CLI 模型清单）不显示密钥栏。
+              显示一个空着却必须填的输入框，是最容易让人卡住的一种界面。
+            */}
+            {isSecretlessKind(editing.kind) ? null : (
+              <label className="p-row">
+                <span className="p-muted" style={{ width: 64, flex: 'none' }}>密钥</span>
+                <input
+                  className="p-input"
+                  type="password"
+                  value={editing.secret}
+                  onChange={(e) => setEditing({ ...editing, secret: e.target.value })}
+                  placeholder={editing.kind === 'github' ? 'ghp_… 或 github_pat_…' : 'sk-…'}
+                />
+              </label>
+            )}
             <div className="p-muted" style={{ fontSize: 'var(--fs-12, 12px)' }}>
               {KIND_META[editing.kind].hint}
               {editing.kind === 'github' ? `。${scopeHintFor(['github:write'])}` : ''}
@@ -338,8 +354,9 @@ export function CredentialPanel({
 
               现在节点只存"用哪个凭据 + 用哪个模型"。
             */}
-            {editing.kind === 'llm' ? (
+            {(editing.kind === 'llm' || editing.kind === 'cli') ? (
               <>
+                {editing.kind === 'cli' ? null : (
                 <label className="p-row">
                   <span className="p-muted" style={{ width: 64, flex: 'none' }}>服务商</span>
                   <select
@@ -372,9 +389,13 @@ export function CredentialPanel({
                     })}
                   />
                 </label>
+                </label>
+                )}
+                {editing.kind === 'cli' ? null : (
                 <div className="p-muted" style={{ fontSize: 'var(--fs-12, 12px)' }}>
                   留空用上方服务商的官方地址。中转 / 自建网关填完整地址。
                 </div>
+                )}
 
                 <div className="p-row" style={{ alignItems: 'flex-start' }}>
                   <span className="p-muted" style={{ width: 64, flex: 'none' }}>模型清单</span>
@@ -394,7 +415,7 @@ export function CredentialPanel({
                   拉取按钮只在外部注入了 fetchModels 时出现。
                   不注入就隐藏 —— 给一个点了必然失败的按钮更糟。
                 */}
-                {fetchModels ? (
+                {fetchModels && editing.kind === 'llm' ? (
                   <div className="p-row" style={{ gap: 'var(--sp-4, 8px)', flexWrap: 'wrap' }}>
                     <button
                       className="p-btn"
@@ -454,7 +475,7 @@ export function CredentialPanel({
 
             <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
               <button className="p-btn primary" onClick={save} disabled={busy}>
-                {busy ? '校验中…' : '校验并保存'}
+                {busy ? '校验中…' : (isSecretlessKind(editing.kind) ? '保存' : '校验并保存')}
               </button>
               <button className="p-btn" onClick={() => setEditing(null)} disabled={busy}>取消</button>
             </div>

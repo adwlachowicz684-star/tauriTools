@@ -677,6 +677,70 @@ test('预警圆点不带呼吸动画', () => {
   assert.ok(!/@keyframes/.test(css), '不应有 @keyframes');
 });
 
+/* ================= 卡片内容不许撑破卡片 ================= */
+
+/*
+ * 卡片宽度固定 240px，而里面的文本几乎全是用户填的
+ * （提示词、URL、路径、文件名、报错）。两类溢出：
+ *
+ *   ① 横向：一长串不带空格的东西（URL / 路径 / 文件名）
+ *      找不到换行点，直接捅出右边界。
+ *   ② 纵向：多行文本没有上限，一张卡片能长到半屏。
+ *
+ * 这两类在 240px 的卡片上都很容易命中，而**测试跑不出来** ——
+ * 没有浏览器就没有布局。只能靠 CSS 级断言盯着。
+ */
+test('卡片有长串换行与 flex 子项收缩两条兜底', () => {
+  const css = fs.readFileSync(path.join(ROOT, 'styles.css'), 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const card = css.slice(css.indexOf('.node-card {'));
+  const block = card.slice(0, card.indexOf('}'));
+  // ① 长串（URL / 路径中间没空格）必须能断行
+  assert.match(block, /overflow-wrap:\s*anywhere/, '卡片要允许长串断行');
+  // ② flex 子项默认 min-width:auto，不带空格的文件名会把整行顶开
+  assert.match(css, /\.node-card\s+\*\s*\{[^}]*min-width:\s*0/, '卡片内所有元素都要能收缩');
+});
+
+test('多行文本都限了行数（提示词 / 原因 / 报错）', () => {
+  const css = fs.readFileSync(path.join(ROOT, 'styles.css'), 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const cls of ['node-line--preview', 'node-line--alert', 'node-line--err']) {
+    const i = css.indexOf(`.${cls} {`);
+    assert.ok(i >= 0, `缺 .${cls}`);
+    const b = css.slice(i, css.indexOf('}', i));
+    assert.match(b, /-webkit-line-clamp/, `.${cls} 没限行数`);
+  }
+});
+
+test('条件分支的规则文本是 flex 项且能收缩', () => {
+  /*
+   * .cond-text 在 .cond-rule（flex）里。
+   * 缺少 flex:1 / min-width:0 时它不会收缩，长规则描述会顶破卡片 ——
+   * 这正是"条件判断卡片溢出"的那一处。
+   */
+  const css = fs.readFileSync(path.join(ROOT, 'styles.css'), 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const i = css.indexOf('.cond-text {');
+  assert.ok(i >= 0, '缺 .cond-text');
+  const b = css.slice(i, css.indexOf('}', i));
+  assert.match(b, /min-width:\s*0/, '.cond-text 要能收缩');
+  assert.match(b, /overflow:\s*hidden/, '.cond-text 要截断');
+});
+
+test('循环摘要的文本包成了元素（匿名 flex 项出不来省略号）', () => {
+  /*
+   * 裸文本写进 flex 容器会被包成**匿名** flex 项，
+   * 容器上的 text-overflow 对它无效 —— 只能硬切断，没有省略号。
+   * 所以 LoopNode 里必须把它包成 .loop-text。
+   */
+  const css = fs.readFileSync(path.join(ROOT, 'styles.css'), 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(css, /\.loop-text\s*\{/, '要有 .loop-text');
+  const src = fs.readFileSync(path.join(ROOT, 'components', 'LoopNode.tsx'), 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(src, /className="loop-text"/, '循环摘要的文本要包成 .loop-text');
+});
+
 test('节点库的自定义色块有样式（.side-swatch）', () => {
   /*
    * 色块是新增的控件，忘了写 CSS 的话它会退化成一个无边框的小方块，

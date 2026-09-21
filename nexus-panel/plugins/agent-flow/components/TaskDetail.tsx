@@ -21,7 +21,13 @@ import {
 function NodeRow({ n, now, label }: { n: TaskNodeState; now: number; label?: string }) {
   const [open, setOpen] = useState(false);
   const dur = n.startedAt ? elapsedOf({ startedAt: n.startedAt, endedAt: n.endedAt } as TaskRecord, now) : 0;
-  const hasBody = Boolean(n.output || n.error || n.rendered);
+  /*
+   * 判据也要算进"有没有可展开的内容"。
+   *
+   * 只输出 true / false 的节点（比较、条件）输出本身就那么一两个字，
+   * 判据才是要看的东西 —— 不算进来的话这一行根本展不开。
+   */
+  const hasBody = Boolean(n.output || n.error || n.rendered || n.detail);
   return (
     <div className={`task-node st-${n.status}`}>
       <div
@@ -46,6 +52,16 @@ function NodeRow({ n, now, label }: { n: TaskNodeState; now: number; label?: str
             <div className="task-field">
               <div className="task-field-k">提示词</div>
               <pre className="task-pre">{n.rendered}</pre>
+            </div>
+          ) : null}
+          {/*
+            判据排在输出**前面**：比较 / 条件这类节点的输出只有 true/false，
+            先看到它反而不知道在看什么。先说"拿什么比出来的"，再说结论。
+          */}
+          {n.detail ? (
+            <div className="task-field">
+              <div className="task-field-k">判据</div>
+              <pre className="task-pre detail">{n.detail}</pre>
             </div>
           ) : null}
           {n.output ? (
@@ -266,6 +282,8 @@ export function TaskFlow({ task, now }: { task: TaskRecord; now: number }) {
                   </div>
                   <FlowVars vars={b.vars} full />
                   {st?.error ? <pre className="task-pre err">{st.error}</pre> : null}
+                  {/* 图上点开也要看到判据：只显示 true/false 的节点，光看输出等于没看 */}
+                  {st?.detail ? <pre className="task-pre detail">{st.detail}</pre> : null}
                   {st?.output ? <pre className="task-pre">{st.output.slice(0, 400)}</pre> : null}
                   {!st?.error && !st?.output ? (
                     <div className="task-mute">

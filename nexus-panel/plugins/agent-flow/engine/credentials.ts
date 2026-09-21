@@ -15,7 +15,18 @@
 /* 类型                                                                */
 /* ------------------------------------------------------------------ */
 
-export type CredentialKind = 'github' | 'llm' | 'generic';
+export type CredentialKind = 'github' | 'llm' | 'generic' | 'cli';
+
+/**
+ * 不需要密钥的凭据种类。
+ *
+ * CLI 走自己的登录态，模型名却要跟大模型凭据一样统一管理 ——
+ * 各处手填一份，改名时就要改好几处，漏一处表现为"这个节点还是旧模型名"。
+ * 所以给它一条**只存模型清单**的凭据：没有密钥、没有地址，只有一份名单。
+ */
+export function isSecretlessKind(kind: CredentialKind): boolean {
+  return kind === 'cli';
+}
 
 /** 能力。命名习惯：`<领域>:<动作>` */
 export type Capability =

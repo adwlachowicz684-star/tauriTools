@@ -220,7 +220,25 @@ body { background: var(--af-bg); color: var(--af-fg); }
   /* position:relative 供 .is-stacked::before（嵌合咬合口）绝对定位 ——
      原先单独写在"嵌合"那节，与这里相隔 1700 行，容易被漏改 */
   position: relative;
+
+  /*
+   * ================= 卡片宽度固定，内容一律不许撑破它 =================
+   *
+   * 下面两条是**兜底**，不是替代各行的单行省略：
+   *
+   * overflow-wrap: anywhere —— 长 URL / 长路径中间没有空格，
+   * 默认换行规则找不到断点，整串会直接捅出卡片右边界。
+   * 图片识别卡片上那行完整地址就是这个症状。
+   * （继承给子元素，所以卡片内任何位置的长串都受约束。）
+   *
+   * .node-card * { min-width: 0 } —— flex 子项默认 min-width:auto，
+   * 等于"不许比内容的最窄宽度更窄"。一行不带空格的文件名，
+   * 它的最窄宽度就是整串长度，于是 flex 容器被顶开、省略号也不生效。
+   * 这条一次解决所有 flex 子项，不必逐个类去补。
+   */
+  overflow-wrap: anywhere;
 }
+.node-card * { min-width: 0; }
 .node-card.is-selected { border-color: var(--af-accent); box-shadow: 0 0 0 2px var(--af-glow); }
 /*
  * 左边条现在**只表示节点类型**（由 NodeShell 用内联样式注入 def.meta.color），
@@ -328,6 +346,14 @@ body { background: var(--af-bg); color: var(--af-fg); }
 .node-line--preview {
   background: var(--af-sunk); border-radius: var(--af-r-sm);
   padding: 6px 8px; min-height: 42px; line-height: 1.45;
+  /*
+   * 最多四行。
+   * 以前没有上限：提示词、地址、待翻译文本原样铺开的话，
+   * 一张卡片能长到半屏，把整张画布的布局顶散。
+   * 完整内容在属性面板里看，卡片上只放"够认出是哪一步"的量。
+   */
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4;
+  overflow: hidden;
 }
 
 .node-line--meta { display: flex; gap: 10px; font-size: var(--fs-11, 11px); color: var(--af-dim); }
@@ -348,6 +374,10 @@ body { background: var(--af-bg); color: var(--af-fg); }
   display: flex; align-items: center; gap: 4px;
   font-size: var(--fs-11, 11px); color: var(--af-t-file); margin-top: 3px;
 }
+/* 文件名不带空格，不省略的话会把这一行顶出卡片 */
+.node-line--files > span:last-child {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .node-line__badge {
   border: 1px solid currentColor; border-radius: var(--r-pill, 999px);
   padding: 0 6px; font-family: var(--af-mono);
@@ -361,9 +391,17 @@ body { background: var(--af-bg); color: var(--af-fg); }
   color: #fca5a5; background: rgba(239, 68, 68, 0.12);
   border-left: 2px solid rgba(239, 68, 68, 0.55);
   border-radius: 3px; padding: 3px 6px;
+  /* 原因可能很长（一条规则一个），限三行，完整列表看属性面板 */
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+  overflow: hidden;
 }
 
-.node-line--err { font-size: var(--fs-11, 11px); color: var(--af-bad); margin-top: 4px; line-height: 1.45; }
+.node-line--err {
+  font-size: var(--fs-11, 11px); color: var(--af-bad); margin-top: 4px; line-height: 1.45;
+  /* 同上：堆栈 / 长报错不该把卡片撑成一条 */
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+  overflow: hidden;
+}
 
 /* ------------------------------------------------------------------ */
 /* 胶囊小标签                                                          */
@@ -712,7 +750,10 @@ button.mini.danger:hover { border-color: var(--af-bad); color: var(--af-t-err2);
   border-radius: var(--af-r-xs); padding: 1px 6px; font-size: var(--fs-11, 11px);
 }
 .cond-rule.is-default .cond-op { background: #2d3a52; color: #93c5fd; }
-.cond-text { color: var(--af-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cond-text {
+  flex: 1; min-width: 0;
+  color: var(--af-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .cond-empty { font-size: var(--fs-12, 12px); }
 
 /* 分支出口手柄：稍微内缩，避免和任务节点的出口混淆 */
@@ -1008,6 +1049,12 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .loop-icon { flex: none; font-size: var(--fs-13, 13px); color: var(--af-t-loop); }
+/*
+ * 容器上的 text-overflow 对**匿名 flex 项**不生效 ——
+ * 直接写在 .loop-summary 里的裸文本会被浏览器包成一个匿名 flex 子项，
+ * 省略号出不来，只能硬切断。所以 LoopNode 里把文本包成 .loop-text。
+ */
+.loop-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .loop-ports { display: flex; gap: 6px; margin: 5px 0 2px; }
 .loop-port {
   font-size: var(--fs-10, 10px); padding: 1px 6px; border-radius: var(--af-r-xs);
@@ -1533,6 +1580,11 @@ input.mono, textarea.mono {
   background: var(--af-bg); border: 1px solid var(--af-divider);
   border-radius: 5px; padding: 7px 9px; color: var(--af-soft); }
 .task-pre.err { color: var(--af-bad); border-color: var(--af-bad); }
+/*
+ * 判据：比正文亮一档，并且限高 ——
+ * 它是"一眼扫完"的那一行，占一大块反而把真正的输出挤下去了。
+ */
+.task-pre.detail { color: var(--af-fg); max-height: 96px; background: var(--af-sunk); }
 
 .task-logs { border-top: 1px solid var(--af-divider); max-height: 34%;
   overflow: auto; padding: 8px 14px 12px; }

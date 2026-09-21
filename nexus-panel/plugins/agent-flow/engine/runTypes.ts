@@ -8,7 +8,11 @@ export type RunEvent =
   | { type: 'layer-start'; layer: number; total: number; ids: string[] }
   | { type: 'node-start'; id: string; rendered: string }
   | { type: 'node-chunk'; id: string; chunk: string }
-  | { type: 'node-done'; id: string; ok: boolean; output: string; error?: string }
+  /*
+   * detail：这个结论是怎么来的（判据）。
+   * 运算类节点只输出 true/false，没有它事后完全无法复盘。
+   */
+  | { type: 'node-done'; id: string; ok: boolean; output: string; error?: string; detail?: string }
   /**
    * 节点出错但还没到"完成"那一步 —— 缺执行器、参数不合法等前置失败。
    *

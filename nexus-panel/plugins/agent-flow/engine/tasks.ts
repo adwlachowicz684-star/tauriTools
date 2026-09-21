@@ -50,6 +50,13 @@ export type TaskNodeState = {
   loopDone?: number;
   /** 本轮迭代值 */
   loopItem?: string;
+  /**
+   * 这个结论是怎么来的（判据）。
+   *
+   * 比较 / 运算节点只产出 true / false / 3 这类裸值 ——
+   * 光看输出不知道当时拿什么跟什么比，流程排查到这一步就断了。
+   */
+  detail?: string;
 };
 
 export type TaskLogLine = {
@@ -214,6 +221,7 @@ function reduce(task: TaskRecord, e: RunEvent, now: number): void {
       // done 事件带的是完整输出，直接取代；没有才保留已累积的
       if (e.output) n.output = clampOutput(e.output);
       n.error = e.error ?? '';
+      if (e.detail) n.detail = e.detail;
       log(task, now, `${e.ok ? '完成' : '失败'}：${e.id}${e.error ? ` — ${e.error}` : ''}`, e.id);
       break;
     }

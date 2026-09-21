@@ -527,7 +527,13 @@ export function CliModelPanel({
   onChange: (patch: Record<string, unknown>) => void;
   onOpenCredentials?: (kind: string) => void;
 }) {
-  const llmCreds = (credentials ?? []).filter((x) => x.kind === 'llm');
+  /*
+   * CLI 凭据（cli）与大模型凭据（llm）都能提供模型清单。
+   *
+   * CLI 走自己的登录态，不需要密钥 —— 但模型名一样要统一管理：
+   * 各处手填一份，改模型时要改好几处，漏一处表现为"这个节点还是旧名字"。
+   */
+  const llmCreds = (credentials ?? []).filter((x) => x.kind === 'llm' || x.kind === 'cli');
   const cred = llmCreds.find((x) => x.id === credentialId) ?? null;
   const models = llmCreds.length ? llmModelsOf(cred) : [];
   const cur = String(model ?? '').trim();
@@ -650,7 +656,7 @@ export function CliModelPanel({
 
       {onOpenCredentials ? (
         <div className="p-row">
-          <button className="p-btn" onClick={() => onOpenCredentials('llm')}>
+          <button className="p-btn" onClick={() => onOpenCredentials('cli')}>
             填写凭据
           </button>
         </div>

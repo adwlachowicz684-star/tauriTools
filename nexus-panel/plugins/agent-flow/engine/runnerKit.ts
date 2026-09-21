@@ -73,6 +73,15 @@ export type NodeRunOutput = {
    * 给了会挂在 node-done 的 error 上，但**不**算失败、不改状态。
    */
   warn?: string;
+  /**
+   * 「这个结论是怎么来的」—— 与 output 并列的一行说明。
+   *
+   * 只输出 `true` / `false` / `3` 这类裸值的节点，事后回看完全无从判断：
+   * 不知道当时拿什么跟什么比、比的是什么。运算类节点是重灾区。
+   *
+   * 它不是日志（日志是流水），是**这一步的判据**，要跟着节点存进任务记录。
+   */
+  detail?: string;
 };
 
 /** 写附加字段并通知 UI；两者都没给则什么都不做 */
@@ -141,6 +150,7 @@ export async function withNodeRun(
       ok: true,
       output: r.output,
       error: r.warn,
+      detail: r.detail,
     });
     setStatus(id, 'success');
   } catch (err) {

@@ -13,7 +13,7 @@ import {
   type ChatMessage, type ContentPart,
 } from '../llm';
 import { resolveParams } from '../params';
-import { evaluateCondition } from '../condition';
+import { evaluateCondition, type RuleOutcome } from '../condition';
 import { resolveParallel, effectiveConcurrency, MAX_CONCURRENCY } from '../parallel';
 import { resolveLoopItems, makeLoopCtx, type LoopResolve } from '../loop';
 import {
@@ -22,6 +22,16 @@ import {
 } from '../updates';
 import type { RunContext } from '../runContext';
 import { withNodeRun, NodeFailError } from '../runnerKit';
+
+/** 把判定依据压成一行：走了哪条 + 当时看的内容 */
+function condDetail(res: RuleOutcome): string {
+  const seen = (res.inspected ?? '').trim();
+  const what = seen ? `依据「${seen.length > 40 ? `${seen.slice(0, 39)}…` : seen}」` : '依据（上游无内容）';
+  const which = res.rule
+    ? `命中「${res.rule.label || res.branchId || '未命名规则'}」`
+    : '没有规则命中';
+  return `${which} · ${what}`;
+}
 
 export async function runCondition(ctx: RunContext): Promise<void> {
     const {
@@ -55,6 +65,12 @@ export async function runCondition(ctx: RunContext): Promise<void> {
      * 那 node-done 就该是 ok:false，否则日志与徽章各说各话。
      */
     if (res.error) throw new NodeFailError(res.error, out);
-    return { output: out };
+    /*
+     * 判据：命中了哪条规则 + 当时看的是什么内容。
+     *
+     * 只看输出(`[条件] 走「xxx」`)无法判断判定对不对 ——
+     * 尤其规则里引用 {{上游.output}} 时，实际取到的文本根本看不出来。
+     */
+    return { output: out, detail: condDetail(res) };
   });
 }
