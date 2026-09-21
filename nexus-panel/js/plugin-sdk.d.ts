@@ -144,7 +144,7 @@ export interface PluginContext {
      *   reject(错误)  —— 真出错（服务没装 / 挂载失败 / 超时 / 崩溃）
      *
      * 于是调用方无需 try/catch 就能一行调起：
-     *   const r = await ctx.services.color.pick({ initial, custom: saved });
+     *   const r = await ctx.services.color.pick(initial, { custom: saved });
      *   if (r.hex) apply(r.hex);
      *   save(r.custom);          // 取消了也要存
      *

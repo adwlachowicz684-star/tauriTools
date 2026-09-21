@@ -510,5 +510,82 @@ console.log('\n--- I. 右上角入口管理 ---');
   t('原生版同样有', /addExtra/.test(native));
 }
 
+/* ============================================================
+   F. 强调色 / 环境色的自定义色（色盘选色）
+   ============================================================ */
+{
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '');
+
+  const sa = strip(app);
+  const tm = strip(src('js/theme-manager.js'));
+
+  console.log('\n--- F. 自定义色（色盘选色） ---');
+
+  /* 两个槽位都要有入口 */
+  t('强调色排有自定义入口', /customColorButton\('accent'\)/.test(sa));
+  t('环境色排有自定义入口', /customColorButton\('env'\)/.test(sa));
+
+  /* 存储：两个槽位必须分开，否则收藏色会互相串 */
+  t('强调色与环境色的收藏夹各用一个键',
+    /nexus:accent-custom/.test(tm) && /nexus:env-custom/.test(tm));
+  t('getCustomColors 按 slot 取键', /slot === 'env' \? KEY_CUSTOM_ENV : KEY_CUSTOM_ACCENT/.test(tm));
+  t('saveCustomColors 按 slot 取键', /saveCustomColors[\s\S]{0,260}KEY_CUSTOM_ENV/.test(tm));
+
+  /* 只认 #rrggbb：localStorage 里的怪值不该被带进面板 */
+  t('收藏夹过滤非法值（只留 #rrggbb）', /\^#\[0-9a-fA-F\]\{6\}\$/.test(tm));
+
+  /* N28：无构建模式下色盘服务不可用，必须先问再调 */
+  t('先 available() 再调 pick（不可用会 throw）',
+    /await ctx\.services\.color\.available\(\)/.test(sa));
+  t('不可用时有降级通路（原生取色器）', /type="color"/.test(sa) && /el\.click\(\)/.test(sa));
+
+  /* 取消也要存收藏：用户可能刚收藏完就点取消 */
+  t('取消了也保存 custom', /saveCustomColors\(slot, r\?\.custom\)/.test(sa));
+  t('只有拿到 hex 才应用', /if \(r\?\.hex\) applyColor/.test(sa));
+
+  /* pick 是 (initial, opts) 双参；写成对象形式会类型报错（实测踩到） */
+  t('pick 用双参调用，不是对象形式',
+    /color\.pick\(\s*\n?\s*isHex\(cur\)/.test(sa)
+    && !/color\.pick\(\{\s*initial/.test(sa));
+
+  /*
+   * 当前色不在预设里时要显示出来。
+   * 少了它：用户选了个自定义色，面板上看不到自己选了什么，
+   * 一排预设色还全部保持不透明（因为都不等于当前色）→ 像没生效。
+   */
+  t('非预设的当前色会单独显示', /cur && !isPreset \? \(/.test(sa));
+
+  /* 降级用的 input 必须由用户手势触发，不能按需 createElement */
+  t('降级 input 常驻渲染（临时创建会被浏览器拦）',
+    /ref=\{accentInput\}/.test(sa) && /ref=\{envInput\}/.test(sa));
+
+  /* ---- 行为验证：真跑一遍存储，而不是只查源码字符串 ---- */
+  const TM = await import('./js/theme-manager.js');
+  t('导出 getCustomColors / saveCustomColors',
+    typeof TM.getCustomColors === 'function' && typeof TM.saveCustomColors === 'function');
+
+  localStorage.removeItem('nexus:accent-custom');
+  localStorage.removeItem('nexus:env-custom');
+  t('初始为空数组', JSON.stringify(TM.getCustomColors('accent')) === '[]');
+
+  TM.saveCustomColors('accent', ['#11aa22', '#ff0000']);
+  TM.saveCustomColors('env', ['#00ff00']);
+  t('两个槽位互不串（强调色 2 / 环境色 1）',
+    TM.getCustomColors('accent').length === 2 && TM.getCustomColors('env').length === 1,
+    `${TM.getCustomColors('accent').length} / ${TM.getCustomColors('env').length}`);
+
+  /* 手改 localStorage 塞进来的怪值不该被带进面板 */
+  TM.saveCustomColors('accent', ['#123456', 'javascript:alert(1)', 'rgb(1,2,3)', null, 42]);
+  t('非法值被过滤，只留 #rrggbb',
+    JSON.stringify(TM.getCustomColors('accent')) === '["#123456"]',
+    JSON.stringify(TM.getCustomColors('accent')));
+
+  /* 坏 JSON 不能让设置页打不开 */
+  localStorage.setItem('nexus:accent-custom', '{{{坏 JSON');
+  t('坏 JSON 不抛、退回空数组', JSON.stringify(TM.getCustomColors('accent')) === '[]');
+  localStorage.removeItem('nexus:accent-custom');
+  localStorage.removeItem('nexus:env-custom');
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

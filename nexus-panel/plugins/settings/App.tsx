@@ -20,6 +20,7 @@ import {
   saveAsCustom, deleteCustomTheme,
   // getCurrent：色相/明暗改为按主题各记一份后，提示文案要显示当前主题名
   getCurrent,
+  getCustomColors, saveCustomColors,
   onChange as onThemeChange,
 } from '../../js/theme-manager.js';
 import { swatchFor, styleLabel } from '../../js/themes.js';
@@ -664,6 +665,92 @@ export default function Settings() {
 
   const rerender = () => force((n) => n + 1);
 
+  /* ---------------- 自定义色（强调色 / 环境色共用一套） ----------------
+   *
+   * 预设色板只有固定 9 个色，用户想用自己的品牌色就只能走色盘。
+   * 两个槽位共用这段逻辑，靠 slot 区分存储键与提示文案。
+   *
+   * 降级：无构建模式下 color-picker（React + requiresBuild）会被
+   * filterByRuntime 过滤掉（N28），此时退回原生 <input type="color">
+   * —— 没有 SV 面板和吸管，但至少能选任意色，
+   * 不至于"点了自定义却毫无反应"。 */
+  const accentInput = useRef<HTMLInputElement>(null);
+  const envInput = useRef<HTMLInputElement>(null);
+
+  const applyColor = (slot: 'accent' | 'env', hex: string) => {
+    if (slot === 'env') setEnvColor(hex); else setAccent(hex);
+    ctx.toast(`${slot === 'env' ? '环境色' : '强调色'}：${hex}`, 'ok');
+    rerender();
+    void syncThemeToShell();
+  };
+
+  const pickCustomColor = async (slot: 'accent' | 'env') => {
+    const cur = slot === 'env' ? getEnvColor() : getAccent();
+    const isHex = (v: string | null): v is string => !!v && /^#[0-9a-fA-F]{6}$/.test(v);
+
+    /* 先问一句能不能用，不能用就降级 —— 直接 pick() 会 throw（N28） */
+    let usable = false;
+    try { usable = !!(await ctx.services.color.available()); } catch { usable = false; }
+
+    if (!usable) {
+      const el = slot === 'env' ? envInput.current : accentInput.current;
+      if (!el) { ctx.toast('当前环境无法打开色盘', 'err'); return; }
+      el.value = isHex(cur) ? cur : '#5b8cff';
+      el.click();
+      return;
+    }
+
+    try {
+      const r = await ctx.services.color.pick(
+        isHex(cur) ? cur : null,
+        {
+          custom: getCustomColors(slot),
+          /* 把当前基调的预设色喂给色盘当常用色，与上面那排保持一致 ——
+             否则深色下面板给出的浅色跟旁边的色板对不上 */
+          preset: swatchFor(getBase()).map(([c]) => c),
+        },
+      );
+      /* 取消了也要存：用户可能刚收藏完就点取消 */
+      saveCustomColors(slot, r?.custom);
+      if (r?.hex) applyColor(slot, r.hex);
+    } catch (e) {
+      ctx.toast(`打开色盘失败：${String((e as Error)?.message || e)}`, 'err');
+    }
+  };
+
+  /* 预设色板之外的当前色：不在预设里就单独显示出来，
+     否则用户选了个自定义色却看不到"我选的是什么"。 */
+  const customColorButton = (slot: 'accent' | 'env') => {
+    const cur = slot === 'env' ? getEnvColor() : getAccent();
+    const isPreset = !!cur
+      && swatchFor(getBase()).some(([c]) => c.toLowerCase() === cur.toLowerCase());
+    return (
+      <>
+        <button
+          className="p-btn"
+          onClick={() => { void pickCustomColor(slot); }}
+          title={slot === 'env' ? '从色盘里选一个环境色' : '从色盘里选一个强调色'}
+          style={{ flex: 'none', fontSize: 'var(--fs-11, 11px)', padding: '2px 8px' }}
+        >
+          🎨 自定义
+        </button>
+        {cur && !isPreset ? (
+          <button
+            className="p-btn"
+            onClick={() => { void pickCustomColor(slot); }}
+            title={`当前自定义色 ${cur}（点击重选）`}
+            style={{
+              color: cur,
+              boxShadow: '3px 3px 7px var(--sh-dark), -3px -3px 7px var(--sh-light)',
+            }}
+          >
+            ● {cur}
+          </button>
+        ) : null}
+      </>
+    );
+  };
+
   /* 样式审计：拉每个插件的 CSS，跑一遍与外壳变量契约的规则。
      插件是独立文档，外壳的 CSS 到不了那边，只能靠"引入 + 变量映射"保持一致；
      这条链上任何一环错位，表现都是某个主题下突然看不清，很难联想到是接错了。
@@ -778,6 +865,25 @@ export default function Settings() {
           <div className="p-muted" style={{ marginBottom: 'var(--sp-6, 12px)', fontSize: 'var(--fs-12, 12px)' }}>
             点缩略图即切换。标题栏右上角的 ◐ 按钮也能快速切换，两处是同一套数据。
           </div>
+          {/* 降级通路：无构建模式下色盘服务不可用，用原生取色器兜底。
+              刻意常驻渲染而不是按需创建 —— input 必须由用户手势触发，
+              临时 createElement + click 在部分浏览器上会被拦掉。 */}
+          <input
+            ref={accentInput}
+            type="color"
+            style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
+            tabIndex={-1}
+            aria-hidden
+            onChange={(e) => { applyColor('accent', e.target.value); }}
+          />
+          <input
+            ref={envInput}
+            type="color"
+            style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
+            tabIndex={-1}
+            aria-hidden
+            onChange={(e) => { applyColor('env', e.target.value); }}
+          />
           {(() => {
             const all = listThemes();
             const groups: [string, typeof all][] = [
@@ -894,6 +1000,7 @@ export default function Settings() {
                 </button>
               );
             })}
+            {customColorButton('accent')}
             <ResetDefaultBtn
               disabled={!getAccent()}
               onClick={() => { resetAccent(); ctx.toast('已恢复主题自带强调色', 'ok'); rerender(); void syncThemeToShell(); }}
@@ -925,6 +1032,7 @@ export default function Settings() {
                 </button>
               );
             })}
+            {customColorButton('env')}
             <ResetDefaultBtn
               disabled={!getEnvColor()}
               onClick={() => { resetEnvColor(); ctx.toast('已恢复主题自带环境色', 'ok'); rerender(); void syncThemeToShell(); }}

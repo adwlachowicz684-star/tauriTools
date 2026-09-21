@@ -167,7 +167,7 @@ function withBuiltinShortcuts(services) {
      * 漏了就是 unhandled rejection。
      *
      * 于是调用方可以这样，无需 try/catch：
-     *   const r = await ctx.services.color.pick({ initial, custom: saved });
+     *   const r = await ctx.services.color.pick(initial, { custom: saved });
      *   if (r.hex) apply(r.hex);
      *   save(r.custom);          // 取消了也要存
      *

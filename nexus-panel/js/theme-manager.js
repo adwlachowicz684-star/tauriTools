@@ -21,6 +21,15 @@ const KEY_THEME = 'nexus:theme';
 const KEY_ACCENT = 'nexus:accent';
 // 环境色（原「主题色」）：与强调色并列的第二个可调主色
 const KEY_ENV = 'nexus:env-color';
+/*
+ * 自定义色的收藏夹：**强调色与环境色各存一份**。
+ *
+ * 为什么要分开：色盘的「常用色」是调用方传进去、又原样带回来的
+ * （pick 返回 { hex, custom }），共用一个键的话，
+ * 在强调色里收藏的一批色会串到环境色那边去。
+ */
+const KEY_CUSTOM_ACCENT = 'nexus:accent-custom';
+const KEY_CUSTOM_ENV = 'nexus:env-custom';
 // 用户是否手动选过主题 —— 没选过时默认主题才能继续生效
 const KEY_USERSET = 'nexus:theme-userset';
 // 主题色调整：在主题自身配色上做整体偏移（色相角度 / 明暗百分比）
@@ -405,6 +414,42 @@ export function getAccent() {
 /** 环境色：与强调色并列的第二个可调主色，仅作次要点缀 */
 export function getEnvColor() {
   try { return localStorage.getItem(KEY_ENV) || null; } catch { return null; }
+}
+
+/** 收藏夹最多留这么多个；再多面板上也摆不下，且会无限增长 */
+const CUSTOM_MAX = 16;
+
+/**
+ * 读某个槽位的自定义色收藏夹。
+ *
+ * slot —— 'accent' | 'env'
+ *
+ * 解析失败一律返回空数组，不抛：收藏夹只是"上次用过的色"，
+ * 读不出来最多是不显示，不至于让整个设置页打不开。
+ */
+export function getCustomColors(slot) {
+  const key = slot === 'env' ? KEY_CUSTOM_ENV : KEY_CUSTOM_ACCENT;
+  try {
+    const v = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(v)
+      ? v.filter((c) => typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c)).slice(0, CUSTOM_MAX)
+      : [];
+  } catch { return []; }
+}
+
+/**
+ * 存收藏夹。
+ *
+ * 刻意**只认 #rrggbb**：色盘返回的已归一化，而手改 localStorage 的人
+ * 塞进来的怪值会让面板渲染出非法色。过滤掉比带着跑更安全。
+ */
+export function saveCustomColors(slot, list) {
+  const key = slot === 'env' ? KEY_CUSTOM_ENV : KEY_CUSTOM_ACCENT;
+  const clean = (Array.isArray(list) ? list : [])
+    .filter((c) => typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c))
+    .slice(0, CUSTOM_MAX);
+  try { localStorage.setItem(key, JSON.stringify(clean)); } catch {}
+  return clean;
 }
 
 /**
