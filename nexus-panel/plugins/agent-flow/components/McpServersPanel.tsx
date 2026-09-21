@@ -110,7 +110,7 @@ export default function McpServersPanel({
             {refreshing ? '刷新中…' : '刷新'}
           </button>
         ) : null}
-        <button type="button" className="mini primary" onClick={startNew}>+ 添加</button>
+        <button type="button" className="mini af-add" onClick={startNew}>+ 添加</button>
       </div>
 
       <div className="cred-tip">{TABS.find((t) => t.key === tab)?.hint}</div>

@@ -94,6 +94,10 @@ export const CONTROLS_VARS = [
   /* 选中态的"加粗"改用描边（不占布局）。同样是新增变量 → 必须登记，
      否则会被判成"变量未定义"（这是同一个坑第四次了）。 */
   '--ctl-faux-bold',
+  /* 「虚线添加」入口的统一尺度（.nx-add / .af-add 用）。
+     同样是新增变量 → 必须登记，否则会被判成"变量未定义"
+     （这是同一个坑第 5 次了：手工清单会漏，漏了没有机制能发现）。 */
+  '--add-line', '--add-bg', '--add-r', '--add-fs', '--add-op', '--add-shadow',
 ];
 
 /* 运行时由 JSX **内联注入**的变量（brushVars，见 utils/visual.ts）。

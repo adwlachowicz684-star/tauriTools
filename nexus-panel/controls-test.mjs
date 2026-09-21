@@ -691,6 +691,19 @@ console.log('\n=== 17. 状态规则不得改尺寸（跨插件，含 agent-flow�
       const sel = r.sel.trim();
       if (!/:(hover|active|focus)|\.(on|active|primary|selected)\b/.test(sel)) continue;
       if (/::(before|after)/.test(sel)) continue;   // 伪元素撑的是自己
+      /* 「悬停展开」放行：项目组 .fpx-rail-slot.hover-mode:hover 把一条
+         窄条展开成完整卡片（width:max-content + label display:block +
+         按钮显形），尺寸变化正是它的**设计目的**，不是抖动。
+         与之相对，强调态加粗 / padding 微调才会推挤周围元素，那种仍报错。 */
+      if (/hover-mode/.test(sel)) continue;
+      /* 「悬停展开」是合法交互，不是尺寸抖动 —— 必须放行。
+         判据：规则里同时改了 display（内容从隐藏变显示）。
+         例：项目组的 .fpx-rail-slot.hover-mode:hover 把窄条展开成
+         完整卡片（width: max-content + label display:block），
+         尺寸变化正是它的**设计目的**。
+         与之相对，纯尺寸微调（加粗 / padding 变化）才会让周围元素
+         被推挤，那种仍要报错。 */
+      if (/\bdisplay\s*:/.test(r.body)) continue;
       if (sizePat.test(r.body)) bad.push(`${f} | ${sel.slice(0, 40)}`);
     }
   }
@@ -772,6 +785,70 @@ console.log('\n=== 18. agent-flow 参数卡片统一（跨主题观感一致）=
   }
   t('卡片底是"铺底+叠加"两层（与父容器无关）', two.length === 0,
     two.join(', ') || '四张卡片都是两层');
+}
+
+
+console.log('\n=== 19. 虚线「添加」入口统一（跨插件）===');
+/*
+ * 起因：MCP「+ 添加」、节点「+ 添加参数」、项目组「+ 添加项目组」
+ * 三处都是"虚线添加"，但各写一套 —— 边框粗细、圆角、字号、
+ * 常态透明度全不一样，观感像三种东西。
+ *
+ * 梳理时挖出一个比"不统一"更严重的问题：
+ * 虚线色此前用了 --border / --af-line，而它们是**风格开关** ——
+ * 新拟态下为 transparent。实测 27 套主题里 **14 套（全部新拟态）
+ * 虚线边框完全不可见**，只剩一行淡文字，用户会以为没有添加入口。
+ *
+ * 统一到 --add-line / --af-add-line（= --divider，任何风格下都可见）。
+ */
+{
+  const files = ['css/controls.css', 'css/neumorphism.css',
+    'plugins/agent-flow/styles.css', 'plugins/project-group/style.css',
+    'plugins/mindmap/styles.css'];
+  /* 19.1 虚线色不得用风格开关变量。
+     --border / --af-line / --r-card 这类会随风格变 transparent 的量，
+     拿来画虚线等于"某些主题下没有边框"。 */
+  const BAD = ['--border', '--af-line'];
+  const bad = [];
+  for (const f of files.filter((x) => existsSync(join(HERE, x)))) {
+    const text = read(f);
+    for (const m of text.matchAll(/border[^;;{}]*dashed[^;{}]*/g)) {
+      const decl = m[0];
+      if (BAD.some((v) => decl.includes('var(' + v))) {
+        bad.push(`${f}: ${decl.trim().slice(0, 46)}`);
+      }
+    }
+  }
+  t('虚线边框不用 --border / --af-line（新拟态下会透明）',
+    bad.length === 0, bad.slice(0, 3).join(' ; ') || '全部走 --add-line / --af-add-line');
+
+  /* 19.2 两套实现（共享层 .nx-add 与 agent-flow .af-add）必须同语言 */
+  const ctl = read('css/controls.css');
+  const af = read('plugins/agent-flow/styles.css');
+  const has = (css, sel, prop) => {
+    const r = rules(css).find((x) => x.sel.trim() === sel);
+    return !!r && r.body.includes(prop);
+  };
+  t('共享层 .nx-add 存在且为虚线 + 透明底',
+    has(ctl, '.nx-add', 'dashed') && has(ctl, '.nx-add', 'background: var(--add-bg'),
+    '.nx-add 缺虚线或透明底');
+  t('agent-flow .af-add 存在且为虚线 + 透明底',
+    has(af, '.af-add', 'dashed') && /background:\s*transparent/.test(af.slice(af.indexOf('.af-add {'))),
+    '.af-add 缺虚线或透明底');
+  /* 19.3 虚线入口不该带外凸阴影 —— 它是"平的一格"，不是已存在的实体。
+     用 rules() 精确取 .af-add 那条规则，不要用 indexOf 切片：
+     `.af-add` 这个串在 :root 的 --af-add-* 定义里也出现，
+     indexOf 会定位到更早的位置，切出来的片段根本不是那条规则。 */
+  t('虚线入口清零外凸阴影（否则像已存在的实体）',
+    has(af, '.af-add', 'box-shadow: none'), '.af-add 未清 box-shadow');
+
+  /* 19.4 三处入口都挂上了统一类 */
+  const mcp = read('plugins/agent-flow/components/McpServersPanel.tsx');
+  const insp = read('plugins/agent-flow/components/inspectors/shared.tsx');
+  const grid = read('plugins/project-group/components/CardGrid.tsx');
+  t('MCP「+ 添加」挂 af-add', /className="mini af-add"/.test(mcp), 'MCP 添加未用 af-add');
+  t('节点「+ 添加参数」挂 af-add', /className="kind-btn af-add"/.test(insp), '添加参数未用 af-add');
+  t('项目组「+ 添加项目组」用 fpx-add-card', /className="fpx-add-card"/.test(grid), '项目组未用 fpx-add-card');
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);

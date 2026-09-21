@@ -61,6 +61,72 @@ export function styleLabel(style) {
   return STYLE_LABELS[style] || '';
 }
 
+/* ==================================================================
+   风格参数：每种风格特有的可调项
+   ------------------------------------------------------------------
+   为什么不能共用一套"强度"滑块：
+   三种风格靠**完全不同的手段**塑形，可调的东西不是一个维度 ——
+     · 玻璃   靠"透"：面板是半透明的，模糊半径决定背景虚化程度
+     · 新拟态 靠"凸"：面板与底板同色，全靠双向阴影撑出立体
+     · 扁平   靠"勾"：没有立体感，边界由描边勾出来
+   给玻璃调"立体度"、给扁平调"透明度"都毫无意义，所以按风格分开定义。
+
+   `affects` 列出该参数要缩放哪些变量 —— **必须是 rgba() 形式**：
+   实现是缩放其 alpha 通道，对 #rrggbb 无效（会原样返回）。
+   三套主题的 --surface 里，只有 glass 用 rgba，另两套用 hex，
+   这正是"透明度只该出现在玻璃风格"的结构性原因。
+
+   默认值 100（%）＝主题自带的原始强度。存的是**倍率**而不是绝对值：
+   每套主题的原始 alpha 差异很大（玻璃深色 .07 / 浅色 .55），
+   存绝对值会把这个差异抹平，所有玻璃主题变成一个样。
+
+   参数按主题 id 分别存储（见 theme-manager 的 styleKey），
+   与色相 / 明暗同理 —— 在 A 主题调好的值不该串到 B 主题上。
+   ================================================================== */
+export const STYLE_PARAMS = {
+  glass: [
+    {
+      key: 'glass-alpha', label: '玻璃透明度', unit: '%',
+      min: 20, max: 260, step: 5,
+      affects: ['--surface', '--surface-raised', '--surface-sunk', '--surface-overlay'],
+      desc: '面板的通透程度。调低更实（内容更清晰），调高更透（背景更明显）',
+    },
+    {
+      key: 'glass-blur', label: '模糊强度', unit: 'px',
+      min: 0, max: 32, step: 1,
+      /* 不是 alpha 缩放，而是直接改 --blur 的长度值（见 applyStyleParams） */
+      absolute: true,
+      affects: ['--blur'],
+      desc: '背景的虚化半径。0 为完全不模糊（等同普通半透明）',
+    },
+  ],
+  neumorph: [
+    {
+      key: 'relief', label: '立体度', unit: '%',
+      min: 0, max: 220, step: 5,
+      /* mode='deviation'：缩放阴影色**离底色多远**，而不是缩放 alpha。
+         必须如此 —— 新拟态的 --sh-dark/--sh-light 14 套全是**不透明 hex**，
+         alpha 缩放对 hex 无效，照 alpha 做这个滑块会完全没反应。 */
+      mode: 'deviation',
+      affects: ['--sh-dark', '--sh-light'],
+      desc: '凸起 / 凹陷的强度。调低趋于扁平，调高更立体',
+    },
+  ],
+  flat: [
+    {
+      key: 'edge-weight', label: '描边强度', unit: '%',
+      min: 0, max: 260, step: 5,
+      affects: ['--border'],
+      desc: '边界描边的明显程度。调低边界更隐，调高更硬朗',
+    },
+  ],
+};
+
+/** 取某风格的参数列表；未知风格（自定义主题没写 style）返回空数组，设置页就不显示这一节 */
+export function styleParams(style) {
+  return STYLE_PARAMS[style] || [];
+}
+
 export const PRESET_THEMES = [
   /* ---------------- 新拟态 · 深色 ---------------- */
   {
@@ -601,6 +667,78 @@ export const PRESET_THEMES = [
     },
   },
 
+    /* 浅色扁平此前**只有极简白一套**（见"风格 × 基调"分布：
+       深色扁平 4 套、浅色扁平 1 套）。纯白底在长时间使用时偏刺眼，
+       所以补两套带色温的：一套暖（素笺）、一套冷（晨雾）。
+
+       为什么不直接改极简白：它是对外承诺过的"文档工具观感"，
+       改底色等于换了一个主题。补新的比改旧的更安全。 */
+    {
+      id: 'paper-flat',
+      name: '素笺',
+      desc: '暖米白 · 扁平，纸质观感',
+      base: 'light',
+      style: 'flat',
+      vars: {
+        '--bg': '#f7f6f3',
+        '--surface': '#fffefb',
+        '--surface-sunk': '#f0eee9',
+        '--surface-raised': '#fffefd',
+        /* 扁平风格靠明度差分层：阴影色与面色拉开，但不用双向塑形
+           （那是新拟态的手法，扁平下会显得脏） */
+        '--sh-dark': '#e3e0d9',
+        '--sh-light': '#fffef8',
+        '--text': '#33322e',
+        '--text-soft': '#45443f',
+        '--text-dim': '#66645e',
+        '--text-mute': '#918f88',
+        '--accent': '#2f6fed',
+        '--env-color': '#1da178',
+        '--ok': '#1b9d4b',
+        '--running': '#4987f5',
+        '--warn': '#c07c09',
+        '--danger': '#ef4444',
+        '--border': 'rgba(0,0,0,.10)',
+        '--blur': '0px',
+        /* 圆角比极简白再硬一档：纸质偏"印刷品"，太软会失去利落感 */
+        '--r-xl': '10px',
+        '--r-lg': '8px',
+        '--r-md': '6px',
+        '--r-sm': '4px',
+      },
+    },
+    {
+      id: 'mist-flat',
+      name: '晨雾',
+      desc: '冷灰白 · 扁平，低饱和',
+      base: 'light',
+      style: 'flat',
+      vars: {
+        '--bg': '#f2f4f7',
+        '--surface': '#fafbfd',
+        '--surface-sunk': '#e9ecf1',
+        '--surface-raised': '#fdfeff',
+        '--sh-dark': '#dde1e8',
+        '--sh-light': '#ffffff',
+        '--text': '#2a2f3a',
+        '--text-soft': '#3b4150',
+        '--text-dim': '#5b6472',
+        '--text-mute': '#8b93a1',
+        '--accent': '#3b6fe0',
+        '--env-color': '#0f8f7a',
+        '--ok': '#1b9d4b',
+        '--running': '#4987f5',
+        '--warn': '#b8800a',
+        '--danger': '#e0433c',
+        '--border': 'rgba(0,0,0,.09)',
+        '--blur': '0px',
+        '--r-xl': '10px',
+        '--r-lg': '8px',
+        '--r-md': '6px',
+        '--r-sm': '4px',
+      },
+    },
+
   /* ---------------- 玻璃 ---------------- */
   {
     id: 'glass-dark',
@@ -702,6 +840,76 @@ export const PRESET_THEMES = [
     },
   },
 
+    /* 浅色玻璃此前只有 glass-light 一套 —— 与浅色扁平是同一个洞。
+       两套玻璃都自带渐变背景（--bg-image）：毛玻璃的"透"
+       必须透出点什么才有意义，纯色底上开模糊等于没开。 */
+    {
+      id: 'glass-mint',
+      name: '薄荷玻璃',
+      desc: '浅薄荷底 · 清透毛玻璃',
+      base: 'light',
+      style: 'glass',
+      vars: {
+        '--bg': '#e6f2ee',
+        '--bg-image': 'radial-gradient(980px 500px at 10% -6%, #bfe8dc 0%, transparent 58%), radial-gradient(800px 460px at 104% 106%, #cfe6ff 0%, transparent 55%)',
+        '--surface': 'rgba(255,255,255,.50)',
+        '--surface-sunk': 'rgba(0,0,0,.05)',
+        '--surface-overlay': 'rgba(250, 253, 252, .90)',
+        '--surface-raised': 'rgba(255,255,255,.60)',
+        '--sh-dark': 'rgba(90,130,115,.20)',
+        '--sh-light': 'rgba(255,255,255,.72)',
+        '--text': '#223029',
+        '--text-soft': '#35463f',
+        '--text-dim': '#556a61',
+        '--text-mute': '#7d9188',
+        '--accent': '#1c8f74',
+        '--env-color': '#2f74c8',
+        '--ok': '#17874a',
+        '--running': '#3d84e8',
+        '--warn': '#a87208',
+        '--danger': '#d93f38',
+        '--border': 'rgba(255,255,255,.62)',
+        '--blur': '15px',
+        '--r-xl': '18px',
+        '--r-lg': '14px',
+        '--r-md': '11px',
+        '--r-sm': '7px',
+      },
+    },
+    {
+      id: 'glass-nebula',
+      name: '星云玻璃',
+      desc: '深蓝紫底 · 星云光晕配毛玻璃',
+      base: 'dark',
+      style: 'glass',
+      vars: {
+        '--bg': '#10131f',
+        '--bg-image': 'radial-gradient(1000px 560px at 8% -8%, #2b3f8f 0%, transparent 56%), radial-gradient(760px 480px at 96% 12%, #6b2f8a 0%, transparent 54%), radial-gradient(900px 520px at 44% 116%, #14555e 0%, transparent 58%)',
+        '--surface': 'rgba(255,255,255,.08)',
+        '--surface-sunk': 'rgba(0,0,0,.24)',
+        '--surface-overlay': 'rgba(28, 32, 48, .92)',
+        '--surface-raised': 'rgba(255,255,255,.17)',
+        '--sh-dark': 'rgba(0,0,0,.38)',
+        '--sh-light': 'rgba(255,255,255,.09)',
+        '--text': '#eef0fa',
+        '--text-soft': '#d5d9ec',
+        '--text-dim': '#a9b0cc',
+        '--text-mute': '#767da0',
+        '--accent': '#7fb0ff',
+        '--env-color': '#c58cff',
+        '--ok': '#22c55e',
+        '--running': '#4c8dff',
+        '--warn': '#f59e0b',
+        '--danger': '#ef4444',
+        '--border': 'rgba(255,255,255,.14)',
+        '--blur': '16px',
+        '--r-xl': '18px',
+        '--r-lg': '14px',
+        '--r-md': '11px',
+        '--r-sm': '7px',
+      },
+    },
+
   /* ---------------- 默认 ---------------- */
   {
     id: 'agentflow-dark',
@@ -759,6 +967,61 @@ function darken(hex, amount) {
   return '#' + [0, 2, 4]
     .map((i) => f(parseInt(h.substr(i, 2), 16)).toString(16).padStart(2, '0'))
     .join('');
+}
+
+/* ==================================================================
+   预设背景
+   ------------------------------------------------------------------
+   主题自带的 --bg-image 是它设计的一部分（如"极光玻璃"的光晕），
+   换掉会失去主题特征 —— 所以预设背景是**用户可选**的叠加项，
+   不是修改主题本身。选了就存在本地，恢复默认即可回到主题自带背景。
+
+   为什么做成 CSS 渐变而不是图片文件：
+     · 零字节 —— 不占 localStorage（自定义图要转 base64，1.5MB 上限
+       正是为了不给存储撑爆，预设若也存图会挤掉其它设置）
+     · 随窗口尺寸自适应 —— radial-gradient 用百分比定位，图片会拉伸变形
+
+   每个预设标了 `base`：设置页据此把"明显不适合当前基调"的排在后面，
+   但不禁止 —— 深底配浅渐变也是一种风格，用户想试就该能试。
+   ================================================================== */
+export const BG_PRESETS = [
+  {
+    id: 'bg-mist', name: '晨雾', base: 'light',
+    css: 'radial-gradient(1000px 520px at 12% -8%, #dfe9f5 0%, transparent 60%), radial-gradient(820px 460px at 104% 106%, #f0e4f2 0%, transparent 56%)',
+  },
+  {
+    id: 'bg-dune', name: '沙丘', base: 'light',
+    css: 'radial-gradient(1100px 560px at 30% -10%, #f6e7d2 0%, transparent 58%), radial-gradient(900px 480px at 108% 112%, #ecd9c4 0%, transparent 54%)',
+  },
+  {
+    id: 'bg-sakura', name: '樱雪', base: 'light',
+    css: 'radial-gradient(960px 500px at 8% -6%, #ffd9e6 0%, transparent 58%), radial-gradient(860px 470px at 102% 108%, #d9ecff 0%, transparent 55%)',
+  },
+  {
+    id: 'bg-mint', name: '薄荷', base: 'light',
+    css: 'radial-gradient(980px 500px at 10% -6%, #c8ecdf 0%, transparent 58%), radial-gradient(800px 460px at 104% 106%, #d4e8ff 0%, transparent 55%)',
+  },
+  {
+    id: 'bg-abyss', name: '深海', base: 'dark',
+    css: 'radial-gradient(1000px 560px at 10% -10%, #12415c 0%, transparent 58%), radial-gradient(880px 500px at 106% 110%, #0d2a3a 0%, transparent 56%)',
+  },
+  {
+    id: 'bg-aurora', name: '极光', base: 'dark',
+    css: 'radial-gradient(900px 520px at 6% -6%, #1e4d8c 0%, transparent 55%), radial-gradient(760px 460px at 100% 6%, #7b2d7d 0%, transparent 52%), radial-gradient(880px 500px at 50% 118%, #0f5f5c 0%, transparent 58%)',
+  },
+  {
+    id: 'bg-starry', name: '星夜', base: 'dark',
+    css: 'radial-gradient(1100px 600px at 20% -12%, #232a52 0%, transparent 56%), radial-gradient(900px 500px at 96% 108%, #3a2350 0%, transparent 54%)',
+  },
+  {
+    id: 'bg-ember', name: '余烬', base: 'dark',
+    css: 'radial-gradient(1000px 540px at 12% -8%, #5a2418 0%, transparent 56%), radial-gradient(880px 480px at 104% 112%, #3d1c2e 0%, transparent 54%)',
+  },
+];
+
+/** 按 id 取预设背景；取不到返回 null */
+export function findBgPreset(id) {
+  return BG_PRESETS.find((p) => p.id === id) || null;
 }
 
 /** 强调色与环境色共用的候选色板 */

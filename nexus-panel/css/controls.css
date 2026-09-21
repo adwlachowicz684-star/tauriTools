@@ -74,6 +74,21 @@
      0.4px 是实测值：0.2 看不出来，0.6 以上描边开始互相粘连、糊成一团。 */
   --ctl-faux-bold: 0.4px;
 
+  /* ---------- 「虚线添加」入口的统一尺度 ----------
+     下面 .nx-add-* 一套类共用这些值。同类入口散在三个插件里各写各的
+     （MCP「+ 添加」、节点「+ 添加参数」、项目组「+ 添加项目组」），
+     边框粗细、圆角、字号、常态透明度全都不一样，观感像是三种东西。
+
+     只统一**语言**（虚线 + 透明底 + 压低透明度 + hover 转强调色），
+     不统一尺寸 —— 右上角的小按钮和整行的大卡片本来就不是一个量级。 */
+  --add-line:    var(--divider, var(--text-mute));
+  --add-bg:      transparent;
+  --add-r:       var(--r-sm, 4px);
+  --add-fs:      var(--fs-12, 12px);
+  /* 常态压低：它是"可以加"而不是"已经在做的事"，不该和实心卡片抢注意力 */
+  --add-op:      .65;
+  --add-shadow:  var(--ctl-shadow-sm);
+
   /* ---------- 控件阴影档位 ----------
      此前 --ctl-shadow 只定义在 `.nx-btn, .p-btn, .mm-btn` 那条规则**内部**，
      是局部变量 —— 别的按钮类（agent-flow 的 .toolbar button / .kind-btn /
@@ -1058,6 +1073,46 @@ input[type='range']:disabled {
   box-shadow: none;
 }
 
+/* ============================================================
+   「虚线添加」入口（+ 添加服务 / + 添加参数 / + 添加项目组 …）
+   ============================================================
+   三种插件里这类入口此前各写一套，边框粗细、圆角、字号、常态透明度
+   全不一样，观感像是三种不同的东西。这里定一套共同的语言。
+
+   虚线色**必须用 --add-line（= --divider）而不是 --border**：
+   ------------------------------------------------------------
+   --border 是「风格开关」—— 新拟态下它是 transparent（靠阴影塑形）。
+   项目组的 .fpx-add-card 此前正用的 --border，实测 **27 套主题里
+   14 套（全部新拟态）虚线边框完全不可见**，只剩一行淡文字，
+   用户会以为"这里没有添加入口"。
+
+   --divider 则是「任何风格下都保证可见的边界」，正是这里要的语义。
+
+   常态不压满透明度是刻意的：虚线 + 透明底已经很弱，再压到很低会
+   让人看不清；.65 是能看出"可点"又不抢主内容的档位。 */
+.nx-add {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px dashed var(--add-line);
+  border-radius: var(--add-r);
+  background: var(--add-bg);
+  color: var(--text-dim);
+  font-size: var(--add-fs);
+  font-family: inherit;
+  cursor: pointer;
+  opacity: var(--add-op);
+  transition: opacity var(--dur-fast), border-color var(--dur-fast),
+              color var(--dur-fast), box-shadow var(--dur-fast);
+}
+.nx-add:hover,
+.nx-add:focus-visible {
+  opacity: 1;
+  color: var(--accent);
+  border-color: var(--accent);
+}
+/* 按下＝内凹：与实心卡片被按下去同一种表现，才像"这一格也可以点" */
+.nx-add:active { box-shadow: var(--sh-in-sm); }
+.nx-add:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
+
 /* 禁止图标（带斜杠的圆环）。
    显式指定 emoji 字体：系统默认字体可能把它渲染成空白方框，
    那还不如不画 —— 没了图标，占位框就只剩一句费解的文字。 */
@@ -1066,4 +1121,48 @@ input[type='range']:disabled {
   line-height: 1;
   font-family: 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
   opacity: .85;
+}
+
+/* ============================================================
+   预设背景选择器（设置 → 主题 → 背景图）
+   ============================================================ */
+
+/* 一格 = 一块渐变缩略图 + 名字。
+   做成"缩略图 + 名字"而不是只给名字：八个预设叫"晨雾 / 沙丘 / 樱雪…"，
+   光看名字根本想象不出长什么样，必须能看见。 */
+.nx-bgpick {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border-radius: var(--r-sm, 4px);
+  /* 无底色：选中态靠下面的外环表达，常态就别抢视觉 */
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-dim);
+}
+.nx-bgpick:hover { color: var(--text); }
+
+/* 缩略图：直接把预设的渐变铺上去，所见即所得。
+   必须给底色兜底 —— 渐变是 radial-gradient 且带 transparent 收尾，
+   没有底色的话透明部分会露出父容器的背景，深色下看着像脏了一块。 */
+.nx-bgpick-sw {
+  width: 54px;
+  height: 32px;
+  border-radius: var(--r-xs, 3px);
+  background-color: var(--surface-sunk, var(--surface));
+  background-size: cover;
+  background-position: center;
+  /* 常态就给一圈细边：渐变之间可能颜色接近，没有边会连成一片分不出格 */
+  box-shadow: inset 0 0 0 1px var(--divider, var(--text-mute));
+}
+
+/* 选中态：外环 + 文字用强调色。
+   与配色条同一套语汇（选中＝外环），不用内凹 ——
+   缩略图本身是色块，内凹在这上面看不出来。 */
+.nx-bgpick.on { color: var(--accent); }
+.nx-bgpick.on .nx-bgpick-sw {
+  box-shadow: 0 0 0 2px var(--accent);
 }

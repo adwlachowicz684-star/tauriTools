@@ -222,8 +222,12 @@ console.log('\n=== 运行时注入变量（brushVars）不被误判 ===');
      所以不算"共享变量"，不进列表。 */
   const rootBlocks = [...controlsCss.matchAll(/:root\s*\{([^}]*)\}/g)]
     .map((m) => m[1]).join('\n');
+  /* 收集范围必须覆盖 CONTROLS_VARS 里**所有前缀**，不能只写 --ctl-：
+     新增 --add-*（虚线添加入口的尺度）后，若这里仍只收 --ctl-，
+     反向断言会把已定义的 --add-* 判成"列表里登记了但 CSS 里没有"。
+     加新前缀时记得同步这里的正则。 */
   const defined = [...new Set(
-    [...rootBlocks.matchAll(/(--ctl-[a-z0-9-]+)\s*:/gi)].map((m) => m[1]))];
+    [...rootBlocks.matchAll(/(--(?:ctl|add)-[a-z0-9-]+)\s*:/gi)].map((m) => m[1]))];
   const missing = defined.filter((v) => !CONTROLS_VARS.includes(v));
   t('controls.css 里的 --ctl-* 变量都已在 CONTROLS_VARS 中登记',
     missing.length === 0, missing.join(', ') || `已登记 ${defined.length} 个`);

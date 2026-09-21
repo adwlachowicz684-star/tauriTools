@@ -287,7 +287,7 @@ export function FileParamsPanel({ node, onChange }: {
           );
         })}
 
-        <button className="kind-btn" onClick={() => patchParams([...params, makeParam()])}>
+        <button className="kind-btn af-add" onClick={() => patchParams([...params, makeParam()])}>
           + 添加参数
         </button>
 
