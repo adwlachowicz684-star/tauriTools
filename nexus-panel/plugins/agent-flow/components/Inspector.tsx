@@ -163,64 +163,52 @@ export default function Inspector({
   ) : null;
 
   /*
-   * 「节点 id」行。
+   * 顶部一条工具条：显示高度 + 节点 id。
    *
-   * ================= 为什么挪到这里 =================
+   * ================= 为什么不各占一个功能区 ====================
    *
-   * 以前 id 显示在**卡片底部**（`ma` + 时间戳乱码，如 mamu7obyv93）。
-   * 那串字符对用户没有意义 —— 看不出是哪个节点，还像出错信息，
-   * 却占了每一张卡片的一行。
+   * 以前是两行，各带一个标签（"显示高度" / "节点 id"）。
+   * 它们都不是**参数** —— 改了不影响本次执行，
+   * 却和真正的参数列表排在一起，看着像两组配置项。
    *
-   * 但它是**排查的钥匙**：运行日志里写的是 id（`开始：mamu7obyv93`），
-   * 没有它就对不上是哪个节点。所以不能直接删，要挪到该看的地方 ——
-   * 选中节点，这里就能看到、能点一下复制。
-   *
-   * 放在面板最上面而不是混进参数列表：它不是参数，改它没意义。
+   * 现在合成面板最上面一行，右边对齐 id。
+   * 高度那三个按钮仍带 title，鼠标停一下就知道各档是干什么的。
    */
-  const idRow = (
-    <div className="insp-size">
-      <span className="insp-size-label">节点 id</span>
-      <span className="insp-size-ops">
-        <button
-          className="insp-size-btn insp-id-btn"
-          title="点一下复制。运行日志里写的就是这个 id"
-          onClick={() => {
-            const t = String(node.id ?? '');
-            void navigator.clipboard?.writeText(t).then(
-              () => pushNote?.(`已复制节点 id：${t}`),
-              () => pushNote?.(`复制失败，请手动选中：${t}`),
-            );
-          }}
-        >
-          {String(node.id ?? '')}
-        </button>
-      </span>
-    </div>
-  );
-
   const sizeRow = (
-    <div className="insp-size">
-      <span className="insp-size-label">显示高度</span>
-      <span className="insp-size-ops">
+    <div className="insp-topbar">
+      <span className="insp-topbar-group">
         {(Object.keys(NODE_SIZE_META) as NodeSize[]).map((k) => (
           <button
             key={k}
             className={`insp-size-btn${size === k ? ' on' : ''}`}
-            title={NODE_SIZE_META[k].hint}
+            title={`显示高度：${NODE_SIZE_META[k].hint}`}
             onClick={() => onChange(node.id, { size: k })}
           >
             {NODE_SIZE_META[k].label}
           </button>
         ))}
       </span>
+      <span className="task-grow" />
+      <button
+        className="insp-size-btn insp-id-btn"
+        title="节点 id —— 点一下复制。运行日志里写的就是这个 id"
+        onClick={() => {
+          const t = String(node.id ?? '');
+          void navigator.clipboard?.writeText(t).then(
+            () => pushNote?.(`已复制节点 id：${t}`),
+            () => pushNote?.(`复制失败，请手动选中：${t}`),
+          );
+        }}
+      >
+        {String(node.id ?? '')}
+      </button>
     </div>
   );
 
   return (
     <>
-      {stackRow}
       {sizeRow}
-      {idRow}
+      {stackRow}
       {/*
         面板也要兜住。
         曾经触发器的数据不合法 → 面板渲染抛错 → 整棵树崩，

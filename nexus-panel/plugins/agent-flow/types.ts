@@ -82,10 +82,19 @@ export function defaultFileOutput(): TaskFileOutput {
  */
 export type NodeSize = 'sm' | 'md' | 'lg';
 
+/*
+ * 三档的叫法。
+ *
+ * 以前叫「矮 / 中 / 高」—— 那是**描述长相**，不是描述用途，
+ * 于是选档时只能靠"看着高不高"猜，看不出该给哪类节点用哪档。
+ *
+ * 改成说信息量：简（只留标题）/ 标（标准）/ 详（展开更多）。
+ * 单字是为了让三个按钮宽度一致、挤在面板顶部不换行。
+ */
 export const NODE_SIZE_META: Record<NodeSize, { label: string; hint: string }> = {
-  sm: { label: '矮', hint: '只留标题行 —— 模块内部的次要节点用这个' },
-  md: { label: '中', hint: '标准高度（默认）' },
-  lg: { label: '高', hint: '展开更多内容 —— 关键节点用这个' },
+  sm: { label: '简', hint: '只留标题行 —— 次要节点、模块内部用这个' },
+  md: { label: '标', hint: '标准（默认）—— 标题 + 主要参数' },
+  lg: { label: '详', hint: '展开更多内容 —— 关键节点用这个' },
 };
 
 /** 缺省 / 非法值一律按 'md' 处理 —— 老存档没有这个字段 */
