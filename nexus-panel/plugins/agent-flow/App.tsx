@@ -25,6 +25,8 @@ import { useCredentialVault, VAULT_MODE_META, CRED_KEY } from './hooks/useCreden
 import { useStackLayout } from './hooks/useStackLayout';
 import { useTaskStore } from './hooks/useTaskStore';
 import { useMcpRegistry } from './hooks/useMcpRegistry';
+import { useDeleteUndo } from './hooks/useDeleteUndo';
+import { useExportFlow } from './hooks/useExportFlow';
 import {
   type Credential, type CredentialKind, makeCredential,
   pickFor, needsOf, kindForNeed, missingCapabilities, resolveSecret,
@@ -55,7 +57,6 @@ import { defaultKV as kvStore } from './engine/kv';
 import {
   writeTextFile, fsAllowRoot, listFsRoots, canExportToFile,
 } from './lib/tauri';
-import { withinRoots } from './engine/exportDir';
 import ModuleLibrary, {
   MODULE_DRAG_MIME, decodeModuleDrag, askCreateModule,
 } from './components/ModuleLibrary';
@@ -104,11 +105,6 @@ import {
 import { TriggerScheduler } from './engine/triggers';
 import type { CanvasConfig } from './engine/canvasConfig';
 import { type CanvasParam, migrateEnvVars, paramRefsOfNodes } from './engine/canvasParams';
-import { exportFlow, EXPORT_FORMATS } from './engine/scriptExport';
-import {
-  loadExportDir as loadExportDirSetting, saveExportDir as persistExportDir,
-  resolveExportTarget, parentOf,
-} from './engine/exportDir';
 import {
   makeCanvas, nextCanvasName, renameCanvas, removeCanvas, nextActiveId,
   updateCanvasContent, updateCanvasConfig, canvasConfigOf, sortForDisplay, toMeta,
@@ -129,11 +125,6 @@ import type { FlowEdge, FlowNode } from './flowTypes';
 import { killCli, runCli, canWatch, startWatch, canWebhook, startWebhook,
   fileOp, fsArgsOf, fetchText, httpRequest, postJson, readImageDataUrl, readAudioDataUrl,
   fetchDeviceSalt, tailFile, type DonePayload, type FsArgs } from './lib/tauri';
-import {
-  deleteElements, nextSelection, hasAnythingToDelete,
-  makeSnapshot, describeDelete,
-  type UndoSnapshot,
-} from './engine/canvasOps';
 
 /**
  * 画布的节点组件映射。
@@ -304,6 +295,21 @@ export default function App() {
   }, [nodes]);
 
 
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  /*
+   * 删除 + 撤销删除。
+   *
+   * App.tsx 往下拆的第五块。放在 nodes / edges / selectedId 与三个 setter
+   * **都就位之后** —— 少一个都拿不到，而提前调用会撞 TDZ。
+   */
+  const {
+    undoSnap, deleteNotice, setDeleteNotice,
+    beforeDelete, deleteSelected, undoDelete, handleNodesDelete, clearUndo,
+  } = useDeleteUndo({
+    nodes, edges, selectedId, setNodes, setEdges, setSelectedId,
+  });
+
   /**
    * 切换画布时同步 React Flow 的内容。
    *
@@ -320,9 +326,9 @@ export default function App() {
     setNodes((c?.nodes ?? []) as FlowNode[]);
     setEdges((c?.edges ?? []) as FlowEdge[]);
     setSelectedId(null);
-    setUndoSnap(null);
-    setDeleteNotice(null);
-  }, [activeId, canvases, setNodes, setEdges]);
+    // 撤销快照属于上一张画布，带过去会把别处的内容恢复过来
+    clearUndo();
+  }, [activeId, canvases, setNodes, setEdges, clearUndo]);
 
   /** 画布内容变化后写回（防抖，避免拖动时每帧都存） */
   const saveTimer = useRef<number | null>(null);
@@ -355,7 +361,7 @@ export default function App() {
     saveToStorage((k, v) => localStorage.setItem(k, v), { canvases, activeId });
   }, [canvases, activeId]);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+
   /*
    * 跨画布定位：先切画布，等节点就位再滚过去。
    *
@@ -618,10 +624,6 @@ export default function App() {
   // 外观：跟随面板主题 / 固定 Agent Flow 原生样式
   const [themeMode, setThemeMode] = useState<ThemeMode>(readThemeMode);
   useEffect(() => applyThemeMode(themeMode), [themeMode]);
-  /** 最近一次删除的快照，用于撤销；null 表示无可撤销 */
-  const [undoSnap, setUndoSnap] = useState<UndoSnapshot<FlowNode, FlowEdge> | null>(null);
-  /** 删除后可能出现的"下游还在引用被删节点"提示 */
-  const [deleteNotice, setDeleteNotice] = useState<string | null>(null);
 
   const seq = useRef(0);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -678,21 +680,6 @@ export default function App() {
 
 
 
-  /* ---------------- 导出目录 ---------------- */
-
-  /*
-   * 默认导出目录 —— **全局偏好**，不是画布级配置。
-   * 导出到哪跟"这是哪张画布"无关，是用户习惯。
-   */
-  const [exportDir, setExportDirState] = useState<string>(() => loadExportDirSetting());
-  /** 待导出的格式：等用户选完目录再真正写 */
-  const [pendingExport, setPendingExport] = useState<string | null>(null);
-
-  const setExportDir = useCallback((d: string) => {
-    setExportDirState(d);
-    persistExportDir(d);
-  }, []);
-
   /* ---------------- 画布级配置与导出 ---------------- */
 
   /*
@@ -700,6 +687,19 @@ export default function App() {
    * 设成 state 就得跟着 canvases 同步，多一处可能忘更新的地方。
    */
   const activeCanvas = canvases.find((c) => c.id === activeId) ?? null;
+
+  /*
+   * 默认导出目录 + 导出成脚本 / 说明。
+   *
+   * App.tsx 往下拆的第六块。放在 activeCanvas **之后** ——
+   * 文件名要用到画布名，而那是派生值，得先算出来。
+   */
+  const {
+    exportDir, setExportDir, pendingExport, exportFlowAs, onPickExportDir,
+    cancelPendingExport, browseExportDir,
+  } = useExportFlow({
+    nodes, edges, canvasName: activeCanvas?.name ?? null, onLog: pushLog,
+  });
 
   /**
    * 存画布配置（MCP 服务 / 环境变量）。
@@ -721,134 +721,6 @@ export default function App() {
      */
   }, [activeId]);
 
-  /**
-   * 把整张画布导出成脚本 / 说明。
-   *
-   * ================= 为什么不走浏览器下载了 =================
-   *
-   * 以前用 <a download>：文件落到系统默认下载目录，
-   * **插件自己也不知道在哪**，日志里只有文件名没有目录 ——
-   * 用户找不到文件，也不知道该去哪找。
-   *
-   * 更糟的是 try/catch 的 catch 是空的（注释说"退回剪贴板"但没实现），
-   * 下载被拦时日志照样打印"✅ 已导出"，**失败伪装成成功**。
-   *
-   * 现在改走 fs_op 写文件：路径由我们决定，结果能确认，
-   * 失败就明确报失败。
-   */
-  const writeExport = useCallback(
-    async (fmt: string, dir: string | null) => {
-      const meta = EXPORT_FORMATS.find((f) => f.id === fmt);
-      if (!meta) return;
-      const graph = { nodes, edges };
-      const r = exportFlow(graph, meta.id as never);
-      const target = resolveExportTarget(exportDir, dir, activeCanvas?.name ?? 'canvas', meta.ext);
-
-      /*
-       * 没有目录可用（浏览器模式，或未设目录也没选）→ 退回下载。
-       * 这时**必须**明说路径不受控，不能让用户以为写到了某处。
-       */
-      if (target.source === 'download') {
-        try {
-          const blob = new Blob([r.text], { type: 'text/plain;charset=utf-8' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = target.path;
-          a.click();
-          setTimeout(() => URL.revokeObjectURL(url), 1000);
-          pushLog(`✅ 已导出${meta.label}（${r.count} 个节点）→ ${target.path}（浏览器下载目录，非软件目录）`);
-        } catch (e) {
-          /* 这里**不能**再静默 —— 失败就要说失败 */
-          pushLog(`✗ 导出失败：${String((e as Error)?.message ?? e)}`);
-        }
-        reportSkipped(r, meta.label, pushLog);
-        return;
-      }
-
-      try {
-        /*
-         * fs_op 只写**授权根目录内**的路径 —— 这是"读任意文件 + 外传"
-         * 这条风险链的收敛点，不能绕。
-         *
-         * 所以写之前先看目录在不在授权列表里，不在就申请。
-         *
-         * 为什么不能像第一版那样"失败了偷偷授权再试一次"：
-         *   · 用户完全不知道发生过授权
-         *   · 授权失败时看到的是笼统的"路径越权"，
-         *     而不是真正的原因（目录不存在 / 不允许授权 / 加进去没生效），
-         *     排查只能靠猜
-         */
-        const dir = parentOf(target.path);
-        let roots = await listFsRoots().catch(() => [] as string[]);
-        if (!withinRoots(dir, roots)) {
-          pushLog(`· 目录还没授权，正在申请：${dir}`);
-          try {
-            await fsAllowRoot(dir);
-          } catch (e) {
-            /*
-             * 授权失败**必须**说清原因 ——
-             * 最常见的是"目录不存在"或"不允许把这么大的范围加进来"，
-             * 笼统报"路径越权"会让人以为是路径写错了。
-             */
-            pushLog(`✗ 授权目录失败：${String((e as Error)?.message ?? e)}`);
-            return;
-          }
-          /* 回读一次：确认真的加进去了，别把"调用了但没生效"当成成功 */
-          roots = await listFsRoots().catch(() => [] as string[]);
-          if (!withinRoots(dir, roots)) {
-            pushLog(`✗ 授权已提交但目录仍不在授权列表里：${dir} —— 请换一个目录，或到设置里检查授权列表`);
-            return;
-          }
-        }
-
-        const out = await writeTextFile(target.path, r.text);
-        if (!out.ok) {
-          pushLog(`✗ 导出失败：${out.text || '目标目录不可写'}`);
-          return;
-        }
-        const how = target.source === 'picked' ? '（本次选的目录）' : '（默认导出目录）';
-        pushLog(`✅ 已导出${meta.label}（${r.count} 个节点）→ ${target.path} ${how}`);
-      } catch (e) {
-        pushLog(`✗ 导出失败：${String((e as Error)?.message ?? e)}`);
-        return;
-      }
-      reportSkipped(r, meta.label, pushLog);
-    },
-    [nodes, edges, activeCanvas, exportDir, pushLog],
-  );
-
-  /** 导出入口：没设默认目录就先让用户选一个 */
-  const exportFlowAs = useCallback((fmt: string) => {
-    /* 浏览器模式写不了文件，直接走下载，弹选择器也没意义 */
-    if (!canExportToFile()) {
-      void writeExport(fmt, null);
-      return;
-    }
-    if (exportDir) {
-      void writeExport(fmt, null);
-      return;
-    }
-    setPendingExport(fmt);
-  }, [exportDir, writeExport]);
-
-  /** 目录选择器选完之后 */
-  const onPickExportDir = useCallback((dir: string, asDefault: boolean) => {
-    const fmt = pendingExport;
-    setPendingExport(null);
-    /*
-     * '__browse__' 表示"只是从设置里点浏览来填目录"，不是要导出 ——
-     * 这时只把目录填进设置框，不写文件。
-     * 不区分的话，用户在设置里选个目录会莫名导出一份文件。
-     */
-    const browsing = fmt === BROWSE_ONLY;
-    if (asDefault || browsing) setExportDir(dir);
-    if (fmt && !browsing) void writeExport(fmt, dir);
-  }, [pendingExport, writeExport, setExportDir]);
-
-
-/** 目录选择器只用于"填设置"，不代表要导出 */
-const BROWSE_ONLY = '__browse__';
 
 /**
  * 未翻译的节点**必须**告出来 ——
@@ -1017,72 +889,7 @@ function reportSkipped(
     toggleStackCollapse, onStackDragStart, onStackDrag, onStackDragStop,
   } = stack;
 
-  /** 记录删除前快照，并算出删除后是否留下悬空引用 */
-  const beforeDelete = useCallback(
-    (req: { nodeIds?: string[]; edgeIds?: string[] }) => {
-      if (!hasAnythingToDelete(nodes, edges, req)) return true;
 
-      setUndoSnap(makeSnapshot(nodes, edges, selectedId, describeDelete(req.nodeIds ?? [], req.edgeIds ?? [])));
-
-      // 提前算出悬空引用：删除后节点已消失，就查不到了
-      const res = deleteElements(nodes, edges, req);
-      if (res.danglingRefs.length > 0) {
-        const detail = res.danglingRefs
-          .map((d) => `${d.ref} 仍被 ${d.usedBy.join('、')} 引用`)
-          .join('；');
-        setDeleteNotice(`已删除，但 ${detail}。这些变量运行时会原样传给 CLI，记得改掉。`);
-      } else {
-        setDeleteNotice(null);
-      }
-      return true; // 允许删除
-    },
-    [nodes, edges, selectedId],
-  );
-
-  const handleNodesDelete = useCallback((deleted: { id: string }[]) => {
-    setSelectedId((cur) => nextSelection(cur, deleted.map((n) => n.id)));
-  }, []);
-
-  /** 工具栏「删除」：删掉当前选中项（React Flow 选中标记 + 属性面板选中态兜底） */
-  const deleteSelected = useCallback(() => {
-    const nodeIds = nodes.filter((n) => n.selected).map((n) => n.id);
-    const edgeIds = edges.filter((e) => (e as { selected?: boolean }).selected).map((e) => e.id);
-    // 属性面板选中的节点可能没走 React Flow 的选中态，补上
-    if (nodeIds.length === 0 && edgeIds.length === 0 && selectedId) nodeIds.push(selectedId);
-
-    if (!hasAnythingToDelete(nodes, edges, { nodeIds, edgeIds })) return;
-
-    beforeDelete({ nodeIds, edgeIds });
-    const res = deleteElements(nodes, edges, { nodeIds, edgeIds });
-    setNodes(res.nodes);
-    setEdges(res.edges);
-    setSelectedId((cur) => nextSelection(cur, res.removedNodeIds));
-  }, [nodes, edges, selectedId, beforeDelete, setNodes, setEdges]);
-
-  /** 撤销：恢复最近一次删除 */
-  const undoDelete = useCallback(() => {
-    if (!undoSnap) return;
-    setNodes(undoSnap.nodes);
-    setEdges(undoSnap.edges);
-    setSelectedId(undoSnap.selectedId);
-    setUndoSnap(null);
-    setDeleteNotice(null);
-  }, [undoSnap, setNodes, setEdges]);
-
-  // Ctrl/Cmd+Z 撤销删除（在输入框里打字时不拦截）
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return;
-      const t = e.target as HTMLElement | null;
-      if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
-      if (t?.isContentEditable) return;
-      if (!undoSnap) return;
-      e.preventDefault();
-      undoDelete();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [undoSnap, undoDelete]);
 
   /* ---------------- 多画布操作 ---------------- */
 
@@ -2724,7 +2531,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
             title="导出到哪个目录？"
             onPick={(d) => onPickExportDir(d, false)}
             onPickAsDefault={(d) => onPickExportDir(d, true)}
-            onCancel={() => setPendingExport(null)}
+            onCancel={cancelPendingExport}
           />
         ) : null}
 
@@ -2782,7 +2589,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
               onNote={pushLog}
               exportDir={exportDir}
               onChangeExportDir={setExportDir}
-              onBrowseExportDir={() => setPendingExport(BROWSE_ONLY)}
+              onBrowseExportDir={browseExportDir}
               canExportToFile={canExportToFile()}
               canvasConfig={canvasConfigOf(activeCanvas)}
               onCanvasConfigChange={saveCanvasConfig}

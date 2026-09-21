@@ -355,3 +355,86 @@ test('关闭的节点仍显示缺项徽章，只把圆点变灰', () => {
     '关闭态不得再挂 level-* 类 —— 那会把"缺参"也说成绿的',
   );
 });
+
+/* ================= 撤销删除 ================= */
+
+/*
+ * 撤销要连选中态一起恢复。
+ *
+ * 少了它：撤销后节点回来了，但没一个被选中 ——
+ * 用户看着画布"变了又说不清变在哪"，而这是唯一能指出恢复内容的线索。
+ *
+ * 用 readSrc 同时扫 App 与 hook：撤销栈已抽到 hooks/ 下，
+ * 只盯一处会在搬走后假通过。
+ */
+test('撤销删除要恢复选中态', () => {
+  const src = readSrc('App.tsx', 'hooks/useDeleteUndo.ts');
+  assert.ok(
+    /setSelectedId\(undoSnap\.selectedId\)/.test(src),
+    '撤销时要恢复 snapshot 里的 selectedId',
+  );
+});
+
+/*
+ * 换画布要清掉撤销栈。
+ *
+ * 快照里是**上一张画布**的节点与边。不清的话在 B 画布按 Ctrl+Z
+ * 会把 A 画布的内容整片恢复过来 —— 用户什么都没删，画布却变了。
+ */
+test('换画布清空撤销栈', () => {
+  const src = readSrc('App.tsx', 'hooks/useDeleteUndo.ts');
+  assert.ok(/clearUndo\(\)/.test(src), '换画布时要 clearUndo()');
+});
+
+/* ================= 导出目录 ================= */
+
+/*
+ * 申请授权后必须**回读**一次确认真的加进去了。
+ *
+ * Linux 的 Secret Service 就是这类"接受写入但读不出来"的典型，
+ * 目录授权同理：调用成功 ≠ 生效。
+ * 少了回读，失败会伪装成成功，用户拿到的是一句"导出失败：路径越权"，
+ * 而真正的原因（目录不存在 / 不允许授权 / 加进去没生效）全被藏了。
+ */
+test('授权目录后回读校验', () => {
+  const src = readSrc('App.tsx', 'hooks/useExportFlow.ts');
+  /*
+   * 数**次数**而不是配一条宽松的正则 ——
+   * 第一次 listFsRoots（写之前看在不在授权列表里）与回读那次写法几乎一样，
+   * 用 `/roots = await listFsRoots()[\s\S]{0,200}withinRoots/` 的话，
+   * 把回读删掉仍然会被**前面那次**匹配上（假阴性）。
+   * 故障注入时正是这么骗过去的。
+   */
+  const n = (src.match(/await listFsRoots\(\)/g) ?? []).length;
+  assert.ok(n >= 2, `授权后要回读一次 listFsRoots（当前只有 ${n} 处）`);
+});
+
+/*
+ * 导出失败必须报出来。
+ *
+ * 以前这里是空的 catch（注释说"退回剪贴板"但没实现），
+ * 下载被拦时日志照样打印"✅ 已导出" —— 失败伪装成成功。
+ */
+test('导出的失败分支都要写日志', () => {
+  const src = readSrc('App.tsx', 'hooks/useExportFlow.ts');
+  assert.ok(
+    /catch \(e\)[\s\S]{0,200}onLog\(`✗ 导出失败/.test(src)
+      || /catch \(e\)[\s\S]{0,200}pushLog\(`✗ 导出失败/.test(src),
+    '导出失败的 catch 里必须写日志，不能空着',
+  );
+});
+
+/*
+ * 回读发现"授权没生效"要明说。
+ *
+ * 少了这句：失败会伪装成成功，用户拿到的是笼统的"路径越权"，
+ * 而真正的原因（目录不存在 / 不允许授权 / 加进去没生效）全被藏了 ——
+ * 排查只能靠猜。
+ */
+test('授权没生效要说清，不能笼统报路径越权', () => {
+  const src = readSrc('App.tsx', 'hooks/useExportFlow.ts');
+  assert.ok(
+    /仍不在授权列表里/.test(src),
+    '回读失败时要明说"已提交但仍不在授权列表里"',
+  );
+});
