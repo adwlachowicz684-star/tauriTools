@@ -93,6 +93,30 @@
   --ctl-shadow-press: var(--sh-in-md);   /* 按下 / 选中：内凹 */
 }
 
+/* ---------- button 兜底：去掉浏览器自带的边框与按钮字体 ----------
+ *
+ * <button> 有两处 UA 默认样式会在自定义皮肤下露出来：
+ *
+ *   1. `border: 2px outset ButtonBorder`
+ *      ButtonBorder 是**系统色**，深色界面下它偏亮 —— 表现为一圈白边。
+ *      实测：脑图「配色主题」里每个内置主题都套着一圈白，
+ *      而同一个 .mm-theme 用在自定义主题上时宿主是 <div>、没有边框 ——
+ *      同一份 class 出现两种观感，看着就像没统一过样式。
+ *
+ *   2. `font: 400 13.333px Arial`
+ *      UA 给 button 设的是**完整字体**（含 family），它**不继承** body 的字体。
+ *      按钮文字因此与页面其余部分不同族，只是不明显。
+ *
+ * 此前靠每个按钮类各写一遍 `border: 0`（脑图里写了 9 处），
+ * 结果 .mm-theme 漏了 —— 逐类补必然会漏，所以这里收口一次。
+ *
+ * 放在最前面：后面任何类显式写的 border / font **仍然优先**
+ * （类选择器 0,1,0 高于元素选择器 0,0,1），不会覆盖既有意图。 */
+button {
+  border: 0;
+  font: inherit;
+}
+
 .nx-btn,
 .p-btn,
 .mm-btn {
@@ -296,11 +320,34 @@
 /* 下拉：原生箭头由系统画，颜色不跟随主题，这里统一收口 */
 .nx-select,
 .mm-select { cursor: pointer; }
-.nx-select option,
-.mm-select option {
+
+/* ---------- 下拉展开后的列表（option）----------
+ *
+ * 收口范围刻意是**所有** select，而不只是 .nx-select / .mm-select。
+ * 实测全仓 35 个 select 用的 class 五花八门（裸 select / .p-input /
+ * .fpx-select / .hist-sel …），逐个挂一遍必然漏 ——
+ * 漏掉的那批在深色主题下拉出一块白底，白字正好看不见。
+ *
+ * 为什么必须显式设：<select> 展开的那块列表是浏览器原生绘制的，
+ * 它**不继承** select 自己的 background —— 把 select 设成深色，
+ * 展开后照样可能是一块白。color-scheme 能让不少浏览器跟着走，
+ * 但管不到所有平台（macOS 的下拉由系统绘制，不读这里的 CSS）。
+ *
+ * 背景用 --surface-overlay：展开的列表是浮层，该比输入框亮一档。
+ * 兜底回 --surface —— mindmap / project-group 只引 tokens + controls，
+ * 没引 neumorphism.css，而 --surface-overlay 定义在那儿，没兜底会拿到空值。 */
+select option {
   color: var(--text);
   background: var(--surface-overlay, var(--surface));
 }
+select optgroup {
+  color: var(--text-dim, var(--text));
+  background: var(--surface-overlay, var(--surface));
+}
+/* 选中项**刻意不设**：交给浏览器默认高亮。
+   曾想给 background:var(--accent) + color:CanvasText，但 CanvasText 是按
+   color-scheme 定的、**不是**按底色明暗算的 —— 用户把强调色设成亮黄
+   （cyberpunk）就成了白字压亮黄，对比度 1.09，等于没有。 */
 
 /* 多行文本 */
 .nx-textarea {
