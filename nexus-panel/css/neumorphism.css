@@ -913,7 +913,10 @@ body.nx-inspecting * { cursor: crosshair !important; }
   padding: var(--sp-3, 6px);
   border-radius: var(--r);
   background: var(--surface);
-  box-shadow: var(--sh-out);
+  /* 工具栏下拉菜单是**浮层**，阴影要够重才看得出浮在内容上。
+     此前写的是 var(--sh-out) —— 这个变量**从未定义过**，
+     整条声明直接失效，菜单是"贴"在页面上的，没有浮起感。 */
+  box-shadow: var(--sh-out-lg);
   display: flex;
   flex-direction: column;
   gap: var(--sp-1, 2px);
@@ -929,7 +932,9 @@ body.nx-inspecting * { cursor: crosshair !important; }
   cursor: pointer;
   white-space: nowrap;
 }
-.tb-menu-item:hover:not(:disabled) { background: var(--accent-soft, var(--surface-2)); }
+/* --accent-soft 与 --surface-2 **两个都没定义**：兜底项自己也是空的，
+   于是整条声明失效 —— 鼠标划过菜单项**没有任何反馈**。 */
+.tb-menu-item:hover:not(:disabled) { background: var(--surface-raised); }
 .tb-menu-item:disabled {
   color: var(--text-dim);
   cursor: var(--ctl-disabled-cursor, not-allowed);

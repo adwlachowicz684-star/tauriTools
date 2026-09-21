@@ -106,8 +106,19 @@ console.log('\n=== 4. 重复定义清理干净 ===');
      这是本次要根治的问题，所以直接查"完整实现的重复" */
   const dupBtn = /\.mm-btn\s*\{[^}]*box-shadow/.test(mm);
   t('mindmap 不再自己写 .mm-btn 的完整实现', !dupBtn);
-  t('mindmap 不再自己写 .mm-input / .mm-select',
-    !/\.mm-input\s*\{/.test(mm) && !/\.mm-select\s*\{/.test(mm));
+  /* 判据必须是「有没有写完整实现」，不能是「有没有这条选择器」。
+     原写法 `!/\.mm-select\s*\{/` 会误判：选择器组 `.mm-input, .mm-select {`
+     的最后一项后面**本来就跟 `{`**，于是「只改变量」的合规写法也被判成重复。
+     而 mindmap 那条恰恰是合规的 —— 它只覆盖 --ctl-h / --ctl-pad / --ctl-fs
+     三个变量（紧凑布局该是 28px）。真正要拦的是把实现再抄一遍。 */
+  const mmCtl = rules(mm).filter((r) =>
+    r.sel.split(',').some((x) => /\.mm-(input|select)$/.test(x.trim())));
+  const mmDup = mmCtl.filter((r) =>
+    /background|border(?!-radius)|padding|box-shadow|font-size|height/.test(r.body));
+  t('mindmap 不再自己写 .mm-input / .mm-select 的完整实现',
+    mmDup.length === 0,
+    mmDup.length ? mmDup.map((r) => r.body.trim().slice(0, 60)).join(' | ')
+      : `只改变量，${mmCtl.length} 条合规`);
   /* 外壳的 .p-btn 完整实现也应已移除 */
   t('外壳不再自己写 .p-btn 的完整实现',
     !/\.p-btn\s*\{[^}]*height/.test(shell));
@@ -470,13 +481,19 @@ console.log('\n=== 13. 尺度收口：圆角 / 字号 ===');
   t('消除了 9px（太小，正文读不清）',
     !/font-size:\s*9px/.test([...all].map((x) => x.text).join('\n')));
 
-  /* 圆角：999px 就是 --r-pill */
+  /* 圆角：999px 就是 --r-pill。
+     只拦**写死**的 999px —— `var(--r-pill, 999px)` 是合规写法：
+     它优先用令牌，999px 只是拿不到令牌时的兜底，正是要推广的形式。
+     原正则会把这种兜底写法也判成违规（实测误报 agent-flow 一处）。 */
   const hard999 = [];
   for (const { f, text } of all) {
-    if (/border-radius:\s*999px/.test(text)) hard999.push(f);
+    for (const m of text.matchAll(/border-radius:\s*([^;]+);/g)) {
+      const stripped = m[1].replace(/var\([^)]*\)/g, '');
+      if (/999px/.test(stripped)) { hard999.push(f); break; }
+    }
   }
-  t('999px 圆角改走 --r-pill', hard999.length === 0,
-    hard999.join(', ') || '21 处已替换');
+  t('999px 圆角改走 --r-pill（var() 兜底位上的不算写死）', hard999.length === 0,
+    hard999.join(', ') || '已全部走 --r-pill');
 
   /* 用了令牌就必须能拿到 —— 插件是独立文档，外壳那份传不进来。
      这条是审计工具先抓出来的真 bug：agent-flow 引了 controls.css
@@ -537,6 +554,68 @@ console.log('\n=== 14. 文本溢出 / 表单错误态 / 触摸目标 ===');
      变成"点 A 触发 B"。所以只提供显式工具类。 */
   t('触摸扩展不自动套用到图标按钮（密集时会重叠误触）',
     !/\.nx-btn\.icon::after/.test(controls));
+}
+
+console.log('\n=== 15. 原生下拉（select）的展开列表配色 ===');
+/*
+ * 起因（用户报的）：深色主题下点开下拉，展开的列表是**浅底**，
+ * 白字压在上面看不清。
+ *
+ * 根因不是配色选错，是**根本没设**：<select> 展开的那块列表由浏览器
+ * 原生绘制，它**不继承** select 自己的 background ——
+ * 把 select 设成深色，展开后照样可能是一块白。
+ *
+ * 实测全仓 35 个 select 里，此前只有 1 个（.cond-op-select）设了 option 颜色，
+ * 其余全裸。而它们的 class 五花八门（裸 select / .p-input / .fpx-select /
+ * .hist-sel …），逐个挂一遍必然再漏 —— 所以收口必须是**覆盖所有 select**
+ * 的通用规则，而不是挂在某个 class 上。
+ */
+{
+  /* agent-flow 自成一套 --af-* 变量（刻意不引外壳样式表），要单独读。
+     这里**在块内声明**而不是复用文件顶部的同名变量 —— 那个在别的代码块里
+     （实测此处访问不到，直接 ReferenceError）。 */
+  const af = read('plugins/agent-flow/styles.css');
+
+  /* 15.1 共享层：必须是不挂 class 的通用规则 */
+  const optRule = rules(controls).find((r) =>
+    r.sel.split(',').some((p) => p.trim() === 'select option'));
+  t('共享层有覆盖**全部** select 的 option 规则', !!optRule,
+    optRule ? optRule.sel.trim() : '未找到');
+  if (optRule) {
+    t('option 背景走主题变量（不写死色值，才能跟随换肤）',
+      /background:\s*var\(--surface-overlay[^)]*\)/.test(optRule.body)
+      && !/background:\s*#[0-9a-fA-F]{3,8}/.test(optRule.body));
+    t('option 文字走 --text', /color:\s*var\(--text\)/.test(optRule.body));
+    /* 兜底的意义：mindmap / project-group 只引 tokens + controls，
+       没引 neumorphism.css，而 --surface-overlay 定义在那儿 ——
+       没有兜底这两个插件会拿到空值，等于白设。 */
+    t('背景带 --surface 兜底（只引 controls 的插件不会拿到空值）',
+      /var\(--surface-overlay,\s*var\(--surface\)\)/.test(optRule.body));
+  }
+
+  /* 15.2 optgroup 也要设：分组标题混在选项里不加区分会分不清 */
+  const grpRule = rules(controls).find((r) =>
+    r.sel.split(',').some((p) => p.trim() === 'select optgroup'));
+  t('optgroup 也有配色（否则分组标题与选项分不清）', !!grpRule);
+
+  /* 15.3 agent-flow 自成一套，必须自己有一份 */
+  const afOpt = rules(af).find((r) =>
+    r.sel.split(',').some((p) => p.trim() === 'select option'));
+  t('agent-flow 有自己的 option 收口（它不引 controls.css）', !!afOpt,
+    afOpt ? afOpt.sel.trim() : '未找到');
+  if (afOpt) {
+    t('agent-flow 的 option 用 --af-* 变量（跟随它自己的主题层）',
+      /background:\s*var\(--af-panel\)/.test(afOpt.body)
+      && /color:\s*var\(--af-fg\)/.test(afOpt.body));
+  }
+
+  /* 15.4 选中项**不能**写死文字色 —— 本轮差点做错的一处 */
+  const checkedBodies = [...rules(controls), ...rules(af)]
+    .filter((r) => /option\s*:checked/.test(r.sel))
+    .map((r) => r.body);
+  t('不存在写死文字色的 option:checked（会被亮黄强调色打成白字）',
+    checkedBodies.every((b) => !/color:\s*(#[0-9a-fA-F]{3,8}|white|CanvasText)/.test(b)),
+    checkedBodies.length ? `存在 ${checkedBodies.length} 条（只许设背景）` : '未设，交给浏览器默认高亮');
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
