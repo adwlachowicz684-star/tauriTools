@@ -13,6 +13,7 @@ import { getRunner } from './runnerRegistry';
 import type { RunContext } from './runContext';
 import { renderTemplate } from './template';
 import { inputValueFor, chainOutputAbove } from './stack';
+import { isNodeDisabled } from './nodeDisabled';
 import {
   extractFileRefs, parseManualPaths, buildFileFields, type FileRef,
 } from './files';
@@ -224,6 +225,19 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
 
       const runnable: string[] = [];
       for (const id of layer) {
+        /*
+         * 关掉的节点：不执行，而且**要像失败一样往下游传播**。
+         *
+         * 只跳过它自己的话，下游会拿到空输入继续跑 ——
+         * 用户看到的是"我关掉了这一步，后面却还在动"。
+         */
+        if (isNodeDisabled(byId.get(id))) {
+          markSkipped(id, scope);
+          scope.failedSet.add(id);
+          setStatus(id, 'skipped');
+          continue;
+        }
+
         const inEdges = graph.edges.filter((e) => e.target === id);
 
         if (inEdges.length === 0) {

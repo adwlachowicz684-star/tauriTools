@@ -2,6 +2,9 @@ import { Handle, Position } from '@xyflow/react';
 import type { ReactNode } from 'react';
 import { getDef } from '../nodes/registry';
 import { validateNode, LEVEL_COLOR, LEVEL_TEXT, LEVEL_SHORT, type IssueLevel } from '../engine/nodeValidate';
+import { isNodeDisabled } from '../engine/nodeDisabled';
+/** 关闭态的圆点色。中性灰，不与"缺项/缺参"的黄红撞色 */
+const OFF_DOT_COLOR = '#6b7280';
 import { normalizeSize, type NodeSize } from '../types';
 import { resolveNodeColor } from '../engine/nodeColors';
 import { stackParentOf } from '../engine/stack';
@@ -74,6 +77,13 @@ export function NodeShell({
    */
   const issue = validateNode({ data });
   const dot: IssueLevel = issue.level;
+  /*
+   * 关掉的节点：徽章**照常显示缺参 / 缺项**，只有圆点变灰。
+   *
+   * 整个徽章去掉的话，重新打开时才发现它其实一直没配好 ——
+   * 关掉不等于修好。变灰的圆点是唯一能一眼区分"关着的 / 配好的"的地方。
+   */
+  const off = isNodeDisabled({ data: data as Record<string, unknown> });
   const stacked = stackParentOf({ data: data as Record<string, unknown> }) !== null;
   /*
    * "下面挂着块"要压掉下圆角与下边框 —— 与 stacked 一起才能拼成直筒。
@@ -86,7 +96,7 @@ export function NodeShell({
 
   return (
     <div
-      className={`node-card size-${size} ${stacked ? 'is-stacked' : ''} ${hasChild ? 'is-stack-top' : ''} ${className ?? ''} status-${status} ${selected ? 'is-selected' : ''}`}
+      className={`node-card size-${size} ${stacked ? 'is-stacked' : ''} ${hasChild ? 'is-stack-top' : ''} ${className ?? ''} status-${status}${off ? ' is-off' : ''} ${selected ? 'is-selected' : ''}`}
       style={{ borderLeftColor: color }}
     >
       {hasTarget ? <Handle type="target" position={Position.Left} /> : null}
@@ -109,11 +119,20 @@ export function NodeShell({
        */}
       <div className="node-head">
         <span
-          className={`node-badge level-${dot}`}
-          title={issue.messages.length ? issue.messages.join('；') : LEVEL_TEXT[dot]}
+          className={`node-badge level-${dot}${off ? ' is-off' : ''}`}
+          title={
+            (off ? '已关闭（不参与执行）· ' : '')
+            + (issue.messages.length ? issue.messages.join('；') : LEVEL_TEXT[dot])
+          }
         >
-          <span className={`node-dot level-${dot}`} style={{ background: LEVEL_COLOR[dot] }} />
+          <span
+            className={`node-dot${off ? ' is-off' : ''}`}
+            /* 关掉时用内联样式盖掉 level 的颜色 —— 不能用 level-ok 之类，
+               那会把"缺参"也说成绿的 */
+            style={{ background: off ? OFF_DOT_COLOR : LEVEL_COLOR[dot] }}
+          />
           {LEVEL_SHORT[dot]}
+          {off ? ' · 关' : ''}
         </span>
         <span className="node-title">{data.label}</span>
       </div>
