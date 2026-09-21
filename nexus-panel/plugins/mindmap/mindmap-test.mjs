@@ -6768,6 +6768,75 @@ group('文件库展开导致画布内容位移：按实测屏幕位置差补偿'
   }
 }
 
+group('app 句柄：可写状态必须成对提供 getter/setter');
+
+{
+  const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  // 扫**所有**拿到 app 句柄的模块，不只 panels.js —— 下次新模块给
+  // getter-only 属性赋值时同样的坑会重演，而报错只在运行时出现。
+  const MODULES = ['panels.js', 'filelist.js', 'mediainfo.js', 'themes.js',
+    'formats.js', 'xmind.js', 'workbook.js', 'store.js', 'tab-drag.js',
+    'tag-badges.js', 'layout-thumbs.js', 'diagnostics.js', 'preset-icons.js'];
+  const pj = MODULES.map((f) => {
+    try { return fs.readFileSync(path.join(HERE, f), 'utf8'); } catch (e) { return ''; }
+  }).join('\n');
+
+  // ---- 1) 机制自证：严格模式下给「只有 getter」的访问器赋值会抛错 ----
+  //
+  // 这是本 bug 的根因（ES 模块恒为严格模式）。先把它钉住，
+  // 免得以后有人改成普通属性后忘了为什么需要 setter。
+  {
+    const only = {};
+    Object.defineProperty(only, 'a', { get: () => 1, configurable: true });
+    let threw = null;
+    try { only.a = 2; } catch (e) { threw = e; }
+    ok(threw instanceof TypeError, '严格模式下给只有 getter 的属性赋值会抛 TypeError');
+    ok(/has only a getter/.test(threw ? threw.message : ''),
+      `报错信息与线上一致（实际：${threw ? threw.message : '无'}）`);
+
+    // 成对提供后即可正常写入
+    let v = 1;
+    const pair = { get a() { return v; }, set a(x) { v = x; } };
+    pair.a = 99;
+    eq(pair.a, 99, '提供 setter 后赋值生效');
+  }
+
+  // ---- 2) 通用守卫：panels.js 里所有 `app.X = ...` 都必须在 app 上有 setter ----
+  //
+  // 不能只断言 customThemes 一处 —— 下次再加一个 getter-only 的可写状态时
+  // 同样的坑会重演，而报错发生在运行时、测试却全绿。
+  const appStart = ix.indexOf('const app = {');
+  ok(appStart > 0, '找到 app 对象字面量');
+  // 取到与之匹配的收尾 `};`（用缩进为 2 空格的 `};` 作结束标志）
+  const appEnd = ix.indexOf('\n  };', appStart);
+  const appBlk = ix.slice(appStart, appEnd);
+
+  const assigned = [...new Set(
+    [...pj.matchAll(/\bapp\.([A-Za-z_$][\w$]*)\s*(?:=[^=]|\+=|-=)/g)].map((m) => m[1]),
+  )];
+  ok(assigned.length > 0, `存在对 app 属性的赋值（${assigned.join(', ')}）`);
+
+  for (const name of assigned) {
+    const hasSetter = new RegExp(`set\\s+${name}\\s*\\(`).test(appBlk)
+      || new RegExp(`set\\s+${name}\\s*\\(`).test(ix.slice(0, appStart));
+    ok(hasSetter, `app.${name} 有 setter（否则赋值会抛 TypeError）`);
+  }
+
+  // ---- 3) 具体：customThemes 三者齐全 ----
+  ok(/get customThemes\(\) \{ return customThemes; \}/.test(appBlk), 'app.customThemes 有 getter');
+  ok(/set customThemes\(v\) \{ customThemes = v \|\| \[\]; \}/.test(appBlk),
+    'app.customThemes 有 setter（写到模块级变量，saveThemes 读的就是它）');
+  // setter 必须落到**模块级变量**，saveThemes 才能存到新值。
+  // 写成存到别处（或忘记赋值）的话读取仍是旧数组，等于没改。
+  ok(/await store\.themes\.save\(customThemes\)/.test(ix),
+    'saveThemes 落盘读的是模块级 customThemes');
+
+  // ---- 4) 三条受影响路径都还在（说明 setter 不是死代码）----
+  const pjOnly = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  eq((pjOnly.match(/app\.customThemes\s*=/g) || []).length, 3,
+    'panels.js 有三处赋值（导入 / 删除 / 编辑保存主题）');
+}
+
 group('多附件：XMind 往返（导出再导回）');
 
 {
