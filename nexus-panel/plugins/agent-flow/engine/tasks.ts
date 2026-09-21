@@ -26,6 +26,13 @@ export const SOURCE_LABEL: Record<TaskSource, string> = {
 
 export type TaskNodeState = {
   id: string;
+  /**
+   * 节点标题。
+   *
+   * 任务与历史里要画**流程图**，而图上写 id（`mamu7obyv93`）等于没写 ——
+   * 看不出这一步是干什么的。所以建任务时把标题抄一份进来。
+   */
+  label?: string;
   /** 与画布节点同一套状态机，pending 也要认 —— runner 会给等待上游的节点发它 */
   status: NodeStatus;
   output: string;
@@ -52,6 +59,9 @@ export type TaskLogLine = {
   nodeId?: string;
 };
 
+/** 流程图的连线。只存两端 —— 画拓扑用不到别的 */
+export type TaskEdge = { source: string; target: string };
+
 export type TaskRecord = {
   id: string;
   canvasId: string;
@@ -68,6 +78,15 @@ export type TaskRecord = {
   layerTotal: number;
   /** 总节点数，用于算进度 */
   total: number;
+  /**
+   * 建任务那一刻的连线（含嵌合展开出来的）。
+   *
+   * 没有它，流程图就只能按执行顺序排成一列 ——
+   * 那不是流程图，看不出谁等谁，也就分不出"等待"和"阻断"。
+   */
+  edges?: TaskEdge[];
+  /** 节点标题表。画流程图用；缺哪条就用 id 顶上 */
+  labels?: Record<string, string>;
 };
 
 export const MAX_OUTPUT_CHARS = 20000;
@@ -88,6 +107,10 @@ export function makeTask(init: {
   source?: TaskSource;
   total?: number;
   now?: number;
+  /** 节点标题，画流程图用；没有就退回 id */
+  labels?: Record<string, string>;
+  /** 建任务那一刻的连线，含嵌合展开出来的 */
+  edges?: TaskEdge[];
 }): TaskRecord {
   seq += 1;
   const now = init.now ?? Date.now();
@@ -104,6 +127,8 @@ export function makeTask(init: {
     layerNow: 0,
     layerTotal: 0,
     total: init.total ?? 0,
+    ...(init.edges && init.edges.length > 0 ? { edges: init.edges } : {}),
+    ...(init.labels && Object.keys(init.labels).length > 0 ? { labels: init.labels } : {}),
   };
 }
 
