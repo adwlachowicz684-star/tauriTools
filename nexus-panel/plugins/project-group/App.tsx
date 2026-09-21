@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ContentPanel } from './components/ContentPanel';
 import { Dialogs, type Dialog, type PendingSend } from './components/DialogsHub';
 import { CardGrid, TabBar, type DragPayload } from './components/CardGrid';
-import { SideRail } from './components/SideRail';
+import { SideRail, type RailMode } from './components/SideRail';
 import { StackedGroups } from './components/StackedGroups';
 import { ContextMenu, MenuLayerContext, type MenuItem } from './components/ui';
 import { normalizeKey, errText } from './api';
@@ -118,6 +118,8 @@ export default function App() {
    * 收起后仍要能展开，否则就成了"关掉容易打开难"，所以栏底留一个展开按钮。
    */
   const [railCollapsed, setRailCollapsed] = useState(false);
+  /* #58 左栏模式；与收起态一致，只存会话态不进 config */
+  const [railMode, setRailMode] = useState<RailMode>('persistent');
 
   /**
    * 内容区当前选中的条目（受控于本组件）。
@@ -794,6 +796,8 @@ export default function App() {
           hotkeys={boot.config.hotkeys}
           collapsed={railCollapsed}
           onToggleCollapsed={() => setRailCollapsed((v) => !v)}
+          mode={railMode}
+          onModeChange={() => setRailMode((v) => (v === 'hover' ? 'persistent' : 'hover'))}
         />
 
         <div className="fpx-main">
@@ -1061,7 +1065,7 @@ function Column({
   focused: boolean;
   /** 点卡片上的项目组名 → 在项目组栏里选中它（仅项目栏用得到） */
   onJumpToGroup?: (card: CardInfo) => void;
-  /* #82 编辑那一条链接；必须由外层传入 —— Column 作用域里没有 App 的 setter */
+  /* #82 编辑那一条链接；必须外层传入（Column 里没有 App 的 setter） */
   onEditLink?: (project: string, group: string) => void;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -1117,14 +1121,10 @@ function Column({
         onMove={onMove}
         onCrossDrop={onCrossDrop}
         menus={menus}
-        /* 这句提示此前是**空头承诺**：它让用户点「＋ 添加」，
-           而卡片区里当时并没有这个按钮（只有页签条上有一个 ＋）。
-           加了末尾的虚线添加框（#287）之后才名副其实。 */
+                /* 加末尾虚线添加框（#287）之后这句提示才名副其实 */
         emptyHint={`还没有${title}，点下面的「＋ 添加${title}」选一个文件夹`}
         onJumpToGroup={onJumpToGroup}
-        /* #82：点明细里的链接名 → 直接编辑那条链接。
-           用**行里的 group** 而不是卡片的汇总 linkedGroup ——
-           一个项目可以有多条链接记录，只传卡片会改错对象。 */
+                /* #82：用行里的 group，不用卡片汇总的 linkedGroup */
         onEditLink={onEditLink}
         onAdd={onAdd}
         addHint={`添加${title}`}

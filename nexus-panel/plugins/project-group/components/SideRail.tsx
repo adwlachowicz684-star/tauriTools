@@ -37,6 +37,9 @@ const IS_MAC = typeof navigator !== 'undefined'
   && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
 const MOD = IS_MAC ? '⌘' : 'Ctrl';
 
+/** 左栏两种显示模式（#58）。 */
+export type RailMode = 'persistent' | 'hover';
+
 export interface RailGroup {
   /** 连锁动作分组的标识，用于空数组时不渲染 */
   key: string;
@@ -45,6 +48,7 @@ export interface RailGroup {
 
 export function SideRail({
   groups, chainActions, onChainAction, hotkeys, collapsed, onToggleCollapsed,
+  mode, onModeChange,
 }: {
   groups: RailGroup[];
   /** 连锁动作：每个一条，点击即对当前选中卡片执行 */
@@ -55,6 +59,17 @@ export function SideRail({
   /** 收起态（#58 #225）：只留一条窄条与展开按钮 */
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
+  /**
+   * #58 两种模式：
+   *   · `persistent` 常驻 —— 文字一直显示（栏宽随内容）
+   *   · `hover` 悬停浮出 —— **图标条始终窄宽**，悬停/聚焦时才浮出全宽面板
+   *
+   * 浮出必须**覆盖**而不是挤开：栏宽若跟着悬停变化，三栏会被推着左右跳，
+   * 而且会和布局记忆（colStars）打架。所以外层 slot 固定窄宽，
+   * 内层栏正常在流内（这样高度还是它自己的），悬停时宽度溢出到 slot 之外。
+   */
+  mode?: RailMode;
+  onModeChange?: () => void;
 }) {
   /** 动作 id → 生效键位；没绑（空串）就不显示 */
   const keyOf = (a: RailAction): string => {
@@ -68,68 +83,93 @@ export function SideRail({
      用户只能靠记得这个快捷键才能找回来。 */
   if (collapsed) {
     return (
-      <div className="fpx-rail collapsed">
-        <button
-          className="fpx-rail-btn"
-          title="展开左操作栏（Shift+~）"
-          onClick={onToggleCollapsed}
-        >
-          <span className="fpx-rail-icon">»</span>
-        </button>
+      /* slot 在收起态也要有：它是 flex 子项，宽度由它决定，
+         直接让 rail 当 flex 子项会随内容变宽，与悬停态宽度不一致 */
+      <div className="fpx-rail-slot">
+        <div className="fpx-rail collapsed">
+          <button
+            className="fpx-rail-btn"
+            title="展开左操作栏（Shift+~）"
+            onClick={onToggleCollapsed}
+          >
+            <span className="fpx-rail-icon">»</span>
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="fpx-rail">
-      {groups.map((g) => (
-        <div className="fpx-rail-group" key={g.key}>
-          {g.actions.map((a) => (
-            <button
-              key={a.label}
-              className={`fpx-rail-btn${a.danger ? ' danger' : ''}`}
-              title={a.title ?? a.label}
-              disabled={a.disabled}
-              onClick={a.onClick}
-            >
-              <span className="fpx-rail-icon">{a.icon}</span>
-              <span className="fpx-rail-label">{a.label}</span>
-              {keyOf(a) && (
-                <span className="fpx-rail-key">{keyOf(a)}</span>
-              )}
-            </button>
-          ))}
-        </div>
-      ))}
+    <div className={`fpx-rail-slot${mode === 'hover' ? ' hover-mode' : ''}`}>
+      <div className="fpx-rail">
+        {groups.map((g) => (
+          <div className="fpx-rail-group" key={g.key}>
+            {g.actions.map((a) => (
+              <button
+                key={a.label}
+                className={`fpx-rail-btn${a.danger ? ' danger' : ''}`}
+                title={a.title ?? a.label}
+                disabled={a.disabled}
+                onClick={a.onClick}
+              >
+                <span className="fpx-rail-icon">{a.icon}</span>
+                <span className="fpx-rail-label">{a.label}</span>
+                {keyOf(a) && (
+                  <span className="fpx-rail-key">{keyOf(a)}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        ))}
 
-      {chainActions.length > 0 && (
+        {chainActions.length > 0 && (
+          <div className="fpx-rail-group">
+            {chainActions.map((a) => (
+              <button
+                key={a.id}
+                className="fpx-rail-btn"
+                title={`${a.name}（对当前选中的卡片执行）`}
+                onClick={() => onChainAction(a)}
+              >
+                <span className="fpx-rail-icon">{a.icon || '▶'}</span>
+                <span className="fpx-rail-label">{a.name}</span>
+                {a.shortcut && (
+                  <span className="fpx-rail-key">{a.shortcut.replace('mod', MOD)}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* 收起入口置底：与"展开"成对，避免收起后没有回头路 */}
         <div className="fpx-rail-group">
-          {chainActions.map((a) => (
-            <button
-              key={a.id}
-              className="fpx-rail-btn"
-              title={`${a.name}（对当前选中的卡片执行）`}
-              onClick={() => onChainAction(a)}
-            >
-              <span className="fpx-rail-icon">{a.icon || '▶'}</span>
-              <span className="fpx-rail-label">{a.name}</span>
-              {a.shortcut && (
-                <span className="fpx-rail-key">{a.shortcut.replace('mod', MOD)}</span>
-              )}
-            </button>
-          ))}
-        </div>
-      )}
+          <button
+            className="fpx-rail-btn"
+            title="收起左操作栏（Shift+~）"
+            onClick={onToggleCollapsed}
+          >
+            <span className="fpx-rail-icon">«</span>
+          </button>
+          {/*
+            模式切换（#58）。放在置底这一组、与「收起」并列：
+            两个入口都管"左栏占多少地方"，分开找会很烦。
 
-      {/* 收起入口置底：与"展开"成对，避免收起后没有回头路 */}
-      <div className="fpx-rail-group">
-        <button
-          className="fpx-rail-btn"
-          title="收起左操作栏（Shift+~）"
-          onClick={onToggleCollapsed}
-        >
-          <span className="fpx-rail-icon">«</span>
-        </button>
+            必须给 title：悬停模式下文字是隐藏的，
+            不给提示就只剩一个看不懂的图标，等于没有这个功能。
+          */}
+          {onModeChange && (
+            <button
+              className="fpx-rail-btn"
+              title={mode === 'hover'
+                ? '左栏改为常驻（文字一直显示）'
+                : '左栏改为悬停浮出（图标条始终窄宽）'}
+              onClick={onModeChange}
+            >
+              <span className="fpx-rail-icon">{mode === 'hover' ? '⇥' : '⇤'}</span>
+              <span className="fpx-rail-label">{mode === 'hover' ? '常驻' : '悬停'}</span>
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
