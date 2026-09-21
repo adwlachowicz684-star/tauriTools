@@ -1607,6 +1607,14 @@ input.mono, textarea.mono {
   border-radius: 4px; background: none; cursor: pointer;
 }
 
+/* 属性面板顶栏：显示高度 + 节点 id 合成一行（都不是参数，不该各占一块） */
+.insp-topbar {
+  display: flex; align-items: center; gap: 6px;
+  padding-bottom: 6px; margin-bottom: var(--sp-3, 6px);
+  border-bottom: 1px solid var(--af-line, #2a2f3a);
+}
+.insp-topbar-group { display: flex; gap: 4px; }
+
 /* 触发条件卡片 —— 每种触发方式各占一块，独立配置 */
 .trig-cards { display: flex; flex-direction: column; gap: 8px; }
 .trig-card {
