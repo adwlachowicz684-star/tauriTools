@@ -367,3 +367,22 @@ export function formatDateTime(ts: number): string {
   const p = (x: number) => String(x).padStart(2, '0');
   return `${d.getMonth() + 1}月${d.getDate()}日 ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+
+/**
+ * 写不进去时裁掉一半最旧的 —— 抽出来是为了能单测。
+ *
+ * ================= 为什么要给"裁不动"一个明确的返回值 ====================
+ *
+ * 只剩一条时再裁还是它自己，会陷进"裁了再写、写了再裁"的死循环。
+ * 返回 null 让调用方知道"救不了了"，去提示用户而不是反复重试。
+ *
+ * ================= 为什么不能静默 ====================
+ *
+ * localStorage 通常只有 5MB。写失败却什么都不说的话，
+ * 用户以为归档好了，下次打开却是空的 —— 那种丢失无从查起。
+ */
+export function planHistoryRetry(file: HistoryFile): HistoryFile | null {
+  if (file.entries.length <= 1) return null;
+  const keep = file.entries.slice(0, Math.max(1, Math.floor(file.entries.length / 2)));
+  return { v: file.v, entries: keep };
+}
