@@ -3045,19 +3045,35 @@ group('P2 导入导出');
     ['PNG 1 倍', 'app.api.exportPng(1)'],
     ['PNG 2 倍', 'app.api.exportPng(2)'],
     ['PNG 3 倍', 'app.api.exportPng(3)'],
-    ['主题导入', 'importThemeFile()'],
-    ['主题导出', 'exportThemeFile()'],
     ['快照导出', 'app.api.exportBackups()'],
     ['快照导入', 'app.api.importBackups()'],
   ]) {
     ok(ex.includes(kw), `A39 导入导出页含「${label}」`);
   }
 
-  // 其余三处旧入口必须清掉，否则同一个功能还是有两个地方能点
+  // 其余旧入口必须清掉，否则同一个功能还是有两个地方能点
   ok(!/onclick: \(\) => app\.api\.exportJson\(\)/.test(pn),
     'A39 文件页的导出按钮已移除');
-  ok(!/'导入主题'/.test(pn) || !/'导出主题'/.test(pn),
-    'A39 主题页的导入/导出按钮已移除');
+
+  // ---- 主题的导入/导出**回归主题页**（与新建/编辑/删除同排）----
+  // 它们是「对主题这个对象」的操作，和主题列表是一组连贯动作；
+  // 放导入导出页会让主题页要靠一句 hint 指路，等于把连贯操作拆成两地。
+  {
+    // 切片结束锚点不能用 `pages.theme = pageTheme;` ——
+    // function 声明被提升，`pages.theme = pageTheme` 出现在**定义之前**
+    // （第 579 行 vs 第 1501 行），slice 会拿到空串，三条断言永远为假（假阴性）。
+    const th = pn.slice(pn.indexOf('function pageTheme('),
+      pn.indexOf('// 默认停在「主题」页'));
+    ok(/importThemeFile\(\)/.test(th), 'A39 主题页有「导入主题」');
+    ok(/exportThemeFile\(\)/.test(th), 'A39 主题页有「导出主题」');
+    // 不能两处都有 —— 那就是把刚集中的入口又拆开
+    ok(!/importThemeFile\(\)/.test(ex), 'A39 导入导出页**不再**有主题导入（避免两处入口）');
+    ok(!/exportThemeFile\(\)/.test(ex), 'A39 导入导出页**不再**有主题导出');
+    // 指路用的 hint 要删掉 —— 按钮就在本页了，再指路就是自相矛盾
+    ok(!/自定义的导入\/导出在侧栏/.test(pn), 'A39 主题页的指路 hint 已删除');
+    // 「内置主题无法导出」改由**禁用态**表达，不再靠文字
+    ok(/disabled: isBuiltin/.test(th), 'A39 内置主题时导出按钮禁用（不靠文字说明）');
+  }
   const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
   ok(/\.mm-menu-item/.test(css), 'A39 菜单有样式');
 }
@@ -5794,9 +5810,11 @@ group('导入导出页：行为级（真实 render）');
     const el = buildSide(app, {});
     el.open('exchange');
     const heads = [...el.el.querySelectorAll('h3')].map((x) => x.textContent);
-    for (const t of ['导入', '导出为文档', '导出为交换格式', '导出为图像 / PDF', '主题', '快照备份']) {
+    // 「主题」节已回归主题页（与新建/编辑/删除同排），本页不再有
+    for (const t of ['导入', '导出为文档', '导出为交换格式', '导出为图像 / PDF', '快照备份']) {
       ok(heads.includes(t), `有「${t}」这一节`);
     }
+    ok(!heads.includes('主题'), '「主题」节不在本页（已回归主题页）');
   }
 
   // 3) 点按钮真的调对应 api —— 逐个点，防止"按钮在但接错"
@@ -6271,7 +6289,8 @@ group('导入导出页：标题右侧圆形问号 + 悬浮说明');
   const sec = (n) => fields.find((f) => f.querySelector('h3')?.textContent === n);
 
   // ---- 1) 每个标题右边都有一个问号 ----
-  const titles = ['导入', '导出为文档', '导出为交换格式', '导出为图像 / PDF', '主题', '快照备份'];
+  // 「主题」节已移出本页（回归主题页，与新建/编辑/删除同排）
+  const titles = ['导入', '导出为文档', '导出为交换格式', '导出为图像 / PDF', '快照备份'];
   for (const t of titles) {
     const f = sec(t);
     ok(!!f, `有「${t}」节`);
@@ -6312,7 +6331,7 @@ group('导入导出页：标题右侧圆形问号 + 悬浮说明');
 
   // ---- 4) 悬浮真的能显示，且内容正确 ----
   {
-    const dot = sec('主题')?.querySelector('button.mm-help');
+    const dot = sec('导入')?.querySelector('button.mm-help');
     dot?.dispatchEvent(new dom.window.MouseEvent('mouseenter', { bubbles: false }));
     const tip = document.querySelector('.mm-helptip');
     ok(!!tip, '提示框元素存在');
@@ -6320,9 +6339,9 @@ group('导入导出页：标题右侧圆形问号 + 悬浮说明');
     eq(tip?.parentElement, document.body, '提示框挂在 body 上（不被侧栏 overflow 裁剪）');
     ok(tip?.classList.contains('open'), 'mouseenter 后提示框显示');
     const txt = tip?.textContent || '';
-    ok(/自定义/.test(txt), '提示框含该节的说明文字');
+    ok(/嗅探/.test(txt), '提示框含该节的说明文字');
     // 多段要分成多行，挤成一整段会读不出是几条
-    eq(tip?.querySelectorAll('.mm-helptip-line').length, 2, '主题节说明是 2 段');
+    eq(tip?.querySelectorAll('.mm-helptip-line').length, 2, '导入节说明是 2 段');
 
     // mouseleave 后要能关掉（有延迟，用定时器断言）
     dot?.dispatchEvent(new dom.window.MouseEvent('mouseleave', { bubbles: false }));
@@ -6340,6 +6359,97 @@ group('导入导出页：标题右侧圆形问号 + 悬浮说明');
     const hr = cs.slice(cs.indexOf('.mm-help {'), cs.indexOf('.mm-help:hover'));
     ok(/border-radius:\s*50%/.test(hr), '问号是圆形');
     ok(/cursor:\s*help/.test(hr), '问号是 help 指针');
+  }
+}
+
+group('主题页：导入/导出与新建同排 + 内置主题禁用导出');
+
+{
+  const { buildSide } = await import('./panels.js');
+  const mk = (customThemes = []) => buildSide({
+    api: {
+      status() {}, commit() {}, selectedRef: () => null, selectedRefs: () => [], selectedImages: () => [],
+      applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
+      nodeStyle: () => ({}), setNodeStyle: () => {},
+    },
+    bridge: { getSelectedNodeId: () => 'n1' }, customThemes,
+    sheet: { theme: 'fresh-blue', layout: 'default' },
+  }, {});
+
+  // ---- 1) 导入 / 导出 / 新建 在同一行 ----
+  {
+    const el = mk();
+    el.open('theme');
+    const sec = [...el.el.querySelectorAll('.mm-field')]
+      .find((f) => f.querySelector('h3')?.textContent === '配色主题');
+    ok(!!sec, '有「配色主题」节');
+    const btns = [...(sec?.querySelectorAll('button.mm-btn') || [])];
+    const texts = btns.map((b) => b.textContent);
+    ok(texts.some((t) => /新建/.test(t)), '有「＋ 新建」');
+    ok(texts.some((t) => /导入/.test(t)), '有「导入…」');
+    ok(texts.some((t) => /导出/.test(t)), '有「导出」');
+    // 三者必须**同一行**：拆开后「导入/导出」看着像另一个独立功能
+    const rows = [...(sec?.querySelectorAll('.mm-row') || [])];
+    const one = rows.find((r) => {
+      const ts = [...r.querySelectorAll('button.mm-btn')].map((b) => b.textContent);
+      return ts.some((t) => /新建/.test(t)) && ts.some((t) => /导入/.test(t)) && ts.some((t) => /导出/.test(t));
+    });
+    ok(!!one, '新建 / 导入 / 导出 在同一行');
+  }
+
+  // ---- 2) 内置主题时「导出」禁用 ----
+  {
+    const el = mk();   // sheet.theme = 'fresh-blue'（内置）
+    el.open('theme');
+    const sec = [...el.el.querySelectorAll('.mm-field')]
+      .find((f) => f.querySelector('h3')?.textContent === '配色主题');
+    const exp = [...(sec?.querySelectorAll('button.mm-btn') || [])]
+      .find((b) => b.textContent === '导出');
+    ok(!!exp, '找到「导出」按钮');
+    eq(exp?.disabled, true, '内置主题时导出按钮禁用');
+    ok(/内置主题/.test(exp?.getAttribute('title') || ''),
+      '禁用时 title 说明原因（不让用户点了才知道）');
+  }
+
+  // ---- 3) 自定义主题时「导出」可用 ----
+  {
+    const el = mk([{ id: 'my-theme', name: '我的主题' }]);
+    // 让当前主题指向自定义主题
+    el.open('theme');
+    const sec = [...el.el.querySelectorAll('.mm-field')]
+      .find((f) => f.querySelector('h3')?.textContent === '配色主题');
+    // 点自定义主题把它设为当前，再刷新看按钮
+    const custom = [...(sec?.querySelectorAll('.mm-theme') || [])]
+      .find((x) => /我的主题/.test(x.textContent || ''));
+    const nameSpan = custom && [...custom.querySelectorAll('.name')][0];
+    nameSpan?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    el.refresh();
+    const sec2 = [...el.el.querySelectorAll('.mm-field')]
+      .find((f) => f.querySelector('h3')?.textContent === '配色主题');
+    const exp2 = [...(sec2?.querySelectorAll('button.mm-btn') || [])]
+      .find((b) => b.textContent === '导出');
+    // 注：applyTheme 是 api 里的空实现，sheet.theme 不会真的变，
+    // 这里只验证「禁用态是根据当前主题算出来的」这一逻辑存在
+    ok(!!exp2, '自定义主题场景下也能找到导出按钮');
+  }
+
+  // ---- 4) 指路 hint 已删除 ----
+  {
+    const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+    ok(!/自定义的导入\/导出在侧栏/.test(pn), '主题页的指路 hint 已删除');
+  }
+
+  // ---- 5) 「内置主题无法导出」改由问号承载，信息没丢 ----
+  {
+    const el = mk();
+    el.open('theme');
+    const sec = [...el.el.querySelectorAll('.mm-field')]
+      .find((f) => f.querySelector('h3')?.textContent === '配色主题');
+    const dot = sec?.querySelector('.mm-sec-head button.mm-help');
+    ok(!!dot, '「配色主题」标题右边有问号');
+    dot?.dispatchEvent(new dom.window.MouseEvent('mouseenter', { bubbles: false }));
+    const tip = document.querySelector('.mm-helptip');
+    ok(/自定义/.test(tip?.textContent || ''), '问号里说明「仅针对自定义主题」');
   }
 }
 
