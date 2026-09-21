@@ -188,6 +188,23 @@ export function StackedGroups({
               className="fpx-stack-head"
               // 只让头部可拖：整个框可拖会和里面的卡片拖拽抢事件
               draggable={editing !== i}
+              /*
+               * 点标题栏**空白处**立即折叠/展开，**零延迟**（对齐原版
+               * `OnGroupBoxHeaderUp`：非文字区"与折叠按钮同速，零延迟"）。
+               *
+               * 名字按钮那一块要延后 220ms 好让双击改名有机会取消它，
+               * 但那份延迟不该波及整个标题栏 —— 折个叠还要等一下，
+               * 手快的会觉得"点了没反应"。热区大一点也更顺手。
+               *
+               * `e.target === e.currentTarget` 保证只认真正落在 head 上的点击：
+               * 箭头按钮与名字按钮各有自己的处理，这里不能再插一脚，
+               * 否则点箭头会切换两次（展开又折回去）。
+               */
+              onClick={(e) => {
+                if (e.target !== e.currentTarget) return;
+                if (dragFrom !== -1) return;   // 正在拖分类时不误触
+                toggle(i);
+              }}
               onDragStart={(e) => {
                 if (editing === i) return;
                 /* 此前用 `text/plain`，隐患有两处：

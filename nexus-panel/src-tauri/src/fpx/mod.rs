@@ -867,7 +867,10 @@ pub(crate) fn core_save_style(
            目录自己被设了「防写入」的话，这次写入会被**自己的锁**拦掉 ——
            用户设了保护之后就再也换不了图标，且报错信息完全指向不了原因。
            所以要放进临时摘锁窗口。 */
-        with_unlock(dir, path, || sys::apply_icon(path, &icon))?;
+        /* 中文/含空格的图标路径写进 desktop.ini 可能让 Shell 读不出来 ——
+           这里换成一个纯 ASCII 的副本路径（见 stable_icon_ref）。 */
+        let shell_icon = stable_icon_ref(&dir.join("icons"), &icon);
+        with_unlock(dir, path, || sys::apply_icon(path, &shell_icon))?;
     }
 
     Ok(snapshot(dir, cfg))
@@ -1283,7 +1286,8 @@ pub fn fpx_set_icon(
            这里若也写，两套图标就没区别了。 */
         if affect && !gui && cfg!(windows) {
             // #427：同 core_save_style，写 desktop.ini 要进临时摘锁窗口
-            if let Err(e) = with_unlock(&dir, &path, || sys::apply_icon(&path, &icon)) {
+            let shell_icon = stable_icon_ref(&dir.join("icons"), &icon);
+            if let Err(e) = with_unlock(&dir, &path, || sys::apply_icon(&path, &shell_icon)) {
                 warn = Some(e);
             }
         }
@@ -1365,6 +1369,89 @@ pub(crate) fn sanitize_icon_name(name: &str) -> String {
         .collect::<String>()
         .trim()
         .to_string()
+}
+
+/**
+ * 为"同步到资源管理器"准备一个**路径纯 ASCII** 的图标引用。
+ *
+ * --------------------------------------------------------------------
+ * 对齐原版 `FolderIconService.CopyIconToCache` / `GetStableName`：
+ *
+ * > desktop.ini 中的 IconResource 路径若含非 ASCII 字符（中文、空格、
+ * > 特殊符号），不同编码下极易乱码导致图标加载失败。
+ *
+ * 本版图标名直接来自用户文件，中文**是常态**。中文名写进 desktop.ini 后，
+ * 资源管理器可能读不出来 —— 而界面里却显示得好好的（界面走的是配置里的
+ * 另一条路径）。用户看到的是"同步了但资源管理器没变"，无从下手。
+ *
+ * 做法：非 ASCII 时复制一份到 `icons/_shellcache/<稳定名>`，
+ * desktop.ini 引用那份副本。**不动** `folder_icons` 里登记的原路径 ——
+ * 改登记值会让界面里的图标跟着变，那是另一套东西，不该被牵连。
+ *
+ * @param icons_dir 数据目录下的 icons/
+ * @param icon_ref  形如 `文件路径|索引`
+ */
+#[cfg(windows)]
+fn stable_icon_ref(icons_dir: &std::path::Path, icon_ref: &str) -> String {
+    let mut parts = icon_ref.splitn(2, '|');
+    let file = parts.next().unwrap_or("").trim();
+    let index = parts.next().and_then(|s| s.trim().parse::<i32>().ok()).unwrap_or(0);
+    if file.is_empty() { return icon_ref.to_string(); }
+
+    /*
+     * 已经是纯 ASCII 且不含空格 → 原样返回。
+     * 空格由 `build_icon_resource_line` 的引号处理，不必为此复制一份。
+     */
+    if file.is_ascii() && !file.contains(' ') { return icon_ref.to_string(); }
+
+    let src = std::path::Path::new(file);
+    if !src.is_file() { return icon_ref.to_string(); }
+
+    let cache = icons_dir.join("_shellcache");
+    if std::fs::create_dir_all(&cache).is_err() { return icon_ref.to_string(); }
+
+    /*
+     * 稳定名 = 哈希前缀 + ASCII 化的原名。
+     *
+     * 哈希只用来**避免重名**，不需要密码学强度 ——
+     * 所以不引 sha1 依赖（动 Cargo.toml 的代价远大于收益），
+     * 用 FNV-1a 64：同一路径永远得到同一前缀，重名概率足够低。
+     */
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in file.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    let prefix = format!("{:08x}", h);
+    let stem = src
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "icon".to_string());
+    /* 只留 ASCII 字母数字与 - _，其余（含中文、空格）统一换成 _ */
+    let safe: String = stem
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let ext = src
+        .extension()
+        .map(|s| format!(".{}", s.to_string_lossy()))
+        .unwrap_or_else(|| ".ico".to_string());
+    let dest = cache.join(format!("{prefix}_{safe}{ext}"));
+
+    /*
+     * 复制失败就退回原路径 —— 不能因为取不到副本就不写 desktop.ini，
+     * 那会让"同步到资源管理器"整个功能静默失效。
+     * 中文路径至少还有机会被 Shell 正确解析（本版 ini 是按 UTF-16 写的）。
+     */
+    if std::fs::copy(src, &dest).is_err() { return icon_ref.to_string(); }
+
+    format!("{}|{}", dest.to_string_lossy(), index)
+}
+
+/// 非 Windows 下原样返回（那里根本不写 desktop.ini）。
+#[cfg(not(windows))]
+fn stable_icon_ref(_icons_dir: &std::path::Path, icon_ref: &str) -> String {
+    icon_ref.to_string()
 }
 
 /// 把前端 fetch 到的内置图标内容存进数据目录 icons/，返回落盘路径。

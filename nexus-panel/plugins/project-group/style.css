@@ -182,7 +182,14 @@
  * 改成 0 宽：标题按钮独占剩余空间，整条都能点（折叠），
  * 操作按钮（＋ / ⋯）仍被它推到最右。
  */
-.fpx-stack-spacer { flex: 0; width: 0; }
+/*
+ * 标题栏空白区：撑开并把操作按钮顶到最右，同时**本身可点**（折叠/展开）。
+ *
+ * 此前是 `flex: 0; width: 0` —— 于是标题栏上除箭头与名字外没有第三块可点的
+ * 地方，而箭头只有 18px 宽。热区太小是"用起来别扭但说不出哪别扭"的典型。
+ * 撑开之后整条标题栏的空白处都能点，操作按钮也回到了右侧这个更常规的位置。
+ */
+.fpx-stack-spacer { flex: 1; min-width: 8px; cursor: pointer; }
 .fpx-stack-op {
   width: 22px; height: 22px; flex-shrink: 0;
   background: transparent; border: 1px solid var(--border); border-radius: var(--r-xs);
