@@ -261,7 +261,7 @@ export function CredentialPanel({
             ))}
           </div>
         </div>
-        <div className="p-muted" style={{ marginTop: 'var(--sp-2, 4px)', fontSize: 11 }}>
+        <div className="p-muted" style={{ marginTop: 'var(--sp-2, 4px)', fontSize: 'var(--fs-note, 11px)' }}>
           {VAULT_MODE_META[mode ?? 'auto'].hint}
           {mode === 'passphrase' && !locked && onUnlock ? (
             <button className="mini" style={{ marginLeft: 'var(--sp-3, 6px)' }} onClick={() => onUnlock('')}>
@@ -272,7 +272,7 @@ export function CredentialPanel({
 
         {locked ? (
           <div className="cred-edit">
-            <div className="p-muted" style={{ fontSize: 'var(--fs-12, 12px)' }}>
+            <div className="p-muted" style={{ fontSize: 'var(--fs-body, 12px)' }}>
               凭据已用口令加密。输入口令后才会解密到内存，磁盘上始终是密文。
             </div>
             <label className="p-row">
@@ -340,7 +340,7 @@ export function CredentialPanel({
                 />
               </label>
             )}
-            <div className="p-muted" style={{ fontSize: 'var(--fs-12, 12px)' }}>
+            <div className="p-muted" style={{ fontSize: 'var(--fs-body, 12px)' }}>
               {KIND_META[editing.kind].hint}
               {editing.kind === 'github' ? `。${scopeHintFor(['github:write'])}` : ''}
             </div>
@@ -392,7 +392,7 @@ export function CredentialPanel({
                 </label>
                 )}
                 {editing.kind === 'cli' ? null : (
-                <div className="p-muted" style={{ fontSize: 'var(--fs-12, 12px)' }}>
+                <div className="p-muted" style={{ fontSize: 'var(--fs-body, 12px)' }}>
                   留空用上方服务商的官方地址。中转 / 自建网关填完整地址。
                 </div>
                 )}
@@ -466,7 +466,7 @@ export function CredentialPanel({
                   </div>
                 ) : null}
 
-                <div className="p-muted" style={{ fontSize: 'var(--fs-12, 12px)' }}>
+                <div className="p-muted" style={{ fontSize: 'var(--fs-body, 12px)' }}>
                   节点上的模型下拉框就列这里的东西。服务商上新模型后可再来拉一次，
                   也可以直接在上面补一行。
                 </div>

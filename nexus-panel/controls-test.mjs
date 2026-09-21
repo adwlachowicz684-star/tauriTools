@@ -851,5 +851,70 @@ console.log('\n=== 19. 虚线「添加」入口统一（跨插件）===');
   t('项目组「+ 添加项目组」用 fpx-add-card', /className="fpx-add-card"/.test(grid), '项目组未用 fpx-add-card');
 }
 
+
+console.log('\n=== 20. 字号走语义档（agent-flow）===');
+/*
+ * 起因：agent-flow 里文字大小"各写各的" —— 258 处声明散在 10 个档位，
+ * 同一类元素（栏标题）有的 13、有的 10、有的 14，并排看像三个产品。
+ *
+ * 改法不是"把数字改一致"，而是**建立语义档再重映射**：
+ *   --fs-title(13) / --fs-body(12) / --fs-note(11) / --fs-micro(10) / --fs-code(11)
+ * 一个语义只允许一个档位。以后要调整体字号，改 tokens.css 一处即可。
+ */
+{
+  const af = read('plugins/agent-flow/styles.css');
+  const body = strip(af).replace(/--[\w-]+\s*:\s*[^;]+;/g, '');
+  const SEM = /^var\(--fs-(title|body|note|micro|code)/;
+  const bad = [];
+  const icons = [];
+  for (const m of body.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    const sel = m[1].trim().replace(/\n/g, ' ');
+    for (const f of m[2].matchAll(/font-size\s*:\s*([^;]+);/g)) {
+      const v = f[1].trim();
+      if (SEM.test(v)) continue;
+      /* 图标字形：font-size 在这里是"画多大"而不是"字多大"
+         （× 关闭、kind/trg 图标），14/15 两档刻意保留。 */
+      if (/^var\(--fs-(14|15)/.test(v)) { icons.push(sel.slice(0, 34)); continue; }
+      if (/--af-add-fs/.test(v)) continue;
+      bad.push(`${v} @ ${sel.slice(0, 40)}`);
+    }
+  }
+  t('字号全部走语义档（图标字形除外）', bad.length === 0,
+    bad.slice(0, 3).join(' ; ') || `语义档 ${body.match(/font-size/g)?.length || 0} 处，图标字形 ${icons.length} 处`);
+
+  /* 20.2 tokens.css 必须定义这几个语义档，且档位不重复 */
+  const tk = read('css/tokens.css');
+  const defined = {};
+  for (const m of tk.matchAll(/(--fs-(?:title|body|note|micro|code))\s*:\s*([^;]+);/g)) {
+    defined[m[1]] = m[2].trim();
+  }
+  const need = ['--fs-title', '--fs-body', '--fs-note', '--fs-micro', '--fs-code'];
+  t('tokens.css 定义了五档语义字号', need.every((k) => defined[k]),
+    need.filter((k) => !defined[k]).join(', ') || JSON.stringify(defined));
+  /* 20.2b agent-flow 用到的每个语义档，tokens.css 里都必须有定义。
+     只查"定义了五档"不够 —— 把某档改名后，插件侧仍写旧名，
+     上面那条照样通过（旧名没被要求存在）。从插件侧反向查才拦得住。 */
+  const used = new Set([...body.matchAll(/var\((--fs-(?:title|body|note|micro|code))/g)]
+    .map((m) => m[1]));
+  const undef = [...used].filter((k) => !defined[k]);
+  t('agent-flow 用到的语义档都已在 tokens.css 定义', undef.length === 0,
+    undef.join(', ') || `用到 ${used.size} 档`);
+
+  /* 20.3 同一选择器不得有多处不同档位的 font-size（响应式覆盖除外） */
+  const noMedia = strip(af).replace(/@media[^{]*\{[\s\S]*?\n\}/g, '')
+    .replace(/--[\w-]+\s*:\s*[^;]+;/g, '');
+  const seen = new Map();
+  for (const m of noMedia.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    const key = m[1].trim().replace(/\n/g, ' ').split(',')[0].trim();
+    const fs = [...m[2].matchAll(/font-size\s*:\s*([^;]+);/g)].map((x) => x[1].trim());
+    if (!fs.length) continue;
+    if (!seen.has(key)) seen.set(key, new Set());
+    fs.forEach((v) => seen.get(key).add(v));
+  }
+  const dup = [...seen.entries()].filter(([, v]) => v.size > 1);
+  t('同一选择器不出现多个字号档位（响应式覆盖除外）',
+    dup.length === 0, dup.slice(0, 3).map(([k, v]) => `${k}: ${[...v].join('/')}`).join(' ; '));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

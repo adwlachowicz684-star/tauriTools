@@ -773,7 +773,7 @@ export function OrderPicker({
           {GH_STRATEGY_META[s].label}
         </button>
       ))}
-      <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+      <span className="p-muted" style={{ fontSize: 'var(--fs-note, 11px)' }}>
         顺序即优先级，前面的失败自动换下一个
       </span>
     </div>

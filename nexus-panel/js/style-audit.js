@@ -59,6 +59,8 @@ export const TOKEN_VARS = [
   '--z-base', '--z-raised', '--z-sticky', '--z-float', '--z-menu',
   '--z-mask', '--z-dialog', '--z-pop', '--z-toast', '--z-tooltip',
   '--ring-neutral',
+  /* 语义字号档：让每处文字属于哪个语义写进变量名 */
+  '--fs-title', '--fs-body', '--fs-note', '--fs-micro', '--fs-code',
   '--z-inspector',
   '--z-picker',   /* 吸管 / 全屏取样遮罩 */
   /* 动画时长：与 --dur-*（一次性过渡）分开的一档，见 tokens.css 的说明 */
