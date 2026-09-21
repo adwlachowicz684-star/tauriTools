@@ -887,11 +887,19 @@
 }
 .fpx-settings-sec .fpx-check { margin-bottom: 4px; }
 .fpx-toollist {
+  /* #131 左右两列：工具一多（三十来个）单列会拖得很长，
+     勾一个要滚很久。两列在**窄屏**下退回单列 ——
+     硬分两列的话每项只剩半宽，工具名（等宽、较长）会被截断到看不清。 */
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 2px 12px;
   max-height: 200px; overflow: auto;
   padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--r-sm);
   background: var(--surface-sunk);
 }
-.fpx-toollist .fpx-check { margin-bottom: 2px; }
+/* min-width:0 不能省：grid 项默认 min-width:auto，长工具名会把轨道撑开，
+   两列就变成一列半 —— 看着像布局坏了 */
+.fpx-toollist .fpx-check { margin-bottom: 2px; min-width: 0; }
 /* 工具名等宽，方便与外部配置对照 */
 .fpx-toollist .fpx-check-title { font-family: var(--font-mono); font-size: var(--fs-11, 11px); }
 

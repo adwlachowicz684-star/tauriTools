@@ -2161,6 +2161,28 @@ where
     }
 }
 
+/**
+ * #202 把新建的链接名**并入**已有清单（去重，大小写不敏感）。
+ *
+ * 不能直接整份覆盖：账本里的 `names` 是"这个项目当前有哪些链接"，
+ * 而本次只建了传进来的那几个 —— 覆盖会丢掉之前已建、且**磁盘上仍然存在**
+ * 的链接。表现是：junction 还在，界面却显示"未链接"，而没有任何报错。
+ *
+ * 首次建链时原清单为空，覆盖与并入结果相同，所以这个 bug 只在
+ * "补充建链 / 部分指定名字"时出现 —— 更难被发现。
+ *
+ * 大小写不敏感的理由同 #91：Windows 下 `.OpenCode` 与 `.opencode`
+ * 是同一个目录，按精确比较去重会漏掉真正的重名。
+ */
+pub(crate) fn merge_link_names(existing: &mut Vec<String>, added: Vec<String>) {
+    for n in added {
+        let dup = existing.iter().any(|e| e.eq_ignore_ascii_case(&n));
+        if !dup {
+            existing.push(n);
+        }
+    }
+}
+
 fn upsert_record(records: &mut Vec<LinkRecord>, project: &str, group: &str, names: Vec<String>) {
     let key = store::normalize_key(project);
     let now = now_string();
@@ -2172,14 +2194,17 @@ fn upsert_record(records: &mut Vec<LinkRecord>, project: &str, group: &str, name
         r.lib = group.to_string();
         r.group = group_name;
         r.created = now;
-        r.names = names;
+        /* #202 并入而不是覆盖 —— 理由见 merge_link_names */
+        merge_link_names(&mut r.names, names);
     } else {
+        let mut acc: Vec<String> = Vec::new();
+        merge_link_names(&mut acc, names);
         records.push(LinkRecord {
             project: project.to_string(),
             lib: group.to_string(),
             group: group_name,
             created: now,
-            names,
+            names: acc,
         });
     }
 }

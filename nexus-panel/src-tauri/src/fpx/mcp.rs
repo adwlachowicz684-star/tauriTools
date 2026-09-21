@@ -1220,6 +1220,7 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
                     "name": r.0,
                     "skillDir": r.1,
                     "skillFile": r.2,
+                    "renamed": r.3,
                     "note": "已在 skill 目录生成本地骨架（SKILL.md），在 AI 客户端中重新打开该分组即可加载",
                 })).unwrap_or_default() }] })
             }
@@ -1284,7 +1285,14 @@ fn manual_text(data_dir: &std::path::Path) -> String {
 
 /// 本地生成 skill 骨架：目录名由描述清洗得来，同名自动加序号避让（永不覆盖已有内容）。
 /// 返回 (最终名称, 目录, SKILL.md 路径)。
-fn local_skill_scaffold(base: &std::path::Path, prompt: &str) -> Result<(String, String, String), String> {
+/**
+ * 返回值：`(最终名字, 目录, 文件, 是否因同名而改名)`。
+ *
+ * #94 第四个值是**显式标志**而不是让调用方拿 name 去跟描述比对推断：
+ * 名字经过 `sanitize_name` 清洗（空格转 `-`、非法字符丢弃），
+ * 调用方几乎推不准"这个名字是不是被改过"。
+ */
+fn local_skill_scaffold(base: &std::path::Path, prompt: &str) -> Result<(String, String, String, bool), String> {
     let base_name = sanitize_name(prompt);
     if base_name.is_empty() { return Err("skill 描述清洗后为空，请换个说法".into()); }
 
@@ -1307,9 +1315,13 @@ fn local_skill_scaffold(base: &std::path::Path, prompt: &str) -> Result<(String,
     );
     std::fs::write(&file, md).map_err(|e| format!("写入 SKILL.md 失败: {e}"))?;
 
+    /* 避让发生在 `while p.exists()` 那段：同名就加 2、3… 后缀。
+       renamed 直接由"最终名 != 清洗出来的名"得出，不需要另记标志。 */
+    let renamed = final_name != base_name;
     Ok((final_name,
         dir.to_string_lossy().to_string(),
-        file.to_string_lossy().to_string()))
+        file.to_string_lossy().to_string(),
+        renamed))
 }
 
 /// 把描述清洗成合法目录名：保留中英文数字与 - _ ，其余转空格再压成一个 -
