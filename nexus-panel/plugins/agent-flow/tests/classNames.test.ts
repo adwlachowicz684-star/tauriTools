@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { readSrc } from './srcScan';
 import path from 'node:path';
 
 /*
@@ -278,9 +279,13 @@ test('.is-stack-top 有定义且被接上', () => {
 });
 
 /** 标记必须算出来塞进 data，否则 NodeShell 扫不到全图 */
-test('App 在渲染时算 hasStackChild', () => {
+test('渲染时算 hasStackChild', () => {
   if (!hasSrc) return;
-  const app = read(path.join(ROOT, 'App.tsx'));
+  /*
+   * 嵌合已抽到 hooks/useStackLayout —— App.tsx 与 hook 都扫，
+   * 只盯一处会在代码搬走后假通过。
+   */
+  const app = readSrc('App.tsx', 'hooks/useStackLayout.ts');
   assert.ok(app.includes('stackParentIds'), 'App 要用 stackParentIds 算出下面挂着块的节点');
   assert.ok(app.includes('hasStackChild'), '要把 hasStackChild 塞进 data');
 });
