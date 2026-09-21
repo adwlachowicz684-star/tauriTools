@@ -5,10 +5,13 @@ import { inspectorOf } from './inspectors/inspectorOf';
 import { NODE_SIZE_META, normalizeSize, type NodeSize } from '../types';
 import { stackParentOf, descendantsOf, chainTopOf, chainOf } from '../engine/stack';
 import { ErrorBoundary } from './ErrorBoundary';
-import {
-  setDefault, clearDefault, hasDefault, matchPresetKey,
-} from '../engine/nodeDefaults';
-import { allPresets } from '../nodes/registry';
+/*
+ * 「设为默认」不再有整体按钮 —— 每个参数各自带一个小按钮。
+ *
+ * 整体按钮的问题是顺带定死别的字段：只想改一个字段的默认，
+ * 得先把整个节点配成想要的样子再整份存，
+ * 而其它字段当前的值（哪怕只是路过改了一下）会一起被存进去。
+ */
 import type { CanvasConfig } from '../engine/canvasConfig';
 import CanvasConfigPanel from './inspectors/CanvasConfigPanel';
 
@@ -160,40 +163,6 @@ export default function Inspector({
   ) : null;
 
   /*
-   * 「设为默认」行。
-   *
-   * 同样放在分发器里 —— 条件 / 循环 / 并发 / 触发器用的是整体自定义面板，
-   * 塞进各面板要改 4 处；这里一次覆盖全部类型。
-   *
-   * 它也不属于"节点参数"（不影响本次执行），而是影响**以后新建的节点**，
-   * 所以没混进字段列表。
-   */
-  const presets = allPresets();
-  const presetKey = matchPresetKey(
-    presets as never, node.type, node.data as Record<string, unknown>,
-  ) ?? node.type;
-  const hasOwn = hasDefault(presetKey);
-
-  const onSetDefault = () => {
-    const r = setDefault(presetKey, node.data);
-    const label = presets.find((p) => p.key === presetKey)?.label ?? presetKey;
-    if (r.strippedSecrets) {
-      pushNote?.(
-        `已把当前参数设为「${label}」的默认。节点里直接填写的令牌不会被保存`
-        + '（默认值是明文存储），请改用凭据中心的凭据。',
-      );
-      return;
-    }
-    pushNote?.(`已把当前参数设为「${label}」的默认，之后新建的同类节点都用这套值。`);
-  };
-
-  const onClearDefault = () => {
-    clearDefault(presetKey);
-    const label = presets.find((p) => p.key === presetKey)?.label ?? presetKey;
-    pushNote?.(`已清除「${label}」的默认参数，恢复为出厂值。`);
-  };
-
-  /*
    * 「节点 id」行。
    *
    * ================= 为什么挪到这里 =================
@@ -229,32 +198,6 @@ export default function Inspector({
     </div>
   );
 
-  const defaultRow = (
-    <div className="insp-size" style={{ marginBottom: 'var(--sp-3, 6px)', paddingBottom: 6 }}>
-      <span className="insp-size-label">
-        {hasOwn ? '已设默认' : '默认参数'}
-      </span>
-      <span className="insp-size-ops">
-        <button
-          className={`insp-size-btn${hasOwn ? ' on' : ''}`}
-          title="把当前参数存成这类节点的默认值，之后新建的同类节点都用这套值"
-          onClick={onSetDefault}
-        >
-          设为默认
-        </button>
-        {hasOwn ? (
-          <button
-            className="insp-size-btn"
-            title="恢复为出厂默认值"
-            onClick={onClearDefault}
-          >
-            清除
-          </button>
-        ) : null}
-      </span>
-    </div>
-  );
-
   const sizeRow = (
     <div className="insp-size">
       <span className="insp-size-label">显示高度</span>
@@ -278,7 +221,6 @@ export default function Inspector({
       {stackRow}
       {sizeRow}
       {idRow}
-      {defaultRow}
       {/*
         面板也要兜住。
         曾经触发器的数据不合法 → 面板渲染抛错 → 整棵树崩，

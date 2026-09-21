@@ -223,19 +223,27 @@ test('字段渲染层接了逐字段设为默认', () => {
 });
 
 /**
- * presetKey 必须与整节点那个按钮同一套算法。
+ * 不再有「管整个节点」的设为默认按钮。
  *
- * 各算一次的话两边会存到不同的键下 ——
- * 表现为"我单独设了某个字段的默认，顶部却显示没设过默认"。
+ * 以前它和逐字段小按钮并存：
+ * 顶部一个"设为默认"把整份 data 存成默认，下面每个字段又各有一个。
+ * 两条路写进不同的键（一个按 matchPresetKey、一个按字段路径），
+ * 于是"我单独设了某个字段的默认，顶部却显示没设过默认"。
+ *
+ * 而且整体按钮会顺带定死别的字段 —— 只想改一个字段的默认，
+ * 得先把整个节点配成想要的样子再整份存。
+ *
+ * 所以只留逐字段小按钮，键的算法也只剩一处。
  */
-test('逐字段与整节点用同一个 presetKey 算法', () => {
+test('属性面板不再有整节点的设为默认按钮', () => {
   if (!hasSrc) return;
-  const f = read(path.join(ROOT, 'components/inspectors/fields.tsx'));
   const i = read(path.join(ROOT, 'components/Inspector.tsx'));
-  for (const src of [f, i]) {
-    assert.ok(src.includes('matchPresetKey'), '两边都该用 matchPresetKey 算键');
-    assert.ok(src.includes('allPresets'), '两边都该传 allPresets');
-  }
+  assert.ok(!i.includes('setDefault'), 'Inspector 不该再整份存默认');
+  assert.ok(!i.includes('hasDefault'), 'Inspector 不该再查整节点默认');
+  // 逐字段那条路必须还在 —— 全删了等于功能没了
+  const f = read(path.join(ROOT, 'components/inspectors/fields.tsx'));
+  assert.ok(f.includes('matchPresetKey'), 'fields.tsx 仍要用 matchPresetKey 算键');
+  assert.ok(f.includes('allPresets'), 'fields.tsx 仍要传 allPresets');
 });
 
 /** 密钥字段必须被挡住 —— 默认值是明文落盘的 */
