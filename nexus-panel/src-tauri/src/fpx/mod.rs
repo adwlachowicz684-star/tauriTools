@@ -2121,6 +2121,32 @@ pub fn fpx_save_chain_actions(
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     list.retain(|a| seen.insert(a.id.clone()));
 
+    /*
+     * 与内置默认**逐字一致**的模板存成 null（对齐原版 `SetChainTemplate`：
+     * 「与内置默认一致时存 null 防膨胀」）。
+     *
+     * 不归一化的话会有两个后果：
+     *   ① config 里多出一大坨与默认值完全重复的模板文本；
+     *   ② 更要紧的 —— 这份副本被**冻结**了。以后内置默认改进了
+     *      （比如补了占位符、改了措辞），这位用户仍停在旧的那份，
+     *      而界面上看不出它"不是默认值"，他也无从知道该清空。
+     *
+     * 只对**内置动作**做：自定义动作没有内置默认，清空是真清空。
+     */
+    for a in list.iter_mut() {
+        if a.builtin.trim().is_empty() { continue; }
+        if let Some(v) = a.project.as_ref() {
+            if v.trim() == super::chain::default_project(&a.builtin).trim() {
+                a.project = None;
+            }
+        }
+        if let Some(v) = a.group.as_ref() {
+            if v.trim() == super::chain::default_group(&a.builtin).trim() {
+                a.group = None;
+            }
+        }
+    }
+
     store::with_config(&dir, |cfg| {
         cfg.chain_actions = Some(list.clone());
         Ok(())

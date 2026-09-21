@@ -125,7 +125,9 @@
     "test:pg-icon-clip": "node plugins/project-group/icon-clip-test.mjs",
     "test:pg-link-row-real": "node plugins/project-group/link-row-real-test.mjs",
     "test:pg-stack-hotzone": "node plugins/project-group/stack-head-hotzone-test.mjs",
-    "test:pg-shell-icon-ascii": "node plugins/project-group/shell-icon-ascii-test.mjs"
+    "test:pg-shell-icon-ascii": "node plugins/project-group/shell-icon-ascii-test.mjs",
+    "test:pg-movecard-source": "node plugins/project-group/movecard-source-tab-test.mjs",
+    "test:pg-chain-tpl-norm": "node plugins/project-group/chain-template-normalize-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

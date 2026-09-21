@@ -289,15 +289,42 @@ export function useFpx() {
    * 卡片被塞进一个凭空新建的空白页签里 —— 用户看到的就是"卡片消失了"。
    * 索引来源（activeTab）存在 localStorage 里，与当前快照偶有不同步，故在后端兜底。
    */
+  /**
+   * 移动卡片（同页签重排 / 跨页签移动）。
+   *
+   * @param fromTabIndex **源页签**。原来不传，于是只能"从所有页签里把这个路径
+   *   全部删掉"再插入目标 —— 而同一个路径**可以登记在多个页签里**（添加时只查
+   *   当前页签有没有重复）。那样拖一次会把它在**其它页签里的登记一并抹掉**，
+   *   而用户只是想在这一页里挪个位置：改了不该改的地方，且没有任何提示。
+   *
+   *   原版注释里点明了这点：「同路径多页签时按路径 RemoveAll 会误删其他页签的
+   *   同路径卡」。所以只从源页签摘。
+   */
   const moveCard = useCallback(async (
     kind: CardKind, path: string, toTabIndex: number, toIndex: number,
+    fromTabIndex?: number,
   ) => {
     await updateConfig((d) => {
       const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
+      if (tabs.length === 0) return;
       // 掐头去尾：先把目标位置定在合法范围内，再摘卡（摘卡不影响页签数）
       const maxTab = Math.max(0, tabs.length - 1);
       const tab = Math.max(0, Math.min(toTabIndex, maxTab));
-      for (const t of tabs) t.items = t.items.filter((p) => p !== path);
+      /*
+       * 源页签：优先用显式传入的那个；
+       * 没传就退回"第一个含这张卡的页签"（找不到就什么都不做 ——
+       * 凭空插入一张不在任何页签里的卡，比不动更糟）。
+       */
+      let src = fromTabIndex ?? tabs.findIndex((t) => t.items.includes(path));
+      if (src < 0 || src >= tabs.length) src = tabs.findIndex((t) => t.items.includes(path));
+      if (src < 0) return;
+      /*
+       * 只摘**一处**：同一个页签里理论上也会有重复登记（历史数据），
+       * 用 filter 会一次全清掉。这里只删找到的第一条。
+       */
+      const at = tabs[src].items.indexOf(path);
+      if (at < 0) return;
+      tabs[src].items.splice(at, 1);
       const target = tabs[tab];
       const i = Math.max(0, Math.min(toIndex, target.items.length));
       target.items.splice(i, 0, path);

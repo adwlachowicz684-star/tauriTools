@@ -853,14 +853,18 @@ export default function App() {
               selected={s.selProject}
               onSelect={(p) => { setFocus('project'); s.setSelProject(p); }}
               onOpen={(p) => openPath(p, 'dir')}
-              onMove={(path, i) => s.moveCard('project', path, activeTabRef.current.project, i)}
+              /* fromTab 显式传：拖的是当前这一页里的卡，源就是当前页签。
+                 不传的话 moveCard 会退回"找第一个含它的页签"，
+                 同路径登记在多个页签时会摘错一个。 */
+              onMove={(path, i) => s.moveCard('project', path, activeTabRef.current.project, i,
+                activeTabRef.current.project)}
               onMoveToTab={(path, tabIndex) => {
                 /* #103 拖回自己所在的页签 = 取消，不做任何事。
                    不守卫的话会被 moveCard 移到该页签末尾 ——
                    用户以为取消了，实际改了顺序，且没有任何提示。 */
                 if (skipDropToTab(boot.projectTabs, tabIndex, path)) return;
                 const n = boot.projectTabs[tabIndex]?.items.length ?? 0;
-                s.moveCard('project', path, tabIndex, n);
+                s.moveCard('project', path, tabIndex, n, activeTabRef.current.project);
               }}
               onCrossDrop={onCrossDrop}
               thumbs={iconThumbs}
@@ -921,7 +925,9 @@ export default function App() {
                 thumbs={iconThumbs}
                 onSelect={(p) => { setFocus('group'); s.setSelGroup(p); }}
                 onOpen={(p) => openPath(p, 'dir')}
-                onMove={(tabIndex, path, index) => s.moveCard('group', path, tabIndex, index)}
+                /* 项目组是纵向堆叠：卡片就在 tabIndex 这个分类框里，
+                   源与目标都是它。 */
+                onMove={(tabIndex, path, index) => s.moveCard('group', path, tabIndex, index, tabIndex)}
                 onCrossDrop={onCrossDrop}
                 menus={menus('group')}
                 onRename={(i, n) => s.renameTab('group', i, n)}
