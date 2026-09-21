@@ -398,15 +398,8 @@ bootIframePlugin(async (ctx) => {
     });
 
     // 导入导出按钮已全部移到侧栏「导入导出」页（原 openExportMenu 一并删除）。
-    // 顶栏只留画布级操作（新建 / 复制），格式相关的入口统一收进那一页。
-    toolbar.appendChild(group(
-      B('新建', guard('新建画布', () => addSheet()), { title: '新建画布' }),
-      B('复制', guard('复制画布', () => duplicateSheet(workbook.activeId)),
-        { title: '复制当前画布（含内容与主题布局）' }),
-    ));
-
-    toolbar.appendChild(h('div.mm-sep', {}));
-
+    // 「新建 / 复制」画布也已移除 —— 页签区自带 ＋ 新建入口，
+    // 复制则是低频操作，占着顶栏最显眼的位置性价比太低。
     toolbar.appendChild(group(
       B('下级', () => { bridge?.exec('AppendChildNode'); commit(); }, { title: '插入下级节点 (Tab)' }),
       B('同级', () => { bridge?.exec('AppendSiblingNode'); commit(); }, { title: '插入同级节点 (Enter)' }),
@@ -471,6 +464,15 @@ bootIframePlugin(async (ctx) => {
       title: settings.filesOpen ? '隐藏脑图文件列表' : '显示脑图文件列表',
       onclick: () => toggleFiles(),
     }, '📚'));
+
+    // ---- 聚焦 ----
+    // 「回到中心主题」是看整幅图时最高频的补救操作：拖远了、缩放乱了，
+    // 一键把视野拉回根节点。放在图标条最上面 —— 它是"迷路时的出口"，
+    // 埋在下面等于没有。
+    rail.appendChild(h('button.mm-btn', {
+      title: '聚焦中心主题（视图回到根节点并选中它）',
+      onclick: () => { bridge?.focusRoot(); },
+    }, '⌖'));
 
     // ---- 展开层级 ----
     // 原先在右侧栏「样式」页的「视图」节里。那位置很别扭：
@@ -2118,7 +2120,12 @@ bootIframePlugin(async (ctx) => {
     api,
     get customThemes() { return customThemes; },
     get settings() { return settings; },
-    sheet,
+    // 必须是 **getter**：`sheet` 本身是「取当前画布」的**函数**，
+    // 直接把函数传出去的话，面板里 `app.sheet?.theme` / `?.layout`
+    // 读的是**函数对象**上的属性（恒 undefined），于是主题列表与布局
+    // 模板的选中态永远停在默认值 —— 用户切了布局，画布变了，面板高亮
+    // 却不动。改成 getter 后每次读都是当前画布。
+    get sheet() { return sheet(); },
   };
   side = buildSide(app, { onPage: syncSideTabs });
   fileList = buildFileList(app);

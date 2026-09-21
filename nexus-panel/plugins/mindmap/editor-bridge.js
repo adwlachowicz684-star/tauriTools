@@ -464,6 +464,16 @@ export class EditorBridge {
   }
 
   /** 按选中节点展开到第 N 层（0/负数=全部） */
+  /**
+   * 聚焦中心主题：视图移到根节点并选中它。
+   *
+   * 为什么单独做一个方法而不是 `exec('camera', root)`：
+   * 跨 iframe **传不了节点对象**，根节点只能让编辑器自己取。
+   */
+  focusRoot() {
+    return this._safe('聚焦中心主题', (m) => m.focusRoot());
+  }
+
   expandToLevel(levels) {
     return this._safe('展开', (m) => m.expandSelectedToLevel(levels));
   }

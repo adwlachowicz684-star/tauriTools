@@ -2241,6 +2241,18 @@
                 var rc = km.getRenderContainer();
                 var shape = new kity.Rect().setRadius(6);
                 shape.stroke('#0A84FF', 2).fill('rgba(10,132,255,0.10)');
+                // **必须让高亮框不接收鼠标事件**。
+                // KityMinder 的选中靠 `getTargetNode()`：从事件的 targetShape
+                // 往上找带 `minderNode` 的容器。这个框加在 renderContainer 上、
+                // 画在节点**之上**且带半透明填充 —— 不禁用命中的话，点它
+                // 覆盖到的节点时 targetShape 是这个框，往上找不到 minderNode，
+                // 于是**选不中**，表现为"搜索之后其他节点点不动了"。
+                // 而且只有取消搜索（clearSearchMark）才恢复，很难定位。
+                try { shape.setStyle('pointer-events', 'none'); } catch (e) {}
+                // 双保险：直接写到底层 SVG 节点的 style 上。
+                // 只调 setStyle 的话，若 kity 版本差异导致它没落到 node.style，
+                // 拦截依旧发生；而这里写的是浏览器真正认的那一份。
+                try { if (shape.node) shape.node.style.pointerEvents = 'none'; } catch (e) {}
                 var pad = 6;
                 shape.setPosition(lb.x - pad, lb.y - pad);
                 shape.setSize(lb.width + pad * 2, lb.height + pad * 2);
@@ -2317,11 +2329,36 @@
             _searchPos = idx + 1;                 // 与 search() 的 1 起下标保持一致
             var node = list[idx];
             try { km.clearSelect && km.clearSelect(); } catch (e) {}
+            _selfSelecting = true;
             try { km.select && km.select(node); } catch (e) {}
+            // 同步复位：select 派发的 selectionchange 是**同步**的，
+            // 放在 try 之后就晚了（那时标志已经过期，框会被自己清掉）
+            _selfSelecting = false;
             markSearchNode(node);
             try { km.focus && km.focus(); } catch (e) {}
             return true;
         }
+        // 用户手动点到**别的**节点时，把上一个搜索结果的高亮框撤掉。
+        // 留着的话，画面上会同时出现"选中态"和"搜索高亮"两个框，
+        // 用户分不清现在选中的到底是哪个。
+        //
+        // 注意要**跳过自己触发的那次**：focusSearchResult 里会 select
+        // 当前匹配节点，那也会派发 selectionchange —— 不排除的话，
+        // 刚画好的框会被自己立刻清掉，等于搜索定位完全没有高亮。
+        var _selfSelecting = false;
+        function isCurrentSearchNode(n) {
+            var list = _searchList || [];
+            var i = _searchPos - 1;
+            return !!(n && i >= 0 && i < list.length && list[i] === n);
+        }
+        try { km.on('selectionchange', function () {
+            if (_selfSelecting || !_searchMark) return;
+            var sel = null;
+            try { sel = km.getSelectedNode && km.getSelectedNode(); } catch (e) {}
+            if (isCurrentSearchNode(sel)) return;
+            clearSearchMark();
+        }); } catch (e) {}
+
         // 内容变化后旧结果会过期：按当前关键字静默重建，避免外壳点条目时定位到已删节点
         try { km.on('contentchange', function () {
             if (!_searchKw) return;
@@ -2630,6 +2667,26 @@
             // 外壳点结果条目时定位。索引越界返回 false ——
             // 内容变化后列表会重建，外壳的旧列表可能与当前不一致，
             // 越界时宁可失败也不能定位到错误的节点。
+            // 聚焦中心主题：把视图移到根节点并选中它。
+            //
+            // 不用外壳传节点进来 —— 跨 iframe 传不了对象，
+            // 只能让编辑器自己取 km.getRoot()。
+            //
+            // camera 的第二个参数是动画时长：给 0 会瞬移，
+            // 用户看不出"发生了什么、移到哪儿了"；
+            // 给 300ms 才有"镜头推过去"的连续感。
+            focusRoot: function () {
+                try {
+                    var root = km.getRoot();
+                    if (!root) return false;
+                    // 先展开：根节点若是折叠的，视野里根本没有内容可看
+                    try { root.expand && root.expand(); } catch (e) {}
+                    try { km.execCommand('camera', root, 300); } catch (e) {}
+                    try { km.clearSelect && km.clearSelect(); } catch (e) {}
+                    try { km.select && km.select(root); } catch (e) {}
+                    return true;
+                } catch (e) { return false; }
+            },
             gotoSearchResult: function (idx) {
                 try { return focusSearchResult(Number(idx) | 0); } catch (e) { return false; }
             },
