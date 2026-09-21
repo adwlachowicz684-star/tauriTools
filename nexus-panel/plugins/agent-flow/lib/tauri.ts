@@ -138,9 +138,9 @@ export async function runCli(req: RunRequest, h: StreamHandlers): Promise<void> 
   // listen 也包进 try：事件通道不可用时这里会抛，
   // 留在外面会变成 unhandled rejection，界面上什么都不显示
   try {
-    unlisteners.push(await listen<string>(out, (e) => h.onStdout(e.payload)));
-    unlisteners.push(await listen<string>(err, (e) => h.onStderr(e.payload)));
-    unlisteners.push(await listen<DonePayload>(done, (e) => finish(e.payload)));
+    unlisteners.push(await listen<string>(out, (e: { payload: string }) => h.onStdout(e.payload)));
+    unlisteners.push(await listen<string>(err, (e: { payload: string }) => h.onStderr(e.payload)));
+    unlisteners.push(await listen<DonePayload>(done, (e: { payload: DonePayload }) => finish(e.payload)));
 
     await invoke<void>('run_node', { req });
   } catch (e) {
@@ -173,7 +173,7 @@ export async function startWatch(
   if (!hasTauriEvents()) return null;
 
   await invoke<void>('watch_start', { id, dir, recursive });
-  const un = await listen<string>(`watch-event/${id}`, (e) => onEvent(e.payload));
+  const un = await listen<string>(`watch-event/${id}`, (e: { payload: string }) => onEvent(e.payload));
 
   return () => {
     un();
@@ -213,7 +213,7 @@ export async function startWebhook(
     console.error('启动 webhook 失败', e);
     return null;
   }
-  const un = await listen<string>(`webhook-event/${id}`, (e) => onEvent(e.payload));
+  const un = await listen<string>(`webhook-event/${id}`, (e: { payload: string }) => onEvent(e.payload));
 
   return () => {
     un();
