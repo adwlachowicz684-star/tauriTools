@@ -1719,3 +1719,28 @@
   outline: 1px solid var(--accent);
   outline-offset: 1px;
 }
+
+/* #156 图标弹窗页签栏（预设 / 剪贴板） */
+.fpx-prestab { display: flex; gap: 4px; margin-bottom: 8px; }
+.fpx-prestab button {
+  padding: 4px 10px; font-size: 12px; border-radius: var(--r-sm);
+  border: 1px solid var(--border); background: transparent; color: var(--text-dim);
+}
+.fpx-prestab button.on { background: var(--surface); color: var(--text); border-color: var(--border); }
+
+/*
+ * 剪贴板页签下隐藏预设库那一整块。
+ *
+ * 用 `:not()` 排除而不是逐个列类名 —— 列类名的话以后往预设区加一块，
+ * 忘了同步这里就会在剪贴板页签下露出半截预设库。
+ */
+.fpx-preset.clip > :not(.fpx-prestab):not(.fpx-clip) { display: none; }
+
+.fpx-clip-preview {
+  display: block; width: 64px; height: 64px; margin: 10px 0;
+  object-fit: contain; background: var(--surface-sunk); border-radius: var(--r-sm);
+}
+.fpx-clip-empty {
+  margin: 10px 0; padding: 20px; text-align: center; font-size: 12px;
+  color: var(--text-dim); background: var(--surface-sunk); border-radius: var(--r-sm);
+}

@@ -1385,11 +1385,53 @@ pub fn fpx_save_icon_data(
     let safe = sanitize_icon_name(&name);
     if safe.is_empty() { return Err("图标名为空".into()); }
 
-    let path = dest_dir.join(format!("{safe}.ico"));
     let bytes = base64::decode(&data_base64)?;
     if bytes.len() > 2 * 1024 * 1024 { return Err("图标数据超过 2MB".into()); }
+
+    /*
+     * 重名自动加 `(1)`（对齐原版 `PresetIconService.UniqueIconName`）。
+     *
+     * 此前直接按原名 `write` —— 同名就**静默覆盖**用户已有的图标。
+     * 用户导入一张也叫 logo.png 的图，旧的那张就没了，且没有任何提示；
+     * 等他在分组里点到那一项时，看到的是新图却以为是旧的。
+     *
+     * 两条判据都要查（与原版一致）：
+     *   ① 磁盘上已有同名文件 —— 这是真会覆盖的那种
+     *   ② 配置各分组里已有同名 —— 不查的话会出现两个"同名项"指向同一个文件，
+     *      之后 #12「清理失效预设」或改名时会分不清是谁
+     */
+    let name = unique_icon_name(&dest_dir, &dir, &safe);
+    let path = dest_dir.join(format!("{name}.ico"));
     std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().to_string())
+}
+
+/**
+ * 生成一个不与现有图标冲突的名字。
+ *
+ * `base` 已清洗过（不含路径分隔符）。冲突时追加 `(2)` `(3)`…，
+ * 上限 999 次后放弃（防止异常输入下无限循环）。
+ */
+fn unique_icon_name(dest_dir: &std::path::Path, data_dir: &std::path::Path, base: &str) -> String {
+    // 各分组登记过的名字（大小写不敏感，与原版 StringComparer.OrdinalIgnoreCase 一致）
+    let known: Vec<String> = store::load_config(data_dir)
+        .icon_groups
+        .iter()
+        .flat_map(|g| g.icons.iter())
+        .map(|n| n.to_lowercase())
+        .collect();
+
+    let taken = |n: &str| {
+        dest_dir.join(format!("{n}.ico")).exists()
+            || known.iter().any(|k| k == &n.to_lowercase())
+    };
+
+    if !taken(base) { return base.to_string(); }
+    for i in 2..=999 {
+        let cand = format!("{base}({i})");
+        if !taken(&cand) { return cand; }
+    }
+    base.to_string()
 }
 
 /**

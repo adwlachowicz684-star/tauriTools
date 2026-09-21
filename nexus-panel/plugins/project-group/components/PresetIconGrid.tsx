@@ -12,6 +12,8 @@ import { resolveMoveIndex, clampIndex, gapIndexAtX } from '../utils/dragSort';
 import { pruneGroups, staleByList, staleByProbe, totalRemoved } from '../utils/iconGroups';
 /* #146 图标网格高度自适应：与 #147 模板框共用同一个测量 hook */
 import { useAvailableHeight } from '../hooks/useAvailableHeight';
+/* #7 剪贴板图片 → 多尺寸 ICO（与设置页「软件图标」那处共用同一份转换） */
+import { imageToIcoBase64 } from '../utils/ico';
 
 /** 内置图标默认归入的组名（与原版一致）。 */
 const DEFAULT_GROUP = '默认';
@@ -50,6 +52,19 @@ export function PresetIconGrid({
   const [active, setActive] = useState<string>(DEFAULT_GROUP);
   const [addMode, setAddMode] = useState(false);
   const [busy, setBusy] = useState('');
+
+  /*
+   * #156 剪贴板页签（原版 IconPickDialog 三个页签之一：预设 / 系统 / 剪贴板）。
+   *
+   * 「系统」那页依赖 Windows 图标提取（#5/#6），本版没有，故只做两个。
+   */
+  const [tab, setTab] = useState<'preset' | 'clip'>('preset');
+  /** 剪贴板里的图：dataURL 用于预览，Blob 用于转 ICO */
+  const [clipUrl, setClipUrl] = useState<string | null>(null);
+  const [clipBlob, setClipBlob] = useState<Blob | null>(null);
+  const [clipMsg, setClipMsg] = useState('');
+  /* 目标分组；'' 表示"仅应用、不加入任何分组"（原版 noAddText 那一项） */
+  const [clipGroup, setClipGroup] = useState<string>(DEFAULT_GROUP);
 
   /** 保证至少有一个默认分组；默认组初始收录全部内置图标。 */
   const effective = useMemo<IconGroup[]>(() => {
@@ -270,8 +285,112 @@ export function PresetIconGrid({
     }
   };
 
+  /**
+   * 读剪贴板里的图片。
+   *
+   * 两条入口都要有：按钮（`navigator.clipboard.read`）与面板内 paste 事件。
+   * 只给按钮的话，用户按 Ctrl+V 会什么都没发生 ——
+   * 而"粘贴"这件事的默认操作就是 Ctrl+V，没有它最反直觉。
+   */
+  const takeImage = (item: Blob | null, why: string) => {
+    if (!item) { setClipMsg(why); return; }
+    setClipBlob(item);
+    setClipUrl(URL.createObjectURL(item));
+    setClipMsg('');
+  };
+
+  const pasteFromClipboard = async () => {
+    try {
+      /* Safari 等不支持 read() 时报的错要给出来 ——
+         否则点了没反应，用户会以为剪贴板是空的。 */
+      const items = await navigator.clipboard.read();
+      for (const it of items) {
+        for (const t of it.types) {
+          if (!t.startsWith('image/')) continue;
+          takeImage(await it.getType(t), '');
+          return;
+        }
+      }
+      setClipMsg('剪贴板里没有图片。');
+    } catch (e) {
+      setClipMsg(`读取剪贴板失败：${errText(e)}`);
+    }
+  };
+
+  /*
+   * #157 应用后**不清空**剪贴板图。
+   *
+   * 原版注释写得很直接：「不清空 _clipboardImage：非模态下可对连续选中的
+   * 多张卡重复应用同一张图」。本版 #8 已经是非模态（换卡片换目标），
+   * 若这里清空，用户给第二张卡贴同一张图就得重新复制一次 ——
+   * 而非模态的意义本来就是"连着贴好几张"。
+   */
+  const applyClipboard = async () => {
+    if (!clipBlob) { setClipMsg('请先粘贴图片。'); return; }
+    setBusy('clip');
+    try {
+      const b64 = await imageToIcoBase64(clipBlob);
+      /* 名字用「剪贴板」（原版 baseName），重名由后端自动加 (1) */
+      const path = await api.saveIconData('剪贴板', b64);
+      const nm = path.replace(/\\/g, '/').split('/').pop()?.replace(/\.ico$/, '') ?? '剪贴板';
+      if (clipGroup) {
+        commit(effective.map((g) => (g.name === clipGroup && !g.icons.includes(nm)
+          ? { ...g, icons: [...g.icons, nm] } : g)));
+      }
+      onPick(path);
+      setClipMsg(`已应用${clipGroup ? `并加入「${clipGroup}」` : ''}：${nm}`);
+    } catch (e) {
+      setClipMsg(`应用失败：${errText(e)}`);
+    } finally {
+      setBusy('');
+    }
+  };
+
   return (
-    <div className="fpx-preset">
+    <div className={`fpx-preset${tab === 'clip' ? ' clip' : ''}`}>
+      <div className="fpx-prestab">
+        <button className={tab === 'preset' ? 'on' : ''} onClick={() => setTab('preset')}>预设库</button>
+        <button className={tab === 'clip' ? 'on' : ''} onClick={() => setTab('clip')}>剪贴板</button>
+      </div>
+      {tab === 'clip' && (
+        <div
+          className="fpx-clip"
+          /* 粘贴要挂在这块上：window 级监听会与页面里其它输入框的粘贴打架 */
+          onPaste={(e) => {
+            const f = Array.from(e.clipboardData?.items ?? [])
+              .find((it) => it.type.startsWith('image/'));
+            if (!f) { setClipMsg('剪贴板里没有图片。'); return; }
+            e.preventDefault();
+            takeImage(f.getAsFile(), '');
+          }}
+        >
+          <div className="p-row">
+            <button className="p-btn" onClick={() => void pasteFromClipboard()}>粘贴</button>
+            <button className="p-btn primary" disabled={!clipBlob || !!busy}
+              onClick={() => void applyClipboard()}>
+              {busy ? '处理中…' : '应用'}
+            </button>
+          </div>
+          <div className="p-muted" style={{ marginTop: 'var(--sp-4, 8px)' }}>
+            也可以直接按 Ctrl+V。
+          </div>
+          {clipUrl ? (
+            <img className="fpx-clip-preview" src={clipUrl} alt="剪贴板图片" />
+          ) : (
+            <div className="fpx-clip-empty">还没有图片</div>
+          )}
+          <div className="fpx-field">
+            <label>加入分组</label>
+            <select className="p-input" value={clipGroup} onChange={(e) => setClipGroup(e.target.value)}>
+              <option value="">（仅应用，不加入分组）</option>
+              {effective.map((g) => (
+                <option key={g.name} value={g.name}>{g.name}</option>
+              ))}
+            </select>
+          </div>
+          {clipMsg && <div className="p-muted">{clipMsg}</div>}
+        </div>
+      )}
       <div className="fpx-groupbar">
         {effective.map((g, i) => (
           /* #151 外层 wrap 只为承载 hover 显形的删除按钮；
