@@ -12,10 +12,14 @@
 
 import {
   PRESET_THEMES, THEME_VARS, ACCENT_SWATCHES, ACCENT_SWATCHES_LIGHT,
-  DEFAULT_THEME_ID, swatchFor,
+  DEFAULT_THEME_ID, swatchFor, styleParams, BG_PRESETS, findBgPreset,
 } from './themes.js';
 
 export { ACCENT_SWATCHES, ACCENT_SWATCHES_LIGHT, swatchFor, PRESET_THEMES, THEME_VARS };
+/* 风格参数表转出去：设置页要按当前风格渲染对应的滑块 */
+export { STYLE_PARAMS } from './themes.js';
+/* 预设背景表：设置页要渲染可选宫格 */
+export { BG_PRESETS } from './themes.js';
 
 const KEY_THEME = 'nexus:theme';
 const KEY_ACCENT = 'nexus:accent';
@@ -285,6 +289,43 @@ function applyShift(vars, theme) {
 }
 
 /* ---------------------------- 派生变量 ---------------------------- */
+
+/**
+ * 把用户调过的风格参数写进变量表。
+ *
+ * 两种模式：
+ *   · 倍率（默认）—— 缩放 affects 里各变量的 alpha，100% 等于主题原值
+ *   · 绝对值（absolute: true）—— 直接替换，用于 --blur 这种长度值
+ *
+ * 为什么 --blur 不能用倍率：主题里它是 `0px`（非玻璃风格根本没开模糊），
+ * 任何倍率乘 0 还是 0。而玻璃主题的 `12px` 用户想调到 0 也调不动。
+ * 长度量只能直接给值。
+ */
+function applyStyleParams(vars, theme) {
+  const list = styleParams(theme?.style);
+  if (!list.length) return vars;
+  for (const p of list) {
+    const raw = getStyleParam(p.key, theme?.id);
+    if (raw == null) continue;                       // 没调过 → 保持主题原值
+    if (p.absolute) {
+      /* 绝对值的 min/max 由 STYLE_PARAMS 定，这里只夹一次防越界 */
+      const n = Math.max(p.min, Math.min(p.max, Number(raw)));
+      for (const k of p.affects) vars[k] = k === '--blur' ? `${n}px` : String(n);
+      continue;
+    }
+    const k = Number(raw) / 100;
+    if (!isFinite(k)) continue;
+    for (const name of p.affects) {
+      if (vars[name] == null) continue;
+      vars[name] = p.mode === 'deviation'
+        /* 立体度：缩放阴影色**离底色多远**（hex 阴影只能这么调，见 scaleDeviation） */
+        ? scaleDeviation(vars[name], vars['--bg'], k)
+        : scaleAlpha(vars[name], k);
+    }
+  }
+  return vars;
+}
+
 function deriveVars(theme) {
   const v = { ...theme.vars };
   const dark = theme.base === 'dark';
@@ -292,6 +333,15 @@ function deriveVars(theme) {
   // 先偏移基础配色，再做派生计算 —— 这样 scroll-thumb、hairline 之类
   // 由 --bg 派生的量也会跟着一起变，不会出现"底色变了滑块没变"。
   applyShift(v, theme);
+
+  /* 风格参数放在色相/明暗**之后**、派生**之前**：
+     · 之后 —— 偏移改的是颜色本身，若先缩放再偏移，
+       缩放出的半透明面被偏移时会带着 alpha 一起走，结果与先偏移不同；
+     · 之前 —— 将来若有从 --surface 派生的量，也能跟着一起变。
+     这里只缩放主题**自己写的**值，不碰下面的派生量 ——
+     派生量（--divider / --edge / --scroll-thumb 等）是"保证可见"的兜底，
+     随用户滑块一起变淡就会失去兜底作用。 */
+  applyStyleParams(v, theme);
 
   // 强调色辉光
   v['--accent-glow'] = rgba(v['--accent'], dark ? 0.32 : 0.22);
@@ -493,6 +543,143 @@ function readShift(key, clampFn) {
 const clampHue = (n) => (isNaN(n) ? 0 : Math.max(-180, Math.min(180, n)));
 const clampLight = (n) => (isNaN(n) ? 0 : Math.max(-50, Math.min(50, n)));
 
+/* ------------------------ 风格参数（按主题存） ------------------------
+ *
+ * 三种风格各有独特的可调项（玻璃的透明度 / 模糊、新拟态的立体度、
+ * 扁平的描边强度），定义在 js/themes.js 的 STYLE_PARAMS。
+ *
+ * 存法与色相 / 明暗**完全一致**（styleKey 按主题 id 分档），
+ * 理由也相同：各主题的原始强度差异很大（玻璃深色 surface alpha .07、
+ * 浅色 .55），存倍率而非绝对值；而倍率是相对本主题的，
+ * 串到别的主题上必然不合适。
+ */
+const KEY_STYLE = 'nexus:style-param';
+const styleKey = (paramKey, themeId) =>
+  `${KEY_STYLE}:${paramKey}:${themeId || current?.id || getThemeId()}`;
+
+/** 取某主题的某风格参数；没设过返回 100（＝主题自带强度）。unit='px' 时返回 null 表示未设过 */
+export function getStyleParam(paramKey, themeId) {
+  try {
+    const v = localStorage.getItem(styleKey(paramKey, themeId));
+    return v == null ? null : Number(v);
+  } catch { return null; }
+}
+
+/** 设置风格参数并立即重绘。改的不是当前主题时不重绘，等切过去自然读新值 */
+export function setStyleParam(paramKey, value, themeId) {
+  const id = themeId || current?.id || getThemeId();
+  try { localStorage.setItem(styleKey(paramKey, id), String(Number(value))); } catch {}
+  if (id !== (current?.id || getThemeId())) return getCurrent();
+  const theme = current || findTheme(getThemeId());
+  const applied = applyTo(theme, getAccent(), getEnvColor());
+  listeners.forEach((fn) => {
+    try { fn(applied, 'style-param'); } catch (e) { console.error('[theme]', e); }
+  });
+  return applied;
+}
+
+/** 复位某个风格参数到主题自带强度 */
+export function resetStyleParam(paramKey, themeId) {
+  const id = themeId || current?.id || getThemeId();
+  try { localStorage.removeItem(styleKey(paramKey, id)); } catch {}
+  if (id !== (current?.id || getThemeId())) return getCurrent();
+  const theme = current || findTheme(getThemeId());
+  const applied = applyTo(theme, getAccent(), getEnvColor());
+  listeners.forEach((fn) => {
+    try { fn(applied, 'style-param'); } catch (e) { console.error('[theme]', e); }
+  });
+  return applied;
+}
+
+/** 解析 hex / rgb() / rgba() 为 {r,g,b,a}；解析不了返回 null */
+function parseAny(str) {
+  const s = String(str || '').trim();
+  const hex = parseHex(s);
+  if (hex) return { ...hex, a: 1 };
+  const m = /^rgba?\(([^)]+)\)$/.exec(s);
+  if (!m) return null;
+  const p = m[1].split(',').map((x) => x.trim());
+  const r = parseFloat(p[0]), g = parseFloat(p[1]), b = parseFloat(p[2]);
+  if (![r, g, b].every(isFinite)) return null;
+  return { r, g, b, a: p.length > 3 && isFinite(parseFloat(p[3])) ? parseFloat(p[3]) : 1 };
+}
+
+const rgbToHex = (c) => '#' + [c.r, c.g, c.b]
+  .map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0'))
+  .join('');
+
+/**
+ * 缩放 rgba() 的 alpha 通道。
+ *
+ * 只认 rgba() —— 对 #rrggbb 或 `none` / `transparent` 原样返回。
+ * 这不是偷懒：玻璃风格的 --surface 是半透明的，alpha 决定它
+ * "透多少"，正是这里要调的东西；而把不透明的 hex 强行套 alpha
+ * 会让底板透上来与文字叠在一起，是另一种风格不该发生的事。
+ *
+ * 上限锁 1：alpha 超过 1 浏览器会按 1 处理，但那样"继续调就没反应了"，
+ * 用户会以为滑块坏了。锁到 1 让手感在饱和处停住而不是静默无效。
+ */
+function scaleAlpha(str, k) {
+  const m = /^rgba?\(([^)]+)\)$/.exec(String(str || '').trim());
+  if (!m) return str;
+  const parts = m[1].split(',').map((s) => s.trim());
+  if (parts.length < 4) return str;          // rgb() 没有 alpha，改不了
+  const a = Math.max(0, Math.min(1, parseFloat(parts[3]) * k));
+  if (!isFinite(a)) return str;
+  return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${Number(a.toFixed(3))})`;
+}
+
+/**
+ * 缩放某色**相对底色**的偏离量（新拟态的"立体度"用它）。
+ *
+ * ==================================================================
+ * 为什么不能用 scaleAlpha —— 这是本轮实测才发现的一个错误：
+ *
+ *   新拟态的 --sh-dark / --sh-light 是**不透明 hex**
+ *   （深色新拟态：#16181d / #414855，底色 #2b2f36），14 套全部是 hex。
+ *   而 scaleAlpha 只认 rgba()，对 hex 原样返回 ——
+ *   照原方案做下去，"立体度"滑块拖到底也**一点变化都没有**。
+ *
+ *   立体感的来源不是 alpha，而是阴影色**离底色多远**：
+ *     k=1 → 原值（正常凸起）
+ *     k=0 → 等于底色 → 阴影消失 → 退化为扁平（语义正确！）
+ *     k=2 → 偏离加倍 → 更立体
+ *   这才是"立体度"该调的量，也天然覆盖"调到 0 就是扁平"这个直觉。
+ * ==================================================================
+ *
+ * 输出保持原格式：入参是 hex 就出 hex，是 rgba 就保留 alpha，
+ * 免得把主题里刻意写的半透明阴影改成不透明。
+ */
+function scaleDeviation(str, baseStr, k) {
+  const c = parseAny(str);
+  const b = parseAny(baseStr);
+  if (!c || !b) return str;
+  /* rgba 先合成到底色上再缩放偏离，否则半透明阴影的"实际观感强度"
+     与算出来的对不上（合成后偏离变小，缩放会放大误差）。 */
+  const ca = Math.max(0, Math.min(1, c.a));
+  const eff = {
+    r: c.r * ca + b.r * (1 - ca),
+    g: c.g * ca + b.g * (1 - ca),
+    b: c.b * ca + b.b * (1 - ca),
+  };
+  const out = {
+    r: Math.max(0, Math.min(255, b.r + (eff.r - b.r) * k)),
+    g: Math.max(0, Math.min(255, b.g + (eff.g - b.g) * k)),
+    b: Math.max(0, Math.min(255, b.b + (eff.b - b.b) * k)),
+  };
+  if (ca < 1) {
+    /* 原本半透明 → 转回"能产生同样观感"的 rgba（alpha 不变） */
+    const a = ca;
+    const rgb = {
+      r: (out.r - b.r * (1 - a)) / a,
+      g: (out.g - b.g * (1 - a)) / a,
+      b: (out.b - b.b * (1 - a)) / a,
+    };
+    return `rgba(${Math.round(rgb.r)}, ${Math.round(rgb.g)}, ${Math.round(rgb.b)}, ${a})`;
+  }
+  return rgbToHex(out);
+}
+
 /** 色相偏移，单位度，范围 -180 ~ 180，0 表示不偏移 */
 export function getHueShift(themeId) {
   if (themeId) {
@@ -618,6 +805,12 @@ function applyTo(theme, accent, envColor) {
   if (supportsBgImage(theme)) {
     const custom = getBgImage();
     if (custom) vars['--bg-image'] = 'url("' + escapeCssUrl(custom) + '")';
+    /* 预设背景与自定义图**互斥**：后者优先（它是用户特意挑的图）。
+       不互斥的话两个都设了会出现"图上叠渐变"，谁也看不清。 */
+    else {
+      const preset = findBgPreset(getBgPreset());
+      if (preset) vars['--bg-image'] = preset.css;
+    }
   }
 
   const root = document.documentElement;
@@ -747,6 +940,30 @@ export function getBgImage() {
   try { return localStorage.getItem(KEY_BG_IMAGE) || ''; } catch { return ''; }
 }
 
+/* ------------------------ 预设背景 ------------------------ */
+const KEY_BG_PRESET = 'nexus:bg-preset';
+
+/** 当前选中的预设背景 id；没选过返回空串 */
+export function getBgPreset() {
+  try { return localStorage.getItem(KEY_BG_PRESET) || ''; } catch { return ''; }
+}
+
+/**
+ * 选一个预设背景。传空串表示不用预设（回到主题自带背景）。
+ *
+ * 选预设时**清掉自定义图**：两者互斥，留着旧的自定义图会导致
+ * 预设永远不生效（applyTo 里自定义图优先），用户点了没反应。
+ */
+export function setBgPreset(id) {
+  if (!supportsBgImage()) return false;
+  try {
+    if (id) localStorage.setItem(KEY_BG_PRESET, id);
+    else localStorage.removeItem(KEY_BG_PRESET);
+    if (id) localStorage.removeItem(KEY_BG_IMAGE);
+  } catch { /* 存储失败时静默：背景丢了不影响主流程 */ }
+  return resetOne([], 'bg-image');
+}
+
 /**
  * 转义 CSS url() 里的内容。
  *
@@ -772,6 +989,9 @@ export function setBgImage(url) {
 
 /** 恢复主题自带的背景图 */
 export function resetBgImage() {
+  /* 预设也要一起清 —— 否则点"恢复默认"后底色变回来了，
+     渐变还挂在上面，用户会以为按钮坏了。 */
+  try { localStorage.removeItem(KEY_BG_PRESET); } catch {}
   return resetOne([KEY_BG_IMAGE], 'bg-image');
 }
 

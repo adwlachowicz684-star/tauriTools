@@ -15,15 +15,25 @@ import {
      而不是一个"恢复主题自带配色"大按钮 ——
      用户只想把色相调回 0 时，不该连强调色一起丢掉。 */
   resetAccent, resetEnvColor, resetHueShift, resetLightShift,
-  /* 背景图 */
+  /* 背景图 + 预设背景 */
   supportsBgImage, getBgImage, setBgImage, resetBgImage,
+  getBgPreset, setBgPreset,
+  /* 风格参数：每种风格各有自己那几个可调项 */
+  getStyleParam, setStyleParam, resetStyleParam,
+  findTheme,
   saveAsCustom, deleteCustomTheme,
   // getCurrent：色相/明暗改为按主题各记一份后，提示文案要显示当前主题名
   getCurrent,
   getCustomColors, saveCustomColors,
   onChange as onThemeChange,
 } from '../../js/theme-manager.js';
-import { swatchFor, styleLabel } from '../../js/themes.js';
+import {
+  swatchFor, styleLabel,
+  /* styleParams：按风格取该风格特有的可调项（玻璃的透明度/模糊、新拟态的立体度…） */
+  styleParams,
+  /* BG_PRESETS：预设渐变背景，用户挑一个即可，不必自己找图 */
+  BG_PRESETS,
+} from '../../js/themes.js';
 import {
   ADAPT_POLICIES, PLUGIN_THEMES,
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
@@ -192,6 +202,12 @@ function StyleAuditBadge({ audit, open, onToggle }: {
  * 1.5MB 足以放下压缩后的壁纸，又留得出余量。
  */
 const MAX_BG_BYTES = 1.5 * 1024 * 1024;
+
+/** 从 '14px' / '0px' 里取出数字；取不到返回 0（未开模糊） */
+function parseBlurPx(v: string | undefined): number {
+  const n = parseFloat(String(v || '0'));
+  return isFinite(n) ? n : 0;
+}
 
 function ResetDefaultBtn({ disabled, onClick, title }: {
   disabled: boolean; onClick: () => void; title?: string;
@@ -943,6 +959,10 @@ export default function Settings() {
           />
           {(() => {
             const all = listThemes();
+            /* 当前主题对象：风格参数区要按它的 style 决定显示哪几个滑块。
+               用 findTheme(getThemeId()) 而不是遍历时顺手拿 ——
+               主题可能刚被删除，findTheme 有兜底，遍历拿不到就是 undefined。 */
+            const curTheme = findTheme(getThemeId());
             const groups: [string, typeof all][] = [
               ['深色', all.filter((t) => t.base === 'dark')],
               ['浅色', all.filter((t) => t.base === 'light')],
@@ -1140,16 +1160,93 @@ export default function Settings() {
             />
           </div>
 
+          {/* ---------- 风格参数 ----------
+              三种风格靠完全不同的手段塑形，可调项不是一个维度，
+              所以按**当前主题的风格**只显示它自己那几个滑块。
+              给玻璃调"立体度"、给扁平调"透明度"都毫无意义。 */}
+          {(() => {
+            const list = styleParams(curTheme?.style);
+            if (!list.length) return null;
+            return (
+              <>
+                <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)' }}>
+                  {styleLabel(curTheme?.style)}风格（{curTheme?.name}）
+                </div>
+                {list.map((p) => {
+                  const raw = getStyleParam(p.key);
+                  /* 没调过就显示主题自带强度（100% 或主题里的 --blur 值），
+                     而不是 0 —— 0 会让人误以为当前是"完全没有立体感"。 */
+                  const shown = raw == null
+                    ? (p.absolute ? parseBlurPx(curTheme?.vars?.['--blur']) : 100)
+                    : raw;
+                  return (
+                    <div key={p.key} style={{ marginTop: 'var(--sp-5, 10px)' }}>
+                      <div className="p-row" style={{ gap: 'var(--sp-4, 8px)' }}>
+                        <span style={{ flex: 'none', fontSize: 'var(--fs-12, 12px)', minWidth: 64 }}>
+                          {p.label}
+                        </span>
+                        <input
+                          type="range"
+                          className="nx-range"
+                          min={p.min}
+                          max={p.max}
+                          step={p.step}
+                          value={shown}
+                          /* onChange 而不是 onMouseUp：拖动时要**实时**看到变化，
+                             否则用户不知道该停在哪 —— 这正是调"透明度/立体度"
+                             这类连续量的意义所在。 */
+                          onChange={(e) => {
+                            setStyleParam(p.key, Number(e.target.value));
+                            rerender();
+                            void syncThemeToShell();
+                          }}
+                          style={{ flex: 1, minWidth: 0 }}
+                        />
+                        <span className="p-mono p-muted" style={{
+                          flex: 'none', fontSize: 'var(--fs-11, 11px)', minWidth: 42, textAlign: 'right',
+                        }}>
+                          {shown}{p.unit}
+                        </span>
+                        <ResetDefaultBtn
+                          disabled={raw == null}
+                          onClick={() => {
+                            resetStyleParam(p.key);
+                            ctx.toast(p.label + '已恢复主题自带值', 'ok');
+                            rerender(); void syncThemeToShell();
+                          }}
+                          title={'恢复' + p.label + '到主题自带值'}
+                        />
+                      </div>
+                      <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-1, 2px)' }}>
+                        {p.desc}
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            );
+          })()}
+
           {/* ---------- 背景图 ----------
               只有主题本来就带 --bg-image 的才能换图；
               纯色主题给一个带边框的占位并画禁止图标，
               让用户一眼知道"不是坏了，是这套主题没有"。 */}
+          {/* 当前基调：预设背景要按它排序（同基调的排前面）。
+              定义在 IIFE **外面** —— 预览槽与预设宫格两处都要用。 */}
+          {(() => {
+            const baseNow = getBase();
+            return (
+              <>
           <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)' }}>
             背景图
           </div>
           {(() => {
             const supported = supportsBgImage();
             const cur = getBgImage();
+            const presetId = getBgPreset();
+            const preset = presetId ? BG_PRESETS.find((p) => p.id === presetId) : null;
+            const presetCss = preset?.css || '';
+            const presetName = preset?.name || '';
             if (!supported) {
               return (
                 <div className="nx-bgslot nx-bgslot-off" title="当前主题为纯色底，不支持背景图">
@@ -1164,11 +1261,18 @@ export default function Settings() {
               <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
                 <div
                   className="nx-bgslot"
-                  style={cur ? { backgroundImage: 'url("' + cur + '")' } : undefined}
-                  title={cur ? '当前背景图' : '主题自带背景'}
+                  style={cur
+                    ? { backgroundImage: 'url("' + cur + '")' }
+                    /* 选了预设就在预览槽里画出该渐变 —— 否则用户看不出
+                       "我选了什么"，只能靠记忆分辨八个名字。 */
+                    : (presetCss ? { backgroundImage: presetCss } : undefined)}
+                  title={cur ? '当前背景图' : (presetCss ? '当前预设：' + presetName : '主题自带背景')}
                 >
-                  {!cur ? (
+                  {!cur && !presetCss ? (
                     <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>主题自带</span>
+                  ) : null}
+                  {!cur && presetCss ? (
+                    <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>{presetName}</span>
                   ) : null}
                 </div>
                 <button className="p-btn" onClick={() => bgFileRef.current?.click()}>
@@ -1203,11 +1307,53 @@ export default function Settings() {
                   }}
                 />
                 <ResetDefaultBtn
-                  disabled={!cur}
+                  disabled={!cur && !presetId}
                   onClick={() => { resetBgImage(); ctx.toast('已恢复主题自带背景', 'ok'); rerender(); void syncThemeToShell(); }}
                   title="恢复为当前主题自带的背景"
                 />
               </div>
+            );
+          })()}
+
+          {/* ---------- 预设背景 ----------
+              与上面的"选择图片…"并列但互斥：选预设会清掉自定义图，
+              反之亦然。两条路共用一个预览槽，恢复默认一次清空。 */}
+          {supportsBgImage() ? (
+            <div style={{ marginTop: 'var(--sp-5, 10px)' }}>
+              <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+                预设背景（不用自己找图）
+              </div>
+              <div className="p-row" style={{ marginTop: 'var(--sp-3, 6px)', gap: 'var(--sp-3, 6px)' }}>
+                {[...BG_PRESETS]
+                  /* 同基调的排前面。不隐藏异基调的 —— 是想降低误选概率，
+                     不是替用户决定他不能用。 */
+                  .sort((a, b) => (a.base === baseNow ? 0 : 1) - (b.base === baseNow ? 0 : 1))
+                  .map((p) => {
+                    const on = getBgPreset() === p.id && !getBgImage();
+                    return (
+                      <button
+                        key={p.id}
+                        className={'nx-bgpick' + (on ? ' on' : '')}
+                        title={p.name + (p.base === baseNow ? '' : '（' + (p.base === 'dark' ? '深' : '浅') + '色底设计）')}
+                        onClick={() => {
+                          if (on) { setBgPreset(''); ctx.toast('已取消预设背景', 'ok'); }
+                          else { setBgPreset(p.id); ctx.toast('背景：' + p.name, 'ok'); }
+                          rerender(); void syncThemeToShell();
+                        }}
+                      >
+                        <span
+                          className="nx-bgpick-sw"
+                          style={{ backgroundImage: p.css }}
+                          aria-hidden="true"
+                        />
+                        <span style={{ fontSize: 'var(--fs-11, 11px)' }}>{p.name}</span>
+                      </button>
+                    );
+                  })}
+              </div>
+            </div>
+          ) : null}
+              </>
             );
           })()}
 

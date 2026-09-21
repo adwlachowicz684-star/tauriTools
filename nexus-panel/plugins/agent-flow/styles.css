@@ -67,12 +67,55 @@
   --af-sunk:   var(--af-native-sunk);
   --af-item:   var(--af-native-item);
 
+  /* ---- 参数卡片（触发器 / 规则 / 参数 / 凭证等面板内的分组卡片）----
+   *
+   * 卡片底**不能直接用** --surface-raised / --surface-sunk 这类主题层级变量。
+   * 实测 23 套主题，raised 相对容器的感知亮度差 |ΔL*|：
+   *     深色新拟态类 4.8~6.9（尚可）
+   *     纯黑扁平 18.1 / 终端绿 17.9 / 极光玻璃 17.3（亮得像贴了块补丁 ← 用户说的"突兀"）
+   *     极简白 1.0 / 浅色玻璃 1.3（几乎看不见）
+   *   极差 17.5 倍 —— 这就是"不同主题观感不一样"的根因。
+   *
+   * 改法：铺一层**不透明**面板底，再叠一层**按基调定方向**的半透明。
+   *   铺底 → 结果与父容器无关，嵌套多深都不漂；
+   *   叠加 → 深色提亮（白）、浅色压暗（黑），两端都拿到稳定 ΔL*。
+   * 实测新方案 ΔL* 落在 3.2~5.8，极差 1.8 倍（原 17.5 倍）。 */
+  --af-card-overlay: rgba(255, 255, 255, .05);
+  --af-card-line:   var(--af-line);
+  --af-card-r:      var(--af-r-sm);
+
+  /* ---- 「虚线添加」入口（与 css/controls.css 的 --add-* 同一套值）----
+     agent-flow 刻意不引 controls.css（两套组件样式会互相污染），
+     所以这里自己声明一份。值域与那边对齐，改一边记得改另一边。
+
+     --af-add-line 取 --af-divider 而不是 --af-line：
+     --af-line 跟随 --border，而 --border 是「风格开关」——
+     新拟态下为 transparent。用它画虚线，14/27 套主题下边框会**完全不可见**
+     （项目组的 .fpx-add-card 就是这个 bug）。
+     --af-divider 则是任何风格下都保证可见的边界色。 */
+  /* 显式给两个基调的值，**不依赖 --divider**。
+     ------------------------------------------------------------
+     --divider 是 theme-manager 按基调算出来的，但它**不在 THEME_VARS 里**
+     （注释里写明"不进主题 vars"），所以永远不会被写到 :root 上。
+     实际生效的是 css/neumorphism.css:146 那份**写死的深色值**
+     rgba(255,255,255,.10) —— 切到浅色主题时它不会变，
+     于是浅底上画白虚线 ≈ 看不见。
+
+     两个基调各给一个值才是稳的：深色提亮、浅色压暗。 */
+  --af-add-line: rgba(255, 255, 255, .12);
+  --af-add-r:    var(--af-r-sm);
+  --af-add-fs:   var(--fs-12, 12px);
+  --af-add-op:   .65;
+
   /* ---- 尺度令牌（本插件自成一套）----
      agent-flow 刻意不引入外壳的 neumorphism.css（两套组件样式会互相污染），
      所以这里自己声明一份，值域与 css/tokens.css 对齐。
      将来若决定跟随外壳尺度，把这里整体换成 @import 即可。 */
   --af-mono:  ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --af-r-xs:  4px;
+  /* 中等圆角。此前代码里写 var(--af-r, 8px) 但**从未定义过** —— 靠兜底生效，
+     等于幽灵引用（改这里的值不会影响它）。补上定义，让兜底成为真正的兜底。 */
+  --af-r:     8px;
   --af-r-sm:  6px;
   --af-dur-fast: .12s;
   --af-dur-base: .18s;
@@ -166,6 +209,18 @@
 /* 浅色基调下的加深版本（仅 follow 模式生效）
    取值标准：在接近白的底上对比度 ≥ 4.5，同时保持原来的色相。 */
 :root[data-af-mode="follow"][data-nexus-base="light"] {
+  /*
+   * 卡片叠加层在浅色下必须**反向为压暗**。
+   * 浅色主题的 panel 已经接近白（如浅色新拟态 #e6e9ef，L*≈92），
+   * 继续往上加白没有空间 —— 实测再叠 5% 白，ΔL* 只剩 0.6，卡片等于没有。
+   * 改为压暗（4% 黑）后 ΔL* ≈ 3.3，与深色端的 4.8~5.8 落在同一区间。
+   */
+  --af-card-overlay: rgba(0, 0, 0, .04);
+
+  /* 虚线在浅底上必须改成压暗方向 —— 与卡片叠加层同理：
+     默认值是"微白"，白虚线画在接近白的底上等于没有。 */
+  --af-add-line: rgba(0, 0, 0, .16);
+
   --af-t-err:    #b91c1c;
   --af-t-err2:   #c0392b;
   --af-t-code:   #0b5fa5;
@@ -178,6 +233,13 @@
   --af-t-cond-v: #6d28d9;
   --af-t-file:   #0b6e8f;
 }
+/* 下拉框展开后的列表由浏览器**原生绘制**，不继承 select 自己的背景 ——
+   把 select 设成深色，展开后照样是一块白底，白字自然看不见。
+   全仓 35 个 select 此前只有 1 个设过 option 颜色，逐类挂必然再漏，
+   所以收口成覆盖所有 select 的通用规则（本插件不引 controls.css）。 */
+select option { background: var(--af-panel); color: var(--af-fg); }
+select optgroup { background: var(--af-panel); color: var(--af-dim); }
+
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 body { background: var(--af-bg); color: var(--af-fg); }
@@ -456,7 +518,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
   display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px;
   padding: 8px 10px;
   border: 1px solid var(--af-line, #2a2f3a);
-  border-radius: var(--r-card, 8px);
+  border-radius: var(--af-r, 8px);
   background: var(--af-raised, rgba(255, 255, 255, 0.03));
 }
 .inspector .field > span { font-size: var(--fs-12, 12px); color: var(--af-dim); }
@@ -470,7 +532,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
   align-items: center; gap: 8px; margin-bottom: 8px;
   padding: 8px 10px;
   border: 1px solid var(--af-line, #2a2f3a);
-  border-radius: var(--r-card, 8px);
+  border-radius: var(--af-r, 8px);
   background: var(--af-raised, rgba(255, 255, 255, 0.03));
 }
 /*
@@ -556,7 +618,11 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 }
 .p-btn:hover { border-color: var(--af-accent); }
 .p-btn:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
-.p-btn.primary { color: var(--af-accent); font-weight: 600; }
+.p-btn.primary {
+  color: var(--af-accent);
+  /* 强调不改 font-weight：字重改字形宽度 → 按钮变宽 → 整排布局跳动 */
+  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
+}
 .p-btn.danger { color: var(--af-bad); }
 
 /* 面板标题行：左侧可改名的输入框 + 右侧节点类型标签 */
@@ -720,8 +786,10 @@ button.mini.danger:hover { border-color: var(--af-bad); color: var(--af-t-err2);
 
 /* ---------------- 属性面板：规则编辑 ---------------- */
 .rule-card {
-  border: 1px solid var(--af-line); border-radius: 8px;
-  padding: 8px; margin-bottom: 8px; background: var(--af-sunk);
+  border: 1px solid var(--af-card-line); border-radius: var(--af-card-r);
+  padding: 8px; margin-bottom: 8px;
+  background-color: var(--af-panel);
+  background-image: linear-gradient(var(--af-card-overlay), var(--af-card-overlay));
 }
 .rule-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .rule-row:last-child { margin-bottom: 0; }
@@ -740,7 +808,7 @@ button.mini.danger:hover { border-color: var(--af-bad); color: var(--af-t-err2);
 
 .tip {
   margin-top: 10px; font-size: var(--fs-12, 12px); color: var(--af-dim);
-  background: var(--af-sunk); border: 1px dashed var(--af-line);
+  background: var(--af-sunk); border: 1px dashed var(--af-add-line);
   border-radius: var(--af-r-sm); padding: 8px 10px; line-height: 1.6;
 }
 
@@ -1166,7 +1234,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 .cond-expr {
   display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
   margin: 6px 0; padding: 6px 8px; border-radius: var(--af-r-sm);
-  border: 1px dashed var(--af-line); background: var(--af-sunk);
+  border: 1px dashed var(--af-add-line); background: var(--af-sunk);
 }
 .cond-chip {
   font-size: var(--fs-11, 11px); padding: 2px 8px; border-radius: var(--r-pill, 999px);
@@ -1206,7 +1274,10 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   transition: border-color var(--af-dur-fast), color var(--af-dur-fast), background var(--af-dur-fast);
   box-shadow: var(--ctl-shadow-sm);}
 .cond-op-btn:hover { border-color: var(--af-soft); color: var(--af-fg); }
-.cond-op-btn.on { font-weight: 600; }
+.cond-op-btn.on {
+  /* 同上：选中态用描边而非字重 */
+  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
+}
 .cond-op-btn-icon { font-family: var(--af-mono); font-size: var(--fs-11, 11px); }
 
 /* 算子语义提示 */
@@ -1268,7 +1339,10 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   transition: border-color var(--af-dur-fast), color var(--af-dur-fast), background var(--af-dur-fast);
   box-shadow: var(--ctl-shadow-sm);}
 .cond-logic-btn:hover { border-color: var(--af-soft); color: var(--af-fg); }
-.cond-logic-btn.on { font-weight: 600; }
+.cond-logic-btn.on {
+  /* 同上 */
+  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
+}
 
 /* 条件列表 */
 .cond-list {
@@ -1302,10 +1376,37 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   border: 1px solid var(--af-line); background: var(--af-panel); color: var(--af-dim);
 }
 
+/* 「虚线添加」入口的统一实现（MCP「+ 添加」/ 节点「+ 添加参数」/ 各列表新增）。
+   与 css/controls.css 的 .nx-add 同一套语言，值域见 :root 的 --af-add-*。 */
+.af-add {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px dashed var(--af-add-line);
+  border-radius: var(--af-add-r);
+  background: transparent;
+  color: var(--af-dim);
+  font-size: var(--af-add-fs);
+  font-family: inherit;
+  cursor: pointer;
+  opacity: var(--af-add-op);
+  /* 必须显式清零：它常与 .mini / .kind-btn 这类实心按钮类叠加使用，
+     而那些类带 --ctl-shadow 外凸阴影 —— 虚线入口是"平的一格"，
+     带外凸会显得像已经存在的实体，与"待添加"的语义相反。 */
+  box-shadow: none;
+  transition: opacity var(--af-dur-fast), border-color var(--af-dur-fast),
+              color var(--af-dur-fast), box-shadow var(--af-dur-fast);
+}
+.af-add:hover,
+.af-add:focus-visible {
+  opacity: 1;
+  color: var(--af-accent);
+  border-color: var(--af-accent);
+}
+.af-add:active { box-shadow: var(--sh-in-sm); }
+
 .cond-add {
   align-self: flex-start; margin-top: 2px;
   font-size: var(--fs-11, 11px); padding: 3px 9px; border-radius: 5px; cursor: pointer;
-  border: 1px dashed var(--af-divider); background: transparent; color: var(--af-dim);
+  border: 1px dashed var(--af-add-line); background: transparent; color: var(--af-dim);
   transition: border-color var(--af-dur-fast), color var(--af-dur-fast);
   box-shadow: var(--ctl-shadow-sm);}
 .cond-add:hover { border-color: var(--af-accent); color: var(--af-accent); }
@@ -1353,8 +1454,10 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 
 /* 自定义参数卡片 */
 .param-card {
-  margin-top: 5px; padding: 6px 8px; border-radius: var(--af-r-sm);
-  border: 1px solid var(--af-line); background: var(--af-sunk);
+  margin-top: 5px; padding: 6px 8px; border-radius: var(--af-card-r);
+  border: 1px solid var(--af-card-line);
+  background-color: var(--af-panel);
+  background-image: linear-gradient(var(--af-card-overlay), var(--af-card-overlay));
 }
 .param-card.off { opacity: .5; border-style: dashed; }
 .param-row { display: flex; align-items: center; gap: 5px; margin-top: 5px; }
@@ -1632,7 +1735,7 @@ input.mono, textarea.mono {
 /* 筛选区同样按侧栏内边距对齐 */
 .hist-filter { padding: 9px 12px; }
 
-/* 节点库里的自定义颜色：小色块，点开主面板的取色面板 */
+/* 节点库里的自定义颜色：小色块 + 取色器 */
 .side-swatch {
   width: 12px; height: 12px; flex: none;
   border-radius: 3px;
@@ -1643,6 +1746,15 @@ input.mono, textarea.mono {
 /* 只在悬停条目时才明显 —— 一直满亮度会让整列看起来五颜六色 */
 .side-item:not(:hover) .side-swatch { opacity: 0.45; }
 .side-swatch:hover { opacity: 1; transform: scale(1.15); }
+.side-picker {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-left: 4px;
+}
+.side-picker input[type='color'] {
+  width: 26px; height: 20px; padding: 0;
+  border: 1px solid var(--af-line, #2a2f3a);
+  border-radius: 4px; background: none; cursor: pointer;
+}
 
 /* 任务流程图 —— 默认视图，看"卡在哪儿" */
 /* 任务流程图（画布布局） */
@@ -1660,8 +1772,8 @@ input.mono, textarea.mono {
   margin-top: 4px; padding: 8px;
   background: var(--af-panel, #171a21);
   border: 1px solid var(--af-line, #2a2f3a);
-  border-radius: var(--r-card, 8px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  border-radius: var(--af-r, 8px);
+  box-shadow: var(--sh-cast-sm, 0 8px 24px rgba(0,0,0,.45));
 }
 .task-flow-pop-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: var(--fs-11, 11px); }
 .task-layer-group { margin-bottom: 8px; }
@@ -1680,7 +1792,7 @@ input.mono, textarea.mono {
 .task-flow-node {
   border: 1px solid var(--af-line, #2a2f3a);
   border-left-width: 3px;
-  border-radius: var(--r-card, 8px);
+  border-radius: var(--af-r, 8px);
   padding: 6px 8px;
   background: var(--af-raised, rgba(255, 255, 255, 0.03));
   display: flex; flex-direction: column; gap: 2px;
@@ -1699,7 +1811,7 @@ input.mono, textarea.mono {
 .task-flow-var {
   display: inline-flex; align-items: baseline; gap: 3px; max-width: 100%;
   font-size: var(--fs-10, 10px); line-height: 1.5;
-  padding: 0 5px; border-radius: 999px;
+  padding: 0 5px; border-radius: var(--r-pill, 999px);
   border: 1px solid var(--af-line, #2a2f3a);
   background: var(--af-sunk, rgba(0, 0, 0, .18));
   color: var(--af-dim);
@@ -1713,7 +1825,7 @@ input.mono, textarea.mono {
 .task-flow-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .task-flow-link {
   font-size: var(--fs-10, 10px); color: var(--af-mute);
-  padding: 1px 6px; border: 1px solid var(--af-line, #2a2f3a); border-radius: 999px;
+  padding: 1px 6px; border: 1px solid var(--af-line, #2a2f3a); border-radius: var(--r-pill, 999px);
 }
 .task-view-switch { display: flex; gap: 6px; margin: 6px 0; }
 
@@ -1753,10 +1865,13 @@ input.mono, textarea.mono {
 /* 触发条件卡片 —— 每种触发方式各占一块，独立配置 */
 .trig-cards { display: flex; flex-direction: column; gap: 8px; }
 .trig-card {
-  border: 1px solid var(--af-line, #2a2f3a);
-  border-radius: var(--r-card, 8px);
+  border: 1px solid var(--af-card-line);
+  border-radius: var(--af-card-r);
   padding: 8px 10px;
-  background: var(--af-raised, rgba(255, 255, 255, 0.03));
+  /* 两层背景：先铺不透明面板底，再叠按基调定方向的叠加层。
+     只用一层半透明的话，最终颜色取决于父容器 —— 嵌套一变就漂。 */
+  background-color: var(--af-panel);
+  background-image: linear-gradient(var(--af-card-overlay), var(--af-card-overlay));
 }
 /* 停用的卡整块变淡 —— 只把按钮变灰不够，扫一眼看不出哪张是关的 */
 .trig-card.is-off { opacity: 0.55; }
@@ -1766,8 +1881,11 @@ input.mono, textarea.mono {
 .trig-add { display: flex; flex-wrap: wrap; gap: 4px; }
 .trig-empty {
   font-size: var(--fs-11, 11px); color: var(--af-mute);
-  padding: 8px 10px; border: 1px dashed var(--af-line, #2a2f3a);
-  border-radius: var(--r-card, 8px);
+  padding: 8px 10px; border: 1px dashed var(--af-add-line);
+  /* 两边都同意"虚线色改走 --af-add-line"；圆角取本地的 --af-add-r：
+     它是「虚线添加」专用圆角档，与 .af-add / .nx-add 同一套尺度，
+     而 --af-r 是通用中圆角——用它会让占位框与其它添加入口差一个档。 */
+  border-radius: var(--af-add-r);
 }
 .trig-row.is-off { opacity: 0.5; }
 
@@ -2061,8 +2179,10 @@ input.mono, textarea.mono {
 }
 .pc-card {
   position: relative; display: inline-flex; align-items: stretch;
-  border: 1px solid var(--af-line); border-radius: 6px;
-  background: var(--af-item); overflow: hidden;
+  border: 1px solid var(--af-card-line); border-radius: var(--af-card-r);
+  overflow: hidden;
+  background-color: var(--af-panel);
+  background-image: linear-gradient(var(--af-card-overlay), var(--af-card-overlay));
   transition: border-color var(--af-dur-fast), background var(--af-dur-fast);
 }
 .pc-card:hover { border-color: var(--af-accent); }
@@ -2096,7 +2216,7 @@ input.mono, textarea.mono {
 .pc-del:hover { color: var(--af-bad); }
 
 .pc-add, .pc-detach {
-  border: 1px dashed var(--af-line); border-radius: 6px; cursor: pointer;
+  border: 1px dashed var(--af-add-line); border-radius: var(--af-add-r); cursor: pointer;
   background: transparent; color: var(--af-dim); font-family: inherit;
   font-size: var(--fs-12, 12px); padding: 5px 9px;
   transition: border-color var(--af-dur-fast), color var(--af-dur-fast);
@@ -2164,7 +2284,11 @@ input.mono, textarea.mono {
   transition: background var(--af-dur-fast);
   box-shadow: var(--ctl-shadow);}
 .mod-btn:hover { background: rgba(245, 158, 11, 0.22); }
-.mod-btn.primary { background: rgba(245, 158, 11, 0.3); font-weight: 600; }
+.mod-btn.primary {
+  background: rgba(245, 158, 11, 0.3);
+  /* 同上 */
+  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
+}
 .mod-btn.primary:hover { background: rgba(245, 158, 11, 0.45); }
 
 /* 侧栏的「节点库 / 模块库」切换 */
@@ -2176,16 +2300,22 @@ input.mono, textarea.mono {
  * 不是运行状态 —— 运行状态看右侧徽章。
  */
 .node-dot.level-warn { box-shadow: 0 0 0 2px rgba(245, 158, 11, .22);   /* 状态光环：零模糊彩色环，非立体阴影 */ }
+.node-dot.level-error {
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, .28);    /* 同上 */
+  animation: af-pulse-dot var(--anim-pulse, 1.6s) ease-in-out infinite;
+}
 /*
- * 不加脉动。
- *
- * 以前红点会呼吸（af-pulse-dot），本意是"红=会阻断，值得抢视线"。
- * 实际效果相反：画布上有几个缺参节点就一直在闪，反而盖住了真正要看的东西；
- * 而且"什么都没做，画面却一直在动"会被当成卡了。
- *
- * 分级靠颜色与光环已经够 —— 阻断原因本来就写在卡片上，不靠圆点传达。
+ * 只给红点加脉动：红是"会阻断"，值得抢视线；
+ * 黄点如果也闪，画布上一片闪动反而看不出重点。
  */
-.node-dot.level-error { box-shadow: 0 0 0 2px rgba(239, 68, 68, .28);    /* 同上 */ }
+@keyframes af-pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+/* 尊重系统的"减少动态效果"设置 */
+@media (prefers-reduced-motion: reduce) {
+  .node-dot.level-error { animation: none; }
+}
 
 /* 阻断原因直接写在卡片上 —— 只靠一个小红点，用户不知道缺什么 */
 /* ---------------- 节点显示高度（矮 / 中 / 高）---------------- */
@@ -2367,8 +2497,8 @@ input.mono, textarea.mono {
 .canvas-config .cfg-del:hover { background: rgba(248, 81, 73, .16); color: #f85149; }
 
 .canvas-config .cfg-add {
-  width: 100%; padding: 6px; border: 1px dashed var(--af-line, #2a2f3a);
-  border-radius: 5px; background: none; cursor: pointer;
+  width: 100%; padding: 6px; border: 1px dashed var(--af-add-line);
+  border-radius: var(--af-add-r); background: none; cursor: pointer;
   font-size: var(--fs-12, 12px); color: var(--af-dim, #8b93a7);
   box-shadow: var(--ctl-shadow-sm);}
 .canvas-config .cfg-add:hover { border-color: var(--af-accent); color: var(--af-accent); }
@@ -2819,7 +2949,7 @@ input.mono, textarea.mono {
 .mcp-item-head strong { font-size: var(--fs-13, 13px); }
 .mcp-off {
   font-size: var(--fs-10, 10px); padding: 0 6px; border-radius: var(--r-pill, 999px);
-  border: 1px dashed var(--af-line); color: var(--af-dim);
+  border: 1px dashed var(--af-add-line); color: var(--af-dim);
 }
 .mcp-item-sub {
   font-size: var(--fs-11, 11px); color: var(--af-dim); font-family: var(--af-mono, monospace);
@@ -2915,7 +3045,7 @@ input.mono, textarea.mono {
   background: var(--af-panel, #1c1c1e);
   border: 1px solid var(--af-line, #333);
   border-radius: var(--af-r, 8px);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, .45);
+  box-shadow: var(--sh-cast-md, 0 18px 44px rgba(0,0,0,.22));
   overflow: hidden;
 }
 
@@ -3003,7 +3133,7 @@ input.mono, textarea.mono {
 .node-chip-detail {
   display: flex; flex-direction: column; gap: 1px;
   margin-top: 2px; padding-top: 2px;
-  border-top: 1px dashed var(--af-line, #2a2f3a);
+  border-top: 1px dashed var(--af-add-line);
 }
 .node-chip-row { display: flex; gap: 4px; align-items: baseline; }
 .node-chip-k { flex: none; color: var(--af-dim); font-size: var(--fs-10, 10px); }
