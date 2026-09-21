@@ -296,11 +296,34 @@
 /* 下拉：原生箭头由系统画，颜色不跟随主题，这里统一收口 */
 .nx-select,
 .mm-select { cursor: pointer; }
-.nx-select option,
-.mm-select option {
+
+/* ---------- 下拉展开后的列表（option）----------
+ *
+ * 收口范围刻意是**所有** select，而不只是 .nx-select / .mm-select。
+ * 实测全仓 35 个 select 用的 class 五花八门（裸 select / .p-input /
+ * .fpx-select / .hist-sel …），逐个挂一遍必然漏 ——
+ * 漏掉的那批在深色主题下拉出一块白底，白字正好看不见。
+ *
+ * 为什么必须显式设：<select> 展开的那块列表是浏览器原生绘制的，
+ * 它**不继承** select 自己的 background —— 把 select 设成深色，
+ * 展开后照样可能是一块白。color-scheme 能让不少浏览器跟着走，
+ * 但管不到所有平台（macOS 的下拉由系统绘制，不读这里的 CSS）。
+ *
+ * 背景用 --surface-overlay：展开的列表是浮层，该比输入框亮一档。
+ * 兜底回 --surface —— mindmap / project-group 只引 tokens + controls，
+ * 没引 neumorphism.css，而 --surface-overlay 定义在那儿，没兜底会拿到空值。 */
+select option {
   color: var(--text);
   background: var(--surface-overlay, var(--surface));
 }
+select optgroup {
+  color: var(--text-dim, var(--text));
+  background: var(--surface-overlay, var(--surface));
+}
+/* 选中项**刻意不设**：交给浏览器默认高亮。
+   曾想给 background:var(--accent) + color:CanvasText，但 CanvasText 是按
+   color-scheme 定的、**不是**按底色明暗算的 —— 用户把强调色设成亮黄
+   （cyberpunk）就成了白字压亮黄，对比度 1.09，等于没有。 */
 
 /* 多行文本 */
 .nx-textarea {

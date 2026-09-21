@@ -116,12 +116,20 @@ export const CONTROLS_VARS = [
 
    prefix 列表手工维护（同 CONTROLS_VARS 的理由：浏览器里读不到文件），
    由 style-audit-test 盯着它与源码里的 brushVars 调用是否一致。 */
+/* 运行时由 JS **逐元素注入**的位置变量（js/inspector.js 的高亮层）。
+   --------------------------------------------------------------------
+   `overlay.style.setProperty('--x', r.left + 'px')` 这样写在 JS 里，
+   CSS 文件里同样搜不到定义 —— 与 brushVars 是同一类情况。
+   兜底的 0 是刻意的：还没定位到元素时框不该出现在左上角以外的位置。 */
+export const RUNTIME_POSITION_VARS = ['--x', '--y', '--w', '--h'];
+
 export const BRUSH_PREFIXES = ['tag', 'grp'];
 const BRUSH_SUFFIXES = ['base', 'hover', 'press', 'on', 'edge'];
 export const BRUSH_VARS = BRUSH_PREFIXES.flatMap(
   (p) => BRUSH_SUFFIXES.map((s) => `--${p}-${s}`));
 
-const KNOWN = new Set([...SHELL_VARS, ...TOKEN_VARS, ...CONTROLS_VARS, ...BRUSH_VARS]);
+const KNOWN = new Set([...SHELL_VARS, ...TOKEN_VARS, ...CONTROLS_VARS, ...BRUSH_VARS,
+  ...RUNTIME_POSITION_VARS]);
 
 /* ------------------------------------------------------------------ */
 

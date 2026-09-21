@@ -498,6 +498,36 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 .p-input::placeholder { color: var(--af-mute); }
 .p-input:focus { outline: none; border-color: var(--af-accent); }
 
+/* ---------- 下拉展开后的列表（option）----------
+ *
+ * 这块是**全局收口**，不挂在某个 class 上 —— 本插件里 30 多个 select
+ * 用的 class 五花八门（裸 select / .p-input / .hist-sel / .cond-*-select …），
+ * 逐个挂一遍必然漏。此前只有 .cond-op-select 一个设了 option 颜色，
+ * 其余全是浏览器默认（深色面板下拉出一块白底，白字正好看不见）。
+ *
+ * 为什么必须显式设：<select> 展开的列表是**浏览器原生绘制**的，
+ * 它**不继承** select 自己的 background —— 把 select 设成深色，
+ * 展开后照样可能是一块白。color-scheme 能让部分浏览器跟着走，
+ * 但管不到所有平台（macOS 的下拉由系统绘制，压根不读这里的 CSS）。
+ *
+ * 背景取 --af-panel 而非 --af-sunk：展开的列表是**浮层**，
+ * 该比输入框亮一档，视觉上才像浮在内容上面。
+ *
+ * optgroup（分组标题）单独弱化：它与 option 混在一起时不加区分，
+ * 用户分不清哪是分组名、哪是可选项。 */
+select option {
+  background: var(--af-panel);
+  color: var(--af-fg);
+}
+select optgroup {
+  background: var(--af-panel);
+  color: var(--af-dim);
+}
+/* 选中项**刻意不设**：交给浏览器默认高亮。
+   曾想给 background:var(--af-accent) + color:CanvasText，但 CanvasText 是按
+   color-scheme 定的、**不是**按底色明暗算的 —— 用户把强调色设成亮黄
+   （cyberpunk）就成了白字压亮黄，对比度 1.09，等于没有。 */
+
 /* 两者都用 <label> 承载，label 默认 display:inline，必须显式改成 flex */
 .p-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .p-col { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
@@ -1621,10 +1651,12 @@ input.mono, textarea.mono {
   position: absolute; left: 0; top: 100%; z-index: 5;
   width: 280px; max-height: 220px; overflow: auto;
   margin-top: 4px; padding: 8px;
-  background: var(--af-panel, #171a21);
-  border: 1px solid var(--af-line, #2a2f3a);
-  border-radius: var(--r-card, 8px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  background: var(--af-panel);
+  border: 1px solid var(--af-line);
+  border-radius: var(--af-r-sm);
+  /* 投射阴影走 --af-cast-*（指向 --sh-cast-*，与外壳浮层同一套）。
+     写死 rgba(0,0,0,.45) 换主题不会跟着变：深色下看不见、浅色下又太重。 */
+  box-shadow: var(--af-cast-lg);
 }
 .task-flow-pop-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: var(--fs-11, 11px); }
 .task-layer-group { margin-bottom: 8px; }
@@ -1643,7 +1675,7 @@ input.mono, textarea.mono {
 .task-flow-node {
   border: 1px solid var(--af-line, #2a2f3a);
   border-left-width: 3px;
-  border-radius: var(--r-card, 8px);
+  border-radius: var(--af-r-sm);
   padding: 6px 8px;
   background: var(--af-raised, rgba(255, 255, 255, 0.03));
   display: flex; flex-direction: column; gap: 2px;
@@ -1658,7 +1690,7 @@ input.mono, textarea.mono {
 .task-flow-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .task-flow-link {
   font-size: var(--fs-10, 10px); color: var(--af-mute);
-  padding: 1px 6px; border: 1px solid var(--af-line, #2a2f3a); border-radius: 999px;
+  padding: 1px 6px; border: 1px solid var(--af-line, #2a2f3a); border-radius: var(--r-pill, 999px);
 }
 .task-view-switch { display: flex; gap: 6px; margin: 6px 0; }
 
@@ -1699,7 +1731,7 @@ input.mono, textarea.mono {
 .trig-cards { display: flex; flex-direction: column; gap: 8px; }
 .trig-card {
   border: 1px solid var(--af-line, #2a2f3a);
-  border-radius: var(--r-card, 8px);
+  border-radius: var(--af-r-sm);
   padding: 8px 10px;
   background: var(--af-raised, rgba(255, 255, 255, 0.03));
 }
@@ -1712,7 +1744,7 @@ input.mono, textarea.mono {
 .trig-empty {
   font-size: var(--fs-11, 11px); color: var(--af-mute);
   padding: 8px 10px; border: 1px dashed var(--af-line, #2a2f3a);
-  border-radius: var(--r-card, 8px);
+  border-radius: var(--af-r-sm);
 }
 .trig-row.is-off { opacity: 0.5; }
 
@@ -2863,10 +2895,14 @@ input.mono, textarea.mono {
   max-height: min(70vh, 520px);
   display: flex;
   flex-direction: column;
-  background: var(--af-panel, #1c1c1e);
-  border: 1px solid var(--af-line, #333);
-  border-radius: var(--af-r, 8px);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, .45);
+  background: var(--af-panel);
+  border: 1px solid var(--af-line);
+  /* --af-r 这个变量**从未定义过**（本插件只有 --af-r-xs / --af-r-sm），
+     写了它等于永远吃兜底、不跟随主题。改用具名的 --af-r-sm。 */
+  border-radius: var(--af-r-sm);
+  /* 投射阴影必须走 --af-cast-*：它指向 --sh-cast-*，与外壳浮层同一套。
+     写死 rgba(0,0,0,.45) 换主题不会跟着变 —— 深色下看不见、浅色下又太重。 */
+  box-shadow: var(--af-cast-lg);
   overflow: hidden;
 }
 
