@@ -6662,7 +6662,7 @@ group('文件库 / 搜索结果：两个独立页签共用一个底框');
   }
 }
 
-group('文件库展开导致画布内容位移：补内核漏掉的半个 Δ');
+group('文件库展开导致画布内容位移：按实测屏幕位置差补偿');
 
 {
   const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
@@ -6678,21 +6678,45 @@ group('文件库展开导致画布内容位移：补内核漏掉的半个 Δ');
     'panBy 不传 duration（与内核 resize 一致，避免动画互相打断）');
   ok(/panBy\(dx, dy\) \{/.test(br), '桥接转发 panBy');
 
-  // ---- 2) 补偿量是 Δ/2，不是 Δ ----
-  // 内核 resize 已补 (新宽-旧宽)/2，只补剩下的半个。补 Δ 会过冲。
-  ok(/bridge\?\.panBy\(Math\.round\(d \/ 2\), 0\)/.test(ix),
-    '补偿量是 Δ/2（内核已补另外一半，补 Δ 会过冲）');
-  // 宽度必须**实测**：padding/gap/box-sizing 变了硬编码值就补错
-  ok(/canvasEl\.clientWidth - before/.test(ix), 'Δ 用实测（不硬编码 216）');
-  ok(!/panBy\(-108|panBy\(108/.test(ix), '没有硬编码 ±108 之类的位移量');
-  // 等一帧：class 刚改完布局还没更新，此时读 clientWidth 仍是旧值、Δ 恒 0
-  ok(/requestAnimationFrame/.test(ix), '等一帧再测宽度（否则 Δ 恒为 0）');
-  ok(/if \(!d\) return;/.test(ix), 'Δ 为 0 时不补（搜索↔文件切换宽度不变）');
+  // ---- 2) 补偿以**实测屏幕位置差**为准，不推算内核补了几成 ----
+  ok(/const d = Math\.round\(before - after\)/.test(ix),
+    '补偿量 = 前后屏幕位置之差（不推算内核补了几成）');
+  // 早先按"固定 Δ/2"硬补是错的：Δ 取决于 flex 收缩分配，右侧栏一旦可收缩
+  // 就不是 216。这里必须没有任何 216 / 108 之类的常量参与。
+  const ixNoComment = ix.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok(!/216|108/.test(ixNoComment), '代码里没有 216 / 108 之类的硬编码位移常量');
+  // before 取不到时必须**跳过**，不能当成 0 —— 那会补出一个反向位移
+  ok(/if \(before == null\) return r;/.test(ix),
+    '拿不到 before 就跳过补偿（不能当成 0）');
+  ok(/if \(after == null\) return;/.test(ix), '拿不到 after 也跳过');
+  // 1px 以内是取整噪声，不补 —— 否则每次开合都多一次无谓平移
+  ok(/Math\.abs\(d\) >= 1/.test(ix), '1px 以内不补（取整噪声）');
+  // 等**两帧**：一帧只够布局更新，内核 resize 可能还没跑
+  ok(/nextFrames\(2\)/.test(ix), '等两帧再测（一帧不够：内核 resize 可能还没跑）');
+  ok(/function nextFrames\(n\)/.test(ix), '有 nextFrames 辅助函数');
 
-  // ---- 3) 只在底框「开↔合」时回调，不是每次 apply ----
-  ok(/wasOpen !== !!p/.test(fl), '只在开合状态**变化**时回调 onPanelToggle');
-  ok(/onToggle && wasOpen !== !!p/.test(fl), '回调受 onToggle 存在性保护');
-  ok(/onPanelToggle: compensateCanvasPan/.test(ix), '外壳注册了 onPanelToggle');
+  // ---- 3) 所有会改变底框开合的调用点都套了 withStableRoot ----
+  for (const call of [
+    /withStableRoot\(\(\) => fileList\?\.showFiles\(on\)\)/,
+    /withStableRoot\(\(\) => fileList\?\.setSearch\(null\)\)/,
+    /withStableRoot\(\(\) => fileList\?\.setSearch\(bridge\?\.getSearchResults\?\.\(\) \|\| null\)\)/,
+  ]) {
+    ok(call.test(ix), `调用点套了 withStableRoot：${call.source.slice(0, 46)}…`);
+  }
+  // 不允许残留**裸调用**（初始化那一处除外：那时 bridge 还没建、
+  // rootScreenX 返回 null，withStableRoot 会自行跳过，包裹了也没意义）
+  const ixCode = ix.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const bare = [...ixCode.matchAll(/^\s+(?:fileList\?\.|fileList\.)(showFiles|setSearch)\([^)]*\);$/gm)]
+    .filter((m) => !/!!settings\.filesOpen/.test(m[0]));
+  eq(bare.length, 0, `无未包裹的裸开合调用（发现 ${bare.map((m) => m[0].trim()).join(' | ')}）`);
+
+  // ---- 3b) rootScreenX 取不到时返回 null，不是 0 ----
+  ok(/rootScreenX: function \(\)/.test(html), '编辑器暴露 rootScreenX');
+  ok(/typeof v === 'number' && isFinite\(v\) \? v : null/.test(br),
+    'rootScreenX 取不到时返回 null（不是 0）');
+  // 必须含容器左边缘：只测容器内坐标看不出容器自己挪了多少
+  ok(/host\.getBoundingClientRect\(\)\.left/.test(html),
+    'rootScreenX 含容器左边缘（否则看不出容器自己挪了多少）');
 
   // ---- 4) 几何账：216 = flex-basis 186 + padding 10×2 + gap 10 ----
   {
