@@ -165,9 +165,9 @@ export function HistoryList({
                   ) : (
                     <div
                       key={row.key}
-                      className={`hist-row ${active && active.id === row.entry.id ? 'is-active' : ''}`}
+                      className={`hist-row ${activeId === row.entry.id ? 'is-active' : ''}`}
                       style={{ height: ENTRY_H }}
-                      onClick={() => setSel(row.entry.id)}
+                      onClick={() => onSelect(row.entry.id)}
                     >
                       <div className="task-item-top">
                         <span className="task-name">{row.entry.canvasName}</span>

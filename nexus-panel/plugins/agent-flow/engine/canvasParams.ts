@@ -172,7 +172,7 @@ export function paramValue(
 }
 
 export function paramNamesOf(params: CanvasParam[] | undefined): string[] {
-  return namesOf(params);
+  return namesOf(params ?? []);
 }
 
 /** 参数表 → 渲染用的查表。渲染时每个变量都查一次，数组 find 是线性扫描 */
@@ -196,11 +196,11 @@ export function diffParamIssue(
   params: CanvasParam[] | undefined,
   used: readonly string[],
 ): ParamIssue {
-  const defined = namesOf(params);
+  const defined = namesOf(params ?? []);
   const usedSet = new Set(norm(used));
   return {
     // 引用了但没定义 —— 这才是会出问题的
-    missing: [...usedSet].filter((n) => !defined.has(n)).sort(),
+    missing: [...usedSet].filter((n) => !defined.includes(n)).sort(),
     // 定义了但没人用 —— 只提示，不阻断（可能是给将来预留的）
     unused: [...defined].filter((n) => !usedSet.has(n)).sort(),
   };
@@ -234,7 +234,11 @@ export function ensureParams(
   names: readonly string[],
 ): CanvasParam[] {
   const out = (params ?? []).map(cloneParam);
-  const defined = namesOf(out);
+  /*
+   * 追加过程中要能判断"这个名已经有了"，所以用 Set 而不是数组 ——
+   * 数组每加一个就要 includes 扫一遍，且这里本来就是边加边查。
+   */
+  const defined = new Set(namesOf(out));
   for (const n of norm(names)) {
     if (defined.has(n)) continue;
     if (!isValidParamName(n)) continue;
@@ -263,7 +267,7 @@ export function migrateEnvVars(
   envVars: Record<string, string> | undefined,
 ): CanvasParam[] {
   const out = (params ?? []).map(cloneParam).filter((p) => p.name);
-  const defined = namesOf(out);
+  const defined = new Set(namesOf(out));
   for (const [k, v] of Object.entries(envVars ?? {})) {
     const name = String(k ?? '').trim();
     if (!name || defined.has(name)) continue;
@@ -281,13 +285,13 @@ function cloneParam(p: CanvasParam): CanvasParam {
   return next;
 }
 
-function namesOf(params: readonly CanvasParam[]): Set<string> {
+function namesOf(params: readonly CanvasParam[]): string[] {
   const out = new Set<string>();
   for (const p of params ?? []) {
     const n = String(p?.name ?? '').trim();
     if (n) out.add(n);
   }
-  return out;
+  return [...out];
 }
 
 function norm(names: readonly string[]): string[] {
