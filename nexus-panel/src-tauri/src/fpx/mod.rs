@@ -778,6 +778,23 @@ pub(crate) fn core_save_style(
 /// 与 core_save_style 分开是为了避免「为了保留旧图标而先读一次配置」的写法：
 /// 那种写法在并发下会把读到的旧图标值写回，覆盖期间别人设的新图标。
 /// 只改自己关心的字段，其余留给事务里的磁盘最新值。
+/**
+ * #165 合法色值：`#RGB` 或 `#RRGGBB`（字母大小写不限，存之前统一转大写）。
+ *
+ * 为什么要在**写入时**挡住：非法值存进配置后，前端 `brushVars` 会返回 `{}`
+ * （解析失败即降级），卡片就走"无标签色"分支 —— 界面上**看不出任何异常**，
+ * 只是"设了颜色却不生效"，也没有报错。这正是最难被发现的那一类问题。
+ *
+ * 注意**只在写时校验，读时不动**：存量配置里可能已经躺着非法值，
+ * 读时一并拒绝会让这些卡片连现有颜色都显示不出来，比现状更糟。
+ */
+pub(crate) fn is_hex_color(c: &str) -> bool {
+    let b = c.as_bytes();
+    if b.first() != Some(&b'#') { return false; }
+    let hex = &b[1..];
+    (hex.len() == 3 || hex.len() == 6) && hex.iter().all(|x| x.is_ascii_hexdigit())
+}
+
 pub(crate) fn core_set_tag_color(
     dir: &std::path::Path,
     path: &str,
@@ -796,6 +813,10 @@ pub(crate) fn core_set_tag_color(
         if c.is_empty() {
             table.remove(path);
         } else {
+            /* #165 挡在写入前：存进去再降级，用户只会觉得"设了没反应" */
+            if !is_hex_color(&c) {
+                return Err(format!("非法色值「{c}」，应为 #RRGGBB 或 #RGB"));
+            }
             table.insert(path.to_string(), c);
         }
         Ok(snapshot(dir, cfg))

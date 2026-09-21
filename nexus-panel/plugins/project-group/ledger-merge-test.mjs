@@ -72,4 +72,36 @@ console.log('\n=== 4. #131 MCP 工具开关两列 ===');
   t('子项 min-width:0', /\.fpx-toollist \.fpx-check \{[^}]*min-width: 0;/.test(css));
 }
 
+console.log('\n=== 5. #86 编辑器「跟随系统」选项 ===');
+{
+  const tools = R('components/ToolsPanel.tsx');
+  /*
+   * 后端早已支持（editToolPath 为空 → open_default），缺的只是**入口** ——
+   * 没有它，用户一旦选过编辑器就退不回去（只能手工清配置），
+   * 等于这个能力不存在。
+   */
+  t('有跟随系统项', /跟随系统/.test(tools));
+  /* 必须是可点的一项，而不是"清空"按钮：用户要看到当前处于哪种状态 */
+  t('是列表里的一项', /className=\{`fpx-editoritem\$\{!config\.editToolPath \? ' active' : ''\}`\}/.test(tools));
+  t('选中态按"未设置"判定', /!config\.editToolPath \? ' active' : ''/.test(tools));
+  /*
+   * 空串要走后端存 None，本地草稿也必须传 null 而不是 '' ——
+   * 否则 active 判定（!editToolPath）会判成"没跟随系统"，显示与配置不一致。
+   */
+  t('本地草稿传 null', /onSaved\(\{ editToolPath: exe \|\| null \}\)/.test(tools));
+  t('日志区分两种情况', /exe \? `已设置编辑器：\$\{exe\}` : '已改为跟随系统/.test(tools));
+}
+
+console.log('\n=== 6. #165 色值非法要在**写入时**挡住 ===');
+{
+  t('有校验函数', /pub\(crate\) fn is_hex_color\(c: &str\) -> bool/.test(mod));
+  t('校验 3 位与 6 位', /hex\.len\(\) == 3 \|\| hex\.len\(\) == 6/.test(mod));
+  t('必须是十六进制', /hex\.iter\(\)\.all\(\|x\| x\.is_ascii_hexdigit\(\)\)/.test(mod));
+  t('必须以 # 开头', /if b\.first\(\) != Some\(&b'#'\) \{ return false; \}/.test(mod));
+  t('写入前校验', /if !is_hex_color\(&c\) \{/.test(mod));
+  t('非法直接报错', /return Err\(format!\("非法色值/.test(mod));
+  /* 读时不校验：存量配置里可能已有非法值，拒读会让现有颜色也显示不出来 */
+  t('读取路径未加校验', !/fn core_set_tag_color[\s\S]{0,400}?load_config[\s\S]{0,200}?is_hex_color/.test(mod));
+}
+
 done();

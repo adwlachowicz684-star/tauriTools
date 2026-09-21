@@ -161,8 +161,14 @@ export function EditorDialog({
   const pick = async (exe: string) => {
     try {
       await api.setEditor(exe);
-      onSaved({ editToolPath: exe });
-      onLog(`已设置编辑器：${exe}`);
+      /*
+       * 空串 = 跟随系统，后端会存成 None。
+       * 这里也要传 null 而不是 ''：本地草稿若是空串，
+       * 界面上"跟随系统"那项的 active 判定（!config.editToolPath）
+       * 就会判成"没跟随系统"，显示与配置不一致。
+       */
+      onSaved({ editToolPath: exe || null });
+      onLog(exe ? `已设置编辑器：${exe}` : '已改为跟随系统（系统默认程序打开 .md）');
       onClose();
     } catch (e) {
       onLog(`设置失败：${errText(e)}`, true);
@@ -185,6 +191,25 @@ export function EditorDialog({
       )}
 
       <div className="fpx-editorlist">
+        {/*
+         * #86 「跟随系统」：不选任何编辑器，交给系统默认程序。
+         *
+         * 后端早已支持（edit_tool_path 为空时 open_default），
+         * 缺的只是这个**入口** —— 没有它，用户一旦选过编辑器就退不回去
+         * （唯一的办法是手工清空配置），等于这个能力等于不存在。
+         *
+         * 它必须是**可点的一项**而不是一个"清空"按钮：
+         * 用户要在候选列表里看到"当前生效的是跟随系统"，
+         * 否则不知道自己现在处于哪种状态。
+         */}
+        <button
+          className={`fpx-editoritem${!config.editToolPath ? ' active' : ''}`}
+          onClick={() => pick('')}
+          title="不指定编辑器，用系统默认程序打开 .md"
+        >
+          <span className="fpx-editorname">跟随系统</span>
+          <span className="fpx-editorexe p-mono">系统默认程序</span>
+        </button>
         {list.map((c) => (
           <button
             key={c.exe}
