@@ -21,7 +21,33 @@ import { defaultKV, type KV } from './kv';
  */
 
 const STORAGE_KEY = 'agent-flow.nodeColors.v1';
+/** 取色面板里收藏的自定义色 —— 单独一个键，不混进类型覆盖表 */
+const CUSTOM_KEY = 'agent-flow.nodeColors.custom.v1';
 const FORMAT_VERSION = 1;
+
+/**
+ * 取色面板的"自定义常用色"。
+ *
+ * 由主面板的取色服务托管（传进去显示、返回来存下），
+ * 这里只负责落地 —— 下次打开还是同一排，与各调用方互不干扰。
+ */
+export function loadCustomColors(kv: KV = defaultKV()): string[] {
+  try {
+    const parsed = JSON.parse(kv.get(CUSTOM_KEY) ?? '[]') as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isHexColor);
+  } catch {
+    return [];
+  }
+}
+
+export function saveCustomColors(list: string[], kv: KV = defaultKV()): void {
+  try {
+    kv.set(CUSTOM_KEY, JSON.stringify(list.filter(isHexColor)));
+  } catch {
+    /* 存不下就算了，不能让整个插件挂掉 */
+  }
+}
 
 export type ColorMap = Record<string, string>;
 

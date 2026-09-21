@@ -165,6 +165,8 @@ export function allPresets(): NodePreset[] {
         type: def.type,
         // 用户自定义的类型色优先（预设自带的色更具体，仍由它赢）
         color: resolveNodeColor(def.type, p.color ?? color, p.color, overrides),
+        // 预设自带的色不算"用户定的" —— 恢复默认要能回到它
+        colorOwn: !p.color && !!overrides[def.type],
       });
     }
   }
@@ -187,6 +189,8 @@ export function allPresets(): NodePreset[] {
       label: cp.name,
       // 自定义预设自己的色最具体；没设才轮到类型覆盖
       color: resolveNodeColor(cp.baseType, def.meta.color, cp.color, overrides),
+      // 预设自带的色优先于类型覆盖，所以"用户定的"只看它自己有没有设
+      colorOwn: !!cp.color,
       hint: `自定义 · 基于${def.meta.label}`,
       // 每次返回新对象：多个实例若共享同一份，改一个会串到另一个上
       init: () => dataOf(cp),

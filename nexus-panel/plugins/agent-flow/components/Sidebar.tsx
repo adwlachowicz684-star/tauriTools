@@ -3,12 +3,13 @@ import NodeDesc from './NodeDesc';
 import { presetsByCategory, getDef, allPresets } from '../nodes';
 import { hasDef } from '../nodes/registry';
 import { confirm, alert, prompt } from '../../../js/dialog.js';
+import { useNexus } from '../../../src/nexus-react';
 import {
   presetIdOf, removeCustomPreset, renameCustomPreset,
   exportCustomPresets, importCustomPresets,
   loadCustomPresets, saveCustomPresets,
 } from '../engine/customPresets';
-import { setColorOverride } from '../engine/nodeColors';
+import { setColorOverride, loadCustomColors, saveCustomColors } from '../engine/nodeColors';
 import { pickBrief, producesDescOf } from '../engine/blockApi';
 import NodeTip, { type TipAnchor } from './NodeTip';
 
@@ -368,12 +369,19 @@ export default function Sidebar({
   const groups = presetsByCategory();
 
   /*
-   * 自定义颜色：取色器当前开着的那一条。
+   * 自定义颜色：点色块 → 调主面板的取色服务。
    *
-   * 存的是 key 而不是 boolean —— 同时只能开一个，
-   * 否则点开第二条时第一条还挂着，两条挤在 260px 宽的侧栏里。
+   * 以前这里自挂一个 `<input type="color">` 弹层。它确实是浏览器原生的、
+   * 不算"自己写的色盘"，但只能选一个色，没有常用色、没有吸管，
+   * 而主面板那个取色面板本来就有 —— 各插件共用一份，不必各写各的。
+   *
+   * 降级仍走原生 input：无构建模式下取色服务不可用（React/TSX 服务会被过滤），
+   * 此时若什么都不给，点色块就彻底没反应了。原生控件是兜底，不是另一套实现。
    */
-  const [pickKey, setPickingColor] = useState<string | null>(null);
+  const nexus = useNexus();
+  const nativeInput = useRef<HTMLInputElement | null>(null);
+  /** 降级路径下"正在给谁取色" —— 原生 input 的 change 事件不带这份信息 */
+  const pending = useRef<{ key: string; type: string } | null>(null);
 
   const applyColor = async (p: { key: string; type: string }, color: string | null) => {
     const id = presetIdOf(p.key);
@@ -389,9 +397,28 @@ export default function Sidebar({
     } else {
       setColorOverride(p.type, color);
     }
-    setPickingColor(null);
     // 强制重渲染 —— preset 的色是 allPresets() 现算的，不刷新看不到变化
     setTick((v) => v + 1);
+  };
+
+  /** 点色块：优先主面板取色服务，不可用才落回原生取色器 */
+  const openPicker = async (p: { key: string; type: string; color: string }) => {
+    try {
+      if (await nexus.services.color.available()) {
+        const r = await nexus.services.color.pick(p.color, { custom: loadCustomColors() });
+        /*
+         * 取消也要存 custom —— 用户可能刚收藏完几个色就点了取消，
+         * 那份收藏不该跟着丢。
+         */
+        if (r?.custom?.length) saveCustomColors(r.custom);
+        if (r?.hex) void applyColor(p, r.hex);
+        return;
+      }
+    } catch {
+      /* 服务没装 / 挂载失败：落回原生取色器，不要静默吞掉 */
+    }
+    pending.current = p;
+    nativeInput.current?.click();
   };
 
   return (
@@ -400,6 +427,21 @@ export default function Sidebar({
      * 切标签时左栏的标题、内边距、滚动方式不再变。
      */
     <aside className="side-pane" key={tick}>
+      {/*
+        降级用的原生取色器。
+        `display:none` 的 input 仍可 click() 并弹出系统取色器 ——
+        它只在取色服务不可用（无构建模式）时才被点到，正常路径走不到这里。
+      */}
+      <input
+        ref={nativeInput}
+        type="color"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const p = pending.current;
+          pending.current = null;
+          if (p) void applyColor(p, e.target.value);
+        }}
+      />
       {/*
         节点库**只管节点**。
         模块库原先嵌在这里用二级 tab 切，现在提到左栏顶层与它并列 ——
@@ -521,12 +563,10 @@ export default function Sidebar({
                   >
                     <span className="side-label">{p.label}</span>
                     {/*
-                     * 自定义颜色。
+                     * 自定义颜色：点色块 → 主面板的取色面板。
                      *
-                     * 用 `<input type="color">` 而不是自画色板：
-                     * 原生取色器各平台都是用户熟悉的那一个，
-                     * 自画一份要处理 eyedropper / 历史色 / 关不掉的浮层，
-                     * 而收益只是"看起来统一"。
+                     * 不再自挂弹层 —— 侧栏只有 260px，塞不下 SV 面板加色相条，
+                     * 而取色服务本来就是全面板共用的那一个。
                      */}
                     <span
                       className="side-swatch"
@@ -535,24 +575,25 @@ export default function Sidebar({
                       onClick={(e) => {
                         // 不阻止冒泡会顺带弹说明浮层
                         e.stopPropagation();
-                        setPickingColor(pickKey === p.key ? null : p.key);
+                        void openPicker(p);
                       }}
                     />
-                    {pickKey === p.key ? (
-                      <span className="side-picker" onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="color"
-                          value={p.color}
-                          onChange={(e) => void applyColor(p, e.target.value)}
-                        />
-                        <button
-                          className="side-head-btn"
-                          onClick={() => void applyColor(p, null)}
-                          title="恢复这个类型的默认色"
-                        >
-                          默认
-                        </button>
-                      </span>
+                    {/*
+                     * 恢复默认。只在**这个色确实是用户定的**时出现 ——
+                     * colorOwn 由 allPresets() 一并算出，不在这里现猜。
+                     * 无条件给的话，每行都挂一个按钮，反而看不清哪条改过。
+                     */}
+                    {p.colorOwn ? (
+                      <button
+                        className="side-op"
+                        title="恢复默认色"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void applyColor(p, null);
+                        }}
+                      >
+                        ↺
+                      </button>
                     ) : null}
                     {isCustom ? (
                       <span className="side-ops">

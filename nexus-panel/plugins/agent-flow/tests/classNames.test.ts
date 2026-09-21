@@ -660,7 +660,24 @@ test('.side-head / .side-title / .side-title-ops 在 CSS 里各只有一处定�
   }
 });
 
-test('节点库的自定义色块有样式（.side-swatch / .side-picker）', () => {
+test('预警圆点不带呼吸动画', () => {
+  /*
+   * 红点以前会脉动（af-pulse-dot），本意是"阻断值得抢视线"。
+   * 实际相反：画布上有几个缺参节点就一直在闪，
+   * 而且"什么都没做画面却在动"会被当成卡了。
+   *
+   * 这类东西很容易被加回来 —— 脉动看起来挺像那么回事。
+   * 断言整个文件不含 CSS 动画，而不只是 .node-dot 那一条：
+   * 定义分散在 animation / @keyframes / prefers-reduced-motion 三处，
+   * 只盯一处的话，删掉另外两处照样通过。
+   */
+  const css = fs.readFileSync(path.join(ROOT, 'styles.css'), 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/animation\s*:/.test(css), '不应有 animation');
+  assert.ok(!/@keyframes/.test(css), '不应有 @keyframes');
+});
+
+test('节点库的自定义色块有样式（.side-swatch）', () => {
   /*
    * 色块是新增的控件，忘了写 CSS 的话它会退化成一个无边框的小方块，
    * 界面上只是"看着怪"，没人会想到是样式没定义。
@@ -668,7 +685,24 @@ test('节点库的自定义色块有样式（.side-swatch / .side-picker）', ()
   const css = fs.readFileSync(path.join(ROOT, 'styles.css'), 'utf-8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
   assert.match(css, /\.side-swatch\s*\{/, '要有 .side-swatch');
-  assert.match(css, /\.side-picker\s*\{/, '要有 .side-picker');
+});
+
+test('改色不自己画色板 —— 走主面板的取色服务', () => {
+  /*
+   * 以前侧栏自挂一个 <input type="color"> 弹层（外加 .side-picker 一套样式）。
+   * 那是各写一份：没有常用色、没有吸管，而主面板的取色面板本来就有这些。
+   *
+   * 这条盯的是"别再回到自画"：色块点了要调 ctx.services.color.pick。
+   * 匹配调用而不是"文件里含不含这个名字" —— 注释里正要写这个词来说明取舍。
+   */
+  const t = srcOf('components/Sidebar.tsx');
+  assert.match(t, /services\.color\.pick\s*\(/, '要点开主面板的取色服务');
+  /*
+   * 类名不带前导点（`className="side-picker"`），
+   * 所以这里不能写成 /\.side-picker/ —— 那种写法只认 CSS 里的选择器，
+   * 注入 `className="side-picker side-swatch"` 时不会红（假阴性，实测踩过）。
+   */
+  assert.ok(!/\bside-picker\b/.test(t), '不再自挂取色弹层');
 });
 
 test('改色走 setColorOverride / 自定义预设自己那份，不各写一套', () => {
