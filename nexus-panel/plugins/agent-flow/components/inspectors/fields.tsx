@@ -6,11 +6,11 @@ import type { Credential } from '../../engine/credentials';
 // 从 engine/files 直接拿，不绕 shared：shared 只是转手 import 进来用，
 // 并没有再导出，硬要从它拿就得让它多导出一次，平白加一层耦合
 import { FILE_FIELD_HINT } from '../../engine/files';
-import { shouldDetach, detachGroup } from '../../engine/paramCards';
-// 从 registry 拿 getCardGroup，不能走 nodes/index（会与 defs 成环）
-import { getCardGroup } from '../../nodes/registry';
+import { resolveVars } from '../../engine/variables';
+// 从 registry 拿 getVariableGroup，不能走 nodes/index（会与 defs 成环）
+import { getVariableGroup } from '../../nodes/registry';
 import { CredentialPicker } from './shared';
-import { ParamCardPicker } from './ParamCardPicker';
+import { VariablePicker } from './VariablePicker';
 import {
   matchPresetKey, isSecretField, setFieldsDefault, clearFieldsDefault, hasFieldDefault,
 } from '../../engine/nodeDefaults';
@@ -45,7 +45,7 @@ export type FieldType =
   | 'switch' // 勾选
   | 'chips' // 按钮组（如目标语言）
   | 'credential' // 凭据选择（同时写 token 与 credentialId）
-  | 'paramCard' // 参数卡片：一组字段存成卡片，点一下整套套用
+  | 'paramCard' // 参数变量：一组字段存成卡片，点一下整套套用
   | 'note' // 纯提示文本，不占字段
   | 'custom'; // 逃生口：完全自己渲染
 
@@ -71,6 +71,8 @@ export type FieldRenderProps = {
   presetKey?: string;
   /** 全部画布（「调用画布」节点的下拉框要用） */
   canvases?: { id: string; name: string }[];
+  /** 当前画布 id（变量选择器按它过滤本画布变量） */
+  canvasId?: string;
   /** 当前画布 id（下拉框里要排除它） */
   activeCanvasId?: string;
   /** 写一条运行日志（存成功 / 被拒绝时告诉用户） */
@@ -109,7 +111,7 @@ export type FieldDef = {
 
   /* ---- paramCard 类型用 ---- */
   /** 卡片组名。同组卡片跨节点类型共享，如 'github-repo' */
-  cardGroup?: string;
+  varGroup?: string;
   /** 这张卡片管辖的字段名。改这些字段会自动脱钩 */
   cardKeys?: string[];
   /** 卡片上显示的摘要文字，如 "acme/web" */
@@ -404,23 +406,24 @@ function renderField(
 
   if (type === 'paramCard') {
     /*
-     * 保留作为逃生口：绝大多数节点走 meta.cardGroups 自动渲染即可，
+     * 保留作为逃生口：绝大多数节点走 meta.varGroups 自动渲染即可，
      * 需要特殊布局时才在 fields 里手写这一段。
      * 组的 keys / summary 一律从卡片组定义取，不再由字段重复声明 ——
      * 两处都能声明的话，改一处忘另一处就会出现"面板显示的卡片名
      * 与拖上去套用的字段不是一回事"。
      */
-    const group = f.cardGroup ?? '';
-    const gd = getCardGroup(group);
+    const group = f.varGroup ?? '';
+    const gd = getVariableGroup(group);
     const cardHint = typeof f.hint === 'function' ? f.hint(p.d) : f.hint;
     return (
       <div className="field" key={`pc-${group}`}>
-        <span>{strOf(f.label, p.d) || gd?.label || '参数卡片'}</span>
-        <ParamCardPicker
+        <span>{strOf(f.label, p.d) || gd?.label || '参数变量'}</span>
+        <VariablePicker
           group={group}
           d={p.d}
           patch={p.onChangeNode}
           defaultName={f.cardName ?? gd?.name}
+          canvasId={p.canvasId}
         />
         {cardHint ? <small className="dim">{cardHint}</small> : null}
       </div>
@@ -536,7 +539,7 @@ function renderField(
  */
 export function BasicInspector({
   node, edges, onChange, credentials, onOpenCredentials,
-  fields, footer, onEditModule, onNote,
+  fields, footer, onEditModule, onNote, canvasId,
 }: {
   node: FlowNode;
   edges: FlowEdge[];
@@ -550,29 +553,36 @@ export function BasicInspector({
   onEditModule?: (nodeId: string) => void;
   /** 逐字段「设为默认」用它写日志 */
   onNote?: (msg: string) => void;
+  /** 当前画布 id */
+  canvasId?: string;
 }) {
-  const d = node.data as unknown as Record<string, unknown>;
+  /* 引用变量时节点上不存值 —— 显示前先解析，否则输入框是空的 */
+  const d = resolveVars(node.data as unknown as Record<string, unknown>);
   const def = getDef(node.type);
   const upstream = edges.filter((e) => e.target === node.id).map((e) => e.source);
 
   /*
-   * 参数卡片是**通用能力**：节点只需在 meta.cardGroups 里声明"我支持哪些组"，
+   * 参数变量是**通用能力**：节点只需在 meta.varGroups 里声明"我支持哪些组"，
    * 这里就自动渲染出对应的选择器，不必在 fields 里写任何东西。
    *
-   * 与拖放校验共用同一份 meta.cardGroups —— 面板上有选择器的组，
+   * 与拖放校验共用同一份 meta.varGroups —— 面板上有选择器的组，
    * 才接受把该组卡片拖到节点上。反过来若两边各写一份，
    * 就会出现"面板有选择器但拖放被拒"这类不一致。
    */
-  const cardGroups = (def.meta.cardGroups ?? [])
-    .map((g) => getCardGroup(g))
+  const varGroups = (def.meta.varGroups ?? [])
+    .map((g) => getVariableGroup(g))
     .filter((g): g is NonNullable<typeof g> => g !== null);
 
+  /*
+   * 改字段不再自动脱离变量 —— 现在改的是**变量本身**
+   * （转投在 Inspector 里统一做，见 redirectVarPatch）。
+   *
+   * 以前"改一下就脱钩"的后果：想让 5 个节点共用同一个仓库地址，
+   * 在其中任何一个上改一下就散了，变量形同虚设。
+   * 真要独立，点选择器上的「脱离」。
+   */
   const patchObj = (p: Record<string, unknown>) => {
-    let merged = p;
-    for (const g of cardGroups) {
-      if (shouldDetach(p, g.keys)) merged = { ...merged, ...detachGroup(d, g.group) };
-    }
-    onChange(node.id, merged);
+    onChange(node.id, p);
   };
 
   /*
@@ -586,6 +596,7 @@ export function BasicInspector({
 
   const base: FieldRenderProps = {
     d,
+    canvasId,
     value: undefined,
     onChange: () => {},
     patch: patchObj,
@@ -633,10 +644,10 @@ export function BasicInspector({
         ),
       )}
 
-      {cardGroups.map((g) => (
+      {varGroups.map((g) => (
         <div className="field" key={`pc-${g.group}`}>
           <span>{g.label}</span>
-          <ParamCardPicker group={g.group} d={d} patch={patchObj} defaultName={g.name} />
+          <VariablePicker group={g.group} d={d} patch={patchObj} defaultName={g.name} canvasId={canvasId} />
           <small className="dim">
             存成卡片后可一键套用，也能直接拖到画布上的节点；改上面的字段会自动脱钩
           </small>

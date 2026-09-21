@@ -6,6 +6,7 @@ import { isNodeDisabled } from '../engine/nodeDisabled';
 /** 关闭态的圆点色。中性灰，不与"缺项/缺参"的黄红撞色 */
 const OFF_DOT_COLOR = '#6b7280';
 import { normalizeSize, type NodeSize } from '../types';
+import { resolveVars } from '../engine/variables';
 import { resolveNodeColor } from '../engine/nodeColors';
 import { stackParentOf } from '../engine/stack';
 
@@ -75,7 +76,11 @@ export function NodeShell({
    * 现在分开 —— 左边条恒为类型色（认种类），徽章报配置完整度（认能不能跑），
    * 运行状态一律看任务窗口。
    */
-  const issue = validateNode({ data });
+  /*
+   * 引用变量时，节点上不存那组字段的值 —— 直接校验会报"缺参"。
+   * 先把变量的值解析进来再校验，否则"引用了变量"看起来像"参数没填"。
+   */
+  const issue = validateNode({ data: resolveVars(data) });
   const dot: IssueLevel = issue.level;
   /*
    * 关掉的节点：徽章**照常显示缺参 / 缺项**，只有圆点变灰。

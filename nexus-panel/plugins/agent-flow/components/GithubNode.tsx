@@ -1,6 +1,6 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { GithubUpdateNodeData, GithubPushNodeData } from '../types';
-import { NodeCardChips } from './NodeCardChips';
+import { NodeVarChips } from './NodeVarChips';
 import { validateNode, LEVEL_COLOR, LEVEL_TEXT } from '../engine/nodeValidate';
 import { getDef } from '../nodes/registry';
 import { normalizeSize } from '../types';
@@ -67,11 +67,11 @@ function GithubCard({
       <div className="node-title">{d.label || fallbackLabel}</div>
       {size === 'sm' ? null : <div className="node-line node-line--brief">{target}</div>}
       {/*
-       * 参数卡片在矮卡片上保留。
-       * 它是"这个节点用的是哪套配置"的关键信息 ——
-       * 一片矮卡片里若看不出各自套用了哪张卡，模块就没法快速核对了。
+       * 变量卡扣按显示高度走：简不显示 / 标显示名字 / 详显示内容。
+       * 以前矮卡片上硬保留 —— 与"简档只留标题"的初衷冲突：
+       * 一片矮卡片就是要扫标题，多一行反而更慢。
        */}
-      <NodeCardChips data={d} groups={[{ group: 'github-repo', fallback: '地址' }]} />
+      <NodeVarChips data={d} size={size} groups={[{ group: 'github-repo', fallback: '地址' }]} />
       {size === 'sm' ? null : <div className="node-line node-line--meta">{meta}</div>}
       {size === 'sm' ? null : out}
       {issue.level === 'error' && issue.messages.length ? (

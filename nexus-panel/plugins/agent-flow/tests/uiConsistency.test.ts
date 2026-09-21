@@ -3,6 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { readSrc } from './srcScan';
 import { isNodeDisabled, nodeDisabledOf } from '../engine/nodeDisabled';
+import {
+  addVariable, applyVarTo, resolveVars, registerVariableGroup,
+} from '../engine/variables';
+
+/** 内存 KV：变量引擎各处都可注入，测试里不必碰 localStorage */
+function memKV() {
+  const map = new Map<string, string>();
+  return { map, get: (k: string) => map.get(k) ?? null, set: (k: string, v: string) => void map.set(k, v) };
+}
 import path from 'node:path';
 
 /**
@@ -516,4 +525,84 @@ test('触发器启用判定不用 !enabled', () => {
     !/!d\.enabled/.test(bare),
     '启用判定不能写 !d.enabled —— undefined 会被当成停用',
   );
+});
+
+/* ================= 变量（原「参数卡片」）================= */
+
+/*
+ * 引用期间节点上**不存**那组字段的值。
+ *
+ * 留着就变成"第二份值"：改了变量，一部分地方读到新值、
+ * 一部分读到节点上的旧值，表现为"改了有时候生效有时候不生效"。
+ */
+test('引用变量后节点上不再存该组字段的值', () => {
+  registerVariableGroup({
+    group: 'guard-repo', label: '守卫用', keys: ['owner', 'repo'],
+    summary: () => '', validate: () => null,
+  });
+  const kv = memKV();
+  const v = addVariable({ group: 'guard-repo', name: 'R', values: { owner: 'a', repo: 'b' } }, kv);
+  const patch = applyVarTo({ label: 'A' }, v);
+  assert.equal('owner' in patch, true, '必须显式把旧值清掉，不然节点上留着第二份值');
+  assert.equal(patch.owner, undefined);
+  // 但解析要能拿回来
+  assert.equal(resolveVars({ ...patch }, kv).owner, 'a');
+});
+
+/*
+ * 改字段要转投到变量本身。
+ *
+ * 不转投的话，在任一节点上改一下（旧逻辑是"改了就脱钩"），
+ * 想让 5 个节点共用一个仓库地址就散了 —— 变量形同虚设。
+ */
+test('改字段会转投到变量本身（Inspector 统一做）', () => {
+  const insp = readSrc('components/Inspector.tsx');
+  /*
+   * 必须匹配**调用**，不能只查"文件里含 redirectVarPatch"——
+   * import 行里也有这个名字，把调用删掉照样通过（假阴性，已踩到）。
+   */
+  assert.match(insp, /redirectVarPatch\(node\.data/, 'Inspector 要用 redirectVarPatch 转投');
+  assert.match(insp, /patchVariableValues\(/, '转投后要真的写进变量');
+  // 面板拿到的数据必须是解析后的，否则输入框是空的
+  assert.match(insp, /resolveVars\(node\.data\)/, '面板显示前要先解析变量');
+});
+
+/*
+ * 执行前必须解析。
+ *
+ * 不解析：GitHub 节点读到空仓库名、HTTP 节点读到空地址，
+ * 而用户明明选了变量 —— 只会以为变量功能坏了。
+ */
+test('执行前解析变量', () => {
+  const r = readSrc('engine/runner.ts');
+  // 同上：import 里也有 resolveVars，只查名字会被骗过去
+  assert.match(r, /resolveVars\(n\.data\)/, 'runGraph 执行前要解析变量');
+});
+
+/*
+ * 校验前也要解析，否则"引用了变量"会被判成"参数没填"。
+ */
+test('校验前解析变量', () => {
+  const sh = readSrc('components/NodeShell.tsx');
+  assert.match(sh, /validateNode\(\{ data: resolveVars\(/, 'NodeShell 校验前要解析变量');
+});
+
+/*
+ * 三档显示：简不显示 / 标显示名字 / 详显示内容。
+ */
+test('变量卡扣按显示高度分三档', () => {
+  const c = readSrc('components/NodeVarChips.tsx');
+  assert.match(c, /size === 'sm'/, '简档不显示');
+  assert.match(c, /size === 'lg'/, '详档显示内容');
+  // 详档的文本必须限高，否则一个长值能把整张画布顶开
+  const css = read(path.join(ROOT, 'styles.css'));
+  assert.match(css, /\.node-chip-v[\s\S]{0,200}line-clamp/, '详档文本要限制行数');
+});
+
+test('变量作用域：默认画布级，全局要显式打开', () => {
+  const v = readSrc('engine/variables.ts');
+  assert.match(v, /global === true/, 'global 必须显式为真才算全局（缺省即画布级）');
+  // 选择器上要有切换开关
+  const p = readSrc('components/inspectors/VariablePicker.tsx');
+  assert.match(p, /setVariableGlobal/, '变量上要有全局开关');
 });
