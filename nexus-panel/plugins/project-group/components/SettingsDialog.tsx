@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Api } from '../api';
 import { errText } from '../api';
+import { imageToIcoBase64 } from '../utils/ico';
 import type { BackupAutoStatus, BackupTargets, ChainClient, FpxConfig, McpToolRow } from '../types';
 import { ChainActionsPanel } from './ChainActionsPanel';
 import { summarizeDetection } from '../utils/clientDetect';
@@ -286,20 +287,37 @@ export function SettingsBody({
     }
     setWinBusy(srcLabel);
     try {
-      const b64 = await new Promise<string>((resolve, reject) => {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
         const fr = new FileReader();
         fr.onload = () => {
-          /* dataURL 形如 `data:image/png;base64,xxx`，后端要的是纯 base64 */
-          const v = String(fr.result ?? '').split(',')[1] ?? '';
+          const v = String(fr.result ?? '');
           v ? resolve(v) : reject(new Error('读取内容为空'));
         };
         fr.onerror = () => reject(new Error('读取文件失败'));
         fr.readAsDataURL(file);
       });
-      const saved = await api.saveIconData(file.name, b64);
+      /*
+       * #7 非 ICO 图片必须**真的转成 ICO**再入库。
+       *
+       * 后端存的文件名固定是 `{name}.ico`（sanitize 不去扩展名）。
+       * 把 PNG 原样写盘会得到一个"叫 .ico 实为 PNG"的文件 ——
+       * 资源管理器按 ICO 结构解析，显示不出来，且没有任何报错。
+       */
+      const isIco = lower.endsWith('.ico');
+      const b64 = isIco
+        ? dataUrl.split(',')[1] ?? ''
+        /* 交给 canvas 缩放 + PNG 内嵌拼装，见 utils/ico.ts */
+        : await imageToIcoBase64(file);
+      if (!b64) throw new Error('读取内容为空');
+      /*
+       * 名字要**去掉原扩展名**：后端会再补 `.ico`，
+       * 不去掉就得到 `logo.png.ico` 这种双后缀 —— 看着像坏了。
+       */
+      const saved = await api.saveIconData(file.name.replace(/\.[^.]+$/, ''), b64);
       setIconFiles((prev) => (prev.includes(saved) ? prev : [...prev, saved]));
-      stageWindowIcon(saved, `data:image/png;base64,${b64}`);
-      onLog(`已收入「${file.name}」，点「应用」生效`);
+      /* 预览仍用原图：它最清晰，且浏览器对 PNG/JPEG 的支持比 ICO 稳 */
+      stageWindowIcon(saved, dataUrl);
+      onLog(`已收入「${file.name}」${isIco ? '' : '（已转为多尺寸 .ico）'}，点「应用」生效`);
     } catch (e) {
       onLog(`${srcLabel}失败：${errText(e)}`, true);
     } finally {

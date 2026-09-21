@@ -71,7 +71,12 @@ console.log('\n=== 4. 收入图片（拖放/粘贴共用）===');
   t('剥掉 dataURL 前缀', /split\(','\)\[1\]/.test(dlg));
 
   /* 先落盘到 icons/，再拿返回路径 */
-  t('落盘走 saveIconData', /await api\.saveIconData\(file\.name, b64\)/.test(dlg));
+  /*
+   * 不要绑 `saveIconData(file.name, b64)` 这种**完整写法**：
+   * #7 把第一个参数改成 `file.name.replace(...)`（去掉原扩展名）后
+   * 这条就假失败了。真正要断言的是"落盘走的是 saveIconData"。
+   */
+  t('落盘走 saveIconData', /await api\.saveIconData\(file\.name/.test(dlg));
   t('用返回的绝对路径', /stageWindowIcon\(saved/.test(dlg));
   /* 顺带成为"我的图标"的一员 */
   t('并入图标列表（去重）', /setIconFiles\(\(prev\) => \(prev\.includes\(saved\) \? prev : \[...prev, saved\]\)\)/.test(dlg));
