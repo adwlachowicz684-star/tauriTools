@@ -177,8 +177,20 @@ console.log('\n=== 7. 变体互不干扰（收进同一内核才发现）===');
     /* 锚点用 `ref={cardsRef}` 而不是 `className="fpx-cards"`：
        后者在我把 className 改成模板字符串（加 empty-over）后就找不到，
        分段取空 → 两条断言一起误报。**锚点要挑不容易随实现变化的那个。** */
-    const i = cardGrid.indexOf('ref={cardsRef}');
-    const seg = i >= 0 ? cardGrid.slice(Math.max(0, i - 400), i + 700) : '';
+    /*
+     * 分段范围**不能写死 700 字符**：往中间插入代码（#14 的外部拖入分支）
+     * 之后 `onEdgeDragOver` 被推出窗口，indexOf 返回 -1 → 断言假失败。
+     * 改成按 `onDragOver` … `onDragLeave` 切出整块。
+     */
+    /*
+     * 锚点必须是卡片区那一处：`onDragOver={(e) => {` 在页签区也有一个，
+     * 直接 indexOf 会切到页签那段（那里没有 BOX 守卫）→ 两条一起假失败。
+     * 先定位 `ref={cardsRef}`（卡片容器），再从它后面找 onDragOver。
+     */
+    const iAnchor = cardGrid.indexOf('ref={cardsRef}');
+    const i0 = cardGrid.indexOf('onDragOver={(e) => {', iAnchor);
+    const i1 = cardGrid.indexOf('onDragLeave', i0);
+    const seg = i0 >= 0 && i1 > i0 ? cardGrid.slice(i0, i1) : '';
     t('卡片区排除 BOX_DRAG_MIME', /types\.includes\(BOX_DRAG_MIME\)\) return;/.test(seg));
     /* 记指针必须在守卫之后：调分类框顺序时不该连带滚卡片区 */
     const iGuard = seg.indexOf('BOX_DRAG_MIME');

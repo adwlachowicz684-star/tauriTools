@@ -25,6 +25,7 @@ import {
   DRAG_THRESHOLD, movedEnough,
   parseDragPayload, parseTabDrag,
   gapIndexAt, resolveMoveIndex,
+  isExternalDrag, externalDropName,
   type DragPayload, type TabDragPayload,
 } from '../utils/dragSort';
 
@@ -104,6 +105,15 @@ export function TabBar({
   onDropCard?: (path: string, tabIndex: number) => void;
   /** 页签拖到另一个页签上：重排页签顺序（原版页签可拖动排序） */
   onMoveTab?: (from: number, to: number) => void;
+  /**
+   * #14 从文件管理器拖进来的东西。
+   *
+   * **拿不到绝对路径**（浏览器沙箱只给 File 对象，不给磁盘路径），
+   * 所以这里回调的只是"拖了什么名字"，由外层接到正规的选目录流程上。
+   * 沉默地什么都不做是最糟的：用户拖了、松手了、界面毫无变化，
+   * 他会以为这个功能坏了，而且下次还会再拖一次。
+   */
+  onExternalDrop?: (name: string) => void;
 }) {
   const [selfEditing, setSelfEditing] = useState(-1);
   const [draft, setDraft] = useState('');
@@ -331,6 +341,7 @@ export function TabBar({
 /** 卡片网格：选中 / 打开 / 右键菜单 / 拖拽（跨栏=分配，同栏=排序） */
 export function CardGrid({
   kind, cards, selected, thumbs, onSelect, onOpen, onMove, onCrossDrop, menus,
+  onExternalDrop,
   emptyHint, onJumpToGroup, onEditLink, onAdd, addHint,
 }: {
   kind: CardKind;
@@ -342,6 +353,11 @@ export function CardGrid({
   onOpen: (path: string) => void;
   onMove: (dragPath: string, index: number) => void;
   onCrossDrop: (drag: DragPayload, target: CardInfo | null) => void;
+  /**
+   * #14 从文件管理器拖进来的东西（只有名字，没有路径 —— 见 TabBar 同名注释）。
+   * 沉默地什么都不做是最糟的：用户拖了、松手了、界面毫无变化。
+   */
+  onExternalDrop?: (name: string) => void;
   menus: (card: CardInfo) => MenuItem[];
   emptyHint: string;
   /* #287 卡片区末尾的「＋」虚线框。
@@ -457,9 +473,14 @@ export function CardGrid({
   const resolveIndex = (p: string, k: number): number =>
     resolveMoveIndex(cards.findIndex((c) => c.path === p), k, cards.length);
 
+  /** #14 外部拖入悬停中：整区虚线高亮（不画插入竖条） */
+  const [externalOver, setExternalOver] = useState(false);
+
   /** 拖拽结束（含被取消）一律清干净：拖到窗口外松手时 drop 不触发，
    *  不靠 dragend 兜底的话竖条会残留在屏幕上。 */
-  const clearDrop = () => { setDropAt(null); setOverCross(false); setDragPath(null); };
+  const clearDrop = () => {
+    setDropAt(null); setOverCross(false); setDragPath(null); setExternalOver(false);
+  };
 
   /* 贴边自动滚动（#104）：拖到卡片区上下边缘时列表自己滚。
      卡片多的时候（几十项）不这样就没法把卡片拖到另一头。
@@ -481,7 +502,7 @@ export function CardGrid({
       /* shifting：只在拖拽中开过渡。平时不开 —— 否则任何 transform 变化
          （包括列表重排带来的）都会慢半拍地飘一下。 */
       className={`fpx-cards${cards.length === 0 && dropAt === 0 && draggingKind === kind ? ' empty-over' : ''}${
-        dragPath && !overCross ? ' shifting' : ''}`}
+        dragPath && !overCross ? ' shifting' : ''}${externalOver ? ' external-over' : ''}`}
       ref={cardsRef}
       onDragOver={(e) => {
         /* 分类框重排时（BOX_DRAG_MIME）会经过这里的卡片区 ——
@@ -489,6 +510,17 @@ export function CardGrid({
            界面却冒出一条"卡片要插到这儿"的竖条，看着像要误操作。
            这是把四套拖拽收进同一份内核时才发现的互相干扰。 */
         if (e.dataTransfer.types.includes(BOX_DRAG_MIME)) return;
+        /*
+         * #14 外部拖入：**只画整区高亮，不画插入竖条**。
+         * 竖条表达"插在这两张之间"，而外面的文件夹不是卡片、
+         * 没有"插到哪儿"这一说；画竖条会让用户以为拖的东西被插进了列表中间。
+         */
+        if (isExternalDrag(e.dataTransfer.types)) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+          setExternalOver(true);
+          return;
+        }
         /* 记指针位置给贴边自动滚动（#104）。放在守卫**之后**：
            调分类框顺序时不该连带把卡片区滚起来。 */
         onEdgeDragOver(e);
@@ -499,9 +531,27 @@ export function CardGrid({
       }}
       onDragLeave={(e) => {
         // 只有真正离开整个卡片区才清；移到子卡片上时 relatedTarget 仍在容器内
-        if (!e.currentTarget.contains(e.relatedTarget as Node)) clearDropWithScroll();
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+          clearDropWithScroll();
+          setExternalOver(false);
+        }
       }}
       onDrop={(e) => {
+        /*
+         * #14 外部拖入：拿到的是 File 对象，**没有磁盘绝对路径**
+         * （浏览器沙箱只给内容不给路径；要真路径得开宿主的
+         * `dragDropEnabled`，那是宿主级配置，不由本插件改）。
+         *
+         * 所以这里不假装能加卡片，而是把用户"想加这个文件夹"的意图
+         * 接到正规的选目录流程上，并把名字带过去当提示。
+         * 什么都不做（现状）比这个糟得多 —— 拖了、松手了、毫无反应。
+         */
+        if (isExternalDrag(e.dataTransfer.types)) {
+          e.preventDefault();
+          setExternalOver(false);
+          if (onExternalDrop) onExternalDrop(externalDropName(e.dataTransfer.files));
+          return;
+        }
         const raw = e.dataTransfer.getData(DRAG_MIME);
         const drag = parseDragPayload(raw);
         // 先取数再清状态：清早了就拿不到 data 了

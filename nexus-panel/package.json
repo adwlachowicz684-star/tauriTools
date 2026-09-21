@@ -118,7 +118,8 @@
     "test:pg-ledger-merge": "node plugins/project-group/ledger-merge-test.mjs",
     "test:pg-verify-batch": "node plugins/project-group/verify-batch-test.mjs",
     "test:pg-types-fix": "node plugins/project-group/types-fix-test.mjs",
-    "test:pg-rail-hover": "node plugins/project-group/rail-hover-test.mjs"
+    "test:pg-rail-hover": "node plugins/project-group/rail-hover-test.mjs",
+    "test:pg-external-drop": "node plugins/project-group/external-drop-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

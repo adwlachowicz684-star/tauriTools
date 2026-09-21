@@ -297,6 +297,41 @@ export function swapIndexWithDeadZone(
   return target;
 }
 
+/**
+ * #14 判定这次拖拽是不是"从文件管理器拖进来的"。
+ *
+ * **判据是"一个内部类型都没有"，而不是"有 Files"**：
+ * 浏览器在 dragover 阶段就屏蔽了 dataTransfer 的内容（只能读 types），
+ * 而 `Files` 这个 type 只有在拖的是**文件**时才一定有；
+ * 拖**文件夹**时部分平台只给 `text/uri-list`。
+ * 用"有 Files"判的话，拖文件夹会被漏掉 —— 恰好是 #14 要支持的那种。
+ *
+ * 反过来，内部拖拽一定带自己的私有 MIME，所以"一个都没有"就是外部的。
+ */
+/** dataTransfer.types 的形态（别名是为了让类型可被静态剥离） */
+export type DragTypes = readonly string[];
+
+export function isExternalDrag(types: DragTypes | null): boolean {
+  if (!types || types.length === 0) return false;
+  const list = [...types];
+  return !list.some(
+    (t) => t === DRAG_MIME || t === TAB_DRAG_MIME || t === BOX_DRAG_MIME,
+  );
+}
+
+/**
+ * 拖进来的名字（用于"把这步接到正规流程上"时的提示）。
+ *
+ * 拿不到绝对路径 —— 见下面 `externalDropName` 的说明。
+ */
+export type DropNameFile = { name: string };
+/** 别名包住 readonly 数组：内联写 `readonly X[]` 时类型剥离器处理不了 */
+export type DropNameFiles = readonly DropNameFile[];
+
+export function externalDropName(files: DropNameFiles | null): string {
+  return files && files.length > 0 ? files[0].name : '';
+}
+
 /* --------------------------- 贴边自动滚动（#104）--------------------------- */
 
 /**

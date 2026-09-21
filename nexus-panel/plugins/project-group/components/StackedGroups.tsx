@@ -15,7 +15,7 @@ import { ContextMenu, type MenuItem } from './ui';
 export function StackedGroups({
   tabs, cardsOf, selected, thumbs, onSelect, onOpen,
   onMove, onCrossDrop, menus, onRename, onRemove, onAdd, onMoveTab,
-  emptyHint, reveal,
+  emptyHint, reveal, onExternalDrop,
 }: {
   tabs: { name: string; items: CardInfo[] }[];
   /** 取某个页签的卡片（含后端补齐的 exists / 链接状态等） */
@@ -33,6 +33,8 @@ export function StackedGroups({
   onAdd: (tabIndex: number) => void;
   /** 分类框上下拖动重排（原版各分类可拖着换上下位置） */
   onMoveTab: (from: number, to: number) => void;
+  /** #14 从文件管理器拖入（只有名字，没有路径） */
+  onExternalDrop?: (name: string) => void;
   emptyHint: string;
   /**
    * 要"滚进视野"的卡片（#19）。由外层在跳转时设置。
@@ -247,6 +249,7 @@ export function StackedGroups({
                 onCrossDrop={onCrossDrop}
                 menus={menus}
                 emptyHint={emptyHint}
+                onExternalDrop={onExternalDrop}
               />
             )}
           </div>

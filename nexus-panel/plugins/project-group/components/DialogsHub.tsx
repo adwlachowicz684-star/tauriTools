@@ -42,7 +42,8 @@ import type { FpxStore } from '../hooks/useFpx';
 export type Dialog =
   | { type: 'none' }
   /** 选目录加入页签；tabIndex 用于项目组栏堆叠后指定落到哪个分类 */
-  | { type: 'pickDir'; kind: CardKind; tabIndex?: number }
+  /** #14 从文件管理器拖进来时打开（带拖入的名字当提示） */
+  | { type: 'pickDir'; kind: CardKind; tabIndex?: number; droppedName?: string }
   | { type: 'create'; kind: CardKind }
   | { type: 'lock'; card: CardInfo }
   | { type: 'style'; card: CardInfo }
@@ -202,6 +203,15 @@ export function Dialogs(props: DialogsProps) {
           api={s.api}
           title={dialog.kind === 'project' ? '添加项目文件夹' : '添加项目组文件夹'}
           allowCreate
+          /*
+           * #14 提示要把"为什么还要再选一次"说清楚。
+           * 浏览器沙箱只给 File 对象、不给磁盘绝对路径，
+           * 所以拖进来的文件夹无法直接加成卡片 —— 但不说这句的话，
+           * 用户只会觉得刚才那一下拖没成功，或者以为软件不支持。
+           */
+          hint={dialog.droppedName
+            ? `已收到拖入的「${dialog.droppedName}」。浏览器安全限制下拿不到它的磁盘路径，请在这里再选一次（同一文件夹即可）。`
+            : undefined}
           onClose={() => setDialog({ type: 'none' })}
           onPick={(p) => s.addCard(dialog.kind, p)}
         />

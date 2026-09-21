@@ -104,22 +104,14 @@ export default function App() {
   const [confirmRemoveTab, setConfirmRemoveTab] =
     useState<{ kind: CardKind; index: number; message: string } | null>(null);
 
-  /**
-   * 键盘焦点栏：卡片快捷键（Ctrl/⌘+O、F2、Delete…）作用在哪一栏。
-   * 点哪一栏的卡片就把焦点带到哪一栏，也可由 Ctrl/⌘+←/→ 直接切换。
-   * 不存 store —— 只是本次会话的落点，重进默认给「项目」。
-   */
+  /* 键盘焦点栏：卡片快捷键作用在哪一栏。不存 store（只是本次会话落点） */
   const [focus, setFocus] = useState<CardKind>('project');
 
-  /**
-   * 左操作栏是否收起（#58 #225）。
-   *
-   * 只影响本插件自己的那一栏，不动外壳侧边栏 —— 后者归主窗口任务。
-   * 收起后仍要能展开，否则就成了"关掉容易打开难"，所以栏底留一个展开按钮。
-   */
+  /* #58 #225 左栏收起。只动本插件那一栏，不动外壳侧边栏（归主窗口） */
   const [railCollapsed, setRailCollapsed] = useState(false);
-  /* #58 左栏模式；与收起态一致，只存会话态不进 config */
+  /* #58 左栏模式；只存会话态不进 config */
   const [railMode, setRailMode] = useState<RailMode>('persistent');
+
 
   /**
    * 内容区当前选中的条目（受控于本组件）。
@@ -152,17 +144,13 @@ export default function App() {
   } = useLayoutMemory({ s, config: boot?.config });
 
   /** 侧边栏/快捷键入口的待确认发送（#43） */
-  /* 类型从 Dialogs 引入而不是在这里抄一份：
-     两边各写一份的话，加字段时会漏改一边，
-     而漏的那边表现为"某个字段永远是 undefined"——不报错，最难查。 */
+  /* 类型从 Dialogs 引入：抄一份的话漏改的那边"永远 undefined"，不报错最难查 */
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
-  /** 跳转定位目标（#19）：path + 自增序号（序号保证连跳同一张卡也能触发） */
+    /** #19 跳转定位：序号保证连跳同一张卡也能触发 */
   const [reveal, setReveal] = useState<{ path: string; seq: number } | null>(null);
   const revealSeq = useRef(0);
 
-  /* 快捷键提示（#50）：是否显示 + 当前生效的键位。
-     键位从 HOTKEYS 动态取（含用户覆盖），不手抄 —— 手抄的话改了键位
-     按钮上还是旧值，用户照着按却没反应。 */
+  /* #50 键位从 HOTKEYS 动态取：手抄的话改了键位按钮上还是旧值 */
   const showHints = boot?.config.showShortcuts ?? true;
   const comboHint = useCallback(
     (id: string) => (showHints && isHotkeyId(id)
@@ -810,6 +798,7 @@ export default function App() {
               title="项目"
               kind="project"
               onEditLink={(p, g) => setConfirmLink({ project: p, group: g })}
+              onExternalDrop={(n) => setDialog({ type: 'pickDir', kind: 'project', droppedName: n })}
               tabs={boot.projectTabs}
               cards={projectCards}
               selected={s.selProject}
@@ -890,7 +879,7 @@ export default function App() {
                 onRemove={(i) => requestRemoveTab('group', i)}
                 onAdd={(i) => setDialog({ type: 'pickDir', kind: 'group', tabIndex: i })}
                 onMoveTab={(from, to) => void s.moveTab('group', from, to)}
-                reveal={reveal}
+                onExternalDrop={(n) => setDialog({ type: 'pickDir', kind: 'group', droppedName: n })}                reveal={reveal}
                 emptyHint="还没有项目组，点分类右侧的 ＋ 添加"
               />
             </div>
@@ -1037,7 +1026,7 @@ export default function App() {
 function Column({
   title, kind, tabs, cards, selected, onSelect, onOpen, onMove, onMoveToTab, onCrossDrop,
   thumbs, menus, onAdd, onAddTab, onRenameTab, onRemoveTab, onMoveTab, active, onTab, focused,
-  onJumpToGroup, onEditLink,
+  onJumpToGroup, onEditLink, onExternalDrop,
 }: {
   title: string;
   kind: CardKind;
@@ -1065,8 +1054,10 @@ function Column({
   focused: boolean;
   /** 点卡片上的项目组名 → 在项目组栏里选中它（仅项目栏用得到） */
   onJumpToGroup?: (card: CardInfo) => void;
-  /* #82 编辑那一条链接；必须外层传入（Column 里没有 App 的 setter） */
+  /* #82 必须外层传入（Column 里没有 App 的 setter） */
   onEditLink?: (project: string, group: string) => void;
+  /** #14 从文件管理器拖入（只有名字，没有路径） */
+  onExternalDrop?: (name: string) => void;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   // 由「⋯」菜单触发的内联重命名：-1 表示不在编辑
@@ -1126,6 +1117,7 @@ function Column({
         onJumpToGroup={onJumpToGroup}
                 /* #82：用行里的 group，不用卡片汇总的 linkedGroup */
         onEditLink={onEditLink}
+        onExternalDrop={onExternalDrop}
         onAdd={onAdd}
         addHint={`添加${title}`}
       />

@@ -8,13 +8,19 @@ import { Modal } from './ui';
  * 支持面包屑回退、快速起点、手工粘贴路径。
  */
 export function DirDialog({
-  api, title = '选择文件夹', onClose, onPick, allowCreate,
+  api, title = '选择文件夹', onClose, onPick, allowCreate, hint,
 }: {
   api: Api;
   title?: string;
   onClose: () => void;
   onPick: (path: string) => void;
   allowCreate?: boolean;
+  /**
+   * #14 顶部提示。拖进来的文件夹**拿不到绝对路径**，
+   * 所以要把"为什么还要再选一次"说清楚 ——
+   * 不说的话用户会以为刚才那一下拖失败了，或者以为这个软件很笨。
+   */
+  hint?: string;
 }) {
   const [path, setPath] = useState('');
   const [entries, setEntries] = useState<DirEntryLite[]>([]);
@@ -91,6 +97,11 @@ export function DirDialog({
         </>
       }
     >
+      {hint && (
+        <div className="fpx-dirhint">
+          {hint}
+        </div>
+      )}
       <div className="p-row" style={{ marginBottom: 'var(--sp-5, 10px)' }}>
         {roots.map((r) => (
           <button key={r.path} className="p-btn" onClick={() => load(r.path)}>{r.name}</button>

@@ -1424,6 +1424,32 @@
   background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
+/* #14 拖入后的提示条：解释"为什么还要再选一次"。
+   不给这个解释，用户只会觉得刚才那一下拖没成功。 */
+.fpx-dirhint {
+  margin-bottom: var(--sp-5, 10px);
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font-size: var(--fs-12, 12px);
+  line-height: 1.5;
+}
+
+/* ---------------- 从文件管理器拖入（#14）----------------
+ * 与 #105 的空列表落点**共用同一套视觉**（整区虚线高亮）——
+ * 两种场景要传达的是同一件事："会落到这里面"。
+ * 画成插入竖条就错了：外面的文件夹不是卡片，没有"插到哪两张之间"。
+ *
+ * 用 `external-over` 而不是复用 `empty-over`：后者绑着"列表为空"这个条件，
+ * 混用的话以后改一处会顺带改掉另一处。
+ */
+.fpx-cards.external-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: -3px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
 /* ---------------- 图标排序（#114）----------------
  * 落点提示用**左缘竖条**而不是整格高亮：图标是密集的网格，
  * 整格高亮会被相邻格的边框糊在一起，看不出到底插在哪。
