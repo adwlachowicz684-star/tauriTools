@@ -23,6 +23,13 @@ export function makeApi(ctx: PluginContext) {
 
     createLink: (project: string, group: string, names?: string[]) =>
       call<Snapshot>('fpx_create_link', { project, group, names: names ?? null }),
+    /*
+     * #200 同步：把该项目下的链接**设成**指定的这几个（未列名的会被删掉）。
+     * 与 createLink（补充建、不删任何东西）是两种语义 ——
+     * 混用的话"取消勾选"看起来生效了（对话框关了），链接却还在。
+     */
+    syncLinks: (project: string, group: string, names: string[]) =>
+      call<Snapshot>('fpx_sync_links', { project, group, names }),
 
     removeLink: (project: string) =>
       call<Snapshot>('fpx_remove_link', { project }),

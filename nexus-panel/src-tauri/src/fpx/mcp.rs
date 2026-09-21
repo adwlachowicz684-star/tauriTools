@@ -1064,17 +1064,33 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             if path.is_empty() { return Err(err("缺少参数 path")); }
             within_raw(&path)?;
             let cfg = super::store::load_config(&dir);
-            let cur = cfg.folder_icons.get(&path).cloned()
-                .or_else(|| {
+            /* #113 两套：folder_icons 会写 desktop.ini，folder_gui_icons 只在界面内。
+               查询两边都要看 —— 只回一套的话，"界面设了图标但查不到"会被当成丢配置。 */
+            let pick = |table: &super::model::IconMap| -> Option<String> {
+                table.get(&path).cloned().or_else(|| {
                     let key = super::store::normalize_key(&path);
-                    cfg.folder_icons.iter()
+                    table.iter()
                         .find(|(k, _)| super::store::normalize_key(k) == key)
                         .map(|(_, v)| v.clone())
-                });
+                })
+            };
+            let cur = pick(&cfg.folder_icons);
+            let gui = pick(&cfg.folder_gui_icons);
+            /* #139 报清楚"现在生效的图标从哪儿来的"：
+               只回一个值的话，用户分不清看到的是资源管理器那个（来自 ini）
+               还是界面里那个（来自 GUI 映射），于是
+               "界面改了图标、资源管理器没变"会被当成 bug —— 而那是正确行为。 */
+            let (source, shown, ini_exists, system_attr) =
+                super::sys::icon_source(&path, gui.clone(), cfg.icon_affect_explorer);
             json!({ "content": [{ "type": "text", "text": serde_json::to_string(&json!({
                 "path": path,
-                "iconAffectExplorer": cfg.icon_affect_explorer,
                 "icon": cur,
+                "guiIcon": gui,
+                "shown": shown,
+                "source": source,
+                "iniExists": ini_exists,
+                "systemAttr": system_attr,
+                "iconAffectExplorer": cfg.icon_affect_explorer,
             })).unwrap_or_default() }] })
         }
         "folder_icon_restore" => {

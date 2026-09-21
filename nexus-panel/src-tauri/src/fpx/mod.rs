@@ -658,6 +658,108 @@ pub(crate) fn core_create_link(
     Ok(snapshot(dir, &cfg))
 }
 
+/**
+ * #200 把该项目的链接**同步成**指定的这几个名字（取消勾选 = 删掉、释放名字）。
+ *
+ * 与 `core_create_link` 的区别必须分清：
+ *   · create = **补充建**（并入已有清单），不删任何东西
+ *   · sync   = **设成这几个**（多退少补），未列名的会被删掉
+ * 两者混用会让"取消勾选"看起来生效了（对话框关了），链接却还在。
+ *
+ * ## 为什么未列名的要全部删，而不是只删"本组已占用"的
+ *
+ * 账本里一个项目**只有一条**记录，`group` 字段只有一个值 ——
+ * 它表达不了"A 名字指向甲组、B 名字指向乙组"。
+ * 所以只要这次的目标组与记录里的不同（换绑），旧链接就必须全部断掉：
+ * 留着它们在磁盘上指向旧组，账本里却查不到，正是 #202 那类"静默残骸"。
+ *
+ * ## 含"已失效旧名"一并清理
+ *
+ * 账本里可能记着早已不存在（被手动删掉）的名字。它们不在 `names` 里，
+ * 走同一条删除路径 —— `junction::remove` 对不存在的链接是安全的，
+ * 于是"账本里的垃圾名"顺便被清掉，不必另写一遍清理逻辑。
+ */
+pub(crate) fn core_sync_links(
+    dir: &std::path::Path,
+    project: &str,
+    group: &str,
+    names: Vec<String>,
+) -> Result<Snapshot, String> {
+    let cfg = store::load_config(dir);
+    ensure_path_in(dir, &cfg, project)?;
+    ensure_path_in(dir, &cfg, group)?;
+    guard::reject_forbidden_raw(project)?;
+    guard::reject_forbidden_raw(group)?;
+
+    let key = store::normalize_key(project);
+    let prev: Vec<String> = store::load_records(dir)
+        .iter()
+        .find(|r| store::normalize_key(&r.project) == key)
+        .map(|r| r.link_names())
+        .unwrap_or_default();
+
+    // 不在本次名单里的 = 要删的（大小写不敏感比对，理由同 #91）
+    let to_remove: Vec<String> = prev
+        .iter()
+        .filter(|n| !names.iter().any(|x| x.eq_ignore_ascii_case(n)))
+        .cloned()
+        .collect();
+
+    let mut err: Option<String> = None;
+    let _guard = LockGuard::new(project, store::lock_of(&cfg, project));
+    for n in &names {
+        match junction::create(project, group, std::slice::from_ref(n)) {
+            Ok(_) => {}
+            Err(e) => { err = Some(e); break; }
+        }
+    }
+    if err.is_none() && !to_remove.is_empty() {
+        if let Err(e) = junction::remove(project, &to_remove) {
+            err = Some(e);
+        }
+    }
+    drop(_guard);
+
+    /*
+     * 账本写成**磁盘实际状态**：建成功的 + 删除失败的。
+     * 不直接写 names —— 那样"删失败但记录已删"会让磁盘上仍存在的链接
+     * 在账本里消失（同 #202）。
+     */
+    let removed_ok: Vec<String> = if err.is_none() {
+        to_remove.clone()
+    } else {
+        /* 中途失败：只把确实已删掉的排除掉，逐个确认过才算 */
+        to_remove.iter()
+            .filter(|n| !junction::link_path(project, n).exists())
+            .cloned()
+            .collect()
+    };
+    let final_names: Vec<String> = {
+        let mut acc: Vec<String> = Vec::new();
+        for n in &prev {
+            if removed_ok.iter().any(|x| x.eq_ignore_ascii_case(n)) { continue; }
+            merge_link_names(&mut acc, vec![n.clone()]);
+        }
+        merge_link_names(&mut acc, names.clone());
+        acc
+    };
+
+    store::with_records(dir, |records| {
+        if final_names.is_empty() {
+            /* #201 一个链接都不剩 → 移除整条记录，而不是留一条空 names 的 */
+            records.retain(|r| store::normalize_key(&r.project) != key);
+        } else {
+            upsert_record(records, project, group, final_names);
+        }
+        Ok(())
+    })?;
+
+    if let Some(e) = err {
+        return Err(format!("同步链接时部分失败：{e}"));
+    }
+    Ok(snapshot(dir, &cfg))
+}
+
 pub(crate) fn core_remove_link(dir: &std::path::Path, project: &str) -> Result<Snapshot, String> {
     let cfg = store::load_config(dir);
     // 断链会删 junction，同样是写操作：只认已登记的卡片
@@ -884,6 +986,19 @@ pub fn fpx_create_link(
 ) -> Result<Snapshot, String> {
     let dir = store::data_dir(&app, &state)?;
     core_create_link(&dir, &project, &group, names)
+}
+
+/// #200 把项目的链接同步成指定的这几个名字（取消勾选 = 删除并释放名字）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_sync_links(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+    project: String,
+    group: String,
+    names: Vec<String>,
+) -> Result<Snapshot, String> {
+    let dir = store::data_dir(&app, &state)?;
+    core_sync_links(&dir, &project, &group, names)
 }
 
 /// 删除项目下的链接并清除记录。

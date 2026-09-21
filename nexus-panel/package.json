@@ -115,7 +115,8 @@
     "test:pg-action-sort": "node plugins/project-group/action-sort-test.mjs",
     "test:pg-icon-del-hover": "node plugins/project-group/icon-del-hover-test.mjs",
     "test:pg-shift-anim": "node plugins/project-group/shift-anim-test.mjs",
-    "test:pg-ledger-merge": "node plugins/project-group/ledger-merge-test.mjs"
+    "test:pg-ledger-merge": "node plugins/project-group/ledger-merge-test.mjs",
+    "test:pg-verify-batch": "node plugins/project-group/verify-batch-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

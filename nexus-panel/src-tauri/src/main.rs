@@ -305,6 +305,7 @@ fn main() {
             rust_ping, app_version, window_action, set_window_icon,
             mm_print, mm_print_support, mm_svg_to_pdf, mm_pdf_vector_support, mm_open_devtools,
             fpx::fpx_bootstrap, fpx::fpx_save_config, fpx::fpx_create_link, fpx::fpx_remove_link,
+            fpx::fpx_sync_links,
             fpx::fpx_scan_content, fpx::fpx_read_file, fpx::fpx_open_path, fpx::fpx_list_dirs,
             fpx::fpx_quick_roots, fpx::fpx_copy_text, fpx::fpx_create_folder, fpx::fpx_set_lock, fpx::fpx_set_icon,
             fpx::fpx_remove_card,

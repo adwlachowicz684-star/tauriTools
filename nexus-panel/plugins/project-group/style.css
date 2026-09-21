@@ -1013,6 +1013,22 @@
 .fpx-ca-ops { flex: none; display: flex; gap: 2px; opacity: 0; }
 .fpx-ca-item:hover .fpx-ca-ops { opacity: 1; }
 
+/* #195 兜底界面：白屏比报错更难排查，所以错误原因要**原样显示**出来 */
+.fpx-crash {
+  padding: 16px; margin: 12px;
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface-sunk);
+}
+.fpx-crash-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--danger); }
+.fpx-crash-msg {
+  /* 错误堆栈可能很长：限高 + 可滚，不让它把整个窗口顶开 */
+  max-height: 180px; overflow: auto;
+  margin: 0 0 10px; padding: 8px;
+  border-radius: var(--r-xs, 3px); background: var(--surface);
+  font-family: var(--font-mono); font-size: var(--fs-11, 11px);
+  white-space: pre-wrap; word-break: break-all;
+}
+
 /* #148 / #149 连锁动作拖拽重排
  * 插入条画在**缝隙**上而不是整项高亮：列表行挨得紧，
  * 整项高亮看不出"插在这一行之前还是之后"。

@@ -375,6 +375,95 @@ pub fn apply_icon(dir: &str, icon_ref: &str) -> Result<String, String> {
     }
 }
 
+/**
+ * 从 ini 文本里读出 `IconResource` 的值（#139 用来报"来源"）。
+ *
+ * 只认 `[.ShellClassInfo]` 段下的那一行：ini 里可能还有别的段，
+ * 直接全文找 "IconResource" 会把别处的同名键当成图标来源。
+ */
+#[cfg(windows)]
+pub fn icon_resource_in(text: &str) -> Option<String> {
+    let mut in_sec = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_sec = t.eq_ignore_ascii_case("[.ShellClassInfo]");
+            continue;
+        }
+        if !in_sec { continue; }
+        if let Some(v) = t.strip_prefix("IconResource=").or_else(|| t.strip_prefix("iconresource=")) {
+            /* 形如 `"C:\a b.ico",0` 或 `a.ico,0`：去掉索引与可选引号。
+               路径本身可能含逗号，所以从**最后一个逗号**切 */
+            let v = v.trim();
+            let (file, idx) = match v.rfind(',') {
+                Some(k) => (v[..k].trim(), v[k + 1..].trim()),
+                None => (v, "0"),
+            };
+            let file = file.trim_matches('"');
+            if file.is_empty() { return None; }
+            return Some(format!("{file}|{idx}"));
+        }
+    }
+    None
+}
+
+/**
+ * #139 图标来源查询：把"现在生效的图标是从哪儿来的"说清楚。
+ *
+ * 为什么需要它：只回一个图标值的话，用户分不清自己看到的是
+ * **资源管理器里那个**（来自 desktop.ini）还是**界面里那个**（来自 GUI 映射），
+ * 于是"界面改了图标、资源管理器没变"会被当成 bug —— 而那其实是正确的
+ * （`icon_affect_explorer` 关掉时就是这样）。
+ *
+ * 返回：`(来源, 图标引用, ini 是否存在, 文件夹是否带 System 属性)`
+ */
+pub fn icon_source(dir: &str, gui_icon: Option<String>, affect_explorer: bool) -> (String, Option<String>, bool, bool) {
+    #[cfg(windows)]
+    {
+        /* 这里**不读** affect_explorer：来源是直接看磁盘上有没有 ini，
+           比"配置说要写"更准 —— 配置与实际可能已经不一致（比如用户手删了 ini）。 */
+        let _ = affect_explorer;
+        let p = Path::new(dir);
+        let ini = p.join(INI_NAME);
+        let ini_exists = ini.exists();
+        let from_ini = if ini_exists {
+            match read_ini_text(&ini) { Ok(Some(t)) => icon_resource_in(&t), _ => None }
+        } else { None };
+        let system_attr = has_system_attr(dir);
+        if let Some(r) = from_ini {
+            return ("desktopIni".into(), Some(r), ini_exists, system_attr);
+        }
+        if let Some(g) = gui_icon {
+            return ("guiMap".into(), Some(g), ini_exists, system_attr);
+        }
+        ("none".into(), None, ini_exists, system_attr);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (dir, affect_explorer);
+        match gui_icon {
+            Some(g) => ("guiMap".into(), Some(g), false, false),
+            None => ("none".into(), None, false, false),
+        }
+    }
+}
+
+/// 文件夹是否带 System 属性（资源管理器要靠它才会读 desktop.ini）。
+#[cfg(windows)]
+fn has_system_attr(dir: &str) -> bool {
+    match run_cmd("attrib", &[dir.to_string()]) {
+        Ok(out) => {
+            /* attrib 输出形如 "S    C:\foo" 或 "    C:\foo"：
+               属性字母固定在最前面几个字节里，取第一段判含 'S' 即可。
+               不能全文找 'S' —— 路径里可能就有大写 S。 */
+            let text = String::from_utf8_lossy(&out.stdout).to_string();
+            let head = text.split_whitespace().next().unwrap_or_default().to_string();
+            head.contains('S')
+        }
+        Err(_) => false,
+    }
+}
+
 #[cfg(windows)]
 fn split_icon_ref(icon_ref: &str) -> (String, i32) {
     let mut parts = icon_ref.splitn(2, '|');

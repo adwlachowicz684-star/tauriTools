@@ -384,7 +384,9 @@ export function Dialogs(props: DialogsProps) {
           links={boot.links ?? []}
           onConfirm={(names) => {
             setConfirmLink(null);
-            void s.createLink(confirmLink.project, confirmLink.group, names);
+            /* #200 走 sync 而不是 create：取消勾选的名字要真的删掉、释放名字。
+               用 create 的话它们会留在磁盘上，界面仍显示已链接。 */
+            void s.syncLinks(confirmLink.project, confirmLink.group, names);
           }}
           onClose={() => setConfirmLink(null)}
         />

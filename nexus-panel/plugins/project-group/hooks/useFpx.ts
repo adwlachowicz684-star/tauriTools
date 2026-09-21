@@ -415,6 +415,20 @@ export function useFpx() {
     }
   }, [api, applySnapshot, ctx, pushLog, run]);
 
+  /*
+   * #200 同步（取消勾选 = 删掉链接、释放名字）。
+   * 与 createLink 是两种语义，别互相替代 —— 见 api.syncLinks 的注释。
+   */
+  const syncLinks = useCallback(async (project: string, group: string, names: string[]) => {
+    const snap = await run('同步链接', () => api.syncLinks(project, group, names));
+    if (snap) {
+      applySnapshot(snap);
+      const row: LinkRow | undefined = snap.links.find((l) => l.project === project);
+      pushLog(`已同步：${project} → ${group}（${row?.names.length ?? 0} 个链接）`);
+      ctx.toast('链接已同步', 'ok');
+    }
+  }, [api, applySnapshot, ctx, pushLog, run]);
+
   const removeLink = useCallback(async (project: string) => {
     const snap = await run('撤销链接', () => api.removeLink(project));
     if (snap) {
@@ -557,7 +571,7 @@ export function useFpx() {
     content, contentKind, setContentKind, focusDir, scan,
     updateConfig, addCard, removeCard, removeCardFull, moveCard, moveCardAcross, addTab, renameTab, removeTab,
     tabRemoveCheck, moveTab,
-    createLink, removeLink, setTagColor, setIcon, saveStyle, saveCustomColors, setLock, refresh,
+    createLink, syncLinks, removeLink, setTagColor, setIcon, saveStyle, saveCustomColors, setLock, refresh,
   };
 }
 
