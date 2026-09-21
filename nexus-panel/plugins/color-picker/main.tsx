@@ -100,23 +100,30 @@ function ServicePanel() {
         }}
         onSaveCustom={(colors) => { customRef.current = colors; }}
         onLog={() => { /* 服务里没有日志面板，静默 */ }}
+        /*
+         * 「取消 / 确定」作为 actions 塞进色盘的右下角 ——
+         * 与 WPF 的 btnRow 一样：左边一组动作，右下角一个确认。
+         * 单独另起一行的话，弹窗底部会出现两排按钮，看着像两个不同的东西。
+         */
+        actions={(
+          <>
+            <button className="p-btn" onClick={() => finish(null)}>
+              取消
+            </button>
+            <button
+              className="p-btn primary"
+              onClick={() => {
+                const hex = hexRef.current;
+                /* 用户点了"恢复默认"（hex 为 null）但调用方不认 null 时，
+                   回退到起始色 —— 否则调用方拿到 null 会当成"没选"。 */
+                finish(hex === null && !current?.allowNull ? view.initial : hex);
+              }}
+            >
+              确定
+            </button>
+          </>
+        )}
       />
-      <div className="cp-actions">
-        <button className="p-btn" onClick={() => finish(null)}>
-          取消
-        </button>
-        <button
-          className="p-btn primary"
-          onClick={() => {
-            const hex = hexRef.current;
-            /* 用户点了"恢复默认"（hex 为 null）但调用方不认 null 时，
-               回退到起始色 —— 否则调用方拿到 null 会当成"没选"。 */
-            finish(hex === null && !current?.allowNull ? view.initial : hex);
-          }}
-        >
-          确定
-        </button>
-      </div>
     </div>
   );
 }

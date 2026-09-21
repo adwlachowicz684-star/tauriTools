@@ -236,6 +236,35 @@ console.log('\n=== 10d. 色盘：共享组件，不是两份实现 ===');
  */
 t('色盘组件已搬到 color-picker', has('plugins/color-picker/ColorPicker.tsx'));
 t('SV 面板/色相条也已搬过去', has('plugins/color-picker/SvPanel.tsx'));
+
+/*
+ * 布局对齐原版 WPF（src/Views/ColorPickDialog.cs）：
+ *   SV 面板 + **竖直**色相条并排等高；底部动作行左=吸管/存为常用/恢复默认、右=确认。
+ * 此前色相条是横向压在 SV 面板下方，与"一块方形选色区"的原版形态不符。
+ */
+{
+  const cp = src('plugins/color-picker/ColorPicker.tsx');
+  const css = src('plugins/color-picker/style.css');
+  const svp = src('plugins/color-picker/SvPanel.tsx');
+
+  /* 竖直：取值用 clientY，且渐变方向是 to bottom */
+  t('色相条取纵向坐标（竖直）', /clientY/.test(svp) && !/HueBar[\s\S]{0,400}clientX/.test(svp));
+  t('色相条渐变是纵向的', /fpx-hue[\s\S]{0,200}linear-gradient\(to bottom/.test(css));
+  /* 并排：选色区是 flex 横排，且 SV 有 flex:1 */
+  t('SV 与色相条并排（选色区横排）',
+    /\.fpx-picker-visual\s*\{[\s\S]{0,200}display:\s*flex/.test(css)
+    && /\.fpx-sv\s*\{[\s\S]{0,120}flex:\s*1/.test(css));
+  /* 等高：两者都在 stretch 容器里 */
+  t('选色区子元素等高拉伸', /align-items:\s*stretch/.test(css));
+  /* 底部动作行三个动作按钮 + 右侧确认槽 */
+  t('底部动作行含吸管/存为常用/恢复默认',
+    ['吸管', '存为常用', '恢复默认'].every((k) => cp.includes(k)));
+  t('确认槽留给调用方（actions）', /actions\s*\?\s*<div/.test(cp));
+  t('服务把取消/确定传进 actions', /actions=\{\(/.test(src('plugins/color-picker/main.tsx')));
+  /* 数值行：预览块 + R/G/B + 色值同一行 */
+  t('数值行横排（预览块与 RGB 同排）',
+    /\.fpx-value-row\s*\{[\s\S]{0,120}display:\s*flex/.test(css));
+}
 /*
  * 意图是"project-group 不自带色盘"，判据该是**没人引用**，
  * 不是"文件不存在"。

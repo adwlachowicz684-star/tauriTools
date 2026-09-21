@@ -9,72 +9,135 @@
  * 引用方要在自己的样式里 @import 或 link 本文件。
  * ============================================================ */
 
-.fpx-swatch {
-  width: 34px; height: 34px; border-radius: var(--r-sm); cursor: pointer;
-  border: 2px solid transparent;
+.fpx-picker {
+  display: flex; flex-direction: column; gap: var(--sp-5, 10px);
 }
-.fpx-swatch.active { border-color: var(--text); }
-.fpx-picker { display: flex; flex-direction: column; gap: 8px; }
-.fpx-picker.compact { gap: 6px; }
-.fpx-preview-block {
-  width: 46px; height: 34px; flex: none; border-radius: var(--r-sm);
-  border: 1px solid var(--border);
-  display: grid; place-items: center; font-size: var(--fs-10, 10px);
-  /* 白字是**有意的**：这块底色是用户自定义的频道色，明暗不定，
-     用主题变量反而会在浅色频道上变成"浅字压浅底"。配一层文字阴影兜底。 */
-  color: #fff;
-  text-shadow: 0 1px 2px rgba(0,0,0,.6);
-}
-.fpx-channel { display: flex; align-items: center; gap: 4px; font-size: var(--fs-11, 11px); color: var(--text-mute); }
-.fpx-channel input { width: 62px; height: 32px; padding: 0 8px; }
-.fpx-picker-label {
-  display: flex; align-items: center; gap: 8px;
-  font-size: var(--title-3-fs, 11px); color: var(--text-dim); margin-top: 2px;
-  font-weight: var(--title-3-fw);}
-.fpx-swatches { display: flex; flex-wrap: wrap; gap: 5px; }
-.fpx-swatch-wrap { position: relative; display: inline-block; }
-.fpx-swatch-del {
-  position: absolute; top: -5px; right: -5px;
-  width: 15px; height: 15px; padding: 0; line-height: 1;
-  border: 1px solid var(--border); border-radius: 50%;
-  background: var(--surface); color: var(--text-mute);
-  font-size: var(--fs-10, 10px); cursor: pointer;
-}
-.fpx-swatch-del:hover { color: var(--danger); border-color: var(--danger); }
+.fpx-picker.compact { gap: var(--sp-4, 8px); }
+
+/* ① 选色区：SV 面板（占满）+ 竖直色相条（定宽贴右），照搬 WPF 的 pickerRow */
 .fpx-picker-visual {
-  display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;
+  display: flex; gap: var(--sp-4, 8px); align-items: stretch;
+  padding: 0 var(--sp-2, 4px);        /* 左右留呼吸，别贴死弹窗内缘 */
 }
 .fpx-sv {
+  flex: 1; min-width: 0;
   position: relative; border-radius: var(--r-sm);
-  border: 1px solid var(--border);
+  box-shadow: var(--sh-out-sm);
   cursor: crosshair; touch-action: none;   /* 触屏拖动别变成滚动 */
   overflow: hidden;
 }
 .fpx-sv:focus-visible, .fpx-hue:focus-visible { outline: 2px solid var(--accent); }
 .fpx-sv-cursor {
-  position: absolute; width: 12px; height: 12px;
-  margin: -6px 0 0 -6px;                    /* 让圆心对准指针 */
+  position: absolute; width: 14px; height: 14px;
+  margin: -7px 0 0 -7px;                    /* 让圆心对准指针 */
   border-radius: 50%;
   border: 2px solid #fff;
   box-shadow: 0 0 0 1px rgba(0,0,0,.55), inset 0 0 0 1px rgba(0,0,0,.3);
   pointer-events: none;                     /* 否则会挡住 pointermove */
 }
+/* 竖直色相条：宽度 16（对齐 WPF），高度由 flex 拉伸到与 SV 面板等高 */
 .fpx-hue {
-  position: relative; border-radius: var(--r-pill, 999px);
-  border: 1px solid var(--border);
-  cursor: pointer; touch-action: none;
-  background: linear-gradient(to right,
+  flex: none; position: relative;
+  border-radius: var(--r-xs);
+  box-shadow: var(--sh-out-sm);
+  cursor: crosshair; touch-action: none;
+  background: linear-gradient(to bottom,
     #f00 0%, #ff0 16.66%, #0f0 33.33%,
     #0ff 50%, #00f 66.66%, #f0f 83.33%, #f00 100%);
 }
+/* 指示器是横条（上下白边）：竖直条上放圆点看不出指的是哪个高度 */
 .fpx-hue-cursor {
-  position: absolute; top: 50%; width: 14px; height: 14px;
-  margin: -7px 0 0 -7px;
-  border-radius: 50%;
-  border: 2px solid #fff;
-  box-shadow: 0 0 0 1px rgba(0,0,0,.55);
+  position: absolute; left: -2px; right: -2px; height: 4px;
+  margin-top: -2px;
+  border-top: 1px solid #fff; border-bottom: 1px solid #fff;
+  box-shadow: 0 0 3px rgba(0,0,0,.6);
   pointer-events: none;
 }
+
+/* ② 数值行：预览块 + R/G/B + 色值，同一视觉中轴横排（WPF 的 rgbRow） */
+.fpx-value-row {
+  display: flex; align-items: center; gap: var(--sp-4, 8px);
+}
+.fpx-preview-block {
+  width: 38px; height: 26px; flex: none; border-radius: var(--r-xs);
+  box-shadow: var(--sh-out-sm);
+  display: grid; place-items: center; font-size: var(--fs-10, 10px);
+  /* 白字是**有意的**：这块底色是用户自定义的颜色，明暗不定，
+     用主题变量反而会在浅色底上变成"浅字压浅底"。配一层文字阴影兜底。 */
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,.6);
+}
+.fpx-preview-def { opacity: .85; }
+
+.fpx-channel {
+  display: flex; align-items: center; gap: var(--sp-2, 4px);
+  font-size: var(--fs-11, 11px); color: var(--text-dim);
+}
+.fpx-channel input {
+  width: 46px; height: 26px; padding: 0 6px;
+  font-family: var(--font-mono); text-align: center;
+}
+/* 三个数字框并排时，原生上下箭头是最显眼的噪音 —— 去掉。
+   值仍可直接键入，方向键也仍能微调。 */
+.fpx-channel input::-webkit-outer-spin-button,
+.fpx-channel input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.fpx-channel input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
+
+.fpx-hex {
+  flex: 1; min-width: 0; height: 26px; padding: 0 8px;
+  font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .5px;
+}
+
+/* ③ ④ 分区 -------------------------------------------------------- */
+.fpx-picker-sec {
+  display: flex; flex-direction: column; gap: var(--sp-3, 6px);
+}
+.fpx-picker-label {
+  display: flex; align-items: center; gap: var(--sp-4, 8px);
+  font-size: var(--title-3-fs, 11px); color: var(--text-dim);
+  font-weight: var(--title-3-fw);
+}
+/* 「＋ 收藏」推到行尾，而不是紧挨着字数统计 */
+.fpx-picker-label .fpx-mini { margin-left: auto; }
+
+.fpx-swatches { display: flex; flex-wrap: wrap; gap: var(--sp-3, 6px); }
+.fpx-swatch {
+  width: 30px; height: 30px; border-radius: var(--r-xs); cursor: pointer;
+  border: none; box-shadow: var(--sh-out-sm);
+  transition: transform var(--dur-fast, 120ms), box-shadow var(--dur-fast, 120ms);
+}
+.fpx-swatch:hover { transform: translateY(-2px); box-shadow: var(--sh-out-md); }
+/* 选中态用 outline + offset：改 border 会改变盒子尺寸，整排会跟着抖一下 */
+.fpx-swatch.active { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fpx-swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.fpx-swatch-wrap { position: relative; display: inline-block; }
+.fpx-swatch-del {
+  position: absolute; top: -6px; right: -6px;
+  width: 18px; height: 18px; padding: 0; line-height: 1;
+  display: grid; place-items: center;
+  border: none; border-radius: 50%;
+  background: var(--surface); color: var(--text-dim);
+  box-shadow: var(--sh-out-sm);
+  font-size: var(--fs-10, 10px); cursor: pointer;
+  /* 半透明常显而不是 hover 才出现：藏起来就没法发现能删，
+     且键盘 Tab 过去时看不见焦点落在哪。 */
+  opacity: .55; transition: opacity var(--dur-fast, 120ms), color var(--dur-fast, 120ms);
+}
+.fpx-swatch-wrap:hover .fpx-swatch-del,
+.fpx-swatch-del:focus-visible { opacity: 1; }
+.fpx-swatch-del:hover { color: var(--danger); }
+
+/* ⑤ 底部动作行：左=吸管 / 存为常用 / 恢复默认，右=确认（WPF 的 btnRow） */
+.fpx-actions {
+  display: flex; align-items: center; gap: var(--sp-3, 6px);
+  margin-top: var(--sp-2, 4px);
+}
+.fpx-actions-right {
+  margin-left: auto; display: flex; gap: var(--sp-3, 6px);
+}
+
+/* 吸管待命遮罩 ------------------------------------------------------ */
 .fpx-pick-overlay {
   position: fixed; inset: 0; z-index: var(--z-picker, 1300);
   cursor: crosshair;
@@ -83,7 +146,7 @@
 }
 .fpx-pick-hint {
   position: fixed; left: 50%; top: 24px; transform: translateX(-50%);
-  padding: 8px 14px; border-radius: var(--r-sm);
+  padding: var(--sp-4, 8px) var(--sp-6, 12px); border-radius: var(--r-sm);
   background: var(--surface); border: 1px solid var(--border);
   box-shadow: var(--sh-cast-md);
   font-size: var(--fs-12, 12px); line-height: 1.7; text-align: center;

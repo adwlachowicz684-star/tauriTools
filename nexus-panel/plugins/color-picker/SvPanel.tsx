@@ -73,47 +73,57 @@ export function SvPanel({
 }
 
 /**
- * 色相条。
+ * 色相条（**竖直**，贴在 SV 面板右侧）
+ * ------------------------------------------------------------
+ * 布局照搬原版 WPF（src/Views/ColorPickDialog.cs）：
+ *   SV 面板占满剩余宽度，色相条定宽 16 贴右，两者**等高并排**。
  *
- * 七个色标（红黄绿青蓝品红）均分，首尾都是红以便循环。
- * 与 SV 面板共用同一套拖动逻辑。
+ * 此前这里是**横向**色相条压在 SV 面板下方。换方向的理由不是审美：
+ *   · 竖直条的刻度方向与 SV 面板的明度轴一致（都是纵向），
+ *     横向条会让"选色区"被切成"上大块 + 下细条"两个不等高的部分；
+ *   · 并排后整个选色区是**一块方形**，与右侧色条构成一个整体，
+ *     而不是上下两截各带自己的光标，视觉上更像一个控件。
+ *
+ * 高度由外层容器给（与 SV 面板等高），所以不再收 height 参数。
  */
 export function HueBar({
-  hsv, onChange, height = 14,
+  hsv, onChange, width = 16,
 }: {
   hsv: Hsv;
   onChange: (next: Hsv) => void;
-  height?: number;
+  width?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
-  const update = useCallback((clientX: number) => {
+  const update = useCallback((clientY: number) => {
     const el = ref.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    if (r.width === 0) return;
-    const x = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+    if (r.height === 0) return;
+    const y = Math.max(0, Math.min(1, (clientY - r.top) / r.height));
     // 只改色相，保留当前饱和度与明度 —— 换色不该顺手把深浅也重置了
-    onChange({ h: x * 360, s: hsv.s, v: hsv.v });
+    onChange({ h: y * 360, s: hsv.s, v: hsv.v });
   }, [hsv.s, hsv.v, onChange]);
 
   return (
     <div
       ref={ref}
       className="fpx-hue"
-      style={{ height }}
+      style={{ width }}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
-        update(e.clientX);
+        update(e.clientY);
       }}
       onPointerMove={(e) => {
         if (e.buttons === 0) return;
-        update(e.clientX);
+        update(e.clientY);
       }}
     >
+      {/* 指示器是**横条**（上下白边）而不是圆点：
+          竖直条上用圆点会看不出它指的是一条色带上的哪个高度。 */}
       <div
         className="fpx-hue-cursor"
-        style={{ left: `${(hsv.h / 360) * 100}%`, background: pureHueHex(hsv.h) }}
+        style={{ top: `${(hsv.h / 360) * 100}%`, background: pureHueHex(hsv.h) }}
       />
     </div>
   );

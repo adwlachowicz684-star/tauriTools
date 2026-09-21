@@ -36,8 +36,10 @@ const MAX_CUSTOM = 24;
 
 /** 色盘：预设 24 色 + 自定义常用色（可增删持久化）+ RGB/HEX 输入 + 吸管 + 恢复默认 */
 export function ColorPicker({
-  value, customColors, onChange, onSaveCustom, onLog, compact, preset,
+  value, customColors, onChange, onSaveCustom, onLog, compact, preset, actions,
 }: {
+  /** 右下角动作（服务模式的「取消/确定」）。内联模式不给 —— 它实时生效，没有确认。 */
+  actions?: React.ReactNode;
   /**
    * 预设色（"常用色"那一排）。
    *
@@ -144,17 +146,30 @@ export function ColorPicker({
     onSaveCustom([...customColors, current]);
   };
 
+  /* 恢复默认：把默认色填进输入框与面板（#676）
+     —— 此前 hexText 被清成空、面板却仍是默认紫，两处对不上；
+     清空的另一个后果是用户没法在默认色基础上微调，只能先盲选一个。 */
+  const resetDefault = () => {
+    setHsv(hexToHsv(DEFAULT_COLOR));
+    setHexText(DEFAULT_COLOR);
+    onChange(null);
+  };
+
   return (
     <div className={compact ? 'fpx-picker compact' : 'fpx-picker'}>
-      {/* 可视化选色区：SV 面板 + 色相条。
+      {/* ① 可视化选色区：SV 面板 + 色相条。
           此前只能靠预设色块和 RGB 数字调，没有一个能"看颜色"的地方。 */}
       <div className="fpx-picker-visual">
-        <SvPanel hsv={hsv} onChange={applyHsv} />
+        {/* 高度 176 与 WPF 原版一致；色相条与它并排等高 */}
+        <SvPanel hsv={hsv} onChange={applyHsv} height={176} />
         <HueBar hsv={hsv} onChange={applyHsv} />
       </div>
 
-      {/* 预览 + 通道输入 */}
-      <div className="p-row">
+      {/* ② 数值行：预览块 + R/G/B + 色值，同一中轴横排（照搬 WPF 的 rgbRow）。
+
+          WPF 里色值是**只读文本**，这里保留可编辑：用户可以整段粘贴
+          `#AABBCC` 进来，只读就得先手动拆成三个数字。这是有意偏离原版。 */}
+      <div className="fpx-value-row">
         <div className="fpx-preview-block" style={{ background: current }}>
           {!value && <span className="fpx-preview-def">默认</span>}
         </div>
@@ -167,6 +182,7 @@ export function ColorPicker({
               min={0}
               max={255}
               value={rgb[i]}
+              aria-label={`${label} 通道`}
               onChange={(e) => setChannel(i as 0 | 1 | 2, Number(e.target.value))}
             />
           </label>
@@ -175,38 +191,28 @@ export function ColorPicker({
           className="p-input fpx-hex"
           value={hexText}
           placeholder="#RRGGBB"
+          spellCheck={false}
+          aria-label="十六进制颜色值"
           onChange={(e) => applyHex(e.target.value)}
         />
-        <button className="p-btn" disabled={picking || armed}
-          onClick={() => setArmed(true)}
-          title="进入取色模式：移开鼠标后再点一下取样，Esc 取消">
-          {picking ? '取色中…' : armed ? '请点击取样…' : '⌖ 吸管'}
-        </button>
-        {/* 恢复默认后**把默认色填进输入框与面板**（#676）：
-            之前 hexText 被清成空、面板却仍是默认紫，两处对不上；
-            清空的另一个后果是用户没法在默认色基础上微调，只能先盲选一个。 */}
-        <button className="p-btn" onClick={() => {
-          setHsv(hexToHsv(DEFAULT_COLOR));
-          setHexText(DEFAULT_COLOR);
-          onChange(null);
-        }}>
-          恢复默认
-        </button>
       </div>
 
-      {/* 预设色 */}
-      <div className="fpx-picker-label">常用色</div>
-      <div className="fpx-swatches">
-        {(preset ?? PRESET_COLORS).map((c) => (
-          <button
-            key={c}
-            className={`fpx-swatch${current === c ? ' active' : ''}`}
-            style={{ background: c }}
-            title={c}
-            onClick={() => applyHex(c)}
-          />
-        ))}
-      </div>
+      {/* ③ 常用色 */}
+      <section className="fpx-picker-sec">
+        <div className="fpx-picker-label">常用色（单击应用）</div>
+        <div className="fpx-swatches">
+          {(preset ?? PRESET_COLORS).map((c) => (
+            <button
+              key={c}
+              className={`fpx-swatch${current === c ? ' active' : ''}`}
+              style={{ background: c }}
+              title={c}
+              aria-label={`使用颜色 ${c}`}
+              onClick={() => applyHex(c)}
+            />
+          ))}
+        </div>
+      </section>
 
       {/* 待命遮罩：portal 到 body。
           不放在本组件里是因为外壳 `.dialog` 有 backdrop-filter，
@@ -222,31 +228,58 @@ export function ColorPicker({
         document.body,
       )}
 
-      {/* 自定义常用色 */}
-      <div className="fpx-picker-label">
-        我的常用色
-        <span className="p-muted">（{customColors.length}/{MAX_CUSTOM}）</span>
-        <button className="p-btn fpx-mini" onClick={addCustom}>＋ 收藏当前色</button>
-      </div>
-      <div className="fpx-swatches">
-        {customColors.length === 0 && <span className="p-muted">（还没有，点「收藏当前色」添加）</span>}
-        {customColors.map((c) => (
-          <span key={c} className="fpx-swatch-wrap">
-            <button
-              className={`fpx-swatch${current === c ? ' active' : ''}`}
-              style={{ background: c }}
-              title={c}
-              onClick={() => applyHex(c)}
-            />
-            <button
-              className="fpx-swatch-del"
-              title="删除"
-              onClick={() => onSaveCustom(customColors.filter((x) => x !== c))}
-            >
-              ✕
-            </button>
-          </span>
-        ))}
+      {/* ④ 我的常用色 */}
+      <section className="fpx-picker-sec">
+        <div className="fpx-picker-label">
+          我的常用色（悬浮显示删除）
+          <span className="p-muted">（{customColors.length}/{MAX_CUSTOM}）</span>
+        </div>
+        <div className="fpx-swatches">
+          {customColors.length === 0 && <span className="p-muted">（还没有，点「收藏当前色」添加）</span>}
+          {customColors.map((c) => (
+            <span key={c} className="fpx-swatch-wrap">
+              <button
+                className={`fpx-swatch${current === c ? ' active' : ''}`}
+                style={{ background: c }}
+                title={c}
+                aria-label={`使用颜色 ${c}`}
+                onClick={() => applyHex(c)}
+              />
+              {/* 删除是真按钮（键盘可达），不是只能右键 ——
+                  此前设置页那排收藏色只给右键，键盘用户删不掉。 */}
+              <button
+                className="fpx-swatch-del"
+                title="删除"
+                aria-label={`删除颜色 ${c}`}
+                onClick={() => onSaveCustom(customColors.filter((x) => x !== c))}
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
+      </section>
+
+      {/* ⑤ 底部动作行：左=吸管/存为常用/恢复默认，右=确认（照搬 WPF 的 btnRow）。
+          右侧留给调用方（服务模式的「取消/确定」），内联模式没有就只留左边。 */}
+      <div className="fpx-actions">
+        <button
+          className="p-btn"
+          disabled={picking || armed}
+          onClick={() => setArmed(true)}
+          title="进入取色模式：移开鼠标后再点一下取样，Esc 取消"
+        >
+          {picking ? '取色中…' : armed ? '请点击取样…' : '吸管'}
+        </button>
+        <button className="p-btn" onClick={addCustom}
+          title={`把当前颜色存进我的常用色（最多 ${MAX_CUSTOM} 个）`}>
+          存为常用
+        </button>
+        <button className="p-btn" onClick={resetDefault}
+          title="清除自定义颜色，还原默认外观">
+          恢复默认
+        </button>
+        {actions ? <div className="fpx-actions-right">{actions}</div> : null}
       </div>
     </div>
   );
