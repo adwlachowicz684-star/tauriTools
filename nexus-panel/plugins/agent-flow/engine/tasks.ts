@@ -62,6 +62,9 @@ export type TaskLogLine = {
 /** 流程图的连线。只存两端 —— 画拓扑用不到别的 */
 export type TaskEdge = { source: string; target: string };
 
+/** 建任务那一刻的节点坐标 —— 画布布局的快照 */
+export type TaskPos = { x: number; y: number };
+
 export type TaskRecord = {
   id: string;
   canvasId: string;
@@ -87,6 +90,17 @@ export type TaskRecord = {
   edges?: TaskEdge[];
   /** 节点标题表。画流程图用；缺哪条就用 id 顶上 */
   labels?: Record<string, string>;
+  /**
+   * 节点坐标表。
+   *
+   * 有了它，流程图才能画成**画布当时那个样子** ——
+   * 分层网格虽然能看出谁先谁后，但和你摆的布局对不上，
+   * 认不出"这是我那张图"。
+   *
+   * 是快照不是引用：画布后来改了，老记录仍显示当时跑的样子 ——
+   * 那是"这次运行"该有的行为。
+   */
+  positions?: Record<string, TaskPos>;
 };
 
 export const MAX_OUTPUT_CHARS = 20000;
@@ -111,6 +125,8 @@ export function makeTask(init: {
   labels?: Record<string, string>;
   /** 建任务那一刻的连线，含嵌合展开出来的 */
   edges?: TaskEdge[];
+  /** 建任务那一刻的节点坐标 */
+  positions?: Record<string, TaskPos>;
 }): TaskRecord {
   seq += 1;
   const now = init.now ?? Date.now();
@@ -129,6 +145,7 @@ export function makeTask(init: {
     total: init.total ?? 0,
     ...(init.edges && init.edges.length > 0 ? { edges: init.edges } : {}),
     ...(init.labels && Object.keys(init.labels).length > 0 ? { labels: init.labels } : {}),
+    ...(init.positions && Object.keys(init.positions).length > 0 ? { positions: init.positions } : {}),
   };
 }
 

@@ -2659,6 +2659,14 @@ function reportSkipped(
         ...runEdges.map((e) => ({ source: e.source, target: e.target })),
         ...stackE.map((e) => ({ source: e.source, target: e.target })),
       ],
+      /*
+       * 坐标快照 —— 流程图要画成画布当时那个样子。
+       * 嵌合展开出来的节点没有坐标（它们不在画布 nodes 里），
+       * 缺的那些会退回分层网格，不会画到 (0,0) 叠成一团。
+       */
+      positions: Object.fromEntries(
+        runNodes.map((n) => [n.id, { x: n.position?.x ?? 0, y: n.position?.y ?? 0 }]),
+      ),
     });
     currentTaskRef.current = task.id;
     setTasks((list) => [task, ...list]);

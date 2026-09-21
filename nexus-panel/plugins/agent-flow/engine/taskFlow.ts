@@ -106,10 +106,13 @@ export type FlowNodeBox = {
   id: string;
   label: string;
   status: FlowStatus;
-  /** 列（层），从 0 开始 */
+  /** 列（层），从 0 开始。分层模式下用来摆格子 */
   col: number;
   /** 行，从 0 开始 */
   row: number;
+  /** 画布坐标。缺省表示这条没有坐标，要退回分层 */
+  x?: number;
+  y?: number;
 };
 
 export type FlowLayout = {
@@ -118,7 +121,20 @@ export type FlowLayout = {
   links: TaskEdge[];
   cols: number;
   rows: number;
+  /**
+   * canvas = 按画布坐标摆（有坐标时），layered = 分层网格。
+   *
+   * 有**任意一个**节点缺坐标就整张退回分层：
+   * 一半按坐标、一半按格子会画成两块互不相干的图。
+   */
+  mode: 'canvas' | 'layered';
+  /** canvas 模式下的画布包围盒，用来定 SVG 视口 */
+  bounds?: { x: number; y: number; w: number; h: number };
 };
+
+/** 卡片默认尺寸。没有 measured 时用它算包围盒与连线端点 */
+export const BOX_W = 200;
+export const BOX_H = 72;
 
 /**
  * 分层布局。
@@ -165,7 +181,66 @@ export function layoutTaskFlow(task: TaskRecord): FlowLayout {
 
   const cols = boxes.reduce((m, b) => Math.max(m, b.col), 0) + 1;
   const rows = boxes.reduce((m, b) => Math.max(m, b.row), 0) + 1;
-  return { boxes, links: edges, cols, rows };
+
+  /*
+   * 有坐标就按画布摆。
+   *
+   * 少数节点缺坐标（比如模块展开出来的）时**整张退回分层** ——
+   * 一半按坐标一半按格子会画成两块互不相干的图。
+   */
+  const pos = task.positions;
+  const allPosed = pos
+    && boxes.length > 0
+    && boxes.every((b) => typeof pos[b.id]?.x === 'number' && typeof pos[b.id]?.y === 'number');
+
+  if (!allPosed || !pos) {
+    return { boxes, links: edges, cols, rows, mode: 'layered' as const };
+  }
+
+  for (const b of boxes) {
+    b.x = pos[b.id].x;
+    b.y = pos[b.id].y;
+  }
+
+  const xs = boxes.map((b) => b.x!);
+  const ys = boxes.map((b) => b.y!);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const bounds = {
+    x: minX,
+    y: minY,
+    w: Math.max(...xs) - minX + BOX_W,
+    h: Math.max(...ys) - minY + BOX_H,
+  };
+  return { boxes, links: edges, cols, rows, mode: 'canvas' as const, bounds };
+}
+
+/**
+ * 一条连线在 SVG 里的两端（都在卡片的**边缘中点**上）。
+ *
+ * 从中心连到中心会让线穿过卡片上的字 ——
+ * 而这一步的名字恰恰是要看清的东西。
+ */
+export function linkEndsOf(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): { x1: number; y1: number; x2: number; y2: number } {
+  const fc = { x: from.x + BOX_W / 2, y: from.y + BOX_H / 2 };
+  const tc = { x: to.x + BOX_W / 2, y: to.y + BOX_H / 2 };
+  // 主要朝右走：出口在右边、入口在左边
+  const rightward = tc.x >= fc.x;
+  return {
+    x1: rightward ? from.x + BOX_W : from.x,
+    y1: fc.y,
+    x2: rightward ? to.x : to.x + BOX_W,
+    y2: tc.y,
+  };
+}
+
+/** 贝塞尔控制点 —— 与画布上的边同一套画法 */
+export function linkPathOf(e: { x1: number; y1: number; x2: number; y2: number }): string {
+  const dx = Math.abs(e.x2 - e.x1) * 0.5;
+  return `M ${e.x1} ${e.y1} C ${e.x1 + dx} ${e.y1}, ${e.x2 - dx} ${e.y2}, ${e.x2} ${e.y2}`;
 }
 
 /** 各状态各有多少 —— 顶上那一行汇总用 */
@@ -196,4 +271,20 @@ export function flowSummary(boxes: FlowNodeBox[]): Record<FlowStatus, number> {
 export function errorNodesOf(task: TaskRecord): string[] {
   const ids = task.order.length > 0 ? task.order : Object.keys(task.nodes ?? {});
   return ids.filter((id) => flowStatusOf(task, id) === 'blocked');
+}
+
+/**
+ * 按层分组的节点 id —— 列表视图用。
+ *
+ * 与流程图的列同源（都是 topoLayers），
+ * 所以"图上第二列"就是"列表第二组"，切过去能对上。
+ */
+export function layersOf(task: TaskRecord): Array<[number, string[]]> {
+  const { boxes, cols } = layoutTaskFlow(task);
+  const out: Array<[number, string[]]> = [];
+  for (let c = 0; c < cols; c += 1) {
+    const ids = boxes.filter((b) => b.col === c).map((b) => b.id);
+    if (ids.length > 0) out.push([c, ids]);
+  }
+  return out;
 }
