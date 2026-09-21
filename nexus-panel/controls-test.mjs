@@ -916,5 +916,44 @@ console.log('\n=== 20. 字号走语义档（agent-flow）===');
     dup.length === 0, dup.slice(0, 3).map(([k, v]) => `${k}: ${[...v].join('/')}`).join(' ; '));
 }
 
+
+console.log('\n=== 21. 背景图预览框（放大 + 占位纵向排）===');
+/*
+ * 用户反馈：占位态的禁止图标贴在左边不好看，且框太小看不清图。
+ * 两条约定：
+ *   ① 预览框放大（120×68 → 200×112），有图才看得清细节；
+ *   ② 占位态改**纵向**排：图标在上居中，说明在下面独占一整行。
+ */
+{
+  const ctl = read('css/controls.css');
+  const slot = rules(ctl).find((r) => r.sel.trim() === '.nx-bgslot');
+  const off = rules(ctl).find((r) => r.sel.trim() === '.nx-bgslot-off');
+  const txt = rules(ctl).find((r) => r.sel.trim() === '.nx-bgslot-off-text');
+  const w = /width:\s*(\d+)px/.exec(slot?.body || '')?.[1];
+  const h = /height:\s*(\d+)px/.exec(slot?.body || '')?.[1];
+  t('预览框已放大到 ≥200×112', Number(w) >= 200 && Number(h) >= 112,
+    `${w}×${h}`);
+  /* 21.2 占位态必须是纵向：横排会把图标顶到左边（用户明确说不好看） */
+  t('占位态为纵向排（图标在上、文字在下）',
+    /flex-direction:\s*column/.test(off?.body || ''), '.nx-bgslot-off 缺 flex-direction: column');
+  /* 21.3 说明文字必须占满整行并居中 —— 不给 width 的话会按内容宽度居中，
+     文字一长就看不出是独立的一行 */
+  t('占位说明文字占满整行并居中',
+    /width:\s*100%/.test(txt?.body || '') && /text-align:\s*center/.test(txt?.body || ''),
+    '.nx-bgslot-off-text 缺 width:100% 或 text-align:center');
+  /* 21.4 图标放大到 ≥24px：框放大后它是主视觉，18px 显得孤零零 */
+  const ban = rules(ctl).find((r) => r.sel.trim() === '.nx-bgslot-ban');
+  t('禁止图标 ≥24px（框放大后的主视觉）',
+    Number(/font-size:\s*(\d+)px/.exec(ban?.body || '')?.[1]) >= 24,
+    ban?.body.match(/font-size:[^;]+/)?.[0]);
+  /* 21.5 两态同尺寸：切换主题时框不跳，只有内容换 */
+  t('占位态不另设尺寸（与有图态同尺寸）',
+    !/width:\s*\d+px/.test(off?.body || ''), '.nx-bgslot-off 不应覆盖 width');
+  /* 21.6 JSX 里占位文字挂了该类 */
+  const app = read('plugins/settings/App.tsx');
+  t('占位说明挂 .nx-bgslot-off-text',
+    /nx-bgslot-ban[\s\S]{0,220}nx-bgslot-off-text/.test(app), 'JSX 未挂该类');
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
