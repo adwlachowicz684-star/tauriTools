@@ -163,7 +163,7 @@ export default function McpServersPanel({
               placeholder="选填，给自己看的"
             />
           </label>
-          <div className="p-muted" style={{ fontSize: 'var(--fs-12, 12px)' }}>
+          <div className="p-muted" style={{ fontSize: 'var(--fs-body, 12px)' }}>
             环境变量在展开后填写 —— 名字像密钥的（含 token / secret / password 等）
             导出时会脱敏，不会随画布带出去。
           </div>
