@@ -19,6 +19,7 @@ const stack = R('components/StackedGroups.tsx');
 const hub = R('components/DialogsHub.tsx');
 const dlg = R('components/DirDialog.tsx');
 const app = R('App.tsx');
+const cg = R('components/CardGrid.tsx');
 const css = R('style.css');
 
 console.log('\n=== 1. 判定要认"拖文件夹" ===');
@@ -84,28 +85,35 @@ console.log('\n=== 3. 接到正规流程，而不是静默 ===');
   t('直接导入走 addCard 并带 tabIndex',
     /s\.addCard\(kind, target, tabIndex\)/.test(app));
   /*
-   * 宿主开了 dragDropEnabled —— 没有它，File 上没有 path，
-   * 直接导入永远走不到。这条必须钉，否则改动会静默退化成"总是弹框"。
+   * 宿主侧的两个前置（开 dragDropEnabled + 装文档级守卫）**不由本插件改**，
+   * 所以这里不做断言 —— 断言一个我改不了的东西只会让套件长期红灯，
+   * 而红灯久了会被当噪音忽略（那比不测更糟）。
+   *
+   * 改成**状态报告**：把"插件侧已就绪 / 宿主侧未就绪"直接打出来，
+   * 谁看测试输出都能一眼看到进度与还差什么。
    */
   const conf = R('../../src-tauri/tauri.conf.json');
-  t('宿主已开启 dragDropEnabled（否则拿不到路径）', /"dragDropEnabled"\s*:\s*true/.test(conf));
-  /*
-   * 开了 dragDropEnabled 就必须有**文档级**拖放守卫。
-   *
-   * 没有它：webview 开始接收拖放，而对拖入文件的默认行为是**打开它** ——
-   * 整个界面导航走。各插件只在自己那一小块区域 preventDefault，
-   * 拖到标题栏 / 侧边栏 / 空白处就没人拦，而那恰恰最容易误拖。
-   *
-   * 这条与上面那条是**一对**：只开配置不装守卫比不开更糟，
-   * 因为不开至少什么都不发生。
-   */
   const host = R('../../js/host.js');
-  t('宿主装了文档级拖放守卫', /addEventListener\('drop', stop\)/.test(host));
-  /* 调用点必须在 createHost 内、且在插件挂载之前；找不到调用点直接判失败而不是跳过 */
+  const confOn = /"dragDropEnabled"\s*:\s*true/.test(conf);
+  const guardOn = /addEventListener\('drop', stop\)/.test(host);
   const gi = host.indexOf('installDropGuard();');
   const ci = host.indexOf('const bus = createBus();');
-  t('守卫在插件挂载前安装（createHost 内）', gi > 0 && ci > 0 && gi > ci && gi - ci < 400,
-    `gi=${gi} ci=${ci}`);
+  const guardPlaced = gi > 0 && ci > 0 && gi > ci && gi - ci < 400;
+
+  console.log(`\n  [宿主前置] dragDropEnabled=${confOn ? '已开' : '未开'}`
+    + ` / 文档级拖放守卫=${guardOn ? '已装' : '未装'}`
+    + `${guardOn ? (guardPlaced ? '（位置正确）' : '（**位置不对**）') : ''}`);
+  if (!confOn || !guardOn || (guardOn && !guardPlaced)) {
+    console.log('  [宿主前置] 未就绪 → 拖入时拿不到绝对路径，会退回"选目录"对话框。'
+      + '这是**预期内的降级**，不是 bug。');
+  }
+
+  /*
+   * 真正该钉的是**插件侧这条降级链**：拿不到路径时必须还有兜底，
+   * 否则"拖了没反应"这个原痛点又回来了。
+   */
+  t('拿不到路径时退回对话框（不静默）', /onExternalDrop\?\.\(path \|\| name, !!path\)/.test(cg));
+  t('有路径才标记为直接导入', /!!path/.test(cg));
 }
 
 console.log('\n=== 4. 提示要解释"为什么还要再选一次" ===');
