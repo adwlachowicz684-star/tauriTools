@@ -2593,12 +2593,31 @@ function reportSkipped(
       ? (tgtCanvas.edges as Edge[])
       : edges;
 
+    /*
+     * 嵌合 = 一条隐式边（上方 → 下方）。这里先算出来：
+     * 任务记录要抄一份连线去画流程图，下面拼执行图也要用 ——
+     * 两处各算一次会不一致（图上连着、跑起来却没这条边）。
+     */
+    const stackE = stackEdges(runNodes as never);
+
     // 建一条任务记录。total 先按节点数估，运行时以实际出现的节点为准
     const task = makeTask({
       canvasId: tgtId ?? '',
       canvasName: tgtCanvas?.name ?? canvases.find((c) => c.id === activeId)?.name ?? '未命名流程',
       source,
       total: runNodes.length,
+      /*
+       * 标题与连线一起抄进任务记录 —— 任务窗口与历史要画流程图。
+       * 只存 id 的话图上写的就是 mamu7obyv93 这种乱码，看不出这一步干什么；
+       * 只存顺序不存连线的话，那是一列而不是图，分不出"等待"和"阻断"。
+       */
+      labels: Object.fromEntries(
+        runNodes.map((n) => [n.id, String((n.data as { label?: string }).label ?? n.id)]),
+      ),
+      edges: [
+        ...runEdges.map((e) => ({ source: e.source, target: e.target })),
+        ...stackE.map((e) => ({ source: e.source, target: e.target })),
+      ],
     });
     currentTaskRef.current = task.id;
     setTasks((list) => [task, ...list]);
@@ -2625,7 +2644,6 @@ function reportSkipped(
      * 拓扑排序、失败传播、跳过全部自动成立 ——
      * 引擎里不需要为"嵌合"写任何专门逻辑。
      */
-    const stackE = stackEdges(runNodes as never);
     const rawGraph: Graph = {
       nodes: runNodes.map((n) => ({ id: n.id, data: n.data })),
       edges: [
