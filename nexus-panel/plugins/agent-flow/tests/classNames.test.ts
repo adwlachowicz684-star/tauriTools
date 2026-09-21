@@ -331,7 +331,8 @@ test('saveCanvasConfig 不再为 MCP 触发刷新', () => {
 /** 服务库变了要防抖刷新 —— 改命令算变化（那是换了个服务） */
 test('全局服务库变了要触发刷新', () => {
   if (!hasSrc) return;
-  const app = read(path.join(ROOT, 'App.tsx'));
+  // MCP 已抽到 hooks/useMcpRegistry —— 两边都扫，只盯一处会在搬走后假通过
+  const app = readSrc('App.tsx', 'hooks/useMcpRegistry.ts');
   assert.ok(/mcpServers,\s*scheduleMcpRefresh/.test(app), 'effect 要依赖 mcpServers');
   assert.ok(app.includes('toServerRefs'), '要用 toServerRefs 转形状');
 });
