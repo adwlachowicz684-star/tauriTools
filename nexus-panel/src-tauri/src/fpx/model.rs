@@ -173,7 +173,10 @@ pub struct FpxConfig {
     /// true = 只新增/更新（源里删了的在备份中保留）；false = 镜像同步。
     #[serde(default = "default_true")]
     pub backup_append_only: bool,
-    /// 自动备份间隔（分钟）；0 = 关闭。预设档位 15/30/60/120/360/720/1440。
+    /// 自动备份间隔（分钟）；0 = 关闭。
+    /// 预设档位 1/2/5/10/15/30/60/120/360/720/1440（#93 补齐了短档位）。
+    /// **后端不校验取值** —— 手改 config.json 存别的值也能跑，
+    /// 前端 select 要把这种值显示出来，否则界面显示空白。
     #[serde(default)]
     pub backup_auto_minutes: u32,
     /// MCP 服务总开关：false 时即使已启动也拒绝请求。

@@ -11,9 +11,21 @@ import {
   LOG_MAX_LINES_DEFAULT, LOG_MAX_LINES_MAX, LOG_MAX_LINES_MIN, clampLogMax,
 } from '../utils/log';
 
-/** 自动备份档位（分钟）；0 = 关闭。与原版预设一致。 */
+/**
+ * 自动备份档位（分钟）；0 = 关闭。
+ *
+ * #93 补齐 1/2/5/10 分钟：改配置时想"改完就备份一次看看对不对"，
+ * 最短却要等 15 分钟 —— 那就只能手动备份，等于这个功能在**最需要它的
+ * 时候用不上**（刚改完设置、刚调整备份目录，恰恰最想立刻验证一次）。
+ *
+ * 短档位不是为了长期开着，是为了"调设置时能马上看到效果"。
+ */
 const BACKUP_PRESETS: { value: number; label: string }[] = [
   { value: 0, label: '关闭' },
+  { value: 1, label: '1 分钟' },
+  { value: 2, label: '2 分钟' },
+  { value: 5, label: '5 分钟' },
+  { value: 10, label: '10 分钟' },
   { value: 15, label: '15 分钟' },
   { value: 30, label: '30 分钟' },
   { value: 60, label: '1 小时' },
@@ -631,6 +643,13 @@ export function SettingsBody({
               value={autoMinutes}
               onChange={(e) => setAutoMinutes(Number(e.target.value))}
             >
+              {/* #93 当前值不在档位里时（手改 config.json 存了别的值）
+                  动态插一项显示它 —— 受控 select 遇到没有的 option 会**显示空白**，
+                  用户看不出当前是什么，还以为没设置。
+                  这与 #63 同源：显示必须与实际一致。 */}
+              {!BACKUP_PRESETS.some((p) => p.value === autoMinutes) && (
+                <option value={autoMinutes}>{autoMinutes} 分钟（自定义）</option>
+              )}
               {BACKUP_PRESETS.map((p) => (
                 <option key={p.value} value={p.value}>{p.label}</option>
               ))}

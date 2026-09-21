@@ -20,8 +20,6 @@
     "test:bridge": "node bridge-test.mjs",
     "test:controls": "node controls-test.mjs",
     "test:dialog": "node dialog-test.mjs",
-    "test:drag-reorder": "node drag-reorder-test.mjs",
-    "test:disclosure": "node disclosure-test.mjs",
     "test:errdiag": "node err-diag-test.mjs",
     "test:external": "node external-test.mjs",
     "test:flash": "node plugin-flash-test.mjs",
@@ -70,6 +68,7 @@
     "test:follow-theme": "node follow-theme-test.mjs",
     "test:responsive": "node responsive-test.mjs",
     "test:service-plugin": "node service-plugin-test.mjs",
+    "test:drag-reorder": "node drag-reorder-test.mjs",
     "test:drag-payload": "node plugins/project-group/drag-payload-test.mjs",
     "test:pg": "node plugins/project-group/drag-payload-test.mjs",
     "test:pg-hotkeys": "node plugins/project-group/hotkeys-test.mjs",
@@ -105,7 +104,8 @@
     "test:pg-link-rename": "node plugins/project-group/link-rename-test.mjs",
     "test:pg-remove-card": "node plugins/project-group/remove-card-test.mjs",
     "test:pg-settings-datadir": "node plugins/project-group/settings-datadir-test.mjs",
-    "test:pg-link-row-edit": "node plugins/project-group/link-row-edit-test.mjs"
+    "test:pg-link-row-edit": "node plugins/project-group/link-row-edit-test.mjs",
+    "test:pg-backup-interval": "node plugins/project-group/backup-interval-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
