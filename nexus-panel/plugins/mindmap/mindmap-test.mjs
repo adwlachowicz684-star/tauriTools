@@ -6514,6 +6514,154 @@ group('顶栏瘦身 / 聚焦中心主题 / 搜索不阻断选中 / 布局选中�
   ok(!/^\s*sheet,$/m.test(idx), '不再直接把 sheet 函数当属性传出');
 }
 
+group('文件库 / 搜索结果：两个独立页签共用一个底框');
+
+{
+  const { buildFileList } = await import('./filelist.js');
+  const mkApp = (filesOpen = false) => {
+    const calls = [];
+    const app = {
+      api: {
+        status() {}, commit() {}, openFile() {}, createFile() {}, createFolder() {},
+        renameFile() {}, deleteFile() {}, moveFile() {},
+        fileState: () => ({ files: [{ id: 'f1', name: '甲' }], folders: [], currentId: 'f1' }),
+      },
+      settings: { filesOpen },
+      bridge: { gotoSearchResult: () => true },
+    };
+    return { app, calls };
+  };
+  const visible = (el, sel) => {
+    const n = [...el.querySelectorAll(sel)][0];
+    if (!n) return false;
+    for (let p = n; p && p !== el; p = p.parentElement) {
+      if (p.style && p.style.display === 'none') return false;
+    }
+    return true;
+  };
+
+  // ---- 1) 初始：文件库开 → 显示文件 ----
+  {
+    const { app } = mkApp(false);
+    const fl = buildFileList(app);
+    fl.refresh();      // 文件列表内容由外壳渲染，这里补一次（真实环境是 renderFiles()）
+    fl.showFiles(true);
+    eq(fl.isFilesPanel(), true, 'a 文件面板占着底框');
+    ok(fl.el.classList.contains('open'), 'a 底框展开');
+    ok(visible(fl.el, '.mm-file-item'), 'a 文件列表可见');
+    eq(fl.isSearchMode(), false, 'a 不在搜索态');
+  }
+
+  // ---- 2) 搜索结果出来 → 占住底框，文件让位 ----
+  {
+    const { app } = mkApp(false);
+    const fl = buildFileList(app);
+    fl.refresh();
+    fl.showFiles(true);
+    fl.setSearch({ kw: 'ab', total: 2, active: 0, items: ['甲ab', '乙ab'] });
+    eq(fl.isSearchMode(), true, 'b 搜索结果占住底框');
+    ok(fl.el.classList.contains('open'), 'b 底框仍展开');
+    ok(visible(fl.el, '.mm-search-item'), 'b 搜索结果可见');
+    ok(!visible(fl.el, '.mm-file-item'), 'b 文件列表被遮盖');
+    eq(fl.isFilesPanel(), false, 'b 不再是文件面板');
+  }
+
+  // ---- 3) 点 📚 → 切回文件，搜索结果被遮盖 ----
+  {
+    const { app } = mkApp(false);
+    const fl = buildFileList(app);
+    fl.refresh();
+    fl.setSearch({ kw: 'ab', total: 2, active: 0, items: ['甲ab', '乙ab'] });
+    fl.toggleFiles();
+    eq(fl.isFilesPanel(), true, 'c 点文件 → 切到文件列表');
+    eq(fl.isSearchMode(), false, 'c 搜索结果让位');
+    ok(visible(fl.el, '.mm-file-item'), 'c 文件列表可见');
+    ok(!visible(fl.el, '.mm-search-item'), 'c 搜索结果被遮盖');
+  }
+
+  // ---- 4) 再点 📚 → 收起文件，但**退回搜索结果**（不是整个关掉）----
+  {
+    const { app } = mkApp(false);
+    const fl = buildFileList(app);
+    fl.setSearch({ kw: 'ab', total: 2, active: 0, items: ['甲ab', '乙ab'] });
+    fl.toggleFiles();          // → files
+    eq(fl.isFilesPanel(), true, 'd 先切到文件');
+    fl.toggleFiles();          // → 收起文件
+    eq(fl.isFilesPanel(), false, 'd 再点 → 文件收起');
+    eq(fl.isSearchMode(), true, 'd 退回搜索结果（不是把底框整个关掉）');
+    ok(fl.el.classList.contains('open'), 'd 底框仍展开');
+    ok(visible(fl.el, '.mm-search-item'), 'd 搜索结果真的可见');
+    // 关键：搜索结果的内容还在，没有被清掉重来
+    eq(fl.el.querySelectorAll('.mm-search-item').length, 2, 'd 搜索条目仍在（2 条）');
+  }
+
+  // ---- 5) 没有搜索结果时，收起文件 = 整个底框收起 ----
+  {
+    const { app } = mkApp(false);
+    const fl = buildFileList(app);
+    fl.refresh();
+    fl.showFiles(true);
+    fl.toggleFiles();
+    eq(fl.isFilesPanel(), false, 'e 文件已收起');
+    eq(fl.isOpen(), false, 'e 无搜索结果 → 底框整个收起');
+    ok(!fl.el.classList.contains('open'), 'e 底框没有 open 类');
+  }
+
+  // ---- 6) 清空搜索 → 让位给文件（若用户开着）/ 或收起 ----
+  {
+    const { app } = mkApp(true);      // settings.filesOpen = true
+    const fl = buildFileList(app);
+    fl.refresh();
+    fl.showFiles(true);
+    fl.setSearch({ kw: 'ab', total: 1, active: 0, items: ['甲ab'] });
+    eq(fl.isSearchMode(), true, 'f 先进搜索');
+    fl.setSearch(null);
+    eq(fl.isSearchMode(), false, 'f 清空搜索 → 退出搜索态');
+    eq(fl.isFilesPanel(), true, 'f 让位给文件列表（settings.filesOpen 为 true）');
+    eq(fl.el.querySelectorAll('.mm-search-item').length, 0, 'f 搜索条目真的清掉了');
+  }
+  {
+    const { app } = mkApp(false);     // settings.filesOpen = false
+    const fl = buildFileList(app);
+    fl.setSearch({ kw: 'ab', total: 1, active: 0, items: ['甲ab'] });
+    fl.setSearch(null);
+    eq(fl.isOpen(), false, 'g 用户没开文件库 → 清空搜索后底框收起');
+  }
+
+  // ---- 7) 标题与按钮随面板切换 ----
+  {
+    const { app } = mkApp(false);
+    const fl = buildFileList(app);
+    fl.refresh();
+    fl.showFiles(true);
+    const t1 = fl.el.querySelector('.mm-files-title').textContent;
+    ok(/脑图文件/.test(t1), 'h 文件态标题是「脑图文件」');
+    fl.setSearch({ kw: 'ab', total: 3, active: 0, items: ['a', 'b', 'c'] });
+    const t2 = fl.el.querySelector('.mm-files-title').textContent;
+    ok(/搜索结果 3 项/.test(t2), 'h 搜索态标题显示真实总数');
+    // 搜索态不能有「＋ / 📁」—— 它们建的是文件，但页面不是文件列表
+    const btns = [...fl.el.querySelectorAll('.mm-files-head button')];
+    const hidden = btns.filter((b) => b.style.display === 'none');
+    eq(hidden.length, 2, 'h 搜索态隐藏「＋ / 📁」（点了像没反应）');
+    fl.toggleFiles();
+    ok(/脑图文件/.test(fl.el.querySelector('.mm-files-title').textContent),
+      'h 切回文件 → 标题恢复');
+    eq([...fl.el.querySelectorAll('.mm-files-head button')]
+      .filter((b) => b.style.display === 'none').length, 0, 'h 切回文件 → 按钮恢复');
+  }
+
+  // ---- 8) 外壳不再有 setOpen（避免两个入口各说各话）----
+  {
+    const src = fs.readFileSync(path.join(HERE, 'filelist.js'), 'utf8');
+    ok(!/setOpen/.test(src), 'i filelist 不再导出 setOpen（状态由页签方法统一管）');
+    ok(/function toggleFiles\(\)/.test(src), 'i 有 toggleFiles');
+    ok(/function showFiles\(on\)/.test(src), 'i 有 showFiles');
+    const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+    ok(/fileList\?\.showFiles\(on\)/.test(ix), 'i 外壳调 showFiles');
+    ok(!/fileList\?\.setOpen/.test(ix), 'i 外壳不再调 setOpen');
+  }
+}
+
 group('多附件：XMind 往返（导出再导回）');
 
 {
