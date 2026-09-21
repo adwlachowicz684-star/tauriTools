@@ -701,14 +701,19 @@ export default function Settings() {
     }
 
     try {
+      /*
+       * **刻意不传 preset**。
+       *
+       * preset 是"覆盖色盘自带的 24 个预设色"。早先为了"跟上面那排
+       * 保持一致"传了 swatchFor()（只有 9 个），结果把 24 色砍成 9 色 ——
+       * 本想打开更多选择，实际反而更少。
+       *
+       * 上面那排是快捷推荐，色盘里是完整调色板，两者不必一致：
+       * 从色盘选出的任意色都能直接应用。
+       */
       const r = await ctx.services.color.pick(
         isHex(cur) ? cur : null,
-        {
-          custom: getCustomColors(slot),
-          /* 把当前基调的预设色喂给色盘当常用色，与上面那排保持一致 ——
-             否则深色下面板给出的浅色跟旁边的色板对不上 */
-          preset: swatchFor(getBase()).map(([c]) => c),
-        },
+        { custom: getCustomColors(slot) },
       );
       /* 取消了也要存：用户可能刚收藏完就点取消 */
       saveCustomColors(slot, r?.custom);

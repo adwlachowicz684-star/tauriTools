@@ -559,6 +559,28 @@ console.log('\n--- I. 右上角入口管理 ---');
   t('降级 input 常驻渲染（临时创建会被浏览器拦）',
     /ref=\{accentInput\}/.test(sa) && /ref=\{envInput\}/.test(sa));
 
+  /*
+   * **不传 preset**。
+   *
+   * preset 是"覆盖色盘自带的预设色"。早先为了"跟上面那排一致"
+   * 传了 swatchFor()（9 个），把色盘的 24 色砍成 9 色 ——
+   * 本想打开更多选择，实际反而更少。
+   */
+  t('不传 preset（传了会把色盘预设色砍成 9 个）', !/preset:/.test(sa));
+
+  /*
+   * 收藏上限必须 >= 色盘的 MAX_CUSTOM。
+   * 写死数字守不住：两边各自改，漂移时没人发现。
+   * 所以从色盘源码里读出来再比。
+   */
+  {
+    const cp = src('plugins/color-picker/ColorPicker.tsx');
+    const cpMax = Number((cp.match(/MAX_CUSTOM\s*=\s*(\d+)/) || [])[1] || 0);
+    const tmMax = Number((tm.match(/CUSTOM_MAX\s*=\s*(\d+)/) || [])[1] || 0);
+    t('收藏上限不低于色盘上限（小了会静默截断）',
+      cpMax > 0 && tmMax >= cpMax, `设置页 ${tmMax} / 色盘 ${cpMax}`);
+  }
+
   /* ---- 行为验证：真跑一遍存储，而不是只查源码字符串 ---- */
   const TM = await import('./js/theme-manager.js');
   t('导出 getCustomColors / saveCustomColors',
@@ -583,6 +605,31 @@ console.log('\n--- I. 右上角入口管理 ---');
   /* 坏 JSON 不能让设置页打不开 */
   localStorage.setItem('nexus:accent-custom', '{{{坏 JSON');
   t('坏 JSON 不抛、退回空数组', JSON.stringify(TM.getCustomColors('accent')) === '[]');
+  localStorage.removeItem('nexus:accent-custom');
+
+  /*
+   * 同一色的大小写两态要并成一格。
+   * 色盘 normalizeHex 返回大写，手改 localStorage 的可能是小写，
+   * 不去重的话同一个色占两格，24 个槽位白白少一个。
+   */
+  TM.saveCustomColors('accent', ['#AABBCC', '#aabbcc', '#112233']);
+  t('大小写重复合并成一格', TM.getCustomColors('accent').length === 2,
+    JSON.stringify(TM.getCustomColors('accent')));
+  t('统一存小写', TM.getCustomColors('accent')[0] === '#aabbcc');
+
+  /*
+   * 读的一侧也要归一化。
+   *
+   * 只测"存进去是小写"抓不到这条：那时 saveCustomColors 已经归一化过，
+   * 把 getCustomColors 的归一化删掉照样全绿（实测踩到）。
+   * 必须绕过写入、直接往 localStorage 塞大写值才测得到 ——
+   * 手改 localStorage 的人正是这么干的。
+   */
+  localStorage.setItem('nexus:accent-custom', JSON.stringify(['#AABBCC', '#112233']));
+  t('直写 localStorage 的大写值读出时也归一化',
+    TM.getCustomColors('accent')[0] === '#aabbcc',
+    JSON.stringify(TM.getCustomColors('accent')));
+  localStorage.removeItem('nexus:accent-custom');
   localStorage.removeItem('nexus:accent-custom');
   localStorage.removeItem('nexus:env-custom');
 }

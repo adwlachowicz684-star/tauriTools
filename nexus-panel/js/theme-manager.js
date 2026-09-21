@@ -416,8 +416,14 @@ export function getEnvColor() {
   try { return localStorage.getItem(KEY_ENV) || null; } catch { return null; }
 }
 
-/** 收藏夹最多留这么多个；再多面板上也摆不下，且会无限增长 */
-const CUSTOM_MAX = 16;
+/*
+ * 收藏夹上限。
+ *
+ * **必须与色盘的 MAX_CUSTOM（24）对齐，不能比它小** ——
+ * 小了会把用户收藏的色静默截断：在色盘里收藏 20 个，
+ * 回到设置页存下来只剩 16 个，用户不会收到任何提示。
+ */
+const CUSTOM_MAX = 24;
 
 /**
  * 读某个槽位的自定义色收藏夹。
@@ -432,7 +438,11 @@ export function getCustomColors(slot) {
   try {
     const v = JSON.parse(localStorage.getItem(key) || '[]');
     return Array.isArray(v)
-      ? v.filter((c) => typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c)).slice(0, CUSTOM_MAX)
+      ? v.filter((c) => typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c))
+        /* 统一小写：色盘 normalizeHex 返回大写，手改的可能是小写，
+           不归一化的话同一个色会被当成两个，重复占位 */
+        .map((c) => c.toLowerCase())
+        .slice(0, CUSTOM_MAX)
       : [];
   } catch { return []; }
 }
@@ -445,8 +455,12 @@ export function getCustomColors(slot) {
  */
 export function saveCustomColors(slot, list) {
   const key = slot === 'env' ? KEY_CUSTOM_ENV : KEY_CUSTOM_ACCENT;
+  const seen = new Set();
   const clean = (Array.isArray(list) ? list : [])
     .filter((c) => typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c))
+    .map((c) => c.toLowerCase())
+    /* 去重：色盘内按原样比较，同一色的大写与小写会各占一格 */
+    .filter((c) => (seen.has(c) ? false : (seen.add(c), true)))
     .slice(0, CUSTOM_MAX);
   try { localStorage.setItem(key, JSON.stringify(clean)); } catch {}
   return clean;
