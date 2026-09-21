@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
-  CLI_META, TRIGGER_META, DEFAULT_BRANCH, OP_META, triggerKindsOf,
+  CLI_META, TRIGGER_META, DEFAULT_BRANCH, OP_META,
   makeRule, makeParallelRule,
   isCondition, isTrigger, isParallel, isLoop, isFs, isUpdate, isOcr, isTranslate,
   isGithubUpdate, isGithubPush,
@@ -11,7 +11,7 @@ import {
   LOOP_MODE_META, FS_OP_META, MAX_LOOP_ITERATIONS, defaultFileOutput,
   type TaskFileOutput,
   type CliKind, type ConditionOp, type ConditionNodeData,
-  type TriggerKind, type TriggerConfig, type TriggerNodeData,
+  type TriggerKind, type TriggerConfig, type TriggerNodeData, type TriggerEntry,
   type ParallelMode, type ParallelNodeData, type TaskNodeData,
   type LoopMode, type LoopNodeData, type LoopOnError,
   type FsOp, type FsNodeData,
@@ -27,6 +27,10 @@ import {
 } from '../../engine/conversations';
 import { fileOp, tailFile, type FsArgs } from '../../lib/tauri';
 import { DEFAULT_TRIGGER_CONFIG } from '../../types';
+import {
+  triggerEntriesOf, addTriggerEntry, removeTriggerEntry,
+  patchTriggerEntry, patchEntryConfig, mergeConfig, makeEntryId, entryEnabled,
+} from '../../engine/triggerEntries';
 import { fetchText } from '../../lib/tauri';
 import {
   validateRule, validateCondition, simulateCondition, describeRuleExpression,
@@ -60,14 +64,26 @@ export function TriggerInspector({ node, onChange, webhookTokens }: {
   const patchConfig = (patch: Partial<TriggerConfig>) =>
     onChange(node.id, { config: { ...d.config, ...patch } });
 
-  /** 兼容旧的单值字段：读的时候统一走 triggerKindsOf */
-  const selected = triggerKindsOf(d);
-  const toggle = (k: TriggerKind, on: boolean) => {
-    const next = on
-      ? (selected.includes(k) ? selected : [...selected, k])
-      : selected.filter((x) => x !== k);
-    // 写回时一并清掉旧的 trigger 字段，避免它与 triggers 打架
-    onChange(node.id, { triggers: next, trigger: undefined });
+  /*
+   * 触发**条件卡片**。
+   *
+   * 以前是一组勾选框：选了哪几种方式，下面才显示哪些字段。
+   * 于是所有方式共用同一份 config —— 改「周期」的秒数会顺带改到
+   * 别的触发方式也在读的字段，而且看不出"这个节点到底配了几个条件"。
+   *
+   * 现在每种方式是一张卡，各带自己的 config，可单独停用 / 删除。
+   */
+  const entries = triggerEntriesOf(d as unknown as Record<string, unknown>);
+  const writeEntries = (next: TriggerEntry[]) => {
+    // 一并清掉老字段，避免它与 entries 打架（两处都有的话不知道该听谁的）
+    onChange(node.id, { entries: next, triggers: undefined, trigger: undefined });
+  };
+  const patchEntry = (id: string, patch: Partial<TriggerConfig>) =>
+    writeEntries(patchEntryConfig(entries, id, patch));
+  const seqRef = useRef(0);
+  const addEntry = (k: TriggerKind) => {
+    seqRef.current += 1;
+    writeEntries(addTriggerEntry(entries, k, makeEntryId(seqRef.current)));
   };
 
   return (
@@ -81,29 +97,44 @@ export function TriggerInspector({ node, onChange, webhookTokens }: {
       </label>
 
       <div className="field">
-        <span>触发方式（可多选）</span>
-        <div className="trig-multi">
-          {(Object.keys(TRIGGER_META) as TriggerKind[]).map((k) => {
-            const on = selected.includes(k);
-            return (
-              <label key={k} className={'trig-check' + (on ? ' on' : '')} title={TRIGGER_META[k].hint}>
-                <input
-                  type="checkbox"
-                  checked={on}
-                  onChange={(e) => toggle(k, e.target.checked)}
-                />
-                <span className="trig-check-icon">{TRIGGER_META[k].icon}</span>
-                <span className="trig-check-label">{TRIGGER_META[k].label}</span>
-              </label>
-            );
-          })}
-        </div>
+        <span className="field-label-row">
+          触发条件
+          <span className="trig-add">
+            {(Object.keys(TRIGGER_META) as TriggerKind[]).map((k) => (
+              <button
+                key={k}
+                type="button"
+                className="side-head-btn"
+                title={`添加「${TRIGGER_META[k].label}」条件`}
+                onClick={() => addEntry(k)}
+              >
+                ＋{TRIGGER_META[k].label}
+              </button>
+            ))}
+          </span>
+        </span>
+        {entries.length === 0 ? (
+          <div className="trig-empty">
+            还没有触发条件 —— 上面点一个添加。一个条件都不会触发时，这个节点不会跑。
+          </div>
+        ) : (
+          <div className="trig-cards">
+            {entries.map((e) => (
+              <TriggerCard
+                key={e.id}
+                node={node}
+                entry={e}
+                base={d.config}
+                webhookTokens={webhookTokens}
+                onPatch={(patch) => patchEntry(e.id, patch)}
+                onToggle={(on) => writeEntries(patchTriggerEntry(entries, e.id, { enabled: on }))}
+                onRemove={() => writeEntries(removeTriggerEntry(entries, e.id))}
+              />
+            ))}
+          </div>
+        )}
         <small className="dim">
-          {selected.length === 0
-            ? '一个都没选 —— 这个节点不会触发'
-            : selected.length === 1
-              ? TRIGGER_META[selected[0]].hint
-              : `已选 ${selected.length} 种，任一满足即触发`}
+          {entries.length > 1 ? '每张卡独立配置，任一条件满足即触发' : ''}
         </small>
       </div>
 
@@ -115,111 +146,6 @@ export function TriggerInspector({ node, onChange, webhookTokens }: {
         />
         <span>启用这个触发器</span>
       </label>
-
-      {selected.includes('interval') && (
-        <label className="field">
-          <span>间隔秒数（最小 10，避免把 CLI 打爆）</span>
-          <input
-            type="number" min={10}
-            value={d.config.intervalSec}
-            onChange={(e) => patchConfig({ intervalSec: Math.max(10, Number(e.target.value) || 10) })}
-          />
-        </label>
-      )}
-
-      {selected.includes('cron') && (
-        <label className="field">
-          <span>cron 表达式（分 时 日 月 周）</span>
-          <input
-            value={d.config.cronExpr}
-            placeholder="0 9 * * 1-5"
-            onChange={(e) => patchConfig({ cronExpr: e.target.value })}
-          />
-        </label>
-      )}
-
-      {selected.includes('watch') && (
-        <>
-          <label className="field">
-            <span>监听目录</span>
-            <input
-              value={d.config.watchDir}
-              placeholder="/path/to/dir"
-              onChange={(e) => patchConfig({ watchDir: e.target.value })}
-            />
-          </label>
-          <label className="field">
-            <span>只关心这些后缀（逗号分隔，留空=全部）</span>
-            <input
-              value={(d.config.watchExts ?? []).join(',')}
-              placeholder="py,js,ts"
-              onChange={(e) => patchConfig({
-                watchExts: e.target.value.split(',').map((x) => x.trim()).filter(Boolean),
-              })}
-            />
-          </label>
-          <label className="field">
-            <span>防抖毫秒</span>
-            <input
-              type="number" min={0}
-              value={d.config.debounceMs}
-              onChange={(e) => patchConfig({ debounceMs: Number(e.target.value) || 0 })}
-            />
-          </label>
-        </>
-      )}
-
-      {selected.includes('webhook') && (
-        <>
-          <div className="field row2">
-            <label className="field">
-              <span>端口</span>
-              <input
-                type="number"
-                value={d.config.port}
-                onChange={(e) => patchConfig({ port: Number(e.target.value) || 8787 })}
-              />
-            </label>
-            <label className="field">
-              <span>路径</span>
-              <input
-                value={d.config.path}
-                onChange={(e) => patchConfig({ path: e.target.value || '/' })}
-              />
-            </label>
-          </div>
-          <div className="url-box">
-            <code>{`http://127.0.0.1:${d.config.port}${d.config.path}`}</code>
-          </div>
-          <label className="field">
-            <span>校验 Token（留空=不校验身份，但调用仍需带下方请求头）</span>
-            <input value={d.config.token} onChange={(e) => patchConfig({ token: e.target.value })} />
-          </label>
-          {!d.config.token && webhookTokens?.[node.id] ? (
-            <div className="tip">
-              未填 Token，后端已自动生成：<code>{webhookTokens[node.id]}</code>
-              <br />
-              调用时带上请求头 <code>X-Token</code> 或 <code>Authorization: Bearer …</code>。
-              留空不等于「不校验」——否则本机任何程序（不只网页）都能触发这条工作流。
-              <br />
-              例：<code>curl -H 'X-Token: {webhookTokens[node.id]}' http://127.0.0.1:{d.config.port}{d.config.path}</code>
-            </div>
-          ) : null}
-          {!d.config.token && !webhookTokens?.[node.id] && (
-            <div className="tip">
-              未配 Token 时，调用需带请求头 <code>X-Nexus-Webhook: 1</code>。
-              这不是身份校验，而是挡住浏览器里的恶意网页静默触发本端口 ——
-              网页加不了自定义头，加了也会因预检失败而发不出去。
-              <br />
-              例：<code>curl -H 'X-Nexus-Webhook: 1' http://127.0.0.1:{d.config.port}{d.config.path}</code>
-            </div>
-          )}
-        </>
-      )}
-
-      {selected.includes('chat') && (
-        <ChatConfig node={node} d={d} patchConfig={patchConfig} />
-      )}
 
       <label className="field">
         <span>触发时注入的输入（节点里用 <code>{'{{input}}'}</code> 读取）</span>
@@ -273,6 +199,168 @@ function platformOf(): 'win' | 'mac' | 'linux' {
  * 不如扫一遍本机，把"找到没 / 能不能读"如实报出来 ——
  * 尤其是"目录存在但读不了"这种最容易白忙一场的情况。
  */
+/**
+ * 一张触发条件卡。
+ *
+ * ================= 为什么是卡片 ====================
+ *
+ * 以前所有触发方式共用节点上同一份 `config`，
+ * 界面则是一组勾选框 + "选中才显示"的字段堆。
+ *
+ * 于是：改「周期」的秒数会顺带改到别的触发方式也在读的字段，
+ * 而且看不出这个节点到底配了几个条件 —— 它们没有各自的边界。
+ *
+ * 现在每张卡自带 config（只写自己关心的字段），
+ * 缺的字段由节点默认 config 兜底（mergeConfig）。
+ */
+export function TriggerCard({ entry, base, node, webhookTokens, onPatch, onToggle, onRemove }: {
+  entry: TriggerEntry;
+  /** 节点级默认配置：卡片没覆盖的字段用它的 */
+  base: TriggerConfig | undefined;
+  node: FlowNode;
+  webhookTokens?: Record<string, string>;
+  onPatch: (patch: Partial<TriggerConfig>) => void;
+  onToggle: (on: boolean) => void;
+  onRemove: () => void;
+}) {
+  const meta = TRIGGER_META[entry.kind];
+  const cfg = mergeConfig(base, entry.config);
+  const on = entryEnabled(entry);
+  /* 卡片自己的 config 就是这里的全部 —— 读 d.config 会读到节点默认值，
+     表现为"我在卡里改了却没变" */
+  const d = { config: cfg } as TriggerNodeData;
+
+  return (
+    <div className={'trig-card' + (on ? '' : ' is-off')}>
+      <div className="trig-card-head">
+        <span className="trig-card-icon">{meta?.icon ?? '⚡'}</span>
+        <span className="trig-card-name">{meta?.label ?? entry.kind}</span>
+        <span className="task-grow" />
+        <button
+          type="button"
+          className={'side-head-btn' + (on ? ' is-on' : '')}
+          onClick={() => onToggle(!on)}
+          title={on ? '停用这个条件（其它条件不受影响）' : '启用这个条件'}
+        >
+          {on ? '已启用' : '已停用'}
+        </button>
+        <button
+          type="button"
+          className="side-head-btn"
+          onClick={onRemove}
+          title="删除这个触发条件"
+        >
+          删除
+        </button>
+      </div>
+
+      {entry.kind === 'interval' ? (
+        <label className="field">
+          <span>间隔秒数（最小 10，避免把 CLI 打爆）</span>
+          <input
+            type="number" min={10}
+            value={cfg.intervalSec}
+            onChange={(e) => onPatch({ intervalSec: Math.max(10, Number(e.target.value) || 10) })}
+          />
+        </label>
+      ) : null}
+
+      {entry.kind === 'cron' ? (
+        <label className="field">
+          <span>cron 表达式（分 时 日 月 周）</span>
+          <input
+            value={cfg.cronExpr}
+            placeholder="0 9 * * 1-5"
+            onChange={(e) => onPatch({ cronExpr: e.target.value })}
+          />
+        </label>
+      ) : null}
+
+      {entry.kind === 'watch' ? (
+        <>
+          <label className="field">
+            <span>监听目录</span>
+            <input
+              value={cfg.watchDir}
+              placeholder="/path/to/dir"
+              onChange={(e) => onPatch({ watchDir: e.target.value })}
+            />
+          </label>
+          <label className="field">
+            <span>只关心这些后缀（逗号分隔，留空=全部）</span>
+            <input
+              value={(cfg.watchExts ?? []).join(',')}
+              placeholder="py,js,ts"
+              onChange={(e) => onPatch({
+                watchExts: e.target.value.split(',').map((x) => x.trim()).filter(Boolean),
+              })}
+            />
+          </label>
+          <label className="field">
+            <span>防抖毫秒</span>
+            <input
+              type="number" min={0}
+              value={cfg.debounceMs}
+              onChange={(e) => onPatch({ debounceMs: Number(e.target.value) || 0 })}
+            />
+          </label>
+        </>
+      ) : null}
+
+      {entry.kind === 'webhook' ? (
+        <>
+          <div className="field row2">
+            <label className="field">
+              <span>端口</span>
+              <input
+                type="number"
+                value={cfg.port}
+                onChange={(e) => onPatch({ port: Number(e.target.value) || 8787 })}
+              />
+            </label>
+            <label className="field">
+              <span>路径</span>
+              <input
+                value={cfg.path}
+                onChange={(e) => onPatch({ path: e.target.value || '/' })}
+              />
+            </label>
+          </div>
+          <div className="url-box">
+            <code>{`http://127.0.0.1:${cfg.port}${cfg.path}`}</code>
+          </div>
+          <label className="field">
+            <span>校验 Token（留空=不校验身份，但调用仍需带下方请求头）</span>
+            <input value={cfg.token} onChange={(e) => onPatch({ token: e.target.value })} />
+          </label>
+          {!cfg.token && webhookTokens?.[node.id] ? (
+            <div className="tip">
+              未填 Token，后端已自动生成：<code>{webhookTokens[node.id]}</code>
+              <br />
+              调用时带上请求头 <code>X-Token</code> 或 <code>Authorization: Bearer …</code>。
+              留空不等于「不校验」——否则本机任何程序（不只网页）都能触发这条工作流。
+            </div>
+          ) : null}
+          {!cfg.token && !webhookTokens?.[node.id] ? (
+            <div className="tip">
+              未配 Token 时，调用需带请求头 <code>X-Nexus-Webhook: 1</code>。
+              这不是身份校验，而是挡住浏览器里的恶意网页静默触发本端口。
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
+      {entry.kind === 'chat' ? (
+        <ChatConfig node={node} d={d} patchConfig={onPatch} />
+      ) : null}
+
+      {entry.kind === 'manual' ? (
+        <div className="cond-hint">点「运行」时立即执行一次。</div>
+      ) : null}
+    </div>
+  );
+}
+
 export function ChatConfig({ d, patchConfig }: {
   node: FlowNode;
   d: TriggerNodeData;
