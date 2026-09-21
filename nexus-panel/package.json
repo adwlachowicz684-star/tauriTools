@@ -106,7 +106,8 @@
     "test:pg-settings-datadir": "node plugins/project-group/settings-datadir-test.mjs",
     "test:pg-link-row-edit": "node plugins/project-group/link-row-edit-test.mjs",
     "test:pg-backup-interval": "node plugins/project-group/backup-interval-test.mjs",
-    "test:pg-drop-springback": "node plugins/project-group/drop-springback-test.mjs"
+    "test:pg-drop-springback": "node plugins/project-group/drop-springback-test.mjs",
+    "test:pg-mcp-exit": "node plugins/project-group/mcp-exit-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

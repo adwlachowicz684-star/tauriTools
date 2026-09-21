@@ -411,8 +411,38 @@ fn main() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("启动 Nexus Panel 失败");
+        .build(tauri::generate_context!())
+        .expect("构建 Nexus Panel 失败")
+        .run(|app_handle, event| {
+            /*
+             * #53 退出时关闭 MCP 后台进程（原版 `closeMcpOnExit`）。
+             *
+             * 此前这是个**死配置项**：model.rs 里有字段、有 Default，
+             * 但全库无读取点。表现是"界面上有个开关，勾了没反应" ——
+             * 不报错，用户只会以为自己没设对。
+             *
+             * 为什么挂 RunEvent::Exit 而不是窗口关闭事件：
+             *   · 窗口 close/hide 不意味着进程退出（本项目用 hide 隐藏窗口，
+             *     第二个实例靠 single-instance 回调唤回）；
+             *   · 托盘「退出」走 app.exit(0)，也不经过窗口事件。
+             * RunEvent::Exit 是唯一能覆盖**所有**退出路径的钩子。
+             *
+             * 注意：Tauri 2 的 RunEvent 只在 `App::run(|h, event| ..)` 回调里给，
+             * Builder 上没有 on_event —— 挂在 Builder 上编译不过。
+             *
+             * 只在配置为 true 时关：有人把 MCP 当常驻服务用
+             * （关掉面板仍想让客户端连着），所以由开关决定。
+             */
+            if let tauri::RunEvent::Exit = event {
+                let should_stop = crate::fpx::store::resolve_data_dir(app_handle)
+                    .map(|dir| crate::fpx::store::load_config(&dir).close_mcp_on_exit)
+                    .unwrap_or(false);
+                if should_stop {
+                    crate::fpx::mcp::stop();
+                    eprintln!("[mcp] 退出时已按配置关闭 MCP 后台进程");
+                }
+            }
+        });
 }
 
 /// 解析 `--mcp [port]` 里可选的端口号，没给则 0（由系统分配）。

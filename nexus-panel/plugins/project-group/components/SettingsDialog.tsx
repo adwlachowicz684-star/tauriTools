@@ -124,6 +124,10 @@ export function SettingsBody({
   const [moveFolder, setMoveFolder] = useState(config.moveFolderOnCrossMove);
   const [moveScope, setMoveScope] = useState(config.moveFolderScope || 'defaultRootsFlatten');
   const [mcpEnabled, setMcpEnabled] = useState(config.mcpEnabled);
+  /* #53 退出时一并关闭 MCP 进程。
+     此前这个字段**连界面入口都没有** —— 只有 model.rs 里的字段与 Default，
+     全库无读取点也无写入点。用户根本看不到它，更谈不上生效。 */
+  const [closeMcpOnExit, setCloseMcpOnExit] = useState(config.closeMcpOnExit ?? false);
   const [mcpTools, setMcpTools] = useState<Record<string, boolean>>({ ...config.mcpTools });
   const [toolRows, setToolRows] = useState<McpToolRow[]>([]);
   const [status, setStatus] = useState<BackupAutoStatus | null>(null);
@@ -209,6 +213,7 @@ export function SettingsBody({
         moveFolderOnCrossMove: moveFolder,
         moveFolderScope: moveScope,
         mcpEnabled,
+        closeMcpOnExit,
         mcpTools,
         logMaxLines: clampLogMax(logMaxDraft),
       });
@@ -694,6 +699,11 @@ export function SettingsBody({
         <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', margin: '4px 0 8px' }}>
           进程的启动 / 停止在「服务」面板；这里只管是否对外提供能力。
         </div>
+        <Check
+          checked={closeMcpOnExit} onChange={setCloseMcpOnExit}
+          title="退出面板时一并关闭 MCP 进程"
+          sub="勾选后退出即释放端口；不勾则进程常驻，关掉面板也能继续被客户端连"
+        />
         {toolRows.length > 0 && (
           <div className="fpx-toollist">
             {toolRows.map((t) => (
