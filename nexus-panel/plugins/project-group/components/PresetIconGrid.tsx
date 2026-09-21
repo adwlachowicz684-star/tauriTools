@@ -18,6 +18,20 @@ import { imageToIcoBase64 } from '../utils/ico';
 /** 内置图标默认归入的组名（与原版一致）。 */
 const DEFAULT_GROUP = '默认';
 
+/**
+ * 受支持的图片格式（对齐原版 `PresetIconService.IsSupportedImage`）。
+ *
+ * .ico 直接入库，其余转多尺寸 .ico。收在这里而不是内联在调用处：
+ * 以后加一种格式，过滤与提示两处都会跟着变，写散了就容易漏一处 ——
+ * 漏了的表现是"这个文件能用却不让用"，没有任何报错。
+ */
+const SUPPORTED_IMAGE_EXT = ['.ico', '.png', '.jpg', '.jpeg', '.bmp', '.gif'];
+
+function isSupportedImageFile(name: string): boolean {
+  const lower = name.toLowerCase();
+  return SUPPORTED_IMAGE_EXT.some((e) => lower.endsWith(e));
+}
+
 /** 二进制 → base64（图标只有几 KB，直接拼字符串即可，无需分块优化）。 */
 async function toBase64(url: string): Promise<string> {
   const res = await fetch(url);
@@ -357,11 +371,37 @@ export function PresetIconGrid({
           className="fpx-clip"
           /* 粘贴要挂在这块上：window 级监听会与页面里其它输入框的粘贴打架 */
           onPaste={(e) => {
-            const f = Array.from(e.clipboardData?.items ?? [])
-              .find((it) => it.type.startsWith('image/'));
-            if (!f) { setClipMsg('剪贴板里没有图片。'); return; }
-            e.preventDefault();
-            takeImage(f.getAsFile(), '');
+            /*
+             * 两条入口都要查（对齐原版 `PasteFromClipboard`）：
+             *   ① 位图本身（截图、画图软件里复制）
+             *   ② **图片文件**（在资源管理器里复制一个 .png 再粘贴）
+             *
+             * 只查 ① 的话，第 ② 种最常见的操作会完全没反应 ——
+             * 用户复制了个文件、粘贴、界面什么都不发生。
+             * 原版专门写了 `ContainsFileDropList` 那条分支，正是为此。
+             *
+             * 只查 ② 也不行：截图时剪贴板里根本没有文件条目。
+             */
+            const items = Array.from(e.clipboardData?.items ?? []);
+            const bitmap = items.find((it) => it.type.startsWith('image/'));
+            if (bitmap) {
+              e.preventDefault();
+              takeImage(bitmap.getAsFile(), '');
+              return;
+            }
+            /*
+             * 文件分支要**按扩展名过滤**：剪贴板里可能同时有各种文件
+             * （复制一整个文件夹里的东西过来很常见）。不过滤的话
+             * 拿第一个 .txt 去解码，报出来的错完全指不到原因。
+             */
+            const file = Array.from(e.clipboardData?.files ?? [])
+              .find((f) => isSupportedImageFile(f.name));
+            if (file) {
+              e.preventDefault();
+              takeImage(file, '');
+              return;
+            }
+            setClipMsg('剪贴板里没有图片。');
           }}
         >
           <div className="p-row">
@@ -372,7 +412,13 @@ export function PresetIconGrid({
             </button>
           </div>
           <div className="p-muted" style={{ marginTop: 'var(--sp-4, 8px)' }}>
-            也可以直接按 Ctrl+V。
+            {/*
+              按钮那条路走的是 `clipboard.read()`，它**只给位图**，
+              拿不到"复制了一个图片文件"这种情况（浏览器 API 的限制）。
+              所以要写明：复制文件请按 Ctrl+V。
+              不写的话用户点了按钮没反应，只会以为功能坏了。
+            */}
+            也可以直接按 Ctrl+V（复制图片文件时只能用它）。
           </div>
           {clipUrl ? (
             <img className="fpx-clip-preview" src={clipUrl} alt="剪贴板图片" />

@@ -1051,7 +1051,13 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
                     /* #427：写 desktop.ini 是往这个目录里写点，
                        目录被自己设了「防写入」时会被拦（自伤），
                        所以放进临时摘锁窗口。 */
-                    super::with_unlock(&dir, &path, || super::sys::apply_icon(&path, &icon))?;
+                    /* 中文/含空格的图标路径写进 desktop.ini 可能让 Shell 读不出来，
+                       换成一个纯 ASCII 的副本路径（见 stable_icon_ref）。
+                       mod.rs 里两处同步写入走的是同一条规则，这里必须一致 ——
+                       两处不同步的话，MCP 设完再在界面里改一次，
+                       资源管理器里的表现会随"最后一次是谁写的"而变。 */
+                    let shell_icon = super::stable_icon_ref(&dir.join("icons"), &icon);
+                    super::with_unlock(&dir, &path, || super::sys::apply_icon(&path, &shell_icon))?;
                     Ok("已写入 desktop.ini，资源管理器同步生效".to_string())
                 } else {
                     Ok("已记录到配置（界面内生效，未写入资源管理器）".to_string())

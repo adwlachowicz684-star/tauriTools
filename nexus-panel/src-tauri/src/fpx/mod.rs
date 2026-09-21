@@ -1392,7 +1392,7 @@ pub(crate) fn sanitize_icon_name(name: &str) -> String {
  * @param icon_ref  形如 `文件路径|索引`
  */
 #[cfg(windows)]
-fn stable_icon_ref(icons_dir: &std::path::Path, icon_ref: &str) -> String {
+pub(crate) fn stable_icon_ref(icons_dir: &std::path::Path, icon_ref: &str) -> String {
     let mut parts = icon_ref.splitn(2, '|');
     let file = parts.next().unwrap_or("").trim();
     let index = parts.next().and_then(|s| s.trim().parse::<i32>().ok()).unwrap_or(0);
@@ -1450,7 +1450,7 @@ fn stable_icon_ref(icons_dir: &std::path::Path, icon_ref: &str) -> String {
 
 /// 非 Windows 下原样返回（那里根本不写 desktop.ini）。
 #[cfg(not(windows))]
-fn stable_icon_ref(_icons_dir: &std::path::Path, icon_ref: &str) -> String {
+pub(crate) fn stable_icon_ref(_icons_dir: &std::path::Path, icon_ref: &str) -> String {
     icon_ref.to_string()
 }
 

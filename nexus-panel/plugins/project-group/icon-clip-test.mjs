@@ -52,6 +52,25 @@ console.log('\n=== 3. 两条粘贴入口 ===');
   t('没有图时说明', /剪贴板里没有图片/.test(grid));
 }
 
+console.log('\n=== 3b. 也收**图片文件**（原版 ContainsFileDropList）===');
+{
+  /*
+   * 在资源管理器里复制一个 .png 再粘贴，是最常见的操作之一。
+   * 只认位图的话它会完全没反应 —— 用户复制了文件、粘贴、什么都不发生。
+   */
+  t('paste 里查 files', /e\.clipboardData\?\.files/.test(grid));
+  t('按扩展名过滤', /isSupportedImageFile\(f\.name\)/.test(grid));
+  t('有格式清单', /const SUPPORTED_IMAGE_EXT = \['\.ico', '\.png', '\.jpg', '\.jpeg', '\.bmp', '\.gif'\];/.test(grid));
+  /* 位图优先：截图时剪贴板里没有文件条目 */
+  const iB = grid.indexOf("it.type.startsWith('image/')");
+  const iF = grid.indexOf('isSupportedImageFile(f.name)');
+  t('位图分支在文件分支之前', iB > 0 && iF > iB, `bitmap=${iB} file=${iF}`);
+  /* 两条路都要 preventDefault，否则浏览器会做自己的默认粘贴 */
+  t('两条路都拦默认', (grid.match(/e\.preventDefault\(\);\s*\n\s*takeImage\(/g) || []).length >= 2);
+  /* 按钮那条路拿不到文件列表，要写明只能用 Ctrl+V */
+  t('提示说明文件需 Ctrl+V', /复制图片文件时只能用它/.test(grid));
+}
+
 console.log('\n=== 4. 转 ICO 再入库 ===');
 {
   /* 后端文件名固定 .ico，PNG 原样写盘会得到"叫 .ico 实为 PNG"的文件 */

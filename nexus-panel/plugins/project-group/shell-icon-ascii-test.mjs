@@ -17,8 +17,8 @@ console.log('\n=== 1. 有稳定名副本机制 ===');
 {
   t('有 stable_icon_ref', /fn stable_icon_ref\(/.test(mod));
   /* 只在 Windows 生效 —— 别的平台根本不写 desktop.ini */
-  t('仅 windows 版本带 cfg', /#\[cfg\(windows\)\]\nfn stable_icon_ref\(/.test(mod));
-  t('非 windows 原样返回', /#\[cfg\(not\(windows\)\)\]\s*\nfn stable_icon_ref\([^)]*\) -> String \{\s*\n\s*icon_ref\.to_string\(\)\s*\n\}/.test(mod));
+  t('仅 windows 版本带 cfg', /#\[cfg\(windows\)\]\s*\npub\(crate\) fn stable_icon_ref\(/.test(mod));
+  t('非 windows 原样返回', /#\[cfg\(not\(windows\)\)\]\s*\npub\(crate\) fn stable_icon_ref\([^)]*\) -> String \{\s*\n\s*icon_ref\.to_string\(\)\s*\n\}/.test(mod));
   /* 缓存目录固定名，副本路径稳定可复现 */
   t('副本落在 _shellcache', /join\("_shellcache"\)/.test(mod));
 }
@@ -61,6 +61,24 @@ console.log('\n=== 5. 两处写 desktop.ini 都接上了 ===');
   /* 不能再有直接把 icon 传进去的写法 */
   const left = (mod.match(/sys::apply_icon\(&?path, &icon\)/g) || []).length;
   t('没有遗留直传 icon 的调用', left === 0, `剩 ${left} 处`);
+}
+
+console.log('\n=== 6. MCP 那两处也要同步（否则表现随写入者而变）===');
+{
+  const mcp = rs('mcp.rs');
+  /*
+   * folder_icon_set 走 MCP、界面改图标走 mod.rs —— 两条路必须同一规则。
+   * 不同步的话，MCP 设完再在界面里改一次，资源管理器里的表现
+   * 会随"最后一次是谁写的"而变，用户查不出规律。
+   */
+  t('MCP folder_icon_set 接上',
+    /let shell_icon = super::stable_icon_ref\(&dir\.join\("icons"\), &icon\);/.test(mcp));
+  t('MCP 不再直传 icon', !/sys::apply_icon\(&path, &icon\)/.test(mcp));
+  /* 恢复默认那处：要删的是 desktop.ini，没有图标路径，不必接 */
+  t('恢复默认仍传空串', /sys::apply_icon\(&path, ""\)/.test(mcp));
+  /* 可见性：mcp.rs 是 fpx 的子模块，要用必须 pub(crate) */
+  t('函数可见性 pub(crate)', /pub\(crate\) fn stable_icon_ref\(/.test(mod));
+  t('windows 版也是 pub(crate)', /#\[cfg\(windows\)\]\s*\npub\(crate\) fn stable_icon_ref\(/.test(mod));
 }
 
 done();
