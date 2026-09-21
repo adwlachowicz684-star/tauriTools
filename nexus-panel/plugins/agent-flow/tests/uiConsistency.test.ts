@@ -164,7 +164,7 @@ test('SECRET_FIELDS 直接复用 SECRET_PATHS，不再自己抄一份', () => {
 /* ================= 并发刷新要有代号守卫 ================= */
 
 test('MCP 刷新用 seq 守卫，避免旧结果覆盖新结果', () => {
-  const app = read(path.join(ROOT, 'App.tsx'));
+  const app = readSrc('App.tsx', 'hooks/useMcpRegistry.ts');
   assert.ok(/mcpRefreshSeq/.test(app), '并发刷新要有代号');
   /*
    * 匹配**具体那一条** return 语句，不能只查"文件里有这个比较" ——
