@@ -266,6 +266,63 @@ export function deadZone(neighborSize: number, fixed = 8, ratio = 0.2): number {
 }
 
 /**
+ * 半区判定 + 死区滞后（连锁动作用）。
+ *
+ * 返回 `null` 表示「还停在犹豫区」，调用方要**保持现状**而不是把插入条清掉 ——
+ * 直接 setGap(null) 的话，指针不动时插入条会一闪一闪，比不动还晃眼。
+ *
+ * 死区沿用 `deadZone`：取固定值与项高 20% 的较小者，矮项也能精确操作。
+ */
+export function gapIndexAtDeadZone(
+  rect: BoxRect,
+  pointer: number,
+  i: number,
+  fixedDeadZone = 14,
+): number | null {
+  const center = rect.top + rect.height / 2;
+  const zone = deadZone(rect.height, fixedDeadZone);
+  if (Math.abs(pointer - center) <= zone) return null;
+  return pointer > center ? i + 1 : i;
+}
+
+/**
+ * 固定墙：内置项不许被借位挤过去（#148）。
+ *
+ * 连锁动作前四个是内置的（发消息 / 切模型 / 限制 / 清上下文），
+ * 自定义项拖动时不能把它们的位置挤掉 —— 挤掉了顺序就不再是「内置在前」。
+ *
+ * 所以按移动方向逐个检查要经过的项：一旦撞上内置，就停在它**相邻那一格**
+ * （向左停右边一格、向右停左边一格），而不是原样返回原下标 ——
+ * 那样用户会觉得「拖不动、没反应」。
+ *
+ * @param from  被拖项当前下标
+ * @param to    期望落点（会先夹紧到合法范围）
+ * @param fixed 各项是否内置，长度即列表长度
+ */
+export function clampAcrossFixedWall(
+  from: number,
+  to: number,
+  fixed: boolean[],
+): number {
+  const n = fixed.length;
+  if (n === 0 || from < 0 || from >= n) return from;
+  const target = clampIndex(to, n - 1);
+  let out = target;
+  if (target < from) {
+    for (let i = from - 1; i >= target; i--) {
+      if (fixed[i]) return i + 1;
+      out = i;
+    }
+  } else if (target > from) {
+    for (let i = from + 1; i <= target; i++) {
+      if (fixed[i]) return i - 1;
+      out = i;
+    }
+  }
+  return out;
+}
+
+/**
  * 换到哪个下标——带死区滞后，且支持一次跨多项（#494）。
  *
  * @param y        指针位置
