@@ -429,6 +429,14 @@ export default function App() {
   }, [canvases, activeId]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /*
+   * 跨画布定位：先切画布，等节点就位再滚过去。
+   *
+   * 不缓一帧的话，`nodes` 还是**旧画布**的那一份 ——
+   * 拿旧节点的位置去 setCenter，会滚到一个根本不存在的坐标上，
+   * 表现为"点了定位但画布没动"。
+   */
+  const pendingLocate = useRef<{ canvasId: string; nodeId: string } | null>(null);
   const [running, setRunning] = useState(false);
 
   /* ---------------- 任务窗口 ---------------- */
@@ -1592,6 +1600,39 @@ function reportSkipped(
     ]);
     setSelectedId(id);
   };
+
+  /*
+   * 定位到画布上的某个节点：选中 + 滚到视口中心。
+   *
+   * 只选中不滚的话，节点可能在视口外 ——
+   * 用户会以为按钮没生效（"我点了，什么都没发生"）。
+   */
+  const locateNode = useCallback((nodeId: string, ns: FlowNode[]) => {
+    const n = ns.find((x) => x.id === nodeId);
+    setSelectedId(nodeId);
+    setNodes((prev) => prev.map((x) => ({ ...x, selected: x.id === nodeId }) as FlowNode));
+    if (!n) return;
+    // measured 是 xyflow 量出来的实际尺寸；没量过就用默认卡片大小
+    const w = (n as { measured?: { width?: number } }).measured?.width ?? 240;
+    const h = (n as { measured?: { height?: number } }).measured?.height ?? 90;
+    rfInstance.current?.setCenter(n.position.x + w / 2, n.position.y + h / 2, {
+      zoom: rfInstance.current?.getZoom() ?? 1,
+      duration: 300,
+    });
+  }, [setNodes]);
+
+  /*
+   * 切完画布再定位。
+   *
+   * 依赖里带 nodes：切画布后 nodes 会换一批，那时才找得到目标节点。
+   */
+  useEffect(() => {
+    const pend = pendingLocate.current;
+    if (!pend) return;
+    if (pend.canvasId !== activeId) return;
+    pendingLocate.current = null;
+    locateNode(pend.nodeId, nodes);
+  }, [activeId, nodes, locateNode]);
 
   const onConnect = useCallback(
     (params: Connection) => {
@@ -3450,6 +3491,17 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
                     setView('flow');
                   }
                 }}
+                onLocateNode={(canvasId, nodeId) => {
+                  if (!canvasId || !canvases.some((c) => c.id === canvasId)) return;
+                  setView('flow');
+                  if (canvasId === activeId) {
+                    // 已经在这张画布上：直接滚过去，不用等
+                    locateNode(nodeId, nodes);
+                    return;
+                  }
+                  setActiveId(canvasId);
+                  pendingLocate.current = { canvasId, nodeId };
+                }}
               />
             )}
           </div>
@@ -3471,6 +3523,17 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
                     setActiveId(canvasId);
                     setView('flow');
                   }
+                }}
+                onLocateNode={(canvasId, nodeId) => {
+                  if (!canvasId || !canvases.some((c) => c.id === canvasId)) return;
+                  setView('flow');
+                  if (canvasId === activeId) {
+                    // 已经在这张画布上：直接滚过去，不用等
+                    locateNode(nodeId, nodes);
+                    return;
+                  }
+                  setActiveId(canvasId);
+                  pendingLocate.current = { canvasId, nodeId };
                 }}
               />
             )}

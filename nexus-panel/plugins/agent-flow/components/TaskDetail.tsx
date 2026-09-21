@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import {
   type TaskRecord, type TaskNodeState,
   elapsedOf, formatDuration, formatClock,
@@ -6,7 +6,8 @@ import {
 } from '../engine/tasks';
 import { formatDateTime } from '../engine/history';
 import {
-  layoutTaskFlow, flowSummary, FLOW_STATUS_META, type FlowStatus,
+  layoutTaskFlow, flowSummary, errorNodesOf,
+  FLOW_STATUS_META, type FlowStatus,
 } from '../engine/taskFlow';
 
 /**
@@ -137,7 +138,7 @@ export function TaskFlow({ task }: { task: TaskRecord }) {
 }
 
 export function TaskDetail({
-  task, now, onCancel, onJumpToCanvas,
+  task, now, onCancel, onJumpToCanvas, onLocateNode,
   /** 历史面板里显示完整日期，任务窗口里当天的事只需时钟 */
   showDate = false,
   /** 归档时内容被裁剪过，需要提示，否则会被当成"输出丢了" */
@@ -147,6 +148,8 @@ export function TaskDetail({
   now: number;
   onCancel?: (id: string) => void;
   onJumpToCanvas?: (canvasId: string) => void;
+  /** 定位到画布上的某个节点（切画布 + 选中 + 滚过去） */
+  onLocateNode?: (canvasId: string, nodeId: string) => void;
   showDate?: boolean;
   archived?: boolean;
 }) {
@@ -157,6 +160,34 @@ export function TaskDetail({
    * 而那正是打开任务窗口最常见的目的。
    */
   const [tab, setTab] = useState<'flow' | 'list'>('flow');
+
+  /*
+   * 「定位错误」的游标。
+   *
+   * ================= 为什么用 ref 而不是 findIndex ====================
+   *
+   * 用「当前节点在错误列表里的下标」每次重算的话，
+   * 第 N 次点击永远定位到**同一个**（第一个）错误 ——
+   * 按钮上的计数也永不变，点三次都在原地打转。
+   *
+   * ================= 为什么每次点击都重新收集 ====================
+   *
+   * 运行中节点状态一直在变：点第二次时第一个错误可能已经修好了。
+   * 用旧列表推进游标会停在已经不存在的错误上。
+   */
+  const cursor = useRef<{ taskId: string; i: number }>({ taskId: task.id, i: -1 });
+
+  const onLocate = () => {
+    if (!onLocateNode) return;
+    const ids = errorNodesOf(task);
+    if (ids.length === 0) return;
+    if (cursor.current.taskId !== task.id) cursor.current = { taskId: task.id, i: -1 };
+    cursor.current.i = (cursor.current.i + 1) % ids.length;
+    onLocateNode(task.canvasId, ids[cursor.current.i]);
+  };
+
+  // 无错误时置灰 —— 不要等到点了才告诉用户"没有"
+  const errCount = errorNodesOf(task).length;
 
   return (
     <>
@@ -176,6 +207,18 @@ export function TaskDetail({
         <span className="task-grow" />
         {task.status === 'running' && onCancel ? (
           <button className="p-btn danger" onClick={() => onCancel(task.id)}>停止</button>
+        ) : null}
+        {onLocateNode ? (
+          <button
+            className="p-btn"
+            onClick={onLocate}
+            disabled={errCount === 0}
+            title={errCount === 0
+              ? '这次运行没有失败或被阻断的节点'
+              : `依次定位出问题的节点（共 ${errCount} 个）`}
+          >
+            定位错误{errCount > 0 ? ` ${cursor.current.taskId === task.id ? (cursor.current.i + 1) || 1 : 1}/${errCount}` : ''}
+          </button>
         ) : null}
         {onJumpToCanvas ? (
           <button className="p-btn" onClick={() => onJumpToCanvas(task.canvasId)}>
