@@ -410,6 +410,12 @@ function collectTs(dir: string, out: string[] = []): string[] {
  */
 function pluginRoot(): string {
   if (process.env.NEXUS_AF_ROOT) return process.env.NEXUS_AF_ROOT;
+  /*
+   * AF_SRC 是编译产物下唯一的线索：产物目录里没有源码，
+   * 沿 __dirname 往上找必然失败，于是这条护栏静默失效 ——
+   * 而它恰恰是盯"未定义变量"的那一类。
+   */
+  if (process.env.AF_SRC) return process.env.AF_SRC;
   let d = __dirname;
   for (let i = 0; i < 6; i++) {
     if (existsSync(join(d, 'App.tsx')) && existsSync(join(d, 'engine'))) return d;

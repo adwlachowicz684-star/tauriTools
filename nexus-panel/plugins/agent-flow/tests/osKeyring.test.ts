@@ -191,8 +191,26 @@ test('离开 OS 凭据管理器时要删掉那条记录', async () => {
   const fs = await import('node:fs');
   const path = await import('node:path');
   const ROOT = process.env.AF_SRC ?? path.resolve(__dirname, '..');
-  const f = fs.readFileSync(path.join(ROOT, 'App.tsx'), 'utf-8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  /*
+   * 凭据逻辑已抽到 hooks/useCredentialVault ——
+   * 两个文件都扫，App.tsx 里若再冒出一份也算（那正是要防的"两处各写一份"）。
+   */
+  const src = ['App.tsx', 'hooks/useCredentialVault.ts']
+    .map((rel) => {
+      const abs = path.join(ROOT, rel);
+      return fs.existsSync(abs) ? fs.readFileSync(abs, 'utf-8') : '';
+    })
+    .join('\n')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    /*
+     * 行注释也要剥。
+     *
+     * 把调用 `// await osKeyringDelete()` 注释掉是最常见的"改坏"方式，
+     * 只剥 /* *\/ 的话注释里那行仍会被算成"有调用"，守卫形同虚设。
+     * 只剥**整行**注释：行尾注释和 URL 里的 // 都不动。
+     */
+    .replace(/^\s*\/\/.*$/gm, '');
+  const f = src;
   /*
    * 留着等于在数据目录之外又留了一把能解开旧密文的钥匙，
    * 而用户以为已经换掉了。
