@@ -2009,7 +2009,19 @@ const picons = await import('./preset-icons.js');
   el.open('tag');
   const btns = [...el.el.querySelectorAll('button')].map((b) => b.textContent);
   ok(btns.includes('图标库…'), '标签页有「图标库…」入口');
-  ok(btns.includes('清除图标'), '保留「清除图标」');
+  // 清除图标从独立一行并入第一行后，按钮文案成了 ✕。
+  // 按 title 找而不是按文案 —— 文案是 ✕，与颜色行的清除按钮一样，
+  // 按文案找会同时命中好几个，断言不出"这一个存在"。
+  const hasClearIcon = [...el.el.querySelectorAll('button')]
+    .some((b) => /清除节点上的图标/.test(b.getAttribute('title') || ''));
+  ok(hasClearIcon, '有「清除图标」（并入第一行）');
+  // 三个按钮必须同一行：拆两行会让"清除"看着像另一个独立功能
+  {
+    const iconSec = [...el.el.querySelectorAll('.mm-field')]
+      .find((f) => f.querySelector('h3')?.textContent === '图标');
+    const rowCount = iconSec ? iconSec.querySelectorAll('.mm-row').length : 99;
+    eq(rowCount, 1, '图标区三个按钮同一行');
+  }
 }
 
 {
@@ -2081,8 +2093,13 @@ const tb = await import('./tag-badges.js');
 
   // 语义校验：清除格必须真的下发 0
   eq(tb.BADGE_ROWS.flat().filter((v) => v === 0).length, 1, '恰好一个清除格');
-  ok(tb.BADGE_ROWS[1].includes(0), '清除格在第二行末（对齐 WPF values 第二排）');
   eq(tb.BADGE_ROWS.flat().length, 10, '共 10 格（1–9 + 清除）');
+  // 单排：10 个档位是同一维度，拆两排会让人以为 1–5 与 6–9 是两类。
+  // 只断言"只有一行"还不够 —— 若某人拆成 [[1..5],[6..9,0]] 但顺序仍对，
+  // 上面两条照样绿。这里直接断言首行长度。
+  eq(tb.BADGE_ROWS.length, 1, '徽章只有一行（10 格排一排）');
+  eq(tb.BADGE_ROWS[0].length, 10, '首行就是全部 10 格');
+  eq(tb.BADGE_ROWS[0][9], 0, '清除格在末位');
 }
 
 {
@@ -2103,8 +2120,8 @@ const tb = await import('./tag-badges.js');
   el.open('tag');
 
   const rows = [...el.el.querySelectorAll('.mm-badge-row')];
-  eq(rows.length, 4, '优先级+进度 各两行 = 4 行');
-  eq(rows[0].querySelectorAll('.mm-badge').length, 5, '每行 5 格');
+  eq(rows.length, 2, '优先级+进度 各一行 = 2 行');
+  eq(rows[0].querySelectorAll('.mm-badge').length, 10, '每行 10 格（1–9 + 清除）');
   eq(el.el.querySelectorAll('.mm-badge').length, 20, '共 20 格（两组各 10）');
 
   // 清除格必须是 ✕ 且 data-v=0
@@ -6144,6 +6161,93 @@ group('文字垂直居中：改用真实测量，不再吃内核经验系数');
   ok(/center: \{ top: 0, middle: 0, bottom: 0 \}/.test(html), 'f 微调表含 center 层级（中央主题）');
   ok(/child: \{ top: 0, middle: 0, bottom: 0 \}/.test(html), 'f 微调表含 child 层级（子主题）');
   ok(/deep: \{ top: 0, middle: 0, bottom: 0 \}/.test(html), 'f 微调表含 deep 层级（更下级）');
+}
+
+group('样式面板：一排化 / 删除按钮弱化 / 分节清除');
+
+{
+  const { buildSide } = await import('./panels.js');
+  const mk = () => buildSide({
+    api: {
+      status() {}, commit() {}, selectedRef: () => null, selectedRefs: () => [], selectedImages: () => [],
+      applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
+      nodeStyle: () => ({}), setNodeStyle: () => {},
+    },
+    bridge: { getSelectedNodeId: () => 'n1' }, customThemes: [],
+  }, {});
+  const el = mk();
+  el.open('style');
+
+  const fields = [...el.el.querySelectorAll('.mm-field')];
+  const sec = (name) => fields.find((f) => f.querySelector('h3')?.textContent === name);
+
+  // ---- 1) 三个标题右边各有一个清除按钮 ----
+  for (const t of ['文字', '节点', '连线']) {
+    const f = sec(t);
+    ok(!!f, `有「${t}」节`);
+    const head = f?.querySelector('.mm-sec-head');
+    ok(!!head, `「${t}」标题行存在（清除按钮挂在这里）`);
+    const q = head?.querySelector('button.mm-btn.quiet');
+    ok(!!q, `「${t}」标题右边有弱化清除按钮`);
+  }
+
+  // 四个清除按钮不再挤成一排：整节必须不存在
+  const hasClearSec = fields.some((f) => f.querySelector('h3')?.textContent === '清除样式');
+  ok(!hasClearSec, '不再有「清除样式」整节（四个按钮挤一排）');
+
+  // 「清除全部」保留，但落在样式刷里（与复制/粘贴同为整体操作）
+  {
+    const f = sec('样式刷');
+    const btns = [...(f?.querySelectorAll('button') || [])].map((b) => b.textContent);
+    ok(btns.includes('清除全部'), '「清除全部」保留在样式刷节');
+  }
+
+  // ---- 2) 圆角归入「节点」，不再独立成节 ----
+  ok(!sec('圆角'), '不再有独立的「圆角」节');
+  {
+    const f = sec('节点');
+    const labels = [...(f?.querySelectorAll('.mm-label') || [])].map((s) => s.textContent);
+    ok(labels.includes('圆角'), '圆角归入「节点」节');
+    ok(labels.includes('填充') && labels.includes('描边'), '节点节含填充与描边');
+  }
+
+  // ---- 3) 字体色与 B / I / S 同一行 ----
+  {
+    const f = sec('文字');
+    const rows = [...(f?.querySelectorAll('.mm-row') || [])];
+    const one = rows.find((r) => {
+      const chips = [...r.querySelectorAll('.mm-chip')].map((c) => c.textContent);
+      return chips.includes('B') && chips.includes('I') && chips.includes('S');
+    });
+    ok(!!one, '存在含 B / I / S 的行');
+    const hasSwatch = one && !!one.querySelector('.mm-swatch');
+    ok(hasSwatch, '字体色与 B / I / S 在同一行（该行内有取色块）');
+  }
+
+  // ---- 4) 删除类按钮弱化 ----
+  {
+    const qs = [...el.el.querySelectorAll('button.mm-btn.quiet')];
+    ok(qs.length >= 3, '存在弱化按钮（清除类）');
+    // 弱化按钮不能是常规实心按钮：否则整页一排排按钮，主操作被淹没
+    const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+    const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '');
+    const cs = strip(css);
+    const qr = cs.slice(cs.indexOf('.mm-btn.quiet {'), cs.indexOf('.mm-btn.quiet:hover'));
+    ok(/background:\s*none/.test(qr), '弱化按钮无底板');
+    ok(/box-shadow:\s*none/.test(qr), '弱化按钮无立体阴影');
+    // hover 必须还有反馈 —— 全去掉就成了"看不出能不能点"
+    const qh = cs.slice(cs.indexOf('.mm-btn.quiet:hover'), cs.indexOf('.mm-btn.quiet:active'));
+    ok(/color:\s*var\(--accent\)/.test(qh), '弱化按钮 hover 仍有变色反馈');
+  }
+
+  // ---- 5) 徽章单排：行内不换行 ----
+  {
+    const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+    const cs = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const br = cs.slice(cs.indexOf('.mm-badge-row {'), cs.indexOf('.mm-badge-row {') + 200);
+    ok(/flex-wrap:\s*nowrap/.test(br), '徽章行不换行（10 格始终一排）');
+    ok(/justify-content:\s*space-between/.test(br), '徽章行用 space-between（窄屏压缩间隙而非掉行）');
+  }
 }
 
 group('多附件：XMind 往返（导出再导回）');
