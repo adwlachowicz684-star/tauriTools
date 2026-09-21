@@ -244,3 +244,39 @@ test('列表按层分组，与流程图的列同源', () => {
   assert.deepEqual(groups[0][1], ['a']);
   assert.equal(groups[1][1].length, 2);
 });
+
+/* ================= 变量标注 ================= */
+/*
+ * 流程图上要标"这一步用的哪个变量"。
+ *
+ * 存的是**名字 + 摘要**，不是变量 id ——
+ * 任务记录是历史，变量后来被删掉不该让这次运行的标注变空白。
+ */
+test('makeTask 收下变量快照；空的整个不存（不占空间）', () => {
+  const withVars = makeTask({
+    canvasId: 'c', canvasName: '流程', now: T0,
+    vars: { a: [{ name: '主仓库', summary: 'acme/web' }] },
+  });
+  assert.deepEqual(withVars.vars, { a: [{ name: '主仓库', summary: 'acme/web' }] });
+
+  const none = makeTask({ canvasId: 'c', canvasName: '流程', now: T0, vars: {} });
+  assert.equal(none.vars, undefined);
+});
+
+test('流程图把变量挂到节点框上；没标的就是空数组而不是 undefined', () => {
+  const t = task({ order: ['a', 'b'], labels: { a: '推代码', b: '发通知' } });
+  t.vars = { a: [{ name: '主仓库', summary: 'acme/web' }] };
+  const { boxes } = layoutTaskFlow(t);
+  const a = boxes.find((b) => b.id === 'a');
+  const b = boxes.find((b) => b.id === 'b');
+  assert.deepEqual(a?.vars, [{ name: '主仓库', summary: 'acme/web' }]);
+  assert.deepEqual(b?.vars, [], '没标的节点给空数组 —— 调用方不必到处判空');
+});
+
+test('变量被删了，老流程图上的标注还在（存名字不存 id 就是为了这个）', () => {
+  const t = task({ order: ['a'] });
+  t.vars = { a: [{ name: '主仓库', summary: 'acme/web' }] };
+  const { boxes } = layoutTaskFlow(t);
+  assert.equal(boxes[0].vars[0].name, '主仓库');
+  assert.equal(boxes[0].vars[0].summary, 'acme/web');
+});

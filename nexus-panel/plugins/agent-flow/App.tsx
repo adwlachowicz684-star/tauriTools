@@ -12,7 +12,7 @@ import Inspector from './components/Inspector';
 import { buildNodeTypes, getDef, allPresets, type NodeDef } from './nodes';
 import { getVariableGroup } from './nodes/registry';
 import {
-  applyVarTo, findVar, checkVarForNode, duplicateVar,
+  applyVarTo, findVar, checkVarForNode, duplicateVar, varSnapshotOf,
 } from './engine/variables';
 import {
   VAR_DRAG_MIME, decodeVarDrag,
@@ -1592,6 +1592,15 @@ function reportSkipped(
        */
       positions: Object.fromEntries(
         runNodes.map((n) => [n.id, { x: n.position?.x ?? 0, y: n.position?.y ?? 0 }]),
+      ),
+      /*
+       * 变量快照（名字 + 摘要）—— 流程图上要标"这一步用的哪个变量"。
+       * 只收引用了的节点：绝大多数节点没用变量，全存一遍是白占空间。
+       */
+      vars: Object.fromEntries(
+        runNodes
+          .map((n) => [n.id, varSnapshotOf(n.data)] as const)
+          .filter(([, vs]) => vs.length > 0),
       ),
     });
     currentTaskRef.current = task.id;

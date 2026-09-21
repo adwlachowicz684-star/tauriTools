@@ -436,8 +436,54 @@ body { background: var(--af-bg); color: var(--af-fg); }
   flex: 1; min-height: 0; width: 100%; background: var(--af-panel);
   padding: 14px; overflow-y: auto;
 }
-.inspector .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+/*
+ * 预设参数 = 一张卡片。
+ *
+ * 与「触发条件卡」「变量卡」共用同一套壳（描边 / 圆角 / 底色），
+ * 于是参数区、触发区、变量区三处是同一种长相。
+ *
+ * 为什么预设也要套壳：
+ *   以前参数是"标签 + 控件 + 小字"三行裸排，而触发条件已经做成
+ *   一张张独立的卡 —— 同一个面板里两种长相，改一处忘另一处不会报错，
+ *   只能靠人眼比对才发现。
+ *
+ * 「预设不能增删」是**行为**，不是长相：
+ *   这里没有 ＋ / × 按钮，因为节点自带哪些参数是节点类型定的。
+ *   刻意不加「预设」角标 —— 每个参数都挂一个只会变成噪音，
+ *   而用户本来也不会期待「脚本内容」旁边有个删除按钮。
+ */
+.inspector .field {
+  display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--af-line, #2a2f3a);
+  border-radius: var(--r-card, 8px);
+  background: var(--af-raised, rgba(255, 255, 255, 0.03));
+}
 .inspector .field > span { font-size: var(--fs-12, 12px); color: var(--af-dim); }
+
+/*
+ * 内联字段（.p-row）也是预设参数，同样套壳 ——
+ * 只有一部分参数像卡片、另一部分不像，看起来就像漏做了。
+ * CredentialPanel 的 .p-row 不受影响：它不在 .inspector 里。
+ */
+.inspector .p-row {
+  align-items: center; gap: 8px; margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--af-line, #2a2f3a);
+  border-radius: var(--r-card, 8px);
+  background: var(--af-raised, rgba(255, 255, 255, 0.03));
+}
+/*
+ * 嵌套的不重复套壳 —— 卡片里再画一圈描边会变成俄罗斯套娃。
+ * 用三段选择器提高优先级：下面 .trg-edit .field / .field.row2 .field
+ * 都是两段的，写在后面就会盖掉这里的复位。
+ */
+.inspector .field .field,
+.inspector .field .p-row,
+.inspector .trig-card .field {
+  padding: 0; margin-bottom: 10px;
+  border: 0; border-radius: 0; background: none;
+}
 
 /*
  * 逐字段「设为默认」的小按钮。
@@ -1654,6 +1700,24 @@ input.mono, textarea.mono {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .task-flow-node-st { font-size: var(--fs-10, 10px); }
+/*
+ * 流程图上的变量标注 —— 与画布卡片上的卡扣（.node-chip）同一套观感，
+ * 只是更小：节点框只有 200px 宽，卡扣大了会把状态文字挤掉。
+ */
+.task-flow-vars { display: flex; flex-wrap: wrap; gap: 3px; }
+.task-flow-var {
+  display: inline-flex; align-items: baseline; gap: 3px; max-width: 100%;
+  font-size: var(--fs-10, 10px); line-height: 1.5;
+  padding: 0 5px; border-radius: 999px;
+  border: 1px solid var(--af-line, #2a2f3a);
+  background: var(--af-sunk, rgba(0, 0, 0, .18));
+  color: var(--af-dim);
+}
+.task-flow-var-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-flow-var-sum {
+  color: var(--af-fg); font-family: var(--af-mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .task-flow-node.st-blocked { opacity: 0.75; }
 .task-flow-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .task-flow-link {

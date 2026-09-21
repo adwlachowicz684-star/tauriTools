@@ -9,12 +9,12 @@ import { loadColorOverrides, resolveNodeColor } from '../engine/nodeColors';
 
 /*
  * re-export 卡片组的查询函数。
- * 字段层（components/inspectors/fields.tsx）必须从这里拿 getCardGroup，
+ * 字段层（components/inspectors/fields.tsx）必须从这里拿 getVariableGroup，
  * 不能走 nodes/index —— 后者会 import 全部 defs/*，而 defs/* 的 Canvas
  * 指向画布卡片组件，形成 卡片 → nodes/index → defs → 卡片 的环。
  * 引擎层的 paramCards 不依赖任何节点，从 registry 转出是安全的。
  */
-export { getCardGroup, allCardGroups } from '../engine/paramCards';
+export { getVariableGroup, allVariableGroups } from '../engine/variables';
 
 /**
  * 注册表本体。

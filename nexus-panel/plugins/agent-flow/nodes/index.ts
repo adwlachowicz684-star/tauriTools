@@ -12,11 +12,11 @@
  */
 /**
  * 卡片组必须先于节点注册：BaseInspector 渲染面板时会按
- * def.meta.cardGroups 去查组定义（取 label / keys / summary），
+ * def.meta.varGroups 去查组定义（取 label / keys / summary），
  * 组没注册就查不到，选择器渲染不出来。
  */
-import { registerBuiltinCardGroups } from './cardGroups';
-registerBuiltinCardGroups();
+import { registerBuiltinVariableGroups } from './variableGroups';
+registerBuiltinVariableGroups();
 
 import './defs/task';
 import './defs/genericHttp';
@@ -67,5 +67,5 @@ export {
 export type { NodeDef, NodePreset, NodeMeta, NodeCategory, NodeInspectorProps } from './types';
 export { NODE_CATEGORY_META } from './types';
 export {
-  getCardGroup, allCardGroups, checkCardForNode, patchForCard,
-} from '../engine/paramCards';
+  getVariableGroup, allVariableGroups, checkVarForNode, patchForVar,
+} from '../engine/variables';

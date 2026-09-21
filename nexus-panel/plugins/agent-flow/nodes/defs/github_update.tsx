@@ -55,7 +55,7 @@ registerNode({
   type: 'github-update',
   dataKind: 'github-update',
   meta: {
-    cardGroups: ['github-repo'],
+    varGroups: ['github-repo'],
     label: '更新检测',
     color: '#a78bfa',
     category: 'external',

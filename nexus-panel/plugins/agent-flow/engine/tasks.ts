@@ -101,7 +101,17 @@ export type TaskRecord = {
    * 那是"这次运行"该有的行为。
    */
   positions?: Record<string, TaskPos>;
+  /**
+   * 节点引用的变量（名字 + 摘要），画流程图用。
+   *
+   * 存**名字**而不是变量 id：任务记录是历史，
+   * 变量后来被改名或删掉，都不该让这次运行的标注变成空白。
+   */
+  vars?: Record<string, TaskNodeVar[]>;
 };
+
+/** 流程图上标的"这个节点用的变量"。只存名字与摘要，不存 id */
+export type TaskNodeVar = { name: string; summary: string };
 
 export const MAX_OUTPUT_CHARS = 20000;
 export const MAX_LOGS = 500;
@@ -127,6 +137,8 @@ export function makeTask(init: {
   edges?: TaskEdge[];
   /** 建任务那一刻的节点坐标 */
   positions?: Record<string, TaskPos>;
+  /** 建任务那一刻各节点引用的变量（名字 + 摘要） */
+  vars?: Record<string, TaskNodeVar[]>;
 }): TaskRecord {
   seq += 1;
   const now = init.now ?? Date.now();
@@ -146,6 +158,7 @@ export function makeTask(init: {
     ...(init.edges && init.edges.length > 0 ? { edges: init.edges } : {}),
     ...(init.labels && Object.keys(init.labels).length > 0 ? { labels: init.labels } : {}),
     ...(init.positions && Object.keys(init.positions).length > 0 ? { positions: init.positions } : {}),
+    ...(init.vars && Object.keys(init.vars).length > 0 ? { vars: init.vars } : {}),
   };
 }
 

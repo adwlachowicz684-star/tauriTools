@@ -96,6 +96,34 @@ function NodeRow({ n, now, label }: { n: TaskNodeState; now: number; label?: str
  * 没有（老记录、模块展开出来的节点缺坐标）就退回分层网格，
  * 而不是把缺坐标的那几个画到 (0,0) 叠成一团。
  */
+/**
+ * 流程图上的变量标注。
+ *
+ * 节点框上只显示**名字**（框太窄，摊开内容会把图挤散），
+ * 点开浮层再显示「名字 = 值」。
+ *
+ * 与画布卡片上的三档（简不显示 / 标名字 / 详内容）同源：
+ * 这里没有"简"档 —— 流程图上没有任何变量标注的节点本来就是空白，
+ * 不需要额外一档来表达"不显示"。
+ */
+function FlowVars({ vars, full = false }: {
+  vars: { name: string; summary: string }[];
+  /** true = 摊开成「名字 = 值」；false = 只显示名字（节点框上） */
+  full?: boolean;
+}) {
+  if (vars.length === 0) return null;
+  return (
+    <span className="task-flow-vars">
+      {vars.map((v, i) => (
+        <span key={`${v.name}-${i}`} className="task-flow-var" title={v.summary ? `${v.name} = ${v.summary}` : v.name}>
+          <span className="task-flow-var-name">{v.name}</span>
+          {full && v.summary ? <span className="task-flow-var-sum">{v.summary}</span> : null}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 export function TaskFlow({ task, now }: { task: TaskRecord; now: number }) {
   const { boxes, links, cols, mode, bounds } = layoutTaskFlow(task);
   const sum = flowSummary(boxes);
@@ -142,6 +170,7 @@ export function TaskFlow({ task, now }: { task: TaskRecord; now: number }) {
               <span className="task-flow-node-st" style={{ color: FLOW_STATUS_META[b.status].color }}>
                 {FLOW_STATUS_META[b.status].label}
               </span>
+              <FlowVars vars={b.vars} />
             </div>
           ))}
         </div>
@@ -226,6 +255,7 @@ export function TaskFlow({ task, now }: { task: TaskRecord; now: number }) {
                 {meta.label}
                 {st?.startedAt ? ` · ${formatDuration(elapsedOf({ startedAt: st.startedAt, endedAt: st.endedAt } as TaskRecord, now))}` : ''}
               </span>
+              <FlowVars vars={b.vars} />
               {shown === b.id ? (
                 <div className="task-flow-pop" onClick={(e) => e.stopPropagation()}>
                   <div className="task-flow-pop-head">
@@ -234,6 +264,7 @@ export function TaskFlow({ task, now }: { task: TaskRecord; now: number }) {
                     <span className="task-grow" />
                     <button className="side-head-btn" onClick={() => setPinned(null)}>关闭</button>
                   </div>
+                  <FlowVars vars={b.vars} full />
                   {st?.error ? <pre className="task-pre err">{st.error}</pre> : null}
                   {st?.output ? <pre className="task-pre">{st.output.slice(0, 400)}</pre> : null}
                   {!st?.error && !st?.output ? (

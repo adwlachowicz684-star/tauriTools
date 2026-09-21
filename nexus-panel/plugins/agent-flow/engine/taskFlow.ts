@@ -1,4 +1,4 @@
-import type { TaskEdge, TaskNodeState, TaskRecord } from './tasks';
+import type { TaskEdge, TaskNodeState, TaskNodeVar, TaskRecord } from './tasks';
 import { topoLayers } from './topo';
 
 /**
@@ -113,6 +113,8 @@ export type FlowNodeBox = {
   /** 画布坐标。缺省表示这条没有坐标，要退回分层 */
   x?: number;
   y?: number;
+  /** 这个节点引用的变量（名字 + 摘要）。没有就是空数组，不是 undefined —— 免得调用方到处判空 */
+  vars: TaskNodeVar[];
 };
 
 export type FlowLayout = {
@@ -162,6 +164,7 @@ export function layoutTaskFlow(task: TaskRecord): FlowLayout {
         status: flowStatusOf(task, id),
         col,
         row,
+        vars: task.vars?.[id] ?? [],
       });
     });
   });
@@ -176,6 +179,7 @@ export function layoutTaskFlow(task: TaskRecord): FlowLayout {
       status: flowStatusOf(task, id),
       col: layers.length,
       row: boxes.filter((b) => b.col === layers.length).length,
+      vars: task.vars?.[id] ?? [],
     });
   }
 

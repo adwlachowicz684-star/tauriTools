@@ -62,7 +62,7 @@ registerNode({
   type: 'github-push',
   dataKind: 'github-push',
   meta: {
-    cardGroups: ['github-repo', 'workdir'],
+    varGroups: ['github-repo', 'workdir'],
     label: '推送',
     color: '#34d399',
     category: 'external',

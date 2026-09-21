@@ -606,3 +606,61 @@ test('变量作用域：默认画布级，全局要显式打开', () => {
   const p = readSrc('components/inspectors/VariablePicker.tsx');
   assert.match(p, /setVariableGlobal/, '变量上要有全局开关');
 });
+
+/* ================= 预设参数 = 卡片 ================= */
+/*
+ * 节点自带的参数（脚本内容、分支、地址……）也套卡片壳，
+ * 与「触发条件卡」「变量卡」同一种长相。
+ *
+ * 「预设不能增删」是行为不是长相：这里没有 ＋ / × 按钮。
+ * 刻意不加"预设"角标 —— 每个参数挂一个只会变成噪音。
+ */
+test('预设参数套卡片壳（与触发卡、变量卡同一套描边/圆角/底色）', () => {
+  const css = read(path.join(ROOT, 'styles.css'));
+  assert.match(
+    css,
+    /\.inspector \.field \{[^}]*border:/,
+    '.inspector .field 要有描边 —— 预设参数是一张卡片，不是三行裸排',
+  );
+  assert.match(
+    css,
+    /\.inspector \.field \{[^}]*border-radius:/,
+    '.inspector .field 要有圆角',
+  );
+});
+
+/*
+ * 卡里再画一圈描边会变成俄罗斯套娃。
+ * 触发卡内部（.trig-card）与 row2 里的字段都该复位。
+ */
+test('卡片里的字段不重复套壳', () => {
+  const css = read(path.join(ROOT, 'styles.css'));
+  assert.match(
+    css,
+    /\.inspector \.trig-card \.field \{[^}]*border:\s*0/,
+    '触发卡内部的字段要复位，否则卡里套卡',
+  );
+});
+
+/* ================= 流程图上的变量标注 ================= */
+/*
+ * 节点框上只显示名字（框窄），点开浮层才摊开「名字 = 值」。
+ * 两种布局（画布坐标 / 分层网格）都得有 ——
+ * 只做一种的话，切一下视图标注就消失了，看着像坏了。
+ */
+test('流程图两种布局都标变量', () => {
+  const d = readSrc('components/TaskDetail.tsx');
+  const hits = d.match(/<FlowVars /g) ?? [];
+  assert.ok(hits.length >= 3, `FlowVars 至少要出现 3 次（两种布局 + 浮层），实际 ${hits.length}`);
+  assert.match(d, /<FlowVars vars=\{b\.vars\} full \/>/, '浮层里要摊开显示');
+});
+
+test('流程图的变量标注存名字不存 id（历史不随变量改名而消失）', () => {
+  const v = readSrc('engine/variables.ts');
+  assert.match(v, /export function varSnapshotOf/, '要有快照函数');
+  assert.doesNotMatch(
+    v,
+    /varSnapshotOf[\s\S]{0,400}id:/,
+    '快照里不该存变量 id —— 变量删掉后老流程图会变空白',
+  );
+});

@@ -5,6 +5,7 @@ import {
   varsOfGroup, findVar, varIdOf, applyVarTo, detachVar, shouldDetach,
   exportVariables, importVariables, duplicateVar, checkVarForNode, patchForVar,
   registerVariableGroup, getVariableGroup, resolveVars, redirectVarPatch,
+  varSnapshotOf,
   patchVariableValues, setVariableGlobal, saveVariables, LEGACY_CARDS_KEY,
   type Variable, type VariableGroupDef, type KV,
 } from '../engine/variables';
@@ -503,4 +504,63 @@ test('patchForVar 对未注册的组返回空（不制造脏数据）', () => {
   const kv = memKV();
   const c = addVariable({ group: '野组', name: 'X', values: { a: 1 } }, kv);
   assert.deepEqual(patchForVar(c), {});
+});
+
+
+/* ================= 老字段 cardRefs ================= */
+/*
+ * "参数卡片"时期引用存在 data.cardRefs 里，改名后写的是 varRefs。
+ * 老画布里那些**升级之前就套好**的节点只有 cardRefs ——
+ * 读不到它们的后果不是"显示少一点"，而是参数全空：
+ * 引用期间值根本不在节点上，引用再读不到就两边都没有。
+ *
+ * 这里踩过一次真 bug：改名时把 `d.varRefs ?? d.cardRefs` 一起改成了
+ * `d.varRefs ?? d.varRefs`（两边同名，等价于只认新名）。
+ * 测试没抓到是因为测试数据都是当场新建的，没有老字段的样本。
+ */
+test('老画布的 cardRefs 引用照样认（改名不该让已有引用断掉）', () => {
+  const kv = memKV();
+  const c = addVariable({ group: 'github-repo', name: '主仓库', values: REPO_VALUES }, kv);
+  assert.equal(varIdOf({ cardRefs: { 'github-repo': c.id } }, 'github-repo'), c.id);
+});
+
+test('老字段引用照样能解析出值', () => {
+  const kv = memKV();
+  const c = addVariable({ group: 'github-repo', name: '主仓库', values: REPO_VALUES }, kv);
+  const d = resolveVars({ cardRefs: { 'github-repo': c.id } }, kv);
+  assert.equal(d.owner, 'acme');
+  assert.equal(d.repo, 'web');
+});
+
+test('redirectVarPatch：patch 里带 cardRefs 也算调用方在管引用（不转投）', () => {
+  const { varUpdates } = redirectVarPatch({}, { repo: undefined, cardRefs: { 'github-repo': 'pc1' } });
+  assert.deepEqual(varUpdates, [], '自带引用标记时改字段不该写进变量');
+});
+
+test('shouldDetach：patch 里带 cardRefs 不算手改字段', () => {
+  assert.equal(shouldDetach({ owner: 'a', cardRefs: { g: 'pc1' } }, ['owner']), false);
+});
+
+/* ================= 变量快照（给流程图用） ================= */
+
+test('varSnapshotOf：摊成名字 + 摘要', () => {
+  const kv = memKV();
+  const c = addVariable({ group: 'github-repo', name: '主仓库', values: REPO_VALUES }, kv);
+  const snap = varSnapshotOf({ varRefs: { 'github-repo': c.id } }, kv);
+  assert.equal(snap.length, 1);
+  assert.equal(snap[0].name, '主仓库');
+  assert.ok(snap[0].summary.length > 0, '摘要不该是空的');
+});
+
+test('varSnapshotOf：没引用的节点返回空数组（不制造 undefined）', () => {
+  assert.deepEqual(varSnapshotOf({}), []);
+  assert.deepEqual(varSnapshotOf({ varRefs: {} }), []);
+});
+
+test('varSnapshotOf：变量被删了就跳过，不留空壳', () => {
+  const kv = memKV();
+  const c = addVariable({ group: 'github-repo', name: '主仓库', values: REPO_VALUES }, kv);
+  const data = { varRefs: { 'github-repo': c.id } };
+  removeVariable(c.id, kv);
+  assert.deepEqual(varSnapshotOf(data, kv), []);
 });

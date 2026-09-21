@@ -259,8 +259,14 @@ export function findVar(id: string | undefined | null, kv: KV = defaultKV()): Va
  * 节点上记录「哪个组引用了哪个变量」。
  * 存在 data 里，随画布存档一起走。
  *
- * 老字段名是 varRefs（那是"参数卡片"时期留下的），
+ * 老字段名是 cardRefs（那是"参数卡片"时期留下的），
  * 读的时候两个都认 —— 老画布里的引用不该因为改名就断掉。
+ *
+ * 这里踩过一次：改名时把 `d.varRefs ?? d.cardRefs` 一起改成了
+ * `d.varRefs ?? d.varRefs`（两边同名，等价于只认新名）。
+ * 症状极隐蔽 —— 新套用的变量一切正常，只有**升级前就套好**的节点
+ * 引用读不到，而引用期间值不在节点上，于是那些节点的参数全部变空。
+ * 测试没抓到是因为测试数据都是当场新建的，没有老字段的样本。
  */
 export type VarRefs = Record<string, string>;
 
@@ -271,7 +277,7 @@ function dataOf(node: NodeLike): Record<string, unknown> {
 }
 
 function refsOf(d: Record<string, unknown>): VarRefs | null {
-  const r = d.varRefs ?? d.varRefs;
+  const r = d.varRefs ?? d.cardRefs;
   return (r && typeof r === 'object') ? (r as VarRefs) : null;
 }
 
@@ -285,6 +291,34 @@ export function varIdOf(data: unknown, group: string): string | null {
 /** 节点上全部引用（已归一化，老字段也算） */
 export function varRefsOf(data: unknown): VarRefs {
   return { ...(refsOf(dataOf({ data })) ?? {}) };
+}
+
+/**
+ * 一个节点当前引用的变量，摊成「名字 + 摘要」——给任务流程图用。
+ *
+ * ================= 为什么存名字而不是 id =================
+ *
+ * 任务记录是**历史**。变量后来被改名、被删掉，都不该让老记录变空白。
+ * 存 id 的话，删一个变量会让所有旧流程图上的标注同时消失 ——
+ * 而"这次运行用的是哪个变量"恰恰是事后回看时最想知道的。
+ *
+ * 摘要在建任务那一刻算好（变量当时的值），之后变量怎么改都不影响这条记录。
+ */
+export function varSnapshotOf(
+  data: unknown,
+  kv: KV = defaultKV(),
+): { name: string; summary: string }[] {
+  const refs = refsOf(dataOf({ data })) ?? {};
+  const out: { name: string; summary: string }[] = [];
+  for (const group of Object.keys(refs)) {
+    const id = refs[group];
+    if (typeof id !== 'string' || !id) continue;
+    const v = findVar(id, kv);
+    if (!v) continue;
+    const gd = getVariableGroup(group);
+    out.push({ name: v.name, summary: gd?.summary(v.values) ?? '' });
+  }
+  return out;
 }
 
 /**
@@ -384,7 +418,7 @@ export function redirectVarPatch(
   data: unknown,
   patch: Record<string, unknown>,
 ): { nodePatch: Record<string, unknown>; varUpdates: { id: string; patch: Record<string, unknown> }[] } {
-  if ('varRefs' in patch || 'varRefs' in patch) {
+  if ('varRefs' in patch || 'cardRefs' in patch) {
     return { nodePatch: patch, varUpdates: [] };
   }
   const refs = refsOf(dataOf({ data }));
@@ -410,7 +444,7 @@ export function redirectVarPatch(
 
 /** 手改了某个字段时，判断要不要连带脱离（与旧 shouldDetach 同口径，保留兼容） */
 export function shouldDetach(patch: Record<string, unknown>, keys: string[]): boolean {
-  if ('varRefs' in patch || 'varRefs' in patch) return false;
+  if ('varRefs' in patch || 'cardRefs' in patch) return false;
   return Object.keys(patch).some((k) => keys.indexOf(k) >= 0);
 }
 

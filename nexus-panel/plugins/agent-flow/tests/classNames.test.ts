@@ -185,7 +185,7 @@ test('需要基类节奏的变体都挂了块类名', () => {
 });
 
 /**
- * .node-chip 是**参数卡片**（NodeCardChips，会换色 / 虚线）专用的，
+ * .node-chip 是**参数卡片**（NodeVarChips，会换色 / 虚线）专用的，
  * 胶囊小标签必须用 .node-pill。
  *
  * 第一版把胶囊命名为 node-chip，于是它与参数卡片**撞名** ——
@@ -197,7 +197,7 @@ test('.node-chip 只允许参数卡片用', () => {
   if (!hasSrc) return;
   const bad: string[] = [];
   for (const f of sources()) {
-    if (path.basename(f) === 'NodeCardChips.tsx') continue;
+    if (path.basename(f) === 'NodeVarChips.tsx') continue;
     const src = read(f);
     if (src.includes('"node-chip"') || /[`\s]node-chip[`\s]/.test(src)) {
       bad.push(path.relative(ROOT, f));
