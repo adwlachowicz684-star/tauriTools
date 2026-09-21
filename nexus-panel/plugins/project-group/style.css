@@ -783,6 +783,29 @@
 .fpx-grouptab.add { padding: 0 10px; }
 .fpx-groupcount { font-size: var(--fs-11, 11px); opacity: .7; font-variant-numeric: tabular-nums;}
 
+/* #151 分组标题的删除按钮：hover / 聚焦才显形
+ *
+ * 两处都不能省：
+ *  · opacity 只管**看不看得见**，看不见的按钮**仍然可以点** ——
+ *    用户以为点的是标题（切换分组），实际删掉了分组。
+ *    必须连 pointer-events 一起关（与 #116 同一个坑）。
+ *  · :focus-visible 给键盘用户：否则 tab 到不可见按钮上按回车删了东西，
+ *    却不知道自己删的是谁。
+ */
+.fpx-groupwrap { display: inline-flex; align-items: center; gap: 2px; }
+.fpx-groupdel {
+  width: 18px; height: 18px; padding: 0; flex: none;
+  display: grid; place-items: center;
+  border: 1px solid var(--border); border-radius: var(--r-xs, 3px);
+  background: var(--surface); color: var(--text-dim);
+  font-size: 12px; line-height: 1; cursor: pointer;
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--dur-fast, .15s) ease, color var(--dur-fast, .15s) ease;
+}
+.fpx-groupwrap:hover .fpx-groupdel,
+.fpx-groupdel:focus-visible { opacity: 1; pointer-events: auto; }
+.fpx-groupdel:hover { color: var(--danger); border-color: var(--danger); }
+
 /* 图标宫格：每项固定宽，超长名截断 */
 .fpx-icongrid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));

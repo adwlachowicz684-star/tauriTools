@@ -149,17 +149,27 @@ export function PresetIconGrid({
     onLog(`已清理 ${totalRemoved(removed)} 个失效项（${detail}）`);
   };
 
-  const deleteGroup = async () => {
-    if (!current) return;
+  /**
+   * #151 分组标题上的 × —— 删**指定**那一组。
+   *
+   * 与原来的「删除分组」按钮（作用于当前活动组）不同：
+   * 用户点的是**某个标题**上的 ×，删的必须就是那一组。
+   * 若仍按 active 删，实际删掉的可能是用户没打算动的那个，
+   * 而且没有任何提示（这与 #82 那处是同一类错误）。
+   */
+  const removeGroupAt = async (i: number) => {
+    const g = effective[i];
+    if (!g) return;
     if (effective.length <= 1) { onLog('至少保留一个分组', true); return; }
     const ok = await confirm({
       title: '删除分组',
-      message: `删除分组「${current.name}」？组内图标不会被删除，只是取消归类。`,
+      message: `删除分组「${g.name}」？组内图标不会被删除，只是取消归类。`,
       danger: true,
     });
     if (!ok) return;
-    commit(effective.filter((g) => g.name !== current.name));
+    commit(effective.filter((x) => x.name !== g.name));
   };
+
 
   /**
    * 图标拖到某个位置（#72）。
@@ -264,8 +274,10 @@ export function PresetIconGrid({
     <div className="fpx-preset">
       <div className="fpx-groupbar">
         {effective.map((g, i) => (
+          /* #151 外层 wrap 只为承载 hover 显形的删除按钮；
+             标题按钮本身仍是拖拽/重命名的主体。 */
+          <div className="fpx-groupwrap" key={g.name}>
           <button
-            key={g.name}
             className={[
               'fpx-grouptab',
               g.name === active ? 'active' : '',
@@ -311,12 +323,22 @@ export function PresetIconGrid({
             {g.name}
             <span className="fpx-groupcount">{g.icons.length}</span>
           </button>
+          /* #151 删除按钮**不能嵌在标题按钮里**：button 套 button 是无效 HTML，
+             浏览器会把嵌套的那个提到外面去，样式和事件都会错位。
+             故做成兄弟元素，靠外层 wrap 的 hover 显形。 */
+          {effective.length > 1 && (
+            <button
+              className="fpx-groupdel"
+              title={`删除分组「${g.name}」`}
+              onClick={() => void removeGroupAt(i)}
+            >
+              ×
+            </button>
+          )}
+        </div>
         ))}
         <button className="fpx-grouptab add" onClick={addGroup} title="新建分组">＋</button>
         <span style={{ flex: 1 }} />
-        {current && effective.length > 1 && (
-          <button className="p-btn mini" onClick={deleteGroup}>删除分组</button>
-        )}
         {/* #12 只在真的存了分组时才显示 —— 默认组是动态生成的、没有失效项，
             给一个永远清出 0 项的按钮只会让人以为功能坏了 */}
         {hasStoredGroups && (
