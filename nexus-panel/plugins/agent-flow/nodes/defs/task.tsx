@@ -1,6 +1,6 @@
 import { CLI_META, makeNode, type CliKind, type TaskNodeData } from '../../types';
 import TaskNode from '../../components/TaskNode';
-import { FileParamsPanel } from '../../components/inspectors/shared';
+import { FileParamsPanel, CliModelPanel } from '../../components/inspectors/shared';
 import {
   Field, VarBar, upstreamTokens, upstreamFileTokens, type FieldDef,
 } from '../../components/inspectors/fields';
@@ -51,11 +51,25 @@ const fields: FieldDef[] = [
     ),
   },
   {
-    type: 'text',
+    /*
+     * 模型走「凭据 + 模型」两个框，与 OCR / 翻译 / HTTP 一致。
+     *
+     * 以前这里是手填 text：模型名长且易拼错，
+     * 打错一个字符要等 CLI 跑起来才出错，而 CLI 多半只回一句非零退出，
+     * 根本看不出是模型名的问题。
+     */
+    type: 'custom',
+    spec: { keys: ['model', 'credentialId'], kind: 'select' },
     key: 'model',
-    label: '模型（可选）',
-    placeholder: '留空用 CLI 默认',
-    hint: '部分 CLI 支持指定模型，留空则用它的默认值',
+    render: (p) => (
+      <CliModelPanel
+        model={String(p.d.model ?? '')}
+        credentialId={p.d.credentialId as string}
+        credentials={p.credentials}
+        onChange={p.patch}
+        onOpenCredentials={p.onOpenCredentials}
+      />
+    ),
   },
   {
     type: 'text',

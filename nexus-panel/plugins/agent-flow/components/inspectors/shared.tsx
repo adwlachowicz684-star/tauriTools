@@ -502,6 +502,166 @@ export function LlmConfigPanel({
 /* ------------------------------------------------------------------ */
 
 /**
+ * CLI 节点的「凭据 + 模型」。
+ *
+ * ================= 为什么不是手填 ====================
+ *
+ * 模型名长且易拼错，手打错一个字符要等到 CLI 跑起来才报错，
+ * 而报错往往不是"模型名不对"（多数 CLI 只回一句非零退出）。
+ * 改成从凭据的模型清单里选，拼错这件事就不存在了。
+ *
+ * ================= 为什么还要留手填 ====================
+ *
+ * CLI 认的模型名与 API 的模型名**不总是同一套**（别名、内部版本号、渠道名）。
+ * 清单只是"常用"那一批，写死成只能选，用户就配不了清单外的模型。
+ *
+ * 所以两条路都留：清单里选，或点「手填」自己敲。
+ * 选了手填就把下拉框换成输入框 —— 两者同处一行，不会看着像两个模型字段。
+ */
+export function CliModelPanel({
+  model, credentialId, credentials, onChange, onOpenCredentials,
+}: {
+  model: string;
+  credentialId?: string;
+  credentials?: Credential[];
+  onChange: (patch: Record<string, unknown>) => void;
+  onOpenCredentials?: (kind: string) => void;
+}) {
+  const llmCreds = (credentials ?? []).filter((x) => x.kind === 'llm');
+  const cred = llmCreds.find((x) => x.id === credentialId) ?? null;
+  const models = llmCreds.length ? llmModelsOf(cred) : [];
+  const cur = String(model ?? '').trim();
+
+  /*
+   * 手填态。
+   *
+   * 只有用户点了「手填」才为真 —— 不拿"当前值不在清单里"来推断：
+   * 那样的话，用户手填完又去凭据里把这个模型加进清单，
+   * 界面会一直停在手填态，而它明明已经能选了。
+   *
+   * 没选凭据时只有手填一条路，此时这个开关没有意义（一律按手填渲染）。
+   */
+  const [manual, setManual] = useState(false);
+
+  /*
+   * 清单里没有当前值时把它补进去。
+   *
+   * 不补的话下拉框会跳到第一项，看着像模型被改掉了，
+   * 而节点上存的还是原来那个 —— 界面与数据不一致，最难发现的一类。
+   */
+  const options = models.slice();
+  if (cur && options.indexOf(cur) < 0) options.unshift(cur);
+
+  const asSelect = !!cred && !manual;
+
+  return (
+    <div className="field">
+      <span>模型</span>
+
+      {/* ① 凭据：决定下面那一框列出哪些模型 */}
+      <label className="field">
+        <small className="dim">凭据（决定可选的模型清单）</small>
+        <select
+          value={credentialId || ''}
+          onChange={(e) => {
+            /*
+             * 换凭据时清空模型 —— 两家服务商的模型名通常不通用，
+             * 留着旧名字会挑一个对方没有的，那还不如留空让用户重新选。
+             */
+            setManual(false);
+            onChange({ credentialId: e.target.value, model: '' });
+          }}
+        >
+          <option value="">（不指定，手填模型）</option>
+          {llmCreds.map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.name}{x.identity ? ` (@${x.identity})` : ''}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {/* ② 模型 */}
+      <label className="field">
+        <small className="dim">模型</small>
+        {asSelect ? (
+          <select
+            value={cur}
+            onChange={(e) => {
+              const v = e.target.value;
+              /*
+               * 哨兵值必须在这里拦掉。
+               *
+               * 它只是个"切到手填"的动作，不是模型名 ——
+               * 直接 onChange 下去的话，节点上就存了个 "__manual__"，
+               * 跑的时候 CLI 会原样收到它，报错还看不出是这儿来的。
+               */
+              if (v === '__manual__') { setManual(true); return; }
+              onChange({ model: v });
+            }}
+          >
+            <option value="">（用 CLI 默认）</option>
+            {options.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+            {/*
+              切到手填：给清单外的模型留一条路。
+              它是个动作而不是选项 —— 绝不写进 model
+              （写进去的话 CLI 会真的收到 "__manual__" 这种东西）。
+            */}
+            <option value="__manual__">（手填…）</option>
+          </select>
+        ) : (
+          <input
+            className="p-input"
+            value={cur}
+            placeholder="留空用 CLI 默认"
+            onChange={(e) => onChange({ model: e.target.value })}
+          />
+        )}
+        {/*
+          两个方向都要能切。只有"手填"没有"回到清单"的话，
+          用户点进去就出不来了 —— 而清单才是推荐路径。
+        */}
+        {cred ? (
+          <button
+            className="link-btn"
+            onClick={() => {
+              if (asSelect) {
+                setManual(true);
+              } else {
+                setManual(false);
+                // 手填的值若不在清单里会被补进选项，不会丢
+                if (cur && options.indexOf(cur) < 0) onChange({ model: cur });
+              }
+            }}
+            title={asSelect ? '清单里没有想要的模型时自己填' : '回到凭据的模型清单'}
+          >
+            {asSelect ? '手填' : '从清单选'}
+          </button>
+        ) : null}
+      </label>
+
+      <div className="cond-hint">
+        {cred
+          ? `清单来自「${cred.name}」。改清单去凭据中心改一次，所有用这条凭据的节点同时生效。`
+          : '没选凭据就是手填，CLI 用自己默认的模型。'}
+      </div>
+
+      {onOpenCredentials ? (
+        <div className="p-row">
+          <button className="p-btn" onClick={() => onOpenCredentials('llm')}>
+            填写凭据
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+/**
  * 凭据选择区。
  *
  * 只列出**满足本节点权限要求**的凭据 —— 推送节点不会让你选一把只有读权限的令牌，

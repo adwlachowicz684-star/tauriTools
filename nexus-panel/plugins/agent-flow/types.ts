@@ -45,6 +45,15 @@ export type TaskNodeData = {
   /** 节点内编辑的提示词，支持 {{nodeId.output}} 引用上游输出 */
   prompt: string;
   model: string;
+  /**
+   * 模型清单从哪条凭据来。
+   *
+   * 只作**清单来源**：模型名仍存在 model 上、运行时照旧读 model。
+   * 之所以还要记这一条，是为了下次打开面板时下拉框还是那一家的清单 ——
+   * 不记的话换过凭据后，选中的模型会"跳回第一项"，
+   * 界面与节点上实际存的值就对不上了。
+   */
+  credentialId?: string;
   workdir: string;
   /** 是否自动批准工具调用（traecli -y / codebuddy -y） */
   yolo: boolean;

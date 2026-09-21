@@ -323,6 +323,62 @@ test('运行时地址与密钥优先取自凭据', () => {
   }
 });
 
+/* ================= CLI 节点：模型不选手填 ================= */
+
+/*
+ * CLI 节点的模型以前是手填 text。模型名长且易拼错，
+ * 打错一个字符要等 CLI 跑起来才出错，而 CLI 多半只回一句非零退出，
+ * 根本看不出是模型名的问题。
+ *
+ * 现在与 OCR / 翻译 / HTTP 一致：选凭据 → 从它的模型清单里选。
+ */
+test('CLI 节点的模型走凭据清单，不再手填', () => {
+  const def = read(path.join(ROOT, 'nodes', 'defs', 'task.tsx'));
+  assert.match(def, /CliModelPanel/, 'CLI 要用凭据 + 模型那个面板');
+  /*
+   * 不能再出现手填模型的 text 字段。
+   * 匹配的是"声明一个 text 字段且 key 是 model"这个动作 ——
+   * 注释里正好要写 key: 'model' 来说明为什么改掉，只查子串会被骗过。
+   */
+  assert.ok(
+    !/type:\s*'text'[\s\S]{0,120}?key:\s*'model'/.test(def),
+    'CLI 的模型又变成手填了',
+  );
+});
+
+test('「手填」是动作不是模型名 —— 哨兵值不得落进 model', () => {
+  /*
+   * 下拉框里那一项「（手填…）」看起来是个选项，但它只是切换的动作。
+   * 直接 onChange 下去的话，节点上就存了个 '__manual__'，
+   * 跑的时候 CLI 原样收到它，报错还看不出是这儿来的。
+   *
+   * 这类"哨兵值泄漏"测试跑不出来 —— 界面看着完全正常。
+   */
+  const sh = read(path.join(COMP, 'inspectors', 'shared.tsx'));
+  assert.match(sh, /export function CliModelPanel/, '要有 CliModelPanel');
+  // 拦下来：看到哨兵就 setManual，不走 onChange
+  assert.match(sh, /__manual__'\)\s*\{\s*setManual\(true\)/, '哨兵要被拦掉并切到手填态');
+  /*
+   * 反向：不许把它当普通值写下去。
+   * 有人"顺手"改成 onChange({ model: v }) 就会命中这一条。
+   */
+  const bad = /onChange\(\{[^}]*model:\s*v\s*\}\)/.test(sh)
+    && !/__manual__'\)\s*\{\s*setManual\(true\)/.test(sh);
+  assert.equal(bad, false, '哨兵值被写进 model 了');
+});
+
+test('切到手填后还能切回清单（两个方向都要有）', () => {
+  /*
+   * 只有「手填」没有「从清单选」的话，用户点进去就出不来了，
+   * 而清单才是推荐路径 —— 出不来就只能先取消凭据，那会顺带清掉已选的模型。
+   */
+  const sh = read(path.join(COMP, 'inspectors', 'shared.tsx'));
+  const body = sh.slice(sh.indexOf('export function CliModelPanel'));
+  const panel = body.slice(0, body.indexOf('\nexport function '));
+  assert.match(panel, /'手填'/, '要有切到手填的入口');
+  assert.match(panel, /'从清单选'/, '要有切回清单的入口');
+});
+
 /* ================= 反向吸附：动的是被拖节点 ================= */
 
 /*
