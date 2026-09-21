@@ -460,8 +460,15 @@ bootIframePlugin(async (ctx) => {
   function buildRail() {
     rail.innerHTML = '';
     // 图标条只留「文件库」开关：四个属性页入口在顶栏最右（对齐 C#）。
-    rail.appendChild(h('button.mm-btn' + (settings.filesOpen ? '.on' : ''), {
-      title: settings.filesOpen ? '隐藏脑图文件列表' : '显示脑图文件列表',
+    // 高亮与文案跟着**实际占着底框的是哪个面板**走，不能只看 settings ——
+    // 搜索时文件面板是让位的，但 settings.filesOpen 仍可能是 true，
+    // 按 settings 显示会让按钮亮着而列表没出现，看着像按钮坏了。
+    const filesOn = fileList?.isFilesPanel?.() ?? !!settings.filesOpen;
+    const hasSearch = fileList?.isSearchMode?.() ?? false;
+    rail.appendChild(h('button.mm-btn' + (filesOn ? '.on' : ''), {
+      title: filesOn
+        ? (hasSearch ? '收起文件列表（退回搜索结果）' : '收起脑图文件列表')
+        : '显示脑图文件列表',
       onclick: () => toggleFiles(),
     }, '📚'));
 
@@ -796,12 +803,20 @@ bootIframePlugin(async (ctx) => {
     return { files: fileIndex, folders: foldersList, currentId: currentFileId };
   }
 
-  /** 文件库面板展开/隐藏，状态记在设置里，下次进来保持 */
+  /**
+   * 文件库面板展开/隐藏。
+   *
+   * 与搜索结果是**两个独立页签**共用一个底框，所以"开合"不是简单的
+   * 二值翻转：当前占着底框的是文件才收起它（收起后若有搜索结果就退回
+   * 搜索结果），否则切到文件。最终是否显示文件由 fileList 决定 ——
+   * 外壳不能自己算，否则两者的状态会各说各话。
+   */
   function toggleFiles(force) {
-    const on = force == null ? !settings.filesOpen : !!force;
-    settings.filesOpen = on;
+    const on = force == null ? !fileList?.isFilesPanel?.() : !!force;
+    fileList?.showFiles(on);
+    const showing = !!fileList?.isFilesPanel?.();
+    settings.filesOpen = showing;
     store.settings.save(settings);
-    fileList?.setOpen(on);
     buildRail();
   }
 
@@ -2134,7 +2149,7 @@ bootIframePlugin(async (ctx) => {
   //   右侧：属性侧栏（样式/标签/主题/文件），C# 里固定 276px 常驻
   body.insertBefore(fileList.el, canvasEl);
   body.appendChild(side.el);
-  fileList.setOpen(!!settings.filesOpen);
+  fileList.showFiles(!!settings.filesOpen);
   captureShellErrors();
   buildRail();
   renderTabs();

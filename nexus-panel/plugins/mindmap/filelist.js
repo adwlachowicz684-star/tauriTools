@@ -53,10 +53,57 @@ export function buildFileList(app) {
 
   /* ---------------------- 搜索结果模式 ---------------------- */
 
-  let searchMode = false;
+  // 两个**独立**面板共用一个底框，同一时刻只有一个占着它：
+  //   'files'  → 文件列表
+  //   'search' → 搜索结果
+  //   null     → 底框收起
+  //
+  // 不能用「搜索时把文件列表藏起来、取消搜索再放回来」那种单标志做法 ——
+  // 那样两者是"替代"关系而不是"两个页签"，收起文件后没法退回搜索结果。
+  let panel = null;
+  // 是否有**有效**搜索结果。收起搜索面板后仍保留 —— 用户再次收起文件时
+  // 要能退回搜索结果，而不是直接把整个底框关掉。
+  let hasSearch = false;
+
   let searchItems = [];
   let searchKw = '';
+  let searchTotal = 0;
   let searchActive = 0;
+
+  /** 把 panel 落到 DOM 上：底框开合 + 两个 body 互斥 + 标题与按钮随面板切换 */
+  function apply() {
+    const p = panel;
+    el.classList.toggle('open', !!p);
+    bodyEl.style.display = p === 'files' ? '' : 'none';
+    searchBodyEl.style.display = p === 'search' ? '' : 'none';
+
+    const isSearch = p === 'search';
+    // 标题与「＋ / 📁」随面板切换：搜索结果页没有"新建脑图"的语义，
+    // 留着两个按钮会出现"点了没反应"（它们建的仍是文件，但页面不是文件列表）
+    titleEl.textContent = isSearch
+      ? `搜索结果 ${Number(searchTotal) || searchItems.length} 项`
+      : '脑图文件';
+    newFileBtn.style.display = isSearch ? 'none' : '';
+    newFolderBtn.style.display = isSearch ? 'none' : '';
+  }
+
+  /**
+   * 打开 / 关闭**文件**面板。
+   *
+   * 关掉文件时若还有搜索结果，就退回搜索结果 —— 这正是"两个独立页签
+   * 共用一个底框"该有的行为：收起一个，底下那个露出来。
+   * （原来是直接把整个底框关掉，搜索结果就这么丢了。）
+   */
+  function showFiles(on) {
+    panel = on ? 'files' : (hasSearch ? 'search' : null);
+    apply();
+  }
+
+  /** 点 📚：当前是文件就收起（有搜索则退回搜索），否则切到文件 */
+  function toggleFiles() {
+    showFiles(panel !== 'files');
+    return panel === 'files';
+  }
 
   /**
    * 渲染搜索结果条目。
@@ -113,35 +160,31 @@ export function buildFileList(app) {
     const has = Array.isArray(items) && items.length > 0;
 
     if (!has) {
-      if (!searchMode) return;      // 本来就不在搜索态，别白重建一次
-      searchMode = false;
+      // 本来就没有搜索结果、也没占着底框 —— 别白重建一次
+      if (!hasSearch && panel !== 'search') return;
+      hasSearch = false;
       searchItems = [];
       searchKw = '';
-      titleEl.textContent = '脑图文件';
-      newFileBtn.style.display = '';
-      newFolderBtn.style.display = '';
-      searchBodyEl.style.display = 'none';
+      searchTotal = 0;
       // 真的清空 DOM，不能只靠 display:none —— 残留条目占内存，
       // 且任何按 .mm-search-item 查询的逻辑都会查到上一轮的旧结果
       searchBodyEl.innerHTML = '';
-      bodyEl.style.display = '';
-      setOpen(!!app.settings?.filesOpen);
+      // 退出搜索：让位给文件列表（若用户开着它），否则整个底框收起
+      if (panel === 'search') panel = app.settings?.filesOpen ? 'files' : null;
+      apply();
       return;
     }
 
-    searchMode = true;
+    hasSearch = true;
     searchItems = items;
     searchKw = String(res.kw || '');
-    searchActive = Number(res.active) || 0;
     // 标题显示**真实总数**（编辑器侧超过 200 条只回传前 200 条）
-    titleEl.textContent = `搜索结果 ${Number(res.total) || items.length} 项`;
-    newFileBtn.style.display = 'none';
-    newFolderBtn.style.display = 'none';
-    bodyEl.style.display = 'none';
-    searchBodyEl.style.display = '';
+    searchTotal = Number(res.total) || items.length;
+    searchActive = Number(res.active) || 0;
     renderSearchItems();
-    // 文件库默认是收起的 —— 搜完结果藏在收起的框里等于没显示
-    setOpen(true);
+    // 搜索结果出来就占住底框 —— 文件库默认收起，结果藏在收起的框里等于没显示
+    panel = 'search';
+    apply();
   }
 
   /* ---------------------- 单个文件项 ---------------------- */
@@ -215,7 +258,7 @@ export function buildFileList(app) {
 
   function refresh() {
     // 搜索态下文件列表是隐藏的，重建它纯属白费（还会把搜索区挤下去）
-    if (searchMode) return;
+    if (panel === 'search') return;
     const { files, folders, currentId } = api.fileState();
     bodyEl.innerHTML = '';
 
@@ -267,9 +310,11 @@ export function buildFileList(app) {
     }
   }
 
-  function setOpen(on) {
-    el.classList.toggle('open', !!on);
-  }
-
-  return { el, refresh, setOpen, setSearch, isSearchMode: () => searchMode };
+  return {
+    el, refresh, setSearch,
+    showFiles, toggleFiles,
+    isSearchMode: () => panel === 'search',
+    isFilesPanel: () => panel === 'files',
+    isOpen: () => !!panel,
+  };
 }
