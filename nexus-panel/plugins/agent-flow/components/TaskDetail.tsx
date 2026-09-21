@@ -6,7 +6,8 @@ import {
 } from '../engine/tasks';
 import { formatDateTime } from '../engine/history';
 import {
-  layoutTaskFlow, flowSummary, errorNodesOf,
+  layoutTaskFlow, flowSummary, errorNodesOf, layersOf,
+  linkEndsOf, linkPathOf, BOX_W, BOX_H,
   FLOW_STATUS_META, type FlowStatus,
 } from '../engine/taskFlow';
 
@@ -17,7 +18,7 @@ import {
  * "历史里看到的字段和运行时看到的对不上"只是时间问题。
  */
 
-function NodeRow({ n, now }: { n: TaskNodeState; now: number }) {
+function NodeRow({ n, now, label }: { n: TaskNodeState; now: number; label?: string }) {
   const [open, setOpen] = useState(false);
   const dur = n.startedAt ? elapsedOf({ startedAt: n.startedAt, endedAt: n.endedAt } as TaskRecord, now) : 0;
   const hasBody = Boolean(n.output || n.error || n.rendered);
@@ -29,7 +30,7 @@ function NodeRow({ n, now }: { n: TaskNodeState; now: number }) {
         style={hasBody ? undefined : { cursor: 'default' }}
       >
         <span className={`dot ${n.status === 'success' ? 'ok' : n.status === 'failed' ? 'bad' : n.status === 'running' ? 'run' : ''}`} />
-        <span className="task-node-id">{n.id}</span>
+        <span className="task-node-id">{label ?? n.id}</span>
         <span className="task-node-status">{NODE_STATUS_LABEL[n.status] || n.status}</span>
         {n.branch ? <span className="task-tag">分支 {n.branch}</span> : null}
         {n.concurrency !== undefined ? <span className="task-tag">并发 {n.concurrency}</span> : null}
@@ -80,59 +81,172 @@ function NodeRow({ n, now }: { n: TaskNodeState; now: number }) {
  * 任务记录里没有坐标，而画布坐标在节点增删后早已对不上。
  * 分层图稳定，且"同一列 = 可以并行"一眼可见。
  */
-export function TaskFlow({ task }: { task: TaskRecord }) {
-  const { boxes, links, cols } = layoutTaskFlow(task);
+/**
+ * 流程图 —— 任务窗口与历史的**默认视图**。
+ *
+ * ================= 为什么默认看图 ====================
+ *
+ * 详细列表能回答"这一步输出了什么"，
+ * 但"卡在哪儿了"必须看图才答得出来：
+ * 一列平铺的文本看不出谁在等谁，也就分不出「等待」和「阻断」。
+ *
+ * ================= 布局 ====================
+ *
+ * 有坐标快照时按**画布当时的样子**摆 —— 认得出"这是我那张图"。
+ * 没有（老记录、模块展开出来的节点缺坐标）就退回分层网格，
+ * 而不是把缺坐标的那几个画到 (0,0) 叠成一团。
+ */
+export function TaskFlow({ task, now }: { task: TaskRecord; now: number }) {
+  const { boxes, links, cols, mode, bounds } = layoutTaskFlow(task);
   const sum = flowSummary(boxes);
+  /*
+   * 浮层：悬停预览、点击钉住。
+   *
+   * 两个态必须分开 —— 合成一个开关的话，
+   * 要么悬停后浮层赖着不走，要么点开的浮层鼠标一移就没了。
+   */
+  const [hover, setHover] = useState<string | null>(null);
+  const [pinned, setPinned] = useState<string | null>(null);
+  const shown = pinned ?? hover;
 
   if (boxes.length === 0) {
     return <div className="task-mute">这次运行没有节点记录。</div>;
   }
 
-  return (
-    <div className="task-flow">
-      <div className="task-flow-legend">
-        {(Object.keys(FLOW_STATUS_META) as FlowStatus[]).map((k) => (
-          <span key={k} className="task-flow-legend-item">
-            <span className="task-flow-dot" style={{ background: FLOW_STATUS_META[k].color }} />
-            {FLOW_STATUS_META[k].label} {sum[k]}
-          </span>
-        ))}
-      </div>
+  const byId = new Map(boxes.map((b) => [b.id, b]));
+  const stateOf = (id: string) => task.nodes[id];
+  const legend = (
+    <div className="task-flow-legend">
+      {(Object.keys(FLOW_STATUS_META) as FlowStatus[]).map((k) => (
+        <span key={k} className="task-flow-legend-item">
+          <span className="task-flow-dot" style={{ background: FLOW_STATUS_META[k].color }} />
+          {FLOW_STATUS_META[k].label} {sum[k]}
+        </span>
+      ))}
+    </div>
+  );
 
-      <div className="task-flow-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(96px, 1fr))` }}>
-        {boxes.map((b) => (
-          <div
-            key={b.id}
-            className={`task-flow-node st-${b.status}`}
-            style={{ gridColumn: b.col + 1, borderLeftColor: FLOW_STATUS_META[b.status].color }}
-            title={`${b.label} · ${FLOW_STATUS_META[b.status].label}`}
-          >
-            <span className="task-flow-node-name">{b.label}</span>
-            <span className="task-flow-node-st" style={{ color: FLOW_STATUS_META[b.status].color }}>
-              {FLOW_STATUS_META[b.status].label}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      {/*
-        连线用文字标出来，不画 SVG。
-        画 SVG 要算每个格子的实际像素位置（依赖测量），
-        而分层图的**列**本身已经表达了顺序 ——
-        把"谁 → 谁"列出来足够，还省掉一整套测量与重排。
-      */}
-      {links.length > 0 ? (
-        <div className="task-flow-links">
-          {links.map((e, i) => (
-            <span key={i} className="task-flow-link">
-              {task.labels?.[e.source] ?? e.source} → {task.labels?.[e.target] ?? e.target}
-            </span>
+  if (mode === 'layered') {
+    return (
+      <div className="task-flow">
+        {legend}
+        <div className="task-flow-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(96px, 1fr))` }}>
+          {boxes.map((b) => (
+            <div
+              key={b.id}
+              className={`task-flow-node st-${b.status}`}
+              style={{ gridColumn: b.col + 1, borderLeftColor: FLOW_STATUS_META[b.status].color }}
+              title={`${b.label} · ${FLOW_STATUS_META[b.status].label}`}
+            >
+              <span className="task-flow-node-name">{b.label}</span>
+              <span className="task-flow-node-st" style={{ color: FLOW_STATUS_META[b.status].color }}>
+                {FLOW_STATUS_META[b.status].label}
+              </span>
+            </div>
           ))}
         </div>
-      ) : null}
-      {links.length === 0 && boxes.length > 1 ? (
-        <div className="task-mute">这次运行没有记录连线，只能按执行顺序排。</div>
-      ) : null}
+        {links.length > 0 ? (
+          <div className="task-flow-links">
+            {links.map((e, i) => (
+              <span key={i} className="task-flow-link">
+                {task.labels?.[e.source] ?? e.source} → {task.labels?.[e.target] ?? e.target}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        <div className="task-mute">
+          这次运行没有记录坐标，按执行层排列。
+        </div>
+      </div>
+    );
+  }
+
+  const pad = 24;
+  const vb = bounds!;
+  const svgW = vb.w + pad * 2;
+  const svgH = vb.h + pad * 2;
+  const off = (v: number, min: number) => v - min + pad;
+
+  return (
+    <div className="task-flow">
+      {legend}
+      <div className="task-flow-canvas" style={{ height: Math.min(svgH + 8, 460) }}>
+        <svg
+          className="task-flow-svg"
+          viewBox={`0 0 ${svgW} ${svgH}`}
+          width={svgW}
+          height={svgH}
+        >
+          {links.map((e, i) => {
+            const a = byId.get(e.source);
+            const b = byId.get(e.target);
+            if (!a || !b) return null;
+            const ends = linkEndsOf(
+              { x: off(a.x!, vb.x), y: off(a.y!, vb.y) },
+              { x: off(b.x!, vb.x), y: off(b.y!, vb.y) },
+            );
+            return (
+              <path
+                key={i}
+                d={linkPathOf(ends)}
+                className={`task-flow-edge st-${b.status}`}
+                fill="none"
+                markerEnd="url(#tf-arrow)"
+              />
+            );
+          })}
+          <defs>
+            <marker id="tf-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+            </marker>
+          </defs>
+        </svg>
+
+        {boxes.map((b) => {
+          const st = stateOf(b.id);
+          const meta = FLOW_STATUS_META[b.status];
+          return (
+            <div
+              key={b.id}
+              className={`task-flow-node abs st-${b.status}${shown === b.id ? ' is-active' : ''}`}
+              style={{
+                left: off(b.x!, vb.x),
+                top: off(b.y!, vb.y),
+                width: BOX_W,
+                minHeight: BOX_H,
+                borderLeftColor: meta.color,
+              }}
+              onMouseEnter={() => setHover(b.id)}
+              onMouseLeave={() => setHover((h) => (h === b.id ? null : h))}
+              onClick={() => setPinned((p) => (p === b.id ? null : b.id))}
+            >
+              <span className="task-flow-node-name">{b.label}</span>
+              <span className="task-flow-node-st" style={{ color: meta.color }}>
+                {meta.label}
+                {st?.startedAt ? ` · ${formatDuration(elapsedOf({ startedAt: st.startedAt, endedAt: st.endedAt } as TaskRecord, now))}` : ''}
+              </span>
+              {shown === b.id ? (
+                <div className="task-flow-pop" onClick={(e) => e.stopPropagation()}>
+                  <div className="task-flow-pop-head">
+                    <strong>{b.label}</strong>
+                    <span style={{ color: meta.color }}>{meta.label}</span>
+                    <span className="task-grow" />
+                    <button className="side-head-btn" onClick={() => setPinned(null)}>关闭</button>
+                  </div>
+                  {st?.error ? <pre className="task-pre err">{st.error}</pre> : null}
+                  {st?.output ? <pre className="task-pre">{st.output.slice(0, 400)}</pre> : null}
+                  {!st?.error && !st?.output ? (
+                    <div className="task-mute">
+                      {b.status === 'waiting' ? '上游还没到它，这一步没有输出。' : '这一步没有记录输出。'}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -254,14 +368,31 @@ export function TaskDetail({
         </button>
       </div>
 
-      {tab === 'flow' ? <TaskFlow task={task} /> : null}
+      {tab === 'flow' ? <TaskFlow task={task} now={now} /> : null}
 
+      {/*
+        列表按**层**分组，不按执行先后平铺。
+        平铺的话与流程图的列对不上 —— 图上看到的第二列，
+        在列表里可能散落在第 3、7、11 行，切过去就找不着了。
+      */}
       <div className="task-nodes" hidden={tab !== 'list'}>
         {task.order.length === 0 ? (
           <div className="task-mute">还没有节点开始执行。</div>
         ) : (
-          task.order.map((id) => (
-            <NodeRow key={id} n={task.nodes[id]} now={now} />
+          layersOf(task).map(([layer, ids]) => (
+            <div key={layer} className="task-layer-group">
+              <div className="task-layer-head">
+                第 {layer + 1} 层 · {ids.length} 个（同一层可以并行）
+              </div>
+              {ids.map((id) => (
+                <NodeRow
+                  key={id}
+                  n={task.nodes[id] ?? { id, status: 'idle' as const, output: '', error: '' }}
+                  now={now}
+                  label={task.labels?.[id]}
+                />
+              ))}
+            </div>
           ))
         )}
       </div>

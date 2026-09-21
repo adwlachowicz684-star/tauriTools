@@ -1608,6 +1608,30 @@ input.mono, textarea.mono {
 }
 
 /* 任务流程图 —— 默认视图，看"卡在哪儿" */
+/* 任务流程图（画布布局） */
+.task-flow-canvas { position: relative; overflow: auto; }
+.task-flow-svg { position: absolute; inset: 0; pointer-events: none; }
+.task-flow-edge { stroke: var(--af-line, #2a2f3a); stroke-width: 1.5; color: var(--af-line, #2a2f3a); }
+.task-flow-edge.st-done { stroke: #22c55e; color: #22c55e; }
+.task-flow-edge.st-running { stroke: #f59e0b; color: #f59e0b; }
+.task-flow-edge.st-blocked { stroke: #ef4444; color: #ef4444; opacity: 0.6; }
+.task-flow-node.abs { position: absolute; cursor: pointer; }
+.task-flow-node.is-active { z-index: 3; box-shadow: 0 0 0 1px var(--af-accent, #3b82f6); }
+.task-flow-pop {
+  position: absolute; left: 0; top: 100%; z-index: 5;
+  width: 280px; max-height: 220px; overflow: auto;
+  margin-top: 4px; padding: 8px;
+  background: var(--af-panel, #171a21);
+  border: 1px solid var(--af-line, #2a2f3a);
+  border-radius: var(--r-card, 8px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+.task-flow-pop-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: var(--fs-11, 11px); }
+.task-layer-group { margin-bottom: 8px; }
+.task-layer-head {
+  font-size: var(--fs-10, 10px); color: var(--af-mute);
+  padding: 2px 0; border-bottom: 1px solid var(--af-line, #2a2f3a);
+}
 .task-flow { padding: 2px 0 8px; }
 .task-flow-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
 .task-flow-legend-item {

@@ -168,3 +168,79 @@ test('没跑到的节点不算错误 —— 那是等待，不是阻断', () => 
   const t = task({ order: ['a', 'b'], edges: [{ source: 'a', target: 'b' }] });
   assert.deepEqual(errorNodesOf(t), []);
 });
+
+/* ------------------------------------------------------------------ */
+/* 画布布局                                                            */
+/* ------------------------------------------------------------------ */
+
+import { linkEndsOf, linkPathOf, layersOf } from '../engine/taskFlow';
+
+function posedTask(opts: {
+  order: string[];
+  edges?: { source: string; target: string }[];
+  positions?: Record<string, { x: number; y: number }>;
+}) {
+  const t = task({ order: opts.order, edges: opts.edges }) as ReturnType<typeof task> & {
+    positions?: Record<string, { x: number; y: number }>;
+  };
+  t.positions = opts.positions;
+  return t;
+}
+
+test('有坐标就按画布摆', () => {
+  const t = posedTask({
+    order: ['a', 'b'],
+    edges: [{ source: 'a', target: 'b' }],
+    positions: { a: { x: 0, y: 0 }, b: { x: 400, y: 120 } },
+  });
+  const r = layoutTaskFlow(t);
+  assert.equal(r.mode, 'canvas');
+  assert.equal(r.boxes.find((b) => b.id === 'b')?.x, 400);
+  assert.ok(r.bounds && r.bounds.w > 0, '要有包围盒给 SVG 定视口');
+});
+
+/**
+ * 只要**有一个**节点缺坐标就整张退回分层。
+ * 一半按坐标、一半按格子会画成两块互不相干的图。
+ */
+test('缺任何一个坐标都退回分层（不画到 0,0 叠成一团）', () => {
+  const t = posedTask({
+    order: ['a', 'b'],
+    positions: { a: { x: 10, y: 10 } },
+  });
+  assert.equal(layoutTaskFlow(t).mode, 'layered');
+});
+
+test('老记录没有坐标 → 分层，不崩', () => {
+  const t = task({ order: ['a', 'b'], edges: [{ source: 'a', target: 'b' }] });
+  const r = layoutTaskFlow(t);
+  assert.equal(r.mode, 'layered');
+  assert.equal(r.boxes.length, 2);
+});
+
+test('连线端点在卡片边缘，不是中心', () => {
+  const e = linkEndsOf({ x: 0, y: 0 }, { x: 400, y: 0 });
+  assert.ok(e.x1 > 0, '出口在右边缘而不是中心');
+  assert.ok(e.x2 < 400 + 200, '入口在左边缘');
+});
+
+test('往左连时端点也要跟着翻', () => {
+  const e = linkEndsOf({ x: 400, y: 0 }, { x: 0, y: 0 });
+  assert.equal(e.x1, 400, '出口换到左边');
+  assert.equal(e.x2, 200, '入口换到右边');
+});
+
+test('连线路径是贝塞尔（有控制点）', () => {
+  assert.match(linkPathOf(linkEndsOf({ x: 0, y: 0 }, { x: 400, y: 0 })), /^M .* C /);
+});
+
+test('列表按层分组，与流程图的列同源', () => {
+  const t = task({
+    order: ['a', 'b', 'c'],
+    edges: [{ source: 'a', target: 'b' }, { source: 'a', target: 'c' }],
+  });
+  const groups = layersOf(t);
+  assert.equal(groups.length, 2);
+  assert.deepEqual(groups[0][1], ['a']);
+  assert.equal(groups[1][1].length, 2);
+});
