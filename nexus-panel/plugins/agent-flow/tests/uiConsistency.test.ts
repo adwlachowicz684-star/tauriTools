@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { readSrc } from './srcScan';
 import path from 'node:path';
 
 /**
@@ -319,7 +320,7 @@ test('运行时地址与密钥优先取自凭据', () => {
  * 对方没有位移，挂上去就永远写不进去，表现为"看着嵌上了但没连"。
  */
 test('反向吸附时对方的 stackParent 不受"有没有位移"影响', () => {
-  const src = read(path.join(ROOT, 'App.tsx'));
+  const src = readSrc('App.tsx', 'hooks/useStackLayout.ts');
   assert.ok(
     /if \(isAttachChild && attachParent\) data\.stackParent = attachParent;/.test(src),
     'App.tsx 必须无条件给反向吸附的对方写 stackParent（不能包在 `at &&` 里）',

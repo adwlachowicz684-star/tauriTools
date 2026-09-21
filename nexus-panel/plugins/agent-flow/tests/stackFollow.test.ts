@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { readSrc } from './srcScan';
 import path from 'node:path';
 import { planStackDrop, snapPosOf } from '../engine/stack';
 
@@ -100,8 +101,7 @@ test('App 真的应用了 followers', () => {
    * 要剥注释：注释里为说明"少了它会怎样"会把字段名原样写出来，
    * 不剥的话把调用删了检查照样通过（假阴性）。
    */
-  const app = fs.readFileSync(path.join(ROOT, 'App.tsx'), 'utf-8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const app = readSrc('App.tsx', 'hooks/useStackLayout.ts');
   assert.match(
     app,
     /plan\.followers/,
