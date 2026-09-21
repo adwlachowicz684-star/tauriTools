@@ -30,6 +30,7 @@
  */
 
 import type { Trigger, TriggerKind, TriggerConfig } from '../types';
+import { triggerEntriesOf, entryEnabled, mergeConfig } from './triggerEntries';
 
 /* ------------------------------------------------------------------ */
 /* 类型                                                                */
@@ -118,23 +119,31 @@ export function collectGlobalTriggers(
       if (!isTriggerNode(d)) continue;
       if (!enabledOf(d)) continue; // 节点被禁用 → 完全不管
 
-      const kinds = triggerKindsOf(d);
-      if (kinds.length === 0) continue;
+      /*
+       * 按**触发条件卡片**展开，而不是按 kind 数组。
+       *
+       * id 用卡片 id 而不是 kind：同一个 kind 可以配多张卡
+       * （比如两个不同端口的调用触发），用 kind 拼 id 会让后一张覆盖前一张，
+       * 表现为"只生效了一个，另一个配了却不跑"。
+       */
+      const entries = triggerEntriesOf(d).filter(entryEnabled);
+      if (entries.length === 0) continue;
 
       const base = { ...defaultConfig, ...((d.config ?? {}) as Record<string, unknown>) } as TriggerConfig;
       const bg = backgroundOf(d);
 
-      for (const kind of kinds) {
+      for (const e of entries) {
         out.push({
-          id: `${c.id}::${n.id}:${kind}`,
+          id: `${c.id}::${n.id}:${e.id}`,
           nodeId: n.id,
           canvasId: c.id,
           canvasName: c.name,
           name: String(d.label ?? n.id ?? ''),
-          kind,
+          kind: e.kind,
           enabled: true,
           background: bg,
-          config: base,
+          // 每张卡自己的配置覆盖节点默认 —— 卡与卡之间不再互相影响
+          config: mergeConfig(base, e.config),
           input: String(d.input ?? ''),
           lastFiredAt: null,
           lastResult: null,
