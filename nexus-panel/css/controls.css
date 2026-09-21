@@ -1043,11 +1043,18 @@ input[type='range']:disabled {
    背景图预览槽位（设置 → 主题 → 背景图）
    ============================================================ */
 
-/* 预览框：有图时铺满展示，没图时显示"主题自带" */
+/* 预览框：有图时铺满展示，没图时显示"主题自带"
+   200×112（原 120×68）—— 两处同时放大，理由各不相同：
+     · 有图：120px 宽铺一张壁纸，渐变的层次全糊在一起，看不出效果；
+       放到 200px 才分得清是"雾"还是"沙丘"。
+     · 占位：要在同一个框里放下「图标一行 + 说明一行」，
+       原先的高度只够横排，图标只能贴左边。
+
+   两态刻意保持**同尺寸**：切换主题时框不跳，只有内容换。 */
 .nx-bgslot {
   flex: none;
-  width: 120px;
-  height: 68px;
+  width: 200px;
+  height: 112px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1065,12 +1072,28 @@ input[type='range']:disabled {
    什么都不显示的话，用户会以为是加载失败或程序坏了；
    画个"这里本来能放图、但这套主题没有"，一眼就懂。 */
 .nx-bgslot-off {
-  gap: 6px;
+  /* 纵向排：图标在上居中，说明在下面**独占一整行**。
+     此前是横排（图标 + 文字，gap 6px），在 120px 宽的框里塞 18px 图标
+     加 8 个汉字，图标被顶到左边、文字只能挤在右侧还常折行 ——
+     看着像"图标和一句没对齐的话"，不像一个完整的状态说明。 */
+  flex-direction: column;
+  gap: var(--sp-3, 6px);
+  padding: 8px;
   /* 用 --divider 而不是 --border —— 后者是**风格开关**，
      新拟态下它是 transparent，画出来等于没有（这个坑踩过三次）。 */
   border: 1px dashed var(--divider, var(--text-mute));
   background: transparent;
   box-shadow: none;
+}
+
+/* 占位态的说明文字：占满整行并居中，与上方的图标形成上下呼应。
+   必须给 width —— 不给的话 flex 列布局下它会按内容宽度居中，
+   结果文字一长就显得"没对齐"，看不出是独立的一行。 */
+.nx-bgslot-off-text {
+  width: 100%;
+  text-align: center;
+  font-size: var(--fs-note, 11px);
+  line-height: 1.5;
 }
 
 /* ============================================================
@@ -1115,9 +1138,11 @@ input[type='range']:disabled {
 
 /* 禁止图标（带斜杠的圆环）。
    显式指定 emoji 字体：系统默认字体可能把它渲染成空白方框，
-   那还不如不画 —— 没了图标，占位框就只剩一句费解的文字。 */
+   那还不如不画 —— 没了图标，占位框就只剩一句费解的文字。
+   28px：占位框放大后图标是**主视觉**，18px 在大框里显得孤零零；
+   同时它是 emoji，放大不会变模糊（矢量字形），可以放心加大。 */
 .nx-bgslot-ban {
-  font-size: 18px;
+  font-size: 28px;
   line-height: 1;
   font-family: 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
   opacity: .85;
