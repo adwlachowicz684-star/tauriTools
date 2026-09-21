@@ -122,3 +122,49 @@ test('汇总各状态计数', () => {
   assert.equal(sum.waiting, 1);
   assert.equal(sum.blocked, 0);
 });
+
+/* ------------------------------------------------------------------ */
+/* 定位错误                                                            */
+/* ------------------------------------------------------------------ */
+
+import { errorNodesOf } from '../engine/taskFlow';
+
+test('定位列表按执行顺序，不是按类型', () => {
+  const t = task({
+    order: ['a', 'b', 'c'],
+    edges: [{ source: 'a', target: 'b' }, { source: 'b', target: 'c' }],
+    nodes: { a: { status: 'failed' } },
+  });
+  assert.deepEqual(errorNodesOf(t), ['a', 'b', 'c'], '失败的自己也该能被定位');
+});
+
+test('被上游掐断的 skipped 也要能被定位 —— 那才是根因附近', () => {
+  const t = task({
+    order: ['a', 'b'],
+    edges: [{ source: 'a', target: 'b' }],
+    nodes: { a: { status: 'failed' }, b: { status: 'skipped' } },
+  });
+  assert.deepEqual(errorNodesOf(t), ['a', 'b']);
+});
+
+test('用户主动关掉的节点不算错误 —— 不该被定位到', () => {
+  const t = task({
+    order: ['a', 'b'],
+    edges: [{ source: 'a', target: 'b' }],
+    nodes: { a: { status: 'success' }, b: { status: 'skipped' } },
+  });
+  assert.deepEqual(errorNodesOf(t), []);
+});
+
+test('没有错误时是空列表（按钮据此置灰）', () => {
+  const t = task({
+    order: ['a'],
+    nodes: { a: { status: 'success' } },
+  });
+  assert.deepEqual(errorNodesOf(t), []);
+});
+
+test('没跑到的节点不算错误 —— 那是等待，不是阻断', () => {
+  const t = task({ order: ['a', 'b'], edges: [{ source: 'a', target: 'b' }] });
+  assert.deepEqual(errorNodesOf(t), []);
+});

@@ -70,13 +70,30 @@ export function flowStatusOf(
   }
 }
 
-function upstreamBroken(task: TaskRecord, id: string): boolean {
+function upstreamBroken(task: TaskRecord, id: string, seen: Set<string> = new Set()): boolean {
+  /*
+   * 成环时不能无限递归 —— 任务记录里的边来自运行时图，
+   * 循环节点会把它自己的出口边也记进来。
+   */
+  if (seen.has(id)) return false;
+  seen.add(id);
+
   for (const e of task.edges ?? []) {
     if (e.target !== id) continue;
     const up = task.nodes[e.source];
-    if (!up) continue;
+    /*
+     * 上游自己也没出现过 —— 必须继续往上追。
+     *
+     * 在这里 `continue` 掉的话，链会在第一个"没跑到"的节点处断掉：
+     * a 失败 → b 从未出现 → c 判成"等待"，
+     * 而 c 其实早就被掐断了，根本不会跑。
+     */
+    if (!up) {
+      if (upstreamBroken(task, e.source, seen)) return true;
+      continue;
+    }
     if (up.status === 'failed') return true;
-    if (up.status === 'skipped' && upstreamBroken(task, e.source)) return true;
+    if (up.status === 'skipped' && upstreamBroken(task, e.source, seen)) return true;
   }
   return false;
 }
@@ -156,4 +173,27 @@ export function flowSummary(boxes: FlowNodeBox[]): Record<FlowStatus, number> {
   const out: Record<FlowStatus, number> = { done: 0, running: 0, waiting: 0, blocked: 0 };
   for (const b of boxes) out[b.status] += 1;
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* 定位错误                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 这次运行里"出了问题"的节点，按**执行顺序**排列。
+ *
+ * ================= 为什么包含 skipped ====================
+ *
+ * 被跳过的节点几乎都是上游失败导致的，而那往往才是根因位置。
+ * 只看 failed 的话，会被带到下游那个"什么都没干"的节点上 ——
+ * 真正的断点在它前面。
+ *
+ * ================= 为什么按 order 而不是按类型 ====================
+ *
+ * 按类型分组（先所有失败、再所有跳过）会让跳转顺序
+ * 与图上从左到右的顺序对不上：按按钮跳，图上的高亮却乱跳。
+ */
+export function errorNodesOf(task: TaskRecord): string[] {
+  const ids = task.order.length > 0 ? task.order : Object.keys(task.nodes ?? {});
+  return ids.filter((id) => flowStatusOf(task, id) === 'blocked');
 }
