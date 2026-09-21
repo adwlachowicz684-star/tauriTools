@@ -1513,6 +1513,31 @@
  * 做成按钮：光标与键盘可达都要有反馈，否则用户不知道能点。
  * 下划线用虚线（区别于普通链接），hover 才转实线。
  */
+/* ---------------- 备份实际落点（#29）----------------
+ * 只读：它由规则算出来，做成输入框会让人以为能改。
+ * 长路径靠 title 悬停 + 可选中复制，不换行（换行会把面板撑得很长）。
+ */
+.fpx-targets {
+  margin-top: 4px;
+  border: 1px solid var(--surface-sunk);
+  border-radius: var(--r-sm, 4px);
+  padding: 4px 6px;
+}
+.fpx-target-row {
+  display: flex; gap: 6px; align-items: baseline;
+  font-size: var(--fs-11, 11px);
+  line-height: 1.7;
+}
+.fpx-target-label {
+  flex: none; color: var(--text-mute); min-width: 3.5em;
+}
+.fpx-target-path {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  user-select: text;
+}
+
 .fpx-link-name.edit {
   background: none; border: 0; padding: 0;
   font: inherit; color: inherit;

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Api } from '../api';
 import { errText } from '../api';
-import type { BackupAutoStatus, ChainClient, FpxConfig, McpToolRow } from '../types';
+import type { BackupAutoStatus, BackupTargets, ChainClient, FpxConfig, McpToolRow } from '../types';
 import { ChainActionsPanel } from './ChainActionsPanel';
 import { summarizeDetection } from '../utils/clientDetect';
 import { ChainClientsDialog } from './ChainClientsDialog';
@@ -181,6 +181,15 @@ export function SettingsBody({
   const [hotkeys, setHotkeys] = useState<Record<string, string> | null>(config.hotkeys ?? null);
 
   const [version, setVersion] = useState('');
+
+  /* #29 实际生效的备份落点。
+     **必须问后端**：留空时会退到数据目录下的 backup/ 并再按类型加一层子目录，
+     这一层用户猜不到；前端若自己按规则推，改了后端规则就会漂移。 */
+  const [targets, setTargets] = useState<BackupTargets | null>(null);
+  useEffect(() => {
+    // 外壳命令可能不存在（旧版本 Rust 未编译进来），静默失败即可
+    api.backupTargets().then(setTargets).catch(() => setTargets(null));
+  }, [api]);
 
   useEffect(() => {
     // 外壳命令可能不存在（旧版本 Rust 未编译进来），静默失败即可
@@ -685,6 +694,24 @@ export function SettingsBody({
           <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
             打开的就是备份实际写入的目录。还没备份过时目录可能不存在 —— 这里不自动创建，
             免得看到空目录反而困惑。
+          </div>
+          {/* #29 把**实际生效**的两条路径显示出来。
+              上面填的是规则，这里显示规则算出来的结果 ——
+              留空时它会退到数据目录下的 backup/ 并再加一层类型子目录，
+              那一层光看规则根本看不出来。 */}
+          <div className="fpx-targets">
+            <div className="fpx-target-row">
+              <span className="fpx-target-label">项目</span>
+              <span className="fpx-target-path" title={targets?.project}>{targets?.project ?? '（未取到）'}</span>
+            </div>
+            <div className="fpx-target-row">
+              <span className="fpx-target-label">项目组</span>
+              <span className="fpx-target-path" title={targets?.group}>{targets?.group ?? '（未取到）'}</span>
+            </div>
+          </div>
+          {/* 取不到时明确说"未取到" —— 留空会被当成加载失败 */}
+          <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+            以上为当前规则下的实际落点，保存后才会变。数据目录：{targets?.dataDir ?? '（未取到）'}
           </div>
         </div>
       </div>

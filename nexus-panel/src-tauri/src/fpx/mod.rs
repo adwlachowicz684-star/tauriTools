@@ -1410,6 +1410,29 @@ pub fn fpx_open_backup_dir(
     sys::open_path(&target.to_string_lossy(), "dir", "")
 }
 
+/// #29 查询**实际生效**的备份目录（两类各一）。
+///
+/// 设置里只显示用户填的规则，看不出最终落在哪儿 ——
+/// 而 backupDir 留空时会退到数据目录下的 backup/ 并**再按类型加一层子目录**，
+/// 这一层用户根本猜不到。出问题时（备份没找到、要手动清理）
+/// 需要的正是那个真实路径。
+///
+/// 与备份时用的是同一个 `resolve_dir`，保证显示的与实际写入的是同一个，
+/// 前端不要自己按规则推 —— 推出来的会和后端漂移。
+#[tauri::command]
+pub fn fpx_backup_targets(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+) -> Result<BackupTargets, String> {
+    let dir = store::data_dir(&app, &state)?;
+    let cfg = store::load_config(&dir);
+    Ok(BackupTargets {
+        project: backup::resolve_dir(&cfg, &dir, "project").to_string_lossy().to_string(),
+        group: backup::resolve_dir(&cfg, &dir, "group").to_string_lossy().to_string(),
+        data_dir: dir.to_string_lossy().to_string(),
+    })
+}
+
 /* ---------------------------- 备份 ---------------------------- */
 
 /// 一键备份项目 / 项目组到备份目录。

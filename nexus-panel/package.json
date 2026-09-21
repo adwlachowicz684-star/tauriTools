@@ -107,7 +107,8 @@
     "test:pg-link-row-edit": "node plugins/project-group/link-row-edit-test.mjs",
     "test:pg-backup-interval": "node plugins/project-group/backup-interval-test.mjs",
     "test:pg-drop-springback": "node plugins/project-group/drop-springback-test.mjs",
-    "test:pg-mcp-exit": "node plugins/project-group/mcp-exit-test.mjs"
+    "test:pg-mcp-exit": "node plugins/project-group/mcp-exit-test.mjs",
+    "test:pg-backup-targets": "node plugins/project-group/backup-targets-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

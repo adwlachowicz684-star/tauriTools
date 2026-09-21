@@ -359,6 +359,13 @@ export interface McpToolRow {
 
 /* ---------------------------- 自动备份 ---------------------------- */
 
+/** #29 实际生效的备份目录（后端按 resolve_dir 算好，前端不要自己推） */
+export interface BackupTargets {
+  project: string;
+  group: string;
+  dataDir: string;
+}
+
 export interface BackupAutoStatus {
   running: boolean;
   minutes: number;

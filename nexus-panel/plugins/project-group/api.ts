@@ -1,6 +1,6 @@
 import type { PluginContext } from '../../js/plugin-sdk.js';
 import type {
-  BackupAutoStatus, BackupResult, Bootstrap, CaptureResult, CardKind, ChainClient,
+  BackupAutoStatus, BackupResult, BackupTargets, Bootstrap, CaptureResult, CardKind, ChainClient,
   ChainAction, ChainSendResult, ContentItem, CustomChainClient, DirEntryLite,
   ClearResult, EditorCandidate, FpxConfig, McpToolRow, MoveAcrossResult,
   ContentRenameResult, RenameResult, Snapshot, WatchEvent,
@@ -191,6 +191,8 @@ export function makeApi(ctx: PluginContext) {
 
     /** 自动备份状态：是否运行中、间隔、上次执行时间 */
     backupAutoStatus: () => call<BackupAutoStatus>('fpx_backup_auto_status'),
+    /** #29 实际生效的备份落点。前端自己按规则推会和后端漂移，必须问后端 */
+    backupTargets: () => call<BackupTargets>('fpx_backup_targets'),
 
     /** 按 config.backupAutoMinutes 启停定时备份，返回是否运行中 */
     backupAutoSync: () => call<boolean>('fpx_backup_auto_sync'),

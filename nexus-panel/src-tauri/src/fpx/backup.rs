@@ -47,6 +47,18 @@ pub struct AutoStatus {
     pub last_run: Option<String>,
 }
 
+/// #29 实际生效的备份目录（两类各一 + 数据目录）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupTargets {
+    /// 项目备份落点
+    pub project: String,
+    /// 项目组备份落点
+    pub group: String,
+    /// 数据目录（留空时从这里退出的 backup/，显示出来好对照）
+    pub data_dir: String,
+}
+
 /// 启动自动备份线程；已在运行则忽略。间隔为 0 时不启动（视为关闭）。
 pub fn start_auto(app: AppHandle) -> bool {
     // 间隔可能尚未设置，先看一眼配置，为 0 就别起线程
