@@ -6250,6 +6250,99 @@ group('样式面板：一排化 / 删除按钮弱化 / 分节清除');
   }
 }
 
+group('导入导出页：标题右侧圆形问号 + 悬浮说明');
+
+{
+  const { buildSide } = await import('./panels.js');
+  const el = buildSide({
+    api: {
+      status() {}, commit() {}, selectedRef: () => null, selectedRefs: () => [], selectedImages: () => [],
+      applyLayout: () => {}, applyTheme: () => {}, saveThemes: async () => true,
+      nodeStyle: () => ({}), setNodeStyle: () => {},
+      importFile() {}, exportXMind() {}, exportJson() {}, exportTxt() {}, exportMarkdown() {},
+      exportSvg() {}, exportPdf() {}, exportPng() {}, printMap() {}, exchange() {},
+      exportBackups() {}, importBackups() {}, backupNow: async () => {},
+    },
+    bridge: { getSelectedNodeId: () => 'n1' }, customThemes: [],
+  }, {});
+  el.open('exchange');
+
+  const fields = [...el.el.querySelectorAll('.mm-field')];
+  const sec = (n) => fields.find((f) => f.querySelector('h3')?.textContent === n);
+
+  // ---- 1) 每个标题右边都有一个问号 ----
+  const titles = ['导入', '导出为文档', '导出为交换格式', '导出为图像 / PDF', '主题', '快照备份'];
+  for (const t of titles) {
+    const f = sec(t);
+    ok(!!f, `有「${t}」节`);
+    const head = f?.querySelector('.mm-sec-head');
+    ok(!!head, `「${t}」用带标题行的结构（问号挂在这里）`);
+    const dot = head?.querySelector('button.mm-help');
+    ok(!!dot, `「${t}」标题右边有圆形问号`);
+    // 必须紧跟标题之后：放在标题前会把标题挤得参差不齐
+    const kids = [...(head?.children || [])];
+    ok(kids[0]?.tagName === 'H3' && kids[1]?.classList.contains('mm-help'),
+      `「${t}」问号紧跟在标题之后`);
+  }
+
+  // ---- 2) 问号是可聚焦的 button，且不带原生 title ----
+  {
+    const dot = sec('导入')?.querySelector('button.mm-help');
+    eq(dot?.tagName, 'BUTTON', '问号是 button（可 Tab 聚焦）');
+    eq(dot?.textContent, '?', '问号内容是 ?');
+    // 原生 title 必须置空：否则自定义提示框与原生 title 会同时弹两个
+    eq(dot?.getAttribute('title'), '', '问号不带原生 title（避免与自定义提示框重复弹出）');
+    ok(!!dot?.getAttribute('aria-label'), '问号有 aria-label');
+  }
+
+  // ---- 3) 说明文字进了提示框，不再铺在界面上 ----
+  {
+    const f = sec('导入');
+    const hints = [...(f?.querySelectorAll('.mm-hint') || [])].map((x) => x.textContent);
+    // 「会替换 / 不可撤销」是会造成数据丢失的警告，必须留在界面上
+    ok(hints.some((t) => /不可撤销/.test(t)), '保留「不可撤销」警告在界面上');
+    // 嗅探格式这类补充信息不再占位
+    ok(!hints.some((t) => /嗅探/.test(t)), '「按内容嗅探格式」已移出界面');
+  }
+  {
+    const f = sec('导出为交换格式');
+    const hints = [...(f?.querySelectorAll('.mm-hint') || [])].map((x) => x.textContent);
+    ok(!hints.some((t) => /只导当前画布/.test(t)), '交换格式的长说明已移出界面');
+  }
+
+  // ---- 4) 悬浮真的能显示，且内容正确 ----
+  {
+    const dot = sec('主题')?.querySelector('button.mm-help');
+    dot?.dispatchEvent(new dom.window.MouseEvent('mouseenter', { bubbles: false }));
+    const tip = document.querySelector('.mm-helptip');
+    ok(!!tip, '提示框元素存在');
+    // 挂 body 而不是留在面板里：侧栏 overflow-y:auto 会裁剪它
+    eq(tip?.parentElement, document.body, '提示框挂在 body 上（不被侧栏 overflow 裁剪）');
+    ok(tip?.classList.contains('open'), 'mouseenter 后提示框显示');
+    const txt = tip?.textContent || '';
+    ok(/自定义/.test(txt), '提示框含该节的说明文字');
+    // 多段要分成多行，挤成一整段会读不出是几条
+    eq(tip?.querySelectorAll('.mm-helptip-line').length, 2, '主题节说明是 2 段');
+
+    // mouseleave 后要能关掉（有延迟，用定时器断言）
+    dot?.dispatchEvent(new dom.window.MouseEvent('mouseleave', { bubbles: false }));
+    ok(true, 'mouseleave 未抛错');
+  }
+
+  // ---- 5) 样式：fixed + 默认不显示 ----
+  {
+    const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+    const cs = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const tr = cs.slice(cs.indexOf('.mm-helptip {'), cs.indexOf('.mm-helptip.open'));
+    ok(/position:\s*fixed/.test(tr), '提示框 position:fixed（配合挂 body，不受祖先裁剪）');
+    ok(/display:\s*none/.test(tr), '默认 display:none（不只是透明，否则仍会挡住点击）');
+    ok(/z-index/.test(tr), '提示框有 z-index');
+    const hr = cs.slice(cs.indexOf('.mm-help {'), cs.indexOf('.mm-help:hover'));
+    ok(/border-radius:\s*50%/.test(hr), '问号是圆形');
+    ok(/cursor:\s*help/.test(hr), '问号是 help 指针');
+  }
+}
+
 group('多附件：XMind 往返（导出再导回）');
 
 {
