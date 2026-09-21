@@ -119,7 +119,14 @@ export function TabManagerDialog({
                   onBlur={() => void commitEdit()}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') { e.preventDefault(); void commitEdit(); }
-                    if (e.key === 'Escape') { e.preventDefault(); setEditing(null); }
+                    if (e.key === 'Escape') {
+  e.preventDefault();
+  /* #250 必须 stopPropagation：否则这次 Esc 会继续冒到 window，
+     外层弹窗那层也会响应 —— 用户只想退出改名，结果整个弹窗关了。
+     输入框在弹窗**内部**，它先收到事件，拦住即可。 */
+  e.stopPropagation();
+  setEditing(null);
+}
                   }}
                 />
               ) : (

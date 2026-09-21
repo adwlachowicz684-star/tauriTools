@@ -288,6 +288,8 @@ export function LinkAgentBody({
                     });
                     clearRenameErr(p.original);
                     e.currentTarget.blur();
+                    /* #250 同上：只退出这次编辑，别让事件冒到上面的浮层 */
+                    e.stopPropagation();
                   }
                 }}
               />

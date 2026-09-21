@@ -267,7 +267,15 @@ export function TabBar({
               onBlur={() => endEdit(true)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') endEdit(true);
-                if (e.key === 'Escape') endEdit(false);
+                if (e.key === 'Escape') {
+  /*
+   * #250 必须 stopPropagation：这次 Esc 只想退出改名，
+   * 若继续冒到 window，上面压着的浮层那层也会响应 ——
+   * 于是"退一步"变成"连底下一层一起退"。
+   */
+  e.stopPropagation();
+  endEdit(false);
+}
               }}
             />
           ) : (

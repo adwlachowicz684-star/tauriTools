@@ -24,6 +24,46 @@ import { clampPanelHeight } from '../utils/layout';
  */
 export const MenuLayerContext = createContext<HTMLElement | null>(null);
 
+/* ------------------------- Esc 层级栈（#250）------------------------- */
+/*
+ * 浮层叠着开时（弹窗里再开弹窗、编辑态上压着菜单），按一次 Esc
+ * **只关最上面那一层**。
+ *
+ * 此前每层各自 `window.addEventListener('keydown', ...)`，
+ * 于是按一次 Esc 所有层一起关 —— 用户只想退出当前这一步，
+ * 结果连底下正在填的表单一起没了。这类"退一步变成退到底"没有报错，
+ * 只是让人不敢再按 Esc，而 Esc 恰恰是最常用的退出键。
+ *
+ * 注意 `e.stopPropagation()` 挡不住：多个监听器挂在**同一个** window 上，
+ * 同目标的监听器互不影响（那要用 stopImmediatePropagation，
+ * 而它会连不相干的监听器一起挡掉）。所以只能靠栈判"谁在最上面"。
+ */
+const escStack: symbol[] = [];
+
+/**
+ * 注册一个 Esc 层；只有**栈顶**那层的回调会执行。
+ * 回调每次渲染刷新，避免闭包读到过期的 state（例如"正在确认关闭"这个标志）。
+ */
+export function useEscapeLayer(handler: () => void) {
+  const h = useRef(handler);
+  h.current = handler;
+  useEffect(() => {
+    const token = Symbol('esc-layer');
+    escStack.push(token);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (escStack[escStack.length - 1] !== token) return;   // 不是最上层就不处理
+      h.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      const i = escStack.indexOf(token);
+      if (i >= 0) escStack.splice(i, 1);
+    };
+  }, []);
+}
+
 /**
  * 居中弹窗：点遮罩或右上角 ✕ 关闭。
  *
@@ -74,14 +114,12 @@ export function Modal({
   const shownH = dragH ?? height ?? null;
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.stopPropagation();
-      if (confirming) setConfirming(false);
-      else ask();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+  /* #250 走 Esc 层级栈：叠着开时只有最上面那层响应。
+     且"有未保存改动"时先撤确认、再关 —— 一次 Esc 退一步。 */
+  useEscapeLayer(() => {
+    if (confirming) setConfirming(false);
+    else ask();
+  });
   }, [ask, confirming]);
 
   return (
@@ -166,14 +204,12 @@ export function ContextMenu({
     const close = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) onClose();
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('mousedown', close);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('mousedown', close);
-      window.removeEventListener('keydown', onKey);
-    };
+    return () => { window.removeEventListener('mousedown', close); };
   }, [onClose]);
+
+  /* #250 同上：右键菜单也占一层，Esc 只关最上面那个 */
+  useEscapeLayer(onClose);
 
   useEffect(() => {
     const el = ref.current;
@@ -221,13 +257,19 @@ export function ConfirmDialog({
   onConfirm: () => void;
   onClose: () => void;
 }) {
+  /*
+   * 回车：和下面那个「确定」按钮走同一条路径 —— 确认 + 关闭。
+   * 只调 onConfirm 的话弹窗不会消失，用户再点一次按钮就重复执行了
+   * （对建链这类操作意味着连着建两次）。
+   *
+   * Esc **不在这里处理**：本组件渲染的就是 Modal，Esc 交给 Modal 那层
+   * （#250）。这里再监听一次的话，同一个 Esc 会被两个层各处理一遍。
+   */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-      // 回车要和下面那个「确定」按钮走同一条路径：确认 + 关闭。
-      // 只调 onConfirm 的话弹窗不会消失，用户再点一次按钮就重复执行了
-      // （对建链这类操作意味着连着建两次）。
-      if (e.key === 'Enter') { onConfirm(); onClose(); }
+      if (e.key !== 'Enter') return;
+      onConfirm();
+      onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

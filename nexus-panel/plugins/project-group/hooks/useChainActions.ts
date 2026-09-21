@@ -32,9 +32,14 @@ export interface UseChainActionsArgs {
   } | null) => void;
 }
 
+/** #207 同一目标 + 同一动作的重复触发间隔（毫秒） */
+const SEND_DEBOUNCE_MS = 400;
+
 export function useChainActions({
   ctx, s, chainActions, bootReady, setPendingSend,
 }: UseChainActionsArgs) {
+  /** #207 上一次真正发出去的时间戳，键为「动作 id + 目标路径」 */
+  const lastSentAt = useRef<Map<string, number>>(new Map());
 
   /** 事件名：动作 id → 事件名。两处必须一致，否则注册了却收不到。 */
   const shortcutEvent = (id: string) => `fpx:chain:${id}`;
@@ -96,8 +101,28 @@ export function useChainActions({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bootReady, chainActions, ctx]);
 
-  /** 直接按动作发送（右键菜单用），失败记日志 + toast */
+  /**
+   * 直接按动作发送（右键菜单用），失败记日志 + toast
+   *
+   * #207 同一「动作 + 目标」400ms 内的重复触发会被丢弃。
+   * 为什么要它：
+   *   · 右键菜单连点、快捷键按住不放都会连发 —— 一次发送就可能拉起
+   *     一个外部 AI 进程，连发几个就是几个进程一起跑；
+   *   · 更常见的是双击：菜单项点两下在界面上毫无区别（没有计数反馈），
+   *     用户不知道自己发重了，事后看到两份结果只会以为软件有问题。
+   *
+   * 只按「动作 + 目标」去重，不按动作：对 A 发完立刻对 B 发是正常操作，
+   * 不能拦。
+   */
   const sendAction = async (actionId: string, kind: CardKind, path: string) => {
+    const key = `${actionId}\u0000${kind}\u0000${path}`;
+    const now = Date.now();
+    const prev = lastSentAt.current.get(key);
+    if (prev !== undefined && now - prev < SEND_DEBOUNCE_MS) {
+      /* 丢弃而不是排队：用户想的是"发一次"，不是"待会儿再发一次" */
+      return;
+    }
+    lastSentAt.current.set(key, now);
     try {
       const r = await s.api.chainSendAction(actionId, kind, path);
       s.pushLog(r.message, !r.ok);
@@ -106,6 +131,10 @@ export function useChainActions({
       const msg = `发送失败：${String((e as Error)?.message ?? e)}`;
       s.pushLog(msg, true);
       ctx.toast(msg, 'err');
+      /* 失败要**清掉**时间戳：用户看到失败后多半立刻重试，
+         若被防抖拦掉，表现为"再点一次什么都没发生" ——
+         那比连发更让人困惑（他会以为重试没生效、继续点，最后干脆放弃）。 */
+      lastSentAt.current.delete(key);
     }
   };
 

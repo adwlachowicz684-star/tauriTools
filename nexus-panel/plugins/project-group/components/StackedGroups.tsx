@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CardInfo } from '../types';
 import { CardGrid, type DragPayload } from './CardGrid';
 import { BOX_DRAG_MIME, parseBoxDrag } from '../utils/dragSort';
@@ -47,6 +47,14 @@ export function StackedGroups({
   /** 分类框重排：拖起的分类索引、当前落点索引（-1 为无） */
   const [dragFrom, setDragFrom] = useState(-1);
   const [overIdx, setOverIdx] = useState(-1);
+  /** #251 待执行的"单击折叠"，见下方 clickTimer 的说明 */
+  const clickTimer = useRef<number | null>(null);
+  /* 卸载时必须清掉待执行的折叠：定时器晚于组件卸载触发会去 setState，
+     表现为"切走之后回来，某个分类自己折叠了"，且 React 会告警。
+     这类延迟执行的兜底最容易被漏 —— 漏了不报错，只是偶发地乱动一下。 */
+  useEffect(() => () => {
+    if (clickTimer.current !== null) { clearTimeout(clickTimer.current); clickTimer.current = null; }
+  }, []);
 
   /**
    * 跳转后把这张卡滚进视野（#19，原版 BringIntoView）。
@@ -169,15 +177,44 @@ export function StackedGroups({
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') e.currentTarget.blur();
-                    if (e.key === 'Escape') { setDraft(t.name); setEditing(-1); }
+                    if (e.key === 'Escape') {
+  /*
+   * #250 必须 stopPropagation：这次 Esc 只想退出改名，
+   * 若继续冒到 window，上面压着的浮层那层也会响应 ——
+   * 于是"退一步"变成"连底下一层一起退"。
+   */
+  e.stopPropagation();
+  setDraft(t.name);
+  setEditing(-1);
+}
                   }}
                 />
               ) : (
                 <button
                   className="fpx-stack-name"
-                  title="双击重命名"
-                  onClick={() => toggle(i)}
-                  onDoubleClick={() => { setDraft(t.name); setEditing(i); }}
+                  title="单击折叠 / 双击重命名"
+                  /* #251 单击折叠要**延后**执行，好让双击有机会取消它。
+                     不延后的话，双击改名会先折叠再展开 —— 两次 toggle
+                     净效果为零，但界面明显闪一下；折叠着的分类更是
+                     会展开又折回去，看着像界面在乱动。
+                     代价是单击折叠慢 220ms，比闪烁好接受得多。 */
+                  onClick={() => {
+                    if (clickTimer.current !== null) clearTimeout(clickTimer.current);
+                    const idx = i;
+                    clickTimer.current = window.setTimeout(() => {
+                      clickTimer.current = null;
+                      toggle(idx);
+                    }, 220);
+                  }}
+                  onDoubleClick={() => {
+                    /* 双击：取消待执行的折叠，只进改名 */
+                    if (clickTimer.current !== null) {
+                      clearTimeout(clickTimer.current);
+                      clickTimer.current = null;
+                    }
+                    setDraft(t.name);
+                    setEditing(i);
+                  }}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     setMenu({ i, x: e.clientX, y: e.clientY });
