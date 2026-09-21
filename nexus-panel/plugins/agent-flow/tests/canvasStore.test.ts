@@ -462,3 +462,26 @@ test('清理护栏: 脱敏依然生效（密钥不进存档、不随导出走）
   assert.equal(dumped.includes('sk-must-not-persist'), false,
     '这是移除保险箱后**唯一**还在防泄漏的机制，绝不能退化');
 });
+
+/*
+ * 守卫：任务/历史列表不得再引用未定义的 active / setSel。
+ *
+ * 这两个名字是"选中态提到 App 持有"那次留下的：
+ * 组件里根本没有它们，每行渲染都会求值 → ReferenceError → **整个列表白屏**。
+ *
+ * 这类问题测试跑不出来（列表组件不进单测），只能扫源码。
+ * 匹配 `active &&` 而不是单独的 active —— 后者会命中 activeId / activeCanvas 等合法名字。
+ */
+test('守卫: 列表组件里不再有未定义的 active / setSel', () => {
+  const root = pluginRoot();
+  const files = [
+    join(root, 'components', 'TaskPanel.tsx'),
+    join(root, 'components', 'HistoryPanel.tsx'),
+  ];
+  for (const f of files) {
+    if (!existsSync(f)) continue;
+    const src = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    assert.ok(!/\bsetSel\b/.test(src), `${f} 里还有 setSel`);
+    assert.ok(!/\bactive\s*&&/.test(src), `${f} 里还有 active &&`);
+  }
+});
