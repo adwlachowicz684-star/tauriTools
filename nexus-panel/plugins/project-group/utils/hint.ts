@@ -8,7 +8,7 @@
  * 用户按按钮上的提示去按却没反应。
  */
 
-import { effectiveCombo, formatCombo } from './hotkeys';
+import { effectiveCombo, formatCombo, isHotkeyId } from './hotkeys';
 
 /** 工具栏按钮 → 快捷键 id 的映射。只有真有键位的才登记 */
 export const TOOLBAR_HINT_IDS: Record<string, string> = {
@@ -29,7 +29,8 @@ export function comboHintOf(
   overrides: Record<string, string> | null | undefined,
   isMac: boolean,
 ): string {
-  const c = effectiveCombo(actionId, overrides ?? null);
+  /* 收窄而不是断言：拼错的 id 静默取不到键位，界面上只是"没提示" */
+  const c = isHotkeyId(actionId) ? effectiveCombo(actionId, overrides ?? null) : '';
   return c ? formatCombo(c, isMac) : '';
 }
 
@@ -47,7 +48,7 @@ export function shouldShowHint(
   overrides: Record<string, string> | null | undefined,
 ): boolean {
   if (!enabled || !actionId) return false;
-  return !!effectiveCombo(actionId, overrides ?? null);
+  return isHotkeyId(actionId) ? !!effectiveCombo(actionId, overrides ?? null) : false;
 }
 
 /**

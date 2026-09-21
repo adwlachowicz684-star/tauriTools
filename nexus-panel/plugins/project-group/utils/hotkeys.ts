@@ -83,6 +83,22 @@ export function hotkeysByGroup(): { group: HotkeyGroup; items: HotkeyDef[] }[] {
 export const HOTKEY_BY_ID: Record<string, HotkeyDef> =
   Object.fromEntries(HOTKEYS.map((h) => [h.id, h]));
 
+/**
+ * 把任意字符串收窄成 `HotkeyId`（类型守卫）。
+ *
+ * 为什么要它：动作 id 可能来自配置 / 外部数据，是 `string`；
+ * 直接传给 `effectiveCombo` 过不了类型检查，而用 `as HotkeyId`
+ * 断言会把"id 写错了"这类真问题抹平 —— 拼错的 id 会静默取不到键位，
+ * 界面上表现为"这个按钮没有快捷键提示"，没人会想到是 id 拼错。
+ *
+ * 判定用 `HOTKEY_BY_ID` 而不是另写一份 id 列表：
+ * 抄一份列表的话，往 `HOTKEYS` 里加动作时忘了同步这里，
+ * 新动作的键位提示就会永远不显示。
+ */
+export function isHotkeyId(id: string): id is HotkeyId {
+  return Object.prototype.hasOwnProperty.call(HOTKEY_BY_ID, id);
+}
+
 /** 覆盖表 → 生效的 combo（没覆盖的用默认）。 */
 export function effectiveCombo(
   id: HotkeyId,

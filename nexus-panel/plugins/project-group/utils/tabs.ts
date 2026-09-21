@@ -77,10 +77,27 @@ export function canRemove(total: number): boolean {
  * @param tabIndex 落点页签下标
  * @param path 被拖的卡片路径
  */
+/**
+ * 页签里的条目两种形态都存在：
+ *   · 运行时快照 `TabInfo.items` 是 `CardInfo[]`
+ *   · 配置里的 `TabItem.items` 是 `string[]`
+ * 所以这里两种都收，而不是只写 `string[]`。
+ *
+ * **只写 `string[]` 是个真 bug，不是类型洁癖**：调用方传的是
+ * `CardInfo[]`，`items.includes(path)` 拿对象去比字符串**恒为 false** ——
+ * 于是这条守卫一次也没生效过，#103「拖回源页签 = 无操作」形同虚设
+ * （用户拖回去仍会被挪到末尾）。类型不匹配正是它唯一的破绽。
+ */
+/** 页签里的条目：运行时快照是 `CardInfo`，配置里是路径字符串。 */
+export type DropItem = string | { path: string };
+
 export function skipDropToTab(
-  tabs: { items: string[] }[], tabIndex: number, path: string,
+  tabs: { items: DropItem[] }[],
+  tabIndex: number,
+  path: string,
 ): boolean {
   const t = tabs[tabIndex];
   if (!t) return false;
-  return t.items.includes(path);
+  /* 显式比较 path，而不是 includes —— 后者在形态不匹配时静默失效 */
+  return t.items.some((it) => (typeof it === 'string' ? it : it.path) === path);
 }

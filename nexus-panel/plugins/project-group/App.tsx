@@ -11,7 +11,7 @@ import { useCardHotkeys } from './hooks/useCardHotkeys';
 import { useChainActions } from './hooks/useChainActions';
 import { useLayoutMemory } from './hooks/useLayoutMemory';
 import {
-  effectiveCombo, formatCombo, IS_MAC, type HotkeyId,
+  effectiveCombo, formatCombo, isHotkeyId, IS_MAC, type HotkeyId,
 } from './utils/hotkeys';
 import { clampLogMax } from './utils/log';
 import { skipDropToTab } from './utils/tabs';
@@ -163,7 +163,8 @@ export default function App() {
      按钮上还是旧值，用户照着按却没反应。 */
   const showHints = boot?.config.showShortcuts ?? true;
   const comboHint = useCallback(
-    (id: string) => (showHints ? effectiveCombo(id, boot?.config.hotkeys ?? null) : ''),
+    (id: string) => (showHints && isHotkeyId(id)
+      ? effectiveCombo(id, boot?.config.hotkeys ?? null) : ''),
     [showHints, boot?.config.hotkeys],
   );
 
@@ -804,6 +805,7 @@ export default function App() {
             <Column
               title="项目"
               kind="project"
+              onEditLink={(p, g) => setConfirmLink({ project: p, group: g })}
               tabs={boot.projectTabs}
               cards={projectCards}
               selected={s.selProject}
@@ -1031,7 +1033,7 @@ export default function App() {
 function Column({
   title, kind, tabs, cards, selected, onSelect, onOpen, onMove, onMoveToTab, onCrossDrop,
   thumbs, menus, onAdd, onAddTab, onRenameTab, onRemoveTab, onMoveTab, active, onTab, focused,
-  onJumpToGroup,
+  onJumpToGroup, onEditLink,
 }: {
   title: string;
   kind: CardKind;
@@ -1059,6 +1061,8 @@ function Column({
   focused: boolean;
   /** 点卡片上的项目组名 → 在项目组栏里选中它（仅项目栏用得到） */
   onJumpToGroup?: (card: CardInfo) => void;
+  /* #82 编辑那一条链接；必须由外层传入 —— Column 作用域里没有 App 的 setter */
+  onEditLink?: (project: string, group: string) => void;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   // 由「⋯」菜单触发的内联重命名：-1 表示不在编辑
@@ -1121,7 +1125,7 @@ function Column({
         /* #82：点明细里的链接名 → 直接编辑那条链接。
            用**行里的 group** 而不是卡片的汇总 linkedGroup ——
            一个项目可以有多条链接记录，只传卡片会改错对象。 */
-        onEditLink={(project, group) => setConfirmLink({ project, group })}
+        onEditLink={onEditLink}
         onAdd={onAdd}
         addHint={`添加${title}`}
       />

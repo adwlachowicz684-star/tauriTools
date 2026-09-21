@@ -46,7 +46,11 @@ console.log('\n=== 3. 阻止冒泡 ===');
 
 console.log('\n=== 4. 接线 ===');
 {
-  t('App 传入 onEditLink', /onEditLink=\{\(project, group\) => setConfirmLink\(\{ project, group \}\)\}/.test(app));
+  /*
+   * 不要绑参数名（写成 `(project, group) => ...`）—— 精简变量名为 `(p, g)`
+   * 就会误报。这里真正要保证的是"传了 onEditLink 且它会 setConfirmLink"。
+   */
+  t('App 传入 onEditLink', /onEditLink=\{[^}]*setConfirmLink/.test(app));
   /* 复用已有的建链弹窗，不另起一套 */
   t('复用 confirmLink 弹窗', /confirmLink=\{confirmLink\}/.test(app));
   t('弹窗已渲染（在 Dialogs.tsx）', /\{confirmLink && \(/.test(dlg));

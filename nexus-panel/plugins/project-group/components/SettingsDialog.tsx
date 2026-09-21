@@ -567,7 +567,12 @@ export function SettingsBody({
         <h3>布局</h3>
         <div className="fpx-field">
           <div className="p-row">
-            <button className="p-btn" onClick={() => void onResetLayout()}>
+            {/*
+              `?.()` 而不是直接调用：这个回调是可选的（外层可以不传）。
+              直接调用在没传时是 TypeError —— 点了按钮没反应、控制台报错，
+              而用户只会觉得"这个按钮坏了"。
+            */}
+            <button className="p-btn" onClick={() => void onResetLayout?.()}>
               恢复默认布局
             </button>
           </div>

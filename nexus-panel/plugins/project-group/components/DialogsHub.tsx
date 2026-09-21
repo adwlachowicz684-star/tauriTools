@@ -109,7 +109,14 @@ export interface DialogsProps {
 
 export function Dialogs(props: DialogsProps) {
   const { s } = props;
-  const { ctx, boot } = s;
+  /*
+   * **`boot` 不解构**（原写法 `const { ctx, boot } = s`）：
+   * TypeScript 不会把 `s.boot` 的判空窄化传递到已解构出来的局部变量上，
+   * 于是下面每一处 `boot.xxx` 都报"可能为 null"（共 19 处）。
+   * 改成局部常量后，判空一次即可全程窄化。
+   */
+  const { ctx } = s;
+  const boot = s.boot;
 
   /*
    * #8 图标面板的目标跟随（原版 `UpdateTarget`）。
@@ -152,14 +159,40 @@ export function Dialogs(props: DialogsProps) {
    * 实际图标仍设到打开时的那张上。**显示与目标不一致**比不跟随更糟。
    */
   const selCard = useMemo(() => {
-    if (!selPath || !s.boot) return null;
-    const all = [...(s.boot.projectTabs ?? []), ...(s.boot.groupTabs ?? [])];
+    /* 这里判的是 `boot` 而不是 `s.boot`：它在 hooks 区（早退之前），
+       拿不到下面的窄化，所以必须自己判一次 */
+    if (!selPath || !boot) return null;
+    const all = [...(boot.projectTabs ?? []), ...(boot.groupTabs ?? [])];
     return all.flatMap((t) => t.items ?? []).find((c) => c.path === selPath) ?? null;
-  }, [selPath, s.boot]);
+  }, [selPath, boot]);
 
   /* 跟随且选中已变 → 用选中的；否则用打开时那张（含锁定、以及选中为空的情况） */
-  const iconTargetPath = iconFollow ? (selCard?.path ?? dialog.type === 'icons' ? dialog.card.path : '') : (dialog.type === 'icons' ? dialog.card.path : '');
+  /*
+   * 括号**不能省**（原写法漏了内层括号，是真崩溃，不只是类型报错）：
+   *
+   *   selCard?.path ?? dialog.type === 'icons' ? dialog.card.path : ''
+   *
+   * `??` 优先级高于 `?:`，于是被解析成
+   *   (selCard?.path ?? (dialog.type === 'icons')) ? dialog.card.path : ''
+   * 条件变成"路径字符串"本身：只要**选中了卡片**（不管当前开的什么弹窗），
+   * 条件就为真 → 去取 `dialog.card.path` → 而 dialog 多半是 `{type:'none'}`
+   * → undefined.path → 整个组件渲染就崩（白屏）。
+   *
+   * 也就是说：默认跟随 + 选中任意卡片 + 没开图标弹窗 = 必崩。
+   * 类型检查只是把它报成了"Dialog 上没有 card"，根因在这里。
+   * 下一行 iconTargetName 一直有这对括号，所以只有这一行出问题。
+   */
+  const iconTargetPath = iconFollow
+    ? (selCard?.path ?? (dialog.type === 'icons' ? dialog.card.path : ''))
+    : (dialog.type === 'icons' ? dialog.card.path : '');
   const iconTargetName = iconFollow ? (selCard?.name ?? (dialog.type === 'icons' ? dialog.card.name : '')) : (dialog.type === 'icons' ? dialog.card.name : '');
+
+  /*
+   * 放在**所有 hooks 之后**（hooks 不能在条件之后调用，否则顺序会变）：
+   * boot 为 null 时这些弹窗本来也没有可渲染的内容 —— 每个弹窗都要读
+   * boot.config，硬撑着渲染只会拿到 undefined 再炸在更深的地方。
+   */
+  if (!boot) return null;
 
   return (
     <>
