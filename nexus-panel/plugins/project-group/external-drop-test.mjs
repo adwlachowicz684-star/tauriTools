@@ -85,33 +85,28 @@ console.log('\n=== 3. 接到正规流程，而不是静默 ===');
   t('直接导入走 addCard 并带 tabIndex',
     /s\.addCard\(kind, target, tabIndex\)/.test(app));
   /*
-   * 宿主侧的两个前置（开 dragDropEnabled + 装文档级守卫）**不由本插件改**，
-   * 所以这里不做断言 —— 断言一个我改不了的东西只会让套件长期红灯，
-   * 而红灯久了会被当噪音忽略（那比不测更糟）。
+   * 宿主侧的两个前置（开 dragDropEnabled + 装文档级拖放守卫）。
    *
-   * 改成**状态报告**：把"插件侧已就绪 / 宿主侧未就绪"直接打出来，
-   * 谁看测试输出都能一眼看到进度与还差什么。
+   * 2026-09-22 **恢复为断言**：宿主已开 `dragDropEnabled: true`、
+   * 已装文档级守卫（host.js 的 installDropGuard）。
+   *
+   * 此前一度改成"状态报告"是因为宿主未就绪 —— 那时钉断言会让套件长期红灯，
+   * 红灯久了会被当噪音忽略（比不测更糟）。现在前置齐了，就必须钉死：
+   * 这两个开关任一被回退，#14 会**静默退化**成"总是弹选目录框"，
+   * 而功能看起来还在（能加卡片），只是每次都要多一步，没人会报 bug。
    */
   const conf = R('../../src-tauri/tauri.conf.json');
   const host = R('../../js/host.js');
-  const confOn = /"dragDropEnabled"\s*:\s*true/.test(conf);
-  const guardOn = /addEventListener\('drop', stop\)/.test(host);
+  t('宿主已开启 dragDropEnabled（否则拿不到路径）', /"dragDropEnabled"\s*:\s*true/.test(conf));
+  t('宿主装了文档级拖放守卫', /addEventListener\('drop', stop\)/.test(host));
+  /* 调用点必须在 createHost 内、且在插件挂载之前；找不到调用点直接判失败而不是跳过 */
   const gi = host.indexOf('installDropGuard();');
   const ci = host.indexOf('const bus = createBus();');
-  const guardPlaced = gi > 0 && ci > 0 && gi > ci && gi - ci < 400;
+  t('守卫在插件挂载前安装（createHost 内）', gi > 0 && ci > 0 && gi > ci && gi - ci < 400,
+    `gi=${gi} ci=${ci}`);
+  /* 开配置不装守卫比不开更糟：不开至少什么都不发生，开了不拦则整个界面导航走 */
+  t('守卫同时拦 dragover', /addEventListener\('dragover', stop\)/.test(host));
 
-  console.log(`\n  [宿主前置] dragDropEnabled=${confOn ? '已开' : '未开'}`
-    + ` / 文档级拖放守卫=${guardOn ? '已装' : '未装'}`
-    + `${guardOn ? (guardPlaced ? '（位置正确）' : '（**位置不对**）') : ''}`);
-  if (!confOn || !guardOn || (guardOn && !guardPlaced)) {
-    console.log('  [宿主前置] 未就绪 → 拖入时拿不到绝对路径，会退回"选目录"对话框。'
-      + '这是**预期内的降级**，不是 bug。');
-  }
-
-  /*
-   * 真正该钉的是**插件侧这条降级链**：拿不到路径时必须还有兜底，
-   * 否则"拖了没反应"这个原痛点又回来了。
-   */
   t('拿不到路径时退回对话框（不静默）', /onExternalDrop\?\.\(path \|\| name, !!path\)/.test(cg));
   t('有路径才标记为直接导入', /!!path/.test(cg));
 }

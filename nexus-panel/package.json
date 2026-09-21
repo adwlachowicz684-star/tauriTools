@@ -122,7 +122,8 @@
     "test:pg-external-drop": "node plugins/project-group/external-drop-test.mjs",
     "test:pg-deadzone-swap": "node plugins/project-group/deadzone-swap-test.mjs",
     "test:pg-ico-build": "node plugins/project-group/ico-build-test.mjs",
-    "test:pg-icon-clip": "node plugins/project-group/icon-clip-test.mjs"
+    "test:pg-icon-clip": "node plugins/project-group/icon-clip-test.mjs",
+    "test:pg-link-row-real": "node plugins/project-group/link-row-real-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

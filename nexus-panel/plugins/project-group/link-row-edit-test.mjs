@@ -26,15 +26,26 @@ console.log('\n=== 1. 链接名可点 ===');
   t('有 onEditLink 参数', /onEditLink\?: \(project: string, group: string\) => void/.test(grid));
   t('传进来', /onJumpToGroup, onEditLink, onAdd/.test(grid));
   t('渲染成按钮', /<button\s+className="fpx-link-name edit"/.test(grid));
-  t('点击调 onEditLink', /onEditLink\(c\.path, d\.group\)/.test(grid));
+  /* 现在是 gPath（= d.realGroup || d.group），见第 2 节 */
+  t('点击调 onEditLink', /onEditLink\(c\.path, gPath\)/.test(grid));
   /* 不传时退回不可点的 span —— 比"点了没反应"好 */
   t('不传时渲染成 span', /\) : \(\s*\n\s*<span className="fpx-link-name"/.test(grid));
 }
 
 console.log('\n=== 2. 传的是"这一行"的 group（最关键）===');
 {
-  /* d.group 是这一行的；c.linkedGroup 是汇总值，改错对象 */
-  t('传 d.group 而非卡片汇总值', /onEditLink\(c\.path, d\.group\)/.test(grid));
+  /*
+   * d.group 是**账本登记**的（整卡共用）；2026-09-22 起改传 gPath
+   * （= d.realGroup || d.group），即这一行**磁盘上真实指向**的组。
+   *
+   * 一个项目可以有多个链接名指向不同的组，账本那条记录只有一个 group，
+   * 于是某些行必然是错的 —— 而它看起来完全正常。
+   * 用整卡共用的 group 去编辑，改的就成了另一条。
+   */
+  t('传这一行真实指向（gPath）', /onEditLink\(c\.path, gPath\)/.test(grid));
+  t('gPath 优先取 realGroup', /const gPath = d\.realGroup \|\| d\.group;/.test(grid));
+  /* 汇总值不能出现在编辑调用里 —— 那正是当初要修的那个 bug */
+  t('不传卡片汇总值', !/onEditLink\(c\.path, c\.linkedGroup/.test(grid));
   t('没有传 linkedGroup', !/onEditLink\([^)]*linkedGroup/.test(grid));
 }
 

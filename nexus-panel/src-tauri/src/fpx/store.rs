@@ -769,11 +769,54 @@ fn build_card(
     let mut broken = 0usize;
     let mut conflict = 0usize;
     let mut details: Vec<LinkDetail> = Vec::with_capacity(names.len());
+    let project_exists = std::path::Path::new(path).exists();
     for n in &names {
         let state = match super::junction::link_state(path, n) {
             super::junction::LinkState::Valid => { has_link += 1; "valid" }
             super::junction::LinkState::Broken => { broken += 1; "broken" }
             super::junction::LinkState::Conflict => { conflict += 1; "conflict" }
+        };
+        /*
+         * 逐行反查真实目标（原版 row 级 ResolveTarget）。
+         *
+         * 只在**读得到且确实存在**时才覆盖 —— 读不到（权限、损坏的
+         * junction）就留着账本值，不能把"查不出来"显示成"没连"。
+         */
+        let real = super::junction::resolve_target(&super::junction::link_path(path, n))
+            .filter(|t| !t.is_empty() && std::path::Path::new(t).exists());
+        let (gname, gpath) = match (&real, rec) {
+            (Some(t), _) => (
+                std::path::Path::new(t)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                t.clone(),
+            ),
+            (None, Some(r)) => (r.group.clone(), r.lib.clone()),
+            (None, None) => (
+                fb_name.clone().unwrap_or_default(),
+                fb_path.clone().unwrap_or_default(),
+            ),
+        };
+        let group_exists = std::path::Path::new(&gpath).exists();
+        /*
+         * 逐行提示：四种情况要分得清。
+         *
+         * 只给一个笼统的"链接异常"是不够的 ——
+         * "项目文件夹没了"和"项目组文件夹没了"是两种完全不同的补救方式，
+         * 用户看不出区别就只能瞎试。
+         */
+        let tip = if !project_exists {
+            format!("项目文件夹不存在: {path}")
+        } else if !gpath.is_empty() && !group_exists {
+            format!("项目组文件夹不存在: {gpath}")
+        } else if state == "conflict" {
+            format!("链接冲突: {n} 被普通目录/文件占用")
+        } else if state == "valid" {
+            if gname.is_empty() { format!("已创建链接（{n}）") }
+            else { format!("链接项目组: {gname}（{n}）") }
+        } else {
+            format!("链接已破坏: {n}")
         };
         details.push(LinkDetail {
             name: n.clone(),
@@ -786,6 +829,11 @@ fn build_card(
             state: state.to_string(),
             // 创建时间只有账本知道，磁盘上读不出来 —— 空着比编一个强
             created: rec.map(|r| r.created.clone()).unwrap_or_default(),
+            real_group_name: gname,
+            real_group: gpath,
+            project_exists,
+            group_exists,
+            tip,
         });
     }
     let lock = lock_of(cfg, path);

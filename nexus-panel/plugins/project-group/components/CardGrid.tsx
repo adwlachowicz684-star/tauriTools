@@ -855,43 +855,70 @@ export function CardGrid({
 
           {expanded.has(c.path) && (c.linkDetails?.length ?? 0) > 0 && (
             <div className="fpx-links">
-              {sortedDetails(c.linkDetails!).map((d) => (
-                <div className={`fpx-link-row ${d.state}`} key={d.name + d.group}>
-                  <span className="fpx-link-dot" title={STATE_TITLE[d.state]} />
+              {sortedDetails(c.linkDetails!).map((d) => {
+                /*
+                 * 逐行**真实**指向优先（后端按磁盘反查得到）。
+                 *
+                 * 一个项目可以有多条链接指向**不同的组**（用户手工建了多个
+                 * junction 就会这样）。此前整卡共用一个 group，于是某些行
+                 * 显示的组名是错的 —— 而它看起来完全正常。
+                 * 更糟的是 #82「点链接名编辑那一条」拿 group 去编辑，
+                 * 改的就成了另一条：改了不该改的地方，且没有任何提示。
+                 *
+                 * 真实值缺失时（读不到 junction）退回账本值：
+                 * "当初登记到哪"仍比空着有用。
+                 */
+                const gName = d.realGroupName || d.groupName;
+                const gPath = d.realGroup || d.group;
+                return (
+                <div className={`fpx-link-row ${d.state}`} key={d.name + gPath}>
+                  <span
+                    className="fpx-link-dot"
+                    /* 逐行 tip 分四种：项目没了 / 项目组没了 / 冲突 / 失效。
+                       只给笼统的"链接异常"不够 —— 前两种的补救方式完全不同，
+                       用户看不出区别就只能瞎试。 */
+                    title={d.tip || STATE_TITLE[d.state]}
+                  />
                   {/* #82 点链接名直接编辑这条链接。
                       看清某一行不对（失效 / 链错组）时，
                       最短路径就是点那一行本身，而不是回到卡片菜单里找。 */}
                   {onEditLink ? (
                     <button
                       className="fpx-link-name edit"
-                      title={`编辑这条链接：${d.name}${d.groupName ? ` → ${d.groupName}` : ''}`}
+                      title={d.tip || `编辑这条链接：${d.name}${gName ? ` → ${gName}` : ''}`}
                       onClick={(e) => {
                         e.stopPropagation();
-                        onEditLink(c.path, d.group);
+                        onEditLink(c.path, gPath);
                       }}
                     >{d.name}</button>
                   ) : (
-                    <span className="fpx-link-name" title={d.name}>{d.name}</span>
+                    <span className="fpx-link-name" title={d.tip || d.name}>{d.name}</span>
                   )}
-                  {kind === 'project' && d.groupName && (
+                  {kind === 'project' && gName && (
                     <>
                       <span className="fpx-link-to">→</span>
                       <span className="fpx-link-group"
                         /* #293：同上，明细里的组名也跟随组色派生 */
                         style={c.tagColor ? (brushVars(c.tagColor, 'grp') as React.CSSProperties) : undefined}
-                        title={d.group || d.groupName}
+                        title={gPath || gName}
                         onClick={(e) => {
                           if (!onJumpToGroup) return;
                           e.stopPropagation();
                           onJumpToGroup(c);
-                        }}>{d.groupName}</span>
+                        }}>{gName}</span>
                     </>
+                  )}
+                  {/* 项目组文件夹没了要单独标出来 ——
+                      它与"链接失效"是两回事：前者是目标被删，后者是链接断了。 */}
+                  {d.state === 'valid' && d.groupExists === false && gPath && (
+                    <span className="fpx-link-state">组缺失</span>
                   )}
                   {d.state !== 'valid' && (
                     <span className="fpx-link-state">{STATE_TEXT[d.state]}</span>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

@@ -155,13 +155,27 @@ export interface CardInfo {
 export interface LinkDetail {
   /** 链接名（如 .opencode、agents） */
   name: string;
-  /** 指向的项目组名 */
+  /** 指向的项目组名（账本登记值） */
   groupName: string;
-  /** 指向的项目组路径 */
+  /** 指向的项目组路径（账本登记值） */
   group: string;
   /** valid / broken / conflict */
   state: 'valid' | 'broken' | 'conflict';
   created: string;
+  /*
+   * 逐行**真实**指向（后端按磁盘反查）。
+   *
+   * 一个项目可以有多个链接名指向**不同的组**（手工建多个 junction 就会这样），
+   * 整卡共用一个 group 必然有行是错的。界面与 #82 的编辑都要用 real*。
+   */
+  realGroupName: string;
+  realGroup: string;
+  /** 项目文件夹本身是否还在 */
+  projectExists: boolean;
+  /** 这一行指向的项目组文件夹是否还在 */
+  groupExists: boolean;
+  /** 逐行提示（项目没了 / 项目组没了 / 冲突 / 失效，四种要分得清） */
+  tip: string;
 }
 
 export interface TabInfo {

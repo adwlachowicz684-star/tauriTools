@@ -607,6 +607,26 @@ pub struct LinkDetail {
     pub state: String,
     /// 建立时间（记录里没有则空串）
     pub created: String,
+    /*
+     * 逐行**真实**指向（对齐原版 `ScanProjectCard` 里的 row 级反查）。
+     *
+     * 一个项目可以有多条链接，每条**指向不同的组**（用户手工建了
+     * 多个 junction 就会出现）。此前整卡共用一个 group，于是
+     * 界面上某些行显示的组名是**错的**，而它看起来完全正常 ——
+     * #82「点链接名编辑那一条」拿到的 group 也就跟着错，
+     * 改的仍然是另一条。这类"改了不该改的地方"没有报错。
+     *
+     * 这里按**磁盘实际**反查逐名目标，与账本不一致时以磁盘为准：
+     * 用户看到的应该是"现在到底连到哪"，而不是"当初登记到哪"。
+     */
+    pub real_group_name: String,
+    pub real_group: String,
+    /// 项目文件夹本身是否还在
+    pub project_exists: bool,
+    /// 这一行指向的项目组文件夹是否还在
+    pub group_exists: bool,
+    /// 逐行提示（区分"项目不存在/项目组不存在/冲突/破坏"）
+    pub tip: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
