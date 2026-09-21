@@ -1303,6 +1303,50 @@
             // textGroup.transform.matrix.f 也永远是 0。noderender 在整节点渲染完成后触发，此刻
             // getContentBox() 与文本组边界均已确定，setTranslate(0,dy) 为绝对设定、每次内核复位后重设，幂等。
             // dy = 基础对齐落点 + 该层级该对齐的微调偏移。
+            // ---- 文字垂直居中：改用**真实测量**，不再吃内核的经验系数 ----
+            //
+            // 内核 TextRenderer.update 最后一行是
+            //     a.setTranslate(0, d * fontSize)
+            // d 来自一张硬编码的「浏览器 × 平台 × 字体族」经验表：
+            //     { safari:{...}, ie:{...}, edge:{...}, sg:{...},
+            //       chrome:{ Mac:{...}, Win:{ "微软雅黑,Microsoft YaHei":-.15, ..., default:-.15 }, ... },
+            //       firefox:{...} }
+            // 三个前提在 WebView2 里都不成立：
+            //   ① 主题里**根本没有 font-family**（fresh-*/classic/snow/fish 的定义
+            //      只有 root/main/sub-font-size 与 line-height），所以取到的
+            //      font-family 恒为 "default"，永远命中那一个经验值；
+            //   ② d 只乘 font-size，**不含行数与行高** —— 多行节点必然偏；
+            //   ③ 该表是按「浏览器 + 微软雅黑 + dominant-baseline:text-before-edge
+            //      表示文本顶部」标定的。Chromium 一旦把 text-before-edge 当基线处理，
+            //      setY 的含义就从「顶部」变成「基线」，整套计算错位。
+            // 结果就是**不同主题偏差不同**（root 字号 16 vs 24、行数不同），
+            // 表现为中央主题 / 子主题 / 更下级主题有的偏高、有的偏低。
+            //
+            // 修法：不再猜，直接测。SVG 的 getBBox() **不含元素自身的 transform**，
+            // 拿到的正是「尚未平移」的真实文本边界，据此把文本中心对齐到内容盒中心。
+            // 这样无论字体、字号、行数、baseline 语义如何，都自动居中。
+            //
+            // 抽成全局纯函数是为了可测（jsdom 里 getBBox 恒为 0，测不了真实渲染）。
+            window.__kmTextDy = function (bb, cbox, va, off) {
+                if (!bb || !bb.height || !cbox || !cbox.height) return null;   // 测不到 → null，调用方保持内核落点
+                var dy;
+                if (va === 'top') dy = cbox.y - bb.y;
+                else if (va === 'bottom') dy = (cbox.y + cbox.height) - (bb.y + bb.height);
+                else dy = (cbox.y + cbox.height / 2) - (bb.y + bb.height / 2);
+                return dy + (Number(off) || 0);
+            };
+            // 默认对齐：纯文本节点（内容盒几乎就是文本盒）做**视觉居中**；
+            // 节点带图片等额外内容时保留内核的沉底语义，不改动带图节点的既有布局。
+            window.__kmDefaultValign = function (cbox, bb) {
+                if (!cbox || !bb) return 'middle';
+                return (cbox.height - bb.height) > 1 ? 'bottom' : 'middle';
+            };
+            //
+            // 注意：原实现开头有 `if (!va) return;` —— 只有**显式设过 vertical-align**
+            // 的节点才会被校正。而 Web 版没有任何入口去设这个值（panels.js / index.js
+            // 里都没有 valign 命令），所以它对所有节点都是死的，
+            // 三级微调表 __valignOffset 也就永远读不到。这正是"原源码做过偏移、
+            // 现在没生效"的那一环。现在默认节点也进校正分支，微调表才真正可用。
             var valignBindDone = false;
             function bindValign() {
                 if (valignBindDone) return;
@@ -1310,18 +1354,18 @@
                     km.on('noderender', function (e) {
                         var node = e && e.node;
                         if (!node || !node.getData || !node.getRenderer) return;
-                        var va = node.getData('vertical-align');
-                        if (!va) return;
                         try {
                             var tg = node.getRenderer('TextRenderer').getRenderShape();
                             if (!tg || !tg.getBoundaryBox || !tg.setTranslate) return;
                             var cbox = node.getContentBox();
                             if (!cbox || !cbox.height) return;
-                            var textH = tg.getBoundaryBox().height || 0;
-                            if (textH <= 0) return;
-                            var extra = Math.max(0, cbox.height - textH);
-                            var baseDy = extra <= 0 ? 0 : (va === 'top' ? -extra : (va === 'bottom' ? 0 : -extra / 2));
-                            tg.setTranslate(0, baseDy + voOffset(node, va));
+                            var bb = tg.getBoundaryBox();
+                            var va = node.getData('vertical-align') || window.__kmDefaultValign(cbox, bb);
+                            var dy = window.__kmTextDy(bb, cbox, va, voOffset(node, va));
+                            // dy 为 null 表示测不到真实边界 —— 此时**绝不能**设 0，
+                            // 那会把内核的经验补偿整个抹掉，文字反而更偏
+                            if (dy == null) return;
+                            tg.setTranslate(0, dy);
                         } catch (e2) {}
                     });
                     valignBindDone = true;

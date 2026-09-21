@@ -6044,6 +6044,97 @@ group('布局：文件库展开时画布内容不能移动 + 控件档位');
     '.mm-field 显式 stretch（不写就会被 controls.css 的 center 层叠成居中）');
 }
 
+group('文字垂直居中：改用真实测量，不再吃内核经验系数');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+
+  // ---- 根因确认：内核的补偿是「font-size × 硬编码经验系数」 ----
+  const core = fs.readFileSync(path.join(HERE, 'editor', 'kityminder.core.min.js'), 'utf8');
+  ok(/setTranslate\(0,\(d\|\|0\)\*i\)/.test(core),
+    '内核确实按 font-size×系数 做垂直补偿（d 来自经验表）');
+  // 主题里没有 font-family —— 这是"取到的字体恒为 default"的原因
+  const th = fs.readFileSync(path.join(HERE, 'themes.js'), 'utf8');
+  ok(!/font-family/.test(th), '主题元数据里没有 font-family（内核只能取到 default）');
+
+  // ---- 修法：用真实 bbox 居中 ----
+  ok(/__kmTextDy = function/.test(html), '抽出可测的纯函数 __kmTextDy');
+  ok(/__kmDefaultValign = function/.test(html), '抽出可测的纯函数 __kmDefaultValign');
+  // 关键：**不再**要求节点显式设过 vertical-align。
+  // 注意必须先剥注释 —— 新写的注释里引用了旧写法 `if (!va) return;`，
+  // 不剥掉的话删没删这句断言都是绿的（假阳性）。
+  const htmlCode = html.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok(!/if \(!va\) return;/.test(htmlCode),
+    '不再因未设 vertical-align 而跳过校正（这正是偏移一直没生效的那一环）');
+  // 测不到真实边界时必须保持内核落点，不能设 0
+  ok(/if \(dy == null\) return;/.test(html),
+    '测不到边界时保持内核落点（设 0 会把经验补偿整个抹掉，更偏）');
+
+  // ---- 纯函数行为：执行**源码里**的函数，不是在这里重写一份 ----
+  //
+  // 早先这里按语义另写了一份实现来断言，结果源码被改坏照样全绿 ——
+  // 断言测的是副本，不是被测对象（假阳性）。改为把源码里那两个函数
+  // 抠出来真跑一遍。
+  const seg = html.slice(html.indexOf('window.__kmTextDy = function'),
+    html.indexOf('var valignBindDone = false;'));
+  const defSeg = html.slice(html.indexOf('window.__kmDefaultValign = function'),
+    html.indexOf('window.__kmTextDy = function'));
+  const mk = {};
+  // eslint-disable-next-line no-new-func
+  new Function('window', seg + '\n' + defSeg)(mk);
+  const dy = mk.__kmTextDy;
+  const def = mk.__kmDefaultValign;
+  ok(typeof dy === 'function', '源码里的 __kmTextDy 可执行');
+  ok(typeof def === 'function', '源码里的 __kmDefaultValign 可执行');
+
+  // a) 纯文本节点：把真实中心对齐到内容盒中心
+  {
+    // 内容盒 = 内核按 font-size 算的理论盒（16px 单行：y=-8,h=16）
+    // 真实渲染边界更高（18.5）：y=-8,h=18.5 —— 这正是"实际比理论高"的偏差来源
+    const r = dy({ y: -8, height: 18.5 }, { y: -8, height: 16 }, 'middle');
+    eq(Math.round(r * 100) / 100, -1.25, 'a 纯文本居中：真实中心 1.25 → 上移 1.25');
+  }
+
+  // b) 字号越大，同一比例偏差的绝对值越大 —— 这就是"不同主题表现不同"
+  {
+    const r16 = dy({ y: -8, height: 18.5 }, { y: -8, height: 16 }, 'middle');
+    const r24 = dy({ y: -12, height: 27.75 }, { y: -12, height: 24 }, 'middle');
+    ok(Math.abs(r24) > Math.abs(r16),
+      `b 字号越大绝对偏差越大（16px:${r16.toFixed(2)} vs 24px:${r24.toFixed(2)}）`);
+  }
+
+  // c) top / bottom 语义用真实边界，而不是内核的理论高度
+  {
+    eq(dy({ y: -8, height: 18.5 }, { y: -8, height: 40 }, 'top'), 0, 'c 顶对齐：顶边相合');
+    // 内容盒底 (-8+40=32) - 文本真实底 (-8+18.5=10.5) = 21.5
+    eq(dy({ y: -8, height: 18.5 }, { y: -8, height: 40 }, 'bottom'), 21.5,
+      'c 底对齐：真实底边对齐内容盒底边');
+  }
+
+  // d) 测不到 → null（调用方据以保持内核落点）
+  {
+    eq(dy({ y: 0, height: 0 }, { y: -8, height: 16 }, 'middle'), null, 'd 文本测不到 → null');
+    eq(dy({ y: -8, height: 18.5 }, null, 'middle'), null, 'd 内容盒取不到 → null');
+  }
+
+  // e) 默认对齐：纯文本居中，带图（内容盒明显更高）保留沉底
+  {
+    eq(def({ y: -8, height: 16 }, { y: -8, height: 18.5 }), 'middle', 'e 纯文本 → 居中');
+    eq(def({ y: -8, height: 60 }, { y: -8, height: 18.5 }), 'bottom', 'e 带图 → 保留沉底');
+  }
+
+  // f) 三级微调（center/child/deep）现在对默认节点也生效
+  // 注意：不能只断言 `/voOffset\(node, va\)/` ——
+  // 那会命中它自己的**函数定义** `function voOffset(node, va) {`，
+  // 于是把调用处的实参换成 0 之后，断言照样绿（假阳性）。
+  // 必须断言它在 __kmTextDy 调用里被当作实参传入。
+  ok(/__kmTextDy\(bb, cbox, va, voOffset\(node, va\)\)/.test(htmlCode),
+    'f 三级微调表接入默认节点（不再只服务于显式 valign）');
+  ok(/center: \{ top: 0, middle: 0, bottom: 0 \}/.test(html), 'f 微调表含 center 层级（中央主题）');
+  ok(/child: \{ top: 0, middle: 0, bottom: 0 \}/.test(html), 'f 微调表含 child 层级（子主题）');
+  ok(/deep: \{ top: 0, middle: 0, bottom: 0 \}/.test(html), 'f 微调表含 deep 层级（更下级）');
+}
+
 group('多附件：XMind 往返（导出再导回）');
 
 {
