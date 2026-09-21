@@ -130,7 +130,16 @@ function vTrigger(d: TriggerNodeData): V {
   }
 
   if (blocked) return error(...msgs);
-  if (!d.enabled) msgs.push('触发器已停用，不会被自动触发');
+  /*
+   * 口径必须是 `=== false`，不能写 `!d.enabled`。
+   *
+   * 老存档里没有 enabled 字段（这个字段是后来加的），取到 undefined。
+   * `!undefined` 为真 → 明明是好好的触发器，界面上却写着"已停用"、
+   * 校验也跟着报"不会被自动触发"，而属性面板那个勾选框用的是
+   * `!== false`（显示勾选）—— 三处口径不一致，用户看到的就是
+   * "这边说停用、那边说启用"，且完全不知道是自己改过还是坏了。
+   */
+  if (d.enabled === false) msgs.push('触发器已停用，不会被自动触发');
   return msgs.length ? warn(...msgs) : ok();
 }
 

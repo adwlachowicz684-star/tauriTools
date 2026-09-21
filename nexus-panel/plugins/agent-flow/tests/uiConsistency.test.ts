@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { readSrc } from './srcScan';
+import { isNodeDisabled, nodeDisabledOf } from '../engine/nodeDisabled';
 import path from 'node:path';
 
 /**
@@ -206,7 +207,12 @@ test('卡片上不再渲染节点 id', () => {
 });
 
 test('节点 id 只在属性面板里可查（可复制）', () => {
-  const insp = read(path.join(COMP, 'Inspector.tsx'));
+  /*
+   * id 与显示高度已搬进通用基础信息区（inspectors/NodeBasics）。
+   * 只读 Inspector.tsx 的话，搬走后这条守卫会**静默失效** ——
+   * 失效的样子是"通过"，比报错更危险。
+   */
+  const insp = readSrc('components/Inspector.tsx', 'components/inspectors/NodeBasics.tsx');
   assert.match(insp, /节点 id/, '属性面板要有「节点 id」行');
   // 能复制才算真能用于排查：光显示一串乱码，还得手打
   assert.match(insp, /clipboard[\s\S]{0,120}writeText/, '「节点 id」要能点一下复制');
@@ -436,5 +442,78 @@ test('授权没生效要说清，不能笼统报路径越权', () => {
   assert.ok(
     /仍不在授权列表里/.test(src),
     '回读失败时要明说"已提交但仍不在授权列表里"',
+  );
+});
+
+/* ================= 基础信息区通用化 ================= */
+
+/*
+ * 名称只能有一处来源。
+ *
+ * 以前条件 / 循环 / 并发 / 触发器 / 字段型面板各写一份「节点名称」输入，
+ * 加上分发器里那几行，一共五处。漏改一处不报错，只是那个节点的
+ * 面板顶部与别人不一样。
+ *
+ * 用 readSrc 同时扫五个文件：少了谁都不行。
+ */
+test('节点名称只在通用基础信息区里渲染', () => {
+  for (const f of [
+    'components/inspectors/ConditionInspector.tsx',
+    'components/inspectors/LoopInspector.tsx',
+    'components/inspectors/ParallelInspector.tsx',
+    'components/inspectors/TriggerInspector.tsx',
+    'components/inspectors/fields.tsx',
+  ]) {
+    const src = readSrc(f);
+    /*
+     * 不能只查"文件里含 节点名称" —— 为说明为什么挪走，
+     * 注释里正好要把这四个字原样写出来（假阴性）。
+     * 用 stripComments 剥掉注释再查真正的渲染动作。
+     */
+    const bare = stripComments(src);
+    assert.ok(
+      !/节点名称/.test(bare),
+      `${f} 又自己渲染了「节点名称」—— 应统一走 NodeBasics`,
+    );
+  }
+  const basics = readSrc('components/inspectors/NodeBasics.tsx');
+  assert.match(basics, /title-input/, '通用基础信息区要渲染名称输入框');
+});
+
+/*
+ * 关闭开关必须认老字段。
+ *
+ * 触发器历史上另有一个节点级 `enabled`。若 isNodeDisabled 只认 `disabled`，
+ * 老存档里 enabled:false 的触发器在通用开关上显示"开启"，
+ * 而卡片上仍写着"已停用" —— 一份内容两个说法。
+ */
+test('关闭开关认触发器老字段 enabled', () => {
+  /*
+   * 用**行为**断言而不是扫源码。
+   *
+   * isNodeDisabled 与 nodeDisabledOf 两处写法几乎一样，
+   * 只查"文件里含 enabled === false"的话，改坏其中一处
+   * 仍会被另一处匹配上（假阴性）—— 故障注入时正是这么骗过去的。
+   */
+  assert.equal(isNodeDisabled({ data: { enabled: false } }), true, '老字段 enabled:false 要算关闭');
+  assert.equal(isNodeDisabled({ data: { disabled: true } }), true, 'disabled:true 要算关闭');
+  assert.equal(isNodeDisabled({ data: {} }), false, '没这两个字段就是开着');
+  assert.equal(isNodeDisabled({ data: { enabled: undefined } }), false, 'undefined 不能当关闭');
+  assert.equal(nodeDisabledOf({ enabled: false }), true, 'nodeDisabledOf 同样要认老字段');
+});
+
+/*
+ * 启用/停用口径一律 `=== false`，不写 `!x`。
+ *
+ * 老存档没有 enabled 字段，取到 undefined —— `!undefined` 为真，
+ * 于是好端端的触发器显示"已停用"，而属性面板那个勾选框
+ * （用的是 !== false）仍显示勾选。这是用户报的"手动触发显示停用"的根因。
+ */
+test('触发器启用判定不用 !enabled', () => {
+  const src = readSrc('components/TriggerNode.tsx', 'engine/nodeValidate.ts');
+  const bare = stripComments(src);
+  assert.ok(
+    !/!d\.enabled/.test(bare),
+    '启用判定不能写 !d.enabled —— undefined 会被当成停用',
   );
 });

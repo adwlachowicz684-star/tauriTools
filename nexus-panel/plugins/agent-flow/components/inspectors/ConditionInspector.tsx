@@ -46,7 +46,6 @@ import {
 } from '../../engine/llm';
 import { canReadImage } from '../../lib/tauri';
 import type { FlowEdge, FlowNode } from '../../flowTypes';
-import SaveAsCustom from './SaveAsCustom';
 
 const OPS = Object.keys(OP_META) as ConditionOp[];
 
@@ -141,13 +140,11 @@ export function ConditionInspector({ node, edges, onChange }: {
 
   return (
     <aside className="inspector">
-      <label className="field">
-        <span className="field-label-row">
-          节点名称
-          <SaveAsCustom node={node} />
-        </span>
-        <input value={d.label} onChange={(e) => onChange(node.id, { label: e.target.value })} />
-      </label>
+      {/*
+       * 名称已上移到通用基础信息区（inspectors/NodeBasics），
+       * 连同「存为自定义」一起。以前每个面板各写一份 ——
+       * 改文案或改存储方式要同步五处，而漏一处不会报错。
+       */}
 
       {/* ---------- 可视化试跑 ---------- */}
       <div className="field">

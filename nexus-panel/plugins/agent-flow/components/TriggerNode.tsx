@@ -37,7 +37,9 @@ export default function TriggerNode({ id, data, selected }: NodeProps<TriggerFlo
       data={d}
       selected={selected}
       // is-disabled 是触发器独有的（停用态），外壳不认识，这里自己加
-      className={`trigger ${d.enabled ? '' : 'is-disabled'}`}
+      // 口径 `=== false`：老存档没有 enabled 字段，取到 undefined，
+      // 写成 `!d.enabled` 会让好端端的触发器显示"已停用"
+      className={`trigger ${d.enabled === false ? 'is-disabled' : ''}`}
       /* 触发器是起点，没有输入端口 */
       hasTarget={false}
       tag={
@@ -46,7 +48,7 @@ export default function TriggerNode({ id, data, selected }: NodeProps<TriggerFlo
           {entries.length === 1
             ? (TRIGGER_META[entries[0].kind]?.label ?? entries[0].kind)
             : `${entries.length} 个触发条件`}
-          {!d.enabled && <span className="trig-off">已停用</span>}
+          {d.enabled === false && <span className="trig-off">已停用</span>}
         </>
       }
       footExtra={<span className="node-line--foot">触发器起点</span>}

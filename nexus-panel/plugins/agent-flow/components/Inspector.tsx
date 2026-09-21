@@ -2,8 +2,7 @@ import type { FlowEdge, FlowNode } from '../flowTypes';
 import type { Credential } from '../engine/credentials';
 import { getDef } from '../nodes/registry';
 import { inspectorOf } from './inspectors/inspectorOf';
-import { NODE_SIZE_META, normalizeSize, type NodeSize } from '../types';
-import { stackParentOf, descendantsOf, chainTopOf, chainOf } from '../engine/stack';
+import { NodeBasics } from './inspectors/NodeBasics';
 import { ErrorBoundary } from './ErrorBoundary';
 /*
  * 「设为默认」不再有整体按钮 —— 每个参数各自带一个小按钮。
@@ -109,128 +108,15 @@ export default function Inspector({
   // 所以这里不需要判空 —— 见 nodes/registry.ts 的 makeFallback
   const def = getDef(node.type);
   const Panel = inspectorOf(def);
-  const size = normalizeSize((node.data as { size?: unknown }).size);
-
-  /*
-   * 尺寸选择器放在分发器里，而不是各节点的面板里 ——
-   * 条件 / 循环 / 并发 / 触发器用的是整体自定义面板，
-   * 塞进节点面板就得改 4 个文件；放在这里一次覆盖全部节点类型。
-   *
-   * 它也不属于"节点参数"（不影响执行结果），所以不该混进字段列表，
-   * 单独一行放在标题下方更合适。
-   */
-  /*
-   * 嵌合信息行。
-   *
-   * 放在这里而不是 NodeShell 里：折叠按钮要调 onChange，
-   * 卡片组件拿不到（它只收 data）。面板本来就有 onChange，顺理成章。
-   *
-   * 折叠标记打在**串顶**上 —— 打在中间某块上会出现
-   * "上半截显示、下半截隐藏"这种半吊子状态。
-   */
-  const stackParent = stackParentOf({ data: node.data as Record<string, unknown> });
-  const inStack = stackParent !== null || descendantsOf([node] as never, node.id).length > 0;
-  const stackRow = inStack ? (
-    <div className="insp-size" style={{ marginBottom: 'var(--sp-3, 6px)', paddingBottom: 6 }}>
-      <span className="insp-size-label">
-        {stackParent ? `嵌合于 ${stackParent}` : `串顶 · 共 ${chainOf([node] as never, node.id).length} 块`}
-      </span>
-      <span className="insp-size-ops">
-        <button
-          className="insp-size-btn"
-          title="折叠只隐藏显示，节点照常执行"
-          onClick={() => onChange(chainTopOf([node] as never, node.id), { stackCollapsed: true })}
-        >
-          折叠
-        </button>
-        <button
-          className="insp-size-btn"
-          onClick={() => onChange(chainTopOf([node] as never, node.id), { stackCollapsed: false })}
-        >
-          展开
-        </button>
-        {stackParent ? (
-          <button
-            className="insp-size-btn"
-            title="解除与上方节点的嵌合（也可以直接把它拖开）"
-            onClick={() => onChange(node.id, { stackParent: null })}
-          >
-            解除
-          </button>
-        ) : null}
-      </span>
-    </div>
-  ) : null;
-
-  /*
-   * 顶部一条工具条：显示高度 + 节点 id。
-   *
-   * ================= 为什么不各占一个功能区 ====================
-   *
-   * 以前是两行，各带一个标签（"显示高度" / "节点 id"）。
-   * 它们都不是**参数** —— 改了不影响本次执行，
-   * 却和真正的参数列表排在一起，看着像两组配置项。
-   *
-   * 现在合成面板最上面一行，右边对齐 id。
-   * 高度那三个按钮仍带 title，鼠标停一下就知道各档是干什么的。
-   */
-  /*
-   * 关闭开关。
-   *
-   * 左右拨动的样式（不是勾选框）：它是"这一步现在算不算数"的总开关，
-   * 勾选框看着像"某个参数要不要勾"，容易和下面的参数混在一起。
-   */
-  const off = (node.data as Record<string, unknown>)?.disabled === true;
-  const offRow = (
-    <button
-      type="button"
-      className={'insp-switch' + (off ? ' is-off' : '')}
-      title={off ? '已关闭 —— 这一步不参与执行，下游也会跟着停' : '开启 —— 这一步正常执行'}
-      onClick={() => onChange(node.id, { disabled: !off })}
-    >
-      <span className="insp-switch-track">
-        <span className="insp-switch-knob" />
-      </span>
-      <span className="insp-switch-text">{off ? '已关闭' : '开启'}</span>
-    </button>
-  );
-
-  const sizeRow = (
-    <div className="insp-topbar">
-      <span className="insp-topbar-group">
-        {(Object.keys(NODE_SIZE_META) as NodeSize[]).map((k) => (
-          <button
-            key={k}
-            className={`insp-size-btn${size === k ? ' on' : ''}`}
-            title={`显示高度：${NODE_SIZE_META[k].hint}`}
-            onClick={() => onChange(node.id, { size: k })}
-          >
-            {NODE_SIZE_META[k].label}
-          </button>
-        ))}
-      </span>
-      <span className="task-grow" />
-      <button
-        className="insp-size-btn insp-id-btn"
-        title="节点 id —— 点一下复制。运行日志里写的就是这个 id"
-        onClick={() => {
-          const t = String(node.id ?? '');
-          void navigator.clipboard?.writeText(t).then(
-            () => pushNote?.(`已复制节点 id：${t}`),
-            () => pushNote?.(`复制失败，请手动选中：${t}`),
-          );
-        }}
-      >
-        {String(node.id ?? '')}
-      </button>
-    </div>
-  );
 
   return (
     <>
-      {sizeRow}
-      {stackRow}
-      {offRow}
+      <NodeBasics
+        node={node}
+        onChange={onChange}
+        onNote={onNote}
+        onEditModule={onEditModule}
+      />
       {/*
         面板也要兜住。
         曾经触发器的数据不合法 → 面板渲染抛错 → 整棵树崩，
