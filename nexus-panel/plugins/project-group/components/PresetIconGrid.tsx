@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Api } from '../api';
 import { errText } from '../api';
 import { PRESET_ICON_NAMES, presetIconUrl } from '../presetIcons';
@@ -10,6 +10,8 @@ import { confirm, prompt } from '../../../js/dialog.js';
 import { resolveMoveIndex, clampIndex, gapIndexAtX } from '../utils/dragSort';
 /* #12 清理失效项：判定与清理都是纯函数，放在 utils 里好测 */
 import { pruneGroups, staleByList, staleByProbe, totalRemoved } from '../utils/iconGroups';
+/* #146 图标网格高度自适应：与 #147 模板框共用同一个测量 hook */
+import { useAvailableHeight } from '../hooks/useAvailableHeight';
 
 /** 内置图标默认归入的组名（与原版一致）。 */
 const DEFAULT_GROUP = '默认';
@@ -41,6 +43,10 @@ export function PresetIconGrid({
   onPick: (path: string) => void;
   onLog: (m: string, isError?: boolean) => void;
 }) {
+  /** #146 图标网格：限高容器 */
+  const gridRef = useRef<HTMLDivElement>(null);
+  const gridH = useAvailableHeight(gridRef, { minHeight: 120, bottomGap: 14 });
+
   const [active, setActive] = useState<string>(DEFAULT_GROUP);
   const [addMode, setAddMode] = useState(false);
   const [busy, setBusy] = useState('');
@@ -338,7 +344,10 @@ export function PresetIconGrid({
           {addMode ? '全部内置图标都已在本组中。' : '本组还没有图标，点「加入图标」从内置库里挑。'}
         </div>
       ) : (
-        <div className="fpx-icongrid">
+        /* #146 高度自适应：可用高 = 弹窗可视高 − 上方占用 − 底部留白。
+           量不到时（不在弹窗里 / 首帧）传 null，CSS 里那条 340px 兜底仍在。 */
+        <div className="fpx-icongrid" ref={gridRef}
+          style={gridH ? { maxHeight: gridH } : undefined}>
           {shown.map((n, i) => (
             <div
               key={n}

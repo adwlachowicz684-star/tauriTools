@@ -4,6 +4,8 @@ import { errText } from '../api';
 import { canRemove, defaultIconOf, defaultNameOf } from '../utils/chainBuiltins';
 import type { ChainAction, ChainClient } from '../types';
 import { PlaceholderBar } from './PlaceholderBar';
+/* #147 模板框高度自适应：与 #146 图标网格共用同一个测量 hook */
+import { useAvailableHeight } from '../hooks/useAvailableHeight';
 import { Modal } from './ui';
 
 /** 自定义动作的候选图标（内置四个动作的图标不在此列，避免重复观感）。 */
@@ -38,7 +40,16 @@ export function ChainActionsPanel({
   /* 两个模板编辑框的 ref：占位符要插到光标处，必须拿到元素读 selectionStart。
      各自一份，否则在项目模板里点按钮会插到项目组模板的光标位置。 */
   const projectTplRef = useRef<HTMLTextAreaElement>(null);
+  /*
+   * #147 两个模板框：面板拉高时跟着拉高，最扁不低于 140。
+   *
+   * 必须在 ref 声明**之后**调用 —— hook 里要读 projectTplRef 这个 const，
+   * 写在它之前会撞 TDZ（Cannot access 'projectTplRef' before initialization），
+   * 而且这是运行时报错、不是编译错误，tsc 也未必抓得到。
+   */
+  const projectTplH = useAvailableHeight(projectTplRef, { minHeight: 140, bottomGap: 16 });
   const groupTplRef = useRef<HTMLTextAreaElement>(null);
+  const groupTplH = useAvailableHeight(groupTplRef, { minHeight: 140, bottomGap: 16 });
 
   useEffect(() => {
     api.chainActions()
@@ -298,6 +309,9 @@ export function ChainActionsPanel({
                   ref={projectTplRef}
                   className="p-input fpx-textarea"
                   rows={6}
+                  /* #147 面板拉高时跟着拉高；量不到时 rows=6 仍是兜底。
+                     最扁不低于 140 —— 再矮就看不清"这是一个模板框"了。 */
+                  style={projectTplH ? { height: projectTplH } : undefined}
                   placeholder="留空使用内置默认模板"
                   value={cur.project ?? ''}
                   onChange={(e) => patch(cur.id, { project: e.target.value || null })}
@@ -315,6 +329,7 @@ export function ChainActionsPanel({
                   ref={groupTplRef}
                   className="p-input fpx-textarea"
                   rows={6}
+                  style={groupTplH ? { height: groupTplH } : undefined}
                   placeholder="留空使用内置默认模板"
                   value={cur.group ?? ''}
                   onChange={(e) => patch(cur.id, { group: e.target.value || null })}

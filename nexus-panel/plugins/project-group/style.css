@@ -786,7 +786,11 @@
 /* 图标宫格：每项固定宽，超长名截断 */
 .fpx-icongrid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
-  gap: 8px; max-height: 340px; overflow: auto; padding: 2px;
+  gap: 8px; overflow: auto; padding: 2px;
+  /* #146 max-height 由 JS 按"弹窗可视高 − 上方占用 − 底部留白"算出并写在
+     style 上。这条 340px 是**兜底**：不在弹窗里（内联渲染）或首帧还没量到时
+     仍要有限高，否则图标一多就把面板撑出外层滚动条。 */
+  max-height: 340px;
 }
 .fpx-icongrid-item { position: relative; }
 .fpx-icontile {

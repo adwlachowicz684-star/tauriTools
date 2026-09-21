@@ -110,7 +110,8 @@
     "test:pg-mcp-exit": "node plugins/project-group/mcp-exit-test.mjs",
     "test:pg-backup-targets": "node plugins/project-group/backup-targets-test.mjs",
     "test:pg-click-debounce": "node plugins/project-group/click-debounce-test.mjs",
-    "test:pg-escape-layer": "node plugins/project-group/escape-layer-test.mjs"
+    "test:pg-escape-layer": "node plugins/project-group/escape-layer-test.mjs",
+    "test:pg-avail-height": "node plugins/project-group/avail-height-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
