@@ -6453,6 +6453,67 @@ group('主题页：导入/导出与新建同排 + 内置主题禁用导出');
   }
 }
 
+group('顶栏瘦身 / 聚焦中心主题 / 搜索不阻断选中 / 布局选中态');
+
+{
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+  const code = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  // ---- 1) 顶栏「新建 / 复制」已移除 ----
+  ok(!/B\('新建', guard\('新建画布'/.test(idx), '顶栏「新建」按钮已移除');
+  ok(!/B\('复制', guard\('复制画布'/.test(idx), '顶栏「复制」按钮已移除');
+  // 但功能本身不能跟着删 —— 页签区的 ＋ 与页签右键菜单还在用
+  ok(/function addSheet\(/.test(idx) && /function duplicateSheet\(/.test(idx),
+    'addSheet / duplicateSheet 仍在（页签区在用，不是死代码）');
+  ok(/onclick: guard\('新建画布', \(\) => addSheet\(\)\)/.test(idx),
+    '页签区仍有 ＋ 新建入口');
+
+  // ---- 2) 左侧图标条有「聚焦中心主题」 ----
+  ok(/focusRoot\(\)/.test(idx), '图标条调用 bridge.focusRoot()');
+  ok(/focusRoot\(\) \{/.test(br), '桥接有 focusRoot()');
+  // 编辑器侧：不能让外壳传节点进来（跨 iframe 传不了对象）
+  ok(/focusRoot: function \(\) \{/.test(html), '编辑器门面暴露 focusRoot');
+  ok(/km\.getRoot\(\)/.test(html), 'focusRoot 自己取 km.getRoot()（不靠外壳传节点）');
+  // 动画时长不能是 0 —— 瞬移的话用户看不出移到哪儿了
+  ok(/execCommand\('camera', root, 300\)/.test(html),
+    'camera 带 300ms 动画（0 会瞬移，看不出发生了什么）');
+  // 先展开折叠的根节点：否则视野里没内容
+  ok(/root\.expand && root\.expand\(\)/.test(html), '聚焦前先展开根节点');
+
+  // ---- 3) 搜索高亮框不拦截点击 ----
+  //
+  // 这是"搜索之后其他节点点不动"的根因：KityMinder 靠 getTargetNode()
+  // 从 targetShape 往上找 minderNode，而这个框画在节点**之上**且带填充，
+  // 不禁用命中的话点它覆盖到的节点就选不中。
+  ok(/shape\.setStyle\('pointer-events', 'none'\)/.test(html),
+    '搜索高亮框禁用鼠标命中（否则点不中节点）');
+  ok(/shape\.node\.style\.pointerEvents = 'none'/.test(html),
+    '双保险：直接写 SVG 节点 style（kity setStyle 不落盘时仍生效）');
+
+  // 高亮框必须有填充才需要禁用命中 —— 顺带确认它确实是"画在节点之上"的
+  ok(/fill\('rgba\(10,132,255,0\.10\)'\)/.test(html), '高亮框带半透明填充（确实会拦截）');
+
+  // ---- 4) 选中别的节点后清掉旧高亮框 ----
+  ok(/km\.on\('selectionchange'/.test(html), '监听 selectionchange 以清理旧高亮');
+  // 必须跳过自己触发的那次：focusSearchResult 里 select 会同步派发
+  // selectionchange，不排除的话刚画的框会被自己立刻清掉
+  ok(/if \(_selfSelecting \|\| !_searchMark\) return;/.test(html),
+    '跳过自己触发的 selectionchange（否则刚画的框立刻被自己清掉）');
+  ok(/isCurrentSearchNode\(sel\)/.test(html), '选中的仍是当前匹配节点时不清除');
+
+  // ---- 5) app.sheet 必须是 getter ----
+  //
+  // `sheet` 本身是「取当前画布」的**函数**。直接把函数传出去的话，
+  // 面板里 `app.sheet?.theme` / `?.layout` 读的是**函数对象**的属性
+  // （恒 undefined），于是主题与布局的选中态永远停在默认值 ——
+  // 用户切了布局、画布变了，面板高亮却不动。
+  ok(/get sheet\(\) \{ return sheet\(\); \}/.test(idx),
+    'app.sheet 是 getter（传函数本身会让选中态永远停在默认值）');
+  ok(!/^\s*sheet,$/m.test(idx), '不再直接把 sheet 函数当属性传出');
+}
+
 group('多附件：XMind 往返（导出再导回）');
 
 {
