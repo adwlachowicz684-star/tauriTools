@@ -4,7 +4,7 @@ import {
   parentIdOf, movedEnough, heightOf, STACK_GAP, stackParentIds,
   planStackDrop, planStackReflow, measureHeights,
 } from '../engine/stack';
-import { canConnect, specOf } from '../engine/nodeSpecs';
+import { canConnect, specOf } from '../engine/nodeSpec';
 
 /**
  * 嵌合要用的节点形状。

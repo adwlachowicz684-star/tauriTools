@@ -436,7 +436,7 @@ pub fn icon_source(dir: &str, gui_icon: Option<String>, affect_explorer: bool) -
         if let Some(g) = gui_icon {
             return ("guiMap".into(), Some(g), ini_exists, system_attr);
         }
-        ("none".into(), None, ini_exists, system_attr);
+        ("none".into(), None, ini_exists, system_attr)
     }
     #[cfg(not(windows))]
     {

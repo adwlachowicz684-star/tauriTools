@@ -1559,10 +1559,10 @@ pub fn fpx_open_backup_dir(
 pub fn fpx_backup_targets(
     app: AppHandle,
     state: State<'_, FpxState>,
-) -> Result<BackupTargets, String> {
+) -> Result<backup::BackupTargets, String> {
     let dir = store::data_dir(&app, &state)?;
     let cfg = store::load_config(&dir);
-    Ok(BackupTargets {
+    Ok(backup::BackupTargets {
         project: backup::resolve_dir(&cfg, &dir, "project").to_string_lossy().to_string(),
         group: backup::resolve_dir(&cfg, &dir, "group").to_string_lossy().to_string(),
         data_dir: dir.to_string_lossy().to_string(),
