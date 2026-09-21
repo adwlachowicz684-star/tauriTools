@@ -106,8 +106,19 @@ console.log('\n=== 4. 重复定义清理干净 ===');
      这是本次要根治的问题，所以直接查"完整实现的重复" */
   const dupBtn = /\.mm-btn\s*\{[^}]*box-shadow/.test(mm);
   t('mindmap 不再自己写 .mm-btn 的完整实现', !dupBtn);
-  t('mindmap 不再自己写 .mm-input / .mm-select',
-    !/\.mm-input\s*\{/.test(mm) && !/\.mm-select\s*\{/.test(mm));
+  /* 判据必须是「有没有写完整实现」，不能是「有没有这条选择器」。
+     原写法 `!/\.mm-select\s*\{/` 会误判：选择器组 `.mm-input, .mm-select {`
+     的最后一项后面**本来就跟 `{`**，于是「只改变量」的合规写法也被判成重复。
+     而 mindmap 那条恰恰是合规的 —— 它只覆盖 --ctl-h / --ctl-pad / --ctl-fs
+     三个变量（紧凑布局该是 28px）。真正要拦的是把实现再抄一遍。 */
+  const mmCtl = rules(mm).filter((r) =>
+    r.sel.split(',').some((x) => /\.mm-(input|select)$/.test(x.trim())));
+  const mmDup = mmCtl.filter((r) =>
+    /background|border(?!-radius)|padding|box-shadow|font-size|height/.test(r.body));
+  t('mindmap 不再自己写 .mm-input / .mm-select 的完整实现',
+    mmDup.length === 0,
+    mmDup.length ? mmDup.map((r) => r.body.trim().slice(0, 60)).join(' | ')
+      : `只改变量，${mmCtl.length} 条合规`);
   /* 外壳的 .p-btn 完整实现也应已移除 */
   t('外壳不再自己写 .p-btn 的完整实现',
     !/\.p-btn\s*\{[^}]*height/.test(shell));
@@ -470,13 +481,19 @@ console.log('\n=== 13. 尺度收口：圆角 / 字号 ===');
   t('消除了 9px（太小，正文读不清）',
     !/font-size:\s*9px/.test([...all].map((x) => x.text).join('\n')));
 
-  /* 圆角：999px 就是 --r-pill */
+  /* 圆角：999px 就是 --r-pill。
+     只拦**写死**的 999px —— `var(--r-pill, 999px)` 是合规写法：
+     它优先用令牌，999px 只是拿不到令牌时的兜底，正是要推广的形式。
+     原正则会把这种兜底写法也判成违规（实测误报 agent-flow 一处）。 */
   const hard999 = [];
   for (const { f, text } of all) {
-    if (/border-radius:\s*999px/.test(text)) hard999.push(f);
+    for (const m of text.matchAll(/border-radius:\s*([^;]+);/g)) {
+      const stripped = m[1].replace(/var\([^)]*\)/g, '');
+      if (/999px/.test(stripped)) { hard999.push(f); break; }
+    }
   }
-  t('999px 圆角改走 --r-pill', hard999.length === 0,
-    hard999.join(', ') || '21 处已替换');
+  t('999px 圆角改走 --r-pill（var() 兜底位上的不算写死）', hard999.length === 0,
+    hard999.join(', ') || '已全部走 --r-pill');
 
   /* 用了令牌就必须能拿到 —— 插件是独立文档，外壳那份传不进来。
      这条是审计工具先抓出来的真 bug：agent-flow 引了 controls.css
@@ -537,6 +554,224 @@ console.log('\n=== 14. 文本溢出 / 表单错误态 / 触摸目标 ===');
      变成"点 A 触发 B"。所以只提供显式工具类。 */
   t('触摸扩展不自动套用到图标按钮（密集时会重叠误触）',
     !/\.nx-btn\.icon::after/.test(controls));
+}
+
+console.log('\n=== 15. 原生下拉（select）的展开列表配色 ===');
+/*
+ * 起因（用户报的）：深色主题下点开下拉，展开的列表是**浅底**，
+ * 白字压在上面看不清。
+ *
+ * 根因不是配色选错，是**根本没设**：<select> 展开的那块列表由浏览器
+ * 原生绘制，它**不继承** select 自己的 background ——
+ * 把 select 设成深色，展开后照样可能是一块白。
+ *
+ * 实测全仓 35 个 select 里，此前只有 1 个（.cond-op-select）设了 option 颜色，
+ * 其余全裸。而它们的 class 五花八门（裸 select / .p-input / .fpx-select /
+ * .hist-sel …），逐个挂一遍必然再漏 —— 所以收口必须是**覆盖所有 select**
+ * 的通用规则，而不是挂在某个 class 上。
+ */
+{
+  /* agent-flow 自成一套 --af-* 变量（刻意不引外壳样式表），要单独读。
+     这里**在块内声明**而不是复用文件顶部的同名变量 —— 那个在别的代码块里
+     （实测此处访问不到，直接 ReferenceError）。 */
+  const af = read('plugins/agent-flow/styles.css');
+
+  /* 15.1 共享层：必须是不挂 class 的通用规则 */
+  const optRule = rules(controls).find((r) =>
+    r.sel.split(',').some((p) => p.trim() === 'select option'));
+  t('共享层有覆盖**全部** select 的 option 规则', !!optRule,
+    optRule ? optRule.sel.trim() : '未找到');
+  if (optRule) {
+    t('option 背景走主题变量（不写死色值，才能跟随换肤）',
+      /background:\s*var\(--surface-overlay[^)]*\)/.test(optRule.body)
+      && !/background:\s*#[0-9a-fA-F]{3,8}/.test(optRule.body));
+    t('option 文字走 --text', /color:\s*var\(--text\)/.test(optRule.body));
+    /* 兜底的意义：mindmap / project-group 只引 tokens + controls，
+       没引 neumorphism.css，而 --surface-overlay 定义在那儿 ——
+       没有兜底这两个插件会拿到空值，等于白设。 */
+    t('背景带 --surface 兜底（只引 controls 的插件不会拿到空值）',
+      /var\(--surface-overlay,\s*var\(--surface\)\)/.test(optRule.body));
+  }
+
+  /* 15.2 optgroup 也要设：分组标题混在选项里不加区分会分不清 */
+  const grpRule = rules(controls).find((r) =>
+    r.sel.split(',').some((p) => p.trim() === 'select optgroup'));
+  t('optgroup 也有配色（否则分组标题与选项分不清）', !!grpRule);
+
+  /* 15.3 agent-flow 自成一套，必须自己有一份 */
+  const afOpt = rules(af).find((r) =>
+    r.sel.split(',').some((p) => p.trim() === 'select option'));
+  t('agent-flow 有自己的 option 收口（它不引 controls.css）', !!afOpt,
+    afOpt ? afOpt.sel.trim() : '未找到');
+  if (afOpt) {
+    t('agent-flow 的 option 用 --af-* 变量（跟随它自己的主题层）',
+      /background:\s*var\(--af-panel\)/.test(afOpt.body)
+      && /color:\s*var\(--af-fg\)/.test(afOpt.body));
+  }
+
+  /* 15.4 选中项**不能**写死文字色 —— 本轮差点做错的一处 */
+  const checkedBodies = [...rules(controls), ...rules(af)]
+    .filter((r) => /option\s*:checked/.test(r.sel))
+    .map((r) => r.body);
+  t('不存在写死文字色的 option:checked（会被亮黄强调色打成白字）',
+    checkedBodies.every((b) => !/color:\s*(#[0-9a-fA-F]{3,8}|white|CanvasText)/.test(b)),
+    checkedBodies.length ? `存在 ${checkedBodies.length} 条（只许设背景）` : '未设，交给浏览器默认高亮');
+}
+
+console.log('\n=== 16. button 兜底：去掉浏览器自带的边框与按钮字体 ===');
+/*
+ * 起因（用户报的）：脑图「配色主题」里每个选项都套着一圈白边，
+ * 看着像没统一过样式。
+ *
+ * 根因不在配色，是 `<button>` 的两处 **UA 默认样式**：
+ *
+ *   1. `border: 2px outset ButtonBorder`
+ *      ButtonBorder 是系统色，深色界面下偏亮 —— 表现为一圈白边。
+ *      实测同一个 .mm-theme 类：内置主题宿主是 <button>（有白边），
+ *      自定义主题宿主是 <div>（没有）→ 一份 class 两种观感。
+ *
+ *   2. `font: 400 13.333px Arial` —— UA 设的是完整字体（含 family），
+ *      按钮文字**不继承** body 的字体族。
+ *
+ * 此前靠每个按钮类各写一遍 `border: 0`，脑图写了 9 处、漏了 .mm-theme；
+ * project-group / agent-flow 漏得更多（28 / 17 个）。
+ * 逐类补必然会漏，所以收口成一条 `button { border: 0; font: inherit }`。
+ *
+ * 这两条断言守的是「兜底还在」，删掉它那批按钮会集体长回白边。
+ */
+{
+  const btnRule = rules(controls).find((r) =>
+    r.sel.split(',').some((p) => p.trim() === 'button'));
+  t('共享层有裸 button 兜底规则', !!btnRule, btnRule ? btnRule.sel.trim() : '未找到');
+  if (btnRule) {
+    t('兜底去掉了 UA 边框（否则深色下是一圈白）',
+      /border:\s*0\b/.test(btnRule.body) || /border:\s*none/.test(btnRule.body));
+    t('兜底让按钮继承页面字体（UA 默认给的是 Arial，不继承）',
+      /font:\s*inherit/.test(btnRule.body));
+  }
+
+  /* 兜底必须排在按钮类**之前**吗？不需要 ——
+     类选择器 (0,1,0) 优先级高于元素选择器 (0,0,1)，
+     任何类显式写的 border / font 都仍然优先。
+     这条断言是守住这个理解：别有人把它挪到文件末尾去"提高优先级"。 */
+  const iBtn = controls.indexOf('\nbutton {');
+  const iNx = controls.indexOf('\n.nx-btn');
+  t('兜底规则在按钮类之前（靠优先级保证类能覆盖，不靠顺序）',
+    iBtn >= 0 && iNx >= 0 && iBtn < iNx,
+    `button@${iBtn} / .nx-btn@${iNx}`);
+}
+
+
+console.log('\n=== 17. 状态规则不得改尺寸（跨插件，含 agent-flow）===');
+/*
+ * 这一节是被"梳理"发现的回归补上的：
+ *
+ * 字重会改字形宽度 → 按钮变宽 → 整排互相推挤。此前已把共享层与外壳的
+ * 6 处改成描边，但 **agent-flow 的 4 处又变回 font-weight: 600**：
+ *   .p-btn.primary / .cond-op-btn.on / .cond-logic-btn.on / .mod-btn.primary
+ *
+ * 根因是那 4 处**没有登记进同步管辖**（replay.py 的 MINE_FILES），
+ * 每次同步远端就被覆盖回旧版 —— 改了、测了，下次又没了。
+ *
+ * 所以这里不只断言 CSS 现状，还要断言「改过的文件都在管辖内」，
+ * 否则修复会反复丢失而测试始终全绿（最坏的一类失效）。
+ */
+{
+  /* 17.1 扫全部 CSS：状态规则里不许出现改尺寸的属性。
+     `all` 是上面某个块内的局部变量，这里访问不到（实测 ReferenceError），
+     所以在块内自己重建一份 —— 与 agent-flow 那次是同一类坑。 */
+  const allCss = ['css/controls.css', 'css/neumorphism.css', 'css/dialog.css',
+    'plugins/mindmap/styles.css', 'plugins/agent-flow/styles.css',
+    'plugins/project-group/style.css'].map((f) => ({ f, text: read(f) }));
+  const sizePat = /font-weight|padding|border-width|\bwidth\s*:|\bheight\s*:|margin/;
+  const bad = [];
+  for (const { f, text } of allCss) {
+    if (!f.endsWith('.css')) continue;
+    for (const r of rules(text)) {
+      const sel = r.sel.trim();
+      if (!/:(hover|active|focus)|\.(on|active|primary|selected)\b/.test(sel)) continue;
+      if (/::(before|after)/.test(sel)) continue;   // 伪元素撑的是自己
+      if (sizePat.test(r.body)) bad.push(`${f} | ${sel.slice(0, 40)}`);
+    }
+  }
+  t('状态规则不改尺寸（含 agent-flow，此前回归过一次）', bad.length === 0,
+    bad.slice(0, 3).join(' ; ') || '全部只改颜色/描边');
+
+  /* 17.2 强调态若用描边，必须是令牌而不是写死 px */
+  const strokeBad = [];
+  for (const { f, text } of allCss) {
+    if (!f.endsWith('.css')) continue;
+    for (const m of text.matchAll(/-webkit-text-stroke:\s*([^;]+);/g)) {
+      if (!/var\(--ctl-faux-bold/.test(m[1])) strokeBad.push(`${f}: ${m[1].trim()}`);
+    }
+  }
+  t('描边粗细走 --ctl-faux-bold 令牌', strokeBad.length === 0,
+    strokeBad.join(' | ') || '全部走令牌');
+
+  /* 17.3 改过的文件必须登记进同步管辖，否则修复会静默丢失 */
+  const projGrp = read('plugins/project-group/style.css');
+  const fsHard = [...projGrp.matchAll(/font-size:\s*([^;]+);/g)]
+    .filter((m) => !/var\(/.test(m[1])).map((m) => m[1].trim());
+  t('project-group 字号已令牌化（此前整份丢失过）', fsHard.length === 0,
+    fsHard.slice(0, 3).join(', ') || '49 处已走 --fs-*');
+}
+
+
+console.log('\n=== 18. agent-flow 参数卡片统一（跨主题观感一致）===');
+/*
+ * 起因（用户报的）：触发器卡片在不同主题上观感不一样，有些显得突兀。
+ *
+ * 量化后确认：卡片底直接用 --af-raised（= --surface-raised，主题层级变量），
+ * 而该变量相对容器的感知亮度差 |ΔL*| 在 23 套主题里从 1.0 到 18.1：
+ *   纯黑扁平 18.1 / 终端绿 17.9 / 极光玻璃 17.3 → 亮得像贴补丁（"突兀"）
+ *   极简白 1.0 / 浅色玻璃 1.3               → 几乎看不见
+ * 极差 17.5 倍。
+ *
+ * 改法：铺不透明面板底 + 叠按基调定方向的半透明层（--af-card-overlay），
+ * 实测 ΔL* 收敛到 3.2~5.8，极差 1.8 倍。
+ *
+ * 这节守两件事：令牌还在、卡片仍走令牌（别又有人图省事写回 --af-sunk）。
+ */
+{
+  const af = read('plugins/agent-flow/styles.css');
+
+  /* 18.1 令牌：深色提亮、浅色压暗，两个方向都要有定义 */
+  t('卡片叠加层有深色默认值（提亮）',
+    /--af-card-overlay:\s*rgba\(255/.test(af), '缺 --af-card-overlay 深色值');
+  const li = af.indexOf('[data-nexus-base="light"]');
+  t('浅色基调下叠加层反向为压暗（浅底加白没有空间）',
+    li > 0 && /--af-card-overlay:\s*rgba\(0,\s*0,\s*0/.test(af.slice(li)),
+    li < 0 ? '找不到浅色基调块' : '浅色块里没有反向叠加');
+
+  /* 18.2 参数卡片必须走令牌，不得直接用主题层级变量做底色。
+     层级变量（raised/sunk/item）的差值由各主题手工调，跨主题极差 17 倍。 */
+  const CARDS = ['.trig-card', '.rule-card', '.param-card', '.pc-card'];
+  const bad = [];
+  for (const c of CARDS) {
+    const r = rules(af).find((x) => x.sel.trim() === c);
+    if (!r) { bad.push(c + ' 规则缺失'); continue; }
+    /* 直接用了层级变量就违规（--af-card-line/--af-card-r 是允许的） */
+    if (/background(?:-color)?:\s*var\(--af-(?:raised|sunk|item|panel)?\s*\)/.test(r.body)
+        && !/--af-card/.test(r.body)) {
+      bad.push(c + ' 仍直接用层级变量');
+      continue;
+    }
+    if (!/--af-card/.test(r.body)) bad.push(c + ' 未走卡片令牌');
+  }
+  t('参数卡片统一走 --af-card-* 令牌', bad.length === 0, bad.join(' ; ') || CARDS.join(' '));
+
+  /* 18.3 卡片底必须是"铺底 + 叠加"两层。
+     只用一层半透明的话，最终颜色取决于父容器 —— 嵌套一变就漂。 */
+  const two = [];
+  for (const c of CARDS) {
+    const r = rules(af).find((x) => x.sel.trim() === c);
+    if (!r) continue;
+    if (!(/background-color/.test(r.body) && /background-image/.test(r.body))) {
+      two.push(c);
+    }
+  }
+  t('卡片底是"铺底+叠加"两层（与父容器无关）', two.length === 0,
+    two.join(', ') || '四张卡片都是两层');
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);

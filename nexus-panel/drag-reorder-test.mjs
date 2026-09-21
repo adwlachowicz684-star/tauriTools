@@ -197,6 +197,61 @@ console.log('\n=== 9. 手感一致：与项目组集群共用同一套数值 ===
     Number(theirRatio) === DEAD_ZONE_RATIO, `集群 ${theirRatio} / 内核 ${DEAD_ZONE_RATIO}`);
 }
 
+
+/* ==================== 10. 接线完整性（容器必须挂 onDragOver）==================== */
+/*
+ * 这一节守的是一个**已经发生过**的事故：
+ *
+ * `useDragReorder` 的两处接线只写了 `ref={xxxRef}`，漏了 `onDragOver`。
+ * 注释里明明写着「只给容器而不是每行挂 onDragOver……不给容器则测不到，
+ * 表现是『拖了不让位』」，代码却没照做 —— 注释写了不等于做到了。
+ *
+ * 漏挂的失效链路是**静默**的，这是它最难发现的地方：
+ *   1. 行上有 draggable → dragstart 照常触发 → **能拖起来**
+ *   2. 但容器没有 onDragOver → 没人调用 preventDefault
+ *      → 浏览器判定此处不可放置，光标是禁止符
+ *   3. trySwap 从不执行 → 不让位
+ *   4. 松手时 from === to → onDrop 不触发 → 什么都不发生
+ *
+ * 用户看到的就是「按住拖动没有反应」，而所有单元测试全绿
+ * （纯逻辑层每关都过，错的是接线，测不到）。
+ */
+{
+  const src = readFileSync('plugins/settings/App.tsx', 'utf8');
+
+  /* 把 `=>` 换成占位符再切标签。
+     不换的话 `onDrop={(e) => e.preventDefault()}` 里的 `>` 会被当成
+     开标签的结束，`[^>]*?` 提前截断，标签内容取不全 ——
+     于是「有 onDragOver」也可能被判成没有（误报）。 */
+  const norm = src.replace(/=>/g, ' ');
+
+  /* 所有传给 useDragReorder 的 containerRef 名 */
+  const refNames = [...src.matchAll(/containerRef:\s*(\w+)/g)].map((m) => m[1]);
+  t('至少有一处用了 useDragReorder 的容器引用', refNames.length > 0,
+    `找到 ${refNames.length} 处：${refNames.join(', ')}`);
+
+  for (const name of refNames) {
+    const key = `ref={${name}}`;
+    const idx = norm.indexOf(key);
+    if (idx < 0) {
+      t(`容器 ${name} 在 JSX 里被引用`, false, '找不到 ref 挂点');
+      continue;
+    }
+    /* 从 ref 挂点向前找最近的 <div，向后找标签结束 */
+    const start = norm.lastIndexOf('<div', idx);
+    const end = start < 0 ? -1 : norm.indexOf('>', idx);
+    if (start < 0 || end < 0) {
+      t(`容器 ${name} 的开标签可定位`, false, '标签边界定位失败');
+      continue;
+    }
+    const tag = norm.slice(start, end + 1);
+    t(`容器 ${name} 挂了 onDragOver（漏了就是「能拖起来但没反应」）`,
+      /onDragOver\s*=/.test(tag), tag.replace(/\s+/g, ' ').slice(0, 70));
+    t(`容器 ${name} 吞掉了 drop 默认动作`,
+      /onDrop\s*=/.test(tag), tag.replace(/\s+/g, ' ').slice(0, 70));
+  }
+}
+
 console.log(`\n${'='.repeat(52)}`);
 console.log(`通过 ${pass} 项，失败 ${fails.length} 项`);
 if (fails.length) {

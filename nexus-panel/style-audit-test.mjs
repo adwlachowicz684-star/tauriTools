@@ -187,6 +187,26 @@ console.log('\n=== 运行时注入变量（brushVars）不被误判 ===');
   t('源码里的 brushVars 前缀已全部登记', missing.length === 0,
     missing.join(', ') || `用到：${used.join(', ')}`);
 }
+/* 运行时注入的**位置**变量（js/inspector.js 的高亮层）同样会被静态扫描
+   误判成"从未定义"，所以也在审计里登记了。
+   与 brushVars 同理：名单手工维护，必须盯着它与真实注入处是否一致。 */
+{
+  const audit = await import('./js/style-audit.js');
+  const shell = readFileSync('css/neumorphism.css', 'utf8');
+  const hits = audit.auditCss(shell, 'x')
+    .filter((x) => /var\(--[xywh]\)/.test(x.msg));
+  t('--x/--y/--w/--h 不再被判成未定义', hits.length === 0,
+    hits.map((x) => x.msg.slice(0, 40)).join(' | '));
+
+  const insp = existsSync('js/inspector.js')
+    ? readFileSync('js/inspector.js', 'utf8') : '';
+  const injected = [...new Set(
+    [...insp.matchAll(/setProperty\(\s*'(--[a-z0-9-]+)'/g)].map((m) => m[1]))];
+  const missing = injected.filter((v) => !audit.RUNTIME_POSITION_VARS.includes(v));
+  t('inspector.js 注入的变量已全部登记', missing.length === 0,
+    missing.join(', ') || `注入：${injected.join(', ')}`);
+}
+
 
 
 {

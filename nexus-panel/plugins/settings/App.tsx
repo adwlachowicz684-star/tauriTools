@@ -373,7 +373,19 @@ function ToolbarSection({ plugins, ctx }: { plugins: any[]; ctx: any }) {
           还没有任何入口。可在下方把应用插件加进来。
         </div>
       )}
-      <div ref={tbRef}>
+      {/*
+        onDragOver 必须挂在**容器**上，不能挂在行上。
+        漏了它的后果是整条链路静默失效：dragstart 照常触发（所以能拖起来），
+        但没人调用 preventDefault，浏览器判定此处不可放置 —— 光标是禁止符，
+        且 trySwap 从不执行，松手什么都没发生。看起来就是「拖了没反应」。
+      */}
+      <div
+        ref={tbRef}
+        onDragOver={tbDrag.onDragOver}
+        /* 松手时吞掉默认动作：不 preventDefault 的话，部分浏览器会拿
+           dataTransfer 里的数据去做默认处理（当文本插入等）。 */
+        onDrop={(e) => e.preventDefault()}
+      >
       {entries.map((e, i) => (
         <div
           style={rowStyle}
@@ -1290,7 +1302,12 @@ export default function Settings() {
                   {appPlugins.length
                     ? sub(`应用插件 · ${appPlugins.length}`, '显示在侧边栏 · 可上下拖动排序')
                     : null}
-                  <div ref={appsRef}>
+                  {/* 同工具栏入口：onDragOver 挂容器，漏了就是「能拖起来但没反应」 */}
+                  <div
+                    ref={appsRef}
+                    onDragOver={appsDrag.onDragOver}
+                    onDrop={(e) => e.preventDefault()}
+                  >
                   {appPlugins.map((p, i) => (
                     <PluginRow
                       key={p.id}
