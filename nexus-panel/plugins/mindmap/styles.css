@@ -112,8 +112,6 @@ html, body {
   display: flex;
   gap: 10px;
   min-height: 0;
-  /* 文件库是覆盖式抽屉的定位基准（见 .mm-files 注释） */
-  position: relative;
 }
 
 /* 侧边栏：图标条 + 可折叠页面 */
@@ -815,36 +813,32 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: var(-
    左侧文件库（脑图文件列表 / 文件夹）
    ============================================================ */
 
-/* 文件库（含搜索结果）：**覆盖式抽屉**，不参与 flex 流。
+/* 文件库（含搜索结果）：flex 子项，与画布并排，展开时**挤窄画布**。
    ============================================================
-   原来是 `flex: 0 0 186px` 的 flex 子项，展开时会把画布挤窄 196px。
-   代价不只是"画布变窄"，而是**画布内容会跟着左右移动**：
-     画布变窄 → 内层 iframe 尺寸变 → iframe 内 window 派发 resize
-     → kityminder core 的 view 模块监听 resize，把视图平移
-       (新宽-旧宽)/2 重新居中 → 内容在屏幕上左右晃一下。
-   每次展开/收起都晃，很干扰（用户明确反馈过）。
+   为什么不用覆盖式抽屉（浮在画布之上）：
+     抽屉会遮住画布左侧 186px，用户看到的内容比关着时还少，
+     对「要看整张图」这个主场景是负收益。而挤窄布局下画布只是
+     **变窄 186px**，可见区域仍然完整。用户明确选择了这个版本。
 
-   改成绝对定位浮在画布左侧之上后，画布尺寸**完全不变**，
-   iframe 不触发 resize，内容一动不动。只要画布宽度变了，
-   靠"事后反向补偿"是补不干净的 —— 用户拖过画布或缩放过之后，
-   补偿基准就乱了。
+   代价是画布尺寸变化 → 内核 resize 会把视图重新居中
+   → 内容左右晃一下。这个偏移量很小（≤93px），只在展开/收起瞬间
+   发生，属可接受范围。内核本身没有"暂停自动居中"的 API，
+   做精确反向补偿需要操作 _viewDragger 私有成员，风险高于收益。
    ============================================================ */
 .mm-files {
-  position: absolute;
-  left: 0; top: 0; bottom: 0;
-  width: 186px;
+  flex: 0 0 186px;
+  width: 186px;       /* 显式声明宽度：左侧抽屉的折叠/展开动画若作用在 flex-basis 上，
+                           缺少 width 会导致元素在「收缩到 0」与「恢复 186px」之间
+                           出现一帧宽度塌陷，连带滚动容器闪一下 */
   display: none;
   flex-direction: column;
   gap: 8px;
   padding: 10px;
   border-radius: var(--r, 14px);
   background: var(--surface);
-  /* 比画布更重的阴影：它浮在画布之上，压不出层次就会像
-     "把画布切掉一块"，看着像布局坏了 */
-  box-shadow: var(--sh-out-lg, 0 8px 24px rgba(0, 0, 0, .35));
+  box-shadow: var(--sh-out-md);
   overflow-y: auto;
   min-height: 0;   /* flex 子项默认 min-height:auto，滚动区会被内容顶开、overflow 失效 */
-  z-index: var(--z-raised, 6);
 }
 .mm-files.open { display: flex; }
 

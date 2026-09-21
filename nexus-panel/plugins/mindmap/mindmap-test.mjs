@@ -6003,27 +6003,38 @@ group('左侧搜索结果面板（复用文件库底框）');
   }
 }
 
-group('布局：文件库展开时画布内容不能移动 + 控件档位');
+group('布局：文件库挤窄画布（不遮挡）+ 控件档位');
 
 {
   const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
   const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '');   // 先剥注释，避免命中说明文字
   const cs = strip(css);
 
-  // ---- 1) 文件库是覆盖式抽屉，不参与 flex 流 ----
-  const filesRule = cs.slice(cs.indexOf('.mm-files {'), cs.indexOf('.mm-files.open'));
-  ok(/position:\s*absolute/.test(filesRule),
-    '.mm-files 是绝对定位抽屉（不是 flex 子项）');
-  ok(!/flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 不再占 flex 流宽度（否则展开会把画布挤窄）');
+  // ---- 1) 文件库是 flex 子项，与画布并排 ----
+  //
+  // 为什么是挤窄而不是抽屉：抽屉会遮住画布左侧 186px，用户看到的内容
+  // 比关着时还少；挤窄下画布只是变窄 186px，可见区域仍然完整。
+  // 代价是画布尺寸变化 → 内核把视图重新居中 → 内容左右晃一下，
+  // 但偏移量很小（≤93px）、只在展开/收起瞬间发生，属可接受范围。
+  // 切片必须停在「下一个 }」而非 .open 处 —— 因为 .open 规则前还夹着
+  // 整整一段 15 行的注释块（含「为什么不用覆盖式抽屉」），那里面没有
+  // width:186px。不跳过注释就会断言失败（假阴性），逼得人去改实现。
+  const filesOpenIdx = cs.indexOf('.mm-files.open');
+  const nextBrace = cs.indexOf('}', filesOpenIdx);
+  const filesRule = cs.slice(cs.indexOf('.mm-files {'), nextBrace + 1);
+  ok(/flex:\s*0\s+0\s+186px/.test(filesRule),
+    '.mm-files 是 flex 子项（186px 固定宽，展开时挤窄画布）');
+  ok(!/position:\s*absolute/.test(filesRule),
+    '.mm-files 不是 absolute 抽屉（抽屉会遮挡画布）');
+
+  // 挤窄布局的关键：不能脱离 flex 流，否则就变成浮在上层遮挡画布了。
+  // 双重断言 —— 只断言「是 flex 子项」不够：若某人同时写了 absolute，
+  // absolute 优先级更高、实际仍是抽屉，单条断言会误判为通过。
+  ok(!/position:\s*absolute/.test(filesRule) &&
+      /flex:\s*0\s+0\s+186px/.test(filesRule),
+    '.mm-files 在 flex 流中且宽度 186px（挤窄画布而非遮挡）');
+
   ok(/width:\s*186px/.test(filesRule), '.mm-files 宽度仍是 186px');
-
-  // 抽屉必须有定位基准：少了它，absolute 会相对更外层定位，位置就飘了
-  const bodyRule = cs.slice(cs.indexOf('.mm-body {'), cs.indexOf('.mm-body {') + 200);
-  ok(/position:\s*relative/.test(bodyRule), '.mm-body 提供定位基准（抽屉靠它定位）');
-
-  // 阴影要比画布重 —— 它是浮在画布之上的，压不出层次就像"画布被切掉一块"
-  ok(/z-index/.test(filesRule), '.mm-files 有 z-index（浮在画布之上）');
 
   // ---- 2) 控件档位：输入框/下拉必须与按钮同为 28px ----
   //
