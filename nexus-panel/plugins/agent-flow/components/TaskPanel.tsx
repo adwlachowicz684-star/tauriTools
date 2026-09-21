@@ -183,7 +183,7 @@ export function TaskList({
                     <div
                       key={row.key}
                       style={{ height: TASK_ROW_HEIGHT }}
-                      className={`task-row ${selectedId === row.task.id ? 'is-active' : ''}`}
+                      className={`task-row ${activeId === row.task.id ? 'is-active' : ''}`}
                       onClick={() => onSelect(row.task.id)}
                     >
                       <div className="task-item-top">
