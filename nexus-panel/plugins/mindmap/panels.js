@@ -205,7 +205,45 @@ function section(title, ...children) {
   return h('div.mm-field', {}, h('h3', {}, title), ...children);
 }
 
-function colorRow(label, value, onPick, onClear) {
+/**
+ * 标题行右侧带一个操作按钮的 section。
+ *
+ * 用于「清除样式」这类**作用于整节**的操作：放在标题右边意味着
+ * 「这一节的样式都能被它清掉」，语义比在节尾另起一行按钮清楚得多 ——
+ * 也避免了四个清除按钮挤成一排、看不出各自管哪一块。
+ *
+ * 按钮用 .mm-btn.quiet（弱化态）：删除类操作在面板里到处都是，
+ * 全都用常规按钮会喧宾夺主，抢走主操作（选色 / 选字号）的注意力。
+ */
+function sectionAct(title, action, ...children) {
+  return h('div.mm-field', {},
+    h('div.mm-sec-head', {},
+      h('h3', {}, title),
+      h('span', { style: { flex: '1 1 auto' } }),
+      action),
+    ...children);
+}
+
+/**
+ * 弱化删除按钮（✕）。
+ *
+ * 样式面板里清除类操作很多（清颜色、清图标、清各类样式），
+ * 若都做成常规 .mm-btn，整页会是一排排实心按钮，
+ * 主操作（选色块 / 选字号 / 选徽章）反而被淹没了。
+ * 这里统一用一个无背景、弱化色的图标按钮。
+ */
+function quietBtn(title, onclick) {
+  return h('button.mm-btn.quiet.icon', { onclick, title }, '✕');
+}
+
+/**
+ * 取色行。
+ *
+ * `extras` 用于把同类控件塞进**同一行**（例如字体色后面跟 B / I / S）。
+ * 分开成两行的代价不只是多占一行高度：颜色与字形修饰都是「文字外观」，
+ * 拆开后用户要理解为两组不同的东西，而它们其实是同一组。
+ */
+function colorRow(label, value, onPick, onClear, extras) {
   const inp = h('input', {
     type: 'color',
     value: value || '#4A90D9',
@@ -220,7 +258,8 @@ function colorRow(label, value, onPick, onClear) {
   return h('div.mm-row', {},
     h('span.mm-label', { style: { minWidth: '48px' } }, label),
     sw,
-    onClear ? h('button.mm-btn.icon', { onclick: onClear, title: `清除${label}` }, '✕') : null,
+    onClear ? quietBtn(`清除${label}`, onClear) : null,
+    ...(extras || []),
   );
 }
 
@@ -1034,11 +1073,20 @@ export function buildSide(app, opts = {}) {
       app.api.commit();
     };
 
+    // 「清除样式」按钮挂在**每一节的标题右边**，而不是在末尾凑成一排四个。
+    // 四个同名按钮挤一排时，用户分不清哪个清的是文字、哪个清的是连线；
+    // 挂标题右边后，「这个按钮管这一节」是由位置直接表达出来的。
+    const clearBtn = (label, scopes) => quietBtn(label, () => {
+      for (const sc of scopes) app.bridge?.clearNodeStyle(sc);
+      app.api.commit();
+      refresh();
+    });
+
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
       // 文字段：C# 版 SidePageStyle 的第一段。原本插件只把它放在顶部工具栏，
       // 工具栏控件太多挤不下，且无法回显当前节点的格式状态（无状态按钮）。
       // 这里补齐，并按 collectNodeStyle 上报的字段回显/高亮当前值。
-      section('文字',
+      sectionAct('文字', clearBtn('清除文字样式', ['text']),
         h('div.mm-row', {},
           h('span.mm-label', { style: { minWidth: '48px' } }, '字体'),
           h('select.mm-select', {
@@ -1055,26 +1103,28 @@ export function buildSide(app, opts = {}) {
           }, ...withPresetValue(SIZES, st.fontSize).map((n) =>
             h('option', { value: n, selected: Number(st.fontSize) === n }, String(n)))),
         ),
+        // 颜色与 B/I/S **同一行**：它们都是「文字外观」的开关，
+        // 拆成两行会让人以为是两组不相干的设置
         colorRow('字体色', st.color,
           (v) => run('forecolor', v),
-          () => { app.bridge?.clearNodeStyle('text'); app.api.commit(); refresh(); }),
-        h('div.mm-row', {},
-          h('button.mm-chip' + (st.bold ? '.on' : ''), {
-            style: { fontWeight: '700' },
-            onclick: () => run('bold'),
-            title: '加粗',
-          }, 'B'),
-          h('button.mm-chip' + (st.italic ? '.on' : ''), {
-            style: { fontStyle: 'italic' },
-            onclick: () => run('italic'),
-            title: '斜体',
-          }, 'I'),
-          h('button.mm-chip' + (st.strikethrough ? '.on' : ''), {
-            style: { textDecoration: 'line-through' },
-            onclick: () => run('strikethrough'),
-            title: '删除线',
-          }, 'S'),
-        ),
+          () => { app.bridge?.clearNodeStyle('text'); app.api.commit(); refresh(); },
+          [
+            h('button.mm-chip' + (st.bold ? '.on' : ''), {
+              style: { fontWeight: '700' },
+              onclick: () => run('bold'),
+              title: '加粗',
+            }, 'B'),
+            h('button.mm-chip' + (st.italic ? '.on' : ''), {
+              style: { fontStyle: 'italic' },
+              onclick: () => run('italic'),
+              title: '斜体',
+            }, 'I'),
+            h('button.mm-chip' + (st.strikethrough ? '.on' : ''), {
+              style: { textDecoration: 'line-through' },
+              onclick: () => run('strikethrough'),
+              title: '删除线',
+            }, 'S'),
+          ]),
         h('div.mm-row', {},
           h('span.mm-label', { style: { minWidth: '48px' } }, '水平'),
           ...[['left', '左'], ['center', '中'], ['right', '右']].map(([v, t]) =>
@@ -1092,10 +1142,13 @@ export function buildSide(app, opts = {}) {
             }, t)),
         ),
       ),
-      section('节点填充',
+      // 「节点填充」与「节点边框」合并为一节：圆角归入本节后，
+      // 四组控件（填充 / 描边 / 线宽 / 圆角）本来就是「节点长什么样」的
+      // 同一个维度。分成两节反而让「圆角」看起来像独立功能。
+      // 清除要同时清 node（填充+圆角）与 border（描边色+线宽）两个 scope ——
+      // 内核里它们是两个命令，只清一个会留下半截样式。
+      sectionAct('节点', clearBtn('清除节点样式', ['node', 'border']),
         colorRow('填充', st.fill, (v) => set({ fill: v }), () => set({ fill: null })),
-      ),
-      section('节点边框',
         colorRow('描边', st.stroke, (v) => set({ stroke: v }), () => set({ stroke: null })),
         h('div.mm-row', {},
           h('span.mm-label', { style: { minWidth: '48px' } }, '线宽'),
@@ -1103,21 +1156,20 @@ export function buildSide(app, opts = {}) {
             onclick: () => set({ strokeWidth: w }),
           }, String(w))),
         ),
+        h('div.mm-row', {},
+          h('span.mm-label', { style: { minWidth: '48px' } }, '圆角'),
+          ...RADII.map((r) => h('button.mm-chip' + (Number(st.radius) === r ? '.on' : ''), {
+            onclick: () => set({ radius: r }),
+          }, String(r))),
+        ),
       ),
-      section('连线',
+      sectionAct('连线', clearBtn('清除连线样式', ['line']),
         colorRow('连线', st.lineColor, (v) => set({ lineColor: v }), () => set({ lineColor: null })),
         h('div.mm-row', {},
           h('span.mm-label', { style: { minWidth: '48px' } }, '线宽'),
           ...WIDTHS.map((w) => h('button.mm-chip' + (Number(st.lineWidth) === w ? '.on' : ''), {
             onclick: () => set({ lineWidth: w }),
           }, String(w))),
-        ),
-      ),
-      section('圆角',
-        h('div.mm-row', {},
-          ...RADII.map((r) => h('button.mm-chip' + (Number(st.radius) === r ? '.on' : ''), {
-            onclick: () => set({ radius: r }),
-          }, String(r))),
         ),
       ),
       // 外观：C# 样式页「外观」段（整理布局 + 清除/复制/粘贴样式）
@@ -1139,24 +1191,19 @@ export function buildSide(app, opts = {}) {
             onclick: () => { app.bridge.pasteNodeStyle(); app.api.commit(); app.api.status('已粘贴节点样式'); },
             title: '把剪贴板里的样式贴到当前选中节点',
           }, '粘贴样式'),
+          // 「清除全部」放在样式刷里：两者都是**整体**操作（作用于全部样式），
+          // 而各节标题右边的按钮是**分节**操作。混在一起会让人以为是同一粒度。
+          h('button.mm-btn', {
+            onclick: () => {
+              for (const sc of ['text', 'node', 'border', 'line']) app.bridge?.clearNodeStyle(sc);
+              app.api.commit();
+              refresh();
+              app.api.status('已清除全部样式');
+            },
+            title: '清除文字 / 节点 / 边框 / 连线的全部自定义样式',
+          }, '清除全部'),
         ),
         h('div.mm-hint', {}, '快捷键 Ctrl+Shift+C / Ctrl+Shift+V（编辑器内置）。剪贴板仅本次会话有效。'),
-      ),
-      section('清除样式',
-        h('div.mm-row', {},
-          h('button.mm-btn', { onclick: () => { app.bridge.clearNodeStyle('text'); app.api.commit(); refresh(); } }, '文字'),
-          h('button.mm-btn', { onclick: () => { app.bridge.clearNodeStyle('node'); app.api.commit(); refresh(); } }, '节点'),
-          h('button.mm-btn', { onclick: () => { app.bridge.clearNodeStyle('border'); app.api.commit(); refresh(); } }, '边框'),
-          h('button.mm-btn', { onclick: () => { app.bridge.clearNodeStyle('line'); app.api.commit(); refresh(); } }, '连线'),
-        ),
-        h('button.mm-btn', {
-          style: { marginTop: '4px' },
-          onclick: () => {
-            for (const s of ['text', 'node', 'border', 'line']) app.bridge.clearNodeStyle(s);
-            app.api.commit();
-            refresh();
-          },
-        }, '清除全部样式'),
       ),
     );
   }
@@ -1220,6 +1267,8 @@ export function buildSide(app, opts = {}) {
         badgeRow('progress', app.bridge.getSelectedProgress?.() ?? null,
           (v) => { app.bridge.exec('progress', v); app.api.commit(); refresh(); }),
       ),
+      // 三个按钮**同一行**：「选图标」「选图片」「清除」是同一件事的三个动作，
+      // 拆成两行后「清除图标」孤零零占一行，看着像另一个独立功能
       section('图标',
         h('div.mm-row', {},
           h('button.mm-btn', {
@@ -1227,9 +1276,7 @@ export function buildSide(app, opts = {}) {
             title: '从预设图标库点选（A3–A10）',
           }, '图标库…'),
           h('button.mm-btn', { onclick: pickImage }, '浏览图片…'),
-        ),
-        h('div.mm-row', {},
-          h('button.mm-btn', { onclick: () => { app.bridge.setImage(null); app.api.commit(); } }, '清除图标'),
+          quietBtn('清除节点上的图标 / 图片', () => { app.bridge.setImage(null); app.api.commit(); }),
         ),
         h('div.mm-hint', {}, '图标与图片都以 dataURL 内联进脑图，随文件一起导出；建议控制在 2MB 内。'),
       ),
