@@ -487,11 +487,17 @@ export function buildSide(app, opts = {}) {
    *
    * 界面上**所有**导入导出入口集中在这里 —— 顶栏那 7 个按钮
    * （导入 / 导出▾ / XMIND / TXT / MD / SVG / PNG）已移除，
-   * 主题页与历史快照弹窗里的导入导出按钮也一并收过来。
+   * 历史快照弹窗里的导入导出按钮也一并收过来。
    *
    * 为什么集中：原先分散在顶栏、文件页、主题页、快照弹窗四处，
    * 同一个「导出」在不同地方能点到的格式还不一样（顶栏有 PNG 倍率、
    * 文件页只有 JSON/MD），用户不知道去哪儿找某个格式。
+   *
+   * **例外：主题的导入 / 导出留在主题页**，与「新建 / 编辑 / 删除」同排。
+   * 它们操作的是「主题」这个对象，和主题列表是一组连贯动作；收进本页后
+   * 主题页要靠一句 hint 指路，等于把一组连贯操作拆成两地。
+   * 集中原则解决的是"同一个导出在不同地方长得不一样"，
+   * 而主题这里是"同一对象的操作要不要分开" —— 后者不该拆。
    */
   function pageExchange() {
     const btn = (label, onclick, title) => h('button.mm-btn', {
@@ -551,15 +557,6 @@ export function buildSide(app, opts = {}) {
           btn('PNG · 1 倍', () => app.api.exportPng(1), '位图，1 倍 = 画布原尺寸'),
           btn('PNG · 2 倍', () => app.api.exportPng(2), '像素密度翻倍，文字与连线不糊'),
           btn('PNG · 3 倍', () => app.api.exportPng(3), '体积较大，适合打印或大屏'),
-        ),
-      ),
-
-      sectionTip('主题',
-        ['导入 / 导出仅针对**自定义**主题；内置主题无法导出。',
-          '导入会重新生成 id，不会覆盖同名主题。'],
-        row(
-          btn('导入主题…', () => importThemeFile(), '从 JSON 文件导入自定义主题（重新生成 id，不会覆盖同名）'),
-          btn('导出当前主题', () => exportThemeFile(), '把当前画布正在用的自定义主题导出为 JSON'),
         ),
       ),
 
@@ -1554,8 +1551,18 @@ export function buildSide(app, opts = {}) {
         )),
     );
 
+    // 当前是不是内置主题 —— 内置主题无法导出（没有可序列化的自定义定义）。
+    // 这条信息原本靠节尾那句 hint 传达；按钮移到本页后改为**直接禁用**导出按钮：
+    // 让按钮可点、点了再报错，等于把"做不了"这件事推迟到用户已经付出操作之后。
+    const isBuiltin = THEMES.some((t) => t.value === cur);
+
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
-      section('配色主题',
+      // 导入 / 导出与「新建 / 编辑 / 删除」同排：它们都是**对主题这个对象**的操作，
+      // 放在一处才看得出「主题能做的全在这里」。原先收进侧栏「导入导出」页后，
+      // 主题页要靠一句 hint 指路，等于把一组连贯操作拆成了两地。
+      sectionTip('配色主题',
+        ['导入 / 导出仅针对**自定义**主题；内置主题无法导出。',
+          '导入会重新生成 id，不会覆盖同名主题。'],
         list,
         h('div.mm-row', {},
           // A64：把当前主题传进去当种子（原版 OnNewThemeClick 同款行为）
@@ -1563,9 +1570,18 @@ export function buildSide(app, opts = {}) {
             onclick: () => openThemeEditor(app, null, cur),
             title: `以当前主题「${curName}」为起点新建`,
           }, '＋ 新建'),
+          h('button.mm-btn', {
+            onclick: () => importThemeFile(),
+            title: '从 JSON 文件导入自定义主题（重新生成 id，不会覆盖同名）',
+          }, '导入…'),
+          h('button.mm-btn', {
+            onclick: () => exportThemeFile(),
+            disabled: isBuiltin,
+            title: isBuiltin
+              ? '当前是内置主题，无法导出（请先新建或选中自定义主题）'
+              : '把当前画布正在用的自定义主题导出为 JSON',
+          }, '导出'),
         ),
-        // 主题的导入/导出已移到侧栏「导入导出」页（与其余导入导出入口集中）
-        h('div.mm-hint', {}, '自定义的导入/导出在侧栏「导入导出」页；内置主题无法导出。'),
       ),
       section('布局模板',
         // 两列缩略图网格 + 名称，对齐 WPF 原版（UniformGrid Columns="2" + 100×58 缩略图）
