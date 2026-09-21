@@ -10,7 +10,6 @@ import { shouldDetach, detachGroup } from '../../engine/paramCards';
 // 从 registry 拿 getCardGroup，不能走 nodes/index（会与 defs 成环）
 import { getCardGroup } from '../../nodes/registry';
 import { CredentialPicker } from './shared';
-import SaveAsCustom from './SaveAsCustom';
 import { ParamCardPicker } from './ParamCardPicker';
 import {
   matchPresetKey, isSecretField, setFieldsDefault, clearFieldsDefault, hasFieldDefault,
@@ -609,31 +608,15 @@ export function BasicInspector({
 
   return (
     <aside className="inspector">
-      <div className="insp-title">
-        <input
-          className="title-input"
-          value={String(d.label ?? '')}
-          onChange={(e) => onChange(node.id, { label: e.target.value })}
-        />
-        <span className="insp-kind">{def.meta.label}</span>
-        {/*
-         * 模块节点的编辑入口。
-         * 放在标题行而不是字段区：进内部编辑是"整个节点层面"的动作，
-         * 混在字段里会被当成一个普通参数。
-         */}
-        {node.type === 'module' && onEditModule ? (
-          <button
-            className="link-btn"
-            title="编辑这个模块的内部结构（改完会脱钩成独立副本）"
-            onClick={() => onEditModule(node.id)}
-          >
-            编辑内部
-          </button>
-        ) : (
-          <SaveAsCustom node={node} />
-        )}
-      </div>
-
+      {/*
+       * 名称 / id / 开启 / 显示高度 / 嵌合操作已上移到通用基础信息区
+       * （inspectors/NodeBasics），这里只留参数。
+       *
+       * 以前本面板自己画一整条标题行（名称 + 类型 + 存为自定义），
+       * 于是"字段型节点"与"整体自定义面板节点"的顶部长得不一样：
+       * 前者名称在面板内，后者在分发器外。同一种东西两个位置，
+       * 挑节点时每换一种就要重新找一遍。
+       */}
       {list.map(({ f, i }) =>
         renderField(
           f,

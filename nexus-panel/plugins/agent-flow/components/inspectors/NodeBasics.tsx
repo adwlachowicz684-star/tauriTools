@@ -1,0 +1,173 @@
+import type { FlowNode } from '../../flowTypes';
+import { NODE_SIZE_META, normalizeSize, type NodeSize } from '../../types';
+import { getDef } from '../../nodes/registry';
+import { stackParentOf, descendantsOf, chainTopOf, chainOf } from '../../engine/stack';
+import { isNodeDisabled } from '../../engine/nodeDisabled';
+import SaveAsCustom from './SaveAsCustom';
+
+/**
+ * 节点的**基础信息区**。
+ *
+ * ================= 为什么要单独成一块 ====================
+ *
+ * 名称、id、开启、显示高度、嵌合操作 —— 这些是每个节点都有的、
+ * 与"这个节点干什么"无关的东西。
+ *
+ * 以前它们散在各处：
+ *   · 名称：五个面板各写一份（条件 / 循环 / 并发 / 触发器 / 字段型面板）
+ *   · id 与显示高度：分发器里两行
+ *   · 开启：分发器里一个开关
+ *   · 折叠 / 展开 / 解除：分发器里一行，且只在嵌合时出现
+ *
+ * 散着的后果是**每种节点的面板顶部长得都不一样**：
+ * 有的先名称后参数，有的先参数后名称；有的能存为自定义，有的不能。
+ * 挑节点时要在不同布局间重新找一遍位置。
+ *
+ * ================= 为什么它们不是参数 ====================
+ *
+ * 改这些都不影响本次执行结果（关掉除外 —— 那是"这一步算不算数"）。
+ * 混进参数列表会被当成配置项的另两组，
+ * 而"改了半天发现跑起来没变"正是这种混淆的典型表现。
+ */
+
+type Props = {
+  node: FlowNode;
+  onChange: (id: string, patch: Record<string, unknown>) => void;
+  /** 给用户的即时反馈（走画布日志） */
+  onNote?: (msg: string) => void;
+  /** 进入模块实例的内部编辑。只有模块节点用得上 */
+  onEditModule?: (nodeId: string) => void;
+};
+
+export function NodeBasics({ node, onChange, onNote, onEditModule }: Props) {
+  const def = getDef(node.type);
+  const d = (node.data ?? {}) as Record<string, unknown>;
+  const size = normalizeSize(d.size);
+
+  /*
+   * 嵌合信息行。
+   *
+   * 折叠标记打在**串顶**上 —— 打在中间某块上会出现
+   * "上半截显示、下半截隐藏"这种半吊子状态。
+   */
+  const stackParent = stackParentOf({ data: d });
+  const inStack = stackParent !== null || descendantsOf([node] as never, node.id).length > 0;
+
+  /*
+   * 关闭开关。
+   *
+   * 左右拨动的样式（不是勾选框）：它是"这一步现在算不算数"的总开关，
+   * 勾选框看着像"某个参数要不要勾"，容易和下面的参数混在一起。
+   *
+   * 口径走 isNodeDisabled：触发器历史上那个 `enabled` 字段也算数，
+   * 否则会出现"这里说已关闭、那里说已启用"的两份真相。
+   */
+  const off = isNodeDisabled({ data: d });
+
+  return (
+    <section className="insp-basics">
+      <div className="insp-title">
+        <input
+          className="title-input"
+          value={String(d.label ?? '')}
+          onChange={(e) => onChange(node.id, { label: e.target.value })}
+        />
+        <span className="insp-kind">{def.meta.label}</span>
+        {/*
+         * 模块节点给「编辑内部」，其余给「存为自定义」——
+         * 两个都是"整个节点层面"的动作，占同一个位置，
+         * 不会同时出现也不会抢位置。
+         */}
+        {node.type === 'module' && onEditModule ? (
+          <button
+            type="button"
+            className="mini"
+            title="编辑这个模块实例的内部（改动只影响本实例）"
+            onClick={() => onEditModule(node.id)}
+          >
+            编辑内部
+          </button>
+        ) : (
+          <SaveAsCustom node={node} />
+        )}
+      </div>
+
+      <div className="insp-topbar">
+        <button
+          type="button"
+          className={'insp-switch' + (off ? ' is-off' : '')}
+          title={off ? '已关闭 —— 这一步不参与执行，下游也会跟着停' : '开启 —— 这一步正常执行'}
+          onClick={() => onChange(node.id, { disabled: !off, enabled: true })}
+        >
+          <span className="insp-switch-track">
+            <span className="insp-switch-knob" />
+          </span>
+          <span className="insp-switch-text">{off ? '已关闭' : '开启'}</span>
+        </button>
+
+        <span className="insp-topbar-group">
+          {(Object.keys(NODE_SIZE_META) as NodeSize[]).map((k) => (
+            <button
+              key={k}
+              className={`insp-size-btn${size === k ? ' on' : ''}`}
+              title={`显示高度：${NODE_SIZE_META[k].hint}`}
+              onClick={() => onChange(node.id, { size: k })}
+            >
+              {NODE_SIZE_META[k].label}
+            </button>
+          ))}
+        </span>
+
+        <span className="task-grow" />
+
+        <button
+          className="insp-size-btn insp-id-btn"
+          title="节点 id —— 点一下复制。运行日志里写的就是这个 id"
+          onClick={() => {
+            const t = String(node.id ?? '');
+            void navigator.clipboard?.writeText(t).then(
+              () => onNote?.(`已复制节点 id：${t}`),
+              () => onNote?.(`复制失败，请手动选中：${t}`),
+            );
+          }}
+        >
+          {String(node.id ?? '')}
+        </button>
+      </div>
+
+      {inStack ? (
+        <div className="insp-size insp-stack-row">
+          <span className="insp-size-label">
+            {stackParent
+              ? `嵌合于 ${stackParent}`
+              : `串顶 · 共 ${chainOf([node] as never, node.id).length} 块`}
+          </span>
+          <span className="insp-size-ops">
+            <button
+              className="insp-size-btn"
+              title="折叠只隐藏显示，节点照常执行"
+              onClick={() => onChange(chainTopOf([node] as never, node.id), { stackCollapsed: true })}
+            >
+              折叠
+            </button>
+            <button
+              className="insp-size-btn"
+              onClick={() => onChange(chainTopOf([node] as never, node.id), { stackCollapsed: false })}
+            >
+              展开
+            </button>
+            {stackParent ? (
+              <button
+                className="insp-size-btn"
+                title="解除与上方节点的嵌合（也可以直接把它拖开）"
+                onClick={() => onChange(node.id, { stackParent: null })}
+              >
+                解除
+              </button>
+            ) : null}
+          </span>
+        </div>
+      ) : null}
+    </section>
+  );
+}

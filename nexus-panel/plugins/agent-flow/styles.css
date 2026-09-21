@@ -2928,3 +2928,18 @@ input.mono, textarea.mono {
   font-size: var(--fs-10, 10px); line-height: 1.5; color: var(--af-warn);
   padding-left: 8px; border-left: 2px solid var(--af-warn);
 }
+
+/* ================= 基础信息区 ================= */
+/*
+ * 名称 / id / 开启 / 显示高度 / 嵌合操作合成一块，所有节点顶部一致。
+ *
+ * 以前这些散在五个面板和分发器里，于是每种节点的面板顶部长得都不一样：
+ * 有的先名称后参数，有的先参数后名称。挑节点时每换一种就要重新找一遍位置。
+ *
+ * 底边一条分隔线 —— 与下面的参数区隔开。
+ * 不加的话它看起来就是"第一类参数"，而这正是要避免的混淆。
+ */
+.insp-basics { margin-bottom: var(--sp-3, 6px); }
+.insp-basics .insp-title { margin-bottom: 8px; }
+/* 嵌合行：与顶栏同款，只是没有下边框（它是最后一行，下面就是分隔线） */
+.insp-stack-row { border-bottom: none; margin-bottom: 0; }
