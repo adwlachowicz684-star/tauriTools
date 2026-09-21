@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CardInfo } from '../types';
 import { CardGrid, type DragPayload } from './CardGrid';
+import { swapIndexWithDeadZone } from '../utils/dragSort';
 import { BOX_DRAG_MIME, parseBoxDrag } from '../utils/dragSort';
 import { ContextMenu, type MenuItem } from './ui';
 
@@ -100,6 +101,9 @@ export function StackedGroups({
 
   const allCollapsed = collapsed.size === tabs.length && tabs.length > 0;
 
+  /** 各分类框的位置尺寸，供 #75 死区换位计算落点 */
+  const boxRefs = useRef<(HTMLDivElement | null)[]>([]);
+
   return (
     <div className="fpx-stack">
       {tabs.map((t, i) => {
@@ -113,13 +117,41 @@ export function StackedGroups({
               overIdx === i && dragFrom !== -1 && dragFrom !== i ? 'over' : '',
             ].filter(Boolean).join(' ')}
             key={`${t.name}-${i}`}
+            ref={(el) => { boxRefs.current[i] = el; }}
             onDragOver={(e) => {
               // 只响应分类框自身的重排；卡片拖拽交给下面的 CardGrid
               if (dragFrom === -1 || !e.dataTransfer.types.includes(BOX_DRAG_MIME)) return;
               e.preventDefault();
               e.stopPropagation();
               e.dataTransfer.dropEffect = 'move';
-              setOverIdx(i);
+              /*
+               * #75 落点由**指针位置 + 死区**算出，而不是"悬停哪个框就是哪个"。
+               *
+               * 直接取悬停项的话，手抖一两个像素落点就跳，看着像界面坏了 ——
+               * 分类框高矮不一（有的展开很高、有的折叠只剩标题），
+               * 指针在框内移动时最容易来回跳。
+               *
+               * 量不到尺寸时（首帧 / 尚未布局）退回"悬停即落点"，
+               * 不至于变成"拖了没反应"。
+               *
+               * 不需要 `resolveMoveIndex` 那种缝隙换算：
+               * `swapIndexWithDeadZone` 返回的本来就是**最终下标**，
+               * 而 `moveTab` 是"先摘后插"，插入位置也是最终下标。
+               */
+              const rects: { top: number; height: number }[] = [];
+              for (let k = 0; k < tabs.length; k++) {
+                const r = boxRefs.current[k]?.getBoundingClientRect();
+                if (!r) { rects.length = 0; break; }
+                rects.push({ top: r.top, height: r.height });
+              }
+              setOverIdx(rects.length === tabs.length
+                ? swapIndexWithDeadZone(
+                    e.clientY,
+                    rects.map((r) => r.top + r.height / 2),
+                    rects.map((r) => r.height),
+                    dragFrom,
+                  )
+                : i);
             }}
             onDragLeave={() => setOverIdx((v) => (v === i ? -1 : v))}
             onDrop={(e) => {
@@ -127,6 +159,7 @@ export function StackedGroups({
               const raw = e.dataTransfer.getData(BOX_DRAG_MIME);
               // 先取数再清状态：清早了就拿不到 data 了
               const from = dragFrom;
+              const to = overIdx;
               setDragFrom(-1);
               setOverIdx(-1);
               e.stopPropagation();
@@ -138,8 +171,11 @@ export function StackedGroups({
                  让浏览器把拖影飞回原位 —— 否则这次无效放置
                  看起来和成功一模一样。 */
               if (!box || box.index !== from) return;
+              /* 原地放下 = 无操作：不 preventDefault 才有回弹（与 #103 同源）。
+                 落点现在是死区算出来的 target，而不是"当前悬停的框"。 */
+              if (to < 0 || to === from) return;
               e.preventDefault();
-              if (from !== i) onMoveTab(from, i);
+              onMoveTab(from, to);
             }}
           >
             <div

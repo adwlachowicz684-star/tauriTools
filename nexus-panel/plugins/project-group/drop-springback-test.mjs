@@ -94,8 +94,19 @@ console.log('\n=== 2. 分类框：同样规则 ===');
   t('找到 onDrop', !!b);
   t('校验在 preventDefault 之前',
     b.indexOf('parseBoxDrag(raw)') < b.indexOf('e.preventDefault();'));
-  t('无效就 return 且不 preventDefault',
-    /if \(!box \|\| box\.index !== from\) return;[\s\S]{0,40}?e\.preventDefault\(\);/.test(b));
+  /*
+   * 用**位置顺序**比较，不要写 `{0,40}?` 这种字符窗口：
+   * 中间插入新的守卫（#75 的"原地放下"）后窗口不够宽 → 假失败。
+   * 真正要断言的是"return 在 preventDefault 之前"，与中间隔多少字符无关。
+   */
+  /*
+   * **必须查存在性**（`>= 0`）：`indexOf` 找不到时返回 -1，
+   * 而 `-1 < 任何正数` 恒为真 —— 反向验证时发现，把那行 return 删掉
+   * 这条断言**照样通过**（漏报），等于没测。
+   */
+  const iRet = b.indexOf('if (!box || box.index !== from) return;');
+  const iPrev = b.indexOf('e.preventDefault();');
+  t('无效就 return 且不 preventDefault', iRet >= 0 && iPrev >= 0 && iRet < iPrev);
   t('stopPropagation 仍在（保层级）', /e\.stopPropagation\(\);/.test(b));
 }
 

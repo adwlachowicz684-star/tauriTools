@@ -119,7 +119,8 @@
     "test:pg-verify-batch": "node plugins/project-group/verify-batch-test.mjs",
     "test:pg-types-fix": "node plugins/project-group/types-fix-test.mjs",
     "test:pg-rail-hover": "node plugins/project-group/rail-hover-test.mjs",
-    "test:pg-external-drop": "node plugins/project-group/external-drop-test.mjs"
+    "test:pg-external-drop": "node plugins/project-group/external-drop-test.mjs",
+    "test:pg-deadzone-swap": "node plugins/project-group/deadzone-swap-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
