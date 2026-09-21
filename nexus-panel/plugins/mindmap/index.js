@@ -2181,6 +2181,15 @@ bootIframePlugin(async (ctx) => {
     get bridge() { return bridge; },
     api,
     get customThemes() { return customThemes; },
+    // **必须同时有 setter**：panels.js 有三处 `app.customThemes = ...`
+    // （导入主题 / 删除主题 / 编辑保存主题）。ES 模块是严格模式，给「只有
+    // getter」的访问器属性赋值会抛 TypeError：
+    //   Cannot set property customThemes of #<Object> which has only a getter
+    // 表现为点保存主题直接报错、改了存不进去。
+    //
+    // 两者缺一不可：getter 让面板读到**当前**值（数组会被整体替换），
+    // setter 让写回落到模块级变量（saveThemes 读的是它）。
+    set customThemes(v) { customThemes = v || []; },
     get settings() { return settings; },
     // 必须是 **getter**：`sheet` 本身是「取当前画布」的**函数**，
     // 直接把函数传出去的话，面板里 `app.sheet?.theme` / `?.layout`

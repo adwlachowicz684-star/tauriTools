@@ -1763,6 +1763,60 @@ CSS 解析器继续往后找，把紧跟的注释忽略掉、与下一个选择�
 - 关键属性断言：`.mm-side` 块内 `flex: 0 0 276px` / `display:flex` /
   `overflow-y:auto` / `min-height:0` 均存在
 
+## 保存主题失败：`has only a getter`
+
+### 现象
+
+点「保存主题」报错：
+
+```
+Cannot set property customThemes of #<Object> which has only a getter
+```
+
+导入主题、删除主题同样是这条路，一并失败。
+
+### 根因
+
+`app` 句柄上 `customThemes` **只有 getter**：
+
+```js
+const app = {
+  get customThemes() { return customThemes; },   // ← 没有 setter
+};
+```
+
+而 `panels.js` 有三处 `app.customThemes = ...`（导入 / 删除 / 编辑保存）。
+**ES 模块恒为严格模式**，给「只有 getter」的访问器属性赋值会抛 TypeError
+（非严格模式下才是静默失败）。已实测复现：
+
+```js
+const o = {}; Object.defineProperty(o, 'a', { get: () => 1 });
+o.a = 2;   // TypeError: Cannot set property a ... which has only a getter
+```
+
+### 修法
+
+补 setter，写回模块级变量（`saveThemes()` 读的就是它）：
+
+```js
+get customThemes() { return customThemes; },
+set customThemes(v) { customThemes = v || []; },
+```
+
+两者缺一不可：getter 让面板读到**当前**值（数组会被整体替换），
+setter 让写回真正落到模块级变量。**setter 若写成空实现**，赋值不报错但
+`saveThemes()` 存的仍是旧数组 —— 表现为「提示成功，重开又没了」，
+比直接抛错更难查，故专门有断言盯着。
+
+### 通用守卫
+
+不能只断言 `customThemes` 一处 —— 下次再加一个 getter-only 的可写状态，
+同样的坑会重演，而报错只在运行时出现、测试却全绿。
+
+测试会扫描**所有**拿到 app 句柄的模块，找出 `app.X = ...` 赋值，
+逐个要求 `app` 上有对应的 `set X(`。注入 `app.sheet = null`（`sheet` 是
+getter-only）已确认能抓到。
+
 ## 文件库 / 搜索结果：两个独立页签共用一个底框
 
 两者共用同一个 `.mm-files` 底框（同 186px），但**不是**"搜索时把文件列表
