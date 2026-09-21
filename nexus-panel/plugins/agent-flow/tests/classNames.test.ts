@@ -645,3 +645,20 @@ test('.side-head / .side-title / .side-title-ops 在 CSS 里各只有一处定�
     assert.equal(n, 1, `.${sel} 应当只有一处定义，实际 ${n} 处`);
   }
 });
+
+test('节点库的自定义色块有样式（.side-swatch / .side-picker）', () => {
+  /*
+   * 色块是新增的控件，忘了写 CSS 的话它会退化成一个无边框的小方块，
+   * 界面上只是"看着怪"，没人会想到是样式没定义。
+   */
+  const css = fs.readFileSync(path.join(ROOT, 'styles.css'), 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(css, /\.side-swatch\s*\{/, '要有 .side-swatch');
+  assert.match(css, /\.side-picker\s*\{/, '要有 .side-picker');
+});
+
+test('改色走 setColorOverride / 自定义预设自己那份，不各写一套', () => {
+  const t = srcOf('components/Sidebar.tsx');
+  assert.ok(/setColorOverride/.test(t), '内置类型要写类型级覆盖');
+  assert.ok(/saveCustomPresets/.test(t), '自定义预设要写回它自己');
+});

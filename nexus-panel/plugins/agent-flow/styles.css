@@ -1586,6 +1586,27 @@ input.mono, textarea.mono {
 /* 筛选区同样按侧栏内边距对齐 */
 .hist-filter { padding: 9px 12px; }
 
+/* 节点库里的自定义颜色：小色块 + 取色器 */
+.side-swatch {
+  width: 12px; height: 12px; flex: none;
+  border-radius: 3px;
+  border: 1px solid var(--af-line, #2a2f3a);
+  cursor: pointer;
+  margin-left: auto;
+}
+/* 只在悬停条目时才明显 —— 一直满亮度会让整列看起来五颜六色 */
+.side-item:not(:hover) .side-swatch { opacity: 0.45; }
+.side-swatch:hover { opacity: 1; transform: scale(1.15); }
+.side-picker {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-left: 4px;
+}
+.side-picker input[type='color'] {
+  width: 26px; height: 20px; padding: 0;
+  border: 1px solid var(--af-line, #2a2f3a);
+  border-radius: 4px; background: none; cursor: pointer;
+}
+
 /* 触发条件卡片 —— 每种触发方式各占一块，独立配置 */
 .trig-cards { display: flex; flex-direction: column; gap: 8px; }
 .trig-card {

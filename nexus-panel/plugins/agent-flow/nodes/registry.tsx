@@ -5,6 +5,7 @@ import {
 } from './types';
 import { loadCustomPresets, presetKey, presetIdOf, dataOf } from '../engine/customPresets';
 import { withCrashGuard } from '../components/ErrorBoundary';
+import { loadColorOverrides, resolveNodeColor } from '../engine/nodeColors';
 
 /*
  * re-export 卡片组的查询函数。
@@ -148,11 +149,24 @@ export function allDefs(): NodeDef[] {
  * 多数类型只有一个预设，有 variants 的（任务的两种 CLI）会展开成多项。
  */
 export function allPresets(): NodePreset[] {
+  /*
+   * 类型色覆盖只在这里读一次 ——
+   * 每个预设各读一遍会变成 N 次 localStorage 读取，
+   * 而它们要的是同一份东西。
+   */
+  const overrides = loadColorOverrides();
   const out: NodePreset[] = [];
   for (const def of defs.values()) {
     const { presets, label, color } = def.meta;
     const list = presets?.() ?? [{ key: def.type, label, color, init: () => def.create('') }];
-    for (const p of list) out.push({ ...p, type: def.type });
+    for (const p of list) {
+      out.push({
+        ...p,
+        type: def.type,
+        // 用户自定义的类型色优先（预设自带的色更具体，仍由它赢）
+        color: resolveNodeColor(def.type, p.color ?? color, p.color, overrides),
+      });
+    }
   }
 
   /*
@@ -171,7 +185,8 @@ export function allPresets(): NodePreset[] {
       key: presetKey(cp.id),
       type: cp.baseType,
       label: cp.name,
-      color: cp.color ?? def.meta.color,
+      // 自定义预设自己的色最具体；没设才轮到类型覆盖
+      color: resolveNodeColor(cp.baseType, def.meta.color, cp.color, overrides),
       hint: `自定义 · 基于${def.meta.label}`,
       // 每次返回新对象：多个实例若共享同一份，改一个会串到另一个上
       init: () => dataOf(cp),

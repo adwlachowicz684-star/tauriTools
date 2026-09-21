@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { getDef } from '../nodes/registry';
 import { validateNode, LEVEL_COLOR, LEVEL_TEXT, LEVEL_SHORT, type IssueLevel } from '../engine/nodeValidate';
 import { normalizeSize, type NodeSize } from '../types';
+import { resolveNodeColor } from '../engine/nodeColors';
 import { stackParentOf } from '../engine/stack';
 
 /**
@@ -57,7 +58,11 @@ export function NodeShell({
   const status = data.status ?? 'idle';
   const size: NodeSize = normalizeSize((data as { size?: unknown }).size);
   // 节点类型色的唯一来源：注册表里那份。未注册的类型走兜底定义（灰色），不会崩
-  const color = typeColor ?? getDef(type).meta.color;
+  /*
+   * 用户在节点库改过的类型色，画布上要跟着变 ——
+   * 侧栏与画布是同一套视觉语言，改一处只生效一边会让人以为没改成功。
+   */
+  const color = resolveNodeColor(type, typeColor ?? getDef(type).meta.color, typeColor);
 
   /*
    * 圆点是**配置预警**，它在徽章里（徽章写的是配置状态，不是运行状态）。

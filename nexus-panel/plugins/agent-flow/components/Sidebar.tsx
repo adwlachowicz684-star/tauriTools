@@ -6,7 +6,9 @@ import { confirm, alert, prompt } from '../../../js/dialog.js';
 import {
   presetIdOf, removeCustomPreset, renameCustomPreset,
   exportCustomPresets, importCustomPresets,
+  loadCustomPresets, saveCustomPresets,
 } from '../engine/customPresets';
+import { setColorOverride } from '../engine/nodeColors';
 import { pickBrief, producesDescOf } from '../engine/blockApi';
 import NodeTip, { type TipAnchor } from './NodeTip';
 
@@ -365,6 +367,33 @@ export default function Sidebar({
    */
   const groups = presetsByCategory();
 
+  /*
+   * 自定义颜色：取色器当前开着的那一条。
+   *
+   * 存的是 key 而不是 boolean —— 同时只能开一个，
+   * 否则点开第二条时第一条还挂着，两条挤在 260px 宽的侧栏里。
+   */
+  const [pickKey, setPickingColor] = useState<string | null>(null);
+
+  const applyColor = async (p: { key: string; type: string }, color: string | null) => {
+    const id = presetIdOf(p.key);
+    if (id) {
+      // 自定义预设：色存在它自己身上（比类型级覆盖更具体）
+      const list = loadCustomPresets();
+      const hit = list.find((x) => x.id === id);
+      if (hit) {
+        if (color === null) delete hit.color;
+        else hit.color = color;
+        saveCustomPresets(list);
+      }
+    } else {
+      setColorOverride(p.type, color);
+    }
+    setPickingColor(null);
+    // 强制重渲染 —— preset 的色是 allPresets() 现算的，不刷新看不到变化
+    setTick((v) => v + 1);
+  };
+
   return (
     /*
      * 外壳用 .side-pane —— 模块库、画布库用同一套底板，
@@ -491,6 +520,40 @@ export default function Sidebar({
                     }
                   >
                     <span className="side-label">{p.label}</span>
+                    {/*
+                     * 自定义颜色。
+                     *
+                     * 用 `<input type="color">` 而不是自画色板：
+                     * 原生取色器各平台都是用户熟悉的那一个，
+                     * 自画一份要处理 eyedropper / 历史色 / 关不掉的浮层，
+                     * 而收益只是"看起来统一"。
+                     */}
+                    <span
+                      className="side-swatch"
+                      style={{ background: p.color }}
+                      title={`改「${p.label}」的颜色（画布上的节点会一起变）`}
+                      onClick={(e) => {
+                        // 不阻止冒泡会顺带弹说明浮层
+                        e.stopPropagation();
+                        setPickingColor(pickKey === p.key ? null : p.key);
+                      }}
+                    />
+                    {pickKey === p.key ? (
+                      <span className="side-picker" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="color"
+                          value={p.color}
+                          onChange={(e) => void applyColor(p, e.target.value)}
+                        />
+                        <button
+                          className="side-head-btn"
+                          onClick={() => void applyColor(p, null)}
+                          title="恢复这个类型的默认色"
+                        >
+                          默认
+                        </button>
+                      </span>
+                    ) : null}
                     {isCustom ? (
                       <span className="side-ops">
                         <button
