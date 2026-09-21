@@ -388,6 +388,27 @@
 
 /* ---------- 卡片 ---------- */
 .fpx-cards { display: flex; flex-direction: column; gap: 8px; min-height: 80px; }
+
+/* #74 / #190 让位动画：0.25s 缓出
+ *
+ * 过渡**只在拖拽中**开（容器上的 .shifting）：
+ * 平时若也开着，任何 transform 变化都会慢半拍地飘一下 ——
+ * 包括列表重排、展开链接明细导致的位移，看着像界面卡。
+ *
+ * 缓出（ease-out）而非线性：让位要"快速让开、稳稳停住"，
+ * 线性会让卡片看起来像在匀速滑动，没有"让"的感觉。
+ *
+ * 时长取主题的 --dur-slow（260ms）而不是写死 250ms：
+ * 与 #190 要求的 0.25s 是同一量级，但跟随主题后换肤也同步。
+ */
+.fpx-cards.shifting .fpx-card {
+  transition: transform var(--dur-slow, .25s) ease-out;
+}
+/* 被拖的那张卡**不参与**让位过渡：它跟着指针走，
+   加过渡会让它自己慢半拍地飘，反而看不清落点 */
+.fpx-cards.shifting .fpx-card.dragging {
+  transition: none;
+}
 .fpx-empty { padding: 14px; }
 .fpx-card {
   position: relative;   /* 插入竖条用伪元素绝对定位，不占布局 */

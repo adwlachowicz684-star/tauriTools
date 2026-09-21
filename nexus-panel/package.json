@@ -113,7 +113,8 @@
     "test:pg-escape-layer": "node plugins/project-group/escape-layer-test.mjs",
     "test:pg-avail-height": "node plugins/project-group/avail-height-test.mjs",
     "test:pg-action-sort": "node plugins/project-group/action-sort-test.mjs",
-    "test:pg-icon-del-hover": "node plugins/project-group/icon-del-hover-test.mjs"
+    "test:pg-icon-del-hover": "node plugins/project-group/icon-del-hover-test.mjs",
+    "test:pg-shift-anim": "node plugins/project-group/shift-anim-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

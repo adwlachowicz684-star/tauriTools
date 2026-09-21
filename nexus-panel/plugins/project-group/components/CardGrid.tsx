@@ -383,6 +383,35 @@ export function CardGrid({
   /** 按下时的指针位置，用于拖拽阈值判定（见 DRAG_THRESHOLD） */
   const pressAt = useRef<{ x: number; y: number } | null>(null);
   /**
+   * #74 / #190 让位动画：被拖卡片的高度（含间距），决定其他卡让开多少。
+   *
+   * 在 dragStart 时量一次即可 —— 拖拽过程中它不会变。
+   * 取 offsetHeight + gap：少算 gap 的话让开的缝会刚好卡住卡片，
+   * 看着像"没完全让开"。
+   */
+  const [dragH, setDragH] = useState(0);
+  /** 卡片间距，与 CSS 的 gap 保持一致（.fpx-cards 是 8px） */
+  const CARD_GAP = 8;
+
+  /**
+   * 某张卡此刻该让开多少（正数下移、负数上移、0 不动）。
+   *
+   * 不真的重排数组 —— 重排会让 React 重建 DOM 顺序，
+   * 而 CSS transition 对"DOM 顺序变了"是**不生效**的（要做 FLIP 才行，
+   * 得逐项测量、补偿、再动画归零，成本高且易错）。
+   * 用 transform 位移表达让位，视觉结果一样，且天然可过渡。
+   */
+  const shiftOf = (i: number): number => {
+    if (!dragPath || dropAt === null || overCross || !dragH) return 0;
+    const from = cards.findIndex((c) => c.path === dragPath);
+    if (from < 0) return 0;
+    const to = resolveMoveIndex(from, dropAt, cards.length);
+    if (to === from) return 0;
+    if (to < from && i >= to && i < from) return dragH + CARD_GAP;
+    if (to > from && i > from && i <= to) return -(dragH + CARD_GAP);
+    return 0;
+  };
+  /**
    * 已展开链接明细的卡片（#16）。
    *
    * 纯视图状态，不写进配置：折叠与否只影响当前这一次浏览，
@@ -449,7 +478,10 @@ export function CardGrid({
       /* #105 空列表时不画孤零零一条竖条，改为**整区高亮**：
          列表里一张卡都没有，竖条没有"插在哪两张之间"的参照，
          看着像界面坏了。整区高亮才能表达"会落到这里面"。 */
-      className={`fpx-cards${cards.length === 0 && dropAt === 0 && draggingKind === kind ? ' empty-over' : ''}`}
+      /* shifting：只在拖拽中开过渡。平时不开 —— 否则任何 transform 变化
+         （包括列表重排带来的）都会慢半拍地飘一下。 */
+      className={`fpx-cards${cards.length === 0 && dropAt === 0 && draggingKind === kind ? ' empty-over' : ''}${
+        dragPath && !overCross ? ' shifting' : ''}`}
       ref={cardsRef}
       onDragOver={(e) => {
         /* 分类框重排时（BOX_DRAG_MIME）会经过这里的卡片区 ——
@@ -533,14 +565,23 @@ export function CardGrid({
             !overCross && dropAt === i ? 'drop-before' : '',
             !overCross && dropAt === cards.length && i === cards.length - 1 ? 'drop-after' : '',
           ].filter(Boolean).join(' ')}
-          style={c.tagColor ? ({
-            /* 三态派生色交给 `brushVars`（utils/visual）统一算：
-               此前这里是两个内联魔数（0.18 / -0.12），而链接按钮完全没有
-               派生 —— 于是"卡片有悬停反馈、链接按钮没有"。
-               收进一处后两者必然同步，改配色也只改一处。 */
-            ...tag,
-            borderLeft: `4px solid ${tag['--tag-base'] ?? c.tagColor}`,
-          } as React.CSSProperties) : undefined}
+          style={(() => {
+            /*
+             * 标签色：三态派生交给 `brushVars`（utils/visual）统一算 ——
+             * 此前这里是两个内联魔数（0.18 / -0.12），而链接按钮完全没有
+             * 派生，于是"卡片有悬停反馈、链接按钮没有"。
+             * 收进一处后两者必然同步，改配色也只改一处。
+             *
+             * #74 让位位移：写在 transform 上，过渡时长由 CSS 给（#190）。
+             * 合并成**一个** style 对象 —— React 里后写的 style 会整份覆盖，
+             * 不能写两个 style 属性。
+             */
+            const sh = shiftOf(i);
+            return {
+              ...(c.tagColor ? { ...tag, borderLeft: `4px solid ${tag['--tag-base'] ?? c.tagColor}` } : null),
+              ...(sh ? { transform: `translateY(${sh}px)` } : null),
+            } as React.CSSProperties;
+          })()}
           draggable
           onPointerDown={(e) => { pressAt.current = { x: e.clientX, y: e.clientY }; }}
           onDragStart={(e) => {
@@ -552,11 +593,15 @@ export function CardGrid({
             e.dataTransfer.setData(DRAG_MIME, JSON.stringify({ kind, path: c.path } satisfies DragPayload));
             e.dataTransfer.effectAllowed = 'move';
             draggingKind = kind;
+            /* #74 量一次被拖卡片的高度，供让位位移用 */
+            setDragH(e.currentTarget.offsetHeight);
             setDragPath(c.path);
           }}
           onDragEnd={() => {
             draggingKind = null;
             setDragPath(null);
+            /* 清掉让位位移，否则松手后卡片停在让开的位置上不回来 */
+            setDragH(0);
             clearDropWithScroll();
             setOver(-1);
           }}
