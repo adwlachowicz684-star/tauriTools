@@ -465,6 +465,20 @@ export class EditorBridge {
 
   /** 按选中节点展开到第 N 层（0/负数=全部） */
   /**
+   * 中央主题中心的屏幕 x。
+   *
+   * 用于"展开文件库前后测一下、差多少补多少" —— 不去推算内核补了几成，
+   * 直接以**用户实际看到的位置**为准。
+   *
+   * @returns {number|null} 取不到时返回 null（调用方据此跳过补偿，
+   *   不能当成 0 —— 那会补出一个反向位移）
+   */
+  rootScreenX() {
+    const v = this._safe('读取中心位置', (m) => m.rootScreenX());
+    return typeof v === 'number' && isFinite(v) ? v : null;
+  }
+
+  /**
    * 相对平移视图。
    *
    * 用于补内核 resize 补偿**漏掉的那一半**：内核只补 (新宽-旧宽)/2，

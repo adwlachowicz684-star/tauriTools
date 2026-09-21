@@ -2687,6 +2687,29 @@
             //
             // 不传 duration（与内核 resize 一致）：带动画的话，两次平移
             // 的动画会互相打断，最终落点不是两者之和。
+            // 中央主题（根）中心的**屏幕** x 坐标。
+            //
+            // 为什么测"屏幕"而不是"画布内"：文件库展开时容器左边缘会右移，
+            // 只测容器内坐标的话，容器自己挪了多少就看不出来 —— 而用户看到
+            // 的"内容动了没有"正是屏幕位置。
+            //
+            // 组成：容器左边缘屏幕 x + 视图平移 + 根节点的 view 盒中心。
+            // 取**根节点**而不是整个内容盒：内容盒会随节点增减/重排改变尺寸，
+            // 中心随之漂移，不能当参照物。
+            rootScreenX: function () {
+                try {
+                    var root = km.getRoot();
+                    if (!root) return null;
+                    var box = root.getRenderContainer().getRenderBox('view');
+                    if (!box) return null;
+                    var m = km.getRenderContainer().transform.translate;
+                    var pan = m ? (m[0] || 0) : 0;
+                    var host = km.getRenderTarget();
+                    var left = host && host.getBoundingClientRect
+                        ? host.getBoundingClientRect().left : 0;
+                    return left + pan + box.x + box.width / 2;
+                } catch (e) { return null; }
+            },
             panBy: function (dx, dy) {
                 try {
                     var d = km._viewDragger;

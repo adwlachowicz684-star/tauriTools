@@ -20,15 +20,8 @@ import { h } from '../../js/plugin-sdk.js';
  */
 const DND = 'application/x-mm-file';
 
-export function buildFileList(app, opts) {
+export function buildFileList(app) {
   const api = app.api;
-  /**
-   * 底框**开合状态发生变化**时回调（不是每次 apply 都调）。
-   *
-   * 只有"开↔合"才改变画布宽度；搜索↔文件两页签之间切换时底框一直
-   * 开着、宽度不变，不回调 —— 否则会对着 Δ=0 空补一次。
-   */
-  const onToggle = opts && opts.onPanelToggle;
 
   let dragId = null;      // 当前被拖动的文件 id
 
@@ -80,9 +73,7 @@ export function buildFileList(app, opts) {
   /** 把 panel 落到 DOM 上：底框开合 + 两个 body 互斥 + 标题与按钮随面板切换 */
   function apply() {
     const p = panel;
-    const wasOpen = el.classList.contains('open');
     el.classList.toggle('open', !!p);
-    if (onToggle && wasOpen !== !!p) onToggle(!!p);
     bodyEl.style.display = p === 'files' ? '' : 'none';
     searchBodyEl.style.display = p === 'search' ? '' : 'none';
 

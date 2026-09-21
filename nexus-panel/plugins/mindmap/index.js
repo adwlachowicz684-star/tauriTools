@@ -380,7 +380,7 @@ bootIframePlugin(async (ctx) => {
       searchInfo.classList.toggle('warn', st.warn);
       // 结果列表单独取：search() 每调一次就推进到下一个匹配，
       // 若让它顺带返回列表，"刷新列表"就会连带多跳一格
-      fileList?.setSearch(bridge?.getSearchResults?.() || null);
+      withStableRoot(() => fileList?.setSearch(bridge?.getSearchResults?.() || null));
     }
     const searchInput = h('input.mm-input', {
       placeholder: '搜索节点…',
@@ -388,7 +388,7 @@ bootIframePlugin(async (ctx) => {
       oninput: () => {
         // 关键字被删空 → 立刻退出搜索态。
         // 等回车才清的话，面板会一直挂着上一次的结果，看着像"搜索坏了"
-        if (!searchInput.value.trim()) fileList?.setSearch(null);
+        if (!searchInput.value.trim()) withStableRoot(() => fileList?.setSearch(null));
       },
       onkeydown: (e) => {
         if (e.key !== 'Enter') return;
@@ -804,33 +804,50 @@ bootIframePlugin(async (ctx) => {
   }
 
   /**
-   * 底框开合后把画布内容**移回原处**。
+   * 等 n 帧。
    *
-   * 背景：文件库是 flex 子项，展开时把画布挤窄 Δ（当前 = 186 + padding
-   * 10×2 + gap 10 = **216px**），画布左边缘右移 Δ。而内核 resize 时只补
-   * `(新宽-旧宽)/2` —— 半个 Δ。于是内容净位移 Δ/2 ≈ 108px，
-   * 表现为「展开文件库，整幅图往右挪一下」。
-   *
-   * 这里在内核补完之后**再补半个 Δ**，凑成整 Δ，内容即回到原处。
-   *
-   * 三个要点 ——
-   *
-   * **宽度用实测而不是硬编码 216。** padding / gap / box-sizing 任一项
-   * 变了，硬编码值就会补错；实测永远对得上。
-   *
-   * **补偿量是 Δ/2 而不是 Δ。** 内核已经补了 Δ/2，只补剩下的那半。
-   * 补 Δ 会过冲，内容朝反方向再移 108px。
-   *
-   * **等一帧再测。** class 刚改完布局还没更新，此时读 clientWidth 拿到的
-   * 还是旧值、Δ 恒为 0，补偿等于没做。
+   * 为什么不是一帧：class 改完只是把布局标脏，真正重排发生在下一帧；
+   * 而 iframe 内 window resize（内核据此补位移）**也**在那一批回调里。
+   * 只等一帧的话，可能测到"布局已更新、内核还没补"的中间态，补偿量就错了。
    */
-  function compensateCanvasPan() {
-    const before = canvasEl.clientWidth;
-    requestAnimationFrame(() => {
-      const d = canvasEl.clientWidth - before;
-      if (!d) return;                       // 宽度没变（例如搜索↔文件切换）→ 不补
-      bridge?.panBy(Math.round(d / 2), 0);
+  function nextFrames(n) {
+    return new Promise((res) => {
+      let i = 0;
+      const step = () => (++i >= n ? res() : requestAnimationFrame(step));
+      requestAnimationFrame(step);
     });
+  }
+
+  /**
+   * 在底框开合前后把中央主题**钉在同一处**。
+   *
+   * 为什么改成"测位置再补"，而不是"按算出来的 Δ 补一半"：
+   *
+   * 内核 resize 确实会补位移（实测 `_viewDragger` 的运动量变了），但补的
+   * 究竟是几成、容器左边缘又实际移动了多少，取决于 flex 收缩的分配 ——
+   * 右侧栏一旦可收缩（历史上 `.mm-side` 样式失效时正是如此），画布宽度
+   * 的变化量就不再是 216，而是随内容浮动。此前按"固定 Δ/2"硬补，在这个
+   * 前提不成立时就会补错，甚至把原本不动的画面补动。
+   *
+   * 所以不再推算机制，直接以**用户看到的结果**为准：
+   * 展开前记下中央主题的屏幕 x，展开后再测一次，差多少就补多少。
+   * 这样无论中间发生了什么（内核补了几成、侧栏让了多少、有没有重排），
+   * 最终落点都是"中央主题没动"。
+   *
+   * @param {Function} fn 会改变底框开合的操作（同步执行）
+   */
+  function withStableRoot(fn) {
+    const before = bridge?.rootScreenX?.();
+    const r = fn();
+    if (before == null) return r;        // 编辑器没就绪 → 不补，不能当成 0
+    nextFrames(2).then(() => {
+      const after = bridge?.rootScreenX?.();
+      if (after == null) return;
+      const d = Math.round(before - after);
+      // 1px 以内是取整噪声，不补 —— 否则每次开合都多一次无谓的平移
+      if (Math.abs(d) >= 1) bridge?.panBy(d, 0);
+    });
+    return r;
   }
 
   /**
@@ -843,7 +860,7 @@ bootIframePlugin(async (ctx) => {
    */
   function toggleFiles(force) {
     const on = force == null ? !fileList?.isFilesPanel?.() : !!force;
-    fileList?.showFiles(on);
+    withStableRoot(() => fileList?.showFiles(on));
     const showing = !!fileList?.isFilesPanel?.();
     settings.filesOpen = showing;
     store.settings.save(settings);
@@ -924,7 +941,7 @@ bootIframePlugin(async (ctx) => {
     redoStack = [];
     // 换画布后旧搜索结果全部失效（节点都换了），不清会让用户点到一个
     // 根本不在这张画布上的"结果"，然后定位失败
-    fileList?.setSearch(null);
+    withStableRoot(() => fileList?.setSearch(null));
     // 切换/重载画布会重置编辑器历史基线，锁必须解 ——
     // 否则会拿旧栈标记去操作新画布（与 resetHistory 同理）
     pendingRedo = null;
@@ -2173,7 +2190,7 @@ bootIframePlugin(async (ctx) => {
     get sheet() { return sheet(); },
   };
   side = buildSide(app, { onPage: syncSideTabs });
-  fileList = buildFileList(app, { onPanelToggle: compensateCanvasPan });
+  fileList = buildFileList(app);
   // 顺序对齐 C# MindMapPanel 的主体两列：[文件库] | 画布 | [属性侧栏 276px]
   //   左侧：文件库（Web 版多文档功能，C# 没有；默认收起，点 📚 展开）
   //   右侧：属性侧栏（样式/标签/主题/文件），C# 里固定 276px 常驻
