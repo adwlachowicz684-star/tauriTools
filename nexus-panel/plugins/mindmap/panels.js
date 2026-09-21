@@ -224,6 +224,131 @@ function sectionAct(title, action, ...children) {
     ...children);
 }
 
+/* ------------------------- 悬浮说明（问号提示框） ------------------------- */
+
+/**
+ * 提示框单例。
+ *
+ * **必须挂到 document.body 而不是留在面板里**：侧栏是
+ * `overflow-y: auto` 的滚动容器，提示框若留在里面，一旦内容超出
+ * 侧栏边界就会被**裁剪** —— 表现为"提示框只显示一半"或者干脆看不见。
+ * 挂 body + `position: fixed` 才能完全不受祖先 overflow 影响。
+ */
+let helpTipEl = null;
+let helpTipAnchor = null;
+
+function ensureHelpTip() {
+  if (helpTipEl && helpTipEl.isConnected) return helpTipEl;
+  helpTipEl = h('div.mm-helptip', { role: 'tooltip' });
+  // 鼠标移到提示框上也要能停住 —— 否则想选中里面文字时一移过去就消失了
+  helpTipEl.addEventListener('mouseenter', () => { clearTimeout(helpTipHideTimer); });
+  helpTipEl.addEventListener('mouseleave', () => hideHelpTip());
+  document.body.appendChild(helpTipEl);
+  return helpTipEl;
+}
+
+let helpTipHideTimer = 0;
+
+/**
+ * 定位并显示提示框。
+ *
+ * 竖直方向：优先放问号**下方**；下方空间不够则翻到上方。
+ * 水平方向：让提示框左边缘尽量贴住问号，但整体**钳在视口内** ——
+ * 侧栏贴着窗口右缘，不钳的话提示框会超出屏幕右边被切掉。
+ */
+function showHelpTip(anchor, lines) {
+  const el = ensureHelpTip();
+  clearTimeout(helpTipHideTimer);
+  el.innerHTML = '';
+  const arr = Array.isArray(lines) ? lines : [lines];
+  arr.filter(Boolean).forEach((t) => {
+    // 用 textContent 构造，不拼 innerHTML —— 说明文案里含冒号引号等字符，
+    // 拼串有转义问题；且将来若混入动态内容就是 XSS
+    el.appendChild(h('div.mm-helptip-line', {}, String(t)));
+  });
+  el.style.visibility = 'hidden';
+  el.classList.add('open');
+  helpTipAnchor = anchor;
+  positionHelpTip();
+  el.style.visibility = '';
+}
+
+function positionHelpTip() {
+  const el = helpTipEl;
+  if (!el || !helpTipAnchor) return;
+  const a = helpTipAnchor.getBoundingClientRect();
+  const b = el.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth || window.innerWidth || 0;
+  const vh = document.documentElement.clientHeight || window.innerHeight || 0;
+  const M = 8;                      // 与视口边缘的最小留白
+
+  // jsdom 里 getBoundingClientRect 全为 0 —— 此时别把 top/left 算成负的
+  // 一大截（那样在真实环境里会因为初始值错乱闪一下），直接退到 (0,0)
+  if (!a.width && !a.height && !a.left && !a.top) {
+    el.style.top = '0px'; el.style.left = '0px';
+    return;
+  }
+
+  let top = a.bottom + 6;
+  if (b.height && top + b.height > vh - M) {
+    const up = a.top - b.height - 6;
+    // 上方也放不下时取空间较大的一侧，而不是硬塞回下方被切掉
+    top = (up >= M) ? up : Math.max(M, vh - b.height - M);
+  }
+  let left = a.left;
+  if (b.width) left = Math.min(Math.max(M, left), Math.max(M, vw - b.width - M));
+
+  el.style.top = Math.round(top) + 'px';
+  el.style.left = Math.round(left) + 'px';
+}
+
+function hideHelpTip() {
+  clearTimeout(helpTipHideTimer);
+  // 留一点延迟：鼠标从问号移到提示框本体的途中会短暂离开两者，
+  // 立即隐藏会导致"怎么都移不过去"
+  helpTipHideTimer = setTimeout(() => {
+    if (helpTipEl) helpTipEl.classList.remove('open');
+    helpTipAnchor = null;
+  }, 120);
+}
+
+/**
+ * 圆形小问号。
+ *
+ * 说明文字不直接铺在界面上：它们都是"用之前不必知道、想知道时再看"的
+ * 补充信息，全铺开会让导入导出页变成一整页说明文字，按钮反而找不着。
+ *
+ * 用**自定义提示框而不是原生 title**：title 有 1 秒以上延迟、
+ * 不能换行、长句会拉成一条横贯屏幕的长条，且样式完全不受控。
+ */
+function helpDot(text, label) {
+  const dot = h('button.mm-help', {
+    type: 'button',
+    'aria-label': label || '说明',
+    title: '',           // 置空：否则自定义提示框与原生 title 会**同时**弹两个
+  }, '?');
+  dot.addEventListener('mouseenter', () => showHelpTip(dot, text));
+  dot.addEventListener('mouseleave', () => hideHelpTip());
+  dot.addEventListener('focus', () => showHelpTip(dot, text));
+  dot.addEventListener('blur', () => hideHelpTip());
+  return dot;
+}
+
+/**
+ * 带问号的节标题。
+ *
+ * 问号放在**标题行右侧**（与「清除样式」按钮同位置）。放在标题左边会
+ * 把标题挤得参差不齐 —— 各节标题字数不一，左边对齐的是标题本身。
+ */
+function sectionTip(title, tip, ...children) {
+  return h('div.mm-field', {},
+    h('div.mm-sec-head', {},
+      h('h3', {}, title),
+      helpDot(tip, `${title}：说明`),
+      h('span', { style: { flex: '1 1 auto' } })),
+    ...children);
+}
+
 /**
  * 弱化删除按钮（✕）。
  *
@@ -379,16 +504,20 @@ export function buildSide(app, opts = {}) {
     const hint = (t) => h('div.mm-hint', {}, t);
 
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
-      section('导入',
-        hint('支持 XMind / JSON / Markdown / FreeMind / OPML / Mermaid / PlantUML。'
-          + '按文件内容嗅探格式 —— 把 .opml 存成 .xml、把 .mmd 存成 .txt 也能认出来。'),
+      // 各节的**补充**说明都收进标题右边的问号里，界面上只留按钮。
+      // 保留在界面上的只有「导入会替换且不可撤销」这一条 ——
+      // 那是会造成数据丢失的警告，藏进悬浮框里就有可能被跳过不看。
+      sectionTip('导入',
+        ['支持 XMind / JSON / Markdown / FreeMind / OPML / Mermaid / PlantUML。',
+          '按文件内容嗅探格式 —— 把 .opml 存成 .xml、把 .mmd 存成 .txt 也能认出来。'],
         row(btn('导入文件…', () => app.api.importFile(), '选择文件导入（会替换全部画布，导入前有确认）')),
         hint('⚠ 导入会替换当前所有画布，且不可撤销 —— 建议先导出或备份。'),
       ),
 
-      section('导出为文档',
-        hint('XMind 与官方互通（多画布、主题、外框、附件一并打包，换机可还原）；'
-          + 'JSON 保留全部私有字段，本工具无损往返；Markdown 便于人读与 diff。'),
+      sectionTip('导出为文档',
+        ['XMind 与官方互通（多画布、主题、外框、附件一并打包，换机可还原）。',
+          'JSON 保留全部私有字段，本工具无损往返。',
+          'Markdown 便于人读与 diff（多画布按「## 画布：」分块）。'],
         row(
           btn('XMind', () => app.api.exportXMind(), '导出为 .xmind（含附件打包）'),
           btn('JSON', () => app.api.exportJson(), '导出为 .json（本工具无损往返）'),
@@ -397,20 +526,21 @@ export function buildSide(app, opts = {}) {
         ),
       ),
 
-      section('导出为交换格式',
-        hint('给别的软件用。这些格式顶层只有一个根，装不下多画布 —— '
-          + '**只导当前画布**，其余画布不写入。'),
+      sectionTip('导出为交换格式',
+        ['给别的软件用。这些格式顶层只有一个根，装不下多画布 —— 只导当前画布，其余画布不写入。',
+          '只交换「文字 + 层级 + 折叠状态」；图标、优先级、进度、附件一概不写 —— '
+          + '塞进自定义属性只会在别的软件里变乱码。'],
         row(
           btn('FreeMind', () => app.api.exchange('freemind'), 'FreeMind / Freeplane / XMind 可导入'),
           btn('OPML', () => app.api.exchange('opml'), 'OmniOutliner / Workflowy / 幕布 等大纲工具'),
           btn('Mermaid', () => app.api.exchange('mermaid'), 'GitHub / GitLab / Notion / Obsidian 原生渲染'),
           btn('PlantUML', () => app.api.exchange('plantuml'), 'PlantUML / Confluence / 多数 Wiki'),
         ),
-        hint('只交换「文字 + 层级 + 折叠状态」；图标、优先级、进度、附件一概不写 —— '
-          + '塞进自定义属性只会在别的软件里变乱码。'),
       ),
 
-      section('导出为图像 / PDF',
+      sectionTip('导出为图像 / PDF',
+        ['SVG 是矢量图，可无损放大；PDF 不经浏览器、不弹对话框直接保存。',
+          'PNG 倍率要你主动选：默认 3 倍的话一个普通脑图会导出几十 MB，多数人并不需要。'],
         row(
           btn('SVG', () => app.api.exportSvg(), '矢量图，可无损放大'),
           btn('PDF（矢量）', () => app.api.exportPdf(), '不经浏览器、不弹对话框，直接保存；失败时自动改用打印对话框'),
@@ -422,19 +552,20 @@ export function buildSide(app, opts = {}) {
           btn('PNG · 2 倍', () => app.api.exportPng(2), '像素密度翻倍，文字与连线不糊'),
           btn('PNG · 3 倍', () => app.api.exportPng(3), '体积较大，适合打印或大屏'),
         ),
-        hint('PNG 倍率要你主动选：默认 3 倍的话一个普通脑图会导出几十 MB，多数人并不需要。'),
       ),
 
-      section('主题',
-        hint('导入/导出仅针对自定义主题；内置主题无法导出。'),
+      sectionTip('主题',
+        ['导入 / 导出仅针对**自定义**主题；内置主题无法导出。',
+          '导入会重新生成 id，不会覆盖同名主题。'],
         row(
           btn('导入主题…', () => importThemeFile(), '从 JSON 文件导入自定义主题（重新生成 id，不会覆盖同名）'),
           btn('导出当前主题', () => exportThemeFile(), '把当前画布正在用的自定义主题导出为 JSON'),
         ),
       ),
 
-      section('快照备份',
-        hint('快照是自动/手动保存的历史副本，误操作后可回滚。'),
+      sectionTip('快照备份',
+        ['快照是自动 / 手动保存的历史副本，误操作后可回滚。',
+          '导出 / 导入快照用于换机迁移（按时间戳去重）。'],
         row(
           btn('立即备份', async () => { await app.api.backupNow(); refresh(); }, '立刻保存一份当前状态'),
           btn('历史快照…', () => openBackups(app), '查看 / 恢复快照'),

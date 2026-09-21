@@ -70,6 +70,62 @@ html, body {
 }
 .mm-btn.quiet:active { box-shadow: none; }
 
+/* 圆形小问号（标题右侧的说明入口）
+   ============================================================
+   用 button 而不是 span：它是**可聚焦**的，键盘用户能 Tab 到它并
+   看到提示（focus 也会触发显示）。用 span 就只有鼠标能用。
+   ============================================================ */
+.mm-help {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--ctl-shadow);
+  color: var(--text-dim);
+  font-size: var(--fs-10, 10px);
+  font-weight: 600;
+  line-height: 1;
+  cursor: help;
+}
+.mm-help:hover { color: var(--accent); }
+/* baseline 对齐会让圆形按钮与标题文字**底部**对不齐（圆没有基线），
+   这里改成居中并微调下沉，让圆心与标题文字视觉居中 */
+.mm-sec-head .mm-help { align-self: center; }
+
+/* 悬浮说明框
+   ============================================================
+   position: fixed + 挂 document.body（由 JS 决定）：
+   侧栏是 overflow-y:auto 的滚动容器，提示框若留在面板里，一旦超出
+   侧栏边界就会被**裁剪** —— 表现为"只显示一半"或干脆看不见。
+
+   默认 display:none 而不是只靠 opacity：只降透明度的话它仍然占据
+   文档流并可被点到，会出现"看不见但挡住了下面的按钮"。
+   ============================================================ */
+.mm-helptip {
+  position: fixed;
+  z-index: var(--z-tooltip, 1200);
+  display: none;
+  max-width: 280px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm, 8px);
+  background: var(--surface);
+  box-shadow: var(--sh-out-md);
+  color: var(--text-dim);
+  font-size: var(--fs-12, 12px);
+  line-height: 1.6;
+  pointer-events: auto;
+}
+.mm-helptip.open { display: block; }
+.mm-helptip-line + .mm-helptip-line {
+  margin-top: 4px;
+  /* 段间分隔：多段说明挤在一起会读成一整段，分不清是几条 */
+  padding-top: 4px;
+  border-top: 1px solid var(--sh-dark);
+}
+
 /* 节标题行：标题 + 右侧操作按钮。
    用 flex 而不是给 h3 加 float —— h3 是块级，float 会让后续内容
    环绕错位；且 align-items:baseline 才能让按钮与标题文字对齐
