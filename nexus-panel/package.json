@@ -21,6 +21,7 @@
     "test:controls": "node controls-test.mjs",
     "test:dialog": "node dialog-test.mjs",
     "test:drag-reorder": "node drag-reorder-test.mjs",
+    "test:disclosure": "node disclosure-test.mjs",
     "test:errdiag": "node err-diag-test.mjs",
     "test:external": "node external-test.mjs",
     "test:flash": "node plugin-flash-test.mjs",

@@ -136,3 +136,20 @@ export function isService(p: PluginManifest | null | undefined): boolean;
 export function isToolbar(p: PluginManifest | null | undefined): boolean;
 export function isInsideTauri(): boolean;
 export const THEME_VARS: string[];
+
+/* ------------------------------------------------------------------ */
+/* 插件顺序（设置面板里拖动排序的结果）                                */
+/* ------------------------------------------------------------------ */
+/* ⚠️ 本文件是**手写声明**：TS 优先读 .d.ts 而不是从 host.js 推断，
+   所以在 host.js 里新增导出后**必须同步登记到这里**。
+   没登记的表现很隐蔽：运行时一切正常（JS 不读 .d.ts），
+   只有跑 tsc 时才报 TS2305「has no exported member」，
+   而调用方拿到的是 any —— 类型检查等于失效，且不报错。 */
+/** 顺序变化后派发的事件名（设置面板两种形态都要监听） */
+export const PLUGIN_ORDER_EVENT: string;
+/** 用户在设置里排的插件 id 顺序；没排过返回空数组 */
+export function pluginOrder(): string[];
+/** 写入插件顺序并通知外壳重排（同页 / iframe 两种形态都覆盖） */
+export function setPluginOrder(ids: string[]): void;
+/** 按保存的顺序排好，没记录的排最后；**不改动原数组** */
+export function applyPluginOrder(plugins: PluginManifest[]): PluginManifest[];

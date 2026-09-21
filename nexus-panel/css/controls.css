@@ -976,3 +976,47 @@ input[type='range']:disabled {
 @media (prefers-reduced-motion: reduce) {
   .nx-drag-dragging { transition: none; }
 }
+
+/* ============================================================
+   背景图预览槽位（设置 → 主题 → 背景图）
+   ============================================================ */
+
+/* 预览框：有图时铺满展示，没图时显示"主题自带" */
+.nx-bgslot {
+  flex: none;
+  width: 120px;
+  height: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-sm, 4px);
+  /* 有图时 cover 铺满，避免拉伸变形 */
+  background-size: cover;
+  background-position: center;
+  overflow: hidden;
+  /* 内凹：它是"承载区"，与轨道/输入框同一种材质 */
+  box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);
+}
+
+/* 当前主题**不支持**背景图时的占位。
+   刻意给一圈**可见边框** + 禁止图标：
+   什么都不显示的话，用户会以为是加载失败或程序坏了；
+   画个"这里本来能放图、但这套主题没有"，一眼就懂。 */
+.nx-bgslot-off {
+  gap: 6px;
+  /* 用 --divider 而不是 --border —— 后者是**风格开关**，
+     新拟态下它是 transparent，画出来等于没有（这个坑踩过三次）。 */
+  border: 1px dashed var(--divider, var(--text-mute));
+  background: transparent;
+  box-shadow: none;
+}
+
+/* 禁止图标（带斜杠的圆环）。
+   显式指定 emoji 字体：系统默认字体可能把它渲染成空白方框，
+   那还不如不画 —— 没了图标，占位框就只剩一句费解的文字。 */
+.nx-bgslot-ban {
+  font-size: 18px;
+  line-height: 1;
+  font-family: 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
+  opacity: .85;
+}

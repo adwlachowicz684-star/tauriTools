@@ -549,6 +549,18 @@ function applyTo(theme, accent, envColor) {
     // 否则把环境色设成红色，就会得到"红色的成功提示"。
     vars['--env-color'] = envColor;
   }
+
+  /* 用户自选背景图。
+     ------------------------------------------------------------------
+     它**只在主题本身就带背景图时**才生效（见 supportsBgImage）。
+     给没有背景图的主题硬塞一张图，会盖掉主题的底色设计，
+     而且那些主题的文字/卡片对比度本来就是按纯色底算的 ——
+     压上一张图后可能整片看不清，用户只会觉得"这套主题坏了"。 */
+  if (supportsBgImage(theme)) {
+    const custom = getBgImage();
+    if (custom) vars['--bg-image'] = 'url("' + escapeCssUrl(custom) + '")';
+  }
+
   const root = document.documentElement;
   for (const k of THEME_VARS) {
     if (vars[k] != null) {
@@ -628,6 +640,106 @@ export function setEnvColor(envColor) {
     try { fn(applied, 'env-color'); } catch (er) { console.error('[theme]', er); }
   });
   return applied;
+}
+
+/**
+ * 复位的**通用内核**：清掉某个键，用剩余的自定义值重绘，并通知监听者。
+ *
+ * 为什么要有它而不用 resetColors 那种「全清 + applyTheme 重来」：
+ * 单项复位必须**保留其余项**。若走 applyTheme 会把强调色、环境色、
+ * 色相、明暗一股脑全清 —— 用户只想把色相调回 0，结果强调色也没了。
+ * 那种「点小按钮却丢了别的设置」比不提供复位更糟。
+ *
+ * @param {string[]} keys 要清除的存储键
+ * @param {string}   kind 通知给监听者的变更类型
+ */
+function resetOne(keys, kind) {
+  try { keys.forEach((k) => localStorage.removeItem(k)); } catch { /* 忽略存储失败 */ }
+  const theme = current || findTheme(getThemeId());
+  const applied = applyTo(theme, getAccent(), getEnvColor());
+  listeners.forEach((fn) => {
+    try { fn(applied, kind); } catch (e) { console.error('[theme]', e); }
+  });
+  return applied;
+}
+
+/* ------------------------------ 背景图 ------------------------------ */
+
+const KEY_BG_IMAGE = 'nexus:bg-image';
+
+/**
+ * 这套主题**支不支持**背景图。
+ *
+ * 判据：主题自己就带了 `--bg-image`（渐变）。没带的就是纯色主题 ——
+ * 它们的设计语言就是干净底色，压张图上去只会糊。
+ *
+ * 为什么看主题而不是看「用户设没设」：设置面板要据此决定
+ * 是给"选图"入口还是给"🚫 此主题不支持"的占位。
+ */
+export function supportsBgImage(theme) {
+  const t = theme || current || findTheme(getThemeId());
+  if (!t) return false;
+  const v = deriveVars(t)['--bg-image'];
+  return !!v && v !== 'none';
+}
+
+/** 用户自选的背景图（dataURL 或 URL）；没选过返回空串 */
+export function getBgImage() {
+  try { return localStorage.getItem(KEY_BG_IMAGE) || ''; } catch { return ''; }
+}
+
+/**
+ * 转义 CSS url() 里的内容。
+ *
+ * 为什么必须转：用户的图片路径/URL 里可能含 `"` 或 `\`，
+ * 直接拼进 `url("...")` 会**提前闭合字符串**，后面的内容被当成 CSS 规则
+ * 解析 —— 轻则背景失效，重则该条声明之后的所有变量都不生效。
+ */
+function escapeCssUrl(u) {
+  return String(u || '').replace(/[\\"]/g, (c) => '\\' + c);
+}
+
+/** 设置背景图并立即生效。返回 false 表示主题不支持（调用方应提示） */
+export function setBgImage(url) {
+  if (!supportsBgImage()) return false;
+  try {
+    if (url) localStorage.setItem(KEY_BG_IMAGE, url);
+    else localStorage.removeItem(KEY_BG_IMAGE);
+  } catch { /* 超出配额时静默失败：背景图丢了不影响主流程 */ }
+  /* 走 resetOne 的同一条通知链路（kind 用 'bg-image'）：
+     它本就负责「用当前值重绘 + 通知监听者」，这里只是值为空。 */
+  return resetOne([], 'bg-image');
+}
+
+/** 恢复主题自带的背景图 */
+export function resetBgImage() {
+  return resetOne([KEY_BG_IMAGE], 'bg-image');
+}
+
+/** 只把**强调色**恢复为主题自带（环境色、色相、明暗都保留） */
+export function resetAccent() {
+  return resetOne([KEY_ACCENT], 'accent');
+}
+
+/** 只把**环境色**恢复为主题自带 */
+export function resetEnvColor() {
+  return resetOne([KEY_ENV], 'env-color');
+}
+
+/**
+ * 只把**色相**归零（明暗保留）。
+ *
+ * 走 setThemeShift 而不是直接删键：删键后 getHueShift 会回落到
+ * 「旧版全局键」，而那个键可能还留着别的历史值 —— 归零不成反被回填。
+ * setThemeShift 写的是当前主题自己的键，语义才干净。
+ */
+export function resetHueShift() {
+  return setThemeShift(0, getLightShift());
+}
+
+/** 只把**明暗**归零（色相保留）；理由同上 */
+export function resetLightShift() {
+  return setThemeShift(getHueShift(), 0);
 }
 
 /** 清除自定义的强调色与环境色，回到主题自带配色 */

@@ -11,6 +11,12 @@ import {
   listThemes, applyTheme, setAccent, setEnvColor, resetColors,
   getThemeId, getAccent, getEnvColor, getBase,
   getHueShift, getLightShift, setThemeShift,
+  /* 单项复位：把「恢复默认」做成每个调节项各自的小按钮，
+     而不是一个"恢复主题自带配色"大按钮 ——
+     用户只想把色相调回 0 时，不该连强调色一起丢掉。 */
+  resetAccent, resetEnvColor, resetHueShift, resetLightShift,
+  /* 背景图 */
+  supportsBgImage, getBgImage, setBgImage, resetBgImage,
   saveAsCustom, deleteCustomTheme,
   // getCurrent：色相/明暗改为按主题各记一份后，提示文案要显示当前主题名
   getCurrent,
@@ -169,6 +175,39 @@ function StyleAuditBadge({ audit, open, onToggle }: {
  * 两区用的是同一套行渲染逻辑 —— 复制两份的话，
  * 将来给行加一个按钮就只会加在一处，另一区悄悄少一个。
  */
+/**
+ * 「恢复默认」小按钮。
+ *
+ * **始终渲染**，不是「改过了才显示」：按钮凭空出现会把同一行的滑块、
+ * 数值、其它按钮一起挤开 —— 这就是刚修过的布局跳动，这里不能再犯一次。
+ * 未偏离默认时 disabled —— 弱化但仍占位，布局纹丝不动。
+ */
+/**
+ * 用户自选背景图的大小上限。
+ *
+ * 图片以 dataURL 存进 localStorage，而 localStorage 通常只有 ~5MB
+ * 且是**整个应用共用**的 —— 一张 4MB 的壁纸 base64 后约 5.5MB，
+ * 会把插件顺序、主题偏移等一并挤掉（写入静默失败，现象很难查）。
+ * 1.5MB 足以放下压缩后的壁纸，又留得出余量。
+ */
+const MAX_BG_BYTES = 1.5 * 1024 * 1024;
+
+function ResetDefaultBtn({ disabled, onClick, title }: {
+  disabled: boolean; onClick: () => void; title?: string;
+}) {
+  return (
+    <button
+      className="p-btn"
+      disabled={disabled}
+      onClick={onClick}
+      title={title || '恢复为当前主题的默认值'}
+      style={{ flex: 'none', fontSize: 'var(--fs-11, 11px)', padding: '2px 8px' }}
+    >
+      ↺
+    </button>
+  );
+}
+
 function PluginRow({ p, audit, auditOpen, onToggleAudit, onOverride, onRemove, dragProps, dragging }: {
   p: PluginManifest;
   audit: any;
@@ -566,6 +605,10 @@ export default function Settings() {
   const appPlugins = (plugins || []).filter((p) => !p.kind || p.kind === 'app');
   const svcPlugins = (plugins || []).filter((p) => p.kind === 'service');
 
+  /* 背景图选择的隐藏 input：按钮只是替它触发点击，
+     这样"选择图片…"能保持与其它按钮一致的观感，而不是一个裸 file 控件 */
+  const bgFileRef = useRef<HTMLInputElement>(null);
+
   const appsRef = useRef<HTMLDivElement>(null);
   const appsDrag = useDragReorder({
     count: appPlugins.length,
@@ -851,6 +894,11 @@ export default function Settings() {
                 </button>
               );
             })}
+            <ResetDefaultBtn
+              disabled={!getAccent()}
+              onClick={() => { resetAccent(); ctx.toast('已恢复主题自带强调色', 'ok'); rerender(); void syncThemeToShell(); }}
+              title="恢复为当前主题自带的强调色"
+            />
           </div>
 
           <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)' }}>
@@ -877,6 +925,11 @@ export default function Settings() {
                 </button>
               );
             })}
+            <ResetDefaultBtn
+              disabled={!getEnvColor()}
+              onClick={() => { resetEnvColor(); ctx.toast('已恢复主题自带环境色', 'ok'); rerender(); void syncThemeToShell(); }}
+              title="恢复为当前主题自带的环境色"
+            />
           </div>
 
           <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)' }}>
@@ -896,6 +949,11 @@ export default function Settings() {
             <span className="p-mono p-muted" style={{ width: 46, flex: 'none', textAlign: 'right' }}>
               {getHueShift() > 0 ? '+' : ''}{getHueShift()}°
             </span>
+            <ResetDefaultBtn
+              disabled={!getHueShift()}
+              onClick={() => { resetHueShift(); ctx.toast('色相已归零', 'ok'); rerender(); void syncThemeToShell(); }}
+              title="把色相偏移归零（明暗保留）"
+            />
           </div>
           <div className="p-row" style={{ marginTop: 'var(--sp-3, 6px)', gap: 'var(--sp-4, 8px)' }}>
             <span className="p-muted" style={{ width: 30, flex: 'none' }}>明暗</span>
@@ -908,24 +966,83 @@ export default function Settings() {
             <span className="p-mono p-muted" style={{ width: 46, flex: 'none', textAlign: 'right' }}>
               {getLightShift() > 0 ? '+' : ''}{getLightShift()}%
             </span>
+            <ResetDefaultBtn
+              disabled={!getLightShift()}
+              onClick={() => { resetLightShift(); ctx.toast('明暗已归零', 'ok'); rerender(); void syncThemeToShell(); }}
+              title="把明暗偏移归零（色相保留）"
+            />
           </div>
 
-          {(getAccent() || getEnvColor() || getHueShift() || getLightShift()) ? (
-            <div className="p-row" style={{ marginTop: 'var(--sp-5, 10px)' }}>
-              <button
-                className="p-btn"
-                onClick={() => { resetColors(); ctx.toast('已恢复主题自带配色', 'ok'); rerender(); void syncThemeToShell(); }}
-              >
-                ↺ 恢复主题自带配色
-              </button>
-              <span className="p-muted">
-                当前：强调色 {getAccent() || '（默认）'} · 环境色 {getEnvColor() || '（默认）'}
-                {(getHueShift() || getLightShift())
-                  ? ` · 偏移 ${getHueShift() > 0 ? '+' : ''}${getHueShift()}° / ${getLightShift() > 0 ? '+' : ''}${getLightShift()}%`
-                  : ''}
-              </span>
-            </div>
-          ) : null}
+          {/* ---------- 背景图 ----------
+              只有主题本来就带 --bg-image 的才能换图；
+              纯色主题给一个带边框的占位并画禁止图标，
+              让用户一眼知道"不是坏了，是这套主题没有"。 */}
+          <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)' }}>
+            背景图
+          </div>
+          {(() => {
+            const supported = supportsBgImage();
+            const cur = getBgImage();
+            if (!supported) {
+              return (
+                <div className="nx-bgslot nx-bgslot-off" title="当前主题为纯色底，不支持背景图">
+                  <span className="nx-bgslot-ban" aria-hidden="true">🚫</span>
+                  <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+                    此主题不带背景图
+                  </span>
+                </div>
+              );
+            }
+            return (
+              <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
+                <div
+                  className="nx-bgslot"
+                  style={cur ? { backgroundImage: 'url("' + cur + '")' } : undefined}
+                  title={cur ? '当前背景图' : '主题自带背景'}
+                >
+                  {!cur ? (
+                    <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>主题自带</span>
+                  ) : null}
+                </div>
+                <button className="p-btn" onClick={() => bgFileRef.current?.click()}>
+                  选择图片…
+                </button>
+                <input
+                  ref={bgFileRef}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    /* 先清空 value：否则连选同一个文件不会再触发 change */
+                    e.target.value = '';
+                    if (!f) return;
+                    if (f.size > MAX_BG_BYTES) {
+                      ctx.toast(`图片太大（${(f.size / 1048576).toFixed(1)}MB），请换一张小图或先压缩`, 'err');
+                      return;
+                    }
+                    const r = new FileReader();
+                    r.onload = () => {
+                      if (!setBgImage(String(r.result || ''))) {
+                        ctx.toast('当前主题不支持背景图', 'err');
+                        return;
+                      }
+                      ctx.toast('背景图已应用', 'ok');
+                      rerender();
+                      void syncThemeToShell();
+                    };
+                    r.onerror = () => ctx.toast('读取图片失败', 'err');
+                    r.readAsDataURL(f);
+                  }}
+                />
+                <ResetDefaultBtn
+                  disabled={!cur}
+                  onClick={() => { resetBgImage(); ctx.toast('已恢复主题自带背景', 'ok'); rerender(); void syncThemeToShell(); }}
+                  title="恢复为当前主题自带的背景"
+                />
+              </div>
+            );
+          })()}
 
           <div className="p-row" style={{ marginTop: 'var(--sp-7, 14px)' }}>
             <button
