@@ -617,11 +617,29 @@ pub fn fill_all(tpl: &str, path: &str, data_dir: &str) -> String {
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
+    /*
+     * #45 补齐原版那 7 个里的最后两个：`{路径}` / `{文件夹名}`，
+     * 语义分别等同于 `{项目路径}` / `{项目名称}`（清单 #617 明写"同"）。
+     *
+     * ## 顺序无所谓，但值得说清为什么无所谓
+     *
+     * 这一串 replace 是**顺序敏感**的：若某个 token 是另一个的子串，
+     * 先替换短的会把长的拆坏。这里逐个查过：
+     *   · `{路径}` 不是 `{项目路径}` 的子串 —— 后者"路"前面是"目"不是"{"
+     *   · `{文件夹名}` 与 `{项目名称}` 互不为子串
+     * 所以下面的顺序安全。**加新占位符时必须重查一遍**。
+     *
+     * 这两条之所以还要加：它们是原版模板的常用写法，
+     * 不加的话从旧版粘过来的模板会**原样保留占位符**发到 AI 那边 ——
+     * 没有报错，AI 只是收到一句带花括号的话。
+     */
     tpl
         .replace("{path}", path)
         .replace("{name}", &name)
         .replace("{项目路径}", path)
         .replace("{项目名称}", &name)
+        .replace("{路径}", path)
+        .replace("{文件夹名}", &name)
         .replace("{工具根目录}", data_dir)
         .replace("{工具路径}", data_dir)
         .replace("{工具文件名}", "nexus-panel")

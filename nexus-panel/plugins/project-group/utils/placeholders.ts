@@ -23,6 +23,11 @@ export const PLACEHOLDERS: PlaceholderDef[] = [
   { token: '{name}', label: 'name', group: 'own', hint: '当前卡片文件夹名（不含上级路径）' },
   { token: '{项目路径}', label: '项目路径', group: 'legacy', hint: '原版写法，等价于 {path}' },
   { token: '{项目名称}', label: '项目名称', group: 'legacy', hint: '原版写法，等价于 {name}' },
+  /* #45：原版那 7 个里的最后两个，补齐才能直接粘贴旧模板。
+     它们与上面两个同值（清单 #617 明写"同"），hint 里直接说清 ——
+     不然用户会以为有区别，挑错一个又看不出发错了什么。 */
+  { token: '{路径}', label: '路径', group: 'legacy', hint: '原版写法，等价于 {项目路径}（与它同值）' },
+  { token: '{文件夹名}', label: '文件夹名', group: 'legacy', hint: '原版写法，等价于 {项目名称}（与它同值）' },
   { token: '{工具根目录}', label: '工具根目录', group: 'tool', hint: '数据目录（原版指 exe 所在目录）' },
   { token: '{工具路径}', label: '工具路径', group: 'tool', hint: '数据目录，与 {工具根目录} 同值' },
   { token: '{工具文件名}', label: '工具文件名', group: 'tool', hint: '宿主程序名（nexus-panel）' },

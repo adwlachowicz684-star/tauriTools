@@ -42,7 +42,9 @@ const { t, done } = makeT();
 const { PLACEHOLDERS, GROUP_TITLE, GROUP_ORDER, placeholdersByGroup, insertAtCursor } = P;
 
 console.log('\n=== 1. 清单本身 ===');
-t('共 7 个占位符', PLACEHOLDERS.length === 7, `${PLACEHOLDERS.length} 个`);
+/* #45 补齐原版最后两个（{路径} / {文件夹名}）后是 9 个：
+   本插件 2 个 + 原版兼容 4 个 + 工具 3 个 */
+t('共 9 个占位符', PLACEHOLDERS.length === 9, `${PLACEHOLDERS.length} 个`);
 t('token 无重复', new Set(PLACEHOLDERS.map((p) => p.token)).size === PLACEHOLDERS.length);
 t('token 都带花括号', PLACEHOLDERS.every((p) => /^\{.+\}$/.test(p.token)));
 t('每条都有说明', PLACEHOLDERS.every((p) => p.hint && p.label));
@@ -80,6 +82,25 @@ if (!fs.existsSync(rsPath)) {
   t('后端替换数量与清单一致', replaced.size === declared.size,
     `后端 ${replaced.size} / 前端 ${declared.size}`);
   t('{工具文件名} 在后端替换为宿主名', /\{工具文件名\}",\s*"nexus-panel"/.test(body));
+
+  /*
+   * fill_all 是一串顺序敏感的 replace：**若某个 token 是另一个的子串，
+   * 先替换短的会把长的拆坏**（例如有 `{路径}` 与 `{项目路径}` 时，
+   * 前者若在后者之前替换且互为子串，长 token 就被截掉一半）。
+   *
+   * 现在这 9 个互不为子串，所以顺序安全。但**以后每加一个都要重查** ——
+   * 这类 bug 的表现是"某个占位符没被替换、原样发给 AI"，没有任何报错，
+   * 只会让 AI 收到一句带花括号的话。
+   */
+  const toks = [...replaced];
+  const clashes = toks.flatMap((a) => toks.filter((b) => b !== a && a.includes(b)).map((b) => `${b} ⊂ ${a}`));
+  t('占位符互不为子串（顺序安全）', clashes.length === 0, clashes.join(' / ') || '无');
+
+  /* #45：原版那两个与既有的是同值别名，hint 里要写清，
+     否则用户以为有区别、挑错也看不出发错了什么 */
+  const alias = PLACEHOLDERS.filter((p) => ['{路径}', '{文件夹名}'].includes(p.token));
+  t('两个新占位符都在清单里', alias.length === 2);
+  t('说明里点明同值', alias.every((p) => /同值/.test(p.hint)));
 }
 
 console.log('\n=== 4. 插入行为：光标处插入 ===');
