@@ -804,6 +804,36 @@ bootIframePlugin(async (ctx) => {
   }
 
   /**
+   * 底框开合后把画布内容**移回原处**。
+   *
+   * 背景：文件库是 flex 子项，展开时把画布挤窄 Δ（当前 = 186 + padding
+   * 10×2 + gap 10 = **216px**），画布左边缘右移 Δ。而内核 resize 时只补
+   * `(新宽-旧宽)/2` —— 半个 Δ。于是内容净位移 Δ/2 ≈ 108px，
+   * 表现为「展开文件库，整幅图往右挪一下」。
+   *
+   * 这里在内核补完之后**再补半个 Δ**，凑成整 Δ，内容即回到原处。
+   *
+   * 三个要点 ——
+   *
+   * **宽度用实测而不是硬编码 216。** padding / gap / box-sizing 任一项
+   * 变了，硬编码值就会补错；实测永远对得上。
+   *
+   * **补偿量是 Δ/2 而不是 Δ。** 内核已经补了 Δ/2，只补剩下的那半。
+   * 补 Δ 会过冲，内容朝反方向再移 108px。
+   *
+   * **等一帧再测。** class 刚改完布局还没更新，此时读 clientWidth 拿到的
+   * 还是旧值、Δ 恒为 0，补偿等于没做。
+   */
+  function compensateCanvasPan() {
+    const before = canvasEl.clientWidth;
+    requestAnimationFrame(() => {
+      const d = canvasEl.clientWidth - before;
+      if (!d) return;                       // 宽度没变（例如搜索↔文件切换）→ 不补
+      bridge?.panBy(Math.round(d / 2), 0);
+    });
+  }
+
+  /**
    * 文件库面板展开/隐藏。
    *
    * 与搜索结果是**两个独立页签**共用一个底框，所以"开合"不是简单的
@@ -2143,7 +2173,7 @@ bootIframePlugin(async (ctx) => {
     get sheet() { return sheet(); },
   };
   side = buildSide(app, { onPage: syncSideTabs });
-  fileList = buildFileList(app);
+  fileList = buildFileList(app, { onPanelToggle: compensateCanvasPan });
   // 顺序对齐 C# MindMapPanel 的主体两列：[文件库] | 画布 | [属性侧栏 276px]
   //   左侧：文件库（Web 版多文档功能，C# 没有；默认收起，点 📚 展开）
   //   右侧：属性侧栏（样式/标签/主题/文件），C# 里固定 276px 常驻

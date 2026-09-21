@@ -2675,6 +2675,26 @@
             // camera 的第二个参数是动画时长：给 0 会瞬移，
             // 用户看不出"发生了什么、移到哪儿了"；
             // 给 300ms 才有"镜头推过去"的连续感。
+            // 相对平移视图（补偿画布宽度变化时内核没补的那一半）。
+            //
+            // 内核 resize 时只补 (新宽-旧宽)/2 —— 即**半个**容器位移，
+            // 剩下那半个没人补，于是画布内容会随容器左边缘一起挪。
+            // 见外壳侧 README「文件库展开导致画布内容位移」一节。
+            //
+            // 为什么必须走 _viewDragger：内核没有公开的平移命令。
+            // camera 是把某节点移到视口中心，hand 是拖拽态，
+            // move 命令只支持 up/down/left/right 四档固定步长。
+            //
+            // 不传 duration（与内核 resize 一致）：带动画的话，两次平移
+            // 的动画会互相打断，最终落点不是两者之和。
+            panBy: function (dx, dy) {
+                try {
+                    var d = km._viewDragger;
+                    if (!d || !d.move) return false;
+                    d.move(new kity.Point(Number(dx) | 0, Number(dy) | 0));
+                    return true;
+                } catch (e) { return false; }
+            },
             focusRoot: function () {
                 try {
                     var root = km.getRoot();
