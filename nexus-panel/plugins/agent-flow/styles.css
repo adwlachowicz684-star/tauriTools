@@ -1787,7 +1787,7 @@ input.mono, textarea.mono {
 /* 筛选区同样按侧栏内边距对齐 */
 .hist-filter { padding: 9px 12px; }
 
-/* 节点库里的自定义颜色：小色块 + 取色器 */
+/* 节点库里的自定义颜色：小色块，点开主面板的取色面板 */
 .side-swatch {
   width: 12px; height: 12px; flex: none;
   border-radius: 3px;
@@ -1798,15 +1798,6 @@ input.mono, textarea.mono {
 /* 只在悬停条目时才明显 —— 一直满亮度会让整列看起来五颜六色 */
 .side-item:not(:hover) .side-swatch { opacity: 0.45; }
 .side-swatch:hover { opacity: 1; transform: scale(1.15); }
-.side-picker {
-  display: inline-flex; align-items: center; gap: 4px;
-  margin-left: 4px;
-}
-.side-picker input[type='color'] {
-  width: 26px; height: 20px; padding: 0;
-  border: 1px solid var(--af-line, #2a2f3a);
-  border-radius: 4px; background: none; cursor: pointer;
-}
 
 /* 任务流程图 —— 默认视图，看"卡在哪儿" */
 /* 任务流程图（画布布局） */
@@ -2352,22 +2343,16 @@ input.mono, textarea.mono {
  * 不是运行状态 —— 运行状态看右侧徽章。
  */
 .node-dot.level-warn { box-shadow: 0 0 0 2px rgba(245, 158, 11, .22);   /* 状态光环：零模糊彩色环，非立体阴影 */ }
-.node-dot.level-error {
-  box-shadow: 0 0 0 2px rgba(239, 68, 68, .28);    /* 同上 */
-  animation: af-pulse-dot var(--anim-pulse, 1.6s) ease-in-out infinite;
-}
 /*
- * 只给红点加脉动：红是"会阻断"，值得抢视线；
- * 黄点如果也闪，画布上一片闪动反而看不出重点。
+ * 不加脉动。
+ *
+ * 以前红点会呼吸（af-pulse-dot），本意是"红=会阻断，值得抢视线"。
+ * 实际效果相反：画布上有几个缺参节点就一直在闪，反而盖住了真正要看的东西；
+ * 而且"什么都没做，画面却一直在动"会被当成卡了。
+ *
+ * 分级靠颜色与光环已经够 —— 阻断原因本来就写在卡片上，不靠圆点传达。
  */
-@keyframes af-pulse-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
-}
-/* 尊重系统的"减少动态效果"设置 */
-@media (prefers-reduced-motion: reduce) {
-  .node-dot.level-error { animation: none; }
-}
+.node-dot.level-error { box-shadow: 0 0 0 2px rgba(239, 68, 68, .28);    /* 同上 */ }
 
 /* 阻断原因直接写在卡片上 —— 只靠一个小红点，用户不知道缺什么 */
 /* ---------------- 节点显示高度（矮 / 中 / 高）---------------- */
