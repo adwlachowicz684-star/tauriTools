@@ -40,6 +40,8 @@ import type { CardKind } from '../types';
 export const DRAG_MIME = 'application/x-fpx-card';
 export const TAB_DRAG_MIME = 'application/x-fpx-tab';
 export const BOX_DRAG_MIME = 'application/x-fpx-box';
+/** #148 连锁动作页签重排。纵向列表，语义与卡片排序一致，故单列一种 MIME */
+export const ACTION_DRAG_MIME = 'application/x-fpx-action';
 
 /* ---------------------------------- 阈值 ---------------------------------- */
 
@@ -137,6 +139,27 @@ export function parseTabDrag(raw: string | null | undefined): TabDragPayload | n
 }
 
 /** 解析分框重排载荷（同样任意来源，必须校验）。 */
+/**
+ * #148 解析连锁动作拖拽载荷。只认 id —— 列表项靠 id 定位，不靠下标。
+ *
+ * 这里**刻意不用括号内的类型断言**：testkit 的类型剥离器处理不了
+ * "括号 + 类型断言 + 内联对象类型"那种写法，会原样留下关键字 →
+ * 剥离产物语法错误 → **drag-sort-test 跟着一起挂掉**（已踩过一次）。
+ * 用 typeof 守卫既避开它，也少一次断言。
+ */
+export function parseActionDrag(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const v: unknown = JSON.parse(raw);
+    if (!v || typeof v !== 'object') return null;
+    const rec: Record<string, unknown> = { ...v };
+    const id = rec.id;
+    return typeof id === 'string' && id ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 export function parseBoxDrag(raw: string | null | undefined): BoxDragPayload | null {
   const parsed = parseJson(raw);
   if (typeof parsed !== 'object' || parsed === null) return null;

@@ -6,6 +6,11 @@ import type { ChainAction, ChainClient } from '../types';
 import { PlaceholderBar } from './PlaceholderBar';
 /* #147 模板框高度自适应：与 #146 图标网格共用同一个测量 hook */
 import { useAvailableHeight } from '../hooks/useAvailableHeight';
+/* #148 连锁动作重排：与卡片/页签/图标共用同一套索引纠偏与半区判定，
+   不另写一份 —— 各写一份的话改了那边的边界处理这里就会悄悄不一致。 */
+import {
+  ACTION_DRAG_MIME, parseActionDrag, resolveMoveIndex, gapIndexAt,
+} from '../utils/dragSort';
 import { Modal } from './ui';
 
 /** 自定义动作的候选图标（内置四个动作的图标不在此列，避免重复观感）。 */
@@ -104,6 +109,25 @@ export function ChainActionsPanel({
   };
 
   /** 上移 / 下移：列表顺序即展示与右键菜单顺序 */
+  /* #148 / #149 拖拽重排：拖起的是哪个、当前落点缝隙（-1 为无） */
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [actGap, setActGap] = useState(-1);
+
+  /** 把某个 id 移到落点缝隙 k（复用卡片/页签那套"先移除再插入"的纠偏） */
+  const dropActionAt = (id: string, k: number) => {
+    setList((l) => {
+      const from = l.findIndex((a) => a.id === id);
+      if (from < 0 || k < 0 || k > l.length) return l;
+      const to = resolveMoveIndex(from, k, l.length);
+      if (to === from) return l;   // 原地放下：什么都不做（#103 同源）
+      const n = [...l];
+      const [it] = n.splice(from, 1);
+      n.splice(to, 0, it);
+      return n;
+    });
+    setDirty(true);
+  };
+
   const move = (id: string, delta: number) => {
     setList((l) => {
       const i = l.findIndex((a) => a.id === id);
@@ -156,22 +180,66 @@ export function ChainActionsPanel({
       <div className="fpx-ca-wrap">
         <div className="fpx-ca-list">
           {list.map((a, i) => (
-            <div
-              key={a.id}
-              className={`fpx-ca-item${a.id === active ? ' on' : ''}`}
-              onClick={() => setActive(a.id)}
-            >
-              <span className="fpx-ca-icon">{a.icon}</span>
-              <span className="fpx-ca-name">
-                {a.name}
-                {!a.builtin && <span className="fpx-badge dim" style={{ marginLeft: 'var(--sp-3, 6px)' }}>自定义</span>}
-              </span>
-              <span className="fpx-ca-ops">
-                <button title="上移" disabled={i === 0} onClick={(e) => { e.stopPropagation(); move(a.id, -1); }}>↑</button>
-                <button title="下移" disabled={i === list.length - 1} onClick={(e) => { e.stopPropagation(); move(a.id, 1); }}>↓</button>
-              </span>
+            /* #149 插入条：画在**缝隙**上（每项之前），落点在哪儿一目了然。
+               只在拖拽中渲染 —— 平时显示一条横线会让人以为哪里错了。 */
+            <div key={a.id}>
+              {dragId && actGap === i && dragId !== a.id && (
+                <div className="fpx-ca-gap" />
+              )}
+              <div
+                className={`fpx-ca-item${a.id === active ? ' on' : ''}${
+                  dragId === a.id ? ' dragging' : ''}`}
+                /* #148 除了 ↑↓ 按钮，还可以直接拖 —— 按钮调一次动一格，
+                   跨好几格要点很多次。 */
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData(ACTION_DRAG_MIME, JSON.stringify({ id: a.id }));
+                  /* 拖影用默认即可，但必须设 effect，否则部分浏览器不触发 drop */
+                  e.dataTransfer.effectAllowed = 'move';
+                  setDragId(a.id);
+                }}
+                onDragEnd={() => { setDragId(null); setActGap(-1); }}
+                onDragOver={(e) => {
+                  const id = parseActionDrag(e.dataTransfer.getData(ACTION_DRAG_MIME))
+                    ?? dragId;
+                  if (!id) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  /* 用 rect 判定前后半区，不用 offsetY —— 项里有 <span>，
+                     指针落在它上面时 offsetY 会跳变（与 #115 同一个坑） */
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setActGap(gapIndexAt({ top: r.top, height: r.height }, e.clientY, i));
+                }}
+                onDrop={(e) => {
+                  const id = parseActionDrag(e.dataTransfer.getData(ACTION_DRAG_MIME));
+                  /* #103 同源：先解析、确认有效才 preventDefault。
+                     否则无效放置也走"被接受"路径，浏览器不给回弹动画 ——
+                     拖影直接消失、界面毫无变化，用户以为放下去了。 */
+                  if (!id) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const r = e.currentTarget.getBoundingClientRect();
+                  const k = gapIndexAt({ top: r.top, height: r.height }, e.clientY, i);
+                  dropActionAt(id, k);
+                  setDragId(null);
+                  setActGap(-1);
+                }}
+                onClick={() => setActive(a.id)}
+              >
+                <span className="fpx-ca-icon">{a.icon}</span>
+                <span className="fpx-ca-name">
+                  {a.name}
+                  {!a.builtin && <span className="fpx-badge dim" style={{ marginLeft: 'var(--sp-3, 6px)' }}>自定义</span>}
+                </span>
+                <span className="fpx-ca-ops">
+                  <button title="上移" disabled={i === 0} onClick={(e) => { e.stopPropagation(); move(a.id, -1); }}>↑</button>
+                  <button title="下移" disabled={i === list.length - 1} onClick={(e) => { e.stopPropagation(); move(a.id, 1); }}>↓</button>
+                </span>
+              </div>
             </div>
           ))}
+          {/* 末尾那条缝隙：拖到最后一项下半区时落点在列表末尾 */}
+          {dragId && actGap === list.length && <div className="fpx-ca-gap" />}
         </div>
 
         <div className="fpx-ca-detail">

@@ -960,6 +960,22 @@
 .fpx-ca-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fpx-ca-ops { flex: none; display: flex; gap: 2px; opacity: 0; }
 .fpx-ca-item:hover .fpx-ca-ops { opacity: 1; }
+
+/* #148 / #149 连锁动作拖拽重排
+ * 插入条画在**缝隙**上而不是整项高亮：列表行挨得紧，
+ * 整项高亮看不出"插在这一行之前还是之后"。
+ */
+.fpx-ca-gap {
+  height: 2px; margin: 1px 0;
+  border-radius: 1px;
+  background: var(--accent);
+  /* 不给辉光：列表本身很窄，加辉光会糊成一片，反而看不清落点 */
+}
+.fpx-ca-item.dragging {
+  /* 被拖的那项压暗 —— 不压的话界面上有两个"当前项"（原位置与拖影），
+     用户分不清哪个是真的 */
+  opacity: .45;
+}
 .fpx-ca-ops button {
   width: 20px; height: 20px; padding: 0; line-height: 18px;
   border: 1px solid var(--border); border-radius: var(--r-xs);
