@@ -4280,7 +4280,10 @@ group('画布附件区渲染（真实源码）');
     eq(r.texts.map((t) => t.content).join(','), '一.pdf,二.pdf,三.pdf', '顺序与名字都对');
     const ys = r.texts.map((t) => t.ty);
     ok(ys[1] > ys[0] && ys[2] > ys[1], '三行依次往下（y 递增，不重叠）');
-    eq(Math.round(ys[1] - ys[0]), 17, '行距 17px');
+    // 行距必须 ≥ 图标高度 20：写 17 时相邻两行的图标上下各占 20，
+    // 重叠 3px —— 用户看到的就是「两个图标叠在一起」。
+    const gap = Math.round(ys[1] - ys[0]);
+    ok(gap >= 20, `行距 ≥ 图标高度 20（实际 ${gap}）—— 否则相邻行图标重叠`);
   }
 
   // ---- 视频：一张卡片 + 数字角标 ----
@@ -4531,7 +4534,7 @@ group('拖放：编辑器侧（真实源码）');
   // 文件每行一个
   ok(/var fils = refListOf\(node\.getData\('file'\)\);/.test(html), '文件读列表');
   ok(/for \(var fi = 0; fi < fils\.length; fi\+\+\)/.test(html), '每个文件画一行');
-  ok(/top \+= 17/.test(html), '行高固定 17（多行依次往下排）');
+  ok(/top \+= 24/.test(html), '行距 24 ≥ 图标高度 20（写 17 会让相邻图标重叠）');
 }
 
 group('拖放：bridge 与插件层接入');
@@ -5049,8 +5052,22 @@ group('附件图标不能是黑块：fill 必须用 none 而不是 transparent')
   // 渲染器认不出就回退默认黑色 —— 整个矩形糊成黑块。none 才是标准值。
   // 只断言「rect 用的是 none」而不是「全文不含 transparent」——
   // 后者会命中注释里的说明文字，属于假阳性（注释改了代码没改也照样绿）
-  ok(/new kity\.Rect\(16, 20, 0, -10, 3\)\.fill\('none'\)/.test(fi),
+  ok(/new kity\.Rect\(15, 20, -10, -10, 3\)\.fill\('none'\)/.test(fi),
     'FileIcon 的矩形底用 fill(none)（transparent 会被渲染器回退成黑色）');
+  // 几何必须罩住 outline 的实际范围 x∈[-8,3] / y∈[-10,10]。
+  // 早先是 (16,20, 0,-10) —— 从原点向右延伸 16px，与本体错位且压住文件名，
+  // 表现为「悬停出现一个透明小框、位置不对」。
+  {
+    const m = fi.match(/new kity\.Rect\((\d+), (\d+), (-?\d+), (-?\d+)/);
+    ok(!!m, '能取到 FileIcon rect 的几何');
+    if (m) {
+      const [, w, h, x, y] = m.map(Number);
+      ok(x <= -8 && x + w >= 3, `rect 横向罩住 outline（x=${x}, 右=${x + w}，需含 [-8,3]）`);
+      ok(y <= -10 && y + h >= 10, `rect 纵向罩住 outline（y=${y}, 下=${y + h}，需含 [-10,10]）`);
+      // 右边界不能伸到文字起点（文字在原点右侧 12px = cx-34 vs 图标 cx-46）
+      ok(x + w <= 12, `rect 右边界不压到文件名（右=${x + w} ≤ 12）`);
+    }
+  }
   ok(!/\.fill\('transparent'\)/.test(fi.replace(/\/\*[\s\S]*?\*\//g, '')),
     'FileIcon 代码里不再出现 fill(transparent)');
   ok(!/fill\('transparent'\)/.test(vi), 'VideoIcon 不再用 fill(transparent)');
@@ -5862,14 +5879,58 @@ group('展开层级按钮：移到左侧图标条');
   // 1) 左侧图标条里要有这三个层级
   const rail = idx.slice(idx.indexOf('function buildRail()'),
     idx.indexOf("  /* ------------------------- 保存抑制"));
-  ok(/bridge\?\.expandToLevel\(/.test(rail), '左侧图标条调 expandToLevel');
+  // 两组并存：层级（中心主题）/ 展开（选中节点）
+  ok(/bridge\?\.expandRootToLevel\(/.test(rail), '「层级」组调 expandRootToLevel（中心主题为准）');
+  ok(/bridge\?\.expandToLevel\(/.test(rail), '「展开」组调 expandToLevel（选中节点为准）');
+  ok(/'层级'/.test(rail) && /'展开'/.test(rail), '两组小标题都在：层级 / 展开');
+
+  // **两组必须是同一个生成函数**，否则容易只改一组、另一组行为悄悄不一致
+  // 定义处是箭头函数常量（`const levelGroup = (`），不含 `levelGroup(` 字样，
+  // 所以调用次数就是 2 —— 少一次说明有一组被单独写死了。
+  ok(/const levelGroup = \(label, tipOf, call\)/.test(rail), '有统一的 levelGroup 生成函数');
+  eq((rail.match(/levelGroup\(/g) || []).length, 2, '两组都走 levelGroup（不再各写一份）');
+
   // 三个层级一个都不能少，且 0=全部
   ok(/\[1, '1级'/.test(rail) && /\[2, '2级'/.test(rail) && /\[0, '全'/.test(rail),
     '三个层级都在：1级 / 2级 / 全（0 = 全部）');
-  ok(/for \(const \[lv, label, tip\] of/.test(rail),
+  ok(/for \(const \[lv, text, tip\] of tipOf\)/.test(rail),
     '用循环生成（新增层级时不用复制三份）');
+
+  // **语义必须区分开**：层级的提示里要写明与选中节点无关
+  {
+    const lvl = rail.slice(rail.indexOf("levelGroup('层级'"), rail.indexOf("levelGroup('展开'"));
+    const exp = rail.slice(rail.indexOf("levelGroup('展开'"));
+    ok(/中心主题/.test(lvl), '「层级」提示写明以中心主题为准');
+    ok(!/选中节点/.test(lvl.replace(/\/\*[\s\S]*?\*\//g, '')),
+      '「层级」不再以选中节点为准');
+    ok(/选中节点/.test(exp), '「展开」以当前选中节点为准');
+  }
   // 图标条宽 34px，文字必须压短 —— 写全「展开一级」会溢出换行
   ok(!/'展开一级'/.test(rail), '按钮文字是短标（不是「展开一级」，会溢出 34px）');
+
+  // 1b) 编辑器与桥接都要有「以根节点为准」的门面
+  {
+    const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+    const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+    ok(/expandRootToLevel: function \(levels\)/.test(html), '编辑器有 expandRootToLevel 门面');
+    ok(/km\.getRoot\(\)/.test(html), 'expandRootToLevel 取根节点（不是 getSelectedNode）');
+    ok(/expandRootToLevel\(levels\) \{/.test(br), '桥接转发 expandRootToLevel');
+    // 两条路径除基准节点外必须一致，否则两组按钮行为会不一样
+    const r0 = html.indexOf('expandRootToLevel: function');
+    const s0 = html.indexOf('expandSelectedToLevel: function');
+    // 只比**函数体**（跳过函数名与取基准节点那一行），其余必须逐字一致
+    // 截到函数体真正的结尾（`}catch(e){return false;}`），不能取固定长度 ——
+    // 那样会把后面紧跟的其它门面也带进来，两边永远不相等。
+    const body = (t) => {
+      let out = t.slice(t.indexOf('{'))
+        .replace(/km\.getRoot\(\)|km\.getSelectedNode\(\)/g, 'BASE')
+        .replace(/\s+/g, '');
+      const end = out.indexOf('}catch(e){returnfalse;}');
+      return end < 0 ? out : out.slice(0, end + '}catch(e){returnfalse;}'.length);
+    };
+    eq(body(html.slice(r0, r0 + 700)), body(html.slice(s0, s0 + 700)),
+      '两个门面除基准节点外逻辑一致（否则两组按钮行为不同）');
+  }
 
   // 2) 右侧样式页的「视图」节必须**删掉**，不能两处都能点
   ok(!/section\('视图'/.test(pn), '样式页不再有「视图」节');
@@ -5879,8 +5940,8 @@ group('展开层级按钮：移到左侧图标条');
   ok(/\.mm-rail-sep/.test(css) && /\.mm-rail-label/.test(css), '有分隔线与「层级」小标题样式');
   ok(/mm-rail-sep/.test(rail) && /mm-rail-label/.test(rail), '图标条里渲染了分隔线与小标题');
 
-  // 4) 层级按钮要落 commit（否则撤销栈不记，改动也存不住）
-  ok(/bridge\?\.expandToLevel\(lv\);\s*\n\s*commit\(\);/.test(rail),
+  // 4) 两组按钮都要落 commit（否则撤销栈不记，改动也存不住）
+  ok(/rail\.appendChild\(B\(text, \(\) => \{ call\(lv\); commit\(\); \}/.test(rail),
     '展开后 commit（进撤销栈并持久化）');
 }
 
@@ -6835,6 +6896,87 @@ group('app 句柄：可写状态必须成对提供 getter/setter');
   const pjOnly = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   eq((pjOnly.match(/app\.customThemes\s*=/g) || []).length, 3,
     'panels.js 有三处赋值（导入 / 删除 / 编辑保存主题）');
+}
+
+group('清除按钮图标 / 样式间距 / 媒体查看尺寸');
+
+{
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+
+  // ---- 1) 清除类按钮不用 ✕ / × ----
+  //
+  // ✕ 在界面上的通行含义是「关闭 / 取消」，而这里是「把样式恢复默认」。
+  // 用户看到 ✕ 会以为点了就把这一节收起来，不敢点。
+  const q = pn.slice(pn.indexOf('function quietBtn('), pn.indexOf('function quietBtn(') + 420);
+  ok(/'⟲'/.test(q), '清除按钮用 ⟲（还原）而不是 ✕（像关闭）');
+  ok(!/'✕'|'×'|'✖'/.test(q), '清除按钮不再用 ✕ / ×');
+
+  // ---- 2) B / I / S 与字体色之间留空隙 ----
+  //
+  // 间距要加在**这一组的第一个**上，不是每个 chip 都加 —— 那是"间距"不是"分隔"。
+  const bis = pn.slice(pn.indexOf("title: '加粗'") - 400, pn.indexOf("title: '删除线'") + 60);
+  ok(/marginLeft: '14px'/.test(bis), 'B 前有 14px 空隙（颜色与字形是两套功能）');
+  // 只加一次：给每个 chip 都加会变成均匀的间距，分隔感反而没了
+  eq((pn.match(/marginLeft: '14px'/g) || []).length, 1, '空隙只加一次（分隔而非间距）');
+
+  // ---- 3) 图片预览放大 ----
+  const pv = css.slice(css.indexOf('.mm-preview {'), css.indexOf('.mm-preview {') + 320);
+  {
+    const mw = pv.match(/max-width:\s*min\((\d+)vw,\s*(\d+)px\)/);
+    ok(!!mw, '能取到 .mm-preview 的 max-width');
+    if (mw) {
+      ok(Number(mw[1]) >= 90, `预览宽度放到 ≥90vw（实际 ${mw[1]}vw）`);
+      ok(Number(mw[2]) >= 1000, `预览像素上限 ≥1000px（实际 ${mw[2]}px）`);
+    }
+    const mh = pv.match(/max-height:\s*(\d+)vh/);
+    ok(Number(mh && mh[1]) >= 70, `预览高度 ≥70vh（实际 ${mh && mh[1]}vh）`);
+  }
+  // 光放大图片不够：dialog 本身固定 560px，图再大也被容器压住
+  ok(/\.mm-dialog\.wide\s*\{/.test(css), '有宽版 dialog（否则 560px 容器会把大图压回去）');
+  {
+    // 锚点要带 ` {`：注释里也出现了 `.mm-dialog.wide`，只按类名找会命中注释，
+    // 取到的 160 字符全是注释文字，断言永远失败（且失败原因看不出来）。
+    const w = css.slice(css.indexOf('.mm-dialog.wide {'), css.indexOf('.mm-dialog.wide {') + 160);
+    ok(/width:\s*min\(1160px/.test(w), '宽版 dialog 放宽到 1160px');
+  }
+  ok(/\{ wide: true \}\);/.test(pn), '预览/播放传了 wide');
+
+  // ---- 4) 视频必须限高，否则按钮被挤出可视区 ----
+  //
+  // 竖屏视频（9:16）按 width:100% 铺开能到近千像素高，把下方
+  // 「截图 / 设为缩略图 / 关闭」全挤出 max-height:86vh 的可视区 ——
+  // 表现为「按钮不见了」，其实是要往下滚才看得到。
+  const vd = css.slice(css.indexOf('video.mm-video {'), css.indexOf('video.mm-video {') + 260);
+  ok(/max-height:\s*\d+vh/.test(vd), 'video 有 max-height（否则竖屏视频把按钮挤出可视区）');
+  // 只限高不设 object-fit 会把画面压扁
+  ok(/object-fit:\s*contain/.test(vd), 'video 用 contain（只限高不设会把画面压扁）');
+  // 旧的那条规则必须已被移除：两条同时存在时谁生效取决于顺序，不可预测
+  eq((css.match(/video\.mm-video\s*\{/g) || []).length, 1, 'video 规则只有一条（不能两条打架）');
+}
+
+group('文件图标：悬停高亮框与行距');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  const fiAt = html.indexOf("var FileIcon = kity.createClass");
+  const fi = html.slice(fiAt, fiAt + 1800);
+
+  // rect 是**悬停高亮框**，几何必须罩住 outline 的实际范围 x∈[-8,3] / y∈[-10,10]
+  const m = fi.match(/this\.rect = new kity\.Rect\((\d+), (\d+), (-?\d+), (-?\d+)/);
+  ok(!!m, '能取到 FileIcon rect 几何');
+  if (m) {
+    const [, w, h, x, y] = m.map(Number);
+    ok(x <= -8 && x + w >= 3, `rect 横向罩住 outline（[${x}, ${x + w}] 需含 [-8,3]）`);
+    ok(y <= -10 && y + h >= 10, `rect 纵向罩住 outline（[${y}, ${y + h}] 需含 [-10,10]）`);
+    // 文件名在图标原点右侧 12px（cx-34 vs 图标 cx-46），rect 右边界不能伸过去
+    ok(x + w <= 12, `rect 右边界不压到文件名（${x + w} ≤ 12）`);
+  }
+
+  // 行距必须 ≥ 图标高度 20
+  const rowStep = html.match(/top \+= (\d+);\s*\n\s*\}\s*\n\s*\}\s*\n\s*\} catch/);
+  const step = Number((html.match(/top \+= (\d+);/g) || []).slice(-1)[0]?.match(/\d+/)?.[0]);
+  ok(step >= 20, `文件行距 ≥ 20（实际 ${step}）—— 17 会让相邻图标重叠 3px`);
 }
 
 group('多附件：XMind 往返（导出再导回）');
