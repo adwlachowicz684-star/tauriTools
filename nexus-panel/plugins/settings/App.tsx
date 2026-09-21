@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   toolbarEntriesOf, wantsEntry, hiddenIds, extraIds,
-  toggleHidden, moveEntry, moveEntryTo, addExtra, removeExtra,
+  toggleHidden, addExtra, removeExtra,
 } from '../../js/toolbar-plugin.js';
 import { useNexus } from '../../src/nexus-react';
 import type { PluginManifest } from '../../js/host.js';
@@ -15,25 +15,15 @@ import {
      而不是一个"恢复主题自带配色"大按钮 ——
      用户只想把色相调回 0 时，不该连强调色一起丢掉。 */
   resetAccent, resetEnvColor, resetHueShift, resetLightShift,
-  /* 背景图 + 预设背景 */
+  /* 背景图 */
   supportsBgImage, getBgImage, setBgImage, resetBgImage,
-  getBgPreset, setBgPreset,
-  /* 风格参数：每种风格各有自己那几个可调项 */
-  getStyleParam, setStyleParam, resetStyleParam,
-  findTheme,
   saveAsCustom, deleteCustomTheme,
   // getCurrent：色相/明暗改为按主题各记一份后，提示文案要显示当前主题名
   getCurrent,
   getCustomColors, saveCustomColors,
   onChange as onThemeChange,
 } from '../../js/theme-manager.js';
-import {
-  swatchFor, styleLabel,
-  /* styleParams：按风格取该风格特有的可调项（玻璃的透明度/模糊、新拟态的立体度…） */
-  styleParams,
-  /* BG_PRESETS：预设渐变背景，用户挑一个即可，不必自己找图 */
-  BG_PRESETS,
-} from '../../js/themes.js';
+import { swatchFor, styleLabel } from '../../js/themes.js';
 import {
   ADAPT_POLICIES, PLUGIN_THEMES,
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
@@ -203,12 +193,6 @@ function StyleAuditBadge({ audit, open, onToggle }: {
  */
 const MAX_BG_BYTES = 1.5 * 1024 * 1024;
 
-/** 从 '14px' / '0px' 里取出数字；取不到返回 0（未开模糊） */
-function parseBlurPx(v: string | undefined): number {
-  const n = parseFloat(String(v || '0'));
-  return isFinite(n) ? n : 0;
-}
-
 function ResetDefaultBtn({ disabled, onClick, title }: {
   disabled: boolean; onClick: () => void; title?: string;
 }) {
@@ -308,175 +292,179 @@ function PluginRow({ p, audit, auditOpen, onToggleAudit, onOverride, onRemove, d
  * ⚠️ 入口列表用 toolbarEntriesOf() 推导，与加载器**共用同一份判断** ——
  * 两边各写一遍必然漂移，表现是"设置里关掉了、右上角还在"。
  */
+/**
+ * 右上角按钮（工具栏入口）管理 —— 商店式卡片矩阵。
+ *
+ * 这里改过两版：
+ *
+ *   v1 只把 kind:'toolbar' 的列出来，**没有任何开关**；
+ *   v2 补了开关，但"把应用插件加进来"是一个 <select> 下拉框。
+ *
+ * 下拉框的问题不是不好看，是**信息被切成两半**：
+ *   · 下拉里只有"还没加入"的候选 —— 想确认某个插件加没加，
+ *     得先去上面那排入口里找；两边各看一半才完整。
+ *   · 一次只能看见一项，插件多了要逐个展开才知道有什么。
+ *
+ * v3（现在）：**所有插件各出一张卡**，像商店货架一样铺开。
+ * 一张卡同时表达"它是什么"和"它现在处于什么状态"，
+ * 卡片上两个按钮把两件事分开：
+ *
+ *   展示 / 隐藏   —— 已经在右上角了，要不要暂时不显示（保留位置与顺序）
+ *   加入 / 取消   —— 要不要占一个右上角入口（取消不等于卸载插件）
+ *
+ * 这两个是**不同层次**，不是同一个开关的两种说法：
+ * 隐藏保留配置（再点回来还在原位），取消加入则彻底没有这个入口。
+ *
+ * ⚠️ 入口列表用 toolbarEntriesOf() 推导，与加载器**共用同一份判断** ——
+ * 两边各写一遍必然漂移，表现是"设置里关掉了、右上角还在"。
+ */
 function ToolbarSection({ plugins, ctx }: { plugins: any[]; ctx: any }) {
   const [, force] = useState(0);
   const rerender = () => force((v) => v + 1);
 
-  const entries = toolbarEntriesOf(plugins);
-
-  /*
-   * 拖拽排序：与项目组集群、WPF 集群同一套内核（js/drag-reorder.js），
-   * 死区 / 阈值 / 贴边滚动的数值都从那里来 —— 三处手感才可能对得上。
-   *
-   * 只给容器而不是每行挂 onDragOver：换位判定要**测量所有子项**的中心，
-   * 内核靠 containerRef 找子项；不给容器则测不到，表现是「拖了不让位」。
-   */
-  const tbRef = useRef<HTMLDivElement>(null);
-  const tbDrag = useDragReorder({
-    count: entries.length,
-    containerRef: tbRef,
-    mimeKey: 'toolbar-entry',
-    onMove: (from: number, to: number) => {
-      /* 用 id 而不是下标：让位后 entries 还是旧数组，但顺序已写进存储，
-         用 id 定位才是准的。索引纠偏由 moveEntryTo 内部完成。 */
-      const id = entries[from]?.id;
-      if (!id) return;
-      moveEntryTo(id, to);
-      rerender();
-    },
-  });
-
   const hidden = new Set(hiddenIds());
   const extra = new Set(extraIds());
-  /* 可以加进来的：应用插件里还没成为入口的那些 */
-  const candidates = (plugins || []).filter(
-    (p) => (!p.kind || p.kind === 'app') && !wantsEntry(p));
-  const [pick, setPick] = useState('');
+  const entries = toolbarEntriesOf(plugins);
+  const byId = new Map(entries.map((e) => [e.pluginId, e]));
+  const rank = new Map(entries.map((e, i) => [e.pluginId, i]));
 
-  const rowStyle: React.CSSProperties = {
-    padding: '12px 14px', marginTop: 'var(--sp-5, 10px)', borderRadius: 'var(--r)',
-    background: 'var(--surface-sunk)',
-    boxShadow: 'inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light)',
-  };
-  const btn = (
-    label: string, title: string, onClick: () => void,
-    danger?: boolean, disabled?: boolean,
-  ) => (
+  /*
+   * 已加入的按现有入口顺序排在最前，未加入的保持原序跟在后面。
+   * Array.sort 是稳定排序，所以未加入那批不会互相打乱。
+   *
+   * 这样卡片矩阵本身就**体现了当前右上角按钮的顺序**
+   * （第 1 位、第 2 位……写在卡片上），不需要另开一个列表去解释。
+   */
+  const cards = (plugins || []).slice().sort((a, b) => {
+    const ia = rank.has(a.id) ? (rank.get(a.id) as number) : Number.MAX_SAFE_INTEGER;
+    const ib = rank.has(b.id) ? (rank.get(b.id) as number) : Number.MAX_SAFE_INTEGER;
+    return ia - ib;
+  });
+
+  type CardBtn = { label: string; title: string; act?: () => void; disabled?: boolean };
+
+  const cardBtn = (b: CardBtn) => (
     <button
-      className={'p-btn' + (danger ? ' danger' : '')}
-      title={title}
-      disabled={disabled}
-      onClick={() => { onClick(); rerender(); }}
+      className="p-btn"
+      title={b.title}
+      disabled={b.disabled}
+      onClick={() => {
+        if (!b.act) return;
+        b.act();
+        rerender();
+      }}
       style={{
-        height: 30, minWidth: 30, padding: '0 8px',
-        fontSize: 'var(--fs-12, 12px)', cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.45 : 1,
+        flex: 1, minWidth: 0, height: 28, padding: '0 6px',
+        fontSize: 'var(--fs-11, 11px)',
+        cursor: b.disabled ? 'not-allowed' : 'pointer',
+        opacity: b.disabled ? 0.45 : 1,
       }}
     >
-      {label}
+      {b.label}
     </button>
-  );
-
-  const head = (
-    <div style={{
-      display: 'flex', alignItems: 'baseline', gap: 'var(--sp-4, 8px)',
-      marginTop: 'var(--sp-6, 12px)',
-    }}>
-      <span style={{ fontSize: 'var(--fs-12, 12px)', fontWeight: 600 }}>
-        {`右上角按钮 · ${entries.length}`}
-      </span>
-      <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
-        显示在标题栏右侧，可隐藏与排序
-      </span>
-    </div>
   );
 
   return (
     <>
-      {head}
-      {entries.length ? null : (
-        <div className="p-muted" style={{ marginTop: 'var(--sp-4, 8px)', fontSize: 'var(--fs-11, 11px)' }}>
-          还没有任何入口。可在下方把应用插件加进来。
-        </div>
-      )}
-      {/*
-        onDragOver 必须挂在**容器**上，不能挂在行上。
-        漏了它的后果是整条链路静默失效：dragstart 照常触发（所以能拖起来），
-        但没人调用 preventDefault，浏览器判定此处不可放置 —— 光标是禁止符，
-        且 trySwap 从不执行，松手什么都没发生。看起来就是「拖了没反应」。
-      */}
-      <div
-        ref={tbRef}
-        onDragOver={tbDrag.onDragOver}
-        /* 松手时吞掉默认动作：不 preventDefault 的话，部分浏览器会拿
-           dataTransfer 里的数据去做默认处理（当文本插入等）。 */
-        onDrop={(e) => e.preventDefault()}
-      >
-      {entries.map((e, i) => (
-        <div
-          style={rowStyle}
-          key={e.id}
-          {...tbDrag.getItemProps(i)}
-          /* className 刻意放在 spread **之后**：内核也会返回 className
-             （拖拽态），写在前面会被它覆盖掉 p-row。 */
-          className={'p-row' + (tbDrag.dragFrom === i ? ' nx-drag-dragging' : '')}
-        >
-          <span className="nx-drag-handle" title="按住这里上下拖动可调整顺序">⠿</span>
-          <span style={{ fontSize: 'var(--fs-15, 15px)', width: 24, textAlign: 'center' }}>
-            {e.label}
-          </span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 'var(--fs-13, 13px)' }}>
-              {e.name}
-              {hidden.has(e.id) ? (
-                <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}> · 已隐藏</span>
-              ) : null}
-            </div>
-            <div className="p-mono p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
-              {e.source === 'toolbar' ? '工具栏插件' : '应用插件入口（点了切过去）'}
-            </div>
-          </div>
-          {btn(hidden.has(e.id) ? '显示' : '隐藏',
-            hidden.has(e.id) ? '重新显示到右上角' : '从右上角隐藏',
-            () => toggleHidden(e.id))}
-          {btn('↑', '上移', () => moveEntry(e.id, -1), false, i === 0)}
-          {btn('↓', '下移', () => moveEntry(e.id, 1), false, i === entries.length - 1)}
-          {e.source === 'entry' && !e.builtin
-            ? btn('移除', '从右上角移除这个入口', () => removeExtra(e.pluginId), true)
-            : null}
-        </div>
-      ))}
+      <div style={{
+        display: 'flex', alignItems: 'baseline', gap: 'var(--sp-4, 8px)',
+        marginTop: 'var(--sp-6, 12px)',
+      }}>
+        <span style={{ fontSize: 'var(--fs-12, 12px)', fontWeight: 600 }}>
+          {`右上角按钮 · ${entries.length}`}
+        </span>
+        <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+          显示在标题栏右侧；从下方卡片加入或移除
+        </span>
       </div>
 
-      {/* 添加入口：这是"找不到地方添加按钮入口"的直接答案 */}
-      {candidates.length ? (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 'var(--sp-4, 8px)',
-          marginTop: 'var(--sp-5, 10px)',
-        }}>
-          <select
-            className="p-input"
-            style={{ flex: 1, height: 30, fontSize: 'var(--fs-12, 12px)', padding: '0 8px' }}
-            value={pick}
-            onChange={(ev) => setPick(ev.target.value)}
-          >
-            <option value="">把应用插件添加到右上角…</option>
-            {candidates.map((p) => (
-              <option key={p.id} value={p.id}>{p.icon ?? '◌'} {p.name}</option>
-            ))}
-          </select>
-          <button
-            className="p-btn"
-            style={{ height: 30, padding: '0 10px', fontSize: 'var(--fs-12, 12px)' }}
-            disabled={!pick}
-            onClick={() => {
-              if (!pick) return;
-              addExtra(pick);
-              setPick('');
-              rerender();
-              const p = (plugins || []).find((x) => x.id === pick);
-              ctx?.toast?.(`已把「${p?.name ?? pick}」添加到右上角`, 'ok');
-            }}
-          >
-            添加
-          </button>
-        </div>
-      ) : null}
-      {extra.size ? (
+      <div className="tb-shop">
+        {cards.map((p) => {
+          const isTb = p.kind === 'toolbar';
+          const isSvc = p.kind === 'service';
+          const joined = wantsEntry(p, extra);
+          const e = byId.get(p.id);
+          const hid = e ? hidden.has(e.id) : false;
+          const pos = rank.get(p.id);
+
+          /*
+           * 「展示 / 隐藏」只对**已经加入**的入口有意义。
+           * 未加入时**禁用而不是不画** —— 按钮凭空消失，
+           * 用户只会以为是漏了，不会想到"要先加入"。
+           */
+          const show: CardBtn = (!joined || !e)
+            ? { label: '展示', title: '先加入右上角，才能控制是否显示', disabled: true }
+            : hid
+              ? {
+                label: '展示', title: '重新显示到右上角',
+                act: () => toggleHidden(e.id),
+              }
+              : {
+                label: '隐藏', title: '从右上角隐藏（保留位置与顺序，可再显示）',
+                act: () => toggleHidden(e.id),
+              };
+
+          /*
+           * 「加入 / 取消加入」。
+           * 两种情况禁用，但**都要写明原因**：
+           *   服务插件 —— 不进界面，加了也是点开一片空白
+           *   工具栏插件 —— 自己就声明了要占右上角，不是"加"上去的
+           * 禁用的按钮不给 title 就是"点了没反应且不知道为什么"。
+           */
+          const join: CardBtn = isSvc
+            ? { label: '加入', title: '服务插件在后台运行，不进界面', disabled: true }
+            : !joined
+              ? {
+                label: '加入',
+                title: '在右上角加一个按钮，点了切到这个插件',
+                act: () => {
+                  addExtra(p.id);
+                  ctx?.toast?.(`已把「${p.name ?? p.id}」加到右上角`, 'ok');
+                },
+              }
+              : isTb
+                ? { label: '取消加入', title: '工具栏插件内置在右上角，不可移除', disabled: true }
+                : {
+                  label: '取消加入',
+                  title: '从右上角移除这个按钮（不会卸载插件）',
+                  act: () => {
+                    removeExtra(p.id);
+                    ctx?.toast?.(`已把「${p.name ?? p.id}」移出右上角`, 'ok');
+                  },
+                };
+
+          return (
+            <div
+              key={p.id}
+              className={'tb-card' + (joined ? ' joined' : '') + (hid ? ' is-hidden' : '')}
+            >
+              <div className="tb-card-top">
+                <span className="tb-card-icon">{p.icon ?? '◌'}</span>
+                <span className="tb-card-name" title={p.name ?? p.id}>{p.name ?? p.id}</span>
+              </div>
+              <div className="tb-card-meta">
+                {isSvc ? '服务插件' : isTb ? '工具栏插件' : '应用插件'}
+                {joined ? ` · 第 ${(pos ?? 0) + 1} 位` : ''}
+                {hid ? ' · 已隐藏' : ''}
+              </div>
+              <div className="tb-card-btns">
+                {cardBtn(show)}
+                {cardBtn(join)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {entries.length ? null : (
         <div className="p-muted" style={{ marginTop: 'var(--sp-4, 8px)', fontSize: 'var(--fs-11, 11px)' }}>
-          手动添加的入口点了会切到对应插件；移除只是去掉右上角按钮，不会卸载插件。
+          右上角还没有任何按钮。在上面任意一张卡片点「加入」即可。
         </div>
-      ) : null}
+      )}
+      <div className="p-muted" style={{ marginTop: 'var(--sp-4, 8px)', fontSize: 'var(--fs-11, 11px)' }}>
+        加入的入口点了会切到对应插件；取消加入只是去掉右上角按钮，不会卸载插件。
+        「隐藏」是暂时不显示，再点「展示」会回到原来的位置。
+      </div>
     </>
   );
 }
@@ -959,10 +947,6 @@ export default function Settings() {
           />
           {(() => {
             const all = listThemes();
-            /* 当前主题对象：风格参数区要按它的 style 决定显示哪几个滑块。
-               用 findTheme(getThemeId()) 而不是遍历时顺手拿 ——
-               主题可能刚被删除，findTheme 有兜底，遍历拿不到就是 undefined。 */
-            const curTheme = findTheme(getThemeId());
             const groups: [string, typeof all][] = [
               ['深色', all.filter((t) => t.base === 'dark')],
               ['浅色', all.filter((t) => t.base === 'light')],
@@ -1160,93 +1144,16 @@ export default function Settings() {
             />
           </div>
 
-          {/* ---------- 风格参数 ----------
-              三种风格靠完全不同的手段塑形，可调项不是一个维度，
-              所以按**当前主题的风格**只显示它自己那几个滑块。
-              给玻璃调"立体度"、给扁平调"透明度"都毫无意义。 */}
-          {(() => {
-            const list = styleParams(curTheme?.style);
-            if (!list.length) return null;
-            return (
-              <>
-                <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)' }}>
-                  {styleLabel(curTheme?.style)}风格（{curTheme?.name}）
-                </div>
-                {list.map((p) => {
-                  const raw = getStyleParam(p.key);
-                  /* 没调过就显示主题自带强度（100% 或主题里的 --blur 值），
-                     而不是 0 —— 0 会让人误以为当前是"完全没有立体感"。 */
-                  const shown = raw == null
-                    ? (p.absolute ? parseBlurPx(curTheme?.vars?.['--blur']) : 100)
-                    : raw;
-                  return (
-                    <div key={p.key} style={{ marginTop: 'var(--sp-5, 10px)' }}>
-                      <div className="p-row" style={{ gap: 'var(--sp-4, 8px)' }}>
-                        <span style={{ flex: 'none', fontSize: 'var(--fs-12, 12px)', minWidth: 64 }}>
-                          {p.label}
-                        </span>
-                        <input
-                          type="range"
-                          className="nx-range"
-                          min={p.min}
-                          max={p.max}
-                          step={p.step}
-                          value={shown}
-                          /* onChange 而不是 onMouseUp：拖动时要**实时**看到变化，
-                             否则用户不知道该停在哪 —— 这正是调"透明度/立体度"
-                             这类连续量的意义所在。 */
-                          onChange={(e) => {
-                            setStyleParam(p.key, Number(e.target.value));
-                            rerender();
-                            void syncThemeToShell();
-                          }}
-                          style={{ flex: 1, minWidth: 0 }}
-                        />
-                        <span className="p-mono p-muted" style={{
-                          flex: 'none', fontSize: 'var(--fs-11, 11px)', minWidth: 42, textAlign: 'right',
-                        }}>
-                          {shown}{p.unit}
-                        </span>
-                        <ResetDefaultBtn
-                          disabled={raw == null}
-                          onClick={() => {
-                            resetStyleParam(p.key);
-                            ctx.toast(p.label + '已恢复主题自带值', 'ok');
-                            rerender(); void syncThemeToShell();
-                          }}
-                          title={'恢复' + p.label + '到主题自带值'}
-                        />
-                      </div>
-                      <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-1, 2px)' }}>
-                        {p.desc}
-                      </div>
-                    </div>
-                  );
-                })}
-              </>
-            );
-          })()}
-
           {/* ---------- 背景图 ----------
               只有主题本来就带 --bg-image 的才能换图；
               纯色主题给一个带边框的占位并画禁止图标，
               让用户一眼知道"不是坏了，是这套主题没有"。 */}
-          {/* 当前基调：预设背景要按它排序（同基调的排前面）。
-              定义在 IIFE **外面** —— 预览槽与预设宫格两处都要用。 */}
-          {(() => {
-            const baseNow = getBase();
-            return (
-              <>
           <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)' }}>
             背景图
           </div>
           {(() => {
             const supported = supportsBgImage();
             const cur = getBgImage();
-            const presetId = getBgPreset();
-            const preset = presetId ? BG_PRESETS.find((p) => p.id === presetId) : null;
-            const presetCss = preset?.css || '';
-            const presetName = preset?.name || '';
             if (!supported) {
               return (
                 <div className="nx-bgslot nx-bgslot-off" title="当前主题为纯色底，不支持背景图">
@@ -1261,18 +1168,11 @@ export default function Settings() {
               <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
                 <div
                   className="nx-bgslot"
-                  style={cur
-                    ? { backgroundImage: 'url("' + cur + '")' }
-                    /* 选了预设就在预览槽里画出该渐变 —— 否则用户看不出
-                       "我选了什么"，只能靠记忆分辨八个名字。 */
-                    : (presetCss ? { backgroundImage: presetCss } : undefined)}
-                  title={cur ? '当前背景图' : (presetCss ? '当前预设：' + presetName : '主题自带背景')}
+                  style={cur ? { backgroundImage: 'url("' + cur + '")' } : undefined}
+                  title={cur ? '当前背景图' : '主题自带背景'}
                 >
-                  {!cur && !presetCss ? (
+                  {!cur ? (
                     <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>主题自带</span>
-                  ) : null}
-                  {!cur && presetCss ? (
-                    <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>{presetName}</span>
                   ) : null}
                 </div>
                 <button className="p-btn" onClick={() => bgFileRef.current?.click()}>
@@ -1307,53 +1207,11 @@ export default function Settings() {
                   }}
                 />
                 <ResetDefaultBtn
-                  disabled={!cur && !presetId}
+                  disabled={!cur}
                   onClick={() => { resetBgImage(); ctx.toast('已恢复主题自带背景', 'ok'); rerender(); void syncThemeToShell(); }}
                   title="恢复为当前主题自带的背景"
                 />
               </div>
-            );
-          })()}
-
-          {/* ---------- 预设背景 ----------
-              与上面的"选择图片…"并列但互斥：选预设会清掉自定义图，
-              反之亦然。两条路共用一个预览槽，恢复默认一次清空。 */}
-          {supportsBgImage() ? (
-            <div style={{ marginTop: 'var(--sp-5, 10px)' }}>
-              <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
-                预设背景（不用自己找图）
-              </div>
-              <div className="p-row" style={{ marginTop: 'var(--sp-3, 6px)', gap: 'var(--sp-3, 6px)' }}>
-                {[...BG_PRESETS]
-                  /* 同基调的排前面。不隐藏异基调的 —— 是想降低误选概率，
-                     不是替用户决定他不能用。 */
-                  .sort((a, b) => (a.base === baseNow ? 0 : 1) - (b.base === baseNow ? 0 : 1))
-                  .map((p) => {
-                    const on = getBgPreset() === p.id && !getBgImage();
-                    return (
-                      <button
-                        key={p.id}
-                        className={'nx-bgpick' + (on ? ' on' : '')}
-                        title={p.name + (p.base === baseNow ? '' : '（' + (p.base === 'dark' ? '深' : '浅') + '色底设计）')}
-                        onClick={() => {
-                          if (on) { setBgPreset(''); ctx.toast('已取消预设背景', 'ok'); }
-                          else { setBgPreset(p.id); ctx.toast('背景：' + p.name, 'ok'); }
-                          rerender(); void syncThemeToShell();
-                        }}
-                      >
-                        <span
-                          className="nx-bgpick-sw"
-                          style={{ backgroundImage: p.css }}
-                          aria-hidden="true"
-                        />
-                        <span style={{ fontSize: 'var(--fs-11, 11px)' }}>{p.name}</span>
-                      </button>
-                    );
-                  })}
-              </div>
-            </div>
-          ) : null}
-              </>
             );
           })()}
 

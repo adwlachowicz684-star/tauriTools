@@ -1518,3 +1518,66 @@ html.theme-transition *:not(.spinner) {
 .p-range:focus-visible {
   box-shadow: 0 0 0 2px var(--accent-glow, rgba(91, 140, 255, .3));
 }
+
+/* ---------------- 右上角按钮 · 插件卡片矩阵（设置页） ----------------
+   放在本文件而不是 plugins/settings/settings.css：
+   后者是 **iframe 专用补丁**，同页嵌合模式刻意不引入它
+   （见 plugins/settings/module.tsx 的说明）。写在那里的规则
+   在同页模式下等于没写 —— 设置页两种模式都得能看见这张卡片。
+
+   布局照"商店货架"：铺满可用宽度自动换行，每张卡自成一格。
+   列宽下限 148px 是量过卡片内容定的：
+     图标(22) + 名称(min) + 两个按钮并排(各约 48 + 间距)
+   再窄按钮就会挤成两行，看着像两个不同的控件。 */
+.tb-shop {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: var(--sp-4, 8px);
+  margin-top: var(--sp-4, 8px);
+}
+.tb-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3, 6px);
+  min-width: 0;
+  padding: var(--sp-4, 8px) var(--sp-5, 10px);
+  border-radius: var(--r-sm, 9px);
+  background: var(--surface-sunk);
+  box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);
+}
+/* 已加入的给一圈内描边：一眼能分出"已经在右上角了"和"还可以加"，
+   不靠颜色区分 —— 语义色（--accent）留给状态，不要拿来当装饰。 */
+.tb-card.joined {
+  box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light),
+              inset 0 0 0 1px var(--accent);
+}
+/* 已隐藏的整卡压暗：右上角没有它，卡片也不该是"待命"的观感。 */
+.tb-card.is-hidden { opacity: .55; }
+
+.tb-card-top {
+  display: flex; align-items: center; gap: var(--sp-3, 6px);
+  min-width: 0;
+}
+.tb-card-icon {
+  flex: none; width: 22px; text-align: center;
+  font-size: var(--fs-15, 15px);
+}
+/* 名称可能很长（插件名是用户自己起的），截断但不换行 ——
+   卡片高度必须一致，否则矩阵会出现参差的空洞。 */
+.tb-card-name {
+  min-width: 0; flex: 1;
+  font-size: var(--fs-12, 12px);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tb-card-meta {
+  font-size: var(--fs-11, 11px);
+  color: var(--text-dim);
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* margin-top:auto 把两个按钮压到卡片底部：
+   名称占一行还是两行不影响按钮对齐 —— 矩阵里高度参差最显眼的就是按钮。 */
+.tb-card-btns {
+  display: flex; gap: var(--sp-3, 6px);
+  margin-top: auto;
+}

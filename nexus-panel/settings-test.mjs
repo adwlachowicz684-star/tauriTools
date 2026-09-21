@@ -410,9 +410,66 @@ console.log('\n--- G. 插件按 kind 三分区 ---');
    */
   t('两版都用 toolbarEntriesOf 推导入口（与加载器同源）',
     /toolbarEntriesOf/.test(react) && /toolbarEntriesOf/.test(native));
-  t('两版都能隐藏/排序/添加',
-    ['toggleHidden', 'moveEntry', 'addExtra', 'removeExtra']
+  /*
+   * 两版都改成**商店式卡片矩阵**（原来是下拉框 + 上移/下移按钮）。
+   *
+   * 下拉框的问题不是不好看，是信息被切成两半：下拉里只有"还没加入"的
+   * 候选，已加入的要看上面那排入口 —— 两边各看一半才完整。
+   * 矩阵一张卡同时给出"它是什么"和"现在什么状态"。
+   */
+  /*
+   * 钉**类名本身**（带引号/花括号），不是裸子串：
+   * 'tb-card-top' 里也含 'tb-card'，只查裸子串的话，
+   * 把卡片的 class 去掉、只留子元素类名，这条照样绿。
+   */
+  t('两版都渲染卡片矩阵（tb-shop / tb-card）',
+    /className="tb-shop"/.test(react) && /h\('div\.tb-shop'/.test(native)
+    && /className=\{'tb-card'/.test(react) && /class: 'tb-card'/.test(native));
+  /*
+   * 用户明确要求"不要用下拉框"——这条**反向**钉住：
+   * 只允许字符里不再出现 select 元素，否则哪天有人"顺手补个下拉"就回退了。
+   * 只钉正向（有矩阵）不够：矩阵和下拉可以同时存在。
+   */
+  /*
+   * 钉**旧下拉文案消失**，而不是"全文没有 <select>"：
+   * 设置页别处（主题、适配策略）本来就有合法的下拉框，
+   * 全文件扫会把它们一起判进来 —— 那是断言范围错了，不是代码错了。
+   */
+  t('两版都不再有「添加插件」下拉框',
+    !/把应用插件添加到右上角/.test(react) && !/把应用插件添加到右上角/.test(native));
+  /* 卡片上两个按钮：展示/隐藏 与 加入/取消加入，两版都要有 */
+  t('两版卡片都有「展示/隐藏」按钮',
+    /'展示'/.test(react) && /'隐藏'/.test(react)
+    && /label: '展示'/.test(native) && /label: '隐藏'/.test(native));
+  t('两版卡片都有「加入/取消加入」按钮',
+    /'加入'/.test(react) && /'取消加入'/.test(react)
+    && /label: '加入'/.test(native) && /label: '取消加入'/.test(native));
+  t('两版都用了 toggleHidden / addExtra / removeExtra',
+    ['toggleHidden', 'addExtra', 'removeExtra']
       .every((fn) => react.includes(fn) && native.includes(fn)));
+  /*
+   * 服务插件不进界面，工具栏插件不可移除 —— 两种"加入"都得禁用，
+   * 且**必须写明原因**（不给 title 就是"点了没反应且不知道为什么"）。
+   */
+  t('两版都禁用服务插件的加入并说明原因',
+    /服务插件在后台运行，不进界面/.test(react)
+    && /服务插件在后台运行，不进界面/.test(native));
+  t('两版都禁用工具栏插件的移除并说明原因',
+    /工具栏插件内置在右上角，不可移除/.test(react)
+    && /工具栏插件内置在右上角，不可移除/.test(native));
+  /* 未加入时「展示/隐藏」禁用且说明要先加入 —— 不画按钮会让人以为漏了 */
+  t('两版都说明未加入时不能显示/隐藏',
+    /先加入右上角/.test(react) && /先加入右上角/.test(native));
+  /* CSS 必须写在 neumorphism.css：settings.css 是 iframe 专用补丁，
+     同页模式刻意不引入它，写在那里的规则在同页下等于没写。 */
+  /*
+   * 钉**网格布局**而不只是"类名存在"：
+   * 把 display:grid 改成 block 后卡片会竖成一列，那就不是矩阵了，
+   * 只查类名的话这种退化一个都抓不到。
+   */
+  t('卡片样式写在 neumorphism.css 且是网格（两种模式都生效）',
+    /\.tb-shop\s*\{[\s\S]{0,160}display:\s*grid/.test(css)
+    && /\.tb-shop\s*\{[\s\S]{0,300}repeat\(auto-fill/.test(css));
 
   /*
    * 引用了就得有定义。

@@ -13,14 +13,22 @@ import {
 import { SHELL_SHORTCUT_SPECS, shellComboSet, normCombo } from '../../js/shell-shortcuts.js';
 import {
   toolbarEntriesOf, wantsEntry, hiddenIds, extraIds,
-  toggleHidden, moveEntry, addExtra, removeExtra,
+  toggleHidden, addExtra, removeExtra,
 } from '../../js/toolbar-plugin.js';
 
 /**
  * 右上角按钮（工具栏入口）管理 —— 与 React 版 ToolbarSection 同能力。
  *
- * 之前这里只是把 kind:'toolbar' 的插件列出来，没有任何开关：
- * 想隐藏、想排序、想把应用插件放到右上角都没地方点。
+ * 两版必须**同一套形态**，否则同页模式与 iframe 模式下
+ * 同一个设置页长得不一样，用户只会以为其中一个是坏的。
+ *
+ * 商店式卡片矩阵：**所有**插件各出一张卡，取代原来的下拉框。
+ * 下拉框一次只显示一项，且只有"还没加入"的候选 —— 想确认加没加
+ * 得再去上面那排入口里找，两边各看一半才完整。
+ * 矩阵把"它是什么"和"它现在什么状态"合到一张卡上，
+ * 卡片上两个按钮分别是两个层次：
+ *   展示 / 隐藏 —— 已在右上角，要不要暂时不显示（保留位置与顺序）
+ *   加入 / 取消 —— 要不要占一个入口（取消不等于卸载插件）
  *
  * @param {object} ctx
  * @param {object[]|null} plugins
@@ -32,74 +40,91 @@ function buildToolbarSection(ctx, plugins, sub) {
     const entries = toolbarEntriesOf(list);
     const hidden = new Set(hiddenIds());
     const extra = new Set(extraIds());
-    const candidates = list.filter((p) => (!p.kind || p.kind === 'app') && !wantsEntry(p));
+    const byId = new Map(entries.map((e) => [e.pluginId, e]));
+    const rank = new Map(entries.map((e, i) => [e.pluginId, i]));
 
-    const btn = (label, title, onclick, danger, disabled) => h('button', {
-      class: 'p-btn' + (danger ? ' danger' : ''),
-      title,
-      disabled: disabled ? 'disabled' : null,
-      onclick: disabled ? null : () => { onclick(); rerender(); },
+    /* 已加入的按入口顺序排前面，未加入的保持原序（sort 稳定）。
+       于是矩阵本身就体现了右上角按钮的当前顺序。 */
+    const cards = list.slice().sort((a, b) => {
+      const ia = rank.has(a.id) ? rank.get(a.id) : Number.MAX_SAFE_INTEGER;
+      const ib = rank.has(b.id) ? rank.get(b.id) : Number.MAX_SAFE_INTEGER;
+      return ia - ib;
+    });
+
+    const cardBtn = (b) => h('button', {
+      class: 'p-btn',
+      title: b.title,
+      disabled: b.disabled ? 'disabled' : null,
+      onclick: (b.disabled || !b.act) ? null : () => { b.act(); rerender(); },
       style: {
-        height: '30px', minWidth: '30px', padding: '0 8px', fontSize: '12px',
-        cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? '0.45' : '1',
+        flex: '1', minWidth: '0', height: '28px', padding: '0 6px', fontSize: '11px',
+        cursor: b.disabled ? 'not-allowed' : 'pointer',
+        opacity: b.disabled ? '0.45' : '1',
       },
-    }, label);
+    }, b.label);
 
-    const rows = entries.map((e, i) => h('div.p-row', {
-      style: {
-        display: 'flex', alignItems: 'center', gap: '10px',
-        padding: '12px 14px', marginTop: '10px', borderRadius: 'var(--r, 12px)',
-        background: 'var(--surface-sunk)',
-        boxShadow: 'inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light)',
-      },
-    },
-      h('span', { style: { fontSize: '15px', width: '24px', textAlign: 'center' } }, e.label),
-      h('div', { style: { flex: 1, minWidth: 0 } },
-        h('div', { style: { fontSize: '13px' } },
-          e.name + (hidden.has(e.id) ? ' · 已隐藏' : '')),
-        h('div.p-mono.p-muted', { style: { fontSize: '11px' } },
-          e.source === 'toolbar' ? '工具栏插件' : '应用插件入口（点了切过去）')),
-      btn(hidden.has(e.id) ? '显示' : '隐藏',
-        hidden.has(e.id) ? '重新显示到右上角' : '从右上角隐藏',
-        () => toggleHidden(e.id)),
-      btn('↑', '上移', () => moveEntry(e.id, -1), false, i === 0),
-      btn('↓', '下移', () => moveEntry(e.id, 1), false, i === entries.length - 1),
-      e.source === 'entry' && !e.builtin
-        ? btn('移除', '从右上角移除这个入口', () => removeExtra(e.pluginId), true)
-        : null));
+    const cardNodes = cards.map((p) => {
+      const isTb = p.kind === 'toolbar';
+      const isSvc = p.kind === 'service';
+      const joined = wantsEntry(p, extra);
+      const e = byId.get(p.id);
+      const hid = e ? hidden.has(e.id) : false;
+      const pos = rank.get(p.id);
 
-    /* 添加入口 */
-    let sel = null;
-    const addRow = candidates.length ? h('div', {
-      style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px' },
-    },
-      sel = h('select.p-input', {
-        style: { flex: 1, height: '30px', fontSize: '12px', padding: '0 8px' },
+      /* 未加入时**禁用而不是不画**：按钮凭空消失，
+         用户只会以为漏了，不会想到"要先加入"。 */
+      const show = (!joined || !e)
+        ? { label: '展示', title: '先加入右上角，才能控制是否显示', disabled: true }
+        : hid
+          ? { label: '展示', title: '重新显示到右上角', act: () => toggleHidden(e.id) }
+          : {
+            label: '隐藏', title: '从右上角隐藏（保留位置与顺序，可再显示）',
+            act: () => toggleHidden(e.id),
+          };
+
+      /* 两种禁用都要写明原因；不给 title 就是"点了没反应且不知道为什么"。 */
+      const join = isSvc
+        ? { label: '加入', title: '服务插件在后台运行，不进界面', disabled: true }
+        : !joined
+          ? {
+            label: '加入', title: '在右上角加一个按钮，点了切到这个插件',
+            act: () => {
+              addExtra(p.id);
+              ctx.toast(`已把「${p.name || p.id}」加到右上角`, 'ok');
+            },
+          }
+          : isTb
+            ? { label: '取消加入', title: '工具栏插件内置在右上角，不可移除', disabled: true }
+            : {
+              label: '取消加入', title: '从右上角移除这个按钮（不会卸载插件）',
+              act: () => {
+                removeExtra(p.id);
+                ctx.toast(`已把「${p.name || p.id}」移出右上角`, 'ok');
+              },
+            };
+
+      return h('div', {
+        class: 'tb-card' + (joined ? ' joined' : '') + (hid ? ' is-hidden' : ''),
       },
-        h('option', { value: '' }, '把应用插件添加到右上角…'),
-        ...candidates.map((p) => h('option', { value: p.id }, `${p.icon || '◌'} ${p.name}`))),
-      h('button.p-btn', {
-        style: { height: '30px', padding: '0 10px', fontSize: '12px' },
-        onclick: () => {
-          const id = sel && sel.value;
-          if (!id) return;
-          addExtra(id);
-          const p = list.find((x) => x.id === id);
-          ctx.toast(`已把「${p?.name || id}」添加到右上角`, 'ok');
-          rerender();
-        },
-      }, '添加')) : null;
+        h('div.tb-card-top', {},
+          h('span.tb-card-icon', {}, p.icon || '◌'),
+          h('span.tb-card-name', { title: p.name || p.id }, p.name || p.id)),
+        h('div.tb-card-meta', {},
+          (isSvc ? '服务插件' : isTb ? '工具栏插件' : '应用插件')
+          + (joined ? ` · 第 ${(pos ?? 0) + 1} 位` : '')
+          + (hid ? ' · 已隐藏' : '')),
+        h('div.tb-card-btns', {}, cardBtn(show), cardBtn(join)));
+    });
 
     return [
-      sub(`右上角按钮 · ${entries.length}`, '显示在标题栏右侧，可隐藏与排序'),
+      sub(`右上角按钮 · ${entries.length}`, '显示在标题栏右侧；从下方卡片加入或移除'),
+      h('div.tb-shop', {}, ...cardNodes),
       entries.length ? null : h('div.p-muted', {
         style: { marginTop: '8px', fontSize: '11px' },
-      }, '还没有任何入口。可在下方把应用插件加进来。'),
-      ...rows,
-      addRow,
-      extra.size ? h('div.p-muted', {
-        style: { marginTop: '8px', fontSize: '11px' },
-      }, '手动添加的入口点了会切到对应插件；移除只是去掉右上角按钮，不会卸载插件。') : null,
+      }, '右上角还没有任何按钮。在上面任意一张卡片点「加入」即可。'),
+      h('div.p-muted', { style: { marginTop: '8px', fontSize: '11px' } },
+        '加入的入口点了会切到对应插件；取消加入只是去掉右上角按钮，不会卸载插件。'
+        + '「隐藏」是暂时不显示，再点「展示」会回到原来的位置。'),
     ].filter(Boolean);
   };
 
