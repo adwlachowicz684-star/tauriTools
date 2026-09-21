@@ -119,13 +119,16 @@ export function StackedGroups({
               const from = dragFrom;
               setDragFrom(-1);
               setOverIdx(-1);
-              e.preventDefault();
               e.stopPropagation();
               /* 载荷同样来自"任意来源"，必须校验。
                  这里真正用的是组件内的 dragFrom（它是权威），
                  但校验能让"伪造载荷"与"状态意外残留"两种情况都落空而不是误动。 */
               const box = parseBoxDrag(raw);
+              /* 同上（回弹）：校验不过就不 preventDefault，
+                 让浏览器把拖影飞回原位 —— 否则这次无效放置
+                 看起来和成功一模一样。 */
               if (!box || box.index !== from) return;
+              e.preventDefault();
               if (from !== i) onMoveTab(from, i);
             }}
           >

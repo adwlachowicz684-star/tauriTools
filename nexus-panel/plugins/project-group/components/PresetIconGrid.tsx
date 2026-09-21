@@ -288,12 +288,15 @@ export function PresetIconGrid({
             }}
             onDragLeave={() => { if (groupGap !== null) setGroupGap(null); }}
             onDrop={(e) => {
-              e.preventDefault();
               const src = groupDrag;
               const k = groupGap ?? i;
               setGroupGap(null);
               setGroupDrag(null);
+              /* 回弹（同 CardGrid）：拖到自己身上 / 状态为空 = 这次没生效，
+                 此时**不要** preventDefault —— 否则浏览器不做回弹动画，
+                 拖影直接消失，看起来和成功放置一模一样。 */
               if (!src || src === g.name) return;
+              e.preventDefault();
               moveGroup(src, k);
             }}
             onDragEnd={() => { setGroupDrag(null); setGroupGap(null); }}
@@ -351,11 +354,12 @@ export function PresetIconGrid({
               onDragOver={(e) => { if (iconDrag) { e.preventDefault(); setIconOver(i); } }}
               onDragLeave={() => { if (iconOver === i) setIconOver(null); }}
               onDrop={(e) => {
-                e.preventDefault();
                 const src = iconDrag;
                 setIconOver(null);
                 setIconDrag(null);
+                /* 同上：拖到自己 = 没生效，不 preventDefault 才有回弹 */
                 if (!src || src === n) return;
+                e.preventDefault();
                 moveIcon(src, i);
               }}
               onDragEnd={() => { setIconDrag(null); setIconOver(null); }}

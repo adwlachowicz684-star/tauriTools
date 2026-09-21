@@ -225,24 +225,34 @@ export function TabBar({
             // 先看是不是页签重排
             if (onMoveTab) {
               const rawTab = e.dataTransfer.getData(TAB_DRAG_MIME);
+              const t = parseTabDrag(rawTab);
+              /* 同上：解析不出来就不 preventDefault，让浏览器回弹。
+                 拖到自己身上（t.index === i）也不算放置成功，一并放过。 */
               if (rawTab) {
+                setTabOver(-1);
+                if (!t || t.kind !== kind || t.index === i) return;
                 e.preventDefault();
                 e.stopPropagation();
-                setTabOver(-1);
-                const t = parseTabDrag(rawTab);
-                // 只接受同栏的页签，且拖到自己身上无意义
-                if (t && t.kind === kind && t.index !== i) onMoveTab(t.index, i);
+                onMoveTab(t.index, i);
                 return;
               }
             }
             if (!onDropCard) return;
             const raw = e.dataTransfer.getData(DRAG_MIME);
+            const drag = parseDragPayload(raw);
             setDropTarget(-1);
-            if (!raw) return;
+            /*
+             * 回弹（A57）：**载荷无效时不要 preventDefault**。
+             *
+             * 浏览器只在 drop "被接受"时才不做回弹动画。先 preventDefault
+             * 再校验的话，无效放置看起来和成功一模一样 —— 拖影直接消失、
+             * 界面毫无变化，用户以为放下去了，其实什么也没发生。
+             *
+             * 所以把解析提到前面，确认有效后才 preventDefault。
+             */
+            if (!drag) return;
             e.preventDefault();
             e.stopPropagation();
-            const drag = parseDragPayload(raw);
-            if (!drag) return;
             // 只接同栏卡片：跨栏拖拽的语义是「分配」，交给卡片区处理
             if (drag.kind !== kind) return;
             onDropCard(drag.path, i);
@@ -452,14 +462,19 @@ export function CardGrid({
         if (!e.currentTarget.contains(e.relatedTarget as Node)) clearDropWithScroll();
       }}
       onDrop={(e) => {
-        e.preventDefault();
         const raw = e.dataTransfer.getData(DRAG_MIME);
+        const drag = parseDragPayload(raw);
         // 先取数再清状态：清早了就拿不到 data 了
         const k = dropAt;
         clearDropWithScroll();
-        if (!raw) return;
-        const drag = parseDragPayload(raw);
+        /*
+         * 回弹（A57）：拖到**空白处**是最需要这个反馈的场景 ——
+         * 用户拖到列表外/卡片之间的空地，什么都没发生。
+         * 无条件 preventDefault 会让拖影直接消失，
+         * 看着就像"放下去了"，而他下次还会往那儿拖。
+         */
         if (!drag) return;
+        e.preventDefault();
         if (drag.kind === kind) onMove(drag.path, resolveIndex(drag.path, k ?? cards.length));
         else onCrossDrop(drag, null);
       }}
@@ -549,16 +564,28 @@ export function CardGrid({
             setDropAt(cross ? null : posOf(e, i));
           }}
           onDrop={(e) => {
-            e.preventDefault();
             e.stopPropagation();
             const raw = e.dataTransfer.getData(DRAG_MIME);
+            const drag = parseDragPayload(raw);
             const k = dropAt;
             const cross = overCross;
             clearDropWithScroll();
             setOver(-1);
-            if (!raw) return;
-            const drag = parseDragPayload(raw);
+            /*
+             * 回弹（对照 tab-drag 的 A57）：**数据无效时不要 preventDefault**。
+             *
+             * 浏览器只在 drop "被接受"时才不做回弹动画。无条件
+             * preventDefault 会让无效放置看起来像成功 —— 拖影直接消失、
+             * 没有任何反馈，用户以为放下去了，其实什么也没发生。
+             *
+             * 不 preventDefault 时浏览器会把拖影动画飞回原位，
+             * 那正是"这次没生效"该有的反馈。
+             *
+             * 注意 dragover 的 preventDefault 必须保留（否则 drop 根本不触发），
+             * 这里动的只是 drop 这一下。
+             */
             if (!drag) return;
+            e.preventDefault();
             if (cross || drag.kind !== kind) onCrossDrop(drag, c);
             else onMove(drag.path, resolveIndex(drag.path, k ?? i));
           }}

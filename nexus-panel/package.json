@@ -105,7 +105,8 @@
     "test:pg-remove-card": "node plugins/project-group/remove-card-test.mjs",
     "test:pg-settings-datadir": "node plugins/project-group/settings-datadir-test.mjs",
     "test:pg-link-row-edit": "node plugins/project-group/link-row-edit-test.mjs",
-    "test:pg-backup-interval": "node plugins/project-group/backup-interval-test.mjs"
+    "test:pg-backup-interval": "node plugins/project-group/backup-interval-test.mjs",
+    "test:pg-drop-springback": "node plugins/project-group/drop-springback-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
