@@ -10,13 +10,13 @@ import Inspector from './components/Inspector';
 // 副作用导入：把 nodes/defs/ 下的节点定义注册进表。
 // 放在这里是刻意的 —— 注册表必须先被填充，下面的 buildNodeTypes() 才有内容。
 import { buildNodeTypes, getDef, allPresets, type NodeDef } from './nodes';
-import { getCardGroup } from './nodes/registry';
+import { getVariableGroup } from './nodes/registry';
 import {
-  applyCardTo, findCard, checkCardForNode, duplicateCard,
-} from './engine/paramCards';
+  applyVarTo, findVar, checkVarForNode, duplicateVar,
+} from './engine/variables';
 import {
-  CARD_DRAG_MIME, decodeCardDrag,
-} from './components/inspectors/ParamCardPicker';
+  VAR_DRAG_MIME, decodeVarDrag,
+} from './components/inspectors/VariablePicker';
 import {
   duplicateElements, stripRuntime, type DupNode, type DupEdge,
 } from './engine/duplicate';
@@ -1297,31 +1297,31 @@ function reportSkipped(
 
   /** 拖放到画布：需要把屏幕坐标换算成画布坐标 */
   /**
-   * 把卡片套到画布上的某个节点。
+   * 把变量套到画布上的某个节点。
    *
-   * 与面板里的点选走的是同一套校验（checkCardForNode），
-   * 且校验依据都是 def.meta.cardGroups —— 一处声明、两处共用，
+   * 与面板里的点选走的是同一套校验（checkVarForNode），
+   * 且校验依据都是 def.meta.varGroups —— 一处声明、两处共用，
    * 不会出现"面板能选、拖放却被拒"的不一致。
    */
-  const applyCardToNode = useCallback(
+  const applyVarToNode = useCallback(
     (nodeId: string, cardId: string) => {
       const target = nodes.find((n) => n.id === nodeId);
-      const card = findCard(cardId);
+      const card = findVar(cardId);
       if (!target || !card) return;
 
       const def = getDef(target.type);
-      const check = checkCardForNode(card, def.meta.cardGroups);
+      const check = checkVarForNode(card, def.meta.varGroups);
       if (!check.ok) {
-        // 明确拒绝并说明原因。静默忽略会让用户以为卡片坏了。
+        // 明确拒绝并说明原因。静默忽略会让用户以为变量坏了。
         pushLog(`✗ ${check.reason}（${def.meta.label}）`);
-        void alert({ title: '这张卡片套不上', message: check.reason });
+        void alert({ title: '这个变量用不上', message: check.reason });
         return;
       }
 
-      const groupDef = getCardGroup(card.group);
+      const groupDef = getVariableGroup(card.group);
       if (!groupDef) return;
-      patchNode(nodeId, applyCardTo(target.data as Record<string, unknown>, card, groupDef.keys));
-      pushLog(`✓ ${def.meta.label}「${target.id}」已套用卡片「${card.name}」`);
+      patchNode(nodeId, applyVarTo(target.data as Record<string, unknown>, card));
+      pushLog(`✓ ${def.meta.label}「${target.id}」已引用变量「${card.name}」`);
     },
     [nodes, patchNode, pushLog],
   );
@@ -1330,14 +1330,14 @@ function reportSkipped(
     (e: DragEvent) => {
       e.preventDefault();
 
-      /* ---- 先判是不是参数卡片 ---- */
-      const cardPayload = decodeCardDrag(e.dataTransfer.getData(CARD_DRAG_MIME))
-        ?? decodeCardDrag(e.dataTransfer.getData('text/plain'));
+      /* ---- 先判是不是变量 ---- */
+      const cardPayload = decodeVarDrag(e.dataTransfer.getData(VAR_DRAG_MIME))
+        ?? decodeVarDrag(e.dataTransfer.getData('text/plain'));
       if (cardPayload) {
-        // Ctrl / ⌘ 拖动 = 复制一张新卡片（与节点复制同一套手感）
+        // Ctrl / ⌘ 拖动 = 复制一个新变量（与节点复制同一套手感）
         if (e.ctrlKey || e.metaKey) {
-          const copy = duplicateCard(cardPayload.cardId);
-          if (copy) pushLog(`✓ 已复制卡片「${copy.name}」`);
+          const copy = duplicateVar(cardPayload.cardId);
+          if (copy) pushLog(`✓ 已复制变量「${copy.name}」`);
           return;
         }
         /*
@@ -1352,10 +1352,10 @@ function reportSkipped(
           el = el.parentElement;
         }
         if (!nodeId) {
-          pushLog('✗ 请把卡片拖到具体的节点上');
+          pushLog('✗ 请把变量拖到具体的节点上');
           return;
         }
-        applyCardToNode(nodeId, cardPayload.cardId);
+        applyVarToNode(nodeId, cardPayload.cardId);
         return;
       }
 

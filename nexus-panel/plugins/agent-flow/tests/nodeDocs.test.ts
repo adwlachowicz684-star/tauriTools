@@ -224,15 +224,15 @@ test('卡片页说清了"管哪些字段"与"能用在哪些节点"', () => {
 });
 
 /**
- * 卡片组是注册进来的（nodes/cardGroups.ts），文档按注册项生成 ——
+ * 卡片组是注册进来的（nodes/varGroups.ts），文档按注册项生成 ——
  * 新增一组却没重新生成文档时，这里会红。
  */
-test('卡片页数量与 cardGroups.ts 的注册项一致', () => {
-  const src = fs.readFileSync(path.join(SRC, 'nodes', 'cardGroups.ts'), 'utf-8');
+test('变量页数量与 variableGroups.ts 的注册项一致', () => {
+  const src = fs.readFileSync(path.join(SRC, 'nodes', 'variableGroups.ts'), 'utf-8');
   const registered = [...src.matchAll(/group:\s*'([^']+)'/g)].map((m) => m[1]);
   const files = fs.readdirSync(cardsDir).map((f) => f.replace(/\.md$/, ''));
   assert.equal(files.length, registered.length,
-    `卡片页 ${files.length} 个，注册项 ${registered.length} 个 —— 改了 cardGroups.ts 要重新生成`);
+    `卡片页 ${files.length} 个，注册项 ${registered.length} 个 —— 改了 variableGroups.ts 要重新生成`);
   for (const g of new Set(registered)) {
     assert.ok(files.includes(g), `注册了 ${g} 但没有文档页`);
   }

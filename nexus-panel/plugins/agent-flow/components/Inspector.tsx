@@ -3,6 +3,7 @@ import type { Credential } from '../engine/credentials';
 import { getDef } from '../nodes/registry';
 import { inspectorOf } from './inspectors/inspectorOf';
 import { NodeBasics } from './inspectors/NodeBasics';
+import { resolveVars, redirectVarPatch, patchVariableValues } from '../engine/variables';
 import { ErrorBoundary } from './ErrorBoundary';
 /*
  * 「设为默认」不再有整体按钮 —— 每个参数各自带一个小按钮。
@@ -109,11 +110,35 @@ export default function Inspector({
   const def = getDef(node.type);
   const Panel = inspectorOf(def);
 
+  /*
+   * 变量解析：引用期间节点上**不存**那组字段的值。
+   *
+   * 不解析的话输入框是空的 —— 用户会以为"引用了变量，值却丢了"。
+   * 解析在这里做一次，下面所有面板拿到的都是完整数据。
+   */
+  const shown = { ...node, data: resolveVars(node.data) } as FlowNode;
+
+  /*
+   * 改字段时，把命中变量组的部分转投到变量本身。
+   *
+   * 语义：改一处，所有引用这个变量的节点一起变。
+   * 想让某个节点独立，点选择器上的「脱离」。
+   *
+   * 转投放在这里（分发器）而不是各节点的面板里：
+   * 字段型面板与整体自定义面板都走同一个 onChange，
+   * 放在这里一处覆盖全部节点类型；放进面板就得改十几个文件。
+   */
+  const onChangeWithVars: typeof onChange = (id, patch) => {
+    const { nodePatch, varUpdates } = redirectVarPatch(node.data, patch);
+    for (const u of varUpdates) patchVariableValues(u.id, u.patch);
+    if (Object.keys(nodePatch).length > 0) onChange(id, nodePatch);
+  };
+
   return (
     <>
       <NodeBasics
-        node={node}
-        onChange={onChange}
+        node={shown}
+        onChange={onChangeWithVars}
         onNote={onNote}
         onEditModule={onEditModule}
       />
@@ -127,9 +152,10 @@ export default function Inspector({
       <Panel
         onEditModule={onEditModule}
         onNote={onNote}
-      node={node}
+        canvasId={activeCanvasId}
+      node={shown}
       edges={edges}
-      onChange={onChange}
+      onChange={onChangeWithVars}
       credentials={credentials}
       onOpenCredentials={onOpenCredentials}
         webhookTokens={webhookTokens}

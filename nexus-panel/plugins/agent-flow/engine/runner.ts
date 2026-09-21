@@ -9,6 +9,7 @@ import {
 } from '../types';
 import { resolveSecret, type Credential } from './credentials';
 import { topoLayers } from './topo';
+import { resolveVars } from './variables';
 import { getRunner } from './runnerRegistry';
 import type { RunContext } from './runContext';
 import { renderTemplate } from './template';
@@ -58,7 +59,20 @@ export type {
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSummary> {
-  const { layers, cyclic } = topoLayers(graph);
+  /*
+   * 先把变量解析进节点数据，再执行。
+   *
+   * 引用变量时节点上不存那组字段的值，直接用会拿到 undefined：
+   * GitHub 节点读到空仓库名、HTTP 节点读到空地址 ——
+   * 而用户明明选了变量，只会以为"变量功能坏了"。
+   *
+   * 在这里解析一次，下面所有执行器拿到的都是完整数据。
+   */
+  const g: Graph = {
+    ...graph,
+    nodes: graph.nodes.map((n) => ({ ...n, data: resolveVars(n.data) }) as GraphNode),
+  };
+  const { layers, cyclic } = topoLayers(g);
   const emit = opts.onEvent;
 
   if (cyclic.length > 0) {
@@ -70,7 +84,7 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
   }
 
   const runStartedAt = Date.now();
-  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  const byId = new Map(g.nodes.map((n) => [n.id, n]));
   const outputs: Record<string, string> = {};
   /*
    * 工作流变量表。跨节点共享，{{var.名字}} 可读。
@@ -106,7 +120,7 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
   const computeStoppedDownstream = (): Set<string> => {
     const out = new Set<string>();
     const adj = new Map<string, string[]>();
-    for (const e of graph.edges) {
+    for (const e of g.edges) {
       const cur = adj.get(e.source);
       if (cur) cur.push(e.target);
       else adj.set(e.source, [e.target]);
@@ -175,7 +189,7 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
   const concOf = new Map<string, number>();
   const inheritConcurrency = (id: string): number => {
     if (concOf.has(id)) return concOf.get(id)!;
-    const inEdges = graph.edges.filter((e) => e.target === id);
+    const inEdges = g.edges.filter((e) => e.target === id);
     let value = opts.concurrency;
     if (inEdges.length > 0) {
       const inherited = inEdges.map((e) => concOf.get(e.source) ?? opts.concurrency);
@@ -238,7 +252,7 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
           continue;
         }
 
-        const inEdges = graph.edges.filter((e) => e.target === id);
+        const inEdges = g.edges.filter((e) => e.target === id);
 
         if (inEdges.length === 0) {
           runnable.push(id);
@@ -418,7 +432,7 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
 
   /* ---------- 主流程：跳过循环体成员，它们由各自的循环执行 ---------- */
   const mainIds = orderByLayers(
-    graph.nodes.map((n) => n.id).filter((id) => !bodyNodeSet.has(id)),
+    g.nodes.map((n) => n.id).filter((id) => !bodyNodeSet.has(id)),
   );
   await runScope(mainIds, globalScope);
 

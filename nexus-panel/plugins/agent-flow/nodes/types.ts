@@ -109,6 +109,11 @@ export type NodeInspectorProps = {
   /** 后端为「未填 Token」的 webhook 触发器自动生成的校验 Token，按触发器 id 索引 */
   webhookTokens?: Record<string, string>;
   /**
+   * 当前画布 id。变量默认画布级，选择器要按它过滤。
+   * 不传则只显示全局变量 —— 拿不到上下文时宁可少给。
+   */
+  canvasId?: string;
+  /**
    * 写一条运行日志。逐字段「设为默认」用它告诉用户存了 / 为什么没存。
    * 可选：不传时按钮仍能用，只是不写日志（靠按钮自身的"已设"态反馈）。
    */
@@ -168,7 +173,7 @@ export type NodeMeta = {
    * 的卡片能拖到这类节点上 —— 面板渲染与拖放校验共用这一份声明，
    * 不会出现"面板上有选择器却不接受拖放"或反之的不一致。
    */
-  cardGroups?: string[];
+  varGroups?: string[];
 };
 
 export type NodeDef = {
