@@ -501,8 +501,14 @@ export class EditorBridge {
     return this._safe('聚焦中心主题', (m) => m.focusRoot());
   }
 
+  /** 展开：以**当前选中节点**为基准 */
   expandToLevel(levels) {
     return this._safe('展开', (m) => m.expandSelectedToLevel(levels));
+  }
+
+  /** 层级：以**中心主题**为基准（与选中谁无关） */
+  expandRootToLevel(levels) {
+    return this._safe('展开层级', (m) => m.expandRootToLevel(levels));
   }
 
   setTheme(theme) {

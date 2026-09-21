@@ -358,7 +358,11 @@ function sectionTip(title, tip, ...children) {
  * 这里统一用一个无背景、弱化色的图标按钮。
  */
 function quietBtn(title, onclick) {
-  return h('button.mm-btn.quiet.icon', { onclick, title }, '✕');
+  // 用 ⟲ 而不是 ✕ / ×：
+  // ✕ 在界面上的通行含义是「关闭 / 取消」，而这里是「把样式恢复默认」。
+  // 用户看到 ✕ 会以为点了就把这一节收起来，不敢点。
+  // ⟲ 表达的是「还原」，与清除样式的实际行为一致。
+  return h('button.mm-btn.quiet.icon', { onclick, title }, '⟲');
 }
 
 /**
@@ -1237,8 +1241,11 @@ export function buildSide(app, opts = {}) {
           (v) => run('forecolor', v),
           () => { app.bridge?.clearNodeStyle('text'); app.api.commit(); refresh(); },
           [
+            // 与前面的色块**留一段空隙**：颜色（取色）与 B/I/S（字形开关）
+            // 是两套东西，紧贴着会看成一组控件。空隙放在这一组的第一个上，
+            // 而不是给每个 chip 都加 —— 那是"间距"不是"分隔"。
             h('button.mm-chip' + (st.bold ? '.on' : ''), {
-              style: { fontWeight: '700' },
+              style: { fontWeight: '700', marginLeft: '14px' },
               onclick: () => run('bold'),
               title: '加粗',
             }, 'B'),
@@ -1621,8 +1628,11 @@ export function buildSide(app, opts = {}) {
  * @param onClose 关闭时的清理钩子：点遮罩、点关闭按钮、外部调 close() 都会触发，
  *   用于释放 Blob URL 之类的一次性资源。
  */
-function dialog(title, children, onClose) {
+function dialog(title, children, onClose, opt) {
   const mask = h('div.mm-mask', {});
+  // wide：媒体查看（图片预览 / 视频播放）用。普通 dialog 固定 560px 宽，
+  // 会把大图压到要左右拖动才看得全。
+  const dlgCls = 'div.mm-dialog' + (opt && opt.wide ? '.wide' : '');
   let cleaned = false;
   const close = () => {
     if (cleaned) return;
@@ -1631,7 +1641,7 @@ function dialog(title, children, onClose) {
     try { onClose?.(); } catch { /* 清理失败不该拦住关闭 */ }
   };
   mask.appendChild(
-    h('div.mm-dialog', {},
+    h(dlgCls, {},
       h('h3', {}, title),
       ...children,
       h('div.mm-actions', {}, h('button.mm-btn', { onclick: close }, '关闭')),
@@ -1955,7 +1965,9 @@ export function openVideo(app, asset, opt = {}) {
   v.addEventListener?.('loadedmetadata', tryPlay, { once: true });
   setTimeout(tryPlay, 0);
 
-  return dialog(`播放：${asset.name || '视频'}`, [v, hint, actions], release);
+  // wide：竖屏视频按 560px 铺开会很高，宽版能让它更舒展；
+  // 更关键的是 video 已限高，按钮不会被挤出可视区。
+  return dialog(`播放：${asset.name || '视频'}`, [v, hint, actions], release, { wide: true });
 }
 
 /** 图片附件预览浮层（点节点图标时，图片比直接下载更直观） */
@@ -2018,6 +2030,7 @@ export function openPreview(app, asset, opts) {
   // dialog 返回的 mask 里第一个 h3 就是标题，换张时同步改掉
   let titleNode = null;
 
+  // wide：早先套在 560px 的 dialog 里，稍大一点的图就被压到要左右拖动
   const dlg = dialog(`预览：${items[idx].name || '图片'}`, [
     h('div', {}, img, nav, h('div.mm-actions', {}, save)),
   ], () => {
@@ -2026,7 +2039,7 @@ export function openPreview(app, asset, opts) {
     for (const it of items) {
       try { if (it.url && /^blob:/.test(String(it.url))) URL.revokeObjectURL(it.url); } catch { /* ignore */ }
     }
-  });
+  }, { wide: true });
 
   titleNode = dlg.mask.querySelector('h3');
   if (many) {

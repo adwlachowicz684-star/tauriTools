@@ -487,18 +487,31 @@ bootIframePlugin(async (ctx) => {
     // 而且每次用都要先切到样式页再往下翻。左侧图标条常驻可见，一步就到。
     //
     // 按钮宽 34px，所以文字压成「1级 / 2级 / 全」—— 写全「展开一级」会溢出。
-    rail.appendChild(h('div.mm-rail-sep', {}));
-    rail.appendChild(h('span.mm-rail-label', {}, '层级'));
-    for (const [lv, label, tip] of [
-      [1, '1级', '从选中节点展开 1 级（更深层收起）'],
-      [2, '2级', '从选中节点展开 2 级（更深层收起）'],
-      [0, '全', '展开所有层级'],
-    ]) {
-      rail.appendChild(B(label, () => {
-        bridge?.expandToLevel(lv);
-        commit();
-      }, { title: tip }));
-    }
+    // 两组各三个按钮，语义差在**基准节点**：
+    //   「层级」→ 始终从中心主题算（看整幅图的全局视角，跟选中谁无关）
+    //   「展开」→ 从当前选中节点算（围绕这一个节点往外放）
+    //
+    // 必须两个都留：只用「展开」的话，想看全局还得先去点中心主题，
+    // 而没选中任何节点时它又完全没反应；只用「层级」则没法单独摊开某个分支。
+    const levelGroup = (label, tipOf, call) => {
+      rail.appendChild(h('div.mm-rail-sep', {}));
+      rail.appendChild(h('span.mm-rail-label', {}, label));
+      for (const [lv, text, tip] of tipOf) {
+        rail.appendChild(B(text, () => { call(lv); commit(); }, { title: tip }));
+      }
+    };
+
+    levelGroup('层级', [
+      [1, '1级', '从中心主题展开 1 级（更深层收起）—— 与当前选中哪个节点无关'],
+      [2, '2级', '从中心主题展开 2 级（更深层收起）—— 与当前选中哪个节点无关'],
+      [0, '全', '展开所有层级（以中心主题为基准）'],
+    ], (lv) => bridge?.expandRootToLevel(lv));
+
+    levelGroup('展开', [
+      [1, '1级', '从当前选中节点展开 1 级（更深层收起）'],
+      [2, '2级', '从当前选中节点展开 2 级（更深层收起）'],
+      [0, '全', '展开选中节点下的所有层级'],
+    ], (lv) => bridge?.expandToLevel(lv));
   }
 
   /* ------------------------- 页签 ------------------------- */

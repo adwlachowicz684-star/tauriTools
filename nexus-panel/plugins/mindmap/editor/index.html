@@ -557,7 +557,13 @@
                     // 16×20 的**纯黑矩形**，把折角和描边全盖住（"黑图标"）。
                     // 只有鼠标移上去再移开（mouseout 会设成 none）才恢复正常，
                     // 所以表现为「一开始是黑的，划一下就好了」。
-                    this.rect = new kity.Rect(16, 20, 0, -10, 3).fill('none');
+                    // rect 是**悬停高亮框**，几何必须罩住下面 outline 的实际范围。
+                    // outline 的路径是 x∈[-8,3] / y∈[-10,10]（11×20，原点不在中心），
+                    // 而这里原先写的是 (16,20, 0,-10) —— 从原点向右延伸 16px，
+                    // 与图标本体**完全错位**，还盖到右边的文件名上：
+                    // 表现为「悬停出现一个透明小框，位置不对、把文字压住」。
+                    // 取 [-10,5] × [-10,10]：罩住图标并留 2px 余量，像按钮的热区。
+                    this.rect = new kity.Rect(15, 20, -10, -10, 3).fill('none');
                     // 轮廓与折角**拆成两条 path**：合成一条时 fill 会把折角那条
                     // 开放线段也当闭合区域填掉，看不出是「文件」。
                     // 轮廓带一层淡填充 —— 纯描边在深色画布上太细，认不出形状。
@@ -823,7 +829,9 @@
                                 fn.setTranslate(cx - 34, fy + 4);
                             } catch (e3) {}
                             push(fn);
-                            top += 17;
+                            // 行距必须 ≥ 图标高度（20）：写 17 时相邻两行的图标
+                            // 上下各占 20，重叠 3px —— 用户看到的就是「两个图标叠在一起」。
+                            top += 24;
                         }
                     } catch (e2) {}
                 });
@@ -2738,6 +2746,31 @@
             // 更深层一律收起（对齐「展开到指定层并收起更深」语义）。无选中节点返回 false。
             // 采用内置展开/收起机制（与内置展开器/快捷键一致）：renderTree 触发 beforerender
             // （节点与连线可见性随父节点展开态联动）+ layout 动画 + contentchange，而非 refresh。
+            // 层级版：无论如何都**从中心主题**算起。
+            //
+            // 与 expandSelectedToLevel 的区别只在于基准节点：那个取当前选中
+            // 节点，这个固定取根。两套按钮并存时语义必须干净 ——
+            // 「层级」是看整幅图的全局视角（跟选中谁无关），
+            // 「展开」才是围绕当前节点往外放。
+            //
+            // 顺带解决一个老问题：原先「层级」用的也是选中节点，
+            // 没选中任何节点时按钮就**完全没反应**，用户以为坏了。
+            expandRootToLevel: function (levels) {
+                try {
+                    var n = km.getRoot();
+                    if (!n) return false;
+                    var base = n.getLevel();
+                    n.traverse(function (node) {
+                        var depth = node.getLevel() - base;
+                        if (levels <= 0 || depth < levels) node.expand();
+                        else if (!node.isLeaf()) node.collapse();
+                    });
+                    n.renderTree();
+                    km.layout(100);
+                    km.fire('contentchange');
+                    return true;
+                } catch (e) { return false; }
+            },
             expandSelectedToLevel: function (levels) {
                 try {
                     var n = km.getSelectedNode();

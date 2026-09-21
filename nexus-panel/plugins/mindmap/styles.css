@@ -655,7 +655,7 @@ html, body {
 }
 .mm-item .name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: var(--surface-sunk); }
+/* video.mm-video 的规则已上移，与图片预览放在一起（同属「媒体查看」） */
 
 /* 搜索结果提示 */
 .mm-search-info { color: var(--text-mute); font-size: var(--fs-12, 12px); min-width: 74px; }
@@ -686,14 +686,35 @@ video.mm-video { width: 100%; border-radius: var(--r-sm, 9px); background: var(-
 .mm-dialog .mm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 
-/* 图片附件预览浮层 */
+/* 图片附件预览浮层。
+   早先是 70vw / 720px + 60vh，横向又套在 560px 的 .mm-dialog 里 ——
+   实际可用宽度只有 ~528px，稍大一点的图就被压到要左右拖动才能看全。
+   改成 92vw / 1100px + 74vh，并让预览用的 dialog 放宽（见 .mm-dialog.wide）。 */
 .mm-preview {
-  max-width: min(70vw, 720px);
-  max-height: 60vh;
+  max-width: min(92vw, 1100px);
+  max-height: 74vh;
   display: block;
   margin: 0 auto;
   border-radius: var(--r-xs, 6px);
   background: var(--bg);
+}
+
+/* 预览/播放用的宽版 dialog：普通 dialog 固定 560px，会把大图压小 */
+.mm-dialog.wide {
+  width: min(1160px, 94vw);
+  max-height: 92vh;
+}
+
+/* 视频必须限高：竖屏视频（9:16）按 width:100% 铺开能到近千像素高，
+   把下方「截图 / 设为缩略图 / 关闭」全挤出 86vh 的可视区 ——
+   表现为「按钮不见了」，其实是要往下滚才看得到。
+   限高 + contain 后，画面完整、按钮始终可见。 */
+video.mm-video {
+  width: 100%;
+  max-height: 54vh;
+  object-fit: contain;
+  border-radius: var(--r-sm, 9px);
+  background: var(--surface-sunk);
 }
 
 /* 快捷键说明里的按键样式：仿键盘按键，等宽字体 */
