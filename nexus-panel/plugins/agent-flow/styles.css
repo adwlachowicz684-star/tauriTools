@@ -67,6 +67,32 @@
   --af-sunk:   var(--af-native-sunk);
   --af-item:   var(--af-native-item);
 
+  /* ---- 输入控件边框：与结构分隔线**分开** ----
+   *
+   * 此前输入框 / 下拉框的边框与卡片描边共用 --af-line，而它是
+   *   var(--border, var(--af-native-line))
+   * 一个变量承担了两种语义，两端都出问题：
+   *
+   *   原生模式   --af-line = 硬编码 #262b36（深蓝），不跟随基调。
+   *              底色一旦是浅的，对比度实测 **12.2 ~ 14.2** ——
+   *              内容边框只需 1.2~1.5 就看得见，超出约 10 倍，
+   *              观感就是"边框特别粗特别黑"。
+   *   跟随模式   14 套新拟态主题把 --border 设成 transparent，
+   *              于是 --af-line = transparent，输入框**完全没有边框**
+   *              （transparent 是合法值，var() 的兜底不会生效）。
+   *
+   * 两端其实是同一个根因：输入控件要的是"稳定、温和、始终可见"，
+   * 而 --border 是**风格开关**（新拟态靠阴影塑形，故设透明）。
+   * 语义不同就不该共用一个变量。
+   *
+   * 取值**直接复用共享层的 --divider**（深色 .10 白 / 浅色 .12 黑，
+   * 由 theme-manager 按基调派生）而不是另定一套数值 ——
+   * mindmap / project-group / settings 的输入框走的就是它，
+   * 复用才能保证"同一个输入框在各插件里长一个样"。
+   * 原生模式拿不到 --divider 时用 .14 兜底，与派生值同量级。
+   */
+  --af-input-line: var(--divider, rgba(255, 255, 255, .14));
+
   /* ---- 参数卡片（触发器 / 规则 / 参数 / 凭证等面板内的分组卡片）----
    *
    * 卡片底**不能直接用** --surface-raised / --surface-sunk 这类主题层级变量。
@@ -221,6 +247,11 @@
      默认值是"微白"，白虚线画在接近白的底上等于没有。 */
   --af-add-line: rgba(0, 0, 0, .16);
 
+  /* 浅色下同样交给 --divider（它会派生成压暗方向）；
+     拿不到时兜底 .14 黑 —— 若沿用 --af-line 的 #262b36，
+     对比度会飙到 **12~14**（内容边框只需 1.2~1.5），那才是"又粗又黑"。 */
+  --af-input-line: var(--divider, rgba(0, 0, 0, .14));
+
   --af-t-err:    #b91c1c;
   --af-t-err2:   #c0392b;
   --af-t-code:   #0b5fa5;
@@ -265,10 +296,10 @@ body { background: var(--af-bg); color: var(--af-fg); }
 .toolbar button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 .toolbar button.primary { background: var(--af-accent); border-color: var(--af-accent); color: #fff; }
 .toolbar .inline { display: flex; align-items: center; gap: 6px; font-size: var(--fs-title, 13px); color: var(--af-dim); }
-.toolbar select { background: var(--af-raised); color: var(--af-fg); border: 1px solid var(--af-line); border-radius: var(--af-r-sm); padding: 5px; }
+.toolbar select { background: var(--af-raised); color: var(--af-fg); border: 1px solid var(--af-input-line); border-radius: var(--af-r-sm); padding: 5px; }
 .toolbar .grow { flex: 1; }
 .toolbar input[type=text], .toolbar input:not([type]) {
-  background: var(--af-raised); border: 1px solid var(--af-line); color: var(--af-fg);
+  background: var(--af-raised); border: 1px solid var(--af-input-line); color: var(--af-fg);
   border-radius: var(--af-r-sm); padding: 6px 10px; font-size: var(--fs-body, 12px);
 }
 
@@ -613,7 +644,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
 }
 .field-def-btn:disabled:hover { color: var(--af-dim); border-color: var(--af-line); }
 .inspector input[type=text], .inspector input:not([type]), .inspector select, .inspector textarea {
-  background: var(--af-sunk); border: 1px solid var(--af-line); color: var(--af-fg);
+  background: var(--af-sunk); border: 1px solid var(--af-input-line); color: var(--af-fg);
   border-radius: var(--af-r-sm); padding: 7px 9px; font-size: var(--fs-body, 12px); font-family: inherit;
 }
 .inspector textarea { resize: vertical; line-height: 1.5; }
@@ -634,8 +665,8 @@ body { background: var(--af-bg); color: var(--af-fg); }
  * padding / font-size（CSS 同权重看先后，写在这里它们才盖得住）。
  */
 .p-input {
-  background: var(--af-sunk); border: 1px solid var(--af-line); color: var(--af-fg);
-  border-radius: var(--af-r-sm); padding: 6px 9px; font-size: var(--fs-micro, 10px); font-family: inherit;
+  background: var(--af-sunk); border: 1px solid var(--af-input-line); color: var(--af-fg);
+  border-radius: var(--af-r-sm); padding: 6px 9px; font-size: var(--fs-body, 12px); font-family: inherit;
   /* flex 子项默认 min-width:auto，input 的固有宽度会把 340px 的窄面板撑破 */
   flex: 1; min-width: 0;
 }
@@ -667,7 +698,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 .insp-title { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .insp-title .title-input {
   flex: 1; min-width: 0; font-weight: 600; font-size: var(--fs-title, 13px);
-  background: var(--af-sunk); border: 1px solid var(--af-line); color: var(--af-fg);
+  background: var(--af-sunk); border: 1px solid var(--af-input-line); color: var(--af-fg);
   border-radius: var(--af-r-sm); padding: 6px 9px; font-family: inherit;
 }
 .insp-title .title-input:focus { outline: none; border-color: var(--af-accent); }
@@ -768,7 +799,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 }
 .trg-edit .field { margin-bottom: 10px; }
 .trg-edit input[type=text], .trg-edit input:not([type]) {
-  background: var(--af-sunk); border: 1px solid var(--af-line); color: var(--af-fg);
+  background: var(--af-sunk); border: 1px solid var(--af-input-line); color: var(--af-fg);
   border-radius: var(--af-r-sm); padding: 6px 9px; font-size: var(--fs-body, 12px); width: 100%;
 }
 .trg-edit input.invalid { border-color: var(--af-bad); }
@@ -841,7 +872,7 @@ button.mini.danger:hover { border-color: var(--af-bad); color: var(--af-t-err2);
 }
 .rule-label { flex: 1; }
 .inspector .rule-card input, .inspector .rule-card select {
-  background: var(--af-sunk); border: 1px solid var(--af-line); color: var(--af-fg);
+  background: var(--af-sunk); border: 1px solid var(--af-input-line); color: var(--af-fg);
   border-radius: 5px; padding: 5px 7px; font-size: var(--fs-body, 12px);
 }
 .inspector .rule-value { flex: 1; }
@@ -1411,7 +1442,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 .cond-op-select {
   flex: 1; min-width: 0;
   font-size: var(--fs-body, 12px); padding: 2px 6px; border-radius: 5px;
-  border: 1px solid var(--af-line); background: var(--af-panel); color: var(--af-fg);
+  border: 1px solid var(--af-input-line); background: var(--af-panel); color: var(--af-fg);
 }
 .cond-op-select optgroup { color: var(--af-dim); font-style: normal; }
 .cond-op-select option { color: var(--af-fg); background: var(--af-panel); }
@@ -1420,7 +1451,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 .cond-src-select {
   flex: none; max-width: 45%;
   font-size: var(--fs-body, 12px); padding: 2px 5px; border-radius: 5px;
-  border: 1px solid var(--af-line); background: var(--af-panel); color: var(--af-dim);
+  border: 1px solid var(--af-input-line); background: var(--af-panel); color: var(--af-dim);
 }
 
 /* 「虚线添加」入口的统一实现（MCP「+ 添加」/ 节点「+ 添加参数」/ 各列表新增）。
@@ -1510,7 +1541,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 .param-row { display: flex; align-items: center; gap: 5px; margin-top: 5px; }
 .param-row select {
   flex: none; font-size: var(--fs-body, 12px); padding: 2px 6px; border-radius: 5px;
-  border: 1px solid var(--af-line); background: var(--af-panel); color: var(--af-fg);
+  border: 1px solid var(--af-input-line); background: var(--af-panel); color: var(--af-fg);
 }
 .rule-value.mono { font-family: var(--af-mono); font-size: var(--fs-note, 11px); }
 .param-index { width: 56px; flex: none; font-size: var(--fs-note, 11px); padding: 2px 5px; border-radius: 5px;
@@ -2522,7 +2553,7 @@ input.mono, textarea.mono {
 
 .canvas-config input[type=text] {
   width: 100%; box-sizing: border-box;
-  background: var(--af-sunk, #171b24); border: 1px solid var(--af-line, #2a2f3a);
+  background: var(--af-sunk, #171b24); border: 1px solid var(--af-input-line);
   border-radius: 5px; padding: 5px 7px; font-size: var(--fs-body, 12px); color: var(--af-fg, #e6e9f0);
 }
 .canvas-config .cfg-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-code, 11px); }
@@ -2713,7 +2744,7 @@ input.mono, textarea.mono {
   font-size: var(--fs-body, 12px);
   background: rgba(0, 0, 0, .3);
   color: inherit;
-  border: 1px solid var(--af-line, #2a2f3a);
+  border: 1px solid var(--af-input-line);
   border-radius: 4px;
   padding: 1px 4px;
 }
