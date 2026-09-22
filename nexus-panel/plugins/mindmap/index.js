@@ -17,7 +17,8 @@ import { bootIframePlugin, h } from '../../js/plugin-sdk.js';
 import '../../css/dialog.css';
 import { confirm as askConfirm, alert as askAlert, prompt as askText } from '../../js/dialog.js';
 import { EditorBridge } from './editor-bridge.js';
-import { DEFAULT_THEME, DEFAULT_LAYOUT, isBuiltinTheme, deriveCanvasTheme } from './themes.js';
+import { DEFAULT_THEME, DEFAULT_LAYOUT, isBuiltinTheme, deriveCanvasTheme,
+  mergePresetThemes } from './themes.js';
 import * as wb from './workbook.js';
 import * as diag from './diagnostics.js';
 import * as store from './store.js';
@@ -67,6 +68,20 @@ bootIframePlugin(async (ctx) => {
   let workbook = (await store.doc(currentFileId).load()) || wb.newWorkbook();
   workbook.sheets = wb.normalizeSheets(workbook.sheets);
   let customThemes = (await store.themes.load()) || [];
+  /*
+   * 并入预置主题。
+   *
+   * 必须**在注册之前**并：registerCustomThemes() 遍历的是 customThemes，
+   * 面板列表读的也是它 —— 少了这一句，预置主题既看不见也注册不进去
+   * （applyTheme 里 customThemes.find 拿不到，core 里就没有这个主题）。
+   *
+   * removedPresets 记的是"用户删过的预置 id"。没有它的话，
+   * 删掉的预置主题下次启动又被并回来 —— 删除按钮等于坏的。
+   */
+  customThemes = mergePresetThemes(
+    customThemes,
+    Array.isArray(settings?.removedPresets) ? settings.removedPresets : [],
+  );
 
   let bridge = null;
   let side = null;
@@ -2089,6 +2104,25 @@ bootIframePlugin(async (ctx) => {
     printMap: guard('打印', (opts) => printMap(opts)),
     exchange: guard('导出交换格式', (kind) => exportExchange(kind)),
     saveThemes: guard('保存主题', saveThemes),
+    /**
+     * 记下"用户删掉了某个预置主题"。
+     *
+     * 只写 settings.removedPresets，不动 customThemes —— 数组已经由面板
+     * 过滤掉了，这里再动会和面板的赋值打架（面板用 `app.customThemes = ...`
+     * 整体替换，两边都改会以最后写入的为准）。
+     *
+     * 非预置 id 直接忽略：用户自建主题删了就是删了，没有"下次再并回来"的
+     * 问题，记下来只会让这份名单无限增长。
+     */
+    markPresetRemoved: guard('移除预置主题', async (id) => {
+      if (!String(id || '').startsWith('mm-preset-')) return true;
+      const list = Array.isArray(settings.removedPresets) ? settings.removedPresets : [];
+      if (!list.includes(id)) list.push(id);
+      settings.removedPresets = list;
+      const ok = await store.settings.save(settings);
+      if (!ok) status('移除记录未写入，该主题下次启动会重新出现', true);
+      return !!ok;
+    }),
     applyTheme: guard('应用主题', applyTheme),
     applyLayout: guard('应用布局', applyLayout),
     toast: (m, t) => ctx.toast(m, t),
