@@ -93,16 +93,26 @@ console.log('\n=== 3. 实扫：不得有新增死类名 ===');
    *
    * 一旦列表里某项被真正修好了，应从此表移除（测试会因此更严）。
    */
+  /*
+   * 白名单 —— 分两类，理由必须写清，否则就成了"懒得修就加进列表"。
+   *
+   * 一类：**样式不在 CSS 文件里**（由 JS 运行时注入）。扫描只解析 .css，
+   *   所以查不到定义；但样式是真实存在的，不是损伤。
+   * 二类：**状态钩子**。只用于标记模式、供外部样式表或后续功能挂钩，
+   *   本身不需要本项目内的 CSS。给他们硬编样式等于凭空发明行为。
+   */
   const KNOWN_DEAD = [
-    // 外壳：靠内联或父级兜底
-    'nexus-view-settings', 'nexus-isolated', 'tb-toolbar-btn',
-    // mindmap
-    'mm-print-root', 'mm-diag', 'is-playing',
-    // project-group
-    'fpx-root', 'fpx-node-icon', 'fpx-settings-icons', 'fpx-lock-watch',
-    'pin', 'preset', 'mine', 'hover',
-    // agent-flow
-    'running',
+    // ── 一类：样式由 JS 注入，不在 .css 文件里 ──
+    // io.js 打印时动态插入 '@media print' 样式表，含 .mm-print-root
+    // （.mm-print-svg 只在 mindmap-test.mjs 里出现，已被 excludeSrc 排除，
+    //   故不登记在此 —— 登记了反而会被"都还在"那条判为陈旧）
+    'mm-print-root',
+
+    // ── 二类：状态钩子，不配样式是对的 ──
+    // 外壳挂在 body 上的模式标记，供外部样式表/扩展使用
+    'nexus-view-settings', 'nexus-isolated',
+    // 工具栏按钮的标记类（'tb-btn tb-toolbar-btn'），样式由 .tb-btn 承担
+    'tb-toolbar-btn',
   ];
 
   const r = scanDeadClasses({ root: HERE, cssFiles: CSS_FILES, excludeSrc: EXCLUDE_SRC });
@@ -112,9 +122,15 @@ console.log('\n=== 3. 实扫：不得有新增死类名 ===');
   t('没有白名单之外的新增死类名', fresh.length === 0,
     fresh.map((d) => `${d.cls} ← ${d.file}`).join(' | ') || `已知 ${r.dead.length} 个，无新增`);
 
-  t('白名单里的确实都还在（没被悄悄修好而忘了更新）',
-    r.dead.length >= KNOWN_DEAD.length - 2,
-    `实际 ${r.dead.length} / 登记 ${KNOWN_DEAD.length}`);
+  /*
+   * 反向校验：白名单必须**真的都还在**。
+   *
+   * 若某项被修好了却忘了从表内移除，这条会红 —— 逼着收紧白名单。
+   * 没有这条的话白名单只增不减，慢慢就变成"什么都往里塞"。
+   */
+  const stale = KNOWN_DEAD.filter((c) => !r.dead.some((d) => d.cls === c));
+  t('白名单里的都确实还在（没有悄悄修好却忘了移除）',
+    stale.length === 0, stale.join(', ') || `${KNOWN_DEAD.length} 个全部命中`);
 }
 
 console.log('\n=== 4. 已修复的 9 处损伤不得回退 ===');
