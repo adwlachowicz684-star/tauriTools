@@ -3787,8 +3787,20 @@ group('B4/B5 档位动态补项 + B6 颜色名');
   eq(JSON.stringify(pn.withPresetValue(null, 13)), JSON.stringify([13]), 'B4 presets 非法 → 不崩，value 仍补入');
 
   const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
-  ok(/withPresetValue\(SIZES, st\.fontSize\)/.test(src),
-    'B5 字号下拉用动态档位（否则 13 号字时无任何项选中，显示成空白/第一项）');
+  // 字号改走 numSpinner 后不再有"下拉框没有任何项被选中"的问题 ——
+  // 输入框直接显示当前值（13 就是 13）。动态档位的作用由
+  // min/max 微调范围 + list 预设共同承担：值不在预设里也能正常显示与微调。
+  ok(/numSpinner\(\{[\s\S]{0,200}?value: st\.fontSize/.test(src),
+    'B5 字号用 numSpinner（不在预设档位的值也能正常显示）');
+  // 微调范围必须**宽于**预设档位：卡在档位两端的话，微调到最大预设就上不去了
+  ok(/const MIN_FS = \d+/.test(src) && /const MAX_FS = \d+/.test(src), '字号有 MIN_FS / MAX_FS');
+  {
+    const min = Number(src.match(/const MIN_FS = (\d+)/)[1]);
+    const max = Number(src.match(/const MAX_FS = (\d+)/)[1]);
+    const sizes = JSON.parse(src.match(/const SIZES = (\[[^\]]+\])/)[1]);
+    ok(min < Math.min(...sizes), `MIN_FS(${min}) 比最小预设小 —— 否则微调不下去`);
+    ok(max > Math.max(...sizes), `MAX_FS(${max}) 比最大预设大 —— 否则微调不上去`);
+  }
 }
 
 {
@@ -6446,16 +6458,21 @@ group('主题页：导入/导出与新建同排 + 内置主题禁用导出');
     ok(!!sec, '有「配色主题」节');
     const btns = [...(sec?.querySelectorAll('button.mm-btn') || [])];
     const texts = btns.map((b) => b.textContent);
-    ok(texts.some((t) => /新建/.test(t)), '有「＋ 新建」');
-    ok(texts.some((t) => /导入/.test(t)), '有「导入…」');
-    ok(texts.some((t) => /导出/.test(t)), '有「导出」');
-    // 三者必须**同一行**：拆开后「导入/导出」看着像另一个独立功能
-    const rows = [...(sec?.querySelectorAll('.mm-row') || [])];
-    const one = rows.find((r) => {
+    ok(texts.some((t) => /新建/.test(t)), '有「＋ 新建主题」');
+    // 命名必须**成对**：「导入主题」对「导出主题」。
+    // 早前一个「导入…」一个「导出」，看着像两个不相干的功能
+    ok(texts.some((t) => t === '导入主题'), '按钮叫「导入主题」（不是被截断的「导入…」）');
+    ok(texts.some((t) => t === '导出主题'), '按钮叫「导出主题」（与「导入主题」成对）');
+    // 省略号是**被截断**出来的，不是有意省略 —— 不允许再出现
+    ok(!texts.some((t) => /…/.test(t)), '没有按钮文字被截断成省略号');
+    // 三个按钮**各占一行**：挤在一排时每个都被压窄，「导入主题」会显示成「导入…」
+    const col = sec?.querySelector('.mm-col');
+    ok(!!col, '三个按钮装在竖排容器里');
+    eq(col ? col.querySelectorAll('button.mm-btn').length : 0, 3, '竖排容器里正好三个按钮');
+    ok(![...(sec?.querySelectorAll('.mm-row') || [])].some((r) => {
       const ts = [...r.querySelectorAll('button.mm-btn')].map((b) => b.textContent);
-      return ts.some((t) => /新建/.test(t)) && ts.some((t) => /导入/.test(t)) && ts.some((t) => /导出/.test(t));
-    });
-    ok(!!one, '新建 / 导入 / 导出 在同一行');
+      return ts.includes('导入主题') || ts.includes('导出主题');
+    }), '导入/导出不再挤在横排里（那会被压成省略号）');
   }
 
   // ---- 2) 内置主题时「导出」禁用 ----
@@ -6465,8 +6482,8 @@ group('主题页：导入/导出与新建同排 + 内置主题禁用导出');
     const sec = [...el.el.querySelectorAll('.mm-field')]
       .find((f) => f.querySelector('h3')?.textContent === '配色主题');
     const exp = [...(sec?.querySelectorAll('button.mm-btn') || [])]
-      .find((b) => b.textContent === '导出');
-    ok(!!exp, '找到「导出」按钮');
+      .find((b) => b.textContent === '导出主题');
+    ok(!!exp, '找到「导出主题」按钮');
     eq(exp?.disabled, true, '内置主题时导出按钮禁用');
     ok(/内置主题/.test(exp?.getAttribute('title') || ''),
       '禁用时 title 说明原因（不让用户点了才知道）');
@@ -6488,7 +6505,7 @@ group('主题页：导入/导出与新建同排 + 内置主题禁用导出');
     const sec2 = [...el.el.querySelectorAll('.mm-field')]
       .find((f) => f.querySelector('h3')?.textContent === '配色主题');
     const exp2 = [...(sec2?.querySelectorAll('button.mm-btn') || [])]
-      .find((b) => b.textContent === '导出');
+      .find((b) => b.textContent === '导出主题');
     // 注：applyTheme 是 api 里的空实现，sheet.theme 不会真的变，
     // 这里只验证「禁用态是根据当前主题算出来的」这一逻辑存在
     ok(!!exp2, '自定义主题场景下也能找到导出按钮');
@@ -6977,6 +6994,132 @@ group('文件图标：悬停高亮框与行距');
   const rowStep = html.match(/top \+= (\d+);\s*\n\s*\}\s*\n\s*\}\s*\n\s*\} catch/);
   const step = Number((html.match(/top \+= (\d+);/g) || []).slice(-1)[0]?.match(/\d+/)?.[0]);
   ok(step >= 20, `文件行距 ≥ 20（实际 ${step}）—— 17 会让相邻图标重叠 3px`);
+}
+
+group('数值输入框 numSpinner（▲▼ 步进 / ▾ 选预设 / 滚轮 ±1）');
+
+{
+  const pn = await import('./panels.js');
+  // 构造一个可测的 spinner：只关心交互语义，不依赖具体主题页
+  const changes = [];
+  const sp = pn.numSpinner({
+    value: 5, min: 0, max: 24, list: [0, 3, 5, 8, 12, 16, 24],
+    onChange: (v) => changes.push(v),
+  });
+  const inp = sp.querySelector('input.mm-num');
+
+  eq(inp.value, '5', '初始显示当前值');
+
+  /* ---- 1) ▲ / ▼ 是 ±1，不是在预设列表里挪 ---- */
+  const arrows = [...sp.querySelectorAll('.mm-num-spin .mm-num-arrow')];
+  eq(arrows.length, 2, '上下两个箭头');
+  arrows[0].dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  eq(changes.at(-1), 6, '▲ = +1（不是跳到下一个预设 8）');
+  arrows[1].dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  arrows[1].dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  eq(changes.at(-1), 4, '▼ = -1（连续点会持续 -1）');
+  eq(inp.value, '4', '输入框跟着变');
+
+  /* ---- 2) 滚轮 ±1，且一次手势只走一格 ---- */
+  changes.length = 0;
+  const wheel = (dy) => sp.dispatchEvent(new dom.window.WheelEvent('wheel', { deltaY: dy, bubbles: true, cancelable: true }));
+  wheel(-1);
+  eq(changes.length, 1, '向上滚 = +1');
+  eq(changes.at(-1), 5, '滚动后值 +1');
+  // 惯性滚动会连发几十个事件：必须只吃第一格，否则数值瞬间冲到上限
+  for (let i = 0; i < 30; i++) wheel(-1);
+  eq(changes.length, 1, '同一次手势只走一格（后续 30 个事件被忽略）');
+
+  /* ---- 3) 滚轮只看方向，不看 delta 大小 ---- */
+  await new Promise((r) => setTimeout(r, 140));   // 等解锁
+  changes.length = 0;
+  wheel(-600);
+  eq(changes.at(-1), 6, 'delta 很大也只 +1（按量换算会一次跳很多格）');
+
+  /* ---- 4) 边界钳制 ---- */
+  await new Promise((r) => setTimeout(r, 140));
+  changes.length = 0;
+  const sp2 = pn.numSpinner({ value: 1, min: 0, max: 3, list: [], onChange: (v) => changes.push(v) });
+  const inp2 = sp2.querySelector('input.mm-num');
+  const a2 = [...sp2.querySelectorAll('.mm-num-spin .mm-num-arrow')];
+  for (let i = 0; i < 10; i++) a2[1].dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  eq(changes.at(-1), 0, '减到下限就停住（不会变负数）');
+  eq(inp2.value, '0', '输入框显示钳住后的值');
+
+  /* ---- 5) ▾ 弹出预设列表，选中即套用 ---- */
+  const sp3 = pn.numSpinner({ value: 5, min: 0, max: 40, list: [0, 3, 5, 8], onChange: (v) => changes.push(v) });
+  const caret = sp3.querySelector('.mm-num-caret');
+  ok(!!caret, '有 ▾ 预设按钮');
+  changes.length = 0;
+  caret.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  const menu = document.querySelectorAll('.mm-menu-item');
+  eq(menu.length, 4, '菜单里是全部预设值');
+  [...menu].find((m) => m.textContent === '8')
+    .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  eq(changes.at(-1), 8, '选中预设值即套用');
+  // 关掉菜单，免得影响后续用例
+  document.querySelectorAll('.mm-menu-mask').forEach((m) => m.remove());
+
+  /* ---- 6) 非法输入还原，不把垃圾值当真 ---- */
+  const sp4 = pn.numSpinner({ value: 10, min: 0, max: 40, list: [], onChange: (v) => changes.push(v) });
+  const inp4 = sp4.querySelector('input.mm-num');
+  changes.length = 0;
+  inp4.value = 'abc';
+  inp4.dispatchEvent(new dom.window.Event('change'));
+  eq(changes.length, 0, '非法输入不回调（不会把 NaN 写进节点）');
+  eq(inp4.value, '10', '非法输入还原成当前值');
+
+  /* ---- 7) 值没变就不回调 ---- */
+  changes.length = 0;
+  inp4.value = '10';
+  inp4.dispatchEvent(new dom.window.Event('change'));
+  eq(changes.length, 0, '值没变就不回调（免得白记一次撤销）');
+
+  /* ---- 8) 三个数值控件都用它 ---- */
+  const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  for (const [who, pat] of [
+    ['字号', /numSpinner\(\{[\s\S]{0,160}?value: st\.fontSize/],
+    ['节点线宽', /numSpinner\(\{[\s\S]{0,160}?value: st\.strokeWidth/],
+    ['圆角', /numSpinner\(\{[\s\S]{0,160}?value: st\.radius/],
+    ['连线线宽', /numSpinner\(\{[\s\S]{0,160}?value: st\.lineWidth/],
+  ]) {
+    ok(pat.test(src), `${who} 用 numSpinner`);
+  }
+  // 圆角上限必须**大于**最大预设：卡在预设上的话微调到那儿就上不去了
+  {
+    // 从「value: st.radius」往前找到它所属的 numSpinner({ 起点 ——
+    // 直接全局 match 会命中**前一个**控件（线宽），那样测的就不是圆角了
+    const ri = src.indexOf('value: st.radius');
+    const rs = src.lastIndexOf('numSpinner({', ri);
+    const seg = src.slice(rs, src.indexOf('})', ri) + 2);
+    ok(/value: st\.radius/.test(seg), '定位到圆角那一段');
+    ok(/max:\s*(\d+)/.test(seg), '圆角有 max');
+    const max = Number(seg.match(/max:\s*(\d+)/)[1]);
+    const radii = JSON.parse(src.match(/const RADII = (\[[^\]]+\])/)[1]);
+    ok(max > Math.max(...radii), `圆角 max(${max}) > 最大预设(${Math.max(...radii)})`);
+  }
+}
+
+group('主题：新建 / 编辑后列表立刻刷新（不用切页签）');
+
+{
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+
+  // 主题保存后必须重刷侧栏：列表是 pageTheme() 里按 app.customThemes 现算的，
+  // 不刷的话新主题不会出现在列表里，得切走页签再切回来才看得到 ——
+  // 用户会以为没保存成功，其实已经落盘了。
+  ok(/app\.api\.refreshSide\?\.\(\);/.test(pn), '主题保存后调用 refreshSide');
+  // 调用点必须在 applyTheme 之后、dlg.close() 之前：
+  // 提前刷会刷到还没写进 customThemes 的旧列表
+  {
+    const at = pn.indexOf('app.api.refreshSide?.()');
+    ok(pn.indexOf('app.api.applyTheme(editing.id)') < at, '刷新在 applyTheme 之后');
+    ok(at < pn.indexOf('dlg.close()', at), '刷新在关闭对话框之前');
+  }
+  // 宿主必须真的暴露这个方法，否则面板里那句是空调用
+  ok(/refreshSide:/.test(ix), 'index.js 暴露 refreshSide');
+  ok(/side\?\.refresh\?\.\(\)/.test(ix), 'refreshSide 落到侧栏实例的 refresh');
 }
 
 group('附件画进节点框内（节点撑高，不再被相邻节点遮挡）');
