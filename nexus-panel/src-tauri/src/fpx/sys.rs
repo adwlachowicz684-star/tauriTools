@@ -453,6 +453,68 @@ fn run_cmd(program: &str, args: &[String]) -> Result<std::process::Output, Strin
 
 const INI_NAME: &str = "desktop.ini";
 
+/*
+ * 通知 Shell 某文件夹图标已变更（对齐原版 FolderIconService.NotifyShellIconChanged）。
+ *
+ * **为什么要它**：写完 desktop.ini 后，资源管理器仍用**旧的图标缓存**渲染 ——
+ * 用户看到的是"设了图标、资源管理器却没变"，只能自己按 F5。
+ * 此前本版的返回消息里就写着"可能需要按 F5 刷新"，那其实是把该做的事推给了用户。
+ *
+ * 三步缺一不可（原版注释逐条写明）：
+ *   1. UPDATEDIR   —— 丢弃外壳对该目录的解析缓存并重读 desktop.ini
+ *                     （"文件夹→图标位置"缓存失效的关键）
+ *   2. UPDATEITEM  —— 精准刷新文件夹自身的显示项
+ *   3. ASSOCCHANGED—— 全局关联兜底，清理图像级缓存
+ *
+ * 失败一律静默：刷新失败只是"图标延迟更新"，绝不能因此让设置图标这个操作失败 ——
+ * desktop.ini 已经写好了，报一个跟结果相反的错更糟。
+ */
+#[cfg(windows)]
+mod shell_notify {
+    #[link(name = "shell32")]
+    extern "system" {
+        pub fn SHChangeNotify(w_event_id: i32, u_flags: u32, dw_item1: *const u16, dw_item2: *const u16);
+    }
+}
+
+#[cfg(windows)]
+const SHCNE_UPDATEDIR: i32 = 0x0000_1000;
+#[cfg(windows)]
+const SHCNE_UPDATEITEM: i32 = 0x0000_2000;
+#[cfg(windows)]
+const SHCNE_ASSOCCHANGED: i32 = 0x0800_0000;
+#[cfg(windows)]
+const SHCNF_PATHW: u32 = 0x0005;
+#[cfg(windows)]
+const SHCNF_IDLIST: u32 = 0x0000;
+#[cfg(windows)]
+const SHCNF_FLUSH: u32 = 0x1000;
+
+/// 刷新某文件夹在资源管理器里的图标显示。非 Windows 为空操作。
+pub fn notify_shell_icon_changed(dir: &str) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let wide: Vec<u16> = std::ffi::OsStr::new(dir)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        unsafe {
+            shell_notify::SHChangeNotify(
+                SHCNE_UPDATEDIR, SHCNF_PATHW | SHCNF_FLUSH, wide.as_ptr(), std::ptr::null());
+            shell_notify::SHChangeNotify(
+                SHCNE_UPDATEITEM, SHCNF_PATHW | SHCNF_FLUSH, wide.as_ptr(), std::ptr::null());
+            /* 第三步不带路径（IDLIST），两个指针都传 null */
+            shell_notify::SHChangeNotify(
+                SHCNE_ASSOCCHANGED, SHCNF_IDLIST | SHCNF_FLUSH, std::ptr::null(), std::ptr::null());
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
+    }
+}
+
 /// 写入 / 清除文件夹图标。icon_ref 形如 "<ico 路径>" 或 "<dll 路径>|<索引>"；空 = 清除。
 pub fn apply_icon(dir: &str, icon_ref: &str) -> Result<String, String> {
     #[cfg(not(windows))]
@@ -489,6 +551,8 @@ pub fn apply_icon(dir: &str, icon_ref: &str) -> Result<String, String> {
             // 文件夹只清系统属性；**绝不动 +h**——加 +h 会让文件夹本身
             // 在资源管理器里被隐藏，用户会以为数据丢了
             let _ = run_cmd("attrib", &["-s".to_string(), p.to_string_lossy().to_string()]);
+            /* 清除也要通知：否则图标**仍显示旧的**，用户以为没删掉 */
+            notify_shell_icon_changed(dir);
             return Ok("已恢复默认图标".into());
         }
 
@@ -505,7 +569,12 @@ pub fn apply_icon(dir: &str, icon_ref: &str) -> Result<String, String> {
         // 文件夹加 +s（让资源管理器读取 ini）；ini 本身加 +h +s（隐藏它）
         let _ = run_cmd("attrib", &["+s".to_string(), p.to_string_lossy().to_string()]);
         let _ = run_cmd("attrib", &["+h".to_string(), "+s".to_string(), ini_arg()]);
-        Ok("已写入资源管理器图标（资源管理器可能需要按 F5 刷新）".into())
+        /*
+         * 写完后必须通知 Shell，否则资源管理器仍拿旧缓存渲染 ——
+         * 此前这句消息里写着"可能需要按 F5 刷新"，那是把该做的事推给了用户。
+         */
+        notify_shell_icon_changed(dir);
+        Ok("已写入资源管理器图标".into())
     }
 }
 
@@ -525,7 +594,19 @@ pub fn icon_resource_in(text: &str) -> Option<String> {
             continue;
         }
         if !in_sec { continue; }
-        if let Some(v) = t.strip_prefix("IconResource=").or_else(|| t.strip_prefix("iconresource=")) {
+        /*
+         * 两种键名都要认（对齐原版 GetCustomIconReference）：
+         *   · `IconResource=` —— Vista+ 常用；
+         *   · `IconFile=`     —— **旧格式**，XP 时代或别的工具写出来的 ini 里仍是这个。
+         *
+         * 只认前者的话，那些文件夹会被报成"没有自定义图标"，
+         * 而资源管理器里**明明显示着图标** —— 又是显示与实际不一致，且看不出原因。
+         */
+        let v = t.strip_prefix("IconResource=")
+            .or_else(|| t.strip_prefix("iconresource="))
+            .or_else(|| t.strip_prefix("IconFile="))
+            .or_else(|| t.strip_prefix("iconfile="));
+        if let Some(v) = v {
             /* 形如 `"C:\a b.ico",0` 或 `a.ico,0`：去掉索引与可选引号。
                路径本身可能含逗号，所以从**最后一个逗号**切 */
             let v = v.trim();
@@ -535,6 +616,8 @@ pub fn icon_resource_in(text: &str) -> Option<String> {
             };
             let file = file.trim_matches('"');
             if file.is_empty() { return None; }
+            /* 无索引（如 `IconResource=C:\x\i.ico`）按 0 处理，而不是整条放弃 */
+            let idx = if idx.is_empty() { "0" } else { idx };
             return Some(format!("{file}|{idx}"));
         }
     }
