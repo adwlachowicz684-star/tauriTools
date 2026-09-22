@@ -47,7 +47,27 @@ export function collectDefinedClasses(css) {
   const selBlocks = clean.replace(/\{[^}]*\}/g, '\u0000').split('\u0000');
   for (const raw of selBlocks) {
     // 去掉 @media/@supports 等 at-rule 前缀与 keyframes 百分比
-    const seg = raw.replace(/@[a-z-]+[^{]*/gi, ' ').replace(/^\s*\d+%\s*/gm, ' ');
+    /*
+     * 去掉 @ 规则的前言，但**绝不能吞掉后面的选择器**。
+     *
+     * 原写法 `@[a-z-]+[^{]*` 会一路吃到下一个 `{` 为止：
+     *   @import url('...');
+     *   @import url('...');  /* 注释 *\/
+     *   .fpx-root { ... }
+     * —— @import 是**语句型**（以 ; 结尾、没有自己的 {），
+     * 于是 `[^{]*` 一直吃到 `.fpx-root` 的 `{`，把 `.fpx-root` 也吞了。
+     * 实测：project-group/style.css 第 8 行定义了 .fpx-root，
+     * 却被判成死类名，正是这个原因。
+     *
+     * 分两类处理：
+     *   语句型（@import/@charset/@namespace）→ 吃到 `;` 为止
+     *   块级型（@media/@supports…）→ 前言吃到它**自己的** `{` 为止，
+     *     且把 `{` 一起保留（`\{` 写在匹配里），这样不会越过边界。
+     */
+    const seg = raw
+      .replace(/@(?:import|charset|namespace)[^;]*;/gi, ' ')
+      .replace(/@[a-z-]+[^{]*\{/gi, '{')
+      .replace(/^\s*\d+%\s*/gm, ' ');
     for (const m of seg.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)) out.add(m[1]);
   }
   return out;
@@ -90,8 +110,37 @@ export function collectUsedClasses(src) {
     const body = m[1];
     for (const part of body.split(/\$\{[^}]*\}/)) addTokens(part);
     for (const inner of body.matchAll(/\$\{([^}]*)\}/g)) {
-      // 只取引号里的字面量，不取表达式里的标识符（那些不是类名）
-      for (const s of inner[1].matchAll(/['"`]([^'"`]*)['"`]/g)) addTokens(s[1]);
+      /*
+       * 只取**三元分支里的**字面量，不取条件里的。
+       *
+       * `className={`fpx-grouptab${tab === 'mine' ? ' active' : ''}`}`
+       *   → 'mine' 是**比较值**，不是类名；' active' 才是。
+       * 不区分会把 preset / mine / hover / running 这类状态枚举值
+       * 全报成死类名（实测 15 个里有 4 个是这么误报的）。
+       *
+       * 判据：找第一个**不在引号内**的 `?`，它之前是条件（跳过），
+       * 之后是分支（取值）。找不到 `?` 说明整个 ${} 是表达式而非类名，
+       * 例如 `st-${n.status}`，一律跳过。
+       */
+      const expr = inner[1];
+      /*
+       * 改看每个字面量**后面**紧跟的字符，而不是切分 ?/:：
+       *   `'success' ?`  → 后面是 ? → 条件值，跳过
+       *   `'ok' :`       → 后面是 : → 分支值，取
+       *   `'run' :`      → 取
+       *   `'running' ?`  → 跳过
+       *
+       * 用"切分第一个 ?"的老办法处理不了**嵌套三元** ——
+       * `a ? 'ok' : b === 'running' ? 'run' : ''` 从第一个 ? 切开后，
+       * 右半边仍含 'running'，会误报（实测踩到）。
+       */
+      for (const s of expr.matchAll(/['"`]([^'"`]*)['"`]/g)) {
+        let k = (s.index ?? 0) + s[0].length;
+        while (k < expr.length && /\s/.test(expr[k])) k++;
+        // 后面紧跟 ? → 是三元的条件值，不是类名
+        if (expr[k] === '?') continue;
+        addTokens(s[1]);
+      }
     }
   }
   // 3: h('div.mm-foo') / h('.mm-foo')
