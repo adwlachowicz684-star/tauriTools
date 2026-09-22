@@ -119,6 +119,20 @@ pub fn validate_name(raw: &str) -> Result<String, String> {
     if name == "." || name == ".." || name.trim_matches('.').is_empty() {
         return Err("名称不能是 . 或 ..".into());
     }
+    /*
+     * 不能以句点结尾（原版 ValidateName 明写）。
+     *
+     * Windows 会**静默**去掉目录名末尾的句点：输入 `foo.` 实际建出 `foo`。
+     * 于是配置里存的是 `foo.`，磁盘上是 `foo` —— 界面照配置显示带句点，
+     * 之后所有按名字去查的操作（打开 / 改名 / 删除）都查不到。
+     * 这是"显示与实际不一致"且**没有任何报错**的一类，必须在入口就挡掉。
+     *
+     * 末尾空格不在此列：上面 `raw.trim()` 已经把它去掉了，
+     * 用户打 "foo " 得到 "foo" 是符合预期的，不必报错。
+     */
+    if name.ends_with('.') {
+        return Err("名称不能以句点结尾（Windows 会静默去掉，导致配置里的名字与磁盘不一致）".into());
+    }
     if name.len() > 120 { return Err("名称过长（上限 120 字符）".into()); }
     Ok(name.to_string())
 }
@@ -131,6 +145,22 @@ pub fn create_folder(
     hierarchy: Option<&str>,
     template: Option<&str>,
 ) -> Result<String, String> {
+    let target = resolve_new_target(parent, name, hierarchy)?;
+    create_folder_at(&target, template)
+}
+
+/**
+ * 只算目标路径、不做任何磁盘操作。
+ *
+ * 拆出来的原因：`core_create_folder` 需要**先知道目标路径**才能按它
+ * 去摘祖先锁（原版 `WithUnlockForPath`）—— 摘锁窗口必须包住真正的创建动作，
+ * 而窗口的 key 又是目标路径，所以在创建之前必须先算出来。
+ */
+pub fn resolve_new_target(
+    parent: &str,
+    name: &str,
+    hierarchy: Option<&str>,
+) -> Result<PathBuf, String> {
     let name = validate_name(name)?;
     let mut target = if parent.trim().is_empty() {
         let roots = quick_roots();
@@ -149,14 +179,28 @@ pub fn create_folder(
     if target.exists() {
         return Err(format!("目标已存在: {}", target.display()));
     }
-    fs::create_dir_all(&target).map_err(|e| format!("创建文件夹失败: {e}"))?;
+    Ok(target)
+}
+
+/**
+ * 在**已算好的**目标路径上真正创建（含模板拷贝）。
+ *
+ * 调用方负责把这一步放进摘锁窗口 —— 见 `core_create_folder`。
+ *
+ * 模板拷贝也必须在窗口内：原版就是整个 `CopyDirectoryRecursive` 包在
+ * `WithUnlockForPath` 里。只把 `CreateDirectory` 包进去的话，
+ * 受保护目录下建完空目录、接着拷模板内容会被 ACL 拒绝 ——
+ * 用户看到的是"新建成功但里面是空的"，而没有任何报错。
+ */
+pub fn create_folder_at(target: &std::path::Path, template: Option<&str>) -> Result<String, String> {
+    fs::create_dir_all(target).map_err(|e| format!("创建文件夹失败: {e}"))?;
 
     if let Some(tpl) = template {
         let tpl = tpl.trim();
         if !tpl.is_empty() {
             let tpl_path = Path::new(tpl);
             if tpl_path.is_dir() {
-                copy_tree(tpl_path, &target)?;
+                copy_tree(tpl_path, target)?;
             }
         }
     }

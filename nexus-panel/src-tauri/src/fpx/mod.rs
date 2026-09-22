@@ -1378,7 +1378,22 @@ pub(crate) fn core_create_folder(
     guard::reject_forbidden_raw(parent)?;
     let cfg = store::load_config(dir);
     let h = if cfg.create_path_carries_hierarchy { hierarchy } else { None };
-    sys::create_folder(parent, name, h, template)
+
+    let target = sys::resolve_new_target(parent, name, h)?;
+    /*
+     * 创建必须走**摘锁窗口**（对齐原版 FolderCreateService 的
+     * `WithUnlockForPath(full, () => Directory.CreateDirectory(full))`）。
+     *
+     * 不走窗口的后果：用户给某个目录上了「防写入」后，在这个目录下
+     * 新建项目一律失败（deny 会继承到子层级）。而报错只有一句
+     * "创建文件夹失败"，**不含原因** —— 用户不知道是自己刚上的锁挡住了自己，
+     * 只会以为功能坏了。
+     *
+     * 这正是"锁"的设计意图：它挡的是第三方（AI 会话进程），
+     * 不是本工具代表用户执行的写入。所以本工具自己的操作要过窗口。
+     */
+    let target_key = target.to_string_lossy().to_string();
+    with_unlock(dir, &target_key, || sys::create_folder_at(&target, template))
 }
 
 /// 新建项目 / 项目组文件夹，返回完整路径。
