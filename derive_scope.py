@@ -154,7 +154,11 @@ def save_base(sha):
 
 def classify(base=None):
     head = remote_head()
-    remote = tree_of('main')
+    # 必须用**具体 commit sha** 而不是 'main'：
+    # 'main' 是浮动的，取文件列表与取 HEAD 之间若有人推了新提交，
+    # 两边就不是同一份内容 —— 那会导致 base 与"实际拉到的内容"不一致，
+    # 表现为本地明明已同步却仍被判成 MINE（实测踩到）。
+    remote = tree_of(head)
     if base is None:
         base = load_base()
     if base is None:
@@ -204,7 +208,7 @@ def classify(base=None):
     return dict(head=head, base=base, first_run=first_run, **groups)
 
 
-def fetch_remote_text(path, ref='main'):
+def fetch_remote_text(path, ref):
     d = api('contents/%s?ref=%s' % (path, ref))
     import base64 as _b
     return _b.b64decode(d['content']).decode('utf-8')
@@ -237,13 +241,17 @@ def sync_theirs(base=None, include_both=False):
             if os.path.exists(full):
                 import shutil
                 shutil.copy2(full, os.path.join(bdir, p.replace('/', '__')))
-            txt = fetch_remote_text(p)
+            txt = fetch_remote_text(p, r['head'])
             os.makedirs(os.path.dirname(full), exist_ok=True)
             io.open(full, 'w', encoding='utf-8').write(txt)
             n += 1
         except Exception as e:
             print('  ✗ %-50s %s' % (p.split('/')[-1], str(e)[:50]))
     print('已同步 %d/%d 个（备份在 .git/sync-backup/）' % (n, len(targets)))
+    # 同步完把基准推进到**实际拉取的那个 commit**（不是再取一次 HEAD）——
+    # 两者必须严格对应，否则"本地已同步"会被误判成 MINE。
+    save_base(r['head'])
+    print('基准已同步推进为 %s' % r['head'][:10])
     print('BOTH %d 个未处理（需人工/三方合并）: %s'
           % (len(r['BOTH']), ', '.join(x.split('/')[-1] for x in r['BOTH'][:5])))
 
@@ -253,6 +261,19 @@ def main():
     only_mine = '--mine' in args
     as_json = '--json' in args
     if '--update-base' in args:
+        """
+        手动推进基准前**必须**先确认本地已对齐，否则会把"我落后于远端的
+        差异"固化成 MINE —— 实测踩到过：base 被推到 HEAD 后，那 10 个
+        "别人推的、我没同步"的文件全被判成我改的。
+        """
+        cur = classify(load_base())
+        unresolved = len(cur['THEIRS']) + len(cur['BOTH'])
+        if unresolved and '--force' not in args:
+            print('✗ 本地还有 THEIRS %d + BOTH %d 未同步，此时推进基准会把它们'
+                  % (len(cur['THEIRS']), len(cur['BOTH'])))
+            print('  固化成 MINE（表现为"我没改过的文件被当成我改的"）。')
+            print('  请先跑 --sync-theirs，或确认无误后加 --force。')
+            return
         h = remote_head(); save_base(h)
         print('基准已更新为 %s' % h[:10]); return
     b = None
