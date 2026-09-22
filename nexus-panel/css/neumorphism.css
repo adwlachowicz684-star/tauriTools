@@ -145,6 +145,9 @@
 
   --divider:       rgba(255,255,255,.10);
   --blur:          0px;
+
+  /* 风格层兜底（由 js/theme-manager.js 按主题覆写） */
+  --edge:          rgba(255,255,255,.08);
   --bg-image:      none;
   --hairline:      rgba(255,255,255,.05);
   --mask:          rgba(10,12,16,.62);
@@ -167,6 +170,21 @@
   --t: 200ms cubic-bezier(.4, 0, .2, 1);
 
   color-scheme: dark;
+}
+
+/* 浅色档兜底：与上面 :root 同一批变量，只换成"深色墨"方向。
+   只覆盖颜色类兜底，圆角/尺寸不随基调变，不动。
+
+   为什么必须单独给一份：上面那批是**深色档**，只在 JS 未跑（首屏）
+   或主题模块不可用时生效。若浅色主题首屏先用深色兜底，
+   分隔线会变成白线压在浅底上（等于看不见），等 JS 落地再跳变一次 ——
+   切换主题时那个"闪一下"，多半就是它。 */
+:root[data-theme-base="light"] {
+  --divider:  rgba(0,0,0,.12);
+  --edge:     rgba(0,0,0,.10);
+  --hairline: rgba(0,0,0,.07);
+  --mask:     rgba(90,96,110,.32);
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }

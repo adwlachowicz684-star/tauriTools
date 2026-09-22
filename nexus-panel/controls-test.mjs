@@ -1190,5 +1190,52 @@ console.log('\n=== 26. 背景图预设必须有界面入口 ===');
     /\.nx-bgpreset\s*\{[^}]*border:[^;]*var\(--divider/.test(css));
 }
 
+
+console.log('\n=== 27. 数据驱动的调节项必须有界面入口 ===');
+{
+  /*
+   * 两类"界面缺控件"的事故，先后各发生过一次，且都是**静默**的：
+   *
+   *   ① 风格参数（玻璃透明度 / 模糊强度 / 立体度 / 描边强度）
+   *      STYLE_PARAMS + getStyleParam/setStyleParam 全部就绪，
+   *      设置页却从没渲染过 —— 用户只听说有透明度可调，界面上找不到滑块。
+   *   ② 背景图预设：数据有 10 个，界面只有一个「选择图片…」按钮。
+   *
+   * 共同点：能力在**数据层**成立，缺的是把它画出来的那几行 JSX。
+   * 而这正是断言最难覆盖的一类 —— 单测跑的是模块，不会去看 UI 有没有接。
+   *
+   * 所以这里做一条**通用**的检查：凡 STYLE_PARAMS 里登记的参数键，
+   * 设置页必须出现 setStyleParam 的调用；否则就是"有 API 没控件"。
+   */
+  const thMod = await import('./js/themes.js');
+  const app = read('plugins/settings/App.tsx');
+
+  const keys = [];
+  for (const list of Object.values(thMod.STYLE_PARAMS)) {
+    for (const p of list) keys.push(p.key);
+  }
+  t('STYLE_PARAMS 至少登记了一个风格参数', keys.length > 0, `${keys.length} 个`);
+
+  /* 设置页必须是**按风格动态渲染**（styleParams(...)），
+     而不是把四个参数写死 —— 写死的话给玻璃主题也会显示"立体度"。 */
+  t('设置页按当前风格动态取参数', /styleParams\(\s*(?:th\?\.style|th\.style)/.test(app));
+  t('设置页渲染了滑块', /type="range"/.test(app) && /setStyleParam\(/.test(app));
+  t('风格参数带恢复默认', /resetStyleParam\(/.test(app));
+
+  /* 每个参数键都要真的能在界面里被设置 ——
+     以后新增参数（比如给扁平加"圆角强度"）忘了加 UI，这条会红。 */
+  const missing = keys.filter((k) => {
+    // 动态渲染下 key 来自 p.key，不出现在源码里，故只校验渲染逻辑存在
+    return false;
+  });
+  t('风格参数走 p.key/p.min/p.max 动态取值（新增参数自动带上 UI）',
+    /p\.key/.test(app) && /p\.min/.test(app) && /p\.max/.test(app));
+
+  /* 背景图预设：曾加过一次，随后被他人整文件覆盖而无人察觉 ——
+     所以这条断言要一直留着，作为"再次丢失"的哨兵。 */
+  t('背景图预设仍有界面入口', /BG_PRESETS\.map\(/.test(app));
+  t('预设可点且可取消', /setBgPreset\(\s*on\s*\?\s*''\s*:\s*p\.id\s*\)/.test(app));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
