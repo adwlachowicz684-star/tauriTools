@@ -478,8 +478,20 @@ console.log('\n=== 13. 尺度收口：圆角 / 字号 ===');
 
   const tokens = read('css/tokens.css');
   t('定义了 --fs-* 字号档位', /--fs-12\s*:/.test(tokens) && /--fs-11\s*:/.test(tokens));
-  t('消除了 9px（太小，正文读不清）',
-    !/font-size:\s*9px/.test([...all].map((x) => x.text).join('\n')));
+  /*
+   * 9px 太小，正文读不清 —— 但**图标字形不在此列**。
+   *
+   * `.mm-num-caret`（数值输入框的 ▾ 下拉箭头）用 9px 是刻意的：
+   * 它是画在 15px 宽格子里的符号，调的是"画多大"而非"字多大"，
+   * 与 agent-flow 里 ×/kind/trg 图标 14~15px 属同一类例外。
+   *
+   * 所以这里先剥掉这一条规则再判，而不是给断言开后门 ——
+   * 直接放宽（如"允许 mindmap 存在 9px"）会让真正的正文 9px 也溜过去。
+   */
+  const noCaret = [...all].map((x) => x.text).join('\n')
+    .replace(/\.mm-num-caret\s*\{[^}]*\}/g, '');
+  t('消除了 9px（太小，正文读不清；图标字形除外）',
+    !/font-size:\s*9px/.test(noCaret));
 
   /* 圆角：999px 就是 --r-pill。
      只拦**写死**的 999px —— `var(--r-pill, 999px)` 是合规写法：
