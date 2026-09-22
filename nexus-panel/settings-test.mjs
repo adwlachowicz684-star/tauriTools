@@ -333,8 +333,18 @@ console.log('\n--- E. 插件行末尾定宽 ---');
   t('CSS 有 .p-slot-audit 定宽', /width:\s*\d+px/.test(audit), audit.match(/width:[^;]*/)?.[0] || '（无）');
 
   /* 两个外壳都要真的套上这个格子 —— 只改 CSS 不套类是没效果的 */
-  t('React 版：内置/移除 套进 .p-slot-act', /className="p-slot-act"/.test(react));
-  t('原生版：内置/移除 套进 .p-slot-act', /span\.p-slot-act/.test(native));
+  /*
+   * React 版的插件管理已从**行式**改成卡片：每个插件自成一格，
+   * 不再有"同一列、不同行"这回事，也就不需要定宽格来防错位 ——
+   * 定宽格解决的正是"名称列 flex:1 把宽度差转成右侧位移"。
+   *
+   * 所以这里**反向**钉住：React 版不应再出现 p-slot-act。
+   * 只钉原生版（它仍是行式）不够 —— 哪天有人把行式搬回来，
+   * 定宽格也会跟着回来，那条正向断言照样绿，而错位问题已随卡片消失。
+   */
+  t('React 版改用卡片承载（不再用 p-slot-act 定宽格）',
+    !/p-slot-act/.test(react), '卡片里没有"列"，也就没有列错位');
+  t('原生版（仍是行式）：内置/移除 套进 .p-slot-act', /span\.p-slot-act/.test(native));
   t('React 版：样式徽标套进 .p-slot-audit', /className="p-slot-audit"/.test(react));
   t('徽标按钮撑满格子（宽度不再随字数变）',
     /\.p-slot-audit > button\s*\{\s*width:\s*100%/.test(strip(css)));
@@ -396,8 +406,15 @@ console.log('\n--- G. 插件按 kind 三分区 ---');
    * （不再是简单的 filter + map），因为它还要管显示、排序、添加。
    * 断言跟着契约走：查这两个函数被定义且被引用。
    */
-  t('React 版有工具栏管理组件', /function ToolbarSection/.test(react));
-  t('React 版引用了它', /<ToolbarSection /.test(react));
+  /*
+   * 组件已改名 PluginManager —— 它不再只管"右上角按钮"，
+   * 而是把原插件管理（行式 PluginRow）与右上角管理合并进同一套卡片。
+   * 名字跟着职责走，断言也跟着改：只查 ToolbarSection 会在合并后永远红，
+   * 而"永远红"和"永远绿"一样没有信息量。
+   */
+  t('React 版有插件管理组件', /function PluginManager/.test(react));
+  t('React 版引用了它', /<PluginManager[\s\S]{0,80}plugins=\{plugins\}/.test(react),
+    '只查 "<PluginManager" 太松；钉到传参才算真接上');
   t('原生版有工具栏管理函数', /function buildToolbarSection/.test(native));
   /*
    * 钉**调用点**（前面有缩进、以逗号结尾），不是定义处 ——
@@ -424,7 +441,7 @@ console.log('\n--- G. 插件按 kind 三分区 ---');
    */
   t('两版都渲染卡片矩阵（tb-shop / tb-card）',
     /className="tb-shop"/.test(react) && /h\('div\.tb-shop'/.test(native)
-    && /className=\{'tb-card'/.test(react) && /class: 'tb-card'/.test(native));
+    && /'tb-card'/.test(react) && /class: 'tb-card'/.test(native));
   /*
    * 用户明确要求"不要用下拉框"——这条**反向**钉住：
    * 只允许字符里不再出现 select 元素，否则哪天有人"顺手补个下拉"就回退了。
@@ -487,11 +504,23 @@ console.log('\n--- G. 插件按 kind 三分区 ---');
    * hook 顺序错误 —— 所以提到顶层并改名为 appPlugins / svcPlugins。
    * 断言跟着改名，守的还是同一件事：引用了就得有定义。
    */
-  for (const nm of ['appPlugins', 'svcPlugins']) {
-    t(`React 版 ${nm} 有定义且被引用`,
-      defCount(r, nm) === 1 && useCount(r, nm) > 1,
-      `定义 ${defCount(r, nm)} / 出现 ${useCount(r, nm)}`);
-  }
+  /*
+   * 合并成卡片矩阵后，svcPlugins 这个中间数组**不再存在**：
+   * 服务组由 orderedFor('service') 从 all 里现算，分组渲染统一走
+   * GROUPS.map，不再需要预先切出两个数组。
+   *
+   * 只留 appPlugins —— 拖拽 hook 的 count 与 getItemProps 索引都依赖它，
+   * 它还必须是**侧边栏顺序**（见下面"应用组按侧边栏顺序"那条）。
+   *
+   * 断言跟着实现走：继续要求 svcPlugins 存在，等于钉住已废弃的中间变量，
+   * 逼人为了过测试把它加回来。
+   */
+  t('React 版 appPlugins 有定义且被引用',
+    defCount(r, 'appPlugins') === 1 && useCount(r, 'appPlugins') > 1,
+    `定义 ${defCount(r, 'appPlugins')} / 出现 ${useCount(r, 'appPlugins')}`);
+  t('React 版不再有 svcPlugins（服务组由 orderedFor 现算）',
+    defCount(r, 'svcPlugins') === 0 && /orderedFor\(/.test(r),
+    `定义 ${defCount(r, 'svcPlugins')}`);
   for (const nm of ['appRows', 'svcRows']) {
     t(`原生版 ${nm} 有定义且被引用`,
       defCount(n, nm) >= 1 && useCount(n, nm) > 1,
@@ -764,9 +793,10 @@ t('② 卡片来源并上 allToolbarDefs（兜底补卡）',
  * 只查 allToolbarDefs 是否存在，会被"算了却没并进 cards"骗过去
  * （改回 (plugins||[]).slice() 照样绿，而那正是要防的回退）。
  */
-t('②b cards 用的是并上 ghosts 后的清单',
-  /const cards = all\.slice\(\)/.test(setSrc),
-  '缺一张卡 = 该按钮无法隐藏');
+t('②b 清单并上 ghosts 后**真的被用上**（orderedFor 基于 all）',
+  /const all = \(plugins \|\| \[\]\)\.concat\(ghosts\)/.test(setSrc)
+  && /orderedFor[\s\S]{0,400}all\.filter/.test(setSrc),
+  '只算不用 = 缺一张卡，该按钮就无法隐藏');
 /* 兜底后必须真能补出卡片并允许隐藏 —— 用真实模块跑，不查字符串 */
 {
   globalThis.localStorage = globalThis.localStorage || {
@@ -829,12 +859,26 @@ t('定义了三组（工具栏 / 应用 / 服务）',
 t('有分类函数（把 kind 归一到三组之一）',
   /kindOf[\s\S]{0,200}'toolbar'\s*\?\s*'toolbar'/.test(appSrc),
   '漏了归一化的话，未标注的插件会掉进 undefined 组、整组消失');
-t('按分组渲染（grouped.map，不是一整片 cards.map）',
-  /grouped\.map\(/.test(appSrc) && !/cards\.map\(/.test(appSrc),
+t('按分组渲染（GROUPS.map + orderedFor）',
+  /GROUPS\.map\(/.test(appSrc) && /orderedFor\(/.test(appSrc)
+  && !/cards\.map\(/.test(appSrc),
   '残留 cards.map 说明分组没接上渲染');
-t('组内仍按已加入顺序排（复用排序后的 cards）',
-  /grouped = GROUPS\.map[\s\S]{0,200}cards\.filter/.test(appSrc),
-  '重排一遍就会和右上角实际顺序不一致');
+/*
+ * ⚠️ 关键：三组**不是同一套排序**，混用会出真错。
+ *   工具栏组 —— 按右上角按钮顺序（卡片标"第 N 位"）
+ *   应用组   —— 按**侧边栏顺序**，因为拖拽排序改的就是这个顺序
+ *   服务组   —— 清单原序（不在任何可见列表里，没有"顺序"可言）
+ *
+ * 应用组若也按 rank 排，卡片顺序会与拖拽要改的侧边栏顺序错位：
+ * 拖第 2 张实际动的是侧边栏第 5 个，而且**不报错**，只是"拖完不对"。
+ */
+t('应用组按侧边栏顺序（appOrder），不按右上角 rank',
+  /const appOrder = \(plugins \|\| \[\]\)\.filter/.test(appSrc)
+  && /orderedFor[\s\S]{0,200}key === 'app'\) return appOrder/.test(appSrc),
+  '应用组用 rank 排会让拖拽错位且不报错');
+t('工具栏组按右上角顺序排（卡片标第 N 位）',
+  /key === 'toolbar'[\s\S]{0,300}rank\.get/.test(appSrc)
+  && /右上角第 \$\{/.test(appSrc));
 t('空组保留标题（不整块隐藏）',
   /g\.items\.length \? \([\s\S]{0,400}:\s*\(/ .test(appSrc)
   || /这一类当前没有插件/.test(appSrc),
@@ -846,6 +890,61 @@ t('分组样式写在 neumorphism.css（同页模式也生效）',
   /\.tb-group\s*\{/.test(cssSrc) && /\.tb-group-head\s*\{/.test(cssSrc));
 t('分组样式没写进 settings.css（那边不加载）',
   !/\.tb-group/.test(src('plugins/settings/settings.css')));
+
+/* ---------------------------------------------------------------- */
+console.log('\n=== 插件管理合并进卡片（原行式管理项全部入卡） ===');
+/*
+ * 需求：把原本「插件管理」的内容全部搬进卡片，卡片放大到约两倍。
+ *
+ * 合并的理由不是省地方 —— 两件事**作用的是同一个对象**：
+ * 用户眼里"管理插件"就是在一处把运行方式、外观基调、入口位置都解决。
+ * 分两块时，改基调在下面、改入口在上面，中间还隔着服务插件区。
+ *
+ * 断言必须钉住"管理项真的进了卡片"，而不只是"卡片还在"：
+ * 少钉一项，就会有一天有人把某项搬回行式而测试全绿。
+ */
+const pm = src('plugins/settings/App.tsx');
+/* 取 PluginManager 函数体 —— 这些类名/调用必须**在卡内**，
+   只在文件里出现不算（别处也可能用到同名东西）。 */
+const pmStart = pm.indexOf('function PluginManager(');
+const pmBody = pm.slice(pmStart, pm.indexOf('\n/**\n * 快捷键总览。', pmStart));
+
+t('卡片里有 entry（行式时它是挨着名称的一行小字，一挤就截断）',
+  /tb-card-entry/.test(pmBody) && /p\.entry/.test(pmBody));
+t('卡片里有样式审计徽标', /StyleAuditBadge/.test(pmBody));
+t('卡片里有基调下拉（适配策略）',
+  /tb-card-select/.test(pmBody) && /PLUGIN_THEMES/.test(pmBody));
+t('卡片里有移除/内置（卸载入口在卡上，不用再去别处找）',
+  /移除/.test(pmBody) && /p\.builtin/.test(pmBody));
+t('卡片里有右上角两个按钮（加入/取消 + 展示/隐藏）',
+  /addExtra\(p\.id\)/.test(pmBody) && /removeExtra\(p\.id\)/.test(pmBody)
+  && /toggleHidden\(e\.id\)/.test(pmBody));
+t('拖拽只作用于应用组（服务组不在侧边栏，排了没处生效）',
+  /isApp && ai !== undefined \? appsDrag\.getItemProps\(ai\)/.test(pmBody));
+
+/* 卡片不能引用组件外的名字 —— 那是编译期 TS2304、运行时 undefined。 */
+t('外壳动作经 props 传入（onRemove / onOverride），不直接引用外层函数',
+  /onRemove: \(p: any\) => void/.test(pmBody)
+  && /onOverride: \(p: any, v: string\) => void/.test(pmBody)
+  && !/\bremovePlugin\(p\)/.test(pmBody)
+  && !/syncPolicyToShell\(/.test(pmBody),
+  '在子组件里直接用 removePlugin 会编译不过');
+t('父组件把两个动作都传下来了',
+  /onRemove=\{removePlugin\}/.test(pm) && /onOverride=\{\(p, v\)/.test(pm));
+
+/* 放大：列宽 148 → 300 */
+const cssPm = src('css/neumorphism.css');
+const shopBlock = (() => {
+  const i = cssPm.indexOf('.tb-shop {');
+  return cssPm.slice(i, cssPm.indexOf('}', i) + 1);
+})();
+const w = Number((shopBlock.match(/minmax\((\d+)px/) || [])[1] || 0);
+t('卡片列宽放大到 300px 量级（原 148px 装不下管理项）', w >= 280, `${w}px`);
+t('卡片内新增的行有样式（entry / field / select）',
+  /\.tb-card-entry\s*\{/.test(cssPm)
+  && /\.tb-card-field\s*\{/.test(cssPm)
+  && /\.tb-card-select\s*\{/.test(cssPm),
+  '只有类名没有规则 = 内容裸排');
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

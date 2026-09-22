@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+/* RefObject / DragEvent 是**类型**，必须用 type 导入：
+   写成值导入在 verbatimModuleSyntax 或 isolatedModules 下会被当成
+   运行时 import，而 react 的类型在运行时不存在 —— 打包时报错。
+   （JSX 里用到 React.DragEvent 这类命名空间写法，前提是命名空间已导入；
+   本文件只具名导入，所以这里补两个类型别名。） */
+import {
+  useEffect, useRef, useState,
+  type RefObject, type DragEvent, type ChangeEvent as ReactChangeEvent,
+} from 'react';
 import {
   toolbarEntriesOf, wantsEntry, hiddenIds, extraIds,
   toggleHidden, addExtra, removeExtra,
@@ -212,116 +220,52 @@ function ResetDefaultBtn({ disabled, onClick, title }: {
   );
 }
 
-function PluginRow({ p, audit, auditOpen, onToggleAudit, onOverride, onRemove, dragProps, dragging }: {
-  p: PluginManifest;
-  audit: any;
-  auditOpen: boolean;
-  onToggleAudit: () => void;
-  onOverride: (v: string) => void;
-  onRemove: () => void;
-  /** 拖拽排序属性。服务插件区**不传** —— 它不在侧边栏，排了也没处生效 */
-  dragProps?: Record<string, any>;
-  dragging?: boolean;
-}) {
-  return (
-    <div
-      {...dragProps}
-      /* className 放在 spread **之后**：内核也会返回 className（拖拽态），
-         写在前面会被它覆盖，整行会丢掉 p-row 的样式。 */
-      className={'p-row' + (dragging ? ' nx-drag-dragging' : '')}
-      style={{
-        padding: '12px 14px', marginTop: 'var(--sp-5, 10px)', borderRadius: 'var(--r)',
-        background: 'var(--surface-sunk)',
-        boxShadow: 'inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light)',
-      }}
-    >
-      {dragProps ? (
-        <span className="nx-drag-handle" title="按住这里上下拖动可调整顺序">⠿</span>
-      ) : null}
-      <span style={{ fontSize: 'var(--fs-15, 15px)', width: 24, textAlign: 'center' }}>{p.icon ?? '◌'}</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 'var(--fs-13, 13px)' }}>{p.name}</div>
-        <div className="p-mono p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>{p.entry}</div>
-      </div>
-      <span className="p-tag">{p.type === 'iframe' ? '沙箱' : '同页'}</span>
-      <StyleAuditBadge audit={audit} open={auditOpen} onToggle={onToggleAudit} />
-      {/* 空串就是「跟随全局」：onOverride 的签名是 (v: string) => void，
-          两处调用点再用 `v || null` 把它转成 null —— 这里补 `|| null` 是多余的，
-          且会让 tsc 报「string | null 不能赋给 string」（上游 56f2607b 带进来的） */}
-      <select
-        className="p-input"
-        style={{ width: 130, height: 30, fontSize: 'var(--fs-12, 12px)', padding: '0 8px' }}
-        value={getPluginOverride(p.id) ?? ''}
-        onChange={(e) => onOverride(e.target.value)}
-      >
-        <option value="">跟随全局</option>
-        {PLUGIN_THEMES.map((t) => (
-          <option key={t.value} value={t.value}>{t.label}</option>
-        ))}
-      </select>
-      {/*
-        p-slot-act：定宽格。
-        「内置」是 .p-tag、「移除」是 .p-btn.danger，两种形态宽度不同；
-        而左侧名称列是 flex:1，会把这点宽度差全部转成右侧各格的位移 ——
-        表现就是同一列的下拉框在内置行与非内置行之间左右错位。
-      */}
-      <span className="p-slot-act">
-        {p.builtin ? (
-          <span className="p-tag">内置</span>
-        ) : (
-          <button
-            className="p-btn danger"
-            style={{ height: 30, padding: '0 10px', fontSize: 'var(--fs-12, 12px)' }}
-            onClick={onRemove}
-          >
-            移除
-          </button>
-        )}
-      </span>
-    </div>
-  );
-}
 
 /**
- * 右上角按钮（工具栏入口）管理。
+ * 插件管理 —— 卡片矩阵（原「插件管理」整块 + 右上角按钮管理合并）。
  *
- * 之前这一区只是把 kind:'toolbar' 的插件列出来，**没有任何开关**：
- * 想隐藏某个按钮没地方点、想排序没地方拖、想把某个应用插件
- * 放到右上角更是没入口 —— 也就是"找不到地方添加按钮入口"。
+ * 这里改过三版：
  *
- * 这里提供三件事：显示/隐藏、上移/下移、把应用插件添加为入口。
- * 改完立刻生效（toolbar-plugin.js 派发事件，标题栏重新渲染）。
+ *   v1 只是一行行的 PluginRow：图标 + 名称 + 下拉 + 移除，信息密但**没有
+ *      任何右上角开关**，想隐藏某个按钮没地方点、想加入口没入口。
+ *   v2 单独加了「右上角按钮」一区，但"把应用插件加进来"是 <select> 下拉框。
+ *      下拉框的问题不是不好看，是**信息被切成两半**：下拉里只有"还没加入"
+ *      的候选，想确认某个插件加没加得先去上面那排入口里找，两边各看一半。
+ *   v3（现在）：**一个插件一张卡**，原来行式管理里的每一项（沙箱/同页、
+ *      样式审计、基调下拉、内置/移除、拖动排序）与右上角管理（加入/取消、
+ *      展示/隐藏）全部搬进同一张卡。
  *
- * ⚠️ 入口列表用 toolbarEntriesOf() 推导，与加载器**共用同一份判断** ——
- * 两边各写一遍必然漂移，表现是"设置里关掉了、右上角还在"。
- */
-/**
- * 右上角按钮（工具栏入口）管理 —— 商店式卡片矩阵。
+ * 合并的理由不是"省地方" —— 是这两件事**作用的是同一个对象**：
+ * 用户眼里"管理插件"就是在一处把它的运行方式、外观基调、入口位置都解决了。
+ * 分两块时，改个基调在下面、改个入口在上面，中间还隔着服务插件那一区，
+ * 找起来要上下翻。
  *
- * 这里改过两版：
- *
- *   v1 只把 kind:'toolbar' 的列出来，**没有任何开关**；
- *   v2 补了开关，但"把应用插件加进来"是一个 <select> 下拉框。
- *
- * 下拉框的问题不是不好看，是**信息被切成两半**：
- *   · 下拉里只有"还没加入"的候选 —— 想确认某个插件加没加，
- *     得先去上面那排入口里找；两边各看一半才完整。
- *   · 一次只能看见一项，插件多了要逐个展开才知道有什么。
- *
- * v3（现在）：**所有插件各出一张卡**，像商店货架一样铺开。
- * 一张卡同时表达"它是什么"和"它现在处于什么状态"，
- * 卡片上两个按钮把两件事分开：
- *
- *   展示 / 隐藏   —— 已经在右上角了，要不要暂时不显示（保留位置与顺序）
- *   加入 / 取消   —— 要不要占一个右上角入口（取消不等于卸载插件）
- *
- * 这两个是**不同层次**，不是同一个开关的两种说法：
- * 隐藏保留配置（再点回来还在原位），取消加入则彻底没有这个入口。
+ * 卡片放大到约两倍（列宽 148px → 300px）：原来的卡片只放得下"图标+名称+
+ * 两个按钮"，装不下 entry、审计徽标、基调下拉这些本来就属于管理项的东西。
  *
  * ⚠️ 入口列表用 toolbarEntriesOf() 推导，与加载器**共用同一份判断** ——
  * 两边各写一遍必然漂移，表现是"设置里关掉了、右上角还在"。
  */
-function ToolbarSection({ plugins, ctx }: { plugins: any[]; ctx: any }) {
+function PluginManager({
+  plugins, ctx, audits, auditOpen, setAuditOpen, appsRef, appsDrag,
+  onRemove, onOverride,
+}: {
+  plugins: any[];
+  ctx: any;
+  audits: Record<string, any>;
+  auditOpen: string | null;
+  setAuditOpen: (fn: (cur: string | null) => string | null) => void;
+  appsRef: RefObject<HTMLDivElement>;
+  appsDrag: any;
+  /*
+   * 卸载与改基调都要碰外壳（removePlugin / shell.normalizer），
+   * 而这些依赖 ctx 与 setPlugins，只存在于 Settings 组件作用域内。
+   * 必须**由父组件传进来**，不能在 PluginManager 里直接引用 ——
+   * 那是组件外的名字，编译期就找不到（TS2304），运行时更是 undefined。
+   */
+  onRemove: (p: any) => void;
+  onOverride: (p: any, v: string) => void;
+}) {
   const [, force] = useState(0);
   const rerender = () => force((v) => v + 1);
 
@@ -352,58 +296,59 @@ function ToolbarSection({ plugins, ctx }: { plugins: any[]; ctx: any }) {
   const byId = new Map(entries.map((e) => [e.pluginId, e]));
   const rank = new Map(entries.map((e, i) => [e.pluginId, i]));
 
-  /*
-   * 已加入的按现有入口顺序排在最前，未加入的保持原序跟在后面。
-   * Array.sort 是稳定排序，所以未加入那批不会互相打乱。
-   *
-   * 这样卡片矩阵本身就**体现了当前右上角按钮的顺序**
-   * （第 1 位、第 2 位……写在卡片上），不需要另开一个列表去解释。
-   */
-  const cards = all.slice().sort((a: any, b: any) => {
-    const ia = rank.has(a.id) ? (rank.get(a.id) as number) : Number.MAX_SAFE_INTEGER;
-    const ib = rank.has(b.id) ? (rank.get(b.id) as number) : Number.MAX_SAFE_INTEGER;
-    return ia - ib;
-  });
-
-  /*
-   * 按 kind 分成三组：工具栏 / 应用 / 服务。**组内**再按已加入顺序排。
-   *
-   * 之前是一整片卡片混排，而这三类插件**能做的事不一样**：
-   *   工具栏插件 —— 自己就声明了要占右上角，只能隐藏、不能移除
-   *   应用插件   —— 唯一可以「加入 / 取消加入」的一类
-   *   服务插件   —— 后台运行不进界面，两个按钮都不可用
-   * 混在一片里，用户得逐张卡片读那行小字才知道自己能点哪个；
-   * 分组后每组的可用操作是固定的，看标题就知道。
-   */
   const kindOf = (p: any) =>
     p?.kind === 'toolbar' ? 'toolbar' : p?.kind === 'service' ? 'service' : 'app';
+
+  /*
+   * 应用插件组用**侧边栏顺序**（appPlugins 原序），不用右上角 rank 排序。
+   *
+   * 这三组的排序依据本就不同，混用一套会出真错：
+   *   工具栏插件组 —— 按右上角按钮顺序（卡片上标「第 N 位」）
+   *   应用插件组   —— 按侧边栏顺序，因为**拖拽排序改的就是这个顺序**
+   *   服务插件组   —— 保持清单原序（不在任何可见列表里，没有"顺序"可言）
+   *
+   * 应用组若也按 rank 排，卡片顺序会与拖拽要改的侧边栏顺序错位：
+   * 拖了第 2 张，实际动的是侧边栏第 5 个 —— 而且不报错，只是"拖完不对"。
+   */
+  const appOrder = (plugins || []).filter((p: any) => kindOf(p) === 'app');
+  const appIndex = new Map(appOrder.map((p: any, i: number) => [p.id, i]));
+
   const GROUPS: { key: string; title: string; hint: string }[] = [
     {
       key: 'toolbar',
       title: '工具栏插件',
-      hint: '自带入口，只能隐藏 / 展示，不能移除',
+      hint: '显示在标题栏右上角 · 自带入口，只能隐藏 / 展示',
     },
     {
       key: 'app',
       title: '应用插件',
-      hint: '可加入右上角按钮，点了切到该插件',
+      hint: '显示在侧边栏 · 可拖动排序 · 可加入右上角按钮',
     },
     {
       key: 'service',
       title: '服务插件',
-      hint: '后台运行不进界面，无法放到右上角',
+      hint: '后台运行不进界面，由其它插件通过 ctx.services.call 调用',
     },
   ];
-  const grouped = GROUPS.map((g) => ({
-    ...g,
-    items: cards.filter((p: any) => kindOf(p) === g.key),
-  }));
+
+  const orderedFor = (key: string) => {
+    if (key === 'app') return appOrder;
+    if (key === 'toolbar') {
+      /* 已加入的按右上角顺序排在最前（卡片上标第 N 位），其余保持原序 */
+      return all.filter((p: any) => kindOf(p) === 'toolbar').slice().sort((a: any, b: any) => {
+        const ia = rank.has(a.id) ? (rank.get(a.id) as number) : Number.MAX_SAFE_INTEGER;
+        const ib = rank.has(b.id) ? (rank.get(b.id) as number) : Number.MAX_SAFE_INTEGER;
+        return ia - ib;
+      });
+    }
+    return all.filter((p: any) => kindOf(p) === 'service');
+  };
 
   type CardBtn = { label: string; title: string; act?: () => void; disabled?: boolean };
 
-  const cardBtn = (b: CardBtn) => (
+  const cardBtn = (b: CardBtn, danger = false) => (
     <button
-      className="p-btn"
+      className={'p-btn' + (danger ? ' danger' : '')}
       title={b.title}
       disabled={b.disabled}
       onClick={() => {
@@ -422,126 +367,181 @@ function ToolbarSection({ plugins, ctx }: { plugins: any[]; ctx: any }) {
     </button>
   );
 
+  const groupHead = (label: string, hint: string) => (
+    <div className="tb-group-head">
+      <span className="tb-group-title">{label}</span>
+      <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>{hint}</span>
+    </div>
+  );
+
   return (
     <>
-      <div style={{
-        display: 'flex', alignItems: 'baseline', gap: 'var(--sp-4, 8px)',
-        marginTop: 'var(--sp-6, 12px)',
-      }}>
-        <span style={{ fontSize: 'var(--fs-12, 12px)', fontWeight: 600 }}>
-          {`右上角按钮 · ${entries.length}`}
-        </span>
-        <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
-          显示在标题栏右侧；从下方卡片加入或移除
-        </span>
+      <div className="tb-summary">
+        共 {all.length} 个插件 · 右上角 {entries.length} 个按钮
+        {' · '}在卡片上改基调、加入或隐藏入口、移除插件
       </div>
 
-      {grouped.map((g) => (
-        <div key={g.key} className="tb-group">
-          <div className="tb-group-head">
-            <span className="tb-group-title">
-              {g.title} · {g.items.length}
-            </span>
-            <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
-              {g.hint}
-            </span>
-          </div>
-          {/* 空组不渲染卡片区，但标题保留 —— 否则"这类插件一个都没有"
-              和"这类插件没被列出来"看起来一样，都会被当成漏了。 */}
-          {g.items.length ? (
-            <div className="tb-shop">
-              {g.items.map((p) => {
-
-            const isTb = p.kind === 'toolbar';
-            const isSvc = p.kind === 'service';
-            const joined = wantsEntry(p, extra);
-            const e = byId.get(p.id);
-            const hid = e ? hidden.has(e.id) : false;
-            const pos = rank.get(p.id);
-
-            /*
-             * 「展示 / 隐藏」只对**已经加入**的入口有意义。
-             * 未加入时**禁用而不是不画** —— 按钮凭空消失，
-             * 用户只会以为是漏了，不会想到"要先加入"。
-             */
-            const show: CardBtn = (!joined || !e)
-              ? { label: '展示', title: '先加入右上角，才能控制是否显示', disabled: true }
-              : hid
-                ? {
-                  label: '展示', title: '重新显示到右上角',
-                  act: () => toggleHidden(e.id),
-                }
-                : {
-                  label: '隐藏', title: '从右上角隐藏（保留位置与顺序，可再显示）',
-                  act: () => toggleHidden(e.id),
-                };
-
-            /*
-             * 「加入 / 取消加入」。
-             * 两种情况禁用，但**都要写明原因**：
-             *   服务插件 —— 不进界面，加了也是点开一片空白
-             *   工具栏插件 —— 自己就声明了要占右上角，不是"加"上去的
-             * 禁用的按钮不给 title 就是"点了没反应且不知道为什么"。
-             */
-            const join: CardBtn = isSvc
-              ? { label: '加入', title: '服务插件在后台运行，不进界面', disabled: true }
-              : !joined
-                ? {
-                  label: '加入',
-                  title: '在右上角加一个按钮，点了切到这个插件',
-                  act: () => {
-                    addExtra(p.id);
-                    ctx?.toast?.(`已把「${p.name ?? p.id}」加到右上角`, 'ok');
-                  },
-                }
-                : isTb
-                  ? { label: '取消加入', title: '工具栏插件内置在右上角，不可移除', disabled: true }
-                  : {
-                    label: '取消加入',
-                    title: '从右上角移除这个按钮（不会卸载插件）',
-                    act: () => {
-                      removeExtra(p.id);
-                      ctx?.toast?.(`已把「${p.name ?? p.id}」移出右上角`, 'ok');
-                    },
-                  };
-
-            return (
+      {GROUPS.map((g) => {
+        const items = orderedFor(g.key);
+        const isApp = g.key === 'app';
+        return (
+          <div key={g.key} className="tb-group">
+            {groupHead(`${g.title} · ${items.length}`, g.hint)}
+            {/* 空组不渲染卡片区，但标题保留 —— 否则"这类插件一个都没有"
+                和"这类插件没被列出来"看起来一样，都会被当成漏了。 */}
+            {items.length ? (
               <div
-                key={p.id}
-                className={'tb-card' + (joined ? ' joined' : '') + (hid ? ' is-hidden' : '')}
+                className="tb-shop"
+                ref={isApp ? appsRef : undefined}
+                onDragOver={isApp ? appsDrag.onDragOver : undefined}
+                onDrop={isApp ? (e: DragEvent) => e.preventDefault() : undefined}
               >
-                <div className="tb-card-top">
-                  <span className="tb-card-icon">{p.icon ?? '◌'}</span>
-                  <span className="tb-card-name" title={p.name ?? p.id}>{p.name ?? p.id}</span>
-                </div>
-                <div className="tb-card-meta">
-                  {isSvc ? '服务插件' : isTb ? '工具栏插件' : '应用插件'}
-                  {joined ? ` · 第 ${(pos ?? 0) + 1} 位` : ''}
-                  {hid ? ' · 已隐藏' : ''}
-                </div>
-                <div className="tb-card-btns">
-                  {cardBtn(show)}
-                  {cardBtn(join)}
-                </div>
+                {items.map((p: any) => {
+                  const isTb = kindOf(p) === 'toolbar';
+                  const isSvc = kindOf(p) === 'service';
+                  const joined = wantsEntry(p, extra);
+                  const e = byId.get(p.id);
+                  const hid = e ? hidden.has(e.id) : false;
+                  const pos = rank.get(p.id);
+                  const audit = audits[p.id];
+                  const ai = appIndex.get(p.id);
+                  const dragProps = isApp && ai !== undefined ? appsDrag.getItemProps(ai) : undefined;
+
+                  /*
+                   * 「展示 / 隐藏」只对**已经加入**的入口有意义。
+                   * 未加入时**禁用而不是不画** —— 按钮凭空消失，
+                   * 用户只会以为是漏了，不会想到"要先加入"。
+                   */
+                  const show: CardBtn = (!joined || !e)
+                    ? { label: '展示', title: '先加入右上角，才能控制是否显示', disabled: true }
+                    : hid
+                      ? {
+                        label: '展示', title: '重新显示到右上角',
+                        act: () => toggleHidden(e.id),
+                      }
+                      : {
+                        label: '隐藏', title: '从右上角隐藏（保留位置与顺序，可再显示）',
+                        act: () => toggleHidden(e.id),
+                      };
+
+                  /*
+                   * 「加入 / 取消加入」。
+                   * 两种情况禁用，但**都要写明原因**：
+                   *   服务插件 —— 不进界面，加了也是点开一片空白
+                   *   工具栏插件 —— 自己就声明了要占右上角，不是"加"上去的
+                   * 禁用的按钮不给 title 就是"点了没反应且不知道为什么"。
+                   */
+                  const join: CardBtn = isSvc
+                    ? { label: '加入', title: '服务插件在后台运行，不进界面', disabled: true }
+                    : !joined
+                      ? {
+                        label: '加入',
+                        title: '在右上角加一个按钮，点了切到这个插件',
+                        act: () => {
+                          addExtra(p.id);
+                          ctx?.toast?.(`已把「${p.name ?? p.id}」加到右上角`, 'ok');
+                        },
+                      }
+                      : isTb
+                        ? { label: '取消加入', title: '工具栏插件内置在右上角，不可移除', disabled: true }
+                        : {
+                          label: '取消加入',
+                          title: '从右上角移除这个按钮（不会卸载插件）',
+                          act: () => {
+                            removeExtra(p.id);
+                            ctx?.toast?.(`已把「${p.name ?? p.id}」移出右上角`, 'ok');
+                          },
+                        };
+
+                  return (
+                    <div
+                      key={p.id}
+                      {...dragProps}
+                      /* className 放在 spread **之后**：拖拽内核也会返回
+                         className（拖拽态），写在前面会被它覆盖。 */
+                      className={
+                        'tb-card'
+                        + (joined ? ' joined' : '')
+                        + (hid ? ' is-hidden' : '')
+                        + (dragProps && appsDrag.dragFrom === ai ? ' nx-drag-dragging' : '')
+                      }
+                    >
+                      <div className="tb-card-top">
+                        {dragProps ? (
+                          <span className="nx-drag-handle" title="按住这里拖动可调整侧边栏顺序">⠿</span>
+                        ) : null}
+                        <span className="tb-card-icon">{p.icon ?? '◌'}</span>
+                        <span className="tb-card-name" title={p.name ?? p.id}>{p.name ?? p.id}</span>
+                        <span className="p-tag">{p.type === 'iframe' ? '沙箱' : '同页'}</span>
+                      </div>
+
+                      {/* entry 只在卡片里才放得下 —— 行式布局时它是紧挨着
+                          名称的一行小字，一挤就被截断成看不懂的半截。 */}
+                      <div className="tb-card-entry" title={p.entry ?? ''}>{p.entry ?? ''}</div>
+
+                      <div className="tb-card-meta">
+                        {isSvc ? '服务插件' : isTb ? '工具栏插件' : '应用插件'}
+                        {joined ? ` · 右上角第 ${(pos ?? 0) + 1} 位` : ''}
+                        {hid ? ' · 已隐藏' : ''}
+                      </div>
+
+                      <div className="tb-card-field">
+                        <StyleAuditBadge
+                          audit={audit}
+                          open={auditOpen === p.id}
+                          onToggle={() => setAuditOpen((cur: string | null) => (cur === p.id ? null : p.id))}
+                        />
+                        {/* 空串就是「跟随全局」。onOverride 的签名是 (v: string)=>void，
+                            这里补 `|| null` 是多余的，且会让 tsc 报类型错。 */}
+                        <select
+                          className="p-input tb-card-select"
+                          title="为这个插件单独指定基调判定方式（默认跟随全局）"
+                          value={getPluginOverride(p.id) ?? ''}
+                          onChange={(ev: ReactChangeEvent<HTMLSelectElement>) => {
+                            onOverride(p, ev.target.value);
+                            rerender();
+                          }}
+                        >
+                          <option value="">跟随全局</option>
+                          {PLUGIN_THEMES.map((t) => (
+                            <option key={t.value} value={t.value}>{t.label}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="tb-card-btns">
+                        {cardBtn(show)}
+                        {cardBtn(join)}
+                        {p.builtin
+                          ? cardBtn({ label: '内置', title: '内置插件不可移除', disabled: true })
+                          : cardBtn({
+                            label: '移除',
+                            title: '卸载这个插件（内置插件不可移除）',
+                            act: () => onRemove(p),
+                          }, true)}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            );
-              })}
-            </div>
-          ) : (
-            <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
-              这一类当前没有插件。
-            </div>
-          )}
-        </div>
-      ))}
+            ) : (
+              <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+                这一类当前没有插件。
+              </div>
+            )}
+          </div>
+        );
+      })}
+
       {entries.length ? null : (
         <div className="p-muted" style={{ marginTop: 'var(--sp-4, 8px)', fontSize: 'var(--fs-11, 11px)' }}>
-          右上角还没有任何按钮。在上面任意一张卡片点「加入」即可。
+          右上角还没有任何按钮。在应用插件的卡片上点「加入」即可。
         </div>
       )}
       <div className="p-muted" style={{ marginTop: 'var(--sp-4, 8px)', fontSize: 'var(--fs-11, 11px)' }}>
         加入的入口点了会切到对应插件；取消加入只是去掉右上角按钮，不会卸载插件。
         「隐藏」是暂时不显示，再点「展示」会回到原来的位置。
+        「移除」才是卸载插件，且内置插件不可移除。
       </div>
     </>
   );
@@ -693,12 +693,12 @@ export default function Settings() {
    * 应用插件（侧边栏里那些）—— 拖动排序**只作用于这一类**。
    * 服务插件不在侧边栏，给它们排序没有意义，还会让用户以为排了能用。
    *
-   * 分成 appPlugins / svcPlugins 两个数组放在组件顶层，
-   * 是因为拖拽的 hook **不能写在 JSX 里的 IIFE 中** ——
-   * hook 必须在组件顶层无条件调用，写在条件分支里会报顺序错误。
+   * 放在组件顶层是因为拖拽的 hook **不能写在 JSX 里的 IIFE 或子组件中**：
+   * hook 必须在组件顶层无条件调用，写在条件分支/子组件里会报顺序错误，
+   * 而且子组件的 hook 状态不会随父组件重渲染而正确复用。
+   * 所以这里算好，再连同 ref 一起传给 PluginManager。
    */
   const appPlugins = (plugins || []).filter((p) => !p.kind || p.kind === 'app');
-  const svcPlugins = (plugins || []).filter((p) => p.kind === 'service');
 
   /* 背景图选择的隐藏 input：按钮只是替它触发点击，
      这样"选择图片…"能保持与其它按钮一致的观感，而不是一个裸 file 控件 */
@@ -1371,90 +1371,36 @@ export default function Settings() {
             </div>
           </div>
 
-          {/* ---------------- 插件管理 ---------------- */}
+          {/* ---------------- 插件管理 ----------------
+              原先用一行行的 PluginRow 列出 app / service，右上角按钮管理
+              另起一区。现在两者合并成同一套卡片矩阵（PluginManager）：
+              一个插件一张卡，运行方式、基调、入口位置、卸载都在卡上。 */}
           <div className="p-card">
             <h2>插件管理</h2>
             <div className="p-muted" style={{ marginBottom: 'var(--sp-3, 6px)' }}>
-              侧栏「＋」可安装新插件；右侧下拉为单个插件指定基调判定方式
+              侧栏「＋」可安装新插件；每张卡片可单独指定基调判定方式、加入或
+              隐藏右上角入口、卸载插件
             </div>
-            {/*
-              按 app / service / toolbar 分区：
-              · 服务插件不显示在侧边栏，由其它插件 ctx.services.call 调用
-              · 工具栏插件显示在标题栏右上角，也不在侧边栏
-
-              两者混进"应用插件"里都会误导 —— 用户装了却在侧边栏找不到，
-              「同页/沙箱」那个标签完全不足以说明原因。
-
-              ⚠️ 用 kind 精确分类，不要写 `kind !== 'service'`：
-              那会把 toolbar 也算成 app（实测过）。
-            */}
-            {(() => {
-              /* apps / svcs 提到组件顶层定义（appPlugins / svcPlugins），
-                 因为拖拽 hook 必须在顶层调用，不能写在这个 IIFE 里 */
-              const sub = (label: string, hint?: string) => (
-                <div style={{
-                  display: 'flex', alignItems: 'baseline', gap: 'var(--sp-4, 8px)',
-                  marginTop: 'var(--sp-6, 12px)',
-                }}>
-                  <span style={{ fontSize: 'var(--fs-12, 12px)', fontWeight: 600 }}>{label}</span>
-                  {hint ? (
-                    <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>{hint}</span>
-                  ) : null}
-                </div>
-              );
-              return (
-                <>
-                  {appPlugins.length
-                    ? sub(`应用插件 · ${appPlugins.length}`, '显示在侧边栏 · 可上下拖动排序')
-                    : null}
-                  {/* 同工具栏入口：onDragOver 挂容器，漏了就是「能拖起来但没反应」 */}
-                  <div
-                    ref={appsRef}
-                    onDragOver={appsDrag.onDragOver}
-                    onDrop={(e) => e.preventDefault()}
-                  >
-                  {appPlugins.map((p, i) => (
-                    <PluginRow
-                      key={p.id}
-                      p={p}
-                      dragProps={appsDrag.getItemProps(i)}
-                      dragging={appsDrag.dragFrom === i}
-                      audit={audits[p.id]}
-                      auditOpen={auditOpen === p.id}
-                      onToggleAudit={() => setAuditOpen((cur) => (cur === p.id ? null : p.id))}
-                      onOverride={(v) => {
-                        setPluginOverride(p.id, v || null);
-                        void syncPolicyToShell(() => (ctx as any)?.shell?.normalizer
-                          ?.setPluginOverride(p.id, v || null));
-                        ctx.toast(`「${p.name}」适配策略已更新`, 'ok');
-                      }}
-                      onRemove={() => removePlugin(p)}
-                    />
-                  ))}
-                  </div>
-                  {svcPlugins.length
-                    ? sub(`服务插件 · ${svcPlugins.length}`, '不显示在侧边栏，由其它插件通过 ctx.services.call 调用')
-                    : null}
-                  {svcPlugins.map((p) => (
-                    <PluginRow
-                      key={p.id}
-                      p={p}
-                      audit={audits[p.id]}
-                      auditOpen={auditOpen === p.id}
-                      onToggleAudit={() => setAuditOpen((cur) => (cur === p.id ? null : p.id))}
-                      onOverride={(v) => {
-                        setPluginOverride(p.id, v || null);
-                        void syncPolicyToShell(() => (ctx as any)?.shell?.normalizer
-                          ?.setPluginOverride(p.id, v || null));
-                        ctx.toast(`「${p.name}」适配策略已更新`, 'ok');
-                      }}
-                      onRemove={() => removePlugin(p)}
-                    />
-                  ))}
-                  <ToolbarSection plugins={plugins} ctx={ctx} />
-                </>
-              );
-            })()}
+            <PluginManager
+              plugins={plugins}
+              ctx={ctx}
+              audits={audits}
+              auditOpen={auditOpen}
+              setAuditOpen={setAuditOpen}
+              appsRef={appsRef}
+              appsDrag={appsDrag}
+              onRemove={removePlugin}
+              onOverride={(p, v) => {
+                setPluginOverride(p.id, v || null);
+                void syncPolicyToShell(() => (ctx as any)?.shell?.normalizer
+                  ?.setPluginOverride(p.id, v || null));
+                ctx.toast(`「${p.name}」适配策略已更新`, 'ok');
+              }}
+            />
+            {/* 读不到清单时**必须**说清原因：
+                下面三组的标题都还在、卡片区都是"这一类当前没有插件"，
+                看着跟"确实没装插件"一模一样 —— 少了这行，
+                「未连接到外壳」会被当成「你没装插件」，排查方向全错。 */}
             {plugins.length ? null : (
               <div className="p-muted" style={{ marginTop: 'var(--sp-5, 10px)' }}>
                 {pluginsUnknown

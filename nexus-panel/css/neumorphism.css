@@ -1596,10 +1596,14 @@ html.theme-transition *:not(.spinner) {
    列宽下限 148px 是量过卡片内容定的：
      图标(22) + 名称(min) + 两个按钮并排(各约 48 + 间距)
    再窄按钮就会挤成两行，看着像两个不同的控件。 */
+/* 列宽从 148px 放到 300px（约两倍）：
+   卡片里现在要装 entry、样式审计、基调下拉、三个按钮 ——
+   148px 只放得下"图标 + 名称 + 两个小按钮"，装进去会挤成多行，
+   名称与按钮各自换行，矩阵高度参差得像坏了。 */
 .tb-shop {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
-  gap: var(--sp-4, 8px);
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--sp-5, 10px);
   margin-top: var(--sp-4, 8px);
 }
 .tb-card {
@@ -1607,10 +1611,29 @@ html.theme-transition *:not(.spinner) {
   flex-direction: column;
   gap: var(--sp-3, 6px);
   min-width: 0;
-  padding: var(--sp-4, 8px) var(--sp-5, 10px);
-  border-radius: var(--r-sm, 9px);
+  padding: var(--sp-5, 10px) var(--sp-6, 12px);
+  border-radius: var(--r, 12px);
   background: var(--surface-sunk);
   box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);
+}
+/* 顶部一行：拖拽手柄 + 图标 + 名称 + 类型标签。
+   名称 flex:1 吃掉剩余空间，标签用 flex:none 才不会被挤没。 */
+.tb-card-top .p-tag { flex: none; }
+.tb-card-entry {
+  font-family: var(--font-mono, ui-monospace, Menlo, Consolas, monospace);
+  font-size: var(--fs-10, 10px);
+  color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 审计徽标 + 基调下拉同一行：徽标不定宽（有/无问题时宽度会变），
+   下拉 flex:1 吃掉剩余 —— 徽标宽度变化时下拉跟着伸缩，不会错位。 */
+.tb-card-field {
+  display: flex; align-items: center; gap: var(--sp-3, 6px);
+  min-width: 0;
+}
+.tb-card-select {
+  flex: 1; min-width: 0; height: 28px;
+  font-size: var(--fs-11, 11px); padding: 0 6px;
 }
 /* 已加入的给一圈内描边：一眼能分出"已经在右上角了"和"还可以加"，
    不靠颜色区分 —— 语义色（--accent）留给状态，不要拿来当装饰。 */
@@ -1660,6 +1683,13 @@ html.theme-transition *:not(.spinner) {
    块间用间距而不是分隔线：这一片本身就在一个带边框的面板里，
    再画横线会把它切成互不相干的几块，反而看不出同属"右上角按钮"。 */
 .tb-group { margin-top: var(--sp-6, 12px); }
+/* 顶部一行总览：这一区现在管的事变多了（基调 / 入口 / 卸载），
+   得先说清"一共多少、右上角几个"，否则卡片一多就成了无参照的货架。 */
+.tb-summary {
+  margin-top: var(--sp-4, 8px);
+  font-size: var(--fs-11, 11px);
+  color: var(--text-dim);
+}
 .tb-group-head {
   display: flex; align-items: baseline;
   gap: var(--sp-4, 8px);
