@@ -773,7 +773,13 @@ t('②b cards 用的是并上 ghosts 后的清单',
     _d: {}, getItem(k) { return this._d[k] ?? null; },
     setItem(k, v) { this._d[k] = v; }, removeItem(k) { delete this._d[k]; },
   };
-  const tp = await import(path.join(HERE, 'js/toolbar-plugin.js').replace(/\\/g, '/'));
+  /*
+   * 必须转成 file:// URL：直接把 `E:/...` 这种绝对路径交给 ESM loader，
+   * 在 Windows 上会报 ERR_UNSUPPORTED_ESM_URL_SCHEME（protocol 'e:'），
+   * 整个测试从这一行起就跑不下去了。上面那些 `import('./js/xxx.js')`
+   * 是相对路径所以没事，这里是绝对路径才踩到。
+   */
+  const tp = await import(pathToFileURL(path.join(HERE, 'js/toolbar-plugin.js')).href);
   const tbManifests = [
     { id: 'toolbar-theme', name: '切换主题', icon: '◐', kind: 'toolbar', type: 'module' },
     { id: 'toolbar-mcp', name: 'MCP 状态', icon: '⬡', kind: 'toolbar', type: 'module' },

@@ -606,7 +606,14 @@ body {
 .err-diag[open] > summary::before { transform: rotate(90deg); }
 .err-diag > summary:hover { color: var(--text); }
 .err-diag-actions { margin: 10px 0; display: flex; gap: 8px; }
-.err-diag-actions /* 日志正文：等宽 + 限制高度，长堆栈不会把整个错误框撑到屏幕外 */
+/*
+ * 日志正文：等宽 + 限制高度，长堆栈不会把整个错误框撑到屏幕外。
+ *
+ * ⚠️ 这里曾残留一个**没有规则体**的 `.err-diag-actions` 选择器，
+ * 于是下面这条被解析成 `.err-diag-actions .err-diag-body`（后代选择器）——
+ * 等宽与限高只在 .err-diag-actions 内部生效，正文本身一条都没吃到。
+ * 同类损伤 dead-class-test 的「截断规则」一项会拦（本次就是这样发现的）。
+ */
 .err-diag-body {
   font-family: var(--font-mono);
   font-size: var(--fs-11, 11px);
@@ -855,6 +862,26 @@ body.nx-inspecting * { cursor: crosshair !important; }
   min-height: 100%;
   isolation: isolate;          /* 把 mix-blend-mode 限制在容器内，不影响外壳 */
 }
+
+/*
+ * 外框修饰层。host.js 里写的是 'plugin-wrap plugin-wrap-frame' 两个类，
+ * 但 frame 这层历史上定义过又消失，属于"覆盖写丢失"——
+ * 与 project-group 那 8 个类是同一类损伤，现在一并补回并由
+ * dead-class-test.mjs 守住。
+ *
+ * 只做视觉修饰（描边 + 圆角），不改布局：
+ * .plugin-wrap 已设 position:relative + height:100% + isolation:isolate，
+ * 在这里重复写会引入层叠冲突，所以刻意不碰。
+ *
+ * ⚠️ 这段在 2026-09-23 的「设置页卡片分组」提交里又被整段删掉过一次
+ * （同一处损伤第二次复现），现在补回第二版。
+ */
+.plugin-wrap-frame {
+  border: 1px solid var(--border, rgba(255, 255, 255, .12));
+  border-radius: var(--r-card, 10px);
+  overflow: hidden;
+}
+
 .plugin-root { min-height: 100%; position: relative; }
 /* 挂载期遮罩：iframe 先隐身，等主题变量推完、适配滤镜也挂上再淡入。
    --------------------------------------------------------------------
