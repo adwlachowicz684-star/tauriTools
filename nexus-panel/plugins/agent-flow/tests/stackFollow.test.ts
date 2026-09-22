@@ -113,3 +113,41 @@ test('App 真的应用了 followers', () => {
     'followers 要真的参与落位',
   );
 });
+
+/* ================= 复制拖动不带走原串 ================= */
+
+/*
+ * 按住 Ctrl / ⌘ 拖动串中间的一环：
+ *
+ *   期望   原件整个串都不动，跟着鼠标走的是**副本**
+ *   实际   副本留在原地没动，原件下面挂着的整串被拖走了
+ *
+ * 根因：位移是改写到副本上的（App 的 handleNodesChange），原件不动；
+ * 但这里的整串跟随是按**原件**的下级算的，于是跟着走的是原件的下级 ——
+ * 原模块当场散架，而用户明明只是想复制出一个。
+ */
+test('复制拖动时整串跟随要跳过（否则原串被拖走）', () => {
+  const src = readSrc('hooks/useStackLayout.ts');
+  /*
+   * 必须匹配"onStackDrag 处理函数内部"的 isDuplicating 调用。
+   * 只查文件里含不含 isDuplicating 不行 ——
+   * onStackDragStop 里也有一个（那是另一件事：不改 stackParent），
+   * 删掉拖动中这个照样通过（假阴性）。
+   */
+  const m = /const onStackDrag = useCallback\([\s\S]{0,1600}?\n    \},\n/.exec(src);
+  assert.ok(m, '找不到 onStackDrag');
+  assert.match(m[0], /isDuplicating\(\)/, '拖动中要判复制态并跳过整串跟随');
+});
+
+test('复制出来的副本不与原件的父抢同一个下级', () => {
+  /*
+   * 嵌合是链：一个父只有一个下级。
+   * 副本若仍指向原父，原父名下同时挂着原件与副本 ——
+   * 拖动原串时被复制出来的那块也跟着跳。
+   * 这条盯 engine 侧的重指向（duplicate.ts）。
+   */
+  const dup = readSrc('engine/duplicate.ts');
+  const m = /for \(const n of outNodes\)[\s\S]{0,600}?\n  \}/.exec(dup);
+  assert.ok(m, 'duplicate 里要有 stackParent 重指向');
+  assert.match(m[0], /stackParent/, '要处理 stackParent');
+});

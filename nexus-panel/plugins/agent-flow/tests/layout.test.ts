@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   LEFT_TABS, LEFT_TAB_LABEL,
-  normalizeLeftTab, normalizeLogHeight,
+  TASK_TABS, TASK_TAB_LABEL,
+  normalizeLeftTab, normalizeTaskTab, normalizeLogHeight,
   LOG_H_MIN, LOG_H_MAX, LOG_H_DEFAULT,
-  leftPaneVisible, leftPaneEditable, coerceForView,
+  leftPaneEditable, leftTabsFor,
 
 } from '../engine/layout';
 
@@ -91,56 +92,62 @@ test('默认值在合法范围内', () => {
   assert.ok(LOG_H_DEFAULT >= LOG_H_MIN && LOG_H_DEFAULT <= LOG_H_MAX);
 });
 
-/* ================= 可见性 ================= */
+/* ================= 任务视图的子标签 ================= */
 
-test('流程视图下左边栏可见', () => {
-  assert.equal(leftPaneVisible('flow'), true);
+test('任务视图两个子标签：进行中 / 已完成', () => {
+  assert.deepEqual(TASK_TABS, ['running', 'done']);
+  assert.equal(TASK_TAB_LABEL.running, '进行中');
+  assert.equal(TASK_TAB_LABEL.done, '已完成');
 });
 
-/** 任务/历史是查看态，画布藏起来了，节点拖不出去 —— 留着是死栏 */
-test('任务视图下左边栏隐藏', () => {
-  assert.equal(leftPaneVisible('tasks'), false);
+/** 历史不再是一个顶层入口，它只是"已完成"这个子标签 */
+test('顶层视图只剩流程与任务两个', () => {
+  assert.equal(typeof leftPaneEditable('flow'), 'boolean');
+  assert.equal(leftPaneEditable('tasks'), false);
 });
 
-test('历史视图下左边栏隐藏', () => {
-  assert.equal(leftPaneVisible('history'), false);
+test('任务标签脏值退回进行中', () => {
+  assert.equal(normalizeTaskTab('done'), 'done');
+  assert.equal(normalizeTaskTab('running'), 'running');
+  assert.equal(normalizeTaskTab('xxx'), 'running');
+  assert.equal(normalizeTaskTab(null), 'running');
+  assert.equal(normalizeTaskTab(undefined), 'running');
+  assert.equal(normalizeTaskTab(123), 'running');
 });
 
-test('未知视图按不可见处理', () => {
-  assert.equal(leftPaneVisible('zzz' as never), false);
-  assert.equal(leftPaneVisible(null as never), false);
+/** 老存档里存的是主视图名，不再是合法子标签 —— 必须落在存在的标签上 */
+test('老存档的 history 落在已完成', () => {
+  assert.equal(normalizeTaskTab('history'), 'done');
 });
+
+/* ================= 左栏始终有标签 ================= */
+
+/**
+ * 两个视图**都显示左栏**，只是标签组不同。
+ *
+ * 以前任务 / 历史下整条隐去 —— 同一条栏时有时无，
+ * 切过去整个界面宽度变一次。
+ */
+test('两个视图下左栏都有标签', () => {
+  assert.equal(leftTabsFor('flow').length, 3);
+  assert.equal(leftTabsFor('tasks').length, 2);
+});
+
+test('流程视图用三个库，任务视图用两个状态', () => {
+  assert.deepEqual(leftTabsFor('flow'), ['node', 'module', 'canvas']);
+  assert.deepEqual(leftTabsFor('tasks'), ['running', 'done']);
+});
+
+test('未知视图按流程处理', () => {
+  assert.deepEqual(leftTabsFor('zzz' as never), ['node', 'module', 'canvas']);
+  assert.deepEqual(leftTabsFor(null as never), ['node', 'module', 'canvas']);
+});
+
+/* ================= 可编辑性 ================= */
 
 test('只有流程视图能编辑', () => {
   assert.equal(leftPaneEditable('flow'), true);
   assert.equal(leftPaneEditable('tasks'), false);
-  assert.equal(leftPaneEditable('history'), false);
-});
-
-/** 编辑性必须与画布可见性一致，否则"左边能改、中间看不见" */
-test('可编辑一定可见', () => {
-  for (const v of ['flow', 'tasks', 'history'] as const) {
-    if (leftPaneEditable(v)) assert.equal(leftPaneVisible(v), true, `${v} 可编辑却不可见`);
-  }
-});
-
-/* ================= 切视图时纠正 ================= */
-
-test('流程视图保持当前标签', () => {
-  const r = coerceForView('flow', 'canvas');
-  assert.equal(r.left, 'canvas');
-  assert.equal(r.visible, true);
-});
-
-test('流程视图停在模块库也保持', () => {
-  const r = coerceForView('flow', 'module');
-  assert.equal(r.left, 'module');
-  assert.equal(r.visible, true);
-});
-
-test('非流程视图标记不可见', () => {
-  const r = coerceForView('history', 'node');
-  assert.equal(r.visible, false);
 });
 
 /**

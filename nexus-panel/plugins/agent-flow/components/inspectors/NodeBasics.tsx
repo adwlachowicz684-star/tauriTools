@@ -66,13 +66,30 @@ export function NodeBasics({ node, onChange, onNote, onEditModule }: Props) {
 
   return (
     <section className="insp-basics">
+      {/*
+       * 第一行只有名称 —— 独占一行。
+       *
+       * 以前名称右边跟着类型标签：「条件分支」「触发器」这类词比较长，
+       * 会把输入框挤短，稍长一点的名字就被截在中间看不全。
+       * 名称是"我给这一步起的名字"，值得占满整行。
+       */}
       <div className="insp-title">
         <input
           className="title-input"
           value={String(d.label ?? '')}
           onChange={(e) => onChange(node.id, { label: e.target.value })}
         />
+      </div>
+
+      {/*
+       * 第二行：类型标签 + 节点层面的动作。
+       *
+       * 类型挪下来之后，「存为自定义」这类按钮也有了自己的位置，
+       * 不必再跟名称抢同一行的宽度。
+       */}
+      <div className="insp-kindrow">
         <span className="insp-kind">{def.meta.label}</span>
+        <span className="task-grow" />
         {/*
          * 模块节点给「编辑内部」，其余给「存为自定义」——
          * 两个都是"整个节点层面"的动作，占同一个位置，

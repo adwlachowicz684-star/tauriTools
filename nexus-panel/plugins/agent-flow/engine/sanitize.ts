@@ -47,7 +47,7 @@ export function looksLikeSecretName(name: string): boolean {
  * 否则只复制串顶（下级没一起选中）时，副本会继承"我下面有块"，
  * 底部被压平而实际下面什么都没有。
  */
-export const VIEW_KEYS = ['size', 'stackParent', 'stackCollapsed', 'hasStackChild'];
+export const VIEW_KEYS = ['size', 'stackParent', 'stackCollapsed', 'hasStackChild', 'onFireManual'];
 
 /** 数据里是否含内联密钥 —— 用于提示用户"这部分不会被存进去" */
 export function hadInlineSecret(data: unknown): boolean {

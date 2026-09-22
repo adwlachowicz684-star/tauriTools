@@ -43,8 +43,8 @@ export function useStackLayout<T extends StackNode>({
   /**
    * 当前是不是"按住 Ctrl 拖动 = 复制"。
    *
-   * 复制时移动的是副本，原件关系没变 ——
-   * 此时改 stackParent 会把**原件**改坏。
+   * 复制时走的是副本，原件**整个串**都不该动 ——
+   * 改 stackParent 会把原件改坏，让原串跟着鼠标走则直接把它拆散。
    */
   isDuplicating: () => boolean;
 }) {
@@ -122,6 +122,18 @@ export function useStackLayout<T extends StackNode>({
   /** 拖动中：整串跟着走（用起始位置 + 被拖节点的位移量） */
   const onStackDrag = useCallback(
     (_e: unknown, node: { id: string; position: { x: number; y: number } }) => {
+      /*
+       * 复制拖动（Ctrl / ⌘）**不带走原串**。
+       *
+       * 位移是改写到副本上的（见 App 的 handleNodesChange），
+       * 原件一直留在原地。而这里的跟随直接按**原件**的下级来算，
+       * 于是跟着鼠标走的是原件下面挂着的那一整串 ——
+       * 表现为：被复制的节点留在原地没动，它下面整串却被拖走了，
+       * 原来的模块当场散架，而用户明明只是想复制出一个。
+       *
+       * 复制要的是"原件不动、副本跟鼠标"，所以整串跟随在这里跳过。
+       */
+      if (isDuplicating()) return;
       const start = dragStartRef.current;
       if (!start || !start[node.id]) return;
       const dx = node.position.x - start[node.id].x;

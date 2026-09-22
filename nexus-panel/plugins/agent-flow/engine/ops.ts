@@ -299,13 +299,17 @@ const COMPARE_SIGN: Record<string, string> = {
 };
 
 /**
- * 带参数的一句话摘要（卡片与导出说明共用）。
+ * 摘要的一小段。
  *
- * ================= 为什么必须带参数 ====================
+ * ================= 为什么要拆成段 ====================
  *
- * 以前只显示运算名（如"＋"），改了参数在卡片上看不出任何变化 ——
- * 用户改完以为没生效，只好点开面板再确认一遍。
- * 现在把参数写进摘要，改一个字卡片就跟着变。
+ * 摘要里混着两类东西：**参数**（`10`、`5`）和**文字**（`＋`、`包含`、括号）。
+ * 以前只产出一整条字符串，卡片上只能当纯文本渲染 ——
+ * 于是 `10 ＋ 5` 看起来就是一句话，看不出 `10` 和 `5` 是这一格填的参数、
+ * `＋` 是选的运算符。改参数时得先认出哪几个字是参数。
+ *
+ * 现在按 role 分好，卡片把参数渲染成下凹的输入格（与面板里填参数
+ * 那一个个框同一套观感），一眼就能对上"哪块是我填的"。
  *
  * ================= 谁在用 ====================
  *
@@ -313,58 +317,140 @@ const COMPARE_SIGN: Record<string, string> = {
  * 两处各写一份的话，会出现"卡片上写着 1＋2、导出说明里只有'加'"——
  * 同一件事两种说法，而两边都没错，错的是分了两处。
  */
+export type BriefPart = {
+  /** val=参数值 / op=运算符 / fn=函数名 / text=字面文字（括号、逗号、"包含"这类） */
+  role: 'val' | 'op' | 'fn' | 'text';
+  text: string;
+};
+
+/** 只有 val / op / fn 会被渲染成下凹的参数格，text 是连接它们的字 */
+export function isArgPart(p: BriefPart): boolean {
+  return p.role !== 'text';
+}
+
+/**
+ * 拼回一整条字符串（导出说明用）。
+ *
+ * 两个**非** text 段之间补一个空格（否则 `10` 和 `＋` 会黏成 `10＋`）；
+ * text 段自己带空格（如 `' 包含 '`、`', '`），不能再补 ——
+ * 补了会变成 `min( 1 , 2 )` 这种散开的写法。
+ */
+function partsToText(ps: BriefPart[]): string {
+  let s = '';
+  for (let i = 0; i < ps.length; i += 1) {
+    const p = ps[i];
+    if (i > 0 && p.role !== 'text' && ps[i - 1].role !== 'text') s += ' ';
+    s += p.text;
+  }
+  return s;
+}
+
+/** 带参数的一句话摘要（卡片与导出说明共用） */
 export function opBrief(kind: string, d: Record<string, unknown>): string {
+  return partsToText(opBriefParts(kind, d));
+}
+
+/** 摘要的分段形式 —— 卡片靠它把参数画成下凹的输入格 */
+export function opBriefParts(kind: string, d: Record<string, unknown>): BriefPart[] {
   const op = String(d.op ?? '');
   const a = briefArg(d.a);
   const b = briefArg(d.b);
   const c = briefArg(d.c);
+  /** 单目函数写法：函数名 + 括号里的参数 */
+  const call = (name: string, ...args: string[]): BriefPart[] => [
+    { role: 'fn', text: name },
+    { role: 'text', text: '(' },
+    ...args.map((v, i) => [
+      ...(i > 0 ? [{ role: 'text' as const, text: ', ' }] : []),
+      { role: 'val' as const, text: v },
+    ]).flat(),
+    { role: 'text', text: ')' },
+  ];
 
   if (kind === 'math') {
     const sign = MATH_SIGN[op];
-    if (sign) return `${a} ${sign} ${b}`;
+    if (sign) return [{ role: 'val', text: a }, { role: 'op', text: sign }, { role: 'val', text: b }];
     // min / max 是函数名写法，写成 `min(1, 2)` 比 `1 min 2` 好认
-    if (op === 'min' || op === 'max') return `${op}(${a}, ${b})`;
+    if (op === 'min' || op === 'max') return call(op, a, b);
     // 单目：取整、绝对值 —— 没有第二个数
-    if (op === 'round' || op === 'floor' || op === 'ceil' || op === 'abs') return `${op}(${a})`;
-    return opSummary(kind, op);
+    if (op === 'round' || op === 'floor' || op === 'ceil' || op === 'abs') return call(op, a);
+    return [{ role: 'text', text: opSummary(kind, op) }];
   }
 
   if (kind === 'text') {
     switch (op) {
-      case 'concat': return `${a} ＋ ${b}`;
-      case 'length': return `长度(${a})`;
-      case 'upper': return `转大写(${a})`;
-      case 'lower': return `转小写(${a})`;
-      case 'trim': return `去空格(${a})`;
+      case 'concat':
+        return [{ role: 'val', text: a }, { role: 'op', text: '＋' }, { role: 'val', text: b }];
+      case 'length': return call('长度', a);
+      case 'upper': return call('转大写', a);
+      case 'lower': return call('转小写', a);
+      case 'trim': return call('去空格', a);
       // 替换要三个参数才说得清，用箭头表示"换成"
-      case 'replace': return `${a}：${b} → ${c}`;
-      case 'substr': return `${a}[${b}~${c}]`;
-      case 'split': return `${a} 第 ${c} 段`;
-      case 'join': return `连接 ${a}（用「${b}」）`;
-      case 'repeat': return `${a} × ${b}`;
-      default: return opSummary(kind, op);
+      case 'replace':
+        return [
+          { role: 'val', text: a }, { role: 'text', text: '：' },
+          { role: 'val', text: b }, { role: 'op', text: '→' }, { role: 'val', text: c },
+        ];
+      case 'substr':
+        return [
+          { role: 'val', text: a }, { role: 'text', text: '[' },
+          { role: 'val', text: b }, { role: 'text', text: '~' },
+          { role: 'val', text: c }, { role: 'text', text: ']' },
+        ];
+      case 'split':
+        return [
+          { role: 'val', text: a }, { role: 'text', text: ' 第 ' },
+          { role: 'val', text: c }, { role: 'text', text: ' 段' },
+        ];
+      case 'join':
+        return [
+          { role: 'text', text: '连接 ' }, { role: 'val', text: a },
+          { role: 'text', text: '（用「' }, { role: 'val', text: b }, { role: 'text', text: '」）' },
+        ];
+      case 'repeat':
+        return [{ role: 'val', text: a }, { role: 'op', text: '×' }, { role: 'val', text: b }];
+      default:
+        return [{ role: 'text', text: opSummary(kind, op) }];
     }
   }
 
   if (kind === 'compare') {
     const sign = COMPARE_SIGN[op];
-    if (sign) return `${a} ${sign} ${b}`;
-    if (op === 'contains') return `${a} 包含 ${b}`;
-    if (op === 'startsWith') return `${a} 以 ${b} 开头`;
-    if (op === 'endsWith') return `${a} 以 ${b} 结尾`;
-    return opSummary(kind, op);
+    if (sign) return [{ role: 'val', text: a }, { role: 'op', text: sign }, { role: 'val', text: b }];
+    if (op === 'contains') return [{ role: 'val', text: a }, { role: 'text', text: ' 包含 ' }, { role: 'val', text: b }];
+    if (op === 'startsWith') {
+      return [
+        { role: 'val', text: a }, { role: 'text', text: ' 以 ' },
+        { role: 'val', text: b }, { role: 'text', text: ' 开头' },
+      ];
+    }
+    if (op === 'endsWith') {
+      return [
+        { role: 'val', text: a }, { role: 'text', text: ' 以 ' },
+        { role: 'val', text: b }, { role: 'text', text: ' 结尾' },
+      ];
+    }
+    return [{ role: 'text', text: opSummary(kind, op) }];
   }
 
   if (kind === 'random') {
     switch (op) {
-      case 'int': return `随机整数 ${a}~${b}`;
-      case 'float': return `随机小数 ${a}~${b}`;
-      case 'pick': return `随机选一个：${a}`;
-      case 'shuffle': return `打乱：${a}`;
-      case 'bool': return '随机真假';
-      default: return opSummary(kind, op);
+      case 'int':
+        return [
+          { role: 'text', text: '随机整数 ' }, { role: 'val', text: a },
+          { role: 'text', text: '~' }, { role: 'val', text: b },
+        ];
+      case 'float':
+        return [
+          { role: 'text', text: '随机小数 ' }, { role: 'val', text: a },
+          { role: 'text', text: '~' }, { role: 'val', text: b },
+        ];
+      case 'pick': return [{ role: 'text', text: '随机选一个：' }, { role: 'val', text: a }];
+      case 'shuffle': return [{ role: 'text', text: '打乱：' }, { role: 'val', text: a }];
+      case 'bool': return [{ role: 'text', text: '随机真假' }];
+      default: return [{ role: 'text', text: opSummary(kind, op) }];
     }
   }
 
-  return opSummary(kind, op);
+  return [{ role: 'text', text: opSummary(kind, op) }];
 }

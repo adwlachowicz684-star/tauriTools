@@ -9,8 +9,9 @@
  *
  * 这些是**界面状态**，但它们有必须守住的规则：
  *
- *   · 切到「任务 / 历史」视图时左边栏没有意义（画布藏起来了，节点拖不出去），
- *     不跟着切就会留一条死栏 —— 而"点了没反应"是最难自查的一类问题
+ *   · 切到任务视图时左栏要换成「进行中 / 已完成」——
+ *     两个视图共用同一条栏、同一套底板，不跟着换就会留一条死栏，
+ *     而"点了没反应"是最难自查的一类问题
  *   · 存进 localStorage 的值可能是任意形状（老版本写的、手改的），
  *     不归一就会渲染出一个谁都不认识的标签，**点了没反应**
  *
@@ -29,8 +30,13 @@
 export type LeftTab = 'node' | 'module' | 'canvas';
 
 
-/** 主视图 */
-export type MainView = 'flow' | 'tasks' | 'history';
+/**
+ * 主视图：只剩「流程 / 任务」两个。
+ *
+ * 历史不再是一个顶层入口 —— 它与任务窗口的区别只是"跑完没跑完"，
+ * 却占了一个和流程平级的位置，于是同一件事要分两处找。
+ */
+export type MainView = 'flow' | 'tasks';
 
 export const LEFT_TABS: LeftTab[] = ['node', 'module', 'canvas'];
 
@@ -39,6 +45,45 @@ export const LEFT_TAB_LABEL: Record<LeftTab, string> = {
   module: '模块库',
   canvas: '画布',
 };
+
+/* ------------------------------------------------------------------ */
+/* 任务视图的两个子标签                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 任务视图左栏的两个标签。
+ *
+ * 「进行中」就是原来的任务窗口，「已完成」就是原来的历史窗口 ——
+ * 合并成一个视图下并列的两个标签，与流程视图的
+ * 节点库 / 模块库 / 画布库 **同一套切法**：
+ *
+ *   · 顶层只留「流程 / 任务」两个，不再有三个平级入口
+ *   · 已完成任务与正在跑的任务本质是同一类东西的不同状态，
+ *     分成两个窗口时，找一条刚跑完的记录要先想"它算任务还是算历史"
+ */
+export type TaskTab = 'running' | 'done';
+
+export const TASK_TABS: TaskTab[] = ['running', 'done'];
+
+export const TASK_TAB_LABEL: Record<TaskTab, string> = {
+  running: '进行中',
+  done: '已完成',
+};
+
+/**
+ * 把任意值归一成合法的任务子标签。
+ *
+ * 默认退回 **running**：任务视图的主要用途是盯正在跑的，
+ * 而"打开却发现停在看不懂的那一页"比"没停在我上次看的地方"更糟。
+ */
+export function normalizeTaskTab(v: unknown): TaskTab {
+  /*
+   * 'history' 是合并前那个顶层「历史」入口留下的值。
+   * 认它并落到 done —— 上次在看历史的人，这次应该停在"已完成"，
+   * 而不是回到"进行中"再自己找一遍。
+   */
+  return v === 'done' || v === 'history' ? 'done' : 'running';
+}
 
 /* ------------------------------------------------------------------ */
 /* 右栏日志高度                                                        */
@@ -87,16 +132,6 @@ export function normalizeLeftTab(v: unknown): LeftTab {
 /* ------------------------------------------------------------------ */
 
 /**
- * 左边栏在当前视图下是否有意义。
- *
- * 任务 / 历史是**查看态**：画布都藏起来了，节点拖不出去。
- * 留着节点库就是一条死栏。
- */
-export function leftPaneVisible(view: MainView): boolean {
-  return view === 'flow';
-}
-
-/**
  * 画布置于左边栏时，是否在画布标签上也能编辑。
  *
  * 只有流程视图能编辑 —— 与画布区本身的可见性保持一致，
@@ -107,12 +142,12 @@ export function leftPaneEditable(view: MainView): boolean {
 }
 
 /**
- * 切视图时自动纠正标签。
+ * 当前视图下左栏该显示哪一组标签。
  *
- * 从流程切到历史时如果正停在「节点库」，不纠正的话
- * 用户看到的是一个显示着节点库、但什么都拖不动的侧栏。
+ * 两个视图**都有**左栏内容（流程是三个库，任务是进行中/已完成），
+ * 所以不再有"隐藏左栏"这回事 —— 以前任务视图下左栏被整条隐去，
+ * 于是同样宽的一条栏在不同视图下时有时无，切过去整个布局跳一下。
  */
-export function coerceForView(view: MainView, left: LeftTab): { left: LeftTab; visible: boolean } {
-  if (!leftPaneVisible(view)) return { left, visible: false };
-  return { left, visible: true };
+export function leftTabsFor(view: MainView): string[] {
+  return view === 'tasks' ? (TASK_TABS as string[]) : (LEFT_TABS as string[]);
 }
