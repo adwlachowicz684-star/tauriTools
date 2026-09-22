@@ -130,7 +130,8 @@
     "test:pg-chain-tpl-norm": "node plugins/project-group/chain-template-normalize-test.mjs",
     "test:pg-chain-default-fill": "node plugins/project-group/chain-default-fill-test.mjs",
     "test:pg-addcard-cross-tab": "node plugins/project-group/addcard-cross-tab-test.mjs",
-    "test:pg-rename-relink": "node plugins/project-group/rename-relink-test.mjs"
+    "test:pg-rename-relink": "node plugins/project-group/rename-relink-test.mjs",
+    "test:pg-backup-reentry": "node plugins/project-group/backup-reentry-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

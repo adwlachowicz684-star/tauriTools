@@ -37,6 +37,43 @@ static AUTO_RUNNING: AtomicBool = AtomicBool::new(false);
 static AUTO_GEN: AtomicU64 = AtomicU64::new(0);
 static AUTO_LAST: Mutex<Option<SystemTime>> = Mutex::new(None);
 
+/*
+ * 「备份进行中」标志：手动 / 自动 / MCP 三条入口共用（对齐原版 `_backupBusy`
+ * —— 原版注释写明"防重入（含自动定时触发共用）"）。
+ *
+ * 为什么要它：两份备份同时写同一个目标目录时，一边走到镜像删除阶段，
+ * 会把另一边刚复制进去的文件当成"源里没有的多余文件"删掉。
+ * 结果是备份目录里缺文件，而两边都报成功 —— 没有任何报错。
+ */
+static BACKUP_BUSY: AtomicBool = AtomicBool::new(false);
+
+/// 抢占"备份中"标志；已被占用返回 None。
+///
+/// 用 Drop 自动释放，而不是在各条返回路径上手动置回 false：
+/// 中途 return / panic 漏掉一处，标志就永久停在 true，
+/// 之后**所有**备份都做不了，且没有任何报错 ——
+/// 用户只会觉得"备份突然不工作了"。
+pub fn try_begin() -> Option<BackupGuard> {
+    BACKUP_BUSY
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .ok()
+        .map(|_| BackupGuard)
+}
+
+/// 是否已有备份在跑。自动线程用它**先探再跑**，
+/// 免得抢占失败却已经把本轮时间戳吃掉（那样要等一整个间隔才重试）。
+pub fn is_busy() -> bool {
+    BACKUP_BUSY.load(Ordering::SeqCst)
+}
+
+pub struct BackupGuard;
+
+impl Drop for BackupGuard {
+    fn drop(&mut self) {
+        BACKUP_BUSY.store(false, Ordering::SeqCst);
+    }
+}
+
 /// 自动备份状态（给设置面板显示）。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,6 +144,11 @@ pub fn start_auto(app: AppHandle) -> bool {
                 .unwrap_or(0);
             if elapsed < u64::from(mins) * 60 { continue; }
 
+            /*
+             * 先探再跑：被占用时**不更新 last**，30 秒后这一轮还会再来。
+             * 若照原样先把 last 推到现在，这次抢占失败就等于白等一整个间隔。
+             */
+            if is_busy() { continue; }
             last = Some(SystemTime::now());
             let _ = run(&cfg, &dir, "project", cfg.backup_append_only);
             let _ = run(&cfg, &dir, "group", cfg.backup_append_only);
@@ -205,6 +247,25 @@ pub fn collect_paths(tabs: &[super::model::TabItem]) -> Vec<String> {
 /// 执行备份。kind: project | group
 pub fn run(cfg: &FpxConfig, data_dir: &Path, kind: &str, append_only: bool) -> BackupResult {
     let target = resolve_dir(cfg, data_dir, kind);
+    /*
+     * 防重入放在 `run` 里，而不是各调用点：手动命令 / 自动线程 / MCP
+     * 三条入口都调它，只在一处加就不会漏。
+     *
+     * 被占用时**返回带一条错误的空结果**，不是静默成功 ——
+     * 原版 `_backupBusy` 是直接 `return`（点了没反应），
+     * 用户不知道是备份在跑还是功能坏了。说清楚才是"显示与实际一致"。
+     */
+    let _guard = match try_begin() {
+        Some(g) => g,
+        None => {
+            return BackupResult {
+                target: target.to_string_lossy().to_string(),
+                sources: 0, missing_sources: 0, new_files: 0, updated_files: 0,
+                deleted_files: 0, skipped_links: 0,
+                errors: vec!["[跳过] 已有备份正在进行（手动 / 自动 / MCP 入口之一），本次未执行".to_string()],
+            };
+        }
+    };
     let tabs = if kind == "group" { &cfg.group_tabs } else { &cfg.project_tabs };
     let paths = collect_paths(tabs);
     let mut r = BackupResult {
