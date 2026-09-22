@@ -83,7 +83,26 @@ console.log('\n=== 4. 分隔条聚焦时方向键归分隔条 ★ ===');
   t('没有整组让路', !/if \(isOnSplitter\(e\.target\)\) return;/.test(hk));
 }
 
-console.log('\n=== 5. 原有行为没被改坏 ===');
+console.log('\n=== 5. 切页签要清掉该栏的选中（原版 SwitchProjectTab）★ ===');
+{
+  /*
+   * 原版：SwitchProjectTab 后 `vm.SelectedCard == null`。
+   *
+   * 不清的后果：选中的卡不在新页签里、界面上看不见它，
+   * 但左栏操作与快捷键仍作用于它 —— 用户以为"没选中任何东西"，
+   * 按 F2 却改了另一页签里的卡。没有任何提示。
+   */
+  const i = app.indexOf('onTab={(i) => {');
+  const b = app.slice(i, i + 700);
+  t('切页签时清选中', /s\.setSelProject\(null\);/.test(b));
+  /* 只清这一栏：项目组栏是堆叠的，所有分类同时在界面上，
+     清它只会让用户平白失去对另一栏的选择 */
+  t('不动项目组栏的选中', !/s\.setSelGroup\(null\);/.test(b));
+  /* 页签切换本身不能丢 */
+  t('仍在切页签', /s\.setActiveTab\(\(prev\) => \(\{ \.\.\.prev, project: i \}\)\);/.test(b));
+}
+
+console.log('\n=== 6. 原有行为没被改坏 ===');
 {
   t('cycleTab 仍在', /const cycleTab = \(kind: CardKind, delta: number\)/.test(app));
   t('focus 仍在', /\n    focus: setFocus,\n/.test(app));

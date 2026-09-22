@@ -912,7 +912,23 @@ export default function App() {
               onRemoveTab={(i) => requestRemoveTab('project', i)}
               onMoveTab={(from, to) => void s.moveTab('project', from, to)}
               active={s.activeTab.project}
-              onTab={(i) => s.setActiveTab((prev) => ({ ...prev, project: i }))}
+              /*
+               * 切页签要清掉这一栏的选中（对齐原版 SwitchProjectTab：
+               * `vm.SelectedCard == null`）。
+               *
+               * 不清的后果：选中的卡不在新页签里，界面上**看不见它**，
+               * 但左栏操作（改名 / 改色 / 打开）与快捷键仍作用于它 ——
+               * 用户以为"没选中任何东西"，按 F2 却改了另一页签里的卡。
+               * 这是"改了不该改的东西"里最典型的一种，且没有任何提示。
+               *
+               * 只清 project 这一栏：项目组栏是纵向堆叠、所有分类同时在
+               * 界面上，不存在"选中的卡不在视野里"的情况，清它只会让用户
+               * 平白失去对另一栏的选择。
+               */
+              onTab={(i) => {
+                s.setActiveTab((prev) => ({ ...prev, project: i }));
+                s.setSelProject(null);
+              }}
               focused={focus === 'project'}
               onJumpToGroup={jumpToGroup}
             />
