@@ -1136,6 +1136,77 @@ input[type='range']:disabled {
 .nx-add:active { box-shadow: var(--sh-in-sm); }
 .nx-add:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 
+/* ============================================================
+   卡片交互反馈（悬浮 / 按压 / 入场）
+   ============================================================
+   四个参考页（学习台 / 乐园 / 小账本 / 港股报告）的动效里，
+   下面几条是**同类手段里最克制**的，收口成一套：
+
+     悬浮边缘高亮  港股报告 .expert-card:hover{border-color:accent}
+                   —— 只换颜色、不换粗细，卡片尺寸纹丝不动
+     悬浮微抬升    学习台 .item:hover{translateY(-1px)+浅阴影}
+                   —— 乐园那版是 -3px 配 0 8px 24px 大阴影，
+                      在工具界面里过于浮夸，取 -1px 这版
+     按压          三者都有（.97 / .95 / .98），取中间 .97
+     入场          学习台 fadeIn、小账本 enter 都是
+                   「淡入 + 上移 6~10px」，取 6px 这版
+
+   为什么这一节只许改这几类属性：
+   ------------------------------------------------------------
+   此前修过一轮"按钮选中后加粗 → 字宽变化 → 整排按钮互推"，
+   以及"缩略图 hover 改高度 → 整行抖 3px"。
+
+   判据很简单：**是否参与布局计算**。
+     ✅ 可改：color / background-color / border-color / box-shadow
+              / transform / opacity —— 都不占布局
+     ❌ 禁改：font-weight / font-size / padding / border-width
+              / width / height / margin —— 全都会重排
+
+   border-color 之所以安全，正因为这里**只换色不动宽度**。
+   若写成 border: 2px solid（简写会重置 width），就又会把卡片撑大。 */
+
+/* 模块卡片：悬浮时边缘转强调色 + 微抬升。
+   border-color 而非 border：前者只换色，后者会把粗细也重置掉。 */
+.nx-card,
+.nx-panel {
+  transition: border-color var(--dur-fast), box-shadow var(--dur-fast),
+              transform var(--dur-fast);
+}
+.nx-card:hover,
+.nx-panel:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: var(--sh-out-sm);
+}
+
+/* 按压：内凹阴影（原有）+ 轻微缩放（参考页共有手法）。
+   只加 transform，不动 padding —— 缩放不占布局，按钮不会推挤邻居。 */
+.nx-card:active,
+.nx-panel:active,
+.nx-btn:active,
+.p-btn:active { transform: scale(.97); }
+
+/* 入场：淡入 + 上移。参考页是 220~300ms 配 6~10px，
+   这里取 200ms / 6px（--dur-base），再快就看不出"进入"了。 */
+@keyframes nx-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.nx-enter { animation: nx-enter var(--anim-in) ease both; }
+
+/* 尊重「减少动态效果」的系统设置。
+   参考页四个都没有这条，但它是无障碍底线：
+   前庭功能敏感的用户看到位移会不适，这里直接关掉位移只留淡入。 */
+@media (prefers-reduced-motion: reduce) {
+  .nx-card,
+  .nx-panel,
+  .nx-btn,
+  .p-btn { transition: none; }
+  .nx-card:hover,
+  .nx-panel:hover { transform: none; }
+  .nx-enter { animation: none; }
+}
+
 /* 禁止图标（带斜杠的圆环）。
    显式指定 emoji 字体：系统默认字体可能把它渲染成空白方框，
    那还不如不画 —— 没了图标，占位框就只剩一句费解的文字。
