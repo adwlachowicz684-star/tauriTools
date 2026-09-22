@@ -955,5 +955,172 @@ console.log('\n=== 21. 背景图预览框（放大 + 占位纵向排）===');
     /nx-bgslot-ban[\s\S]{0,220}nx-bgslot-off-text/.test(app), 'JSX 未挂该类');
 }
 
+
+console.log('\n=== 22. 主题对比度兜底（纯计算，不依赖 jsdom）===');
+/*
+ * theme-test.mjs 是权威，但它 import jsdom —— 装不上依赖时**整套跑不起来**，
+ * 于是"新增主题对比度不达标"这类问题在 CI 之外根本没人拦。
+ * （实测：新增 5 套暖纸主题时，其中 1 套的三级文字 2.68 < 3，
+ *   靠手算才发现，测试一个都没跑。）
+ *
+ * 这里是纯计算兜底，覆盖 theme-test 里那组 PAIRS 的同一套阈值。
+ * 两边阈值必须一致，否则"本地过了、CI 红了"会让人无所适从。
+ */
+{
+  const { PRESET_THEMES } = await import('./js/themes.js');
+  const hex2rgb = (h) => { const x = h.replace('#', ''); return [0, 2, 4].map((i) => parseInt(x.slice(i, i + 2), 16)); };
+  const lum = (h) => {
+    const [r, g, b] = hex2rgb(h).map((v) => { const y = v / 255; return y <= 0.03928 ? y / 12.92 : ((y + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const cr = (a, b) => { const la = lum(a), lb = lum(b); const [hi, lo] = la > lb ? [la, lb] : [lb, la]; return (hi + 0.05) / (lo + 0.05); };
+  const solid = (c) => c && /^#[0-9a-f]{6}$/i.test(c);
+  const PAIRS = [
+    ['--text', '--bg', 4.5], ['--text-soft', '--bg', 4.5],
+    ['--text-dim', '--bg', 3.0], ['--text-mute', '--bg', 3.0],
+    ['--accent', '--bg', 3.0],
+    ['--text', '--surface', 4.5], ['--text-dim', '--surface', 3.0],
+    ['--text-mute', '--surface', 3.0],
+    ['--text', '--surface-raised', 4.5],
+  ];
+  const bad = [];
+  for (const th of PRESET_THEMES) {
+    for (const [fg, bgc, min] of PAIRS) {
+      if (!solid(th.vars[fg]) || !solid(th.vars[bgc])) continue;
+      const c = cr(th.vars[fg], th.vars[bgc]);
+      if (c < min) bad.push(`${th.id} ${fg}@${bgc} ${c.toFixed(2)}<${min}`);
+    }
+  }
+  t('全部主题的对比度达标（纯计算兜底）', bad.length === 0,
+    bad.slice(0, 3).join(' | ') || `${PRESET_THEMES.length} 套全部达标`);
+
+  /* 22.2 暖纸质那一族（新增）必须都在：它们补齐了"大地色系"的基调覆盖。
+     少了任何一套，浅色扁平就又只剩下冷调（蓝/灰）可选。 */
+  const warm = ['oat-umber', 'olive-paper', 'terracotta', 'cocoa-night', 'glass-amber'];
+  const missing = warm.filter((id) => !PRESET_THEMES.some((x) => x.id === id));
+  t('暖纸质 / 大地色系主题族齐全', missing.length === 0, missing.join(', ') || `${warm.length} 套`);
+
+  /* 22.3 风格 × 基调不能有洞 */
+  const combos = new Set(PRESET_THEMES.map((x) => x.style + '/' + x.base));
+  const holes = [];
+  for (const st of ['neumorph', 'flat', 'glass']) {
+    for (const b of ['dark', 'light']) if (!combos.has(st + '/' + b)) holes.push(st + '/' + b);
+  }
+  t('风格 × 基调 每种组合都有主题', holes.length === 0, holes.join(', ') || '6/6');
+}
+
+
+console.log('\n=== 23. 交互反馈动效（借鉴四个参考页）===');
+/*
+ * 从四个参考页收口而来：悬浮边缘高亮（港股报告）、微抬升（学习台）、
+ * 按压（三者共有）、入场（学习台/小账本）。
+ *
+ * 守的是**边界**而不是数值：状态变化只许改不占布局的属性。
+ * 依据此前两起真实事故 —— 按钮加粗导致宽度变化、缩略图改高导致整行抖。
+ *
+ * 筛选方式刻意按**选择器名**挑块，而不是按"从 A 切到 B"的位置切片：
+ * 位置切片一旦遇到文件里已存在同名标记（如别处已有 prefers-reduced-motion），
+ * 结束点会落在起点之前，slice 返回空串 —— 于是检查项一个都匹配不到，
+ * 断言却**全部通过**。这是比漏检更危险的假通过。
+ */
+{
+  const ctl = read('css/controls.css');
+  const BAN = /\b(font-weight|font-size|padding|border-width|width|height|margin)\s*:/;
+  const MINE = /nx-card|nx-panel|nx-enter/;
+  const bad = [];
+  for (const m of ctl.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    const sel = m[1].trim().replace(/\n/g, ' ');
+    if (!MINE.test(sel)) continue;
+    if (!/:hover|:active|@keyframes/.test(sel)) continue;
+    const hit = m[2].match(BAN);
+    if (hit) bad.push(`${sel.slice(0, 34)} → ${hit[0]}`);
+  }
+  t('悬浮/按压/入场都不改布局属性', bad.length === 0,
+    bad.slice(0, 3).join(' ; ') || '只改 color/shadow/transform/opacity');
+
+  /* 23.2 悬浮边缘高亮必须是 border-color 而不是 border 简写。
+     border 简写会重置粗细（默认 medium≈3px），把卡片撑大 ——
+     这正是"悬浮时布局跳动"的典型来源。
+     判据里排除 border-color：`border` 后紧跟 `-` 的不是简写。 */
+  const hb = ctl.match(/\.nx-panel:hover\s*\{([^}]*)\}/)?.[1] || '';
+  t('悬浮用 border-color（不动粗细）',
+    hb !== '' && /border-color:/.test(hb) && !/(?:^|[;{\s])border\s*:/.test(hb),
+    hb.trim().slice(0, 46) || '未匹配到 .nx-panel:hover');
+
+  t('入场动画走 --anim-in 令牌',
+    /animation:\s*nx-enter\s+var\(--anim-in\)/.test(ctl), '未用 --anim-in');
+
+  /* 23.4 必须有 prefers-reduced-motion 兜底。
+     四个参考页都没这条，但它是无障碍底线：位移会引发前庭不适。 */
+  t('尊重 prefers-reduced-motion', /prefers-reduced-motion/.test(ctl), '缺少无障碍兜底');
+}
+
+
+console.log('\n=== 24. 输入控件边框（与结构分隔线分离）===');
+/*
+ * 用户反馈：agent-flow 的输入框边框"特别粗特别黑"。
+ *
+ * 根因不是粗细（全仓都是 1px），而是**一个变量承担两种语义**：
+ *   --af-line = var(--border, #262b36)
+ * 同时被"结构分隔线"和"输入框边框"使用，两端都失控：
+ *   · --border 是**风格开关**：14 套新拟态把它设为 transparent
+ *     → 输入框完全没有边框（transparent 是合法值，var() 兜底不生效）
+ *   · 原生模式回落到硬编码 #262b36，不跟随基调
+ *     → 底色一浅，实测对比度 12.2~14.2（内容边框只需 1.2~1.5）
+ *
+ * 改法：拆出 --af-input-line，并**复用共享层 --divider**
+ * （mindmap / project-group / settings 的输入框就用它），保证跨插件同观感。
+ * 修复后对比度 1.21~1.38，极差从 1.6 倍收到 1.14 倍。
+ */
+{
+  const af = read('plugins/agent-flow/styles.css');
+  const body = strip(af).replace(/--[\w-]+\s*:\s*[^;]+;/g, '');
+
+  /* 24.1 输入控件不得再用 --af-line 画边框 */
+  const wrong = [];
+  for (const m of body.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    const sel = m[1].trim().replace(/\n/g, ' ');
+    const isInput = sel.split(',').some((x) =>
+      /(^|[\s.\[\-])(input|select|textarea)/i.test(x));
+    if (!isInput) continue;
+    if (/\bborder(?!-[a-z])[^;:]*:[^;]*--af-line/.test(m[2])) {
+      wrong.push(sel.split(',')[0].slice(0, 38));
+    }
+  }
+  t('输入控件不再用 --af-line 画边框', wrong.length === 0, wrong.slice(0, 3).join(' ; '));
+
+  /* 24.2 --af-input-line 必须存在，且**跟随基调**（浅色块另有覆盖）。
+     只查"存在"会被 #262b36 那种硬编码蒙混过关 —— 必须确认两侧都定义了。 */
+  const defs = [...af.matchAll(/--af-input-line\s*:\s*([^;]+);/g)].map((m) => m[1].trim());
+  t('--af-input-line 在深浅两种基调下都有定义', defs.length >= 2, `找到 ${defs.length} 处：${defs.join(' / ')}`);
+  t('--af-input-line 复用共享 --divider（跨插件一致）',
+    defs.every((d) => /var\(--divider/.test(d)), defs.join(' / '));
+
+  /* 24.3 两个变量必须保持分离。若哪天被合并回 --af-line，
+     上面 24.1 会立刻变红 —— 这里再钉一条，防止"看起来改了其实同指一个值"。 */
+  t('输入边框与结构线是两个独立变量',
+    /--af-input-line/.test(af) && /--af-line\s*:/.test(af), '变量被合并了');
+
+  /* 24.4 普通输入框字号统一为 --fs-body。
+     此前 .p-input 是 --fs-micro(10px)，同页其它输入框都是 12px ——
+     批量重映射时误伤，输入框正文不该是最小档。
+
+     两个刻意例外，不能一刀切：
+       · 标题输入框（.title-input）是**编辑中的标题**，13px 与它显示态一致，
+         缩到 12px 会在获得焦点那一刻"跳一下字号"
+       · 等宽输入（input.mono）跟随等宽字体，11px 是代码区观感 */
+  const EXEMPT = /title-input|\.mono/;
+  const fsBad = [];
+  for (const m of body.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    const sel = m[1].trim().replace(/\n/g, ' ');
+    if (!sel.split(',').some((x) => /(^|[\s.\[\-])(input|select|textarea)/i.test(x))) continue;
+    if (EXEMPT.test(sel)) continue;
+    const fs = m[2].match(/font-size\s*:\s*([^;]+);/)?.[1].trim();
+    if (fs && !/--fs-body/.test(fs)) fsBad.push(`${sel.split(',')[0].slice(0, 26)} → ${fs}`);
+  }
+  t('普通输入框字号统一走 --fs-body（标题/等宽除外）',
+    fsBad.length === 0, fsBad.slice(0, 3).join(' ; '));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
