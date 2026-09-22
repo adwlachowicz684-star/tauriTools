@@ -5828,7 +5828,7 @@ group('导入导出页：行为级（真实 render）');
     el.open('exchange');
     const heads = [...el.el.querySelectorAll('h3')].map((x) => x.textContent);
     // 「主题」节已回归主题页（与新建/编辑/删除同排），本页不再有
-    for (const t of ['导入', '导出为文档', '导出为交换格式', '导出为图像 / PDF', '快照备份']) {
+    for (const t of ['导入', '导出为文档', '导出为交换格式（单画布）', '导出为图像 / PDF', '快照备份']) {
       ok(heads.includes(t), `有「${t}」这一节`);
     }
     ok(!heads.includes('主题'), '「主题」节不在本页（已回归主题页）');
@@ -6351,7 +6351,7 @@ group('导入导出页：标题右侧圆形问号 + 悬浮说明');
 
   // ---- 1) 每个标题右边都有一个问号 ----
   // 「主题」节已移出本页（回归主题页，与新建/编辑/删除同排）
-  const titles = ['导入', '导出为文档', '导出为交换格式', '导出为图像 / PDF', '快照备份'];
+  const titles = ['导入', '导出为文档', '导出为交换格式（单画布）', '导出为图像 / PDF', '快照备份'];
   for (const t of titles) {
     const f = sec(t);
     ok(!!f, `有「${t}」节`);
@@ -6385,7 +6385,7 @@ group('导入导出页：标题右侧圆形问号 + 悬浮说明');
     ok(!hints.some((t) => /嗅探/.test(t)), '「按内容嗅探格式」已移出界面');
   }
   {
-    const f = sec('导出为交换格式');
+    const f = sec('导出为交换格式（单画布）');
     const hints = [...(f?.querySelectorAll('.mm-hint') || [])].map((x) => x.textContent);
     ok(!hints.some((t) => /只导当前画布/.test(t)), '交换格式的长说明已移出界面');
   }
@@ -6977,6 +6977,73 @@ group('文件图标：悬停高亮框与行距');
   const rowStep = html.match(/top \+= (\d+);\s*\n\s*\}\s*\n\s*\}\s*\n\s*\} catch/);
   const step = Number((html.match(/top \+= (\d+);/g) || []).slice(-1)[0]?.match(/\d+/)?.[0]);
   ok(step >= 20, `文件行距 ≥ 20（实际 ${step}）—— 17 会让相邻图标重叠 3px`);
+}
+
+group('附件画进节点框内（节点撑高，不再被相邻节点遮挡）');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+
+  // ---- 1) 纳入节点盒：必须**重建 Box**，不能改原对象的 height ----
+  //
+  // kity.Box 的 bottom / cx / cy 都是构造时算好的普通属性，改 height
+  // 不会连带更新 —— 外框会按旧 bottom 画、连线会按旧 cy 接。
+  ok(/node\._contentBox = nb;/.test(html), '把撑高后的盒写回 _contentBox（布局读的就是它）');
+  ok(/var nb = new kity\.Box\(/.test(html), '新建 Box 而不是改原对象');
+  ok(!/box\.height \+=/.test(html), '没有直接改 box.height（bottom/cy 不会跟着变）');
+  ok(!/_contentBox\.height/.test(html), '没有改 _contentBox.height');
+
+  // 只往下长：上沿不动，正文位置不变
+  ok(/box\.cx - w \/ 2, box\.y, w, box\.height \+ extra/.test(html),
+    '新盒以原上沿为基准、只往下长（正文位置不变）');
+  // 宽度要跟着附件走：节点比附件窄时图片/文件名会戳出外框
+  ok(/var w = Math\.max\(box\.width, attW\);/.test(html), '节点宽度至少覆盖附件宽度');
+
+  // ---- 2) 外框必须按新盒重画 ----
+  //
+  // 外框渲染器在 noderender 之前就跑完了，不重画的话附件区露在框外 ——
+  // 也就是"放进去了但框没跟着变大"。
+  ok(/getRenderer\('OutlineRenderer'\)/.test(html), '取到 OutlineRenderer');
+  ok(/orr\.update\(orr\.getRenderShape\(\), node, nb\)/.test(html),
+    '外框按新盒重画一次（否则框不跟着变大）');
+
+  // ---- 3) 只在真的画了附件时才撑高 ----
+  ok(/if \(top > attachTop\) \{/.test(html), '没有附件时不撑高（不能凭空多出一段空白）');
+  ok(/var attachTop = box\.bottom \+ ATTACH_PAD;/.test(html), '附件区起点是原盒下沿 + 内边距');
+  // 每类附件都要把自己的宽度记进 attW，漏一类就会戳出框
+  for (const [who, pat] of [
+    ['图片横幅', /attW = Math\.max\(attW, iw\);/],
+    ['视频卡片', /attW = Math\.max\(attW, vw\);/],
+    ['文件行', /attW = Math\.max\(attW, 12 \+ estTextW\(/],
+  ]) {
+    ok(pat.test(html), `${who}的宽度计入 attW（漏了会戳出外框）`);
+  }
+
+  // ---- 4) estTextW：CJK 按全角、拉丁按 0.55 ----
+  {
+    const i = html.indexOf('function estTextW(');
+    ok(i > 0, '有 estTextW');
+    const fn = new Function(html.slice(i, html.indexOf('var FileIcon = kity.createClass')) + '; return estTextW;')();
+    eq(fn('中', 12), 12, 'CJK 一字 = 1 个字号');
+    ok(Math.abs(fn('abcd', 12) - 12 * 0.55 * 4) < 1e-6, '拉丁字母 = 0.55 个字号');
+    eq(fn('', 12), 0, '空串宽度 0');
+    eq(fn(null, 12), 0, 'null 当空串（不能抛错）');
+    // 宁可估宽：估窄了文件名会戳出外框
+    ok(fn('中文.pdf', 12) > fn('abc', 12), '中文名比短拉丁名宽');
+  }
+
+  // ---- 5) 注释要说清现在是框内（旧注释说"画在框外"会误导后来人）----
+  ok(/附件区（画在节点框\*\*内\*\*）/.test(html), '注释标明画在框内');
+  ok(!/附件区（节点框\*\*下沿之外\*\*）/.test(html), '不再声称"画在框外"');
+}
+
+group('导出为交换格式 → 导出为交换格式（单画布）');
+
+{
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  ok(/sectionTip\('导出为交换格式（单画布）'/.test(pn),
+    '节标题带「（单画布）」—— 不写明会以为多画布都导了');
+  ok(!/sectionTip\('导出为交换格式'/.test(pn), '不再有不带「（单画布）」的旧标题');
 }
 
 group('多附件：XMind 往返（导出再导回）');
