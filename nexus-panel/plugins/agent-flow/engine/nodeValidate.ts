@@ -7,6 +7,7 @@ import type {
   JoinNodeData, GateNodeData, ThrottleNodeData, TimeoutNodeData, RetryNodeData,
 } from '../types';
 import { triggerEntriesOf, entryEnabled, mergeConfig } from './triggerEntries';
+import { argTypeIssues } from './argTypes';
 
 /**
  * 节点配置校验 —— 画布圆点的三色预警。
@@ -37,6 +38,17 @@ export type IssueLevel = 'ok' | 'warn' | 'error';
 export type NodeIssue = {
   level: IssueLevel;
   messages: string[];
+  /**
+   * 红色是不是由**参数类型错误**引起的。
+   *
+   * 缺参与错参都是红灯，但改法完全不同：
+   *   缺参 → 补一个值
+   *   错参 → 把一个值改成别的类型
+   *
+   * 不区分的话，徽章上都显示「缺参」，用户以为自己忘了填，
+   * 于是又填一遍 —— 越填越错。
+   */
+  typeError?: boolean;
 };
 
 type V = { level: IssueLevel; messages: string[] };
@@ -379,13 +391,50 @@ export function validateNode(node: { data?: unknown } | null | undefined): NodeI
   const d = node?.data as Record<string, unknown> | undefined;
   if (!d) return { level: 'ok', messages: [] };
   const fn = VALIDATORS[String(d.kind ?? '')];
-  if (!fn) return { level: 'ok', messages: [] };
-  try {
-    return fn(d as never);
-  } catch {
-    // 校验出错不该让画布白屏
-    return { level: 'ok', messages: [] };
+  let base: V = { level: 'ok', messages: [] };
+  if (fn) {
+    try {
+      base = fn(d as never);
+    } catch {
+      // 校验出错不该让画布白屏
+      base = { level: 'ok', messages: [] };
+    }
   }
+  /*
+   * 叠加**参数类型**校验。
+   *
+   * 为什么放在这里统一叠加，而不是写进各自的 validator：
+   * 类型校验是**跨节点种类**的同一套规则（哪个参数在这个运算下该是什么类型），
+   * 而 VALIDATORS 是按 dataKind 分派的一批各自独立的函数 ——
+   * 塞进每个函数里就要写四遍，且新增节点时最容易漏。
+   *
+   * 更重要的是它回答的是**另一件事**：
+   *   VALIDATORS  → 有没有填（缺参 / 缺项）
+   *   argTypes    → 填的对不对（错参）
+   *
+   * 分开之后，用户看到红圆点能从文案直接分辨该"补一个值"还是"改一个类型"。
+   */
+  const typeIssues = argTypeIssues(String(d.kind ?? ''), d);
+  if (typeIssues.length === 0) return base;
+  const msgs = typeIssues.map((t) => t.message);
+  return {
+    level: 'error',
+    messages: [...base.messages, ...msgs],
+    typeError: true,
+  };
+}
+
+/**
+ * 徽章文案。
+ *
+ * 比 LEVEL_SHORT 多处理一档：红 + typeError →「错参」而不是「缺参」。
+ * 写成函数而不是扩展 LEVEL_SHORT 的键 —— 那张表按**等级**索引，
+ * 而"错参"是等级之下的成因，塞进同一张表会让键名变成
+ * `error-type` 这种复合东西，消费端还得自己拼。
+ */
+export function badgeTextOf(issue: NodeIssue): string {
+  if (issue.level === 'error' && issue.typeError) return '错参';
+  return LEVEL_SHORT[issue.level];
 }
 
 /** 一批节点里最严重的那一档，用于"整张画布有没有问题"的汇总 */
