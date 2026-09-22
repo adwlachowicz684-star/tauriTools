@@ -182,6 +182,33 @@ export function LinkAgentBody({
     return true;
   };
 
+  /**
+   * **提交时**剔除与预设默认一致的厂商标注（对齐原版 `ApplyEdit`：
+   * 「厂商恢复为预设默认时移除覆盖」）。
+   *
+   * 为什么不边输边删：输入框是受控的，值由 `vendors[name]` 派生。
+   * 用户刚打完与默认相同的那几个字就被删键 —— 输入框**当场清空**，
+   * 显示与他刚输入的内容不符，看着像失灵。所以只在落盘时归一化。
+   *
+   * 存下来会有两个后果：① config 多一条与默认重复的覆盖；
+   * ② 更要紧的 —— 这份覆盖被**冻结**了。以后预设的默认厂商标注改了，
+   * 这位用户仍停在旧文案上，而界面上它看起来和"没设过"一模一样。
+   *
+   * 只对**预设项**做：自定义项没有预设默认，清了就是真清。
+   */
+  const vendorPick = (src: Record<string, string>): Record<string, string> => {
+    const out: Record<string, string> = {};
+    const presetVendorOf = new Map(presetRows.map((r) => [r.shown, r.vendor]));
+    for (const n of allNames) {
+      const v = (src[n] ?? '').trim();
+      if (!v) continue;
+      const pv = (presetVendorOf.get(n) ?? '').trim();
+      if (pv && v === pv) continue;
+      out[n] = v;
+    }
+    return out;
+  };
+
   const addCustom = () => {
     const raw = draft.trim();
     if (!raw) return;
@@ -218,7 +245,7 @@ export function LinkAgentBody({
       linkAgents: map,
       custom,
       remarks: pick(remarks),
-      vendors: pick(vendors),
+      vendors: vendorPick(vendors),
       renames: keptRenames,
       pinned: keptPinned,
     });

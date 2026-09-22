@@ -200,11 +200,14 @@ console.log('\n=== 反选（#96）===');
 }
 
 
+/* 多个用例都要读这份源码，提到外面声明 ——
+   放在某个块里的话，别的块引用会 ReferenceError。 */
+const panel = fs.readFileSync(path.join(HERE, 'components/LinkPanel.tsx'), 'utf8')
+  .replace(/\/\*[\s\S]*?\*\//g, '');
+
 console.log('\n=== #91 链接名大小写不敏感查重 ===');
 {
   const { hasNameCI } = await loadTs(path.join(HERE, 'utils/linkAgents.ts'));
-  const panel = fs.readFileSync(path.join(HERE, 'components/LinkPanel.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
   const rs = fs.readFileSync(
     path.join(HERE, '..', '..', 'src-tauri', 'src', 'fpx', 'junction.rs'), 'utf8');
 
@@ -233,6 +236,22 @@ console.log('\n=== #91 链接名大小写不敏感查重 ===');
   t('后端剔预设也用 eq_ignore_ascii_case',
     /PRESET_AGENTS\.iter\(\)\.any\(.*eq_ignore_ascii_case\(n\)/.test(rs));
   t('后端合并时去重', /names\.iter\(\)\.any\(\|x\| x\.eq_ignore_ascii_case\(&n\)\)/.test(rs));
+}
+
+console.log('\n=== 8. 厂商标注与预设默认一致时不存（对齐原版 ApplyEdit）===');
+{
+  /* 有 vendorPick */
+  t('提交走 vendorPick', /vendors: vendorPick\(vendors\),/.test(panel));
+  t('有 vendorPick 定义', /const vendorPick = \(src: Record<string, string>\): Record<string, string> =>/.test(panel));
+  /* 只剔除预设项：自定义项没有预设默认 */
+  t('建预设厂商映射', /new Map\(presetRows\.map\(\(r\) => \[r\.shown, r\.vendor\]\)\)/.test(panel));
+  t('预设为空则不剔除', /if \(pv && v === pv\) continue;/.test(panel));
+  /* 边输边删会让受控输入框当场清空 —— 显示与刚输入的不符 */
+  t('不在 onChange 里删', !/setVendors\(\(v\) => vendorSet/.test(panel));
+  t('onChange 仍是直接写入',
+    /setVendors\(\(v\) => \(\{ \.\.\.v, \[p\.shown\]: ev\.target\.value \}\)\)/.test(panel));
+  /* 空值仍要剔除（否则 config 里留空串覆盖） */
+  t('空值剔除', /if \(!v\) continue;/.test(panel));
 }
 
 done();
