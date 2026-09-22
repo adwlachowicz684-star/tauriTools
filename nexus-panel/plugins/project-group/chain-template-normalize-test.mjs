@@ -15,8 +15,17 @@ const mod = rs('mod.rs');
 
 console.log('\n=== 1. 保存时归一化 ===');
 {
-  t('项目模板比对默认', /if v\.trim\(\) == super::chain::default_project\(&a\.builtin\)\.trim\(\) \{\s*\n\s*a\.project = None;/.test(mod));
-  t('项目组模板比对默认', /if v\.trim\(\) == super::chain::default_group\(&a\.builtin\)\.trim\(\) \{\s*\n\s*a\.group = None;/.test(mod));
+  /*
+   * 断言**不绑具体路径前缀**：`chain::` 与 `super::chain::` 都合法，
+   * 取决于 mod.rs 里是否 use 过。此前钉死了 `super::chain::`，
+   * 上游改用 `chain::` 后**误报**"归一化没了"——
+   * 误报报多了就会被当噪音忽略，比漏报更伤。
+   * 真正要钉的是"比对默认后把字段置 None"这个**语义**。
+   */
+  const normRe = (fn, field) => new RegExp(
+    `if v\\.trim\\(\\) == (?:super::)?chain::${fn}\\(&a\\.builtin\\)\\.trim\\(\\) \\{\\s*\\n\\s*a\\.${field} = None;`);
+  t('项目模板比对默认', normRe('default_project', 'project').test(mod));
+  t('项目组模板比对默认', normRe('default_group', 'group').test(mod));
   /* 两侧都做 —— 只做一侧的话另一侧的副本照样被冻结 */
   t('两侧都处理', (mod.match(/= None;/g) || []).length >= 2);
 }

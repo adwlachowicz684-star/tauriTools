@@ -268,10 +268,27 @@ pub fn apply_lock(path: &str, deny_delete: bool, deny_write: bool) -> Result<Str
         if deny_delete { rights.push('D'); }
         if deny_write { rights.push('W'); }
         // 两个都为 false 的情况已在上面提前返回，这里 rights 必非空
-        let perm = format!("Everyone:(OI)(CI)({rights})");
-        let out = run_cmd("icacls", &[path.to_string(), "/deny".to_string(), perm])?;
-        if !out.status.success() {
-            return Err(format!("icacls 失败: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        /*
+         * 必须下**两条** ACE（对齐原版 FolderLockService.Apply）：
+         *
+         *   · `Everyone:(OI)(CI)(…)`  —— 靠继承作用于子文件与子目录；
+         *   · `Everyone:(…)`          —— **目录自身**（不带继承标记即只作用于本对象）。
+         *
+         * 此前只有第一条。缺第二条的实际后果：
+         *
+         *   · 防删除档：拒绝的是"删除该目录里的子项"这件事在子项上的落地，
+         *     而**删除子项**的权限检查走的是**父目录**上的 DELETE_CHILD ——
+         *     目录自身没有 deny，里面的文件仍然删得掉，只有目录本身删不掉；
+         *   · 防写入档：`CreateFiles` 走父目录的 WriteData 检查，
+         *     目录自身没有 deny，仍能往里**新建**文件。
+         *
+         * 两种情形都是"用户以为锁住了、实际没锁住"，且没有任何报错。
+         */
+        for perm in [format!("Everyone:(OI)(CI)({rights})"), format!("Everyone:({rights})")] {
+            let out = run_cmd("icacls", &[path.to_string(), "/deny".to_string(), perm])?;
+            if !out.status.success() {
+                return Err(format!("icacls 失败: {}", String::from_utf8_lossy(&out.stderr).trim()));
+            }
         }
         // 三个分支都得 .into()：函数返回 Result<String, _>，
         // 前两个转了而最后一个漏掉，第三个分支就会是 &str，与 String 不匹配。
