@@ -1780,3 +1780,44 @@
   margin: 10px 0; padding: 20px; text-align: center; font-size: var(--fs-12, 12px);
   color: var(--text-dim); background: var(--surface-sunk); border-radius: var(--r-sm);
 }
+
+/*
+ * ---------------------------------------------------------------------------
+ * 卡片链接明细（展开/收起）
+ * ---------------------------------------------------------------------------
+ * 这一整块曾于 2026-09-16 被 d9c899bf 引入，2 分钟后被 d23cd76b 整块覆盖写
+ * 抹掉，此后 6 天、20+ 次提交无人发现——因为测试全是正向断言（"这条规则里
+ * 必须有 align-items"），没有一条反向扫描（"被引用的类名必须有定义"）。
+ *
+ * 类名仍被 CardGrid.tsx 使用却无定义，可见后果：明细条不是 flex 行、
+ * 按钮不是 22px 紧凑档、状态文字不会推到最右、长路径不省略、
+ * 徽章没有 pointer 手感、箭头无展开态。
+ *
+ * 现在由 style-dead-class 扫描（见 dead-class-test.mjs）守住：
+ * 再被覆盖写抹掉会直接报红，不再依赖人记得。
+ */
+.fpx-links-bar { display: flex; align-items: center; gap: 8px; padding: 0 2px 6px; }
+.fpx-links-toggle { height: 22px; padding: 0 8px; font-size: var(--fs-11, 11px); }
+.fpx-link-to { opacity: .5; }
+.fpx-link-group { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fpx-link-row:not(.broken):not(.conflict) .fpx-link-group { cursor: default; }
+.fpx-link-state { margin-left: auto; flex: none; font-size: var(--fs-micro, 10px); opacity: .8; }
+.fpx-link-row.broken .fpx-link-state { color: var(--text-mute); }
+.fpx-link-row.conflict .fpx-link-state { color: var(--danger, #c8555a); }
+
+/* 展开三角：默认 ▸，展开后旋转 90° 指向下方。
+   用 transform 而不是换字符 —— 换字符会导致字形宽度变化推挤右侧内容。 */
+.fpx-link-arrow {
+  display: inline-flex; flex: none; margin-left: auto;
+  transition: transform .15s ease;
+}
+.fpx-link-arrow.open { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) {
+  .fpx-link-arrow { transition: none; }
+}
+
+/* 徽章可点：pointer + inline-flex，hover 提亮。
+   filter: brightness 而不是改背景色 —— 背景色由链接状态（正常/断链/冲突）
+   决定，写死会覆盖掉状态色。 */
+.fpx-badge.expandable { cursor: pointer; display: inline-flex; align-items: center; gap: 3px; }
+.fpx-badge.expandable:hover { filter: brightness(1.15); }
