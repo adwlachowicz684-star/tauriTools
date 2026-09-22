@@ -1821,3 +1821,32 @@
    决定，写死会覆盖掉状态色。 */
 .fpx-badge.expandable { cursor: pointer; display: inline-flex; align-items: center; gap: 3px; }
 .fpx-badge.expandable:hover { filter: brightness(1.15); }
+
+/*
+ * ---------------------------------------------------------------------------
+ * 补回"裸类名"—— 组件里写了 className，整仓 CSS 却没有定义
+ * ---------------------------------------------------------------------------
+ * 属于报告第四节的"写了类名没配样式"。可见后果写在各条注释里。
+ *
+ * 之所以先前一直没被发现：现有断言全是**正向**的（"这条规则里必须有 X"），
+ * 没有**反向**的（"用了的类名必须有定义"）。现已由 dead-class-test.mjs 守住。
+ *
+ * 注：.fpx-root 不在此列 —— 它定义在文件第 8 行，先前是扫描器把 @import
+ * 之后的选择器一起吞掉才误报的（已修，见 dead-class-scan.js 的注释）。
+ */
+
+/* 树节点图标 📂/📄。与 .fpx-node-arrow 同宽、同样不参与伸缩 ——
+   否则不同层级的文件名起始位置会参差不齐。 */
+.fpx-node-icon { width: 16px; flex: none; text-align: center; }
+
+/* 图标选择区：一排候选图标，超宽换行。
+   用 flex wrap 而不是 grid —— 图标数量不固定，grid 要写死列数。 */
+.fpx-settings-icons { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* 监控告警勾选项。放在弹窗底部，与上方内容拉开距离，
+   否则会紧贴着上一行，看不出它是独立的一项。 */
+.fpx-lock-watch { margin-top: var(--sp-4, 8px); }
+
+/* 账面固定（仅登记、无系统权限）：与 .lock（真实 ACL 保护）区分开 ——
+   lock 用 --text-dim 表示"已生效"，pin 更淡一档表示"只是记录，不是真限制"。 */
+.fpx-badge.pin { color: var(--text-mute); opacity: .75; }
