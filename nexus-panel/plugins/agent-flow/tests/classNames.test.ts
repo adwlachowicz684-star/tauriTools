@@ -809,3 +809,37 @@ test('拖动一开始就收掉浮层（不依赖 mouseleave）', () => {
   assert.ok(m, '找不到 onDragStart 的定义');
   assert.match(m[0], /setTip\(null\)/, '拖动开始要收掉说明浮层');
 });
+
+test('拖放落点不能自己再减一次容器偏移', () => {
+  /*
+   * 症状：「拖节点进画布没反应，只能 Ctrl 单击添加」。
+   *
+   * screenToFlowPosition 内部**自己**减 domNode 的 rect（xyflow 源码可见），
+   * 传进去的必须是裸屏幕坐标。以前这里再减一层 wrapperRef 的 bounds，
+   * 减了两次 —— 落点往左上偏一个容器宽度，拖到画布左侧时算出负坐标，
+   * 节点被放到视口外，用户以为「拖不进去」。
+   *
+   * 而单击添加走 spawnNode 的默认位置（视口内），两者一对比，
+   * 很容易被误判成「拖放事件没触发」—— 于是去查浮层遮挡、查 MIME，
+   * 真正的坐标问题一直没人看。
+   */
+  const t = srcOf('App.tsx');
+  const calls = [...t.matchAll(/screenToFlowPosition\(\s*\{([\s\S]{0,200}?)\}\s*\)/g)];
+  assert.ok(calls.length > 0, '找不到 screenToFlowPosition 调用');
+  for (const [, body] of calls) {
+    const m = /x:\s*([\s\S]*?),\s*\n?\s*y:/.exec(body);
+    assert.ok(m, '坐标块里找不到 x');
+    // x 后面必须只有一个标识符（e.clientX），不能带减法
+    assert.doesNotMatch(m[1], /[-+]/, 'x 不能自己再算偏移（screenToFlowPosition 内部已减）');
+  }
+});
+
+test('拖放落点走统一入口 flowPosOf', () => {
+  /*
+   * 两处落点（节点、模块）曾各写一份坐标换算，
+   * 修一处漏一处就会出现「模块拖得进、节点拖不进」这种半边症状。
+   */
+  const t = srcOf('App.tsx');
+  assert.match(t, /spawnNode\(payload,\s*flowPosOf\(e\)\)/, '节点落点走 flowPosOf');
+  assert.match(t, /spawnModule\(modPayload\.moduleId,\s*flowPosOf\(e\)\)/, '模块落点走 flowPosOf');
+});

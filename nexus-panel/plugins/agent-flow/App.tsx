@@ -1371,6 +1371,26 @@ function reportSkipped(
     [nodes, patchNode, pushLog],
   );
 
+  /*
+   * 拖放落点 → 画布坐标。
+   *
+   * 必须直接把**屏幕坐标**（clientX/clientY）交给 screenToFlowPosition：
+   * 它内部自己减掉容器偏移（见 xyflow 源码：
+   * `const { x: domX, y: domY } = domNode.getBoundingClientRect()`）。
+   *
+   * 以前这里额外减了一层 wrapperRef 的 bounds，等于**减了两次** ——
+   * 落点整体往左上偏一个容器宽度（侧栏约 340px），
+   * 拖到画布左侧时算出来是负坐标，节点被放到视口外。
+   * 表现是「拖进画布没反应」，而 Ctrl 单击添加走默认位置（120,120）看得见，
+   * 于是看起来像「拖放坏了、只能单击添加」。
+   */
+  const flowPosOf = useCallback((e: DragEvent) => {
+    return rfInstance.current?.screenToFlowPosition({
+      x: e.clientX,
+      y: e.clientY,
+    });
+  }, []);
+
   const onDrop = useCallback(
     (e: DragEvent) => {
       e.preventDefault();
@@ -1408,30 +1428,16 @@ function reportSkipped(
       const modPayload = decodeModuleDrag(e.dataTransfer.getData(MODULE_DRAG_MIME))
         ?? decodeModuleDrag(e.dataTransfer.getData('text/plain'));
       if (modPayload) {
-        const bounds2 = wrapperRef.current?.getBoundingClientRect();
-        const pos2 = bounds2
-          ? rfInstance.current?.screenToFlowPosition({
-              x: e.clientX - bounds2.left,
-              y: e.clientY - bounds2.top,
-            })
-          : undefined;
-        spawnModule(modPayload.moduleId, pos2);
+        spawnModule(modPayload.moduleId, flowPosOf(e));
         return;
       }
 
       const payload = decodeDrag(e.dataTransfer.getData(DRAG_MIME))
         ?? decodeDrag(e.dataTransfer.getData('text/plain'));
       if (!payload) return;
-      const bounds = wrapperRef.current?.getBoundingClientRect();
-      const pos = bounds
-        ? rfInstance.current?.screenToFlowPosition({
-            x: e.clientX - bounds.left,
-            y: e.clientY - bounds.top,
-          })
-        : undefined;
-      spawnNode(payload, pos);
+      spawnNode(payload, flowPosOf(e));
     },
-    [spawnNode],
+    [spawnNode, spawnModule, flowPosOf],
   );
 
   const onDragOver = useCallback((e: DragEvent) => {
