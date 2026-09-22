@@ -99,6 +99,11 @@ import * as tb from './tag-badges.js';
 
 const FONTS = ['微软雅黑', '宋体', '黑体', '楷体', 'Arial', 'Consolas', 'sans-serif'];
 const SIZES = [12, 14, 16, 18, 20, 24, 28, 32, 40];
+// 字号的微调范围。必须比预设档位**更宽**：预设最小 12、最大 40，
+// 若把 min/max 卡在档位两端，滚轮微调到那儿就动不了了，
+// 而"比 40 再大一点"这种需求是真的存在的（标题节点）。
+const MIN_FS = 8;
+const MAX_FS = 72;
 
 /**
  * 把当前值补进档位列表，并保持有序（纯函数，可测）。
@@ -411,6 +416,106 @@ function safe(label, fn, onErr) {
     }
     return r;
   };
+}
+
+/**
+ * Windows 经典数值输入框（up-down control）。
+ *
+ * 三件事分开做，缺一件都会让人以为控件坏了：
+ *   1. ▲ / ▼ —— ±1
+ *   2. ▾ —— 弹出预设值列表（圆角 / 线宽 / 字号各有常用档位，逐个点更快）
+ *   3. 滚轮 —— ±1
+ *
+ * **滚轮是 ±1，不是在预设列表里前后挪**。这两者差别很大：圆角预设是
+ * [0,3,5,8,12,16,24]，在 3 上滚一下若是"下一个选项"就跳到 5，
+ * 而用户期望的是 4 —— 微调要靠滚轮，粗调才用列表。
+ *
+ * @param {object} o
+ * @param {number} o.value   当前值
+ * @param {number} o.min     下限（滚轮/箭头都钳在这里）
+ * @param {number} o.max     上限
+ * @param {number[]} o.list  预设值（下拉列表的内容，可为空）
+ * @param {(v:number)=>void} o.onChange
+ */
+export function numSpinner(o) {
+  const min = Number.isFinite(o.min) ? o.min : 0;
+  const max = Number.isFinite(o.max) ? o.max : 999;
+  const list = (o.list || []).filter((v) => Number.isFinite(v));
+  let cur = Number.isFinite(Number(o.value)) ? Math.round(Number(o.value)) : min;
+
+  /** 钳到 [min,max] 并取整 —— 输入框里可能粘进 "12.7" 或 "abc" */
+  const clamp = (v) => {
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n)) return cur;
+    return Math.max(min, Math.min(max, n));
+  };
+  const emit = (v) => {
+    const n = clamp(v);
+    if (n === cur) { inp.value = String(n); return; }   // 无变化就别回调，免得白记一次撤销
+    cur = n;
+    inp.value = String(n);
+    o.onChange?.(n);
+  };
+
+  const inp = h('input.mm-num', {
+    type: 'text',
+    inputmode: 'numeric',
+    value: String(cur),
+    title: o.title || '',
+    onchange: (e) => emit(e.target.value),
+    onkeydown: (e) => {
+      // ↑ / ↓ 与按钮同义；输入框里按方向键挪光标是另一回事，这里直接接管
+      if (e.key === 'ArrowUp') { e.preventDefault(); emit(cur + 1); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); emit(cur - 1); }
+      else if (e.key === 'Enter') { e.preventDefault(); emit(inp.value); }
+    },
+  });
+  // 失焦时把非法输入还原成当前值 —— 留着 "abc" 在框里，用户会以为真的设成了
+  inp.addEventListener('blur', () => { inp.value = String(cur); });
+
+  const arrow = (glyph, delta, tip) => h('button.mm-num-arrow', {
+    tabindex: '-1',
+    title: tip,
+    onclick: () => { emit(cur + delta); inp.focus(); },
+  }, glyph);
+
+  const caret = h('button.mm-num-arrow.mm-num-caret', {
+    tabindex: '-1',
+    title: '选择预设值',
+    onclick: () => {
+      if (!list.length) return;
+      popupMenu(caret, list.map((v) => ({
+        label: String(v),
+        onSelect: () => emit(v),
+      })));
+    },
+  }, '▾');
+
+  const box = h('span.mm-num-box', {},
+    inp,
+    h('span.mm-num-spin', {}, arrow('▲', 1, '增加 1'), arrow('▼', -1, '减少 1')),
+    caret,
+  );
+
+  /* ---- 滚轮 ----
+   * 一次手势只走一格：触控板一划就是几十个 wheel 事件，不锁的话数值会瞬间
+   * 冲到上限。与图片预览同一套做法（触发后上锁，静默 WHEEL_GAP 才解锁）。
+   */
+  const WHEEL_GAP = 90;
+  let locked = false;
+  let idle = 0;
+  box.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (locked) return;
+    locked = true;
+    // 只看方向，不看 delta 大小：惯性滚动的 delta 能攒到几百，
+    // 按量换算会一次跳很多格
+    emit(cur + (e.deltaY < 0 ? 1 : -1));
+    clearTimeout(idle);
+    idle = setTimeout(() => { locked = false; }, WHEEL_GAP);
+  }, { passive: false });
+
+  return box;
 }
 
 function chips(items, current, onPick) {
@@ -1232,11 +1337,13 @@ export function buildSide(app, opts = {}) {
         ),
         h('div.mm-row', {},
           h('span.mm-label', { style: { minWidth: '48px' } }, '字号'),
-          h('select.mm-select', {
-            style: { flex: '1 1 auto' },
-            onchange: (e) => run('fontsize', Number(e.target.value)),
-          }, ...withPresetValue(SIZES, st.fontSize).map((n) =>
-            h('option', { value: n, selected: Number(st.fontSize) === n }, String(n)))),
+          // 数值一律走 numSpinner：滚轮 ±1 微调、▲▼ 步进、▾ 选预设档位。
+          // 原来是下拉框，改一次要两步（点开 → 找值），而且没法微调。
+          numSpinner({
+            value: st.fontSize, min: MIN_FS, max: MAX_FS,
+            list: SIZES, title: '字号（滚轮 / ▲▼ 微调，▾ 选预设）',
+            onChange: (v) => run('fontsize', v),
+          }),
         ),
         // 颜色与 B/I/S **同一行**：它们都是「文字外观」的开关，
         // 拆成两行会让人以为是两组不相干的设置
@@ -1290,24 +1397,32 @@ export function buildSide(app, opts = {}) {
         colorRow('描边', st.stroke, (v) => set({ stroke: v }), () => set({ stroke: null })),
         h('div.mm-row', {},
           h('span.mm-label', { style: { minWidth: '48px' } }, '线宽'),
-          ...WIDTHS.map((w) => h('button.mm-chip' + (Number(st.strokeWidth) === w ? '.on' : ''), {
-            onclick: () => set({ strokeWidth: w }),
-          }, String(w))),
+          numSpinner({
+            value: st.strokeWidth, min: 1, max: 12,
+            list: WIDTHS, title: '节点描边线宽（滚轮 / ▲▼ 微调，▾ 选预设）',
+            onChange: (w) => set({ strokeWidth: w }),
+          }),
         ),
         h('div.mm-row', {},
           h('span.mm-label', { style: { minWidth: '48px' } }, '圆角'),
-          ...RADII.map((r) => h('button.mm-chip' + (Number(st.radius) === r ? '.on' : ''), {
-            onclick: () => set({ radius: r }),
-          }, String(r))),
+          numSpinner({
+            value: st.radius, min: 0, max: 40,
+            // 上限给到 40 而不是预设里的 24：滚轮能微调出 25、26…，
+            // 把 max 卡在最大预设值上，微调到那儿就再也上不去了
+            list: RADII, title: '节点圆角（滚轮 / ▲▼ 微调，▾ 选预设）',
+            onChange: (r) => set({ radius: r }),
+          }),
         ),
       ),
       sectionAct('连线', clearBtn('清除连线样式', ['line']),
         colorRow('连线', st.lineColor, (v) => set({ lineColor: v }), () => set({ lineColor: null })),
         h('div.mm-row', {},
           h('span.mm-label', { style: { minWidth: '48px' } }, '线宽'),
-          ...WIDTHS.map((w) => h('button.mm-chip' + (Number(st.lineWidth) === w ? '.on' : ''), {
-            onclick: () => set({ lineWidth: w }),
-          }, String(w))),
+          numSpinner({
+            value: st.lineWidth, min: 1, max: 12,
+            list: WIDTHS, title: '连线线宽（滚轮 / ▲▼ 微调，▾ 选预设）',
+            onChange: (w) => set({ lineWidth: w }),
+          }),
         ),
       ),
       // 外观：C# 样式页「外观」段（整理布局 + 清除/复制/粘贴样式）
@@ -1574,23 +1689,30 @@ export function buildSide(app, opts = {}) {
         ['导入 / 导出仅针对**自定义**主题；内置主题无法导出。',
           '导入会重新生成 id，不会覆盖同名主题。'],
         list,
-        h('div.mm-row', {},
+        // 三个按钮**各占一行**：主题页的按钮文字不短（「导入主题」四个字），
+        // 挤在一排时每个都被压到要截断（曾显示成「导入…」），
+        // 用户得悬停才知道是干什么的。竖排是这里的唯一选择 ——
+        // 侧栏只有 252px 可用，而「新建 / 导入主题 / 导出主题」没有更短的写法。
+        h('div.mm-col', {},
           // A64：把当前主题传进去当种子（原版 OnNewThemeClick 同款行为）
           h('button.mm-btn', {
             onclick: () => openThemeEditor(app, null, cur),
             title: `以当前主题「${curName}」为起点新建`,
-          }, '＋ 新建'),
+          }, '＋ 新建主题'),
+          // 命名必须**成对**：「导入主题」对「导出主题」。
+          // 早先一个是「导入…」、另一个是「导出」，看着像两个不相干的功能，
+          // 而且省略号是因为按钮太窄被截断的，不是有意省略。
           h('button.mm-btn', {
             onclick: () => importThemeFile(),
             title: '从 JSON 文件导入自定义主题（重新生成 id，不会覆盖同名）',
-          }, '导入…'),
+          }, '导入主题'),
           h('button.mm-btn', {
             onclick: () => exportThemeFile(),
             disabled: isBuiltin,
             title: isBuiltin
               ? '当前是内置主题，无法导出（请先新建或选中自定义主题）'
               : '把当前画布正在用的自定义主题导出为 JSON',
-          }, '导出'),
+          }, '导出主题'),
         ),
       ),
       section('布局模板',
@@ -1853,6 +1975,10 @@ export function openThemeEditor(app, theme, seedTheme) {
     const saved = await app.api.saveThemes();
     if (!saved) { app.api.status('主题保存失败（未写入本地库）', true); return; }
     app.api.applyTheme(editing.id);
+    // **必须重刷侧栏**：主题列表是在 pageTheme() 里按 app.customThemes
+    // 现算的，不刷的话新建的主题不会出现在列表里，得切走页签再切回来才看得到
+    // —— 用户会以为没保存成功，其实已经落盘了。编辑改名同理（列表还显示旧名）。
+    app.api.refreshSide?.();
     dlg.close();
     app.api.toast('主题已保存并应用', 'ok');
   };
@@ -2081,13 +2207,17 @@ export function openPreview(app, asset, opts) {
     // 有输入焦点时不抢（预览里没有输入框，但别把行为写死）
     acc += (e.deltaY || 0) + (e.deltaX || 0);
     if (Math.abs(acc) < WHEEL_STEP) return;
-    if (locked) return;
-    locked = true;
+    // 上锁期间也要**把累积量清掉**：不清的话解锁那一刻 acc 已经攒够阈值，
+    // 会立刻再切一张 —— 用户停手后画面自己又跳一下。
+    if (locked) { acc = 0; return; }
     // **先取方向再清零** —— 顺序反了的话 acc 已经是 0，
     // `acc > 0` 永远为假，于是向下滚也变成往上一张
     const dir = acc > 0 ? 1 : -1;
     acc = 0;
     setIdx(idx + dir);
+    // **必须上锁**：此前漏了这一行，`locked` 永远是 false，
+    // 于是"一次手势只切一张"根本没生效 —— 触控板一划连切好几张。
+    locked = true;
     clearTimeout(idleTimer);
     // 滚轮停下才解锁：这样「滑一次 = 切一张」，连滑两下是两张
     idleTimer = setTimeout(() => { locked = false; }, WHEEL_GAP);
