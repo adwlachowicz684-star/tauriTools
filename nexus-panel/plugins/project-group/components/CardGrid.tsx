@@ -27,8 +27,27 @@ import {
   gapIndexAt, resolveMoveIndex,
   isExternalDrag, externalDropName,
   classifyExternalDrop, entriesOf, dirPathOf,
-  type DragPayload, type TabDragPayload, type DropItems,
+  type DragPayload, type TabDragPayload, type DropItems, type DropNameFiles,
 } from '../utils/dragSort';
+
+/**
+ * `dataTransfer.files` → dragSort 要的 `DropNameFiles`。
+ *
+ * 浏览器给的是 **FileList**：类数组，且标准 `File` 上**没有** `path`
+ * —— 而 dragSort 那三个函数要的是 `{ name, path: string | null }[]`。
+ * 直接传就是 TS2345（FileList 不能赋给 readonly DropNameFile[]）。
+ *
+ * `path` 是宿主开了 `dragDropEnabled` 之后 **Tauri 挂在 File 上的**
+ * 磁盘绝对路径，标准浏览器里没有，所以读不到就是 `null`，
+ * 交给 `dirPathOf` 判空后退回对话框 —— 与 dragSort 的约定一致。
+ */
+function dropFilesOf(files: FileList | null): DropNameFiles {
+  if (!files || files.length === 0) return [];
+  return Array.from(files).map((f) => {
+    const p = (f as File & { path?: unknown }).path;
+    return { name: f.name, path: typeof p === 'string' ? p : null };
+  });
+}
 
 /**
  * 链接明细排序：**有问题的排前面**。
@@ -574,9 +593,10 @@ export function CardGrid({
            * 拖单个文件同理 —— 他要加的是文件夹，弹框也接不上。
            * 这两种都给一句明确的话，而不是干脆静默（静默正是 #14 要修的）。
            */
-          const name = externalDropName(e.dataTransfer.files);
+          const files = dropFilesOf(e.dataTransfer.files);
+          const name = externalDropName(files);
           const entries = entriesOf(e.dataTransfer.items as unknown as DropItems | null);
-          const kind = classifyExternalDrop(e.dataTransfer.files, entries);
+          const kind = classifyExternalDrop(files, entries);
           if (kind !== 'dir') {
             /* 拖单个文件或一段文字：一句话说清，不弹框。
                弹「选择目录」在这种场景是纯粹的误导。 */
@@ -593,7 +613,7 @@ export function CardGrid({
            * 仍拿不到路径时（比如运行在纯浏览器里调试）才退回对话框，
            * 否则"拖了没反应"这个原痛点又会回来。
            */
-          const path = dirPathOf(e.dataTransfer.files, entries);
+          const path = dirPathOf(files, entries);
           onExternalDrop?.(path || name, !!path);
           return;
         }

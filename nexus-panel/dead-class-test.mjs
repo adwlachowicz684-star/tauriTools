@@ -43,9 +43,17 @@ const CSS_FILES = [
   'plugins/color-picker/style.css', 'plugins/settings/settings.css',
 ].filter((f) => existsSync(join(HERE, f)));
 
-// 测试脚手架 / 示例插件 / 第三方封装里的类名不代表真实用法
+/*
+ * 测试脚手架 / 示例插件 / 第三方封装里的类名不代表真实用法。
+ *
+ * ⚠️ 分隔符必须**同时认 `/` 与 `\`**：扫描结果里的相对路径在 Windows 上
+ * 是 `js\dead-class-scan.js`（反斜杠），而原先只写了 `(^|/)`，
+ * 于是在 Windows 上这些排除**一条都没生效** ——
+ * 扫描器把自己源码里的 `a`/`b`/`mm-foo` 和 demo 插件的 `num`/`log`/`hero`
+ * 全算成死类名，这条断言必然红。Linux 上因为是 `/` 所以看不出问题。
+ */
 const EXCLUDE_SRC =
-  '(^|/)([^/]*-test\\.mjs|[^/]*\\.test\\.ts|tests/|demo-|editor-bridge\\.js|dead-class-scan\\.js)';
+  '(^|[/\\\\])([^/\\\\]*-test\\.mjs|[^/\\\\]*\\.test\\.ts|tests[/\\\\]|demo-|editor-bridge\\.js|dead-class-scan\\.js)';
 
 console.log('=== 1. 扫描器自身：必须分得清真假 ===');
 {

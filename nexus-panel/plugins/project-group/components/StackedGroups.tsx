@@ -16,7 +16,7 @@ import { ContextMenu, type MenuItem } from './ui';
 export function StackedGroups({
   tabs, cardsOf, selected, thumbs, onSelect, onOpen,
   onMove, onCrossDrop, menus, onRename, onRemove, onAdd, onMoveTab,
-  emptyHint, reveal, onExternalDrop,
+  emptyHint, reveal, onExternalDrop, onExternalNotice,
 }: {
   tabs: { name: string; items: CardInfo[] }[];
   /** 取某个页签的卡片（含后端补齐的 exists / 链接状态等） */
@@ -42,6 +42,15 @@ export function StackedGroups({
    *   用户拖到「创作」却加进了「政策」，且完全无从察觉。
    */
   onExternalDrop?: (target: string, direct: boolean, tabIndex: number) => void;
+  /**
+   * 拖进来的**不是文件夹**（单个文件 / 一段文字）时说一句话。
+   *
+   * 与 onExternalDrop 成对：项目栏（CardGrid）早已接了这条，项目组栏
+   * 却只声明了 onExternalDrop —— App 两边都传 onExternalNotice，
+   * 这边因为 props 里没有而被 TS 挡下、运行时直接丢弃。
+   * 结果就是：往项目组栏拖一段文字**毫无反应**，正是 #14 要修的那个痛点。
+   */
+  onExternalNotice?: (kind: 'file' | 'empty', name: string) => void;
   emptyHint: string;
   /**
    * 要"滚进视野"的卡片（#19）。由外层在跳转时设置。
@@ -309,6 +318,7 @@ export function StackedGroups({
                 menus={menus}
                 emptyHint={emptyHint}
                 onExternalDrop={(target, direct) => onExternalDrop?.(target, direct, i)}
+                onExternalNotice={onExternalNotice}
               />
             )}
           </div>

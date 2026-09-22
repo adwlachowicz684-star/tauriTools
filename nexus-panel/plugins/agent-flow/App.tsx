@@ -461,7 +461,15 @@ export default function App() {
   useEffect(() => {
     const onOpen = (e: Event) => {
       const d = (e as CustomEvent<{ page?: string }>)?.detail || {};
-      if (d.page) setCredPage(d.page);
+      /*
+       * 只认这两个页面名。
+       *
+       * 原写法 `if (d.page) setCredPage(d.page)` 把任意字符串塞进
+       * `"mcp" | "cred"`（TS2345）。更要紧的是：真来了一个别的名字，
+       * 面板会打开，但两个子标签都不是选中态 —— 用户看到的是个空面板，
+       * 且没有任何报错（静默出错）。不认识就不改，保持上次那个页。
+       */
+      if (d.page === 'mcp' || d.page === 'cred') setCredPage(d.page);
       setCredOpen(true);
     };
     window.addEventListener('nexus:open-credentials', onOpen);

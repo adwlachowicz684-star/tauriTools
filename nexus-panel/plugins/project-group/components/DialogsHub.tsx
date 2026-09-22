@@ -171,13 +171,22 @@ export function Dialogs(props: DialogsProps) {
     /* 关闭竞态：路径换掉后旧请求才回来，会把 A 的状态显示到 B 上 */
     let alive = true;
     setLiveLock(null);
-    ctx.api.lockState(lockPath)
+    /*
+     * 用 `s.api`（makeApi(ctx) 造的那份），不是 `ctx.api`。
+     *
+     * PluginContext 上**根本没有 api 这个字段**（tsc: TS2339），
+     * 所以原写法运行时是 `undefined.lockState` —— 抛错、被下面 catch 吃掉，
+     * 于是锁状态永远是 null（= 界面显示"不知道"）。
+     * 「按原版对齐（十三）」那条"读实际值"在这里**一次都没生效过**，
+     * 因为从不报错，看日志也发现不了。
+     */
+    s.api.lockState(lockPath)
       .then((r) => { if (alive) setLiveLock(r); })
       /* 读不到就保持 null（= "不知道"），**不弹错也不当无锁** ——
          那两种是不同含义，混起来会让用户以为保护没生效而反复加锁 */
       .catch(() => { if (alive) setLiveLock(null); });
     return () => { alive = false; };
-  }, [lockPath, ctx.api]);
+  }, [lockPath, s.api]);
 
   const selPath = s.selProject ?? s.selGroup;
   /*
