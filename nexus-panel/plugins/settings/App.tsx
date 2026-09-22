@@ -57,6 +57,19 @@ import { SHELL_SHORTCUT_SPECS, shellComboSet, normCombo } from '../../js/shell-s
 type TabKey = 'theme' | 'plugins' | 'external' | 'files' | 'shortcuts' | 'window' | 'about';
 
 /**
+ * styleParams() 住在 js/themes.js（JS，没有类型声明），返回的每项结构是
+ * 那边 STYLE_PARAMS 里的对象字面量。在这里补一个类型是为了让下面的
+ * list.map 拿到具体字段 —— 不加的话 p 是隐式 any，noImplicitAny 下直接
+ * TS7006，且写错字段名不会有任何提示。
+ * absolute 只有模糊半径那一项带：它是绝对值型（px），默认值不走倍率的 100。
+ */
+type StyleParam = {
+  key: string; label: string; unit: string;
+  min: number; max: number; step: number;
+  desc: string; absolute?: boolean;
+};
+
+/**
  * 取外壳全局单例：本设置页是 iframe 插件，开启严格沙箱后 window.__NEXUS__
  * 取不到，要降级读宿主的 parent（同文件外链管理、ExternalCard.tsx 都是这个写法）。
  * 隔离态（opaque origin）下连 parent 也访问不了，会抛 SecurityError，必须 try/catch。
@@ -1259,7 +1272,7 @@ export default function Settings() {
               给玻璃调"立体度"没有意义，因此只渲染**当前主题风格**对应的那几项。 */}
           {(() => {
             const th = getCurrent();
-            const list = styleParams(th?.style);
+            const list = styleParams(th?.style) as StyleParam[];
             if (!list.length) return null;
             return (
               <div>

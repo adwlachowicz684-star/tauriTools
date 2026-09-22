@@ -1611,12 +1611,15 @@ html.theme-transition *:not(.spinner) {
    在同页模式下等于没写 —— 设置页两种模式都得能看见这张卡片。
 
    布局照"商店货架"：铺满可用宽度自动换行，每张卡自成一格。
-   列宽下限 148px 是量过卡片内容定的：
-     图标(22) + 名称(min) + 两个按钮并排(各约 48 + 间距)
-   再窄按钮就会挤成两行，看着像两个不同的控件。 */
+
+   列宽下限 300px（原 148px）：148 是**只有图标 + 名称 + 两个按钮**时
+   量出来的，再窄按钮就会挤成两行、看着像两个不同的控件。后来卡片里
+   又加了两行内容 —— entry 路径（沙箱插件的入口文件，往往很长）和
+   基调判定方式下拉（"跟随全局"加上箭头就百来像素）——
+   148px 下这两行会各被折成两段、下拉被压到只剩箭头。放到 300px 才排得下。 */
 .tb-shop {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: var(--sp-4, 8px);
   margin-top: var(--sp-4, 8px);
 }
@@ -1665,6 +1668,37 @@ html.theme-transition *:not(.spinner) {
 .tb-card-btns {
   display: flex; gap: var(--sp-3, 6px);
   margin-top: auto;
+}
+/* 顶部一行总览（共几个插件 / 右上角几个按钮）。
+   不放在卡片里：它是**对着整片矩阵**的说明，缩进任何一张卡都会读成
+   那张卡自己的属性。压暗 + 小字，扫视时不会跟分组标题抢注意力。 */
+.tb-summary {
+  font-size: var(--fs-11, 11px);
+  color: var(--text-dim);
+  margin-top: var(--sp-4, 8px);
+}
+/* 入口文件路径。等宽是因为路径里的分隔符与层级要靠字形对齐才读得出
+   结构；截断而不是换行 —— 卡片高度必须一致，否则矩阵会出现参差的空洞。 */
+.tb-card-entry {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: var(--fs-11, 11px);
+  color: var(--text-mute);
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 基调判定方式那一行（审查徽标 + 下拉）。
+   align-items:center 是必须的：徽标是行内块、select 有自己的行高，
+   不居中会一个上一个下，看着像两行而不是一行。 */
+.tb-card-field {
+  display: flex; align-items: center; gap: var(--sp-3, 6px);
+  min-width: 0;
+}
+/* flex:1 + min-width:0：卡片宽度由网格决定，下拉必须**让位**给徽标，
+   而不是把徽标挤出去。不带 min-width:0 时 flex 子项的默认 min-width:auto
+   会让它按内容撑开，窄卡片里就把这一行顶出边界。 */
+.tb-card-select {
+  flex: 1; min-width: 0;
+  font-size: var(--fs-11, 11px);
 }
 
 /* 分组容器：工具栏 / 应用 / 服务三组各占一块。
