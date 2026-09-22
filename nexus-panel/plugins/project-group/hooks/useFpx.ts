@@ -585,8 +585,21 @@ export function useFpx() {
     } else {
       setSelGroup((p) => (p && normalizeKey(p, ci) === normalizeKey(path, ci) ? r.newPath : p));
     }
-    const extra = r.recHits > 0 ? `，同步 ${r.recHits} 条链接记录` : '';
+    /*
+     * 改名后要如实报出三件事：重链接了多少条、有没有失败需要复查、
+     * 备份目录有没有跟着改名。
+     *
+     * 只报"改名成功"是不够的 —— 项目组改名会牵动指向它的全部链接，
+     * 用户需要知道"改完之后那些链接还在不在"。
+     */
+    let extra = r.recHits > 0 ? `，同步 ${r.recHits} 条链接记录` : '';
+    if (r.relinked && r.relinked > 0) extra += `，重建 ${r.relinked} 条链接`;
+    // 备份目录跟着改名了要说一声：否则用户在备份区看到两个名字会以为是自己弄错了
+    if (r.backupNote) extra += `，${r.backupNote}`;
     pushLog(`已改名为「${newName}」${extra}`);
+    if (r.relinkErrors && r.relinkErrors.length > 0) {
+      pushLog(`有 ${r.relinkErrors.length} 个项目的链接重建失败，请手动复查：${r.relinkErrors.join('；')}`, true);
+    }
     return r;
   }, [api, applySnapshot, ci, pushLog, run]);
 

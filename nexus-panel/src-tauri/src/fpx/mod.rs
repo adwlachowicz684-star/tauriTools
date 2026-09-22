@@ -258,24 +258,115 @@ pub(crate) fn core_rename_folder(
 
     let old_key = store::normalize_key(path);
 
-    // 整个「读配置 → 改名 → 同步所有登记 → 写回」放进一个事务：
+    /*
+     * 与 `core_move_folder` 一样拆成三段，耗时 IO 不进事务。
+     *
+     * 此前整个「改名 → 同步 → 写回」都塞在 `with_config` 里，加上本轮要补的
+     * junction 重建（项目组被十个项目引用就是二十次磁盘 IO），
+     * 跨进程锁会被占住好几秒，而 `--mcp` 拉起的那个实例会因此等锁超时报错
+     * （`core_move_folder` 那段注释讲过同一个道理）。
+     */
+    let cfg0 = store::load_config(dir);
+    let lock_before = store::lock_of(&cfg0, path)
+        .map(|l| (l.deny_delete, l.deny_write))
+        .filter(|(d, w)| *d || *w);
+    // 仅项目组改名需要重建 junction（项目改名的 junction 是其子项，随目录一起走）
+    let kind_is_group = kind == "group";
+
+    /* 抑制监控器（#411）：接下来要改名，而这个目录可能正被监控着。
+       不抑制的话，监控线程下一次轮询会把它当成"有人动了受保护的文件夹"，
+       弹一堆告警 —— 用户改个名就被自己吓一次。
+       **必须在动手之前**登记，事后再补就漏掉了中间那次轮询。
+       新旧路径都要登记：抑制键是路径，改名后监控的是新路径。 */
+    watch::suppress(&[path.to_string(), new_path.clone()]);
+    // 摘锁后才能 rename：受 ACL 保护的目录 rename 会被系统拒绝
+    let _guard = LockGuard::new(path, store::lock_of(&cfg0, path));
+    // 跨卷时 rename 必然失败，回退到"复制 + 删除"；
+    // 回退的语义是"复制没成功就绝不删源"，不会留下两份残缺数据
+    crate::fpx::fsutil::rename_with_fallback(old, std::path::Path::new(&new_path))
+        .map_err(|e| format!("改名失败：{e}"))?;
+    drop(_guard);
+
+    /*
+     * 原路径受 ACL 保护 → 对**新**路径重建保护（对齐原版 `RelocateCard` 第 4 步）。
+     *
+     * `LockGuard` 的 drop 是对**旧路径**恢复，而改名后旧路径已经不存在了 ——
+     * 于是保护**静默丢失**：盾牌徽章还在（config 里的条目随后被 remap 成新路径），
+     * 但磁盘上其实没锁。用户以为受着保护，实际一删就掉。
+     */
+    if let Some((dd, dw)) = lock_before {
+        if let Err(e) = sys::apply_lock(&new_path, dd, dw) {
+            eprintln!("[fpx] 对新路径重建 ACL 保护失败: {e}");
+        }
+    }
+
+    /*
+     * 改名时把备份根目录下对应的备份子目录一并改名（对齐原版
+     * `RenameBackupFolder`：末级名对末级名）。
+     *
+     * 不同步的后果：备份目录里还留着旧名字的子目录，下次备份会**新建**一个
+     * 新名字的目录 —— 于是同一个项目在备份区里躺了两份，一份是旧的、
+     * 一份是新的，而用户在备份目录里翻的时候根本分不清该恢复哪一个。
+     *
+     * 失败只记录不中断：备份目录改名属于"顺手对齐"，
+     * 不能因为它失败就把整个改名回滚（文件夹已经改完了）。
+     */
+    let mut backup_note = String::new();
+    {
+        let old_seg = std::path::Path::new(path)
+            .file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let new_seg = std::path::Path::new(&new_path)
+            .file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        if !old_seg.is_empty() && !new_seg.is_empty() && !old_seg.eq_ignore_ascii_case(&new_seg) {
+            let bkind = if kind_is_group { "group" } else { "project" };
+            let root = backup::resolve_dir(&cfg0, dir, bkind);
+            let old_bak = root.join(&old_seg);
+            let new_bak = root.join(&new_seg);
+            // 目标已存在则跳过：绝不覆盖一份已有的备份
+            if old_bak.is_dir() && !new_bak.exists() {
+                match std::fs::rename(&old_bak, &new_bak) {
+                    Ok(_) => backup_note = format!("备份目录已同步改名：{}", new_seg),
+                    Err(e) => eprintln!("[fpx] 备份目录改名失败 {} → {}: {e}", old_bak.display(), new_bak.display()),
+                }
+            }
+        }
+    }
+
+    /*
+     * 项目组改名要重建指向它的 junction（对齐原版 `RelocateCard` 第 2 步：
+     * 「项目组改名/搬家须把指向旧路径的所有 junction 重建到新路径」）。
+     *
+     * 此前这里写死 `relinked: 0`，注释还写着"原版同样如此" ——
+     * **那条注释是错的**：原版只在"项目搬家"时不重建（junction 是项目目录
+     * 的子项，随目录一起挪走），项目组改名与搬家**都要**重建。
+     *
+     * 不重建的后果：改个名，所有指向它的链接**全部断掉**。
+     * 界面上链接图标变红而用户不知道为什么 —— 他只是改了个名字。
+     */
+    let guide = store::load_records(dir);
+    let mut relinked = 0usize;
+    let mut relink_errors: Vec<String> = Vec::new();
+    if kind_is_group {
+        for r in guide.iter() {
+            if store::normalize_key(&r.lib) != old_key { continue; }
+            if !std::path::Path::new(&r.project).is_dir() { continue; }
+            let names = r.link_names();
+            if names.is_empty() { continue; }
+            // 与搬家同一套：先删旧的（可能已断），再建指向新路径的。
+            // 失败不中断：记录下来一并回传，让前端提示用户手动复查。
+            let _ = junction::remove(&r.project, &names);
+            match junction::create(&r.project, &new_path, &names) {
+                Ok(_) => relinked += 1,
+                Err(e) => relink_errors.push(format!("{}：{e}", r.project)),
+            }
+        }
+    }
+    drop(guide);
+
+    // 整个「同步所有登记 → 写回」放进一个事务：
     // 期间不能被别的写入者（MCP 线程 / 其它命令）插进来，否则两边各自基于
     // 旧快照写回，后写的会把先写的整份覆盖。
-    store::with_config(dir, |cfg| {
-        /* 抑制监控器（#411）：接下来要改名，而这个目录可能正被监控着。
-           不抑制的话，监控线程下一次轮询会把它当成"有人动了受保护的文件夹"，
-           弹一堆告警 —— 用户改个名就被自己吓一次。
-           **必须在动手之前**登记，事后再补就漏掉了中间那次轮询。
-           新旧路径都要登记：抑制键是路径，改名后监控的是新路径。 */
-        watch::suppress(&[path.to_string(), new_path.clone()]);
-        // 摘锁后才能 rename：受 ACL 保护的目录 rename 会被系统拒绝
-        let _guard = LockGuard::new(path, store::lock_of(cfg, path));
-        // 跨卷时 rename 必然失败，回退到"复制 + 删除"；
-        // 回退的语义是"复制没成功就绝不删源"，不会留下两份残缺数据
-        crate::fpx::fsutil::rename_with_fallback(old, std::path::Path::new(&new_path))
-            .map_err(|e| format!("改名失败：{e}"))?;
-        drop(_guard);
-
+    let (snap, tab_hits, rec_hits) = store::with_config(dir, |cfg| {
         // ---- 同步所有以旧路径为键的登记 ----
         // 页签登记（项目 / 项目组都要改：同一路径可能被登记在多个页签里）
         let mut tab_hits = 0usize;
@@ -331,15 +422,17 @@ pub(crate) fn core_rename_folder(
             Ok(hits)
         })?;
 
-        Ok(model::RenameResult {
-            snapshot: snapshot(dir, cfg),
-            new_path: new_path.clone(),
-            tab_hits,
-            rec_hits,
-            // 改名不重建 junction：原版同样如此（改名后链接会断，提示用户重新分配）
-            relinked: 0,
-            relink_errors: Vec::new(),
-        })
+        Ok((snapshot(dir, cfg), tab_hits, rec_hits))
+    })?;
+
+    Ok(model::RenameResult {
+        snapshot: snap,
+        new_path,
+        tab_hits,
+        rec_hits,
+        relinked,
+        relink_errors,
+        backup_note,
     })
 }
 
@@ -426,11 +519,28 @@ fn core_move_folder(
     // ---- 阶段一：摘 ACL 锁 + 物理移动（不持数据锁）----
     // lock_of 只需要读配置判断受保护与否，用只读快照即可，不必进事务。
     let cfg0 = store::load_config(dir);
+    let lock_before = store::lock_of(&cfg0, path)
+        .map(|l| (l.deny_delete, l.deny_write))
+        .filter(|(d, w)| *d || *w);
     // 抑制监控器（#411），理由同上；源与目标都登记
     watch::suppress(&[path.to_string(), new_path.clone()]);
     let _guard = LockGuard::new(path, store::lock_of(&cfg0, path));
     std::fs::rename(old, &new_path).map_err(|e| format!("移动文件夹失败：{e}"))?;
     drop(_guard);
+
+    /*
+     * 与改名同理：受保护目录搬家后，要对**新**路径重建保护
+     * （对齐原版 `RelocateCard` 第 4 步）。
+     *
+     * `LockGuard` 的 drop 恢复的是**旧路径**，而旧路径已经不存在 ——
+     * 保护会静默丢失，盾牌徽章却还在（config 条目随后被 remap 到新路径），
+     * 显示与实际情况不一致。
+     */
+    if let Some((dd, dw)) = lock_before {
+        if let Err(e) = sys::apply_lock(&new_path, dd, dw) {
+            eprintln!("[fpx] 对新路径重建 ACL 保护失败: {e}");
+        }
+    }
 
     // ---- 阶段二：junction 重建（不持数据锁）----
     // 项目组搬家：所有指向旧路径的 junction 全断了，必须逐个重建到新路径
@@ -509,6 +619,8 @@ fn core_move_folder(
         rec_hits,
         relinked,
         relink_errors,
+        // 搬家不改末级名，备份子目录名不变，无需同步
+        backup_note: String::new(),
     })
 }
 

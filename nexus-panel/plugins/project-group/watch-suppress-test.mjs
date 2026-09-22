@@ -86,13 +86,33 @@ console.log('\n=== 5. 两个入口都登记了 ===');
 
 console.log('\n=== 6. 顺序：抑制在物理移动之前 ===');
 {
-  const renameAt = mod.indexOf('watch::suppress(&[path.to_string(), new_path.clone()])');
-  const renameGuard = mod.indexOf('LockGuard::new(path, store::lock_of(cfg, path))');
-  t('改名：抑制在摘锁之前', renameAt > -1 && renameAt < renameGuard);
+  /*
+   * 断言**不绑具体写法**：摘锁那行的配置来源此前是事务里的 `cfg`，
+   * 改为事务外 `cfg0` 后就找不到了（绑源码形态的断言在重构后必然误报）。
+   * 真正要钉的是"抑制早于摘锁"这个**次序**，所以按块定位、用宽松串匹配。
+   */
+  const guardIdxIn = (blk) => {
+    const i = blk.indexOf('LockGuard::new(path, store::lock_of(');
+    return i;
+  };
+  const supIdxIn = (blk) => blk.indexOf('watch::suppress(&[path.to_string()');
 
-  const moveIdx = mod.lastIndexOf('watch::suppress(&[path.to_string(), new_path.clone()])');
-  const moveGuard = mod.indexOf('LockGuard::new(path, store::lock_of(&cfg0, path))');
-  t('搬家：抑制在摘锁之前', moveIdx > -1 && moveIdx < moveGuard);
+  const renBlk = (() => {
+    const i = mod.indexOf('pub(crate) fn core_rename_folder');
+    const ends = ['\nfn ', '\npub fn ', '\npub(crate) fn ']
+      .map((p) => mod.indexOf(p, i + 1)).filter((x) => x > 0);
+    return mod.slice(i, Math.min(...ends));
+  })();
+  const movBlk = (() => {
+    const i = mod.indexOf('fn core_move_folder');
+    const ends = ['\nfn ', '\npub fn ', '\npub(crate) fn ']
+      .map((p) => mod.indexOf(p, i + 1)).filter((x) => x > 0);
+    return mod.slice(i, Math.min(...ends));
+  })();
+  const ra = supIdxIn(renBlk), rg = guardIdxIn(renBlk);
+  t('改名：抑制在摘锁之前', ra > -1 && rg > -1 && ra < rg, `sup=${ra} guard=${rg}`);
+  const ma = supIdxIn(movBlk), mg = guardIdxIn(movBlk);
+  t('搬家：抑制在摘锁之前', ma > -1 && mg > -1 && ma < mg, `sup=${ma} guard=${mg}`);
 }
 
 console.log('\n=== 7. 原有行为没被改坏 ===');

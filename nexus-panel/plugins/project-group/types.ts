@@ -283,6 +283,8 @@ export interface RenameResult {
   relinked?: number;
   /** 重建失败的项目清单（路径：原因）；非空说明有链接需要手动复查 */
   relinkErrors?: string[];
+  /** 备份目录同步改名的提示（空串表示没有对应备份目录） */
+  backupNote?: string;
 }
 
 /**
