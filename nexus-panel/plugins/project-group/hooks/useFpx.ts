@@ -231,8 +231,27 @@ export function useFpx() {
   const addCard = useCallback(async (kind: CardKind, path: string, tabIndex?: number) => {
     const list = cardsOf(kind);
     const idx = tabIndex ?? activeTab[kind];
-    if (list[idx]?.items.some((c) => c.path === path)) {
-      ctx.toast('该文件夹已在当前页签中', 'err');
+    /*
+     * 跨**所有**页签查重（对齐原版 `AddFavoriteCore` → `FindDuplicate`：
+     * 遍历该类别的全部页签，不是只看当前这一个）。
+     *
+     * 只看当前页签的话，同一个文件夹可以被登记进两个页签 ——
+     * 而这两份登记在界面上**看不出是两份**（切页签才看得到另一份）：
+     * 改名 / 改色 / 删除都只作用在其中一处，用户以为改了却发现另一处没变，
+     * 或者删了却在别处又冒出来。没有报错，最难排查。
+     *
+     * 提示要**说清在哪个页签里** —— 原版只说"已在收藏中存在"，
+     * 页签一多用户根本不知道该去哪儿找。
+     */
+    /*
+     * 归一 = 去尾斜杠 + 转小写（对齐原版 `FindDuplicate` 的 OrdinalIgnoreCase）。
+     * 只去尾斜杠的话，`D:\\a` 与 `d:\\A` 会被当成两个不同条目 ——
+     * 而它们在 Windows 下是同一个目录。
+     */
+    const norm = (p: string) => p.replace(/[\\/]+$/, '').toLowerCase();
+    const owner = list.findIndex((t) => t.items.some((c) => norm(c.path) === norm(path)));
+    if (owner >= 0) {
+      ctx.toast(`该文件夹已在页签「${list[owner].name}」中`, 'err');
       return;
     }
     await updateConfig((d) => {

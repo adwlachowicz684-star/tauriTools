@@ -128,7 +128,8 @@
     "test:pg-shell-icon-ascii": "node plugins/project-group/shell-icon-ascii-test.mjs",
     "test:pg-movecard-source": "node plugins/project-group/movecard-source-tab-test.mjs",
     "test:pg-chain-tpl-norm": "node plugins/project-group/chain-template-normalize-test.mjs",
-    "test:pg-chain-default-fill": "node plugins/project-group/chain-default-fill-test.mjs"
+    "test:pg-chain-default-fill": "node plugins/project-group/chain-default-fill-test.mjs",
+    "test:pg-addcard-cross-tab": "node plugins/project-group/addcard-cross-tab-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
