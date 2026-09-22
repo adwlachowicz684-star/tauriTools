@@ -807,3 +807,42 @@ test('任务视图有自己的两个子标签（与流程的三个库同一套�
   assert.match(app, /TASK_TAB_LABEL/, '任务子标签要有中文名');
   assert.match(app, /setTaskTabRaw/, '子标签要能切');
 });
+
+/* ================= 属性面板两段的左右留白 ================= */
+
+/*
+ * 基础信息区（.insp-basics）与参数区（.inspector）是**兄弟容器**：
+ * 前者不滚动、后者自己滚动，所以留白只能各写各的。
+ *
+ * 但两段必须对齐 —— 否则基础信息贴着面板边缘、参数卡片却缩进去，
+ * 上下看着像两块不同的界面拼起来。
+ *
+ * 这类问题测试跑不出来（样式不影响逻辑），且改一处忘另一处不报错，
+ * 只能靠源码级守卫盯着。历史上这条被上游整份覆盖 styles.css 冲掉过一次。
+ */
+test('属性面板两段共用同一个左右内边距变量', () => {
+  const css = readSrc('styles.css');
+
+  // 变量必须**真的定义过** —— 只写 var(--x, 兜底) 而不定义，
+  // 是靠兜底生效的幽灵引用（改变量值不会有任何反应）。
+  assert.match(css, /--af-insp-pad:\s*\d/, '--af-insp-pad 要有真实定义，不能只靠兜底');
+
+  const basics = /\.insp-basics\s*\{([^}]*)\}/.exec(css);
+  assert.ok(basics, '找不到 .insp-basics 的定义');
+  assert.match(basics[1], /padding:\s*0\s+var\(--af-insp-pad/, '.insp-basics 要有横向内边距，且走同一变量');
+
+  const insp = /\.inspector\s*\{([^}]*)\}/.exec(css);
+  assert.ok(insp, '找不到 .inspector 的定义');
+  assert.match(insp[1], /padding:\s*var\(--af-insp-pad/, '.inspector 要引用同一变量');
+});
+
+/*
+ * 只给一段加内边距是最典型的改坏方式：
+ * 界面看着"已经修好了"（改的那一段确实缩进了），另一段照旧贴边。
+ * 所以两段都要断言，缺任一段都得红。
+ */
+test('两段都真的有留白（不能只改一段）', () => {
+  const css = readSrc('styles.css');
+  assert.match(css, /\.insp-basics\s*\{[^}]*padding:/, '.insp-basics 缺内边距');
+  assert.match(css, /\.inspector\s*\{[^}]*padding:/, '.inspector 缺内边距');
+});
