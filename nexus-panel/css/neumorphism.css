@@ -176,6 +176,38 @@ html, body {
   overflow: hidden;
 }
 
+/* iframe 插件页：上面这条规则在这里是**错的**，必须覆盖
+   =================================================================
+   `html, body { height:100%; overflow:hidden }` 是给**主面板**写的：
+   主面板自己不滚，滚动交给内部的 #stage-scroll。
+
+   但 iframe 插件页也引入同一份 CSS（home / settings / project-group /
+   agent-flow / demo-react 都引了），而 iframe 内部**没有** #stage-scroll
+   —— 于是这条规则在插件页里只剩"禁止滚动"这一半：
+
+       body 高度锁死 100% + overflow:hidden
+       → 内容超出可视高度时无处可滚
+       → 超出部分被直接裁掉；iframe 高度是 100%、不随内容长高，
+         所以超出部分是**永久不可达**的，不是被盖住
+
+   表现就是「插件页下面的内容看不见」，以及内容带最小宽度时
+   （.p-grid 的 minmax(220px, 1fr) 就是典型：容器再窄，网格项也不肯
+   小于 220px）横向被切掉一截 —— 卡片看着比 body 宽，右边缺一块。
+
+   body.nexus-iframe-plugin 是 js/plugin-sdk.js 为这个场景打的标记，
+   但**此前全仓零配套规则**：标记了却没人用，等于没标记。
+
+   ⚠️ 只改 overflow，**不要动 height**：
+   settings 插件的 #root 是 height:100%（见 plugins/settings/settings.css），
+   它必须有 body 这个确定高度当参照物；把 height 改成 auto 会让那条
+   100% 退化成 auto，设置页的分栏布局当场塌掉（分页条与内容区不再分栏）。
+   overflow:auto 后 body 自己成为滚动容器，而 settings 那种"内容刚好
+   一屏"的情况不会多出滚动条 —— 两种滚动机制不打架。
+*/
+body.nexus-iframe-plugin {
+  overflow: auto;
+}
+
 body {
   background: var(--bg);
   background-image: var(--bg-image);

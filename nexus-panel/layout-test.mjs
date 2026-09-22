@@ -119,5 +119,41 @@ t('#main 不再声明两行',
   !/\b54px\s+1fr\b/.test(decl(rule('#main'), 'grid-template-rows') || ''),
   decl(rule('#main'), 'grid-template-rows'));
 
+console.log('\n=== 4. iframe 插件页：主面板的 html,body 规则必须被覆盖 ===');
+/*
+ * js/plugin-sdk.js 在每个 iframe 插件页的 body 上加 .nexus-iframe-plugin，
+ * 但**此前全仓零配套 CSS 规则** —— 标记了却没人用，等于没标记。
+ *
+ * 后果：插件页也引入了本文件，于是吃到
+ *     html, body { height: 100%; overflow: hidden; }
+ * 那是给主面板的（滚动交给 #stage-scroll）。iframe 内部没有 #stage-scroll，
+ * 只剩"禁止滚动"这一半 —— 内容超出即被裁掉，而 iframe 高度锁 100%
+ * 不随内容长高，超出部分**永久不可达**。
+ *
+ * 横向也一样：.p-grid 是 minmax(220px, 1fr)，容器再窄网格项也不肯
+ * 小于 220px，于是卡片被撑得比 body 宽、右边缺一截。
+ */
+const sdk = readFileSync('./js/plugin-sdk.js', 'utf8');
+const iframeBody = rule('body.nexus-iframe-plugin');
+t('body.nexus-iframe-plugin 有配套规则（此前为零）', !!iframeBody);
+t('JS 确实打了这个标记（否则规则是死代码）',
+  /classList\.add\('nexus-iframe-plugin'\)/.test(sdk));
+/* overflow 必须是 auto/scroll —— hidden 就等于没修 */
+t('覆盖了 overflow（不再是 hidden）',
+  /auto|scroll/.test(decl(iframeBody, 'overflow') || ''),
+  decl(iframeBody, 'overflow'));
+/*
+ * ⚠️ 这条最要紧：**不能**顺手把 height 改成 auto。
+ * settings 插件的 #root 是 height:100%（plugins/settings/settings.css），
+ * 它靠 body 这个确定高度当参照物；body 高度一变 auto，那条 100% 退化成
+ * auto，设置页的分栏布局当场塌掉。只改 overflow 就不碰这条依赖。
+ */
+t('没有动 height（否则 settings 的 #root height:100% 会塌）',
+  decl(iframeBody, 'height') === null,
+  decl(iframeBody, 'height') || '(未设置)');
+/* 规则必须写在共用的 neumorphism.css：iframe 插件都引它，
+   写在某个插件的私有 CSS 里则只有那一个插件受益。 */
+t('规则写在共用的 neumorphism.css', css.includes('body.nexus-iframe-plugin'));
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
