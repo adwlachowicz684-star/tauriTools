@@ -2,10 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import {
   toolbarEntriesOf, wantsEntry, hiddenIds, extraIds,
   toggleHidden, addExtra, removeExtra,
+  /* allToolbarDefs：标题栏**实际渲染用的那份**入口定义。
+     卡片来源要并上它，理由见 ToolbarSection 内的注释。 */
+  allToolbarDefs,
 } from '../../js/toolbar-plugin.js';
 import { useNexus } from '../../src/nexus-react';
 import type { PluginManifest } from '../../js/host.js';
-import { setPluginOrder } from '../../js/host.js';
+import { setPluginOrder, loadRegistry } from '../../js/host.js';
 import { useDragReorder } from '../../js/drag-reorder-react.js';
 import {
   listThemes, applyTheme, setAccent, setEnvColor, resetColors,
@@ -324,7 +327,28 @@ function ToolbarSection({ plugins, ctx }: { plugins: any[]; ctx: any }) {
 
   const hidden = new Set(hiddenIds());
   const extra = new Set(extraIds());
-  const entries = toolbarEntriesOf(plugins);
+  /*
+   * 卡片来源 = 插件清单 **并上** 标题栏真实加载的入口定义。
+   *
+   * 只取 plugins 是不够的：那是外壳 state.plugins（refresh 时刻的快照），
+   * 而右上角按钮是标题栏用 loadRegistry() 实时读全量清单加载出来的。
+   * 两处不同源就会出现 —— 按钮明明就在右上角，这里却列不出它的卡片，
+   * 于是「想隐藏某个按钮，翻遍设置也找不到开关」。
+   *
+   * allToolbarDefs() 拿的是**按钮渲染用的同一份 def**，与右上角同源；
+   * 清单里缺哪个就补一张（ghosts）。正常情况下它为空，行为与之前一致。
+   */
+  const seen = new Set((plugins || []).map((p: any) => p.id));
+  const ghosts = allToolbarDefs()
+    .filter((d: any) => d && !seen.has(d.id))
+    .map((d: any) => ({
+      id: d.id,
+      name: d.tip || d.label || d.id,
+      icon: d.label,
+      kind: 'toolbar',
+    }));
+  const all = (plugins || []).concat(ghosts);
+  const entries = toolbarEntriesOf(all);
   const byId = new Map(entries.map((e) => [e.pluginId, e]));
   const rank = new Map(entries.map((e, i) => [e.pluginId, i]));
 
@@ -335,7 +359,7 @@ function ToolbarSection({ plugins, ctx }: { plugins: any[]; ctx: any }) {
    * 这样卡片矩阵本身就**体现了当前右上角按钮的顺序**
    * （第 1 位、第 2 位……写在卡片上），不需要另开一个列表去解释。
    */
-  const cards = (plugins || []).slice().sort((a, b) => {
+  const cards = all.slice().sort((a: any, b: any) => {
     const ia = rank.has(a.id) ? (rank.get(a.id) as number) : Number.MAX_SAFE_INTEGER;
     const ib = rank.has(b.id) ? (rank.get(b.id) as number) : Number.MAX_SAFE_INTEGER;
     return ia - ib;
@@ -660,11 +684,34 @@ export default function Settings() {
   });
 
   useEffect(() => {
-    const list = shellGlobal()?.getPlugins?.();
-    setPlugins(Array.isArray(list) ? list : []);
-    // 拿不到外壳时不要静默显示成「0 个插件」，后面会渲染一条显式提示
-    setPluginsUnknown(!Array.isArray(list));
-    ctx.invoke<string>('app_version').then(setVersion).catch(() => setVersion('浏览器模式'));
+    let alive = true;
+    (async () => {
+      /*
+       * 与右上角按钮**同源**：标题栏是用 loadRegistry() 实时读全量清单
+       * 来加载按钮的；这里此前读 shellGlobal().getPlugins()，那是
+       * state.plugins —— refresh() 时刻的**快照**。
+       *
+       * 两处口径不同就会出现：按钮已经在右上角了，设置页却列不出它的卡
+       * 片，于是想隐藏也找不到开关（"快照里没有的东西无法管理"）。
+       *
+       * 拿不到实时清单时降级到快照，再不行才报未知 ——
+       * 绝不静默显示成「0 个插件」。
+       */
+      let list: any = null;
+      try { list = await loadRegistry(); } catch { /* 降级到外壳快照 */ }
+      if (!Array.isArray(list) || !list.length) {
+        const snap = shellGlobal()?.getPlugins?.();
+        if (Array.isArray(snap) && snap.length) list = snap;
+      }
+      if (!alive) return;
+      setPlugins(Array.isArray(list) ? list : []);
+      setPluginsUnknown(!Array.isArray(list));
+      try {
+        const v = await ctx.invoke<string>('app_version');
+        if (alive) setVersion(v);
+      } catch { if (alive) setVersion('浏览器模式'); }
+    })();
+    return () => { alive = false; };
   }, [ctx]);
 
   /* 订阅主题变更：从标题栏的主题按钮切换时，
@@ -1158,21 +1205,21 @@ export default function Settings() {
               return (
                 <div className="nx-bgslot nx-bgslot-off" title="当前主题为纯色底，不支持背景图">
                   <span className="nx-bgslot-ban" aria-hidden="true">🚫</span>
-                  <span className="p-muted nx-bgslot-off-text">
+                  <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
                     此主题不带背景图
                   </span>
                 </div>
               );
             }
             return (
-              <div className="p-row wrap" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
+              <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
                 <div
                   className="nx-bgslot"
                   style={cur ? { backgroundImage: 'url("' + cur + '")' } : undefined}
                   title={cur ? '当前背景图' : '主题自带背景'}
                 >
                   {!cur ? (
-                    <span className="p-muted nx-bgslot-off-text">主题自带</span>
+                    <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>主题自带</span>
                   ) : null}
                 </div>
                 <button className="p-btn" onClick={() => bgFileRef.current?.click()}>

@@ -737,5 +737,72 @@ console.log('\n--- I. 右上角入口管理 ---');
   localStorage.removeItem('nexus:env-custom');
 }
 
+/* ---------------------------------------------------------------- */
+console.log('\n=== J. 右上角卡片必须与按钮同源（快照缺失也能列出）===');
+/*
+ * 用户实测：右上角明明有「切换主题 / MCP」这些按钮，设置页的卡片矩阵里
+ * 却没有它们的卡 —— 于是想隐藏某个按钮时翻遍设置也找不到开关。
+ *
+ * 根因是**两处不同源**：
+ *   · 标题栏用 loadRegistry() 实时读全量清单来加载按钮
+ *   · 设置页此前读 shellGlobal().getPlugins() = state.plugins，是 refresh 时刻的快照
+ * 快照里没有的东西无法管理。
+ *
+ * 两道修复，两道都要钉住：
+ *   ① 设置页也用 loadRegistry() 实时读（降级到快照）
+ *   ② 卡片来源并上 allToolbarDefs()（按钮渲染用的同一份 def）
+ */
+const setSrc = src('./plugins/settings/App.tsx');
+t('① 设置页直接用 loadRegistry（与标题栏同源）',
+  /await loadRegistry\(\)/.test(setSrc));
+t('② 卡片来源并上 allToolbarDefs（兜底补卡）',
+  /allToolbarDefs\(\)/.test(setSrc)
+  && /!seen\.has\(/.test(setSrc),
+  '缺一张卡 = 该按钮无法隐藏');
+/*
+ * 光"算了 ghosts"不够 —— 必须**真的用上**。
+ * 只查 allToolbarDefs 是否存在，会被"算了却没并进 cards"骗过去
+ * （改回 (plugins||[]).slice() 照样绿，而那正是要防的回退）。
+ */
+t('②b cards 用的是并上 ghosts 后的清单',
+  /const cards = all\.slice\(\)/.test(setSrc),
+  '缺一张卡 = 该按钮无法隐藏');
+/* 兜底后必须真能补出卡片并允许隐藏 —— 用真实模块跑，不查字符串 */
+{
+  globalThis.localStorage = globalThis.localStorage || {
+    _d: {}, getItem(k) { return this._d[k] ?? null; },
+    setItem(k, v) { this._d[k] = v; }, removeItem(k) { delete this._d[k]; },
+  };
+  const tp = await import(path.join(HERE, 'js/toolbar-plugin.js').replace(/\\/g, '/'));
+  const tbManifests = [
+    { id: 'toolbar-theme', name: '切换主题', icon: '◐', kind: 'toolbar', type: 'module' },
+    { id: 'toolbar-mcp', name: 'MCP 状态', icon: '⬡', kind: 'toolbar', type: 'module' },
+  ];
+  await tp.loadToolbarPlugins(tbManifests, {
+    loadModule: async (m) => ({ default: { id: m.id, label: m.icon, tip: m.name, onClick() {} } }),
+  });
+  /* 模拟"清单里没有 toolbar 插件"的最坏情况 */
+  const plugins = [{ id: 'home', name: '概览', kind: 'app' }];
+  const seen = new Set(plugins.map((p) => p.id));
+  const ghosts = tp.allToolbarDefs().filter((d) => d && !seen.has(d.id))
+    .map((d) => ({ id: d.id, name: d.tip || d.label || d.id, icon: d.label, kind: 'toolbar' }));
+  const all = plugins.concat(ghosts);
+  const entries = tp.toolbarEntriesOf(all);
+  /*
+   * 不写死数量：本文件的其它用例已经往 defs 里加载过入口，
+   * allToolbarDefs() 返回的条数取决于前面的执行 —— 写死 2 会在别人
+   * 加用例时假红。断言"这两个 id 确实被补出来了"才是要守的契约。
+   */
+  const gid = new Set(ghosts.map((g) => g.id));
+  const eid = new Set(entries.map((e) => e.pluginId));
+  t('清单缺 toolbar 时仍能补出卡片（切换主题 / MCP）',
+    gid.has('toolbar-theme') && gid.has('toolbar-mcp')
+    && eid.has('toolbar-theme') && eid.has('toolbar-mcp'),
+    `补回 ${ghosts.length} 张 / 入口 ${entries.length}`);
+  const extra = new Set(tp.extraIds());
+  t('补出的卡片「隐藏」可用（joined=true）',
+    all.filter((p) => p.kind === 'toolbar').every((p) => tp.wantsEntry(p, extra)));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

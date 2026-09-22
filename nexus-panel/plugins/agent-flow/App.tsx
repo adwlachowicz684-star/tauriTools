@@ -440,6 +440,26 @@ export default function App() {
     lockVault, unlock, changeVaultMode, openCredentials,
   } = vault;
 
+  /*
+   * 接住「打开凭据中心」。
+   *
+   * 链路三段，缺任一段都是**点了没反应、且不报错**：
+   *   ① 右上角 MCP 按钮 → 宿主 emit('nexus:open-credentials')
+   *   ② main.tsx 把总线事件转成 window 事件（总线到不了 React 树内部）
+   *   ③ **这里**接住并真正打开面板
+   *
+   * ③ 曾在远端一次覆盖中丢失（①②都还在，所以表现为"静默失效"）。
+   */
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const d = (e as CustomEvent<{ page?: string }>)?.detail || {};
+      if (d.page) setCredPage(d.page);
+      setCredOpen(true);
+    };
+    window.addEventListener('nexus:open-credentials', onOpen);
+    return () => window.removeEventListener('nexus:open-credentials', onOpen);
+  }, [setCredOpen, setCredPage]);
+
 
 
 
