@@ -804,5 +804,42 @@ t('②b cards 用的是并上 ghosts 后的清单',
     all.filter((p) => p.kind === 'toolbar').every((p) => tp.wantsEntry(p, extra)));
 }
 
+/* ---------------------------------------------------------------- */
+console.log('\n=== 右上角按钮卡片按 kind 分三组 ===');
+/*
+ * 需求：设置页的插件卡片要按 工具栏 / 应用 / 服务 分类。
+ *
+ * 理由不是"看起来整齐" —— 三类的**可用操作不同**：
+ *   工具栏插件 → 自带入口，只能隐藏/展示，不能移除
+ *   应用插件   → 唯一能「加入 / 取消加入」的一类
+ *   服务插件   → 后台运行不进界面，两个按钮都不可用
+ * 混排时用户得逐张读卡片小字才知道能点哪个；分组后看组标题即可。
+ */
+const appSrc = src('plugins/settings/App.tsx');
+const cssSrc = src('css/neumorphism.css');
+
+t('定义了三组（工具栏 / 应用 / 服务）',
+  /key:\s*'toolbar'[\s\S]{0,300}key:\s*'app'[\s\S]{0,300}key:\s*'service'/.test(appSrc));
+t('有分类函数（把 kind 归一到三组之一）',
+  /kindOf[\s\S]{0,200}'toolbar'\s*\?\s*'toolbar'/.test(appSrc),
+  '漏了归一化的话，未标注的插件会掉进 undefined 组、整组消失');
+t('按分组渲染（grouped.map，不是一整片 cards.map）',
+  /grouped\.map\(/.test(appSrc) && !/cards\.map\(/.test(appSrc),
+  '残留 cards.map 说明分组没接上渲染');
+t('组内仍按已加入顺序排（复用排序后的 cards）',
+  /grouped = GROUPS\.map[\s\S]{0,200}cards\.filter/.test(appSrc),
+  '重排一遍就会和右上角实际顺序不一致');
+t('空组保留标题（不整块隐藏）',
+  /g\.items\.length \? \([\s\S]{0,400}:\s*\(/ .test(appSrc)
+  || /这一类当前没有插件/.test(appSrc),
+  '整块隐藏会让"这类没有"和"这类没列出来"看起来一样');
+
+/* CSS 必须写在 neumorphism.css —— settings.css 是 iframe 专用补丁，
+   同页嵌合模式刻意不加载它，写在那里等于没写（这条之前踩过）。 */
+t('分组样式写在 neumorphism.css（同页模式也生效）',
+  /\.tb-group\s*\{/.test(cssSrc) && /\.tb-group-head\s*\{/.test(cssSrc));
+t('分组样式没写进 settings.css（那边不加载）',
+  !/\.tb-group/.test(src('plugins/settings/settings.css')));
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -20,16 +20,13 @@ import {
   resetAccent, resetEnvColor, resetHueShift, resetLightShift,
   /* 背景图 */
   supportsBgImage, getBgImage, setBgImage, resetBgImage,
-  /* 预设背景：数据存在 themes.js，设置页负责渲染成可点的缩略图。
-     此前只 import 了上面四个，预设在数据里有、界面上没有入口。 */
-  getBgPreset, setBgPreset,
   saveAsCustom, deleteCustomTheme,
   // getCurrent：色相/明暗改为按主题各记一份后，提示文案要显示当前主题名
   getCurrent,
   getCustomColors, saveCustomColors,
   onChange as onThemeChange,
 } from '../../js/theme-manager.js';
-import { swatchFor, styleLabel, BG_PRESETS } from '../../js/themes.js';
+import { swatchFor, styleLabel } from '../../js/themes.js';
 import {
   ADAPT_POLICIES, PLUGIN_THEMES,
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
@@ -368,6 +365,40 @@ function ToolbarSection({ plugins, ctx }: { plugins: any[]; ctx: any }) {
     return ia - ib;
   });
 
+  /*
+   * 按 kind 分成三组：工具栏 / 应用 / 服务。**组内**再按已加入顺序排。
+   *
+   * 之前是一整片卡片混排，而这三类插件**能做的事不一样**：
+   *   工具栏插件 —— 自己就声明了要占右上角，只能隐藏、不能移除
+   *   应用插件   —— 唯一可以「加入 / 取消加入」的一类
+   *   服务插件   —— 后台运行不进界面，两个按钮都不可用
+   * 混在一片里，用户得逐张卡片读那行小字才知道自己能点哪个；
+   * 分组后每组的可用操作是固定的，看标题就知道。
+   */
+  const kindOf = (p: any) =>
+    p?.kind === 'toolbar' ? 'toolbar' : p?.kind === 'service' ? 'service' : 'app';
+  const GROUPS: { key: string; title: string; hint: string }[] = [
+    {
+      key: 'toolbar',
+      title: '工具栏插件',
+      hint: '自带入口，只能隐藏 / 展示，不能移除',
+    },
+    {
+      key: 'app',
+      title: '应用插件',
+      hint: '可加入右上角按钮，点了切到该插件',
+    },
+    {
+      key: 'service',
+      title: '服务插件',
+      hint: '后台运行不进界面，无法放到右上角',
+    },
+  ];
+  const grouped = GROUPS.map((g) => ({
+    ...g,
+    items: cards.filter((p: any) => kindOf(p) === g.key),
+  }));
+
   type CardBtn = { label: string; title: string; act?: () => void; disabled?: boolean };
 
   const cardBtn = (b: CardBtn) => (
@@ -405,84 +436,104 @@ function ToolbarSection({ plugins, ctx }: { plugins: any[]; ctx: any }) {
         </span>
       </div>
 
-      <div className="tb-shop">
-        {cards.map((p) => {
-          const isTb = p.kind === 'toolbar';
-          const isSvc = p.kind === 'service';
-          const joined = wantsEntry(p, extra);
-          const e = byId.get(p.id);
-          const hid = e ? hidden.has(e.id) : false;
-          const pos = rank.get(p.id);
+      {grouped.map((g) => (
+        <div key={g.key} className="tb-group">
+          <div className="tb-group-head">
+            <span className="tb-group-title">
+              {g.title} · {g.items.length}
+            </span>
+            <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+              {g.hint}
+            </span>
+          </div>
+          {/* 空组不渲染卡片区，但标题保留 —— 否则"这类插件一个都没有"
+              和"这类插件没被列出来"看起来一样，都会被当成漏了。 */}
+          {g.items.length ? (
+            <div className="tb-shop">
+              {g.items.map((p) => {
 
-          /*
-           * 「展示 / 隐藏」只对**已经加入**的入口有意义。
-           * 未加入时**禁用而不是不画** —— 按钮凭空消失，
-           * 用户只会以为是漏了，不会想到"要先加入"。
-           */
-          const show: CardBtn = (!joined || !e)
-            ? { label: '展示', title: '先加入右上角，才能控制是否显示', disabled: true }
-            : hid
-              ? {
-                label: '展示', title: '重新显示到右上角',
-                act: () => toggleHidden(e.id),
-              }
-              : {
-                label: '隐藏', title: '从右上角隐藏（保留位置与顺序，可再显示）',
-                act: () => toggleHidden(e.id),
-              };
+            const isTb = p.kind === 'toolbar';
+            const isSvc = p.kind === 'service';
+            const joined = wantsEntry(p, extra);
+            const e = byId.get(p.id);
+            const hid = e ? hidden.has(e.id) : false;
+            const pos = rank.get(p.id);
 
-          /*
-           * 「加入 / 取消加入」。
-           * 两种情况禁用，但**都要写明原因**：
-           *   服务插件 —— 不进界面，加了也是点开一片空白
-           *   工具栏插件 —— 自己就声明了要占右上角，不是"加"上去的
-           * 禁用的按钮不给 title 就是"点了没反应且不知道为什么"。
-           */
-          const join: CardBtn = isSvc
-            ? { label: '加入', title: '服务插件在后台运行，不进界面', disabled: true }
-            : !joined
-              ? {
-                label: '加入',
-                title: '在右上角加一个按钮，点了切到这个插件',
-                act: () => {
-                  addExtra(p.id);
-                  ctx?.toast?.(`已把「${p.name ?? p.id}」加到右上角`, 'ok');
-                },
-              }
-              : isTb
-                ? { label: '取消加入', title: '工具栏插件内置在右上角，不可移除', disabled: true }
+            /*
+             * 「展示 / 隐藏」只对**已经加入**的入口有意义。
+             * 未加入时**禁用而不是不画** —— 按钮凭空消失，
+             * 用户只会以为是漏了，不会想到"要先加入"。
+             */
+            const show: CardBtn = (!joined || !e)
+              ? { label: '展示', title: '先加入右上角，才能控制是否显示', disabled: true }
+              : hid
+                ? {
+                  label: '展示', title: '重新显示到右上角',
+                  act: () => toggleHidden(e.id),
+                }
                 : {
-                  label: '取消加入',
-                  title: '从右上角移除这个按钮（不会卸载插件）',
-                  act: () => {
-                    removeExtra(p.id);
-                    ctx?.toast?.(`已把「${p.name ?? p.id}」移出右上角`, 'ok');
-                  },
+                  label: '隐藏', title: '从右上角隐藏（保留位置与顺序，可再显示）',
+                  act: () => toggleHidden(e.id),
                 };
 
-          return (
-            <div
-              key={p.id}
-              className={'tb-card' + (joined ? ' joined' : '') + (hid ? ' is-hidden' : '')}
-            >
-              <div className="tb-card-top">
-                <span className="tb-card-icon">{p.icon ?? '◌'}</span>
-                <span className="tb-card-name" title={p.name ?? p.id}>{p.name ?? p.id}</span>
-              </div>
-              <div className="tb-card-meta">
-                {isSvc ? '服务插件' : isTb ? '工具栏插件' : '应用插件'}
-                {joined ? ` · 第 ${(pos ?? 0) + 1} 位` : ''}
-                {hid ? ' · 已隐藏' : ''}
-              </div>
-              <div className="tb-card-btns">
-                {cardBtn(show)}
-                {cardBtn(join)}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+            /*
+             * 「加入 / 取消加入」。
+             * 两种情况禁用，但**都要写明原因**：
+             *   服务插件 —— 不进界面，加了也是点开一片空白
+             *   工具栏插件 —— 自己就声明了要占右上角，不是"加"上去的
+             * 禁用的按钮不给 title 就是"点了没反应且不知道为什么"。
+             */
+            const join: CardBtn = isSvc
+              ? { label: '加入', title: '服务插件在后台运行，不进界面', disabled: true }
+              : !joined
+                ? {
+                  label: '加入',
+                  title: '在右上角加一个按钮，点了切到这个插件',
+                  act: () => {
+                    addExtra(p.id);
+                    ctx?.toast?.(`已把「${p.name ?? p.id}」加到右上角`, 'ok');
+                  },
+                }
+                : isTb
+                  ? { label: '取消加入', title: '工具栏插件内置在右上角，不可移除', disabled: true }
+                  : {
+                    label: '取消加入',
+                    title: '从右上角移除这个按钮（不会卸载插件）',
+                    act: () => {
+                      removeExtra(p.id);
+                      ctx?.toast?.(`已把「${p.name ?? p.id}」移出右上角`, 'ok');
+                    },
+                  };
 
+            return (
+              <div
+                key={p.id}
+                className={'tb-card' + (joined ? ' joined' : '') + (hid ? ' is-hidden' : '')}
+              >
+                <div className="tb-card-top">
+                  <span className="tb-card-icon">{p.icon ?? '◌'}</span>
+                  <span className="tb-card-name" title={p.name ?? p.id}>{p.name ?? p.id}</span>
+                </div>
+                <div className="tb-card-meta">
+                  {isSvc ? '服务插件' : isTb ? '工具栏插件' : '应用插件'}
+                  {joined ? ` · 第 ${(pos ?? 0) + 1} 位` : ''}
+                  {hid ? ' · 已隐藏' : ''}
+                </div>
+                <div className="tb-card-btns">
+                  {cardBtn(show)}
+                  {cardBtn(join)}
+                </div>
+              </div>
+            );
+              })}
+            </div>
+          ) : (
+            <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+              这一类当前没有插件。
+            </div>
+          )}
+        </div>
+      ))}
       {entries.length ? null : (
         <div className="p-muted" style={{ marginTop: 'var(--sp-4, 8px)', fontSize: 'var(--fs-11, 11px)' }}>
           右上角还没有任何按钮。在上面任意一张卡片点「加入」即可。
@@ -1208,21 +1259,21 @@ export default function Settings() {
               return (
                 <div className="nx-bgslot nx-bgslot-off" title="当前主题为纯色底，不支持背景图">
                   <span className="nx-bgslot-ban" aria-hidden="true">🚫</span>
-                  <span className="p-muted nx-bgslot-off-text">
+                  <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
                     此主题不带背景图
                   </span>
                 </div>
               );
             }
             return (
-              <div className="p-row wrap" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
+              <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
                 <div
                   className="nx-bgslot"
                   style={cur ? { backgroundImage: 'url("' + cur + '")' } : undefined}
                   title={cur ? '当前背景图' : '主题自带背景'}
                 >
                   {!cur ? (
-                    <span className="p-muted nx-bgslot-off-text">主题自带</span>
+                    <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>主题自带</span>
                   ) : null}
                 </div>
                 <button className="p-btn" onClick={() => bgFileRef.current?.click()}>
@@ -1264,37 +1315,6 @@ export default function Settings() {
               </div>
             );
           })()}
-
-          {/* ---------- 预设背景 ----------
-              此前 BG_PRESETS 只在 themes.js 里有数据，界面没有入口 ——
-              用户能看到的只有一个「选择图片…」按钮，10 个预设全部不可达。
-              现在排在这里供点选；主题不带背景图时不显示（与上面占位同理）。 */}
-          {supportsBgImage() ? (
-            <div className="nx-bgpresets">
-              {BG_PRESETS.map((p) => {
-                const on = getBgPreset() === p.id;
-                return (
-                  <button
-                    key={p.id}
-                    className={'nx-bgpreset' + (on ? ' on' : '')}
-                    style={{ backgroundImage: p.css }}
-                    /* 再点一次已选中的 = 取消，回到主题自带背景。
-                       不做取消的话，选了预设就只能靠「恢复默认」退出，
-                       而那个按钮在自定义图那一组里，用户找不到。 */
-                    onClick={() => {
-                      setBgPreset(on ? '' : p.id);
-                      ctx.toast(on ? '已取消预设背景' : `背景：${p.name}`, 'ok');
-                      rerender();
-                      void syncThemeToShell();
-                    }}
-                    title={on ? `取消「${p.name}」` : `使用「${p.name}」`}
-                    aria-pressed={on}
-                    aria-label={p.name}
-                  />
-                );
-              })}
-            </div>
-          ) : null}
 
           <div className="p-row" style={{ marginTop: 'var(--sp-7, 14px)' }}>
             <button

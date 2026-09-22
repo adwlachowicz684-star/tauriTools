@@ -145,18 +145,6 @@
 
   --divider:       rgba(255,255,255,.10);
   --blur:          0px;
-
-  /* 上面这批是**深色档兜底**，只在 JS 还没跑（首屏）或主题模块不可用时生效；
-     正常运行下会被 js/theme-manager.js 的内联样式整组覆写。
-
-     所以这里必须再给一份浅色档 —— 否则首屏那几十毫秒里，
-     浅色主题会先用上深色兜底（白分隔线压在浅底上，等于看不见），
-     等 JS 落地再跳变一次。切换主题时那个闪一下，多半就是它。
-
-     用 [data-theme-base] 而不是 [data-nexus-base]：前者由 theme-manager
-     写在外壳的 :root 上，后者是 plugin-sdk 写在 iframe 插件自己的文档里，
-     主面板读不到。 */
-  --edge:          rgba(255,255,255,.08);
   --bg-image:      none;
   --hairline:      rgba(255,255,255,.05);
   --mask:          rgba(10,12,16,.62);
@@ -179,16 +167,6 @@
   --t: 200ms cubic-bezier(.4, 0, .2, 1);
 
   color-scheme: dark;
-}
-
-/* 浅色档兜底：与上面 :root 同一批变量，只是换成"深色墨"方向。
-   只覆盖**颜色类**兜底，圆角/尺寸不动 —— 那些不随基调变。 */
-:root[data-theme-base="light"] {
-  --divider:  rgba(0,0,0,.12);
-  --edge:     rgba(0,0,0,.10);
-  --hairline: rgba(0,0,0,.07);
-  --mask:     rgba(90,96,110,.32);
-  color-scheme: light;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -628,15 +606,7 @@ body {
 .err-diag[open] > summary::before { transform: rotate(90deg); }
 .err-diag > summary:hover { color: var(--text); }
 .err-diag-actions { margin: 10px 0; display: flex; gap: 8px; }
-/* 日志正文：等宽 + 限制高度，长堆栈不会把整个错误框撑到屏幕外。
-
-   这一行前面原本以 `.err-diag-actions` 开头且**没有规则体** ——
-   覆盖写时它的 `{...}` 被挤掉，于是 CSS 把这两行连读成后代选择器
-   `.err-diag-actions .err-diag-body`。
-   而 host.js 里 `.err-diag-actions` 与 `.err-diag-body` 是**兄弟节点**，
-   不是父子 —— 选择器永远匹配不上，下面整段样式全部失效：
-   长堆栈会把错误框撑出屏幕，恰恰是这条注释想防止的事。
-   （已由 dead-class-scan 的截断检测抓出） */
+.err-diag-actions /* 日志正文：等宽 + 限制高度，长堆栈不会把整个错误框撑到屏幕外 */
 .err-diag-body {
   font-family: var(--font-mono);
   font-size: var(--fs-11, 11px);
@@ -885,22 +855,6 @@ body.nx-inspecting * { cursor: crosshair !important; }
   min-height: 100%;
   isolation: isolate;          /* 把 mix-blend-mode 限制在容器内，不影响外壳 */
 }
-/*
- * 外框修饰层。host.js 里写的是 'plugin-wrap plugin-wrap-frame' 两个类，
- * 但 frame 这层历史上定义过又消失，属于"覆盖写丢失"——
- * 与 project-group 那 8 个类是同一类损伤，现在一并补回并由
- * dead-class-test.mjs 守住。
- *
- * 只做视觉修饰（描边 + 圆角），不改布局：
- * .plugin-wrap 已设 position:relative + height:100% + isolation:isolate，
- * 在这里重复写会引入层叠冲突，所以刻意不碰。
- */
-.plugin-wrap-frame {
-  border: 1px solid var(--border, rgba(255, 255, 255, .12));
-  border-radius: var(--r-card, 10px);
-  overflow: hidden;
-}
-
 .plugin-root { min-height: 100%; position: relative; }
 /* 挂载期遮罩：iframe 先隐身，等主题变量推完、适配滤镜也挂上再淡入。
    --------------------------------------------------------------------
@@ -1666,4 +1620,25 @@ html.theme-transition *:not(.spinner) {
 .tb-card-btns {
   display: flex; gap: var(--sp-3, 6px);
   margin-top: auto;
+}
+
+/* 分组容器：工具栏 / 应用 / 服务三组各占一块。
+   --------------------------------------------------------------------
+   分这三组不是装饰 —— 三类的**可用操作不同**：
+     工具栏插件 → 只能隐藏 / 展示
+     应用插件   → 唯一能「加入 / 取消加入」的一类
+     服务插件   → 两个按钮都不可用
+   混排时得逐张读卡片上那行小字才知道自己能点哪个，分组后看标题即可。
+
+   块间用间距而不是分隔线：这一片本身就在一个带边框的面板里，
+   再画横线会把它切成互不相干的几块，反而看不出同属"右上角按钮"。 */
+.tb-group { margin-top: var(--sp-6, 12px); }
+.tb-group-head {
+  display: flex; align-items: baseline;
+  gap: var(--sp-4, 8px);
+  flex-wrap: wrap;
+}
+.tb-group-title {
+  font-size: var(--fs-12, 12px);
+  font-weight: 600;
 }
