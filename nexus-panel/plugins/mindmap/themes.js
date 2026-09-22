@@ -85,6 +85,125 @@ export function isBuiltinTheme(name) {
   return THEMES.some((t) => t.value === name);
 }
 
+/* ==================================================================
+   预置自定义主题
+   ------------------------------------------------------------------
+   为什么做成**自定义主题**而不是加进上面的 THEMES：
+     THEMES 里每一项的 value 都必须存在于 kityminder-core 的内置主题表
+     （core 的 setTheme 靠 `list[name]` 查找）。凭空加一个 value，
+     选它会注册失败、画布停在旧配色上 —— 内置表是**第三方库**的，改不了。
+   自定义主题则走 registerCustomTheme() 写进同一张表，是官方扩展口。
+
+   配色的一条硬约束（设计这些值时最容易被忽略）：
+   ---------------------------------------------------------------
+   registerCustomTheme() 内部是
+       var bg = s.textColor; ... 'root-color': bg, 'main-color': bg, 'sub-color': bg
+   即**三级节点共用同一个文字色**。于是 root / main / sub 三个背景必须落在
+   同一明暗侧 —— 只要有一级跨到对面（例如 root 深蓝配浅字、sub 白底），
+   同一个文字色必然在某一级上看不清，而这个缺陷只会体现在**那一级**上，
+   调色时很容易被当成"这一级颜色没选好"而反复涂改。
+
+   所以这里每个主题都满足：
+     · textColor 在 root / main / sub 三处对比度均 ≥ 4.5（实测 5.6~14.5）
+     · 层级靠 L* 递进区分（浅色 67/88/100，深色 33/24/15），相邻级差 ≥ 8
+     · 连线、选中色对画布底 ≥ 3.0（连线是结构信息，太淡等于没有骨架）
+   这些数值由 mm-palette-test 逐项断言，改动会被拦下。
+
+   id 统一用 mm-preset- 前缀：与用户自建主题区分开，
+   也避免将来内置主题扩名时撞车。
+   ================================================================== */
+export const PRESET_THEMES = [
+  {
+    id: 'mm-preset-mist-blue', name: '晨雾蓝', base: 'light',
+    desc: '浅蓝灰画布 · 三级蓝递进，清爽耐看',
+    palette: {
+      background: '#F5F8FC', textColor: '#1B2A3E',
+      selectedColor: '#2F6FBF', connectColor: '#698EB7', connectWidth: 2,
+      rootBackground: '#7BA6D6', rootFontSize: 18, rootRadius: 8, rootSpace: 12,
+      mainBackground: '#CCDFF3', mainFontSize: 15, mainRadius: 6, mainSpace: 8, mainMargin: 24,
+      subBackground: '#FFFFFF', subFontSize: 13, subRadius: 5, subSpace: 6, subMargin: 24,
+    },
+  },
+  {
+    id: 'mm-preset-warm-sand', name: '暖砂', base: 'light',
+    desc: '暖米画布 · 沙棕递进，纸质温润',
+    palette: {
+      background: '#FAF7F2', textColor: '#33291F',
+      selectedColor: '#B07C3E', connectColor: '#A18663', connectWidth: 2,
+      rootBackground: '#BD9E75', rootFontSize: 18, rootRadius: 8, rootSpace: 12,
+      mainBackground: '#E6DBC8', mainFontSize: 15, mainRadius: 6, mainSpace: 8, mainMargin: 24,
+      subBackground: '#FFFFFF', subFontSize: 13, subRadius: 5, subSpace: 6, subMargin: 24,
+    },
+  },
+  {
+    id: 'mm-preset-mint-morning', name: '薄荷晨', base: 'light',
+    desc: '浅绿画布 · 薄荷递进，清透不刺眼',
+    palette: {
+      background: '#F4F9F6', textColor: '#1E2E26',
+      selectedColor: '#3E8F6B', connectColor: '#669580', connectWidth: 2,
+      rootBackground: '#78AE96', rootFontSize: 18, rootRadius: 8, rootSpace: 12,
+      mainBackground: '#C7E3D6', mainFontSize: 15, mainRadius: 6, mainSpace: 8, mainMargin: 24,
+      subBackground: '#FFFFFF', subFontSize: 13, subRadius: 5, subSpace: 6, subMargin: 24,
+    },
+  },
+  {
+    id: 'mm-preset-deep-ink', name: '深墨', base: 'dark',
+    desc: '墨蓝画布 · 节点浮起，长时盯屏不累',
+    palette: {
+      background: '#141922', textColor: '#E8EDF5',
+      selectedColor: '#5B8CFF', connectColor: '#4265B9', connectWidth: 2,
+      rootBackground: '#304D82', rootFontSize: 18, rootRadius: 8, rootSpace: 12,
+      mainBackground: '#2B3A53', mainFontSize: 15, mainRadius: 6, mainSpace: 8, mainMargin: 24,
+      subBackground: '#1D2634', subFontSize: 13, subRadius: 5, subSpace: 6, subMargin: 24,
+    },
+  },
+  {
+    id: 'mm-preset-pine-forest', name: '松林', base: 'dark',
+    desc: '墨绿画布 · 松针配色，沉静专注',
+    palette: {
+      background: '#121A16', textColor: '#E6EFE9',
+      selectedColor: '#4FA37A', connectColor: '#387356', connectWidth: 2,
+      rootBackground: '#2D5643', rootFontSize: 18, rootRadius: 8, rootSpace: 12,
+      mainBackground: '#273E31', mainFontSize: 15, mainRadius: 6, mainSpace: 8, mainMargin: 24,
+      subBackground: '#1B2821', subFontSize: 13, subRadius: 5, subSpace: 6, subMargin: 24,
+    },
+  },
+  {
+    id: 'mm-preset-dusk-violet', name: '暮紫', base: 'dark',
+    desc: '紫黑画布 · 暮色递进，适合做创意图',
+    palette: {
+      background: '#171422', textColor: '#EDE9F5',
+      selectedColor: '#8B6FD9', connectColor: '#6F59AD', connectWidth: 2,
+      rootBackground: '#52418B', rootFontSize: 18, rootRadius: 8, rootSpace: 12,
+      mainBackground: '#3D335C', mainFontSize: 15, mainRadius: 6, mainSpace: 8, mainMargin: 24,
+      subBackground: '#292238', subFontSize: 13, subRadius: 5, subSpace: 6, subMargin: 24,
+    },
+  },
+];
+
+/**
+ * 把预置主题并进自定义主题列表。
+ *
+ * 直接 concat 会让**删掉的预置主题下次启动又冒出来** —— 用户删一次不够，
+ * 得每次都删，等于删除按钮是坏的。所以 `removed` 里记过的 id 永久跳过。
+ *
+ * @param {Array} customThemes 用户已存的主题（含其改过的预置主题）
+ * @param {string[]} removed 用户删过的预置 id
+ * @returns {Array} 合并后的列表；用户同名 id 的以**用户版**为准（可编辑、可保留改动）
+ */
+export function mergePresetThemes(customThemes = [], removed = []) {
+  const list = Array.isArray(customThemes) ? [...customThemes] : [];
+  const gone = new Set(removed || []);
+  const has = new Set(list.map((t) => t?.id));
+  for (const p of PRESET_THEMES) {
+    if (gone.has(p.id) || has.has(p.id)) continue;
+    // 深拷贝：否则用户编辑预置主题时改的是模块级常量，
+    // 刷新后其它文档也跟着变（同一个对象被多处引用）。
+    list.push(JSON.parse(JSON.stringify(p)));
+  }
+  return list;
+}
+
 /**
  * A64 新建主题的种子调色板。
  *
