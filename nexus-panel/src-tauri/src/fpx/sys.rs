@@ -249,6 +249,123 @@ fn open_default(file: &Path) -> Result<(), String> {
 
 /* ---------------------------- ACL 文件夹保护 ---------------------------- */
 
+/// 磁盘上**实际生效**的保护状态（对齐原版 FolderLockState / GetState）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LockState {
+    pub deny_delete: bool,
+    pub deny_write: bool,
+}
+
+impl LockState {
+    pub fn any(&self) -> bool { self.deny_delete || self.deny_write }
+}
+
+/// 读取实际生效的保护状态（只读查询，不修改）。
+///
+/// 对齐原版 `FolderLockService.GetState`。与"配置里登记了什么"是两件事：
+/// 读它才能回答"到底锁住没有"。
+///
+/// **为什么必须有它**：icacls 可能失败（资源管理器持有句柄、权限不足），
+/// 用户也可能在资源管理器里手动改过 ACL。只按配置显示的话，
+/// "界面说锁着、磁盘上其实没锁"这种状态**无任何报错** ——
+/// 正是 15.1（缺目录自身那条 ACE）那类问题能被藏住的原因。
+pub fn lock_state(path: &str) -> Result<LockState, String> {
+    let p = Path::new(path);
+    if !p.is_dir() {
+        return Err(format!("目录不存在: {path}"));
+    }
+
+    #[cfg(windows)]
+    {
+        let out = run_cmd("icacls", &[path.to_string()])?;
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        /*
+         * icacls 输出形如：
+         *   Everyone:(DENY)(D)
+         *   Everyone:(OI)(CI)(DENY)(W)
+         *   BUILTIN\Administrators:(I)(OI)(CI)(F)
+         *
+         * 只认「身份是 Everyone」且「带 (DENY)」的行 —— 与本工具管理范围一致，
+         * 不把第三方 Deny 当成自己的锁（原版 IsWorldSid + AccessControlType.Deny 同口径）。
+         */
+        let mut st = LockState::default();
+        for line in text.lines() {
+            let line = line.trim();
+            if !line.starts_with("Everyone:") { continue; }
+            if !line.contains("(DENY)") { continue; }
+            /*
+             * 权限位在 `(DENY)` **之后**的那对括号里（`(OI)(CI)` 等继承标记在前）。
+             * 里面是逗号分隔的简写：D/DE=删除，W/AD/WEA/WA=各类写入，
+             * WDAC/WO/RC 等属**非管理范围**，不当成本工具的锁
+             * （与原版"只认权限落在 Delete/Write 管理范围内"同口径）。
+             */
+            let after = match line.split("(DENY)").nth(1) { Some(x) => x, None => continue };
+            let inner = match after.trim_start().strip_prefix('(').and_then(|x| x.split(')').next()) {
+                Some(x) => x, None => continue,
+            };
+            for p in inner.split(',') {
+                match p.trim() {
+                    "D" | "DE" => st.deny_delete = true,
+                    "W" | "AD" | "WA" | "WEA" => st.deny_write = true,
+                    _ => {}
+                }
+            }
+        }
+        Ok(st)
+    }
+
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(p).map_err(|e| format!("读取权限失败: {e}"))?.permissions().mode();
+        // 非 Windows 只有只读近似：写位全无 = 只读（视为防写入生效）
+        let ro = mode & 0o222 == 0;
+        Ok(LockState { deny_delete: ro, deny_write: ro })
+    }
+}
+
+/// 启动自愈：按期望强度**幂等**重建 ACE（对齐原版 SweepRepair）。
+///
+/// 处理上次异常退出、icacls 中途失败、或外部拆锁造成的不一致：
+///   · desired 里每条：目录存在且与期望不符才重建（已符合就免写，省一次外部进程）；
+///   · known 里不在 desired 中的（已从配置移除的旧条目）：只清残留的本工具 deny。
+///
+/// 单条失败不影响其余，逐条返回错误（空 vec = 全部成功）。
+/// **绝不因为自愈失败阻断启动** —— 那会让软件起不来。
+pub fn sweep_repair(desired: &[(String, bool, bool)], known: &[String]) -> Vec<String> {
+    let mut errors: Vec<String> = Vec::new();
+    let mut wanted: Vec<String> = Vec::new();
+    for (raw, dd, dw) in desired {
+        match lock_state(raw) {
+            Ok(cur) if cur.deny_delete == *dd && cur.deny_write == *dw => {
+                wanted.push(raw.clone());
+                continue; // 已符合期望，免写
+            }
+            Ok(_) => {
+                wanted.push(raw.clone());
+                if let Err(e) = apply_lock(raw, *dd, *dw) {
+                    errors.push(format!("{raw}: {e}"));
+                }
+            }
+            // 目录不存在 / 读不到：无从谈起保护，跳过（不报错刷屏）
+            Err(_) => { wanted.push(raw.clone()); }
+        }
+    }
+    for raw in known {
+        if wanted.iter().any(|w| w == raw) { continue; }
+        match lock_state(raw) {
+            Ok(st) if st.any() => {
+                if let Err(e) = apply_lock(raw, false, false) {
+                    errors.push(format!("{raw}: {e}"));
+                }
+            }
+            _ => {}
+        }
+    }
+    errors
+}
+
 /// 应用 / 解除保护。Windows 走 icacls（best-effort），Unix 退化为 chmod 只读。
 pub fn apply_lock(path: &str, deny_delete: bool, deny_write: bool) -> Result<String, String> {
     let p = Path::new(path);

@@ -4,7 +4,7 @@ import type {
   ChainAction, ChainSendResult, ContentItem, CustomChainClient, DirEntryLite,
   ClearResult, EditorCandidate, FpxConfig, McpToolRow, MoveAcrossResult,
   ContentRenameResult, RenameResult, Snapshot, WatchEvent,
-  RenameIconResult,
+  RenameIconResult, LockStateLive,
 } from './types';
 
 /**
@@ -72,6 +72,9 @@ export function makeApi(ctx: PluginContext) {
       }),
 
     /* #21 accountOnly = 仅账面固定，不落系统权限。可选，默认 false。 */
+    /** 读**磁盘实际生效**的保护状态（与配置登记值是两件事） */
+    lockState: (path: string) =>
+      call<LockStateLive>('fpx_lock_state', { path }),
     setLock: (path: string, denyDelete: boolean, denyWrite: boolean, accountOnly?: boolean) =>
       call<Snapshot>('fpx_set_lock', {
         path, deny_delete: denyDelete, deny_write: denyWrite, account_only: accountOnly ?? false,

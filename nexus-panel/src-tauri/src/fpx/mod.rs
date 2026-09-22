@@ -1065,9 +1065,35 @@ pub fn fpx_bootstrap(app: AppHandle, state: State<'_, FpxState>) -> Result<Boots
     let cfg = store::load_config(&dir);
     let records = store::load_records(&dir);
     let names = junction::enabled_names(&cfg);
+    /*
+     * 启动自愈：按 config.locks **幂等**重建 ACE（对齐原版 SweepRepair）。
+     *
+     * 解决的是"上次异常退出 / icacls 中途失败 / 外部拆锁"留下的不一致。
+     * 只在**实际状态与期望不符**时才写（sweep_repair 内部先 lock_state 比对），
+     * 已符合就免写 —— 不为每条锁白跑一次 icacls /deny。
+     *
+     * 两条硬约束：
+     *   · account_only（账面固定）**必须跳过**：它明确"不动系统权限"，
+     *     自愈若给它落 ACL，等于替用户取消了这个选择，且他会以为自己没开过锁；
+     *   · 失败**绝不阻断启动**，只把逐条错误并进 notices ——
+     *     因自愈失败而让软件起不来是最糟的结果。
+     */
+    let mut notices = store::config_issues(&dir);
+    if !cfg.locks.is_empty() {
+        let desired: Vec<(String, bool, bool)> = cfg.locks.iter()
+            .filter(|l| !l.account_only)
+            .map(|l| (l.path.clone(), l.deny_delete, l.deny_write))
+            .collect();
+        if !desired.is_empty() {
+            for e in sys::sweep_repair(&desired, &[]) {
+                notices.push(format!("[ACL 自愈] {e}"));
+            }
+        }
+    }
+
     Ok(Bootstrap {
         // 体检放在构造里算一次：启动只读一处，不值得单独暴露成命令
-        config_notices: store::config_issues(&dir),
+        config_notices: notices,
         data_dir: dir.to_string_lossy().to_string(),
         platform: std::env::consts::OS.to_string(),
         config: cfg.clone(),
@@ -1421,6 +1447,26 @@ pub fn fpx_mcp_tools(
     let dir = store::data_dir(&app, &state)?;
     let cfg = store::load_config(&dir);
     Ok(mcp::tool_rows(&cfg))
+}
+
+/// 读取某目录**磁盘上实际生效**的保护状态（对齐原版 LockToggle 打开弹窗前先读一次）。
+///
+/// 与"配置里登记了什么"是两件事 —— 只按登记值显示的话，
+/// icacls 失败、外部手动改过 ACL、缺目录自身那条 ACE（15.1）
+/// 这些情况都会表现为"界面说锁着、实际没锁"，且**没有任何报错**。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_lock_state(path: String) -> serde_json::Value {
+    let exists = std::path::Path::new(&path).is_dir();
+    let live = if exists { sys::lock_state(&path).ok() } else { None };
+    serde_json::json!({
+        "path": path,
+        "exists": exists,
+        "denyDelete": live.map(|l| l.deny_delete).unwrap_or(false),
+        "denyWrite": live.map(|l| l.deny_write).unwrap_or(false),
+        /* 读不到时明确给 error 而不是默认 false：
+           "不知道"与"确定没锁"是两回事，混在一起会让用户以为保护没生效而重复加锁。 */
+        "error": live.is_none().then(|| "目录不存在或读取 ACL 失败".to_string()),
+    })
 }
 
 /// 自动备份状态（设置面板显示用）：是否运行中、间隔、上次执行时间。

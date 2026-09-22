@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Api } from '../api';
 import { errText } from '../api';
-import type { CardKind, IconGroup } from '../types';
+import type { CardKind, IconGroup, LockStateLive } from '../types';
 import { ColorPicker } from '../../color-picker/ColorPicker';
 import { DirDialog } from './DirDialog';
 import { PresetIconGrid } from './PresetIconGrid';
@@ -112,11 +112,19 @@ export function CreateDialog({
 /** ACL 文件夹保护 */
 export function LockDialog({
   path, denyDelete, denyWrite, accountOnly, onClose, onApply,
-  watchEnabled, onWatchChange,
+  watchEnabled, onWatchChange, live,
 }: {
   path: string;
   denyDelete: boolean;
   denyWrite: boolean;
+  /**
+   * 磁盘上**实际生效**的状态（打开弹窗前由外层读一次，对齐原版 LockToggle）。
+   *
+   * 与上面那两个「登记值」是两件事：icacls 失败、手动改过 ACL、
+   * 缺目录自身那条 ACE，都会让两者不一致，而**没有任何报错** ——
+   * 只显示登记值的话，用户会以为自己受着保护。
+   */
+  live?: LockStateLive | null;
   /** 「账面固定」（#21）：与 ACL 是两件事，可选以兼容旧调用点 */
   accountOnly?: boolean;
   onClose: () => void;
@@ -146,6 +154,19 @@ export function LockDialog({
     setDw(next.denyWrite);
     setAo(next.accountOnly);
   };
+
+  /*
+   * 只在**读得到且确实不一致**时才提示。
+   * 读不到（live 为 null / error）就什么也不说 ——
+   * 那是"不知道"，不是"不一致"；按不一致提示会让用户以为保护没生效而反复加锁。
+   */
+  const drift = live && !live.error && live.exists
+    && (live.denyDelete !== dd || live.denyWrite !== dw);
+  /* 文案要说"实际是什么"，只说"不一致"用户无从判断严重性 */
+  const liveText = !live ? ''
+    : !live.denyDelete && !live.denyWrite ? '未保护'
+      : [live.denyDelete ? '防删除' : '', live.denyWrite ? '防写入' : '']
+        .filter(Boolean).join(' + ');
 
   return (
     <Modal
@@ -186,6 +207,19 @@ export function LockDialog({
           ? '当前是自定义组合（不在预设档位内）'
           : (LOCK_PRESETS.find((p) => p.id === cur)?.hint ?? '')}
       </div>
+
+      {/*
+        磁盘实际生效 ≠ 上面选的档位时明确说出来。
+        不提示的话，用户会以为已经受保护（界面显示的就是他选的档），
+        而实际没锁上 —— 这正是 15.1（缺目录自身那条 ACE）藏得住的原因。
+        文案要说清"点应用即可对齐"，否则用户不知道该怎么消除这个提示。
+      */}
+      {drift && (
+        <div className="fpx-lock-drift" role="status">
+          磁盘上实际生效的保护（{liveText}）与上面所选不同，
+          可能上次设置未完全生效或被外部改动过 —— 点「应用」即可对齐。
+        </div>
+      )}
 
       {/* #23 监控告警：与保护设置放在一起才顺手 ——
           设完保护接着就会想"要不要盯着它"。

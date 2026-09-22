@@ -1030,8 +1030,35 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
                 Some(l) => (l.deny_delete, l.deny_write),
                 None => (false, false),
             };
+            /*
+             * 同时报「配置登记的」与「磁盘实际生效的」（对齐原版 LockStatus 的
+             * configured / aclLive / consistent 三段）。
+             *
+             * 只报登记值的话，"界面说锁着、磁盘上其实没锁"（icacls 失败、
+             * 外部手动改过、缺 15.1 那条目录自身 ACE）这种状态**没有任何报错**，
+             * 调用方无从察觉 —— 而它恰恰是"以为锁住了"最容易翻车的地方。
+             */
+            let exists = std::path::Path::new(&path).is_dir();
+            let live = if exists {
+                match super::sys::lock_state(&path) {
+                    Ok(st) => Some((st.deny_delete, st.deny_write, String::new())),
+                    Err(e) => Some((false, false, e)),
+                }
+            } else { None };
+            let (ld, lw, lerr) = live.unwrap_or((false, false, String::new()));
+            /*
+             * consistent 只在「目录存在且读得到实际状态」时才算数。
+             * 读不到就报 false 会误导调用方以为"锁没生效"，
+             * 而真相是"我们不知道" —— 两种情况要分开。
+             */
+            let known = exists && lerr.is_empty();
             json!({ "content": [{ "type": "text", "text": serde_json::to_string(&json!({
                 "path": path, "locked": dd || dw, "denyDelete": dd, "denyWrite": dw,
+                "exists": exists,
+                "configured": { "denyDelete": dd, "denyWrite": dw },
+                "aclLive": { "delete": ld, "write": lw },
+                "consistent": known && ld == dd && lw == dw,
+                "error": if lerr.is_empty() { serde_json::Value::Null } else { json!(lerr) },
             })).unwrap_or_default() }] })
         }
         "folder_icon_set" => {

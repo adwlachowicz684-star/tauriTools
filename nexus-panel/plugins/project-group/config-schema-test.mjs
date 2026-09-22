@@ -96,8 +96,16 @@ console.log('\n=== 6. 加载路径接上了 ===');
   t('config_issues 存在', /pub fn config_issues\(dir: &Path\) -> Vec<String>/.test(store));
   t('config_issues 是只读的（不写文件）',
     /读路径不该顺手改文件/.test(store));
+  /*
+   * 不钉死 `config_notices: store::config_issues(&dir)` 这一整句：
+   * 启动自愈后要先并入 ACL 自愈的错误，字段改成传局部 `notices`
+   * （其值 = config_issues + 自愈错误）。钉死原句会**误报**"体检结果没了"，
+   * 而它其实还在 —— 只是多拼了东西。
+   * 真正要钉的是：`config_issues` 确实被算进去了。
+   */
   t('bootstrap 带上了体检结果',
-    /config_notices: store::config_issues\(&dir\)/.test(mod));
+    /let mut notices = store::config_issues\(&dir\);/.test(mod)
+    || /config_notices: store::config_issues\(&dir\)/.test(mod));
   t('Bootstrap 有 config_notices 字段', /pub config_notices: Vec<String>/.test(model));
 }
 

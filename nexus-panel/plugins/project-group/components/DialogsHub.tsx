@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { RemoveCardDialog } from './dialogs';
 import { RenameDialog } from './RenameDialog';
 import { RenameContentDialog } from './RenameContentDialog';
@@ -22,7 +22,7 @@ import {
    等哪天误发一条时根本想不起来是在这里关的。 */
 import { setSkipConfirm } from '../utils/confirmOnce';
 import type {
-  CardInfo, CardKind, ChainAction,
+  CardInfo, CardKind, ChainAction, LockStateLive,
 } from '../types';
 import type { FpxStore } from '../hooks/useFpx';
 
@@ -130,9 +130,22 @@ export function Dialogs(props: DialogsProps) {
    */
   const [iconFollow, setIconFollow] = useState(true);
 
+  /**
+   * 保护弹窗打开时读一次的**磁盘实际生效**状态（`fpx_lock_state`）。
+   *
+   * 只在弹窗确实是 lock 且路径变了时才查：每次渲染都查会反复跑 icacls
+   * （外部进程），弹窗里点一下开关就卡一下。
+   */
+
   const {
     dialog,
     setDialog,
+    /*
+     * 保护弹窗打开时读一次的**磁盘实际生效**状态（`fpx_lock_state`）。
+     *
+     * 用解构出来的 `dialog` 而不是 props.dialog ——
+     * 后者在下面 render 里每次重新取值，语义不一致容易漂移。
+     */
     doMove,
     doRenameContent,
     chainActions,
@@ -150,6 +163,21 @@ export function Dialogs(props: DialogsProps) {
     iconFiles,
     setIconFiles,
   } = props;
+
+  const lockPath = dialog.type === 'lock' ? dialog.card.path : '';
+  const [liveLock, setLiveLock] = useState<LockStateLive | null>(null);
+  useEffect(() => {
+    if (!lockPath) { setLiveLock(null); return; }
+    /* 关闭竞态：路径换掉后旧请求才回来，会把 A 的状态显示到 B 上 */
+    let alive = true;
+    setLiveLock(null);
+    ctx.api.lockState(lockPath)
+      .then((r) => { if (alive) setLiveLock(r); })
+      /* 读不到就保持 null（= "不知道"），**不弹错也不当无锁** ——
+         那两种是不同含义，混起来会让用户以为保护没生效而反复加锁 */
+      .catch(() => { if (alive) setLiveLock(null); });
+    return () => { alive = false; };
+  }, [lockPath, ctx.api]);
 
   const selPath = s.selProject ?? s.selGroup;
   /*
@@ -238,6 +266,12 @@ export function Dialogs(props: DialogsProps) {
           path={dialog.card.path}
           denyDelete={dialog.card.denyDelete}
           denyWrite={dialog.card.denyWrite}
+          /*
+           * 打开弹窗时读一次**磁盘实际生效**的状态（对齐原版 LockToggle
+           * 弹窗前先 GetState）。弹窗里显示的是登记值，不读实际值的话
+           * "以为锁着、实际没锁"就没有任何出口。
+           */
+          live={liveLock}
           /* #21 账面固定：与 ACL 是两件事，单独传 */
           accountOnly={dialog.card.accountFixed}
           onClose={() => setDialog({ type: 'none' })}

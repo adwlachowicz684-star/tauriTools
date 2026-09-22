@@ -237,6 +237,19 @@ export interface DirEntryLite {
 
 /* ---------------------------- 备份 ---------------------------- */
 
+/** 磁盘上**实际生效**的保护状态（对齐原版 GetState）。 */
+export interface LockStateLive {
+  path: string;
+  /** 目录是否存在（不存在则无从谈起保护） */
+  exists: boolean;
+  /** 实际生效：防删除 */
+  denyDelete: boolean;
+  /** 实际生效：防写入 */
+  denyWrite: boolean;
+  /** 读不到时为非空 —— 「不知道」与「确定没锁」必须分开 */
+  error?: string | null;
+}
+
 export interface BackupResult {
   target: string;
   sources: number;

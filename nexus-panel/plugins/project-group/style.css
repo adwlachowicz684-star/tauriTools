@@ -1533,6 +1533,20 @@
 .fpx-lock-preset-name { font-weight: 600; }
 .fpx-lock-preset-flags { font-size: var(--fs-10, 10px); opacity: .65; }
 
+/* 磁盘实际生效 ≠ 所选档位 的提示（对齐原版 LockToggle 前先 GetState）
+ * 用告警色描边而不是填充：它是一条**补充说明**，
+ * 做成大面积色块会盖过档位选择这个主体操作。 */
+.fpx-lock-drift {
+  margin-bottom: var(--sp-5, 10px);
+  padding: var(--sp-4, 8px) var(--sp-5, 10px);
+  border-left: 3px solid var(--warn, #d8a657);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunk);
+  font-size: var(--fs-11, 11px);
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
 /* ---------------- 面板内操作反馈条（#9）----------------
  * **吸顶**：面板可能很长，操作发生在底部时，
  * 不吸顶的反馈条等于不存在（用户在底部操作，反馈在顶部屏幕外）。
