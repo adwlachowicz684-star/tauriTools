@@ -3231,7 +3231,7 @@ input.mono, textarea.mono {
   border: 1px solid var(--af-line);
   /* 下凹：底色比面板深一档 + 内阴影。与 .pc-card.on / .node-chip.on 同一套 */
   background: var(--af-sunk); box-shadow: var(--sh-in-sm);
-  font-size: var(--fs-11, 11px); line-height: 1.7; color: var(--af-fg);
+  font-size: var(--fs-note); line-height: 1.7; color: var(--af-fg);
 }
 
 /* 运算符 / 函数名：只换色，不换形状 */
@@ -3251,7 +3251,7 @@ input.mono, textarea.mono {
  */
 .trig-fire {
   flex: none; cursor: pointer;
-  font-size: var(--fs-10, 10px); line-height: 1.5;
+  font-size: var(--fs-micro); line-height: 1.5;
   padding: 1px 6px; border-radius: var(--af-r-xs);
   color: var(--af-accent);
   background: var(--af-sunk);
