@@ -621,6 +621,42 @@ export default function App() {
    * 再切「当前页签」没有任何可见效果 —— 所以这里改成把选中项移到下一个分类的
    * 第一张卡片：既保留了"在分类间前后跳"的语义，又真的看得见（还会把键盘焦点带过去）。
    */
+  /**
+   * 上下键在**当前栏**的卡片间移动选中（对齐原版 `NavigateAdjacent`）。
+   *
+   * 此前完全没有：换栏（Ctrl/⌘+←/→）只能落到目标栏的第一张，
+   * 到不了中间的卡 —— 键盘用户只能靠鼠标点，否则选不中第 3 张之后的卡。
+   *
+   * 三个必须做对的点：
+   *   1. **越界不动**（不循环）：最后一张再按 ↓ 若绕回第一张，
+   *      用户按过头时会以为选中跳到了别处，且看不出那是"绕回来了"。
+   *   2. 没选中任何卡片时，↑/↓ 都落到**第一张**（原版 idx<0→0），
+   *      而不是什么都不做 —— 否则第一次按键永远没反应。
+   *   3. **选完要滚动到可视区**：选中的卡在滚动区外时，界面上
+   *      没有任何变化，用户以为按键没生效（原版 BringIntoView 正是为此）。
+   */
+  const navigate = (delta: number) => {
+    const list = focus === 'project' ? projectCards : groupCards;
+    if (list.length === 0) return;
+    const cur = focus === 'project' ? s.selProject : s.selGroup;
+    const idx = cur ? list.findIndex((c) => c.path === cur) : -1;
+    const next = idx < 0 ? 0 : idx + delta;
+    if (next < 0 || next >= list.length) return;
+    const target = list[next];
+    if (focus === 'project') s.setSelProject(target.path);
+    else s.setSelGroup(target.path);
+    /*
+     * 必须等渲染完：选中是 state 变更，同一帧里 DOM 还没更新，
+     * 立刻查会拿到旧的那张（甚至 null），滚动静默失效。
+     * `block: 'nearest'` —— 已经可见时不要动，避免无谓地整页跳动。
+     */
+    requestAnimationFrame(() => {
+      const key = window.CSS && CSS.escape ? CSS.escape(target.path) : target.path;
+      const el = document.querySelector<HTMLElement>(`[data-card-path="${key}"]`);
+      el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  };
+
   const cycleTab = (kind: CardKind, delta: number) => {
     const n = (kind === 'project' ? boot?.projectTabs.length : boot?.groupTabs.length) ?? 0;
     if (n <= 1) return;
@@ -726,6 +762,7 @@ export default function App() {
     refresh: () => { refreshChainActions(); s.refresh(); },
     clearInvalid: () => void s.clearInvalid(),
     cycleTab,
+    navigate,
     focus: setFocus,
     // 补齐的 5 条（原版 ShortcutCatalog）
     toggleTips: () => setHelp((v) => !v),

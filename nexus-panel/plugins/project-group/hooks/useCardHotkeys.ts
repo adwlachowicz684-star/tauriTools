@@ -35,6 +35,11 @@ export interface HotkeyActions {
   icon: () => void;
   /** Delete 从当前页签移除 */
   remove: () => void;
+  /**
+   * 上下键在**当前栏**的卡片间移动选中（原版 NavigateAdjacent）。
+   * delta = -1 上一张 / +1 下一张。
+   */
+  navigate: (delta: number) => void;
   /** F5 刷新 */
   refresh: () => void;
   /** F8 清除无效项 */
@@ -81,6 +86,20 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 /**
+ * 焦点是否落在分隔条上（原版是 GridSplitter 独占鼠标，web 里得自己判）。
+ *
+ * 分隔条 `tabIndex=0`、方向键调宽度。若导航也响应，按一下方向键会
+ * **同时**调宽度 + 把选中卡片移走 —— 用户在调布局，却看到选中莫名其妙
+ * 跳到别的卡上，而这是他没要求过的改动。必须让路。
+ */
+function isOnSplitter(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || typeof el.getAttribute !== 'function') return false;
+  return el.getAttribute('role') === 'separator'
+    || el.getAttribute('aria-orientation') != null;
+}
+
+/**
  * 卡片与页签的键盘操作。
  *
  * 键位与 README 的承诺一一对应：
@@ -112,11 +131,19 @@ export function useCardHotkeys(
     const bind = (
       combo: string | string[],
       run: (e: KeyboardEvent) => void,
-      opts?: { always?: boolean },
+      opts?: { always?: boolean; yieldSplitter?: boolean },
     ) => {
       const off = sc.call(ctx, combo, (e: KeyboardEvent) => {
         // 打字优先：否则在改名框里按 Delete 会把卡片从页签里删掉
         if (isTyping(e.target)) return;
+        /*
+         * 分隔条聚焦时方向键归它：不排除会"调宽度 + 移动选中"双触发。
+         *
+         * 只有明确声明 `yieldSplitter` 的那几条才让路 ——
+         * Delete / F2 这些在分隔条上按仍然该生效，
+         * 让整组都让路会变成"焦点一落到分隔条，快捷键全失灵"。
+         */
+        if (opts?.yieldSplitter && isOnSplitter(e.target)) return;
         // 有弹窗打开时整组让路，避免半途改到看不见的卡片
         // （开关类动作例外，见 ALWAYS_ON 的说明）
         if (!enabledRef.current && !opts?.always) return;
@@ -155,6 +182,11 @@ export function useCardHotkeys(
     run('color', () => ref.current.color());
     run('icon', () => ref.current.icon());
     run('remove', () => ref.current.remove());
+
+    /* 上下键导航：裸方向键最容易撞车（分隔条、下拉框），
+       所以这两条显式声明自己要让路给分隔条。 */
+    bind(map.navUp, () => ref.current.navigate(-1), { yieldSplitter: true });
+    bind(map.navDown, () => ref.current.navigate(1), { yieldSplitter: true });
     run('refresh', () => ref.current.refresh());
     run('clearInvalid', () => ref.current.clearInvalid());
 

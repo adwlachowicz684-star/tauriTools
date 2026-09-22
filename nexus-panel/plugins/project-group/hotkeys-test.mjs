@@ -27,7 +27,8 @@ const { HOTKEYS, GROUP_LABEL, hotkeysByGroup, effectiveCombo, effectiveMap,
         findConflicts, formatCombo, normalizeCombo, comboFromEvent } = HK;
 
 console.log('\n=== 1. 注册表完整性 ===');
-t('总条数 = 20', HOTKEYS.length === 20, `${HOTKEYS.length} 条`);
+/* 20 → 22：补了上下键导航（原版 NavigateAdjacent）两条 */
+t('总条数 = 22', HOTKEYS.length === 22, `${HOTKEYS.length} 条`);
 t('id 无重复', new Set(HOTKEYS.map((h) => h.id)).size === HOTKEYS.length);
 const missingGroup = HOTKEYS.filter((h) => !h.group);
 t('每条都标了 group（漏标会在分组列表里静默消失）',

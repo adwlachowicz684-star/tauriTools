@@ -12,6 +12,10 @@
 export type HotkeyId =
   | 'open' | 'lock' | 'rename' | 'move' | 'color' | 'icon' | 'remove'
   | 'refresh' | 'clearInvalid'
+  /* 上下键在**当前栏**的卡片间移动选中（原版 NavigateAdjacent）。
+     此前完全没有：鼠标点一张是最直觉的操作，但键盘用户没法移动选中，
+     只能靠 Ctrl/⌘+←/→ 换栏 —— 换栏只能落到第一张，到不了中间的卡。 */
+  | 'navUp' | 'navDown'
   | 'cycleGroup' | 'cycleGroupBack' | 'cycleProject' | 'cycleProjectBack'
   | 'focusProject' | 'focusGroup'
   /* 以下 5 条是照原版 ShortcutCatalog 补齐的（#221 #222 #223 #225 #226）。
@@ -64,6 +68,10 @@ export const HOTKEYS: HotkeyDef[] = [
   { id: 'color', label: '图标与标签色', combo: 'f4', group: 'card' },
   { id: 'icon', label: '改图标', combo: 'f6', group: 'card' },
   { id: 'remove', label: '从页签移除', combo: 'delete', group: 'card' },
+  { id: 'navUp', label: '选中上一张', combo: 'arrowup', group: 'card',
+    note: '焦点在分隔条上时由分隔条响应（调宽度）' },
+  { id: 'navDown', label: '选中下一张', combo: 'arrowdown', group: 'card',
+    note: '焦点在分隔条上时由分隔条响应（调宽度）' },
 
   /* ---- 页签切换 ---- */
   { id: 'cycleGroup', label: '下一个项目组页签', combo: 'mod+tab', group: 'tab' },

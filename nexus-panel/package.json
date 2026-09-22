@@ -134,7 +134,8 @@
     "test:pg-backup-reentry": "node plugins/project-group/backup-reentry-test.mjs",
     "test:pg-folder-lock-ace": "node plugins/project-group/folder-lock-ace-test.mjs",
     "test:pg-lock-live-state": "node plugins/project-group/lock-live-state-test.mjs",
-    "test:pg-shell-icon-notify": "node plugins/project-group/shell-icon-notify-test.mjs"
+    "test:pg-shell-icon-notify": "node plugins/project-group/shell-icon-notify-test.mjs",
+    "test:pg-card-nav": "node plugins/project-group/card-nav-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
