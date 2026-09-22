@@ -1645,18 +1645,7 @@ export function buildSide(app, opts = {}) {
             style: { display: 'flex', cursor: 'pointer' },
             onclick: () => { app.api.applyTheme(t.id); refresh(); },
           }, swatchBar(customSwatch(t))),
-          h('span.name', {
-            onclick: () => { app.api.applyTheme(t.id); refresh(); },
-            /*
-             * 预置主题与用户自建在列表里长得一样，但它俩的"来历"不同：
-             * 预置的可随意改、删了也不心疼（删掉只记进名单，不影响别的）；
-             * 自建的往往是照着某份文档调的。
-             * 没有标识的话，用户删之前没法判断这一项是不是自己建的。
-             */
-            title: t.id?.startsWith?.('mm-preset-')
-              ? '预置主题：可编辑、可删除，删后不再出现'
-              : '自定义主题',
-          }, t.name || t.id),
+          h('span.name', { onclick: () => { app.api.applyTheme(t.id); refresh(); } }, t.name || t.id),
           h('button.mm-btn.icon', { onclick: () => { openThemeEditor(app, t); }, title: '编辑' }, '✎'),
           h('button.mm-btn.icon', {
             // A62 删除回退（对照 WPF OnDeleteThemeClick，MindMapPanel.xaml.cs:2825）
@@ -1671,9 +1660,6 @@ export function buildSide(app, opts = {}) {
               const isCurrent = cur === t.id;
               if (isCurrent) await app.api.applyTheme(DEFAULT_THEME);
               app.customThemes = (app.customThemes || []).filter((x) => x.id !== t.id);
-              // 预置主题必须**记进移除名单**：否则下次启动 mergePresetThemes
-              // 又把它并回来，删除等于没删（用户得每次启动都删一遍）。
-              await app.api.markPresetRemoved(t.id);
               const ok = await app.api.saveThemes();
               if (!ok) {
                 app.api.status('删除失败（未写入本地库）', true);

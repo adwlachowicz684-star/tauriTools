@@ -419,6 +419,64 @@ html, body {
 .mm-chip:hover { color: var(--accent); }
 .mm-chip.on { color: var(--accent); box-shadow: var(--sh-in-sm); }
 
+/* Windows 经典数值输入框（up-down control）
+   ============================================================
+   .mm-num-box  [ 输入 ] [ ▲ ] [ ▾ ]
+                        [ ▼ ]
+   三件套必须都在：▲▼ 步进、▾ 选预设、滚轮 ±1。
+   少任何一个都会让人以为控件坏了（"这个数字怎么改不了"）。 */
+.mm-num-box {
+  display: inline-flex;
+  align-items: stretch;
+  height: 28px;
+  border-radius: var(--r-xs, 7px);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-sm);
+  overflow: hidden;
+}
+.mm-num {
+  width: 46px;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-12, 12px);
+  text-align: center;
+  padding: 0 2px;
+}
+.mm-num:focus { outline: none; color: var(--accent); }
+/* 数字用等宽：滚轮微调时宽度不跳，不会左右抖 */
+.mm-num { font-variant-numeric: tabular-nums; }
+.mm-num-spin {
+  display: flex;
+  flex-direction: column;
+  width: 16px;
+  flex: none;
+}
+.mm-num-arrow {
+  border: 0;
+  padding: 0;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 8px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* 两个箭头各占一半高：合起来正好是输入框的高度 */
+.mm-num-spin .mm-num-arrow { flex: 1 1 0; }
+.mm-num-arrow:hover { color: var(--accent); }
+.mm-num-arrow + .mm-num-arrow { box-shadow: inset 0 1px 0 var(--sh-dark); }
+.mm-num-caret {
+  width: 15px;
+  flex: none;
+  font-size: 9px;
+  box-shadow: inset 1px 0 0 var(--sh-dark);
+}
+
 /* 主题卡片 */
 .mm-theme {
   display: flex; align-items: center; gap: 8px;
@@ -640,6 +698,10 @@ html, body {
 }
 
 /* 颜色网格（9 档优先级 / 进度色板简化为单色选择） */
+/* 竖排按钮组：侧栏窄，按钮文字又不能缩（缩了就是「导入…」这种省略号） */
+.mm-col { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.mm-col > .mm-btn { width: 100%; }
+
 .mm-colors { display: grid; grid-template-columns: repeat(9, 1fr); gap: 4px; }
 .mm-colors .mm-swatch { width: 100%; height: 20px; border-radius: var(--r-xs, 5px); }
 
