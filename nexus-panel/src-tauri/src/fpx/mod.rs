@@ -810,10 +810,55 @@ pub(crate) fn core_sync_links(
         .map(|r| r.link_names())
         .unwrap_or_default();
 
-    // 不在本次名单里的 = 要删的（大小写不敏感比对，理由同 #91）
-    let to_remove: Vec<String> = prev
+    /*
+     * 逐名查**磁盘实际**目标（对齐原版 ApplyLinkPick 里的 ownedByThis /
+     * InspectOwnership）。读不到或目标已不存在 = None。
+     */
+    let target_key = store::normalize_key(group);
+    let resolve_of = |n: &str| -> Option<String> {
+        junction::resolve_target(&junction::link_path(project, n))
+            .filter(|t| !t.is_empty() && std::path::Path::new(t).exists())
+    };
+
+    // 不在本次名单里的才需要判断去留（大小写不敏感比对，理由同 #91）
+    let outside: Vec<String> = prev
         .iter()
         .filter(|n| !names.iter().any(|x| x.eq_ignore_ascii_case(n)))
+        .cloned()
+        .collect();
+
+    /*
+     * 删 junction：只删**确实指向本次目标组**的那些（原版 ownedByThis）。
+     *
+     * 为什么不能"不在名单里的全删"：
+     * 一个项目的不同链接名**可以指向不同的组**（手工建、或从别处迁移过来
+     * 就会出现）。用户这次只是在「乙组」下加/改链接，若把账本里所有没勾的
+     * 都删掉，指向「甲组」的那几个**会一起消失** ——
+     * 而他根本没对甲组做过任何操作。这类"改了不该改的地方"没有任何报错，
+     * 用户只会发现别处的链接莫名其妙断了。
+     */
+    let to_remove: Vec<String> = outside
+        .iter()
+        .filter(|n| resolve_of(n)
+            .map(|t| store::normalize_key(&t) == target_key)
+            .unwrap_or(false))
+        .cloned()
+        .collect();
+
+    /*
+     * 账本要剔除的：不在名单里**且未被其它组占用**的。
+     *
+     * 比 `to_remove` 多一类「已失效的旧名」（读不到实际目标）——
+     * 它们没有真实链接，留着只会让界面显示一条连不上的链接。
+     * 而**指向别组的一律保留在账本里**（原版 InspectOwnership 判定），
+     * 否则那个链接会变成账本里查不到的"静默残骸"（同 #202）。
+     */
+    let cancelled: Vec<String> = outside
+        .iter()
+        .filter(|n| match resolve_of(n) {
+            None => true,                                              // 失效
+            Some(t) => store::normalize_key(&t) == target_key,         // 本组
+        })
         .cloned()
         .collect();
 
@@ -846,10 +891,22 @@ pub(crate) fn core_sync_links(
             .cloned()
             .collect()
     };
+    /*
+     * 从账本里真正剔除的 = 删成功的 ∪ 本来就失效的。
+     *
+     * **不**直接剔除 `cancelled`：里面可能包含"删失败"的（junction 还在），
+     * 剔掉会让磁盘上仍存在的链接在账本里消失（同 #202 那类静默残骸）。
+     */
+    let gone: Vec<String> = cancelled
+        .iter()
+        .filter(|n| removed_ok.iter().any(|x| x.eq_ignore_ascii_case(n))
+            || resolve_of(n).is_none())
+        .cloned()
+        .collect();
     let final_names: Vec<String> = {
         let mut acc: Vec<String> = Vec::new();
         for n in &prev {
-            if removed_ok.iter().any(|x| x.eq_ignore_ascii_case(n)) { continue; }
+            if gone.iter().any(|x| x.eq_ignore_ascii_case(n)) { continue; }
             merge_link_names(&mut acc, vec![n.clone()]);
         }
         merge_link_names(&mut acc, names.clone());

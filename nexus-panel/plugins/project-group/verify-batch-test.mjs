@@ -81,6 +81,30 @@ console.log('\n=== 5. #200 取消勾选 = 真的删掉（sync 而非 create）==
   /* 要删的 = 不在本次名单里的 */
   t('差集用大小写不敏感比对',
     /filter\(\|n\| !names\.iter\(\)\.any\(\|x\| x\.eq_ignore_ascii_case\(n\)\)\)/.test(mod));
+
+  /*
+   * 只删**确实指向本次目标组**的（原版 ApplyLinkPick 的 ownedByThis）。
+   *
+   * 不能"不在名单里就全删"：同一项目的不同链接名可以指向不同的组
+   * （手工建或从别处迁移过来就有）。用户这次只在乙组下加一个链接名，
+   * 若把账本里所有没勾的都删掉，指向甲组的那几个会一起消失 ——
+   * 而他根本没对甲组做过操作。这类"改了不该改的"没有任何报错。
+   */
+  const i = mod.indexOf('pub(crate) fn core_sync_links(');
+  const b = mod.slice(i, mod.indexOf('\npub(crate) fn ', i + 1));
+  t('逐名查磁盘实际目标', /let resolve_of = \|n: &str\| -> Option<String>/.test(b));
+  /*
+   * 必须钉**连续的一段**：分开钉 "有 to_remove" 和 "有 normalize_key 比对"
+   * 是漏报的 —— 后者在下面的 `cancelled` 里也出现一次，
+   * 把 to_remove 的收窄条件换成 `true` 后断言照样通过。
+   */
+  t('to_remove 确实按实际目标收窄',
+    /let to_remove: Vec<String> = outside\n        \.iter\(\)\n        \.filter\(\|n\| resolve_of\(n\)/.test(b));
+  t('有 cancelled（含失效旧名）', /let cancelled: Vec<String> = outside/.test(b));
+  t('cancelled 含失效项（None => true）', /None => true,/.test(b));
+  /* 指向别组的必须保留在账本 —— 否则成了账本里查不到的静默残骸（同 #202） */
+  t('只剔 删成功的 ∪ 失效的', /\|\| resolve_of\(n\)\.is_none\(\)/.test(b));
+  t('不再用 removed_ok 直接剔账本', !/if removed_ok\.iter\(\)\.any\(\|x\| x\.eq_ignore_ascii_case\(n\)\) \{ continue; \}/.test(b));
 }
 
 console.log('\n=== 6. sync 的账本要写"磁盘实际状态" ===');
