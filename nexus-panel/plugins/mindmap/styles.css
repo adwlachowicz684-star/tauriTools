@@ -882,7 +882,19 @@ video.mm-video {
   background: rgba(0, 0, 0, .25);
   text-shadow: 0 1px 3px rgba(0, 0, 0, .6);
 }
-.mm-vthumb.playing .mm-vthumb-play { display: none; }
+/*
+ * .playing 与 .is-playing 是两个**不同**的类，别混用：
+ *   .playing     点过播放后加上、**从不移除** → 表示"已展开"（布局用）
+ *   .is-playing  随播放状态 toggle         → 表示"正在播放"（状态用）
+ *
+ * 原来 ▶ 的隐藏挂在 .playing 上：暂停后 .playing 仍在，
+ * ▶ 就再也不出现 —— 用户以为点了没反应，只能重新点画面。
+ * 改用 .is-playing：暂停即恢复 ▶，符合"再点一次继续播"的预期。
+ *
+ * 顺带说明：.is-playing 此前是**裸类名**（组件 toggle 了却无任何 CSS），
+ * 这条规则给了它真正的用途，不需要再新增一条占位样式。
+ */
+.mm-vthumb.is-playing .mm-vthumb-play { display: none; }
 
 .mm-vthumb.empty,
 .mm-vthumb.broken,
@@ -1268,4 +1280,28 @@ video.mm-video {
   font-variant-numeric: tabular-nums;
   min-width: 44px; text-align: center;
   color: var(--text-dim, #9aa4b2); font-size: var(--fs-12, 12px);
+}
+
+/*
+ * 诊断报告文本框（panels.js openDiagnostics）。
+ *
+ * 原先是裸类名：组件写了 .mm-diag，整仓 CSS 没有定义，
+ * textarea 于是走浏览器默认 —— 非等宽字体、字号偏大、无内边距、
+ * 不跟随主题（浅色主题下是白底黑字，深色主题下仍是白底黑字）。
+ * 报告内容是**多行对齐的键值文本**，等宽是刚需：不等宽则冒号无法对齐。
+ *
+ * 宽度/rows 由组件内联给定，这里只管字体、配色与内边距。
+ */
+.mm-diag {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11, 11px);
+  line-height: 1.6;
+  padding: 8px 10px;
+  color: var(--text);
+  background: var(--surface-sunk);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm, 8px);
+  box-shadow: var(--sh-in-sm);
+  white-space: pre;
+  overflow: auto;
 }
