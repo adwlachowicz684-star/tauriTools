@@ -17,7 +17,8 @@ import { bootIframePlugin, h } from '../../js/plugin-sdk.js';
 import '../../css/dialog.css';
 import { confirm as askConfirm, alert as askAlert, prompt as askText } from '../../js/dialog.js';
 import { EditorBridge } from './editor-bridge.js';
-import { DEFAULT_THEME, DEFAULT_LAYOUT, isBuiltinTheme, deriveCanvasTheme } from './themes.js';
+import { DEFAULT_THEME, DEFAULT_LAYOUT, isBuiltinTheme, deriveCanvasTheme,
+  mergePresetThemes } from './themes.js';
 import * as wb from './workbook.js';
 import * as diag from './diagnostics.js';
 import * as store from './store.js';
@@ -67,6 +68,11 @@ bootIframePlugin(async (ctx) => {
   let workbook = (await store.doc(currentFileId).load()) || wb.newWorkbook();
   workbook.sheets = wb.normalizeSheets(workbook.sheets);
   let customThemes = (await store.themes.load()) || [];
+  // 并入预置主题：必须在注册之前，否则面板读不到、core 里也没这个主题。
+  customThemes = mergePresetThemes(
+    customThemes,
+    Array.isArray(settings?.removedPresets) ? settings.removedPresets : [],
+  );
 
   let bridge = null;
   let side = null;
@@ -2089,6 +2095,15 @@ bootIframePlugin(async (ctx) => {
     printMap: guard('打印', (opts) => printMap(opts)),
     exchange: guard('导出交换格式', (kind) => exportExchange(kind)),
     saveThemes: guard('保存主题', saveThemes),
+    markPresetRemoved: guard('移除预置主题', async (id) => {
+      if (!String(id || '').startsWith('mm-preset-')) return true;
+      const list = Array.isArray(settings.removedPresets) ? settings.removedPresets : [];
+      if (!list.includes(id)) list.push(id);
+      settings.removedPresets = list;
+      const ok = await store.settings.save(settings);
+      if (!ok) status('移除记录未写入，该主题下次启动会重新出现', true);
+      return !!ok;
+    }),
     // 主题编辑器（panels.js）保存后要靠它重刷侧栏。
     // 面板只持有 app.api，拿不到侧栏实例；不暴露的话新建/编辑主题后
     // 列表里**看不到新主题**，必须切走页签再切回来才出现 ——
