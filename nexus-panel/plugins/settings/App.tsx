@@ -28,13 +28,21 @@ import {
   resetAccent, resetEnvColor, resetHueShift, resetLightShift,
   /* 背景图 */
   supportsBgImage, getBgImage, setBgImage, resetBgImage,
+  /* 风格参数（玻璃透明度 / 模糊强度 / 立体度 / 描边强度）。
+     数据与 setStyleParam 早已就绪，但设置页此前**从没渲染过** ——
+     用户只听说有透明度可调，界面上却找不到滑块。 */
+  getStyleParam, setStyleParam, resetStyleParam,
+  /* 读主题自带的 --blur，作为「模糊强度」滑块的默认位 */
+  exportVarsFor,
+  /* 预设背景：数据存在 themes.js，设置页负责渲染成可点的缩略图。 */
+  getBgPreset, setBgPreset,
   saveAsCustom, deleteCustomTheme,
   // getCurrent：色相/明暗改为按主题各记一份后，提示文案要显示当前主题名
   getCurrent,
   getCustomColors, saveCustomColors,
   onChange as onThemeChange,
 } from '../../js/theme-manager.js';
-import { swatchFor, styleLabel } from '../../js/themes.js';
+import { swatchFor, styleLabel, styleParams, BG_PRESETS } from '../../js/themes.js';
 import {
   ADAPT_POLICIES, PLUGIN_THEMES,
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
@@ -1245,6 +1253,61 @@ export default function Settings() {
             />
           </div>
 
+          {/* ---------- 风格参数 ----------
+              每种风格靠不同的"塑形手段"成立，所以可调项按风格分开：
+                玻璃 → 透明度 / 模糊半径    新拟态 → 立体度    扁平 → 描边强度
+              给玻璃调"立体度"没有意义，因此只渲染**当前主题风格**对应的那几项。 */}
+          {(() => {
+            const th = getCurrent();
+            const list = styleParams(th?.style);
+            if (!list.length) return null;
+            return (
+              <div>
+                <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)' }}>
+                  {`风格参数（${styleLabel(th.style)}）`}
+                </div>
+                {list.map((p) => {
+                  const raw = getStyleParam(p.key);
+                  /* 未调过时的默认值：倍率型是 100（＝主题自带强度）；
+                     绝对值型（模糊半径）要读主题自己的 --blur，
+                     不能一律显示 100 —— 主题自带值各不相同，
+                     显示 100 会让"没调过"看起来像"被调到了 100px"。 */
+                  const fb = p.absolute
+                    ? (parseFloat(String(exportVarsFor(th)['--blur'] || '').replace('px', '')) || p.min)
+                    : 100;
+                  const val = raw == null ? fb : raw;
+                  return (
+                    <div key={p.key} className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
+                      <span className="p-muted" style={{ width: 72, flex: 'none', fontSize: 'var(--fs-11, 11px)' }} title={p.desc}>
+                        {p.label}
+                      </span>
+                      <input
+                        className="p-range"
+                        type="range"
+                        min={p.min} max={p.max} step={p.step}
+                        value={val}
+                        title={p.desc}
+                        onChange={(e) => {
+                          setStyleParam(p.key, Number(e.target.value));
+                          rerender();
+                          void syncThemeToShell();
+                        }}
+                      />
+                      <span className="p-muted" style={{ width: 52, flex: 'none', fontSize: 'var(--fs-11, 11px)', textAlign: 'right' }}>
+                        {val}{p.unit}
+                      </span>
+                      <ResetDefaultBtn
+                        disabled={raw == null}
+                        onClick={() => { resetStyleParam(p.key); ctx.toast(`${p.label}已恢复默认`, 'ok'); rerender(); void syncThemeToShell(); }}
+                        title={`恢复${p.label}为「${th.name}」自带强度`}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
           {/* ---------- 背景图 ----------
               只有主题本来就带 --bg-image 的才能换图；
               纯色主题给一个带边框的占位并画禁止图标，
@@ -1259,7 +1322,7 @@ export default function Settings() {
               return (
                 <div className="nx-bgslot nx-bgslot-off" title="当前主题为纯色底，不支持背景图">
                   <span className="nx-bgslot-ban" aria-hidden="true">🚫</span>
-                  <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+                  <span className="p-muted nx-bgslot-off-text">
                     此主题不带背景图
                   </span>
                 </div>
@@ -1315,6 +1378,37 @@ export default function Settings() {
               </div>
             );
           })()}
+
+          {/* ---------- 预设背景 ----------
+              BG_PRESETS 曾只在 themes.js 里有数据、界面没有入口，
+              用户能看见的只有一个「选择图片…」按钮，10 个预设全部不可达。
+              主题不带背景图时不显示（与上面的占位同理）。 */}
+          {supportsBgImage() ? (
+            <div className="nx-bgpresets">
+              {BG_PRESETS.map((p) => {
+                const on = getBgPreset() === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    className={'nx-bgpreset' + (on ? ' on' : '')}
+                    style={{ backgroundImage: p.css }}
+                    /* 再点一次已选中的 = 取消，回到主题自带背景。
+                       不做取消的话，选了预设就只能靠「恢复默认」退出，
+                       而那个按钮在自定义图那一组里，用户找不到。 */
+                    onClick={() => {
+                      setBgPreset(on ? '' : p.id);
+                      ctx.toast(on ? '已取消预设背景' : `背景：${p.name}`, 'ok');
+                      rerender();
+                      void syncThemeToShell();
+                    }}
+                    title={on ? `取消「${p.name}」` : `使用「${p.name}」`}
+                    aria-pressed={on}
+                    aria-label={p.name}
+                  />
+                );
+              })}
+            </div>
+          ) : null}
 
           <div className="p-row" style={{ marginTop: 'var(--sp-7, 14px)' }}>
             <button
