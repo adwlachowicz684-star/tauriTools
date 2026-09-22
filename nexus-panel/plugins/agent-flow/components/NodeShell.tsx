@@ -1,7 +1,7 @@
 import { Handle, Position } from '@xyflow/react';
 import type { ReactNode } from 'react';
 import { getDef } from '../nodes/registry';
-import { validateNode, LEVEL_COLOR, LEVEL_TEXT, LEVEL_SHORT, type IssueLevel } from '../engine/nodeValidate';
+import { validateNode, LEVEL_COLOR, LEVEL_TEXT, badgeTextOf, type IssueLevel } from '../engine/nodeValidate';
 import { isNodeDisabled } from '../engine/nodeDisabled';
 /** 关闭态的圆点色。中性灰，不与"缺项/缺参"的黄红撞色 */
 const OFF_DOT_COLOR = '#6b7280';
@@ -136,7 +136,7 @@ export function NodeShell({
                那会把"缺参"也说成绿的 */
             style={{ background: off ? OFF_DOT_COLOR : LEVEL_COLOR[dot] }}
           />
-          {LEVEL_SHORT[dot]}
+          {badgeTextOf(issue)}
           {off ? ' · 关' : ''}
         </span>
         <span className="node-title">{data.label}</span>

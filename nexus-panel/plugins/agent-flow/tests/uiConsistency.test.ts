@@ -75,7 +75,26 @@ test('配置状态的短文案全项目只有一处定义（LEVEL_SHORT）', () 
   assert.deepEqual(defs, ['engine/nodeValidate.ts'], `LEVEL_SHORT 抄了多份：${defs.join(', ')}`);
   // 卡片必须用它来显示，而不是自己写字面量
   const shell = read(path.join(COMP, DEFINER));
-  assert.match(shell, /LEVEL_SHORT\[dot\]/, 'NodeShell 要用 LEVEL_SHORT 显示配置状态');
+  /*
+   * 走 badgeTextOf(issue) 而不是直接取 LEVEL_SHORT[dot] ——
+   * 红圆点有两种成因（缺参 / 错参），文案必须区分，
+   * 否则用户看到「缺参」会以为自己忘了填，于是又填一遍。
+   */
+  assert.match(shell, /badgeTextOf\(issue\)/, 'NodeShell 要走 badgeTextOf 显示配置状态');
+  assert.ok(!/LEVEL_SHORT\[dot\]/.test(shell), '不要直接取表 —— 那样区分不出缺参与错参');
+});
+
+/*
+ * 「错参」必须是引擎算出来的，不是卡片上硬写的词。
+ *
+ * 硬写的话，改了判定规则而忘了改文案，徽章会显示「缺参」
+ * 而提示行说的是类型不对 —— 两处互相矛盾。
+ */
+test('错参文案由引擎的 typeError 决定', () => {
+  const v = read(path.join(ROOT, 'engine/nodeValidate.ts'));
+  assert.match(v, /typeError:\s*true/, '类型错误要标出 typeError');
+  assert.match(v, /badgeTextOf/, '要有徽章文案函数');
+  assert.match(v, /return '错参'/, '错参文案');
 });
 
 test('圆点在徽章里，不在标题行上当独立元素', () => {
@@ -480,9 +499,9 @@ test('反向吸附时对方的 stackParent 不受"有没有位移"影响', () =>
  */
 test('关闭的节点仍显示缺项徽章，只把圆点变灰', () => {
   const shell = read(path.join(COMP, DEFINER));
-  // 徽章文案不受关闭态影响 —— LEVEL_SHORT 必须无条件渲染
+  // 徽章文案不受关闭态影响 —— 必须无条件渲染
   assert.ok(
-    /\{LEVEL_SHORT\[dot\]\}/.test(shell),
+    /\{badgeTextOf\(issue\)\}/.test(shell),
     '徽章文案必须始终渲染（关掉也要看得见缺什么）',
   );
   // 圆点颜色按关闭态分支，且关闭分支不能复用 level 色
