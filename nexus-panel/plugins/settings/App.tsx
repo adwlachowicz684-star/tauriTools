@@ -1205,21 +1205,21 @@ export default function Settings() {
               return (
                 <div className="nx-bgslot nx-bgslot-off" title="当前主题为纯色底，不支持背景图">
                   <span className="nx-bgslot-ban" aria-hidden="true">🚫</span>
-                  <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+                  <span className="p-muted nx-bgslot-off-text">
                     此主题不带背景图
                   </span>
                 </div>
               );
             }
             return (
-              <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
+              <div className="p-row wrap" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
                 <div
                   className="nx-bgslot"
                   style={cur ? { backgroundImage: 'url("' + cur + '")' } : undefined}
                   title={cur ? '当前背景图' : '主题自带背景'}
                 >
                   {!cur ? (
-                    <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>主题自带</span>
+                    <span className="p-muted nx-bgslot-off-text">主题自带</span>
                   ) : null}
                 </div>
                 <button className="p-btn" onClick={() => bgFileRef.current?.click()}>
