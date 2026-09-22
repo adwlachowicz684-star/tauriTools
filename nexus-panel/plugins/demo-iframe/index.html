@@ -3,6 +3,28 @@
 <head>
   <meta charset="UTF-8" />
   <title>沙箱插件示例</title>
+  <!--
+    组件样式必须自己引 —— iframe 是**独立文档**，主页面的 CSS 进不来。
+    --------------------------------------------------------------------
+    同页（module）插件与宿主同文档，直接继承主页面样式，什么都不用写；
+    iframe 插件则完全隔离，home / settings / project-group / agent-flow /
+    demo-react 这几个都是在各自的 index.html（或入口 tsx）里引了这一份。
+
+    本插件此前漏了这一行，于是打开后只有文字：
+      · .p-card / .p-btn / .p-stat / .p-grid 这些类名没有任何样式定义
+      · 按钮退化成浏览器默认外观，文字堆成一列
+      · 而插件本身是**正常挂载**的（计数、invoke、toast 都能用），
+        所以不会报错 —— 只表现为「样式没了」，很难联想到是少引一个 CSS。
+
+    用 <link> 而不是在 module 脚本里 import：
+      无构建模式下浏览器直接加载本文件，原生 ESM **不能** import CSS；
+      <link> 的相对路径 ../../css/neumorphism.css 两种模式下都成立
+      （Vite 构建时会把它打包成 hashed 资源并重写 href）。
+
+    放在内联 <style> **之前**：内联那句 `html,body{background:transparent}`
+    要盖住 neumorphism.css 里 body 的 var(--bg)，让外壳主题透出来。
+  -->
+  <link rel="stylesheet" href="../../css/neumorphism.css" />
   <style>
     /* iframe 内部重置：背景透明，让外壳主题透出来 */
     html, body { margin: 0; background: transparent; }
