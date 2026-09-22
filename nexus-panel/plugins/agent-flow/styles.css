@@ -143,6 +143,15 @@
      等于幽灵引用（改这里的值不会影响它）。补上定义，让兜底成为真正的兜底。 */
   --af-r:     8px;
   --af-r-sm:  6px;
+  /*
+   * 属性面板的左右内边距。
+   *
+   * 必须抽成变量：基础信息区（.insp-basics）与参数区（.inspector）
+   * 是 **两个兄弟容器**，各自滚动、各自留白。
+   * 两处各写一个数字的话，改一处忘另一处不会报错，
+   * 只会表现为"上半截贴着边、下半截缩进去"。
+   */
+  --af-insp-pad: 14px;
   --af-dur-fast: .12s;
   --af-dur-base: .18s;
   --af-dur-slow: .3s;
@@ -565,7 +574,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
    * 宽度 100%：右栏已有左边框，这里再加一条会变成双线。
    */
   flex: 1; min-height: 0; width: 100%; background: var(--af-panel);
-  padding: 14px; overflow-y: auto;
+  padding: var(--af-insp-pad, 14px); overflow-y: auto;
 }
 /*
  * 预设参数 = 一张卡片。
@@ -3186,7 +3195,18 @@ input.mono, textarea.mono {
  * 底边一条分隔线 —— 与下面的参数区隔开。
  * 不加的话它看起来就是"第一类参数"，而这正是要避免的混淆。
  */
-.insp-basics { margin-bottom: var(--sp-3, 6px); }
+/*
+ * 基础信息区：与下面的参数区（.inspector）是**兄弟**，
+ * 两者左右留白必须一致 —— 否则基础信息贴着面板边缘、
+ * 参数卡片却缩进去，上下两段对不齐。
+ *
+ * 只用横向内边距：这一块在面板顶部，
+ * 加上下内边距会把内容整体往下推，白占一截。
+ */
+.insp-basics {
+  margin-bottom: var(--sp-3, 6px);
+  padding: 0 var(--af-insp-pad, 14px);
+}
 .insp-basics .insp-title { margin-bottom: 8px; }
 /* 嵌合行：与顶栏同款，只是没有下边框（它是最后一行，下面就是分隔线） */
 .insp-stack-row { border-bottom: none; margin-bottom: 0; }
