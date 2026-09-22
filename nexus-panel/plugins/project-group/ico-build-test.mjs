@@ -110,11 +110,17 @@ console.log('\n=== 5. base64 ===');
 console.log('\n=== 6. 尺寸档位 ===');
 {
   const { ICO_SIZES } = await loadTs(path.join(HERE, 'utils/ico.ts'));
-  /* 要覆盖资源管理器用到的全部场景：列表 16、平铺 32、图标 48、超大 256 */
-  t('含 16', ICO_SIZES.includes(16));
-  t('含 32', ICO_SIZES.includes(32));
-  t('含 48', ICO_SIZES.includes(48));
-  t('含 256', ICO_SIZES.includes(256));
+  /*
+   * 对齐原版 IconConversion 的 { 16, 24, 32, 48, 64, 128, 256 }。
+   *
+   * 缺 24/64/128 的后果：资源管理器在中等/大/特大图标视图下要取 48 与 256
+   * 之间的档位，没有帧就只能放大 32 或缩小 256 —— 图标发虚，
+   * 且看不出是"少了档位"造成的，也没有任何报错。
+   */
+  for (const n of [16, 24, 32, 48, 64, 128, 256]) {
+    t(`含 ${n}`, ICO_SIZES.includes(n));
+  }
+  t('就是这七档（不多不少）', ICO_SIZES.length === 7, `实际 ${ICO_SIZES.length} 档`);
 }
 
 console.log('\n=== 7. 源码里的关键注释（防回归）===');
