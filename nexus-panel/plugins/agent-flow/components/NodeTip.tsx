@@ -124,7 +124,17 @@ export default function NodeTip({
   const body = (
     <div
       ref={ref}
-      className="node-tip"
+      /*
+       * 悬停态加 is-hover：它的 CSS 是 pointer-events:none。
+       *
+       * 光靠"拖动时收掉浮层"不够 —— 那是 React 的重渲染，
+       * 与浏览器派发 drop 之间有时序差；而悬停态浮层本来就不需要交互
+       * （鼠标移开即关，没有可点、可滚的东西），让它对整个指针事件透明
+       * 才是彻底的解法：即使它还盖在画布上，drop 也会穿过去落到 .canvas。
+       *
+       * 钉住态不能加 —— 那个是要读的，得能滚、能点关闭。
+       */
+      className={`node-tip${pinned ? '' : ' is-hover'}`}
       /*
        * 位置测出来之前先藏起来。
        * 不藏的话会先在左上角闪一下再跳到位 —— 每次打开都闪，很扎眼。

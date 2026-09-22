@@ -7,8 +7,13 @@ import { NodeShell } from './NodeShell';
 /** 某种触发方式的简短摘要 */
 function summaryOf(c: TriggerConfig, k: TriggerKind): string {
   switch (k) {
+    /*
+     * 手动这一档的摘要不再写「点『运行』时触发」——
+     * 那句话是在指别处的一个按钮，而卡片上现在自己就能点。
+     * 写着"去别处点"、却又在本处给了按钮，是两种互相矛盾的指引。
+     */
     case 'manual':
-      return '点「运行」时触发';
+      return '点右边按钮立即跑一次';
     case 'interval':
       return `每 ${c.intervalSec} 秒`;
     case 'cron':
@@ -29,6 +34,14 @@ export default function TriggerNode({ id, data, selected }: NodeProps<TriggerFlo
    * 不显示的话用户会以为那个条件不存在。
    */
   const entries = triggerEntriesOf(d as unknown as Record<string, unknown>);
+  /*
+   * 卡片上的「手动触发」回调 —— App 在渲染时塞进 data（不落盘，
+   * 见 engine/sanitize 的 VIEW_KEYS）。
+   *
+   * 卡片组件只拿得到自己这一个节点，而它是按 node.type 从注册表取的，
+   * 没有别的入口能传 props，所以走 data。
+   */
+  const fire = (d as unknown as { onFireManual?: (id: string) => void }).onFireManual;
 
   return (
     <NodeShell
@@ -62,6 +75,23 @@ export default function TriggerNode({ id, data, selected }: NodeProps<TriggerFlo
             <span className="trig-kind">{TRIGGER_META[e.kind]?.label ?? e.kind}</span>
             {/* 用这张卡自己的配置做摘要 —— 读共享 config 会显示成别的条件的值 */}
             <span className="trig-detail">{summaryOf(mergeConfig(d.config, e.config), e.kind)}</span>
+            {/*
+              手动这一档自己带触发按钮 —— 多触发器时，工具栏那个「运行」
+              看不出跑的是哪一个，而卡片上写着"点『运行』时触发"
+              却没有任何可点的东西。
+
+              stopPropagation 是必须的：xyflow 的节点区会响应
+              mousedown 做拖动/选中，不拦住的话点按钮会顺带把节点拖走。
+            */}
+            {e.kind === 'manual' && fire && entryEnabled(e) ? (
+              <button
+                type="button"
+                className="trig-fire"
+                title="立即跑一次这张画布"
+                onMouseDown={(ev) => ev.stopPropagation()}
+                onClick={(ev) => { ev.stopPropagation(); fire(id); }}
+              >▶ 触发</button>
+            ) : null}
             {!entryEnabled(e) && <span className="trig-off">停用</span>}
           </div>
         ))}

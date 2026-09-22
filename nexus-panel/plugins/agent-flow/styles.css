@@ -3210,3 +3210,67 @@ input.mono, textarea.mono {
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
   overflow: hidden; word-break: break-all;
 }
+
+
+/* ============================================================
+ * 以下 7 个类是本地改动引入、远端尚没有的，合并时补回。
+ * （远端 styles.css 与本地发生过 74 处冲突，这些规则取本地版本）
+ * ============================================================ */
+.node-tip.is-hover { pointer-events: none; }
+
+.node-brief {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 4px;
+  /* 覆盖 .node-line--brief 的 nowrap + ellipsis —— 那是一整条字符串时的写法 */
+  overflow: visible; white-space: normal; text-overflow: clip;
+}
+.node-brief-text { color: var(--af-dim); }
+
+.node-arg {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 0 5px; border-radius: 4px;
+  border: 1px solid var(--af-line);
+  /* 下凹：底色比面板深一档 + 内阴影。与 .pc-card.on / .node-chip.on 同一套 */
+  background: var(--af-sunk); box-shadow: var(--sh-in-sm);
+  font-size: var(--fs-11, 11px); line-height: 1.7; color: var(--af-fg);
+}
+
+/* 运算符 / 函数名：只换色，不换形状 */
+.node-arg.is-op { color: var(--af-accent); border-color: var(--af-accent); }
+
+.node-arg.is-fn { color: var(--af-soft); }
+
+/* 第二行：节点类型 + 节点层面的动作（存为自定义 / 编辑内部） */
+.insp-kindrow { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+
+/*
+ * 卡片上的「▶ 触发」。
+ *
+ * 用描边胶囊而不是实心按钮：这一行本来就挤（图标 + 方式名 + 摘要），
+ * 实心块会把摘要挤没、并且抢过"这一行在说什么"的注意力。
+ * 它是行内的一个动作，不是这一行的主体。
+ */
+.trig-fire {
+  flex: none; cursor: pointer;
+  font-size: var(--fs-10, 10px); line-height: 1.5;
+  padding: 1px 6px; border-radius: var(--af-r-xs);
+  color: var(--af-accent);
+  background: var(--af-sunk);
+  border: 1px solid var(--af-accent);
+  box-shadow: var(--sh-in-sm);
+}
+
+.trig-fire:hover { background: var(--af-accent); color: #fff; }
+
+.trig-fire:active { transform: translateY(1px); }
+
+/*
+ * 悬停态（鼠标掠过弹出的那个）对指针事件完全透明。
+ *
+ * 它是 portal 到 body 的、位置在侧栏右侧 —— 也就是压在画布左半边。
+ * 而 HTML5 拖放期间浏览器**不派发** mouseleave，浮层不会因为鼠标移开而消失，
+ * 于是松手时 drop 的落点是浮层而不是 .canvas，这一次拖动被吞掉：
+ * 表现为"节点库拖不进画布，只能 Ctrl 单击添加"。
+ *
+ * 悬停态本来就没有可交互的东西（鼠标移开即关），穿透它没有代价。
+ * 钉住态不带这个类名 —— 那个是要读的，得能滚、能点关闭。
+ */

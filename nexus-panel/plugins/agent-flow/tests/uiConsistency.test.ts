@@ -254,7 +254,12 @@ test('说明浮层用 portal 挂到 body（否则被侧栏滚动区裁掉）', (
    * 哪怕 position:fixed 也会被它裁剪 —— 只露出侧栏内那一条。
    */
   assert.match(tip, /createPortal\(/, 'NodeTip 必须挂到 document.body');
-  assert.match(tip, /position:\s*fixed|className="node-tip"/);
+  /*
+   * 类名现在是模板字符串（要拼 is-hover），所以不能写
+   * `className="node-tip"` —— 那样匹配不上，守卫会**假阴性**。
+   * 这里匹配"node-tip 这个类名确实被用上"，不关心拼接方式。
+   */
+  assert.match(tip, /node-tip/, 'NodeTip 要带上 node-tip 类名');
 });
 
 test('浮层两种打开方式都通：点击钉住 / 悬停预览', () => {
@@ -780,4 +785,25 @@ test('流程图的变量标注存名字不存 id（历史不随变量改名而�
     /varSnapshotOf[\s\S]{0,400}id:/,
     '快照里不该存变量 id —— 变量删掉后老流程图会变空白',
   );
+});
+
+/* ================= 顶层视图只剩两个 ================= */
+
+/*
+ * 历史并进了任务视图的「已完成」子标签。
+ *
+ * 它原本占着一个与流程平级的位置，而它与任务的区别只是"跑完没跑完" ——
+ * 找一条刚跑完的记录要先想"它现在算任务还是算历史"。
+ */
+test('不再有顶层「历史」入口', () => {
+  const app = readSrc('App.tsx');
+  assert.ok(!/setView\('history'\)/.test(app), '又出现顶层历史视图');
+  assert.ok(!/view === 'history'/.test(app), '又出现历史视图分支');
+});
+
+test('任务视图有自己的两个子标签（与流程的三个库同一套切法）', () => {
+  const app = readSrc('App.tsx');
+  assert.match(app, /leftTabsFor\(view\)/, '左栏标签要走同一套取法');
+  assert.match(app, /TASK_TAB_LABEL/, '任务子标签要有中文名');
+  assert.match(app, /setTaskTabRaw/, '子标签要能切');
 });

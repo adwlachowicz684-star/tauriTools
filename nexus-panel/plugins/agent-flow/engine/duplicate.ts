@@ -114,6 +114,39 @@ export function duplicateElements(input: DuplicateInput): DuplicateResult {
     });
   }
 
+  /*
+   * 嵌合关系（stackParent）要跟着一起重指向，不能原样照抄。
+   *
+   * ============ 为什么必须处理 ============
+   *
+   * 照抄会造出两种都不是用户想要的结果：
+   *
+   *   ① 父**不在**复制集合里（最常见：Ctrl 拖动串中间的一环）
+   *      副本仍指向原父 → 原父名下同时挂着原件与副本两个下级。
+   *      而嵌合是**链**（一个父只有一个下级，见 stack.ts 的 childrenOf），
+   *      多出来那个会被当成"链上的另一个分支"，取哪个全看遍历顺序 ——
+   *      表现为"拖动原串时，被复制出来的那块也跟着跳"。
+   *
+   *   ② 父**在**复制集合里（整串一起复制）
+   *      副本指向**原件** → 副本串的一半挂在原件上。
+   *      于是拖副本会带着原件走，原件被改动 —— 而复制的本意是原件不动。
+   *
+   * 所以：父在集合内 → 指向副本；父在集合外 → 断开（副本独立）。
+   * 断开是刻意的：副本落在松手的位置，通常与原来的父并不相邻，
+   * 留着关系就是"关系还在、看着却是歪的"那一类。
+   */
+  for (const n of outNodes) {
+    const d = (n.data ?? {}) as Record<string, unknown>;
+    const p = d.stackParent;
+    if (typeof p !== 'string') continue;
+    /*
+     * 空串也算"没有父"（parentIdOf 就是这么判的），
+     * 留着它只是往存档里写脏值 —— 一并清掉。
+     */
+    if (map[p]) d.stackParent = map[p];
+    else delete d.stackParent;
+  }
+
   const outEdges: DupEdge[] = [];
   for (const e of edges) {
     const s = map[e.source];

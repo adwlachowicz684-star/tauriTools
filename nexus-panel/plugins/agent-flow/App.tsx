@@ -50,9 +50,10 @@ import { prompt } from '../../js/dialog.js';
 import DirPicker from './components/DirPicker';
 import {
   LEFT_TABS, LEFT_TAB_LABEL,
-  normalizeLeftTab, normalizeLogHeight, coerceForView,
+  TASK_TABS, TASK_TAB_LABEL,
+  normalizeLeftTab, normalizeTaskTab, normalizeLogHeight, leftTabsFor,
 } from './engine/layout';
-import type { LeftTab } from './engine/layout';
+import type { LeftTab, TaskTab } from './engine/layout';
 import { defaultKV as kvStore } from './engine/kv';
 import {
   writeTextFile, fsAllowRoot, listFsRoots, canExportToFile,
@@ -382,7 +383,14 @@ export default function App() {
     渲染压力交给任务窗口的虚拟滚动（只画视口内的行），
     这里不做人为截断，否则"刚跑完的被挤掉了"会让人以为任务丢了。
   */
-  const [view, setView] = useState<'flow' | 'tasks' | 'history'>('flow');
+  /*
+   * 只剩「流程 / 任务」两个顶层视图。
+   *
+   * 历史改成任务视图下的一个子标签（「已完成」）—— 它与任务的区别
+   * 只是"跑完没跑完"，却占了一个与流程平级的位置，
+   * 于是找一条刚跑完的记录要先想"它现在算任务还是算历史"。
+   */
+  const [view, setView] = useState<'flow' | 'tasks'>('flow');
   /*
    * 任务列表 + 跨会话历史归档。
    *
@@ -669,14 +677,23 @@ export default function App() {
    */
   const [logH, setLogH] = useState<number>(() => normalizeLogHeight(kvStore().get('agent-flow.logH.v1')));
 
+  /*
+   * 任务视图下的子标签：进行中 / 已完成。
+   *
+   * 与 leftTab 分开存 —— 它是任务视图自己的状态，
+   * 混进 leftTab 的话，流程视图切到「画布库」会把任务视图
+   * 也带到一个它不认识的标签上。
+   */
+  const [taskTabRaw, setTaskTabRaw] = useState<TaskTab>(
+    () => normalizeTaskTab(kvStore().get('agent-flow.taskTab.v1')),
+  );
+
   useEffect(() => { kvStore().set('agent-flow.leftTab.v1', leftTabRaw); }, [leftTabRaw]);
+  useEffect(() => { kvStore().set('agent-flow.taskTab.v1', taskTabRaw); }, [taskTabRaw]);
   useEffect(() => { kvStore().set('agent-flow.logH.v1', String(logH)); }, [logH]);
 
-
-
-
-  const coerced = coerceForView(view, leftTabRaw);
-  const leftTab = coerced.left;
+  const leftTab = normalizeLeftTab(leftTabRaw);
+  const taskTab = normalizeTaskTab(taskTabRaw);
 
 
   /*
@@ -1929,6 +1946,74 @@ function reportSkipped(
   const runRef = useRef(run);
   useEffect(() => { runRef.current = run; }, [run]);
 
+  const runningRef = useRef(running);
+  useEffect(() => { runningRef.current = running; }, [running]);
+
+  /*
+   * 卡片上的「手动触发」。
+   *
+   * 以前只有工具栏那个「运行」按钮能手动跑 —— 触发器节点上写着
+   * 「点「运行」时立即执行一次」，却**没有任何可点的东西**，
+   * 得先去别处找一个按钮。而多触发器时用户不知道点「运行」跑的是哪个。
+   *
+   * 依赖只放稳定引用（runRef / runningRef / setNodes），
+   * 于是这个函数本身是稳定的 —— 被塞进节点 data 后不会让整批节点
+   * 每次渲染都重建（xyflow 会据此全量重渲染）。
+   */
+  const fireManualTrigger = useCallback((nodeId: string) => {
+    if (runningRef.current) {
+      pushLog('已有任务在运行，本次触发被跳过');
+      return;
+    }
+    void runRef.current?.(undefined, 'manual').then((ok) => {
+      // 与调度器触发同一套落款：卡片上就能看到"上次触发"的时间与方式
+      setNodes((ns) => ns.map((n) => (
+        n.id === nodeId && isTrigger(n.data)
+          ? ({
+            ...n,
+            data: {
+              ...n.data,
+              lastFiredAt: Date.now(),
+              lastFiredKind: 'manual',
+              status: ok ? 'success' : 'failed',
+            },
+          } as FlowNode)
+          : n
+      )));
+    });
+  }, [pushLog, setNodes]);
+
+  /*
+   * 给触发器节点塞一个「手动触发」回调。
+   *
+   * 走 data 而不是别的通道：卡片组件只拿得到自己这一个节点，
+   * 而它是按 node.type 从注册表里取的，没有别的入口能传 props。
+   *
+   * 放在 fireManualTrigger **之后**：那是 const，提前用会撞 TDZ。
+   *
+   * 函数是非可序列化的，落盘时 JSON.stringify 会直接丢掉它；
+   * 另外也进了 VIEW_KEYS，复制 / 存模块时会被剥掉。
+   */
+  const canvasNodes = useMemo(
+    () => displayNodes.map((n): typeof n => {
+      if (!isTrigger(n.data)) return n;
+      /*
+       * 先落到 Record 再交回去。
+       *
+       * 直接写字面量会撞多余属性检查（TS2353）——
+       * onFireManual 是**运行时临时挂上**的，不属于任何节点自己的 data 类型
+       * （它不是配置，落盘时会被丢掉、复制时会被剥掉）。
+       * 交给一个 Record 变量中转就没有"字面量新鲜度"了，检查自然放过。
+       */
+      const data: Record<string, unknown> = {
+        ...(n.data as Record<string, unknown>),
+        onFireManual: fireManualTrigger,
+      };
+      return { ...n, data } as typeof n;
+    }),
+    [displayNodes, fireManualTrigger],
+  );
+
 
 
 const globalTriggersRef = useRef<GlobalTrigger[]>([]);
@@ -2266,9 +2351,6 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
               </span>
             ) : null}
           </button>
-          <button className={view === 'history' ? 'on' : ''} onClick={() => setView('history')}>
-            历史
-          </button>
         </div>
         {histWarn ? (
           <span className="hist-warn-inline" title={histWarn}>⚠ 归档存储</span>
@@ -2355,38 +2437,38 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
       <div className="af-body-row">
         <div className="af-left-pane">
           {/*
-            左栏内容随视图换：
-              流程   → 节点库 / 模块库 / 画布库（三个标签）
-              任务   → 任务列表
-              历史   → 历史列表
+            左栏**两个视图都有**，只是标签组不同：
+              流程 → 节点库 / 模块库 / 画布库
+              任务 → 进行中 / 已完成
 
-            任务 / 历史下画布是隐藏的，节点库拖不出东西 ——
-            留着它是一条"点了没反应"的死栏。所以列表顶上同一条栏，
-            位置、宽度、底板（.side-pane）全都与节点库一致。
+            底板（.side-pane）、宽度、位置完全一致 ——
+            切视图时只是同一条栏换了内容和标签，布局不跳。
+
+            以前任务 / 历史下这条栏被整条隐去（画布藏了、节点拖不动），
+            于是同一条栏时有时无，切过去整个界面宽度变一次。
           */}
-          {view !== 'flow' ? null : (
-            <div className="pane-tabs">
-              {LEFT_TABS.map((t) => (
-                <button
-                  key={t}
-                  className={leftTab === t ? 'on' : ''}
-                  onClick={() => setLeftTabRaw(t)}
-                >
-                  {LEFT_TAB_LABEL[t]}
-                </button>
-              ))}
-            </div>
-          )}
+          <div className="pane-tabs">
+            {leftTabsFor(view).map((t) => (
+              <button
+                key={t}
+                className={
+                  view === 'tasks'
+                    ? (taskTab === t ? 'on' : '')
+                    : (leftTab === t ? 'on' : '')
+                }
+                onClick={() => {
+                  if (view === 'tasks') setTaskTabRaw(t as TaskTab);
+                  else setLeftTabRaw(t as LeftTab);
+                }}
+              >
+                {view === 'tasks'
+                  ? TASK_TAB_LABEL[t as TaskTab]
+                  : LEFT_TAB_LABEL[t as LeftTab]}
+              </button>
+            ))}
+          </div>
           <div className="pane-body">
-            {view === 'tasks' ? (
-              <TaskList
-                tasks={tasks}
-                now={tick}
-                onClear={() => setTasks((list) => list.filter((t) => t.status === 'running'))}
-                selectedId={taskSel}
-                onSelect={setTaskSel}
-              />
-            ) : view === 'history' ? (
+            {view === 'tasks' ? (taskTab === 'done' ? (
               <HistoryList
                 entries={history}
                 now={tick}
@@ -2396,7 +2478,15 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
                 selectedId={histSel}
                 onSelect={setHistSel}
               />
-            ) : leftTab === 'node' ? (
+            ) : (
+              <TaskList
+                tasks={tasks}
+                now={tick}
+                onClear={() => setTasks((list) => list.filter((t) => t.status === 'running'))}
+                selectedId={taskSel}
+                onSelect={setTaskSel}
+              />
+            )) : leftTab === 'node' ? (
               <Sidebar
                 onAdd={(p) => spawnNode(p)}
                 disabled={running}
@@ -2436,7 +2526,12 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
         {/*
           列表已移到左栏（与节点库共用底板），这里只放**详情**。
         */}
-        {view === 'history' ? (
+        {/*
+          详情跟随左栏的子标签 —— 两个视图共用一处，
+          「已完成」就是原来的历史详情（带日期、可归档），
+          「进行中」可取消。
+        */}
+        {view === 'tasks' && taskTab === 'done' ? (
           <div className="task-detail">
             {!activeHist ? (
               <div className="nx-empty task-empty">选一条记录看细节。</div>
@@ -2467,7 +2562,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
             )}
           </div>
         ) : null}
-        {view === 'tasks' ? (
+        {view === 'tasks' && taskTab !== 'done' ? (
           <div className="task-detail">
             {!activeTask ? (
               <div className="nx-empty task-empty">选一条任务看细节。</div>
@@ -2502,7 +2597,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
         ) : null}
         <div className="canvas" ref={wrapperRef} onDrop={onDrop} onDragOver={onDragOver} style={view === 'flow' ? undefined : { display: 'none' }}>
           <ReactFlow
-            nodes={displayNodes}
+            nodes={canvasNodes}
             edges={edges}
             onNodesChange={handleNodesChange}
             onEdgesChange={onEdgesChange}
@@ -2587,6 +2682,18 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
           不做成可切标签：跑流程时盯着日志还得能改参数，
           切成标签就得来回切 —— 那两件事恰恰经常同时发生。
         */}
+        {/*
+           任务 / 历史视图下**不渲染右栏**。
+
+           它原本恒显示（只读 + 一句"改节点请回流程"），
+           于是详情区被一条 340px 的栏挤掉三分之一 ——
+           任务列表在左栏、详情在中间，中间本来就不宽，
+           挤完只剩半屏，流程图与节点输出都要横向滚。
+
+           属性面板在这两个视图下没有可读的东西（它自己都在说
+           "改节点请回流程"）；日志在任务详情里已经有了。
+        */}
+        {view === 'flow' ? (
         <div className="af-right-pane">
           <div className="af-right-insp">
         <div className="insp-slot">
@@ -2629,29 +2736,6 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
           </fieldset>
         </div>
 
-
-        {credOpen ? (
-          <CredentialPanel
-            credentials={credentials}
-            onChange={(next) => setCredentials(next)}
-            onClose={() => { setCredOpen(false); setCredFocus(''); setCredPage('cred'); }}
-            initialPage={credPage}
-            verify={verifyCredential}
-            fetchModels={fetchModels}
-            locked={vaultKey === null}
-            mode={store.mode}
-            onUnlock={(pass) => {
-              if (pass === '') { lockVault(); return; }
-              unlock(pass);
-            }}
-            onChangeMode={changeVaultMode}
-            cryptoWarn={cryptoWarn}
-            unlockError={unlockErr}
-            mcpServers={mcpServers}
-            onMcpChange={commitMcp}
-            mcpToolCount={mcpToolCount}
-          />
-        ) : null}
 
           </div>
 
@@ -2697,9 +2781,43 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
         </div>
           </div>
         </div>
+        ) : null}
       </div>
       </div>
       </div>
+
+      {/*
+        凭据中心挂在这里（af-body-row 之外），不跟着右栏走。
+
+        以前它写在右栏里，而任务 / 历史视图下右栏不渲染 ——
+        于是从"填写凭据"按钮点进来会毫无反应：面板根本没被渲染，
+        连报错都没有。
+
+        它本来就是全屏遮罩（.cred-mask 是 position:fixed），
+        放在哪一层都一样显示，不依赖右栏的布局。
+      */}
+      {credOpen ? (
+        <CredentialPanel
+          credentials={credentials}
+          onChange={(next) => setCredentials(next)}
+          onClose={() => { setCredOpen(false); setCredFocus(''); setCredPage('cred'); }}
+          initialPage={credPage}
+          verify={verifyCredential}
+          fetchModels={fetchModels}
+          locked={vaultKey === null}
+          mode={store.mode}
+          onUnlock={(pass) => {
+            if (pass === '') { lockVault(); return; }
+            unlock(pass);
+          }}
+          onChangeMode={changeVaultMode}
+          cryptoWarn={cryptoWarn}
+          unlockError={unlockErr}
+          mcpServers={mcpServers}
+          onMcpChange={commitMcp}
+          mcpToolCount={mcpToolCount}
+        />
+      ) : null}
     </div>
   );
 }

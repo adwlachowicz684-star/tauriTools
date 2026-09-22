@@ -147,6 +147,24 @@ export default function Sidebar({
     // 同时放一份 text/plain，某些环境下自定义 MIME 会被过滤
     e.dataTransfer.setData('text/plain', encodeDrag(p));
     e.dataTransfer.effectAllowed = 'copy';
+    /*
+     * 拖起来就立刻收掉说明浮层。
+     *
+     * 不收会直接导致**拖不进画布**：
+     *   ① 浮层是 portal 到 body 的，位置在侧栏右侧 —— 也就是压在画布左半边
+     *   ② HTML5 拖放期间浏览器**不派发** mouseleave/mouseout，
+     *      所以浮层不会因为鼠标移开而消失，它一直停在原地
+     *   ③ 松手时鼠标下面如果是浮层，drop 的落点是浮层而不是 .canvas，
+     *      于是这一次拖动被吞掉
+     *
+     * 从条目按下鼠标时浮层刚弹出（悬停是 0 延迟），
+     * 于是每次拖动它都在 —— 表现为"拖动经常没反应，只能 Ctrl 单击添加"。
+     *
+     * 这里引用的 cancelTimers / setTip 定义在下方（const），
+     * 但只在事件真正触发时才求值，不会撞 TDZ。
+     */
+    cancelTimers();
+    setTip(null);
   };
 
   /*

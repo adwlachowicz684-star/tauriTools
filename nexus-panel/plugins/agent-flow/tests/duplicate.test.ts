@@ -219,3 +219,77 @@ test('复制跑过的节点：副本不带执行结果（配合 create 铺默认
   assert.equal(d.lastSha, undefined);
   assert.equal(d.label, 'A', '配置要留下');
 });
+
+/* ---- 嵌合关系（stackParent）跟着重指向 ---- */
+
+/*
+ * 照抄 stackParent 会造出两种都不是用户想要的结果，这里各钉一条。
+ */
+test('父不在复制集合里：副本断开嵌合（不与原件抢同一个父）', () => {
+  /*
+   * 嵌合是**链**：一个父只有一个下级（见 stack.ts 的 childrenOf）。
+   * 副本若仍指向原父，原父名下就同时挂着原件与副本 ——
+   * 表现为"拖动原串时，被复制出来的那块也跟着跳"。
+   */
+  const r = duplicateElements(baseInput({
+    nodes: [
+      { id: 'a', position: { x: 0, y: 0 }, data: {} },
+      { id: 'b', position: { x: 0, y: 90 }, data: { stackParent: 'a' } },
+    ],
+    ids: ['b'],
+  }));
+  const b2 = r.nodes.find((n) => n.id === 'b_copy');
+  assert.ok(b2, '要有副本');
+  assert.equal((b2.data as { stackParent?: string }).stackParent, undefined,
+    '副本应当独立，不再挂在原父下');
+});
+
+test('父在复制集合里：副本指向副本（不挂回原件）', () => {
+  /*
+   * 指向原件的话，副本串的上半截挂在原件上 ——
+   * 拖副本会带着原件走，而复制的本意是原件不动。
+   */
+  const r = duplicateElements(baseInput({
+    nodes: [
+      { id: 'a', position: { x: 0, y: 0 }, data: {} },
+      { id: 'b', position: { x: 0, y: 90 }, data: { stackParent: 'a' } },
+    ],
+    ids: ['a', 'b'],
+  }));
+  const b2 = r.nodes.find((n) => n.id === 'b_copy');
+  assert.equal((b2.data as { stackParent?: string }).stackParent, 'a_copy',
+    '副本要指向副本，不能指回原件');
+});
+
+test('整串复制后仍是完整的一条链（串尾到串头能走通）', () => {
+  const r = duplicateElements(baseInput({
+    nodes: [
+      { id: 'a', position: { x: 0, y: 0 }, data: {} },
+      { id: 'b', position: { x: 0, y: 90 }, data: { stackParent: 'a' } },
+      { id: 'c', position: { x: 0, y: 180 }, data: { stackParent: 'b' } },
+    ],
+    ids: ['a', 'b', 'c'],
+  }));
+  const byId = Object.fromEntries(r.nodes.map((n) => [n.id, n]));
+  assert.equal((byId.a_copy.data as { stackParent?: string }).stackParent, undefined);
+  assert.equal((byId.b_copy.data as { stackParent?: string }).stackParent, 'a_copy');
+  assert.equal((byId.c_copy.data as { stackParent?: string }).stackParent, 'b_copy');
+});
+
+test('没有嵌合关系的节点不受影响', () => {
+  const r = duplicateElements(baseInput({
+    nodes: [{ id: 'a', position: { x: 0, y: 0 }, data: { label: 'x' } }],
+    ids: ['a'],
+  }));
+  assert.equal('stackParent' in (r.nodes[0].data as object), false);
+  assert.equal((r.nodes[0].data as { label: string }).label, 'x');
+});
+
+/** 空串是脏值（曾经存过又被清掉），不能当成有效父 id 留下 */
+test('stackParent 是空串时清掉，不留脏值', () => {
+  const r = duplicateElements(baseInput({
+    nodes: [{ id: 'b', position: { x: 0, y: 0 }, data: { stackParent: '' } }],
+    ids: ['b'],
+  }));
+  assert.equal('stackParent' in (r.nodes[0].data as object), false);
+});

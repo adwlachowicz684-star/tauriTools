@@ -774,3 +774,38 @@ test('改色走 setColorOverride / 自定义预设自己那份，不各写一套
   assert.ok(/setColorOverride/.test(t), '内置类型要写类型级覆盖');
   assert.ok(/saveCustomPresets/.test(t), '自定义预设要写回它自己');
 });
+
+/* ================= 说明浮层不能挡住拖放 ================= */
+
+/*
+ * 悬停说明是 portal 到 body 的，位置在侧栏右侧 —— 也就是**压在画布左半边**。
+ * 而 HTML5 拖放期间浏览器不派发 mouseleave，浮层不会因为鼠标移开而消失，
+ * 于是松手时 drop 的落点是浮层而不是 .canvas，这一次拖动被吞掉：
+ * 表现为"节点库拖不进画布，只能 Ctrl 单击添加"。
+ *
+ * 这类问题在沙盒里根本跑不出来（没有浏览器、没有拖放），只能盯源码。
+ */
+test('悬停态浮层对指针透明（否则拖放被它吞掉）', () => {
+  const css = fs.readFileSync(path.join(ROOT, 'styles.css'), 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const i = css.indexOf('.node-tip.is-hover');
+  assert.ok(i >= 0, '缺 .node-tip.is-hover');
+  const b = css.slice(i, css.indexOf('}', i));
+  assert.match(b, /pointer-events:\s*none/, '悬停态浮层要让指针穿透');
+});
+
+test('拖动一开始就收掉浮层（不依赖 mouseleave）', () => {
+  /*
+   * 光靠 CSS 穿透不够：钉住态是可交互的，不能穿透。
+   * 所以拖动开始时还要主动收掉一次。
+   */
+  const t = srcOf('components/Sidebar.tsx');
+  /*
+   * 必须匹配**处理函数的定义**，不能只找 onDragStart 这几个字 ——
+   * McpServerSection 的 props 里也有同名参数（且排在前面），
+   * 用 indexOf 取到的是那一行，于是删掉真正的收浮层动作照样通过（假阴性）。
+   */
+  const m = /const onDragStart = \([\s\S]{0,900}?\n  \}/.exec(t);
+  assert.ok(m, '找不到 onDragStart 的定义');
+  assert.match(m[0], /setTip\(null\)/, '拖动开始要收掉说明浮层');
+});

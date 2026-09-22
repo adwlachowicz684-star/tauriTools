@@ -357,7 +357,7 @@ export function CredentialPanel({
             {(editing.kind === 'llm' || editing.kind === 'cli') ? (
               <>
                 {editing.kind === 'cli' ? null : (
-                  <>
+                <>
                 <label className="p-row">
                   <span className="p-muted" style={{ width: 64, flex: 'none' }}>服务商</span>
                   <select
@@ -390,7 +390,7 @@ export function CredentialPanel({
                     })}
                   />
                 </label>
-                  </>
+                </>
                 )}
                 {editing.kind === 'cli' ? null : (
                 <div className="p-muted" style={{ fontSize: 'var(--fs-body, 12px)' }}>
