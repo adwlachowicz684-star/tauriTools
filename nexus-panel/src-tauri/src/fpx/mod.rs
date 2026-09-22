@@ -2288,12 +2288,12 @@ pub fn fpx_save_chain_actions(
     for a in list.iter_mut() {
         if a.builtin.trim().is_empty() { continue; }
         if let Some(v) = a.project.as_ref() {
-            if v.trim() == super::chain::default_project(&a.builtin).trim() {
+            if v.trim() == chain::default_project(&a.builtin).trim() {
                 a.project = None;
             }
         }
         if let Some(v) = a.group.as_ref() {
-            if v.trim() == super::chain::default_group(&a.builtin).trim() {
+            if v.trim() == chain::default_group(&a.builtin).trim() {
                 a.group = None;
             }
         }
