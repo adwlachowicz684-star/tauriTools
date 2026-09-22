@@ -846,3 +846,74 @@ test('两段都真的有留白（不能只改一段）', () => {
   assert.match(css, /\.insp-basics\s*\{[^}]*padding:/, '.insp-basics 缺内边距');
   assert.match(css, /\.inspector\s*\{[^}]*padding:/, '.inspector 缺内边距');
 });
+
+/* ============ CSS 变量必须真的能解析（不许静默失效） ============ */
+
+/*
+ * 这是本轮最重要的一条守卫。
+ *
+ * ================= 症状 =================
+ *
+ * 「代码改对了、界面看不出来」。
+ * 具体表现：精心调的字号没变、参数下凹只有极弱底色差看着像不存在、
+ * 胶囊圆角成了直角 —— 而 grep 类名、查组件接线全都正常。
+ *
+ * ================= 根因 =================
+ *
+ * 本文件引用了 --fs-note / --fs-body / --sh-in-sm / --r-pill / --ctl-* 等
+ * 外壳令牌，它们定义在 css/tokens.css 与 css/controls.css。
+ * 但**这两个文件运行时从未被加载**：index.html 与 src/main.tsx
+ * 只引了 css/neumorphism.css。
+ *
+ * CSS 规范：var() 引用未定义变量且无兜底 → 该声明在计算值时无效 →
+ * 属性退化为初始值（font-size 走继承、box-shadow:none、border-radius:0）。
+ * 不报错、不告警，界面只是「看起来没改」。
+ *
+ * ================= 检查口径 =================
+ *
+ * 只看**运行时真正加载**的 CSS 集合（外壳 neumorphism + 本文件），
+ * 不能把仓库里所有 css/*.css 都算作已定义 ——
+ * 那样 tokens.css 会被误判成"有定义"，正是这个 bug 藏了这么久的原因。
+ *
+ * 带兜底的 var(--x, 值) 放行：它失败也有值可用（如 --edge → transparent）。
+ */
+test('agent-flow 的 CSS 变量在运行时加载集里都有定义（无兜底者）', () => {
+  const panelRoot = path.join(ROOT, '..', '..'); // nexus-panel/
+  const loaded: string[] = [];
+  for (const rel of ['css/neumorphism.css', 'plugins/agent-flow/styles.css']) {
+    const p = path.join(panelRoot, rel);
+    if (fs.existsSync(p)) loaded.push(fs.readFileSync(p, 'utf-8'));
+  }
+  assert.ok(loaded.length >= 1, '读不到运行时 CSS，检查口径失效');
+
+  const defined = new Set<string>();
+  for (const c of loaded) {
+    for (const m of c.matchAll(/(--[\w-]+)\s*:/g)) defined.add(m[1]);
+  }
+
+  const css = readSrc('styles.css');
+  const bad = new Set<string>();
+  // 只抓**无兜底**的引用：var(--x) 后紧跟右括号
+  for (const m of css.matchAll(/var\(\s*(--[\w-]+)\s*\)/g)) {
+    if (!defined.has(m[1])) bad.add(m[1]);
+  }
+  assert.deepEqual(
+    [...bad], [],
+    '这些变量运行时未定义 → 对应声明整条失效（界面看着像没改）：' + [...bad].join(', '),
+  );
+});
+
+/*
+ * 反过来也要盯：上面那条靠 styles.css 自己补定义通过，
+ * 于是"补定义被删掉"必须也被抓到 —— 挑一个高频变量专门断言。
+ */
+test('补齐的外壳令牌仍在（--fs-note / --sh-in-sm / --r-pill 有真实定义）', () => {
+  const css = readSrc('styles.css');
+  for (const v of ['--fs-note', '--sh-in-sm', '--r-pill', '--fs-body']) {
+    assert.match(css, new RegExp(re_escape(v) + ':\\s*[^;]+;'), `${v} 要有真实定义，不能只靠兜底`);
+  }
+});
+
+function re_escape(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
+}

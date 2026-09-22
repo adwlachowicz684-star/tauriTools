@@ -152,6 +152,60 @@
    * 只会表现为"上半截贴着边、下半截缩进去"。
    */
   --af-insp-pad: 14px;
+
+  /*
+   * ================= 补齐外壳令牌（不可省） =================
+   *
+   * 本文件大量引用 --fs-* / --sh-in-sm / --r-pill / --ctl-* 这些令牌，
+   * 而它们定义在 css/tokens.css 与 css/controls.css ——
+   * **这两个文件运行时从未被加载**（index.html 与 src/main.tsx 只引了
+   * css/neumorphism.css），于是这些 var() 全部解析失败：
+   *
+   *   CSS 规则：var() 引用未定义变量且无兜底 → 该声明在计算值时无效
+   *   → 属性退化为初始值（font-size 继承、box-shadow:none、border-radius:0）
+   *
+   * 后果是"代码写对了、界面看不出来"：
+   *   · 字号（--fs-note 94 处 / --fs-body 72 处）→ 全回退成继承值
+   *   · 下凹（--sh-in-sm）→ 没阴影，只剩 5/255 的底色差，看着像不存在
+   *   · 胶囊（--r-pill 36 处）→ 圆角为 0，成了直角方块
+   *
+   * 这里按 tokens.css / controls.css 的原值补齐，让插件自包含；
+   * 值保持 var() 引用（--sh-dark/--sh-light 由 neumorphism.css 提供），
+   * 所以主题切换仍然跟得上。
+   */
+  --fs-10: 10px; --fs-11: 11px; --fs-12: 12px; --fs-14: 14px; --fs-15: 15px;
+  --fs-body:  var(--fs-12, 12px);
+  --fs-code:  var(--fs-11, 11px);
+  --fs-note:  var(--fs-11, 11px);
+  --fs-micro: var(--fs-10, 10px);
+  --title-1-fs: 13px;
+  --fs-title:   var(--title-1-fs, 13px);
+  --title-1-fw: 600; --title-2-fw: 600; --title-3-fw: 600;
+
+  --r-xs:   6px;
+  --r-pill: 999px;
+
+  --relief-edge: var(--edge, transparent);
+  --sh-out-sm: 2px 2px 5px var(--sh-dark), -2px -2px 5px var(--sh-light),
+               inset 0 0 0 1px var(--relief-edge);
+  --sh-out-md: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light),
+               inset 0 0 0 1px var(--relief-edge);
+  --sh-in-sm: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);
+  --sh-in-md: inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light);
+  --sh-cast-sm: 0  8px 24px rgba(0, 0, 0, .45);
+  --sh-cast-md: 0 18px 44px rgba(0, 0, 0, .22);
+  --sh-cast-lg: 0 20px 60px rgba(0, 0, 0, .50);
+
+  --sp-3:  6px;
+  --z-base: 1;
+  --z-menu: 60;
+
+  --ctl-disabled-cursor: not-allowed;
+  --ctl-disabled-opacity: .45;
+  --ctl-faux-bold: 0.4px;
+  --ctl-shadow:       var(--sh-out-md);
+  --ctl-shadow-sm:    var(--sh-out-sm);
+  --ctl-shadow-press: var(--sh-in-md);
   --af-dur-fast: .12s;
   --af-dur-base: .18s;
   --af-dur-slow: .3s;
