@@ -184,9 +184,12 @@ export function useCardHotkeys(
     run('remove', () => ref.current.remove());
 
     /* 上下键导航：裸方向键最容易撞车（分隔条、下拉框），
-       所以这两条显式声明自己要让路给分隔条。 */
-    bind(map.navUp, () => ref.current.navigate(-1), { yieldSplitter: true });
-    bind(map.navDown, () => ref.current.navigate(1), { yieldSplitter: true });
+       所以这两条显式声明自己要让路给分隔条。
+
+       这里直接调 bind，就得自己补上 run() 里那个 `if (!combo) return` ——
+       否则用户把这条绑定取消（空串）时，照样会拿空串去注册一次。 */
+    if (map.navUp) bind(map.navUp, () => ref.current.navigate(-1), { yieldSplitter: true });
+    if (map.navDown) bind(map.navDown, () => ref.current.navigate(1), { yieldSplitter: true });
     run('refresh', () => ref.current.refresh());
     run('clearInvalid', () => ref.current.clearInvalid());
 
