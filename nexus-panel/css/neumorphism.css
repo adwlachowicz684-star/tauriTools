@@ -579,6 +579,14 @@ body {
   border-radius: var(--r-sm);
   background: var(--surface-sunk);
   box-shadow: var(--sh-in-md);
+  /* 必须显式改回 text。
+     根 body 上有 user-select:none（整个面板按桌面应用的观感处理，
+     拖标题栏时不会误选文字），而它会**继承**进来 ——
+     于是报错文字鼠标划不动、选不中，只能靠折叠区的"复制"按钮。
+     报错信息正是最需要手动摘一段贴给别人的东西，这里必须放开。 */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 .err-box .row { margin-top: 16px; display: flex; gap: 10px; }
 

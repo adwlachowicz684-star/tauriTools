@@ -174,5 +174,36 @@ t('诊断区有样式（折叠箭头/等宽正文/限高）',
   && /max-height/.test(css.slice(css.indexOf('.err-diag-body'))));
 t('正文用等宽字体变量', /\.err-diag-body[\s\S]{0,200}var\(--font-mono\)/.test(css));
 
+/* ---------------------------------------------------------------- */
+console.log('\n=== 报错文本可选中 + 一键复制 ===');
+/*
+ * 用户实测：报错框里的文字**鼠标划不动、选不中**。
+ * 根因：根 body 上有 user-select:none（面板按桌面应用观感处理），
+ * 而 .err-box pre 没有显式改回来 —— user-select 是**继承**的，
+ * 于是报错信息（最需要手动摘一段贴给别人的东西）只能靠按钮复制。
+ */
+const neu = read('css/neumorphism.css');
+const preBlock = (() => {
+  const i = neu.indexOf('.err-box pre {');
+  return i < 0 ? '' : neu.slice(i, neu.indexOf('}', i) + 1);
+})();
+t('报错区显式放开可选中（覆盖继承来的 none）',
+  /user-select:\s*text/.test(preBlock),
+  'body 是 none，不显式改回来就选不中');
+t('带 -webkit- 前缀（旧 WebView 仍认这个）',
+  /-webkit-user-select:\s*text/.test(preBlock));
+t('鼠标样式为文本（暗示可以划选）', /cursor:\s*text/.test(preBlock));
+
+const hostSrc = read('js/host.js');
+t('主报错有独立 id（复制时取它与屏幕一致）',
+  /<pre id="err-msg">/.test(hostSrc));
+t('第一行按钮里有「复制报错」',
+  /id="err-copy-msg"[^>]*>复制报错</.test(hostSrc),
+  '原先只有折叠的诊断日志区能复制，得先展开');
+t('绑定了复制处理（取 pre 文本，不是 message）',
+  /querySelector\('#err-copy-msg'\)/.test(hostSrc)
+  && /copyText\(msgEl\?\.textContent/.test(hostSrc),
+  '复制 err.stack 全量，与屏幕上看到的一致');
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

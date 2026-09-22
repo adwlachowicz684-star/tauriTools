@@ -187,7 +187,27 @@ export function buildInputs(root = PROJECT_ROOT) {
 const r = (p) => resolve(PROJECT_ROOT, p);
 
 /** 需要原样拷进 dist 的「无构建」示例插件（不参与打包） */
-export const PLAIN_PLUGINS = ['demo-iframe', 'demo-module', 'demo-light'];
+/*
+ * 原样拷进 dist 的插件目录（不交给 Vite 处理）。
+ *
+ * ⚠️ 这里**只能放没有 index.html 的插件**。
+ *
+ * 有 index.html 的插件会被 buildInputs() 自动收成 Vite 入口，产出
+ * dist/plugins/<id>/index.html（引用 /assets/... 打包后的 chunk）。
+ * 而本名单的拷贝发生在 closeBundle（打包之后）—— 源码版 index.html
+ * 会把打包版**整个盖掉**，它里面那句
+ *     import { ... } from '../../js/plugin-sdk.js'
+ * 在 dist 里指向 dist/js/plugin-sdk.js —— 该文件不存在（Vite 把 sdk
+ * 打成了 /assets/plugin-sdk-*.js）。
+ * 结果：脚本 404 → 从未执行 → 插件不发 'ready' → 外壳等满 10s 报
+ * 「iframe 插件握手超时（10s）」，且**看不出是构建配置问题**。
+ * （demo-iframe「示例·原生沙箱」、demo-light「示例·浅色插件」就栽在这里）
+ *
+ * demo-module 没有 index.html，不是 Vite 入口，靠 plugin-entries.js 的
+ * import.meta.glob 出 chunk —— 原样拷贝不与之冲突，留着无害。
+ * vite.config.ts 的 closeBundle 里有断言把上面这条规则钉住。
+ */
+export const PLAIN_PLUGINS = ['demo-module'];
 
 export const PATHS = {
   root: PROJECT_ROOT,

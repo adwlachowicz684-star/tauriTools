@@ -112,6 +112,20 @@ function copyPlainPlugins(): Plugin {
         copyInto(PATHS.registry, resolve(out, 'registry.js'));
       }
       for (const name of PLAIN_PLUGINS) {
+        /*
+         * 构建期断言：有 index.html 的插件**不能**出现在原样拷贝名单里。
+         *
+         * 原因见 config/nexus.config.mjs 里 PLAIN_PLUGINS 的注释 ——
+         * 源码版 index.html 会盖掉打包版，插件脚本 404，最终表现为
+         * 「iframe 插件握手超时（10s）」这种**完全看不出是构建配置问题**
+         * 的运行时报错。静默放过等于把排查成本转嫁给下一次。
+         */
+        if (fsSync.existsSync(resolve(PATHS.plugins, name, 'index.html'))) {
+          throw new Error(
+            `[nexus-copy-plain-plugins] 插件 "${name}" 有 index.html，` +
+            '已被 Vite 收为入口；放进 PLAIN_PLUGINS 会让源码版盖掉打包版，' +
+            '表现为「iframe 插件握手超时（10s）」。请从 PLAIN_PLUGINS 移除。');
+        }
         const src = resolve(PATHS.plugins, name);
         if (fsSync.existsSync(src)) {
           copyInto(src, resolve(out, name));

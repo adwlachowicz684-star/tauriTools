@@ -87,7 +87,7 @@ t('vite.config 会原样拷贝 registry.js',
 t('拷贝发生在 closeBundle（打包之后，不会被覆盖）',
   /apply: 'build'[\s\S]{0,120}closeBundle/.test(viteCfg));
 t('PLAIN_PLUGINS 的插件整目录拷贝',
-  /for \(const name of PLAIN_PLUGINS\)[\s\S]{0,160}copyInto\(src/.test(viteCfg));
+  /for \(const name of PLAIN_PLUGINS\)[\s\S]{0,900}copyInto\(src/.test(viteCfg));
 
 console.log('\n=== 3. 核心约束：Vite 模式下插件入口必须是 HTML ===');
 /*
@@ -326,6 +326,33 @@ console.log('\n=== 6. 文档化：原因必须写在代码里 ===');
 t('registry 头部说明了双实现', /各写了两份实现/.test(registry));
 t('vite.config 注释说明了不能整目录拷贝普通插件',
   /整目录原样拷贝会盖掉打包产物/.test(viteCfg));
+
+/* ---------------------------------------------------------------- */
+console.log('\n=== 7. 原样拷贝名单不得含 Vite 入口插件 ===');
+/*
+ * 用户实测：「示例·原生沙箱」「示例·浅色插件」打开报
+ *   Error: iframe 插件握手超时（10s）
+ * 根因不是网络、也不是握手逻辑，是**构建配置**：
+ *   这两个插件有 index.html → 被 buildInputs() 收成 Vite 入口 →
+ *   产出 dist/plugins/<id>/index.html（引用 /assets/... chunk）；
+ *   而它们又被列进 PLAIN_PLUGINS，closeBundle 的整目录原样拷贝
+ *   （打包之后执行）把**源码版**盖了回去 —— 里面那句
+ *     import ... from '../../js/plugin-sdk.js'
+ *   在 dist 里指向不存在的 dist/js/plugin-sdk.js。
+ * 脚本 404 → 从不执行 → 不发 ready → 等满 10s 才报握手超时。
+ * 这类错**完全看不出是构建问题**，所以必须在构建期就拦住。
+ */
+
+for (const id of ['demo-iframe', 'demo-light']) {
+  t(`${id} 已从 PLAIN_PLUGINS 移除`,
+    !new RegExp(`PLAIN_PLUGINS\\s*=\\s*\\[[^\\]]*'${id}'`).test(cfg));
+}
+t('closeBundle 里有构建期断言（有 index.html 就报错）',
+  /index\.html[\s\S]{0,400}throw new Error/.test(src('vite.config.ts'))
+  && /PLAIN_PLUGINS/.test(src('vite.config.ts')),
+  '静默放过 = 把排查成本转嫁给下一次');
+t('断言错误信息点明后果（握手超时）', /握手超时/.test(src('vite.config.ts')),
+  '报错里不写清后果，下一个人不知道为什么要拦');
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 

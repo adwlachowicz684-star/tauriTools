@@ -1550,6 +1550,19 @@ export function createHost(opts = {}) {
     stage.querySelector('#err-retry').onclick = () => mount(manifest?.id);
     stage.querySelector('#err-back').onclick = () => hooks.onOpen?.('home') ?? mount('home');
 
+    /* 主报错一键复制。
+       原先只有折叠起来的「诊断日志」区有复制按钮 —— 而多数时候要贴给
+       别人的就是上面那一行报错（含堆栈），得先展开 details 才够得着。
+       复制的是 <pre> 里的文本，与屏幕上看到的一致（err.stack 全量）。 */
+    const msgEl = stage.querySelector('#err-msg');
+    const btnCopyMsg = stage.querySelector('#err-copy-msg');
+    if (btnCopyMsg) {
+      btnCopyMsg.onclick = async () => {
+        const ok = await copyText(msgEl?.textContent || String(err?.stack || err?.message || err));
+        hooks.toast?.(ok ? '报错信息已复制' : '复制失败，请手动选中复制', ok ? 'ok' : 'err');
+      };
+    }
+
     /* 复制 / 导出：把完整报告带走，方便贴 issue 或发给开发者 */
     const body = stage.querySelector('#err-diag-body');
     if (body) {
@@ -1903,9 +1916,10 @@ export function renderErrorBox(manifest, err, diag) {
   return `
       <div class="err-box">
         <h3>⚠ 插件「${title}」加载失败</h3>
-        <pre>${escapeHtml(msg)}</pre>
+        <pre id="err-msg">${escapeHtml(msg)}</pre>
         <div class="row">
           <button class="p-btn primary" id="err-retry">重试</button>
+          <button class="p-btn" id="err-copy-msg">复制报错</button>
           <button class="p-btn" id="err-back">返回概览</button>
         </div>
         ${report ? `
