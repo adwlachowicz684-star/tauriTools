@@ -541,6 +541,37 @@
                 return Math.max(9, Math.min(13, Math.round(fs * 0.75)));
             }
 
+            /**
+             * 估算一段文字的显示宽度，用来决定「文件行需要多宽」。
+             *
+             * 为什么是估算：kity.Text 没有同步可用的 getWidth()，量 BBox 又要等
+             * 布局完成，而这里是在渲染过程中就要算出盒子尺寸。
+             *
+             * 中日韩字符按 1 个字号算（等宽全角），其余按 0.55 算（拉丁字母平均
+             * 宽度）。宁可**估宽一点**：估窄了文件名会戳出外框，估宽了只是节点
+             * 稍微宽一点，不影响可读性。
+             *
+             * 由测试直接取源码执行，所以写成命名函数而不是内联表达式。
+             */
+            function estTextW(str, fontSize) {
+                var text = String(str == null ? '' : str);
+                var fs = Number(fontSize) || 12;
+                var w = 0;
+                for (var i = 0; i < text.length; i++) {
+                    var code = text.charCodeAt(i);
+                    // CJK 统一表意文字、假名、全角字母/数字、CJK 标点
+                    var wide = (code >= 0x1100 && code <= 0x115F)      // 韩文初声
+                        || (code >= 0x2E80 && code <= 0xA4CF)          // CJK 部首/汉字/假名等
+                        || (code >= 0xAC00 && code <= 0xD7A3)          // 韩文音节
+                        || (code >= 0xF900 && code <= 0xFAFF)          // 兼容表意文字
+                        || (code >= 0xFE30 && code <= 0xFE4F)          // CJK 兼容形式
+                        || (code >= 0xFF00 && code <= 0xFF60)          // 全角形式
+                        || (code >= 0xFFE0 && code <= 0xFFE6);
+                    w += wide ? fs : fs * 0.55;
+                }
+                return w;
+            }
+
             var FileIcon = kity.createClass('FileIcon', {
                 base: kity.Group,
                 constructor: function () {
@@ -667,24 +698,40 @@
                             });
                             rc.appendShape(icon);
                         }
-                        /* ================= 附件区（节点框**下沿之外**） =================
+                        /* ================= 附件区（画在节点框**内**） =================
                          * 一个节点可挂多张图片、多个视频、多个文件：
                          *   图片 → 横幅（多张可左右切换）
                          *   视频 → 一张缩略图卡片 + 右上角数字角标（总数）
                          *   文件 → 每行一个（图标 + 文件名）
                          *
-                         * 为什么画在框外而不是框内：kityminder 的 contentBox 由
-                         * _rendererClasses 计算，往里加渲染器会让 renderNodeBatch 按
-                         * b[0] 的渲染器数整体迭代时取到 undefined（"Cannot set properties
-                         * of undefined (setting 'contentBox')"），结果是子节点无法布局、
-                         * 全部堆在画布中心 —— 之前踩过，代价太大，不再碰。
+                         * 早期画在框外（紧贴下沿往下排），问题是**会被相邻节点遮挡**：
+                         * contentBox 由 _rendererClasses 算出来，画在框外的形状不参与，
+                         * 于是布局不知道这块占了地方，相邻节点照旧挤在一起，把附件盖住。
+                         *
+                         * 改成画在框内 + 把 contentBox 撑高（见本节末尾「纳入节点盒」）：
+                         * 布局按撑高后的盒排布，节点之间自然留出空间，附件也就露出来了。
+                         *
+                         * 为什么**不**往 _rendererClasses 里加渲染器来撑高：
+                         * renderNodeBatch 按 b[0] 的渲染器数整体迭代，各节点渲染器数
+                         * 不一致时会取到 undefined（"Cannot set properties of undefined
+                         * (setting 'contentBox')"），结果是子节点无法布局、全部堆在画布
+                         * 中心 —— 之前踩过，代价太大，不再碰。
+                         * 这里只在 noderender 里改 _contentBox，不动渲染器数组。
                          */
                         var push = function (sh) {
                             rc.appendShape(sh);
                             (node._kmLabels = node._kmLabels || []).push(sh);
                             return sh;
                         };
-                        var top = box.bottom + 6;
+                        // 附件区起点：节点盒下沿 + 内边距。
+                        // ATTACH_PAD 同时用作上下内边距 —— 上边隔开正文，
+                        // 下边让外框与最后一行之间留一口气，不至于贴着边。
+                        var ATTACH_PAD = 6;
+                        var attachTop = box.bottom + ATTACH_PAD;
+                        var top = attachTop;
+                        // 附件区实际占到的最大宽度。节点比它窄时要撑宽，
+                        // 否则图片 / 文件名会横着戳出外框 —— 看着像"没放进去"。
+                        var attW = 0;
                         var cx = box.cx;
 
                         /* ---- 图片横幅（多张可切换） ---- */
@@ -735,6 +782,7 @@
                                 push(cnt);
                             }
                             top += ih + 4;
+                            attW = Math.max(attW, iw);
                         }
 
                         /* ---- 视频组：一张卡片 + 右上角数字角标 ---- */
@@ -811,6 +859,7 @@
                                 });
                             }
                             top += vh + 4;
+                            attW = Math.max(attW, vw);
                         }
 
                         /* ---- 文件：每行一个 ---- */
@@ -822,16 +871,47 @@
                             fic.setTranslate(cx - 46, fy);
                             bindAttach(fic, 'file', fi, fils[fi], attachmentLabel(fils[fi], '附件'), node);
                             push(fic);
-                            var fn = new kity.Text(attachmentLabel(fils[fi], '文件附件'));
+                            var flabel = attachmentLabel(fils[fi], '文件附件');
+                            var fn = new kity.Text(flabel);
                             try {
                                 fn.setSize(attachmentFontSize(node)).fill(color).setTextAnchor('start');
                                 fn.setStyle('pointer-events', 'none');
                                 fn.setTranslate(cx - 34, fy + 4);
                             } catch (e3) {}
                             push(fn);
+                            // 一行占的宽度 = 图标 12 + 文件名。文件名宽度只能估算：
+                            // kity.Text 没有同步的 getWidth，量 BBox 又要等布局完成。
+                            attW = Math.max(attW, 12 + estTextW(flabel, attachmentFontSize(node)));
                             // 行距必须 ≥ 图标高度（20）：写 17 时相邻两行的图标
                             // 上下各占 20，重叠 3px —— 用户看到的就是「两个图标叠在一起」。
                             top += 24;
+                        }
+
+                        /* ---- 把附件区纳入节点盒 ----
+                         * 布局读的是 node.getContentBox()（即 _contentBox）。
+                         * 画在框外的形状不进这个盒，布局就不知道这块占了地方 ——
+                         * 相邻节点照旧挤上来，把附件盖住。
+                         *
+                         * 做法：按附件区的实际范围**重建** _contentBox（只往下长，
+                         * 上沿不动，所以正文位置不变）。
+                         *
+                         * 必须 new 一个 Box 而不是改原对象的 height：kity.Box 的
+                         * bottom / cy / cx 都是构造时算好的**普通属性**，改 height
+                         * 不会连带更新 —— 外框会按旧 bottom 画、连线会按旧 cy 接。
+                         */
+                        if (top > attachTop) {
+                            var endY = top + ATTACH_PAD;
+                            var extra = endY - box.bottom;
+                            var w = Math.max(box.width, attW);
+                            var nb = new kity.Box(box.cx - w / 2, box.y, w, box.height + extra);
+                            node._contentBox = nb;
+                            // 外框是按**旧**盒画的（外框渲染器在本事件之前就跑完了），
+                            // 必须按新盒再画一次，否则附件区露在框外 ——
+                            // 也就是"放进去了但框没跟着变大"。
+                            var orr = node.getRenderer && node.getRenderer('OutlineRenderer');
+                            if (orr && orr.getRenderShape && orr.update) {
+                                try { orr.update(orr.getRenderShape(), node, nb); } catch (e4) {}
+                            }
                         }
                     } catch (e2) {}
                 });
