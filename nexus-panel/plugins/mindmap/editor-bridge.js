@@ -479,6 +479,26 @@ export class EditorBridge {
   }
 
   /**
+   * 告知编辑器：画布容器在屏幕上横向移动了 dLeft px（文件库展开/收起挤窄所致）。
+   *
+   * 容器位移**只能由父页面测**：编辑器侧在 iframe 内，取 #minder-container
+   * 的 getBoundingClientRect().left 得到的是相对 iframe 视口的坐标，父页面把
+   * iframe 挤到右边时它恒定不变 —— 测不出来。
+   *
+   * 编辑器在自己那次 resize 里把「容器位移 + 内核自动居中的位移」一并补掉。
+   * 这里只传容器位移、不传补偿量 —— 内核到底补了几成只有编辑器量得准。
+   *
+   * 编辑器侧没有这个能力时静默跳过 —— 补偿是锦上添花，
+   * 不该因此弹出「XX 失败」去打扰用户。
+   */
+  notifyLayoutShift(dLeft) {
+    if (!this.ready || !this.minder) return false;
+    const fn = this.minder.notifyLayoutShift;
+    if (typeof fn !== 'function') return false;
+    try { return fn.call(this.minder, dLeft) === true; } catch { return false; }
+  }
+
+  /**
    * 相对平移视图。
    *
    * 用于补内核 resize 补偿**漏掉的那一半**：内核只补 (新宽-旧宽)/2，

@@ -6756,9 +6756,22 @@ group('文件库展开导致画布内容位移：按实测屏幕位置差补偿'
     'panBy 不传 duration（与内核 resize 一致，避免动画互相打断）');
   ok(/panBy\(dx, dy\) \{/.test(br), '桥接转发 panBy');
 
-  // ---- 2) 补偿以**实测屏幕位置差**为准，不推算内核补了几成 ----
-  ok(/const d = Math\.round\(before - after\)/.test(ix),
-    '补偿量 = 前后屏幕位置之差（不推算内核补了几成）');
+  // ---- 2) 容器位移必须**在父页面测**，不能依赖 iframe 内的坐标 ----
+  //
+  // 这是本轮真正修掉的 bug：早先补偿量取自编辑器侧的 rootScreenX()，它取
+  // #minder-container 的 getBoundingClientRect().left —— 那是 iframe 内的元素，
+  // 坐标相对**iframe 自己的视口**；父页面把 iframe 挤到右边时该值恒定不变，
+  // 于是容器位移被抵消，补偿只剩"撤销内核补偿"，净位移反而变成 +N。
+  //
+  // 所以断言不能只检查"代码里出现了 getBoundingClientRect().left"（那只能防
+  // 止被人删掉，防不住测错坐标系），而要检查**测的是父页面的 canvasEl**。
+  const wsrSeg = ix.slice(ix.indexOf('function withStableRoot(fn) {'),
+    ix.indexOf('/**', ix.indexOf('function withStableRoot(fn) {')));
+  ok(/canvasEl/.test(wsrSeg), 'withStableRoot 测的是父页面的 canvasEl（不是 iframe 内坐标）');
+  ok(/getBoundingClientRect\(\)\.left/.test(wsrSeg), '取容器左边缘的屏幕 x');
+  // 容器位移交由编辑器补偿；本侧**不得**再自行 panBy，否则双重补偿
+  ok(/notifyLayoutShift\?\.\(dLeft\)/.test(wsrSeg), '把容器位移报给编辑器');
+  ok(!/panBy/.test(wsrSeg), '本侧不再自行 panBy（补偿交给编辑器，避免双重）');
   // 早先按"固定 Δ/2"硬补是错的：Δ 取决于 flex 收缩分配，右侧栏一旦可收缩
   // 就不是 216。这里必须没有任何 216 / 108 之类的常量参与。
   const ixNoComment = ix.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
@@ -6766,12 +6779,12 @@ group('文件库展开导致画布内容位移：按实测屏幕位置差补偿'
   // before 取不到时必须**跳过**，不能当成 0 —— 那会补出一个反向位移
   ok(/if \(before == null\) return r;/.test(ix),
     '拿不到 before 就跳过补偿（不能当成 0）');
-  ok(/if \(after == null\) return;/.test(ix), '拿不到 after 也跳过');
+  ok(/if \(after == null\) return r;/.test(ix), '拿不到 after 也跳过');
   // 1px 以内是取整噪声，不补 —— 否则每次开合都多一次无谓平移
-  ok(/Math\.abs\(d\) >= 1/.test(ix), '1px 以内不补（取整噪声）');
-  // 等**两帧**：一帧只够布局更新，内核 resize 可能还没跑
-  ok(/nextFrames\(2\)/.test(ix), '等两帧再测（一帧不够：内核 resize 可能还没跑）');
-  ok(/function nextFrames\(n\)/.test(ix), '有 nextFrames 辅助函数');
+  ok(/Math\.abs\(dLeft\) >= 1/.test(ix), '1px 以内不补（取整噪声）');
+  // 同步测量即可：补偿发生在 iframe 的 resize 回调里，不必等帧
+  ok(!/nextFrames\(2\)/.test(ix),
+    '不再等两帧（补偿在 resize 回调内同步完成，等帧只会让画面先晃一下再拉回）');
 
   // ---- 3) 所有会改变底框开合的调用点都套了 withStableRoot ----
   for (const call of [
@@ -6788,13 +6801,16 @@ group('文件库展开导致画布内容位移：按实测屏幕位置差补偿'
     .filter((m) => !/!!settings\.filesOpen/.test(m[0]));
   eq(bare.length, 0, `无未包裹的裸开合调用（发现 ${bare.map((m) => m[0].trim()).join(' | ')}）`);
 
-  // ---- 3b) rootScreenX 取不到时返回 null，不是 0 ----
-  ok(/rootScreenX: function \(\)/.test(html), '编辑器暴露 rootScreenX');
+  // ---- 3b) rootScreenX 保留但**不再参与补偿** ----
+  //
+  // 它仍在（供诊断/定位用），但位移补偿不能依赖它：它在 iframe 内取
+  // #minder-container 的 getBoundingClientRect().left，那是相对 iframe 视口的
+  // 坐标，测不到容器在父页面里的位移。这里断言"补偿链路里没有它"，
+  // 防止有人日后图省事又把它接回去。
+  ok(/rootScreenX: function \(\)/.test(html), '编辑器仍暴露 rootScreenX（诊断用）');
   ok(/typeof v === 'number' && isFinite\(v\) \? v : null/.test(br),
     'rootScreenX 取不到时返回 null（不是 0）');
-  // 必须含容器左边缘：只测容器内坐标看不出容器自己挪了多少
-  ok(/host\.getBoundingClientRect\(\)\.left/.test(html),
-    'rootScreenX 含容器左边缘（否则看不出容器自己挪了多少）');
+  ok(!/rootScreenX/.test(wsrSeg), '补偿链路不依赖 rootScreenX（iframe 内测不到容器位移）');
 
   // ---- 4) 几何账：216 = flex-basis 186 + padding 10×2 + gap 10 ----
   {
@@ -6844,6 +6860,77 @@ group('文件库展开导致画布内容位移：按实测屏幕位置差补偿'
     ok(/overflow-y:\s*auto/.test(sideBlk), '.mm-side 保留 overflow-y:auto');
     ok(/min-height:\s*0/.test(sideBlk), '.mm-side 保留 min-height:0');
   }
+}
+
+group('位移补偿：容器位移在父页面测，内核那一份在 iframe resize 里补');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+  const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const code = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const cHtml = code(html);
+
+  // ---- 1) 内核确实会自动居中（这是要抵消的东西）----
+  const core = fs.readFileSync(path.join(HERE, 'editor', 'kityminder.core.min.js'), 'utf8');
+  ok(/this\._viewDragger\.move\(new e\.Point\(\(b\.width-c\.width\)\/2\|0/.test(core),
+    '内核 resize 时把视图平移 (新宽-旧宽)/2|0 重新居中（要抵消的就是这一下）');
+
+  // ---- 2) 编辑器：接收容器位移，并在自己那次 resize 里补 ----
+  ok(/notifyLayoutShift = function/.test(html), '编辑器提供 notifyLayoutShift');
+  // dw 必须与内核**同源**：读内核自己的 _lastClientSize，而不是外壳传进来的宽度。
+  // 外壳量的 iframe 宽度会被取整，与内核的 clientWidth 差的那点就是残留 1px。
+  ok(/km\._lastClientSize/.test(cHtml), 'dw 取自内核的 _lastClientSize（与内核同源，否则残留 1px）');
+  ok(/var dw = w - old\.width/.test(cHtml), '位移按内核那份旧尺寸算');
+  // 内核是 `(dw/2)|0`（向零取整），补偿里必须原样复现；换成 Math.round 会残留 0.5px
+  ok(/var kernel = \(dw \/ 2\) \| 0/.test(cHtml), '复现内核的向零取整（不是 Math.round）');
+  // 复用既有门面，避免第二处直接碰 _viewDragger
+  ok(/window\.__minder\.panBy\(comp, 0\)/.test(cHtml), '补偿复用 panBy 门面（不另开 _viewDragger 调用点）');
+
+  // ---- 3) 只对「底框开合」那一次生效，不能误伤拖窗口 ----
+  const pendStart = html.indexOf('notifyLayoutShift = function');
+  const pendSeg = html.slice(pendStart, html.indexOf("window.addEventListener('resize'", pendStart));
+  ok(/pendingUntil = Date\.now\(\) \+ /.test(pendSeg), '容器位移带有效期（不是永久生效）');
+  ok(/Date\.now\(\) > pendingUntil/.test(cHtml), '过期就不补偿（普通 resize 保留内核的居中行为）');
+  ok(/pendingLeft = 0;/.test(cHtml), '用一次即清（一次性，不会累积）');
+
+  // ---- 4) 桥接转发；旧版编辑器没有这个能力时静默跳过 ----
+  ok(/notifyLayoutShift\(dLeft\)/.test(br), '桥接提供 notifyLayoutShift');
+  const brSeg = br.slice(br.indexOf('notifyLayoutShift(dLeft) {'),
+    br.indexOf('notifyLayoutShift(dLeft) {') + 600);
+  ok(/typeof fn !== 'function'/.test(brSeg),
+    '编辑器无此能力时静默返回 false（补偿是锦上添花，不该弹「XX 失败」）');
+
+  // ---- 5) 几何账：容器位移 + 内核位移 + 补偿 = 0 ----
+  //
+  // 不做这步就会退回"凭感觉补一半"。用**源码里的算式**跑，不是在这里另写一份
+  // —— 另写一份的话源码被改坏照样全绿（假阳性）。
+  {
+    const seg = cHtml.slice(cHtml.indexOf('var kernel = (dw / 2) | 0'),
+      cHtml.indexOf('try {', cHtml.indexOf('var kernel = (dw / 2) | 0')));
+    // 抠出 comp 的算式，按源码语义执行
+    const mkComp = new Function('dLeft', 'dw', seg + '\nreturn comp;');
+    // 展开：容器右移 216，宽度减少 216 → 内核补 -108 → 需再补 -108
+    eq(mkComp(216, -216), -108, '展开：补偿 -108（容器 +216 与内核 -108 相加归零）');
+    eq(216 + (-108) + mkComp(216, -216), 0, '展开：净位移为 0（内容不动）');
+    // 收起：完全对称
+    eq(mkComp(-216, 216), 108, '收起：补偿 +108');
+    eq(-216 + 108 + mkComp(-216, 216), 0, '收起：净位移为 0');
+    // 奇数宽度：内核 |0 截断丢的那 1px 也要算进去
+    eq(215 + (-107) + mkComp(215, -215), 0, '奇数位移也精确归零（含内核 |0 截断的 1px）');
+  }
+
+  // ---- 6) 回归护栏：不得退回「iframe 内测容器位移」的老路 ----
+  //
+  // 老实现的测点在 editor/index.html 里取 #minder-container 的
+  // getBoundingClientRect().left —— iframe 内的坐标相对 iframe 自己的视口，
+  // 父页面把 iframe 挤到右边时它恒定不变，容器位移被完全抵消。
+  // 只断言"代码里有 getBoundingClientRect().left"是抓不住的（老实现也有），
+  // 必须断言**补偿链路里不出现 iframe 内的容器测量**。
+  const compSeg = html.slice(html.indexOf('notifyLayoutShift = function'),
+    html.indexOf("hostPost({ type: 'request', id: 0"));
+  ok(!/getBoundingClientRect\(\)\.left/.test(compSeg),
+    '补偿链路不在 iframe 内测容器左边缘（那里测不到父页面的位移）');
 }
 
 group('app 句柄：可写状态必须成对提供 getter/setter');

@@ -823,49 +823,38 @@ bootIframePlugin(async (ctx) => {
   }
 
   /**
-   * 等 n 帧。
+   * 在底框开合前后把画布内容**钉在同一处**。
    *
-   * 为什么不是一帧：class 改完只是把布局标脏，真正重排发生在下一帧；
-   * 而 iframe 内 window resize（内核据此补位移）**也**在那一批回调里。
-   * 只等一帧的话，可能测到"布局已更新、内核还没补"的中间态，补偿量就错了。
-   */
-  function nextFrames(n) {
-    return new Promise((res) => {
-      let i = 0;
-      const step = () => (++i >= n ? res() : requestAnimationFrame(step));
-      requestAnimationFrame(step);
-    });
-  }
-
-  /**
-   * 在底框开合前后把中央主题**钉在同一处**。
+   * 位移来自两处，二者必须都算上：
+   *   · 容器左边缘右移（CSS 决定，`getBoundingClientRect().left` 实测）
+   *   · 内核 resize 时的「自动重新居中」—— 它平移 (新宽-旧宽)/2|0
    *
-   * 为什么改成"测位置再补"，而不是"按算出来的 Δ 补一半"：
+   * 这里只负责测**容器位移**并告知编辑器；内核那一份由编辑器在自己的
+   * resize 回调里量（见 editor/index.html 的 notifyLayoutShift 一节）。
+   * 分工的原因：内核补了几成，只有编辑器侧拿得到同源数据。
    *
-   * 内核 resize 确实会补位移（实测 `_viewDragger` 的运动量变了），但补的
-   * 究竟是几成、容器左边缘又实际移动了多少，取决于 flex 收缩的分配 ——
-   * 右侧栏一旦可收缩（历史上 `.mm-side` 样式失效时正是如此），画布宽度
-   * 的变化量就不再是 216，而是随内容浮动。此前按"固定 Δ/2"硬补，在这个
-   * 前提不成立时就会补错，甚至把原本不动的画面补动。
+   * 必须在本模块（**父页面**）里测容器位移。早期把测点放在编辑器侧的
+   * `rootScreenX()` 里，取 `#minder-container` 的 getBoundingClientRect().left
+   * —— 那是 iframe 内的元素，坐标相对 **iframe 自己的视口**，父页面把
+   * iframe 挤到右边时它恒定不变，于是容器位移被完全抵消，测出来的差
+   * 只剩内核那一份，补偿反而把内核的正确补偿撤销了，净位移变成 +N
+   * （比不补偿更严重）。
    *
-   * 所以不再推算机制，直接以**用户看到的结果**为准：
-   * 展开前记下中央主题的屏幕 x，展开后再测一次，差多少就补多少。
-   * 这样无论中间发生了什么（内核补了几成、侧栏让了多少、有没有重排），
-   * 最终落点都是"中央主题没动"。
+   * 同步测量即可，不需要等帧：补偿发生在 iframe 的 resize 回调里，
+   * 本函数只要在 resize 派发前把位移报出去就够了。
    *
    * @param {Function} fn 会改变底框开合的操作（同步执行）
    */
   function withStableRoot(fn) {
-    const before = bridge?.rootScreenX?.();
+    const cv = canvasEl;
+    const before = cv ? cv.getBoundingClientRect().left : null;
     const r = fn();
-    if (before == null) return r;        // 编辑器没就绪 → 不补，不能当成 0
-    nextFrames(2).then(() => {
-      const after = bridge?.rootScreenX?.();
-      if (after == null) return;
-      const d = Math.round(before - after);
-      // 1px 以内是取整噪声，不补 —— 否则每次开合都多一次无谓的平移
-      if (Math.abs(d) >= 1) bridge?.panBy(d, 0);
-    });
+    if (before == null) return r;        // 量不到容器位置 → 不补，不能当成 0
+    const after = cv ? cv.getBoundingClientRect().left : null;
+    if (after == null) return r;
+    const dLeft = after - before;
+    // 1px 以内是取整噪声，不补 —— 否则每次开合都多一次无谓的平移
+    if (Math.abs(dLeft) >= 1) bridge?.notifyLayoutShift?.(dLeft);
     return r;
   }
 

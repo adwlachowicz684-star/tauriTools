@@ -3447,6 +3447,81 @@ function _kmParseColor(c) {
             return n;
         }
 
+        /**
+         * 文件库展开/收起：抵消内核的「自动重新居中」，让画布内容停在原处。
+         * ============================================================
+         * 挤窄布局下画布容器变窄 —— 容器左边缘右移 N px，宽度同时减少 N px。
+         * 容器移动是 CSS 决定的，内容本该跟着容器走，但内核还会「重新居中」：
+         *     resize → _viewDragger.move((新宽 - 旧宽) / 2 | 0, …)
+         * 内容在屏幕上的净位移 = 容器位移 + 内核位移 = N + (-N/2) = N/2，
+         * 展开、收起各晃一次。
+         *
+         * 为什么**不**用「前后各测一次中央主题的屏幕 x，差多少补多少」：
+         * 那套做法的测点在 iframe 内（rootScreenX 取 #minder-container 的
+         * getBoundingClientRect().left），而该值是相对 **iframe 自己的视口**的
+         * —— 父页面把 iframe 挤到右边时，iframe 内的坐标系原点跟着一起移动，
+         * 这个 left 是**恒定**的。于是 before/after 里的容器位移被完全抵消，
+         * 测出来的差只剩内核那一份，补偿就把内核的正确补偿原样撤销了，
+         * 净位移反而变成 +N（比不补偿更严重）。
+         *
+         * 所以容器位移必须由**父页面**测（那里的 .mm-canvas 是真屏幕坐标），
+         * 通过 notifyLayoutShift 传进来；本侧只负责在 resize 里把两者相加补掉。
+         *
+         * 三个必须守住的边界：
+         * · 必须在内核**之后**执行。内核的 resize 监听在 km 构造时就注册了，
+         *   本监听器注册在它之后，同一个 resize 事件里内核先跑完，我们再叠加。
+         * · dw 必须取内核**自己用的**那份（_lastClientSize 的旧值）。外壳量的
+         *   iframe 宽度会被取整、内核用 clientWidth，两边差的那点就是残留 1px。
+         * · 内核的取整是 `(dw/2)|0`（向零取整），这里必须原样复现。
+         * ============================================================
+         */
+        (function () {
+            var pendingLeft = 0;     // 画布容器在屏幕上的横向位移（父页面实测）
+            var pendingUntil = 0;    // 只对紧接着的那一次 resize 生效
+            var prevSize = null;     // 上一次 resize 结束时内核的 _lastClientSize
+
+            function snap() {
+                var k = km._lastClientSize;
+                if (k && typeof k.width === 'number') return { width: k.width, height: k.height };
+                var rt = km.getRenderTarget && km.getRenderTarget();
+                return rt ? { width: rt.clientWidth, height: rt.clientHeight } : null;
+            }
+            prevSize = snap();
+
+            window.__minder.notifyLayoutShift = function (dLeft) {
+                pendingLeft = Number(dLeft) || 0;
+                // 时间窗：给「底框开合 → 布局变化 → iframe 派发 resize」留余量，
+                // 又不能太长 —— 否则下一次用户拖窗口会被当成同一次而误补偿
+                pendingUntil = Date.now() + 600;
+                return true;
+            };
+
+            window.addEventListener('resize', function () {
+                var rt = km.getRenderTarget && km.getRenderTarget();
+                if (!rt) return;
+                var w = rt.clientWidth, h = rt.clientHeight;
+                if (!w || !h) return;
+                var cur = snap();
+                var old = prevSize;
+                prevSize = cur;
+                if (!old || !cur) return;
+                // 与内核同源：内核算的就是 (b.width - _lastClientSize.width)
+                var dw = w - old.width;
+                if (!dw) return;                        // 尺寸没变 → 内核也没动
+                if (Date.now() > pendingUntil) return;  // 普通 resize（拖窗口）：保留内核的居中行为
+                var dLeft = pendingLeft;
+                pendingLeft = 0;                        // 一次性：用完即清
+                if (!dLeft) return;
+                var kernel = (dw / 2) | 0;              // 内核实际平移量（向零取整）
+                var comp = -Math.round(dLeft + kernel);
+                if (!comp) return;
+                try {
+                    // 复用门面，避免第二处直接碰 _viewDragger
+                    window.__minder.panBy(comp, 0);
+                } catch (e) { /* 内核换了实现就放弃补偿，绝不能因此打断 resize */ }
+            });
+        })();
+
         hostPost({ type: 'request', id: 0, action: 'log', payload: 'kityminder 就绪' });
     })();
     }, false);
