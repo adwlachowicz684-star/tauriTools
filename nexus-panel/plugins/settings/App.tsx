@@ -20,13 +20,16 @@ import {
   resetAccent, resetEnvColor, resetHueShift, resetLightShift,
   /* 背景图 */
   supportsBgImage, getBgImage, setBgImage, resetBgImage,
+  /* 预设背景：数据存在 themes.js，设置页负责渲染成可点的缩略图。
+     此前只 import 了上面四个，预设在数据里有、界面上没有入口。 */
+  getBgPreset, setBgPreset,
   saveAsCustom, deleteCustomTheme,
   // getCurrent：色相/明暗改为按主题各记一份后，提示文案要显示当前主题名
   getCurrent,
   getCustomColors, saveCustomColors,
   onChange as onThemeChange,
 } from '../../js/theme-manager.js';
-import { swatchFor, styleLabel } from '../../js/themes.js';
+import { swatchFor, styleLabel, BG_PRESETS } from '../../js/themes.js';
 import {
   ADAPT_POLICIES, PLUGIN_THEMES,
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
@@ -1261,6 +1264,37 @@ export default function Settings() {
               </div>
             );
           })()}
+
+          {/* ---------- 预设背景 ----------
+              此前 BG_PRESETS 只在 themes.js 里有数据，界面没有入口 ——
+              用户能看到的只有一个「选择图片…」按钮，10 个预设全部不可达。
+              现在排在这里供点选；主题不带背景图时不显示（与上面占位同理）。 */}
+          {supportsBgImage() ? (
+            <div className="nx-bgpresets">
+              {BG_PRESETS.map((p) => {
+                const on = getBgPreset() === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    className={'nx-bgpreset' + (on ? ' on' : '')}
+                    style={{ backgroundImage: p.css }}
+                    /* 再点一次已选中的 = 取消，回到主题自带背景。
+                       不做取消的话，选了预设就只能靠「恢复默认」退出，
+                       而那个按钮在自定义图那一组里，用户找不到。 */
+                    onClick={() => {
+                      setBgPreset(on ? '' : p.id);
+                      ctx.toast(on ? '已取消预设背景' : `背景：${p.name}`, 'ok');
+                      rerender();
+                      void syncThemeToShell();
+                    }}
+                    title={on ? `取消「${p.name}」` : `使用「${p.name}」`}
+                    aria-pressed={on}
+                    aria-label={p.name}
+                  />
+                );
+              })}
+            </div>
+          ) : null}
 
           <div className="p-row" style={{ marginTop: 'var(--sp-7, 14px)' }}>
             <button

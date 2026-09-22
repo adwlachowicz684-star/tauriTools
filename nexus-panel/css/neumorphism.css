@@ -145,6 +145,18 @@
 
   --divider:       rgba(255,255,255,.10);
   --blur:          0px;
+
+  /* 上面这批是**深色档兜底**，只在 JS 还没跑（首屏）或主题模块不可用时生效；
+     正常运行下会被 js/theme-manager.js 的内联样式整组覆写。
+
+     所以这里必须再给一份浅色档 —— 否则首屏那几十毫秒里，
+     浅色主题会先用上深色兜底（白分隔线压在浅底上，等于看不见），
+     等 JS 落地再跳变一次。切换主题时那个闪一下，多半就是它。
+
+     用 [data-theme-base] 而不是 [data-nexus-base]：前者由 theme-manager
+     写在外壳的 :root 上，后者是 plugin-sdk 写在 iframe 插件自己的文档里，
+     主面板读不到。 */
+  --edge:          rgba(255,255,255,.08);
   --bg-image:      none;
   --hairline:      rgba(255,255,255,.05);
   --mask:          rgba(10,12,16,.62);
@@ -167,6 +179,16 @@
   --t: 200ms cubic-bezier(.4, 0, .2, 1);
 
   color-scheme: dark;
+}
+
+/* 浅色档兜底：与上面 :root 同一批变量，只是换成"深色墨"方向。
+   只覆盖**颜色类**兜底，圆角/尺寸不动 —— 那些不随基调变。 */
+:root[data-theme-base="light"] {
+  --divider:  rgba(0,0,0,.12);
+  --edge:     rgba(0,0,0,.10);
+  --hairline: rgba(0,0,0,.07);
+  --mask:     rgba(90,96,110,.32);
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }

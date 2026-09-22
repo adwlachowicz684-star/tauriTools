@@ -39,8 +39,19 @@ export const THEME_VARS = [
   // 否则用户把主题色设成红色，就会出现"红色的成功提示"。
   '--ok', '--running', '--warn', '--danger',
   '--surface-raised', '--text-soft',
-  /* --divider 由 theme-manager 按基调派生（不进主题 vars）：
-     它必须"任何风格下都可见"，交给主题自己填就可能又被填成透明。 */
+  /* --divider / --edge 由 theme-manager 按基调**派生**，主题数据里不该填
+     （填了就可能又被填成 transparent，失去"保证可见"的作用）。
+
+     但它们**必须留在 THEME_VARS 里**，这是两件不同的事：
+       · 不进主题 vars  → 主题数据不能自己填（deriveVars 会无条件覆盖）
+       · 进 THEME_VARS  → applyTo 才会把派生值写到 :root 上
+
+     曾因把这两件事混为一谈而漏登记，后果很隐蔽：
+     deriveVars 算出了正确值，applyTo 却不写它，实际生效的是
+     neumorphism.css 里那条**写死的深色兜底** —— 深色下碰巧一样所以没暴露，
+     一切到浅色主题，分隔线与立体描边就全都变成白线、几乎看不见。
+     （agent-flow 的输入框边框也接在 --divider 上，一并消失。） */
+  '--divider', '--edge',
   '--border', '--blur', '--hairline', '--mask',
   '--scroll-thumb', '--badge-fg',
   // 圆角也是形状语言的一部分：新拟态的大圆角是"软"的一部分，
