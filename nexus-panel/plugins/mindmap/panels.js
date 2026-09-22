@@ -1645,7 +1645,12 @@ export function buildSide(app, opts = {}) {
             style: { display: 'flex', cursor: 'pointer' },
             onclick: () => { app.api.applyTheme(t.id); refresh(); },
           }, swatchBar(customSwatch(t))),
-          h('span.name', { onclick: () => { app.api.applyTheme(t.id); refresh(); } }, t.name || t.id),
+          h('span.name', {
+            onclick: () => { app.api.applyTheme(t.id); refresh(); },
+            title: t.id?.startsWith?.('mm-preset-')
+              ? '预置主题：可编辑、可删除，删后不再出现'
+              : '自定义主题',
+          }, t.name || t.id),
           h('button.mm-btn.icon', { onclick: () => { openThemeEditor(app, t); }, title: '编辑' }, '✎'),
           h('button.mm-btn.icon', {
             // A62 删除回退（对照 WPF OnDeleteThemeClick，MindMapPanel.xaml.cs:2825）
@@ -1660,6 +1665,7 @@ export function buildSide(app, opts = {}) {
               const isCurrent = cur === t.id;
               if (isCurrent) await app.api.applyTheme(DEFAULT_THEME);
               app.customThemes = (app.customThemes || []).filter((x) => x.id !== t.id);
+              await app.api.markPresetRemoved(t.id);
               const ok = await app.api.saveThemes();
               if (!ok) {
                 app.api.status('删除失败（未写入本地库）', true);
