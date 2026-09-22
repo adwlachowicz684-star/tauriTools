@@ -17,6 +17,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripComments } from './js/dead-class-scan.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const read = (p) => readFileSync(join(HERE, p), 'utf8');
@@ -1132,6 +1133,61 @@ console.log('\n=== 24. 输入控件边框（与结构分隔线分离）===');
   }
   t('普通输入框字号统一走 --fs-body（标题/等宽除外）',
     fsBad.length === 0, fsBad.slice(0, 3).join(' ; '));
+}
+
+
+console.log('\n=== 25. 基调派生变量必须参与内联覆写 ===');
+{
+  /*
+   * --divider / --edge 由 theme-manager 按基调派生，但**曾漏登记在 THEME_VARS 外**。
+   * 后果很隐蔽：deriveVars 算出了正确值，applyTo 却不写它，
+   * 实际生效的是 neumorphism.css 里那条写死的深色兜底 ——
+   * 深色下碰巧一样所以一直没暴露，一切到浅色主题，
+   * 分隔线与立体描边就全变成白线、几乎看不见。
+   * agent-flow 的输入框边框也接在 --divider 上，一并消失。
+   */
+  const themesSrc = read('js/themes.js');
+  const tv = themesSrc.slice(themesSrc.indexOf('export const THEME_VARS'), themesSrc.indexOf('];', themesSrc.indexOf('export const THEME_VARS')));
+  t('--divider 已登记进 THEME_VARS', /'--divider'/.test(tv));
+  t('--edge 已登记进 THEME_VARS', /'--edge'/.test(tv));
+
+  /* 主题产出、却没登记的变量会永远停留在 CSS 兜底值上。
+     这条断言防止以后新增派生量时再漏登记。 */
+  const tmMod = await import('./js/theme-manager.js');
+  const thMod = await import('./js/themes.js');
+  const produced = new Set();
+  for (const th of tmMod.listThemes()) {
+    for (const k of Object.keys(tmMod.exportVarsFor(th))) produced.add(k);
+  }
+  const notRegistered = [...produced].filter((k) => !thMod.THEME_VARS.includes(k));
+  t('主题产出的变量全部登记在 THEME_VARS 里', notRegistered.length === 0,
+    notRegistered.join(', ') || `${produced.size} 个全部登记`);
+
+  // CSS 兜底必须两档都有，否则首屏那几十毫秒会先用深色档再跳变
+  const neu = stripComments(read('css/neumorphism.css'));
+  t('CSS 兜底有浅色档（[data-theme-base="light"]）',
+    /:root\[data-theme-base="light"\]\s*\{[^}]*--divider/.test(neu));
+}
+
+console.log('\n=== 26. 背景图预设必须有界面入口 ===');
+{
+  /*
+   * BG_PRESETS 曾只在 themes.js 里有数据，设置页没有渲染它 ——
+   * 用户能看见的只有一个「选择图片…」按钮，10 个预设全部不可达。
+   */
+  const app = read('plugins/settings/App.tsx');
+  t('设置页引入了 BG_PRESETS', /import\s*\{[^}]*BG_PRESETS[^}]*\}\s*from/.test(app));
+  t('设置页渲染了预设缩略图', /BG_PRESETS\.map\(/.test(app));
+  t('预设可点（有 onClick）', /BG_PRESETS\.map\([\s\S]{0,600}?onClick/.test(app));
+  t('再点一次可取消（回到主题自带）', /setBgPreset\(\s*on\s*\?\s*''\s*:\s*p\.id\s*\)/.test(app));
+
+  const css = stripComments(read('css/controls.css'));
+  t('.nx-bgpreset 有定义', /\.nx-bgpreset\s*\{/.test(css));
+  t('.nx-bgpreset 有选中态', /\.nx-bgpreset\.on\s*\{/.test(css));
+  /* 缩略图用 --divider 而不是 --border：后者是风格开关，
+     新拟态下 transparent，画出来等于没有。 */
+  t('缩略图边框用 --divider 而非 --border',
+    /\.nx-bgpreset\s*\{[^}]*border:[^;]*var\(--divider/.test(css));
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);

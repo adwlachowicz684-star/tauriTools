@@ -1262,3 +1262,68 @@ input[type='range']:disabled {
 .nx-bgpick.on .nx-bgpick-sw {
   box-shadow: 0 0 0 2px var(--accent);
 }
+
+/* ============================================================
+   背景图预设缩略图
+   ============================================================
+   预设此前**只存在于 themes.js 的数据里**，设置页没有渲染入口 ——
+   用户能看见的只有一个"选择图片…"按钮，等于 10 个预设全部不可达。
+
+   缩略图直接用预设自己的 css（渐变）当背景，不另做图片文件：
+   渐变随格子大小自适应，不会像位图那样拉伸变形，也不占存储。 */
+.nx-bgpresets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4, 8px);
+  margin-top: var(--sp-4, 8px);
+}
+
+.nx-bgpreset {
+  flex: none;
+  width: 72px;
+  height: 44px;
+  padding: 0;
+  border-radius: var(--r-sm, 4px);
+  /* 与 .nx-bgslot 同一套铺法，保证缩略图看到的就是实际效果 */
+  background-size: cover;
+  background-position: center;
+  /* 用 --divider 而非 --border：后者是风格开关，新拟态下 transparent */
+  border: 1px solid var(--divider, var(--text-mute));
+  cursor: pointer;
+  position: relative;
+  transition: border-color var(--dur-fast) ease, transform var(--dur-fast) ease;
+}
+
+.nx-bgpreset:hover { border-color: var(--accent); transform: translateY(-1px); }
+.nx-bgpreset:active { transform: scale(.97); }
+
+/* 选中态：强调色描边 + 角上一个 ✓。
+   只靠描边不够 —— 几个预设的渐变本身就偏暖/偏冷，
+   描边在某些底色上不明显，需要第二个信号。 */
+.nx-bgpreset.on {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.nx-bgpreset.on::after {
+  content: '✓';
+  position: absolute;
+  right: 3px;
+  bottom: 1px;
+  font-size: 11px;
+  line-height: 1;
+  /* ✓ 直接压在预设渐变上，而渐变的明暗与当前主题**无关**
+     （浅色主题也能选「星夜」这种深色预设）—— 所以不能继承 --text，
+     否则会出现"浅色主题 + 深色预设 = 深✓压深底"。
+     做法与角标一致：铺一块强调色底，字色用 --badge-fg ——
+     它由 pickOnColor(--accent) 按强调色明暗派生，任何强调色下都达标。
+     比写死 #fff 稳：强调色是亮黄时白字对比度只有 1.09，等于没有。 */
+  background: var(--accent);
+  color: var(--badge-fg, #fff);
+  padding: 0 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-bgpreset { transition: none; }
+  .nx-bgpreset:hover { transform: none; }
+  .nx-bgpreset:active { transform: none; }
+}
