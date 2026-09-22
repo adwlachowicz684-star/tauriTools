@@ -1139,6 +1139,17 @@
 
 /* ---------- 通用表单块 ---------- */
 .fpx-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+/*
+ * 「填入默认模板」：贴在 label 那一行的右端，不要把 label 挤到看不见。
+ * 用 align-self: flex-end 而不是 absolute —— 后者在窄面板里会盖住 label 文字，
+ * 而 label 正是说明"这一栏是什么"的唯一线索。
+ */
+.fpx-ca-fill-default {
+  align-self: flex-end;
+  height: 22px; padding: 0 8px;
+  font-size: var(--fs-11, 11px);
+  color: var(--text-dim);
+}
 .fpx-field > label { font-size: var(--fs-12, 12px); color: var(--text-dim); }
 
 /* 一行复选框（整行可点，与 CheckLine 区分：这里不带副标题） */

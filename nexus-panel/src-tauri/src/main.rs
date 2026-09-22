@@ -315,7 +315,7 @@ fn main() {
             fpx::fpx_backup, fpx::fpx_list_editors, fpx::fpx_set_editor, fpx::fpx_edit_file,
             fpx::fpx_read_text, fpx::fpx_write_text,
             fpx::fpx_chain_clients, fpx::fpx_save_chain_clients, fpx::fpx_move_card_across,
-            fpx::fpx_chain_actions, fpx::fpx_save_chain_actions, fpx::fpx_chain_send_action,
+            fpx::fpx_chain_actions, fpx::fpx_save_chain_actions, fpx::fpx_chain_send_action, fpx::fpx_chain_defaults,
             fpx::fpx_chain_send, fpx::fpx_chain_preview, fpx::fpx_capture_screen,
             fpx::fpx_watch_start,
             fpx::fpx_watch_stop, fpx::fpx_watch_poll, fpx::fpx_mcp_start, fpx::fpx_mcp_tools,

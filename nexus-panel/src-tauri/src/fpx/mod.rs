@@ -1672,6 +1672,22 @@ pub fn fpx_open_backup_dir(
     let cfg = store::load_config(&dir);
     // 与备份时用的是同一个 resolver，保证"打开的就是实际写入的那个目录"
     let target = backup::resolve_dir(&cfg, &dir, if kind == "group" { "group" } else { "project" });
+
+    /*
+     * 目录还不存在就**先建出来再打开**（对齐原版 SettingsPanel：
+     * 「目录不存在则先创建（备份目录尚未执行过备份时可能为空）」）。
+     *
+     * 不建的话，用户在执行过备份之前点这个按钮会拿到「路径不存在」，
+     * 而这个报错完全指向不了原因 —— 他只会以为功能坏了，
+     * 或者以为备份目录设置有误（其实设置是对的，只是还没备份过）。
+     *
+     * 建失败不该拦住打开：让它照原样去 open_path，
+     * 由 open_path 给出"路径不存在"这个**真实**的原因 ——
+     * 换成"创建目录失败"反而掩盖了真正的问题。
+     */
+    if !target.exists() {
+        let _ = std::fs::create_dir_all(&target);
+    }
     sys::open_path(&target.to_string_lossy(), "dir", "")
 }
 
@@ -2099,6 +2115,30 @@ pub fn fpx_chain_actions(
     let dir = store::data_dir(&app, &state)?;
     // ensure_actions 可能补齐了内置项，落盘以免下次又补一遍
     store::with_config(&dir, |cfg| Ok(chain::ensure_actions(cfg)))
+}
+
+/// 内置动作的**默认模板**（按 id → 项目/项目组两份）。
+///
+/// 为什么要把默认值送到前端：界面里"留空 = 用内置默认"，
+/// 于是用户**看不到默认到底是什么**，想在默认基础上改一点点都无从下手 ——
+/// 只能凭空把整段重打一遍。原版的做法是"恢复默认后回显默认文案"，
+/// 本版保留"留空即默认"的语义，另给一个「填入默认模板」入口，
+/// 让想改的人能先把默认取出来再改。
+///
+/// 只给内置动作的：自定义动作没有默认，给了也是空串。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_chain_defaults() -> std::collections::HashMap<String, [String; 2]> {
+    let mut m = std::collections::HashMap::new();
+    for (id, _, _) in chain::BUILTIN {
+        m.insert(
+            (*id).to_string(),
+            [
+                chain::default_project(id).to_string(),
+                chain::default_group(id).to_string(),
+            ],
+        );
+    }
+    m
 }
 
 /// 保存连锁动作清单（含增删改排序）。

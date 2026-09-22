@@ -155,6 +155,15 @@ export function makeApi(ctx: PluginContext) {
     /** 连锁动作清单（内置 + 自定义） */
     chainActions: () => call<ChainAction[]>('fpx_chain_actions'),
 
+    /**
+     * 内置动作的默认模板（id → [项目, 项目组]）。
+     *
+     * 界面里"留空 = 用内置默认"，于是默认到底是什么用户看不见，
+     * 想在默认基础上改一点点都无从下手。这里把默认取出来，
+     * 供「填入默认模板」按钮使用。
+     */
+    chainDefaults: () => call<Record<string, [string, string]>>('fpx_chain_defaults'),
+
     saveChainActions: (actions: ChainAction[]) =>
       call<ChainAction[]>('fpx_save_chain_actions', { actions }),
 

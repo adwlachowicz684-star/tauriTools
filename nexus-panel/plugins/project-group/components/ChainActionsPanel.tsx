@@ -47,6 +47,15 @@ export function ChainActionsPanel({
 }) {
   const [list, setList] = useState<ChainAction[]>([]);
   const [clients, setClients] = useState<ChainClient[]>([]);
+  /*
+   * 内置动作的默认模板（id → [项目, 项目组]）。
+   *
+   * 界面里「留空 = 用内置默认」，于是默认到底是什么用户看不见 ——
+   * 想在默认基础上改一点点都无从下手，只能凭空把整段重打一遍。
+   * 原版的做法是"恢复默认后回显默认文案"，本版保留"留空即默认"，
+   * 另给一个「填入默认模板」，让想改的人先把默认取出来再改。
+   */
+  const [defaults, setDefaults] = useState<Record<string, [string, string]>>({});
   const [active, setActive] = useState<string>('chain');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -73,6 +82,9 @@ export function ChainActionsPanel({
       })
       .catch((e) => onLog(errText(e), true));
     api.chainClients().then(setClients).catch(() => { /* 客户端列表拿不到也能编辑 */ });
+    /* 拿不到默认模板不算错：只是「填入默认模板」暂时不可用，
+       编辑与保存不受影响 —— 不能因为这一项拉不到就整个面板打不开。 */
+    api.chainDefaults().then(setDefaults).catch(() => { /* 同上 */ });
   }, [api, onLog]);
 
   const cur = list.find((a) => a.id === active) ?? null;
@@ -190,6 +202,35 @@ export function ChainActionsPanel({
     } finally {
       setSaving(false);
     }
+  };
+
+  /**
+   * 「填入默认模板」按钮。
+   *
+   * 只在**内置动作**上出现：自定义动作没有内置默认，
+   * 给了也是个点了没反应的按钮。
+   *
+   * 填的是**取出来的默认文本**，不是"恢复默认"——
+   * 填完之后这一栏就变成用户自定义值了，他可以照着改。
+   * 想回到"用默认"只要清空即可（placeholder 已写明）。
+   */
+  const tplFillButton = (kind: 'project' | 'group') => {
+    const d = cur ? defaults[cur.builtin] : undefined;
+    const text = d ? (kind === 'project' ? d[0] : d[1]) : '';
+    if (!cur || !cur.builtin || !text) return null;
+    /* 已经填了内容就不抢这个位置：那是"覆盖用户已写的东西"，
+       一次误点就把整段模板换掉，代价太大。 */
+    const curText = (kind === 'project' ? cur.project : cur.group) ?? '';
+    if (curText.trim()) return null;
+    return (
+      <button
+        className="p-btn fpx-ca-fill-default"
+        title="把内置默认模板取出来填进这里，可在此基础上修改；清空即恢复使用默认"
+        onClick={() => patch(cur.id, kind === 'project' ? { project: text } : { group: text })}
+      >
+        填入默认模板
+      </button>
+    );
   };
 
   return (
@@ -438,6 +479,7 @@ export function ChainActionsPanel({
 
               <div className="fpx-field" style={{ marginTop: 'var(--sp-5, 10px)' }}>
                 <label>项目模板</label>
+                {tplFillButton('project')}
                 <textarea
                   ref={projectTplRef}
                   className="p-input fpx-textarea"
@@ -458,6 +500,7 @@ export function ChainActionsPanel({
 
               <div className="fpx-field">
                 <label>项目组模板</label>
+                {tplFillButton('group')}
                 <textarea
                   ref={groupTplRef}
                   className="p-input fpx-textarea"
