@@ -160,7 +160,21 @@ button {
 /* 紧凑档：脑图这类密集布局。放在后面是为了覆盖上面的默认值 ——
    同一个元素同时挂 .nx-btn 和 .sm 时才生效 */
 .nx-btn.sm,
+.p-btn.sm,
 .mm-btn {
+  /*
+   * .p-btn.sm 是**补上的** —— 此前这一档只列了 .nx-btn.sm 与 .mm-btn，
+   * 于是 project-group 挂 .p-btn.sm **完全没有效果**。
+   *
+   * 后果不是"少一个类"，而是一条完整的退化链：
+   *   共享层没有 .p-btn.sm → 开发者试了没反应 → 改用内联 style={{height:30}}
+   *   → 内联优先级压过这里 → CSS 层的统一在这类按钮上彻底失效。
+   *   实测内联里有 height:30(16处)/26(9处)/32/22，横跨 7 个文件，
+   *   全都源于此。所以修的是共享层这个漏项，而不是去逐个改那 25 处数字。
+   *
+   * 注意 .mm-btn 是**无条件**紧凑（脑图全密集布局），
+   * 而 .sm 是**条件式** —— 两者语义不同，别合并成一条。
+   */
   --ctl-h: 28px;
   --ctl-pad: 9px;
   --ctl-fs: 12.5px;
@@ -220,6 +234,7 @@ button {
    放在 primary **之后** —— 一个按钮若同时是主要与选中，
    选中是更具体的状态，应覆盖突出显示。 */
 .nx-btn.on,
+.p-btn.on,
 .mm-btn.on {
   color: var(--accent);
   box-shadow: var(--ctl-shadow-press);
@@ -258,11 +273,13 @@ button {
 
 /* 纯图标按钮：等比收缩。字号单独放大一点，图标字符才不会显得小 */
 .nx-btn.icon,
+.p-btn.icon,
 .mm-btn.icon {
   padding: 0 7px;
   font-weight: var(--fw-strong, 600);
 }
 .nx-btn.wide,
+.p-btn.wide,
 .mm-btn.wide { min-width: 0; }
 
 /* ------------------------------------------------------------
@@ -293,6 +310,7 @@ button {
 }
 
 .nx-input.sm,
+.p-input.sm,
 .nx-select.sm,
 .mm-input,
 .mm-select {
@@ -365,7 +383,8 @@ select optgroup {
    （cyberpunk）就成了白字压亮黄，对比度 1.09，等于没有。 */
 
 /* 多行文本 */
-.nx-textarea {
+.nx-textarea,
+.p-textarea {
   padding: 8px var(--ctl-pad, 10px);
   font: inherit;
   font-size: var(--ctl-fs, 13px);
@@ -378,7 +397,8 @@ select optgroup {
   outline: none;
   resize: vertical;
 }
-.nx-textarea:focus { box-shadow: var(--sh-in-md), 0 0 0 2px var(--accent-glow); }
+.nx-textarea,
+.p-textarea:focus { box-shadow: var(--sh-in-md), 0 0 0 2px var(--accent-glow); }
 
 /* ------------------------------------------------------------
    标签 / 徽标
