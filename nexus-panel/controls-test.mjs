@@ -1312,10 +1312,24 @@ console.log('\n=== 28. 尺度量必须走令牌（圆角 / 层级 / 状态色 / 
      与共享的偶数 --sp-* 对不上，硬套会改变观感）。
      所以先不要求清零，改为**冻结基线**：新增可以，减少更好，变多就报红。
      这样至少能挡住"继续恶化"，存量待专项处理。 */
+  /* 剥掉 var(...) 含嵌套：循环替换直到不再变化即可处理 `var(--a, var(--b, 4px))` */
+  const stripVars = (x) => { let p = null; while (p !== x) { p = x; x = x.replace(/var\([^()]*\)/g, ''); } return x; };
   const spacingOf = (src) =>
-    [...src.matchAll(/(?:margin|padding|gap)[^;:]*\s*:\s*([^;]+);/g)]
+    [...stripVars(src).matchAll(/(?:margin|padding|gap)[^;:]*\s*:\s*([^;]+);/g)]
       .flatMap((m) => [...m[1].matchAll(/(\d+)px/g)].map((x) => x[1]))
       .filter((v) => Number(v) >= 2).length;
+  /*
+   * 必须先剥掉 var()：否则 `padding: 0 var(--sp-2, 4px)` 里的**兜底 4px**
+   * 会被当成写死值计进去 —— 与第 1 节"var 兜底不算硬编码"是同一条规则，
+   * 这里之前漏了，于是基线被虚高（实测 agent-flow +6、project-group +25）。
+   *
+   * 虚高的真正危害不是数字难看：它会让"新增了一处真写死"被虚高部分吃掉，
+   * 基线形同虚设；反过来看，也可能像这次一样把**没恶化**报成恶化，
+   * 让人去改动根本不该动的代码。
+   *
+   * 剥掉后计数只会变小，故基线 639 / 265 保持不变 ——
+   * 那是**更宽松**的方向，不可能放过真实恶化。
+   */
   /* 632 → 639：上游 #120 新增参数连线 UI（输出卡片 / 连线标签 / 几个
      小按钮）带了 7 处。都是 `4px 7px`、`2px 9px` 这类**不对称**值，
      而共享的 --sp-* 是单档位（上下左右同一个数），硬套会改变观感 ——
@@ -1760,6 +1774,73 @@ console.log('\n=== 35. 插件基调判定（浅色主题下反转加反） ===')
   t('registry.js 的 theme 语义与判定实现一致（注释互证）',
     /与面板同基调/.test(read('plugins/registry.js')) &&
     /与面板同基调/.test(tn));
+}
+
+
+console.log('\n=== 36. 取色弹窗：主题适配与不滚动 ===');
+{
+  const css = read('plugins/color-picker/style.css');
+  const host = read('js/host.js');
+  const sv = read('plugins/color-picker/SvPanel.tsx');
+  const cp = read('plugins/color-picker/ColorPicker.tsx');
+  const sc = stripComments(css);
+
+  /* ---- 主题适配 ---- */
+
+  /*
+   * 服务浮层底色必须是 **--surface-overlay**（弹窗层），不能是 --surface（面板层）。
+   * 玻璃主题下 --surface 是半透明的，弹窗浮在主面板之上，
+   * 一透就把底下的字一起透出来 —— 与 dialog.css 同一结论。
+   */
+  const shown = host.slice(host.indexOf('SERVICE_SHOWN_CSS'), host.indexOf('SERVICE_HIDDEN_CSS') > host.indexOf('SERVICE_SHOWN_CSS') ? host.length : host.length);
+  t('服务浮层用 --surface-overlay（不是面板层 --surface）',
+    /--surface-overlay/.test(shown) && !/background:\s*var\(--surface[,)]/.test(shown));
+
+  /* 圆角/阴影/z-index 走令牌：写死会让切主题时唯独这个弹窗不跟着变 */
+  t('服务浮层圆角走 --r-* 令牌', /border-radius:\s*var\(--r-/.test(shown));
+  t('服务浮层阴影走 --sh-* 令牌', /box-shadow:\s*var\(--sh-/.test(shown));
+  t('服务浮层层级走 --z-* 令牌', /z-index:\s*var\(--z-/.test(shown));
+  t('服务层级档位已在 tokens.css 定义',
+    /--z-service\s*:/.test(read('css/tokens.css')));
+
+  /* 描边用 --divider：--border 在新拟态下是 transparent（风格开关，非保证可见） */
+  t('吸管提示边框用 --divider 而非 --border',
+    /\.fpx-pick-hint[\s\S]{0,400}border:[^;]*var\(--divider/.test(sc) &&
+    !/\.fpx-pick-hint[\s\S]{0,400}border:[^;]*var\(--border/.test(sc));
+
+  /*
+   * 色块必须自带一圈 --divider。
+   * 底色是用户自选的（可能是纯白），浅色主题下没有这一圈
+   * 就与面板底融为一体 —— 用户会以为那儿没有色块。
+   */
+  t('色块有 --divider 描边环（白色块在浅色主题下可见）',
+    /\.fpx-swatch\s*\{[\s\S]{0,400}inset 0 0 0 1px var\(--divider/.test(sc));
+  t('预览块同样有环',
+    /\.fpx-preview-block[\s\S]{0,400}inset 0 0 0 1px var\(--divider/.test(sc));
+
+  /* ---- 不滚动 ---- */
+
+  /*
+   * 选色区必须弹性：写死 176px 是"弹窗要滚动"的直接原因 ——
+   * 176 + 数值行 + 两排色块 + 按钮行 超过固定的 420 高。
+   */
+  t('选色区弹性分配（不再写死高度）',
+    /\.fpx-picker-visual\s*\{[\s\S]{0,500}flex:\s*1 1 auto/.test(sc));
+  t('选色区有最小高度（内联按内容撑高时不会塌成 0）',
+    /\.fpx-picker-visual\s*\{[\s\S]{0,500}min-height:/.test(sc));
+  t('SvPanel 的 height 不再有默认值（否则 inline 压过 CSS）',
+    /height,\s*\}:|hsv, onChange, height,/.test(sv) && !/height\s*=\s*\d+/.test(sv));
+  t('ColorPicker 不再传固定高度', !/SvPanel[^>]*height=\{/.test(cp));
+
+  /*
+   * 空间不足时让**色块区**内部滚，而不是整个弹窗滚。
+   * flex:none 会把压力全推回弹窗，又变回整窗滚动。
+   */
+  t('色块区可压缩（不是 flex:none）',
+    /\.fpx-picker-sec\s*\{[\s\S]{0,500}flex:\s*0 1 auto/.test(sc));
+  t('色块列表自身可滚且留至少一行',
+    /\.fpx-swatches\s*\{[\s\S]{0,400}min-height:\s*26px/.test(sc) &&
+    /\.fpx-swatches\s*\{[\s\S]{0,400}overflow-y:\s*auto/.test(sc));
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
