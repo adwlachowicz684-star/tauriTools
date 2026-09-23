@@ -41,6 +41,14 @@ export type ModuleEdge = {
   branch?: string;
   label?: string;
   loopRole?: 'body' | 'done';
+  /**
+   * 参数连线：填进目标节点的哪个参数。
+   *
+   * 不带它的话，打包成模块时参数连线会被重建成**流程连线** ——
+   * "我只是想取个值"变成"多一条执行路径"，目标节点多跑一次，
+   * 而界面上只是线变了个颜色，没有任何提示。
+   */
+  targetArg?: string;
 };
 
 /** 模块定义。nodes / edges 是画布结构的子集（id/type/data/position + 边） */
@@ -167,6 +175,7 @@ export function modulePorts(def: ModuleDef): ModulePorts {
  */
 import { stripRuntimeNodes } from './runtimeKeys';
 import { stackEdges } from './stack';
+import { makeParamEdge } from './paramLinks';
 export { stripRuntimeNodes };
 
 /* ------------------------------------------------------------------ */
@@ -278,13 +287,28 @@ export function expandModules(
       });
     }
 
-    // 内部边：两端都改写
+    /*
+     * 内部边：两端都改写。
+     *
+     * 参数连线要在这一步**还原成完整的边形状** ——
+     * 存档里只存了 targetArg（省得存一整个 data），
+     * 而展开回画布后 isParamEdge 看的是 data.kind。
+     * 不还原的话参数连线会变成一条普通流程线：
+     * 值不会填进参数，反而多出一条执行路径。
+     */
     for (const e of def.edges) {
+      const source = idMap.get(e.source) ?? e.source;
+      const target = idMap.get(e.target) ?? e.target;
+      if (e.targetArg) {
+        const pe = makeParamEdge(source, target, e.targetArg);
+        outEdges.push({ ...pe, id: `${n.id}__${e.id}` } as never);
+        continue;
+      }
       outEdges.push({
         ...e,
         id: `${n.id}__${e.id}`,
-        source: idMap.get(e.source) ?? e.source,
-        target: idMap.get(e.target) ?? e.target,
+        source,
+        target,
       });
     }
 
@@ -434,6 +458,8 @@ export type CrossingEdge = {
   inner: string;
   branch?: string;
   loopRole?: 'body' | 'done' | undefined;
+  /** 参数连线：填进目标节点的哪个参数（跨边界时不能丢，理由同 ModuleEdge） */
+  targetArg?: string;
 };
 
 export function isPackableSelected(nodes: PackableNode[]): boolean {
@@ -530,13 +556,34 @@ export function packSelection(
    * 是更明确的意图，所以**已有真实边就不再补嵌合边**。
    * 两条都留的话同一对节点间会多出一条边，执行时表现为重复触发。
    */
+  /*
+   * 取边上的"参数连线目标参数"。不是参数连线返回 undefined。
+   *
+   * 判据走边的 data（isParamEdge 就是这么判的），不靠 handle ——
+   * 打包时 handle 关系不在存档里，data 才是跟着边一起存的那个。
+   */
+  const paramArgOf = (e: unknown): string | undefined => {
+    const d = (e as { data?: unknown } | undefined)?.data as Record<string, unknown> | undefined;
+    if (d?.kind !== 'param') return undefined;
+    const a = d.targetArg;
+    return typeof a === 'string' && a ? a : undefined;
+  };
+
   const linked = new Set<string>();
 
   const pushInner = (
     id: string, source: string, target: string,
     branch?: string, loopRole?: 'body' | 'done' | undefined,
+    targetArg?: string,
   ) => {
-    edges.push({ id, source, target, branch, loopRole });
+    /*
+     * targetArg 只在参数连线上有。undefined 时不要写进对象 ——
+     * 写一个 targetArg: undefined 进存档，展开时判空会分不清
+     * "没这个字段"和"字段是 undefined"，干净的存档更好排查。
+     */
+    edges.push(targetArg
+      ? { id, source, target, branch, loopRole, targetArg }
+      : { id, source, target, branch, loopRole });
     linked.add(`${source}->${target}`);
   };
 
@@ -547,21 +594,24 @@ export function packSelection(
     const inT = ids.has(t);
 
     if (inS && inT) {
-      pushInner(String(e?.id ?? `${s}-${t}`), s, t, e?.branch, e?.loopRole);
+      pushInner(
+        String(e?.id ?? `${s}-${t}`), s, t, e?.branch, e?.loopRole,
+        paramArgOf(e),
+      );
       continue;
     }
     /* 一端在里面、一端在外面 —— 摘出来，替换后重新挂到实例上 */
     if (inS && !inT) {
       crossing.push({
         kind: 'out', outer: t, inner: s,
-        branch: e?.branch, loopRole: e?.loopRole,
+        branch: e?.branch, loopRole: e?.loopRole, targetArg: paramArgOf(e),
       });
       continue;
     }
     if (!inS && inT) {
       crossing.push({
         kind: 'in', outer: s, inner: t,
-        branch: e?.branch, loopRole: e?.loopRole,
+        branch: e?.branch, loopRole: e?.loopRole, targetArg: paramArgOf(e),
       });
     }
   }
@@ -612,16 +662,24 @@ export function rewireCrossing(
   for (const c of crossing ?? []) {
     const source = c.kind === 'in' ? c.outer : instanceId;
     const target = c.kind === 'in' ? instanceId : c.outer;
-    const key = `${source}->${target}|${c.branch ?? ''}|${c.loopRole ?? ''}`;
+    /*
+     * 去重键必须带上 targetArg。
+     *
+     * 不带的话，"同一个外部节点给模块内两个不同参数供值"这两条线
+     * 会被当成同一条去重掉 —— 表现为存完模块少了一条参数连线，
+     * 而界面上看不出少的是哪一条。
+     */
+    const key = `${source}->${target}|${c.branch ?? ''}|${c.loopRole ?? ''}|${c.targetArg ?? ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({
+    const base = {
       id: `x_${instanceId}_${seen.size}`,
       source,
       target,
       branch: c.branch,
       loopRole: c.loopRole,
-    });
+    };
+    out.push(c.targetArg ? { ...base, targetArg: c.targetArg } : base);
   }
   return out;
 }
