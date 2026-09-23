@@ -839,38 +839,59 @@ bootIframePlugin(async (ctx) => {
   }
 
   /**
-   * 在底框开合前后把画布内容**钉在同一处**。
+   * 中心主题的**真实屏幕 x**（父页面容器 left + 编辑器实测的相对偏移）。
    *
-   * 位移来自两处，二者必须都算上：
-   *   · 容器左边缘右移（CSS 决定，`getBoundingClientRect().left` 实测）
-   *   · 内核 resize 时的「自动重新居中」—— 它平移 (新宽-旧宽)/2|0
+   * 容器位移只有父页面测得出来（iframe 内测不到，见下），节点相对画布的
+   * 偏移只有编辑器测得出来 —— 两边各出一半，加起来才是用户看到的位置。
+   */
+  function measureRootX() {
+    const cr = canvasEl && canvasEl.getBoundingClientRect
+      ? canvasEl.getBoundingClientRect() : null;
+    if (!cr) return null;
+    const off = bridge && bridge.rootOffsetX ? bridge.rootOffsetX() : null;
+    if (off == null) return null;
+    return cr.left + off;
+  }
+
+  /**
+   * 在底框开合前后把画布内容**钉在同一处** —— 闭环，不再推算。
    *
-   * 这里只负责测**容器位移**并告知编辑器；内核那一份由编辑器在自己的
-   * resize 回调里量（见 editor/index.html 的 notifyLayoutShift 一节）。
-   * 分工的原因：内核补了几成，只有编辑器侧拿得到同源数据。
+   * 前三版都栽在同一件事上：**预测**位移是哪几份相加（容器 + 内核 resize 的
+   * (新宽-旧宽)/2|0 + …）再一次性补掉。而实际位移源比算出来的多 —— 内核
+   * `paperrender` / `layoutallfinish` 还会跑 `camera` 把根节点**重新居中**，
+   * 且带 100ms 动画；iframe 的 resize 何时派发也由浏览器决定。漏一份、或
+   * 晚一帧，画面就晃一下。
    *
-   * 必须在本模块（**父页面**）里测容器位移。早期把测点放在编辑器侧的
-   * `rootScreenX()` 里，取 `#minder-container` 的 getBoundingClientRect().left
-   * —— 那是 iframe 内的元素，坐标相对 **iframe 自己的视口**，父页面把
-   * iframe 挤到右边时它恒定不变，于是容器位移被完全抵消，测出来的差
-   * 只剩内核那一份，补偿反而把内核的正确补偿撤销了，净位移变成 +N
-   * （比不补偿更严重）。
+   * 所以改成**每次实测**：记下开合前中心主题的屏幕 x，开合后反复测量、
+   * 差多少补多少，直到归零。
    *
-   * 同步测量即可，不需要等帧：补偿发生在 iframe 的 resize 回调里，
-   * 本函数只要在 resize 派发前把位移报出去就够了。
+   * 为什么必须回到父页面测：iframe 内取 `#minder-container` 的
+   * getBoundingClientRect().left 相对的是 **iframe 自己的视口**，父页面把
+   * iframe 挤到右边时它恒定不变 —— 容器位移会被完全抵消（上一版正是这么错的，
+   * 补偿反而把内核的正确补偿撤销了）。
    *
    * @param {Function} fn 会改变底框开合的操作（同步执行）
    */
   function withStableRoot(fn) {
-    const cv = canvasEl;
-    const before = cv ? cv.getBoundingClientRect().left : null;
+    const before = measureRootX();
     const r = fn();
-    if (before == null) return r;        // 量不到容器位置 → 不补，不能当成 0
-    const after = cv ? cv.getBoundingClientRect().left : null;
-    if (after == null) return r;
-    const dLeft = after - before;
-    // 1px 以内是取整噪声，不补 —— 否则每次开合都多一次无谓的平移
-    if (Math.abs(dLeft) >= 1) bridge?.notifyLayoutShift?.(dLeft);
+    if (before == null) return r;        // 量不到 → 不补，不能当成 0
+
+    // 收敛：同步一次 + 之后几帧各一次。
+    // · 同步那次保证「本帧就对」—— 容器是 CSS 挪的，不等 resize。
+    // · 之后几次收拾迟到的影响（内核 resize 的自动居中、camera 重新居中）。
+    //   每帧的 resize 步骤排在 rAF 之前，所以 rAF 里的补正仍在本帧绘制前。
+    // · 每次都是实测差值，多补无害（差为 0 就不动），不会累积成两倍。
+    let tries = 0;
+    const settle = () => {
+      const now = measureRootX();
+      if (now == null) return;
+      const d = Math.round(now - before);
+      if (Math.abs(d) >= 1) bridge?.panBy(-d, 0);
+      if (d !== 0 && ++tries < 5) requestAnimationFrame(settle);
+    };
+    settle();
+    requestAnimationFrame(settle);
     return r;
   }
 

@@ -1678,102 +1678,72 @@ node.style 上，拦截依旧发生，而这里写的是浏览器真正认的那
 这类 bug 的特点：功能"看着能跑"（切布局确实生效），只有**回显**是错的，
 所以很容易拖很久才被发现。
 
-## 文件库展开导致画布内容位移：分两段补偿（各测各的）
+## 文件库展开导致画布内容位移：闭环实测，差多少补多少
 
-### 先纠正一个方法论错误
+### 结论先说：不要预测位移，要测量位移
 
-此前我用"翻遍提交历史没找到那一版"来否定"挤压但内容不动"的观察，
-这是**本末倒置**：历史里没有，只说明**没人写过**，不代表那种观感不存在。
-正确做法是去查机制、解释观感，而不是用"查无此版"反驳使用者。
-
-### 位移来自两处，必须都算上
+前三版都是**开环**——先推算位移是哪几份相加，再一次性补掉：
 
 ```
-内容在屏幕上的位置 = 容器左边缘 + 视图平移 + 节点坐标
-
-① 容器左边缘右移 ② 内核 resize 时还会「自动重新居中」：
-                       _viewDragger.move((新宽-旧宽)/2 | 0, …)
+① 容器左边缘右移（CSS）
+② 内核 resize 的自动居中 (新宽-旧宽)/2 | 0
+③ …？
 ```
 
-只补 ① 或只补 ② 都不够 —— 实测展开一次净位移约 108px。
+每一版都以为自己补齐了，下一版又发现还漏一份。第三版甚至把补偿拆成
+"同步补 ① + resize 里撤 ②"，仍然抖。
 
-### 中间踩过的坑：测点放在 iframe 内，等于没测
+**根因**：③ 是真实存在的，而且算不出来 —— 内核 `paperrender` /
+`layoutallfinish` 上还挂着 `camera` 命令，会把根节点**重新居中**，
+且 `viewAnimationDuration` 默认 100ms（带动画）；iframe 的 resize 何时
+派发也由浏览器决定。只要漏一份、或晚一帧，画面就晃一下。
 
-上一版的做法是"展开前后各测一次中央主题的屏幕 x，差多少补多少"，
-测点在编辑器侧 `rootScreenX()`：
+### 现在的做法：闭环
+
+记下开合前中心主题的**真实屏幕 x**，开合后反复测量、差多少补多少，
+直到归零：
 
 ```js
-var host = km.getRenderTarget();          // #minder-container，iframe 内的元素
-var left = host.getBoundingClientRect().left;
-return left + pan + box.x + box.width / 2;
+const before = measureRootX();
+fn();                       // 底框开合
+const settle = () => {
+  const d = Math.round(measureRootX() - before);
+  if (Math.abs(d) >= 1) bridge?.panBy(-d, 0);
+  if (d !== 0 && ++tries < 5) requestAnimationFrame(settle);
+};
+settle();                   // 同步一次：容器是 CSS 挪的，本帧就得补
+requestAnimationFrame(settle);
 ```
 
-`getBoundingClientRect()` 返回的是相对**各自 viewport** 的矩形，而 iframe
-是独立文档、有自己的 viewport。父页面把 iframe 从 left=0 挤到 left=216 时，
-iframe 内的坐标系原点跟着一起移动，**这个 left 恒定不变**。
+位移从哪来**不重要** —— 内核居中、camera 居中、取整丢的亚像素，全被
+测量吸收。
 
-于是 before / after 里的容器位移被完全抵消，测出来的差只剩内核那一份：
+### 测量点：两边各出一半
 
-```
-before = C + pan0 + xc
-after  = C + pan1 + xc          pan1 = pan0 + kernel
-d      = before - after = -kernel = +108
-```
-
-补偿 +108 恰好把内核的 -108 **撤销**了，容器右移的 216px 一分不少地留在
-屏幕上 —— 比不补偿还多推 108px。
-
-这条坑还藏得很深：当时有条断言检查"rootScreenX 含容器左边缘"，
-但它只匹配代码里是否出现 `getBoundingClientRect().left`，
-**防得住被人删掉，防不住测错坐标系**。
-
-### 现在的分工：谁的能量谁测
-
-| 角色 | 测什么 | 怎么测 |
+| 谁测 | 测什么 | 为什么必须在这边 |
 |---|---|---|
-| 外壳（`withStableRoot`） | 容器左边缘位移 `dLeft` | 父页面 `canvasEl.getBoundingClientRect().left` 前后差 |
-| 编辑器（resize 回调） | 内核补了多少 `kernel` | 内核自己的 `_lastClientSize`（同源整数） |
+| 父页面 `measureRootX()` | 容器左边缘的屏幕 x | iframe 内的 `getBoundingClientRect().left` 相对 **iframe 自己的视口**，父页面把 iframe 挤到右边时它**恒定不变** |
+| 编辑器 `rootOffsetX()` | 中心主题中心相对画布容器的偏移 | 平移/重排/camera 的效果只有编辑器看得见 |
 
-编辑器在自己那次 resize 里补 `-Math.round(dLeft + kernel)`，两者相加归零。
+`rootOffsetX()` 优先用 DOM 实测（元素 rect − 容器 rect，同一个视口），
+拿不到才退回 `pan + 根节点 view 盒中心`。返回 `null` 时调用方跳过 ——
+不能当 0。
 
-要点：
+### 踩过的坑（都已写进测试护栏）
 
-**容器位移必须由父页面测。** iframe 内测不到，原因见上。
+**测点放在 iframe 内，等于没测。** 上一版 `rootScreenX()` 取
+`#minder-container` 的 `getBoundingClientRect().left`，容器位移被完全
+抵消，测出来的差只剩内核那一份，补偿反而把内核的正确补偿撤销了，
+净位移变成 +N（比不补偿更严重）。
 
-**`kernel` 必须取内核同源的数据。** 外壳量的 iframe 宽度会被取整、
-内核用 `clientWidth`，两个口径相减就是残留的那 1px。
+**只补一次是不够的。** 内核的 resize 可能晚一帧到；每帧的 resize 步骤
+排在 rAF 之前，所以补正放在 rAF 里仍赶得及本帧绘制。上限 5 次，避免
+无限 rAF。
 
-**复现内核的取整方式。** 内核是 `(dw/2)|0`（向零取整），这里换成
-`Math.round` 会残留 0.5px。
+**同步那次必须先跑。** 容器是 CSS 挪的、本帧就上屏，等 resize 再补就
+露出一次抖动。
 
-**同步测量即可，但补偿必须分两步。** 测 `dLeft` 不用等帧（父页面量父页面的
-元素，同步就准）。可**补偿不能全压在 resize 里**：容器是 CSS 挪的、本帧就
-上屏，而 iframe 的 resize 什么时候派发由浏览器决定，慢一帧就露出一次
-肉眼可见的抖动 —— "改完还在抖"正是栽在这里。所以拆成：
-
-1. 开合**同步**补掉容器那一份 `panBy(-dLeft)`（本帧生效，没有中间态）
-2. resize 里只把内核那一下撤掉 `panBy(-kernel)`
-
-第 2 步若把 `dLeft` 也算进来就会补成两倍，反而晃得更厉害。
-
-**早先"等两帧再测"会让画面先晃一下再被拉回** —— 最终位置对，过程看得见；
-同步补之后过程也没有了。
-
-**`dLeft` 带 600ms 有效期且用一次即清。** 拖窗口同样是 resize，
-不该被当成底框开合而误补偿，否则画布会越拖越偏。
-
-### 为什么不能按"固定 Δ 补一半"
-
-Δ 取决于 flex 收缩的分配，不是常量：
-
-```
-.mm-files 占位 = flex-basis 186 + padding 10×2 = 206（content-box）
-加 .mm-body 的 gap 10  →  216
-```
-
-右侧 `.mm-side` 一旦**可收缩**（历史上它样式失效时正是如此），画布宽度的
-变化量就不再等于 216，而随侧栏此刻的内容宽度浮动。所以两侧都实测、
-不做常量假设。
+**1px 以内不补。** 取整噪声，补了反而每次开合多一次无谓平移。
 
 ## 保存主题失败：`has only a getter`
 
