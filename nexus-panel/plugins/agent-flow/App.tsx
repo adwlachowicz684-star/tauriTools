@@ -26,6 +26,9 @@ import {
   duplicateElements, stripRuntime, type DupNode, type DupEdge,
 } from './engine/duplicate';
 import { CredentialPanel, canUse } from './components/CredentialPanel';
+// 卡片上的参数格要能就地改，得拿到 App 的 patchNode ——
+// 卡片是经 nodeTypes 交给 xyflow 渲染的，不是 App 的直接子组件，只能走 Context
+import { NodePatchProvider } from './components/ArgCell';
 import { useCredentialVault, VAULT_MODE_META, CRED_KEY } from './hooks/useCredentialVault';
 import { useStackLayout } from './hooks/useStackLayout';
 import { useTaskStore } from './hooks/useTaskStore';
@@ -69,9 +72,10 @@ import ModuleLibrary, {
 import { expandCanvasRefs } from './engine/canvasRef';
 import { syncCanvasesRefNames, snapshotCanvasName } from './engine/canvasRefName';
 import {
-  collectGlobalTriggers, activeTriggers, dedupeWatchDirs,
+  collectGlobalTriggers, activeTriggers, dedupeWatchDirs, isActiveTrigger,
   type GlobalTrigger,
 } from './engine/triggerRegistry';
+import { ERR_NO_TRIGGER, reachableFrom } from './engine/triggerScope';
 import {
   loadGroups, saveGroups, pruneGroupsIfChanged, dropEmptyGroups,
   nextGroupName, addToGroup, removeFromGroup,
@@ -320,7 +324,7 @@ export default function App() {
    */
   const {
     undoSnap, deleteNotice, setDeleteNotice,
-    beforeDelete, deleteSelected, undoDelete, handleNodesDelete, clearUndo,
+    beforeDelete, undoDelete, handleNodesDelete, clearUndo,
   } = useDeleteUndo({
     nodes, edges, selectedId, setNodes, setEdges, setSelectedId,
   });
@@ -817,21 +821,6 @@ function reportSkipped(
       return { ...n, data: next } as FlowNode;
     }));
   }, [setNodes, canvases]);
-
-  /** 工具栏「+ 任务」。走注册表，与从侧栏添加走同一条路径 */
-  const addTask = () => {
-    seq.current += 1;
-    const id = `task${Date.now().toString(36)}${seq.current}`;
-    setNodes((ns) => [
-      ...ns,
-      {
-        id, type: 'task',
-        position: { x: 80 + (ns.length % 4) * 300, y: 80 + Math.floor(ns.length / 4) * 220 },
-        data: getDef('task').create(id, { label: `任务 ${ns.length + 1}` }),
-      } as FlowNode,
-    ]);
-    setSelectedId(id);
-  };
 
   /*
    * 定位到画布上的某个节点：选中 + 滚到视口中心。
@@ -1565,21 +1554,6 @@ function reportSkipped(
     e.dataTransfer.dropEffect = 'copy';
   }, []);
 
-  /** 工具栏「+ 条件」。同上，走注册表 */
-  const addCondition = () => {
-    seq.current += 1;
-    const id = `cond${Date.now().toString(36)}${seq.current}`;
-    setNodes((ns) => [
-      ...ns,
-      {
-        id, type: 'condition',
-        position: { x: 220 + (ns.length % 4) * 300, y: 300 },
-        data: getDef('condition').create(id, { label: '条件判断' }),
-      } as FlowNode,
-    ]);
-    setSelectedId(id);
-  };
-
   /* ---------------- 持久化 ---------------- */
 
   const save = () => {
@@ -1709,6 +1683,7 @@ function reportSkipped(
     inputOverride?: string,
     source: TaskSource = 'unknown',
     targetCanvasId?: string,
+    entryNodeId?: string,
   ): Promise<boolean> => {
     if (running) {
       pushLog('已有任务在运行，本次触发被跳过');
@@ -1738,12 +1713,69 @@ function reportSkipped(
      */
     const stackE = stackEdges(runNodes as never);
 
+    /*
+     * 入口判定 —— 所有流程都从触发器开始。
+     *
+     * 以前这里不判：画布上所有节点一律排个序全跑。于是角落里那个
+     * 从没接过东西的调试节点也照跑，夜间定时任务还会把它一起带起来；
+     * 它连不上任何输入，失败时把整条流程标红，日志里混进一堆
+     * 与本次触发毫无关系的记录。
+     *
+     * 放在**建任务记录之前**：判掉的话不该留下一条空任务，
+     * 否则任务窗口里会出现一条 0 条记录的条目，看着像跑崩了。
+     */
+    const entryIds = runNodes
+      .filter((n) => isActiveTrigger(n.data as Record<string, unknown>))
+      .map((n) => n.id);
+    if (entryIds.length === 0) {
+      pushLog(`✗ ${ERR_NO_TRIGGER}（先在画布上放一个触发器并启用）`);
+      setRunning(false);
+      return false;
+    }
+
+    /*
+     * 自动触发必须指定入口，只跑被触发的那一条链路。
+     *
+     * 不指定会退化成"从全部触发器出发" —— 于是某个周期任务到期
+     * 会把整张画布所有触发链路全带起来，等于一次触发、全部重跑。
+     */
+    let entryId: string | undefined;
+    if (entryNodeId !== undefined) {
+      if (!runNodes.some((n) => n.id === entryNodeId)) {
+        pushLog(`✗ 入口触发器 ${entryNodeId} 不在画布上，本次不执行`);
+        setRunning(false);
+        return false;
+      }
+      if (!entryIds.includes(entryNodeId)) {
+        pushLog('✗ 入口触发器未启用（节点已关闭，或没有启用的触发条件），本次不执行');
+        setRunning(false);
+        return false;
+      }
+      entryId = entryNodeId;
+    }
+
+    /*
+     * 任务总数按**这一条链路**估，而不是全画布节点数。
+     *
+     * progressOf 取 max(task.total, 实际出现数)：分母若含范围外节点，
+     * 百分比永远到不了 100%，表现为"跑完了却卡在 70%"。
+     */
+    const scopeTotal = entryId === undefined
+      ? runNodes.length
+      : reachableFrom(
+        [entryId],
+        [
+          ...runEdges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+          ...stackE.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+        ] as never,
+      ).size;
+
     // 建一条任务记录。total 先按节点数估，运行时以实际出现的节点为准
     const task = makeTask({
       canvasId: tgtId ?? '',
       canvasName: tgtCanvas?.name ?? canvases.find((c) => c.id === activeId)?.name ?? '未命名流程',
       source,
-      total: runNodes.length,
+      total: scopeTotal,
       /*
        * 标题与连线一起抄进任务记录 —— 任务窗口与历史要画流程图。
        * 只存 id 的话图上写的就是 mamu7obyv93 这种乱码，看不出这一步干什么；
@@ -2032,6 +2064,13 @@ function reportSkipped(
       githubFetch, githubPush, httpRequester, credentials, playAudioReader, tableReader,
       input: effectiveInput, onEvent, signal: controller.signal,
       /*
+       * 入口触发器 —— 只跑从它出发的那一条链路。
+       *
+       * 不传的话引擎会以图上全部触发器为起点，那等于
+       * "一次自动触发，整张画布所有链路全跑一遍"。
+       */
+      entry: entryId,
+      /*
        * 人工输入：跑到该节点时弹框等人填。
        *
        * 用 dialog 的 prompt —— 它是外壳提供的模态输入，
@@ -2099,7 +2138,13 @@ function reportSkipped(
       pushLog('已有任务在运行，本次触发被跳过');
       return;
     }
-    void runRef.current?.(undefined, 'manual').then((ok) => {
+    /*
+     * 带上入口 id：只跑这张卡所在的那条链路。
+     *
+     * 不传的话等于"从全部触发器出发"，点一张卡会把别的触发器
+     * 的链路也一起跑起来 —— 而卡片上写的是"触发"，用户只会以为跑了一个。
+     */
+    void runRef.current?.(undefined, 'manual', undefined, nodeId).then((ok) => {
       // 与调度器触发同一套落款：卡片上就能看到"上次触发"的时间与方式
       setNodes((ns) => ns.map((n) => (
         n.id === nodeId && isTrigger(n.data)
@@ -2205,7 +2250,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
          * 不指定就变成"跑当前这张"，半夜自己跑起来的会是错的流程。
          */
         const gt = globalTriggersRef.current.find((x) => x.id === t.id);
-        const ok = await runRef.current(injected, src, gt?.canvasId);
+        const ok = await runRef.current(injected, src, gt?.canvasId, t.nodeId);
         // 触发记录写回画布上的触发器节点，直接在节点卡片上就能看到"上次触发时间"
         const targetId = t.nodeId ?? t.id;
         setNodes((ns) => ns.map((n) =>
@@ -2518,38 +2563,19 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
         ) : null}
         <strong className="brand">Agent Flow</strong>
         {/*
-          这几个是**画布编辑**按钮。任务 / 历史视图里画布是藏起来的，
-          留着就是点了没反应 —— 和别处的"静默失效"是同一类问题，所以一并隐藏。
-          运行 / 保存 / 导入导出 不受影响：那些在查看态下依然有意义。
+          工具栏不再放「+ 任务 / + 条件 / + 并发 / + 触发器 / 删除 / 撤销 / 停止」
+          这一排按钮 —— 它们全都与别处重复，而重复入口会互相打架：
+
+            · 添加节点：左侧节点库拖拽（或 Ctrl+单击侧栏条目）
+            · 删除：选中后按 Delete / Backspace
+            · 撤销删除：Ctrl / Cmd + Z
+            · 停止：切到「任务」页签，在任务详情里停
+
+          另外「运行工作流」也已移除：所有流程都从触发器开始，
+          留着它就是留了一个绕过入口的口子 —— 点它跑的是"图上所有节点"，
+          与触发器卡片上的「▶ 触发」不是同一条路径，
+          表现为"同一个流程，手动跑和自动跑结果不一样"。
         */}
-        {view === 'flow' ? (
-          <>
-            <button onClick={addTask} disabled={running}>+ 任务</button>
-            <button onClick={addCondition} disabled={running}>+ 条件</button>
-            <button onClick={() => spawnNode({ kind: 'parallel' })} disabled={running}>+ 并发</button>
-            <button onClick={() => spawnNode({ kind: 'trigger' })} disabled={running}>
-              + 触发器
-            </button>
-            <button
-              onClick={deleteSelected}
-              disabled={running || nodes.length === 0}
-              title="删除选中的节点或连线（Delete / Backspace）"
-            >
-              删除
-            </button>
-            <button
-              onClick={undoDelete}
-              disabled={running || !undoSnap}
-              title={undoSnap ? `撤销删除：${undoSnap.label}` : '没有可撤销的删除'}
-            >
-              ↩ 撤销
-            </button>
-          </>
-        ) : null}
-        <button className="primary" onClick={() => void run(undefined, 'manual')} disabled={running || nodes.length === 0}>
-          {running ? '运行中…' : '运行工作流'}
-        </button>
-        <button onClick={stop} disabled={!running}>停止</button>
 
         <span className="trg-btn-static" title="触发器已作为节点放在画布上">
           ⏱ 触发器{triggers.length > 0 && <span className="dot">{enabledCount}/{triggers.length}</span>}
@@ -2756,6 +2782,13 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
             )}
           </div>
         ) : null}
+        {/*
+          卡片上改参数的通道。
+          值就是下面的 patchNode —— 与右侧面板走**同一个**函数：
+          两处各写一份更新逻辑的话，一处漏了画布参数快照之类的附带处理，
+          就会变成"在卡片上改的没存住"。
+        */}
+        <NodePatchProvider value={patchNode}>
         <div className="canvas" ref={wrapperRef} onDrop={onDrop} onDragOver={onDragOver} style={view === 'flow' ? undefined : { display: 'none' }}>
           <ReactFlow
             nodes={canvasNodes}
@@ -2806,6 +2839,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
             <MiniMap pannable zoomable />
           </ReactFlow>
         </div>
+        </NodePatchProvider>
 
         {/*
            目录选择器 —— 没设默认导出目录时弹出来。
@@ -2824,6 +2858,13 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
         {deleteNotice && (
           <div className="delete-notice">
             <span>⚠ {deleteNotice}</span>
+            {/*
+              撤销在工具栏上没有按钮了，这里补一个可见入口 ——
+              否则删掉之后唯一的回头路是 Ctrl+Z，不提示的话没人知道。
+            */}
+            {undoSnap ? (
+              <button className="mini" onClick={undoDelete}>撤销</button>
+            ) : null}
             <button className="mini" onClick={() => setDeleteNotice(null)}>知道了</button>
           </div>
         )}

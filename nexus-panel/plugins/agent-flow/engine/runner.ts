@@ -13,6 +13,7 @@ import { resolveVars } from './variables';
 import {
   paramLinksOf, flowEdgesOf, linksInto, applyParamLinks,
 } from './paramLinks';
+import { entryScopeOf } from './triggerScope';
 import { getRunner } from './runnerRegistry';
 import { nodeTimeoutMsOf, timeoutMessageOf } from './nodeTimeout';
 import type { RunContext } from './runContext';
@@ -155,6 +156,30 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
       branches: [], parallels: [], loops: [], vars: {},
     };
   }
+
+  /*
+   * 执行范围：从触发器出发能走到的节点。
+   *
+   * 不先算这一步的话，图上所有节点都会被跑一遍 ——
+   * 包括那些从没接过任何东西的孤立节点。它们连不上输入，
+   * 跑出来的结果没有意义，失败还会把整条流程标红，
+   * 日志里混进一堆与本次触发无关的记录。
+   *
+   * 只在显式给了 entry 或图上本就有触发器时才限定：
+   * 引擎这一层不改既有调用方的行为，约束由调用方（App）保证。
+   */
+  const scope = opts.entry !== undefined || g.nodes.some(
+    (n) => String((n.data as Record<string, unknown> | undefined)?.kind ?? '') === 'trigger',
+  ) ? entryScopeOf(g, opts.entry) : null;
+
+  if (scope && !scope.ok) {
+    emit({ type: 'run-error', message: scope.message });
+    return {
+      ok: false, outputs: {}, failed: [], skipped: [],
+      branches: [], parallels: [], loops: [], vars: {},
+    };
+  }
+  const inScope = scope && scope.ok ? scope.ids : null;
 
   const runStartedAt = Date.now();
   const byId = new Map(g.nodes.map((n) => [n.id, n]));
@@ -620,7 +645,9 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
 
   /* ---------- 主流程：跳过循环体成员，它们由各自的循环执行 ---------- */
   const mainIds = orderByLayers(
-    g.nodes.map((n) => n.id).filter((id) => !bodyNodeSet.has(id)),
+    g.nodes.map((n) => n.id).filter(
+      (id) => !bodyNodeSet.has(id) && (inScope === null || inScope.has(id)),
+    ),
   );
   await runScope(mainIds, globalScope);
 

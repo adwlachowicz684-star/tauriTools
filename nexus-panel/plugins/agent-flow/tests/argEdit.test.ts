@@ -1,0 +1,182 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { opBriefParts, opBrief } from '../engine/ops';
+import { readSrc } from './srcScan';
+
+/*
+ * 卡片上的参数**就地编辑**。
+ *
+ * ================= 为什么需要这一组测试 =================
+ *
+ * 参数画成下凹的输入格之后，它长得就跟"能填东西的框"一样，
+ * 点一下却没反应 —— 比不画成框更让人困惑。
+ *
+ * 而这类问题**跑不出红**：逻辑没错，只是界面上点不动。
+ * 所以一部分断言走源码扫描（与 classNames / uiConsistency 同一套路），
+ * 一部分走 opBriefParts 的行为（它是纯函数，能直接跑）。
+ */
+
+/* ================= 编辑初值必须是原始值 ================= */
+
+/**
+ * 显示用的 text 走过 briefArg()：超 16 字截成"很长的一段文字…"。
+ * 拿它当编辑框初值的话，点一下输入框里的字就被截掉了，
+ * 一失焦等于把原始值**改写成截断后的那截** —— 不报错，只是数据悄悄少一截。
+ */
+test('参数格带原始值（不能用截断后的显示文本当编辑初值）', () => {
+  const long = '这是一段明显超过十六个字的很长很长的参数内容';
+  const parts = opBriefParts('math', { op: 'add', a: long, b: '1' });
+  const a = parts.find((p) => p.key === 'a');
+  assert.ok(a, 'math 的摘要里必须有 a 这个参数格');
+  assert.equal(a?.raw, long, 'raw 必须是完整原始值');
+  assert.notEqual(a?.raw, a?.text, 'raw 不能等于截断后的显示文本');
+  assert.ok((a?.text ?? '').length <= 17, 'text 仍然要截断（卡片不能撑破）');
+});
+
+test('空参数格的初值是空串而不是 ?', () => {
+  const parts = opBriefParts('math', { op: 'add' });
+  const a = parts.find((p) => p.key === 'a');
+  assert.equal(a?.text, '?', '显示仍写 ? —— 一眼看出缺的是哪一个');
+  assert.equal(a?.raw, '', '编辑初值必须是空串，否则输入框里会先出现一个 ?');
+});
+
+/* ================= 每个参数格都能改 ================= */
+
+test('参数值可就地改：带 edit 且 kind=text', () => {
+  const parts = opBriefParts('compare', { op: 'gt', a: '3', b: '5' });
+  for (const k of ['a', 'b']) {
+    const p = parts.find((x) => x.key === k);
+    assert.ok(p, `缺少参数格 ${k}`);
+    assert.deepEqual(p?.edit, { key: k, kind: 'text' }, `${k} 必须可就地改`);
+  }
+});
+
+/**
+ * 运算符是**只能选**的：加减乘除、大于小于包含，就那几个。
+ * 手填的话填错一个字不报错，只是运行时走到 default 分支给"未知运算"。
+ */
+test('运算符号格可点开下拉改运算', () => {
+  const parts = opBriefParts('math', { op: 'add', a: '1', b: '2' });
+  const op = parts.find((p) => p.role === 'op');
+  assert.deepEqual(op?.edit, { key: 'op', kind: 'select' }, '运算符格必须能弹下拉');
+  assert.equal(op?.raw, 'add', 'raw 给当前运算值，下拉靠它定位选中项');
+});
+
+/**
+ * 「包含 / 开头 / 结尾」以前是纯文字段，卡片上点不了 ——
+ * 旁边 > < 那些符号格却点一下就能改，同一个节点的同一个东西两种待遇，
+ * 看着像有的坏了。
+ */
+test('包含 / 开头 / 结尾也是运算符，同样可点', () => {
+  for (const op of ['contains', 'startsWith', 'endsWith']) {
+    const parts = opBriefParts('compare', { op, a: '苹果', b: '果' });
+    const selectable = parts.filter((p) => p.edit?.kind === 'select');
+    assert.equal(selectable.length, 1, `${op} 的摘要里应当有一个可点的运算符格`);
+    assert.equal(selectable[0]?.raw, op, `${op} 的下拉要能定位到当前运算`);
+  }
+});
+
+test('函数名写法（取整 / 转大写 / 随机整数）也可点', () => {
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ['math', { op: 'round', a: '2.6' }],
+    ['text', { op: 'upper', a: 'abc' }],
+    ['random', { op: 'int', a: '1', b: '9' }],
+    ['random', { op: 'bool' }],
+  ];
+  for (const [kind, d] of cases) {
+    const parts = opBriefParts(kind, d);
+    const fn = parts.find((p) => p.role === 'fn');
+    assert.ok(fn, `${kind}/${String(d.op)} 应当有函数名格`);
+    assert.deepEqual(fn?.edit, { key: 'op', kind: 'select' }, `${kind} 的函数名格要能改运算`);
+  }
+});
+
+/* ================= 改成 op 段后，导出的那句话不能变 ================= */
+
+/**
+ * 「包含」从文字段改成运算符段，partsToText 会自动在两个非文字段之间补空格，
+ * 所以结果必须**逐字相同** —— 变了就是导出的说明与卡片上对不上了。
+ */
+test('包含改成分段后，摘要文本逐字不变', () => {
+  assert.equal(opBrief('compare', { op: 'contains', a: '苹果', b: '果' }), '苹果 包含 果');
+  assert.equal(opBrief('compare', { op: 'startsWith', a: '苹果', b: '果' }), '苹果 以 果 开头');
+  assert.equal(opBrief('compare', { op: 'endsWith', a: '苹果', b: '果' }), '苹果 以 果 结尾');
+  assert.equal(opBrief('compare', { op: 'gt', a: '3', b: '5' }), '3 > 5');
+  assert.equal(opBrief('math', { op: 'add', a: '1', b: '2' }), '1 ＋ 2');
+  assert.equal(opBrief('math', { op: 'min', a: '1', b: '2' }), 'min(1, 2)');
+  assert.equal(opBrief('random', { op: 'int', a: '1', b: '5' }), '随机整数 1~5');
+  assert.equal(opBrief('random', { op: 'pick', a: 'a,b' }), '随机选一个：a,b');
+  assert.equal(opBrief('text', { op: 'replace', a: 'aba', b: 'a', c: 'x' }), 'aba：a → x');
+});
+
+/* ================= 源码守卫 ================= */
+
+/**
+ * 没有 nodrag，点参数框会变成"拖走整个节点" ——
+ * 想改个数字却把节点拖跑了。而这在单测里看不出来，只能扫源码。
+ */
+test('参数输入框带 nodrag（点它不会变成拖节点）', () => {
+  const src = readSrc('components/ArgCell.tsx');
+  const m = src.match(/className="node-arg-in[^"]*"/);
+  assert.ok(m, '必须有 node-arg-in 这个输入框');
+  assert.ok(m?.[0].includes('nodrag'), '输入框必须带 nodrag');
+});
+
+test('下拉也带 nodrag（展开下拉时不能把节点拖走）', () => {
+  const src = readSrc('components/ArgCell.tsx');
+  const m = src.match(/className="node-arg-sel[^"]*"/);
+  assert.ok(m, '必须有 node-arg-sel 这个下拉');
+  assert.ok(m?.[0].includes('nodrag'), '下拉必须带 nodrag');
+});
+
+/**
+ * 按退格删字符时，若不拦住冒泡，画布会把它当成"删除节点" ——
+ * 而那时焦点在输入框里，用户根本想不到自己在操作画布。
+ */
+test('输入框拦住键盘冒泡（否则退格会删掉整个节点）', () => {
+  const src = readSrc('components/ArgCell.tsx');
+  assert.ok(/onKeyDown=\{onKey\}/.test(src), '输入框必须挂 onKeyDown');
+  assert.ok(/e\.stopPropagation\(\)/.test(src), '必须 stopPropagation');
+});
+
+/**
+ * 编辑初值用 part.raw。
+ * 用 part.text 的话输入框里先出现的是截断后的那截 —— 见上面第一条测试。
+ */
+test('进入编辑用 raw 而不是 text', () => {
+  const src = readSrc('components/ArgCell.tsx');
+  assert.ok(/setDraft\(part\.raw/.test(src), '编辑初值必须取 part.raw');
+});
+
+/**
+ * 卡片拿不到 App 的 setNodes，只能走 Context。
+ * 不挂 Provider 的后果是卡片上点了没反应 —— 不报错，最难查。
+ */
+test('App 挂了 patch 的 Provider（否则卡片上点了没反应）', () => {
+  const src = readSrc('App.tsx');
+  assert.ok(/NodePatchProvider value=\{patchNode\}/.test(src), '必须把 patchNode 传下去');
+});
+
+/**
+ * 选项从节点定义里取，不在卡片上另写一份。
+ * 两处各写一份列表的话，加一个运算符要改两个地方，
+ * 漏改的表现是"面板里能选，卡片上下拉里没有"。
+ */
+test('下拉选项从节点定义取（不在卡片上另抄一份列表）', () => {
+  const src = readSrc('components/ArgCell.tsx');
+  assert.ok(/def\.fields\?\.\(d\)/.test(src), '必须走 getDef(...).fields()');
+  // 卡片上不许出现写死的运算符清单
+  assert.ok(!/'add'/.test(src), '卡片上不允许出现写死的运算值清单');
+});
+
+/**
+ * 编辑态若把 Handle 换成 input 而丢掉它，已连上的那根参数线会短暂找不到端口：
+ * 线还在（按 id 记的），但这一端没了落点，表现为"改完参数，连线飘在半空"。
+ */
+test('编辑态仍然渲染参数入口（连线不能断）', () => {
+  const src = readSrc('components/ArgCell.tsx');
+  assert.ok(/const handle = part\.key \? \(/.test(src), '入口必须按 part.key 判');
+  // 三个分支（下拉 / 输入框 / 静态）都要带上它
+  const n = (src.match(/\{handle\}/g) ?? []).length;
+  assert.equal(n, 3, '三个分支都要渲染入口，少一个就会在编辑时断线');
+});

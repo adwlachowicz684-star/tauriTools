@@ -330,6 +330,23 @@ export type BriefPart = {
    * 只有 val 有：运算符与字面文字不是参数，不能接。
    */
   key?: string;
+  /**
+   * 编辑框的**初值** —— 必须是原始值，不能是 text。
+   *
+   * text 是显示用的，走过 briefArg()：超 16 字会截成"很长的一段文字…"。
+   * 拿它当编辑初值的话，点一下输入框里的字就被截掉了，
+   * 一失焦等于**把原始值改写成了截断后的那截** ——
+   * 且没有任何报错，只是数据悄悄少了一截。
+   */
+  raw?: string;
+  /**
+   * 在卡片上**就地改**：改哪个字段、怎么改。
+   *
+   * kind='text' 点一下变输入框；kind='select' 点一下弹下拉。
+   * 选项不写在这里 —— 从节点定义的 fields 里取（见 ArgCell），
+   * 两处各写一份列表的话，改一处就会让卡片与面板给出不同的选项。
+   */
+  edit?: { key: string; kind: 'text' | 'select' };
 };
 
 /** 只有 val / op / fn 会被渲染成下凹的参数格，text 是连接它们的字 */
@@ -362,62 +379,78 @@ export function opBrief(kind: string, d: Record<string, unknown>): string {
 /** 摘要的分段形式 —— 卡片靠它把参数画成下凹的输入格 */
 export function opBriefParts(kind: string, d: Record<string, unknown>): BriefPart[] {
   const op = String(d.op ?? '');
+  /** 显示值：走 briefArg，超长截断、空值写 ? */
   const a = briefArg(d.a);
   const b = briefArg(d.b);
   const c = briefArg(d.c);
+  /** 原始值：编辑框的初值，见 BriefPart.raw 的说明 */
+  const raw = (v: unknown): string => (v === undefined || v === null ? '' : String(v));
+  /** 参数格：可连线（带 key）+ 可就地改（带 raw 与 edit） */
+  const V = (key: string): BriefPart => ({
+    role: 'val',
+    text: key === 'a' ? a : key === 'b' ? b : c,
+    key,
+    raw: raw(d[key]),
+    edit: { key, kind: 'text' },
+  });
+  /**
+   * 运算符格：点一下弹下拉改 op。
+   *
+   * raw 给的是**当前运算值**（如 'add' / 'contains'）而不是显示文字 ——
+   * 下拉要靠它定位"现在选的是哪一项"。
+   */
+  const OP = (text: string): BriefPart => ({
+    role: 'op', text, raw: op, edit: { key: 'op', kind: 'select' },
+  });
+  /** 函数名格（min / 取整 / 转大写）：也是 op 的一种写法，同样可点 */
+  const FN = (name: string): BriefPart => ({
+    role: 'fn', text: name, raw: op, edit: { key: 'op', kind: 'select' },
+  });
   /** 单目函数写法：函数名 + 括号里的参数 */
-  const call = (name: string, ...args: Array<[string, string]>): BriefPart[] => [
-    { role: 'fn', text: name },
+  const call = (name: string, ...args: string[]): BriefPart[] => [
+    FN(name),
     { role: 'text', text: '(' },
-    ...args.map(([k, v], i) => [
+    ...args.map((k, i) => [
       ...(i > 0 ? [{ role: 'text' as const, text: ', ' }] : []),
-      { role: 'val' as const, text: v, key: k },
+      V(k),
     ]).flat(),
     { role: 'text', text: ')' },
   ];
 
   if (kind === 'math') {
     const sign = MATH_SIGN[op];
-    if (sign) return [{ role: 'val', key: 'a', text: a }, { role: 'op', text: sign }, { role: 'val', key: 'b', text: b }];
+    if (sign) return [V('a'), OP(sign), V('b')];
     // min / max 是函数名写法，写成 `min(1, 2)` 比 `1 min 2` 好认
-    if (op === 'min' || op === 'max') return call(op, ['a', a], ['b', b]);
+    if (op === 'min' || op === 'max') return call(op, 'a', 'b');
     // 单目：取整、绝对值 —— 没有第二个数
-    if (op === 'round' || op === 'floor' || op === 'ceil' || op === 'abs') return call(op, ['a', a]);
+    if (op === 'round' || op === 'floor' || op === 'ceil' || op === 'abs') return call(op, 'a');
     return [{ role: 'text', text: opSummary(kind, op) }];
   }
 
   if (kind === 'text') {
     switch (op) {
-      case 'concat':
-        return [{ role: 'val', key: 'a', text: a }, { role: 'op', text: '＋' }, { role: 'val', key: 'b', text: b }];
-      case 'length': return call('长度', ['a', a]);
-      case 'upper': return call('转大写', ['a', a]);
-      case 'lower': return call('转小写', ['a', a]);
-      case 'trim': return call('去空格', ['a', a]);
+      case 'concat': return [V('a'), OP('＋'), V('b')];
+      case 'length': return call('长度', 'a');
+      case 'upper': return call('转大写', 'a');
+      case 'lower': return call('转小写', 'a');
+      case 'trim': return call('去空格', 'a');
       // 替换要三个参数才说得清，用箭头表示"换成"
       case 'replace':
-        return [
-          { role: 'val', key: 'a', text: a }, { role: 'text', text: '：' },
-          { role: 'val', key: 'b', text: b }, { role: 'op', text: '→' }, { role: 'val', key: 'c', text: c },
-        ];
+        return [V('a'), { role: 'text', text: '：' }, V('b'), OP('→'), V('c')];
       case 'substr':
         return [
-          { role: 'val', key: 'a', text: a }, { role: 'text', text: '[' },
-          { role: 'val', key: 'b', text: b }, { role: 'text', text: '~' },
-          { role: 'val', key: 'c', text: c }, { role: 'text', text: ']' },
+          V('a'), { role: 'text', text: '[' },
+          V('b'), { role: 'text', text: '~' },
+          V('c'), { role: 'text', text: ']' },
         ];
       case 'split':
-        return [
-          { role: 'val', key: 'a', text: a }, { role: 'text', text: ' 第 ' },
-          { role: 'val', key: 'c', text: c }, { role: 'text', text: ' 段' },
-        ];
+        return [V('a'), { role: 'text', text: ' 第 ' }, V('c'), { role: 'text', text: ' 段' }];
       case 'join':
         return [
-          { role: 'text', text: '连接 ' }, { role: 'val', key: 'a', text: a },
-          { role: 'text', text: '（用「' }, { role: 'val', key: 'b', text: b }, { role: 'text', text: '」）' },
+          { role: 'text', text: '连接 ' }, V('a'),
+          { role: 'text', text: '（用「' }, V('b'), { role: 'text', text: '」）' },
         ];
-      case 'repeat':
-        return [{ role: 'val', key: 'a', text: a }, { role: 'op', text: '×' }, { role: 'val', key: 'b', text: b }];
+      case 'repeat': return [V('a'), OP('×'), V('b')];
       default:
         return [{ role: 'text', text: opSummary(kind, op) }];
     }
@@ -425,38 +458,33 @@ export function opBriefParts(kind: string, d: Record<string, unknown>): BriefPar
 
   if (kind === 'compare') {
     const sign = COMPARE_SIGN[op];
-    if (sign) return [{ role: 'val', key: 'a', text: a }, { role: 'op', text: sign }, { role: 'val', key: 'b', text: b }];
-    if (op === 'contains') return [{ role: 'val', key: 'a', text: a }, { role: 'text', text: ' 包含 ' }, { role: 'val', key: 'b', text: b }];
-    if (op === 'startsWith') {
-      return [
-        { role: 'val', key: 'a', text: a }, { role: 'text', text: ' 以 ' },
-        { role: 'val', key: 'b', text: b }, { role: 'text', text: ' 开头' },
-      ];
-    }
-    if (op === 'endsWith') {
-      return [
-        { role: 'val', key: 'a', text: a }, { role: 'text', text: ' 以 ' },
-        { role: 'val', key: 'b', text: b }, { role: 'text', text: ' 结尾' },
-      ];
-    }
+    if (sign) return [V('a'), OP(sign), V('b')];
+    /*
+     * 「包含 / 开头 / 结尾」也是运算符，只是写成中文字。
+     *
+     * 以前它们是 text 段（纯文字），于是卡片上这一处**点不了** ——
+     * 想改只能打开面板，而旁边 `>` `<` 那些符号格点一下就能改，
+     * 同一个节点的同一个东西两种待遇，看着像有的坏了。
+     *
+     * 改成 op 段后与符号格一致（带边框、可点）。
+     * partsToText 会在两个非 text 段之间自动补空格，
+     * 所以导出的那句话与改之前**逐字相同**（有测试盯着）。
+     */
+    if (op === 'contains') return [V('a'), OP('包含'), V('b')];
+    if (op === 'startsWith') return [V('a'), { role: 'text', text: ' 以 ' }, V('b'), OP('开头')];
+    if (op === 'endsWith') return [V('a'), { role: 'text', text: ' 以 ' }, V('b'), OP('结尾')];
     return [{ role: 'text', text: opSummary(kind, op) }];
   }
 
   if (kind === 'random') {
     switch (op) {
       case 'int':
-        return [
-          { role: 'text', text: '随机整数 ' }, { role: 'val', key: 'a', text: a },
-          { role: 'text', text: '~' }, { role: 'val', key: 'b', text: b },
-        ];
+        return [FN('随机整数'), V('a'), { role: 'text', text: '~' }, V('b')];
       case 'float':
-        return [
-          { role: 'text', text: '随机小数 ' }, { role: 'val', key: 'a', text: a },
-          { role: 'text', text: '~' }, { role: 'val', key: 'b', text: b },
-        ];
-      case 'pick': return [{ role: 'text', text: '随机选一个：' }, { role: 'val', key: 'a', text: a }];
-      case 'shuffle': return [{ role: 'text', text: '打乱：' }, { role: 'val', key: 'a', text: a }];
-      case 'bool': return [{ role: 'text', text: '随机真假' }];
+        return [FN('随机小数'), V('a'), { role: 'text', text: '~' }, V('b')];
+      case 'pick': return [FN('随机选一个'), { role: 'text', text: '：' }, V('a')];
+      case 'shuffle': return [FN('打乱'), { role: 'text', text: '：' }, V('a')];
+      case 'bool': return [FN('随机真假')];
       default: return [{ role: 'text', text: opSummary(kind, op) }];
     }
   }

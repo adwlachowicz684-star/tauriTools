@@ -91,6 +91,21 @@ export function isTriggerNode(data: Record<string, unknown> | undefined): boolea
   return String((data ?? {}).kind ?? '') === 'trigger';
 }
 
+/**
+ * 这个触发节点现在能不能当**入口**（节点没禁用 + 至少一张启用的触发卡片）。
+ *
+ * 三个条件缺一不可，而它们散在两处（节点开关 / 卡片开关）——
+ * 各调用方自己拼一遍就会出现"这里算能跑、那里算不能跑"，
+ * 表现为"触发器面板上写着启用，点运行却说没有入口"。
+ *
+ * 与 collectGlobalTriggers 的过滤条件保持一致：那边跳过的，这边也不该算。
+ */
+export function isActiveTrigger(data: Record<string, unknown> | undefined): boolean {
+  if (!isTriggerNode(data)) return false;
+  if (!enabledOf(data)) return false;
+  return triggerEntriesOf(data).some(entryEnabled);
+}
+
 /** 兼容旧的单值字段：读取一律走这里 */
 export function triggerKindsOf(data: Record<string, unknown> | undefined): TriggerKind[] {
   const d = data ?? {};

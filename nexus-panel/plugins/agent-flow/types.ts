@@ -126,6 +126,19 @@ export type GraphEdge = {
   source: string;
   target: string;
   /**
+   * 两端接在哪个端口上。
+   *
+   * 参数连线全靠它区分"这根线供哪个参数"：
+   * targetHandle 是 `arg:xxx`（填进目标节点的 xxx 参数），
+   * sourceHandle 是 `out:xxx`（取自来源节点的 xxx 输出）。
+   *
+   * 流程连线也可能带（分支/循环要分左右口），所以放在公共类型里，
+   * 不单独给参数连线开一个子类型 —— 开子类型后，
+   * 凡是收 GraphEdge[] 的函数都要先做一次类型窄化，漏一处就是静默失效。
+   */
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
+  /**
    * 边的种类，供 React Flow 选渲染组件。
    *
    * 'param' = 参数连线（画成紫虚线带箭头），其余按流程连线渲染。

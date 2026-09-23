@@ -228,6 +228,19 @@ export type RunOptions = {
    * 虚拟边是调用方拼进 edges 的，所以**执行顺序与失败传播照常工作**。
    */
   stackNodes?: Array<{ id: string; position: { x: number; y: number }; data?: Record<string, unknown> }>;
+  /**
+   * 入口触发器节点 id —— 本次运行从它出发。
+   *
+   * 不给 = 图上全部触发器都算起点（手动运行的语义）。
+   * 给了 = 只跑从它出发的那一条链路（自动触发必须给，
+   *        否则一个周期任务到期会带起整张画布）。
+   *
+   * 判定与可达计算见 engine/triggerScope：
+   * 引擎这一侧只负责"限定范围"，"该不该有入口"由调用方判定 ——
+   * 触发器是否启用牵扯节点禁用、触发条件卡片、后台开关，
+   * 那些语义在 triggerRegistry 里，不归 runner 管。
+   */
+  entry?: string;
   onEvent: (e: RunEvent) => void;
   signal?: AbortSignal;
 };

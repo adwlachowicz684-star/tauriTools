@@ -3507,6 +3507,53 @@ input.mono, textarea.mono {
 
 .node-arg.is-fn { color: var(--af-soft); }
 
+/* ------------------------------------------------------------------ */
+/* 参数格就地编辑                                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 画成下凹的输入格却不给改，比不画成框更让人困惑 ——
+ * 所以能改的格子要有"能改"的样子：hover 时边框点亮 + 手型光标。
+ */
+.node-arg.is-editable { position: relative; cursor: pointer; }
+.node-arg.is-editable:hover { border-color: var(--af-accent); color: var(--af-accent); }
+
+/* 文字不吃点击：点它等同于点格子（落到覆盖在上面的控件上） */
+.node-arg-txt { pointer-events: none; }
+
+/*
+ * 铺满整格、透明的原生下拉。
+ *
+ * 为什么用原生 select 而不是自绘浮层：节点卡片在 xyflow 的变换层里，
+ * 自绘浮层会被后面的节点盖住 —— 层级由 transform 决定，改不了；
+ * 而原生下拉是浏览器画的，永远在最上层。
+ * 铺满是为了点格子任何位置都能展开，透明是为了看得见我们的格子。
+ */
+.node-arg-sel {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer;
+  border: 0; padding: 0; margin: 0; background: transparent;
+  appearance: none; -webkit-appearance: none;
+}
+
+/* 编辑中的输入框 —— 与格子同一套下凹观感，换强调色边框表示"正在改" */
+.node-arg-in {
+  max-width: 150px; padding: 0 4px;
+  border: 1px solid var(--af-accent); border-radius: 4px;
+  background: var(--af-sunk); box-shadow: var(--sh-in-sm);
+  color: var(--af-fg); font: inherit; font-size: var(--fs-note); line-height: 1.6;
+}
+.node-arg-in:focus { outline: none; }
+
+/*
+ * xyflow 的约定类名：带 .nodrag 的元素不触发节点拖动。
+ *
+ * 不写这条样式，参数框里的点击会变成"拖走整个节点" ——
+ * 想改个数字却把节点拖跑了。这里顺便把光标改成文本光标，
+ * 输入框上不该是"可以拖走"的手势。
+ */
+.nodrag.nopan { cursor: text; }
+
 /* 第二行：节点类型 + 节点层面的动作（存为自定义 / 编辑内部） */
 .insp-kindrow { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 
