@@ -152,6 +152,15 @@
      想调"标题字重"要改三行，且容易只改两行漏一行。
      现在源头只有 --fw-strong 一个。 */
   --fw-strong:   600;
+  --fw-mid:    500;
+  --fw-normal: 400;
+
+  /* 行高三档：1.45 紧凑 / 1.5 常规 / 1.6 宽松。
+     此前全仓散着 8 个值，其中 1.5 与 1.55、1.6 与 1.7 相差不足 0.1，
+     在 11~12px 上只差半个像素却让不同区块行距对不齐。 */
+  --lh-tight:   1.45;
+  --lh-normal:  1.5;
+  --lh-relaxed: 1.6;
   --title-1-fs: 13px;  --title-1-fw: var(--fw-strong);
   --title-2-fs: 12px;  --title-2-fw: var(--fw-strong);
   --title-3-fs: 11px;  --title-3-fw: var(--fw-strong);
