@@ -82,6 +82,8 @@ export type FlowEdge = {
   id: string;
   source: string;
   target: string;
+  /** React Flow 用它选渲染组件：'param' 走参数连线那套样式 */
+  type?: string;
   label?: string;
   data?: FlowEdgeData;
   /** 条件分支边在 UI 上高亮 */

@@ -7,7 +7,7 @@ import type {
   JoinNodeData, GateNodeData, ThrottleNodeData, TimeoutNodeData, RetryNodeData,
 } from '../types';
 import { triggerEntriesOf, entryEnabled, mergeConfig } from './triggerEntries';
-import { argTypeIssues } from './argTypes';
+import { argTypeIssues, type ArgTypeIssue } from './argTypes';
 
 /**
  * 节点配置校验 —— 画布圆点的三色预警。
@@ -386,8 +386,23 @@ const VALIDATORS: Table = {
   retry: vRetry as never,
 };
 
-/** 校验单个节点。未知类型返回 ok —— 没规则时不要乱报红 */
-export function validateNode(node: { data?: unknown } | null | undefined): NodeIssue {
+/**
+ * 校验单个节点。未知类型返回 ok —— 没规则时不要乱报红
+ *
+ * ================= 为什么多一个 linkIssues 参数 =================
+ *
+ * 参数连线的类型校验**看不了单个节点**：它要比的是
+ * "上游产出什么" 与 "这个参数期望什么"，上游在别的节点上。
+ * 而 validateNode 一次只拿一个节点，扫不到全图。
+ *
+ * 所以图级的那部分由调用方算好传进来，在这里与手填值的校验合并。
+ * 合并而不是分两处显示：同一个参数既可能手填错、也可能连错，
+ * 分成两个红点的话用户得猜该看哪个。
+ */
+export function validateNode(
+  node: { data?: unknown } | null | undefined,
+  linkIssues?: ArgTypeIssue[],
+): NodeIssue {
   const d = node?.data as Record<string, unknown> | undefined;
   if (!d) return { level: 'ok', messages: [] };
   const fn = VALIDATORS[String(d.kind ?? '')];
@@ -414,7 +429,10 @@ export function validateNode(node: { data?: unknown } | null | undefined): NodeI
    *
    * 分开之后，用户看到红圆点能从文案直接分辨该"补一个值"还是"改一个类型"。
    */
-  const typeIssues = argTypeIssues(String(d.kind ?? ''), d);
+  const typeIssues = [
+    ...argTypeIssues(String(d.kind ?? ''), d),
+    ...(linkIssues ?? []),
+  ];
   if (typeIssues.length === 0) return base;
   const msgs = typeIssues.map((t) => t.message);
   return {

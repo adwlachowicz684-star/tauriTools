@@ -1,6 +1,7 @@
-import type { NodeProps } from '@xyflow/react';
+import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { NodeShell } from './NodeShell';
 import { opBriefParts, briefArg, isArgPart, type BriefPart } from '../engine/ops';
+import { argHandleId } from '../engine/paramLinks';
 
 /**
  * role → 类名。
@@ -38,7 +39,29 @@ export function OpNode({ id, type, data, selected }: NodeProps) {
     >
       <div className="node-line node-line--brief node-brief">
         {parts.map((p, i) => (
-          <span key={i} className={ARG_CLASS[p.role]}>{p.text}</span>
+          /*
+           * 参数格（role=val）自带一个**入口**，供参数连线接进来。
+           *
+           * 只有带 key 的格子才有 —— 运算符、括号、字面文字不是参数，
+           * 给它们也开个口子会让人连到一个"接了也没用"的位置。
+           *
+           * 为什么入口在格子上而不是节点左侧那一个总入口：
+           * 运算节点有 a / b / c 三个参数，共用一个入口就分不清
+           * 这根线是填给谁的，而填错参数的表现是"结果不对但不报错"。
+           */
+          p.key ? (
+            <span key={i} className={`${ARG_CLASS[p.role]} node-arg-port`}>
+              <Handle
+                type="target"
+                position={Position.Left}
+                id={argHandleId(p.key)}
+                className="node-arg-handle"
+              />
+              {p.text}
+            </span>
+          ) : (
+            <span key={i} className={ARG_CLASS[p.role]}>{p.text}</span>
+          )
         ))}
       </div>
     </NodeShell>

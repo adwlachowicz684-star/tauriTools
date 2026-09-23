@@ -47,7 +47,14 @@ export function looksLikeSecretName(name: string): boolean {
  * 否则只复制串顶（下级没一起选中）时，副本会继承"我下面有块"，
  * 底部被压平而实际下面什么都没有。
  */
-export const VIEW_KEYS = ['size', 'stackParent', 'stackCollapsed', 'hasStackChild', 'onFireManual'];
+/*
+ * argLinkIssues 是**渲染时算出来的**：参数连线带来的类型错，前提是看得到
+ * 全图（上游产出什么）。存进存档就是脏数据 —— 上游改了它不会跟着变，
+ * 表现为"上游已经改对了，这里还是红的"。列进来也让复制节点时把它剥掉。
+ */
+export const VIEW_KEYS = [
+  'size', 'stackParent', 'stackCollapsed', 'hasStackChild', 'onFireManual', 'argLinkIssues',
+];
 
 /** 数据里是否含内联密钥 —— 用于提示用户"这部分不会被存进去" */
 export function hadInlineSecret(data: unknown): boolean {

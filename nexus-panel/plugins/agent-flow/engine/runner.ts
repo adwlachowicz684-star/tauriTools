@@ -10,6 +10,9 @@ import {
 import { resolveSecret, type Credential } from './credentials';
 import { topoLayers } from './topo';
 import { resolveVars } from './variables';
+import {
+  paramLinksOf, flowEdgesOf, linksInto, applyParamLinks,
+} from './paramLinks';
 import { getRunner } from './runnerRegistry';
 import type { RunContext } from './runContext';
 import { renderTemplate } from './template';
@@ -70,13 +73,58 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
    */
   const g: Graph = {
     ...graph,
+    /*
+     * 只保留流程连线。
+     *
+     * 参数连线在这里必须剥掉 —— 后面分支、循环、停止传播、并发继承
+     * 全都遍历 g.edges，它们看到参数连线会当成一条执行路径，
+     * 于是"给某个参数取值"这个动作凭空多出一次执行。
+     * 表现为某个节点跑了两次，日志里有两条同名记录，而画布上看不出为什么。
+     *
+     * 参数连线只做两件事：参与排序（让来源先跑）、在节点执行前填值。
+     */
+    edges: flowEdgesOf(graph.edges),
     nodes: graph.nodes.map((n) => ({ ...n, data: resolveVars(n.data) }) as GraphNode),
   };
-  const { layers, cyclic } = topoLayers(g);
+  const paramLinks = paramLinksOf(graph.edges);
   const emit = opts.onEvent;
 
+  /*
+   * 参数连线造成的环要**单独报**。
+   *
+   * 先只按流程边排一次：若这里就成环，那是真正的流程环，
+   * 报"检测到环"是对的。
+   */
+  const flowTopo = topoLayers(g);
+  if (flowTopo.cyclic.length > 0) {
+    emit({ type: 'run-error', message: `检测到环，无法执行：${flowTopo.cyclic.join(' → ')}` });
+    return {
+      ok: false, outputs: {}, failed: flowTopo.cyclic, skipped: [],
+      branches: [], parallels: [], loops: [], vars: {},
+    };
+  }
+
+  /*
+   * 再把参数连线计入排序约束。
+   *
+   * 不带它的话来源可能排在目标之后，目标读 outputs[来源] 拿到 undefined，
+   * 表现为"连了线却拿到空值"，而界面上连线明明画着 ——
+   * 这类问题看日志只会看到参数为空，不会想到是顺序问题。
+   */
+  const { layers, cyclic } = topoLayers(g, paramLinks);
+
+  /*
+   * 走到这里的环**只可能是参数连线造成的**（流程环上面已提前返回）。
+   *
+   * 所以不能再说"检测到环" —— 用户会去流程里找一个并不存在的环。
+   * 必须指名是参数连线：那是"你要拿它的输出填参数，它也反过来要你的"，
+   * 解法是拆掉其中一条，跟流程走向无关。
+   */
   if (cyclic.length > 0) {
-    emit({ type: 'run-error', message: `检测到环，无法执行：${cyclic.join(' → ')}` });
+    emit({
+      type: 'run-error',
+      message: `参数连线成环，无法决定取值顺序：${cyclic.join(' → ')}（拆掉其中一条参数连线即可）`,
+    });
     return {
       ok: false, outputs: {}, failed: cyclic, skipped: [],
       branches: [], parallels: [], loops: [], vars: {},
@@ -403,10 +451,55 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
     runNode, runScope, loopStack,
   });
 
+  /**
+   * 取节点数据，**把参数连线的值填进去**。
+   *
+   * ================= 为什么不改 g.nodes =================
+   *
+   * 直接改 g.nodes 上那份数据是"永久生效"的，而循环体每轮都会执行
+   * 同一个节点 —— 第一轮填进去的值会留在那，第二轮即使上游产出变了
+   * 也读的是旧的。表现为"循环第二轮开始值就不对了"。
+   *
+   * 所以每次执行时临时算一份，不落回图里。
+   *
+   * ================= 为什么区分"没跑到"和"产出空" =================
+   *
+   * outputs 里存的是**这次运行中**该节点已经产出的值。
+   * 排序保证了来源已经跑完（topoLayers 计入了参数连线）。
+   *
+   * 关键取舍在来源**没跑到**时（被关掉 / 上游失败 / 分支没走这边）：
+   *
+   *   填成空串    → 把用户手填在参数框里的值抹掉。
+   *                 表现为"我明明填了值，连了条线之后就没了"，
+   *                 而且节点会拿空串算出无意义的结果。
+   *   保留原值    → 相当于连线没生效，但至少还是用户自己填的那个数。
+   *
+   * 取后者：**只有来源确实产出了东西才覆盖**。
+   * 来源跑到了但产出空串，那是真的产出了空，照常覆盖 ——
+   * 否则"上游明确输出空"会被当成"上游没跑"，两种情形就分不开了。
+   */
+  function paramNodeOf(id: string): GraphNode {
+    const base = byId.get(id)!;
+    const links = linksInto(paramLinks, id);
+    if (links.length === 0) return base;
+
+    const values: Record<string, string> = {};
+    for (const l of links) {
+      // hasOwnProperty 而不是 `outputs[x] ?? ''`：
+      // 后者分不开"没跑到"与"产出空串"，见上面的取舍
+      if (!Object.prototype.hasOwnProperty.call(outputs, l.source)) continue;
+      values[l.targetArg] = outputs[l.source];
+    }
+    return {
+      ...base,
+      data: applyParamLinks(base.data as Record<string, unknown>, values),
+    } as GraphNode;
+  }
+
 
   /** 执行单个节点，按类型分派 */
   async function runNode(id: string, scope: Scope): Promise<void> {
-    const node = byId.get(id)!;
+    const node = paramNodeOf(id);
 
     /* ================================================================
      * 按注册表分发。

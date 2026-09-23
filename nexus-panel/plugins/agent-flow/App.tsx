@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } fro
 import {
   ReactFlow, Background, Controls, MiniMap, addEdge,
   useNodesState, useEdgesState, useReactFlow,
-  type Connection, type Edge, type NodeTypes, type ReactFlowInstance,
+  type Connection, type Edge, type NodeTypes, type EdgeTypes, type ReactFlowInstance,
   type NodeChange, SelectionMode } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -10,6 +10,8 @@ import Inspector from './components/Inspector';
 // 副作用导入：把 nodes/defs/ 下的节点定义注册进表。
 // 放在这里是刻意的 —— 注册表必须先被填充，下面的 buildNodeTypes() 才有内容。
 import { buildNodeTypes, getDef, allPresets, type NodeDef } from './nodes';
+import { ParamEdge } from './components/ParamEdge';
+import { parseArgHandle, makeParamEdge, isParamEdge, linkHintOf, paramLinksOf, paramLinkIssues } from './engine/paramLinks';
 import { getVariableGroup } from './nodes/registry';
 import {
   applyVarTo, findVar, checkVarForNode, duplicateVar, varSnapshotOf,
@@ -135,6 +137,15 @@ import { killCli, runCli, canWatch, startWatch, canWebhook, startWebhook,
  * 现在从注册表构建，与侧栏、属性面板、执行引擎共用同一份声明。
  */
 const nodeTypes: NodeTypes = buildNodeTypes();
+
+/**
+ * 边的组件映射。
+ *
+ * 参数连线必须注册自己的组件 —— 它要画成虚线 + 紫 + 箭头，
+ * 与流程连线的绿实线区分开。不注册的话 xyflow 走默认边，
+ * 两种线长得一样，"这根是供参数还是走流程"就得靠猜。
+ */
+const edgeTypes: EdgeTypes = { param: ParamEdge };
 
 const STORAGE_KEY = 'agent-flow:v1';
 const TRG_KEY = 'agent-flow:triggers:v1';
@@ -854,6 +865,40 @@ function reportSkipped(
 
   const onConnect = useCallback(
     (params: Connection) => {
+      /*
+       * 先判是不是**参数连线**。
+       *
+       * 判据是目标那端：目标是 `arg:xxx`（某个参数格的入口）
+       * 就说明用户想"把我的输出填进这个参数"，而不是"我跑完接着跑你"。
+       *
+       * 必须走这条分支而不是落进下面的流程连线逻辑 ——
+       * 混进去会让它带上 branch / loopRole，
+       * 于是"取个值"变成"多一条执行路径"。
+       */
+      const argKey = parseArgHandle(params.targetHandle);
+      if (argKey) {
+        setEdges((eds) => {
+          const one = makeParamEdge(params.source!, params.target!, argKey);
+          /*
+           * 同一个参数只保留一条线。
+           *
+           * 两条线连同一个参数时，"取谁的值"取决于存档里边的顺序，
+           * 而那个顺序不保证 —— 表现为"偶尔取到另一个值"，
+           * 是那种复现不了、只能靠运气撞见的问题。
+           */
+          const rest = eds.filter(
+            (e) => !(isParamEdge(e) && e.target === params.target && e.data?.targetArg === argKey),
+          );
+          return addEdge(one, rest);
+        });
+        const hint = linkHintOf(
+          (nodes.find((n) => n.id === params.source)?.data as { kind?: string } | undefined)?.kind,
+          argKey,
+        );
+        if (hint) pushLog(`⚠ ${hint}`);
+        return;
+      }
+
       // handleId 即出口标识：
       //  · 条件节点 → 分支 id 或 __default__
       //  · 循环节点 → 'body'（循环体）/ 'done'（循环结束）
@@ -2008,24 +2053,39 @@ function reportSkipped(
    * 函数是非可序列化的，落盘时 JSON.stringify 会直接丢掉它；
    * 另外也进了 VIEW_KEYS，复制 / 存模块时会被剥掉。
    */
+  /*
+   * 参数连线带来的**类型错**，按节点分组。
+   *
+   * 这里是唯一能算它的位置：要看"上游产出什么"，
+   * 而卡片组件只拿得到自己那一个节点。
+   *
+   * 挂在 useMemo 上而不是每次渲染重算：它要遍历全部连线，
+   * 而画布每拖一下就会重渲染一次。
+   */
+  const argLinkIssues = useMemo(
+    () => paramLinkIssues(nodes, paramLinksOf(edges)),
+    [nodes, edges],
+  );
+
   const canvasNodes = useMemo(
     () => displayNodes.map((n): typeof n => {
-      if (!isTrigger(n.data)) return n;
+      const issues = argLinkIssues[n.id];
+      if (!issues && !isTrigger(n.data)) return n;
       /*
        * 先落到 Record 再交回去。
        *
        * 直接写字面量会撞多余属性检查（TS2353）——
-       * onFireManual 是**运行时临时挂上**的，不属于任何节点自己的 data 类型
-       * （它不是配置，落盘时会被丢掉、复制时会被剥掉）。
+       * onFireManual / argLinkIssues 是**运行时临时挂上**的，
+       * 不属于任何节点自己的 data 类型（它们不是配置，
+       * 落盘时会被丢掉、复制时会被剥掉）。
        * 交给一个 Record 变量中转就没有"字面量新鲜度"了，检查自然放过。
        */
-      const data: Record<string, unknown> = {
-        ...(n.data as Record<string, unknown>),
-        onFireManual: fireManualTrigger,
-      };
+      const data: Record<string, unknown> = { ...(n.data as Record<string, unknown>) };
+      if (issues) data.argLinkIssues = issues;
+      if (isTrigger(n.data)) data.onFireManual = fireManualTrigger;
       return { ...n, data } as typeof n;
     }),
-    [displayNodes, fireManualTrigger],
+    [displayNodes, fireManualTrigger, argLinkIssues],
   );
 
 
@@ -2617,6 +2677,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onInit={(inst) => { rfInstance.current = inst; }}
             onNodeClick={(_, n) => setSelectedId(n.id)}
             /* 按住 Ctrl / ⌘ 拖动 = 复制一份跟着鼠标走，原件留在原地 */

@@ -126,6 +126,24 @@ export type GraphEdge = {
   source: string;
   target: string;
   /**
+   * 边的种类，供 React Flow 选渲染组件。
+   *
+   * 'param' = 参数连线（画成紫虚线带箭头），其余按流程连线渲染。
+   * 不加这个字段的话参数连线会画成普通流程线，两种线长得一样，
+   * "这根是供参数还是走流程"就得靠猜。
+   */
+  type?: string;
+  /**
+   * 箭头。React Flow 见到它会自动生成对应的 `<marker>` 定义。
+   *
+   * 参数连线必须带：它回答的是"谁的值给谁用"，
+   * 两端节点看着对等时，方向只能靠箭头说出来。
+   *
+   * 字段名与结构都对齐 React Flow 的 EdgeMarker，
+   * 这里不 import 那个类型（types.ts 要能在纯 node 环境里跑）。
+   */
+  markerEnd?: { type: string; color?: string; width?: number; height?: number };
+  /**
    * 条件节点出边专属：标注这条边属于哪个分支。
    * - 值为某条 ConditionRule 的 id → 该规则命中时走这条边
    * - '__default__' → 兜底分支（所有规则都没命中时走）

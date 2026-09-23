@@ -53,7 +53,22 @@ export type ArgKind =
  * 模板引用（{{xx.output}}）在**编辑时**是看不到值的，
  * 它要到运行时才知道。判成 num / text 都是猜，一律放行。
  */
-export type ValueKind = ArgKind | 'unknown';
+/**
+ * 一个值**实际是什么种类**。
+ *
+ * 比 ArgKind 多几种：
+ *
+ *   · 'unknown' 判不出来 —— 模板引用 {{xx.output}} 在编辑时没有值，
+ *     判成 num / text 都是猜，猜错的代价是把正确的流程标红
+ *     （**误报比漏报更糟**），所以一律放行。
+ *
+ *   · 'bool' / 'table' / 'files' 是**参数连线**带来的种类。
+ *     手填的值只会是 num 或 text（valueKindOf 只产出这两种），
+ *     但这三种来自上游节点的产出：比较出 bool、表格节点出 table、
+ *     文件节点出 files。它们接到要数字的参数上就是错的，
+ *     必须能表达出来，否则"接了个表格进加减乘除"会被判成合法。
+ */
+export type ValueKind = ArgKind | 'unknown' | 'bool' | 'table' | 'files';
 
 /* ------------------------------------------------------------------ */
 /* 期望类型表                                                          */
@@ -273,6 +288,36 @@ export function argTypeIssues(
     });
   }
   return out;
+}
+
+/**
+ * 查**某一个参数**当前期望什么类型。
+ *
+ * ================= 为什么不从 argTypeIssues 反推 =================
+ *
+ * argTypeIssues 返回的是"已经出问题的清单"，用它反查期望类型
+ * 得先造一个必然冲突的探针值去试探 —— 那是把查询写成了副作用，
+ * 而探针值万一哪天被当成合法值（比如规则表里加了新种类），
+ * 查询就静默返回 null，表现是"连了线不报"。
+ *
+ * 查询就该是查询：直接读规则表，读不到就是"没明确期望"。
+ *
+ * 返回 null = 这个参数没有明确期望（或该运算用不到它），一律放行。
+ */
+export function argExpectOf(
+  dataKind: string | undefined | null,
+  data: Record<string, unknown> | undefined | null,
+  key: string,
+): ArgKind | null {
+  if (!dataKind || !data) return null;
+  const rule = RULES[dataKind];
+  if (!rule) return null;
+
+  const opVal = String(data[rule.by] ?? '');
+  const opRule = rule.rules[opVal];
+  if (!opRule) return null;
+
+  return opRule.args[key] ?? null;
 }
 
 /* ------------------------------------------------------------------ */
