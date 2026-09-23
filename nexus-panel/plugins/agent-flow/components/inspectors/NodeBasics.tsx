@@ -152,6 +152,39 @@ export function NodeBasics({ node, onChange, onNote, onEditModule }: Props) {
         </button>
       </div>
 
+      {/*
+       * 单节点执行超时。
+       *
+       * 放在基础信息区而不是参数区：它不属于任何一种节点自己的参数，
+       * 对所有节点一视同仁（跟"开启""显示高度"是一类）。
+       *
+       * 留空 / 0 = 不限时。这是刻意的默认值 ——
+       * 加了超时这个功能，不能让任何既有流程的行为发生变化。
+       */}
+      <div className="insp-size">
+        <span className="insp-size-label">超时</span>
+        <input
+          className="insp-timeout-input"
+          type="number"
+          min="0"
+          step="1"
+          /*
+           * 0 显示成空而不是 "0"：
+           * 数字框右侧有步进箭头，显示 0 会让人以为"超时 0 秒 = 立刻失败"，
+           * 而它实际是"不限时"。空串才是这个意思的直观表达。
+           */
+          value={d.timeoutSec ? String(d.timeoutSec) : ''}
+          placeholder="不限"
+          title="这一步最多跑多少秒。留空 = 不限时；到点没跑完就判失败，下游跟着跳过"
+          onChange={(e) => {
+            const raw = e.target.value;
+            const n = Number(raw);
+            onChange(node.id, { timeoutSec: raw === '' || !Number.isFinite(n) || n <= 0 ? 0 : n });
+          }}
+        />
+        <span className="insp-size-label">秒 · 留空不限</span>
+      </div>
+
       {inStack ? (
         <div className="insp-size insp-stack-row">
           <span className="insp-size-label">

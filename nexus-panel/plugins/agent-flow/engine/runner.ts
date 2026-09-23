@@ -14,6 +14,7 @@ import {
   paramLinksOf, flowEdgesOf, linksInto, applyParamLinks,
 } from './paramLinks';
 import { getRunner } from './runnerRegistry';
+import { nodeTimeoutMsOf, timeoutMessageOf } from './nodeTimeout';
 import type { RunContext } from './runContext';
 import { renderTemplate } from './template';
 import { inputValueFor, chainOutputAbove } from './stack';
@@ -87,7 +88,31 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
     nodes: graph.nodes.map((n) => ({ ...n, data: resolveVars(n.data) }) as GraphNode),
   };
   const paramLinks = paramLinksOf(graph.edges);
-  const emit = opts.onEvent;
+
+  /*
+   * 已判定超时的节点。
+   *
+   * 超时那一步的底层操作**并没有被杀掉**（Promise 无法外部取消），
+   * 它还在后台跑，跑完会照常 emit / setStatus / 写 outputs。
+   * 不拦住就会出现"日志里先报失败、过一会儿又变成功"，
+   * 而下游此时已经按失败跳过了 —— 状态自相矛盾，且排查方向完全错。
+   *
+   * 所以这里记一个集合：进了这个集合的节点，此后一切对外写入作废。
+   */
+  const timedOut = new Set<string>();
+  const rawEmit = opts.onEvent;
+
+  /**
+   * 对外事件出口，带超时闸门。
+   *
+   * 只拦**带 id** 的事件（node-status / node-done 都是某个节点的）；
+   * 整次运行级别的事件（run-error / run-done）没有 id，不该被拦。
+   */
+  const emit = (e: RunEvent): void => {
+    const owner = (e as { id?: string }).id;
+    if (owner !== undefined && timedOut.has(owner)) return;
+    rawEmit(e);
+  };
 
   /*
    * 参数连线造成的环要**单独报**。
@@ -497,10 +522,80 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
   }
 
 
-  /** 执行单个节点，按类型分派 */
+  /** 执行单个节点，按类型分派（外面套一层超时，见 runNodeTimed） */
   async function runNode(id: string, scope: Scope): Promise<void> {
-    const node = paramNodeOf(id);
+    await runNodeTimed(id, scope);
+  }
 
+  /**
+   * 超时包装。
+   *
+   * 放在 runNode 的**外层**而不是各个调用点：runNode 是递归入口，
+   * 循环体、并发队列都走它，套一层就全部覆盖；
+   * 分散到调用点则必然漏掉某一条路径，表现为"这个节点设了超时却没生效"。
+   *
+   * 这是**软超时**：见 engine/nodeTimeout.ts 开头的说明。
+   * 底层操作不会被杀掉，只是不再等它。
+   */
+  async function runNodeTimed(id: string, scope: Scope): Promise<void> {
+    const node = paramNodeOf(id);
+    const limitMs = nodeTimeoutMsOf(
+      node.data as Record<string, unknown> | undefined,
+      opts.nodeTimeoutSec,
+    );
+
+    /* 不限时：走原路，一个定时器都不建 */
+    if (limitMs <= 0) {
+      await dispatchNode(id, node, scope);
+      return;
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const fired = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), limitMs);
+    });
+
+    const work = dispatchNode(id, node, scope);
+    /*
+     * 必须挂一个 catch，而且是在 race 之前。
+     *
+     * 超时后我们不再 await work，它若在此后 reject 就会变成
+     * unhandled rejection —— 在 Node 里会直接把整个测试进程搞挂。
+     */
+    work.catch(() => { /* 已经判过超时了，这里的失败不再上报 */ });
+
+    try {
+      const raced = await Promise.race([
+        work.then(() => 'done' as const),
+        fired,
+      ]);
+      if (raced !== 'timeout') return;
+
+      /* ---- 到点没跑完：判失败，并冻结它此后的写入 ---- */
+      timedOut.add(id);
+      rawEmit({
+        type: 'node-done', id, ok: false, output: '',
+        error: timeoutMessageOf(limitMs),
+      });
+      /*
+       * 走 markFailed 而不是只 setStatus：下游要按"上游失败"跳过。
+       * 只标红而不传播的话，下游会拿空值继续跑，
+       * 于是超时那一步的错误被冲淡成一堆看不懂的空结果。
+       */
+      markFailed(id, scope);
+    } finally {
+      /*
+       * 定时器必须清掉。
+       *
+       * 节点正常跑完时若留着它，到点会往一个早已结束的流程里
+       * 再写一次状态；而进程想退出也会被这些 timer 拖住。
+       */
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
+  /** 真正的按类型分派 */
+  async function dispatchNode(id: string, node: GraphNode, scope: Scope): Promise<void> {
     /* ================================================================
      * 按注册表分发。
      *

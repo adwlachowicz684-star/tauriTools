@@ -2606,6 +2606,18 @@ input.mono, textarea.mono {
 }
 .insp-size-label { font-size: var(--fs-micro, 10px); color: var(--af-dim); flex: none;
   font-weight: var(--title-3-fw);}
+/*
+ * 超时输入框。
+ *
+ * width 用 ch 而不是 px：秒数最多三位数（600 秒 = 10 分钟），
+ * 按字符宽度给就不会在输入过程中来回跳动，也不会长到抢走整行。
+ */
+.insp-timeout-input {
+  width: 6ch; flex: none;
+  background: var(--af-sunk); border: 1px solid var(--af-input-line); color: var(--af-fg);
+  border-radius: var(--af-r-ctl); padding: 2px 5px;
+  font-size: var(--fs-body, 12px); font-family: inherit;
+}
 .insp-size-ops { display: inline-flex; gap: 4px; }
 .insp-size-btn {
   border: 1px solid var(--af-line); border-radius: var(--af-r-ctl); cursor: pointer;
