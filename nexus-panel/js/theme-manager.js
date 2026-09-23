@@ -319,6 +319,20 @@ function applyStyleParams(vars, theme) {
      */
     const k = p.invert ? 100 / Number(raw) : Number(raw) / 100;
     if (!isFinite(k)) continue;
+    /*
+     * opacity 模式（磨砂颗粒）：它是不透明度**数值**，不是颜色，
+     * scaleAlpha 只对 rgba() 字符串有效，对 '0.055' 无能为力。
+     * 上限 0.15 —— 资料实测：颗粒超过约 15% 就不再是质感，
+     * 而是肉眼可见的噪点。这里硬性夹住，滑块拖到底也不会脏。
+     */
+    if (p.mode === 'opacity') {
+      for (const name of p.affects) {
+        const cur = parseFloat(vars[name]);
+        if (!isFinite(cur)) continue;
+        vars[name] = String(Math.min(0.15, +(cur * k).toFixed(3)));
+      }
+      continue;
+    }
     for (const name of p.affects) {
       if (vars[name] == null) continue;
       vars[name] = p.mode === 'deviation'
