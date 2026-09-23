@@ -2846,7 +2846,7 @@
                         else if (!node.isLeaf()) node.collapse();
                     });
                     n.renderTree();
-                    km.layout(100);
+                    km.layout();
                     km.fire('contentchange');
                     return true;
                 } catch (e) { return false; }
@@ -2862,7 +2862,7 @@
                         else if (!node.isLeaf()) node.collapse();
                     });
                     n.renderTree();
-                    km.layout(100);
+                    km.layout();
                     km.fire('contentchange');
                     return true;
                 } catch (e) { return false; }
@@ -3245,7 +3245,7 @@
                     try { node.setText(String(text == null ? '' : text)); } catch (e2) {}
                     km.select(node, true);
                     km.fire('contentchange');
-                    km.layout(100);
+                    km.layout();
                     return true;
                 } catch (e) { return false; }
             };
@@ -3315,7 +3315,7 @@
                 try {
                     if (n.isLeaf && n.isLeaf()) return false;   // 叶子无事可做
                     if (wantExpand) n.expand(); else n.collapse();
-                    n.renderTree(); km.layout(100); km.fire('contentchange');
+                    n.renderTree(); km.layout(); km.fire('contentchange');
                     return true;
                 } catch (e) { return false; }
             }

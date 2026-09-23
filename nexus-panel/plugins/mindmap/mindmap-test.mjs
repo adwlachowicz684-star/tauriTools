@@ -7211,6 +7211,12 @@ group('Tab 建节点：一次就成（不再多出一条孤立连线）');
   // 写 layout(100) 里的 100 会被静默忽略
   ok(!/km\.layout\(\s*\d/.test(src), 'km.layout() 不传无效的数字参数（那会被忽略）');
   ok(!/km\.appendNode\(/.test(src), '源码里已无 km.appendNode 调用');
+  // 全文都不该再有 layout(数字)：km.layout() 不接受参数，写了也是静默忽略。
+  // 先剥掉注释再匹配 —— 否则会命中「写 layout(100) 会被忽略」这句说明文字
+  const codeOnly = html.replace(/\/\*[\s\S]*?\*\//g, '').split('\n')
+    .filter((l) => !/^\s*\*/.test(l) && !/^\s*\/\//.test(l)).join('\n');
+  ok(!/km\.layout\(\s*\d/.test(codeOnly),
+    '全文无 km.layout(数字)（该参数会被静默忽略，写了是误导）');
 }
 
 group('数值输入框 numSpinner（▲▼ 步进 / ▾ 选预设 / 滚轮 ±1）');
