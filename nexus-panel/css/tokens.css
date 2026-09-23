@@ -161,6 +161,7 @@
   --lh-tight:   1.45;
   --lh-normal:  1.5;
   --lh-relaxed: 1.6;
+  --lh-loose: 1.7;   /* 长文/提示条：最宽松一档 */
   --title-1-fs: 13px;  --title-1-fw: var(--fw-strong);
   --title-2-fs: 12px;  --title-2-fw: var(--fw-strong);
   --title-3-fs: 11px;  --title-3-fw: var(--fw-strong);
