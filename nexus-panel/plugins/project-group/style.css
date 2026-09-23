@@ -1779,8 +1779,51 @@
  */
 .fpx-links-bar { display: flex; align-items: center; gap: 8px; padding: 0 2px 6px; }
 .fpx-links-toggle { height: 22px; padding: 0 8px; font-size: var(--fs-11, 11px); }
+
+/*
+ * .fpx-link-row 的**基础定义**。
+ *
+ * 上面那段事故注释说这块被覆盖写抹掉过一次，补回来的是 .fpx-links-bar
+ * 等；但 .fpx-link-row **本身**一直没有基础规则 —— 只有几条带 `:not()`
+ * 的修饰规则。后果有两层，都是肉眼可见的：
+ *   · 行不是 flex → 里面的标识/名字/箭头挤成一团、没有对齐与间距
+ *   · 更隐蔽的：`.fpx-link-state { margin-left: auto }` **只在 flex 容器里
+ *     才生效**，所以"失效 / 冲突"这些状态文字不会被推到最右，
+ *     而是紧贴着组名，看上去像组名的一部分
+ *
+ * 为什么原有的死类扫描没抓到：它只查"CSS 里出现的类名有没有被源码引用"，
+ * 而 .fpx-link-row 既被引用、又在（带修饰的）选择器里出现过 —— 就被当成
+ * 正常了。**"出现在某个选择器里"不等于"有基础定义"**，这是两个方向。
+ */
+.fpx-link-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 1px 0; min-height: 20px;
+  font-size: var(--fs-11, 11px); line-height: 1.5;
+}
 .fpx-link-to { opacity: .5; }
 .fpx-link-group { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/*
+ * 明细行里的状态点**独立定义一份**，不能只靠 `.fpx-badge .fpx-link-dot`。
+ *
+ * 那一处是给徽章内的小点用的（`.fpx-badge` 后代选择器），链接明细行
+ * 不在徽章里 → 匹配不上 → 空 span 是 0×0，完全不可见。用户展开卡片
+ * 看到一排链接，却没有任何状态标识，只能逐个悬停看提示。
+ *
+ * 这里与徽章那处保持同样的 6px 与三色语义（有效=强调蓝 / 失效=灰 /
+ * 冲突=红），只是不再嵌套在 .fpx-badge 下。
+ */
+.fpx-link-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  display: inline-block; background: var(--accent);
+}
+.fpx-link-dot.valid { background: var(--accent); }
+.fpx-link-dot.broken { background: var(--text-mute); }
+.fpx-link-dot.conflict { background: var(--danger); }
+
+/* #292 链接名按钮内部：标识 + 名字（对齐原版 LinkedTabBtn 的"齿轮 + 名字"） */
+.fpx-link-name { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.fpx-link-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fpx-link-row:not(.broken):not(.conflict) .fpx-link-group { cursor: default; }
 .fpx-link-state { margin-left: auto; flex: none; font-size: var(--fs-micro, 10px); opacity: .8; }
 .fpx-link-row.broken .fpx-link-state { color: var(--text-mute); }

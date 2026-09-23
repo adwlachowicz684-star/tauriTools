@@ -83,7 +83,12 @@ console.log('\n=== 4. 前端用真实值（#82 的编辑目标）===');
 
 console.log('\n=== 5. 提示接到界面 ===');
 {
-  t('状态点用逐行 tip', /title=\{d\.tip \|\| STATE_TITLE\[d\.state\]\}/.test(grid));
+  /*
+   * #292 之后状态点并进了链接名按钮（点标识也能编辑），
+   * tip 随之挂到**按钮**上 —— 语义没变（逐行 tip 要显示出来），
+   * 只是挂载点变了。钉按钮上的那处，别钉已经不存在的 dot title。
+   */
+  t('逐行 tip 挂在链接名按钮上', /title=\{d\.tip \|\| /.test(grid) && /编辑这条链接：\$\{d\.name\}/.test(grid));
   t('链接名悬停用 tip', /title=\{d\.tip \|\| d\.name\}/.test(grid));
   /*
    * 组文件夹没了要单独标 —— 它与"链接失效"是两回事：
@@ -151,6 +156,61 @@ console.log('\n=== 9. 「不是 junction 而是普通目录」：不删但必须
    */
   const liveToast = hook.split('\n').some((l) => /ctx\.toast\(msg, 'err'\)/.test(l) && !l.trim().startsWith('//'));
   t('前端 toast（且真在执行，不是注释）', liveToast);
+}
+
+console.log('\n=== 10. #292 链接行状态标识：可见 + 分状态 + 与名字合成一个按钮 ★★ ===');
+{
+  const grid = fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8');
+  const css = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8');
+
+  /* 一、状态点必须**可见**。
+     给它定尺寸的原本只有 `.fpx-badge .fpx-link-dot`（徽章内的那一处），
+     明细行不在徽章里 → 匹配不上 → 空 span 是 0×0，用户完全看不见。 */
+  const dotRules = css.split('\n')
+    .map((l, i) => ({ l, i }))
+    .filter(({ l }) => /\.fpx-link-dot[\s,{:.]/.test(l) && !/^\s*\*/.test(l));
+  const hasStandalone = dotRules.some(({ l }) => /^\.fpx-link-dot/.test(l.trim()));
+  t('fpx-link-dot 有独立定义（不只在 .fpx-badge 下）', hasStandalone,
+    dotRules.map((x) => x.l.trim()).join(' | '));
+
+  /* 二、点必须**分状态着色**。
+     CSS 里定义了 .valid/.broken/.conflict 三色，但 JSX 此前没带状态类 ——
+     于是所有点永远一个颜色，看不出哪条链接失效了。 */
+  const dotSpans = grid.split('\n').filter((l) => /className=\{`fpx-link-dot/.test(l) || /className="fpx-link-dot"/.test(l));
+  t('明细行渲染了状态点', dotSpans.length > 0);
+  const detailDots = grid.split('\n').filter((l) => /fpx-link-dot \$\{d\.state\}/.test(l));
+  t('明细行的点带 state 类（颜色才分得开）', detailDots.length >= 2, `找到 ${detailDots.length} 处`);
+
+  /* 三、#292 标识与名字合成**一个**按钮：点标识也能编辑。
+     分成两个元素时，用户看到那个点会以为可点，点了却没反应。 */
+  /* 按 `<button … </button>` 整块取，不能只取含 className 的那一小段：
+     状态点在 className 之后若干行，窗口不够就取不到（假失败）。 */
+  const bi = grid.indexOf('className="fpx-link-name edit"');
+  const bStart = grid.lastIndexOf('<button', bi);
+  const bEnd = grid.indexOf('</button>', bi);
+  const btn = grid.slice(bStart, bEnd + 9);
+  t('按钮内包含状态点', /fpx-link-dot/.test(btn));
+  t('按钮内包含链接名', /\{d\.name\}/.test(btn) || /fpx-link-text/.test(btn));
+  t('按钮仍走 onEditLink', /onEditLink\(c\.path, gPath\)/.test(btn));
+
+  /* 四、行必须是 flex —— 否则 `.fpx-link-state { margin-left: auto }`
+     不生效，"失效/冲突"不会被推到最右，看上去像组名的一部分。 */
+  /* 按**块**取（截到第一个 `}`）—— CSS 规则是跨行写的，
+     只取一行的话 display/align-items 在下一行，断言恒假（假失败）。 */
+  const ri = css.indexOf('.fpx-link-row {');
+  const rowRule = ri > 0 ? css.slice(ri, css.indexOf('}', ri)) : '';
+  t('.fpx-link-row 有基础定义', !!rowRule, rowRule || '(缺失)');
+  t('基础定义里是 flex', !!rowRule && /display:\s*flex/.test(rowRule));
+  t('基础定义里有 align-items', !!rowRule && /align-items/.test(rowRule));
+
+  /*
+   * 五、为什么原有的死类扫描没抓到这两处（记下来免得再以为它守着）：
+   * 它只查"CSS 里出现的类名有没有被源码引用"，而这两个类既被引用、
+   * 又在（带 :not / 带 .fpx-badge 前缀的）选择器里出现过，就被当成正常。
+   * **"出现在某个选择器里" ≠ "有基础定义" / "在当前上下文能匹配"**。
+   * 这两个方向都值得钉，但通用扫描会误报（很多类确实只在某容器内使用），
+   * 所以这里针对这两个具体点钉，不做泛化。
+   */
 }
 
 done();

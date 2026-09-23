@@ -892,27 +892,42 @@ export function CardGrid({
                 const gPath = d.realGroup || d.group;
                 return (
                 <div className={`fpx-link-row ${d.state}`} key={d.name + gPath}>
-                  <span
-                    className="fpx-link-dot"
-                    /* 逐行 tip 分四种：项目没了 / 项目组没了 / 冲突 / 失效。
-                       只给笼统的"链接异常"不够 —— 前两种的补救方式完全不同，
-                       用户看不出区别就只能瞎试。 */
-                    title={d.tip || STATE_TITLE[d.state]}
-                  />
-                  {/* #82 点链接名直接编辑这条链接。
-                      看清某一行不对（失效 / 链错组）时，
-                      最短路径就是点那一行本身，而不是回到卡片菜单里找。 */}
+                  {/*
+                    #292 对齐原版 `LinkedTabBtn`：**状态标识与链接名合成一个按钮**。
+
+                    此前状态点是按钮外的一个空 span，而给它定尺寸的只有
+                    `.fpx-badge .fpx-link-dot`（徽章内的那一处）——
+                    明细行里根本不匹配，于是它是 0×0、**完全不可见**。
+                    而且它没带状态类（`.valid/.broken/.conflict` 全在 CSS 里
+                    定义了却没人用），所以就算显示出来也永远是一个颜色，
+                    用户看不出哪条链接失效了，只能一个个悬停看提示。
+
+                    合成到一个按钮里还有个实际好处：用户看到那个点会以为
+                    它可点，点它却没反应最别扭；现在点标识和点名字是同一件事。
+                  */}
                   {onEditLink ? (
                     <button
                       className="fpx-link-name edit"
+                      /* #82 点链接名直接编辑这条链接。
+                         看清某一行不对（失效 / 链错组）时，
+                         最短路径就是点那一行本身，而不是回到卡片菜单里找。 */
                       title={d.tip || `编辑这条链接：${d.name}${gName ? ` → ${gName}` : ''}`}
                       onClick={(e) => {
                         e.stopPropagation();
                         onEditLink(c.path, gPath);
                       }}
-                    >{d.name}</button>
+                    >
+                      {/* 逐行 tip 分四种：项目没了 / 项目组没了 / 冲突 / 失效。
+                          只给笼统的"链接异常"不够 —— 前两种的补救方式完全不同，
+                          用户看不出区别就只能瞎试。 */}
+                      <span className={`fpx-link-dot ${d.state}`} aria-hidden />
+                      <span className="fpx-link-text">{d.name}</span>
+                    </button>
                   ) : (
-                    <span className="fpx-link-name" title={d.tip || d.name}>{d.name}</span>
+                    <span className="fpx-link-name" title={d.tip || d.name}>
+                      <span className={`fpx-link-dot ${d.state}`} aria-hidden />
+                      <span className="fpx-link-text">{d.name}</span>
+                    </span>
                   )}
                   {kind === 'project' && gName && (
                     <>
