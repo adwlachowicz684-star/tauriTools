@@ -557,9 +557,21 @@ export function createHost(opts = {}) {
         instance.adaptInput = {
           manifest, wrap: instance.wrap, target: instance.target,
           root: instance.root, isIframe: manifest.type === 'iframe',
-          // 插件自选了主题后，它看到的"面板基调"就是那套的基调。
-          // 不传的话 installAdapter 会取全局基调 → 深浅判断反 → 滤镜加反。
-          panelBase: baseForPlugin(manifest.id),
+          /*
+           * 插件自选了主题后，它看到的"面板基调"就是那套的基调。
+           * 不传的话 installAdapter 会取全局基调 → 深浅判断反 → 滤镜加反。
+           *
+           * 必须写成 **getter 而不是一次性求值** —— 这是"切换主题后
+           * 插件深浅反转"的根因：
+           *   1. 插件在深色主题下挂载，panelBase 求值为 'dark' 并**固定**下来；
+           *   2. 用户切到浅色主题，host 调 reAdapt() 重算；
+           *   3. reAdapt 复用的是 inst.adaptInput，里面那个 'dark' 是旧值；
+           *   4. 插件已跟着主题变浅（pluginBase='light'），
+           *      与陈旧的 panelBase='dark' 不相等 → 施加反转 → 变深。
+           * 结果：面板是浅的，插件是深的，而 localStorage 里明明写着 light。
+           * 改成 getter 后每次读取都重算，任何时候都是当前值。
+           */
+          get panelBase() { return baseForPlugin(manifest.id); },
         };
         await reAdapt(instance);
       } else if (instance) {

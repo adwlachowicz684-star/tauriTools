@@ -671,7 +671,15 @@ function applyThemeVars(vars) {
   s.textContent = ':root{' +
     Object.entries(vars).map(([k, v]) => `${k}:${v}`).join(';') + '}';
   // 让表单控件、滚动条跟随外壳基调
-  const base = vars['--text'] && isLightColor(vars['--bg']) ? 'light' : 'dark';
+  /*
+   * 只看底色，不再额外要求 --text 存在。
+   * 原写法 `vars['--text'] && isLightColor(...)`：--text 缺失时
+   * **无论底色多亮都判成 dark** —— 用一个不相关变量的存在性去否决
+   * 真正的判据，任何漏传 --text 的链路都会把浅色主题整体翻成深色，
+   * 且不报错。isLightColor 自身已处理空值（返回 false → dark），
+   * 这层门是多余的。
+   */
+  const base = isLightColor(vars['--bg']) ? 'light' : 'dark';
   document.documentElement.style.colorScheme = base;
   /* 把基调也写成 data 属性，供插件 CSS 按基调切档。
      光有 colorScheme 不够：那是给浏览器原生控件用的，CSS 选择器读不到。
