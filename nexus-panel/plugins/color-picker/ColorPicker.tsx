@@ -160,8 +160,9 @@ export function ColorPicker({
       {/* ① 可视化选色区：SV 面板 + 色相条。
           此前只能靠预设色块和 RGB 数字调，没有一个能"看颜色"的地方。 */}
       <div className="fpx-picker-visual">
-        {/* 高度 176 与 WPF 原版一致；色相条与它并排等高 */}
-        <SvPanel hsv={hsv} onChange={applyHsv} height={176} />
+        {/* 高度不再写 176：交给 CSS 弹性分配，弹窗才不会溢出滚动。
+            详见 style.css 里 .fpx-picker-visual 的说明。 */}
+        <SvPanel hsv={hsv} onChange={applyHsv} />
         <HueBar hsv={hsv} onChange={applyHsv} />
       </div>
 
