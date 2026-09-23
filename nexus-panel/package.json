@@ -136,7 +136,8 @@
     "test:pg-lock-live-state": "node plugins/project-group/lock-live-state-test.mjs",
     "test:pg-shell-icon-notify": "node plugins/project-group/shell-icon-notify-test.mjs",
     "test:pg-card-nav": "node plugins/project-group/card-nav-test.mjs",
-    "test:pg-new-folder-align": "node plugins/project-group/new-folder-align-test.mjs"
+    "test:pg-new-folder-align": "node plugins/project-group/new-folder-align-test.mjs",
+    "test:pg-config-normalize": "node plugins/project-group/config-normalize-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

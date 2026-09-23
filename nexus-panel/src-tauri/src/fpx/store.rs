@@ -260,6 +260,40 @@ fn ensure_default_tabs(cfg: &mut FpxConfig) {
             if first.name.is_empty() { first.name = "默认".into(); }
         }
     }
+
+    /*
+     * **已存在的**页签名若为空白也要兜底（对齐原版 ConfigService.Normalize：
+     * `if (string.IsNullOrWhiteSpace(t.Name)) t.Name = "页签"`）。
+     *
+     * 不兜底的后果：手改 config.json 把页签名设成空串或纯空格，
+     * 界面上那个页签按钮是**空白的、宽度塌到几乎为零** —— 用户不知道它存在、
+     * 点不中它、也没法给它改名（因为根本找不到它在哪）。
+     * 而它里面的卡片也就这样被"藏"起来了，且没有任何报错。
+     *
+     * 用 is_empty 判定空白（等价于 trim 后为空）而不是只判 empty，
+     * 纯空格名同样看不出是什么。
+     */
+    for t in cfg.project_tabs.iter_mut() {
+        if t.name.trim().is_empty() { t.name = "页签".into(); }
+    }
+    for t in cfg.group_tabs.iter_mut() {
+        if t.name.trim().is_empty() { t.name = "页签".into(); }
+    }
+    /*
+     * 图标分组同理：一个分组都没有时，原版会用顶层 legacy presetIcons
+     * 迁出一个「默认」分组。本版没有 legacy 顶层列表可迁，
+     * 但至少要留一个空分组 —— 否则界面上"图标"那块是彻底空的，
+     * 用户分不清是"没有图标"还是"加载失败"。
+     */
+    if cfg.icon_groups.is_empty() {
+        cfg.icon_groups.push(super::model::IconGroup {
+            name: "默认".into(),
+            icons: vec![],
+        });
+    }
+    for g in cfg.icon_groups.iter_mut() {
+        if g.name.trim().is_empty() { g.name = "分组".into(); }
+    }
 }
 
 /**
