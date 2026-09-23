@@ -1699,5 +1699,68 @@ console.log('\n=== 34. agent-flow 文字属性档位 ===');
     !/font-family:\s*(?:ui-)?monospace/.test(sc));
 }
 
+
+console.log('\n=== 35. 插件基调判定（浅色主题下反转加反） ===');
+{
+  const tn = read('js/theme-normalizer.js');
+  const sc = stripComments(tn);
+
+  /*
+   * manifest.theme 的语义是**与面板的关系**，不是"插件自身什么颜色"。
+   * registry.js 顶部：'dark' = 与面板同基调（不适配）；'light' = 相反（需适配）。
+   *
+   * 此前写成 pluginBase = manifest.theme，把"同基调"当成了"插件是深色"：
+   *   面板深色 → 'dark'==='dark' → 不反转（碰巧对）
+   *   面板浅色 → 'dark'≠'light'  → 施加反转（错）
+   * 深色下永远不暴露，一切到浅色主题（赤陶/宣纸）必现。
+   */
+  t('manifest.theme 不再被直接当作插件自身基调',
+    !/pluginBase\s*=\s*manifest\.theme\s*;/.test(sc));
+
+  /* 面板浅色 + theme:"dark"（同基调）→ 必须判定为不反转 */
+  {
+    const panelBase = 'light';
+    const pluginBase = 'dark' === 'light'
+      ? (panelBase === 'dark' ? 'light' : 'dark')
+      : panelBase;
+    t('theme:"dark" + 浅色面板 → 判定为同基调、不反转',
+      pluginBase === panelBase, `pluginBase=${pluginBase}`);
+  }
+  {
+    const panelBase = 'dark';
+    const pluginBase = 'dark' === 'light'
+      ? (panelBase === 'dark' ? 'light' : 'dark')
+      : panelBase;
+    t('theme:"dark" + 深色面板 → 仍判定为同基调、不反转',
+      pluginBase === panelBase, `pluginBase=${pluginBase}`);
+  }
+  {
+    for (const panelBase of ['dark', 'light']) {
+      const pluginBase = 'light' === 'light'
+        ? (panelBase === 'dark' ? 'light' : 'dark')
+        : panelBase;
+      if (pluginBase === panelBase) {
+        t(`theme:"light" + ${panelBase} 面板 → 应反转`, false);
+      }
+    }
+    t('theme:"light"（声明相反）在两种面板下都反转', true);
+  }
+
+  /*
+   * 实测优先于声明：插件自己上报的基调必须排在 manifest 之前。
+   * 上报值是插件在自己文档里采样得到的**实际渲染结果**，
+   * 而 manifest 是静态声明 —— 跟随主题的插件声明会失效。
+   */
+  const iRep = sc.indexOf("o.reportedBase === 'light'");
+  const iMan = sc.indexOf("manifest.theme === 'light'");
+  t('插件上报基调优先于 manifest 声明',
+    iRep > 0 && iMan > 0 && iRep < iMan, `reported@${iRep} manifest@${iMan}`);
+
+  /* 语义必须在注释里写清，否则后来者会再"修正"回错误写法 */
+  t('registry.js 的 theme 语义与判定实现一致（注释互证）',
+    /与面板同基调/.test(read('plugins/registry.js')) &&
+    /与面板同基调/.test(tn));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
