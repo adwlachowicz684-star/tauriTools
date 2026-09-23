@@ -76,4 +76,40 @@ console.log('\n=== 4. 原有的保护没被改坏 ===');
   t('ini 本身仍 +h +s（隐藏它）', /attrib", &\["\+h".*, "\+s"/.test(sys) || /\+"\.\.\." \+h/.test(sys) || /\+h/.test(sys));
 }
 
+console.log('\n=== 5. 图标来源优先级：GUI 映射 > desktop.ini ★★ ===');
+{
+  /*
+   * 原版 ResolveFolderIcon 明写优先级：GUI 专属映射 > desktop.ini > Shell 默认。
+   * 本版前端 `displayIcon` 也是 `c.guiIcon ?? c.icon`（gui 在前）。
+   *
+   * 反过来（ini 在前）的后果：设了 GUI 专属图标、而目录里还留着一份旧的
+   * desktop.ini 时，报告会说生效的是 ini 那个旧图标 —— 与界面上画出来的
+   * 不一致，且没有任何报错，MCP 调用方据此做出的判断全错。
+   *
+   * 必须钉**次序**：只钉"两个分支都存在"是漏报（顺序反了也满足）。
+   */
+  const i = sys.indexOf('pub fn icon_source');
+  const fn = sys.slice(i, sys.indexOf('\n}\n', i) > 0 ? sys.indexOf('\n}\n', i) : i + 3000);
+  const gi = fn.indexOf('if let Some(g) = gui_icon');
+  const ii = fn.indexOf('if let Some(r) = from_ini');
+  t('guiMap 分支存在', gi > 0);
+  t('desktopIni 分支存在', ii > 0);
+  t('guiMap 判定早于 desktopIni', gi > 0 && ii > gi, `${gi} / ${ii}`);
+  t('guiMap 标签正确', /\("guiMap"\.into\(\), Some\(g\)/.test(fn));
+  /* 非 Windows 分支同样是 gui 优先，不能只改一半 */
+  const ni = sys.indexOf('#[cfg(not(windows))]', i);
+  const nfn = sys.slice(ni, ni + 400);
+  t('非 Windows 分支也以 gui 为准', nfn.indexOf('gui_icon') > 0 && nfn.indexOf('"guiMap"') > 0);
+}
+
+console.log('\n=== 6. #445 get_status 同时给出 aiAgentCmd 与 chainClient ===');
+{
+  const mcp = fs.readFileSync(path.join(HERE, '../../src-tauri/src/fpx/mcp.rs'), 'utf8');
+  const j = mcp.indexOf('"get_status" => {');
+  const blk = mcp.slice(j, j + 1400);
+  t('给出 chainClient', /"chainClient": cfg\.chain_client/.test(blk));
+  t('同时给出 aiAgentCmd（原版字段名）', /"aiAgentCmd": cfg\.chain_client/.test(blk));
+  t('注释说明为何两个都给', /找不到 aiAgentCmd/.test(blk));
+}
+
 done();

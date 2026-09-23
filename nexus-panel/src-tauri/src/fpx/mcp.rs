@@ -976,6 +976,11 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
                 "groups": groups,
                 "linkCount": snap.links.len(),
                 "chainClient": cfg.chain_client,
+                /* #445 原版 get_status 里叫 `aiAgentCmd`；本版这个角色由
+                   `chain_client` 承担。两个名字都给：按原版字段写的调用方
+                   找不到 aiAgentCmd 会当成"没配 AI 客户端"而走兜底分支，
+                   那是个**静默的行为差异**（不报错，只是行为变了）。 */
+                "aiAgentCmd": cfg.chain_client,
                 "selection": sel,
             })).unwrap_or_default() }] })
         }

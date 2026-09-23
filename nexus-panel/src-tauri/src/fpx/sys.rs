@@ -677,6 +677,8 @@ pub fn icon_resource_in(text: &str) -> Option<String> {
  * （`icon_affect_explorer` 关掉时就是这样）。
  *
  * 返回：`(来源, 图标引用, ini 是否存在, 文件夹是否带 System 属性)`
+ *
+ * 来源取值：`guiMap`（界面专属映射，优先级最高）/ `desktopIni` / `none`。
  */
 pub fn icon_source(dir: &str, gui_icon: Option<String>, affect_explorer: bool) -> (String, Option<String>, bool, bool) {
     #[cfg(windows)]
@@ -691,11 +693,24 @@ pub fn icon_source(dir: &str, gui_icon: Option<String>, affect_explorer: bool) -
             match read_ini_text(&ini) { Ok(Some(t)) => icon_resource_in(&t), _ => None }
         } else { None };
         let system_attr = has_system_attr(dir);
-        if let Some(r) = from_ini {
-            return ("desktopIni".into(), Some(r), ini_exists, system_attr);
-        }
+        /*
+         * 优先级：**GUI 映射 > desktop.ini**（原版 ResolveFolderIcon 明写，
+         * 本版前端 `displayIcon` 也是 `c.guiIcon ?? c.icon`）。
+         *
+         * 之前这里把 desktop.ini 排在前面，于是"设了 GUI 专属图标、
+         * 而目录里还留着一份旧的 desktop.ini"（先开同步设过、后来关掉，
+         * 或被别的工具写过）时会报成 desktopIni + 旧图标值 ——
+         * 而界面上显示的是 guiIcon。**报告与实际显示不一致，且没有任何报错**，
+         * MCP 调用方据此以为生效的是另一个图标。
+         *
+         * 反过来说：两边都设了时以哪边为准，必须和界面上真正画出来的那个一致，
+         * 否则"查状态"这个动作本身就在骗人。
+         */
         if let Some(g) = gui_icon {
             return ("guiMap".into(), Some(g), ini_exists, system_attr);
+        }
+        if let Some(r) = from_ini {
+            return ("desktopIni".into(), Some(r), ini_exists, system_attr);
         }
         ("none".into(), None, ini_exists, system_attr)
     }
