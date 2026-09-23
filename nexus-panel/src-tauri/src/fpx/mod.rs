@@ -46,6 +46,7 @@ pub(crate) fn snapshot(dir: &std::path::Path, cfg: &FpxConfig) -> Snapshot {
         project_tabs: store::build_tabs(&cfg.project_tabs, cfg, &records, &names, "project"),
         group_tabs: store::build_tabs(&cfg.group_tabs, cfg, &records, &names, "group"),
         links: store::build_link_rows(&records),
+        link_notices: Vec::new(),
     }
 }
 
@@ -853,13 +854,41 @@ pub(crate) fn core_sync_links(
      * 而**指向别组的一律保留在账本里**（原版 InspectOwnership 判定），
      * 否则那个链接会变成账本里查不到的"静默残骸"（同 #202）。
      */
+    /*
+     * 「该名字在磁盘上不是 junction，而是普通目录/文件」——**不删，但要让用户看见**。
+     *
+     * 原版 `RemoveLink` 遇到这种情况会**抛异常**，而那时 wanted 里的链接
+     * 已经建好了 —— 半截状态，用户还得自己查哪儿断了。本版不抛；
+     * 但也不能像原版那样静默略过：名字被普通目录占着，"取消勾选"对它不生效，
+     * 用户会以为删掉了，实际还占着位置，且**没有任何提示**。
+     *
+     * 所以：不删（避免误删内容），留在账本里（界面上会显示成"冲突"，
+     * 那正是我们想要的可见性），并附一条说明带回去。
+     */
+    let occupied: Vec<String> = outside
+        .iter()
+        .filter(|n| junction::link_state(project, n) == junction::LinkState::Conflict)
+        .cloned()
+        .collect();
+
     let cancelled: Vec<String> = outside
         .iter()
         .filter(|n| match resolve_of(n) {
             None => true,                                              // 失效
             Some(t) => store::normalize_key(&t) == target_key,         // 本组
         })
+        /* 被普通目录/文件占用的**保留在账本里**：磁盘上还占着位置，
+           剔掉会让它变成账本里查不到的"静默残骸"（同 #202）。 */
+        .filter(|n| !occupied.iter().any(|x| x.eq_ignore_ascii_case(n)))
         .cloned()
+        .collect();
+
+    let mut notices: Vec<String> = occupied
+        .iter()
+        .map(|n| format!(
+            "「{n}」未删除：{} 已存在且不是链接（普通目录/文件），为避免误删内容已跳过，请手动处理",
+            junction::link_path(project, n).display(),
+        ))
         .collect();
 
     let mut err: Option<String> = None;
@@ -923,10 +952,21 @@ pub(crate) fn core_sync_links(
         Ok(())
     })?;
 
+    /*
+     * 部分失败时把说明并进错误一起带出去 ——
+     * 否则用户只看到"失败"，看不到"还有一个名字被占着没处理"。
+     */
+    let mut snap = snapshot(dir, &cfg);
+    snap.link_notices = std::mem::take(&mut notices);
     if let Some(e) = err {
-        return Err(format!("同步链接时部分失败：{e}"));
+        let extra = if snap.link_notices.is_empty() {
+            String::new()
+        } else {
+            format!("\n{}", snap.link_notices.join("\n"))
+        };
+        return Err(format!("同步链接时部分失败：{e}{extra}"));
     }
-    Ok(snapshot(dir, &cfg))
+    Ok(snap)
 }
 
 pub(crate) fn core_remove_link(dir: &std::path::Path, project: &str) -> Result<Snapshot, String> {

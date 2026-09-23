@@ -683,6 +683,16 @@ pub struct Snapshot {
     pub project_tabs: Vec<TabInfo>,
     pub group_tabs: Vec<TabInfo>,
     pub links: Vec<LinkRow>,
+    /*
+     * 本次操作里"做了但没做成"的说明（比如某个名字被普通目录占着、没能删掉）。
+     *
+     * 为什么要单独带回来：这类情况**不算失败**（其余都成功了），
+     * 走 Err 会把整次操作报成失败；而不报的话用户以为都成了 ——
+     * 他取消了那个名字，界面上却还占着位置，且没有任何提示。
+     * 只有同步链接这类"部分生效"的操作会填，其余为空。
+     */
+    #[serde(default)]
+    pub link_notices: Vec<String>,
 }
 
 /// 前端启动所需的一次性数据。

@@ -524,6 +524,21 @@ export function useFpx() {
       pushLog(`已同步：${project} → ${group}（${row?.names.length ?? 0} 个链接）`);
       ctx.toast('链接已同步', 'ok');
     }
+    /*
+     * 部分没做成的（名字被普通目录占着、没能删）要单独说出来。
+     *
+     * 这类情况后端不算失败 —— 其余链接都同步好了，报成"同步链接失败"
+     * 会让用户以为整次操作都没生效。但也不能不说：他取消了那个名字，
+     * 界面上却还占着位置，没有任何提示，只能以为软件在随机丢东西。
+     */
+    if (snap && snap.linkNotices && snap.linkNotices.length > 0) {
+      const msg = snap.linkNotices.join('；');
+      pushLog(`同步链接：${msg}`, true);
+      /* 用 err 而不是 info：需要用户手动处理，不处理会一直占着位置 */
+      ctx.toast(msg, 'err');
+    }
+    return snap;
+
   }, [api, applySnapshot, ctx, pushLog, run]);
 
   const removeLink = useCallback(async (project: string) => {

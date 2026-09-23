@@ -134,4 +134,53 @@ console.log('\n=== 8. 未设置父目录时拒绝 ===');
     /未设置「新建\{\}父目录」，无法确定迁移目标根/.test(cli));
 }
 
+console.log('\n=== 7. #314 页签名收敛为合法单级片段 ★★ ===');
+{
+  const i = cli.indexOf('pub fn safe_segment');
+  t('safe_segment 存在', i > 0);
+  /* 从文档注释开始取（注释在 fn 之前，讲"为什么用 Windows 字符集"） */
+  const c0 = cli.lastIndexOf('/**', i);
+  const fn = cli.slice(c0 > 0 ? c0 : i, i + 900);
+
+  /* 一、必须挡住能拼出**多层级**或越出目标根的字符。
+     页签名直接拿去 root.join(seg)，含 \ 或 / 会拼出多级路径 ——
+     项目被搬到用户没指定的地方，而报告里只写"已搬迁"。 */
+  t('挡住反斜杠', /'\\\\'/.test(fn));
+  t('挡住斜杠', /\| '\/' /.test(fn));
+  t('挡住冒号', /\| ':' /.test(fn));
+  t('挡住通配符', /\| '\*' /.test(fn));
+  t('挡住引号与尖括号', /'"' \| '<' \| '>' \| '\|'/.test(fn));
+  t('挡住控制符', /is_control\(\)/.test(fn));
+  t('挡住 . 与 ..', /s == "\." \|\| s == "\.\."/.test(fn));
+  t('挡住空白', /trim\(\)\.is_empty\(\)/.test(fn));
+
+  /* 二、必须用**Windows** 的非法字符集，而不是"当前平台"的。
+     按当前平台判的话，同一份 config 换台机器跑结论就不同。 */
+  t('注释说明为何用 Windows 集', /Windows 的/.test(fn) || /当前平台/.test(fn));
+
+  /* 三、计划里被跳过的项目**必须进计划**（原版 continue 掉、连记录都没有） */
+  const j = cli.indexOf('struct PlanItem');
+  const blk = cli.slice(j, j + 2600);
+  t('计划项带 skip 原因', /skip: String/.test(blk));
+  t('排除目录也进计划并写明原因', /跳过：排除目录/.test(blk));
+  t('链接/不存在也写明原因', /跳过：是链接，不是真实目录/.test(blk) && /跳过：文件夹不存在/.test(blk));
+  t('页签名非法时该页签整体不搬', /页签名「\{\}」含非法字符，该页签整体不搬/.test(blk));
+
+  /* 四、跳过项要**计入 skipped**（原版不计，总数对不上 → 用户以为丢了） */
+  /* 第二个 `for it in &plan {` 才是执行段（第一个在 dry-run 里） */
+  const k = cli.indexOf('for it in &plan {', cli.indexOf('for it in &plan {') + 10);
+  const exec = cli.slice(k, k + 700);
+  t('执行段把 skip 计入 skipped', exec.indexOf('skipped += 1') > 0 && exec.indexOf('it.skip.clone()') > 0);
+  t('执行段 push 出记录（不静默）', /items\.push\(MigItem/.test(exec));
+
+  /* 五、dry-run 同样要显示跳过原因 ——
+     预演的意义就是"动手前看清楚"，看不到的跳过等于没预演 */
+  const d = cli.indexOf('let mut pre: Vec<MigItem>');
+  const dry = cli.slice(d, d + 700);
+  t('预演段也输出 skip 原因', dry.indexOf('it.skip.clone()') > 0);
+
+  /* 六、根目录拼接用的是收敛后的 seg，不是原始页签名 */
+  t('用收敛后的 seg 拼路径', /root\.join\(&it\.seg\)/.test(cli));
+}
+
 done();

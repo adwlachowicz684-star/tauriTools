@@ -152,6 +152,26 @@ struct MigItem {
  * 而那时候目录已经搬走了。给一个只看不做的通道，成本极低，
  * 却是这类命令唯一能让人放心按下去的东西。
  */
+/**
+ * #314 把页签名收敛为合法的单级目录片段；不合法返回 `None`。
+ *
+ * 不合法 = 空 / 纯空白 / `.` / `..` / 含路径分隔符或 Windows 文件名非法字符 / 含控制符。
+ *
+ * 字符集用 **Windows 的**非法集（`\ / : * ? " < > |`）而不是"当前平台"的：
+ * 迁移目标是给资源管理器用的目录名，按当前平台判的话同一份 config
+ * 换台机器跑就会得出不同结论 —— 而用户名/页签名里出现这些字符本就不该被接受。
+ */
+pub fn safe_segment(name: &str) -> Option<String> {
+    if name.trim().is_empty() { return None; }
+    let s = name.trim();
+    if s == "." || s == ".." { return None; }
+    for c in s.chars() {
+        if c.is_control() { return None; }
+        if matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { return None; }
+    }
+    Some(s.to_string())
+}
+
 fn migrate(
     cfg_path: &str,
     rec_path: &str,
@@ -178,15 +198,56 @@ fn migrate(
 
     let tabs = if kind == "group" { &cfg.group_tabs } else { &cfg.project_tabs };
 
-    // 先做不可变计划：搬迁过程中要改 config，不能边枚举边改
-    let mut plan: Vec<(String, String)> = Vec::new(); // (页签名, 源路径)
+    /*
+     * 先做不可变计划：搬迁过程中要改 config，不能边枚举边改。
+     *
+     * 计划项带一个 `skip`：被排除 / 不是真实目录 / 页签名不合法的项目
+     * **也要进计划**，而不像原版那样 `continue` 掉。
+     *
+     * 原版 `HierarchyMigrator` 里这两种情况都是直接 continue ——
+     * 既不 moved 也不 skipped，**连一条记录都没有**。用户跑完看到
+     * "100 个项目只处理了 80 个"，另外 20 个完全没有任何说明，
+     * 只会以为丢了。这个**不照搬**：不搬的决定是对的，静默略过不是。
+     */
+    struct PlanItem {
+        /// 页签名（层级片段）；页签名不合法时为空
+        seg: String,
+        src: String,
+        /// 非空 = 跳过，值为原因
+        skip: String,
+    }
+    let mut plan: Vec<PlanItem> = Vec::new();
     for t in tabs {
         for p in &t.items {
             let k = reloc_key(p);
-            if excludes.iter().any(|e| e.eq_ignore_ascii_case(&k)) { continue; }
-            // 不跟随链接：搬迁一个 junction 会把链接背后的目录搬走，而不是搬链接本身
-            if !super::fsutil::is_real_dir(Path::new(p)) { continue; }
-            plan.push((t.name.clone(), p.clone()));
+            let mut skip = String::new();
+            if excludes.iter().any(|e| e.eq_ignore_ascii_case(&k)) {
+                skip = "跳过：排除目录（数据目录 / 目标根）".to_string();
+            } else if !super::fsutil::is_real_dir(Path::new(p)) {
+                /* 不跟随链接：搬迁一个 junction 会把链接背后的目录搬走，
+                   而不是搬链接本身。这里必须说明原因 ——
+                   "文件夹不存在"和"是链接所以不搬"是两种不同的补救。 */
+                skip = if Path::new(p).exists() {
+                    "跳过：是链接，不是真实目录".to_string()
+                } else {
+                    "跳过：文件夹不存在".to_string()
+                };
+            }
+            /*
+             * #314 页签名收敛为合法的**单级**目录片段。
+             *
+             * 原版 `SafeSegment` 注释："含非法路径字符、控制符、空白、'.'、'..' 时返回 null"，
+             * 命中则**该页签整体不搬**。
+             *
+             * 为什么必须挡：页签名直接拿去 `root.join(seg)`，含 `\` 或 `/` 的页签名
+             * 会拼出**多层级**路径（甚至越出目标根，比如 `..\..\x`），
+             * 于是项目被搬到用户完全没指定的地方 —— 而报告里只写"已搬迁"。
+             */
+            let seg = safe_segment(&t.name);
+            if skip.is_empty() && seg.is_none() {
+                skip = format!("跳过：页签名「{}」含非法字符，该页签整体不搬", t.name);
+            }
+            plan.push(PlanItem { seg: seg.unwrap_or_default(), src: p.clone(), skip });
         }
     }
 
@@ -195,7 +256,12 @@ fn migrate(
        所以 dry-run 能完整展示"哪些会搬、哪些会跳过、为什么跳过"。 */
     if dry_run {
         let mut pre: Vec<MigItem> = Vec::new();
-        for (seg, src) in &plan {
+        for it in &plan {
+            let src = &it.src;
+            if !it.skip.is_empty() {
+                pre.push(MigItem { src: src.clone(), dst: String::new(), note: it.skip.clone() });
+                continue;
+            }
             let name = Path::new(src).file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
@@ -203,7 +269,7 @@ fn migrate(
                 pre.push(MigItem { src: src.clone(), dst: String::new(), note: "跳过：无法解析文件夹名".into() });
                 continue;
             }
-            let dst = root.join(seg).join(&name);
+            let dst = root.join(&it.seg).join(&name);
             let note = if reloc_key(src).eq_ignore_ascii_case(&reloc_key(&dst.to_string_lossy())) {
                 "跳过：已在目标位置".to_string()
             } else if dst.exists() {
@@ -231,13 +297,26 @@ fn migrate(
     let mut items: Vec<MigItem> = Vec::new();
     let (mut moved, mut skipped, mut failed) = (0, 0, 0);
 
-    for (seg, src) in &plan {
+    for it in &plan {
+        let src = &it.src;
+        if !it.skip.is_empty() {
+            /* 原版这里是**不计入** skipped 的（连记录都没有）。
+               本版照搬"不搬"的决定，但不照搬"静默" ——
+               否则总数对不上，用户只会以为项目丢了。 */
+            skipped += 1;
+            items.push(MigItem { src: src.clone(), dst: String::new(), note: it.skip.clone() });
+            continue;
+        }
         let name = Path::new(src).file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        if name.is_empty() { skipped += 1; continue; }
+        if name.is_empty() {
+            skipped += 1;
+            items.push(MigItem { src: src.clone(), dst: String::new(), note: "跳过：无法解析文件夹名".into() });
+            continue;
+        }
 
-        let dst_dir = root.join(seg);
+        let dst_dir = root.join(&it.seg);
         let dst = dst_dir.join(&name);
 
         if reloc_key(src).eq_ignore_ascii_case(&reloc_key(&dst.to_string_lossy())) {

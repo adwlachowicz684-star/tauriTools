@@ -219,6 +219,14 @@ export interface Snapshot {
   projectTabs: TabInfo[];
   groupTabs: TabInfo[];
   links: LinkRow[];
+  /*
+   * 本次操作里"做了但没做成"的说明（比如某名字被普通目录占着没能删）。
+   *
+   * 这类情况**不算失败**（其余都成功了），走错误通道会把整次操作报成失败；
+   * 不报的话用户以为都成了 —— 他取消了那个名字，界面上却还占着位置。
+   */
+  linkNotices?: string[];
+
 }
 
 export interface ContentItem {

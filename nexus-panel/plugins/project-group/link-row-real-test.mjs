@@ -124,4 +124,33 @@ console.log('\n=== 8. #198 链接名勾选：换绑提示要按磁盘实际，�
   t('界面说明为何默认不勾', /默认<b>不勾选<\/b>/.test(dlg));
 }
 
+console.log('\n=== 9. 「不是 junction 而是普通目录」：不删但必须显示（原版抛异常，本版不照搬）★ ===');
+{
+  const mod = fs.readFileSync(path.join(HERE, '../../src-tauri/src/fpx/mod.rs'), 'utf8');
+  const i = mod.indexOf('pub(crate) fn core_sync_links');
+  const fn = mod.slice(i, i + 9000);
+  const hook = fs.readFileSync(path.join(HERE, 'hooks/useFpx.ts'), 'utf8');
+
+  /* 一、识别出被普通目录/文件占用的名字 */
+  t('识别 Conflict 的名字',
+    /let occupied: Vec<String> = outside\s*\n\s*\.iter\(\)\s*\n\s*\.filter\(\|n\| junction::link_state\(project, n\) == junction::LinkState::Conflict\)/.test(fn));
+  /* 二、不删（避免误删内容），但不能静默略过 */
+  t('文案说明为避免误删已跳过', /为避免误删内容已跳过，请手动处理/.test(fn));
+  /* 三、保留在账本里 —— 剔掉会变成账本里查不到的"静默残骸"（#202） */
+  t('被占用的保留在账本里',
+    /\.filter\(\|n\| !occupied\.iter\(\)\.any\(\|x\| x\.eq_ignore_ascii_case\(n\)\)\)/.test(fn));
+  /* 四、说明要带回前端 —— 走 Err 会把整次成功的操作报成失败 */
+  t('notices 写进快照', /snap\.link_notices = std::mem::take\(&mut notices\)/.test(fn));
+  t('部分失败时也把说明并进错误', fn.includes('snap.link_notices.join(') && /let extra = if snap\.link_notices\.is_empty\(\)/.test(fn));
+  /* 五、前端要真的显示出来 —— 否则后端算了也白算 */
+  t('前端读 linkNotices', /snap\.linkNotices/.test(hook));
+  t('前端记日志', /pushLog\(`同步链接：\$\{msg\}`, true\)/.test(hook));
+  /*
+   * 逐行判而不是整篇 `test()` —— 注释掉那行后文本仍在，整篇匹配会**漏报**
+   * （反向验证 C 就是这么空跑的）。真正要钉的是这行**活着**。
+   */
+  const liveToast = hook.split('\n').some((l) => /ctx\.toast\(msg, 'err'\)/.test(l) && !l.trim().startsWith('//'));
+  t('前端 toast（且真在执行，不是注释）', liveToast);
+}
+
 done();
