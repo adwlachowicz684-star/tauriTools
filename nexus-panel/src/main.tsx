@@ -1,6 +1,24 @@
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import '../css/neumorphism.css';
+/*
+ * tokens.css 是**设计令牌的权威来源**（间距、时长、层级 z-*、阴影、字体）。
+ *
+ * 它此前从未被加载 —— 只有 neumorphism.css 被引。于是凡是引用令牌的
+ * `var()` 全部按 CSS 规范失效、属性退化为初始值：不报错、不告警，
+ * 表现为"样式看着不对但查不出哪错了"。
+ *
+ * 这类失效已经出现过两轮：
+ *   ① agent-flow 的 styles.css 里 94 处字号、36 处圆角、22 处按钮凸起全废
+ *   ② neumorphism 自己引用的 --z-* / --dur-* / --font-sans 等 19 个同样失效
+ *
+ * 补变量名到各文件是打地鼠 —— 补完一批，上游再引一批新的又失效。
+ * 加载令牌文件才是根治。
+ *
+ * 顺序必须在 neumorphism.css **之后**：后者带一整套同名兜底值，
+ * 先加载它、再让令牌覆盖，主题缺失时仍有值可用。
+ */
+import '../css/tokens.css';
 import { initTheme } from '../js/theme-manager.js';
 
 /**
