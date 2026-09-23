@@ -338,11 +338,30 @@ export function createHost(opts = {}) {
        服务画出的色盘/图标面板才看得见、点得着。 */
   const SERVICE_HIDDEN_CSS =
     'position:absolute;left:-99999px;top:0;width:400px;height:300px;overflow:hidden;pointer-events:none;';
+  /*
+   * 服务浮层的样式**全部走令牌**，不写死。
+   * ------------------------------------------------------------------
+   * 此前这里写死了：border-radius:8px、box-shadow:0 12px 40px rgba(...)、
+   * 底色取 --surface、z-index 9999。后果不是"不好看"，而是**不跟随主题**：
+   *   · 圆角 —— 扁平主题 10px、新拟态 14px、赤陶 14px，写死 8px 后
+   *     切主题时唯独这个弹窗的角是另一个体系的；
+   *   · 阴影 —— 写死的固定黑投影在浅色主题下过重，且吃不到主题的方向；
+   *   · 底色用 --surface —— 那是**面板层**，玻璃主题下是半透明的，
+   *     弹窗浮在主面板之上，一透就把底下的字一起透出来，
+   *     与 dialog.css 里"弹窗层必须用 --surface-overlay"是同一个结论。
+   *
+   * 高度 420 → 440：内容虽已改成弹性（不再被顶出去），
+   * 但留一点余量能让选色区在常见窗口下更高，拖动更好瞄。
+   */
   const SERVICE_SHOWN_CSS =
     'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);' +
-    'width:min(560px,90vw);height:min(420px,80vh);z-index:9999;' +
-    'background:var(--surface,#222);border:1px solid var(--edge,#444);' +
-    'border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.45);overflow:hidden;';
+    'width:min(560px,90vw);height:min(440px,82vh);' +
+    'z-index:var(--z-service,9900);' +
+    'background:var(--surface-overlay,var(--surface,#222));' +
+    'border:1px solid var(--divider,var(--edge,#444));' +
+    'border-radius:var(--r-lg,8px);' +
+    'box-shadow:var(--sh-out-lg),var(--sh-cast-md);' +
+    'overflow:hidden;';
   serviceHost.style.cssText = SERVICE_HIDDEN_CSS;
   (opts.serviceHostParent || document.body).appendChild(serviceHost);
 
@@ -351,7 +370,8 @@ export function createHost(opts = {}) {
   const serviceMask = document.createElement('div');
   serviceMask.id = 'nexus-service-mask';
   serviceMask.style.cssText =
-    'display:none;position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,.45);';
+    'display:none;position:fixed;inset:0;z-index:var(--z-service-mask,9800);' +
+    'background:var(--mask,rgba(0,0,0,.45));';
   (opts.serviceHostParent || document.body).appendChild(serviceMask);
 
   /** 显示/隐藏交互服务的浮层 */
