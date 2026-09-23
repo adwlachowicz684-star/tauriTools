@@ -27,6 +27,7 @@
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SKIP_DIRS } from './js/dead-class-scan.js';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 
@@ -138,6 +139,40 @@ function targets() {
 const THIRD_PARTY = /(?:^|[\\/])(?:editor|vendor|node_modules|dist|third|kityminder)(?:[\\/]|$)|kityminder|\.min\.css/;
 
 const FILES = targets();
+
+/*
+ * 源码里的**内联样式**（React style={{...}} 与模板串 style="..."）。
+ * ------------------------------------------------------------------
+ * 这是此前"梳理很多次却总有没统一的"的直接原因：
+ * 所有检查（本脚本、dead-class-scan、controls-test）都只读 .css 文件，
+ * 而项目里存在一整个**影子样式层**活在 .tsx/.js 里 ——
+ * 实测 439 处 React inline style + 28 处字符串 inline style，从未被扫过。
+ *
+ * 更关键的是：内联优先级**高于**任何 CSS 类。所以即便 CSS 层已经
+ * 用 --ctl-h 统一了控件高度，一个 style={{ height: 30 }} 就能把它顶掉，
+ * 而且改 CSS 完全无效 —— 表现为"明明统一过了，界面还是不整齐"。
+ * 不把这一层纳入扫描，就永远有扫不到的角落。
+ */
+const SRC_FILES = (() => {
+  const out = [];
+  const walk = (d, depth) => {
+    if (depth > 6) return;
+    let ents = [];
+    try { ents = readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      if (SKIP_DIRS.has(e.name)) continue;
+      const p = join(d, e.name);
+      if (e.isDirectory()) walk(p, depth + 1);
+      else if (/\.(tsx|jsx|ts|js)$/.test(e.name)) {
+        // 测试文件里的示例不算产品样式
+        if (!/-test\.mjs?$|\.test\.|tests?\//.test(p)) out.push(p);
+      }
+    }
+  };
+  walk(join(ROOT, ONLY_DIR || 'plugins'), 0);
+  if (!ONLY_DIR) walk(join(ROOT, 'src'), 0);
+  return out;
+})();
 
 /*
  * 共享层归属：有些规则（减少动效兜底、裸 button 兜底）本就该
@@ -521,7 +556,98 @@ if (WANT_CLASSES && ONLY_DIR) {
 if (WANT_JSON) {
   console.log(JSON.stringify({ pass, fail, rows }, null, 2));
 } else {
-  console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
+  
+console.log('\n=== 14. 内联样式（影子层） ===');
+{
+  /*
+   * 扫描 React style={{...}} 与模板串 style="..." 里的**写死值**。
+   *
+   * 两类不算违规：
+   *   · var(...) / 变量引用 —— 已经走令牌了
+   *   · 纯布局关键字（flex / block / 100% / inherit）与 0 / 1 / auto
+   *   · 百分比定位（top: 38% 这类是几何，不是设计量）
+   */
+  const PROPS = new Set(['color','background','backgroundcolor','border','borderradius',
+    'fontsize','fontweight','padding','margin','gap','width','height','boxshadow','zindex',
+    'opacity','lineheight','minheight','maxheight','minwidth','maxwidth']);
+  const norm = (k) => k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
+  const IGNORE = /^(inherit|auto|none|flex|block|grid|inline|inline-flex|transparent|currentcolor|0|1|100%|0px|unset|initial|center|left|right|top|bottom|absolute|relative|fixed|sticky|hidden|visible|nowrap|wrap|pointer|default|text|contain|cover|ellipsis|bold|normal|row|column)$/i;
+
+  const hits = [];
+  for (const p of SRC_FILES) {
+    let src = '';
+    try { src = read(p); } catch { continue; }
+    const rel = p.replace(ROOT + '/', '');
+    const push = (prop, val) => {
+      if (!PROPS.has(prop)) return;
+      if (/var\(|\$\{/.test(val)) return;
+      /* 剥所有引号：模板里写成 padding: '0 12px', 会带引号残留，
+         不剥的话同一个值会因引号被算成两个不同的项，统计失真 */
+      const v = val.replace(/["']/g, '').trim();
+      if (IGNORE.test(v)) return;
+      // 变量名（引用了外部常量）不算写死
+      if (/^[A-Za-z_$][\w$]*$/.test(v)) return;
+      if (/^-?[\d.]+%$/.test(v)) return;      // 百分比是几何不是设计量
+      if (/^-?[\d.]+$/.test(v) && (prop === 'opacity' || prop === 'zindex')) return;
+      hits.push({ rel, prop, v });
+    };
+    for (const m of src.matchAll(/style\s*=\s*\{\{(.*?)\}\}/gs)) {
+      for (const km of m[1].matchAll(/(?:^|[,{])\s*(['"]?)([A-Za-z][\w-]*)\1\s*:\s*([^,}\n]+)/g)) {
+        push(norm(km[2]), km[3]);
+      }
+    }
+    for (const m of src.matchAll(/style\s*=\s*["\']([^"\']*)["\']/g)) {
+      for (const dm of m[1].matchAll(/([\w-]+)\s*:\s*([^;]+)/g)) push(norm(dm[1]), dm[2]);
+    }
+  }
+
+  const byProp = {};
+  for (const h of hits) (byProp[h.prop] ||= []).push(h);
+  const summary = Object.entries(byProp)
+    .sort((a, b) => b[1].length - a[1].length)
+    .map(([k, v]) => `${k}×${v.length}`).join(' ');
+
+  /*
+   * 冻结基线而不是要求立刻清零：存量里有很多是"当时随手调的"，
+   * 一次性改完风险大（观感会变）。先让它们**可见**，再逐批收口。
+   * 关键是：新增必须归零，否则这条就没有意义。
+   */
+  if (STRICT) {
+    /*
+     * 冻结基线 = 当前实测存量（project-group 一个插件就有 height 16 / padding 21）。
+     * 与"间距冻结基线"同一套处理：不追求立刻清零，先让它们**可见**，
+     * 再逐批收口；关键是新增必须归零，否则这条就没有意义。
+     *
+     * 这些数字本身也是答案的一部分：它们证明"影子层"确实存在且规模不小 ——
+     * 此前所有检查都只读 .css，这一层从来没被数过。
+     */
+    const BASE = { height: 16, width: 8, padding: 21, gap: 4, fontsize: 2 };
+    for (const [prop, allow] of Object.entries(BASE)) {
+      const n = (byProp[prop] || []).length;
+      t(`内联 ${prop} 写死不超过基线 ${allow}`, n <= allow,
+        n > allow ? `当前 ${n}：${(byProp[prop] || []).slice(0, 4).map((x) => x.rel + '=' + x.v).join(', ')}` : '');
+    }
+  } else {
+    t(`内联写死已登记（${hits.length} 处）`, true, summary);
+  }
+
+  /* 反向：内联里**不许出现颜色字面量** —— 那是最严重的不跟随主题 */
+  const colorHit = [];
+  for (const p of SRC_FILES) {
+    let src = ''; try { src = read(p); } catch { continue; }
+    for (const m of src.matchAll(/style\s*=\s*\{\{(.*?)\}\}/gs)) {
+      for (const cm of m[1].matchAll(/:\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]*\))/g)) {
+        colorHit.push(p.replace(ROOT + '/', '') + ':' + cm[1]);
+      }
+    }
+    for (const m of src.matchAll(/style\s*=\s*["\']([^"\']*)["\']/g)) {
+      if (/#[0-9a-fA-F]{3,8}|rgba?\(/.test(m[1])) colorHit.push(p.replace(ROOT + '/', ''));
+    }
+  }
+  t('内联样式无颜色字面量（颜色必须走令牌）', colorHit.length === 0, colorHit.slice(0, 3).join(', '));
+}
+
+console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
   if (todo.length) {
     console.log(`\n存量待办 ${todo.length} 条（跑 --dir <界面> 时按新界面标准严格判定）：`);
     for (const x of todo) console.log(`  · ${x}`);
