@@ -2586,13 +2586,14 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
           ⏱ 触发器{triggers.length > 0 && <span className="dot">{enabledCount}/{triggers.length}</span>}
         </span>
 
-        <label className="inline" title="原生＝固定 Agent Flow 自己的样式；跟随＝用面板主题">
-          外观
-          <select value={themeMode} onChange={(e) => setThemeMode(e.target.value as ThemeMode)}>
-            <option value="follow">跟随面板</option>
-            <option value="native">原生样式</option>
-          </select>
-        </label>
+        {/*
+          外观已挪到右侧「画布设置」里的「外观」一节。
+
+          它属于整个插件、不属于这张画布，跟工具栏上这些"本次运行怎么跑"
+          的东西不是一类；更重要的是默认主题下两个选项**观感完全相同**
+          （配色与原生层是同一套值），摆在工具栏里看着就像个坏掉的开关。
+          设置页里写了说明，讲清"要换面板主题才看得出差别"。
+        */}
         <label className="inline">
           并发
           <select value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} disabled={running}>
@@ -2940,6 +2941,8 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
               onExportFlow={exportFlowAs}
               canvases={canvases}
               activeCanvasId={activeId ?? undefined}
+              themeMode={themeMode}
+              onThemeModeChange={setThemeMode}
             />
           </fieldset>
         </div>

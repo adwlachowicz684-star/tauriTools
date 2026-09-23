@@ -26,6 +26,15 @@ type Props = {
   onBrowseExportDir: () => void;
   /** 能不能真正写文件（浏览器模式下为 false） */
   canExportToFile: boolean;
+  /* ---- 外观 ---- */
+  /**
+   * 外观模式 —— **插件级偏好**，不是画布级配置。
+   *
+   * 它放在这里只是因为插件没有别的设置入口，
+   * 面板上必须写明"不属于这张画布"，否则用户会以为换张画布就变了。
+   */
+  themeMode?: 'native' | 'follow';
+  onThemeModeChange?: (mode: 'native' | 'follow') => void;
 };
 
 function newServer(): McpServer {
@@ -42,10 +51,12 @@ function newServer(): McpServer {
 function CanvasConfigPanel({
   config, onChange, onExport, onNote,
   exportDir, onChangeExportDir, onBrowseExportDir, canExportToFile,
+  themeMode, onThemeModeChange,
 }: Props) {
   const [openMcp, setOpenMcp] = useState(true);
   const [openEnv, setOpenEnv] = useState(false);
   const [openExport, setOpenExport] = useState(false);
+  const [openTheme, setOpenTheme] = useState(false);
 
   const servers = config.mcpServers ?? [];
   const issues = validateCanvasConfig(config);
@@ -279,6 +290,45 @@ function CanvasConfigPanel({
           </div>
         )}
       </div>
+
+      {/* ---------- 外观（插件级，不是画布级） ---------- */}
+      {themeMode && onThemeModeChange ? (
+      <div className="cfg-sec">
+        <button type="button" className="cfg-title" onClick={() => setOpenTheme(!openTheme)}>
+          <span>{openTheme ? '▾' : '▸'}</span>
+          外观
+          <em>{themeMode === 'follow' ? '跟随面板' : '原生'}</em>
+        </button>
+
+        {openTheme && (
+          <div className="cfg-body">
+            <p className="cfg-hint">
+              这一项属于<strong>整个插件</strong>，换画布不会变。
+            </p>
+            <div className="cfg-row">
+              <select
+                value={themeMode}
+                onChange={(ev) => onThemeModeChange(ev.target.value as 'native' | 'follow')}
+              >
+                <option value="follow">跟随面板主题</option>
+                <option value="native">原生样式（固定深色）</option>
+              </select>
+            </div>
+            {/*
+              这两句是"这个功能是不是废了"的答案，必须写在当场。
+
+              默认的「Agent Flow 深色」主题，其变量值与原生层**逐像素相同**
+              —— 所以在没换过面板主题的情况下，两个选项看起来一模一样。
+              这不是坏了，是默认值恰好对齐；换一套面板主题才会看出差别。
+            */}
+            <p className="cfg-hint">
+              默认主题下两个选项观感相同 —— 它的配色与原生层是同一套值。
+              换成别的面板主题（比如浅色）后，跟随才会跟着变。
+            </p>
+          </div>
+        )}
+      </div>
+      ) : null}
 
       {issues.length > 0 && (
         <div className="cfg-issues">

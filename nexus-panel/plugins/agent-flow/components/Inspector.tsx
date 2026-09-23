@@ -62,6 +62,9 @@ type Props = {
   onBrowseExportDir?: () => void;
   /** 能不能真正写文件（浏览器模式为 false） */
   canExportToFile?: boolean;
+  /* ---- 外观（插件级偏好，只在"没选中节点"的设置页里出现） ---- */
+  themeMode?: 'native' | 'follow';
+  onThemeModeChange?: (mode: 'native' | 'follow') => void;
 };
 
 export default function Inspector({
@@ -70,6 +73,7 @@ export default function Inspector({
   canvasConfig, onCanvasConfigChange, onExportFlow,
   exportDir = '', onChangeExportDir, onBrowseExportDir, canExportToFile = false,
   canvases, activeCanvasId,
+  themeMode, onThemeModeChange,
 }: Props) {
   const pushNote = onNote;
   if (!node) {
@@ -90,6 +94,8 @@ export default function Inspector({
             onChangeExportDir={onChangeExportDir ?? (() => {})}
             onBrowseExportDir={onBrowseExportDir ?? (() => {})}
             canExportToFile={canExportToFile}
+            themeMode={themeMode}
+            onThemeModeChange={onThemeModeChange}
           />
         </aside>
       );
