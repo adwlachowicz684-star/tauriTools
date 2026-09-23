@@ -139,7 +139,8 @@
     "test:pg-new-folder-align": "node plugins/project-group/new-folder-align-test.mjs",
     "test:pg-config-normalize": "node plugins/project-group/config-normalize-test.mjs",
     "test:pg-deadcode": "node plugins/project-group/deadcode-test.mjs",
-    "test:pg-saveguard": "node plugins/project-group/saveguard-test.mjs"
+    "test:pg-saveguard": "node plugins/project-group/saveguard-test.mjs",
+    "test:pg-type-hygiene": "node plugins/project-group/type-hygiene-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
