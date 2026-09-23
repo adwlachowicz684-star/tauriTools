@@ -139,6 +139,14 @@
      将来若决定跟随外壳尺度，把这里整体换成 @import 即可。 */
   --af-mono:  ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --af-r-xs:  4px;
+
+  /* 控件圆角主值。5px 此前在文件里写死了 23 处 —— 它落在
+
+     xs(4) 与 sm(6) 之间，既不是这档也不是那档，于是没人敢动。
+
+     补成令牌后这 23 处有了归口，想统一调整改这里一处即可。 */
+
+  --af-r-ctl: 5px;
   /* 中等圆角。此前代码里写 var(--af-r, 8px) 但**从未定义过** —— 靠兜底生效，
      等于幽灵引用（改这里的值不会影响它）。补上定义，让兜底成为真正的兜底。 */
   --af-r:     8px;
@@ -481,7 +489,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
   display: flex; align-items: center; gap: 7px; margin: 5px 0;
   font-size: var(--fs-note, 11px); color: #bae6fd;
   background: #0e202e; border: 1px solid #1d4d5a;
-  border-radius: 5px; padding: 4px 7px;
+  border-radius: var(--af-r-ctl); padding: 4px 7px;
 }
 /* 复制 / 移动的第二条路径：视觉上并入同一组，不另起一块 */
 .node-line--path.is-sub { margin-top: -2px; opacity: .85; }
@@ -874,7 +882,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 
 button.mini {
   background: var(--af-raised); border: 1px solid var(--af-line); color: var(--af-fg);
-  font-size: var(--fs-body, 12px); padding: 3px 9px; border-radius: 5px; cursor: pointer;
+  font-size: var(--fs-body, 12px); padding: 3px 9px; border-radius: var(--af-r-ctl); cursor: pointer;
   box-shadow: var(--ctl-shadow);}
 button.mini:hover:not(:disabled) { border-color: var(--af-accent); }
 button.mini:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
@@ -936,7 +944,7 @@ button.mini.danger:hover { border-color: var(--af-bad); color: var(--af-t-err2);
 .rule-label { flex: 1; }
 .inspector .rule-card input, .inspector .rule-card select {
   background: var(--af-sunk); border: 1px solid var(--af-input-line); color: var(--af-fg);
-  border-radius: 5px; padding: 5px 7px; font-size: var(--fs-body, 12px);
+  border-radius: var(--af-r-ctl); padding: 5px 7px; font-size: var(--fs-body, 12px);
 }
 .inspector .rule-value { flex: 1; }
 .rule-row small.dim { flex: none; }
@@ -953,7 +961,7 @@ button.mini.danger:hover { border-color: var(--af-bad); color: var(--af-t-err2);
 .url-box { display: flex; align-items: center; gap: 8px; }
 .url-box code {
   flex: 1; background: var(--af-sunk); border: 1px solid var(--af-line);
-  border-radius: 5px; padding: 6px 8px; font-size: var(--fs-code, 11px);
+  border-radius: var(--af-r-ctl); padding: 6px 8px; font-size: var(--fs-code, 11px);
   font-family: var(--af-mono); overflow: auto; white-space: nowrap; text-overflow: ellipsis;
 }
 .out.snippet {
@@ -1185,7 +1193,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   display: flex; align-items: center; gap: 7px; margin: 5px 0;
   font-size: var(--fs-note, 11px); color: var(--af-t-loop-d);
   background: #0e2026; border: 1px solid #1d4d5a;
-  border-radius: 5px; padding: 4px 7px;
+  border-radius: var(--af-r-ctl); padding: 4px 7px;
 }
 .par-bars { display: flex; gap: 2px; align-items: flex-end; height: 11px; flex: none; }
 .par-bars i { width: 3px; background: #06b6d4; border-radius: var(--r-pill, 1px); }
@@ -1207,7 +1215,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   display: flex; align-items: center; gap: 7px; margin: 5px 0;
   font-size: var(--fs-note, 11px); color: #fbcfe8;
   background: #2a1622; border: 1px solid #4a2537;
-  border-radius: 5px; padding: 4px 7px;
+  border-radius: var(--af-r-ctl); padding: 4px 7px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .loop-icon { flex: none; font-size: var(--fs-title, 13px); color: var(--af-t-loop); }
@@ -1286,13 +1294,13 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 
 /* ---------------- 更新检测节点（B站 / 公众号） ---------------- */
 .node-card.update { border-left-color: #fb7299; }
-.node-card.update.status-success { border-left-color: #22c55e; }
+.node-card.update.status-success { border-left-color: var(--af-ok); }
 
 .upd-icon { flex: none; font-size: var(--fs-body, 12px); }
 .upd-summary {
   margin: 4px 0; font-size: var(--fs-note, 11px);
   background: var(--af-sunk); border: 1px solid var(--af-line);
-  border-radius: 5px; padding: 4px 7px;
+  border-radius: var(--af-r-ctl); padding: 4px 7px;
 }
 .upd-summary code {
   font-family: var(--af-mono); font-size: var(--fs-note, 11px); color: var(--af-soft);
@@ -1409,7 +1417,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 .cond-op-items { flex: 1; display: flex; flex-wrap: wrap; gap: 4px; }
 .cond-op-btn {
   display: inline-flex; align-items: center; gap: 4px;
-  padding: 3px 9px; border-radius: 5px; cursor: pointer;
+  padding: 3px 9px; border-radius: var(--af-r-ctl); cursor: pointer;
   font-size: var(--fs-body, 12px); color: var(--af-dim);
   border: 1px solid var(--af-line); background: var(--af-sunk);
   transition: border-color var(--af-dur-fast), color var(--af-dur-fast), background var(--af-dur-fast);
@@ -1431,7 +1439,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 /* 配置问题 */
 .cond-issue {
   font-size: var(--fs-note, 11px); line-height: 1.5; margin-top: 4px;
-  padding: 4px 8px; border-radius: 5px; border-left: 2px solid;
+  padding: 4px 8px; border-radius: var(--af-r-ctl); border-left: 2px solid;
 }
 .cond-issue.warn { color: var(--af-warn); border-color: var(--af-warn); background: rgba(245, 158, 11, .08); }
 .cond-issue.error { color: var(--af-bad); border-color: var(--af-bad); background: rgba(239, 68, 68, .08); }
@@ -1475,7 +1483,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   margin: 2px 0 6px;
 }
 .cond-logic-btn {
-  font-size: var(--fs-body, 12px); padding: 2px 9px; border-radius: 5px; cursor: pointer;
+  font-size: var(--fs-body, 12px); padding: 2px 9px; border-radius: var(--af-r-ctl); cursor: pointer;
   border: 1px solid var(--af-line); background: var(--af-sunk); color: var(--af-dim);
   transition: border-color var(--af-dur-fast), color var(--af-dur-fast), background var(--af-dur-fast);
   box-shadow: var(--ctl-shadow-sm);}
@@ -1492,7 +1500,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   border-left: 2px solid var(--af-divider);
 }
 .cond-item {
-  padding: 5px 7px; border-radius: 5px;
+  padding: 5px 7px; border-radius: var(--af-r-ctl);
   border: 1px solid var(--af-line); background: var(--af-sunk);
 }
 .cond-item.off { opacity: .5; border-style: dashed; }
@@ -1504,7 +1512,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 }
 .cond-op-select {
   flex: 1; min-width: 0;
-  font-size: var(--fs-body, 12px); padding: 2px 6px; border-radius: 5px;
+  font-size: var(--fs-body, 12px); padding: 2px 6px; border-radius: var(--af-r-ctl);
   border: 1px solid var(--af-input-line); background: var(--af-panel); color: var(--af-fg);
 }
 .cond-op-select optgroup { color: var(--af-dim); font-style: normal; }
@@ -1513,7 +1521,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 .cond-item-body { display: flex; gap: 5px; margin-top: 5px; }
 .cond-src-select {
   flex: none; max-width: 45%;
-  font-size: var(--fs-body, 12px); padding: 2px 5px; border-radius: 5px;
+  font-size: var(--fs-body, 12px); padding: 2px 5px; border-radius: var(--af-r-ctl);
   border: 1px solid var(--af-input-line); background: var(--af-panel); color: var(--af-dim);
 }
 
@@ -1546,7 +1554,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 
 .cond-add {
   align-self: flex-start; margin-top: 2px;
-  font-size: var(--fs-note, 11px); padding: 3px 9px; border-radius: 5px; cursor: pointer;
+  font-size: var(--fs-note, 11px); padding: 3px 9px; border-radius: var(--af-r-ctl); cursor: pointer;
   border: 1px dashed var(--af-add-line); background: transparent; color: var(--af-dim);
   transition: border-color var(--af-dur-fast), color var(--af-dur-fast);
   box-shadow: var(--ctl-shadow-sm);}
@@ -1603,11 +1611,11 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 .param-card.off { opacity: .5; border-style: dashed; }
 .param-row { display: flex; align-items: center; gap: 5px; margin-top: 5px; }
 .param-row select {
-  flex: none; font-size: var(--fs-body, 12px); padding: 2px 6px; border-radius: 5px;
+  flex: none; font-size: var(--fs-body, 12px); padding: 2px 6px; border-radius: var(--af-r-ctl);
   border: 1px solid var(--af-input-line); background: var(--af-panel); color: var(--af-fg);
 }
 .rule-value.mono { font-family: var(--af-mono); font-size: var(--fs-note, 11px); }
-.param-index { width: 56px; flex: none; font-size: var(--fs-note, 11px); padding: 2px 5px; border-radius: 5px;
+.param-index { width: 56px; flex: none; font-size: var(--fs-note, 11px); padding: 2px 5px; border-radius: var(--af-r-ctl);
   border: 1px solid var(--af-line); background: var(--af-panel); color: var(--af-fg); }
 
 .param-preview {
@@ -1705,7 +1713,7 @@ input.mono, textarea.mono {
 .view-switch { display: flex; gap: 2px; margin-right: 8px;
   border: 1px solid var(--af-divider); border-radius: 7px; padding: 2px; }
 .view-switch button { background: none; border: none; color: var(--af-mute);
-  font-size: var(--fs-body, 12px); padding: 3px 12px; border-radius: 5px; cursor: pointer;
+  font-size: var(--fs-body, 12px); padding: 3px 12px; border-radius: var(--af-r-ctl); cursor: pointer;
   box-shadow: var(--ctl-shadow);}
 .view-switch button.on {
   background: var(--af-accent); color: #fff;
@@ -1775,7 +1783,7 @@ input.mono, textarea.mono {
 .task-pre { margin: 0; max-height: 220px; overflow: auto; white-space: pre-wrap;
   word-break: break-all; font-size: var(--fs-note, 11px); line-height: 1.6;
   background: var(--af-bg); border: 1px solid var(--af-divider);
-  border-radius: 5px; padding: 7px 9px; color: var(--af-soft); }
+  border-radius: var(--af-r-ctl); padding: 7px 9px; color: var(--af-soft); }
 .task-pre.err { color: var(--af-bad); border-color: var(--af-bad); }
 /*
  * 判据：比正文亮一档，并且限高 ——
@@ -1898,13 +1906,17 @@ input.mono, textarea.mono {
 .task-flow-canvas { position: relative; overflow: auto; }
 .task-flow-svg { position: absolute; inset: 0; pointer-events: none; }
 .task-flow-edge { stroke: var(--af-line, #2a2f3a); stroke-width: 1.5; color: var(--af-line, #2a2f3a); }
-.task-flow-edge.st-done { stroke: #22c55e; color: #22c55e; }
-.task-flow-edge.st-running { stroke: #f59e0b; color: #f59e0b; }
-.task-flow-edge.st-blocked { stroke: #ef4444; color: #ef4444; opacity: 0.6; }
+/* 状态色走 --af-ok/--af-warn/--af-bad 而不是写死 #22c55e 之类：
+   它俩在 follow 模式下会转接面板的 --ok/--warn/--danger（见 :root[data-af-mode="follow"]），
+   写死则永远停在原生深色档 —— 浅色面板上这三条线会偏暗、发灰。 */
+
+.task-flow-edge.st-done { stroke: var(--af-ok); color: var(--af-ok); }
+.task-flow-edge.st-running { stroke: var(--af-warn); color: var(--af-warn); }
+.task-flow-edge.st-blocked { stroke: var(--af-bad); color: var(--af-bad); opacity: 0.6; }
 .task-flow-node.abs { position: absolute; cursor: pointer; }
-.task-flow-node.is-active { z-index: 3; box-shadow: 0 0 0 1px var(--af-accent, #3b82f6); }
+.task-flow-node.is-active { z-index: var(--z-inline, 5); box-shadow: 0 0 0 1px var(--af-accent, #3b82f6); }
 .task-flow-pop {
-  position: absolute; left: 0; top: 100%; z-index: 5;
+  position: absolute; left: 0; top: 100%; z-index: var(--z-inline, 5);
   width: 280px; max-height: 220px; overflow: auto;
   margin-top: 4px; padding: 8px;
   background: var(--af-panel, #171a21);
@@ -2415,7 +2427,7 @@ input.mono, textarea.mono {
 }
 .mod-bar-ops { margin-left: auto; display: flex; gap: 6px; flex: none; }
 .mod-btn {
-  border: 1px solid rgba(245, 158, 11, 0.5); border-radius: 5px;
+  border: 1px solid rgba(245, 158, 11, 0.5); border-radius: var(--af-r-ctl);
   background: transparent; color: #fbbf24; cursor: pointer;
   font-family: inherit; font-size: var(--fs-body, 12px); padding: 3px 11px;
   transition: background var(--af-dur-fast);
@@ -2489,7 +2501,7 @@ input.mono, textarea.mono {
   font-weight: var(--title-3-fw);}
 .insp-size-ops { display: inline-flex; gap: 4px; }
 .insp-size-btn {
-  border: 1px solid var(--af-line); border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--af-line); border-radius: var(--af-r-ctl); cursor: pointer;
   background: transparent; color: var(--af-dim); font-family: inherit;
   font-size: var(--fs-body, 12px); padding: 2px 10px;
   transition: color var(--af-dur-fast), border-color var(--af-dur-fast);
@@ -2617,7 +2629,7 @@ input.mono, textarea.mono {
 .canvas-config input[type=text] {
   width: 100%; box-sizing: border-box;
   background: var(--af-sunk, #171b24); border: 1px solid var(--af-input-line);
-  border-radius: 5px; padding: 5px 7px; font-size: var(--fs-body, 12px); color: var(--af-fg, #e6e9f0);
+  border-radius: var(--af-r-ctl); padding: 5px 7px; font-size: var(--fs-body, 12px); color: var(--af-fg, #e6e9f0);
 }
 .canvas-config .cfg-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-code, 11px); }
 
@@ -2637,7 +2649,7 @@ input.mono, textarea.mono {
 .canvas-config .cfg-export {
   display: flex; flex-direction: column; gap: 1px; align-items: flex-start;
   width: 100%; padding: 7px 9px; margin-bottom: 5px;
-  border: 1px solid var(--af-line, #2a2f3a); border-radius: 5px;
+  border: 1px solid var(--af-line, #2a2f3a); border-radius: var(--af-r-ctl);
   background: none; cursor: pointer; font-size: var(--fs-title, 13px); color: var(--af-fg, #e6e9f0);
   box-shadow: var(--ctl-shadow);}
 .canvas-config .cfg-export small { font-size: var(--fs-note, 11px); color: var(--af-dim, #8b93a7); }
@@ -2657,7 +2669,7 @@ input.mono, textarea.mono {
 .mcp-sec { margin: 2px 0; }
 .mcp-sec-title {
   display: flex; align-items: center; gap: 6px; width: 100%;
-  padding: 5px 8px; border: 0; border-radius: 5px; background: none;
+  padding: 5px 8px; border: 0; border-radius: var(--af-r-ctl); background: none;
   /* 左边条 = 这个 server 的色，与该项工具在画布上的卡片同色。
      以前这里也是圆球，同样会与画布的边条语言打架。 */
   border-left: 3px solid transparent;

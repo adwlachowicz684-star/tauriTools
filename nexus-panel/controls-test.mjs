@@ -1237,5 +1237,68 @@ console.log('\n=== 27. 数据驱动的调节项必须有界面入口 ===');
   t('预设可点且可取消', /setBgPreset\(\s*on\s*\?\s*''\s*:\s*p\.id\s*\)/.test(app));
 }
 
+
+console.log('\n=== 28. 尺度量必须走令牌（圆角 / 层级 / 状态色 / 间距防恶化）===');
+{
+  const af = stripComments(read('plugins/agent-flow/styles.css'));
+  const pg = stripComments(read('plugins/project-group/style.css'));
+  const tk = stripComments(read('css/tokens.css'));
+
+  /* ---- 圆角 ----
+     agent-flow 曾有一套写死的 5px（23 处），它落在自有令牌 xs(4) 与 sm(6)
+     之间，两边都不靠，于是长期没人敢动 —— 想统一圆角得改 23 个地方。
+     现已收口成 --af-r-ctl，这里盯住"不要再冒出新的"。 */
+  const r5 = [...af.matchAll(/border-radius\s*:\s*(\d+)px/g)].map((m) => m[1]);
+  t('agent-flow 圆角不再写死 5px', !r5.includes('5'), `残留 ${r5.length} 处写死`);
+  t('--af-r-ctl 已定义', /--af-r-ctl\s*:\s*5px/.test(af));
+
+  /* ---- 层级 ----
+     z-index 写死的危害不在数值本身，而在**看不出它该排在哪一档**：
+     后来者想加一个浮层，只能靠猜一个数，于是越加越乱。 */
+  const zombie = [];
+  for (const [name, src] of [['agent-flow', af], ['project-group', pg], ['tokens', tk]]) {
+    for (const m of src.matchAll(/z-index\s*:\s*(\d+)\s*;/g)) zombie.push(`${name}:${m[1]}`);
+  }
+  t('z-index 全部走令牌', zombie.length === 0, zombie.join(', ') || '无写死');
+
+  /* ---- 状态色 ----
+     #22c55e/#f59e0b/#ef4444 与 --ok/--warn/--danger 完全同值。
+     写死的后果：follow 模式下 --af-ok 会转接面板状态色，写死的不会 ——
+     切到浅色面板，这三条流程线仍停在原生深色档，偏暗发灰。 */
+  /*
+   * 只查**规则体里的直接写死**，两类必须排除：
+   *   ① 定义处 —— `--af-native-ok: #22c55e;` 就是这三个值的源头，不算写死
+   *   ② 兜底值 —— `var(--af-bad, #ef4444)` 是合规写法，兜底本就该写死
+   * 判据：色值前面紧邻的字符若是 `,` 则是兜底；若整行是 `--xxx:` 则是定义。
+   */
+  const stHard = [];
+  for (const c of ['#22c55e', '#f59e0b', '#ef4444']) {
+    for (const m of af.matchAll(new RegExp(c.replace(/[#]/g, '\\$&'), 'g'))) {
+      const before = af.slice(Math.max(0, m.index - 40), m.index);
+      if (/,\s*$/.test(before)) continue;              // var(...) 的兜底
+      if (/--[\w-]+\s*:\s*$/.test(before)) continue;   // 令牌定义处
+      stHard.push(c);
+    }
+  }
+  t('状态色不再写死（走 --af-ok/--af-warn/--af-bad）',
+    stHard.length === 0, stHard.join(', ') || '无残留');
+
+  /* ---- 间距：防恶化 ----
+     存量 661 处写死一次性令牌化风险太大（5px/7px 是另一套节奏，
+     与共享的偶数 --sp-* 对不上，硬套会改变观感）。
+     所以先不要求清零，改为**冻结基线**：新增可以，减少更好，变多就报红。
+     这样至少能挡住"继续恶化"，存量待专项处理。 */
+  const spacingOf = (src) =>
+    [...src.matchAll(/(?:margin|padding|gap)[^;:]*\s*:\s*([^;]+);/g)]
+      .flatMap((m) => [...m[1].matchAll(/(\d+)px/g)].map((x) => x[1]))
+      .filter((v) => Number(v) >= 2).length;
+  const AF_BASELINE = 632, PG_BASELINE = 265;
+  const nowAf = spacingOf(af), nowPg = spacingOf(pg);
+  t('agent-flow 间距未继续恶化（不超过基线）', nowAf <= AF_BASELINE,
+    `当前 ${nowAf} / 基线 ${AF_BASELINE}`);
+  t('project-group 间距未继续恶化（不超过基线）', nowPg <= PG_BASELINE,
+    `当前 ${nowPg} / 基线 ${PG_BASELINE}`);
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

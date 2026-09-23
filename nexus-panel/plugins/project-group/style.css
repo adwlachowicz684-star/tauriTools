@@ -74,7 +74,7 @@
   max-width: 180px;
   min-width: 76px;
   padding: 10px 6px;
-  z-index: 30;
+  z-index: var(--z-rail, 30);
   box-shadow: var(--sh-out-md);
   overflow: visible;
 }
