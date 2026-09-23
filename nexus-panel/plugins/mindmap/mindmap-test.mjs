@@ -4596,14 +4596,25 @@ group('拖放：bridge 与插件层接入');
   ok(/failed\.push\(r\.error/.test(hd),
     '失败项带上**原因**：只说「未添加」用户不知道该怎么办，「超过单张上限 24.0 MB」才能决定下一步');
 
-  // 首帧缩略图：必须有超时与失败兜底
+  /* ---- 封面取帧：1/3 处，不再取首帧 ----
+   * 首帧绝大多数是黑场 / 淡入 / 片头字幕，抓出来一片纯黑，
+   * 卡片上看着像「图没加载出来」—— 这正是之前封面全黑的原因。
+   */
   const mt = fnBody(idx, 'function makeVideoThumb(file)');
-  // 这条必须**精确**匹配 v.src 的赋值：只断言"文件里出现过 #t=0.1"是不行的 ——
-  // 注释里也写着它，字符串还在但赋值改没了照样绿（变异验证实锤过）。
-  ok(/v\.src\s*=\s*url\s*\+\s*'#t=0\.1'/.test(mt),
-    'v.src 实际赋值为 url + #t=0.1（不 seek 不绘制首帧，抓出来全黑）');
-  ok(/setTimeout/.test(mt), '有超时（某些编码元数据加载很慢，不能一直等）');
-  ok(/fin\(null\)/.test(mt), '失败一律返回 null（缩略图不能挡住附加本身）');
+  // 采样点：先 1/3，若仍在黑场再依次试 1/2、2/3
+  ok(/1\s*\/\s*3/.test(mt) && /1\s*\/\s*2/.test(mt) && /2\s*\/\s*3/.test(mt),
+    '采样点为 1/3 → 1/2 → 2/3（避开片头黑场）');
+  // 必须真的 seek，不能只靠 #t= —— seek 到 1/3 才能拿到有内容的帧
+  ok(/v\.currentTime\s*=/.test(mt), 'seek 到采样点（用 currentTime，不是只靠 #t= 片段）');
+  ok(/'seeked'/.test(mt), '等 seeked 事件（seek 是异步的，不等会抓到旧帧）');
+  // 黑场检测：光换采样点不够，1/3 也可能仍在黑场里，得看亮度
+  ok(/getImageData/.test(mt), '抓帧后算平均亮度（判断是不是黑场）');
+  ok(/lum\s*<\s*DARK/.test(mt), '太黑就试下一个采样点');
+  // 不能只写 seek 不写兜底：duration 可能是 Infinity（直播流 / 未索引）
+  ok(/Number\.isFinite\(dur\)/.test(mt), 'duration 不合法时退回首帧（不能拿 NaN 去 seek）');
+  ok(!/#t=0\.1/.test(mt), '不再依赖 #t=0.1 那种"取首帧"的写法');
+  ok(/setTimeout/.test(mt), '有超时（某些编码 seek 很慢，不能一直等）');
+  ok(/preload\s*=\s*'auto'/.test(mt), 'preload=auto（metadata 只拉元数据，seek 过去解不出画面）');
 
   // 侧栏改为列表
   const pnl = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
@@ -5032,11 +5043,29 @@ group('视频播放：两个按钮与自动播放回退');
     pnl.indexOf('export function openVideo') + 2600);
 
   ok(/'截图'/.test(ov), '有「截图」按钮');
-  ok(/'设为缩略图'/.test(ov), '有「设为缩略图」按钮');
-  ok(/opt\.onSetThumb/.test(ov), '设为缩略图走回调（写回节点引用）');
+  ok(/'设为封面'/.test(ov), '有「设为封面」按钮');
+  ok(/opt\.onSetThumb/.test(ov), '设为封面走回调（写回节点引用）');
   // 没有节点上下文时不给这个按钮 —— 点了没反应更让人困惑
   ok(/opt\.onSetThumb \? \[setThumb\] : \[\]/.test(ov),
-    '没有回调时不显示「设为缩略图」（避免点了没反应）');
+    '没有回调时不显示「设为封面」（避免点了没反应）');
+
+  /* ---- 侧栏打开的视频也要能设封面 ----
+   * 早先在侧栏点视频走 openVideo(app, asset)，不传 opt，
+   * 于是只有从画布节点点开的才有「设为封面」按钮 —— 看着像功能丢了。
+   */
+  const at = pnl.slice(pnl.indexOf('const openAt = async'), pnl.indexOf('const openAt = async') + 2600);
+  ok(/onSetThumb:/.test(at), '侧栏打开视频时带上 onSetThumb');
+  ok(/app\.api\.setVideoThumb\?\.\(/.test(at), '侧栏的设封面走 api.setVideoThumb');
+  // 签名是 `const openAt = async (kind, ref, index)` —— 必须连 async 一起匹配，
+  // 写成 openAt(kind,ref,index) 永远为假（那是调用处的形态），断言就成了装饰品
+  ok(/const openAt = async \(kind, ref, index\)/.test(at), 'openAt 带 index（否则不知道改第几个视频）');
+  {
+    const call = pnl.slice(pnl.indexOf("safe('打开'") || 0, (pnl.indexOf("safe('打开'") || 0) + 300);
+    ok(/openAt\(kind, ref, index\)/.test(call), '调用处真的把 index 传进去了');
+  }
+  // 宿主必须暴露，否则面板那句是空调用
+  const ix2 = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  ok(/setVideoThumb:/.test(ix2), 'index.js 暴露 api.setVideoThumb');
 
   // 抓帧：videoWidth 为 0 时必须返回 null（不是空串 —— 空串画出来是全黑）
   ok(/if \(!w \|\| !hh\) return null;/.test(ov), '没画面时返回 null（不是空串）');

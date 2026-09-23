@@ -1107,13 +1107,30 @@ export function buildSide(app, opts = {}) {
       app.api.status(`已移除${label}：${r.n || '（未命名）'}`);
     };
 
-    /** 打开第 index 个（图片预览 / 视频播放 / 其余下载） */
-    const openAt = async (kind, ref) => {
+    /**
+     * 打开第 index 个（图片预览 / 视频播放 / 其余下载）
+     *
+     * 视频要带上 onSetThumb，否则浮层里**没有「设为封面」按钮** ——
+     * 早先这里调 openVideo(app, asset) 不传 opt，于是只有从画布节点点开的
+     * 视频才有那个按钮，从侧栏点开的没有，看着像功能丢了。
+     */
+    const openAt = async (kind, ref, index) => {
       if (!ref?.a) { app.api.status('该附件来自旧版路径，无法在沙箱内打开', true); return; }
       const asset = await io.getAsset(ref.a, true);
       if (!asset?.blob) { app.api.status('附件数据已丢失', true); return; }
       trackMediaUrl(asset.url);
-      if (kind === 'video') { openVideo(app, asset); return; }
+      if (kind === 'video') {
+        const i = Number(index);
+        openVideo(app, asset, {
+          index: i,
+          // 传 nodeId：浮层开着时用户可能点了别的节点，不切回去会写错视频
+          onSetThumb: (dataUrl) => {
+            const id = _pendingNodeId || app.bridge?.getSelectedNodeId?.() || '';
+            app.api.setVideoThumb?.(i, id, dataUrl);
+          },
+        });
+        return;
+      }
       if (isImageName(ref.n) && asset.url) openPreview(app, asset);
       else io.downloadBlob(io.safeFileName(asset.name || ref.n || '附件'), asset.blob);
     };
@@ -1204,7 +1221,7 @@ export function buildSide(app, opts = {}) {
     h('span.mm-arow-icon', {}, kind === 'video' ? '🎬' : fileIcon(ref.n || '')),
     h('span.mm-arow-name', {}, ref.n || '未命名'),
     h('button.mm-mini', {
-      onclick: (e) => { e.stopPropagation(); safe('打开', () => openAt(kind, ref), (m) => app.api.status(m, true))(); },
+      onclick: (e) => { e.stopPropagation(); safe('打开', () => openAt(kind, ref, index), (m) => app.api.status(m, true))(); },
       title: '打开 / 下载',
     }, '⤓'),
     h('button.mm-mini', {
@@ -2030,7 +2047,10 @@ export function openThemeEditor(app, theme, seedTheme) {
  *
  * 两个新增按钮：
  * - **截图**：把当前画面存成图片（下载）
- * - **设为缩略图**：把当前画面写回该视频的引用（ref.t），节点卡片上立刻换成这张
+ * - **设为封面**：把当前画面写回该视频的引用（ref.t），节点卡片上立刻换成这张
+ *
+ * 「设为封面」只在有节点上下文时出现（opt.onSetThumb）——
+ * 没有上下文还显示的话，点了就是静默无反应，比不显示更让人困惑。
  *
  * 自动播放的坑：浏览器会阻止**有声**自动播放。点画布上的视频是一次用户手势，
  * 但 postMessage 是异步的，浮层建好时手势可能已过期 —— 表现为「点开了但不动」。
@@ -2074,9 +2094,9 @@ export function openVideo(app, asset, opt = {}) {
   }, '截图');
 
   const setThumb = h('button.mm-btn', {
-    onclick: () => withFrame((d) => { opt.onSetThumb?.(d); }, '已设为该视频的缩略图'),
+    onclick: () => withFrame((d) => { opt.onSetThumb?.(d); }, '已设为该视频的封面'),
     title: '把当前画面设为节点卡片上显示的封面',
-  }, '设为缩略图');
+  }, '设为封面');
 
   const actions = h('div.mm-actions', {},
     shot,

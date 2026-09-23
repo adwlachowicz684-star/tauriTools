@@ -1347,35 +1347,113 @@ bootIframePlugin(async (ctx) => {
   }
 
   /**
-   * 视频首帧 → dataURL。
-   * 失败一律返回 null（缩略图只是锦上添花，不能因为它挡住附加本身）。
-   * 4 秒超时：某些编码的元数据加载很慢，不能让用户一直等。
+   * 视频封面 → dataURL。
+   *
+   * **取时间轴 1/3 处，不再取首帧。**
+   * 绝大多数视频开头是黑场 / 淡入 / 片头字幕，首帧抓出来一片纯黑，
+   * 卡片上看着像「图没加载出来」—— 这正是之前封面全黑的原因。
+   * 1/3 处既避开了片头，又比正中间更靠前，通常更能代表内容。
+   *
+   * 黑场回退：1/3 若几乎全黑，依次再试 1/2、2/3。
+   * 有些片子片头特别长，1/3 仍在黑场里，不能只赌一个点。
+   *
+   * 失败一律返回 null（封面只是锦上添花，不能因为它挡住附加本身）。
+   * 整体 6 秒、单次 seek 2.5 秒超时：某些编码 seek 很慢，不能一直等。
    */
   function makeVideoThumb(file) {
+    // 采样点（占总时长的比例），按顺序试，取第一个「不黑」的
+    const RATIOS = [1 / 3, 1 / 2, 2 / 3];
+    // 平均亮度低于此值视为黑场（0-255）。取 12 而非 0：
+    // 纯黑帧常见值是 0~8，留点余量才能挡住「几乎全黑」的淡入帧
+    const DARK = 12;
+    const OVERALL_MS = 6000;
+    const SEEK_MS = 2500;
+
     return new Promise((res) => {
       let done = false;
-      const fin = (v) => { if (done) return; done = true; res(v); };
-      try {
-        const url = URL.createObjectURL(file);
-        const v = document.createElement('video');
-        v.preload = 'metadata';
-        v.muted = true;
-        // 不带 #t=0.1 时不少浏览器不 seek 就不绘制首帧，抓出来是全黑
-        v.src = url + '#t=0.1';
-        v.onloadeddata = () => {
+      let url = null;
+      let v = null;
+      let last = null;          // 最后抓到的一帧：全黑时好歹有画面，不是 null
+      const fin = (r) => {
+        if (done) return;
+        done = true;
+        clearTimeout(overall);
+        try { if (url) URL.revokeObjectURL(url); } catch { /* ignore */ }
+        try { if (v) { v.removeAttribute('src'); v.load(); } } catch { /* ignore */ }
+        res(r || null);
+      };
+      const overall = setTimeout(() => fin(last), OVERALL_MS);
+
+      /** 抓当前帧，顺带算出平均亮度（用于判断是不是黑场） */
+      const capture = () => {
+        try {
+          const w = v.videoWidth;
+          const hh = v.videoHeight;
+          if (!w || !hh) return null;
+          const c = document.createElement('canvas');
+          c.width = 160;
+          c.height = Math.max(1, Math.round(160 * (hh / w)));
+          const ctx = c.getContext('2d');
+          ctx.drawImage(v, 0, 0, c.width, c.height);
+          let lum = 255;
           try {
-            const c = document.createElement('canvas');
-            c.width = 160;
-            const ratio = v.videoHeight && v.videoWidth ? v.videoHeight / v.videoWidth : 0.5625;
-            c.height = Math.max(1, Math.round(c.width * ratio));
-            c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
-            fin(c.toDataURL('image/jpeg', 0.7));
-          } catch { fin(null); }
-          URL.revokeObjectURL(url);
+            const d = ctx.getImageData(0, 0, c.width, c.height).data;
+            let sum = 0;
+            let n = 0;
+            // 每 4 个像素采一个：判黑场不需要逐像素，能快一倍
+            for (let i = 0; i < d.length; i += 16) { sum += (d[i] + d[i + 1] + d[i + 2]) / 3; n += 1; }
+            if (n) lum = sum / n;
+          } catch { /* 拿不到像素（环境限制）就当不黑，别因此丢掉画面 */ }
+          return { url: c.toDataURL('image/jpeg', 0.7), lum };
+        } catch {
+          return null;
+        }
+      };
+
+      try {
+        url = URL.createObjectURL(file);
+        v = document.createElement('video');
+        // 必须 auto：preload=metadata 只加载元数据，seek 过去也解不出画面
+        v.preload = 'auto';
+        v.muted = true;
+        v.playsInline = true;
+
+        v.onloadedmetadata = () => {
+          const dur = v.duration;
+          // duration 不合法（直播流 / 未索引）就退回首帧，不能拿 NaN 去 seek
+          if (!Number.isFinite(dur) || dur <= 0) {
+            last = capture()?.url || null;
+            fin(last);
+            return;
+          }
+          let i = 0;
+          const tryNext = () => {
+            if (done) return;
+            if (i >= RATIOS.length) { fin(last); return; }
+            // 减 0.05 秒：正好 seek 到末尾会触发 ended，画面反而空
+            const t = Math.max(0, Math.min(dur - 0.05, dur * RATIOS[i]));
+            let settled = false;
+            const onSeeked = () => {
+              if (done || settled) return;
+              settled = true;
+              clearTimeout(seekTimer);
+              const f = capture();
+              if (f?.url) last = f.url;
+              if (f && f.lum < DARK) { i += 1; tryNext(); return; }   // 还在黑场，试下一个点
+              fin(f ? f.url : last);
+            };
+            // seeked 可能不来（某些编码 / 目标位置就在当前帧），必须有超时兜底
+            const seekTimer = setTimeout(onSeeked, SEEK_MS);
+            v.addEventListener('seeked', onSeeked, { once: true });
+            try { v.currentTime = t; } catch { onSeeked(); }
+          };
+          tryNext();
         };
-        v.onerror = () => { URL.revokeObjectURL(url); fin(null); };
-        setTimeout(() => { URL.revokeObjectURL(url); fin(null); }, 4000);
-      } catch { fin(null); }
+        v.onerror = () => fin(last);
+        v.src = url;
+      } catch {
+        fin(null);
+      }
     });
   }
 
@@ -2129,6 +2207,15 @@ bootIframePlugin(async (ctx) => {
     },
     /** 读取选中节点的图片 dataURL 列表（合并 images 横幅与老 image 字段） */
     selectedImages: () => bridge?.getSelectedImages?.() || [],
+    /**
+     * 把一帧画面设为第 index 个视频的封面（ref.t）。
+     * 侧栏的播放浮层要用它 —— 面板只持有 app.api，碰不到插件内部函数。
+     *
+     * nodeId 必须传：浮层开着时用户完全可能点了别的节点，
+     * 不切回去就会写到一个不相干的视频上。
+     */
+    setVideoThumb: (index, nodeId, dataUrl) =>
+      guard('设为封面', () => setVideoThumb(index, nodeId, dataUrl))(),
     /** 当前选中节点的节点级样式（由编辑器 nodestyle 事件回传） */
     nodeStyle: () => nodeStyleCache,
     /** 修改设置项（自动快照间隔 / 布局动画），改完立即持久化并生效 */
