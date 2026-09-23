@@ -522,34 +522,19 @@ export class EditorBridge {
   }
 
   /**
-   * 告知编辑器：画布容器在屏幕上横向移动了 dLeft px（文件库展开/收起挤窄所致）。
+   * 中心主题中心相对**画布容器左边缘**的横向偏移（编辑器侧实测）。
    *
-   * 容器位移**只能由父页面测**：编辑器侧在 iframe 内，取 #minder-container
-   * 的 getBoundingClientRect().left 得到的是相对 iframe 视口的坐标，父页面把
-   * iframe 挤到右边时它恒定不变 —— 测不出来。
+   * 补偿改成闭环后不再需要"告知编辑器容器挪了多少"：外壳每次都实测中心主题
+   * 的真实屏幕位置（容器 left + 本偏移），差多少补多少。内核补了几成、
+   * camera 有没有重新居中、取整丢了几像素，全被测量吸收，不必推算。
    *
-   * 编辑器在自己那次 resize 里把「容器位移 + 内核自动居中的位移」一并补掉。
-   * 这里只传容器位移、不传补偿量 —— 内核到底补了几成只有编辑器量得准。
-   *
-   * 编辑器侧没有这个能力时静默跳过 —— 补偿是锦上添花，
-   * 不该因此弹出「XX 失败」去打扰用户。
+   * @returns {number|null} 取不到返回 null（调用方据此跳过，不能当 0）
    */
-  notifyLayoutShift(dLeft) {
-    if (!this.ready || !this.minder) return false;
-    const fn = this.minder.notifyLayoutShift;
-    if (typeof fn !== 'function') return false;
-    try { return fn.call(this.minder, dLeft) === true; } catch { return false; }
+  rootOffsetX() {
+    const v = this._safe('读取中心位置', (m) => m.rootOffsetX());
+    return typeof v === 'number' && isFinite(v) ? v : null;
   }
 
-  /**
-   * 相对平移视图。
-   *
-   * 用于补内核 resize 补偿**漏掉的那一半**：内核只补 (新宽-旧宽)/2，
-   * 画布左边缘却移动了整整一个 Δ，于是内容净位移 Δ/2。
-   * 调用方再补一个 Δ/2 即可让内容回到原处。
-   *
-   * @param {number} dx 正 = 内容右移
-   */
   panBy(dx, dy) {
     return this._safe('平移视图', (m) => m.panBy(dx, dy));
   }

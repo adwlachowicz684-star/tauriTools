@@ -2798,6 +2798,44 @@
                     return left + pan + box.x + box.width / 2;
                 } catch (e) { return null; }
             },
+            /**
+             * 中心主题中心相对**画布容器左边缘**的横向偏移。
+             *
+             * 闭环补偿的测量点：不推算内核会补多少、也不假设坐标系，直接用 DOM
+             * 实测 —— 平移、重排、camera 重新居中，任何位移都会体现在这个数里。
+             * 父页面再加上容器自身的屏幕 left 就是真实屏幕位置。
+             *
+             * 为什么能在 iframe 内测：取的是**相对差**（元素 rect − 容器 rect），
+             * 两侧同一个视口、坐标系一致；而"容器在屏幕上挪了多少"必须回到
+             * 父页面测 —— 那正是上一版踩的坑。
+             *
+             * 取不到就返回 null，调用方据此跳过（不能当 0）。
+             */
+            rootOffsetX: function () {
+                try {
+                    var root = km.getRoot();
+                    if (!root) return null;
+                    var host = km.getRenderTarget();
+                    var g = root.getRenderContainer && root.getRenderContainer();
+                    var el = g && g.node;
+                    if (host && el && el.getBoundingClientRect && host.getBoundingClientRect) {
+                        var r = el.getBoundingClientRect();
+                        var h = host.getBoundingClientRect();
+                        if (r.width || r.height) return (r.left + r.width / 2) - h.left;
+                    }
+                    // 兜底：拿不到 DOM 就退回几何量（pan + 根节点 view 盒中心）
+                    var box = root.getRenderContainer().getRenderBox('view');
+                    if (!box) return null;
+                    var rc = km.getRenderContainer();
+                    var m = rc && rc.transform ? rc.transform.translate : null;
+                    var pan = 0;
+                    if (m && m.length) {
+                        if (typeof m[0] === 'number') pan = m[0] || 0;
+                        else if (m[0] && typeof m[0].x === 'number') pan = m[0].x || 0;
+                    }
+                    return pan + box.x + box.width / 2;
+                } catch (e) { return null; }
+            },
             panBy: function (dx, dy) {
                 try {
                     var d = km._viewDragger;
@@ -3489,91 +3527,6 @@ function _kmParseColor(c) {
             if (n && km.refresh) { try { km.refresh(); } catch (e) { /* 重排失败不影响已写入的色值 */ } }
             return n;
         }
-
-        /**
-         * 文件库展开/收起：抵消内核的「自动重新居中」，让画布内容停在原处。
-         * ============================================================
-         * 挤窄布局下画布容器变窄 —— 容器左边缘右移 N px，宽度同时减少 N px。
-         * 容器移动是 CSS 决定的，内容本该跟着容器走，但内核还会「重新居中」：
-         *     resize → _viewDragger.move((新宽 - 旧宽) / 2 | 0, …)
-         * 内容在屏幕上的净位移 = 容器位移 + 内核位移 = N + (-N/2) = N/2，
-         * 展开、收起各晃一次。
-         *
-         * 为什么**不**用「前后各测一次中央主题的屏幕 x，差多少补多少」：
-         * 那套做法的测点在 iframe 内（rootScreenX 取 #minder-container 的
-         * getBoundingClientRect().left），而该值是相对 **iframe 自己的视口**的
-         * —— 父页面把 iframe 挤到右边时，iframe 内的坐标系原点跟着一起移动，
-         * 这个 left 是**恒定**的。于是 before/after 里的容器位移被完全抵消，
-         * 测出来的差只剩内核那一份，补偿就把内核的正确补偿原样撤销了，
-         * 净位移反而变成 +N（比不补偿更严重）。
-         *
-         * 所以容器位移必须由**父页面**测（那里的 .mm-canvas 是真屏幕坐标），
-         * 通过 notifyLayoutShift 传进来；本侧只负责在 resize 里把两者相加补掉。
-         *
-         * 三个必须守住的边界：
-         * · **容器那一份必须同步补，不能等 resize。** 容器是 CSS 挪的，本帧就
-         *   上屏；而 iframe 的 resize 什么时候派发由浏览器决定，慢一帧就是一次
-         *   肉眼可见的抖动 —— "改完还在抖"正是栽在这里。所以补偿拆成两处：
-         *   容器位移在 notifyLayoutShift 里同步补掉，内核那一份在 resize 里撤。
-         * · 必须在内核**之后**执行。内核的 resize 监听在 km 构造时就注册了，
-         *   本监听器注册在它之后，同一个 resize 事件里内核先跑完，我们再撤销。
-         * · dw 必须取内核**自己用的**那份（_lastClientSize 的旧值），且内核的
-         *   取整是 `(dw/2)|0`（向零取整），这里必须原样复现。
-         * ============================================================
-         */
-        (function () {
-            var pendingLeft = 0;     // 画布容器在屏幕上的横向位移（父页面实测）
-            var pendingUntil = 0;    // 只对紧接着的那一次 resize 生效
-            var prevSize = null;     // 上一次 resize 结束时内核的 _lastClientSize
-
-            function snap() {
-                var k = km._lastClientSize;
-                if (k && typeof k.width === 'number') return { width: k.width, height: k.height };
-                var rt = km.getRenderTarget && km.getRenderTarget();
-                return rt ? { width: rt.clientWidth, height: rt.clientHeight } : null;
-            }
-            prevSize = snap();
-
-            window.__minder.notifyLayoutShift = function (dLeft) {
-                dLeft = Number(dLeft) || 0;
-                if (!dLeft) return false;
-                // ① 容器位移：**立刻**补。容器是 CSS 挪的，本帧就会上屏，
-                //    等到 resize 再补的话中间那一帧画面是错的。
-                try { window.__minder.panBy(-Math.round(dLeft), 0); } catch (e) { /* 门面缺失就放弃，不能因此打断开合 */ }
-                // ② 内核那一份（resize 里的自动重新居中）留到下面撤销。
-                //    时间窗：给「底框开合 → 布局变化 → iframe 派发 resize」留余量，
-                //    又不能太长 —— 否则下一次用户拖窗口会被当成同一次而误补偿
-                pendingLeft = dLeft;
-                pendingUntil = Date.now() + 600;
-                return true;
-            };
-
-            window.addEventListener('resize', function () {
-                var rt = km.getRenderTarget && km.getRenderTarget();
-                if (!rt) return;
-                var w = rt.clientWidth, h = rt.clientHeight;
-                if (!w || !h) return;
-                var cur = snap();
-                var old = prevSize;
-                prevSize = cur;
-                if (!old || !cur) return;
-                // 与内核同源：内核算的就是 (b.width - _lastClientSize.width)
-                var dw = w - old.width;
-                if (!dw) return;                        // 尺寸没变 → 内核也没动
-                if (Date.now() > pendingUntil) return;  // 普通 resize（拖窗口）：保留内核的居中行为
-                var dLeft = pendingLeft;
-                pendingLeft = 0;                        // 一次性：用完即清
-                if (!dLeft) return;
-                // 只撤**内核**这一下：容器那一份早已在开合时同步补过，
-                // 这里再把 dLeft 算进来就会补成两倍，反而晃得更厉害。
-                var kernel = (dw / 2) | 0;              // 内核实际平移量（向零取整）
-                if (!kernel) return;
-                try {
-                    // 复用门面，避免第二处直接碰 _viewDragger
-                    window.__minder.panBy(-kernel, 0);
-                } catch (e) { /* 内核换了实现就放弃补偿，绝不能因此打断 resize */ }
-            });
-        })();
 
         hostPost({ type: 'request', id: 0, action: 'log', payload: 'kityminder 就绪' });
     })();
