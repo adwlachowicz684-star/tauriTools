@@ -3468,11 +3468,14 @@ function _kmParseColor(c) {
          * 通过 notifyLayoutShift 传进来；本侧只负责在 resize 里把两者相加补掉。
          *
          * 三个必须守住的边界：
+         * · **容器那一份必须同步补，不能等 resize。** 容器是 CSS 挪的，本帧就
+         *   上屏；而 iframe 的 resize 什么时候派发由浏览器决定，慢一帧就是一次
+         *   肉眼可见的抖动 —— "改完还在抖"正是栽在这里。所以补偿拆成两处：
+         *   容器位移在 notifyLayoutShift 里同步补掉，内核那一份在 resize 里撤。
          * · 必须在内核**之后**执行。内核的 resize 监听在 km 构造时就注册了，
-         *   本监听器注册在它之后，同一个 resize 事件里内核先跑完，我们再叠加。
-         * · dw 必须取内核**自己用的**那份（_lastClientSize 的旧值）。外壳量的
-         *   iframe 宽度会被取整、内核用 clientWidth，两边差的那点就是残留 1px。
-         * · 内核的取整是 `(dw/2)|0`（向零取整），这里必须原样复现。
+         *   本监听器注册在它之后，同一个 resize 事件里内核先跑完，我们再撤销。
+         * · dw 必须取内核**自己用的**那份（_lastClientSize 的旧值），且内核的
+         *   取整是 `(dw/2)|0`（向零取整），这里必须原样复现。
          * ============================================================
          */
         (function () {
@@ -3489,9 +3492,15 @@ function _kmParseColor(c) {
             prevSize = snap();
 
             window.__minder.notifyLayoutShift = function (dLeft) {
-                pendingLeft = Number(dLeft) || 0;
-                // 时间窗：给「底框开合 → 布局变化 → iframe 派发 resize」留余量，
-                // 又不能太长 —— 否则下一次用户拖窗口会被当成同一次而误补偿
+                dLeft = Number(dLeft) || 0;
+                if (!dLeft) return false;
+                // ① 容器位移：**立刻**补。容器是 CSS 挪的，本帧就会上屏，
+                //    等到 resize 再补的话中间那一帧画面是错的。
+                try { window.__minder.panBy(-Math.round(dLeft), 0); } catch (e) { /* 门面缺失就放弃，不能因此打断开合 */ }
+                // ② 内核那一份（resize 里的自动重新居中）留到下面撤销。
+                //    时间窗：给「底框开合 → 布局变化 → iframe 派发 resize」留余量，
+                //    又不能太长 —— 否则下一次用户拖窗口会被当成同一次而误补偿
+                pendingLeft = dLeft;
                 pendingUntil = Date.now() + 600;
                 return true;
             };
@@ -3512,12 +3521,13 @@ function _kmParseColor(c) {
                 var dLeft = pendingLeft;
                 pendingLeft = 0;                        // 一次性：用完即清
                 if (!dLeft) return;
+                // 只撤**内核**这一下：容器那一份早已在开合时同步补过，
+                // 这里再把 dLeft 算进来就会补成两倍，反而晃得更厉害。
                 var kernel = (dw / 2) | 0;              // 内核实际平移量（向零取整）
-                var comp = -Math.round(dLeft + kernel);
-                if (!comp) return;
+                if (!kernel) return;
                 try {
                     // 复用门面，避免第二处直接碰 _viewDragger
-                    window.__minder.panBy(comp, 0);
+                    window.__minder.panBy(-kernel, 0);
                 } catch (e) { /* 内核换了实现就放弃补偿，绝不能因此打断 resize */ }
             });
         })();

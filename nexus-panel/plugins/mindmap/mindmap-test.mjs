@@ -6884,8 +6884,11 @@ group('位移补偿：容器位移在父页面测，内核那一份在 iframe re
   ok(/var dw = w - old\.width/.test(cHtml), '位移按内核那份旧尺寸算');
   // 内核是 `(dw/2)|0`（向零取整），补偿里必须原样复现；换成 Math.round 会残留 0.5px
   ok(/var kernel = \(dw \/ 2\) \| 0/.test(cHtml), '复现内核的向零取整（不是 Math.round）');
-  // 复用既有门面，避免第二处直接碰 _viewDragger
-  ok(/window\.__minder\.panBy\(comp, 0\)/.test(cHtml), '补偿复用 panBy 门面（不另开 _viewDragger 调用点）');
+  // 补偿拆成两处，各有各的时机，不能合并成一处
+  ok(/window\.__minder\.panBy\(-Math\.round\(dLeft\), 0\)/.test(cHtml),
+    '开合时**同步**补掉容器位移 -dLeft（不等 resize）');
+  ok(/window\.__minder\.panBy\(-kernel, 0\)/.test(cHtml),
+    'resize 里只撤内核那一下（再把 dLeft 算进来就会补成两倍）');
 
   // ---- 3) 只对「底框开合」那一次生效，不能误伤拖窗口 ----
   const pendStart = html.indexOf('notifyLayoutShift = function');
@@ -6901,23 +6904,75 @@ group('位移补偿：容器位移在父页面测，内核那一份在 iframe re
   ok(/typeof fn !== 'function'/.test(brSeg),
     '编辑器无此能力时静默返回 false（补偿是锦上添花，不该弹「XX 失败」）');
 
-  // ---- 5) 几何账：容器位移 + 内核位移 + 补偿 = 0 ----
+  // ---- 5) 时序账：开合同步补 + resize 撤内核，两帧都对 ----
   //
-  // 不做这步就会退回"凭感觉补一半"。用**源码里的算式**跑，不是在这里另写一份
-  // —— 另写一份的话源码被改坏照样全绿（假阳性）。
+  // 这是"改完还在抖"的根因：容器是 CSS 挪的、本帧就上屏，而 iframe 的 resize
+  // 何时派发由浏览器决定。把补偿全压在 resize 里，慢一帧就是一次肉眼可见的
+  // 抖动。所以这里**真跑一遍源码里那两段**，分别断言两个时刻：
+  //   · resize 还没来时，画面已经是对的（补偿同步生效，没有中间态）
+  //   · resize 来了之后，净位移仍是 0
   {
-    const seg = cHtml.slice(cHtml.indexOf('var kernel = (dw / 2) | 0'),
-      cHtml.indexOf('try {', cHtml.indexOf('var kernel = (dw / 2) | 0')));
-    // 抠出 comp 的算式，按源码语义执行
-    const mkComp = new Function('dLeft', 'dw', seg + '\nreturn comp;');
-    // 展开：容器右移 216，宽度减少 216 → 内核补 -108 → 需再补 -108
-    eq(mkComp(216, -216), -108, '展开：补偿 -108（容器 +216 与内核 -108 相加归零）');
-    eq(216 + (-108) + mkComp(216, -216), 0, '展开：净位移为 0（内容不动）');
+    const iife = html.slice(
+      html.indexOf('(function () {\n            var pendingLeft = 0;'),
+      html.indexOf("hostPost({ type: 'request', id: 0"));
+    ok(/notifyLayoutShift/.test(iife) && /addEventListener\('resize'/.test(iife),
+      '抠出完整的补偿 IIFE');
+
+    // 桩：内核只暴露补偿用到的口子；panBy 记录每一次平移
+    function makeSim(w0) {
+      let w = w0;
+      const pans = [];
+      let onResize = null;
+      const km = {
+        _lastClientSize: { width: w0, height: 600 },
+        getRenderTarget: () => ({ clientWidth: w, clientHeight: 600 }),
+      };
+      const win = {
+        addEventListener: (t, fn) => { if (t === 'resize') onResize = fn; },
+        __minder: { panBy: (dx) => { pans.push(dx); return true; } },
+      };
+      // eslint-disable-next-line no-new-func
+      new Function('window', 'km', iife)(win, km);
+      return {
+        sum: () => pans.reduce((a, b) => a + b, 0),
+        notify: (d) => win.__minder.notifyLayoutShift(d),
+        // 模拟内核的 resize：先按 (dw/2)|0 平移，再把 _lastClientSize 推到新值
+        kernelResize: (newW) => {
+          const dw = newW - km._lastClientSize.width;
+          w = newW;
+          km._lastClientSize = { width: newW, height: 600 };
+          pans.push((dw / 2) | 0);
+          if (onResize) onResize();
+        },
+      };
+    }
+
+    // 展开：容器右移 216（文件库 186 + gap 10 + 内边距归边后实测）
+    {
+      const s = makeSim(1000);
+      s.notify(216);
+      eq(s.sum(), -216, '开合**同步**就补掉容器位移 -216（不等 resize）');
+      eq(216 + s.sum(), 0, 'resize 还没来画面已经是对的（不会再晃一帧）');
+      s.kernelResize(784);                 // 内核自动居中 -108 → 本侧撤销 +108
+      // sum 里已经含内核那一下（kernelResize 记的就是它），别再单列一次
+      eq(216 + s.sum(), 0, '展开：容器 +216 与全部视图平移相加 → 净位移 0');
+    }
+
     // 收起：完全对称
-    eq(mkComp(-216, 216), 108, '收起：补偿 +108');
-    eq(-216 + 108 + mkComp(-216, 216), 0, '收起：净位移为 0');
-    // 奇数宽度：内核 |0 截断丢的那 1px 也要算进去
-    eq(215 + (-107) + mkComp(215, -215), 0, '奇数位移也精确归零（含内核 |0 截断的 1px）');
+    {
+      const s = makeSim(784);
+      s.notify(-216);
+      eq(s.sum(), 216, '收起同步补 +216');
+      s.kernelResize(1000);
+      eq(-216 + s.sum(), 0, '收起：净位移 0');
+    }
+
+    // 普通拖窗口：没有待处理的开合 → 不补偿，内核的居中行为原样保留
+    {
+      const s = makeSim(1000);
+      s.kernelResize(900);
+      eq(s.sum(), -50, '拖窗口不补偿（内核那一下保留，不越权）');
+    }
   }
 
   // ---- 6) 回归护栏：不得退回「iframe 内测容器位移」的老路 ----
