@@ -829,26 +829,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
 .inspector .check { display: flex; align-items: center; gap: 7px; font-size: var(--fs-title, 13px); margin-bottom: 12px; }
 /* ---------- 表单件：GitHub 面板 / 凭据中心 / 历史筛选共用 ----------
  *
- * .p-input / .p-row / .p-col / .p-muted / .p-btn 这一族原本是**外壳**
- * neumorphism.css 里的类。本插件刻意不引那份样式表（两套组件样式互相污染，
- * 见文件头），于是它们在本插件的 iframe 里**没有任何定义**：
- *   · input / select 退回浏览器默认外观（深色面板下是白底黑字，非常刺眼）
- *   · label 退回默认 inline 布局，一行挤成一团
- * 点开 GitHub 推送节点看到的就是这个。
- *
- * 这里用插件自己的 --af-* 变量补一套：观感与既有 .inspector input 一致，
- * 同样跟随主题，且不引入外壳样式表。
- *
- * 位置刻意靠前：后面有更专门的 .hist-sel / .hist-search，需要能覆盖此处的
- * padding / font-size（CSS 同权重看先后，写在这里它们才盖得住）。
- */
-.p-input {
-  background: var(--af-sunk); border: 1px solid var(--af-input-line); color: var(--af-fg);
-  border-radius: var(--af-r-sm); padding: 6px 9px; font-size: var(--fs-body, 12px); font-family: inherit;
-  /* flex 子项默认 min-width:auto，input 的固有宽度会把 340px 的窄面板撑破 */
-  flex: 1; min-width: 0;
-}
-/* textarea 也用这个类：不能给固定高，否则 rows 失效被压成一行 */
+ * .p-input / .p-row //* textarea 也用这个类：不能给固定高，否则 rows 失效被压成一行 */
 textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 .p-input::placeholder { color: var(--af-mute); }
 .p-input:focus { outline: none; border-color: var(--af-accent); }
@@ -933,8 +914,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 }
 
 /* ---------------- 触发器 ---------------- */
-.toolbar .trg-btn { position: relative; background: #2a2036; border-color: #4a3a5e; }
-.toolbar .trg-btn .dot {
+.toolbar.toolbar .trg-btn .dot {
   margin-left: 6px; font-size: var(--fs-micro, 10px); background: var(--af-accent); color: #fff;
   border-radius: var(--r-pill, 999px); padding: 1px 6px;
 }
@@ -945,7 +925,6 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
    弹窗现在统一用 js/dialog.js + css/dialog.css（.nx-mask / .nx-dlg）。
    留着只会让人误以为还有另一套弹窗可以改。 */
 
-.add-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 .kind-btn {
   display: inline-flex; align-items: center; gap: 6px;
   background: var(--af-raised); border: 1px solid var(--af-line); color: var(--af-fg);
