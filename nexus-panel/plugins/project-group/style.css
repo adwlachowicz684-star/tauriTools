@@ -166,7 +166,7 @@
   display: flex; align-items: center; gap: 6px;
   height: 22px; padding: 0;
   background: transparent; border: 0; color: var(--text);
-  font-size: var(--fs-12, 12px); font-weight: 600; text-align: left;
+  font-size: var(--fs-12, 12px); font-weight: var(--fw-strong, 600); text-align: left;
   cursor: pointer; overflow: hidden;
 }
 .fpx-stack-name > span { flex-shrink: 0; font-weight: 400; }
@@ -609,7 +609,7 @@
  * 浮雕只是叠加的一层质感，不参与对比度计算，**不会破坏可读性**。
  */
 .fpx-card-name {
-  font-size: var(--fs-13, 13px); color: var(--text); font-weight: 600;
+  font-size: var(--fs-13, 13px); color: var(--text); font-weight: var(--fw-strong, 600);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   text-shadow: 0 1px 0 color-mix(in srgb, var(--text) 0%, transparent),
                0 1px 1px color-mix(in srgb, var(--sh-light) 55%, transparent);
@@ -941,7 +941,7 @@
 /* ---------- 基础设置面板 ---------- */
 .fpx-settings-sec { margin-bottom: 16px; }
 .fpx-settings-sec h3 {
-  margin: 0 0 6px; font-size: var(--fs-12, 12px); font-weight: 600;
+  margin: 0 0 6px; font-size: var(--fs-12, 12px); font-weight: var(--fw-strong, 600);
   color: var(--accent); letter-spacing: .04em;
 }
 .fpx-settings-sec .fpx-check { margin-bottom: 4px; }
@@ -1078,7 +1078,7 @@
   border: 1px solid var(--border); border-radius: var(--r-sm);
   background: var(--surface-sunk);
 }
-.fpx-crash-title { font-size: var(--fs-13, 13px); font-weight: 600; margin-bottom: 8px; color: var(--danger); }
+.fpx-crash-title { font-size: var(--fs-13, 13px); font-weight: var(--fw-strong, 600); margin-bottom: 8px; color: var(--danger); }
 .fpx-crash-msg {
   /* 错误堆栈可能很长：限高 + 可滚，不让它把整个窗口顶开 */
   max-height: 180px; overflow: auto;
@@ -1250,7 +1250,7 @@
 }
 .fpx-help-keygroup { min-width: 150px; flex: 1; }
 .fpx-help-keytitle {
-  font-size: var(--fs-11, 11px); font-weight: 600;
+  font-size: var(--fs-11, 11px); font-weight: var(--fw-strong, 600);
   color: var(--text-mute); margin-bottom: 4px;
 }
 .fpx-help-keygroup table { width: 100%; border-collapse: collapse; font-size: var(--fs-12, 12px); }
@@ -1263,7 +1263,7 @@
 .fpx-hotkey-group-title {
   padding: 4px 8px 2px;
   font-size: var(--fs-11, 11px); color: var(--text-mute);
-  font-weight: 600; letter-spacing: .3px;
+  font-weight: var(--fw-strong, 600); letter-spacing: .3px;
 }
 .fpx-hotkey-row {
   display: flex; align-items: center; gap: 8px;
@@ -1530,7 +1530,7 @@
   color: var(--accent); border-color: var(--accent);
   box-shadow: var(--sh-in-sm);
 }
-.fpx-lock-preset-name { font-weight: 600; }
+.fpx-lock-preset-name { font-weight: var(--fw-strong, 600); }
 .fpx-lock-preset-flags { font-size: var(--fs-10, 10px); opacity: .65; }
 
 /* 磁盘实际生效 ≠ 所选档位 的提示（对齐原版 LockToggle 前先 GetState）
@@ -1635,7 +1635,7 @@
 .fpx-icontarget-name {
   flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-weight: 600;
+  font-weight: var(--fw-strong, 600);
 }
 .fpx-icontarget-none { flex: 1; color: var(--danger); opacity: .8; }
 
@@ -1820,7 +1820,7 @@
    filter: brightness 而不是改背景色 —— 背景色由链接状态（正常/断链/冲突）
    决定，写死会覆盖掉状态色。 */
 .fpx-badge.expandable { cursor: pointer; display: inline-flex; align-items: center; gap: 3px; }
-.fpx-badge.expandable:hover { filter: brightness(1.15); }
+.fpx-badge.expandable:hover { filter: var(--hover-bright-strong, 1.15); }
 
 /*
  * ---------------------------------------------------------------------------

@@ -86,7 +86,7 @@ html, body {
   box-shadow: var(--ctl-shadow);
   color: var(--text-dim);
   font-size: var(--fs-10, 10px);
-  font-weight: 600;
+  font-weight: var(--fw-strong, 600);
   line-height: 1;
   cursor: help;
 }
@@ -144,7 +144,7 @@ html, body {
 .mm-btn:disabled { opacity: var(--ctl-disabled-opacity); cursor: not-allowed; box-shadow: none; }
 
 .mm-btn.wide { min-width: 0; }
-.mm-btn.icon { padding: 0 7px; font-weight: 600; }
+.mm-btn.icon { padding: 0 7px; font-weight: var(--fw-strong, 600); }
 
 .mm-input::placeholder { color: var(--text-mute); }
 
@@ -262,7 +262,7 @@ html, body {
 .mm-side h3 {
   margin: 0;
   font-size: var(--fs-13, 13px);
-  font-weight: 600;
+  font-weight: var(--fw-strong, 600);
   color: var(--text);
 }
 .mm-side .mm-hint { color: var(--text-mute); font-size: var(--fs-12, 12px); line-height: 1.6; }
@@ -510,7 +510,7 @@ html, body {
 }
 /* 悬停不再改高度 —— 10px->13px 会让整行高 3px，
    鼠标划过一排配色时列表在上下抖。要"更醒目"就改亮度。 */
-.mm-theme:hover .mm-swbar { filter: brightness(1.12); }
+.mm-theme:hover .mm-swbar { filter: var(--hover-bright-strong, 1.15); }
 .mm-theme.on .mm-swbar {
   /* 选中用**外环**而不是内凹阴影：配色条本身是色块，内凹在这上面看不出来 */
   box-shadow: 0 0 0 2px var(--accent);
@@ -569,7 +569,7 @@ html, body {
   justify-content: center;
   border-radius: 50%;          /* WPF 精灵图是圆形徽章 */
   font-size: var(--fs-11, 11px);
-  font-weight: 600;
+  font-weight: var(--fw-strong, 600);
   /* 深色面板上，徽章自带底色就够了；但浅色底（清除格 #E1E1E1）需要描边
      才不会糊在面板里 —— 用中性灰，两种底都不突兀 */
   box-shadow: 0 0 0 1px var(--ring-neutral);
@@ -1095,7 +1095,7 @@ video.mm-video {
 .mm-search-item:hover { background: var(--surface-sunk, var(--surface)); }
 .mm-search-item.active { color: var(--accent); box-shadow: var(--sh-in-sm); }
 /* 命中片段：只染色不铺底 —— 铺底会跟 active 的底色打架，反而看不清 */
-.mm-search-item mark { background: transparent; color: var(--accent); font-weight: 600; }
+.mm-search-item mark { background: transparent; color: var(--accent); font-weight: var(--fw-strong, 600); }
 
 .mm-file-item:hover { background: var(--surface-sunk, var(--surface)); }
 .mm-file-item.active {

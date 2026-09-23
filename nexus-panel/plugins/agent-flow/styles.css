@@ -425,7 +425,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
  */
 .node-head { display: flex; align-items: center; gap: 6px; }
 .node-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.node-title { font-weight: 600; font-size: var(--fs-title, 13px); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-title { font-weight: var(--fw-strong, 600); font-size: var(--fs-title, 13px); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /*
  * 配置状态徽章 —— 放在标题**左边**，圆点装在里面。
@@ -875,7 +875,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 /* 面板标题行：左侧可改名的输入框 + 右侧节点类型标签 */
 .insp-title { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .insp-title .title-input {
-  flex: 1; min-width: 0; font-weight: 600; font-size: var(--fs-title, 13px);
+  flex: 1; min-width: 0; font-weight: var(--fw-strong, 600); font-size: var(--fs-title, 13px);
   background: var(--af-sunk); border: 1px solid var(--af-input-line); color: var(--af-fg);
   border-radius: var(--af-r-sm); padding: 6px 9px; font-family: inherit;
 }
@@ -923,7 +923,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
   overflow: hidden;
 }
 .af-crash-tag {
-  font-weight: 600; color: var(--af-bad, #ef4444);
+  font-weight: var(--fw-strong, 600); color: var(--af-bad, #ef4444);
 }
 .af-crash-msg {
   color: var(--af-dim);
@@ -963,7 +963,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 .trg.editing { border-color: var(--af-accent); }
 .trg-head { display: flex; align-items: center; gap: 8px; }
 .trg-icon { font-size: var(--fs-14, 14px); }
-.trg-name { font-weight: 600; font-size: var(--fs-body, 12px); }
+.trg-name { font-weight: var(--fw-strong, 600); font-size: var(--fs-body, 12px); }
 .trg-kind {
   font-size: var(--fs-note, 11px); color: var(--af-dim); background: var(--af-raised);
   border-radius: var(--af-r-xs); padding: 2px 6px;
@@ -1481,7 +1481,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   border: 1px solid var(--af-line); background: var(--af-sunk);
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
 }
-.cond-sim strong { font-weight: 600; }
+.cond-sim strong { font-weight: var(--fw-strong, 600); }
 .cond-sim strong.ok { color: var(--af-ok); }
 .cond-sim strong.warn { color: var(--af-warn); }
 .cond-sim strong.bad { color: var(--af-bad); }
@@ -1504,7 +1504,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 
 .cond-op-badge {
   display: inline-flex; align-items: center; gap: 5px;
-  font-size: var(--fs-micro, 10px); font-weight: 600; padding: 2px 9px;
+  font-size: var(--fs-micro, 10px); font-weight: var(--fw-strong, 600); padding: 2px 9px;
   border-radius: var(--r-pill, 999px); border: 1px solid currentColor;
   background: var(--af-panel);
 }
@@ -1915,7 +1915,7 @@ input.mono, textarea.mono {
   background: var(--af-item); border-bottom: 1px solid var(--af-divider);
   position: sticky; top: 0; z-index: var(--af-z-base); }
 .task-group-head:hover { background: var(--af-raised); }
-.task-group-name { font-size: var(--fs-body, 12px); font-weight: 600;
+.task-group-name { font-size: var(--fs-body, 12px); font-weight: var(--fw-strong, 600);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-group-count { font-size: var(--fs-micro, 10px); color: var(--af-mute);
   padding: 0 6px; border-radius: var(--r-pill, 999px); background: var(--af-bg); }
@@ -1982,7 +1982,7 @@ input.mono, textarea.mono {
   background: var(--af-bg);
   font-size: var(--fs-title, 13px);
 }
-.task-list-head strong { font-weight: 600; color: var(--af-fg); }
+.task-list-head strong { font-weight: var(--fw-strong, 600); color: var(--af-fg); }
 
 /* 允许换行：任务行三列元信息在 280px 下放得开，
    但历史行还有两个操作按钮，挤的时候换行总比重叠好 */
@@ -2133,7 +2133,7 @@ input.mono, textarea.mono {
 .trig-card.is-off { opacity: 0.55; }
 .trig-card-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .trig-card-icon { font-size: var(--fs-title, 13px); }
-.trig-card-name { font-size: var(--fs-body, 12px); font-weight: 600; color: var(--af-fg); }
+.trig-card-name { font-size: var(--fs-body, 12px); font-weight: var(--fw-strong, 600); color: var(--af-fg); }
 .trig-add { display: flex; flex-wrap: wrap; gap: 4px; }
 .trig-empty {
   font-size: var(--fs-note, 11px); color: var(--af-mute);
@@ -2341,7 +2341,7 @@ input.mono, textarea.mono {
 .chat-probe-row.no { border-left: 3px solid var(--af-warn); }
 
 .chat-probe-top { display: flex; align-items: center; gap: 7px; }
-.chat-probe-name { font-weight: 600; color: var(--af-fg); flex: 1; min-width: 0;
+.chat-probe-name { font-weight: var(--fw-strong, 600); color: var(--af-fg); flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-probe-tag { flex: none; font-size: var(--fs-micro, 10px); padding: 0 6px; border-radius: var(--r-pill, 999px);
   border: 1px solid var(--af-line); color: var(--af-dim); }
@@ -2455,7 +2455,7 @@ input.mono, textarea.mono {
   border: none; background: none; cursor: pointer; color: inherit;
   padding: 4px 8px; font-family: inherit; text-align: left;
 }
-.pc-name { font-size: var(--fs-body, 12px); font-weight: 600; }
+.pc-name { font-size: var(--fs-body, 12px); font-weight: var(--fw-strong, 600); }
 .pc-sum {
   font-size: var(--fs-micro, 10px); color: var(--af-mute); max-width: 150px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -3323,7 +3323,7 @@ input.mono, textarea.mono {
 }
 .node-tip-title {
   flex: 1; min-width: 0;
-  font-size: var(--fs-title, 13px); font-weight: 600;
+  font-size: var(--fs-title, 13px); font-weight: var(--fw-strong, 600);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .node-tip-close {
@@ -3349,7 +3349,7 @@ input.mono, textarea.mono {
   border-top: 1px dashed var(--af-divider); padding-top: 5px;
 }
 .nd-param { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
-.nd-key { font-size: var(--fs-note, 11px); color: var(--af-fg); font-weight: 600; }
+.nd-key { font-size: var(--fs-note, 11px); color: var(--af-fg); font-weight: var(--fw-strong, 600); }
 .nd-raw {
   font-size: var(--fs-micro, 10px); color: var(--af-dim);
   font-family: var(--af-mono, monospace);
@@ -3402,7 +3402,7 @@ input.mono, textarea.mono {
  * 详档文本一律限制三行 —— 变量值可能是整段脚本或一长串路径，
  * 不限制的话一个节点能把整张画布顶开。
  */
-.node-chip-name { font-weight: 600; }
+.node-chip-name { font-weight: var(--fw-strong, 600); }
 .node-chip-detail {
   display: flex; flex-direction: column; gap: 1px;
   margin-top: 2px; padding-top: 2px;

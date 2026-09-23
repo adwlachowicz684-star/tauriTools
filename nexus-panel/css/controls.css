@@ -229,16 +229,16 @@ button {
 }
 
 .nx-btn.danger,
-.p-btn.danger { color: var(--danger); font-weight: 600; }
+.p-btn.danger { color: var(--danger); font-weight: var(--fw-strong, 600); }
 
 /* 实底主按钮：文字色用 --badge-fg（那本来就是"叠在强调色上的文字色"，
    深浅由主题决定），不写死 #fff —— 浅色强调色上白字会看不见 */
 .nx-btn.solid {
   color: var(--badge-fg);
   background: var(--accent);
-  font-weight: 600;
+  font-weight: var(--fw-strong, 600);
 }
-.nx-btn.solid:hover { color: var(--badge-fg); filter: brightness(1.06); }
+.nx-btn.solid:hover { color: var(--badge-fg); filter: var(--hover-bright, 1.06); }
 
 .nx-btn.danger.solid {
   color: var(--badge-fg);
@@ -260,7 +260,7 @@ button {
 .nx-btn.icon,
 .mm-btn.icon {
   padding: 0 7px;
-  font-weight: 600;
+  font-weight: var(--fw-strong, 600);
 }
 .nx-btn.wide,
 .mm-btn.wide { min-width: 0; }
