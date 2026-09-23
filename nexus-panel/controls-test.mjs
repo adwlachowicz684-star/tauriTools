@@ -1069,7 +1069,17 @@ console.log('\n=== 23. 交互反馈动效（借鉴四个参考页）===');
      border 简写会重置粗细（默认 medium≈3px），把卡片撑大 ——
      这正是"悬浮时布局跳动"的典型来源。
      判据里排除 border-color：`border` 后紧跟 `-` 的不是简写。 */
-  const hb = ctl.match(/\.nx-panel:hover\s*\{([^}]*)\}/)?.[1] || '';
+  /*
+   * 不能写成 `\.nx-panel:hover\s*\{` —— 加进 .p-card / .fpx-card 之后
+   * 选择器变成了**多行组合**：`.nx-card:hover,\n.nx-panel:hover,\n… {`
+   * 此时 `:hover` 后面紧跟的是逗号而不是 `{`，原正则直接匹配不到，
+   * 报"未匹配到"—— 断言本身假定了单行写法。
+   * 改成：先按规则块切，取选择器里含 .nx-panel:hover 的那块。
+   */
+  let hb = '';
+  for (const m of ctl.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    if (/\.nx-panel:hover\b/.test(m[1])) { hb = m[2]; break; }
+  }
   t('悬浮用 border-color（不动粗细）',
     hb !== '' && /border-color:/.test(hb) && !/(?:^|[;{\s])border\s*:/.test(hb),
     hb.trim().slice(0, 46) || '未匹配到 .nx-panel:hover');

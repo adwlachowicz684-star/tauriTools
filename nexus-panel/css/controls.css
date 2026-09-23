@@ -442,6 +442,19 @@ select optgroup {
 /* ------------------------------------------------------------
    开关
    ------------------------------------------------------------ */
+/*
+ * ---------- 备用通用控件 ----------
+ *
+ * 下面这批（开关 / 分隔线 / 加载指示 / 提示条 / 复选 / 滑块）
+ * 当前**零引用**：各插件要么用原生元素，要么自己实现了一遍。
+ *
+ * 与"真废弃"的区别在于它们是**完整的通用控件**，不是某个界面的残留：
+ * 新加一个设置项要开关、要分隔线、要加载态时，直接挂类名即可，
+ * 不必再从零写一遍 box-shadow / 动画 / 无障碍焦点环 ——
+ * 而这类细节正是各插件重复实现时最容易漏的（比如 focus-visible）。
+ *
+ * 因此保留为备用，不清理。
+ */
 .nx-switch {
   position: relative;
   flex: none;
@@ -1165,15 +1178,38 @@ input[type='range']:disabled {
    border-color 之所以安全，正因为这里**只换色不动宽度**。
    若写成 border: 2px solid（简写会重置 width），就又会把卡片撑大。 */
 
-/* 模块卡片：悬浮时边缘转强调色 + 微抬升。
-   border-color 而非 border：前者只换色，后者会把粗细也重置掉。 */
+/*
+ * 模块卡片：悬浮时边缘转强调色 + 微抬升。
+ *
+ * border-color 而非 border：前者只换色，后者会把粗细也重置掉。
+ *
+ * 类名列表此前**只有 .nx-card / .nx-panel 两个**，而这两个类
+ * 代码里一次都没用过（各插件实际挂的是 .p-card / .mm-card / .fpx-card）。
+ * 结果就是：这套动效写了，但**没有任何一张卡片受益** ——
+ * 死样式里最隐蔽的一类：定义完整、看着合理、实际悬空。
+ *
+ * 现在把实际在用的卡片类接进来：
+ *   .p-card —— 外壳控件类（README 有记载，settings / agent-flow 可用）
+ *   .fpx-card —— project-group 卡片（CardGrid.tsx 以数组拼接方式挂类，
+ *                静态扫描看不到，容易被误判成死样式，实测在用）
+ * 注意 mindmap 里**没有** .mm-card 这个类（实测源码零出现）——
+ * 此前凭"三个插件各有一套"的假设把它加进来，属于悬空接入，已移除。
+ * 教训：接入前要核实类名真实存在，不能按对称性推。
+ * 注意 .fpx-card 自己在 project-group/style.css 里另写了一条
+ * 一模一样的 hover（translateY(-1px) + --sh-out-md），已合并到此处，
+ * 那边只留它特有的 border-left-color。
+ */
 .nx-card,
-.nx-panel {
+.nx-panel,
+.p-card,
+.fpx-card {
   transition: border-color var(--dur-fast), box-shadow var(--dur-fast),
               transform var(--dur-fast);
 }
 .nx-card:hover,
-.nx-panel:hover {
+.nx-panel:hover,
+.p-card:hover,
+.fpx-card:not(.missing):hover {
   border-color: var(--accent);
   transform: translateY(-1px);
   box-shadow: var(--sh-out-sm);
@@ -1183,6 +1219,8 @@ input[type='range']:disabled {
    只加 transform，不动 padding —— 缩放不占布局，按钮不会推挤邻居。 */
 .nx-card:active,
 .nx-panel:active,
+.p-card:active,
+.fpx-card:not(.missing):active,
 .nx-btn:active,
 .p-btn:active { transform: scale(.97); }
 
@@ -1200,10 +1238,14 @@ input[type='range']:disabled {
 @media (prefers-reduced-motion: reduce) {
   .nx-card,
   .nx-panel,
+  .p-card,
+  .fpx-card,
   .nx-btn,
   .p-btn { transition: none; }
   .nx-card:hover,
-  .nx-panel:hover { transform: none; }
+  .nx-panel:hover,
+  .p-card:hover,
+  .fpx-card:hover { transform: none; }
   .nx-enter { animation: none; }
 }
 

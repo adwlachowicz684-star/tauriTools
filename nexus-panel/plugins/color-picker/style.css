@@ -181,9 +181,3 @@
   gap: 10px;
   overflow: auto;
 }
-.cp-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  flex: none;
-}

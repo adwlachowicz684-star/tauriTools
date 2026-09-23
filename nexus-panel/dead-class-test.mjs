@@ -272,5 +272,170 @@ console.log('\n=== 6. 反向校验：代码用了但 CSS 没定义 ===');
     stale.join(', ') || '无过期项');
 }
 
+
+console.log('\n=== 7. 死样式分类：档位类留用、真废弃清零 ===');
+{
+  const files = [];
+  const walk = (d) => {
+    for (const f of readdirSync(d)) {
+      if (['node_modules', '.git', 'dist', 'target', 'build'].includes(f)) continue;
+      const p = join(d, f);
+      if (statSync(p).isDirectory()) walk(p); else files.push(p);
+    }
+  };
+  walk(ROOT);
+  const css = files.filter((f) => f.endsWith('.css'));
+  const src = files.filter((f) => /\.(tsx|jsx|ts|js|mjs)$/.test(f)
+    && !/-test\.mjs$/.test(f) && !/\.test\.(ts|tsx)$/.test(f)
+    && !/plugins\/demo-module\//.test(f)
+    && !/\.min\.js$/.test(f) && !/editor\//.test(f)
+    && !/js\/dead-class-scan\.js$/.test(f));
+
+  const defined = new Set();
+  for (const f of css) for (const c of collectDefinedClasses(readFileSync(f, 'utf8'))) defined.add(c);
+  const used = new Set();
+  for (const f of src) {
+    try { for (const c of collectUsedClasses(stripComments(readFileSync(f, 'utf8')))) used.add(c); } catch {}
+  }
+  const dead = [...defined].filter((c) => !used.has(c));
+
+  /*
+   * 死样式分两类，处理方式完全不同，不能一刀切：
+   *
+   * ① 档位类 —— 通过拼接或组合使用，扫描器看不见，实际在用。
+   *    · 状态档：st-done / st-running / level-ok / size-sm …
+   *      （className={'node-badge level-' + x}）
+   *    · 修饰档：accent / ok / warn / err / sm / wide / solid / end / between
+   *      （.nx-tag.accent 这种组合，单类名在源码里找不到）
+   *    · 方向档：drop-before / drop-after / gap-before / horizontal / vertical
+   *    这些**不能删**，删了会让对应档位直接失效。
+   *
+   * ② 真废弃 —— 独立引用 0 次、非档位、非拼接前缀。这类才该清。
+   */
+  const TIER = /^(st|level|size|drop|gap)-|(^(accent|ok|warn|err|sm|wide|solid|one|three|end|between|horizontal|vertical|hidden|joined|revealed|has-error|no-error|missing|invalid|success|failed|cancelled|file|src|val|yes|lines|cross|snippet|switch|slider|transparent|radio|is-hidden|is-on|is-fn|is-op)$)/;
+
+  /*
+   * 还有一类要留：**共享层的三前缀别名**。
+   * controls.css 里 `.nx-btn, .p-btn, .mm-btn` 是并列写在同一个
+   * 选择器组里的三个同义名，视觉完全相同 —— 共享层提供三个名字，
+   * 插件挑一个用即可。当前只有 p-* / mm-* 被实际采用，nx-* 暂时没人用，
+   * 但它们不是死代码：删掉会让"第三个可选名"消失，且整组样式仍在
+   * （由 p-* 提供），删它既无收益也无从判断将来哪个插件会选它。
+   * 所以列为**备用别名**，与真废弃区分开。
+   */
+  const ALIAS = new Set(['nx-btn', 'nx-input', 'nx-select', 'nx-textarea',
+    'nx-tag', 'nx-row', 'nx-muted', 'nx-mono', 'mm-mono', 'mm-input',
+    'mm-select', 'mm-chip', 'nx-bgpick', 'nx-bgpick-sw', 'nx-bgpreset',
+    'nx-card', 'nx-panel',
+    /* 备用通用控件：完整控件而非界面残留，新加设置项时直接挂用 */
+    'nx-switch', 'nx-sep', 'nx-spinner', 'nx-loading-inline',
+    'nx-loading-inner', 'nx-toasts', 'nx-check', 'nx-range',
+    /* 文本截断 / 入场 / 遮罩 / 添加入口：新界面直接挂用 */
+    'nx-ellipsis', 'nx-clamp', 'nx-enter', 'nx-mask', 'nx-add',
+    /* 拖拽进行中：运行时 classList 添加，静态扫描看不到 */
+    'nx-drag-dragging',
+    /* fpx-card：CardGrid.tsx 以数组拼接方式挂类，静态扫描看不到但确实在用 */
+    'fpx-card',
+    /* 对话框部件（dialog.css）与立体基元（nm-*）：
+       均已就地标注为"备用"，供新界面直接挂用，不清理 */
+    'nx-ok', 'nx-err', 'nx-warn', 'nx-dlg-field', 'nx-dlg-label', 'nx-dlg-err',
+    'nm-raised', 'nm-raised-sm', 'nm-inset', 'nm-inset-sm', 'nm-pressed',
+    /* 检查器浮层（nx-insp-*）：由 js/inspector.js 运行时拼装插入，
+       静态扫描只看 .css 看不到运行时注入，与 mm-print-* 同理 */
+    'nx-insp-top', 'nx-insp-bottom', 'nx-insp-left', 'nx-insp-right',
+    'nx-insp-name', 'nx-insp-size', 'nx-insp-plugin', 'nx-insp-warn',
+    'nx-insp-locked',
+    /* react-flow 第三方类名：由库在运行时渲染，源码里搜不到是正常的 */
+    'react-flow__handle', 'react-flow__edge', 'react-flow__background-pattern',
+    'react-flow__controls', 'react-flow__minimap',
+    /* 以拼接/模板方式挂类，静态扫描取不到但实测在用 */
+    'nexus-adapted', 'tb-card', 'trig-card']);
+
+  /*
+   * 前缀族：agent-flow 触发器 / 节点徽标这一族的类名
+   * 多以 `${prefix}-${x}` 动态拼出（trg-icon / trg-name / kind-icon …），
+   * 单看成员名在源码里找不到，但整族都在用。
+   *
+   * 用**前缀规则**而不是逐个枚举：逐个枚举会让白名单随新成员无限膨胀，
+   * 而这正是上一节警告过的反模式。整族放行，只盯住"族外"的真废弃。
+   */
+  const FAMILY = /^(trg|trig|kind|upd|stack|task|insp|node|side)-/;
+
+  const realDead = dead.filter((c) => !TIER.test(c) && !ALIAS.has(c) && !FAMILY.test(c));
+
+  /*
+   * 冻结基线而不是要求清零。
+   *
+   * 存量里剩的大部分是 agent-flow 的**拼接族残留**
+   * （trg / cond-ops / pane-dot / ok-line 这类）：它们多半由
+   * `${a}-${b}` 动态拼出，静态扫描只能看到碎片，无法确认有没有在用。
+   * 逐个人工核实代价很高，且删错会让正在用的档位直接失效。
+   *
+   * 所以这里不追求清零，改为**只增不减**：新增可以，变多就报红。
+   * 与"间距冻结基线"是同一套处理 —— 长期红着的断言等于没有断言。
+   */
+  /*
+   * 40 是当前实测存量，绝大多数是 agent-flow 的拼接族残留。
+   * 设为基线即"暂时接受"，但**不代表它们无害** ——
+   * 需要一次专项（逐个确认拼接来源）才能真正清干净或确认可用。
+   * 在那之前，这条只保证不再变多。
+   */
+  const DEAD_BASELINE = 40;
+  t('真废弃未继续增加（不超过基线）', realDead.length <= DEAD_BASELINE,
+    `当前 ${realDead.length} / 基线 ${DEAD_BASELINE}：${realDead.slice(0, 6).join(', ')}`);
+
+  /* 白名单反向校验：某项若已在 CSS 里被删掉，就必须移出表内，
+     否则白名单只增不减，慢慢变成"什么都往里塞"而失去意义。 */
+  const staleAlias = [...ALIAS].filter((c) => !defined.has(c));
+  t('备用别名白名单没有过期项', staleAlias.length === 0,
+    staleAlias.join(', ') || '无过期项');
+
+  /* 已清理的 12 处不许复活（反向钉死） */
+  /* 已清理 11 处（+2 条关联的 hover / 后代规则）。
+     注意 mm-mono 不在此列：它在 controls.css 的三前缀别名组里，
+     属于上面的 ALIAS，mindmap 里那份独立定义才是被清理的对象。 */
+  const CLEANED = ['fpx-color', 'fpx-iconitem', 'fpx-iconlist', 'fpx-iconname',
+    'fpx-iconthumb', 'fpx-menu-icon', 'mm-att-ghost', 'mm-att-hi', 'mm-colors',
+    'mm-grow', 'cp-actions'];
+  const revived = CLEANED.filter((c) => defined.has(c));
+  t('已清理的 11 处废弃样式没有复活', revived.length === 0,
+    revived.join(', ') || '全部保持清理状态');
+
+  /* ---- 最重要的一条：动效组必须真的接到了在用类名上 ----
+     此前 .nx-card / .nx-panel 挂着完整一套交互反馈（悬浮高亮 + 微抬升
+     + 按压 + 入场），但这两个类代码里零引用 —— 动效写了，没有一张
+     卡片受益。这是死样式里最隐蔽的一类：定义完整、看着合理、实际悬空。
+     现在三个插件的实际卡片类都接进来了，这条盯住别再掉。 */
+  const ctrl = readFileSync(join(ROOT, 'css/controls.css'), 'utf8');
+  /* 只核实在**真实存在**的卡片类：
+     .mm-card 已被移除 —— mindmap 里根本没有这个类，
+     此前是凭"三插件各一套"的对称性假设加进来的。 */
+  /*
+   * 必须查**基础 transition 组**（不含 :hover / :active），
+   * 不能只查 `.p-card,` 出现次数 —— 摘掉基础组后，
+   * .p-card 仍出现在 `.p-card:hover,` 里，宽松的计数照样通过。
+   * 实测：用计数法做破坏验证，摘掉 .p-card 后断言仍绿，等于没验证。
+   */
+  /*
+   * 必须先剥注释再切块：`([^{}]+)\{` 会把**注释正文**也当成选择器
+   * （上一个块以 } 结束后，注释内容会被一路吃到下一个 { 为止）。
+   * 上面那段说明里正好写了 ".p-card —— 外壳控件类"，
+   * 于是摘掉真定义后断言仍从注释里找到 .p-card，照样通过 ——
+   * 破坏验证形同虚设。与前面"扫描器扫到文档注释里的示例"是同一类坑。
+   */
+  const ctrlNC = stripComments(ctrl);
+  const baseSel = [...ctrlNC.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+    .filter((m) => /transition:/.test(m[2]) && !/:hover|:active/.test(m[1]))
+    .map((m) => m[1]).join(' ');
+  for (const cls of ['p-card', 'fpx-card']) {
+    t(`动效基础组已接入 .${cls}`,
+      new RegExp('\\.' + cls + '\\b').test(baseSel));
+  }
+  /* project-group 里那条一模一样的重复 hover 不许复活 */
+  const pg = readFileSync(join(ROOT, 'plugins/project-group/style.css'), 'utf8');
+  t('project-group 未重复实现悬浮抬升',
+    !/\.fpx-card:hover\s*\{[^}]*translateY\(-1px\)/.test(pg));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

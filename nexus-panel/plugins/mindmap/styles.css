@@ -36,11 +36,9 @@ html, body {
 /* ------------------------------ 通用 ------------------------------ */
 
 .mm-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.mm-grow { flex: 1 1 auto; }
 .mm-sep { width: 1px; align-self: stretch; background: var(--sh-dark); margin: 0 2px; }
 .mm-label { color: var(--text-dim); font-size: var(--title-3-fs, 11px); white-space: nowrap;
   font-weight: var(--title-3-fw);}
-.mm-mono { font-family: var(--font-mono); }
 
 /* 迷你按钮：比 .p-btn 更紧凑，工具栏用 */
 .mm-btn:hover { color: var(--accent); }
@@ -702,8 +700,6 @@ html, body {
 .mm-col { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
 .mm-col > .mm-btn { width: 100%; }
 
-.mm-colors { display: grid; grid-template-columns: repeat(9, 1fr); gap: 4px; }
-.mm-colors .mm-swatch { width: 100%; height: 20px; border-radius: var(--r-xs, 5px); }
 
 .mm-list { display: flex; flex-direction: column; gap: 5px; max-height: 220px; overflow-y: auto;
   min-height: 0;   /* flex 子项默认 min-height:auto，滚动区会被内容顶开、overflow 失效 */}
@@ -1232,36 +1228,8 @@ video.mm-video {
 }
 
 /* 附件拖拽：跟随指针的浮层 */
-.mm-att-ghost {
-  position: fixed;
-  z-index: var(--z-toast, 9999);
-  display: none;
-  max-width: 200px;
-  padding: 3px 7px;
-  font-size: var(--fs-12, 12px);
-  line-height: 1.4;
-  color: var(--text, #e6e6e6);
-  background: var(--surface, #2b2b31);
-  border: 1px solid var(--accent, #6ea8fe);
-  border-radius: var(--r-xs, 4px);
-  box-shadow: var(--sh-cast-md, 0 2px 8px rgba(0, 0, 0, .35));
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  /* 必须 none：否则 elementFromPoint 命中的是浮层自己，找不到目标节点 */
-  pointer-events: none;
-}
 
 /* 附件拖拽：目标节点高亮框 */
-.mm-att-hi {
-  position: fixed;
-  z-index: var(--z-pop, 9998);
-  display: none;
-  border: 2px solid var(--accent, #6ea8fe);
-  border-radius: var(--r-xs, 4px);
-  background: rgba(110, 168, 254, 0.12);
-  pointer-events: none;
-}
 
 /* 窄屏：侧栏收窄，把宽度让给画布 —— 画布比图标栏更需要空间 */
 @media (max-width: 820px) {
