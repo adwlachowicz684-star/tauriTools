@@ -104,8 +104,8 @@ export default function FilesCard() {
             {r}
           </div>
           <button
-            className="p-btn"
-            style={{ height: 26, padding: '0 9px', fontSize: 'var(--fs-11, 11px)' }}
+            className="p-btn sm"
+            style={{padding: '0 9px', fontSize: 'var(--fs-11, 11px)' }}
             title="撤销授权（应用数据目录不可撤销）"
             disabled={busy}
             onClick={() => remove(r)}
@@ -117,17 +117,17 @@ export default function FilesCard() {
 
       <div className="p-row" style={{ marginTop: 'var(--sp-6, 12px)' }}>
         <input
-          className="p-input"
+          className="p-input sm"
           type="text"
           placeholder="粘贴要授权的目录完整路径，如 /Users/me/projects"
-          style={{ flex: 1, height: 30, fontSize: 'var(--fs-12, 12px)', padding: '0 10px', minWidth: 0 }}
+          style={{ flex: 1, fontSize: 'var(--fs-12, 12px)', padding: '0 10px', minWidth: 0 }}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
         />
         <button
           className="p-btn primary"
-          style={{ height: 30, padding: '0 14px', fontSize: 'var(--fs-12, 12px)' }}
+          style={{padding: '0 14px', fontSize: 'var(--fs-12, 12px)' }}
           disabled={busy}
           onClick={add}
         >
