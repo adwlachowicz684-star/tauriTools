@@ -402,7 +402,8 @@ bootIframePlugin(async (ctx) => {
       searchInfo.classList.toggle('warn', st.warn);
       // 结果列表单独取：search() 每调一次就推进到下一个匹配，
       // 若让它顺带返回列表，"刷新列表"就会连带多跳一格
-      withStableRoot(() => fileList?.setSearch(bridge?.getSearchResults?.() || null));
+      fileList?.setSearch(bridge?.getSearchResults?.() || null);
+      syncCanvasInset();
     }
     const searchInput = h('input.mm-input', {
       placeholder: '搜索节点…',
@@ -410,7 +411,7 @@ bootIframePlugin(async (ctx) => {
       oninput: () => {
         // 关键字被删空 → 立刻退出搜索态。
         // 等回车才清的话，面板会一直挂着上一次的结果，看着像"搜索坏了"
-        if (!searchInput.value.trim()) withStableRoot(() => fileList?.setSearch(null));
+        if (!searchInput.value.trim()) { fileList?.setSearch(null); syncCanvasInset(); }
       },
       onkeydown: (e) => {
         if (e.key !== 'Enter') return;
@@ -839,60 +840,31 @@ bootIframePlugin(async (ctx) => {
   }
 
   /**
-   * 中心主题的**真实屏幕 x**（父页面容器 left + 编辑器实测的相对偏移）。
+   * 同步「假边框」的位置。
    *
-   * 容器位移只有父页面测得出来（iframe 内测不到，见下），节点相对画布的
-   * 偏移只有编辑器测得出来 —— 两边各出一半，加起来才是用户看到的位置。
+   * 画布容器**始终铺满**整块主体区（文件库移出了 flex 流，改成浮层），
+   * 所以文件库开合时画布的几何一点都不变 —— iframe 不会收到 resize，
+   * 内核不会重排，画布内容**零位移**。这是"内容不动"的根本解法：
+   * 不去补偿位移，而是让位移从根上不发生。
+   *
+   * 既然画布真的铺满了，视觉上"画布被挤到文件库右边"那个框就只能画出来：
+   * `.mm-canvas-frame` 是一层 pointer-events:none 的覆盖物，只描边不占位，
+   * 它的左边缘跟着文件库走。看得见，摸不着，也不影响画布一个像素。
+   *
+   * 位置一律**实测**：文件库宽度、gap 任一变动写死的数都会失配，框就会错位。
    */
-  function measureRootX() {
-    const cr = canvasEl && canvasEl.getBoundingClientRect
-      ? canvasEl.getBoundingClientRect() : null;
-    if (!cr) return null;
-    const off = bridge && bridge.rootOffsetX ? bridge.rootOffsetX() : null;
-    if (off == null) return null;
-    return cr.left + off;
-  }
-
-  /**
-   * 在底框开合前后把画布内容**钉在同一处** —— 闭环，不再推算。
-   *
-   * 前三版都栽在同一件事上：**预测**位移是哪几份相加（容器 + 内核 resize 的
-   * (新宽-旧宽)/2|0 + …）再一次性补掉。而实际位移源比算出来的多 —— 内核
-   * `paperrender` / `layoutallfinish` 还会跑 `camera` 把根节点**重新居中**，
-   * 且带 100ms 动画；iframe 的 resize 何时派发也由浏览器决定。漏一份、或
-   * 晚一帧，画面就晃一下。
-   *
-   * 所以改成**每次实测**：记下开合前中心主题的屏幕 x，开合后反复测量、
-   * 差多少补多少，直到归零。
-   *
-   * 为什么必须回到父页面测：iframe 内取 `#minder-container` 的
-   * getBoundingClientRect().left 相对的是 **iframe 自己的视口**，父页面把
-   * iframe 挤到右边时它恒定不变 —— 容器位移会被完全抵消（上一版正是这么错的，
-   * 补偿反而把内核的正确补偿撤销了）。
-   *
-   * @param {Function} fn 会改变底框开合的操作（同步执行）
-   */
-  function withStableRoot(fn) {
-    const before = measureRootX();
-    const r = fn();
-    if (before == null) return r;        // 量不到 → 不补，不能当成 0
-
-    // 收敛：同步一次 + 之后几帧各一次。
-    // · 同步那次保证「本帧就对」—— 容器是 CSS 挪的，不等 resize。
-    // · 之后几次收拾迟到的影响（内核 resize 的自动居中、camera 重新居中）。
-    //   每帧的 resize 步骤排在 rAF 之前，所以 rAF 里的补正仍在本帧绘制前。
-    // · 每次都是实测差值，多补无害（差为 0 就不动），不会累积成两倍。
-    let tries = 0;
-    const settle = () => {
-      const now = measureRootX();
-      if (now == null) return;
-      const d = Math.round(now - before);
-      if (Math.abs(d) >= 1) bridge?.panBy(-d, 0);
-      if (d !== 0 && ++tries < 5) requestAnimationFrame(settle);
-    };
-    settle();
-    requestAnimationFrame(settle);
-    return r;
+  function syncCanvasInset() {
+    if (!frameEl || !fileList || !canvasEl) return;
+    const br = body.getBoundingClientRect();
+    const cr = canvasEl.getBoundingClientRect();
+    const gap = parseFloat(getComputedStyle(body).columnGap
+      || getComputedStyle(body).gap || '10') || 10;
+    // 文件库贴着画布左缘浮着（不占流），画布本身就铺满
+    fileList.el.style.left = Math.round(cr.left - br.left + gap) + 'px';
+    if (!fileList.isOpen()) { frameEl.style.left = '0px'; return; }
+    const w = fileList.el.getBoundingClientRect().width;
+    // 框的左边缘 = 文件库右缘 + 一个 gap
+    frameEl.style.left = Math.round(cr.left - br.left + gap + w + gap) + 'px';
   }
 
   /**
@@ -905,7 +877,8 @@ bootIframePlugin(async (ctx) => {
    */
   function toggleFiles(force) {
     const on = force == null ? !fileList?.isFilesPanel?.() : !!force;
-    withStableRoot(() => fileList?.showFiles(on));
+    fileList?.showFiles(on);
+    syncCanvasInset();
     const showing = !!fileList?.isFilesPanel?.();
     settings.filesOpen = showing;
     store.settings.save(settings);
@@ -986,7 +959,8 @@ bootIframePlugin(async (ctx) => {
     redoStack = [];
     // 换画布后旧搜索结果全部失效（节点都换了），不清会让用户点到一个
     // 根本不在这张画布上的"结果"，然后定位失败
-    withStableRoot(() => fileList?.setSearch(null));
+    fileList?.setSearch(null);
+    syncCanvasInset();
     // 切换/重载画布会重置编辑器历史基线，锁必须解 ——
     // 否则会拿旧栈标记去操作新画布（与 resetHistory 同理）
     pendingRedo = null;
@@ -2352,6 +2326,7 @@ bootIframePlugin(async (ctx) => {
   body.insertBefore(fileList.el, canvasEl);
   body.appendChild(side.el);
   fileList.showFiles(!!settings.filesOpen);
+  syncCanvasInset();
   captureShellErrors();
   buildRail();
   renderTabs();

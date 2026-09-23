@@ -203,6 +203,7 @@ html, body {
   display: flex;
   gap: 10px;
   min-height: 0;
+  position: relative;   /* 文件库是浮层，需要相对本容器定位 */
 }
 
 /* 侧边栏：图标条 + 可折叠页面 */
@@ -285,6 +286,21 @@ html, body {
   font-weight: var(--title-3-fw);}
 
 /* 画布容器：内层 iframe 由 JS 注入 */
+/* 假边框：画布其实铺满了整块主体区，"被文件库挤到右边"这个框是画出来的。
+   只描边不占位，pointer-events:none —— 看得见、摸不着，也不影响画布一个像素。
+   左边缘由 JS 按文件库实测位置写入（见 index.js 的 syncCanvasInset）。 */
+.mm-canvas-frame {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: var(--r, 14px);
+  box-shadow: var(--sh-out-md);
+  pointer-events: none;
+  z-index: 4;
+}
+
 .mm-canvas {
   flex: 1 1 auto;
   min-width: 0;
@@ -1025,11 +1041,17 @@ video.mm-video {
    发生，属可接受范围。内核本身没有"暂停自动居中"的 API，
    做精确反向补偿需要操作 _viewDragger 私有成员，风险高于收益。
    ============================================================ */
+/* 文件库：**浮层**，不再挤窄画布。
+   画布容器始终铺满整块主体区，所以文件库开合时画布几何一点不变 ——
+   iframe 收不到 resize、内核不重排、内容零位移。
+   代价是它会盖住画布左侧一块（抽屉的固有代价），换来的是"绝对不动"。
+   left 由 JS 实测写入（见 index.js 的 syncCanvasInset）。 */
 .mm-files {
-  flex: 0 0 186px;
-  width: 186px;       /* 显式声明宽度：左侧抽屉的折叠/展开动画若作用在 flex-basis 上，
-                           缺少 width 会导致元素在「收缩到 0」与「恢复 186px」之间
-                           出现一帧宽度塌陷，连带滚动容器闪一下 */
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 6;
+  width: 186px;
   display: none;
   flex-direction: column;
   gap: 8px;
