@@ -226,15 +226,56 @@ export async function installAdapter(o) {
   if (policy === 'always') {
     pluginBase = panelBase === 'dark' ? 'light' : 'dark';   // 强制取反，保证一定反转
     baseSource = 'policy';
-  } else if (manifest.theme === 'light' || manifest.theme === 'dark') {
-    pluginBase = manifest.theme;
-    baseSource = 'manifest';
   } else if (o.reportedBase === 'light' || o.reportedBase === 'dark') {
-    /* 隔离插件：外壳读不到 contentDocument，由插件自己采样后上报。
-       没有这一步的话，隔离插件的采样会静默失败 → 被当成"基调一致" → 不反转，
-       于是在深色面板上留下一块刺眼的白，且不报任何错。 */
+    /*
+     * 插件**自己上报**的真实基调优先于 manifest 声明。
+     * ------------------------------------------------------------------
+     * 顺序反了就是"切到浅色主题后插件深浅反转"的根因（实测）：
+     *
+     *   manifest.theme 是**静态声明**，写的是"这个插件 UI 固定什么基调"。
+     *   但很多插件实际**跟随外壳主题** —— 它们引了 nexus 变量、
+     *   首帧还会读 localStorage 里的 preload-base 铺底色。
+     *   这类插件切到浅色主题后，渲染结果**已经是浅色**了。
+     *
+     *   而 manifest 分支优先级更高，pluginBase 被钉死成声明值（如 'dark'），
+     *   与 panelBase='light'（浅色面板）不相等 → 施加反转滤镜
+     *   → 本已变浅的插件又被翻回深色。
+     *
+     *   表现：面板是浅的、插件是深的，而 localStorage 里明明写着 light。
+     *   且它是**同步判定**（不过采样等待），所以切换瞬间就错，不滞后。
+     *
+     * 上报值是插件在自己文档里采样得到的**实际渲染结果**，
+     * 天然比静态声明可靠 —— 实测优先于声明。
+     */
     pluginBase = o.reportedBase;
     baseSource = 'reported';
+  } else if (manifest.theme === 'light' || manifest.theme === 'dark') {
+    /*
+     * manifest.theme 的语义是**与面板的关系**，不是"插件自身什么颜色"。
+     *
+     * registry.js 顶部写明：
+     *   'dark'  = 与面板同基调（不适配）
+     *   'light' = 相反（需适配）
+     *
+     * 此前这里被当成"插件自身的基调"直接用：
+     *   pluginBase = manifest.theme  // 'dark'
+     * 于是面板是深色时 pluginBase==panelBase → 不反转，**碰巧正确**；
+     * 而面板一切到浅色（赤陶、宣纸这类），
+     *   pluginBase='dark' ≠ panelBase='light' → 施加反转
+     * 可 theme:'dark' 明明说的是"与面板同基调、不要适配"。
+     *
+     * 表现：切到浅色主题后插件被翻成深色，而 localStorage 里写着 light。
+     * 深色面板下永远不暴露（两个值恰好相等），浅色下必现 ——
+     * 这是它能潜伏这么久的原因。
+     *
+     * 按文档语义换算：
+     *   'dark'  → 与面板同基调 → 不反转
+     *   'light' → 与面板相反   → 反转
+     */
+    pluginBase = manifest.theme === 'light'
+      ? (panelBase === 'dark' ? 'light' : 'dark')
+      : panelBase;
+    baseSource = 'manifest';
   } else {
     /* 走自动检测。
        两道保险，缺一不可：
