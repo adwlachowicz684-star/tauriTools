@@ -6777,14 +6777,13 @@ group('文件库 / 搜索结果：两个独立页签共用一个底框');
   }
 }
 
-group('文件库展开导致画布内容位移：闭环实测，差多少补多少');
+group('文件库展开导致画布内容位移：按实测屏幕位置差补偿');
 
 {
   const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
   const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
   const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   const fl = fs.readFileSync(path.join(HERE, 'filelist.js'), 'utf8');
-  const cHtml = html.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
   // ---- 1) 编辑器有 panBy 门面 ----
   ok(/panBy: function \(dx, dy\)/.test(html), '编辑器门面暴露 panBy');
@@ -6794,84 +6793,35 @@ group('文件库展开导致画布内容位移：闭环实测，差多少补多�
     'panBy 不传 duration（与内核 resize 一致，避免动画互相打断）');
   ok(/panBy\(dx, dy\) \{/.test(br), '桥接转发 panBy');
 
-  // ---- 2) 闭环：反复实测，差多少补多少 ----
+  // ---- 2) 容器位移必须**在父页面测**，不能依赖 iframe 内的坐标 ----
   //
-  // 前三版都栽在"预测"（容器 + 内核 (dw/2)|0 + … 一次性补掉）。实际位移源更
-  // 多：内核 paperrender / layoutallfinish 还会跑 camera 把根节点重新居中且带
-  // 100ms 动画，iframe 的 resize 何时派发也由浏览器定。漏一份就晃一下。
-  // 所以断言的是**机制**：多次测量 + 按差值补，补完还要再看一眼。
-  const wsrStart = ix.indexOf('function measureRootX()');
-  const wsrSeg = ix.slice(wsrStart,
+  // 这是本轮真正修掉的 bug：早先补偿量取自编辑器侧的 rootScreenX()，它取
+  // #minder-container 的 getBoundingClientRect().left —— 那是 iframe 内的元素，
+  // 坐标相对**iframe 自己的视口**；父页面把 iframe 挤到右边时该值恒定不变，
+  // 于是容器位移被抵消，补偿只剩"撤销内核补偿"，净位移反而变成 +N。
+  //
+  // 所以断言不能只检查"代码里出现了 getBoundingClientRect().left"（那只能防
+  // 止被人删掉，防不住测错坐标系），而要检查**测的是父页面的 canvasEl**。
+  const wsrSeg = ix.slice(ix.indexOf('function withStableRoot(fn) {'),
     ix.indexOf('/**', ix.indexOf('function withStableRoot(fn) {')));
   ok(/canvasEl/.test(wsrSeg), 'withStableRoot 测的是父页面的 canvasEl（不是 iframe 内坐标）');
-  ok(/getBoundingClientRect/.test(wsrSeg), '取容器的屏幕位置');
-  ok(/bridge\.rootOffsetX\(\)/.test(wsrSeg), '节点偏移由编辑器实测（两边各出一半）');
-  ok(/const settle = \(\) =>/.test(wsrSeg), '有独立的 settle（收敛）函数');
-  ok(/const d = Math\.round\(now - before\)/.test(wsrSeg), '补的是实测差值（不是推算量）');
-  ok(/bridge\?\.panBy\(-d, 0\)/.test(wsrSeg), '按差值反向平移');
-  ok(/requestAnimationFrame\(settle\)/.test(wsrSeg), '没收敛就下一帧再看一次（收拾迟到的 resize / camera）');
-  ok(/tries < 5/.test(wsrSeg), '重试有上限（不会无限 rAF）');
-  // 同步那次必须先跑：容器是 CSS 挪的，本帧就得补上，不能等 resize
-  ok(/\n    settle\(\);\n    requestAnimationFrame\(settle\);/.test(wsrSeg),
-    '同步先收一次再交棒给下一帧（容器那份不等 resize）');
-  ok(/Math\.abs\(d\) >= 1/.test(wsrSeg), '1px 以内不补（取整噪声）');
-  // 不再有任何"预测位移"的残留
-  ok(!/dLeft/.test(wsrSeg), '本侧不再出现 dLeft（不再推算容器位移）');
-  ok(!/kernel|_lastClientSize/.test(wsrSeg), '本侧不再推算内核补了多少');
+  ok(/getBoundingClientRect\(\)\.left/.test(wsrSeg), '取容器左边缘的屏幕 x');
+  // 容器位移交由编辑器补偿；本侧**不得**再自行 panBy，否则双重补偿
+  ok(/notifyLayoutShift\?\.\(dLeft\)/.test(wsrSeg), '把容器位移报给编辑器');
+  ok(!/panBy/.test(wsrSeg), '本侧不再自行 panBy（补偿交给编辑器，避免双重）');
+  // 早先按"固定 Δ/2"硬补是错的：Δ 取决于 flex 收缩分配，右侧栏一旦可收缩
+  // 就不是 216。这里必须没有任何 216 / 108 之类的常量参与。
   const ixNoComment = ix.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   ok(!/216|108/.test(ixNoComment), '代码里没有 216 / 108 之类的硬编码位移常量');
-  ok(/if \(before == null\) return r;/.test(ix), '拿不到 before 就跳过补偿（不能当成 0）');
-  ok(/if \(now == null\) return;/.test(ix), '中途量不到也跳过');
-
-  // ---- 2b) 编辑器提供"节点相对画布容器的偏移"（实测，非推算） ----
-  ok(/rootOffsetX: function \(\)/.test(html), '编辑器提供 rootOffsetX');
-  ok(/el\.getBoundingClientRect\(\)/.test(cHtml) && /host\.getBoundingClientRect\(\)/.test(cHtml),
-    '优先 DOM 实测（元素 rect − 容器 rect，同一视口）');
-  // 必须真的是"两者相减"。只断言"出现了 getBoundingClientRect"抓不住被换成
-  // return 0 —— 那样补偿测不到任何位移，等于没测。
-  ok(/\(r\.left \+ r\.width \/ 2\) - h\.left/.test(cHtml),
-    '测量值是元素中心相对容器左边缘的**差值**（不是常量）');
-  ok(/return null/.test(cHtml), '取不到时返回 null（不是 0）');
-  ok(/rootOffsetX\(\) \{/.test(br), '桥接提供 rootOffsetX');
-
-  // ---- 2c) 回归护栏：不得退回开环预测 ----
-  ok(!/notifyLayoutShift/.test(html) && !/notifyLayoutShift/.test(br) && !/notifyLayoutShift/.test(ix),
-    '开环的 notifyLayoutShift 链路已整体移除（避免与闭环双重补偿）');
-  ok(!/pendingLeft|pendingUntil/.test(html), '不再有"待处理位移 + 时间窗"的一次性补偿');
-
-  // ---- 2d) 收敛行为：故意让画面在两次测量之间被偷偷移动 ----
-  //
-  // 模拟内核 resize 自动居中、camera 重新居中这类"算不出来"的位移源。
-  // 闭环不关心位移从哪来，只关心测出来差多少。
-  {
-    const calls = [];
-    let containerLeft = 0, nodeOffset = 300, pan = 0;
-    const measure = () => containerLeft + nodeOffset + pan;
-    const before = measure();
-    let tries = 0;
-    // 与源码同一套算式（上面已断言源码文本），返回 true = 还要再看一帧
-    const settle = () => {
-      const d = Math.round(measure() - before);
-      if (Math.abs(d) >= 1) { pan += -d; calls.push(-d); }
-      if (d !== 0 && ++tries < 5) return true;
-      return false;
-    };
-
-    containerLeft = 216;                 // ① 容器被 CSS 挤到右边
-    eq(settle(), true, '① 有差值 → 补，且还要再看一帧');
-    eq(measure(), before, '① 同步那次就把容器位移补掉了（本帧就对）');
-
-    pan += -108;                         // ② 内核迟到的自动居中
-    eq(settle(), true, '② 新差值 → 继续补');
-    eq(measure(), before, '② 迟到的内核居中也被吸收');
-
-    pan += 37;                           // ③ 来源未知的位移（如 camera 重新居中）
-    eq(settle(), true, '③ 未知来源的差值同样被补');
-    eq(measure(), before, '③ 闭环不关心位移从哪来');
-
-    eq(settle(), false, '④ 归零后停止收敛（不会一直空转）');
-    eq(calls.length, 3, '恰好补了三次，没有多余动作');
-  }
+  // before 取不到时必须**跳过**，不能当成 0 —— 那会补出一个反向位移
+  ok(/if \(before == null\) return r;/.test(ix),
+    '拿不到 before 就跳过补偿（不能当成 0）');
+  ok(/if \(after == null\) return r;/.test(ix), '拿不到 after 也跳过');
+  // 1px 以内是取整噪声，不补 —— 否则每次开合都多一次无谓平移
+  ok(/Math\.abs\(dLeft\) >= 1/.test(ix), '1px 以内不补（取整噪声）');
+  // 同步测量即可：补偿发生在 iframe 的 resize 回调里，不必等帧
+  ok(!/nextFrames\(2\)/.test(ix),
+    '不再等两帧（补偿在 resize 回调内同步完成，等帧只会让画面先晃一下再拉回）');
 
   // ---- 3) 所有会改变底框开合的调用点都套了 withStableRoot ----
   for (const call of [
@@ -7074,7 +7024,6 @@ group('位移补偿：容器位移在父页面测，内核那一份在 iframe re
   ok(!/getBoundingClientRect\(\)\.left/.test(compSeg),
     '补偿链路不在 iframe 内测容器左边缘（那里测不到父页面的位移）');
 }
-
 
 group('app 句柄：可写状态必须成对提供 getter/setter');
 
@@ -7316,6 +7265,77 @@ group('Enter 插入同级：按了要有反应（不再被按钮吃掉）');
   {
     const fn = ix.slice(ix.indexOf('function bindKeyForward'), ix.indexOf('const refocusCanvas'));
     ok(/isEnter\s*&&\s*e\.shiftKey/.test(fn), 'Shift+Enter 不抢（交给浏览器 / 编辑框换行）');
+  }
+}
+
+group('视频/附件不压文字：居中必须按撑高前的盒算');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+
+  /* ---- 1) 附件区必须把"撑高前的盒"留下来 ---- */
+  {
+    const i = html.indexOf('var box = node.getContentBox();');
+    ok(i > 0, '附件区读取 contentBox');
+    const seg = html.slice(i, i + 600);
+    ok(/node\._kmBaseBox\s*=\s*box/.test(seg),
+      '附件区撑高**之前**把原盒存进 node._kmBaseBox');
+  }
+
+  /* ---- 2) 文字居中必须用原盒，不能用撑高后的 ---- */
+  {
+    const i = html.indexOf('function bindValign()');
+    ok(i > 0, '有 bindValign');
+    const seg = html.slice(i, html.indexOf('valignBindDone = true;', i));
+    ok(/node\._kmBaseBox\s*\|\|\s*node\.getContentBox\(\)/.test(seg),
+      'bindValign 用 _kmBaseBox（不是撑高后的 getContentBox()）');
+  }
+
+  /* ---- 3) 行为级：模拟一次 noderender，看文字被推到哪 ---- */
+  //
+  // 两个 handler 都挂在 noderender 上，附件区（先注册）先跑，
+  // 它把 _contentBox 撑高；bindValign（后注册）随后跑。
+  // 若 bindValign 读撑高后的盒，就会把文字沉进视频区。
+  {
+    const TXT_H = 20;      // 文字组高度
+    const VID_H = 54;      // 视频卡片高度
+    const PAD = 6;
+
+    // 真实源码里的纯函数
+    const dySrc = html.slice(html.indexOf('window.__kmTextDy = function'), html.indexOf('};', html.indexOf('window.__kmTextDy = function')) + 2);
+    const vaSrc = html.slice(html.indexOf('window.__kmDefaultValign = function'), html.indexOf('};', html.indexOf('window.__kmDefaultValign = function')) + 2);
+    const scope = {};
+    new Function('window', dySrc + '\n' + vaSrc + '\nthis.dy = window.__kmTextDy; this.va = window.__kmDefaultValign;').call(scope, {});
+    const { dy: kmTextDy, va: kmDefaultValign } = scope;
+
+    // 文字在盒内垂直居中（无额外偏移）
+    const cbox = { y: 0, height: TXT_H };
+    const bb = { y: 0, height: TXT_H };
+
+    // 用**原盒**：文字盒 == 内容盒 → middle → dy ≈ 0（文字不动）
+    {
+      const va = kmDefaultValign(cbox, bb);
+      eq(va, 'middle', '文字盒 == 内容盒时按居中处理');
+      eq(kmTextDy(bb, cbox, va, 0), 0, '居中时 dy = 0（文字不被推走）');
+    }
+
+    // 用**撑高后的盒**：内容盒比文字高了 (VID_H + PAD) → 被当成"带图节点"
+    // → bottom 分支 → 文字沉到撑高后盒的底部，也就是视频区里
+    {
+      const grown = { y: 0, height: TXT_H + VID_H + PAD };
+      const va = kmDefaultValign(grown, bb);
+      eq(va, 'bottom', '内容盒明显高于文字盒时走 bottom（带图节点语义）');
+      const d = kmTextDy(bb, grown, va, 0);
+      eq(d, VID_H + PAD, `走 bottom 会把文字下移 ${VID_H + PAD}px —— 正好是视频卡片的高度`);
+      // 文字顶部 = bb.y + d，视频区起点 = 原盒下沿 + PAD = TXT_H + PAD
+      ok(TXT_H + d > TXT_H + PAD, '文字被推进视频区（这就是"视频压到文字"）');
+    }
+
+    // 结论：两者相差就是视频卡片高度 —— 用错盒就会把文字整整推下去一张卡片
+    const grew = { y: 0, height: TXT_H + VID_H + PAD };
+    const dWrong = kmTextDy(bb, grew, kmDefaultValign(grew, bb), 0);
+    const dRight = kmTextDy(bb, cbox, kmDefaultValign(cbox, bb), 0);
+    eq(dWrong - dRight, VID_H + PAD, '用错盒 vs 用对盒，文字位置差一整张视频卡片的高度');
   }
 }
 
