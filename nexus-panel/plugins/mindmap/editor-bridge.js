@@ -397,6 +397,26 @@ export class EditorBridge {
   }
 
   /**
+   * 插入同级节点（等价于画布上按 Enter）。
+   *
+   * 为什么要单独一个门面：焦点停在工具栏 <button> 上时按 Enter，浏览器会把它
+   * 当成「激活当前按钮」，于是用户看到的是**又执行了一遍刚点的那个按钮**，
+   * 而画布收不到 —— 表现就是「Enter 插入同级没反应」。
+   * 由插件层在捕获阶段拦下 Enter 后转送到这里（见 index.js 的 bindKeyForward）。
+   */
+  insertSibling() {
+    try {
+      const w = this.iframe?.contentWindow;
+      if (!w) return false;
+      w.focus();
+      w.__minderInsertSibling?.();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * 选中指定 data.id 的节点（拖放用）。
    * @returns {boolean} 找到了并选中为 true
    */

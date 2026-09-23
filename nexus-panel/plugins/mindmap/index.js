@@ -296,13 +296,29 @@ bootIframePlugin(async (ctx) => {
    * 为什么不会重复触发：keydown 不跨 iframe 冒泡。焦点在编辑器里时，
    * 事件在内层文档就处理完了，本层收不到。
    */
-  function bindTabForward() {
+  /* Tab → 插入下级，Enter → 插入同级（XMind 语义）。
+   *
+   * 转发的不只是 Tab：Enter 有**更隐蔽**的一个坑 ——
+   * 焦点停在工具栏 <button> 上时，浏览器把 Enter 当成「激活当前按钮」，
+   * 于是用户按 Enter 的真实效果是**又执行了一遍刚点的那个按钮**，
+   * 而画布一点都没收到。看着就是「Enter 插入同级没反应」。
+   * （Tab 在按钮上是焦点导航，同样到不了画布。）
+   *
+   * 两者都必须在捕获阶段 preventDefault 掉，否则按钮会被顺带激活，
+   * 变成「插入节点 + 又跑一遍按钮」的双重动作。
+   */
+  function bindKeyForward() {
     const onKey = (e) => {
-      if (e.key !== 'Tab') return;
+      const isTab = e.key === 'Tab';
+      const isEnter = e.key === 'Enter';
+      if (!isTab && !isEnter) return;
       if (e.ctrlKey || e.altKey || e.metaKey) return;   // 带修饰键的交给浏览器
+      // Shift+Enter 在编辑框里是换行，在画布上没有专门语义，交给浏览器
+      if (isEnter && e.shiftKey) return;
       if (isTextTarget(e.target)) return;               // 输入框里保持默认
       e.preventDefault();
-      bridge?.insertChild();
+      if (isTab) bridge?.insertChild();
+      else bridge?.insertSibling();
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
@@ -2300,8 +2316,8 @@ bootIframePlugin(async (ctx) => {
   syncCanvasTheme(ctx.theme);
 
   // Tab 转发：焦点停在工具栏按钮上时，浏览器会拿 Tab 做焦点导航，
-  // 画布收不到键。这里拦下来转给画布（详见 bindTabForward 的注释）。
-  const unbindTab = bindTabForward();
+  // 画布收不到键。这里拦下来转给画布（详见 bindKeyForward 的注释）。
+  const unbindTab = bindKeyForward();
 
   const ok = await bridge.load();
   if (!ok) {

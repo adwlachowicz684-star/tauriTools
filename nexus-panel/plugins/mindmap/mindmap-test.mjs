@@ -638,28 +638,32 @@ group('Tab → 插入下级节点');
 }
 
 {
-  // 8.5 插件层：Tab 必须在捕获阶段拦下，且放过文本控件与带修饰键的组合
+  // 8.5 插件层：Tab / Enter 必须在捕获阶段拦下，且放过文本控件与带修饰键的组合
   const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
-  const fn = src.slice(src.indexOf('function bindTabForward'), src.indexOf('const refocusCanvas'));
+  const fn = src.slice(src.indexOf('function bindKeyForward'), src.indexOf('const refocusCanvas'));
   ok(/window\.addEventListener\('keydown',\s*onKey,\s*true\)/.test(fn),
-    'Tab 监听在捕获阶段（冒泡阶段拦不住浏览器的焦点导航）');
+    '监听在捕获阶段（冒泡阶段拦不住浏览器的焦点导航 / 按钮激活）');
   ok(/e\.preventDefault\(\)/.test(fn), '拦下后 preventDefault');
-  ok(/bridge\?\.insertChild\(\)/.test(fn), '拦下后转送给编辑器');
-  ok(/e\.key\s*!==\s*'Tab'/.test(fn), '只处理 Tab');
-  ok(/e\.ctrlKey\s*\|\|\s*e\.altKey\s*\|\|\s*e\.metaKey/.test(fn), '带修饰键的 Tab 交给浏览器');
-  ok(/isTextTarget\(e\.target\)/.test(fn), '焦点在输入控件里时不抢 Tab');
+  ok(/bridge\?\.insertChild\(\)/.test(fn), 'Tab 转送 insertChild');
+  ok(/bridge\?\.insertSibling\(\)/.test(fn), 'Enter 转送 insertSibling');
+  // Enter 不转发是「按了没用」的直接原因：焦点在 <button> 上时，
+  // 浏览器把 Enter 当成激活按钮，canvas 一点都收不到
+  ok(/e\.key\s*===\s*'Enter'/.test(fn), 'Enter 也在转发范围内（否则按了没反应）');
+  ok(/if\s*\(!isTab\s*&&\s*!isEnter\)\s*return/.test(fn), '只处理 Tab 与 Enter');
+  ok(/e\.ctrlKey\s*\|\|\s*e\.altKey\s*\|\|\s*e\.metaKey/.test(fn), '带修饰键的交给浏览器');
+  ok(/isTextTarget\(e\.target\)/.test(fn), '焦点在输入控件里时不抢');
   ok(/window\.removeEventListener\('keydown',\s*onKey,\s*true\)/.test(fn), '返回注销函数');
 
   ok(/function\s+isTextTarget/.test(src), '定义了 isTextTarget');
-  const it = src.slice(src.indexOf('function isTextTarget'), src.indexOf('function bindTabForward'));
+  const it = src.slice(src.indexOf('function isTextTarget'), src.indexOf('function bindKeyForward'));
   for (const tag of ['input', 'textarea', 'select']) {
     ok(it.includes(`'${tag}'`), `isTextTarget 覆盖 <${tag}>`);
   }
   ok(/isContentEditable/.test(it), 'isTextTarget 覆盖 contentEditable');
 
   // 8.6 卸载时要注销，否则重复挂载会叠加监听
-  ok(/unbindTab\?\.\(\)/.test(src), '卸载时注销 Tab 监听');
-  ok(/const\s+unbindTab\s*=\s*bindTabForward\(\)/.test(src), '初始化时绑定');
+  ok(/unbindTab\?\.\(\)/.test(src), '卸载时注销按键监听');
+  ok(/const\s+unbindTab\s*=\s*bindKeyForward\(\)/.test(src), '初始化时绑定');
 
   // 8.7 工具栏按钮点完归还焦点 —— 不只 Tab，Enter/方向键/Delete 同样依赖它
   const bseg = src.slice(src.indexOf('const refocusCanvas'), src.indexOf('function buildToolbar'));
@@ -7140,6 +7144,99 @@ group('文件图标：悬停高亮框与行距');
   const rowStep = html.match(/top \+= (\d+);\s*\n\s*\}\s*\n\s*\}\s*\n\s*\} catch/);
   const step = Number((html.match(/top \+= (\d+);/g) || []).slice(-1)[0]?.match(/\d+/)?.[0]);
   ok(step >= 20, `文件行距 ≥ 20（实际 ${step}）—— 17 会让相邻图标重叠 3px`);
+}
+
+group('Enter 插入同级：按了要有反应（不再被按钮吃掉）');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+
+  /* ---- 1) 链路完整：门面 → bridge → 转发 ---- */
+  ok(/window\.__minderInsertSibling\s*=/.test(html), '编辑器页暴露 window.__minderInsertSibling');
+  ok(/function\s+insertSiblingNode/.test(html), '插入同级抽成具名函数（Enter 与门面共用同一份）');
+  ok(/kmShortcut\('Enter',\s*insertSiblingNode\)/.test(html), 'Enter 快捷键与门面同一个实现');
+  ok(/insertSibling\(\)\s*\{/.test(br), 'bridge 有 insertSibling()');
+  ok(/w\.__minderInsertSibling\?\.\(\)/.test(br), 'bridge.insertSibling 调到内层门面');
+  ok(/bridge\?\.insertSibling\(\)/.test(ix), '插件层把 Enter 转送给 bridge');
+
+  /* ---- 2) 行为级：Enter 的插入位置真的是"同级" ---- */
+  {
+    const i = html.indexOf('function insertSiblingNode()');
+    ok(i > 0, '有 insertSiblingNode');
+    // 切到 kmShortcut 那行之前：否则会把 kmShortcut 调用也切进来，
+    // 而 kmShortcut 是外层 IIFE 里的局部函数，new Function 里没有它 → 直接崩。
+    // 崩溃 ≠ 断言失败（脚本也会判"抓到"），是本项目反复踩过的假阳性。
+    const src = html.slice(i, html.indexOf("kmShortcut('Enter'", i));
+
+    const run = (sel) => {
+      const log = [];
+      const km = {
+        getSelectedNode: () => sel,
+        getRoot: () => ({ id: 'ROOT', children: [] }),
+        createNode(t, parent, index) { log.push(`create(parent=${parent && parent.id}, index=${index})`); return { id: 'NEW' }; },
+        select() {}, fire() {}, layout() {},
+      };
+      let inserted = null;
+      const insertNode = (parent, index) => { inserted = { parent, index }; log.push('insertNode'); };
+      const fn = new Function('km', 'insertNode', src + '; return insertSiblingNode;')(km, insertNode);
+      fn();
+      return { log, inserted };
+    };
+
+    // 普通子节点：插到父的 index+1 处 → 紧随其后，是同级
+    {
+      const parent = { id: 'P', children: [{ id: 'A' }, { id: 'B' }, { id: 'C' }] };
+      const sel = { id: 'B', parent, getLevel: () => 1, getIndex: () => 1 };
+      const { inserted } = run(sel);
+      ok(inserted && inserted.parent === parent, '插到**父节点**下（同级，不是子节点）');
+      eq(inserted?.index, 2, '位置是 sel.getIndex()+1（紧跟在选中节点之后）');
+    }
+
+    // 根节点：没有同级可言，退化成插子节点
+    // 否则会插到根自己旁边变成"双根"，遍历与导出都会出问题
+    {
+      const root = { id: 'ROOT', parent: null, getLevel: () => 0, getIndex: () => 0, children: [] };
+      const { inserted } = run(root);
+      ok(inserted && inserted.parent === root, '根节点降级为插子节点（不能插成双根）');
+    }
+
+    // 异常数据：parent 存在但 getLevel() 返回 0（导入的老数据 / 数据损坏）。
+    // 只看 sel.parent 的话，会拿根的"父"去插，插出一个谁都不挂的游离节点。
+    // getLevel() > 0 这道判断正是挡这个的 —— 不能省。
+    {
+      const weirdParent = { id: 'WEIRD', children: [] };
+      const sel = { id: 'W', parent: weirdParent, getLevel: () => 0, getIndex: () => 3, children: [] };
+      const { inserted } = run(sel);
+      eq(inserted?.parent?.id, 'W', 'parent 异常时降级为插子节点（不拿可疑的父去插）');
+    }
+
+    // 无选中：插到根下
+    // 比对用 id 而不是对象引用：源码里走的是 km.getRoot()，
+    // mock 每次返回的是同一个对象，但断言不该依赖这一点
+    {
+      let inserted = null;
+      const root = { id: 'ROOT', children: [] };
+      const km = {
+        getSelectedNode: () => null,
+        getRoot: () => root,
+        createNode() { return { id: 'NEW' }; },
+        select() {}, fire() {}, layout() {},
+      };
+      const fn = new Function('km', 'insertNode',
+        html.slice(html.indexOf('function insertSiblingNode()'), html.indexOf("kmShortcut('Enter'", html.indexOf('function insertSiblingNode()')))
+        + '; return insertSiblingNode;')(km, (parent, index) => { inserted = { parent, index }; });
+      fn();
+      eq(inserted?.parent?.id, 'ROOT', '无选中时插到根下（不静默丢失）');
+    }
+  }
+
+  /* ---- 3) 转发必须放过 Shift+Enter（编辑框里是换行）---- */
+  {
+    const fn = ix.slice(ix.indexOf('function bindKeyForward'), ix.indexOf('const refocusCanvas'));
+    ok(/isEnter\s*&&\s*e\.shiftKey/.test(fn), 'Shift+Enter 不抢（交给浏览器 / 编辑框换行）');
+  }
 }
 
 group('Tab 建节点：一次就成（不再多出一条孤立连线）');

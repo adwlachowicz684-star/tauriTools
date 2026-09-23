@@ -3249,12 +3249,24 @@
                     return true;
                 } catch (e) { return false; }
             };
-            kmShortcut('Enter', function () {
+            /* 插入同级节点（Enter / XMind 语义）。
+             *
+             * 抽成具名函数是为了让插件层也能拿到同一份实现 ——
+             * 和 Tab 同理：焦点停在工具栏 <button> 上时，Enter 会被浏览器
+             * 当成「激活当前按钮」，永远进不到画布。
+             * 若不拦，用户按 Enter 的真实效果是**又执行了一遍刚点的那个按钮**，
+             * 看着就像「Enter 没反应」。
+             */
+            function insertSiblingNode() {
                 var sel = km.getSelectedNode();
                 if (!sel) { insertNode(km.getRoot && km.getRoot(), null); return; }
+                // 根节点没有同级可言 —— 退化成插子节点，否则会插到根自己旁边
+                // 变成一棵「双根」，后续遍历与导出都会出问题
                 if (sel.parent && sel.getLevel() > 0) insertNode(sel.parent, sel.getIndex() + 1);
                 else insertNode(sel, null);
-            });
+            }
+            kmShortcut('Enter', insertSiblingNode);
+            window.__minderInsertSibling = insertSiblingNode;
             // 删除：Delete / Backspace
             kmShortcut('Delete', removeSelectedNode);
             kmShortcut('Backspace', removeSelectedNode);

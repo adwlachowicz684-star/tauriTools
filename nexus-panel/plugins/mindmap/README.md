@@ -1875,6 +1875,50 @@ getter-only）已确认能抓到。
 行距原为 17，而图标高 20 → 相邻两行图标**重叠 3px**，即「两个图标叠在
 一起」。改 24。
 
+## Enter 插入同级：按了要有反应（不再被按钮吃掉）
+
+### 现象
+
+界面上写着 Enter = 插入同级，但按了没反应。
+
+### 根因：Enter 被浏览器当成"激活按钮"
+
+kityminder 的键盘输入全靠编辑器页里一个隐藏的 `input.km-receiver`，焦点不在
+它上面时画布收不到任何键。而插件层有一整排工具栏按钮 —— **点过任意一个之后
+焦点就停在 `<button>` 上**，此时按 Enter，浏览器把它当成「激活当前按钮」。
+
+于是用户按 Enter 的真实效果是：**又执行了一遍刚点的那个按钮**，而画布一点都
+没收到。看着就是「Enter 没反应」。
+
+Tab 之前有 `bindTabForward` 转发（Tab 在按钮上是焦点导航，同样到不了画布），
+所以 Tab 能用、Enter 不能用 —— 同一个坑的两条路，只修了一条。
+
+### 修法
+
+转发的不只是 Tab，Enter 也要转：
+
+```
+编辑器页  →  window.__minderInsertSibling（抽成具名函数，与 Enter 共用一份实现）
+bridge    →  insertSibling()
+插件层    →  捕获阶段拦下 Enter → preventDefault → bridge.insertSibling()
+```
+
+`preventDefault()` **不能省**：不拦的话按钮会被顺带激活，变成
+「插入节点 + 又跑一遍按钮」的双重动作。
+
+转发放过三种情况：带修饰键（Ctrl/Alt/Meta）、焦点在文本控件里、Shift+Enter
+（编辑框里是换行）。
+
+### 顺带：父节点判据不能只看 `sel.parent`
+
+```js
+if (sel.parent && sel.getLevel() > 0) insertNode(sel.parent, sel.getIndex() + 1);
+```
+
+`getLevel() > 0` 这道判断是防御**异常数据**的：`parent` 存在但 `getLevel()`
+返回 0（导入的老数据 / 数据损坏）时，只靠 `sel.parent` 会拿那个可疑的父去插，
+插出一个谁都不挂的游离节点。已加行为级用例锁住。
+
 ## Tab 建节点：按一次就成（不再多出一条孤立连线）
 
 ### 现象
