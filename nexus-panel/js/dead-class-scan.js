@@ -101,6 +101,17 @@ export function collectUsedClasses(src) {
     // 模板串里的 ${} 是运行时拼的，不能当类名（会误报出一堆不存在的）
     for (const part of body.split(/\$\{[^}]*\}/)) addTokens(part);
   }
+  /*
+   * 2a2: className={'cond-chip src' + (x ? ' off' : '')}
+   *      —— 字面量后面是**运算**而不是直接收括号，
+   *         上面 `\{\s*'([^']*)'\s*\}` 要求 ' 之后马上是 }，
+   *         于是这种写法整个匹配不上，cond-chip / src 会被误报成死类名
+   *         （实测：远端新增 ConditionInspector 就是这么写的）。
+   *      这里只要求 className= 后紧跟 { 与引号，不再要求右边是 }。
+   */
+  for (const m of src.matchAll(/class(?:Name)?\s*=\s*\{\s*'([^']*)'/g)) addTokens(m[1]);
+  for (const m of src.matchAll(/class(?:Name)?\s*=\s*\{\s*"([^"]*)"/g)) addTokens(m[1]);
+
   // 2b: 模板串里带 ${} 的，如 `fpx-link-arrow${x ? ' open' : ''}`
   //     —— 两个方向都要取，缺一个就会漏报：
   //       · ${} 外的静态部分 → fpx-link-arrow
