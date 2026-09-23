@@ -1651,11 +1651,41 @@ export type ConstNodeData = {
   stackCollapsed?: boolean;
   kind: 'const';
   label: string;
+  /**
+   * 常量种类。
+   *
+   * 老节点没有这个字段 —— 一律按 'text' 处理（那正是它当初的行为）。
+   * 用 `=== false` 之类的写法在这里是错的：缺省该落到 text，不是别的。
+   */
+  valueType?: ConstValueType;
   /** 固定输出。支持模板（模板在运行时求值，所以"常量"也可以是动态拼出来的） */
   value: string;
   status: NodeStatus;
   output: string;
   error: string;
+};
+
+/**
+ * 常量节点的种类。
+ *
+ * 三种不是"换个输入控件"这么简单 —— 它们**产出的值种类不同**：
+ * 数字常量接到「大于」上合法，接到「包含」上才是错参；
+ * 布尔常量接到条件判定上合法，接到加减乘除上是错参。
+ * 所以种类必须参与参数类型校验（见 argTypes / paramLinks）。
+ */
+export type ConstValueType = 'text' | 'num' | 'bool';
+
+/**
+ * 三种常量的名字。
+ *
+ * 放在 types.ts（数据层）而不是节点定义里：makeConstNode 要用它当默认标签，
+ * 而 defs/const.ts 反过来 import types.ts —— 表写在 defs 里就成环了。
+ * 颜色属于界面，仍留在 defs/const.ts。
+ */
+export const CONST_TYPE_LABEL: Record<ConstValueType, string> = {
+  text: '文本常量',
+  num: '数字常量',
+  bool: '布尔常量',
 };
 
 export function makeGateNode(id: string, partial: Partial<GateNodeData> = {}): GraphNode {
@@ -2192,12 +2222,20 @@ export function makeAskNode(id: string, partial: Record<string, unknown> = {}): 
 }
 
 export function makeConstNode(id: string, partial: Partial<ConstNodeData> = {}): GraphNode {
+  const vt: ConstValueType = partial.valueType ?? 'text';
   return {
     id,
     data: {
       kind: 'const',
-      label: partial.label ?? '常量',
-      value: partial.value ?? '',
+      label: partial.label ?? CONST_TYPE_LABEL[vt],
+      valueType: vt,
+      /*
+       * 布尔常量的默认值必须是 'true'，不能是空串。
+       *
+       * 空串输出空串，下游条件节点拿到空值既不等于 true 也不等于 false，
+       * 判定结果取决于它自己的兜底 —— 而用户拖进来时想的是"给个 false"。
+       */
+      value: partial.value ?? (vt === 'bool' ? 'true' : ''),
       status: 'idle',
       output: '',
       error: '',

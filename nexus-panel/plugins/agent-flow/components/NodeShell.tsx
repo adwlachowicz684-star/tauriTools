@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { getDef } from '../nodes/registry';
 import { validateNode, LEVEL_COLOR, LEVEL_TEXT, badgeTextOf, type IssueLevel } from '../engine/nodeValidate';
 import { isNodeDisabled } from '../engine/nodeDisabled';
-import { OUT_HANDLE } from '../engine/paramLinks';
+import { OUT_HANDLE, outHandleId, outputsOf, producesArgOf, valueKindLabel } from '../engine/paramLinks';
 /** 关闭态的圆点色。中性灰，不与"缺项/缺参"的黄红撞色 */
 const OFF_DOT_COLOR = '#6b7280';
 import { normalizeSize, type NodeSize } from '../types';
@@ -212,27 +212,57 @@ export function NodeShell({
 }
 
 /**
- * 输出卡片。
+ * 输出卡片 —— 每个输出参数一个端口，参数连线从这里拖出。
  *
- * ================= 为什么种类与值分开两行 =================
+ * ================= 为什么端口在卡片上而不是节点右侧 =================
  *
- * 种类是**静态**的（这个节点永远产出数字），
- * 值是**运行后**才有的。合成一行的话，没跑过时整行空白，
- * 看着像"这个节点没有输出"。
+ * 节点右侧那个总出口是**流程出口**（"我跑完接着跑你"）。
+ * 用它兼作参数出口的话，两种连线共用一个口子，
+ * 拖出来的线是哪一种只能靠目标端猜 ——
+ * 而猜错的后果是"只是想取个值，却多出一条执行路径"。
  *
- * 分开之后：没跑过也知道它将来会产出什么，能不能接给别人一目了然。
+ * 现在输入侧是 arg:key（每个参数格一个入口）、输出侧是 out:key，
+ * 两端对等，"参数指向参数"才说得通。
+ *
+ * ================= 为什么种类按 data 判而不是 PortKind =================
+ *
+ * 卡片上要写"数字"而不是"文本" —— 数字常量在 PortKind 里是 text，
+ * 但参数连线按值种类校验（producesArgOf），
+ * 写 PortKind 会让"数字常量"显示成"文本常量"。
  */
 function OutCard({ type, data }: { type: string; data: Record<string, unknown> }) {
   const spec = specOf(type);
-  const produces = spec?.produces ?? 'any';
-  // 无输出的节点不显示这张卡 —— 显示"无输出"占一行还没信息量
-  if (produces === 'none') return null;
+  if ((spec?.produces ?? 'any') === 'none') return null;
 
+  const kind = (data.kind as string | undefined) ?? type;
+  const ports = outputsOf(kind);
   const out = String((data as { output?: unknown }).output ?? '').trim();
+  const valueKind = producesArgOf(kind, data);
+
   return (
-    <div className="node-line--out" title={out ? out : (spec?.producesDesc ?? '')}>
-      <span className="node-line__out-kind">{PORT_LABEL[produces]}</span>
-      {out ? <span className="node-line__out-val">{out}</span> : null}
+    <div className="node-outs">
+      {ports.map((key) => (
+        <div
+          key={key}
+          className="node-line--out node-out-port"
+          title={out ? out : (spec?.producesDesc ?? '')}
+        >
+          <span className="node-line__out-kind">{valueKindLabel(valueKind)}</span>
+          {out ? <span className="node-line__out-val">{out}</span> : null}
+          {/*
+           * 端口：参数连线的**起点**。
+           *
+           * 多输出时每个端口各带自己的 key，一根线只取其中一个 ——
+           * 共用一个口子的话"取的是哪个"取决于边的顺序，而顺序不保证。
+           */}
+          <Handle
+            type="source"
+            position={Position.Right}
+            id={outHandleId(key)}
+            className="node-out-handle"
+          />
+        </div>
+      ))}
     </div>
   );
 }

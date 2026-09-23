@@ -203,6 +203,22 @@ const RULES: Record<string, KindRule> = {
       float: N('a', 'b'),
     },
   },
+
+  /*
+   * 常量：按**种类**（valueType）决定它自己的值该是什么。
+   *
+   * 与其它几项不同 —— 其余节点校验的是"参数"，常量校验的是它**唯一的产出**。
+   * 把它纳入同一张表是为了让"数字常量里填了 abc"在卡片上标「错参」，
+   * 而不是等接到「大于」上时才发现算出来是 0。
+   *
+   * text 不列：文本什么都能填，没有"错的文本"。
+   */
+  const: {
+    by: 'valueType',
+    rules: {
+      num: N('value'),
+    },
+  },
 };
 
 /* ------------------------------------------------------------------ */
@@ -349,6 +365,7 @@ const ARG_LABELS: Record<string, Record<string, string>> = {
   compare: { a: '左边', b: '右边' },
   text: { a: '文本', b: '第二个值', c: '第三个值' },
   random: { a: '最小值', b: '最大值' },
+  const: { value: '值' },
 };
 
 function argLabel(dataKind: string, key: string): string {

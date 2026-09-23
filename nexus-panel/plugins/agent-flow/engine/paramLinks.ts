@@ -43,10 +43,104 @@ import { argExpectOf, type ArgTypeIssue, type ValueKind } from './argTypes';
 /**
  * 出口 handle 的 id。
  *
- * 参数连线**必须**从这个出口出发：节点右侧那个默认出口是流程出口，
+ * 参数连线从这个出口出发。节点右侧那个默认出口是流程出口，
  * 两者共用同一个 handle 的话，拖出来的线无法判断用户想连哪一种。
  */
 export const OUT_HANDLE = 'out';
+
+/**
+ * 默认输出参数的 key。
+ *
+ * 一个节点可以有多个具名输出（见 outputsOf），但绝大多数只有一个 ——
+ * 那个就是它，名字叫 'out'。
+ */
+export const OUT_DEFAULT = 'out';
+
+/**
+ * 输出参数 handle 的 id：out:输出key
+ *
+ * ================= 为什么输出也要具名 =================
+ *
+ * 以前只有节点右侧一个总出口（OUT_HANDLE），连线从它拖到某个参数格。
+ * 单输出时够用，但一旦节点有**多个输出**（自定义输出参数、
+ * 模块的多出口、一次算出好几个值），一个总出口就说不清
+ * 这根线取的是哪一个 —— 而取错的表现是"值不对但不报错"。
+ *
+ * 对称地：输入侧早就已经是 arg:key（每个参数格一个入口）。
+ * 输出侧不跟上，两端就不对等，"参数指向参数"也就无从谈起。
+ */
+export function outHandleId(key: string): string {
+  return `out:${key}`;
+}
+
+/**
+ * 从 handle id 反解输出 key。不是输出端口则返回 null。
+ *
+ * ================= 为什么裸 'out' 不算输出端口 =================
+ *
+ * 节点右侧那个总出口（OUT_HANDLE）是**流程出口**，本意是"我跑完接着跑你"。
+ * 把它也算成输出端口的话，从它拖到某个参数格会被判成参数连线 ——
+ * 一根流程线被画成紫虚线，用户以为只是取个值，实际下游多了一条执行路径。
+ *
+ * 所以输出参数必须走**输出卡片上的端口**（out:xxx），与流程出口分开。
+ *
+ * ================= 那升级前连好的线怎么办 =================
+ *
+ * 老存档的参数连线 sourceHandle 就是裸 'out'。它们靠
+ * `data.kind === 'param'` 仍然被认成参数连线（见 isParamEdge / paramLinksOf），
+ * 只是**画线**时 handle 对不上 —— 由 normalizeParamEdges 在渲染时补成
+ * 'out:out'。判定与画线两条路分开，老线才不会变成废线。
+ */
+export function parseOutHandle(h: string | null | undefined): string | null {
+  if (!h) return null;
+  if (h === OUT_HANDLE) return null;
+  return h.startsWith('out:') ? h.slice('out:'.length) : null;
+}
+
+/**
+ * 把老参数连线的 handle 补成输出端口写法（渲染前用，不落盘）。
+ *
+ * 不改存档是刻意的：存进去就要考虑"改坏了怎么回退"，
+ * 而这里要的只是"线能画在正确的口子上"。
+ */
+export function normalizeParamEdges<T extends GraphEdge>(edges: T[]): T[] {
+  let changed = false;
+  const out = edges.map((e) => {
+    if (!isParamEdge(e)) return e;
+    const d = e.data as Record<string, unknown> | undefined;
+    const targetArg = typeof d?.targetArg === 'string' ? d.targetArg : null;
+    if (!targetArg) return e;
+    if (parseOutHandle(e.sourceHandle) !== null) return e;
+    changed = true;
+    const key = typeof d?.sourceArg === 'string' ? d.sourceArg : OUT_DEFAULT;
+    return {
+      ...e,
+      sourceHandle: outHandleId(key),
+      targetHandle: e.targetHandle ?? argHandleId(targetArg),
+    };
+  });
+  return changed ? out : edges;
+}
+
+/**
+ * 一个节点有哪些**输出参数**。
+ *
+ * 默认只有一个（OUT_DEFAULT）。有多输出的节点在这里按 kind 展开 ——
+ * 这张表是"输出卡片上画几个出口"的唯一依据，
+ * 散在组件里各写一份就会出现"卡片上有口子、连线却认不出来"。
+ */
+export const NODE_OUTPUTS: Record<string, string[]> = {
+  /*
+   * 目前只有单输出的通用情形。
+   * 多输出（如模块的多出口）将来在这里登记，卡片与连线两侧同时生效。
+   */
+};
+
+/** 某个节点的输出参数清单。老数据 / 未登记的类型 → 单输出 */
+export function outputsOf(dataKind: string | undefined | null): string[] {
+  const list = dataKind ? NODE_OUTPUTS[dataKind] : undefined;
+  return list && list.length > 0 ? list : [OUT_DEFAULT];
+}
 
 /**
  * 参数连线的颜色。
@@ -72,12 +166,17 @@ export function parseArgHandle(h: string | null | undefined): string | null {
   return h.startsWith('arg:') ? h.slice('arg:'.length) : null;
 }
 
-/** sourceHandle / targetHandle 是否构成一条参数连线 */
+/**
+ * sourceHandle / targetHandle 是否构成一条参数连线。
+ *
+ * 现在是**参数指向参数**：源端必须是某个输出端口（out:xxx），
+ * 目标端必须是某个参数入口（arg:xxx）。
+ */
 export function isParamHandles(
   sourceHandle: string | null | undefined,
   targetHandle: string | null | undefined,
 ): boolean {
-  return sourceHandle === OUT_HANDLE && parseArgHandle(targetHandle) !== null;
+  return parseOutHandle(sourceHandle) !== null && parseArgHandle(targetHandle) !== null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -97,6 +196,13 @@ export type ParamLink = {
   target: string;
   /** 目标节点上被填充的参数 key */
   targetArg: string;
+  /**
+   * 取来源节点的**哪个输出**。缺省 = 默认输出。
+   *
+   * 多输出节点必须记它：不记的话两根线（一个取 result、一个取 count）
+   * 长得一样，而"取到的是哪一个"取决于边的顺序 —— 顺序在存档里不保证。
+   */
+  sourceArg?: string;
 };
 
 /**
@@ -119,7 +225,17 @@ export function paramLinksOf(edges: GraphEdge[]): ParamLink[] {
     const targetArg = typeof d?.targetArg === 'string' ? d.targetArg : null;
     // 没有 targetArg 的参数连线是废线（连到了节点但没说填哪个参数），跳过
     if (!targetArg) continue;
-    out.push({ id: e.id, source: e.source, target: e.target, targetArg });
+    /*
+     * sourceArg 也能从 sourceHandle 上读出来 —— 老存档的 handle 是
+     * 'out' 或 'out:xxx'，data 里没有 sourceArg。
+     * 两个来源都要认，否则升级前的线会取不到值。
+     */
+    const sourceArg = typeof d?.sourceArg === 'string'
+      ? d.sourceArg
+      : (parseOutHandle(e.sourceHandle) ?? undefined);
+    out.push({
+      id: e.id, source: e.source, target: e.target, targetArg, sourceArg,
+    });
   }
   return out;
 }
@@ -139,11 +255,20 @@ export function makeParamEdge(
   source: string,
   target: string,
   targetArg: string,
+  sourceArg?: string,
 ): GraphEdge {
   return {
     id: `p:${source}->${target}:${targetArg}`,
     source,
     target,
+    /*
+     * 源端写明是哪个输出端口。
+     *
+     * 不写的话，多输出节点的两根线长一样，取哪个取决于边的顺序。
+     * 单输出节点也统一带上 —— 省掉"什么时候有、什么时候没有"的判断。
+     */
+    sourceHandle: outHandleId(sourceArg ?? OUT_DEFAULT),
+    targetHandle: argHandleId(targetArg),
     /*
      * type 是 React Flow 选组件的依据。
      * 不设它，参数连线会画成普通流程线 —— 两种线长得一样，
@@ -162,7 +287,15 @@ export function makeParamEdge(
      * 'arrowclosed' 是 MarkerType.ArrowClosed 的值，稳定公开。
      */
     markerEnd: { type: 'arrowclosed', color: PARAM_COLOR, width: 16, height: 16 },
-    data: { kind: 'param', targetArg } as unknown as GraphEdge['data'],
+    /*
+     * sourceArg 同时写进 data 与 sourceHandle。
+     *
+     * 写两处不是冗余：handle 是 React Flow 画线要用的（决定线从哪个口子出来），
+     * data 是**存档**里唯一跟着边走的东西。
+     * 只写 handle 的话，某些路径（模块打包、导出导入）重建边时可能丢 handle，
+     * 而丢掉的表现是"线还在但取不到值"。
+     */
+    data: { kind: 'param', targetArg, sourceArg: sourceArg ?? OUT_DEFAULT } as unknown as GraphEdge['data'],
   };
 }
 
@@ -193,7 +326,10 @@ export function makeParamEdge(
  * 而漂移的表现是"该报的没报" —— 静默失效，没人会发现。
  * 所以它只填**能确定**的少数几种，其余一律从 produces 推。
  */
-export function producesArgOf(dataKind: string | undefined | null): ValueKind {
+export function producesArgOf(
+  dataKind: string | undefined | null,
+  data?: Record<string, unknown> | null,
+): ValueKind {
   switch (dataKind) {
     // 产出一定是数字文本（即使 PortKind 写的是 text）
     case 'math':
@@ -205,6 +341,21 @@ export function producesArgOf(dataKind: string | undefined | null): ValueKind {
     case 'update':
     case 'gate':
       return 'bool';
+    /*
+     * 常量：**按种类**产出。
+     *
+     * 三种常量 dataKind 都是 'const'，产出的值种类却不同
+     * （数字常量出 num、布尔常量出 bool）—— 不读 valueType 的话
+     * 数字常量接到「大于」上会被当成文本，报不该报的「错参」。
+     *
+     * 老存档没有 valueType，一律按 text —— 那正是它当初的行为。
+     */
+    case 'const': {
+      const vt = String(data?.valueType ?? 'text');
+      if (vt === 'num') return 'num';
+      if (vt === 'bool') return 'bool';
+      return 'text';
+    }
     default:
       break;
   }
@@ -306,7 +457,7 @@ export function paramLinkIssues(
     const expect = argExpectOf(dstKind, dstData, link.targetArg);
     if (!expect || expect === 'any') continue;
 
-    const actual = producesArgOf((srcData?.kind as string | undefined) ?? null);
+    const actual = producesArgOf((srcData?.kind as string | undefined) ?? null, srcData);
     // unknown = 上游产出看不出来（mark / any / none），不在这报
     if (actual === 'unknown' || actual === 'any') continue;
 
@@ -316,13 +467,20 @@ export function paramLinkIssues(
       key: link.targetArg,
       expect,
       actual,
-      message: `「${link.targetArg}」接的是上游输出（${valueLabel(actual)}），但这里要${valueLabel(expect)}`,
+      message: `「${link.targetArg}」接的是上游输出（${valueKindLabel(actual)}），但这里要${valueKindLabel(expect)}`,
     });
   }
   return out;
 }
 
-function valueLabel(v: ValueKind): string {
+/**
+ * 值种类的人话名字。
+ *
+ * 输出卡片上显示的就是它 —— 卡片上要写"数字"而不是 PortKind 里的"文本"，
+ * 因为参数连线按**值种类**校验（见 producesArgOf），
+ * 写 PortKind 会让"数字常量"在卡片上显示成"文本"。
+ */
+export function valueKindLabel(v: ValueKind): string {
   switch (v) {
     case 'num':
       return '数字';

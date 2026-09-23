@@ -1002,3 +1002,65 @@ test('任务流程图不再写死高度（撑到界面底端）', () => {
   assert.match(td, /className=\{?"task-flow task-flow--fill"/,
     '画布模式的流程图没挂 task-flow--fill —— CSS 写了也不会生效');
 });
+
+/* ================= 常量：三种预设，不是一个节点上的下拉框 ================= */
+
+/*
+ * 三种常量（文本 / 数字 / 布尔）必须是**三个侧栏预设**。
+ *
+ * 做成一个节点上的下拉框的话，拖进来的永远是"文本常量"，
+ * 想用布尔得先拖进来、再点开面板、再改一项 —— 三步，
+ * 而前两步看到的东西（侧栏名、卡片标题）都是错的。
+ *
+ * 更关键的是：三种常量**产出的值种类不同**（num / bool / text），
+ * 不分开就无法参与参数类型校验 —— 数字常量接到「大于」上才合法。
+ */
+test('常量展开成三种预设（文本/数字/布尔）', () => {
+  const def = read(path.join(ROOT, 'nodes', 'defs', 'const.ts'));
+  assert.match(def, /presets:/, 'const 没有 presets —— 三种常量在侧栏选不到');
+  for (const vt of ['text', 'num', 'bool']) {
+    assert.match(def, new RegExp(`'${vt}'`), `预设里没有 ${vt} 常量`);
+  }
+  /* 产出种类必须按 valueType 走，否则数字常量会被当成文本 */
+  const pl = read(path.join(ROOT, 'engine', 'paramLinks.ts'));
+  assert.match(pl, /case 'const'/, 'producesArgOf 不认 const —— 三种常量产出同一个种类');
+  assert.match(pl, /valueType/, 'producesArgOf 不读 valueType —— 数字常量会被判成文本');
+});
+
+/* ================= 输出端口：参数连线从输出卡片拖出 ================= */
+
+/*
+ * 以前参数连线的源端是节点右侧那个总出口（裸 'out'），
+ * 而它同时是**流程出口**（"我跑完接着跑你"）。
+ *
+ * 兼用的后果：从它拖到参数格到底是"取个值"还是"接着跑"，
+ * 只能靠目标端猜 —— 猜错就是"只想取个值却多出一条执行路径"。
+ *
+ * 现在输出侧与输入侧对称（out:key ↔ arg:key），
+ * 两端都要盯：只改判定不改卡片（没有口子可拖），
+ * 或只改卡片不改判定（拖出来画成流程线），都是白改。
+ */
+test('参数连线走输出端口，流程出口不再兼作参数出口', () => {
+  const pl = read(path.join(ROOT, 'engine', 'paramLinks.ts'));
+  /* 裸 'out' 必须判成"不是输出端口" */
+  const body = pl.slice(pl.indexOf('export function parseOutHandle'));
+  assert.match(body.slice(0, 600), /h === OUT_HANDLE\) return null/,
+    'parseOutHandle 仍把裸 out 当成输出端口 —— 流程出口会兼作参数出口');
+
+  /* 卡片上必须有 out:xxx 端口可拖 */
+  const shell = read(path.join(COMP, 'NodeShell.tsx'));
+  assert.match(shell, /outHandleId\(key\)/, '输出卡片上没有输出端口 —— 没有口子可拖');
+  assert.match(shell, /outputsOf\(/, '输出端口清单没接上 —— 多输出将来无处登记');
+
+  /* 渲染前必须补老线的 handle，否则"线看不见、值却是对的" */
+  const app = read(path.join(ROOT, 'App.tsx'));
+  assert.match(app, /normalizeParamEdges\(edges\)/,
+    'App 没有规范化参数连线的 handle —— 升级前的线会画不出来');
+});
+
+test('输出端口的类名在 styles.css 里有定义', () => {
+  const css = stripCssComments(readSrc('styles.css'));
+  for (const c of ['node-outs', 'node-out-port', 'node-out-handle']) {
+    assert.ok(css.includes(`.${c}`), `styles.css 里没有 .${c} —— 端口画不出来或没有落点`);
+  }
+});

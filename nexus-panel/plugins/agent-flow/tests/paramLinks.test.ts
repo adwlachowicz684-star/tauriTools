@@ -5,8 +5,9 @@ import {
   isParamEdge, paramLinksOf, flowEdgesOf, makeParamEdge,
   producesArgOf, paramLinkIssues, applyParamLinks, linksInto,
   argHandleId, parseArgHandle, isParamHandles, OUT_HANDLE,
+  outHandleId, parseOutHandle, normalizeParamEdges, OUT_DEFAULT,
 } from '../engine/paramLinks';
-import { argExpectOf } from '../engine/argTypes';
+import { argTypeIssues, argExpectOf } from '../engine/argTypes';
 import { topoLayers } from '../engine/topo';
 import { runGraph } from '../engine/runner';
 import { validateNode, badgeTextOf } from '../engine/nodeValidate';
@@ -56,12 +57,88 @@ test('没有 targetArg 的参数连线是废线，跳过而不是填进空参数
   assert.deepEqual(paramLinksOf([broken]), [], '没有 targetArg 不该产生连线');
 });
 
-test('handle 约定：出口 out + 入口 arg:key 才算参数连线', () => {
-  assert.equal(isParamHandles(OUT_HANDLE, argHandleId('a')), true);
-  assert.equal(isParamHandles(OUT_HANDLE, 'x'), false, '目标不是参数入口');
-  assert.equal(isParamHandles(null, argHandleId('a')), false, '不是从 out 出口出发');
+test('handle 约定：输出端口 out:key + 入口 arg:key 才算参数连线', () => {
+  assert.equal(isParamHandles(outHandleId(OUT_DEFAULT), argHandleId('a')), true);
+  assert.equal(isParamHandles(outHandleId('cnt'), argHandleId('b')), true, '多输出的第二个端口也算');
+  assert.equal(isParamHandles(outHandleId('a'), 'x'), false, '目标不是参数入口');
+  assert.equal(isParamHandles(null, argHandleId('a')), false, '不是从输出端口出发');
   assert.equal(parseArgHandle(argHandleId('b')), 'b');
   assert.equal(parseArgHandle(null), null);
+});
+
+/*
+ * 节点右侧那个总出口（OUT_HANDLE）是**流程出口**，不能兼作参数出口。
+ *
+ * 兼用的话，从它拖到某个参数格会被判成参数连线 ——
+ * 一根流程线被画成紫虚线，用户以为只是取个值，
+ * 实际下游多了一条执行路径（表现为某个节点跑了两次）。
+ */
+test('流程出口不再是参数连线的源端', () => {
+  assert.equal(isParamHandles(OUT_HANDLE, argHandleId('a')), false,
+    '从节点右侧总出口拖到参数格 = 流程连线，不是参数连线');
+  assert.equal(parseOutHandle(OUT_HANDLE), null);
+  assert.equal(parseOutHandle(outHandleId('cnt')), 'cnt');
+});
+
+/*
+ * 升级前连好的线 sourceHandle 是裸 'out'，data.kind 仍是 'param'。
+ * 判定照旧（靠 data），画线由 normalizeParamEdges 补成 'out:out' ——
+ * 两条路分开，老线才不会变成"看不见的线"。
+ */
+test('老参数连线（裸 out）仍被认成参数连线，渲染时补成输出端口', () => {
+  const old = {
+    id: 'p', source: 'a', target: 'b', sourceHandle: OUT_HANDLE,
+    data: { kind: 'param', targetArg: 'a' },
+  } as unknown as GraphEdge;
+  assert.equal(isParamEdge(old), true);
+  const links = paramLinksOf([old]);
+  assert.equal(links.length, 1, '老线不该变成废线');
+  assert.equal(links[0].sourceArg, undefined, '没有写明时按默认输出处理');
+
+  const fixed = normalizeParamEdges([old]);
+  assert.equal(fixed[0].sourceHandle, outHandleId(OUT_DEFAULT));
+  assert.equal(fixed[0].targetHandle, argHandleId('a'), '目标端也要补，否则线画不到参数格');
+});
+
+test('常量按种类产出不同的值种类', () => {
+  assert.equal(producesArgOf('const', { valueType: 'num' }), 'num');
+  assert.equal(producesArgOf('const', { valueType: 'bool' }), 'bool');
+  assert.equal(producesArgOf('const', { valueType: 'text' }), 'text');
+  // 老存档没有 valueType —— 按 text，那正是它当初的行为
+  assert.equal(producesArgOf('const', {}), 'text');
+  assert.equal(producesArgOf('const'), 'text');
+});
+
+test('数字常量填了文字时报「错参」', () => {
+  const issues = argTypeIssues('const', { valueType: 'num', value: 'abc' });
+  assert.equal(issues.length, 1, '数字常量填 abc 要报出来');
+  assert.equal(issues[0].key, 'value');
+  assert.equal(issues[0].expect, 'num');
+
+  assert.deepEqual(argTypeIssues('const', { valueType: 'num', value: '42' }), [], '数字不该报');
+  assert.deepEqual(argTypeIssues('const', { valueType: 'text', value: 'abc' }), [], '文本什么都能填');
+  assert.deepEqual(argTypeIssues('const', { valueType: 'bool', value: 'true' }), [], '布尔不校验');
+  // 模板放行：编辑时没有值，判成什么都可能是猜
+  assert.deepEqual(argTypeIssues('const', { valueType: 'num', value: '{{x.output}}' }), []);
+});
+
+test('数字常量接到「大于」合法，接到「包含」报错参', () => {
+  const nodes = [
+    { id: 'c1', data: { kind: 'const', valueType: 'num', value: '10' } },
+    { id: 'm1', data: { kind: 'math', op: 'add' } },
+  ] as unknown as GraphNode[];
+  const links = [{ id: 'p', source: 'c1', target: 'm1', targetArg: 'a' }];
+  assert.deepEqual(paramLinkIssues(nodes, links), {}, '数字 → 加减乘除 合法');
+
+  const toText = [{ id: 'p', source: 'c1', target: 'm1', targetArg: 'a' }];
+  void toText;
+  // 文本常量接到同样位置也不该报（数学要数字，文本常量是 text → 该报）
+  const textNodes = [
+    { id: 'c2', data: { kind: 'const', valueType: 'text', value: 'x' } },
+    { id: 'm1', data: { kind: 'math', op: 'add' } },
+  ] as unknown as GraphNode[];
+  const bad = paramLinkIssues(textNodes, [{ id: 'p', source: 'c2', target: 'm1', targetArg: 'a' }]);
+  assert.equal(Object.keys(bad).length, 1, '文本常量接到加减乘除上要报错参');
 });
 
 /* ------------------------------------------------------------------ */

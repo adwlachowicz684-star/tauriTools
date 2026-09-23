@@ -11,7 +11,10 @@ import Inspector from './components/Inspector';
 // 放在这里是刻意的 —— 注册表必须先被填充，下面的 buildNodeTypes() 才有内容。
 import { buildNodeTypes, getDef, allPresets, type NodeDef } from './nodes';
 import { ParamEdge } from './components/ParamEdge';
-import { parseArgHandle, makeParamEdge, isParamEdge, linkHintOf, paramLinksOf, paramLinkIssues } from './engine/paramLinks';
+import {
+  parseArgHandle, parseOutHandle, makeParamEdge, isParamEdge,
+  linkHintOf, paramLinksOf, paramLinkIssues, normalizeParamEdges,
+} from './engine/paramLinks';
 import { getVariableGroup } from './nodes/registry';
 import {
   applyVarTo, findVar, checkVarForNode, duplicateVar, varSnapshotOf,
@@ -875,10 +878,19 @@ function reportSkipped(
        * 混进去会让它带上 branch / loopRole，
        * 于是"取个值"变成"多一条执行路径"。
        */
+      /*
+       * 源端也要认：必须是某个**输出端口**（out:xxx）。
+       *
+       * 只判目标端的话，从节点右侧那个流程出口拖到参数格也会被当成参数连线 ——
+       * 而那个出口的本意是"我跑完接着跑你"。
+       * 两种出口混用的表现是：一根流程线被画成了紫虚线，
+       * 用户以为只是取个值，实际下游多了一条执行路径。
+       */
       const argKey = parseArgHandle(params.targetHandle);
-      if (argKey) {
+      const outKey = parseOutHandle(params.sourceHandle);
+      if (argKey && outKey) {
         setEdges((eds) => {
-          const one = makeParamEdge(params.source!, params.target!, argKey);
+          const one = makeParamEdge(params.source!, params.target!, argKey, outKey);
           /*
            * 同一个参数只保留一条线。
            *
@@ -2151,6 +2163,18 @@ function reportSkipped(
     [displayNodes, fireManualTrigger, argLinkIssues],
   );
 
+  /*
+   * 画线前把**老参数连线**的 handle 补成输出端口写法。
+   *
+   * 升级前连好的线 sourceHandle 是裸 'out'（那时它兼作参数出口）。
+   * 现在输出端口叫 'out:xxx'，不补的话 xyflow 找不到对应的口子，
+   * 线会画不出来或落到节点中心 —— 而 data.kind 仍是 'param'，
+   * 值还照常取。于是"线看不见、值却是对的"，最难联想的一种。
+   *
+   * 只在渲染时补，不改存档：要的只是线画在正确的口子上。
+   */
+  const canvasEdges = useMemo(() => normalizeParamEdges(edges), [edges]);
+
 
 
 const globalTriggersRef = useRef<GlobalTrigger[]>([]);
@@ -2735,7 +2759,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
         <div className="canvas" ref={wrapperRef} onDrop={onDrop} onDragOver={onDragOver} style={view === 'flow' ? undefined : { display: 'none' }}>
           <ReactFlow
             nodes={canvasNodes}
-            edges={edges}
+            edges={canvasEdges}
             onNodesChange={handleNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
