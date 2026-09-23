@@ -786,24 +786,6 @@
 .fpx-vendor { width: 92px; flex: none; height: 28px; padding: 0 8px; font-size: var(--fs-11, 11px); }
 
 /* ---------- 图标文件选择 ---------- */
-.fpx-iconlist {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 8px; max-height: 340px; overflow: auto;
-}
-.fpx-iconitem {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px; border: 1px solid var(--border); border-radius: var(--r-sm);
-  background: var(--surface-sunk); color: var(--text); cursor: pointer;
-  text-align: left; min-width: 0;
-}
-.fpx-iconitem:hover { border-color: var(--accent); }
-.fpx-iconthumb {
-  width: 26px; height: 26px; flex: none; display: grid; place-items: center;
-  border-radius: var(--r-xs); background: var(--surface); font-size: var(--fs-12, 12px); color: var(--accent);
-}
-.fpx-iconname {
-  font-size: var(--fs-11, 11px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 
 /* ---------- 目录选择器 ---------- */
 .fpx-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin-bottom: 8px; }
@@ -835,10 +817,6 @@
   background: var(--surface-sunk);
 }
 .fpx-emoji.active { border-color: var(--accent); box-shadow: var(--glow-sm); }
-.fpx-color {
-  width: 34px; height: 34px; padding: 0; border: 1px solid var(--border);
-  border-radius: var(--r-sm); background: transparent; cursor: pointer;
-}
 
 /* ---------- 色盘 ---------- */
 .fpx-preview-def { color: var(--text-mute); text-shadow: none; }
@@ -846,6 +824,7 @@
 .fpx-mini { height: 24px; padding: 0 8px; font-size: var(--fs-11, 11px); }
 
 /* 卡片上的标签色点 */
+
 .fpx-color-dot {
   width: 8px; height: 8px; flex: none; border-radius: 50%;
   box-shadow: 0 0 6px currentColor;
@@ -1125,7 +1104,6 @@
 .fpx-emoji.on { border-color: var(--accent); }
 
 /* 卡片右键菜单里的连锁动作图标 */
-.fpx-menu-icon { margin-right: 6px; }
 
 /* ---------- 自定义连锁客户端 ---------- */
 .fpx-cc-row {

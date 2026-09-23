@@ -1188,39 +1188,64 @@ input[type='range']:disabled {
  * 结果就是：这套动效写了，但**没有任何一张卡片受益** ——
  * 死样式里最隐蔽的一类：定义完整、看着合理、实际悬空。
  *
- * 现在把实际在用的卡片类接进来：
- *   .p-card —— 外壳控件类（README 有记载，settings / agent-flow 可用）
- *   .fpx-card —— project-group 卡片（CardGrid.tsx 以数组拼接方式挂类，
- *                静态扫描看不到，容易被误判成死样式，实测在用）
- * 注意 mindmap 里**没有** .mm-card 这个类（实测源码零出现）——
- * 此前凭"三个插件各有一套"的假设把它加进来，属于悬空接入，已移除。
- * 教训：接入前要核实类名真实存在，不能按对称性推。
+ *
+ * 【容器 与 可交互 必须分开 —— 这是本轮返工的根因】
+ *
+ * 上一版把 .p-card 也接进了这一组，结果设置面板每一个分区底板
+ * （div.set-body > .p-card）鼠标划过会抬升、点下去会缩放 ——
+ * 而它只是个**装内容的盒子**，点它没有任何反应却有按压动画，
+ * 看起来像坏了。
+ *
+ * 根因是把"长得像卡片"当成了"可以点"。
+ * .p-card 的实际定义就是 padding + 圆角 + 底色 + 阴影加一个标题样式，
+ * 是**布局容器**；settings 里 6 处、shell 里若干处全是静态分区，
+ * 没有任何 onClick。
+ *
+ * 判据改成"**是否可交互**"，而不是"是不是卡片"：
+ *   ✅ .fpx-card —— 可点（onClick 选中）+ 可拖（draggable），实测在用
+ *   ✅ .nx-card / .nx-panel —— 语义就是"可交互模块卡片"
+ *   ✅ .nx-tap —— 显式可点击标记：容器若确实可点，挂这个类才给反馈
+ *   ❌ .p-card —— 纯容器，已摘出
+ *
+ * 另：mindmap 里**没有** .mm-card 这个类（实测源码零出现），
+ * 此前凭"三个插件各一套"的对称性假设加进来，属悬空接入，一并移除。
  * 注意 .fpx-card 自己在 project-group/style.css 里另写了一条
  * 一模一样的 hover（translateY(-1px) + --sh-out-md），已合并到此处，
  * 那边只留它特有的 border-left-color。
  */
 .nx-card,
 .nx-panel,
-.p-card,
-.fpx-card {
+.nx-tap {
   transition: border-color var(--dur-fast), box-shadow var(--dur-fast),
               transform var(--dur-fast);
 }
 .nx-card:hover,
 .nx-panel:hover,
-.p-card:hover,
-.fpx-card:not(.missing):hover {
+.nx-tap:hover {
   border-color: var(--accent);
   transform: translateY(-1px);
   box-shadow: var(--sh-out-sm);
 }
 
+/*
+ * .nx-tap —— 显式"可点击"标记。
+ *
+ * 容器类（.p-card 等）默认**不带**交互反馈，因为它们只是装内容的盒子。
+ * 某个容器若确实可点（整块点击跳转 / 展开），挂上 .nx-tap 即可获得
+ * 与按钮一致的悬浮高亮 + 按压反馈。
+ *
+ * 为什么是显式标记而不是"容器也一起给"：
+ * 无法从 CSS 判断一个元素有没有绑定 onClick，而猜错的代价是
+ * 满屏静态面板都在响应鼠标 —— 上面那次返工正是这么来的。
+ * 显式挂类让"可点"成为作者主动声明的意图。
+ */
+.nx-tap { cursor: pointer; }
+
 /* 按压：内凹阴影（原有）+ 轻微缩放（参考页共有手法）。
    只加 transform，不动 padding —— 缩放不占布局，按钮不会推挤邻居。 */
 .nx-card:active,
 .nx-panel:active,
-.p-card:active,
-.fpx-card:not(.missing):active,
+.nx-tap:active,
 .nx-btn:active,
 .p-btn:active { transform: scale(.97); }
 
@@ -1238,14 +1263,12 @@ input[type='range']:disabled {
 @media (prefers-reduced-motion: reduce) {
   .nx-card,
   .nx-panel,
-  .p-card,
-  .fpx-card,
+  .nx-tap,
   .nx-btn,
   .p-btn { transition: none; }
   .nx-card:hover,
   .nx-panel:hover,
-  .p-card:hover,
-  .fpx-card:hover { transform: none; }
+  .nx-tap:hover { transform: none; }
   .nx-enter { animation: none; }
 }
 
