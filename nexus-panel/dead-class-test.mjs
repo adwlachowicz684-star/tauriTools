@@ -20,9 +20,11 @@
  *   B. 截断规则：选择器后没有规则体（.err-diag-body 那次是真事故）
  *   C. 关键修复不得回退
  */
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+const ROOT = dirname(fileURLToPath(import.meta.url));
 import {
   stripComments, collectDefinedClasses, collectUsedClasses,
   findTruncatedRules, scanDeadClasses,
@@ -183,6 +185,85 @@ console.log('\n=== 5. CSS 结构完整性 ===');
       : (s.split('{').length === s.split('}').length),
       `${s.split('{').length - 1} / ${s.split('}').length - 1}`);
   }
+}
+
+
+console.log('\n=== 6. 反向校验：代码用了但 CSS 没定义 ===');
+{
+  /*
+   * 前面几节盯的是"CSS 有定义、代码没用"（死样式，危害是冗余）。
+   * 这一节盯反方向：**代码用了、CSS 查无定义** —— 这才是真正的疏漏，
+   * 表现是元素裸奔（没有间距、没有边框、位置乱），且不报任何错。
+   *
+   * 本次全仓扫描的结论是"已清零"，但清零状态必须有人守着：
+   * 以后新增一个 className 而忘了补样式，这里会立刻报红。
+   */
+  const files = [];
+  const walk = (d) => {
+    for (const f of readdirSync(d)) {
+      if (['node_modules', '.git', 'dist', 'target', 'build'].includes(f)) continue;
+      const p = join(d, f);
+      if (statSync(p).isDirectory()) walk(p);
+      else files.push(p);
+    }
+  };
+  walk(ROOT);
+  const css = files.filter((f) => f.endsWith('.css'));
+  /* 排除测试文件自身：里面全是 `className="a b c"` 这类**示例串**，
+     扫进来会把 a / b / c / mm-foo 全报成"无样式类名"（实测报了 6 个）。
+     生产代码才是真正要盯的对象。 */
+  /* 排除三类，都是**非生产 UI**，扫进来只会制造噪声：
+     · 测试文件 —— 里面全是 `className="a b c"` 这类示例串
+     · demo 插件 —— 演示用，样式本就随便
+     · *.min.js / editor 第三方库 —— 打包产物，类名由上游决定 */
+  const src = files.filter((f) => /\.(tsx|jsx|ts|js|mjs)$/.test(f)
+    && !/-test\.mjs$/.test(f) && !/\.test\.(ts|tsx)$/.test(f)
+    && !/plugins\/demo-module\//.test(f)
+    && !/\.min\.js$/.test(f) && !/editor\//.test(f)
+    /* 扫描器自身也要排除：它的文档注释与单测里用 mm-foo 举例，
+       不排除会被自己扫出来（实测报了 1 个）。 */
+    && !/js\/dead-class-scan\.js$/.test(f));
+
+  const defined = new Set();
+  for (const f of css) {
+    for (const c of collectDefinedClasses(readFileSync(f, 'utf8'))) defined.add(c);
+  }
+  const used = new Set();
+  for (const f of src) {
+    /*
+     * 先剥注释再扫描。
+     * dead-class-scan.js 自己的文档注释里就有 `className="a b"` 这类示例，
+     * 不剥会把 a / b / mm-foo 报成"无样式类名"（实测报了 6 个）。
+     * 生产代码里同样可能用注释举例，所以这一步不能省。
+     */
+    try {
+      for (const c of collectUsedClasses(stripComments(readFileSync(f, 'utf8')))) used.add(c);
+    } catch { /* 忽略 */ }
+  }
+
+  /* 白名单：这几类是**刻意**没有样式的，不是疏漏。
+     · nexus-isolated / nexus-view-settings —— plugin-sdk 打在 body 上的
+       状态钩子，供插件 CSS 自行选择要不要响应；外壳不该替插件做视觉决定。
+     · mm-print-root / mm-print-svg —— 样式由 io.js 在导出时动态注入，
+       静态 CSS 里本来就没有（扫描器只读 .css，看不到运行时注入）。
+     · tb-toolbar-btn —— 标记类，视觉由同串里的 .tb-btn 承担。
+     · side-picker —— 仅出现在测试里。
+     · nx-insp- —— 前缀拼接（nx-insp-top/bottom/left/right 都有定义）。 */
+  const ALLOW = new Set([
+    'nexus-isolated', 'nexus-view-settings',
+    'mm-print-root', 'mm-print-svg',
+    'tb-toolbar-btn', 'side-picker', 'nx-insp-',
+  ]);
+
+  const missing = [...used].filter((c) => !defined.has(c) && !ALLOW.has(c));
+  t('没有"代码用了但 CSS 没定义"的类名', missing.length === 0,
+    missing.slice(0, 6).join(', ') || `${used.size} 个类名全部有定义`);
+
+  /* 白名单反向校验：某项若已被真修好（CSS 里补了定义），
+     就必须从表内移除 —— 否则白名单只增不减，慢慢变成"什么都往里塞"。 */
+  const stale = [...ALLOW].filter((c) => defined.has(c) && c !== 'nx-insp-');
+  t('白名单没有过期项（已被补样式的应移出）', stale.length === 0,
+    stale.join(', ') || '无过期项');
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
