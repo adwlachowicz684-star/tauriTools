@@ -4848,14 +4848,18 @@ group('附件在节点间拖拽：分发逻辑（跑真实源码）');
   }
 
   // 7) 跟随浮层必须 pointer-events:none，否则命中测试命中的是它自己
+  //
+  // 断言盯的是 **JS 里的 inline style**，不是 CSS —— 这两个元素是运行时
+  // createElement 出来的、样式全走 style.xxx，styles.css 里压根没有这两个类。
+  // 早先断言读 CSS 导致永远为假（假阴性），后来样式改成 inline 后直接变红，
+  // 两种情况都没在把关真正的行为。
   {
-    const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
-    const g = css.slice(css.indexOf('.mm-att-ghost {'), css.indexOf('.mm-att-hi {'));
-    ok(/pointer-events:\s*none/.test(g),
+    // 两个元素各自独立设置，缺一个就会出现"拖到某处后浮层自己挡住命中测试"
+    const mkGhost = html.slice(html.indexOf('function attGhostEl('), html.indexOf('function attHiEl('));
+    ok(/pointerEvents\s*=\s*'none'/.test(mkGhost),
       '跟随浮层 pointer-events:none（否则 elementFromPoint 命中它自己）');
-    const hiAt = css.indexOf('.mm-att-hi {');
-    const hi = css.slice(hiAt, hiAt + 400);
-    ok(/pointer-events:\s*none/.test(hi), '高亮框同样不能吃事件');
+    const mkHi = html.slice(html.indexOf('function attHiEl('), html.indexOf('/** 把高亮框套在目标节点上'));
+    ok(/pointerEvents\s*=\s*'none'/.test(mkHi), '高亮框同样不能吃事件');
   }
 
   // 8) 源节点不给高亮（高亮了像「可以放」，实际是空操作）
@@ -7136,6 +7140,77 @@ group('文件图标：悬停高亮框与行距');
   const rowStep = html.match(/top \+= (\d+);\s*\n\s*\}\s*\n\s*\}\s*\n\s*\} catch/);
   const step = Number((html.match(/top \+= (\d+);/g) || []).slice(-1)[0]?.match(/\d+/)?.[0]);
   ok(step >= 20, `文件行距 ≥ 20（实际 ${step}）—— 17 会让相邻图标重叠 3px`);
+}
+
+group('Tab 建节点：一次就成（不再多出一条孤立连线）');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+
+  // 取 insertNode 的**完整函数体**（到下一个顶层函数为止）
+  const i = html.indexOf('function insertNode(parent, index)');
+  ok(i > 0, '有 insertNode');
+  const src = html.slice(i, html.indexOf('function removeSelectedNode()', i));
+
+  /* ---- 行为级：用 mock 跑真实源码，看按一次 Tab 到底发生了什么 ---- */
+  const run = (parent) => {
+    const log = [];
+    const node = { render() { log.push('render'); }, renderTree() { log.push('renderTree(new)'); } };
+    const km = {
+      // 真实内核：createNode 内部已经 appendNode —— mock 必须还原这一点，
+      // 否则「编辑器又 append 一次」这个 bug 根本暴露不出来
+      createNode(text, p, index) {
+        log.push('createNode');
+        log.push('kernel:appendNode');
+        return node;
+      },
+      appendNode() { log.push('editor:appendNode'); },
+      select() { log.push('select'); },
+      fire() { log.push('fire'); },
+      layout(d) { log.push('layout' + (d === undefined ? '' : '(' + d + ')')); },
+    };
+    const beginTextEdit = () => log.push('beginTextEdit');
+    const fn = new Function('km', 'beginTextEdit', src + '; return insertNode;')(km, beginTextEdit);
+    fn(parent, null);
+    return log;
+  };
+
+  {
+    const log = run({ children: [], isCollapsed: () => false });
+    // 核心：**必须渲染**。attachNode 只把容器挂进树里，不画内容。
+    // 不渲染 → 节点没有 _contentBox → 连线画到 (0,0)，节点自身不可见也选不中
+    ok(log.includes('render'), '新节点被 render（否则不可见、选不中，只剩一条孤立连线）');
+    // createNode 内部已 append 过，编辑器再调一次会让 attachNode 跑两遍
+    ok(!log.includes('editor:appendNode'), '不再重复调用 km.appendNode（createNode 内部已 append）');
+    // 顺序：先渲染，再布局，最后开编辑框 —— 反了编辑框定位不到节点
+    ok(log.indexOf('render') < log.indexOf('layout'), 'render 在 layout 之前');
+    ok(log.indexOf('layout') < log.indexOf('beginTextEdit'), 'layout 在 beginTextEdit 之前');
+  }
+
+  /* ---- 父节点折叠：必须整棵子树重渲，只 render 新节点不够 ---- */
+  {
+    let treeRendered = false;
+    let expanded = false;
+    const parent = {
+      children: [],
+      isCollapsed: () => true,
+      expand() { expanded = true; },
+      renderTree() { treeRendered = true; },
+    };
+    run(parent);
+    ok(expanded, '父节点折叠时先 expand');
+    ok(treeRendered, '折叠时整棵子树重渲（只 render 新节点的话，展开的老节点是残影）');
+  }
+
+  /* ---- 源码级：防止改回去 ---- */
+  ok(/km\.createNode\(null, parent, idx\)/.test(src), '位置通过 createNode 的第三个参数传（不再事后 append）');
+  // 不能传 null：insertChild 只对 undefined 取「追加到末尾」，
+  // 传 null 会被 splice 当成 0，节点插到最前面
+  ok(/index == null\s*\?/.test(src), 'index 为 null 时换算成末尾下标（不能直接传给 createNode）');
+  // km.layout() 不接受参数：动画时长只由 layoutAnimationDuration 决定，
+  // 写 layout(100) 里的 100 会被静默忽略
+  ok(!/km\.layout\(\s*\d/.test(src), 'km.layout() 不传无效的数字参数（那会被忽略）');
+  ok(!/km\.appendNode\(/.test(src), '源码里已无 km.appendNode 调用');
 }
 
 group('数值输入框 numSpinner（▲▼ 步进 / ▾ 选预设 / 滚轮 ±1）');

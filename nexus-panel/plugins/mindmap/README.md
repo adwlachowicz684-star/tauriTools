@@ -1875,6 +1875,61 @@ getter-only）已确认能抓到。
 行距原为 17，而图标高 20 → 相邻两行图标**重叠 3px**，即「两个图标叠在
 一起」。改 24。
 
+## Tab 建节点：按一次就成（不再多出一条孤立连线）
+
+### 现象
+
+画布上按 Tab 建不出新节点，要按两次；第一次按完出现一条**孤立连线** ——
+选不中，两端也不连着任何节点。
+
+### 根因
+
+编辑器的 `insertNode()` 建完节点后**没有 render**，只调了 layout：
+
+```js
+var node = km.createNode(null, parent);
+km.appendNode(node, parent, ...);   // ← 多余，createNode 内部已 append
+km.select(node, true);
+km.fire('contentchange');
+km.layout(100);                     // ← 缺 render
+beginTextEdit(node, null, null);
+```
+
+`attachNode` 只是把渲染**容器**挂进树里，并不画内容。不渲染的话节点没有
+`_contentBox`，`getContentBox()` 返回**空 Box (0,0,0,0)**，于是 Connect 模块
+把连线画到 `(0,0)` —— 就是那条孤立连线；节点自身不可见、也选不中，看着像
+「Tab 没生效」。
+
+再按一次 Tab 时，行内编辑器收尾（`closeTextEditor`）里那句 `node.render()`
+把它补上了，节点这才出现 —— 所以表现成「按两次才建出来」。
+
+### 修法
+
+参照内核 `AppendChildCommand` 的写法：
+
+```js
+c.isExpanded() ? d.render() : (c.expand(), c.renderTree())
+```
+
+即：
+
+- 父节点原本展开 → `node.render()`
+- 父节点原本折叠 → `parent.expand()` + `parent.renderTree()`
+  （只 render 新节点不够，展开出来的老节点会停留在折叠态的残影上）
+
+### 顺带修掉的两个问题
+
+**重复的 `appendNode`。** `km.createNode(text, parent, index)` 内部已经
+`appendNode` 过一次（`appendNode = insertChild + attachNode`），编辑器又调一遍
+会让 `attachNode` 跑两次。要指定位置就用 `createNode` 的第三个参数。
+
+注意**不能传 `null`**：`insertChild` 只在参数是 `undefined` 时才取「追加到
+末尾」，传 `null` 会被 `splice(null,…)` 当成 `0`，节点插到最前面。
+
+**`km.layout(100)` 里的 100 是无效的。** `Minder.layout()` **不接受参数** ——
+动画时长只由 `setOption('layoutAnimationDuration')` 决定。写 `layout(100)`
+会被静默忽略，只会误导后来人以为这里有动画。已改成 `km.layout()`。
+
 ## 数值输入框 numSpinner（▲▼ 步进 / ▾ 选预设 / 滚轮 ±1）
 
 字号 / 线宽 / 圆角三个数值控件统一走 `numSpinner()`，形态是 Windows 经典的

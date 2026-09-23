@@ -3126,16 +3126,46 @@
         (function () {
             function kmShortcut(key, fn) { try { km.addShortcut(key, fn); } catch (e) {} }
 
-            // 插入新节点并进入行内编辑；父节点若折叠先展开
+            /* 插入新节点并进入行内编辑；父节点若折叠先展开。
+             *
+             * 两个坑，都是实测出来的（不是风格问题）：
+             *
+             * 1. **不要再调 km.appendNode**。km.createNode(text, parent, index)
+             *    内部已经 append 过一次（appendNode = insertChild + attachNode），
+             *    再调一次会让 attachNode 跑两遍。要指定位置就用 createNode 的
+             *    第三个参数。
+             *    另外**不能传 null**：insertChild 只在参数是 undefined 时才取
+             *    「追加到末尾」，传 null 会被 splice 当成 0，节点插到最前面。
+             *
+             * 2. **必须 render**。attachNode 只是把渲染容器挂进树里，并不画内容。
+             *    不渲染的话节点没有 _contentBox，getContentBox() 返回**空 Box**，
+             *    于是 Connect 模块把连线画到 (0, 0) —— 就是那条「不连任何东西、
+             *    也选不中」的孤立连线；节点自身不可见，看着像「Tab 没生效」，
+             *    要再按一次才出现（第二次 Tab 由行内编辑器收尾时才补渲染）。
+             *    参照内核 AppendChildCommand：
+             *      c.isExpanded() ? d.render() : (c.expand(), c.renderTree())
+             */
             function insertNode(parent, index) {
                 try {
                     if (!parent) return;
-                    if (parent.isCollapsed && parent.isCollapsed()) { try { parent.expand(); } catch (e) {} }
-                    var node = km.createNode(null, parent);
-                    km.appendNode(node, parent, index == null ? (parent.children ? parent.children.length : 0) : index);
+                    var expanded = false;
+                    if (parent.isCollapsed && parent.isCollapsed()) {
+                        try { parent.expand(); expanded = true; } catch (e) {}
+                    }
+                    var idx = index == null
+                        ? (parent.children ? parent.children.length : 0)
+                        : index;
+                    var node = km.createNode(null, parent, idx);
                     km.select(node, true);
+                    // 父节点原本折叠时要整棵子树重渲 —— 只 render 新节点，
+                    // 展开出来的那些老节点仍然停留在折叠态的残留画面上
+                    if (expanded) { try { parent.renderTree(); } catch (e) {} }
+                    else { try { node.render(); } catch (e) {} }
                     km.fire('contentchange');
-                    km.layout(100);
+                    // km.layout() **不接受参数**：动画时长只由
+                    // setOption('layoutAnimationDuration') 决定，
+                    // 写 layout(100) 里的 100 会被静默忽略（误导后来人以为有动画）
+                    km.layout();
                     beginTextEdit(node, null, null);
                 } catch (e) {}
             }
@@ -3143,7 +3173,8 @@
                 var sel = km.getSelectedNode();
                 if (!sel || sel.getLevel() === 0) return;   // 根节点不删
                 try { km.removeNode(sel); } catch (e) { return; }
-                try { km.fire('contentchange'); km.layout(100); } catch (e) {}
+                // 同上：layout() 不接受参数，写 100 会被忽略
+                try { km.fire('contentchange'); km.layout(); } catch (e) {}
             }
 
             // 插入：Tab 子节点、Enter 同级（当前节点之后；根/无选中则插子节点）
