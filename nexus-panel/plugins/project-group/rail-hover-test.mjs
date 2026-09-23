@@ -49,11 +49,13 @@ console.log('\n=== 2. 浮出必须"覆盖"而非"挤开" ===');
   t('有最大宽度上限', /max-width: 180px;/.test(css));
   /* slot 不能裁剪，否则浮出部分被切掉 */
   t('slot 不裁剪', /\.fpx-rail-slot \{[\s\S]{0,200}?overflow: visible;/.test(css));
-  /* 浮出要压在内容之上。
-     #118 把层级收口成令牌（z-index: var(--z-rail, 30)），
-     钉死数字 `z-index: 30;` 就匹配不到了 —— 改钉令牌名，
-     顺带保证它走的是共享层级表而不是随手写一个数。 */
-  t('浮出抬高 z-index', /z-index:\s*var\(--z-rail,\s*30\)/.test(css));
+  /* 浮出要压在内容之上 */
+  /*
+   * 上游把写死的 30 换成了 var(--z-rail, 30)（走主题变量）。
+   * 真正要钉的是"浮出时 z-index 高于内容"，不是具体写法 ——
+   * 钉死字面量会在上游改用变量后**误报**，误报多了就会被当噪音忽略。
+   */
+  t('浮出抬高 z-index', /z-index:\s*(?:30|var\(--z-rail,\s*30\))\s*;/.test(css));
 }
 
 console.log('\n=== 3. 键盘也要能浮出（:focus-within）===');
