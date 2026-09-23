@@ -557,3 +557,93 @@ test('内部坐标要减原点（否则拖出来跑到画布左上角）', () =>
   assert.equal((r.nodes[0] as { position: { y: number } }).position.y, 0);
   assert.equal((r.nodes[1] as { position: { y: number } }).position.y, 90);
 });
+
+/* ------------------------------------------------------------------ */
+/* 参数连线进出模块                                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 存为模块时，参数连线必须**还是参数连线**。
+ *
+ * 丢掉 targetArg 的后果不是"少显示一点"：
+ * 重建出来的边没有 data.kind='param'，于是被当成流程边 ——
+ * "我只是想取个值"变成"多一条执行路径"，目标节点会多跑一次。
+ * 而界面上只是线变了个颜色，没有任何提示。
+ */
+
+const PE = (id: string, s: string, t: string, arg: string) => ({
+  id, source: s, target: t,
+  data: { kind: 'param', targetArg: arg },
+} as never);
+
+test('模块内部的参数连线存下来还是参数连线', () => {
+  const r = packSelection(
+    [PN('src', 0, 0), PN('dst', 100, 0)],
+    [PE('p1', 'src', 'dst', 'a') as never],
+  );
+  assert.equal(r.crossing.length, 0, '两端都在里面，不算跨边界');
+  assert.equal(r.edges.length, 1);
+  assert.equal(
+    (r.edges[0] as { targetArg?: string }).targetArg, 'a',
+    'targetArg 必须跟着进模块定义，否则展开后变流程边',
+  );
+});
+
+test('跨进模块的参数连线，重挂后仍是参数连线', () => {
+  const r = packSelection(
+    [PN('dst', 100, 0)],
+    [PE('p1', 'outer1', 'dst', 'a') as never],
+  );
+  assert.equal(r.crossing.length, 1);
+  assert.equal(r.crossing[0].kind, 'in');
+  assert.equal(r.crossing[0].targetArg, 'a', '跨边界时 targetArg 不能丢');
+
+  const rewired = rewireCrossing('m1', r.crossing) as { targetArg?: string }[];
+  assert.equal(rewired.length, 1);
+  assert.equal(rewired[0].targetArg, 'a', '重挂到模块实例上后仍是参数连线');
+});
+
+test('同一外部节点给两个不同参数供值，去重不能吃掉其中一条', () => {
+  /*
+   * 去重键若不含 targetArg，这两条会被当成同一条 ——
+   * 表现为存完模块莫名少一条参数连线，而看不出少的是哪条。
+   */
+  const crossing = [
+    { kind: 'in' as const, outer: 'x', inner: 'a', targetArg: 'a' },
+    { kind: 'in' as const, outer: 'x', inner: 'a', targetArg: 'b' },
+  ];
+  const out = rewireCrossing('m1', crossing) as { targetArg?: string }[];
+  assert.equal(out.length, 2, '两个不同参数要各自保留');
+  assert.deepEqual(out.map((e) => e.targetArg).sort(), ['a', 'b']);
+});
+
+test('展开模块时参数连线还原成完整边形状（data.kind 在）', () => {
+  /*
+   * 存档里只存 targetArg，而 isParamEdge 看的是 data.kind。
+   * 展开时不还原就会变成普通流程线。
+   */
+  const def: ModuleDef = {
+    id: 'md1', name: 'm', at: '', nodes: [PN('dst', 0, 0) as never],
+    edges: [{ id: 'e1', source: 'src', target: 'dst', targetArg: 'a' }],
+  } as unknown as ModuleDef;
+  const g = expandModules(
+    { nodes: [modNode('inst', 'md1')], edges: [] } as never,
+    () => def,
+  );
+  const e = (g.edges as { data?: { kind?: string } }[]).find((x) => (x as { id?: string }).id?.includes('e1'));
+  assert.ok(e, '边要展开出来');
+  assert.equal(e?.data?.kind, 'param', '展开后必须还是参数连线');
+});
+
+test('普通流程边展开时不带多余字段（不制造 targetArg）', () => {
+  const def: ModuleDef = {
+    id: 'md1', name: 'm', at: '', nodes: [],
+    edges: [{ id: 'e1', source: 'a', target: 'b' }],
+  } as unknown as ModuleDef;
+  const g = expandModules(
+    { nodes: [modNode('inst', 'md1')], edges: [] } as never,
+    () => def,
+  );
+  const e = (g.edges as { data?: unknown }[])[0];
+  assert.equal(e?.data, undefined, '流程边不该被塞上 data');
+});
