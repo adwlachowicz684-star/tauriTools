@@ -1520,5 +1520,56 @@ console.log('\n=== 31. 玻璃主题默认不透度（下层文字不得透出）
     washed.map((x) => x.name).join(' ') || '饱和度未被稀释');
 }
 
+
+console.log('\n=== 32. 磨砂四层（不能只有 blur） ===');
+{
+  const { PRESET_THEMES, STYLE_PARAMS } = await import('./js/themes.js');
+  const glass = PRESET_THEMES.filter((t) => t.style === 'glass');
+  const ctrl = read('css/neumorphism.css');
+
+  /*
+   * 磨砂 ≠ 虚化。高斯模糊在数学上会压低对比度、稀释饱和度，
+   * 单独 blur() 出来的是"蒙尘的塑料片"，不是磨砂玻璃。
+   * 完整质感由四层构成：blur + saturate + 颗粒 + 边缘高光。
+   */
+  t('玻璃主题都配了 saturate（补回被模糊吃掉的饱和度）',
+    glass.every((x) => {
+      const v = Number(String(x.vars['--saturate'] || '').replace('%', ''));
+      return v >= 140 && v <= 200;            // 资料推荐 140%~180%
+    }), glass.map((x) => x.vars['--saturate']).join(' '));
+
+  t('saturate 与 blur 写在同一条 backdrop-filter 里',
+    /backdrop-filter:\s*blur\(var\(--blur\)\)\s*saturate\(var\(--saturate\)\)/.test(ctrl));
+  t('拆成两条 backdrop-filter 声明会让后者覆盖前者（反向钉死）',
+    (ctrl.match(/backdrop-filter:/g) || []).length >= 2 &&
+    !/backdrop-filter:\s*blur\(var\(--blur\)\);\s*\n\s*backdrop-filter:/.test(ctrl));
+
+  t('颗粒层用伪元素且 pointer-events:none（否则吞点击）',
+    /::before\s*\{[^}]*pointer-events:\s*none/s.test(ctrl) ||
+    /::before\s*\{[^}]*--frost-noise/s.test(ctrl));
+  t('颗粒层平铺小块（避免全屏光栅化）',
+    /background-size:\s*128px\s*128px/.test(ctrl));
+  t('颗粒层不动画（动 baseFrequency 会每帧重算湍流场）',
+    !/@keyframes[^{]*\{[^}]*frost/s.test(ctrl));
+
+  t('颗粒强度有上限 0.15（超过是可见噪点而非质感）',
+    /Math\.min\(0\.15/.test(read('js/theme-manager.js')));
+  t('玻璃主题颗粒值都在 0.02~0.12 之间',
+    glass.every((x) => {
+      const g = Number(x.vars['--frost-grain']);
+      return g >= 0.02 && g <= 0.12;
+    }), glass.map((x) => x.vars['--frost-grain']).join(' '));
+
+  t('浅色玻璃用 soft-light、深色用 overlay（浅底上 overlay 显脏）',
+    glass.every((x) => x.base === 'dark'
+      ? x.vars['--frost-blend'] === 'overlay'
+      : x.vars['--frost-blend'] === 'soft-light'));
+
+  t('磨砂颗粒已做成可调项（数据驱动，界面会自动渲染）',
+    (STYLE_PARAMS.glass || []).some((x) => x.key === 'glass-grain'));
+  t('非玻璃风格颗粒为 0（不产生任何绘制）',
+    /--frost-grain:\s*0;/.test(ctrl));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
