@@ -38,6 +38,8 @@ export const SHELL_VARS = [
   '--sh-dark', '--sh-light',
   // 风格层
   '--border', '--divider', '--blur', '--edge',
+  // 磨砂四层
+  '--saturate', '--frost-grain', '--frost-blend', '--frost-edge', '--frost-noise',
   // 派生
   '--hairline', '--mask', '--scroll-thumb', '--badge-fg',
   // 圆角主档
@@ -189,14 +191,42 @@ export function auditCss(css, file = 'styles.css', opt = {}) {
      var() 取不到值时该声明直接失效，退回到继承/初始值。
      后果是换主题不跟随，且往往表现为"某个主题下文字突然变亮/变暗"。 */
   const seenUndef = new Set();
-  for (const m of text.matchAll(/var\(\s*(--[a-z0-9-]+)\s*([,)])/gi)) {
+  for (const m of text.matchAll(/var\(\s*(--[a-z0-9-]+)\s*(,?)([^)]*)\)/gi)) {
     const v = m[1];
     if (isKnown(v)) continue;
     if (seenUndef.has(v)) continue;              // 同一个变量只报一次
     seenUndef.add(v);
+    /*
+     * 有兜底时是否报警，取决于**兜底本身是不是空值**。
+     *
+     * 原写法一律报 warn，于是 mindmap / project-group 里
+     * `var(--fw-strong, 600)`、`var(--hover-bright-strong, 1.15)`
+     * 这类**刻意带兜底**的写法被长期挂warn —— 而这两个文件
+     * 本就不引 tokens.css，兜底正是为这种场景准备的，
+     * 兜底生效是设计意图，不是缺陷。
+     *
+     * 但仍要报的情况（此前修过的"幽灵变量"）：
+     * 兜底自己也是 var() 且那个 var 同样未定义 ——
+     * 例如 `var(--accent-soft, var(--surface-2))` 两个都没定义，
+     * 兜底链整个落空，最终拿到空值。这类必须拦。
+     */
     const withFallback = m[2] === ',';
+    const fb = (m[3] || '').trim();
+    /*
+     * 兜底里含 var() 时，上面的正则被 `)` 截断了，拿不到完整兜底串。
+     * 这里单独取：从当前匹配起点把整条声明扫出来再判断。
+     * 典型问题写法：var(--accent-soft, var(--surface-2)) —— 两个都没定义，
+     * 兜底链整个落空，最终拿到空值（此前 .tb-menu-item:hover 正是如此）。
+     */
+    let fbEmpty = !fb;
+    if (!fbEmpty && fb.includes('var(')) {
+      const tail = text.slice(m.index, m.index + 120);
+      const inner = /var\(\s*(--[a-z0-9-]+)\s*,\s*var\(\s*(--[a-z0-9-]+)/i.exec(tail);
+      fbEmpty = !!inner && !isKnown(inner[2]);
+    }
+    if (withFallback && !fbEmpty) continue;      // 兜底非空 → 不报
     push(withFallback ? LEVEL.warn : LEVEL.error,
-      withFallback ? 'var-未定义(有兜底)' : 'var-未定义',
+      withFallback ? 'var-未定义(兜底为空)' : 'var-未定义',
       withFallback
         ? `var(${v}) 从未定义，只有兜底值在生效 —— 多半是拼写错误或改名后忘了同步`
         : `var(${v}) 从未定义，这条声明会直接失效（且不跟随主题）`,
