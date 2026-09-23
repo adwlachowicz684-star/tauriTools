@@ -360,7 +360,13 @@ console.log('\n=== 7. 死样式分类：档位类留用、真废弃清零 ===');
    * 用**前缀规则**而不是逐个枚举：逐个枚举会让白名单随新成员无限膨胀，
    * 而这正是上一节警告过的反模式。整族放行，只盯住"族外"的真废弃。
    */
-  const FAMILY = /^(trg|trig|kind|upd|stack|task|insp|node|side)-/;
+  /*
+   * status- 也是拼接族：NodeShell 里写的是 `status-${status}`，
+   * 静态扫描只能取到 `status-` 这个碎片，于是 status-success /
+   * status-error 这些**确实在用**的类会被当成死样式。
+   * 与 trg- / kind- 那族同源，同样按前缀放行。
+   */
+  const FAMILY = /^(trg|trig|kind|upd|stack|task|insp|node|side|status)-/;
 
   const realDead = dead.filter((c) => !TIER.test(c) && !ALIAS.has(c) && !FAMILY.test(c));
 
