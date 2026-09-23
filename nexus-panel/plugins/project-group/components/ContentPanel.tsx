@@ -2,54 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Api } from '../api';
 import { errText } from '../api';
 import type { ContentItem } from '../types';
-
-interface TreeNode {
-  name: string;
-  path: string;
-  relPath: string;
-  /** 所属类别（agent/skill/rule）。同名条目在不同类别下是不同节点，必须一起参与匹配。 */
-  kind: string;
-  item?: ContentItem;
-  children: TreeNode[];
-}
-
-function buildTree(items: ContentItem[]): TreeNode[] {
-  const roots: TreeNode[] = [];
-
-  for (const it of items) {
-    const parts = it.relPath.split('\\').filter(Boolean);
-    let level = roots;
-    let prefix = '';
-
-    parts.forEach((part, i) => {
-      const isLeaf = i === parts.length - 1;
-      prefix = prefix ? `${prefix}\\${part}` : part;
-      // 关键：按 kind + name 匹配。否则 agent\foo.md 与 rule\foo.md 会撞成同一个节点，
-      // 后遍历到的 item 覆盖先遍历到的，界面上直接少一个条目。
-      let node = level.find((n) => n.name === part && n.kind === it.kind);
-      if (!node) {
-        node = { name: part, path: '', relPath: prefix, kind: it.kind, children: [] };
-        level.push(node);
-      }
-      if (isLeaf) {
-        node.item = it;
-        node.path = it.path;
-      }
-      level = node.children;
-    });
-  }
-  const sort = (nodes: TreeNode[]) => {
-    nodes.sort((a, b) => {
-      const ad = a.children.length > 0 && !a.item;
-      const bd = b.children.length > 0 && !b.item;
-      if (ad !== bd) return ad ? -1 : 1;
-      return a.name.localeCompare(b.name, 'zh-CN');
-    });
-    for (const n of nodes) sort(n.children);
-  };
-  sort(roots);
-  return roots;
-}
+import {
+  buildTree, fillDirPaths, type TreeNode,
+} from '../utils/contentTree';
+import { ContextMenu, type MenuItem } from './ui';
 
 const KIND_LABEL: Record<string, string> = { agent: 'Agent', skill: 'Skill', rule: 'Rule' };
 
@@ -78,8 +34,14 @@ export function ContentPanel({
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [text, setText] = useState('');
+  /** #259 内容树右键菜单。存节点而不是 path —— 目录节点没有 ContentItem，只有 TreeNode。 */
+  const [menu, setMenu] = useState<{ x: number; y: number; node: TreeNode } | null>(null);
 
-  const tree = useMemo(() => buildTree(items), [items]);
+  const tree = useMemo(() => {
+    const t = buildTree(items);
+    fillDirPaths(t);
+    return t;
+  }, [items]);
   const counts = useMemo(() => ({
     agent: items.filter((i) => i.kind === 'agent').length,
     skill: items.filter((i) => i.kind === 'skill').length,
@@ -123,6 +85,81 @@ export function ContentPanel({
     return t.slice(Math.max(t.lastIndexOf('\\'), t.lastIndexOf('/')) + 1);
   };
 
+  /** 走后端复制命令：沙箱 iframe 里 navigator.clipboard 会被静默拒绝（点了没反应也没报错）。 */
+  const copy = (what: string, label: string) => {
+    api.copyText(what).then(
+      (ok) => onLog(ok ? `已复制${label}：${what}` : '复制失败', !ok),
+      (e) => onLog(errText(e), true),
+    );
+  };
+
+  /**
+   * #259 / #260 内容树右键菜单（原版 AgentSkillViewModel 的七个命令）。
+   *
+   * **按节点类型显隐**，不是"全显示 + 点了报错"：
+   *   · 打开文件 —— 仅文件叶子（目录型 skill 打开的是里面的 SKILL.md，见下一条）
+   *   · 打开 SKILL.md —— 仅目录型 skill（`item.isDir`）
+   *   · 重命名 —— 仅叶子。目录节点没有 ContentItem，后端改名是按条目走的，
+   *     给它这一项只会是"点了报错"，不如不显示
+   *
+   * 原版 RightClickCommand 明确"仅高亮节点，不触发展开切换 / 预览副作用"——
+   * 所以这里右键**不改选中态**：菜单直接作用于右键的那一个节点。
+   * 若顺手 onSelect，会触发读文件（网络往返），右键一下就卡一下，且预览区莫名跳变。
+   */
+  const menuFor = (n: TreeNode): MenuItem[] => {
+    const out: MenuItem[] = [];
+    const phys = n.path;
+    const isDirSkill = !!n.item && n.item.isDir;
+    const isFile = !!n.item && !n.item.isDir;
+
+    // 1 复制名称：叶子用去扩展名的显示名，目录用目录名（原版 CopyNameCommand）
+    out.push({
+      key: 'name',
+      label: '复制名称',
+      onClick: () => copy(n.item ? n.item.name : n.name, '名称'),
+    });
+    // 2 复制文件名（含扩展名）—— 与「复制名称」在 skill 目录下常常不一样，所以都留
+    if (phys) {
+      out.push({
+        key: 'fn', label: '复制文件名', onClick: () => copy(fileNameOf(phys), '文件名'),
+      });
+    }
+    // 3 复制完整路径
+    if (phys) {
+      out.push({ key: 'path', label: '复制路径', onClick: () => copy(phys, '路径') });
+    }
+    // 4 打开文件：仅文件叶子
+    if (isFile && n.item) {
+      out.push({
+        key: 'open',
+        label: '打开文件',
+        onClick: () => api.openPath(n.item!.path, 'auto').catch((e) => onLog(errText(e), true)),
+      });
+    }
+    // 5 打开 SKILL.md：仅目录型 skill。走 editFile —— 后端会做「目录 → SKILL.md」解析
+    if (isDirSkill && n.item) {
+      out.push({
+        key: 'md',
+        label: '打开 SKILL.md',
+        onClick: () => api.editFile(n.item!.path).catch((e) => onLog(errText(e), true)),
+      });
+    }
+    // 6 打开所在文件夹：目录开它自己，叶子定位到父目录并选中该文件
+    if (phys) {
+      out.push({
+        key: 'dir',
+        label: '打开所在文件夹',
+        onClick: () => api.openPath(phys, isDirSkill || !n.item ? 'dir' : 'containing')
+          .catch((e) => onLog(errText(e), true)),
+      });
+    }
+    // 7 重命名：仅叶子
+    if (n.item) {
+      out.push({ key: 'rename', label: '重命名', onClick: () => onRename(n.item!) });
+    }
+    return out;
+  };
+
   const read = async (item: ContentItem) => {
     onSelect(item);
     setText('');
@@ -145,6 +182,10 @@ export function ContentPanel({
       const row = (
         <div
           key={key}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setMenu({ x: e.clientX, y: e.clientY, node: n });
+          }}
           /* #262 只高亮**叶子**，目录节点不高亮。
 
              这里的坑不是"要不要高亮目录"，而是**怎么判断**：
@@ -305,6 +346,15 @@ export function ContentPanel({
         </div>
         <pre className="fpx-pre">{text || (selected ? '（空文件）' : '左侧点选一个条目查看内容')}</pre>
       </div>
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={menuFor(menu.node)}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
   );
 }

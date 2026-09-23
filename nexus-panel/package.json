@@ -140,7 +140,8 @@
     "test:pg-config-normalize": "node plugins/project-group/config-normalize-test.mjs",
     "test:pg-deadcode": "node plugins/project-group/deadcode-test.mjs",
     "test:pg-saveguard": "node plugins/project-group/saveguard-test.mjs",
-    "test:pg-type-hygiene": "node plugins/project-group/type-hygiene-test.mjs"
+    "test:pg-type-hygiene": "node plugins/project-group/type-hygiene-test.mjs",
+    "test:pg-content-tree": "node plugins/project-group/content-tree-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
