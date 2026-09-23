@@ -280,17 +280,15 @@ fn ensure_default_tabs(cfg: &mut FpxConfig) {
         if t.name.trim().is_empty() { t.name = "页签".into(); }
     }
     /*
-     * 图标分组同理：一个分组都没有时，原版会用顶层 legacy presetIcons
-     * 迁出一个「默认」分组。本版没有 legacy 顶层列表可迁，
-     * 但至少要留一个空分组 —— 否则界面上"图标"那块是彻底空的，
-     * 用户分不清是"没有图标"还是"加载失败"。
+     * 图标分组只兜底**空名**，不兜底"一个分组都没有"。
+     *
+     * 为什么不能补一个空分组：前端 `PresetIconGrid` 的兜底是
+     * `groups.length > 0 ? groups : [{ 默认, 全部内置图标 }]` ——
+     * 只有"一个分组都没有"才会展示全部内置图标。后端一旦补出空分组，
+     * 这个兜底就永远不触发，图标区变成**彻底空白**
+     * （用户既看不到内置图标，也分不清是没图标还是加载失败）。
+     * 本轮先补了空分组、正是踩了这个坑，已回退。
      */
-    if cfg.icon_groups.is_empty() {
-        cfg.icon_groups.push(super::model::IconGroup {
-            name: "默认".into(),
-            icons: vec![],
-        });
-    }
     for g in cfg.icon_groups.iter_mut() {
         if g.name.trim().is_empty() { g.name = "分组".into(); }
     }
