@@ -137,7 +137,9 @@
     "test:pg-shell-icon-notify": "node plugins/project-group/shell-icon-notify-test.mjs",
     "test:pg-card-nav": "node plugins/project-group/card-nav-test.mjs",
     "test:pg-new-folder-align": "node plugins/project-group/new-folder-align-test.mjs",
-    "test:pg-config-normalize": "node plugins/project-group/config-normalize-test.mjs"
+    "test:pg-config-normalize": "node plugins/project-group/config-normalize-test.mjs",
+    "test:pg-deadcode": "node plugins/project-group/deadcode-test.mjs",
+    "test:pg-saveguard": "node plugins/project-group/saveguard-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

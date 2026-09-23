@@ -36,8 +36,14 @@ export const LOG_HEIGHT_MAX = 600;
 export const PANEL_HEIGHT_MIN = 200;
 /** 上限交给 CSS 的 86vh，这里只给一个足够大的兜底（小屏时 CSS 会先顶到） */
 export const PANEL_HEIGHT_MAX = 2000;
-/** 拖动把手的高度：分隔条要够粗才好抓，但别喧宾夺主 */
-export const SPLITTER_HIT = 8;
+/*
+ * 分隔条粗细 8px 只写在 style.css（`.fpx-splitter.horizontal { width: 8px }`）。
+ *
+ * 此前这里另有一个 `SPLITTER_HIT = 8` 常量，但**全库无人引用** ——
+ * 真正在生效的是 CSS 里那个值。留着两个"真源"才是最坏的：
+ * 以后改手感的人改了 JS 常量、界面纹丝不动，他会以为改坏了。
+ * 单一真源留在 CSS，理由写在那边的注释里。
+ */
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
@@ -127,6 +133,6 @@ export function resizeColStars(
  * 原版用 `ScheduleLayoutSave` 防抖，避免每个 SizeChanged 都写盘。
  * 这里更进一步：**只在松手时写一次**，连防抖都不需要 ——
  * 拖动过程中改的是本地 state，松手才落盘。
- * 这个常量只在"连续两次改动间隔极短"时兜底（例如键盘微调连按）。
+ * 所以**不设防抖常量**：此前那个 `LAYOUT_SAVE_DEBOUNCE_MS = 300` 全库无人引用，
+ * 且与"连防抖都不需要"这句注释自相矛盾 —— 留着只会让人以为有防抖。
  */
-export const LAYOUT_SAVE_DEBOUNCE_MS = 300;

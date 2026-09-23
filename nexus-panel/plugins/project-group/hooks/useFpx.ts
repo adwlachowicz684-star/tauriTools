@@ -254,11 +254,23 @@ export function useFpx() {
       ctx.toast(`该文件夹已在页签「${list[owner].name}」中`, 'err');
       return;
     }
-    await updateConfig((d) => {
+    const snap = await updateConfig((d) => {
       const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
       while (tabs.length <= idx) tabs.push({ name: `页签${tabs.length + 1}`, items: [] });
       tabs[idx].items.push(path);
     });
+    /*
+     * **保存失败就到此为止，绝不再报"已添加"**（`updateConfig` 失败返回 null）。
+     *
+     * 不检查的话会出现两条互相矛盾的反馈：`run` 已经弹了"保存配置失败"，
+     * 这里却又在日志里写"已添加项目：D:\xxx"，还会把这张**并不存在**的卡
+     * 选中（下面 setSelProject）—— 用户看见日志说成功、界面上却没有卡片，
+     * 刷新后确认没了，只会认为是软件在随机丢东西。
+     *
+     * 顺带说明为什么这里必须早退而不是只跳过日志：选中一张不在列表里的卡，
+     * 之后所有"对选中项操作"（改名/改色/删除）都会作用到一个空目标上。
+     */
+    if (!snap) return;
     pushLog(`已添加${kind === 'project' ? '项目' : '项目组'}：${path}`);
     // 拖入后是否自动选中由设置项决定（原版 autoSelect 的语义）
     if (boot?.config.autoSelect ?? true) {
@@ -286,17 +298,28 @@ export function useFpx() {
     kind: CardKind, path: string, tabIndex: number | null,
     keep: { link: boolean; icon: boolean; color: boolean },
   ) => {
-    await api.removeCard(path, kind, tabIndex, keep);
-    await refresh();
-    pushLog(`已移除：${path}`);
-  }, [api, refresh, pushLog]);
+    /*
+     * 必须走 `run`：api 层的 `call` 不 catch，异常会一路 reject 到调用方。
+     * 而调用方写的是 `void s.removeCardFull(...)`，没人接 ——
+     * 于是失败变成一个 unhandled rejection：**用户点完"删除"毫无反应**，
+     * 既没有 toast 也没有日志，他只会以为按钮坏了（或以为删掉了，
+     * 结果刷新后卡片还在）。
+     */
+    await run('移除卡片', async () => {
+      await api.removeCard(path, kind, tabIndex, keep);
+      await refresh();
+      pushLog(`已移除：${path}`);
+    });
+  }, [api, refresh, pushLog, run]);
 
   const removeCard = useCallback(async (kind: CardKind, path: string, tabIndex?: number) => {
     const idx = tabIndex ?? activeTab[kind];
-    await updateConfig((d) => {
+    const snap = await updateConfig((d) => {
       const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
       if (tabs[idx]) tabs[idx].items = tabs[idx].items.filter((p) => p !== path);
     });
+    /* 同上：保存失败就不能写"已移除"，否则日志说移走了、卡片还在 */
+    if (!snap) return;
     pushLog(`已从页签移除：${path}`);
   }, [activeTab, pushLog, updateConfig]);
 

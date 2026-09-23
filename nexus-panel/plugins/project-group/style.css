@@ -233,6 +233,9 @@
   background: transparent;
   transition: background var(--dur-fast, .15s);
 }
+/* 8px：要够粗才好抓（尤其触屏/触控板），但别喧宾夺主。
+   这是分隔条粗细的**唯一真源** —— utils/layout.ts 里那个同名常量已删，
+   因为它从未被引用过，留着只会让人以为改它有用。 */
 .fpx-splitter.horizontal { width: 8px; cursor: col-resize; margin: 0 4px; }
 .fpx-splitter.vertical { height: 8px; cursor: row-resize; margin: 4px 0; }
 /* 中间那条 1px 的线：平时几乎看不见，悬停/拖动时才显形 */
@@ -508,11 +511,10 @@
   box-shadow: var(--sh-out-sm);
   transition: transform var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
 }
-/* 悬浮微抬升已并入共享层的 .nx-card 动效组（css/controls.css）：
-   这里原本另写了一条一模一样的 translateY(-1px) + --sh-out-md，
-   两边并存时以本文件为准、共享层那条永远不生效 —— 典型的重复实现。
-   保留下面那条特有的 border-left-color（它是链接状态色，共享层管不到）。 */
-
+.fpx-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--sh-out-md);   /* 抬升：阴影更大更散 */
+}
 /* 按下 = 内凹（同一块材料被压进去），而不是"阴影消失" */
 .fpx-card:active {
   transform: translateY(0);
@@ -784,6 +786,24 @@
 .fpx-vendor { width: 92px; flex: none; height: 28px; padding: 0 8px; font-size: var(--fs-11, 11px); }
 
 /* ---------- 图标文件选择 ---------- */
+.fpx-iconlist {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px; max-height: 340px; overflow: auto;
+}
+.fpx-iconitem {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface-sunk); color: var(--text); cursor: pointer;
+  text-align: left; min-width: 0;
+}
+.fpx-iconitem:hover { border-color: var(--accent); }
+.fpx-iconthumb {
+  width: 26px; height: 26px; flex: none; display: grid; place-items: center;
+  border-radius: var(--r-xs); background: var(--surface); font-size: var(--fs-12, 12px); color: var(--accent);
+}
+.fpx-iconname {
+  font-size: var(--fs-11, 11px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* ---------- 目录选择器 ---------- */
 .fpx-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin-bottom: 8px; }
@@ -815,6 +835,10 @@
   background: var(--surface-sunk);
 }
 .fpx-emoji.active { border-color: var(--accent); box-shadow: var(--glow-sm); }
+.fpx-color {
+  width: 34px; height: 34px; padding: 0; border: 1px solid var(--border);
+  border-radius: var(--r-sm); background: transparent; cursor: pointer;
+}
 
 /* ---------- 色盘 ---------- */
 .fpx-preview-def { color: var(--text-mute); text-shadow: none; }
@@ -1101,6 +1125,7 @@
 .fpx-emoji.on { border-color: var(--accent); }
 
 /* 卡片右键菜单里的连锁动作图标 */
+.fpx-menu-icon { margin-right: 6px; }
 
 /* ---------- 自定义连锁客户端 ---------- */
 .fpx-cc-row {
