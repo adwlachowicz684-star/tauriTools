@@ -1571,5 +1571,70 @@ console.log('\n=== 32. 磨砂四层（不能只有 blur） ===');
     /--frost-grain:\s*0;/.test(ctrl));
 }
 
+
+console.log('\n=== 33. agent-flow 字号与字体档 ===');
+{
+  const af = read('plugins/agent-flow/styles.css');
+  const sc = stripComments(af);
+  const blocks = [...sc.matchAll(/([^{}]+)\{([^}]*)\}/g)].map((m) => ({
+    sel: m[1].trim().replace(/\s+/g, ' '), body: m[2],
+  }));
+  const fsOf = (sel) => {
+    const b = blocks.find((x) => x.sel === sel);
+    const m = b && b.body.match(/font-size:\s*([^;]+)/);
+    return m ? m[1].trim() : null;
+  };
+
+  /*
+   * 等宽文本片段必须统一走 --fs-code。
+   *
+   * 根因：等宽字体在**相同 px 下视觉比比例字体小**（x-height 更小），
+   * 所以等宽片段本就该有自己的一档。此前 29 处等宽字体里只有 2 处
+   * 用了 --fs-code，其余散在 10/11/12px 且 9 处压根没设 ——
+   * 观感必然参差，用户报的"字体字号不统一"主要来自这里。
+   */
+  const monoBad = blocks.filter((x) =>
+    /font-family:[^;]*mono/i.test(x.body)
+    && !/icon/.test(x.sel)                      // 图标字形：font-size 是尺寸
+    && !/idx/.test(x.sel)                       // 序号同属"画多大"
+    && x.sel !== ':root'
+    && x.sel !== '.canvas-config .cfg-k'   // 键：普通文本档；值(.cfg-mono)才走等宽档
+    && !/--fs-code/.test(x.body)
+  ).map((x) => x.sel);
+  t('等宽文本片段统一走 --fs-code', monoBad.length === 0, monoBad.join(', '));
+
+  /* 图标类例外必须写在注释里 —— 否则后来者会再"统一"掉它们 */
+  t('图标字形例外已在注释中说明',
+    /图标字形/.test(af) && /尺寸不是字号|画多大/.test(af));
+
+  /*
+   * 悬浮窗（.node-tip）内不许同一胶囊混两档字号。
+   * .nd-port-k 是 .nd-port 里的"产出/接受"标签，
+   * 此前 10px 配 11px 的内容 —— 一个胶囊里两种字号，看着就是没对齐。
+   */
+  t('悬浮窗胶囊内不混档（.nd-port-k 与 .nd-port 同档）',
+    fsOf('.nd-port-k') === fsOf('.nd-port'),
+    `k=${fsOf('.nd-port-k')} port=${fsOf('.nd-port')}`);
+
+  /* 悬浮窗内所有文字都该有显式字号（此前 .side-desc-add 靠继承） */
+  const tipCls = ['.nd-line', '.nd-port', '.nd-port-k', '.nd-out', '.nd-cap',
+    '.nd-req-note', '.nd-key', '.nd-raw', '.nd-reqdot', '.nd-hint',
+    '.nd-more', '.nd-note', '.side-desc-add', '.node-tip-title', '.node-tip-close'];
+  const noFs = tipCls.filter((c) => !fsOf(c));
+  t('悬浮窗内文字都有显式字号', noFs.length === 0, noFs.join(', '));
+
+  /*
+   * 档位数量收敛：一个 360px 浮层不该出现 4 档以上。
+   *
+   * 必须按**兜底像素值**去重而不是按变量名 ——
+   * --fs-note 与 --fs-code 都是 11px，视觉上是同一档，
+   * 按变量名算会得出 5 档的假结论（用户看到的是像素，不是变量名）。
+   */
+  const px = (v) => (v && v.match(/(\d+(?:\.\d+)?)px/) || [])[1] || v;
+  const levels = new Set(tipCls.map(fsOf).filter(Boolean).map(px));
+  t('悬浮窗字号档位 ≤4 档（按实际像素去重）', levels.size <= 4,
+    [...levels].sort((a, b) => b - a).join(' / ') + ' px');
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
