@@ -93,4 +93,35 @@ console.log('\n=== 5. 提示接到界面 ===');
   t('组缺失文案', /组缺失/.test(grid));
 }
 
+console.log('\n=== 8. #198 链接名勾选：换绑提示要按磁盘实际，且他组占用默认不勾选 ★★ ===');
+{
+  const dlg = fs.readFileSync(path.join(HERE, 'components/LinkPickDialog.tsx'), 'utf8');
+  const hub = fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8');
+
+  /* 一、判定依据必须是逐名**磁盘实际**指向，不是账本的整条 group。
+     账本一条记录只有一个 group，多链接名指向不同组时必然有行是错的（#202）。
+     钉死"用 realGroup"而不是"用 row.group"。 */
+  t('不再用账本整条 group 判定', !/row\.group/.test(dlg));
+  t('改用逐名 realGroup', /d\.realGroup/.test(dlg));
+  t('读不到目标时不进表（避免误判成别组）',
+    /if \(d\.realGroup && d\.realGroup\.length > 0\) m\.set/.test(dlg));
+  t('对话框接收逐名明细而非账本', /details\?: LinkDetail\[\]/.test(dlg));
+  t('Hub 从卡片 linkDetails 取', /return c\.linkDetails/.test(hub));
+  t('Hub 传的是 details 而非 links', /details=\{cardDetails\(boot/.test(hub));
+
+  /* 二、路径比对不能直接用 ===：后端反查的目标可能带尾反斜杠。
+     不等就会把"已连本组"误判成"要换绑" —— 提示错 + 默认不勾选 → 一取消就被删。 */
+  t('有尾分隔符归一化比对', /replace\(\/\[\\\\\/\]\+\$\/, ''\)/.test(dlg));
+  t('比对大小写不敏感', /toLowerCase\(\)/.test(dlg));
+  t('rebind 用 samePath 判定', /const rebind = target !== undefined && !samePath\(target, group\)/.test(dlg));
+
+  /* 三、他组占用的名字**默认不勾选**（原版 MakeCheck 明写）。
+     默认勾上的话，用户直接点确定就把别组链接抢过来了 ——
+     而他根本没打算动那边。 */
+  t('初始勾选排除他组占用',
+    /useState<Set<string>>\(\s*\(\) => new Set\(enabled\.filter\(\(n\) => !ownedElsewhere\.has\(n\)\)\)/.test(dlg));
+  t('「回到默认」同样排除', /reset = \(\) => setPicked\(new Set\(enabled\.filter\(\(n\) => !ownedElsewhere\.has\(n\)\)\)\)/.test(dlg));
+  t('界面说明为何默认不勾', /默认<b>不勾选<\/b>/.test(dlg));
+}
+
 done();

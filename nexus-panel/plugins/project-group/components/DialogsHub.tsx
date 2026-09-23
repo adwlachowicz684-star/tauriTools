@@ -22,7 +22,7 @@ import {
    等哪天误发一条时根本想不起来是在这里关的。 */
 import { setSkipConfirm } from '../utils/confirmOnce';
 import type {
-  CardInfo, CardKind, ChainAction, LockStateLive,
+  Bootstrap, CardInfo, CardKind, ChainAction, LockStateLive,
 } from '../types';
 import type { FpxStore } from '../hooks/useFpx';
 
@@ -114,6 +114,25 @@ export interface DialogsProps {
   openIconPicker: (card: CardInfo) => Promise<void>;
   iconFiles: string[];
   setIconFiles: (v: string[]) => void;
+}
+
+/**
+ * 找某项目的**逐名**链接明细。
+ *
+ * 用卡片上的 `linkDetails`（后端按磁盘反查）而不是账本 `links`：
+ * 账本一条记录只有一个 group，多个链接名指向不同组时必然有行是错的（#202）。
+ * 卡片不在任何页签里时返回 undefined —— 那时对话框退化成"不显示徽章"，
+ * 比显示错的强。
+ */
+function cardDetails(boot: Bootstrap, project: string) {
+  const norm = (x: string) => x.replace(/[\\/]+$/, '').toLowerCase();
+  const key = norm(project);
+  for (const t of [...(boot.projectTabs ?? []), ...(boot.groupTabs ?? [])]) {
+    for (const c of t.items ?? []) {
+      if (norm(c.path ?? '') === key) return c.linkDetails;
+    }
+  }
+  return undefined;
 }
 
 export function Dialogs(props: DialogsProps) {
@@ -484,7 +503,7 @@ export function Dialogs(props: DialogsProps) {
           group={confirmLink.group}
           config={boot.config}
           allNames={boot.allNames ?? []}
-          links={boot.links ?? []}
+          details={cardDetails(boot, confirmLink.project)}
           onConfirm={(names) => {
             setConfirmLink(null);
             /* #200 走 sync 而不是 create：取消勾选的名字要真的删掉、释放名字。
