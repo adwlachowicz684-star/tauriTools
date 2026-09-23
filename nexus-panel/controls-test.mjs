@@ -1636,5 +1636,68 @@ console.log('\n=== 33. agent-flow 字号与字体档 ===');
     [...levels].sort((a, b) => b - a).join(' / ') + ' px');
 }
 
+
+console.log('\n=== 34. agent-flow 文字属性档位 ===');
+{
+  const af = read('plugins/agent-flow/styles.css');
+  const tk = read('css/tokens.css');
+  const sc = stripComments(af);
+  const blocks = [...sc.matchAll(/([^{}]+)\{([^}]*)\}/g)].map((m) => ({
+    sel: m[1].trim().replace(/\s+/g, ' '), body: m[2],
+  }));
+  const vals = (prop) => {
+    const c = {};
+    for (const b of blocks) {
+      for (const m of b.body.matchAll(new RegExp(prop + ':\\s*([^;]+)', 'g'))) {
+        (c[m[1].trim()] ||= []).push(b.sel);
+      }
+    }
+    return c;
+  };
+
+  /*
+   * 字重：不许出现**裸数字**，也不许用 --title-N-fw。
+   *
+   * 后者是个认知陷阱：tokens.css 里 title-1/2/3-fw **都指向同一个
+   * --fw-strong**，值完全相同。于是 `--title-1-fw` 与 `--title-3-fw`
+   * 并排出现时，读者以为存在三级差异，实际一点没有 ——
+   * 这比直接写 600 更容易误导后来者。
+   */
+  const fw = vals('font-weight');
+  const fwBare = Object.keys(fw).filter((v) => /^[\d.]+$|^normal$/.test(v));
+  t('字重无裸数字', fwBare.length === 0, fwBare.join(', '));
+  t('不再使用 title-N-fw（三级同值的假象）',
+    !/--title-[123]-fw/.test(sc),
+    (sc.match(/--title-[123]-fw/g) || []).join(','));
+  for (const k of ['--fw-strong', '--fw-mid', '--fw-normal']) {
+    t(`字重档 ${k} 在 tokens 有定义`, new RegExp('\\' + k.slice(1) + '[:\\s]').test(tk) || k === '--fw-strong');
+  }
+
+  /*
+   * 行高：收敛到三档，例外必须写在注释里。
+   * 例外有两类：line-height:1（图标居中）、固定 px（与定高控件配套）。
+   */
+  const lh = vals('line-height');
+  const lhBare = Object.keys(lh).filter((v) => /^[\d.]+$/.test(v) && v !== '1');
+  t('行高无裸倍数（1 例外已注明）', lhBare.length === 0, lhBare.join(', '));
+  t('行高固定 px 例外已在注释中说明', /15px \/ 16px/.test(af));
+  for (const k of ['--lh-tight', '--lh-normal', '--lh-relaxed']) {
+    t(`行高档 ${k} 在 tokens 有定义`, new RegExp(k.replace(/[-]/g,'\\-') + ':').test(tk));
+  }
+
+  /*
+   * 字体族：不许硬编码整套字体栈。
+   * 曾写死一份「与外壳内容几乎相同、顺序不同」的栈，
+   * 结果外壳换字体、插件这里不变 —— 且不报任何错。
+   */
+  const ff = vals('font-family');
+  const ffBare = Object.keys(ff).filter(
+    (v) => !v.startsWith('var(') && v !== 'inherit');
+  t('字体族无硬编码（inherit 除外）', ffBare.length === 0, ffBare.join(' | '));
+  t('正文族跟随 --font-sans', /font-family:\s*var\(--font-sans/.test(sc));
+  t('等宽族统一走 --af-mono',
+    !/font-family:\s*(?:ui-)?monospace/.test(sc));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
