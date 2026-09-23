@@ -758,7 +758,7 @@ export default function App() {
    * 文件名要用到画布名，而那是派生值，得先算出来。
    */
   const {
-    exportDir, setExportDir, pendingExport, exportFlowAs, onPickExportDir,
+    exportDir, setExportDir, pendingExport, exportFlowAs, exportText, onPickExportDir,
     cancelPendingExport, browseExportDir,
   } = useExportFlow({
     nodes, edges, canvasName: activeCanvas?.name ?? null, onLog: pushLog,
@@ -1562,23 +1562,28 @@ function reportSkipped(
     pushLog('已保存到本地');
   };
 
+  /*
+   * 工具栏「导出」：导出整张画布的 JSON。
+   *
+   * 以前这里自己拼 <a download> 下载，有两个毛病：
+   *   · Tauri 的 webview 不接管下载，点了常常什么都没发生
+   *   · 导出成功与否**完全不打日志** —— 失败和成功在界面上都一样安静，
+   *     用户只能说"导出无效"，而根本无从判断是没跑还是跑到哪一步
+   *
+   * 现在与脚本 / 说明导出走同一条路（exportText）：
+   * 路径我们定、结果能确认、失败明确报出来，日志里还有完整路径。
+   */
   const exportJson = () => {
     // 导出前脱敏：LLM 的 apiKey 不能跟着文件走。
     // 这个文件是要发给别人 / 传上仓库的，里面带密钥等于直接交出去，
     // 而填过密钥的人往往不会意识到它存在。
-    const blob = new Blob(
-      [JSON.stringify({ nodes: redactNodes(nodes), edges, triggers }, null, 2)],
-      { type: 'application/json' },
+    const text = JSON.stringify({ nodes: redactNodes(nodes), edges, triggers }, null, 2);
+    exportText(
+      text,
+      'json',
+      '流程',
+      `（${nodes.length} 个节点、${edges.length} 条连线）`,
     );
-    const a = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    a.href = url;
-    a.download = 'agent-flow.json';
-    a.click();
-    // click() 是同步派发的，走到这里下载已经接管了这个 URL。
-    // 不 revoke 的话，URL 会连同它引用的整个 blob 一直挂在内存里 ——
-    // 每次导出漏一份，反复导出内存就一直涨。
-    URL.revokeObjectURL(url);
   };
 
   const importJson = (file: File) => {

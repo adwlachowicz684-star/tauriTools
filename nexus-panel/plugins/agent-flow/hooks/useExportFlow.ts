@@ -9,8 +9,25 @@ import {
 } from '../lib/tauri';
 import type { FlowEdge, FlowNode } from '../flowTypes';
 
-/** 目录选择器只用于"填设置"，不代表要导出 */
-const BROWSE_ONLY = '__browse__';
+/**
+ * 待导出的一份内容。
+ *
+ * 以前这里只存格式 id（'script' / 'md' …），于是"导出流程 JSON"没法复用
+ * 这条"没目录 → 弹选择器 → 写"的链路 —— 它只能自己走浏览器下载，
+ * 而 Tauri 的 webview 不接管下载，点了就什么都没发生。
+ *
+ * 现在存的是**已经生成好的内容**，谁都能用。
+ */
+type PendingExport = {
+  kind: 'browse';
+} | {
+  kind: 'write';
+  ext: string;
+  label: string;
+  text: string;
+  /** 字数/节点数一类的补充，拼进日志里 */
+  note?: string;
+};
 
 /**
  * 未翻译的节点**必须**告出来 ——
@@ -54,8 +71,8 @@ export function useExportFlow({
    * 导出到哪跟"这是哪张画布"无关，是用户习惯。
    */
   const [exportDir, setExportDirState] = useState<string>(() => loadExportDirSetting());
-  /** 待导出的格式：等用户选完目录再真正写 */
-  const [pendingExport, setPendingExport] = useState<string | null>(null);
+  /** 待导出的内容：等用户选完目录再真正写 */
+  const [pendingExport, setPendingExport] = useState<PendingExport | null>(null);
 
   const setExportDir = useCallback((d: string) => {
     setExportDirState(d);
@@ -78,13 +95,15 @@ export function useExportFlow({
    * 现在改走 fs_op 写文件：路径由我们决定，结果能确认，
    * 失败就明确报失败。
    */
-  const writeExport = useCallback(
-    async (fmt: string, dir: string | null) => {
-      const meta = EXPORT_FORMATS.find((f) => f.id === fmt);
-      if (!meta) return;
-      const graph = { nodes, edges };
-      const r = exportFlow(graph, meta.id as never);
-      const target = resolveExportTarget(exportDir, dir, canvasName || 'canvas', meta.ext);
+  const writeOut = useCallback(
+    async (
+      text: string,
+      ext: string,
+      label: string,
+      dir: string | null,
+      note = '',
+    ) => {
+      const target = resolveExportTarget(exportDir, dir, canvasName || 'canvas', ext);
 
       /*
        * 没有目录可用（浏览器模式，或未设目录也没选）→ 退回下载。
@@ -92,20 +111,28 @@ export function useExportFlow({
        */
       if (target.source === 'download') {
         try {
-          const blob = new Blob([r.text], { type: 'text/plain;charset=utf-8' });
+          const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
           a.download = target.path;
+          /*
+           * 两个细节，少一个都是"点了没反应"：
+           *   · a 必须挂进文档 —— 有些内核（Firefox / 部分 WebKit）
+           *     对游离元素的 click() 不触发下载
+           *   · revoke 必须延后 —— click() 只是派发事件，真正取流是异步的，
+           *     同步 revoke 会把 URL 提前作废，下载直接消失
+           */
+          document.body.appendChild(a);
           a.click();
+          a.remove();
           setTimeout(() => URL.revokeObjectURL(url), 1000);
-          onLog(`✅ 已导出${meta.label}（${r.count} 个节点）→ ${target.path}（浏览器下载目录，非软件目录）`);
+          onLog(`✅ 已导出${label}${note} → ${target.path}（浏览器下载目录，非软件目录）`);
         } catch (e) {
           /* 这里**不能**再静默 —— 失败就要说失败 */
           onLog(`✗ 导出失败：${String((e as Error)?.message ?? e)}`);
         }
-        reportSkipped(r, meta.label, onLog);
-        return;
+        return true;
       }
 
       try {
@@ -121,12 +148,12 @@ export function useExportFlow({
          *     而不是真正的原因（目录不存在 / 不允许授权 / 加进去没生效），
          *     排查只能靠猜
          */
-        const dir = parentOf(target.path);
+        const dirPath = parentOf(target.path);
         let roots = await listFsRoots().catch(() => [] as string[]);
-        if (!withinRoots(dir, roots)) {
-          onLog(`· 目录还没授权，正在申请：${dir}`);
+        if (!withinRoots(dirPath, roots)) {
+          onLog(`· 目录还没授权，正在申请：${dirPath}`);
           try {
-            await fsAllowRoot(dir);
+            await fsAllowRoot(dirPath);
           } catch (e) {
             /*
              * 授权失败**必须**说清原因 ——
@@ -134,73 +161,100 @@ export function useExportFlow({
              * 笼统报"路径越权"会让人以为是路径写错了。
              */
             onLog(`✗ 授权目录失败：${String((e as Error)?.message ?? e)}`);
-            return;
+            return false;
           }
           /* 回读一次：确认真的加进去了，别把"调用了但没生效"当成成功 */
           roots = await listFsRoots().catch(() => [] as string[]);
-          if (!withinRoots(dir, roots)) {
-            onLog(`✗ 授权已提交但目录仍不在授权列表里：${dir} —— 请换一个目录，或到设置里检查授权列表`);
-            return;
+          if (!withinRoots(dirPath, roots)) {
+            onLog(`✗ 授权已提交但目录仍不在授权列表里：${dirPath} —— 请换一个目录，或到设置里检查授权列表`);
+            return false;
           }
         }
 
-        const out = await writeTextFile(target.path, r.text);
+        const out = await writeTextFile(target.path, text);
         if (!out.ok) {
           onLog(`✗ 导出失败：${out.text || '目标目录不可写'}`);
-          return;
+          return false;
         }
         const how = target.source === 'picked' ? '（本次选的目录）' : '（默认导出目录）';
-        onLog(`✅ 已导出${meta.label}（${r.count} 个节点）→ ${target.path} ${how}`);
-      } catch (e) {
-        onLog(`✗ 导出失败：${String((e as Error)?.message ?? e)}`);
-        return;
-      }
-      reportSkipped(r, meta.label, onLog);
-    },
-    [nodes, edges, canvasName, exportDir, onLog],
+        onLog(`✅ 已导出${label}${note} → ${target.path} ${how}`);
+        return true;
+    } catch (e) {
+      onLog(`✗ 导出失败：${String((e as Error)?.message ?? e)}`);
+      return false;
+    }
+  },
+  [canvasName, exportDir, onLog],
   );
 
-  /** 导出入口：没设默认目录就先让用户选一个 */
-  const exportFlowAs = useCallback((fmt: string) => {
+  /*
+   * 统一的导出入口：没设默认目录就先让用户选一个。
+   *
+   * 两份内容（脚本/说明 与 流程 JSON）都走它 ——
+   * 各写一份"没目录怎么办"就会出现"脚本能导出、JSON 点了没反应"，
+   * 而用户只会说"导出坏了"，分不清是哪一份。
+   */
+  const startWrite = useCallback((p: Extract<PendingExport, { kind: 'write' }>) => {
     /* 浏览器模式写不了文件，直接走下载，弹选择器也没意义 */
-    if (!canExportToFile()) {
-      void writeExport(fmt, null);
+    if (!canExportToFile() || exportDir) {
+      void writeOut(p.text, p.ext, p.label, null, p.note ?? '');
       return;
     }
-    if (exportDir) {
-      void writeExport(fmt, null);
-      return;
+    setPendingExport(p);
+  }, [exportDir, writeOut]);
+
+  /** 导出入口：脚本 / 说明 */
+  const exportFlowAs = useCallback((fmt: string) => {
+    const meta = EXPORT_FORMATS.find((f) => f.id === fmt);
+    if (!meta) return;
+    const r = exportFlow({ nodes, edges }, meta.id as never);
+    /*
+     * 内容在这里就生成好，而不是等选完目录再生成：
+     * pending 里存文本后，"生成"与"写"两件事彻底分开，
+     * 写失败时不会因为画布状态已经变了而导出出一份不一样的东西。
+     */
+    startWrite({
+      kind: 'write', ext: meta.ext, label: meta.label,
+      text: r.text, note: `（${r.count} 个节点）`,
+    });
+    if (r.skipped.length) {
+      /* 漏翻的节点在选目录之前就该说，否则用户以为只导出了一部分还成功了 */
+      reportSkipped(r, meta.label, onLog);
     }
-    setPendingExport(fmt);
-  }, [exportDir, writeExport]);
+  }, [nodes, edges, startWrite, onLog]);
+
+  /** 导出入口：流程 JSON（工具栏「导出」） */
+  const exportText = useCallback((text: string, ext: string, label: string, note?: string) => {
+    startWrite({ kind: 'write', ext, label, text, note });
+  }, [startWrite]);
 
   /** 目录选择器选完之后 */
   const onPickExportDir = useCallback((dir: string, asDefault: boolean) => {
-    const fmt = pendingExport;
+    const p = pendingExport;
     setPendingExport(null);
     /*
-     * '__browse__' 表示"只是从设置里点浏览来填目录"，不是要导出 ——
+     * kind='browse' 表示"只是从设置里点浏览来填目录"，不是要导出 ——
      * 这时只把目录填进设置框，不写文件。
      * 不区分的话，用户在设置里选个目录会莫名导出一份文件。
      */
-    const browsing = fmt === BROWSE_ONLY;
+    const browsing = p?.kind === 'browse';
     if (asDefault || browsing) setExportDir(dir);
-    if (fmt && !browsing) void writeExport(fmt, dir);
-  }, [pendingExport, writeExport, setExportDir]);
+    if (p?.kind === 'write') void writeOut(p.text, p.ext, p.label, dir, p.note ?? '');
+  }, [pendingExport, writeOut, setExportDir]);
 
 
 
 
   /*
    * 选择器取消、以及"从设置里点浏览"这两个入口都只跟 pendingExport 有关，
-   * 而 BROWSE_ONLY 这个哨兵值是本 hook 的实现细节 ——
+   * 而 'browse' 这个分支是本 hook 的实现细节 ——
    * 不把它暴露出去，App 那边就不用知道有这个值存在。
    */
   const cancelPendingExport = useCallback(() => setPendingExport(null), []);
-  const browseExportDir = useCallback(() => setPendingExport(BROWSE_ONLY), []);
+  const browseExportDir = useCallback(() => setPendingExport({ kind: 'browse' }), []);
 
   return {
     exportDir, setExportDir, pendingExport,
-    exportFlowAs, onPickExportDir, cancelPendingExport, browseExportDir,
+    exportFlowAs, exportText, onPickExportDir, cancelPendingExport, browseExportDir,
   };
 }

@@ -623,6 +623,50 @@ test('导出的失败分支都要写日志', () => {
 });
 
 /*
+ * 工具栏「导出」不能再自己拼 <a download>。
+ *
+ * 那是这次"点了没反应"的根因：Tauri 的 webview 不接管下载，
+ * 而这条路径**连日志都不打** —— 成功失败都安静，
+ * 用户只能说"导出无效"，无从判断是没跑还是跑到哪一步。
+ *
+ * 现在必须与脚本 / 说明导出共用同一条写盘路径（exportText）。
+ */
+test('导出走统一写盘，不再自拼下载', () => {
+  const app = readSrc('App.tsx');
+  assert.ok(
+    !/createObjectURL/.test(app),
+    'App.tsx 不该再有 createObjectURL —— 导出要走 exportText 统一写盘',
+  );
+  assert.ok(
+    /exportText\(/.test(app),
+    '工具栏导出要调用 exportText',
+  );
+  const hook = readSrc('hooks/useExportFlow.ts');
+  assert.ok(
+    /exportText/.test(hook) && /startWrite/.test(hook),
+    'useExportFlow 要提供 exportText 并接到统一入口上',
+  );
+});
+
+/*
+ * 下载兜底的两个细节，少一个都是"点了没反应"。
+ *
+ * 同步 revoke 尤其隐蔽：click() 只是派发事件，真正取流是异步的，
+ * URL 提前作废 → 下载直接消失，而 try/catch 抓不到（它是"成功"的）。
+ */
+test('下载兜底要挂进文档并延后 revoke', () => {
+  const src = readSrc('hooks/useExportFlow.ts');
+  assert.ok(
+    /appendChild\(a\)/.test(src),
+    'a 要挂进文档再 click —— 游离元素的 click() 在部分内核上不触发下载',
+  );
+  assert.ok(
+    /setTimeout\(\(\) => URL\.revokeObjectURL/.test(src),
+    'revoke 必须延后，同步 revoke 会把下载直接作废',
+  );
+});
+
+/*
  * 回读发现"授权没生效"要明说。
  *
  * 少了这句：失败会伪装成成功，用户拿到的是笼统的"路径越权"，
