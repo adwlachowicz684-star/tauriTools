@@ -1375,5 +1375,45 @@ console.log('\n=== 29. 字重与悬停提亮必须走令牌 ===');
     [...new Set(hard600)].join(', ') || '已全部走 --fw-strong');
 }
 
+
+console.log('\n=== 30. 玻璃透明度方向 + 弹框不透明地板 ===');
+{
+  const th = read('js/themes.js');
+  const tm = read('js/theme-manager.js');
+
+  /* 30.1 方向：调高 = 更透。
+     原先 k = raw/100 直接乘 alpha —— 200% 把 alpha 翻倍，
+     于是"透明度"越高面板越实，与标签、描述都相反。 */
+  t('玻璃透明度标记为 invert',
+    /key: 'glass-alpha'[\s\S]{0,400}?invert: true/.test(th));
+  t('invert 的 k 取倒数（调高 → alpha 更低）',
+    /p\.invert \? 100 \/ Number\(raw\)/.test(tm));
+
+  /* 30.2 弹框分档：不和面板同步变透 */
+  t('弹框走 softAffects', /softAffects: \['--surface-overlay'\]/.test(th));
+  t('弹框有不透明度地板', /alphaFloor: 0\.88/.test(th));
+  t('softAffects 只吃一半幅度', /const kSoft = 1 \+ \(k - 1\) \/ 2/.test(tm));
+  t('地板函数存在且被调用',
+    /function clampAlphaMin/.test(tm) && /clampAlphaMin\(vars\[name\], p\.alphaFloor\)/.test(tm));
+
+  /* 30.3 弹框不许回到面板那一档（反向钉死） */
+  const ga = th.match(/key: 'glass-alpha'[\s\S]{0,600}?\}/)?.[0] || '';
+  t('--surface-overlay 已移出 affects',
+    !/affects: \[[^\]]*--surface-overlay/.test(ga));
+
+  /* ---- 主题切换后插件深浅反转 ----
+     根因是 panelBase 在挂载时求值一次就固定，reAdapt 复用旧值。 */
+  const host = read('js/host.js');
+  t('panelBase 用 getter 而非一次性求值',
+    /get panelBase\(\) \{ return baseForPlugin\(manifest\.id\); \}/.test(host));
+  t('不再有 panelBase: 的静态赋值（防复活）',
+    !/panelBase:\s*baseForPlugin\(manifest\.id\),/.test(host));
+
+  /* 基调判定不该被不相关的变量否决 */
+  const sdk = read('js/plugin-sdk.js');
+  t('基调只看底色，不被 --text 是否存在否决',
+    /const base = isLightColor\(vars\['--bg'\]\) \? 'light' : 'dark';/.test(sdk));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

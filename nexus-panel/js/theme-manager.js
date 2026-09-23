@@ -313,7 +313,11 @@ function applyStyleParams(vars, theme) {
       for (const k of p.affects) vars[k] = k === '--blur' ? `${n}px` : String(n);
       continue;
     }
-    const k = Number(raw) / 100;
+    /*
+     * invert（玻璃透明度）：标签写的是"透明度"，调高就该更透 = alpha 更低，
+     * 所以取倒数。100% 时 k=1 保持主题原值，两种方向都以此为中心。
+     */
+    const k = p.invert ? 100 / Number(raw) : Number(raw) / 100;
     if (!isFinite(k)) continue;
     for (const name of p.affects) {
       if (vars[name] == null) continue;
@@ -321,6 +325,15 @@ function applyStyleParams(vars, theme) {
         /* 立体度：缩放阴影色**离底色多远**（hex 阴影只能这么调，见 scaleDeviation） */
         ? scaleDeviation(vars[name], vars['--bg'], k)
         : scaleAlpha(vars[name], k);
+    }
+    /* 弹框：只吃一半幅度 + 不透明度地板（见 STYLE_PARAMS 的 softAffects） */
+    if (p.softAffects) {
+      const kSoft = 1 + (k - 1) / 2;
+      for (const name of p.softAffects) {
+        if (vars[name] == null) continue;
+        vars[name] = scaleAlpha(vars[name], kSoft);
+        if (p.alphaFloor != null) vars[name] = clampAlphaMin(vars[name], p.alphaFloor);
+      }
     }
   }
   return vars;
@@ -619,6 +632,22 @@ const rgbToHex = (c) => '#' + [c.r, c.g, c.b]
  * 上限锁 1：alpha 超过 1 浏览器会按 1 处理，但那样"继续调就没反应了"，
  * 用户会以为滑块坏了。锁到 1 让手感在饱和处停住而不是静默无效。
  */
+/**
+ * 把 alpha 抬到不低于 floor。
+ *
+ * 只用于"必须看得清"的浮层（弹框）。返回原串当它不是 rgba 时，
+ * 与 scaleAlpha 的保守策略一致 —— 认不出的格式不动它。
+ */
+function clampAlphaMin(str, floor) {
+  const m = /^rgba?\(([^)]+)\)$/.exec(String(str || '').trim());
+  if (!m) return str;
+  const parts = m[1].split(',').map((s) => s.trim());
+  if (parts.length < 4) return str;
+  const a = parseFloat(parts[3]);
+  if (!isFinite(a) || a >= floor) return str;
+  return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${floor})`;
+}
+
 function scaleAlpha(str, k) {
   const m = /^rgba?\(([^)]+)\)$/.exec(String(str || '').trim());
   if (!m) return str;
@@ -1099,4 +1128,4 @@ export function exportVars() {
   return exportVarsFor(current || findTheme(getThemeId()));
 }
 
-export { shift, rgba, parseHex };
+export { shift, rgba, parseHex, clampAlphaMin };

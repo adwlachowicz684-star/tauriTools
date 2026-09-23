@@ -99,8 +99,26 @@ export const STYLE_PARAMS = {
     {
       key: 'glass-alpha', label: '玻璃透明度', unit: '%',
       min: 20, max: 260, step: 5,
-      affects: ['--surface', '--surface-raised', '--surface-sunk', '--surface-overlay'],
-      desc: '面板的通透程度。调低更实（内容更清晰），调高更透（背景更明显）',
+      /*
+       * invert：调高 = 更透。
+       * 原先是倍率直接乘 alpha —— 200% 反而把 alpha 翻倍，
+       * 于是"透明度"越高面板越实，与标签和描述正好相反。
+       * 描述从一开始写的就是"调高更透"，所以错的是实现，不是文案。
+       */
+      invert: true,
+      affects: ['--surface', '--surface-raised', '--surface-sunk'],
+      /*
+       * 弹框单独一档：只吃一半幅度，并设不透明度地板。
+       *
+       * 面板透一点是玻璃的观感，弹框透就是灾难 —— 它浮在主面板之上，
+       * 底下内容一透出来，弹框里的文字就没法读了。
+       * 所以弹框不能和面板同步变透：
+       *   · softAffects —— 只吃一半幅度（k' = 1 + (k-1)/2）
+       *   · alphaFloor  —— 再怎么调也不低于 0.88
+       */
+      softAffects: ['--surface-overlay'],
+      alphaFloor: 0.88,
+      desc: '面板的通透程度。调低更实（内容更清晰），调高更透（背景更明显）。弹框只吃一半幅度，且不会低于 88% 不透明度',
     },
     {
       key: 'glass-blur', label: '模糊强度', unit: 'px',
