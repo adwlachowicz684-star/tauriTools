@@ -199,6 +199,16 @@ export type RunOptions = {
   playAudioReader?: (path: string) => Promise<string>;
   input?: string;
   /**
+   * 全局默认的单节点超时（秒）。0 / 不填 = 不限时。
+   *
+   * 节点自己的 `timeoutSec` 优先，且**能覆盖成"不限时"**——
+   * 否则"全局设了 60 秒、某个节点就是要等 10 分钟"表达不出来，
+   * 用户只能把全局调大，等于全局保护失效。
+   *
+   * 默认不限时是刻意的：加这个功能不能改变任何既有流程的行为。
+   */
+  nodeTimeoutSec?: number;
+  /**
    * 画布参数（{{params.名字}}）。
    *
    * 由调用方（App）从当前画布的 config.params 传入 ——
