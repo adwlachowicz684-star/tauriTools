@@ -531,7 +531,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
 .node-line--path.is-danger .node-line__op { background: #5a2020; color: #fecaca; }
 .node-line__code {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: var(--af-mono); font-size: var(--fs-note, 11px);
+  font-family: var(--af-mono); font-size: var(--fs-code, 11px);
 }
 .node-line__arrow { flex: none; color: var(--af-dim); }
 
@@ -553,7 +553,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
 .node-line--meta > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .node-line--mono {
-  font-size: var(--fs-note, 11px); color: var(--af-ok); font-family: var(--af-mono);
+  font-size: var(--fs-code, 11px); color: var(--af-ok); font-family: var(--af-mono);
   margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
@@ -571,6 +571,7 @@ body { background: var(--af-bg); color: var(--af-fg); }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .node-line__badge {
+  font-size: var(--fs-code, 11px);
   border: 1px solid currentColor; border-radius: var(--r-pill, 999px);
   padding: 0 6px; font-family: var(--af-mono);
 }
@@ -901,7 +902,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 
 .var-bar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-bottom: 5px; }
 .chip {
-  font-size: var(--fs-micro, 10px); background: var(--af-raised); border: 1px solid var(--af-line);
+  font-size: var(--fs-code, 11px); background: var(--af-raised); border: 1px solid var(--af-line);
   color: var(--af-accent); border-radius: var(--af-r-xs); padding: 2px 6px; cursor: pointer; font-family: var(--af-mono);
   box-shadow: var(--ctl-shadow-sm);}
 .out {
@@ -998,6 +999,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 .trg-edit .err { color: var(--af-t-err2); font-size: var(--fs-body, 12px); margin-top: 4px; }
 .trg-edit .ok-line { color: var(--af-ok); font-size: var(--fs-body, 12px); margin-top: 4px; }
 .trg-edit code {
+  font-size: var(--fs-code, 11px);
   background: var(--af-raised); padding: 1px 4px; border-radius: 3px; font-family: var(--af-mono);
 }
 
@@ -1410,7 +1412,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 .trig-kind { flex: none; color: var(--af-fg); font-weight: 500; }
 .trig-detail {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: var(--af-mono); font-size: var(--fs-note, 11px); color: var(--af-dim);
+  font-family: var(--af-mono); font-size: var(--fs-code, 11px); color: var(--af-dim);
 }
 
 /* ---------------- 更新检测节点（B站 / 公众号） ---------------- */
@@ -1424,7 +1426,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   border-radius: var(--af-r-ctl); padding: 4px 7px;
 }
 .upd-summary code {
-  font-family: var(--af-mono); font-size: var(--fs-note, 11px); color: var(--af-soft);
+  font-family: var(--af-mono); font-size: var(--fs-code, 11px); color: var(--af-soft);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block;
 }
 
@@ -1461,14 +1463,14 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   display: flex; flex-direction: column; gap: 4px; align-items: flex-start;
 }
 .upd-baseline code {
-  font-family: var(--af-mono); font-size: var(--fs-note, 11px); color: var(--af-fg);
+  font-family: var(--af-mono); font-size: var(--fs-code, 11px); color: var(--af-fg);
   word-break: break-all;
 }
 .upd-baseline .dim { font-size: var(--fs-note, 11px); }
 
 .upd-test {
   margin: 6px 0 0; padding: 8px 10px; border-radius: var(--af-r-sm);
-  font-family: var(--af-mono); font-size: var(--fs-note, 11px); line-height: 1.55;
+  font-family: var(--af-mono); font-size: var(--fs-code, 11px); line-height: 1.55;
   white-space: pre-wrap; word-break: break-all;
   border: 1px solid var(--af-line); background: var(--af-sunk);
   color: var(--af-soft); max-height: 220px; overflow: auto;
@@ -1482,7 +1484,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 /* 试跑输入 */
 .cond-sample {
   width: 100%; resize: vertical;
-  font-family: var(--af-mono); font-size: var(--fs-note, 11px); line-height: 1.55;
+  font-family: var(--af-mono); font-size: var(--fs-code, 11px); line-height: 1.55;
   padding: 7px 9px; border-radius: var(--af-r-sm);
   border: 1px solid var(--af-line); background: var(--af-sunk);
   color: var(--af-fg);
@@ -1513,7 +1515,8 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .cond-chip.src { border-color: var(--af-t-cond-s); color: var(--af-t-cond-s); }
-.cond-chip.val { border-color: #a855f7; color: var(--af-t-cond-v); font-family: var(--af-mono); }
+.cond-chip.val {
+  font-size: var(--fs-code, 11px); border-color: #a855f7; color: var(--af-t-cond-v); font-family: var(--af-mono); }
 .cond-chip.val.empty { border-color: var(--af-warn); color: var(--af-warn); border-style: dashed; }
 
 .cond-op-badge {
@@ -1522,10 +1525,14 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   border-radius: var(--r-pill, 999px); border: 1px solid currentColor;
   background: var(--af-panel);
 }
+
+/* 例外：这里是**图标字形**，font-size 是「画多大」而不是「字多大」，
+   不参与等宽文本档的统一（与 mindmap 的 .mm-num-caret 同理）。 */
 .cond-op-badge-icon { font-family: var(--af-mono); font-size: var(--fs-micro, 10px); }
 
 /* 节点卡片内的算子也带图标（沿用原有紫色风格，只是加了图标间距） */
 .cond-rule .cond-op { display: inline-flex; align-items: center; gap: 4px; }
+/* 例外：图标字形，font-size 是尺寸不是字号 */
 .cond-rule .cond-op-icon { font-family: var(--af-mono); font-size: var(--fs-note, 11px); opacity: .85; }
 
 /* 算子选择：分类按钮网格 */
@@ -1548,6 +1555,9 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   /* 同上：选中态用描边而非字重 */
   -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
 }
+
+/* 例外：这里是**图标字形**，font-size 是「画多大」而不是「字多大」，
+   不参与等宽文本档的统一（与 mindmap 的 .mm-num-caret 同理）。 */
 .cond-op-btn-icon { font-family: var(--af-mono); font-size: var(--fs-body, 12px); }
 
 /* 算子语义提示 */
@@ -1710,6 +1720,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   font-size: var(--fs-body, 12px); padding: 2px 0; line-height: 1.45;
 }
 .file-preview-name {
+  font-size: var(--fs-code, 11px);
   flex: none; color: var(--af-t-file); font-family: var(--af-mono);
 }
 .file-preview-path {
@@ -1718,7 +1729,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 }
 .file-preview-fields {
   margin-top: 5px; padding-top: 5px; border-top: 1px dashed var(--af-divider);
-  font-size: var(--fs-note, 11px); color: var(--af-dim); font-family: var(--af-mono);
+  font-size: var(--fs-code, 11px); color: var(--af-dim); font-family: var(--af-mono);
   word-break: break-all;
 }
 
@@ -1735,7 +1746,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   flex: none; font-size: var(--fs-body, 12px); padding: 2px 6px; border-radius: var(--af-r-ctl);
   border: 1px solid var(--af-input-line); background: var(--af-panel); color: var(--af-fg);
 }
-.rule-value.mono { font-family: var(--af-mono); font-size: var(--fs-note, 11px); }
+.rule-value.mono { font-family: var(--af-mono); font-size: var(--fs-code, 11px); }
 .param-index { width: 56px; flex: none; font-size: var(--fs-note, 11px); padding: 2px 5px; border-radius: var(--af-r-ctl);
   border: 1px solid var(--af-line); background: var(--af-panel); color: var(--af-fg); }
 
@@ -1744,6 +1755,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap;
 }
 .param-preview code {
+  font-size: var(--fs-code, 11px);
   font-family: var(--af-mono); color: var(--af-t-file);
   background: var(--af-panel); border: 1px solid var(--af-line);
   border-radius: var(--af-r-xs); padding: 1px 5px; word-break: break-all;
@@ -1758,7 +1770,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 /* 节点卡片里的来源 / 目标语言小标签 */
 /* 等宽输入：地址、模型名、Key 这类 */
 input.mono, textarea.mono {
-  font-family: var(--af-mono); font-size: var(--fs-note, 11px);
+  font-family: var(--af-mono); font-size: var(--fs-code, 11px);
 }
 
 /* API Key 行：输入框 + 显示/隐藏按钮 */
@@ -1891,7 +1903,8 @@ input.mono, textarea.mono {
 .task-node.st-running { border-color: var(--af-accent); }
 .task-node-head { display: flex; align-items: center; gap: 8px;
   padding: 7px 10px; font-size: var(--fs-title, 13px); cursor: pointer; }
-.task-node-id { font-family: monospace; }
+.task-node-id {
+  font-size: var(--fs-code, 11px); font-family: monospace; }
 .task-node-status { color: var(--af-mute); }
 .task-tag { font-size: var(--fs-micro, 10px); padding: 0 6px; border-radius: var(--r-pill, 999px);
   background: var(--af-item); color: var(--af-soft); }
@@ -1916,7 +1929,7 @@ input.mono, textarea.mono {
   overflow: auto; padding: 8px 14px 12px; }
 .task-logs-title { font-size: var(--fs-title, 13px); color: var(--af-mute); margin-bottom: 5px;
   font-weight: var(--title-2-fw);}
-.task-log { display: flex; gap: 8px; font-size: var(--fs-note, 11px); line-height: 1.7;
+.task-log { display: flex; gap: 8px; font-size: var(--fs-code, 11px); line-height: 1.7;
   font-family: monospace; }
 .task-log-at { color: var(--af-mute); flex: none; }
 .task-log-id { color: var(--af-accent); flex: none; }
@@ -2112,6 +2125,7 @@ input.mono, textarea.mono {
 }
 .task-flow-var-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-flow-var-sum {
+  font-size: var(--fs-code, 11px);
   color: var(--af-fg); font-family: var(--af-mono);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -2448,6 +2462,9 @@ input.mono, textarea.mono {
 }
 .side-desc-add {
   display: block; margin-top: 4px; color: var(--af-dim);
+  /* 此前没设字号，靠继承 .side-desc(11px) —— 而它和 .nd-more 是同一类
+     "操作提示/计数"，那边是 10px，这边却是 11px，看着就不像一家人。 */
+  font-size: var(--fs-micro, 10px);
 }
 .side-op:hover { color: var(--af-fg); background: var(--af-item); }
 .side-del:hover { color: var(--af-bad); }
@@ -2672,6 +2689,7 @@ input.mono, textarea.mono {
  * 等宽字体：这串字符是要跟日志逐字对照的，比例字体下 l/1、0/O 分不清。
  */
 .insp-id-btn {
+  font-size: var(--fs-code, 11px);
   font-family: var(--af-mono);
   max-width: 62%;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -2781,7 +2799,8 @@ input.mono, textarea.mono {
 }
 
 .canvas-config .cfg-row input { flex: 1; min-width: 0; }
-.canvas-config .cfg-k { flex: 0 0 92px !important; font-family: ui-monospace, monospace; }
+.canvas-config .cfg-k {
+  font-size: var(--fs-note, 11px); flex: 0 0 92px !important; font-family: ui-monospace, monospace; }
 
 .canvas-config input[type=text] {
   width: 100%; box-sizing: border-box;
@@ -3252,7 +3271,7 @@ input.mono, textarea.mono {
   border: 1px dashed var(--af-add-line); color: var(--af-dim);
 }
 .mcp-item-sub {
-  font-size: var(--fs-note, 11px); color: var(--af-dim); font-family: var(--af-mono, monospace);
+  font-size: var(--fs-code, 11px); color: var(--af-dim); font-family: var(--af-mono, monospace);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .mcp-item-meta { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
@@ -3290,7 +3309,7 @@ input.mono, textarea.mono {
  * 以前只有一句话，"能不能用"全靠猜。
  */
 .nd { display: flex; flex-direction: column; gap: 6px; }
-.nd-line { font-size: var(--fs-body, 12px); line-height: 1.5; color: var(--af-fg); }
+.nd-line { font-size: var(--fs-body, 12px); line-height: 1.55; color: var(--af-fg); }
 
 .nd-ports { display: flex; gap: 6px; flex-wrap: wrap; }
 .nd-port {
@@ -3299,7 +3318,11 @@ input.mono, textarea.mono {
   background: var(--af-raised); color: var(--af-fg);
   border: 1px solid var(--af-line);
 }
-.nd-port-k { font-size: var(--fs-micro, 10px); color: var(--af-dim); flex: none; }
+.nd-port-k {
+  /* 与 .nd-port 的内容**同档**：同一个胶囊里混两种字号，视觉上就是"没对齐"。
+     弱化改靠颜色（--af-dim），不靠缩小字号。 */
+  font-size: var(--fs-note, 11px); color: var(--af-dim); flex: none;
+}
 
 /*
  * 产出说明独占一行。
@@ -3374,7 +3397,7 @@ input.mono, textarea.mono {
 .node-tip-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px 10px; }
 .nd-req { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .nd-cap {
-  font-size: var(--fs-micro, 10px); padding: 0 6px; border-radius: var(--r-pill, 999px);
+  font-size: var(--fs-code, 11px); padding: 0 6px; border-radius: var(--r-pill, 999px);
   border: 1px solid var(--af-line); color: var(--af-dim);
   font-family: var(--af-mono, monospace);
 }
@@ -3389,7 +3412,7 @@ input.mono, textarea.mono {
 .nd-param { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
 .nd-key { font-size: var(--fs-note, 11px); color: var(--af-fg); font-weight: var(--fw-strong, 600); }
 .nd-raw {
-  font-size: var(--fs-micro, 10px); color: var(--af-dim);
+  font-size: var(--fs-code, 11px); color: var(--af-dim);
   font-family: var(--af-mono, monospace);
 }
 .nd-reqdot {
@@ -3404,7 +3427,7 @@ input.mono, textarea.mono {
   border-top: 1px dashed var(--af-divider); padding-top: 5px;
 }
 .nd-note {
-  font-size: var(--fs-note, 11px); line-height: 1.5; color: var(--af-warn);
+  font-size: var(--fs-note, 11px); line-height: 1.55; color: var(--af-warn);
   padding-left: 8px; border-left: 2px solid var(--af-warn);
 }
 
