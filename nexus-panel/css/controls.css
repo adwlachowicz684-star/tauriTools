@@ -388,7 +388,7 @@ select optgroup {
   padding: 8px var(--ctl-pad, 10px);
   font: inherit;
   font-size: var(--ctl-fs, 13px);
-  line-height: 1.6;
+  line-height: line-height: var(--lh-relaxed, 1.6);
   color: var(--text);
   background: var(--surface-sunk, var(--surface));
   border: 0;
@@ -440,6 +440,29 @@ select optgroup {
 .p-row.wrap { flex-wrap: wrap; }
 .nx-row.end,
 .p-row.end { justify-content: flex-end; }
+
+/*
+ * 表单标签列：`.p-row` 里那个**定宽**的标签，用来让后面的输入框左对齐。
+ *
+ * 此前这个宽度是内联写死的 `style={{ width: 64, flex: 'none' }}` ——
+ * 实测 CredentialPanel 一处就有 13 个，而同样的写法一旦要改列宽
+ * （比如翻译更长、字号调大）就得逐个改，且改 CSS 完全无效（内联优先级更高）。
+ *
+ * 收口成类之后列宽可调一处即生效。宽度走 --field-label-w 令牌，
+ * 默认 64px 与现有观感一致，所以这次改动不改变任何界面。
+ */
+.field-label {
+  width: var(--field-label-w, 64px);
+  flex: none;
+}
+/*
+ * 加宽档。两个面板用了不同的列宽（凭据面板 64、MCP 面板 76），
+ * 不是笔误而是标签文字长短不同 —— 所以**不合并成一个值**，
+ * 而是让同一个类支持按需覆盖列宽：
+ * 数字仍写在 CSS 里、仍是令牌，只是作用域不同。
+ * 若强行统一成 64，MCP 面板的「命令」这类长标签会被截断。
+ */
+.field-label.wide { --field-label-w: 76px; }
 .nx-row.between,
 .p-row.between { justify-content: space-between; }
 
@@ -551,7 +574,7 @@ select optgroup {
 .mm-vthumb-empty,
 .fpx-empty {
   color: var(--text-dim);
-  line-height: 1.7;
+  line-height: line-height: var(--lh-loose, 1.7);
   text-align: center;
 }
 
@@ -655,7 +678,7 @@ select optgroup {
   max-width: 320px;
   border-radius: var(--r-sm);
   font-size: var(--fs-12, 12px);
-  line-height: 1.5;
+  line-height: line-height: var(--lh-normal, 1.5);
   color: var(--text);
   /* 与弹窗同理：用 --surface-overlay，玻璃主题下 --surface 只有 7% 白 */
   background: var(--surface-overlay);
@@ -955,7 +978,7 @@ input[type='range']:disabled {
   margin-top: 4px;
   font-size: var(--fs-11, 11px);
   color: var(--danger);
-  line-height: 1.4;
+  line-height: line-height: var(--lh-tight, 1.45);
 }
 
 /* ------------------------------------------------------------
@@ -1126,7 +1149,7 @@ input[type='range']:disabled {
   width: 100%;
   text-align: center;
   font-size: var(--fs-note, 11px);
-  line-height: 1.5;
+  line-height: line-height: var(--lh-normal, 1.5);
 }
 
 /* ============================================================
