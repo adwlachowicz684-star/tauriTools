@@ -522,16 +522,14 @@ export class EditorBridge {
   }
 
   /**
-   * 中心主题中心相对**画布容器左边缘**的横向偏移（编辑器侧实测）。
+   * 中心主题的屏幕 x（诊断用）。
    *
-   * 补偿改成闭环后不再需要"告知编辑器容器挪了多少"：外壳每次都实测中心主题
-   * 的真实屏幕位置（容器 left + 本偏移），差多少补多少。内核补了几成、
-   * camera 有没有重新居中、取整丢了几像素，全被测量吸收，不必推算。
+   * 只用于定位/排查，不参与补偿 —— 画布几何恒定后没有位移可补。
    *
-   * @returns {number|null} 取不到返回 null（调用方据此跳过，不能当 0）
+   * @returns {number|null} 取不到返回 null（不是 0）
    */
-  rootOffsetX() {
-    const v = this._safe('读取中心位置', (m) => m.rootOffsetX());
+  rootScreenX() {
+    const v = this._safe('读取中心位置', (m) => m.rootScreenX());
     return typeof v === 'number' && isFinite(v) ? v : null;
   }
 
