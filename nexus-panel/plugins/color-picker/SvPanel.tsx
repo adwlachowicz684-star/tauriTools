@@ -21,10 +21,20 @@ import { pureHueHex, type Hsv } from './color';
  * 四角因此正好是 白 / 纯色 / 黑 / 黑，与 HSV 的定义一致。
  */
 export function SvPanel({
-  hsv, onChange, height = 160,
+  hsv, onChange, height,
 }: {
   hsv: Hsv;
   onChange: (next: Hsv) => void;
+  /**
+   * 固定高度（可选）。
+   *
+   * **不传才是推荐用法**：此时高度交给 CSS（父级 stretch + 弹性布局），
+   * 面板会跟着容器大小走 —— 服务弹窗高就面板大、矮就面板小。
+   *
+   * 传像素值的老毛病：它写在 inline style 上，优先级压过 CSS，
+   * 于是容器再矮也不会压缩，内容被顶出可视区 → 弹窗出现滚动条。
+   * 保留这个参数只为兼容需要写死的调用方。
+   */
   height?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
