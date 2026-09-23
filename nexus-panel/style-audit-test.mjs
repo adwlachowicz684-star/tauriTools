@@ -17,7 +17,11 @@ const t = (name, cond, extra = '') => {
   cond ? pass++ : fail++;
   console.log(`${cond ? '✅' : '❌'} ${name}${extra ? ' → ' + extra : ''}`);
 };
-const has = (issues, rule) => issues.some((x) => x.rule === rule);
+/*
+ * 前缀匹配而非全等：规则名带修饰后缀（如 `var-未定义(兜底为空)`），
+ * 用全等会因改名而漏判 —— 测试仍绿，实际上什么都没验证。
+ */
+const has = (issues, rule) => issues.some((x) => x.rule === rule || x.rule.startsWith(rule + '('));
 
 console.log('=== 1. 规则：踩坑的 CSS 必须被报出来 ===');
 
@@ -39,6 +43,13 @@ console.log('=== 1. 规则：踩坑的 CSS 必须被报出来 ===');
   t('改用 --divider 后不再报错', !has(auditCss(css, 'a.css'), 'border-风格开关'));
 }
 
+/* 兜底链整个落空（幽灵变量的老问题）→ 必须报 */
+{
+  const css = '.x { background: var(--accent-soft, var(--surface-2)); }';
+  const r = auditCss(css, 'a.css');
+  t('兜底是另一个未定义 var → 仍然报', has(r, 'var-未定义'));
+}
+
 /* E2：变量未定义 */
 {
   const css = '.x { color: var(--text-mute-typo); }';
@@ -49,8 +60,8 @@ console.log('=== 1. 规则：踩坑的 CSS 必须被报出来 ===');
 {
   const css = '.x { color: var(--text-mute-typo, #888); }';
   const r = auditCss(css, 'a.css');
-  t('未定义但有兜底 → warn（降级，因为还有兜底在生效）',
-    has(r, 'var-未定义(有兜底)'));
+  t('未定义且兜底非空 → 不报（兜底本就是为此准备的）',
+    !has(r, 'var-未定义'));
 }
 {
   /* 这正是 agent-flow 真实踩过的：--af-text-mute 引用 23 处却从未定义 */
