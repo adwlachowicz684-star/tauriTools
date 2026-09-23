@@ -966,3 +966,39 @@ function stripCssComments(text: string): string {
 function re_escape(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
 }
+
+/* ================= 任务流程图要撑到界面底端 ================= */
+
+/*
+ * .task-flow-canvas 的高度曾经是内联写死的 Math.min(svgH + 8, 460)。
+ *
+ * svgH 由节点坐标的包围盒算出：只有两三个节点、或节点都排在同一行时，
+ * 它只有一百多像素 —— 画布就那么高，下面一大片空白。
+ * 而"流程本来就小"和"窗口没给够地方"在界面上长得一样，
+ * 于是看起来像"任务窗口特别小"。
+ *
+ * 改法是让外层参与 flex 分配、canvas 自己撑满并滚动。
+ * 这里盯的是**两端都要改**：只写 CSS 不改组件（内联 style 优先级更高，
+ * 会一直压着 CSS），或者只改组件不写 CSS，都会白改。
+ */
+test('任务流程图不再写死高度（撑到界面底端）', () => {
+  const td = read(path.join(COMP, 'TaskDetail.tsx'));
+  assert.doesNotMatch(td, /task-flow-canvas[^>]*style=/,
+    'task-flow-canvas 还带着内联 style —— 内联优先级高于 CSS，撑不满');
+  assert.doesNotMatch(td, /Math\.min\(\s*svgH/,
+    'TaskDetail 还在按 svgH 限高（460）—— 节点少时画布只有一百多像素');
+
+  const css = stripCssComments(readSrc('styles.css'));
+  const m = css.match(/\.task-flow-canvas\s*\{([^}]*)\}/);
+  assert.ok(m, 'styles.css 里没有 .task-flow-canvas');
+  assert.match(m[1], /flex:\s*1/, '.task-flow-canvas 必须 flex:1 才能撑满剩余高度');
+  assert.match(m[1], /min-height:\s*0/,
+    '.task-flow-canvas 缺 min-height:0 —— flex item 默认 min-height:auto，'
+    + '内容高时会把父级撑爆而不是在自己内部滚动');
+
+  /* 外层不参与分配的话，剩余空间归 .task-detail，canvas 仍撑不到底端 */
+  assert.match(css, /\.task-flow--fill\s*\{[^}]*flex:\s*1/,
+    '.task-flow--fill 必须 flex:1（否则 .task-flow 按内容高度排，下面仍是空白）');
+  assert.match(td, /className=\{?"task-flow task-flow--fill"/,
+    '画布模式的流程图没挂 task-flow--fill —— CSS 写了也不会生效');
+});

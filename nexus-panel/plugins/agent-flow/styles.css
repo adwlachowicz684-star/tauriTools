@@ -2024,7 +2024,21 @@ input.mono, textarea.mono {
 
 /* 任务流程图 —— 默认视图，看"卡在哪儿" */
 /* 任务流程图（画布布局） */
-.task-flow-canvas { position: relative; overflow: auto; }
+/*
+ * 画布模式的流程图要**填满详情区的剩余高度**（到界面底端）。
+ *
+ * 以前这里还有一个内联写死的高度 Math.min(svgH + 8, 460)：
+ * 节点纵向分布窄时（只有两三个节点、或都排在同一行），
+ * svgH 算出来只有一百多像素，画布就那么高 —— 下面一大片空白，
+ * 而"流程就这么大"和"窗口只给了这么点地方"在界面上很难区分。
+ *
+ * 现在是：容器撑满剩余空间，内容按真实坐标摆在左上，超出部分自己滚。
+ * 图小的时候留白，图大的时候滚动，都不再被 460 卡住。
+ *
+ * min-height: 0 是必需的 —— flex item 默认 min-height:auto，
+ * 内容比容器高时它不肯收缩，会把父级撑爆而不是在自己内部滚动。
+ */
+.task-flow-canvas { flex: 1; min-height: 0; position: relative; overflow: auto; }
 .task-flow-svg { position: absolute; inset: 0; pointer-events: none; }
 .task-flow-edge { stroke: var(--af-line, #2a2f3a); stroke-width: 1.5; color: var(--af-line, #2a2f3a); }
 /* 状态色走 --af-ok/--af-warn/--af-bad 而不是写死 #22c55e 之类：
@@ -2052,6 +2066,16 @@ input.mono, textarea.mono {
   padding: 2px 0; border-bottom: 1px solid var(--af-line, #2a2f3a);
 }
 .task-flow { padding: 2px 0 8px; }
+
+/*
+ * 外层也要参与分配：不写 flex:1 的话它按内容高度排在头部下面，
+ * 下面的空白属于 .task-detail，canvas 撑不到界面底端。
+ */
+.task-flow--fill {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+}
+.task-flow--fill > .task-flow-legend { flex: none; }
+
 .task-flow-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
 .task-flow-legend-item {
   display: flex; align-items: center; gap: 4px;

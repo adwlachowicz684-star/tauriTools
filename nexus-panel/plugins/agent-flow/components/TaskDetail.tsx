@@ -213,9 +213,10 @@ export function TaskFlow({ task, now }: { task: TaskRecord; now: number }) {
   const off = (v: number, min: number) => v - min + pad;
 
   return (
-    <div className="task-flow">
+    <div className="task-flow task-flow--fill">
       {legend}
-      <div className="task-flow-canvas" style={{ height: Math.min(svgH + 8, 460) }}>
+      {/* 高度交给 .task-flow-canvas 的 flex:1 撑满，这里不再写死 */}
+      <div className="task-flow-canvas">
         <svg
           className="task-flow-svg"
           viewBox={`0 0 ${svgW} ${svgH}`}
