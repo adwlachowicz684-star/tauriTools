@@ -17,6 +17,17 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
 const src = fs.readFileSync(path.join(HERE, 'hooks/useFpx.ts'), 'utf8');
 
+/**
+ * 剥掉注释再断言。
+ *
+ * 必须剥：本文件 addCard 的说明里**引用了旧写法** `while (tabs.length <= idx)`
+ * 作为反例（那正是要解释为什么改掉的），全文扫会命中注释里的反例，
+ * 于是断言在没有真代码时**照样通过** —— 漏报。
+ */
+const strip = (x) => x
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/(^|\s)\/\/[^\n]*/g, '$1');
+
 /** 取某个 useCallback(async 函数体 */
 function fn(name) {
   const m = new RegExp('const ' + name + ' = useCallback\\(async').exec(src);
@@ -68,6 +79,65 @@ console.log('\n=== 4. 已修的两处不被回滚 ===');
 {
   t('addCard 注释说明为什么早退', /保存失败就到此为止/.test(fn('addCard')));
   t('removeCardFull 注释说明静默失败', /unhandled rejection/.test(fn('removeCardFull')));
+}
+
+console.log('\n=== 5. 保存失败不得推进"当前页签" ★★ ===');
+{
+  /*
+   * addTab 的坑比 addCard 更隐蔽：它推进的是 activeTab 这个**索引**。
+   * 保存失败时 tabs 一条没多，而新索引正好等于旧长度 ——
+   * 于是 activeTab 被推到越界下标，卡片区显示空白。
+   * 用户以为"新建成功、只是空的"，往这个不存在的页签里加卡、改设置。
+   *
+   * 判据必须是"早退早于 setActiveTab"，只钉 `const snap =` 不够 ——
+   * 把早退挪到 setActiveTab 之后照样命中。
+   */
+  const b = fn('addTab');
+  const iSnap = b.indexOf('const snap = await updateConfig');
+  const iGuard = b.indexOf('if (!snap) return;');
+  const iSet = b.indexOf('setActiveTab(');
+  t('addTab 取到返回值', iSnap >= 0);
+  t('addTab 先判失败再动 activeTab', iGuard >= 0 && iSet >= 0 && iGuard < iSet,
+    `guard=${iGuard} set=${iSet}`);
+  t('addTab 注释说明越界后果', /越界/.test(b));
+}
+
+console.log('\n=== 6. 索引推进类操作一律先看保存结果 ===');
+{
+  /*
+   * 同类操作必须一致：moveTab / removeTab 都推进 activeTab，
+   * 都必须在 setActiveTab 之前早退。
+   * 只钉 addTab 的话，moveTab 的守卫被删掉也测不到。
+   */
+  for (const name of ['moveTab', 'removeTab']) {
+    const b = fn(name);
+    const iGuard = b.indexOf('if (!snap) return;');
+    const iSet = b.indexOf('setActiveTab(');
+    if (iSet >= 0) {
+      t(`${name} 先判失败再动 activeTab`, iGuard >= 0 && iGuard < iSet,
+        `guard=${iGuard} set=${iSet}`);
+    } else {
+      t(`${name} 推进状态前先判失败`, iGuard >= 0);
+    }
+  }
+}
+
+
+console.log('\n=== 7. 不得凭空补齐页签 ★★ ===');
+{
+  /*
+   * addCard 原写法 `while (tabs.length <= idx) tabs.push(...)`：
+   * 索引一越界就连续造空页签，把"索引与 tabs 不同步"这件事**掩盖**掉，
+   * 同时凭空改动用户没要求改的页签结构。
+   *
+   * 判据：全库不得再出现 while 补齐页签的写法，且 addCard 必须夹取。
+   * 只钉"有 clampIndex"不够 —— 把夹取删掉、换回 while，断言照样过。
+   */
+  const all = [src, fs.readFileSync(path.join(HERE, 'components/StackedGroups.tsx'), 'utf8')];
+  t('没有 while 补齐页签', !all.some((x) => /while\s*\(\s*tabs\.length\s*<=/.test(strip(x))));
+  const b = fn('addCard');
+  t('addCard 夹取索引', /clampIndex\(idx,\s*tabs\.length\s*-\s*1\)/.test(b));
+  t('addCard 空 tabs 时早退', /tabs\.length === 0\)\s*return/.test(b));
 }
 
 done();

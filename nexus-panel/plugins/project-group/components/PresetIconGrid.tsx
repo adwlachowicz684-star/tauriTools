@@ -12,8 +12,9 @@ import { resolveMoveIndex, clampIndex, gapIndexAtX } from '../utils/dragSort';
 import { pruneGroups, staleByList, staleByProbe, totalRemoved } from '../utils/iconGroups';
 /* #146 图标网格高度自适应：与 #147 模板框共用同一个测量 hook */
 import { useAvailableHeight } from '../hooks/useAvailableHeight';
-/* #7 剪贴板图片 → 多尺寸 ICO（与设置页「软件图标」那处共用同一份转换） */
-import { imageToIcoBase64 } from '../utils/ico';
+/* #7 剪贴板图片 → 多尺寸 ICO（与设置页「软件图标」那处共用同一份转换）。
+   urlToBase64 同样从 utils 走：那边是分块实现，这边不再自写一份逐字节拼接的。 */
+import { imageToIcoBase64, urlToBase64 } from '../utils/ico';
 
 /** 内置图标默认归入的组名（与原版一致）。 */
 const DEFAULT_GROUP = '默认';
@@ -30,17 +31,6 @@ const SUPPORTED_IMAGE_EXT = ['.ico', '.png', '.jpg', '.jpeg', '.bmp', '.gif'];
 function isSupportedImageFile(name: string): boolean {
   const lower = name.toLowerCase();
   return SUPPORTED_IMAGE_EXT.some((e) => lower.endsWith(e));
-}
-
-/** 二进制 → base64（图标只有几 KB，直接拼字符串即可，无需分块优化）。 */
-async function toBase64(url: string): Promise<string> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`读取图标失败: ${res.status}`);
-  const buf = await res.arrayBuffer();
-  const bytes = new Uint8Array(buf);
-  let bin = '';
-  for (let i = 0; i < bytes.length; i += 1) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin);
 }
 
 /**
@@ -289,7 +279,7 @@ export function PresetIconGrid({
   const use = async (name: string) => {
     setBusy(name);
     try {
-      const b64 = await toBase64(presetIconUrl(name));
+      const b64 = await urlToBase64(presetIconUrl(name));
       const path = await api.saveIconData(name, b64);
       onPick(path);
     } catch (e) {

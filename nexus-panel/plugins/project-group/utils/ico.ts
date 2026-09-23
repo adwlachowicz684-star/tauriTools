@@ -101,6 +101,24 @@ export function toBase64(bytes: Uint8Array): string {
 }
 
 /**
+ * 从一个 URL 取图片字节并转成 base64。
+ *
+ * 收在这里而不是各调用处自己写一份：本文件那个 `toBase64` 是**分块**的，
+ * 注释里写明了为什么要分块（大数组一次性展开会爆调用栈）。
+ * 调用处若另写一份"逐字节拼接"的，那份逻辑就游离在外 ——
+ * 这边修了边界、那边不会跟着变，而且两种写法谁也说不清该信哪个。
+ *
+ * 内置图标实测：122 个 .ico，中位 4.7KB、**最大 64KB**（游戏设计.ico）。
+ * 所以"图标只有几 KB、无需分块"这个说法对大多数成立，但最大的那个不划算。
+ */
+export async function urlToBase64(url: string): Promise<string> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`读取图标失败: ${res.status}`);
+  const buf = await res.arrayBuffer();
+  return toBase64(new Uint8Array(buf));
+}
+
+/**
  * 入库用的尺寸档位（对齐原版 IconConversion.TryConvertToIco 的
  * `{ 16, 24, 32, 48, 64, 128, 256 }`）。
  *

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNexus } from '../../../src/nexus-react';
 import { errText, makeApi, normalizeKey } from '../api';
 import { LOG_MAX_LINES_DEFAULT, clampLogMax } from '../utils/log';
+import { clampIndex } from '../utils/dragSort';
 import { activeAfterMove, activeAfterRemove } from '../utils/tabs';
 import type {
   Bootstrap, CardKind, ContentItem, FpxConfig, LinkRow, Snapshot, TabInfo,
@@ -256,8 +257,21 @@ export function useFpx() {
     }
     const snap = await updateConfig((d) => {
       const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
-      while (tabs.length <= idx) tabs.push({ name: `页签${tabs.length + 1}`, items: [] });
-      tabs[idx].items.push(path);
+      /*
+       * 越界时**夹取**，绝不"凭空补齐页签"。
+       *
+       * 原写法是 `while (tabs.length <= idx) tabs.push(...)`：
+       * idx 一越界就连续造出若干个空的「页签N」，直到凑够 idx。
+       * 用户只是加了张卡片，凭空多出几个空页签 —— 这是改了他没要求改的东西，
+       * 而且没有任何提示（他只会发现"怎么多了几个空页签"）。
+       *
+       * idx 来自 `tabIndex ?? activeTab[kind]`，两者都可能与当前 tabs 不同步
+       * （例如上一次保存失败、或项目组栏的分类索引与 groupTabs 长度错位）。
+       * 这种不同步本该被看见，凭空补齐恰好把它**掩盖**了。
+       */
+      if (tabs.length === 0) return;
+      const at = clampIndex(idx, tabs.length - 1);
+      tabs[at].items.push(path);
     });
     /*
      * **保存失败就到此为止，绝不再报"已添加"**（`updateConfig` 失败返回 null）。
@@ -389,10 +403,24 @@ export function useFpx() {
   }, [api, applySnapshot, pushLog, run]);
 
   const addTab = useCallback(async (kind: CardKind, name: string) => {
-    await updateConfig((d) => {
+    /**
+     * 必须先看保存结果再动 activeTab。
+     *
+     * 保存失败时 tabs 一条都没多，而 `cardsOf(kind).length` 正是**旧长度** ——
+     * 它恰好等于"新页签的索引"，于是 activeTab 被推到一个**越界**的下标上：
+     * `boot.projectTabs[idx]` 为 undefined，卡片区显示空白。
+     *
+     * 用户看到的是"新建成功了、只是这个页签是空的"（保存失败那句 toast
+     * 容易被忽略），于是往这个并不存在的页签里加卡、改设置 ——
+     * 全部作用在错误的上下文里，且没有任何提示。
+     *
+     * 成功时同样用旧长度：新页签索引 = N，旧长度 = N，正好对得上。
+     */
+    const snap = await updateConfig((d) => {
       const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
       tabs.push({ name: name.trim() || `页签${tabs.length + 1}`, items: [] });
     });
+    if (!snap) return;
     setActiveTab((s) => ({ ...s, [kind]: cardsOf(kind).length }));
   }, [cardsOf, updateConfig]);
 

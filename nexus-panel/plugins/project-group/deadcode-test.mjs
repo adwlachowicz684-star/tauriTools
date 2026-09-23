@@ -111,4 +111,36 @@ console.log('\n=== 4. 状态表自身可用 ===');
   t('无整段 base64 混入', !/[A-Za-z0-9+/]{500,}={0,2}/.test(s));
 }
 
+
+console.log('\n=== 5. base64 转换只有一份实现 ★ ===');
+{
+  /*
+   * 本轮合并：PresetIconGrid 里另有一份"逐字节拼接"的 toBase64(url)，
+   * utils/ico.ts 里那份是**分块**的（注释写明大数组一次性展开会爆调用栈）。
+   * 两份并存 = 改一处漏一处，且说不清该信哪个。
+   *
+   * 判据：全插件内 `fromCharCode` 只允许出现在 utils/ico.ts。
+   * 只钉"PresetIconGrid 没有 toBase64"不够 —— 换个文件再写一份就漏了。
+   */
+  const files = [];
+  (function walk(d) {
+    for (const n of fs.readdirSync(d)) {
+      const full = path.join(d, n);
+      if (fs.statSync(full).isDirectory()) { if (n !== 'preseticons') walk(full); continue; }
+      if (/\.(ts|tsx)$/.test(n) && !n.includes('test')) files.push(full);
+    }
+  })(HERE);
+  const offenders = files.filter((f) => {
+    const rel = path.relative(HERE, f).replace(/\\/g, '/');
+    if (rel === 'utils/ico.ts') return false;
+    return /fromCharCode/.test(fs.readFileSync(f, 'utf8'));
+  }).map((f) => path.relative(HERE, f).replace(/\\/g, '/'));
+  t('fromCharCode 只在 utils/ico.ts', offenders.length === 0, offenders.join('、'));
+
+  t('ico.ts 导出 urlToBase64', /export async function urlToBase64/.test(
+    fs.readFileSync(path.join(HERE, 'utils/ico.ts'), 'utf8')));
+  t('PresetIconGrid 走 urlToBase64', /urlToBase64\(presetIconUrl\(/.test(
+    fs.readFileSync(path.join(HERE, 'components/PresetIconGrid.tsx'), 'utf8')));
+}
+
 done();

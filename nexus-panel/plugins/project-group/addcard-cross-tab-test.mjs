@@ -46,9 +46,17 @@ console.log('\n=== 3. 落库仍在指定页签 ===');
 {
   /* 只改查重，不改落点：点哪个页签的 ＋ 就该进哪个 */
   t('仍用 idx 落库', /const idx = tabIndex \?\? activeTab\[kind\];/.test(hook));
-  t('仍写入 tabs[idx]', /tabs\[idx\]\.items\.push\(path\);/.test(hook));
+  /*
+   * 不钉 `tabs[idx]` 这个字面量：本轮把落库索引改成**夹取后的 `at`**
+   * （越界时不再凭空补齐页签），钉死旧写法只会误报。
+   * 真实要钉的是"push 进的那个索引来自 idx"（夹取后仍是 idx 对应的位置），
+   * 以及"查重发生在落库之前"。
+   */
+  t('落库索引来自 idx（夹取后）',
+    /const at = clampIndex\(idx, tabs\.length - 1\);/.test(hook)
+    && /tabs\[at\]\.items\.push\(path\);/.test(hook));
   const iOwner = hook.indexOf('const owner = list.findIndex');
-  const iPush = hook.indexOf('tabs[idx].items.push(path);');
+  const iPush = hook.indexOf('.items.push(path);');
   t('查重在落库之前', iOwner > 0 && iOwner < iPush, `owner=${iOwner} push=${iPush}`);
 }
 

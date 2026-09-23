@@ -75,7 +75,14 @@ console.log('\n=== 4. 转 ICO 再入库 ===');
 {
   /* 后端文件名固定 .ico，PNG 原样写盘会得到"叫 .ico 实为 PNG"的文件 */
   t('走 imageToIcoBase64', /await imageToIcoBase64\(clipBlob\)/.test(grid));
-  t('复用同一份转换', /import \{ imageToIcoBase64 \} from '\.\.\/utils\/ico';/.test(grid));
+  /*
+   * 只钉"从 '../utils/ico' 导入且含 imageToIcoBase64"，不钉整行 import 的字面量：
+   * 早先钉死了 `import { imageToIcoBase64 } from '../utils/ico';`，
+   * 后来同一行多加一个 urlToBase64 就误报 —— 真实要钉的是"复用 utils 那份"，
+   * 不是"这一行恰好只有这一个名字"。
+   */
+  t('复用同一份转换',
+    /import\s*\{[^}]*\bimageToIcoBase64\b[^}]*\}\s*from\s*'\.\.\/utils\/ico'/.test(grid));
   /* 名字用「剪贴板」（原版 baseName），重名由后端加 (1) */
   t('名字用剪贴板', /api\.saveIconData\('剪贴板', b64\)/.test(grid));
   /* 显示名从返回路径取 —— 后端可能加了 (1)，显示必须与实际一致 */
