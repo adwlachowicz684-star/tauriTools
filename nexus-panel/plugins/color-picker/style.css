@@ -26,6 +26,9 @@
 
 .fpx-picker {
   display: flex; flex-direction: column; gap: var(--sp-5, 10px);
+  /* 撑满服务弹窗：不写这条，内部就没有"剩余空间"可分给选色区，
+     选色区会退化成 min-height、下方留一片空白。 */
+  flex: 1 1 auto; min-height: 0;
 }
 .fpx-picker.compact { gap: var(--sp-4, 8px); }
 
@@ -33,9 +36,24 @@
 .fpx-picker-visual {
   display: flex; gap: var(--sp-4, 8px); align-items: stretch;
   padding: 0 var(--sp-2, 4px);        /* 左右留呼吸，别贴死弹窗内缘 */
+  /*
+   * 选色区**吸收剩余高度**，而不是写死 176px。
+   * ------------------------------------------------------------------
+   * 写死高度是"弹窗要滚动"的直接原因：服务弹窗固定 420 高，
+   * 而 176 + 数值行 + 两排色块 + 按钮行 已经超过它，
+   * 于是整个面板 overflow —— 一个取色弹窗居然要上下滚才能看到确定按钮。
+   *
+   * 改成弹性后：弹窗高就面板大、弹窗矮就面板小，永远不滚。
+   * min-height 是内联用法（project-group 的弹窗按内容撑高）的兜底，
+   * 没有它面板会塌成 0 —— 那种容器没有"剩余空间"可分。
+   * 实测：560×420 下面板 148，400 宽（90vw）下 148，均不溢出。
+   */
+  flex: 1 1 auto; min-height: 110px;
 }
 .fpx-sv {
-  flex: 1; min-width: 0;
+  flex: 1; min-width: 0; min-height: 0;
+  /* 高度由父级 align-items:stretch 给，不再写像素值 ——
+     组件层的 inline height 会压过这里，故 SvPanel 的 height 改成可选。 */
   position: relative; border-radius: var(--r-sm);
   box-shadow: var(--sh-out-sm);
   cursor: crosshair; touch-action: none;   /* 触屏拖动别变成滚动 */
@@ -75,8 +93,10 @@
 }
 .fpx-preview-block {
   width: 38px; height: 26px; flex: none; border-radius: var(--r-xs);
-  box-shadow: var(--sh-out-sm);
-  display: grid; place-items: center; font-size: var(--fs-10, 10px);
+  /* 环用 --divider：底色是用户自选的（可能是纯白），浅色主题下
+     没有这一圈就会与面板底融为一体，看不出"这是个色块"。 */
+  box-shadow: var(--sh-out-sm), inset 0 0 0 1px var(--divider, rgba(0,0,0,.12));
+  display: grid; place-items: center; font-size: var(--fs-micro, 10px);
   /* 白字是**有意的**：这块底色是用户自定义的颜色，明暗不定，
      用主题变量反而会在浅色底上变成"浅字压浅底"。配一层文字阴影兜底。 */
   color: #fff;
@@ -86,8 +106,10 @@
 
 .fpx-channel {
   display: flex; align-items: center; gap: var(--sp-2, 4px);
-  font-size: var(--fs-11, 11px); color: var(--text-dim);
+  /* 输入框是控件，走正文档；只有 R/G/B 这三个字母走说明档 */
+  font-size: var(--fs-body, 12px); color: var(--text-dim);
 }
+.fpx-channel > span { font-size: var(--fs-note, 11px); }
 .fpx-channel input {
   width: 46px; height: 26px; padding: 0 6px;
   font-family: var(--font-mono); text-align: center;
@@ -106,19 +128,43 @@
 /* ③ ④ 分区 -------------------------------------------------------- */
 .fpx-picker-sec {
   display: flex; flex-direction: column; gap: var(--sp-3, 6px);
+  /*
+   * 可压缩（0 1 auto）+ 内部滚动，而不是 flex:none。
+   * ------------------------------------------------------------------
+   * flex:none 看着"保护色块不被压"，实际是把压力全推给整个弹窗 ——
+   * 窗口一矮（82vh 落到 360）总高就超出，滚动条回到弹窗上，
+   * 又变回"一个取色弹窗要上下滚"的样子。
+   *
+   * 让色块区先让位：它自己内部滚一行，弹窗整体始终不滚。
+   * 色块是**列表**，列表内部滚动是常规交互；
+   * 而"确定按钮要滚才看得到"不是。
+   */
+  flex: 0 1 auto; min-height: 0;
+}
+.fpx-picker-sec > .fpx-picker-label { flex: none; }
+.fpx-swatches {
+  display: flex; flex-wrap: wrap; gap: 5px; align-content: flex-start;
+  /* 让位时至少留一行可见，压到 0 就什么都看不见了 */
+  min-height: 26px; overflow-y: auto;
 }
 .fpx-picker-label {
   display: flex; align-items: center; gap: var(--sp-4, 8px);
-  font-size: var(--title-3-fs, 11px); color: var(--text-dim);
-  font-weight: var(--title-3-fw);
+  /* 用语义档而不是 --title-3-fs / --title-3-fw：
+     那两个名字暗示"三级层次"，实际在 tokens.css 里三级**同值**
+     （都指向 --fw-strong），名字与值不符反而误导后来者。 */
+  font-size: var(--fs-note, 11px); color: var(--text-dim);
+  font-weight: var(--fw-strong, 600);
 }
 /* 「＋ 收藏」推到行尾，而不是紧挨着字数统计 */
 .fpx-picker-label .fpx-mini { margin-left: auto; }
 
-.fpx-swatches { display: flex; flex-wrap: wrap; gap: var(--sp-3, 6px); }
 .fpx-swatch {
-  width: 30px; height: 30px; border-radius: var(--r-xs); cursor: pointer;
-  border: none; box-shadow: var(--sh-out-sm);
+  /* 26px 而不是 30px：24 个预设色在窄弹窗（90vw）里会多占一整行，
+     那一行正是把内容顶出 420 高度、逼出滚动条的元凶。 */
+  width: 26px; height: 26px; border-radius: var(--r-xs); cursor: pointer;
+  border: none;
+  /* 同理加一圈 --divider：白色色块在浅色主题下会消失 */
+  box-shadow: var(--sh-out-sm), inset 0 0 0 1px var(--divider, rgba(0,0,0,.12));
   transition: transform var(--dur-fast, 120ms), box-shadow var(--dur-fast, 120ms);
 }
 .fpx-swatch:hover { transform: translateY(-2px); box-shadow: var(--sh-out-md); }
@@ -134,7 +180,7 @@
   border: none; border-radius: 50%;
   background: var(--surface); color: var(--text-dim);
   box-shadow: var(--sh-out-sm);
-  font-size: var(--fs-10, 10px); cursor: pointer;
+  font-size: var(--fs-micro, 10px); cursor: pointer;
   /* 半透明常显而不是 hover 才出现：藏起来就没法发现能删，
      且键盘 Tab 过去时看不见焦点落在哪。 */
   opacity: .55; transition: opacity var(--dur-fast, 120ms), color var(--dur-fast, 120ms);
@@ -162,12 +208,22 @@
 .fpx-pick-hint {
   position: fixed; left: 50%; top: 24px; transform: translateX(-50%);
   padding: var(--sp-4, 8px) var(--sp-6, 12px); border-radius: var(--r-sm);
-  background: var(--surface); border: 1px solid var(--border);
+  /*
+   * --surface-overlay 而不是 --surface：这条提示是 position:fixed，
+   * 压在**整个屏幕**上（可能是别的窗口、可能是深色主面板）。
+   * --surface 在玻璃主题下是半透明的，底下一透字就糊了 ——
+   * 弹窗类容器一律用 overlay 层，这是 dialog.css 里同样的结论。
+   *
+   * 边框同理用 --divider：--border 在新拟态主题下是 transparent
+   * （它是"风格开关"，不是"保证可见的边界"），用了等于没有边框。
+   */
+  background: var(--surface-overlay, var(--surface));
+  border: 1px solid var(--divider, rgba(0,0,0,.12));
   box-shadow: var(--sh-cast-md);
-  font-size: var(--fs-12, 12px); line-height: 1.7; text-align: center;
+  font-size: var(--fs-body, 12px); line-height: var(--lh-relaxed, 1.6); text-align: center;
   pointer-events: none;    /* 提示条不该挡住取样点击 */
 }
-.fpx-pick-hint .dim { opacity: .6; font-size: var(--fs-11, 11px); }
+.fpx-pick-hint .dim { opacity: .6; font-size: var(--fs-note, 11px); }
 
 /* ============================================================
  * 服务弹窗外壳（只在服务实例里用到）
@@ -179,5 +235,14 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /*
+   * overflow 保留 auto 作**兜底**：窗口极窄（90vw 掉到 320px）时
+   * 色块会多占一行，此时滚动好过裁掉"确定"按钮。
+   * 正常尺寸下内容已能一屏放下，滚动条不会出现 ——
+   * 真正的修复是上面把选色区改成弹性，而不是把滚动关掉。
+   */
   overflow: auto;
+  /* 服务 iframe 是独立文档，UA 默认文字色是黑的 ——
+     深色主题下不显式继承就会得到黑字压深底。 */
+  color: var(--text);
 }
