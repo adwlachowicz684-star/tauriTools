@@ -1458,6 +1458,66 @@ console.log('\n=== 31. 玻璃主题默认不透度（下层文字不得透出）
     const a = alphaOf(x.vars['--surface']);
     return a === null || a < 0.9;          // 非玻璃多为 hex（null）
   }));
+
+  /*
+   * 表面色必须**跟背景同色系**，不能固定用白色叠加。
+   *
+   * 这是本轮返工的第二个根因：原先 surface 是 rgba(255,255,255,.07)
+   * 这种"白色半透明"叠加层。深色底上即使只有 7% 白，也会把
+   * #1b1f2b 提亮到 #2b2f3a（ΔL*=7.6）—— 不透明度调高时整块面板
+   * 发灰发亮，跟主题色调对不上（极光玻璃是紫调，面板却是灰的）。
+   *
+   * 正确做法是 HSV 里**只动 V/S、保持 H**，让面板色从背景色派生。
+   * 下面两条分别钉死"不许用中性白"和"不许提亮过头"。
+   */
+  const hex2rgb = (h) => {
+    const x = String(h).replace('#', '');
+    return [0, 2, 4].map((i) => parseInt(x.slice(i, i + 2), 16));
+  };
+  const rgb2hsv = ([r, g, b]) => {
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+    let h = 0;
+    if (d) {
+      if (mx === r) h = ((g - b) / d) % 6;
+      else if (mx === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60; if (h < 0) h += 360;
+    }
+    return [h, mx ? d / mx : 0, mx / 255];
+  };
+  const hueGap = (a, b) => {
+    const d = Math.abs(rgb2hsv(a)[0] - rgb2hsv(b)[0]);
+    return Math.min(d, 360 - d);
+  };
+  /* 中性色（白/灰/黑）没有色相可言，用饱和度兜底：
+     纯白叠加层的 S 会显著低于背景，据此识别。 */
+  const satOf = (c) => rgb2hsv(c)[1];
+
+  const offHue = glass.filter((x) => {
+    const bg = hex2rgb(x.vars['--bg']);
+    const sf = (String(x.vars['--surface']).match(/\d+/g) || []).slice(0, 3).map(Number);
+    return hueGap(bg, sf) > 12;
+  });
+  t('玻璃表面与背景同色系（色相偏离 ≤12°）', offHue.length === 0,
+    offHue.map((x) => `${x.name}:${hueGap(hex2rgb(x.vars['--bg']), (String(x.vars['--surface']).match(/\d+/g) || []).slice(0, 3).map(Number)).toFixed(0)}°`).join(' ') || '全部同色系');
+
+  /* 深色下不许提亮过头 —— 用户反馈"不透明度调高就发亮"正来自这里 */
+  const tooBright = glass.filter((x) => x.base === 'dark' && (() => {
+    const bg = hex2rgb(x.vars['--bg']);
+    const sf = (String(x.vars['--surface']).match(/\d+/g) || []).slice(0, 3).map(Number);
+    return rgb2hsv(sf)[2] - rgb2hsv(bg)[2] > 0.10;   // V 增量不超过 10%
+  })());
+  t('深色玻璃面板不过亮（V 增量 ≤10%）', tooBright.length === 0,
+    tooBright.map((x) => x.name).join(' ') || '深色面板与背景贴近');
+
+  /* 表面色不许是低饱和的中性灰白（那正是"白色叠加"的痕迹） */
+  const washed = glass.filter((x) => {
+    const bg = hex2rgb(x.vars['--bg']);
+    const sf = (String(x.vars['--surface']).match(/\d+/g) || []).slice(0, 3).map(Number);
+    return satOf(sf) < satOf(bg) * 0.5 && satOf(bg) > 0.08;
+  });
+  t('表面未被中性白洗淡（保有色相饱和度）', washed.length === 0,
+    washed.map((x) => x.name).join(' ') || '饱和度未被稀释');
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
