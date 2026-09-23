@@ -1415,5 +1415,50 @@ console.log('\n=== 30. 玻璃透明度方向 + 弹框不透明地板 ===');
     /const base = isLightColor\(vars\['--bg'\]\) \? 'light' : 'dark';/.test(sdk));
 }
 
+
+console.log('\n=== 31. 玻璃主题默认不透度（下层文字不得透出） ===');
+{
+  const { PRESET_THEMES } = await import('./js/themes.js');
+  const glass = PRESET_THEMES.filter((t) => t.style === 'glass');
+  const alphaOf = (x) => {
+    const m = /rgba?\([^)]*?,\s*([\d.]+)\s*\)/.exec(String(x || ''));
+    return m ? Number(m[1]) : null;
+  };
+
+  /*
+   * 玻璃主题原先 surface 只有 .07~.55 —— 主面板的文字会**透出来**，
+   * 与面板自己的文字叠在一起，两者都看不清。
+   * 用户要的是"磨砂"，不是"透明"：磨砂 = 模糊背景 + 足够遮挡，
+   * 太透就没有磨砂感，只剩透视干扰。
+   *
+   * 所以默认面板不透明度抬到 0.90（与弹窗原值同档），
+   * 浮起/凹陷层 0.94、弹窗 0.96。磨砂感由 --blur 保留，
+   * 透出的那 10% 是**虚化后的背景色**，不再是可读文字。
+   */
+  t('玻璃主题都有 surface 且 ≥0.88', glass.length > 0 && glass.every((x) => {
+    const a = alphaOf(x.vars['--surface']); return a !== null && a >= 0.88;
+  }), glass.map((x) => `${x.name}:${alphaOf(x.vars['--surface'])}`).join(' '));
+
+  t('浮起/凹陷层 ≥0.92', glass.every((x) => {
+    const r = alphaOf(x.vars['--surface-raised']);
+    const k = alphaOf(x.vars['--surface-sunk']);
+    return r >= 0.92 && k >= 0.92;
+  }));
+
+  t('弹窗层 ≥0.94', glass.every((x) => alphaOf(x.vars['--surface-overlay']) >= 0.94));
+
+  /* 磨砂感靠 blur 保留，不许被顺手清掉 */
+  t('玻璃主题都保留了模糊（--blur > 0）', glass.every((x) => {
+    const b = parseFloat(String(x.vars['--blur'] || '0')); return b > 0;
+  }), glass.map((x) => x.vars['--blur']).join(' '));
+
+  /* 非玻璃风格不受影响（不该被误改） */
+  const other = PRESET_THEMES.filter((t) => t.style !== 'glass');
+  t('非玻璃风格未被波及', other.every((x) => {
+    const a = alphaOf(x.vars['--surface']);
+    return a === null || a < 0.9;          // 非玻璃多为 hex（null）
+  }));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
