@@ -39,6 +39,10 @@ export const THEME_VARS = [
   // 否则用户把主题色设成红色，就会出现"红色的成功提示"。
   '--ok', '--running', '--warn', '--danger',
   '--surface-raised', '--text-soft',
+  /* 磨砂四层：saturate 补饱和 / 颗粒强度 / 颗粒混合模式 / 边缘高光。
+     与 --divider 同理 —— 这些是**派生量**，主题可填（玻璃主题按基调
+     给了不同值），但必须登记才会被 applyTo 写到 :root。 */
+  '--saturate', '--frost-grain', '--frost-blend', '--frost-edge',
   /* --divider / --edge 由 theme-manager 按基调**派生**，主题数据里不该填
      （填了就可能又被填成 transparent，失去"保证可见"的作用）。
 
@@ -119,6 +123,15 @@ export const STYLE_PARAMS = {
       softAffects: ['--surface-overlay'],
       alphaFloor: 0.88,
       desc: '面板的通透程度。调低更实（内容更清晰），调高更透（背景更明显）。弹框只吃一半幅度，且不会低于 88% 不透明度',
+    },
+    {
+      key: 'glass-grain', label: '磨砂颗粒', unit: '%',
+      min: 0, max: 250, step: 10,
+      /* 颗粒是**数值**不是颜色通道，用专门的 opacity 模式：
+         倍率乘基础值，并夹在 0.15 以内（超过就是可见噪点而非质感） */
+      mode: 'opacity',
+      affects: ['--frost-grain'],
+      desc: '磨砂表面的颗粒感。0 = 只剩虚化（没有磨砂质感），调高更接近真实磨砂玻璃',
     },
     {
       key: 'glass-blur', label: '模糊强度', unit: 'px',
@@ -927,6 +940,11 @@ export const PRESET_THEMES = [
       '--danger': '#ef4444',
       '--border': 'rgba(255,255,255,.12)',
       '--blur': '14px',
+      /* 磨砂四层：blur(已有) + saturate 补饱和 + 颗粒质感 + 边缘高光 */
+      '--saturate': '175%',
+      '--frost-grain': '0.055',
+      '--frost-blend': 'overlay',
+      '--frost-edge': 'rgba(255,255,255,.13)',
       '--r-xl': '18px',
       '--r-lg': '14px',
       '--r-md': '11px',
@@ -960,6 +978,11 @@ export const PRESET_THEMES = [
       '--danger': '#ef4444',
       '--border': 'rgba(255,255,255,.65)',
       '--blur': '16px',
+      /* 磨砂四层：blur(已有) + saturate 补饱和 + 颗粒质感 + 边缘高光 */
+      '--saturate': '150%',
+      '--frost-grain': '0.035',
+      '--frost-blend': 'soft-light',
+      '--frost-edge': 'rgba(255,255,255,.70)',
       '--r-xl': '18px',
       '--r-lg': '14px',
       '--r-md': '11px',
@@ -993,6 +1016,11 @@ export const PRESET_THEMES = [
       '--danger': '#ef4444',
       '--border': 'rgba(255,255,255,.15)',
       '--blur': '18px',
+      /* 磨砂四层：blur(已有) + saturate 补饱和 + 颗粒质感 + 边缘高光 */
+      '--saturate': '185%',
+      '--frost-grain': '0.065',
+      '--frost-blend': 'overlay',
+      '--frost-edge': 'rgba(255,255,255,.16)',
       '--r-xl': '18px',
       '--r-lg': '14px',
       '--r-md': '11px',
@@ -1030,6 +1058,11 @@ export const PRESET_THEMES = [
         '--danger': '#d93f38',
         '--border': 'rgba(255,255,255,.62)',
         '--blur': '15px',
+        /* 磨砂四层：blur(已有) + saturate 补饱和 + 颗粒质感 + 边缘高光 */
+        '--saturate': '145%',
+        '--frost-grain': '0.032',
+        '--frost-blend': 'soft-light',
+        '--frost-edge': 'rgba(255,255,255,.68)',
         '--r-xl': '18px',
         '--r-lg': '14px',
         '--r-md': '11px',
@@ -1063,6 +1096,11 @@ export const PRESET_THEMES = [
         '--danger': '#ef4444',
         '--border': 'rgba(255,255,255,.14)',
         '--blur': '16px',
+        /* 磨砂四层：blur(已有) + saturate 补饱和 + 颗粒质感 + 边缘高光 */
+        '--saturate': '180%',
+        '--frost-grain': '0.058',
+        '--frost-blend': 'overlay',
+        '--frost-edge': 'rgba(255,255,255,.15)',
         '--r-xl': '18px',
         '--r-lg': '14px',
         '--r-md': '11px',
@@ -1096,6 +1134,11 @@ export const PRESET_THEMES = [
         '--danger': '#e07a5f',
         '--border': 'rgba(255,240,220,.14)',
         '--blur': '16px',
+        /* 磨砂四层：blur(已有) + saturate 补饱和 + 颗粒质感 + 边缘高光 */
+        '--saturate': '180%',
+        '--frost-grain': '0.060',
+        '--frost-blend': 'overlay',
+        '--frost-edge': 'rgba(255,240,220,.15)',
         '--r-xl': '18px',
         '--r-lg': '14px',
         '--r-md': '11px',
