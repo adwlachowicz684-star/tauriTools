@@ -9,6 +9,8 @@ import { normalizeSize, type NodeSize } from '../types';
 import { resolveVars } from '../engine/variables';
 import { resolveNodeColor } from '../engine/nodeColors';
 import { stackParentOf } from '../engine/stack';
+import { specOf, PORT_LABEL } from '../engine/nodeSpec';
+import type { ArgTypeIssue } from '../engine/argTypes';
 
 /**
  * 节点卡片外壳 —— 10 种画布卡片共用的骨架。
@@ -80,7 +82,20 @@ export function NodeShell({
    * 引用变量时，节点上不存那组字段的值 —— 直接校验会报"缺参"。
    * 先把变量的值解析进来再校验，否则"引用了变量"看起来像"参数没填"。
    */
-  const issue = validateNode({ data: resolveVars(data) });
+  /*
+   * 参数连线带来的**类型错**由 App 算好塞进 data。
+   *
+   * 为什么不能在这里算：这类问题要看"上游产出什么"，
+   * 而 NodeShell 只拿得到自己这一个节点，扫不到全图。
+   * 与 hasStackChild 同理 —— 渲染时算、不落盘（见 sanitize 的 VIEW_KEYS）。
+   *
+   * 不传的话，上游把「包含」改成「大于」之后这里仍然是绿灯 ——
+   * 连线一根没动，界面上不会有任何变化，只有重新对一遍才发现。
+   */
+  const linkIssues = (data as Record<string, unknown>).argLinkIssues as
+    | ArgTypeIssue[]
+    | undefined;
+  const issue = validateNode({ data: resolveVars(data) }, linkIssues);
   const dot: IssueLevel = issue.level;
   /*
    * 关掉的节点：徽章**照常显示缺参 / 缺项**，只有圆点变灰。
@@ -105,7 +120,14 @@ export function NodeShell({
       style={{ borderLeftColor: color }}
     >
       {hasTarget ? <Handle type="target" position={Position.Left} /> : null}
-      {hasSource ? <Handle type="source" position={Position.Right} /> : null}
+      {/*
+       * 出口统一带 id="out"。
+       *
+       * 参数连线与流程连线都从这个出口出发，靠**目标**那端区分：
+       * 目标是 `arg:xxx` 就是供参数，否则是流程走向。
+       * 出口不带 id 的话两种连线无法区分，也就画不出不同的线。
+       */}
+      {hasSource ? <Handle type="source" position={Position.Right} id="out" /> : null}
 
       {/*
        * 标题行：**配置状态在左、标题在右**。
@@ -166,6 +188,43 @@ export function NodeShell({
       {size === 'sm' ? null : footExtra ? (
         <div className="node-foot">{footExtra}</div>
       ) : null}
+
+      {/*
+       * 输出卡片 —— 「这个节点产出什么」+ 上次跑出来的值。
+       *
+       * 它是参数连线的**起点**：从这个卡片往外拖，就是"把我的输出
+       * 接给别人当参数"。没有这张卡片的话，用户只能猜哪个出口是干什么的。
+       *
+       * 只显示产出种类（文本 / 数字 / 是或否 …）而不是完整输出：
+       * 完整值可能很长，会顶开卡片；看值去任务窗口。
+       */}
+      {size === 'sm' || !hasSource ? null : <OutCard type={type} data={data} />}
+    </div>
+  );
+}
+
+/**
+ * 输出卡片。
+ *
+ * ================= 为什么种类与值分开两行 =================
+ *
+ * 种类是**静态**的（这个节点永远产出数字），
+ * 值是**运行后**才有的。合成一行的话，没跑过时整行空白，
+ * 看着像"这个节点没有输出"。
+ *
+ * 分开之后：没跑过也知道它将来会产出什么，能不能接给别人一目了然。
+ */
+function OutCard({ type, data }: { type: string; data: Record<string, unknown> }) {
+  const spec = specOf(type);
+  const produces = spec?.produces ?? 'any';
+  // 无输出的节点不显示这张卡 —— 显示"无输出"占一行还没信息量
+  if (produces === 'none') return null;
+
+  const out = String((data as { output?: unknown }).output ?? '').trim();
+  return (
+    <div className="node-line--out" title={out ? out : (spec?.producesDesc ?? '')}>
+      <span className="node-line__out-kind">{PORT_LABEL[produces]}</span>
+      {out ? <span className="node-line__out-val">{out}</span> : null}
     </div>
   );
 }

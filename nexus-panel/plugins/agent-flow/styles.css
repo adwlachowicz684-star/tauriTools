@@ -249,6 +249,18 @@
   --af-t-cond-s: #38bdf8;
   --af-t-cond-v: #c9a6f7;
   --af-t-file:   #7dd3fc;
+  /*
+   * 参数连线的颜色。
+   *
+   * 刻意**不复用**任何状态色：绿是完成、黄是进行、蓝是等待、红是阻断，
+   * 参数线借其中一个就会变成"这根线也是流程"，
+   * 而它其实只是"取个值、不走流程"。
+   *
+   * 兜底值与 engine/paramLinks 的 PARAM_COLOR **必须一致** ——
+   * 箭头色烘在建边那一刻、读不到 CSS 变量，两边不一致就出现
+   * "线是紫的、箭头是别的色"。有守卫盯着。
+   */
+  --af-t-param:  #c084fc;
 
   /* 投射阴影：颜色故意不跟主题（叠在内容上的投影得是"暗"，
      浅色主题下换成浅色就等于没有投影），理由同 css/tokens.css 的说明。
@@ -334,6 +346,8 @@
   --af-t-cond-s: #0369a1;
   --af-t-cond-v: #6d28d9;
   --af-t-file:   #0b6e8f;
+  /* 同 --af-t-param 的说明：深色档是亮紫，浅色档压深才看得见 */
+  --af-t-param:  #7e22ce;
 }
 /* 下拉框展开后的列表由浏览器**原生绘制**，不继承 select 自己的背景 ——
    把 select 设成深色，展开后照样是一块白底，白字自然看不见。
@@ -565,6 +579,99 @@ body { background: var(--af-bg); color: var(--af-fg); }
   /* 同上：堆栈 / 长报错不该把卡片撑成一条 */
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
   overflow: hidden;
+}
+
+/* ------------------------------------------------------------------ */
+/* 输出卡片 —— 参数连线的起点                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 「这个节点产出什么」+ 上次跑出来的值。
+ *
+ * 它是参数连线的**起点**：从这个卡片往外拖，就是"把我的输出接给别人当参数"。
+ * 没有它，用户只能猜右侧那个出口是干什么的。
+ *
+ * 只显示产出**种类**而不是完整输出：完整值可能很长，会顶开卡片；
+ * 看值去任务窗口。
+ */
+.node-line--out {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 5px; padding-top: 4px;
+  border-top: 1px dashed var(--af-divider);
+  font-size: var(--fs-note, 11px);
+}
+/*
+ * 种类与值分两行（两个元素）而不是合成一句。
+ *
+ * 种类是**静态**的（这个节点永远产出数字），值是**跑完**才有的。
+ * 合成一句的话，没跑过时整行空白，看着像"这个节点没有输出"，
+ * 也就不知道能不能接给别人。
+ */
+.node-line__out-kind {
+  flex: none; color: var(--af-t-param, #c084fc);
+  border: 1px solid currentColor; border-radius: var(--r-pill, 999px); padding: 0 6px;
+}
+/* min-width:0 不可省：flex 子项默认 min-width:auto，一段长输出会把卡片撑破 */
+.node-line__out-val {
+  flex: 1; min-width: 0; color: var(--af-soft);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ */
+/* 参数入口 —— 每个参数格自带一个入口                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 运算节点有 a / b / c 三个参数，入口必须落在**格子自己身上**：
+ * 共用一个入口就分不清这根线是填给谁的，
+ * 而填错参数的表现是"结果不对但不报错" —— 最难查的那一类。
+ */
+.node-arg-port { position: relative; }
+/*
+ * 选择器带 .react-flow__handle 是为了压过 xyflow 自己的 handle 样式
+ * （同权重下谁在后面谁生效，而它在外部样式表里，顺序不归我们管）。
+ * 平时淡显、悬停时点亮：一直高亮的话，卡片上会多出好几个抢视线的小圆点。
+ */
+.react-flow__handle.node-arg-handle {
+  left: -2px; top: 50%; transform: translate(-50%, -50%);
+  width: 7px; height: 7px; min-width: 0; min-height: 0;
+  border: 1px solid var(--af-t-param, #c084fc);
+  background: var(--af-panel); border-radius: 50%;
+  opacity: .5;
+}
+.react-flow__handle.node-arg-handle:hover,
+.node-arg-port:hover .node-arg-handle { opacity: 1; }
+
+/* ------------------------------------------------------------------ */
+/* 参数连线 —— 紫虚线 + 箭头                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 与流程连线（绿色实线）区分开，靠**三个信号叠加**而不是只靠颜色：
+ *
+ *   · 颜色  参数线走专门的参数紫，不复用任何状态色
+ *   · 虚线  扫一眼就能分辨，不用去比色
+ *   · 箭头  参数连线**有方向**，方向有含义（从产出方流向使用方）
+ *
+ * 只靠颜色的代价是色弱用户完全分不出，而虚线是**形状**差异，
+ * 不依赖辨色能力。
+ *
+ * 选择器带 .react-flow__edge 同样是为了压过 xyflow 的 .react-flow__edge-path。
+ */
+.react-flow__edge .af-param-edge {
+  stroke: var(--af-t-param, #c084fc);
+  stroke-width: 1.6;
+  stroke-dasharray: 5 4;
+}
+/* 选中时加粗：十几根线混在一起时，不放大差异就看不出选中的是哪根 */
+.react-flow__edge.selected .af-param-edge { stroke-width: 2.4; }
+.af-param-edge-label {
+  position: absolute;
+  font-size: var(--fs-micro, 10px); color: var(--af-t-param, #c084fc);
+  background: var(--af-panel); border: 1px solid var(--af-divider);
+  border-radius: var(--r-pill, 999px); padding: 0 5px;
+  /* 标签只是标注，不该挡住下面的连线（否则选中/删除都点不到） */
+  pointer-events: none;
 }
 
 /* ------------------------------------------------------------------ */
