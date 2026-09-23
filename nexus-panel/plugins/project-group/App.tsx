@@ -1020,6 +1020,7 @@ export default function App() {
                 onKind={s.setContentKind}
                 onLog={s.pushLog}
                 onRename={(it) => setDialog({ type: 'renameContent', path: it.path, name: it.name })}
+                onRenameSegment={(req) => setDialog({ type: 'renameSegment', ...req })}
                 onRefresh={() => void s.scan(s.focusDir)}
                 selected={contentSel}
                 onSelect={onContentSelect}

@@ -98,8 +98,19 @@ export function collectLeaves(n: TreeNode): TreeNode[] {
 export function fillDirPaths(nodes: TreeNode[]): void {
   for (const n of nodes) {
     if (!n.item) {
+      /*
+       * #345（更正）**只对 agent / rule 回填**。
+       *
+       * 原版 PrepareTree 注释写明：只有 agent/rule 的文件夹节点回填物理路径；
+       * skill 的层级是**虚拟层**（由名字里的 `_` 拆出来，见 `skillTreeRelPath`），
+       * 磁盘上并不存在对应的目录。
+       *
+       * 对它回填会推出一个**错误的**路径：名字 `a_b_c` 的目录型 skill，
+       * 节点 `a` 会被填成 skill 根目录 —— 用户点「打开所在文件夹」
+       * 打开的是整个 skill 目录，而不是他点的那一层。没有报错，只是开错了地方。
+       */
       const leaf = firstLeaf(n);
-      if (leaf?.path) {
+      if (leaf?.path && n.kind !== 'skill') {
         const extra = splitPath(leaf.relPath).length - splitPath(n.relPath).length;
         const parts = splitPath(leaf.path);
         if (extra > 0 && parts.length > extra) {
@@ -109,4 +120,70 @@ export function fillDirPaths(nodes: TreeNode[]): void {
       fillDirPaths(n.children);
     }
   }
+}
+
+/**
+ * #342 skill 名按 `_` 拆分层级（原版 RefreshCore：
+ * `s.RelPath.Replace('_', '\\')`，在**呈现层**做，不在扫描层）。
+ *
+ * 放在呈现层而不是后端有两个原因：
+ *   · 原版就是这样分的（Service 给物理相对路径，ViewModel 决定怎么显示）
+ *   · 改后端 `rel_path` 会破坏 `baseDirOf`（用 `path.endsWith(relPath)` 反推基目录），
+ *     改完"打开 skill 目录"按钮会一直置灰 —— 而它报错也指不到这里
+ */
+export const skillTreeRelPath = (relPath: string): string => relPath.split('_').join('\\');
+
+/** 拆出最后一段：返回 `[所在目录, 末段名]`。两种分隔符都认。 */
+export function splitLast(p: string): [string, string] {
+  const t = p.replace(/[\\/]+$/, '');
+  const i = Math.max(t.lastIndexOf('\\'), t.lastIndexOf('/'));
+  return i < 0 ? ['', t] : [t.slice(0, i), t.slice(i + 1)];
+}
+
+/** 主名（去扩展名）与扩展名（含点）。目录没有扩展名。 */
+export function stemExt(name: string, isDir: boolean): [string, string] {
+  if (isDir) return [name, ''];
+  const i = name.lastIndexOf('.');
+  return i <= 0 ? [name, ''] : [name.slice(0, i), name.slice(i)];
+}
+
+export interface SegmentMove {
+  from: string;
+  to: string;
+  isDir: boolean;
+}
+
+/**
+ * #213 / #344 skill 虚拟层重命名：批量替换子树条目**物理名**中对应的 `_` 段。
+ *
+ * 原版 `RenameSkillSegment`：`segIndex = folder.Depth - 1`，
+ * 物理名 `Split('_')` 后取该下标替换。所以点击树里的第 2 层文件夹，
+ * 改的是磁盘名里第 2 个 `_` 段。
+ *
+ * **只算计划，不执行** —— 真正的改名（含冲突检查与原子性）在 Rust 侧。
+ * 这样这段最容易算错的逻辑（下标、扩展名保留、跳过条件）可以在沙箱里穷举单测；
+ * 留在 .tsx 里就只能写文本断言，下标算错照样通过。
+ *
+ * 返回 `skipped` 而不是静默丢弃：一个都没匹配上时调用方要能报出来
+ * （否则用户改了个名字、界面毫无变化，只会以为坏了）。
+ */
+export function planSkillSegmentRename(
+  leaves: { path: string; isDir: boolean }[],
+  segIndex: number,
+  oldSeg: string,
+  newName: string,
+): { moves: SegmentMove[]; skipped: number } {
+  const moves: SegmentMove[] = [];
+  let skipped = 0;
+  for (const leaf of leaves) {
+    const [dir, name] = splitLast(leaf.path);
+    const [stem, ext] = stemExt(name, leaf.isDir);
+    const segs = stem.split('_');
+    // 物理名段数不够、或该下标不是旧段名 —— 跳过（原版同判据）
+    if (segIndex >= segs.length || segs[segIndex] !== oldSeg) { skipped++; continue; }
+    segs[segIndex] = newName;
+    const sep = dir.includes('\\') ? '\\' : (dir.includes('/') ? '/' : '\\');
+    moves.push({ from: leaf.path, to: `${dir}${sep}${segs.join('_')}${ext}`, isDir: leaf.isDir });
+  }
+  return { moves, skipped };
 }

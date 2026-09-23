@@ -3,7 +3,8 @@ import type { Api } from '../api';
 import { errText } from '../api';
 import type { ContentItem } from '../types';
 import {
-  buildTree, fillDirPaths, type TreeNode,
+  buildTree, fillDirPaths, skillTreeRelPath, planSkillSegmentRename,
+  collectLeaves, type TreeNode,
 } from '../utils/contentTree';
 import { ContextMenu, type MenuItem } from './ui';
 
@@ -19,7 +20,19 @@ export function ContentPanel({
   onKind: (k: 'all' | 'agent' | 'skill' | 'rule') => void;
   onLog: (msg: string, isError?: boolean) => void;
   /** 条目改名（WPF AgentSkill 面板的 RenameCommand 对应入口） */
-  onRename: (item: ContentItem) => void;
+  onRename: (target: { path: string; name: string }) => void;
+  /**
+   * #213 skill 虚拟层改名：批量替换子树条目物理名里对应的 `_` 段。
+   *
+   * 与单条改名分开是因为**语义完全不同**：单条改的是磁盘上的一个名字，
+   * 这里一次动 N 个条目，且要告诉用户"会影响几个"再让他填 ——
+   * 合并成一个入口的话，用户在不知情的情况下改掉一批文件名。
+   */
+  onRenameSegment: (req: {
+    oldSeg: string;
+    count: number;
+    submit: (newName: string) => Promise<boolean>;
+  }) => void;
   /** 重新扫描当前目录 */
   onRefresh: () => void;
   /**
@@ -34,11 +47,19 @@ export function ContentPanel({
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [text, setText] = useState('');
-  /** #259 内容树右键菜单。存节点而不是 path —— 目录节点没有 ContentItem，只有 TreeNode。 */
-  const [menu, setMenu] = useState<{ x: number; y: number; node: TreeNode } | null>(null);
+  /** #259 内容树右键菜单。存节点而不是 path —— 目录节点没有 ContentItem，只有 TreeNode。
+   *  `depth` 一并存：skill 虚拟层改名要靠它算 `_` 段下标。 */
+  const [menu, setMenu] = useState<{ x: number; y: number; node: TreeNode; depth: number } | null>(null);
 
   const tree = useMemo(() => {
-    const t = buildTree(items);
+    /*
+     * #342 skill 名按 `_` 拆分层级：**在呈现层做**，不动后端 `rel_path`。
+     * 改后端的话 `baseDirOf`（用 `path.endsWith(relPath)` 反推基目录）会失效，
+     * 「打开 skill 目录」按钮从此一直置灰，而报错指不到这里。
+     */
+    const src = items.map((i) => (
+      i.kind === 'skill' ? { ...i, relPath: skillTreeRelPath(i.relPath) } : i));
+    const t = buildTree(src);
     fillDirPaths(t);
     return t;
   }, [items]);
@@ -106,11 +127,13 @@ export function ContentPanel({
    * 所以这里右键**不改选中态**：菜单直接作用于右键的那一个节点。
    * 若顺手 onSelect，会触发读文件（网络往返），右键一下就卡一下，且预览区莫名跳变。
    */
-  const menuFor = (n: TreeNode): MenuItem[] => {
+  const menuFor = (n: TreeNode, depth: number): MenuItem[] => {
     const out: MenuItem[] = [];
     const phys = n.path;
     const isDirSkill = !!n.item && n.item.isDir;
     const isFile = !!n.item && !n.item.isDir;
+    /** skill 虚拟层文件夹：由名字里的 `_` 拆出来的中间节点，磁盘上不存在 */
+    const isSkillFolder = !n.item && n.kind === 'skill';
 
     // 1 复制名称：叶子用去扩展名的显示名，目录用目录名（原版 CopyNameCommand）
     out.push({
@@ -153,11 +176,72 @@ export function ContentPanel({
           .catch((e) => onLog(errText(e), true)),
       });
     }
-    // 7 重命名：仅叶子
-    if (n.item) {
-      out.push({ key: 'rename', label: '重命名', onClick: () => onRename(n.item!) });
+    /*
+     * 7 重命名（#343 分派）。
+     *
+     * 原版 RenameNode 四路分派：
+     *   · skill 虚拟层文件夹 → 批量替换子树物理名里的 `_` 段
+     *   · skill 目录型叶子   → 改目录整名
+     *   · 其余叶子           → 改文件名（保留扩展名）
+     *   · agent/rule 文件夹  → 改物理目录名
+     *
+     * **skill 虚拟层必须单独一路**：它磁盘上不存在，
+     * 走"改目录名"会去改一个不存在的路径，报错还指不到原因。
+     */
+    if (isSkillFolder) {
+      out.push({
+        key: 'renameSeg',
+        label: '重命名层级…',
+        onClick: () => renameSegment(n, depth),
+      });
+    } else if (n.item) {
+      out.push({
+        key: 'rename',
+        label: '重命名',
+        onClick: () => onRename({ path: n.item!.path, name: n.item!.name }),
+      });
+    } else if (phys && n.kind !== 'skill') {
+      // agent / rule 的文件夹：#345 回填过真实路径，可以直接改物理目录名
+      out.push({ key: 'renameDir', label: '重命名', onClick: () => onRename({ path: phys, name: n.name }) });
     }
     return out;
+  };
+
+  /**
+   * #213 skill 虚拟层改名（原版 RenameSkillSegment）。
+   *
+   * 段下标 = 节点深度（根层 0）。原版写的是 `folder.Depth - 1`，
+   * 而它的 Depth 根层算 1 —— 两种记法差一个偏移，**照抄会全错一格**：
+   * 点第 1 层却改了第 2 个 `_` 段，改完界面看似没变（因为层级没动对），
+   * 而磁盘上已经改掉了不该改的段。
+   */
+  const renameSegment = (n: TreeNode, depth: number) => {
+    const leaves = collectLeaves(n)
+      .filter((l) => !!l.item)
+      .map((l) => ({ path: l.item!.path, isDir: !!l.item!.isDir }));
+    onRenameSegment({
+      oldSeg: n.name,
+      count: leaves.length,
+      submit: async (newName: string) => {
+        const { moves } = planSkillSegmentRename(leaves, depth, n.name, newName);
+        if (moves.length === 0) {
+          onLog('没有匹配的条目可改名（物理名里没有对应的 `_` 段）', true);
+          return false;
+        }
+        try {
+          const r = await api.renameSkillSegment(moves, newName);
+          onLog(
+            `已把层级「${n.name}」改为「${newName}」：${r.moved} 个条目`
+            + (r.skipped > 0 ? `，跳过 ${r.skipped} 个` : ''),
+          );
+          onRefresh();
+          return true;
+        } catch (e) {
+          onLog(errText(e), true);
+          return false;
+        }
+      },
+    });
   };
 
   const read = async (item: ContentItem) => {
@@ -184,7 +268,7 @@ export function ContentPanel({
           key={key}
           onContextMenu={(e) => {
             e.preventDefault();
-            setMenu({ x: e.clientX, y: e.clientY, node: n });
+            setMenu({ x: e.clientX, y: e.clientY, node: n, depth });
           }}
           /* #262 只高亮**叶子**，目录节点不高亮。
 
@@ -351,7 +435,7 @@ export function ContentPanel({
         <ContextMenu
           x={menu.x}
           y={menu.y}
-          items={menuFor(menu.node)}
+          items={menuFor(menu.node, menu.depth)}
           onClose={() => setMenu(null)}
         />
       )}

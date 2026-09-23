@@ -2277,6 +2277,68 @@ pub fn fpx_rename_content_item(
     Ok(model::ContentRenameResult { new_path })
 }
 
+/// skill 虚拟层重命名：批量替换子树条目物理名中对应的 `_` 段（#213 / #342 / #344）。
+///
+/// 计划（from / to 配对）由前端算好传进来 —— 段下标与扩展名保留这类
+/// 最容易算错的逻辑放在可单测的 TS 里；**原子性与权限仍在这里**：
+///   · 全部目标先做存在性检查，**任一冲突即整体取消**，不做半截改动（#344）
+///   · 逐条经 `with_unlock` 执行（同 E009b：条目可能位于受保护的项目组内）
+///   · 要求 from 与 to **同父目录**：这条不变量把"批量改名"钉死在改名语义上，
+///     避免配对算错或被误用成任意移动
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_rename_skill_segment(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+    moves: Vec<model::SegmentMoveIn>,
+    new_name: String,
+) -> Result<model::SegmentRenameResult, String> {
+    let dir = store::data_dir(&app, &state)?;
+
+    /*
+     * 层级名**禁止下划线**：skill 层级是靠 `_` 拆出来的，
+     * 段名里再含 `_` 会把层级拆乱（原版 ValidateSegmentName 明写）。
+     */
+    let name = sys::validate_name(&new_name)?;
+    if name.contains('_') {
+        return Err("层级名不能包含下划线 _（会破坏层级拆分）".into());
+    }
+    if moves.is_empty() {
+        return Err("没有匹配的条目可改名，请刷新后重试".into());
+    }
+
+    let mut skipped = 0usize;
+    let mut plan: Vec<(String, String)> = Vec::new();
+    for m in &moves {
+        ensure_path_allowed(&dir, &m.from)?;
+        ensure_path_allowed(&dir, &m.to)?;
+        let from = std::path::Path::new(&m.from);
+        let to = std::path::Path::new(&m.to);
+        if !from.exists() { skipped += 1; continue; }
+        if from.parent() != to.parent() {
+            return Err(format!("改名配对非法（不在同一目录）：{}", m.to));
+        }
+        plan.push((m.from.clone(), m.to.clone()));
+    }
+
+    /* #344 冲突整体取消：先全量检查，再动手。
+       边查边改的话，前几条改完才发现后面冲突 —— 目录已经半改，
+       用户看到的是"改了一半"，且无从还原。 */
+    for (_, to) in &plan {
+        if std::path::Path::new(to).exists() {
+            return Err(format!("目标位置已存在同名条目：{}\n（未做任何改动）", to));
+        }
+    }
+
+    let mut moved = 0usize;
+    for (from, to) in &plan {
+        with_unlock(&dir, from, || {
+            std::fs::rename(from, to).map_err(|e| format!("改名失败：{e}"))
+        })?;
+        moved += 1;
+    }
+    Ok(model::SegmentRenameResult { moved, skipped })
+}
+
 /// 清除无效项：摘掉页签里已不存在的路径，并清理指向它们的链接记录。
 #[tauri::command(rename_all = "snake_case")]
 pub fn fpx_clear_invalid(

@@ -741,6 +741,23 @@ pub struct ContentRenameResult {
     pub new_path: String,
 }
 
+/// skill 虚拟层改名的**一条移动指令**（from / to 均为绝对路径）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SegmentMoveIn {
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SegmentRenameResult {
+    /// 实际改掉的条目数
+    pub moved: usize,
+    /// 物理名里没有对应 `_` 段、被跳过的条目数
+    pub skipped: usize,
+}
+
 /// 目录选择器用的一条目录项。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

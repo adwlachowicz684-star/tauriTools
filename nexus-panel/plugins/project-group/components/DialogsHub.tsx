@@ -58,6 +58,14 @@ export type Dialog =
   | { type: 'move'; card: CardInfo; kind: CardKind }
   /** 内容区条目改名 */
   | { type: 'renameContent'; path: string; name: string }
+  /** #213 skill 虚拟层改名：一次替换一批条目物理名里的 `_` 段 */
+  | {
+      type: 'renameSegment';
+      oldSeg: string;
+      count: number;
+      /** 改名动作由内容面板组装（它才握着叶子清单与段下标） */
+      submit: (newName: string) => Promise<boolean>;
+    }
   /** 页签统一管理（#23） */
   | { type: 'tabManager' };
 
@@ -345,6 +353,15 @@ export function Dialogs(props: DialogsProps) {
             await doRenameContent(dialog.path, n);
             return true;
           }}
+        />
+      )}
+
+      {dialog.type === 'renameSegment' && (
+        <RenameContentDialog
+          name={dialog.oldSeg}
+          segment={{ oldSeg: dialog.oldSeg, count: dialog.count }}
+          onClose={() => setDialog({ type: 'none' })}
+          onSubmit={dialog.submit}
         />
       )}
 

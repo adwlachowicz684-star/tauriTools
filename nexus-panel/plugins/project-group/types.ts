@@ -309,6 +309,14 @@ export interface ContentRenameResult {
   newPath: string;
 }
 
+/** #213 skill 虚拟层改名结果（批量替换 `_` 段） */
+export interface SegmentRenameResult {
+  /** 实际改掉的条目数 */
+  moved: number;
+  /** 物理名里没有对应 `_` 段、被跳过的条目数 */
+  skipped: number;
+}
+
 /** 清除无效项的结果 */
 export interface ClearResult {
   snapshot: Snapshot;

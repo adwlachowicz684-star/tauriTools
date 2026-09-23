@@ -3,7 +3,7 @@ import type {
   BackupAutoStatus, BackupResult, BackupTargets, Bootstrap, CaptureResult, CardKind, ChainClient,
   ChainAction, ChainSendResult, ContentItem, CustomChainClient, DirEntryLite,
   ClearResult, EditorCandidate, FpxConfig, McpToolRow, MoveAcrossResult,
-  ContentRenameResult, RenameResult, Snapshot, WatchEvent,
+  ContentRenameResult, SegmentRenameResult, RenameResult, Snapshot, WatchEvent,
   RenameIconResult, LockStateLive,
 } from './types';
 
@@ -59,6 +59,14 @@ export function makeApi(ctx: PluginContext) {
     /** 内容区条目改名（agent / skill / rule 的文件或目录型 skill 目录） */
     renameContentItem: (path: string, newName: string) =>
       call<ContentRenameResult>('fpx_rename_content_item', { path, new_name: newName }),
+    /**
+     * #213 skill 虚拟层改名：批量替换一批条目物理名里对应的 `_` 段。
+     *
+     * 只传配对（from / to）与新名；冲突检查与原子性在后端 ——
+     * 前端算不出来"目标是否已存在"（那是磁盘状态），也保证不了"不做半截改动"。
+     */
+    renameSkillSegment: (moves: { from: string; to: string }[], newName: string) =>
+      call<SegmentRenameResult>('fpx_rename_skill_segment', { moves, new_name: newName }),
 
     /** 清除无效项：摘掉页签里已不存在的路径 */
     clearInvalid: () => call<ClearResult>('fpx_clear_invalid'),

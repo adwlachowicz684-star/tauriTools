@@ -322,7 +322,7 @@ fn main() {
             fpx::fpx_backup_auto_status, fpx::fpx_backup_auto_sync, fpx::fpx_mcp_stop,
             fpx::fpx_backup_targets,
             fpx::fpx_mcp_status, fpx::fpx_import_icons, fpx::fpx_rename_folder, fpx::fpx_clear_invalid,
-            fpx::fpx_move_folder, fpx::fpx_rename_content_item,
+            fpx::fpx_move_folder, fpx::fpx_rename_content_item, fpx::fpx_rename_skill_segment,
             af_flow::run_node, af_flow::kill_node, af_flow::check_cli,
             af_flow::watch_start, af_flow::watch_stop,
             af_flow::webhook_start, af_flow::webhook_stop,
