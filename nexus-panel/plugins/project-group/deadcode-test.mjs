@@ -143,4 +143,45 @@ console.log('\n=== 5. base64 转换只有一份实现 ★ ===');
     fs.readFileSync(path.join(HERE, 'components/PresetIconGrid.tsx'), 'utf8')));
 }
 
+console.log('\n=== 6. CSS 类不得是死代码（跨插件）★ ===');
+{
+  /*
+   * style.css 被 color-picker 等共享插件**共用**，所以扫描必须跨插件。
+   *
+   * 本轮差点误删 fpx-mini / fpx-picker / fpx-preview-def 三个类：
+   * 它们在 project-group 内部确实无人引用，但 color-picker 在用。
+   * 只在插件内扫描 = 误删正在用的东西 —— 与 PRESET_COLORS 是同一个坑。
+   *
+   * 整词匹配：`fpx-color` 不能命中 `fpx-color-dot`（后者仍在用）。
+   */
+  const css = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8');
+  const classes = new Set();
+  for (const m of css.matchAll(/\.(fpx-[\w-]+)/g)) classes.add(m[1]);
+
+  /*
+   * 引用扫描**只算真实源码（.ts/.tsx），必须排除 .mjs 测试文件**。
+   *
+   * 原因（本轮实测踩到）：allSources() 会收 .mjs，而本文件注释里
+   * 写着"差点误删 fpx-mini / fpx-picker / fpx-preview-def"——
+   * 于是这三个类被自己的注释判定为"在用"，断言恒真 = 空跑。
+   * 反向验证（把 color-picker 里唯一的 fpx-mini 引用删掉）才发现。
+   *
+   * 测试文件里的类名只出现在断言字符串里，不代表真实使用；
+   * 真实引用只在 .tsx 的 className 中。
+   */
+  const src = [...texts.entries()]
+    .filter(([f]) => /\.tsx?$/.test(f))
+    .map(([, v]) => v)
+    .join('\n');
+  const dead = [];
+  for (const c of classes) {
+    const re = new RegExp('(?<![\\w-])' + c + '(?![\\w-])');
+    if (re.test(src)) continue;
+    dead.push(c);
+  }
+  t('style.css 无未被任何插件引用的死类', dead.length === 0, dead.join('、'));
+  // 反例护栏：类名集合若为空，说明正则失效（断言恒真 = 空跑）
+  t('扫描到了足量类名（正则有效）', classes.size > 50, String(classes.size));
+}
+
 done();
