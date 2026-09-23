@@ -295,7 +295,7 @@ body {
   display: flex;
   align-items: center;
   gap: 9px;
-  font-weight: 600;
+  font-weight: var(--fw-strong, 600);
   letter-spacing: .4px;
   font-size: var(--fs-13, 13px);
   min-width: 0;
@@ -489,7 +489,7 @@ body {
   font-size: var(--fs-10, 10px);
   display: none;
   place-items: center;
-  font-weight: 600;
+  font-weight: var(--fw-strong, 600);
 }
 
 #sidebar-foot { display: flex; flex-direction: column; gap: 10px; flex: none; }
@@ -525,7 +525,7 @@ body {
 }
 #plugin-bar h1 {
   font-size: var(--fs-15, 15px);
-  font-weight: 600;
+  font-weight: var(--fw-strong, 600);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -769,7 +769,7 @@ body {
   white-space: nowrap; text-overflow: ellipsis;
 }
 .nx-insp-badge.on { display: flex; }
-.nx-insp-name   { color: #8ec5ff; font-weight: 600; }
+.nx-insp-name   { color: #8ec5ff; font-weight: var(--fw-strong, 600); }
 .nx-insp-size   { color: #b9c0cc; }
 .nx-insp-plugin {
   color: #ffd479;
@@ -819,7 +819,7 @@ body.nx-inspecting * { cursor: crosshair !important; }
 .p-card + .p-card { margin-top: 16px; }
 .p-card h2 {
   font-size: var(--fs-13, 13px);
-  font-weight: 600;
+  font-weight: var(--fw-strong, 600);
   color: var(--text);
   margin-bottom: 14px;
   display: flex; align-items: center; gap: 8px;
@@ -866,7 +866,7 @@ body.nx-inspecting * { cursor: crosshair !important; }
   box-shadow: var(--sh-in-lg);
 }
 .p-stat .k { font-size: var(--fs-11, 11px); color: var(--text-mute); }
-.p-stat .v { font-size: var(--fs-22, 22px); font-weight: 600; color: var(--accent); margin-top: 4px; }
+.p-stat .v { font-size: var(--fs-22, 22px); font-weight: var(--fw-strong, 600); color: var(--accent); margin-top: 4px; }
 
 /* ============================================================
    插件容器与主题适配层
@@ -1517,7 +1517,7 @@ html.theme-transition *:not(.spinner) {
   min-width: 0;
   color: var(--text);
   font-size: var(--fs-12, 12px);
-  font-weight: 600;
+  font-weight: var(--fw-strong, 600);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1719,5 +1719,5 @@ html.theme-transition *:not(.spinner) {
 }
 .tb-group-title {
   font-size: var(--fs-12, 12px);
-  font-weight: 600;
+  font-weight: var(--fw-strong, 600);
 }

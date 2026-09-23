@@ -62,7 +62,7 @@
 .nx-dlg-title {
   margin: 0;
   font-size: var(--fs-13, 13px);
-  font-weight: 600;
+  font-weight: var(--fw-strong, 600);
   color: var(--text);
   display: flex;
   align-items: center;
@@ -147,7 +147,7 @@
   border-color: var(--accent);
   box-shadow: var(--sh-out-md);
 }
-.nx-btn.primary:hover { color: var(--badge-fg); filter: brightness(1.06); }
+.nx-btn.primary:hover { color: var(--badge-fg); filter: var(--hover-bright, 1.06); }
 /* 危险操作：确认按钮用状态色 --danger，而不是让用户把主题色误认成警告 */
 .nx-btn.danger {
   color: var(--badge-fg);

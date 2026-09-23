@@ -723,7 +723,15 @@ console.log('\n=== 17. 状态规则不得改尺寸（跨插件，含 agent-flow�
          与之相对，纯尺寸微调（加粗 / padding 变化）才会让周围元素
          被推挤，那种仍要报错。 */
       if (/\bdisplay\s*:/.test(r.body)) continue;
-      if (sizePat.test(r.body)) bad.push(`${f} | ${sel.slice(0, 40)}`);
+      /*
+       * 放行 stroke-width：SVG 描边是**绘制**属性，不参与布局计算 ——
+       * 加粗连线不会推挤任何东西（.react-flow__edge.selected 就这么干）。
+       * sizePat 里的 `width\s*:` 会误伤它，所以先剥掉再判。
+       * 注意只剥属性名本身，不能一刀切放行整条规则：
+       * 若同一条规则里还改了 padding / font-weight，那些仍要报错。
+       */
+      const bodyNoStroke = r.body.replace(/\bstroke-width\s*:\s*[^;}]*;?/g, '');
+      if (sizePat.test(bodyNoStroke)) bad.push(`${f} | ${sel.slice(0, 40)}`);
     }
   }
   t('状态规则不改尺寸（含 agent-flow，此前回归过一次）', bad.length === 0,
@@ -1309,6 +1317,52 @@ console.log('\n=== 28. 尺度量必须走令牌（圆角 / 层级 / 状态色 / 
     `当前 ${nowAf} / 基线 ${AF_BASELINE}`);
   t('project-group 间距未继续恶化（不超过基线）', nowPg <= PG_BASELINE,
     `当前 ${nowPg} / 基线 ${PG_BASELINE}`);
+}
+
+
+console.log('\n=== 29. 字重与悬停提亮必须走令牌 ===');
+{
+  const tk = stripComments(read('css/tokens.css'));
+
+  /* ---- 字重 ----
+     此前 --title-1-fw / -2-fw / -3-fw 三行各写一个裸 600：
+     同一个语义散成三处，想改"标题字重"要动三行，极易漏改一行。
+     现收口为 --fw-strong 一个源头，三级标题改为引用它。 */
+  t('--fw-strong 已定义', /--fw-strong\s*:\s*600/.test(tk));
+  t('三级标题字重改为引用 --fw-strong',
+    (tk.match(/--title-[123]-fw\s*:\s*var\(--fw-strong\)/g) || []).length === 3,
+    `${(tk.match(/--title-[123]-fw\s*:\s*var\(--fw-strong\)/g) || []).length} / 3`);
+
+  /* ---- 悬停提亮 ----
+     此前四个地方写了三个不同的倍率（1.06 / 1.12 / 1.15），
+     没有任何依据，纯属各自手调。收口成两档（大面积 / 小面积）。 */
+  t('--hover-bright 已定义', /--hover-bright\s*:\s*[\d.]+/.test(tk));
+  t('--hover-bright-strong 已定义', /--hover-bright-strong\s*:\s*[\d.]+/.test(tk));
+
+  /* 全仓不许再出现裸的 brightness(数字) —— 新增悬停效果时必须走令牌 */
+  const filesToCheck = ['css/controls.css', 'css/dialog.css',
+    'plugins/project-group/style.css', 'plugins/mindmap/styles.css',
+    'plugins/agent-flow/styles.css'];
+  const hardBright = [];
+  for (const f of filesToCheck) {
+    const src = stripComments(read(f));
+    for (const m of src.matchAll(/(?<![-\w])filter\s*:\s*([^;}]*brightness\([^)]*\))/g)) {
+      if (!/var\(--hover-bright/.test(m[1])) hardBright.push(`${f}: ${m[1].trim()}`);
+    }
+  }
+  t('悬停提亮全部走令牌', hardBright.length === 0,
+    hardBright.join(' | ') || '无写死 brightness');
+
+  /* ---- 字重：防恶化 ----
+     基础规则里的裸 600 已全部收口；这里盯住不再新增。
+     （状态规则里的 font-weight 由第 17 节单独拦，那里是禁止而非令牌化。） */
+  const hard600 = [];
+  for (const f of filesToCheck) {
+    const src = stripComments(read(f));
+    for (const m of src.matchAll(/font-weight\s*:\s*600\s*[;}]/g)) hard600.push(f);
+  }
+  t('基础规则里不再有裸 font-weight: 600', hard600.length === 0,
+    [...new Set(hard600)].join(', ') || '已全部走 --fw-strong');
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
