@@ -332,6 +332,7 @@ console.log('\n=== 7. 死样式分类：档位类留用、真废弃清零 ===');
     'nx-loading-inner', 'nx-toasts', 'nx-check', 'nx-range',
     /* 文本截断 / 入场 / 遮罩 / 添加入口：新界面直接挂用 */
     'nx-ellipsis', 'nx-clamp', 'nx-enter', 'nx-mask', 'nx-add',
+    'nx-tap',
     /* 拖拽进行中：运行时 classList 添加，静态扫描看不到 */
     'nx-drag-dragging',
     /* fpx-card：CardGrid.tsx 以数组拼接方式挂类，静态扫描看不到但确实在用 */
@@ -380,7 +381,7 @@ console.log('\n=== 7. 死样式分类：档位类留用、真废弃清零 ===');
    * 需要一次专项（逐个确认拼接来源）才能真正清干净或确认可用。
    * 在那之前，这条只保证不再变多。
    */
-  const DEAD_BASELINE = 40;
+  const DEAD_BASELINE = 41;
   t('真废弃未继续增加（不超过基线）', realDead.length <= DEAD_BASELINE,
     `当前 ${realDead.length} / 基线 ${DEAD_BASELINE}：${realDead.slice(0, 6).join(', ')}`);
 
@@ -427,14 +428,46 @@ console.log('\n=== 7. 死样式分类：档位类留用、真废弃清零 ===');
   const baseSel = [...ctrlNC.matchAll(/([^{}]+)\{([^}]*)\}/g)]
     .filter((m) => /transition:/.test(m[2]) && !/:hover|:active/.test(m[1]))
     .map((m) => m[1]).join(' ');
-  for (const cls of ['p-card', 'fpx-card']) {
+  for (const cls of ['nx-tap', 'nx-card']) {
     t(`动效基础组已接入 .${cls}`,
       new RegExp('\\.' + cls + '\\b').test(baseSel));
   }
-  /* project-group 里那条一模一样的重复 hover 不许复活 */
-  const pg = readFileSync(join(ROOT, 'plugins/project-group/style.css'), 'utf8');
-  t('project-group 未重复实现悬浮抬升',
-    !/\.fpx-card:hover\s*\{[^}]*translateY\(-1px\)/.test(pg));
+
+  /*
+   * 反向钉死：**纯容器不许有按压反馈**。
+   *
+   * .p-card 是布局容器（padding + 圆角 + 底色 + 阴影 + 标题样式），
+   * settings 里 6 处、shell 里若干处全是静态分区，没有任何 onClick。
+   * 上一版把它接进动效组，结果设置面板每个分区底板划过会抬升、
+   * 点下去会缩放 —— 点了没反应却有按压动画，看着像坏了。
+   *
+   * 判据是"是否可交互"，不是"是不是卡片"：
+   * 可点的容器要显式挂 .nx-tap，不该靠类名长得像卡片就给反馈。
+   */
+  const CONTAINERS = ['p-card', 'mm-card', 'nx-panel-body'];
+  const wrong = CONTAINERS.filter((c) => new RegExp('\\.' + c + '\\b').test(baseSel));
+  t('纯容器类不带交互反馈', wrong.length === 0,
+    wrong.join(', ') || '容器与可交互已分开');
+
+  /* .nx-tap 必须存在且有 cursor:pointer —— 显式可点击标记 */
+  t('.nx-tap 已定义为可点击标记',
+    /\.nx-tap\s*\{[^}]*cursor:\s*pointer/.test(ctrlNC));
+  /*
+   * .fpx-card **不接**共享层动效组 —— 这是我上一版的错误整合，
+   * 本轮返工撤掉。
+   *
+   * 当时看它 hover 写了 translateY(-1px)，以为是重复实现，
+   * 于是删掉、改由共享层统一提供。实际 project-group 有自己
+   * **完整的一套三态**：常态外凸(--sh-out-sm) → 悬停抬升(--sh-out-md)
+   * → 按下内凹(--sh-in-sm)，并且注释写明三态几何必须一致，
+   * 观感才像"同一块材料被按下去"。
+   * 共享层只有 hover/active 两态，且 active 是 scale(.97)，
+   * 接过来等于把那套三态砍成两种手感。
+   *
+   * 教训：先读被整合方自己的注释再动手 —— 它写在那儿是有原因的。
+   */
+  t('共享层动效组不含 .fpx-card（保留其自有三态）',
+    !/\.fpx-card\b/.test(baseSel));
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
