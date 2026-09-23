@@ -146,6 +146,34 @@
   --divider:       rgba(255,255,255,.10);
   --blur:          0px;
 
+  /* ---- 磨砂质感：光有 blur 是不够的 ----
+     高斯模糊在数学上会**压低对比度、稀释饱和度**，
+     单独 blur() 出来的不是磨砂玻璃，是"蒙尘的塑料片" —— 发灰、发闷。
+     真实的磨砂玻璃由四层共同构成，缺一层就不像：
+
+       ① blur()      虚化背后内容（项目已有）
+       ② saturate()  补回被模糊吃掉的饱和度 —— 这一条是"廉价 vs 高级"的
+                     分水岭。真玻璃因折射会让透过的颜色更浓郁，
+                     saturate(140%~180%) 才出玻璃感。
+       ③ 颗粒层      磨砂的物理质感。纯 blur 是**数字化平滑**的，
+                     而真实磨砂表面有细微颗粒散射光 —— 少了它就是
+                     "虚化"而不是"磨砂"。用 SVG feTurbulence 生成。
+       ④ 边缘高光    勾出玻璃的厚度。见下方 --frost-edge。
+
+     ② 与 ③ 是本轮新增（此前只有 ①）。 */
+  --saturate:      100%;
+  /* 颗粒强度。上限 0.12：超过约 0.15 就不再是质感，
+     而是肉眼可见的噪点（资料实测值）。深色端略高、浅色端略低，
+     因为浅底上噪点更容易显脏。 */
+  --frost-grain:   0;
+  /* 颗粒的 SVG data URI（feTurbulence）。
+     用**平铺小块**而不是全屏 filter:url()：后者会在首屏按元素尺寸
+     光栅化一次，4K 视口下开销明显；前者只渲 128px 再 repeat。 */
+  --frost-noise:   url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  /* 边缘高光：模拟玻璃切断光线时边缘的镜面反射。
+     没有它，玻璃面板会"薄得像张贴纸"。 */
+  --frost-edge:    transparent;
+
   /* 风格层兜底（由 js/theme-manager.js 按主题覆写） */
   --edge:          rgba(255,255,255,.08);
   --bg-image:      none;
@@ -1231,8 +1259,60 @@ html[data-theme-style='glass'] #sidebar,
 html[data-theme-style='glass'] #main-inner,
 html[data-theme-style='glass'] .toast,
 html[data-theme-style='glass'] .err-box {
-  -webkit-backdrop-filter: blur(var(--blur));
-  backdrop-filter: blur(var(--blur));
+  /*
+   * ② saturate 必须与 blur 写在**同一条声明**里。
+   * 拆成两行时后者会整条覆盖前者（Safari 尤其如此），
+   * 结果只剩饱和度、模糊没了。
+   */
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
+  backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
+  /* ④ 边缘高光：勾出玻璃厚度 */
+  border-color: var(--frost-edge);
+}
+
+/* 
+ * ③ 颗粒层 —— 磨砂感的物理来源。
+ * ------------------------------------------------------------------
+ * 纯 blur 是"数字化平滑"，真实磨砂表面有细微颗粒在散射光。
+ * 少了这一层，再大的 blur 也只是"虚化"，不是"磨砂"。
+ *
+ * 实现要点（都是踩过的坑）：
+ *   · ::before 而非 ::after —— 伪元素默认画在内容之后，
+ *     用 after 会盖在文字上方，把正文也糊上一层颗粒。
+ *   · pointer-events: none —— 否则这一层会吞掉整块面板的点击。
+ *   · z-index: 0 + 容器 position: relative —— 让它待在背景层，
+ *     不参与内容的层叠排序。
+ *   · 只平铺 128px 小块 —— 全屏 filter:url() 会按元素尺寸光栅化，
+ *     4K 视口下首屏开销明显。
+ *   · 必须 static，绝不动画 —— 动 baseFrequency 会让整个
+ *     湍流场每帧重算。
+ *
+ * --frost-grain 为 0 时（非玻璃风格）整层自动失效，不产生任何绘制。
+ */
+html[data-theme-style='glass'] #titlebar,
+html[data-theme-style='glass'] #sidebar,
+html[data-theme-style='glass'] #main-inner,
+html[data-theme-style='glass'] .toast,
+html[data-theme-style='glass'] .err-box {
+  position: relative;
+}
+html[data-theme-style='glass'] #titlebar::before,
+html[data-theme-style='glass'] #sidebar::before,
+html[data-theme-style='glass'] #main-inner::before,
+html[data-theme-style='glass'] .toast::before,
+html[data-theme-style='glass'] .err-box::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background-image: var(--frost-noise);
+  background-size: 128px 128px;
+  opacity: var(--frost-grain);
+  /* overlay 让颗粒"烧进"表面而不压死底色；
+     浅色主题下颗粒偏对比，改用 soft-light（见 themes.js 按基调分档） */
+  mix-blend-mode: var(--frost-blend, overlay);
 }
 
 /* 切换主题时的短暂过渡（由 theme-manager 临时挂上 .theme-transition） */
