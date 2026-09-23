@@ -162,12 +162,21 @@
   --af-insp-pad: 14px;
 
   /*
-   * ================= 补齐外壳令牌（不可省） =================
+   * ================= 外壳令牌的本地兜底（@import 失效时保底） =================
    *
-   * 本文件大量引用 --fs-* / --sh-in-sm / --r-pill / --ctl-* 这些令牌，
-   * 而它们定义在 css/tokens.css 与 css/controls.css ——
-   * **这两个文件运行时从未被加载**（index.html 与 src/main.tsx 只引了
-   * css/neumorphism.css），于是这些 var() 全部解析失败：
+   * 本文件大量引用 --fs-* / --sh-in-sm / --r-pill / --ctl-* 这些令牌。
+   * 它们定义在 css/tokens.css 与 css/controls.css，靠**本文件开头的
+   * @import** 拿到（第 6~7 行），不是靠外壳捎带 —— 插件是独立文档/独立
+   * 样式作用域，外壳那份传不进来。
+   *
+   * 曾经这里写的是"这两个文件运行时从未被加载"—— 那是错的，
+   * 当时漏算了 @import（见 tests/uiConsistency.test.ts 里那条守卫的修订说明）。
+   * 据此多加的一次 tokens.css import 已还原。
+   *
+   * 下面这批定义仍保留，但它们是**兜底**而非"补齐"：
+   * 一旦 @import 因路径/构建问题失效，界面不至于整片塌掉。
+   * 代价是同名令牌会被这里盖掉（同为 :root，文档顺序靠后者胜），
+   * 所以**不要在这里写死上游已收口的令牌**（--title-*-fw 踩过一次）。
    *
    *   CSS 规则：var() 引用未定义变量且无兜底 → 该声明在计算值时无效
    *   → 属性退化为初始值（font-size 继承、box-shadow:none、border-radius:0）
@@ -188,7 +197,12 @@
   --fs-micro: var(--fs-10, 10px);
   --title-1-fs: 13px;
   --fs-title:   var(--title-1-fs, 13px);
-  --title-1-fw: 600; --title-2-fw: 600; --title-3-fw: 600;
+  /*
+   * 字重不再写死 600 —— 上游 tokens.css 已收口成 --fw-strong（同为 600）。
+   * 这里若再定义一个 600，同为 :root、文档顺序靠后就会**盖掉**令牌，
+   * 表现是"上游把字重令牌改了，agent-flow 不跟着变"。
+   * 拿掉定义、交给 @import 进来的 tokens.css 即可。
+   */
 
   --r-xs:   6px;
   --r-pill: 999px;
@@ -829,7 +843,26 @@ body { background: var(--af-bg); color: var(--af-fg); }
 .inspector .check { display: flex; align-items: center; gap: 7px; font-size: var(--fs-title, 13px); margin-bottom: 12px; }
 /* ---------- 表单件：GitHub 面板 / 凭据中心 / 历史筛选共用 ----------
  *
- * .p-input / .p-row //* textarea 也用这个类：不能给固定高，否则 rows 失效被压成一行 */
+ * .p-input / .p-row / .p-col / .p-muted / .p-btn 这一族原本是**外壳**
+ * neumorphism.css 里的类。本插件刻意不引那份样式表（两套组件样式互相污染，
+ * 见文件头），于是它们在本插件的 iframe 里**没有任何定义**：
+ *   · input / select 退回浏览器默认外观（深色面板下是白底黑字，非常刺眼）
+ *   · label 退回默认 inline 布局，一行挤成一团
+ * 点开 GitHub 推送节点看到的就是这个。
+ *
+ * 这里用插件自己的 --af-* 变量补一套：观感与既有 .inspector input 一致，
+ * 同样跟随主题，且不引入外壳样式表。
+ *
+ * 位置刻意靠前：后面有更专门的 .hist-sel / .hist-search，需要能覆盖此处的
+ * padding / font-size（CSS 同权重看先后，写在这里它们才盖得住）。
+ */
+.p-input {
+  background: var(--af-sunk); border: 1px solid var(--af-input-line); color: var(--af-fg);
+  border-radius: var(--af-r-sm); padding: 6px 9px; font-size: var(--fs-body, 12px); font-family: inherit;
+  /* flex 子项默认 min-width:auto，input 的固有宽度会把 340px 的窄面板撑破 */
+  flex: 1; min-width: 0;
+}
+/* textarea 也用这个类：不能给固定高，否则 rows 失效被压成一行 */
 textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 .p-input::placeholder { color: var(--af-mute); }
 .p-input:focus { outline: none; border-color: var(--af-accent); }
@@ -914,7 +947,8 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
 }
 
 /* ---------------- 触发器 ---------------- */
-.toolbar.toolbar .trg-btn .dot {
+.toolbar .trg-btn { position: relative; background: #2a2036; border-color: #4a3a5e; }
+.toolbar .trg-btn .dot {
   margin-left: 6px; font-size: var(--fs-micro, 10px); background: var(--af-accent); color: #fff;
   border-radius: var(--r-pill, 999px); padding: 1px 6px;
 }
@@ -925,6 +959,7 @@ textarea.p-input { height: auto; resize: vertical; line-height: 1.5; }
    弹窗现在统一用 js/dialog.js + css/dialog.css（.nx-mask / .nx-dlg）。
    留着只会让人误以为还有另一套弹窗可以改。 */
 
+.add-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 .kind-btn {
   display: inline-flex; align-items: center; gap: 6px;
   background: var(--af-raised); border: 1px solid var(--af-line); color: var(--af-fg);

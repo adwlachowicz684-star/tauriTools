@@ -869,41 +869,60 @@ test('两段都真的有留白（不能只改一段）', () => {
 /* ============ CSS 变量必须真的能解析（不许静默失效） ============ */
 
 /*
- * 这是本轮最重要的一条守卫。
- *
  * ================= 症状 =================
  *
- * 「代码改对了、界面看不出来」。
- * 具体表现：精心调的字号没变、参数下凹只有极弱底色差看着像不存在、
- * 胶囊圆角成了直角 —— 而 grep 类名、查组件接线全都正常。
+ * 「代码改对了、界面看不出来」：精心调的字号没变、参数下凹只有极弱底色差
+ * 看着像不存在、胶囊圆角成了直角 —— 而 grep 类名、查组件接线全都正常。
  *
  * ================= 根因 =================
  *
- * 本文件引用了 --fs-note / --fs-body / --sh-in-sm / --r-pill / --ctl-* 等
- * 外壳令牌，它们定义在 css/tokens.css 与 css/controls.css。
- * 但**这两个文件运行时从未被加载**：index.html 与 src/main.tsx
- * 只引了 css/neumorphism.css。
+ * 本文件引用 --fs-note / --fs-body / --sh-in-sm / --r-pill / --ctl-* 等外壳
+ * 令牌，它们定义在 css/tokens.css 与 css/controls.css。
  *
  * CSS 规范：var() 引用未定义变量且无兜底 → 该声明在计算值时无效 →
  * 属性退化为初始值（font-size 走继承、box-shadow:none、border-radius:0）。
  * 不报错、不告警，界面只是「看起来没改」。
  *
- * ================= 检查口径 =================
+ * ================= 检查口径（修订过一次） =================
  *
- * 只看**运行时真正加载**的 CSS 集合（外壳 neumorphism + 本文件），
- * 不能把仓库里所有 css/*.css 都算作已定义 ——
- * 那样 tokens.css 会被误判成"有定义"，正是这个 bug 藏了这么久的原因。
+ * 只算**运行时真正加载**的 CSS，而且必须**跟随 @import 展开** ——
+ * 本文件第 6~11 行 @import 了 tokens / controls / dialog 三份，
+ * neumorphism.css 第 84~88 行同样 @import 了它们。
  *
- * 带兜底的 var(--x, 值) 放行：它失败也有值可用（如 --edge → transparent）。
+ * 上一版只把这两个文件的**文本**拼起来扫，不跟 @import，于是把
+ * "通过 @import 拿到"误判成"没定义"，报出 19 个并不存在的幽灵变量，
+ * 并据此在 main.tsx 多加了一次 tokens.css 的 import（已还原）。
+ * **不跟 @import 的扫描比不扫描更糟：它给出的是确定的错误答案。**
+ *
+ * 带兜底的 var(--x, 值) 放行：失败也有值可用（如 --edge → transparent）。
+ * 主题引擎运行时推的变量（--sh-dark / --bg / --text-mute …）由
+ * js/theme-manager.js 写到 :root，不在任何 CSS 文件里，同样不算幽灵。
  */
 test('agent-flow 的 CSS 变量在运行时加载集里都有定义（无兜底者）', () => {
   const panelRoot = path.join(ROOT, '..', '..'); // nexus-panel/
-  const loaded: string[] = [];
-  for (const rel of ['css/neumorphism.css', 'plugins/agent-flow/styles.css']) {
-    const p = path.join(panelRoot, rel);
-    if (fs.existsSync(p)) loaded.push(fs.readFileSync(p, 'utf-8'));
-  }
-  assert.ok(loaded.length >= 1, '读不到运行时 CSS，检查口径失效');
+  /** 跟随 @import 展开 —— 先剥注释，注释里的 @import 不是导入 */
+  const expand = (rel: string, seen = new Set<string>()): string => {
+    const abs = path.join(panelRoot, rel);
+    if (seen.has(abs) || !fs.existsSync(abs)) return '';
+    seen.add(abs);
+    const src = stripCssComments(fs.readFileSync(abs, 'utf-8'));
+    let out = src + '\n';
+    for (const m of src.matchAll(/@import\s+url\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+      out += expand(path.join(path.dirname(rel), m[1]), seen);
+    }
+    return out;
+  };
+  const loaded = ['css/neumorphism.css', 'plugins/agent-flow/styles.css'].map((r) => expand(r));
+  assert.ok(loaded.some((x) => x.length > 0), '读不到运行时 CSS，检查口径失效');
+
+  /** 由 js/theme-manager.js 运行时写到 :root，不在任何 CSS 文件里 */
+  const THEME_PUSHED = new Set([
+    '--accent', '--accent-glow', '--badge-fg', '--bg', '--bg-image', '--blur',
+    '--border', '--danger', '--divider', '--edge', '--hairline', '--mask',
+    '--ok', '--r-lg', '--r-md', '--r-sm', '--r-xl', '--running', '--scroll-thumb',
+    '--sh-dark', '--sh-light', '--surface', '--surface-overlay', '--surface-raised',
+    '--surface-sunk', '--text', '--text-dim', '--text-mute', '--text-soft', '--warn',
+  ]);
 
   const defined = new Set<string>();
   for (const c of loaded) {
@@ -914,7 +933,7 @@ test('agent-flow 的 CSS 变量在运行时加载集里都有定义（无兜底�
   const bad = new Set<string>();
   // 只抓**无兜底**的引用：var(--x) 后紧跟右括号
   for (const m of css.matchAll(/var\(\s*(--[\w-]+)\s*\)/g)) {
-    if (!defined.has(m[1])) bad.add(m[1]);
+    if (!defined.has(m[1]) && !THEME_PUSHED.has(m[1])) bad.add(m[1]);
   }
   assert.deepEqual(
     [...bad], [],
@@ -923,15 +942,26 @@ test('agent-flow 的 CSS 变量在运行时加载集里都有定义（无兜底�
 });
 
 /*
- * 反过来也要盯：上面那条靠 styles.css 自己补定义通过，
- * 于是"补定义被删掉"必须也被抓到 —— 挑一个高频变量专门断言。
+ * 反过来也要盯：上面那条靠"变量能解析"通过，而能解析的前提是
+ * **tokens.css / controls.css 真的被引入**。删掉某条 @import，
+ * 变量照样能解析（另一处还引着），换个加载顺序才废。
+ *
+ * 以前这条断言的是"styles.css 里必须本地补一份定义"—— 那恰恰是错的：
+ * 本地补一份会**盖掉** @import 进来的同名令牌（同为 :root，文档顺序靠后者胜），
+ * 上游改令牌时 agent-flow 不跟着变（--title-*-fw 已经踩过一次）。
  */
-test('补齐的外壳令牌仍在（--fs-note / --sh-in-sm / --r-pill 有真实定义）', () => {
+test('外壳令牌靠 @import 拿到，而不是本地重复定义', () => {
   const css = readSrc('styles.css');
-  for (const v of ['--fs-note', '--sh-in-sm', '--r-pill', '--fs-body']) {
-    assert.match(css, new RegExp(re_escape(v) + ':\\s*[^;]+;'), `${v} 要有真实定义，不能只靠兜底`);
-  }
+  assert.match(css, /@import\s+url\(['"]\.\.\/\.\.\/css\/tokens\.css['"]\)/,
+    'styles.css 必须 @import tokens.css');
+  assert.match(css, /@import\s+url\(['"]\.\.\/\.\.\/css\/controls\.css['"]\)/,
+    'styles.css 必须 @import controls.css');
 });
+
+/** 剥 CSS 注释：块注释与整行注释都要剥，否则注释里的类名/变量会被当成真引用 */
+function stripCssComments(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
 
 function re_escape(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
