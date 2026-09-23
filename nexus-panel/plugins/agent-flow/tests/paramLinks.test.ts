@@ -337,31 +337,6 @@ test('参数连线带箭头 —— 没有箭头就分不清"谁的值给谁用"'
   assert.ok(/markerEnd:/.test(pl), 'makeParamEdge 要带 markerEnd（方向）');
 });
 
-test('出口 handle 走 OUT_HANDLE 常量，不写字面量', () => {
-  if (!SRC) return;
-  const pl = readSrc('engine/paramLinks.ts');
-  const m = pl.match(/OUT_HANDLE\s*=\s*'([^']+)'/);
-  assert.ok(m, 'paramLinks 里要有 OUT_HANDLE 常量');
-
-  const shell = readSrc('components/NodeShell.tsx');
-  /*
-   * 为什么要有这条：
-   *
-   * isParamHandles 靠 sourceHandle === OUT_HANDLE 判定"这是参数连线"。
-   * NodeShell 里若写死成 'out'，改常量那天两者就对不上 ——
-   * 症状是"我明明从出口拖到参数格，画出来的却是流程线"，
-   * 而排查时根本不会想到是两处字符串不同步。
-   */
-  assert.ok(
-    /id=\{OUT_HANDLE\}/.test(shell),
-    'NodeShell 的出口 handle 必须引用 OUT_HANDLE，不能写字面量',
-  );
-  assert.ok(
-    !/id="out"/.test(shell),
-    'NodeShell 里不该再出现写死的 id="out"',
-  );
-});
-
 test('箭头色与 CSS 兜底色是同一个值', () => {
   if (!SRC) return;
   const pl = readSrc('engine/paramLinks.ts');

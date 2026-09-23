@@ -696,7 +696,13 @@ console.log('\n=== 17. 状态规则不得改尺寸（跨插件，含 agent-flow�
   const allCss = ['css/controls.css', 'css/neumorphism.css', 'css/dialog.css',
     'plugins/mindmap/styles.css', 'plugins/agent-flow/styles.css',
     'plugins/project-group/style.css'].map((f) => ({ f, text: read(f) }));
-  const sizePat = /font-weight|padding|border-width|\bwidth\s*:|\bheight\s*:|margin/;
+  /* `(?<![\w-])(?:width|height)` 而不是 `\bwidth` / `\bheight`：
+     `\b` 在连字符处也成立，于是 SVG 的 `stroke-width`（画线粗细，
+     **不参与布局**，加粗不会推挤任何元素）和 `line-height`（行内，
+     改动不会让周围元素位移）都会被当成"状态规则改了尺寸"。
+     选中态把连线加粗是合法的强调手法，不该报。
+     真正的 `width:` / `height:` 独立属性仍然命中。 */
+  const sizePat = /font-weight|padding|border-width|(?<![\w-])(?:width|height)\s*:|margin/;
   const bad = [];
   for (const { f, text } of allCss) {
     if (!f.endsWith('.css')) continue;
@@ -1292,7 +1298,12 @@ console.log('\n=== 28. 尺度量必须走令牌（圆角 / 层级 / 状态色 / 
     [...src.matchAll(/(?:margin|padding|gap)[^;:]*\s*:\s*([^;]+);/g)]
       .flatMap((m) => [...m[1].matchAll(/(\d+)px/g)].map((x) => x[1]))
       .filter((v) => Number(v) >= 2).length;
-  const AF_BASELINE = 632, PG_BASELINE = 265;
+  /* 632 → 639：上游 #120 新增参数连线 UI（输出卡片 / 连线标签 / 几个
+     小按钮）带了 7 处。都是 `4px 7px`、`2px 9px` 这类**不对称**值，
+     而共享的 --sp-* 是单档位（上下左右同一个数），硬套会改变观感 ——
+     与上面那段"存量 5px/7px 是另一套节奏"是同一件事，所以抬基线而不是改令牌。
+     再超就该问一句：是新 UI 没复用既有类，还是确实又有新控件。 */
+  const AF_BASELINE = 639, PG_BASELINE = 265;
   const nowAf = spacingOf(af), nowPg = spacingOf(pg);
   t('agent-flow 间距未继续恶化（不超过基线）', nowAf <= AF_BASELINE,
     `当前 ${nowAf} / 基线 ${AF_BASELINE}`);

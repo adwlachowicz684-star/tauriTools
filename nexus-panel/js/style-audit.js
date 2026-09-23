@@ -58,6 +58,12 @@ export const TOKEN_VARS = [
   '--font-sans', '--font-mono',
   '--z-base', '--z-raised', '--z-sticky', '--z-float', '--z-menu',
   '--z-mask', '--z-dialog', '--z-pop', '--z-toast', '--z-tooltip',
+  /* #118 层级收口新加的两个 —— 只加了 tokens.css 的定义、
+     忘了登记这里，于是 agent-flow 的 `var(--z-inline, 5)` 与
+     project-group 的 `var(--z-rail, 30)` 被判成"未定义(有兜底)"。
+     这是"新增令牌忘了登记"的同一个坑第 N 次了：**在 tokens.css 里
+     加 --z-* 必须同时加到这份列表**。 */
+  '--z-rail', '--z-inline',
   '--ring-neutral',
   /* 语义字号档：让每处文字属于哪个语义写进变量名 */
   '--fs-title', '--fs-body', '--fs-note', '--fs-micro', '--fs-code',

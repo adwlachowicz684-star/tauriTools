@@ -231,8 +231,14 @@ console.log('\n=== 9. 手感一致：与项目组集群共用同一套数值 ===
     `找到 ${refNames.length} 处：${refNames.join(', ')}`);
 
   for (const name of refNames) {
-    const key = `ref={${name}}`;
-    const idx = norm.indexOf(key);
+    /* 挂点不一定是裸的 `ref={appsRef}`。
+       设置页改成卡片矩阵后，只有「应用」那一组才挂它，写成了条件式
+       `ref={isApp ? appsRef : undefined}`（同标签的 onDragOver / onDrop
+       也一并条件化）—— 旧断言只认裸写法，于是一直红。
+       判据放宽成"某个 ref={ … } 表达式里出现这个名字"，
+       后面那两条（onDragOver / onDrop）仍然按同一个标签检查。 */
+    const mref = new RegExp(`ref=\\{[^}]*\\b${name}\\b[^}]*\\}`).exec(norm);
+    const idx = mref ? mref.index : -1;
     if (idx < 0) {
       t(`容器 ${name} 在 JSX 里被引用`, false, '找不到 ref 挂点');
       continue;

@@ -77,6 +77,14 @@ export type FlowEdgeData = {
   label?: string;
   /** 循环节点的出边角色：body 每轮执行 / done 结束后执行一次 */
   loopRole?: 'body' | 'done';
+  /**
+   * 参数连线标记：'param' 表示这条边只给某个参数供值，不参与执行顺序。
+   * 与 types.ts 的 GraphEdge.data 是同一份语义（那边给 engine/ 下的
+   * 纯 node 测试用，这边给 React Flow 的边用）。
+   */
+  kind?: string;
+  /** 参数连线的目标参数名 */
+  targetArg?: string;
 };
 export type FlowEdge = {
   id: string;

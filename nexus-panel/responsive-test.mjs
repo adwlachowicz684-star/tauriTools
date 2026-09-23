@@ -59,7 +59,12 @@ console.log('=== 3. 纵向：滚动区必须写 min-height: 0 ===');
    表现是"下面的内容看不见，且滚不动"。 */
 for (const [css, sel, label] of [
   [shell, '#plugin-list', '侧边栏插件列表'],
-  [af, '.sidebar', 'agent-flow 侧栏'],
+  /* `.sidebar` 是重构前的节点库外壳，后来三个库（节点/模块/画布）
+     共用 `.side-pane` + `.side-body`（见 styles.css 里那段长注释），
+     旧类名已不存在 —— 断言指着一个查无此类的选择器会**永远红**，
+     而实际代码 `.side-body` 早就写了 min-height:0。
+     重构换类名时这里漏改，属"改了代码没同步守卫"。 */
+  [af, '.side-body', 'agent-flow 侧栏滚动区'],
   [mm, '.mm-icon-side', '脑图图标栏'],
   [mm, '.mm-list', '脑图列表'],
   [mm, '.mm-files', '脑图文件列表'],

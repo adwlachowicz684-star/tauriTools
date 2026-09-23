@@ -18,7 +18,14 @@ const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', 
 });
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
-globalThis.navigator = dom.window.navigator;
+/*
+ * navigator 不能直接赋值：Node 21+ 自带 `globalThis.navigator`，
+ * 且只有 getter —— 直接赋值抛 TypeError，本文件整个跑不起来
+ * （Node 22 实测，owned-test.mjs 同一处坑）。
+ */
+Object.defineProperty(globalThis, 'navigator', {
+  value: dom.window.navigator, configurable: true, writable: true,
+});
 
 const {
   snapshotGlobals, diffSnapshots, auditUnmount,

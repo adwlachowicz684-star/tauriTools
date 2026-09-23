@@ -216,13 +216,19 @@ console.log('\n=== 6. 反向校验：代码用了但 CSS 没定义 ===');
      · 测试文件 —— 里面全是 `className="a b c"` 这类示例串
      · demo 插件 —— 演示用，样式本就随便
      · *.min.js / editor 第三方库 —— 打包产物，类名由上游决定 */
+  /* ⚠️ 路径分隔符必须写 `[/\\]`：walk() 给的是**平台原生**路径，
+     Windows 上每个目录分隔都是 `\`。只写 `/` 的话
+     `plugins/demo-module/`、`editor/`、`js/dead-class-scan.js`
+     这三条**一条都不会命中**，demo 插件与扫描器自身的示例类名
+     （mm-foo / num / log / hero）会全部被算成"无样式类名"。
+     上一节 EXCLUDE_SRC 踩过同一个坑（2026-09-23）。 */
   const src = files.filter((f) => /\.(tsx|jsx|ts|js|mjs)$/.test(f)
     && !/-test\.mjs$/.test(f) && !/\.test\.(ts|tsx)$/.test(f)
-    && !/plugins\/demo-module\//.test(f)
-    && !/\.min\.js$/.test(f) && !/editor\//.test(f)
+    && !/plugins[/\\]demo-module[/\\]/.test(f)
+    && !/\.min\.js$/.test(f) && !/[/\\]editor[/\\]/.test(f)
     /* 扫描器自身也要排除：它的文档注释与单测里用 mm-foo 举例，
        不排除会被自己扫出来（实测报了 1 个）。 */
-    && !/js\/dead-class-scan\.js$/.test(f));
+    && !/js[/\\]dead-class-scan\.js$/.test(f));
 
   const defined = new Set();
   for (const f of css) {

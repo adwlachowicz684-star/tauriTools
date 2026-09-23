@@ -95,10 +95,24 @@ type KindRule = {
  * 每项的**人话说明**，用于报错文案。
  * 不写的话报错只能说"类型不对"，用户不知道该往哪改。
  */
-const KIND_HINT: Record<ArgKind, string> = {
+const KIND_HINT: Record<ValueKind, string> = {
   num: '数字',
   text: '文本',
   any: '任意内容',
+  /*
+   * 下面四种**不会**作为"期望"出现（ArgKind 里没有它们）：
+   * 手填的值只可能是 num / text，期望只可能要求 num / text / any。
+   *
+   * 但它们是合法的**实际**值 —— bool / table / files 来自参数连线上游
+   * 节点的产出，unknown 是模板引用（编辑时无值）。少了这几个键，
+   * `KIND_HINT[actual]` 就是 undefined，报错文案会印成
+   * 「要数字，现在填的是undefined」—— 用户根本不知道改什么。
+   * 文案与 paramLinks 的 valueLabel() 保持一致。
+   */
+  bool: '是/否',
+  table: '表格',
+  files: '文件',
+  unknown: '任意内容',
 };
 
 const N = (...keys: string[]): OpRule => ({

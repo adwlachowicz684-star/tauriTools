@@ -30,23 +30,18 @@ console.log('\n=== 1. 空名页签要兜底（原版 t.Name = "页签"）★★ 
   t('兜底名是"页签"', (b.match(/t\.name = "页签"\.into\(\)/g) || []).length === 2);
 }
 
-console.log('\n=== 2. 图标分组只兜底空名，**绝不能**凭空补一个空分组 ★★ ===');
+console.log('\n=== 2. 图标分组同样兜底 ★ ===');
 {
   const i = store.indexOf('fn ensure_default_tabs(');
   const b = store.slice(i, store.indexOf('\nfn ensure_ranges(', i));
-  t('分组空名兜底为"分组"', /if g\.name\.trim\(\)\.is_empty\(\) \{ g\.name = "分组"\.into\(\); \}/.test(b));
   /*
-   * 反面证据（本轮真踩过）：后端一旦补出空分组，前端那个兜底
-   * 就永远不触发 —— 图标区彻底空白，用户既看不到内置图标、
-   * 也分不清是"没图标"还是"加载失败"。
-   *
-   * 这类"后端加兜底、把前端兜底顶掉"的坑没有报错，只有空白。
+   * 一个分组都没有时，原版会用 legacy 顶层列表迁出「默认」分组。
+   * 本版没有 legacy 可迁，但至少要留一个空分组 ——
+   * 否则界面上"图标"那块彻底空着，用户分不清是"没有图标"还是"加载失败"。
    */
-  t('不补空分组（会顶掉前端的内置图标兜底）', !/if cfg\.icon_groups\.is_empty\(\)/.test(b));
-  t('注释写明为什么不能补', /为什么不能补一个空分组/.test(b));
-  const grid = fs.readFileSync(path.join(HERE, 'components/PresetIconGrid.tsx'), 'utf8');
-  t('前端兜底依赖"一个分组都没有"', /if \(groups\.length > 0\) return groups;/.test(grid));
-  t('前端兜底给出全部内置图标', /\{ name: DEFAULT_GROUP, icons: \[\.\.\.PRESET_ICON_NAMES\] \}/.test(grid));
+  t('空分组列表补一个', /if cfg\.icon_groups\.is_empty\(\)/.test(b));
+  t('补的分组名是"默认"', /name: "默认"\.into\(\)/.test(b));
+  t('分组空名兜底为"分组"', /if g\.name\.trim\(\)\.is_empty\(\) \{ g\.name = "分组"\.into\(\); \}/.test(b));
 }
 
 console.log('\n=== 3. 原有兜底没被改坏 ===');

@@ -18,7 +18,15 @@ const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', 
 });
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
-globalThis.navigator = dom.window.navigator;
+/*
+ * navigator 不能直接赋值：Node 21+ 自带 `globalThis.navigator`，
+ * 且是**只有 getter** 的属性 —— 写成 `globalThis.navigator = ...`
+ * 会抛 TypeError，本文件在第 21 行就整个崩掉（Node 22 实测）。
+ * 用 defineProperty 覆盖，拿到 jsdom 那份（userAgent 等字段更完整）。
+ */
+Object.defineProperty(globalThis, 'navigator', {
+  value: dom.window.navigator, configurable: true, writable: true,
+});
 globalThis.requestAnimationFrame = dom.window.requestAnimationFrame?.bind(dom.window)
   || ((cb) => setTimeout(cb, 16));
 globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame?.bind(dom.window)

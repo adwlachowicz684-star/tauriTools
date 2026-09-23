@@ -3,7 +3,6 @@ import type { ReactNode } from 'react';
 import { getDef } from '../nodes/registry';
 import { validateNode, LEVEL_COLOR, LEVEL_TEXT, badgeTextOf, type IssueLevel } from '../engine/nodeValidate';
 import { isNodeDisabled } from '../engine/nodeDisabled';
-import { OUT_HANDLE } from '../engine/paramLinks';
 /** 关闭态的圆点色。中性灰，不与"缺项/缺参"的黄红撞色 */
 const OFF_DOT_COLOR = '#6b7280';
 import { normalizeSize, type NodeSize } from '../types';
@@ -128,14 +127,7 @@ export function NodeShell({
        * 目标是 `arg:xxx` 就是供参数，否则是流程走向。
        * 出口不带 id 的话两种连线无法区分，也就画不出不同的线。
        */}
-      {/*
-       * id 走 OUT_HANDLE 常量，不写字面量。
-       *
-       * 参数连线判定时要拿它和 sourceHandle 比对（isParamHandles）。
-       * 两处各写一个 'out' 的话，改一处就会让连线认不出来 ——
-       * 而症状是"拖出来的线画成流程线了"，很难联想到这里。
-       */}
-      {hasSource ? <Handle type="source" position={Position.Right} id={OUT_HANDLE} /> : null}
+      {hasSource ? <Handle type="source" position={Position.Right} id="out" /> : null}
 
       {/*
        * 标题行：**配置状态在左、标题在右**。

@@ -141,8 +141,14 @@ export type GraphEdge = {
    *
    * 字段名与结构都对齐 React Flow 的 EdgeMarker，
    * 这里不 import 那个类型（types.ts 要能在纯 node 环境里跑）。
+   *
+   * `type` 只能取这两个字面量，**不能写 string**：
+   * GraphEdge 会直接喂给 React Flow 的 addEdge()，而它的 EdgeMarker.type
+   * 是 'arrow' | 'arrowclosed' | MarkerType。写成 string 就赋不进去
+   * （TS2345）。不用 MarkerType 枚举是因为那要 import @xyflow/react，
+   * 而这两个字符串正是枚举成员的值，稳定公开。
    */
-  markerEnd?: { type: string; color?: string; width?: number; height?: number };
+  markerEnd?: { type: 'arrow' | 'arrowclosed'; color?: string; width?: number; height?: number };
   /**
    * 条件节点出边专属：标注这条边属于哪个分支。
    * - 值为某条 ConditionRule 的 id → 该规则命中时走这条边
@@ -157,6 +163,16 @@ export type GraphEdge = {
    * - undefined → 非循环节点的普通边
    */
   loopRole?: 'body' | 'done';
+  /**
+   * 边的附加数据（React Flow 的边靠它带自定义信息）。
+   *
+   * 参数连线：`kind: 'param'` + `targetArg`（要填上游产出到哪个参数）。
+   *
+   * 判据放这里而不是 handle：handle 的对应关系在连线建好之后就固定了，
+   * 而 data 是**唯一随边一起存档**的东西 —— 重新载入画布后还能认出
+   * "这条是参数连线、给的是哪个参数"，靠的就是它。
+   */
+  data?: { kind?: string; targetArg?: string };
 };
 
 export const CLI_META: Record<CliKind, { label: string; cmd: string; color: string }> = {
