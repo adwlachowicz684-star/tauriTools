@@ -138,6 +138,19 @@ function targets() {
 const THIRD_PARTY = /(?:^|[\\/])(?:editor|vendor|node_modules|dist|third|kityminder)(?:[\\/]|$)|kityminder|\.min\.css/;
 
 const FILES = targets();
+
+/*
+ * 共享层归属：有些规则（减少动效兜底、裸 button 兜底）本就该
+ * **只在共享层写一份**，要求每个界面各写一遍只会各自漂移。
+ * 目标引了共享层 → 去共享层找；没引（独立界面）→ 要求它自己有。
+ * 这两个量在多个小节里都要用，故提到外层 ——
+ * 写在某个 section 块里的话，后面的块会 ReferenceError。
+ */
+const OWN = FILES.map(read);
+const USES_SHARED = OWN.some((x) => /@import[^;]*(tokens|controls)\.css/.test(x));
+const SHARED = USES_SHARED
+  ? ['css/tokens.css', 'css/controls.css', 'css/neumorphism.css'].map((f) => read(join(ROOT, f)))
+  : [];
 if (!FILES.length) {
   console.error(`没有找到 CSS 文件（--dir=${ONLY_DIR || '默认'}）`);
   process.exit(1);
@@ -363,11 +376,7 @@ section('10. 可访问性');
    * （写多份只会各自漂移）。目标引了共享层就去看共享层有没有；
    * 没引（独立界面）才要求它自己有。
    */
-  const own = FILES.map(read);
-  const usesShared = own.some((x) => /@import[^;]*(tokens|controls)\.css/.test(x));
-  const shared = usesShared
-    ? ['css/tokens.css', 'css/controls.css', 'css/neumorphism.css'].map((f) => read(join(ROOT, f)))
-    : [];
+  const own = OWN, shared = SHARED, usesShared = USES_SHARED;
   const pool = own.concat(shared);
   const hasRM = pool.some((x) => /prefers-reduced-motion/.test(x));
   t(`有 prefers-reduced-motion 兜底${usesShared ? '（由共享层提供）' : ''}`, hasRM,
@@ -387,10 +396,10 @@ section('10. 可访问性');
  * ============================================================ */
 section('13. 通用控件收口');
 {
-  const poolAll = own.concat(shared).join('\n');
+  const poolAll = OWN.concat(SHARED).join('\n');
   const noVar = stripVars(stripComments(poolAll));
   const m = noVar.match(/(^|\})\s*button\s*\{[^}]*\}/);
-  t(`有裸 button 兜底规则${usesShared ? '（由共享层提供）' : ''}`, !!m, '未找到 button { ... }');
+  t(`有裸 button 兜底规则${USES_SHARED ? '（由共享层提供）' : ''}`, !!m, '未找到 button { ... }');
   if (m) {
     t('兜底去掉了 UA 边框（否则深色下是一圈白）', /border\s*:\s*0|border\s*:\s*none/.test(m[0]));
     t('兜底让按钮继承页面字体（UA 默认是 Arial）', /font(-family)?\s*:\s*inherit/.test(m[0]));
