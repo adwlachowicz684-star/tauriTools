@@ -58,8 +58,8 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
           </div>
         </div>
         <select
-          className="p-input"
-          style={{ height: 30, fontSize: 'var(--fs-12, 12px)', padding: '0 8px', flex: 'none', maxWidth: 190 }}
+          className="p-input sm"
+          style={{fontSize: 'var(--fs-12, 12px)', padding: '0 8px', flex: 'none', maxWidth: 190 }}
           value={cfg[key] ?? ''}
           onChange={(e) => setCfg(setPluginConfig(manifest.id, { [key]: e.target.value || null }))}
         >
@@ -94,8 +94,8 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
               </div>
             </div>
             <button
-              className={'p-btn' + (cfg[key] ? ' primary' : '')}
-              style={{ height: 30, padding: '0 12px', fontSize: 'var(--fs-12, 12px)', flex: 'none' }}
+              className={'p-btn sm' + (cfg[key] ? ' primary' : '')}
+              style={{padding: '0 12px', fontSize: 'var(--fs-12, 12px)', flex: 'none' }}
               onClick={() => toggle(key)}
             >
               {cfg[key] ? '已开启' : '已关闭'}
