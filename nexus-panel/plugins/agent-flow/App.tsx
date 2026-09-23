@@ -1041,7 +1041,18 @@ function reportSkipped(
        */
       const preset = allPresets().find((x) => x.key === p.kind)
         ?? allPresets().find((x) => x.type === p.kind);
-      if (!preset) return;                       // 拖拽载荷已损坏，静默忽略
+      /*
+       * 找不到就**说出来**，不能静默 return。
+       *
+       * 静默的代价：用户拖了、松手、什么都没发生 ——
+       * 他会以为自己没拖对（再拖几次），或者以为界面坏了。
+       * 而"没反应"和"拖放被环境吞掉"在界面上长得一模一样，
+       * 不写这一行就永远分不清是数据问题还是环境问题。
+       */
+      if (!preset) {
+        pushLog(`✗ 这个节点类型已不存在（${String(p.kind)}），可能来自旧存档`);
+        return;
+      }
       const def = getDef(preset.type);
       const id = `${def.meta.idPrefix}${suffix}`;
       const node = {
@@ -1064,7 +1075,7 @@ function reportSkipped(
       setNodes((ns) => [...ns, node]);
       setSelectedId(node.id);
     },
-    [nodes.length, setNodes],
+    [nodes.length, setNodes, pushLog],
   );
 
   /* ---------------- 按住 Ctrl 拖动 = 复制 ---------------- */
@@ -1430,11 +1441,52 @@ function reportSkipped(
    * 于是看起来像「拖放坏了、只能单击添加」。
    */
   const flowPosOf = useCallback((e: DragEvent) => {
-    return rfInstance.current?.screenToFlowPosition({
-      x: e.clientX,
-      y: e.clientY,
-    });
-  }, []);
+    const inst = rfInstance.current;
+    if (!inst) return undefined;
+    const raw = inst.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    if (!raw || !Number.isFinite(raw.x) || !Number.isFinite(raw.y)) return undefined;
+
+    /*
+     * 落点夹进可见区域。
+     *
+     * 为什么必须夹：坐标换算一旦有偏差（多减/少减一层偏移、缩放没除、
+     * 容器 rect 取错），算出来的流坐标会落在**视口之外**。
+     * 节点其实被创建成功了，只是看不见 —— 用户的观感是"拖了没反应"，
+     * 而 Ctrl 单击走默认位置（一定在视口内）却能用，
+     * 于是看起来像"拖放坏了"，实际是"拖放到看不见的地方去了"。
+     *
+     * 夹进视口后，最坏情况只是落点偏一点，不会消失。
+     * 而"是否真的被夹过"会写进日志 —— 那一行就是坐标链路出问题的证据。
+     */
+    const host = wrapperRef.current;
+    const w = host?.clientWidth ?? 0;
+    const h = host?.clientHeight ?? 0;
+    const vp = inst.getViewport();
+    if (!w || !h || !vp.zoom) return raw;
+
+    const minX = -vp.x / vp.zoom;
+    const maxX = (w - vp.x) / vp.zoom;
+    const minY = -vp.y / vp.zoom;
+    const maxY = (h - vp.y) / vp.zoom;
+    /* 卡片约 240×90，往内收一点，避免贴边时只露一半 */
+    const padX = 20;
+    const padY = 20;
+    const cx = Math.min(Math.max(raw.x, minX + padX), Math.max(minX + padX, maxX - padX));
+    const cy = Math.min(Math.max(raw.y, minY + padY), Math.max(minY + padY, maxY - padY));
+
+    if (cx !== raw.x || cy !== raw.y) {
+      /*
+       * 这一行是**诊断**，不是给用户看的提示。
+       * 它出现即说明坐标换算有系统性偏差 —— 两组数的差值就是偏移量，
+       * 拿它对一遍侧栏宽度（260）或右栏宽度（340）就能定位多减了哪一层。
+       */
+      pushLog(
+        `⚠ 落点在视口外，已拉回（诊断：算得 ${Math.round(raw.x)},${Math.round(raw.y)}`
+        + ` → 实落 ${Math.round(cx)},${Math.round(cy)}；偏移 ${Math.round(cx - raw.x)},${Math.round(cy - raw.y)}）`,
+      );
+    }
+    return { x: cx, y: cy };
+  }, [pushLog]);
 
   const onDrop = useCallback(
     (e: DragEvent) => {
@@ -1479,10 +1531,21 @@ function reportSkipped(
 
       const payload = decodeDrag(e.dataTransfer.getData(DRAG_MIME))
         ?? decodeDrag(e.dataTransfer.getData('text/plain'));
-      if (!payload) return;
+      /*
+       * 同上：不静默。
+       *
+       * 走到这里说明 drop 事件确实到了，但 dataTransfer 里没有可用的载荷。
+       * 常见原因是 order 被别的 drop 处理器先吃掉并 stopPropagation，
+       * 或者拖的来源不是侧栏（比如从别的窗口拖了文字进来）。
+       * 给一句提示，用户至少知道"事件到了、数据没到"。
+       */
+      if (!payload) {
+        pushLog('✗ 没能读出拖动的内容 —— 请从左侧节点库里拖');
+        return;
+      }
       spawnNode(payload, flowPosOf(e));
     },
-    [spawnNode, spawnModule, flowPosOf],
+    [spawnNode, spawnModule, flowPosOf, applyVarToNode, duplicateVar, pushLog],
   );
 
   const onDragOver = useCallback((e: DragEvent) => {
