@@ -544,10 +544,20 @@ fn tools() -> Vec<Value> {
             "path": { "type": "string" },
             "tab_index": { "type": "integer", "description": "可选，页签序号（0 起）；省略则加到第一个页签" },
         }), vec!["kind", "path"]),
-        tool("set_lock", "设置 ACL 保护（防删除 / 防写入）", json!({
+        /*
+         * #138 `accountOnly` 与 `remove` 此前只在**执行代码**里认，
+         * 工具清单（tools/list）里没声明。
+         *
+         * 后果：调用方（AI 客户端靠 tools/list 决定能传什么）**永远看不到
+         * 这两个参数** —— 能力存在但不可发现，等于没有。
+         * 而它不报错，只是"AI 从不使用这两个能力"，很难归因到这里。
+         */
+        tool("set_lock", "设置 / 解除 ACL 保护（防删除 / 防写入 / 仅账面固定）", json!({
             "path": { "type": "string" },
             "denyDelete": { "type": "boolean" },
             "denyWrite": { "type": "boolean" },
+            "accountOnly": { "type": "boolean", "description": "仅账面固定：只登记，不落系统权限（原版 account_only）" },
+            "remove": { "type": "boolean", "description": "true = 解除全部 ACL 保护并退出账面固定（原版 remove）" },
         }), vec!["path"]),
         tool("set_tag_color", "设置卡片标签颜色（#RRGGBB，空串=恢复默认）", json!({
             "path": { "type": "string" },
@@ -961,11 +971,53 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             /* #21 / #138 账面固定：仅登记，不落系统权限。
                老调用方不带这个参数，默认 false（行为不变）。 */
             let ao = args.get("accountOnly").and_then(|v| v.as_bool()).unwrap_or(false);
+            /*
+             * #138 `remove`：显式解除（原版 `LockSet` 的 remove 分支）。
+             *
+             * 为什么不能只靠"三个开关都 false"来解除：那三个 false 的**语义
+             * 是"什么都不设"**，而 `remove` 是"解除并退出账面固定"。
+             * 两者在当前实现里恰好落到同一结果，但语义不同 ——
+             * 一旦以后出现"只登记、不落 ACL"之外的第四种状态，
+             * 靠"全 false 推断意图"就会做错。显式参数才不会漂移。
+             */
+            let remove = args.get("remove").and_then(|v| v.as_bool()).unwrap_or(false);
             // ACL 是写操作：能对任意路径改 ACL，就能把系统目录锁死或解锁
             let path = s("path");
             within_raw(&path)?;
+            if remove && (dd || dw || ao) {
+                return Err(err("remove=true 时不要再传 denyDelete/denyWrite/accountOnly（语义冲突）"));
+            }
+            let (dd, dw, ao) = if remove { (false, false, false) } else { (dd, dw, ao) };
             super::core_set_lock(&dir, &path, dd, dw, ao).map_err(|e| err(&e))?;
-            json!({ "content": [{ "type": "text", "text": format!("保护已更新：防删除={dd} 防写入={dw} 账面固定={ao}") }] })
+            /*
+             * 返回结构对齐原版 LockSet：strength / protectedNow / note / guiNote。
+             *
+             * 原版多给这些字段不是啰嗦：调用方（AI）据此判断"现在到底锁住
+             * 没有"。只回一句"保护已更新"的话，**账面固定（无系统级拦截）
+             * 与真 ACL 保护在回包里长得一模一样** ——
+             * AI 会以为自己防住了，实际什么都没拦。
+             */
+            let strength = match (dd, dw, ao) {
+                (true, true, _) => "只读保护",
+                (true, false, _) => "防删除",
+                (false, true, _) => "防写入",
+                _ if ao => "仅固定",
+                _ => "无保护",
+            };
+            let note = if remove {
+                "已解除全部 ACL 保护并退出账面固定".to_string()
+            } else if dd || dw {
+                format!("ACL 已生效 [{strength}]：删除/改名被系统拒绝{}", if dw { "，目录只读" } else { "" })
+            } else if ao {
+                "仅账面固定（无系统级拦截）".to_string()
+            } else {
+                "已解除全部 ACL 保护并退出账面固定".to_string()
+            };
+            json!({ "content": [{ "type": "text", "text": serde_json::to_string(&json!({
+                "ok": true, "path": path, "strength": strength,
+                "protectedNow": dd || dw, "note": note,
+                "guiNote": "若界面正在运行，需刷新后才能看到本变更",
+            })).unwrap_or_default() }] })
         }
         "set_tag_color" => {
             let path = s("path");

@@ -159,4 +159,66 @@ console.log('\n=== #21 账面固定（与 ACL 是两件事）===');
     fs.readFileSync(path.join(HERE, 'types.ts'), 'utf8')));
 }
 
+console.log('\n=== 11. #138 lock_set 的 account_only / remove ★ ===');
+{
+  /* 本文件没有全局 `strip`（只有各处就地 .replace），直接用会 ReferenceError
+     让整个套件挂掉 —— 与 watch-suppress-test 那次同一个坑。 */
+  const mcp = fs.readFileSync(path.join(HERE, '../../src-tauri/src/fpx/mcp.rs'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+
+  /*
+   * 一、**工具清单里必须声明**。
+   *
+   * accountOnly 此前只在执行代码里认、tools/list 里没声明 ——
+   * 调用方（AI 客户端靠 tools/list 决定能传什么）**永远看不到它**。
+   * 能力存在但不可发现 = 等于没有，而且它不报错，
+   * 只是"AI 从不使用这个能力"，很难归因到这里。
+   */
+  const si = mcp.indexOf('tool("set_lock"');
+  const sblk = mcp.slice(si, mcp.indexOf('tool(', si + 10));
+  t('清单里声明了 accountOnly', /"accountOnly"/.test(sblk), sblk.slice(0, 200));
+  t('清单里声明了 remove', /"remove":/.test(sblk));
+  t('两个都写了 description（否则调用方不知道语义）',
+    (sblk.match(/description/g) || []).length >= 2);
+
+  /* 二、执行代码要真的读它 */
+  const ci = mcp.indexOf('"set_lock" => {');
+  const cblk = mcp.slice(ci, mcp.indexOf('\n        "set_tag_color"', ci + 1));
+  t('读了 accountOnly', /args\.get\("accountOnly"\)/.test(cblk));
+  t('读了 remove', /args\.get\("remove"\)/.test(cblk));
+
+  /*
+   * 三、`remove` 与三个开关互斥时必须报错，不能静默取其一。
+   *
+   * 静默的话调用方以为两个都生效了，而实际生效的是我们不确定的那一个。
+   */
+  t('remove 与其它开关冲突时报错',
+    /remove && \(dd \|\| dw \|\| ao\)[\s\S]{0,160}语义冲突/.test(cblk), cblk.slice(0, 320));
+  /* remove 必须真的把三个位清掉（否则 remove 了却仍落 ACL） */
+  t('remove 时三个位清零', /if remove \{ \(false, false, false\) \}/.test(cblk));
+
+  /*
+   * 四、回包要能区分「真 ACL」与「仅账面固定」。
+   *
+   * 只回一句"保护已更新"的话，**账面固定（无系统级拦截）与真 ACL 保护
+   * 在回包里长得一模一样** —— AI 会以为自己防住了，实际什么都没拦。
+   */
+  t('回包带 strength', /"strength": strength/.test(cblk));
+  t('回包带 protectedNow', /"protectedNow": dd \|\| dw/.test(cblk));
+  t('回包带 note', /"note": note/.test(cblk));
+  t('账面固定时 note 明说"无系统级拦截"', /仅账面固定（无系统级拦截）/.test(cblk));
+  t('remove/无保护时 note 明说已解除', /已解除全部 ACL 保护并退出账面固定/.test(cblk));
+
+  /*
+   * 五、strength 四档必须齐全且互斥。
+   *
+   * 少一档的话 AI 会把"仅固定"读成"无保护"（或反之），
+   * 据此做出错误的后续动作。
+   */
+  t('strength 有只读/防删除/防写入/仅固定/无保护',
+    /"只读保护"/.test(cblk) && /"防删除"/.test(cblk) && /"防写入"/.test(cblk)
+    && /"仅固定"/.test(cblk) && /"无保护"/.test(cblk));
+  t('strength 用 match 一次判（不会重复叠加）', /let strength = match \(dd, dw, ao\)/.test(cblk));
+}
+
 done();
