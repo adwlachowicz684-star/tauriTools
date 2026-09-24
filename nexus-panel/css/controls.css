@@ -388,7 +388,7 @@ select optgroup {
   padding: 8px var(--ctl-pad, 10px);
   font: inherit;
   font-size: var(--ctl-fs, 13px);
-  line-height: line-height: var(--lh-relaxed, 1.6);
+  line-height: var(--lh-relaxed, 1.6);
   color: var(--text);
   background: var(--surface-sunk, var(--surface));
   border: 0;
@@ -574,7 +574,7 @@ select optgroup {
 .mm-vthumb-empty,
 .fpx-empty {
   color: var(--text-dim);
-  line-height: line-height: var(--lh-loose, 1.7);
+  line-height: var(--lh-loose, 1.7);
   text-align: center;
 }
 
@@ -678,7 +678,7 @@ select optgroup {
   max-width: 320px;
   border-radius: var(--r-sm);
   font-size: var(--fs-12, 12px);
-  line-height: line-height: var(--lh-normal, 1.5);
+  line-height: var(--lh-normal, 1.5);
   color: var(--text);
   /* 与弹窗同理：用 --surface-overlay，玻璃主题下 --surface 只有 7% 白 */
   background: var(--surface-overlay);
@@ -978,7 +978,7 @@ input[type='range']:disabled {
   margin-top: 4px;
   font-size: var(--fs-11, 11px);
   color: var(--danger);
-  line-height: line-height: var(--lh-tight, 1.45);
+  line-height: var(--lh-tight, 1.45);
 }
 
 /* ------------------------------------------------------------
@@ -1149,7 +1149,7 @@ input[type='range']:disabled {
   width: 100%;
   text-align: center;
   font-size: var(--fs-note, 11px);
-  line-height: line-height: var(--lh-normal, 1.5);
+  line-height: var(--lh-normal, 1.5);
 }
 
 /* ============================================================

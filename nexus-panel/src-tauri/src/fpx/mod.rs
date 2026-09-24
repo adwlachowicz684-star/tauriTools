@@ -1324,8 +1324,11 @@ pub fn fpx_remove_card(
          */
         match tab_index {
             Some(i) => {
+                /* 先取长度再可变借用：ok_or_else 的闭包里读 tabs.len()
+                   会与 get_mut 的可变借用冲突（E0502）。 */
+                let tab_count = tabs.len();
                 let t = tabs.get_mut(i).ok_or_else(|| format!(
-                    "页签下标 {i} 不存在（当前 {} 个页签），未移除：{path}", tabs.len()
+                    "页签下标 {i} 不存在（当前 {tab_count} 个页签），未移除：{path}"
                 ))?;
                 t.items.retain(|p| store::normalize_key(p) != key);
             }
@@ -2701,6 +2704,7 @@ pub fn fpx_mcp_status() -> serde_json::Value {
 ///
 /// 启动时也会自动跑一次（见 main.rs 的 setup），这里额外给一个入口：
 /// 用户装完客户端、手工登记完条目之后，不必重启面板就能校正路径。
+#[tauri::command(rename_all = "snake_case")]
 pub fn fpx_mcp_register() -> String {
     mcp::register_clients()
 }
