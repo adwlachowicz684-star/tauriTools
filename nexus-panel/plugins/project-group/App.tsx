@@ -264,6 +264,46 @@ export default function App() {
     }
   }, [contentSel, ctx, s]);
 
+  /*
+   * 用 Markdown 阅读器打开（E2 的触发源）。
+   *
+   * openWithArgs 那条机制建好之后一直**没有调用方** ——
+   * 机制存在的意义是有人用它，没人调就等于没做。这里就是第一个调用方。
+   *
+   * 走 ctx.openPlugin 而不是自己 mount：
+   *   项目组只是"知道有个路径"，怎么打开、需不需要重挂载是宿主的事。
+   *   而且 md 可能已经激活 —— 那时要走事件总线补发，
+   *   自己 mount 会整篇重载（滚动位置全丢），正是宿主分两种情况的原因。
+   *
+   * 只认 md/markdown/txt：阅读器是纯文本渲染，
+   *   拿二进制（.png/.exe）去读会得到一堆乱码且不报错，比直接拒绝更费解。
+   */
+  const MD_EXT = /\.(md|markdown|mdown|mkd|txt)$/i;
+
+  const readMarkdown = useCallback(async () => {
+    if (!contentSel) {
+      ctx.toast('请先在内容浏览里选中一个条目', 'err');
+      return;
+    }
+    if (!MD_EXT.test(contentSel.name || '')) {
+      ctx.toast(`「${contentSel.name}」不是 Markdown/文本文件`, 'err');
+      return;
+    }
+    /*
+     * openPlugin 返回 boolean：false = 目标不存在或被拒绝。
+     * 不判的话，阅读器没装/被过滤掉时是**静默无反应** ——
+     * 用户点了按钮，什么都没发生，也不知道是没装还是坏了。
+     */
+    const ok = await ctx.openPlugin?.('md', { path: contentSel.path });
+    if (!ok) {
+      const m = '打开 Markdown 阅读器失败：插件未安装或被过滤';
+      s.pushLog(m, true);
+      ctx.toast(m, 'err');
+      return;
+    }
+    s.pushLog(`已用阅读器打开：${contentSel.path}`);
+  }, [contentSel, ctx, s]);
+
   const projectCards = useMemo(
     () => boot?.projectTabs[s.activeTab.project]?.items ?? [],
     [boot, s.activeTab.project],
@@ -1032,6 +1072,30 @@ export default function App() {
               */}
               <div className="p-row fpx-col-head">
                 <h2 style={{ margin: 0 }}>内容浏览</h2>
+                {/* 内容区选中条目的两个动作。
+                    编辑走内置编辑器（Mod+D），阅读走 md 插件（E2 触发源）。
+                    未选中时禁用而不是隐藏 —— 隐藏的话"这栏能做什么"
+                    全靠猜，禁用至少说明"先选一个"。 */}
+                <div className="p-row fpx-col-head-ops">
+                  <button
+                    className="p-btn"
+                    style={{ height: 26, padding: '0 8px' }}
+                    disabled={!contentSel}
+                    onClick={openMarkdown}
+                    title="用内置编辑器编辑（Mod+D）"
+                  >
+                    编辑
+                  </button>
+                  <button
+                    className="p-btn"
+                    style={{ height: 26, padding: '0 8px' }}
+                    disabled={!contentSel}
+                    onClick={readMarkdown}
+                    title="用 Markdown 阅读器打开"
+                  >
+                    阅读
+                  </button>
+                </div>
               </div>
               <ContentPanel
                 api={s.api}

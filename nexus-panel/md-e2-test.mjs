@@ -125,8 +125,9 @@ if (createModuleContext) {
  */
 console.log('\n=== 2. 宿主（host.js）接线 ===');
 
+/* args 允许带默认值（args = null）—— 断言别钉死写法，钉"有没有第二个参数" */
 t('mount 接收第二个参数 args',
-  /async function mount\(id, args\)/.test(hostC));
+  /async function mount\(id, args\s*(=\s*null)?\)/.test(hostC));
 t('mount 把 args 传给 iframe 分支',
   /mountIframeView\(stage, manifest, token, 'main', args\)/.test(hostC));
 t('mount 把 args 传给 module 分支',

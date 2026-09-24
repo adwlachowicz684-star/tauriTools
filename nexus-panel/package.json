@@ -146,7 +146,8 @@
     "test:md-service": "node md-service-test.mjs",
     "test:md-drop": "node md-drop-test.mjs",
     "test:md-e2": "node md-e2-test.mjs",
-    "test:md-interact": "node md-interact-test.mjs"
+    "test:md-interact": "node md-interact-test.mjs",
+    "test:open-plugin": "node open-plugin-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

@@ -215,7 +215,15 @@ export interface PluginContext {
   /** 重新加载本插件 */
   reload(): void;
   /** 跳转到另一个插件 */
-  openPlugin(id: string): void;
+  /**
+   * 切换到另一个插件，可带打开参数（E2 触发源）。
+   *
+   * 只有**内置**插件能用：宿主会校验 manifest.builtin。
+   * 否则第三方可借 md 的 fpx_read_file（任意路径读取）读文件 = 提权。
+   *
+   * @returns 宿主是否受理（目标不存在 / 被拒绝 = false）
+   */
+  openPlugin(id: string, args?: any): Promise<boolean>;
   /** 注册应用级快捷键（窗口前台即生效）；命中后外壳在总线上发 event */
   registerShortcut(accel: string, event: string, label?: string): void;
   unregisterShortcut(accel: string): void;

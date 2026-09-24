@@ -355,7 +355,46 @@ function buildCtx(base) {
     /** 请求外壳重新加载本插件 */
     reload() { transport.notify('reload', {}); },
     /** 切换到另一个插件 */
-    openPlugin(targetId) { transport.notify('open', { id: targetId }); },
+    /*
+     * 切换到另一个插件，可带打开参数（E2 触发源）。
+     *
+     * 例：项目组里点一个 .md 文件 →
+     *   await ctx.openPlugin('md', { path: 'D:/a.md' })
+     * 目标插件挂载后 ctx.openArgs.path 就是那个路径。
+     *
+     * 【这里原先是 openPlugin(targetId) 只走 transport.notify('open')】
+     * 那版三个问题：① 不带参数，E2 无从触发；
+     *   ② notify 是"发出去不管"，没有返回值；
+     *   ③ 更隐蔽的 —— 本轮一度在 ctx 里**另加了一份同名 openPlugin**，
+     *      对象字面量里后者覆盖前者，注入的函数永远不被调用，
+     *      表现为"调了没反应"且不报错。所以只保留**这一份**，
+     *      再要加能力就改这里，不要另起同名键。
+     *
+     * 两条通路（与 services 同构）：
+     *   · 同页 —— 宿主直接注入函数（base.openPlugin），不走消息
+     *   · 沙箱 —— 桥接请求 'open-plugin'，由宿主校验后执行
+     *
+     * 外面套 Promise.resolve 是必须的：module 的 transport.request 是
+     * **同步**返回，直接 .catch 会 TypeError（非 Promise 没有 catch），
+     * 而调用方都在 await，抛出去就成了 unhandled rejection ——
+     * 界面上只表现为"点了没反应"。
+     *
+     * 安全前提：这条能力**只允许内置插件**用，宿主会校验 manifest.builtin。
+     * 否则第三方插件可以 openPlugin('md', { path: '任意文件' })，
+     * 借 md 的 fpx_read_file（任意路径读取，不经 guard）把内容读出来 ——
+     * 它自己没这条命令，却能借别人的白名单，是**提权**。
+     *
+     * @param {string} targetId 目标插件 id
+     * @param {any} [args] 打开参数
+     * @returns {Promise<boolean>} 宿主是否受理（不存在/被拒绝 = false）
+     */
+    openPlugin(targetId, args) {
+      return Promise.resolve(
+        base.openPlugin
+          ? base.openPlugin(targetId, args)
+          : transport.request('open-plugin', { id: targetId, args }),
+      ).catch(() => false);
+    },
 
     /**
      * 注册一个应用级快捷键（窗口在前台时生效，与插件是否激活无关）。
@@ -543,6 +582,7 @@ export function createModuleContext({
   scope = null,                 // 事件绑定目标，默认主文档
   services = null,              // 服务调用入口（宿主注入）；同页插件与宿主同文档，直连
   openArgs = null,              // 打开参数（E2）：宿主 mount(id, args) 带进来
+  openPlugin = null,            // 跨插件打开（E2 触发源）；由宿主注入，见 host.js
 }) {
   const useShadow = !!manifest.shadow;
   const root = useShadow ? container.attachShadow({ mode: 'open' }) : container;
@@ -668,6 +708,7 @@ export function createModuleContext({
     transport, bus, theme, bindShortcut, owned,
     services,   // 同页插件与宿主同文档，宿主直接注入，不必绕桥接
     openArgs,
+    openPlugin, // 跨插件打开；同页由宿主注入，没注入时 buildCtx 会退到桥接
   });
 
   // 卸载时兜底注销所有快捷键，杜绝监听器残留
