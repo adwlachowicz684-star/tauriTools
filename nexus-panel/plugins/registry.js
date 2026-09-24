@@ -50,6 +50,7 @@ export const plugins = [
     type: 'module',
     entry: noBuild ? './plugins/home/index.js' : './plugins/home/module.tsx',
     theme: 'dark',
+    followsTheme: true,   // 同页插件，观感由外壳主题变量驱动，不参与反转
     requiresBuild: !noBuild,
     builtin: true,
     description: '运行环境与插件清单',
@@ -82,6 +83,15 @@ export const plugins = [
     entry: './plugins/demo-react/index.html',
     version: '1.0.0',
     theme: 'dark',
+    /*
+     * 本插件**跟随面板主题**：入口 HTML 读 nexus:preload-base / preload-bg
+     * 铺底色，颜色由外壳推过来的变量决定，不是写死的深色。
+     *
+     * 只写 theme:'dark' 而不标这个，适配层会按「自身固定深色」处理：
+     * 浅色面板（赤陶）下判定基调不等 → 施加反转滤镜
+     * → 已经变浅的界面被二次翻回深色。
+     */
+    followsTheme: true,
     requiresBuild: true,
     description: 'React + TSX 编写，跑在沙箱里，ctx 用法与同页插件完全一致',
   },
@@ -114,6 +124,7 @@ export const plugins = [
      */
     entry: noBuild ? './plugins/demo-module/index.js' : './plugins/demo-module/module.js',
     theme: 'dark',
+    followsTheme: true,   // 底色取 var(--surface-sunk)，由外壳主题驱动
     version: '1.0.0',
     description: '同页挂载，可直接调用 Rust',
   },
@@ -124,6 +135,7 @@ export const plugins = [
     type: 'iframe',
     entry: './plugins/demo-iframe/index.html',
     theme: 'dark',
+    followsTheme: true,   // html,body 背景透明、文字取 var(--text)，外壳主题直接透出
     version: '1.0.0',
     description: '不依赖构建工具的 iframe 插件',
   },
@@ -138,63 +150,6 @@ export const plugins = [
     theme: 'dark',
     followsTheme: true,
     description: '项目 / 项目组双栏管理：agent 链接分配、内容浏览、连锁指令、内置图标与备份',
-  },
-  {
-    /*
-     * md 插件 —— Markdown 阅读。
-     *
-     * 走**同页（module）**而不是 iframe：
-     * F6「主题跟随」要求颜色全部读宿主 CSS 变量（--bg / --surface / --text /
-     * --accent）。iframe 是独立文档，宿主样式进不来 —— demo-iframe 就是因为
-     * 漏引样式，打开后"只有文字"。同页则天然继承，不用额外补引。
-     *
-     * 它是内置插件（builtin: true），与宿主同文档不会引入不可信代码，
-     * 对应分级模型里的 L1（受信任、构建期扫过）。
-     *
-     * followsTheme 必须给：
-     * 少了它，切到浅色主题时界面已变浅，适配系统却照旧采样判成"插件深色"，
-     * 再施加 invert → 已变浅的部分被二次翻转。
-     * 这个标记的语义见 agent-flow 那段注释。
-     */
-    id: 'md',
-    name: 'Markdown',
-    icon: '▤',
-    type: 'module',
-    entry: './plugins/md/module.tsx',
-    version: '0.1.0',
-    theme: 'dark',
-    requiresBuild: true,
-    builtin: true,
-    followsTheme: true,
-    description: 'Markdown 阅读：粘贴/拖入/服务调用，跟随面板主题',
-  },
-  /*
-   * md-render —— md 插件的 **E3 服务入口**。
-   *
-   * 为什么单独一条、而不是给上面那条加 kind:'service'：
-   * 一个插件 id 只能有一种 kind。md 本身要显示在侧边栏（app），
-   * 服务入口只能另起一个 id。
-   *
-   * 目录必须独立（plugins/md-render/）：plugin-entries.js 的 Vite glob
-   * 只认 plugins/<id>/module.*，一个目录只能有一个同页入口，
-   * 而 md/module.tsx 已被 app 占用。详见 md-render/module.js 头部。
-   *
-   * 刻意 **不加 interactive**：渲染是纯计算，不需要用户看见。
-   * 加了会让宿主弹出居中浮层 —— 表现是"调一下闪一下空白框"。
-   *
-   * 也不加 followsTheme：它没有界面，谈不上跟随主题。
-   */
-  {
-    id: 'md-render',
-    name: 'Markdown 渲染',
-    icon: '▤',
-    kind: 'service',
-    type: 'module',
-    entry: './plugins/md-render/module.js',
-    version: '0.1.0',
-    requiresBuild: true,
-    builtin: true,
-    description: 'Markdown 渲染服务：其它插件经 ctx.services.call 调用，返回 HTML 字符串',
   },
   {
     id: 'mindmap',
@@ -261,6 +216,7 @@ export const plugins = [
     entry: './plugins/demo-service/index.html',
     version: '1.0.0',
     theme: 'dark',
+    followsTheme: true,   // 同样读 preload-base 铺底，跟随面板，不参与反转
     description: '示例服务插件：不进侧边栏，由其它插件通过 ctx.services.call 调用',
   },
   {
@@ -281,6 +237,7 @@ export const plugins = [
     type: 'module',
     entry: noBuild ? './plugins/settings/index.js' : './plugins/settings/module.tsx',
     theme: 'dark',
+    followsTheme: true,   // 同页插件，观感由外壳主题变量驱动，不参与反转
     requiresBuild: !noBuild,
     builtin: true,
     description: '主题、强调色、插件主题适配、插件管理',
