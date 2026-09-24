@@ -80,4 +80,53 @@ console.log('\n=== 5. 不重建组件（换目标不能丢状态）===');
   t('没有用 key 绑目标', !/key=\{iconTarget|key=\{selCard|key=\{dialog\.card/.test(host));
 }
 
+console.log('\n=== #153 图标网格贴边自动滚动 ★★ ===');
+{
+  const g = fs.readFileSync(path.join(HERE, 'components/PresetIconGrid.tsx'), 'utf8');
+
+  /* 一、得真的接上 hook。
+     此前 #104 的 hook 只被 CardGrid 用，图标网格（122 个内置图标、
+     限高 340px、overflow:auto）拖到边缘完全不滚 ——
+     排在后面看不见的图标根本拖不到，用户只能先滚再拖来回倒腾。 */
+  t('引入了 useEdgeAutoScroll', /import \{ useEdgeAutoScroll \}/.test(g));
+  t('hook 绑在网格容器上', /useEdgeAutoScroll\(gridRef,/.test(g));
+  t('active 只在真拖拽时为真', /useEdgeAutoScroll\(gridRef, iconDrag !== null\)/.test(g));
+
+  /*
+   * 二、**声明顺序**：hook 必须在 iconDrag 之后。
+   *
+   * `const` 有暂时性死区（TDZ），在 `const [iconDrag] = useState(...)`
+   * 之前读 `iconDrag` 会抛 ReferenceError —— 而且是**运行时**才炸，
+   * 语法检查（括号配对那套）完全看不出来。
+   * 我第一版就是放在了 gridRef 旁边（靠前），语法检查全绿。
+   */
+  const iDrag = g.indexOf('const [iconDrag, setIconDrag]');
+  const iHook = g.indexOf('useEdgeAutoScroll(gridRef,');
+  t('iconDrag 已声明', iDrag > 0);
+  t('hook 调用在 iconDrag 声明之后（TDZ）', iHook > iDrag && iDrag > 0,
+    `iconDrag@${iDrag} hook@${iHook}`);
+
+  /* 三、容器上要有 dragover：指针停在边缘时常常落在格子之间的空隙，
+     那里没有 item 的 handler，不挂就记不到指针位置 → 不滚。 */
+  const gi = g.indexOf('className="fpx-icongrid"');
+  const gridBlock = g.slice(gi, g.indexOf('>', gi) + 200);
+  t('网格容器挂了 onDragOver', /onDragOver/.test(gridBlock));
+  t('网格容器记下了指针位置', /ptrRef\.current = \{ x: e\.clientX, y: e\.clientY \}/.test(gridBlock));
+  t('指针位置交给 hook', /onGridDragOver\(e\)/.test(gridBlock));
+
+  /*
+   * 四、滚动后必须重算落点（#153 的另一半，只加滚动是不够的）。
+   *
+   * dragover 只在指针移动时触发，贴边滚动期间指针不动 →
+   * 高亮停在滚动前那个格子上，而它已滚出视野。用户看着空处松手，
+   * 图标被放到一个他没看见的位置。
+   */
+  t('网格容器挂了 onScroll', /onScroll=\{\(\) =>/.test(g));
+  t('滚动时按当前指针重算落点', /elementFromPoint/.test(g));
+  t('重算结果写回 iconOver', /setIconOver\(i\)/.test(g));
+  const si = g.indexOf('onScroll={() => {');
+  const scrollBlock = g.slice(si, si + 500);
+  t('只在真拖拽时重算（否则普通滚动会乱标）', /if \(!iconDrag \|\| !p\) return;/.test(scrollBlock));
+}
+
 done();

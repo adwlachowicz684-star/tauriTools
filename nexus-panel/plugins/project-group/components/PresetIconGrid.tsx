@@ -12,6 +12,8 @@ import { resolveMoveIndex, clampIndex, gapIndexAtX } from '../utils/dragSort';
 import { pruneGroups, staleByList, staleByProbe, totalRemoved } from '../utils/iconGroups';
 /* #146 图标网格高度自适应：与 #147 模板框共用同一个测量 hook */
 import { useAvailableHeight } from '../hooks/useAvailableHeight';
+/* #153 拖图标到网格上下边缘时自动滚动（与卡片列表同源，同一个 hook）。 */
+import { useEdgeAutoScroll } from '../hooks/useEdgeAutoScroll';
 /* #7 剪贴板图片 → 多尺寸 ICO（与设置页「软件图标」那处共用同一份转换）。
    urlToBase64 同样从 utils 走：那边是分块实现，这边不再自写一份逐字节拼接的。 */
 import { imageToIcoBase64, urlToBase64 } from '../utils/ico';
@@ -52,6 +54,7 @@ export function PresetIconGrid({
   /** #146 图标网格：限高容器 */
   const gridRef = useRef<HTMLDivElement>(null);
   const gridH = useAvailableHeight(gridRef, { minHeight: 120, bottomGap: 14 });
+
 
   const [active, setActive] = useState<string>(DEFAULT_GROUP);
   const [addMode, setAddMode] = useState(false);
@@ -199,6 +202,23 @@ export function PresetIconGrid({
    */
   const [iconDrag, setIconDrag] = useState<string | null>(null);
   const [iconOver, setIconOver] = useState<number | null>(null);
+
+  /*
+   * #153 贴边自动滚动（与卡片列表同源，同一个 hook）。
+   *
+   * active 直接绑 `iconDrag !== null`：只有真拖拽时才起 rAF 循环，
+   * 松手（onDragEnd）/ 落下（onDrop）置空后循环自动停 ——
+   * 忘了停的话容器会一直自己滚，用户松手了界面还在动。
+   *
+   * **必须放在 iconDrag 声明之后**：`const` 有暂时性死区（TDZ），
+   * 在这之前读它会抛 ReferenceError，而且是**运行时**才炸，
+   * 语法检查看不出来。
+   *
+   * 指针位置另存一份（ptrRef）是给下面 onScroll 用的：hook 内部的
+   * pointerY 不外露，而滚动后要靠它重新判断"指针下是谁"。
+   */
+  const ptrRef = useRef<{ x: number; y: number } | null>(null);
+  const { onDragOver: onGridDragOver } = useEdgeAutoScroll(gridRef, iconDrag !== null);
 
   /* ---------------- 分组重排（#73）---------------- */
   const [groupDrag, setGroupDrag] = useState<string | null>(null);
@@ -524,7 +544,32 @@ export function PresetIconGrid({
         /* #146 高度自适应：可用高 = 弹窗可视高 − 上方占用 − 底部留白。
            量不到时（不在弹窗里 / 首帧）传 null，CSS 里那条 340px 兜底仍在。 */
         <div className="fpx-icongrid" ref={gridRef}
-          style={gridH ? { maxHeight: gridH } : undefined}>
+          style={gridH ? { maxHeight: gridH } : undefined}
+          /* 容器上也要挂 dragover：指针停在边缘时往往落在格子之间的空隙里，
+             那里没有 item 的 handler，不挂就记不到指针位置 → 不滚。 */
+          onDragOver={(e) => {
+            ptrRef.current = { x: e.clientX, y: e.clientY };
+            onGridDragOver(e);
+          }}
+          /*
+           * 滚动后重算落点（#153 的另一半）。
+           *
+           * 只加自动滚动是不够的：`dragover` **只在指针移动时触发**，
+           * 贴边滚动期间指针不动 → 高亮仍停在滚动前那个格子上，
+           * 而它已经滚出视野了。用户看着空处松手，图标被放到一个
+           * 他没看见的位置 —— 这正是"改了不该改的地方"。
+           *
+           * 所以每滚一跳就用 elementFromPoint 按**当前**指针位置重算。
+           */
+          onScroll={() => {
+            const p = ptrRef.current;
+            if (!iconDrag || !p) return;
+            const el = document.elementFromPoint(p.x, p.y);
+            const item = el?.closest('.fpx-icongrid-item');
+            if (!item?.parentElement) return;
+            const i = Array.prototype.indexOf.call(item.parentElement.children, item);
+            if (i >= 0) setIconOver(i);
+          }}>
           {shown.map((n, i) => (
             <div
               key={n}
