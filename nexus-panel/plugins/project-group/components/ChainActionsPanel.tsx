@@ -241,10 +241,10 @@ export function ChainActionsPanel({
       guardClose={dirty && !saving}
       footer={
         <>
-          <button className="p-btn" onClick={addCustom}>＋ 自定义动作</button>
+          <button className="p-btn sm" onClick={addCustom}>＋ 自定义动作</button>
           <span style={{ flex: 1 }} />
-          <button className="p-btn" onClick={onClose}>关闭</button>
-          <button className="p-btn primary" disabled={!dirty || saving} onClick={() => void save()}>
+          <button className="p-btn sm" onClick={onClose}>关闭</button>
+          <button className="p-btn sm primary" disabled={!dirty || saving} onClick={() => void save()}>
             {saving ? '保存中…' : '保存'}
           </button>
         </>
@@ -361,8 +361,7 @@ export function ChainActionsPanel({
                   {/* 只有内置动作有"默认名"可回退；自定义动作的名字就是用户自己起的 */}
                   {defaultNameOf(cur.builtin) && (
                     <button
-                      className="p-btn"
-                      style={{ height: 32, padding: '0 10px' }}
+                      className="p-btn sm"
                       title={`恢复为默认名称「${defaultNameOf(cur.builtin)}」`}
                       onClick={() => patch(cur.id, { name: defaultNameOf(cur.builtin) })}
                     >
@@ -379,8 +378,7 @@ export function ChainActionsPanel({
                 <div className="p-row" style={{ justifyContent: 'space-between' }}>
                   <label style={{ margin: 0 }}>图标</label>
                   <button
-                    className="p-btn"
-                    style={{ height: 26, padding: '0 8px' }}
+                    className="p-btn sm"
                     title="把图标恢复为默认值（内置动作回到出厂图标，自定义动作回到 🧩）"
                     onClick={() => patch(cur.id, { icon: defaultIconOf(cur.builtin) })}
                   >
@@ -464,7 +462,7 @@ export function ChainActionsPanel({
                     }}
                   />
                   <button
-                    className="p-btn"
+                    className="p-btn sm"
                     disabled={!cur.shortcut}
                     onClick={() => patch(cur.id, { shortcut: null })}
                   >
@@ -525,7 +523,7 @@ export function ChainActionsPanel({
               </div>
 
               {canRemove(cur.builtin, devMode) && (
-                <button className="p-btn danger" style={{ marginTop: 'var(--sp-6, 12px)' }}
+                <button className="p-btn sm danger" style={{ marginTop: 'var(--sp-6, 12px)' }}
                   onClick={() => remove(cur.id)}>
                   {cur.builtin ? '删除该内置动作（开发者模式）' : '删除该自定义动作'}
                 </button>
