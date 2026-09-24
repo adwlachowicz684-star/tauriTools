@@ -25,6 +25,29 @@
     .preview pre { background: rgba(128,128,128,.15); padding: 8px; border-radius: 4px; overflow: auto; }
     .preview blockquote { margin: .5em 0; padding-left: 8px;
                           border-left: 3px solid var(--accent, #3E63DD); opacity: .85; }
+    /*
+     * 服务返回的 HTML 带 .markdown-body 包裹（见 md-render），
+     * 而降级路径的极简版输出是裸标签。所以两套选择器都要有样式：
+     *   · .preview h1            —— 命中降级路径的裸标签
+     *   · .preview .markdown-body h1 —— 命中服务路径
+     * 上面已有的 h1/code/pre/blockquote 是**后代**选择器，
+     * 对两条路径都生效；这里只补以前缺的：表格、列表、图片、
+     * 分隔线、删除线、任务列表勾选框。
+     */
+    .preview ul, .preview ol { margin: .4em 0; padding-left: 1.4em; }
+    .preview li { margin: .15em 0; }
+    .preview table { margin: .5em 0; border-collapse: collapse; font-size: 11px; }
+    .preview th, .preview td {
+      padding: 3px 8px; border: 1px solid var(--edge, #444); text-align: left;
+    }
+    .preview th { background: rgba(128,128,128,.12); }
+    .preview img { max-width: 100%; }
+    .preview hr { border: 0; height: 1px; margin: .8em 0;
+                  background: var(--edge, #444); }
+    .preview del { opacity: .7; }
+    .preview input[type="checkbox"] { margin-right: 4px; }
+    /* 代码块里的语言标记（服务路径才有） */
+    .preview pre code { display: block; }
     .foot { display: flex; gap: 6px; margin-top: 8px; }
     .hint { opacity: .6; font-size: 11px; }
   </style>

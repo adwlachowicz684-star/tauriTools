@@ -89,8 +89,37 @@ function render(md) {
   return out.join('\n');
 }
 
+/*
+ * F11 —— 预览改用共享的 `md-render` 服务，不再自己渲染一遍。
+ * ============================================================
+ *
+ * 为什么要换：仓库里一度存在**两套 md 渲染器**（本文件的极简版 +
+ * md 插件的 react-markdown 版）。两套并存的实际后果不是"多一份代码"，
+ * 而是**表现不一致**：同一段 md 在编辑预览里显示成 A，在阅读器里显示成 B。
+ * 实测极简版缺这些：引用（> 被先转义吃掉）、图片（渲染成 !<a>）、
+ * 有序列表降级成 ul、无任务列表、无删除线、代码块语言标记丢失、
+ * 标题无 id、缩进嵌套被拍平，且 `javascript:` 协议未过滤。
+ *
+ * 为什么不直接删掉极简版：**必须留作降级**。
+ * 本插件是 iframe，走桥接调服务；服务没注册 / 桥接超时 / 返回空时，
+ * 若没有降级就只剩一块空白预览 —— 那比"显示得不完美"糟得多。
+ * 所以：优先服务，任何异常都回退极简版，且**静默**（弹窗会打断编辑）。
+ */
+async function renderHtml(ctx, text) {
+  const fallback = () => render(text);
+  if (!ctx || typeof ctx.services?.call !== 'function') return fallback();
+  try {
+    const html = await ctx.services.call('md-render', 'renderToHtml', { text: text || '' });
+    if (typeof html === 'string' && html.trim()) return html;
+    return fallback();
+  } catch {
+    /* 服务不可用就用自带的 —— 不 rethrow：预览失败不该让整个编辑器打不开 */
+    return fallback();
+  }
+}
+
 /** 打开编辑面板，返回编辑后的文本；取消则 reject */
-async function edit({ text = '', title = 'Markdown' } = {}) {
+async function edit({ text = '', title = 'Markdown' } = {}, ctx) {
   const ui = document.getElementById('ui');
   if (!ui) throw new Error('md 服务：找不到挂载点');
 
@@ -108,8 +137,29 @@ async function edit({ text = '', title = 'Markdown' } = {}) {
 
     const ta = el('textarea', { value: text, spellcheck: false });
     const pv = el('div', { className: 'preview' });
-    const paint = () => { pv.innerHTML = render(ta.value); };
-    ta.addEventListener('input', paint);
+
+    /*
+     * paintSeq —— 异步渲染的**竞态**防护。
+     *
+     * 走服务后 paint 变成异步：打字快时多个请求同时在飞，
+     * 先发的可能后回来。不加序号的话会出现"预览显示的是几秒前的内容"，
+     * 而且再敲一个键又变对 —— 这类时好时坏最难查。
+     * 只认**最后一次**请求的结果。
+     */
+    let paintSeq = 0;
+    /* 防抖：每敲一个键都发一次桥接请求太频繁，120ms 肉眼无感 */
+    let debounce = 0;
+    const paint = async () => {
+      const my = ++paintSeq;
+      const html = await renderHtml(ctx, ta.value);
+      if (my !== paintSeq) return;          // 已有更新的请求，丢弃
+      pv.innerHTML = html;
+    };
+    const paintSoon = () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(paint, 120);
+    };
+    ta.addEventListener('input', paintSoon);
 
     /* 工具栏：对选区做前后包裹。
        用 setRangeText 而不是整体替换 —— 后者会丢光标位置，
@@ -172,6 +222,10 @@ bootServicePlugin({
   /** 打开编辑面板，返回编辑后的文本 */
   async edit(args = {}) { return edit(args); },
 
-  /** 只要渲染结果（调用方自己做编辑框时用） */
-  async render({ text } = {}) { return render(text); },
+  /*
+   * 只要渲染结果（调用方自己做编辑框时用）。
+   * 同样优先共享服务 —— 否则"服务返回 A、本方法返回 B"，
+   * 调用方拿到的和预览里看到的对不上。
+   */
+  async render({ text } = {}, ctx) { return renderHtml(ctx, text); },
 });
