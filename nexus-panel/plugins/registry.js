@@ -168,6 +168,34 @@ export const plugins = [
     followsTheme: true,
     description: 'Markdown 阅读：粘贴/拖入/服务调用，跟随面板主题',
   },
+  /*
+   * md-render —— md 插件的 **E3 服务入口**。
+   *
+   * 为什么单独一条、而不是给上面那条加 kind:'service'：
+   * 一个插件 id 只能有一种 kind。md 本身要显示在侧边栏（app），
+   * 服务入口只能另起一个 id。
+   *
+   * 目录必须独立（plugins/md-render/）：plugin-entries.js 的 Vite glob
+   * 只认 plugins/<id>/module.*，一个目录只能有一个同页入口，
+   * 而 md/module.tsx 已被 app 占用。详见 md-render/module.js 头部。
+   *
+   * 刻意 **不加 interactive**：渲染是纯计算，不需要用户看见。
+   * 加了会让宿主弹出居中浮层 —— 表现是"调一下闪一下空白框"。
+   *
+   * 也不加 followsTheme：它没有界面，谈不上跟随主题。
+   */
+  {
+    id: 'md-render',
+    name: 'Markdown 渲染',
+    icon: '▤',
+    kind: 'service',
+    type: 'module',
+    entry: './plugins/md-render/module.js',
+    version: '0.1.0',
+    requiresBuild: true,
+    builtin: true,
+    description: 'Markdown 渲染服务：其它插件经 ctx.services.call 调用，返回 HTML 字符串',
+  },
   {
     id: 'mindmap',
     name: '思维导图',
