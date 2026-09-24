@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { RemoveCardDialog } from './dialogCards';
+import { RemoveCardDialog } from './dialogs';
 import { RenameDialog } from './RenameDialog';
 import { RenameContentDialog } from './RenameContentDialog';
-import { CreateDialog, IconPickDialog, LockDialog, StyleDialog } from './dialogCards';
+import { CreateDialog, IconPickDialog, LockDialog, StyleDialog } from './dialogs';
 import { DirDialog } from './DirDialog';
 import { TabManagerDialog } from './TabManagerDialog';
 import { ChainConfirmDialog } from './ChainConfirmDialog';
@@ -22,9 +22,9 @@ import {
    等哪天误发一条时根本想不起来是在这里关的。 */
 import { setSkipConfirm } from '../utils/confirmOnce';
 import type {
-  Bootstrap, CardInfo, CardKind, ChainAction, LockStateLive,
+  CardInfo, CardKind, ChainAction, LockStateLive,
 } from '../types';
-import type { FpxStore } from '../hooks/useFpx';
+import type { FpxStoreReady } from '../hooks/useFpx';
 
 /**
  * 弹窗的**全部**形态——集中一处，App 里只留 `<Dialogs .../>` 一行。
@@ -45,10 +45,7 @@ export type Dialog =
   /** #14 从文件管理器拖进来时打开（带拖入的名字当提示） */
   | { type: 'pickDir'; kind: CardKind; tabIndex?: number; droppedName?: string }
   | { type: 'create'; kind: CardKind }
-  /* #419 kind 一并带过来：保护弹窗要显示"项目 / 项目组"徽章。
-     两栏都能调出这个弹窗，路径长得又像，没有徽章的话用户无从确认
-     自己正在给**哪一个**上锁 —— 而锁错对象的代价是目录被系统拦住。 */
-  | { type: 'lock'; card: CardInfo; kind: CardKind }
+  | { type: 'lock'; card: CardInfo }
   | { type: 'style'; card: CardInfo }
   | { type: 'icons'; card: CardInfo }
   | { type: 'backup' }
@@ -91,20 +88,13 @@ export interface PendingSend {
 }
 
 export interface DialogsProps {
-  s: FpxStore;
+  s: FpxStoreReady;
   dialog: Dialog;
   setDialog: (d: Dialog) => void;
   /** 执行搬家：选完目标目录后调用（含监控器抑制，见 App） */
   doMove: (card: CardInfo, kind: CardKind, dest: string) => void;
   /** 内容区条目改名 */
-  /**
-   * 返回**是否成功**（不是 void）。
-   *
-   * 弹窗靠这个返回值决定"关闭"还是"留在原地显示错误"。
-   * 若是 void，调用方只能无条件当成成功 —— 失败时弹窗照样关闭，
-   * 用户看到的是"点了确定、什么都没发生、也没报错"。
-   */
-  doRenameContent: (path: string, name: string) => Promise<boolean>;
+  doRenameContent: (path: string, name: string) => void;
   /** 连锁动作清单：确认弹窗要显示动作名 */
   chainActions: ChainAction[];
   pendingSend: PendingSend | null;
@@ -124,25 +114,6 @@ export interface DialogsProps {
   openIconPicker: (card: CardInfo) => Promise<void>;
   iconFiles: string[];
   setIconFiles: (v: string[]) => void;
-}
-
-/**
- * 找某项目的**逐名**链接明细。
- *
- * 用卡片上的 `linkDetails`（后端按磁盘反查）而不是账本 `links`：
- * 账本一条记录只有一个 group，多个链接名指向不同组时必然有行是错的（#202）。
- * 卡片不在任何页签里时返回 undefined —— 那时对话框退化成"不显示徽章"，
- * 比显示错的强。
- */
-function cardDetails(boot: Bootstrap, project: string) {
-  const norm = (x: string) => x.replace(/[\\/]+$/, '').toLowerCase();
-  const key = norm(project);
-  for (const t of [...(boot.projectTabs ?? []), ...(boot.groupTabs ?? [])]) {
-    for (const c of t.items ?? []) {
-      if (norm(c.path ?? '') === key) return c.linkDetails;
-    }
-  }
-  return undefined;
 }
 
 export function Dialogs(props: DialogsProps) {
@@ -310,7 +281,6 @@ export function Dialogs(props: DialogsProps) {
       {dialog.type === 'lock' && (
         <LockDialog
           path={dialog.card.path}
-          kind={dialog.kind}
           denyDelete={dialog.card.denyDelete}
           denyWrite={dialog.card.denyWrite}
           /*
@@ -379,7 +349,10 @@ export function Dialogs(props: DialogsProps) {
         <RenameContentDialog
           name={dialog.name}
           onClose={() => setDialog({ type: 'none' })}
-          onSubmit={(n) => doRenameContent(dialog.path, n)}
+          onSubmit={async (n) => {
+            await doRenameContent(dialog.path, n);
+            return true;
+          }}
         />
       )}
 
@@ -511,7 +484,7 @@ export function Dialogs(props: DialogsProps) {
           group={confirmLink.group}
           config={boot.config}
           allNames={boot.allNames ?? []}
-          details={cardDetails(boot, confirmLink.project)}
+          links={boot.links ?? []}
           onConfirm={(names) => {
             setConfirmLink(null);
             /* #200 走 sync 而不是 create：取消勾选的名字要真的删掉、释放名字。
@@ -617,7 +590,7 @@ function HelpDialog({
           键位可在「设置 → 快捷键」里改。
         </div>
         <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 'var(--sp-8, 16px)' }}>
-          <button className="p-btn primary" onClick={onClose}>知道了</button>
+          <button className="p-btn sm primary" onClick={onClose}>知道了</button>
         </div>
 
         {/* 底边拖动把手（#56）：只有记住了高度才渲染 ——
