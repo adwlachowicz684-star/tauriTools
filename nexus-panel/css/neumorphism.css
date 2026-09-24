@@ -1967,3 +1967,93 @@ html.theme-transition *:not(.spinner) {
    用 outline 而不是 border —— border 会改变盒模型尺寸，
    一进一出导致整个插件布局抖一下。 */
 .md-wrap.is-drag { outline: 2px dashed var(--accent); outline-offset: -3px; }
+
+/* ---- md · 代码块复制 / 目录 / 右键菜单（批次 3） ----
+   全部走令牌，不写死色值：写死后切主题时唯独这几处是另一个体系的，
+   且这类"局部不跟随"不会报错，只能靠肉眼发现。 */
+
+/* 代码块顶栏 */
+.md-code-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2, 8px);
+  margin: 0 0 var(--sp-2, 8px);
+  padding-bottom: var(--sp-2, 8px);
+  border-bottom: 1px solid var(--border);
+}
+.md-code-lang {
+  font-size: 11px;
+  letter-spacing: .04em;
+  color: var(--muted);
+}
+.md-code-copy {
+  font-size: 11px;
+  padding: 2px var(--sp-2, 8px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.md-code-copy:hover { color: var(--text); border-color: var(--accent); }
+.md-code-copy.is-ok { color: var(--accent); border-color: var(--accent); }
+.md-code-copy.is-fail { color: var(--danger); border-color: var(--danger); }
+
+/* 目录栏 */
+.md-toc {
+  border-bottom: 1px solid var(--border);
+  padding: var(--sp-2, 8px) var(--sp-3, 12px);
+  max-height: 30vh;
+  overflow: auto;
+}
+.md-toc-list { list-style: none; margin: 0; padding: 0; }
+/* 按级别缩进：level 直接进类名，不用内联 style（内联样式吃不到主题） */
+.md-toc-lv1 { padding-left: 0; }
+.md-toc-lv2 { padding-left: 10px; }
+.md-toc-lv3 { padding-left: 20px; }
+.md-toc-lv4 { padding-left: 30px; }
+.md-toc-lv5 { padding-left: 40px; }
+.md-toc-lv6 { padding-left: 50px; }
+.md-toc-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+  padding: 1px 0;
+  cursor: pointer;
+  /* 长标题截断：不截断会把整个目录栏撑宽，挤压正文 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.md-toc-item:hover { color: var(--text); }
+.md-toc-item.is-on { color: var(--accent); }
+
+/* 右键菜单：fixed + z-index 才不会被引流区裁掉 */
+.md-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 140px;
+  padding: var(--sp-1, 4px) 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  box-shadow: var(--shadow-md, 0 6px 20px rgba(0, 0, 0, .28));
+}
+.md-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  padding: var(--sp-2, 8px) var(--sp-3, 12px);
+  cursor: pointer;
+}
+.md-menu-item:hover { background: var(--accent); color: var(--bg); }

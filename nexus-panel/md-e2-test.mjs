@@ -203,8 +203,15 @@ t('读失败有提示（不静默）', /读取失败/.test(appC));
  */
 console.log('\n=== 5. 命令白名单 ===');
 
-t('invoke-policy 里 md 只登记了 fpx_read_file',
-  /md: \['fpx_read_file'\]/.test(policy));
+/*
+ * md 现在两条：fpx_read_file（E2 读路径）+ fpx_copy_text（批次 3 复制）。
+ * 断言写成"必须含这两条、且不含任何 M 类"而不是钉死数组字面量 ——
+ * 钉死的话每加一条合法命令都要回来改测试，"忘了改"会被误判成安全回归。
+ */
+t('md 登记了 fpx_read_file（E2 读路径）',
+  /md: \[[^\]]*'fpx_read_file'/.test(policy));
+t('md 登记了 fpx_copy_text（复制）',
+  /md: \[[^\]]*'fpx_copy_text'/.test(policy));
 t('md 未登记任何 M 类能力（run_node / webhook / window_action）',
   !/md: \[[^\]]*(run_node|webhook_start|window_action)/.test(policy));
 

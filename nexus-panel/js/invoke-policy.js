@@ -108,7 +108,12 @@ export const PLUGIN_COMMANDS = {
    *    所以它是"任意路径读取"，只因 md 是内置插件（builtin: true）才给。
    *    第三方插件要这条必须单独评估 —— 拿到它等于能读整机任意文本。
    */
-  md: ['fpx_read_file'],
+  /*
+   * fpx_copy_text —— 写系统剪贴板（S 类）。
+   * 代码块复制与右键菜单都要它。前端 navigator.clipboard 在插件里
+   * 拿不到 allow-clipboard-write，会**静默失败**，所以必须走后端。
+   */
+  md: ['fpx_read_file', 'fpx_copy_text'],
 
   /*
    * agent-flow

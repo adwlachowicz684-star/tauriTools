@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { REMARK_PLUGINS, REHYPE_PLUGINS, urlTransform } from './render-config';
 import {
@@ -7,6 +7,10 @@ import {
   looksBinary,
   titleOf,
 } from './drop-file';
+import { reactTextOf } from './text-of';
+import { copyText } from './clipboard';
+import { headingsOf, activeIdOf } from './toc';
+import { targetOf, menuItemsFor } from './ctx-menu';
 
 /**
  * md 插件主界面
@@ -79,6 +83,50 @@ const SAMPLE = [
  */
 const MAX_READ_CHARS = 8 * 1024 * 1024;
 
+/**
+ * 代码块：顶栏 + 复制按钮（F2/F3）。
+ * ============================================================
+ * 覆盖的是 `pre` 而不是 `code`：
+ *   块级代码渲染成 pre > code.language-xxx，内联代码只有 code。
+ *   覆盖 code 的话要把两种形态分开判断，而 pre 天然只命中块级，
+ *   不用判也不会误伤行内代码。
+ *
+ * 语言标记从子元素 code 的 className 上取 ——
+ * rehype-highlight 把原始 ```js 的 "js" 放在那里。
+ */
+function CodeBlock({ ctx, children, ...rest }: any) {
+  const [state, setState] = useState('idle');   // idle | ok | fail
+  const codeEl = Array.isArray(children) ? children[0] : children;
+  const raw = useMemo(() => reactTextOf(codeEl?.props?.children), [codeEl]);
+  const lang = String(codeEl?.props?.className || '')
+    .match(/language-([\w+#.-]+)/)?.[1] || '';
+
+  const onCopy = useCallback(async () => {
+    const ok = await copyText(ctx, raw);
+    setState(ok ? 'ok' : 'fail');
+    /* 复位：不复位的话复制第二个块时，第一个块的"已复制"还挂着，
+       看起来像新那次没生效 */
+    setTimeout(() => setState('idle'), 1500);
+  }, [ctx, raw]);
+
+  return (
+    <pre {...rest}>
+      <div className="md-code-bar" contentEditable={false}>
+        <span className="md-code-lang">{lang || 'text'}</span>
+        <button
+          type="button"
+          className={`md-code-copy is-${state}`}
+          onClick={onCopy}
+          title="复制代码"
+        >
+          {state === 'ok' ? '已复制' : state === 'fail' ? '复制失败' : '复制'}
+        </button>
+      </div>
+      {children}
+    </pre>
+  );
+}
+
 export default function MdApp({ ctx }: { ctx?: any } = {}) {
   const [src, setSrc] = useState(SAMPLE);
   /* 当前文件名。空串 = 内容是粘贴/默认的，不是从文件来的。 */
@@ -86,24 +134,103 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
   const [hint, setHint] = useState('');
   const [dragging, setDragging] = useState(false);
 
+  /* 渲染区容器。TOC 与右键菜单都要它，见下面各自说明。 */
+  const outRef = useRef<any>(null);
+
+  /*
+   * F4 目录。
+   *
+   * 在**渲染之后**从 DOM 里读，而不是先解析源码算锚点：
+   * id 由 rehype-slug（github-slugger）生成，带去重与 emoji 处理，
+   * 自己照抄一份必然漂移，表现是"点了 TOC 没反应"且不报错。
+   * 直接问 DOM 就没有重复逻辑。
+   *
+   * 依赖里必须带 body：body 换了 DOM 才重建，
+   * 只依赖 src 的话在极端情况下会读到上一帧的 DOM。
+   */
+  const [toc, setToc] = useState<any[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  /* 滚动高亮：挂在**容器**上而不是 window ——
+     滚动的是 .md-out 自己，window 根本不滚，挂上去永远不触发。 */
+  const onOutScroll = useCallback(() => {
+    setActiveId(activeIdOf(toc, outRef.current));
+  }, [toc]);
+
+  const onTocClick = useCallback((id: string) => {
+    const el = outRef.current?.querySelector(`[id="${id.replace(/["\\]/g, '\\$&')}"]`);
+    /* 用 scrollIntoView 而不是算 offsetTop：
+       后者在嵌套滚动容器里要逐级累加，漏一级就滚错位置。 */
+    el?.scrollIntoView({ block: 'start' });
+    setActiveId(id);
+  }, []);
+
+  /*
+   * F5 右键菜单。
+   * 菜单项由 ctx-menu 生成，复制走 clipboard.copyText。
+   */
+  const [menu, setMenu] = useState<any>(null);
+
+  const onContextMenu = useCallback((e: any) => {
+    const t = targetOf(e.target);
+    /* 不是链接/图片就不接管：让浏览器原生菜单出来。
+       一律接管会让"想复制正文"变得做不到。 */
+    if (!t) { setMenu(null); return; }
+    const items = menuItemsFor(t);
+    if (!items.length) { setMenu(null); return; }
+    e.preventDefault();
+    setMenu({ x: e.clientX, y: e.clientY, items, kind: t.kind });
+  }, []);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const onKey = (ev: any) => { if (ev.key === 'Escape') setMenu(null); };
+    /* 捕获阶段：菜单自己内部也监听的话，点菜单项会先关菜单再点不到按钮。
+       用捕获 + 判断来源更稳，这里直接监听 document 的 click（含菜单内），
+       菜单项的 onClick 会先跑（冒泡到 document 之前），所以顺序是对的。 */
+    document.addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('click', close);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menu]);
+
   /*
    * 渲染结果按 src 记忆化。
    * 不 memo 的话，输入框每敲一个字符都整篇重新解析 ——
    * 小文档无感，批次 4 要上大文档虚拟滚动，那时每键全量重解析会直接卡死。
    * 位置先定在这里，批次 4 只需换掉 ReactMarkdown，不用改调用点。
    */
+  const components = useMemo(
+    () => ({ pre: (props: any) => <CodeBlock ctx={ctx} {...props} /> }),
+    [ctx],
+  );
+
   const body = useMemo(
     () => (
       <ReactMarkdown
         remarkPlugins={REMARK_PLUGINS}
         rehypePlugins={REHYPE_PLUGINS}
         urlTransform={urlTransform}
+        components={components}
       >
         {src}
       </ReactMarkdown>
     ),
-    [src],
+    [src, components],
   );
+
+  /*
+   * 目录在**渲染之后**从 DOM 读，所以依赖 body 而不是 src：
+   * body 换了 DOM 才重建，依赖 src 会读到上一帧。
+   */
+  useEffect(() => {
+    const items = headingsOf(outRef.current);
+    setToc(items);
+    setActiveId(null);
+  }, [body]);
 
   const onDrop = useCallback(async (e) => {
     /*
@@ -204,6 +331,29 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
         </span>
         {hint ? <span className="md-hint">{hint}</span> : null}
       </div>
+      {/*
+        目录栏：没有标题时不渲染整栏。
+        渲染空栏会留一条永远空白的窄条，看着像布局坏了。
+      */}
+      {toc.length ? (
+        <nav className="md-toc">
+          <div className="md-pane-t">目录 · {toc.length}</div>
+          <ul className="md-toc-list">
+            {toc.map((it, i) => (
+              <li key={`${it.id}-${i}`} className={`md-toc-lv${it.level}`}>
+                <button
+                  type="button"
+                  className={`md-toc-item${activeId === it.id ? ' is-on' : ''}`}
+                  onClick={() => onTocClick(it.id)}
+                  title={it.text}
+                >
+                  {it.text}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      ) : null}
       <div className="md-panes">
         <div className="md-pane">
           <div className="md-pane-t">Markdown 源</div>
@@ -225,9 +375,44 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
         </div>
         <div className="md-pane">
           <div className="md-pane-t">渲染结果</div>
-          <div className="md-out markdown-body">{body}</div>
+          <div
+            className="md-out markdown-body"
+            ref={outRef}
+            onScroll={onOutScroll}
+            onContextMenu={onContextMenu}
+          >
+            {body}
+          </div>
         </div>
       </div>
+      {/*
+        右键菜单：定位于 clientX/clientY（视口坐标），
+        父级是 position:relative 的 md-wrap，直接减它的矩形即可。
+        不用 pageX：那在有滚动时会算出屏幕外。
+      */}
+      {menu ? (
+        <div
+          className="md-menu"
+          style={{ left: menu.x, top: menu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {menu.items.map((it: any) => (
+            <button
+              type="button"
+              key={it.key}
+              className="md-menu-item"
+              onClick={async () => {
+                const ok = await copyText(ctx, it.value);
+                setMenu(null);
+                if (!ok) setHint('复制失败：剪贴板不可用');
+                else setHint(`已${it.label}`);
+              }}
+            >
+              {it.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
