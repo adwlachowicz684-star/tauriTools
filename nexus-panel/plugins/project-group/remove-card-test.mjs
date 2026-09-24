@@ -47,7 +47,8 @@ console.log('\n=== 3. 两套都要清（#13 / #113）===');
 {
   const mod = strip(fs.readFileSync(path.join(RS, 'mod.rs'), 'utf8'));
   const body = mod.slice(mod.indexOf('pub fn fpx_remove_card'));
-  const seg = body.slice(0, body.indexOf('/// 扫描项目组下的'));
+  /* 收尾锚点用代码（下一个函数签名），不用文档注释 */
+  const seg = body.slice(0, body.indexOf('pub fn fpx_scan_content'));
   t('清 folder_icons', /cfg\.folder_icons\.retain/.test(seg));
   t('清 folder_gui_icons', /cfg\.folder_gui_icons\.retain/.test(seg));
   t('清 tag_colors', /cfg\.tag_colors\.retain/.test(seg));
