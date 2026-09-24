@@ -328,38 +328,12 @@ export function useFpx() {
 
   const removeCard = useCallback(async (kind: CardKind, path: string, tabIndex?: number) => {
     const idx = tabIndex ?? activeTab[kind];
-    /*
-     * 「一条都没删掉」必须说出来。
-     *
-     * 后端 `fpx_remove_card` 是按归一化键匹配（Windows 下大小写不敏感 + 去尾斜杠），
-     * 这里按原文精确比 —— 配置被手改过、或路径来源不同时两边判据就不同：
-     * 后端认得的这里认不得。此前这种情形是**静默无操作**：保存照样成功，
-     * 于是日志写"已移除"而卡片仍在，用户只能以为功能坏了。
-     *
-     * 不改成归一化比较是有意的：Linux 下 `\` 是合法文件名字符，
-     * 一律 `\`→`/` 会把两个不同目录判成同一个，删错东西比删不掉更糟。
-     */
-    let removed = false;
-    let exists = false;
     const snap = await updateConfig((d) => {
       const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
-      const t = tabs[idx];
-      if (!t) return;
-      exists = true;
-      const before = t.items.length;
-      t.items = t.items.filter((p) => p !== path);
-      removed = t.items.length < before;
+      if (tabs[idx]) tabs[idx].items = tabs[idx].items.filter((p) => p !== path);
     });
     /* 同上：保存失败就不能写"已移除"，否则日志说移走了、卡片还在 */
     if (!snap) return;
-    if (!exists) {
-      pushLog(`未移除：页签下标 ${idx} 不存在（${path}）`, true);
-      return;
-    }
-    if (!removed) {
-      pushLog(`未移除：该页签里没有这一条（${path}）`, true);
-      return;
-    }
     pushLog(`已从页签移除：${path}`);
   }, [activeTab, pushLog, updateConfig]);
 
@@ -386,9 +360,7 @@ export function useFpx() {
     kind: CardKind, path: string, toTabIndex: number, toIndex: number,
     fromTabIndex?: number,
   ) => {
-    /* 同 removeCard：`moved` 用来把"静默没动"变成一句明确的提示 */
-    let moved = false;
-    const snap = await updateConfig((d) => {
+    await updateConfig((d) => {
       const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
       if (tabs.length === 0) return;
       // 掐头去尾：先把目标位置定在合法范围内，再摘卡（摘卡不影响页签数）
@@ -412,16 +384,8 @@ export function useFpx() {
       const target = tabs[tab];
       const i = Math.max(0, Math.min(toIndex, target.items.length));
       target.items.splice(i, 0, path);
-      moved = true;
     });
-    /*
-     * 拖了却没生效一定要说出来，否则表现就是"拖完回弹、什么都没发生"，
-     * 用户无法区分"这个位置不允许放"和"保存失败"。
-     */
-    if (snap && !moved) {
-      pushLog(`未移动：没在源页签里找到这一条（${path}）`, true);
-    }
-  }, [pushLog, updateConfig]);
+  }, [updateConfig]);
 
   /**
    * 跨类别移动卡片（项目 ⇄ 项目组）。
@@ -560,21 +524,6 @@ export function useFpx() {
       pushLog(`已同步：${project} → ${group}（${row?.names.length ?? 0} 个链接）`);
       ctx.toast('链接已同步', 'ok');
     }
-    /*
-     * 部分没做成的（名字被普通目录占着、没能删）要单独说出来。
-     *
-     * 这类情况后端不算失败 —— 其余链接都同步好了，报成"同步链接失败"
-     * 会让用户以为整次操作都没生效。但也不能不说：他取消了那个名字，
-     * 界面上却还占着位置，没有任何提示，只能以为软件在随机丢东西。
-     */
-    if (snap && snap.linkNotices && snap.linkNotices.length > 0) {
-      const msg = snap.linkNotices.join('；');
-      pushLog(`同步链接：${msg}`, true);
-      /* 用 err 而不是 info：需要用户手动处理，不处理会一直占着位置 */
-      ctx.toast(msg, 'err');
-    }
-    return snap;
-
   }, [api, applySnapshot, ctx, pushLog, run]);
 
   const removeLink = useCallback(async (project: string) => {
@@ -737,3 +686,22 @@ export function useFpx() {
 }
 
 export type FpxStore = ReturnType<typeof useFpx>;
+
+/*
+ * **boot 已就绪**的 store：与 FpxStore 唯一的区别是 boot 不为 null。
+ *
+ * 为什么要有这个类型，而不是在使用处写 `boot!`：
+ *   App 里 `if (!boot) return <加载失败/>` 之后才渲染弹窗，
+ *   所以 Dialogs 拿到的 boot **必然**非 null —— 这是由调用顺序保证的事实。
+ *   但 FpxStore 的 boot 是 `Bootstrap | null`，类型层面无从体现，
+ *   于是弹窗里每一处 `boot.config` 都报 TS18047（本轮实测 19 处）。
+ *
+ *   用 `boot!` 逐个掩盖是最糟的做法：它把"这里不会是 null"这个判断
+ *   **复制到 19 个地方**，以后谁改了 App 的提前 return，19 处断言全部
+ *   悄悄变成谎言，而编译器一声不响。
+ *
+ *   收紧 props 类型则是**在一处**表达这个事实：调用方必须证明 boot 已就绪
+ *   才能把 store 传进来。App 那两行提前 return 就是这个证明，
+ *   将来若被删掉，编译器会在**调用处**报错，而不是在 19 个使用处沉默。
+ */
+export type FpxStoreReady = Omit<FpxStore, 'boot'> & { boot: Bootstrap };
