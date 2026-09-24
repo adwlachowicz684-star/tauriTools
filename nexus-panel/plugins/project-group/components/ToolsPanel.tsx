@@ -463,8 +463,15 @@ export function ServiceBody({
   const [interval, setInterval] = useState(config.watchIntervalSecs || 30);
 
   useEffect(() => {
-    api.mcpStatus().then((s) => setMcpOn(s.running)).catch(() => {});
-  }, [api]);
+    /*
+     * 不能 `.catch(() => {})`：取不到状态时按钮停在「启动」，
+     * 而 server 可能**正在跑** —— 用户点启动会撞上端口占用，
+     * 报错还指不到"其实已经起来了"。说一句，让他先点停止。
+     */
+    api.mcpStatus()
+      .then((s) => setMcpOn(s.running))
+      .catch((e) => onLog(`读取 MCP 状态失败（按钮显示的可能不准）：${errText(e)}`, true));
+  }, [api, onLog]);
 
   const toggleMcp = async () => {
     try {
@@ -484,20 +491,48 @@ export function ServiceBody({
     }
   };
 
+  /*
+   * `watchStart` / `watchStop` 返回的是 **bool**（真的启/停成功了吗），
+   * 不是抛异常。返回 false = 没成功，必须**当成失败处理**。
+   *
+   * 原来的写法把它当成功：照样 `onSaved({ watchEnabled: true })`
+   * 并记一句「已开始监听受保护目录」。于是 ——
+   *
+   *   1. 配置被写成"启用监听"，但线程根本没起来；
+   *   2. 下次进插件，`useState(config.watchEnabled)` 让按钮显示「停止监听」，
+   *      而实际没在监听 —— **界面说在监听，其实没有**；
+   *   3. 自动恢复那段又是同样的写法，再记一句"已恢复监听"。
+   *
+   * 后果是：受保护目录被外部改动时**完全没有告警**，而用户从头到尾
+   * 看到的是"监听中"。这是"防写入"这条线上最难查的一种失效 ——
+   * 没有任何报错，只是该响的警报永远不响。
+   *
+   * 失败时**不写 watchEnabled**：留着旧值，下次进来还会再试一次；
+   * 写成 true 又起不来，等于把"恢复"这条路也堵死了。
+   */
   const toggleWatch = async () => {
     try {
       if (watchOn) {
-        await api.watchStop();
-        setWatchOn(false);
-        onWatchToggled(false);
+        const ok = await api.watchStop();
+        setWatchOn(!ok);
+        onWatchToggled(!ok);
+        if (!ok) {
+          onLog('停止监听失败：监听线程可能仍在运行，请重启插件', true);
+          return;
+        }
         onSaved({ watchEnabled: false, watchIntervalSecs: interval });
         onLog('已停止监听');
       } else {
-        const ok = await api.watchStart(Math.max(5, interval));
+        const secs = Math.max(5, interval);
+        const ok = await api.watchStart(secs);
         setWatchOn(ok);
         onWatchToggled(ok);
-        onSaved({ watchEnabled: true, watchIntervalSecs: interval });
-        onLog(`已开始监听受保护目录（每 ${Math.max(5, interval)} 秒检查一次）`);
+        if (!ok) {
+          onLog('开始监听失败：监听线程未能启动，配置未改动', true);
+          return;
+        }
+        onSaved({ watchEnabled: true, watchIntervalSecs: secs });
+        onLog(`已开始监听受保护目录（每 ${secs} 秒检查一次）`);
       }
     } catch (e) {
       onLog(`监听操作失败：${errText(e)}`, true);

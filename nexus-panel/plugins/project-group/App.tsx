@@ -88,6 +88,17 @@ export default function App() {
     s.api.watchStart(boot.config.watchIntervalSecs)
       .then((ok) => {
         setWatchOn(ok);
+        /*
+         * `ok` 是 bool（线程真的起来了吗），**不是**抛异常。返回 false 时
+         * 原来照样记"已按上次设置恢复监听"，与 ToolsPanel 那处同一个 bug：
+         * 配置写着启用、日志写着已恢复、按钮显示"停止监听"，而线程根本没起来
+         * → 受保护目录被改动时**一条告警都没有**。
+         * 说清配置仍是"启用"：下次进入还会重试，也提示他手动启一次。
+         */
+        if (!ok) {
+          s.pushLog('恢复监听失败：线程未能启动（配置仍是"启用"，下次进入会重试）', true);
+          return;
+        }
         s.pushLog('已按上次设置恢复受保护目录监听');
       })
       .catch((e) => s.pushLog(`恢复监听失败：${String(e)}`, true));
