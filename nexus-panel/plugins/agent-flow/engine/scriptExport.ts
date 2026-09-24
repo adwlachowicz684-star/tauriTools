@@ -23,6 +23,7 @@
 import type { Graph, GraphNode } from '../types';
 import { topoLayers } from './topo';
 import { opBrief } from './ops';
+import { paramLinksOf, linksInto } from './paramLinks';
 
 export type ExportFormat = 'shell' | 'python' | 'json' | 'markdown';
 
@@ -140,6 +141,35 @@ function jsonPathExpr(path: string, style: 'sh' | 'py'): string {
   return `d${chain}`;
 }
 
+
+/*
+ * 参数连线在脚本里的**显式说明**。
+ *
+ * 画布上跑时，参数连线把来源节点的 output 填进目标参数；
+ * 而脚本里这一行取的是**节点上手填的值** —— 只有产出值的少数节点
+ * （常量、时钟、提取…）会赋给一个变量，多数节点（日志、等待、HTTP…）
+ * 根本没有对应的变量可供引用，翻译不过去。
+ *
+ * 所以按本文件自己的原则：翻译不了就写成注释标出来，绝不静默。
+ * 不标的话用户会拿到一份"能跑、但值和画布上不一样"的脚本，
+ * 而没有任何线索 —— 那正是本文件开头批判的那件事。
+ */
+function paramLinkNoteOf(
+  g: Graph,
+  nodeId: string,
+  prefix: string,
+): string[] {
+  const links = linksInto(paramLinksOf(g.edges), nodeId);
+  if (links.length === 0) return [];
+  return links.map((l) => {
+    const src = g.nodes.find((x) => x.id === l.source);
+    const srcName = str((src?.data as Record<string, unknown> | undefined)?.label
+      ?? (src?.data as Record<string, unknown> | undefined)?.name) || l.source;
+    return `${prefix}注意：参数「${l.targetArg}」在画布上来自「${srcName}」的输出，`
+      + `这里取的是节点上填的值 —— 两者可能不同`;
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /* Shell                                                               */
 /* ------------------------------------------------------------------ */
@@ -196,7 +226,7 @@ function toShell(g: Graph): ExportResult {
    * 用户会拿到一份"少了几个节点"的脚本而毫无线索。
    */
   const skipped: Skipped[] = [];
-  const { layers, cyclic } = topoLayers(g);
+  const { layers, cyclic } = topoLayers(g, paramLinksOf(g.edges));
   const order: string[] = [];
   for (const l of layers) for (const id of l) order.push(id);
   for (const id of cyclic) {
@@ -218,6 +248,7 @@ function toShell(g: Graph): ExportResult {
     const line = shellLine(n, skipped);
     if (line) { lines.push(line); count += 1; }
     else { lines.push(`# TODO 未翻译：${id}（${str((n.data as Record<string, unknown>)?.kind ?? '')}）`); }
+    lines.push(...paramLinkNoteOf(g, id, '# '));
   }
   return { text: lines.join('\n') + '\n', skipped, count };
 }
@@ -280,7 +311,7 @@ function toPython(g: Graph): ExportResult {
    * 用户会拿到一份"少了几个节点"的脚本而毫无线索。
    */
   const skipped: Skipped[] = [];
-  const { layers, cyclic } = topoLayers(g);
+  const { layers, cyclic } = topoLayers(g, paramLinksOf(g.edges));
   const order: string[] = [];
   for (const l of layers) for (const id of l) order.push(id);
   for (const id of cyclic) {
@@ -317,6 +348,7 @@ function toPython(g: Graph): ExportResult {
     const line = pyLine(n, skipped, '    ');
     if (line) { lines.push(line); count += 1; }
     else { lines.push(`    # TODO 未翻译：${id}（${str((n.data as Record<string, unknown>)?.kind ?? '')}）`); }
+    lines.push(...paramLinkNoteOf(g, id, '    # '));
   }
   lines.push('', '', 'if __name__ == "__main__":', '    main()', '');
   return { text: lines.join('\n'), skipped, count };
@@ -349,7 +381,7 @@ function toMarkdown(g: Graph): ExportResult {
    * 用户会拿到一份"少了几个节点"的脚本而毫无线索。
    */
   const skipped: Skipped[] = [];
-  const { layers, cyclic } = topoLayers(g);
+  const { layers, cyclic } = topoLayers(g, paramLinksOf(g.edges));
   const order: string[] = [];
   for (const l of layers) for (const id of l) order.push(id);
   for (const id of cyclic) {
@@ -384,6 +416,13 @@ function toMarkdown(g: Graph): ExportResult {
     if (kind === 'condition' || kind === 'loop' || kind === 'parallel') {
       skipped.push({ id, kind, reason: '控制流的结构在说明里只有顺序，看不到分支' });
       lines.push('- ⚠ 控制流节点：说明里只能体现顺序，分支/循环结构请看画布');
+    }
+    /*
+     * 与 shell / python 同一口径：参数连线也要标。
+     * 三处各写一份容易漏，漏的那份就是"这一步的说明看着完整其实是错的"。
+     */
+    for (const note of paramLinkNoteOf(g, id, '  ')) {
+      lines.push(`- ⚠ ${note.replace(/^\s*/, '')}`);
     }
     lines.push('');
   }

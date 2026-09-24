@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { exportFlow, exportAll, EXPORT_FORMATS } from '../engine/scriptExport';
+import { readSrc } from './srcScan';
 
 const n = (id: string, kind: string, data = {}) => ({
   id, data: { kind, label: id, status: 'idle', output: '', error: '', ...data },
@@ -151,4 +152,41 @@ test('成环的节点要被标出来，不能静默丢掉', () => {
     [e('a1', 'b1'), e('b1', 'a1')],
   ), 'shell');
   assert.ok(r.skipped.some((x) => x.reason.includes('环')), '成环没被标记');
+});
+
+/* ------------------------------------------------------------------ */
+/* 参数连线与导出                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 导出的脚本必须把参数连线**计入排序**。
+ *
+ * 运行时（runner）是计入的，导出若不计入，
+ * 生成的脚本里来源会排在目标**之后** —— 目标拿到空值，
+ * 于是"画布上跑是对的，导出的脚本跑出来不对"，
+ * 而脚本能生成、能执行，完全没有报错。
+ */
+test('导出排序计入参数连线（与运行时同一口径）', () => {
+
+  const src = readSrc('engine/scriptExport.ts');
+  assert.ok(/topoLayers\(g,\s*paramLinksOf\(g\.edges\)\)/.test(src),
+    '导出必须把参数连线传给 topoLayers');
+  // 不能还留着不带参数连线的旧写法
+  assert.ok(!/topoLayers\(g\);/.test(src), '还有一处排序漏了参数连线');
+});
+
+/**
+ * 参数连线在脚本里翻译不过去，必须**写出来**。
+ *
+ * 脚本里取的是节点上手填的值，而画布上跑时取的是来源节点的输出。
+ * 只有少数节点（常量、时钟…）会赋给一个变量可供引用，
+ * 多数（日志、等待、HTTP…）根本没有 —— 翻译不了就得标出来，
+ * 否则用户拿到一份"能跑但值不对"的脚本而毫无线索。
+ */
+test('有参数连线的节点在脚本里要标注（不能静默取手填值）', () => {
+
+  const src = readSrc('engine/scriptExport.ts');
+  assert.ok(/paramLinkNoteOf/.test(src), '必须显式标出参数连线造成的差异');
+  assert.ok(/paramLinkNoteOf\(g, id, '# '\)/.test(src), 'shell 要标');
+  assert.ok(/paramLinkNoteOf\(g, id, '    # '\)/.test(src), 'python 要标');
 });

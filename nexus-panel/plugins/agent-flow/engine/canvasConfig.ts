@@ -247,9 +247,17 @@ export function syncMcpFromLibrary(
 ): McpServer | null {
   const hit = lib.find((x) => x.id === s.credentialId);
   if (!hit) return null;
+  /*
+   * 名字要按**去空格后是否为空**判断，不能用 ??。
+   *
+   * 连接条目名字是空串时 ?? 不回退（'' 不是 null/undefined），
+   * 会把画布上这条的名字清空 —— 而节点是靠名字引用服务的，
+   * 名字一空，画布上所有引用它的节点全部"找不到服务"，且不提示原因。
+   */
+  const nm = (hit.name ?? '').trim();
   return {
     ...s,
-    name: hit.name ?? s.name,
+    name: nm || s.name,
     command: hit.command ?? '',
     url: hit.url ?? '',
     env: { ...(hit.env ?? {}) },

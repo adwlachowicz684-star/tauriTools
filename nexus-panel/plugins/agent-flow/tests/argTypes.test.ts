@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { argTypeIssues, valueKindOf, argTypedKinds } from '../engine/argTypes';
 import { validateNode, badgeTextOf } from '../engine/nodeValidate';
+import { readSrc } from './srcScan';
 
 /**
  * 参数类型校验。
@@ -146,4 +147,63 @@ test('有契约的种类都在清单里（用于核对覆盖）', () => {
   for (const k of ['math', 'compare', 'text', 'random']) {
     assert.ok(kinds.includes(k), `${k} 该有类型契约`);
   }
+});
+
+/* ------------------------------------------------------------------ */
+/* 覆盖守卫：加新运算不能忘了配类型规则                                  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 节点定义里列出的每个运算，类型表里都要有对应 ——
+ * 或明确写着"不校验"。
+ *
+ * 这张表是**手写维护**的（engine/argTypes.ts 的 RULES），
+ * 加一个新运算时很容易只在节点定义里加、忘了配规则。
+ * 后果是"漏报"：填错了类型不标红，而漏报在界面上完全没有痕迹 ——
+ * 不像报错那样会被发现，只能靠这条守卫盯。
+ *
+ * 所以这里直接拿节点定义文件里的选项去比对，
+ * 而不是再抄一份运算清单（抄一份本身就可能抄漏）。
+ */
+test('节点定义里的每个运算都有类型规则或显式豁免', () => {
+  const pairs: { file: string; kind: string }[] = [
+    { file: 'nodes/defs/math.ts', kind: 'math' },
+    { file: 'nodes/defs/compare.ts', kind: 'compare' },
+    { file: 'nodes/defs/text.ts', kind: 'text' },
+    { file: 'nodes/defs/random.ts', kind: 'random' },
+  ];
+  const rulesSrc = readSrc('engine/argTypes.ts');
+
+  for (const { file, kind } of pairs) {
+    const def = readSrc(file);
+    // 节点定义里 op 这个 select 的选项
+    const opts = [...def.matchAll(/\{\s*value:\s*'([a-zA-Z0-9_]+)'/g)].map((m) => m[1]);
+    assert.ok(opts.length > 0, `${file} 里没解析到运算选项 —— 守卫本身失效了`);
+
+    // 取该 kind 的 rules 块
+    /*
+     * 用 [\s\S] 而不是 . —— 默认的 . 不跨行，
+     * 而 `by: 'op',` 与 `rules: {` 之间是有换行的。
+     * 用 . 的话正则永远匹配不上，守卫会去报"没有这一节"，
+     * 那是**守卫自己错了**，比没有守卫更糟（会误导人去改对的代码）。
+     */
+    const block = new RegExp(`\\n  ${kind}:\\s*\\{\\s*by:[\\s\\S]*?rules:\\s*\\{([\\s\\S]*?)\\n  \\},`).exec(rulesSrc);
+    assert.ok(block, `类型表里没有 ${kind} 这一节`);
+    const covered = [...block[1].matchAll(/^\s{6}([a-zA-Z0-9_]+):/gm)].map((m) => m[1]);
+
+    const missing = opts.filter((o) => !covered.includes(o));
+    assert.deepEqual(missing, [], `${kind} 有运算没配类型规则：${missing.join('、')}`);
+  }
+});
+
+/*
+ * 「选一个」必须用逗号分隔的列表，那是文本 ——
+ * 按数字校验会把 "a,b,c" 标红，那是误报，比漏报更糟。
+ */
+test('随机选一个 / 打乱按文本校验，不能按数字', () => {
+  // "a,b,c" 是合法用法，不该报错
+  assert.deepEqual(argTypeIssues('random', { kind: 'random', op: 'pick', a: 'a,b,c' }), []);
+  assert.deepEqual(argTypeIssues('random', { kind: 'random', op: 'shuffle', a: 'x,y' }), []);
+  // 而整数上下界仍要数字
+  assert.ok(argTypeIssues('random', { kind: 'random', op: 'int', a: 'abc', b: '10' }).length > 0);
 });
