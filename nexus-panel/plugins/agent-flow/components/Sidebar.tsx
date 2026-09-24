@@ -355,7 +355,7 @@ export default function Sidebar({
 
         {groups.length === 0 ? (
           <div className="side-empty">
-            还没有节点 —— 在凭据中心配一个 MCP 服务，再点刷新
+            还没有节点 —— 在连接管理器配一个 MCP 服务，再点刷新
           </div>
         ) : null}
 

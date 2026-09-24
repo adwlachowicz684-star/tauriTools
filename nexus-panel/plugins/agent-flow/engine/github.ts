@@ -542,7 +542,7 @@ export function b64Encode(s: string): string {
   return out;
 }
 
-/** 凭据校验：GET /user，顺便读 X-OAuth-Scopes */
+/** 连接校验：GET /user，顺便读 X-OAuth-Scopes */
 export async function verifyToken(f: Fetcher, token: string): Promise<TokenCheck> {
   const r = await f('https://api.github.com/user', { headers: authHeaders(token) });
   const h = lowerHeaders(r.headers || {});

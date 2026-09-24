@@ -24,19 +24,19 @@ import { osKeyringGet, osKeyringSet, osKeyringDelete } from '../lib/tauri';
  */
 export const VAULT_MODE_META: Record<VaultMode, { label: string }> = {
   auto: { label: '本机加密' },
-  oskeyring: { label: 'OS 凭据管理器' },
+  oskeyring: { label: 'OS 连接管理器' },
   passphrase: { label: '口令加密' },
 };
 
 export const CRED_KEY = 'agent-flow.credentials.v1';
 
 /**
- * 凭据库（加密存储 + 解锁 + 换保管方式）。
+ * 连接库（加密存储 + 解锁 + 换保管方式）。
  *
  * ================= 为什么第一个拆它 ====================
  *
  * App.tsx 曾三千七百多行、四十多个 useState。
- * 凭据这块是全应用**最独立**的一块：只依赖"画布列表"（迁移老节点上的
+ * 连接这块是全应用**最独立**的一块：只依赖"画布列表"（迁移老节点上的
  * 内联密钥）和一个写日志的回调，与画布交互、执行流程没有牵扯。
  * 从最独立的拆起，一次一块。
  *
@@ -80,7 +80,7 @@ export function useCredentialVault({
 }) {
 
   /*
-   * 老节点上的内联密钥 → 收进凭据中心。
+   * 老节点上的内联密钥 → 收进连接管理器。
    *
    * 迁移要读"当前画布"，但把它放进 useCallback 的依赖会让回调每次改画布就重建，
    * 进而让所有依赖它的 effect 反复重注册。用 ref 读最新值，依赖保持为空。
@@ -98,12 +98,12 @@ export function useCredentialVault({
   }, [canvasesRef, setCanvases]);
 
   /**
-   * 凭据单独存一个 key，不混进画布存档。
+   * 连接单独存一个 key，不混进画布存档。
    * 画布会被导出分享，密钥一旦进去就等于交出去了；
    * 分开存之后，导出的文件里只有 credentialId，没有密钥本身。
    */
   /* ---------------------------------------------------------------- *
-   * 凭据库（加密）                                                    *
+   * 连接库（加密）                                                    *
    *                                                                   *
    * 内存里是明文，磁盘上是密文。加解密只在 load / save 两个出入口做，  *
    * 组件照常读写 credential.secret，不需要知道加密的存在 ——             *
@@ -116,7 +116,7 @@ export function useCredentialVault({
   const [vaultKey, setVaultKey] = useState<string | null>(null);
   const [credOpen, setCredOpen] = useState(false);
   const [credFocus, setCredFocus] = useState<string>('');
-  /** 凭据中心打开时停在哪一页（'mcp' = 从工具栏 MCP 状态插件进来） */
+  /** 连接管理器打开时停在哪一页（'mcp' = 从工具栏 MCP 状态插件进来） */
   const [credPage, setCredPage] = useState<'cred' | 'mcp'>('cred');
   const [unlockErr, setUnlockErr] = useState('');
   const [cryptoWarn, setCryptoWarn] = useState('');
@@ -126,17 +126,17 @@ export function useCredentialVault({
    *
    * 盐的存放位置（审查项 A-02）：
    *   旧行为是生成后存进 localStorage —— 同一页面上的任何脚本都能读走它，
-   *   配合公开的本机特征就能算出凭据密钥。现在改为优先用 Rust 侧的盐
+   *   配合公开的本机特征就能算出连接密钥。现在改为优先用 Rust 侧的盐
    *   （存在应用数据目录，要调 af_device_salt 才拿得到）。
    *
    * 但**已有数据的老用户必须继续用原来那个盐** ——
-   * 换盐等于把已存的凭据全部锁死，那比"盐可被读到"严重得多。
+   * 换盐等于把已存的连接全部锁死，那比"盐可被读到"严重得多。
    * 所以只有"存盘里还没有盐"（新安装）这一条路径才走 Rust。
    */
   useEffect(() => {
     const be = beRef.current;
     if (!be) {
-      setCryptoWarn('当前环境不支持 WebCrypto，凭据将以明文保存。请避免在公用设备上使用。');
+      setCryptoWarn('当前环境不支持 WebCrypto，连接将以明文保存。请避免在公用设备上使用。');
       return;
     }
     setCryptoWarn('');
@@ -152,7 +152,7 @@ export function useCredentialVault({
     };
 
     /*
-     * oskeyring 模式：主密钥不在数据目录里，去 OS 凭据管理器取。
+     * oskeyring 模式：主密钥不在数据目录里，去 OS 连接管理器取。
      *
      * 与 auto 完全无关，所以**不走盐那条路** —— 混着走的话，
      * 一旦拿了设备盐派生出的密钥去解 OS 密钥加密的数据，
@@ -177,8 +177,8 @@ export function useCredentialVault({
            * 假的安全感比没有更糟。明确说出来，让他自己决定换哪种。
            */
           setCryptoWarn(
-            `OS 凭据管理器不可用（${plan.reason}）。当前**没有**启用任何主密钥，`
-            + '请在凭据中心改用「本机加密」或「口令加密」。',
+            `OS 连接管理器不可用（${plan.reason}）。当前**没有**启用任何主密钥，`
+            + '请在连接管理器改用「本机加密」或「口令加密」。',
           );
           return;
         }
@@ -188,9 +188,9 @@ export function useCredentialVault({
         const wrote = await osKeyringSet(key);
         if (!alive) return;
         if (!wrote.ok) {
-          setCryptoWarn(`无法把主密钥写进 OS 凭据管理器（${wrote.reason}）。`
-            + '为了避免凭据永久解不开，本次**没有**启用加密。'
-            + '请在凭据中心改用「本机加密」或「口令加密」。');
+          setCryptoWarn(`无法把主密钥写进 OS 连接管理器（${wrote.reason}）。`
+            + '为了避免连接永久解不开，本次**没有**启用加密。'
+            + '请在连接管理器改用「本机加密」或「口令加密」。');
           return;
         }
         const back = await osKeyringGet();
@@ -202,8 +202,8 @@ export function useCredentialVault({
            * 此时若拿它加密，下次再也解不开 —— 那是数据丢失，不是报错能挽回的。
            * 所以宁可不加密，也要把话说清楚。
            */
-          setCryptoWarn(`${check.reason}。为避免凭据永久解不开，本次**没有**启用加密。`
-            + '请在凭据中心改用「本机加密」或「口令加密」。');
+          setCryptoWarn(`${check.reason}。为避免连接永久解不开，本次**没有**启用加密。`
+            + '请在连接管理器改用「本机加密」或「口令加密」。');
           return;
         }
         setVaultKey(key);
@@ -227,20 +227,20 @@ export function useCredentialVault({
       })
       .catch(() => { if (alive) useSalt(newDeviceSalt(be), true); });
     return () => { alive = false; };
-    // 只运行一次：mode 与凭据由下面两个 effect 负责
+    // 只运行一次：mode 与连接由下面两个 effect 负责
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /*
-   * 刚从磁盘解出来的凭据，快照一份。
+   * 刚从磁盘解出来的连接，快照一份。
    *
-   * 用来让下面那个"凭据变化 → 加密落盘"跳过无谓的一轮：
+   * 用来让下面那个"连接变化 → 加密落盘"跳过无谓的一轮：
    * 解密完 setCredentials 会触发它，于是又把同样的内容重新加密一遍 ——
-   * 每条凭据一次 PBKDF2（约 50ms），纯属白跑，磁盘上本来就已是这个状态。
+   * 每条连接一次 PBKDF2（约 50ms），纯属白跑，磁盘上本来就已是这个状态。
    */
   const loadedCredsRef = useRef<{ list: Credential[]; key: string } | null>(null);
 
-  // 解锁状态变化（或换模式后）→ 解密出运行时凭据
+  // 解锁状态变化（或换模式后）→ 解密出运行时连接
   useEffect(() => {
     const be = beRef.current;
     if (!be || vaultKey === null) return;
@@ -248,8 +248,8 @@ export function useCredentialVault({
     decryptStore(be, store, vaultKey).then((r) => {
       if (!alive) return;
       /*
-       * 迁移可能**新增**凭据（老节点上的 key 收进来）。
-       * 只 setCredentials 不落盘的话，刷新后新凭据消失，
+       * 迁移可能**新增**连接（老节点上的 key 收进来）。
+       * 只 setCredentials 不落盘的话，刷新后新连接消失，
        * 而节点上已经指向它 —— 表现为"配好了，重启就没了"。
        */
       const creds = migrateLlmNow(r.credentials);
@@ -259,7 +259,7 @@ export function useCredentialVault({
         void encryptStore(beRef.current!, store, creds, vaultKey);
       }
       if (r.failed.length > 0) {
-        setUnlockErr(`有 ${r.failed.length} 条凭据解不开，可能是口令不对或数据损坏。`);
+        setUnlockErr(`有 ${r.failed.length} 条连接解不开，可能是口令不对或数据损坏。`);
       }
     });
     return () => { alive = false; };
@@ -267,7 +267,7 @@ export function useCredentialVault({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vaultKey]);
 
-  // 凭据变化 → 加密落盘
+  // 连接变化 → 加密落盘
   useEffect(() => {
     const be = beRef.current;
     if (!be || vaultKey === null) return;
@@ -310,11 +310,11 @@ export function useCredentialVault({
   }, [store]);
 
   /**
-   * 切换加密方式：用新的主密钥重新加密全部凭据。
+   * 切换加密方式：用新的主密钥重新加密全部连接。
    *
    * 三种模式的主密钥来源完全不同，所以这里必须**分别取**：
    *   auto        设备特征派生（要盐）
-   *   oskeyring   OS 凭据管理器（要写进去并回读验证）
+   *   oskeyring   OS 连接管理器（要写进去并回读验证）
    *   passphrase  用户口令
    * 拿错一种去加密，结果是下次一条都解不开 —— 且界面上只会显示"口令不对"。
    */
@@ -326,10 +326,10 @@ export function useCredentialVault({
     if (mode === 'oskeyring') {
       const key = newOsKeyringKey((n) => be.randomBytes(n));
       const wrote = await osKeyringSet(key);
-      if (!wrote.ok) { onLog(`✗ 无法写入 OS 凭据管理器：${wrote.reason}`); return; }
+      if (!wrote.ok) { onLog(`✗ 无法写入 OS 连接管理器：${wrote.reason}`); return; }
       const back = await osKeyringGet();
       const check = judgeOsKeyringWrite(back, key);
-      if (!check.ok) { onLog(`✗ ${check.reason}。为避免凭据永久解不开，未切换。`); return; }
+      if (!check.ok) { onLog(`✗ ${check.reason}。为避免连接永久解不开，未切换。`); return; }
       newKey = key;
     } else if (mode === 'auto') {
       let salt = store.deviceSalt;
@@ -357,7 +357,7 @@ export function useCredentialVault({
     setStore(next);
     setVaultKey(newKey);
     try { localStorage.setItem(CRED_KEY, serializeStore(next)); } catch { /* 忽略 */ }
-    onLog(`✓ 凭据存储方式已改为${VAULT_MODE_META[mode].label}`);
+    onLog(`✓ 连接存储方式已改为${VAULT_MODE_META[mode].label}`);
   }, [store, credentials, onLog]);
   const openCredentials = useCallback((kind: string) => {
     setCredFocus(kind);
@@ -365,7 +365,7 @@ export function useCredentialVault({
   }, []);
 
   /*
-   * 外部（工具栏 MCP 状态插件）要打开凭据中心时走这里。
+   * 外部（工具栏 MCP 状态插件）要打开连接管理器时走这里。
    *
    * 状态在组件内部，外面调不到，所以由 main.tsx 把插件总线上的事件
    * 转成一个 window 事件，这里再接住。多绕一层是因为

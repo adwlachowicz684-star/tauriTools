@@ -46,11 +46,11 @@ export type TaskNodeData = {
   prompt: string;
   model: string;
   /**
-   * 模型清单从哪条凭据来。
+   * 模型清单从哪条连接来。
    *
    * 只作**清单来源**：模型名仍存在 model 上、运行时照旧读 model。
    * 之所以还要记这一条，是为了下次打开面板时下拉框还是那一家的清单 ——
-   * 不记的话换过凭据后，选中的模型会"跳回第一项"，
+   * 不记的话换过连接后，选中的模型会"跳回第一项"，
    * 界面与节点上实际存的值就对不上了。
    */
   credentialId?: string;
@@ -833,7 +833,7 @@ export type GenericHttpNodeData = {
   timeoutSec: number;
   /** 响应最大字节数，防止一个异常大的响应把面板拖垮 */
   maxBytesKb: number;
-  /** 从凭据库取令牌，自动加 Authorization: Bearer <token> */
+  /** 从连接库取令牌，自动加 Authorization: Bearer <token> */
   credentialId: string;
   /** 4xx/5xx 是否算节点失败。关掉则把错误响应也当正常输出，交给下游判断 */
   failOnHttpError: boolean;
@@ -1076,9 +1076,9 @@ export type GithubUpdateNodeData = {
   base: string;
   /** 策略顺序，前面失败了自动换后面 */
   order: GithubStrategy[];
-  /** 凭据 id；留空则用节点内联的 token */
+  /** 连接 id；留空则用节点内联的 token */
   credentialId: string;
-  /** 内联令牌（兼容旧画布；新配置请走凭据） */
+  /** 内联令牌（兼容旧画布；新配置请走连接） */
   token: string;
   status: NodeStatus;
   output: string;
@@ -1235,7 +1235,7 @@ export type OcrNodeData = {
   label: string;
   /** 大模型配置（与翻译节点共用） */
   llm: LlmConfig;
-  /** 凭据 id；留空则用 llm.apiKey 的内联值 */
+  /** 连接 id；留空则用 llm.apiKey 的内联值 */
   credentialId: string;
   imageSource: ImageSource;
   /** url 模式：图片地址；支持 {{上游.output}} */
@@ -1269,7 +1269,7 @@ export type TranslateNodeData = {
   kind: 'translate';
   label: string;
   llm: LlmConfig;
-  /** 凭据 id；留空则用 llm.apiKey 的内联值 */
+  /** 连接 id；留空则用 llm.apiKey 的内联值 */
   credentialId: string;
   /** 待翻译文本，支持 {{上游.output}} */
   text: string;
@@ -1340,8 +1340,8 @@ export function makeTranslateNode(id: string, partial: Partial<TranslateNodeData
  */
 export const VAULT_MODE_META: Record<VaultMode, { label: string; hint: string }> = {
   oskeyring: {
-    label: 'OS 凭据管理器',
-    hint: '主密钥存在 Windows 凭据管理器 / macOS 钥匙串里，不在应用数据目录 —— '
+    label: 'OS 连接管理器',
+    hint: '主密钥存在 Windows 连接管理器 / macOS 钥匙串里，不在应用数据目录 —— '
       + '拷走整个数据目录也解不开，且不用每次输口令。'
       + '能登录这台机器的人仍可取到，要防那个请用口令模式',
   },
@@ -1398,7 +1398,7 @@ export function makeGenericHttpNode(id: string, partial: Partial<GenericHttpNode
 /* ================================================================== */
 /* 工具节点：等待 / 日志标记 / 提示音 / 播放音频 / 当前时间 / 常量      */
 /*                                                                    */
-/* 这些节点都不依赖外部能力（不需要 CLI、凭据、文件系统通道），         */
+/* 这些节点都不依赖外部能力（不需要 CLI、连接、文件系统通道），         */
 /* 所以 engine/nodeRequires.ts 里没有它们 —— 也正因如此，             */
 /* 浏览器模式下同样可用。                                              */
 /* ================================================================== */

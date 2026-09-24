@@ -1,5 +1,5 @@
 /**
- * 凭据加密 —— 让 localStorage 里不再出现明文密钥。
+ * 连接加密 —— 让 localStorage 里不再出现明文密钥。
  *
  * 【防什么、不防什么，先说清楚】
  *  · 防得住：外部工具直接读取浏览器存储文件（Tauri 的 webview 数据
@@ -99,7 +99,7 @@ export function isCipherBundle(x: unknown): x is CipherBundle {
 }
 
 /**
- * 判断持久化下来的凭据是否需要迁移。
+ * 判断持久化下来的连接是否需要迁移。
  * 返回 'plain' 表示还是老格式（明文），'cipher' 表示已加密，'empty' 表示空。
  */
 export function secretKind(secret: unknown): 'plain' | 'cipher' | 'empty' {

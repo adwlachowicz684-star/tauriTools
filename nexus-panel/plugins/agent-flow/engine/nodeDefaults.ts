@@ -32,7 +32,7 @@ import { defaultKV, loadObject, type KV } from './kv';
  *
  *  3. 内联密钥：token / llm.apiKey / config.token
  *     默认值是明文存 localStorage 的，不能当密钥仓库用。
- *     凭据引用（credentialId）保留 —— 它只是个 id，不是密钥本身。
+ *     连接引用（credentialId）保留 —— 它只是个 id，不是密钥本身。
  */
 
 export const NODE_DEFAULTS_KEY = 'agent-flow.node-defaults.v1';

@@ -65,7 +65,7 @@ export const LLM_CONFIG_GROUP: VariableGroupDef = {
     return model ? `${provider} · ${model}` : provider;
   },
   /*
-   * 不校验 apiKey 是否已填：密钥走凭据中心或加密保险箱，
+   * 不校验 apiKey 是否已填：密钥走连接管理器或加密保险箱，
    * 卡片里存的是模型与供应商，本来就不该带密钥。
    */
   validate: (v) => {

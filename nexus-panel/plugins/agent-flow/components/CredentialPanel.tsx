@@ -16,12 +16,14 @@ import { PROVIDER_META, type LlmProvider } from '../engine/llm';
 import type { VaultMode } from '../engine/credentialStore';
 
 /**
- * 凭据中心。
+ * 连接管理器 —— 密钥与外部服务统一在一处管。
  *
  * 三件事：
  *  1. 保存前先校验 —— 手滑粘错一个字符，要等到节点运行时才报 401 就太晚了
  *  2. 校验出能力并展示 —— 用户能一眼看出这把密钥能干啥、不能干啥
- *  3. 按需跳转 —— 从节点面板点「去填写」过来时，自动选中对应类型并展开表单
+ *  3. 按需跳转 —— 从节点面板点「管理连接」过来时，自动选中对应类型并展开表单
+ *
+ * 分「密钥 / 服务」两页，理由见组件内 page 那处注释。
  */
 
 const KIND_META: Record<CredentialKind, { label: string; hint: string }> = {
@@ -38,7 +40,7 @@ const CAP_LABEL: Record<string, string> = {
   'llm:vision': '识图',
 };
 
-/** 哪些节点在用这条凭据 */
+/** 哪些节点在用这条连接 */
 function usersOf(list: Credential[], id: string): string[] {
   const out: string[] = [];
   for (const kind of Object.keys(NODE_NEEDS)) {
@@ -84,7 +86,7 @@ export function CredentialPanel({
   cryptoWarn?: string;
   /** 上一次解锁失败的原因 */
   unlockError?: string;
-  /* ---- MCP 服务（全局库，与凭据同一处管） ---- */
+  /* ---- MCP 服务（全局库，与连接同一处管） ---- */
   mcpServers?: GlobalMcpServer[];
   onMcpChange?: (next: GlobalMcpServer[]) => void;
   /** MCP 协议是否已接入。未接入时状态位明说，不给假绿勾 */
@@ -95,13 +97,13 @@ export function CredentialPanel({
   mcpRefreshing?: boolean;
   /**
    * 打开时停在哪一页。由外部（工具栏 MCP 状态插件）指定 ——
-   * 从 MCP 状态点进来就该直接看到 MCP 服务，而不是先看到凭据列表
+   * 从 MCP 状态点进来就该直接看到 MCP 服务，而不是先看到连接列表
    * 再让用户自己找标签页。
    */
   initialPage?: 'cred' | 'mcp';
 }) {
   /*
-   * 顶部分「凭据 / MCP 服务」两页。
+   * 顶部分「连接 / MCP 服务」两页。
    *
    * 两者性质一致：都是"这台机器上有什么外部能力"，
    * 都是全局的、都不随画布导出。分开两个入口的话，
@@ -182,21 +184,24 @@ export function CredentialPanel({
     <div className="cred-mask" onClick={onClose}>
       <div className="cred-panel" onClick={(e) => e.stopPropagation()}>
         <div className="cred-head">
-          <strong>凭据中心</strong>
+          <strong>连接管理器</strong>
           <span className="mcp-tabs" style={{ marginLeft: 'auto' }}>
             <button
               type="button"
               className={'mcp-tab' + (page === 'cred' ? ' on' : '')}
               onClick={() => setPage('cred')}
             >
-              凭据
+              密钥
+              {credentials && credentials.length > 0 ? (
+                <span className="mcp-tab-count">{credentials.length}</span>
+              ) : null}
             </button>
             <button
               type="button"
               className={'mcp-tab' + (page === 'mcp' ? ' on' : '')}
               onClick={() => setPage('mcp')}
             >
-              MCP 服务
+              服务
               {mcpServers && mcpServers.length > 0 ? (
                 <span className="mcp-tab-count">{mcpServers.length}</span>
               ) : null}
@@ -221,7 +226,7 @@ export function CredentialPanel({
         ) : (
           <>
         <div className="cred-tip">
-          密钥只存在本机，不会随画布导出 —— 导出的文件里只有凭据 ID。
+          密钥只存在本机，不会随画布导出 —— 导出的文件里只有连接 ID。
         </div>
 
         {cryptoWarn ? <div className="cred-err">{cryptoWarn}</div> : null}
@@ -246,7 +251,7 @@ export function CredentialPanel({
                   if (m === 'passphrase') {
                     const p = await prompt({
                       title: '设置解锁口令',
-                      message: '之后每次打开凭据都要输入这个口令。忘了就只能重新填一遍所有凭据。',
+                      message: '之后每次打开连接都要输入这个口令。忘了就只能重新填一遍所有连接。',
                       placeholder: '解锁口令',
                       validate: (v) => (v ? null : '口令不能为空'),
                     });
@@ -273,10 +278,10 @@ export function CredentialPanel({
         {locked ? (
           <div className="cred-edit">
             <div className="p-muted" style={{ fontSize: 'var(--fs-body, 12px)' }}>
-              凭据已用口令加密。输入口令后才会解密到内存，磁盘上始终是密文。
+              连接已用口令加密。输入口令后才会解密到内存，磁盘上始终是密文。
             </div>
             <label className="p-row">
-              <span className="p-muted field-label">口令</span>
+              <span className="p-muted" style={{ width: 64, flex: 'none' }}>口令</span>
               <input
                 className="p-input"
                 type="password"
@@ -290,7 +295,7 @@ export function CredentialPanel({
             </label>
             <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
               <button
-                className="p-btn sm primary"
+                className="p-btn primary"
                 onClick={() => onUnlock && onUnlock(unlockPass)}
                 disabled={!unlockPass}
               >
@@ -304,7 +309,7 @@ export function CredentialPanel({
         {editing ? (
           <div className="cred-edit">
             <label className="p-row">
-              <span className="p-muted field-label">名称</span>
+              <span className="p-muted" style={{ width: 64, flex: 'none' }}>名称</span>
               <input
                 className="p-input"
                 value={editing.name}
@@ -313,7 +318,7 @@ export function CredentialPanel({
               />
             </label>
             <label className="p-row">
-              <span className="p-muted field-label">类型</span>
+              <span className="p-muted" style={{ width: 64, flex: 'none' }}>类型</span>
               <select
                 className="p-input"
                 value={editing.kind}
@@ -330,7 +335,7 @@ export function CredentialPanel({
             */}
             {isSecretlessKind(editing.kind) ? null : (
               <label className="p-row">
-                <span className="p-muted field-label">密钥</span>
+                <span className="p-muted" style={{ width: 64, flex: 'none' }}>密钥</span>
                 <input
                   className="p-input"
                   type="password"
@@ -346,20 +351,20 @@ export function CredentialPanel({
             </div>
 
             {/*
-              大模型凭据要多收三样：服务商、API 地址、模型清单。
+              大模型连接要多收三样：服务商、API 地址、模型清单。
 
               以前这三样（外加密钥）每个用到的节点上各存一份 ——
               同一个 key 要在每个节点填一遍，换 key 要改好几处，
               漏一处表现为"这个节点连的还是旧 key"且不报错。
 
-              现在节点只存"用哪个凭据 + 用哪个模型"。
+              现在节点只存"用哪个连接 + 用哪个模型"。
             */}
             {(editing.kind === 'llm' || editing.kind === 'cli') ? (
               <>
                 {editing.kind === 'cli' ? null : (
                 <>
                 <label className="p-row">
-                  <span className="p-muted field-label">服务商</span>
+                  <span className="p-muted" style={{ width: 64, flex: 'none' }}>服务商</span>
                   <select
                     className="p-input"
                     value={llmProviderOf(editing) ?? 'custom'}
@@ -379,7 +384,7 @@ export function CredentialPanel({
                 </label>
 
                 <label className="p-row">
-                  <span className="p-muted field-label">API 地址</span>
+                  <span className="p-muted" style={{ width: 64, flex: 'none' }}>API 地址</span>
                   <input
                     className="p-input"
                     value={editing.meta?.[LLM_META.baseUrl] ?? ''}
@@ -399,7 +404,7 @@ export function CredentialPanel({
                 )}
 
                 <div className="p-row" style={{ alignItems: 'flex-start' }}>
-                  <span className="p-muted field-label">模型清单</span>
+                  <span className="p-muted" style={{ width: 64, flex: 'none' }}>模型清单</span>
                   <textarea
                     className="p-input"
                     rows={4}
@@ -419,7 +424,7 @@ export function CredentialPanel({
                 {fetchModels && editing.kind === 'llm' ? (
                   <div className="p-row" style={{ gap: 'var(--sp-4, 8px)', flexWrap: 'wrap' }}>
                     <button
-                      className="p-btn sm"
+                      className="p-btn"
                       disabled={modelState === 'busy'}
                       onClick={async () => {
                         const url = modelsEndpointOf(
@@ -475,10 +480,10 @@ export function CredentialPanel({
             ) : null}
 
             <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
-              <button className="p-btn sm primary" onClick={save} disabled={busy}>
+              <button className="p-btn primary" onClick={save} disabled={busy}>
                 {busy ? '校验中…' : (isSecretlessKind(editing.kind) ? '保存' : '校验并保存')}
               </button>
-              <button className="p-btn sm" onClick={() => setEditing(null)} disabled={busy}>取消</button>
+              <button className="p-btn" onClick={() => setEditing(null)} disabled={busy}>取消</button>
             </div>
             {err ? <div className="cred-err">{err}</div> : null}
             {msg ? <div className="cred-ok">{msg}</div> : null}
@@ -486,7 +491,7 @@ export function CredentialPanel({
         ) : (
           <div className="p-row" style={{ gap: 'var(--sp-4, 8px)', flexWrap: 'wrap' }}>
             {(Object.keys(KIND_META) as CredentialKind[]).map((k) => (
-              <button key={k} className="p-btn sm" onClick={() => startNew(k)}>
+              <button key={k} className="p-btn" onClick={() => startNew(k)}>
                 + {KIND_META[k].label}
               </button>
             ))}
@@ -495,7 +500,7 @@ export function CredentialPanel({
 
         <div className="cred-list" style={locked ? { display: 'none' } : undefined}>
           {credentials.length === 0 ? (
-            <div className="p-muted">还没有凭据。上面选一种添加。</div>
+            <div className="p-muted">还没有连接。上面选一种添加。</div>
           ) : (
             credentials.map((c) => (
               <div key={c.id} className="cred-item">
@@ -540,7 +545,7 @@ export function CredentialPanel({
   );
 }
 
-/** 供给节点面板用：判断某凭据能否给某节点用 */
+/** 供给节点面板用：判断某连接能否给某节点用 */
 export function canUse(cred: Credential, nodeKind: string): boolean {
   return missingCapabilities(cred.capabilities, NODE_NEEDS[nodeKind] || []).length === 0;
 }

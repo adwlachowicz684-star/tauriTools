@@ -337,11 +337,35 @@ test('全局服务库变了要触发刷新', () => {
   assert.ok(app.includes('toServerRefs'), '要用 toServerRefs 转形状');
 });
 
-/** 凭据中心要能看到 MCP 那页 */
-test('凭据中心有 MCP 服务页', () => {
+/**
+ * 连接管理器要分「密钥 / 服务」两页。
+ *
+ * 以前只断言"有 MCP 服务页签"。面板改名后那一页叫「服务」，
+ * 另一页叫「密钥」—— 两页都要在，少一页说明分组被改回混排了。
+ *
+ * 不叫「资源」：MCP 协议里 Resource 是专有名词（只读上下文、靠 URI 标识），
+ * 撞名会让用户以为这里是 MCP 的 resource。
+ */
+test('连接管理器分密钥与服务两页', () => {
   if (!hasSrc) return;
   const p = read(path.join(ROOT, 'components/CredentialPanel.tsx'));
-  assert.ok(p.includes('MCP 服务'), '凭据中心缺 MCP 页签');
+  assert.ok(p.includes('连接管理器'), '面板标题该叫连接管理器（装的不只是密钥了）');
+  /*
+   * 不能只写 p.includes('密钥') ——
+   *
+   * 「密钥」二字在文件里到处都是（"密钥不能为空"、"密钥只存本机"、
+   * KIND_META 里的"通用密钥"），页签被改回旧名照样能通过（假阴性）。
+   * 故障时正是这样溜过去的。
+   *
+   * 所以**绑定到页签按钮本身**：从 page === 'cred' 那个 mcp-tab
+   * 往下找到它按钮里的文本。
+   */
+  const credTab = /page === 'cred'[\s\S]{0,300}?>\s*\n\s*([^<{\n]+)/.exec(p);
+  const mcpTab = /page === 'mcp'[\s\S]{0,300}?>\s*\n\s*([^<{\n]+)/.exec(p);
+  assert.ok(credTab, '找不到 cred 页签按钮');
+  assert.ok(mcpTab, '找不到 mcp 页签按钮');
+  assert.equal(credTab[1].trim(), '密钥', 'cred 页签该叫「密钥」');
+  assert.equal(mcpTab[1].trim(), '服务', 'mcp 页签该叫「服务」');
   assert.ok(p.includes('McpServersPanel'), '没有渲染 MCP 面板');
 });
 

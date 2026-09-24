@@ -848,10 +848,10 @@ export function canReadImage(): boolean {
 }
 
 /**
- * 取本机设备盐（凭据加密用）。
+ * 取本机设备盐（连接加密用）。
  *
  * 盐原先存在 localStorage —— 同一页面上的任何脚本（包括别的插件）
- * 都能直接读走，拿到它 + 公开的本机特征就能算出凭据密钥。
+ * 都能直接读走，拿到它 + 公开的本机特征就能算出连接密钥。
  * 现在由 Rust 侧生成并存在应用数据目录，只有能调这条命令的一方拿得到。
  *
  * 返回 null 表示拿不到（浏览器模式 / 隔离态 / 命令未注册），
@@ -861,16 +861,16 @@ export function canReadImage(): boolean {
  * 整个用户数据目录被拷走的人照样能拿到。它防的是"同页面其它代码顺手读"。
  */
 /* ------------------------------------------------------------------ */
-/* OS 凭据管理器（保险箱主密钥）                                        */
+/* OS 连接管理器（保险箱主密钥）                                        */
 /* ------------------------------------------------------------------ */
 
 /*
- * 主密钥存进 OS 凭据管理器：Windows 凭据管理器 / macOS 钥匙串 /
+ * 主密钥存进 OS 连接管理器：Windows 连接管理器 / macOS 钥匙串 /
  * Linux Secret Service。钥匙不在应用数据目录里，拷走目录也解不开。
  *
  * 三个函数都**不吞异常** —— 拿不到就是拿不到，要让上层明确知道，
  * 由它决定是否降级、怎么告诉用户。在这里静默返回 null 的话，
- * 上层会以为是"没存过"，于是新建一个密钥覆盖 —— 凭据永久丢失。
+ * 上层会以为是"没存过"，于是新建一个密钥覆盖 —— 连接永久丢失。
  */
 export type OsKeyringResult<T> =
   | { ok: true; value: T }
@@ -887,37 +887,37 @@ export async function osKeyringGet(): Promise<OsKeyringRead> {
    * 用 hasTauri() 而不是 isTauri()：
    * 隔离态下 isTauri() 是 false，可桥接其实还通着（见 hasTauri 的说明）。
    * 照 isTauri 判断会把明明能用的桌面端误判成浏览器模式，
-   * 于是用户无缘无故被告知"没有 OS 凭据管理器"。
+   * 于是用户无缘无故被告知"没有 OS 连接管理器"。
    */
   if (!hasTauri()) {
-    return { ok: false, reason: '浏览器模式下没有 OS 凭据管理器' };
+    return { ok: false, reason: '浏览器模式下没有 OS 连接管理器' };
   }
   try {
     const v = await invoke<string | null>('af_os_keyring_get');
     // 后端用 Option<String> 表示"没有"，到前端是 null
     return toOsKeyringRead(v);
   } catch (e) {
-    return { ok: false, reason: describeInvokeErr(e, '读取 OS 凭据管理器失败') };
+    return { ok: false, reason: describeInvokeErr(e, '读取 OS 连接管理器失败') };
   }
 }
 
 /** 写主密钥 */
 export async function osKeyringSet(value: string): Promise<OsKeyringResult<true>> {
   if (!hasTauri()) {
-    return { ok: false, reason: '浏览器模式下没有 OS 凭据管理器' };
+    return { ok: false, reason: '浏览器模式下没有 OS 连接管理器' };
   }
   try {
     await invoke<void>('af_os_keyring_set', { value });
     return { ok: true, value: true };
   } catch (e) {
-    return { ok: false, reason: describeInvokeErr(e, '写入 OS 凭据管理器失败') };
+    return { ok: false, reason: describeInvokeErr(e, '写入 OS 连接管理器失败') };
   }
 }
 
-/** 删除主密钥。切换模式离开 OS 凭据管理器时调用，不留残余 */
+/** 删除主密钥。切换模式离开 OS 连接管理器时调用，不留残余 */
 export async function osKeyringDelete(): Promise<OsKeyringResult<true>> {
   if (!hasTauri()) {
-    return { ok: false, reason: '浏览器模式下没有 OS 凭据管理器' };
+    return { ok: false, reason: '浏览器模式下没有 OS 连接管理器' };
   }
   try {
     await invoke<void>('af_os_keyring_delete');

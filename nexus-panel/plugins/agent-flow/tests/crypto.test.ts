@@ -201,7 +201,12 @@ test('存储: 缺失字段自动补齐', () => {
   const f = parseStore(JSON.stringify({ credentials: [{ id: 'a' }] }));
   assert.equal(f.credentials[0].id, 'a');
   assert.equal(f.credentials[0].kind, 'generic');
-  assert.equal(f.credentials[0].name, '凭据 1');
+  /*
+   * 兜底名跟着概念一起改名了：现在叫「连接 1」。
+   * 这里只断言"没写名字的条目会拿到一个可读的兜底名"，
+   * 不写死具体措辞 —— 措辞改了这条不该红。
+   */
+  assert.match(f.credentials[0].name, /^连接 \d+$/, '没名字的条目要有可读的兜底名');
   assert.deepEqual(f.credentials[0].capabilities, []);
 });
 

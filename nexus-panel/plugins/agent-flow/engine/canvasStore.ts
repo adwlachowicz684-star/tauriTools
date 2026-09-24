@@ -215,8 +215,8 @@ const ACTIVE_KEY = 'agent-flow.activeCanvas.v1';
  * 那条路的问题是加密用的盐与本机特征都在本机，拿到整个数据目录的人
  * 照样能复现钥匙 —— 是"抬成本"不是"上锁"。
  *
- * 现在统一走**凭据中心**：节点只存 credentialId 引用，密钥本体由凭据库保管，
- * 可选 OS 凭据管理器 / 本机加密 / 口令模式三种，其中口令模式的钥匙不落盘。
+ * 现在统一走**连接管理器**：节点只存 credentialId 引用，密钥本体由连接库保管，
+ * 可选 OS 连接管理器 / 本机加密 / 口令模式三种，其中口令模式的钥匙不落盘。
  *
  * 节点上内联填写的字段仍然保留（兼容旧画布），但**只活在内存里** ——
  * redactSecrets 保证它既不写进画布存档、也不随导出走，刷新后为空。
@@ -440,7 +440,7 @@ export function deserialize(raw: string | null): PersistedState {
  * 读取：只管画布（已脱敏）。
  *
  * 拿到的画布里，密钥字段一律是空串 —— 内存里那份不落盘，
- * 刷新后由用户重新填或改走凭据中心的引用。
+ * 刷新后由用户重新填或改走连接管理器的引用。
  */
 export function loadFromStorage(
   get: (k: string) => string | null,

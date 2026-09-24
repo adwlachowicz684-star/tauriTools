@@ -167,7 +167,7 @@ export type RunOptions = {
   /** 本地图片读取器；不提供时 OCR 的本地文件模式会失败并提示 */
   imageReader?: ImageReader;
   /**
-   * 凭据库。节点只存 credentialId，真正取密钥在这里做 ——
+   * 连接库。节点只存 credentialId，真正取密钥在这里做 ——
    * 密钥不进图数据，导出画布时也不会跟着走。
    */
   credentials?: Credential[];

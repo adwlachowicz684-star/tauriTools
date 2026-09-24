@@ -44,7 +44,7 @@ const fields: FieldDef[] = [
     label: '请求头',
     rows: 3,
     placeholder: '每行一条，如：\nX-Token: abc123',
-    hint: '留空即可；填了 Authorization 就不会再自动加凭据令牌',
+    hint: '留空即可；填了 Authorization 就不会再自动加连接令牌',
   },
   {
     type: 'textarea',

@@ -75,10 +75,10 @@ export async function runOcr(ctx: RunContext): Promise<void> {
   }
 
   /*
-   * 地址与密钥**优先取自凭据**。
+   * 地址与密钥**优先取自连接**。
    *
    * 节点上那份旧 llm 配置只作兜底（老画布迁移前）——
-   * 反过来的话，改了凭据的地址不生效，表现为"改了没反应"。
+   * 反过来的话，改了连接的地址不生效，表现为"改了没反应"。
    */
   const cfg = resolveLlmFromCredential(
     findCredential(opts.credentials ?? [], d.credentialId), d.llm?.model, { fallback: d.llm },

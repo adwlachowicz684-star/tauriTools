@@ -26,7 +26,7 @@ import { argTypeIssues, type ArgTypeIssue } from './argTypes';
  * ================= 为什么放一个文件 =================
  *
  * 执行器是一节点一文件（每个几十行），校验规则只有几行且需要互相参照
- * （比如"缺凭据"在拉取是黄、在推送是红），拆散了反而看不出这个对照。
+ * （比如"缺连接"在拉取是黄、在推送是红），拆散了反而看不出这个对照。
  * 集中一处，规则表一目了然。
  *
  * 与执行器同样刻意**不 import 任何 React**：
@@ -196,7 +196,7 @@ function vOcr(d: OcrNodeData): V {
   if (d.imageSource === 'file' && blank(d.path)) return error('没填图片路径');
   if (d.imageSource !== 'file' && blank(d.url)) return error('没填图片地址');
   if (blank(d.credentialId) && blank(d.llm?.apiKey)) {
-    return warn('没选凭据也没填密钥，调用模型时可能失败');
+    return warn('没选连接也没填密钥，调用模型时可能失败');
   }
   return ok();
 }
@@ -204,7 +204,7 @@ function vOcr(d: OcrNodeData): V {
 function vTranslate(d: TranslateNodeData): V {
   const msgs: string[] = [];
   if (blank(d.credentialId) && blank(d.llm?.apiKey)) {
-    msgs.push('没选凭据也没填密钥，调用模型时可能失败');
+    msgs.push('没选连接也没填密钥，调用模型时可能失败');
   }
   /*
    * text 为空不判错：它可能挂在某个上游后面，靠 {{上游.output}} 取内容。
@@ -226,7 +226,7 @@ function vGithubUpdate(d: GithubUpdateNodeData): V {
    * 私有仓库才需要。判黄 —— 能跑，只是可能拿不到。
    */
   if (blank(d.credentialId) && blank(d.token)) {
-    return warn('没选凭据也没填令牌，私有仓库会拉取失败');
+    return warn('没选连接也没填令牌，私有仓库会拉取失败');
   }
   return ok();
 }
@@ -239,7 +239,7 @@ function vGithubPush(d: GithubPushNodeData): V {
    * 这两条规则的差异正是"能不能跑通"这条分界线的具体体现。
    */
   if (blank(d.credentialId) && blank(d.token)) {
-    return error('推送必须有令牌：选一个凭据或填写内联令牌');
+    return error('推送必须有令牌：选一个连接或填写内联令牌');
   }
   return ok();
 }

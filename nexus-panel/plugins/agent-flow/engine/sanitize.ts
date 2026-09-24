@@ -76,7 +76,7 @@ export function hadInlineSecret(data: unknown): boolean {
  * 挖掉内联密钥。挖过的位置留空串而不是删键 ——
  * 保持字段结构完整，界面上该输入框还在（只是空了），用户知道该填什么。
  *
- * 凭据引用（credentialId）**不动**：它只是个 id，不是密钥本身，
+ * 连接引用（credentialId）**不动**：它只是个 id，不是密钥本身，
  * 而且恰恰是我们希望用户改用、并能随预设一起复用的东西。
  */
 export function stripSecrets(data: Record<string, unknown>): Record<string, unknown> {

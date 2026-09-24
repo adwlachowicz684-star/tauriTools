@@ -33,13 +33,13 @@ export default function SaveAsCustom({ node }: {
     addCustomPreset({ name, baseType: node.type, data: node.data });
     /*
      * 直接填在节点里的令牌不会被存进预设（预设是明文存储，不能当密钥仓库用），
-     * 但凭据引用会保留。不说明的话，用户拖出新节点会发现令牌空了却不知为何。
+     * 但连接引用会保留。不说明的话，用户拖出新节点会发现令牌空了却不知为何。
      */
     if (leaked) {
       await alert({
         title: '已存为自定义节点',
         message: '节点里直接填写的令牌不会被保存（预设是明文存储）。'
-          + '改用凭据中心的凭据即可随预设一起复用。',
+          + '改用连接管理器的连接即可随预设一起复用。',
       });
     }
   };

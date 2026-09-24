@@ -44,7 +44,7 @@ export type FieldType =
   | 'select' // 下拉
   | 'switch' // 勾选
   | 'chips' // 按钮组（如目标语言）
-  | 'credential' // 凭据选择（同时写 token 与 credentialId）
+  | 'credential' // 连接条目选择（同时写 token 与 credentialId）—— 指连接管理器里的一条，不是画布连线
   | 'paramCard' // 参数变量：一组字段存成卡片，点一下整套套用
   | 'note' // 纯提示文本，不占字段
   | 'custom'; // 逃生口：完全自己渲染
@@ -56,7 +56,7 @@ export type FieldRenderProps = {
   value: unknown;
   /** 改本字段（key 由描述提供，调用方不会写错） */
   onChange: (v: unknown) => void;
-  /** 改多个字段。凭据选择器要同时写 token 与 credentialId，故需要这个 */
+  /** 改多个字段。连接条目选择器要同时写 token 与 credentialId，故需要这个 */
   patch: (p: Record<string, unknown>) => void;
   node: FlowNode;
   edges: FlowEdge[];
@@ -106,7 +106,7 @@ export type FieldDef = {
   step?: number;
   /** 标签在左、控件在右。默认标签在上（.field 列式） */
   inline?: boolean;
-  /** credential 类型用：决定需要哪些能力的凭据 */
+  /** credential 类型用：决定需要哪些能力的连接条目 */
   credentialKind?: string;
 
   /* ---- paramCard 类型用 ---- */
@@ -262,7 +262,7 @@ function FieldDefaultButton({
   void tick;
 
   const title = secret
-    ? '密钥不存进默认值（默认值是明文保存的），请改用凭据中心'
+    ? '密钥不存进默认值（默认值是明文保存的），请改用连接管理器'
     : on
       ? `已把「${label}」设为默认，点击清除`
       : `把当前的「${label}」设为这类节点的默认值（只影响这一个参数）`;
@@ -511,7 +511,7 @@ function renderField(
    * 只给**描述层**的字段加（有 key 且不是 note / custom / credential）：
    *   · custom 是一整块手写 JSX，标签在它自己内部，
    *     按钮浮在块外面会看不出是给哪个参数的
-   *   · credential 本身就是要走凭据中心的，不需要默认
+   *   · credential 本身就是要走连接管理器的，不需要默认
    * 这几类仍用面板顶部那个"管整个节点"的按钮。
    */
   const ops = p.presetKey && f.key ? (
@@ -635,8 +635,8 @@ export function BasicInspector({
             ...base,
             value: f.key ? d[f.key] : undefined,
             onChange: (v) => f.key && onChange(node.id, { [f.key]: v }),
-            // renderField 的凭据分支要用 onChangeNode（type:'credential' 的字段），
-            // custom 渲染的作者也可能读 id。少了这两个，点凭据选择器会撞 undefined。
+            // renderField 的连接条目分支要用 onChangeNode（type:'credential' 的字段），
+            // custom 渲染的作者也可能读 id。少了这两个，点连接选择器会撞 undefined。
             id: node.id,
             onChangeNode: patchObj,
           },

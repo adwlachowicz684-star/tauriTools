@@ -338,15 +338,15 @@ export function LlmConfigPanel({
   /**
    * 节点上那份旧格式的配置。
    *
-   * 只作**兜底**：没有凭据时用它（老画布迁移前），
-   * 有凭据时地址与密钥一律取自凭据，这份里的对应字段不再起作用。
+   * 只作**兜底**：没有连接时用它（老画布迁移前），
+   * 有连接时地址与密钥一律取自连接，这份里的对应字段不再起作用。
    */
   cfg: LlmConfig;
   onChange: (patch: Record<string, unknown>) => void;
   needVision: boolean;
-  /** 凭据中心的全部凭据（只列 llm 的） */
+  /** 连接管理器的全部连接（只列 llm 的） */
   credentials?: Credential[];
-  /** 节点当前选中的凭据 */
+  /** 节点当前选中的连接 */
   credentialId?: string;
   onOpenCredentials?: (kind: string) => void;
 }) {
@@ -358,10 +358,10 @@ export function LlmConfigPanel({
    * 换 key 要改好几处 —— 漏一处表现为"这个节点连的还是旧 key"，且不报错。
    *
    * 现在只剩：
-   *   ① 用哪个凭据（地址 + 密钥 + 服务商都在凭据里）
-   *   ② 用哪个模型（下拉框列该凭据的模型清单）
+   *   ① 用哪个连接（地址 + 密钥 + 服务商都在连接里）
+   *   ② 用哪个模型（下拉框列该连接的模型清单）
    *
-   * 改凭据 = 所有引用它的节点同时生效。
+   * 改连接 = 所有引用它的节点同时生效。
    */
   const c = cfg ?? defaultLlmConfig();
   const llmCreds = (credentials ?? []).filter((x) => x.kind === 'llm');
@@ -384,16 +384,16 @@ export function LlmConfigPanel({
     <div className="field">
       <span>大模型</span>
 
-      {/* ① 凭据 */}
+      {/* ① 连接 */}
       <label className="field">
-        <small className="dim">凭据（含 API 地址与密钥）</small>
+        <small className="dim">连接（含 API 地址与密钥）</small>
         <select
           value={credentialId || ''}
           onChange={(e) => {
             const id = e.target.value;
             const next = llmCreds.find((x) => x.id === id) ?? null;
             /*
-             * 换凭据时**不自动改模型**：
+             * 换连接时**不自动改模型**：
              * 两家服务商的模型名通常不通用，自动改会挑一个对方没有的，
              * 那还不如留空让用户自己选（留空时运行时取清单第一个）。
              */
@@ -401,7 +401,7 @@ export function LlmConfigPanel({
             void next;
           }}
         >
-          <option value="">（还没选凭据）</option>
+          <option value="">（还没选连接）</option>
           {llmCreds.map((x) => (
             <option key={x.id} value={x.id}>
               {x.name}{x.identity ? ` (@${x.identity})` : ''}
@@ -412,26 +412,26 @@ export function LlmConfigPanel({
 
       {llmCreds.length === 0 ? (
         <div className="llm-note">
-          还没有大模型凭据。API Key、API 地址、服务商都在凭据里填一次就够，
-          之后每个节点只选一下凭据和模型。
+          还没有大模型连接。API Key、API 地址、服务商都在连接里填一次就够，
+          之后每个节点只选一下连接和模型。
           {onOpenCredentials ? (
             <button className="link-btn" onClick={() => onOpenCredentials('llm')}>
-              去凭据中心填写 →
+              去连接管理器填写 →
             </button>
           ) : null}
         </div>
       ) : null}
 
       {/*
-        「填写凭据」按钮常驻，不只在没有凭据时出现。
+        「管理连接」按钮常驻，不只在没有连接时出现。
 
-        想再加一把 key、或改现有凭据的地址时，
-        如果按钮只在"一个凭据都没有"时才有，就得先把唯一的凭据删掉才能看到它。
+        想再加一把 key、或改现有连接的地址时，
+        如果按钮只在"一个连接都没有"时才有，就得先把唯一的连接删掉才能看到它。
       */}
       {onOpenCredentials ? (
         <div className="p-row">
           <button className="p-btn" onClick={() => onOpenCredentials('llm')}>
-            填写凭据
+            管理连接
           </button>
         </div>
       ) : null}
@@ -448,7 +448,7 @@ export function LlmConfigPanel({
           onChange={(e) => setModel(e.target.value)}
           disabled={!cred}
         >
-          <option value="">{cred ? '（选一个模型）' : '（先选凭据）'}</option>
+          <option value="">{cred ? '（选一个模型）' : '（先选连接）'}</option>
           {options.map((m) => (
             /*
               已知的"不支持视觉"模型在名字后标注。
@@ -460,18 +460,18 @@ export function LlmConfigPanel({
           ))}
         </select>
         {cred ? null : (
-          <div className="cond-hint">选了凭据才会列出它的模型清单</div>
+          <div className="cond-hint">选了连接才会列出它的模型清单</div>
         )}
       </label>
 
       {/*
-        没有凭据时退回节点上那份旧配置 —— 老画布迁移前会走这条路。
-        直接报"必失败"的话，老节点会突然不能跑，而界面上只说是没凭据。
+        没有连接时退回节点上那份旧配置 —— 老画布迁移前会走这条路。
+        直接报"必失败"的话，老节点会突然不能跑，而界面上只说是没连接。
       */}
       {!cred && !String(c.apiKey ?? '').trim() ? (
         <div className="cond-issues">
           <div className="cond-issues-title">配置提示</div>
-          <div className="cond-issue error">没选凭据，节点上也没有旧密钥，调用模型会失败</div>
+          <div className="cond-issue error">没选连接，节点上也没有旧密钥，调用模型会失败</div>
         </div>
       ) : null}
 
@@ -486,13 +486,13 @@ export function LlmConfigPanel({
 
       {cred ? (
         <div className="tip">
-          地址与密钥取自「{cred.name}」。改地址或换 key 去凭据中心改一次，
-          所有用这条凭据的节点同时生效。
+          地址与密钥取自「{cred.name}」。改地址或换 key 去连接管理器改一次，
+          所有用这条连接的节点同时生效。
         </div>
       ) : (
         <div className="tip">
           节点上还留着一份旧配置（服务商 / 地址 / 密钥）。它只作兜底 ——
-          选了凭据后就以凭据为准。建议去凭据中心收进一条凭据，改一处即可。
+          选了连接后就以连接为准。建议去连接管理器收进一条连接，改一处即可。
         </div>
       )}
     </div>
@@ -502,13 +502,13 @@ export function LlmConfigPanel({
 /* ------------------------------------------------------------------ */
 
 /**
- * CLI 节点的「凭据 + 模型」。
+ * CLI 节点的「连接 + 模型」。
  *
  * ================= 为什么不是手填 ====================
  *
  * 模型名长且易拼错，手打错一个字符要等到 CLI 跑起来才报错，
  * 而报错往往不是"模型名不对"（多数 CLI 只回一句非零退出）。
- * 改成从凭据的模型清单里选，拼错这件事就不存在了。
+ * 改成从连接的模型清单里选，拼错这件事就不存在了。
  *
  * ================= 为什么还要留手填 ====================
  *
@@ -528,7 +528,7 @@ export function CliModelPanel({
   onOpenCredentials?: (kind: string) => void;
 }) {
   /*
-   * CLI 凭据（cli）与大模型凭据（llm）都能提供模型清单。
+   * CLI 连接（cli）与大模型连接（llm）都能提供模型清单。
    *
    * CLI 走自己的登录态，不需要密钥 —— 但模型名一样要统一管理：
    * 各处手填一份，改模型时要改好几处，漏一处表现为"这个节点还是旧名字"。
@@ -542,10 +542,10 @@ export function CliModelPanel({
    * 手填态。
    *
    * 只有用户点了「手填」才为真 —— 不拿"当前值不在清单里"来推断：
-   * 那样的话，用户手填完又去凭据里把这个模型加进清单，
+   * 那样的话，用户手填完又去连接里把这个模型加进清单，
    * 界面会一直停在手填态，而它明明已经能选了。
    *
-   * 没选凭据时只有手填一条路，此时这个开关没有意义（一律按手填渲染）。
+   * 没选连接时只有手填一条路，此时这个开关没有意义（一律按手填渲染）。
    */
   const [manual, setManual] = useState(false);
 
@@ -564,14 +564,14 @@ export function CliModelPanel({
     <div className="field">
       <span>模型</span>
 
-      {/* ① 凭据：决定下面那一框列出哪些模型 */}
+      {/* ① 连接：决定下面那一框列出哪些模型 */}
       <label className="field">
-        <small className="dim">凭据（决定可选的模型清单）</small>
+        <small className="dim">连接（决定可选的模型清单）</small>
         <select
           value={credentialId || ''}
           onChange={(e) => {
             /*
-             * 换凭据时清空模型 —— 两家服务商的模型名通常不通用，
+             * 换连接时清空模型 —— 两家服务商的模型名通常不通用，
              * 留着旧名字会挑一个对方没有的，那还不如留空让用户重新选。
              */
             setManual(false);
@@ -641,7 +641,7 @@ export function CliModelPanel({
                 if (cur && options.indexOf(cur) < 0) onChange({ model: cur });
               }
             }}
-            title={asSelect ? '清单里没有想要的模型时自己填' : '回到凭据的模型清单'}
+            title={asSelect ? '清单里没有想要的模型时自己填' : '回到连接的模型清单'}
           >
             {asSelect ? '手填' : '从清单选'}
           </button>
@@ -650,14 +650,14 @@ export function CliModelPanel({
 
       <div className="cond-hint">
         {cred
-          ? `清单来自「${cred.name}」。改清单去凭据中心改一次，所有用这条凭据的节点同时生效。`
-          : '没选凭据就是手填，CLI 用自己默认的模型。'}
+          ? `清单来自「${cred.name}」。改清单去连接管理器改一次，所有用这条连接的节点同时生效。`
+          : '没选连接就是手填，CLI 用自己默认的模型。'}
       </div>
 
       {onOpenCredentials ? (
         <div className="p-row">
           <button className="p-btn" onClick={() => onOpenCredentials('cli')}>
-            填写凭据
+            管理连接
           </button>
         </div>
       ) : null}
@@ -668,9 +668,9 @@ export function CliModelPanel({
 /* ------------------------------------------------------------------ */
 
 /**
- * 凭据选择区。
+ * 连接选择区。
  *
- * 只列出**满足本节点权限要求**的凭据 —— 推送节点不会让你选一把只有读权限的令牌，
+ * 只列出**满足本节点权限要求**的连接 —— 推送节点不会让你选一把只有读权限的令牌，
  * 从源头避免"选完才在运行时撞 403"。
  */
 export function CredentialPicker({
@@ -693,13 +693,13 @@ export function CredentialPicker({
   return (
     <div className="gh-cred">
       <div className="p-row">
-        <span className="p-muted" style={{ width: 64, flex: 'none' }}>凭据</span>
+        <span className="p-muted" style={{ width: 64, flex: 'none' }}>连接</span>
         <select
           className="p-input"
           value={credentialId || ''}
           onChange={(e) => onChange({ credentialId: e.target.value })}
         >
-          <option value="">（不用凭据，用下面内联的密钥）</option>
+          <option value="">（不用连接，用下面内联的密钥）</option>
           {usable.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}{c.identity ? ` (@${c.identity})` : ''}
@@ -711,14 +711,14 @@ export function CredentialPicker({
 
       {usable.length === 0 ? (
         <div className="gh-note">
-          还没有能用于本节点的凭据
+          还没有能用于本节点的连接
           {need.length ? `（需要：${need.join(' / ')}）` : ''}。
           {onOpenCredentials ? (
             <button
               className="link-btn"
               onClick={() => onOpenCredentials(wantKind || 'generic')}
             >
-              去凭据中心填写 →
+              去连接管理器填写 →
             </button>
           ) : null}
         </div>
@@ -726,7 +726,7 @@ export function CredentialPicker({
 
       {selected && selected.ambiguous && need.indexOf('github:write') >= 0 ? (
         <div className="gh-warn">
-          这条凭据的权限无法自动判定。若推送时报 403，多半是它没有写权限 ——
+          这条连接的权限无法自动判定。若推送时报 403，多半是它没有写权限 ——
           重新申请时勾选 repo（私有库）或 public_repo（公开库）。
         </div>
       ) : null}
@@ -739,7 +739,7 @@ export function CredentialPicker({
             type="password"
             value={value || ''}
             onChange={(e) => onChange({ token: e.target.value })}
-            placeholder="不推荐：会随画布保存。请在凭据中心统一填写"
+            placeholder="不推荐：会随画布保存。请在连接管理器统一填写"
           />
         </label>
       ) : null}

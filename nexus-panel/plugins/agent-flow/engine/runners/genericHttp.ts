@@ -52,7 +52,7 @@ export async function runGenericHttp(ctx: RunContext): Promise<void> {
       headers['Content-Type'] = 'application/json';
     }
 
-    // 凭据优先于内联：走凭据库的令牌不进画布数据，导出时不会带走
+    // 连接优先于内联：走连接库的令牌不进画布数据，导出时不会带走
     const token = resolveSecret(opts.credentials ?? [], d.credentialId, '');
     if (token && !Object.keys(headers).some((k) => k.toLowerCase() === 'authorization')) {
       headers.Authorization = `Bearer ${token}`;

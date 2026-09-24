@@ -174,7 +174,7 @@ function CanvasConfigPanel({
               环境变量是最顺手的填 token 的地方，而这里明文存 localStorage。
             */}
             <p className="cfg-warn">
-              不要在这里直接填密钥。要用密钥就填凭据中心的引用，
+              不要在这里直接填密钥。要用密钥就填连接管理器的引用，
               明文值会跟着画布存档一起落盘。
             </p>
 

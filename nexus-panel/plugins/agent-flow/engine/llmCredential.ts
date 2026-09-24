@@ -1,5 +1,5 @@
 /**
- * 大模型凭据 —— 纯逻辑层（可单测，不碰 DOM / 网络）。
+ * 大模型连接 —— 纯逻辑层（可单测，不碰 DOM / 网络）。
  *
  * ================= 为什么要有这一层 ====================
  *
@@ -9,16 +9,16 @@
  * 结果是同一个 key 要在每个节点上填一遍，换 key 要改好几处，
  * 漏一处表现为"这个节点连的还是旧 key"，而且不报错。
  *
- * 现在节点只存两样：**用哪个凭据** + **用哪个模型**。
- * 地址与密钥全在凭据里 —— 改一处，所有引用它的节点同时生效。
+ * 现在节点只存两样：**用哪个连接** + **用哪个模型**。
+ * 地址与密钥全在连接里 —— 改一处，所有引用它的节点同时生效。
  *
  * ================= 这一层放什么 ====================
  *
- * 凭据里"大模型专属信息"的读写与解释：
+ * 连接里"大模型专属信息"的读写与解释：
  *   · meta 里怎么存地址与模型列表
  *   · 模型名怎么判断可能不支持图片
- *   · 凭据 + 模型名 → 真正能发请求的配置（url / model / apiKey）
- *   · 老节点上那份完整配置怎么收进凭据
+ *   · 连接 + 模型名 → 真正能发请求的配置（url / model / apiKey）
+ *   · 老节点上那份完整配置怎么收进连接
  */
 
 import type { Credential } from './credentials';
@@ -27,7 +27,7 @@ import {
 } from './llm';
 
 /* ------------------------------------------------------------------ */
-/* 凭据 meta 的键                                                      */
+/* 连接 meta 的键                                                      */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -40,7 +40,7 @@ export const LLM_META = {
   baseUrl: 'llm.baseUrl',
   /** 模型列表，换行分隔 */
   models: 'llm.models',
-  /** 服务商预设名，用于给没填地址的凭据兜底 */
+  /** 服务商预设名，用于给没填地址的连接兜底 */
   provider: 'llm.provider',
 } as const;
 
@@ -48,7 +48,7 @@ export const LLM_META = {
 /* 读                                                                  */
 /* ------------------------------------------------------------------ */
 
-/** 凭据里存的 API 地址。没填则按服务商预设兜底 */
+/** 连接里存的 API 地址。没填则按服务商预设兜底 */
 export function llmBaseUrlOf(cred: Credential | null | undefined): string {
   if (!cred) return '';
   const own = (cred.meta?.[LLM_META.baseUrl] ?? '').trim();
@@ -57,7 +57,7 @@ export function llmBaseUrlOf(cred: Credential | null | undefined): string {
   return llmProviderOf(cred) ? PROVIDER_META[llmProviderOf(cred)!].baseUrl : '';
 }
 
-/** 凭据声明的服务商。取不到或非法时返回 null（不是 'custom'） */
+/** 连接声明的服务商。取不到或非法时返回 null（不是 'custom'） */
 export function llmProviderOf(cred: Credential | null | undefined): LlmProvider | null {
   if (!cred) return null;
   const p = (cred.meta?.[LLM_META.provider] ?? '').trim();
@@ -139,11 +139,11 @@ export function knownVisionModel(model: string): boolean {
 }
 
 /* ------------------------------------------------------------------ */
-/* 凭据 + 模型 → 请求配置                                              */
+/* 连接 + 模型 → 请求配置                                              */
 /* ------------------------------------------------------------------ */
 
 /**
- * 把"凭据 + 选中的模型"算成真正能发请求的配置。
+ * 把"连接 + 选中的模型"算成真正能发请求的配置。
  *
  * 节点上不再存地址与密钥，全靠这里补 —— 这是整个简化的落点。
  */
@@ -155,7 +155,7 @@ export function resolveLlmFromCredential(
   const timeoutSec = opts.timeoutSec && opts.timeoutSec > 0 ? opts.timeoutSec : 60;
 
   /*
-   * 没有凭据 → 退回节点上那份旧配置（老画布迁移前会走这条路）。
+   * 没有连接 → 退回节点上那份旧配置（老画布迁移前会走这条路）。
    * 直接返回空的话，老节点会突然跑不起来，而界面上看不出原因。
    */
   if (!cred) {
@@ -170,7 +170,7 @@ export function resolveLlmFromCredential(
    * 选中的模型不在列表里也**照用**。
    *
    * 列表只是"上次拉到的快照"，服务商随时可能上新模型；
-   * 卡住不让用会逼用户每次上新模型都回来编辑一次凭据。
+   * 卡住不让用会逼用户每次上新模型都回来编辑一次连接。
    */
   const finalModel = String(model ?? '').trim()
     || (list.length > 0 ? list[0] : '')
@@ -194,10 +194,10 @@ export type LlmMigrationInput = {
 };
 
 /**
- * 老节点上那份 llm 配置，能不能收进凭据。
+ * 老节点上那份 llm 配置，能不能收进连接。
  *
  * 判据只有一条：**有没有密钥**。
- * 没有密钥的话收进去也是一条跑不通的凭据，
+ * 没有密钥的话收进去也是一条跑不通的连接，
  * 还不如不动 —— 节点上那份留着继续用。
  */
 export function canMigrateLlm(input: LlmMigrationInput): boolean {
@@ -206,7 +206,7 @@ export function canMigrateLlm(input: LlmMigrationInput): boolean {
 }
 
 /**
- * 为老节点那份配置找一条可复用的凭据，找不到就返回 null（调用方新建）。
+ * 为老节点那份配置找一条可复用的连接，找不到就返回 null（调用方新建）。
  *
  * 复用判据：地址 + 密钥都相同。
  * 只比密钥不够 —— 同一个 key 也可能配了不同地址（官方 / 中转），
@@ -234,7 +234,7 @@ export function findReusableLlmCredential(
  * 迁移后该往节点上写什么。
  *
  * 只留 credentialId 与 model —— 地址、密钥、服务商全部清掉。
- * 不清的话两处都有地址，改凭据的地址不生效，
+ * 不清的话两处都有地址，改连接的地址不生效，
  * 表现为"改了没反应"，而且看不出是节点上那份还在起作用。
  */
 export function llmMigrationPatch(cred: Credential, input: LlmMigrationInput): Record<string, unknown> {
@@ -320,26 +320,26 @@ export type MigratableCanvas = {
 };
 
 export type LlmMigrationResult = {
-  /** 新建出来的凭据（已并入传入列表） */
+  /** 新建出来的连接（已并入传入列表） */
   credentials: Credential[];
   /** 改过的节点，按画布 id 分组：`canvasId → { nodeId → patch }` */
   patches: Record<string, Record<string, Record<string, unknown>>>;
-  /** 新收进凭据的节点数 */
+  /** 新收进连接的节点数 */
   migrated: number;
 };
 
 /**
- * 把所有画布上"节点内联的大模型配置"收进凭据。
+ * 把所有画布上"节点内联的大模型配置"收进连接。
  *
  * ================= 为什么必须幂等 ====================
  *
  * 它在每次加载时跑（老画布随时可能被打开）。
- * 不幂等的话每开一次就多一条凭据 ——
- * 表现为凭据列表越来越长，而用户不知道哪条是真的。
+ * 不幂等的话每开一次就多一条连接 ——
+ * 表现为连接列表越来越长，而用户不知道哪条是真的。
  *
  * 幂等靠两点：
  *   ① 只处理"节点上还有密钥"的（canMigrateLlm）
- *   ② 迁移前先找可复用的凭据（同地址 + 同密钥）
+ *   ② 迁移前先找可复用的连接（同地址 + 同密钥）
  * 于是已经迁过的节点（密钥已清空）第二次直接跳过。
  */
 export function migrateLlmToCredentials(
@@ -363,7 +363,7 @@ export function migrateLlmToCredentials(
           kind: 'llm',
           /*
            * 名字带服务商与画布名 ——
-           * 多条凭据都叫「大模型 API Key」时分不清哪条是哪条。
+           * 多条连接都叫「大模型 API Key」时分不清哪条是哪条。
            */
           name: `${PROVIDER_META[provider]?.label ?? '自定义'} · ${cv.name || cv.id}`,
           secret: (llm?.apiKey ?? '').trim(),

@@ -1,13 +1,13 @@
 /**
- * 凭据中心 —— 纯逻辑层（可单测，不碰 DOM / localStorage）。
+ * 连接管理器 —— 纯逻辑层（可单测，不碰 DOM / localStorage）。
  *
  * 三个概念分清楚：
- *   凭据 Credential   存一把密钥（GitHub 令牌、某家 API Key……）
+ *   连接 Credential   存一把密钥（GitHub 令牌、某家 API Key……）
  *   能力 Capability   这把密钥能干的事（github:read / github:write / llm:chat…）
  *   需求 Need         某个节点要用它干什么
  *
  * 节点只声明"我需要 github:write"，不关心用的是哪把密钥；
- * 保存凭据时校验出能力，匹配交给 satisfies。改一把密钥，
+ * 保存连接时校验出能力，匹配交给 satisfies。改一把密钥，
  * 所有引用它的节点同时生效 —— 这就是"多个节点共享一个 key"。
  */
 
@@ -18,11 +18,11 @@
 export type CredentialKind = 'github' | 'llm' | 'generic' | 'cli';
 
 /**
- * 不需要密钥的凭据种类。
+ * 不需要密钥的连接种类。
  *
- * CLI 走自己的登录态，模型名却要跟大模型凭据一样统一管理 ——
+ * CLI 走自己的登录态，模型名却要跟大模型连接一样统一管理 ——
  * 各处手填一份，改名时就要改好几处，漏一处表现为"这个节点还是旧模型名"。
- * 所以给它一条**只存模型清单**的凭据：没有密钥、没有地址，只有一份名单。
+ * 所以给它一条**只存模型清单**的连接：没有密钥、没有地址，只有一份名单。
  */
 export function isSecretlessKind(kind: CredentialKind): boolean {
   return kind === 'cli';
@@ -37,7 +37,7 @@ export type Capability =
 
 export type Credential = {
   id: string;
-  /** 展示名，用户在凭据列表里看到的东西 */
+  /** 展示名，用户在连接列表里看到的东西 */
   name: string;
   kind: CredentialKind;
   /** 密钥本体。绝不进导出的 JSON */
@@ -118,12 +118,12 @@ export function missingCapabilities(
   return (need || []).filter((n) => !satisfiesOne(have, n));
 }
 
-/** 凭据能否用于声明了 need 的节点 */
+/** 连接能否用于声明了 need 的节点 */
 export function satisfies(cred: Credential, need: Capability[]): boolean {
   return missingCapabilities(cred.capabilities || [], need).length === 0;
 }
 
-/** 从一组凭据里挑出能满足 need 的 */
+/** 从一组连接里挑出能满足 need 的 */
 export function pickFor(
   creds: Credential[],
   need: Capability[],
@@ -150,7 +150,7 @@ export function needsOf(nodeKind: string): Capability[] {
   return NODE_NEEDS[nodeKind] || [];
 }
 
-/** 节点需要的凭据类型（用于界面里过滤可选凭据） */
+/** 节点需要的连接类型（用于界面里过滤可选连接） */
 export function kindForNeed(need: Capability[]): CredentialKind | null {
   if (!need || need.length === 0) return null;
   if (need.some((n) => n.indexOf('github:') === 0)) return 'github';
@@ -228,7 +228,7 @@ export function scopeHintFor(need: Capability[]): string {
 }
 
 /* ------------------------------------------------------------------ */
-/* 建凭据                                                              */
+/* 建连接                                                              */
 /* ------------------------------------------------------------------ */
 
 let seq = 0;
@@ -240,7 +240,7 @@ export function makeCredential(
   const now = Date.now();
   return {
     id: partial.id || `cred_${now}_${seq}`,
-    name: partial.name || '未命名凭据',
+    name: partial.name || '未命名连接',
     kind: partial.kind || 'generic',
     secret: partial.secret || '',
     meta: partial.meta,
@@ -254,7 +254,7 @@ export function makeCredential(
 }
 
 /**
- * 凭据脱敏：导出 / 落盘前调用。
+ * 连接脱敏：导出 / 落盘前调用。
  *
  * 只留 id 与名字，密钥与能力明细都不带走 ——
  * 能力里能反推出权限范围，也不宜外泄。
@@ -275,7 +275,7 @@ export function redactCredentials(list: Credential[]): Credential[] {
   return (list || []).map(redactCredential);
 }
 
-/** 按 id 取凭据；找不到返回 null（调用方决定如何提示） */
+/** 按 id 取连接；找不到返回 null（调用方决定如何提示） */
 export function findCredential(
   list: Credential[],
   id: string | undefined,
@@ -286,7 +286,7 @@ export function findCredential(
 }
 
 /**
- * 解析节点用的密钥：优先走凭据引用，没有则退回节点内联值。
+ * 解析节点用的密钥：优先走连接引用，没有则退回节点内联值。
  *
  * 保留内联是为了兼容旧画布 —— 那些节点里直接存了 apiKey，
  * 不认它们的话用户一升级就全部失效。

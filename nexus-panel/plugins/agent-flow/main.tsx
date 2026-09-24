@@ -21,9 +21,9 @@ bootIframeReactPlugin((ctx) => {
   setTauriBridge(ctx);
 
   /*
-   * 工具栏上的 MCP 状态插件要能打开凭据中心。
+   * 工具栏上的 MCP 状态插件要能打开连接管理器。
    *
-   * 凭据中心的开关是 App 里的 state，总线事件到不了 React 树内部，
+   * 连接管理器的开关是 App 里的 state，总线事件到不了 React 树内部，
    * 所以这里把它转成一个 window 事件，App 那边再接住。
    * 用 window 事件而不是模块级回调，是为了避免再引入一份
    * "谁注册谁监听"的可变全局。

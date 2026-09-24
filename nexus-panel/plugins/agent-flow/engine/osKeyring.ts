@@ -1,5 +1,5 @@
 /**
- * 把保险箱主密钥放进 **操作系统凭据管理器**。
+ * 把保险箱主密钥放进 **操作系统连接管理器**。
  *
  * ================= 为什么需要第三种模式 ====================
  *
@@ -10,13 +10,13 @@
  *
  * auto 的问题（af_flow.rs 里也记着）：
  *   盐文件就躺在应用数据目录里，明文明放。
- *   **谁把整个数据目录拷走，谁就能离线复现密钥、解开全部凭据。**
+ *   **谁把整个数据目录拷走，谁就能离线复现密钥、解开全部连接。**
  *   它防的只是"同页面其它脚本顺手读"，防不住离线拷贝。
  *
  * passphrase 能防，但每次打开都要输一遍。
  *
- * 第三种：主密钥存进 OS 凭据管理器 ——
- *   Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service。
+ * 第三种：主密钥存进 OS 连接管理器 ——
+ *   Windows 连接管理器 / macOS 钥匙串 / Linux Secret Service。
  *   钥匙不在数据目录里，而在 OS 手里，且与用户登录态绑定。
  *   既不用每次输口令，又防得住"拷走整个目录"。
  *
@@ -31,7 +31,7 @@
  *
  * ③ **写进去之前先回读验证。**
  *    存不进去、或存进去读不回来（Linux 上钥匙串要解锁时很常见），
- *    如果照样拿它加密，凭据就永久解不开了 —— 那是数据丢失。
+ *    如果照样拿它加密，连接就永久解不开了 —— 那是数据丢失。
  */
 
 /* ------------------------------------------------------------------ */
@@ -39,7 +39,7 @@
 /* ------------------------------------------------------------------ */
 
 /**
- * 在 OS 凭据管理器里的标识。
+ * 在 OS 连接管理器里的标识。
  *
  * service 与 account 一起定位一条记录，所以不用再往里塞随机后缀 ——
  * 换了名字就等于换了个保险箱，之前存的密钥找不回来。
@@ -59,14 +59,14 @@ export type OsKeyringRead =
   | { ok: true; value: string }
   /** 没有这条记录（还没存过），不是错误 */
   | { ok: true; value: null }
-  /** 凭据管理器不可用或读失败 */
+  /** 连接管理器不可用或读失败 */
   | { ok: false; reason: string };
 
 /** 把一次读取的结果归一成 OsKeyringRead —— 边界都收在这里，调用方不用各自判一遍 */
 export function toOsKeyringRead(raw: unknown): OsKeyringRead {
   if (raw === null || raw === undefined) return { ok: true, value: null };
   if (typeof raw !== 'string') {
-    return { ok: false, reason: `凭据管理器返回了非字符串：${typeof raw}` };
+    return { ok: false, reason: `连接管理器返回了非字符串：${typeof raw}` };
   }
   /*
    * 空串当"没有"。
@@ -86,7 +86,7 @@ export function toOsKeyringRead(raw: unknown): OsKeyringRead {
  * 生成一个新的主密钥。
  *
  * 用 16 进制而不是 base64：hex 在所有平台都能原样进出，
- * 而 base64 里的 + / = 在某些凭据管理器里会被转义。
+ * 而 base64 里的 + / = 在某些连接管理器里会被转义。
  */
 export function newOsKeyringKey(randomBytes: (n: number) => Uint8Array): string {
   const a = randomBytes(OS_KEYRING_KEY_BYTES);
@@ -104,9 +104,9 @@ export function newOsKeyringKey(randomBytes: (n: number) => Uint8Array): string 
 export type OsKeyringPlan =
   /** 用读到的这个密钥去解密 */
   | { action: 'use'; key: string }
-  /** 生成一个新密钥，存进凭据管理器，再用它加密 */
+  /** 生成一个新密钥，存进连接管理器，再用它加密 */
   | { action: 'create'; key: string }
-  /** 凭据管理器不可用 —— 必须明确告知，不能静默降级 */
+  /** 连接管理器不可用 —— 必须明确告知，不能静默降级 */
   | { action: 'unavailable'; reason: string };
 
 /**
@@ -132,7 +132,7 @@ export type OsKeyringWriteCheck =
 /**
  * 写完回读，确认真的存住了。
  *
- * 这是防"凭据永久解不开"的最后一道关：
+ * 这是防"连接永久解不开"的最后一道关：
  * Linux 的 Secret Service 在钥匙串锁着时会**接受写入但读不出来**，
  * 此时若拿这个密钥去加密，下次打开就再也解不开了。
  *
@@ -145,7 +145,7 @@ export function judgeOsKeyringWrite(readBack: OsKeyringRead, expected: string): 
   if (readBack.value === null) {
     return {
       ok: false,
-      reason: '写入后回读为空 —— 凭据管理器没有真正存住（钥匙串可能处于锁定状态）',
+      reason: '写入后回读为空 —— 连接管理器没有真正存住（钥匙串可能处于锁定状态）',
     };
   }
   if (readBack.value !== expected) {
@@ -156,7 +156,7 @@ export function judgeOsKeyringWrite(readBack: OsKeyringRead, expected: string): 
      */
     return {
       ok: false,
-      reason: '写入后回读与写入值不一致，凭据管理器可能做了转义或截断',
+      reason: '写入后回读与写入值不一致，连接管理器可能做了转义或截断',
     };
   }
   return { ok: true };
@@ -174,7 +174,7 @@ export function judgeOsKeyringWrite(readBack: OsKeyringRead, expected: string): 
  * 能登录这台机器的用户仍然能取到密钥。
  */
 export function osKeyringHint(): string {
-  return '主密钥存在操作系统凭据管理器里（Windows 凭据管理器 / macOS 钥匙串），'
+  return '主密钥存在操作系统连接管理器里（Windows 连接管理器 / macOS 钥匙串），'
     + '不在应用数据目录中 —— 拷走整个数据目录也解不开。'
     + '能登录这台机器的人仍可取到，要防那个请用口令模式。';
 }

@@ -102,9 +102,9 @@ export type NodeInspectorProps = {
   node: FlowNode;
   edges: FlowEdge[];
   onChange: (id: string, patch: Record<string, unknown>) => void;
-  /** 凭据列表；不传则凭据选择区不显示 */
+  /** 连接列表；不传则连接选择区不显示 */
   credentials?: Credential[];
-  /** 打开凭据中心，并聚焦到指定类型 */
+  /** 打开连接管理器，并聚焦到指定类型 */
   onOpenCredentials?: (kind: string) => void;
   /** 后端为「未填 Token」的 webhook 触发器自动生成的校验 Token，按触发器 id 索引 */
   webhookTokens?: Record<string, string>;

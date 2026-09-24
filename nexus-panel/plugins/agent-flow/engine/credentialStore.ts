@@ -1,5 +1,5 @@
 /**
- * 加密凭据存储 —— 在"持久化"这一层做加密，上层无感。
+ * 加密连接存储 —— 在"持久化"这一层做加密，上层无感。
  *
  * 关键约定：**内存里是明文，磁盘上是密文**。
  * 组件照常读写 credential.secret，不用关心加密；
@@ -17,7 +17,7 @@ import {
 /**
  * 磁盘上的形态：secret 字段换成密文包，其余照旧。
  * 可读字段（名字、类型、能力）保持明文 —— 加密它们没有意义，
- * 反而让"有多少条凭据、分别能干什么"在界面上都显示不出来。
+ * 反而让"有多少条连接、分别能干什么"在界面上都显示不出来。
  */
 export type StoredCredential = Omit<Credential, 'secret'> & {
   secret: CipherBundle | '';
@@ -27,14 +27,14 @@ export type StoredCredential = Omit<Credential, 'secret'> & {
  * 保险箱主密钥从哪来。
  *
  *   auto        本机特征派生 —— 盐明文躺在数据目录里，拷走目录即可离线解开
- *   oskeyring   OS 凭据管理器 —— 钥匙在 OS 手里，拷走目录解不开，且不用每次输口令
+ *   oskeyring   OS 连接管理器 —— 钥匙在 OS 手里，拷走目录解不开，且不用每次输口令
  *   passphrase  用户口令     —— 每次打开要输，钥匙只在用户脑子里
  */
 export type VaultMode = 'auto' | 'oskeyring' | 'passphrase';
 
 export type StoredFile = {
   v: number;
-  /** 'auto' 绑定本机；'oskeyring' 存 OS 凭据管理器；'passphrase' 每次输口令 */
+  /** 'auto' 绑定本机；'oskeyring' 存 OS 连接管理器；'passphrase' 每次输口令 */
   mode: VaultMode;
   /** auto 模式用的设备盐。不是秘密，但缺了它无法离线复现密钥 */
   deviceSalt: string;
@@ -86,7 +86,7 @@ export function parseStore(raw: string | null): StoredFile {
     .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
     .map((x, i) => ({
       id: typeof x.id === 'string' ? x.id : `cred_restored_${i}`,
-      name: typeof x.name === 'string' && x.name.trim() !== '' ? x.name : `凭据 ${i + 1}`,
+      name: typeof x.name === 'string' && x.name.trim() !== '' ? x.name : `连接 ${i + 1}`,
       kind: (x.kind === 'github' || x.kind === 'llm' || x.kind === 'generic' || x.kind === 'cli')
         ? x.kind as Credential['kind'] : 'generic',
       // 明文兼容：老数据进来直接保留，由 migrate 决定是否加密
@@ -104,11 +104,11 @@ export function parseStore(raw: string | null): StoredFile {
 }
 
 /**
- * 把存储文件解密成运行时凭据。
+ * 把存储文件解密成运行时连接。
  *
  * @param pass 解锁口令。auto 模式传本机特征串，passphrase 模式传用户口令
- * @returns 解密后的凭据；单条解密失败时该条 secret 留空并记入 failed，
- *          不整批失败 —— 一条坏掉不该让所有凭据都用不了
+ * @returns 解密后的连接；单条解密失败时该条 secret 留空并记入 failed，
+ *          不整批失败 —— 一条坏掉不该让所有连接都用不了
  */
 export async function decryptStore(
   be: CryptoBackend,
@@ -137,7 +137,7 @@ export async function decryptStore(
 /* 写入                                                                */
 /* ------------------------------------------------------------------ */
 
-/** 把运行时凭据加密成存储文件。空密钥不加密（没东西可保护） */
+/** 把运行时连接加密成存储文件。空密钥不加密（没东西可保护） */
 export async function encryptStore(
   be: CryptoBackend,
   file: StoredFile,

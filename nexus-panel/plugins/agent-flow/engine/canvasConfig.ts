@@ -37,7 +37,7 @@ export type McpServer = {
   command?: string;
   /** HTTP 传输的地址（SSE / streamable） */
   url?: string;
-  /** 附加环境变量；值可以用模板引用凭据 */
+  /** 附加环境变量；值可以用模板引用连接 */
   env?: Record<string, string>;
   /** 备注 */
   note?: string;

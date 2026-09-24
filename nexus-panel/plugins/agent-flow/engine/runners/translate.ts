@@ -65,7 +65,7 @@ export async function runTranslate(ctx: RunContext): Promise<void> {
     d.glossary,
   );
 
-  /* 同 OCR：地址与密钥优先取自凭据，节点上那份只作兜底 */
+  /* 同 OCR：地址与密钥优先取自连接，节点上那份只作兜底 */
   const cfg = resolveLlmFromCredential(
     findCredential(opts.credentials ?? [], d.credentialId), d.llm?.model, { fallback: d.llm },
   );
