@@ -579,15 +579,46 @@ where
     Ok(r)
 }
 
-/// 严格加载账本（写入路径专用）。
-pub fn load_records_strict(dir: &Path) -> LoadOutcome<Vec<LinkRecord>> {
-    #[derive(serde::Deserialize, Default)]
-    struct File {
+/// 账本文件（link-record.json）的**两种历史形态**。
+///
+/// 对齐原版 `LinkRecordService.LoadStrict`，它明写：
+/// 「兼容 `{clusters,links}` 对象 或 **裸数组** 两种历史格式」。
+///
+///   · `{ "links": [...] }` —— 对象形态（当前写入格式）
+///   · `[...]`              —— **裸数组**（更早版本原版工具写出来的）
+///
+/// 只认对象形态的后果：老账本会被判成"损坏" ——
+/// 文件本身完好、数据一条不少，但工具报「JSON 解析失败」并顺带
+/// **拦住全部写入**（`guard_against_corrupt`）。
+/// 用户看到的只是"账本坏了"，而真相是"我们不认这个格式" ——
+/// 报错完全指向不了原因，他也无从知道该手动改什么。
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+pub enum RecordFile {
+    Object {
         #[serde(default)]
         links: Vec<LinkRecord>,
+    },
+    Array(Vec<LinkRecord>),
+}
+
+impl Default for RecordFile {
+    fn default() -> Self { RecordFile::Object { links: Vec::new() } }
+}
+
+impl RecordFile {
+    pub fn into_links(self) -> Vec<LinkRecord> {
+        match self {
+            RecordFile::Object { links } => links,
+            RecordFile::Array(v) => v,
+        }
     }
-    match load_strict::<File>(&dir.join("link-record.json")) {
-        LoadOutcome::Ok(f) => LoadOutcome::Ok(f.links),
+}
+
+/// 严格加载账本（写入路径专用）。
+pub fn load_records_strict(dir: &Path) -> LoadOutcome<Vec<LinkRecord>> {
+    match load_strict::<RecordFile>(&dir.join("link-record.json")) {
+        LoadOutcome::Ok(f) => LoadOutcome::Ok(f.into_links()),
         LoadOutcome::Corrupted { backup, reason } => {
             LoadOutcome::Corrupted { backup, reason }
         }
@@ -595,15 +626,13 @@ pub fn load_records_strict(dir: &Path) -> LoadOutcome<Vec<LinkRecord>> {
 }
 
 pub fn load_records(dir: &Path) -> Vec<LinkRecord> {
-    #[derive(serde::Deserialize, Default)]
-    struct File { #[serde(default)] links: Vec<LinkRecord> }
     // 账本同样是唯一副本：读不出来时**绝不能以空列表继续**——
     // 后续 save_records 会把空列表整份写回，所有链接记录瞬间蒸发。
     // 这里给空列表只为让界面仍能渲染，但损坏状态会被记下，
     // 随后的 save_records 会被 guard_against_corrupt 拦住。
-    load_strict::<File>(&dir.join("link-record.json"))
-        .unwrap_or_else(File::default)
-        .links
+    load_strict::<RecordFile>(&dir.join("link-record.json"))
+        .unwrap_or_else(RecordFile::default)
+        .into_links()
 }
 
 pub fn save_records(dir: &Path, records: &[LinkRecord]) -> Result<(), String> {
@@ -951,13 +980,9 @@ pub fn write_json_any<T: serde::Serialize>(path: &std::path::Path, value: &T) ->
 
 /// 按**完整文件路径**读链接记录（与 load_records 不同：那个收的是目录）。
 pub fn load_records_from_exact(path: &std::path::Path) -> Result<Vec<LinkRecord>, String> {
-    #[derive(serde::Deserialize)]
-    struct File {
-        #[serde(default)]
-        links: Vec<LinkRecord>,
-    }
+    // 同上：这里读的是同一个 link-record.json，两种形态都要认。
     if !path.exists() { return Ok(Vec::new()); }
-    read_json_any::<File>(path).map(|f| f.links)
+    read_json_any::<RecordFile>(path).map(|f| f.into_links())
 }
 
 /// 按完整文件路径读链接记录；文件不存在时返回空（首次运行属正常）。

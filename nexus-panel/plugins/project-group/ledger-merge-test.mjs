@@ -104,4 +104,67 @@ console.log('\n=== 6. #165 色值非法要在**写入时**挡住 ===');
   t('读取路径未加校验', !/fn core_set_tag_color[\s\S]{0,400}?load_config[\s\S]{0,200}?is_hex_color/.test(mod));
 }
 
+console.log('\n=== 4. 账本两种历史形态都要认（#452 相关，原版 LoadStrict 明写）★★ ===');
+{
+  /*
+   * 原版 `LinkRecordService.LoadStrict` 明写：
+   *   「兼容 {clusters,links} 对象 或 **裸数组** 两种历史格式」
+   *
+   * 本版此前只认 `{links:[...]}` 对象形态。用**更早版本原版工具**写出来的
+   * 裸数组账本会被判成"损坏"：文件完好、数据一条不少，但工具报
+   * 「JSON 解析失败」并顺带**拦住全部写入**（guard_against_corrupt）。
+   *
+   * 用户看到的只是"账本坏了"，而真相是"我们不认这个格式" ——
+   * 报错完全指向不了原因，他也无从知道该手动改什么。
+   */
+  const store = RS('src-tauri/src/fpx/store.rs');
+
+  /* 一、两种形态都要在类型里 */
+  t('有 RecordFile 双形态类型', /enum RecordFile/.test(store));
+  /* untagged 是关键：不带它的话 serde 会按"带标签的枚举"去解析，
+     两种形态都匹配不上。 */
+  t('用 untagged（否则两种形态都匹配不上）', /#\[serde\(untagged\)\]/.test(store));
+  t('有对象形态变体（links）', /Object \{[\s\S]{0,120}links: Vec<LinkRecord>/.test(store));
+  t('有裸数组形态变体', /Array\(Vec<LinkRecord>\)/.test(store));
+
+  /* 二、两个读取入口都要换成它（漏一处 = 从那个入口读仍是"损坏"） */
+  t('load_records_strict 用它',
+    /load_strict::<RecordFile>\(&dir\.join\("link-record\.json"\)\)/.test(store));
+  t('load_records 用它',
+    (store.match(/load_strict::<RecordFile>/g) || []).length >= 2,
+    '命中 ' + (store.match(/load_strict::<RecordFile>/g) || []).length + ' 处');
+  t('load_records_from_exact 也用它',
+    /read_json_any::<RecordFile>\(path\)/.test(store));
+
+  /* 三、**反面证据**：不允许再有只认 links 的局部 struct */
+  t('没有残留的局部 File 结构体（反面证据）',
+    !/struct File \{[\s\S]{0,120}links: Vec<LinkRecord>/.test(store));
+
+  /* 四、写入仍然只写对象形态（不写裸数组） */
+  t('save_records 仍写对象形态',
+    /struct File<'a> \{ links: &'a \[LinkRecord\] \}/.test(store));
+  /*
+   * 不写 `clusters`：原版 `LinkRecordFile.Clusters` 是 `List<object>`，
+   * 从头到尾**从未被填充**，只是历史遗留的占位键；
+   * 每条记录的 `Cluster` 也是建链时写死 `""`、**全库无任何读取**。
+   * 照搬只会把一个死字段搬过来（判 ➖）。
+   */
+  /*
+   * 这条**第一版误匹配了自己的注释**：RS() 只剥块注释（slash-star 那种），
+   * 不剥 `///` 文档注释，而上面那段说明里就写了 {clusters,links}
+   * → 断言恒真（空跑）。
+   *
+   * （注释里也不能直接写块注释的起止符，否则提前闭合、后面全成裸代码。）
+   *
+   * 改成先去掉整行的 `//` 注释再判：真正要钉的是**代码里没有这个字段**，
+   * 不是"文件里不出现这个词"。
+   */
+  const codeOnly = store
+    .split('\n')
+    .filter((l) => !l.trimStart().startsWith('//'))
+    .join('\n');
+  t('不写 clusters 死字段（代码层面）', !/clusters/.test(codeOnly),
+    '含 clusters 的行：' + (codeOnly.split('\n').filter((l) => /clusters/.test(l))[0] || '无'));
+}
+
 done();
