@@ -1911,5 +1911,56 @@ console.log('\n=== 36. 取色弹窗：主题适配与不滚动 ===');
     /\.fpx-swatches\s*\{[\s\S]{0,400}overflow-y:\s*auto/.test(sc));
 }
 
+console.log('\n=== 37. 类型检查暴露的两类真 bug ===');
+{
+  /*
+   * 这一节来自**第一次真正跑通的 tsc**（此前一直报"装不上 TypeScript"，
+   * 根因是 .npmrc 里 global=true，npm install 全装到全局去了）。
+   * 下面两条都不是风格问题，是会崩的运行时错误。
+   */
+
+  /* ---- 1. props 声明了却没解构 → 裸调用 ReferenceError ---- */
+  /*
+   * ContentPanel 的 props 类型里有 onRenameSegment，但解构列表里漏了它，
+   * 而 renameSegment() 内部直接裸调用 onRenameSegment({...})
+   * → 用户点「改名」的瞬间抛 ReferenceError，功能完全是坏的。
+   * 这类错误只有 tsc 能发现：ESLint 的 no-undef 在 TS 文件里默认不报。
+   */
+  const cp = read('plugins/project-group/components/ContentPanel.tsx');
+  {
+    const m = cp.match(/export function ContentPanel\(\{\s*([\s\S]*?)\s*\}:\s*\{/);
+    const destruct = m ? m[1] : '';
+    // props 类型体里声明的字段名
+    const bodyStart = cp.indexOf('}: {', cp.indexOf('export function ContentPanel('));
+    const bodyEnd = cp.indexOf('\n  })', bodyStart);
+    const declared = [...cp.slice(bodyStart, bodyEnd).matchAll(/^ {2}(\w+)\??:/gm)].map((x) => x[1]);
+    const missing = declared.filter((d) => !new RegExp(`\\b${d}\\b`).test(destruct));
+    t('props 声明的字段都进了解构列表（漏了会 ReferenceError）',
+      missing.length === 0, missing.join(', '));
+    t('onRenameSegment 已解构', /\bonRenameSegment\b/.test(destruct));
+  }
+
+  /* ---- 2. ?? 与三元混用的优先级陷阱 ---- */
+  /*
+   * `a ?? b ? c : d` 解析成 `(a ?? b) ? c : d`，不是直觉的 `a ?? (b ? c : d)`。
+   * 漏了括号时，只要 a 非空就会无条件取 c —— 而 c 里访问的是联合类型
+   * 上并不存在的字段（dialog.card 只在 type==='icons' 分支存在），
+   * 于是读到 undefined.path → TypeError。
+   * iconTargetName 那一行写了括号，两行不一致正是漏写的原因。
+   */
+  const dl = read('plugins/project-group/components/Dialogs.tsx');
+  {
+    // 找出所有 `??` 后紧跟一个未加括号的三元的写法
+    const risky = [...dl.matchAll(/\?\?\s*([A-Za-z_$][\w.$?]*\s*(?:===|!==|==|!=)[^?]*?)\s*\?[^:]*:./g)]
+      .map((m) => m[0].slice(0, 60));
+    t('?? 与三元混用处都加了括号',
+      risky.length === 0, risky.join(' | '));
+    t('iconTargetPath 与 iconTargetName 写法一致（都带括号）',
+      /selCard\?\.path \?\? \(dialog\.type === 'icons'/.test(dl) &&
+      /selCard\?\.name \?\? \(dialog\.type === 'icons'/.test(dl));
+  }
+}
+
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
