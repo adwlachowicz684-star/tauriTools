@@ -178,7 +178,48 @@ console.log('\n=== 3. 顺序断言必须两端都判存在 ===');
   t('顺序比较的两端都判了存在', bad.length === 0, bad.slice(0, 5).join(' | '));
 }
 
-console.log('\n=== 4. 反向自检：护栏本身能抓到 ===');
+console.log('\n=== 4. 不许有占位断言 ===');
+/*
+ * 名字承诺在验行为、条件却写成字面真值 —— 它永远报绿，**什么都不验**，
+ * 它永远报绿，**什么都不验**，看着却像有覆盖（比没有断言更糟：给假安心）。
+ * 看着却像有覆盖（比没有断言更糟：给假安心）。本轮扫出 2 处，
+ * 都是"先记下待办、后来忘了补"留下的。
+ *
+ * 允许的例外：条件里带 `typeof x !== 'undefined'` 之类的环境守卫
+ * （那种是真的在判某物存在），所以只禁**纯字面**恒真。
+ */
+{
+  const bad = [];
+  for (const f of tests) {
+    /*
+     * 必须先剥注释：本段自己的说明里就写着 `t(...) true` 这个写法，
+     * 不剥的话**护栏会把自己注释里的字样当成违规**报出来（实测误报 2 条）。
+     */
+    const src = stripComments(fs.readFileSync(path.join(PLUG, f), 'utf8'));
+    for (const m of src.matchAll(/\bt\(/g)) {
+      let depth = 0; let j = m.index;
+      for (let k = m.index; k < src.length; k += 1) {
+        if (src[k] === '(') depth += 1;
+        else if (src[k] === ')') { depth -= 1; if (depth === 0) { j = k; break; } }
+      }
+      const stmt = src.slice(m.index, j + 1);
+      if (stmt.indexOf(',') < 0) continue;
+      let cond = stmt.slice(stmt.indexOf(',') + 1).trim();
+      if (cond.endsWith(')')) cond = cond.slice(0, -1);
+      /* 去掉尾部的消息参数（模板串 / 单引号串），最多两层 */
+      for (let i = 0; i < 2; i += 1) {
+        cond = cond.replace(/,\s*('[^']*'|`[^`]*`)\s*$/, '').trim().replace(/,$/, '');
+      }
+      if (/^(true|1|!0|!!1)$/.test(cond) || /\|\|\s*(true|1)\s*$/.test(cond)) {
+        const nm = stmt.match(/^t\(\s*(['\`])(.*?)\1/);
+        bad.push(`${f}: ${nm ? nm[2] : '?'}`);
+      }
+    }
+  }
+  t('没有占位断言（条件是字面真值）', bad.length === 0, bad.slice(0, 5).join(' | '));
+}
+
+console.log('\n=== 5. 反向自检：护栏本身能抓到 ===');
 {
   /* 造一个"只活在注释里"的模式，护栏必须把它标出来 */
   const probe = '这条说明只存在于注释里的探针XYZ';
@@ -196,6 +237,12 @@ console.log('\n=== 4. 反向自检：护栏本身能抓到 ===');
     const fake = `t('假的次序断言', s.indexOf('AAA') < s.indexOf('BBB'));`;
     const guarded = /AAA/.test(fake) && /(?:AAA|BBB)[\s\S]{0,40}>=?\s*0/.test(fake);
     return !guarded;   // 没判存在 → 应当被标为 bad
+  })());
+  /* 占位类自检：字面 true 必须被认出来 */
+  t('占位类：判定函数确实认得出来', (() => {
+    const fake = 'true';
+    const msg = '`t(...';
+    return /^(true|1|!0|!!1)$/.test(fake) && msg.length > 0;
   })());
 }
 

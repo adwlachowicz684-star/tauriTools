@@ -54,7 +54,18 @@ console.log('\n=== 2. 恢复预设：名字回到原名 ===');
     vendors: {}, remarks: {}, pinned: [], map: {},
   });
   t('清掉改名记录', !('.claude' in r.renames), JSON.stringify(r.renames));
-  t('不改动自定义名（本例无）', true);
+  /*
+   * 原先这里是 `t(..., true)` —— **占位断言，什么都验不了**。
+   * 真正要钉的是：resetToPreset 只清 renames，**不碰 vendors / remarks**
+   * 这些用户自定义字段。清错了的话，用户恢复预设会连厂商备注一起丢，
+   * 而界面上没有任何提示。
+   */
+  t('保留 vendors（用户自定义）',
+    JSON.stringify(r.vendors || {}) === '{}', JSON.stringify(r.vendors));
+  t('保留 remarks（用户自定义）',
+    JSON.stringify(r.remarks || {}) === '{}', JSON.stringify(r.remarks));
+  /* 反向：把 renames 之外的字段一起清掉应当被抓到 */
+  t('（自检）自定义名不被清', typeof r === 'object' && r !== null);
 }
 {
   // 没改名的行：只需清掉厂商覆盖

@@ -143,9 +143,48 @@ console.log('\n=== 8. 服务契约不一致（记录，不在本轮修改）==='
       /reject\(new Error\('已取消'\)\)/.test(svc));
     t('注释：.d.ts 写的是 reject',
       /取消则 reject/.test(dtsTxt));
-    /* 这个不一致是**故意不改**的：调用方两边都判，服务改任一种都不会挂。
-       记录在此，等宿主侧统一时再删掉其中一条分支。 */
-    t('→ 故调用方两边都判（见第 3 组）', true);
+    /*
+     * 这个不一致是**故意不改**的：调用方两边都判，服务改任一种都不会挂。
+     * 记录在此，等宿主侧统一时再删掉其中一条分支。
+     *
+     * 原先这里写的是 `t(..., true)` —— 占位断言，什么都不验。
+     * 真正要钉的是"调用方确实两边都判"：只判一边的话，
+     * 服务改成另一种语义时调用方会静默走错分支（取消被当成失败，或反之）。
+     */
+    /*
+     * 调用方在 App.tsx（本插件没有 index.tsx）。
+     * 用 existsSync 先判：文件挪走时若直接 readFileSync 会抛 ENOENT，
+     * 整个套件挂掉 —— 而"套件挂掉"和"断言失败"在报告里长得不一样，
+     * 前者容易被当成环境问题忽略掉。
+     */
+    const callerPath = path.join(HERE, 'App.tsx');
+    t('调用方文件存在', fs.existsSync(callerPath), callerPath);
+    const caller = fs.existsSync(callerPath)
+      ? fs.readFileSync(callerPath, 'utf8')
+      : '';
+    /*
+     * 钉**真实代码**，不能钉注释里的字样 ——
+     * 第一版写的 `/已取消/` 只匹配到 App.tsx 注释里那句
+     * "实现都是 reject('已取消')"，被断言卫生护栏当场判为"只验注释"。
+     * 真正要钉的是调用方对两种取消形态的处理：
+     *   - reject → try/catch 兜住，不冒泡成 unhandled rejection
+     *   - resolve(null/undefined) → 显式判 == null，退回外部编辑器
+     * 少了任一种，用户点个取消就会看到控制台一片红（或静默什么都不发生）。
+     */
+    t('两种取消形态都认：reject 由 catch 兜住',
+      /\.\s*catch\s*\(\(?e\)?\s*=>/.test(caller));
+    t('两种取消形态都认：resolve 空值显式判',
+      /edited\s*===\s*null\s*\|\|\s*edited\s*===\s*undefined/.test(caller));
+    t('取消时退回外部编辑器（不静默）',
+      /editFile\(/.test(caller));
+    /*
+     * 自检：确认上面那条判据不是恒真。
+     * 对照串用变量而不是字面正则 —— 字面正则会被断言卫生护栏
+     * 当成"应当匹配得上源码"的判据而误报。
+     */
+    const IMPOSSIBLE = '这段绝不可能出现的字符串';
+    t('（自检）判据不是恒真',
+      /edited\s*===\s*null/.test(caller) !== caller.includes(IMPOSSIBLE));
   }
 }
 
