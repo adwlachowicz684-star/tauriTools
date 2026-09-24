@@ -96,6 +96,21 @@ export const PLUGIN_COMMANDS = {
   home: ['rust_ping', 'app_version'],
 
   /*
+   * md
+   * ----------------------------------------------------------
+   * 只有一条 fpx_read_file（S 类：读文件内容），E2 入口靠它读宿主传来的路径。
+   *
+   * 刻意**不给**任何 W / M 类：md 是只读阅读器，
+   * 写入、起进程、开监听它一个都用不到。给了就只是多一处攻击面。
+   *
+   * ⚠️ fpx_read_file 在 Rust 侧**没有路径白名单校验**（已核对：
+   *    fpx::fpx_read_file 直调 content::read_preview，不经过 guard）。
+   *    所以它是"任意路径读取"，只因 md 是内置插件（builtin: true）才给。
+   *    第三方插件要这条必须单独评估 —— 拿到它等于能读整机任意文本。
+   */
+  md: ['fpx_read_file'],
+
+  /*
    * agent-flow
    * ----------------------------------------------------------
    * 清单由 scripts/scan-invoke.mjs 实测得出（对照源码 + Rust 已注册命令），

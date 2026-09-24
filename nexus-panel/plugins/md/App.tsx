@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { REMARK_PLUGINS, REHYPE_PLUGINS, urlTransform } from './render-config';
 import {
@@ -67,7 +67,19 @@ const SAMPLE = [
   '原始 HTML 与 javascript: 协议应被拦下，不会真的执行。',
 ].join('\n');
 
-export default function MdApp() {
+/**
+ * 读取上限（字符）。
+ *
+ * Rust 侧 fpx_read_file 的默认值是 20000 —— 那是给"预览 skill"用的，
+ * 对阅读器太小：一篇长文档读到一半就断，且**只加一句"已截断"**，
+ * 不报错。所以必须显式传大值。
+ *
+ * 给 8M 而不是无限：真出现超大文件时不至于把内存吃干，
+ * 且这种情况下"读不动"比"界面卡死"要好。
+ */
+const MAX_READ_CHARS = 8 * 1024 * 1024;
+
+export default function MdApp({ ctx }: { ctx?: any } = {}) {
   const [src, setSrc] = useState(SAMPLE);
   /* 当前文件名。空串 = 内容是粘贴/默认的，不是从文件来的。 */
   const [fileName, setFileName] = useState('');
@@ -138,6 +150,46 @@ export default function MdApp() {
   }, []);
 
   const onDragLeave = useCallback(() => setDragging(false), []);
+
+  /*
+   * E2：宿主传路径。
+   *
+   * 两条通道都要，缺一不可（这也是宿主 openWithArgs 分两种情况的原因）：
+   *   · ctx.openArgs      —— 挂载**之前**就带进来的，同步可读
+   *   · ctx.onOpenArgs    —— 已挂载后再次打开新文件，走事件总线
+   *
+   * 只接前者：第二次"用 md 打开另一个文件"没反应；
+   * 只接后者：第一次收不到（那时还没订阅）。
+   */
+  const openPath = useCallback(async (path: string) => {
+    if (!path) return;
+    try {
+      const text = await ctx.invoke('fpx_read_file', {
+        path,
+        max: MAX_READ_CHARS,
+      });
+      if (typeof text !== 'string') {
+        setHint('读取失败：返回内容不是文本');
+        return;
+      }
+      setSrc(text);
+      const nm = String(path).replace(/\\/g, '/').split('/').pop() || path;
+      setFileName(nm);
+      setHint('');
+    } catch (err) {
+      setHint(`读取失败：${err?.message || err}`);
+    }
+  }, [ctx]);
+
+  useEffect(() => {
+    if (!ctx) return;
+    const first = ctx.openArgs?.path;
+    if (first) openPath(first);
+    const off = ctx.onOpenArgs?.((args: any) => {
+      if (args?.path) openPath(args.path);
+    });
+    return () => off?.();
+  }, [ctx, openPath]);
 
   return (
     <div

@@ -18,4 +18,9 @@
 import { defineReactPlugin } from '../../src/nexus-react';
 import MdApp from './App';
 
-export default defineReactPlugin({ name: 'Markdown' }, () => <MdApp />);
+/*
+ * 把 ctx 传给 App：E2（宿主传路径）要用 ctx.openArgs / ctx.onOpenArgs /
+ * ctx.invoke。不给的话 App 里 ctx 是 undefined，路径入口**静默不生效** ——
+ * 不报错，只是"传了路径没反应"，正是最难排查的那类。
+ */
+export default defineReactPlugin({ name: 'Markdown' }, (ctx) => <MdApp ctx={ctx} />);
