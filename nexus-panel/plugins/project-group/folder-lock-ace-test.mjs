@@ -52,4 +52,58 @@ console.log('\n=== 3. 非 Windows 分支没被改坏 ===');
   t('Unix 消息与实际一致', /当前平台不支持单独的防删除档/.test(sys));
 }
 
+console.log('\n=== 2. #211 内容浏览不需要摘锁（清单误判）★ ===');
+{
+  /*
+   * 状态表此前写「211 · 内容浏览受 ACL 保护时摘锁执行 / content.rs 无 unlock」。
+   * 回原版核对后判**不适用（➖）**：
+   *
+   * 原版 FolderLockService 只有两类 deny ——
+   *   DeleteRights = Delete | DeleteSubdirectoriesAndFiles
+   *   WriteRights  = WriteData | AppendData | WriteAttributes | WriteExtendedAttributes
+   * **没有任何读位**（ReadData / ReadAttributes / ListDirectory / Traverse 都没 deny）。
+   *
+   * 所以"读目录 / 读文件"根本不在被挡之列 —— content.rs 里全是
+   * `read_dir` / `read_to_string`，不需要摘锁，摘了反而是多余的权限操作。
+   *
+   * 这不是"还没做"，是**不该做**。判 ⬜ 会让它一直挂着假装是个缺口。
+   */
+  const i = sys.indexOf('pub fn apply_lock');
+  const ends = [sys.indexOf('\npub fn ', i + 1), sys.indexOf('\nfn ', i + 1)].filter((x) => x > 0);
+  const blk = sys.slice(i, Math.min(...ends));
+
+  /*
+   * 真正要钉的契约：**权限位集合里永远不能出现读位**。
+   *
+   * 哪天有人往里加一个 `R`，内容浏览就会在受保护目录下静默失败 ——
+   * 那时 #211 才真的变成缺口。所以钉的是"只可能有 D 和 W"，
+   * 而不是"content.rs 里有没有 unlock"。
+   */
+  t('rights 只由 D/W 两个位拼出',
+    /if deny_delete \{ rights\.push\('D'\); \}/.test(blk)
+    && /if deny_write \{ rights\.push\('W'\); \}/.test(blk), blk.slice(blk.indexOf('let mut rights'), blk.indexOf('let mut rights') + 200));
+  /* 反面证据：不允许再出现第三个 push（那多半就是读位） */
+  t('没有第三个权限位（读位）', !/rights\.push\('[^DW]'\)/.test(blk));
+
+  /*
+   * 状态解析同口径：只认 D/DE/W/AD/WA/WEA，
+   * 读位（R/GR 等）与 WDAC/WO/RC 一样属非管理范围，不当成本工具的锁。
+   * 认错的话"用户手动加了读 deny"会被当成我们上的锁，解除时一并清掉 ——
+   * 动了用户没要求动的东西。
+   */
+  t('解析只认删除位', /"D" \| "DE" => st\.deny_delete = true/.test(sys));
+  t('解析只认写入位', /"W" \| "AD" \| "WA" \| "WEA" => st\.deny_write = true/.test(sys));
+  t('锁状态只有 deny_delete / deny_write 两个字段',
+    /pub struct LockState[\s\S]{0,200}deny_delete: bool,[\s\S]{0,120}deny_write: bool/.test(sys));
+
+  /*
+   * 顺带确认**写**路径已经接了摘锁（#427）—— 那才是真正需要它的地方。
+   * 读不用摘、写必须摘，两边都确认完，#211 的判定才站得住。
+   */
+  const mod = strip(fs.readFileSync(path.join(HERE, '../../src-tauri/src/fpx/mod.rs'), 'utf8'));
+  const wi = mod.indexOf('pub fn fpx_write_text');
+  const wblk = mod.slice(wi, mod.indexOf('\npub fn ', wi + 1));
+  t('写正文（SKILL.md / rule）走了 with_unlock', /with_unlock\(&dir, &target,/.test(wblk), wblk.slice(-260));
+}
+
 done();
