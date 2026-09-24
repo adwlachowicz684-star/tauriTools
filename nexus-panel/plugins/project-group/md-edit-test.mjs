@@ -96,7 +96,11 @@ console.log('\n=== 7. 后端命令 ===');
     t('定义了 fpx_read_text', /pub fn fpx_read_text\(/.test(mod));
     t('定义了 fpx_write_text', /pub fn fpx_write_text\(/.test(mod));
     const rd = mod.slice(mod.indexOf('pub fn fpx_read_text'), mod.indexOf('pub fn fpx_write_text'));
-    const wr = mod.slice(mod.indexOf('pub fn fpx_write_text'), mod.indexOf('/* ---------------------------- Agent 连锁'));
+    /*
+     * 结尾锚点原先是分隔注释；改用该段第一个函数签名（代码），
+     * 注释改写不至于让整段切片失效。
+     */
+    const wr = mod.slice(mod.indexOf('pub fn fpx_write_text'), mod.indexOf('pub fn fpx_chain_clients('));
     t('读也过路径收口', /ensure_path_in\(&dir, &cfg, &path\)/.test(rd));
     t('写也过路径收口（写比读更该收口）', /ensure_path_in\(&dir, &cfg, &path\)/.test(wr));
     t('二进制拒绝打开（编辑后写回等于损坏）',
@@ -129,7 +133,7 @@ console.log('\n=== 8. 服务契约不一致（记录，不在本轮修改）==='
       /resolve\(null\) —— \*\*用户取消\*\*/.test(jsTxt));
     t('但 md-editor 实现是 reject(已取消)',
       /reject\(new Error\('已取消'\)\)/.test(svc));
-    t('.d.ts 与实际一致（写的是 reject）',
+    t('注释：.d.ts 写的是 reject',
       /取消则 reject/.test(dtsTxt));
     /* 这个不一致是**故意不改**的：调用方两边都判，服务改任一种都不会挂。
        记录在此，等宿主侧统一时再删掉其中一条分支。 */

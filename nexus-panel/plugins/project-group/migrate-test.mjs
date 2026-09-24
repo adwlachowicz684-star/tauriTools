@@ -27,25 +27,36 @@ const RS = path.join(HERE, '../../src-tauri/src/fpx');
 const { t, done } = makeT();
 
 const cli = fs.readFileSync(path.join(RS, 'cli.rs'), 'utf8');
+/* 跨卷回退的实现在这里：复制失败必须提前返回、不能接着删源 */
+const fsu = fs.readFileSync(path.join(RS, 'fsutil.rs'), 'utf8');
 
 /** 预演分支的源码 */
 const dry = cli.slice(cli.indexOf('if dry_run {'), cli.indexOf('let backup_note'));
 /** 备份函数 */
-/* 从注释起切：那段"为什么不覆盖"的说明写在函数**前面**，
-   只切函数体的话注释根本不在切片里 —— 断言会静默失败。 */
-const bakStart = cli.lastIndexOf('/// 迁移前把', cli.indexOf('fn backup_before_migrate'));
-const bak = cli.slice(bakStart > -1 ? bakStart : cli.indexOf('fn backup_before_migrate'),
+/*
+ * 两端都用**代码**锚点（函数签名）—— 原先起点用的是文档注释
+ * `/// 迁移前把…`，那条注释一改写，切片起点就漂了。
+ *
+ * 那段"为什么不覆盖"的说明写在函数**前面**，不在函数体里，
+ * 所以单独切一份 `bakDoc` 只用来验注释；验代码的断言一律用 `bak`。
+ * 早先是"为了让注释断言过"就把起点挪到注释上，结果整段代码断言
+ * 都挂在一个注释字面量上 —— 注释一改全片失效。
+ */
+const bak = cli.slice(cli.indexOf('fn backup_before_migrate'),
                       cli.indexOf('fn remap'));
+const bakDoc = cli.slice(cli.lastIndexOf('/**', cli.indexOf('fn backup_before_migrate')),
+                         cli.indexOf('fn backup_before_migrate'));
 /** 命令分派 */
-const dispatch = cli.slice(cli.indexOf('pub fn try_handle'), cli.indexOf('/// 未显式传路径时'));
+/* 结尾锚点用代码（函数签名），不用文档注释 —— 注释改写会让切片失效 */
+const dispatch = cli.slice(cli.indexOf('pub fn try_handle'), cli.indexOf('fn backup_before_migrate('));
 
 console.log('\n=== 1. dry-run 开关 ===');
 {
   t('migrate 签名带 dry_run', /fn migrate\(\s*cfg_path: &str,\s*rec_path: &str,\s*kind: &str,\s*dry_run: bool,/.test(cli));
   t('命令行认 --dry-run', /args\.iter\(\)\.any\(\|a\| a == "--dry-run"\)/.test(cli));
   t('两条迁移命令都认', (cli.match(/a == "--dry-run"/g) || []).length === 2);
-  t('文档头写了用法', /--dry-run：只打印计划/.test(cli));
-  t('文档头提醒迁移不可逆', /物理搬目录并覆写 config/.test(cli));
+  t('注释：文档头写了用法', /--dry-run：只打印计划/.test(cli));
+  t('注释：文档头提醒迁移不可逆', /物理搬目录并覆写 config/.test(cli));
 }
 
 console.log('\n=== 2. 预演不能动任何东西（核心）===');
@@ -93,7 +104,7 @@ console.log('\n=== 5. 备份不能覆盖已有备份（关键）===');
   t('遍历找空位（最多 100 次防死循环）', /for n in 0\.\.100/.test(bak));
   t('遇到已存在就跳过该名字', /if dst\.exists\(\) \{ continue; \}/.test(bak));
   /* 注释会跨行，直接匹配整句会被换行打断 —— 先归一空白再匹配 */
-  const bakFlat = bak
+  const bakFlat = bakDoc
     .split('\n')
     .map((l) => l.replace(/^\s*\/\/+\s?/, ''))
     .join('')
@@ -116,15 +127,32 @@ console.log('\n=== 6. 备份失败的处理 ===');
 console.log('\n=== 7. 原有的保护仍在（没被改坏）===');
 {
   t('排除数据目录自身', /excludes\.push\(reloc_key/.test(cli));
-  t('排除目标根（防把根搬进自己）', /防止把根搬进自己/.test(cli));
+  /*
+   * 这批原本只验「注释里写了这句话」，名字却承诺在验**行为** ——
+   * 代码真退化、注释还在的话，断言照样通过：
+   * 你以为有覆盖，其实没有（这次全量剥离注释的扫描才暴露出来）。
+   *
+   * 拆成两条：一条诚实地叫「注释：…」（钉住说明还在，防止后人删掉），
+   * 一条验**真实代码**。
+   */
+  t('注释：为什么排除目标根', /防止把根搬进自己/.test(cli));
+  t('排除目标根（防把根搬进自己）',
+    /excludes\.push\(reloc_key\(&root\.to_string_lossy\(\)\)\)/.test(cli));
+  t('注释：为什么不跟随链接', /不跟随链接：搬迁一个 junction/.test(cli));
   t('不跟随链接（搬 junction 会搬走背后目录）',
-    /不跟随链接：搬迁一个 junction/.test(cli));
+    /!super::fsutil::is_real_dir\(Path::new\(p\)\)/.test(cli));
   t('目标已存在则跳过（不覆盖用户文件）',
     /跳过：目标已存在同名目录/.test(cli));
-  t('跨卷回退到"复制+删除"', /跨卷时 rename 会失败/.test(cli));
-  t('复制没成功就不删源', /复制没成功就不删源/.test(cli));
+  t('注释：为什么跨卷要退到复制+删除', /跨卷时 rename 会失败/.test(cli));
+  t('跨卷回退到"复制+删除"', /rename_with_fallback/.test(cli));
+  t('注释：复制没成功就不删源', /复制没成功就不删源/.test(cli));
+  /* 真实代码在 fsutil.rs：复制失败要带着"源目录保持原样"提前返回，
+     绝不能继续往下删源 —— 所以断言的是那个 `?` 之前的错误信息。 */
+  t('复制没成功就不删源（真实代码）', /源目录保持原样/.test(fsu));
   t('图标/标签色/锁 跟着换键', /cfg\.folder_icons = remap/.test(cli));
-  t('项目组搬走后重建链接', /指向它的链接全断了/.test(cli));
+  t('注释：为什么项目组搬走要重建链接', /指向它的链接全断了/.test(cli));
+  t('项目组搬走后重建链接',
+    /super::junction::create\(&r\.project, &r\.group, &names\)/.test(cli));
   t('写回失败也如实报出', /搬迁完成但写回 config 失败/.test(cli));
 }
 

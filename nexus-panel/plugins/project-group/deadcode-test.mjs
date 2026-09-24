@@ -74,7 +74,7 @@ console.log('\n=== 2. 已删常量不得复活 ===');
   t('LAYOUT_SAVE_DEBOUNCE_MS 已删', !/export const LAYOUT_SAVE_DEBOUNCE_MS/.test(layout));
   t('注释写明为什么删（防后人加回）', /此前这里另有一个/.test(layout) && /不设防抖常量/.test(layout));
   const css = fs.readFileSync(path.join(PG, 'style.css'), 'utf8');
-  t('CSS 里 8px 标为唯一真源', /唯一真源/.test(css));
+  t('注释：CSS 里 8px 标为唯一真源', /唯一真源/.test(css));
   t('CSS 分隔条仍是 8px', /\.fpx-splitter\.horizontal \{ width: 8px;/.test(css));
 }
 

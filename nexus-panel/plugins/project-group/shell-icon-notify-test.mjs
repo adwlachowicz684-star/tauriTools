@@ -75,7 +75,10 @@ console.log('\n=== 3. ini 兼容旧格式 IconFile（此前只认 IconResource�
 console.log('\n=== 4. 原有行为没被改坏 ===');
 {
   t('apply_icon 仍在', /pub fn apply_icon\(/.test(sys));
-  t('仍只清 +s 不动 +h', /绝不动 \+h/.test(sys));
+  t('注释：文件夹绝不动 +h', /绝不动 \+h/.test(sys));
+  /* 真实代码：文件夹那次 attrib 只有 -s，不带 -h（带 -h 会把文件夹本身藏起来） */
+  t('仍只清 +s 不动 +h',
+    /run_cmd\("attrib", &\["-s"\.to_string\(\), p\.to_string_lossy\(\)\.to_string\(\)\]\)/.test(sys));
   t('ini 仍加 +h +s', /"\+h".*?\+s/.test(sys));
   t('lock_state 仍在', /pub fn lock_state\(/.test(sys));
   t('两条 ACE 仍在', /for perm in \[format!\(/.test(sys));

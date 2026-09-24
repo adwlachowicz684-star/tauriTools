@@ -52,7 +52,7 @@ console.log('\n=== 2. with_unlock 存在且语义正确 ===');
     /if covering\.is_empty\(\) \{\s*return f\(\);\s*\}/.test(fn));
   t('摘锁失败时把已摘的恢复回去', /for d in taken\.iter\(\)\.rev\(\) \{/.test(fn));
   t('摘锁失败的错误明说"保护未被改动"', /保护未被改动/.test(fn));
-  t('恢复有重试一次', /重试一次/.test(fn));
+  t('注释：恢复有重试一次', /重试一次/.test(fn));
   t('重试前短暂等待（资源管理器可能持有句柄）',
     /std::thread::sleep\(std::time::Duration::from_millis\(120\)\)/.test(fn));
   /* 写成功但恢复失败：必须报，且要说清"内容已写入" */
@@ -92,7 +92,14 @@ console.log('\n=== 5. deploy_skill 的摘锁窗口（最容易错的一处）===
   /* endAt 不能用 "folder_icon_get"：它在本文档里出现过，
      且位置可能早于起点，slice 会得到空串、断言全部静默失败。
      用只出现在分支处的 "other =>"，且从起点往后找。 */
-  const anchor427 = mcp.indexOf('摘锁窗口（#427）');
+  /*
+   * 锚点必须是**代码字面量**：原先用的是注释里的「摘锁窗口（#427）」，
+   * 那句注释一旦改写或删掉，indexOf 返回 -1、slice 得到空串，
+   * 下面六条会一起失效（表现为"整片报错"而不是"指出哪条不对"）。
+   * 换成这段代码独有的语句。
+   */
+  const anchor427 = mcp.indexOf('let deploy_base = if let Some(sd) = super::content::skill_dir_of(&target)');
+  t('#427 锚点仍然找得到（否则下面整片都是假结果）', anchor427 >= 0);
   const seg = mcp.slice(anchor427, mcp.indexOf('other =>', anchor427));
   /* 窗口要盖住 CreateDir 和写请求文件，但不能盖住 spawn */
   t('窗口在 create_dir_all 之前开始', /_guard = super::LockGuard::new/.test(seg));
@@ -107,7 +114,7 @@ console.log('\n=== 5. deploy_skill 的摘锁窗口（最容易错的一处）===
   t('注释说明"只盖 CreateDir 的话写请求文件时照样自伤"',
     /只盖 CreateDir 的话/.test(seg));
   t('注释说明"不能盖住 spawn"', /不能\*\*盖住后面 spawn/.test(seg));
-  t('本地骨架分支也在窗口内', /本地骨架同样要写文件/.test(seg));
+  t('注释：本地骨架分支也在窗口内', /本地骨架同样要写文件/.test(seg));
 }
 
 console.log('\n=== 6. 模块路径（语法检查抓不到的坑）===');

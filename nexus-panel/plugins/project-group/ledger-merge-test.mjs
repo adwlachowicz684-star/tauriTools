@@ -63,7 +63,12 @@ console.log('\n=== 3. #94 deploy_skill 同名避让 + renamed 标志 ===');
 console.log('\n=== 4. #131 MCP 工具开关两列 ===');
 {
   const seg = css.slice(css.indexOf('.fpx-toollist {'));
-  const b = seg.slice(0, seg.indexOf('/* min-width'));
+  /*
+   * 收尾锚点原先是注释 `/* min-width`：那条注释一删，indexOf 返回 -1，
+   * slice(0, -1) 会砍掉最后一个字符而不是"截止到下一条规则"，
+   * 两条断言就可能误判。改成下一条规则的**选择器**。
+   */
+  const b = seg.slice(0, seg.indexOf('.fpx-select {'));
   t('用 grid', /display: grid;/.test(b));
   t('auto-fill + 最小宽（窄屏退回单列）', /grid-template-columns: repeat\(auto-fill, minmax\(240px, 1fr\)\);/.test(b));
   /* 硬分两列的话窄屏每项只剩半宽，等宽工具名会被截断到看不清 */

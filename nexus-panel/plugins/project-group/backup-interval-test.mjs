@@ -52,13 +52,13 @@ console.log('\n=== 3. 当前值不在档位里时要显示出来（最关键）=
     /!BACKUP_PRESETS\.some\(\(p\) => p\.value === autoMinutes\) && \(/.test(dlg));
   t('插入的项显示该值', /value=\{autoMinutes\}>\{autoMinutes\} 分钟（自定义）/.test(dlg));
   /* 后端不校验取值，所以这种情况真的会发生 */
-  t('后端确实不校验取值', /后端不校验取值/.test(model));
+  t('注释：后端确实不校验取值', /后端不校验取值/.test(model));
 }
 
 console.log('\n=== 4. 后端注释同步 ===');
 {
   t('model.rs 注释列出短档位', /预设档位 1\/2\/5\/10\/15\/30\/60\/120\/360\/720\/1440/.test(model));
-  t('提示前端要显示自定义值', /前端 select 要把这种值显示出来/.test(model));
+  t('注释：提示前端要显示自定义值', /前端 select 要把这种值显示出来/.test(model));
 }
 
 done();

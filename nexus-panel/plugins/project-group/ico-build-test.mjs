@@ -130,11 +130,11 @@ console.log('\n=== 7. 源码里的关键注释（防回归）===');
    * 在那上面查注释文本永远是 false（漏报）。
    */
   const raw = fs.readFileSync(path.join(HERE, 'utils/ico.ts'), 'utf8');
-  t('说明了为什么要转', /叫 \.ico、内容却是 PNG/.test(raw));
-  t('说明了 256→0', /0 表示 256/.test(raw));
-  t('说明了要 revoke', /必须释放/.test(raw));
+  t('注释：说明了为什么要转', /叫 \.ico、内容却是 PNG/.test(raw));
+  t('注释：说明了 256→0', /0 表示 256/.test(raw));
+  t('注释：说明了要 revoke', /必须释放/.test(raw));
   /* 三元里的 ?: 会被剥离器误判 —— 这条注释提醒别改回去 */
-  t('提醒避开三元', /三元里的 `\? :` 会被类型剥离器误判/.test(raw));
+  t('注释：提醒避开三元', /三元里的 `\? :` 会被类型剥离器误判/.test(raw));
 }
 
 done();

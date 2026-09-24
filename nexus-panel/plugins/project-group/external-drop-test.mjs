@@ -236,7 +236,10 @@ console.log('\n=== #360 拖到页签上 → 落到**那个**页签 ★★ ===');
   const tabEnd = grid.indexOf('\nexport function ', tabStart + 10);
   const tabBlk = grid.slice(tabStart, tabEnd > 0 ? tabEnd : undefined);
   const dropIdx = tabBlk.indexOf('isExternalDrag(e.dataTransfer.types)');
-  const moveIdx = tabBlk.indexOf('// 先看是不是页签重排');
+  /* 锚点用**代码**：原先用的是注释 `// 先看是不是页签重排`，
+     注释改写后 moveIdx 变 -1、这条顺序断言恒假（假失败），
+     而真正的"外部分支被挡住"回归却可能照样悄悄发生。 */
+  const moveIdx = tabBlk.indexOf('const rawTab = e.dataTransfer.getData(TAB_DRAG_MIME);');
   t('外部分支在页签重排分支之前（顺序）', dropIdx >= 0 && moveIdx > dropIdx,
     `external@${dropIdx} move@${moveIdx}`);
   t('外部分支把 tabIndex 传出去',

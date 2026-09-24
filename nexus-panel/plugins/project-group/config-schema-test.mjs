@@ -74,8 +74,15 @@ console.log('\n=== 4. 迁移框架 ===');
      断言绑死某一种写法会在改名后误报"功能没了"。 */
   t('逐级升（while 而非 if）',
     /while cfg\.schema_version < (model::)?CURRENT_SCHEMA/.test(fn));
-  t('已是最新版则返回空（不每次刷一句"已迁移"）',
-    /已是最新版则返回空/.test(store));
+  t('注释：已是最新版则返回空', /已是最新版则返回空/.test(store));
+  /*
+   * 真实代码：`while cfg.schema_version < CURRENT_SCHEMA` ——
+   * 用 while 而非固定 if，且"已是最新"时循环体一次都不进、自然返回空。
+   * 若写成 `if ... == CURRENT-1` 这类固定步，跳级配置只能升一档，
+   * 且每次都返回一条"已迁移"（界面每启动刷一句废话）。
+   */
+  t('已是最新版则返回空（循环体一次都不进）',
+    /while cfg\.schema_version < CURRENT_SCHEMA/.test(store));
   t('未知版本有兜底提示', /未知的配置版本 \{other\}/.test(fn));
   t('每级都推进版本号（防死循环）', /cfg\.schema_version = from \+ 1;/.test(fn));
 }
@@ -94,8 +101,18 @@ console.log('\n=== 6. 加载路径接上了 ===');
   const lc = store.slice(store.indexOf('pub fn load_config(dir'), store.indexOf('pub fn load_config_strict'));
   t('load_config 里跑迁移', /migrate_config\(&mut cfg\);/.test(lc));
   t('config_issues 存在', /pub fn config_issues\(dir: &Path\) -> Vec<String>/.test(store));
-  t('config_issues 是只读的（不写文件）',
-    /读路径不该顺手改文件/.test(store));
+  t('注释：读路径不该顺手改文件', /读路径不该顺手改文件/.test(store));
+  /*
+   * 真实代码：把 config_issues 整段切出来，里面**不许出现任何写文件调用**。
+   * 只钉注释的话，哪天有人在体检里顺手"修一下"配置，断言照样通过 ——
+   * 而那会让"只是看一眼"这个动作去改用户的数据。
+   */
+  {
+    const ci = store.slice(store.indexOf('pub fn config_issues(dir: &Path) -> Vec<String>'),
+                           store.indexOf('pub fn load_config(dir'));
+    t('config_issues 是只读的（不写文件）',
+      !/write_text\(|fs::write\(|write_json\(|save_config\(/.test(ci));
+  }
   /*
    * 不钉死 `config_notices: store::config_issues(&dir)` 这一整句：
    * 启动自愈后要先并入 ACL 自愈的错误，字段改成传局部 `notices`
@@ -116,7 +133,7 @@ console.log('\n=== 7. 前端 ===');
   const hk = fs.readFileSync(path.join(HERE, 'hooks/useFpx.ts'), 'utf8');
   t('启动后提示一次', /configNotices/.test(hk));
   t('用 ref 保证不重复提示', /noticedRef/.test(hk));
-  t('提示单独一个 effect、不塞进 refresh',
+  t('注释：提示单独一个 effect、不塞进 refresh',
     /单独一个 effect、不塞进 refresh/.test(hk));
   t('refresh 的依赖数组没被塞进 pushLog',
     !/\[api, run, ctx, pushLog\]/.test(hk));

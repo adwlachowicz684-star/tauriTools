@@ -179,7 +179,13 @@ console.log('\n=== 11. 新补的规范项 ===');
     /scrollbar-thumb \{[^}]*box-shadow/.test(css));
   t('轨道内凹（与承载区同材质）', /scrollbar-track \{[^}]*surface-sunk/.test(css));
   /* #288 去聚焦蓝边——但只能去"有替代表现"的元素 */
-  t('去蓝边时有替代表现', /outline: none;\s*\/\* 换成与主题一致的表现/.test(css));
+  /*
+   * 原先钉的是 `outline: none;` 后面**那句注释** —— 注释删了就假失败，
+   * 而真正要守的是"去掉蓝边的同时给了替代表现"。
+   * 改成在同一条规则里同时要求 outline:none 与替代样式（阴影或边框）。
+   */
+  t('去蓝边时有替代表现',
+    /outline: none;[^}]*(box-shadow|border)/.test(css));
   t('没有全站 outline:none（否则键盘用户失去焦点指示）',
     !/\*\s*:focus-visible\s*\{\s*outline:\s*none/.test(cssNC));
 }

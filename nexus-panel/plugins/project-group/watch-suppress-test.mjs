@@ -49,7 +49,8 @@ console.log('\n=== 2. 抑制时长要盖住一次轮询（核心）===');
 
 console.log('\n=== 3. 抑制期间照常更新指纹（最容易错的一处）===');
 {
-  const loop = watch.slice(watch.indexOf('let mut changed: Vec<WatchEvent>'), watch.indexOf('// 配置里删掉的目录不再监控'));
+  /* 收尾锚点用代码（last.retain 那句），不用其上的注释 */
+  const loop = watch.slice(watch.indexOf('let mut changed: Vec<WatchEvent>'), watch.indexOf('last.retain(|k, _| cfg_paths.contains(k));'));
   t('命中抑制时走独立分支', /if suppressed\(p\) \{/.test(loop));
   t('存在则更新指纹', /last\.insert\(p\.clone\(\), fingerprint\(path\)\);/.test(loop));
   t('不存在则移除（与正常分支一致）', /last\.remove\(p\);/.test(loop));
@@ -68,7 +69,12 @@ console.log('\n=== 4. 过期与清理 ===');
   const fn2 = sliceWithDoc(watch, 'pub fn suppress', '/// 取走待处理事件');
   t('登记时顺手清过期项', /v\.retain\(\|\(_, u\)\| \*u > Instant::now\(\)\)/.test(fn2));
   t('重复登记按最后一次顺延', /Some\(e\) => e\.1 = until/.test(fn2));
-  const q = watch.slice(watch.indexOf('/// 该路径当前是否处于抑制窗口内'), watch.indexOf('fn mtime_secs'));
+  /*
+   * 锚点必须是**代码**：原先用的是文档注释 `/// 该路径当前是否处于抑制窗口内`，
+   * 那条注释一改写，indexOf 变 -1、slice 得到空串，下面两条一起假失败
+   * （而真正的"抑制窗口失效"回归却可能悄悄发生）。改用函数签名。
+   */
+  const q = watch.slice(watch.indexOf('fn suppressed(p: &str) -> bool {'), watch.indexOf('fn mtime_secs'));
   t('查询时按未过期才算抑制', /\*u > Instant::now\(\)/.test(q));
   t('锁中毒时不阻塞（返回 false）', /Err\(_\) => false/.test(q));
   t('按归一化键匹配（路径写法不同也能命中）',
