@@ -70,7 +70,7 @@ for (const p of LOCK_PRESETS) {
 
 console.log('\n=== 5. 界面接线 ===');
 {
-  const dlg = fs.readFileSync(path.join(HERE, 'components/dialogs.tsx'), 'utf8')
+  const dlg = fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
   const cssNC = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
@@ -95,7 +95,7 @@ console.log('\n=== 5. 界面接线 ===');
 
 console.log('\n=== #23 弹窗内监控告警开关 ===');
 {
-  const dlg = fs.readFileSync(path.join(HERE, 'components/dialogs.tsx'), 'utf8')
+  const dlg = fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
   const host = fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
@@ -117,7 +117,7 @@ console.log('\n=== #23 弹窗内监控告警开关 ===');
 
 console.log('\n=== #21 账面固定（与 ACL 是两件事）===');
 {
-  const dlg = fs.readFileSync(path.join(HERE, 'components/dialogs.tsx'), 'utf8')
+  const dlg = fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
   const host = fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
@@ -230,7 +230,7 @@ console.log('\n=== 12. #419 弹窗显示目标路径 + 类型徽章 ★ ===');
    * link-agents / 本处）。每节用到的辅助函数必须就地定义或确认已存在。
    */
   const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
-  const dlg = strip(fs.readFileSync(path.join(HERE, 'components/dialogs.tsx'), 'utf8'));
+  const dlg = strip(fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8'));
   const hub = strip(fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8'));
   const app = strip(fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8'));
   const css = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8');
@@ -266,7 +266,7 @@ console.log('\n=== 12. #419 弹窗显示目标路径 + 类型徽章 ★ ===');
 console.log('\n=== 13. #431 icacls 自救命令要写出来 ★ ===');
 {
   const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
-  const dlg = strip(fs.readFileSync(path.join(HERE, 'components/dialogs.tsx'), 'utf8'));
+  const dlg = strip(fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8'));
   const css = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8');
 
   /*

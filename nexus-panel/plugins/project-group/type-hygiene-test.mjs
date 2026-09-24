@@ -75,7 +75,7 @@ head('TS2304 子组件不得引用 App 的 setConfirmLink');
   const others = [];
   // 注意：必须指向**真实存在**的文件。早先写的是 Column.tsx（本版没有这个文件），
   // 于是 `!col || ...` 恒为真 —— 断言空跑，反向验证才发现。
-  for (const f of ['components/CardGrid.tsx', 'components/DialogsHub.tsx', 'components/dialogs.tsx', 'components/StackedGroups.tsx']) {
+  for (const f of ['components/CardGrid.tsx', 'components/DialogsHub.tsx', 'components/dialogCards.tsx', 'components/StackedGroups.tsx']) {
     const raw = src(f);
     if (!raw) continue;
     const t = strip(raw);

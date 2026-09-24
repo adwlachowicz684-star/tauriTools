@@ -6,6 +6,7 @@ import { SideRail, type RailMode } from './components/SideRail';
 import { StackedGroups } from './components/StackedGroups';
 import { ContextMenu, MenuLayerContext, type MenuItem } from './components/ui';
 import { normalizeKey, errText } from './api';
+import { copyText as copyTextImpl } from './utils/clipboard';
 import { useFpx } from './hooks/useFpx';
 import { useCardHotkeys } from './hooks/useCardHotkeys';
 import { useChainActions } from './hooks/useChainActions';
@@ -315,42 +316,13 @@ export default function App() {
   const openPath = (p: string, mode: 'auto' | 'dir' | 'containing' | 'editor' = 'auto') =>
     s.api.openPath(p, mode).catch((e) => s.pushLog(String((e as Error)?.message ?? e), true));
 
-  /**
-   * 复制文本到剪贴板。
-   * 主力走后端（不受 iframe 沙箱权限限制）；后端不可用时退回 Clipboard API，
-   * 再不行用 execCommand 兜底 —— 三档都失败才提示，避免出现"点了没反应"。
+  /*
+   * 复制文本：三档兜底（后端 → Clipboard API → execCommand）。
+   * 整段在 `utils/clipboard.ts`，不在这里 —— App 已顶到结构护栏上限。
    */
-  const copyText = async (text: string) => {
-    try {
-      if (await s.api.copyText(text)) {
-        ctx.toast('已复制', 'ok');
-        return;
-      }
-      s.pushLog('复制失败：后端未能写入剪贴板', true);
-    } catch {
-      // 后端命令可能不存在（旧版本 Rust 未编译进来），静默降级到浏览器 API
-    }
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-        ctx.toast('已复制', 'ok');
-        return;
-      }
-    } catch { /* 继续兜底 */ }
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      const ok = document.execCommand('copy');
-      document.body.removeChild(ta);
-      ctx.toast(ok ? '已复制' : '复制失败', ok ? 'ok' : 'err');
-    } catch {
-      ctx.toast('复制失败', 'err');
-    }
-  };
+  const copyText = useCallback((text: string) =>
+    copyTextImpl({ api: s.api, toast: ctx.toast, log: s.pushLog }, text),
+  [s.api, s.pushLog, ctx.toast]);
 
   /* ---------------- 卡片右键菜单 ---------------- */
   const menus = (kind: CardKind) => (card: CardInfo): MenuItem[] => {
@@ -480,11 +452,27 @@ export default function App() {
   useEffect(() => {
     if (!bootReady) return;
     let cancelled = false;
+    /*
+     * 拉取失败**必须说出来**。
+     *
+     * 此前 catch 里只 `setChainActions([])`：动作清单是 config 里的
+     * 用户数据，拉不到就把界面清空成"没有任何动作"——
+     * 侧栏空了、快捷键按了没反应、右键菜单里一项都没有，
+     * 而**全程没有任何提示**。用户只能以为是自己没配过、或配置丢了
+     * （他甚至可能去设置页重新建一遍，把原本正常的数据覆盖掉）。
+     *
+     * 清空仍然要做（否则界面停在旧清单上，同样是错的），
+     * 但必须同时记一条错误日志，说明"是没拉到"而不是"没有"。
+     */
     s.api.chainActions()
       .then((l) => { if (!cancelled) setChainActions(l); })
-      .catch(() => { if (!cancelled) setChainActions([]); });
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setChainActions([]);
+        s.pushLog(`读取连锁动作失败：${errText(e)}（界面已显示为"无动作"，配置本身未改动）`, true);
+      });
     return () => { cancelled = true; };
-  }, [bootReady, s.api, chainVersion]);
+  }, [bootReady, s.api, s.pushLog, chainVersion]);
 
   /* ---------------- 连锁动作：快捷键 + 侧边栏 ----------------
    * 接线（注册 + 事件订阅 + 三个发送入口）收在 `hooks/useChainActions`。

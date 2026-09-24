@@ -83,7 +83,7 @@ console.log('\n=== 2. DTO 与跨端 ===');
 
 console.log('\n=== 3. 界面接线 ===');
 {
-  const dlg = fs.readFileSync(path.join(HERE, 'components/dialogs.tsx'), 'utf8')
+  const dlg = fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
   const host = fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');

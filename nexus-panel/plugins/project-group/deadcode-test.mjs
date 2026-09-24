@@ -231,15 +231,30 @@ console.log('\n=== 7. 不得有无人 import 的死文件 ★ ===');
       }
     }
   }
-  /* 测试文件里的任何提及 → 不判死（loadTs 动态加载不算 import） */
-  const testBlob = fs.readdirSync(PG)
+  /*
+   * 测试里**真的读了**这个文件 → 不判死（loadTs 动态加载不算 import）。
+   *
+   * 判据是"同一行里出现读取动作"，不是"名字被提到过"：
+   * 后者把 type-hygiene-test 里那句 `const fake = ['dialogs.tsx','Dialogs.tsx']`
+   * 也算成"在用" —— 于是真死文件 `Dialogs.tsx` 被整条放过。
+   * 名字被提到 ≠ 文件被加载，两者差一次 readFileSync。
+   */
+  const testLines = fs.readdirSync(PG)
     .filter((n) => n.endsWith('-test.mjs'))
     .map((n) => { try { return fs.readFileSync(path.join(PG, n), 'utf8'); } catch { return ''; } })
+    .join('\n').split('\n')
+    .filter((l) => /readFileSync|loadTs|import\(|require\(/.test(l))
     .join('\n');
 
+  /*
+   * 用**带扩展名的完整文件名**匹配，不能用去扩展名的裸名：
+   * `includes('Dialogs')` 会被 `DialogsHub.tsx` 命中 —— 于是真死文件
+   * `Dialogs.tsx` 又被放过一次。这与 `includes('onEditLink')` 命中
+   * `onEditLinkX` 是同一类子串误命中，第 19 次。
+   */
   const dead = sources.filter((f) => {
     if (resolved.has(key(path.resolve(f)))) return false;
-    return !testBlob.includes(path.basename(f).replace(/\.tsx?$/, ''));
+    return !testLines.includes(path.basename(f));
   }).map((f) => path.relative(PG, f));
   t('无死文件', dead.length === 0, dead.join('、') || '干净');
   /* 反例护栏：源文件集合若为空，说明扫描失效（断言恒真 = 空跑） */

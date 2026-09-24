@@ -36,7 +36,7 @@ console.log('\n=== 2. 样式：遮罩不挡点击、面板本体可点 ===');
 
 console.log('\n=== 3. 目标条：必须让用户看见当前作用于谁 ===');
 {
-  const dlg = strip(fs.readFileSync(path.join(HERE, 'components/dialogs.tsx'), 'utf8'));
+  const dlg = strip(fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8'));
   t('有目标条', /className="fpx-icontarget"/.test(dlg));
   t('显示目标名', /\{target\.name\}/.test(dlg));
   /* 未选中时要明确说，不能留空 */
@@ -50,7 +50,7 @@ console.log('\n=== 3. 目标条：必须让用户看见当前作用于谁 ===');
 
   /* **换目标时不重置浏览状态** —— 这条是注释里的硬约束 */
   t('注释写明换目标不重置', /换目标时浏览状态一律保留/.test(
-    fs.readFileSync(path.join(HERE, 'components/dialogs.tsx'), 'utf8')));
+    fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8')));
 }
 
 console.log('\n=== 4. 宿主：跟随与 setIcon 必须用同一个目标 ===');

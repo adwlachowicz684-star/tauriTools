@@ -141,7 +141,7 @@ console.log('\n=== 8. 已实现（本轮核对确认）===');
   /* #204 链接名大小写不敏感查重（#91 已修） */
   t('#204 junction 里不敏感查重', /x\.eq_ignore_ascii_case\(&n\)/.test(RS('src-tauri/src/fpx/junction.rs')));
   /* #209 删除已分配卡片先确认 */
-  t('#209 有保留链接勾选', /title="保留链接"/.test(R('components/dialogs.tsx')));
+  t('#209 有保留链接勾选', /title="保留链接"/.test(R('components/dialogCards.tsx')));
   /* #210 仅移除当前实例：tab_index 有值时只动那一个页签 */
   t('#210 按 tab_index 移除', /Some\(i\) => \{[\s\S]{0,160}?tabs\.get_mut\(i\)/.test(mod));
   t('#210 前端传了页签下标', /s\.removeCardFull\([\s\S]{0,220}?idx/.test(hub));

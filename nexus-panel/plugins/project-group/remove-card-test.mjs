@@ -92,7 +92,7 @@ console.log('\n=== 4. 断链只对项目卡 ===');
 
 console.log('\n=== 5. 默认全保留（升级不丢数据）===');
 {
-  const src = strip(fs.readFileSync(path.join(HERE, 'components/dialogs.tsx'), 'utf8'));
+  const src = strip(fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8'));
   t('保留链接默认 true', /useState\(true\)[\s\S]{0,200}?useState\(true\)[\s\S]{0,200}?useState\(true\)/.test(src));
   t('三个勾选都在', /保留链接/.test(src) && /保留图标/.test(src) && /保留标签色/.test(src));
   /* 项目组卡没有链接，不该显示这一项 */

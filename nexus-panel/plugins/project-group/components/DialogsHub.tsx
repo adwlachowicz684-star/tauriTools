@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { RemoveCardDialog } from './dialogs';
+import { RemoveCardDialog } from './dialogCards';
 import { RenameDialog } from './RenameDialog';
 import { RenameContentDialog } from './RenameContentDialog';
-import { CreateDialog, IconPickDialog, LockDialog, StyleDialog } from './dialogs';
+import { CreateDialog, IconPickDialog, LockDialog, StyleDialog } from './dialogCards';
 import { DirDialog } from './DirDialog';
 import { TabManagerDialog } from './TabManagerDialog';
 import { ChainConfirmDialog } from './ChainConfirmDialog';

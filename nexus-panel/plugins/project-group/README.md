@@ -128,7 +128,9 @@ plugins/project-group/
     ├── RenameDialog.tsx       # 文件夹改名
     ├── RenameContentDialog.tsx# 内容条目改名
     ├── LinkPanel.tsx          # 链接名开关（记录表已移除，数据仍在 config.json）
-    └── dialogs.tsx            # 新建 / ACL 保护 / 图标与标签
+    └── dialogCards.tsx        # 新建 / ACL 保护 / 图标与标签
+                               # （原名 dialogs.tsx：与 Dialogs.tsx 仅差大小写，
+                               #   Windows 大小写不敏感，两者无法共存）
 ```
 
 ```

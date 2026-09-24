@@ -139,7 +139,7 @@ console.log('\n=== 5. 标签色的两套（#113）===');
 
 console.log('\n=== 6. 界面开关与参数传递 ===');
 {
-  const dlg = fs.readFileSync(path.join(HERE, 'components/dialogs.tsx'), 'utf8')
+  const dlg = fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
   const host = fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
