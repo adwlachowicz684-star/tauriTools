@@ -666,16 +666,20 @@
                         }
                         node._kmLabels = null;
                         var box = node.getContentBox();
-                        if (!box) return;
                         // **撑高前的原始盒，必须存下来。**
                         // 本节末尾会把 _contentBox 撑高以容纳附件区，而 bindValign
                         // （文字垂直居中，注册在**之后**）读的也是 getContentBox() ——
                         // 它拿到的会是撑高后的盒，于是误判成「节点内容比文字高
                         // （像带图片那样）」，走 bottom 分支把文字沉到盒底，
                         // 也就是沉进视频区 —— 表现为「视频压到文字」。
-                        // 而且文字换行 / 改字号时视频位置还会跟着乱跑。
                         // 居中要按**文字自己的盒**判断，所以这里留一份原盒。
+                        //
+                        // 必须**无条件**记（哪怕这次是空盒），不能放在下面的
+                        // return 之后：那次提前返回会留下**上一次渲染的旧值**，
+                        // bindValign 拿旧盒算出的文字位置就是错的，
+                        // 而且错得隐蔽（节点改了文字才暴露）。
                         node._kmBaseBox = box;
+                        if (!box || !box.height) return;
                         var baseX = box.right + node.getStyle('space-left');
                         var y = box.cy;
                         var rc = node.getRenderContainer();
@@ -1452,7 +1456,8 @@
                         var node = e && e.node;
                         if (!node || !node.getData || !node.getRenderer) return;
                         try {
-                            var tg = node.getRenderer('TextRenderer').getRenderShape();
+                            var tr = node.getRenderer('TextRenderer');
+                            var tg = tr && tr.getRenderShape && tr.getRenderShape();
                             if (!tg || !tg.getBoundaryBox || !tg.setTranslate) return;
                             // 必须用**附件区撑高之前**的盒（_kmBaseBox）。
                             // 直接用 getContentBox() 会拿到撑高后的盒：
@@ -1464,8 +1469,25 @@
                             // 而附件区不是"别的内容"，它是我们额外画进去的。
                             var cbox = node._kmBaseBox || node.getContentBox();
                             if (!cbox || !cbox.height) return;
+                            // 实测边界（未平移）—— 算平移量必须用这个
                             var bb = tg.getBoundaryBox();
-                            var va = node.getData('vertical-align') || window.__kmDefaultValign(cbox, bb);
+                            /*
+                             * 判断「有没有额外内容」要用 **TextRenderer 自己的
+                             * contentBox**，不能用上面那个实测的 bb。
+                             *
+                             * 两者口径不同源：内核给文字记的盒高就是 font-size
+                             * （`new Box(0,c,w,i)` 第 4 参 i），而 getBBox 是字形
+                             * 实测高度，通常比 font-size 高 0~20%。
+                             * 16px 差约 2px、24px 差约 4px —— 阈值 `> 1` 根本
+                             * 挡不住，纯文字节点会被**误判成带图节点**走 bottom，
+                             * 字号越大越容易中（这也能解释"不同主题表现不同"）。
+                             *
+                             * 用同源盒之后，差值就只剩「图片等其他 renderer 带来
+                             * 的高度」，判断才准。平移量 dy 仍然用实测的 bb ——
+                             * 那个必须实测，用记账值反而会偏。
+                             */
+                            var tbox = (tr && tr.contentBox) || bb;
+                            var va = node.getData('vertical-align') || window.__kmDefaultValign(cbox, tbox);
                             var dy = window.__kmTextDy(bb, cbox, va, voOffset(node, va));
                             // dy 为 null 表示测不到真实边界 —— 此时**绝不能**设 0，
                             // 那会把内核的经验补偿整个抹掉，文字反而更偏
