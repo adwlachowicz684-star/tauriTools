@@ -108,6 +108,102 @@ pub fn self_check(config_path: &str, record_path: &str, out_dir: &str) -> String
     lines.push(String::new());
     lines.push(format!("[INFO] 登记路径 {total} 条，其中 {missing} 条当前不存在（可用「清除无效项」清理）"));
 
+    // ---- 4. ACL 系统级往返（TEMP 探针目录，不碰用户数据）----
+    /*
+     * #181 原版 `DataSelfCheck` 有一整段 ACL 用例，本版此前**没有**。
+     *
+     * 为什么必须有：锁是"用户以为防住了"的东西，而它可能**根本没生效**
+     * —— icacls 会失败、用户可能在资源管理器里手动改过、还可能缺目录自身
+     * 那条 ACE（见 `sys::apply_lock` 的注释）。这些全表现为
+     * "界面说锁着、磁盘上其实没锁"，且**没有任何报错**。
+     * 自检是唯一能把它暴露出来的地方。
+     *
+     * **用探针目录而不是 config 里的真实路径**：后者会在自检期间真的去改
+     * 用户的目录权限。跑完立即删除。
+     *
+     * 这里手工复刻 `with_unlock` 的内核（摘 → 执行 → 恢复），
+     * **不能直接调 `with_unlock`**：它按 `config.locks` 查覆盖该路径的祖先锁，
+     * 而探针目录不在配置里 → `covering` 为空 → 直接透传，什么也测不到。
+     * 若"简化"成调它，测试会永远通过且毫无意义。
+     *
+     * 用 `cfg!(windows)`（布尔常量）而不是 `#[cfg(windows)]`：
+     * 两个分支都要参与编译，否则非 Windows 下这段语法根本不被检查。
+     */
+    lines.push(String::new());
+    if !cfg!(windows) {
+        lines.push("[INFO] 非 Windows：锁退化为只读近似（无独立防删除档），跳过 ACL 用例".to_string());
+    } else {
+        lines.push("== ACL 系统级往返（临时探针目录，不碰用户数据）==".to_string());
+        let probe = out.join("_acl-probe");
+        let probe_s = probe.to_string_lossy().to_string();
+        let acl: Result<(), String> = (|| {
+            if probe.exists() {
+                let _ = std::fs::remove_dir_all(&probe);
+            }
+            std::fs::create_dir_all(&probe).map_err(|e| format!("建探针目录失败: {e}"))?;
+
+            // 1) Protect(防删除) → 读回一致
+            super::sys::apply_lock(&probe_s, true, false)?;
+            let st = super::sys::lock_state(&probe_s)?;
+            if !(st.deny_delete && !st.deny_write) {
+                return Err(format!(
+                    "Protect(防删除) 后读回不一致: denyDelete={} denyWrite={}",
+                    st.deny_delete, st.deny_write));
+            }
+
+            // 2) 防删除档下删除子文件应被拒（缺目录自身 ACE 时这一条会过）
+            let f1 = probe.join("probe.txt");
+            std::fs::write(&f1, "x").map_err(|e| format!("探针文件写入失败: {e}"))?;
+            if std::fs::remove_file(&f1).is_ok() {
+                return Err("防删除档下删除子文件未被拒绝（等于没锁住）".to_string());
+            }
+
+            // 3) 摘锁窗口内可删
+            super::sys::apply_lock(&probe_s, false, false)?;
+            if f1.exists() {
+                std::fs::remove_file(&f1).map_err(|e| format!("摘锁窗口内仍删不掉: {e}"))?;
+            }
+
+            // 4) 窗口结束恢复后保护仍在
+            super::sys::apply_lock(&probe_s, true, false)?;
+            let st2 = super::sys::lock_state(&probe_s)?;
+            if !st2.deny_delete {
+                return Err("解锁窗口结束后 denyDelete 未恢复".to_string());
+            }
+
+            // 5) 防写入档：新建被拒 → 摘锁后可写 → 恢复
+            super::sys::apply_lock(&probe_s, false, true)?;
+            let f2 = probe.join("w.txt");
+            if std::fs::write(&f2, "x").is_ok() {
+                return Err("防写入档下新建文件未被拒绝（等于没锁住）".to_string());
+            }
+            super::sys::apply_lock(&probe_s, false, false)?;
+            std::fs::write(&f2, "x").map_err(|e| format!("摘锁窗口内仍写不进: {e}"))?;
+            super::sys::apply_lock(&probe_s, false, true)?;
+
+            // 6) Unprotect → 不应残留本工具的 deny
+            super::sys::apply_lock(&probe_s, false, false)?;
+            let st3 = super::sys::lock_state(&probe_s)?;
+            if st3.any() {
+                return Err(format!(
+                    "Unprotect 后仍有残留: denyDelete={} denyWrite={}",
+                    st3.deny_delete, st3.deny_write));
+            }
+            Ok(())
+        })();
+        match acl {
+            Ok(()) => check(
+                true,
+                "ACL 往返：Protect → 拒删 → 窗口内可删 → 恢复 → 防写入 → Unprotect".to_string(),
+                &mut lines, &mut pass),
+            Err(e) => check(false, format!("ACL 往返失败: {e}"), &mut lines, &mut pass),
+        }
+        /* 探针目录无论成败都删：留下来会让下一次自检撞上"已存在"。
+           先摘一次锁 —— 用例中途失败时它可能还锁着，直接删会失败并留下残骸。 */
+        let _ = super::sys::apply_lock(&probe_s, false, false);
+        let _ = std::fs::remove_dir_all(&probe);
+    }
+
     lines.push(String::new());
     lines.push(if pass { "== 全部通过 ==".to_string() } else { "== 存在失败项 ==".to_string() });
 

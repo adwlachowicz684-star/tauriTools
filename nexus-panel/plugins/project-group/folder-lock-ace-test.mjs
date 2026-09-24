@@ -106,4 +106,70 @@ console.log('\n=== 2. #211 内容浏览不需要摘锁（清单误判）★ ==='
   t('写正文（SKILL.md / rule）走了 with_unlock', /with_unlock\(&dir, &target,/.test(wblk), wblk.slice(-260));
 }
 
+console.log('\n=== 3. #181 数据自检要有 ACL 用例 ★ ===');
+{
+  const cli = strip(fs.readFileSync(path.join(HERE, '../../src-tauri/src/fpx/cli.rs'), 'utf8'));
+  const i = cli.indexOf('pub fn self_check(');
+  const blk = cli.slice(i, cli.indexOf('\npub fn ', i + 1));
+
+  t('self_check 里有 ACL 段', /ACL 系统级往返/.test(blk));
+
+  /*
+   * 一、**必须**用临时探针目录，不能用 config 里的真实路径。
+   *
+   * 后者会在自检期间真的去改用户的目录权限 ——
+   * 用户跑一次自检，自己的目录被上锁又解锁一遍，而报告里看不出来。
+   */
+  t('用探针目录（_acl-probe）', /out\.join\("_acl-probe"\)/.test(blk));
+  /*
+   * 必须钉**两处**：开头清残留一处、跑完删除一处。
+   * 只钉"存在"的话，删掉跑完那处、留下开头那处，断言照样通过（漏报）——
+   * 本轮反向验证就踩到了。
+   */
+  t('探针目录跑完删除（共两处：清残留 + 收尾）',
+    (blk.match(/remove_dir_all\(&probe\)/g) || []).length >= 2,
+    '出现 ' + (blk.match(/remove_dir_all\(&probe\)/g) || []).length + ' 次');
+  t('没用 config 里的真实路径做 ACL 用例', !/locks\.iter\(\)\s*\n\s*\{\s*apply_lock/.test(blk));
+
+  /*
+   * 二、**不能**直接调 `with_unlock`。
+   *
+   * 它按 `config.locks` 查覆盖该路径的祖先锁，而探针目录不在配置里 →
+   * `covering` 为空 → 直接透传，什么也测不到。
+   * 若"简化"成调它，测试会永远通过且毫无意义。
+   */
+  t('没有在自检里调 with_unlock（会空跑）', !/with_unlock\(/.test(blk));
+
+  /*
+   * 三、用 `cfg!(windows)` 而不是 `#[cfg(windows)]`。
+   *
+   * 后者会让非 Windows 下这段**根本不参与编译**，
+   * 语法错了也发现不了（上次那个多写分号的事故就是这么来的）。
+   */
+  t('用 cfg!(windows) 布尔常量', /if !cfg!\(windows\)/.test(blk));
+  t('非 Windows 时明说跳过（不是默默不测）', /跳过 ACL 用例/.test(blk));
+
+  /* 四、六步往返：Protect → 拒删 → 窗口内可删 → 恢复 → 防写入 → Unprotect */
+  t('Protect 后读回校验', /Protect\(防删除\) 后读回不一致/.test(blk));
+  t('验"拒删"且失败时报"等于没锁住"', /防删除档下删除子文件未被拒绝/.test(blk));
+  t('验"窗口内可删"', /摘锁窗口内仍删不掉/.test(blk));
+  t('验"窗口结束恢复"', /解锁窗口结束后 denyDelete 未恢复/.test(blk));
+  t('验"防写入档拒新建"', /防写入档下新建文件未被拒绝/.test(blk));
+  t('验 Unprotect 无残留', /Unprotect 后仍有残留/.test(blk));
+  /*
+   * 每一条失败都必须进 check（否则只是打日志，自检仍报"全部通过"——
+   * 那正是"看起来做完了"的样子）。
+   */
+  t('用例结果进 check（不是只打日志）', /match acl[\s\S]{0,400}check\(/.test(blk));
+  /*
+   * 必须钉 **match acl 块内**的 Err 分支。
+   * 只钉 `Err(e) => check(false,` 的话，self_check 前几节也有同形代码 ——
+   * 把 ACL 这条改成丢弃后，断言仍被别处命中（漏报，本轮踩到）。
+   */
+  const mi = blk.indexOf('match acl {');
+  const mblk = blk.slice(mi, mi + 400);
+  t('失败时 pass 会被置 false（在 match acl 块内）',
+    /Err\(e\) => check\(false,/.test(mblk), mblk.slice(0, 200));
+}
+
 done();
