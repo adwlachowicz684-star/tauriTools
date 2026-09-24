@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { RemoveCardDialog } from './dialogs';
+/*
+ * 这五个弹窗组件原本在 `dialogs.tsx`，后来该文件改名为 `dialogCards.tsx`，
+ * 但**这里的 import 没跟着改** —— 改名只改了文件、没改引用，
+ * Vite 直接报 "Failed to resolve import './dialogs'"，整个插件编译不过。
+ * 这类断链在编辑器里不报错（TS 找不到模块才会报），只有构建/运行时才炸。
+ */
+import { RemoveCardDialog } from './dialogCards';
 import { RenameDialog } from './RenameDialog';
 import { RenameContentDialog } from './RenameContentDialog';
-import { CreateDialog, IconPickDialog, LockDialog, StyleDialog } from './dialogs';
+import { CreateDialog, IconPickDialog, LockDialog, StyleDialog } from './dialogCards';
 import { DirDialog } from './DirDialog';
 import { TabManagerDialog } from './TabManagerDialog';
 import { ChainConfirmDialog } from './ChainConfirmDialog';
