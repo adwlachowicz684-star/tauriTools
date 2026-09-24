@@ -1184,7 +1184,14 @@ function Column({
    * @param target 绝对路径（direct=true）或名字（direct=false，拿不到路径时兜底）
    * @param direct true = 直接导入，不要再弹对话框
    */
-  onExternalDrop?: (target: string, direct: boolean) => void;
+  /*
+   * #360 tabIndex：拖到**页签**上时指定落到哪个页签；
+   * 卡片区触发时为 undefined（落到当前活动页签）。
+   *
+   * 这个参数一路传到 addCard，后端早就支持 ——
+   * 缺的一直是"页签上那次 drop 根本没被接上"。
+   */
+  onExternalDrop?: (target: string, direct: boolean, tabIndex?: number) => void;
   /**
    * #14 拖进来的东西**不是文件夹**时告知用户。
    *
@@ -1237,6 +1244,11 @@ function Column({
         onEditingDone={() => setEditingTab(-1)}
         onDropCard={(path, tabIndex) => onMoveToTab(path, tabIndex)}
         onMoveTab={onMoveTab}
+        /* #360 拖文件夹到页签上 → 落到**那个**页签。
+           此前这里没传：TabBar 的 onDrop 里根本没有外部分支，
+           拖到页签上直接回弹、界面毫无变化。 */
+        onExternalDrop={onExternalDrop}
+        onExternalNotice={onExternalNotice}
       />
 
       <CardGrid

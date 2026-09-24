@@ -571,3 +571,31 @@ function ratio(depth: number, zone: number, maxSpeed: number): number {
   const t = Math.max(0, Math.min(1, depth / zone));
   return Math.round(t * maxSpeed);
 }
+
+/** 一次外部拖入的判定结果。 */
+export type ExternalDropOutcome =
+  /** 是文件夹：`target` 为绝对路径（拿到时）或名字（拿不到时），`direct` 表示能否直接导入 */
+  | { kind: 'dir'; target: string; direct: boolean }
+  /** 拖的是单个文件：他真正要的是文件夹，弹选目录框是误导 */
+  | { kind: 'file'; name: string }
+  /** 拖的是一段文字/链接：同样不该弹框 */
+  | { kind: 'empty'; name: string };
+
+/**
+ * 判定一次外部拖入（从文件管理器拖进来的东西）到底是什么、该怎么接。
+ *
+ * **抽成共享函数而不是各处内联**：卡片区与页签条都要处理外部拖入，
+ * 两处各写一套的话，改了一处另一处就漂移 ——
+ * 表现为"拖到卡片区正常、拖到页签上却弹了个误导性的选目录框"，
+ * 用户只会觉得软件行为不稳定。
+ */
+export function resolveExternalDrop(
+  files: DropNameFiles | null,
+  entries: DropEntriesArg,
+): ExternalDropOutcome {
+  const name = externalDropName(files);
+  const kind = classifyExternalDrop(files, entries);
+  if (kind !== 'dir') return { kind, name };
+  const path = dirPathOf(files, entries);
+  return { kind: 'dir', target: path || name, direct: !!path };
+}

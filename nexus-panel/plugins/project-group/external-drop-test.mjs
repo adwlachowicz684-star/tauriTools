@@ -70,10 +70,21 @@ console.log('\n=== 3. 接到正规流程，而不是静默 ===');
    * 下面钉的是新的接线方式：拿到绝对路径 → 调 onExternalDrop(target, true)；
    * 不是文件夹 → 只提示，不弹框。
    */
+  /*
+   * 这两条**此前钉的是内联写法**（classifyExternalDrop / dirPathOf 直接出现在
+   * CardGrid 里）。#360 把那段抽成了共享函数 `resolveExternalDrop`
+   * （页签条要用同一份），旧锚点就全部失配 —— 是过期断言，不是回归。
+   *
+   * 改成钉**语义仍在**：卡片区仍区分文件夹/非文件夹、仍把 direct 传出去，
+   * 只是分类逻辑现在住在 dragSort 里。
+   * 若只改成"存在 resolveExternalDrop"，就测不到卡片区是否还做区分。
+   */
   t('drop 里区分了文件夹与非文件夹',
-    /classifyExternalDrop\(/.test(grid) && /onExternalNotice\?\./.test(grid));
+    /out\.kind !== 'dir'[\s\S]{0,200}onExternalNotice\?\.\(out\.kind, out\.name\)/.test(grid));
   t('拿到路径就标记 direct（调用方据此决定要不要弹框）',
-    /dirPathOf\(/.test(grid) && /onExternalDrop\?\.\(path \|\| name, !!path\)/.test(grid));
+    /onExternalDrop\?\.\(out\.target, out\.direct\)/.test(grid));
+  /* 分类逻辑本身在共享函数里，direct 由"有没有拿到路径"决定 */
+  t('direct 由有无路径决定', /direct: !!path/.test(ds));
   t('App 项目栏接了', /onExternalDrop=\{externalDrop\('project'\)\}/.test(app));
   t('App 项目组栏接了', /onExternalDrop=\{externalDrop\('group'\)\}/.test(app));
   t('Column 透传', /onExternalDrop=\{onExternalDrop\}/.test(app));
@@ -107,8 +118,13 @@ console.log('\n=== 3. 接到正规流程，而不是静默 ===');
   /* 开配置不装守卫比不开更糟：不开至少什么都不发生，开了不拦则整个界面导航走 */
   t('守卫同时拦 dragover', /addEventListener\('dragover', stop\)/.test(host));
 
-  t('拿不到路径时退回对话框（不静默）', /onExternalDrop\?\.\(path \|\| name, !!path\)/.test(cg));
-  t('有路径才标记为直接导入', /!!path/.test(cg));
+  /*
+   * 同上：这两条钉的是 `path || name` 这个内联表达式，抽出后失配。
+   * 真正要钉的语义 —— 拿不到路径时仍走对话框（不静默），
+   * 现在由 `out.target` 兜底成名字 + `out.direct=false` 表达。
+   */
+  t('拿不到路径时退回对话框（不静默）', /target: path \|\| name/.test(ds));
+  t('有路径才标记为直接导入', /direct: !!path/.test(ds));
 }
 
 console.log('\n=== 4. 提示要解释"为什么还要再选一次" ===');
@@ -165,6 +181,95 @@ console.log('\n=== 5. 行为 ===');
   t('entriesOf 正常取出 isDirectory',
     entriesOf([{ webkitGetAsEntry: () => ({ isDirectory: true }) }])[0].isDirectory === true);
   t('entriesOf 对 null 返回空', entriesOf(null).length === 0);
+}
+
+console.log('\n=== #360 拖到页签上 → 落到**那个**页签 ★★ ===');
+{
+  const css = R('style.css');
+
+  /*
+   * 原版 `MainWindow.xaml.cs: OnTabDrop`：
+   *   int idx = GetTabIndexAt(projectTabsHost, e.GetPosition(projectTabsHost));
+   *   foreach (var f in files) if (Directory.Exists(f2)) vm.AddFavoriteToTab("project", idx, f2);
+   *
+   * 即**拖到哪个页签就加到哪个页签**（OnTabDragOver 还会顺带切过去）。
+   *
+   * 本版此前：TabBar 有 `onExternalDrop` 这个 prop，**声明了却从没被调用** ——
+   * onDragOver / onDrop 里只有 TAB_DRAG_MIME 与 DRAG_MIME 两个分支，
+   * 拖文件夹到页签上不 preventDefault → 浏览器回弹、界面毫无变化。
+   *
+   * 而外层 `externalDrop` 早就把 tabIndex 一路传到 `addCard` 了 ——
+   * **能力铺好了、入口没接上**（同 #486 / #138 那类"存在但不可发现"）。
+   *
+   * 用户要加到第 3 个页签，只能先切过去再拖，否则加到当前页签，
+   * 而他看不出为什么。
+   */
+
+  /* 一、TabBar 的 onDragOver 要有外部分支并 preventDefault */
+  t('页签 onDragOver 有外部分支',
+    /isExternalDrag\(e\.dataTransfer\.types\)[\s\S]{0,300}setExternalTab\(i\)/.test(grid));
+  t('外部分支 preventDefault（不阻止会回弹）',
+    /isExternalDrag\(e\.dataTransfer\.types\)\s*\)\s*\{[\s\S]{0,200}e\.preventDefault\(\)/.test(grid));
+  t('外部分支用 copy 语义（是新增不是搬走）',
+    /e\.dataTransfer\.dropEffect = 'copy'/.test(grid));
+  t('外部分支 stopPropagation（页签在卡片区之上）',
+    /setExternalTab\(i\);\s*\n\s*return;/.test(grid));
+
+  /* 二、onDrop 里外部分支必须**最先** */
+  t('页签 onDrop 有外部分支',
+    /onDrop=\{\(e\) => \{[\s\S]{0,400}isExternalDrag\(e\.dataTransfer\.types\)/.test(grid));
+  /*
+   * 顺序关键：若放在 `if (onMoveTab)` 之后，会被 `rawTab` 判空挡住
+   * （取不到内部数据 → 直接 return，外部分支永远走不到）。
+   * 钉"外部分支出现在 onMoveTab 之前"。
+   */
+  /*
+   * **第一版这条是漏报**：用 `grid.indexOf('isExternalDrag(...)')` 取的是
+   * **卡片区**那处（它排在前面），于是"外部分支在重排分支之前"恒真 ——
+   * 把页签的外部分支整体挪到后面，断言照样通过。
+   * 反向验证（B）才发现。
+   *
+   * 改成只在 **TabBar 组件那一段**里比较：本文件有两个 onDrop，
+   * 卡片区那个也用同样的 isExternalDrag，不限制范围必然取错。
+   */
+  const tabStart = grid.indexOf('export function TabBar({');
+  const tabEnd = grid.indexOf('\nexport function ', tabStart + 10);
+  const tabBlk = grid.slice(tabStart, tabEnd > 0 ? tabEnd : undefined);
+  const dropIdx = tabBlk.indexOf('isExternalDrag(e.dataTransfer.types)');
+  const moveIdx = tabBlk.indexOf('// 先看是不是页签重排');
+  t('外部分支在页签重排分支之前（顺序）', dropIdx >= 0 && moveIdx > dropIdx,
+    `external@${dropIdx} move@${moveIdx}`);
+  t('外部分支把 tabIndex 传出去',
+    /onExternalDrop\?\.\(out\.target, out\.direct, i\)/.test(grid));
+
+  /* 三、分类逻辑与卡片区共用一份（两处各写一套就会漂移） */
+  t('有共享的 resolveExternalDrop', /export function resolveExternalDrop/.test(ds));
+  t('页签用共享函数', /resolveExternalDrop\(files, entriesOf/.test(grid));
+  t('卡片区也用共享函数',
+    (grid.match(/resolveExternalDrop\(files, entriesOf/g) || []).length >= 2,
+    '命中 ' + (grid.match(/resolveExternalDrop\(files, entriesOf/g) || []).length + ' 处');
+  t('卡片区不再内联分类（反面证据）',
+    !/const kind = classifyExternalDrop\(files, entries\)/.test(grid));
+
+  /* 四、非文件夹仍要一句话说清，不弹误导的选目录框 */
+  t('页签上拖文件也给提示', /onExternalNotice\?\.\(out\.kind, out\.name\)/.test(grid));
+
+  /* 五、外层 Column 要把回调接过去（漏了就是"页签上没反应"） */
+  t('Column 的 prop 带 tabIndex',
+    /onExternalDrop\?: \(target: string, direct: boolean, tabIndex\?: number\) => void;/.test(app));
+  t('TabBar 接到 onExternalDrop',
+    /onMoveTab=\{onMoveTab\}[\s\S]{0,300}onExternalDrop=\{onExternalDrop\}/.test(app));
+
+  /* 六、高亮类要有基础定义，且与内部移动高亮区分 */
+  t('页签有 external 高亮类', /fpx-tab\.external/.test(css));
+  t('external 高亮有基础定义（虚线，区别于实线发光）',
+    /\.fpx-tab\.external\s*\{[\s\S]{0,200}border-style: dashed/.test(css));
+  t('externalTab 是独立状态（不复用 dropTarget）',
+    /const \[externalTab, setExternalTab\] = useState\(-1\)/.test(grid));
+  t('className 里用到 externalTab',
+    /externalTab === i \? 'external' : ''/.test(grid));
+  t('dragLeave 清 externalTab',
+    /setDropTarget\(-1\); setTabOver\(-1\); setExternalTab\(-1\)/.test(grid));
 }
 
 done();

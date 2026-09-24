@@ -1231,6 +1231,17 @@
 /* 页签接收拖拽时的高亮 */
 .fpx-tab.drop { border-color: var(--accent); box-shadow: var(--glow-sm); }
 
+/* -------- 页签接收**外部**拖入（#360）--------
+ * 与 .drop 区分：.drop 是"卡片移到末尾"，这里是"文件夹加到这个页签"。
+ * 用虚线边框而不是实线发光 —— 外部拖入是 copy 语义（新增），
+ * 内部移动是 move 语义（搬走），两种高亮长得一样的话
+ * 用户分不清这次操作会不会把别处的卡片挪走。 */
+.fpx-tab.external {
+  border-style: dashed;
+  border-color: var(--accent);
+  background: var(--chip-active-bg, var(--surface-sunk));
+}
+
 /* ---------- 说明 ---------- */
 .fpx-help { margin: 0; padding-left: 18px; font-size: var(--fs-12, 12px); line-height: 1.9; color: var(--text-dim); }
 .fpx-help b { color: var(--text); }
