@@ -1253,17 +1253,44 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             let path = s("path");
             if path.is_empty() { return Err(err("缺少参数 path")); }
             within_raw(&path)?;
-            super::store::with_config(&dir, |cfg| {
+            let note = super::store::with_config(&dir, |cfg| {
                 let key = super::store::normalize_key(&path);
-                cfg.folder_icons.retain(|k, _| super::store::normalize_key(k) != key);
+                /*
+                 * #13 **两套都要清**。
+                 *
+                 * 只清 `folder_icons` 的话，勾「仅界面生效」设过的图标**还原不掉** ——
+                 * 回包仍旧是"已恢复默认图标"，而界面上图标还在。
+                 * 对 AI 调用方来说这就是一次假成功：它以为做完了，显示却没变，
+                 * 而且没有任何线索能指向"还有一套没清"。
+                 */
+                let mut cleared = 0usize;
+                for table in [&mut cfg.folder_icons, &mut cfg.folder_gui_icons] {
+                    let before = table.len();
+                    table.retain(|k, _| super::store::normalize_key(k) != key);
+                    cleared += before - table.len();
+                }
+                let mut note = if cleared > 0 {
+                    "已恢复默认图标".to_string()
+                } else {
+                    "该目录没有自定义图标登记，无需恢复".to_string()
+                };
                 if cfg.icon_affect_explorer {
                     /* #427：恢复默认同样要写这个目录（删 ini、去 +s），
-                       受保护时一样会被自己拦住。 */
-                    let _ = super::with_unlock(&dir, &path, || super::sys::apply_icon(&path, ""));
+                       受保护时一样会被自己拦住。
+
+                       失败**必须说出来**：原来用 `let _ =` 吞掉，于是目录被自己
+                       设了「防写入」时 desktop.ini 根本没删掉，回包却照常说
+                       "已恢复默认图标" —— 资源管理器里图标还在，无从得知原因。 */
+                    match super::with_unlock(&dir, &path, || super::sys::apply_icon(&path, "")) {
+                        Ok(_) => {}
+                        Err(e) => note.push_str(&format!(
+                            "；配置已清除，但 desktop.ini 未能删除（{e}），可先解除保护再重试"
+                        )),
+                    }
                 }
-                Ok(())
+                Ok(note)
             }).map_err(|e| err(&e))?;
-            json!({ "content": [{ "type": "text", "text": "已恢复默认图标" }] })
+            json!({ "content": [{ "type": "text", "text": note }] })
         }
         "capture_screen" => {
             let target = match args.get("dir").and_then(|v| v.as_str()) {

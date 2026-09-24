@@ -219,7 +219,28 @@ console.log('\n=== 4. 不许有占位断言 ===');
   t('没有占位断言（条件是字面真值）', bad.length === 0, bad.slice(0, 5).join(' | '));
 }
 
-console.log('\n=== 5. 反向自检：护栏本身能抓到 ===');
+console.log('\n=== 5. 测试不得依赖 process.cwd() 定位源码 ===');
+/*
+ * 用 `process.cwd()` 拼源码路径的测试，**结论取决于从哪个目录敲 node**：
+ * 换个 cwd 就 `readdirSync` 抛 ENOENT，整个文件一条断言都没跑就挂掉。
+ *
+ * 这类失效最阴险：回归脚本看到"非 0 退出"容易当成环境噪音略过，
+ * 于是那几十条护栏在不知不觉中全部失效，而日志里依旧一片绿。
+ * 定位必须按文件自身位置（`fileURLToPath(import.meta.url)`）。
+ */
+{
+  const bad = [];
+  for (const f of tests) {
+    const src = stripComments(fs.readFileSync(path.join(PLUG, f), 'utf8'));
+    if (/process\.cwd\(\)/.test(src)) bad.push(f);
+  }
+  t('没有测试用 cwd 拼源码路径', bad.length === 0, bad.join(', ') || '干净');
+  /* 反面证据：本文件自己的说明里也写了这个字样，不剥注释会误报 */
+  t('判定函数确实认得出来', /process\.cwd\(\)/.test('const R = process.cwd();')
+    && !/process\.cwd\(\)/.test(stripComments('// const R = process.cwd();')));
+}
+
+console.log('\n=== 6. 反向自检：护栏本身能抓到 ===');
 {
   /* 造一个"只活在注释里"的模式，护栏必须把它标出来 */
   const probe = '这条说明只存在于注释里的探针XYZ';

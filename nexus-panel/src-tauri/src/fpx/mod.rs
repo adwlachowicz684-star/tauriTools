@@ -183,7 +183,18 @@ pub(crate) fn core_icon_data(dir: &std::path::Path, raw: &str) -> Result<String,
     push(&dir.to_string_lossy());
     // 用户自己选过的图标可以在任意位置：把它们逐个纳入白名单，
     // 既保住"自定义图标在任意盘"的用法，又不至于退回"任意文件读"
+    /*
+     * #13 两套图标**都要**纳入白名单。
+     *
+     * 只收 `folder_icons` 的后果很具体：同一个图标文件，勾「仅界面生效」
+     * 设下去就**读不出来** —— 卡片图标变回占位符，而前端 `useIconThumbs`
+     * 对失败是 `catch {}` 静默处理的，用户点完确认看到"什么都没变"，
+     * 得不到任何解释。取消勾选同一个图标又能显示了，于是表现为"这个开关有毛病"。
+     */
     for v in cfg.folder_icons.values() {
+        push(&icon_file_part(v));
+    }
+    for v in cfg.folder_gui_icons.values() {
         push(&icon_file_part(v));
     }
 
@@ -586,7 +597,18 @@ fn core_move_folder(
         }
 
         cfg.folder_icons = remap_keys(std::mem::take(&mut cfg.folder_icons), &old_key, &new_path);
+        /*
+         * #13 / #113：两套都要跟着换键，只挪 `folder_icons` 与 `tag_colors`
+         * 是不够的 —— 「仅界面生效」那两套漏了的话，搬完家卡片悄悄变回默认
+         * 图标与默认色，**没有任何报错**，用户只会以为搬家把设置弄丢了。
+         *
+         * 改名那条路径（`core_rename_folder`）与 `cli.rs` 的层级迁移都已经是
+         * 四套齐全，只有这里漏了两套；三处做的是同一件事，写法必须一致，
+         * 否则下次再补功能时仍会只补其中一处。
+         */
+        cfg.folder_gui_icons = remap_keys(std::mem::take(&mut cfg.folder_gui_icons), &old_key, &new_path);
         cfg.tag_colors = remap_keys(std::mem::take(&mut cfg.tag_colors), &old_key, &new_path);
+        cfg.tag_gui_colors = remap_keys(std::mem::take(&mut cfg.tag_gui_colors), &old_key, &new_path);
         for l in cfg.locks.iter_mut() {
             if store::normalize_key(&l.path) == old_key {
                 l.path = new_path.clone();

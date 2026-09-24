@@ -10,10 +10,21 @@
  */
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = process.cwd();
-const PG = join(ROOT, 'plugins/project-group');
+/*
+ * **不能用 `process.cwd()` 定位**。
+ *
+ * 原来写的是 `join(process.cwd(), 'plugins/project-group')`，于是这个文件的
+ * 结论取决于"从哪个目录敲 node"：从 nexus-panel 跑正常，从插件目录跑就
+ * `readdirSync` 抛 ENOENT —— 整个文件一条断言都没执行就挂掉。
+ *
+ * 这类"跑不出来"最要命：回归脚本若只看退出码非 0 会当成环境噪音略过，
+ * 于是这 22 条护栏在不知不觉中全部失效。按文件自身位置定位，与本项目
+ * 其它测试一致，任何 cwd 下结论都一样。
+ */
+const PG = dirname(fileURLToPath(import.meta.url));
 const COMP = join(PG, 'components');
 
 let pass = 0;
