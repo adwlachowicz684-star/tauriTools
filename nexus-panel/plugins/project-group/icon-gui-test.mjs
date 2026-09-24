@@ -145,4 +145,81 @@ console.log('\n=== 6. 界面开关与参数传递 ===');
   t('宿主透传第三个参数', /s\.saveStyle\(dialog\.card\.path, icon, color, gui\)/.test(host));
 }
 
+console.log('\n=== 第 8 节 · #77 仅界面生效：save_style 这条路径 ★★ ===');
+{
+  /*
+   * #77 状态表写「只有『同步到资源管理器』一个开关」—— 其实那就是
+   * 原版 `iconAffectExplorer`，**原版也只有这一个开关**（AppConfig.cs:272），
+   * 本版 SettingsDialog 里已有。所以 #77 本身是**已做**。
+   *
+   * 但核对时发现一个**真 BUG**：`core_save_style` 里 gui_only 只作用于
+   * **标签色**（tag_gui_colors），**图标那半边被忽略** ——
+   * 无条件写 folder_icons + 无条件写 desktop.ini。
+   *
+   * StyleDialog（右键「图标与标签…」）走的就是这条路径，
+   * 也就是用户勾「仅界面生效」设图标的那个入口。
+   */
+  const mod = fs.readFileSync(path.join(HERE, '../../src-tauri/src/fpx/mod.rs'), 'utf8');
+  const i = mod.indexOf('pub(crate) fn core_save_style(');
+  const blk = mod.slice(i, mod.indexOf('\n}\n', i));
+
+  /* 一、图标必须按 gui_only 分流到两套表 */
+  t('图标按 gui_only 分流（if gui_only）', /if gui_only \{[\s\S]{0,300}folder_gui_icons/.test(blk));
+  t('gui_only 时写 folder_gui_icons',
+    /if gui_only \{[\s\S]{0,200}folder_gui_icons\.insert/.test(blk));
+  t('非 gui_only 时写 folder_icons',
+    /\} else \{[\s\S]{0,200}folder_icons\.insert/.test(blk));
+
+  /*
+   * 二、**反面证据**：不允许再出现"无条件写 folder_icons.insert"。
+   * 只钉"有 folder_gui_icons.insert"是**漏报** ——
+   * 把分流删掉、只留一处无条件 folder_icons.insert，断言照样通过。
+   */
+  t('没有无条件写 folder_icons（反面证据）',
+    !/let icon = icon[\s\S]{0,200}?folder_icons\.insert/.test(
+      blk.replace(/if gui_only \{[\s\S]*?\} else \{[\s\S]*?\}/, '')),
+    '分流块之外不应再有 folder_icons.insert');
+
+  /* 三、desktop.ini 必须在 gui_only 时不写 */
+  t('desktop.ini 只在非 gui_only 时写',
+    /icon_affect_explorer && !gui_only && cfg!\(windows\)/.test(blk));
+  t('没有无条件写 desktop.ini（反面证据）',
+    !/icon_affect_explorer && cfg!\(windows\)/.test(blk));
+
+  /* 四、清键要用归一化键：大小写/尾斜杠不同会被当成两条登记 */
+  t('清键按归一化键（retain + normalize_key）',
+    (blk.match(/retain\(\|k, _\| store::normalize_key\(k\) != key/g) || []).length >= 2,
+    '命中 ' + (blk.match(/retain\(\|k, _\| store::normalize_key\(k\) != key/g) || []).length + ' 处');
+
+  /* 五、与 fpx_set_icon 同写法：两条路做的是同一件事 */
+  const j = mod.indexOf('pub fn fpx_set_icon(');
+  const blk2 = mod.slice(j, mod.indexOf('\n}\n', j));
+  t('fpx_set_icon 同样按 gui 分流', /if gui \{[\s\S]{0,300}folder_gui_icons/.test(blk2));
+  t('fpx_set_icon 同样不在 gui 时写 ini', /affect && !gui && cfg!\(windows\)/.test(blk2));
+
+  /* 六、标签色那半边本来就是对的，别改回去 */
+  t('标签色按 gui_only 分流到 tag_gui_colors',
+    /let color_table = if gui_only \{ &mut cfg\.tag_gui_colors \} else \{ &mut cfg\.tag_colors \}/.test(blk));
+
+  /* 七、原版只有一个开关，本版也只有一个（不是"缺一个"） */
+  const types = fs.readFileSync(path.join(HERE, 'types.ts'), 'utf8');
+  t('config 有 iconAffectExplorer 开关', /iconAffectExplorer/.test(types));
+}
+
+console.log('\n=== 第 9 节 · #433 locked 账面固定并入 locks ===');
+{
+  const types = fs.readFileSync(path.join(HERE, 'types.ts'), 'utf8');
+  /*
+   * 原版 `config.Locked` 是**独立于 folderLock.items 的另一个列表**
+   * （MainViewModel：`if (!IsLockedPath(key)) _config.Locked.Add(key);`）。
+   * 本版用 `locks[].accountOnly` 一个标志位表达同一件事。
+   *
+   * 两者**等价**：都能表达"在册但无 ACL"。一个列表 + 标志位 vs 两个列表，
+   * 后者反而要维护两处的一致性（搬家/改名要同时 remap 两个列表，
+   * 漏一个就是"账面固定静默失效"）。所以判 ➖（有意合并，不是缺口）。
+   */
+  t('accountFixed 存在（卡片上的账面固定）', /accountFixed/.test(types));
+  t('accountOnly 存在（后端 LockItem）', /accountOnly/.test(types));
+}
+
 done();

@@ -1064,14 +1064,40 @@ pub(crate) fn core_save_style(
 
     let icon = icon_ref.unwrap_or_default();
     let icon = icon.trim().to_string();
-    if icon.is_empty() {
-        cfg.folder_icons.remove(path);
+    /*
+     * #113 两套图标：gui_only 决定动的是哪一套。
+     *
+     * **此前这里无条件写 `folder_icons`** —— 于是「仅界面生效」**静默失效**，
+     * 三重后果一条都不报错：
+     *   1. `folder_gui_icons` 永远写不进去，界面那套根本没登记
+     *   2. 反而把 `folder_icons`（资源管理器那套）**覆盖掉** ——
+     *      用户只是想在本工具里换个图标，资源管理器里那个也被换了，
+     *      而两套的定义就是"互不覆盖"
+     *   3. desktop.ini 照写 —— 与"不影响资源管理器"直接矛盾
+     *
+     * 用户看到的只是"勾了仅界面生效，资源管理器却也跟着变了"。
+     * 与 `fpx_set_icon` 保持同一套写法：两条路做的是同一件事，
+     * 写法不一致本身就是下次出事的来源。
+     */
+    let key = store::normalize_key(path);
+    if gui_only {
+        cfg.folder_gui_icons.retain(|k, _| store::normalize_key(k) != key);
+        if !icon.is_empty() {
+            cfg.folder_gui_icons.insert(path.to_string(), icon.clone());
+        }
     } else {
-        cfg.folder_icons.insert(path.to_string(), icon.clone());
+        cfg.folder_icons.retain(|k, _| store::normalize_key(k) != key);
+        if !icon.is_empty() {
+            cfg.folder_icons.insert(path.to_string(), icon.clone());
+        }
     }
 
-    // desktop.ini 是 Windows 资源管理器专属机制，其它平台只记在配置里（界面内仍生效）
-    if cfg.icon_affect_explorer && cfg!(windows) {
+    /*
+     * desktop.ini 是 Windows 资源管理器专属机制，其它平台只记在配置里（界面内仍生效）。
+     * **`!gui_only`**：GUI 专属图标的定义就是"不动资源管理器"，
+     * 这里若也写，两套图标就没有区别了。
+     */
+    if cfg.icon_affect_explorer && !gui_only && cfg!(windows) {
         /* #427：写 desktop.ini 就是往这个目录里写点。
            目录自己被设了「防写入」的话，这次写入会被**自己的锁**拦掉 ——
            用户设了保护之后就再也换不了图标，且报错信息完全指向不了原因。
