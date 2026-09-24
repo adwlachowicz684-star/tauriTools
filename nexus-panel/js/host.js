@@ -21,7 +21,7 @@ import { createModuleContext, BRIDGE_CHANNEL } from './plugin-sdk.js';
 /* 同页插件入口加载器：Vite 构建下走 import.meta.glob，
    否则原来的动态 import 在无构建模式才不会被构建期丢掉。 */
 import { loadModuleEntry } from './plugin-entries.js';
-import { installAdapter } from './theme-normalizer.js';
+import { installAdapter, declaredTheme } from './theme-normalizer.js';
 import * as normalizer from './theme-normalizer.js';
 import { getPluginConfig } from './plugin-config.js';
 import * as pluginConfig from './plugin-config.js';
@@ -509,37 +509,7 @@ export function createHost(opts = {}) {
   };
 
   /* ---- 加载 / 卸载 ---- */
-  /*
-   * 带参数打开插件（E2 入口的统一出口）。
-   *
-   * 两种情况必须分开处理，这是本函数存在的全部理由：
-   *
-   *   ① 插件**尚未**是激活态 → 走 mount(id, args)，参数随挂载塞进 ctx.openArgs。
-   *   ② 插件**已经**激活     → 此时不能再 mount（会整篇重新挂载，
-   *      用户正在看的内容、滚动位置全丢），只能走事件总线补发。
-   *
-   * 只写 ① 的话，第二次"用 md 打开另一个文件"会整篇重载；
-   * 只写 ② 的话，第一次就永远收不到。
-   *
-   * @param {string} id
-   * @param {any} args
-   */
-  async function openWithArgs(id, args) {
-    if (state.activeId === id && state.instance) {
-      bus.emit(`plugin:open-args:${id}`, args);
-      return;
-    }
-    await mount(id, args);
-  }
-
-  /*
-   * mount(id, args) —— args 是"打开参数"（E2 入口）。
-   *
-   * 它在挂载**之前**就存在，所以必须由宿主持有并塞进 ctx，
-   * 不能走事件总线（总线的订阅要等插件挂载完，那时这一发早已过去）。
-   * 详见 plugin-sdk.js 里 openArgs 的说明。
-   */
-  async function mount(id, args) {
+  async function mount(id) {
     const manifest = state.plugins.find((p) => p.id === id);
     /* 服务插件不该被用户直接打开：它没有主视图，打开是空白。
        拦在这里而不是只靠侧边栏不显示 —— 侧边栏只是 UI，
@@ -595,8 +565,8 @@ export function createHost(opts = {}) {
 
     try {
       const instance = manifest.type === 'iframe'
-        ? await mountIframeView(stage, manifest, token, 'main', args)
-        : await mountModule(stage, manifest, token, args);
+        ? await mountIframeView(stage, manifest, token, 'main')
+        : await mountModule(stage, manifest, token);
 
       if (state.mounting !== token) { await safeTeardown(instance); return; }
       state.instance = instance;
@@ -864,7 +834,7 @@ export function createHost(opts = {}) {
   };
 
   /* ---- 模式 A：同页模块插件 ---- */
-  async function mountModule(stage, manifest, token, openArgs = null) {
+  async function mountModule(stage, manifest, token) {
     const wrap = document.createElement('div');
     wrap.className = 'plugin-wrap';
     const container = document.createElement('div');
@@ -891,7 +861,7 @@ export function createHost(opts = {}) {
     }
 
     const ctx = createModuleContext({
-      manifest, container, bus, openArgs,
+      manifest, container, bus,
       theme: readTheme(),
       shellHooks: makeShellHooks(manifest),
       isActive: isPluginActive(manifest.id),   // 快捷键只在自己激活时生效
@@ -955,7 +925,7 @@ export function createHost(opts = {}) {
     return () => clearTimeout(timer);
   }
 
-  async function mountIframeView(hostEl, manifest, token, view = 'main', openArgs = null) {
+  async function mountIframeView(hostEl, manifest, token, view = 'main') {
     const wrap = document.createElement('div');
     wrap.className = 'plugin-wrap plugin-wrap-frame';
     const iframe = document.createElement('iframe');
@@ -1083,7 +1053,6 @@ export function createHost(opts = {}) {
               // 插件可能自选了主题（见 varsForPlugin）；没有则等同全局
               type: 'init', manifest, theme: varsForPlugin(manifest.id), view,
               isolated,                         // 插件据此决定能力探测方式
-              openArgs,                         // 打开参数（E2），与 module 同语义
               /* 让插件自报基调。两种场景：
                  1) 隔离插件 —— 外壳读不到 contentDocument，采样会静默失败
                  2) followsTheme 插件 —— 它自己跟随面板主题，基调该由它说了算。
@@ -1093,7 +1062,7 @@ export function createHost(opts = {}) {
                  上报值用 sampleOwnBase() 读插件自己的 body 背景：
                  follow 模式 → 等于面板基调 → 不加滤镜；
                  native 模式 → 固定深色 → 该加就加。 */
-              reportBase: (isolated || !!manifest.followsTheme) && adaptTheme,
+              reportBase: (isolated || declaredTheme(manifest) === 'follow') && adaptTheme,
               // 宿主自报 origin，供插件回发消息时用作 targetOrigin。
               // 隔离态下插件是 opaque origin，读不到 parent.location，
               // 只能靠这里告诉它 —— 否则它只能通配 '*'。
@@ -1727,7 +1696,6 @@ export function createHost(opts = {}) {
 
   return {
     state, bus, mount, unmount, mountSettings, win, setBadge,
-    openWithArgs,
     hasSettings: () => hasSettings(state.instance),
     /* 点 ✕ 的行为（'hide' | 'close'）。外壳**在点击时**才取，
        所以设置页改完立即生效，不用重启。 */
