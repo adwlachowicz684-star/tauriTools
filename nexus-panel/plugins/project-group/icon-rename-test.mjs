@@ -48,6 +48,18 @@ console.log('\n=== 1. 后端：改名核心（core_rename_icon）===');
   /* **配置写失败要把文件改名回去** —— 否则又是一次断链 */
   t('配置失败时回滚物理改名', /Err\(e\) => \{[\s\S]{0,120}?rename\(&dest, &old_canon\)/.test(src));
 
+  /* 回滚**自己失败**也必须说出来。此前是 `let _ =` 吞掉，
+     于是用户只看到"配置写入失败"——听起来像什么都没改；
+     而实际状态是文件已在新名字下、配置仍指向旧名，这就是断链，且无从补救。 */
+  {
+    const i = src.indexOf('let (snap, affected)');
+    const blk = src.slice(i, i + 1200);
+    t('回滚不再用 let _ = 吞掉', !/let _ = std::fs::rename\(&dest, &old_canon\)/.test(blk));
+    t('回滚失败写进报错', /if let Err\(e2\) = std::fs::rename\(&dest, &old_canon\)/.test(blk));
+    t('报错里说明文件现位于何处（否则用户不知道该改哪个）',
+      /图标文件现位于 \{new_path\}/.test(blk));
+  }
+
   /* 文件名清洗抽成共用函数（保存与改名同一套规则） */
   t('有共用清洗函数', /pub\(crate\) fn sanitize_icon_name/.test(src));
   t('保存图标也用它（不抄两份）', /let safe = sanitize_icon_name\(&name\)/.test(src));

@@ -36,6 +36,8 @@ static AUTO_RUNNING: AtomicBool = AtomicBool::new(false);
 /// 结果两个线程各备份一遍。每次 start 领新代次，老线程发现代次变了就自行退出。
 static AUTO_GEN: AtomicU64 = AtomicU64::new(0);
 static AUTO_LAST: Mutex<Option<SystemTime>> = Mutex::new(None);
+/// 上一次自动备份的**失败原因**（成功则清空）。
+static AUTO_ERR: Mutex<Option<String>> = Mutex::new(None);
 
 /*
  * 「备份进行中」标志：手动 / 自动 / MCP 三条入口共用（对齐原版 `_backupBusy`
@@ -80,8 +82,14 @@ impl Drop for BackupGuard {
 pub struct AutoStatus {
     pub running: bool,
     pub minutes: u32,
-    /// 上次自动备份时刻，未跑过为 null
+    /// 上次**成功**的自动备份时刻；未成功跑过为 null
     pub last_run: Option<String>,
+    /// 上次自动备份的失败原因；成功 / 未跑过为 null。
+    ///
+    /// 必须一并回给前端：只回 `last_run` 的话，备份一直失败时
+    /// 面板会一直显示上一次成功的时间（或"从未备份"），
+    /// 用户看不出"其实一直在失败"。
+    pub last_error: Option<String>,
 }
 
 /// #29 实际生效的备份目录（两类各一 + 数据目录）。
@@ -104,6 +112,23 @@ pub fn start_auto(app: AppHandle) -> bool {
         Err(_) => 0,
     };
     if minutes == 0 { return false; }
+
+    /*
+     * **已在运行则直接忽略** —— 函数头上那句注释一直这么写，
+     * 但代码此前无条件领新代次 + 重起线程，注释与行为不一致。
+     *
+     * 为什么必须忽略（不是"重起也没事"）：线程的 `last` 是**局部变量**，
+     * 新线程从 `None` 开始，而循环里「首次进入只记起点不执行」——
+     * 于是**每重起一次，下一次备份就被推迟整整一个间隔**。
+     *
+     * 而 start_auto 的调用点是"保存设置之后"（SettingsDialog.save），
+     * 用户调设置时保存相当频繁，结果就是：状态面板显示「运行中」、
+     * 日志也写「自动备份已启用（每 N 分钟）」，**实际一次都不会跑**。
+     *
+     * 间隔改动不需要靠重起来生效：线程每 30 秒会自己重读配置
+     * （见文件头 TICK_SECS 的说明），且 `last` 得以保留。
+     */
+    if is_auto_running() { return true; }
 
     let gen = AUTO_GEN.fetch_add(1, Ordering::SeqCst) + 1;
     AUTO_RUNNING.store(true, Ordering::SeqCst);
@@ -150,10 +175,31 @@ pub fn start_auto(app: AppHandle) -> bool {
              */
             if is_busy() { continue; }
             last = Some(SystemTime::now());
-            let _ = run(&cfg, &dir, "project", cfg.backup_append_only);
-            let _ = run(&cfg, &dir, "group", cfg.backup_append_only);
-            if let Ok(mut g) = AUTO_LAST.lock() {
-                *g = last;
+            /*
+             * **必须看 `run` 的结果**。此前两行都是 `let _ =`，
+             * 而 `AUTO_LAST` 紧接着就被写成"刚刚" —— 于是备份
+             * **一次都没成功过**（目标盘不可写 / 路径失效 / 权限不足……），
+             * 设置面板却显示「上次自动备份：刚刚」。
+             *
+             * 用户据此以为备份一直在正常进行，直到真需要恢复时才发现
+             * 备份目录是空的 —— 而那时已经晚了。这是本工具最不能有的一种错：
+             * 界面**主动**给了一个与事实相反的安全感。
+             */
+            let mut errs: Vec<String> = Vec::new();
+            for (k, append) in [("project", cfg.backup_append_only), ("group", cfg.backup_append_only)] {
+                let r = run(&cfg, &dir, k, append);
+                errs.extend(r.errors.iter().cloned());
+            }
+            if errs.is_empty() {
+                if let Ok(mut g) = AUTO_LAST.lock() { *g = last; }
+                if let Ok(mut g) = AUTO_ERR.lock() { *g = None; }
+            } else {
+                /*
+                 * 失败时**不推进** AUTO_LAST：让它继续显示上一次真正成功的时刻，
+                 * 没有就显示"从未备份过" —— 都比谎报"刚刚"诚实。
+                 * 错误记下来，由设置面板直接显示。
+                 */
+                if let Ok(mut g) = AUTO_ERR.lock() { *g = Some(errs.join("；")); }
             }
         }
     });
@@ -180,7 +226,8 @@ pub fn auto_status(app: &AppHandle) -> AutoStatus {
             super::format_time(d.as_secs() as i64)
         })
     });
-    AutoStatus { running: is_auto_running(), minutes, last_run }
+    let last_error = AUTO_ERR.lock().ok().and_then(|g| g.as_ref().cloned());
+    AutoStatus { running: is_auto_running(), minutes, last_run, last_error }
 }
 
 const MTIME_TOLERANCE_SECS: i64 = 2;

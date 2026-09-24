@@ -1656,7 +1656,15 @@ pub fn fpx_backup_auto_status(app: AppHandle) -> backup::AutoStatus {
 pub fn fpx_backup_auto_sync(app: AppHandle) -> bool {
     let minutes = match store::resolve_data_dir(&app) {
         Ok(dir) => store::load_config(&dir).backup_auto_minutes,
-        Err(_) => 0,
+        /*
+         * 数据目录解析失败时**绝不能按 0 处理** ——
+         * 那会走到 stop_auto()，把正在跑的定时备份悄悄停掉。
+         * 用户没关过它，界面上也不会有"已停止"的提示，
+         * 于是他以为备份一直在继续，实际从这一刻起再没发生过。
+         *
+         * 读不到就**什么都不做**：保持现状，把当前是否运行中如实回给前端。
+         */
+        Err(_) => return backup::is_auto_running(),
     };
     if minutes == 0 {
         backup::stop_auto();
@@ -1943,7 +1951,17 @@ pub(crate) fn core_rename_icon(
     let (snap, affected) = match r {
         Ok(v) => v,
         Err(e) => {
-            let _ = std::fs::rename(&dest, &old_canon);
+            /*
+             * 回滚**失败也必须说出来**。此前是 `let _ =` 吞掉，
+             * 于是用户只看到"配置写入失败"——听起来像"什么都没改"。
+             * 而实际状态是：文件已经在新名字下、配置还指向旧名字，
+             * **这就是断链**，且报错里完全没有提示，用户无从补救。
+             */
+            if let Err(e2) = std::fs::rename(&dest, &old_canon) {
+                return Err(format!(
+                    "{e}；且回滚图标改名也失败（{e2}），图标文件现位于 {new_path}，配置仍指向旧名，请手动改回"
+                ));
+            }
             return Err(e);
         }
     };

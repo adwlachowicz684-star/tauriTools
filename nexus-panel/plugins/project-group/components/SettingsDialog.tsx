@@ -228,7 +228,19 @@ export function SettingsBody({
         logMaxLines: clampLogMax(logMaxDraft),
       });
       const running = await api.backupAutoSync();
-      onLog(autoMinutes === 0 ? '已停止自动备份' : `自动备份已启用（每 ${autoMinutes} 分钟）`);
+      /*
+       * 必须以**后端返回的是否真的在跑**为准来写日志。
+       * 此前只看输入框里的 autoMinutes，于是后端没起来（间隔读到 0 /
+       * 数据目录读不到）时日志照样写「自动备份已启用」——
+       * 用户据此以为备份在继续，实际一次都不会执行，且没有任何提示。
+       */
+      if (autoMinutes === 0) {
+        onLog('已停止自动备份');
+      } else if (running) {
+        onLog(`自动备份已启用（每 ${autoMinutes} 分钟）`);
+      } else {
+        onLog('自动备份未能启动，请检查备份设置后重试', true);
+      }
       setStatus((s) => (s ? { ...s, running, minutes: autoMinutes } : s));
       onLog('设置已保存');
     } catch (e) {
@@ -692,10 +704,19 @@ export function SettingsBody({
               ))}
             </select>
           </div>
-          <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
-            {status?.lastRun
-              ? `上次自动备份：${status.lastRun}${status.running ? '，运行中' : ''}`
-              : '设置后由后台定时执行，改动在保存时生效'}
+          <div className="p-muted" style={{
+            fontSize: 'var(--fs-11, 11px)',
+            /* 失败是"需要用户处理"的状态，不能混在普通说明里用同一种灰色 */
+            ...(status?.lastError ? { color: 'var(--danger)' } : {}),
+          }}>
+            {/* 失败原因**必须优先显示**：它盖在"上次备份时间"之上。
+                只显示时间的话，备份一直失败时面板会一直停在
+                上一次成功的时间上，用户看不出其实早就不在备份了。 */}
+            {status?.lastError
+              ? `自动备份失败：${status.lastError}`
+              : status?.lastRun
+                ? `上次自动备份：${status.lastRun}${status.running ? '，运行中' : ''}`
+                : '设置后由后台定时执行，改动在保存时生效'}
           </div>
         </div>
         {dirRow('备份根目录（两类共用）', backupDir, setBackupDir, 'bu',

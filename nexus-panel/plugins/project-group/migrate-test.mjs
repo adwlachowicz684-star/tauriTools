@@ -216,6 +216,36 @@ console.log('\n=== 7. #314 页签名收敛为合法单级片段 ★★ ===');
 
   /* 六、根目录拼接用的是收敛后的 seg，不是原始页签名 */
   t('用收敛后的 seg 拼路径', /root\.join\(&it\.seg\)/.test(cli));
+
+  /* 七、链接重建失败**必须说出来**（此前是 `Err(_) => {}`，完全吞掉）
+     —— 报告只写「重建链接 N 条」，失败的那几条既不计进 N 也没有一行提到，
+     用户拿到一份干干净净的"完成"报告，而那些链接实际仍指向搬走前的旧位置。 */
+  {
+    /* 注意：两个锚点都要从 relinked 之后再找 —— `write_json_any`
+       在文件前面还有别处，直接 indexOf 会取到前面那个，切片变空 */
+    const from = cli.indexOf('let mut relinked = 0');
+    const blk = cli.slice(from, cli.indexOf('if let Err(e) = store::write_json_any', from));
+    t('取到重建段', blk.length > 0);
+    t('重建失败被收集起来', /relink_errors\.push\(/.test(blk));
+    /* 必须在**剥掉注释后**再判：说明文字里就写着 `Err(_) => {}` 这几个字，
+       不剥的话断言会命中注释 → 永远为真（第 18 次踩到这类空跑） */
+    const blkCode = blk.replace(/\/\*[\s\S]*?\*\//g, '');
+    t('不再有空的 Err 分支', !/Err\(_\)\s*=>\s*\{\s*\}/.test(blkCode));
+    t('错误信息带项目路径与链接名', /\{\}\（\{\}）：\{e\}/.test(blkCode));
+
+    /*
+     * 锚点必须是**代码**，不能是 `/// 入口：解析 argv` 这类文档注释：
+     * 注释一改写就返回 -1，切片整段失效，而断言看起来还在跑
+     * （断言卫生护栏第 2 节正是钉这个）。用 `render` 之后的下一个
+     * 顶层函数 `try_handle` 做界。
+     */
+    const fromR = cli.indexOf('fn render(');
+    const r = cli.slice(fromR, cli.indexOf('pub fn try_handle', fromR));
+    t('render 收 relink_errors 参数', /relink_errors: &\[String\]/.test(r));
+    t('报告里写明失败条数', /重建链接\*\*失败\*\* \{\} 条/.test(r));
+    t('报告末尾逐条列出（否则用户不知道是哪几条）', /\[链接重建失败\]/.test(r));
+    t('三个调用点都传了', (cli.match(/render\(moved, skipped, failed, relinked, &relink_errors, &items\)/g) ?? []).length === 3);
+  }
 }
 
 done();

@@ -491,6 +491,18 @@ fn migrate(
 
     // 项目组搬走后，指向它的链接全断了：逐个重建
     let mut relinked = 0;
+    /*
+     * 重建失败的**必须说出来**。此前这里是 `Err(_) => {}`（完全吞掉），
+     * 于是报告只写「重建链接 N 条」：失败的那几条既不计进 N，
+     * 也没有任何一行提到它们。
+     *
+     * 用户拿到一份干干净净的"完成"报告，而那些链接实际仍指向
+     * 搬走之前的旧路径（已经失效的 junction）—— 界面上表现为红色断链，
+     * 他却不知道是这次迁移造成的，更不知道有哪几条要手动补。
+     *
+     * 与 mod.rs 两条搬家路径保持一致（那边进 `relink_errors` 一并回传）。
+     */
+    let mut relink_errors: Vec<String> = Vec::new();
     if kind == "group" {
         for r in records.iter_mut() {
             // 同上：不跟随链接
@@ -501,19 +513,21 @@ fn migrate(
             let _ = super::junction::remove(&r.project, &names);
             match super::junction::create(&r.project, &r.group, &names) {
                 Ok(_) => relinked += 1,
-                Err(_) => {}
+                Err(e) => relink_errors.push(format!(
+                    "{}（{}）：{e}", r.project, names.join("、")
+                )),
             }
         }
     }
 
     if let Err(e) = store::write_json_any(Path::new(cfg_path), &cfg) {
-        return format!("搬迁完成但写回 config 失败: {e}\n{}", render(moved, skipped, failed, relinked, &items));
+        return format!("搬迁完成但写回 config 失败: {e}\n{}", render(moved, skipped, failed, relinked, &relink_errors, &items));
     }
     if let Err(e) = store::save_records_to(Path::new(rec_path), &records) {
-        return format!("搬迁完成但写回 link-record 失败: {e}\n{}", render(moved, skipped, failed, relinked, &items));
+        return format!("搬迁完成但写回 link-record 失败: {e}\n{}", render(moved, skipped, failed, relinked, &relink_errors, &items));
     }
 
-    format!("{}\n{}", backup_note, render(moved, skipped, failed, relinked, &items))
+    format!("{}\n{}", backup_note, render(moved, skipped, failed, relinked, &relink_errors, &items))
 }
 
 /// 迁移前把 config 与 link-record 各复制一份带时间戳的副本。
@@ -563,11 +577,15 @@ fn render(
     skipped: usize,
     failed: usize,
     relinked: usize,
+    relink_errors: &[String],
     items: &[MigItem],
 ) -> String {
     let mut s = format!("== 层级迁移完成 ==\n已搬 {moved} 条，跳过 {skipped} 条，失败 {failed} 条");
     if relinked > 0 {
         s.push_str(&format!("，重建链接 {relinked} 条"));
+    }
+    if !relink_errors.is_empty() {
+        s.push_str(&format!("，重建链接**失败** {} 条", relink_errors.len()));
     }
     s.push_str("\n\n");
     for it in items {
@@ -575,6 +593,12 @@ fn render(
             s.push_str(&format!("[OK]   {} → {}\n", it.src, it.dst));
         } else {
             s.push_str(&format!("[{}] {} → {}\n", it.note, it.src, it.dst));
+        }
+    }
+    if !relink_errors.is_empty() {
+        s.push_str("\n[链接重建失败] 以下链接仍指向旧位置，请手动处理：\n");
+        for e in relink_errors {
+            s.push_str(&format!("  - {e}\n"));
         }
     }
     s

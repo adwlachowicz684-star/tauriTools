@@ -414,8 +414,10 @@ export interface BackupTargets {
 export interface BackupAutoStatus {
   running: boolean;
   minutes: number;
-  /** 上次自动备份时刻；未跑过为 null */
+  /** 上次**成功**的自动备份时刻；未成功跑过为 null */
   lastRun: string | null;
+  /** 上次自动备份的失败原因；成功 / 未跑过为 null */
+  lastError: string | null;
 }
 
 export type CardKind = 'project' | 'group';

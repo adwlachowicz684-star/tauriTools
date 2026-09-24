@@ -21,7 +21,16 @@ console.log('\n=== 1. 三条入口都经过 run（只在一处加守卫就不会
 {
   t('手动命令走 backup::run', /backup::run\(&cfg, &dir, &kind, ao\)/.test(mod));
   t('MCP 走 backup::run', /super::backup::run\(&cfg, &dir, kind, append_only\)/.test(mcp));
-  t('自动线程走 run', /let _ = run\(&cfg, &dir, "project"/.test(bak));
+  /*
+   * 自动线程仍要走 run（三条入口共用一处防重入的关键）。
+   *
+   * 锚点**不能**钉 `let _ = run(&cfg, &dir, "project"`：
+   * 那一轮为了让"备份失败不再谎报成功"，把两处 `let _ =` 改成了
+   * 收集 errors 的循环 —— 钉死旧写法会在**代码变得更好之后**报错。
+   * 真正要钉的是"自动线程确实调了 run 并拿到结果"，不是它怎么写。
+   */
+  t('自动线程走 run', /let r = run\(&cfg, &dir, k, append\)/.test(bak));
+  t('自动线程不再吞掉结果', !/let _ = run\(/.test(bak));
 }
 
 console.log('\n=== 2. 进行中标志 ===');
