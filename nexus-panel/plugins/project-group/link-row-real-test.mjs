@@ -213,4 +213,57 @@ console.log('\n=== 10. #292 链接行状态标识：可见 + 分状态 + 与名�
    */
 }
 
+console.log('\n=== 11. 链接明细容器：滚动容器与省略号（事故注释里漏补的）★★ ===');
+{
+  const css = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8');
+
+  /*
+   * 一、.fpx-links 必须有基础定义 —— 此前**只有滚动条伪元素规则**。
+   *
+   * 没有 overflow 的话，那条 8px 窄滚动条 / 悬停才显形的样式永远不生效，
+   * 而一个项目可以连十几条（预设 agent 名就有 22 个），全展开会把单张卡片
+   * 撑到几屏高，把别的卡片全挤出视野。
+   */
+  const li = css.search(/^\.fpx-links\s*\{/m);
+  const linksRule = li > 0 ? css.slice(li, css.indexOf('}', li)) : '';
+  t('.fpx-links 有基础定义', li > 0);
+  t('明细容器可滚动（overflow）', /overflow:\s*auto/.test(linksRule), linksRule);
+  t('明细容器限高（max-height）', /max-height/.test(linksRule));
+
+  /*
+   * 二、flex item 上的 ellipsis 必须配 min-width: 0。
+   *
+   * 三件套（overflow:hidden + text-overflow:ellipsis + white-space:nowrap）
+   * 写在块级元素上就够了，但作为 flex item 时 min-width 默认 auto，
+   * 不会收缩到内容以下 → 长路径把整行撑破而不是显示省略号。
+   *
+   * 那段事故注释点名的"长路径不省略"，补了三件套之后**依然存在** ——
+   * 只是根因从"没定义"变成了"缺 min-width: 0"。同名后果，不同根因。
+   */
+  /*
+   * 按**行首**的选择器定位，不能用 indexOf 全篇找。
+   *
+   * 我第一版就是 indexOf —— 而这些类名在注释里也被提到过，
+   * 于是 slice 取到的是**注释块**，里面恰好也有 min-width: 0。
+   * 结果：把真规则里的 min-width 删掉，断言照样通过（空跑）。
+   * 反向验证时才发现。
+   */
+  const ruleOf = (sel) => {
+    const re = new RegExp('^' + sel.replace(/[.\-]/g, '\\$&') + '\\s*\\{', 'm');
+    const m = re.exec(css);
+    return m ? css.slice(m.index, css.indexOf('}', m.index)) : '';
+  };
+  const groupRule = ruleOf('.fpx-link-group');
+  t('.fpx-link-group 有 min-width: 0（省略号才生效）', /min-width:\s*0/.test(groupRule), groupRule.slice(0, 120));
+
+  const textRule = ruleOf('.fpx-link-text');
+  t('.fpx-link-text 有 min-width: 0', /min-width:\s*0/.test(textRule), textRule.slice(0, 120));
+
+  /* 三、三件套本身也得在（min-width 只是补最后一步） */
+  for (const [name, rule] of [['.fpx-link-group', groupRule], ['.fpx-link-text', textRule]]) {
+    t(`${name} 有 ellipsis 三件套`,
+      /overflow:\s*hidden/.test(rule) && /text-overflow:\s*ellipsis/.test(rule) && /white-space:\s*nowrap/.test(rule));
+  }
+}
+
 done();

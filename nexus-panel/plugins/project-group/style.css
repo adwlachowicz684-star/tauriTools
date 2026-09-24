@@ -1777,6 +1777,28 @@
  * 现在由 style-dead-class 扫描（见 dead-class-test.mjs）守住：
  * 再被覆盖写抹掉会直接报红，不再依赖人记得。
  */
+/*
+ * .fpx-links —— 卡片内的**链接明细容器**（上面那段事故注释里漏补的最后一个）。
+ *
+ * 此前它**只有滚动条伪元素规则**（`.fpx-links::-webkit-scrollbar` 那几条），
+ * 没有基础规则。后果有两层，第二层尤其隐蔽：
+ *
+ *   1. 不是 flex column → 多行之间没有 gap，行挨着行挤在一起
+ *   2. **没有 overflow** → 那条 8px 窄滚动条、悬停才显形的样式**永远不生效**，
+ *      因为压根没有溢出。而一个项目可以连十几条（预设 agent 名就有 22 个），
+ *      全展开会把单张卡片撑到几屏高，把别的卡片全挤出视野 ——
+ *      用户看到的是"展开一个，其余全不见了"。
+ *
+ * 写好了滚动条样式却没给 overflow，是最典型的"看起来做完了"的坑：
+ * 代码在那儿、注释在那儿，就是不工作。
+ *
+ * max-height 取 168px（约 8 行）：够一次看清常见情况，又不会吃掉整屏。
+ */
+.fpx-links {
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 168px; overflow: auto;
+  padding-left: 2px;
+}
 .fpx-links-bar { display: flex; align-items: center; gap: 8px; padding: 0 2px 6px; }
 .fpx-links-toggle { height: 22px; padding: 0 8px; font-size: var(--fs-11, 11px); }
 
@@ -1801,7 +1823,21 @@
   font-size: var(--fs-11, 11px); line-height: 1.5;
 }
 .fpx-link-to { opacity: .5; }
-.fpx-link-group { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/*
+ * flex 子项要能收缩到内容以下，才轮得到 ellipsis 生效。
+ *
+ * `overflow:hidden + text-overflow:ellipsis + white-space:nowrap` 三件套
+ * 写在块级元素上就够了，但**作为 flex item 时还差一步**：
+ * flex item 的 `min-width` 默认是 `auto`，意味着它不会收缩到内容宽度以下，
+ * 于是长路径会把整行撑破（明细行横向溢出），而不是显示成省略号。
+ *
+ * 这段事故注释里点名的"长路径不省略"，补了三件套之后**仍然存在** ——
+ * 只是原因从"没定义"变成了"缺 min-width: 0"。同名的后果，不同的根因。
+ */
+.fpx-link-group {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0;
+}
 
 /*
  * 明细行里的状态点**独立定义一份**，不能只靠 `.fpx-badge .fpx-link-dot`。
@@ -1823,7 +1859,12 @@
 
 /* #292 链接名按钮内部：标识 + 名字（对齐原版 LinkedTabBtn 的"齿轮 + 名字"） */
 .fpx-link-name { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
-.fpx-link-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 同上：.fpx-link-text 也是 flex item，缺 min-width: 0 的话长链接名不会省略，
+   而是把状态点与箭头挤开（甚至撑破按钮）。 */
+.fpx-link-text {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0;
+}
 .fpx-link-row:not(.broken):not(.conflict) .fpx-link-group { cursor: default; }
 .fpx-link-state { margin-left: auto; flex: none; font-size: var(--fs-micro, 10px); opacity: .8; }
 .fpx-link-row.broken .fpx-link-state { color: var(--text-mute); }
