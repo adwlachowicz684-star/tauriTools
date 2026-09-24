@@ -1962,5 +1962,64 @@ console.log('\n=== 37. 类型检查暴露的两类真 bug ===');
 }
 
 
+console.log('\n=== 38. 类型收紧代替非空断言（boot 就绪由调用方证明） ===');
+{
+  const uf = read('plugins/project-group/hooks/useFpx.ts');
+  const dl = read('plugins/project-group/components/Dialogs.tsx');
+  const dh = read('plugins/project-group/components/DialogsHub.tsx');
+  const ap = read('plugins/project-group/App.tsx');
+  const lm = read('plugins/project-group/hooks/useLayoutMemory.ts');
+
+  /*
+   * App 里 `if (!boot) return <加载失败/>` 之后才渲染弹窗 → 弹窗拿到的 boot
+   * 必然非 null。但 FpxStore.boot 是 `Bootstrap | null`，类型层面看不出来，
+   * 于是 Dialogs 里每一处 boot.config 都报 TS18047（实测 19 处）。
+   *
+   * 两种修法，代价差很远：
+   *   写 19 处 `boot!`  —— 把"这里不会是 null"复制 19 份，将来谁删了
+   *                        App 的提前 return，19 处断言一起变成谎言且
+   *                        编译器一声不响。
+   *   收紧 props 类型   —— 只在一处表达，调用方必须证明 boot 已就绪；
+   *                        将来删了提前 return，编译器在**调用处**报错。
+   * 选后者。
+   */
+  t('useFpx 导出了 boot 非 null 的 FpxStoreReady',
+    /export type FpxStoreReady\s*=\s*Omit<FpxStore,\s*'boot'>\s*&\s*\{\s*boot:\s*Bootstrap\s*\}/.test(uf));
+
+  t('Dialogs / DialogsHub 的 s 用 FpxStoreReady',
+    /s:\s*FpxStoreReady;/.test(dl) && /s:\s*FpxStoreReady;/.test(dh));
+
+  /* 弹窗内部不该出现 boot! / s.boot! 这类非空断言 */
+  t('弹窗里没有用 boot! 掩盖 null（该由类型收紧解决）',
+    !/boot\s*!\s*[.)\[]/.test(dl) && !/boot\s*!\s*[.)\[]/.test(dh));
+
+  /*
+   * 收窄点必须只有一处，且就在提前 return 之后 —— 这样"boot 已就绪"
+   * 这个事实的证明与它的使用紧挨着，不会被后来的重构隔开。
+   */
+  t('App 在 !boot 提前 return 之后做一次性收窄',
+    /if \(!boot\)[\s\S]{0,600}const sReady:\s*FpxStoreReady\s*=\s*\{\s*\.\.\.s,\s*boot\s*\}/.test(ap));
+  t('App 把收窄后的 sReady 传给 Dialogs',
+    /<Dialogs\s*\n?\s*s=\{sReady\}/.test(ap));
+
+  /* ---- 顺带：同一个函数里另一个会崩的引用 ---- */
+  /*
+   * onLogResizeEnd 曾写 `saveLayout({ logRowHeight })`，但本作用域根本没有
+   * logRowHeight 这个变量（本地 state 叫 logHeight，配置字段才叫 logRowHeight）。
+   * ESM 是严格模式 → 拖完日志分隔条松手那一下直接 ReferenceError。
+   * 一直没被发现是因为不拖分隔条就走不到这条路径。
+   */
+  t('保存日志高度时用的是 logHeight 而不是未定义的 logRowHeight',
+    /saveLayout\(\{\s*logRowHeight:\s*logHeight\s*\}\)/.test(lm));
+  /*
+   * 必须先剥注释再匹配：上面修复时我把"曾写成 saveLayout({ logRowHeight })"
+   * 这句话写进了注释里，不剥注释的话这条断言会匹配到注释本身而永远报红
+   * —— 检查器读到自己写的说明就报警，是这类断言最典型的假阳性。
+   */
+  t('useLayoutMemory 里没有裸用未声明的 logRowHeight（剥注释后）',
+    !/saveLayout\(\{\s*logRowHeight\s*\}\)/.test(stripComments(lm)));
+}
+
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
