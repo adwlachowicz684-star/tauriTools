@@ -576,8 +576,25 @@ pub fn send(id: &str, directory: &str, prompt: &str, custom: &[super::model::Cus
                 ChainSendResult { ok: true, client: def.1.into(), needs_paste: false,
                     message: format!("已发送到 {}", def.1) }
             } else {
-                ChainSendResult { ok: true, client: def.1.into(), needs_paste: true,
-                    message: format!("{} 无法自动打开，指令已复制。", def.1) }
+                /*
+                 * **必须真的复制**，不能只写一句"指令已复制"。
+                 *
+                 * 此前这里直接返回 ok:true + needs_paste:true +
+                 * "指令已复制"，却**没有调用 set_clipboard** ——
+                 * 于是：
+                 *   · 用户按提示去粘贴，粘出来的是剪贴板里的**旧内容**
+                 *     （可能是别处的路径、密码、一段无关文本）；
+                 *   · ok:true → 前端走"成功"通道（绿色 toast、日志不计错），
+                 *     看起来完全正常，用户不会怀疑是工具没复制。
+                 *
+                 * 这是最坏的一类：它不报错，而是**主动**给出一个没发生过的动作，
+                 * 失败要等用户把错内容粘进 AI 对话框才发现。
+                 *
+                 * 走 paste_and_open 而不是只补一次 set_clipboard：
+                 * 它与 `_ =>` 那条兜底分支同一套处理（先复制、再试 CLI、
+                 * 再试 scheme），成败与文案都由那里如实给出。
+                 */
+                paste_and_open(def, directory, prompt)
             }
         }
         "cursor" => {
@@ -586,8 +603,8 @@ pub fn send(id: &str, directory: &str, prompt: &str, custom: &[super::model::Cus
                 ChainSendResult { ok: true, client: def.1.into(), needs_paste: false,
                     message: format!("已发送到 {}", def.1) }
             } else {
-                ChainSendResult { ok: true, client: def.1.into(), needs_paste: true,
-                    message: format!("{} 无法自动打开，指令已复制。", def.1) }
+                /* 同上：URL 唤起失败时必须真的把指令放进剪贴板 */
+                paste_and_open(def, directory, prompt)
             }
         }
         "vscode" => match vscode_exe() {

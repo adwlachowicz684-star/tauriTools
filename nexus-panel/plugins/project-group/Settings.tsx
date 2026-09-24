@@ -63,14 +63,31 @@ export default function PluginSettings() {
    * 拿自己加载时的旧 config 整份写回会把那些改动抹掉。
    */
   const save = useCallback(async (patch: Partial<FpxConfig>) => {
-    const fresh = await api.bootstrap();
-    const next: FpxConfig = { ...fresh.config, ...patch };
-    const snap = await api.saveConfig(next);
-    setBoot((b) => (b ? { ...b, ...snap } : b));
-    // 通知主视图：两个 iframe 不共享状态，不通知它那边还是旧数据
-    ctx.emit('project-group:config-changed');
-    return snap;
-  }, [api, ctx]);
+    /*
+     * 失败**必须说出来**。此前整段没有 try/catch，而下面六个调用点
+     * 全是 `void save(...)` —— 异常一路 reject 出去没人接，变成
+     * unhandled rejection：**用户拨了一个开关，界面毫无反应**，
+     * 既没 toast 也没反馈条（连"保存失败"都没有）。
+     *
+     * 保存失败是可能的（磁盘满 / 跨进程锁冲突 / 损坏文件保护拦下写入），
+     * 而用户只会以为"这个开关没记住"，反复拨、反复失败。
+     *
+     * 返回 null 让调用方知道没成；`.then(() => void load())` 那路
+     * 会重读一份真实配置，把开关弹回磁盘上的真实值 —— 正是我们要的。
+     */
+    try {
+      const fresh = await api.bootstrap();
+      const next: FpxConfig = { ...fresh.config, ...patch };
+      const snap = await api.saveConfig(next);
+      setBoot((b) => (b ? { ...b, ...snap } : b));
+      // 通知主视图：两个 iframe 不共享状态，不通知它那边还是旧数据
+      ctx.emit('project-group:config-changed');
+      return snap;
+    } catch (e) {
+      log(`保存失败：${errText(e)}`, true);
+      return null;
+    }
+  }, [api, ctx, log]);
 
   if (err) {
     return (

@@ -264,46 +264,6 @@ export default function App() {
     }
   }, [contentSel, ctx, s]);
 
-  /*
-   * 用 Markdown 阅读器打开（E2 的触发源）。
-   *
-   * openWithArgs 那条机制建好之后一直**没有调用方** ——
-   * 机制存在的意义是有人用它，没人调就等于没做。这里就是第一个调用方。
-   *
-   * 走 ctx.openPlugin 而不是自己 mount：
-   *   项目组只是"知道有个路径"，怎么打开、需不需要重挂载是宿主的事。
-   *   而且 md 可能已经激活 —— 那时要走事件总线补发，
-   *   自己 mount 会整篇重载（滚动位置全丢），正是宿主分两种情况的原因。
-   *
-   * 只认 md/markdown/txt：阅读器是纯文本渲染，
-   *   拿二进制（.png/.exe）去读会得到一堆乱码且不报错，比直接拒绝更费解。
-   */
-  const MD_EXT = /\.(md|markdown|mdown|mkd|txt)$/i;
-
-  const readMarkdown = useCallback(async () => {
-    if (!contentSel) {
-      ctx.toast('请先在内容浏览里选中一个条目', 'err');
-      return;
-    }
-    if (!MD_EXT.test(contentSel.name || '')) {
-      ctx.toast(`「${contentSel.name}」不是 Markdown/文本文件`, 'err');
-      return;
-    }
-    /*
-     * openPlugin 返回 boolean：false = 目标不存在或被拒绝。
-     * 不判的话，阅读器没装/被过滤掉时是**静默无反应** ——
-     * 用户点了按钮，什么都没发生，也不知道是没装还是坏了。
-     */
-    const ok = await ctx.openPlugin?.('md', { path: contentSel.path });
-    if (!ok) {
-      const m = '打开 Markdown 阅读器失败：插件未安装或被过滤';
-      s.pushLog(m, true);
-      ctx.toast(m, 'err');
-      return;
-    }
-    s.pushLog(`已用阅读器打开：${contentSel.path}`);
-  }, [contentSel, ctx, s]);
-
   const projectCards = useMemo(
     () => boot?.projectTabs[s.activeTab.project]?.items ?? [],
     [boot, s.activeTab.project],
@@ -667,24 +627,24 @@ export default function App() {
     for (const e of r.relinkErrors ?? []) s.pushLog(`链接重建失败：${e}`, true);
   }, [s]);
 
-  /** 内容区条目改名：改完重扫一遍目录 */
-  const doRenameContent = useCallback(async (path: string, name: string) => {
+  /*
+   * 内容区条目改名：改完重扫一遍目录。
+   *
+   * 必须**把成败返回给调用方**：此前是 void + 内部静默 return，
+   * 弹窗那侧只能无条件 return true —— 失败时弹窗照常关闭（像成功了），
+   * 名字其实没变，而弹窗里那句「改名未成功」从此成了死代码。
+   * 用户视角：填完新名 → 确定 → 弹窗消失 → 列表仍是旧名，且没有提示
+   * （只有一闪而过的 toast，很容易错过）。
+   */
+  const doRenameContent = useCallback(async (path: string, name: string): Promise<boolean> => {
     const r = await s.run('改名', () => s.api.renameContentItem(path, name));
-    if (!r) return;
+    if (!r) return false;
     s.pushLog(`已改名为「${name}」`);
     await s.scan(s.focusDir);
+    return true;
   }, [s]);
 
-  /**
-   * 页签前后翻页，到头回环。索引先 clamp：activeTab 与当前快照可能不同步。
-   *
-   * 项目组栏改成纵向堆叠后，所有分类同时在屏幕上，
-   * 再切「当前页签」没有任何可见效果 —— 所以这里改成把选中项移到下一个分类的
-   * 第一张卡片：既保留了"在分类间前后跳"的语义，又真的看得见（还会把键盘焦点带过去）。
-   */
-  /**
-   * 上下键在**当前栏**的卡片间移动选中（对齐原版 `NavigateAdjacent`）。
-   *
+  /* 上下键在**当前栏**的卡片间移动选中（对齐原版 `NavigateAdjacent`）。
    * 此前完全没有：换栏（Ctrl/⌘+←/→）只能落到目标栏的第一张，
    * 到不了中间的卡 —— 键盘用户只能靠鼠标点，否则选不中第 3 张之后的卡。
    *
@@ -1072,30 +1032,6 @@ export default function App() {
               */}
               <div className="p-row fpx-col-head">
                 <h2 style={{ margin: 0 }}>内容浏览</h2>
-                {/* 内容区选中条目的两个动作。
-                    编辑走内置编辑器（Mod+D），阅读走 md 插件（E2 触发源）。
-                    未选中时禁用而不是隐藏 —— 隐藏的话"这栏能做什么"
-                    全靠猜，禁用至少说明"先选一个"。 */}
-                <div className="p-row fpx-col-head-ops">
-                  <button
-                    className="p-btn"
-                    style={{ height: 26, padding: '0 8px' }}
-                    disabled={!contentSel}
-                    onClick={openMarkdown}
-                    title="用内置编辑器编辑（Mod+D）"
-                  >
-                    编辑
-                  </button>
-                  <button
-                    className="p-btn"
-                    style={{ height: 26, padding: '0 8px' }}
-                    disabled={!contentSel}
-                    onClick={readMarkdown}
-                    title="用 Markdown 阅读器打开"
-                  >
-                    阅读
-                  </button>
-                </div>
               </div>
               <ContentPanel
                 api={s.api}

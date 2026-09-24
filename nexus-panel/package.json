@@ -142,12 +142,12 @@
     "test:pg-saveguard": "node plugins/project-group/saveguard-test.mjs",
     "test:pg-type-hygiene": "node plugins/project-group/type-hygiene-test.mjs",
     "test:pg-content-tree": "node plugins/project-group/content-tree-test.mjs",
+    "test:pg-backup-auto-truth": "node plugins/project-group/backup-auto-truth-test.mjs",
     "test:md-render": "node md-render-test.mjs",
     "test:md-service": "node md-service-test.mjs",
     "test:md-drop": "node md-drop-test.mjs",
     "test:md-e2": "node md-e2-test.mjs",
-    "test:md-interact": "node md-interact-test.mjs",
-    "test:open-plugin": "node open-plugin-test.mjs"
+    "test:md-interact": "node md-interact-test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

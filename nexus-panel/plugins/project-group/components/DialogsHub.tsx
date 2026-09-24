@@ -97,7 +97,14 @@ export interface DialogsProps {
   /** 执行搬家：选完目标目录后调用（含监控器抑制，见 App） */
   doMove: (card: CardInfo, kind: CardKind, dest: string) => void;
   /** 内容区条目改名 */
-  doRenameContent: (path: string, name: string) => void;
+  /**
+   * 返回**是否成功**（不是 void）。
+   *
+   * 弹窗靠这个返回值决定"关闭"还是"留在原地显示错误"。
+   * 若是 void，调用方只能无条件当成成功 —— 失败时弹窗照样关闭，
+   * 用户看到的是"点了确定、什么都没发生、也没报错"。
+   */
+  doRenameContent: (path: string, name: string) => Promise<boolean>;
   /** 连锁动作清单：确认弹窗要显示动作名 */
   chainActions: ChainAction[];
   pendingSend: PendingSend | null;
@@ -372,10 +379,7 @@ export function Dialogs(props: DialogsProps) {
         <RenameContentDialog
           name={dialog.name}
           onClose={() => setDialog({ type: 'none' })}
-          onSubmit={async (n) => {
-            await doRenameContent(dialog.path, n);
-            return true;
-          }}
+          onSubmit={(n) => doRenameContent(dialog.path, n)}
         />
       )}
 
