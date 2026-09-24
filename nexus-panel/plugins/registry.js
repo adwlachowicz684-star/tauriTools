@@ -140,6 +140,35 @@ export const plugins = [
     description: '项目 / 项目组双栏管理：agent 链接分配、内容浏览、连锁指令、内置图标与备份',
   },
   {
+    /*
+     * md 插件 —— Markdown 阅读。
+     *
+     * 走**同页（module）**而不是 iframe：
+     * F6「主题跟随」要求颜色全部读宿主 CSS 变量（--bg / --surface / --text /
+     * --accent）。iframe 是独立文档，宿主样式进不来 —— demo-iframe 就是因为
+     * 漏引样式，打开后"只有文字"。同页则天然继承，不用额外补引。
+     *
+     * 它是内置插件（builtin: true），与宿主同文档不会引入不可信代码，
+     * 对应分级模型里的 L1（受信任、构建期扫过）。
+     *
+     * followsTheme 必须给：
+     * 少了它，切到浅色主题时界面已变浅，适配系统却照旧采样判成"插件深色"，
+     * 再施加 invert → 已变浅的部分被二次翻转。
+     * 这个标记的语义见 agent-flow 那段注释。
+     */
+    id: 'md',
+    name: 'Markdown',
+    icon: '▤',
+    type: 'module',
+    entry: './plugins/md/module.tsx',
+    version: '0.1.0',
+    theme: 'dark',
+    requiresBuild: true,
+    builtin: true,
+    followsTheme: true,
+    description: 'Markdown 阅读：粘贴/拖入/服务调用，跟随面板主题',
+  },
+  {
     id: 'mindmap',
     name: '思维导图',
     icon: '❖',
