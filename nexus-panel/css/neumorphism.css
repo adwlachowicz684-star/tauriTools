@@ -1955,6 +1955,59 @@ html.theme-transition *:not(.spinner) {
 }
 
 /*
+ * .md-puml-box —— PlantUML 图表容器（F10）
+ * ------------------------------------------------------------
+ * 与 mermaid 不同：PlantUML 的 renderToString **没有 options 参数**，
+ * 不能像 render() 那样传 { dark: true }，所以图本身是**白底**的。
+ *
+ * 因此这里给容器一个边框 + 圆角 + 内边距，把白底图变成一张"图卡"：
+ *   · 暗色主题下是深色面板里的一张亮色卡片，边界清楚、可读
+ *   · 不用 filter: invert() —— 那会把品牌色一起反掉
+ *   · 不在 SVG 内部改配色 —— PlantUML 的 SVG 结构没有稳定契约
+ *
+ * svg 必须 max-width:100%：引擎输出的 SVG 带固定 width，
+ * 窄栏里会横向溢出，而溢出部分在 .md-out 里是被裁掉的
+ * （看不全，且没有滚动条提示）。
+ */
+.md-puml-box {
+  margin: 10px 0;
+  overflow-x: auto;
+  padding: 8px;
+  border: 1px solid var(--edge, #3a3a3a);
+  border-radius: 6px;
+  background: var(--surface-sunk, #1e1e1e);
+}
+.md-puml-box svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+/* 渲染中占位：高度必须给，否则图画出来时下面内容会被顶得跳一下。
+   PlantUML 首次渲染要初始化 WASM，比 mermaid 更慢，占位给高一点 */
+.md-puml-loading {
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  color: var(--text-dim, var(--muted, #888));
+  font-size: 12px;
+}
+/* 语法错误：源码一起显示 —— 只显示错误消息的话用户没法对照改 */
+.md-puml-err {
+  border-left: 3px solid var(--danger, #ff6b6b);
+  padding-left: 10px;
+}
+.md-puml-msg {
+  color: var(--danger, #ff6b6b);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.md-puml-src {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/*
  * .md-export —— 导出按钮组（F9）
  * ------------------------------------------------------------
  * 不写死颜色：跟 .md-bar 里其它元素同一套变量，切主题时一起变。

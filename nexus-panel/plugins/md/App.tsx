@@ -13,7 +13,9 @@ import { headingsOf, activeIdOf } from './toc';
 import { targetOf, menuItemsFor } from './ctx-menu';
 import { splitBlocks, createBlockCache, visibleBlockIndex } from './blocks';
 import MermaidBlock from './MermaidBlock';
+import PlantUMLBlock from './PlantUMLBlock';
 import { isMermaid } from './mermaid';
+import { isPlantUML } from './plantuml';
 import { exportPathOf, checkExportPath, buildExportHtml, EXPORT_EXTS } from './export';
 
 /**
@@ -124,6 +126,13 @@ function CodeBlock({ ctx, children, ...rest }: any) {
   const codeClass = children?.props?.className;
   if (isMermaid(codeClass)) {
     return <MermaidBlock ctx={ctx} className={codeClass} {...rest}>{children}</MermaidBlock>;
+  }
+  /*
+   * PlantUML 同理：不接出来的话源码会被 highlight.js 着色，
+   * 显示成一段彩色文本 —— **不报错**，用户只以为"图表没渲染"。
+   */
+  if (isPlantUML(codeClass)) {
+    return <PlantUMLBlock ctx={ctx} className={codeClass} {...rest}>{children}</PlantUMLBlock>;
   }
   const [state, setState] = useState('idle');   // idle | ok | fail
   const codeEl = Array.isArray(children) ? children[0] : children;
