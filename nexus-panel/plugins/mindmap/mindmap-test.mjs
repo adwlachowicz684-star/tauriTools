@@ -5456,6 +5456,64 @@ group('短文本节点的最小宽度（跑真实源码）');
     // 原异常继续抛出是对的：静默吞掉会让"节点画不出来"变成没有线索的问题
     ok(threw, '内核 update 抛错时**继续抛出**（不静默吞，否则排查无门）');
   }
+  // 6.5) **thunk 分支**：update 在"文本变了"时返回的是未求值的函数
+  //
+  // 这是补丁真正要生效的场景 —— 新建节点 / 刚打完字，文本必然是"刚变"。
+  // 不解析这个 thunk 的话，box.width 是 undefined，钳宽度被静默跳过。
+  // 实测（内核跑在 jsdom 里）："一" 首次 62px、二次 80px —— 首次根本没生效。
+  {
+    const TR = function () {};
+    TR.__KityClassName = 'TextRenderer';
+    let calls = 0;
+    TR.prototype.update = function () {
+      // 像内核那样：文本变了 → 返回 thunk；命中缓存 → 直接返回 Box
+      return () => { calls++; return { x: 0, y: 0, width: 4, height: 20 }; };
+    };
+    const minder = { _rendererClasses: { center: [TR] } };
+    new Function('return (' + src + ');')()(minder);
+    const box = TR.prototype.update({}, { getStyle: () => 16 });
+    ok(typeof box !== 'function', 'thunk 被求值（返回的不是函数）');
+    eq(calls, 1, 'thunk 只被求值一次（不能重复算）');
+    eq(box.width, 32, 'thunk 分支也要钳到下限 32');
+  }
+  // 6.6) thunk 求值为空 → 原样交回（让内核自己处理，不能在这儿打断渲染）
+  {
+    const TR = function () {};
+    TR.__KityClassName = 'TextRenderer';
+    TR.prototype.update = function () { return () => null; };
+    const minder = { _rendererClasses: { center: [TR] } };
+    new Function('return (' + src + ');')()(minder);
+    const box = TR.prototype.update({}, { getStyle: () => 16 });
+    ok(typeof box === 'function', 'thunk 求值为空时原样交回内核');
+  }
+
+  /* ---- 6.7) 必须**对称**撑宽，不能只加 width ----
+   * 文字从 x=0 起画，只加 width 会把盒中心往右推、字却留在原处 → 短文字偏左。
+   * 实测（内核 + jsdom，字号 16 / 下限 32）："一"(字宽14) 偏 9px、"一二"(28) 偏 2px。
+   */
+  {
+    const mkBox = (width) => ({ x: 0, y: -8, width, height: 20,
+      left: 0, right: width, top: -8, bottom: 12, cx: width / 2, cy: 2 });
+    const run = (width, fs) => {
+      const TR = function () {};
+      TR.__KityClassName = 'TextRenderer';
+      TR.prototype.update = function () { return mkBox(width); };
+      new Function('return (' + src + ');')()({ _rendererClasses: { center: [TR] } });
+      return TR.prototype.update({}, { getStyle: () => fs });
+    };
+    const b1 = run(14, 16);                   // 字宽 14 → 撑到 32（差 18）
+    eq(b1.width, 32, '宽度撑到 32');
+    eq(b1.x, -9, 'x 左移差值的一半（对称撑开）');
+    // 关键：盒中心必须仍在字的中心（14/2 = 7）
+    eq(b1.cx, 7, `盒中心 = 字中心（${b1.cx} === 7）—— 只加 width 会变成 16，字就偏左 9px`);
+    eq(b1.left, -9, 'left 跟着 x 更新（merge() 读的是 left/right）');
+    eq(b1.right, 23, 'right 正确（-9 + 32）');
+    // 已经够宽时不能动
+    const b2 = run(70, 16);
+    eq(b2.x, 0, '够宽时 x 不动');
+    eq(b2.width, 70, '够宽时宽度不动');
+  }
+
   // 7) 幂等：重复打补丁不能套两层（套两层下限会被应用两次）
   {
     const { TextRenderer, minder } = makeMinder({ width: 4 });

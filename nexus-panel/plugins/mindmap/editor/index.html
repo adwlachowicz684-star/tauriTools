@@ -346,6 +346,23 @@
                 TR.prototype.update = function () {
                     var box = origUpdate.apply(this, arguments);
                     try {
+                        /*
+                         * update 在「文本变了」时返回的是**未求值的 thunk**（函数），
+                         * 不是 Box —— 内核源码末尾是 `return ... (function(){...})()`。
+                         * 此时 box.width 是 undefined，钳宽度会被**静默跳过**。
+                         *
+                         * 而"文本刚变"恰恰就是新建节点 / 刚打完字，也就是最需要
+                         * 下限的时刻 —— 实测（内核跑在 jsdom 里）：
+                         *   "一"   首次 62px、二次 80px（第二次才生效）
+                         *   "一二" 首次 76px、二次 80px
+                         * 不解析 thunk 的话，这个补丁对它想解决的问题**一次都没生效**。
+                         */
+                        if (typeof box === 'function') {
+                            var resolved = box();
+                            // 求值失败就把 thunk 原样交回内核（它自己会再调一次）
+                            if (!resolved) return box;
+                            box = resolved;
+                        }
                         // update(container, node, ...) —— node 是第 2 个参数
                         if (box && typeof box.width === 'number') {
                             var node = arguments[1];
@@ -354,7 +371,31 @@
                             // getStyle 查不到时返回 null（不是 0），必须回落
                             if (got) fs = Number(got) || DEFAULT_FS;
                             var min = Math.round(MIN_CHARS * fs);
-                            if (box.width < min) box.width = min;
+                            if (box.width < min) {
+                                /*
+                                 * 必须**对称**地往两侧撑，不能只加 width。
+                                 *
+                                 * 文字是从 x=0 起画的（kity.Text 默认 start 锚点），
+                                 * 只加 width 会把盒中心往右推，而字还在原处 ——
+                                 * 短文字就偏左了。实测（内核 + jsdom，字号 16、下限 32）：
+                                 *   "一"   字宽 14 → 偏左 9px
+                                 *   "一二" 字宽 28 → 偏左 2px
+                                 * 字够宽（≥ 下限）时不受影响，所以这个偏只有短节点才有，
+                                 * 平时看不出来。
+                                 *
+                                 * 对称撑宽后：盒变成 [-d/2, 字宽 + d/2]，
+                                 * 中心仍是「字宽/2」，和字本身重合 —— 居中得以保持。
+                                 */
+                                var d = min - box.width;
+                                box.x -= d / 2;
+                                box.width = min;
+                                // Box 的 left/right/cx 是**构造时算好的普通属性**，
+                                // 只改 x/width 不会连带更新 —— 而 merge() 读的正是
+                                // left/right，不改的话撑宽会在合并时被丢掉。
+                                box.left = box.x;
+                                box.right = box.x + box.width;
+                                box.cx = box.x + box.width / 2;
+                            }
                         }
                     } catch (e) { /* 拿不到就保持原宽度，不能让节点渲染失败 */ }
                     return box;
