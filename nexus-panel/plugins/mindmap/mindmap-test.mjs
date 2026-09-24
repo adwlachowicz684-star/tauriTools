@@ -7682,7 +7682,16 @@ group('数值输入框 numSpinner（▲▼ 步进 / ▾ 选预设 / 滚轮 ±1�
   ]) {
     ok(pat.test(src), `${who} 用 numSpinner`);
   }
-  // 圆角上限必须**大于**最大预设：卡在预设上的话微调到那儿就上不去了
+  /* 圆角上限：既要够得着最大预设，又不能超过**几何上限**
+   *
+   * kity: formatRadius(w,h,r) = min(floor(min(w/2,h/2)), r)
+   * 实测（真实内核跑在 jsdom 里）：
+   *   root 104×40 → 上限 20 ｜ 子节点 96×26 → 13 ｜ 长子节点 258×22 → 11
+   * 所以：
+   *   · 最大预设必须 ≤ 20（此前是 24 —— **任何节点都达不到**，
+   *     点了没变化，用户会以为控件坏了）
+   *   · max 也不该 > 20（再大只是"拖了没反应"）
+   */
   {
     // 从「value: st.radius」往前找到它所属的 numSpinner({ 起点 ——
     // 直接全局 match 会命中**前一个**控件（线宽），那样测的就不是圆角了
@@ -7690,10 +7699,16 @@ group('数值输入框 numSpinner（▲▼ 步进 / ▾ 选预设 / 滚轮 ±1�
     const rs = src.lastIndexOf('numSpinner({', ri);
     const seg = src.slice(rs, src.indexOf('})', ri) + 2);
     ok(/value: st\.radius/.test(seg), '定位到圆角那一段');
-    ok(/max:\s*(\d+)/.test(seg), '圆角有 max');
-    const max = Number(seg.match(/max:\s*(\d+)/)[1]);
+    ok(/max:/.test(seg), '圆角有 max');
+    // max 写成了具名常量，要从常量定义里取值（不能只认字面量数字）
+    const mConst = src.match(/const MAX_RADIUS = (\d+)/);
+    ok(!!mConst, '圆角上限是具名常量 MAX_RADIUS');
+    const max = Number(mConst[1]);
+    ok(seg.includes('max: MAX_RADIUS'), '圆角 max 用的是该常量（不是散落的魔法数字）');
     const radii = JSON.parse(src.match(/const RADII = (\[[^\]]+\])/)[1]);
-    ok(max > Math.max(...radii), `圆角 max(${max}) > 最大预设(${Math.max(...radii)})`);
+    ok(max >= Math.max(...radii), `圆角 max(${max}) 够得着最大预设(${Math.max(...radii)})`);
+    ok(max <= 20, `圆角 max(${max}) 不超过几何上限 20（再大只会饱和，拖了没反应）`);
+    ok(Math.max(...radii) <= 20, `最大预设(${Math.max(...radii)}) 不超过几何上限 20`);
   }
 }
 

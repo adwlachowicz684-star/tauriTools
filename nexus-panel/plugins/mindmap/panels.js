@@ -130,7 +130,19 @@ export function withPresetValue(presets, value) {
   // 数值升序：字符串排序会把 100 排到 20 前面
   return list.sort((a, b) => a - b);
 }
-const RADII = [0, 3, 5, 8, 12, 16, 24];
+/* 圆角预设：上限 20，不含 24。
+ *
+ * kity 的 setRadius 内部是 formatRadius(w, h, r) = min(floor(min(w/2, h/2)), r)
+ * —— 圆角**不能超过节点较短边的一半**。实测（真实内核跑在 jsdom 里）：
+ *   root   104×40 → 上限 20
+ *   子主题  96×26 → 上限 13
+ *   长子节点 258×22 → 上限 11
+ * 也就是说 24 **在任何节点上都达不到**（最大也只有 20），放在预设里
+ * 只会让用户点了发现没变化，以为控件坏了。
+ */
+const RADII = [0, 3, 5, 8, 12, 16, 20];
+/** 圆角可调上限（= 根节点的实测上限 20；再大只会饱和，不会有视觉变化） */
+const MAX_RADIUS = 20;
 const WIDTHS = [1, 2, 3, 4, 6];
 
 /* --------------------------- 小组件 --------------------------- */
@@ -1423,7 +1435,9 @@ export function buildSide(app, opts = {}) {
         h('div.mm-row', {},
           h('span.mm-label', { style: { minWidth: '48px' } }, '圆角'),
           numSpinner({
-            value: st.radius, min: 0, max: 40,
+            // 上限 20 而不是 40：见 RADII 的说明 —— 圆角超过节点较短边的一半
+            // 会被 kity 静默钳住，给再大的范围也只是"拖了没反应"
+            value: st.radius, min: 0, max: MAX_RADIUS,
             // 上限给到 40 而不是预设里的 24：滚轮能微调出 25、26…，
             // 把 max 卡在最大预设值上，微调到那儿就再也上不去了
             list: RADII, title: '节点圆角（滚轮 / ▲▼ 微调，▾ 选预设）',
