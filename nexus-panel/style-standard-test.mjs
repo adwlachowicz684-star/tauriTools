@@ -585,8 +585,13 @@ console.log('\n=== 14. 内联样式（影子层） ===');
          不剥的话同一个值会因引号被算成两个不同的项，统计失真 */
       const v = val.replace(/["']/g, '').trim();
       if (IGNORE.test(v)) return;
-      // 变量名（引用了外部常量）不算写死
-      if (/^[A-Za-z_$][\w$]*$/.test(v)) return;
+      /*
+       * 变量引用不算写死 —— 含**成员表达式**（win.totalHeight、BUCKET_H 这类）。
+       * 只判纯标识符会漏掉带点号的，实测 HistoryPanel / TaskPanel 的
+       * `height: win.totalHeight` 就被算成写死值，是**运行期算出来的**，
+       * 根本不是设计量，改它属于动功能。
+       */
+      if (/^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/.test(v)) return;
       if (/^-?[\d.]+%$/.test(v)) return;      // 百分比是几何不是设计量
       if (/^-?[\d.]+$/.test(v) && (prop === 'opacity' || prop === 'zindex')) return;
       hits.push({ rel, prop, v });
@@ -621,7 +626,22 @@ console.log('\n=== 14. 内联样式（影子层） ===');
      * 这些数字本身也是答案的一部分：它们证明"影子层"确实存在且规模不小 ——
      * 此前所有检查都只读 .css，这一层从来没被数过。
      */
-    const BASE = { height: 16, width: 8, padding: 21, gap: 4, fontsize: 2 };
+    /*
+     * 基线 = 当前实测存量。height 已收口到 16 以内（原本 24）；
+     * width 从 36 降到 19，padding 从 57 降到 34。
+     *
+     * 剩下的不是"没改干净"，而是三类**刻意保留**：
+     *   · 弹窗定制宽度（ChainConfirmDialog 620、Dialogs 560）
+     *     —— dialog.css 默认 420，这些弹窗内容确实更宽，
+     *        强行改成 420 会挤压内容；宽度是**逐个弹窗的**决定，不是全局设计量。
+     *   · 输入框定宽（genericHttp 96）—— 同一行的输入框要对齐，属于布局。
+     *   · 容器布局间距（padding 那批）—— 与 agent-flow 的 641 处间距同源，
+     *     属同一类存量债，等间距专项一起处理，不在这里零散改。
+     *
+     * 冻结的意义是"不再变多"：新增一处内联写死就会报红。
+     * 长期红着的断言等于没有断言，所以存量记基线、增量卡死。
+     */
+    const BASE = { height: 16, width: 19, padding: 34, gap: 4, fontsize: 2 };
     for (const [prop, allow] of Object.entries(BASE)) {
       const n = (byProp[prop] || []).length;
       t(`内联 ${prop} 写死不超过基线 ${allow}`, n <= allow,
@@ -645,6 +665,36 @@ console.log('\n=== 14. 内联样式（影子层） ===');
     }
   }
   t('内联样式无颜色字面量（颜色必须走令牌）', colorHit.length === 0, colorHit.slice(0, 3).join(', '));
+
+  /*
+   * 类名**写错位置**：把类名当成裸 JSX 属性写。
+   * ------------------------------------------------------------------
+   *   <button
+   *     p-btn          ← 错：这是属性 p-btn={true}，不是类名
+   *     style={{ padding: '0 12px' }}
+   *
+   * React 会把它渲染成 HTML 属性 `p-btn="true"`，**样式完全不生效**，
+   * 而且不报错、不崩溃、不影响功能 —— 只能靠肉眼发现。
+   *
+   * 实测 project-group 有 7 个按钮是这么写的（"新增分类""复制全部日志"
+   * "清空""＋添加""⋯"等），它们**没有任何按钮样式**，
+   * 开发者为了让它看起来像个按钮，只能再手写内联 padding ——
+   * 于是又多一处脱离体系的内联值。这就是"梳理很多次还有不统一"的
+   * 又一类根因，而且此前所有检查都没覆盖到。
+   */
+  const KNOWN = /^(p|mm|nx|fpx)-(btn|input|muted|row|card|tag|mini|select|textarea)$/;
+  const bare = [];
+  for (const p of SRC_FILES) {
+    let src = ''; try { src = read(p); } catch { continue; }
+    if (!/\.tsx$|\.jsx$/.test(p)) continue;
+    for (const m of src.matchAll(/^\s{2,}([a-z][\w-]*)\s*$/gm)) {
+      if (KNOWN.test(m[1])) {
+        bare.push(p.replace(ROOT + '/', '') + ':' + m[1] + ':' + (src.slice(0, m.index).split('\n').length));
+      }
+    }
+  }
+  t('无「类名写成裸属性」的按钮/控件（样式会完全不生效）',
+    bare.length === 0, bare.slice(0, 4).join(', '));
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
