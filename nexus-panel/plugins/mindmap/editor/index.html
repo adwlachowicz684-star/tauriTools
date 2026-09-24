@@ -1438,9 +1438,33 @@
             };
             // 默认对齐：纯文本节点（内容盒几乎就是文本盒）做**视觉居中**；
             // 节点带图片等额外内容时保留内核的沉底语义，不改动带图节点的既有布局。
-            window.__kmDefaultValign = function (cbox, bb) {
-                if (!cbox || !bb) return 'middle';
-                return (cbox.height - bb.height) > 1 ? 'bottom' : 'middle';
+            /*
+             * 默认对齐：**一律居中**，只有"内核真的渲染了图片"才沉底。
+             *
+             * 之前用 `(cbox.height - 文字盒高) > 1` 来判断「节点有没有额外内容」，
+             * 这个判据**恒为真**，实测推翻了它：
+             *   · root（font-size 16）→ getContentBox() 高 **40**，而文字盒高 16
+             *   · 多出来的 24 是外框内边距（OutlineRenderer 给的上下 padding）
+             * 也就是说 cbox 永远比文字盒高，跟有没有图片无关。
+             *
+             * 更糟的是两种"文字盒高"口径还不同源：
+             *   · TextRenderer.update 返回的盒：高 = font-size（内核记账值，实测 16）
+             *   · tg.getBoundaryBox()：SVG 实测字形高度，通常再高 0~20%
+             * 用哪个都改变不了"差值是内边距"这个事实。
+             *
+             * 而且 **tr.contentBox 根本不是文字自己的盒**（实测 root 上是 0×0）：
+             * 批量渲染时内核用 `e.contentBox = i[d]` 记的是**上一个**渲染器的盒
+             * （ renderNodeBatch 里的 off-by-one ），拿它当文字盒等于拿了个空盒。
+             *
+             * 所以改成直接问「内核会不会渲染图片」—— 这是唯一确定的信号：
+             * 单图走 data.image（由内核 ImageRenderer 画，图片在上、文字在下）；
+             * 多图走 data.images（**由我们自己在附件区画**，不进内核渲染器）。
+             */
+            window.__kmNodeValign = function (node) {
+                try {
+                    if (node && node.getData && node.getData('image')) return 'bottom';
+                } catch (e) { /* 取不到就当没图 */ }
+                return 'middle';
             };
             //
             // 注意：原实现开头有 `if (!va) return;` —— 只有**显式设过 vertical-align**
@@ -1462,7 +1486,7 @@
                             // 必须用**附件区撑高之前**的盒（_kmBaseBox）。
                             // 直接用 getContentBox() 会拿到撑高后的盒：
                             // 挂了视频/文件/图片的节点，盒被附件区撑高了几十像素，
-                            // 于是下面 __kmDefaultValign 判定成「节点带额外内容」
+                            // 于是下面判定成「节点带额外内容」
                             // → 走 bottom 分支 → 文字被沉到盒底 → 沉进视频区，
                             // 表现为「视频压到文字」。
                             // 居中本来就该按「文字之外有没有别的内容」判断，
@@ -1471,23 +1495,11 @@
                             if (!cbox || !cbox.height) return;
                             // 实测边界（未平移）—— 算平移量必须用这个
                             var bb = tg.getBoundaryBox();
-                            /*
-                             * 判断「有没有额外内容」要用 **TextRenderer 自己的
-                             * contentBox**，不能用上面那个实测的 bb。
-                             *
-                             * 两者口径不同源：内核给文字记的盒高就是 font-size
-                             * （`new Box(0,c,w,i)` 第 4 参 i），而 getBBox 是字形
-                             * 实测高度，通常比 font-size 高 0~20%。
-                             * 16px 差约 2px、24px 差约 4px —— 阈值 `> 1` 根本
-                             * 挡不住，纯文字节点会被**误判成带图节点**走 bottom，
-                             * 字号越大越容易中（这也能解释"不同主题表现不同"）。
-                             *
-                             * 用同源盒之后，差值就只剩「图片等其他 renderer 带来
-                             * 的高度」，判断才准。平移量 dy 仍然用实测的 bb ——
-                             * 那个必须实测，用记账值反而会偏。
-                             */
-                            var tbox = (tr && tr.contentBox) || bb;
-                            var va = node.getData('vertical-align') || window.__kmDefaultValign(cbox, tbox);
+                            // 对齐方式：一律居中，只有内核渲染了图片才沉底。
+                            // 判据不能用「cbox 比文字盒高多少」—— 实测那个差值
+                            // 恒等于外框内边距（root 上 40 vs 16），跟有没有图无关，
+                            // 用它会导致**每个节点**都被判成带图、文字一律沉底。
+                            var va = node.getData('vertical-align') || window.__kmNodeValign(node);
                             var dy = window.__kmTextDy(bb, cbox, va, voOffset(node, va));
                             // dy 为 null 表示测不到真实边界 —— 此时**绝不能**设 0，
                             // 那会把内核的经验补偿整个抹掉，文字反而更偏

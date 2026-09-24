@@ -1949,6 +1949,39 @@ __kmDefaultValign = (cbox, bb) => (cbox.height - bb.height) > 1 ? 'bottom' : 'mi
 
 真正的问题在另一头：**是文字被推下来了，不是视频没动**。
 
+## 文字对齐判据：不能比高度，要问「有没有内核图片」
+
+### 实测（内核 + kity 跑在 jsdom 里，root font-size 16）
+
+```
+渲染器顺序: TextRenderer | Priority | Progress | hyperlink | Note |
+            Resource | Image | Outline | Expander | Shadow | Wireframe
+getContentBox():      y=-20  h=40
+TextRenderer 自有盒:  y=-8   h=16     ← 高就是 font-size
+tr.contentBox:        y=0    h=0      ← 0×0！
+```
+
+### ① 比高度的判据**恒为真**
+
+```js
+(cbox.height - 文字盒高) > 1 ? 'bottom' : 'middle'
+```
+
+40 - 16 = 24 > 1 → **永远 bottom**。那 24 是 OutlineRenderer 给的外框内边距，
+**跟有没有图片无关**。也就是说每个节点都会被判成「带图」，文字一律沉底。
+
+### ② tr.contentBox 不是文字自己的盒
+
+批量渲染 `renderNodeBatch` 里是 `e.contentBox = i[d]`，而 `i[d]` 装的还是
+**上一个**渲染器返回的盒（off-by-one），所以 TextRenderer.contentBox 实测 0×0。
+拿它当文字盒等于拿了个空盒 —— 40 - 0，更是恒为 bottom。
+
+### 改法
+
+单图走 `data.image`（内核 ImageRenderer 画，图片在上、文字在下）→ bottom；
+多图走 `data.images`（**由附件区自己画**，不进内核渲染器）→ 仍居中；
+其余一律居中。这是唯一确定的信号，不依赖任何测量口径。
+
 ## 视频封面：取 1/3 处，不再取首帧
 
 ### 为什么首帧是黑的

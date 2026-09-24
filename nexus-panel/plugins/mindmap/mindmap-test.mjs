@@ -6215,7 +6215,7 @@ group('文字垂直居中：改用真实测量，不再吃内核经验系数');
 
   // ---- 修法：用真实 bbox 居中 ----
   ok(/__kmTextDy = function/.test(html), '抽出可测的纯函数 __kmTextDy');
-  ok(/__kmDefaultValign = function/.test(html), '抽出可测的纯函数 __kmDefaultValign');
+  ok(/__kmNodeValign = function/.test(html), '抽出可测的纯函数 __kmNodeValign');
   // 关键：**不再**要求节点显式设过 vertical-align。
   // 注意必须先剥注释 —— 新写的注释里引用了旧写法 `if (!va) return;`，
   // 不剥掉的话删没删这句断言都是绿的（假阳性）。
@@ -6233,15 +6233,15 @@ group('文字垂直居中：改用真实测量，不再吃内核经验系数');
   // 抠出来真跑一遍。
   const seg = html.slice(html.indexOf('window.__kmTextDy = function'),
     html.indexOf('var valignBindDone = false;'));
-  const defSeg = html.slice(html.indexOf('window.__kmDefaultValign = function'),
-    html.indexOf('window.__kmTextDy = function'));
+  const defSeg = html.slice(html.indexOf('window.__kmNodeValign = function'),
+    html.indexOf('var valignBindDone = false;'));
   const mk = {};
   // eslint-disable-next-line no-new-func
   new Function('window', seg + '\n' + defSeg)(mk);
   const dy = mk.__kmTextDy;
-  const def = mk.__kmDefaultValign;
+  const def = mk.__kmNodeValign;
   ok(typeof dy === 'function', '源码里的 __kmTextDy 可执行');
-  ok(typeof def === 'function', '源码里的 __kmDefaultValign 可执行');
+  ok(typeof def === 'function', '源码里的 __kmNodeValign 可执行');
 
   // a) 纯文本节点：把真实中心对齐到内容盒中心
   {
@@ -6273,10 +6273,44 @@ group('文字垂直居中：改用真实测量，不再吃内核经验系数');
     eq(dy({ y: -8, height: 18.5 }, null, 'middle'), null, 'd 内容盒取不到 → null');
   }
 
-  // e) 默认对齐：纯文本居中，带图（内容盒明显更高）保留沉底
+  /* e) 默认对齐：一律居中，只有**内核真的渲染了图片**才沉底
+   *
+   * 判据曾经是 `(cbox.height - 文字盒高) > 1`，实测（内核跑在 jsdom 里）：
+   *   root(font-size 16) → getContentBox() 高 40，文字盒高 16
+   * 差的 24 是外框内边距 —— 也就是说**恒为真**，每个节点都会被判成带图。
+   * 所以改成直接问 data.image。
+   */
   {
-    eq(def({ y: -8, height: 16 }, { y: -8, height: 18.5 }), 'middle', 'e 纯文本 → 居中');
-    eq(def({ y: -8, height: 60 }, { y: -8, height: 18.5 }), 'bottom', 'e 带图 → 保留沉底');
+    // 每个用例都**接住抛错再断言**：直接调的话，源码一旦没了容错
+    // （或判据被改回需要 node/cbox）就会变成未捕获异常 → 进程崩溃，
+    // 脚本也判"抓到"，但那不是断言在把关（本项目第 9 次遇到这个坑）。
+    const call = (node) => {
+      try { return { v: def(node) }; } catch (e) { return { threw: true }; }
+    };
+
+    eq(call({ getData: () => null }).v, 'middle', 'e 纯文本节点 → 居中');
+    eq(call({ getData: (k) => (k === 'image' ? 'data:image/png;base64,AA' : null) }).v,
+      'bottom', 'e 有内核渲染的图片（data.image）→ 沉底（图片在上）');
+    // 多图走 data.images —— 由附件区自己画，**不进内核渲染器**，
+    // 所以不能因为 images 有值就沉底（否则文字会被推到盒子外）
+    eq(call({ getData: (k) => (k === 'images' ? '["a","b"]' : null) }).v,
+      'middle', 'e 多图走 images（附件区自绘）→ 仍居中');
+
+    const rNull = call(null);
+    ok(!rNull.threw, 'e 传 null 时不抛（noderender 里节点可能取不到）');
+    eq(rNull.v, 'middle', 'e 取不到节点时回落居中');
+
+    const rBoom = call({ getData: () => { throw new Error('boom'); } });
+    ok(!rBoom.threw, 'e getData 抛错时不往外抛（脏数据不能中断渲染）');
+    eq(rBoom.v, 'middle', 'e getData 抛错时回落居中');
+
+    // 源码级：防止有人把 getData('image') 挪到 try 外面
+    const vs = html.slice(html.indexOf('window.__kmNodeValign = function'),
+      html.indexOf('var valignBindDone = false;'));
+    const atTry = vs.indexOf('try {');
+    const atGet = vs.indexOf("getData('image')");
+    ok(atTry >= 0 && atGet > atTry, '取 data.image 包在 try 里（脏数据不能中断渲染）');
+    ok(/catch \(e\)/.test(vs), '有 catch 兜底');
   }
 
   // f) 三级微调（center/child/deep）现在对默认节点也生效
@@ -7287,19 +7321,20 @@ group('视频/附件不压文字：居中必须按撑高前的盒算');
     ok(atRecord >= 0 && atReturn > atRecord,
       '_kmBaseBox 在提前 return **之前**记录（否则会留旧值）');
 
-    /* ---- 判断"有没有额外内容"必须用**同源**的盒 ----
-     * 内核给文字记的盒高就是 font-size（new Box(0,c,w,i) 第 4 参 i），
-     * 而 getBBox 是字形实测高度，通常高 0~20%：
-     *   16px 差约 2px、24px 差约 4px —— 阈值 >1 挡不住，
-     *   纯文字节点会被误判成"带图节点"走 bottom（字号越大越容易中）。
+    /* ---- 判断"有没有额外内容"不能靠**比高度** ----
+     * 实测（内核跑在 jsdom 里）：root(font-size 16)
+     *   getContentBox() 高 40，而文字盒高 16 —— 差的 24 是外框内边距。
+     * 所以 (cbox.height - 文字盒高) > 1 **恒为真**，比高度等于永远判"带图"。
+     * 也不能用 tr.contentBox：批量渲染里内核记的是**上一个**渲染器的盒
+     * （renderNodeBatch 的 off-by-one），实测 root 上它是 0×0。
      */
     const i2 = html.indexOf('function bindValign()');
     const vb = html.slice(i2, html.indexOf('valignBindDone = true;', i2));
-    ok(/var tbox = \(tr && tr\.contentBox\) \|\| bb/.test(vb),
-      '判断额外内容用 TextRenderer.contentBox（与 _contentBox 同源）');
+    ok(/window\.__kmNodeValign\(node\)/.test(vb), '对齐判断走 __kmNodeValign(node)');
+    ok(!/tr\.contentBox/.test(vb), '不用 tr.contentBox（它是上一个渲染器的盒，实测 0×0）');
+    ok(!/\.height\s*-\s*(bb|tbox)\.height/.test(vb), '不再靠"内容盒比文字盒高多少"判断');
     // 平移量仍必须实测：用记账值反而会偏
     ok(/__kmTextDy\(bb, cbox, va/.test(vb), '平移量 dy 仍用实测的 bb（不用记账盒）');
-    ok(/__kmDefaultValign\(cbox, tbox\)/.test(vb), '对齐判断传 tbox（不是 bb）');
   }
 
   /* ---- 2) 文字居中必须用原盒，不能用撑高后的 ---- */
@@ -7315,47 +7350,48 @@ group('视频/附件不压文字：居中必须按撑高前的盒算');
   //
   // 两个 handler 都挂在 noderender 上，附件区（先注册）先跑，
   // 它把 _contentBox 撑高；bindValign（后注册）随后跑。
-  // 若 bindValign 读撑高后的盒，就会把文字沉进视频区。
+  // 若 bindValign 读撑高后的盒，居中就会把文字推进视频区。
   {
-    const TXT_H = 20;      // 文字组高度
+    const TXT_H = 20;      // 文字高度
     const VID_H = 54;      // 视频卡片高度
-    const PAD = 6;
+    const PAD = 6;         // ATTACH_PAD
 
-    // 真实源码里的纯函数
-    const dySrc = html.slice(html.indexOf('window.__kmTextDy = function'), html.indexOf('};', html.indexOf('window.__kmTextDy = function')) + 2);
-    const vaSrc = html.slice(html.indexOf('window.__kmDefaultValign = function'), html.indexOf('};', html.indexOf('window.__kmDefaultValign = function')) + 2);
+    const dySrc = html.slice(html.indexOf('window.__kmTextDy = function'),
+      html.indexOf('};', html.indexOf('window.__kmTextDy = function')) + 2);
+    const vaSrc = html.slice(html.indexOf('window.__kmNodeValign = function'),
+      html.indexOf('};', html.indexOf('window.__kmNodeValign = function')) + 2);
     const scope = {};
-    new Function('window', dySrc + '\n' + vaSrc + '\nthis.dy = window.__kmTextDy; this.va = window.__kmDefaultValign;').call(scope, {});
-    const { dy: kmTextDy, va: kmDefaultValign } = scope;
+    new Function('window', dySrc + '\n' + vaSrc +
+      '\nthis.dy = window.__kmTextDy; this.va = window.__kmNodeValign;').call(scope, {});
+    const { dy: kmTextDy, va: kmNodeValign } = scope;
 
-    // 文字在盒内垂直居中（无额外偏移）
+    // 纯文本节点 → 居中
+    const node = { getData: () => null };
+    eq(kmNodeValign(node), 'middle', '纯文本节点 → 居中');
+
+    // 原盒（撑高前）：文字盒即内容盒
     const cbox = { y: 0, height: TXT_H };
     const bb = { y: 0, height: TXT_H };
+    const dRight = kmTextDy(bb, cbox, 'middle', 0);
+    eq(dRight, 0, '用原盒：文字正好在盒内居中（dy = 0）');
 
-    // 用**原盒**：文字盒 == 内容盒 → middle → dy ≈ 0（文字不动）
-    {
-      const va = kmDefaultValign(cbox, bb);
-      eq(va, 'middle', '文字盒 == 内容盒时按居中处理');
-      eq(kmTextDy(bb, cbox, va, 0), 0, '居中时 dy = 0（文字不被推走）');
-    }
+    // 撑高后的盒：附件区把盒往下长了 (VID_H + PAD)
+    const extra = VID_H + PAD;
+    const grown = { y: 0, height: TXT_H + extra };
+    const dWrong = kmTextDy(bb, grown, 'middle', 0);
+    eq(dWrong, extra / 2, `用撑高后的盒：文字被下移 ${extra / 2}px（多出高度的一半）`);
 
-    // 用**撑高后的盒**：内容盒比文字高了 (VID_H + PAD) → 被当成"带图节点"
-    // → bottom 分支 → 文字沉到撑高后盒的底部，也就是视频区里
-    {
-      const grown = { y: 0, height: TXT_H + VID_H + PAD };
-      const va = kmDefaultValign(grown, bb);
-      eq(va, 'bottom', '内容盒明显高于文字盒时走 bottom（带图节点语义）');
-      const d = kmTextDy(bb, grown, va, 0);
-      eq(d, VID_H + PAD, `走 bottom 会把文字下移 ${VID_H + PAD}px —— 正好是视频卡片的高度`);
-      // 文字顶部 = bb.y + d，视频区起点 = 原盒下沿 + PAD = TXT_H + PAD
-      ok(TXT_H + d > TXT_H + PAD, '文字被推进视频区（这就是"视频压到文字"）');
-    }
+    // 关键：下移之后文字落进了视频区
+    // 视频区 = 原盒下沿 + PAD 起，高 VID_H
+    const vidTop = TXT_H + PAD;
+    const vidBot = vidTop + VID_H;
+    const txtTop = bb.y + dWrong;
+    const txtBot = txtTop + TXT_H;
+    ok(txtBot > vidTop && txtTop < vidBot,
+      `文字(${txtTop}~${txtBot}) 落进视频区(${vidTop}~${vidBot}) —— 这就是"视频压到文字"`);
 
-    // 结论：两者相差就是视频卡片高度 —— 用错盒就会把文字整整推下去一张卡片
-    const grew = { y: 0, height: TXT_H + VID_H + PAD };
-    const dWrong = kmTextDy(bb, grew, kmDefaultValign(grew, bb), 0);
-    const dRight = kmTextDy(bb, cbox, kmDefaultValign(cbox, bb), 0);
-    eq(dWrong - dRight, VID_H + PAD, '用错盒 vs 用对盒，文字位置差一整张视频卡片的高度');
+    // 反过来：用对盒时文字不进视频区
+    ok((bb.y + dRight + TXT_H) <= vidTop, '用对盒时文字不进视频区');
   }
 }
 
