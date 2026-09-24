@@ -124,3 +124,23 @@ export function hasNameCI(names: string[], name: string): boolean {
   const n = name.trim().toLowerCase();
   return names.some((x) => x.trim().toLowerCase() === n);
 }
+
+/**
+ * #354 置顶名的比较：一律大小写不敏感、两端去空白。
+ *
+ * 原版 `LinkAgentViewModel` 里置顶相关的四处（加 / 删 / 查 / 改名的迁移）
+ * 全用 `OrdinalIgnoreCase`，与链接名查重（#91 / #204 / #310）同一约定。
+ *
+ * 本版此前用 `indexOf` / `includes` 精确比较，于是配置里存的是旧大小写时
+ * （手改过 config、或从更老版本迁移上来）置顶**静默失效** ——
+ * 不报错、列表也不乱，只是那一项不在最前面，
+ * 用户只会以为"置顶没记住"。
+ */
+export function sameName(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+/** 置顶列表里某名字的下标（-1 无）；大小写不敏感（#354）。 */
+export function pinIndexOf(pinned: string[], name: string): number {
+  return pinned.findIndex((x) => sameName(x, name));
+}

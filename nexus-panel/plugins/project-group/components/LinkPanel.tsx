@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { PresetAgent, FpxConfig } from '../types';
 import {
   allEnabled, hasNameCI, invertEnabled, resetToPreset, setAllEnabled,
+  pinIndexOf, sameName,
 } from '../utils/linkAgents';
 import { CheckLine } from './ui';
 
@@ -87,20 +88,32 @@ export function LinkAgentBody({
     onLog?.('已恢复预设名称与厂商标注（置顶与备注保持不变）');
   };
 
+  /*
+   * #354 置顶名按**大小写不敏感**匹配（原版 `LinkAgentViewModel` 四处
+   * 都是 `StringComparer.OrdinalIgnoreCase` / `StringComparison.OrdinalIgnoreCase`）。
+   *
+   * 与 #91 / #204 / #310 同一条约定：链接名在本工具里一律不区分大小写
+   * （Windows 上本就如此，且改名难免带出大小写变化）。
+   * 此前这里是精确比较 —— 配置里存的是旧大小写时置顶**静默失效**：
+   * 没有报错、列表也不乱，只是那一项不在最前面，
+   * 用户只会以为"置顶没记住"。
+   */
   /**
    * 置顶：pin 追加到末尾（多个置顶项按点击顺序排），unpin 直接移除。
    * 排序在渲染时做，未置顶的保持原有相对顺序（稳定）。
    */
   const togglePin = (n: string) => {
-    setPinned((p) => (p.includes(n) ? p.filter((x) => x !== n) : [...p, n]));
+    setPinned((p) => (pinIndexOf(p, n) !== -1
+      ? p.filter((x) => !sameName(x, n))
+      : [...p, n]));
   };
 
   /** 置顶项排前（按 pinned 顺序），其余保持原序 */
   const sortByPin = <T,>(rows: T[], nameOf: (r: T) => string): T[] => {
     const withIdx = rows.map((r, i) => ({ r, i }));
     withIdx.sort((a, b) => {
-      const pa = pinned.indexOf(nameOf(a.r));
-      const pb = pinned.indexOf(nameOf(b.r));
+      const pa = pinIndexOf(pinned, nameOf(a.r));
+      const pb = pinIndexOf(pinned, nameOf(b.r));
       if (pa !== -1 && pb !== -1) return pa - pb;
       if (pa !== -1) return -1;
       if (pb !== -1) return 1;
@@ -173,7 +186,7 @@ export function LinkAgentBody({
     setVendors((v) => migrate(v, currentShown, next));
     // 置顶列表存的是显示名，改名后要把旧名换成新名，否则置顶会失效
     setPinned((p) => {
-      const i = p.indexOf(currentShown);
+      const i = pinIndexOf(p, currentShown);
       if (i === -1) return p;
       const n = [...p];
       n[i] = next;

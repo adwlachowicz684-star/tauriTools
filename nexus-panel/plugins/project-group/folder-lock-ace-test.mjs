@@ -172,4 +172,87 @@ console.log('\n=== 3. #181 数据自检要有 ACL 用例 ★ ===');
     /Err\(e\) => check\(false,/.test(mblk), mblk.slice(0, 200));
 }
 
+console.log('\n=== #317 摘锁窗口的并发边界说明 ===');
+{
+  /* 就地定义：本文件没有全局 `RS`（这是第六次踩到同一类坑） */
+  const RS2 = path.join(HERE, '..', '..', 'src-tauri', 'src');
+  const mod = strip(fs.readFileSync(path.join(RS2, 'fpx/mod.rs'), 'utf8'));
+  /*
+   * 原版 `FolderLockService.cs:65-66` 明写：
+   *   「并发边界：同路径多线程并发进入时深度计数会串行共享（B 可能透传执行
+   *     而 A 尚未摘完锁），非严格互斥 —— 本工具为 GUI 单线程 + MCP 单请求
+   *     串行的消费模型，此场景安全；勿在多线程热点路径使用。」
+   *
+   * 这是一条**写给后来人**的约束，本版此前没有。
+   * 缺了它的后果不是现在出错，而是哪天有人把它放进多线程热点路径
+   * （或拿它包秒级 IO），窗口被延长、恢复动作交错 ——
+   * 表现为"保护被悄悄摘掉一段时间"，而日志里什么都没有。
+   */
+  /*
+   * 不能用"往前截固定长度"的办法定位注释块 —— 偏移一变就切错位置。
+   * 改成按文档注释的**起止**定位：从 `/// 路径收口` 之后这段模块说明里
+   * 找关键词即可；这里直接全文匹配，因为"并发边界"整篇只出现一处。
+   */
+  /*
+   * 关键：`strip` 会剥掉 `/* *\/` 块注释，而这三条说明正写在块注释里 ——
+   * 用剥过的文本匹配必然落空（第七次栽在"注释能不能被断言看到"上）。
+   * 所以这里读**原文**。
+   */
+  const blk = fs.readFileSync(path.join(RS2, 'fpx/mod.rs'), 'utf8');
+  t('说明了并发进入不是严格互斥',
+    /并发边界[\s\S]{0,200}不是严格互斥/.test(blk));
+  t('说明了对本工具为什么安全（GUI 单线程 + MCP 串行）',
+    /GUI 单线程 \+ MCP 单请求串行/.test(blk));
+  t('明确警告不要放进多线程热点路径',
+    /不要把它放进多线程热点路径/.test(blk));
+}
+
+console.log('\n=== #414 项目搬家只改账本的 project 字段 ===');
+{
+  const RS3 = path.join(HERE, '..', '..', 'src-tauri', 'src');
+  const mod2 = strip(fs.readFileSync(path.join(RS3, 'fpx/mod.rs'), 'utf8'));
+  /*
+   * 原版 `MainViewModel.RelocateCard` 第 2 步：
+   *   isGroup → 改 r.Lib + r.Group，并**重建**指向旧路径的 junction
+   *   else    → **只改** r.Project（junction 是项目目录的子项，随目录挪走）
+   *
+   * 区分这两条很重要：项目搬家若也去重建 junction，会去动**项目目录内部**
+   * 的链接（它们本来随目录一起走了，不需要动）；
+   * 不动则项目组改名时链接**全部断掉**（第十批 13.1 修的就是这个）。
+   */
+  const seg = mod2.slice(mod2.indexOf('let rec_hits = store::with_records(dir, |records| {'),
+                        mod2.indexOf('Ok((snapshot(dir, cfg), tab_hits, rec_hits))'));
+  t('项目路径匹配时改 project 字段',
+    /normalize_key\(&r\.project\) == old_key[\s\S]{0,80}r\.project = new_path\.clone\(\)/.test(seg));
+  t('项目组路径匹配时改 lib 与 group',
+    /normalize_key\(&r\.lib\) == old_key[\s\S]{0,140}r\.group = new_name\.clone\(\)/.test(seg));
+  /*
+   * 反向验证时发现这条是漏报：`if kind_is_group` 与 `junction::create`
+   * 之间隔着**好几屏**（先是删旧链接，再 create），400 字符的窗口根本够不到。
+   * 放宽到 2000 —— 真正要钉的是"重建发生在项目组分支内"，
+   * 而不是两者挨得多近。
+   */
+  /*
+   * 上面那条**是漏报**：`if kind_is_group {` 与重建之间隔好几屏，
+   * 用 `{\{[\s\S]{0,2000}` 能一路吃到后面的别处代码 ——
+   * 把守卫改成无条件的 `{`，断言照样通过（反向验证 B 才发现）。
+   *
+   * 改成钉**紧邻**的一小段：守卫与 `for r in guide.iter()` 必须挨着。
+   * 这样"去掉守卫"就一定抓得到。
+   */
+  /*
+   * 上面这条**第二版仍是漏报**：本文件有**两处** `if kind_is_group { ...
+   * for r in guide.iter()`（改名一处、搬家一处），只钉"存在"的话
+   * 改掉其中一处、另一处仍命中，断言照样通过（反向验证 B 才发现）。
+   *
+   * 锚定搬家那处 —— 它上面有 `// 只有项目组搬家需要重建` 这行说明，
+   * 用**它**做锚点，保证钉的是这一处而不是另一处。
+   */
+  t('junction 重建只在项目组分支（项目不重建）',
+    /只有项目组搬家需要重建[\s\S]{0,120}if kind_is_group \{\s*\n\s*for r in guide\.iter\(\)/.test(mod2));
+  t('两处重建都带守卫（改名那处也钉住）',
+    (mod2.match(/if kind_is_group \{\s*\n\s*for r in guide\.iter\(\)/g) || []).length >= 2,
+    '命中 ' + (mod2.match(/if kind_is_group \{\s*\n\s*for r in guide\.iter\(\)/g) || []).length + ' 处');
+}
+
 done();

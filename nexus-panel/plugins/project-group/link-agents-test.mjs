@@ -313,4 +313,61 @@ console.log('\n=== 8. #100 「置顶」与「固定」是两个不同功能，�
   t('置顶与固定确实是两个不同的键', !/accountPinned|PinnedFixed/.test(types));
 }
 
+console.log('\n=== #354 置顶名大小写不敏感（同 #91 #204 #310）===');
+{
+  /*
+   * 就地定义：本文件没有全局 `strip`（也没有 `RS`），
+   * 直接引用的话是 ReferenceError、整个套件挂掉。
+   * 这个坑已踩到第五次，每次都是"别的节里定义过"的错觉 ——
+   * 那些是别的文件或局部作用域，不覆盖这里。
+   */
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+  const la = strip(fs.readFileSync(path.join(HERE, 'utils/linkAgents.ts'), 'utf8'));
+  const lp = strip(fs.readFileSync(path.join(HERE, 'components/LinkPanel.tsx'), 'utf8'));
+  const jn = strip(fs.readFileSync(path.join(HERE, '..', '..', 'src-tauri', 'src', 'fpx/junction.rs'), 'utf8'));
+
+  /*
+   * 原版 `LinkAgentViewModel` 置顶相关四处全是 IgnoreCase：
+   *   234: pinned.Contains(it.Name, StringComparer.OrdinalIgnoreCase)
+   *   298/355: _config.LinkAgentsPinned.Contains(name, OrdinalIgnoreCase)
+   *   356: RemoveAll(n => string.Equals(n, name, OrdinalIgnoreCase))
+   *   379: FindIndex(n => string.Equals(n, oldName, OrdinalIgnoreCase))
+   *
+   * 与链接名查重（#91 / #204 / #310）同一约定：名字一律不区分大小写。
+   *
+   * 本版此前用 indexOf / includes / `p == name` 精确比较 ——
+   * 配置里存的是旧大小写时置顶**静默失效**：不报错、列表也不乱，
+   * 只是那一项不在最前面，用户只会以为"置顶没记住"。
+   */
+
+  /* 一、共享辅助函数确实忽略了大小写 */
+  t('有 sameName（大小写不敏感）',
+    /export function sameName\([\s\S]{0,160}toLowerCase\(\)/.test(la));
+  t('有 pinIndexOf', /export function pinIndexOf\(/.test(la));
+  t('pinIndexOf 走 sameName（不是 indexOf）',
+    /return pinned\.findIndex\(\(x\) => sameName\(x, name\)\)/.test(la));
+
+  /* 二、三个用到置顶名的地方都换了 */
+  t('togglePin 用 pinIndexOf', /pinIndexOf\(p, n\) !== -1/.test(lp));
+  t('togglePin 移除也走 sameName', /p\.filter\(\(x\) => !sameName\(x, n\)\)/.test(lp));
+  t('排序用 pinIndexOf', /const pa = pinIndexOf\(pinned, nameOf\(a\.r\)\)/.test(lp));
+  t('改名迁移用 pinIndexOf', /const i = pinIndexOf\(p, currentShown\)/.test(lp));
+
+  /* 三、反面证据：不能残留精确比较 */
+  /*
+   * 只钉"存在 pinIndexOf"是漏报的 —— 下面那行 `p.indexOf` 若留在别处
+   * 照样会让置顶失效。必须同时钉"旧的精确比较没有了"。
+   */
+  t('togglePin 不再用 includes（反面证据）',
+    !/p\.includes\(n\) \? p\.filter/.test(lp));
+  t('改名迁移不再用 indexOf（反面证据）',
+    !/const i = p\.indexOf\(currentShown\)/.test(lp));
+
+  /* 四、Rust 侧同样不敏感（后端排序与前端必须一致，否则两处结果不同） */
+  t('Rust pin_rank 用 eq_ignore_ascii_case',
+    /position\(\|p\| p\.trim\(\)\.eq_ignore_ascii_case\(n\)\)/.test(jn));
+  t('Rust 不再用 p == name（反面证据）',
+    !/position\(\|p\| p == name\)/.test(jn));
+}
+
 done();

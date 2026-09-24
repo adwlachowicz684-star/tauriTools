@@ -58,10 +58,19 @@ pub fn vendor_of(cfg: &FpxConfig, preset: &str) -> String {
 
 /// 置顶项的名次：在 config.linkAgentsPinned 里的下标；不在则返回 None。
 /// 用位置而非布尔，才能让多个置顶项按用户设定的次序排列。
+///
+/// #354 比较**大小写不敏感**（原版 `LinkAgentViewModel` 四处都是
+/// `OrdinalIgnoreCase`），与链接名查重（#91 / #204 / #310）同一约定。
+///
+/// 此前是 `p == name` 精确比较：配置里存的是旧大小写时
+/// （手改过 config、或从更老版本迁移上来）置顶**静默失效** ——
+/// 不报错、列表也不乱，只是那一项不在最前面，
+/// 用户只会以为"置顶没记住"。
 fn pin_rank(cfg: &FpxConfig, name: &str) -> Option<usize> {
+    let n = name.trim();
     cfg.link_agents_pinned
         .iter()
-        .position(|p| p == name)
+        .position(|p| p.trim().eq_ignore_ascii_case(n))
 }
 
 /// 稳定排序：置顶项按 pinned 列表的次序排到最前，其余保持原有相对顺序。
