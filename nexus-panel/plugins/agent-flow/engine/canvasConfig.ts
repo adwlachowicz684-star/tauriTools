@@ -31,6 +31,16 @@ export type McpServer = {
   /** 展示名，也是节点里引用的名字 */
   name: string;
   /**
+   * 指向连接管理器里那条 MCP 服务的 id。
+   *
+   * 服务**怎么连**（命令 / 地址 / 环境变量）归连接管理器管，一处配置全图生效；
+   * 画布这里只决定**这张画布用哪几个**。
+   *
+   * 不填也能用（老存档就是这样），那种情况下下面的 command / url
+   * 就是这张画布自己的配置。
+   */
+  credentialId?: string;
+  /**
    * 启动命令（stdio 传输）。
    * 例：`npx -y @modelcontextprotocol/server-filesystem /tmp`
    */
@@ -188,4 +198,61 @@ export function resolveMcpServer(
  */
 export function mcpChoiceRequired(servers: McpServer[]): boolean {
   return (servers ?? []).length > 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* 与连接管理器里的 MCP 服务库对接                                      */
+/* ------------------------------------------------------------------ */
+
+/** 连接管理器里一条 MCP 服务的最小形状（只取这里用得上的字段） */
+export type McpLibraryEntry = {
+  id: string;
+  name?: string;
+  command?: string;
+  url?: string;
+  env?: Record<string, string>;
+  note?: string;
+  disabled?: boolean;
+};
+
+/**
+ * 画布上这一条服务，是否与连接管理器里的那条**已经对不上**。
+ *
+ * 为什么要管这个：选了连接之后，画布上存的是当时的快照。
+ * 若连接管理器里后来改了地址，画布这份不会自己变 ——
+ * 于是出现"连接管理器里是对的，这张画布跑的却是旧地址"，**且不报错**。
+ * 这类分叉必须摆到界面上，不能假装一致。
+ */
+export function mcpEntryDrifted(s: McpServer, lib: McpLibraryEntry[]): boolean {
+  const hit = lib.find((x) => x.id === s.credentialId);
+  if (!hit) return false;
+  return (
+    (s.command ?? '') !== (hit.command ?? '') ||
+    (s.url ?? '') !== (hit.url ?? '') ||
+    (s.name ?? '') !== (hit.name ?? '')
+  );
+}
+
+/**
+ * 把连接管理器里那条服务的配置**同步**到画布这一条上。
+ *
+ * 只覆盖连接的方式（命令 / 地址 / 环境变量 / 名字），
+ * 不动 id —— id 是画布上这一条的句柄，换了会让已连好的引用断掉。
+ *
+ * 连接条目已被删除时返回 null（调用方据此提示，而不是写进一个空壳）。
+ */
+export function syncMcpFromLibrary(
+  s: McpServer,
+  lib: McpLibraryEntry[],
+): McpServer | null {
+  const hit = lib.find((x) => x.id === s.credentialId);
+  if (!hit) return null;
+  return {
+    ...s,
+    name: hit.name ?? s.name,
+    command: hit.command ?? '',
+    url: hit.url ?? '',
+    env: { ...(hit.env ?? {}) },
+    note: hit.note ?? s.note,
+  };
 }

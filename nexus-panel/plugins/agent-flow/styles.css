@@ -1462,11 +1462,13 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 }
 .trig-row.dim { color: var(--af-warn); justify-content: center; }
 .trig-kind-icon { flex: none; width: 13px; text-align: center; }
-.trig-kind { flex: none; color: var(--af-fg); font-weight: var(--fw-mid, 500); }
-.trig-detail {
-  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: var(--af-mono); font-size: var(--fs-code, 11px); color: var(--af-dim);
-}
+/*
+ * .trig-kind / .trig-detail 已删 —— 触发条件的方式与摘要现在走 ArgLine
+ * （和数学、任务节点同一套下凹格），不再各写一份 span 样式。
+ *
+ * 留着就是死代码：改了它不会有任何界面变化，
+ * 而后来的人会以为"改这里就能改触发器卡片上的样子"。
+ */
 
 /* ---------------- 更新检测节点（B站 / 公众号） ---------------- */
 .node-card.update { border-left-color: #fb7299; }
@@ -2874,6 +2876,28 @@ input.mono, textarea.mono {
   font-size: var(--fs-body, 12px); color: var(--af-dim, #8b93a7);
   box-shadow: var(--ctl-shadow-sm);}
 .canvas-config .cfg-add:hover { border-color: var(--af-accent); color: var(--af-accent); }
+
+/*
+ * 两个按钮并排时不再各占一整行（.cfg-add 是 width:100%）。
+ * 「加一个服务」是次要出口，「去连接管理器添加」才是推荐路径 ——
+ * 后者有描边、前者弱化，避免两个看起来等价让人不知道该点哪个。
+ */
+.canvas-config .cfg-row .cfg-add { width: auto; flex: 1; }
+.canvas-config .cfg-add--ghost {
+  border-style: solid; border-color: var(--af-line, #2a2f3a);
+  color: var(--af-dim, #8b93a7);}
+
+/* 从连接管理器挑服务的下拉框 */
+.canvas-config .cfg-pick {
+  flex: 1; min-width: 0; padding: 5px 6px;
+  border: 1px solid var(--af-line, #2a2f3a); border-radius: var(--af-r-ctl);
+  background: var(--af-sunk); color: var(--af-fg, #e6e9f0);
+  font-size: var(--fs-body, 12px); cursor: pointer;}
+
+/* 「同步过来」这类行内动作 */
+.canvas-config .cfg-link {
+  padding: 0 2px; border: 0; background: none; cursor: pointer;
+  color: var(--af-accent); font-size: inherit; text-decoration: underline;}
 
 .canvas-config .cfg-export {
   display: flex; flex-direction: column; gap: 1px; align-items: flex-start;

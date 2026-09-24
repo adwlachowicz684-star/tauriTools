@@ -65,6 +65,15 @@ type Props = {
   /* ---- 外观（插件级偏好，只在"没选中节点"的设置页里出现） ---- */
   themeMode?: 'native' | 'follow';
   onThemeModeChange?: (mode: 'native' | 'follow') => void;
+  /* ---- MCP：连接管理器里的服务库 ---- */
+  /**
+   * 服务库（全局）。画布设置里挑「这张画布用哪几个」时用它做下拉选项。
+   * 不传的话下拉框是空的 —— 那时必须还有"去连接管理器添加"的入口。
+   */
+  mcpLibrary?: { id: string; name?: string; command?: string; url?: string;
+    env?: Record<string, string>; note?: string; disabled?: boolean }[];
+  /** 打开连接管理器并停在「服务」页 */
+  onOpenMcpLibrary?: () => void;
 };
 
 export default function Inspector({
@@ -74,6 +83,7 @@ export default function Inspector({
   exportDir = '', onChangeExportDir, onBrowseExportDir, canExportToFile = false,
   canvases, activeCanvasId,
   themeMode, onThemeModeChange,
+  mcpLibrary, onOpenMcpLibrary,
 }: Props) {
   const pushNote = onNote;
   if (!node) {
@@ -96,6 +106,13 @@ export default function Inspector({
             canExportToFile={canExportToFile}
             themeMode={themeMode}
             onThemeModeChange={onThemeModeChange}
+            /*
+             * 这两个必须透传 ——
+             * 画布设置页若拿不到服务库，MCP 那一节就只剩手填框，
+             * 于是"改连接管理器，这张画布还是旧地址"，且不报错。
+             */
+            mcpLibrary={mcpLibrary}
+            onOpenMcpLibrary={onOpenMcpLibrary}
           />
         </aside>
       );

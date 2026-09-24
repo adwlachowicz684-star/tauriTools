@@ -29,6 +29,7 @@ import { CredentialPanel, canUse } from './components/CredentialPanel';
 // 卡片上的参数格要能就地改，得拿到 App 的 patchNode ——
 // 卡片是经 nodeTypes 交给 xyflow 渲染的，不是 App 的直接子组件，只能走 Context
 import { NodePatchProvider } from './components/ArgCell';
+import { setInPath } from './engine/objPath';
 import { useCredentialVault, VAULT_MODE_META, CRED_KEY } from './hooks/useCredentialVault';
 import { useStackLayout } from './hooks/useStackLayout';
 import { useTaskStore } from './hooks/useTaskStore';
@@ -467,6 +468,20 @@ export default function App() {
   } = vault;
 
   /*
+   * 打开连接管理器并停在「服务」页。
+   *
+   * 与 openCredentials 的区别：那个走的是"聚焦到某一种密钥"，
+   * 而 MCP 服务不在 credentials 里（它是库里的另一页），
+   * 所以要单独设 credPage —— 只设 credFocus 的话打开后停在「密钥」页，
+   * 用户点"去连接管理器添加"看到的还是密钥列表，找不到加服务的地方。
+   */
+  const openMcpLibrary = useCallback(() => {
+    setCredPage('mcp');
+    setCredFocus('');
+    setCredOpen(true);
+  }, [setCredPage, setCredFocus, setCredOpen]);
+
+  /*
    * 接住「打开连接管理器」。
    *
    * 链路三段，缺任一段都是**点了没反应、且不报错**：
@@ -811,7 +826,28 @@ function reportSkipped(
        * 刚选完一张有名字的画布，卡片上却显示"未命名画布"——
        * 明明选了，看着像没生效。
        */
-      const next = { ...n.data, ...patch } as Record<string, unknown>;
+      /*
+       * 支持点号路径 —— 卡片上要改的不全是顶层字段。
+       *
+       * 触发器的每个条件卡是 `entries.0.config.intervalSec` 这种。
+       * 不解析路径的话，`{'entries.0.kind': 'cron'}` 会真的建出一个
+       * 叫这个名字的顶层字段：不报错，界面上却毫无变化 ——
+       * 因为没有任何地方读它。
+       */
+      let next = { ...n.data } as Record<string, unknown>;
+      for (const [k, v] of Object.entries(patch)) {
+        /*
+         * 带点号的是路径，要走 setInPath 按层级写进去。
+         *
+         * 这段注释以前就写在上面，但代码是 `next[k] = v` ——
+         * 于是 `{'entries.0.kind': 'cron'}` 真的建出一个叫这个名字的
+         * 顶层字段：不报错，界面上毫无变化，因为没有任何地方读它。
+         * 触发器卡片上的条件一直改不动，根子就在这里。
+         */
+        next = k.includes('.')
+          ? (setInPath(next, k, v) as Record<string, unknown>)
+          : { ...next, [k]: v };
+      }
       if (patch.canvasId !== undefined && !patch.canvasName) {
         const snap = snapshotCanvasName(patch.canvasId, canvases);
         if (snap) next.canvasName = snap;
@@ -2943,6 +2979,8 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
               activeCanvasId={activeId ?? undefined}
               themeMode={themeMode}
               onThemeModeChange={setThemeMode}
+              mcpLibrary={mcpServers}
+              onOpenMcpLibrary={openMcpLibrary}
             />
           </fieldset>
         </div>

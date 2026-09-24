@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import {
   emptyCanvasConfig, validateCanvasConfig, resolveMcpServer,
   mcpChoiceRequired, type McpServer,
+  syncMcpFromLibrary, mcpEntryDrifted,
 } from '../engine/canvasConfig';
 import { redactEnv, redactSecrets, canvasConfigOf, updateCanvasConfig } from '../engine/canvasStore';
 import { looksLikeSecretName } from '../engine/sanitize';
+import { readSrc } from './srcScan';
 
 const s = (id: string, name: string, extra = {}): McpServer => ({
   id, name, command: `cmd-${id}`, ...extra,
@@ -165,4 +167,52 @@ test('两处 looksLikeSecretName 判断一致（内联副本没漂移）', () =>
     assert.equal(got, want, `${k}: canvasStore 判为 ${got}，期望 ${want}`);
     assert.equal(looksLikeSecretName(k), want, `${k}: sanitize 那份判错了`);
   }
+});
+
+/* ------------------------------------------------------------------ */
+/* 画布上的 MCP 从连接管理器里挑                                        */
+/* ------------------------------------------------------------------ */
+
+const LIB = [
+  { id: 'c1', name: 'xmind', command: 'npx -y xmind-mcp', url: '' },
+  { id: 'c2', name: 'wiki', command: '', url: 'https://mcp.example.com/sse' },
+];
+
+test('选了连接后，命令与地址从连接条目同步过来', () => {
+  const merged = syncMcpFromLibrary({ id: 's1', name: '', credentialId: 'c1' }, LIB);
+  assert.ok(merged, '必须能同步');
+  assert.equal(merged?.name, 'xmind');
+  assert.equal(merged?.command, 'npx -y xmind-mcp');
+  /*
+   * id 不能变 —— 它是画布上这一条的句柄，
+   * 换了会让已连好的引用断掉。
+   */
+  assert.equal(merged?.id, 's1');
+});
+
+test('连接条目已被删除时返回 null（不是写进一个空壳）', () => {
+  const merged = syncMcpFromLibrary({ id: 's1', name: 'x', credentialId: '没了' }, LIB);
+  assert.equal(merged, null);
+});
+
+test('连接管理器改过了，画布这份要能查出分叉', () => {
+  const stale = { id: 's1', name: 'xmind', command: '旧命令', credentialId: 'c1' };
+  assert.equal(mcpEntryDrifted(stale, LIB), true, '命令不同必须算分叉');
+  const fresh = { id: 's1', name: 'xmind', command: 'npx -y xmind-mcp', credentialId: 'c1' };
+  assert.equal(mcpEntryDrifted(fresh, LIB), false);
+  /* 没选连接的不参与分叉判断 —— 那是这张画布自己的配置 */
+  assert.equal(mcpEntryDrifted({ id: 's2', name: 'a', command: 'b' }, LIB), false);
+});
+
+test('画布设置必须给出「去连接管理器添加」的入口', () => {
+  const src = readSrc('components/inspectors/CanvasConfigPanel.tsx');
+  assert.ok(/onOpenMcpLibrary\?\.\(\)/.test(src), '必须有去连接管理器的按钮');
+  assert.ok(/cfg-pick/.test(src), '必须有挑服务的下拉框');
+});
+
+test('服务库必须一路透传到画布设置页（漏一层下拉框就是空的）', () => {
+  const app = readSrc('App.tsx');
+  const insp = readSrc('components/Inspector.tsx');
+  assert.ok(/mcpLibrary=\{mcpServers\}/.test(app), 'App 必须把服务库传给 Inspector');
+  assert.ok(/mcpLibrary=\{mcpLibrary\}/.test(insp), 'Inspector 必须透传给画布设置页');
 });

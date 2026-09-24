@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import type { CanvasConfig, McpServer } from '../../engine/canvasConfig';
-import { validateCanvasConfig } from '../../engine/canvasConfig';
-import { mcpChoiceRequired } from '../../engine/canvasConfig';
+import {
+  validateCanvasConfig, mcpChoiceRequired,
+  mcpEntryDrifted, syncMcpFromLibrary, type McpLibraryEntry,
+} from '../../engine/canvasConfig';
 import { EXPORT_FORMATS } from '../../engine/scriptExport';
 
 /**
@@ -35,6 +37,17 @@ type Props = {
    */
   themeMode?: 'native' | 'follow';
   onThemeModeChange?: (mode: 'native' | 'follow') => void;
+  /* ---- MCP ---- */
+  /**
+   * 连接管理器里的 MCP 服务库。
+   *
+   * 服务**怎么连**（命令 / 地址 / 环境变量）在那里配，一处改全图生效；
+   * 画布这里只挑「这张画布用哪几个」。
+   * 不传的话下拉框没东西可选 —— 那时必须给出去配的入口，见 onOpenMcpLibrary。
+   */
+  mcpLibrary?: McpLibraryEntry[];
+  /** 打开连接管理器并停在「服务」页 */
+  onOpenMcpLibrary?: () => void;
 };
 
 function newServer(): McpServer {
@@ -52,7 +65,9 @@ function CanvasConfigPanel({
   config, onChange, onExport, onNote,
   exportDir, onChangeExportDir, onBrowseExportDir, canExportToFile,
   themeMode, onThemeModeChange,
+  mcpLibrary, onOpenMcpLibrary,
 }: Props) {
+  const lib = mcpLibrary ?? [];
   const [openMcp, setOpenMcp] = useState(true);
   const [openEnv, setOpenEnv] = useState(false);
   const [openExport, setOpenExport] = useState(false);
@@ -61,6 +76,8 @@ function CanvasConfigPanel({
   const servers = config.mcpServers ?? [];
   const issues = validateCanvasConfig(config);
   const mustPick = mcpChoiceRequired(servers);
+
+  const commitServers = (next: McpServer[]) => onChange({ ...config, mcpServers: next });
 
   const patchServer = (id: string, patch: Partial<McpServer>) => {
     onChange({
@@ -89,11 +106,12 @@ function CanvasConfigPanel({
         {openMcp && (
           <div className="cfg-body">
             <p className="cfg-hint">
-              配在这里的服务，画布上的节点都能用。
+              从连接管理器里挑 —— 服务怎么连（命令 / 地址）在那里配，改一处全图生效。
+              这里只决定<strong>这张画布用哪几个</strong>。
             </p>
 
             {servers.length === 0 && (
-              <p className="cfg-empty">还没配服务 —— 节点会走它自己的通道（比如 HTTP 请求节点直接发请求）。</p>
+              <p className="cfg-empty">还没挑服务 —— 节点会走它自己的通道（比如 HTTP 请求节点直接发请求）。</p>
             )}
 
             {/*
@@ -107,51 +125,153 @@ function CanvasConfigPanel({
               </p>
             )}
 
-            {servers.map((s) => (
-              <div className="cfg-card" key={s.id}>
-                <div className="cfg-row">
-                  <input
-                    type="text"
-                    placeholder="服务名（节点按名字引用）"
-                    value={s.name ?? ''}
-                    onChange={(ev) => patchServer(s.id, { name: ev.target.value })}
-                  />
-                  <button
-                    type="button"
-                    className="cfg-del"
-                    title="删除"
-                    onClick={() => {
-                      onChange({ ...config, mcpServers: servers.filter((x) => x.id !== s.id) });
-                      note(`已删除服务「${s.name || '未命名'}」`);
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-                <input
-                  type="text"
-                  className="cfg-mono"
-                  placeholder="启动命令，如 npx -y @modelcontextprotocol/server-filesystem /tmp"
-                  value={s.command ?? ''}
-                  onChange={(ev) => patchServer(s.id, { command: ev.target.value })}
-                />
-                <input
-                  type="text"
-                  className="cfg-mono"
-                  placeholder="或填 HTTP 地址（与命令二选一）"
-                  value={s.url ?? ''}
-                  onChange={(ev) => patchServer(s.id, { url: ev.target.value })}
-                />
-              </div>
-            ))}
+            {servers.map((s) => {
+              /*
+               * 选了连接之后，命令 / 地址不再在画布上手填 ——
+               * 手填就是又存了一份，改连接管理器时这里不会跟着变，
+               * 于是"连接管理器里是对的，这张画布跑的是旧地址"，且不报错。
+               */
+              const drifted = mcpEntryDrifted(s, lib);
+              const gone = Boolean(s.credentialId) && !lib.some((x) => x.id === s.credentialId);
+              return (
+                <div className="cfg-card" key={s.id}>
+                  <div className="cfg-row">
+                    <select
+                      className="cfg-pick"
+                      value={s.credentialId ?? ''}
+                      onChange={(ev) => {
+                        const cid = ev.target.value;
+                        /*
+                         * 选「（这张画布自己配）」= 回到手填。
+                         *
+                         * 这个出口必须有：连接管理器里只有常用的那几个服务，
+                         * 临时想试一个只在这张画布上用的地址，没这个口子就配不了。
+                         */
+                        if (!cid) {
+                          patchServer(s.id, { credentialId: undefined });
+                          return;
+                        }
+                        const merged = syncMcpFromLibrary({ ...s, credentialId: cid }, lib);
+                        if (!merged) {
+                          note('这条连接在连接管理器里已经不在了，去那边重新加一个');
+                          return;
+                        }
+                        commitServers(servers.map((x) => (x.id === s.id ? merged : x)));
+                        note(`已选用连接「${merged.name}」`);
+                      }}
+                    >
+                      <option value="">（这张画布自己配）</option>
+                      {lib
+                        .filter((x) => !x.disabled)
+                        .map((x) => (
+                          <option key={x.id} value={x.id}>{x.name || '未命名'}</option>
+                        ))}
+                      {/* 已停用的那条仍要留在选项里 ——
+                          否则打开面板时下拉框会跳到第一项，看着像被改掉了，
+                          而画布上存的还是停用那条 */}
+                      {lib
+                        .filter((x) => x.disabled && x.id === s.credentialId)
+                        .map((x) => (
+                          <option key={x.id} value={x.id}>{x.name || '未命名'}（已停用）</option>
+                        ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="cfg-del"
+                      title="从这张画布移除"
+                      onClick={() => {
+                        /*
+                         * 只解除**这张画布**的选用，不删连接管理器里那条 ——
+                         * 库是全局的，别的画布还在用。
+                         */
+                        onChange({ ...config, mcpServers: servers.filter((x) => x.id !== s.id) });
+                        note(`已从这张画布移除「${s.name || '未命名'}」`);
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
 
-            <button
-              type="button"
-              className="cfg-add"
-              onClick={() => onChange({ ...config, mcpServers: [...servers, newServer()] })}
-            >
-              ＋ 加一个服务
-            </button>
+                  {/*
+                    分叉提示：连接管理器里改过了，画布这份还是旧的。
+                    不提示的话这张画布会一直跑旧地址，且没有任何报错。
+                  */}
+                  {drifted ? (
+                    <p className="cfg-warn">
+                      连接管理器里这条已经改过了 ——
+                      <button
+                        type="button"
+                        className="cfg-link"
+                        onClick={() => {
+                          const merged = syncMcpFromLibrary(s, lib);
+                          if (!merged) { note('这条连接已经不在了'); return; }
+                          commitServers(servers.map((x) => (x.id === s.id ? merged : x)));
+                          note('已同步为连接管理器里的最新配置');
+                        }}
+                      >
+                        同步过来
+                      </button>
+                    </p>
+                  ) : null}
+
+                  {gone ? (
+                    <p className="cfg-warn">这条连接在连接管理器里已经删掉了，去那边重新挑一个。</p>
+                  ) : null}
+
+                  {/* 没选连接的（老存档 / 临时自配）才显示手填框 */}
+                  {!s.credentialId ? (
+                    <>
+                      <input
+                        type="text"
+                        placeholder="服务名（节点按名字引用）"
+                        value={s.name ?? ''}
+                        onChange={(ev) => patchServer(s.id, { name: ev.target.value })}
+                      />
+                      <input
+                        type="text"
+                        className="cfg-mono"
+                        placeholder="启动命令，如 npx -y @modelcontextprotocol/server-filesystem /tmp"
+                        value={s.command ?? ''}
+                        onChange={(ev) => patchServer(s.id, { command: ev.target.value })}
+                      />
+                      <input
+                        type="text"
+                        className="cfg-mono"
+                        placeholder="或填 HTTP 地址（与命令二选一）"
+                        value={s.url ?? ''}
+                        onChange={(ev) => patchServer(s.id, { url: ev.target.value })}
+                      />
+                    </>
+                  ) : (
+                    <p className="cfg-hint cfg-mono">
+                      {s.command ? s.command : (s.url || '（这条连接没填命令或地址）')}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+
+            <div className="cfg-row">
+              <button
+                type="button"
+                className="cfg-add"
+                onClick={() => onChange({ ...config, mcpServers: [...servers, newServer()] })}
+              >
+                ＋ 加一个服务
+              </button>
+              {/*
+                去连接管理器加一条新的。
+                这个按钮必须有：库里没有想要的服务时，
+                用户在这里只能加一个空条目然后手填 —— 那又回到了各处各配一份。
+              */}
+              <button
+                type="button"
+                className="cfg-add cfg-add--ghost"
+                onClick={() => onOpenMcpLibrary?.()}
+              >
+                去连接管理器添加
+              </button>
+            </div>
           </div>
         )}
       </div>
