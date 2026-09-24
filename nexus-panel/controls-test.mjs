@@ -1718,62 +1718,93 @@ console.log('\n=== 35. 插件基调判定（浅色主题下反转加反） ===')
 {
   const tn = read('js/theme-normalizer.js');
   const sc = stripComments(tn);
+  const rg = read('plugins/registry.js');
 
   /*
-   * manifest.theme 的语义是**与面板的关系**，不是"插件自身什么颜色"。
-   * registry.js 顶部：'dark' = 与面板同基调（不适配）；'light' = 相反（需适配）。
+   * 判定模型（三支，顺序即优先级）：
+   *   1) reportedBase  插件自己采样上报的实际基调 —— 实测优先于声明
+   *   2) followsTheme  插件观感由外壳主题变量驱动 → 必然与面板同基调，永不反转
+   *   3) manifest.theme 插件**自身**固定什么基调 → 交给"基调不等才反转"的通用规则
    *
-   * 此前写成 pluginBase = manifest.theme，把"同基调"当成了"插件是深色"：
-   *   面板深色 → 'dark'==='dark' → 不反转（碰巧对）
-   *   面板浅色 → 'dark'≠'light'  → 施加反转（错）
-   * 深色下永远不暴露，一切到浅色主题（赤陶/宣纸）必现。
-   */
-  t('manifest.theme 不再被直接当作插件自身基调',
-    !/pluginBase\s*=\s*manifest\.theme\s*;/.test(sc));
-
-  /* 面板浅色 + theme:"dark"（同基调）→ 必须判定为不反转 */
-  {
-    const panelBase = 'light';
-    const pluginBase = 'dark' === 'light'
-      ? (panelBase === 'dark' ? 'light' : 'dark')
-      : panelBase;
-    t('theme:"dark" + 浅色面板 → 判定为同基调、不反转',
-      pluginBase === panelBase, `pluginBase=${pluginBase}`);
-  }
-  {
-    const panelBase = 'dark';
-    const pluginBase = 'dark' === 'light'
-      ? (panelBase === 'dark' ? 'light' : 'dark')
-      : panelBase;
-    t('theme:"dark" + 深色面板 → 仍判定为同基调、不反转',
-      pluginBase === panelBase, `pluginBase=${pluginBase}`);
-  }
-  {
-    for (const panelBase of ['dark', 'light']) {
-      const pluginBase = 'light' === 'light'
-        ? (panelBase === 'dark' ? 'light' : 'dark')
-        : panelBase;
-      if (pluginBase === panelBase) {
-        t(`theme:"light" + ${panelBase} 面板 → 应反转`, false);
-      }
-    }
-    t('theme:"light"（声明相反）在两种面板下都反转', true);
-  }
-
-  /*
-   * 实测优先于声明：插件自己上报的基调必须排在 manifest 之前。
-   * 上报值是插件在自己文档里采样得到的**实际渲染结果**，
-   * 而 manifest 是静态声明 —— 跟随主题的插件声明会失效。
+   * 第 2 支是后来补的。此前只有 1、3，而跟随主题的插件（demo-react 等）
+   * 落到第 3 支后被 theme:'dark' 钉死成"自身深色"，浅色面板下判定不等
+   * → 施加反转 → 已变浅的界面被二次翻回深色。
    */
   const iRep = sc.indexOf("o.reportedBase === 'light'");
+  const iFol = sc.indexOf('manifest.followsTheme');
   const iMan = sc.indexOf("manifest.theme === 'light'");
-  t('插件上报基调优先于 manifest 声明',
-    iRep > 0 && iMan > 0 && iRep < iMan, `reported@${iRep} manifest@${iMan}`);
+  t('判定顺序：上报 > followsTheme > manifest',
+    iRep > 0 && iFol > 0 && iMan > 0 && iRep < iFol && iFol < iMan,
+    `reported@${iRep} follows@${iFol} manifest@${iMan}`);
 
-  /* 语义必须在注释里写清，否则后来者会再"修正"回错误写法 */
-  t('registry.js 的 theme 语义与判定实现一致（注释互证）',
-    /与面板同基调/.test(read('plugins/registry.js')) &&
-    /与面板同基调/.test(tn));
+  t('followsTheme 插件直接取面板基调（永不反转）',
+    /pluginBase\s*=\s*panelBase;\s*\n\s*baseSource\s*=\s*'follows'/.test(sc));
+
+  /*
+   * manifest.theme 的语义是**插件自身固定什么基调**，不是"与面板的关系"。
+   * 本文件 PLUGIN_THEMES 的措辞即证据：'dark' = 本身深色、'light' = 本身浅色。
+   *
+   * 曾改成"关系语义"（'light' → 取 panelBase 的反面），结果浅色面板下
+   * pluginBase 被算成 'dark' → 反转 → 赤陶下示例浅色插件变成深色。
+   * 深色面板下两种语义恰好等价，所以那次改动在深色下"验证通过"、浅色下必现。
+   */
+  t('manifest.theme 按「自身基调」取值',
+    /pluginBase\s*=\s*manifest\.theme\s*;/.test(sc));
+
+  /* ---- 用真实 registry 数据跑一遍判定 ---- */
+  const entries = [];
+  {
+    const rgs = stripComments(rg);
+    for (const m of rgs.matchAll(/id:\s*['"]([^'"]+)['"]([^{]*?)\}/gs)) {
+      const b = m[2];
+      const th = b.match(/theme:\s*['"]([^'"]+)['"]/);
+      if (th) entries.push({ id: m[1], theme: th[1], follows: /followsTheme:\s*true/.test(b) });
+    }
+  }
+  const decide = (e, panel) => {
+    if (e.follows) return panel;                       // 跟随：等于面板
+    if (e.theme === 'light' || e.theme === 'dark') return e.theme;
+    return panel;                                      // auto：采样，视同一致
+  };
+  const light = entries.find((e) => e.id === 'demo-light');
+  t('registry 里有 demo-light 且声明为浅色', !!light && light.theme === 'light');
+  if (light) {
+    t('赤陶（浅色面板）下示例浅色插件不反转 —— 保留它原本的白色',
+      decide(light, 'light') === 'light');
+    t('深色面板下示例浅色插件反转 —— 这才是它要演示的适配',
+      decide(light, 'dark') !== 'dark');
+    t('示例浅色插件未被标成 followsTheme（它是硬编码白底，不跟随）',
+      light.follows === false);
+  }
+
+  /* 跟随主题的插件：两种面板下都不该反转 */
+  for (const id of ['home', 'settings', 'demo-react', 'demo-iframe', 'demo-module', 'demo-service']) {
+    const e = entries.find((x) => x.id === id);
+    t(`跟随主题的 ${id} 在两种面板下都不反转`,
+      !!e && e.follows && decide(e, 'dark') === 'dark' && decide(e, 'light') === 'light',
+      e ? `follows=${e.follows}` : 'registry 里找不到');
+  }
+
+  /*
+   * 结构性兜底：入口里读 preload-base / preload-bg，或把底色写成
+   * transparent / var(--...) 的插件，观感就是由外壳主题驱动的 ——
+   * 这类插件必须在 registry 标 followsTheme，否则会落到 manifest 支被误判。
+   * 这条断言的意义在于：以后新增跟随主题的插件时会自动被拦下。
+   */
+  const FOLLOW_MARK = /nexus:preload-(?:base|bg)|background:\s*transparent|background:\s*['"]?var\(--/;
+  const mis = [];
+  for (const e of entries) {
+    if (e.follows || e.theme !== 'dark') continue;
+    let marked = false;
+    for (const f of ['index.html', 'index.js', 'module.js', 'module.tsx', 'App.tsx']) {
+      const fp = join(ROOT, 'plugins', e.id, f);
+      if (!existsSync(fp)) continue;
+      if (FOLLOW_MARK.test(read(fp))) { marked = true; break; }
+    }
+    if (marked) mis.push(e.id);
+  }
+  t('跟随外壳主题的插件都标了 followsTheme（缺标会被误反转）',
+    mis.length === 0, mis.join(', '));
 }
 
 
