@@ -27,12 +27,47 @@ export const ADAPT_POLICIES = [
   { value: 'never', label: '从不适配', desc: '完全保留插件原始外观' },
 ];
 
-/** 插件 manifest.theme 可选值：声明插件"自身"是什么主题，帮助跳过检测 */
+/*
+ * 插件基调声明 —— **一个字段、四个互斥值**，registry 的 manifest.theme 用它。
+ *
+ * 四值互斥，不可能写出自相矛盾的声明：
+ *   'follow' 观感由外壳主题变量驱动（读 --bg/--surface/--text 或 preload-base）
+ *           → 渲染结果必然等于面板基调，永不反转
+ *   'dark'   自身**固定**深色（写死的深色，不跟随面板）
+ *   'light'  自身**固定**浅色（第三方便捷 UI 的典型样子，需要被适配）
+ *   'auto'   不声明 → 运行时采样插件 DOM 判定（兜底，最不可靠）
+ *
+ * 此前是 theme + followsTheme **两个**字段，语义重叠：
+ * "自身什么色"与"是否跟随"可以同时写，同时写就是矛盾。
+ * registry 里 11 个插件两个都写了，而 followsTheme 分支排在前面，
+ * 那 11 行 theme:'dark' 永远读不到 —— 死字段。
+ * 两轮修 bug 都在给这个死字段编语义，于是"自身色"与"与面板的关系"
+ * 两种读法来回改；它们在深色面板下结论一致，所以怎么改都"验证通过"，
+ * 一切到浅色（赤陶）就必现。合并成互斥枚举后这个问题从结构上消失。
+ */
 export const PLUGIN_THEMES = [
-  { value: 'auto', label: '自动检测' },
-  { value: 'dark', label: '本身深色（不适配）' },
-  { value: 'light', label: '本身浅色（需适配）' },
+  { value: 'auto', label: '自动检测', desc: '运行时采样插件配色判定' },
+  { value: 'follow', label: '跟随面板', desc: '颜色由外壳主题驱动，永不反转' },
+  { value: 'dark', label: '自身深色', desc: '写死的深色，浅色面板下会被反转' },
+  { value: 'light', label: '自身浅色', desc: '第三方便捷 UI 的典型样子，深色面板下会被反转' },
 ];
+
+/**
+ * 把 manifest 归一成上面四个值之一。
+ * followsTheme 是遗留字段，外部插件可能还在用 —— 继续认，等价于 'follow'。
+ */
+export function declaredTheme(manifest) {
+  /*
+   * followsTheme 先判：它是后来加的**更具体的**声明，而 theme:'dark'
+   * 是很久以前几乎所有插件都写的默认值。两者同时出现时，
+   * "我跟随面板"比"我默认是深色"更可信 —— 判错的代价也不对称：
+   * 判成 follow 顶多是不反转，判成 dark 会在浅色面板下把插件翻成深色。
+   */
+  if (manifest?.followsTheme) return 'follow';
+  const v = manifest?.theme;
+  if (v === 'follow' || v === 'dark' || v === 'light') return v;
+  return 'auto';
+}
 
 /* ---------------------------- 偏好存储 ---------------------------- */
 const GLOBAL_KEY = 'nexus:theme-adapt';
@@ -221,6 +256,30 @@ export async function installAdapter(o) {
   };
 
   // 判定插件自身基调：'light' | 'dark'
+  /*
+   * 判定 pluginBase：两级，先实测后声明。
+   *
+   * 第一级（实测）：插件自己采样上报的基调。隔离插件（opaque origin）
+   *   外壳读不到 contentDocument，只能靠它自报；且实测值天然比声明可靠。
+   *
+   * 第二级（声明）：manifest.theme 四选一**互斥**取值：
+   *   'follow' 颜色由外壳主题变量驱动 → 渲染结果必然等于面板 → 永不反转
+   *   'dark'   自身固定深色
+   *   'light'  自身固定浅色
+   *   'auto'   不声明 → 运行时采样
+   *
+   * 为什么必须是**一个**字段的四个互斥值：
+   *   此前是 theme（自身什么色）+ followsTheme（是否跟随）两个字段，
+   *   语义重叠 —— 同时写就是自相矛盾。而 registry 里 11 个插件两个都写了，
+   *   因为 followsTheme 分支排在前面，那 11 行 theme:'dark' 永远读不到，
+   *   成了死字段。随后两轮修 bug 都是在给这个死字段编语义，
+   *   于是"自身色"和"与面板的关系"两种读法来回改：
+   *   它们在**深色面板下结论完全一致**，所以怎么改都"验证通过"，
+   *   一切到浅色（赤陶）就必现。合并成互斥枚举后，
+   *   不可能出现自相矛盾的声明，也不存在死字段。
+   */
+  const declared = declaredTheme(manifest);
+
   let pluginBase;
   let baseSource = 'sampled';
   if (policy === 'always') {
@@ -228,65 +287,24 @@ export async function installAdapter(o) {
     baseSource = 'policy';
   } else if (o.reportedBase === 'light' || o.reportedBase === 'dark') {
     /*
-     * 插件**自己上报**的真实基调优先于 manifest 声明。
-     * ------------------------------------------------------------------
-     * 顺序反了就是"切到浅色主题后插件深浅反转"的根因（实测）：
-     *
-     *   manifest.theme 是**静态声明**，写的是"这个插件 UI 固定什么基调"。
-     *   但很多插件实际**跟随外壳主题** —— 它们引了 nexus 变量、
-     *   首帧还会读 localStorage 里的 preload-base 铺底色。
-     *   这类插件切到浅色主题后，渲染结果**已经是浅色**了。
-     *
-     *   而 manifest 分支优先级更高，pluginBase 被钉死成声明值（如 'dark'），
-     *   与 panelBase='light'（浅色面板）不相等 → 施加反转滤镜
-     *   → 本已变浅的插件又被翻回深色。
-     *
-     *   表现：面板是浅的、插件是深的，而 localStorage 里明明写着 light。
-     *   且它是**同步判定**（不过采样等待），所以切换瞬间就错，不滞后。
-     *
-     * 上报值是插件在自己文档里采样得到的**实际渲染结果**，
-     * 天然比静态声明可靠 —— 实测优先于声明。
+     * 实测优先于声明：上报值是插件在自己文档里采样得到的**实际渲染结果**。
+     * 静态声明写的是初始值，跟随主题的插件实际颜色会变，声明会失效。
      */
     pluginBase = o.reportedBase;
     baseSource = 'reported';
-  } else if (manifest.followsTheme) {
-    /*
-     * 插件明确声明"我的观感由外壳主题变量驱动" → 渲染出来**必然**与面板同基调，
-     * 任何基调下都不该反转。
-     *
-     * 这一支必须排在 manifest.theme **之前**。否则跟随主题的插件会落到
-     * 下一支，被 theme:'dark' 钉死成"自身深色"，浅色面板下与 panelBase
-     * 不等 → 施加反转 → 已变浅的界面被二次翻回深色。
-     *
-     * 判据来自实测而不是声明：这些插件的入口都读 nexus:preload-base /
-     * preload-bg 铺底色（demo-react、demo-service、home、settings 均如此）。
-     * 声明只是把这件已成立的事告诉适配层，让它不必再猜。
-     */
+  } else if (declared === 'follow') {
+    /* 观感由外壳主题驱动 → 必然与面板同基调，任何主题下都不反转 */
     pluginBase = panelBase;
-    baseSource = 'follows';
-  } else if (manifest.theme === 'light' || manifest.theme === 'dark') {
+    baseSource = 'declared';
+  } else if (declared === 'dark' || declared === 'light') {
     /*
-     * manifest.theme 的语义是**插件自身固定什么基调**，不是"与面板的关系"。
-     * ------------------------------------------------------------------
-     * 本文件 PLUGIN_THEMES 的措辞就是证据：
-     *   'dark'  = 本身深色（不适配）
-     *   'light' = 本身浅色（需适配）
-     * "本身"＝插件自己的颜色。registry.js 那句"与面板同基调"是在
-     * **默认深色面板**的前提下写的，两者在深色面板下结论一致，
-     * 一旦切到浅色面板就分道扬镳 —— 正是这个歧义让问题来回反复。
-     *
-     * 所以这里按"自身基调"直接取值，让通用规则（基调不等才反转）去决定：
+     * 自身固定什么色。交给下面的通用规则（基调不等才反转）去决定：
      *   demo-light（自身浅色，纯白硬编码）
      *     浅色面板 → 相等 → 不反转 ✓（保留它原本的白色）
      *     深色面板 → 不等 → 反转 ✓（这才是它要演示的适配）
-     *
-     * 曾把它改成"关系语义"：'light' → 取 panelBase 的反面。
-     * 结果浅色面板下 pluginBase 被算成 'dark' → 施加反转 →
-     * 一块本该保持白色的插件被翻成深色（赤陶下必现）。
-     * 深色面板下两个语义恰好等价，所以那次改动在深色下"验证通过"。
      */
-    pluginBase = manifest.theme;
-    baseSource = 'manifest';
+    pluginBase = declared;
+    baseSource = 'declared';
   } else {
     /* 走自动检测。
        两道保险，缺一不可：
