@@ -224,6 +224,13 @@ pub fn serve(app: AppHandle, port: u16) -> Result<String, String> {
 /// 3. **解析失败不能让循环崩。**
 ///    回一个 JSON-RPC -32700（Parse error）继续读下一行；
 ///    否则一行坏数据就把整个 server 打死，客户端只会看到"进程退出"。
+///
+/// 4. **stdout 断裂（客户端关闭管道）要优雅退出，不能报错。**
+///    原版 `McpServer.RunAsync` 明确：写 stdout 抛异常时 `break` 出循环，
+///    "客户端已关闭，正常退出服务循环"。
+///    此前这里用 `?` 把错误往外抛 → main 里 `exit(1)`，于是**对方正常退出**
+///    被记成一条失败日志 + 非零退出码。部分客户端会据此报"服务崩溃"，
+///    而真相只是对方先走了 —— 属于"报了错，但报的不是真问题"。
 pub fn serve_stdio(dir: PathBuf) -> Result<(), String> {
     let stdin = std::io::stdin();
     let mut reader = BufReader::new(stdin.lock());
@@ -249,29 +256,55 @@ pub fn serve_stdio(dir: PathBuf) -> Result<(), String> {
             Err(e) => {
                 // -32700 Parse error。id 未知，按规范填 null。
                 eprintln!("[mcp:stdio] 解析失败: {e}");
-                write_out(
+                match write_out(
                     &mut out,
                     &json!({
                         "jsonrpc": "2.0", "id": Value::Null,
                         "error": { "code": -32700, "message": format!("解析失败: {e}") }
                     }),
-                )?;
+                ) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        eprintln!("[mcp:stdio] stdout 已断开，正常退出");
+                        break;
+                    }
+                    Err(w) => return Err(w),
+                }
                 continue;
             }
         };
 
         if let Some(resp) = dispatch_opt(&req, &dir) {
-            write_out(&mut out, &resp)?;
+            /*
+             * 写失败 = 管道断了（客户端已关闭），不是本进程的错。
+             * break 出主循环 → main 走 `exit(0)`。
+             *
+             * `write_out` 用返回值区分两种失败：
+             * `Ok(false)` = 管道断了（正常收尾），`Err` = 序列化失败（真 bug）。
+             * 靠错误字符串去分辨太脆 —— 改一下措辞判断就失效了，
+             * 而且失效的表现是"该退出的没退出"，很难查。
+             */
+            match write_out(&mut out, &resp) {
+                Ok(true) => {}
+                Ok(false) => {
+                    eprintln!("[mcp:stdio] stdout 已断开，正常退出");
+                    break;
+                }
+                Err(e) => return Err(e),
+            }
         }
     }
     Ok(())
 }
 
 /// 写一行 JSON 并**立即 flush**（不 flush 客户端会一直等）。
-fn write_out<W: Write>(out: &mut W, v: &Value) -> Result<(), String> {
+///
+/// 返回 `Ok(true)` = 已写出；`Ok(false)` = **stdout 已断**（客户端关闭管道，
+/// 正常收尾）；`Err` = 序列化失败（真 bug，必须让调用方看到）。
+fn write_out<W: Write>(out: &mut W, v: &Value) -> Result<bool, String> {
     let text = serde_json::to_string(v).map_err(|e| format!("序列化响应失败: {e}"))?;
-    writeln!(out, "{text}").map_err(|e| format!("写 stdout 失败: {e}"))?;
-    out.flush().map_err(|e| format!("flush stdout 失败: {e}"))
+    if writeln!(out, "{text}").is_err() { return Ok(false); }
+    Ok(out.flush().is_ok())
 }
 
 pub fn stop() {
