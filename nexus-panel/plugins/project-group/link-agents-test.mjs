@@ -254,4 +254,63 @@ console.log('\n=== 8. 厂商标注与预设默认一致时不存（对齐原版 
   t('空值剔除', /if \(!v\) continue;/.test(panel));
 }
 
+console.log('\n=== 8. #100 「置顶」与「固定」是两个不同功能，不能统一术语 ★ ===');
+{
+  /*
+   * 状态表原注写「当前统一用『置顶』（是有意的：原版术语混乱）」——
+   * **这条注释本身是错的，两处都不成立**：
+   *
+   *   · 本版**并没有**统一用「置顶」：置顶归置顶（链接名排序），
+   *     固定归固定（锁的账面固定），各用各的
+   *   · 原版**也并不混乱**：回 `LinkAgentViewModel.cs` / `MainWindow.xaml.cs`
+   *     核对，两者是**两个不同功能**，措辞一直分开
+   *
+   *     | 词 | 含义 | 原版出处 |
+   *     |---|---|---|
+   *     | 置顶 | 链接名排到列表最前 | AppConfig.cs「置顶的 agent 链接名列表」 |
+   *     | 账面固定 | 锁的"仅登记、不落 ACL"档 | MainWindow.xaml.cs「账面固定 / 防删除 / 只读」|
+   *
+   * 所以这条判 ✅（本来就是对齐的），但**必须钉住**：
+   * 哪天有人"统一术语"把两者合并，用户会看到锁的档位写着"置顶"——
+   * 两个不同功能共用一个词，而界面上没有任何地方解释它们不是一回事。
+   */
+  /*
+   * 本文件没有全局 `strip`（只有第 206 行一处就地 `.replace`），
+   * 直接用会让整个套件 ReferenceError 挂掉 ——
+   * 这是**第三次**踩同一个坑（watch-suppress / lock-preset / 本文件）。
+   */
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+  const grid = strip(fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8'));
+  const link = strip(fs.readFileSync(path.join(HERE, 'components/LinkPanel.tsx'), 'utf8'));
+
+  /* 一、锁那边必须用「固定」（账面固定），不能用「置顶」 */
+  const bi = grid.indexOf('fpx-badge pin');
+  const bblk = grid.slice(Math.max(0, bi - 400), bi + 300);
+  t('锁徽章用「账面固定」', /账面固定/.test(bblk));
+  t('锁徽章没被写成「置顶」', !/置顶/.test(bblk), bblk.slice(-200));
+
+  /* 二、链接名那边必须用「置顶」，不能用「固定」 */
+  t('链接名排序用「置顶」', /置顶/.test(link));
+  /*
+   * 允许出现"固定在…"这类描述性短语吗？不允许：
+   * 只要 LinkPanel 里出现「固定」二字，就容易和锁的档位混淆。
+   * （原版在 LinkPanel 对应处也只用"置顶"。）
+   */
+  t('链接名那边没混进「固定」', !/固定/.test(link));
+
+  /* 三、两个状态在 config 里是两个不同的键 */
+  const types = strip(fs.readFileSync(path.join(HERE, 'types.ts'), 'utf8'));
+  /*
+   * 键名核对（别写成猜的名字）：
+   *   · `linkAgentsPinned` —— 链接名置顶清单（前端 config 字段）
+   *   · `accountFixed` —— 卡片上的"账面固定"（types.ts:143）
+   *   · `accountOnly` —— 后端 LockItem 的同义字段（types.ts:13）
+   * 三者是**两个功能**：置顶是排序，固定是锁的档位。
+   */
+  t('config 里置顶键是 linkAgentsPinned', /linkAgentsPinned/.test(types));
+  t('卡片上固定键是 accountFixed', /accountFixed/.test(types));
+  t('后端 LockItem 上是 accountOnly', /accountOnly/.test(types));
+  t('置顶与固定确实是两个不同的键', !/accountPinned|PinnedFixed/.test(types));
+}
+
 done();
