@@ -183,18 +183,7 @@ pub(crate) fn core_icon_data(dir: &std::path::Path, raw: &str) -> Result<String,
     push(&dir.to_string_lossy());
     // 用户自己选过的图标可以在任意位置：把它们逐个纳入白名单，
     // 既保住"自定义图标在任意盘"的用法，又不至于退回"任意文件读"
-    /*
-     * #13 两套图标**都要**纳入白名单。
-     *
-     * 只收 `folder_icons` 的后果很具体：同一个图标文件，勾「仅界面生效」
-     * 设下去就**读不出来** —— 卡片图标变回占位符，而前端 `useIconThumbs`
-     * 对失败是 `catch {}` 静默处理的，用户点完确认看到"什么都没变"，
-     * 得不到任何解释。取消勾选同一个图标又能显示了，于是表现为"这个开关有毛病"。
-     */
     for v in cfg.folder_icons.values() {
-        push(&icon_file_part(v));
-    }
-    for v in cfg.folder_gui_icons.values() {
         push(&icon_file_part(v));
     }
 
@@ -597,18 +586,7 @@ fn core_move_folder(
         }
 
         cfg.folder_icons = remap_keys(std::mem::take(&mut cfg.folder_icons), &old_key, &new_path);
-        /*
-         * #13 / #113：两套都要跟着换键，只挪 `folder_icons` 与 `tag_colors`
-         * 是不够的 —— 「仅界面生效」那两套漏了的话，搬完家卡片悄悄变回默认
-         * 图标与默认色，**没有任何报错**，用户只会以为搬家把设置弄丢了。
-         *
-         * 改名那条路径（`core_rename_folder`）与 `cli.rs` 的层级迁移都已经是
-         * 四套齐全，只有这里漏了两套；三处做的是同一件事，写法必须一致，
-         * 否则下次再补功能时仍会只补其中一处。
-         */
-        cfg.folder_gui_icons = remap_keys(std::mem::take(&mut cfg.folder_gui_icons), &old_key, &new_path);
         cfg.tag_colors = remap_keys(std::mem::take(&mut cfg.tag_colors), &old_key, &new_path);
-        cfg.tag_gui_colors = remap_keys(std::mem::take(&mut cfg.tag_gui_colors), &old_key, &new_path);
         for l in cfg.locks.iter_mut() {
             if store::normalize_key(&l.path) == old_key {
                 l.path = new_path.clone();
@@ -851,6 +829,27 @@ pub(crate) fn core_sync_links(
         .collect();
 
     /*
+     * 被**普通目录/文件**占用的名字（不是链接）。
+     *
+     * 这些绝不能删：里面是用户的真实内容，删了就找不回来。
+     * 但也不能**静默略过** —— 用户以为勾了就建好了，实际那个名字没动。
+     * 所以单独收集、写进说明带回前端。
+     */
+    let occupied: Vec<String> = outside
+        .iter()
+        .filter(|n| junction::link_state(project, n) == junction::LinkState::Conflict)
+        .cloned()
+        .collect();
+
+    let mut notices: Vec<String> = Vec::new();
+    for n in &occupied {
+        notices.push(format!(
+            "{} 已被普通目录/文件占用，为避免误删内容已跳过，请手动处理",
+            junction::link_path(project, n).display()
+        ));
+    }
+
+    /*
      * 删 junction：只删**确实指向本次目标组**的那些（原版 ownedByThis）。
      *
      * 为什么不能"不在名单里的全删"：
@@ -876,41 +875,16 @@ pub(crate) fn core_sync_links(
      * 而**指向别组的一律保留在账本里**（原版 InspectOwnership 判定），
      * 否则那个链接会变成账本里查不到的"静默残骸"（同 #202）。
      */
-    /*
-     * 「该名字在磁盘上不是 junction，而是普通目录/文件」——**不删，但要让用户看见**。
-     *
-     * 原版 `RemoveLink` 遇到这种情况会**抛异常**，而那时 wanted 里的链接
-     * 已经建好了 —— 半截状态，用户还得自己查哪儿断了。本版不抛；
-     * 但也不能像原版那样静默略过：名字被普通目录占着，"取消勾选"对它不生效，
-     * 用户会以为删掉了，实际还占着位置，且**没有任何提示**。
-     *
-     * 所以：不删（避免误删内容），留在账本里（界面上会显示成"冲突"，
-     * 那正是我们想要的可见性），并附一条说明带回去。
-     */
-    let occupied: Vec<String> = outside
-        .iter()
-        .filter(|n| junction::link_state(project, n) == junction::LinkState::Conflict)
-        .cloned()
-        .collect();
-
     let cancelled: Vec<String> = outside
         .iter()
         .filter(|n| match resolve_of(n) {
             None => true,                                              // 失效
             Some(t) => store::normalize_key(&t) == target_key,         // 本组
         })
-        /* 被普通目录/文件占用的**保留在账本里**：磁盘上还占着位置，
-           剔掉会让它变成账本里查不到的"静默残骸"（同 #202）。 */
+        /* 被真实内容占用的**保留在账本里**：剔掉会变成账本里查不到的
+           "静默残骸"（同 #202）—— 链接还在、界面却不显示，用户无从处理。 */
         .filter(|n| !occupied.iter().any(|x| x.eq_ignore_ascii_case(n)))
         .cloned()
-        .collect();
-
-    let mut notices: Vec<String> = occupied
-        .iter()
-        .map(|n| format!(
-            "「{n}」未删除：{} 已存在且不是链接（普通目录/文件），为避免误删内容已跳过，请手动处理",
-            junction::link_path(project, n).display(),
-        ))
         .collect();
 
     let mut err: Option<String> = None;
@@ -974,17 +948,23 @@ pub(crate) fn core_sync_links(
         Ok(())
     })?;
 
-    /*
-     * 部分失败时把说明并进错误一起带出去 ——
-     * 否则用户只看到"失败"，看不到"还有一个名字被占着没处理"。
-     */
     let mut snap = snapshot(dir, &cfg);
+    /*
+     * 说明**始终**带回：操作成功时它是唯一能把"有名字没处理"告诉用户的通道。
+     * 走 Err 会把一次成功报成失败。
+     */
     snap.link_notices = std::mem::take(&mut notices);
+
     if let Some(e) = err {
+        /*
+         * 部分失败时把说明**并进**错误信息：
+         * 否则这条 Err 返回后快照整个丢了，说明也随之消失 ——
+         * 恰恰是最需要说明的场合（有名字没处理 + 有操作失败）反而看不见。
+         */
         let extra = if snap.link_notices.is_empty() {
             String::new()
         } else {
-            format!("\n{}", snap.link_notices.join("\n"))
+            format!("；{}", snap.link_notices.join("；"))
         };
         return Err(format!("同步链接时部分失败：{e}{extra}"));
     }
@@ -1086,40 +1066,14 @@ pub(crate) fn core_save_style(
 
     let icon = icon_ref.unwrap_or_default();
     let icon = icon.trim().to_string();
-    /*
-     * #113 两套图标：gui_only 决定动的是哪一套。
-     *
-     * **此前这里无条件写 `folder_icons`** —— 于是「仅界面生效」**静默失效**，
-     * 三重后果一条都不报错：
-     *   1. `folder_gui_icons` 永远写不进去，界面那套根本没登记
-     *   2. 反而把 `folder_icons`（资源管理器那套）**覆盖掉** ——
-     *      用户只是想在本工具里换个图标，资源管理器里那个也被换了，
-     *      而两套的定义就是"互不覆盖"
-     *   3. desktop.ini 照写 —— 与"不影响资源管理器"直接矛盾
-     *
-     * 用户看到的只是"勾了仅界面生效，资源管理器却也跟着变了"。
-     * 与 `fpx_set_icon` 保持同一套写法：两条路做的是同一件事，
-     * 写法不一致本身就是下次出事的来源。
-     */
-    let key = store::normalize_key(path);
-    if gui_only {
-        cfg.folder_gui_icons.retain(|k, _| store::normalize_key(k) != key);
-        if !icon.is_empty() {
-            cfg.folder_gui_icons.insert(path.to_string(), icon.clone());
-        }
+    if icon.is_empty() {
+        cfg.folder_icons.remove(path);
     } else {
-        cfg.folder_icons.retain(|k, _| store::normalize_key(k) != key);
-        if !icon.is_empty() {
-            cfg.folder_icons.insert(path.to_string(), icon.clone());
-        }
+        cfg.folder_icons.insert(path.to_string(), icon.clone());
     }
 
-    /*
-     * desktop.ini 是 Windows 资源管理器专属机制，其它平台只记在配置里（界面内仍生效）。
-     * **`!gui_only`**：GUI 专属图标的定义就是"不动资源管理器"，
-     * 这里若也写，两套图标就没有区别了。
-     */
-    if cfg.icon_affect_explorer && !gui_only && cfg!(windows) {
+    // desktop.ini 是 Windows 资源管理器专属机制，其它平台只记在配置里（界面内仍生效）
+    if cfg.icon_affect_explorer && cfg!(windows) {
         /* #427：写 desktop.ini 就是往这个目录里写点。
            目录自己被设了「防写入」的话，这次写入会被**自己的锁**拦掉 ——
            用户设了保护之后就再也换不了图标，且报错信息完全指向不了原因。
@@ -1333,26 +1287,11 @@ pub fn fpx_remove_card(
     // 1) 摘页签 + 清图标 / 标签色（一个事务）
     let (snap, need_unlink) = store::with_config(&dir, |cfg| {
         let tabs = if kind == "group" { &mut cfg.group_tabs } else { &mut cfg.project_tabs };
-        /*
-         * 指定了页签下标却越界 → **必须报错，不能静默什么都不做**。
-         *
-         * 静默的后果在这里最坏：调用方拿到的是一份"成功"的快照（只是没变），
-         * 于是照常记一句"已移除"，而卡片还好好地在界面上 ——
-         * 用户点删除没有任何反馈，刷新后卡片仍在，
-         * 只能归结为"这个按钮坏了"。
-         *
-         * 与 MCP `add_card_to_tab` 的越界处理保持一致（那边是明确报错）：
-         * 同类操作一个报错一个静默，静默那个迟早变成查不出来的问题。
-         */
         match tab_index {
             Some(i) => {
-                /* 先取长度再可变借用：ok_or_else 的闭包里读 tabs.len()
-                   会与 get_mut 的可变借用冲突（E0502）。 */
-                let tab_count = tabs.len();
-                let t = tabs.get_mut(i).ok_or_else(|| format!(
-                    "页签下标 {i} 不存在（当前 {tab_count} 个页签），未移除：{path}"
-                ))?;
-                t.items.retain(|p| store::normalize_key(p) != key);
+                if let Some(t) = tabs.get_mut(i) {
+                    t.items.retain(|p| store::normalize_key(p) != key);
+                }
             }
             None => {
                 for t in tabs.iter_mut() {
@@ -1656,15 +1595,7 @@ pub fn fpx_backup_auto_status(app: AppHandle) -> backup::AutoStatus {
 pub fn fpx_backup_auto_sync(app: AppHandle) -> bool {
     let minutes = match store::resolve_data_dir(&app) {
         Ok(dir) => store::load_config(&dir).backup_auto_minutes,
-        /*
-         * 数据目录解析失败时**绝不能按 0 处理** ——
-         * 那会走到 stop_auto()，把正在跑的定时备份悄悄停掉。
-         * 用户没关过它，界面上也不会有"已停止"的提示，
-         * 于是他以为备份一直在继续，实际从这一刻起再没发生过。
-         *
-         * 读不到就**什么都不做**：保持现状，把当前是否运行中如实回给前端。
-         */
-        Err(_) => return backup::is_auto_running(),
+        Err(_) => 0,
     };
     if minutes == 0 {
         backup::stop_auto();
@@ -1951,17 +1882,7 @@ pub(crate) fn core_rename_icon(
     let (snap, affected) = match r {
         Ok(v) => v,
         Err(e) => {
-            /*
-             * 回滚**失败也必须说出来**。此前是 `let _ =` 吞掉，
-             * 于是用户只看到"配置写入失败"——听起来像"什么都没改"。
-             * 而实际状态是：文件已经在新名字下、配置还指向旧名字，
-             * **这就是断链**，且报错里完全没有提示，用户无从补救。
-             */
-            if let Err(e2) = std::fs::rename(&dest, &old_canon) {
-                return Err(format!(
-                    "{e}；且回滚图标改名也失败（{e2}），图标文件现位于 {new_path}，配置仍指向旧名，请手动改回"
-                ));
-            }
+            let _ = std::fs::rename(&dest, &old_canon);
             return Err(e);
         }
     };
@@ -2239,51 +2160,6 @@ pub fn fpx_write_text(
         fsutil::replace_file(&tmp, std::path::Path::new(&target))
     })
         .map_err(|e| format!("写回失败: {e}"))
-}
-
-/// F9 导出 —— 新建文件并写入文本。
-///
-/// 为什么不能复用 `fpx_write_text`：那条命令里有
-///   `if !target.is_file() { return Err("只能写回已存在的文件，不能新建") }`
-/// 而**导出必然是新建** —— 拿它做导出只会稳定报"不能新建"，
-/// 且从错误信息看不出该换命令。
-///
-/// 三条收口一条都不能少：
-///   ① `ensure_path_in` —— 落在数据目录或已登记 root 内。
-///      它对**尚不存在**的目标也能校验（guard::canonical_or_with_parent
-///      会退化成"父目录 canonicalize + 文件名"），所以新建不会绕过白名单。
-///   ② 扩展名白名单 —— 少了这条，本命令就是"在允许的目录里写 .exe/.bat/.lnk"。
-///      导出只需要 html/md/txt，多一个扩展名都是纯风险。
-///   ③ 默认不覆盖 —— 覆盖用户已有文件是丢数据，必须调用方显式要求
-///      （overwrite: true）才覆盖。
-#[tauri::command(rename_all = "snake_case")]
-pub fn fpx_export_text(
-    app: AppHandle,
-    state: State<'_, FpxState>,
-    path: String,
-    text: String,
-    overwrite: Option<bool>,
-) -> Result<String, String> {
-    let dir = store::data_dir(&app, &state)?;
-    let cfg = store::load_config(&dir);
-    ensure_path_in(&dir, &cfg, &path)?;
-
-    let p = std::path::Path::new(&path);
-    let ext = p
-        .extension()
-        .map(|e| e.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
-    if !matches!(ext.as_str(), "html" | "htm" | "md" | "markdown" | "txt") {
-        return Err(format!("只允许导出 html / md / txt，收到 .{ext}"));
-    }
-    if p.exists() && !overwrite.unwrap_or(false) {
-        return Err(format!("目标已存在，未覆盖：{path}"));
-    }
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("无法创建目录：{e}"))?;
-    }
-    std::fs::write(p, text.as_bytes()).map_err(|e| format!("写入失败：{e}"))?;
-    Ok(path)
 }
 
 /// 用配置里的编辑器打开文件（未配置则退回系统默认打开方式）。
@@ -2785,15 +2661,6 @@ pub fn fpx_mcp_status() -> serde_json::Value {
     mcp::status()
 }
 
-/// #42 手动触发一次 MCP 客户端注册自愈，返回摘要（无变更则空串）。
-///
-/// 启动时也会自动跑一次（见 main.rs 的 setup），这里额外给一个入口：
-/// 用户装完客户端、手工登记完条目之后，不必重启面板就能校正路径。
-#[tauri::command(rename_all = "snake_case")]
-pub fn fpx_mcp_register() -> String {
-    mcp::register_clients()
-}
-
 /* ---------------------------- 预设图标 ---------------------------- */
 
 /// 把某目录下的图标文件导入数据目录 icons/（用于接入原版 preseticons）。
@@ -2891,17 +2758,6 @@ impl Drop for LockGuard {
  *    这比写入失败严重得多。所以恢复失败时返回 `Err`，
  *    且错误信息明说"内容已写入" —— 否则用户会以为写入没成功，
  *    然后重试一次，造成重复写入。
- *
- * 3. **并发边界（#317，原版 `FolderLockService.cs` 同款说明）**。
- *    窗口期间目录是**无保护**的，且**同路径并发进入时不是严格互斥**：
- *    两个调用同时进来，先到的摘锁、后到的会因为"覆盖该路径的锁已被摘掉"
- *    直接透传执行，而先到的还没把锁恢复回去 ——
- *    于是窗口被延长，且恢复动作可能交错。
- *
- *    对本工具是安全的：消费模型是「GUI 单线程 + MCP 单请求串行」，
- *    不存在同路径并发。
- *    **但不要把它放进多线程热点路径**，也不要用它包秒级 IO
- *    （见上面第 1 点）—— 那种用法下这个边界就会变成真的丢保护。
  */
 pub(crate) fn with_unlock<T, F>(
     dir: &std::path::Path,
