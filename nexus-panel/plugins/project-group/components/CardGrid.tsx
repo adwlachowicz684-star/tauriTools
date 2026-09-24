@@ -25,8 +25,8 @@ import {
   DRAG_THRESHOLD, movedEnough,
   parseDragPayload, parseTabDrag,
   gapIndexAt, resolveMoveIndex,
-  isExternalDrag, entriesOf,
-  resolveExternalDrop,
+  isExternalDrag, externalDropName,
+  classifyExternalDrop, entriesOf, dirPathOf,
   type DragPayload, type TabDragPayload, type DropItems, type DropNameFiles,
 } from '../utils/dragSort';
 
@@ -126,35 +126,19 @@ export function TabBar({
   /** 页签拖到另一个页签上：重排页签顺序（原版页签可拖动排序） */
   onMoveTab?: (from: number, to: number) => void;
   /**
-   * #14 / #360 从文件管理器拖进来的东西。
+   * #14 从文件管理器拖进来的东西。
    *
-   * 比卡片区多一个 `tabIndex`：**拖到哪个页签上就落到哪个页签**
-   * （原版 `OnTabDrop` → `AddFavoriteToTab("project", idx, f2)`）。
-   *
-   * 此前这个 prop 声明了却**从没被 onDrop 调用过**（onDragOver/onDrop
-   * 里只有内部 MIME 两个分支），拖文件夹到页签上会直接回弹、
-   * 界面毫无变化。而外层 `externalDrop` 早就把 tabIndex 一路传到
-   * `addCard` 了 —— 能力铺好了、入口没接上。
-   *
+   * **拿不到绝对路径**（浏览器沙箱只给 File 对象，不给磁盘路径），
+   * 所以这里回调的只是"拖了什么名字"，由外层接到正规的选目录流程上。
    * 沉默地什么都不做是最糟的：用户拖了、松手了、界面毫无变化，
    * 他会以为这个功能坏了，而且下次还会再拖一次。
    */
-  onExternalDrop?: (target: string, direct: boolean, tabIndex: number) => void;
-  /** 拖的是文件或一段文字：一句话说清，不弹选目录框（弹了是误导） */
-  onExternalNotice?: (kind: 'file' | 'empty', name: string) => void;
+  onExternalDrop?: (name: string) => void;
 }) {
   const [selfEditing, setSelfEditing] = useState(-1);
   const [draft, setDraft] = useState('');
   /** 页签拖拽的插入位置（-1 无） */
   const [tabOver, setTabOver] = useState(-1);
-  /**
-   * #360 外部拖入正悬停在这个页签上（-1 无）。
-   *
-   * 要**单独一个状态**而不是复用 `dropTarget`：后者在卡片拖拽里
-   * 表达"移到末尾"，而外部拖入要表达"加到这个页签" ——
-   * 复用同一个状态的话，两种语义混在一个高亮上，用户看不出区别。
-   */
-  const [externalTab, setExternalTab] = useState(-1);
 
   /**
    * 悬停自动切页签（原版：拖着卡片悬停在页签上一会儿，自动切过去）。
@@ -220,7 +204,6 @@ export function TabBar({
             i === active ? 'active' : '',
             dropTarget === i ? 'drop' : '',
             tabOver === i ? 'tab-over' : '',
-            externalTab === i ? 'external' : '',
             switchHint === i ? 'switch-hint' : '',
           ].filter(Boolean).join(' ')}
           onClick={() => onSelect(i)}
@@ -251,20 +234,6 @@ export function TabBar({
               setTabOver(i);
               return;
             }
-            /*
-             * #360 外部拖入（文件管理器拖文件夹过来）。
-             *
-             * 必须 preventDefault：不阻止的话浏览器会把这次 drop 判为
-             * "未接受"，拖影弹回去、界面毫无变化 ——
-             * 用户只会以为拖到页签上不支持。
-             */
-            if (isExternalDrag(e.dataTransfer.types)) {
-              e.preventDefault();
-              e.stopPropagation();
-              e.dataTransfer.dropEffect = 'copy';
-              setExternalTab(i);
-              return;
-            }
             const has = e.dataTransfer.types.includes(DRAG_MIME);
             if (!has) return;
             e.preventDefault();
@@ -281,31 +250,8 @@ export function TabBar({
               }, 600);
             }
           }}
-          onDragLeave={() => {
-            setDropTarget(-1); setTabOver(-1); setExternalTab(-1); cancelHoverSwitch();
-          }}
+          onDragLeave={() => { setDropTarget(-1); setTabOver(-1); cancelHoverSwitch(); }}
           onDrop={(e) => {
-            /*
-             * #360 外部拖入最优先：它的 types 里一个内部 MIME 都没有，
-             * 不会与下面两个分支混淆，但**反过来**若放在后面，
-             * 就会被 `onMoveTab` 里的 `rawTab` 判空逻辑挡住
-             * （取不到内部数据 → 直接 return，外部分支永远走不到）。
-             */
-            if (isExternalDrag(e.dataTransfer.types)) {
-              e.preventDefault();
-              e.stopPropagation();
-              setExternalTab(-1);
-              const files = dropFilesOf(e.dataTransfer.files);
-              const out = resolveExternalDrop(files, entriesOf(
-                e.dataTransfer.items as unknown as DropItems | null,
-              ));
-              if (out.kind !== 'dir') {
-                onExternalNotice?.(out.kind, out.name);
-                return;
-              }
-              onExternalDrop?.(out.target, out.direct, i);
-              return;
-            }
             // 先看是不是页签重排
             if (onMoveTab) {
               const rawTab = e.dataTransfer.getData(TAB_DRAG_MIME);
@@ -647,19 +593,14 @@ export function CardGrid({
            * 拖单个文件同理 —— 他要加的是文件夹，弹框也接不上。
            * 这两种都给一句明确的话，而不是干脆静默（静默正是 #14 要修的）。
            */
-          /*
-           * 分类逻辑走 `resolveExternalDrop`（与页签条共用一份）。
-           * 这里此前是内联的，页签条若各写一套就会漂移 ——
-           * 表现为"拖到卡片区正常、拖到页签上却弹了个误导性的框"。
-           */
           const files = dropFilesOf(e.dataTransfer.files);
-          const out = resolveExternalDrop(files, entriesOf(
-            e.dataTransfer.items as unknown as DropItems | null,
-          ));
-          if (out.kind !== 'dir') {
+          const name = externalDropName(files);
+          const entries = entriesOf(e.dataTransfer.items as unknown as DropItems | null);
+          const kind = classifyExternalDrop(files, entries);
+          if (kind !== 'dir') {
             /* 拖单个文件或一段文字：一句话说清，不弹框。
                弹「选择目录」在这种场景是纯粹的误导。 */
-            onExternalNotice?.(out.kind, out.name);
+            onExternalNotice?.(kind === 'file' ? 'file' : 'empty', name);
             return;
           }
           /*
@@ -672,7 +613,8 @@ export function CardGrid({
            * 仍拿不到路径时（比如运行在纯浏览器里调试）才退回对话框，
            * 否则"拖了没反应"这个原痛点又会回来。
            */
-          onExternalDrop?.(out.target, out.direct);
+          const path = dirPathOf(files, entries);
+          onExternalDrop?.(path || name, !!path);
           return;
         }
         const raw = e.dataTransfer.getData(DRAG_MIME);
@@ -951,17 +893,13 @@ export function CardGrid({
                 return (
                 <div className={`fpx-link-row ${d.state}`} key={d.name + gPath}>
                   {/*
-                    #292 对齐原版 `LinkedTabBtn`：**状态标识与链接名合成一个按钮**。
+                    #292 状态点与链接名合成**一个**按钮。
+                    分成两个元素时，用户看到那个点会以为可点、点了却没反应 ——
+                    而它恰恰是最该能点的（点了直接编辑这一条）。
 
-                    此前状态点是按钮外的一个空 span，而给它定尺寸的只有
-                    `.fpx-badge .fpx-link-dot`（徽章内的那一处）——
-                    明细行里根本不匹配，于是它是 0×0、**完全不可见**。
-                    而且它没带状态类（`.valid/.broken/.conflict` 全在 CSS 里
-                    定义了却没人用），所以就算显示出来也永远是一个颜色，
-                    用户看不出哪条链接失效了，只能一个个悬停看提示。
-
-                    合成到一个按钮里还有个实际好处：用户看到那个点会以为
-                    它可点，点它却没反应最别扭；现在点标识和点名字是同一件事。
+                    点的状态类 `d.state` 必须带上：此前明细行的点不带状态类，
+                    而 CSS 里三个颜色都挂在 .valid/.broken/.conflict 上，
+                    于是所有点永远一个颜色，看不出哪条链接失效了。
                   */}
                   {onEditLink ? (
                     <button
@@ -975,15 +913,18 @@ export function CardGrid({
                         onEditLink(c.path, gPath);
                       }}
                     >
-                      {/* 逐行 tip 分四种：项目没了 / 项目组没了 / 冲突 / 失效。
-                          只给笼统的"链接异常"不够 —— 前两种的补救方式完全不同，
-                          用户看不出区别就只能瞎试。 */}
-                      <span className={`fpx-link-dot ${d.state}`} aria-hidden />
+                      <span
+                        className={`fpx-link-dot ${d.state}`}
+                        /* 逐行 tip 分四种：项目没了 / 项目组没了 / 冲突 / 失效。
+                           只给笼统的"链接异常"不够 —— 前两种的补救方式完全不同，
+                           用户看不出区别就只能瞎试。 */
+                        title={d.tip || STATE_TITLE[d.state]}
+                      />
                       <span className="fpx-link-text">{d.name}</span>
                     </button>
                   ) : (
                     <span className="fpx-link-name" title={d.tip || d.name}>
-                      <span className={`fpx-link-dot ${d.state}`} aria-hidden />
+                      <span className={`fpx-link-dot ${d.state}`} title={d.tip || STATE_TITLE[d.state]} />
                       <span className="fpx-link-text">{d.name}</span>
                     </span>
                   )}
