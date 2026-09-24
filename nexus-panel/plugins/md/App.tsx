@@ -11,6 +11,7 @@ import { reactTextOf } from './text-of';
 import { copyText } from './clipboard';
 import { headingsOf, activeIdOf } from './toc';
 import { targetOf, menuItemsFor } from './ctx-menu';
+import { splitBlocks, createBlockCache, visibleBlockIndex } from './blocks';
 
 /**
  * md 插件主界面
@@ -18,10 +19,23 @@ import { targetOf, menuItemsFor } from './ctx-menu';
  * 入口按清单顺序推进：
  *   E4 粘贴/输入  —— 批次 1，零权限
  *   E3 service    —— 已完成（另开 md-render 服务）
- *   E1 拖入       —— 本轮
- *   E2 宿主传路径 —— 需要宿主先有传参机制，尚未设计
+ *   E1 拖入       —— 已完成
+ *   E2 宿主传路径 —— 已完成（宿主 openWithArgs + ctx.openPlugin）
  *
  * 四种入口共用同一份渲染配置，见 render-config.js。
+ *
+ * 【批次 4：分块 + 虚拟 + 阅读状态】
+ * ------------------------------------------------------------
+ * 整篇喂给 ReactMarkdown 有两个硬伤：敲一个键就整篇重解析；
+ * 不可见部分照样参与渲染与布局。切成块之后：
+ *   · 增量 —— 文本没变的块复用上次渲染结果（createBlockCache）
+ *   · 虚拟 —— 不可见的块交给**浏览器**跳过（content-visibility）
+ *
+ * 虚拟滚动刻意用 CSS 而不是自己算高度：
+ *   自己算要测量每块真实高度、维护估算值、处理滚动时跳动，
+ *   这套逻辑错了的表现是"滚动条乱跳"，很难查；
+ *   content-visibility 由浏览器负责，且**不支持时自动退化成普通渲染**
+ *   （未知属性被忽略）—— 最坏情况是没优化，不会坏。
  *
  * 【E1 的关键事实】本插件拖入**不需要文件路径**
  * ------------------------------------------------------------
@@ -131,6 +145,16 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
   const [src, setSrc] = useState(SAMPLE);
   /* 当前文件名。空串 = 内容是粘贴/默认的，不是从文件来的。 */
   const [fileName, setFileName] = useState('');
+  /*
+   * docSeq —— 只在**打开新文档**时自增（拖入 / E2 传路径），
+   * 敲键盘改内容不算。
+   *
+   * 为什么不用 fileName/src 当恢复的依据：
+   *   ① 手改内容时会 setFileName('')，那时 docKey 变了但不是换文档；
+   *   ② src 每敲一个键就变，拿它触发恢复会在打字过程中反复把视图拽回去。
+   *   用一个独立的序号，才分得清"换了文档"和"改了当前文档"。
+   */
+  const [docSeq, setDocSeq] = useState(0);
   const [hint, setHint] = useState('');
   const [dragging, setDragging] = useState(false);
 
@@ -153,9 +177,29 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
 
   /* 滚动高亮：挂在**容器**上而不是 window ——
      滚动的是 .md-out 自己，window 根本不滚，挂上去永远不触发。 */
+  const docKey = fileName || '__untitled__';
+
+  /*
+   * 阅读位置存**块下标**，不存滚动比例。
+   *
+   * 虚拟滚动下不可见块的高度是估算值（contain-intrinsic-size），
+   * 滚动条总高会随渲染进程变化 —— 同一个比例在不同时刻指向的位置不一样，
+   * 恢复出来会偏，且偏多少还说不准。块下标不受高度估算影响，是稳的。
+   */
+  const saveTimer = useRef(0);
   const onOutScroll = useCallback(() => {
     setActiveId(activeIdOf(toc, outRef.current));
-  }, [toc]);
+
+    /* 节流：滚动事件一秒几十次，每次都写 store 会把桥接/存储打满。
+       600ms 足够，掉电也最多丢最后一点位置。 */
+    const now = Date.now();
+    if (now - saveTimer.current < 600) return;
+    saveTimer.current = now;
+    const els = outRef.current?.querySelectorAll?.('.md-block');
+    const i = visibleBlockIndex(outRef.current, els);
+    /* 不 await 也不抛：存不上只是下次不恢复，不该打断滚动 */
+    Promise.resolve(ctx?.store?.set?.(`pos:${docKey}`, { i, ts: now })).catch(() => {});
+  }, [toc, docKey, ctx]);
 
   const onTocClick = useCallback((id: string) => {
     const el = outRef.current?.querySelector(`[id="${id.replace(/["\\]/g, '\\$&')}"]`);
@@ -208,18 +252,45 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
     [ctx],
   );
 
-  const body = useMemo(
-    () => (
+  const blocks = useMemo(() => splitBlocks(src), [src]);
+
+  /*
+   * 块级缓存 —— 增量解析的本体。
+   *
+   * 键是**块文本**：编辑时只有光标所在那块的文本变了，
+   * 其余块直接复用上次渲染出来的 React 元素，不再跑一遍
+   * remark/rehype 整条管线。这是"敲一个键就整篇重解析"的解法。
+   */
+  const cacheRef = useRef(createBlockCache());
+  const renderBlock = useCallback((text: string) => {
+    const hit = cacheRef.current.get(text);
+    if (hit) return hit;
+    const el = (
       <ReactMarkdown
         remarkPlugins={REMARK_PLUGINS}
         rehypePlugins={REHYPE_PLUGINS}
         urlTransform={urlTransform}
         components={components}
       >
-        {src}
+        {text}
       </ReactMarkdown>
-    ),
-    [src, components],
+    );
+    cacheRef.current.set(text, el);
+    return el;
+  }, [components]);
+
+  const body = useMemo(
+    () =>
+      blocks.map((b, i) => (
+        /*
+         * .md-block 是虚拟滚动的单元：CSS 里带 content-visibility: auto。
+         * data-block-index 供阅读状态定位（visibleBlockIndex / 恢复）。
+         */
+        <div className="md-block" key={i} data-block-index={i}>
+          {renderBlock(b.text)}
+        </div>
+      )),
+    [blocks, renderBlock],
   );
 
   /*
@@ -231,6 +302,30 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
     setToc(items);
     setActiveId(null);
   }, [body]);
+
+  /*
+   * F8 阅读状态 —— 打开文档时恢复到上次的位置。
+   *
+   * 只依赖 docSeq/docKey：依赖 body 或 src 的话，
+   * 每敲一个键都会重新跑一遍恢复，打字过程中视图被反复拽回去。
+   * 块列表从 ref 读，避开把 blocks 放进依赖。
+   */
+  const blocksRef = useRef(blocks);
+  blocksRef.current = blocks;
+
+  useEffect(() => {
+    if (!docSeq) return;              // 0 = 还没打开过任何文档，不恢复
+    let cancelled = false;
+    (async () => {
+      const saved = await Promise.resolve(ctx?.store?.get?.(`pos:${docKey}`, null)).catch(() => null);
+      if (cancelled || !saved || typeof saved.i !== 'number') return;
+      const el = outRef.current?.querySelector?.(`[data-block-index="${saved.i}"]`);
+      if (!el) return;
+      el.scrollIntoView({ block: 'start' });
+      setHint(`已恢复到上次的阅读位置（第 ${saved.i + 1} / ${blocksRef.current.length} 块）`);
+    })();
+    return () => { cancelled = true; };
+  }, [docSeq, docKey, ctx]);
 
   const onDrop = useCallback(async (e) => {
     /*
@@ -267,6 +362,7 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
 
     setSrc(text);
     setFileName(file.name || '');
+    setDocSeq((n) => n + 1);           // 换了文档 → 触发阅读位置恢复
     /* 正常打开时也要显示多文件说明：静默丢弃容易让人误以为打开的是想要那个 */
     setHint(note);
   }, []);
@@ -302,6 +398,7 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
       setSrc(text);
       const nm = String(path).replace(/\\/g, '/').split('/').pop() || path;
       setFileName(nm);
+      setDocSeq((n) => n + 1);         // 换了文档 → 触发阅读位置恢复
       setHint('');
     } catch (err) {
       setHint(`读取失败：${err?.message || err}`);

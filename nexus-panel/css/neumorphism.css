@@ -1884,6 +1884,32 @@ html.theme-transition *:not(.spinner) {
 /* ---- markdown 正文排版 ----
    只定结构与间距，颜色一律走变量，不写死。 */
 .markdown-body > *:first-child { margin-top: 0; }
+
+/*
+ * .md-block —— 分块渲染 + 虚拟滚动的单元（批次 4）
+ * ------------------------------------------------------------
+ * content-visibility: auto 让**浏览器**跳过不可见块的渲染与布局，
+ * 而不是自己在 JS 里算高度、维护估算值。
+ *
+ * 为什么不用 JS 虚拟滚动：
+ *   自己算要测量每块真实高度、处理滚动时高度变化导致的跳动，
+ *   这套逻辑错了的表现是"滚动条乱跳"，很难查。
+ *   content-visibility 由浏览器负责，且**不支持时自动退化成普通渲染**
+ *   （未知属性被忽略）—— 最坏只是没优化，不会坏。
+ *
+ * contain-intrinsic-size 必须给值：
+ *   不给的话跳过的内容高度为 0，滚动条会随渲染一路变长，
+ *   表现为"拖到底又被弹回来"。auto 320px = 记住上次真实高度，
+ *   没渲染过就先按 320px 估。
+ *
+ * 【注意】这里只跳渲染，DOM 仍在：
+ *   TOC 靠 querySelectorAll 找标题、靠 getElementById 跳转，
+ *   在 content-visibility: auto 下都正常（auto 不同于 hidden）。
+ */
+.md-block {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px;
+}
 .markdown-body h1, .markdown-body h2,
 .markdown-body h3, .markdown-body h4 {
   margin: .6em 0 .3em;
