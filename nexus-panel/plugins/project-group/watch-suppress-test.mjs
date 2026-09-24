@@ -122,4 +122,54 @@ console.log('\n=== 7. 原有行为没被改坏 ===');
   t('解除保护后不再盯着（retain）', /last\.retain\(\|k, _\| cfg_paths\.contains\(k\)\)/.test(watch));
 }
 
+console.log('\n=== 8. #177 队列溢出必须显式暴露（不能静默丢弃）★ ===');
+{
+  /* 一、标记要有：原版是 Entry.Truncated（bool），本版用 Option<String> 记路径 */
+  t('有 TRUNCATED 标记', /static TRUNCATED: Mutex<Option<String>>/.test(watch));
+
+  const pi = watch.indexOf('fn push_event(');
+  const pblk = watch.slice(pi, watch.indexOf('\nfn ', pi + 1));
+  /*
+   * 二、丢弃的**同时**必须置位。
+   *
+   * 只丢弃不置位 = 静默丢事件：用户看到监控日志不全，但日志本身看起来
+   * 一切正常 —— 他会以为"真的只有这些改动"，进而误判"AI 没动我的文件"。
+   */
+  t('队列满时置位（在 else 分支里）', /\} else if let Ok\(mut tr\) = TRUNCATED\.lock\(\)/.test(pblk), pblk.slice(0, 240));
+  t('只记第一条（Truncated 是 bool 语义，不是计数）', /if tr\.is_none\(\)/.test(pblk));
+  t('记的是被丢那条的路径', /\*tr = Some\(ev\.path\.clone\(\)\)/.test(pblk));
+
+  const qi = watch.indexOf('pub fn pull()');
+  const qblk = watch.slice(qi, watch.indexOf('\npub fn ', qi + 1));
+  /* 三、pull 要把提示带出去（否则置了位也没人看得到） */
+  t('pull 会补一条 overflow 事件', /kind: "overflow"\.into\(\)/.test(qblk), qblk.slice(-200));
+  t('补在末尾（对齐原版 Flush 冲刷完才补）', /out\.push\(WatchEvent \{[^}]*"overflow"/.test(qblk));
+  t('取走即复位（tr.take()）', /if let Some\(p\) = tr\.take\(\)/.test(qblk));
+
+  /*
+   * 四、**取到空也要补**。
+   *
+   * 置位发生在之前某次 push（那时队列满），现在队列空了不代表没丢过。
+   * 若只在 out 非空时补，恰好这次取空的场景下提示永远发不出去。
+   */
+  t('不依赖 out 非空（无条件补）',
+    /if let Ok\(mut tr\) = TRUNCATED\.lock\(\)[\s\S]{0,160}tr\.take\(\)/.test(qblk));
+  t('补之前没有 `if !out.is_empty()` 之类的门',
+    !/if !out\.is_empty\(\)/.test(qblk));
+
+  /*
+   * 五、前端必须先判 overflow 再走通用分支。
+   *
+   * 不判的话它落进 else 显示成「受保护目录发生改动：xxx」——
+   * **把"我们漏报了"伪装成"发生了改动"**，比不显示更糟。
+   */
+  /* 本文件的剥注释函数不叫 strip —— 用 sliceWithDoc 里同样口径的那个。
+     直接用未定义的 `strip` 会让整个套件崩掉（本轮就崩过一次）。 */
+  const app = fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  t('前端识别 overflow', /ev\.kind === 'overflow'/.test(app));
+  t('识别后 continue（不落到通用分支）',
+    /ev\.kind === 'overflow'[\s\S]{0,200}continue;/.test(app));
+  t('提示里说了"已截断"', /部分记录已截断/.test(app));
+}
+
 done();

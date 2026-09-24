@@ -51,6 +51,18 @@ export default function App() {
       try {
         const evs = await s.api.watchPoll();
         for (const ev of evs) {
+          /*
+           * #177 `overflow` 必须先判、并 continue。
+           *
+           * 不判的话它会落进下面那个 else 分支，显示成
+           * 「受保护目录发生改动：xxx」——
+           * **把"我们漏报了"伪装成"发生了改动"**，比不显示更糟：
+           * 用户会据此以为自己看清了全部改动。
+           */
+          if (ev.kind === 'overflow') {
+            s.pushLog(`监控事件过多，部分记录已截断（${ev.path} 附近）`, true);
+            continue;
+          }
           const what = ev.kind === 'added' ? '新增' : ev.kind === 'removed' ? '被删除' : '发生改动';
           s.pushLog(`受保护目录${what}：${ev.path}`, ev.kind === 'removed');
         }
@@ -782,7 +794,7 @@ export default function App() {
       <div className="p-card">
         <h2>加载失败</h2>
         <div className="p-muted">后端命令不可用。请确认在 Nexus Panel（Tauri 环境）中运行，且已重新编译 Rust 端。</div>
-        <button className="p-btn sm primary" style={{ marginTop: 'var(--sp-6, 12px)' }} onClick={() => s.refresh()}>重试</button>
+        <button className="p-btn primary" style={{ marginTop: 'var(--sp-6, 12px)' }} onClick={() => s.refresh()}>重试</button>
       </div>
     );
   }
@@ -794,10 +806,10 @@ export default function App() {
       <div className="p-card">
         <div className="p-row" style={{ justifyContent: 'space-between' }}>
           <div className="p-row">
-            <button className="p-btn sm primary" onClick={() => setDialog({ type: 'create', kind: 'project' })}>＋ 新建项目</button>
-            <button className="p-btn sm primary" onClick={() => setDialog({ type: 'create', kind: 'group' })}>＋ 新建项目组</button>
+            <button className="p-btn primary" onClick={() => setDialog({ type: 'create', kind: 'project' })}>＋ 新建项目</button>
+            <button className="p-btn primary" onClick={() => setDialog({ type: 'create', kind: 'group' })}>＋ 新建项目组</button>
             <button
-              className="p-btn sm"
+              className="p-btn"
               disabled={!s.selProject && !s.selGroup}
               title={s.selProject || s.selGroup ? '把指令发给 AI 客户端' : '先选中一个项目或项目组'}
               onClick={() => setDialog({
@@ -808,18 +820,18 @@ export default function App() {
             >
               发送到 AI
             </button>
-            <button className="p-btn sm" onClick={() => setDialog({ type: 'backup' })}>
+            <button className="p-btn" onClick={() => setDialog({ type: 'backup' })}>
               备份{comboHint('backupNow') && <span className="fpx-key">{formatCombo(comboHint('backupNow'), IS_MAC)}</span>}
             </button>
             <button
-              className="p-btn sm"
+              className="p-btn"
               title="基础设置 / 链接名 / 服务已移到外壳右上角的「⚙ 设置」"
               onClick={() => s.pushLog('设置入口在外壳右上角的「⚙ 设置」（重载按钮左侧）')}
             >
               设置在哪？
             </button>
             <button
-              className="p-btn sm"
+              className="p-btn"
               title="F5"
               onClick={() => {
                 // 刷新要连动作清单一起拉：外部（MCP / 旧版本配置迁移）也可能改过它
@@ -830,19 +842,19 @@ export default function App() {
               刷新{comboHint('refresh') && <span className="fpx-key">{formatCombo(comboHint('refresh'), IS_MAC)}</span>}
             </button>
             <button
-              className="p-btn sm"
+              className="p-btn"
               title="摘掉页签里已不存在的路径（F8）"
               onClick={() => void s.clearInvalid()}
             >
               清除无效项{comboHint('clearInvalid') && <span className="fpx-key">{formatCombo(comboHint('clearInvalid'), IS_MAC)}</span>}
             </button>
-            <button className="p-btn sm" onClick={() => setHelp(true)}>
+            <button className="p-btn" onClick={() => setHelp(true)}>
               使用说明{comboHint('toggleTips') && <span className="fpx-key">{formatCombo(comboHint('toggleTips'), IS_MAC)}</span>}
             </button>
             {/* 页签管理（#23）：两栏页签集中一处增删改序。
                 页签条上的 ⋮ 菜单仍在（就地改更顺手），这里给的是"整理"入口 */}
             <button
-              className="p-btn sm"
+              className="p-btn"
               title="统一管理项目 / 项目组页签：改名、排序、删除"
               onClick={() => setDialog({ type: 'tabManager' })}
             >
@@ -851,7 +863,7 @@ export default function App() {
           </div>
           <div className="p-row">
             <span className="p-mono p-muted" title={boot.dataDir}>数据：{boot.dataDir}</span>
-            <button className="p-btn sm" onClick={() => s.api.openDataDir().catch((e) => s.pushLog(String(e), true))}>
+            <button className="p-btn" onClick={() => s.api.openDataDir().catch((e) => s.pushLog(String(e), true))}>
               打开数据目录
             </button>
           </div>
@@ -961,7 +973,8 @@ export default function App() {
                 </h2>
                 <div className="p-row fpx-col-head-ops">
                   <button
-                    className="p-btn sm"
+                    className="p-btn"
+                    style={{ height: 30, padding: '0 12px' }}
                     title="新增分类"
                 onClick={() => s.addTab('group', `页签${(boot.groupTabs.length) + 1}`)}
                   >
@@ -1049,7 +1062,8 @@ export default function App() {
               </h2>
               <div className="p-row fpx-col-head-ops">
                 <button
-                  className="p-btn sm"
+                  className="p-btn"
+                  style={{ height: 26, padding: '0 8px' }}
                   title="复制全部日志（含时间戳）"
                   disabled={s.log.length === 0}
                   onClick={() => copyText(
@@ -1058,7 +1072,8 @@ export default function App() {
                   复制全部
                 </button>
                 <button
-                  className="p-btn sm"
+                  className="p-btn"
+                  style={{ height: 26, padding: '0 8px' }}
                   title="清空日志（只清界面上的流水，不影响任何登记）"
                   disabled={s.log.length === 0}
                   onClick={s.clearLog}
@@ -1199,9 +1214,10 @@ function Column({
           )}
         </h2>
         <div className="p-row fpx-col-head-ops">
-          <button className="p-btn sm" onClick={onAdd}>＋ 添加</button>
+          <button className="p-btn" style={{ height: 30, padding: '0 12px' }} onClick={onAdd}>＋ 添加</button>
           <button
-            className="p-btn sm"
+            className="p-btn"
+            style={{ height: 30, padding: '0 12px' }}
             onClick={(e) => setMenu({ x: e.clientX, y: e.clientY })}
           >
             ⋯

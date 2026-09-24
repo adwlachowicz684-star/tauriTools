@@ -32,6 +32,9 @@ static RUNNING: AtomicBool = AtomicBool::new(false);
 static GEN: AtomicU64 = AtomicU64::new(0);
 /// 待前端取走的事件（后进先出无所谓，前端按序展示即可）。
 static PENDING: Mutex<Vec<WatchEvent>> = Mutex::new(Vec::new());
+/// #177 队列溢出标记：存**第一条**被丢弃的路径（None = 未曾溢出）。
+/// 由 `push_event` 在丢弃时置位，`pull` 取走提示时复位。
+static TRUNCATED: Mutex<Option<String>> = Mutex::new(None);
 
 /// 当前轮询间隔（秒）。抑制时长按它推算，见 `suppress`。
 static INTERVAL_SECS: AtomicU64 = AtomicU64::new(30);
@@ -139,6 +142,24 @@ fn push_event(ev: WatchEvent, app: &AppHandle) {
     if let Ok(mut q) = PENDING.lock() {
         if q.len() < PULL_LIMIT * 4 {
             q.push(ev.clone());
+        } else if let Ok(mut tr) = TRUNCATED.lock() {
+            /*
+             * #177 队列满 → **不能静默丢弃**。
+             *
+             * 原版 `FolderWatchService.Entry.Truncated` 同语义：
+             * 超 MaxPending 则置位，Flush 冲刷完后补一条 "Overflow" 告警。
+             * 注释写明"短时间事件过多，部分记录已截断"。
+             *
+             * 静默丢弃的后果：用户看到监控日志不全，但日志本身**看起来
+             * 一切正常** —— 他会以为"真的只有这些改动"，进而误判
+             * "AI 没动我的文件"。而真相是我们漏报了。
+             *
+             * 只记**第一条**被丢的路径：原版 Truncated 是 bool 而非计数，
+             * 目的是"告知有丢"，不是"统计丢了几个"。
+             */
+            if tr.is_none() {
+                *tr = Some(ev.path.clone());
+            }
         }
     }
     // 同页挂载模式 / 宿主补上转发后可直接收到；iframe 模式下这一路会被忽略
@@ -263,8 +284,13 @@ pub fn suppress(paths: &[String]) {
 }
 
 /// 取走待处理事件（取完即清空）。前端轮询用。
+///
+/// #177：队列曾溢出时，末尾补一条 `kind: "overflow"` 的提示事件。
+///
+/// 补在**末尾**（对齐原版：Flush 冲刷完待处理队列后才补一条 Overflow 告警），
+/// 且一次只补一条 —— 提示是"有过截断"这件事本身，不是逐条补记。
 pub fn pull() -> Vec<WatchEvent> {
-    match PENDING.lock() {
+    let mut out = match PENDING.lock() {
         Ok(mut q) => {
             if q.len() <= PULL_LIMIT {
                 std::mem::take(&mut *q)
@@ -273,7 +299,18 @@ pub fn pull() -> Vec<WatchEvent> {
             }
         }
         Err(_) => Vec::new(),
+    };
+    /*
+     * 即使本次取到的 `out` 为空也要补：置位发生在**之前**某次 push，
+     * 那时队列已满；现在队列空了不代表没丢过。（若只在 out 非空时补，
+     * 恰好在这次取空的场景下提示就永远发不出去。）
+     */
+    if let Ok(mut tr) = TRUNCATED.lock() {
+        if let Some(p) = tr.take() {
+            out.push(WatchEvent { path: p, kind: "overflow".into(), at: super::now_string() });
+        }
     }
+    out
 }
 
 /// 供诊断：当前监控的路径（调试用，顺带校验数据目录可达）。
