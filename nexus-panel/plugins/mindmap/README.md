@@ -1949,6 +1949,31 @@ __kmDefaultValign = (cbox, bb) => (cbox.height - bb.height) > 1 ? 'bottom' : 'mi
 
 真正的问题在另一头：**是文字被推下来了，不是视频没动**。
 
+## kity.Rect 圆角：在 setSize 之前设会被静默清零
+
+四处都写过 `new kity.Rect().setRadius(N)` —— **圆角全部没生效**。
+
+kity 源码：
+
+```js
+formatRadius(a, b, c) { return Math.min(Math.floor(Math.min(a/2, b/2)), c) }
+setRadius(r) { this.radius = formatRadius(this.width, this.height, r); ... }
+setSize(w, h) { this.width = w; this.height = h; this.update() }   // ← 不重算 radius
+```
+
+新建的 Rect 尺寸是 **0×0**，所以 `formatRadius(0, 0, 6) = 0` —— 圆角被钳成 0，
+而 `setSize` 又**不会**重算，之后也救不回来。实测（真实 kity 跑在 jsdom 里）：
+
+| 顺序 | getRadius() |
+|---|---|
+| `new Rect().setRadius(6)` → `setSize(100,40)` | **0** |
+| `new Rect()` → `setSize(100,40).setRadius(6)` | 6 |
+
+受影响四处：分组标签底色(4)、分组外框(8)、图片选中框(2)、搜索高亮框(6)。
+
+修法：构造时不设，改到 `setSize` **之后**。复用的形状（分组外框、图片选中框）
+每次 `setSize` 后都要重设一次。
+
 ## 文件行：图标钉在固定偏移会让整行不对称、宽度算错
 
 原写法把图标钉在 `cx-46`、文字放在 `cx-34`，`attW` 记 `12 + 文字宽`。

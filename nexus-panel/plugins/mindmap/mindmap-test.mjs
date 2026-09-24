@@ -5141,6 +5141,69 @@ group('附件图标不能是黑块：fill 必须用 none 而不是 transparent')
     '（对照）kity fill 只对真值写属性 —— 所以值本身必须合法');
 }
 
+group('kity.Rect 圆角：必须在 setSize **之后**设（跑真实 kity）');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  const KITY = fs.readFileSync(path.join(HERE, 'editor', 'kity.min.js'), 'utf8');
+
+  /* ---- 1) 先确认内核行为：新建 Rect 尺寸为 0，setRadius 会被钳成 0 ----
+   * kity: formatRadius(a,b,c) = Math.min(Math.floor(Math.min(a/2, b/2)), c)
+   *       setRadius(r): this.radius = formatRadius(this.width, this.height, r)
+   *       setSize(w,h): this.width = w; this.height = h; this.update()  ← 不重算 radius
+   */
+  {
+    const dom = new JSDOM('<!doctype html><body></body>', { runScripts: 'dangerously', pretendToBeVisual: true });
+    const w = dom.window;
+    const sc = w.document.createElement('script');
+    sc.textContent = KITY;
+    w.document.head.appendChild(sc);
+    const kity = w.kity;
+    ok(!!kity && !!kity.Rect, 'kity 可在 jsdom 中加载');
+
+    // 错误顺序：先 setRadius 再 setSize
+    const bad = new kity.Rect().setRadius(6);
+    bad.setPosition(0, 0).setSize(100, 40);
+    eq(bad.getRadius(), 0, '先 setRadius 再 setSize → 圆角被钳成 0（这就是 bug）');
+
+    // 正确顺序：先 setSize 再 setRadius
+    const good = new kity.Rect();
+    good.setPosition(0, 0).setSize(100, 40).setRadius(6);
+    eq(good.getRadius(), 6, '先 setSize 再 setRadius → 圆角保留 6');
+
+    // 复用场景：setSize 之后不重设，圆角依旧是 0
+    const reuse = new kity.Rect();
+    reuse.setSize(100, 40).setRadius(8);
+    eq(reuse.getRadius(), 8, '第一次设好是 8');
+    reuse.setSize(200, 80);                 // 只改尺寸
+    eq(reuse.getRadius(), 8, 'setSize 后 radius 保持 8（kity 不会重置它）');
+    // 但**新建**就没这么幸运：0×0 时设的圆角永远回不来
+    const never = new kity.Rect().setRadius(8);
+    never.setSize(200, 80);
+    eq(never.getRadius(), 0, '新建时（0×0）设的圆角，之后 setSize 也救不回来');
+  }
+
+  /* ---- 2) 源码级：四处圆角都不能出现在 setSize 之前 ---- */
+  // 用**位置**比较而不是正则：setSize 的参数里带括号（(br.x - tl.x) + ...），
+  // 用 `[^)]*` 一类写法会匹配失败，写成宽泛的 [\s\S]*? 又容易跨函数误判。
+  const sites = [
+    ['分组标签底色', 'var bg = new kity.Rect();', 'bg.setPosition', '.setRadius(4);'],
+    ['分组外框', 'shape = new kity.Rect();', 'shape.setSize(', 'shape.setRadius(8);'],
+    ['图片选中框', 'var rect = new kity.Rect();', 'rect.setSize(', 'rect.setRadius(2);'],
+    ['搜索高亮框', 'var shape = new kity.Rect();', 'shape.setSize(', 'shape.setRadius(6);'],
+  ];
+  for (const [who, ctor, sizeCall, radiusCall] of sites) {
+    ok(html.includes(ctor), `${who}：构造时不再预置圆角（0×0 时设会被钳成 0）`);
+    const atSize = html.indexOf(sizeCall);
+    const atRadius = html.indexOf(radiusCall);
+    ok(atSize > 0 && atRadius > atSize,
+      `${who}：setRadius 出现在 setSize 之后（${atSize} < ${atRadius}）`);
+  }
+  // 全局：不允许再出现 `new kity.Rect().setRadius(` 这种顺序
+  ok(!/new kity\.Rect\(\)\.setRadius\(/.test(html),
+    '全文不得再出现 new kity.Rect().setRadius(（0×0 时设必然被钳成 0）');
+}
+
 group('附件操作：写回前必须切回节点（选中丢失防护）');
 
 {

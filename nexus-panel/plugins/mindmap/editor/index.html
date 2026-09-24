@@ -1683,9 +1683,16 @@
                 var h = size + padY * 2 + 2;
                 var x = box.x - pad;
                 var y = box.y - pad - h - 4;
-                var bg = new kity.Rect().setRadius(4);
+                /*
+                 * 圆角必须**在 setSize 之后**再设一次。
+                 * kity 的 setRadius 内部是 formatRadius(width, height, r)
+                 * = min(floor(min(w/2, h/2)), r) —— 而新建的 Rect 尺寸是 0×0，
+                 * 于是 6/8/4/2 全被钳成 **0**，圆角静默丢失。
+                 * setSize 又**不会**重算 radius，所以之后也不会恢复。
+                 */
+                var bg = new kity.Rect();
                 bg.stroke('#E0A94F', 1).fill('rgba(224,169,79,0.10)');
-                bg.setPosition(x, y).setSize(w, h);
+                bg.setPosition(x, y).setSize(w, h).setRadius(4);
                 group.addShape(bg);
                 var text = new kity.Text(label || '');
                 text.setFontSize(size).setFontFamily('Microsoft YaHei').setTextAnchor('start');
@@ -1722,7 +1729,7 @@
                     }
                     if (!shape) {
                         try {
-                            shape = new kity.Rect().setRadius(8);
+                            shape = new kity.Rect();
                             shape.stroke('#E0A94F', 2).fill('rgba(224,169,79,0.06)');
                             shape.setStyle('cursor', 'pointer');
                             shape.on('mousedown', function (ev) { onBoundaryMouseDown(ev, gid); });
@@ -1733,6 +1740,8 @@
                     var pad = 12;
                     shape.setPosition(box.x - pad, box.y - pad);
                     shape.setSize(box.width + pad * 2, box.height + pad * 2);
+                    // setSize 不重算圆角，必须在这里补（理由见 renderGroupLabel）
+                    try { shape.setRadius(8); } catch (e) {}
                     renderGroupLabel(gid, box, rc, pad);
                 });
             }
@@ -1963,11 +1972,12 @@
                 var tl = toRc(r.left, r.top), br = toRc(r.right, r.bottom);
                 var pad = 3;
                 try {
-                    var rect = new kity.Rect().setRadius(2);
+                    var rect = new kity.Rect();
                     rect.stroke(_themeColor || '#2B6CB0', 1.6).fill('none');
                     try { rect.setStyle('pointer-events', 'none'); } catch (e) {}
                     rect.setPosition(tl.x - pad, tl.y - pad);
                     rect.setSize((br.x - tl.x) + pad * 2, (br.y - tl.y) + pad * 2);
+                    try { rect.setRadius(2); } catch (e) {}   // setSize 不重算圆角
                     rc.appendShape(rect);
                     _selRect = rect;
                 } catch (e) {}
@@ -2438,7 +2448,7 @@
                 var lb = node.getLayoutBox();
                 if (!lb) return;
                 var rc = km.getRenderContainer();
-                var shape = new kity.Rect().setRadius(6);
+                var shape = new kity.Rect();
                 shape.stroke('#0A84FF', 2).fill('rgba(10,132,255,0.10)');
                 // **必须让高亮框不接收鼠标事件**。
                 // KityMinder 的选中靠 `getTargetNode()`：从事件的 targetShape
@@ -2455,6 +2465,8 @@
                 var pad = 6;
                 shape.setPosition(lb.x - pad, lb.y - pad);
                 shape.setSize(lb.width + pad * 2, lb.height + pad * 2);
+                // setSize 不重算圆角：不补的话高亮框是**直角**
+                try { shape.setRadius(6); } catch (e) {}
                 rc.addShape(shape);
                 _searchMark = shape;
                 // 若匹配节点在视野外，把画布平移到该节点（参考拖动画布逻辑）
