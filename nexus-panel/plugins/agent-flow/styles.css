@@ -3606,6 +3606,26 @@ input.mono, textarea.mono {
 .node-arg-in:focus { outline: none; }
 
 /*
+ * 多行编辑框（提示词、脚本内容这类长文本）。
+ *
+ * 与 .node-arg-in 的区别只有两处，都是"多行"带来的：
+ *   · 不设 max-width —— 单行限 150px 是为了不把卡片撑宽，
+ *     而多行文本本来就要换行，限宽只会让它变成一条竖着的窄条。
+ *   · 允许改变大小 —— 长文本在一小块里改不动，
+ *     让用户自己拉高比我们猜一个高度靠谱。
+ */
+.node-arg-area {
+  width: 100%; min-width: 160px;
+  padding: var(--sp-2, 4px);
+  border: 1px solid var(--af-accent); border-radius: var(--af-r-xs, 4px);
+  background: var(--af-sunk); box-shadow: var(--sh-in-sm);
+  color: var(--af-fg); font: inherit; font-size: var(--fs-note);
+  line-height: var(--lh-relaxed, 1.6);
+  resize: vertical;
+}
+.node-arg-area:focus { outline: none; }
+
+/*
  * xyflow 的约定类名：带 .nodrag 的元素不触发节点拖动。
  *
  * 不写这条样式，参数框里的点击会变成"拖走整个节点" ——

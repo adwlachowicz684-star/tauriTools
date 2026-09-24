@@ -346,7 +346,18 @@ export type BriefPart = {
    * 选项不写在这里 —— 从节点定义的 fields 里取（见 ArgCell），
    * 两处各写一份列表的话，改一处就会让卡片与面板给出不同的选项。
    */
-  edit?: { key: string; kind: 'text' | 'select' };
+  /**
+   * kind:
+   *   · 'text'   单行 —— 点一下变 input，回车生效
+   *   · 'area'   多行（提示词这类长文本） —— 点一下变 textarea
+   *   · 'select' 只能选的 —— 点一下弹下拉
+   *
+   * 'text' 与 'area' 必须分开：多行的那几种（提示词、脚本内容）
+   * 用单行 input 会把整段挤成一行，且**按回车就提交**，
+   * 于是想换行的人一按回车就退出编辑，内容还被原样存下去了 ——
+   * 不报错，只是那段文本永远只有第一行。
+   */
+  edit?: { key: string; kind: 'text' | 'area' | 'select' };
 };
 
 /** 只有 val / op / fn 会被渲染成下凹的参数格，text 是连接它们的字 */

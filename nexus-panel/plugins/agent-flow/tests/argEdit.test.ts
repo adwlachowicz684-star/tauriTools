@@ -117,9 +117,15 @@ test('包含改成分段后，摘要文本逐字不变', () => {
  */
 test('参数输入框带 nodrag（点它不会变成拖节点）', () => {
   const src = readSrc('components/ArgCell.tsx');
-  const m = src.match(/className="node-arg-in[^"]*"/);
-  assert.ok(m, '必须有 node-arg-in 这个输入框');
-  assert.ok(m?.[0].includes('nodrag'), '输入框必须带 nodrag');
+  /*
+   * 单行与多行**共用一个 editCls 常量**，所以这里盯的是那个常量而不是两处字面量 ——
+   * 两处各写一份的话，新加一种编辑框很容易漏掉 nodrag，
+   * 而漏掉的表现是"点这个框会把节点拖走"，在单测里看不出来。
+   */
+  for (const cls of ['node-arg-in', 'node-arg-area']) {
+    const m = src.match(new RegExp(`'${cls} nodrag nopan'`));
+    assert.ok(m, `${cls} 必须带 nodrag nopan`);
+  }
 });
 
 test('下拉也带 nodrag（展开下拉时不能把节点拖走）', () => {
@@ -135,8 +141,24 @@ test('下拉也带 nodrag（展开下拉时不能把节点拖走）', () => {
  */
 test('输入框拦住键盘冒泡（否则退格会删掉整个节点）', () => {
   const src = readSrc('components/ArgCell.tsx');
-  assert.ok(/onKeyDown=\{onKey\}/.test(src), '输入框必须挂 onKeyDown');
+  /*
+   * props 收在 shared 对象里（单行/多行共用），所以盯的是 onKeyDown: onKey
+   * 而不是 JSX 属性写法 —— 见上面 nodrag 那条的理由。
+   */
+  assert.ok(/onKeyDown: onKey/.test(src), '输入框必须挂 onKeyDown');
   assert.ok(/e\.stopPropagation\(\)/.test(src), '必须 stopPropagation');
+});
+
+/**
+ * 多行编辑框**回车不能提交** —— 想换行的人一按回车就退出编辑，
+ * 内容还被原样存下去了：不报错，只是那段文本永远只有第一行。
+ * 所以多行改成 ⌘/Ctrl+回车 提交。
+ */
+test('多行编辑框回车不提交（要能换行）', () => {
+  const src = readSrc('components/ArgCell.tsx');
+  assert.ok(/if \(!isArea \|\| e\.metaKey \|\| e\.ctrlKey\)/.test(src),
+    '回车提交必须排除多行（多行要 ⌘/Ctrl+回车）');
+  assert.ok(/'area'/.test(readSrc('engine/ops.ts')), "edit.kind 必须有 'area' 这一档");
 });
 
 /**
@@ -250,4 +272,21 @@ test('播放音频的编辑初值是完整路径（不是显示用的文件名�
   const body = src.slice(src.indexOf('export function PlayAudioNode'));
   assert.ok(/val\('path', name, p\)/.test(body.slice(0, 2000)),
     '必须把完整路径 p 作为 raw 传进去');
+});
+
+/**
+ * 提示词在卡片上直接改。
+ *
+ * 任务节点改一次提示词要：选中 → 找那一栏 → 改 → 回画布看，
+ * 而提示词恰恰是这类节点唯一真正要调的东西。
+ */
+test('任务节点的提示词可就地编辑（多行）', () => {
+  const src = readSrc('components/TaskNode.tsx');
+  assert.ok(/<ArgLine\b/.test(src), '必须走 ArgLine');
+  assert.ok(/kind: 'area'/.test(src), '提示词必须是多行编辑');
+  /*
+   * 显示的是截断后的那截，但**编辑初值必须是完整原文** ——
+   * 拿截断后的当初值，一失焦就等于把原文改成了那截。
+   */
+  assert.ok(/raw: prompt/.test(src), '编辑初值必须是完整原文 prompt，不是截断后的 shown');
 });

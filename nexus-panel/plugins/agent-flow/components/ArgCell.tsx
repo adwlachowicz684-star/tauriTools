@@ -144,7 +144,10 @@ export function ArgCell({ nodeId, type, part, className, data }: ArgCellProps) {
   const edit = part.edit;
   const options = edit?.kind === 'select' ? selectOptionsOf(type, edit.key, data) : [];
   const canSelect = Boolean(patch && edit && options.length > 0);
-  const canText = Boolean(patch && edit?.kind === 'text');
+  const isArea = edit?.kind === 'area';
+  const canEdit = Boolean(patch && edit && (edit.kind === 'text' || isArea));
+  /** 多行文本在卡片上占一整块，所以要一个更宽的类名 */
+  const editCls = isArea ? 'node-arg-area nodrag nopan' : 'node-arg-in nodrag nopan';
 
   /*
    * 入口必须始终在 —— 编辑时也不例外。
@@ -202,34 +205,47 @@ export function ArgCell({ nodeId, type, part, className, data }: ArgCellProps) {
       patch?.(nodeId, { [edit.key]: draft });
       setDraft(null);
     };
-    const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    /*
+     * 多行的那几种（提示词、脚本内容）**回车不能提交**。
+     *
+     * 想换行的人一按回车就退出编辑，内容还被原样存下去了 ——
+     * 不报错，只是那段文本永远只有第一行。
+     * 所以多行改成 ⌘/Ctrl+回车 提交，Esc 仍然撤销。
+     */
+    const onKey = (e: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       /*
        * 拦住冒泡：画布上按 Delete 是删除节点、按空格是平移。
        * 不拦的话，在参数框里按一次退格就把整个节点删了 ——
        * 而那时焦点在输入框里，用户根本想不到自己在操作画布。
        */
       e.stopPropagation();
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        commit();
-      } else if (e.key === 'Escape') {
+      if (e.key === 'Escape') {
         e.preventDefault();
         setDraft(null);
+        return;
       }
+      if (e.key !== 'Enter') return;
+      if (!isArea || e.metaKey || e.ctrlKey) {
+        e.preventDefault();
+        commit();
+      }
+    };
+    const shared = {
+      className: editCls,
+      /* 自动聚焦 + 全选：点进来就是要替换掉原来那串 */
+      autoFocus: true,
+      value: draft,
+      onChange: (e: { target: { value: string } }) => setDraft(e.target.value),
+      onBlur: commit,
+      onKeyDown: onKey,
+      onMouseDown: (e: MouseEvent) => e.stopPropagation(),
     };
     return (
       <span className={cls}>
         {handle}
-        <input
-          className="node-arg-in nodrag nopan"
-          /* 自动聚焦 + 全选：点进来就是要替换掉原来那串 */
-          autoFocus
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={onKey}
-          onMouseDown={(e: MouseEvent) => e.stopPropagation()}
-        />
+        {/* 多行与单行都走同一套 props —— 分开写两份的话，
+            给单行加的冒泡拦截之类很容易在多行那份上漏掉 */}
+        {isArea ? <textarea rows={4} {...shared} /> : <input {...shared} />}
       </span>
     );
   }
@@ -239,8 +255,8 @@ export function ArgCell({ nodeId, type, part, className, data }: ArgCellProps) {
   return (
     <span
       className={cls}
-      title={canText ? '点一下直接改' : undefined}
-      onClick={canText ? (e: MouseEvent) => {
+      title={canEdit ? (isArea ? '点一下直接改（⌘/Ctrl+回车 完成）' : '点一下直接改') : undefined}
+      onClick={canEdit ? (e: MouseEvent) => {
         e.stopPropagation();
         // 初值用 raw（未截断），不能用显示用的 text —— 见 BriefPart.raw 的说明
         setDraft(part.raw ?? '');
