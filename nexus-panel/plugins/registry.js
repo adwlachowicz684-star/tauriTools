@@ -3,11 +3,21 @@
  * ------------------------------------------------------------
  * type  'module' 同页挂载  |  'iframe' 沙箱挂载（默认推荐）
  * entry 入口文件，相对项目根目录
- * theme 'dark' 与面板同基调(不适配) | 'light' 相反(需适配) | 'auto'/省略 运行时检测
- * followsTheme true = 该插件的观感**由外壳主题变量驱动**（CSS 里读 --bg/--surface/
- *               --text/--accent），基调该由它自己上报，外壳采样反而会误判。
- *               判据：只给"真的跟随"的插件标 —— 标错会导致该加的滤镜没加
- *               （深色面板上留一块刺眼的白）。
+ * theme 插件基调声明，**四选一互斥**（详见 js/theme-normalizer.js 的 PLUGIN_THEMES）：
+ *         'follow' 观感由外壳主题变量驱动（读 --bg/--surface/--text 或 preload-base）
+ *                  → 渲染结果必然等于面板基调，任何主题下都不反转
+ *         'dark'   自身**固定**深色（写死的深色，不跟随）
+ *         'light'  自身**固定**浅色（第三方便捷 UI 的典型样子）
+ *         'auto'   不声明 → 运行时采样（最不可靠，兜底用）
+ *
+ *         判据是"插件自己的颜色会不会随面板变"：会变就是 follow，
+ *         不变才写 dark/light。标错的代价不对称 ——
+ *         把 follow 标成 dark，浅色面板下会把插件翻成深色（赤陶下必现）。
+ *
+ *         以前是 theme + followsTheme **两个**字段，语义重叠：
+ *         "自身什么色"与"是否跟随"可以同时写，同时写即自相矛盾；
+ *         而 followsTheme 分支排在前面，导致 11 个插件的 theme:'dark'
+ *         永远读不到 —— 死字段。已合并为上面的单一互斥枚举。
  * requiresBuild  true = 用 React/TSX 编写，需要 Vite；无构建模式下自动隐藏
  * kind   'app'（默认，显示在侧边栏） | 'service'（不进侧边栏，供其它插件调用）
  *
@@ -49,8 +59,7 @@ export const plugins = [
      */
     type: 'module',
     entry: noBuild ? './plugins/home/index.js' : './plugins/home/module.tsx',
-    theme: 'dark',
-    followsTheme: true,   // 同页插件，观感由外壳主题变量驱动，不参与反转
+    theme: 'follow',
     requiresBuild: !noBuild,
     builtin: true,
     description: '运行环境与插件清单',
@@ -72,7 +81,7 @@ export const plugins = [
        于是看到"变白一秒后又变黑"，像切换了好几次。
        native 模式（固定深色）仍需要滤镜 —— 所以不能写死"永不适配"，
        要靠插件自报基调动态判定。详见 README 3.7.10。 */
-    followsTheme: true,
+    theme: 'follow',
     description: '工作流编排画布（跟随面板主题）',
   },
   {
@@ -82,7 +91,7 @@ export const plugins = [
     type: 'iframe',
     entry: './plugins/demo-react/index.html',
     version: '1.0.0',
-    theme: 'dark',
+    theme: 'follow',
     /*
      * 本插件**跟随面板主题**：入口 HTML 读 nexus:preload-base / preload-bg
      * 铺底色，颜色由外壳推过来的变量决定，不是写死的深色。
@@ -91,7 +100,6 @@ export const plugins = [
      * 浅色面板（赤陶）下判定基调不等 → 施加反转滤镜
      * → 已经变浅的界面被二次翻回深色。
      */
-    followsTheme: true,
     requiresBuild: true,
     description: 'React + TSX 编写，跑在沙箱里，ctx 用法与同页插件完全一致',
   },
@@ -123,8 +131,7 @@ export const plugins = [
      * 整个 registry.js 直接语法错误（上游在 plugin-entries.js 里已踩过一次）。
      */
     entry: noBuild ? './plugins/demo-module/index.js' : './plugins/demo-module/module.js',
-    theme: 'dark',
-    followsTheme: true,   // 底色取 var(--surface-sunk)，由外壳主题驱动
+    theme: 'follow',
     version: '1.0.0',
     description: '同页挂载，可直接调用 Rust',
   },
@@ -134,8 +141,7 @@ export const plugins = [
     icon: '◇',
     type: 'iframe',
     entry: './plugins/demo-iframe/index.html',
-    theme: 'dark',
-    followsTheme: true,   // html,body 背景透明、文字取 var(--text)，外壳主题直接透出
+    theme: 'follow',
     version: '1.0.0',
     description: '不依赖构建工具的 iframe 插件',
   },
@@ -147,8 +153,7 @@ export const plugins = [
     entry: './plugins/project-group/index.html',
     // React + TSX，需要 Vite；无构建模式下自动隐藏
     requiresBuild: true,
-    theme: 'dark',
-    followsTheme: true,
+    theme: 'follow',
     description: '项目 / 项目组双栏管理：agent 链接分配、内容浏览、连锁指令、内置图标与备份',
   },
   {
@@ -158,8 +163,7 @@ export const plugins = [
     type: 'iframe',
     entry: './plugins/mindmap/index.html',
     version: '1.0.0',
-    theme: 'dark',
-    followsTheme: true,
+    theme: 'follow',
     description: 'kityminder 内核：多画布 / 主题 / 布局 / 附件 / XMind 互导，内容实时缓存',
   },
   /* ---- 服务插件：不显示在侧边栏，供其它插件调用 ----
@@ -175,8 +179,7 @@ export const plugins = [
     type: 'iframe',
     entry: './plugins/color-picker/index.html',
     version: '2.0.0',
-    theme: 'dark',
-    followsTheme: true,
+    theme: 'follow',
     // React + TSX（与 project-group 内联色盘共用同一份组件），需要 Vite
     requiresBuild: true,
     description: '完整色盘：SV 面板 + 色相条 + RGB/HEX + 吸管待命；与内联色盘共用同一份组件实现',
@@ -190,8 +193,7 @@ export const plugins = [
     type: 'iframe',
     entry: './plugins/icon-picker/index.html',
     version: '1.0.0',
-    theme: 'dark',
-    followsTheme: true,
+    theme: 'follow',
     description: '内置 122 个预设图标的浏览与选择',
   },
   {
@@ -203,8 +205,7 @@ export const plugins = [
     type: 'iframe',
     entry: './plugins/md-editor/index.html',
     version: '1.0.0',
-    theme: 'dark',
-    followsTheme: true,
+    theme: 'follow',
     description: '左编辑右预览的 md 编辑器，返回编辑后的文本',
   },
   {
@@ -215,8 +216,7 @@ export const plugins = [
     type: 'iframe',
     entry: './plugins/demo-service/index.html',
     version: '1.0.0',
-    theme: 'dark',
-    followsTheme: true,   // 同样读 preload-base 铺底，跟随面板，不参与反转
+    theme: 'follow',   // 读 preload-base 铺底，跟随面板，不参与反转
     description: '示例服务插件：不进侧边栏，由其它插件通过 ctx.services.call 调用',
   },
   {
@@ -236,8 +236,7 @@ export const plugins = [
      */
     type: 'module',
     entry: noBuild ? './plugins/settings/index.js' : './plugins/settings/module.tsx',
-    theme: 'dark',
-    followsTheme: true,   // 同页插件，观感由外壳主题变量驱动，不参与反转
+    theme: 'follow',
     requiresBuild: !noBuild,
     builtin: true,
     description: '主题、强调色、插件主题适配、插件管理',
