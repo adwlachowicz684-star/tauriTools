@@ -2195,3 +2195,69 @@ html.theme-transition *:not(.spinner) {
   cursor: pointer;
 }
 .md-menu-item:hover { background: var(--accent); color: var(--bg); }
+
+/* ---- md · 最近阅读（批次 5） ----
+   同样全走令牌：写死色值的话切主题时这块是另一个体系，
+   且"局部不跟随"不会报错，只能靠肉眼发现。 */
+.md-recent {
+  flex: none;
+  margin-bottom: var(--sp-3, 8px);
+  padding: var(--sp-2, 8px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface);
+}
+.md-recent-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2, 8px);
+  font-size: var(--fs-11, 11px);
+  color: var(--muted);
+  margin-bottom: var(--sp-2, 8px);
+}
+.md-recent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  /* 超过 6 条才滚：列表本身不该抢走正文的高度 */
+  max-height: 168px;
+  overflow-y: auto;
+}
+.md-recent-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2, 8px);
+}
+.md-recent-item {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  padding: var(--sp-1, 4px) var(--sp-2, 8px);
+  cursor: pointer;
+  /* 路径可能很长：不裁会把右边的 × 挤出可视区 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.md-recent-item:hover { color: var(--accent); }
+.md-recent-del {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px var(--sp-1, 4px);
+  cursor: pointer;
+}
+.md-recent-del:hover { color: var(--danger); }
+.md-recent-empty {
+  font-size: var(--fs-11, 11px);
+  color: var(--muted);
+  padding: var(--sp-1, 4px) var(--sp-2, 8px);
+}

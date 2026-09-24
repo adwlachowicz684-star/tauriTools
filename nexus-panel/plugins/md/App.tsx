@@ -17,6 +17,13 @@ import PlantUMLBlock from './PlantUMLBlock';
 import { isMermaid } from './mermaid';
 import { isPlantUML } from './plantuml';
 import { exportPathOf, checkExportPath, buildExportHtml, EXPORT_EXTS } from './export';
+import {
+  readRecent,
+  addRecent,
+  removeRecent,
+  clearRecent,
+  baseNameOf,
+} from './recent';
 
 /**
  * md 插件主界面
@@ -191,6 +198,9 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
   const [docSeq, setDocSeq] = useState(0);
   const [hint, setHint] = useState('');
   const [dragging, setDragging] = useState(false);
+  /* 最近阅读列表。挂载时读一次，之后由打开动作维护。 */
+  const [recent, setRecent] = useState<any[]>(() => readRecent());
+  const [showRecent, setShowRecent] = useState(false);
 
   /* 渲染区容器。TOC 与右键菜单都要它，见下面各自说明。 */
   const outRef = useRef<any>(null);
@@ -428,16 +438,29 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
       });
       if (typeof text !== 'string') {
         setHint('读取失败：返回内容不是文本');
+        setRecent(removeRecent(path));
         return;
       }
       setSrc(text);
-      const nm = String(path).replace(/\\/g, '/').split('/').pop() || path;
+      const nm = baseNameOf(path);
       setFileName(nm);
       setSrcPath(String(path));
       setDocSeq((n) => n + 1);         // 换了文档 → 触发阅读位置恢复
       setHint('');
+      /*
+       * 打开成功才记进最近列表。
+       * 失败不记 —— 否则列表里会留一条**点了必然报错**的记录，
+       * 而用户只会以为"列表坏了"，想不到是那个文件已经不在了。
+       */
+      setRecent(addRecent(String(path), nm));
     } catch (err) {
       setHint(`读取失败：${err?.message || err}`);
+      /*
+       * 失败就把这条移出列表：文件被删/被移走是最常见的原因，
+       * 留着它只会让同一条错误反复出现。
+       * 移除了要**说一声**，不然用户会以为列表自己吃了记录。
+       */
+      setRecent(removeRecent(path));
     }
   }, [ctx]);
 
@@ -450,6 +473,21 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
     });
     return () => off?.();
   }, [ctx, openPath]);
+
+  /*
+   * 从最近列表打开。
+   * 走的是 openPath —— 和项目组「阅读」、宿主传参**同一条路**，
+   * 不另写一份读文件逻辑（另写一份，改 max 或加校验时就会漏一处）。
+   *
+   * 打开后收起列表：留着会盖住正文，而"点了之后要看的是文档"。
+   */
+  const onOpenRecent = useCallback(
+    (path: string) => {
+      setShowRecent(false);
+      openPath(path);
+    },
+    [openPath],
+  );
 
   /*
    * F9 导出
@@ -545,6 +583,19 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
           {fileName ? titleOf(fileName) : '未命名（粘贴/默认）'}
         </span>
         {hint ? <span className="md-hint">{hint}</span> : null}
+        {/*
+          最近阅读入口。宿主没有选文件对话框，所以这是唯一能"主动重开
+          刚才那份"的地方。列表为空时按钮**仍然可点** ——
+          点了没反应会被当成坏了，展开后至少能看到为什么是空的。
+        */}
+        <button
+          type="button"
+          className="md-btn"
+          onClick={() => setShowRecent((v) => !v)}
+          title="最近读过的文件"
+        >
+          最近{recent.length ? ` · ${recent.length}` : ''}
+        </button>
         <span className="md-export">
           {/*
             没有源路径时禁用而不是隐藏：按钮凭空消失只会被当成漏做了，
@@ -584,6 +635,55 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
           ) : null}
         </span>
       </div>
+      {/* 最近阅读列表 */}
+      {showRecent ? (
+        <div className="md-recent">
+          <div className="md-recent-h">
+            <span>最近阅读 · {recent.length}</span>
+            <button
+              type="button"
+              className="md-btn"
+              disabled={!recent.length}
+              onClick={() => setRecent(clearRecent())}
+              title="清空最近阅读列表"
+            >
+              清空
+            </button>
+          </div>
+          {recent.length ? (
+            <ul className="md-recent-list">
+              {recent.map((it) => (
+                <li key={it.path} className="md-recent-row">
+                  <button
+                    type="button"
+                    className="md-recent-item"
+                    title={it.path}
+                    onClick={() => onOpenRecent(it.path)}
+                  >
+                    {titleOf(it.title || baseNameOf(it.path))}
+                  </button>
+                  {/*
+                    移除用**真按钮**而不是右键：右键对键盘用户不可达，
+                    且这种小色点/小图标上只有 title 时读屏支持不一致。
+                  */}
+                  <button
+                    type="button"
+                    className="md-recent-del"
+                    title="从最近列表移除"
+                    onClick={() => setRecent(removeRecent(it.path))}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="md-recent-empty">
+              还没有记录 —— 拖入文件，或用项目组的「阅读」打开后会出现在这里
+            </div>
+          )}
+        </div>
+      ) : null}
       {/*
         目录栏：没有标题时不渲染整栏。
         渲染空栏会留一条永远空白的窄条，看着像布局坏了。

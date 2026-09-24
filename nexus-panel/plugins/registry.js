@@ -208,6 +208,34 @@ export const plugins = [
     theme: 'follow',
     description: '左编辑右预览的 md 编辑器，返回编辑后的文本',
   },
+  /*
+   * md-render —— 给**其它插件**调用的 Markdown 渲染服务（md 插件 E3 入口）。
+   *
+   * 【为什么必须单独一条，且这几个字段一个都不能少】
+   *   · kind:'service' —— 否则进侧边栏，且 services.call 找不到
+   *   · type:'module'  —— 与宿主同文档，才能和 md app 共用同一份渲染配置
+   *   · 不标 interactive —— 标了宿主会把它弹成居中浮层（那是给色盘用的），
+   *     纯计算服务只会"调一下闪一下空白框"
+   *   · builtin:true —— 内置插件，不引入不可信代码
+   *   · requiresBuild:true —— 依赖 react-markdown 裸模块名，无构建模式不可用
+   *
+   * 【这条丢过一次，且丢了**不报错**】
+   * 远端同步时整条被覆盖掉，而 md-editor（F11）那边有"服务调不到就降级"
+   * 的设计，于是表现为"改了配置但完全没生效"——
+   * 只有这条断言会报出来。别再让它静默消失。
+   */
+  {
+    id: 'md-render',
+    name: 'Markdown 渲染',
+    icon: '📄',
+    kind: 'service',
+    type: 'module',
+    entry: './plugins/md-render/module.js',
+    version: '1.0.0',
+    builtin: true,
+    requiresBuild: true,
+    description: '把 Markdown 渲染成 HTML 字符串，供其它插件调用（同页模块，与 md 阅读器共用渲染配置）',
+  },
   {
     id: 'demo-service',
     name: '示例·取色服务',
