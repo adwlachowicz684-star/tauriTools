@@ -7,7 +7,7 @@ import {
 import { styleLabel } from '../../js/themes.js';
 import { prompt as askPrompt } from '../../js/dialog.js';
 import {
-  ADAPT_POLICIES, PLUGIN_THEMES,
+  ADAPT_POLICIES,
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
 } from '../../js/theme-normalizer.js';
 import { SHELL_SHORTCUT_SPECS, shellComboSet, normCombo } from '../../js/shell-shortcuts.js';
@@ -384,7 +384,7 @@ export default definePlugin({
         style: { height: '30px', width: '130px', fontSize: '12px', padding: '0 8px' },
       },
         h('option', { value: '', selected: !getPluginOverride(p.id) }, '跟随全局'),
-        ...PLUGIN_THEMES.map((t) =>
+        ...ADAPT_POLICIES.map((t) =>
           h('option', { value: t.value, selected: getPluginOverride(p.id) === t.value }, t.label)),
       );
       sel.onchange = () => {
