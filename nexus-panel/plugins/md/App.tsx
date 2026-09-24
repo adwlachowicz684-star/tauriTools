@@ -12,6 +12,8 @@ import { copyText } from './clipboard';
 import { headingsOf, activeIdOf } from './toc';
 import { targetOf, menuItemsFor } from './ctx-menu';
 import { splitBlocks, createBlockCache, visibleBlockIndex } from './blocks';
+import MermaidBlock from './MermaidBlock';
+import { isMermaid } from './mermaid';
 
 /**
  * md 插件主界面
@@ -108,7 +110,20 @@ const MAX_READ_CHARS = 8 * 1024 * 1024;
  * 语言标记从子元素 code 的 className 上取 ——
  * rehype-highlight 把原始 ```js 的 "js" 放在那里。
  */
+/*
+ * Mermaid 走单独的块组件（MermaidBlock），不在这里处理。
+ *
+ * 不走这条路的后果：mermaid 源码会被 highlight.js 当成代码着色，
+ * 显示成一段彩色文本 —— **不报错**，用户只以为"图表没渲染"。
+ *
+ * 判定放在这里（而不是 App 里包一层）是因为类名由 rehype-highlight
+ * 加在 <code> 上，只有进到 code 组件才拿得到。
+ */
 function CodeBlock({ ctx, children, ...rest }: any) {
+  const codeClass = children?.props?.className;
+  if (isMermaid(codeClass)) {
+    return <MermaidBlock ctx={ctx} className={codeClass} {...rest}>{children}</MermaidBlock>;
+  }
   const [state, setState] = useState('idle');   // idle | ok | fail
   const codeEl = Array.isArray(children) ? children[0] : children;
   const raw = useMemo(() => reactTextOf(codeEl?.props?.children), [codeEl]);

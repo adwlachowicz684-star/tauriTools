@@ -1910,6 +1910,49 @@ html.theme-transition *:not(.spinner) {
   content-visibility: auto;
   contain-intrinsic-size: auto 320px;
 }
+
+/*
+ * .md-mm —— Mermaid 图表容器（F10）
+ * ------------------------------------------------------------
+ * 颜色**不写死**：图的配色由 mermaid 的 themeVariables 从宿主变量
+ * 映射（见 plugins/md/mermaid.js themeVarsOf）。这里只管容器自身。
+ *
+ * svg 要 max-width:100% —— mermaid 输出的 svg 带固定 width，
+ * 窄栏里会横向溢出，而溢出部分在 .md-out 里是被裁掉的
+ * （看不全，且没有滚动条提示）。
+ */
+.md-mm {
+  margin: 10px 0;
+  overflow-x: auto;
+}
+.md-mm svg {
+  max-width: 100%;
+  height: auto;
+}
+/* 渲染中占位：高度必须给，图画出来时下面的内容才不会被顶得跳一下 */
+.md-mm-loading {
+  min-height: 96px;
+  display: flex;
+  align-items: center;
+  color: var(--text-dim, var(--muted, #888));
+  font-size: 12px;
+}
+/* 语法错误：图源码一起显示出来 —— 只显示错误消息的话，
+   用户没法对照改（且不知道是自己写错了还是插件坏了） */
+.md-mm-err {
+  border-left: 3px solid var(--danger, #ff6b6b);
+  padding-left: 10px;
+}
+.md-mm-msg {
+  color: var(--danger, #ff6b6b);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.md-mm-src {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.8;
+}
 .markdown-body h1, .markdown-body h2,
 .markdown-body h3, .markdown-body h4 {
   margin: .6em 0 .3em;
