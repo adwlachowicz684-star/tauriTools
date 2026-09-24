@@ -123,41 +123,6 @@
 .fpx-rail-btn:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 /* 原来是写死的 #c96a6a。危险色一律用 --danger：它由主题按基调派生，
    浅色主题下会自动换成更深的红（写死的这个值在浅底上对比度不足 3:1） */
-/*
- * #281 落点：原版的浮雕**只给两级**——PanelTitle（浮层主标题）与
- * SectionTitle（面板内分区/分组标题）；分栏标题 ColumnTitle 与窗口主标题
- * AppTitle 用的是纯色（原版注释："纯色统一风"），**不带浮雕**。
- *
- * 照原版区分这两类是必要的：全加浮雕的话分栏标题会跟着一起"浮"起来，
- * 三个栏头比栏内内容还抢眼，视觉层级整个翻过来。
- *
- * `.p-card > h2` 命中的正是分区标题（设置面板的「基础设置」「Agent 链接名」
- * 「服务」等）；分栏标题在 `.fpx-col-head` 里、不是 .p-card 的直接子级，
- * 天然不落在这条规则上 —— 但下面仍显式写一条回来，
- * 免得以后有人把 col-head 那层去掉时悄悄带上浮雕。
- */
-.p-card > h2 {
-  font-weight: var(--title-3-fw, 600);
-  color: var(--title-emboss-mid);
-}
-@supports ((-webkit-background-clip: text) or (background-clip: text)) {
-  .p-card > h2 {
-    background-image: linear-gradient(
-      180deg,
-      var(--title-emboss-top) 0%,
-      var(--title-emboss-mid) 55%,
-      var(--title-emboss-bottom) 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    text-shadow: 1.3px 1.3px 3px var(--title-emboss-shadow);
-  }
-}
-/* 分栏标题：纯色，不用浮雕（原版 ColumnTitle = MainBrush） */
-.fpx-col-head h2 { color: var(--text); background-image: none; text-shadow: none; }
-@supports ((-webkit-background-clip: text) or (background-clip: text)) {
-  .fpx-col-head h2 { -webkit-background-clip: border-box; background-clip: border-box; }
-}
 .fpx-rail-btn.danger { color: var(--danger); }
 .fpx-rail-btn.danger:hover:not(:disabled) { color: var(--danger); background: var(--surface); }
 .fpx-rail-icon { font-size: var(--fs-18, 18px); line-height: 1.1; }
@@ -770,21 +735,7 @@
 .fpx-node:hover { background: var(--surface); color: var(--text); }
 .fpx-node.selected { color: var(--accent); background: var(--surface); }
 .fpx-node-arrow { width: 10px; color: var(--text-mute); }
-/*
- * #282 等宽条目标题（对齐原版 ItemTitleMono：FontFamily=Consolas）
- *
- * 适用范围是**标识符类**条目：agent 名 / skill 名 / 工具名 / 链接名。
- * 用等宽的理由不是好看：这些名字里常有 `_` `-` `.` 与大小写混排
- * （如 `code_reviewer_v2`、`foo_bar_baz.md`），比例字体下
- * `l` 与 `1`、`I` 与 `l` 几乎分不出来，用户照着抄一个名字很容易抄错，
- * 而抄错的后果是"找不到这个 agent"—— 报错还指不到原因。
- *
- * 只给**名字**加，不给说明文字加（说明是给人读的句子，等宽反而难读）。
- */
-.fpx-node-name {
-  overflow: hidden; text-overflow: ellipsis;
-  font-family: var(--font-mono, ui-monospace, monospace);
-}
+.fpx-node-name { overflow: hidden; text-overflow: ellipsis; }
 .fpx-node-kind {
   margin-left: auto; font-size: var(--fs-10, 10px); color: var(--text-mute);
   border: 1px solid var(--border); border-radius: var(--r-xs); padding: 0 4px;
@@ -1231,17 +1182,6 @@
 /* 页签接收拖拽时的高亮 */
 .fpx-tab.drop { border-color: var(--accent); box-shadow: var(--glow-sm); }
 
-/* -------- 页签接收**外部**拖入（#360）--------
- * 与 .drop 区分：.drop 是"卡片移到末尾"，这里是"文件夹加到这个页签"。
- * 用虚线边框而不是实线发光 —— 外部拖入是 copy 语义（新增），
- * 内部移动是 move 语义（搬走），两种高亮长得一样的话
- * 用户分不清这次操作会不会把别处的卡片挪走。 */
-.fpx-tab.external {
-  border-style: dashed;
-  border-color: var(--accent);
-  background: var(--chip-active-bg, var(--surface-sunk));
-}
-
 /* ---------- 说明 ---------- */
 .fpx-help { margin: 0; padding-left: 18px; font-size: var(--fs-12, 12px); line-height: 1.9; color: var(--text-dim); }
 .fpx-help b { color: var(--text); }
@@ -1588,52 +1528,6 @@
   color: var(--text-dim);
 }
 
-/* -------- 保护弹窗：目标路径 + 类型徽章（#419）--------
- * flex + align-items 让徽章与**首行**路径对齐；
- * 路径很长会折行，此时徽章仍钉在右上角，不会跟着掉到第二行末尾
- * （掉下去的话看起来像另一条说明文字）。 */
-.fpx-lock-target {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-4, 8px);
-  margin-bottom: var(--sp-6, 12px);
-}
-.fpx-lock-target-path {
-  flex: 1 1 auto;
-  /* flex item 上的长路径要能截断/换行，必须给 min-width: 0 ——
-     否则 min-width:auto 会把整行撑破（同 .fpx-link-group 那条）。 */
-  min-width: 0;
-  word-break: break-all;
-}
-.fpx-lock-kind {
-  flex: none;
-  padding: 2px 7px;
-  border-radius: var(--r-sm);
-  background: var(--chip-active-bg, var(--surface-sunk));
-  color: var(--accent, #7aa2f7);
-  font-size: var(--fs-11, 11px);
-  white-space: nowrap;
-}
-
-/* -------- 保护弹窗：icacls 自救命令（#431）-------- */
-.fpx-lock-rescue {
-  margin-top: var(--sp-5, 10px);
-  padding: var(--sp-4, 8px) var(--sp-5, 10px);
-  border-radius: var(--r-sm);
-  background: var(--surface-sunk);
-  font-size: var(--fs-11, 11px);
-  line-height: 1.6;
-}
-.fpx-lock-rescue-cmd {
-  display: block;
-  margin-top: 4px;
-  /* 命令必须能整条选中复制：被截断或折行到看不出边界，用户就会抄错，
-     而抄错的 icacls 命令可能作用于错误的对象。 */
-  word-break: break-all;
-  user-select: all;
-  color: var(--text);
-}
-
 /* ---------------- 面板内操作反馈条（#9）----------------
  * **吸顶**：面板可能很长，操作发生在底部时，
  * 不吸顶的反馈条等于不存在（用户在底部操作，反馈在顶部屏幕外）。
@@ -1883,96 +1777,10 @@
  * 现在由 style-dead-class 扫描（见 dead-class-test.mjs）守住：
  * 再被覆盖写抹掉会直接报红，不再依赖人记得。
  */
-/*
- * .fpx-links —— 卡片内的**链接明细容器**（上面那段事故注释里漏补的最后一个）。
- *
- * 此前它**只有滚动条伪元素规则**（`.fpx-links::-webkit-scrollbar` 那几条），
- * 没有基础规则。后果有两层，第二层尤其隐蔽：
- *
- *   1. 不是 flex column → 多行之间没有 gap，行挨着行挤在一起
- *   2. **没有 overflow** → 那条 8px 窄滚动条、悬停才显形的样式**永远不生效**，
- *      因为压根没有溢出。而一个项目可以连十几条（预设 agent 名就有 22 个），
- *      全展开会把单张卡片撑到几屏高，把别的卡片全挤出视野 ——
- *      用户看到的是"展开一个，其余全不见了"。
- *
- * 写好了滚动条样式却没给 overflow，是最典型的"看起来做完了"的坑：
- * 代码在那儿、注释在那儿，就是不工作。
- *
- * max-height 取 168px（约 8 行）：够一次看清常见情况，又不会吃掉整屏。
- */
-.fpx-links {
-  display: flex; flex-direction: column; gap: 2px;
-  max-height: 168px; overflow: auto;
-  padding-left: 2px;
-}
 .fpx-links-bar { display: flex; align-items: center; gap: 8px; padding: 0 2px 6px; }
 .fpx-links-toggle { height: 22px; padding: 0 8px; font-size: var(--fs-11, 11px); }
-
-/*
- * .fpx-link-row 的**基础定义**。
- *
- * 上面那段事故注释说这块被覆盖写抹掉过一次，补回来的是 .fpx-links-bar
- * 等；但 .fpx-link-row **本身**一直没有基础规则 —— 只有几条带 `:not()`
- * 的修饰规则。后果有两层，都是肉眼可见的：
- *   · 行不是 flex → 里面的标识/名字/箭头挤成一团、没有对齐与间距
- *   · 更隐蔽的：`.fpx-link-state { margin-left: auto }` **只在 flex 容器里
- *     才生效**，所以"失效 / 冲突"这些状态文字不会被推到最右，
- *     而是紧贴着组名，看上去像组名的一部分
- *
- * 为什么原有的死类扫描没抓到：它只查"CSS 里出现的类名有没有被源码引用"，
- * 而 .fpx-link-row 既被引用、又在（带修饰的）选择器里出现过 —— 就被当成
- * 正常了。**"出现在某个选择器里"不等于"有基础定义"**，这是两个方向。
- */
-.fpx-link-row {
-  display: flex; align-items: center; gap: 6px;
-  padding: 1px 0; min-height: 20px;
-  font-size: var(--fs-11, 11px); line-height: 1.5;
-}
 .fpx-link-to { opacity: .5; }
-/*
- * flex 子项要能收缩到内容以下，才轮得到 ellipsis 生效。
- *
- * `overflow:hidden + text-overflow:ellipsis + white-space:nowrap` 三件套
- * 写在块级元素上就够了，但**作为 flex item 时还差一步**：
- * flex item 的 `min-width` 默认是 `auto`，意味着它不会收缩到内容宽度以下，
- * 于是长路径会把整行撑破（明细行横向溢出），而不是显示成省略号。
- *
- * 这段事故注释里点名的"长路径不省略"，补了三件套之后**仍然存在** ——
- * 只是原因从"没定义"变成了"缺 min-width: 0"。同名的后果，不同的根因。
- */
-.fpx-link-group {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  min-width: 0;
-}
-
-/*
- * 明细行里的状态点**独立定义一份**，不能只靠 `.fpx-badge .fpx-link-dot`。
- *
- * 那一处是给徽章内的小点用的（`.fpx-badge` 后代选择器），链接明细行
- * 不在徽章里 → 匹配不上 → 空 span 是 0×0，完全不可见。用户展开卡片
- * 看到一排链接，却没有任何状态标识，只能逐个悬停看提示。
- *
- * 这里与徽章那处保持同样的 6px 与三色语义（有效=强调蓝 / 失效=灰 /
- * 冲突=红），只是不再嵌套在 .fpx-badge 下。
- */
-.fpx-link-dot {
-  width: 6px; height: 6px; border-radius: 50%; flex: none;
-  display: inline-block; background: var(--accent);
-}
-.fpx-link-dot.valid { background: var(--accent); }
-.fpx-link-dot.broken { background: var(--text-mute); }
-.fpx-link-dot.conflict { background: var(--danger); }
-
-/* #292 链接名按钮内部：标识 + 名字（对齐原版 LinkedTabBtn 的"齿轮 + 名字"） */
-.fpx-link-name { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
-/* 同上：.fpx-link-text 也是 flex item，缺 min-width: 0 的话长链接名不会省略，
-   而是把状态点与箭头挤开（甚至撑破按钮）。 */
-.fpx-link-text {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  min-width: 0;
-  /* #282 链接名也是标识符（由 `_` 拆出的层级、取消/换绑都靠它）→ 等宽 */
-  font-family: var(--font-mono, ui-monospace, monospace);
-}
+.fpx-link-group { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fpx-link-row:not(.broken):not(.conflict) .fpx-link-group { cursor: default; }
 .fpx-link-state { margin-left: auto; flex: none; font-size: var(--fs-micro, 10px); opacity: .8; }
 .fpx-link-row.broken .fpx-link-state { color: var(--text-mute); }
@@ -2019,6 +1827,43 @@
 /* 监控告警勾选项。放在弹窗底部，与上方内容拉开距离，
    否则会紧贴着上一行，看不出它是独立的一项。 */
 .fpx-lock-watch { margin-top: var(--sp-4, 8px); }
+
+/* #419 保护弹窗的目标行：路径 + 类型徽章。
+   徽章在路径**右侧**（JSX 里就是这样排的），所以横排且基线对齐 ——
+   竖排会让徽章看起来像另一个标题。路径可能很长，故允许收缩并省略，
+   徽章 flex:none 保证它不会被挤掉（挤掉就失去了"确认锁的是哪个"的意义）。 */
+.fpx-lock-target {
+  display: flex; align-items: baseline; gap: var(--sp-3, 6px);
+  margin-bottom: var(--sp-4, 8px);
+}
+.fpx-lock-target-path {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fpx-lock-kind {
+  flex: none;
+  padding: 1px var(--sp-3, 6px);
+  border: 1px solid var(--divider, rgba(128, 128, 128, .3));
+  border-radius: var(--r-pill, 999px);
+  font-size: var(--fs-10, 10px);
+  color: var(--text-dim, var(--text));
+}
+
+/* #431 自救命令块。整块与上方拉开距离并给一条左侧竖线：
+   它是"出问题时的兜底说明"，不是常规内容，视觉上要能一眼区分。
+   命令用等宽且不换行 —— 命令被折行后复制出来是断开的，照着执行会失败。 */
+.fpx-lock-rescue {
+  margin-top: var(--sp-6, 12px);
+  padding: var(--sp-4, 8px) var(--sp-5, 10px);
+  border-left: 2px solid var(--accent, var(--text-dim, currentColor));
+  background: var(--surface-sunk, rgba(128, 128, 128, .08));
+  border-radius: var(--r-sm, 4px);
+}
+.fpx-lock-rescue-cmd {
+  display: block; margin-top: var(--sp-2, 4px);
+  font-size: var(--fs-code, var(--fs-11, 11px));
+  white-space: pre; overflow-x: auto;
+  user-select: all;
+}
 
 /* 账面固定（仅登记、无系统权限）：与 .lock（真实 ACL 保护）区分开 ——
    lock 用 --text-dim 表示"已生效"，pin 更淡一档表示"只是记录，不是真限制"。 */
