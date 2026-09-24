@@ -44,7 +44,7 @@ import {
 } from '../../js/theme-manager.js';
 import { swatchFor, styleLabel, styleParams, BG_PRESETS } from '../../js/themes.js';
 import {
-  ADAPT_POLICIES, PLUGIN_THEMES,
+  ADAPT_POLICIES,
   getPolicy, setPolicy, getPluginOverride, setPluginOverride,
 } from '../../js/theme-normalizer.js';
 import { auditPlugin, summarize, LEVEL_ORDER } from '../../js/style-audit.js';
@@ -516,7 +516,7 @@ function PluginManager({
                             这里补 `|| null` 是多余的，且会让 tsc 报类型错。 */}
                         <select
                           className="p-input tb-card-select"
-                          title="为这个插件单独指定基调判定方式（默认跟随全局）"
+                          title="为这个插件单独指定适配策略（默认跟随全局）：自动检测 / 总是反转 / 从不反转"
                           value={getPluginOverride(p.id) ?? ''}
                           onChange={(ev: ReactChangeEvent<HTMLSelectElement>) => {
                             onOverride(p, ev.target.value);
@@ -524,7 +524,7 @@ function PluginManager({
                           }}
                         >
                           <option value="">跟随全局</option>
-                          {PLUGIN_THEMES.map((t) => (
+                          {ADAPT_POLICIES.map((t) => (
                             <option key={t.value} value={t.value}>{t.label}</option>
                           ))}
                         </select>
