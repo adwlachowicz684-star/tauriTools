@@ -123,6 +123,41 @@
 .fpx-rail-btn:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 /* 原来是写死的 #c96a6a。危险色一律用 --danger：它由主题按基调派生，
    浅色主题下会自动换成更深的红（写死的这个值在浅底上对比度不足 3:1） */
+/*
+ * #281 落点：原版的浮雕**只给两级**——PanelTitle（浮层主标题）与
+ * SectionTitle（面板内分区/分组标题）；分栏标题 ColumnTitle 与窗口主标题
+ * AppTitle 用的是纯色（原版注释："纯色统一风"），**不带浮雕**。
+ *
+ * 照原版区分这两类是必要的：全加浮雕的话分栏标题会跟着一起"浮"起来，
+ * 三个栏头比栏内内容还抢眼，视觉层级整个翻过来。
+ *
+ * `.p-card > h2` 命中的正是分区标题（设置面板的「基础设置」「Agent 链接名」
+ * 「服务」等）；分栏标题在 `.fpx-col-head` 里、不是 .p-card 的直接子级，
+ * 天然不落在这条规则上 —— 但下面仍显式写一条回来，
+ * 免得以后有人把 col-head 那层去掉时悄悄带上浮雕。
+ */
+.p-card > h2 {
+  font-weight: var(--title-3-fw, 600);
+  color: var(--title-emboss-mid);
+}
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .p-card > h2 {
+    background-image: linear-gradient(
+      180deg,
+      var(--title-emboss-top) 0%,
+      var(--title-emboss-mid) 55%,
+      var(--title-emboss-bottom) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: 1.3px 1.3px 3px var(--title-emboss-shadow);
+  }
+}
+/* 分栏标题：纯色，不用浮雕（原版 ColumnTitle = MainBrush） */
+.fpx-col-head h2 { color: var(--text); background-image: none; text-shadow: none; }
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .fpx-col-head h2 { -webkit-background-clip: border-box; background-clip: border-box; }
+}
 .fpx-rail-btn.danger { color: var(--danger); }
 .fpx-rail-btn.danger:hover:not(:disabled) { color: var(--danger); background: var(--surface); }
 .fpx-rail-icon { font-size: var(--fs-18, 18px); line-height: 1.1; }
@@ -735,7 +770,21 @@
 .fpx-node:hover { background: var(--surface); color: var(--text); }
 .fpx-node.selected { color: var(--accent); background: var(--surface); }
 .fpx-node-arrow { width: 10px; color: var(--text-mute); }
-.fpx-node-name { overflow: hidden; text-overflow: ellipsis; }
+/*
+ * #282 等宽条目标题（对齐原版 ItemTitleMono：FontFamily=Consolas）
+ *
+ * 适用范围是**标识符类**条目：agent 名 / skill 名 / 工具名 / 链接名。
+ * 用等宽的理由不是好看：这些名字里常有 `_` `-` `.` 与大小写混排
+ * （如 `code_reviewer_v2`、`foo_bar_baz.md`），比例字体下
+ * `l` 与 `1`、`I` 与 `l` 几乎分不出来，用户照着抄一个名字很容易抄错，
+ * 而抄错的后果是"找不到这个 agent"—— 报错还指不到原因。
+ *
+ * 只给**名字**加，不给说明文字加（说明是给人读的句子，等宽反而难读）。
+ */
+.fpx-node-name {
+  overflow: hidden; text-overflow: ellipsis;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
 .fpx-node-kind {
   margin-left: auto; font-size: var(--fs-10, 10px); color: var(--text-mute);
   border: 1px solid var(--border); border-radius: var(--r-xs); padding: 0 4px;
@@ -1864,6 +1913,8 @@
 .fpx-link-text {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   min-width: 0;
+  /* #282 链接名也是标识符（由 `_` 拆出的层级、取消/换绑都靠它）→ 等宽 */
+  font-family: var(--font-mono, ui-monospace, monospace);
 }
 .fpx-link-row:not(.broken):not(.conflict) .fpx-link-group { cursor: default; }
 .fpx-link-state { margin-left: auto; flex: none; font-size: var(--fs-micro, 10px); opacity: .8; }

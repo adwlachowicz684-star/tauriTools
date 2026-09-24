@@ -208,4 +208,73 @@ console.log('\n=== 12. 页签三态与虚线添加框（#279 #287）===');
   t('提示不再指向不存在的按钮', !/点「\＋ 添加」选一个文件夹/.test(app4));
 }
 
+console.log('\n=== #281 / #282 / #371 标题浮雕·等宽条目·全局资源 ★★ ===');
+{
+  const css = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8');
+  const ruleOf = (sel) => {
+    const re = new RegExp('^' + sel.replace(/[.>\s-]/g, (m) => '\\' + m) + '\\s*\\{', 'm');
+    const m = re.exec(css);
+    return m ? css.slice(m.index, css.indexOf('}', m.index)) : '';
+  };
+
+  /*
+   * 一、#281 银白浮雕：渐变三色标 + 右下微影。
+   *
+   * 原版 TitleEmbossBrush：#F1F3F8（上，受光）→ #C0C8D4（55%）→ #A6AFBF（下，收暗）；
+   * TextEmboss：Blur 3 / Depth 1.3 / Direction 315（右下）/ Opacity .42。
+   */
+  t('定义了浮雕三色标变量',
+    /--title-emboss-top/.test(css) && /--title-emboss-mid/.test(css) && /--title-emboss-bottom/.test(css));
+  t('浮雕色走变量而非硬编码（#371）',
+    /var\(--title-emboss-top\)/.test(css) && /var\(--title-emboss-bottom\)/.test(css));
+  const h2 = ruleOf('.p-card > h2');
+  t('分区标题用了渐变裁字', /background-clip:\s*text/.test(css) && /linear-gradient/.test(css));
+  t('分区标题有 -webkit- 前缀（WebView2/WKWebView 都要）', /-webkit-background-clip:\s*text/.test(css));
+  t('阴影方向为右下（原版 Direction 315）', /text-shadow:\s*1\.3px\s*1\.3px\s*3px/.test(css));
+
+  /*
+   * 二、**必须区分两级**（照原版）。
+   *
+   * 浮雕只给 PanelTitle / SectionTitle；分栏标题 ColumnTitle 与窗口主标题
+   * AppTitle 是纯色（原版注释"纯色统一风"）。全加的话三个栏头会浮起来，
+   * 比栏内内容还抢眼，视觉层级整个翻过来。
+   */
+  const colHead = ruleOf('.fpx-col-head h2');
+  t('分栏标题不带浮雕（纯色）', /color:\s*var\(--text\)/.test(colHead), colHead.slice(0, 90));
+  t('分栏标题显式关掉了 text-shadow', /text-shadow:\s*none/.test(colHead));
+  /*
+   * `ruleOf` 只取**第一条**同名规则，而这里 .fpx-col-head h2 写了两条
+   * （一条在 @supports 外、一条在内）。只查第一条就会漏 —— 我又踩了
+   * "同名规则有多条，断言只钉到其中一条"这个坑。改成收集全部。
+   */
+  const colHeadAll = [...css.matchAll(/^[ \t]*\.fpx-col-head h2\s*\{[^}]*\}/gm)].map((m) => m[0]).join('\n');
+  t('分栏标题显式还原了 background-clip（全部同名规则）',
+    /background-clip:\s*border-box/.test(colHeadAll), colHeadAll.slice(0, 160));
+
+  /*
+   * 三、**必须包在 @supports 里**（否则不支持的引擎上标题会消失）。
+   *
+   * `color: transparent` + `background-clip: text` 是一对：不支持裁字时
+   * 透明文字就真的透明了 —— 整行标题**彻底消失且没有任何报错**。
+   * 所以透明只能写在 @supports 内，外面留纯色兜底。
+   */
+  t('渐变裁字包在 @supports 内', /@supports[^{]*background-clip:\s*text/.test(css));
+  const outside = css.replace(/@supports[\s\S]*?\n\}/g, '');
+  t('兜底色写在 @supports 之外', /color:\s*var\(--title-emboss-mid\)/.test(outside));
+
+  /*
+   * 四、#282 等宽条目标题：只给**标识符**（agent/skill/工具/链接名）。
+   *
+   * 理由不是好看：这些名字常有 `_` `-` `.` 与大小写混排，比例字体下
+   * `l`/`1`/`I` 分不出来，照着抄一个名字容易抄错，
+   * 后果是"找不到这个 agent"，而报错指不到原因。
+   */
+  const nodeName = ruleOf('.fpx-node-name');
+  t('树节点名（agent/skill）用等宽', /font-family:\s*var\(--font-mono/.test(nodeName), nodeName.slice(0, 90));
+  const linkText = ruleOf('.fpx-link-text');
+  t('链接名用等宽', /font-family:\s*var\(--font-mono/.test(linkText), linkText.slice(0, 110));
+  t('等宽带兜底字族（不依赖 --font-mono 已定义）',
+    /var\(--font-mono,\s*ui-monospace/.test(nodeName) || /var\(--font-mono,\s*ui-monospace/.test(linkText));
+}
+
 done();
