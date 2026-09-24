@@ -62,11 +62,75 @@ type Opt = { value: string; label: string };
  * 漏改的表现是"面板里能选，卡片上下拉里没有"，
  * 而下拉里少了那一项不会报错，只是永远选不到。
  */
+/**
+ * role → 类名。
+ *
+ * 写成查表而不是 `role-${p.role}`：项目里有一条「组件用到的类名必须在
+ * styles.css 里有定义」的守卫，模板拼出来的前缀它查不到，
+ * 只能整条放行 —— 而那正是"类名写错却没人发现"的口子。
+ */
+const ARG_CLASS: Record<BriefPart['role'], string> = {
+  val: 'node-arg',
+  op: 'node-arg is-op',
+  fn: 'node-arg is-fn',
+  text: 'node-brief-text',
+};
+
+/**
+ * 这一格用什么类名 —— 所有卡片共用，不各写一份。
+ *
+ * 带 edit 的 text 段（如停止节点的「停止整个流程」）虽然是文字，
+ * 但它**能点** —— 画成下凹的格子，暗示它跟运算符格一样可以改。
+ * 画成普通文字的话，它看着不可点，用户也就不会去点。
+ *
+ * 两张卡片各写一份的话，加一种 role 就要改两处；
+ * 漏改的表现是同一段内容在两张卡片上一个像输入框、一个像正文，
+ * 而不报错 —— 与"选项列表两处各写一份"是同一类坑。
+ */
+export function argClassOf(p: BriefPart): string {
+  if (p.role === 'text') return p.edit ? 'node-arg' : 'node-brief-text';
+  return ARG_CLASS[p.role];
+}
+
+/**
+ * 一段摘要里的每一格都交给 ArgCell 渲染 —— 所有卡片共用。
+ *
+ * 卡片自己写 map 的话，六张卡片就是六份同样的四行；
+ * 更重要的是：漏掉 ArgCell 的那张卡片，它的参数就只是纯文字
+ * （看不出是参数、也点不了），而**没有任何报错**。
+ */
+export function ArgLine({
+  nodeId, type, data, parts,
+}: {
+  nodeId: string;
+  type: string;
+  data: Record<string, unknown>;
+  parts: BriefPart[];
+}) {
+  return (
+    <div className="node-line node-line--brief node-brief">
+      {parts.map((p, i) => (
+        <ArgCell key={i} nodeId={nodeId} type={type} part={p} data={data} className={argClassOf(p)} />
+      ))}
+    </div>
+  );
+}
+
 export function selectOptionsOf(type: string, key: string, d: Record<string, unknown>): Opt[] {
   const def = getDef(type);
   // fields 的第一个参数是节点 data —— 选项可能随数据变（如按模式给不同列表）
   const fields = def.fields?.(d) ?? [];
-  const f = fields.find((x) => x.key === key);
+  /*
+   * 先按 when 过滤，再找 select。
+   *
+   * 不做这步的话，同一 key 有多个字段（按模式分流）时会命中**第一个** ——
+   * 布尔常量的 value 有三个字段（文本/数字/下拉），第一个是 textarea，
+   * 于是布尔模式下取到的不是下拉，options 为空 → 这一格退化成点不了的静态文字。
+   * 而"同一个参数在另一种模式下能点、这种模式下点不了"没有任何报错。
+   */
+  const f = fields
+    .filter((x) => (x.when ? x.when(d) : true))
+    .find((x) => x.key === key);
   if (!f || f.type !== 'select') return [];
   const o = f.options;
   return (typeof o === 'function' ? o(d) : o ?? []).map((x) => ({ value: x.value, label: x.label }));

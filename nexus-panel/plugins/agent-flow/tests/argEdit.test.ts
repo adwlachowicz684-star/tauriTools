@@ -180,3 +180,74 @@ test('编辑态仍然渲染参数入口（连线不能断）', () => {
   const n = (src.match(/\{handle\}/g) ?? []).length;
   assert.equal(n, 3, '三个分支都要渲染入口，少一个就会在编辑时断线');
 });
+
+/* ============ 参数格铺开到全部卡片（第二批：工具节点） ============ */
+
+/**
+ * 摘要渲染收在一处（ArgLine），卡片不各写一份 map。
+ *
+ * 卡片自己写 map 的话，漏掉 ArgCell 的那张卡片，它的参数就只是一行纯文字 ——
+ * 看不出是参数、也点不了，而**没有任何报错**。
+ */
+test('卡片共用 ArgLine 渲染摘要（不各写一份 map）', () => {
+  for (const f of ['components/OpNode.tsx', 'components/ToolNode.tsx']) {
+    const src = readSrc(f);
+    assert.ok(/<ArgLine /.test(src), `${f} 必须走 ArgLine`);
+    assert.ok(!/parts\.map\(\(p, i\)/.test(src), `${f} 不许自己 map 分段`);
+  }
+});
+
+/**
+ * role → 类名只有一份。
+ * 两张卡片各写一份的话，加一种 role 就要改两处，漏改的表现是
+ * 同一段内容在两张卡片上一个像输入框、一个像正文。
+ */
+test('参数格的类名只有一份（不各写一份查表）', () => {
+  const cell = readSrc('components/ArgCell.tsx');
+  assert.ok(/export function argClassOf/.test(cell), 'ArgCell 必须导出 argClassOf');
+  for (const f of ['components/OpNode.tsx', 'components/ToolNode.tsx']) {
+    assert.ok(!/ARG_CLASS/.test(readSrc(f)), `${f} 不许自带 ARG_CLASS`);
+  }
+});
+
+/**
+ * 工具节点的摘要不许再是整串纯文字。
+ *
+ * 以前是 `<code className="node-line__code">{summary}</code>`：
+ * 「3000 毫秒」「普通 · 你好」看着只是一行说明，看不出哪部分是你填的参数。
+ */
+test('工具节点摘要不再是整串 code（参数要画成下凹格）', () => {
+  const src = readSrc('components/ToolNode.tsx');
+  assert.ok(!/node-line__code/.test(src), 'ToolNode 不许再用 node-line__code');
+  assert.ok(!/summary=\{/.test(src), 'ToolNode 不许再传整串 summary');
+  // 六个节点都要给出 parts
+  for (const fn of ['WaitNode', 'LogNode', 'BeepNode', 'PlayAudioNode', 'ClockNode', 'ConstNode']) {
+    const body = src.slice(src.indexOf(`export function ${fn}`));
+    /* JSX 里数组要包在 {} 里，所以是 parts={ —— 不是 parts=[ */
+    assert.ok(/parts=\{/.test(body.slice(0, 2000)), `${fn} 必须给出 parts`);
+  }
+});
+
+/**
+ * 布尔常量的值走下拉 —— 三种种类共用同一个 value 字段、按 when 分流，
+ * 卡片上不跟着分的话，布尔常量可以填进「是」「maybe」这类下游认不出的值。
+ * 而 selectOptionsOf 不按 when 过滤就会命中第一个（textarea），取到空选项，
+ * 表现为"这一格看着能点，实际点不动"。
+ */
+test('下拉选项先按 when 过滤（同一 key 有多个字段时取对的那一个）', () => {
+  const src = readSrc('components/ArgCell.tsx');
+  assert.ok(/\.filter\(\(x\) => \(x\.when \? x\.when\(d\) : true\)\)/.test(src),
+    'selectOptionsOf 必须按 when 过滤后再找字段');
+});
+
+/**
+ * 编辑初值必须是完整值，不能是显示用的一截。
+ * 播放音频显示的是文件名，若拿文件名当初值，一失焦就把完整路径改成了文件名 ——
+ * 不报错，只是运行时找不到文件。
+ */
+test('播放音频的编辑初值是完整路径（不是显示用的文件名）', () => {
+  const src = readSrc('components/ToolNode.tsx');
+  const body = src.slice(src.indexOf('export function PlayAudioNode'));
+  assert.ok(/val\('path', name, p\)/.test(body.slice(0, 2000)),
+    '必须把完整路径 p 作为 raw 传进去');
+});

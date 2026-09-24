@@ -1,33 +1,7 @@
 import type { NodeProps } from '@xyflow/react';
 import { NodeShell } from './NodeShell';
 import { opBriefParts, briefArg, type BriefPart } from '../engine/ops';
-import { ArgCell } from './ArgCell';
-
-/**
- * role → 类名。
- *
- * 写成查表而不是 `role-${p.role}`：项目里有一条「组件用到的类名必须在
- * styles.css 里有定义」的守卫，模板拼出来的前缀它查不到，
- * 只能整条放行 —— 而那正是"类名写错却没人发现"的口子。
- */
-const ARG_CLASS: Record<BriefPart['role'], string> = {
-  val: 'node-arg',
-  op: 'node-arg is-op',
-  fn: 'node-arg is-fn',
-  text: 'node-brief-text',
-};
-
-/**
- * 这一格用什么类名。
- *
- * 带 edit 的 text 段（如停止节点的「停止整个流程」）虽然是文字，
- * 但它**能点** —— 画成下凹的格子，暗示它跟运算符格一样可以改。
- * 画成普通文字的话，它看着不可点，用户也就不会去点。
- */
-function classOf(p: BriefPart): string {
-  if (p.role === 'text') return p.edit ? 'node-arg' : 'node-brief-text';
-  return ARG_CLASS[p.role];
-}
+import { ArgLine } from './ArgCell';
 
 /**
  * 运算 / 变量 / 停止 / 人工输入 共用的卡片。
@@ -52,11 +26,7 @@ export function OpNode({ id, type, data, selected }: NodeProps) {
       data={d}
       selected={selected}
     >
-      <div className="node-line node-line--brief node-brief">
-        {parts.map((p, i) => (
-          <ArgCell key={i} nodeId={id} type={type} part={p} data={d} className={classOf(p)} />
-        ))}
-      </div>
+      <ArgLine nodeId={id} type={type} data={d} parts={parts} />
     </NodeShell>
   );
 }
