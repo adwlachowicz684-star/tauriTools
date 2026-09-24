@@ -214,7 +214,16 @@ t('md 交互样式不写死色值（走 var()）',
   !/#[0-9a-fA-F]{3,6}\b/.test(mdCss.replace(/rgba?\([^)]*\)/g, '')),
   (mdCss.match(/#[0-9a-fA-F]{3,6}\b/g) || []).join(','));
 
-t('白名单登记了 fpx_copy_text', /md: \['fpx_read_file', 'fpx_copy_text'\]/.test(policy));
+/*
+ * 刻意**不钉死数组字面量**。
+ * 钉成 `md: ['fpx_read_file', 'fpx_copy_text']` 的话，
+ * 之后每加一条合法命令都要回来改测试 —— 忘了改就会被判成
+ * "安全回归"，而实际上只是登记变了（本轮加 fpx_export_text 就踩到了）。
+ * 改成"必须含这几条 + 不含 M 类"，加命令不用动测试。
+ */
+const mdCmds = (policy.match(/md: \[([^\]]*)\]/) || [])[1] || '';
+t('白名单含 fpx_copy_text', /'fpx_copy_text'/.test(mdCmds), mdCmds.slice(0, 120));
+t('白名单含 fpx_read_file（任意路径读取，只给内置）', /'fpx_read_file'/.test(mdCmds));
 t('md 仍未登记 M 类能力',
   !/md: \[[^\]]*(run_node|webhook_start|window_action|shell_open)/.test(policy));
 

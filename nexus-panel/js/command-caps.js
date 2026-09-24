@@ -136,6 +136,11 @@ export const COMMAND_CAPS = {
   fpx_import_icons: 'W',
   fpx_set_editor: 'W',
   fpx_edit_file: 'W',
+  /*
+   * F9 导出专用。比 fpx_write_text 更宽（允许新建），所以扩展名与覆盖
+   * 都在 Rust 侧收口（见 fpx::fpx_export_text）。定 W：写用户数据。
+   */
+  fpx_export_text: 'W',
   fpx_save_chain_clients: 'W',
   fpx_save_chain_actions: 'W',
   fpx_chain_send_action: 'W',

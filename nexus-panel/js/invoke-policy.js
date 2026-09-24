@@ -113,7 +113,18 @@ export const PLUGIN_COMMANDS = {
    * 代码块复制与右键菜单都要它。前端 navigator.clipboard 在插件里
    * 拿不到 allow-clipboard-write，会**静默失败**，所以必须走后端。
    */
-  md: ['fpx_read_file', 'fpx_copy_text'],
+  /*
+   * md —— 内置插件。
+   *   · fpx_read_file     S 类，任意路径读取（不经 guard），所以只给内置
+   *   · fpx_copy_text     复制到剪贴板（插件拿不到 clipboard-write）
+   *   · fpx_export_text   F9 导出，W 类。扩展名白名单 + 默认不覆盖由 Rust 收口
+   *   · fpx_open_path     「打开所在目录」。**只准 mode=dir** ——
+   *     mode=auto 在 Windows 上会对 .exe/.bat 直接执行，
+   *     等于一条任意执行通道（见 fpx::fpx_open_path 注释）。
+   *     （本注释刻意全程不带引号：command-consistency 会把带引号的
+   *      连续串当成命令名，写错一个就会被报成"白名单里有但没注册"。）
+   */
+  md: ['fpx_read_file', 'fpx_copy_text', 'fpx_export_text', 'fpx_open_path'],
 
   /*
    * agent-flow

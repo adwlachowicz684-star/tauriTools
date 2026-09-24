@@ -1953,6 +1953,22 @@ html.theme-transition *:not(.spinner) {
   font-size: 12px;
   opacity: 0.8;
 }
+
+/*
+ * .md-export —— 导出按钮组（F9）
+ * ------------------------------------------------------------
+ * 不写死颜色：跟 .md-bar 里其它元素同一套变量，切主题时一起变。
+ * 写死的话会出现"整条栏变了、按钮没变"，看着像没生效。
+ */
+.md-export {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.md-export .md-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .markdown-body h1, .markdown-body h2,
 .markdown-body h3, .markdown-body h4 {
   margin: .6em 0 .3em;

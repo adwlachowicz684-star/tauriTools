@@ -14,6 +14,7 @@ import { targetOf, menuItemsFor } from './ctx-menu';
 import { splitBlocks, createBlockCache, visibleBlockIndex } from './blocks';
 import MermaidBlock from './MermaidBlock';
 import { isMermaid } from './mermaid';
+import { exportPathOf, checkExportPath, buildExportHtml, EXPORT_EXTS } from './export';
 
 /**
  * md 插件主界面
@@ -160,6 +161,15 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
   const [src, setSrc] = useState(SAMPLE);
   /* 当前文件名。空串 = 内容是粘贴/默认的，不是从文件来的。 */
   const [fileName, setFileName] = useState('');
+  /*
+   * 源文件的**完整路径**。只有文件名不够 —— 导出要知道写到哪个目录。
+   *
+   * 拖入（E1）时拿不到：浏览器沙箱只给 File 对象，不给磁盘路径
+   * （dragDropEnabled=false 下更是如此）。这时 srcPath 为空，
+   * 导出按钮禁用并说明原因 —— 不能随便挑个目录写下去，
+   * 那会变成"导出成功但找不到文件在哪"。
+   */
+  const [srcPath, setSrcPath] = useState('');
   /*
    * docSeq —— 只在**打开新文档**时自增（拖入 / E2 传路径），
    * 敲键盘改内容不算。
@@ -377,6 +387,7 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
 
     setSrc(text);
     setFileName(file.name || '');
+      setSrcPath('');          // 拖入拿不到磁盘路径，见上面 srcPath 的说明
     setDocSeq((n) => n + 1);           // 换了文档 → 触发阅读位置恢复
     /* 正常打开时也要显示多文件说明：静默丢弃容易让人误以为打开的是想要那个 */
     setHint(note);
@@ -413,6 +424,7 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
       setSrc(text);
       const nm = String(path).replace(/\\/g, '/').split('/').pop() || path;
       setFileName(nm);
+      setSrcPath(String(path));
       setDocSeq((n) => n + 1);         // 换了文档 → 触发阅读位置恢复
       setHint('');
     } catch (err) {
@@ -430,6 +442,88 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
     return () => off?.();
   }, [ctx, openPath]);
 
+  /*
+   * F9 导出
+   *
+   * 两个按钮共用这一个函数：差别只在 kind（html / md）与内容来源。
+   *
+   * 三条必须遵守：
+   *   ① 目标路径由**源路径**推出 —— 没有源路径就明确拒绝并说明，
+   *      不挑默认目录（导出成功但用户找不到文件，比直接拒绝更糟）
+   *   ② overwrite 传 true —— 同一个文档反复导出必然覆盖上一次的结果，
+   *      默认不覆盖的话第二次就报"目标已存在"，用户会以为是坏了
+   *   ③ 打开所在目录用 mode:'dir' —— mode:'auto' 在 Windows 上
+   *      对 .exe/.bat 就是执行，等于一条任意执行通道
+   *      （见 fpx::fpx_open_path 的注释）
+   */
+  const [exporting, setExporting] = useState(false);
+  const [exportTo, setExportTo] = useState('');
+
+  const onExport = useCallback(
+    async (kind: 'html' | 'md') => {
+      if (!ctx) { setHint('未连接到外壳，无法导出'); return; }
+      const target = exportPathOf(srcPath, kind);
+      const chk = checkExportPath(target);
+      if (!chk.ok) { setHint(`无法导出：${chk.why}`); return; }
+
+      setExporting(true);
+      setHint('');
+      try {
+        let text: string;
+        if (kind === 'md') {
+          text = src;
+        } else {
+          /*
+           * 渲染后的 HTML 从 DOM 取，不用 React 元素转字符串：
+           * 转字符串要另配 renderToStaticMarkup，两条路径容易不一致。
+           * 取 innerHTML 拿到的一定是屏幕上那一版（含 Mermaid 已画好的 SVG）。
+           */
+          const el = outRef.current;
+          if (!el) { setHint('渲染区未就绪，请稍后再试'); return; }
+          const vars: Record<string, string> = {};
+          try {
+            const cs = getComputedStyle(document.documentElement);
+            for (const n of ['--bg', '--text', '--text-dim', '--border', '--accent']) {
+              const v = cs.getPropertyValue(n);
+              if (v && v.trim()) vars[n] = v.trim();
+            }
+          } catch {
+            /* 读不到就用 BASE_CSS 里的兜底色，不是错误 */
+          }
+          text = buildExportHtml({
+            title: fileName || 'Markdown 导出',
+            bodyHtml: el.innerHTML,
+            vars,
+          });
+        }
+
+        await ctx.invoke('fpx_export_text', {
+          path: target,
+          text,
+          overwrite: true,
+        });
+        setExportTo(target);
+        setHint(`已导出：${target}`);
+      } catch (err) {
+        /* 后端拒绝的原因要原样显示：多数时候是"目录未授权"这类
+           用户能自己解决的事，吞掉就只剩一句"导出失败" */
+        setHint(`导出失败：${err?.message || err}`);
+      } finally {
+        setExporting(false);
+      }
+    },
+    [ctx, srcPath, src, fileName],
+  );
+
+  const onOpenDir = useCallback(async () => {
+    if (!ctx || !exportTo) return;
+    try {
+      await ctx.invoke('fpx_open_path', { path: exportTo, mode: 'dir' });
+    } catch (err) {
+      setHint(`打开目录失败：${err?.message || err}`);
+    }
+  }, [ctx, exportTo]);
+
   return (
     <div
       className={`md-wrap${dragging ? ' is-drag' : ''}`}
@@ -442,6 +536,44 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
           {fileName ? titleOf(fileName) : '未命名（粘贴/默认）'}
         </span>
         {hint ? <span className="md-hint">{hint}</span> : null}
+        <span className="md-export">
+          {/*
+            没有源路径时禁用而不是隐藏：按钮凭空消失只会被当成漏做了，
+            不会想到"得先用项目组的「阅读」打开"。title 里写明原因。
+          */}
+          <button
+            type="button"
+            className="md-btn"
+            disabled={!srcPath || exporting}
+            title={
+              srcPath
+                ? '导出为自包含 HTML（含样式与已画好的图表）'
+                : '拖入的文档拿不到磁盘路径，无法导出；请用项目组的「阅读」打开'
+            }
+            onClick={() => onExport('html')}
+          >
+            {exporting ? '导出中…' : '导出 HTML'}
+          </button>
+          <button
+            type="button"
+            className="md-btn"
+            disabled={!srcPath || exporting}
+            title={srcPath ? '导出 Markdown 源' : '拖入的文档拿不到磁盘路径，无法导出'}
+            onClick={() => onExport('md')}
+          >
+            导出 MD
+          </button>
+          {exportTo ? (
+            <button
+              type="button"
+              className="md-btn"
+              onClick={onOpenDir}
+              title="在资源管理器里打开导出文件所在目录"
+            >
+              打开所在目录
+            </button>
+          ) : null}
+        </span>
       </div>
       {/*
         目录栏：没有标题时不渲染整栏。
@@ -481,6 +613,7 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
                */
               setFileName('');
               setHint('');
+              setSrcPath('');
             }}
             spellCheck={false}
           />

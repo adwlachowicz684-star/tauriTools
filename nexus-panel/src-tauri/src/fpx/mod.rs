@@ -2241,6 +2241,51 @@ pub fn fpx_write_text(
         .map_err(|e| format!("写回失败: {e}"))
 }
 
+/// F9 导出 —— 新建文件并写入文本。
+///
+/// 为什么不能复用 `fpx_write_text`：那条命令里有
+///   `if !target.is_file() { return Err("只能写回已存在的文件，不能新建") }`
+/// 而**导出必然是新建** —— 拿它做导出只会稳定报"不能新建"，
+/// 且从错误信息看不出该换命令。
+///
+/// 三条收口一条都不能少：
+///   ① `ensure_path_in` —— 落在数据目录或已登记 root 内。
+///      它对**尚不存在**的目标也能校验（guard::canonical_or_with_parent
+///      会退化成"父目录 canonicalize + 文件名"），所以新建不会绕过白名单。
+///   ② 扩展名白名单 —— 少了这条，本命令就是"在允许的目录里写 .exe/.bat/.lnk"。
+///      导出只需要 html/md/txt，多一个扩展名都是纯风险。
+///   ③ 默认不覆盖 —— 覆盖用户已有文件是丢数据，必须调用方显式要求
+///      （overwrite: true）才覆盖。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_export_text(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+    path: String,
+    text: String,
+    overwrite: Option<bool>,
+) -> Result<String, String> {
+    let dir = store::data_dir(&app, &state)?;
+    let cfg = store::load_config(&dir);
+    ensure_path_in(&dir, &cfg, &path)?;
+
+    let p = std::path::Path::new(&path);
+    let ext = p
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if !matches!(ext.as_str(), "html" | "htm" | "md" | "markdown" | "txt") {
+        return Err(format!("只允许导出 html / md / txt，收到 .{ext}"));
+    }
+    if p.exists() && !overwrite.unwrap_or(false) {
+        return Err(format!("目标已存在，未覆盖：{path}"));
+    }
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("无法创建目录：{e}"))?;
+    }
+    std::fs::write(p, text.as_bytes()).map_err(|e| format!("写入失败：{e}"))?;
+    Ok(path)
+}
+
 /// 用配置里的编辑器打开文件（未配置则退回系统默认打开方式）。
 #[tauri::command(rename_all = "snake_case")]
 pub fn fpx_edit_file(
