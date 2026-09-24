@@ -1597,3 +1597,147 @@ mod tests {
         assert!(!f("traecli"));
     }
 }
+
+/* ---------------------- MCP 客户端注册自愈（#42） ---------------------- */
+
+/// 在客户端配置里登记本服务的键名（与协议里的 `serverInfo.name` 一致）。
+pub const MCP_REGISTER_KEY: &str = "nexus-panel-project-group";
+
+/// stdio 模式的启动参数。
+///
+/// **不能照原版写 `--mcp`**：原版是独立 exe，`--mcp` 就是它的 stdio 入口；
+/// 本版 `--mcp` 是「隐藏窗口跑界面」（见 main.rs），真正的 stdio 入口是
+/// `--stdio`。照搬的话客户端拉起进程后**收不到任何响应** ——
+/// 进程确实起来了、也不报错，只是不在说协议，表现为「连上就没反应」，
+/// 而日志里什么都没有，最难查。
+pub const MCP_STDIO_ARG: &str = "--stdio";
+
+/// 已知客户端的全局 MCP 配置路径（只在**已存在**的文件里自愈）。
+///
+/// 取自原版 `McpRegistrationService.UpdateTraeGlobalMcpJson` 的两个候选。
+/// 原版注释：「TRAE 不支持环境变量插值，所以写实际 exe 路径」。
+///
+/// 不在这里加没核对过的客户端路径：路径写错只是找不到文件（无害），
+/// 但配置结构猜错就可能改到不是我们条目的东西。
+fn client_config_paths() -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        let base = std::path::PathBuf::from(appdata);
+        out.push(base.join("TRAE SOLO CN").join("User").join("mcp.json"));
+        out.push(base.join("Trae CN").join("User").join("mcp.json"));
+    }
+    out
+}
+
+/// 这条配置里的 command 是不是「我们自己的 exe 的旧位置」。
+///
+/// 判据是**文件名相同**而不是路径前缀相同：装到别处、升级后路径变了，
+/// 文件名不变。反过来，若 command 指向的是别的程序（用户手工配了包装脚本、
+/// 或另一款同名的工具），**绝不能动** ——
+/// 那是在改用户没要求改的东西，而界面上完全看不出来。
+fn is_own_exe(entry: &serde_json::Map<String, serde_json::Value>, exe_name: &str) -> bool {
+    entry
+        .get("command")
+        .and_then(|v| v.as_str())
+        .and_then(|s| std::path::Path::new(s).file_name())
+        .map(|n| n.to_string_lossy().eq_ignore_ascii_case(exe_name))
+        .unwrap_or(false)
+}
+
+/// 修一个配置文件：只动**属于本服务**的条目，绝不主动创建。
+///
+/// @return Ok(true) = 确实改了并已写回；Ok(false) = 无需改动。
+fn heal_client_config(path: &std::path::Path, exe: &std::path::Path) -> Result<bool, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("读失败：{e}"))?;
+    let mut root: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("不是合法 JSON（{e}），未改动"))?;
+
+    let exe_str = exe.to_string_lossy().to_string();
+    let exe_name = exe
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let mut changed = false;
+    {
+        let servers = match root.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
+            Some(s) => s,
+            None => return Ok(false),
+        };
+        // 先收键名：下面要改 servers 的值，边遍历边改会借用冲突
+        let keys: Vec<String> = servers.keys().cloned().collect();
+        for key in keys {
+            let mine = key == MCP_REGISTER_KEY;
+            let entry = match servers.get_mut(&key).and_then(|v| v.as_object_mut()) {
+                Some(e) => e,
+                None => continue,
+            };
+            /*
+             * 键名是我们的、**或** command 指向的是我们 exe 的旧位置，才修。
+             * 两者都不是 → 整条都不动（那里可能登记着别的 MCP 服务，
+             * 或用户故意配的包装脚本）。
+             */
+            if !mine && !is_own_exe(entry, &exe_name) {
+                continue;
+            }
+            if entry.get("command").and_then(|v| v.as_str()) != Some(exe_str.as_str()) {
+                entry.insert("command".into(), serde_json::Value::String(exe_str.clone()));
+                changed = true;
+            }
+            let args_ok = entry
+                .get("args")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first())
+                .and_then(|v| v.as_str())
+                == Some(MCP_STDIO_ARG);
+            if !args_ok {
+                entry.insert(
+                    "args".into(),
+                    serde_json::Value::Array(vec![serde_json::Value::String(
+                        MCP_STDIO_ARG.into(),
+                    )]),
+                );
+                changed = true;
+            }
+        }
+    }
+    if !changed {
+        return Ok(false);
+    }
+    // 原子写：先 .tmp 再 rename，进程中断不残留半截文件
+    let json = serde_json::to_string_pretty(&root).map_err(|e| format!("序列化失败：{e}"))?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json).map_err(|e| format!("写临时文件失败：{e}"))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("替换失败：{e}"))?;
+    Ok(true)
+}
+
+/// 自愈各客户端配置里**已存在**的本服务条目，返回人类可读摘要（无变更则空串）。
+///
+/// 三条硬约束（沿原版 `McpRegistrationService` 的设计）：
+///
+///   1. 只在**已存在**的配置文件里改，**绝不主动创建**文件或条目 ——
+///      用户全局配置里有什么是他自己的事，凭空加一条等于替他改了别的软件的配置
+///   2. 幂等：只在确实不一致时才写
+///   3. 原子写：先 .tmp 再 rename
+///
+/// 失败只返回一段说明，不往上抛 —— 这是锦上添花，
+/// 不能因为自愈失败就让界面起不来。
+pub fn register_clients() -> String {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => return format!("MCP 注册自愈失败：拿不到自身路径（{e}）"),
+    };
+    let mut lines: Vec<String> = Vec::new();
+    for path in client_config_paths() {
+        if !path.exists() {
+            continue;
+        }
+        match heal_client_config(&path, &exe) {
+            Ok(true) => lines.push(format!("已更新 {} → {}", MCP_REGISTER_KEY, path.display())),
+            Ok(false) => {}
+            Err(e) => lines.push(format!("跳过 {}（{}）", path.display(), e)),
+        }
+    }
+    lines.join("\n")
+}

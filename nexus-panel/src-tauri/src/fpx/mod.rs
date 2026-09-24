@@ -2685,6 +2685,14 @@ pub fn fpx_mcp_status() -> serde_json::Value {
     mcp::status()
 }
 
+/// #42 手动触发一次 MCP 客户端注册自愈，返回摘要（无变更则空串）。
+///
+/// 启动时也会自动跑一次（见 main.rs 的 setup），这里额外给一个入口：
+/// 用户装完客户端、手工登记完条目之后，不必重启面板就能校正路径。
+pub fn fpx_mcp_register() -> String {
+    mcp::register_clients()
+}
+
 /* ---------------------------- 预设图标 ---------------------------- */
 
 /// 把某目录下的图标文件导入数据目录 icons/（用于接入原版 preseticons）。

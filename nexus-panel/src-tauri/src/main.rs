@@ -322,6 +322,7 @@ fn main() {
             fpx::fpx_backup_auto_status, fpx::fpx_backup_auto_sync, fpx::fpx_mcp_stop,
             fpx::fpx_backup_targets,
             fpx::fpx_mcp_status, fpx::fpx_import_icons, fpx::fpx_rename_folder, fpx::fpx_clear_invalid,
+            fpx::fpx_mcp_register,
             fpx::fpx_move_folder, fpx::fpx_rename_content_item, fpx::fpx_rename_skill_segment,
             af_flow::run_node, af_flow::kill_node, af_flow::check_cli,
             af_flow::watch_start, af_flow::watch_stop,
@@ -418,6 +419,19 @@ fn main() {
                     Ok(addr) => eprintln!("[mcp] listening on http://{addr}/mcp"),
                     Err(e) => eprintln!("[mcp] 启动失败: {e}"),
                 }
+            }
+            /*
+             * #42 MCP 注册自愈（原版 `McpRegistrationService`，启动时后台跑）。
+             *
+             * 只修**已经登记过**的条目（把 exe 路径与启动参数校正到当前版本），
+             * 绝不主动创建 —— 用户全局配置里有什么是他自己的事，
+             * 凭空加一条等于替他改了别的软件的配置。
+             *
+             * 失败只记 stderr：这是锦上添花，不能因为自愈失败就起不来界面。
+             */
+            let reg = fpx::mcp::register_clients();
+            if !reg.is_empty() {
+                eprintln!("[mcp] 注册自愈：{reg}");
             }
             Ok(())
         })
