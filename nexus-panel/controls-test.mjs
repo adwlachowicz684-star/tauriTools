@@ -1948,10 +1948,22 @@ console.log('\n=== 37. 类型检查暴露的两类真 bug ===');
    * 于是读到 undefined.path → TypeError。
    * iconTargetName 那一行写了括号，两行不一致正是漏写的原因。
    */
-  const dl = read('plugins/project-group/components/Dialogs.tsx');
+  /*
+   * 这两个文件后来被重构：Dialogs.tsx / dialogs.tsx 合并为
+   * dialogCards.tsx + DialogsHub.tsx。断言要跟着找新家，
+   * 否则 read 直接 ENOENT 把整个测试套件崩掉（不是报红，是中断）。
+   */
+  const dl = read('plugins/project-group/components/DialogsHub.tsx');
   {
     // 找出所有 `??` 后紧跟一个未加括号的三元的写法
-    const risky = [...dl.matchAll(/\?\?\s*([A-Za-z_$][\w.$?]*\s*(?:===|!==|==|!=)[^?]*?)\s*\?[^:]*:./g)]
+    /*
+     * 必须剥注释再匹配：修复时我把"曾写成 `?? dialog.type === 'icons' ? ...`"
+     * 这句**错误写法原文**写进了注释里，重构时又被一起搬到了 DialogsHub。
+     * 不剥注释的话，断言匹配到的是注释里的示例而不是真代码 ——
+     * 报红报的是"注释里有个旧写法"，真代码其实是对的。
+     * 这是本轮第三次踩到"检查器读到自己写的说明就报警"。
+     */
+    const risky = [...stripComments(dl).matchAll(/\?\?\s*([A-Za-z_$][\w.$?]*\s*(?:===|!==|==|!=)[^?]*?)\s*\?[^:]*:./g)]
       .map((m) => m[0].slice(0, 60));
     t('?? 与三元混用处都加了括号',
       risky.length === 0, risky.join(' | '));
@@ -1965,8 +1977,8 @@ console.log('\n=== 37. 类型检查暴露的两类真 bug ===');
 console.log('\n=== 38. 类型收紧代替非空断言（boot 就绪由调用方证明） ===');
 {
   const uf = read('plugins/project-group/hooks/useFpx.ts');
-  const dl = read('plugins/project-group/components/Dialogs.tsx');
   const dh = read('plugins/project-group/components/DialogsHub.tsx');
+  const dl = dh;   // Dialogs.tsx 已并入 DialogsHub.tsx
   const ap = read('plugins/project-group/App.tsx');
   const lm = read('plugins/project-group/hooks/useLayoutMemory.ts');
 
@@ -2018,6 +2030,37 @@ console.log('\n=== 38. 类型收紧代替非空断言（boot 就绪由调用方�
    */
   t('useLayoutMemory 里没有裸用未声明的 logRowHeight（剥注释后）',
     !/saveLayout\(\{\s*logRowHeight\s*\}\)/.test(stripComments(lm)));
+}
+
+
+console.log('\n=== 39. 文件改名后引用必须跟着改（断链） ===');
+{
+  const DIR = 'plugins/project-group/components';
+  const hub = read(`${DIR}/DialogsHub.tsx`);
+
+  /*
+   * dialogs.tsx 被改名为 dialogCards.tsx，但 DialogsHub 里两处
+   * `from './dialogs'` 没跟着改 → Vite "Failed to resolve import"，
+   * 整个插件编译不过。改名只改文件、不改引用，是编辑器里**看不出来**的错：
+   * 只有构建或运行时才炸，而且一炸就是整片。
+   */
+  const imports = [...hub.matchAll(/from\s*'\.\/([^']+)'/g)].map((m) => m[1]);
+  const missing = imports.filter((name) => {
+    for (const ext of ['.tsx', '.ts', '.jsx', '.js']) {
+      if (existsSync(join(HERE, DIR, name + ext))) return false;
+    }
+    return true;
+  });
+  t('DialogsHub 里相对 import 的文件都存在（改名后引用要跟着改）',
+    missing.length === 0, missing.map((x) => `./${x}`).join(', '));
+
+  /* 新增功能配套的必填字段：漏一处就是编译不过，且往往漏的是少数几处 */
+  const app = read('plugins/project-group/App.tsx');
+  const lockCalls = [...app.matchAll(/setDialog\(\{\s*type:\s*'lock'[^}]*\}\)/g)].map((m) => m[0]);
+  const noKind = lockCalls.filter((c) => !/\bkind\b/.test(c));
+  t('所有 lock 弹窗调用都带了 kind（#419 后必填）',
+    lockCalls.length > 0 && noKind.length === 0,
+    noKind.join(' | '));
 }
 
 
