@@ -232,6 +232,39 @@ pub fn serve(app: AppHandle, port: u16) -> Result<String, String> {
 ///    被记成一条失败日志 + 非零退出码。部分客户端会据此报"服务崩溃"，
 ///    而真相只是对方先走了 —— 属于"报了错，但报的不是真问题"。
 pub fn serve_stdio(dir: PathBuf) -> Result<(), String> {
+    /*
+     * #483 config 损坏 / 体检告警要在**启动时**打到 stderr。
+     *
+     * 原版 `McpServer` 构造函数里：
+     *   `Console.Error.WriteLine("[fenpei-mcp] " + _configSvc.LastLoadWarning)`
+     * 注释写明「stdout 是协议流不可污染，让客户端/终端可见」。
+     *
+     * 为什么必须打出来：config 损坏时 MCP 会**按默认值照常启动** ——
+     * 所有工具照常响应、看不出任何异常。AI 客户端据此以为自己读到了
+     * 用户的真实配置，实际读到的是一套全新的默认值。
+     * 它不报错、不拒绝服务，只是**静默地错了**。
+     *
+     * 走 stderr 而不是 stdout：stdout 是 JSON-RPC 协议流，
+     * 往里混一行文本会让客户端解析失败 ——
+     * 表现为"连上就断开"，且日志里什么都没有。
+     */
+    for n in super::store::config_issues(&dir) {
+        let _ = writeln!(std::io::stderr(), "[fpx-mcp] {n}");
+    }
+    /*
+     * 损坏本身（不是"未知键/迁移记录"这类体检项）单独报：
+     * `config_issues` 只认能解析的 JSON，解析失败它直接返回空 ——
+     * 若只用它，**最严重的那一类反而一条都不报**。
+     */
+    if let super::store::LoadOutcome::Corrupted { backup, reason } =
+        super::store::load_config_strict(&dir)
+    {
+        let _ = writeln!(
+            std::io::stderr(),
+            "[fpx-mcp] config.json 损坏，本次按默认值运行：{reason}；原文已另存为 {}",
+            backup.display());
+    }
+
     let stdin = std::io::stdin();
     let mut reader = BufReader::new(stdin.lock());
     let stdout = std::io::stdout();

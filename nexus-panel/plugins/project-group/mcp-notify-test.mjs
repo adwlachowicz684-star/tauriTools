@@ -84,4 +84,61 @@ console.log('\n=== 2. stdout 断裂要优雅退出（对齐原版 McpServer.RunA
   t('序列化失败仍然返回 Err（真 bug 不能吞）', /序列化响应失败/.test(w));
 }
 
+console.log('\n=== 4. #483 config 损坏告警必须走 stderr ★ ===');
+{
+  const mcp = strip(fs.readFileSync(path.join(HERE, '../../src-tauri/src/fpx/mcp.rs'), 'utf8'));
+  const i = mcp.indexOf('pub fn serve_stdio(');
+  const blk = mcp.slice(i, i + 2200);
+
+  /*
+   * 一、必须**在启动时**打，不能等到有请求。
+   *
+   * 等到有请求才报的话：客户端若只发 `initialize`（很多客户端就这样），
+   * 告警永远发不出去 —— 而那正是最需要它的时候。
+   */
+  t('启动时就打（在读 stdin 之前）',
+    blk.indexOf('config_issues') < blk.indexOf('BufReader::new'));
+
+  /*
+   * 二、**必须走 stderr**。
+   *
+   * stdout 是 JSON-RPC 协议流，往里混一行文本会让客户端解析失败 ——
+   * 表现为"连上就断开"，且日志里什么都没有。
+   */
+  t('走 stderr（不是 stdout / println!）',
+    /writeln!\(std::io::stderr\(\)/.test(blk));
+  /*
+   * 用 `(?<![a-z])println!\(` 而不是 `println!\(`：
+   * **`eprintln!(` 里就含 `println!(`** 这个子串，
+   * 不排除前导字母的话会把 stderr 的那几处误判成 stdout（假失败）。
+   */
+  t('没有用 println! 输出到 stdout', !/(?<![a-z])println!\(/.test(blk));
+
+  /*
+   * 三、两类都要报，缺一不可。
+   *
+   * `config_issues` 只认**能解析**的 JSON（未知键 / 迁移记录），
+   * 解析失败它直接返回空。若只用它，**最严重的那一类反而一条都不报**。
+   */
+  t('报 config_issues（未知键/迁移）', /store::config_issues\(&dir\)/.test(blk));
+  t('报 Corrupted（解析失败，最严重那类）', /LoadOutcome::Corrupted/.test(blk));
+  t('Corrupted 里说清"按默认值运行"', /按默认值运行/.test(blk));
+  t('Corrupted 里说清原文另存到哪', /原文已另存为/.test(blk));
+
+  /*
+   * 四、打不出来**不能**让服务起不来。
+   *
+   * 用 `let _ =` 忽略结果：stderr 也可能被关掉（部分客户端不接 stderr），
+   * 那时若把错误往外抛，服务直接启动失败 ——
+   * 用户看到的是"MCP 连不上"，而真相只是"没人听 stderr"。
+   */
+  /*
+   * 计数正则必须允许**换行与缩进**：Corrupted 那条是多行 `writeln!(`。
+   * 只按单行匹配的话第二处统计不到（本轮就报了"忽略 1 处"的假失败）。
+   */
+  const ignores = (blk.match(/let _ = writeln!\([\s\S]{0,40}stderr\(\)/g) || []).length;
+  t('写 stderr 失败不影响启动（let _ = 忽略）', ignores >= 2, '忽略 ' + ignores + ' 处');
+  t('Corrupted 分支没有用 ? 往外抛', !/Corrupted[\s\S]{0,300}\?;/.test(blk));
+}
+
 done();
