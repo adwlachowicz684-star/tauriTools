@@ -10,10 +10,9 @@ import { useFpx } from './hooks/useFpx';
 import { useCardHotkeys } from './hooks/useCardHotkeys';
 import { useChainActions } from './hooks/useChainActions';
 import { useLayoutMemory } from './hooks/useLayoutMemory';
-import {
-  effectiveCombo, formatCombo, isHotkeyId, IS_MAC, type HotkeyId,
-} from './utils/hotkeys';
+import { IS_MAC, type HotkeyId } from './utils/hotkeys';
 import { clampLogMax } from './utils/log';
+import { comboHintOf, shouldShowHint, TOOLBAR_HINT_IDS } from './utils/hint';
 import { skipDropToTab } from './utils/tabs';
 
 
@@ -162,12 +161,22 @@ export default function App() {
   const [reveal, setReveal] = useState<{ path: string; seq: number } | null>(null);
   const revealSeq = useRef(0);
 
-  /* #50 键位从 HOTKEYS 动态取：手抄的话改了键位按钮上还是旧值 */
+  /*
+   * #50 键位一律走 utils/hint.ts，不在这里内联第二份 ——
+   * 此前正是内联了一份，hint.ts 整份没人 import，改语义必然只改一边。
+   * 按钮文案 → 键位 id 的映射也在 hint.ts（TOOLBAR_HINT_IDS），不手抄。
+   */
   const showHints = boot?.config.showShortcuts ?? true;
+  const hotkeyOverrides = boot?.config.hotkeys ?? null;
+  /** 按**按钮文案**取已格式化的键位串；没有键位（或被取消绑定）返回空串 */
   const comboHint = useCallback(
-    (id: string) => (showHints && isHotkeyId(id)
-      ? effectiveCombo(id, boot?.config.hotkeys ?? null) : ''),
-    [showHints, boot?.config.hotkeys],
+    (label: string) => {
+      const id = TOOLBAR_HINT_IDS[label] ?? '';
+      return shouldShowHint(showHints, id, hotkeyOverrides)
+        ? comboHintOf(id, hotkeyOverrides, IS_MAC)
+        : '';
+    },
+    [showHints, hotkeyOverrides],
   );
 
 
@@ -821,7 +830,7 @@ export default function App() {
               发送到 AI
             </button>
             <button className="p-btn" onClick={() => setDialog({ type: 'backup' })}>
-              备份{comboHint('backupNow') && <span className="fpx-key">{formatCombo(comboHint('backupNow'), IS_MAC)}</span>}
+              备份{comboHint('备份') && <span className="fpx-key">{comboHint('备份')}</span>}
             </button>
             <button
               className="p-btn"
@@ -839,17 +848,17 @@ export default function App() {
                 s.refresh();
               }}
             >
-              刷新{comboHint('refresh') && <span className="fpx-key">{formatCombo(comboHint('refresh'), IS_MAC)}</span>}
+              刷新{comboHint('刷新') && <span className="fpx-key">{comboHint('刷新')}</span>}
             </button>
             <button
               className="p-btn"
               title="摘掉页签里已不存在的路径（F8）"
               onClick={() => void s.clearInvalid()}
             >
-              清除无效项{comboHint('clearInvalid') && <span className="fpx-key">{formatCombo(comboHint('clearInvalid'), IS_MAC)}</span>}
+              清除无效项{comboHint('清除无效项') && <span className="fpx-key">{comboHint('清除无效项')}</span>}
             </button>
             <button className="p-btn" onClick={() => setHelp(true)}>
-              使用说明{comboHint('toggleTips') && <span className="fpx-key">{formatCombo(comboHint('toggleTips'), IS_MAC)}</span>}
+              使用说明{comboHint('使用说明') && <span className="fpx-key">{comboHint('使用说明')}</span>}
             </button>
             {/* 页签管理（#23）：两栏页签集中一处增删改序。
                 页签条上的 ⋮ 菜单仍在（就地改更顺手），这里给的是"整理"入口 */}

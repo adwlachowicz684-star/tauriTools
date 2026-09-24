@@ -68,7 +68,13 @@ console.log('\n=== 3. HotkeyId 收窄（3 处：App + hint×2）===');
   t('有类型守卫', /export function isHotkeyId\(id: string\): id is HotkeyId/.test(hk));
   /* 判定必须用 HOTKEY_BY_ID，不能另抄一份 id 列表（抄了就会漂移） */
   t('用 HOTKEY_BY_ID 判定', /hasOwnProperty\.call\(HOTKEY_BY_ID, id\)/.test(hk));
-  t('App 里用了守卫', /showHints && isHotkeyId\(id\)/.test(app));
+  /*
+   * 守卫不再内联在 App 里 —— 已收进 utils/hint.ts 的 shouldShowHint，
+   * 由 App.tsx 调用。钉"App 里写 showHints && isHotkeyId"会在接线后误报；
+   * 真正要钉的是**判定逻辑只有一份**（收窄函数定义在 hotkeys.ts）。
+   */
+  t('App 走 hint.ts 的 shouldShowHint（不内联守卫）',
+    /shouldShowHint\(/.test(app) && !/isHotkeyId\(/.test(app));
   t('hint 的 comboHintOf 用了', /isHotkeyId\(actionId\) \? effectiveCombo/.test(hint));
   t('hint 的 shouldShowHint 用了', /isHotkeyId\(actionId\) \? !!effectiveCombo/.test(hint));
   /* 不许用 as 断言抹平 */

@@ -184,4 +184,91 @@ console.log('\n=== 6. CSS 类不得是死代码（跨插件）★ ===');
   t('扫描到了足量类名（正则有效）', classes.size > 50, String(classes.size));
 }
 
+
+console.log('\n=== 7. 不得有无人 import 的死文件 ★ ===');
+/*
+ * 整份文件没人 import = 死文件。最典型的是**搬走后遗留的副本**：
+ * project-group/components/SvPanel.tsx 就是这样 —— 组件已搬到共享色盘
+ * （plugins/color-picker）下，这边留了一份 3.6KB 的副本，全库无人引用。
+ *
+ * 判定只看 **import 语句**（`from '...'` / `import('...')`），
+ * 不看符号出现次数 —— 后者会被注释和测试里的字符串当成"在用"
+ * （第 1 节正是被这个干扰，hint.ts 整份没接线它也没报）。
+ *
+ * 保守排除：文件名在任何 .mjs 测试里出现过就不判死 ——
+ * 测试可能用 loadTs() 动态加载，那种不算死文件（宁可漏，不可误删）。
+ */
+{
+  const walk = (dir, out = []) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === 'node_modules' || e.name === '.git') continue;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p, out);
+      else if (/\.tsx?$/.test(e.name) && !e.name.endsWith('.d.ts')) out.push(p);
+    }
+    return out;
+  };
+  const sources = walk(PG).filter((f) => path.basename(f) !== 'main.tsx');
+  const key = (p) => p.replace(/\.tsx?$/, '');
+
+  /* 收集所有 import 的相对路径，解析成绝对路径 */
+  const resolved = new Set();
+  const scopes = [PG, ...fs.readdirSync(path.join(ROOT, 'plugins'), { withFileTypes: true })
+    .filter((e) => e.isDirectory()).map((e) => path.join(ROOT, 'plugins', e.name)),
+    path.join(ROOT, 'src')];
+  for (const sc of scopes) {
+    if (!fs.existsSync(sc)) continue;
+    for (const f of walk(sc)) {
+      let txt = '';
+      try { txt = fs.readFileSync(f, 'utf8'); } catch { continue; }
+      txt = txt.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+      for (const m of txt.matchAll(/(?:from|import)\s*\(?\s*['"](\.[^'"]+)['"]/g)) {
+        const base = path.resolve(path.dirname(f), m[1]);
+        for (const c of [base, base + '.ts', base + '.tsx',
+          path.join(base, 'index.ts'), path.join(base, 'index.tsx')]) {
+          resolved.add(key(path.resolve(c)));
+        }
+      }
+    }
+  }
+  /* 测试文件里的任何提及 → 不判死（loadTs 动态加载不算 import） */
+  const testBlob = fs.readdirSync(PG)
+    .filter((n) => n.endsWith('-test.mjs'))
+    .map((n) => { try { return fs.readFileSync(path.join(PG, n), 'utf8'); } catch { return ''; } })
+    .join('\n');
+
+  const dead = sources.filter((f) => {
+    if (resolved.has(key(path.resolve(f)))) return false;
+    return !testBlob.includes(path.basename(f).replace(/\.tsx?$/, ''));
+  }).map((f) => path.relative(PG, f));
+  t('无死文件', dead.length === 0, dead.join('、') || '干净');
+  /* 反例护栏：源文件集合若为空，说明扫描失效（断言恒真 = 空跑） */
+  t('扫描到了足量源文件（判据有效）', sources.length > 30, String(sources.length));
+}
+
+console.log('\n=== 8. #50 键位提示必须接线到 utils/hint.ts ★ ===');
+/*
+ * 这一节是被一次"假生效"逼出来的：
+ * utils/hint.ts 写得很完整（映射表 + 三个函数 + 测试齐备），
+ * 但 App.tsx 里**另内联了一份**同样的逻辑，hint.ts 整份没人 import。
+ * 于是 #50 在状态表里标着 ✅（照 hint.ts 的实现看确实做了），
+ * 真正跑的是内联那份 —— 两处语义一旦漂移，改哪边都不全生效。
+ *
+ * 只钉"hint.ts 有人 import"不够：测试文件也会 import 它。
+ * 必须钉**调用方是 App.tsx**，且它不再内联自己的一套。
+ */
+{
+  const app = fs.readFileSync(path.join(PG, 'App.tsx'), 'utf8');
+  t('App.tsx 从 utils/hint 取键位逻辑',
+    /from '\.\/utils\/hint'/.test(app));
+  t('三个函数都用上了（不是只 import 一个）',
+    /comboHintOf\(/.test(app) && /shouldShowHint\(/.test(app) && /TOOLBAR_HINT_IDS\[/.test(app));
+  /* 反面证据：不允许再内联一份 effectiveCombo / isHotkeyId 的拼装 */
+  t('App.tsx 不再内联自己的 effectiveCombo 拼装',
+    !/effectiveCombo\(/.test(app) && !/isHotkeyId\(/.test(app));
+  /* 按钮文案 → 键位 id 的映射只有一份（在 hint.ts 里） */
+  t('按钮里不再手抄键位 id',
+    !/comboHint\('(backupNow|refresh|clearInvalid|toggleTips)'\)/.test(app));
+}
+
 done();

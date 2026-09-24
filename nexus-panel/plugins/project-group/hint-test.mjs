@@ -85,13 +85,19 @@ console.log('\n=== 5. 界面接线 ===');
     /boot\?\.config\.showShortcuts \?\? true/.test(app));
   t('四个按钮都带键位 span', (app.match(/fpx-key/g) || []).length === 4,
     `${(app.match(/fpx-key/g) || []).length} 处`);
+  /*
+   * 键位值走 comboHint（动态）而非写死。
+   * 判据是"由 comboHint 算出"，不钉 formatCombo 包裹 ——
+   * 那层包裹已移到 hint.ts 的 comboHintOf 里（返回的已是格式化串），
+   * 钉死旧写法会在接线方式调整时误报。
+   */
   t('键位值走 comboHint（动态）而非写死',
-    /\{formatCombo\(comboHint\('backupNow'\), IS_MAC\)\}/.test(app));
+    /<span className="fpx-key">\{comboHint\(/.test(app));
   t('按钮里没有硬编码的键位文字',
     !/>备份 F7</.test(app) && !/备份\s*F7\s*</.test(app));
   /* 关键：取消绑定时 span 整体不渲染，而不是渲染成默认键 */
   t('取消绑定时 span 不渲染（&& 短路）',
-    /comboHint\('backupNow'\) && <span/.test(app));
+    /comboHint\('[^']+'\) && <span/.test(app));
 }
 {
   const dlg = fs.readFileSync(path.join(HERE, 'components/SettingsDialog.tsx'), 'utf8');
