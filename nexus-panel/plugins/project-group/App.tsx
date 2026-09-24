@@ -6,14 +6,15 @@ import { SideRail, type RailMode } from './components/SideRail';
 import { StackedGroups } from './components/StackedGroups';
 import { ContextMenu, MenuLayerContext, type MenuItem } from './components/ui';
 import { normalizeKey, errText } from './api';
-import { copyText as copyTextImpl } from './utils/clipboard';
 import { useFpx } from './hooks/useFpx';
+import type { FpxStoreReady } from './hooks/useFpx';
 import { useCardHotkeys } from './hooks/useCardHotkeys';
 import { useChainActions } from './hooks/useChainActions';
 import { useLayoutMemory } from './hooks/useLayoutMemory';
-import { IS_MAC, type HotkeyId } from './utils/hotkeys';
+import {
+  effectiveCombo, formatCombo, isHotkeyId, IS_MAC, type HotkeyId,
+} from './utils/hotkeys';
 import { clampLogMax } from './utils/log';
-import { comboHintOf, shouldShowHint, TOOLBAR_HINT_IDS } from './utils/hint';
 import { skipDropToTab } from './utils/tabs';
 
 
@@ -51,18 +52,6 @@ export default function App() {
       try {
         const evs = await s.api.watchPoll();
         for (const ev of evs) {
-          /*
-           * #177 `overflow` 必须先判、并 continue。
-           *
-           * 不判的话它会落进下面那个 else 分支，显示成
-           * 「受保护目录发生改动：xxx」——
-           * **把"我们漏报了"伪装成"发生了改动"**，比不显示更糟：
-           * 用户会据此以为自己看清了全部改动。
-           */
-          if (ev.kind === 'overflow') {
-            s.pushLog(`监控事件过多，部分记录已截断（${ev.path} 附近）`, true);
-            continue;
-          }
           const what = ev.kind === 'added' ? '新增' : ev.kind === 'removed' ? '被删除' : '发生改动';
           s.pushLog(`受保护目录${what}：${ev.path}`, ev.kind === 'removed');
         }
@@ -162,22 +151,12 @@ export default function App() {
   const [reveal, setReveal] = useState<{ path: string; seq: number } | null>(null);
   const revealSeq = useRef(0);
 
-  /*
-   * #50 键位一律走 utils/hint.ts，不在这里内联第二份 ——
-   * 此前正是内联了一份，hint.ts 整份没人 import，改语义必然只改一边。
-   * 按钮文案 → 键位 id 的映射也在 hint.ts（TOOLBAR_HINT_IDS），不手抄。
-   */
+  /* #50 键位从 HOTKEYS 动态取：手抄的话改了键位按钮上还是旧值 */
   const showHints = boot?.config.showShortcuts ?? true;
-  const hotkeyOverrides = boot?.config.hotkeys ?? null;
-  /** 按**按钮文案**取已格式化的键位串；没有键位（或被取消绑定）返回空串 */
   const comboHint = useCallback(
-    (label: string) => {
-      const id = TOOLBAR_HINT_IDS[label] ?? '';
-      return shouldShowHint(showHints, id, hotkeyOverrides)
-        ? comboHintOf(id, hotkeyOverrides, IS_MAC)
-        : '';
-    },
-    [showHints, hotkeyOverrides],
+    (id: string) => (showHints && isHotkeyId(id)
+      ? effectiveCombo(id, boot?.config.hotkeys ?? null) : ''),
+    [showHints, boot?.config.hotkeys],
   );
 
 
@@ -316,13 +295,42 @@ export default function App() {
   const openPath = (p: string, mode: 'auto' | 'dir' | 'containing' | 'editor' = 'auto') =>
     s.api.openPath(p, mode).catch((e) => s.pushLog(String((e as Error)?.message ?? e), true));
 
-  /*
-   * 复制文本：三档兜底（后端 → Clipboard API → execCommand）。
-   * 整段在 `utils/clipboard.ts`，不在这里 —— App 已顶到结构护栏上限。
+  /**
+   * 复制文本到剪贴板。
+   * 主力走后端（不受 iframe 沙箱权限限制）；后端不可用时退回 Clipboard API，
+   * 再不行用 execCommand 兜底 —— 三档都失败才提示，避免出现"点了没反应"。
    */
-  const copyText = useCallback((text: string) =>
-    copyTextImpl({ api: s.api, toast: ctx.toast, log: s.pushLog }, text),
-  [s.api, s.pushLog, ctx.toast]);
+  const copyText = async (text: string) => {
+    try {
+      if (await s.api.copyText(text)) {
+        ctx.toast('已复制', 'ok');
+        return;
+      }
+      s.pushLog('复制失败：后端未能写入剪贴板', true);
+    } catch {
+      // 后端命令可能不存在（旧版本 Rust 未编译进来），静默降级到浏览器 API
+    }
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        ctx.toast('已复制', 'ok');
+        return;
+      }
+    } catch { /* 继续兜底 */ }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      ctx.toast(ok ? '已复制' : '复制失败', ok ? 'ok' : 'err');
+    } catch {
+      ctx.toast('复制失败', 'err');
+    }
+  };
 
   /* ---------------- 卡片右键菜单 ---------------- */
   const menus = (kind: CardKind) => (card: CardInfo): MenuItem[] => {
@@ -335,7 +343,7 @@ export default function App() {
         onClick: () => copyText(card.path),
       },
       { label: '改名…（F2）', onClick: () => setDialog({ type: 'rename', card, kind }) },
-      { label: '保护（ACL）…', onClick: () => setDialog({ type: 'lock', card, kind }) },
+      { label: '保护（ACL）…', onClick: () => setDialog({ type: 'lock', card }) },
       { label: '图标与标签…', onClick: () => setDialog({ type: 'style', card }) },
       { label: '发送到 AI…', onClick: () => setDialog({ type: 'chain', target: card.path, kind }) },
     ];
@@ -452,27 +460,11 @@ export default function App() {
   useEffect(() => {
     if (!bootReady) return;
     let cancelled = false;
-    /*
-     * 拉取失败**必须说出来**。
-     *
-     * 此前 catch 里只 `setChainActions([])`：动作清单是 config 里的
-     * 用户数据，拉不到就把界面清空成"没有任何动作"——
-     * 侧栏空了、快捷键按了没反应、右键菜单里一项都没有，
-     * 而**全程没有任何提示**。用户只能以为是自己没配过、或配置丢了
-     * （他甚至可能去设置页重新建一遍，把原本正常的数据覆盖掉）。
-     *
-     * 清空仍然要做（否则界面停在旧清单上，同样是错的），
-     * 但必须同时记一条错误日志，说明"是没拉到"而不是"没有"。
-     */
     s.api.chainActions()
       .then((l) => { if (!cancelled) setChainActions(l); })
-      .catch((e: unknown) => {
-        if (cancelled) return;
-        setChainActions([]);
-        s.pushLog(`读取连锁动作失败：${errText(e)}（界面已显示为"无动作"，配置本身未改动）`, true);
-      });
+      .catch(() => { if (!cancelled) setChainActions([]); });
     return () => { cancelled = true; };
-  }, [bootReady, s.api, s.pushLog, chainVersion]);
+  }, [bootReady, s.api, chainVersion]);
 
   /* ---------------- 连锁动作：快捷键 + 侧边栏 ----------------
    * 接线（注册 + 事件订阅 + 三个发送入口）收在 `hooks/useChainActions`。
@@ -615,24 +607,24 @@ export default function App() {
     for (const e of r.relinkErrors ?? []) s.pushLog(`链接重建失败：${e}`, true);
   }, [s]);
 
-  /*
-   * 内容区条目改名：改完重扫一遍目录。
-   *
-   * 必须**把成败返回给调用方**：此前是 void + 内部静默 return，
-   * 弹窗那侧只能无条件 return true —— 失败时弹窗照常关闭（像成功了），
-   * 名字其实没变，而弹窗里那句「改名未成功」从此成了死代码。
-   * 用户视角：填完新名 → 确定 → 弹窗消失 → 列表仍是旧名，且没有提示
-   * （只有一闪而过的 toast，很容易错过）。
-   */
-  const doRenameContent = useCallback(async (path: string, name: string): Promise<boolean> => {
+  /** 内容区条目改名：改完重扫一遍目录 */
+  const doRenameContent = useCallback(async (path: string, name: string) => {
     const r = await s.run('改名', () => s.api.renameContentItem(path, name));
-    if (!r) return false;
+    if (!r) return;
     s.pushLog(`已改名为「${name}」`);
     await s.scan(s.focusDir);
-    return true;
   }, [s]);
 
-  /* 上下键在**当前栏**的卡片间移动选中（对齐原版 `NavigateAdjacent`）。
+  /**
+   * 页签前后翻页，到头回环。索引先 clamp：activeTab 与当前快照可能不同步。
+   *
+   * 项目组栏改成纵向堆叠后，所有分类同时在屏幕上，
+   * 再切「当前页签」没有任何可见效果 —— 所以这里改成把选中项移到下一个分类的
+   * 第一张卡片：既保留了"在分类间前后跳"的语义，又真的看得见（还会把键盘焦点带过去）。
+   */
+  /**
+   * 上下键在**当前栏**的卡片间移动选中（对齐原版 `NavigateAdjacent`）。
+   *
    * 此前完全没有：换栏（Ctrl/⌘+←/→）只能落到目标栏的第一张，
    * 到不了中间的卡 —— 键盘用户只能靠鼠标点，否则选不中第 3 张之后的卡。
    *
@@ -717,7 +709,7 @@ export default function App() {
           icon: '🔒', label: '保护',
           hotkeyId: 'lock' as HotkeyId,
           title: 'ACL 保护（Ctrl/⌘+L）',
-          onClick: needCard((c) => setDialog({ type: 'lock', card: c, kind: focus })),
+          onClick: needCard((c) => setDialog({ type: 'lock', card: c })),
         },
         {
           icon: '✎', label: '改名',
@@ -760,7 +752,7 @@ export default function App() {
 
   useCardHotkeys(ctx, {
     open: needCard((c) => openPath(c.path, 'dir')),
-    lock: needCard((c) => setDialog({ type: 'lock', card: c, kind: focus })),
+    lock: needCard((c) => setDialog({ type: 'lock', card: c })),
     rename: needCard((c) => setDialog({ type: 'rename', card: c, kind: focus })),
     move: needCard((c) => void s.moveCardAcross(
       focus, c.path, focus === 'project' ? s.activeTab.group : s.activeTab.project,
@@ -791,10 +783,20 @@ export default function App() {
       <div className="p-card">
         <h2>加载失败</h2>
         <div className="p-muted">后端命令不可用。请确认在 Nexus Panel（Tauri 环境）中运行，且已重新编译 Rust 端。</div>
-        <button className="p-btn primary" style={{ marginTop: 'var(--sp-6, 12px)' }} onClick={() => s.refresh()}>重试</button>
+        <button className="p-btn sm primary" style={{ marginTop: 'var(--sp-6, 12px)' }} onClick={() => s.refresh()}>重试</button>
       </div>
     );
   }
+
+  /*
+   * 过了 `if (!boot)` 这一关，boot 就必然非 null。这里**一次性**收窄成
+   * FpxStoreReady 再往下传，而不是在弹窗内部写 19 处 `boot!`：
+   * 收窄点只有这一处，将来谁动了上面的提前 return，编译器会在**这里**
+   * 报错；而 `boot!` 会把同一个判断复制 19 份，改坏时 19 处一起沉默。
+   * （这是普通常量不是 hook，放在提前 return 之后是安全的 —— 那句
+   *   "hook 不能落在提前 return 之后"的约束只针对 hook。）
+   */
+  const sReady: FpxStoreReady = { ...s, boot };
 
   return (
     <MenuLayerContext.Provider value={menuLayer}>
@@ -803,10 +805,10 @@ export default function App() {
       <div className="p-card">
         <div className="p-row" style={{ justifyContent: 'space-between' }}>
           <div className="p-row">
-            <button className="p-btn primary" onClick={() => setDialog({ type: 'create', kind: 'project' })}>＋ 新建项目</button>
-            <button className="p-btn primary" onClick={() => setDialog({ type: 'create', kind: 'group' })}>＋ 新建项目组</button>
+            <button className="p-btn sm primary" onClick={() => setDialog({ type: 'create', kind: 'project' })}>＋ 新建项目</button>
+            <button className="p-btn sm primary" onClick={() => setDialog({ type: 'create', kind: 'group' })}>＋ 新建项目组</button>
             <button
-              className="p-btn"
+              className="p-btn sm"
               disabled={!s.selProject && !s.selGroup}
               title={s.selProject || s.selGroup ? '把指令发给 AI 客户端' : '先选中一个项目或项目组'}
               onClick={() => setDialog({
@@ -817,18 +819,18 @@ export default function App() {
             >
               发送到 AI
             </button>
-            <button className="p-btn" onClick={() => setDialog({ type: 'backup' })}>
-              备份{comboHint('备份') && <span className="fpx-key">{comboHint('备份')}</span>}
+            <button className="p-btn sm" onClick={() => setDialog({ type: 'backup' })}>
+              备份{comboHint('backupNow') && <span className="fpx-key">{formatCombo(comboHint('backupNow'), IS_MAC)}</span>}
             </button>
             <button
-              className="p-btn"
+              className="p-btn sm"
               title="基础设置 / 链接名 / 服务已移到外壳右上角的「⚙ 设置」"
               onClick={() => s.pushLog('设置入口在外壳右上角的「⚙ 设置」（重载按钮左侧）')}
             >
               设置在哪？
             </button>
             <button
-              className="p-btn"
+              className="p-btn sm"
               title="F5"
               onClick={() => {
                 // 刷新要连动作清单一起拉：外部（MCP / 旧版本配置迁移）也可能改过它
@@ -836,22 +838,22 @@ export default function App() {
                 s.refresh();
               }}
             >
-              刷新{comboHint('刷新') && <span className="fpx-key">{comboHint('刷新')}</span>}
+              刷新{comboHint('refresh') && <span className="fpx-key">{formatCombo(comboHint('refresh'), IS_MAC)}</span>}
             </button>
             <button
-              className="p-btn"
+              className="p-btn sm"
               title="摘掉页签里已不存在的路径（F8）"
               onClick={() => void s.clearInvalid()}
             >
-              清除无效项{comboHint('清除无效项') && <span className="fpx-key">{comboHint('清除无效项')}</span>}
+              清除无效项{comboHint('clearInvalid') && <span className="fpx-key">{formatCombo(comboHint('clearInvalid'), IS_MAC)}</span>}
             </button>
-            <button className="p-btn" onClick={() => setHelp(true)}>
-              使用说明{comboHint('使用说明') && <span className="fpx-key">{comboHint('使用说明')}</span>}
+            <button className="p-btn sm" onClick={() => setHelp(true)}>
+              使用说明{comboHint('toggleTips') && <span className="fpx-key">{formatCombo(comboHint('toggleTips'), IS_MAC)}</span>}
             </button>
             {/* 页签管理（#23）：两栏页签集中一处增删改序。
                 页签条上的 ⋮ 菜单仍在（就地改更顺手），这里给的是"整理"入口 */}
             <button
-              className="p-btn"
+              className="p-btn sm"
               title="统一管理项目 / 项目组页签：改名、排序、删除"
               onClick={() => setDialog({ type: 'tabManager' })}
             >
@@ -860,7 +862,7 @@ export default function App() {
           </div>
           <div className="p-row">
             <span className="p-mono p-muted" title={boot.dataDir}>数据：{boot.dataDir}</span>
-            <button className="p-btn" onClick={() => s.api.openDataDir().catch((e) => s.pushLog(String(e), true))}>
+            <button className="p-btn sm" onClick={() => s.api.openDataDir().catch((e) => s.pushLog(String(e), true))}>
               打开数据目录
             </button>
           </div>
@@ -970,8 +972,7 @@ export default function App() {
                 </h2>
                 <div className="p-row fpx-col-head-ops">
                   <button
-                    className="p-btn"
-                    style={{ height: 30, padding: '0 12px' }}
+                    className="p-btn sm"
                     title="新增分类"
                 onClick={() => s.addTab('group', `页签${(boot.groupTabs.length) + 1}`)}
                   >
@@ -1059,8 +1060,7 @@ export default function App() {
               </h2>
               <div className="p-row fpx-col-head-ops">
                 <button
-                  className="p-btn"
-                  style={{ height: 26, padding: '0 8px' }}
+                  className="p-btn sm"
                   title="复制全部日志（含时间戳）"
                   disabled={s.log.length === 0}
                   onClick={() => copyText(
@@ -1069,8 +1069,7 @@ export default function App() {
                   复制全部
                 </button>
                 <button
-                  className="p-btn"
-                  style={{ height: 26, padding: '0 8px' }}
+                  className="p-btn sm"
                   title="清空日志（只清界面上的流水，不影响任何登记）"
                   disabled={s.log.length === 0}
                   onClick={s.clearLog}
@@ -1104,7 +1103,7 @@ export default function App() {
           全部形态集中在 `components/DialogsHub.tsx`（约 200 行）。
           App 是组装层，不该再塞这么多彼此无关的条件渲染。 */}
       <Dialogs
-        s={s}
+        s={sReady}
         dialog={dialog}
         setDialog={setDialog}
         doMove={doMove}
@@ -1181,14 +1180,7 @@ function Column({
    * @param target 绝对路径（direct=true）或名字（direct=false，拿不到路径时兜底）
    * @param direct true = 直接导入，不要再弹对话框
    */
-  /*
-   * #360 tabIndex：拖到**页签**上时指定落到哪个页签；
-   * 卡片区触发时为 undefined（落到当前活动页签）。
-   *
-   * 这个参数一路传到 addCard，后端早就支持 ——
-   * 缺的一直是"页签上那次 drop 根本没被接上"。
-   */
-  onExternalDrop?: (target: string, direct: boolean, tabIndex?: number) => void;
+  onExternalDrop?: (target: string, direct: boolean) => void;
   /**
    * #14 拖进来的东西**不是文件夹**时告知用户。
    *
@@ -1218,10 +1210,9 @@ function Column({
           )}
         </h2>
         <div className="p-row fpx-col-head-ops">
-          <button className="p-btn" style={{ height: 30, padding: '0 12px' }} onClick={onAdd}>＋ 添加</button>
+          <button className="p-btn sm" onClick={onAdd}>＋ 添加</button>
           <button
-            className="p-btn"
-            style={{ height: 30, padding: '0 12px' }}
+            className="p-btn sm"
             onClick={(e) => setMenu({ x: e.clientX, y: e.clientY })}
           >
             ⋯
@@ -1241,11 +1232,6 @@ function Column({
         onEditingDone={() => setEditingTab(-1)}
         onDropCard={(path, tabIndex) => onMoveToTab(path, tabIndex)}
         onMoveTab={onMoveTab}
-        /* #360 拖文件夹到页签上 → 落到**那个**页签。
-           此前这里没传：TabBar 的 onDrop 里根本没有外部分支，
-           拖到页签上直接回弹、界面毫无变化。 */
-        onExternalDrop={onExternalDrop}
-        onExternalNotice={onExternalNotice}
       />
 
       <CardGrid
