@@ -276,7 +276,7 @@ export function CredentialPanel({
               凭据已用口令加密。输入口令后才会解密到内存，磁盘上始终是密文。
             </div>
             <label className="p-row">
-              <span className="p-muted" style={{ width: 64, flex: 'none' }}>口令</span>
+              <span className="p-muted field-label">口令</span>
               <input
                 className="p-input"
                 type="password"
@@ -290,7 +290,7 @@ export function CredentialPanel({
             </label>
             <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
               <button
-                className="p-btn primary"
+                className="p-btn sm primary"
                 onClick={() => onUnlock && onUnlock(unlockPass)}
                 disabled={!unlockPass}
               >
@@ -304,7 +304,7 @@ export function CredentialPanel({
         {editing ? (
           <div className="cred-edit">
             <label className="p-row">
-              <span className="p-muted" style={{ width: 64, flex: 'none' }}>名称</span>
+              <span className="p-muted field-label">名称</span>
               <input
                 className="p-input"
                 value={editing.name}
@@ -313,7 +313,7 @@ export function CredentialPanel({
               />
             </label>
             <label className="p-row">
-              <span className="p-muted" style={{ width: 64, flex: 'none' }}>类型</span>
+              <span className="p-muted field-label">类型</span>
               <select
                 className="p-input"
                 value={editing.kind}
@@ -330,7 +330,7 @@ export function CredentialPanel({
             */}
             {isSecretlessKind(editing.kind) ? null : (
               <label className="p-row">
-                <span className="p-muted" style={{ width: 64, flex: 'none' }}>密钥</span>
+                <span className="p-muted field-label">密钥</span>
                 <input
                   className="p-input"
                   type="password"
@@ -359,7 +359,7 @@ export function CredentialPanel({
                 {editing.kind === 'cli' ? null : (
                 <>
                 <label className="p-row">
-                  <span className="p-muted" style={{ width: 64, flex: 'none' }}>服务商</span>
+                  <span className="p-muted field-label">服务商</span>
                   <select
                     className="p-input"
                     value={llmProviderOf(editing) ?? 'custom'}
@@ -379,7 +379,7 @@ export function CredentialPanel({
                 </label>
 
                 <label className="p-row">
-                  <span className="p-muted" style={{ width: 64, flex: 'none' }}>API 地址</span>
+                  <span className="p-muted field-label">API 地址</span>
                   <input
                     className="p-input"
                     value={editing.meta?.[LLM_META.baseUrl] ?? ''}
@@ -399,7 +399,7 @@ export function CredentialPanel({
                 )}
 
                 <div className="p-row" style={{ alignItems: 'flex-start' }}>
-                  <span className="p-muted" style={{ width: 64, flex: 'none' }}>模型清单</span>
+                  <span className="p-muted field-label">模型清单</span>
                   <textarea
                     className="p-input"
                     rows={4}
@@ -419,7 +419,7 @@ export function CredentialPanel({
                 {fetchModels && editing.kind === 'llm' ? (
                   <div className="p-row" style={{ gap: 'var(--sp-4, 8px)', flexWrap: 'wrap' }}>
                     <button
-                      className="p-btn"
+                      className="p-btn sm"
                       disabled={modelState === 'busy'}
                       onClick={async () => {
                         const url = modelsEndpointOf(
@@ -475,10 +475,10 @@ export function CredentialPanel({
             ) : null}
 
             <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
-              <button className="p-btn primary" onClick={save} disabled={busy}>
+              <button className="p-btn sm primary" onClick={save} disabled={busy}>
                 {busy ? '校验中…' : (isSecretlessKind(editing.kind) ? '保存' : '校验并保存')}
               </button>
-              <button className="p-btn" onClick={() => setEditing(null)} disabled={busy}>取消</button>
+              <button className="p-btn sm" onClick={() => setEditing(null)} disabled={busy}>取消</button>
             </div>
             {err ? <div className="cred-err">{err}</div> : null}
             {msg ? <div className="cred-ok">{msg}</div> : null}
@@ -486,7 +486,7 @@ export function CredentialPanel({
         ) : (
           <div className="p-row" style={{ gap: 'var(--sp-4, 8px)', flexWrap: 'wrap' }}>
             {(Object.keys(KIND_META) as CredentialKind[]).map((k) => (
-              <button key={k} className="p-btn" onClick={() => startNew(k)}>
+              <button key={k} className="p-btn sm" onClick={() => startNew(k)}>
                 + {KIND_META[k].label}
               </button>
             ))}
