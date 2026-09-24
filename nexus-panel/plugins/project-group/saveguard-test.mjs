@@ -170,6 +170,22 @@ console.log('\n=== 8. "改了 0 条"必须说出来，不能静默无操作 ★�
   t('moveCard 记录是否真的移动了', /let moved = false;/.test(mf));
   t('moveCard 取到保存结果（才有得判）', /const snap = await updateConfig/.test(mf));
   t('moveCard 没动时提示', /if \(snap && !moved\)/.test(mf) && /未移动/.test(mf));
+  /*
+   * src / tab **必须声明在 updateConfig 回调之外**。
+   *
+   * 日志里要用到它们（`源 ${src + 1} → 目标 ${tab + 1}`）。留在回调内的话，
+   * 回调外的 pushLog 直接 ReferenceError —— 而语法检查（括号配对那套）
+   * 报不出来，只有真拖一次卡片才炸（反向验证 2 证实了：把声明挪回去，
+   * 语法检查仍然全绿）。
+   */
+  const iSnap = mf.indexOf('await updateConfig(');
+  const iSrc = mf.indexOf('let src = -1;');
+  const iTab = mf.indexOf('let tab = -1;');
+  t('src 声明在回调之外', iSrc >= 0 && iSrc < iSnap, `src@${iSrc} snap@${iSnap}`);
+  t('tab 声明在回调之外', iTab >= 0 && iTab < iSnap, `tab@${iTab}`);
+  /* 反面证据：回调内不许再 `let src = ...` / `const tab = ...` */
+  t('回调内不再重复声明 src', !/let src = fromTabIndex/.test(mf));
+  t('回调内不再重复声明 tab', !/const tab = Math\.max/.test(mf));
 }
 
 console.log('\n=== 9. setState updater 里不得有副作用 ★ ===');

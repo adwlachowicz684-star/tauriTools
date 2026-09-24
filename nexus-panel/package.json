@@ -44,7 +44,6 @@
     "test:mcp-alias": "node mcp-alias-test.mjs",
     "test:mcp-stdio": "node mcp-stdio-test.mjs",
     "test:mcp-tab-index": "node mcp-tab-index-test.mjs",
-    "test:md-dedup": "node md-dedup-test.mjs",
     "test:md-drop": "node md-drop-test.mjs",
     "test:md-e2": "node md-e2-test.mjs",
     "test:md-export": "node md-export-test.mjs",

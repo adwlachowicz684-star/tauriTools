@@ -68,14 +68,7 @@ export function useLayoutMemory({ s, config }: UseLayoutMemoryArgs) {
   }, []);
 
   const onLogResizeEnd = useCallback(() => {
-    /*
-     * 这里曾写成 `saveLayout({ logRowHeight })` —— 但本作用域里**没有**
-     * logRowHeight 这个变量：本地 state 叫 logHeight，配置字段才叫
-     * logRowHeight。ESM 是严格模式，读取未声明的标识符会抛
-     * ReferenceError —— 也就是"拖完日志分隔条松手"这一下必崩。
-     * 之所以一直没被发现：不拖分隔条就走不到这条路径。
-     */
-    saveLayout({ logRowHeight: logHeight });
+    saveLayout({ logRowHeight });
     dragBase.current = { ...dragBase.current, height: logHeight };
   }, [saveLayout, logHeight]);
 

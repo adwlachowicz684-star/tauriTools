@@ -326,14 +326,44 @@ export function useFpx() {
     });
   }, [api, refresh, pushLog, run]);
 
+  /*
+   * 是否真的删掉了，必须**记录并说出来**。
+   *
+   * 判据分歧：后端按归一化键匹配（Windows 下大小写不敏感 + 去尾分隔符），
+   * 这里按原文精确比。配置被手改过、或路径来源不同时，后端认得的这里认不得
+   * → 保存照样"成功"，日志却写"已移除"，而卡片还在界面上。
+   *
+   * **没有改成归一化比较**：Linux 下 `\` 是合法文件名字符，
+   * 一律 `\`→`/` 会把两个不同目录判成同一个 —— 删错东西比删不掉更糟。
+   *
+   * 两种"没删掉"要分开说：
+   *   · 页签根本不存在（下标越界）—— 是调用方传错，不是路径问题
+   *   · 页签存在但里面没有这条 —— 是路径对不上
+   * 混成一句的话，用户无法判断该去查哪边。
+   */
   const removeCard = useCallback(async (kind: CardKind, path: string, tabIndex?: number) => {
     const idx = tabIndex ?? activeTab[kind];
+    let removed = false;
+    let exists = false;
     const snap = await updateConfig((d) => {
       const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
-      if (tabs[idx]) tabs[idx].items = tabs[idx].items.filter((p) => p !== path);
+      const tab = tabs[idx];
+      if (!tab) return;
+      exists = true;
+      const n = tab.items.length;
+      tab.items = tab.items.filter((p) => p !== path);
+      removed = tab.items.length < n;
     });
     /* 同上：保存失败就不能写"已移除"，否则日志说移走了、卡片还在 */
     if (!snap) return;
+    if (!exists) {
+      pushLog(`未移除：页签不存在（${kind} 第 ${idx + 1} 个）`, true);
+      return;
+    }
+    if (!removed) {
+      pushLog(`未移除：该页签里没有这条（${path}）`, true);
+      return;
+    }
     pushLog(`已从页签移除：${path}`);
   }, [activeTab, pushLog, updateConfig]);
 
@@ -360,18 +390,30 @@ export function useFpx() {
     kind: CardKind, path: string, toTabIndex: number, toIndex: number,
     fromTabIndex?: number,
   ) => {
-    await updateConfig((d) => {
+    /*
+     * 同 removeCard：记录是否**真的动了**。
+     * 没动就说出来，否则日志静默、界面也不变 —— 用户以为拖成功了。
+     */
+    let moved = false;
+    /*
+     * src / tab 提到回调**外面**：日志要用它们说清"从哪到哪"。
+     * 留在回调里的话，回调外的 pushLog 直接 ReferenceError ——
+     * 语法检查（括号配对那套）看不出来，只有真拖一次才炸。
+     */
+    let src = -1;
+    let tab = -1;
+    const snap = await updateConfig((d) => {
       const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
       if (tabs.length === 0) return;
       // 掐头去尾：先把目标位置定在合法范围内，再摘卡（摘卡不影响页签数）
       const maxTab = Math.max(0, tabs.length - 1);
-      const tab = Math.max(0, Math.min(toTabIndex, maxTab));
+      tab = Math.max(0, Math.min(toTabIndex, maxTab));
       /*
        * 源页签：优先用显式传入的那个；
        * 没传就退回"第一个含这张卡的页签"（找不到就什么都不做 ——
        * 凭空插入一张不在任何页签里的卡，比不动更糟）。
        */
-      let src = fromTabIndex ?? tabs.findIndex((t) => t.items.includes(path));
+      src = fromTabIndex ?? tabs.findIndex((t) => t.items.includes(path));
       if (src < 0 || src >= tabs.length) src = tabs.findIndex((t) => t.items.includes(path));
       if (src < 0) return;
       /*
@@ -384,8 +426,14 @@ export function useFpx() {
       const target = tabs[tab];
       const i = Math.max(0, Math.min(toIndex, target.items.length));
       target.items.splice(i, 0, path);
+      moved = true;
     });
-  }, [updateConfig]);
+    if (snap && !moved) {
+      /* 三种"没动"：页签为空 / 找不到源页签 / 源页签里没有这张卡。
+         都不报错的话，用户拖完发现卡片没挪窝，只会以为拖拽坏了。 */
+      pushLog(`未移动：源页签里没有找到「${path}」（源 ${src + 1} → 目标 ${tab + 1}）`, true);
+    }
+  }, [pushLog, updateConfig]);
 
   /**
    * 跨类别移动卡片（项目 ⇄ 项目组）。
@@ -522,7 +570,25 @@ export function useFpx() {
       applySnapshot(snap);
       const row: LinkRow | undefined = snap.links.find((l) => l.project === project);
       pushLog(`已同步：${project} → ${group}（${row?.names.length ?? 0} 个链接）`);
-      ctx.toast('链接已同步', 'ok');
+      /*
+       * 「不是 junction 而是普通目录」的名字：后端**不删**（避免误删用户内容），
+       * 但会写进 `snap.linkNotices` 带回来。
+       *
+       * 原版 `RemoveLink` 遇到这种情况直接**抛异常**，而那时 wanted 里的链接
+       * 已经建好 —— 半截状态 + 异常冒泡。按你的指示没照搬：不删，但要显示。
+       *
+       * 为什么必须显示：用户取消了那个名字，而它**还占着位置**。不说出来，
+       * 界面上就是一个"取消勾选却依然存在"的矛盾状态，没有任何解释。
+       *
+       * 用 `err` 而不是 `info`：这条需要用户手动处理，不处理会一直占着
+       * （外壳 toast 只认 ok/err/info，写 warn 会被收窄成 info，太弱）。
+       */
+      const notices = snap.linkNotices ?? [];
+      for (const msg of notices) {
+        pushLog(`同步链接：${msg}`, true);
+      }
+      if (notices.length > 0) ctx.toast(notices.join('；'), 'err');
+      else ctx.toast('链接已同步', 'ok');
     }
   }, [api, applySnapshot, ctx, pushLog, run]);
 

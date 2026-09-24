@@ -35,7 +35,12 @@ console.log('\n=== 2. 源页签怎么定 ===');
 {
   /* 显式传的优先 */
   t('接受 fromTabIndex 参数', /fromTabIndex\?: number,/.test(hook));
-  t('显式值优先', /let src = fromTabIndex \?\? tabs\.findIndex/.test(hook));
+  /*
+   * 允许 `let src =` 与 `src =` 两种写法（后者是把 src 提到回调外之后的形式 ——
+   * 日志要用它说清"从哪到哪"，留在回调内会 ReferenceError）。
+   * 钉死一种写法会在变量提升后**误报**，而误报多了这条护栏就会被当噪音忽略。
+   */
+  t('显式值优先', /(let )?src = fromTabIndex \?\? tabs\.findIndex/.test(hook));
   /*
    * 显式值越界时退回"找第一个含它的页签" ——
    * 直接用越界值会 splice 到 undefined 上，那是一次崩溃而不是"没生效"。
@@ -66,7 +71,8 @@ console.log('\n=== 4. 索引语义没被顺手改坏 ===');
 {
   /* 落点仍夹在 [0, 长度] —— 调用方传的是 resolveMoveIndex 算好的最终位置 */
   t('目标位置仍夹取', /const i = Math\.max\(0, Math\.min\(toIndex, target\.items\.length\)\);/.test(hook));
-  t('目标页签仍夹取', /const tab = Math\.max\(0, Math\.min\(toTabIndex, maxTab\)\);/.test(hook));
+  /* 同上：`const tab =` → `tab =`（tab 也要给日志用） */
+  t('目标页签仍夹取', /(let |const )?tab = Math\.max\(0, Math\.min\(toTabIndex, maxTab\)\);/.test(hook));
   t('空页签列表直接返回', /if \(tabs\.length === 0\) return;/.test(hook));
 }
 

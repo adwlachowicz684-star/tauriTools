@@ -150,8 +150,14 @@ console.log('\n=== 9. 「不是 junction 而是普通目录」：不删但必须
   t('notices 写进快照', /snap\.link_notices = std::mem::take\(&mut notices\)/.test(fn));
   t('部分失败时也把说明并进错误', fn.includes('snap.link_notices.join(') && /let extra = if snap\.link_notices\.is_empty\(\)/.test(fn));
   /* 五、前端要真的显示出来 —— 否则后端算了也白算 */
-  t('前端读 linkNotices', /snap\.linkNotices/.test(hook));
-  t('前端记日志', /pushLog\(`同步链接：\$\{msg\}`, true\)/.test(hook));
+  /*
+   * 剥注释后再判：`snap.linkNotices` 这几个字也写在说明注释里，
+   * 不剥的话把真实代码删掉、注释留着，断言**照样通过**（第 21 次同类）。
+   * 这类空跑最危险 —— 代码没了，护栏还报绿。
+   */
+  const hookCode = hook.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');
+  t('前端读 linkNotices（代码层，不含注释）', /snap\.linkNotices/.test(hookCode));
+  t('前端记日志', /pushLog\(`同步链接：\$\{msg\}`, true\)/.test(hookCode));
   /*
    * 逐行判而不是整篇 `test()` —— 注释掉那行后文本仍在，整篇匹配会**漏报**
    * （反向验证 C 就是这么空跑的）。真正要钉的是这行**活着**。

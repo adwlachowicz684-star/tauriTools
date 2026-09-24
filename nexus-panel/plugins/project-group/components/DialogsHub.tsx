@@ -22,7 +22,7 @@ import {
    等哪天误发一条时根本想不起来是在这里关的。 */
 import { setSkipConfirm } from '../utils/confirmOnce';
 import type {
-  CardInfo, CardKind, ChainAction, LockStateLive,
+  Bootstrap, CardInfo, CardKind, ChainAction, LinkDetail, LockStateLive,
 } from '../types';
 import type { FpxStoreReady } from '../hooks/useFpx';
 
@@ -45,7 +45,11 @@ export type Dialog =
   /** #14 从文件管理器拖进来时打开（带拖入的名字当提示） */
   | { type: 'pickDir'; kind: CardKind; tabIndex?: number; droppedName?: string }
   | { type: 'create'; kind: CardKind }
-  | { type: 'lock'; card: CardInfo }
+  /* #419 kind 一并带过来：保护弹窗要显示"项目 / 项目组"徽章。
+     两栏都能调出这个弹窗，路径长得又像，没有徽章的话用户无从确认
+     自己正在给**哪一个**上锁 —— 而锁错对象的代价是目录被系统拦住，
+     用户只会困惑"我明明锁的不是这个"。 */
+  | { type: 'lock'; card: CardInfo; kind: CardKind }
   | { type: 'style'; card: CardInfo }
   | { type: 'icons'; card: CardInfo }
   | { type: 'backup' }
@@ -85,6 +89,19 @@ export interface PendingSend {
   path: string;
   text: string;
   skip: boolean;
+}
+
+/**
+ * #198 取某张卡片的**逐条链接明细**（`CardInfo.linkDetails`）。
+ * 放在模块级而不是组件内：它不读任何 hook，做成纯函数更好测、也更好复用。
+ */
+function cardDetails(boot: Bootstrap | null, project: string): LinkDetail[] {
+  if (!boot) return [];
+  for (const t of [...(boot.projectTabs ?? []), ...(boot.groupTabs ?? [])]) {
+    const c = (t.items ?? []).find((x) => x.path === project);
+    if (c) return c.linkDetails ?? [];
+  }
+  return [];
 }
 
 export interface DialogsProps {
@@ -212,6 +229,21 @@ export function Dialogs(props: DialogsProps) {
     return all.flatMap((t) => t.items ?? []).find((c) => c.path === selPath) ?? null;
   }, [selPath, boot]);
 
+  /*
+   * #198 逐条链接明细：从**卡片**上取，不是从账本上取。
+   *
+   * 账本（boot.links）一条记录只有一个 group，而同一个项目的多个链接名
+   * **可以指向不同的组**（手工建、或从别处迁移过来就有）—— 用它判定换绑，
+   * 必然有行判错：
+   *   · 实际指向别组、但账本 group == 本次目标 → 不显示"将换绑"，用户点确定，
+   *     别处的链接被悄悄抢走；
+   *   · 实际指向本组、但账本 group != 本次目标 → 误显示"将换绑"，用户不敢勾 →
+   *     该名不在名单里且指向本组 → **被删掉**。即：什么都没勾，链接却没了。
+   *
+   * 后端已经逐名按磁盘反查（core_sync_links / #202），这里只是把那套数据
+   * 透传给 LinkPickDialog。
+   */
+
   /* 跟随且选中已变 → 用选中的；否则用打开时那张（含锁定、以及选中为空的情况） */
   /*
    * 括号**不能省**（原写法漏了内层括号，是真崩溃，不只是类型报错）：
@@ -281,6 +313,7 @@ export function Dialogs(props: DialogsProps) {
       {dialog.type === 'lock' && (
         <LockDialog
           path={dialog.card.path}
+          kind={dialog.kind}
           denyDelete={dialog.card.denyDelete}
           denyWrite={dialog.card.denyWrite}
           /*
@@ -484,7 +517,7 @@ export function Dialogs(props: DialogsProps) {
           group={confirmLink.group}
           config={boot.config}
           allNames={boot.allNames ?? []}
-          links={boot.links ?? []}
+          details={cardDetails(boot, confirmLink.project)}
           onConfirm={(names) => {
             setConfirmLink(null);
             /* #200 走 sync 而不是 create：取消勾选的名字要真的删掉、释放名字。
