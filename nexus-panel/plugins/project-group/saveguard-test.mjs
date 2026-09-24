@@ -140,4 +140,71 @@ console.log('\n=== 7. 不得凭空补齐页签 ★★ ===');
   t('addCard 空 tabs 时早退', /tabs\.length === 0\)\s*return/.test(b));
 }
 
+
+console.log('\n=== 8. "改了 0 条"必须说出来，不能静默无操作 ★★ ===');
+/*
+ * 这一类比"保存失败还报成功"更隐蔽：保存**确实成功了**，
+ * 只是 mutate 里一条都没匹配上 —— 快照没变，日志却照写"已移除 / 已移动"。
+ *
+ * 用户看到的是：点了删除、界面毫无变化、刷新后卡片仍在。
+ * 没有报错，只有"没生效"，于是只能归结为"这个功能坏了"。
+ *
+ * 触发条件是**前后端判据不同**：后端 remove_card 按归一化键匹配
+ * （Windows 下大小写不敏感 + 去尾斜杠），前端按原文精确比。
+ * 配置被手改过、或路径来源不同时，后端认得的这里认不得。
+ *
+ * 注意：这里钉的是"要报错"，**不是"要改成归一化比较"** ——
+ * 后者在 Linux 下会把 `a\\b` 与 `a/b` 判成同一个（`\\` 是合法文件名字符），
+ * 删错东西比删不掉更糟。
+ */
+{
+  const uf = fn('removeCard');
+  t('removeCard 记录是否真的删掉了', /let removed = false;/.test(uf));
+  t('removeCard 区分"页签不存在"与"页签里没有这条"',
+    /let exists = false;/.test(uf) && /if \(!exists\)/.test(uf) && /if \(!removed\)/.test(uf));
+  /* 两条提示都必须是 err 级（第二参数 true），否则用户当普通信息略过 */
+  t('两条"未移除"都记为错误',
+    (uf.match(/pushLog\(`未移除[^`]*`, true\)/g) || []).length === 2);
+
+  const mf = fn('moveCard');
+  t('moveCard 记录是否真的移动了', /let moved = false;/.test(mf));
+  t('moveCard 取到保存结果（才有得判）', /const snap = await updateConfig/.test(mf));
+  t('moveCard 没动时提示', /if \(snap && !moved\)/.test(mf) && /未移动/.test(mf));
+}
+
+console.log('\n=== 9. setState updater 里不得有副作用 ★ ===');
+/*
+ * `setX((cur) => { saveLayout(cur); return cur; })` 是明确的 React 反模式：
+ * updater 必须是纯函数，React 有权重放它 —— StrictMode 下一定会跑两次，
+ * 于是保存动作执行两次（两次跨进程文件锁、两次日志），而用户只操作了一次。
+ * 将来保存动作一旦不再幂等（比如带计数），后果更直接。
+ *
+ * 只钉 useLayoutMemory 这一处：它是全库唯一在 updater 里做副作用的。
+ * 判定要看**被赋值的名字**而不是 `set` 前缀，否则 `setTimeout` 之类会误伤。
+ */
+{
+  const lm = fs.readFileSync(path.join(HERE, 'hooks/useLayoutMemory.ts'), 'utf8');
+  const stripped = lm.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const bad = [];
+  for (const m of stripped.matchAll(/set(\w+)\(\s*\(?\s*\w+\s*\)?\s*=>\s*\{/g)) {
+    const varName = 'set' + m[1];
+    // 副作用特征：updater 里调用了非 set* / 非纯函数
+    const rest = stripped.slice(m.index, m.index + 400);
+    for (const c of rest.matchAll(/\b(\w+)\(/g)) {
+      const n = c[1];
+      if (n === varName || n.startsWith('set')) continue;
+      if (/^(Math|Number|String|Boolean)$/.test(n)) continue;
+      if (n === 'if' || n === 'for' || n === 'while' || n === 'return') continue;
+      bad.push(`${varName}→${n}`);
+      break;
+    }
+  }
+  t('useLayoutMemory 的 updater 里无副作用调用', bad.length === 0, bad.join('、'));
+  /* 反面证据：现在应当直接读闭包值（依赖里带上它） */
+  t('onColResizeEnd 依赖里带 colStars',
+    /onColResizeEnd = useCallback\([\s\S]{0,220}?\}, \[saveLayout, colStars\]\)/.test(lm));
+  t('onLogResizeEnd 依赖里带 logHeight',
+    /onLogResizeEnd = useCallback\([\s\S]{0,220}?\}, \[saveLayout, logHeight\]\)/.test(lm));
+}
+
 done();

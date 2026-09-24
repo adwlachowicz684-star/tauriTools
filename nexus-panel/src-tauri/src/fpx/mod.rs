@@ -1311,11 +1311,23 @@ pub fn fpx_remove_card(
     // 1) 摘页签 + 清图标 / 标签色（一个事务）
     let (snap, need_unlink) = store::with_config(&dir, |cfg| {
         let tabs = if kind == "group" { &mut cfg.group_tabs } else { &mut cfg.project_tabs };
+        /*
+         * 指定了页签下标却越界 → **必须报错，不能静默什么都不做**。
+         *
+         * 静默的后果在这里最坏：调用方拿到的是一份"成功"的快照（只是没变），
+         * 于是照常记一句"已移除"，而卡片还好好地在界面上 ——
+         * 用户点删除没有任何反馈，刷新后卡片仍在，
+         * 只能归结为"这个按钮坏了"。
+         *
+         * 与 MCP `add_card_to_tab` 的越界处理保持一致（那边是明确报错）：
+         * 同类操作一个报错一个静默，静默那个迟早变成查不出来的问题。
+         */
         match tab_index {
             Some(i) => {
-                if let Some(t) = tabs.get_mut(i) {
-                    t.items.retain(|p| store::normalize_key(p) != key);
-                }
+                let t = tabs.get_mut(i).ok_or_else(|| format!(
+                    "页签下标 {i} 不存在（当前 {} 个页签），未移除：{path}", tabs.len()
+                ))?;
+                t.items.retain(|p| store::normalize_key(p) != key);
             }
             None => {
                 for t in tabs.iter_mut() {

@@ -29,6 +29,33 @@ console.log('\n=== 1. 后端：命令与参数 ===');
   t('tab_index 是 Option', /tab_index: Option<usize>/.test(mod));
 }
 
+
+console.log('\n=== 1b. 指定页签下标越界必须报错，不能静默无操作 ★★ ===');
+/*
+ * 此前是 `if let Some(t) = tabs.get_mut(i)` —— 越界时**什么都不做**，
+ * 而外层照常返回一份"成功"的快照（只是内容没变）。
+ *
+ * 于是调用方照常记一句"已移除"，卡片却还好好地在界面上：
+ * 用户点删除没有任何反馈，刷新后卡片仍在，只能归结为"按钮坏了"。
+ * 这正是最难查的一类 —— 没有报错，只有"没生效"。
+ *
+ * 与 MCP `add_card_to_tab` 保持一致：那边越界是明确报错。
+ * 同类操作一个报错一个静默，静默那个迟早变成查不出来的问题。
+ */
+{
+  const mod = strip(fs.readFileSync(path.join(RS, 'mod.rs'), 'utf8'));
+  /* 取 fpx_remove_card 的函数体，避免匹配到别处同形代码 */
+  const i = mod.indexOf('pub fn fpx_remove_card(');
+  const body = mod.slice(i, i + 2600);
+  t('越界走 ok_or_else 报错（不是 if let 静默跳过）', /ok_or_else\(/.test(body));
+  t('不再用 if let Some\(t\) = tabs.get_mut 静默分支',
+    !/if let Some\(t\) = tabs\.get_mut/.test(body));
+  /* 报错要带上实际页签数，否则用户无从判断是自己传错还是数据变了 */
+  t('报错信息带下标与页签数', /页签下标/.test(body) && /tabs\.len\(\)/.test(body));
+  /* 反面证据：全页签分支仍然是无条件的（没指定下标才全清） */
+  t('未指定下标时仍清全部页签', /for t in tabs\.iter_mut\(\)/.test(body));
+}
+
 console.log('\n=== 2. 只在"已不在任何页签"时才清理（最关键）===');
 {
   const mod = strip(fs.readFileSync(path.join(RS, 'mod.rs'), 'utf8'));

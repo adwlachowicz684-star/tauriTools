@@ -105,8 +105,28 @@ console.log('\n=== 6. 布局记忆已抽成钩子 ===');
   t('布局算术仍在 utils/layout（未内联进钩子）',
     /from '\.\.\/utils\/layout'/.test(hook));
   t('App 不再自己管 colStars 初值', !/useState<number\[\]>\(\(\) =>\s*\n?\s*normalizeColStars/.test(app3));
-  /* 松手才写 config：拖动中写会让拖动卡顿 */
-  t('保留"松手才写"的语义', /saveLayout\(\{ colStars: cur \}\)/.test(hook));
+  /*
+   * 松手才写 config：拖动中写会让拖动卡顿（每帧一次跨进程文件锁）。
+   *
+   * 钉**语义**而不是某行字面量 —— 此前钉的是 `saveLayout({ colStars: cur })`，
+   * 那是写在 setState updater 里的旧写法（updater 里做副作用是反模式，
+   * 已移出），写法一改断言就误报。
+   *
+   * 真正要保证的两点：
+   *   1. saveLayout 只出现在 *End（松手）回调里
+   *   2. 拖动过程中的 onColResize / onLogResize 不写 config
+   */
+  {
+    const endCol = hook.slice(hook.indexOf('const onColResizeEnd'), hook.indexOf('const onLogResize ='));
+    const endLog = hook.slice(hook.indexOf('const onLogResizeEnd'), hook.indexOf('const tipsHeight'));
+    t('colStars 在松手时才写 config', /saveLayout\(/.test(endCol));
+    t('logHeight 在松手时才写 config', /saveLayout\(/.test(endLog));
+    /* 反面证据：拖动中的两个回调不得出现 saveLayout */
+    const dragCol = hook.slice(hook.indexOf('const onColResize ='), hook.indexOf('const onColResizeEnd'));
+    const dragLog = hook.slice(hook.indexOf('const onLogResize ='), hook.indexOf('const onLogResizeEnd'));
+    t('拖三栏过程中不写 config', !/saveLayout\(/.test(dragCol));
+    t('拖日志高度过程中不写 config', !/saveLayout\(/.test(dragLog));
+  }
 }
 
 console.log('\n=== 7. 规模护栏 ===');

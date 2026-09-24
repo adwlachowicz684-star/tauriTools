@@ -47,25 +47,30 @@ export function useLayoutMemory({ s, config }: UseLayoutMemoryArgs) {
     setColStars(resizeColStars(dragBase.current.stars, i, delta, total));
   }, []);
 
+  /*
+   * 松手时把当前布局写回 config。
+   *
+   * **副作用不能写进 `setXxx((cur) => ...)` 的 updater 里** ——
+   * updater 必须是纯函数，React 有权重放它（StrictMode 下就一定会跑两次），
+   * 于是 `saveLayout` 会被执行两次：两次跨进程文件锁、两次日志，
+   * 而用户只拖了一次。将来若保存动作不再幂等（比如带计数），后果更直接。
+   *
+   * 这里直接读闭包里的当前值：拖动过程中 `onColResize` 每次都 setColStars，
+   * 必然已重渲染过，回调拿到的就是最新值。
+   */
   const onColResizeEnd = useCallback(() => {
-    setColStars((cur) => {
-      saveLayout({ colStars: cur });
-      dragBase.current = { ...dragBase.current, stars: cur };
-      return cur;
-    });
-  }, [saveLayout]);
+    saveLayout({ colStars });
+    dragBase.current = { ...dragBase.current, stars: colStars };
+  }, [saveLayout, colStars]);
 
   const onLogResize = useCallback((delta: number) => {
     setLogHeight(clampLogHeight(dragBase.current.height + delta));
   }, []);
 
   const onLogResizeEnd = useCallback(() => {
-    setLogHeight((cur) => {
-      saveLayout({ logRowHeight: cur });
-      dragBase.current = { ...dragBase.current, height: cur };
-      return cur;
-    });
-  }, [saveLayout]);
+    saveLayout({ logRowHeight });
+    dragBase.current = { ...dragBase.current, height: logHeight };
+  }, [saveLayout, logHeight]);
 
   /** 配置被外部改了（MCP 侧 / 设置页保存）→ 同步回来 */
   useEffect(() => {

@@ -328,12 +328,38 @@ export function useFpx() {
 
   const removeCard = useCallback(async (kind: CardKind, path: string, tabIndex?: number) => {
     const idx = tabIndex ?? activeTab[kind];
+    /*
+     * 「一条都没删掉」必须说出来。
+     *
+     * 后端 `fpx_remove_card` 是按归一化键匹配（Windows 下大小写不敏感 + 去尾斜杠），
+     * 这里按原文精确比 —— 配置被手改过、或路径来源不同时两边判据就不同：
+     * 后端认得的这里认不得。此前这种情形是**静默无操作**：保存照样成功，
+     * 于是日志写"已移除"而卡片仍在，用户只能以为功能坏了。
+     *
+     * 不改成归一化比较是有意的：Linux 下 `\` 是合法文件名字符，
+     * 一律 `\`→`/` 会把两个不同目录判成同一个，删错东西比删不掉更糟。
+     */
+    let removed = false;
+    let exists = false;
     const snap = await updateConfig((d) => {
       const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
-      if (tabs[idx]) tabs[idx].items = tabs[idx].items.filter((p) => p !== path);
+      const t = tabs[idx];
+      if (!t) return;
+      exists = true;
+      const before = t.items.length;
+      t.items = t.items.filter((p) => p !== path);
+      removed = t.items.length < before;
     });
     /* 同上：保存失败就不能写"已移除"，否则日志说移走了、卡片还在 */
     if (!snap) return;
+    if (!exists) {
+      pushLog(`未移除：页签下标 ${idx} 不存在（${path}）`, true);
+      return;
+    }
+    if (!removed) {
+      pushLog(`未移除：该页签里没有这一条（${path}）`, true);
+      return;
+    }
     pushLog(`已从页签移除：${path}`);
   }, [activeTab, pushLog, updateConfig]);
 
@@ -360,7 +386,9 @@ export function useFpx() {
     kind: CardKind, path: string, toTabIndex: number, toIndex: number,
     fromTabIndex?: number,
   ) => {
-    await updateConfig((d) => {
+    /* 同 removeCard：`moved` 用来把"静默没动"变成一句明确的提示 */
+    let moved = false;
+    const snap = await updateConfig((d) => {
       const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
       if (tabs.length === 0) return;
       // 掐头去尾：先把目标位置定在合法范围内，再摘卡（摘卡不影响页签数）
@@ -384,8 +412,16 @@ export function useFpx() {
       const target = tabs[tab];
       const i = Math.max(0, Math.min(toIndex, target.items.length));
       target.items.splice(i, 0, path);
+      moved = true;
     });
-  }, [updateConfig]);
+    /*
+     * 拖了却没生效一定要说出来，否则表现就是"拖完回弹、什么都没发生"，
+     * 用户无法区分"这个位置不允许放"和"保存失败"。
+     */
+    if (snap && !moved) {
+      pushLog(`未移动：没在源页签里找到这一条（${path}）`, true);
+    }
+  }, [pushLog, updateConfig]);
 
   /**
    * 跨类别移动卡片（项目 ⇄ 项目组）。
