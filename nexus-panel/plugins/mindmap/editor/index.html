@@ -920,22 +920,41 @@
                         var fils = refListOf(node.getData('file'));
                         for (var fi = 0; fi < fils.length; fi++) {
                             var fy = top + 8;
+                            /*
+                             * 整行**居中**排布，而不是把图标钉在 cx-46。
+                             *
+                             * 原写法（图标 cx-46、文字 cx-34）有两个后果：
+                             * 1. 行内容相对 cx **不对称**：图标左缘在 cx-54（FileIcon 的
+                             *    outline 路径是 x∈[-8,3]，原点不在中心），文字右缘在
+                             *    cx-34+文字宽。两侧伸出长度不等，盒一居中就必然有
+                             *    一侧戳出外框。
+                             * 2. attW 记的是 `12 + 文字宽`，比**真实所需**小很多。
+                             *    例（文字宽 100）：真实需要 2×max(54, 100-34)=132，
+                             *    而记的是 112 → 文件名戳出右边 10px。
+                             *    文字宽 40 时更离谱：需要 108，记的是 52 —— 图标
+                             *    整个露在框左边。
+                             *
+                             * 改成先算整行宽度，再按它居中：
+                             *   rowW = 图标占宽(11) + 间隙(9) + 文字宽 = 20 + 文字宽
+                             * 行左缘 = cx - rowW/2；图标原点 = 行左缘 + 8（让 outline
+                             * 的左缘正好落在行左缘）；文字 = 行左缘 + 20。
+                             */
+                            var flabel = attachmentLabel(fils[fi], '文件附件');
+                            var rowW = 20 + estTextW(flabel, attachmentFontSize(node));
+                            var rowLeft = cx - rowW / 2;
                             var fic = new FileIcon();
                             fic.paint(color);
-                            fic.setTranslate(cx - 46, fy);
+                            fic.setTranslate(rowLeft + 8, fy);
                             bindAttach(fic, 'file', fi, fils[fi], attachmentLabel(fils[fi], '附件'), node);
                             push(fic);
-                            var flabel = attachmentLabel(fils[fi], '文件附件');
                             var fn = new kity.Text(flabel);
                             try {
                                 fn.setSize(attachmentFontSize(node)).fill(color).setTextAnchor('start');
                                 fn.setStyle('pointer-events', 'none');
-                                fn.setTranslate(cx - 34, fy + 4);
+                                fn.setTranslate(rowLeft + 20, fy + 4);
                             } catch (e3) {}
                             push(fn);
-                            // 一行占的宽度 = 图标 12 + 文件名。文件名宽度只能估算：
-                            // kity.Text 没有同步的 getWidth，量 BBox 又要等布局完成。
-                            attW = Math.max(attW, 12 + estTextW(flabel, attachmentFontSize(node)));
+                            attW = Math.max(attW, rowW);
                             // 行距必须 ≥ 图标高度（20）：写 17 时相邻两行的图标
                             // 上下各占 20，重叠 3px —— 用户看到的就是「两个图标叠在一起」。
                             top += 24;

@@ -7691,9 +7691,62 @@ group('附件画进节点框内（节点撑高，不再被相邻节点遮挡）'
   for (const [who, pat] of [
     ['图片横幅', /attW = Math\.max\(attW, iw\);/],
     ['视频卡片', /attW = Math\.max\(attW, vw\);/],
-    ['文件行', /attW = Math\.max\(attW, 12 \+ estTextW\(/],
+    ['文件行', /attW = Math\.max\(attW, rowW\);/],
   ]) {
     ok(pat.test(html), `${who}的宽度计入 attW（漏了会戳出外框）`);
+  }
+
+  /* ---- 3.5) 文件行必须**居中**且宽度算对 ----
+   *
+   * 原写法：图标钉在 cx-46、文字 cx-34，attW 记 `12 + 文字宽`。
+   * 问题在于这一行相对 cx **不对称**：
+   *   FileIcon 的 outline 路径是 x∈[-8,3]（原点不在中心），
+   *   所以图标左缘在 cx-46-8 = **cx-54**，文字右缘在 cx-34+文字宽。
+   *
+   * 盒是按 cx 居中的（宽度 W → 覆盖 cx±W/2），所需
+   *   W = 2 × max(54, 文字宽 - 34)
+   * 而记的是 12 + 文字宽 —— 严重偏小：
+   *   文字宽 100 → 需 132，记 112 → 文件名戳出右边 10px
+   *   文字宽  40 → 需 108，记  52 → 图标整个露在框左边
+   */
+  {
+    const i = html.indexOf('var fils = refListOf(node.getData(\'file\'));');
+    ok(i > 0, '有文件行渲染');
+    const seg = html.slice(i, html.indexOf('/* ---- 把附件区纳入节点盒', i));
+    ok(/var rowW = 20 \+ estTextW\(/.test(seg), '行宽 = 图标 11 + 间隙 9 + 文字宽（即 20 + 文字宽）');
+    ok(/var rowLeft = cx - rowW \/ 2;/.test(seg), '行按 rowW 居中（左缘 = cx - rowW/2）');
+    ok(/fic\.setTranslate\(rowLeft \+ 8, fy\)/.test(seg),
+      '图标原点 = 行左缘 + 8（outline 左缘 x=-8，正好落在行左缘）');
+    ok(/fn\.setTranslate\(rowLeft \+ 20, fy \+ 4\)/.test(seg), '文字 = 行左缘 + 20');
+    ok(!/cx - 46/.test(seg), '不再把图标钉在 cx-46（那会让整行不对称）');
+
+    /* 数值校验：从**源码**里抠出系数来算，不能在这里另写一份 ——
+     * 另写一份的话源码系数被改小（比如改回 12）断言照样绿（假阴性）。
+     */
+    const mRow = seg.match(/var rowW = (\d+) \+ estTextW\(/);
+    ok(mRow, '能取到 rowW 的常数项');
+    const K = Number(mRow[1]);
+    const mIcon = seg.match(/fic\.setTranslate\(rowLeft \+ (\d+), fy\)/);
+    const mText = seg.match(/fn\.setTranslate\(rowLeft \+ (\d+), fy \+ 4\)/);
+    const iconOff = Number(mIcon[1]);      // 图标原点相对行左缘
+    const textOff = Number(mText[1]);      // 文字起点相对行左缘
+
+    for (const tw of [40, 100, 300]) {
+      const rowW = K + tw;
+      const left = -rowW / 2;                          // 行左缘相对 cx
+      const iconLeft = left + iconOff - 8;             // 图标 outline 左缘（x=-8）
+      const textRight = left + textOff + tw;           // 文字右缘
+      const realW = textRight - iconLeft;              // 这一行**实际**占多宽
+
+      eq(iconLeft, -textRight, `文字宽 ${tw}：行两侧伸出相等（${iconLeft} / ${textRight}）—— 居中`);
+      // 关键：rowW 必须 >= 实际占宽，否则内容戳出外框
+      ok(rowW >= realW, `文字宽 ${tw}：rowW(${rowW}) 覆盖实际占宽(${realW}) —— 不够就会戳出外框`);
+      // 盒是按 cx 居中的（cx ± W/2），两侧伸出 = realW/2 时需 W = realW
+      ok(rowW >= 2 * Math.max(-iconLeft, textRight),
+        `文字宽 ${tw}：盒宽 ${rowW} 足够容纳居中后偏移 ${Math.max(-iconLeft, textRight)}`);
+    }
+    // 常数项必须 >= 20（图标 11 + 间隙 9）：小于它，短文件名的图标会露在框外
+    ok(K >= 20, `rowW 常数项 K=${K} >= 20（图标 11 + 间隙 9；旧的 12 会让图标戳出左边）`);
   }
 
   // ---- 4) estTextW：CJK 按全角、拉丁按 0.55 ----
