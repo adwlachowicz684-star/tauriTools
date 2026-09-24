@@ -249,32 +249,43 @@ export async function installAdapter(o) {
      */
     pluginBase = o.reportedBase;
     baseSource = 'reported';
+  } else if (manifest.followsTheme) {
+    /*
+     * 插件明确声明"我的观感由外壳主题变量驱动" → 渲染出来**必然**与面板同基调，
+     * 任何基调下都不该反转。
+     *
+     * 这一支必须排在 manifest.theme **之前**。否则跟随主题的插件会落到
+     * 下一支，被 theme:'dark' 钉死成"自身深色"，浅色面板下与 panelBase
+     * 不等 → 施加反转 → 已变浅的界面被二次翻回深色。
+     *
+     * 判据来自实测而不是声明：这些插件的入口都读 nexus:preload-base /
+     * preload-bg 铺底色（demo-react、demo-service、home、settings 均如此）。
+     * 声明只是把这件已成立的事告诉适配层，让它不必再猜。
+     */
+    pluginBase = panelBase;
+    baseSource = 'follows';
   } else if (manifest.theme === 'light' || manifest.theme === 'dark') {
     /*
-     * manifest.theme 的语义是**与面板的关系**，不是"插件自身什么颜色"。
+     * manifest.theme 的语义是**插件自身固定什么基调**，不是"与面板的关系"。
+     * ------------------------------------------------------------------
+     * 本文件 PLUGIN_THEMES 的措辞就是证据：
+     *   'dark'  = 本身深色（不适配）
+     *   'light' = 本身浅色（需适配）
+     * "本身"＝插件自己的颜色。registry.js 那句"与面板同基调"是在
+     * **默认深色面板**的前提下写的，两者在深色面板下结论一致，
+     * 一旦切到浅色面板就分道扬镳 —— 正是这个歧义让问题来回反复。
      *
-     * registry.js 顶部写明：
-     *   'dark'  = 与面板同基调（不适配）
-     *   'light' = 相反（需适配）
+     * 所以这里按"自身基调"直接取值，让通用规则（基调不等才反转）去决定：
+     *   demo-light（自身浅色，纯白硬编码）
+     *     浅色面板 → 相等 → 不反转 ✓（保留它原本的白色）
+     *     深色面板 → 不等 → 反转 ✓（这才是它要演示的适配）
      *
-     * 此前这里被当成"插件自身的基调"直接用：
-     *   pluginBase = manifest.theme  // 'dark'
-     * 于是面板是深色时 pluginBase==panelBase → 不反转，**碰巧正确**；
-     * 而面板一切到浅色（赤陶、宣纸这类），
-     *   pluginBase='dark' ≠ panelBase='light' → 施加反转
-     * 可 theme:'dark' 明明说的是"与面板同基调、不要适配"。
-     *
-     * 表现：切到浅色主题后插件被翻成深色，而 localStorage 里写着 light。
-     * 深色面板下永远不暴露（两个值恰好相等），浅色下必现 ——
-     * 这是它能潜伏这么久的原因。
-     *
-     * 按文档语义换算：
-     *   'dark'  → 与面板同基调 → 不反转
-     *   'light' → 与面板相反   → 反转
+     * 曾把它改成"关系语义"：'light' → 取 panelBase 的反面。
+     * 结果浅色面板下 pluginBase 被算成 'dark' → 施加反转 →
+     * 一块本该保持白色的插件被翻成深色（赤陶下必现）。
+     * 深色面板下两个语义恰好等价，所以那次改动在深色下"验证通过"。
      */
-    pluginBase = manifest.theme === 'light'
-      ? (panelBase === 'dark' ? 'light' : 'dark')
-      : panelBase;
+    pluginBase = manifest.theme;
     baseSource = 'manifest';
   } else {
     /* 走自动检测。
