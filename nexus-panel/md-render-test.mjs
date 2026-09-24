@@ -213,7 +213,17 @@ t('md 渲染区可选中', /\.md-out\s*\{[\s\S]{0,400}?user-select:\s*text/.test
  * 主题跟随：md 段内不得出现硬编码色值。
  * 写死色板的后果是切主题时这片不变，看起来像"插件坏了"。
  */
-const hardColors = mdCss.match(/#[0-9a-fA-F]{3,8}\b|rgba?\(/g) || [];
+/*
+ * 只查 **var() 之外**的字面色。
+ *
+ * `var(--danger, #ff6b6b)` 这种兜底写法不算写死色板 ——
+ * 主题跟着变量走，兜底只在变量缺失时才生效，是合法且必要的写法
+ * （本文件里 `var(--sp-4, 8px)` 也是同一类）。
+ * 不先剥掉 var(...) 就查，会把这类正当写法全部判成违规，
+ * 逼着人去掉兜底 —— 那才是真的埋隐患。
+ */
+const mdCssNoVar = mdCss.replace(/var\([^)]*\)/g, 'var()');
+const hardColors = mdCssNoVar.match(/#[0-9a-fA-F]{3,8}\b|rgba?\(/g) || [];
 t('md 样式不写死色板（全部走变量）',
   hardColors.length === 0,
   hardColors.join(','));

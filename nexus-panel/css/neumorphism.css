@@ -1942,3 +1942,28 @@ html.theme-transition *:not(.spinner) {
 .markdown-body hr { border: 0; border-top: 1px solid var(--edge); margin: 1em 0; }
 /* 图片不撑破容器 */
 .markdown-body img { max-width: 100%; }
+
+/* ---- E1 拖入 ---- */
+/* 顶部一行：文件名 + 提示。
+   单独一条而不是塞进 md-pane-t：文件名属于"当前打开的是哪个文件"，
+   跟"这两栏分别是什么"不是同一层信息，混在一起会分不清。 */
+.md-bar {
+  display: flex; align-items: center; gap: var(--sp-4, 8px);
+  flex: none; margin-bottom: 3px;
+  font-size: var(--fs-11, 11px);
+  min-height: 16px;
+}
+.md-file {
+  color: var(--text-dim);
+  /*
+   * 文件名可能很长（拖进深层目录的文件），不裁会把右边提示挤出可视区，
+   * 而提示往往更重要（"文件过大"这类）。
+   */
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 60%;
+}
+.md-hint { color: var(--danger); }
+/* 拖入悬停：整块描边。
+   用 outline 而不是 border —— border 会改变盒模型尺寸，
+   一进一出导致整个插件布局抖一下。 */
+.md-wrap.is-drag { outline: 2px dashed var(--accent); outline-offset: -3px; }
