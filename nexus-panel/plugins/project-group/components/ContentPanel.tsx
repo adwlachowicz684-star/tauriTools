@@ -11,7 +11,8 @@ import { ContextMenu, type MenuItem } from './ui';
 const KIND_LABEL: Record<string, string> = { agent: 'Agent', skill: 'Skill', rule: 'Rule' };
 
 export function ContentPanel({
-  api, root, items, kind, onKind, onLog, onRename, onRefresh, selected, onSelect,
+  api, root, items, kind, onKind, onLog, onRename, onRenameSegment, onRefresh,
+  selected, onSelect,
 }: {
   api: Api;
   root: string;
@@ -321,16 +322,16 @@ export function ContentPanel({
         {(['all', 'agent', 'skill', 'rule'] as const).map((k) => (
           <button
             key={k}
-            className={`p-btn${kind === k ? ' primary' : ''}`}
-            style={{ height: 30, padding: '0 12px' }}
+            className={`p-btn sm${kind === k ? ' primary' : ''}`}
+            
             onClick={() => onKind(k)}
           >
             {k === 'all' ? `全部 ${items.length}` : `${KIND_LABEL[k]} ${counts[k]}`}
           </button>
         ))}
         <button
-          className="p-btn"
-          style={{ height: 30, padding: '0 12px' }}
+          className="p-btn sm"
+          
           disabled={!root}
           onClick={() => api.openPath(root, 'dir').catch((e) => onLog(errText(e), true))}
         >
@@ -343,8 +344,8 @@ export function ContentPanel({
           return (
             <button
               key={k}
-              className="p-btn"
-              style={{ height: 30, padding: '0 12px' }}
+              className="p-btn sm"
+              
               disabled={!dir}
               title={dir ? `打开 ${KIND_LABEL[k]} 目录：${dir}` : `该目录下没有 ${KIND_LABEL[k]}`}
               onClick={() => dir && api.openPath(dir, 'dir').catch((e) => onLog(errText(e), true))}
@@ -354,8 +355,8 @@ export function ContentPanel({
           );
         })}
         <button
-          className="p-btn"
-          style={{ height: 30, padding: '0 12px' }}
+          className="p-btn sm"
+          
           disabled={!root}
           title="重新扫描当前目录"
           onClick={onRefresh}
@@ -378,21 +379,21 @@ export function ContentPanel({
           </div>
           {selected && (
             <div className="p-row">
-              <button className="p-btn" style={{ height: 28, padding: '0 10px' }}
+              <button className="p-btn sm" 
                 onClick={() => api.openPath(selected.path, 'containing').catch((e) => onLog(errText(e), true))}>
                 所在目录
               </button>
-              <button className="p-btn" style={{ height: 28, padding: '0 10px' }}
+              <button className="p-btn sm" 
                 onClick={() => api.editFile(selected.path).catch((e) => onLog(errText(e), true))}>
                 外部编辑
               </button>
-              <button className="p-btn" style={{ height: 28, padding: '0 10px' }}
+              <button className="p-btn sm" 
                 title="重命名该条目（文件保留扩展名）"
                 onClick={() => onRename(selected)}>
                 改名
               </button>
               {/* 沙箱内 navigator.clipboard 会被静默拒绝，走后端复制命令 */}
-              <button className="p-btn" style={{ height: 28, padding: '0 10px' }}
+              <button className="p-btn sm" 
                 title="复制条目名称"
                 onClick={() =>
                   api.copyText(selected.name).then(
@@ -402,7 +403,7 @@ export function ContentPanel({
                 }>
                 复制名
               </button>
-              <button className="p-btn" style={{ height: 28, padding: '0 10px' }}
+              <button className="p-btn sm" 
                 title="复制完整路径"
                 onClick={() =>
                   api.copyText(selected.path).then(
@@ -414,7 +415,7 @@ export function ContentPanel({
               </button>
               {/* 「复制名」给的是去扩展名的显示名；这个给磁盘上的真实文件名（带扩展名）。
                   两者在 skill 目录下常常不一样，所以都留着。 */}
-              <button className="p-btn" style={{ height: 28, padding: '0 10px' }}
+              <button className="p-btn sm" 
                 title="复制文件名（含扩展名，磁盘上的真实名字）"
                 onClick={() => {
                   const fn = fileNameOf(selected.path);
