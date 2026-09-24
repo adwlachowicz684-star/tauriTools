@@ -45,7 +45,10 @@ export type Dialog =
   /** #14 从文件管理器拖进来时打开（带拖入的名字当提示） */
   | { type: 'pickDir'; kind: CardKind; tabIndex?: number; droppedName?: string }
   | { type: 'create'; kind: CardKind }
-  | { type: 'lock'; card: CardInfo }
+  /* #419 kind 一并带过来：保护弹窗要显示"项目 / 项目组"徽章。
+     两栏都能调出这个弹窗，路径长得又像，没有徽章的话用户无从确认
+     自己正在给**哪一个**上锁 —— 而锁错对象的代价是目录被系统拦住。 */
+  | { type: 'lock'; card: CardInfo; kind: CardKind }
   | { type: 'style'; card: CardInfo }
   | { type: 'icons'; card: CardInfo }
   | { type: 'backup' }
@@ -300,6 +303,7 @@ export function Dialogs(props: DialogsProps) {
       {dialog.type === 'lock' && (
         <LockDialog
           path={dialog.card.path}
+          kind={dialog.kind}
           denyDelete={dialog.card.denyDelete}
           denyWrite={dialog.card.denyWrite}
           /*

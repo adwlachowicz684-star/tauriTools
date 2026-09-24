@@ -354,7 +354,7 @@ export default function App() {
         onClick: () => copyText(card.path),
       },
       { label: '改名…（F2）', onClick: () => setDialog({ type: 'rename', card, kind }) },
-      { label: '保护（ACL）…', onClick: () => setDialog({ type: 'lock', card }) },
+      { label: '保护（ACL）…', onClick: () => setDialog({ type: 'lock', card, kind }) },
       { label: '图标与标签…', onClick: () => setDialog({ type: 'style', card }) },
       { label: '发送到 AI…', onClick: () => setDialog({ type: 'chain', target: card.path, kind }) },
     ];
@@ -720,7 +720,7 @@ export default function App() {
           icon: '🔒', label: '保护',
           hotkeyId: 'lock' as HotkeyId,
           title: 'ACL 保护（Ctrl/⌘+L）',
-          onClick: needCard((c) => setDialog({ type: 'lock', card: c })),
+          onClick: needCard((c) => setDialog({ type: 'lock', card: c, kind: focus })),
         },
         {
           icon: '✎', label: '改名',
@@ -763,7 +763,7 @@ export default function App() {
 
   useCardHotkeys(ctx, {
     open: needCard((c) => openPath(c.path, 'dir')),
-    lock: needCard((c) => setDialog({ type: 'lock', card: c })),
+    lock: needCard((c) => setDialog({ type: 'lock', card: c, kind: focus })),
     rename: needCard((c) => setDialog({ type: 'rename', card: c, kind: focus })),
     move: needCard((c) => void s.moveCardAcross(
       focus, c.path, focus === 'project' ? s.activeTab.group : s.activeTab.project,

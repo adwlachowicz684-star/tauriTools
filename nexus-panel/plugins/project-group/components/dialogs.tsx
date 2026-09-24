@@ -111,10 +111,18 @@ export function CreateDialog({
 
 /** ACL 文件夹保护 */
 export function LockDialog({
-  path, denyDelete, denyWrite, accountOnly, onClose, onApply,
+  path, kind, denyDelete, denyWrite, accountOnly, onClose, onApply,
   watchEnabled, onWatchChange, live,
 }: {
   path: string;
+  /**
+   * #419 目标的类型（项目 / 项目组），用于标题下的徽章。
+   *
+   * 两栏都能调出这个弹窗、路径长相又相似，没有徽章的话用户无从确认
+   * 自己正在给**哪一个**上锁 —— 而锁错对象意味着那个目录被系统拦住，
+   * 用户只会困惑"我明明锁的不是这个"。
+   */
+  kind?: 'project' | 'group';
   denyDelete: boolean;
   denyWrite: boolean;
   /**
@@ -179,7 +187,18 @@ export function LockDialog({
         </>
       }
     >
-      <div className="p-mono p-muted" style={{ marginBottom: 'var(--sp-6, 12px)', wordBreak: 'break-all' }}>{path}</div>
+      {/*
+        #419 目标路径 + 类型徽章（对齐原版 AclLockDialog 的 targetGrid）。
+        徽章放路径**右侧**：它是给路径的限定说明，放上面会像另一个标题。
+      */}
+      <div className="fpx-lock-target">
+        <span className="p-mono p-muted fpx-lock-target-path">{path}</span>
+        {kind && (
+          <span className="fpx-lock-kind" title="本次保护操作的对象类别">
+            {kind === 'group' ? '项目组' : '项目'}
+          </span>
+        )}
+      </div>
 
       {/* #22 预设档位：四个组合都有名字，比"随便勾两个框"好认。 */}
       <div className="fpx-lock-presets">
@@ -249,6 +268,23 @@ export function LockDialog({
       <CheckLine checked={dw} onChange={setDw} title="防写入" subtitle="禁止写入，目录变为只读" />
       <div className="p-muted" style={{ marginTop: 'var(--sp-5, 10px)' }}>
         Windows 走系统 icacls，非 Windows 平台退化为只读权限。受保护的目录在建链/删链时会自动临时摘锁。
+      </div>
+      {/*
+        #431 自救命令（原版 AclLockDialog 底部那句「自救命令见 TIPS：
+        icacls "<目录>" /remove:d *S-1-1-0」）。
+        原版只写"见 TIPS"，本版没有 TIPS 面板，直接把命令写出来。
+
+        为什么必须有：上了防删除之后，**本工具自己也可能被挡住**
+        （比如弹窗崩了、或用户手改过 ACL）。没有这条命令，用户只能
+        靠搜索去试，而试错过程中很可能把目录弄成更糟的状态。
+      */}
+      <div className="fpx-lock-rescue">
+        <div className="p-muted">
+          若被自己的保护挡住（提示「拒绝访问」），管理员命令行执行：
+        </div>
+        <code className="p-mono fpx-lock-rescue-cmd">
+          icacls "{path}" /remove:d *S-1-1-0
+        </code>
       </div>
     </Modal>
   );

@@ -1577,6 +1577,52 @@
   color: var(--text-dim);
 }
 
+/* -------- 保护弹窗：目标路径 + 类型徽章（#419）--------
+ * flex + align-items 让徽章与**首行**路径对齐；
+ * 路径很长会折行，此时徽章仍钉在右上角，不会跟着掉到第二行末尾
+ * （掉下去的话看起来像另一条说明文字）。 */
+.fpx-lock-target {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4, 8px);
+  margin-bottom: var(--sp-6, 12px);
+}
+.fpx-lock-target-path {
+  flex: 1 1 auto;
+  /* flex item 上的长路径要能截断/换行，必须给 min-width: 0 ——
+     否则 min-width:auto 会把整行撑破（同 .fpx-link-group 那条）。 */
+  min-width: 0;
+  word-break: break-all;
+}
+.fpx-lock-kind {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: var(--r-sm);
+  background: var(--chip-active-bg, var(--surface-sunk));
+  color: var(--accent, #7aa2f7);
+  font-size: var(--fs-11, 11px);
+  white-space: nowrap;
+}
+
+/* -------- 保护弹窗：icacls 自救命令（#431）-------- */
+.fpx-lock-rescue {
+  margin-top: var(--sp-5, 10px);
+  padding: var(--sp-4, 8px) var(--sp-5, 10px);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunk);
+  font-size: var(--fs-11, 11px);
+  line-height: 1.6;
+}
+.fpx-lock-rescue-cmd {
+  display: block;
+  margin-top: 4px;
+  /* 命令必须能整条选中复制：被截断或折行到看不出边界，用户就会抄错，
+     而抄错的 icacls 命令可能作用于错误的对象。 */
+  word-break: break-all;
+  user-select: all;
+  color: var(--text);
+}
+
 /* ---------------- 面板内操作反馈条（#9）----------------
  * **吸顶**：面板可能很长，操作发生在底部时，
  * 不吸顶的反馈条等于不存在（用户在底部操作，反馈在顶部屏幕外）。

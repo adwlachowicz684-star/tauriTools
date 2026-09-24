@@ -221,4 +221,70 @@ console.log('\n=== 11. #138 lock_set 的 account_only / remove ★ ===');
   t('strength 用 match 一次判（不会重复叠加）', /let strength = match \(dd, dw, ao\)/.test(cblk));
 }
 
+console.log('\n=== 12. #419 弹窗显示目标路径 + 类型徽章 ★ ===');
+{
+  /*
+   * 本文件没有全局 `strip`（第 11 节里是**就地**定义的），
+   * 直接用会让整个套件 ReferenceError 挂掉 ——
+   * 这是**第四次**踩同一个坑（watch-suppress / lock-preset 第11节 /
+   * link-agents / 本处）。每节用到的辅助函数必须就地定义或确认已存在。
+   */
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+  const dlg = strip(fs.readFileSync(path.join(HERE, 'components/dialogs.tsx'), 'utf8'));
+  const hub = strip(fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8'));
+  const app = strip(fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8'));
+  const css = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8');
+
+  /*
+   * 路径此前已显示，**缺的是类型徽章**。
+   * 两栏都能调出这个弹窗、路径长相又相似 —— 没有徽章的话用户无从确认
+   * 自己正在给**哪一个**上锁，而锁错对象意味着那个目录被系统拦住。
+   */
+  t('弹窗有类型徽章元素', /fpx-lock-kind/.test(dlg));
+  t('徽章区分项目/项目组', /kind === 'group' \? '项目组' : '项目'/.test(dlg));
+  /* kind 是可选：没有复用场景传它时不渲染，而不是渲染一个空徽章 */
+  t('kind 为可选（不传就不渲染）', /kind\?: 'project' \| 'group';/.test(dlg));
+  t('徽章带 title 说明', /title="本次保护操作的对象类别"/.test(dlg));
+  t('路径仍在（徽章是补充，不是替代）', /fpx-lock-target-path/.test(dlg));
+
+  /* 三处打开点都要把 kind 传过来，漏一处就是"从那个入口进去没有徽章" */
+  t('右键菜单入口传了 kind', /setDialog\(\{ type: 'lock', card, kind \}\)/.test(app));
+  t('侧栏按钮入口传了 kind', /type: 'lock', card: c, kind: focus/.test(app));
+  t('快捷键入口传了 kind', (app.match(/type: 'lock', card: c, kind: focus/g) || []).length >= 2,
+    '命中 ' + (app.match(/type: 'lock', card: c, kind: focus/g) || []).length + ' 处');
+  t('dialog 类型里带 kind', /\{ type: 'lock'; card: CardInfo; kind: CardKind \}/.test(hub));
+  t('hub 把 kind 传给弹窗', /kind=\{dialog\.kind\}/.test(hub));
+
+  /* 徽章必须在 flex 容器里且 path 有 min-width: 0，否则长路径会把行撑破 */
+  const ti = css.indexOf('.fpx-lock-target {');
+  const tblk = css.slice(ti, ti + 400);
+  t('.fpx-lock-target 是 flex', /display: flex/.test(tblk));
+  t('路径有 min-width: 0（长路径不撑破）', /min-width: 0/.test(tblk));
+  t('徽章 flex: none（不被压缩变形）', /flex: none/.test(css.slice(css.indexOf('.fpx-lock-kind {'), css.indexOf('.fpx-lock-kind {') + 260)));
+}
+
+console.log('\n=== 13. #431 icacls 自救命令要写出来 ★ ===');
+{
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+  const dlg = strip(fs.readFileSync(path.join(HERE, 'components/dialogs.tsx'), 'utf8'));
+  const css = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8');
+
+  /*
+   * 为什么必须有：上了防删除之后，**本工具自己也可能被挡住**
+   * （弹窗崩了、或用户手改过 ACL）。原版写"自救命令见 TIPS"，
+   * 本版没有 TIPS 面板 —— 照搬那句话等于给了个找不到的指针。
+   */
+  t('弹窗里有自救命令', /icacls/.test(dlg));
+  t('命令是完整可复制的（含 /remove:d）', /\/remove:d \*S-1-1-0/.test(dlg));
+  /* 必须带上**当前路径**：给一条通用占位符的话用户还得自己拼，容易抄错 */
+  t('命令里带了当前路径', /icacls "\{path\}"/.test(dlg));
+  t('说明了什么时候用（被自己的保护挡住）', /若被自己的保护挡住/.test(dlg));
+
+  /* 命令要能整条选中复制：被截断或看不出边界就会抄错 */
+  const ci = css.indexOf('.fpx-lock-rescue-cmd {');
+  const cblk = css.slice(ci, ci + 300);
+  t('命令可选中全部（user-select: all）', /user-select: all/.test(cblk));
+  t('命令不截断（word-break: break-all）', /word-break: break-all/.test(cblk));
+}
+
 done();
