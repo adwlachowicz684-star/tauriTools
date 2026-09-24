@@ -288,15 +288,29 @@ export function briefArg(v: unknown, max = 16): string {
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 
-/** 二元算术在摘要里的写法 */
-const MATH_SIGN: Record<string, string> = {
+/**
+ * 运算符写法的**唯一**出处。
+ *
+ * ================= 为什么只能有一份 =================
+ *
+ * 以前这里有两张表（算术一张、比较一张），而任务窗口里那句
+ * 「这个值是这么算出来的」又抄了第三份。
+ * 三份手写表，加一个新运算只要漏改一份就对不上：
+ * 卡片上写 `＋`、判据里写 `add` —— 同一个东西两种写法，
+ * 而且**不报错**，只有把两处并排看才会发现。
+ *
+ * 现在合并成一份并导出，判据那边直接 import。
+ * 有守卫盯着"不许再出现第二张符号表"。
+ */
+export const OP_SIGN: Record<string, string> = {
   add: '＋', sub: '－', mul: '×', div: '÷', mod: 'mod',
-};
-
-/** 比较运算在摘要里的写法 */
-const COMPARE_SIGN: Record<string, string> = {
   eq: '＝', neq: '≠', gt: '>', gte: '≥', lt: '<', lte: '≤',
 };
+
+/** 取运算符写法；表里没有就返回 undefined（多数运算没有符号，比如「包含」） */
+export function opSignOf(op: string): string | undefined {
+  return OP_SIGN[op];
+}
 
 /**
  * 摘要的一小段。
@@ -449,7 +463,7 @@ export function opBriefParts(kind: string, d: Record<string, unknown>): BriefPar
   ];
 
   if (kind === 'math') {
-    const sign = MATH_SIGN[op];
+    const sign = opSignOf(op);
     if (sign) return [V('a'), OP(sign), V('b')];
     // min / max 是函数名写法，写成 `min(1, 2)` 比 `1 min 2` 好认
     if (op === 'min' || op === 'max') return call(op, 'a', 'b');
@@ -499,7 +513,7 @@ export function opBriefParts(kind: string, d: Record<string, unknown>): BriefPar
   }
 
   if (kind === 'compare') {
-    const sign = COMPARE_SIGN[op];
+    const sign = opSignOf(op);
     if (sign) return [V('a'), OP(sign), V('b')];
     /*
      * 「包含 / 开头 / 结尾」也是运算符，只是写成中文字。

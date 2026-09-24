@@ -2,7 +2,17 @@ import test from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import { mathOp, textOp, compareOp, randomOp, num, fmt, opSummary, opBrief, briefArg } from '../engine/ops';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { AF_SRC } from './srcScan';
+
+/** 原样读源码（不去注释）—— 这张表里有些项后面跟着说明 */
+const readSrcRaw = (rel: string): string =>
+  fs.readFileSync(path.join(AF_SRC, rel), 'utf-8');
+import {
+  mathOp, textOp, compareOp, randomOp, num, fmt, opSummary, opBrief, briefArg,
+  opBriefParts, opSignOf,
+} from '../engine/ops';
 
 const v = (r: { ok: boolean; value?: string; error?: string }) =>
   (r as { ok: true; value: string }).value;
@@ -272,4 +282,55 @@ test('每个运算都有摘要 —— 新增运算忘了补，这条会红', () 
     }
   }
   assert.ok(n >= 30, `只检查了 ${n} 个运算，类型定义可能没读到`);
+});
+
+/* ================= 符号表只能有一份 ================= */
+
+/*
+ * 运算符写法（＋ / × / ≥ …）曾经有三份手写表：
+ * 卡片摘要两份（算术、比较各一），任务窗口的判据又抄了第三份。
+ *
+ * 加一个新运算漏改一份，症状是同一个运算在两处写法不同
+ * （卡片 `＋`、判据 `add`）—— 不报错，只有并排看才发现，
+ * 而用户不会并排看，只会觉得"这个判据怎么写得这么怪"。
+ *
+ * 现在合并成 ops.ts 里导出的唯一一份。这里盯两件事：
+ *   1. 不许再出现第二张表（按"带符号字面的 Record<string,string>"判定）
+ *   2. 所有带符号的运算，卡片与判据取到的是同一个符号
+ */
+test('运算符写法只有一份，且卡片与判据取到同一个符号', () => {
+  /*
+   * 用 readSrc 而不是 __dirname ——
+   * 测试跑在编译产物目录里，__dirname 指不到仓库源码
+   * （第一版就是这么写的，于是直接 ENOENT）。
+   */
+  const src = readSrcRaw('engine/ops.ts');
+  const runnerSrc = readSrcRaw('engine/runners/ops.ts');
+
+  // 1. 判据那边不许自带表
+  assert.ok(
+    !/const\s+\w*SIGN\w*\s*:\s*Record<\s*string\s*,\s*string\s*>\s*=\s*\{/.test(runnerSrc),
+    '判据里又出现了一张符号表 —— 应该 import opSignOf，不要各写一份',
+  );
+  assert.ok(runnerSrc.includes('opSignOf'), '判据没有改用 opSignOf');
+
+  // 2. 卡片与判据取到同一个符号
+  const table = new RegExp(
+    'export const OP_SIGN[^=]*=\\s*\\{([\\s\\S]*?)\\};',
+  ).exec(src);
+  assert.ok(table, 'ops.ts 里找不到 OP_SIGN —— 守卫本身失效了');
+  const signs = [...table[1].matchAll(/([a-zA-Z]+):\s*'([^']+)'/g)];
+  assert.ok(signs.length >= 11, `OP_SIGN 只解析到 ${signs.length} 项`);
+
+  for (const [, op, sign] of signs) {
+    // 卡片摘要
+    const kind = ['add', 'sub', 'mul', 'div', 'mod'].includes(op) ? 'math' : 'compare';
+    const parts = opBriefParts(kind, { kind, op, a: '1', b: '2' });
+    const opPart = parts.find((p) => p.role === 'op' || p.role === 'fn');
+    assert.ok(opPart, `${kind}/${op} 的摘要里没有运算符格`);
+    assert.equal(opPart.text, sign, `${kind}/${op}：卡片写 "${opPart.text}"，符号表是 "${sign}"`);
+
+    // 判据：直接对函数断言，避免复制一份实现
+    assert.equal(opSignOf(op), sign, `${op}：opSignOf 与符号表不一致`);
+  }
 });

@@ -2,7 +2,7 @@ import type { RunContext } from '../runContext';
 import { withNodeRun, NodeFailError } from '../runnerKit';
 import { upstreamText } from '../upstream';
 import {
-  mathOp, textOp, compareOp, randomOp,
+  mathOp, textOp, compareOp, randomOp, opSignOf,
   type MathOp, type TextOp, type CompareOp, type RandomOp,
 } from '../ops';
 
@@ -13,12 +13,6 @@ import {
  */
 
 type Args = { a: unknown; b: unknown; c: unknown };
-
-/** 运算符号：与卡片摘要同一套写法，两边说法不一致会让人看不懂 */
-const DETAIL_SIGN: Record<string, string> = {
-  add: '＋', sub: '－', mul: '×', div: '÷', mod: 'mod',
-  eq: '＝', neq: '≠', gt: '>', gte: '≥', lt: '<', lte: '≤',
-};
 
 /**
  * 「这个值是这么算出来的」一句话。
@@ -34,7 +28,7 @@ function cut(v: string): string {
 function opDetail(
   kind: string, op: string, a: string, b: string, c: string, value: string,
 ): string {
-  const sign = DETAIL_SIGN[op] ?? op;
+  const sign = opSignOf(op) ?? op;
   if (kind === 'math' || kind === 'compare') {
     if (op === 'min' || op === 'max' || op === 'round' || op === 'floor'
       || op === 'ceil' || op === 'abs') {
