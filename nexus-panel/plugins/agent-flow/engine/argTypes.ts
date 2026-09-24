@@ -188,7 +188,15 @@ const RULES: Record<string, KindRule> = {
       replace: T('a', 'b', 'c'),
       // 截取：起止下标是数字，源文本是文本
       substr: M({ a: 'text', b: 'num', c: 'num' }),
-      split: T('a', 'b'),
+      /*
+       * 分段：文本 / 分隔符 / **第几段**。
+       *
+       * 只有两个参数就漏了「第几段」—— 它填了非数字时 num() 变 0，
+       * 减 1 得 -1，split 的实现里 `part < 0` 直接返回整串。
+       * 于是"我填了第 2 段，它却把整串原样返回"，不报错、看不出原因。
+       * 这正是本文件要拦的那类：有合法降级行为的错误。
+       */
+      split: M({ a: 'text', b: 'text', c: 'num' }),
       join: T('a', 'b'),
       // 重复次数是数字
       repeat: M({ a: 'text', b: 'num' }),

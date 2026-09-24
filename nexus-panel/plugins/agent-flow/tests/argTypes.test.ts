@@ -207,3 +207,71 @@ test('随机选一个 / 打乱按文本校验，不能按数字', () => {
   // 而整数上下界仍要数字
   assert.ok(argTypeIssues('random', { kind: 'random', op: 'int', a: 'abc', b: '10' }).length > 0);
 });
+
+/*
+ * 分段：三个参数，其中「第几段」必须是数字。
+ *
+ * 漏了它的后果很隐蔽 —— 填非数字时 num() 变 0，减 1 得 -1，
+ * split 的实现里 `part < 0` 直接返回**整串**。
+ * 表现为"我填了第 2 段，它却把整串原样给我"，不报错、看不出原因。
+ */
+test('分段：第几段按数字校验', () => {
+  assert.deepEqual(argTypeIssues('text', { kind: 'text', op: 'split', a: 'x,y', b: ',', c: '2' }), []);
+  const bad = argTypeIssues('text', { kind: 'text', op: 'split', a: 'x,y', b: ',', c: '第二段' });
+  assert.equal(bad.length, 1);
+  assert.equal(bad[0].key, 'c');
+  assert.equal(bad[0].expect, 'num');
+});
+
+/**
+ * 规则表与卡片摘要必须**参数一致**。
+ *
+ * 两张表都是手写的，且互相独立 —— 一边列了三个参数、另一边只画两个，
+ * 那个多出来的参数就在卡片上彻底看不见（用户填了也不知道填在哪）。
+ * split 就是这样：摘要画了 a、c，把分隔符 b 丢了。
+ *
+ * 所以这里拿摘要分段（ops.ts 的 briefOf）里实际出现的参数 key，
+ * 去比对规则表（argTypes.ts）里列的参数 key。
+ * 只查**带参数格**的那些运算（用 V('x')），纯文字的跳过。
+ */
+test('规则表列出的参数与卡片摘要画出来的一致', () => {
+  const opsSrc = readSrc('engine/ops.ts');
+  const rulesSrc = readSrc('engine/argTypes.ts');
+
+  const pairs: { kind: string; op: string; fn: string }[] = [
+    { kind: 'text', op: 'split', fn: 'split' },
+    { kind: 'text', op: 'substr', fn: 'substr' },
+    { kind: 'text', op: 'replace', fn: 'replace' },
+    { kind: 'math', op: 'add', fn: 'add' },
+    { kind: 'compare', op: 'gt', fn: 'gt' },
+  ];
+
+  for (const { kind, op, fn } of pairs) {
+    // 摘要里该运算用到的参数格
+    /*
+     * 结尾只认 `];`，**不要求它前面有换行**。
+     *
+     * 写成 `\n\s*\];` 的话，单行写完的 return（`... V('c')];`）
+     * 结尾不带换行，正则就一路吃到**下一个** case 的 `];` ——
+     * 于是 replace 的参数被数成 6 个（把自己的和 substr 的加起来）。
+     * 那是**守卫自己错了**，比没有守卫更糟：会逼人去改对的代码。
+     */
+    const m = opsSrc.match(new RegExp(`case '${fn}':\\s*return \\s*\\[([\\s\\S]*?)\\];`));
+    if (!m) continue; // 该运算不是 case 写法（如 math 走 sign 分支），跳过
+    const briefKeys = [...m[1].matchAll(/V\('([abc])'\)/g)].map((x) => x[1]).sort();
+
+    // 规则表里该运算列的参数
+    const rm = new RegExp(`\\n\\s{6}${op}:\\s*(?:N|T|A)\\(([^)]*)\\)|\\n\\s{6}${op}:\\s*M\\(\\{([^}]*)\\}`).exec(rulesSrc);
+    if (!rm) continue;
+    const raw = rm[1] ?? rm[2] ?? '';
+    const ruleKeys = [...raw.matchAll(/([abc]):/g)].map((x) => x[1]).concat(
+      [...raw.matchAll(/'([abc])'/g)].map((x) => x[1]),
+    );
+    const uniq = [...new Set(ruleKeys)].sort();
+
+    assert.deepEqual(
+      briefKeys, uniq,
+      `${kind}.${op}：摘要画了 [${briefKeys}]，规则列了 [${uniq}] —— 两者要一致`,
+    );
+  }
+});

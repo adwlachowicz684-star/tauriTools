@@ -357,7 +357,27 @@ export type BriefPart = {
    * 于是想换行的人一按回车就退出编辑，内容还被原样存下去了 ——
    * 不报错，只是那段文本永远只有第一行。
    */
-  edit?: { key: string; kind: 'text' | 'area' | 'select' };
+  edit?: {
+    /** 字段名 —— 下拉选项按它从节点定义里取，也是默认的写入目标 */
+    key: string;
+    kind: 'text' | 'area' | 'select';
+    /**
+     * 写入路径，给 `entries.0.config.intervalSec` 这类嵌套字段用。
+     * 省略时就是 key 本身。
+     *
+     * 不写这个的话，卡片只能改顶层字段 —— 而触发器的每个条件卡
+     * 都在数组里，于是"点得动、改不动"。
+     */
+    path?: string;
+    /**
+     * 直接给出选项，用于**节点定义里没有对应 field** 的那些。
+     *
+     * 触发器条件卡的「方式」就是：`entries` 是数组，没法在 fields 里
+     * 声明一条 `kind`。不给选项的话 selectOptionsOf 查不到，
+     * 下拉展开是空的 —— 格子看着能点，点开却没东西可选。
+     */
+    options?: { value: string; label: string }[];
+  };
 };
 
 /** 只有 val / op / fn 会被渲染成下凹的参数格，text 是连接它们的字 */
@@ -454,8 +474,19 @@ export function opBriefParts(kind: string, d: Record<string, unknown>): BriefPar
           V('b'), { role: 'text', text: '~' },
           V('c'), { role: 'text', text: ']' },
         ];
+      /*
+       * 分段要把**分隔符**也画出来。
+       *
+       * 以前只画了 a 和 c，"按什么分"这一格在卡片上完全看不见 ——
+       * 而它恰恰是这一格最该确认的东西（逗号还是空格，结果完全不同）。
+       * 顺带也和规则表对上了（三个参数都列）。
+       */
       case 'split':
-        return [V('a'), { role: 'text', text: ' 第 ' }, V('c'), { role: 'text', text: ' 段' }];
+        return [
+          V('a'), { role: 'text', text: ' 按 ' },
+          V('b'), { role: 'text', text: ' 分，第 ' },
+          V('c'), { role: 'text', text: ' 段' },
+        ];
       case 'join':
         return [
           { role: 'text', text: '连接 ' }, V('a'),
