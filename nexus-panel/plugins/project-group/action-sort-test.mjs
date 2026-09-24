@@ -58,18 +58,28 @@ console.log('\n=== 3. 无效放置必须能回弹（#103 同源）===');
    */
   const dropSeg = panel.slice(panel.indexOf('onDrop={(e) => {'));
   const seg = dropSeg.slice(0, dropSeg.indexOf('onClick={() => setActive(a.id)}'));
-  t('先解析', seg.indexOf('parseActionDrag') < seg.indexOf('e.preventDefault()'));
+  /*
+   * 顺序断言必须**两端都判存在**：
+   * 某端找不到时 indexOf 返回 -1，而 `-1 < 任意正数` 恒真 ——
+   * 断言会**空跑**：锚点被改没了，它照样报绿，你以为在验次序，其实什么都没验。
+   * 这类空跑靠"剥注释"扫不出来（锚点是代码不是注释），只能显式判 >= 0。
+   */
+  const iParse = seg.indexOf('parseActionDrag');
+  const iPrevDefault = seg.indexOf('e.preventDefault()');
+  t('先解析', iParse >= 0 && iPrevDefault >= 0 && iParse < iPrevDefault);
   /*
    * 只断言"有 if (!id) return"不够 —— 它被放到 preventDefault 之后
    * 照样满足。真正要测的是**位置**：判空的索引必须早于 preventDefault。
    */
+  const iNull = seg.indexOf('if (!id) return;');
   t('判空在 preventDefault 之前',
-    seg.indexOf('if (!id) return;') >= 0
-    && seg.indexOf('if (!id) return;') < seg.indexOf('e.preventDefault()'));
+    iNull >= 0 && iPrevDefault >= 0 && iNull < iPrevDefault);
   /* 反向确认：把判空挪到后面应当被判红 */
   const moved = seg.replace('if (!id) return;', '').replace('e.preventDefault();', 'e.preventDefault(); if (!id) return;');
+  const mNull = moved.indexOf('if (!id) return;');
+  const mPrev = moved.indexOf('e.preventDefault()');
   t('（自检）挪到后面会被抓到',
-    !(moved.indexOf('if (!id) return;') < moved.indexOf('e.preventDefault()')));
+    mNull >= 0 && mPrev >= 0 && !(mNull < mPrev));
 }
 
 console.log('\n=== 4. 原地放下 = 无操作 ===');

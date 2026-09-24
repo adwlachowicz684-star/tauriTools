@@ -64,7 +64,10 @@ console.log('\n=== 3b. 也收**图片文件**（原版 ContainsFileDropList）==
   /* 位图优先：截图时剪贴板里没有文件条目 */
   const iB = grid.indexOf("it.type.startsWith('image/')");
   const iF = grid.indexOf('isSupportedImageFile(f.name)');
-  t('位图分支在文件分支之前', iB > 0 && iF > iB, `bitmap=${iB} file=${iF}`);
+  /* 两端都判：iF 找不到时 `iF > iB` 恒假（脆断），
+     少判 iB 那端则恒真（空跑）—— 两种都要挡住 */
+  t('位图分支在文件分支之前', iB >= 0 && iF >= 0 && iF > iB,
+    `bitmap=${iB} file=${iF}`);
   /* 两条路都要 preventDefault，否则浏览器会做自己的默认粘贴 */
   t('两条路都拦默认', (grid.match(/e\.preventDefault\(\);\s*\n\s*takeImage\(/g) || []).length >= 2);
   /* 按钮那条路拿不到文件列表，要写明只能用 Ctrl+V */

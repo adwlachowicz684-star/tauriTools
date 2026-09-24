@@ -60,8 +60,15 @@ console.log('\n=== 2. 耗时 IO 不进事务 ===');
    */
   const iJunc = ren.indexOf('for r in guide.iter()');
   const iWith = ren.indexOf('store::with_config(dir, |cfg| {');
-  t('重建在事务之外', iJunc > 0 && iJunc < iWith, `junc=${iJunc} with=${iWith}`);
-  t('物理改名也在事务之外', ren.indexOf('rename_with_fallback') < iWith);
+  /*
+   * 用 `>= 0` 而不是 `> 0`：后者把"索引恰好为 0"也判成不合法。
+   * 且顺序断言**两端都要判存在** —— 只判一端的话，另一端锚点被改没了
+   * 会让比较恒真/恒假，断言要么空跑要么无端报红。
+   */
+  t('重建在事务之外', iJunc >= 0 && iWith >= 0 && iJunc < iWith,
+    `junc=${iJunc} with=${iWith}`);
+  const iRename = ren.indexOf('rename_with_fallback');
+  t('物理改名也在事务之外', iRename >= 0 && iWith >= 0 && iRename < iWith);
 }
 
 console.log('\n=== 3. 迁移后对新路径重建 ACL 保护 ★ ===');

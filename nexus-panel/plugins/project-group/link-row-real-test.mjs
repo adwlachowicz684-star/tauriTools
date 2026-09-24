@@ -49,7 +49,9 @@ console.log('\n=== 2. 四种情况要分得清 ===');
   /* 顺序：先判项目本身，再判组 —— 项目都没了就别谈组了 */
   const iProj = rs.indexOf('项目文件夹不存在');
   const iGrp = rs.indexOf('项目组文件夹不存在');
-  t('先判项目再判组', iProj > 0 && iGrp > iProj, `proj=${iProj} grp=${iGrp}`);
+  /* 两端都判（>= 0 而非 > 0：后者把"索引恰好为 0"也判成不合法） */
+  t('先判项目再判组', iProj >= 0 && iGrp >= 0 && iGrp > iProj,
+    `proj=${iProj} grp=${iGrp}`);
 }
 
 console.log('\n=== 3. 新增字段（跨端一致）===');

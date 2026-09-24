@@ -240,7 +240,10 @@ console.log('\n=== #360 拖到页签上 → 落到**那个**页签 ★★ ===');
      注释改写后 moveIdx 变 -1、这条顺序断言恒假（假失败），
      而真正的"外部分支被挡住"回归却可能照样悄悄发生。 */
   const moveIdx = tabBlk.indexOf('const rawTab = e.dataTransfer.getData(TAB_DRAG_MIME);');
-  t('外部分支在页签重排分支之前（顺序）', dropIdx >= 0 && moveIdx > dropIdx,
+  /* 两端都要判存在：moveIdx 变 -1 时 `-1 > dropIdx` 恒假（脆断），
+     而 dropIdx 变 -1 时若少了左端判断则恒真（空跑）。 */
+  t('外部分支在页签重排分支之前（顺序）',
+    dropIdx >= 0 && moveIdx >= 0 && moveIdx > dropIdx,
     `external@${dropIdx} move@${moveIdx}`);
   t('外部分支把 tabIndex 传出去',
     /onExternalDrop\?\.\(out\.target, out\.direct, i\)/.test(grid));

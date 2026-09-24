@@ -59,7 +59,15 @@ console.log('\n=== 4. 失败必须能立刻重试（关键）===');
   const body = chain.slice(chain.indexOf('const sendAction'));
   const seg = body.slice(0, body.indexOf('\n  };'));
   t('失败分支清时间戳', /lastSentAt\.current\.delete\(key\);/.test(seg));
-  t('清时间戳在 catch 里', seg.indexOf('catch') < seg.indexOf('lastSentAt.current.delete(key)'));
+  /*
+   * 顺序断言必须**两端都判存在**：
+   * 某端找不到时 indexOf 返回 -1，而 `-1 < 任意正数` 恒真 ——
+   * 断言会**空跑**：锚点被改没了，它照样报绿，你以为在验次序，其实什么都没验。
+   * 这类空跑靠"剥注释"扫不出来（锚点是代码不是注释），只能显式判 >= 0。
+   */
+  const iCatch = seg.indexOf('catch');
+  const iDel = seg.indexOf('lastSentAt.current.delete(key)');
+  t('清时间戳在 catch 里', iCatch >= 0 && iDel >= 0 && iCatch < iDel);
   /* 成功分支不能清 */
   t('成功时不删（保留防抖）', !/pushLog\(r\.message[\s\S]{0,80}?lastSentAt\.current\.delete/.test(seg));
 }

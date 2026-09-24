@@ -103,7 +103,10 @@ console.log('\n=== #153 图标网格贴边自动滚动 ★★ ===');
   const iDrag = g.indexOf('const [iconDrag, setIconDrag]');
   const iHook = g.indexOf('useEdgeAutoScroll(gridRef,');
   t('iconDrag 已声明', iDrag > 0);
-  t('hook 调用在 iconDrag 声明之后（TDZ）', iHook > iDrag && iDrag > 0,
+  /* 两端都判：iHook 找不到时 `iHook > iDrag` 恒假（脆断），
+     少判 iDrag 那端则恒真（空跑）—— 两种都要挡住 */
+  t('hook 调用在 iconDrag 声明之后（TDZ）',
+    iDrag >= 0 && iHook >= 0 && iHook > iDrag,
     `iconDrag@${iDrag} hook@${iHook}`);
 
   /* 三、容器上要有 dragover：指针停在边缘时常常落在格子之间的空隙，

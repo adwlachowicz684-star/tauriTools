@@ -292,7 +292,12 @@ console.log('\n=== 11. #344 冲突整体取消（在 Rust 侧）★★ ===');
    */
   const ci = fnBody.indexOf('std::path::Path::new(to).exists()');
   const mi = fnBody.indexOf('let mut moved');
-  t('冲突检查早于执行循环', ci > 0 && mi > ci, `${ci} / ${mi}`);
+  /*
+   * 用 `>= 0` 而不是 `> 0`：后者把"索引恰好为 0"也判成不合法。
+   * 且顺序断言**两端都要判存在** —— 只判一端的话，另一端锚点被改没了
+   * 会让比较恒真/恒假，断言要么空跑要么无端报红。
+   */
+  t('冲突检查早于执行循环', ci >= 0 && mi >= 0 && mi > ci, `${ci} / ${mi}`);
   t('冲突时明确说未做改动', /未做任何改动/.test(fnBody));
   t('要求 from / to 同父目录', /from\.parent\(\) != to\.parent\(\)/.test(fnBody));
   t('层级名禁止下划线', /contains\('_'\)/.test(fnBody));

@@ -57,7 +57,13 @@ console.log('\n=== 3. 落库仍在指定页签 ===');
     && /tabs\[at\]\.items\.push\(path\);/.test(hook));
   const iOwner = hook.indexOf('const owner = list.findIndex');
   const iPush = hook.indexOf('.items.push(path);');
-  t('查重在落库之前', iOwner > 0 && iOwner < iPush, `owner=${iOwner} push=${iPush}`);
+  /*
+   * 用 `>= 0` 而不是 `> 0`：后者把"索引恰好为 0"也判成不合法。
+   * 且顺序断言**两端都要判存在** —— 只判一端的话，另一端锚点被改没了
+   * 会让比较恒真/恒假，断言要么空跑要么无端报红。
+   */
+  t('查重在落库之前', iOwner >= 0 && iPush >= 0 && iOwner < iPush,
+    `owner=${iOwner} push=${iPush}`);
 }
 
 console.log('\n=== 4. 存量重复不强行清理 ===');

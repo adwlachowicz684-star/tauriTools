@@ -84,9 +84,16 @@ console.log('\n=== 3. 预演要展示跳过原因 ===');
   t('报出"目标已存在同名目录"', /跳过：目标已存在同名目录/.test(dry));
   t('报出"无法解析文件夹名"', /跳过：无法解析文件夹名/.test(dry));
   t('小计里给出将搬迁的数量', /其中将搬迁 \{\} 项/.test(dry));
-  /* 位置：必须在计划算完、动手之前 */
-  t('位置在 plan 之后', cli.indexOf('if dry_run {') > cli.indexOf('let mut plan'));
-  t('位置在真正搬迁之前', cli.indexOf('if dry_run {') < cli.indexOf('rename_with_fallback'));
+  /*
+   * 位置：必须在计划算完、动手之前。
+   * 两端都要判存在 —— 否则把 `let mut plan` 改名后右端变 -1，
+   * `正数 > -1` 恒真，这条就空跑了（实测过：改名后 67 项照常全绿）。
+   */
+  const iDry = cli.indexOf('if dry_run {');
+  const iPlan = cli.indexOf('let mut plan');
+  const iRename = cli.indexOf('rename_with_fallback');
+  t('位置在 plan 之后', iDry >= 0 && iPlan >= 0 && iDry > iPlan);
+  t('位置在真正搬迁之前', iDry >= 0 && iRename >= 0 && iDry < iRename);
 }
 
 console.log('\n=== 4. 动手前自动备份 ===');

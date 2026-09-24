@@ -30,7 +30,9 @@ console.log('\n=== 1. 两条 ACE 都要下（目录自身那条此前缺失）�
   /* 顺序：先继承后自身，与原版一致 */
   const iInh = blk.indexOf('Everyone:(OI)(CI)({rights})');
   const iSelf = blk.indexOf('Everyone:({rights})', iInh);
-  t('先继承后自身', iInh > -1 && iSelf > iInh, `inh=${iInh} self=${iSelf}`);
+  /* 两端都判（>= 0 而非 > -1，写法统一） */
+  t('先继承后自身', iInh >= 0 && iSelf >= 0 && iSelf > iInh,
+    `inh=${iInh} self=${iSelf}`);
   /* 每条都要检查失败：只跑一次 status 判断的话第二条静默失败 */
   t('每条都校验 status', (blk.match(/if !out\.status\.success\(\)/g) || []).length >= 1);
 }
@@ -43,7 +45,9 @@ console.log('\n=== 2. 解除保护要能清掉两条 ===');
   /* 两条都在应用之前清，否则叠加 */
   const iRem = sys.indexOf('/remove:d');
   const iDeny = sys.indexOf('/deny');
-  t('先清后加', iRem > -1 && iRem < iDeny, `remove=${iRem} deny=${iDeny}`);
+  /* 两端都判（>= 0 而非 > -1，写法统一） */
+  t('先清后加', iRem >= 0 && iDeny >= 0 && iRem < iDeny,
+    `remove=${iRem} deny=${iDeny}`);
 }
 
 console.log('\n=== 3. 非 Windows 分支没被改坏 ===');

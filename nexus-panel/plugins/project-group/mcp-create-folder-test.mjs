@@ -57,7 +57,9 @@ console.log('\n=== 2. 越界先查再建（防孤儿目录）===');
 {
   const createCall = branch.indexOf('core_create_folder');
   const preCheck = branch.indexOf('tab_count_of');
-  t('建目录之前有预检', preCheck > -1 && preCheck < createCall,
+  /* 两端都判（>= 0 而非 > -1，写法统一）：createCall 找不到时
+     `preCheck < -1` 恒假（脆断），少判 preCheck 那端则恒真（空跑） */
+  t('建目录之前有预检', preCheck >= 0 && createCall >= 0 && preCheck < createCall,
     `预检@${preCheck} 建目录@${createCall}`);
   t('预检只在给了 kind 时才做', /if let \(Some\(k\), Some\(i\)\) = \(&kind, tab_index\)/.test(branch));
   t('预检失败直接返回、不往下建', branch.slice(preCheck, createCall).includes('return Err'));

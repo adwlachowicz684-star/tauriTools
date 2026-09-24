@@ -138,7 +138,14 @@ console.log('\n=== 8. 描边与等宽标题 ===');
 {
   const b = bevelEdge('#000000', '#ffffff');
   t('两段描边（亮边在上、暗边在下）', (b.match(/inset/g) || []).length === 2);
-  t('亮边在上', b.indexOf('#ffffff') < b.indexOf('#000000'));
+  /*
+   * 顺序断言必须**两端都判存在**：
+   * 某端找不到时 indexOf 返回 -1，而 `-1 < 任意正数` 恒真 ——
+   * 断言会**空跑**：锚点被改没了，它照样报绿，你以为在验次序，其实什么都没验。
+   * 这类空跑靠"剥注释"扫不出来（锚点是代码不是注释），只能显式判 >= 0。
+   */
+  const iW = b.indexOf('#ffffff'); const iB2 = b.indexOf('#000000');
+  t('亮边在上', iW >= 0 && iB2 >= 0 && iW < iB2);
   t('用 ch 而不是 px（字号变了仍对齐）', MONO_TITLE_WIDTH > 0);
 }
 

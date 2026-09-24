@@ -118,15 +118,84 @@ console.log('\n=== 2. 只匹配到注释的断言必须诚实改名 ===');
   t('没有"名字验行为、实际只验注释"的断言', bad.length === 0, bad.slice(0, 5).join(' | '));
 }
 
-console.log('\n=== 3. 反向自检：护栏本身能抓到 ===');
+console.log('\n=== 3. 顺序断言必须两端都判存在 ===');
+/*
+ * 剥离注释**扫不出这一类**，所以必须单独钉：
+ *
+ *   `t('A 在 B 之前', s.indexOf('A') < s.indexOf('B'))`
+ *
+ * 把 A 改没了 → 左端 -1 → `-1 < 正数` 恒真 → **断言照样报绿**，
+ * 而它声称要验的次序根本没验。实测过：把 cli.rs 里的 `let mut plan`
+ * 改名（功能完全不变），migrate-test 67 项照常全绿 —— 那条"位置在 plan 之后"
+ * 早就空跑了。
+ *
+ * 判据：参与 `<`/`>` 比较的每一端，都要有 `>= 0` / `> 0` / `!== -1` 兜底。
+ * 形式不限：可以直接写在表达式里，也可以先赋给变量再判（后者更常见）。
+ */
+{
+  const bad = [];
+  for (const f of tests) {
+    const src = fs.readFileSync(path.join(PLUG, f), 'utf8');
+    /* 先收集 `const V = <含 indexOf 的表达式>` —— 变量名 → true */
+    const idxVars = new Set();
+    for (const m of src.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*[^;\n]*\.indexOf\s*\(/g)) {
+      idxVars.add(m[1]);
+    }
+    /* 逐个 t( ... ) 语句（用括号配对粗切） */
+    for (const m of src.matchAll(/\bt\(/g)) {
+      let depth = 0; let j = m.index;
+      for (; j < src.length; j += 1) {
+        if (src[j] === '(') depth += 1;
+        else if (src[j] === ')') { depth -= 1; if (depth === 0) break; }
+      }
+      const stmt = src.slice(m.index, j + 1);
+      if (!/\.indexOf\s*\(/.test(stmt)) continue;
+      /* 只关心含顺序比较的 */
+      /*
+       * 操作数是「标识符」或「x.indexOf(...) 完整调用」两种形态 ——
+       * 第一版只捕获了对象名（`cli`），于是两边都被当成"不是 indexOf 结果"
+       * 直接跳过，注入的回归**没抓到**。
+       */
+      const cmp = [...stmt.matchAll(
+        /([A-Za-z_$][\w$]*(?:\s*\.\s*indexOf\s*\([^()]*\))?)\s*(<=?|>=?)\s*([A-Za-z_$][\w$]*(?:\s*\.\s*indexOf\s*\([^()]*\))?)/g
+      )];
+      if (!cmp.length) continue;
+      const nameM = stmt.match(/^t\(\s*['\`]([^'\`]*)/);
+      const name = nameM ? nameM[1] : '?';
+      for (const c of cmp) {
+        for (const side of [c[1], c[3]]) {
+          const isIdxCall = /\.indexOf\s*\(/.test(side);
+          const isIdxVar = idxVars.has(side);
+          if (!isIdxCall && !isIdxVar) continue;   // 不是 indexOf 结果，不管
+          const guarded = new RegExp(
+            `${side.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*(?:>=?\\s*0|!==?\\s*-?\\s*1)`
+          ).test(stmt);
+          if (!guarded) bad.push(`${f}: ${name} → ${side.slice(0, 34)}`);
+        }
+      }
+    }
+  }
+  t('顺序比较的两端都判了存在', bad.length === 0, bad.slice(0, 5).join(' | '));
+}
+
+console.log('\n=== 4. 反向自检：护栏本身能抓到 ===');
 {
   /* 造一个"只活在注释里"的模式，护栏必须把它标出来 */
   const probe = '这条说明只存在于注释里的探针XYZ';
-  t('判定函数确实认得出来', (() => {
+  t('注释类：判定函数确实认得出来', (() => {
     const fake = `// ${probe}\nlet a = 1;`;
     const fs2 = fullAll + fake;
     const ss2 = strippedAll + stripComments(fake);
     return new RegExp(probe).test(fs2) && !new RegExp(probe).test(ss2);
+  })());
+  /*
+   * 顺序类自检：造一条"两端都没判存在"的顺序断言，护栏必须标红。
+   * 少了这条自检，上一条检查可能本身也是空跑的。
+   */
+  t('顺序类：判定函数确实认得出来', (() => {
+    const fake = `t('假的次序断言', s.indexOf('AAA') < s.indexOf('BBB'));`;
+    const guarded = /AAA/.test(fake) && /(?:AAA|BBB)[\s\S]{0,40}>=?\s*0/.test(fake);
+    return !guarded;   // 没判存在 → 应当被标为 bad
   })());
 }
 

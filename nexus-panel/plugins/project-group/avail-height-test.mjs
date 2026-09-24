@@ -70,9 +70,11 @@ console.log('\n=== 5. hook 必须在 ref 声明之后（TDZ）===');
     ['项目模板框', 'const projectTplRef', 'const projectTplH'],
     ['项目组模板框', 'const groupTplRef', 'const groupTplH'],
   ]) {
-    t(`${name}：hook 在 ref 之后`, panel.indexOf(refn) < panel.indexOf(hookn));
+    const iRef = panel.indexOf(refn); const iHook = panel.indexOf(hookn);
+    t(`${name}：hook 在 ref 之后`, iRef >= 0 && iHook >= 0 && iRef < iHook);
   }
-  t('图标网格：hook 在 ref 之后', grid.indexOf('const gridRef') < grid.indexOf('const gridH'));
+  const gRef = grid.indexOf('const gridRef'); const gHook = grid.indexOf('const gridH');
+  t('图标网格：hook 在 ref 之后', gRef >= 0 && gHook >= 0 && gRef < gHook);
 }
 
 console.log('\n=== 6. CSS 兜底要留着 ===');

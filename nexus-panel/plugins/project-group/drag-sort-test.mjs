@@ -190,12 +190,15 @@ console.log('\n=== 7. 变体互不干扰（收进同一内核才发现）===');
     const iAnchor = cardGrid.indexOf('ref={cardsRef}');
     const i0 = cardGrid.indexOf('onDragOver={(e) => {', iAnchor);
     const i1 = cardGrid.indexOf('onDragLeave', i0);
-    const seg = i0 >= 0 && i1 > i0 ? cardGrid.slice(i0, i1) : '';
+    /* 两端都判：i1 找不到时 `i1 > i0` 恒假，切片变空串、后续断言静默失真 */
+    const seg = i0 >= 0 && i1 >= 0 && i1 > i0 ? cardGrid.slice(i0, i1) : '';
     t('卡片区排除 BOX_DRAG_MIME', /types\.includes\(BOX_DRAG_MIME\)\) return;/.test(seg));
     /* 记指针必须在守卫之后：调分类框顺序时不该连带滚卡片区 */
     const iGuard = seg.indexOf('BOX_DRAG_MIME');
     const iEdge = seg.indexOf('onEdgeDragOver(e)');
-    t('记指针在 BOX 守卫之后', iGuard >= 0 && iEdge > iGuard);
+    /* 两端都判：iEdge 找不到时 `iEdge > iGuard` 恒假（脆断），
+       而少了 iGuard 那端则会恒真（空跑）—— 两种都要挡住 */
+    t('记指针在 BOX 守卫之后', iGuard >= 0 && iEdge >= 0 && iEdge > iGuard);
   }
   t('卡片 item 也排除',
     (cardGrid.match(/types\.includes\(BOX_DRAG_MIME\)\)/g) || []).length >= 2);

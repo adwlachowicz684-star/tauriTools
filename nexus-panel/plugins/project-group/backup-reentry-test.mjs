@@ -48,7 +48,13 @@ console.log('\n=== 4. run 入口抢占，且早于任何工作 ===');
 {
   const iGuard = bak.indexOf('let _guard = match try_begin()');
   const iPaths = bak.indexOf('let paths = collect_paths(tabs);');
-  t('run 顶部抢占', iGuard > 0 && iGuard < iPaths, `guard=${iGuard} paths=${iPaths}`);
+  /*
+   * 用 `>= 0` 而不是 `> 0`：后者把"索引恰好为 0"也判成不合法。
+   * 且顺序断言**两端都要判存在** —— 只判一端的话，另一端锚点被改没了
+   * 会让比较恒真/恒假，断言要么空跑要么无端报红。
+   */
+  t('run 顶部抢占', iGuard >= 0 && iPaths >= 0 && iGuard < iPaths,
+    `guard=${iGuard} paths=${iPaths}`);
   /* 被占用时返回带错误的结果，而不是静默成功（原版直接 return = 点了没反应） */
   t('被占用时返回错误', /\[跳过\] 已有备份正在进行/.test(bak));
   t('结果仍带 target（不为空）', /return BackupResult \{\s*\n\s*target: target\.to_string_lossy\(\)\.to_string\(\),/.test(bak));
@@ -67,8 +73,9 @@ console.log('\n=== 5. 自动线程：先探再跑，不吃掉本轮 ===');
    */
   const iBusy = bak.indexOf('if is_busy() { continue; }');
   const iLast = bak.indexOf('last = Some(SystemTime::now());', iBusy);
-  t('先探 is_busy', iBusy > 0);
-  t('探测在更新 last 之前', iBusy > -1 && iLast > iBusy, `busy=${iBusy} last=${iLast}`);
+  t('先探 is_busy', iBusy >= 0);
+  t('探测在更新 last 之前', iBusy >= 0 && iLast >= 0 && iLast > iBusy,
+    `busy=${iBusy} last=${iLast}`);
 }
 
 console.log('\n=== 6. 原有行为没被改坏 ===');

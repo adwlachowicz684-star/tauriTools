@@ -96,8 +96,16 @@ console.log('\n=== 4. #483 config 损坏告警必须走 stderr ★ ===');
    * 等到有请求才报的话：客户端若只发 `initialize`（很多客户端就这样），
    * 告警永远发不出去 —— 而那正是最需要它的时候。
    */
+  /*
+   * 顺序断言必须**两端都判存在**：
+   * 某端找不到时 indexOf 返回 -1，而 `-1 < 任意正数` 恒真 ——
+   * 断言会**空跑**：锚点被改没了，它照样报绿，你以为在验次序，其实什么都没验。
+   * 这类空跑靠"剥注释"扫不出来（锚点是代码不是注释），只能显式判 >= 0。
+   */
+  const iIssues = blk.indexOf('config_issues');
+  const iReader = blk.indexOf('BufReader::new');
   t('启动时就打（在读 stdin 之前）',
-    blk.indexOf('config_issues') < blk.indexOf('BufReader::new'));
+    iIssues >= 0 && iReader >= 0 && iIssues < iReader);
 
   /*
    * 二、**必须走 stderr**。

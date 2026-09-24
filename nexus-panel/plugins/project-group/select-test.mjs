@@ -45,7 +45,10 @@ console.log('\n=== 1. #261 右键先选中再弹菜单 ===');
     /* 顺序不能反：先弹菜单再选中的话，菜单关闭时选中态才变 */
     const iSel = body.indexOf('onSelect(');
     const iMenu = body.indexOf('setMenu(');
-    t(`第 ${i + 1} 处顺序正确（先 select 后 menu）`, iSel >= 0 && iSel < iMenu);
+    /* 两端都判：iMenu 找不到时 `iSel < iMenu` 恒真（空跑），
+       iSel 找不到时恒假（脆断）—— 两种都要挡住 */
+    t(`第 ${i + 1} 处顺序正确（先 select 后 menu）`,
+      iSel >= 0 && iMenu >= 0 && iSel < iMenu);
   }
 }
 

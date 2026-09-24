@@ -55,7 +55,9 @@ console.log('\n=== 2. boot 判空：不解构 + 早退（19 处同源）===');
   /* 早退必须在所有 hooks 之后，否则 hooks 调用顺序会变 */
   const iEarly = hub.indexOf('if (!boot) return null;');
   const iUseMemo = hub.indexOf('const selCard = useMemo(');
-  t('早退在 useMemo 之后', iEarly > iUseMemo && iUseMemo > 0);
+  /* 两端都判（>= 0 而非 > 0）：iEarly 找不到时 `iEarly > iUseMemo` 恒假（脆断），
+     少判 iUseMemo 那端则恒真（空跑）—— 两种都要挡住 */
+  t('早退在 useMemo 之后', iUseMemo >= 0 && iEarly >= 0 && iEarly > iUseMemo);
   /* useMemo 在早退之前，拿不到窄化，必须自己判一次 */
   const seg = hub.slice(iUseMemo, iEarly);
   t('useMemo 内自己判空', /if \(!selPath \|\| !boot\) return null;/.test(seg));

@@ -129,7 +129,13 @@ console.log('\n=== 8. 已实现（本轮核对确认）===');
    */
   const iSel = mcp.indexOf('"select_folder" => {');
   const jSel = mcp.indexOf('"get_selection"', iSel);
-  const selBlk = mcp.slice(iSel, jSel > iSel ? jSel : iSel + 2000);
+  /*
+   * 两端都判存在：原先只有 `jSel > iSel`，iSel 找不到（-1）时
+   * `jSel > -1` 恒真 → 切片起点变成 -1，整段断言基于错误的切片（空跑）。
+   */
+  const selBlk = iSel >= 0 && jSel >= 0 && jSel > iSel
+    ? mcp.slice(iSel, jSel)
+    : (iSel >= 0 ? mcp.slice(iSel, iSel + 2000) : '');
   t('#135 select_folder 会 scan', /content::scan\(&path, "all"\)/.test(selBlk));
   t('#135 同时返回 selection', /"selection": \{ "path": path, "kind": kind \}/.test(selBlk));
   /* #204 链接名大小写不敏感查重（#91 已修） */

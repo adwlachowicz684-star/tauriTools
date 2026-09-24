@@ -32,7 +32,15 @@ console.log('\n=== 2. 不能嵌套 button ===');
   /* button 套 button 是无效 HTML，浏览器会把内层提到外面去 */
   t('用 wrap 承载', /className="fpx-groupwrap"/.test(grid));
   t('× 是兄弟元素（同缩进层的 button）', /className="fpx-groupdel"/.test(grid));
-  t('wrap 在 button 之前', grid.indexOf('fpx-groupwrap') < grid.indexOf('fpx-groupdel'));
+  /*
+   * 顺序断言必须**两端都判存在**：
+   * 某端找不到时 indexOf 返回 -1，而 `-1 < 任意正数` 恒真 ——
+   * 断言会**空跑**：锚点被改没了，它照样报绿，你以为在验次序，其实什么都没验。
+   * 这类空跑靠"剥注释"扫不出来（锚点是代码不是注释），只能显式判 >= 0。
+   */
+  const iWrap = grid.indexOf('fpx-groupwrap');
+  const iDel2 = grid.indexOf('fpx-groupdel');
+  t('wrap 在 button 之前', iWrap >= 0 && iDel2 >= 0 && iWrap < iDel2);
 }
 
 console.log('\n=== 3. 只剩一个组时不给删 ===');

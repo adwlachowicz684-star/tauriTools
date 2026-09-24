@@ -68,7 +68,15 @@ console.log('\n=== 4. 内容没改不写盘 ===');
 {
   t('等于原文时直接返回', /if \(edited === text\)/.test(code));
   t('并说明"内容未变，未写盘"', /内容未变，未写盘/.test(fn));
-  t('该分支在写盘之前', code.indexOf('edited === text') < code.indexOf('writeText'));
+  /*
+   * 顺序断言必须**两端都判存在**：
+   * 某端找不到时 indexOf 返回 -1，而 `-1 < 任意正数` 恒真 ——
+   * 断言会**空跑**：锚点被改没了，它照样报绿，你以为在验次序，其实什么都没验。
+   * 这类空跑靠"剥注释"扫不出来（锚点是代码不是注释），只能显式判 >= 0。
+   */
+  const iEq = code.indexOf('edited === text');
+  const iWrite = code.indexOf('writeText');
+  t('该分支在写盘之前', iEq >= 0 && iWrite >= 0 && iEq < iWrite);
 }
 
 console.log('\n=== 5. 异步快捷键的兜底 ===');
