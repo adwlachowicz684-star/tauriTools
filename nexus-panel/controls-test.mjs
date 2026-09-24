@@ -1714,97 +1714,134 @@ console.log('\n=== 34. agent-flow 文字属性档位 ===');
 }
 
 
-console.log('\n=== 35. 插件基调判定（浅色主题下反转加反） ===');
+console.log('\n=== 35. 插件基调声明：单字段互斥枚举 ===');
 {
   const tn = read('js/theme-normalizer.js');
   const sc = stripComments(tn);
   const rg = read('plugins/registry.js');
+  const rgs = stripComments(rg);
 
   /*
-   * 判定模型（三支，顺序即优先级）：
-   *   1) reportedBase  插件自己采样上报的实际基调 —— 实测优先于声明
-   *   2) followsTheme  插件观感由外壳主题变量驱动 → 必然与面板同基调，永不反转
-   *   3) manifest.theme 插件**自身**固定什么基调 → 交给"基调不等才反转"的通用规则
+   * 决策本身只有一行（基调不等才反转），复杂度全在"插件现在什么颜色"
+   * 这个信息**不可靠**：隔离插件读不到 DOM、动画期间读到中间色、
+   * 跟随主题的插件声明值会变。所以有多个信息源 + 一堆对抗误判的兜底。
    *
-   * 第 2 支是后来补的。此前只有 1、3，而跟随主题的插件（demo-react 等）
-   * 落到第 3 支后被 theme:'dark' 钉死成"自身深色"，浅色面板下判定不等
-   * → 施加反转 → 已变浅的界面被二次翻回深色。
-   */
-  const iRep = sc.indexOf("o.reportedBase === 'light'");
-  const iFol = sc.indexOf('manifest.followsTheme');
-  const iMan = sc.indexOf("manifest.theme === 'light'");
-  t('判定顺序：上报 > followsTheme > manifest',
-    iRep > 0 && iFol > 0 && iMan > 0 && iRep < iFol && iFol < iMan,
-    `reported@${iRep} follows@${iFol} manifest@${iMan}`);
-
-  t('followsTheme 插件直接取面板基调（永不反转）',
-    /pluginBase\s*=\s*panelBase;\s*\n\s*baseSource\s*=\s*'follows'/.test(sc));
-
-  /*
-   * manifest.theme 的语义是**插件自身固定什么基调**，不是"与面板的关系"。
-   * 本文件 PLUGIN_THEMES 的措辞即证据：'dark' = 本身深色、'light' = 本身浅色。
+   * 但真正的 bug 源不是那些兜底，而是**字段语义重叠**：
+   * 以前是 theme（自身什么色）+ followsTheme（是否跟随）两个字段，
+   * 可以同时写、写了即自相矛盾。registry 里 11 个插件两个都写了，
+   * 而 followsTheme 分支排在前面 → 那 11 行 theme:'dark' 永远读不到
+   * → 死字段。两轮修 bug 都在给死字段编语义，"自身色"与"与面板的关系"
+   * 两种读法来回改，而它们在深色面板下结论一致，所以怎么改都"验证通过"，
+   * 一切到浅色（赤陶）必现。
    *
-   * 曾改成"关系语义"（'light' → 取 panelBase 的反面），结果浅色面板下
-   * pluginBase 被算成 'dark' → 反转 → 赤陶下示例浅色插件变成深色。
-   * 深色面板下两种语义恰好等价，所以那次改动在深色下"验证通过"、浅色下必现。
+   * 合并成 theme 单字段四互斥值后，这个问题从结构上消失。
    */
-  t('manifest.theme 按「自身基调」取值',
-    /pluginBase\s*=\s*manifest\.theme\s*;/.test(sc));
 
-  /* ---- 用真实 registry 数据跑一遍判定 ---- */
+  /* ---- 1. 枚举定义 ---- */
+  t('PLUGIN_THEMES 是四值互斥枚举（含 follow）',
+    /value:\s*'auto'/.test(sc) && /value:\s*'follow'/.test(sc) &&
+    /value:\s*'dark'/.test(sc) && /value:\s*'light'/.test(sc));
+
+  /* ---- 2. 归一化函数 ---- */
+  const { declaredTheme } = await import('./js/theme-normalizer.js');
+  const cases = [
+    [{ theme: 'follow' }, 'follow'],
+    [{ theme: 'dark' }, 'dark'],
+    [{ theme: 'light' }, 'light'],
+    [{}, 'auto'],
+    [{ theme: 'auto' }, 'auto'],
+    [{ followsTheme: true }, 'follow'],                  // 遗留字段兼容
+    [{ theme: 'dark', followsTheme: true }, 'follow'],   // 矛盾时以更具体的为准
+  ];
+  let ok = true; const bad = [];
+  for (const [m, want] of cases) {
+    const got = declaredTheme(m);
+    if (got !== want) { ok = false; bad.push(`${JSON.stringify(m)}→${got}(应${want})`); }
+  }
+  t('declaredTheme 归一正确（含遗留字段兼容）', ok, bad.join(', '));
+
+  /* ---- 3. 判定实现：不再有 followsTheme 分支 ---- */
+  t('判定里不再读 manifest.followsTheme（已合并进单字段）',
+    !/manifest\.followsTheme/.test(sc));
+  t('判定按 declaredTheme 结果分支', /declaredTheme\(manifest\)/.test(sc));
+
+  /* ---- 4. registry 里不再有自相矛盾的双字段声明 ---- */
   const entries = [];
-  {
-    const rgs = stripComments(rg);
-    for (const m of rgs.matchAll(/id:\s*['"]([^'"]+)['"]([^{]*?)\}/gs)) {
-      const b = m[2];
-      const th = b.match(/theme:\s*['"]([^'"]+)['"]/);
-      if (th) entries.push({ id: m[1], theme: th[1], follows: /followsTheme:\s*true/.test(b) });
+  for (const m of rgs.matchAll(/id:\s*['"]([^'"]+)['"]([^{]*?)\}/gs)) {
+    const b = m[2];
+    const th = b.match(/theme:\s*['"]([^'"]+)['"]/);
+    if (th || /followsTheme/.test(b)) {
+      entries.push({ id: m[1], theme: th ? th[1] : null, legacy: /followsTheme/.test(b) });
     }
   }
+  t('registry 已无遗留 followsTheme 字段',
+    entries.every((e) => !e.legacy),
+    entries.filter((e) => e.legacy).map((e) => e.id).join(', '));
+  t('registry 的 theme 只用四值之一',
+    entries.every((e) => ['auto', 'follow', 'dark', 'light'].includes(e.theme)),
+    entries.filter((e) => !['auto', 'follow', 'dark', 'light'].includes(e.theme)).map((e) => `${e.id}=${e.theme}`).join(', '));
+
+  /* ---- 5. 行为矩阵：这是真正要保证的东西 ---- */
   const decide = (e, panel) => {
-    if (e.follows) return panel;                       // 跟随：等于面板
-    if (e.theme === 'light' || e.theme === 'dark') return e.theme;
-    return panel;                                      // auto：采样，视同一致
+    if (e.theme === 'follow') return panel;                 // 跟随 → 等于面板 → 不反转
+    if (e.theme === 'dark' || e.theme === 'light') return e.theme;
+    return panel;                                           // auto：视同一致
   };
   const light = entries.find((e) => e.id === 'demo-light');
-  t('registry 里有 demo-light 且声明为浅色', !!light && light.theme === 'light');
+  t('demo-light 声明为 light（第三方便捷 UI，硬编码白底）',
+    !!light && light.theme === 'light');
   if (light) {
-    t('赤陶（浅色面板）下示例浅色插件不反转 —— 保留它原本的白色',
+    t('赤陶（浅色面板）下 demo-light 不反转 —— 保留它原本的白色',
       decide(light, 'light') === 'light');
-    t('深色面板下示例浅色插件反转 —— 这才是它要演示的适配',
+    t('深色面板下 demo-light 反转 —— 这才是它要演示的适配',
       decide(light, 'dark') !== 'dark');
-    t('示例浅色插件未被标成 followsTheme（它是硬编码白底，不跟随）',
-      light.follows === false);
   }
-
-  /* 跟随主题的插件：两种面板下都不该反转 */
-  for (const id of ['home', 'settings', 'demo-react', 'demo-iframe', 'demo-module', 'demo-service']) {
+  for (const id of ['home', 'settings', 'demo-react', 'demo-iframe', 'demo-module',
+    'demo-service', 'agent-flow', 'project-group', 'mindmap']) {
     const e = entries.find((x) => x.id === id);
-    t(`跟随主题的 ${id} 在两种面板下都不反转`,
-      !!e && e.follows && decide(e, 'dark') === 'dark' && decide(e, 'light') === 'light',
-      e ? `follows=${e.follows}` : 'registry 里找不到');
+    t(`跟随面板的 ${id} 在深浅两种面板下都不反转`,
+      !!e && e.theme === 'follow' && decide(e, 'dark') === 'dark' && decide(e, 'light') === 'light',
+      e ? `theme=${e.theme}` : 'registry 里找不到');
   }
 
   /*
    * 结构性兜底：入口里读 preload-base / preload-bg，或把底色写成
    * transparent / var(--...) 的插件，观感就是由外壳主题驱动的 ——
-   * 这类插件必须在 registry 标 followsTheme，否则会落到 manifest 支被误判。
-   * 这条断言的意义在于：以后新增跟随主题的插件时会自动被拦下。
+   * 这类插件必须声明 'follow'，否则会被当成固定深色、在浅色面板下误反转。
+   * 以后新增跟随主题的插件时会自动被拦下。
    */
   const FOLLOW_MARK = /nexus:preload-(?:base|bg)|background:\s*transparent|background:\s*['"]?var\(--/;
   const mis = [];
   for (const e of entries) {
-    if (e.follows || e.theme !== 'dark') continue;
+    if (e.theme === 'follow') continue;
     let marked = false;
     for (const f of ['index.html', 'index.js', 'module.js', 'module.tsx', 'App.tsx']) {
-      const fp = join(ROOT, 'plugins', e.id, f);
+      const fp = join(HERE, 'plugins', e.id, f);
       if (!existsSync(fp)) continue;
-      if (FOLLOW_MARK.test(read(fp))) { marked = true; break; }
+      if (FOLLOW_MARK.test(readFileSync(fp, 'utf8'))) { marked = true; break; }
     }
     if (marked) mis.push(e.id);
   }
-  t('跟随外壳主题的插件都标了 followsTheme（缺标会被误反转）',
+  t('跟随外壳主题的插件都声明了 follow（漏标会被误反转）',
     mis.length === 0, mis.join(', '));
+
+  /* ---- 6. 设置面板：选项值必须与消费方一致 ---- */
+  /*
+   * 此前这两个下拉用 PLUGIN_THEMES（auto/dark/light）渲染选项，
+   * 但 onChange 存进的是**策略键**，而 resolvePolicy 只认 auto/always/never
+   * → 选「自身深色」「自身浅色」存进去后完全不生效（UI 承诺了但没有效果）。
+   */
+  const tsx = read('plugins/settings/App.tsx');
+  const idx = read('plugins/settings/index.js');
+  const perPluginBlock = (src, re) => re.test(src);
+  t('每插件下拉用 ADAPT_POLICIES（值能被 resolvePolicy 消费）',
+    /跟随全局[\s\S]{0,400}ADAPT_POLICIES\.map/.test(tsx) &&
+    /跟随全局[\s\S]{0,400}ADAPT_POLICIES\.map/.test(idx));
+  t('设置面板不再把 PLUGIN_THEMES 当成用户选项',
+    !/PLUGIN_THEMES\.map/.test(tsx) && !/PLUGIN_THEMES\.map/.test(idx));
+  t('PLUGIN_THEMES 不再被 settings 导入（避免未使用导入）',
+    !/import[\s\S]{0,200}PLUGIN_THEMES/.test(tsx) && !/import[\s\S]{0,200}PLUGIN_THEMES/.test(idx));
+  void perPluginBlock;
 }
 
 
