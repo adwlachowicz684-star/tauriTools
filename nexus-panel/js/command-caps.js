@@ -111,6 +111,18 @@ export const COMMAND_CAPS = {
   updater_install: 'M',
   updater_relaunch: 'M',
 
+  /*
+   * 试卷查重（src/dupview/）原生化之后，**这里一条 M 都没有了**。
+   *
+   * 早先它的后端是个 python 服务：起子进程 + 在本机监听 127.0.0.1:8767，
+   * 于是 backend_start / stop / status 三条都得定 M。
+   * 现在扫描、渲染、比对全在 Rust 进程内完成 —— 不拉子进程、不开端口，
+   * 所以下面只剩 S（读，含路径）与 W（处置）。
+   *
+   * 这是原生化最直接的安全收益：插件不再持有「起进程」与「网络监听」
+   * 两种能力，CSP 里也不必为它放行任何回环地址。
+   */
+
   /* ---- S：敏感读（泄露即事故，但不改动数据）---- */
 
   // 设备盐：af_flow.rs 注释说"盐变了之前加密的凭据就全解不开"，
@@ -133,10 +145,44 @@ export const COMMAND_CAPS = {
   // 但它拿到的就是屏幕内容 —— 与截屏同类。
   fpx_pick_color: 'S',
 
+  /*
+   * 试卷查重（src/dupview/）的读类命令。
+   *
+   * 定 S 而不是 R：它们的返回值里全是**用户试卷的文件名与绝对路径**
+   * （list 给出整棵目录树、pages 给出逐页图路径、scan_status 带当前文件），
+   * 拿到它等于拿到用户磁盘上的目录结构。按本表"宁高勿低"的取向，归 S。
+   *
+   * 读的仍是**已经扫进 map.json 的**文件，不是任意路径：
+   * 这些命令都不收"要读哪个文件"的参数，无法被拿来遍历磁盘。
+   */
+  dupview_roots: 'S',
+  dupview_list: 'S',
+  dupview_pages: 'S',
+  dupview_scan_status: 'S',
+  dupview_scan: 'S',
+  dupview_scanall: 'S',
+  dupview_browse: 'S',
+
   /* ---- W：写用户数据 ---- */
 
   // 授权目录内的写 / 删 / 移 —— 最高危的写
   fs_op: 'W',
+
+  /*
+   * 试卷查重：移动用户文件。
+   *
+   * 实现上是「移到 <data>/_trash」而不是真删（可一键还原），
+   * 但对用户来说那批文件确实从原位置消失了，按"看得到的效果"定 W。
+   */
+  dupview_delete: 'W',
+  dupview_restore: 'W',
+
+  // 试卷查重：写的是插件自己的配置（roots.json 根目录列表、done.json 处理标记）。
+  // 不涉及用户文件，但会被上面的处置命令拿来决定"能处置哪些文件"，
+  // 所以同样按写来管 —— 篡改根目录列表等于扩大处置范围。
+  dupview_addroot: 'W',
+  dupview_delroot: 'W',
+  dupview_dir_done: 'W',
 
   fpx_save_config: 'W',
   fpx_create_link: 'W',

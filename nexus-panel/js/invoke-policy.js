@@ -235,6 +235,32 @@ export const PLUGIN_COMMANDS = {
    */
   updater: ['updater_check', 'updater_install', 'updater_relaunch'],
 
+  /*
+   * 试卷查重（plugins/dupview）—— 内置插件。
+   *
+   * 登记它的意义**不在拦截**（内置插件走 isTrusted 直接放行，
+   * 见 checkInvoke 第 2 步），而在于让能力审计看得见：
+   * scripts/scan-invoke.mjs 拿这张表与源码实测做双向比对，
+   * 不登记就会被报成"[未登记] 调用了命令但未在白名单登记"。
+   *
+   * 原生化后没有 M 类了（不再起 python 子进程、不再监听 8767），
+   * builtin 标记保留 —— 它确实随本仓库一同发布、与宿主同源。
+   */
+  dupview: [
+    'dupview_roots',
+    'dupview_addroot',
+    'dupview_delroot',
+    'dupview_scan',
+    'dupview_scanall',
+    'dupview_scan_status',
+    'dupview_list',
+    'dupview_pages',
+    'dupview_delete',
+    'dupview_restore',
+    'dupview_dir_done',
+    'dupview_browse',
+  ],
+
   'demo-iframe': ['rust_ping'],
   'demo-module': ['rust_ping', 'app_version'],
   'demo-react': ['app_version', 'rust_ping'],

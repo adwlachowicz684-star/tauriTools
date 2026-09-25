@@ -1,0 +1,901 @@
+<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>改名重名文件 · OCR高相似 · 截图对比</title>
+<style>
+:root{--dv-accent:#a98a52;--dv-bg:#faf6ee;--dv-card:#fff;--dv-line:#e6dcc6;--dv-txt:#3a3328;--dv-muted:#8a7f6b;--dv-del:#b5533f;--dv-treew:320px}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font-family:"Microsoft YaHei",sans-serif;background:var(--dv-bg);color:var(--dv-txt);display:flex;flex-direction:column}
+header{background:#3a3328;color:#f3ecdf;padding:12px 22px;z-index:5;display:flex;align-items:center;gap:18px;flex-wrap:wrap;flex:0 0 auto}
+#app{flex:1 1 auto;display:flex;min-height:0}
+#tree{flex:0 0 var(--dv-treew);width:var(--dv-treew);overflow:auto;background:#f7f1e4;padding-bottom:20px}
+#splitter{flex:0 0 6px;cursor:col-resize;background:#ece2ca;border-left:1px solid var(--dv-line);border-right:1px solid var(--dv-line);transition:background .12s;touch-action:none}
+#splitter:hover,#splitter.drag{background:#c9b489}
+#app.notree #tree,#app.notree #splitter{display:none}
+#content{flex:1 1 auto;overflow:auto;min-width:0}
+.tnode{display:flex;align-items:center;gap:8px;padding:5px 12px;cursor:pointer;font-size:12px;color:#5c5340}
+.tnode:hover{background:#efe6cd}
+.tnode.sel{background:#e2d6b8;font-weight:700;color:#3a3328}
+.tnode.subj{font-weight:700;color:#4a412f;background:#efe6cd;border-top:1px solid #e6dcc6;position:sticky;top:0;z-index:1}
+.tnode.dir{color:#6a5c3a}
+.tnode .tri{display:inline-block;width:11px;flex:0 0 11px;color:#a08c63;font-size:9px;text-align:center;cursor:pointer}
+.tnode .tri.ph{cursor:default}
+.tnode .dotdone{color:#8a9a7c;font-size:10px}
+.tnode .dotpart{color:#bda87a;font-size:10px}
+.tnode.isdone .tw{color:#8a9a7c}
+.tnode .tw{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tnode .tb{flex:0 0 auto;font-size:11px;color:#a08c63;background:#fff8e8;border-radius:8px;padding:1px 7px}
+.tchildren.hidden{display:none}
+.treehint{padding:8px 12px;font-size:11px;color:#a08c63}
+header h1{font-size:17px;margin:0}
+header .sub{font-size:12px;color:#cbbfa8;margin-left:auto}
+.filters{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.sep{width:1px;height:18px;background:#5c5142;align-self:center}
+.chips{display:flex;gap:5px;flex-wrap:wrap}
+.chip{font-size:12px;color:#cbbfa8;background:#4a4133;border:1px solid #5c5142;border-radius:12px;padding:2px 9px;cursor:pointer;user-select:none}
+.chip:hover{background:#5a5040}
+.chip.on{background:#a98a52;color:#fff;border-color:#a98a52;font-weight:700}
+.dd{position:relative}
+.ddpanel{position:absolute;top:132%;left:0;background:#3a3328;border:1px solid #6a5c3a;border-radius:8px;padding:8px;display:none;z-index:20;box-shadow:0 6px 18px rgba(0,0,0,.35);min-width:176px}
+.ddpanel.open{display:block}
+.ddhead{display:flex;gap:10px;padding:2px 4px 8px;border-bottom:1px solid #5c5142;margin-bottom:6px}
+.ddhead a{color:#d9c9a6;font-size:12px;cursor:pointer}
+.ddhead a:hover{color:#fff;text-decoration:underline}
+.ddrow{display:flex;align-items:center;gap:6px;font-size:12px;color:#f3ecdf;padding:3px 4px;cursor:pointer;border-radius:5px}
+.ddrow:hover{background:#4a4133}
+.ddrow input{accent-color:#a98a52;margin:0;cursor:pointer}
+.frrow{display:flex;gap:6px;align-items:center;margin-bottom:8px}
+.frin{flex:1 1 auto;min-width:0;background:#2b2620;border:1px solid #6a5c3a;border-radius:6px;color:#f3ecdf;font-size:12px;padding:5px 8px;font-family:inherit}
+.frin::placeholder{color:#8a7c66}
+.frlist{max-height:250px;overflow:auto;border-top:1px solid #5c5142;padding-top:6px}
+.frroot{display:flex;align-items:center;gap:6px;font-size:12px;color:#f3ecdf;padding:4px 2px;border-radius:5px}
+.frroot:hover{background:#4a4133}
+.frroot .frp{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#d9c9a6}
+.frroot .frn{flex:0 0 auto;font-size:11px;color:#a08c63;background:#fff8e8;border-radius:8px;padding:1px 6px}
+.frroot .frnm{flex:0 0 auto;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}
+.frroot button{flex:0 0 auto;border:1px solid #6a5c3a;background:#4a4133;color:#e8dfc9;border-radius:5px;font-size:11px;padding:2px 7px;cursor:pointer}
+.frroot button:hover{background:#5a5040}
+.frroot button.frdel{color:#e8b9b0;border-color:#7a4a44}
+.frprog{font-size:11px;color:#d9c9a6;background:#2b2620;border:1px solid #6a5c3a;border-radius:6px;padding:6px 8px;margin-top:8px;display:none;line-height:1.5;word-break:break-all;white-space:pre-line}
+.frprog.on{display:block}
+.tip{position:fixed;z-index:200;left:0;top:0;max-width:560px;background:#2b2620;color:#f3ecdf;border:1px solid #6a5c3a;border-radius:6px;padding:5px 9px;font-size:12px;line-height:1.5;word-break:break-all;white-space:pre-line;box-shadow:0 4px 14px rgba(0,0,0,.4);display:none;pointer-events:none}
+.fbtn{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#f3ecdf;background:#4a4133;border:1px solid #6a5c3a;border-radius:14px;padding:3px 10px;cursor:pointer;user-select:none}
+.fbtn:hover{background:#5a5040}
+.fbtn.on{background:#a98a52;color:#fff;border-color:#a98a52;font-weight:700}
+.fbtn.on:hover{background:#b8995e}
+.fbtn input{accent-color:#a98a52;margin:0;cursor:pointer}
+.sec{margin:0 0 6px}
+.sec>h2{font-size:15px;margin:0;padding:12px 22px 8px;color:#4a412f;border-bottom:1px solid var(--dv-line);background:#f2ead8}
+.flex{display:flex;gap:14px;padding:12px 22px 18px;overflow-x:auto;align-items:flex-start}
+.dirbox{flex:0 0 auto;border:2px solid #d9c9a6;border-radius:10px;background:#fdfaf3;padding:8px;box-shadow:0 1px 4px rgba(0,0,0,.06);max-width:100%}
+.dirbox .dt{font-size:11px;color:#7a6a45;background:#efe6cd;border-radius:6px;padding:3px 8px;margin-bottom:8px;word-break:break-all;max-width:560px}
+.dirbox .btn-copy{display:inline-block;vertical-align:middle;border:1px solid #b7a887;background:#f3ead6;color:#6a5c3a;border-radius:6px;padding:3px 6px;margin-right:6px;cursor:pointer;line-height:1}
+.dirbox .btn-copy:hover{background:#e8dcbe;color:#4a412f}
+.dirbox .dinner{display:flex;gap:10px;overflow-x:auto}
+.dirbox .famgrp{flex:0 0 auto;border:1.5px dashed #cfbb92;border-radius:8px;background:#fcf8ee;padding:6px;display:flex;gap:8px;align-items:flex-start}
+.sec.wrapmode .flex{flex-wrap:wrap;overflow-x:visible}
+.sec.wrapmode .dirbox{flex:0 1 auto;max-width:100%}
+.sec.wrapmode .dirbox .dinner{flex-wrap:wrap;overflow-x:visible}
+.sec.wrapmode .dirbox .famgrp{max-width:100%;flex-wrap:wrap}
+.sec.multi .flex{padding:6px 22px 10px}
+.sec.multi .flex+.flex{border-top:1px dashed #ece2ca;padding-top:9px}
+.rowsub{flex:0 0 auto;align-self:flex-start;font-size:12px;font-weight:700;color:#4a412f;background:#efe6cd;border:1px solid #d9c9a6;border-radius:8px;padding:5px 10px;margin-top:2px}
+.card{flex:0 0 172px;background:var(--dv-card);border:1px solid var(--dv-line);border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.05);position:relative}
+.card.md5{border:3px solid #4f9d5a;box-shadow:0 0 8px rgba(79,157,90,.35)}
+.card.txt{border:3px solid #4a78c2;box-shadow:0 0 8px rgba(74,120,194,.3)}
+.card.sup{border:3px solid #8a5fc0;box-shadow:0 0 8px rgba(138,95,192,.3)}
+.card.sub{border:3px solid #d98a2b;box-shadow:0 0 8px rgba(217,138,43,.3)}
+.card.ylw{border:3px solid #d8b23a;box-shadow:0 0 8px rgba(216,178,58,.35)}
+.card.dim{opacity:.45;filter:grayscale(.85)}
+.card.dim .thumb{pointer-events:none}
+.card .tagmd{position:absolute;top:0;right:0;background:#4f9d5a;color:#fff;font-size:10px;padding:2px 7px;border-bottom-left-radius:8px;font-weight:700;z-index:2}
+.card .tagtxt{position:absolute;top:0;right:0;background:#4a78c2;color:#fff;font-size:10px;padding:2px 7px;border-bottom-left-radius:8px;font-weight:700;z-index:2}
+.card .tagsup{position:absolute;top:0;right:0;background:#8a5fc0;color:#fff;font-size:10px;padding:2px 7px;border-bottom-left-radius:8px;font-weight:700;z-index:2}
+.card .tagsub{position:absolute;top:0;right:0;background:#d98a2b;color:#fff;font-size:10px;padding:2px 7px;border-bottom-left-radius:8px;font-weight:700;z-index:2}
+.card .tagylw{position:absolute;top:0;right:0;background:#d8b23a;color:#3a3410;font-size:10px;padding:2px 7px;border-bottom-left-radius:8px;font-weight:700;z-index:2}
+.card .act button.btn-restore{flex:1;border:0;border-radius:5px;padding:4px;font-size:11px;cursor:pointer;background:#5a7d9a;color:#fff}
+.card .act button.btn-restore:hover{background:#47657f}
+.card .act{display:flex;gap:4px;padding:6px}
+.card .act button{flex:1;border:0;border-radius:5px;padding:4px;font-size:11px;cursor:pointer}
+.card .act .btn-del{background:#b34a4a;color:#fff}
+.card .act .btn-del:hover{background:#913c3c}
+.card .act .btn-ren{background:#e8dfc9;color:#6a5c3a;border:1px solid #d8cdb0 !important}
+.card .act .btn-ren:hover{background:#ddd2b8}
+.card .thumb{height:120px;display:flex;align-items:center;justify-content:center;cursor:zoom-in;background:#fff;border-bottom:1px solid #f0e8d6}
+.card .thumb img{max-width:100%;max-height:100%}
+.card .meta{padding:6px 8px}
+.card .fname{font-size:11px;color:var(--dv-txt);line-height:1.45;word-break:break-all}
+.card .fsize{font-size:10px;color:var(--dv-muted);margin-top:3px}
+.card .fam{font-size:10px;color:#8a6d3f;background:#f3ead6;border-radius:4px;padding:2px 5px;margin-top:4px;word-break:break-all}
+.card .act{display:flex;gap:6px;padding:4px 8px 8px}
+.card .act button{flex:1;border:0;border-radius:5px;padding:4px;font-size:11px;cursor:pointer}
+.btn-del{background:var(--dv-del);color:#fff}
+.btn-del:hover{background:#984232}
+.ldc{position:fixed;inset:0;background:rgba(0,0,0,.88);display:none;align-items:center;justify-content:center;z-index:10;cursor:zoom-out;flex-direction:column;gap:10px;padding:16px}
+.ldc .main{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;overflow:auto;width:100%}
+.ldc .main img{max-width:96%;max-height:100%;box-shadow:0 4px 22px rgba(0,0,0,.6);cursor:zoom-out}
+.ldc .strip{flex:0 0 auto;display:flex;gap:8px;overflow-x:auto;max-width:100%;padding:6px;background:#241f1a;border-radius:8px}
+.ldc .strip .pgv{width:64px;flex:0 0 auto;cursor:pointer;border:2px solid transparent;border-radius:4px;opacity:.75;background:#fff}
+.ldc .strip .pgv.on{border-color:#e6c181;opacity:1}
+.ldc .cap{color:#cdbfae;font-size:12px;text-align:center;max-width:90vw;word-break:break-all}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#3a3328;color:#f3ecdf;padding:9px 20px;border-radius:6px;font-size:13px;display:none;z-index:99}
+.dirbox{position:relative}
+.dirbox .dt{position:relative;z-index:1}
+.dirbox .done-mask{position:absolute;inset:0;background:rgba(120,120,120,.45);z-index:3;pointer-events:none}
+.dirbox .btn-done{position:absolute;top:4px;right:4px;z-index:5;border:1px solid #b7a887;background:#f3ead6;color:#6a5c3a;border-radius:6px;font-size:11px;padding:2px 8px;cursor:pointer}
+.dirbox .btn-done:hover{background:#e8dcbe}
+.dirbox .btn-done.on{background:#8a9a7c;color:#fff;border-color:#6d7d60}
+/* 后端状态灯。本插件被主题适配层整体反转（theme:'light'），
+   灯的颜色若不二次反转，深色面板下绿会变成品红 —— 所以灯上挂
+   data-nexus-no-invert（适配层只在实际施加反转时才注入该规则，
+   浅色面板下它不存在，灯保持原色，两边都对）。 */
+.be{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:#f3ecdf;background:#4a4133;border:1px solid #6a5c3a;border-radius:14px;padding:3px 10px;user-select:none}
+.be .belamp{width:9px;height:9px;flex:0 0 9px;border-radius:50%;background:#8a7c66}
+.be.on .belamp{background:#6fbf7f}
+.be.err .belamp{background:#d98a2b}
+.be .betxt{max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#d9c9a6}
+.be.on .betxt{color:#cfe3cf}
+.be button{padding:2px 9px}
+.be button:disabled{opacity:.4;cursor:default}
+.be button:disabled:hover{background:#4a4133}
+.be-empty{max-width:620px;margin:52px auto;padding:0 22px;line-height:1.9;font-size:13px}
+.be-empty .be-et{font-size:16px;font-weight:700;margin-bottom:8px}
+.be-empty .be-ed{color:#8a7f6b;margin-bottom:16px}
+.be-diag{background:#f3ead6;border:1px solid #e6dcc6;border-radius:6px;padding:10px 12px;margin:16px 0 0;white-space:pre-wrap;word-break:break-all;font-size:11px;color:#6a5c3a;line-height:1.7}
+</style></head><body>
+<header><h1>改名重名文件 · OCR高相似 · 截图对比</h1>
+<div class="filters">
+<span class="be" id="beBox">
+<span class="belamp" id="beLamp" data-nexus-no-invert></span>
+<span class="betxt" id="beTxt">后端检测中…</span>
+<button class="fbtn" id="beStart" onclick="beStart()" data-tip="原生后端已内置于面板，无需启动">启动后端</button>
+<button class="fbtn" id="beStop" onclick="beStop()" data-tip="停止由本面板拉起的那一个后端进程">停止</button>
+</span>
+<span class="sep"></span>
+<label class="fbtn"><input type="checkbox" id="fSingle" onchange="applyFilter()">隐藏单文件</label>
+<label class="fbtn"><input type="checkbox" id="fDone" onchange="applyFilter()">隐藏已解决</label>
+<span class="sep"></span>
+<span class="chips" id="subChips"></span>
+<button class="fbtn" id="btnSubAll" onclick="subAll(1)" data-tip="显示全部学科（取消单选 / 多选筛选）">全选</button>
+<div class="dd"><button class="fbtn" id="ddBtn" onclick="toggleDD(event)" data-tip="展开学科列表，可勾选多个（多选）">学科 ▾</button>
+<div class="ddpanel" id="ddPanel">
+<div class="ddhead"><a onclick="subAll(1)">全选</a><a onclick="subAll(0)">清空</a><a onclick="subInv()">反选</a></div>
+<div id="ddList"></div>
+</div></div>
+<span class="sep"></span>
+<button class="fbtn" id="btnTree" onclick="toggleTree()" data-tip="收起 / 展开左侧目录树">◀ 目录树</button>
+<div class="dd"><button class="fbtn" id="frBtn" onclick="toggleFR(event)">＋ 文件夹</button>
+<div class="ddpanel" id="frPanel" style="min-width:440px">
+<div class="frrow"><input class="frin" id="frPath" placeholder="粘贴或输入文件夹绝对路径" data-tip="支持任意本地文件夹，例如 D:\试卷\2026届">
+<button class="fbtn" onclick="frBrowse()" data-tip="调出系统目录选择框（对话框可能出现在浏览器窗口之后）">浏览…</button>
+<button class="fbtn" onclick="frAdd()" data-tip="登记为根目录并后台扫描、渲染缩略图、做重名与相似度比对">添加</button></div>
+<div class="frrow"><button class="fbtn" onclick="frScanAll()" data-tip="依次增量扫描全部已登记目录：往里新放进的文件会被自动读入、渲染缩略图并比对">全部重新扫描</button>
+<span style="font-size:11px;color:#a08c63">页面打开时会自动增量扫描一次，新文件自动读入</span></div>
+<div class="frlist" id="frList"></div>
+<div class="frprog" id="frProg"></div>
+</div></div>
+</div>
+<span class="sub">左侧点文件夹看内容 · 点三角展开 · 点图逐页预览</span></header>
+<div id="app"><aside id="tree"><div class="treehint">加载文件树…</div></aside><div id="splitter" data-tip="左右拖动调整目录树宽度 · 双击复位 320px"></div><div id="content"><div id="wrap"></div></div></div>
+<div class="ldc" id="ldc"><div class="main" id="main"></div><div class="strip" id="strip"></div><div class="cap" id="cap"></div></div>
+<div class="toast" id="toast"></div>
+<div class="tip" id="tip"></div>
+<script>
+/* 原生后端：没有 python 服务、没有 8767 端口，数据命令一律走 invoke。
+   下面这个 apiU 只负责**图片地址**这一件事。 */
+/* 后端返回的是本地**绝对路径**，webview 不能拿它直接当 URL ——
+   必须经 convertFileSrc 转成 asset 协议地址（CSP 已放行 asset: 与
+   http://asset.localhost）。转换失败就原样返回：宁可图片裂开，
+   也不要因为它抛异常而让整个列表渲染中断。 */
+function apiU(u){
+  if(typeof u!=='string'||!u)return u;
+  if(u.indexOf('http')===0||u.indexOf('data:')===0||u.indexOf('blob:')===0||u.indexOf('asset:')===0)return u;
+  try{return beCtx().convertFileSrc(u)}catch(e){return u}
+}
+/* /list 里每个文件的 img 是本地路径，递归转成可加载的地址 */
+function apiFiles(D){if(D&&D.roots){(function w(ns){for(var i=0;i<ns.length;i++){var n=ns[i];if(n.files)for(var k=0;k<n.files.length;k++)n.files[k].img=apiU(n.files[k].img);if(n.kids)w(n.kids)}})(D.roots)}return D}
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function fmt(sz){if(sz>=1048576)return (sz/1048576).toFixed(1)+'M';return (sz/1024|0)+'k'}
+function toast(m){var t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(function(){t.style.display='none'},1600)}
+var TIPW=0,TIPH=0,TIPTXT=null;
+function tipShow(t,x,y){
+  var el=document.getElementById('tip');
+  if(t!==TIPTXT){el.textContent=t;TIPTXT=t;el.style.display='block';TIPW=el.offsetWidth;TIPH=el.offsetHeight;}
+  else if(el.style.display!=='block'){el.style.display='block';}
+  var nx=x+14,ny=y+18;
+  if(nx+TIPW>window.innerWidth-8)nx=Math.max(8,x-TIPW-14);
+  if(ny+TIPH>window.innerHeight-8)ny=Math.max(8,y-TIPH-14);
+  el.style.left=nx+'px';el.style.top=ny+'px';
+}
+function tipHide(){var el=document.getElementById('tip');if(el)el.style.display='none';TIPTXT=null;}
+document.addEventListener('mouseover',function(e){
+  if(DRAGGING){tipHide();return;}
+  var el=e.target.closest?e.target.closest('[data-tip]'):null;
+  if(!el){tipHide();return;}
+  var t=el.getAttribute('data-tip');
+  if(t)tipShow(t,e.clientX,e.clientY);else tipHide();
+});
+document.addEventListener('mousemove',function(e){
+  if(DRAGGING)return;
+  var el=document.getElementById('tip');
+  if(el&&el.style.display==='block')tipShow(TIPTXT,e.clientX,e.clientY);
+});
+document.addEventListener('mouseout',function(e){
+  var el=e.target.closest?e.target.closest('[data-tip]'):null;
+  if(el&&!el.contains(e.relatedTarget))tipHide();
+});
+window.addEventListener('scroll',tipHide,true);
+window.addEventListener('blur',tipHide);
+var SPL=document.getElementById('splitter'),APPEL=document.getElementById('app');
+var TREE_MINW=160,TREE_DEFW=320,TREE_MAXR=0.7;
+var DRAGGING=false,LASTW=TREE_DEFW;
+function treeWStored(){
+  var w=parseInt(localStorage.getItem('dupview_treew')||'',10);
+  return (w>0?w:TREE_DEFW);
+}
+function setTreeW(w){
+  w=Math.round(w);
+  var mx=Math.round(window.innerWidth*TREE_MAXR);
+  if(w<TREE_MINW)w=TREE_MINW;
+  if(w>mx)w=mx;
+  document.documentElement.style.setProperty('--dv-treew',w+'px');
+  LASTW=w;return w;
+}
+function applyTreeW(){setTreeW(treeWStored())}
+function treeWSave(){try{localStorage.setItem('dupview_treew',String(LASTW))}catch(e){}}
+SPL.addEventListener('pointerdown',function(e){
+  DRAGGING=true;SPL.classList.add('drag');
+  document.body.style.cursor='col-resize';
+  document.body.style.userSelect='none';
+  tipHide();
+  try{SPL.setPointerCapture(e.pointerId)}catch(err){}
+  e.preventDefault();
+});
+SPL.addEventListener('pointermove',function(e){
+  if(!DRAGGING)return;
+  setTreeW(e.clientX-APPEL.getBoundingClientRect().left);
+  e.preventDefault();
+});
+function treeDragEnd(e){
+  if(!DRAGGING)return;
+  DRAGGING=false;SPL.classList.remove('drag');
+  document.body.style.cursor='';
+  document.body.style.userSelect='';
+  treeWSave();
+  try{SPL.releasePointerCapture(e.pointerId)}catch(err){}
+}
+SPL.addEventListener('pointerup',treeDragEnd);
+SPL.addEventListener('pointercancel',treeDragEnd);
+SPL.addEventListener('dblclick',function(){
+  setTreeW(TREE_DEFW);treeWSave();toast('目录树宽度已复位');
+});
+window.addEventListener('resize',function(){if(!DRAGGING)setTreeW(treeWStored())});
+var DATA=null,CACHE={},OPEN={},CUR={path:''},LASTSIG=null,DONEMAP={},SUB_LABEL={'?':'未识别'};
+var FILT={single:false,done:false,subs:{}};
+function subLabel(s){return SUB_LABEL[s]||s}
+function subOn(s){return FILT.subs[s]!==false}
+function subSig(){return DATA?DATA.subjects.map(function(s){return subOn(s)?'1':'0'}).join(''):''}
+function isDone(dir,subj){var m=dir&&DONEMAP[dir];return !!(m&&m[subj])}
+function setDone(dir,subj,val){
+  if(!dir)return;
+  var m=DONEMAP[dir]||(DONEMAP[dir]={});
+  if(val)m[subj]=1;else delete m[subj];
+}
+function buildDoneMap(){
+  DONEMAP={};
+  function walk(n){(n.doneSubs||[]).forEach(function(s){setDone(n.dir,s,1)});(n.kids||[]).forEach(walk);}
+  if(DATA)DATA.roots.forEach(walk);
+}
+function loadFilt(){
+  try{
+    var f=JSON.parse(localStorage.getItem('dupview_filt')||'{}');
+    FILT.single=!!f.single;FILT.done=!!f.done;FILT.subs={};
+    if(f.subs)Object.keys(f.subs).forEach(function(k){FILT.subs[k]=!!f.subs[k]});
+    OPEN={};if(f.open)Object.keys(f.open).forEach(function(k){if(f.open[k])OPEN[k]=1});
+  }catch(e){}
+  document.getElementById('fSingle').checked=FILT.single;
+  document.getElementById('fDone').checked=FILT.done;
+}
+function saveFilt(){
+  try{localStorage.setItem('dupview_filt',JSON.stringify({single:FILT.single,done:FILT.done,subs:FILT.subs,open:OPEN}));}catch(e){}
+}
+function treeOn(){return localStorage.getItem('dupview_tree')!=='0'}
+function applyTree(){
+  var on=treeOn();
+  document.getElementById('app').classList.toggle('notree',!on);
+  var b=document.getElementById('btnTree');
+  b.classList.toggle('on',on);
+  b.textContent=(on?'◀':'▶')+' 目录树';
+}
+function toggleTree(){
+  var on=treeOn();
+  try{localStorage.setItem('dupview_tree',on?'0':'1')}catch(e){}
+  applyTree();
+  toast(on?'已收起目录树':'已展开目录树');
+}
+var FRT=null,FRWAS=false,FRQUIET=false;
+function toggleFR(e){
+  e.stopPropagation();
+  var p=document.getElementById('frPanel');
+  var on=!p.classList.contains('open');
+  p.classList.toggle('open',on);
+  if(on){frLoad();frPoll(false);}
+}
+function frLoad(){
+  cmdRoots().then(function(j){
+    var h='';
+    (j.roots||[]).forEach(function(r){
+      h+='<div class="frroot"><span class="frnm" data-tip="'+esc(r.name)+'">'+esc(r.name)+'</span>'
+        +'<span class="frp" data-tip="'+esc(r.path)+'">'+esc(r.path)+'</span>'
+        +'<span class="frn">'+r.files+'</span>'
+        +'<button onclick="frScan(this)" data-path="'+esc(r.path)+'" data-tip="增量扫描该根目录：已登记目录里新放进去的文件会被读入并比对">重新扫描</button>'
+        +'<button class="frdel" onclick="frDel(this)" data-path="'+esc(r.path)+'" data-tip="仅从列表移除，不删除任何文件">移除</button></div>';
+    });
+    document.getElementById('frList').innerHTML=h||'<div style="font-size:11px;color:#a08c63;padding:4px 2px">尚未添加文件夹</div>';
+    frStatus(j.status);
+  }).catch(function(){});
+}
+function frStatus(st){
+  var el=document.getElementById('frProg');
+  if(!el)return;
+  if(!st||!st.running){el.classList.remove('on');el.textContent='';return;}
+  el.classList.add('on');
+  var s='扫描中：'+(st.name||'')+' · '+st.phase;
+  if(st.total)s+=' ('+st.done+'/'+st.total+')';
+  if(st.msg)s+='\n'+st.msg;
+  el.textContent=s;
+}
+function frPoll(mode){
+  if(FRT)clearInterval(FRT);
+  FRWAS=!!mode;
+  FRQUIET=(mode==='auto');
+  FRT=setInterval(function(){
+    cmdScanStatus().then(function(j){
+      var st=j.status||{};
+      frStatus(st);
+      if(st.running){FRWAS=true;return;}
+      clearInterval(FRT);FRT=null;
+      if(!FRWAS)return;
+      FRWAS=false;
+      var n=st.added||0;
+      if(st.err){toast('扫描失败：'+st.err);frLoad();return;}
+      if(FRQUIET&&!n)return;
+      toast((FRQUIET?'自动扫描完成：':'扫描完成：')+(st.msg||''));
+      frLoad();reloadAll();
+    }).catch(function(){});
+  },1200);
+}
+function frScanAll(){
+  cmdScanAll().then(function(j){
+    if(!j.ok){toast('扫描失败');return;}
+    toast(j.started?'开始扫描全部目录…':'已在扫描中…');
+    frLoad();frPoll(true);
+  }).catch(function(){toast('扫描失败');});
+}
+function frBrowse(){
+  toast('请在系统对话框中选择文件夹…');
+  cmdBrowse().then(function(j){
+    if(j.ok&&j.path){document.getElementById('frPath').value=j.path;toast('已选择文件夹');}
+    else toast(j.err==='cancel'?'未选择文件夹':('浏览失败：'+(j.err||'')));
+  }).catch(function(){toast('浏览失败');});
+}
+function frAdd(){
+  var p=document.getElementById('frPath').value.trim();
+  if(!p){toast('请输入文件夹绝对路径');return;}
+  cmdAddRoot(p).then(function(j){
+      if(!j.ok){toast('添加失败：'+j.err);return;}
+      toast(j.started?'已添加，后台扫描中…':'已在扫描中…');
+      document.getElementById('frPath').value='';
+      frLoad();frPoll(true);
+    }).catch(function(){toast('添加失败');});
+}
+function frScan(btn){
+  var p=btn.getAttribute('data-path');
+  cmdScan(p).then(function(j){
+      if(!j.ok){toast('扫描失败：'+j.err);return;}
+      toast(j.started?'开始扫描…':'已在扫描中…');
+      frLoad();frPoll(true);
+    }).catch(function(){toast('扫描失败');});
+}
+function frDel(btn){
+  var p=btn.getAttribute('data-path');
+  if(!confirm('从列表移除该文件夹？\n（只移除展示，不会删除任何文件）\n'+p))return;
+  cmdDelRoot(p).then(function(j){
+      if(!j.ok){toast('移除失败：'+j.err);return;}
+      toast('已移除');frLoad();reloadAll();
+    }).catch(function(){toast('移除失败');});
+}
+function calcVis(n){
+  var c=0,sub=0,dnc=0;
+  if(n.files&&n.files.length){
+    n.files.forEach(function(it){
+      if(!subOn(it.subj))return;
+      sub++;
+      var dn=isDone(n.dir,it.subj);
+      if(dn)dnc++;
+      if(!(FILT.done&&dn))c++;
+    });
+  }
+  n._own=(c>0&&!(FILT.single&&c<=1))?c:0;
+  var t=n._own;
+  (n.kids||[]).forEach(function(k){
+    t+=calcVis(k);
+    sub+=k._subj;dnc+=k._doneCnt;
+  });
+  n._vis=t;n._subj=sub;n._doneCnt=dnc;
+  n._doneAll=sub>0&&dnc>=sub;
+  n._donePart=dnc>0&&dnc<sub;
+  return t;
+}
+function recalc(){if(DATA)DATA.roots.forEach(calcVis)}
+function findNode(path){
+  if(!DATA)return null;
+  function walk(n){if(n.path===path)return n;for(var i=0;i<(n.kids||[]).length;i++){var r=walk(n.kids[i]);if(r)return r;}return null;}
+  for(var i=0;i<DATA.roots.length;i++){var r=walk(DATA.roots[i]);if(r)return r;}
+  return null;
+}
+function pickDefault(){
+  var cur=CUR.path?findNode(CUR.path):null;
+  if(cur&&cur._vis>0)return;
+  if(DATA)for(var i=0;i<DATA.roots.length;i++){if(DATA.roots[i]._vis>0){CUR.path=DATA.roots[i].path;return;}}
+  CUR.path='';
+}
+function renderView(){
+  if(!CUR.path){document.getElementById('wrap').innerHTML='<div style="padding:24px;color:#8a7f6b">没有符合筛选条件的文件夹</div>';return;}
+  showNode(CUR.path);
+}
+function applyFilter(){
+  FILT.single=document.getElementById('fSingle').checked;
+  FILT.done=document.getElementById('fDone').checked;
+  var sig=subSig();
+  if(sig!==LASTSIG){CACHE={};LASTSIG=sig;}
+  saveFilt();
+  recalc();buildSubUI();pickDefault();buildTree();renderView();
+}
+function toggleSub(s,val){
+  if(val===undefined)val=!subOn(s);
+  FILT.subs[s]=!!val;
+  applyFilter();
+}
+function pickSub(s){
+  if(!DATA)return;
+  var only=subOn(s)&&DATA.subjects.filter(subOn).length===1;
+  DATA.subjects.forEach(function(k){FILT.subs[k]=only?true:(k===s);});
+  applyFilter();
+}
+function subAll(v){if(!DATA)return;DATA.subjects.forEach(function(s){FILT.subs[s]=!!v});applyFilter();}
+function subInv(){if(!DATA)return;DATA.subjects.forEach(function(s){FILT.subs[s]=!subOn(s)});applyFilter();}
+function toggleDD(e){e.stopPropagation();document.getElementById('ddPanel').classList.toggle('open');}
+function buildSubUI(){
+  if(!DATA)return;
+  var chips='';
+  DATA.subjects.forEach(function(s){
+    if(s==='日语'||s==='?')return;
+    chips+='<span class="chip'+(subOn(s)?' on':'')+'" onclick="pickSub(\''+s+'\')" data-tip="只看「'+esc(subLabel(s))+'」；再点一次恢复全部学科 · 多选请用右侧「学科 ▾」">'+esc(subLabel(s))+'</span>';
+  });
+  document.getElementById('subChips').innerHTML=chips;
+  var ba=document.getElementById('btnSubAll');
+  if(ba)ba.classList.toggle('on',DATA.subjects.every(subOn));
+  var rows='';
+  DATA.subjects.forEach(function(s){
+    rows+='<label class="ddrow"><input type="checkbox" '+(subOn(s)?'checked':'')+' onchange="toggleSub(\''+s+'\',this.checked)">'+esc(subLabel(s))+'</label>';
+  });
+  document.getElementById('ddList').innerHTML=rows;
+}
+async function reloadAll(){
+  DATA=apiFiles(await cmdList());MD5IDX=null;buildDoneMap();
+  if(!OPEN.__init__){
+    DATA.roots.forEach(function(r0){
+      OPEN[r0.path]=1;
+      (r0.kids||[]).forEach(function(k){OPEN[k.path]=1;});
+    });
+    OPEN.__init__=1;
+  }
+  LASTSIG=subSig();
+  CACHE={};
+  recalc();buildSubUI();pickDefault();buildTree();renderView();
+}
+async function load(){
+  loadFilt();
+  applyTree();
+  applyTreeW();
+  await reloadAll();
+  cmdScanAll().then(function(j){
+    if(j.started)frPoll('auto');
+    else cmdScanStatus().then(function(k){
+      if(k.status&&k.status.running)frPoll(false);
+    }).catch(function(){});
+  }).catch(function(){});
+}
+function nodeHTML(n,depth){
+  const kids=(n.kids||[]).filter(function(k){return k._vis>0});
+  const open=kids.length&&!!OPEN[n.path];
+  const sel=n.path===CUR.path;
+  let h='<div class="tnode dir'+(sel?' sel':'')+(n._doneAll?' isdone':'')+'" data-path="'+esc(n.path)+'" style="padding-left:'+(6+depth*13)+'px">';
+  h+='<span class="tri'+(kids.length?'':' ph')+'"'+(kids.length?' data-tri="1"':'')+'>'+(kids.length?(open?'▾':'▸'):'')+'</span>';
+  h+='<span class="tw" data-tip="'+esc(n.path)+'">'+esc(n.name)+(n._doneAll?' <span class="dotdone">✓</span>':(n._donePart?' <span class="dotpart">◐</span>':''))+'</span>';
+  h+='<span class="tb">'+n._vis+'</span></div>';
+  if(kids.length){
+    h+='<div class="tchildren'+(open?'':' hidden')+'">';
+    kids.forEach(function(k){h+=nodeHTML(k,depth+1)});
+    h+='</div>';
+  }
+  return h;
+}
+function buildTree(){
+  const t=document.getElementById('tree');
+  let h='';
+  if(DATA)DATA.roots.forEach(function(r0){if(r0._vis>0)h+=nodeHTML(r0,0)});
+  if(!h)h='<div class="treehint">没有符合筛选条件的文件夹</div>';
+  t.innerHTML=h;
+}
+function selTree(path){
+  let sel=null;
+  document.querySelectorAll('#tree .tnode').forEach(function(x){
+    if(x.getAttribute('data-path')===path){x.classList.add('sel');sel=x;}
+    else x.classList.remove('sel');
+  });
+  if(sel)sel.scrollIntoView({block:'nearest'});
+}
+function collectBoxes(n,out){
+  if(n._own>0)out.push(n);
+  (n.kids||[]).forEach(function(k){if(k._vis>0)collectBoxes(k,out)});
+  return out;
+}
+function showNode(path){
+  const n=findNode(path);if(!n)return;
+  CUR.path=path;
+  const wrap=document.getElementById('wrap');wrap.innerHTML='';
+  const sec=document.createElement('div');sec.className='sec';
+  sec.innerHTML='<h2>'+esc(n.path)+' <b>('+n._vis+')</b></h2>';
+  wrap.appendChild(sec);
+  const leaves=collectBoxes(n,[]);
+  const subs=[];
+  leaves.forEach(function(leaf){(leaf.files||[]).forEach(function(it){
+    if(subOn(it.subj)&&subs.indexOf(it.subj)<0)subs.push(it.subj);
+  });});
+  subs.sort(function(a,b){return DATA.subjects.indexOf(a)-DATA.subjects.indexOf(b);});
+  sec.classList.add(subs.length<=1?'wrapmode':'multi');
+  if(!subs.length){
+    const row=document.createElement('div');row.className='flex';
+    row.innerHTML='<div style="color:#8a7f6b;font-size:12px;padding:4px 0">该文件夹下没有符合筛选条件的文件</div>';
+    sec.appendChild(row);selTree(path);return;
+  }
+  subs.forEach(function(s){
+    const row=document.createElement('div');row.className='flex';
+    if(subs.length>1){
+      const lb=document.createElement('div');lb.className='rowsub';lb.textContent=subLabel(s);
+      row.appendChild(lb);
+    }
+    leaves.forEach(function(leaf){
+      const has=(leaf.files||[]).some(function(it){return subOn(it.subj)&&it.subj===s&&!(FILT.done&&isDone(leaf.dir,it.subj));});
+      if(has)row.appendChild(ensureBox(leaf,s));
+    });
+    sec.appendChild(row);
+  });
+  selTree(path);
+}
+document.getElementById('tree').onclick=function(e){
+  const node=e.target.closest('.tnode');if(!node)return;
+  const path=node.getAttribute('data-path');
+  if(e.target.closest('.tri[data-tri]')){OPEN[path]=OPEN[path]?0:1;saveFilt();buildTree();return;}
+  const n=findNode(path);if(!n)return;
+  if((n.kids||[]).length)OPEN[path]=1;
+  saveFilt();CUR.path=path;buildTree();showNode(path);
+};
+document.addEventListener('click',function(e){
+  if(e.target.closest('.dd'))return;
+  ['ddPanel','frPanel'].forEach(function(id){
+    const p=document.getElementById(id);
+    if(p&&p.classList.contains('open'))p.classList.remove('open');
+  });
+});
+function ensureBox(leaf,subj){
+  const key=leaf.path+'|'+(subj||'');
+  if(!CACHE[key])CACHE[key]=buildBox(leaf,subj);
+  return CACHE[key];
+}
+function buildBox(leaf,subj){
+  const d=leaf;
+  const dn=isDone(d.dir,subj);
+  const box=document.createElement('div');
+  box.className='dirbox'+(dn?' isdone':'');
+  box.setAttribute('data-dir',d.dir);
+  box.setAttribute('data-full',d.full||d.dir);
+  box.setAttribute('data-subj',subj||'');
+  box.innerHTML='<div class="dt"><button class="btn-copy" onclick="copyPath(this)" data-tip="复制完整路径"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 14H8V7h11v12z"/></svg></button><span class="dtx" data-tip="'+esc(d.full||d.dir)+'">'+esc(d.dir)+'</span><button class="btn-done'+(dn?' on':'')+'" onclick="dirDone(this)">✓ 已解决</button></div>'
+    +(dn?'<div class="done-mask"></div>':'')
+    +'<div class="dinner"></div>';
+  const dinner=box.querySelector('.dinner');
+  const grp={};
+  d.files.filter(function(it){return subOn(it.subj)&&(!subj||it.subj===subj);}).forEach(function(it){const k=it.fam||'';(grp[k]=grp[k]||[]).push(it);});
+  const seq=[];
+  Object.keys(grp).forEach(function(k){
+    if(!k){grp[k].forEach(function(it){seq.push(it);});return;}
+    seq.push({g:1});grp[k].forEach(function(it){seq.push(it);});seq.push({g:0});
+  });
+  let i=0,cur=null;
+  function step(){
+    let n=0;
+    while(i<seq.length&&n<5){
+      const s=seq[i++];
+      if(s&&s.g===1){cur=document.createElement('div');cur.className='famgrp';dinner.appendChild(cur);}
+      else if(s&&s.g===0){cur=null;}
+      else{const w=document.createElement('div');w.innerHTML=renderCard(s);(cur||dinner).appendChild(w.firstChild);}
+      n++;
+    }
+    if(i<seq.length)requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+  return box;
+}
+var MD5IDX=null;
+function md5Index(){
+  if(MD5IDX)return MD5IDX;
+  MD5IDX={};
+  if(!DATA)return MD5IDX;
+  function walk(n){
+    (n.files||[]).forEach(function(it){if(it.md5){(MD5IDX[it.md5]=MD5IDX[it.md5]||[]).push(it);}});
+    (n.kids||[]).forEach(walk);
+  }
+  DATA.roots.forEach(walk);
+  return MD5IDX;
+}
+function findItem(path){
+  if(!DATA)return null;
+  var found=null;
+  function walk(n){
+    if(found)return;
+    (n.files||[]).forEach(function(it){if(it.path===path)found=it;});
+    (n.kids||[]).forEach(walk);
+  }
+  DATA.roots.forEach(walk);
+  return found;
+}
+function md5PeerTip(it){
+  if(!it.md5)return 'MD5 相同 · 未记录到配对文件';
+  var g=md5Index()[it.md5]||[];
+  var peers=g.filter(function(x){return x.path!==it.path;});
+  if(!peers.length)return 'MD5 相同 · 未找到配对文件';
+  var s='MD5 完全相同（共 '+g.length+' 份），配对文件：';
+  peers.forEach(function(x){s+='\n· '+x.name+(x.dim?'（已删除）':'')+'\n    '+x.path;});
+  return s;
+}
+function renderCard(it){
+        let cls='card';
+        if(it.md5same)cls+=' md5';
+        else if(it.sup)cls+=' sup';
+        else if(it.sub)cls+=' sub';
+        else if(it.txtsame)cls+=' txt';
+        else if(it.ylw)cls+=' ylw';
+        if(it.dim)cls+=' dim';
+        let tag='',tcls='',ttip='';
+        if(it.md5same){tag='MD5相同';tcls='tagmd';ttip=md5PeerTip(it);}
+        else if(it.sup){tag='包含方(超集)';tcls='tagsup';}
+        else if(it.sub){tag='被包含方(子集)';tcls='tagsub';}
+        else if(it.txtsame){tag='文本一致';tcls='tagtxt';}
+        else if(it.ylw){tag='疑似>0.3';tcls='tagylw';}
+        return '<div class="'+cls+'" data-name="'+esc(it.name)+'" data-path="'+esc(it.path)+'" data-fam="'+esc(it.fam||'')+'">'
+          +(tag?'<div class="'+tcls+'"'+(ttip?' data-tip="'+esc(ttip)+'"':'')+'>'+tag+'</div>':'')
+          +'<div class="thumb" onclick="zoom(this)"><img loading="lazy" src="'+it.img+'" alt=""></div>'
+          +'<div class="meta"><div class="fname" data-tip="'+esc(it.name)+'">'+esc(it.name)+'</div>'
+          +'<div class="fsize">'+fmt(it.size)+' · '+it.pages+'页'+(it.sim?' · 相似'+it.sim:'')+'</div>'
+          +(it.fam?'<div class="fam">'+esc(it.fam)+'</div>':'')+'</div>'
+          +'<div class="act">'+(it.dim
+              ?'<button class="btn-restore" onclick="restore(this)">恢复</button>'
+              :'<button class="btn-ren" onclick="ren(this)">改名</button><button class="btn-del" onclick="del(this)">删除</button>')+'</div>'
+          +'</div>';
+}
+var PAGE_CACHE={};
+function zoom(el){
+  const card=el.closest('.card');
+  const path=card.getAttribute('data-path');
+  const name=card.getAttribute('data-name');
+  const L=document.getElementById('ldc');const main=document.getElementById('main');
+  const strip=document.getElementById('strip');const cap=document.getElementById('cap');
+  main.innerHTML='<img src="'+el.querySelector('img').src+'">';
+  strip.innerHTML='<div style="color:#9a8d7c;padding:6px 12px;font-size:12px">加载各页…</div>';
+  cap.textContent=name;L.style.display='flex';
+  function show(j){
+    if(!j.ok){strip.innerHTML='<div style="color:#c9a;padding:6px 12px">无法渲染: '+esc(j.err||'')+'</div>';return;}
+    main.innerHTML='<img src="'+j.pages[0]+'">';
+    cap.textContent=name+' · 共 '+j.pages.length+' 页';
+    let html='';
+    j.pages.forEach(function(u,i){html+='<img class="pgv'+(i===0?' on':'')+'" src="'+u+'" alt="'+(i+1)+'">';});
+    strip.innerHTML=html;
+    strip.querySelectorAll('.pgv').forEach(function(im){
+      im.onclick=function(){main.innerHTML='<img src="'+im.src+'">';
+        strip.querySelectorAll('.pgv').forEach(function(x){x.classList.remove('on')});
+        im.classList.add('on');};
+    });
+  }
+  if(PAGE_CACHE[path]){show(PAGE_CACHE[path]);return;}
+  cmdPages(path).then(function(j){if(j&&j.pages)j.pages=j.pages.map(apiU);PAGE_CACHE[path]=j;show(j);}).catch(function(){strip.innerHTML='<div style="color:#c99">加载失败</div>';});
+}
+document.getElementById('ldc').onclick=function(e){if(e.target===this||e.target.id==='main')this.style.display='none';};
+async function ren(btn){
+  const card=btn.closest('.card');
+  const path=card.getAttribute('data-path');
+  const name=card.getAttribute('data-name');
+  const nn=prompt('输入新文件名：',name);
+  if(!nn||nn===name)return;
+  const j=await cmdRename(path,nn);
+  if(!j.ok){toast('改名失败:'+j.err);return;}
+  const oldfam=card.getAttribute('data-fam')||'';
+  const fam=j.fam||'';
+  card.setAttribute('data-name',j.newname);
+  card.setAttribute('data-path',j.newpath);
+  card.setAttribute('data-fam',fam);
+  card.querySelector('.fname').textContent=j.newname;
+  card.querySelector('.fname').setAttribute('data-tip',j.newname);
+  toast('已改名');
+  if(fam!==oldfam)refreshBox(card,path,j.newpath,j.newname,fam);
+  else setFamLabel(card,fam);
+}
+function setFamLabel(card,fam){
+  const meta=card.querySelector('.meta');
+  const fe=card.querySelector('.fam');
+  if(!fam){if(fe)fe.remove();return;}
+  if(fe){fe.textContent=fam;return;}
+  const d=document.createElement('div');d.className='fam';d.textContent=fam;meta.appendChild(d);
+}
+function refreshBox(card,oldpath,newpath,newname,fam){
+  const box=card.closest('.dirbox');
+  if(!box)return;
+  const dir=box.getAttribute('data-dir');
+  const subj=box.getAttribute('data-subj')||'';
+  const n=findNode(CUR.path);
+  if(!n)return;
+  let leaf=null;
+  (function walk(x){
+    if(leaf)return;
+    if(x.dir===dir&&x._own>0){leaf=x;return;}
+    (x.kids||[]).forEach(walk);
+  })(n);
+  if(!leaf||!leaf.files)return;
+  leaf.files.forEach(function(it){if(it.path===oldpath){it.name=newname;it.path=newpath;it.fam=fam;}});
+  const key=leaf.path+'|'+subj;
+  CACHE[key]=buildBox(leaf,subj);
+  box.replaceWith(CACHE[key]);
+}
+function copyPath(btn){
+  const full=btn.closest('.dirbox').getAttribute('data-full');
+  const ok=function(){toast('已复制完整路径');};
+  const fb=function(){
+    const ta=document.createElement('textarea');
+    ta.value=full;ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.select();
+    try{document.execCommand('copy');ok();}catch(e){toast('复制失败');}
+    document.body.removeChild(ta);
+  };
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(full).then(ok).catch(fb);}else{fb();}
+}
+async function dirDone(btn){
+  const box=btn.closest('.dirbox');
+  const d=box.getAttribute('data-dir');
+  const sj=box.getAttribute('data-subj')||'';
+  const j=await cmdDirDone(d,sj);
+  if(!j.ok){toast('失败:'+j.err);return;}
+  applyDone(d,sj,j.done);
+  setDone(d,sj,j.done);
+  toast((j.done?'已标记解决':'已取消解决')+(sj?'：'+subLabel(sj):''));
+  recalc();buildTree();
+  if(FILT.done){pickDefault();renderView();}
+}
+function applyDone(dir,subj,val){
+  document.querySelectorAll('#wrap .dirbox').forEach(function(b){
+    if(b.getAttribute('data-dir')!==dir)return;
+    if((b.getAttribute('data-subj')||'')!==subj)return;
+    b.classList.toggle('isdone',val);
+    const bt=b.querySelector('.btn-done');if(bt)bt.classList.toggle('on',val);
+    const m=b.querySelector('.done-mask');
+    if(val){if(!m){const e=document.createElement('div');e.className='done-mask';b.insertBefore(e,b.firstChild);}}
+    else if(m)m.remove();
+  });
+}
+async function del(btn){
+  const card=btn.closest('.card');
+  const path=card.getAttribute('data-path');
+  const j=await cmdDelete(path);
+  if(!j.ok){toast('失败:'+j.err);return;}
+  card.classList.add('dim');
+  var o=findItem(path);if(o)o.dim=true;
+  btn.textContent='恢复';btn.className='btn-restore';btn.onclick=function(){restore(this)};
+  toast('已删除(可点恢复)');
+}
+async function restore(btn){
+  const card=btn.closest('.card');
+  const path=card.getAttribute('data-path');
+  const j=await cmdRestore(path);
+  if(!j.ok){toast('恢复失败:'+j.err);return;}
+  card.classList.remove('dim');
+  var o=findItem(path);if(o)o.dim=false;
+  btn.textContent='删除';btn.className='btn-del';btn.onclick=function(){del(this)};
+  toast('已恢复');
+}
+window.addEventListener('keydown',function(e){if(e.key==='F5'){load();e.preventDefault();}});
+window.__dvLoad=load;
+
+/* ===========================================================================
+   后端
+   ---------------------------------------------------------------------------
+   曾经：一个本机 python 服务（plugins/dupview/server/，2175 行）提供全部数据，
+   页面通过 http://127.0.0.1:8767 的 11 个路由访问它，宿主负责拉起/停掉进程。
+   那套架构带进来端口占用、CSP 放行、CORS 白名单、python 解释器定位、
+   依赖分发（PyMuPDF / Pillow / pytesseract）一整套与"查重"无关的东西。
+
+   现在：扫描、渲染、哈希、比对全部在宿主的 Rust 进程内完成
+   （src-tauri/src/dupview/），不再有子进程、端口与 CSP 放行。
+   下面只剩数据目录这一条约定：  <面板数据目录>/dupview
+   =========================================================================== */
+/* 原生化后 BE 只剩一个语义：能力是否随面板就绪。
+   （python 时代的 running / managed / pid / python / script / port
+   都是"外部进程"的属性，现在没有那个进程了。） */
+var BE={ready:false};
+
+function beErr(e){return String((e&&e.message)||e||'未知错误')}
+/* 命令名一律写成**字面量**，不要收进一个通用的 beInvoke(cmd) 里 ——
+   scripts/scan-invoke.mjs 只认字面量，套一层通用封装会让本插件的命令
+   在能力审计里整个消失（而那套扫描是"插件实际持有哪些能力"的唯一实测来源）。
+   包成 async 是必要的：ctx 未就绪时 beCtx() 抛同步异常，
+   只有 async 才能把它变成 rejection，让调用方的 .catch / try 接得住。 */
+function beCtx(){
+  var ctx=window.__nexusCtx;
+  if(!ctx||typeof ctx.invoke!=='function')throw new Error('插件上下文未就绪（请等页面加载完再点）');
+  return ctx;
+}
+/* 下面是本插件用到的全部命令，每条都是**字面量** —— 与上面 beCtx 的注释同理。
+   原生化后不再有 backend_start/stop/status/log（那四条是 python 服务时代的
+   进程管理入口），取而代之的是直接对数据的这 13 条。 */
+async function cmdRoots(){return beCtx().invoke('dupview_roots',{})}
+async function cmdScanStatus(){return beCtx().invoke('dupview_scan_status',{})}
+async function cmdScanAll(){return beCtx().invoke('dupview_scanall',{})}
+async function cmdScan(p){return beCtx().invoke('dupview_scan',{path:p})}
+async function cmdAddRoot(p){return beCtx().invoke('dupview_addroot',{path:p})}
+async function cmdDelRoot(p){return beCtx().invoke('dupview_delroot',{path:p})}
+async function cmdBrowse(){return beCtx().invoke('dupview_browse',{})}
+async function cmdList(){return beCtx().invoke('dupview_list',{})}
+async function cmdPages(path){return beCtx().invoke('dupview_pages',{path:path})}
+async function cmdRename(path,nn){return beCtx().invoke('dupview_rename',{path:path,newname:nn})}
+async function cmdDirDone(d,sj){return beCtx().invoke('dupview_dir_done',{dir:d,subj:sj})}
+async function cmdDelete(path){return beCtx().invoke('dupview_delete',{path:path})}
+async function cmdRestore(path){return beCtx().invoke('dupview_restore',{path:path})}
+/* 原生化后没有"后端进程"可起停：渲染、比对都编译进 exe 里，随面板一起就绪。
+   这一整条 python 时代的启停栏直接隐藏 —— 留着只会让人去点一个
+   已经不存在的「启动后端」。BE 对象只留 ready 这一个语义。 */
+function beRender(){
+  var box=document.getElementById('beBox');
+  if(box)box.style.display='none';
+  BE.ready=true;
+}
+/* 后端不在时占满内容区：说清"是什么 / 怎么起来 / 为什么起不来"。
+/* （beEmpty / beRestoreContent / beWait / beLogDiag 已随 python 后端一并删除：
+   它们分别是"后端未启动占位""轮询端口等待就绪""贴后端日志尾巴"，
+   原生化后没有外部进程，这三件事都不存在了。留着只会引用已删的命令函数。） */
+
+/* 这两个入口来自 python 时代（拉起/停掉本机服务）。原生化后已无对应命令，
+   但 HTML 里那两个按钮的 onclick 还在（按钮随整条启停栏一起隐藏，正常点不到）。
+   留成 no-op 而不是删函数：万一有残留入口被触发，给一句人话提示，
+   总好过 ReferenceError 把整个插件脚本打断。 */
+async function beStart(){toast('已内置原生后端，无需启动');}
+async function beStop(){toast('已内置原生后端，无需停止');}
+/* 挂载时直接读数据：能力编译进 exe，不需要探测端口、不需要等待就绪。
+   （python 版本在这里要 poll 端口直到 8767 通，那是外部进程的固有延迟。） */
+async function beBoot(){
+  beRender();
+  try{await load();}catch(e){toast('读取数据失败：'+beErr(e))}
+}
+window.__dvBoot=beBoot;
+</script>
+<script type="module">
+  import { bootIframePlugin } from '../../js/plugin-sdk.js';
+
+  /* 挂载后才动：外壳会先把主题变量推进 iframe，早一步渲染会闪一帧未适配的原色。
+     起停按钮的点击处理在页面脚本里（onclick 走全局函数），这里只负责
+     把 ctx 交给它们 —— iframe 沙箱里拿不到 Tauri IPC，只能经 ctx.invoke 走桥接。 */
+  bootIframePlugin(async (ctx) => {
+    window.__nexusCtx = ctx;
+    await window.__dvBoot();
+  });
+</script>
+</body></html>

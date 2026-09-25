@@ -147,6 +147,43 @@ export const plugins = [
     version: '1.0.0',
     description: 'kityminder 内核：多画布 / 主题 / 布局 / 附件 / XMind 互导，内容实时缓存',
   },
+  {
+    id: 'dupview',
+    name: '试卷查重',
+    icon: '⧈',
+    type: 'iframe',
+    entry: './plugins/dupview/index.html',
+    version: '1.0.0',
+    /*
+     * theme:'light' —— 插件自带米色配色（--dv-* 变量），不读外壳主题变量。
+     *
+     * 为什么不能写 'follow'：'follow' 会被判成"观感由外壳驱动 → 与面板必然
+     * 同基调"，于是**不施加任何滤镜**，深色面板里就嵌着一整块米色。
+     * 写 'light' 才走自动适配：整体 invert 暗化融入面板，而 img / iframe
+     * 由适配层二次反转还原（见 theme-normalizer.js 的 imgFixCss），
+     * 所以 PDF 截图与缩略图的颜色仍然准确。
+     *
+     * 插件里的 CSS 变量统一用 --dv- 前缀，就是为了躲开外壳推进 iframe :root
+     * 的 --bg / --accent 等变量 —— 否则面板的深色 --bg 会覆盖插件自己的米色底，
+     * 而 --dv-txt 仍是深色，结果是深底深字、全糊。
+     *
+     * 后端是另起的本机 python 服务（127.0.0.1:8767），CSP 放行见
+     * config/nexus.config.mjs 的 DUPVIEW_ORIGIN。
+     */
+    theme: 'light',
+    /*
+     * builtin:true —— **必需**，不是修饰。
+     *
+     * 本插件要调三条 M 类命令（dupview_backend_start / stop / status，起停本机
+     * python 服务），而第三方插件被 THIRD_DENY_CAPS 一律拒 M
+     * （见 invoke-policy.js）。少了这个标记，插件装上去表现为
+     * "点了启动按钮没反应"，且报错只有一行"不能声明 M 类命令"。
+     *
+     * 它也确实符合内置的定义：随本仓库一同发布，与宿主同源。
+     */
+    builtin: true,
+    description: '试卷重名 / 重复比对：重名家族、MD5 与文本一致标注、逐页截图对比、改名与删留',
+  },
   /* ---- 服务插件：不显示在侧边栏，供其它插件调用 ----
      interactive:true —— 调用时宿主会把它临时显示成居中浮层，
      因为色盘/图标选择这类服务**必须用户看得见才用得了**。

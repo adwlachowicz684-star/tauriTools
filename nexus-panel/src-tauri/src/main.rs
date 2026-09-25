@@ -9,6 +9,7 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
 mod af_flow;
+mod dupview;
 mod fpx;
 
 /// 连通性测试：前端 ctx.invoke('rust_ping', { payload })
@@ -298,6 +299,7 @@ fn main() {
         // http：OCR / 翻译 / 订阅源抓取，绕过 webview 同源策略
         .plugin(tauri_plugin_http::init())
         .manage(fpx::store::FpxState::new())
+        .manage(dupview::DupState::new())
         .manage(af_flow::ProcRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(af_flow::WatchRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(af_flow::WebhookRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
@@ -342,7 +344,18 @@ fn main() {
              */
             af_flow::af_os_keyring_get, af_flow::af_os_keyring_set,
             af_flow::af_os_keyring_delete,
-            tray_toggle_window
+            tray_toggle_window,
+            /*
+             * 试卷查重（src/dupview/）12 条命令。原生实现，不拉子进程。
+             * （上游 60 个提交把 updater 那三条连同 mod updater 一起撤了，
+             *   本分支不再把它们带回来。）
+             */
+            dupview::dupview_roots, dupview::dupview_addroot, dupview::dupview_delroot,
+            dupview::dupview_scan, dupview::dupview_scanall, dupview::dupview_scan_status,
+            dupview::dupview_list, dupview::dupview_pages,
+            dupview::dupview_rename,
+            dupview::dupview_delete, dupview::dupview_restore, dupview::dupview_dir_done,
+            dupview::dupview_browse
         ])
         .setup(move |app| {
             /* 托盘图标。
@@ -465,6 +478,10 @@ fn main() {
                     crate::fpx::mcp::stop();
                     eprintln!("[mcp] 退出时已按配置关闭 MCP 后台进程");
                 }
+                /* 「试卷查重」的扫描跑在后台线程里（可能正在渲染几百份卷子），
+                   退出时置取消标志让它尽快收手 —— 否则线程会一直跑到自然结束，
+                   表现为"关了面板后磁盘还在响好几秒"。 */
+                crate::dupview::request_cancel(app_handle);
             }
         });
 }

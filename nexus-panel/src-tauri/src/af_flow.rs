@@ -172,8 +172,12 @@ pub async fn run_node(
 
 /// 终止以 `root` 为根的整棵进程树。返回 Err 时**不代表一个都没杀掉**，
 /// 只代表至少有一刀没成功；调用方按"尽力而为"处理。
+///
+/// `pub(crate)` 是为了让 dupview 模块复用：那边要停的是 python 后端，
+/// 而 Windows 的 taskkill /T 与 Unix 的 /proc 递归属于平台细节，
+/// 各写一份必然只改一边。
 #[cfg(windows)]
-fn kill_process_tree(root: u32) -> Result<(), String> {
+pub(crate) fn kill_process_tree(root: u32) -> Result<(), String> {
     // /T = 连子孙一起，/F = 强制。一条命令搞定，比逐个枚举可靠也快得多
     let out = std::process::Command::new("taskkill")
         .args(["/PID", &root.to_string(), "/T", "/F"])
@@ -187,7 +191,7 @@ fn kill_process_tree(root: u32) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-fn kill_process_tree(root: u32) -> Result<(), String> {
+pub(crate) fn kill_process_tree(root: u32) -> Result<(), String> {
     /// 自底向上：先递归清干净子孙，最后才是本体
     fn rec(pid: u32, depth: usize, errs: &mut Vec<String>) {
         // 深度兜底：ppid 理论上不该成环，但 /proc 读到的是内核快照，
