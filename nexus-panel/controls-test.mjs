@@ -201,7 +201,7 @@ console.log('\n=== 3.5 主题参数表（规整管理）===');
   /* 3.5m 插件单独指定主题时，槽位选择必须按覆盖后的基调。
      用 getBase() 的话，用户把全局改成浅色后，
      t.base !== base 校验必然失败 → 返回 null → 插件"单独指定的主题"静默失效。 */
-  const hostSrc = read('js/host.js');
+  const hostSrc = stripComments(read('js/host.js'));
   t('插件槽位选择用 resolved 基调',
     /resolvePluginTheme[\s\S]{0,900}?getResolvedBase\(\)/.test(hostSrc),
     /resolvePluginTheme[\s\S]{0,900}?getResolvedBase\(\)/.test(hostSrc)
@@ -212,7 +212,7 @@ console.log('\n=== 3.5 主题参数表（规整管理）===');
      风格参数存在另一组 key（styleKey），resetAllVarOverrides 只清 varMap。
      漏了它的后果：点完全部还原，"已改"计数变 0，
      但玻璃透明度滑块仍停在用户设的值上 —— 看起来还原干净了，并没有。 */
-  const tpSrc = read('plugins/settings/ThemeParamsPanel.tsx');
+  const tpSrc = stripComments(read('plugins/settings/ThemeParamsPanel.tsx'));
   /* 匹配范围给到 1600：中间夹了大段注释说明为什么要清，
      写 600 会因为注释太长而匹配不到 resetStyleParam ——
      断言本身的正则太窄，会把已修好的代码报成没修（假红）。 */
@@ -229,9 +229,33 @@ console.log('\n=== 3.5 主题参数表（规整管理）===');
       ? 'varMap + 基调 + 风格 + 风格参数'
       : '只数 varMap，会显示"已改 0 项"却仍有可还原项');
 
+  /* 3.5p 两套设置实现必须都按**风格**分组。
+     registry 按 noBuild 选择 index.js（无构建）还是 module.tsx（Vite），
+     只改一边的话，用户用另一种模式打开看到的仍是按深浅分 ——
+     改的人以为改全了，实际另一半没动。这类漂移不报错、只有肉眼能发现。 */
+  /*
+   * ⚠️ 必须剥注释后再匹配 —— 这是本文件里第 N 次踩同一个坑：
+   * 我在 index.js 的说明注释里写了"getCurrent().base 仍是旧值"这句原话，
+   * 于是 !/getCurrent\(\)\.base/ 匹配到注释、永远为假，把已修好的代码报成没修。
+   * 检查器读到自己写的说明就报警，这事已经发生过三次（文档注释 / 变异体注释 / 此处）。
+   */
+  const idxSrc = stripComments(read('plugins/settings/index.js'));
+  t('无构建版设置页也按风格分组',
+    /Object\.entries\(THEME_STYLE_LABELS\)/.test(idxSrc) && !/\['深色', all\.filter/.test(idxSrc),
+    /Object\.entries\(THEME_STYLE_LABELS\)/.test(idxSrc)
+      ? 'index.js 与 App.tsx 一致（均为按风格）'
+      : 'index.js 仍按深浅分，无构建模式下观感不一致');
+
+  /* 3.5q 无构建版的基调统计也要用 resolved */
+  t('无构建版基调统计用 resolved',
+    !/getCurrent\(\)\.base/.test(idxSrc) && /getResolvedBase\(\)/.test(idxSrc),
+    !/getCurrent\(\)\.base/.test(idxSrc)
+      ? '已改用 getResolvedBase()'
+      : '仍有用 getCurrent().base，改基调后显示错的深浅');
+
   /* 3.5k UI 必须取 resolved 版 —— 否则用户改了风格后，
      "该显示哪些控件"仍按旧风格判断（玻璃滑块不出现、背景图不显示） */
-  const appSrc = read('plugins/settings/App.tsx');
+  const appSrc = stripComments(read('plugins/settings/App.tsx'));
   t('设置页用 resolved 版取风格与基调',
     /styleParams\(th\?\.style\)/.test(appSrc) && /getCurrentResolved\(\);?\s*\n?\s*const list/.test(appSrc)
       || /const th = getCurrentResolved\(\);/.test(appSrc),
