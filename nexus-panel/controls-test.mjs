@@ -1148,6 +1148,17 @@ console.log('\n=== 20. 字号走语义档（agent-flow）===');
          （× 关闭、kind/trg 图标），14/15 两档刻意保留。 */
       if (/^var\(--fs-(14|15)/.test(v)) { icons.push(sel.slice(0, 34)); continue; }
       if (/--af-add-fs/.test(v)) continue;
+      /*
+       * `font-size: inherit` —— 把 button 重置成"看起来像链接"的元素时必须写。
+       *
+       * <button> 的 UA 样式自带字号（各浏览器约 13.333px）且**不继承**父级，
+       * 不显式写 inherit，按钮里的字就会和周围正文不一样大。
+       * 而写成固定档（var(--fs-body)）也不对：这条链接可能出现在标题档的
+       * 上下文里，钉死 body 档反而与周围错位。
+       *
+       * 所以它是"跟随上下文"，不是"没走档"，与图标字形同类，单独放行。
+       */
+      if (v === 'inherit') continue;
       bad.push(`${v} @ ${sel.slice(0, 40)}`);
     }
   }

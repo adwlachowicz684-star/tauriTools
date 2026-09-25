@@ -6353,31 +6353,32 @@ group('布局：文件库挤窄画布（不遮挡）+ 控件档位');
   const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '');   // 先剥注释，避免命中说明文字
   const cs = strip(css);
 
-  // ---- 1) 文件库是 flex 子项，与画布并排 ----
+  // ---- 1) 文件库是**浮层抽屉**，不是 flex 子项 ----
   //
-  // 为什么是挤窄而不是抽屉：抽屉会遮住画布左侧 186px，用户看到的内容
-  // 比关着时还少；挤窄下画布只是变窄 186px，可见区域仍然完整。
-  // 代价是画布尺寸变化 → 内核把视图重新居中 → 内容左右晃一下，
-  // 但偏移量很小（≤93px）、只在展开/收起瞬间发生，属可接受范围。
-  // 切片必须停在「下一个 }」而非 .open 处 —— 因为 .open 规则前还夹着
-  // 整整一段 15 行的注释块（含「为什么不用覆盖式抽屉」），那里面没有
-  // width:186px。不跳过注释就会断言失败（假阴性），逼得人去改实现。
+  // ⚠️ 这一段在 #129（画布铺满 + 文件库浮层 + 假边框）之后被整体反转过：
+  //    早先是 flex 子项（展开时把画布挤窄 186px），代价是画布尺寸变化 →
+  //    内核重新居中 → 内容左右晃一下，于是需要一整条位移补偿链
+  //    （withStableRoot → 桥接 notifyLayoutShift → 编辑器补偿）。
+  //    #129 改成"画布始终铺满、文件库浮在上层"，画布几何恒定，
+  //    iframe 收不到 resize、内核不重排，补偿链也就**不再需要** → 整体删除。
+  //
+  //    但测试只删了一部分，留下 16 项断言**永远失败**
+  //    （mindmap-test 因缺 jsdom 长期跑不起来，所以没人看见）。
+  //    这里按**当前设计**重写，并钉住 #129 的前提，防止有人悄悄改回挤窄：
+  //    一旦改回 flex 挤窄而没有补偿链，下面第 2 组就会立刻报红。
   const filesOpenIdx = cs.indexOf('.mm-files.open');
   const nextBrace = cs.indexOf('}', filesOpenIdx);
   const filesRule = cs.slice(cs.indexOf('.mm-files {'), nextBrace + 1);
-  ok(/flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 是 flex 子项（186px 固定宽，展开时挤窄画布）');
-  ok(!/position:\s*absolute/.test(filesRule),
-    '.mm-files 不是 absolute 抽屉（抽屉会遮挡画布）');
-
-  // 挤窄布局的关键：不能脱离 flex 流，否则就变成浮在上层遮挡画布了。
-  // 双重断言 —— 只断言「是 flex 子项」不够：若某人同时写了 absolute，
-  // absolute 优先级更高、实际仍是抽屉，单条断言会误判为通过。
-  ok(!/position:\s*absolute/.test(filesRule) &&
-      /flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 在 flex 流中且宽度 186px（挤窄画布而非遮挡）');
-
+  ok(/position:\s*absolute/.test(filesRule),
+    '.mm-files 是浮层抽屉（画布铺满、几何恒定）');
+  ok(!/flex:\s*0\s+0\s+186px/.test(filesRule),
+    '.mm-files 不是 flex 子项（不再挤窄画布）');
   ok(/width:\s*186px/.test(filesRule), '.mm-files 宽度仍是 186px');
+  // 抽屉的固有代价是遮住画布左侧一块，换来"绝对不动"；
+  // 因此它必须自带底板（否则透出下面的画布，两层内容叠着看不清）
+  ok(/background:/.test(filesRule), '.mm-files 有底板（浮层不能是透明的）');
+  ok(/overflow-y:\s*auto/.test(filesRule),
+    '.mm-files 内容超高时自己滚（不能把浮层顶出屏幕）');
 
   // ---- 2) 控件档位：输入框/下拉必须与按钮同为 28px ----
   //
@@ -7191,12 +7192,13 @@ group('位移补偿：容器位移在父页面测，内核那一份在 iframe re
   ok(/Date\.now\(\) > pendingUntil/.test(cHtml), '过期就不补偿（普通 resize 保留内核的居中行为）');
   ok(/pendingLeft = 0;/.test(cHtml), '用一次即清（一次性，不会累积）');
 
-  // ---- 4) 桥接转发；旧版编辑器没有这个能力时静默跳过 ----
-  ok(/notifyLayoutShift\(dLeft\)/.test(br), '桥接提供 notifyLayoutShift');
-  const brSeg = br.slice(br.indexOf('notifyLayoutShift(dLeft) {'),
-    br.indexOf('notifyLayoutShift(dLeft) {') + 600);
-  ok(/typeof fn !== 'function'/.test(brSeg),
-    '编辑器无此能力时静默返回 false（补偿是锦上添花，不该弹「XX 失败」）');
+  // ---- 4) 桥接**不再**转发 notifyLayoutShift ----
+  //
+  // 随 #129 移除。这里的价值在于**反向钉住**：
+  // 若日后有人把 notifyLayoutShift 加回桥接，
+  // 说明补偿链正在被重新引入，那么上面第 2 组的前提断言必须同步复查
+  // （否则会出现"有补偿但测的是错的坐标系"这类旧 bug 复辟）。
+  ok(!/notifyLayoutShift/.test(br), '桥接不再转发 notifyLayoutShift（随 #129 移除）');
 
   // ---- 5) 时序账：开合同步补 + resize 撤内核，两帧都对 ----
   //
