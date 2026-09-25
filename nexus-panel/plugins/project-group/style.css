@@ -1292,6 +1292,22 @@
 .fpx-badge .fpx-link-dot.broken { background: var(--text-mute); }
 .fpx-badge .fpx-link-dot.conflict { background: var(--danger); }
 
+/*
+ * 独立定义（不只在 .fpx-badge 下）。
+ *
+ * 定尺寸的原本只有 `.fpx-badge .fpx-link-dot`（徽章内那一处），
+ * 而**明细行不在徽章里** —— 匹配不上 → 空 span 是 0×0，用户完全看不见。
+ * "出现在某个选择器里" ≠ "在当前上下文能匹配"，死类扫描抓不到这类。
+ */
+.fpx-link-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  display: inline-block;
+  background: var(--accent);
+}
+.fpx-link-dot.valid { background: var(--accent); }
+.fpx-link-dot.broken { background: var(--text-mute); }
+.fpx-link-dot.conflict { background: var(--danger); }
+
 /* 项目组卡片的小蓝点：有项目链接到它时才出现（原版 8×8） */
 .fpx-group-dot {
   width: 8px; height: 8px; border-radius: 50%; flex: none;
@@ -1311,6 +1327,15 @@
  *
  * 宽度刻意做窄（8px）：滚动条是"背景里的工具"，不该抢内容的位置。
  */
+/*
+ * 明细容器的基础定义 —— 此前**只有滚动条伪元素规则**。
+ *
+ * 没有 overflow 的话，那条 8px 窄滚动条 / 悬停才显形的样式永远不生效；
+ * 而一个项目可以连十几条（预设 agent 名就有 22 个），
+ * 全展开会把单张卡片撑到几屏高，把别的卡片全挤出视野。
+ */
+.fpx-links { max-height: 168px; overflow: auto; }
+
 .fpx-cards::-webkit-scrollbar,
 .fpx-log::-webkit-scrollbar,
 .fpx-links::-webkit-scrollbar,
@@ -1780,7 +1805,27 @@
 .fpx-links-bar { display: flex; align-items: center; gap: 8px; padding: 0 2px 6px; }
 .fpx-links-toggle { height: 22px; padding: 0 8px; font-size: var(--fs-11, 11px); }
 .fpx-link-to { opacity: .5; }
-.fpx-link-group { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/*
+ * 行必须是 flex —— 否则 `.fpx-link-state { margin-left: auto }` 不生效，
+ * "失效 / 冲突"不会被推到最右，看上去像组名的一部分。
+ */
+.fpx-link-row { display: flex; align-items: center; gap: 6px; }
+
+/*
+ * 省略号三件套 + min-width: 0。
+ *
+ * min-width 是**必需的第二步**：作为 flex item 时 min-width 默认 auto，
+ * 不会收缩到内容以下 → 长路径把整行撑破而不是显示省略号。
+ * 只补三件套不补 min-width，"长路径不省略"依然存在 —— 同名后果，不同根因。
+ */
+.fpx-link-text {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fpx-link-group {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .fpx-link-row:not(.broken):not(.conflict) .fpx-link-group { cursor: default; }
 .fpx-link-state { margin-left: auto; flex: none; font-size: var(--fs-micro, 10px); opacity: .8; }
 .fpx-link-row.broken .fpx-link-state { color: var(--text-mute); }
