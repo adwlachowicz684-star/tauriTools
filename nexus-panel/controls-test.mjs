@@ -187,6 +187,27 @@ console.log('\n=== 3.5 主题参数表（规整管理）===');
       /reapply\(/.test(body) ? '已触发 applyTo + 订阅通知' : '只写了存储，界面不会变');
   }
 
+  /* 3.5l 导出/另存时必须按**覆盖后**的基调算辉光。
+     直接用 theme.base 会与 deriveVars 内部的 covered base 不一致 ——
+     exportVarsFor 的结果是要固化进副本的，错一点就存进去了。 */
+  const evSrc = tmSrc.match(/export function exportVarsFor[\s\S]{0,700}?\n}/);
+  const evBody = evSrc ? evSrc[0] : '';
+  t('导出变量按覆盖后的基调算辉光',
+    /applyMetaOverride\(theme\)\.base/.test(evBody),
+    /applyMetaOverride\(theme\)\.base/.test(evBody)
+      ? '已用 applyMetaOverride(theme).base'
+      : '仍用 theme.base，改深浅后辉光浓度对不上');
+
+  /* 3.5m 插件单独指定主题时，槽位选择必须按覆盖后的基调。
+     用 getBase() 的话，用户把全局改成浅色后，
+     t.base !== base 校验必然失败 → 返回 null → 插件"单独指定的主题"静默失效。 */
+  const hostSrc = read('js/host.js');
+  t('插件槽位选择用 resolved 基调',
+    /resolvePluginTheme[\s\S]{0,900}?getResolvedBase\(\)/.test(hostSrc),
+    /resolvePluginTheme[\s\S]{0,900}?getResolvedBase\(\)/.test(hostSrc)
+      ? '已用 getResolvedBase()'
+      : '仍在用 getBase()，切换深浅后插件指定主题会失效');
+
   /* 3.5k UI 必须取 resolved 版 —— 否则用户改了风格后，
      "该显示哪些控件"仍按旧风格判断（玻璃滑块不出现、背景图不显示） */
   const appSrc = read('plugins/settings/App.tsx');
