@@ -2812,9 +2812,21 @@
             if (idx < 0 || idx >= list.length) return false;
             _searchPos = idx + 1;                 // 与 search() 的 1 起下标保持一致
             var node = list[idx];
-            try { km.clearSelect && km.clearSelect(); } catch (e) {}
+            /*
+             * **必须清空旧选中** —— 否则搜索定位是「累加」的。
+             *
+             * 早先写的是 `km.clearSelect && km.clearSelect()`：内核（Web 版）
+             * **根本没有** clearSelect（那是 WPF/C# 时代的 API），于是这句
+             * 静默短路、什么都不做，下面的 select 变成增量累加。
+             *
+             * 实测后果：点第 1 条选 1 个、点第 2 条选 2 个、点第 3 条选 3 个；
+             * **再点回已经点过的条目，选中完全不变**（用户以为点了没反应）。
+             * 更糟的是随后的编辑（改字号、删除…）会作用到这一堆节点上。
+             *
+             * 正确写法：select(a, truthy) 的第二个参数会先清空再选。
+             */
             _selfSelecting = true;
-            try { km.select && km.select(node); } catch (e) {}
+            try { km.select && km.select(node, true); } catch (e) {}
             // 同步复位：select 派发的 selectionchange 是**同步**的，
             // 放在 try 之后就晚了（那时标志已经过期，框会被自己清掉）
             _selfSelecting = false;
@@ -2962,9 +2974,19 @@
                     if (!root || !km.getSelectedNodes) return false;
                     var sel = km.getSelectedNodes();
                     function contains(arr, x) { for (var i = 0; i < arr.length; i++) if (arr[i] === x) return true; return false; }
+                    /*
+                     * 内核（Web 版）**没有** `clearSelect` —— 那是 WPF/C# 时代的 API。
+                     * 第一句会抛 TypeError，被外层 catch 吞掉，于是六种选择语义
+                     * （全选/反选/兄弟/同层/路径/子树）**全部返回 false、选中态纹丝不动**，
+                     * 用户点了完全没反应。
+                     *
+                     * 而且第二句即便跑到了也是错的：`select(n, true)` 的第二个参数
+                     * truthy 时会**先清空**再选，循环调用的结果只剩最后一个。
+                     *
+                     * 正确写法就一行：`select(数组, true)` = 清空 + 全选。
+                     */
                     function apply(ns) {
-                        km.clearSelect();
-                        for (var i = 0; i < ns.length; i++) { try { km.select(ns[i], true); } catch (e) {} }
+                        km.select(ns, true);
                         try { km.fire && km.fire('selectionchange'); } catch (e) {}
                     }
                     var nodes = [], n = (sel && sel.length && sel[0]) || km.getSelectedNode();

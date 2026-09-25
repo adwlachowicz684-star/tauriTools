@@ -8840,6 +8840,59 @@ group('focusNode 必须检查 selectNodeById 的返回值（否则附件挂错�
     '不是「先调再 return true」的老写法');
 }
 
+group('内核没有 clearSelect —— 两处「清空选中」写法全部失效');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  const kern = fs.readFileSync(path.join(HERE, 'editor', 'kityminder.core.min.js'), 'utf8');
+
+  /*
+   * 前提：Web 版内核**没有** clearSelect（那是 WPF/C# 时代的 API）。
+   * 从内核源码里确认，避免把「测试环境碰巧没有」当成根因。
+   */
+  ok(!/clearSelect\s*:\s*function/.test(kern), '内核确实没有 clearSelect（前提）');
+  ok(/select\s*:\s*function\s*\(a,\s*b\)/.test(kern)
+    && /b&&\(this\._selectedNodes=\[\]\)/.test(kern),
+    'select(a, b) 的 b 为 truthy 时先清空（正确写法的前提）');
+
+  // ---- BUG15：视图选择的六种语义全部失效 ----
+  /*
+   * apply() 第一句是 `km.clearSelect()` → 抛 TypeError → 被外层 catch 吞掉
+   * → select(mode) 返回 false、选中态纹丝不动，用户点了没反应。
+   * 而且第二句 `select(ns[i], true)` 循环调用，每次都清空，只剩最后一个。
+   */
+  const si = html.indexOf('function apply(ns)');
+  ok(si > 0, '有 apply(ns)');
+  {
+    const seg = html.slice(si, si + 900);
+    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(!/km\.clearSelect\(\)/.test(code), '不再调用不存在的 km.clearSelect()');
+    ok(/km\.select\(ns,\s*true\)/.test(code),
+      '一次 select(数组, true) 全选（不是循环逐个 select(n, true)）');
+    ok(!/for \(var i = 0; i < ns\.length; i\+\+\) \{ try \{ km\.select\(ns\[i\]/.test(code),
+      '不是「循环逐个 select(ns[i], true)」的旧写法（那会只剩最后一个）');
+  }
+
+  // ---- BUG16：搜索定位累加选中 ----
+  /*
+   * `km.clearSelect && km.clearSelect()` 静默短路 → select 变增量累加。
+   * 实测：点第1条选1个、第2条选2个…再点回第1条**完全不变**。
+   * 更糟：随后的编辑会作用到这一堆节点上。
+   */
+  const fi = html.indexOf('function focusSearchResult(idx)');
+  ok(fi > 0, '有 focusSearchResult()');
+  {
+    const seg = html.slice(fi, fi + 1200);
+    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(!/km\.clearSelect/.test(code), '不再引用不存在的 km.clearSelect');
+    ok(/km\.select\s*&&\s*km\.select\(node,\s*true\)/.test(code),
+      '定位用 select(node, true) —— 先清空再选');
+    // 自触发守卫仍必须在 select 之后同步复位
+    ok(/_selfSelecting = true;[\s\S]{0,200}km\.select[\s\S]{0,120}_selfSelecting = false;/.test(code),
+      '_selfSelecting 仍包住 select（同步复位，框不会被自己清掉）');
+  }
+}
+
 group('导出为交换格式 → 导出为交换格式（单画布）');
 
 {
