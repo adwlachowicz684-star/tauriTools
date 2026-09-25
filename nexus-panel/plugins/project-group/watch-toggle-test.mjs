@@ -120,4 +120,38 @@ console.log('\n=== 5. MCP 状态取不到不能静默 ===');
   t('这条也是 err 级', /读取 MCP 状态失败[^`]*\$\{errText\(e\)\}`, true\)/.test(tpCode));
 }
 
+console.log('\n=== 6. MCP 停止同样返回 bool，不能谎报「已停止」★ ===');
+{
+  /*
+   * 与 watch 同一类：`fpx_mcp_stop() -> bool`（`!mcp::is_running()`），
+   * 不是抛异常。此前两处都 `await` 了却不用返回值 ——
+   * 停止失败照样记「已停止」+ 绿色 toast，按钮切成「启动」，
+   * 而端口实际还占着：用户接着点启动 → 撞端口占用，
+   * 报错指不到"其实一直没停过"。
+   */
+  const mod = read('../../src-tauri/src/fpx/mod.rs');
+  const j = mod.indexOf('pub fn fpx_mcp_stop');
+  const blk = mod.slice(j, j + 300);
+  t('后端返回 bool', /pub fn fpx_mcp_stop\(\) -> bool/.test(blk));
+  t('返回的是"是否真的停了"', /!mcp::is_running\(\)/.test(blk));
+
+  /* ToolsPanel：失败不能把按钮切成已停 */
+  const i = tpCode.indexOf('const stopped = await api.mcpStop()');
+  t('ToolsPanel 取到返回值', i >= 0);
+  const seg = tpCode.slice(i, i + 400);
+  t('判 bool', /if \(!stopped\)/.test(seg));
+  t('失败要说出来（err 级）', /MCP server 停止失败[^']*', true\)/.test(seg));
+  const iFail = seg.indexOf('MCP server 停止失败');
+  const iOk = seg.indexOf("setMcpOn(false)");
+  /* 两端都判存在：-1 < 正数 恒真会让顺序断言空跑 */
+  t('失败分支早退在"切成已停"之前', iFail >= 0 && iOk >= 0 && iFail < iOk, `fail@${iFail} ok@${iOk}`);
+
+  /* App 的热键入口同样 */
+  const k = appCode.indexOf('const stopped = await s.api.mcpStop()');
+  t('App 取到返回值', k >= 0);
+  const seg2 = appCode.slice(k, k + 400);
+  t('App 判 bool', /if \(!stopped\)/.test(seg2));
+  t('App 失败要说出来', /端口可能仍在监听/.test(seg2));
+}
+
 done();

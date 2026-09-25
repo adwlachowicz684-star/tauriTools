@@ -65,9 +65,20 @@ console.log('\n=== 4. 失败必须能立刻重试（关键）===');
    * 断言会**空跑**：锚点被改没了，它照样报绿，你以为在验次序，其实什么都没验。
    * 这类空跑靠"剥注释"扫不出来（锚点是代码不是注释），只能显式判 >= 0。
    */
+  /*
+   * **两处都要清**，缺一处就漏掉一半的失败：
+   *   · catch  —— 命令本身抛错（后端 Err）
+   *   · try 内 —— 命令**正常返回**但 `ok: false`（客户端没唤起、复制也没成）
+   *
+   * 后者正是用户会看到失败提示、最可能立刻重试的那一支。
+   * 只清 catch 的话，他再点一次被 400ms 防抖静默丢弃，
+   * 表现为"重试毫无反应" —— 比连发更让人困惑。
+   */
   const iCatch = seg.indexOf('catch');
-  const iDel = seg.indexOf('lastSentAt.current.delete(key)');
-  t('清时间戳在 catch 里', iCatch >= 0 && iDel >= 0 && iCatch < iDel);
+  t('catch 里清时间戳',
+    iCatch >= 0 && /lastSentAt\.current\.delete\(key\)/.test(seg.slice(iCatch)));
+  t('try 内 ok=false 分支也清时间戳',
+    /if \(!r\.ok\) lastSentAt\.current\.delete\(key\)/.test(seg));
   /* 成功分支不能清 */
   t('成功时不删（保留防抖）', !/pushLog\(r\.message[\s\S]{0,80}?lastSentAt\.current\.delete/.test(seg));
 }

@@ -9,9 +9,7 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
 mod af_flow;
-mod dupview;
 mod fpx;
-mod updater;
 
 /// 连通性测试：前端 ctx.invoke('rust_ping', { payload })
 #[tauri::command]
@@ -299,30 +297,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         // http：OCR / 翻译 / 订阅源抓取，绕过 webview 同源策略
         .plugin(tauri_plugin_http::init())
-        /*
-         * updater：应用自更新。
-         *
-         * 用官方插件而不是自己接 reqwest：TLS、验签、平台差异都已处理好。
-         * 请求由 **Rust** 发出，不经过 webview，所以 index.html 那条
-         * 锁死的 CSP（connect-src 'self' ipc: http://ipc.localhost）
-         * 一个字都不用改。
-         *
-         * ⚠️ 这里**刻意不给 webview 放 updater 的 ACL**：本项目的更新流程
-         * 走 src/updater.rs 那三条自有命令（纳入能力分级与插件白名单），
-         * 不让任何插件直接调官方的 plugin:updater|* 。
-         * 少了这层收口，第三方插件就能自己触发"下载并安装"——
-         * 等价于运行一段它指定的外部二进制。
-         *
-         * ── 这段连同下面三条命令注册，曾被上游某批提交一并删掉 ──
-         * 删了之后 src/updater.rs 变成标注了却不注册的孤儿文件，
-         * 而 plugins/updater/module.js 仍在 invoke 这三条命令，
-         * 表现为"检查更新点了没反应"（command not found）。
-         * 一致性扫描器（command-consistency-test）会把它报成
-         * "标了却没注册" + "不参与编译的 .rs" + "能力表死条目"。
-         */
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(fpx::store::FpxState::new())
-        .manage(dupview::DupState::new())
         .manage(af_flow::ProcRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(af_flow::WatchRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(af_flow::WebhookRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
@@ -367,21 +342,7 @@ fn main() {
              */
             af_flow::af_os_keyring_get, af_flow::af_os_keyring_set,
             af_flow::af_os_keyring_delete,
-            tray_toggle_window,
-            /*
-             * 试卷查重（src/dupview/）12 条命令。原生实现，不拉子进程。
-             * （上游 60 个提交把 updater 那三条连同 mod updater 一起撤了，
-             *   本分支不再把它们带回来。）
-             */
-            dupview::dupview_roots, dupview::dupview_addroot, dupview::dupview_delroot,
-            dupview::dupview_scan, dupview::dupview_scanall, dupview::dupview_scan_status,
-            dupview::dupview_list, dupview::dupview_pages,
-            dupview::dupview_rename,
-            dupview::dupview_delete, dupview::dupview_restore, dupview::dupview_dir_done,
-            dupview::dupview_browse,
-            /* 自更新三条（src/updater.rs）。与上面 updater 插件同一批被误删，
-               前端 plugins/updater/module.js 一直在调。 */
-            updater::updater_check, updater::updater_install, updater::updater_relaunch
+            tray_toggle_window
         ])
         .setup(move |app| {
             /* 托盘图标。
@@ -504,10 +465,6 @@ fn main() {
                     crate::fpx::mcp::stop();
                     eprintln!("[mcp] 退出时已按配置关闭 MCP 后台进程");
                 }
-                /* 「试卷查重」的扫描跑在后台线程里（可能正在渲染几百份卷子），
-                   退出时置取消标志让它尽快收手 —— 否则线程会一直跑到自然结束，
-                   表现为"关了面板后磁盘还在响好几秒"。 */
-                crate::dupview::request_cancel(app_handle);
             }
         });
 }

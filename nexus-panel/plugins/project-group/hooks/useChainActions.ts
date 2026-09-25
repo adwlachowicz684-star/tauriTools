@@ -127,6 +127,15 @@ export function useChainActions({
       const r = await s.api.chainSendAction(actionId, kind, path);
       s.pushLog(r.message, !r.ok);
       ctx.toast(r.message, r.ok ? 'ok' : 'err');
+      /*
+       * `ok: false` 同样是失败，也必须清掉时间戳（理由见下面 catch）。
+       *
+       * 只清 catch 那一支是不够的——**这正是用户会看到失败提示、
+       * 最可能立刻重试的那一支**：命令正常返回了，只是没发出去，
+       * 于是他再点一次，被 400ms 防抖**静默丢弃**，
+       * 表现为"重试毫无反应"（比连发更让人困惑，见下）。
+       */
+      if (!r.ok) lastSentAt.current.delete(key);
     } catch (e) {
       const msg = `发送失败：${String((e as Error)?.message ?? e)}`;
       s.pushLog(msg, true);

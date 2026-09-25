@@ -300,8 +300,22 @@ export function ChainDialog({
       const r = await api.chainSendAction(actionId, kind, target, finalText || null, chosen);
       setTip(r.message);
       onLog(r.message, !r.ok);
-      // 本次用的客户端写回全局默认，下次开就是它（与旧行为一致）
-      if (client) onSaved({ chainClient: client });
+      /*
+       * 手选的客户端写回全局默认，下次开就是它。
+       *
+       * **只在成功时写**（此前不看 `r.ok`）。`ok: false` 的含义正是
+       * "这个客户端没唤起、复制也没成"——把它写成默认，等于把一个
+       * **用不了的客户端**设成所有动作的默认值：下次打开任何卡片点发送都失败，
+       * 而用户只会觉得"这软件忽然全坏了"，想不到是那次试错留下的。
+       * 失败却留下副作用，比失败本身更难查。
+       *
+       * 失败要明说默认没变：否则他以为"选过了就是默认了"，
+       * 下次看到还是旧客户端，会以为设置没保存住。
+       */
+      if (client) {
+        if (r.ok) onSaved({ chainClient: client });
+        else onLog(`发送失败，默认客户端未改动（仍是「${config.chainClient || 'opencode'}」）`, true);
+      }
     } catch (e) {
       onLog(`发送失败：${errText(e)}`, true);
     } finally {
@@ -476,7 +490,17 @@ export function ServiceBody({
   const toggleMcp = async () => {
     try {
       if (mcpOn) {
-        await api.mcpStop();
+        /*
+         * 同下面 watchStop：`mcpStop` 返回 **bool**（真的停了吗），
+         * 不是抛异常。此前 `await` 了却不用返回值 —— 停止失败照样
+         * `setMcpOn(false)` 并记「已停止」，按钮切成「启动」而端口还占着，
+         * 用户再点启动就撞端口占用，报错指不到"其实没停过"。
+         */
+        const stopped = await api.mcpStop();
+        if (!stopped) {
+          onLog('MCP server 停止失败（端口可能仍在监听），按钮状态未变', true);
+          return;
+        }
         setMcpOn(false);
         setAddr('');
         onLog('MCP server 已停止');

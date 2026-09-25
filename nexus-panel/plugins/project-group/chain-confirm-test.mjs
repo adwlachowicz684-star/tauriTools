@@ -116,4 +116,24 @@ console.log('\n=== 5. 确认框本身 ===');
     fs.existsSync(path.join(HERE, 'components/ChainConfirmDialog.tsx')));
 }
 
+console.log('\n=== 6. 发送失败不该留下副作用 ===');
+{
+  /* 只看**代码**：注释里也会写这些字，拿注释判定会把删掉的代码判成还在 */
+  const strip = (s) => s.split('\n')
+    .filter((l) => !/^\s*\/\//.test(l) && !/^\s*\*/.test(l) && !/^\s*\/\*/.test(l))
+    .join('\n');
+  const panel = strip(fs.readFileSync(path.join(HERE, 'components/ToolsPanel.tsx'), 'utf8'));
+  const hook = strip(fs.readFileSync(path.join(HERE, 'hooks/useChainActions.ts'), 'utf8'));
+
+  const i = panel.indexOf('if (client) {');
+  t('面板：能定位到「写回默认客户端」那段', i >= 0);
+  const seg = i >= 0 ? panel.slice(i, i + 360) : '';
+  t('面板：只在发送成功时写回默认客户端',
+    /if \(r\.ok\) onSaved\(\{ chainClient: client \}\)/.test(seg));
+  t('面板：不再无条件写回（反面证据）', !/^\s*if \(client\) onSaved\(/m.test(panel));
+  t('面板：失败时说明默认没变', /默认客户端未改动/.test(seg));
+  t('侧边栏：ok=false 也清防抖时间戳',
+    /if \(!r\.ok\) lastSentAt\.current\.delete\(key\)/.test(hook));
+}
+
 done();

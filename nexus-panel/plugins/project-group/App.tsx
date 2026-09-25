@@ -184,12 +184,23 @@ export default function App() {
    *
    * 这里走"先查状态再反向操作"而不是本地记一个布尔：MCP 也可能被
    * `--mcp` 独立进程或上一次会话留着，本地布尔会与实际状态脱节。
+   *
+   * `mcpStop` 返回的是 **bool**（真的停了吗），不是抛异常 —— 与
+   * `watchStop` 同一类。此前这里 `await` 了却不用返回值，于是停止失败时
+   * 照样记「已停止」+ 绿色 toast，而端口实际还占着：
+   * 用户接着点启动 → 撞端口占用，报错还指不到"其实一直没停"。
    */
   const toggleMcp = useCallback(async () => {
     try {
       const st = await s.api.mcpStatus();
       if (st.running) {
-        await s.api.mcpStop();
+        const stopped = await s.api.mcpStop();
+        if (!stopped) {
+          const m = 'MCP server 停止失败（端口可能仍在监听）';
+          s.pushLog(m, true);
+          ctx.toast(m, 'err');
+          return;
+        }
         s.pushLog('MCP server 已停止');
         ctx.toast('MCP server 已停止', 'ok');
       } else {
@@ -205,20 +216,13 @@ export default function App() {
   }, [ctx, s]);
 
   /**
-   * Ctrl/⌘ + D 编辑内容区选中的文件（#223 OpenMarkdown）。
-   *
-   * 走内置的 Markdown 编辑器（#33，共享服务 `md-editor`）：
+   * Ctrl/⌘ + D 编辑内容区选中的文件（#223），走内置 Markdown 编辑器（#33）：
    * 读文本 → 编辑 → 写回，全程不出本工具。
-   *
-   * **取消的两种形态都要认**：服务约定是 resolve(null)（见 plugin-sdk 注释），
-   * 但当前三个内置服务的实现都是 reject('已取消')。
-   * 只认一种的话，服务哪天改成另一种就会变成 unhandled rejection ——
-   * 用户点个取消，控制台一片红。
-   *
-   * 内置编辑器没返回结果时**退回外部编辑器**：辅助功能不该把主路径堵死。
-   * 此时分不清"用户取消"和"真出错"（同一个 reject 通道），
-   * 所以不报红，只记日志 —— 用户点了取消也会开外部编辑器，略显多余，
-   * 但比把取消当成崩溃要好。
+   * **取消的两种形态都要认**：服务约定 resolve(null)，但三个内置服务都
+   * reject('已取消')。只认一种会变成 unhandled rejection —— 用户点个取消，
+   * 控制台一片红。
+   * 内置编辑器没返回结果时**退回外部编辑器**：此时分不清"取消"与"真出错"
+   * （同一个 reject 通道），所以不报红，只记日志。
    */
   const openMarkdown = useCallback(async () => {
     if (!contentSel) {
@@ -574,7 +578,14 @@ export default function App() {
       setIconFiles(files);
       setDialog({ type: 'icons', card });
     } catch (e) {
-      s.pushLog(String((e as Error)?.message ?? e), true);
+      /*
+       * 只记日志的话，F6 / 「改图标」按下去**界面毫无变化** ——
+       * 用户看不到日志面板里的那一行，只会以为按钮坏了。
+       * 这里是"打开弹窗"这条路的唯一入口，失败必须让他看见。
+       */
+      const m = `读取图标目录失败：${errText(e)}`;
+      s.pushLog(m, true);
+      ctx.toast(m, 'err');
     }
   };
 
@@ -624,13 +635,6 @@ export default function App() {
   }, [s]);
 
   /**
-   * 页签前后翻页，到头回环。索引先 clamp：activeTab 与当前快照可能不同步。
-   *
-   * 项目组栏改成纵向堆叠后，所有分类同时在屏幕上，
-   * 再切「当前页签」没有任何可见效果 —— 所以这里改成把选中项移到下一个分类的
-   * 第一张卡片：既保留了"在分类间前后跳"的语义，又真的看得见（还会把键盘焦点带过去）。
-   */
-  /**
    * 上下键在**当前栏**的卡片间移动选中（对齐原版 `NavigateAdjacent`）。
    *
    * 此前完全没有：换栏（Ctrl/⌘+←/→）只能落到目标栏的第一张，
@@ -666,6 +670,12 @@ export default function App() {
     });
   };
 
+  /**
+   * 页签前后翻页，到头回环。索引先 clamp：activeTab 与当前快照可能不同步。
+   * 项目组栏改成纵向堆叠后所有分类同时在屏幕上，再切「当前页签」没有可见
+   * 效果 —— 所以改成把选中项移到下一个分类的第一张卡片：既保留了"在分类间
+   * 前后跳"的语义，又真的看得见（还会把焦点带过去）。
+   */
   const cycleTab = (kind: CardKind, delta: number) => {
     const n = (kind === 'project' ? boot?.projectTabs.length : boot?.groupTabs.length) ?? 0;
     if (n <= 1) return;
@@ -762,7 +772,6 @@ export default function App() {
 
   useCardHotkeys(ctx, {
     open: needCard((c) => openPath(c.path, 'dir')),
-    /* 同上：#419 之后 lock 必须带 kind，紧邻的 rename 就带了 focus */
     /* 同上：#419 之后 lock 必须带 kind，紧邻的 rename 就带了 focus */
     lock: needCard((c) => setDialog({ type: 'lock', card: c, kind: focus })),
     rename: needCard((c) => setDialog({ type: 'rename', card: c, kind: focus })),
@@ -936,17 +945,15 @@ export default function App() {
               onMoveTab={(from, to) => void s.moveTab('project', from, to)}
               active={s.activeTab.project}
               /*
-               * 切页签要清掉这一栏的选中（对齐原版 SwitchProjectTab：
-               * `vm.SelectedCard == null`）。
+               * 切页签要清掉这一栏的选中（对齐原版 SwitchProjectTab）。
                *
                * 不清的后果：选中的卡不在新页签里，界面上**看不见它**，
                * 但左栏操作（改名 / 改色 / 打开）与快捷键仍作用于它 ——
                * 用户以为"没选中任何东西"，按 F2 却改了另一页签里的卡。
                * 这是"改了不该改的东西"里最典型的一种，且没有任何提示。
                *
-               * 只清 project 这一栏：项目组栏是纵向堆叠、所有分类同时在
-               * 界面上，不存在"选中的卡不在视野里"的情况，清它只会让用户
-               * 平白失去对另一栏的选择。
+               * 只清 project 这一栏：项目组栏所有分类同时在界面上，不存在
+               * "选中的卡不在视野里"，清它只会平白丢掉另一栏的选择。
                */
               onTab={(i) => {
                 s.setActiveTab((prev) => ({ ...prev, project: i }));

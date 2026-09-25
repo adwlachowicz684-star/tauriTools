@@ -293,15 +293,6 @@ export function useFpx() {
   }, [activeTab, boot?.config.autoSelect, cardsOf, ctx, pushLog, updateConfig]);
 
   /**
-   * 从页签移除卡片。
-   *
-   * 只动一个页签——卡片是按页签分别登记的，同一路径可以存在于多个页签，
-   * 全表删除会连带清掉用户在别的页签里的登记。
-   *
-   * tabIndex 与 addCard 同理：项目组栏堆叠后，卡片所在分类不一定等于 activeTab。
-   * 不传就用 activeTab（项目栏仍是页签形态，行为不变）。
-   */
-  /**
    * #83 移除卡片并按需清理痕迹（链接 / 图标 / 标签色）。
    *
    * 走专门的 `fpx_remove_card` 而不是先改 config 再补几次删除，
@@ -340,6 +331,15 @@ export function useFpx() {
    *   · 页签根本不存在（下标越界）—— 是调用方传错，不是路径问题
    *   · 页签存在但里面没有这条 —— 是路径对不上
    * 混成一句的话，用户无法判断该去查哪边。
+   */
+  /**
+   * 从页签移除卡片。
+   *
+   * 只动一个页签——卡片是按页签分别登记的，同一路径可以存在于多个页签，
+   * 全表删除会连带清掉用户在别的页签里的登记。
+   *
+   * tabIndex 与 addCard 同理：项目组栏堆叠后，卡片所在分类不一定等于 activeTab。
+   * 不传就用 activeTab（项目栏仍是页签形态，行为不变）。
    */
   const removeCard = useCallback(async (kind: CardKind, path: string, tabIndex?: number) => {
     const idx = tabIndex ?? activeTab[kind];
