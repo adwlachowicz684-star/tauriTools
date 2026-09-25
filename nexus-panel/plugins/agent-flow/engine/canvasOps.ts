@@ -6,6 +6,8 @@
  * 这些判断值得被测试覆盖，而不是散落在 UI 事件回调里。
  */
 
+import { isPaneNode } from './pane';
+
 export type MinimalNode = {
   id: string;
   /**
@@ -129,7 +131,28 @@ export function deleteElements<N extends MinimalNode, E extends MinimalEdge>(
   );
   const removedEdgeIds = removedEdges.map((e) => e.id);
 
-  const nextNodes = nodes.filter((n) => !nodeSet.has(n.id));
+  /*
+   * 删掉窗格时，把挂在它下面的节点的 paneId 一起清掉。
+   *
+   * 不清的话那些节点的 paneId 指向一个已经不存在的窗格：
+   * 运行时按"没挂窗格"处理（用节点自己的配置），
+   * 而面板上下拉框显示的也正好是"不挂窗格" ——
+   * 界面与实际恰好一致，于是**看不出继承已经失效**：
+   * 用户改窗格、节点不再跟着变，却没有任何提示。
+   *
+   * 悬空 id 比空值更糟：它让"数据对不上"这件事无法被察觉。
+   */
+  const removedPaneIds = new Set(
+    nodes.filter((n) => nodeSet.has(n.id) && isPaneNode(n)).map((n) => n.id),
+  );
+  const nextNodes = nodes.filter((n) => !nodeSet.has(n.id)).map((n) => {
+    if (removedPaneIds.size === 0) return n;
+    const d = (n.data ?? null) as { paneId?: unknown } | null;
+    if (!d || !removedPaneIds.has(String(d.paneId ?? ''))) return n;
+    const next = { ...(d as Record<string, unknown>) };
+    delete next.paneId;
+    return { ...n, data: next as unknown as N['data'] };
+  });
   const nextEdges = edges.filter((e) => !removedEdgeIds.includes(e.id));
 
   // 悬空引用检查：只看留下来的节点

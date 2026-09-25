@@ -2,7 +2,8 @@ import { CLI_META, makeNode, type CliKind, type TaskNodeData } from '../../types
 import TaskNode from '../../components/TaskNode';
 import { FileParamsPanel, CliModelPanel } from '../../components/inspectors/shared';
 import {
-  Field, VarBar, upstreamTokens, upstreamFileTokens, type FieldDef,
+  Field, VarBar, upstreamTokens, upstreamFileTokens, paneField,
+  type FieldDef, type FieldRenderProps,
 } from '../../components/inspectors/fields';
 import { runTask } from '../../engine/runners/task';
 import { registerNode } from '../registry';
@@ -11,7 +12,12 @@ import { registerNode } from '../registry';
  * 任务节点：字段不多，但提示词那一栏要带一整套上游变量插入按钮，
  * 所以走 custom 逃生口 —— 其余仍是纯声明。
  */
-const fields: FieldDef[] = [
+/*
+ * 写成**函数**而不是常量数组：窗格下拉框的选项来自画布上的窗格节点，
+ * 那是运行时状态（App 的状态），常量数组拿不到 ——
+ * 写死成空数组的话，拖了窗格进来这里也永远选不到。
+ */
+const fields = (_d: Record<string, unknown>, ctx?: FieldRenderProps): FieldDef[] => [
   {
     type: 'select',
     key: 'cli',
@@ -84,6 +90,12 @@ const fields: FieldDef[] = [
     placeholder: '自动批准工具调用（-y）',
     hint: '省去每次确认，但 CLI 会直接改文件',
   },
+  /*
+   * 挂了窗格之后，本节点上**没填的**项（工作目录 / 模型 / 连接）从窗格继承。
+   * 填了的仍然以这里为准 —— 否则改一次窗格就把精心配好的节点盖掉了。
+   */
+  paneField('taskPane', ctx?.nodes),
+
   {
     type: 'custom',
     spec: { keys: ['yolo'], kind: 'switch' },
@@ -120,6 +132,6 @@ registerNode({
   },
   create: (id, partial) => makeNode(id, (partial ?? {}) as Partial<TaskNodeData>).data,
   Canvas: TaskNode,
-  fields: () => fields,
+  fields,
   run: runTask,
 });

@@ -10,6 +10,7 @@ import { resolveVars } from '../../engine/variables';
 // 从 registry 拿 getVariableGroup，不能走 nodes/index（会与 defs 成环）
 import { getVariableGroup } from '../../nodes/registry';
 import { CredentialPicker } from './shared';
+import { paneOptionsOf, type PaneKind } from '../../engine/pane';
 import { VariablePicker } from './VariablePicker';
 import {
   matchPresetKey, isSecretField, setFieldsDefault, clearFieldsDefault, hasFieldDefault,
@@ -71,6 +72,15 @@ export type FieldRenderProps = {
   presetKey?: string;
   /** 全部画布（「调用画布」节点的下拉框要用） */
   canvases?: { id: string; name: string }[];
+  /**
+   * 当前画布上的全部节点。
+   *
+   * 「属于哪个任务窗格」这类下拉框要用 —— 选项来自画布上的窗格节点，
+   * 而那是 App 的状态，节点定义里拿不到。
+   * 不传时下拉框退化成"没得选"，并说明原因（不能给一个空下拉框了事，
+   * 那会让人以为是自己没建窗格）。
+   */
+  nodes?: FlowNode[];
   /** 当前画布 id（变量选择器按它过滤本画布变量） */
   canvasId?: string;
   /** 当前画布 id（下拉框里要排除它） */
@@ -539,10 +549,12 @@ function renderField(
  */
 export function BasicInspector({
   node, edges, onChange, credentials, onOpenCredentials,
-  fields, footer, onEditModule, onNote, canvasId,
+  fields, footer, onEditModule, onNote, canvasId, nodes,
 }: {
   node: FlowNode;
   edges: FlowEdge[];
+  /** 当前画布上的全部节点（窗格下拉框要用） */
+  nodes?: FlowNode[];
   onChange: (id: string, patch: Record<string, unknown>) => void;
   credentials?: Credential[];
   onOpenCredentials?: (kind: string) => void;
@@ -597,6 +609,7 @@ export function BasicInspector({
   const base: FieldRenderProps = {
     d,
     canvasId,
+    nodes,
     value: undefined,
     onChange: () => {},
     patch: patchObj,
@@ -687,6 +700,8 @@ type InspectorComponent = (props: {
   onChange: (id: string, patch: Record<string, unknown>) => void;
   credentials?: Credential[];
   onOpenCredentials?: (kind: string) => void;
+  /** 当前画布上的全部节点（窗格下拉框要用）。靠 {...props} 透传给 BasicInspector */
+  nodes?: FlowNode[];
 }) => JSX.Element;
 
 const inspectorCache = new WeakMap<FieldFactory, Map<unknown, InspectorComponent>>();
@@ -709,4 +724,42 @@ export function makeInspector(
   );
   byFooter.set(footer, Inspector);
   return Inspector;
+}
+
+
+/* ------------------------------------------------------------------ */
+/* 任务窗格选择                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 「属于哪个任务窗格」下拉框。CLI 节点与大模型节点共用。
+ *
+ * ================= 为什么必须有一个「不挂窗格」选项 ====================
+ *
+ * 只有窗格可选的话，画布上没有窗格时下拉框里空空如也，
+ * 而节点上的 paneId 可能是旧的（窗格被删了）—— 那时界面上显示的是
+ * 第一项，看着像"挂在这个窗格上"，实际存的值完全对不上。
+ *
+ * 显式给一个「（不挂窗格）」，空值才有得选、也看得出当前是空的。
+ *
+ * ================= 为什么共用一份 ====================
+ *
+ * 两处各写一遍的话，hint 文案迟早会不一样，
+ * 而「窗格到底覆盖什么」正是用户最需要看清楚的那句话。
+ */
+export function paneField(
+  kind: PaneKind,
+  nodes: readonly FlowNode[] | undefined,
+  label = '属于哪个任务窗格',
+): FieldDef {
+  const opts = paneOptionsOf(nodes ?? [], kind);
+  return {
+    type: 'select',
+    key: 'paneId',
+    label,
+    hint: opts.length
+      ? '节点上填了的项优先，没填的从窗格继承 —— 窗格改一次，整组跟着变'
+      : '画布上还没有窗格：先从侧栏拖一个任务窗格进来，再回来选',
+    options: [{ value: '', label: '（不挂窗格）' }].concat(opts),
+  };
 }

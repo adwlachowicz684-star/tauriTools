@@ -96,6 +96,7 @@ import {
   frameDelta, makeFrame,
 } from './engine/frames';
 import { withDefault } from './engine/nodeDefaults';
+import { isPaneNode, paneMembersOf } from './engine/pane';
 import { specOf, canConnect } from './engine/nodeSpec';
 import { getDefByDataKind } from './nodes/registry';
 import CanvasTabs from './components/CanvasTabs';
@@ -1528,18 +1529,27 @@ function reportSkipped(
       const list = (dragged as FlowNode[]) ?? [];
       const src = list.length > 0 ? list : [node as FlowNode];
       /*
-       * 复制组合框 = 连里面的节点一起复制。
+       * 复制组合框 / 任务窗格 = 连里面的节点一起复制。
        *
-       * 只复制框的话，副本的成员指向的还是原件 ——
-       * 两个框圈着同一批节点，拖哪个框都会挪动同一批，
-       * 而界面上看不出两个框有什么关系。
+       * 只复制容器的话，副本的成员指向的还是原件 ——
+       * 两个容器圈着同一批节点，拖哪个都会挪动同一批，
+       * 而界面上看不出两个容器有什么关系。
+       *
+       * 窗格尤其明显：它自己不存成员名单（见 engine/pane.ts），
+       * 复制出来就是个空窗格，卡片上写着「0 个节点」——
+       * 用户复制了窗格，却得到一个空的，而原件好端端在那儿。
        */
       const ids: string[] = [];
       for (const n of src) {
         if (!n?.id) continue;
         ids.push(n.id);
+        // 组合框：成员名单存在框上
         if (isFrameNode(n)) {
           for (const m of frameMemberIds(n)) ids.push(m);
+        }
+        // 窗格：成员是各节点的 paneId 反向指过来的，要现场数
+        if (isPaneNode(n)) {
+          for (const m of paneMembersOf(nodes, n.id)) ids.push(m);
         }
       }
       const map = duplicateByIds(ids);
@@ -1995,15 +2005,19 @@ function reportSkipped(
       return false;
     }
     /*
-     * 组合框不进执行图。
+     * 组合框与任务窗格都不进执行图。
      *
-     * 它没有任何执行器，进去后会是一个"永远直通"的孤立节点；
+     * 它们没有任何执行器，进去后会是一个"永远直通"的孤立节点；
      * 而孤立节点在按触发器定范围时会被排除，于是"有时报错有时不报"，
      * 取决于这张画布上有没有触发器 —— 最难自查的那类问题。
+     *
+     * 窗格尤其要排除：它是"一批节点的共享配置"，本身不代表一个步骤。
+     * 进图后它会占一个节点位、出现在任务记录里，
+     * 而用户数节点数时不会把它算进去 —— 表现为"任务记录里多出一个看不懂的节点"。
      */
     const runNodes = (tgtCanvas && tgtCanvas.id !== activeId
       ? (tgtCanvas.nodes as FlowNode[])
-      : nodes).filter((n) => !isFrameNode(n));
+      : nodes).filter((n) => !isFrameNode(n) && !isPaneNode(n));
     const runEdges = tgtCanvas && tgtCanvas.id !== activeId
       ? (tgtCanvas.edges as Edge[])
       : edges;
@@ -3254,6 +3268,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
             <Inspector
               node={selected}
               edges={edges}
+              nodes={nodes}
               onChange={patchNode}
               credentials={credentials}
               onOpenCredentials={openCredentials}

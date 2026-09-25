@@ -28,6 +28,16 @@ import './defs/loop';
 import './defs/fs';
 import './defs/ocr';
 import './defs/translate';
+/*
+ * 大模型 API 节点与两种任务窗格。
+ *
+ * 窗格必须先于引用它的节点注册吗 —— 不需要：
+ * 窗格不决定节点的解析方式，节点只是存了一个 paneId，
+ * 运行时按 id 去找，找不着就当没挂窗格。
+ */
+import './defs/llmChat';
+import './defs/taskPane';
+import './defs/apiPane';
 import './defs/github_update';
 import './defs/github_push';
 /*

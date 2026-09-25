@@ -166,3 +166,38 @@ test('文案: 描述删除内容', () => {
   assert.equal(describeDelete(['a'], ['x', 'y']), '1 个节点 + 2 条连线');
   assert.equal(describeDelete([], []), '0 个元素');
 });
+
+/* ---------- 删窗格：清掉成员的 paneId ---------- */
+
+type PN = { id: string; data?: { kind?: string; paneId?: string; prompt?: string } };
+const pn = (id: string, data: PN['data']): PN => ({ id, data });
+
+/**
+ * 窗格被删后，挂在它下面的节点必须把 paneId 清掉。
+ *
+ * 留着悬空 id 的话：运行时按"没挂窗格"处理，面板上下拉框显示的
+ * 也正好是"不挂窗格" —— 界面与实际恰好一致，于是继承失效这件事
+ * 没有任何提示。用户改窗格、节点不再跟着变，却看不出原因。
+ */
+test('删除: 删掉窗格时清空挂在它下面的 paneId', () => {
+  const ns: PN[] = [
+    pn('p1', { kind: 'taskPane' }),
+    pn('t1', { paneId: 'p1', prompt: 'x' }),
+    pn('t2', { paneId: 'p1' }),
+    pn('t3', { paneId: 'p2' }), // 别的窗格，不能被误清
+  ];
+  const res = deleteElements(ns, [], { nodeIds: ['p1'] });
+  const byId = new Map(res.nodes.map((x) => [x.id, x.data]));
+  assert.equal(byId.has('p1'), false);
+  assert.equal(byId.get('t1')?.paneId, undefined);
+  assert.equal(byId.get('t2')?.paneId, undefined);
+  assert.equal(byId.get('t3')?.paneId, 'p2', '别的窗格的引用不能被误清');
+});
+
+/** 删普通节点不该动 paneId（只认窗格） */
+test('删除: 删普通节点不清 paneId', () => {
+  const ns: PN[] = [pn('p1', { kind: 'taskPane' }), pn('t1', { paneId: 'p1' })];
+  const res = deleteElements(ns, [], { nodeIds: ['t1'] });
+  assert.equal(res.nodes.find((x) => x.id === 'p1')?.data?.kind, 'taskPane');
+  assert.equal(res.nodes.length, 1);
+});

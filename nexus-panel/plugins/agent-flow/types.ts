@@ -75,6 +75,15 @@ export type TaskNodeData = {
    * 存下来是为了让面板能显示上一次的结果，排查时不必重跑。
    */
   lastFiles?: string[];
+
+  /**
+   * 属于哪个 CLI 任务窗格（节点 id）。
+   *
+   * 留空 = 独立节点，自己那份配置自己管。
+   * 填了则**节点上没填的项**从窗格继承（工作目录 / 模型 / 连接 / 自动批准），
+   * 节点上填了的项仍然优先 —— 否则窗格一改，精心配好的节点就被盖掉了。
+   */
+  paneId?: string;
 };
 
 /** 文件参数的默认配置 */
@@ -346,6 +355,7 @@ export type NodeData =
   | UpdateNodeData
   | OcrNodeData
   | TranslateNodeData
+  | LlmChatNodeData
   | GithubUpdateNodeData
   | GithubPushNodeData
   /* ---- 工具节点 ---- */
@@ -357,6 +367,8 @@ export type NodeData =
   | ConstNodeData
   | ModuleNodeData
   | FrameNodeData
+  | TaskPaneNodeData
+  | ApiPaneNodeData
   /* ---- 控制器 ---- */
   | JoinNodeData
   | GateNodeData
@@ -1633,6 +1645,75 @@ export function makeOcrNode(id: string, partial: Partial<OcrNodeData> = {}): Gra
   };
 }
 
+/**
+ * 大模型 API 节点 —— 直接调一次大模型，不做 OCR / 翻译这类预设加工。
+ *
+ * 与 OCR、翻译的区别：那两个把"消息怎么拼"写死了（必须带图、必须带目标语言），
+ * 这个节点把 system / user 两段都交给用户，是最通用的那一档。
+ */
+export type LlmChatNodeData = {
+  size?: NodeSize;
+  stackParent?: string | null;
+  stackCollapsed?: boolean;
+  kind: 'llmChat';
+  label: string;
+  /**
+   * 大模型配置（兜底）。
+   *
+   * 地址与密钥**优先取自连接**，这一份只在没配连接时兜底（老画布迁移前）。
+   */
+  llm?: LlmConfig;
+  /** 连接 id（大模型凭据） */
+  credentialId: string;
+  /** 模型名。模型清单来自 credentialId 指向的连接 */
+  model: string;
+  /** system 提示词（角色设定）。挂了 API 窗格且自己没填时用窗格的 */
+  system: string;
+  /** user 提示词，支持 {{上游.output}} */
+  prompt: string;
+  /**
+   * 温度 0~2。
+   *
+   * 刻意**可选**：不填时依次回落到窗格、再回落到默认 0.3。
+   * 给默认值的话节点上永远有值，窗格那一份就永远轮不上 ——
+   * 表现为"窗格改了温度，里面的节点毫无反应"。
+   */
+  temperature?: number;
+  /** 最大输出 token；0 或留空 = 不限制 */
+  maxTokens?: number;
+  /** 是否要求结构化 JSON 输出 */
+  jsonMode?: boolean;
+  /** 属于哪个 API 任务窗格（节点 id） */
+  paneId?: string;
+  /** 自定义参数，下游用 {{id.参数名}} 引用 */
+  params?: NodeParam[];
+  status: NodeStatus;
+  output: string;
+  error: string;
+};
+
+export function makeLlmChatNode(id: string, partial: Partial<LlmChatNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'llmChat',
+      label: partial.label ?? '大模型',
+      llm: partial.llm ?? defaultLlmConfig(),
+      credentialId: partial.credentialId ?? '',
+      model: partial.model ?? '',
+      system: partial.system ?? '',
+      prompt: partial.prompt ?? '',
+      temperature: partial.temperature,
+      maxTokens: partial.maxTokens ?? 0,
+      jsonMode: partial.jsonMode ?? false,
+      paneId: partial.paneId,
+      status: partial.status ?? 'idle',
+      output: partial.output ?? '',
+      error: partial.error ?? '',
+    },
+  };
+}
+
 export function makeTranslateNode(id: string, partial: Partial<TranslateNodeData> = {}): GraphNode {
   return {
     id,
@@ -2260,6 +2341,107 @@ export function makeFrameNode(id: string, partial: Partial<FrameNodeData> = {}):
       label: partial.label ?? '组合',
       members: partial.members ?? [],
     } as FrameNodeData,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 任务窗格                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 任务窗格 —— 一组同类节点的**共享配置容器**。
+ *
+ * ================= 它和组合框的区别 ====================
+ *
+ * 组合框（frame）只管画图：框住、整体挪动，不带任何配置。
+ * 窗格（taskPane / apiPane）带配置：挂在窗格里的节点，
+ * **自己没填的项**从窗格继承。
+ *
+ * 于是"这几个节点都在同一个项目目录里跑"只要配一次。
+ *
+ * ================= 为什么不参与执行 ====================
+ *
+ * 它只是配置的载体，真正跑的还是里面的节点。
+ * 让它也跑一遍会出现一个什么都不做的空节点，
+ * 任务记录里多一条、流程图上多一格，徒增噪音。
+ */
+export type TaskPaneNodeData = {
+  kind: 'taskPane';
+  label: string;
+  /** 成员节点 id。与组合框一样，顺序只影响显示 */
+  members: string[];
+  /** 窗格默认 CLI。成员节点自己选了就用它自己的 */
+  cli?: CliKind;
+  /** 共享工作目录。成员节点留空时用这个 */
+  workdir?: string;
+  /** 默认模型。成员节点留空时用这个 */
+  model?: string;
+  /** 默认连接（模型清单来源）。成员节点留空时用这个 */
+  credentialId?: string;
+  /** 默认是否自动批准工具调用 */
+  yolo?: boolean;
+  /**
+   * 是否把同一窗格内上游节点的输出自动接进下一个节点的提示词。
+   *
+   * 关掉时每个节点只看到自己那份提示词 —— 上下文互不相通，
+   * 适合"几个独立任务凑一批跑"的场景。
+   */
+  shareContext?: boolean;
+};
+
+export function makeTaskPaneNode(id: string, partial: Partial<TaskPaneNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'taskPane',
+      label: partial.label ?? 'CLI 任务窗格',
+      members: partial.members ?? [],
+      cli: partial.cli,
+      workdir: partial.workdir ?? '',
+      model: partial.model ?? '',
+      credentialId: partial.credentialId ?? '',
+      yolo: partial.yolo,
+      shareContext: partial.shareContext ?? true,
+    } as TaskPaneNodeData,
+  };
+}
+
+/**
+ * API 任务窗格 —— 大模型节点的共享配置容器。
+ *
+ * 与 CLI 窗格同理，多承载一样东西：**system 提示词**。
+ * 于是窗格变成一个"角色 / 场景模板"：
+ * 里面每个节点只填 user 提示词，共用一个角色设定与同一条连接。
+ */
+export type ApiPaneNodeData = {
+  kind: 'apiPane';
+  label: string;
+  members: string[];
+  /** 默认连接（大模型凭据） */
+  credentialId?: string;
+  /** 默认模型 */
+  model?: string;
+  /** 共享的 system 提示词（角色设定） */
+  system?: string;
+  /** 默认温度 */
+  temperature?: number;
+  /** 是否要求结构化 JSON 输出 */
+  jsonMode?: boolean;
+};
+
+export function makeApiPaneNode(id: string, partial: Partial<ApiPaneNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'apiPane',
+      label: partial.label ?? 'API 任务窗格',
+      members: partial.members ?? [],
+      credentialId: partial.credentialId ?? '',
+      model: partial.model ?? '',
+      system: partial.system ?? '',
+      temperature: partial.temperature,
+      jsonMode: partial.jsonMode ?? false,
+    } as ApiPaneNodeData,
   };
 }
 

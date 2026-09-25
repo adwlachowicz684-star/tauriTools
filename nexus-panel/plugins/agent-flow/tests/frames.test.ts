@@ -132,7 +132,14 @@ test('不是框就没有位移', () => {
 
 test('执行前把组合框滤掉', () => {
   const src = readSrc('App.tsx');
-  assert.match(src, /filter\(\(n\) => !isFrameNode\(n\)\)/);
+  /*
+   * 窗格（isPaneNode）后来并进了同一条 filter，所以这里一次匹配两处。
+   *
+   * 只断言 !isFrameNode 的话，有人把窗格挪到别处过滤（或干脆漏掉）
+   * 这条照样报绿 —— 而窗格进图的表现与框不同：
+   * 它会被算成"一个步骤"占掉任务记录里的一个节点位。
+   */
+  assert.match(src, /!isFrameNode\(n\)\s*&&\s*!isPaneNode\(n\)/);
 });
 
 test('画布渲染走的是自适应之后的那份', () => {

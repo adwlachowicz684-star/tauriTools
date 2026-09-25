@@ -126,6 +126,13 @@ export type NodeInspectorProps = {
    * 不传时下拉框退化成"没得选"，并说明原因。
    */
   canvases?: { id: string; name: string }[];
+  /**
+   * 当前画布上的全部节点。
+   *
+   * 与 canvases 同理：窗格下拉框的选项来自画布上的窗格节点，
+   * 面板自己拿不到，只能外部注入。
+   */
+  nodes?: FlowNode[];
   /** 当前画布 id —— 用来在下拉框里标出"不能调自己" */
   activeCanvasId?: string;
 };

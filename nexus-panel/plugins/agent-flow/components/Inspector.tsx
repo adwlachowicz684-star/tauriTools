@@ -74,6 +74,14 @@ type Props = {
     env?: Record<string, string>; note?: string; disabled?: boolean }[];
   /** 打开连接管理器并停在「服务」页 */
   onOpenMcpLibrary?: () => void;
+  /**
+   * 当前画布上的全部节点。
+   *
+   * 窗格下拉框要用：选项来自画布上的窗格节点，面板自己拿不到。
+   * 不传时下拉框会退化成"没得选"并说明原因 —— 给一个空下拉框
+   * 会让人以为是自己没建窗格。
+   */
+  nodes?: FlowNode[];
 };
 
 export default function Inspector({
@@ -84,6 +92,7 @@ export default function Inspector({
   canvases, activeCanvasId,
   themeMode, onThemeModeChange,
   mcpLibrary, onOpenMcpLibrary,
+  nodes,
 }: Props) {
   const pushNote = onNote;
   if (!node) {
@@ -178,6 +187,7 @@ export default function Inspector({
         canvasId={activeCanvasId}
       node={shown}
       edges={edges}
+      nodes={nodes}
       onChange={onChangeWithVars}
       credentials={credentials}
       onOpenCredentials={onOpenCredentials}

@@ -1860,6 +1860,11 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 
 .node-card.ocr { border-left-color: #f472b6; }
 .node-card.translate { border-left-color: #38bdf8; }
+/*
+ * 大模型节点：与 OCR / 翻译同属"调一次模型"，但那两个的加工方式是写死的
+ * （必须带图、必须带目标语言），这个没有，所以另给一个颜色区分。
+ */
+.node-card.llm-chat { border-left-color: #818cf8; }
 
 /* 节点卡片里的来源 / 目标语言小标签 */
 /* 等宽输入：地址、模型名、Key 这类 */
@@ -3799,6 +3804,26 @@ input.mono, textarea.mono {
 }
 .af-frame-title { font-weight: var(--fw-mid, 500); }
 .af-frame-count { opacity: 0.7; }
+
+/*
+ * 任务窗格：与组合框同一套底板，多一行"现在配了什么"。
+ *
+ * 窗格的价值是"改一处、整组生效"，卡片上看不到它配了什么，
+ * 就无从判断这一组会不会按预期跑 —— 所以这一行不是装饰。
+ *
+ * 摘要行用绝对定位而不是塞进 flow 布局：
+ * 框的高度由它框住的节点决定，多一行内容会把框撑高，
+ * 于是框每帧变高、又去顶上面的节点（这类"每帧都对、合起来死循环"
+ * 的坑在 engine/frames.ts 里踩过一次）。
+ */
+.af-pane .af-frame-head { height: 34px; align-items: flex-start; padding-top: 6px; }
+.af-frame-sub {
+  position: absolute; top: 22px; left: 8px; right: 8px;
+  font-size: var(--fs-micro, 10px);
+  color: var(--af-frame-text, #9aa7b8); opacity: 0.75;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  pointer-events: none;
+}
 
 /* 组合条：与删除提示同一套位置，颜色改成中性（组合不是危险操作） */
 .sel-bar {

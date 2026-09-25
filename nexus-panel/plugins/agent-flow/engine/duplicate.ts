@@ -147,6 +147,39 @@ export function duplicateElements(input: DuplicateInput): DuplicateResult {
     else delete d.stackParent;
   }
 
+  /*
+   * 窗格归属（paneId）也要跟着重指向，但**断开规则与 stackParent 相反**：
+   * 窗格不在复制集合里时保持原样，而不是清掉。
+   *
+   * ============ 为什么两边不一样 ============
+   *
+   * 嵌合是**链**（一个父只有一个下级）。副本留着关系会变成
+   * "链上的另一个分支"，取哪个全看遍历顺序 —— 所以必须断开。
+   *
+   * 窗格是**多对一**：一个窗格本来就可以挂任意多个成员。
+   * 副本继续指着原窗格既不冲突，也符合预期 ——
+   * "复制一个同类节点，继承同一份共享配置"正是用户想要的。
+   *
+   * 反过来（断开）会把配置继承悄悄弄丢：副本变成"没挂窗格"，
+   * 于是它不再继承工作目录/模型，表现为"复制出来的节点配置不对"，
+   * 而用户从没做过"脱离窗格"这个改动。
+   *
+   * 只有一种情况需要清掉：窗格本身也被复制了，
+   * 那就改成指向副本窗格（map[p] 命中），
+   * 否则副本节点会被原窗格"抢走"—— 原窗格的成员数凭空 +1，
+   * 而用户看着两个窗格，却分不清哪个挂了谁。
+   *
+   * 空串同样清掉：那是曾经挂过又被摘下来的脏值，
+   * 留着会让"没挂窗格"的判断多一条分支。
+   */
+  for (const n of outNodes) {
+    const d = (n.data ?? {}) as Record<string, unknown>;
+    const p = d.paneId;
+    if (typeof p !== 'string') continue;
+    if (map[p]) d.paneId = map[p];
+    else if (p.trim() === '') delete d.paneId;
+  }
+
   const outEdges: DupEdge[] = [];
   for (const e of edges) {
     const s = map[e.source];

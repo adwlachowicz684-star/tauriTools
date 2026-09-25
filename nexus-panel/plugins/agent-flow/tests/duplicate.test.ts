@@ -293,3 +293,62 @@ test('stackParent 是空串时清掉，不留脏值', () => {
   }));
   assert.equal('stackParent' in (r.nodes[0].data as object), false);
 });
+
+/* ---- 窗格归属（paneId）跟着重指向 ---- */
+
+/*
+ * 与 stackParent 一组对照：嵌合是链所以要断开，窗格是多对一所以保留。
+ * 两条规则相反，各钉一条，免得日后有人"顺手改成一样"。
+ */
+test('窗格不在复制集合里：副本仍挂在原窗格（不丢共享配置）', () => {
+  /*
+   * 清掉的话副本变成"没挂窗格"，不再继承工作目录/模型 ——
+   * 表现为"复制出来的节点配置不对"，而用户没做过脱离窗格的改动。
+   */
+  const r = duplicateElements(baseInput({
+    nodes: [
+      { id: 'p1', position: { x: 0, y: 0 }, data: { kind: 'taskPane' } },
+      { id: 't1', position: { x: 0, y: 120 }, data: { paneId: 'p1' } },
+    ],
+    ids: ['t1'],
+  }));
+  const t2 = r.nodes.find((n) => n.id === 't1_copy');
+  assert.equal((t2.data as { paneId?: string }).paneId, 'p1',
+    '副本应当继续挂原窗格，继承同一份共享配置');
+});
+
+test('窗格一起复制：副本成员改指副本窗格（不被原窗格抢走）', () => {
+  /*
+   * 仍指向原窗格的话，原窗格的成员数凭空 +1 ——
+   * 界面上两个窗格，却分不清哪个挂了谁。
+   */
+  const r = duplicateElements(baseInput({
+    nodes: [
+      { id: 'p1', position: { x: 0, y: 0 }, data: { kind: 'taskPane' } },
+      { id: 't1', position: { x: 0, y: 120 }, data: { paneId: 'p1' } },
+      { id: 't2', position: { x: 0, y: 240 }, data: { paneId: 'p1' } },
+    ],
+    ids: ['p1', 't1', 't2'],
+  }));
+  const byId = Object.fromEntries(r.nodes.map((n) => [n.id, n]));
+  assert.equal((byId.t1_copy.data as { paneId?: string }).paneId, 'p1_copy');
+  assert.equal((byId.t2_copy.data as { paneId?: string }).paneId, 'p1_copy');
+});
+
+/** 空串是曾经挂过又被摘下来的脏值，不能留 */
+test('paneId 是空串时清掉，不留脏值', () => {
+  const r = duplicateElements(baseInput({
+    nodes: [{ id: 't1', position: { x: 0, y: 0 }, data: { paneId: '' } }],
+    ids: ['t1'],
+  }));
+  assert.equal('paneId' in (r.nodes[0].data as object), false);
+});
+
+test('没有挂窗格的节点不受影响（不凭空长出 paneId）', () => {
+  const r = duplicateElements(baseInput({
+    nodes: [{ id: 't1', position: { x: 0, y: 0 }, data: { label: 'x' } }],
+    ids: ['t1'],
+  }));
+  assert.equal('paneId' in (r.nodes[0].data as object), false);
+  assert.equal((r.nodes[0].data as { label: string }).label, 'x');
+});
