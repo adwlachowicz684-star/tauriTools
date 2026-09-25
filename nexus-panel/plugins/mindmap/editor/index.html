@@ -2255,7 +2255,13 @@
                 var sh = getOkImageShape(node);
                 if (sh) _selEl = sh.node;
                 _suppressSelClear = true;      // 反选节点，让画面只留图片高亮
-                try { km.clearSelect(); } catch (e) {}
+                /*
+                 * 内核没有 clearSelect：这句会抛 TypeError 被下面的 catch 吞掉，
+                 * 于是节点选中**根本没被清掉** —— 画面上同时有节点选中框和图片
+                 * 高亮框两套高亮，而代码意图是"只留图片高亮"。
+                 * select([], true)：第二个参数先清空，传空数组即纯清空。
+                 */
+                try { km.select && km.select([], true); } catch (e) {}
                 _suppressSelClear = false;
                 refreshThemeColor();
                 drawImgRect(node);
@@ -3255,8 +3261,14 @@
                     // 先展开：根节点若是折叠的，视野里根本没有内容可看
                     try { root.expand && root.expand(); } catch (e) {}
                     try { km.execCommand('camera', root, 300); } catch (e) {}
-                    try { km.clearSelect && km.clearSelect(); } catch (e) {}
-                    try { km.select && km.select(root); } catch (e) {}
+                    /*
+                     * 内核没有 clearSelect（WPF 时代 API），那句 `&&` 会静默短路，
+                     * 下面的 select(root) 就变成**追加** —— 实测选中 2 个节点后
+                     * 点「聚焦中心主题」，结果变成 3 个（把 root 加进去）。
+                     * 用户点了按钮，选中态却"多出来"，随后的编辑会作用到这一堆节点上。
+                     * select(a, true) 的第二个参数会先清空再选。
+                     */
+                    try { km.select && km.select(root, true); } catch (e) {}
                     return true;
                 } catch (e) { return false; }
             },

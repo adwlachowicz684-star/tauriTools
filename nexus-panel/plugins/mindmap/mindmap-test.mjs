@@ -8893,6 +8893,31 @@ group('内核没有 clearSelect —— 两处「清空选中」写法全部失�
   }
 }
 
+group('全仓不得再引用不存在的 km.clearSelect（改用 select([], true)）');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  const kern = fs.readFileSync(path.join(HERE, 'editor', 'kityminder.core.min.js'), 'utf8');
+
+  ok(!/clearSelect\s*:\s*function/.test(kern), '内核没有 clearSelect（前提）');
+
+  /*
+   * 已经因为同一个根因修了 4 处（select 门面 / 搜索定位 / focusRoot / 选中图片），
+   * 逐个断言只能防住已发现的。这里扫**全仓**：只要代码（剥注释后）里还出现
+   * km.clearSelect，不管在哪一律判失败。
+   */
+  const code = html.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const hits = [...code.matchAll(/km\.clearSelect/g)];
+  ok(hits.length === 0,
+    `编辑器代码里不得再出现 km.clearSelect（当前 ${hits.length} 处）`);
+
+  // 找到的替换写法必须还在（防止"删了却没补"，那更糟）
+  ok(/km\.select\(ns,\s*true\)/.test(code), 'select 门面：select(ns, true)');
+  ok(/km\.select\(node,\s*true\)/.test(code), '搜索定位：select(node, true)');
+  ok(/km\.select\(root,\s*true\)/.test(code), 'focusRoot：select(root, true)');
+  ok(/km\.select\(\[\],\s*true\)/.test(code), '选中图片：select([], true) 纯清空');
+}
+
 group('导出为交换格式 → 导出为交换格式（单画布）');
 
 {
