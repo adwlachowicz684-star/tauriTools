@@ -1136,7 +1136,19 @@ export default function Settings() {
                 <div className="theme-group-title">{label} · {items.length}</div>
                 <div className="theme-grid">
                   {items.map((t) => {
-                    const v = t.vars;
+                    /*
+                     * ⚠️ 必须取 exportVarsFor(t)，不能直接用 t.vars。
+                     *
+                     * t.vars 是主题**自带**值，不含任何用户改动：
+                     * 基调 / 风格覆盖、逐项变量、风格参数、强调色，全都读不到。
+                     * 于是"把这套深色主题改成浅色、调了一通"之后，
+                     * 卡片缩略图仍是原来那张深色图 ——
+                     * 列表里看到的和实际效果对不上，用户会以为改动没保存。
+                     *
+                     * 另存副本时存的是固化后的 vars（saveAsCustom 走 deriveVars），
+                     * 所以副本卡片这边显示正确，只有"改了但没另存"的原主题会不一致。
+                     */
+                    const v = exportVarsFor(t);
                     return (
                       <button
                         key={t.id}
