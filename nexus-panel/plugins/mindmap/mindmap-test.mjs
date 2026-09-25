@@ -8631,6 +8631,37 @@ group('两条「附加视频」路径都必须生成封面（不能只修拖放�
   }
 }
 
+group('点搜索结果条目后，顶栏「1/5」必须跟着变');
+
+{
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const fl = fs.readFileSync(path.join(HERE, 'filelist.js'), 'utf8');
+
+  // 顶栏计数由 runSearch() 算（runSearch 是键盘 Enter 那条路）
+  ok(/const st = searchStatusText\(kw, bridge\?\.search\(kw\)\);/.test(idx),
+    '顶栏计数在 runSearch() 里算（对照：那是另一条定位路径）');
+
+  // 面板点条目是**第二条**定位路径，必须同步
+  ok(/setSearchStatus: \(i1, total\)/.test(idx), 'api 暴露 setSearchStatus');
+  {
+    const i = fl.indexOf('function jumpTo(i)');
+    ok(i > 0, '有 jumpTo()');
+    const seg = fl.slice(i, i + 700);
+    ok(/api\.setSearchStatus\?\.\(/.test(seg), '点条目后同步顶栏计数');
+    ok(/i \+ 1/.test(seg), '传 1 起的序号（面板下标是 0 起）');
+    // total 不能用截断后的 items.length
+    ok(/searchTotal \|\| searchItems\.length/.test(seg),
+      '总数用 searchTotal（items 超 200 会被截断，不能写 items.length）');
+  }
+  // setSearchStatus 的实现：total<=0 要清空而不是显示 "1/0"
+  {
+    const i = idx.indexOf('setSearchStatus: (i1, total)');
+    const seg = idx.slice(i, i + 420);
+    ok(/if \(!\(total > 0\)\)/.test(seg), 'total<=0 时清空（不能显示 "1/0"）');
+    ok(/classList\.remove\('warn'\)/.test(seg), '清掉 warn 高亮');
+  }
+}
+
 group('导出为交换格式 → 导出为交换格式（单画布）');
 
 {

@@ -2254,6 +2254,22 @@ bootIframePlugin(async (ctx) => {
     setVideoThumb: (index, nodeId, dataUrl) =>
       guard('设为封面', () => setVideoThumb(index, nodeId, dataUrl))(),
     /**
+     * 同步顶栏的搜索计数（「2/5」）。
+     *
+     * 面板点条目 → gotoSearchResult(i) 定位成功，但顶栏那个计数是
+     * runSearch() 里算的，**没人去更新它** —— 于是点了第 3 条、
+     * 画布跳到第 3 个，顶栏还写着「1/5」。显示与实际不符，
+     * 用户会以为点错了条目。
+     *
+     * 参数用 1 起的当前序号与真实总数（不是截断后的 items.length）。
+     */
+    setSearchStatus: (i1, total) => {
+      if (!searchStatusEl) return;
+      if (!(total > 0)) { searchStatusEl.textContent = ''; searchStatusEl.classList.remove('warn'); return; }
+      searchStatusEl.textContent = `${i1}/${total}`;
+      searchStatusEl.classList.remove('warn');
+    },
+    /**
      * 取一张视频封面（时间轴 1/3 处，黑场则往后试）。
      *
      * 暴露出来是因为「附加视频」有**两条路**：画布拖放（index.js 内部）

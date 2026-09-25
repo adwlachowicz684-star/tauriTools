@@ -150,6 +150,16 @@ export function buildFileList(app) {
     if (!ok) { api.status('定位失败：结果已失效，请重新搜索', true); return; }
     searchActive = i;
     renderSearchItems();
+    /*
+     * 顶栏那个「1/5」必须一起更新。
+     *
+     * 它是 runSearch() 里算的，而这里是**另一条定位路径**（点条目）——
+     * 不同步的话点了第 3 条、画布跳到第 3 个，顶栏还写着「1/5」。
+     *
+     * total 用**真实总数** searchTotal，不能用 items.length：
+     * 结果超过 200 条时 items 被截断，写 items.length 会显示成「3/200」。
+     */
+    api.setSearchStatus?.(i + 1, searchTotal || searchItems.length);
   }
 
   /**
