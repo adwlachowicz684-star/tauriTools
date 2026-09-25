@@ -1734,3 +1734,170 @@ input[type='range']:disabled {
   .pg-wrap { flex-direction: column; }
   .pg-list { width: auto; max-height: 40%; }
 }
+
+/* 主题完整参数编辑区（.tp-*）
+   --------------------------------------------------------------------
+   放共享层而不是 settings.css —— 与 .pg-* 同理：设置插件在 module（同页）
+   模式下**不加载** settings.css（那份文件里的 #root 规则会命中宿主根容器）。
+   放那里等于同页模式下这一整块控件全没有样式。
+
+   全部走令牌，不写裸值：切换主题时这一片要跟着变，
+   写死了就会出现"界面换了主题、参数面板还是旧配色"。
+*/
+.tp-params { margin-top: var(--sp-4, 8px); }
+
+.tp-hint {
+  font-size: var(--fs-11, 11px);
+  line-height: var(--lh-relaxed, 1.6);
+  margin-bottom: var(--sp-4, 8px);
+}
+
+/* 基调 / 风格 / 已改 —— 三项元数据 */
+.tp-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-5, 10px);
+  align-items: center;
+  padding: var(--sp-5, 10px) var(--sp-6, 12px);
+  border-radius: var(--r-sm, 9px);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-sm);
+}
+
+.tp-meta-row { display: flex; align-items: center; gap: var(--sp-3, 6px); }
+
+.tp-meta-k {
+  font-size: var(--fs-11, 11px);
+  color: var(--text-soft, var(--text));
+}
+
+.tp-meta-seg { display: flex; gap: var(--sp-2, 4px); }
+
+.tp-changed { font-size: var(--fs-11, 11px); }
+
+/* 参数行：左文右控件，窄屏转为上下堆叠 */
+.tp-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-5, 10px);
+  padding: var(--sp-4, 8px) var(--sp-5, 10px);
+  margin-top: var(--sp-4, 8px);
+  border-radius: var(--r-sm, 9px);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-sm);
+}
+
+.tp-row.changed {
+  /* 改过的项给一条左侧标记 —— 一屏几十项时，得一眼看出动过哪些 */
+  box-shadow: var(--sh-in-sm), inset 2px 0 0 var(--accent, #5b8cff);
+}
+
+.tp-row-main { flex: 1; min-width: 0; }
+
+.tp-row-label {
+  font-size: var(--fs-12, 12px);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2, 4px);
+}
+
+.tp-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent, #5b8cff);
+  flex: none;
+}
+
+/* 变量名：用户照着它去 CSS 里搜时要用到，所以是等宽 ——
+   等宽字体在相同 px 下视觉偏小，故走 --fs-code 专用档而不是正文档 */
+.tp-row-key {
+  font-size: var(--fs-code, 11px);
+  color: var(--text-mute, var(--text-dim));
+  margin-top: 1px;
+}
+
+.tp-row-desc {
+  font-size: var(--fs-11, 11px);
+  line-height: var(--lh-relaxed, 1.6);
+  margin-top: var(--sp-1, 2px);
+}
+
+.tp-row-ctl {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3, 6px);
+  max-width: 60%;
+}
+
+/* 颜色控件：取色器 + 十六进制 + 透明度滑块 */
+.tp-color { display: flex; align-items: center; gap: var(--sp-3, 6px); }
+
+.tp-picker {
+  flex: none;
+  width: 30px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--divider);
+  border-radius: var(--r-sm, 9px);
+  background: transparent;
+  cursor: pointer;
+}
+
+/* 解析不了的值（transparent / 渐变）用棋盘格表示"不是普通颜色"，
+   不给一个纯黑块 —— 那会被当成"当前就是黑色"。 */
+/* 基色块：tp-chip 是通用名，tp-chip-none 是"解析不了"的特例 */
+.tp-chip {
+  width: 30px;
+  height: 24px;
+  flex: none;
+  border: 1px solid var(--divider);
+  border-radius: var(--r-sm, 9px);
+}
+
+.tp-chip-none {
+  width: 30px;
+  height: 24px;
+  flex: none;
+  border: 1px solid var(--divider);
+  border-radius: var(--r-sm, 9px);
+  background-image:
+    linear-gradient(45deg, var(--text-mute, #888) 25%, transparent 25%, transparent 75%, var(--text-mute, #888) 75%),
+    linear-gradient(45deg, var(--text-mute, #888) 25%, transparent 25%, transparent 75%, var(--text-mute, #888) 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 4px 4px;
+  opacity: .5;
+}
+
+.tp-hex {
+  width: 108px;
+  flex: none;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--fs-code, 11px);
+}
+
+.tp-alpha { display: flex; align-items: center; gap: var(--sp-2, 4px); width: 104px; flex: none; }
+.tp-alpha .p-range { flex: 1; min-width: 0; }
+.tp-alpha-num { width: 32px; flex: none; text-align: right; font-size: var(--fs-11, 11px); }
+
+/* 数字 / 长度 */
+.tp-num { display: flex; align-items: center; gap: var(--sp-3, 6px); width: 176px; flex: none; }
+.tp-num .p-range { flex: 1; min-width: 0; }
+.tp-num-val { width: 46px; flex: none; text-align: right; font-size: var(--fs-11, 11px); }
+
+/* 长文本（背景渐变） */
+.tp-text {
+  width: 260px;
+  flex: none;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--fs-code, 11px);
+}
+
+.tp-group-desc { font-size: var(--fs-11, 11px); }
+
+@media (max-width: 720px) {
+  .tp-row { flex-direction: column; }
+  .tp-row-ctl { max-width: 100%; flex-wrap: wrap; }
+  .tp-text { width: 100%; }
+}

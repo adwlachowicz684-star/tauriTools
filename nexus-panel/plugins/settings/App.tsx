@@ -49,6 +49,8 @@ import FilesCard from './FilesCard';
 import WindowCard from './WindowCard';
 import UpdateCard from './UpdateCard';
 import SettingGroup from '../../src/components/SettingGroup';
+import ThemeParamsPanel from './ThemeParamsPanel';
+import { STYLE_LABELS as THEME_STYLE_LABELS } from '../../js/themes.js';
 /* 外壳提供的那几组插件设置（沙箱 / 插件主题 / 本插件外链）。
    原先只画在插件设置抽屉里，这里复用同一份组件 —— 两处行为必须一致，
    各写一份迟早漂移（一边加了开关另一边没有）。 */
@@ -1075,7 +1077,7 @@ export default function Settings() {
 
       {/* 内容区单独滚动：分页条留在滚动容器外，切页不必先滚回顶部。
           详见 settings.css 的说明。 */}
-      <div className={'set-body' + (tab === 'plugins' ? ' fill' : '')}>
+      <div className={`set-body${tab === 'plugins' ? ' fill' : ''}`}>
       {tab === 'theme' ? (
         /* ---------------- 主题 ---------------- */
         <div className="p-card">
@@ -1104,9 +1106,26 @@ export default function Settings() {
           />
           {(() => {
             const all = listThemes();
+            /*
+             * 按**风格**分组，不按深浅。
+             *
+             * 深浅只是同一套设计的两个取值，用户挑主题时真正的选择是
+             * "要哪种质感"（新拟态 / 扁平 / 玻璃）—— 按深浅分的话，
+             * 想找"玻璃"要在深色和浅色两堆里各翻一遍，而这两堆里的
+             * 玻璃其实是同一套设计的深浅两个版本，本该挨在一起。
+             *
+             * 角标仍显示 style，所以深浅信息没有丢，只是不再是主分组。
+             */
+            const styles: [string, string][] = Object.entries(THEME_STYLE_LABELS)
+              .map(([k, v]) => [k, v] as [string, string]);
             const groups: [string, typeof all][] = [
-              ['深色', all.filter((t) => t.base === 'dark')],
-              ['浅色', all.filter((t) => t.base === 'light')],
+              ...styles.map(([k, label]) => [
+                label,
+                all.filter((t) => (t.style || 'neumorph') === k),
+              ] as [string, typeof all]),
+              /* 没写 style 的（老自定义主题）单列一组 ——
+                 混进任何一组都是错的：它们的观感根本不属于那个风格。 */
+              ['其它', all.filter((t) => !t.style || !THEME_STYLE_LABELS[t.style])],
             ];
             return groups.filter(([, items]) => items.length).map(([label, items]) => (
               <div className="theme-group" key={label}>
@@ -1355,6 +1374,17 @@ export default function Settings() {
               </div>
             );
           })()}
+
+          {/* ---------- 完整参数 ----------
+              主题数据里的每个变量都能在这里改到（派生量除外）。
+              目标是"能调出任意一套内置主题"，而不是只能挑现成的。 */}
+          <div className="p-muted" style={{ marginTop: 'var(--sp-8, 16px)', fontSize: 'var(--fs-13, 13px)' }}>
+            完整参数（{getCurrent().name}）
+          </div>
+          <ThemeParamsPanel
+            theme={getCurrent()}
+            onChanged={() => { rerender(); void syncThemeToShell(); }}
+          />
 
           {/* ---------- 背景图 ----------
               只有主题本来就带 --bg-image 的才能换图；
