@@ -2232,5 +2232,182 @@ console.log('\n=== 40. 弹窗底板：玻璃主题下必须看得见 ===');
     !!dlgRule && /inset\s+0\s+0\s+0\s+1px\s+var\(--dlg-edge\s*,\s*var\(--divider\)\)/.test(dlgRule.body));
 }
 
+console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也要钉住 ===');
+{
+  /*
+   * 这一节是**变异测试**逼出来的，不是设计出来的。
+   *
+   * 前面 40 节的断言绝大多数长这样：
+   *     "这个令牌有定义吗" / "插件引用了合法名字吗" / "类名存在吗"
+   * 它们全部只验**名字**。
+   *
+   * 实测：构造一批"只改数值、一个字都不改"的变异体，
+   * 9 个里 **7 个漏网** —— 5 个测试共 400+ 项断言全绿：
+   *   --z-rail 30→999       层级档被抬高到遮罩之上
+   *   --z-inline 5→99       容器内浮层盖过下拉菜单
+   *   --dur-fast 120ms→2s   按钮反馈变钝两秒
+   *   --lh-tight 1.45→1.9   紧凑档比宽松档还松（档序颠倒）
+   *   --lh-loose 1.7→1.2    同上，反向颠倒
+   *   --r-sm 9px→40px       控件圆角变成胶囊
+   *   --sp-5 10px→2px       间距档塌陷
+   *
+   * 共同点：**名字全对，值全错，断言全绿**。
+   * 所以这里补的是"值之间的关系"—— 档位之所以成体系，
+   * 靠的就是单调性与区间，这些才是真正承载设计意图的部分。
+   *
+   * 设计原则：**断言关系，不断言具体数值**。
+   * 写成 `--lh-tight === 1.45` 的话，调一次设计就要改一次测试，
+   * 很快就会被"顺手改一下"改成永远通过。关系才是稳定的。
+   */
+  const tk = stripComments(read('css/tokens.css'));
+  const num = (n) => {
+    const m = new RegExp('--' + n + '\\s*:\\s*(-?[\\d.]+)').exec(tk);
+    return m ? parseFloat(m[1]) : NaN;
+  };
+  const seq = (names) => names.map(num);
+
+  /* ---- 41.1 层级档：必须单调递增 ---- */
+  /*
+   * 层级表的全部意义就是"谁盖住谁"。数值本身多少无所谓
+   * （外壳与插件在各自文档里，数值不跨文档比较），
+   * 但**顺序必须有意义** —— 否则后来者想加一个浮层只能靠猜。
+   */
+  const Z = ['z-base', 'z-inline', 'z-raised', 'z-sticky', 'z-rail',
+    'z-float', 'z-menu', 'z-mask', 'z-dialog', 'z-pop', 'z-toast', 'z-tooltip'];
+  const zv = seq(Z);
+  const zBad = [];
+  for (let i = 1; i < zv.length; i++) {
+    if (!(zv[i] > zv[i - 1])) zBad.push(`${Z[i - 1]}=${zv[i - 1]} ≥ ${Z[i]}=${zv[i]}`);
+  }
+  t('层级档严格单调递增（谁盖住谁一眼可读）', zBad.length === 0,
+    zBad.join(' | ') || `${Z.length} 档全序`);
+
+  /*
+   * 遮罩必须远高于所有内容浮层。
+   * 只断言"递增"拦不住把 z-rail 调到 999：那时序列仍递增，
+   * 但侧栏浮层会盖在模态遮罩之上 —— 弹窗开着时侧栏还在上面飘。
+   */
+  t('遮罩/弹窗高于所有内容浮层（z-mask 远大于 z-menu）',
+    num('z-mask') > num('z-menu') * 2,
+    `z-menu=${num('z-menu')} z-mask=${num('z-mask')}`);
+
+  /* ---- 41.2 动效时长：三档递增，且都在跟手区间 ---- */
+  /*
+   * 过渡是"用户操作后的反馈"，越短越跟手。
+   * 上限取 500ms：超过这个数，按钮点下去半天才有反应，
+   * 用户会以为没点上而重复点击。
+   */
+  const dv = seq(['dur-fast', 'dur-base', 'dur-slow']);
+  t('过渡时长三档递增', dv[0] < dv[1] && dv[1] < dv[2], dv.join(' < '));
+  t('过渡时长都在跟手区间（≤500ms，慢了用户会重复点击）',
+    dv.every((v) => v > 0 && v <= 500), dv.join(', '));
+  /*
+   * 动画（转圈/呼吸）与过渡分开是刻意的：
+   * 混用的话，为了让转圈不显急而调大 --dur-fast，整个界面的按钮都变钝。
+   * 所以这里钉住"动画明显慢于过渡"这一关系。
+   */
+  t('动画时长明显长于过渡（两组不可混用）',
+    num('anim-spin') > dv[2] && num('anim-pulse') > dv[2],
+    `dur-slow=${dv[2]} spin=${num('anim-spin')} pulse=${num('anim-pulse')}`);
+
+  /* ---- 41.3 行高档：单调 + 都在可读区间 ---- */
+  const LH = ['lh-tight', 'lh-normal', 'lh-relaxed', 'lh-loose'];
+  const lv = seq(LH);
+  const lBad = [];
+  for (let i = 1; i < lv.length; i++) {
+    if (!(lv[i] > lv[i - 1])) lBad.push(`${LH[i - 1]}=${lv[i - 1]} ≥ ${LH[i]}=${lv[i]}`);
+  }
+  t('行高档严格单调递增（紧凑→宽松）', lBad.length === 0, lBad.join(' | ') || lv.join(' < '));
+  /*
+   * 下限 1.2、上限 2.0：
+   * 低于 1.2 中文多行会挤在一起（汉字没有下伸部，比拉丁字母更吃行距）；
+   * 高于 2.0 段落会散开，看不出是一段。
+   */
+  t('行高档都在可读区间 1.2~2.0', lv.every((v) => v >= 1.2 && v <= 2.0), lv.join(', '));
+
+  /* ---- 41.4 间距档：单调递增 ---- */
+  const SP = ['sp-1', 'sp-2', 'sp-3', 'sp-4', 'sp-5', 'sp-6', 'sp-7', 'sp-8', 'sp-9', 'sp-10'];
+  const sv = seq(SP);
+  const sBad = [];
+  for (let i = 1; i < sv.length; i++) {
+    if (!(sv[i] > sv[i - 1])) sBad.push(`${SP[i - 1]}=${sv[i - 1]} ≥ ${SP[i]}=${sv[i]}`);
+  }
+  t('间距档严格单调递增', sBad.length === 0, sBad.join(' | ') || `${SP.length} 档全序`);
+  t('间距档步长均匀（相邻差 ≤4px，不能有塌陷或跳跃）',
+    sv.slice(1).every((v, i) => v - sv[i] <= 4), sv.join(', '));
+
+  /* ---- 41.5 圆角档：单调递增，且控件圆角不得过大 ---- */
+  /*
+   * 圆角档定义在 neumorphism.css（随主题变化），不在 tokens.css。
+   */
+  const neu = stripComments(read('css/neumorphism.css'));
+  const rnum = (n) => {
+    const m = new RegExp('--' + n + '\\s*:\\s*(-?[\\d.]+)').exec(neu);
+    return m ? parseFloat(m[1]) : NaN;
+  };
+  /*
+   * ⚠️ 顺序按**实际数值**排，不按命名直觉：
+   *    r-sm(9) < r(14) < r-md(17) < r-lg(20) < r-xl(26)
+   *
+   * r-md(17) 比 r(14) 大，与"md 应居中"的直觉相反 ——
+   * 这一节第一版按命名直觉写成 ['r-sm','r-md','r','r-lg','r-xl']，
+   * 断言立刻报红，回头查才发现 neumorphism.css 的档位注释
+   * 本身就写错了（写成 `--r(14) > --r-md(17)`）。
+   *
+   * 教训：**注释里的数字不可信，必须与定义核对**。
+   * 所以下面加了一条专门校验注释的断言，防止它再次写错。
+   */
+  const R = ['r-sm', 'r', 'r-md', 'r-lg', 'r-xl'];
+  const rv = R.map(rnum);
+  const rBad = [];
+  for (let i = 1; i < rv.length; i++) {
+    if (!(rv[i] > rv[i - 1])) rBad.push(`${R[i - 1]}=${rv[i - 1]} ≥ ${R[i]}=${rv[i]}`);
+  }
+  t('圆角档严格单调递增（按实际值排，非命名直觉）', rBad.length === 0,
+    rBad.join(' | ') || rv.join(' < '));
+  /*
+   * 控件圆角上限 16px：超过就变成胶囊形，与输入框/按钮的身份不符
+   * （胶囊是标签、徽章的形状语言）。
+   * 只查实际在用的 r-sm —— r-md 目前零引用（控件都用 r-sm），
+   * 它是预留档，硬套这条等于替设计做决定。
+   */
+  t('实际在用的控件圆角档 ≤16px（超过就成胶囊形）',
+    rnum('r-sm') <= 16, `r-sm=${rnum('r-sm')}`);
+  /*
+   * 注释必须与定义一致。
+   * 这次就是被注释带偏的：它写着 `--r(14) > --r-md(17)`，
+   * 而这个不等式根本不成立。写测试的人照抄注释就会写错断言。
+   */
+  {
+    const cm = /--r-xl\((\d+)\)\s*>\s*--r-lg\((\d+)\)\s*>\s*--r-md\((\d+)\)\s*>\s*--r\((\d+)\)\s*>\s*--r-sm\((\d+)\)/.exec(read('css/neumorphism.css'));   // 必须读**原文**：neu 已剥注释
+    const got = cm ? [+cm[5], +cm[4], +cm[3], +cm[2], +cm[1]] : null;   // sm, r, md, lg, xl
+    t('圆角档注释里的数值与实际定义一致（注释不可信，要核对）',
+      !!got && got.every((v, i) => v === rv[i]),
+      got ? `注释 ${got.join('/')} vs 实际 ${rv.join('/')}` : '未找到档位注释');
+  }
+
+  /* ---- 41.6 字重档：递增 + 都在合法区间 ---- */
+  const fw = seq(['fw-normal', 'fw-mid', 'fw-strong']);
+  t('字重档严格单调递增', fw[0] < fw[1] && fw[1] < fw[2], fw.join(' < '));
+  /*
+   * 上限 700：小字号下 700 与 600 视觉差异极小，
+   * 多留一档只会让人纠结（此前清理 700 并入 600 就是这个理由）。
+   * 下限 300：更细的字重在 11px 下会发虚、断笔画。
+   */
+  t('字重档都在 300~700（细了发虚、粗了与相邻档难分）',
+    fw.every((v) => v >= 300 && v <= 700), fw.join(', '));
+
+  /*
+   * 最后一条是这一节的元断言：
+   * 上面每条都依赖"能从 tokens.css 里读到数值"。
+   * 若哪天档位改名、或挪到别的文件，num() 会返回 NaN，
+   * 而 `NaN > NaN` 是 false —— 那些断言会**报红**而不是静默通过，
+   * 这是好事。但仍要防止"全部读到 0"这类静默失效。
+   */
+  t('各档位数值都真实读到（没有整档解析失败）',
+    [...zv, ...dv, ...lv, ...sv, ...rv, ...fw].every((v) => Number.isFinite(v) && v > 0),
+    `层级${zv.length}/时长${dv.length}/行高${lv.length}/间距${sv.length}/圆角${rv.length}/字重${fw.length}`);
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
