@@ -41,8 +41,24 @@ console.log('\n=== 2. 标签要透出去，界面才知道在做什么 ===');
 {
   const hook = strip(read('hooks/useFpx.ts'));
   t('有 busyLabel 状态', /const \[busyLabel, setBusyLabel\] = useState\(''\)/.test(hook));
-  t('run 里写入 label', /setBusyLabel\(label\)/.test(hook));
   t('返回 busyLabel', /busy: busyCount > 0, busyLabel,/.test(hook));
+
+  /*
+   * 单一字符串会说谎：先启动「备份」（慢）再启动「改名」（快），
+   * 改名先结束而 label 还停在「改名」—— 备份跑了十几秒，
+   * 界面却一直显示「正在改名…」。所以必须是**栈**。
+   */
+  t('label 用栈而不是单个字符串', /const busyLabels = useRef<string\[\]>\(\[\]\);/.test(hook));
+  t('开始时入栈', /busyLabels\.current\.push\(label\)/.test(hook));
+  t('显示栈底（最早启动的那个）', /setBusyLabel\(busyLabels\.current\[0\] \?\? ''\)/.test(hook));
+  /* 按值摘自己那一个，不能 pop —— 并发下结束次序未必等于启动次序 */
+  t('结束时按值摘自己（不是 pop）',
+    /const at = busyLabels\.current\.indexOf\(label\);/.test(hook)
+    && /if \(at >= 0\) busyLabels\.current\.splice\(at, 1\);/.test(hook));
+  t('摘不到也不抛（finally 里抛会吞掉结果）', !/busyLabels\.current\.splice\(at, 1\);\s*\}\s*catch/.test(hook));
+  t('结束时同步更新 label', /setBusyLabel\(busyLabels\.current\[0\] \?\? ''\);/.test(hook));
+  /* 反面证据：只塞"最后一次设的那个字符串"是会撒谎的写法，不允许残留 */
+  t('不再有 setBusyLabel(label)（反面证据）', !/setBusyLabel\(label\)/.test(hook));
 }
 
 console.log('\n=== 3. 真正挂到界面上 ===');

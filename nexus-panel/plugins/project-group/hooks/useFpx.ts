@@ -32,8 +32,21 @@ export function useFpx() {
    * 计数：只要还有任何一个在飞就是忙。
    */
   const [busyCount, setBusyCount] = useState(0);
-  /** 当前在做什么（`run` 的 label），供界面显示「正在…」。 */
+  /*
+   * 当前在做什么（`run` 的 label），供界面显示「正在…」。
+   *
+   * 用**栈**而不是"最后一次设的那个字符串"。
+   * 只存一个字符串的话，并发时会说谎：先启动「备份」（慢），再启动
+   * 「改名」（快）—— 改名结束得早，而 label 还停在「改名」，
+   * 于是备份跑了十几秒，界面却一直显示「正在改名…」。
+   * 用户据此以为改名很慢、或者以为改名卡住了，而备份才是真相。
+   *
+   * 显示栈底（最早启动、通常也是最久的那个）：那正是用户在等的那件事。
+   */
   const [busyLabel, setBusyLabel] = useState('');
+  /** 在飞的 label 栈。用 ref 是因为结束时要按值摘掉**自己那一个**，
+      不能凭顺序 pop —— 并发下结束次序与启动次序未必相同。 */
+  const busyLabels = useRef<string[]>([]);
   const [log, setLog] = useState<LogLine[]>([]);
   const [content, setContent] = useState<ContentItem[]>([]);
   /** 内容扫描代号，见下方 scan 的说明：快速切换目录时用它丢弃过期结果 */
@@ -109,7 +122,8 @@ export function useFpx() {
   /** 统一套一层：出错记日志 + toast，不再到处 try/catch */
   const run = useCallback(async <T,>(label: string, fn: () => Promise<T>): Promise<T | null> => {
     setBusyCount((c) => c + 1);
-    setBusyLabel(label);
+    busyLabels.current.push(label);
+    setBusyLabel(busyLabels.current[0] ?? '');
     try {
       const r = await fn();
       return r;
@@ -119,10 +133,24 @@ export function useFpx() {
       ctx.toast(msg, 'err');
       return null;
     } finally {
-      /* 卸载后不该再 setState（React 会警告），但计数**仍要减**：
-         不减的话若同一实例被复用，busy 会永远停在真。
-         Math.max(0, ...) 兜住异常路径下的重复减。 */
-      if (alive.current) setBusyCount((c) => Math.max(0, c - 1));
+      /*
+       * 只摘**自己那一个**，不按末尾 pop：并发下结束次序与启动次序
+       * 未必相同，pop 会把还在跑的那个摘掉。
+       * 找不到（已清空 / 实例被复用过）就当无事，不能让 finally 抛异常
+       * —— 那会把 fn 的真实返回值或 catch 的结果整个吞掉。
+       */
+      const at = busyLabels.current.indexOf(label);
+      if (at >= 0) busyLabels.current.splice(at, 1);
+      /*
+       * 卸载后不再 setState。此时状态随组件一起丢弃，不减也无妨；
+       * 反过来，若插件 reload 后新实例已把 alive 置回 true，
+       * 旧操作收尾会减到**新实例**的计数上 —— 由 Math.max(0, ...)
+       * 兜住，不会减成负数把后续忙态卡死。
+       */
+      if (alive.current) {
+        setBusyCount((c) => Math.max(0, c - 1));
+        setBusyLabel(busyLabels.current[0] ?? '');
+      }
     }
   }, [ctx, pushLog]);
 
