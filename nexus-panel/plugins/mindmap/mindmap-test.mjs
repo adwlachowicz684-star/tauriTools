@@ -7900,8 +7900,14 @@ group('附件画进节点框内（节点撑高，不再被相邻节点遮挡）'
    * 只抠 estTextW 会 ReferenceError（依赖没带进来）。
    */
   {
-    const i = html.indexOf('var _mtCtx = null;');
-    ok(i > 0, '有 measureTextW 相关的测量上下文');
+    /*
+     * 起点必须是 **cssFontFamily 之前**（var _GENERIC_FAMILIES）——
+     * 只从 `var _mtCtx = null;` 开始切的话，cssFontFamily 不在 chunk 里，
+     * 抠出来的代码跑起来会 ReferenceError → 被 catch 吞掉 → 恒回落估算，
+     * 于是测量路径的断言全部变成假阴性（看着在把关其实没有）。
+     */
+    const i = html.indexOf('var _GENERIC_FAMILIES');
+    ok(i > 0, '有 cssFontFamily / measureTextW 的测量上下文');
     const end = html.indexOf('var FileIcon = kity.createClass');
     const chunk = html.slice(i, end);
     ok(/function measureTextW\(/.test(chunk), '源码含 measureTextW');
@@ -7919,7 +7925,7 @@ group('附件画进节点框内（节点撑高，不再被相邻节点遮挡）'
           },
         }),
       };
-      const m = new Function('document', chunk + '; return { estTextW, guessTextW, measureTextW };')(doc);
+      const m = new Function('document', chunk + '; return { estTextW, guessTextW, measureTextW, cssFontFamily };')(doc);
       return m;
     };
 
@@ -7949,6 +7955,55 @@ group('附件画进节点框内（节点撑高，不再被相邻节点遮挡）'
       eq(m.guessTextW(null, 12), 0, 'null 当空串（不能抛错）');
       ok(m.guessTextW('中文.pdf', 12) > m.guessTextW('abc', 12), '中文名比短拉丁名宽');
     }
+    /* 4d-2) cssFontFamily：字体名要加引号才能安全拼进 CSS font 简写
+     *
+     * `ctx.font = '13px Microsoft YaHei'` 走的是 CSS **简写解析**：
+     * 字体名含空格 / 中文 / 逗号时一旦解析失败，赋值会被**静默忽略**，
+     * ctx.font 保持旧值 → measureText 用另一支字体量，结果看似正常其实是错的，
+     * 而且不报错、也不回落（返回值非零）。
+     */
+    {
+      const m = mk(() => 0);
+      const cf = m.cssFontFamily;
+      ok(typeof cf === 'function', 'cssFontFamily 存在（且被一起抠出来）');
+      eq(cf('Microsoft YaHei'), '"Microsoft YaHei"', '含空格 → 加引号');
+      eq(cf('微软雅黑'), '"微软雅黑"', '中文字体名 → 加引号');
+      eq(cf('sans-serif'), 'sans-serif', '通用族名**不加**引号（它是关键字，加了变字体名）');
+      eq(cf('serif'), 'serif', 'serif 同样不加引号');
+      eq(cf('"Comic Sans"'), '"Comic Sans"', '已有引号 → 原样返回（不重复加）');
+      eq(cf(''), 'sans-serif', '空 → 回落 sans-serif');
+      eq(cf(null), 'sans-serif', 'null → 回落 sans-serif（不能抛错）');
+      eq(cf('  Arial  '), '"Arial"', '先 trim 再加引号');
+    }
+    /* 4d-3) 读回校验：ctx.font 赋值被忽略时要能发现
+     * 造一个"设不进去"的 ctx（font 恒为旧值），此时必须返回 null 走回落，
+     * 而不是拿着旧字体的测量结果当真。
+     */
+    {
+      let ctxRef = null;
+      const doc2 = {
+        createElement: () => ({
+          getContext: () => {
+            ctxRef = ctxRef || {
+              font: '99px monospace',
+              // 赋值被"忽略"：setter 不生效，读回永远是初始值
+              set fontValue(v) {},
+              measureText: (t) => ({ width: 123 }),
+            };
+            return ctxRef;
+          },
+        }),
+      };
+      // 让 font 变成只读：用 defineProperty 覆盖
+      const c = { font: '99px monospace', measureText: (t) => ({ width: 123 }) };
+      Object.defineProperty(c, 'font', { get: () => '99px monospace', set: () => {} });
+      const doc3 = { createElement: () => ({ getContext: () => c }) };
+      const m3 = new Function('document', chunk + '; return { estTextW };')(doc3);
+      // 请求 sans-serif，但读回恒为 "99px monospace" → 不含 sans-serif → 判失败 → 回落
+      eq(m3.estTextW('中', 12, 'sans-serif'), 12,
+        'ctx.font 设不进去时返回估算值（不是拿着旧字体量出来的 123）');
+    }
+
     /* 4e) 为什么必须真测：0.55 是拉丁**小写**的平均宽度，宽字符远不止
      * 实测（Arial 宽度表，字号 13、最长 14 字）：
      *   "WWWWWWWWWWWWWW"  估 100  实 172  → 低估 72px

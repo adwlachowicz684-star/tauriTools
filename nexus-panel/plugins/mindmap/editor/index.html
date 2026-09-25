@@ -583,18 +583,6 @@
             }
 
             /**
-             * 估算一段文字的显示宽度，用来决定「文件行需要多宽」。
-             *
-             * 为什么是估算：kity.Text 没有同步可用的 getWidth()，量 BBox 又要等
-             * 布局完成，而这里是在渲染过程中就要算出盒子尺寸。
-             *
-             * 中日韩字符按 1 个字号算（等宽全角），其余按 0.55 算（拉丁字母平均
-             * 宽度）。宁可**估宽一点**：估窄了文件名会戳出外框，估宽了只是节点
-             * 稍微宽一点，不影响可读性。
-             *
-             * 由测试直接取源码执行，所以写成命名函数而不是内联表达式。
-             */
-            /*
              * 真实测量：canvas 的 measureText 是**同步**的，取到的宽度准确。
              * 返回 null 表示量不到（环境没有 canvas / 字体没加载），由调用方回落。
              *
@@ -607,6 +595,32 @@
              * 反向（窄字符 i/l）只是高估 ~60px，节点偏宽但不影响可读性，
              * 所以真正要解决的是低估这一侧。
              */
+            /**
+             * 字体名 → 可安全拼进 CSS font 简写的片段（纯函数，可测）。
+             *
+             * 必须加引号：`ctx.font = '13px Microsoft YaHei'` 走的是 CSS
+             * **简写解析**，字体名含空格 / 中文 / 逗号时一旦解析失败，赋值会被
+             * **静默忽略** —— `ctx.font` 保持上一次的值，于是 measureText
+             * 用的是**另一支字体**，量出来的宽度看似正常其实是错的，
+             * 而且不报错、也不回落（返回值非零，estTextW 不会走回落分支）。
+             * 写成带引号的 string 形式即可容纳任意字符。
+             *
+             * 已含引号、或本身就是通用族名（sans-serif 等）则原样返回 ——
+             * 通用族名是**关键字**，加了引号反而变成字体名，语义就反了。
+             */
+            var _GENERIC_FAMILIES = ['sans-serif', 'serif', 'monospace', 'cursive',
+                'fantasy', 'system-ui', 'ui-sans-serif', 'ui-serif', 'ui-monospace', 'math'];
+            function cssFontFamily(name) {
+                var s = String(name == null ? '' : name).trim();
+                if (!s) return 'sans-serif';
+                if (s.indexOf('"') >= 0 || s.indexOf("'") >= 0) return s;      // 已带引号
+                var low = s.toLowerCase();
+                for (var i = 0; i < _GENERIC_FAMILIES.length; i++) {
+                    if (low === _GENERIC_FAMILIES[i]) return s;               // 通用族名是关键字
+                }
+                return '"' + s.replace(/"/g, '\\"') + '"';
+            }
+
             var _mtCtx = null;
             var _mtCache = Object.create(null);
             var _mtCount = 0;
@@ -617,10 +631,22 @@
                         _mtCtx = cvs.getContext && cvs.getContext('2d');
                     }
                     if (!_mtCtx || typeof _mtCtx.measureText !== 'function') return null;
-                    var key = fontSize + '|' + (fontFamily || '') + '|' + str;
+                    var fam = cssFontFamily(fontFamily);
+                    var key = fontSize + '|' + fam + '|' + str;
                     var hit = _mtCache[key];
                     if (hit !== undefined) return hit;
-                    _mtCtx.font = fontSize + 'px ' + (fontFamily || 'sans-serif');
+                    _mtCtx.font = fontSize + 'px ' + fam;
+                    /*
+                     * 赋值后**读回来校验**：CSS 值无效时会被忽略，`ctx.font`
+                     * 保持旧值 —— 那样 measureText 用的是上一支字体，
+                     * 量出来的宽度是错的却既不报错、也不会走回落。
+                     * 把"去引号并小写化后的字体名"拿去读回值里比对，
+                     * 命中才算这次设置真的生效了。
+                     */
+                    var readBack = '';
+                    try { readBack = String(_mtCtx.font || ''); } catch (e2) { readBack = ''; }
+                    var probe = fam.replace(/["']/g, '').toLowerCase();
+                    if (!readBack || (probe && readBack.toLowerCase().indexOf(probe) < 0)) return null;
                     var r = _mtCtx.measureText(str);
                     var w = (r && Number.isFinite(r.width)) ? r.width : null;
                     if (w === null) return null;

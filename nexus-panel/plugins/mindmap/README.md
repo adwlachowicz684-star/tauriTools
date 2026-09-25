@@ -1949,6 +1949,29 @@ __kmDefaultValign = (cbox, bb) => (cbox.height - bb.height) > 1 ? 'bottom' : 'mi
 
 真正的问题在另一头：**是文字被推下来了，不是视频没动**。
 
+## CSS font 简写赋值失败是**静默**的：测量会用错字体
+
+`ctx.font` 走的是 CSS **简写解析**。字体名含空格 / 中文 / 逗号时，
+`ctx.font = '13px Microsoft YaHei'` 一旦解析失败，赋值会被**忽略**，
+`ctx.font` 保持**上一次的值**。
+
+后果比"量不到"更糟：measureText 用**另一支字体**量，返回值**非零**，
+所以 `estTextW` 的 `m > 0` 回落分支根本不会触发 —— 拿到一个看似正常、
+实际错误的宽度，而且不报错。
+
+两道防线：
+
+**① `cssFontFamily()` 加引号**（写成 string 形式可容纳任意字符）：
+
+```js
+'Microsoft YaHei' → '"Microsoft YaHei"'
+'微软雅黑'        → '"微软雅黑"'
+'sans-serif'      → 'sans-serif'   ← 通用族名是关键字，**不能**加引号
+```
+
+**② 赋值后读回校验**：把去引号小写化后的字体名拿去 `ctx.font` 的读回值里
+比对，命中才算这次设置真的生效，否则返回 null 走回落。
+
 ## 附件名的「测量字体」与「渲染字体」不是同一支
 
 上一轮给 `estTextW` 加了真实测量（`measureText`），并按节点字体去量。
