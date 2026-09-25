@@ -2706,6 +2706,17 @@ pub fn fpx_mcp_status() -> serde_json::Value {
     mcp::status()
 }
 
+/// 手动触发一次 MCP 客户端注册自愈。
+///
+/// 启动时会自愈一次（main.rs），但那只覆盖"进程刚起来那一刻"：
+/// 之后用户挪了 exe、或手工删了客户端配置里的条目，界面上没有
+/// "再来一次"的入口，只能重启应用。这条命令就是那个入口。
+/// 幂等 —— 没变化就什么都不写，返回值直接给人看。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_mcp_register() -> String {
+    mcp::register_clients()
+}
+
 /* ---------------------------- 预设图标 ---------------------------- */
 
 /// 把某目录下的图标文件导入数据目录 icons/（用于接入原版 preseticons）。

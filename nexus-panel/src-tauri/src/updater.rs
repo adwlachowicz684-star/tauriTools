@@ -103,8 +103,18 @@ fn pubkey_ready() -> bool {
 
 /// 用给定通道构造 updater。
 fn build_updater(app: &tauri::AppHandle, channel: &str) -> Result<tauri_plugin_updater::Updater, String> {
+    /* endpoints() 收的是 Vec<Url> 而不是 Vec<String>（updater 2.12）。
+       端点是常量拼出来的，解析失败只可能是常量写错 —— 与其让每个 URL 的
+       parse 结果单独冒泡，不如这里一次性判空，把"端点不可用"说成一句人话。 */
+    let urls: Vec<tauri::Url> = endpoints_for(channel)
+        .into_iter()
+        .filter_map(|s| tauri::Url::parse(&s).ok())
+        .collect();
+    if urls.is_empty() {
+        return Err("更新端点无效：URL 全部解析失败".to_string());
+    }
     app.updater_builder()
-        .endpoints(endpoints_for(channel))
+        .endpoints(urls)
         .map_err(|e| format!("更新端点无效：{e}"))?
         .pubkey(UPDATER_PUBKEY)
         .build()
@@ -156,8 +166,10 @@ pub async fn updater_check(
         Ok(None) => Ok(UpdateInfo {
             state: "uptodate".into(),
             channel: ch,
-            current,
+            /* latest 必须先算：结构体按书写顺序求值，`current` 一旦 move
+               给 current 字段，下面再 .clone() 就是借用已移动的值。 */
             latest: current.clone(),
+            current,
             notes: String::new(),
             date: String::new(),
             message: String::new(),
@@ -168,7 +180,9 @@ pub async fn updater_check(
             current,
             latest: u.version.clone(),
             notes: u.body.clone().unwrap_or_default(),
-            date: u.date.clone().unwrap_or_default(),
+            /* UpdateInfo.date 是 String，而插件给的是 Option<OffsetDateTime>
+               （没有 Default）—— 显式格式化，不靠 unwrap_or_default。 */
+            date: u.date.map(|d| d.to_string()).unwrap_or_default(),
             message: String::new(),
         }),
         /* 查不到不该当成"没有更新"：端点 404 / 网络不通 / 验签失败
