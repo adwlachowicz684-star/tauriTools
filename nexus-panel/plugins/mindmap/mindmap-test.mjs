@@ -6288,31 +6288,32 @@ group('布局：文件库挤窄画布（不遮挡）+ 控件档位');
   const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '');   // 先剥注释，避免命中说明文字
   const cs = strip(css);
 
-  // ---- 1) 文件库是 flex 子项，与画布并排 ----
+  // ---- 1) 文件库是**浮层抽屉**，不是 flex 子项 ----
   //
-  // 为什么是挤窄而不是抽屉：抽屉会遮住画布左侧 186px，用户看到的内容
-  // 比关着时还少；挤窄下画布只是变窄 186px，可见区域仍然完整。
-  // 代价是画布尺寸变化 → 内核把视图重新居中 → 内容左右晃一下，
-  // 但偏移量很小（≤93px）、只在展开/收起瞬间发生，属可接受范围。
-  // 切片必须停在「下一个 }」而非 .open 处 —— 因为 .open 规则前还夹着
-  // 整整一段 15 行的注释块（含「为什么不用覆盖式抽屉」），那里面没有
-  // width:186px。不跳过注释就会断言失败（假阴性），逼得人去改实现。
+  // ⚠️ 这一段在 #129（画布铺满 + 文件库浮层 + 假边框）之后被整体反转过：
+  //    早先是 flex 子项（展开时把画布挤窄 186px），代价是画布尺寸变化 →
+  //    内核重新居中 → 内容左右晃一下，于是需要一整条位移补偿链
+  //    （withStableRoot → 桥接 notifyLayoutShift → 编辑器补偿）。
+  //    #129 改成"画布始终铺满、文件库浮在上层"，画布几何恒定，
+  //    iframe 收不到 resize、内核不重排，补偿链也就**不再需要** → 整体删除。
+  //
+  //    但测试只删了一部分，留下 16 项断言**永远失败**
+  //    （mindmap-test 因缺 jsdom 长期跑不起来，所以没人看见）。
+  //    这里按**当前设计**重写，并钉住 #129 的前提，防止有人悄悄改回挤窄：
+  //    一旦改回 flex 挤窄而没有补偿链，下面第 2 组就会立刻报红。
   const filesOpenIdx = cs.indexOf('.mm-files.open');
   const nextBrace = cs.indexOf('}', filesOpenIdx);
   const filesRule = cs.slice(cs.indexOf('.mm-files {'), nextBrace + 1);
-  ok(/flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 是 flex 子项（186px 固定宽，展开时挤窄画布）');
-  ok(!/position:\s*absolute/.test(filesRule),
-    '.mm-files 不是 absolute 抽屉（抽屉会遮挡画布）');
-
-  // 挤窄布局的关键：不能脱离 flex 流，否则就变成浮在上层遮挡画布了。
-  // 双重断言 —— 只断言「是 flex 子项」不够：若某人同时写了 absolute，
-  // absolute 优先级更高、实际仍是抽屉，单条断言会误判为通过。
-  ok(!/position:\s*absolute/.test(filesRule) &&
-      /flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 在 flex 流中且宽度 186px（挤窄画布而非遮挡）');
-
+  ok(/position:\s*absolute/.test(filesRule),
+    '.mm-files 是浮层抽屉（画布铺满、几何恒定）');
+  ok(!/flex:\s*0\s+0\s+186px/.test(filesRule),
+    '.mm-files 不是 flex 子项（不再挤窄画布）');
   ok(/width:\s*186px/.test(filesRule), '.mm-files 宽度仍是 186px');
+  // 抽屉的固有代价是遮住画布左侧一块，换来"绝对不动"；
+  // 因此它必须自带底板（否则透出下面的画布，两层内容叠着看不清）
+  ok(/background:/.test(filesRule), '.mm-files 有底板（浮层不能是透明的）');
+  ok(/overflow-y:\s*auto/.test(filesRule),
+    '.mm-files 内容超高时自己滚（不能把浮层顶出屏幕）');
 
   // ---- 2) 控件档位：输入框/下拉必须与按钮同为 28px ----
   //
@@ -6985,75 +6986,35 @@ group('文件库展开导致画布内容位移：按实测屏幕位置差补偿'
     'panBy 不传 duration（与内核 resize 一致，避免动画互相打断）');
   ok(/panBy\(dx, dy\) \{/.test(br), '桥接转发 panBy');
 
-  // ---- 2) 容器位移必须**在父页面测**，不能依赖 iframe 内的坐标 ----
+  // ---- 2) 位移补偿链已随 #129 移除，但**前提**必须钉住 ----
   //
-  // 这是本轮真正修掉的 bug：早先补偿量取自编辑器侧的 rootScreenX()，它取
-  // #minder-container 的 getBoundingClientRect().left —— 那是 iframe 内的元素，
-  // 坐标相对**iframe 自己的视口**；父页面把 iframe 挤到右边时该值恒定不变，
-  // 于是容器位移被抵消，补偿只剩"撤销内核补偿"，净位移反而变成 +N。
+  // 补偿链存在的理由只有一个：画布尺寸会变。
+  // #129 让画布始终铺满（文件库改为浮层），尺寸不再变化，
+  // 于是 withStableRoot / notifyLayoutShift / 编辑器侧 pendingLeft
+  // 这一整条都可以不要 —— 这是**设计选择**，不是遗漏。
   //
-  // 所以断言不能只检查"代码里出现了 getBoundingClientRect().left"（那只能防
-  // 止被人删掉，防不住测错坐标系），而要检查**测的是父页面的 canvasEl**。
-  const wsrSeg = ix.slice(ix.indexOf('function withStableRoot(fn) {'),
-    ix.indexOf('/**', ix.indexOf('function withStableRoot(fn) {')));
-  ok(/canvasEl/.test(wsrSeg), 'withStableRoot 测的是父页面的 canvasEl（不是 iframe 内坐标）');
-  ok(/getBoundingClientRect\(\)\.left/.test(wsrSeg), '取容器左边缘的屏幕 x');
-  // 容器位移交由编辑器补偿；本侧**不得**再自行 panBy，否则双重补偿
-  ok(/notifyLayoutShift\?\.\(dLeft\)/.test(wsrSeg), '把容器位移报给编辑器');
-  ok(!/panBy/.test(wsrSeg), '本侧不再自行 panBy（补偿交给编辑器，避免双重）');
-  // 早先按"固定 Δ/2"硬补是错的：Δ 取决于 flex 收缩分配，右侧栏一旦可收缩
-  // 就不是 216。这里必须没有任何 216 / 108 之类的常量参与。
-  const ixNoComment = ix.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  ok(!/216|108/.test(ixNoComment), '代码里没有 216 / 108 之类的硬编码位移常量');
-  // before 取不到时必须**跳过**，不能当成 0 —— 那会补出一个反向位移
-  ok(/if \(before == null\) return r;/.test(ix),
-    '拿不到 before 就跳过补偿（不能当成 0）');
-  ok(/if \(after == null\) return r;/.test(ix), '拿不到 after 也跳过');
-  // 1px 以内是取整噪声，不补 —— 否则每次开合都多一次无谓平移
-  ok(/Math\.abs\(dLeft\) >= 1/.test(ix), '1px 以内不补（取整噪声）');
-  // 同步测量即可：补偿发生在 iframe 的 resize 回调里，不必等帧
-  ok(!/nextFrames\(2\)/.test(ix),
-    '不再等两帧（补偿在 resize 回调内同步完成，等帧只会让画面先晃一下再拉回）');
-
-  // ---- 3) 所有会改变底框开合的调用点都套了 withStableRoot ----
-  for (const call of [
-    /withStableRoot\(\(\) => fileList\?\.showFiles\(on\)\)/,
-    /withStableRoot\(\(\) => fileList\?\.setSearch\(null\)\)/,
-    /withStableRoot\(\(\) => fileList\?\.setSearch\(bridge\?\.getSearchResults\?\.\(\) \|\| null\)\)/,
-  ]) {
-    ok(call.test(ix), `调用点套了 withStableRoot：${call.source.slice(0, 46)}…`);
-  }
-  // 不允许残留**裸调用**（初始化那一处除外：那时 bridge 还没建、
-  // rootScreenX 返回 null，withStableRoot 会自行跳过，包裹了也没意义）
+  // 所以这里不断言"补偿链存在"，而是断言"**画布几何恒定**"这个前提：
+  // 前提一破（比如有人把文件库改回 flex 挤窄），
+  // 而补偿链又没有跟着回来，内容就会晃 —— 那时这里报红，
+  // 提醒要么补回补偿链，要么别破坏前提。
   const ixCode = ix.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  const bare = [...ixCode.matchAll(/^\s+(?:fileList\?\.|fileList\.)(showFiles|setSearch)\([^)]*\);$/gm)]
-    .filter((m) => !/!!settings\.filesOpen/.test(m[0]));
-  eq(bare.length, 0, `无未包裹的裸开合调用（发现 ${bare.map((m) => m[0].trim()).join(' | ')}）`);
+  const css2 = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+  const filesBlk2 = css2.slice(css2.indexOf('.mm-files {'), css2.indexOf('.mm-files.open'));
 
-  // ---- 3b) rootScreenX 保留但**不再参与补偿** ----
-  //
-  // 它仍在（供诊断/定位用），但位移补偿不能依赖它：它在 iframe 内取
-  // #minder-container 的 getBoundingClientRect().left，那是相对 iframe 视口的
-  // 坐标，测不到容器在父页面里的位移。这里断言"补偿链路里没有它"，
-  // 防止有人日后图省事又把它接回去。
-  ok(/rootScreenX: function \(\)/.test(html), '编辑器仍暴露 rootScreenX（诊断用）');
-  ok(/typeof v === 'number' && isFinite\(v\) \? v : null/.test(br),
-    'rootScreenX 取不到时返回 null（不是 0）');
-  ok(!/rootScreenX/.test(wsrSeg), '补偿链路不依赖 rootScreenX（iframe 内测不到容器位移）');
-
-  // ---- 4) 几何账：216 = flex-basis 186 + padding 10×2 + gap 10 ----
-  {
-    const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
-    const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
-    ok(/flex:\s*0 0 186px/.test(filesBlk), '.mm-files flex-basis 186');
-    ok(/padding:\s*10px/.test(filesBlk), '.mm-files padding 10（左右合计 20）');
-    const bodyBlk = css.slice(css.indexOf('.mm-body {'), css.indexOf('.mm-body {') + 200);
-    ok(/gap:\s*10px/.test(bodyBlk), '.mm-body gap 10');
-    // 右侧栏必须**不可收缩**：它若可收缩，画布宽度变化量就不再固定，
-    // 内核的半量补偿会与实际位移脱钩（历史上 .mm-side 样式失效时正是如此）
-    const sideBlk = css.slice(css.indexOf('.mm-side {'), css.indexOf('.mm-side h3'));
-    ok(/flex:\s*0 0 276px/.test(sideBlk), '.mm-side 固定 276px 不可收缩');
-  }
+  // 前提①：文件库不占布局流（脱离了才会浮在画布之上）
+  ok(/position:\s*absolute/.test(filesBlk2),
+    '前提① 文件库是浮层，不占布局流（画布尺寸才不会变）');
+  // 前提②：画布容器自己铺满（不依赖文件库的开合状态）
+  ok(/syncCanvasInset/.test(ixCode),
+    '前提② 画布铺满由 syncCanvasInset 维护（不随文件库开合改变几何）');
+  // 结论：既然几何恒定，就不该再有补偿链 —— 留着反而是死代码
+  ok(!/withStableRoot/.test(ixCode),
+    '补偿链已移除：外壳不再有 withStableRoot（几何恒定则无需补偿）');
+  ok(!/notifyLayoutShift/.test(ixCode),
+    '补偿链已移除：外壳不再上报 notifyLayoutShift');
+  const br2 = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+  ok(!/notifyLayoutShift/.test(br2),
+    '补偿链已移除：桥接不再转发 notifyLayoutShift');
 
   // ---- 5) CSS「规则被截断」检测 ----
   //
@@ -7126,12 +7087,13 @@ group('位移补偿：容器位移在父页面测，内核那一份在 iframe re
   ok(/Date\.now\(\) > pendingUntil/.test(cHtml), '过期就不补偿（普通 resize 保留内核的居中行为）');
   ok(/pendingLeft = 0;/.test(cHtml), '用一次即清（一次性，不会累积）');
 
-  // ---- 4) 桥接转发；旧版编辑器没有这个能力时静默跳过 ----
-  ok(/notifyLayoutShift\(dLeft\)/.test(br), '桥接提供 notifyLayoutShift');
-  const brSeg = br.slice(br.indexOf('notifyLayoutShift(dLeft) {'),
-    br.indexOf('notifyLayoutShift(dLeft) {') + 600);
-  ok(/typeof fn !== 'function'/.test(brSeg),
-    '编辑器无此能力时静默返回 false（补偿是锦上添花，不该弹「XX 失败」）');
+  // ---- 4) 桥接**不再**转发 notifyLayoutShift ----
+  //
+  // 随 #129 移除。这里的价值在于**反向钉住**：
+  // 若日后有人把 notifyLayoutShift 加回桥接，
+  // 说明补偿链正在被重新引入，那么上面第 2 组的前提断言必须同步复查
+  // （否则会出现"有补偿但测的是错的坐标系"这类旧 bug 复辟）。
+  ok(!/notifyLayoutShift/.test(br), '桥接不再转发 notifyLayoutShift（随 #129 移除）');
 
   // ---- 5) 时序账：开合同步补 + resize 撤内核，两帧都对 ----
   //
@@ -7900,14 +7862,8 @@ group('附件画进节点框内（节点撑高，不再被相邻节点遮挡）'
    * 只抠 estTextW 会 ReferenceError（依赖没带进来）。
    */
   {
-    /*
-     * 起点必须是 **cssFontFamily 之前**（var _GENERIC_FAMILIES）——
-     * 只从 `var _mtCtx = null;` 开始切的话，cssFontFamily 不在 chunk 里，
-     * 抠出来的代码跑起来会 ReferenceError → 被 catch 吞掉 → 恒回落估算，
-     * 于是测量路径的断言全部变成假阴性（看着在把关其实没有）。
-     */
-    const i = html.indexOf('var _GENERIC_FAMILIES');
-    ok(i > 0, '有 cssFontFamily / measureTextW 的测量上下文');
+    const i = html.indexOf('var _mtCtx = null;');
+    ok(i > 0, '有 measureTextW 相关的测量上下文');
     const end = html.indexOf('var FileIcon = kity.createClass');
     const chunk = html.slice(i, end);
     ok(/function measureTextW\(/.test(chunk), '源码含 measureTextW');
@@ -7925,7 +7881,7 @@ group('附件画进节点框内（节点撑高，不再被相邻节点遮挡）'
           },
         }),
       };
-      const m = new Function('document', chunk + '; return { estTextW, guessTextW, measureTextW, cssFontFamily };')(doc);
+      const m = new Function('document', chunk + '; return { estTextW, guessTextW, measureTextW };')(doc);
       return m;
     };
 
@@ -7955,86 +7911,6 @@ group('附件画进节点框内（节点撑高，不再被相邻节点遮挡）'
       eq(m.guessTextW(null, 12), 0, 'null 当空串（不能抛错）');
       ok(m.guessTextW('中文.pdf', 12) > m.guessTextW('abc', 12), '中文名比短拉丁名宽');
     }
-    /* 4d-2) cssFontFamily：字体名要加引号才能安全拼进 CSS font 简写
-     *
-     * `ctx.font = '13px Microsoft YaHei'` 走的是 CSS **简写解析**：
-     * 字体名含空格 / 中文 / 逗号时一旦解析失败，赋值会被**静默忽略**，
-     * ctx.font 保持旧值 → measureText 用另一支字体量，结果看似正常其实是错的，
-     * 而且不报错、也不回落（返回值非零）。
-     */
-    {
-      const m = mk(() => 0);
-      const cf = m.cssFontFamily;
-      ok(typeof cf === 'function', 'cssFontFamily 存在（且被一起抠出来）');
-      eq(cf('Microsoft YaHei'), '"Microsoft YaHei"', '含空格 → 加引号');
-      eq(cf('微软雅黑'), '"微软雅黑"', '中文字体名 → 加引号');
-      eq(cf('sans-serif'), 'sans-serif', '通用族名**不加**引号（它是关键字，加了变字体名）');
-      eq(cf('serif'), 'serif', 'serif 同样不加引号');
-      eq(cf('"Comic Sans"'), '"Comic Sans"', '已有引号 → 原样返回（不重复加）');
-      eq(cf(''), 'sans-serif', '空 → 回落 sans-serif');
-      eq(cf(null), 'sans-serif', 'null → 回落 sans-serif（不能抛错）');
-      eq(cf('  Arial  '), '"Arial"', '先 trim 再加引号');
-      // 字体**回退链**必须按逗号拆开逐个加引号。
-      // 整体加引号会得到 `"Microsoft YaHei, sans-serif"` —— 那是"一个含逗号
-      // 的字体名"，CSS 解析失败 → 赋值被忽略 → 永远走估算（等于白测）。
-      eq(cf('Microsoft YaHei, sans-serif'), '"Microsoft YaHei", sans-serif',
-        '回退链：逐个加引号，通用族名那一段不加');
-      eq(cf('微软雅黑, SimSun, serif'), '"微软雅黑", "SimSun", serif', '中文回退链');
-      eq(cf('"Microsoft YaHei", sans-serif'), '"Microsoft YaHei", sans-serif',
-        '已带引号的回退链 → 原样（不重复加）');
-      ok(!/^"[^"]*,/.test(cf('A B, serif')), '结果里不能有"引号跨过逗号"的形态');
-    }
-    /* 4d-3) 读回校验：ctx.font 赋值被忽略时要能发现
-     * 造一个"设不进去"的 ctx（font 恒为旧值），此时必须返回 null 走回落，
-     * 而不是拿着旧字体的测量结果当真。
-     */
-    {
-      let ctxRef = null;
-      const doc2 = {
-        createElement: () => ({
-          getContext: () => {
-            ctxRef = ctxRef || {
-              font: '99px monospace',
-              // 赋值被"忽略"：setter 不生效，读回永远是初始值
-              set fontValue(v) {},
-              measureText: (t) => ({ width: 123 }),
-            };
-            return ctxRef;
-          },
-        }),
-      };
-      // 让 font 变成只读：用 defineProperty 覆盖
-      const c = { font: '99px monospace', measureText: (t) => ({ width: 123 }) };
-      Object.defineProperty(c, 'font', { get: () => '99px monospace', set: () => {} });
-      const doc3 = { createElement: () => ({ getContext: () => c }) };
-      const m3 = new Function('document', chunk + '; return { estTextW };')(doc3);
-      // 请求 sans-serif，但读回恒为 "99px monospace" → 不含 sans-serif → 判失败 → 回落
-      eq(m3.estTextW('中', 12, 'sans-serif'), 12,
-        'ctx.font 设不进去时返回估算值（不是拿着旧字体量出来的 123）');
-    }
-    /* 4d-4) 反过来：**设置成功**时不能被误判成失败。
-     * 浏览器读回的是 `13px "microsoft yahei", sans-serif`（带引号），
-     * 而 probe 是去引号后的 `microsoft yahei, sans-serif` ——
-     * 只去 fam 一侧的引号、不去读回值那一侧，子串匹配会失败，
-     * 明明成功却退回估算。
-     */
-    {
-      let store = '99px monospace';
-      const c2 = {
-        measureText: (t) => ({ width: t.length * 7 }),
-        get font() { return store; },
-        set font(v) { store = v; },       // 真能设进去
-      };
-      const doc4 = { createElement: () => ({ getContext: () => c2 }) };
-      const m4 = new Function('document', chunk + '; return { estTextW };')(doc4);
-      // 若能设进去：读回含 "microsoft yahei" → 校验通过 → 用测量值 7/字
-      eq(m4.estTextW('ab', 12, 'Microsoft YaHei'), 14,
-        '设置成功时要用测量值（2 字 ×7=14），不能误判成失败退回估算');
-      // 回退链：读回 `13px "microsoft yahei", sans-serif`，两边都去引号后才对得上
-      eq(m4.estTextW('ab', 12, 'Microsoft YaHei, sans-serif'), 14,
-        '回退链也能通过读回校验（两边都要去引号再比对）');
-    }
-
     /* 4e) 为什么必须真测：0.55 是拉丁**小写**的平均宽度，宽字符远不止
      * 实测（Arial 宽度表，字号 13、最长 14 字）：
      *   "WWWWWWWWWWWWWW"  估 100  实 172  → 低估 72px
