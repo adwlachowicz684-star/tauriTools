@@ -1362,6 +1362,32 @@ console.log('\n=== 29. 字重与悬停提亮必须走令牌 ===');
      没有任何依据，纯属各自手调。收口成两档（大面积 / 小面积）。 */
   t('--hover-bright 已定义', /--hover-bright\s*:\s*[\d.]+/.test(tk));
   t('--hover-bright-strong 已定义', /--hover-bright-strong\s*:\s*[\d.]+/.test(tk));
+  /*
+   * 两档必须有**明显的强弱关系**，且都在"提亮而非变白"的区间内。
+   *
+   * 只断言"用了令牌"是不够的：变异测试实测把 --hover-bright 从 1.06
+   * 改成 1.15（与 strong 档同值）后，全部 375 项断言**仍然全绿** ——
+   * 令牌还在、引用还在，只有两档的区分消失了。
+   *
+   * 为什么必须是两档而不是一个值（这是刻意设计，不要"统一"掉）：
+   * 可感知度取决于元素面积 —— 大块按钮上 15% 会"闪"，小徽章上 6% 基本看不见。
+   * 两档同值等于把这个设计抹平，大面积控件会变刺眼。
+   *
+   * 不断言具体数值（那会让调设计就要改测试），
+   * 只断言关系与区间。
+   */
+  {
+    const get = (n) => {
+      const m = new RegExp('--' + n + '\\s*:\\s*([\\d.]+)').exec(tk);
+      return m ? parseFloat(m[1]) : NaN;
+    };
+    const base = get('hover-bright'), strong = get('hover-bright-strong');
+    t('悬停提亮两档都在 1.0~1.3（是提亮不是变白）',
+      base > 1.0 && base <= 1.3 && strong > 1.0 && strong <= 1.3,
+      `bright=${base} strong=${strong}`);
+    t('强档明显强于基础档（差值≥0.05，两档不可同值）',
+      strong - base >= 0.05, `bright=${base} strong=${strong} 差=${(strong-base).toFixed(3)}`);
+  }
 
   /* 全仓不许再出现裸的 brightness(数字) —— 新增悬停效果时必须走令牌 */
   const filesToCheck = ['css/controls.css', 'css/dialog.css',
@@ -1764,6 +1790,21 @@ console.log('\n=== 35. 插件基调声明：单字段互斥枚举 ===');
   t('判定里不再读 manifest.followsTheme（已合并进单字段）',
     !/manifest\.followsTheme/.test(sc));
   t('判定按 declaredTheme 结果分支', /declaredTheme\(manifest\)/.test(sc));
+
+  /*
+   * follow 分支必须取 panelBase。
+   *
+   * 这是"观感由外壳主题驱动 → 必然与面板同基调 → 任何主题下都不反转"
+   * 的实现。变异测试实测：把它写成 `pluginBase = 'dark'` 后，
+   * follow 插件在浅色面板下会被判成 dark，与 panelBase='light' 不等
+   * → 施加反转 → 插件变深。4 个测试共 375 项断言**全绿**，无人发现。
+   *
+   * 分支内部逻辑依赖 DOM 采样不易单测，故在源码层钉死这一行。
+   */
+  t('follow 分支的 pluginBase 取 panelBase（不是写死的常量）',
+    /}\s*else\s+if\s*\(declared\s*===\s*'follow'\)\s*\{[\s\S]{0,400}?pluginBase\s*=\s*panelBase\s*;/.test(sc));
+  t('判定里没有把 pluginBase 写成字面量 dark/light（除 policy 强制取反）',
+    [...sc.matchAll(/pluginBase\s*=\s*['"](dark|light)['"]\s*;/g)].length === 0);
 
   /* ---- 4. registry 里不再有自相矛盾的双字段声明 ---- */
   const entries = [];
