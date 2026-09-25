@@ -594,7 +594,46 @@
              *
              * 由测试直接取源码执行，所以写成命名函数而不是内联表达式。
              */
-            function estTextW(str, fontSize) {
+            /*
+             * 真实测量：canvas 的 measureText 是**同步**的，取到的宽度准确。
+             * 返回 null 表示量不到（环境没有 canvas / 字体没加载），由调用方回落。
+             *
+             * 为什么不能只用估算：0.55 是拉丁**小写**字母的平均宽度，
+             * 宽字符（W/M）实际接近 0.94 / 0.83 em ——
+             * 实测（Arial 宽度表，字号 13、最长 14 字）：
+             *   "WWWWWWWWWWWWWW"  估 100  实 172  → **低估 72px**
+             *   "MMMMMMMMMMMMMM"  估 100  实 152  → **低估 52px**
+             * 低估意味着文件名**戳出外框**（盒子按估算值撑宽）。
+             * 反向（窄字符 i/l）只是高估 ~60px，节点偏宽但不影响可读性，
+             * 所以真正要解决的是低估这一侧。
+             */
+            var _mtCtx = null;
+            var _mtCache = Object.create(null);
+            var _mtCount = 0;
+            function measureTextW(str, fontSize, fontFamily) {
+                try {
+                    if (!_mtCtx) {
+                        var cvs = document.createElement('canvas');
+                        _mtCtx = cvs.getContext && cvs.getContext('2d');
+                    }
+                    if (!_mtCtx || typeof _mtCtx.measureText !== 'function') return null;
+                    var key = fontSize + '|' + (fontFamily || '') + '|' + str;
+                    var hit = _mtCache[key];
+                    if (hit !== undefined) return hit;
+                    _mtCtx.font = fontSize + 'px ' + (fontFamily || 'sans-serif');
+                    var r = _mtCtx.measureText(str);
+                    var w = (r && Number.isFinite(r.width)) ? r.width : null;
+                    if (w === null) return null;
+                    // 缓存要有上限：文件名各异，长期累积会无限增长
+                    if (_mtCount >= 500) { _mtCache = Object.create(null); _mtCount = 0; }
+                    _mtCache[key] = w;
+                    _mtCount++;
+                    return w;
+                } catch (e) { return null; }
+            }
+
+            /** 纯估算（measureText 不可用时的回落）。中日韩按全角，其余按 0.55 */
+            function guessTextW(str, fontSize) {
                 var text = String(str == null ? '' : str);
                 var fs = Number(fontSize) || 12;
                 var w = 0;
@@ -611,6 +650,24 @@
                     w += wide ? fs : fs * 0.55;
                 }
                 return w;
+            }
+
+            /**
+             * 一段文字的显示宽度。优先真实测量，量不到才回落估算。
+             *
+             * 用于决定「文件行需要多宽」。宁可**估宽一点**：估窄了文件名会
+             * 戳出外框，估宽了只是节点稍微宽一点。
+             *
+             * 由测试直接取源码执行，所以写成命名函数而不是内联表达式。
+             */
+            function estTextW(str, fontSize, fontFamily) {
+                var text = String(str == null ? '' : str);
+                var fs = Number(fontSize) || 12;
+                var m = measureTextW(text, fs, fontFamily);
+                // 量到 0 也要回落：字体未就绪时 measureText 会给 0，
+                // 拿 0 当真实值等于"认为没有宽度"，比估算还糟
+                if (m && m > 0) return m;
+                return guessTextW(text, fs);
             }
 
             var FileIcon = kity.createClass('FileIcon', {
@@ -940,7 +997,13 @@
                              * 的左缘正好落在行左缘）；文字 = 行左缘 + 20。
                              */
                             var flabel = attachmentLabel(fils[fi], '文件附件');
-                            var rowW = 20 + estTextW(flabel, attachmentFontSize(node));
+                            // 传字体：measureText 要按**实际字体**量才准，
+                            // 用错字体量出来的宽度和画布上画的对不上
+                            var ffs = attachmentFontSize(node);
+                            var ffam = '';
+                            try { ffam = node.getStyle('font-family') || ''; } catch (e) {}
+                            if (!ffam || String(ffam).toLowerCase() === 'default') ffam = 'sans-serif';
+                            var rowW = 20 + estTextW(flabel, ffs, ffam);
                             var rowLeft = cx - rowW / 2;
                             var fic = new FileIcon();
                             fic.paint(color);

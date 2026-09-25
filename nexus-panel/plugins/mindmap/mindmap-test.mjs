@@ -7882,17 +7882,80 @@ group('附件画进节点框内（节点撑高，不再被相邻节点遮挡）'
     ok(K >= 20, `rowW 常数项 K=${K} >= 20（图标 11 + 间隙 9；旧的 12 会让图标戳出左边）`);
   }
 
-  // ---- 4) estTextW：CJK 按全角、拉丁按 0.55 ----
+  /* ---- 4) estTextW：优先真实测量，量不到才回落估算 ----
+   *
+   * 抠源码时必须连 measureTextW / guessTextW **一起**抠 ——
+   * 只抠 estTextW 会 ReferenceError（依赖没带进来）。
+   */
   {
-    const i = html.indexOf('function estTextW(');
-    ok(i > 0, '有 estTextW');
-    const fn = new Function(html.slice(i, html.indexOf('var FileIcon = kity.createClass')) + '; return estTextW;')();
-    eq(fn('中', 12), 12, 'CJK 一字 = 1 个字号');
-    ok(Math.abs(fn('abcd', 12) - 12 * 0.55 * 4) < 1e-6, '拉丁字母 = 0.55 个字号');
-    eq(fn('', 12), 0, '空串宽度 0');
-    eq(fn(null, 12), 0, 'null 当空串（不能抛错）');
-    // 宁可估宽：估窄了文件名会戳出外框
-    ok(fn('中文.pdf', 12) > fn('abc', 12), '中文名比短拉丁名宽');
+    const i = html.indexOf('var _mtCtx = null;');
+    ok(i > 0, '有 measureTextW 相关的测量上下文');
+    const end = html.indexOf('var FileIcon = kity.createClass');
+    const chunk = html.slice(i, end);
+    ok(/function measureTextW\(/.test(chunk), '源码含 measureTextW');
+    ok(/function guessTextW\(/.test(chunk), '源码含 guessTextW（回落）');
+    ok(/function estTextW\(/.test(chunk), '源码含 estTextW');
+
+    // 造一个可控的 canvas 环境，让 measureText 返回我们指定的值
+    const mk = (fnMeasure) => {
+      let ctxRef = null;
+      const doc = {
+        createElement: () => ({
+          getContext: () => {
+            ctxRef = ctxRef || { font: '', measureText: (t) => ({ width: fnMeasure(t) }) };
+            return ctxRef;
+          },
+        }),
+      };
+      const m = new Function('document', chunk + '; return { estTextW, guessTextW, measureTextW };')(doc);
+      return m;
+    };
+
+    // 4a) 真实测量可用 → 用测出来的值（不是估算值）
+    {
+      const m = mk((t) => t.length * 10);          // 每个字符 10px
+      eq(m.estTextW('abcd', 12, 'sans-serif'), 40, '能用 measureText 时用它（4×10=40，不是估算的 26.4）');
+      eq(m.estTextW('中', 12, 'sans-serif'), 10, 'CJK 也按测量值（估算是 12）');
+    }
+    // 4b) 测出 0（字体未就绪）→ 必须回落，不能拿 0 当真实宽度
+    {
+      const m = mk(() => 0);
+      eq(m.estTextW('中', 12, 'sans-serif'), 12, 'measureText 给 0 → 回落估算（拿 0 当真值等于"认为没宽度"）');
+      eq(m.estTextW('abcd', 12, 'sans-serif'), 12 * 0.55 * 4, '回落时拉丁按 0.55');
+    }
+    // 4c) 没有 canvas（jsdom / 受限环境）→ 回落
+    {
+      const m = new Function(chunk + '; return { estTextW };')();   // 无 document
+      eq(m.estTextW('中', 12), 12, '拿不到 canvas → 回落估算（不抛错）');
+    }
+    // 4d) 回落估算本身：CJK 全角、拉丁 0.55
+    {
+      const m = mk(() => 0);
+      eq(m.guessTextW('中', 12), 12, 'CJK 一字 = 1 个字号');
+      ok(Math.abs(m.guessTextW('abcd', 12) - 12 * 0.55 * 4) < 1e-6, '拉丁字母 = 0.55 个字号');
+      eq(m.guessTextW('', 12), 0, '空串宽度 0');
+      eq(m.guessTextW(null, 12), 0, 'null 当空串（不能抛错）');
+      ok(m.guessTextW('中文.pdf', 12) > m.guessTextW('abc', 12), '中文名比短拉丁名宽');
+    }
+    /* 4e) 为什么必须真测：0.55 是拉丁**小写**的平均宽度，宽字符远不止
+     * 实测（Arial 宽度表，字号 13、最长 14 字）：
+     *   "WWWWWWWWWWWWWW"  估 100  实 172  → 低估 72px
+     *   "MMMMMMMMMMMMMM"  估 100  实 152  → 低估 52px
+     * 低估 = 文件名戳出外框（盒子按估算值撑宽）。
+     */
+    {
+      const m = mk(() => 0);          // 走估算
+      const est = m.guessTextW('WWWWWWWWWWWWWW', 13);
+      ok(est < 172 - 40, `估算对宽字符确实会低估（估 ${est.toFixed(0)} < 实 172）—— 所以必须真测`);
+    }
+    // 4f) 调用点必须把字体传进去（measureText 按实际字体量才准）
+    {
+      const j = html.indexOf('var rowW = 20 + estTextW(');
+      const seg2 = html.slice(Math.max(0, j - 400), j + 60);
+      ok(/estTextW\(flabel, ffs, ffam\)/.test(html), '文件行把字号与字体一起传给 estTextW');
+      ok(/toLowerCase\(\) === 'default'/.test(seg2),
+        "字体 'default' 视作未设置（kity 的占位值，当真会量出错误的宽度）");
+    }
   }
 
   // ---- 5) 注释要说清现在是框内（旧注释说"画在框外"会误导后来人）----
