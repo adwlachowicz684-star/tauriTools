@@ -29,6 +29,7 @@ export type FrameAnyNode = {
   measured?: { width?: number; height?: number };
   width?: number;
   height?: number;
+  style?: { width?: number; height?: number };
   data?: unknown;
   selected?: boolean;
   zIndex?: number;
@@ -49,16 +50,73 @@ export const FRAME_MIN_H = 110;
  * measured 是 xyflow 量出来的真实尺寸，**首帧还没有**。
  * 不兜底的话首帧的框会算成 0 宽，第二帧才跳到正确大小 ——
  * 表现为"框闪一下"。
+ *
+ * 这两个值**沿用嵌合串原来用的**（240 × 76），不要单独调：
+ * 框与串现在共用同一份尺寸函数，改这里会同时改动嵌合的贴合位置，
+ * 而串的位置是落盘的 —— 调一次，老画布上所有串都会整体挪一点。
  */
-const FALLBACK_W = 200;
-const FALLBACK_H = 96;
+const FALLBACK_W = 240;
+const FALLBACK_H = 76;
 
-export function widthOf(n: FrameAnyNode): number {
-  return n.measured?.width ?? n.width ?? FALLBACK_W;
+/*
+ * 节点尺寸。
+ *
+ * 四个来源，按优先顺序：
+ *   1. style    —— 显式写死的高度（有些档位直接给 style.height）
+ *   2. measured —— xyflow 用 ResizeObserver 量出来的真实尺寸
+ *   3. width/h  —— 初始提示；组合框自己也算出来写在这里
+ *   4. 兜底     —— 首帧还没量出来时用
+ *
+ * 为什么 style 排在 measured **前面**：
+ * 改「简 / 标 / 详」时，节点可能是靠 style.height 变高的。
+ * 而 measured 是浏览器渲染完才回填的，**滞后一帧** ——
+ * 于是改档位那一帧，style 已经是新值、measured 还是旧的。
+ * 若让 measured 赢，框就按旧高度画，等下一帧才跟上；
+ * 更糟的是嵌合串也按旧高度贴合，整串裂开一次再合上，看着像在抖。
+ *
+ * 两者稳定后必然相等（DOM 高度就是 style 定的），
+ * 所以让 style 赢只在"正在变化"的那几帧起作用，代价为零。
+ *
+ * 不取两者较大值：那会在 style 与 measured 都不准的瞬间叠出双倍误差。
+ *
+ * 为什么这两份要和 engine/stack 共用同一份（见下面 stackSizeOf 的说明）：
+ * 框的包围盒与嵌合串的贴合位置，必须来自**同一个**高度认知。
+ * 各写一份的话，两者对同一个节点的高度看法不同，
+ * 串贴合好了框却还差一截 —— 正是"组合框没跟着模块变"。
+ */
+/*
+ * 只量尺寸时用的形状 —— 不要求 position。
+ *
+ * 单独定义一个而不是复用 FrameAnyNode：
+ * FrameAnyNode 要求 position 必填，而 stack 那边的节点 position 是可选的。
+ * 复用它的话 stack 调用处只能 `as never` 硬转 ——
+ * 那种转换会让"传错对象"在编译期查不出来，运行时静默拿到兜底尺寸。
+ */
+export type SizeLike = {
+  measured?: { width?: number; height?: number } | null;
+  width?: number;
+  height?: number;
+  style?: { width?: number; height?: number };
+};
+
+export function widthOf(n: SizeLike): number {
+  const s = n.style?.width;
+  if (typeof s === 'number' && s > 0) return s;
+  const m = n.measured?.width;
+  if (typeof m === 'number' && m > 0) return m;
+  const w = n.width;
+  if (typeof w === 'number' && w > 0) return w;
+  return FALLBACK_W;
 }
 
-export function heightOf(n: FrameAnyNode): number {
-  return n.measured?.height ?? n.height ?? FALLBACK_H;
+export function heightOf(n: SizeLike): number {
+  const s = n.style?.height;
+  if (typeof s === 'number' && s > 0) return s;
+  const m = n.measured?.height;
+  if (typeof m === 'number' && m > 0) return m;
+  const h = n.height;
+  if (typeof h === 'number' && h > 0) return h;
+  return FALLBACK_H;
 }
 
 /**

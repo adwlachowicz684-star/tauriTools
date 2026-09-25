@@ -166,3 +166,89 @@ test('组合框已注册', () => {
   const src = readSrc('nodes/index.ts');
   assert.match(src, /import '\.\/defs\/frame';/);
 });
+
+/* ------------------------------------------------------------------ */
+/* 实时跟随：成员一变，框立刻跟着变                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 这组盯的是"框要跟着模块实时变动" ——
+ * 嵌合串改「简 / 标 / 详」、拖动成员位置，框都要立刻重算。
+ *
+ * 失效的样子是"改了档位框不变""拖走了框还留在原地"，
+ * 不报错、也不影响执行，只有把框和成员并排看才觉得对不上。
+ */
+
+test('改档位走 style.height 时框也跟着变（不能只认 measured）', () => {
+  /*
+   * measured 是浏览器渲染完才回填的，**滞后一帧**。
+   * 只认 measured 的话，style 已经改了而 measured 还是旧值的那一帧，
+   * 框按旧高度画 —— 表现为"改了档位框不变"。
+   */
+  const withStyle = (h: number): N => ({
+    id: 'a', position: { x: 100, y: 100 },
+    width: 240, height: h,
+    measured: { width: 240, height: 76 }, // 故意留在旧值，模拟还没回填
+    style: { height: h },
+  } as unknown as N);
+
+  const before = fitFrames([frame('F', ['a', 'b']), withStyle(76), node('b', 100, 200, 240, 76)]);
+  const after = fitFrames([before[0], withStyle(260), node('b', 100, 200, 240, 76)]);
+  assert.ok(
+    (after[0].height ?? 0) > (before[0].height ?? 0) + 10,
+    `style 变高后框应跟着变高：${before[0].height} -> ${after[0].height}`,
+  );
+});
+
+test('拖动成员位置后框跟着走', () => {
+  /*
+   * 单个成员拖远，变的不是框的高度而是框的位置 ——
+   * 高度只取决于成员自身的尺寸。所以这里盯 y，
+   * 断言高度不会发现"框没跟着走"（两种情况都不变）。
+   */
+  const before = fitFrames([frame('F', ['a']), node('a', 100, 100, 240, 76)]);
+  const after = fitFrames([before[0], node('a', 100, 900, 240, 76)]);
+  assert.ok(
+    (after[0].position?.y ?? 0) > (before[0].position?.y ?? 0) + 500,
+    `成员拖远后框应跟着下移：${before[0].position?.y} -> ${after[0].position?.y}`,
+  );
+});
+
+test('成员变高后框也变高（包围盒按成员尺寸算）', () => {
+  const before = fitFrames([frame('F', ['a']), node('a', 100, 100, 240, 76)]);
+  const after = fitFrames([before[0], node('a', 100, 100, 240, 400)]);
+  assert.ok(
+    (after[0].height ?? 0) > (before[0].height ?? 0) + 300,
+    `成员变高后框应变高：${before[0].height} -> ${after[0].height}`,
+  );
+});
+
+test('框与嵌合串共用同一份尺寸函数（不能各写一份）', () => {
+  /*
+   * 各写一份的话，两者对同一个节点的高度看法不同 ——
+   * 串贴合好了、框却还差一截，正是"框没跟着模块变"。
+   */
+  const src = readSrc('engine/stack.ts');
+  assert.match(
+    src,
+    /import \{[^}]*heightOf as frameHeightOf[^}]*\} from '\.\/frames';/,
+    'stack 应复用 frames 的 heightOf',
+  );
+  assert.match(src, /export function heightOf\(n: AnyNode\): number \{\s*return frameHeightOf\(n\);/);
+});
+
+test('尺寸函数认 style（四个来源都到位）', () => {
+  const src = readSrc('engine/frames.ts');
+  const body = src.slice(src.indexOf('export function heightOf'));
+  assert.match(body, /style\?\.height/, 'heightOf 必须读 style.height');
+});
+
+test('框的几何会回填进 state（否则每帧重建、拖动发涩）', () => {
+  /*
+   * 只派生不回填的话，存档里的框永远是建框时的尺寸，
+   * sameGeom 永远不成立 → framedNodes 每帧都是新引用 →
+   * canvasNodes 每帧重建。单独看每帧都对，合起来是拖着发涩。
+   */
+  const src = readSrc('App.tsx');
+  assert.match(src, /position: g\.position, width: g\.width, height: g\.height/);
+});

@@ -45,7 +45,7 @@ type AnyNode = {
 };
 
 /** 只取嵌合关系时用这个 —— 不需要坐标，省得调用方硬凑一个 position */
-import { isFrameNode } from './frames';
+import { isFrameNode, heightOf as frameHeightOf, widthOf as frameWidthOf } from './frames';
 
 export function stackParentOf(d: { data?: Record<string, unknown> }): string | null {
   const p = d.data?.stackParent;
@@ -57,14 +57,24 @@ function posOf(n: AnyNode): { x: number; y: number } {
   return n.position ?? { x: 0, y: 0 };
 }
 
+/*
+ * 节点尺寸 —— 与 engine/frames 共用同一份。
+ *
+ * 以前这里只认 measured、兜底 76/240，而 frames 那份认 measured/width/height、
+ * 兜底 96/200。两份对同一个节点的高度看法不同：
+ * 首帧没量出来时，串按 76 贴合、框按 96 画，
+ * 于是"串贴合好了、框却还差一截" —— 而用户只看到框没跟上。
+ *
+ * 更隐蔽的是 style.height：改档位若走 style，这里完全看不见，
+ * 串不重贴合、框也不变，改档位就像没生效。
+ * 共用一份后两种情况一起消失。
+ */
 export function heightOf(n: AnyNode): number {
-  const h = n.measured?.height;
-  return typeof h === 'number' && h > 0 ? h : 76;
+  return frameHeightOf(n);
 }
 
 export function widthOf(n: AnyNode): number {
-  const w = n.measured?.width;
-  return typeof w === 'number' && w > 0 ? w : 240;
+  return frameWidthOf(n);
 }
 
 export function parentIdOf(n: AnyNode): string | null {

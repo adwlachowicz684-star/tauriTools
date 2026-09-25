@@ -1043,14 +1043,59 @@ function reportSkipped(
   });
   const displayNodes = stack.displayNodes;
   /*
-   * 组合框自适应。
+   * 组合框自适应 —— 分两步：派生 + 回填。
    *
-   * 框的位置与大小**每帧按成员的实际位置重算**，不落盘 ——
-   * 存一份的话，挪成员、改显示高度、加成员都要记得同步它，
-   * 漏一处就是"框和里面的东西对不上"，而且不报错。
-   * 详见 engine/frames 里 fitFrames 的说明。
+   * 框的位置与大小**每帧按成员的实际位置重算**，所以不会"框和里面的
+   * 东西对不上"。但只派生、不回填会有第二个问题：
+   *
+   *   fitFrames 每次都返回**新数组**（存档里的框永远是建框时的 180×110，
+   *   与目标几何比必然不相等）→ framedNodes 每帧都是新引用 →
+   *   canvasNodes 每帧重建 → xyflow 每帧重测量、重渲染。
+   *
+   * 拖一个节点时这就表现为框跟不上手、一卡一卡的，
+   * 而每一帧单独看都是对的 —— 最难自查的那类问题。
+   *
+   * 所以把算出来的几何**回写进 nodes**（下面那个 effect）：
+   * 回填后下一帧 sameGeom 成立，fitFrames 直接返回原引用，
+   * canvasNodes 稳定下来；成员再变动时又重新触发一轮。
+   *
+   * 回填只改框自己的 position / width / height，不碰任何成员，
+   * 也不会无限循环（写进去之后比较就相等了）。
    */
   const framedNodes = useMemo(() => fitFrames(displayNodes), [displayNodes]);
+
+  /*
+   * 把算好的框几何回填进 state（理由见上）。
+   *
+   * 只回填**框**，成员一律不动 ——
+   * 顺手动成员的话，拖动时就会出现两个写入源，
+   * 表现为节点位置来回跳。
+   */
+  useEffect(() => {
+    const moved = displayNodes.filter((n) => isFrameNode(n));
+    if (moved.length === 0) return;
+    const want = new Map(moved.map((n) => [n.id, n]));
+    let dirty = false;
+    for (const n of nodes) {
+      if (!isFrameNode(n)) continue;
+      const g = want.get(n.id);
+      if (!g) continue;
+      if (
+        Math.abs((n.position?.x ?? 0) - (g.position?.x ?? 0)) < 0.5 &&
+        Math.abs((n.position?.y ?? 0) - (g.position?.y ?? 0)) < 0.5 &&
+        Math.abs((n.width ?? 0) - (g.width ?? 0)) < 0.5 &&
+        Math.abs((n.height ?? 0) - (g.height ?? 0)) < 0.5
+      ) continue;
+      dirty = true;
+      break;
+    }
+    if (!dirty) return;
+    setNodes((ns) => ns.map((n) => {
+      const g = want.get(n.id);
+      if (!isFrameNode(n) || !g) return n;
+      return { ...n, position: g.position, width: g.width, height: g.height } as FlowNode;
+    }));
+  }, [framedNodes, displayNodes, nodes, setNodes]);
   const {
     toggleStackCollapse, onStackDragStart, onStackDrag, onStackDragStop,
   } = stack;
