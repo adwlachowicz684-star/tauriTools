@@ -46,12 +46,19 @@ export default function ThemeParams({
   const overrides = getVarOverrides(theme.id);
   const changedCount = Object.keys(overrides).length;
 
+  /*
+   * 过滤规则只有两条，不要用"主题有没有自带这个变量"去过滤。
+   *
+   * 曾经按"主题自带"过滤，结果把"从 A 主题调到 B 主题"这条路堵死了：
+   * 新拟态主题不自带 --surface-overlay / --saturate / --frost-* / --r-*，
+   * 用户把风格改成玻璃后，这些项全被隐藏 —— 磨砂质感调不出来，
+   * 弹窗还会退回"没有底板"（deriveVars 没有 overlay 可算）。
+   * 缺值应当显示出来让用户填，而不是藏起来。
+   */
   const specs = paramsForStyle(style).filter((p) => {
-    /* 只显示"这套主题本来就有"的变量 ——
-       给扁平主题显示 --blur（它压根没定义）会得到一个空值滑块，
-       拖了没任何变化，看着像坏了。 */
-    const own = theme.vars?.[p.key];
-    return own != null || overrides[p.key] != null;
+    /* 由色板 UI 管理的（accent / env）不在这里重复 —— 两套存储会打架 */
+    if (p.managedBy) return false;
+    return true;
   });
 
   const setVar = (key: string, v: string) => {
@@ -144,6 +151,10 @@ export default function ThemeParams({
             {items.map((p) => {
               const own = String(theme.vars?.[p.key] ?? '');
               const cur = String(finalVars[p.key] ?? own);
+              /* 主题没自带该变量 —— 显示出来但要说清，
+                 否则用户看到空白会以为是加载失败。
+                 实际生效值由 CSS 兜底（neumorphism.css 的 :root）。 */
+              const undef = own === '' && overrides[p.key] == null;
               const changed = overrides[p.key] != null && overrides[p.key] !== own;
               return (
                 {/* 用模板串而不是字符串拼接：静态扫描只认模板串里的
@@ -154,6 +165,7 @@ export default function ThemeParams({
                     <div className="tp-row-label">
                       {p.label}
                       {changed ? <span className="tp-dot" title="已改（点右侧还原可退回主题自带值）" /> : null}
+                      {undef ? <span className="p-muted tp-undef" title="这套主题没有定义该变量，当前值来自 CSS 默认值">未定义</span> : null}
                     </div>
                     <div className="p-mono tp-row-key">{p.key}</div>
                     {p.desc ? <div className="p-muted tp-row-desc">{p.desc}</div> : null}

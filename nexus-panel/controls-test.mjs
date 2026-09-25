@@ -124,9 +124,17 @@ console.log('\n=== 3.5 主题参数表（规整管理）===');
   /* 3.5a 主题里真实出现过的变量，必须都能改到（派生量除外 —— 它们由底色算出） */
   const used = new Set();
   for (const t of PRESET_THEMES) for (const k of Object.keys(t.vars || {})) used.add(k);
-  const unreachable = [...used].filter((k) => !spec.has(k) && !derived.has(k));
+  /*
+   * managedBy 的项（--accent / --env-color）由色板 UI 管，不在参数表里，
+   * 但用户**确实能改到**，所以要算进"可改" ——
+   * 否则这条会一直红，而红的理由只是"入口在别处"，属于误报。
+   */
+  const managed = new Set(THEME_PARAM_SPEC.filter((p) => p.managedBy).map((p) => p.key));
+  const unreachable = [...used].filter(
+    (k) => !spec.has(k) && !derived.has(k) && !managed.has(k),
+  );
   t('主题用到的变量用户都能改到', unreachable.length === 0,
-    unreachable.join(', ') || `${used.size} 个变量全部有对应控件`);
+    unreachable.join(', ') || `${used.size} 个变量全部可改（含 ${managed.size} 项由色板管）`);
 
   /* 3.5b 反向：参数表不能凭空造变量 ——
      造一个主题里没有的，控件改了也不生效（applyTo 只写 THEME_VARS 里的） */
@@ -141,6 +149,49 @@ console.log('\n=== 3.5 主题参数表（规整管理）===');
   const badGroup = THEME_PARAM_SPEC.filter((p) => !gkeys.has(p.group));
   t('每个参数都归属已定义的分组', badGroup.length === 0,
     badGroup.map((p) => `${p.key}→${p.group}`).join(', ') || '全部分组有效');
+
+  /* 3.5e managedBy 的项不得出现在参数表渲染结果里 ——
+     它们由色板 UI 管，再渲染一份会让两套存储打架：
+     点参数表的"还原"退回主题自带值，色板那份覆盖随即又被叠加回去，
+     表现为"点了还原没反应"。 */
+  const leaked = [];
+  for (const st of ['neumorph', 'flat', 'glass']) {
+    for (const p of tm.paramsForStyle(st)) if (p.managedBy) leaked.push(`${st}/${p.key}`);
+  }
+  t('managedBy 的项不进参数表', leaked.length === 0,
+    leaked.join(', ') || 'accent / env 已交给色板');
+
+  /* 3.5f 关键：不能按"主题有没有自带"过滤参数。
+     新拟态改成玻璃后，--surface-overlay / 磨砂四层 / 圆角 主题都没自带，
+     若被隐藏就永远调不出玻璃质感（弹窗还会退回没有底板）。 */
+  const neo = PRESET_THEMES.find((t) => t.style === 'neumorph');
+  const glassKeys = tm.paramsForStyle('glass').map((p) => p.key);
+  const CRITICAL = ['--surface-overlay', '--saturate', '--frost-grain', '--frost-edge', '--r-sm', '--blur'];
+  const blocked = CRITICAL.filter((k) => !glassKeys.includes(k));
+  t('切到玻璃风格后关键参数都可调', blocked.length === 0,
+    blocked.join(', ') || `${CRITICAL.length} 项关键参数均可填（新拟态主题本身不带也能填）`);
+
+  /* 3.5h 玻璃风格缺 --surface-overlay 时必须派生。
+     不派生的后果是"把新拟态改成玻璃后弹窗没有底板"——
+     当时给 6 套玻璃主题补 overlay 只覆盖了"本来就是玻璃"的路径，
+     覆盖不到"非玻璃改成玻璃"这条新路径。
+     （逻辑依赖 localStorage 与 :root，只能做源码级校验） */
+  const tmSrc = read('js/theme-manager.js');
+  t('玻璃风格缺浮层底时会派生（防弹窗无底板回归）',
+    /style\s*===\s*'glass'\s*&&\s*v\['--surface-overlay'\]\s*==\s*null/.test(tmSrc),
+    'deriveVars 内有 glass overlay 派生');
+
+  /* 3.5i 玻璃风格不论主题是否自带渐变，都允许配背景 ——
+     没有背景的玻璃就是一块实心板，观感不成立 */
+  t('玻璃风格支持背景图（防"改成玻璃后配不了背景"回归）',
+    /if\s*\(style\s*===\s*'glass'\)\s*return\s*true;/.test(tmSrc),
+    'supportsBgImage 对 glass 放行');
+
+  /* 3.5g 模糊半径不该给扁平 —— 扁平面板不透明，拖了没有任何变化 */
+  t('模糊半径不给非玻璃风格',
+    !tm.paramsForStyle('flat').some((p) => p.key === '--blur')
+    && !tm.paramsForStyle('neumorph').some((p) => p.key === '--blur'),
+    'flat / neumorph 均不显示 --blur');
 
   /* 3.5d 滑块型必须有区间 —— 缺 min/max 的 range 会退化成 0~100，
      对 --frost-grain（0~0.15）这种量纲就是"轻轻一拖就爆表"。 */

@@ -1901,3 +1901,11 @@ input[type='range']:disabled {
   .tp-row-ctl { max-width: 100%; flex-wrap: wrap; }
   .tp-text { width: 100%; }
 }
+/* 主题未定义该变量时的角标 */
+.tp-undef {
+  font-size: var(--fs-11, 11px);
+  padding: 0 var(--sp-2, 4px);
+  border-radius: var(--r-sm, 9px);
+  background: var(--surface);
+  box-shadow: var(--sh-out-sm);
+}
