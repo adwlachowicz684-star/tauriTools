@@ -472,7 +472,65 @@ export function createHost(opts = {}) {
   };
 
   /* ---- 加载 / 卸载 ---- */
-  async function mount(id) {
+  /*
+   * 带参数打开插件（E2 入口的统一出口）。
+   *
+   * 两种情况必须分开处理，这是本函数存在的全部理由：
+   *
+   *   ① 插件**尚未**是激活态 → 走 mount(id, args)，参数随挂载塞进 ctx.openArgs。
+   *   ② 插件**已经**激活     → 此时不能再 mount（会整篇重新挂载，
+   *      用户正在看的内容、滚动位置全丢），只能走事件总线补发。
+   *
+   * 只写 ① 的话，第二次"用 md 打开另一个文件"会整篇重载；
+   * 只写 ② 的话，第一次就永远收不到。
+   *
+   * @param {string} id
+   * @param {any} args
+   * @returns {Promise<boolean>} 目标不存在时 false —— 不返回的话调用方
+   *          await 到 undefined，分不清"成功但无返回"和"没这个插件"，
+   *          界面上都是"点了没反应"。
+   */
+  async function openWithArgs(id, args) {
+    const target = state.plugins.find((p) => p.id === id);
+    if (!target) return false;
+    if (state.activeId === id && state.instance) {
+      bus.emit(`plugin:open-args:${id}`, args);
+      return true;
+    }
+    await mount(id, args);
+    return true;
+  }
+
+  /*
+   * openWithArgsFor —— 带**调用方**的跨插件打开。
+   *
+   * 与 openWithArgs 的差别只有一个：多一道 builtin 校验。
+   *
+   * 为什么必须有这道校验（这是本函数存在的全部理由）：
+   *   md 是内置插件，白名单里有 fpx_read_file —— 那是**任意路径读取**
+   *   （fpx::fpx_read_file 不经 guard::must_be_under）。
+   *   第三方插件自己拿不到这条命令，但如果 openPlugin 对它开放，
+   *   它可以 openPlugin('md', { path: 'C:/Users/…/任意文件' })，
+   *   借 md 的白名单把内容读出来 —— **用别人的权限做自己不能做的事，
+   *   这是提权**，而且日志上只显示"md 读了一个文件"，看不出是谁指使的。
+   *
+   * 校验必须在这里（宿主）而不是 sdk：
+   *   sdk 跑在插件自己的上下文，插件改一下就能绕；
+   *   只有宿主这侧是不可信方碰不到的。
+   */
+  async function openWithArgsFor(from, id, args) {
+    if (!from?.builtin) return false;
+    return await openWithArgs(id, args);
+  }
+
+  /*
+   * mount(id, args) —— args 是"打开参数"（E2 入口）。
+   *
+   * 它在挂载**之前**就存在，所以必须由宿主持有并塞进 ctx，
+   * 不能走事件总线（总线的订阅要等插件挂载完，那时这一发早已过去）。
+   * 详见 plugin-sdk.js 里 openArgs 的说明。
+   */
+  async function mount(id, args = null) {
     const manifest = state.plugins.find((p) => p.id === id);
     /* 服务插件不该被用户直接打开：它没有主视图，打开是空白。
        拦在这里而不是只靠侧边栏不显示 —— 侧边栏只是 UI，
@@ -528,8 +586,8 @@ export function createHost(opts = {}) {
 
     try {
       const instance = manifest.type === 'iframe'
-        ? await mountIframeView(stage, manifest, token, 'main')
-        : await mountModule(stage, manifest, token);
+        ? await mountIframeView(stage, manifest, token, 'main', args)
+        : await mountModule(stage, manifest, token, args);
 
       if (state.mounting !== token) { await safeTeardown(instance); return; }
       state.instance = instance;
@@ -636,6 +694,8 @@ export function createHost(opts = {}) {
       theme: readTheme(),
       shellHooks: makeShellHooks(manifest),
       isActive: () => state.shortcutsPaused === true,
+      /* 与主线同形状：同一个 API 一处有、一处没有，是调用方最难排查的那类坑 */
+      openPlugin: (targetId, args2) => openWithArgsFor(manifest, targetId, args2),
     });
 
     const result = await def.settings(ctx);
@@ -725,7 +785,7 @@ export function createHost(opts = {}) {
   }
 
   /* ---- 模式 A：同页模块插件 ---- */
-  async function mountModule(stage, manifest, token) {
+  async function mountModule(stage, manifest, token, openArgs = null) {
     const wrap = document.createElement('div');
     wrap.className = 'plugin-wrap';
     const container = document.createElement('div');
@@ -752,7 +812,10 @@ export function createHost(opts = {}) {
     }
 
     const ctx = createModuleContext({
-      manifest, container, bus,
+      manifest, container, bus, openArgs,
+      /* 跨插件打开（E2 触发源）：同页插件直接给函数，不必绕桥接。
+         builtin 校验在 openWithArgsFor 里，判定在宿主侧，插件改不动。 */
+      openPlugin: (targetId, args2) => openWithArgsFor(manifest, targetId, args2),
       theme: readTheme(),
       shellHooks: makeShellHooks(manifest),
       isActive: isPluginActive(manifest.id),   // 快捷键只在自己激活时生效
@@ -816,7 +879,7 @@ export function createHost(opts = {}) {
     return () => clearTimeout(timer);
   }
 
-  async function mountIframeView(hostEl, manifest, token, view = 'main') {
+  async function mountIframeView(hostEl, manifest, token, view = 'main', openArgs = null) {
     const wrap = document.createElement('div');
     wrap.className = 'plugin-wrap plugin-wrap-frame';
     const iframe = document.createElement('iframe');
@@ -943,6 +1006,7 @@ export function createHost(opts = {}) {
             send(iframe, {
               // 插件可能自选了主题（见 varsForPlugin）；没有则等同全局
               type: 'init', manifest, theme: varsForPlugin(manifest.id), view,
+              openArgs,                         // 打开参数（E2），与 module 同语义
               isolated,                         // 插件据此决定能力探测方式
               /* 让插件自报基调。两种场景：
                  1) 隔离插件 —— 外壳读不到 contentDocument，采样会静默失败
@@ -1179,6 +1243,21 @@ export function createHost(opts = {}) {
             return reply(false, null, verdict.reason);
           }
           return reply(true, await tauri.invoke(payload.cmd, payload.args));
+        }
+        /*
+         * open-plugin —— 跨插件打开（E2 触发源）。
+         *
+         * 例：项目组（同页）点 .md 文件 → 让 md 插件带 path 打开。
+         *
+         * 这里**必须**校验调用方是内置插件，理由见 plugin-sdk.js 的说明：
+         * 开放给第三方就等于允许它借 md 的 fpx_read_file 读任意文件
+         * （它自己没这条命令，却能借别人的白名单），是提权。
+         */
+        case 'open-plugin': {
+          if (!manifest?.builtin) {
+            return reply(false, false, '跨插件打开只允许内置插件使用');
+          }
+          return reply(true, await openWithArgs(payload?.id, payload?.args));
         }
         case 'listen':
           return reply(false, null, 'iframe 模式不支持 listenTauri，请使用 ctx.on / ctx.emit');
@@ -1585,6 +1664,7 @@ export function createHost(opts = {}) {
     getCloseAction,
     setCloseAction,
     onCloseActionChange,
+    openWithArgs,
     readTheme,
     getPlugins: () => state.plugins,
     /** 当前已注册的应用级快捷键（accel → { pluginId, event, label }） */
