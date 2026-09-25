@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Api } from '../api';
 import type { DirEntryLite } from '../types';
 import { Modal } from './ui';
@@ -29,21 +29,38 @@ export function DirDialog({
   const [err, setErr] = useState('');
   const [newName, setNewName] = useState('');
   const [loading, setLoading] = useState(false);
+  /** 目录加载代号，见下方 load 的说明：连续点目录时用它丢弃过期响应 */
+  const loadSeq = useRef(0);
 
   const load = useCallback(async (p: string) => {
+    /*
+     * 本次加载的代号，回来时对不上就丢弃。
+     *
+     * 没有它的话，先点一个慢的目录（网络盘、大目录）、再点一个快的，会出现：
+     * 慢的那次回来时把 entries 和 path 一起改回去 ——
+     * 用户明明点了 B，界面却跳到 A 的内容，地址栏也变成 A。
+     * 没有报错，他会以为自己点错了，于是再点一次 B（又跳一次）。
+     *
+     * 同理，loading 也只能由**最后一次**收尾：
+     * 两次在飞时先回来的那次会提前把 loading 清掉，
+     * 界面于是在"还在读"时显示就绪。
+     */
+    const seq = ++loadSeq.current;
     setLoading(true);
     setErr('');
     try {
       const list = await api.listDirs(p);
+      if (loadSeq.current !== seq) return;
       // path 为空时后端返回的是盘符 / 根目录列表，同样是可选条目，不能丢弃
       // （否则点面包屑 ⌂ 只能看到「请选择一个起点」，实际拿得到数据却不用）
       setEntries(list);
       setPath(p);
       setInput(p);
     } catch (e: any) {
+      if (loadSeq.current !== seq) return;
       setErr(e?.message ?? String(e));
     } finally {
-      setLoading(false);
+      if (loadSeq.current === seq) setLoading(false);
     }
   }, [api]);
 

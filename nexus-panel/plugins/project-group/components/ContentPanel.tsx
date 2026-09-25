@@ -48,6 +48,8 @@ export function ContentPanel({
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [text, setText] = useState('');
+  /** 预览区读取代号，见下方 read 的说明：连续点文件时用它丢弃过期响应 */
+  const readSeq = useRef(0);
   /** #259 内容树右键菜单。存节点而不是 path —— 目录节点没有 ContentItem，只有 TreeNode。
    *  `depth` 一并存：skill 虚拟层改名要靠它算 `_` 段下标。 */
   const [menu, setMenu] = useState<{ x: number; y: number; node: TreeNode; depth: number } | null>(null);
@@ -84,7 +86,17 @@ export function ContentPanel({
    */
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
-  useEffect(() => { onSelectRef.current?.(null); setText(''); }, [root, kind]);
+  useEffect(() => {
+    onSelectRef.current?.(null);
+    setText('');
+    /*
+     * 换目录 / 换类别要让**在飞的那次读取作废**。
+     * 不清的话，上一个目录里一个大文件迟迟没读完，切回来后它的内容
+     * 会落进已经清空、属于新目录的预览区 —— 显示的是别处的文件，
+     * 而界面上没有任何线索说明这份内容不属于当前目录。
+     */
+    readSeq.current++;
+  }, [root, kind]);
 
   /**
    * 某类资源的**实际基目录**（对应原版 OpenAgentDir / OpenSkillDir / OpenRuleDir）。
@@ -248,11 +260,25 @@ export function ContentPanel({
   const read = async (item: ContentItem) => {
     onSelect(item);
     setText('');
+    /*
+     * 本次读取的代号，回来时对不上就丢弃。
+     *
+     * 没有它的话，连续点两个文件（先点一个大的、再点一个小的）会出现：
+     * 选中态已经是后点的那个，预览区却在旧内容回来时被**改写成先点的那个**。
+     * 界面于是同时显示"选中 B"与"B 的内容其实是 A 的"——
+     * 没有任何报错，用户只会以为自己看错了，或者照着错内容去改文件。
+     *
+     * 用递增代号而不是"比较路径是否还是当前选中项"：后者要读 selected，
+     * 而 selected 是 props、本次渲染里的旧值，对快速连点同样判不准。
+     */
+    const seq = ++readSeq.current;
     try {
       // 目录型 skill 传的是目录，后端会自动改读其下的 SKILL.md
       const t = await api.readFile(item.path);
+      if (readSeq.current !== seq) return;   // 期间又点了别的文件，丢弃这一份
       setText(t);
     } catch (e) {
+      if (readSeq.current !== seq) return;
       setText('');
       onLog(`读取失败：${errText(e)}`, true);
     }
