@@ -14,6 +14,7 @@
  *   root-color / main-color / sub-color —— 三级节点**共用一个文字色**。
  *   于是三个层级背景必须落在同一明暗侧，否则必有某一级文字看不清。
  */
+import { readFileSync } from 'node:fs';
 import { PRESET_THEMES, mergePresetThemes, THEMES } from './themes.js';
 
 let pass = 0, fail = 0;
@@ -159,6 +160,29 @@ console.log('\n=== 6. mergePresetThemes 行为 ===');
     mergePresetThemes(mergePresetThemes([], []), []).length === PRESET_THEMES.length);
   t('removed 里的 id 被跳过',
     mergePresetThemes([], ['mm-preset-mist-blue']).length === PRESET_THEMES.length - 1);
+  /*
+   * 删除预置主题必须**把 id 写进 removedPresets**。
+   *
+   * 变异测试实测：把 `settings.removedPresets = list;` 换成空操作后，
+   * 6 个测试共 400+ 项断言**全绿** —— 现存断言只验了
+   * "removed 列表里的 id 会被 mergePresetThemes 跳过"（读侧），
+   * 没验"删除动作真的往列表里写了"（写侧）。
+   *
+   * 而写侧才是关键：预置主题每次启动都会重新并入，
+   * 不记名单的话删除按钮等于坏的 —— 点完看着没了，重启又回来。
+   * 且与"深拷贝"是互补的两半：深拷贝保证编辑不污染源，
+   * 移除名单保证删除能持久化。
+   */
+  {
+    const idx = readFileSync(new URL('./index.js', import.meta.url), 'utf8');
+    const fn = /markPresetRemoved[\s\S]{0,600}?\n {4}\}/.exec(idx);
+    const body = fn ? fn[0] : '';
+    t('删除预置主题会把 id 写进 removedPresets（否则重启又回来）',
+      /settings\.removedPresets\s*=\s*list/.test(body),
+      body ? '已找到写入' : '未找到 markPresetRemoved');
+    t('写入后会落盘保存（只改内存不写档同样会复活）',
+      /save\(settings\)|store\.settings\.save/.test(body));
+  }
   t('removed 不认识自建主题 id 也不影响',
     mergePresetThemes([{ id: 'my-own' }], ['whatever']).length === PRESET_THEMES.length + 1);
 
