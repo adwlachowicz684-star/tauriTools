@@ -1129,6 +1129,7 @@ export default function App() {
         chainActions={chainActions}
         pendingSend={pendingSend}
         setPendingSend={setPendingSend}
+        sendAction={sendAction}
         confirmLink={confirmLink}
         setConfirmLink={setConfirmLink}
         confirmRemoveTab={confirmRemoveTab}

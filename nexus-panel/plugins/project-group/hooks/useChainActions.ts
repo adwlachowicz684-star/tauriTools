@@ -114,7 +114,11 @@ export function useChainActions({
    * 只按「动作 + 目标」去重，不按动作：对 A 发完立刻对 B 发是正常操作，
    * 不能拦。
    */
-  const sendAction = async (actionId: string, kind: CardKind, path: string) => {
+  const sendAction = async (
+    actionId: string, kind: CardKind, path: string,
+    /** 确认框里编辑后的最终文本；不给就用后端模板原文 */
+    prompt?: string | null,
+  ) => {
     const key = `${actionId}\u0000${kind}\u0000${path}`;
     const now = Date.now();
     const prev = lastSentAt.current.get(key);
@@ -124,7 +128,7 @@ export function useChainActions({
     }
     lastSentAt.current.set(key, now);
     try {
-      const r = await s.api.chainSendAction(actionId, kind, path);
+      const r = await s.api.chainSendAction(actionId, kind, path, prompt ?? null);
       s.pushLog(r.message, !r.ok);
       ctx.toast(r.message, r.ok ? 'ok' : 'err');
       /*

@@ -136,4 +136,28 @@ console.log('\n=== 6. 发送失败不该留下副作用 ===');
     /if \(!r\.ok\) lastSentAt\.current\.delete\(key\)/.test(hook));
 }
 
+console.log('\n=== 7. 确认框的发送必须走 sendAction（防抖）===');
+{
+  /* 只看**代码**：注释里也会写 s.api.chainSendAction 这几个字，
+     拿注释判定会把"还在直接调"判成"已改走 sendAction" */
+  const strip = (x) => x.split('\n')
+    .filter((l) => !/^\s*\/\//.test(l) && !/^\s*\*/.test(l) && !/^\s*\/\*/.test(l))
+    .join('\n');
+  const hub = strip(fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8'));
+  const hook = strip(fs.readFileSync(path.join(HERE, 'hooks/useChainActions.ts'), 'utf8'));
+  const app = strip(fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8'));
+
+  t('确认框不再直接调后端命令（反面证据）',
+    !/s\.api\.chainSendAction\(/.test(hub));
+  t('确认框走 sendAction', /sendAction\(actionId, kind, path, finalText \|\| null\)/.test(hub));
+  t('App 把 sendAction 传给了弹窗层', /sendAction=\{sendAction\}/.test(app));
+  t('sendAction 支持传入编辑后的文本',
+    /chainSendAction\(actionId, kind, path, prompt \?\? null\)/.test(hook));
+
+  /* 同帧重复提交守卫：防抖按时间窗口判，同一帧点两下时间差是 0，拦不住 */
+  t('有同帧重复提交守卫', /if \(sentRef\.current\) return;/.test(hub));
+  t('守卫会在新的待确认进来时复位',
+    /useEffect\(\(\) => \{ sentRef\.current = false; \}, \[pendingSend\]\)/.test(hub));
+}
+
 done();

@@ -18,7 +18,6 @@ import {
 import { ConfirmDialog } from './ui';
 import { Splitter } from './Splitter';
 import { LinkPickDialog } from './LinkPickDialog';
-import { errText } from '../api';
 import { clampPanelHeight } from '../utils/layout';
 import {
   effectiveCombo, formatCombo, GROUP_LABEL, hotkeysByGroup, IS_MAC,
@@ -122,6 +121,18 @@ export interface DialogsProps {
   chainActions: ChainAction[];
   pendingSend: PendingSend | null;
   setPendingSend: (p: PendingSend | null) => void;
+  /**
+   * 确认框点「发送」后真正发出去的那一下。
+   *
+   * **必须走 `sendAction`，不能在这里直接 `s.api.chainSendAction`**：
+   * 直接调就绕开了 useChainActions 里的 400ms 防抖，而那条防抖正是为
+   * "双击"准备的 —— 确认框的按钮 `disabled` 恒为 false（`busy={false}`），
+   * 同一帧里连点两下会把指令发两次，一次发送就是一个外部 AI 进程，
+   * 用户事后看到两份结果只会以为软件有问题。
+   *
+   * 顺带统一了日志与 toast 的文案：自己再写一份，改了一处另一处就漂移。
+   */
+  sendAction: (actionId: string, kind: CardKind, path: string, prompt?: string | null) => void;
   /** 建链前选名字（项目 → 项目组） */
   confirmLink: { project: string; group: string } | null;
   setConfirmLink: (v: { project: string; group: string } | null) => void;
@@ -182,6 +193,7 @@ export function Dialogs(props: DialogsProps) {
     chainActions,
     pendingSend,
     setPendingSend,
+    sendAction,
     confirmLink,
     setConfirmLink,
     confirmRemoveTab,
@@ -196,6 +208,12 @@ export function Dialogs(props: DialogsProps) {
   } = props;
 
   const lockPath = dialog.type === 'lock' ? dialog.card.path : '';
+  /** 确认框「发送」的同帧重复提交守卫，见下面 ChainConfirmDialog 的 onConfirm */
+  const sentRef = useRef(false);
+  /* 每次**新**的待确认进来都要复位：否则确认过一次之后，
+     后面所有确认都会被这道守卫挡掉 —— 表现为"点了发送没反应"，
+     而这种失效没有任何提示，用户只能靠重启软件绕过去。 */
+  useEffect(() => { sentRef.current = false; }, [pendingSend]);
   const [liveLock, setLiveLock] = useState<LockStateLive | null>(null);
   useEffect(() => {
     if (!lockPath) { setLiveLock(null); return; }
@@ -415,17 +433,15 @@ export function Dialogs(props: DialogsProps) {
           busy={false}
           onCancel={() => setPendingSend(null)}
           onConfirm={(finalText, skip) => {
+            /* 同帧重复提交守卫：确认框的按钮不禁用，连点两下会进这里两次
+               （两次都在 React 重渲染之前），而防抖按**时间窗口**判 ——
+               这两次时间差是 0，窗口拦不住。所以这里还要自己守一道。 */
+            if (sentRef.current) return;
+            sentRef.current = true;
             if (skip) setSkipConfirm(true);
             const { actionId, kind, path } = pendingSend;
             setPendingSend(null);
-            void s.api.chainSendAction(actionId, kind, path, finalText || null).then(
-              (r) => { s.pushLog(r.message, !r.ok); ctx.toast(r.message, r.ok ? 'ok' : 'err'); },
-              (e) => {
-                const msg = `发送失败：${errText(e)}`;
-                s.pushLog(msg, true);
-                ctx.toast(msg, 'err');
-              },
-            );
+            sendAction(actionId, kind, path, finalText || null);
           }}
         />
       )}
