@@ -29,6 +29,24 @@
    由主面板的 #stage-scroll 负责滚动，本文件也不会被加载。
 */
 
+/*
+ * 尺度令牌显式引入。
+ *
+ * 严格说 tokens.css 已经通过 main.tsx → ../../css/neumorphism.css
+ * 间接拿到了（neumorphism.css 第 84 行 @import 了它），
+ * 运行时的变量并不缺。
+ *
+ * 但 style-audit 是按**单文件**静态判定的，看不到这层间接关系，
+ * 会报「用了令牌却没引入 tokens.css」（W2）。
+ * 与其给审计加一条"上游已引"的豁免（那得让审计理解每个 CSS 的
+ * 加载上下文，很脆），不如让本文件自包含 ——
+ * 代价只是一次幂等的重复引入，变量定义重复没有任何副作用。
+ *
+ * ⚠️ 位置必须在**所有规则之前**：CSS 的 @import 出现在规则之后会被忽略，
+ *    那时审计不报红了（文本里有），变量却一个都没生效 —— 更难查。
+ */
+@import url('../../css/tokens.css');
+
 #root {
   height: 100%;
   display: flex;
@@ -42,4 +60,48 @@
   overflow-y: auto;
   /* 滚动条贴着内容走，不压住卡片右侧的阴影 */
   padding-right: 2px;
+}
+
+/*
+ * 更新说明（UpdateCard 的 <pre className="upd-notes">）
+ * --------------------------------------------------------------------
+ * 远端新增 UpdateCard.tsx 时用了这个类，但**没有配套样式** ——
+ * 死类名扫描报红才发现的（"代码用了但 CSS 没定义"那一条）。
+ *
+ * 没有样式的后果不是"丑"，是可读性与布局两处实际损伤：
+ *   · <pre> 默认**没有背景也没有内边距**，发布说明与上面的正文糊在一起，
+ *     分不清哪段是版本号、哪段是说明；
+ *   · <pre> 默认 **white-space: pre**（不换行）且**无高度上限**，
+ *     发布说明少则几行多则几十行，会把卡片顶出可视区，
+ *     而 .set-body 的滚动是整页滚 —— 用户得滚很久才看得到下面的按钮。
+ *
+ * 观感对齐同目录 ExternalCard 的同类 <pre>（它用的是 .p-mono + 一串内联），
+ * 这样两处"展示一段程序生成文本"的样式一致。
+ */
+.upd-notes {
+  /* pre 自带 margin，会与上一行的间距叠加成双倍 */
+  margin: 0;
+  padding: var(--sp-5, 10px);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--fs-code, 11px);
+  line-height: var(--lh-normal, 1.5);
+  color: var(--text-soft, var(--text));
+  background: var(--surface-sunk);
+  border-radius: var(--r-sm, 9px);
+  box-shadow: var(--sh-in-sm);
+  /*
+   * 两行都必要，缺一不可：
+   *   pre-wrap   —— 换行，否则长行横向撑破卡片
+   *   break-word —— 只在**词内**无处可断时才断（发布说明是自然语言）
+   * 不能用 break-all：那会在任意字符处断开，中文看着还行，
+   * 但英文单词被切成两半很难读（ExternalCard 那条 CSP 用 break-all
+   * 是因为它是无空格的长串，性质不同）。
+   */
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* 上限 + 内部滚动：长说明不再把卡片顶出屏外。
+     没有 min-height:0 的话 flex 子项会被内容顶开，这里的 overflow 失效 ——
+     但 .upd-notes 不在 flex 行内，故不需要。 */
+  max-height: 220px;
+  overflow: auto;
 }
