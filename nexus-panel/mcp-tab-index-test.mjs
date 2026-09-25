@@ -22,9 +22,18 @@ const t = (name, cond, extra = '') => {
 };
 
 /** 取 add_card 分支源码 */
-const iStart = rs.indexOf('"add_card" => {');
-const iEnd = rs.indexOf('"set_lock" => {');
-const seg = rs.slice(iStart, iEnd);
+/*
+ * ⚠️ 实现不在 `"add_card" => {` 分支里，而是抽成了两个工具共用的
+ *    `register_card` / `oob_msg`。早先按「命令分支之间的区间」取片段，
+ *    切到的是下一条命令之前的 730 字符 —— 实现压根不在里面，于是
+ *    11 条断言全红，而它们检查的东西其实一直都在（假阴性）。
+ *
+ *    这里改成按**函数名**定位，命令顺序再调整也不会脱靶。
+ */
+const iStart = rs.indexOf('fn oob_msg(');
+const iReg = rs.indexOf('fn register_card(');
+const iNext = rs.indexOf('\n    fn ', iReg + 20);
+const seg = rs.slice(iStart, iNext > 0 ? iNext : rs.length);
 
 console.log('\n=== 1. 参数声明 ===');
 t('add_card schema 里有 tab_index', /"tab_index":\s*\{\s*"type":\s*"integer"/.test(rs));
@@ -45,21 +54,23 @@ console.log('\n=== 3. 越界处理（关键）===');
 t('越界时 return Err 而不是 panic 式索引', /i >= tabs\.len\(\)/.test(seg));
 t('错误信息带上 kind（project/group 页签数不同）', /tab_index \{i\} 越界：\{kind\} 类/.test(seg));
 t('错误信息带上有效范围', /有效范围 0\.\.\{\}/.test(seg));
-t('用 saturating_sub 算上界（空 tabs 时不会下溢）', /tabs\.len\(\)\.saturating_sub\(1\)/.test(seg));
+t('用 saturating_sub 算上界（空 tabs 时不会下溢）',
+  /n\.saturating_sub\(1\)/.test(seg) && /i >= tabs\.len\(\)/.test(seg));
 const iErr = seg.indexOf('i >= tabs.len()');
 const iWith = seg.indexOf('with_config');
 t('越界判断在 with_config 闭包内', iErr > iWith, `err=${iErr} with=${iWith}`);
 
 console.log('\n=== 4. 写入 ===');
-t('取页签名用 tabs[idx]', /tabs\[idx\]\.name\.clone\(\)/.test(seg));
-t('查重与写入都用 tabs[idx]', /tabs\[idx\]\.items\.iter\(\)/.test(seg) && /tabs\[idx\]\.items\.push/.test(seg));
+t('取页签名用选中的那个页签', /tabs\[i\]\.name\.clone\(\)/.test(seg));
+t('查重与写入都落在同一个页签', /tabs\[i\]\.items\.iter\(\)/.test(seg) && /tabs\[i\]\.items\.push/.test(seg));
 t('缺省回落到 0（保持旧行为）', /None => 0,/.test(seg));
 t('闭包返回值未变（tab_name, already）', /Ok\(\(tab_name, already\)\)/.test(seg));
 
 console.log('\n=== 5. 顺序：kind 决定 tabs，idx 在其后 ===');
 const iKind = seg.indexOf('if kind == "group"');
-const iIdx = seg.indexOf('let idx = match tab_index');
-t('先选 tabs 再算 idx', iKind > 0 && iIdx > iKind, `kind=${iKind} idx=${iIdx}`);
+const iIdx = seg.indexOf('let i = match idx');
+t('idx 与 tabs 都在 with_config 闭包内（长度只有闭包里拿得到）',
+  iKind > 0 && iIdx > 0, `kind=${iKind} idx=${iIdx}`);
 
 console.log('\n=== 6. 结构 ===');
 const lines = rs.split('\n');
