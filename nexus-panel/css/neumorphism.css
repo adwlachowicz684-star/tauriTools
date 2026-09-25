@@ -185,6 +185,16 @@
   /* 边缘高光：模拟玻璃切断光线时边缘的镜面反射。
      没有它，玻璃面板会"薄得像张贴纸"。 */
   --frost-edge:    transparent;
+  /*
+   * 颗粒与底色的混合方式。深色 overlay / 浅色 soft-light ——
+   * overlay 在浅底上会把噪点压成脏斑，soft-light 才像磨砂。
+   *
+   * 这里必须有 :root 默认值（与其它 frost-* 一致）：早先只在**使用处**
+   * 写了 `var(--frost-blend, overlay)`，于是它是整套 frost 变量里唯一
+   * 没有兜底定义的一个 —— 非玻璃主题下读到空值，主题参数面板也显示
+   * 不出当前值（面板读的是变量本身，不是使用处的兜底）。
+   */
+  --frost-blend:   overlay;
 
   /* 风格层兜底（由 js/theme-manager.js 按主题覆写） */
   --edge:          rgba(255,255,255,.08);
