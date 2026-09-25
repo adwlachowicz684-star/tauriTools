@@ -1247,7 +1247,18 @@ export function buildSide(app, opts = {}) {
       title: '打开 / 下载',
     }, '⤓'),
     h('button.mm-mini', {
-      onclick: (e) => { e.stopPropagation(); removeAt(kind, index); },
+      /*
+       * 必须包 safe()：removeAt 是 async，不接住 rejection 的话失败就是
+       * **静默**的 —— 按钮点了没反应，状态栏也不说话（只有诊断日志里
+       * 有一条 unhandledrejection）。
+       *
+       * 同一行的「打开」按钮早就包了 safe()，唯独这个「移除」漏了：
+       * 又是"同一件事多条路径、只修了一条"。
+       */
+      onclick: (e) => {
+        e.stopPropagation();
+        safe('移除附件', () => removeAt(kind, index), (m) => app.api.status(m, true))();
+      },
       title: `移除${label}`,
     }, '✕'));
 
@@ -1748,11 +1759,11 @@ export function buildSide(app, opts = {}) {
           // 早先一个是「导入…」、另一个是「导出」，看着像两个不相干的功能，
           // 而且省略号是因为按钮太窄被截断的，不是有意省略。
           h('button.mm-btn', {
-            onclick: () => importThemeFile(),
+            onclick: safe('导入主题', () => importThemeFile(), (m) => app.api.status(m, true)),
             title: '从 JSON 文件导入自定义主题（重新生成 id，不会覆盖同名）',
           }, '导入主题'),
           h('button.mm-btn', {
-            onclick: () => exportThemeFile(),
+            onclick: safe('导出主题', () => exportThemeFile(), (m) => app.api.status(m, true)),
             disabled: isBuiltin,
             title: isBuiltin
               ? '当前是内置主题，无法导出（请先新建或选中自定义主题）'
@@ -2369,8 +2380,14 @@ export async function openBackups(app) {
     h('div.mm-hint', {}, `按时间倒序，最多保留 ${app.settings?.backupMax ?? store.BACKUP_KEEP} 份。恢复会覆盖当前所有画布。`),
     box,
     h('div.mm-actions', {},
-      h('button.mm-btn', { onclick: async () => { await app.api.backupNow(); await render(); } }, '立即备份'),
-      h('button.mm-btn', { onclick: async () => { await store.clearBackups(); await render(); } }, '清空快照'),
+      h('button.mm-btn', {
+        onclick: safe('立即备份', async () => { await app.api.backupNow(); await render(); },
+          (m) => app.api.status(m, true)),
+      }, '立即备份'),
+      h('button.mm-btn', {
+        onclick: safe('清空快照', async () => { await store.clearBackups(); await render(); },
+          (m) => app.api.status(m, true)),
+      }, '清空快照'),
     ),
   ]
   );
@@ -2398,7 +2415,12 @@ export async function openIconLibrary(app) {
     groups.forEach((g) => {
       groupList.appendChild(
         h('button.mm-btn.icon-group' + (g.id === activeId ? '.on' : ''), {
-          onclick: () => { activeId = g.id; renderGroups(); renderGrid(); },
+          onclick: () => {
+            activeId = g.id;
+            renderGroups();
+            // renderGrid 是 async：不接住的话切分组失败就是静默的
+            safe('切换分组', () => renderGrid(), (m) => app.api.status(m, true))();
+          },
           title: g.builtin ? '内置分组（不可编辑）' : g.name,
         }, g.name + (g.builtin ? '' : ` (${(g.icons || []).length})`)),
       );
@@ -2545,12 +2567,23 @@ export async function openIconLibrary(app) {
       h('div.mm-icon-side', {},
         groupList,
         h('div.mm-row', { style: { flexWrap: 'wrap' } },
-          h('button.mm-btn', { onclick: () => newGroup(), title: '新建分组' }, '＋分组'),
-          h('button.mm-btn', { onclick: () => renameCur() }, '重命名'),
-          h('button.mm-btn', { onclick: () => delCur(), title: '删除当前分组（至少保留一个）' }, '删除'),
+          h('button.mm-btn', {
+            onclick: safe('新建分组', () => newGroup(), (m) => app.api.status(m, true)),
+            title: '新建分组',
+          }, '＋分组'),
+          h('button.mm-btn', {
+            onclick: safe('重命名分组', () => renameCur(), (m) => app.api.status(m, true)),
+          }, '重命名'),
+          h('button.mm-btn', {
+            onclick: safe('删除分组', () => delCur(), (m) => app.api.status(m, true)),
+            title: '删除当前分组（至少保留一个）',
+          }, '删除'),
         ),
         h('div.mm-row', { style: { flexWrap: 'wrap' } },
-          h('button.mm-btn', { onclick: () => importIcons(), title: '从图片文件导入' }, '导入图片'),
+          h('button.mm-btn', {
+            onclick: safe('导入图片', () => importIcons(), (m) => app.api.status(m, true)),
+            title: '从图片文件导入',
+          }, '导入图片'),
           // A5：不弹授权框，靠用户主动 Ctrl+V（见 onPasteIcons）
           h('button.mm-btn', {
             onclick: () => app.api.status('在此窗口按 Ctrl+V 即可把剪贴板里的图片加进当前分组'),
@@ -2566,7 +2599,10 @@ export async function openIconLibrary(app) {
       h('div.mm-icon-main', {},
         grid,
         h('div.mm-row', {},
-          h('button.mm-btn', { onclick: () => importIcons(), title: '把图片导入当前分组' }, '导入…'),
+          h('button.mm-btn', {
+            onclick: safe('导入图片', () => importIcons(), (m) => app.api.status(m, true)),
+            title: '把图片导入当前分组',
+          }, '导入…'),
           h('button.mm-btn', { onclick: () => { app.bridge.setImage(null); app.api.commit(); app.api.status('已清除节点图标'); } }, '清除节点图标'),
         ),
         hint,

@@ -8465,6 +8465,91 @@ group('清空搜索必须连带清掉画布上的高亮框（不能只收面板�
   }
 }
 
+group('所有 async 按钮处理器必须有错误兜底（否则点了静默失败）');
+
+{
+  const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+
+  /*
+   * 通用守卫，不能只盯着某一处：下次再加一个 async 按钮而忘了兜底，
+   * 同样的坑会重演，而测试却全绿。
+   *
+   * 为什么必须有：async 处理器抛错/拒绝时，**界面完全不动** ——
+   * 按钮点了没反应，状态栏也不说话。全局 unhandledrejection 只往
+   * 诊断日志里记一条，用户看不到。
+   *
+   * 判定：onclick 里调用了本文件的 async 函数，且处理器文本里既没有
+   * safe( 也没有 guard( → 无兜底。
+   */
+  const asyncs = new Set();
+  for (const m of src.matchAll(/(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*async/g)) asyncs.add(m[1]);
+  for (const m of src.matchAll(/async\s+function\s+([A-Za-z_$][\w$]*)/g)) asyncs.add(m[1]);
+  asyncs.delete('safe'); asyncs.delete('guard');
+
+  /*
+   * 取处理器**完整**文本，不能只取到行末。
+   *
+   * 早先写的是 /onclick:\s*([^\n]*)/ —— 只拿到第一行。
+   * 多行写法（onclick: (e) => { ...; removeAt(...); }）的第一行是 `(e) => {`，
+   * 里面没有任何 async 调用，于是**整条永远抓不到变异**。
+   * 实测：把「移除附件」改回无兜底，这条断言照样绿 —— 又是假阴性（第 18 次）。
+   *
+   * 改成按括号配对取完整块：以 { ( [ 开头的做括号平衡扫描，
+   * 其余（如 `onclick: safe(...)`）取到行末。
+   */
+  const grab = (from) => {
+    const pairs = { '{': '}', '(': ')', '[': ']' };
+    let i = from;
+    let out = '';
+    // 循环是为了跨过箭头函数：'(e) => { ... }' 里 (e) 的配对在 ')' 就结束了，
+    // 只取一段会漏掉函数体 —— 那正是多行写法的全部内容所在。
+    for (;;) {
+      while (i < src.length && /\s/.test(src[i])) i++;
+      const c = src[i];
+      if (!pairs[c]) {
+        const nl = src.indexOf('\n', i);
+        return out + src.slice(i, nl < 0 ? src.length : nl);
+      }
+      let depth = 0;
+      let j = i;
+      for (; j < src.length; j++) {
+        if (src[j] === c) depth++;
+        else if (src[j] === pairs[c]) { depth--; if (depth === 0) break; }
+      }
+      out += src.slice(i, j + 1);
+      i = j + 1;
+      let k = i;
+      while (k < src.length && /\s/.test(src[k])) k++;
+      if (src.slice(k, k + 2) === '=>') { i = k + 2; continue; }
+      return out;
+    }
+  };
+
+  const bad = [];
+  for (const m of src.matchAll(/onclick:/g)) {
+    const txt = grab(m.index + m[0].length);
+    for (const a of asyncs) {
+      if (!new RegExp('(?<![\w.])' + a + '\\s*\\(').test(txt)) continue;
+      if (/safe\(|guard\(/.test(txt)) continue;
+      bad.push(src.slice(0, m.index).split('\n').length + ':' + a
+        + '  ' + txt.replace(/\s+/g, ' ').trim().slice(0, 80));
+    }
+  }
+  ok(bad.length === 0,
+    '每个调用 async 函数的 onclick 都包了 safe()/guard()（未兜底：' + (bad.join(' | ') || '无') + '）');
+
+  // safe() 本身必须真的接住 rejection（不是只 try/catch 同步部分）
+  {
+    const i = src.indexOf('function safe(label, fn, onErr)');
+    ok(i > 0, '有 safe() 收口函数');
+    const seg = src.slice(i, i + 420);
+    ok(/typeof r\.then === 'function'/.test(seg), 'safe() 检查返回值是不是 Promise');
+    ok(/r\.catch\(/.test(seg), 'safe() 接住 rejection（只 try/catch 同步部分不够）');
+    ok(/onErr\(`\$\{label\}失败/.test(seg) || /onErr\([`'"][^`'"]*\$\{label\}/.test(seg),
+      'safe() 的提示带上操作名（只说「失败」用户不知道是哪一步）');
+  }
+}
+
 group('导出为交换格式 → 导出为交换格式（单画布）');
 
 {
