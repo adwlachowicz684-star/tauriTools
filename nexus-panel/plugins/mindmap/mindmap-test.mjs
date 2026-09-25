@@ -8382,6 +8382,43 @@ group('拖拽浮层与高亮框必须有样式（且必须在 iframe 内那份 C
   }
 }
 
+group('popupMenu 再点同一个锚点必须收起（不能叠层）');
+
+{
+  const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+
+  /*
+   * onDoc 里刻意放过了「点在锚点上」（e.target !== anchorEl）——
+   * 否则 pointerdown 先关、click 又开，菜单永远打不开。
+   * 但这一放过留了洞：再点一次同一个锚点，onDoc 不关，click 又开一个。
+   *
+   * 实测（jsdom 复刻真实序列 pointerdown → click）：
+   *   连点 ▾ 三次 → .mm-menu-mask 数 1 → 2 → 3。
+   * 位置完全相同看着只有一个，但选中某项只关掉最上面那层，
+   * 下面两层还挂着 → **选完菜单不关**。
+   */
+  ok(/let openMenu = null;/.test(src), '有模块级 openMenu 单例');
+  // 同一个锚点 → 收起并**不再开新的**（必须有 return，否则等于没修）
+  {
+    const i = src.indexOf('if (openMenu && openMenu.anchor === anchorEl)');
+    ok(i > 0, '有「同一锚点」分支');
+    const seg = src.slice(i, i + 400);
+    ok(/openMenu = null;/.test(seg), '先清掉 openMenu（不清会一直命中这个分支）');
+    ok(/prev\.close\(\);/.test(seg), '收起上一个');
+    ok(/return\s*\{[\s\S]{0,40}\}/.test(seg), '收起后 return，不再开新的');
+  }
+  // 开了新的要登记；close 要摘掉登记（否则第二次点击永远命中"同一锚点"分支）
+  ok(/openMenu = \{ anchor: anchorEl, close \};/.test(src), '开新的登记为 openMenu');
+  ok(/if \(openMenu && openMenu\.close === close\) openMenu = null;/.test(src),
+    'close 时摘掉登记（否则状态与实际不同步）');
+  // 锚点不同也要先收旧的
+  ok(/if \(openMenu\) \{ const p0 = openMenu; openMenu = null; p0\.close\(\); \}/.test(src),
+    '锚点不同时先收掉旧的（同样是叠层）');
+
+  // 反证：不能把 openMenu 设成永不清理
+  ok(src.split('openMenu').length - 1 >= 6, 'openMenu 被多处引用（不是只声明一次）');
+}
+
 group('导出为交换格式 → 导出为交换格式（单画布）');
 
 {

@@ -1858,8 +1858,38 @@ export function confirmDialog(title, message, okText = '确定', danger = false)
  * @param {HTMLElement} anchorEl 定位锚点（菜单贴在它下方）
  * @param {Array<{label:string,onSelect:Function,hint?:string}|'-'>} items '-' 为分隔线
  */
+/*
+ * 当前开着的菜单（模块级单例）。
+ *
+ * 为什么要记：onDoc 里刻意放过了「点在锚点上」（`e.target !== anchorEl`），
+ * 否则 pointerdown 先关、紧接着的 click 又开，菜单永远打不开。
+ * 但这一放过就留了个洞 —— 再点一次同一个锚点时 onDoc 不关，
+ * 而 click 照样又开一个：
+ *
+ *   实测（jsdom 复刻真实调用序列 pointerdown → click）：
+ *   连点 ▾ 三次，DOM 里 .mm-menu-mask 数是 1 → 2 → 3。
+ *
+ * 三个 mask 位置完全相同，看着只有一个，但：
+ *   · 选中某项只关掉**最上面**那个，下面两层还挂着 → 选完菜单不关；
+ *   · 每个 mask 各带一个 document 监听，层层叠加。
+ *
+ * 修法：同一个锚点再点一次 = 收起（与原生下拉的 toggle 行为一致）。
+ */
+let openMenu = null;
+
 export function popupMenu(anchorEl, items) {
-  const close = () => { mask.remove(); document.removeEventListener('pointerdown', onDoc, true); };
+  // 同一个锚点再点一次 → 收起并**不再开新的**
+  if (openMenu && openMenu.anchor === anchorEl) {
+    const prev = openMenu;
+    openMenu = null;
+    prev.close();
+    return { close: () => {} };
+  }
+  const close = () => {
+    mask.remove();
+    document.removeEventListener('pointerdown', onDoc, true);
+    if (openMenu && openMenu.close === close) openMenu = null;
+  };
   const onDoc = (e) => { if (!mask.contains(e.target) && e.target !== anchorEl) close(); };
 
   const panel = h('div.mm-menu', {},
@@ -1885,6 +1915,9 @@ export function popupMenu(anchorEl, items) {
 
   // 捕获阶段：否则点到画布会先被画布的 mousedown 处理掉，菜单关不掉
   document.addEventListener('pointerdown', onDoc, true);
+  // 开新的之前先收掉上一个（锚点不同的情况），否则同样是叠层
+  if (openMenu) { const p0 = openMenu; openMenu = null; p0.close(); }
+  openMenu = { anchor: anchorEl, close };
   return { close };
 }
 
