@@ -1,6 +1,21 @@
 /**
- * 冒烟测试（仅开发用，可删）：用 jsdom 跑一遍外壳，
+ * 冒烟测试（npm test 默认跑这个）：用 jsdom 跑一遍外壳，
  * 验证：注册表加载 → 侧边栏渲染 → 同页插件挂载 → 事件/持久化。
+ *
+ * ⚠️ 这里原来**永远退出 0**：
+ *     最后一行的 `process.exit(0)` 是无条件的，
+ *     上面那句 `console.log('❌ 运行时错误: ...')` 只是**打印**了错误，
+ *     既不断言也不改退出码。
+ *
+ *     后果是 `npm test` **不可能失败** ——
+ *     外壳哪怕整个挂掉、插件一个都加载不出来、控制台刷满报错，
+ *     它照样打印一堆 ❌ 然后 exit(0)，CI 全绿。
+ *     这是比"断言写错"更彻底的失效：连红的机会都没有。
+ *
+ * 现在改成真断言 + 真退出码。刻意**不断言具体插件数量**
+ * （注册表会随增删变化，写死数字很快就会被改成一个恒真的值），
+ * 只断言"该发生的都发生了"：加载到了插件、渲染出了侧边栏、
+ * 插件能挂载、点击有反应、设置页打得开。
  */
 import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
@@ -43,30 +58,41 @@ globalThis.__NEXUS_NO_BUILD__ = true;
 const errors = [];
 dom.window.addEventListener('error', (e) => errors.push(e.message));
 
+let pass = 0; let fail = 0;
+const t = (name, ok, info) => {
+  if (ok) { pass++; console.log(`✅ ${name}${info ? ` → ${info}` : ''}`); }
+  else { fail++; console.log(`❌ ${name}${info ? ` → ${info}` : ''}`); }
+};
+
 await import('./js/shell.js');
 await new Promise((r) => setTimeout(r, 400));
 
 const N = globalThis.window.__NEXUS__;
 const plugins = N?.getPlugins() || [];
 console.log('插件数:', plugins.length, plugins.map((p) => p.id).join(', '));
-console.log('侧边栏项:', document.querySelectorAll('#plugin-list .nav-item').length);
-console.log('当前插件:', N?.state.activeId);
-console.log('hash:', location.hash);
-console.log('舞台内容长度:', document.querySelector('#stage-scroll').innerHTML.length);
-console.log('标题栏标题:', document.querySelector('#bar-title').textContent);
+t('外壳加载到了插件（注册表非空）', plugins.length > 0, `${plugins.length} 个`);
+t('侧边栏渲染出条目', document.querySelectorAll('#plugin-list .nav-item').length > 0,
+  `${document.querySelectorAll('#plugin-list .nav-item').length} 项`);
+t('有当前激活插件', !!N?.state.activeId, N?.state.activeId || '(无)');
+t('舞台渲染出内容', (document.querySelector('#stage-scroll')?.innerHTML.length || 0) > 0,
+  `${document.querySelector('#stage-scroll')?.innerHTML.length || 0} 字符`);
+t('标题栏有标题', !!document.querySelector('#bar-title')?.textContent?.trim(),
+  document.querySelector('#bar-title')?.textContent || '(空)');
 
 // 切到示例同页插件，验证挂载 + 交互
 N.navigate('demo-module');
 await new Promise((r) => setTimeout(r, 300));
 const stage = document.querySelector('#stage-scroll');
-console.log('demo-module 挂载:', stage.textContent.includes('计数器'));
+t('demo-module 能挂载（舞台出现"计数器"）', stage.textContent.includes('计数器'));
 
 const btn = [...stage.querySelectorAll('button')].find((b) => b.textContent.includes('＋'));
 btn?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 await new Promise((r) => setTimeout(r, 120));
-console.log('计数器点击后:', stage.querySelector('.num')?.textContent);
-console.log('持久化:', localStorage.getItem('nexus:demo-module:count'));
-console.log('角标:', JSON.stringify(N.state.badges));
+const after = stage.querySelector('.num')?.textContent;
+t('点击后计数器有变化（交互真的生效）', !!after, after || '(无)');
+t('计数写入了 localStorage（持久化生效）',
+  localStorage.getItem('nexus:demo-module:count') !== null,
+  String(localStorage.getItem('nexus:demo-module:count')));
 
 // 注意：jsdom 不会真正加载 iframe 子文档，iframe 挂载路径无法在此验证。
 // iframe 的主题适配逻辑由 adapt-test.mjs 单独覆盖。
@@ -74,7 +100,15 @@ console.log('角标:', JSON.stringify(N.state.badges));
 // 切到设置插件
 N.navigate('settings');
 await new Promise((r) => setTimeout(r, 250));
-console.log('settings 挂载:', document.querySelector('#stage-scroll').textContent.includes('插件管理'));
+t('settings 插件能挂载（出现"插件管理"）',
+  document.querySelector('#stage-scroll').textContent.includes('插件管理'));
 
-console.log(errors.length ? '❌ 运行时错误: ' + errors.join(' | ') : '✅ 无运行时错误');
-process.exit(0);
+t('运行期无未捕获错误', errors.length === 0, errors.join(' | ') || '0 条');
+
+console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
+/*
+ * 关键：退出码必须反映结果。
+ * 原来这里是无条件的 process.exit(0)，
+ * 使得 npm test **结构上不可能失败**。
+ */
+process.exit(fail ? 1 : 0);
