@@ -1949,6 +1949,24 @@ __kmDefaultValign = (cbox, bb) => (cbox.height - bb.height) > 1 ? 'bottom' : 'mi
 
 真正的问题在另一头：**是文字被推下来了，不是视频没动**。
 
+## numSpinner 初值不钳：框里会显示 0 这种"不存在的值"
+
+此前只在 `emit` 里钳范围，**初值是裸的** `Math.round(Number(v))`：
+
+```js
+Number(null) === 0   → cur = 0
+Number('')   === 0   → cur = 0
+```
+
+而线宽的 `min` 是 1 —— 于是框里显示 **0**，一个根本不在允许范围内的值。
+上报侧 `strokeWidth` / `lineWidth` 在主题值为 0 时确实会给出 `"0"`，
+所以这条路径是活的。用户看到 0 只会以为「线宽设成 0 所以看不见边框」。
+
+改成 `cur = clamp(o.value, min)`。
+
+⚠️ `clamp` 的兜底值必须走**参数** `fallback`，不能写死 `return cur` ——
+`clamp` 定义在 `let cur` 之前，初值路径会撞上 TDZ 直接抛 ReferenceError。
+
 ## 圆角预设 24 在任何节点上都达不到
 
 同一个 `formatRadius` 还带来第二个后果：**圆角上限受节点尺寸约束**。

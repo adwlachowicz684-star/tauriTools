@@ -6446,6 +6446,31 @@ group('文字垂直居中：改用真实测量，不再吃内核经验系数');
   ok(/deep: \{ top: 0, middle: 0, bottom: 0 \}/.test(html), 'f 微调表含 deep 层级（更下级）');
 }
 
+group('numSpinner 初值钳制（源码级，前置以便先于运行时崩溃被判到）');
+
+{
+  /*
+   * 为什么放在这里而不是"数值输入框"那组里：
+   * 把 clamp 的 fallback 改坏会触发 TDZ（clamp 定义在 let cur 之前），
+   * 样式面板那组（更早）就已经抛 ReferenceError 了 —— 后面的断言根本跑不到。
+   * 放在它前面，才能把"崩溃"变成**断言失败**（本项目第 11 次遇到这类假阳性）。
+   */
+  const psrc = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8').replace(/\r\n/g, '\n');
+  const fnSrc = (() => {
+    const i = psrc.indexOf('const clamp = (v, fallback)');
+    ok(i > 0, 'clamp 带 fallback 参数');
+    let d = 0, j = psrc.indexOf('{', i);
+    for (; j < psrc.length; j++) {
+      if (psrc[j] === '{') d++;
+      else if (psrc[j] === '}') { d--; if (d === 0) return psrc.slice(i, j + 1); }
+    }
+    return '';
+  })();
+  ok(/return fallback;/.test(fnSrc), 'clamp 解析失败时返回 **fallback**（不是写死 cur）');
+  ok(!/return cur;/.test(fnSrc), 'clamp 里不得出现 return cur;（初值时会 TDZ 抛错）');
+  ok(/let cur = clamp\(o\.value, min\);/.test(psrc), '初值走的是 clamp，且 fallback = min');
+}
+
 group('样式面板：一排化 / 删除按钮弱化 / 分节清除');
 
 {
@@ -7632,6 +7657,36 @@ group('数值输入框 numSpinner（▲▼ 步进 / ▾ 选预设 / 滚轮 ±1�
   changes.length = 0;
   wheel(-600);
   eq(changes.at(-1), 6, 'delta 很大也只 +1（按量换算会一次跳很多格）');
+
+  /* ---- 3.5) 初值也要钳到 [min,max] ----
+   * 此前只在 emit 里钳，初值是裸的 Math.round(Number(v))：
+   *   Number(null) === 0 → cur = 0 ；Number('') === 0 → cur = 0
+   * 而线宽 min = 1 —— 框里会显示 **0**，一个根本不在允许范围内的值。
+   * 上报侧 strokeWidth / lineWidth 在主题值为 0 时确实会给出 "0"。
+   */
+  {
+    /* 源码级：clamp 必须用**参数** fallback，不能写死 return cur。
+     *
+     * 只做行为断言是不够的：写成 `return cur` 时，初值路径会撞上 TDZ
+     * （clamp 定义在 `let cur` 之前）直接抛 ReferenceError —— 进程崩溃，
+     * 脚本也会判"抓到"，但那不是断言在把关（本项目第 11 次遇到）。
+     * 而且 emit 那条路径用 cur 是对的，所以行为上两者只在初值时分叉。
+     */
+    const mk = (value, min, max) => pn.numSpinner({ value, min, max, list: [], onChange: () => {} })
+      .querySelector('input.mm-num').value;
+    // Number(null)/Number('') 都是 0 —— 线宽下限是 1，必须钳到 1
+    eq(mk(null, 1, 12), '1', '初值 null → 钳到下限 1（不能显示 0）');
+    eq(mk('', 1, 12), '1', "初值 '' → 钳到下限 1");
+    // 解析不出来 → 下限（而不是"上一次的值"，此时没有上一次）
+    eq(mk('abc', 1, 12), '1', '初值 abc → 下限');
+    eq(mk(undefined, 1, 12), '1', '初值 undefined → 下限');
+    // 超过上限同样要钳
+    eq(mk(999, 1, 12), '12', '初值 999 → 钳到上限 12');
+    // 正常值不动
+    eq(mk(7, 1, 12), '7', '区间内的初值保持不动');
+    // 圆角下限是 0，所以 0 是合法的、必须保留（不能被"钳成 min"以外的值）
+    eq(mk(0, 0, 20), '0', '圆角：0 在区间内，保持 0');
+  }
 
   /* ---- 4) 边界钳制 ---- */
   await new Promise((r) => setTimeout(r, 140));

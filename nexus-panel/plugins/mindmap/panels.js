@@ -453,16 +453,26 @@ export function numSpinner(o) {
   const min = Number.isFinite(o.min) ? o.min : 0;
   const max = Number.isFinite(o.max) ? o.max : 999;
   const list = (o.list || []).filter((v) => Number.isFinite(v));
-  let cur = Number.isFinite(Number(o.value)) ? Math.round(Number(o.value)) : min;
-
   /** 钳到 [min,max] 并取整 —— 输入框里可能粘进 "12.7" 或 "abc" */
-  const clamp = (v) => {
+  const clamp = (v, fallback) => {
     const n = Math.round(Number(v));
-    if (!Number.isFinite(n)) return cur;
+    if (!Number.isFinite(n)) return fallback;
     return Math.max(min, Math.min(max, n));
   };
+
+  /*
+   * 初值**也要钳**。此前只在 emit 里钳，初值是裸的 Math.round(Number(v))：
+   *   Number(null) === 0   → cur = 0
+   *   Number('')   === 0   → cur = 0
+   * 而线宽的 min 是 1 —— 于是框里会显示 **0**，一个根本不在允许范围内的值
+   * （上报侧 strokeWidth / lineWidth 在主题值为 0 时确实会给出 "0"）。
+   * 用户看到 0 只会以为「线宽设成了 0，所以看不见边框」。
+   *
+   * fallback 传 min：初值解析不出来时用下限 —— 此时没有"上一次的值"可用。
+   */
+  let cur = clamp(o.value, min);
   const emit = (v) => {
-    const n = clamp(v);
+    const n = clamp(v, cur);
     if (n === cur) { inp.value = String(n); return; }   // 无变化就别回调，免得白记一次撤销
     cur = n;
     inp.value = String(n);
@@ -1435,11 +1445,9 @@ export function buildSide(app, opts = {}) {
         h('div.mm-row', {},
           h('span.mm-label', { style: { minWidth: '48px' } }, '圆角'),
           numSpinner({
-            // 上限 20 而不是 40：见 RADII 的说明 —— 圆角超过节点较短边的一半
-            // 会被 kity 静默钳住，给再大的范围也只是"拖了没反应"
+            // 上限 MAX_RADIUS(20)：见 RADII 的说明 —— 圆角超过节点较短边的
+            // 一半会被 kity 静默钳住，给再大的范围也只是"拖了没反应"
             value: st.radius, min: 0, max: MAX_RADIUS,
-            // 上限给到 40 而不是预设里的 24：滚轮能微调出 25、26…，
-            // 把 max 卡在最大预设值上，微调到那儿就再也上不去了
             list: RADII, title: '节点圆角（滚轮 / ▲▼ 微调，▾ 选预设）',
             onChange: (r) => set({ radius: r }),
           }),
