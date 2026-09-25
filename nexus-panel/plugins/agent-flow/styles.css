@@ -3763,3 +3763,51 @@ input.mono, textarea.mono {
  * 悬停态本来就没有可交互的东西（鼠标移开即关），穿透它没有代价。
  * 钉住态不带这个类名 —— 那个是要读的，得能滚、能点关闭。
  */
+
+/* ---------------- 组合框 ---------------- */
+/*
+ * 组合框画在节点**后面**（zIndex 为负，见 engine/frames 的 makeFrame），
+ * 所以框内空白处点得到框、点得到成员时命中的是成员 ——
+ * 这正是"点框选整组、点成员只选它自己"能成立的前提。
+ *
+ * 边框用虚线：与流程连线的实线区分开。
+ * 只靠颜色区分的话，色弱用户分不出"框"和"连线"。
+ */
+.af-frame {
+  position: relative; box-sizing: border-box;
+  width: 100%; height: 100%;
+  border: 1.5px dashed var(--af-frame-line, #6b7a90);
+  border-radius: 10px;
+  background: var(--af-frame-bg, rgba(107, 122, 144, 0.07));
+}
+.af-frame.is-selected {
+  border-color: var(--af-frame-line-on, #7c9cff);
+  background: var(--af-frame-bg-on, rgba(124, 156, 255, 0.1));
+}
+.af-frame-head {
+  position: absolute; top: 0; left: 0;
+  display: flex; align-items: center; gap: 6px;
+  height: 22px; padding: 0 8px;
+  font-size: var(--fs-note, 11px);
+  color: var(--af-frame-text, #9aa7b8);
+  white-space: nowrap; pointer-events: none;
+}
+.af-frame-tag {
+  padding: 0 5px; border-radius: 4px;
+  background: var(--af-frame-line, #6b7a90); color: #0f1218;
+  font-size: var(--fs-micro, 10px);
+}
+.af-frame-title { font-weight: var(--fw-mid, 500); }
+.af-frame-count { opacity: 0.7; }
+
+/* 组合条：与删除提示同一套位置，颜色改成中性（组合不是危险操作） */
+.sel-bar {
+  position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
+  z-index: var(--af-z-float); display: flex; align-items: center; gap: 10px;
+  background: #1c2029; border: 1px solid #3a4252; color: #cbd5e1;
+  border-radius: 8px; padding: 9px 12px;
+  font-size: var(--fs-body, 12px); line-height: var(--lh-normal, 1.5);
+  box-shadow: var(--af-cast-sm);
+}
+.delete-notice ~ .sel-bar { bottom: 66px; }
+.sel-bar .mini { flex: none; }

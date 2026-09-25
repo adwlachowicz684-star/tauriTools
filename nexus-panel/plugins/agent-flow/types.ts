@@ -356,6 +356,7 @@ export type NodeData =
   | ClockNodeData
   | ConstNodeData
   | ModuleNodeData
+  | FrameNodeData
   /* ---- 控制器 ---- */
   | JoinNodeData
   | GateNodeData
@@ -2225,6 +2226,41 @@ export function makeModuleNode(id: string, partial: Partial<ModuleNodeData> = {}
 
 export function isModule(d: NodeData): d is ModuleNodeData {
   return (d as ModuleNodeData).kind === 'module';
+}
+
+/* ------------------------------------------------------------------ */
+/* 组合框                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 组合框的数据。
+ *
+ * 只有三样东西：判别式、名字、成员 id。
+ * 它**没有** status / output / error —— 那三个是运行时字段，
+ * 而组合框不参与执行（见 App 里 runNodes 的过滤）。
+ * 给了它们反而会被当成"一个状态永远是 idle 的节点"，
+ * 在各种统计里冒出来。
+ *
+ * members 存 id 而不是存节点副本：
+ * 存副本的话成员改了参数，框里的那份不会跟着变，
+ * 而界面上完全看不出有两份。
+ */
+export type FrameNodeData = {
+  kind: 'frame';
+  label: string;
+  /** 成员节点 id；顺序只影响显示，不影响任何逻辑 */
+  members: string[];
+};
+
+export function makeFrameNode(id: string, partial: Partial<FrameNodeData> = {}): GraphNode {
+  return {
+    id,
+    data: {
+      kind: 'frame',
+      label: partial.label ?? '组合',
+      members: partial.members ?? [],
+    } as FrameNodeData,
+  };
 }
 
 /* ------------------------------------------------------------------ */

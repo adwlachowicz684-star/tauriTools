@@ -45,6 +45,8 @@ type AnyNode = {
 };
 
 /** 只取嵌合关系时用这个 —— 不需要坐标，省得调用方硬凑一个 position */
+import { isFrameNode } from './frames';
+
 export function stackParentOf(d: { data?: Record<string, unknown> }): string | null {
   const p = d.data?.stackParent;
   return typeof p === 'string' && p.length > 0 ? p : null;
@@ -243,6 +245,10 @@ export function findSnapTarget(
 
   for (const n of nodes) {
     if (n.id === dragged.id || exclude.has(n.id)) continue;
+    /* 组合框不能当嵌合目标：它是一个框，不是一块积木。
+       挂上去的话节点会"嵌合在框下面"，而框自己还要跟着成员走，
+       两边互相追位置，表现为串里的节点慢慢飘走。 */
+    if (isFrameNode(n)) continue;
 
     const nx1 = posOf(n).x;
     const nx2 = nx1 + widthOf(n);
@@ -321,6 +327,8 @@ export function findStackChild(
 
   for (const n of nodes) {
     if (n.id === dragged.id || blocked.has(n.id)) continue;
+    // 组合框不是积木，不能挂上来（理由同 findSnapTarget）
+    if (isFrameNode(n)) continue;
     // 已是串中间的一环：挂过来会把原串拆断
     if (parentIdOf(n)) continue;
 

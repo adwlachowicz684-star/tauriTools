@@ -91,6 +91,10 @@ import {
   parentIdOf, movedEnough, heightOf, STACK_GAP, stackParentIds,
   planStackDrop, planStackReflow, measureHeights,
 } from './engine/stack';
+import {
+  fitFrames, isFrameNode, frameMemberIds, selectionWithFrames,
+  frameDelta, makeFrame,
+} from './engine/frames';
 import { withDefault } from './engine/nodeDefaults';
 import { specOf, canConnect } from './engine/nodeSpec';
 import { getDefByDataKind } from './nodes/registry';
@@ -703,6 +707,13 @@ export default function App() {
   const activeRuns = useRef<Map<string, string>>(new Map());
 
   const selected = nodes.find((n) => n.id === selectedId) ?? null;
+  /*
+   * 组合 / 解散的浮动条只在用得着时出现：
+   * 选了 2 个以上节点（能组合）或选到了组合框（能解散）。
+   * 一直显示的话它挡着画布，而"组合"不是每时每刻都要做。
+   */
+  const selCount = nodes.filter((n) => n.selected).length;
+  const selHasFrame = nodes.some((n) => n.selected && isFrameNode(n));
 
   /* ---------------- 布局：左中右三栏的标签 ---------------- */
 
@@ -1031,6 +1042,15 @@ function reportSkipped(
     nodes, setNodes, kindOfNode, onLog: pushLog, isDuplicating,
   });
   const displayNodes = stack.displayNodes;
+  /*
+   * 组合框自适应。
+   *
+   * 框的位置与大小**每帧按成员的实际位置重算**，不落盘 ——
+   * 存一份的话，挪成员、改显示高度、加成员都要记得同步它，
+   * 漏一处就是"框和里面的东西对不上"，而且不报错。
+   * 详见 engine/frames 里 fitFrames 的说明。
+   */
+  const framedNodes = useMemo(() => fitFrames(displayNodes), [displayNodes]);
   const {
     toggleStackCollapse, onStackDragStart, onStackDrag, onStackDragStop,
   } = stack;
@@ -1385,6 +1405,75 @@ function reportSkipped(
     if (def) pushLog(`✓ 已存成模块「${def.name}」，可从模块库拖出来复用`);
   }, [nodes, edges, pushLog]);
 
+  /* ---------------------------------------------------------------- */
+  /* 组合框（把若干节点框成一组）                                      */
+  /* ---------------------------------------------------------------- */
+
+  /** 把选中的节点框成一个组合 */
+  const groupSelection = useCallback(() => {
+    const picked = nodes.filter((n) => n.selected && !isFrameNode(n));
+    if (picked.length < 2) {
+      pushLog('✗ 组合要先选中 2 个以上节点：在画布上框选，或按住 Ctrl / ⌘ 点选');
+      return;
+    }
+    const ids = picked.map((n) => n.id);
+    const seq = nodes.filter((n) => isFrameNode(n)).length + 1;
+    setNodes((ns) => [
+      /*
+       * 一个节点只属于一个框 —— 先让它从原来的框里退出。
+       * 允许同时属于多个框的话，拖其中一个框会挪动这个节点，
+       * 另一个框跟着变形，而界面上分不清它到底属于哪个。
+       */
+      ...ns.map((n) => {
+        if (!isFrameNode(n)) return n;
+        const before = frameMemberIds(n);
+        const after = before.filter((m) => ids.indexOf(m) < 0);
+        if (after.length === before.length) return n;
+        return { ...n, data: { ...(n.data as Record<string, unknown>), members: after } } as FlowNode;
+      }),
+      makeFrame<FlowNode>(`fr${Date.now().toString(36)}`, ids, `组合 ${seq}`),
+    ]);
+    pushLog(`✓ 已把 ${ids.length} 个节点组合起来 —— 点框即选中整组，Ctrl / ⌘+Shift+G 解散`);
+  }, [nodes, setNodes, pushLog]);
+
+  /** 解散组合：只删框，里面的节点保留 */
+  const ungroupSelection = useCallback(() => {
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const frames = nodes.filter((n) => (
+      isFrameNode(n) && (n.selected || frameMemberIds(n).some((m) => byId.get(m)?.selected))
+    ));
+    if (frames.length === 0) {
+      pushLog('✗ 没选中组合框（选中框里的任一节点也算）');
+      return;
+    }
+    const dead = new Set(frames.map((f) => f.id));
+    setNodes((ns) => ns.filter((n) => !dead.has(n.id)));
+    pushLog(`✓ 已解散 ${frames.length} 个组合 —— 节点都保留着`);
+  }, [nodes, setNodes, pushLog]);
+
+  /*
+   * 快捷键 Ctrl / ⌘ + G 组合，加 Shift 解散。
+   *
+   * 工具栏上没有按钮了，而"选中若干节点 → 组合"是个高频动作，
+   * 只在面板里放按钮的话没人找得到。键位与 Figma / Sketch 一致。
+   *
+   * 输入框里要放行：属性面板正在改名时按 Ctrl+G 不该触发组合。
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if ((e.key || '').toLowerCase() !== 'g') return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (view !== 'flow' || running) return;
+      e.preventDefault();
+      if (e.shiftKey) ungroupSelection();
+      else groupSelection();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [view, running, groupSelection, ungroupSelection]);
+
   const onNodeDragStart = useCallback(
     (e: unknown, node: unknown, dragged: unknown) => {
       const ev = e as { ctrlKey?: boolean; metaKey?: boolean };
@@ -1393,27 +1482,117 @@ function reportSkipped(
 
       const list = (dragged as FlowNode[]) ?? [];
       const src = list.length > 0 ? list : [node as FlowNode];
-      const map = duplicateByIds(src.filter((n) => n?.id).map((n) => n.id));
-      if (map) dupMapRef.current = map;
+      /*
+       * 复制组合框 = 连里面的节点一起复制。
+       *
+       * 只复制框的话，副本的成员指向的还是原件 ——
+       * 两个框圈着同一批节点，拖哪个框都会挪动同一批，
+       * 而界面上看不出两个框有什么关系。
+       */
+      const ids: string[] = [];
+      for (const n of src) {
+        if (!n?.id) continue;
+        ids.push(n.id);
+        if (isFrameNode(n)) {
+          for (const m of frameMemberIds(n)) ids.push(m);
+        }
+      }
+      const map = duplicateByIds(ids);
+      if (!map) return;
+      dupMapRef.current = map;
+      /*
+       * 把新框的成员改指副本。
+       * 不改的话新框的成员是原件 id，等于"两个框圈同一批节点"（同上）。
+       */
+      setNodes((ns) => ns.map((n) => {
+        if (!isFrameNode(n)) return n;
+        const oldId = Object.keys(map).find((k) => map[k] === n.id);
+        if (!oldId) return n;
+        const d = { ...(n.data as Record<string, unknown>) };
+        d.members = frameMemberIds({ data: d }).map((m) => map[m] ?? m);
+        return { ...n, data: d } as FlowNode;
+      }));
     },
-    [duplicateByIds],
+    [duplicateByIds, nodes, setNodes],
   );
 
   /** 位移作用在副本上，原件不动 */
   const handleNodesChange = useCallback(
     (changes: NodeChange<FlowNode>[]) => {
       const map = dupMapRef.current;
-      if (!map) {
-        onNodesChange(changes);
-        return;
+      const byId = new Map(nodes.map((n) => [n.id, n]));
+
+      /*
+       * 组合框自己不挪 —— 它的位置是算出来的（fitFrames）。
+       *
+       * 直接改框的位置，下一帧就被重算覆盖，表现为"框拖不动"。
+       * 所以把位移转给里面的节点，框再自己跟着长过去。
+       * 展开时带上嵌合下级：只挪成员会把串拆断（下级留在原地）。
+       */
+      const moved: NodeChange<FlowNode>[] = [];
+      const rest: NodeChange<FlowNode>[] = [];
+      for (const c of changes) {
+        /*
+         * NodeChange 是六种变更的联合，其中 add 那一条**没有 id**（只有 item）。
+         * 所以不能直接写 c.id —— 严格模式下编译不过。
+         *
+         * 而宽松模式下它不报错、值是 undefined，
+         * 于是"新增节点"那条变更会被当成"id 为空的变更"静默跳过，
+         * 表现为偶尔某个节点不响应，而且看不出规律。
+         * 用 'id' in c 窄化，两种模式都成立。
+         */
+        const cid = 'id' in c ? c.id : null;
+        const hit = cid ? byId.get(cid) : undefined;
+        if (c.type === 'position' && hit && isFrameNode(hit)) {
+          const dx = (c.position?.x ?? 0) - (hit.position?.x ?? 0);
+          const dy = (c.position?.y ?? 0) - (hit.position?.y ?? 0);
+          if (dx !== 0 || dy !== 0) {
+            const delta = frameDelta(
+              nodes, cid as string, dx, dy,
+              (id) => descendantsOf(nodes as never, id),
+            );
+            for (const [id, pos] of Object.entries(delta)) {
+              moved.push({ id, type: 'position', position: pos } as NodeChange<FlowNode>);
+            }
+          }
+          continue; // 框自己的那条位移丢掉
+        }
+        rest.push(c);
       }
+
+      /*
+       * 选中扩散：点中框 = 选中它里面所有节点（见 engine/frames 的说明）。
+       *
+       * 反向不成立 —— 点里面的节点只选中它自己，
+       * 否则"改一个节点的参数"会变成"每次都选中一整组"。
+       */
+      /*
+       * 写成 filter().map() 的话，TS 不会把谓词的判定带到 map 里 ——
+       * map 收到的仍是完整的联合类型，取 c.id 就又是那个 add 没有 id 的问题。
+       * 所以直接在 if 里收：进了分支 c 就被窄化成"选中变更"，一定有 id。
+       */
+      const picked: string[] = [];
+      for (const c of rest) {
+        if (c.type === 'select' && c.selected) picked.push(c.id);
+      }
+      const extra: NodeChange<FlowNode>[] = [];
+      if (picked.length > 0) {
+        for (const id of selectionWithFrames(nodes, picked)) {
+          if (picked.indexOf(id) < 0) {
+            extra.push({ id, type: 'select', selected: true } as NodeChange<FlowNode>);
+          }
+        }
+      }
+
+      const final: NodeChange<FlowNode>[] = [...rest, ...extra, ...moved];
       onNodesChange(
-        changes.map((c) =>
-          c.type === 'position' && c.id && map[c.id] ? { ...c, id: map[c.id] } : c,
-        ),
+        map
+          ? final.map((c) =>
+              c.type === 'position' && c.id && map[c.id] ? { ...c, id: map[c.id] } : c)
+          : final,
       );
     },
-    [onNodesChange],
+    [onNodesChange, nodes],
   );
 
   /**
@@ -1770,9 +1949,16 @@ function reportSkipped(
       setRunning(false);
       return false;
     }
-    const runNodes = tgtCanvas && tgtCanvas.id !== activeId
+    /*
+     * 组合框不进执行图。
+     *
+     * 它没有任何执行器，进去后会是一个"永远直通"的孤立节点；
+     * 而孤立节点在按触发器定范围时会被排除，于是"有时报错有时不报"，
+     * 取决于这张画布上有没有触发器 —— 最难自查的那类问题。
+     */
+    const runNodes = (tgtCanvas && tgtCanvas.id !== activeId
       ? (tgtCanvas.nodes as FlowNode[])
-      : nodes;
+      : nodes).filter((n) => !isFrameNode(n));
     const runEdges = tgtCanvas && tgtCanvas.id !== activeId
       ? (tgtCanvas.edges as Edge[])
       : edges;
@@ -2268,7 +2454,7 @@ function reportSkipped(
   );
 
   const canvasNodes = useMemo(
-    () => displayNodes.map((n): typeof n => {
+    () => framedNodes.map((n): typeof n => {
       const issues = argLinkIssues[n.id];
       if (!issues && !isTrigger(n.data)) return n;
       /*
@@ -2285,7 +2471,7 @@ function reportSkipped(
       if (isTrigger(n.data)) data.onFireManual = fireManualTrigger;
       return { ...n, data } as typeof n;
     }),
-    [displayNodes, fireManualTrigger, argLinkIssues],
+    [framedNodes, fireManualTrigger, argLinkIssues],
   );
 
   /*
@@ -2649,6 +2835,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
             · 添加节点：左侧节点库拖拽（或 Ctrl+单击侧栏条目）
             · 删除：选中后按 Delete / Backspace
             · 撤销删除：Ctrl / Cmd + Z
+            · 组合：选中多个节点后 Ctrl / Cmd + G；解散：Ctrl / Cmd + Shift + G
             · 停止：切到「任务」页签，在任务详情里停
 
           另外「运行工作流」也已移除：所有流程都从触发器开始，
@@ -2888,9 +3075,13 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
              *  · 嵌合整串跟随 + 位置快照（onStackDragStart）
              * 分开挂两个同名属性是语法错误，合成一个。
              */
-            onNodeDragStart={(e, n, ns) => { onNodeDragStart(e, n, ns); onStackDragStart(e, n); }}
-            onNodeDragStop={(e, n, ns) => { onNodeDragStop(); onStackDragStop(e, n); }}
-            onNodeDrag={onStackDrag}
+            /*
+             * 嵌合那套不作用在组合框上：框不是积木，
+             * 让它去吸附只会把"框"变成串里的一环（见 engine/stack 里的说明）。
+             */
+            onNodeDragStart={(e, n, ns) => { onNodeDragStart(e, n, ns); if (!isFrameNode(n)) onStackDragStart(e, n); }}
+            onNodeDragStop={(e, n, ns) => { onNodeDragStop(); if (!isFrameNode(n)) onStackDragStop(e, n); }}
+            onNodeDrag={(e, n) => { if (!isFrameNode(n)) onStackDrag(e, n); }}
             /* xyflow v12 的 onBeforeDelete 传的是节点/边对象（内部按 id 处理，需转换），
                且签名要求返回 Promise，所以要 async */
             onBeforeDelete={async ({ nodes: dn, edges: de }) =>
@@ -2949,6 +3140,23 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
             <button className="mini" onClick={() => setDeleteNotice(null)}>知道了</button>
           </div>
         )}
+
+        {/*
+          组合条 —— 工具栏上没有按钮了，而"选中若干节点 → 组合"是高频动作。
+          快捷键 Ctrl / ⌘ + G 是主入口，这里补一个看得见的：
+          没人会猜到有这个键位（与撤销删除那条提示同理）。
+        */}
+        {!running && view === 'flow' && (selCount >= 2 || selHasFrame) ? (
+          <div className="sel-bar">
+            <span>已选 {selCount} 个{selHasFrame ? '（含组合框）' : ''}</span>
+            {selCount >= 2 ? (
+              <button className="mini" onClick={groupSelection}>组合成模块</button>
+            ) : null}
+            {selHasFrame ? (
+              <button className="mini" onClick={ungroupSelection}>解散组合</button>
+            ) : null}
+          </div>
+        ) : null}
 
         {/*
           任务 / 历史视图下属性面板保留，但只读 —— 保留是为了看完整信息。

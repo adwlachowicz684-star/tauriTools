@@ -67,6 +67,8 @@ import './defs/gate';
 import './defs/throttle';
 import './defs/timeout';
 import './defs/retry';
+/* 组合框（frame）：不从侧栏拖，靠画布上「组合」生成 */
+import './defs/frame';
 
 export {
   registerNode, getDef, hasDef, allDefs, allPresets, presetsByCategory, buildNodeTypes,

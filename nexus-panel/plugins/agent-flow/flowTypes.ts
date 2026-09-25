@@ -5,7 +5,7 @@ import type {
   GenericHttpNodeData, ExtractNodeData,
   GithubUpdateNodeData, GithubPushNodeData,
   WaitNodeData, LogNodeData, BeepNodeData, PlayAudioNodeData,
-  ClockNodeData, ConstNodeData, ModuleNodeData, JoinNodeData,
+  ClockNodeData, ConstNodeData, ModuleNodeData, FrameNodeData, JoinNodeData,
   GateNodeData, ThrottleNodeData, TimeoutNodeData, RetryNodeData,
 } from './types';
 
@@ -35,6 +35,8 @@ export type PlayAudioFlowNode = Node<PlayAudioNodeData, 'play-audio'>;
 export type ClockFlowNode = Node<ClockNodeData, 'clock'>;
 export type ConstFlowNode = Node<ConstNodeData, 'const'>;
 export type ModuleFlowNode = Node<ModuleNodeData, 'module'>;
+/** 组合框：画在节点后面的框，不参与执行 */
+export type FrameFlowNode = Node<FrameNodeData, 'frame'>;
 /* ---- 控制器 ---- */
 export type JoinFlowNode = Node<JoinNodeData, 'join'>;
 export type GateFlowNode = Node<GateNodeData, 'gate'>;
@@ -67,6 +69,7 @@ export type FlowNode =
   | ClockFlowNode
   | ConstFlowNode
   | ModuleFlowNode
+  | FrameFlowNode
   | JoinFlowNode
   | GateFlowNode
   | ThrottleFlowNode
