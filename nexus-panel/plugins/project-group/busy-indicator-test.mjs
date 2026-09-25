@@ -132,4 +132,45 @@ console.log('\n=== 6. 时间逻辑真跑（穷举，不只是文本）===');
   t('不同 label 都带上（不是写死一个）', busyText(true, '重新读取配置') === '正在重新读取配置…');
 }
 
+console.log('\n=== 7. 弹窗内的长操作必须自己给反馈 ===');
+{
+  /*
+   * 全局指示器 z-index 40，**低于弹窗遮罩**。这是有意的：弹窗打开时用户
+   * 正在看弹窗，不该被右下角分心。
+   *
+   * 由此推出一条硬约束：**弹窗内的长操作不能指望全局指示器**，
+   * 必须自己给反馈。这一节钉的正是这条例外下的漏网之鱼。
+   */
+  const css = read('style.css');
+  t('全局指示器层级低于遮罩（因此弹窗内要自备反馈）',
+    /\.fpx-busy \{[\s\S]{0,400}?z-index: 40/.test(css));
+
+  const full = read('components/dialogCards.tsx');
+  /*
+   * 必须**限定到 IconPickDialog 这一段**再判。
+   * 本文件有五处「取消」按钮，取全文件第一处会命中前面那个弹窗的 ——
+   * 那条断言永远为真，等于没钉。
+   */
+  const start = full.indexOf('export function IconPickDialog');
+  t('能定位到 IconPickDialog（切片锚点有效）', start >= 0);
+  const dc = full.slice(start);
+  const code = strip(dc);
+
+  /* 导入是真的慢：后端在阻塞线程池里逐个 copy，可能成百上千个文件 */
+  t('导入有 importing 状态', /const \[importing, setImporting\] = useState\(false\)/.test(code));
+  t('开始前置真', /setImporting\(true\)/.test(code));
+  t('结束（含失败）复位', /\} finally \{\s*setImporting\(false\);/.test(code));
+  t('有再入保护', /if \(importing\) return;/.test(code));
+
+  /* 光有状态不够 —— 状态设了却没人用，界面照样没反馈 */
+  t('导入按钮真的禁用', /disabled=\{importing\}/.test(dc));
+  t('导入按钮真的改文案', /\{importing \? '正在导入…' : '从目录导入…'\}/.test(dc));
+
+  /* 取消也要禁用：关掉弹窗之后导入还在跑，结果回到界面上看不到它落在哪 */
+  const cancelLine = dc.split('\n').find((l) => /onClick=\{onClose\}>取消</.test(l));
+  t('能定位到取消按钮', !!cancelLine);
+  t('取消按钮在导入期间也禁用', !!cancelLine && /disabled=\{importing\}/.test(cancelLine));
+}
+
+
 done();

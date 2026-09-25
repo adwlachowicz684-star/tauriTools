@@ -330,6 +330,13 @@ export function IconPickDialog({
   /* #13 两套图标的选择。默认 false = 资源管理器那套（保持原有行为）。 */
   const [guiOnly, setGuiOnly] = useState(false);
   const [picking, setPicking] = useState(false);
+  /*
+   * 导入是**真的慢**：后端在阻塞线程池里逐个 copy 图标文件（可能成百上千）。
+   * 没有这个状态的话，点完「从目录导入…」选好目录之后界面**毫无变化** ——
+   * 按钮也还亮着，用户会以为没生效于是再导一次，或者干脆点「取消」放弃，
+   * 而此时导入其实还在后台跑。
+   */
+  const [importing, setImporting] = useState(false);
   // 自定义图标是本地路径，沙箱里显示不了，逐个问后端要 data URI
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
 
@@ -353,6 +360,14 @@ export function IconPickDialog({
 
   const importFrom = async (dir: string) => {
     setPicking(false);
+    /*
+     * 再入保护。主保护是按钮 disabled —— 但那只在"按钮渲染对了"时成立。
+     * 留这一层是因为两趟并发的后果不对称：后端返回的是**全量**图标列表，
+     * 所以后回来的那趟会把先回来的覆盖掉，界面上看不出少了一批；
+     * 而磁盘上两趟都 copy 过一遍，重复文件也就留下了。
+     */
+    if (importing) return;
+    setImporting(true);
     try {
       const list = await api.importIcons(dir);
       onImported(list);
@@ -360,6 +375,8 @@ export function IconPickDialog({
       setTab('mine');
     } catch (e) {
       onLog(errText(e), true);
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -496,8 +513,16 @@ export function IconPickDialog({
       ))}
 
       <div className="p-row" style={{ justifyContent: 'flex-end', marginTop: 'var(--sp-8, 16px)' }}>
-        <button className="p-btn" onClick={() => setPicking(true)}>从目录导入…</button>
-        <button className="p-btn" onClick={onClose}>取消</button>
+        <button
+          className="p-btn"
+          disabled={importing}
+          onClick={() => setPicking(true)}
+        >
+          {importing ? '正在导入…' : '从目录导入…'}
+        </button>
+        {/* 导入期间不能让「取消」把弹窗关掉：关掉之后导入仍在跑，
+            结果回到界面上却看不到它落在哪 —— 比等着更让人困惑 */}
+        <button className="p-btn" disabled={importing} onClick={onClose}>取消</button>
       </div>
 
       {picking && (
