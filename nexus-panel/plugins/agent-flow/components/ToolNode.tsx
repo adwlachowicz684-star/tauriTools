@@ -4,7 +4,7 @@ import { ArgLine } from './ArgCell';
 import type { BriefPart } from '../engine/ops';
 import { BEEP_PRESET_META, type BeepNodeData, type WaitNodeData, type LogNodeData, type PlayAudioNodeData, type ClockNodeData, type ConstNodeData } from '../types';
 import type {
-  WaitFlowNode, LogFlowNode, BeepFlowNode, PlayAudioNode,
+  WaitFlowNode, LogFlowNode, BeepFlowNode, PlayAudioFlowNode,
   ClockFlowNode, ConstFlowNode,
 } from '../flowTypes';
 
@@ -131,7 +131,14 @@ export function BeepNode({ id, data, selected }: NodeProps<BeepFlowNode>) {
   );
 }
 
-export function PlayAudioNode({ id, data, selected }: NodeProps<PlayAudioNode>) {
+/*
+ * 注意类型参数与**组件名**不是一回事：
+ * 组件叫 PlayAudioNode（下面 playAudio.ts 就是按这个名字 import 去当 Canvas 的），
+ * 而它的节点类型是 PlayAudioFlowNode —— 同目录其它卡片都是 XxxFlowNode，
+ * 唯独这里写成了 PlayAudioNode，于是 NodeProps<…> 收到的是**组件自己**，
+ * 类型全部退化成 any，卡片看着能跑，但 props 一处都校验不到。
+ */
+export function PlayAudioNode({ id, data, selected }: NodeProps<PlayAudioFlowNode>) {
   const d = data as PlayAudioNodeData;
   const p = String(d.path ?? '').trim();
   const name = p ? p.split(/[\\/]/).pop() ?? p : '（未填文件）';
