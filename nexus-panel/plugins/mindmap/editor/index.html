@@ -3027,11 +3027,34 @@
                     var box = root.getRenderContainer().getRenderBox('view');
                     if (!box) return null;
                     var m = km.getRenderContainer().transform.translate;
-                    var pan = m ? (m[0] || 0) : 0;
+                    /*
+                     * `transform.translate` 是 **[Point]**（数组里装一个 kity.Point），
+                     * 不是 [number, number]。写 `m[0]` 拿到的是那个 Point **对象**，
+                     * 于是下面 `left + pan` 变成**字符串拼接**（Point.toString()），
+                     * 整个函数返回一个**字符串**而不是数字。
+                     *
+                     * 实测（jsdom + 真实 kity）：
+                     *   transform.translate = [{x:5, y:0, __KityClassName:'Point'}]
+                     *   m[0]            → Point 对象
+                     *   rootScreenX()   → "05 0012"   ← 字符串！
+                     *
+                     * 后果：调用方拿去做减法得到 NaN，补偿逻辑静默失效
+                     * （现由 editor-bridge 的 isFinite 守卫转成 null 跳过，
+                     *  等于"测中央主题位置"这条路一直是废的）。
+                     *
+                     * 取 .x 才对；顺带用 + 转成数字，杜绝再出现拼接。
+                     */
+                    var pan = 0;
+                    if (m && m[0]) {
+                        var p0 = m[0];
+                        pan = typeof p0 === 'number' ? p0
+                            : (+((p0 && p0.x) || 0));
+                    }
                     var host = km.getRenderTarget();
-                    var left = host && host.getBoundingClientRect
+                    var rawLeft = host && host.getBoundingClientRect
                         ? host.getBoundingClientRect().left : 0;
-                    return left + pan + box.x + box.width / 2;
+                    var left = +rawLeft || 0;
+                    return left + (pan || 0) + (+box.x || 0) + ((+box.width || 0) / 2);
                 } catch (e) { return null; }
             },
             panBy: function (dx, dy) {

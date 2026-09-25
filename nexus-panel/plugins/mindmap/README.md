@@ -1949,6 +1949,31 @@ __kmDefaultValign = (cbox, bb) => (cbox.height - bb.height) > 1 ? 'bottom' : 'mi
 
 真正的问题在另一头：**是文字被推下来了，不是视频没动**。
 
+## rootScreenX 返回的是字符串，不是数字
+
+`km.getRenderContainer().transform.translate` 是 **[Point]**（数组里装一个
+kity.Point），**不是** `[number, number]`。
+
+```js
+var m = km.getRenderContainer().transform.translate;
+var pan = m ? (m[0] || 0) : 0;      // ← m[0] 是 Point 对象
+return left + pan + box.x + box.width / 2;   // ← `+` 退化成字符串拼接
+```
+
+实测（jsdom + 真实 kity）：
+
+```
+transform.translate = [{x:5, y:0, __KityClassName:'Point'}]
+m[0]          → Point 对象
+rootScreenX() → "05 0012"      ← 字符串！
+```
+
+后果：调用方拿去做减法得到 **NaN**，补偿逻辑静默失效。
+`editor-bridge` 有 `isFinite` 守卫会把它转成 null 跳过，所以不报错 ——
+但等于"测中央主题位置来补偿"这条路径**一直没生效过**。
+
+修法：取 `m[0].x`；四个分量**全部**强制转数字，杜绝再出现拼接。
+
 ## CSS font 简写赋值失败是**静默**的：测量会用错字体
 
 `ctx.font` 走的是 CSS **简写解析**。字体名含空格 / 中文 / 逗号时，
