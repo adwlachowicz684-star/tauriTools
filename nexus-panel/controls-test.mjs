@@ -208,6 +208,27 @@ console.log('\n=== 3.5 主题参数表（规整管理）===');
       ? '已用 getResolvedBase()'
       : '仍在用 getBase()，切换深浅后插件指定主题会失效');
 
+  /* 3.5n 「全部还原」必须连风格参数一起清。
+     风格参数存在另一组 key（styleKey），resetAllVarOverrides 只清 varMap。
+     漏了它的后果：点完全部还原，"已改"计数变 0，
+     但玻璃透明度滑块仍停在用户设的值上 —— 看起来还原干净了，并没有。 */
+  const tpSrc = read('plugins/settings/ThemeParamsPanel.tsx');
+  /* 匹配范围给到 1600：中间夹了大段注释说明为什么要清，
+     写 600 会因为注释太长而匹配不到 resetStyleParam ——
+     断言本身的正则太窄，会把已修好的代码报成没修（假红）。 */
+  const resetBlock = tpSrc.match(/resetAllVarOverrides\(theme\.id\)[\s\S]{0,1600}?commit\(\);/);
+  const rb = resetBlock ? resetBlock[0] : '';
+  t('全部还原会清风格参数',
+    /resetStyleParam\(/.test(rb) && /STYLE_PARAMS/.test(rb),
+    /resetStyleParam\(/.test(rb) ? '已遍历 STYLE_PARAMS 全部 reset' : '漏了风格参数，还原不干净');
+
+  /* 3.5o 「已改」计数要含基调/风格/风格参数，不能只数 varMap */
+  t('已改计数含三类覆盖',
+    /styleParamChanged/.test(tpSrc) && /getBaseOverride\(theme\.id\) \? 1 : 0/.test(tpSrc),
+    /styleParamChanged/.test(tpSrc)
+      ? 'varMap + 基调 + 风格 + 风格参数'
+      : '只数 varMap，会显示"已改 0 项"却仍有可还原项');
+
   /* 3.5k UI 必须取 resolved 版 —— 否则用户改了风格后，
      "该显示哪些控件"仍按旧风格判断（玻璃滑块不出现、背景图不显示） */
   const appSrc = read('plugins/settings/App.tsx');
