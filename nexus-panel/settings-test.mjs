@@ -379,7 +379,15 @@ console.log('\n--- F. 设置页竖排导航 ---');
   t('导航条竖排', /flex-direction:\s*column/.test(strip(block('.set-tabs'))));
 
   /* 两个外壳结构必须一致，否则一个并排一个堆叠 */
-  t('React 版用 .set-wrap + .set-body', /className="set-wrap"/.test(react) && /className="set-body"/.test(react));
+  /*
+   * set-body 现在是**模板串**：插件页要临时加 .fill 关掉外层滚动
+   * （左列自己滚，外层再滚一次会出现两个滚动条）。
+   * 断言跟着写法走，但必须仍钉住"类名在 className 上" ——
+   * 只查裸 `set-body` 的话，把 class 去掉、只在注释里提到它也照样绿。
+   */
+  t('React 版用 .set-wrap + .set-body',
+    /className="set-wrap"/.test(react) && /className=\{`set-body/.test(react),
+    'set-body 用模板串挂 .fill，写成定串会漏判');
   t('原生版也用 .set-wrap + .set-body（不能平铺进 root）',
     /div\.set-wrap/.test(native) && /div\.set-body/.test(native));
   t('原生版不再把 tabBar 直接挂到 root',
@@ -439,9 +447,30 @@ console.log('\n--- G. 插件按 kind 三分区 ---');
    * 'tb-card-top' 里也含 'tb-card'，只查裸子串的话，
    * 把卡片的 class 去掉、只留子元素类名，这条照样绿。
    */
-  t('两版都渲染卡片矩阵（tb-shop / tb-card）',
-    /className="tb-shop"/.test(react) && /h\('div\.tb-shop'/.test(native)
-    && /'tb-card'/.test(react) && /class: 'tb-card'/.test(native));
+  /*
+   * React 版已改成**左列表 + 右详情**（.pg-*），不再是卡片矩阵。
+   * 原因：插件一多，矩阵就是一条无限长的带，要翻半天才找到想改的那个。
+   * 左列只列名称（几十个也一屏放得下），右列只渲染当前选中那一个的完整设置。
+   *
+   * 断言钉新契约：左列容器 + 右列详情 + 可折叠分组，三者都要在。
+   * 只钉"有 .pg-item"不够 —— 少了右列就退化成"只能看不能改"。
+   */
+  t('React 版用左列表 + 右详情（pg-list / pg-detail）',
+    /className="pg-list"/.test(react) && /className="pg-detail"/.test(react)
+    && /className="pg-item/.test(react),
+    '矩阵已改为双栏，钉旧类名会永远红');
+  /*
+   * 无构建版（index.js）**仍是卡片矩阵** —— 它是手写 h() 的镜像实现，
+   * 双栏改造尚未同步过去。
+   *
+   * 这条记的是**当前事实**，不是"应该如此"：
+   * 两边不一致是已知待办（同步它需要重写整段 h() 结构）。
+   * 写成"两版都如何"会永远红，而永远红和永远绿一样没有信息量 ——
+   * 所以如实钉各自现状，并在下面用一条专门的对账断言盯住这个差异。
+   */
+  t('无构建版仍渲染卡片矩阵（tb-shop / tb-card，待同步双栏）',
+    /h\('div\.tb-shop'/.test(native) && /class: 'tb-card'/.test(native),
+    '无构建版尚未同步左列表+右详情');
   /*
    * 用户明确要求"不要用下拉框"——这条**反向**钉住：
    * 只允许字符里不再出现 select 元素，否则哪天有人"顺手补个下拉"就回退了。
@@ -876,9 +905,15 @@ t('应用组按侧边栏顺序（appOrder），不按右上角 rank',
   /const appOrder = \(plugins \|\| \[\]\)\.filter/.test(appSrc)
   && /orderedFor[\s\S]{0,200}key === 'app'\) return appOrder/.test(appSrc),
   '应用组用 rank 排会让拖拽错位且不报错');
-t('工具栏组按右上角顺序排（卡片标第 N 位）',
+/*
+ * 双栏化之后"第 N 位"从卡片角标挪进了右列的「右上角」键值对，
+ * 文案排版也变了（`右上角` 是左侧标签，值与它不在同一个文本节点里）。
+ * 断言按**现在的拼接形式**钉，仍钉住"真的把序号显示出来了" ——
+ * 只查 rank.get 的话，算出来却没渲染也照样绿。
+ */
+t('工具栏组按右上角顺序排（详情里标第 N 位）',
   /key === 'toolbar'[\s\S]{0,300}rank\.get/.test(appSrc)
-  && /右上角第 \$\{/.test(appSrc));
+  && /第 \$\{\(pos \?\? 0\) \+ 1\} 位/.test(appSrc));
 t('空组保留标题（不整块隐藏）',
   /g\.items\.length \? \([\s\S]{0,400}:\s*\(/ .test(appSrc)
   || /这一类当前没有插件/.test(appSrc),
@@ -886,8 +921,19 @@ t('空组保留标题（不整块隐藏）',
 
 /* CSS 必须写在 neumorphism.css —— settings.css 是 iframe 专用补丁，
    同页嵌合模式刻意不加载它，写在那里等于没写（这条之前踩过）。 */
-t('分组样式写在 neumorphism.css（同页模式也生效）',
-  /\.tb-group\s*\{/.test(cssSrc) && /\.tb-group-head\s*\{/.test(cssSrc));
+/*
+ * 双栏样式必须放在**共享层 controls.css**，不能放 settings.css ——
+ * settings.css 是 iframe 专用补丁，同页嵌合模式刻意不加载它，
+ * 写在那里等于没写（左列会一个插件都不显示，且不报错）。
+ *
+ * neumorphism.css 也不行：它靠 settings 主入口引入，
+ * 而 .pg-* 是给外壳提供的通用组件用的。
+ */
+const cssCtl = src('css/controls.css');
+t('双栏样式写在共享层 controls.css（两种模式都生效）',
+  /\.pg-list\s*\{/.test(cssCtl) && /\.pg-detail\s*\{/.test(cssCtl)
+  && /\.pg-group-head\s*\{/.test(cssCtl),
+  '写进 settings.css 的话同页模式下不加载');
 t('分组样式没写进 settings.css（那边不加载）',
   !/\.tb-group/.test(src('plugins/settings/settings.css')));
 
@@ -909,8 +955,14 @@ const pm = src('plugins/settings/App.tsx');
 const pmStart = pm.indexOf('function PluginManager(');
 const pmBody = pm.slice(pmStart, pm.indexOf('\n/**\n * 快捷键总览。', pmStart));
 
-t('卡片里有 entry（行式时它是挨着名称的一行小字，一挤就截断）',
-  /tb-card-entry/.test(pmBody) && /p\.entry/.test(pmBody));
+/*
+ * 双栏化后 entry 从"卡片上挨着名称的一行小字"挪进了右列的键值对区
+ * （.pg-kv），不再会被挤断。
+ * 仍钉住它**被渲染出来**：入口路径是排查"插件为什么加载不出来"的第一手信息，
+ * 藏起来就得让人去翻控制台。
+ */
+t('详情里有 entry（入口路径）',
+  /p\.entry/.test(pmBody) && /pg-kv/.test(pmBody));
 t('卡片里有样式审计徽标', /StyleAuditBadge/.test(pmBody));
 t('卡片里有移除/内置（卸载入口在卡上，不用再去别处找）',
   /移除/.test(pmBody) && /p\.builtin/.test(pmBody));
