@@ -413,11 +413,36 @@ export function getVarOverrides(themeId) {
   return readVarMap(themeId);
 }
 
+/*
+ * ⚠️ 这三个写入函数**必须重新应用主题并通知订阅者**，只写 localStorage 是不够的。
+ *
+ * 这是本轮实测出来的一个硬伤：最初只写了存储，结果改完**界面一点变化都没有** ——
+ * 因为 :root 上的 CSS 变量只在 applyTo 里写，不重新跑一遍就还是旧值。
+ * setAccent / setStyleParam 都做了这件事（applyTo + listeners.forEach），
+ * 新增的这几个漏了，于是"改了没反应"。
+ *
+ * 与 setStyleParam 同样处理：改的不是当前主题时只落盘、不重算。
+ */
+function reapply(reason) {
+  const theme = current || findTheme(getThemeId());
+  const applied = applyTo(theme, getAccent(), getEnvColor());
+  listeners.forEach((fn) => {
+    try { fn(applied, reason); } catch (e) { console.error('[theme]', e); }
+  });
+  return applied;
+}
+
+const isCurrentTheme = (themeId) => {
+  const id = themeId || current?.id || getThemeId();
+  return !themeId || id === (current?.id || getThemeId());
+};
+
 export function setVarOverride(name, value, themeId) {
   const m = readVarMap(themeId);
   if (value == null || value === '') delete m[name];
   else m[name] = String(value);
   writeVarMap(themeId, m);
+  if (isCurrentTheme(themeId)) reapply('var-override');
   return m;
 }
 
@@ -425,11 +450,13 @@ export function resetVarOverride(name, themeId) {
   const m = readVarMap(themeId);
   delete m[name];
   writeVarMap(themeId, m);
+  if (isCurrentTheme(themeId)) reapply('var-override');
 }
 
 /** 清空该主题下的所有变量覆盖 */
 export function resetAllVarOverrides(themeId) {
   writeVarMap(themeId, {});
+  if (isCurrentTheme(themeId)) reapply('var-override');
 }
 
 /* ---- 元数据覆盖的读写 ---- */
@@ -447,6 +474,7 @@ export function setBaseOverride(base, themeId) {
     if (!base) localStorage.removeItem(KEY_BASE_OVR + ':' + id);
     else localStorage.setItem(KEY_BASE_OVR + ':' + id, base);
   } catch { /* 忽略 */ }
+  if (isCurrentTheme(themeId)) reapply('base-override');
 }
 
 export function getStyleOverride(themeId) {
@@ -460,6 +488,7 @@ export function setStyleOverride(style, themeId) {
     if (!style) localStorage.removeItem(KEY_STYLE_OVR + ':' + id);
     else localStorage.setItem(KEY_STYLE_OVR + ':' + id, style);
   } catch { /* 忽略 */ }
+  if (isCurrentTheme(themeId)) reapply('style-override');
 }
 
 function deriveVars(rawTheme) {
@@ -984,6 +1013,33 @@ function clearShift(themeId) {
 }
 export function getCurrent() {
   return current || findTheme(getThemeId());
+}
+
+/**
+ * 取**用户改过之后**的当前主题（含深浅 / 风格覆盖）。
+ *
+ * ⚠️ UI 一律该用这个，不用 getCurrent()。
+ *
+ * 两者差一个 applyMetaOverride：用户用设置页的「风格」把新拟态改成玻璃后，
+ * getCurrent().style 仍是 'neumorph'，于是
+ *   · 风格参数（玻璃透明度 / 磨砂颗粒 / 模糊强度）**一个都不出现**
+ *   · 背景图也不显示（supportsBgImage 按 style 判）
+ * —— 用户明明把风格改成玻璃了，界面却什么都不给，看着像坏了。
+ * 派生计算走 deriveVars（内部已覆盖）所以颜色是对的，
+ * 但**哪些控件该出现**取决于 style，这里漏了就会对不上。
+ */
+export function getCurrentResolved() {
+  return applyMetaOverride(current || findTheme(getThemeId()));
+}
+
+/** 当前基调（含覆盖）。getBase() 是原始值，UI 层请用这个 */
+export function getResolvedBase() {
+  return getCurrentResolved().base;
+}
+
+/** 当前风格（含覆盖） */
+export function getResolvedStyle() {
+  return getCurrentResolved().style || 'neumorph';
 }
 /** 面板基调：给插件适配器判断要不要反转 */
 export function getBase() {
