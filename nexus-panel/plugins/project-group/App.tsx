@@ -772,6 +772,7 @@ export default function App() {
   useCardHotkeys(ctx, {
     open: needCard((c) => openPath(c.path, 'dir')),
     /* 同上：#419 之后 lock 必须带 kind，紧邻的 rename 就带了 focus */
+    /* 同上：#419 之后 lock 必须带 kind，紧邻的 rename 就带了 focus */
     lock: needCard((c) => setDialog({ type: 'lock', card: c, kind: focus })),
     rename: needCard((c) => setDialog({ type: 'rename', card: c, kind: focus })),
     move: needCard((c) => void s.moveCardAcross(
