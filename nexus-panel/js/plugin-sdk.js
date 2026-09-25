@@ -229,36 +229,6 @@ function buildCtx(base) {
     id,
     mode,                                  // 'module' | 'iframe'
     manifest,
-
-    /*
-     * openArgs —— 宿主**打开本插件时**带进来的参数（E2 入口）。
-     *
-     * 例：宿主/别的插件调 openWithArgs('md', { path: 'D:/a.md' })，
-     * 插件挂载后 ctx.openArgs.path 就是那个路径。
-     *
-     * 为什么不能只靠 ctx.on(event)：
-     *   事件总线是**同步**的 Map，插件必须挂载完成、on 过之后才收得到。
-     *   而"打开时带参数"这件事发生在挂载**之前** ——
-     *   先 mount 再 emit，插件订阅时那一发早已过去，永远收不到。
-     *   所以挂载期的参数必须由宿主持有并塞进 ctx，不能走总线。
-     *
-     * 没有参数时是 null（不是 {}），让插件能区分"没带参数"和"带了空对象"。
-     */
-    openArgs: base.openArgs ?? null,
-
-    /**
-     * 已挂载之后再次收到新的打开参数。
-     *
-     * 走的是事件总线：那时插件已经挂载完成，顺序不再是问题。
-     * 事件名带插件 id 做前缀 —— 总线是全局的，不带上 id
-     * 会让所有插件都收到别人的打开参数。
-     *
-     * @param {(args: any) => void} handler
-     * @returns {() => void} 取消订阅
-     */
-    onOpenArgs(handler) {
-      return bus.on(`plugin:open-args:${id}`, handler, id);
-    },
     /*
      * owned —— 归属通道。
      *
@@ -355,46 +325,7 @@ function buildCtx(base) {
     /** 请求外壳重新加载本插件 */
     reload() { transport.notify('reload', {}); },
     /** 切换到另一个插件 */
-    /*
-     * 切换到另一个插件，可带打开参数（E2 触发源）。
-     *
-     * 例：项目组里点一个 .md 文件 →
-     *   await ctx.openPlugin('md', { path: 'D:/a.md' })
-     * 目标插件挂载后 ctx.openArgs.path 就是那个路径。
-     *
-     * 【这里原先是 openPlugin(targetId) 只走 transport.notify('open')】
-     * 那版三个问题：① 不带参数，E2 无从触发；
-     *   ② notify 是"发出去不管"，没有返回值；
-     *   ③ 更隐蔽的 —— 本轮一度在 ctx 里**另加了一份同名 openPlugin**，
-     *      对象字面量里后者覆盖前者，注入的函数永远不被调用，
-     *      表现为"调了没反应"且不报错。所以只保留**这一份**，
-     *      再要加能力就改这里，不要另起同名键。
-     *
-     * 两条通路（与 services 同构）：
-     *   · 同页 —— 宿主直接注入函数（base.openPlugin），不走消息
-     *   · 沙箱 —— 桥接请求 'open-plugin'，由宿主校验后执行
-     *
-     * 外面套 Promise.resolve 是必须的：module 的 transport.request 是
-     * **同步**返回，直接 .catch 会 TypeError（非 Promise 没有 catch），
-     * 而调用方都在 await，抛出去就成了 unhandled rejection ——
-     * 界面上只表现为"点了没反应"。
-     *
-     * 安全前提：这条能力**只允许内置插件**用，宿主会校验 manifest.builtin。
-     * 否则第三方插件可以 openPlugin('md', { path: '任意文件' })，
-     * 借 md 的 fpx_read_file（任意路径读取，不经 guard）把内容读出来 ——
-     * 它自己没这条命令，却能借别人的白名单，是**提权**。
-     *
-     * @param {string} targetId 目标插件 id
-     * @param {any} [args] 打开参数
-     * @returns {Promise<boolean>} 宿主是否受理（不存在/被拒绝 = false）
-     */
-    openPlugin(targetId, args) {
-      return Promise.resolve(
-        base.openPlugin
-          ? base.openPlugin(targetId, args)
-          : transport.request('open-plugin', { id: targetId, args }),
-      ).catch(() => false);
-    },
+    openPlugin(targetId) { transport.notify('open', { id: targetId }); },
 
     /**
      * 注册一个应用级快捷键（窗口在前台时生效，与插件是否激活无关）。
@@ -526,23 +457,6 @@ function buildCtx(base) {
       /**
        * 插件主题适配策略（读 + 写），同样在**主平台侧**执行。
        *
-       * 与 theme 同源的问题：策略存在 localStorage，iframe 隔离态下
-       * （opaque origin）本地根本写不进去，主面板读到的还是旧值。
-       *
-       * 另外：适配结果是 installAdapter 时按策略算一次并固化成滤镜的，
-       * 所以光"写入正确"还不够 —— 宿主侧的两个写方法会在写完后重算当前
-       * 插件的适配，否则改了看不到效果。
-       */
-      normalizer: {
-        getPolicy: () => transport.request('shell.call', { ns: 'normalizer', method: 'getPolicy', args: [] }),
-        setPolicy: (v) => transport.request('shell.call', { ns: 'normalizer', method: 'setPolicy', args: [v] }),
-        resolvePolicy: (id) => transport.request('shell.call',
-          { ns: 'normalizer', method: 'resolvePolicy', args: [id] }),
-        getPluginOverride: (id) => transport.request('shell.call',
-          { ns: 'normalizer', method: 'getPluginOverride', args: [id] }),
-        setPluginOverride: (id, v) => transport.request('shell.call',
-          { ns: 'normalizer', method: 'setPluginOverride', args: [id, v] }),
-      },
       /**
        * 窗口行为：点 ✕ 是"藏到托盘"还是"真正退出"。
        *
@@ -581,8 +495,6 @@ export function createModuleContext({
   isActive = () => true,        // 插件当前是否处于激活态（引擎按 activeId 判定）
   scope = null,                 // 事件绑定目标，默认主文档
   services = null,              // 服务调用入口（宿主注入）；同页插件与宿主同文档，直连
-  openArgs = null,              // 打开参数（E2）：宿主 mount(id, args) 带进来
-  openPlugin = null,            // 跨插件打开（E2 触发源）；由宿主注入，见 host.js
 }) {
   const useShadow = !!manifest.shadow;
   const root = useShadow ? container.attachShadow({ mode: 'open' }) : container;
@@ -707,8 +619,6 @@ export function createModuleContext({
     id: manifest.id, manifest, mode: 'module', root, container,
     transport, bus, theme, bindShortcut, owned,
     services,   // 同页插件与宿主同文档，宿主直接注入，不必绕桥接
-    openArgs,
-    openPlugin, // 跨插件打开；同页由宿主注入，没注入时 buildCtx 会退到桥接
   });
 
   // 卸载时兜底注销所有快捷键，杜绝监听器残留
@@ -805,10 +715,8 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
   /* 宿主是否要求本插件自报基调（隔离插件 / followsTheme 插件）。
      记下来是因为 theme 更新时也要重报 —— 只在 init 报一次的话，
      切主题后外壳手上还是旧基调，判定必然错。 */
-  let needReportBase = false;
   let currentTheme = {};             // 外壳推来的主题变量，供 ctx.theme 读取
   let isolated = false;              // 是否处于功能隔离（去掉 allow-same-origin）
-  let openArgs = null;               // 宿主打开本插件时带进来的参数（E2）
   let mounted = false;               // mount 只允许执行一次
   // 宿主的 origin，由 init 消息带过来，作为 postMessage 的 targetOrigin。
   //
@@ -885,13 +793,6 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
         var { manifest } = d;
         view = d.view || 'main';                 // 本次要渲染哪个视图
         if (d.hostOrigin) hostOrigin = d.hostOrigin;
-        /*
-         * 打开参数：与 module 模式同一份语义（见 buildCtx 里 openArgs 的说明）。
-         * iframe 端由 init 消息带过来，挂载时塞进 ctx。
-         * 少了这一环会出现"同页插件拿得到参数、沙箱插件拿不到"，
-         * 正是注释里反复提的那种最难排查的问题。
-         */
-        if ('openArgs' in d) openArgs = d.openArgs ?? null;
       } else {
         manifest = manifest || d.manifest;
       }
@@ -901,14 +802,6 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
         applyThemeVars(d.theme);
         // 回执：告诉外壳"新变量已生效，可以放心采样了"。
         // 没有它，外壳可能在变量落地前就采样 → 读到旧色 → 基调误判 → 反转错。
-        /* 基调变了要**重报**。
-           只在 init 时报一次是不够的：切主题后插件颜色已经变了，
-           reportedBase 却还是旧值，外壳会拿旧基调去判定 → 滤镜加反。
-           必须排在 theme-applied **之前**：外壳等 theme-applied 才采样，
-           先收到新基调，那一次采样才会用对，否则白等一轮还得多闪一次。 */
-        if (needReportBase && d.type === 'theme') {
-          post({ type: 'base-report', base: sampleOwnBase(), view });
-        }
         // 回执：告诉外壳"新变量已生效，可以放心采样了"。
         // 没有它，外壳可能在变量落地前就采样 → 读到旧色 → 基调误判 → 反转错。
         if (d.type === 'theme') post({ type: 'theme-applied' });
@@ -924,16 +817,6 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
       // 如果 ready 又要等 init，就成了 init ← ready ← init 的互等死锁。
       // ready 在脚本就绪时就主动发一次（见本函数末尾）。
 
-      /* 隔离插件：外壳读不到 contentDocument，采样会静默失败 → 不反转 →
-         深色面板上留一块刺眼的白。所以由插件自己采样并上报基调。 */
-      if (d.reportBase) {
-        needReportBase = true;
-        const report = () => post({ type: 'base-report', base: sampleOwnBase(), view });
-        report();
-        // 内容可能是异步渲染的，稍后再报一次；图片加载完再报一次
-        setTimeout(report, 300);
-        window.addEventListener('load', () => setTimeout(report, 60), { once: true });
-      }
 
       const bus = makeBusProxy();
       const transport = {
@@ -979,7 +862,6 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
       const ctx = buildCtx({
         id: manifest.id, manifest, mode: 'iframe',
         root: container, container, transport, bus, theme: currentTheme, bindShortcut,
-        openArgs,
       });
 
       // 卸载时兜底注销
@@ -1142,49 +1024,6 @@ export function bootServicePlugin(methods) {
   );
 }
 
-/**
- * 采样插件自身基调（隔离模式下代替外壳采样）。
- * 取 body 或最外层容器的背景色亮度；拿不到就退回文字色亮度。
- */
-function sampleOwnBase() {
-  const lum = (c) => {
-    const m = String(c).match(/rgba?\(([^)]+)\)/);
-    let r, g, b;
-    if (m) {
-      const p = m[1].split(/[,\s/]+/).filter(Boolean).map(Number);
-      [r, g, b] = p;
-      if (p.length > 3 && p[3] === 0) return null;      // 全透明，当没取到
-    } else {
-      const h = String(c).trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
-      if (!h) return null;
-      let t = h[1];
-      if (t.length === 3) t = t.split('').map((x) => x + x).join('');
-      r = parseInt(t.slice(0, 2), 16);
-      g = parseInt(t.slice(2, 4), 16);
-      b = parseInt(t.slice(4, 6), 16);
-    }
-    if ([r, g, b].some((v) => typeof v !== 'number' || Number.isNaN(v))) return null;
-    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-  };
-
-  const tryEl = (el) => {
-    if (!el) return null;
-    let cur = el;
-    for (let i = 0; i < 6 && cur; i++) {
-      const cs = getComputedStyle(cur);
-      const v = lum(cs.backgroundColor);
-      if (v !== null) return v;
-      cur = cur.parentElement;
-    }
-    return null;
-  };
-
-  const bg = tryEl(document.body);
-  if (bg !== null) return bg > 0.55 ? 'light' : 'dark';
-  const fg = lum(getComputedStyle(document.body).color);
-  if (fg !== null) return fg > 0.55 ? 'dark' : 'light';   // 文字亮 → 底色暗
-  return null;
-}
 
 /* ============================================================
    CSS 作用域化：给 module 模式插件的样式加前缀，避免互相污染

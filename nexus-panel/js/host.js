@@ -21,8 +21,6 @@ import { createModuleContext, BRIDGE_CHANNEL } from './plugin-sdk.js';
 /* 同页插件入口加载器：Vite 构建下走 import.meta.glob，
    否则原来的动态 import 在无构建模式才不会被构建期丢掉。 */
 import { loadModuleEntry } from './plugin-entries.js';
-import { installAdapter, declaredTheme } from './theme-normalizer.js';
-import * as normalizer from './theme-normalizer.js';
 import { getPluginConfig } from './plugin-config.js';
 import * as pluginConfig from './plugin-config.js';
 import * as extPolicy from './external-policy.js';
@@ -82,41 +80,6 @@ export const THEME_API_METHODS = [
 const themeApi = Object.fromEntries(
   THEME_API_METHODS.map((m) => [m, themeManager[m]]).filter(([, fn]) => typeof fn === 'function'),
 );
-
-/**
- * 插件主题适配策略（normalizer），同样经 ctx.shell 桥接。
- *
- * 与主题同源的问题：策略存在 localStorage 里，iframe 插件（尤其隔离态，
- * opaque origin 下 localStorage 根本不可用）本地写不进主平台侧，
- * 主面板读到的还是旧值。
- *
- * 但这里还多一层 —— **光写对还不够**。适配结果是在 installAdapter() 时
- * 按 resolvePolicy() 算一次并固化成滤镜的；策略改了若不重算，当前插件
- * 的滤镜不会变，看起来就是"改了没反应"。所以两个写方法外面包了一层：
- * 写完立刻让宿主对当前实例重跑 reAdapt()。
- *
- * reAdapt 在 createHost 闭包里，这里用回调注入（单例宿主，够用）。
- */
-export const NORMALIZER_API_METHODS = [
-  'getPolicy', 'setPolicy', 'getPluginOverride', 'setPluginOverride', 'resolvePolicy',
-];
-
-/** 由 createHost 注入：策略变更后重算当前插件的适配。 */
-let onAdaptPolicyChanged = () => {};
-
-const normalizerApi = {
-  getPolicy: normalizer.getPolicy,
-  resolvePolicy: normalizer.resolvePolicy,
-  getPluginOverride: normalizer.getPluginOverride,
-  setPolicy: (v) => {
-    normalizer.setPolicy(v);
-    onAdaptPolicyChanged();
-  },
-  setPluginOverride: (id, v) => {
-    normalizer.setPluginOverride(id, v);
-    onAdaptPolicyChanged();
-  },
-};
 
 /* -------------------- 关闭窗口的行为 -------------------- */
 
@@ -509,65 +472,7 @@ export function createHost(opts = {}) {
   };
 
   /* ---- 加载 / 卸载 ---- */
-  /*
-   * 带参数打开插件（E2 入口的统一出口）。
-   *
-   * 两种情况必须分开处理，这是本函数存在的全部理由：
-   *
-   *   ① 插件**尚未**是激活态 → 走 mount(id, args)，参数随挂载塞进 ctx.openArgs。
-   *   ② 插件**已经**激活     → 此时不能再 mount（会整篇重新挂载，
-   *      用户正在看的内容、滚动位置全丢），只能走事件总线补发。
-   *
-   * 只写 ① 的话，第二次"用 md 打开另一个文件"会整篇重载；
-   * 只写 ② 的话，第一次就永远收不到。
-   *
-   * @param {string} id
-   * @param {any} args
-   * @returns {Promise<boolean>} 目标不存在时 false —— 不返回的话调用方
-   *          await 到 undefined，分不清"成功但无返回"和"没这个插件"，
-   *          界面上都是"点了没反应"。
-   */
-  async function openWithArgs(id, args) {
-    const target = state.plugins.find((p) => p.id === id);
-    if (!target) return false;
-    if (state.activeId === id && state.instance) {
-      bus.emit(`plugin:open-args:${id}`, args);
-      return true;
-    }
-    await mount(id, args);
-    return true;
-  }
-
-  /*
-   * openWithArgsFor —— 带**调用方**的跨插件打开。
-   *
-   * 与 openWithArgs 的差别只有一个：多一道 builtin 校验。
-   *
-   * 为什么必须有这道校验（这是本函数存在的全部理由）：
-   *   md 是内置插件，白名单里有 fpx_read_file —— 那是**任意路径读取**
-   *   （fpx::fpx_read_file 不经 guard::must_be_under）。
-   *   第三方插件自己拿不到这条命令，但如果 openPlugin 对它开放，
-   *   它可以 openPlugin('md', { path: 'C:/Users/…/任意文件' })，
-   *   借 md 的白名单把内容读出来 —— **用别人的权限做自己不能做的事，
-   *   这是提权**，而且日志上只显示"md 读了一个文件"，看不出是谁指使的。
-   *
-   * 校验必须在这里（宿主）而不是 sdk：
-   *   sdk 跑在插件自己的上下文，插件改一下就能绕；
-   *   只有宿主这侧是不可信方碰不到的。
-   */
-  async function openWithArgsFor(from, id, args) {
-    if (!from?.builtin) return false;
-    return await openWithArgs(id, args);
-  }
-
-  /*
-   * mount(id, args) —— args 是"打开参数"（E2 入口）。
-   *
-   * 它在挂载**之前**就存在，所以必须由宿主持有并塞进 ctx，
-   * 不能走事件总线（总线的订阅要等插件挂载完，那时这一发早已过去）。
-   * 详见 plugin-sdk.js 里 openArgs 的说明。
-   */
-  async function mount(id, args = null) {
+  async function mount(id) {
     const manifest = state.plugins.find((p) => p.id === id);
     /* 服务插件不该被用户直接打开：它没有主视图，打开是空白。
        拦在这里而不是只靠侧边栏不显示 —— 侧边栏只是 UI，
@@ -623,41 +528,14 @@ export function createHost(opts = {}) {
 
     try {
       const instance = manifest.type === 'iframe'
-        ? await mountIframeView(stage, manifest, token, 'main', args)
-        : await mountModule(stage, manifest, token, args);
+        ? await mountIframeView(stage, manifest, token, 'main')
+        : await mountModule(stage, manifest, token);
 
       if (state.mounting !== token) { await safeTeardown(instance); return; }
       state.instance = instance;
 
-      // 主题适配：基调不一致的插件自动反转，与面板统一。
-      // 插件设置里关掉「主题适配」则完全不动它的外观。
-      if (instance && getPluginConfig(manifest.id).adaptTheme) {
-        instance.adaptInput = {
-          manifest, wrap: instance.wrap, target: instance.target,
-          root: instance.root, isIframe: manifest.type === 'iframe',
-          /*
-           * 插件自选了主题后，它看到的"面板基调"就是那套的基调。
-           * 不传的话 installAdapter 会取全局基调 → 深浅判断反 → 滤镜加反。
-           *
-           * 必须写成 **getter 而不是一次性求值** —— 这是"切换主题后
-           * 插件深浅反转"的根因：
-           *   1. 插件在深色主题下挂载，panelBase 求值为 'dark' 并**固定**下来；
-           *   2. 用户切到浅色主题，host 调 reAdapt() 重算；
-           *   3. reAdapt 复用的是 inst.adaptInput，里面那个 'dark' 是旧值；
-           *   4. 插件已跟着主题变浅（pluginBase='light'），
-           *      与陈旧的 panelBase='dark' 不相等 → 施加反转 → 变深。
-           * 结果：面板是浅的，插件是深的，而 localStorage 里明明写着 light。
-           * 改成 getter 后每次读取都重算，任何时候都是当前值。
-           */
-          get panelBase() { return baseForPlugin(manifest.id); },
-        };
-        await reAdapt(instance);
-      } else if (instance) {
-        hooks.onAdaptInfo?.({ adapted: false, reason: 'adapt-disabled' });
-      }
-      /* 显形放在适配之后：滤镜挂上之前 iframe 是「白底未适配」的样子，
-         此刻摘遮罩就等于把那帧白放给用户看。
-         适配关掉时也要显形 —— 那是用户的选择，不是没走到这一步。 */
+      /* 显形放在主题变量生效之后：变量落地前 iframe 还是上一套主题的样子，
+         此刻摘遮罩就等于把那帧旧色放给用户看。 */
       revealFrame(instance?.iframe);
       // iframe 插件由 revealFrame 顺带收掉加载层；同页插件（module）没有
       // iframe，得在这里自己收，否则它会一直盖着已就绪的插件
@@ -717,11 +595,6 @@ export function createHost(opts = {}) {
       try {
         inst = await mountIframeView(container, manifest, null, 'settings');
       } catch (e) { dismissSettings(true); throw e; }
-      inst.adaptInput = {
-        manifest, wrap: inst.wrap, target: inst.target,
-        root: null, isIframe: true,
-      };
-      await reAdapt(inst);
       // 与主视图同理：等适配滤镜挂上再摘遮罩，否则抽屉里也会闪一下白
       revealFrame(inst?.iframe);
       dismissSettings();
@@ -729,7 +602,6 @@ export function createHost(opts = {}) {
       try { inst.iframe?.contentWindow?.focus(); } catch {}
       return async () => {
         try {
-          if (typeof inst.adaptTeardown === 'function') await inst.adaptTeardown();
           await inst.ctx?.__destroy?.();
           inst.wrap?.remove();
         } catch (e) { console.error('[settings teardown]', e); }
@@ -764,8 +636,6 @@ export function createHost(opts = {}) {
       theme: readTheme(),
       shellHooks: makeShellHooks(manifest),
       isActive: () => state.shortcutsPaused === true,
-      /* 与主线同形状：同一个 API 一处有、一处没有，是调用方最难排查的那类坑 */
-      openPlugin: (targetId, args2) => openWithArgsFor(manifest, targetId, args2),
     });
 
     const result = await def.settings(ctx);
@@ -854,47 +724,8 @@ export function createHost(opts = {}) {
     return { ok: failed.length === 0, deleted, failed };
   }
 
-  /* ---- 主题适配：可重复执行（切换主题后要重算） ----
-     注意 installAdapter 内部有 sleep 采样（约几百毫秒），期间用户可能又切了主题或插件。
-     没有并发保护的话，两次 installAdapter 会各自往 wrap 里塞一张色调覆盖层，
-     而 adaptTeardown 只留最后一张 → 前面的永远清不掉、滤镜层层叠加。
-     用 generation 令牌保证：只有最后一次调用的结果会被采纳。 */
-  async function reAdapt(inst) {
-    /* 把重算入口暴露给模块级的 normalizerApi：
-       策略是从 iframe 里改的，改完必须重算当前插件才看得到效果。 */
-    if (!inst?.adaptInput) return;
-    const gen = (inst.adaptGen || 0) + 1;
-    inst.adaptGen = gen;
-
-    if (typeof inst.adaptTeardown === 'function') {
-      try { await inst.adaptTeardown(); } catch (e) { console.error('[reAdapt]', e); }
-      inst.adaptTeardown = null;
-    }
-
-    const td = await installAdapter(inst.adaptInput);
-
-    // 期间又被触发过（或实例已被卸载/换掉）→ 丢弃这次的结果
-    if (inst.adaptGen !== gen) {
-      try { td?.(); } catch { /* 忽略 */ }
-      return;
-    }
-    // 容器已经不在文档里（插件被切走了）→ 同样丢弃
-    if (inst.wrap && !inst.wrap.isConnected) {
-      try { td?.(); } catch { /* 忽略 */ }
-      return;
-    }
-    inst.adaptTeardown = td;
-  }
-
-  // 策略变更（可能来自 iframe 设置页）→ 对当前插件重算适配。
-  // 只重算当前这一个：其它插件下次挂载时自然会按新策略来，
-  // 没必要为没在显示的东西付采样开销。
-  onAdaptPolicyChanged = () => {
-    if (state.instance) reAdapt(state.instance);
-  };
-
   /* ---- 模式 A：同页模块插件 ---- */
-  async function mountModule(stage, manifest, token, openArgs = null) {
+  async function mountModule(stage, manifest, token) {
     const wrap = document.createElement('div');
     wrap.className = 'plugin-wrap';
     const container = document.createElement('div');
@@ -921,10 +752,7 @@ export function createHost(opts = {}) {
     }
 
     const ctx = createModuleContext({
-      manifest, container, bus, openArgs,
-      /* 跨插件打开（E2 触发源）：同页插件直接给函数，不必绕桥接。
-         builtin 校验在 openWithArgsFor 里，判定在宿主侧，插件改不动。 */
-      openPlugin: (targetId, args2) => openWithArgsFor(manifest, targetId, args2),
+      manifest, container, bus,
       theme: readTheme(),
       shellHooks: makeShellHooks(manifest),
       isActive: isPluginActive(manifest.id),   // 快捷键只在自己激活时生效
@@ -988,7 +816,7 @@ export function createHost(opts = {}) {
     return () => clearTimeout(timer);
   }
 
-  async function mountIframeView(hostEl, manifest, token, view = 'main', openArgs = null) {
+  async function mountIframeView(hostEl, manifest, token, view = 'main') {
     const wrap = document.createElement('div');
     wrap.className = 'plugin-wrap plugin-wrap-frame';
     const iframe = document.createElement('iframe');
@@ -1115,7 +943,6 @@ export function createHost(opts = {}) {
             send(iframe, {
               // 插件可能自选了主题（见 varsForPlugin）；没有则等同全局
               type: 'init', manifest, theme: varsForPlugin(manifest.id), view,
-              openArgs,                         // 打开参数（E2），与 module 同语义
               isolated,                         // 插件据此决定能力探测方式
               /* 让插件自报基调。两种场景：
                  1) 隔离插件 —— 外壳读不到 contentDocument，采样会静默失败
@@ -1126,18 +953,12 @@ export function createHost(opts = {}) {
                  上报值用 sampleOwnBase() 读插件自己的 body 背景：
                  follow 模式 → 等于面板基调 → 不加滤镜；
                  native 模式 → 固定深色 → 该加就加。 */
-              reportBase: (isolated || declaredTheme(manifest) === 'follow') && adaptTheme,
               // 宿主自报 origin，供插件回发消息时用作 targetOrigin。
               // 隔离态下插件是 opaque origin，读不到 parent.location，
               // 只能靠这里告诉它 —— 否则它只能通配 '*'。
               hostOrigin: window.location.origin || '*',
             });
             send(iframe, { type: 'mount' });
-            break;
-          // 隔离插件无法被外壳穿透采样，由它自己采样后上报基调
-          case 'base-report':
-            inst0.reportedBase = d.base;
-            if (inst0.adaptInput) { inst0.adaptInput.reportedBase = d.base; reAdapt(inst0); }
             break;
           case 'mounted':
             clearTimeout(timeout);
@@ -1224,8 +1045,8 @@ export function createHost(opts = {}) {
     }
     hostEl.appendChild(wrap);
 
-    /* 兜底显形：mounted 之后无论后面适配成功与否，最多 900ms 一定显示。
-       没有它，reAdapt 抛错或插件自报基调迟迟不来时，插件会一直隐身。 */
+    /* 兜底显形：mounted 之后无论后续是否成功，最多 900ms 一定显示，
+       免得某个环节卡住时插件一直隐身。 */
     cleanupFns.push(armRevealFallback(iframe));
 
     /* 卸载时注销，否则 liveFrames 会一直持有已移除的 iframe：
@@ -1359,21 +1180,6 @@ export function createHost(opts = {}) {
           }
           return reply(true, await tauri.invoke(payload.cmd, payload.args));
         }
-        /*
-         * open-plugin —— 跨插件打开（E2 触发源）。
-         *
-         * 例：项目组（同页）点 .md 文件 → 让 md 插件带 path 打开。
-         *
-         * 这里**必须**校验调用方是内置插件，理由见 plugin-sdk.js 的说明：
-         * 开放给第三方就等于允许它借 md 的 fpx_read_file 读任意文件
-         * （它自己没这条命令，却能借别人的白名单），是提权。
-         */
-        case 'open-plugin': {
-          if (!manifest?.builtin) {
-            return reply(false, false, '跨插件打开只允许内置插件使用');
-          }
-          return reply(true, await openWithArgs(payload?.id, payload?.args));
-        }
         case 'listen':
           return reply(false, null, 'iframe 模式不支持 listenTauri，请使用 ctx.on / ctx.emit');
         case 'store.get': {
@@ -1436,7 +1242,6 @@ export function createHost(opts = {}) {
           const mod = ns === 'pluginConfig' ? pluginConfig
             : ns === 'external' ? extPolicy
             : ns === 'theme' ? themeApi
-            : ns === 'normalizer' ? normalizerApi
             : ns === 'window' ? windowApi : null;
           if (!mod) return reply(false, null, '未知外壳命名空间: ' + ns);
           const fn = mod[method];
@@ -1728,7 +1533,6 @@ export function createHost(opts = {}) {
     } else if (inst.root) {
       applyThemeVarsTo(inst.root, varsForPlugin(inst.manifest?.id));
     }
-    await reAdapt(inst);
   }
 
   // 主题：初始化并联动（iframe 推送新变量，无需重载；适配结果重算）
@@ -1781,7 +1585,6 @@ export function createHost(opts = {}) {
     getCloseAction,
     setCloseAction,
     onCloseActionChange,
-    openWithArgs,
     readTheme,
     getPlugins: () => state.plugins,
     /** 当前已注册的应用级快捷键（accel → { pluginId, event, label }） */
@@ -1851,18 +1654,6 @@ export function resolvePluginTheme(pluginId) {
 export function varsForPlugin(pluginId) {
   const t = resolvePluginTheme(pluginId);
   return t ? exportVarsFor(t) : exportVars();
-}
-
-/**
- * 该插件实际表现出的基调。
- *
- * 供主题适配使用：适配要的是"插件看到的面板是什么基调"。
- * 插件自选了主题后，它看到的就是那套的基调，而不是全局的 ——
- * 若这里还返回全局基调，深浅判断会反，滤镜会加反。
- */
-export function baseForPlugin(pluginId) {
-  const t = resolvePluginTheme(pluginId);
-  return t ? t.base : themeManager.getBase();
 }
 
 /**
@@ -1950,7 +1741,6 @@ export function collectDiagnostics(manifest, err, extra = {}) {
       主题适配: cfg.adaptTheme ? '开启' : '关闭',
       深色策略: cfg.themeDark || '(跟随全局)',
       浅色策略: cfg.themeLight || '(跟随全局)',
-      适配策略: pick(() => normalizer.resolvePolicy?.(manifest?.id) ?? '(未取到)', '(未取到)'),
     } : { 说明: '无插件配置（manifest 缺少 id）' },
     theme: th ? {
       主题: pick(() => `${th.name} (${th.id})`),
