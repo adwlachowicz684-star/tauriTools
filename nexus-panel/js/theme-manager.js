@@ -1420,10 +1420,16 @@ export function initTheme() {
  */
 export function exportVarsFor(theme) {
   const vars = deriveVars(theme);
+  /* ⚠️ 用**覆盖后**的 base 算辉光透明度。
+     直接用 theme.base 的话，用户把深色主题改成浅色后，
+     deriveVars 内部按浅色算，这里却按深色给 0.32 ——
+     两套值出自同一个函数却用了不同的 base，辉光浓度对不上。
+     exportVarsFor 是给"导出 / 另存"用的，错一点就会固化进副本。 */
+  const themeBase = applyMetaOverride(theme).base;
   const accent = getAccent();
   if (accent) {
     vars['--accent'] = accent;
-    vars['--accent-glow'] = rgba(accent, theme.base === 'dark' ? 0.32 : 0.22);
+    vars['--accent-glow'] = rgba(accent, themeBase === 'dark' ? 0.32 : 0.22);
   }
   const env = getEnvColor();
   if (env) vars['--env-color'] = env;

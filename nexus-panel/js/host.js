@@ -1722,7 +1722,18 @@ export function resolvePluginTheme(pluginId) {
   if (!pluginId) return null;
   let cfg;
   try { cfg = getPluginConfig(pluginId); } catch { return null; }
-  const base = themeManager.getBase();
+  /*
+   * ⚠️ 必须用**覆盖后**的基调，不能用 themeManager.getBase()。
+   *
+   * getBase() 读的是主题自带值。用户在设置页把一套深色主题改成浅色
+   * （基调也是参数了）之后，getBase() 仍返回 'dark'，于是这里去取
+   * cfg.themeDark —— 而当前面板实际是浅色，紧接着的 t.base !== base
+   * 校验必然失败、返回 null，插件退回跟随全局。
+   *
+   * 表现为"给这个插件单独指定的主题，在我切换深浅后突然失效了"，
+   * 且没有任何报错。与设置页 UI 取 getCurrentResolved() 是同一处根因。
+   */
+  const base = themeManager.getResolvedBase();
   const want = base === 'light' ? cfg.themeLight : cfg.themeDark;
   if (!want) return null;
   const t = findTheme(want);
