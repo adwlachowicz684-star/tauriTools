@@ -667,6 +667,28 @@ body {
 }
 .err-box .row { margin-top: 16px; display: flex; gap: 10px; }
 
+/* ---------- 更新说明（UpdateCard 里的 upd-notes）----------
+   与 .err-box 同理：根 body 的 user-select:none 会继承进来，
+   而更新说明是"我要摘一段发给同事"的典型场景 —— 必须显式改回 text。
+   顺序不能反（先标准后前缀）：守卫按类名起、到第一个闭合花括号切块，
+   属性写到了块外就等于没写。 */
+.upd-notes {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-md);
+  color: var(--text-dim);
+  font-size: var(--fs-12, 12px);
+  line-height: var(--lh-relaxed, 1.6);
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
 /* ---------- 错误框里的诊断日志 ----------
    默认折叠：多数人只关心「重试能不能好」，一大坨环境信息糊在脸上
    反而挡住了那行错误。需要排查或要贴给开发者时再展开。 */

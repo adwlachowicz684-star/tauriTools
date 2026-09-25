@@ -155,31 +155,22 @@ export const plugins = [
     entry: './plugins/dupview/index.html',
     version: '1.0.0',
     /*
-     * theme:'light' —— 插件自带米色配色（--dv-* 变量），不读外壳主题变量。
+     * 配色：插件自带米色（--dv-* 变量），**不读外壳推来的主题变量**。
      *
-     * 为什么不能写 'follow'：'follow' 会被判成"观感由外壳驱动 → 与面板必然
-     * 同基调"，于是**不施加任何滤镜**，深色面板里就嵌着一整块米色。
-     * 写 'light' 才走自动适配：整体 invert 暗化融入面板，而 img / iframe
-     * 由适配层二次反转还原（见 theme-normalizer.js 的 imgFixCss），
-     * 所以 PDF 截图与缩略图的颜色仍然准确。
-     *
-     * 插件里的 CSS 变量统一用 --dv- 前缀，就是为了躲开外壳推进 iframe :root
-     * 的 --bg / --accent 等变量 —— 否则面板的深色 --bg 会覆盖插件自己的米色底，
+     * 注册表里没有基调声明字段 —— 上游把 theme / followsTheme 那套收成了
+     * 单一约定：外壳把变量推到哪，插件就渲染到哪，不做反转也不做覆盖。
+     * 所以这里要做的不是"声明自己是浅色"，而是**躲开外壳变量**：
+     * 插件 CSS 变量统一 --dv- 前缀，外壳推进 iframe :root 的 --bg / --accent
+     * 之类就盖不到它 —— 否则面板的深色 --bg 会覆盖插件的米色底，
      * 而 --dv-txt 仍是深色，结果是深底深字、全糊。
-     *
-     * 后端是另起的本机 python 服务（127.0.0.1:8767），CSP 放行见
-     * config/nexus.config.mjs 的 DUPVIEW_ORIGIN。
      */
-    theme: 'light',
     /*
-     * builtin:true —— **必需**，不是修饰。
+     * builtin:true —— 随本仓库一同发布，与宿主同源，符合内置的定义。
      *
-     * 本插件要调三条 M 类命令（dupview_backend_start / stop / status，起停本机
-     * python 服务），而第三方插件被 THIRD_DENY_CAPS 一律拒 M
-     * （见 invoke-policy.js）。少了这个标记，插件装上去表现为
-     * "点了启动按钮没反应"，且报错只有一行"不能声明 M 类命令"。
-     *
-     * 它也确实符合内置的定义：随本仓库一同发布，与宿主同源。
+     * 注意它现在**不是**为了绕过能力限制才标的：原生化之后本插件
+     * 一条 M 类命令都没有（扫描、渲染、比对都在 Rust 进程内完成），
+     * 不再需要靠 builtin 躲开第三方那条 M 禁令。
+     * （python 时代确实需要 —— 那时 backend_start/stop/status 是 M。）
      */
     builtin: true,
     description: '试卷重名 / 重复比对：重名家族、MD5 与文本一致标注、逐页截图对比、改名与删留',
