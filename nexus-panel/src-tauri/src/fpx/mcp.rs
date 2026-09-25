@@ -1222,13 +1222,13 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             let cfg = super::store::load_config(&dir);
             /* #113 两套：folder_icons 会写 desktop.ini，folder_gui_icons 只在界面内。
                查询两边都要看 —— 只回一套的话，"界面设了图标但查不到"会被当成丢配置。 */
+            /*
+             * 走 store 里那一份 `pick_by_key`，不在本地再抄一遍。
+             * 抄两份就会漂移 —— 而"MCP 查得到、卡片渲染查不到"
+             * 正是两份规则不一致时才会有的现象。
+             */
             let pick = |table: &super::model::IconMap| -> Option<String> {
-                table.get(&path).cloned().or_else(|| {
-                    let key = super::store::normalize_key(&path);
-                    table.iter()
-                        .find(|(k, _)| super::store::normalize_key(k) == key)
-                        .map(|(_, v)| v.clone())
-                })
+                super::store::pick_by_key(table, &path)
             };
             let cur = pick(&cfg.folder_icons);
             let gui = pick(&cfg.folder_gui_icons);

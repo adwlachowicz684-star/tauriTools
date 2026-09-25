@@ -672,6 +672,28 @@ pub fn locks_covering<'a>(cfg: &'a FpxConfig, path: &str) -> Vec<&'a super::mode
         .collect()
 }
 
+/// 按路径查一张「路径 → 值」的表：先精确命中，再按 `normalize_key` 兜底。
+///
+/// **为什么不能直接 `map.get(path)`**：
+/// 同一个目录的键可能由**不同入口以不同的字符串形式**写进来 ——
+/// MCP 的 `folder_icon_set` / `set_tag_color` 用的是 AI 传来的原样路径
+/// （可能是 `/` 分隔、可能带尾分隔符、大小写与页签里登记的不同），
+/// 而卡片渲染用的是页签里登记的那一串。两边只要差一点，就会出现
+/// **「MCP 报告图标 / 颜色已设置，界面上却什么都不显示」** ——
+/// 调用方以为做完了，显示却没变，而且没有任何线索能指向"键的写法不同"。
+///
+/// 这正是文件末尾那段"历史教训"说的：**三套匹配规则并存是多个 bug 的共同根因**。
+/// 所以查表一律走这里，与 `lock_of` / `locks_covering` 同一套规则。
+pub fn pick_by_key(map: &std::collections::HashMap<String, String>, path: &str) -> Option<String> {
+    if let Some(v) = map.get(path) {
+        return Some(v.clone());
+    }
+    let key = normalize_key(path);
+    map.iter()
+        .find(|(k, _)| normalize_key(k) == key)
+        .map(|(_, v)| v.clone())
+}
+
 /// Windows 下路径比较忽略大小写与尾斜杠。
 /// 路径比较用的规范化 key —— **全项目唯一一套规则**，任何按路径查表的地方都必须用它。
 ///
@@ -725,20 +747,24 @@ fn resolve_tag_color(path: &str, cfg: &FpxConfig, records: &[LinkRecord], kind: 
      * 自身 GUI > 自身普通 > 组 GUI > 组普通。
      * 不这么排的话，"组设了 GUI 色而项目设了普通色"会显示错的那个。
      */
-    if let Some(c) = cfg.tag_gui_colors.get(path).or_else(|| cfg.tag_colors.get(path)) {
-        return (Some(c.clone()), false);
+    if let Some(c) = pick_by_key(&cfg.tag_gui_colors, path)
+        .or_else(|| pick_by_key(&cfg.tag_colors, path)) {
+        return (Some(c), false);
     }
     // 项目组变色传播到所有引用它的项目（与原 C# 版 PropagateGroupColor 一致）
     if kind == "project" {
         let key = normalize_key(path);
         if let Some(rec) = records.iter().find(|r| normalize_key(&r.project) == key) {
-            let from_gui = cfg.tag_gui_colors.get(&rec.lib)
-                .or_else(|| cfg.tag_gui_colors.get(&rec.group));
-            if let Some(c) = from_gui {
-                return (Some(c.clone()), true);
+            /* 继承的源路径来自账本（r.lib / r.group），写法同样可能与
+               配置里的键不同 —— 一样走规范化查表，否则"项目组改了色、
+               引用它的项目没跟着变"，而那正是这个继承要做的唯一一件事。 */
+            if let Some(c) = pick_by_key(&cfg.tag_gui_colors, &rec.lib)
+                .or_else(|| pick_by_key(&cfg.tag_gui_colors, &rec.group)) {
+                return (Some(c), true);
             }
-            if let Some(c) = cfg.tag_colors.get(&rec.lib).or_else(|| cfg.tag_colors.get(&rec.group)) {
-                return (Some(c.clone()), true);
+            if let Some(c) = pick_by_key(&cfg.tag_colors, &rec.lib)
+                .or_else(|| pick_by_key(&cfg.tag_colors, &rec.group)) {
+                return (Some(c), true);
             }
         }
     }
@@ -918,8 +944,8 @@ fn build_card(
         account_fixed: lock.map(|l| l.account_only).unwrap_or(false),
         deny_delete: lock.map(|l| l.deny_delete).unwrap_or(false),
         deny_write: lock.map(|l| l.deny_write).unwrap_or(false),
-        icon: cfg.folder_icons.get(path).cloned(),
-        gui_icon: cfg.folder_gui_icons.get(path).cloned(),
+        icon: pick_by_key(&cfg.folder_icons, path),
+        gui_icon: pick_by_key(&cfg.folder_gui_icons, path),
         tag_color,
         tag_color_inherited,
         link_details: details,

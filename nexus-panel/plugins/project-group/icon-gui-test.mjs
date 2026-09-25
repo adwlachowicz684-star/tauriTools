@@ -115,10 +115,20 @@ console.log('\n=== 5. 标签色的两套（#113）===');
   t('默认值已初始化', /tag_gui_colors: HashMap::new\(\)/.test(model));
   t('types 有 tagGuiColors', /tagGuiColors/.test(types));
 
-  /* **GUI 那套优先**，且继承也要按同一优先级 */
-  t('自身 GUI 优先', /tag_gui_colors\.get\(path\)\.or_else\(\|\| cfg\.tag_colors\.get\(path\)\)/.test(store));
-  t('继承先看组的 GUI 色', /cfg\.tag_gui_colors\.get\(&rec\.lib\)/.test(store));
-  t('继承再看组的普通色', /if let Some\(c\) = cfg\.tag_colors\.get\(&rec\.lib\)/.test(store));
+  /*
+   * **GUI 那套优先**，且继承也要按同一优先级。
+   *
+   * 三处都改走 `pick_by_key`（规范化查表）而不是 `map.get(path)`：
+   * 键可能由 MCP 以另一种写法写进来（AI 传来的原样路径），
+   * 用精确查就查不到 —— 表现为"MCP 报告已设置、界面什么都不显示"。
+   */
+  t('自身 GUI 优先（且走规范化查表）',
+    /pick_by_key\(&cfg\.tag_gui_colors, path\)\s*\n?\s*\.or_else\(\|\| pick_by_key\(&cfg\.tag_colors, path\)\)/.test(store));
+  t('继承先看组的 GUI 色', /pick_by_key\(&cfg\.tag_gui_colors, &rec\.lib\)/.test(store));
+  t('继承再看组的普通色', /pick_by_key\(&cfg\.tag_colors, &rec\.lib\)/.test(store));
+  /* 反面证据：不许再回到精确查表 */
+  t('标签色不再用 .get(path) 精确查（反面证据）',
+    !/cfg\.tag_gui_colors\.get\(path\)|cfg\.tag_colors\.get\(path\)/.test(store));
 
   /* 只动目标那一套 */
   t('save_style 选表', /let color_table = if gui_only \{ &mut cfg\.tag_gui_colors \} else \{ &mut cfg\.tag_colors \}/.test(mod));
@@ -135,6 +145,35 @@ console.log('\n=== 5. 标签色的两套（#113）===');
 
   const api = fs.readFileSync(path.join(HERE, 'api.ts'), 'utf8');
   t('前端 saveStyle 传 gui_only', /gui_only: guiOnly \?\? null/.test(api));
+}
+
+console.log('\n=== 5b. 卡片图标查表必须规范化 ★★ ===');
+{
+  const store = fs.readFileSync(path.join(RS, 'store.rs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const mcp = fs.readFileSync(path.join(RS, 'mcp.rs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  /*
+   * 此前 `build_card` 里是 `cfg.folder_icons.get(path)` —— **精确**字符串比较。
+   * 而 MCP 的 `folder_icon_set` 用 AI 传来的原样路径当键（可能 `/` 分隔、
+   * 可能带尾分隔符、大小写不同），于是：
+   *   · MCP 侧 `folder_icon_get` 有规范化兜底 → **查得到**，回包说图标已设置
+   *   · 卡片渲染精确查 → **查不到**，界面上什么都不显示
+   * 即"调用方以为做完了，显示却没变"，且没有任何线索指向"键的写法不同"。
+   */
+  t('卡片 icon 走规范化查表', /icon: pick_by_key\(&cfg\.folder_icons, path\)/.test(store));
+  t('卡片 gui_icon 走规范化查表', /gui_icon: pick_by_key\(&cfg\.folder_gui_icons, path\)/.test(store));
+  t('不再用 .get(path) 取卡片图标（反面证据）',
+    !/icon: cfg\.folder_icons\.get\(path\)|gui_icon: cfg\.folder_gui_icons\.get\(path\)/.test(store));
+
+  /* 有且只有一份实现：MCP 不再自己抄一遍，否则两份会漂移 */
+  t('有 pick_by_key 这个共享入口', /pub fn pick_by_key\(/.test(store));
+  t('MCP 的 folder_icon_get 用它', /super::store::pick_by_key\(table, &path\)/.test(mcp));
+  t('MCP 不再内联自己那套兜底（反面证据）',
+    !/table\.iter\(\)\s*\n\s*\.find\(\|\(k, _\)\| super::store::normalize_key\(k\)/.test(mcp));
+
+  /* 与 lock_of 同一套规则：注释里那段"三套规则并存"的教训 */
+  t('lock_of 仍走 normalize_key（同一套规则）',
+    /cfg\.locks\.iter\(\)\.find\(\|l\| normalize_key\(&l\.path\) == key\)/.test(store));
 }
 
 console.log('\n=== 6. 界面开关与参数传递 ===');
