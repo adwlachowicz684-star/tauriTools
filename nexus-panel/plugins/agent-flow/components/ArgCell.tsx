@@ -100,15 +100,21 @@ export function argClassOf(p: BriefPart): string {
  * （看不出是参数、也点不了），而**没有任何报错**。
  */
 export function ArgLine({
-  nodeId, type, data, parts,
+  nodeId, type, data, parts, className,
 }: {
   nodeId: string;
   type: string;
   data: Record<string, unknown>;
   parts: BriefPart[];
+  /**
+   * 容器类名。默认走通用的摘要行；文件节点要沿用 `node-line--path`
+   * （路径是等宽 + 可危险色标记），不给这个口子的话就只能另写一个
+   * 容器 —— 而那正是"同一段参数在两张卡片上长得不一样"的来源。
+   */
+  className?: string;
 }) {
   return (
-    <div className="node-line node-line--brief node-brief">
+    <div className={className ?? 'node-line node-line--brief node-brief'}>
       {parts.map((p, i) => (
         <ArgCell key={i} nodeId={nodeId} type={type} part={p} data={data} className={argClassOf(p)} />
       ))}

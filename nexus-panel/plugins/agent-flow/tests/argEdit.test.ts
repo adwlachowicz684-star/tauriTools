@@ -290,3 +290,123 @@ test('任务节点的提示词可就地编辑（多行）', () => {
    */
   assert.ok(/raw: prompt/.test(src), '编辑初值必须是完整原文 prompt，不是截断后的 shown');
 });
+
+/* ================= 文件 / 表格 / 循环 / 条件 ================= */
+
+/**
+ * 这四类曾经全是纯文字摘要。
+ *
+ * 共同的表现：卡片上写着"读哪个文件""按什么条件保留""重复几次"，
+ * 看着像说明，看不出哪部分是你填的参数，也点不动 ——
+ * 改一个值必须开右侧面板，而它们恰恰是各自节点唯一真正要调的东西。
+ */
+test('文件 / 表格 / 循环 / 条件的参数都走 ArgLine（不再是纯文字）', () => {
+  for (const f of [
+    'components/FsNode.tsx',
+    'components/TableNode.tsx',
+    'components/LoopNode.tsx',
+    'components/ConditionNode.tsx',
+  ]) {
+    const src = readSrc(f);
+    assert.ok(/<ArgLine\b/.test(src), `${f} 必须走 ArgLine（否则参数只是纯文字）`);
+  }
+  // 文件节点原本是 <code className="node-line__code">，整条路径不可点
+  assert.ok(!/node-line__code/.test(readSrc('components/FsNode.tsx')),
+    'FsNode 不许再用 node-line__code');
+  /*
+   * 表格节点原本是 briefOf() 返回一整串字符串。
+   * 这个函数的存在就等于"参数仍是纯文字"，所以直接判它不存在。
+   */
+  assert.ok(!/function briefOf/.test(readSrc('components/TableNode.tsx')),
+    'TableNode 不许再有 briefOf（整串摘要）');
+});
+
+/**
+ * 路径类参数的编辑初值必须是完整路径。
+ *
+ * 显示为了放得下会压成 `…/末尾两级`，拿那一截当编辑初值的话，
+ * 点一下输入框里就只剩 `…/a/b`，一失焦等于把完整路径改坏了 ——
+ * 不报错，只是运行时找不到文件。
+ */
+test('文件与表格的路径：显示截断、编辑用完整值', () => {
+  const fs = readSrc('components/FsNode.tsx');
+  const i = fs.indexOf('function pathCell');
+  assert.ok(i >= 0, 'FsNode 要有统一的 pathCell');
+  const body = fs.slice(i, i + 600);
+  assert.ok(/raw: full/.test(body), 'raw 必须是完整路径 full');
+  assert.ok(/text: shortPath\(full\)/.test(body), 'text 才是截断后的显示');
+
+  const tb = readSrc('components/TableNode.tsx');
+  assert.ok(/raw: p/.test(tb), '读表格的编辑初值必须是完整路径 p');
+});
+
+/**
+ * 循环的分隔符**不给**就地编辑 —— 这是刻意的。
+ *
+ * 它的值可能是真正的换行符（默认就是 '\n'），单行输入框装不下换行，
+ * 编辑框里只剩一个空串，一失焦就把分隔符改没了 ——
+ * 不报错，只是列表从此切不开。宁可让它留在面板里改。
+ */
+test('循环的分隔符不可就地编辑（换行符在单行输入框里会被改坏）', () => {
+  const src = readSrc('components/LoopNode.tsx');
+  // 分隔符仍要显示出来（只是不可改）
+  assert.ok(/text: sepLabel\(d\.separator\)/.test(src), '分隔符要显示出来');
+  assert.ok(!src.includes("key: 'separator'"), '分隔符不能做成可编辑的格子');
+
+  /*
+   * 反过来：次数与通配符**必须**可改 ——
+   * 只钉"分隔符不可改"的话，把整张卡改成不可编辑它照样通过，
+   * 而那比"分隔符能被改坏"更糟（循环节点从此一个参数都调不动）。
+   */
+  assert.ok(src.includes("edit: { key: 'times', kind: 'text' }"), 'times 必须可就地编辑');
+  assert.ok(src.includes("edit: { key: 'pattern', kind: 'text' }"), 'pattern 必须可就地编辑');
+});
+
+/**
+ * 多条件规则不给就地编辑。
+ *
+ * 多条件时值在 rules[i].conditions[j].value，卡片上改的是 rules[i].value ——
+ * 写进去对显示毫无影响，表现为"改了一下，卡片纹丝不动"，而值确实存进去了。
+ */
+test('条件：多条件规则不给就地编辑（写了也没反应）', () => {
+  const src = readSrc('components/ConditionNode.tsx');
+  assert.ok(/const multi = \(r\.conditions \?\? \[\]\)\.length > 0/.test(src));
+  assert.ok(/multi\s*\n?\s*\?\s*\[\{ role: 'text', text: describeRule\(r\) \}\]/.test(src),
+    '多条件要退回 describeRule 的纯文字，且不带 edit');
+  // 单条件的写入路径必须带数组下标
+  assert.ok(/path: `rules\.\$\{i\}\.op`/.test(src), 'op 要写进 rules[i].op');
+  assert.ok(/path: `rules\.\$\{i\}\.value`/.test(src), 'value 要写进 rules[i].value');
+});
+
+/**
+ * 算子名字不许出现两遍。
+ *
+ * 徽章（图标 + 配色）与右边参数格若都写算子名，卡片上会出现两个「包含」。
+ */
+test('条件徽章只留图标（算子名交给参数格，不重复）', () => {
+  const src = readSrc('components/ConditionNode.tsx');
+  /*
+   * 徽章的 title 里**可以**带算子名（hover 要看得到全称），
+   * 所以不能简单地判"徽章里没有 label" —— 那样会误伤 title。
+   * 真正要钉的是：图标 span 之后直接闭合，中间没有文本子节点。
+   */
+  assert.ok(
+    /<span className="cond-op-icon">\{OP_META\[r\.op\]\?\.icon \?\? '\?'\}<\/span>\s*<\/span>/.test(src),
+    '徽章只留图标（算子名交给参数格，不许出现两个「包含」）',
+  );
+  assert.ok(/className="cond-op"/.test(src), '徽章仍要在（配色与识别）');
+});
+
+/**
+ * ArgLine 支持容器类名覆盖。
+ *
+ * 文件节点要沿用 node-line--path（等宽 + 危险色），没有这个口子就只能
+ * 另写一个容器 —— 而那正是"同一段参数在两张卡片上长得不一样"的来源。
+ */
+test('ArgLine 可覆盖容器类名（文件节点要沿用 node-line--path）', () => {
+  const cell = readSrc('components/ArgCell.tsx');
+  assert.ok(/className\?: string/.test(cell), 'ArgLine 要有可选 className');
+  assert.ok(/className \?\? 'node-line node-line--brief node-brief'/.test(cell));
+  const fs = readSrc('components/FsNode.tsx');
+  assert.ok(/className=\{`node-line node-line--path/.test(fs), 'FsNode 要沿用 path 行样式');
+});
