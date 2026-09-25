@@ -4482,12 +4482,22 @@ group('拖放：编辑器侧（真实源码）');
     const startAt = html.indexOf('function legacyRef(raw)');
     const src = html.slice(startAt, html.indexOf('/* ---------------- DOM → 节点 映射'));
     const fn = new Function('JSON', src + '; return { refListOf: refListOf, imageListOf: imageListOf };')(JSON);
+    /*
+     * 用例必须包含**空数组**与**含空元素的数组**。
+     * 之前只有"非空"用例，于是编辑器侧 `p && p.length` 把 '[]' 判否、
+     * 掉进 typeof [] === 'object' 的单对象分支返回 [[]] 这个 divergence
+     * **一直没被抓到** —— 一致性测试是绿的，两边却对同一个输入给出不同结果。
+     */
     const cases = [
       JSON.stringify([{ n: 'a' }, { n: 'b' }]),
       JSON.stringify([{ n: 'a' }]),
       JSON.stringify({ n: 'single' }),
       'C:\\x\\y.pdf',
       '',
+      '[]',                                   // ← 空数组：曾返回 [[]]
+      JSON.stringify([null]),                 // ← 含空元素：曾被留下
+      JSON.stringify([{ n: 'a' }, null]),
+      JSON.stringify([JSON.stringify({ n: 'b' })]),  // ← 元素是 JSON 串
     ];
     let same = true;
     for (const c of cases) {
@@ -4498,7 +4508,31 @@ group('拖放：编辑器侧（真实源码）');
         console.log('      不一致:', JSON.stringify(c), mine, theirs);
       }
     }
-    ok(same, '编辑器 refListOf 与 io.decodeRefList 结果**逐例一致**（含纯路径兜底）');
+    ok(same, '编辑器 refListOf 与 io.decodeRefList 结果**逐例一致**（含空数组/空元素/纯路径）');
+
+    // '[]' 必须真的是空列表 —— 非空就意味着画布上多一行幽灵附件
+    {
+      const r = fn.refListOf('[]');
+      ok(r.length === 0 && !r[0], `'[]' 解析为空列表（实测 ${JSON.stringify(r)}）`);
+    }
+    // 数组入参同样要滤空（io 那边是 .map(normOne).filter(Boolean)）
+    {
+      const mineA = fn.refListOf([null, { n: 'a' }]).map((x) => (x && x.n) || '');
+      const ioA = io.decodeRefList([null, { n: 'a' }]).map((x) => (x && x.n) || '');
+      ok(mineA.join('|') === ioA.join('|') && mineA.length === 1,
+        `数组入参也滤掉空元素（编辑器 ${JSON.stringify(mineA)} / io ${JSON.stringify(ioA)}）`);
+    }
+    // imageListOf 必须接受**真数组**（导入的 JSON 里 images 就是数组）。
+    // 只做 JSON.parse 的话数组会被 String() 化 → 解析失败 → 返回 []，
+    // 导入进来的多图一张都不显示，且没有任何报错。
+    {
+      const nodeWith = (v) => ({ getData: () => v });
+      ok(fn.imageListOf(nodeWith([{ n: 'a' }, { n: 'b' }])).length === 2,
+        'images 是**真数组**时能取到（不是被 JSON.parse 吃掉）');
+      ok(fn.imageListOf(nodeWith([])).length === 0, 'images 为空数组 → 0 张');
+      ok(fn.imageListOf(nodeWith(JSON.stringify([{ n: 'a' }]))).length === 1, '字符串形式仍正常');
+      ok(fn.imageListOf(nodeWith('not json')).length === 0, '坏数据当没有（不抛错）');
+    }
   }
 
   // 多图互斥：规则集中在 EditorBridge.setImages（命令本身只写 images）

@@ -1949,6 +1949,30 @@ __kmDefaultValign = (cbox, bb) => (cbox.height - bb.height) > 1 ? 'bottom' : 'mi
 
 真正的问题在另一头：**是文字被推下来了，不是视频没动**。
 
+## 编辑器的 refListOf 与 io.js 的 decodeRefList 对 '[]' 结果不同
+
+两份实现（编辑器是独立 HTML，import 不了 io.js，只能内联一份），
+测试里有一条"逐例一致"的断言守着。但用例集里**没有空数组** ——
+于是这个 divergence 一直没被抓到，测试是绿的：
+
+| 输入 | 编辑器（旧） | io.js |
+|---|---|---|
+| `'[]'` | `[[]]` | `[]` |
+| `'[null]'` | `[null]`（数组入参时） | `[]` |
+
+根因是那句 `p && p.length && ...`：空数组因 `length=0` 被判否，掉进下面的
+"单对象"分支，而 `typeof [] === 'object'` 成立 → 返回 `[[]]`。
+
+**后果**：删完附件后 `setData('file', '[]')`，画布上凭空多出一行附件
+（名字取不到 → 显示成「文件附件」）—— 一个删不掉的**幽灵图标**。
+
+顺带修了同源的另外两处：
+
+- 数组入参不滤空元素（io 那边是 `.map(normOne).filter(Boolean)`）
+- `imageListOf` 只做 `JSON.parse`：**真数组**（导入的 JSON 里 images 就是
+  数组）会被 `String()` 化成 `[object Object]` 再解析 → 失败 → 返回 `[]`，
+  导入进来的多图**一张都不显示**，且没有任何报错
+
 ## rootScreenX 返回的是字符串，不是数字
 
 `km.getRenderContainer().transform.translate` 是 **[Point]**（数组里装一个

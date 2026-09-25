@@ -482,6 +482,22 @@
                 return [{ n: String(raw).split(/[\\/]/).pop() || String(raw), a: null, legacyPath: String(raw) }];
             }
 
+            /** 归一化单个元素：与 io.js 的 normOne **完全同构**（含数组元素是 JSON 串的情形） */
+            function normRefOne(x) {
+                if (!x) return null;
+                if (typeof x === 'object') return x;
+                var st = String(x).trim();
+                if (!st) return null;
+                // 元素本身也可能是 JSON 串（数组里存了序列化后的 ref）
+                if (st.charAt(0) === '{') {
+                    try {
+                        var oo = JSON.parse(st);
+                        if (oo && typeof oo === 'object') return oo;
+                    } catch (e) { /* 退回路径 */ }
+                }
+                return legacyRef(st)[0];
+            }
+
             function refListOf(raw) {
                 if (!raw) return [];
                 var v = raw;
@@ -491,22 +507,49 @@
                     if (t.charAt(0) === '[') {
                         try {
                             var p = JSON.parse(t);
-                            if (p && p.length && Object.prototype.toString.call(p) === '[object Array]') {
-                                var out = [];
-                                for (var k = 0; k < p.length; k++) if (p[k]) out.push(p[k]);
-                                return out;
+                            /*
+                             * **只要是数组就到此为止**（哪怕是空数组）。
+                             *
+                             * 原写法是 `p && p.length && ...` —— 空数组 `[]`
+                             * 因为 length=0 被判否，掉到下面的"单对象"分支，
+                             * 而 `typeof [] === 'object'` 成立 → 返回 **[[]]**，
+                             * 一个装着空数组的列表。画布上凭空多出一行附件
+                             * （名字取不到，显示成「文件附件」）——
+                             * 表现就是"删完附件，节点上还留着一个幽灵图标"。
+                             *
+                             * 同时 io.js 那边 `Array.isArray(p)` 恒真，返回 []，
+                             * 于是两边对同一个 '[]' 给出**不同**结果。
+                             */
+                            if (Object.prototype.toString.call(p) === '[object Array]') {
+                                return normRefList(p);
                             }
                         } catch (e) { /* 退回单值分支 */ }
                     }
                     try {
                         var o = JSON.parse(t);
-                        if (o && typeof o === 'object') return [o];
+                        // 数组上面已处理；这里只收**非数组**对象
+                        if (o && typeof o === 'object'
+                            && Object.prototype.toString.call(o) !== '[object Array]') return [o];
                     } catch (e) { /* 纯路径 */ }
                     return legacyRef(raw);
                 }
-                if (Object.prototype.toString.call(v) === '[object Array]') return v;
+                if (Object.prototype.toString.call(v) === '[object Array]') return normRefList(v);
                 if (v && typeof v === 'object') return [v];
                 return [];
+            }
+
+            /**
+             * 数组 → 归一化并**滤掉空元素**。
+             * 必须滤：不滤的话 `[null]` 会留下一个 null 元素，
+             * 画布上又是一行幽灵附件（io.js 那边是 `.filter(Boolean)`，两边不等价）。
+             */
+            function normRefList(arr) {
+                var out = [];
+                for (var k = 0; k < arr.length; k++) {
+                    var one = normRefOne(arr[k]);
+                    if (one) out.push(one);
+                }
+                return out;
             }
 
             /**
@@ -519,9 +562,23 @@
             function imageListOf(node) {
                 var many = node.getData('images');
                 if (!many) return [];
+                /*
+                 * 可能是**真数组**（导入的 JSON 里 images 就是数组），不总是字符串。
+                 * 只做 JSON.parse 的话，数组会被 String() 化再解析：
+                 *   [{n:'a'}] → "[object Object]" → 解析失败 → 返回 []
+                 * 于是导入进来的多图**一张都不显示**，而界面上又没有报错，
+                 * 用户只会以为图丢了。
+                 */
+                if (Object.prototype.toString.call(many) === '[object Array]') {
+                    var o1 = [];
+                    for (var q = 0; q < many.length; q++) if (many[q]) o1.push(many[q]);
+                    return o1;
+                }
                 try {
                     var a = JSON.parse(many);
-                    if (a && a.length && Object.prototype.toString.call(a) === '[object Array]') {
+                    // 空数组也要照实返回 []：写 `a && a.length` 会让 '[]' 掉下去，
+                    // 与 refListOf 的处理不一致
+                    if (Object.prototype.toString.call(a) === '[object Array]') {
                         var out = [];
                         for (var k = 0; k < a.length; k++) if (a[k]) out.push(a[k]);
                         return out;
