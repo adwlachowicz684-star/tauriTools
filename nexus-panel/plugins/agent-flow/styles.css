@@ -1488,10 +1488,10 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
  * 每个监听目标一张卡（与触发条件卡片同款底板 ——
  * 两类卡都是"一个节点里并列的若干项"，各写一套迟早长得不一样）。
  */
-.upd-cards { display: flex; flex-direction: column; gap: 6px; }
+.upd-cards { display: flex; flex-direction: column; gap: var(--sp-3); }
 .upd-card { display: flex; flex-direction: column; gap: 3px; }
 .upd-card.is-off { opacity: 0.55; }
-.upd-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.upd-card-head { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
 .upd-card-name {
   font-size: var(--fs-body, 12px); color: var(--af-fg); font-weight: var(--fw-mid, 500);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
@@ -2283,7 +2283,7 @@ input.mono, textarea.mono {
  */
 .insp-metarow .insp-id-btn { max-width: 40%; min-width: 0; }
 /* 超时：标签 + 数字框 + 单位，作为一个整体，不被拉伸也不被压缩 */
-.insp-timeout { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.insp-timeout { display: inline-flex; align-items: center; gap: var(--sp-2); flex: none; }
 
 /*
  * 第三行：显示高度 + 节点层面的动作（存为自定义 / 编辑内部）。
@@ -2292,7 +2292,7 @@ input.mono, textarea.mono {
  * 嵌合行（.insp-stack-row）出现时在线下方，与参数区同侧。
  */
 .insp-opsrow {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: var(--sp-4);
   padding-bottom: 6px; margin-bottom: var(--sp-3, 6px);
   border-bottom: 1px solid var(--af-line, #2a2f3a);
 }
