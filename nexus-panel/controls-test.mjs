@@ -2064,5 +2064,96 @@ console.log('\n=== 39. 文件改名后引用必须跟着改（断链） ===');
 }
 
 
+console.log('\n=== 40. 弹窗底板：玻璃主题下必须看得见 ===');
+{
+  const themesSrc = read('js/themes.js');
+  const dlgCss = read('css/dialog.css');
+
+  /* ---- 一、玻璃主题的弹窗底板与面板必须拉得开 ---- */
+  /*
+   * 事故：把玻璃主题的 --surface 改成"同色系派生、贴近背景"之后，
+   * --surface-overlay 也跟着贴近了 —— 深色玻璃下弹窗与面板的 ΔL*
+   * 只剩 1.85~3.09（非玻璃均值 6.82），弹窗边界完全看不出来，
+   * 表现就是"没有底板"。
+   *
+   * 明度差是弹窗"浮起来"的主要依据，阴影在玻璃这种低对比风格里不够。
+   */
+  const hex = (x) => {
+    const m = /^#([0-9a-f]{6})$/i.exec(String(x || '').trim());
+    return m ? { r: parseInt(m[1].slice(0, 2), 16), g: parseInt(m[1].slice(2, 4), 16), b: parseInt(m[1].slice(4, 6), 16), a: 1 } : null;
+  };
+  const parse = (x) => {
+    const h = hex(x); if (h) return h;
+    const m = /^rgba?\(([^)]+)\)$/.exec(String(x || '').trim()); if (!m) return null;
+    const q = m[1].split(',').map((v) => parseFloat(v));
+    return { r: q[0], g: q[1], b: q[2], a: q.length > 3 ? q[3] : 1 };
+  };
+  const lin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  const lum = (c) => 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
+  const lab = (c) => { const y = lum(c); return y > 0.008856 ? Math.pow(y, 1 / 3) * 116 - 16 : 903.3 * y; };
+  const over = (fg, bg) => ({ r: fg.r * fg.a + bg.r * (1 - fg.a), g: fg.g * fg.a + bg.g * (1 - fg.a), b: fg.b * fg.a + bg.b * (1 - fg.a) });
+
+  /* 按 `id: '` 切块，只取 style: 'glass' 的那几套 */
+  const blocks = themesSrc.split(/\n\s*\{\n/).filter((b) => /id:\s*'glass-/.test(b) && /style:\s*'glass'/.test(b));
+  t('取到玻璃主题定义块', blocks.length >= 6, `找到 ${blocks.length} 套`);
+
+  const pick = (b, name) => {
+    const m = new RegExp("'" + name + "'\\s*:\\s*'([^']+)'").exec(b);
+    return m ? m[1] : null;
+  };
+  const rows = [];
+  for (const b of blocks) {
+    const id = (/id:\s*'([^']+)'/.exec(b) || [])[1];
+    const base = (/base:\s*'([^']+)'/.exec(b) || [])[1];
+    const bg = parse(pick(b, '--bg'));
+    const sf = parse(pick(b, '--surface'));
+    const ov = parse(pick(b, '--surface-overlay'));
+    if (!bg || !sf || !ov) { rows.push({ id, base, d: null }); continue; }
+    const s = over(sf, { r: bg.r, g: bg.g, b: bg.b });
+    const o = over(ov, s);          // 弹窗浮在**面板**上，底是 surface 合成色
+    rows.push({ id, base, d: lab(o) - lab(s) });
+  }
+  const bad = rows.filter((r) => r.d == null || r.d < (r.base === 'dark' ? 5 : 1.5));
+  t('玻璃主题弹窗底板与面板的明度差达标（深色≥5 / 浅色≥1.5）',
+    bad.length === 0,
+    rows.map((r) => `${r.id}=${r.d == null ? '缺值' : r.d.toFixed(2)}`).join(' '));
+
+  /*
+   * 文字仍然要读得清：提亮底板会削弱浅字对比度，这里守住 4.5。
+   */
+  const lowContrast = rows.filter((r) => {
+    const b = blocks.find((x) => (/'([^']+)'/.exec(x) || [])[1] === r.id) || '';
+    const tx = parse(pick(b, '--text')); if (!tx || r.d == null) return false;
+    const bg = parse(pick(b, '--bg')); const sf = parse(pick(b, '--surface')); const ov = parse(pick(b, '--surface-overlay'));
+    const s = over(sf, { r: bg.r, g: bg.g, b: bg.b }); const o = over(ov, s);
+    const a = lum(tx), c = lum(o);
+    return (Math.max(a, c) + 0.05) / (Math.min(a, c) + 0.05) < 4.5;
+  });
+  t('提亮后正文对弹窗底板仍有 ≥4.5 对比度', lowContrast.length === 0,
+    lowContrast.map((r) => r.id).join(', '));
+
+  /* ---- 二、底板变量必须有兜底 ---- */
+  /*
+   * --surface-overlay **只有玻璃主题在 themes.js 里定义**，其余 26 套靠
+   * neumorphism.css 兜底。而 iframe 插件（agent-flow）只 @import 了
+   * tokens/controls/dialog，**没有** neumorphism.css ——
+   * 变量缺失时整条 background 声明无效 → 弹窗完全透明。
+   */
+  const dlgRule = rules(dlgCss).find((r) => /\.\bnx-dlg\b/.test(r.sel) && /background/.test(r.body));
+  t('.nx-dlg 的 background 有兜底（不能只写裸 var）',
+    !!dlgRule && /var\(--surface-overlay\s*,\s*var\(--surface-raised/.test(dlgRule.body),
+    dlgRule ? dlgRule.body.trim().slice(0, 90) : '(未找到规则)');
+
+  /* ---- 三、浅色玻璃靠描边兜底 ---- */
+  /*
+   * 浅色玻璃的 surface 合成后已接近纯白（246,248,252），
+   * overlay 再亮也顶不出明度差（ΔL* 物理上限约 2）——
+   * 没有描边时边界完全看不出来。
+   * 用 inset box-shadow 而非 border：不占布局、不影响 420px 的盒模型。
+   */
+  t('.nx-dlg 有一圈 inset 描边（浅色玻璃的底板依据）',
+    !!dlgRule && /inset\s+0\s+0\s+0\s+1px\s+var\(--dlg-edge\s*,\s*var\(--divider\)\)/.test(dlgRule.body));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
