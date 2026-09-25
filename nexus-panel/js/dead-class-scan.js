@@ -168,6 +168,66 @@ export function collectUsedClasses(src) {
       if (name && /^[A-Za-z_-][\w-]*$/.test(name)) out.add(name);
     }
   }
+  /*
+   * 5: el('div', 'nx-mask') —— **创建辅助函数**传参
+   *
+   * 这是 js/dialog.js 的写法（全项目弹窗的唯一实现）：
+   *     function el(tag, cls, text) { n.className = cls; ... }
+   *     const mask = el('div', 'nx-mask');
+   *
+   * 类名是**函数参数**，不是 class= / className=，也不是模板串 ——
+   * 上面 1~4 条分支**一条都匹配不到**。
+   *
+   * 后果是双向失明（实测：把 .nx-mask 改成 .nx-maskx，
+   * 4 个测试共 375 项断言**全绿**，没有任何一条报红）：
+   *   · 方向1（CSS 定义、代码没用）看的是新类名 .nx-maskx，代码里确实没有，
+   *     本该报死样式 —— 但旧类名 .nx-mask 已从 CSS 消失，方向1 无从对照；
+   *   · 方向2（代码用了、CSS 没定义）看的是旧类名 nx-mask，
+   *     而它压根没被提取出来。
+   * 两个方向同时失效，弹窗整块失去样式却无人知晓。
+   *
+   * ==================================================================
+   * 必须先看 el 的**定义签名**，不能只看调用形式
+   * ==================================================================
+   * 全仓有四个文件各自定义了 el，签名分两种：
+   *
+   *   js/dialog.js                function el(tag, cls, text)        ← 第二参是类名
+   *   color-picker/icon-picker/
+   *   md-editor 的 index.js       const el = (tag, attrs={}, ...kids) ← 第二参是属性对象
+   *
+   * 只看"第一个参数是 HTML 标签"会**误报一大片**：
+   * 实测第一版修复让 dead-class 从 45 项绿变成 2 项红，
+   * 报出的 preview / sv / hue / grid / cell / panes / t / foot 全是
+   * 属性键名或标签名 —— 它们根本不是类名。
+   *
+   * 更值得记的是：当初统计"全仓只有 dialog.js 用 el()"用的就是
+   * 同一个只认字面量第二参的正则，等于**用错误前提验证错误前提**，
+   * 所以没发现另外三个文件。
+   */
+  const elTakesClass = /function\s+el\s*\(\s*\w+\s*,\s*cls\b/.test(src)
+    || /\bel\s*=\s*\(\s*\w+\s*,\s*cls\b/.test(src)
+    || /\bel\s*=\s*function\s*\(\s*\w+\s*,\s*cls\b/.test(src);
+  if (elTakesClass) {
+    const HTML_TAGS = new Set(['a','button','div','h1','h2','h3','h4','h5','h6','input',
+      'label','li','ol','option','p','pre','section','select','span','strong','table',
+      'tbody','td','textarea','th','thead','tr','ul','code','em','small','i','b','form']);
+    /*
+     * 第二参数可能是**拼接**：el('button', 'nx-btn' + (v ? ' primary' : ''))
+     * —— 只匹配到第一个字面量会漏掉拼接里的状态类。
+     * 所以取**整个第二参数表达式**（限长防失控），
+     * 再套用与模板串相同的判据：后面紧跟 `?` 的是条件值，跳过。
+     */
+    for (const m of src.matchAll(/\bel\(\s*['"`]([a-zA-Z][\w]*)['"`]\s*,\s*([^;]{0,160})/g)) {
+      if (!HTML_TAGS.has(String(m[1]).toLowerCase())) continue;
+      const expr = m[2];
+      for (const sm of expr.matchAll(/['"`]([^'"`]*)['"`]/g)) {
+        let k = (sm.index ?? 0) + sm[0].length;
+        while (k < expr.length && /\s/.test(expr[k])) k++;
+        if (expr[k] === '?') continue;      // 三元的条件值，不是类名
+        addTokens(sm[1]);
+      }
+    }
+  }
   return out;
 }
 
