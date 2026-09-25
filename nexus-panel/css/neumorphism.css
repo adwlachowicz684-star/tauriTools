@@ -2261,3 +2261,33 @@ html.theme-transition *:not(.spinner) {
   color: var(--muted);
   padding: var(--sp-1, 4px) var(--sp-2, 8px);
 }
+
+/* ============================================================
+   更新（设置页「更新」标签页）
+   ============================================================ */
+
+/*
+ * 更新说明的正文。
+ *
+ * 根 body 上有 user-select: none（面板按桌面应用处理，拖标题栏时不误选），
+ * 而发布说明是要**划选复制**的（贴到更新日志里、发给同事）。
+ * 不显式改回来的话鼠标拖过去选不中，只会以为这个区域"坏了"。
+ */
+.upd-notes {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+  margin: 0;
+  padding: var(--sp-6, 12px) var(--sp-7, 14px);
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: var(--fs-12, 12px);
+  line-height: 1.7;
+  color: var(--text-dim, var(--text));
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 10px);
+}

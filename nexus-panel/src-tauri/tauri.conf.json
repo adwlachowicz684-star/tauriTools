@@ -31,9 +31,24 @@
     },
     "withGlobalTauri": true
   },
+  
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/adwlachowicz684-star/tauriTools/releases/download/updater-stable/latest.json",
+        "https://gitee.com/REPLACE_GITEE_OWNER/tauriTools/releases/download/updater-stable/latest.json"
+      ],
+      "pubkey": "REPLACE_WITH_YOUR_MINISIGN_PUBLIC_KEY",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
+    
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

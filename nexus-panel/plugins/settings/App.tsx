@@ -51,10 +51,11 @@ import { auditPlugin, summarize, LEVEL_ORDER } from '../../js/style-audit.js';
 import ExternalCard from './ExternalCard';
 import FilesCard from './FilesCard';
 import WindowCard from './WindowCard';
+import UpdateCard from './UpdateCard';
 import { prompt } from '../../js/dialog.js';
 import { SHELL_SHORTCUT_SPECS, shellComboSet, normCombo } from '../../js/shell-shortcuts.js';
 
-type TabKey = 'theme' | 'plugins' | 'external' | 'files' | 'shortcuts' | 'window' | 'about';
+type TabKey = 'theme' | 'plugins' | 'external' | 'files' | 'shortcuts' | 'window' | 'update' | 'about';
 
 /**
  * styleParams() 住在 js/themes.js（JS，没有类型声明），返回的每项结构是
@@ -91,6 +92,7 @@ const TABS: [TabKey, string][] = [
   ['files', '文件'],
   ['shortcuts', '快捷键'],
   ['window', '窗口'],
+  ['update', '更新'],
   ['about', '关于'],
 ];
 
@@ -1525,6 +1527,7 @@ export default function Settings() {
       {tab === 'files' ? <FilesCard /> : null}
       {tab === 'shortcuts' ? <ShortcutsCard unknown={pluginsUnknown} /> : null}
       {tab === 'window' ? <WindowCard /> : null}
+      {tab === 'update' ? <UpdateCard /> : null}
 
       {/* ---------------- 关于 ---------------- */}
       {tab === 'about' ? (

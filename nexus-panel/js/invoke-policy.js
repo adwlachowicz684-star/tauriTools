@@ -221,6 +221,18 @@ export const PLUGIN_COMMANDS = {
   /* 色盘服务要用系统吸管 —— 与 fpx_pick_color 命令对应 */
   'color-picker': ['fpx_pick_color'],
 
+  /*
+   * 应用自更新。三条都是 M 类（见命令分级的注释），
+   * 所以**只给内置 updater 服务插件**，不给任何第三方、也不给设置页。
+   *
+   * 为什么不给设置页（虽然 UI 在设置页里）：
+   * 设置页只是个壳，真正的更新逻辑在 plugins/updater/ 服务里。
+   * 把命令直接给设置页，等于"谁能画界面谁就能装更新"；
+   * 走服务调用则把能力收在 updater 自己名下，
+   * 而且在插件卡片里看得见、能审计。
+   */
+  updater: ['updater_check', 'updater_install', 'updater_relaunch'],
+
   'demo-iframe': ['rust_ping'],
   'demo-module': ['rust_ping', 'app_version'],
   'demo-react': ['app_version', 'rust_ping'],

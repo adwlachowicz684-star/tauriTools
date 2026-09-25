@@ -10,6 +10,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 
 mod af_flow;
 mod fpx;
+mod updater;
 
 /// 连通性测试：前端 ctx.invoke('rust_ping', { payload })
 #[tauri::command]
@@ -297,6 +298,21 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         // http：OCR / 翻译 / 订阅源抓取，绕过 webview 同源策略
         .plugin(tauri_plugin_http::init())
+        /*
+         * updater：应用自更新。
+         *
+         * 用官方插件而不是自己接 reqwest：TLS、验签、平台差异都已处理好。
+         * 请求由 **Rust** 发出，不经过 webview，所以 index.html 那条
+         * 锁死的 CSP（connect-src 'self' ipc: http://ipc.localhost）
+         * 一个字都不用改。
+         *
+         * ⚠️ 这里**刻意不给 webview 放 updater 的 ACL**：本项目的更新流程
+         * 走 src/updater.rs 那三条自有命令（纳入能力分级与插件白名单），
+         * 不让任何插件直接调官方的 plugin:updater|* 。
+         * 少了这层收口，第三方插件就能自己触发"下载并安装"——
+         * 等价于运行一段它指定的外部二进制。
+         */
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(fpx::store::FpxState::new())
         .manage(af_flow::ProcRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(af_flow::WatchRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
@@ -342,7 +358,8 @@ fn main() {
              */
             af_flow::af_os_keyring_get, af_flow::af_os_keyring_set,
             af_flow::af_os_keyring_delete,
-            tray_toggle_window
+            tray_toggle_window,
+            updater::updater_check, updater::updater_install, updater::updater_relaunch
         ])
         .setup(move |app| {
             /* 托盘图标。

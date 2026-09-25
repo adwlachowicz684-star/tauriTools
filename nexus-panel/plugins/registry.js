@@ -236,6 +236,36 @@ export const plugins = [
     requiresBuild: true,
     description: '把 Markdown 渲染成 HTML 字符串，供其它插件调用（同页模块，与 md 阅读器共用渲染配置）',
   },
+  /*
+   * updater —— 应用自更新（设置页「更新」标签页的后端）。
+   *
+   * 【四个字段一个都不能少】
+   *   · kind:'service'  —— 更新没有"页面"，它是被设置页调用的能力。
+   *                        做成 app 插件会在侧边栏多一个几乎不用的入口。
+   *   · type:'module'   —— 与宿主同文档。刻意不做成 iframe：
+   *                        iframe 插件的 ctx.invoke 要走 postMessage 桥接，
+   *                        多一层就多一处"调了没反应且查不到原因"的可能；
+   *                        而它是内置插件，同页不引入不可信代码。
+   *   · builtin:true    —— **最关键的一项**。三条命令都是 M 类，
+   *                        第三方插件禁 M；且若 id 可被顶替，
+   *                        别人注册一个同名 updater 就能劫持更新通道。
+   *   · 不加 requiresBuild —— 入口是纯 JS（无裸模块名），两种模式都能跑。
+   *
+   * 【这条若被覆盖掉，不会报错】
+   * 表现是设置页「检查更新」点了没反应（services.call 找不到该 id）。
+   * updater-test.mjs 里钉了这条，别让它静默消失。
+   */
+  {
+    id: 'updater',
+    name: '应用更新',
+    icon: '⟳',
+    kind: 'service',
+    type: 'module',
+    entry: './plugins/updater/module.js',
+    version: '1.0.0',
+    builtin: true,
+    description: '检查并安装应用更新（GitHub + Gitee 双端点，正式版 / 内部测试双通道）',
+  },
   {
     id: 'demo-service',
     name: '示例·取色服务',

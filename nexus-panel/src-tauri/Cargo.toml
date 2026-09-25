@@ -55,6 +55,10 @@ tauri-plugin-http = "2"
 # （无 lib.rs / mobile_entry_point），故与上面两个插件一样放在普通
 # dependencies 里；将来要支持移动端时再改成 target 段 + #[cfg(desktop)]。
 tauri-plugin-single-instance = "2"
+# updater：应用自更新。官方插件，验签（minisign）与平台差异都已处理好。
+# 注意：它的 JS 命令（plugin:updater|*）**没有**写进 capabilities/default.json ——
+# 本项目只走 src/updater.rs 的自有命令，不把"下载并安装"直接暴露给 webview。
+tauri-plugin-updater = "2"
 notify = "6"
 
 # ---- OS 凭据管理器（保险箱主密钥）----

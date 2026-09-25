@@ -92,6 +92,25 @@ export const COMMAND_CAPS = {
   fpx_watch_start: 'M',
   fpx_watch_stop: 'M',
 
+  /*
+   * 应用自更新（src/updater.rs）。三条**全是 M** —— 一条都不能降级：
+   *   updater_check    对外发 HTTP 请求（暴露当前版本与所选通道）
+   *   updater_install  下载安装包并**执行安装** —— 等价于运行下载下来的二进制
+   *   updater_relaunch 结束并重启本进程
+   *
+   * 定 M 而不是 S/W 的理由：它们改的不是"用户数据"，
+   * 而是**这个程序自身**。装上一个被掉包的更新，
+   * 之前所有的目录白名单、命令分级、沙箱隔离全部作废 ——
+   * 这是比任何读写都高一个量级的能力。
+   *
+   * 因此第三方插件一律拿不到（THIRD_DENY_CAPS 含 'M'），
+   * 且 updater 必须注册为 **builtin** 且 id 锁定 ——
+   * 别人注册一个同名 updater 就能劫持更新通道，这是供应链层面的攻击面。
+   */
+  updater_check: 'M',
+  updater_install: 'M',
+  updater_relaunch: 'M',
+
   /* ---- S：敏感读（泄露即事故，但不改动数据）---- */
 
   // 设备盐：af_flow.rs 注释说"盐变了之前加密的凭据就全解不开"，
