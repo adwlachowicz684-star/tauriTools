@@ -50,6 +50,48 @@
         /* 隐藏鼠标按下时的蓝色选中框，桌面应用里很碍眼 */
         #minder-container * { user-select: none; }
         /* 搜索结果面板已移到外壳左侧（与文件库共用底框），画布内不再自绘浮层 */
+
+        /* ---- 附件拖拽：跟随指针的标签 + 目标节点高亮框 ----
+         * 这两个元素是运行时 createElement 出来的，**必须在本页的 <style> 里
+         * 给样式**：外壳的 styles.css 作用不到 iframe 内部，写在那边等于没写。
+         *
+         * 此前这两个类**一处样式都没有**（类名设了，没人定义），于是：
+         *   · ghost 只有 inline 的 pointer-events，既没有 position 也没有背景
+         *     → left/top 因 static 定位而完全失效，标签停在 body 末尾、
+         *       而且看不见，等于"拖拽时没有任何跟随提示"；
+         *   · attHi 设了 left/top/width/height，但没 position → 全部无效，
+         *     也没有边框背景 → 目标节点**完全没有高亮**，只能盲拖。
+         *
+         * position 必须是 **fixed**：两处坐标都来自视口坐标系
+         * （ghost 用 e.clientX/Y，attHi 用 getBoundingClientRect），
+         * 用 absolute 则要额外补 scroll 偏移。 */
+        .mm-att-ghost {
+            position: fixed;
+            z-index: 10000;
+            display: none;
+            max-width: 240px;
+            padding: 4px 9px;
+            border-radius: 6px;
+            background: var(--km-panel-head-bg);
+            border: 1px solid var(--km-canvas-border);
+            color: var(--km-panel-text);
+            font-size: 12px;
+            line-height: 1.4;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, .35);
+            pointer-events: none;   /* elementFromPoint 不能命中它自己 */
+        }
+        .mm-att-hi {
+            position: fixed;
+            z-index: 9999;
+            display: none;
+            border: 2px solid #0A84FF;
+            border-radius: 6px;
+            background: rgba(10, 132, 255, .12);
+            pointer-events: none;
+        }
     </style>
 </head>
 <body>
@@ -928,6 +970,24 @@
                             (node._kmLabels = node._kmLabels || []).push(sh);
                             return sh;
                         };
+                        /**
+                         * 装饰性形状：画出来看的，**不接收任何点击**。
+                         *
+                         * 为什么必须显式关掉：SVG 默认 pointer-events 是
+                         * visiblePainted —— 只要填充可见就能命中。装饰形状没绑
+                         * handler，命中后事件就**终止在这里**（kity 沿 shape 的
+                         * 父链冒泡，被它盖住的那个兄弟形状收不到），
+                         * 表现为"点上去没反应"。
+                         *
+                         * 双保险：先调 setStyle，再直接写 node.style ——
+                         * 浏览器真正认的是后者，万一 kity 版本的 setStyle
+                         * 没落到 node.style 上，拦截依旧发生。
+                         */
+                        var decor = function (sh) {
+                            try { sh.setStyle('pointer-events', 'none'); } catch (e) {}
+                            try { if (sh.node) sh.node.style.pointerEvents = 'none'; } catch (e) {}
+                            return sh;
+                        };
                         // 附件区起点：节点盒下沿 + 内边距。
                         // ATTACH_PAD 同时用作上下内边距 —— 上边隔开正文，
                         // 下边让外框与最后一行之间留一口气，不至于贴着边。
@@ -947,8 +1007,14 @@
                             var iw = Math.max(64, Math.min(96, box.width || 96));
                             var ih = 60;
                             var ix = cx - iw / 2;
-                            push(new kity.Rect(iw, ih, ix, top, 4)
-                                .fill('rgba(255,255,255,0.07)').stroke(color, 1));
+                            /*
+                             * 底板是**装饰**：它围出图片区，但自己不该接收点击。
+                             * 它比 im 大一圈（im 是 iw-6 × ih-6 居中），
+                             * 于是边缘那 3px 环带会命中底板 —— 底板没绑事件，
+                             * 点了既不打开图片、也选不中节点，看着像"点空了"。
+                             */
+                            push(decor(new kity.Rect(iw, ih, ix, top, 4)
+                                .fill('rgba(255,255,255,0.07)').stroke(color, 1)));
                             try {
                                 var im = new kity.Image(imgs[ii], iw - 6, ih - 6, ix + 3, top + 3);
                                 bindAttach(im, 'image', ii, imgs[ii], '图片 ' + (ii + 1), node);
@@ -1014,10 +1080,23 @@
                                 } catch (e3) {}
                             }
                             var vcy = top + vh / 2;
-                            push((new kity.Path).setPathData(
+                            /*
+                             * 播放三角画在卡片**正中心**，不设 pointer-events 的话
+                             * 它会挡住点击 —— 而这里恰恰是用户最本能会去点的位置
+                             * （看着就是播放按钮）。
+                             *
+                             * 实测（真实 kity，jsdom 里派发 mousedown 到三角的
+                             * DOM 节点）：卡片绑定的 handler **一次都没收到**，
+                             * 即点三角打不开视频。kity 的事件沿 shape 的父链
+                             * 冒泡，而三角与卡片是 rc 下的**兄弟**，兄弟收不到。
+                             *
+                             * 其余装饰（角标 badge/bnum、序号 vseq、缩略图 vt）
+                             * 都设了 none，唯独漏了这个最显眼的。
+                             */
+                            push(decor((new kity.Path).setPathData(
                                 'M' + (cx - 7) + ',' + (vcy - 8) + ' L' + (cx + 9) + ',' + vcy +
                                 ' L' + (cx - 7) + ',' + (vcy + 8) + ' Z')
-                                .fill('rgba(255,255,255,0.92)').stroke('rgba(0,0,0,0.4)', 1));
+                                .fill('rgba(255,255,255,0.92)').stroke('rgba(0,0,0,0.4)', 1)));
                             // 角标：显示**总数**。只画三角认不出有几个视频
                             var bx = vx + vw - 11, by = top + 11;
                             var badge = new kity.Circle(10, bx, by).fill(color).stroke('#1B1B1F', 1.5);

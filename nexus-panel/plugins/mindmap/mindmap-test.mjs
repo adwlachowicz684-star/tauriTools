@@ -4578,8 +4578,23 @@ group('拖放：编辑器侧（真实源码）');
   ok(/function dragHasFiles\(dt\)/.test(html), '区分「拖的是文件」还是画布内部拖拽');
 
   // 视频数字角标
+  /*
+   * 切片用**结构性锚点**而不是固定长度。
+   *
+   * 早先是 `起点 + 5000`，注释里还特意写了"切片长度是实测的"。
+   * 这本身就说明它脆：往视频节里插一段注释（比如给播放三角补
+   * pointer-events 的说明），切换代码就被挤出切片，断言变红 ——
+   * 而**代码一点没改**。测试不该因为加了注释就失败。
+   *
+   * 改成取「视频节起点 → 文件节起点」：两处都是稳定的代码行。
+   */
+  {
+    const vStart = html.indexOf("var vids = refListOf(node.getData('video'));");
+    const vEnd = html.indexOf("var fils = refListOf(node.getData('file'));");
+    ok(vStart > 0 && vEnd > vStart, '视频节 / 文件节锚点都找得到（切片前提是锚点稳定）');
+  }
   const vidPart = html.slice(html.indexOf("var vids = refListOf(node.getData('video'));"),
-    html.indexOf("var vids = refListOf(node.getData('video'));") + 5000);
+    html.indexOf("var fils = refListOf(node.getData('file'));"));
   ok(/new kity\.Circle/.test(vidPart), '视频有角标圆底');
   ok(/String\(vids\.length\)/.test(vidPart), '角标显示**总数**（有几个视频）');
   // 多个视频必须能切换：写死 index 0 的话第 2 个起永远点不到
@@ -8273,6 +8288,98 @@ group('搜索态下跳过 refresh 后，切回文件列表必须补一次重建'
   // 反证：只写 dirty 却不补刷，等于没修
   ok(fl.indexOf('filesDirty') !== fl.lastIndexOf('filesDirty'),
     'filesDirty 被**多处**引用（不是只声明不使用的死变量）');
+}
+
+group('装饰形状必须关掉点击，否则会挡住下面可点的那一个');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+
+  /*
+   * 根因（真实 kity 实测，非推测）：
+   * 派发 mousedown 到盖在上面的三角的 DOM 节点，下面卡片绑定的 handler
+   * **一次都没收到**。kity 的事件沿 shape 的**父链**冒泡，
+   * 而三角与卡片是 rc 下的**兄弟** —— 兄弟收不到。
+   *
+   * SVG 默认 pointer-events 是 visiblePainted（填充可见即可命中），
+   * 所以装饰形状只要没显式关掉，就会把点击**终止在自己身上**。
+   *
+   * 播放三角尤其要命：它画在卡片正中心，而那正是用户最本能会去点的
+   * 位置（看着就是播放按钮）。结果是"点三角打不开视频"。
+   */
+  ok(/var decor = function \(sh\)/.test(html), '有 decor() 辅助函数');
+  ok(/sh\.setStyle\('pointer-events', 'none'\)/.test(html)
+    && /sh\.node\.style\.pointerEvents = 'none'/.test(html),
+    'decor 双保险：setStyle + 直接写 node.style');
+
+  // 播放三角必须走 decor
+  {
+    const i = html.indexOf("var vcy = top + vh / 2;");
+    const seg = html.slice(i, i + 900);
+    ok(/push\(decor\(/.test(seg), '播放三角走 decor（不是裸 push）');
+    ok(/M' \+ \(cx - 7\)/.test(seg), '片段取对了（确实是三角那一段）');
+  }
+  // 图片底板同样要走 decor：它比 im 大一圈，边缘 3px 环带会命中它
+  {
+    const i = html.indexOf("var ix = cx - iw / 2;");
+    const seg = html.slice(i, i + 700);
+    ok(/push\(decor\(/.test(seg), '图片底板走 decor');
+    ok(/new kity\.Rect\(iw, ih/.test(seg), '片段取对了（确实是底板那一段）');
+  }
+
+  // 反证：把 decor 换成裸 push，这两条必须变红
+  ok(!/push\(\(new kity\.Path\)\.setPathData\(\s*'M' \+ \(cx - 7\)/.test(html),
+    '三角不再是裸 push(（锁住不允许改回去）');
+}
+
+group('拖拽浮层与高亮框必须有样式（且必须在 iframe 内那份 CSS 里）');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+
+  /*
+   * 这两个元素是运行时 createElement 出来的，只设了 className。
+   * 样式必须写在 **editor/index.html 的 <style> 里** ——
+   * 外壳的 styles.css 作用不到 iframe 内部，写在那边等于没写。
+   *
+   * 此前两个类一处样式都没有，后果是：
+   *   · ghost：无 position → inline 的 left/top 全部失效，且无背景，看不见
+   *   · attHi：有 left/top/width/height 但无 position → 同样失效，
+   *     且无边框背景 → 目标节点完全没有高亮，只能盲拖
+   */
+  ok(/\.mm-att-ghost\s*\{/.test(html), '编辑器页内定义了 .mm-att-ghost');
+  ok(/\.mm-att-hi\s*\{/.test(html), '编辑器页内定义了 .mm-att-hi');
+  // 位置：写在外壳 CSS 里无效，这条锁住"必须在 iframe 内"
+  ok(!/\.mm-att-(ghost|hi)\s*\{/.test(css),
+    '不在外壳 styles.css 里（那里作用不到 iframe，写了等于没写）');
+
+  /*
+   * position 必须是 fixed：
+   *   ghost 的坐标来自 e.clientX/Y，attHi 来自 getBoundingClientRect()
+   *   —— 两者都是**视口坐标**。用 absolute 会少补 scroll 偏移而错位。
+   */
+  for (const cls of ['mm-att-ghost', 'mm-att-hi']) {
+    const m = html.match(new RegExp('\\.' + cls + '\\s*\\{([\\s\\S]*?)\\}'));
+    ok(!!m, `${cls} 的规则块取得到`);
+    if (!m) continue;
+    const body = m[1];
+    ok(/position\s*:\s*fixed/.test(body), `${cls} 用 position: fixed（不设就是 static，left/top 全失效）`);
+    ok(/pointer-events\s*:\s*none/.test(body), `${cls} 不吃点击（否则 elementFromPoint 命中它自己）`);
+    ok(/z-index\s*:\s*\d/.test(body), `${cls} 有 z-index（否则被画布盖住）`);
+    ok(/display\s*:\s*none/.test(body), `${cls} 默认隐藏（inline 只在拖拽时设 block）`);
+  }
+  // 高亮框要看得见：光有定位没有边框/底色等于没有高亮
+  {
+    const m = html.match(/\.mm-att-hi\s*\{([\s\S]*?)\}/);
+    ok(/border\s*:/.test(m[1]), 'attHi 有边框（否则框住了也看不见）');
+    ok(/background\s*:/.test(m[1]), 'attHi 有底色');
+  }
+  {
+    const m = html.match(/\.mm-att-ghost\s*\{([\s\S]*?)\}/);
+    ok(/background\s*:/.test(m[1]), 'ghost 有背景（否则文字糊在画布上）');
+    ok(/color\s*:/.test(m[1]), 'ghost 有文字色');
+  }
 }
 
 group('导出为交换格式 → 导出为交换格式（单画布）');
