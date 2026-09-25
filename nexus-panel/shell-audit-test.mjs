@@ -202,8 +202,17 @@ t('settings.css 在 neumorphism.css 之后引入',
   setMain.indexOf('neumorphism.css') < setMain.indexOf('./settings.css'));
 
 const setApp = src('plugins/settings/App.tsx');
+/*
+ * ⚠️ 早先写死 `className="set-body"`。插件页改双栏后需要**条件式**加 .fill
+ *    （关掉外层滚动，让左右两栏各自滚），于是变成了模板串
+ *    `set-body${tab === 'plugins' ? ' fill' : ''}` —— 字面量再也匹配不上。
+ *
+ *    改成认「set-body 出现在 className 上」，模板串与字面量都覆盖；
+ *    但**不认**注释里提到 set-body —— 那样把 class 删了也会误绿。
+ */
+const setAppCode = setApp.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, '');
 t('App.tsx 用 .set-body 包裹内容（分页条留在滚动区外）',
-  /className="set-body"/.test(setApp));
+  /className=\{?[`"]set-body/.test(setAppCode));
 t('.set-body 的包裹位于分页条之后',
   setApp.indexOf('set-tabs') < setApp.indexOf('set-body'));
 
