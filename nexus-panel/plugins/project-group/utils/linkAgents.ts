@@ -140,6 +140,28 @@ export function sameName(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
+/**
+ * 链接名是否**真的能用**（不只是"不含非法字符"）。
+ *
+ * 只查非法字符是不够的：`.` / `..` / `...` 都不含非法字符，
+ * 但它们**永远建不出链接** ——
+ *   link_path(project, "..") = **项目的父目录**，"." = **项目自身**。
+ * 建链时两者都命中 Conflict（已存在且不是链接）被拒，
+ * 于是这条名字从此每次分配都失败，报错却指向 `<项目>\..`
+ * 这种看着像"路径拼错了"的文本 —— 用户想不到是**名字**本身不合法。
+ *
+ * 而它在保存时是**静默收下的**：界面列表里正常显示、开关正常，
+ * 只有到"分配项目组"那一刻才炸，且炸在别的地方。
+ *
+ * 判据与后端 `junction::normalize_name` 一致：去掉前导点后必须还剩内容。
+ */
+export function usableLinkName(name: string): boolean {
+  const n = name.trim();
+  if (!n) return false;
+  if (/[\\/:*?"<>|]/.test(n)) return false;
+  return n.replace(/^\.+/, '').trim().length > 0;
+}
+
 /** 置顶列表里某名字的下标（-1 无）；大小写不敏感（#354）。 */
 export function pinIndexOf(pinned: string[], name: string): number {
   return pinned.findIndex((x) => sameName(x, name));

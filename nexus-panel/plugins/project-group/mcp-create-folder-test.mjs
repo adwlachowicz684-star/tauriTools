@@ -120,6 +120,46 @@ console.log('\n=== 6. add_card 行为未变 ===');
     && /已把 \{path\} 加入页签「\{tab_name\}」/.test(addCard));
 }
 
+console.log('\n=== 6b. 回包的链接条数必须是「这个项目的」，不是全库项目数 ★★ ===');
+{
+  /*
+   * `snap.links` 是 Vec<LinkRow>，**一条 = 一个项目**。
+   * 所以 `snap.links.len()` 是"全库有多少个项目有链接"，
+   * 不是"这次这个项目的链接有几个"。
+   *
+   * 之前两处回包都写的它：
+   *   · create_link → 「已分配，当前链接 {n} 条」
+   *   · remove_link → 「已撤销，剩余链接 {n} 条」
+   * 库里有 5 个项目时，给第 1 个分配 3 个链接会回「当前链接 5 条」；
+   * 撤销第 3 个项目后回「剩余链接 4 条」，而它此刻一条都不剩。
+   * 这类数字与事实不符不报错，但直接误导调用方做后续判断。
+   *
+   * 注：前端 useFpx 的 createLink / syncLinks 已按归一化键找行，
+   * 这里必须跟上 —— 两条通道给出互相矛盾的数字就谁都信不过了。
+   */
+  const code = rs.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  t('有 link_names_of 这个按项目取条数的辅助', /fn link_names_of\(/.test(code));
+
+  const fnBody = code.slice(code.indexOf('fn link_names_of('), code.indexOf('fn call_tool('));
+  t('按归一化键找行（不是原文精确比）', /normalize_key\(&r\.project\) == key/.test(fnBody));
+  t('取的是该行的 names 条数', /\.map\(\|r\| r\.names\.len\(\)\)/.test(fnBody));
+
+  /* create_link 分支 */
+  const cl = code.slice(code.indexOf('"create_link" => {'), code.indexOf('"remove_link" => {'));
+  t('create_link 不再用 snap.links.len() 报条数', !/snap\.links\.len\(\)/.test(cl));
+  t('create_link 调 link_names_of', /link_names_of\(&snap, &project\)/.test(cl));
+  t('create_link 文案写明「该项目」', /该项目当前 \{n\} 个链接/.test(
+    rs.slice(rs.indexOf('"create_link" => {'), rs.indexOf('"remove_link" => {'))));
+
+  /* remove_link 分支 */
+  const rl = code.slice(code.indexOf('"remove_link" => {'), code.indexOf('"scan_content" => {'));
+  t('remove_link 文案区分「项目链接已清除」与「账本剩余记录」',
+    /的链接已全部清除/.test(rs.slice(rs.indexOf('"remove_link" => {'), rs.indexOf('"scan_content" => {')))
+    && /账本剩余/.test(rl));
+  t('remove_link 不再写成含糊的「剩余链接 N 条」',
+    !/剩余链接 \{\}/.test(rs.slice(rs.indexOf('"remove_link" => {'), rs.indexOf('"scan_content" => {'))));
+}
+
 console.log('\n=== 7. register_card 本身 ===');
 {
   t('过黑名单（防止登记系统目录）', /reject_forbidden_raw/.test(reg));

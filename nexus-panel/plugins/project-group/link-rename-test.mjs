@@ -21,6 +21,8 @@ const { t, done } = makeT();
 const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
 const src = strip(fs.readFileSync(path.join(HERE, 'components/LinkPanel.tsx'), 'utf8'));
 const css = strip(fs.readFileSync(path.join(HERE, 'style.css'), 'utf8'));
+/* 校验判据已抽到 utils/ 下（改名与"添加自定义"共用一份），字符集合字面量在那里 */
+const ua = strip(fs.readFileSync(path.join(HERE, 'utils/linkAgents.ts'), 'utf8'));
 
 console.log('\n=== 1. 受控输入（不再用 defaultValue）===');
 {
@@ -62,8 +64,14 @@ console.log('\n=== 3. 错误就地显示（不是全局一个）===');
 console.log('\n=== 4. 校验项齐全 ===');
 {
   t('查重名', /allNames\.includes\(next\)/.test(src) && /已被占用/.test(src));
-  /* 直接查字符集合字面量，避免为"正则里的正则"写一堆转义 */
-  t('查非法字符', /名称含有非法字符/.test(src) && src.includes('*?"<>|'));
+  /*
+   * 判据在 utils/ 下（改名与"添加自定义"共用一份），组件侧只钉"两条入口都用了它"。
+   * 只钉"出现过"会漏：任一入口漏掉就仍可绕过，而另一处存在让断言照样通过。
+   */
+  t('查非法字符', /名称含有非法字符/.test(src) && ua.includes('*?"<>|'));
+  t('两条入口都用同一判据（缺一即可绕过）', (src.match(/usableLinkName\(/g) || []).length >= 2);
+  /* `.` / `..` 不含非法字符，却永远建不出链接 —— 只查字符集合拦不住 */
+  t('判据含前导点规则', ua.includes('/^\\.+/'));
   /* #91：与"添加自定义"同一判据，否则改名能绕过 */
   t('查大小写重名（#91 同一判据）', /hasNameCI\(allNames, next\)/.test(src));
   t('清空=恢复原名', /const next = name \|\| original;/.test(src));

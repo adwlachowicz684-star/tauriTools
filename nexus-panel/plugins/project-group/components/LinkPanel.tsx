@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { PresetAgent, FpxConfig } from '../types';
 import {
   allEnabled, hasNameCI, invertEnabled, resetToPreset, setAllEnabled,
-  pinIndexOf, sameName,
+  pinIndexOf, sameName, usableLinkName,
 } from '../utils/linkAgents';
 import { CheckLine } from './ui';
 
@@ -159,8 +159,12 @@ export function LinkAgentBody({
       setRenameErr((x) => ({ ...x, [original]: `「${next}」已被占用` }));
       return false;
     }
-    if (/[\\/:*?"<>|]/.test(next)) {
-      setRenameErr((x) => ({ ...x, [original]: '名称含有非法字符' }));
+    /* 同上：`.` / `..` 不含非法字符但永远建不出链接，改名这条入口也收得住 */
+    if (!usableLinkName(next)) {
+      setRenameErr((x) => ({
+        ...x,
+        [original]: next.replace(/^\.+/, '').trim() ? '名称含有非法字符' : '名称不能只有点号',
+      }));
       return false;
     }
     /* #91 与"添加自定义"同一判据，避免绕过 */
@@ -226,8 +230,17 @@ export function LinkAgentBody({
     const raw = draft.trim();
     if (!raw) return;
     const name = raw.startsWith('.') ? raw : `.${raw}`;
-    if (!name.slice(1).trim()) { setErr('名称不能只有点号'); return; }
-    if (/[\\/:*?"<>|]/.test(name)) { setErr('名称含有非法字符'); return; }
+    /*
+     * 用 `usableLinkName` 而不是"只查非法字符"。
+     *
+     * `..` / `.` 不含非法字符，却**永远建不出链接**（分别是项目父目录与
+     * 项目自身），保存时静默收下、到分配时才在别处报错。
+     * 详见该函数的注释。
+     */
+    if (!usableLinkName(name)) {
+      setErr(name.replace(/^\.+/, '').trim() ? '名称含有非法字符' : '名称不能只有点号');
+      return;
+    }
     /* #91 大小写不敏感：Windows 下 `.OpenCode` 与 `.opencode` 是同一个目录，
        精确比较拦不住，会建出两个指向同一 junction 的链接名。 */
     if (hasNameCI(allNames, name)) { setErr('该链接名已存在（不区分大小写）'); return; }

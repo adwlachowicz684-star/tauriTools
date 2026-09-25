@@ -748,6 +748,33 @@ fn canonical_tool(name: &str) -> (&str, Option<(&str, &str)>) {
     (name, None)
 }
 
+/**
+ * 账本里**这一条记录**的链接名条数（找不到记录则为 0）。
+ *
+ * 为什么不能直接用 `snap.links.len()`：那是**全库的项目条数**
+ * （每条 LinkRow 是一个项目），不是本次这个项目的链接数。
+ *
+ * 之前两条回包都写的是 `snap.links.len()`：
+ *   · create_link → 「已分配，当前链接 {} 条」
+ *   · remove_link → 「已撤销，剩余链接 {} 条」
+ * 库里有 5 个项目时，给第 1 个项目分配 3 个链接会回「当前链接 5 条」；
+ * 撤销第 3 个项目后会回「剩余链接 4 条」—— 而那个项目此刻一条都不剩。
+ *
+ * 这类"报告的数字与事实不符"不报错，但会直接误导调用方：
+ * AI 据此以为自己建成了 5 条（或撤销后还剩 4 条），
+ * 于是跳过校验、或对着不存在的链接做后续操作。
+ * 前端 useFpx 的 createLink / syncLinks 已经按归一化键找行（见那里注释），
+ * 这里必须跟上 —— 两条通道给出互相矛盾的数字，用户/AI 都无从判断哪个对。
+ */
+fn link_names_of(snap: &super::model::Snapshot, project: &str) -> usize {
+    let key = super::store::normalize_key(project);
+    snap.links
+        .iter()
+        .find(|r| super::store::normalize_key(&r.project) == key)
+        .map(|r| r.names.len())
+        .unwrap_or(0)
+}
+
 /// 字符串看起来是不是一条路径（含分隔符或盘符），而不是一个交给 PATH 解析的命令名。
 fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
     let params = req.get("params").cloned().unwrap_or(json!({}));
@@ -887,14 +914,23 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             within_raw(&group)?;
             let snap = super::core_create_link(&dir, &project, &group, None)
                 .map_err(|e| err(&e))?;
-            json!({ "content": [{ "type": "text", "text": format!("已分配，当前链接 {} 条", snap.links.len()) }] })
+            let n = link_names_of(&snap, &project);
+            json!({ "content": [{ "type": "text", "text": format!(
+                "已分配：{project} → {group}（该项目当前 {n} 个链接）") }] })
         }
         "remove_link" => {
             let project = s("project");
             within_raw(&project)?;
             let snap = super::core_remove_link(&dir, &project)
                 .map_err(|e| err(&e))?;
-            json!({ "content": [{ "type": "text", "text": format!("已撤销，剩余链接 {} 条", snap.links.len()) }] })
+            /*
+             * 「剩余」指**账本里还有多少条记录**，语义与上面 create_link 的
+             * 「该项目当前几个链接」不同，两者都如实写清各自的口径 ——
+             * 含糊地都写"链接 N 条"，调用方便分不清是条数还是项目数。
+             */
+            json!({ "content": [{ "type": "text", "text": format!(
+                "已撤销：{project} 的链接已全部清除（账本剩余 {} 条记录）",
+                snap.links.len()) }] })
         }
         "scan_content" => {
             let kind = if s("kind").is_empty() { "all".to_string() } else { s("kind") };

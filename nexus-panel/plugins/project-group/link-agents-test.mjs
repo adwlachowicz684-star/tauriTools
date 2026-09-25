@@ -381,4 +381,50 @@ console.log('\n=== #354 置顶名大小写不敏感（同 #91 #204 #310）===');
     !/position\(\|p\| p == name\)/.test(jn));
 }
 
+console.log('\n=== 9. `.` / `..` 这类名字永远建不出链接，必须挡在保存之前 ★★ ===');
+{
+  /*
+   * 只查非法字符是不够的：`.` / `..` / `...` 都不含非法字符，
+   * 但它们**永远建不出链接** —— link_path(project, "..") 是**项目的父目录**，
+   * "." 是**项目自身**。建链时两者都命中 Conflict 被拒。
+   *
+   * 后果是"保存时静默收下、到分配时才炸，且炸在别处"：
+   * 报错指向 `<项目>\..` 这种看着像路径拼错的文本，
+   * 用户想不到是**名字**不合法。
+   *
+   * 判据与后端 `junction::normalize_name` 一致：去掉前导点后必须还剩内容。
+   */
+  const la = fs.readFileSync(path.join(HERE, 'utils/linkAgents.ts'), 'utf8');
+  const laCode = la.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const lp = fs.readFileSync(path.join(HERE, 'components/LinkPanel.tsx'), 'utf8');
+  const lpCode = lp.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  t('有 usableLinkName', /export function usableLinkName\(/.test(laCode));
+  t('判据是「去前导点后还剩内容」（去前导点后判长度）',
+    laCode.includes('.replace(') && /length > 0/.test(laCode));
+
+  /* 两条入口都要用：添加自定义 与 改名 */
+  t('添加自定义走 usableLinkName', /if \(!usableLinkName\(name\)\)/.test(lpCode));
+  t('改名也走 usableLinkName', /if \(!usableLinkName\(next\)\)/.test(lpCode));
+
+  /* 反面证据：改名那条不能只留"查非法字符" */
+  t('改名不再只查非法字符（反面证据）',
+    lp.indexOf('test(next)') === -1);
+  t('添加自定义不再只查 slice(1)（反面证据）',
+    lp.indexOf('name.slice(1).trim()') === -1);
+
+  /* 行为本身直接穷举：这里是纯函数，能加载真身就不该只做文本断言 */
+  const usable = A.usableLinkName;
+  t('（能加载真身）.foo 可用', usable('.foo') === true);
+  t('（能加载真身）. 不可用', usable('.') === false);
+  t('（能加载真身）.. 不可用', usable('..') === false);
+  t('（能加载真身）... 不可用', usable('...') === false);
+  t('（能加载真身）空串不可用', usable('') === false);
+  t('（能加载真身）含 \\ 不可用', usable('.a\\b') === false);
+  t('（能加载真身）含 : 不可用', usable('.a:b') === false);
+  t('（能加载真身）...foo 仍可用（点不在开头是合法文件名）', usable('...foo') === true);
+  t('（能加载真身）后端判据一致：去点后为空即拒', usable('.. ') === false);
+}
+
+
 done();
