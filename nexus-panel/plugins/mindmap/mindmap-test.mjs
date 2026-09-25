@@ -8779,6 +8779,41 @@ group('「清除文字样式」必须清掉文字节能设的**每一个**键');
     '文字节每个命令的键都在清除列表里（缺失：' + (bad.join('、') || '无') + '）');
 }
 
+group('中心主题必须有 data.id（否则新建画布后无法附加任何文件）');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  const wbSrc = fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8');
+
+  /*
+   * 实测（真实编辑器页）：
+   *   emptyContent() → root.data = {"text":"中心主题"}，id 为 **undefined**
+   *   内核只给「新建出来的」节点自动补 id，导入的根节点不补。
+   *
+   * 后果：选中中心主题 → 点「附加文件…」→ 选完文件 →
+   *   rememberNode() 存空 → focusNode() 返回 false →
+   *   提示「请先选中一个节点再附加」。用户明明选着中心主题，提示却让他去选节点。
+   */
+  ok(/root: \{ data: \{ text: rootText \|\| '中心主题' \}/.test(wbSrc)
+    || !/data:\s*\{[^}]*id/.test(wbSrc.slice(wbSrc.indexOf('emptyContent'), wbSrc.indexOf('emptyContent') + 400)),
+    'emptyContent 生成的根节点确实没有 id（根因确认）');
+
+  ok(/function ensureRootId\(\)/.test(html), '编辑器定义了 ensureRootId');
+  {
+    const i = html.indexOf('function ensureRootId()');
+    const seg = html.slice(i, i + 900);
+    ok(/r\.data\.id = /.test(seg), '确实写入 data.id');
+    ok(/if \(r\.data\.id\) return;/.test(seg), '已有 id 时不动（不覆盖用户数据）');
+  }
+  // importJson 之后必须调它；只定义不调用等于没修
+  {
+    const i = html.indexOf('importJson: function (data)');
+    const seg = html.slice(i, i + 500);
+    ok(/km\.importJson\(d\);[\s\S]{0,80}ensureRootId\(\);/.test(seg),
+      'importJson 之后调用 ensureRootId（只定义不调用 = 没修）');
+  }
+}
+
 group('导出为交换格式 → 导出为交换格式（单画布）');
 
 {

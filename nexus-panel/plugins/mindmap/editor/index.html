@@ -2896,6 +2896,7 @@
                 // 故先摘掉，让画布内容先恢复出来，主题稍后由 setTheme 补上。
                 if (d && d.theme && !themeExists(d.theme)) d.theme = null;
                 km.importJson(d);
+                ensureRootId();
                 km.refresh();
                 _historyCommitBaseline();   // 导入即为新的历史基线，之前的编辑不再回退
                 return true;
@@ -3301,6 +3302,33 @@
         function _historyApply(snap) {
             _historyLock = true;
             try { km.importJson(JSON.parse(snap)); km.refresh(); } catch (e) {} finally { _historyLock = false; }
+        }
+        /**
+         * 保证中心主题有 data.id。
+         *
+         * **为什么必须补**：emptyContent() 生成的根节点只有 text、没有 id
+         * （内核只给「新建出来的」节点自动补 id，导入的根节点不会补）。
+         * 实测：新建画布后 root.data = {"text":"中心主题"}，id 为 undefined。
+         *
+         * 后果（很常见，且提示语完全指错了方向）：
+         *   选中中心主题 → 点「附加文件…」→ 选完文件 →
+         *   panels.js 的 rememberNode() 存到空 id → focusNode() 返回 false →
+         *   提示「请先选中一个节点再附加」。
+         * 用户明明选着中心主题，却被要求去选一个节点 —— 会觉得功能是坏的。
+         * 「附加视频」「移除附件」「设为封面」同理（它们都靠 id 回锁节点）。
+         *
+         * 放在 importJson 之后统一补，所有导入路径（新建画布/打开旧文件/
+         * 导入交换格式/撤销重做）一次覆盖。
+         */
+        function ensureRootId() {
+            try {
+                var r = km.getRoot && km.getRoot();
+                if (!r) return;
+                if (!r.data) r.data = {};
+                if (r.data.id) return;
+                // 与内核新建节点的 id 形态保持一致（小写 base36 随机串）
+                r.data.id = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+            } catch (e) { /* 补不上也不能让导入失败 */ }
         }
         function _historyCommitBaseline() { _baseline = _historySnap(); }
         km.on('contentchange', function () {
