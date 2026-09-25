@@ -228,6 +228,17 @@ for (const s of ['unconfigured', 'uptodate', 'available', 'error']) {
 t('装完不自动重启（给「立即重启」按钮）', /立即重启/.test(card));
 t('换通道后清空旧结果（否则显示上一通道的结论）', /setResult\(null\)/.test(card));
 t('更新说明可选中复制（根 body 是 user-select:none）', /upd-notes/.test(card) && /\.upd-notes/.test(read('css/neumorphism.css')));
+/* 上面那条只查「类名存在」——样式块在了但 user-select 被删掉照样全绿，
+   而根 body 的 none 会继承下来，划选整个失效（看不出是被继承的）。
+   所以单独钉住这一条属性。
+   切块要精确：跨行正则会吃到后面别的规则里的 user-select，变假绿。 */
+(() => {
+  const css = read('css/neumorphism.css');
+  const i = css.indexOf('.upd-notes');
+  const blk = i < 0 ? '' : css.slice(i, css.indexOf('}', i));
+  t('upd-notes 显式声明 user-select: text', /user-select:\s*text/.test(blk));
+  t('upd-notes 带 -webkit- 前缀', /-webkit-user-select:\s*text/.test(blk));
+})();
 
 /* ============================================================
    7. 反向：别把官方 JS 命令暴露给 webview

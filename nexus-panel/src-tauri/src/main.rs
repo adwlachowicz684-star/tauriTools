@@ -10,6 +10,16 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 
 mod af_flow;
 mod fpx;
+/*
+ * 应用更新。三条命令全是 M 类（联网 / 下载安装 / 重启进程），
+ * 只给内置 updater 插件用（第三方禁 M）。
+ *
+ * ⚠️ 这一行此前被同步提交覆盖丢失过两次：updater.rs 文件还在、
+ * 命令也在，但少了 mod 声明就**不参与编译**，注册列表里自然也没有它们 ——
+ * 结果是运行时 "command not found"，界面上表现为「检查更新」点了没反应，
+ * 而编译和实际报错都指向别处。改这个文件后请跑 `npm run scan:commands`。
+ */
+mod updater;
 
 /// 连通性测试：前端 ctx.invoke('rust_ping', { payload })
 #[tauri::command]
@@ -297,6 +307,18 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         // http：OCR / 翻译 / 订阅源抓取，绕过 webview 同源策略
         .plugin(tauri_plugin_http::init())
+        /*
+         * updater：应用自更新。
+         *
+         * ⚠️ 少了这一行是**编译错误**不是运行时问题：updater.rs 里
+         * `app.updater_builder()` 来自 `UpdaterExt` 这个 trait，插件没初始化
+         * 编译器就"看不见"它（E0599）—— 和开头必须 `use tauri::Manager`
+         * 是同一类坑（get_webview_window 也是 trait 方法）。
+         *
+         * 而它的报错信息指向 updater.rs，很容易被当成 updater.rs 写错了，
+         * 实际缺的是 main.rs 这一行。改这个文件后请跑 `npm run scan:commands`。
+         */
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(fpx::store::FpxState::new())
         .manage(af_flow::ProcRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(af_flow::WatchRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
@@ -342,7 +364,10 @@ fn main() {
              */
             af_flow::af_os_keyring_get, af_flow::af_os_keyring_set,
             af_flow::af_os_keyring_delete,
-            tray_toggle_window
+            tray_toggle_window,
+            /* 应用更新三条。缺了的表现是设置页「检查更新」点了没反应 ——
+               前端 invoke 被拒，且不报具体原因。 */
+            updater::updater_check, updater::updater_install, updater::updater_relaunch
         ])
         .setup(move |app| {
             /* 托盘图标。
