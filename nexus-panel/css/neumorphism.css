@@ -1013,20 +1013,6 @@ body.nx-inspecting * { cursor: crosshair !important; }
   .plugin-frame { transition: none; }
 }
 
-/* L3 色调统一：把反色后的杂色拉回面板基色，保留明暗结构 */
-.nexus-tone-overlay {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;        /* 不拦截插件交互 */
-  z-index: var(--z-raised);
-  background: var(--bg);
-  mix-blend-mode: color;
-  opacity: .9;
-}
-
-/* 已适配的插件：补一层内凹底色，视觉上与舞台融合 */
-.nexus-adapted { border-radius: var(--r); }
-
 /* 标题栏置顶按钮激活态 */
 .tb-btn.on {
   color: var(--accent);
@@ -1807,11 +1793,6 @@ html.theme-transition *:not(.spinner) {
 /* flex:1 + min-width:0：卡片宽度由网格决定，下拉必须**让位**给徽标，
    而不是把徽标挤出去。不带 min-width:0 时 flex 子项的默认 min-width:auto
    会让它按内容撑开，窄卡片里就把这一行顶出边界。 */
-.tb-card-select {
-  flex: 1; min-width: 0;
-  font-size: var(--fs-11, 11px);
-}
-
 /* 分组容器：工具栏 / 应用 / 服务三组各占一块。
    --------------------------------------------------------------------
    分这三组不是装饰 —— 三类的**可用操作不同**：
@@ -1831,31 +1812,4 @@ html.theme-transition *:not(.spinner) {
 .tb-group-title {
   font-size: var(--fs-12, 12px);
   font-weight: var(--fw-strong, 600);
-}
-
-/* ============================================================
-   应用更新（设置页「更新」标签页）
-   ------------------------------------------------------------
-   只剩 upd-notes 一个类：其余都用通用类（p-card / p-stat / p-btn /
-   p-input / p-muted），不要为了一个标签页再造一套组件样式。
-   ============================================================ */
-.upd-notes {
-  margin: var(--sp-4, 8px) 0 0;
-  padding: var(--sp-6, 12px);
-  max-height: 220px;
-  overflow: auto;
-  background: var(--bg-sunken, rgba(0, 0, 0, 0.18));
-  border: var(--bd-1, 1px solid var(--bd, rgba(255, 255, 255, 0.08)));
-  border-radius: var(--rd-6, 6px);
-  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: var(--fs-12, 12px);
-  line-height: 1.7;
-  white-space: pre-wrap;
-  word-break: break-word;
-  /* 根 body 是 user-select:none（面板按桌面应用观感处理，拖标题栏不误选文字）。
-     更新说明是要贴给别人看的（发布日志、变更列表），必须能划选 ——
-     继承下来的 none 会让「选中复制」整个失效，且看不出是被继承的。 */
-  user-select: text;
-  -webkit-user-select: text;
-  cursor: text;
 }

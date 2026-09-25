@@ -2,58 +2,62 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
-<title>浅色第三方插件（演示适配）</title>
+<title>示例·订单面板</title>
 <style>
-  /* 故意写成典型"浅色扁平"风格：纯白底、深灰字、无阴影、直角
-     这是第三方插件最常见的样子，与深色新拟态面板天然冲突 */
+  /* 配色一律走外壳推过来的主题变量，不写死任何颜色。
+     插件自己写死颜色是它自己的选择 —— 外壳不做反转、不做覆盖，
+     变量给到哪就渲染到哪。 */
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { background: #ffffff; }
+  html, body { background: var(--bg); }
   body {
     font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-    color: #333333;
+    color: var(--text);
     font-size: 14px;
     padding: 20px;
   }
-  h1 { font-size: 20px; font-weight: 600; color: #111111; margin-bottom: 6px; }
-  .lead { color: #888888; font-size: 13px; margin-bottom: 20px; }
+  h1 { font-size: 20px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+  .lead { color: var(--text-dim); font-size: 13px; margin-bottom: 20px; }
   .card {
-    background: #f5f6f8;
-    border: 1px solid #e3e5e8;
-    border-radius: 4px;
+    background: var(--surface);
+    border: 1px solid var(--divider);
+    border-radius: var(--r-sm, 4px);
     padding: 16px;
     margin-bottom: 14px;
   }
-  .card h2 { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: #222222; }
+  .card h2 { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
   .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
   button {
     font: inherit; cursor: pointer;
     padding: 8px 16px;
-    border: 0; border-radius: 3px;
-    background: #2f6fed; color: #ffffff;
+    border: 0; border-radius: var(--r-sm, 3px);
+    background: var(--accent);
+    /* 叠在强调色上的前景色按强调色明暗派生（黑或白），
+       写死白字在亮黄强调色上对比度只有 1.09，等于看不见。 */
+    color: var(--badge-fg, #fff);
   }
-  button.ghost { background: #ffffff; color: #333333; border: 1px solid #d0d3d8; }
+  button.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--divider); }
   input {
     font: inherit; padding: 8px 12px;
-    border: 1px solid #d0d3d8; border-radius: 3px;
-    background: #ffffff; color: #333333;
+    border: 1px solid var(--divider); border-radius: var(--r-sm, 3px);
+    background: var(--surface); color: var(--text);
     width: 220px;
   }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e8eaed; }
-  th { color: #888888; font-weight: 500; background: #fafbfc; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--hairline); }
+  th { color: var(--text-dim); font-weight: 500; background: var(--surface-sunk); }
   .tag {
     display: inline-block; padding: 2px 8px; border-radius: 2px;
-    background: #e8f0fe; color: #2f6fed; font-size: 12px;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--accent); font-size: 12px;
   }
-  .tag.green { background: #e6f7ee; color: #17a673; }
-  .tag.red   { background: #fdecec; color: #e5484d; }
+  .tag.green { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+  .tag.red   { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
   .stats { display: flex; gap: 14px; }
-  .stat { flex: 1; background: #ffffff; border: 1px solid #e3e5e8; border-radius: 4px; padding: 14px; }
-  .stat .k { font-size: 12px; color: #888888; }
-  .stat .v { font-size: 24px; font-weight: 600; color: #2f6fed; margin-top: 4px; }
-  .bar { height: 8px; background: #eceff3; border-radius: 4px; overflow: hidden; margin-top: 8px; }
-  .bar > i { display: block; height: 100%; background: #2f6fed; width: 68%; }
-  /* 图片：用来验证"二次反转还原"是否生效 */
+  .stat { flex: 1; background: var(--surface); border: 1px solid var(--divider); border-radius: var(--r-sm, 4px); padding: 14px; }
+  .stat .k { font-size: 12px; color: var(--text-dim); }
+  .stat .v { font-size: 24px; font-weight: 600; color: var(--accent); margin-top: 4px; }
+  .bar { height: 8px; background: var(--surface-sunk); border-radius: 4px; overflow: hidden; margin-top: 8px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); width: 68%; }
   .thumb { width: 100%; height: 90px; object-fit: cover; border-radius: 4px; margin-top: 10px; }
   #plugin-mount { min-height: 100%; }
 </style>
@@ -61,7 +65,7 @@
 <body>
 <div id="plugin-mount">
   <h1>Order Dashboard</h1>
-  <div class="lead">这是一个典型的第三方浅色扁平插件 —— 用来演示外壳的自动深色适配。</div>
+  <div class="lead">第三方面板风格的数据页；配色全部走外壳推来的主题变量，切主题时跟着变。</div>
 
   <div class="stats">
     <div class="stat"><div class="k">今日订单</div><div class="v">1,284</div><div class="bar"><i style="width:68%"></i></div></div>
@@ -75,7 +79,7 @@
       <input id="kw" placeholder="搜索订单号…" />
       <button id="go">查询</button>
       <button class="ghost" id="reset">重置</button>
-      <span class="tag">已适配</span>
+      <span class="tag">示例</span>
       <span class="tag green">运行中</span>
       <span class="tag red">2 异常</span>
     </div>
@@ -94,16 +98,16 @@
   </div>
 
   <div class="card">
-    <h2>图片（验证反色还原）</h2>
-    <!-- 内联 SVG 数据图：若适配正确，颜色应原样保留、不被反色 -->
+    <h2>图示配色</h2>
+    <!-- 内联 SVG：状态色走主题变量，切主题时跟着变 -->
     <svg class="thumb" viewBox="0 0 400 90" xmlns="http://www.w3.org/2000/svg">
-      <rect width="400" height="90" fill="#dfe7f5"/>
-      <circle cx="60" cy="45" r="24" fill="#e5484d"/>
-      <rect x="120" y="30" width="120" height="30" rx="4" fill="#17a673"/>
-      <polygon points="290,20 330,70 250,70" fill="#2f6fed"/>
-      <text x="16" y="82" font-size="12" fill="#333">颜色应保持原样</text>
+      <rect width="400" height="90" fill="var(--surface-sunk)"/>
+      <circle cx="60" cy="45" r="24" fill="var(--danger)"/>
+      <rect x="120" y="30" width="120" height="30" rx="4" fill="var(--ok)"/>
+      <polygon points="290,20 330,70 250,70" fill="var(--accent)"/>
+      <text x="16" y="82" font-size="12" fill="var(--text-dim)">状态色跟随主题</text>
     </svg>
-    <div id="out" style="margin-top:10px;color:#888;font-size:12px"></div>
+    <div id="out" style="margin-top:10px;color:var(--text-dim);font-size:12px"></div>
   </div>
 </div>
 

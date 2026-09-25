@@ -43,10 +43,6 @@ import {
   onChange as onThemeChange,
 } from '../../js/theme-manager.js';
 import { swatchFor, styleLabel, styleParams, BG_PRESETS } from '../../js/themes.js';
-import {
-  ADAPT_POLICIES,
-  getPolicy, setPolicy, getPluginOverride, setPluginOverride,
-} from '../../js/theme-normalizer.js';
 import { auditPlugin, summarize, LEVEL_ORDER } from '../../js/style-audit.js';
 import ExternalCard from './ExternalCard';
 import FilesCard from './FilesCard';
@@ -271,7 +267,7 @@ function ResetDefaultBtn({ disabled, onClick, title }: {
  */
 function PluginManager({
   plugins, ctx, audits, auditOpen, setAuditOpen, appsRef, appsDrag,
-  onRemove, onOverride,
+  onRemove,
 }: {
   plugins: any[];
   ctx: any;
@@ -281,13 +277,12 @@ function PluginManager({
   appsRef: RefObject<HTMLDivElement>;
   appsDrag: any;
   /*
-   * 卸载与改基调都要碰外壳（removePlugin / shell.normalizer），
-   * 而这些依赖 ctx 与 setPlugins，只存在于 Settings 组件作用域内。
+   * 卸载要碰外壳（removePlugin），而它依赖 ctx 与 setPlugins，
+   * 只存在于 Settings 组件作用域内。
    * 必须**由父组件传进来**，不能在 PluginManager 里直接引用 ——
    * 那是组件外的名字，编译期就找不到（TS2304），运行时更是 undefined。
    */
   onRemove: (p: any) => void;
-  onOverride: (p: any, v: string) => void;
 }) {
   const [, force] = useState(0);
   const rerender = () => force((v) => v + 1);
@@ -514,22 +509,6 @@ function PluginManager({
                           open={auditOpen === p.id}
                           onToggle={() => setAuditOpen((cur: string | null) => (cur === p.id ? null : p.id))}
                         />
-                        {/* 空串就是「跟随全局」。onOverride 的签名是 (v: string)=>void，
-                            这里补 `|| null` 是多余的，且会让 tsc 报类型错。 */}
-                        <select
-                          className="p-input tb-card-select"
-                          title="为这个插件单独指定适配策略（默认跟随全局）：自动检测 / 总是反转 / 从不反转"
-                          value={getPluginOverride(p.id) ?? ''}
-                          onChange={(ev: ReactChangeEvent<HTMLSelectElement>) => {
-                            onOverride(p, ev.target.value);
-                            rerender();
-                          }}
-                        >
-                          <option value="">跟随全局</option>
-                          {ADAPT_POLICIES.map((t) => (
-                            <option key={t.value} value={t.value}>{t.label}</option>
-                          ))}
-                        </select>
                       </div>
 
                       <div className="tb-card-btns">
@@ -706,7 +685,6 @@ export default function Settings() {
   const [pluginsUnknown, setPluginsUnknown] = useState(false);
   const [version, setVersion] = useState('…');
   const [, force] = useState(0);          // 主题切换后重渲染预览
-  const [policy, setPolicyState] = useState(getPolicy());
   const [tab, setTab] = useState<TabKey>('theme');
   /* 样式审计结果：id → { issues, files }；拿不到样式（隔离态 / module 插件）为 null */
   const [audits, setAudits] = useState<Record<string, any>>({});
@@ -1006,19 +984,6 @@ export default function Settings() {
       await shellTheme.setThemeShift?.(getHueShift(), getLightShift());
       await shellTheme.applyTheme?.(getThemeId(), getAccent(), getEnvColor());
     } catch { /* 桥接不可用：保持本地结果 */ }
-  };
-
-  /**
-   * 把适配策略同步给主平台侧并**触发重算**。
-   *
-   * 与主题同一类问题：策略存 localStorage，iframe 隔离态下本地写不进
-   * 主平台侧。更关键的是——适配滤镜是 installAdapter 时按策略算一次就
-   * 固化的，策略改了不重算，当前插件看起来就是"改了没反应"。
-   * 宿主侧的写方法会在写完后重跑 reAdapt，所以这一步不只是"存对"。
-   */
-  const syncPolicyToShell = async (fn: (() => Promise<unknown>) | undefined) => {
-    if (!fn) return;
-    try { await fn(); } catch { /* 桥接不可用：保持本地结果 */ }
   };
 
   return (
@@ -1450,36 +1415,6 @@ export default function Settings() {
 
       {tab === 'plugins' ? (
         <>
-          {/* ---------------- 插件主题适配 ---------------- */}
-          <div className="p-card">
-            <h2>插件主题适配</h2>
-            <div className="p-muted" style={{ marginBottom: 'var(--sp-6, 12px)', lineHeight: 1.9 }}>
-              基调不一致的插件会自动反转并与面板统一：深色面板暗化浅色插件，浅色面板亮化深色插件。
-              <br />
-              图片/图表会二次反转还原，不会被误伤。
-            </div>
-            <div className="p-row">
-              <span style={{ minWidth: 72 }}>全局策略</span>
-              <select
-                className="p-input"
-                style={{ width: 220 }}
-                value={policy}
-                onChange={(e) => {
-                  setPolicy(e.target.value);
-                  setPolicyState(e.target.value);
-                  void syncPolicyToShell(() => (ctx as any)?.shell?.normalizer?.setPolicy(e.target.value));
-                }}
-              >
-                {ADAPT_POLICIES.map((p) => (
-                  <option key={p.value} value={p.value}>{p.label}</option>
-                ))}
-              </select>
-            </div>
-            <div className="p-muted" style={{ marginTop: 'var(--sp-4, 8px)' }}>
-              {ADAPT_POLICIES.find((p) => p.value === policy)?.desc}
-            </div>
-          </div>
-
           {/* ---------------- 插件管理 ----------------
               原先用一行行的 PluginRow 列出 app / service，右上角按钮管理
               另起一区。现在两者合并成同一套卡片矩阵（PluginManager）：
@@ -1487,8 +1422,7 @@ export default function Settings() {
           <div className="p-card">
             <h2>插件管理</h2>
             <div className="p-muted" style={{ marginBottom: 'var(--sp-3, 6px)' }}>
-              侧栏「＋」可安装新插件；每张卡片可单独指定基调判定方式、加入或
-              隐藏右上角入口、卸载插件
+              侧栏「＋」可安装新插件；每张卡片可加入或隐藏右上角入口、卸载插件
             </div>
             <PluginManager
               plugins={plugins}
@@ -1499,12 +1433,6 @@ export default function Settings() {
               appsRef={appsRef}
               appsDrag={appsDrag}
               onRemove={removePlugin}
-              onOverride={(p, v) => {
-                setPluginOverride(p.id, v || null);
-                void syncPolicyToShell(() => (ctx as any)?.shell?.normalizer
-                  ?.setPluginOverride(p.id, v || null));
-                ctx.toast(`「${p.name}」适配策略已更新`, 'ok');
-              }}
             />
             {/* 读不到清单时**必须**说清原因：
                 下面三组的标题都还在、卡片区都是"这一类当前没有插件"，

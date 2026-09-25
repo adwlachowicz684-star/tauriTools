@@ -6,10 +6,6 @@ import {
 } from '../../js/theme-manager.js';
 import { styleLabel } from '../../js/themes.js';
 import { prompt as askPrompt } from '../../js/dialog.js';
-import {
-  ADAPT_POLICIES,
-  getPolicy, setPolicy, getPluginOverride, setPluginOverride,
-} from '../../js/theme-normalizer.js';
 import { SHELL_SHORTCUT_SPECS, shellComboSet, normCombo } from '../../js/shell-shortcuts.js';
 import {
   toolbarEntriesOf, wantsEntry, hiddenIds, extraIds,
@@ -353,45 +349,9 @@ export default definePlugin({
     );
     pages.theme.appendChild(themeSection);
 
-    /* ============ 2. 插件主题适配 ============ */
-    const policySel = h('select.p-input', { style: { width: '220px' } },
-      ...ADAPT_POLICIES.map((p) =>
-        h('option', { value: p.value, selected: p.value === getPolicy() }, p.label)),
-    );
-    const desc = h('div.p-muted', { style: { marginTop: '8px' } },
-      ADAPT_POLICIES.find((p) => p.value === getPolicy()).desc);
-    policySel.onchange = () => {
-      setPolicy(policySel.value);
-      ctx.toast('已保存，切换插件时生效', 'ok');
-      desc.textContent = ADAPT_POLICIES.find((p) => p.value === policySel.value).desc;
-    };
-
-    pages.plugins.appendChild(
-      h('div.p-card', {},
-        h('h2', {}, '插件主题适配'),
-        h('div.p-muted', { style: { marginBottom: '12px', lineHeight: '1.9' } },
-          '基调不一致的插件会自动反转并与面板统一：深色面板暗化浅色插件，浅色面板亮化深色插件。',
-          h('br'), '图片/图表会二次反转还原，不会被误伤。'),
-        h('div.p-row', {}, h('span', { style: { minWidth: '72px' } }, '全局策略'), policySel),
-        desc,
-      ),
-    );
-
     /* ============ 3. 插件管理 ============ */
     const plugins = readPlugins();
     const rows = (plugins || []).map((p) => {
-      const sel = h('select.p-input', {
-        style: { height: '30px', width: '130px', fontSize: '12px', padding: '0 8px' },
-      },
-        h('option', { value: '', selected: !getPluginOverride(p.id) }, '跟随全局'),
-        ...ADAPT_POLICIES.map((t) =>
-          h('option', { value: t.value, selected: getPluginOverride(p.id) === t.value }, t.label)),
-      );
-      sel.onchange = () => {
-        setPluginOverride(p.id, sel.value || null);
-        ctx.toast(`「${p.name}」适配策略已更新`, 'ok');
-      };
-
       return h('div.p-row', {
         style: {
           padding: '12px 14px', marginTop: '10px', borderRadius: 'var(--r)',
@@ -405,12 +365,11 @@ export default definePlugin({
           h('div.p-mono.p-muted', { style: { fontSize: '11px' } }, p.entry),
         ),
         h('span.p-tag', {}, p.type === 'iframe' ? '沙箱' : '同页'),
-        sel,
         /*
          * p-slot-act：定宽格（与 React 版 App.tsx 同一条规则）。
          * 「内置」是 .p-tag、「移除」是 .p-btn.danger，两种形态宽度不同，
          * 而左侧名称列是 flex:1 —— 宽度差会全部转成右侧各格的位移，
-         * 表现为「跟随全局」下拉框在内置行与非内置行之间左右错位。
+         * 表现为右侧各格在内置行与非内置行之间左右错位。
          */
         h('span.p-slot-act', {},
           p.builtin
