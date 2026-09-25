@@ -64,6 +64,26 @@ console.log('=== 1. 扫描器自身：必须分得清真假 ===');
   t('真定义的能取到',
     collectDefinedClasses('.real-b { color: blue }').has('real-b'));
   t('静态 className', collectUsedClasses('<div className="a b c">').has('b'));
+  /*
+   * 创建辅助函数传参：el('div', 'nx-mask')
+   *
+   * js/dialog.js 的写法 —— 它是全项目弹窗的唯一实现，
+   * 但类名走的是**函数参数**，class= / 模板串 / h() / classList 四条分支
+   * 一条都匹配不到。实测：把 .nx-mask 全局重命名后，4 个测试 375 项
+   * 断言**全绿**，弹窗整块失去样式却无人知晓。
+   */
+  t('创建辅助函数 el(tag, cls) 的类名能取到',
+    collectUsedClasses("function el(tag, cls, text){}\nconst m = el('div', 'nx-mask');").has('nx-mask'));
+  t('el 第二参是拼接时，前段类名仍能取到',
+    collectUsedClasses("function el(tag, cls, text){}\nconst b = el('button', 'nx-btn' + (v ? ' primary' : ''));").has('nx-btn'));
+  /*
+   * 签名不同就不该取 —— 否则误报一大片。
+   * 全仓另三个文件是 `const el = (tag, attrs={}, ...kids)`，
+   * 第二参是**属性对象**不是类名；第一版修复没看签名，
+   * 把 preview / sv / hue / grid / cell / panes 全报成无样式类名。
+   */
+  t('el 第二参是属性对象时不得当类名（签名必须看）',
+    !collectUsedClasses("const el = (tag, attrs = {}, ...kids) => {};\nconst d = el('div', { class: 'preview' });").has('preview'));
   t('模板串字面量部分', collectUsedClasses('className={`fpx-link-row ${d.state}`}').has('fpx-link-row'));
   t('模板串 ${} 不误取', !collectUsedClasses('className={`a ${undefinedVar}`}').has('undefinedVar'));
   t('三元里的状态类 open',
