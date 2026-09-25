@@ -2417,6 +2417,21 @@
                                     m.layout();
                                 }
                             });
+                            /*
+                             * **必须注册** —— 早先只定义了类、没有这一行。
+                             *
+                             * 后果（两条路同时失效，且都不报错）：
+                             *   · 侧栏「粘贴样式」按钮 → exec('pastenodestyle') →
+                             *     内核查不到该命令 → 静默失败，但面板照样提示
+                             *     「已粘贴节点样式」—— 假成功；
+                             *   · Ctrl+Shift+V 快捷键（3678 行已把快捷键绑到这个
+                             *     名字上）同样无效。
+                             *
+                             * 而「复制样式」是好的（copynodestyle 有注册），
+                             * 于是表现为「复制了却永远粘不上」，用户只会以为
+                             * 样式刷是坏的。
+                             */
+                            try { km._commands['pastenodestyle'] = new PasteNodeStyleCommand(); } catch (e) {}
 
                             // 渲染钩子：节点渲染完成后把节点级样式覆盖到外框/连线（选中态也生效，保证应用后即时可见）
                             function applyNodeStyle(node) {

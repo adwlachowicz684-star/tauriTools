@@ -8662,6 +8662,69 @@ group('点搜索结果条目后，顶栏「1/5」必须跟着变');
   }
 }
 
+group('exec/快捷键引用的命令名必须真的注册过（否则静默失败）');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+
+  /*
+   * 背景：「粘贴样式」按钮 exec('pastenodestyle')，而编辑器页**只定义了
+   * PasteNodeStyleCommand 类、从没有 `km._commands['pastenodestyle'] = ...`。
+   * 内核查不到该命令 → 静默失败，面板照样提示「已粘贴节点样式」（假成功）；
+   * 绑在同一个名字上的 Ctrl+Shift+V 快捷键同样无效。
+   * 而「复制样式」是好的 —— 表现为「复制了却永远粘不上」。
+   *
+   * 这类失效**不报错、测试全绿**，只能靠名字比对来防。
+   */
+  const lower = (x) => String(x).toLowerCase();
+
+  // ① 编辑器页自注册的命令（动态扫描，不会过时）
+  const selfReg = new Set();
+  for (const m of html.matchAll(/_commands\[\s*'([^']+)'\s*\]/g)) selfReg.add(lower(m[1]));
+
+  /*
+   * ② 内核内置命令（实测枚举所得，51 个）。
+   *
+   * 只从 min.js 里正则抠不全（命名模式不统一，只能抠到 14 个），
+   * 故以**运行时枚举结果**为准。将来内核升级需重新取一次：
+   * 加载内核后读 Object.keys(km._commands)。
+   */
+  const KERNEL = ('appendchildnode appendparentnode appendsiblingnode arrange arrangedown arrangeup '
+    + 'background bold boundary camera clearnodestyle clearstyle collapse copy copynodestyle copystyle '
+    + 'cut expand expandtolevel file fontfamily fontsize forecolor hand hyperlink image images italic '
+    + 'layout move movetoparent note paste pastestyle priority progress removenode resetlayout resource '
+    + 'setnodestyle strikethrough template text textalign theme valign valignoffset video zoom zoomin zoomout')
+    .split(/\s+/).filter(Boolean);
+  const known = new Set([...KERNEL, ...selfReg]);
+
+  ok(known.has('pastenodestyle'),
+    'pastenodestyle 已注册（BUG：只定义了类、没注册 → 粘贴样式静默失败）');
+  ok(selfReg.has('copynodestyle'), 'copynodestyle 已注册（对照）');
+
+  // ③ 快捷键绑定的每个命令名都必须有注册
+  {
+    const bad = [];
+    for (const m of html.matchAll(/addCommandShortcutKeys\(\{([\s\S]{0,300}?)\}/g)) {
+      for (const k of m[1].matchAll(/([A-Za-z_$][\w$]*)\s*:/g)) {
+        if (!known.has(lower(k[1]))) bad.push('快捷键 ' + k[1]);
+      }
+    }
+    ok(bad.length === 0, '快捷键绑定的命令都有注册（缺失：' + (bad.join('、') || '无') + '）');
+  }
+
+  // ④ 插件层 exec 的命令名都必须有注册
+  {
+    const bad = [];
+    for (const f of ['panels.js', 'index.js', 'editor-bridge.js']) {
+      const src = fs.readFileSync(path.join(HERE, f), 'utf8');
+      for (const m of src.matchAll(/exec\(\s*'([a-zA-Z]+)'/g)) {
+        if (!known.has(lower(m[1]))) bad.push(f + ' → ' + m[1]);
+      }
+    }
+    ok(bad.length === 0, 'exec 的命令名都有注册（缺失：' + (bad.join('、') || '无') + '）');
+  }
+}
+
 group('导出为交换格式 → 导出为交换格式（单画布）');
 
 {
