@@ -316,5 +316,14 @@ export function buildFileList(app) {
     isSearchMode: () => panel === 'search',
     isFilesPanel: () => panel === 'files',
     isOpen: () => !!panel,
+    /**
+     * 是否**还留有**搜索结果（哪怕当前被文件列表盖着）。
+     *
+     * 必须和 isSearchMode() 分开：那个问的是"当前占着底框的是不是搜索"，
+     * 这个问的是"有没有结果可退回"。两者不同 —— 搜索出结果后点 📚，
+     * 底框归文件列表，此时 isSearchMode() 是 false 但结果**还在**。
+     * 混用的话"再点一次就退回搜索结果"这件事就讲不出来了。
+     */
+    hasSearchResults: () => hasSearch,
   };
 }
