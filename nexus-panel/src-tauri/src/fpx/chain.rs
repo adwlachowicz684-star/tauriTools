@@ -380,9 +380,22 @@ pub(crate) fn set_clipboard(text: &str) -> bool {
         use std::io::Write;
         match Command::new("cmd").args(["/c", "clip"]).stdin(std::process::Stdio::piped()).spawn() {
             Ok(mut child) => {
+                /*
+                 * 写失败**不能** `let _ =` 吞掉。
+                 *
+                 * `clip` / `pbcopy` 这类命令是"从 stdin 读完再写入剪贴板"：
+                 * 管道一旦断（子进程提前退出、文本过大），write_all 会失败，
+                 * 而 `child.wait()` **仍然可能返回 0** —— 于是本函数返回 true，
+                 * 调用方照常在界面上写「指令已复制」。
+                 *
+                 * 用户按提示去粘贴，粘出来的是剪贴板里的**旧内容**
+                 * （可能是别处的路径、密码或无关文本），且全程没有任何报错。
+                 * 与前端那次「谎报已复制」是同一类：不报错，而是主动声称了
+                 * 一个没发生过的动作。
+                 */
                 if let Some(sin) = child.stdin.as_mut() {
-                    let _ = sin.write_all(text.as_bytes());
-                    let _ = sin.flush();
+                    if sin.write_all(text.as_bytes()).is_err() { return false; }
+                    if sin.flush().is_err() { return false; }
                 }
                 drop(child.stdin.take());
                 child.wait().map(|s| s.success()).unwrap_or(false)
@@ -393,9 +406,10 @@ pub(crate) fn set_clipboard(text: &str) -> bool {
         use std::io::Write;
         match Command::new("pbcopy").stdin(std::process::Stdio::piped()).spawn() {
             Ok(mut child) => {
+                /* 同上：写失败必须返回 false，不能等 wait() 的退出码 */
                 if let Some(sin) = child.stdin.as_mut() {
-                    let _ = sin.write_all(text.as_bytes());
-                    let _ = sin.flush();
+                    if sin.write_all(text.as_bytes()).is_err() { return false; }
+                    if sin.flush().is_err() { return false; }
                 }
                 drop(child.stdin.take());
                 child.wait().map(|s| s.success()).unwrap_or(false)
@@ -410,9 +424,11 @@ pub(crate) fn set_clipboard(text: &str) -> bool {
                 .args(if prog == "xclip" { vec!["-selection", "clipboard"] } else { vec![] })
                 .stdin(std::process::Stdio::piped()).spawn()
             {
+                /* 同上：写失败不能算成功（否则会去试下一个程序，
+                   而第一个其实已经把半截内容写进剪贴板了） */
                 if let Some(sin) = child.stdin.as_mut() {
-                    let _ = sin.write_all(text.as_bytes());
-                    let _ = sin.flush();
+                    if sin.write_all(text.as_bytes()).is_err() { continue; }
+                    if sin.flush().is_err() { continue; }
                 }
                 drop(child.stdin.take());
                 if child.wait().map(|s| s.success()).unwrap_or(false) { return true; }

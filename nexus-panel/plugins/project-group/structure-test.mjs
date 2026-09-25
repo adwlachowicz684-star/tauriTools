@@ -170,4 +170,19 @@ console.log('\n=== ContentPanel：不靠调用方传稳定引用（无限渲染�
   t('App 注释不再声称必须稳定', !/必须是稳定引用/.test(app));
 }
 
+console.log('\n=== 目录弹窗：起点列表拉不到不能静默 ===');
+{
+  /*
+   * `api.quickRoots().then(...).catch(() => {})` 会把失败整个吞掉：
+   * roots 为空、load 从没被调用 → 弹窗一片空白。
+   * 用户看到的是"这个软件打不开目录"，真相只是"起点列表拉不到"，
+   * 他完全无从判断，更不会想到换个路径粘贴试试。
+   */
+  const src = fs.readFileSync(path.join(HERE, 'components/DirDialog.tsx'), 'utf8');
+  t('取到 DirDialog', src.length > 0);
+  t('quickRoots 失败不再空 catch（反面证据）',
+    !/quickRoots\(\)\s*[\s\S]{0,160}?\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(src));
+  t('失败写进 err', /quickRoots[\s\S]{0,240}?setErr\(/.test(src));
+}
+
 done();

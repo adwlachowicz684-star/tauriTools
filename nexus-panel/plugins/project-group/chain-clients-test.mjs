@@ -157,6 +157,32 @@ console.log('\n=== 6. URL 唤起失败时必须真的把指令放进剪贴板 ==
     /fn paste_and_open[\s\S]*?let copied = set_clipboard\(prompt\);[\s\S]*?ok: copied \|\| opened/.test(rs));
 }
 
+console.log('\n=== 8. set_clipboard：写失败不能靠退出码蒙混过关 ===');
+{
+  /*
+   * `clip` / `pbcopy` / `wl-copy` 都是"从 stdin 读完再写入剪贴板"。
+   *
+   * 若 `let _ = sin.write_all(...)` 把写失败吞掉，而 `child.wait()`
+   * **仍然可能返回 0** → 函数返回 true → 调用方照常写「指令已复制」。
+   * 用户按提示去粘贴，粘出来的是剪贴板里的**旧内容**（可能是别处的
+   * 密码或无关文本），且全程不报错。
+   *
+   * 与第 6 节那次「谎报已复制」同源：不是报错，而是主动声称了一个
+   * 没发生过的动作。所以这里要钉"写失败必须 return false / continue"。
+   */
+  const cb = rs.slice(rs.indexOf('pub(crate) fn set_clipboard('));
+  const cbBody = cb.slice(0, cb.indexOf('\nfn url_encode(') > 0 ? cb.indexOf('\nfn url_encode(') : 2000);
+  t('取到 set_clipboard 正文', cbBody.length > 0);
+  /* 反面证据：不允许再有 let _ = 吞掉 stdin 写入 */
+  t('不再有 let _ = sin.write_all（反面证据）', !/let _ = sin\.write_all/.test(rs));
+  t('不再有 let _ = sin.flush（反面证据）', !/let _ = sin\.flush/.test(rs));
+  t('write_all 失败返回 false', /sin\.write_all\(text\.as_bytes\(\)\)\.is_err\(\)/.test(cbBody));
+  t('flush 失败也返回 false', /sin\.flush\(\)\.is_err\(\)/.test(cbBody));
+  t('两处以上都判了（win/mac/unix 三条分支）',
+    (rs.match(/sin\.write_all\(text\.as_bytes\(\)\)\.is_err\(\)/g) || []).length >= 3,
+    '命中 ' + (rs.match(/sin\.write_all\(text\.as_bytes\(\)\)\.is_err\(\)/g) || []).length + ' 处');
+}
+
 console.log('\n=== 7. 清单规模 ===');
 {
   /* 顺手钉住总数：加/删客户端时这里会响，提醒同步前端说明与文档 */

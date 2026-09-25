@@ -48,10 +48,20 @@ export function DirDialog({
   }, [api]);
 
   useEffect(() => {
+    /*
+     * 取不到快速起点时**不能静默**：失败后 roots 为空、load 从没被调用，
+     * 整个弹窗就是一片空白 —— 用户看到的是"这个软件打不开目录"，
+     * 而真相只是"起点列表拉不到"，他完全无从判断。
+     *
+     * 所以把错误写进 err（弹窗里本来就有这条红字），而不是吞掉。
+     */
     api.quickRoots().then((r) => {
       setRoots(r);
       if (r[0]) load(r[0].path);
-    }).catch(() => {});
+    }).catch((e: unknown) => {
+      setRoots([]);
+      setErr(`无法列出快速起点：${e instanceof Error ? e.message : String(e)}`);
+    });
   }, [api, load]);
 
   const crumbs = useMemo(() => {

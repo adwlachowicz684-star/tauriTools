@@ -223,4 +223,26 @@ console.log('\n=== 9. setState updater 里不得有副作用 ★ ===');
     /onLogResizeEnd = useCallback\([\s\S]{0,220}?\}, \[saveLayout, logHeight\]\)/.test(lm));
 }
 
+console.log('\n=== 链接行数：按归一化键找，不能报出「0 个链接」===');
+{
+  /*
+   * `snap.links.find((l) => l.project === project)` 是原文精确比，
+   * 而后端按归一化键匹配（Windows 下大小写不敏感 + 去尾分隔符）。
+   *
+   * 配置被手改过、或拖进来的路径带尾反斜杠时 find 返回 undefined →
+   * 日志写「已分配：X → Y（0 个链接）」。用户看到"分配完成"配着
+   * "0 个链接"，只能以为没生效、再点一次 —— 而链接其实已经建好了。
+   *
+   * **报告的数字与事实不符**：不报错，但会让人做错后续判断。
+   */
+  const fpx = fs.readFileSync(path.join(HERE, 'hooks/useFpx.ts'), 'utf8');
+  t('取到 useFpx', fpx.length > 0);
+  t('createLink 按归一化键找行（反面证据）',
+    !/const row: LinkRow \| undefined = snap\.links\.find\(\(l\) => l\.project === project\)/.test(fpx));
+  t('两处都用了归一化键',
+    (fpx.match(/normalizeKey\(l\.project, ci\)/g) || []).length === 2,
+    '命中 ' + (fpx.match(/normalizeKey\(l\.project, ci\)/g) || []).length + ' 处');
+  t('依赖带上了 ci', /\[api, applySnapshot, ci, ctx, pushLog, run\]/.test(fpx));
+}
+
 done();
