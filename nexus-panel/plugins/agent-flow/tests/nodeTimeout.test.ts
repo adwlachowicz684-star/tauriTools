@@ -205,6 +205,38 @@ test('守卫：超时定时器必须被清掉（源码级）', () => {
   assert.match(src, /clearTimeout\s*\(\s*timer\s*\)/, 'finally 里要有 clearTimeout(timer)');
 });
 
+/*
+ * 中断处置的两条源码守卫。
+ *
+ * 这两处的失效方式都是**运行时抛错或静默丢数据**，而且只在"用户点了停止
+ * / 节点超时"时才走到 —— 正常跑通的流程永远碰不到，靠跑一遍是发现不了的：
+ *
+ * · runnerKit 漏解构 markSkipped：中断分支一执行就 ReferenceError，
+ *   表现是"点了停止，循环节点崩了"。
+ * · loop 里中断直接上抛：下面的 loop-done / loops 记录不执行，
+ *   取消之后任务记录里这条循环整个消失，看不出跑到第几轮。
+ */
+test('守卫：中断分支用到的 markSkipped 必须真的解构出来', () => {
+  const src = stripComments(readSrc('engine/runnerKit.ts'));
+  assert.match(
+    src, /const \{[^}]*\bmarkSkipped\b[^}]*\} = ctx/,
+    'withNodeRun 要解构 markSkipped —— 漏了会在中断时 ReferenceError',
+  );
+  assert.match(src, /markSkipped\(id, scope\)/, '中断分支要真的调用 markSkipped');
+});
+
+test('守卫：循环被中断时先落轮数记录，再上抛', () => {
+  const src = stripComments(readSrc('engine/runners/loop.ts'));
+  const pushAt = src.indexOf('loops.push(');
+  assert.ok(pushAt > 0, '要有 loops.push');
+  const throwAt = src.lastIndexOf('throw abortedErr');
+  assert.ok(
+    throwAt > pushAt,
+    '中断上抛必须落在记录之后 —— 否则取消后这条循环记录整个消失',
+  );
+  assert.match(src, /isAbortError\(/, '要能认出中断，而不是把所有异常都当失败');
+});
+
 test('跑得快的节点不受超时影响', async () => {
   const g: Graph = {
     nodes: [N('a', 'text', { op: 'upper', a: 'zz', b: '', [TIMEOUT_FIELD]: 5 })],
