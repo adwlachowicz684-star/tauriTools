@@ -58,6 +58,7 @@ registerNode({
     varGroups: ['github-repo'],
     label: '更新检测',
     color: '#a78bfa',
+    legacy: true,
     category: 'external',
     idPrefix: 'gu',
     sub: '检测仓库有没有新提交 / 新 Release（令牌填一次共用）',

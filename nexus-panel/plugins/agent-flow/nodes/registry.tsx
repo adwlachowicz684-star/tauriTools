@@ -157,6 +157,8 @@ export function allPresets(): NodePreset[] {
   const overrides = loadColorOverrides();
   const out: NodePreset[] = [];
   for (const def of defs.values()) {
+    // 老类型不再列进侧栏：它们仍可运行（老画布要用），只是不该再被拖出来
+    if (def.meta.legacy) continue;
     const { presets, label, color } = def.meta;
     const list = presets?.() ?? [{ key: def.type, label, color, init: () => def.create('') }];
     for (const p of list) {

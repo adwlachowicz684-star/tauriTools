@@ -2,9 +2,8 @@ import { useState } from 'react';
 import type { FlowNode } from '../../flowTypes';
 import { UPDATE_SOURCE_META, type UpdateNodeData } from '../../types';
 import { fetchText } from '../../lib/tauri';
-import {
-  parseFeed, parseBiliApi, detectUpdate, sortByNewest, extractBiliUid, biliApiUrl, BILI_REFERER,
-} from '../../engine/updates';
+import { probeFeedTarget, BILI_REFERER } from '../../engine/updates';
+import type { UpdateTarget } from '../../types';
 import type { TestState } from './shared';
 
 /**
@@ -37,54 +36,45 @@ export function UpdateTestPanel({ node, onChange }: {
    * 「测试」就该是只读的 —— 如果它把基线改了，
    * 用户点一下再正式运行，就永远看不到"有更新"了。
    */
+  /**
+   * 试跑一次，但不推进基线。
+   *
+   * 「测试」就该是只读的 —— 如果它把基线改了，
+   * 用户点一下再正式运行，就永远看不到"有更新"了。
+   *
+   * 抓取与判定走 probeFeedTarget（engine/updates.ts），
+   * 与正式运行同一份代码 —— 各写一份会漂成
+   * "试跑说有更新，正式跑却没更新"，两边都不报错。
+   */
   const runTest = async () => {
     setTest({ phase: 'running' });
     try {
-      let url = '';
       const headers: Record<string, string> = {};
       if (d.userAgent) headers['User-Agent'] = d.userAgent;
-
-      if (d.source === 'bilibili' && d.biliMode === 'api') {
-        const uid = extractBiliUid(d.biliUid);
-        if (!uid) {
-          setTest({ phase: 'err', text: '填一个 UP 主 UID 或 space.bilibili.com 主页链接' });
-          return;
-        }
-        url = biliApiUrl(uid);
-        if (d.biliCookie) headers.Cookie = d.biliCookie;
-        if (d.source === 'bilibili') headers.Referer = BILI_REFERER;
-      } else {
-        url = d.feedUrl.trim();
-        if (!url) {
-          setTest({ phase: 'err', text: '需要先填订阅源地址' });
-          return;
-        }
+      if (d.source === 'bilibili' && d.biliCookie) {
+        headers.Cookie = d.biliCookie;
+        headers.Referer = BILI_REFERER;
       }
 
-      const res = await fetchText(url, { headers, timeoutSec: d.timeoutSec });
-      if (!res.ok) {
-        setTest({ phase: 'err', text: `请求失败 HTTP ${res.status}` });
-        return;
-      }
+      const t = {
+        id: '', kind: d.source, enabled: true,
+        biliMode: d.biliMode, biliUid: d.biliUid, biliCookie: d.biliCookie,
+        feedUrl: d.feedUrl, lastSeenId: d.lastSeenId,
+      } as UpdateTarget;
 
-      const parsed = (d.source === 'bilibili' && d.biliMode === 'api')
-        ? parseBiliApi(res.text)
-        : parseFeed(res.text);
-      if (parsed.error) {
-        setTest({ phase: 'err', text: parsed.error });
-        return;
-      }
-
-      const items = sortByNewest(parsed.items);
-      const r = detectUpdate({
-        items, lastSeenId: d.lastSeenId, firstRunAsUpdate: d.firstRunAsUpdate,
+      const r = await probeFeedTarget(t, { headers, timeoutSec: d.timeoutSec, firstRunAsUpdate: d.firstRunAsUpdate }, {
+        get: async (u, o) => {
+          const res = await fetchText(u, o);
+          if (!res.ok) throw new Error(`请求失败 HTTP ${res.status}`);
+          return res.text ?? '';
+        },
       });
+
       const line = [
         `结果：${r.updated ? '有更新' : '无更新'}`,
         r.latest ? `最新：${r.latest.title}` : '',
         r.latest?.url ? r.latest.url : '',
         `说明：${r.reason}`,
-        parsed.warnings.length ? `提示：${parsed.warnings.join('；')}` : '',
       ].filter(Boolean).join('\n');
       setTest({ phase: 'ok', text: line, updated: r.updated });
     } catch (err) {

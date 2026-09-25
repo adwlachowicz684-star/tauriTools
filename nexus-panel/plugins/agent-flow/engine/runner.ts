@@ -11,7 +11,7 @@ import { resolveSecret, type Credential } from './credentials';
 import { topoLayers } from './topo';
 import { resolveVars } from './variables';
 import {
-  paramLinksOf, flowEdgesOf, linksInto, applyParamLinks,
+  paramLinksOf, flowEdgesOf, linksInto, applyParamLinks, outValueOf,
 } from './paramLinks';
 import { entryScopeOf } from './triggerScope';
 import { getRunner } from './runnerRegistry';
@@ -538,7 +538,18 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
       // hasOwnProperty 而不是 `outputs[x] ?? ''`：
       // 后者分不开"没跑到"与"产出空串"，见上面的取舍
       if (!Object.prototype.hasOwnProperty.call(outputs, l.source)) continue;
-      values[l.targetArg] = outputs[l.source];
+      /*
+       * 按这一根线取的是**哪个输出**取值。
+       *
+       * 不认 sourceArg 的话，多输出节点的每一根线都拿到整串输出 ——
+       * 更新检测的「标题」接到日志上会收到
+       * "true\n标题: …\n链接: …" 一整坨，卡片上却明明写的是「标题」。
+       * 那种错不报错，只是下游内容不对，最难联想回这里。
+       */
+      const v = outValueOf(l.sourceArg, outputs[l.source], nodeFields[l.source]);
+      // null = 这次没产出这个输出 → 保留手填值（见上面的取舍）
+      if (v === null) continue;
+      values[l.targetArg] = v;
     }
     return {
       ...base,

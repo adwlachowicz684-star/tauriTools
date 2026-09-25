@@ -14,6 +14,7 @@ registerNode({
   meta: {
     label: UPDATE_SOURCE_META.wechat.label,
     color: UPDATE_SOURCE_META.wechat.color,
+    legacy: true,
     category: 'external',
     idPrefix: 'wx',
     sub: UPDATE_SOURCE_META.wechat.hint,

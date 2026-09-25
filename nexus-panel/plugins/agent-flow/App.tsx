@@ -467,6 +467,23 @@ export default function App() {
   } = vault;
 
   /*
+   * 打开连接管理器并停在「服务」页。
+   *
+   * 与 openCredentials 的区别：那个走的是"聚焦到某一种密钥"，
+   * 而 MCP 服务不在密钥里（它是库里独立的一页），
+   * 所以要单独设 credPage —— 只设 credFocus 的话打开后停在「密钥」页，
+   * 用户点「去连接管理器添加」看到的还是密钥列表，找不到加服务的地方。
+   *
+   * 缺了它，画布设置里那个按钮点了会打开面板却停在错的页 ——
+   * 不报错，只是"找不到在哪加"。
+   */
+  const openMcpLibrary = useCallback(() => {
+    setCredPage('mcp');
+    setCredFocus('');
+    setCredOpen(true);
+  }, [setCredPage, setCredFocus, setCredOpen]);
+
+  /*
    * 接住「打开凭据中心」。
    *
    * 链路三段，缺任一段都是**点了没反应、且不报错**：
@@ -1676,8 +1693,19 @@ function reportSkipped(
         这样即使不运行，打开面板也能看到"上次改了哪些文件"，
         排查问题时不必重跑一遍。
       */
+      /*
+        具名输出（标题 / 链接 / 字数 …）也一起写回节点。
+        它同时是输出卡片上那几行要显示的内容 —— 不写的话
+        多输出节点除了主输出那一行全是空白，看着像"没产出东西"。
+      */
+      /*
+       * 这两个是**运行时回写**字段（上次跑出来的结果），不是配置，
+       * 所以没写进各个节点数据类型 —— 写了就得在每个类型上重复一遍，
+       * 漏一个就是类型错误。字面量检查会把它们判成多余属性，
+       * 因此这里绕开字面量检查（本文件已有先例）。
+       */
       setNodes((ns) => ns.map((n) =>
-        (n.id === e.id ? { ...n, data: { ...n.data, lastFiles: e.files } } as FlowNode : n)));
+        (n.id === e.id ? { ...n, data: { ...(n.data as Record<string, unknown>), lastFiles: e.files, lastFields: e.fields } } as unknown as FlowNode : n)));
       if (e.files.length > 0) {
         pushLog(`📎 ${e.id} 识别到 ${e.files.length} 个文件：${e.files.slice(0, 3).join(', ')}${e.files.length > 3 ? ' …' : ''}`);
       }
@@ -1687,7 +1715,7 @@ function reportSkipped(
       pushLog(`🔍 ${e.id} ${e.reason}`);
       // 把新基线写回节点并持久化：否则下次运行又当成"首次"，永远检测不到更新
       setNodes((ns) => ns.map((n) =>
-        (n.id === e.id ? { ...n, data: { ...n.data, ...e.patch } } as FlowNode : n)));
+        (n.id === e.id ? { ...n, data: { ...n.data, ...(e.patch ?? {}) } } as FlowNode : n)));
     } else if (e.type === 'loop-resolved') {
       const w = e.warnings.length ? ` ⚠ ${e.warnings.join('；')}` : '';
       pushLog(`⟲ ${e.id} 循环开始：${e.reason}（${e.count} 轮）${w}`);
@@ -1860,7 +1888,12 @@ function reportSkipped(
     abortRef.current = controller;
     const stamp = String(Date.now());
 
-    setNodes((ns) => ns.map((n) => ({ ...n, data: { ...n.data, output: '', error: '', status: 'idle' } } as FlowNode)));
+    /*
+     * lastFields 也要清。
+     * 留着的话"这次没跑到"与"上次的值"分不开 ——
+     * 卡片上仍显示着上一次的标题，而这次其实没产出。
+     */
+    setNodes((ns) => ns.map((n) => ({ ...n, data: { ...(n.data as Record<string, unknown>), output: '', error: '', status: 'idle', lastFields: {} } } as unknown as FlowNode)));
 
     /*
      * 先展开模块，再执行。
@@ -2967,6 +3000,8 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
               onChange={patchNode}
               credentials={credentials}
               onOpenCredentials={openCredentials}
+              mcpLibrary={mcpServers}
+              onOpenMcpLibrary={openMcpLibrary}
               webhookTokens={webhookTokens}
               onEditModule={(id) => enterInstanceEdit(id)}
               onNote={pushLog}

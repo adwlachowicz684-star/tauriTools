@@ -30,6 +30,13 @@ import './defs/ocr';
 import './defs/translate';
 import './defs/github_update';
 import './defs/github_push';
+/*
+ * 合并后的「更新检测」必须先于 bili / wechat 注册：
+ * 三者共用 dataKind 'update'，而 getDefByDataKind 取**先注册**的那一份。
+ * 顺序反了的话，新节点会被解析成老的 bili 定义 —— 卡片与面板都走老的那套，
+ * 界面上看着"合并没生效"，且不报任何错。
+ */
+import './defs/update';
 import './defs/bili';
 /* 工具节点：等待 / 日志 / 提示音 / 播放音频 / 当前时间 / 常量 */
 import './defs/wait';

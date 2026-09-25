@@ -165,6 +165,13 @@ export type NodeMeta = {
   /** 卡片左边框 + 侧栏圆点色 */
   color: string;
   category: NodeCategory;
+  /**
+   * 老类型：仍注册着（老画布要能打开），但侧栏不再列出。
+   *
+   * bili / wechat / github-update 合并进 update 之后属于这一类 ——
+   * 两条入口并存会让人不知道该拖哪个，而直接删掉会让老画布变未知节点。
+   */
+  legacy?: boolean;
   /** 新建节点时的 id 前缀，如 'task' → t1、'loop' → lp1 */
   idPrefix: string;
   /** 侧栏该组下方的补充说明 */

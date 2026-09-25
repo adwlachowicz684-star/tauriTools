@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { getDef } from '../nodes/registry';
 import { validateNode, LEVEL_COLOR, LEVEL_TEXT, badgeTextOf, type IssueLevel } from '../engine/nodeValidate';
 import { isNodeDisabled } from '../engine/nodeDisabled';
-import { OUT_HANDLE, outHandleId, outputsOf, producesArgOf, valueKindLabel } from '../engine/paramLinks';
+import { OUT_HANDLE, OUT_DEFAULT, outHandleId, outputsOf, outKindOf, outLabel, valueKindLabel } from '../engine/paramLinks';
 /** 关闭态的圆点色。中性灰，不与"缺项/缺参"的黄红撞色 */
 const OFF_DOT_COLOR = '#6b7280';
 import { normalizeSize, type NodeSize } from '../types';
@@ -237,32 +237,53 @@ function OutCard({ type, data }: { type: string; data: Record<string, unknown> }
   const kind = (data.kind as string | undefined) ?? type;
   const ports = outputsOf(kind);
   const out = String((data as { output?: unknown }).output ?? '').trim();
-  const valueKind = producesArgOf(kind, data);
+  /*
+   * 上次跑出来的**具名字段**。
+   *
+   * 主输出只占一个字符串，标题/链接/字数这些是执行器另写的一张表
+   * （{{id.标题}} 也读它）。没有它的话，多输出节点除了主输出
+   * 那一行全是空白 —— 看着像"这些口子没产出东西"，也就不敢连。
+   */
+  const fields = (data as { lastFields?: Record<string, string> }).lastFields ?? {};
 
   return (
     <div className="node-outs">
-      {ports.map((key) => (
-        <div
-          key={key}
-          className="node-line--out node-out-port"
-          title={out ? out : (spec?.producesDesc ?? '')}
-        >
-          <span className="node-line__out-kind">{valueKindLabel(valueKind)}</span>
-          {out ? <span className="node-line__out-val">{out}</span> : null}
-          {/*
-           * 端口：参数连线的**起点**。
-           *
-           * 多输出时每个端口各带自己的 key，一根线只取其中一个 ——
-           * 共用一个口子的话"取的是哪个"取决于边的顺序，而顺序不保证。
-           */}
-          <Handle
-            type="source"
-            position={Position.Right}
-            id={outHandleId(key)}
-            className="node-out-handle"
-          />
-        </div>
-      ))}
+      {ports.map((p) => {
+        const val = p.key === OUT_DEFAULT
+          ? out
+          : String(fields[p.key] ?? '').trim();
+        return (
+          <div
+            key={p.key}
+            className="node-line--out node-out-port"
+            title={val || (p.key === OUT_DEFAULT ? (spec?.producesDesc ?? '') : outLabel(p))}
+          >
+            <span className="node-line__out-kind">{valueKindLabel(outKindOf(kind, p.key, data))}</span>
+            {/*
+             * 具名输出要写名字。
+             *
+             * 只写"文本"的话，更新检测那四行长得一模一样，
+             * 用户只能按**顺序**猜哪根是标题 —— 而顺序在代码里不保证。
+             */}
+            {p.key === OUT_DEFAULT ? null : (
+              <span className="node-line__out-name">{outLabel(p)}</span>
+            )}
+            {val ? <span className="node-line__out-val">{val}</span> : null}
+            {/*
+             * 端口：参数连线的**起点**。
+             *
+             * 多输出时每个端口各带自己的 key，一根线只取其中一个 ——
+             * 共用一个口子的话"取的是哪个"取决于边的顺序，而顺序不保证。
+             */}
+            <Handle
+              type="source"
+              position={Position.Right}
+              id={outHandleId(p.key)}
+              className="node-out-handle"
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }

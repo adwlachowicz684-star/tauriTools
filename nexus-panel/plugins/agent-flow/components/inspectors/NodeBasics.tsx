@@ -82,14 +82,103 @@ export function NodeBasics({ node, onChange, onNote, onEditModule }: Props) {
       </div>
 
       {/*
-       * 第二行：类型标签 + 节点层面的动作。
+       * 第二行：节点 id · 类型 · 超时 · 开关。
        *
-       * 类型挪下来之后，「存为自定义」这类按钮也有了自己的位置，
-       * 不必再跟名称抢同一行的宽度。
+       * 四项的共同点是"与这个节点干什么无关"，且都只有一两个字的宽度 ——
+       * 各占一行的话，基础信息区会有五六行，参数要滚很久才看得到。
+       *
+       * 左半是**只读信息**（这是什么：id、类型），
+       * 右半是**控制项**（怎么跑：超时、开关）。
+       * 中间用 task-grow 撑开 —— 不让它们挤成一团，
+       * 也让控制项始终贴右边，换节点时位置不跳。
        */}
-      <div className="insp-kindrow">
+      <div className="insp-metarow">
+        <button
+          className="insp-size-btn insp-id-btn"
+          title="节点 id —— 点一下复制。运行日志里写的就是这个 id"
+          onClick={() => {
+            const t = String(node.id ?? '');
+            void navigator.clipboard?.writeText(t).then(
+              () => onNote?.(`已复制节点 id：${t}`),
+              () => onNote?.(`复制失败，请手动选中：${t}`),
+            );
+          }}
+        >
+          {String(node.id ?? '')}
+        </button>
+
         <span className="insp-kind">{def.meta.label}</span>
+
         <span className="task-grow" />
+
+        {/*
+         * 单节点执行超时。
+         *
+         * 放在基础信息区而不是参数区：它不属于任何一种节点自己的参数，
+         * 对所有节点一视同仁（跟"开启""显示高度"是一类）。
+         *
+         * 留空 / 0 = 不限时。这是刻意的默认值 ——
+         * 加了超时这个功能，不能让任何既有流程的行为发生变化。
+         */}
+        <span className="insp-timeout">
+          <span className="insp-size-label">超时</span>
+          <input
+            className="insp-timeout-input"
+            type="number"
+            min="0"
+            step="1"
+            /*
+             * 0 显示成空而不是 "0"：
+             * 数字框右侧有步进箭头，显示 0 会让人以为"超时 0 秒 = 立刻失败"，
+             * 而它实际是"不限时"。空串才是这个意思的直观表达。
+             */
+            value={d.timeoutSec ? String(d.timeoutSec) : ''}
+            placeholder="不限"
+            title="这一步最多跑多少秒。留空 = 不限时；到点没跑完就判失败，下游跟着跳过"
+            onChange={(e) => {
+              const raw = e.target.value;
+              const n = Number(raw);
+              onChange(node.id, { timeoutSec: raw === '' || !Number.isFinite(n) || n <= 0 ? 0 : n });
+            }}
+          />
+          <span className="insp-size-label">秒</span>
+        </span>
+
+        <button
+          type="button"
+          className={'insp-switch' + (off ? ' is-off' : '')}
+          title={off ? '已关闭 —— 这一步不参与执行，下游也会跟着停' : '开启 —— 这一步正常执行'}
+          onClick={() => onChange(node.id, { disabled: !off, enabled: true })}
+        >
+          <span className="insp-switch-track">
+            <span className="insp-switch-knob" />
+          </span>
+          <span className="insp-switch-text">{off ? '已关闭' : '开启'}</span>
+        </button>
+      </div>
+
+      {/*
+       * 第三行：显示高度 + 节点层面的动作。
+       *
+       * 显示高度是"卡片画多高"，动作是"整个节点层面"的操作，
+       * 两者都不是参数，放同一行；动作贴右，与第二行右半对齐。
+       */}
+      <div className="insp-opsrow">
+        <span className="insp-size-group">
+          {(Object.keys(NODE_SIZE_META) as NodeSize[]).map((k) => (
+            <button
+              key={k}
+              className={`insp-size-btn${size === k ? ' on' : ''}`}
+              title={`显示高度：${NODE_SIZE_META[k].hint}`}
+              onClick={() => onChange(node.id, { size: k })}
+            >
+              {NODE_SIZE_META[k].label}
+            </button>
+          ))}
+        </span>
+
+        <span className="task-grow" />
+
         {/*
          * 模块节点给「编辑内部」，其余给「存为自定义」——
          * 两个都是"整个节点层面"的动作，占同一个位置，
@@ -107,82 +196,6 @@ export function NodeBasics({ node, onChange, onNote, onEditModule }: Props) {
         ) : (
           <SaveAsCustom node={node} />
         )}
-      </div>
-
-      <div className="insp-topbar">
-        <button
-          type="button"
-          className={'insp-switch' + (off ? ' is-off' : '')}
-          title={off ? '已关闭 —— 这一步不参与执行，下游也会跟着停' : '开启 —— 这一步正常执行'}
-          onClick={() => onChange(node.id, { disabled: !off, enabled: true })}
-        >
-          <span className="insp-switch-track">
-            <span className="insp-switch-knob" />
-          </span>
-          <span className="insp-switch-text">{off ? '已关闭' : '开启'}</span>
-        </button>
-
-        <span className="insp-topbar-group">
-          {(Object.keys(NODE_SIZE_META) as NodeSize[]).map((k) => (
-            <button
-              key={k}
-              className={`insp-size-btn${size === k ? ' on' : ''}`}
-              title={`显示高度：${NODE_SIZE_META[k].hint}`}
-              onClick={() => onChange(node.id, { size: k })}
-            >
-              {NODE_SIZE_META[k].label}
-            </button>
-          ))}
-        </span>
-
-        <span className="task-grow" />
-
-        <button
-          className="insp-size-btn insp-id-btn"
-          title="节点 id —— 点一下复制。运行日志里写的就是这个 id"
-          onClick={() => {
-            const t = String(node.id ?? '');
-            void navigator.clipboard?.writeText(t).then(
-              () => onNote?.(`已复制节点 id：${t}`),
-              () => onNote?.(`复制失败，请手动选中：${t}`),
-            );
-          }}
-        >
-          {String(node.id ?? '')}
-        </button>
-      </div>
-
-      {/*
-       * 单节点执行超时。
-       *
-       * 放在基础信息区而不是参数区：它不属于任何一种节点自己的参数，
-       * 对所有节点一视同仁（跟"开启""显示高度"是一类）。
-       *
-       * 留空 / 0 = 不限时。这是刻意的默认值 ——
-       * 加了超时这个功能，不能让任何既有流程的行为发生变化。
-       */}
-      <div className="insp-size">
-        <span className="insp-size-label">超时</span>
-        <input
-          className="insp-timeout-input"
-          type="number"
-          min="0"
-          step="1"
-          /*
-           * 0 显示成空而不是 "0"：
-           * 数字框右侧有步进箭头，显示 0 会让人以为"超时 0 秒 = 立刻失败"，
-           * 而它实际是"不限时"。空串才是这个意思的直观表达。
-           */
-          value={d.timeoutSec ? String(d.timeoutSec) : ''}
-          placeholder="不限"
-          title="这一步最多跑多少秒。留空 = 不限时；到点没跑完就判失败，下游跟着跳过"
-          onChange={(e) => {
-            const raw = e.target.value;
-            const n = Number(raw);
-            onChange(node.id, { timeoutSec: raw === '' || !Number.isFinite(n) || n <= 0 ? 0 : n });
-          }}
-        />
-        <span className="insp-size-label">秒 · 留空不限</span>
       </div>
 
       {inStack ? (

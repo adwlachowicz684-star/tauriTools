@@ -1,10 +1,12 @@
 /**
- * 订阅源更新检测 —— B站 UP 主 / 微信公众号。
+ * 订阅源更新检测 —— B站 UP 主 / 微信公众号 / 小红书。
  *
  * 这个模块是纯函数，不碰网络：抓取由 Rust 侧完成，这里只负责
  * 解析响应、挑出最新一条、与上次记录的基线比对。
  * 这样核心逻辑可以脱离 Tauri 直接单测。
  */
+
+import { UPDATE_SOURCE_META, type UpdateTarget } from '../types';
 
 export type FeedItem = {
   /** 稳定唯一标识。B站用 bvid，RSS 用 guid 或 link */
@@ -322,4 +324,114 @@ export function sortByNewest(items: FeedItem[]): FeedItem[] {
   const top = pickLatest(items);
   if (!top) return items;
   return [top, ...items.filter((i) => i !== top)];
+}
+
+/* ------------------------------------------------------------------ */
+/* 抓一个监听目标（试跑与正式运行共用）                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 这个目标该去哪个地址抓。
+ *
+ * ================= 为什么抽出来 =================
+ *
+ * 「测试」按钮和正式运行做的是同一件事，早先各写一份：
+ * 测试面板自己拼 URL、自己 parse、自己 detectUpdate。
+ * 两份逻辑迟早会漂 —— 表现是"试跑说有更新，正式跑却没更新"，
+ * 而**两边都不报错**，用户只能靠猜。
+ */
+export function targetFeedUrl(t: UpdateTarget): { url: string; error?: string } {
+  if (t.kind === 'bilibili' && (t.biliMode ?? 'rss') === 'api') {
+    const uid = extractBiliUid(t.biliUid ?? '');
+    if (!uid) return { url: '', error: '填一个 UP 主 UID 或 space.bilibili.com 主页链接' };
+    return { url: biliApiUrl(uid) };
+  }
+  const url = (t.feedUrl ?? '').trim();
+  if (!url) {
+    /*
+     * 除了 YouTube 和播客，这些平台都没有官方接口，
+     * 地址要靠 RSSHub / wechat2rss 之类拼出来 —— 这句话必须说出来，
+     * 否则用户填主页地址会一直解析失败且不知为何。
+     *
+     * 带上 meta.route 示例：光说"要填订阅源"等于让人猜格式，
+     * 而 RSSHub 的路由（如 /weibo/user/<uid>）不看文档根本拼不出来。
+     */
+    const meta = UPDATE_SOURCE_META[t.kind];
+    return {
+      url: '',
+      error: meta.route
+        ? `${meta.label}：需要填订阅源地址（示例：${meta.route}；可用 RSSHub / wechat2rss 等生成）`
+        : `${meta.label}：需要填订阅源地址`,
+    };
+  }
+  return { url };
+}
+
+export type ProbeInput = {
+  headers?: Record<string, string>;
+  timeoutSec?: number;
+  firstRunAsUpdate?: boolean;
+  /** 基线；不传就按这个目标自己记录的算 */
+  lastSeenId?: string;
+  /** 拿到最终地址时回调（正式运行用它打日志） */
+  onUrl?: (url: string) => void;
+};
+
+export type ProbeDeps = {
+  /** 抓取，返回响应正文；失败请抛错 */
+  get: (url: string, opts: { headers?: Record<string, string>; timeoutSec?: number }) => Promise<string>;
+  /** 模板渲染；试跑面板没有上下文，可以不传 */
+  tpl?: (s: string) => string;
+};
+
+export type ProbeResult = {
+  updated: boolean;
+  latest: FeedItem | null;
+  reason: string;
+  baseline: boolean;
+  url: string;
+};
+
+/**
+ * 抓一个目标并判定有无更新。
+ *
+ * 只覆盖订阅源类（B站 / 公众号 / 小红书）。GitHub 走的是另一条路
+ * （需要 GitHub 拉取能力），由执行器自己处理 ——
+ * 这里不假装能抓，否则点下去会得到一个假结果。
+ */
+export async function probeFeedTarget(
+  t: UpdateTarget,
+  input: ProbeInput,
+  deps: ProbeDeps,
+): Promise<ProbeResult> {
+  const { url, error } = targetFeedUrl(t);
+  if (error) throw new Error(error);
+
+  const rendered = deps.tpl ? deps.tpl(url) : url;
+  input.onUrl?.(rendered);
+
+  const text = await deps.get(rendered, {
+    headers: input.headers ?? {},
+    timeoutSec: input.timeoutSec,
+  });
+
+  const parsed = t.kind === 'bilibili' && (t.biliMode ?? 'rss') === 'api'
+    ? parseBiliApi(text)
+    : parseFeed(text);
+  if (parsed.error) throw new Error(parsed.error);
+
+  const items = sortByNewest(parsed.items);
+  const res = detectUpdate({
+    items,
+    lastSeenId: input.lastSeenId ?? t.lastSeenId ?? '',
+    firstRunAsUpdate: input.firstRunAsUpdate === true,
+  });
+
+  return {
+    updated: res.updated,
+    latest: res.latest,
+    reason: parsed.warnings.length ? `${res.reason}；${parsed.warnings.join('；')}` : res.reason,
+    baseline: res.baseline,
+    url: rendered,
+  };
 }

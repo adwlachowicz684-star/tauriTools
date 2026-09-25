@@ -123,23 +123,194 @@ export function normalizeParamEdges<T extends GraphEdge>(edges: T[]): T[] {
 }
 
 /**
+ * 一个输出参数。
+ *
+ * ================= 为什么要具名 =================
+ *
+ * 一个节点跑完往往不止产出一个值：
+ *
+ *   更新检测 → 有没有更新 / 标题 / 链接 / 时间
+ *   GitHub   → 提交号 / 分支 / 提交说明 / 作者
+ *   表格读取 → 行数 / 列数 / 摘要
+ *
+ * 只有一个总出口的话，"把**标题**接到日志节点的文本上"做不到 ——
+ * 只能整串输出一起接过去，然后在下游自己截。
+ * 而截取规则写在模板里，改上游格式就失效，且不报错。
+ *
+ * 所以输出侧与输入侧对称：输入是 arg:key（一个参数一个入口），
+ * 输出是 out:key（一个输出参数一个出口）。
+ */
+export type OutPort = {
+  /** 输出参数的 key，连线上记的就是它（sourceArg） */
+  key: string;
+  /** 卡片上显示的名字。不写则直接用 key（多数字段名本身就是中文字） */
+  label?: string;
+  /**
+   * 这个输出参数的值种类。不写则按 key 推：
+   * 主输出走 producesArgOf（跟节点产出走），具名字段一律按文本。
+   */
+  kind?: ValueKind;
+};
+
+/** 输出参数在卡片上显示的名字 */
+export function outLabel(p: OutPort): string {
+  return p.label ?? p.key;
+}
+
+/**
  * 一个节点有哪些**输出参数**。
  *
  * 默认只有一个（OUT_DEFAULT）。有多输出的节点在这里按 kind 展开 ——
  * 这张表是"输出卡片上画几个出口"的唯一依据，
  * 散在组件里各写一份就会出现"卡片上有口子、连线却认不出来"。
+ *
+ * ================= 这张表与执行器的对账 =================
+ *
+ * 这里登记的具名字段，必须与对应 runner 实际写入的 fields 一致 ——
+ * 写错一个字，表现是"卡片上有这个口子，连了线却取不到值"，
+ * 而且**不报错**（取不到就保留手填值）。
+ *
+ * 所以 tests/outParams.test.ts 扫执行器源码做反向对账：
+ * 这里多登记、或执行器少写一个，测试都会红。
  */
-export const NODE_OUTPUTS: Record<string, string[]> = {
-  /*
-   * 目前只有单输出的通用情形。
-   * 多输出（如模块的多出口）将来在这里登记，卡片与连线两侧同时生效。
-   */
+export const NODE_OUTPUTS: Record<string, OutPort[]> = {
+  update: [
+    { key: OUT_DEFAULT, label: '结论' },
+    { key: 'updated', label: '是否有更新', kind: 'bool' },
+    { key: 'title', label: '标题', kind: 'text' },
+    { key: 'url', label: '链接', kind: 'text' },
+    { key: 'date', label: '时间', kind: 'text' },
+  ],
+  'github-update': [
+    { key: OUT_DEFAULT, label: '结论' },
+    { key: 'sha', label: '提交号' },
+    { key: 'branch', label: '分支' },
+    { key: 'message', label: '提交说明' },
+    { key: 'author', label: '作者' },
+    { key: 'date', label: '时间' },
+    { key: 'via', label: '来源' },
+  ],
+  'github-push': [
+    { key: OUT_DEFAULT, label: '结论' },
+    { key: 'commit', label: '提交号' },
+    { key: 'via', label: '来源' },
+  ],
+  extract: [
+    { key: OUT_DEFAULT, label: '结论' },
+    { key: 'text', label: '内容' },
+    { key: 'len', label: '字数', kind: 'num' },
+  ],
+  ocr: [
+    { key: OUT_DEFAULT, label: '结论' },
+    { key: 'text', label: '内容' },
+    { key: 'chars', label: '字数', kind: 'num' },
+  ],
+  translate: [
+    { key: OUT_DEFAULT, label: '结论' },
+    { key: 'text', label: '译文' },
+    { key: 'chars', label: '字数', kind: 'num' },
+  ],
+  tableRead: [
+    { key: OUT_DEFAULT, label: '结论' },
+    { key: '行数', kind: 'num' },
+    { key: '列数', kind: 'num' },
+    { key: '摘要' },
+  ],
+  agg: [
+    { key: OUT_DEFAULT, label: '结论' },
+    { key: '结果', kind: 'num' },
+    { key: '列名' },
+    { key: '方式' },
+  ],
+  filter: [
+    { key: OUT_DEFAULT, label: '结论' },
+    { key: '保留行数', kind: 'num' },
+    { key: '摘要' },
+  ],
+  derive: [
+    { key: OUT_DEFAULT, label: '结论' },
+    { key: '行数', kind: 'num' },
+    { key: '摘要' },
+  ],
+  canvasIn: [
+    { key: OUT_DEFAULT, label: '结论' },
+    { key: '端口' },
+    { key: '说明' },
+  ],
+  canvasOut: [
+    { key: OUT_DEFAULT, label: '结论' },
+    { key: '端口' },
+    { key: '说明' },
+  ],
 };
 
 /** 某个节点的输出参数清单。老数据 / 未登记的类型 → 单输出 */
-export function outputsOf(dataKind: string | undefined | null): string[] {
+export function outputsOf(dataKind: string | undefined | null): OutPort[] {
   const list = dataKind ? NODE_OUTPUTS[dataKind] : undefined;
-  return list && list.length > 0 ? list : [OUT_DEFAULT];
+  return list && list.length > 0 ? list : [{ key: OUT_DEFAULT }];
+}
+
+/**
+ * 某个**具体输出参数**的值种类。
+ *
+ * ================= 为什么不能一律按节点产出算 =================
+ *
+ * producesArgOf 回答的是"这个节点主输出是什么"（更新检测 → 是/否）。
+ * 但同一节点上「标题」是文本、「字数」是数字 ——
+ * 一律按主输出算，把"标题接到日志文本"标成错参，那是**误报**；
+ * 反过来把"字数接到大于"漏过去，该报的不报。
+ *
+ * 两种方向都错，所以必须按**具体那一个输出**判。
+ */
+export function outKindOf(
+  dataKind: string | undefined | null,
+  key: string | undefined | null,
+  data?: Record<string, unknown> | null,
+): ValueKind {
+  if (key && key !== OUT_DEFAULT) {
+    const hit = outputsOf(dataKind).find((p) => p.key === key);
+    /* 具名字段：登记了就按登记，没登记（自定义输出）一律按文本 */
+    return hit?.kind ?? 'text';
+  }
+  return producesArgOf(dataKind, data);
+}
+
+/**
+ * 某个输出参数的名字（给报错文案用）。
+ *
+ * 报错里写「接的是上游 title（文本）」没人看得懂 ——
+ * 用户见的是卡片上那行「标题」。
+ */
+export function outLabelOf(dataKind: string | undefined | null, key: string | undefined | null): string {
+  const ports = outputsOf(dataKind);
+  const hit = key ? ports.find((p) => p.key === key) : undefined;
+  return hit ? outLabel(hit) : (key ?? OUT_DEFAULT);
+}
+
+/**
+ * 取来源节点**某个输出**的值。
+ *
+ * ================= 为什么具名输出要另走一条路 =================
+ *
+ * 主输出是 `outputs[id]`（一个字符串）；
+ * 具名字段是执行器写进 `nodeFields[id]` 的那张表（{{id.标题}} 也读它）。
+ * 两条路都走同一张表的话，"字数"这种附加信息会污染主输出。
+ *
+ * ================= 返回 null 的含义 =================
+ *
+ * null = **这个输出这次没有产出**（来源没跑到、或节点没写这个字段）。
+ * 调用方必须据此**保留手填值**而不是填空串 ——
+ * 填成空串的表现是"我明明填了值，连了线之后就没了"。
+ */
+export function outValueOf(
+  sourceArg: string | undefined,
+  output: string,
+  fields: Record<string, string> | undefined,
+): string | null {
+  const key = sourceArg && sourceArg !== OUT_DEFAULT ? sourceArg : null;
+  if (key === null) return output;
+  const v = fields?.[key];
+  return typeof v === 'string' ? v : null;
 }
 
 /**
@@ -457,17 +628,28 @@ export function paramLinkIssues(
     const expect = argExpectOf(dstKind, dstData, link.targetArg);
     if (!expect || expect === 'any') continue;
 
-    const actual = producesArgOf((srcData?.kind as string | undefined) ?? null, srcData);
+    /*
+     * 按**这一根线取的是哪个输出**判，而不是按节点主输出。
+     *
+     * 更新检测的主输出是「是/否」，但它的「标题」是文本 ——
+     * 一律按主输出算，把"标题接到日志文本"判成错参就是误报。
+     */
+    const srcKind = (srcData?.kind as string | undefined) ?? null;
+    const actual = outKindOf(srcKind, link.sourceArg, srcData);
     // unknown = 上游产出看不出来（mark / any / none），不在这报
     if (actual === 'unknown' || actual === 'any') continue;
 
     if (actual === expect) continue;
 
+    const what = link.sourceArg && link.sourceArg !== OUT_DEFAULT
+      ? `上游「${outLabelOf(srcKind, link.sourceArg)}」`
+      : '上游输出';
+
     (out[link.target] ??= []).push({
       key: link.targetArg,
       expect,
       actual,
-      message: `「${link.targetArg}」接的是上游输出（${valueKindLabel(actual)}），但这里要${valueKindLabel(expect)}`,
+      message: `「${link.targetArg}」接的是${what}（${valueKindLabel(actual)}），但这里要${valueKindLabel(expect)}`,
     });
   }
   return out;

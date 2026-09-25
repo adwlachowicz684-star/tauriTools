@@ -288,13 +288,16 @@ export function briefArg(v: unknown, max = 16): string {
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 
-/** 二元算术在摘要里的写法 */
-const MATH_SIGN: Record<string, string> = {
+/*
+ * 运算符在**纯文本**摘要里的符号（`add` → `＋`、`neq` → `≠`）。
+ *
+ * 只有这一张表。以前分 MATH_SIGN / COMPARE_SIGN 两张，
+ * 判据那边还抄了第三份 DETAIL_SIGN ——
+ * 加一个新运算漏改一份，卡片显示 `＋`、运行详情却写 `add`，
+ * 同一件事两种写法，不报错，只有两处并排看才发现。
+ */
+export const OP_SIGN: Record<string, string> = {
   add: '＋', sub: '－', mul: '×', div: '÷', mod: 'mod',
-};
-
-/** 比较运算在摘要里的写法 */
-const COMPARE_SIGN: Record<string, string> = {
   eq: '＝', neq: '≠', gt: '>', gte: '≥', lt: '<', lte: '≤',
 };
 
@@ -308,7 +311,7 @@ const COMPARE_SIGN: Record<string, string> = {
  * （min / round 这类本来就是函数名写法，没有符号）。
  */
 export function opSignOf(op: string): string | undefined {
-  return MATH_SIGN[op] ?? COMPARE_SIGN[op];
+  return OP_SIGN[op];
 }
 
 /**
@@ -453,7 +456,7 @@ export function opBriefParts(kind: string, d: Record<string, unknown>): BriefPar
   ];
 
   if (kind === 'math') {
-    const sign = MATH_SIGN[op];
+    const sign = OP_SIGN[op];
     if (sign) return [V('a'), OP(sign), V('b')];
     // min / max 是函数名写法，写成 `min(1, 2)` 比 `1 min 2` 好认
     if (op === 'min' || op === 'max') return call(op, 'a', 'b');
@@ -478,8 +481,19 @@ export function opBriefParts(kind: string, d: Record<string, unknown>): BriefPar
           V('b'), { role: 'text', text: '~' },
           V('c'), { role: 'text', text: ']' },
         ];
+      /*
+       * 分段要三个参数才说得清 —— 「按什么分」看不见的话，
+       * 卡片上只有 `x,y,z 第 2 段`，逗号还是空格完全看不出来，
+       * 而这两者结果不同。
+       *
+       * 以前这里只画了 a 和 c：规则表列着三个参数，摘要却只画两个，
+       * 多的那个（分隔符）在卡片上彻底消失，且不报错。
+       */
       case 'split':
-        return [V('a'), { role: 'text', text: ' 第 ' }, V('c'), { role: 'text', text: ' 段' }];
+        return [
+          V('a'), { role: 'text', text: ' 按 ' }, V('b'),
+          { role: 'text', text: ' 分，第 ' }, V('c'), { role: 'text', text: ' 段' },
+        ];
       case 'join':
         return [
           { role: 'text', text: '连接 ' }, V('a'),
@@ -492,7 +506,7 @@ export function opBriefParts(kind: string, d: Record<string, unknown>): BriefPar
   }
 
   if (kind === 'compare') {
-    const sign = COMPARE_SIGN[op];
+    const sign = OP_SIGN[op];
     if (sign) return [V('a'), OP(sign), V('b')];
     /*
      * 「包含 / 开头 / 结尾」也是运算符，只是写成中文字。

@@ -23,7 +23,7 @@
 import type { Graph, GraphNode } from '../types';
 import { topoLayers } from './topo';
 import { opBrief } from './ops';
-import { paramLinksOf, linksInto } from './paramLinks';
+import { paramLinksOf, linksInto, outLabelOf, OUT_DEFAULT } from './paramLinks';
 
 export type ExportFormat = 'shell' | 'python' | 'json' | 'markdown';
 
@@ -165,7 +165,17 @@ function paramLinkNoteOf(
     const src = g.nodes.find((x) => x.id === l.source);
     const srcName = str((src?.data as Record<string, unknown> | undefined)?.label
       ?? (src?.data as Record<string, unknown> | undefined)?.name) || l.source;
-    return `${prefix}注意：参数「${l.targetArg}」在画布上来自「${srcName}」的输出，`
+    /*
+     * 具名输出要指名是哪一个。
+     *
+     * 只写"来自「更新检测」的输出"，而它其实接的是「标题」——
+     * 拿着脚本去对照画布时会对不上，那正是这段注释要避免的事。
+     */
+    const srcKind = str((src?.data as Record<string, unknown> | undefined)?.kind) || undefined;
+    const what = l.sourceArg && l.sourceArg !== OUT_DEFAULT
+      ? `的「${outLabelOf(srcKind, l.sourceArg)}」`
+      : '的输出';
+    return `${prefix}注意：参数「${l.targetArg}」在画布上来自「${srcName}」${what}，`
       + `这里取的是节点上填的值 —— 两者可能不同`;
   });
 }

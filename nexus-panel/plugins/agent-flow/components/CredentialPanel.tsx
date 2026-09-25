@@ -182,21 +182,21 @@ export function CredentialPanel({
     <div className="cred-mask" onClick={onClose}>
       <div className="cred-panel" onClick={(e) => e.stopPropagation()}>
         <div className="cred-head">
-          <strong>凭据中心</strong>
+          <strong>连接管理器</strong>
           <span className="mcp-tabs" style={{ marginLeft: 'auto' }}>
             <button
               type="button"
               className={'mcp-tab' + (page === 'cred' ? ' on' : '')}
               onClick={() => setPage('cred')}
             >
-              凭据
+              密钥
             </button>
             <button
               type="button"
               className={'mcp-tab' + (page === 'mcp' ? ' on' : '')}
               onClick={() => setPage('mcp')}
             >
-              MCP 服务
+              服务
               {mcpServers && mcpServers.length > 0 ? (
                 <span className="mcp-tab-count">{mcpServers.length}</span>
               ) : null}

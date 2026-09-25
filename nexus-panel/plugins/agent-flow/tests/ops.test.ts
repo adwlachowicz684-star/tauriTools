@@ -314,15 +314,28 @@ test('运算符写法只有一份，且卡片与判据取到同一个符号', ()
   );
   assert.ok(runnerSrc.includes('opSignOf'), '判据没有改用 opSignOf');
 
-  // 2. 卡片与判据取到同一个符号
-  const table = new RegExp(
-    'export const OP_SIGN[^=]*=\\s*\\{([\\s\\S]*?)\\};',
-  ).exec(src);
-  assert.ok(table, 'ops.ts 里找不到 OP_SIGN —— 守卫本身失效了');
-  const signs = [...table[1].matchAll(/([a-zA-Z]+):\s*'([^']+)'/g)];
-  assert.ok(signs.length >= 11, `OP_SIGN 只解析到 ${signs.length} 项`);
+  /*
+   * 2. 卡片与判据取到同一个符号
+   *
+   * 表可能是一张，也可能按算术/比较分成两张 —— 结构不重要，
+   * 重要的是**出口只有一个**（opSignOf）：
+   * 卡片画什么、判据写什么，都必须由它决定。
+   *
+   * 所以这里把所有 *SIGN* 表都抓出来合并，再逐项比对，
+   * 而不是绑死某一种写法（绑死的守卫在别人换结构时会假红）。
+   */
+  const tables = [...src.matchAll(
+    /const\s+(\w*SIGN\w*)[^=]*=\s*\{([\s\S]*?)\};/g,
+  )];
+  assert.ok(tables.length > 0, 'ops.ts 里找不到符号表 —— 守卫本身失效了');
+  const signs = tables.flatMap((t) =>
+    [...t[2].matchAll(/([a-zA-Z]+):\s*'([^']+)'/g)].map(
+      (m) => [m[1], m[2]] as [string, string],
+    ),
+  );
+  assert.ok(signs.length >= 11, `符号表只解析到 ${signs.length} 项`);
 
-  for (const [, op, sign] of signs) {
+  for (const [op, sign] of signs) {
     // 卡片摘要
     const kind = ['add', 'sub', 'mul', 'div', 'mod'].includes(op) ? 'math' : 'compare';
     const parts = opBriefParts(kind, { kind, op, a: '1', b: '2' });

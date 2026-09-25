@@ -14,6 +14,7 @@ registerNode({
   meta: {
     label: UPDATE_SOURCE_META.bilibili.label,
     color: UPDATE_SOURCE_META.bilibili.color,
+    legacy: true,
     category: 'external',
     idPrefix: 'bl',
     // 复用 UPDATE_SOURCE_META 里那句 —— 不另写一份，免得两处漂移

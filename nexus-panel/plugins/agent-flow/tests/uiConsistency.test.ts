@@ -1000,6 +1000,66 @@ test('两段都真的有留白（不能只改一段）', () => {
   assert.match(css, /\.inspector\s*\{[^}]*padding:/, '.inspector 缺内边距');
 });
 
+/* ============ 基础信息区的三行布局 ============ */
+
+/*
+ * 三行的分工：
+ *   ① 名称（独占一行，能写长）
+ *   ② 节点 id · 类型 · 超时 · 开关
+ *   ③ 显示高度 · 存为自定义 / 编辑内部
+ *
+ * ================= 为什么必须盯 =================
+ *
+ * 这四项（id / 类型 / 超时 / 开关）**曾经各占一行**，
+ * 于是基础信息区有五六行，参数要滚很久才看得到。
+ * 合到一行后，漏掉任何一项的表现是**它直接从面板上消失**：
+ * 不报错、其余三项照常显示，界面看着"挺好的"。
+ *
+ * 与 split 分隔符那次是同一类损伤 —— 规则里有、界面上没有。
+ * 布局被上游整份覆盖带回来时同样不会报错，所以只能从源码盯。
+ */
+test('基础信息区第二行四项齐全（id / 类型 / 超时 / 开关）', () => {
+  const src = readSrc('components/inspectors/NodeBasics.tsx');
+  const row = /<div className="insp-metarow">([\s\S]*?)\n      <\/div>/.exec(src);
+  assert.ok(row, '找不到 .insp-metarow —— 布局被改回去了？');
+  const inner = row[1];
+  // 绑定到"这一行里真的渲染了"，而不是"文件里出现过"
+  assert.match(inner, /insp-id-btn/, '第二行缺节点 id');
+  assert.match(inner, /insp-kind/, '第二行缺类型标签');
+  assert.match(inner, /insp-timeout-input/, '第二行缺超时输入框');
+  assert.match(inner, /insp-switch/, '第二行缺开启开关');
+});
+
+test('第三行是显示高度与节点动作，且带分隔线', () => {
+  const src = readSrc('components/inspectors/NodeBasics.tsx');
+  const row = /<div className="insp-opsrow">([\s\S]*?)\n      <\/div>/.exec(src);
+  assert.ok(row, '找不到 .insp-opsrow');
+  assert.match(row[1], /insp-size-group/, '第三行缺显示高度');
+  assert.match(row[1], /SaveAsCustom|编辑内部/, '第三行缺节点动作');
+
+  const css = readSrc('styles.css');
+  const ops = /\.insp-opsrow\s*\{([^}]*)\}/.exec(css);
+  assert.ok(ops, 'CSS 里没有 .insp-opsrow 的定义');
+  /*
+   * 分隔线必须在这行 —— 它是基础信息区最后一行，线下面就是参数区。
+   * 线丢了的话，两区之间没有任何分界，看着像同一块。
+   */
+  assert.match(ops[1], /border-bottom/, '.insp-opsrow 缺分隔线');
+});
+
+/*
+ * 开关以前是 width:100%（独占一行时的写法）。
+ * 进了第二行还留着，会把「超时」挤出面板右侧 ——
+ * 而且挤出去了也不报错，只是超时那一栏看不见。
+ */
+test('开关不再占满整行（否则把超时挤出面板）', () => {
+  const css = readSrc('styles.css');
+  const sw = /\.insp-switch\s*\{([^}]*)\}/.exec(css);
+  assert.ok(sw, 'CSS 里没有 .insp-switch 的定义');
+  assert.doesNotMatch(sw[1], /width:\s*100%/, '.insp-switch 又是 width:100% 了');
+  assert.match(sw[1], /flex:\s*none/, '.insp-switch 要 flex:none');
+});
+
 /* ============ CSS 变量必须真的能解析（不许静默失效） ============ */
 
 /*
@@ -1183,7 +1243,11 @@ test('参数连线走输出端口，流程出口不再兼作参数出口', () =>
 
   /* 卡片上必须有 out:xxx 端口可拖 */
   const shell = read(path.join(COMP, 'NodeShell.tsx'));
-  assert.match(shell, /outHandleId\(key\)/, '输出卡片上没有输出端口 —— 没有口子可拖');
+  /*
+   * 端口必须带**自己的 key**：多输出时每个输出参数各带一个口子，
+   * 共用一个口子的话"这根线取的是哪个"取决于边的顺序，而顺序不保证。
+   */
+  assert.match(shell, /outHandleId\(p\.key\)/, '输出卡片上没有输出端口 —— 没有口子可拖');
   assert.match(shell, /outputsOf\(/, '输出端口清单没接上 —— 多输出将来无处登记');
 
   /* 渲染前必须补老线的 handle，否则"线看不见、值却是对的" */

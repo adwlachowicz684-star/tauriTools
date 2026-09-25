@@ -20,6 +20,8 @@ export type LoopFlowNode = Node<LoopNodeData, 'loop'>;
 export type FsFlowNode = Node<FsNodeData, 'fs'>;
 /** B站与公众号共用同一种 data，靠 data.source 区分 */
 export type BiliFlowNode = Node<UpdateNodeData, 'bili'>;
+/** 合并后的「更新检测」：一个节点盯多个目标 */
+export type UpdateFlowNode = Node<UpdateNodeData, 'update'>;
 export type WechatFlowNode = Node<UpdateNodeData, 'wechat'>;
 export type OcrFlowNode = Node<OcrNodeData, 'ocr'>;
 export type TranslateFlowNode = Node<TranslateNodeData, 'translate'>;

@@ -6,6 +6,7 @@ import type {
   PlayAudioNodeData, ClockNodeData, ConstNodeData, ModuleNodeData,
   JoinNodeData, GateNodeData, ThrottleNodeData, TimeoutNodeData, RetryNodeData,
 } from '../types';
+import { targetsOf, UPDATE_SOURCE_META, needsFeedUrl } from '../types';
 import { triggerEntriesOf, entryEnabled, mergeConfig } from './triggerEntries';
 import { argTypeIssues, type ArgTypeIssue } from './argTypes';
 
@@ -214,9 +215,41 @@ function vTranslate(d: TranslateNodeData): V {
   return msgs.length ? warn(...msgs) : ok();
 }
 
+/*
+ * 更新检测。
+ *
+ * 合并成多目标之后，校验的对象从"节点"变成"每一张卡"：
+ * 只报第一个有问题的那张 —— 一次全列出来会糊成一片，
+ * 而修好一张再看到下一张，反而更清楚。
+ *
+ * 老节点没有 targets，由 targetsOf() 合成一张，规则不变。
+ */
 function vUpdate(d: UpdateNodeData): V {
-  if (d.source === 'bilibili') return blank(d.biliUid) ? error('没填 B 站 UID') : ok();
-  return blank(d.feedUrl) ? error('没填公众号 feed 地址') : ok();
+  const list = targetsOf(d);
+  const on = list.filter((t) => t.enabled !== false);
+  if (list.length === 0) return error('没有监听目标');
+  if (on.length === 0) return error('监听目标全都停用了');
+
+  for (const t of on) {
+    const who = (t.name ?? '').trim() || UPDATE_SOURCE_META[t.kind].label;
+    if (t.kind === 'bilibili') {
+      if ((t.biliMode ?? 'rss') === 'api') {
+        if (blank(t.biliUid)) return error(`${who}：没填 UP 主 UID`);
+      } else if (blank(t.feedUrl)) {
+        return error(`${who}：RSS 模式没填订阅源地址`);
+      }
+    } else if (t.kind === 'github') {
+      if (blank(t.owner) || blank(t.repo)) return error(`${who}：没填仓库`);
+    } else if (needsFeedUrl(t.kind, t.biliMode) && blank(t.feedUrl)) {
+      /*
+       * 判据走 needsFeedUrl 而不是 else 兜底：
+       * 加平台时只要种类登记了，校验自动跟上；
+       * 忘登记的后果是那张卡**永远绿灯** —— 配置空着也看不出来。
+       */
+      return error(`${who}：没填订阅源地址`);
+    }
+  }
+  return ok();
 }
 
 function vGithubUpdate(d: GithubUpdateNodeData): V {

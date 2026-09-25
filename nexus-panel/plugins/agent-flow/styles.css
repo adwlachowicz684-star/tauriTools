@@ -654,6 +654,15 @@ body { background: var(--af-bg); color: var(--af-fg); }
   flex: none; color: var(--af-t-param, #c084fc);
   border: 1px solid currentColor; border-radius: var(--r-pill, 999px); padding: 0 6px;
 }
+/*
+ * 具名输出的名字（标题 / 链接 / 字数 …）。
+ *
+ * 不写它的后果：更新检测那四行长得一模一样，
+ * 只能按上下顺序猜哪根是标题 —— 而顺序在代码里不保证。
+ */
+.node-line__out-name {
+  flex: none; color: var(--af-soft);
+}
 /* min-width:0 不可省：flex 子项默认 min-width:auto，一段长输出会把卡片撑破 */
 .node-line__out-val {
   flex: 1; min-width: 0; color: var(--af-soft);
@@ -1475,6 +1484,36 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 .node-card.update.status-success { border-left-color: var(--af-ok); }
 
 .upd-icon { flex: none; font-size: var(--fs-body, 12px); }
+/*
+ * 每个监听目标一张卡（与触发条件卡片同款底板 ——
+ * 两类卡都是"一个节点里并列的若干项"，各写一套迟早长得不一样）。
+ */
+.upd-cards { display: flex; flex-direction: column; gap: 6px; }
+.upd-card { display: flex; flex-direction: column; gap: 3px; }
+.upd-card.is-off { opacity: 0.55; }
+.upd-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.upd-card-name {
+  font-size: var(--fs-body, 12px); color: var(--af-fg); font-weight: var(--fw-mid, 500);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.upd-name-input { flex: 1; min-width: 0; padding: 2px 5px; font-size: var(--fs-body, 12px); }
+.upd-verdict.off { color: var(--af-mute); }
+/* 某一张卡自己失败：单独一行红字，不与"最新"那行混 */
+.upd-err {
+  font-size: var(--fs-note, 11px); color: var(--af-bad);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.upd-hint { font-size: var(--fs-note, 11px); line-height: var(--lh-normal, 1.5); }
+.upd-reset { display: flex; align-items: center; gap: 6px; }
+/*
+ * 「加一个监听目标」的候选区。
+ *
+ * 十七种平台平铺成一排会糊成一片，按类别分行 ——
+ * 行内仍可换行（窄面板下不会溢出），行与行之间靠标题区分。
+ */
+.upd-add { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+.upd-add-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.upd-add-title { flex: none; width: 56px; font-size: var(--fs-note, 11px); }
 .upd-summary {
   margin: 4px 0; font-size: var(--fs-note, 11px);
   background: var(--af-sunk); border: 1px solid var(--af-line);
@@ -2195,7 +2234,12 @@ input.mono, textarea.mono {
 /* 关闭开关：左右拨动 */
 .insp-switch {
   display: flex; align-items: center; gap: 6px;
-  width: 100%; margin-bottom: var(--sp-3, 6px);
+  /*
+   * flex: none —— 它现在排在基础信息区第二行的最右端，
+   * 与「超时」并列。以前 width:100% 是独占一行时的写法，
+   * 留着会把超时挤出面板（整行宽度被它吃满）。
+   */
+  flex: none;
   background: none; border: none; padding: 0; cursor: pointer;
   color: var(--af-fg);
 }
@@ -2217,13 +2261,42 @@ input.mono, textarea.mono {
 /* 关闭的节点：卡片整块变淡，但徽章与缺项文案照常显示 */
 .node-card.is-off { opacity: 0.6; }
 
-/* 属性面板顶栏：显示高度 + 节点 id 合成一行（都不是参数，不该各占一块） */
-.insp-topbar {
+/*
+ * 基础信息区第二行：节点 id · 类型 · 超时 · 开关。
+ *
+ * 四项都不是参数，以前各占一行（id 与显示高度挤一行、超时单独一行、
+ * 开关单独一行），基础信息区有五六行，参数要滚很久才看得到。
+ *
+ * 中间那两个 .task-grow 把行分成"只读信息 / 控制项"两半 ——
+ * 不让它们挤成一团，也让控制项始终贴右边，换节点时位置不跳。
+ */
+.insp-metarow {
   display: flex; align-items: center; gap: 6px;
+  margin-bottom: var(--sp-3, 6px);
+}
+/*
+ * id 在这一行里必须能收缩。
+ *
+ * id 是 `ma` + 时间戳乱码，比同一行其他三项长得多 ——
+ * 不设上限的话长 id 会把「超时」和开关挤出面板右侧。
+ * 用百分比而不是 px：面板宽度会随窗口变，写死 px 在窄面板下照样挤。
+ */
+.insp-metarow .insp-id-btn { max-width: 40%; min-width: 0; }
+/* 超时：标签 + 数字框 + 单位，作为一个整体，不被拉伸也不被压缩 */
+.insp-timeout { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+
+/*
+ * 第三行：显示高度 + 节点层面的动作（存为自定义 / 编辑内部）。
+ *
+ * 带下边框 —— 它是基础信息区的最后一行，线下面就是参数区。
+ * 嵌合行（.insp-stack-row）出现时在线下方，与参数区同侧。
+ */
+.insp-opsrow {
+  display: flex; align-items: center; gap: 8px;
   padding-bottom: 6px; margin-bottom: var(--sp-3, 6px);
   border-bottom: 1px solid var(--af-line, #2a2f3a);
 }
-.insp-topbar-group { display: flex; gap: 4px; }
+.insp-size-group { display: flex; gap: 4px; flex: none; }
 
 /* 触发条件卡片 —— 每种触发方式各占一块，独立配置 */
 .trig-cards { display: flex; flex-direction: column; gap: 8px; }
@@ -3657,9 +3730,6 @@ input.mono, textarea.mono {
  * 输入框上不该是"可以拖走"的手势。
  */
 .nodrag.nopan { cursor: text; }
-
-/* 第二行：节点类型 + 节点层面的动作（存为自定义 / 编辑内部） */
-.insp-kindrow { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 
 /*
  * 卡片上的「▶ 触发」。

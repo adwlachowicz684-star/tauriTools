@@ -9,7 +9,7 @@
 - **node.type**：`bili` / `wechat`（多个 type 共用一份 data）
 - **源文件**：`nodes/defs/bili.ts`
 - **产出**：bool（是/否）　**接受**：none
-- **需要的外部能力**：`fetcher`
+- **需要的外部能力**：`fetcher`、`githubFetch`
 
 ## 它做什么
 

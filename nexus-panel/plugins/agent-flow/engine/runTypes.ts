@@ -55,7 +55,11 @@ export type RunEvent =
       item: FeedItem | null;
       reason: string;
       baseline: boolean;
-      patch: Record<string, unknown>;
+      /**
+       * 需要写回节点的数据。多目标时每个目标各发一条用于记日志，
+       * 只有最后一条带 patch —— 所以它是可选的。
+       */
+      patch?: Record<string, unknown>;
     }
   | { type: 'run-done'; ok: boolean }
   | { type: 'run-error'; message: string };

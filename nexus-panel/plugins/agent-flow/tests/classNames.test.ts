@@ -62,6 +62,47 @@ function cssClasses(css: string): Set<string> {
   return set;
 }
 
+/**
+ * 外壳**已加载**的 CSS 里定义的类名。
+ *
+ * ================= 为什么必须算进来 =================
+ *
+ * 插件跑在外壳页面里，`css/neumorphism.css` 是随页面一起加载的，
+ * 它（以及它 @import 的 tokens/controls/dialog）里的类名，
+ * 插件组件拿来用是**完全正常**的 —— `.field-label`、`.p-btn.sm` 都是。
+ *
+ * 只扫插件自己的 styles.css 的话，这类用法会被判成"没有样式定义"。
+ * 那是**假阳性**：照它去改，要么给通用控件在插件里另抄一份样式
+ * （于是外壳调主题时插件不跟着变），要么逼着组件不用共享控件。
+ *
+ * ================= 为什么跟随 @import =================
+ *
+ * 真正的加载关系写在 @import 里，不是"仓库里有哪些 css 文件"。
+ * 按后者判定，正是之前"幽灵变量"藏了两轮的原因：
+ * 文件明明在仓库里、却从未被加载，判定却说"有定义"。
+ */
+function globalCssClasses(): Set<string> {
+  const set = new Set<string>();
+  if (!ROOT) return set;
+  const entry = path.join(ROOT, '..', '..', 'css', 'neumorphism.css');
+  if (!fs.existsSync(entry)) return set;
+  const seen = new Set<string>();
+  const visit = (file: string) => {
+    const abs = path.resolve(file);
+    if (seen.has(abs)) return; // 环形 import 兜底
+    seen.add(abs);
+    const css = stripComments(fs.readFileSync(abs, 'utf-8'));
+    for (const c of cssClasses(css)) set.add(c);
+    // 先剥注释再找 @import：注释里的 @import 不是导入
+    for (const m of css.matchAll(/@import\s+(?:url\()?['"]([^'"]+)['"]/g)) {
+      const next = path.resolve(path.dirname(abs), m[1]);
+      if (fs.existsSync(next)) visit(next);
+    }
+  };
+  visit(entry);
+  return set;
+}
+
 /** 外壳提供的类名（nx- 前缀等），插件自己不定义 */
 const EXTERNAL = /^nx-/;
 /** 模板字符串拼出来的前缀：真正的值运行时才知道 */
@@ -89,8 +130,10 @@ const cssPath = ROOT ? path.join(ROOT, 'styles.css') : '';
 const hasSrc = cssPath !== '' && fs.existsSync(cssPath);
 const css = hasSrc ? fs.readFileSync(cssPath, 'utf-8') : '';
 const defined = cssClasses(css);
+// 外壳已加载的通用控件类名也算"有定义"（见 globalCssClasses 的说明）
+for (const c of globalCssClasses()) defined.add(c);
 
-test('组件里用到的类名都在 styles.css 里有定义', () => {
+test('组件里用到的类名都有样式定义（插件自身 + 外壳已加载的）', () => {
   if (!hasSrc) return;
   const missing: string[] = [];
   for (const f of sources()) {
