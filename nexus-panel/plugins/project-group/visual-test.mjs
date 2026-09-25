@@ -240,10 +240,27 @@ console.log('\n=== #281 / #282 / #371 标题浮雕·等宽条目·全局资源 �
     /--title-emboss-top/.test(css) && /--title-emboss-mid/.test(css) && /--title-emboss-bottom/.test(css));
   t('浮雕色走变量而非硬编码（#371）',
     /var\(--title-emboss-top\)/.test(css) && /var\(--title-emboss-bottom\)/.test(css));
-  const h2 = ruleOf('.p-card > h2');
-  t('分区标题用了渐变裁字', /background-clip:\s*text/.test(css) && /linear-gradient/.test(css));
-  t('分区标题有 -webkit- 前缀（WebView2/WKWebView 都要）', /-webkit-background-clip:\s*text/.test(css));
-  t('阴影方向为右下（原版 Direction 315）', /text-shadow:\s*1\.3px\s*1\.3px\s*3px/.test(css));
+  /*
+   * **必须限定到 `.p-card > h2` 这一条规则内**。
+   *
+   * 用整份 `css` 匹配是漏报：把选择器改名成 `.p-card > h2x`，
+   * 声明（linear-gradient / background-clip: text / text-shadow）全都还在，
+   * 三条断言照样通过 —— 而标题已经完全没有浮雕了。
+   * （第 22 次栽在"只钉文件里有没有这段话"，不钉它属于哪条规则。）
+   */
+  /*
+   * `ruleOf` 只取**第一条**；而这里写了两条（@supports 外一条兜底、
+   * 内一条上渐变），且第二条是**缩进**的，`^` 锚点也匹配不到。
+   * 与下面 colHead 那个坑同源 —— 改成收集全部、允许缩进。
+   */
+  const h2 = [...css.matchAll(/^[ \t]*\.p-card > h2\s*\{[^}]*\}/gm)].map((m) => m[0]).join('\n');
+  t('取到 .p-card > h2 规则', h2.length > 0, h2.slice(0, 80));
+  t('分区标题用了渐变裁字', /background-clip:\s*text/.test(h2) && /linear-gradient/.test(h2));
+  t('分区标题有 -webkit- 前缀（WebView2/WKWebView 都要）', /-webkit-background-clip:\s*text/.test(h2));
+  t('阴影方向为右下（原版 Direction 315）', /text-shadow:\s*1\.3px\s*1\.3px\s*3px/.test(h2));
+  t('浮雕三色标都在这一条里', /var\(--title-emboss-top\)/.test(h2)
+    && /var\(--title-emboss-mid\)/.test(h2)
+    && /var\(--title-emboss-bottom\)/.test(h2), h2.slice(0, 120));
 
   /*
    * 二、**必须区分两级**（照原版）。

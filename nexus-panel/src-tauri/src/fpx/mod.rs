@@ -186,6 +186,16 @@ pub(crate) fn core_icon_data(dir: &std::path::Path, raw: &str) -> Result<String,
     for v in cfg.folder_icons.values() {
         push(&icon_file_part(v));
     }
+    /*
+     * #77 GUI 那套图标**同样**要进白名单。
+     *
+     * 只登记 explorer 那套的话，勾了「仅界面生效」设的图标文件**读不出来**
+     * —— 而前端对读取失败是静默处理的，卡片图标默默变回占位符。
+     * 取消勾选又能显示，表现得就像"这个开关有毛病"。
+     */
+    for v in cfg.folder_gui_icons.values() {
+        push(&icon_file_part(v));
+    }
 
     let canon = guard::must_be_under(&file_part, &roots)?;
     if !canon.is_file() {
@@ -586,7 +596,18 @@ fn core_move_folder(
         }
 
         cfg.folder_icons = remap_keys(std::mem::take(&mut cfg.folder_icons), &old_key, &new_path);
+        /*
+         * #13 同上：**跨栏搬家必须挪 GUI 图标表**。
+         *
+         * 此前这里只挪了两套（explorer 图标 + 普通色），而改名那条路径
+         * 四套齐全。三处做的是同一件事，只有这里漏了 —— 表现为：
+         * 勾了「仅界面生效」的图标 / 标签色，搬完家**静默回到默认**，
+         * 一点报错都没有，用户只会以为搬家把设置弄丢了。
+         */
+        cfg.folder_gui_icons = remap_keys(std::mem::take(&mut cfg.folder_gui_icons), &old_key, &new_path);
         cfg.tag_colors = remap_keys(std::mem::take(&mut cfg.tag_colors), &old_key, &new_path);
+        /* #113 同上：GUI 标签色同样是"仅界面生效"那套，漏了同样静默丢失 */
+        cfg.tag_gui_colors = remap_keys(std::mem::take(&mut cfg.tag_gui_colors), &old_key, &new_path);
         for l in cfg.locks.iter_mut() {
             if store::normalize_key(&l.path) == old_key {
                 l.path = new_path.clone();
@@ -1066,14 +1087,34 @@ pub(crate) fn core_save_style(
 
     let icon = icon_ref.unwrap_or_default();
     let icon = icon.trim().to_string();
-    if icon.is_empty() {
-        cfg.folder_icons.remove(path);
+    /*
+     * #77 图标**同样**要按 gui_only 分流。
+     *
+     * 此前只分流了标签色，图标这半边被无条件写进 `folder_icons`。
+     * 而 `StyleDialog`（右键「图标与标签…」）走的就是这条路径 —— 也就是
+     * 用户勾「仅界面生效」设图标的那个入口。三重后果，一条都不报错：
+     *   1. `folder_gui_icons` 永远写不进去 —— 界面那套根本没登记；
+     *   2. 反而把 `folder_icons`（资源管理器那套）**覆盖掉** —— 两套的定义
+     *      就是"互不覆盖"，用户只是想在本工具里换个图标，
+     *      资源管理器里那个也被换了；
+     *   3. desktop.ini 照写 —— 与"不影响资源管理器"直接矛盾。
+     */
+    let key = store::normalize_key(path);
+    if gui_only {
+        cfg.folder_gui_icons.retain(|k, _| store::normalize_key(k) != key);
+        if !icon.is_empty() {
+            cfg.folder_gui_icons.insert(path.to_string(), icon.clone());
+        }
     } else {
-        cfg.folder_icons.insert(path.to_string(), icon.clone());
+        cfg.folder_icons.retain(|k, _| store::normalize_key(k) != key);
+        if !icon.is_empty() {
+            cfg.folder_icons.insert(path.to_string(), icon.clone());
+        }
     }
 
     // desktop.ini 是 Windows 资源管理器专属机制，其它平台只记在配置里（界面内仍生效）
-    if cfg.icon_affect_explorer && cfg!(windows) {
+    // GUI 专属图标**不写** desktop.ini —— 它的定义就是"不影响资源管理器"。
+    if cfg.icon_affect_explorer && !gui_only && cfg!(windows) {
         /* #427：写 desktop.ini 就是往这个目录里写点。
            目录自己被设了「防写入」的话，这次写入会被**自己的锁**拦掉 ——
            用户设了保护之后就再也换不了图标，且报错信息完全指向不了原因。
@@ -1289,9 +1330,22 @@ pub fn fpx_remove_card(
         let tabs = if kind == "group" { &mut cfg.group_tabs } else { &mut cfg.project_tabs };
         match tab_index {
             Some(i) => {
-                if let Some(t) = tabs.get_mut(i) {
-                    t.items.retain(|p| store::normalize_key(p) != key);
-                }
+                /*
+                 * 越界必须**报错**，不能 `if let` 静默跳过。
+                 *
+                 * 静默时：不删、不报错，外层照常返回一份"成功"的快照
+                 * （只是没变）。调用方照常记一句"已移除"，卡片却还在
+                 * 界面上 —— 用户点删除没有任何反馈，刷新后卡片仍在，
+                 * 只能归结为"按钮坏了"。
+                 *
+                 * 与 MCP `add_card_to_tab` 保持一致：那边越界本来就是
+                 * 报错的，同类操作一个报错一个静默，静默那个迟早变成
+                 * 查不出来的问题。
+                 */
+                let t = tabs.get_mut(i).ok_or_else(|| {
+                    format!("页签下标 {i} 越界（共 {} 个页签）", tabs.len())
+                })?;
+                t.items.retain(|p| store::normalize_key(p) != key);
             }
             None => {
                 for t in tabs.iter_mut() {
@@ -1594,8 +1648,16 @@ pub fn fpx_backup_auto_status(app: AppHandle) -> backup::AutoStatus {
 #[tauri::command(rename_all = "snake_case")]
 pub fn fpx_backup_auto_sync(app: AppHandle) -> bool {
     let minutes = match store::resolve_data_dir(&app) {
+        /*
+         * 数据目录**读不到**时不能按 0 处理。
+         *
+         * 按 0 会一路走到 `stop_auto()`，把**正在运行**的备份悄悄停掉 ——
+         * 而这次调用多半只是用户改了设置触发的一次同步，并不是真的想关掉备份。
+         * 读不到时"保持现状 + 如实回传当前是否在跑"才是对的：
+         * 错的只是这一次的判断，不该顺手改变实际行为。
+         */
         Ok(dir) => store::load_config(&dir).backup_auto_minutes,
-        Err(_) => 0,
+        Err(_) => return backup::is_auto_running(),
     };
     if minutes == 0 {
         backup::stop_auto();
@@ -1882,7 +1944,20 @@ pub(crate) fn core_rename_icon(
     let (snap, affected) = match r {
         Ok(v) => v,
         Err(e) => {
-            let _ = std::fs::rename(&dest, &old_canon);
+            /*
+             * 回滚失败**不能**用 `let _ =` 吞掉。
+             *
+             * 用户看到的只有"配置写入失败"，以为什么都没动；
+             * 实际文件已经在新名字下、配置还指向旧名 —— 一条断链，
+             * 而这个状态没有任何地方告诉他。必须把"文件现位于何处"
+             * 一起说出来，否则他不知道该去改哪个。
+             */
+            if let Err(e2) = std::fs::rename(&dest, &old_canon) {
+                return Err(format!(
+                    "{e}；且改名回滚失败（{e2}），图标文件现位于 {new_path}，\
+                     而配置仍指向旧名，请手动改回",
+                ));
+            }
             return Err(e);
         }
     };
@@ -2814,6 +2889,15 @@ impl Drop for LockGuard {
  *    这比写入失败严重得多。所以恢复失败时返回 `Err`，
  *    且错误信息明说"内容已写入" —— 否则用户会以为写入没成功，
  *    然后重试一次，造成重复写入。
+ *
+ * 3. **并发边界**：同一路径上并发进入本函数**不是严格互斥**的 ——
+ *    两个调用者各自 load 一份配置、各自摘锁与恢复，恢复动作会交错。
+ *    对本工具安全：GUI 单线程 + MCP 单请求串行，实际不会并发。
+ *    但**不要把它放进多线程热点路径** —— 那时窗口会被别人的恢复动作
+ *    延长或提前收掉，表现为"保护被悄悄摘掉一段时间"，而日志里什么都没有。
+ *
+ *    （这条是写给后来人的：原版 `FolderLockService.cs:65` 有同样一句说明。
+ *     缺了它现在不出错，但哪天有人把它挪进并发路径，就是最难查的那一类失效。）
  */
 pub(crate) fn with_unlock<T, F>(
     dir: &std::path::Path,

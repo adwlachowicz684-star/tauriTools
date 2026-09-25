@@ -5,6 +5,21 @@
 @import url('../../css/tokens.css');
 @import url('../../css/controls.css'); /* 通用控件 */
 @import url('../../css/dialog.css');   /* 通用弹窗（js/dialog.js 依赖它） */
+/*
+ * #281 / #371 标题浮雕三色标。
+ *
+ * 原版 `NeuTheme.xaml` 的 TitleEmbossBrush：#F1F3F8（上，受光）
+ * → #C0C8D4（55%）→ #A6AFBF（下，收暗）；TextEmboss：Blur 3 / Depth 1.3
+ * / Direction 315（右下）/ Opacity .42。
+ *
+ * 抽成变量是为了换肤可整体替换（#371）；CSS 内不留硬编码。
+ */
+:root {
+  --title-emboss-top: #f1f3f8;
+  --title-emboss-mid: #c0c8d4;
+  --title-emboss-bottom: #a6afbf;
+  --title-emboss-shadow: rgba(0, 0, 0, .42);
+}
 .fpx-root { padding: 4px 2px 24px; }
 
 /* ---------- 左操作栏 + 主区（对照 WPF：SidebarControl 纵跨含日志的整个内容区）---------- */
@@ -356,6 +371,57 @@
 }
 /* 标题可压缩截断，按钮区不参与收缩，避免窄栏下互相挤 */
 .fpx-col-head > h2 { min-width: 0; overflow: hidden; }
+
+/*
+ * #281 银白浮雕：只给**两级**，不能全加。
+ *
+ * 原版 NeuTheme 的分配：
+ *   AppTitle（窗口主标题）22px  纯色
+ *   PanelTitle（浮层主标题）20px  ✅ 浮雕
+ *   SectionTitle（分区标题）16px  ✅ 浮雕
+ *   ColumnTitle（分栏标题）18px  纯色（原版注释"纯色统一风"）
+ *   ItemTitle（条目标题）14px    纯色
+ *
+ * 本版落点：`.p-card > h2`（分区标题）→ 浮雕；`.fpx-col-head h2`（分栏标题）
+ * → 纯色。**区分这两级是必要的**：全加的话三个栏头会跟着浮起来，
+ * 比栏内内容还抢眼，视觉层级整个翻过来。
+ */
+.p-card > h2 {
+  font-weight: var(--title-3-fw, 600);
+  color: var(--title-emboss-mid);
+}
+/*
+ * **必须都包在 @supports 内**：CSS 没有"文字渐变"属性，得靠
+ * `background-clip: text` 裁字形 + `color: transparent`。
+ * 这两句必须成对、且都在 @supports 内 —— 不支持裁字的引擎上，
+ * 透明文字就真的透明了，**整行标题彻底消失且没有任何报错**。
+ * 所以纯色兜底写在 @supports 之外（上面那条）。
+ */
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .p-card > h2 {
+    background-image: linear-gradient(180deg,
+      var(--title-emboss-top) 0%,
+      var(--title-emboss-mid) 55%,
+      var(--title-emboss-bottom) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    /* Direction 315 = 右下；Depth 1.3 / Blur 3 / Opacity .42 */
+    text-shadow: 1.3px 1.3px 3px var(--title-emboss-shadow);
+  }
+}
+/* 分栏标题：纯色，不用浮雕（原版 ColumnTitle = MainBrush） */
+.fpx-col-head h2 {
+  color: var(--text);
+  background-image: none;
+  text-shadow: none;
+}
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .fpx-col-head h2 {
+    -webkit-background-clip: border-box;
+    background-clip: border-box;
+  }
+}
 .fpx-col-head-ops { flex-shrink: 0; gap: 8px; }
 .fpx-focus-tag { margin-left: 6px; flex-shrink: 0; }
 /* 页签条的上间距已由 .fpx-col-head 的 margin-bottom 统一给出，不能再叠 */
@@ -391,6 +457,22 @@
   box-shadow: var(--sh-in-sm);
 }
 .fpx-tab.add { color: var(--text-mute); }
+/*
+ * #360 页签上的外部拖入高亮。
+ *
+ * **必须是虚线，不能复用内部拖拽那套实线发光**：外部拖入是 copy（新增），
+ * 内部移动是 move（把卡片从别处搬走）。长得一样的话用户分不清
+ * 这次会不会把别处的卡挪走 —— 而两类操作的结果完全不同。
+ *
+ * 光有类名没有基础定义，高亮就是"什么都没发生"（这个坑在
+ * `.fpx-link-dot` 上已经踩过一次：只给 `.fpx-badge .fpx-link-dot`
+ * 定尺寸，明细行里那个是 0×0 完全不可见）。
+ */
+.fpx-tab.external {
+  color: var(--accent);
+  border-color: var(--accent);
+  border-style: dashed;
+}
 /* ---------------- 页签 × 关闭按钮（#27）----------------
  * **平时不显形**：删页签会连带清掉里面登记的所有卡片，
  * 常显的 × 太容易误点。hover 或键盘聚焦才出来。
@@ -735,7 +817,17 @@
 .fpx-node:hover { background: var(--surface); color: var(--text); }
 .fpx-node.selected { color: var(--accent); background: var(--surface); }
 .fpx-node-arrow { width: 10px; color: var(--text-mute); }
-.fpx-node-name { overflow: hidden; text-overflow: ellipsis; }
+/*
+ * #282 树节点名（agent / skill / 工具 / 链接名）用等宽。
+ *
+ * 理由不是好看：这些名字常有 `_` `-` `.` 与大小写混排
+ * （`code_reviewer_v2`、`foo_bar_baz.md`），比例字体下 `l` / `1` / `I`
+ * 几乎分不出来 —— 照着抄一个名字容易抄错，后果是"找不到这个 agent"，
+ * 而报错指不到原因。
+ *
+ * 只给**名字**，不给说明文字（说明是给人读的句子，等宽反而难读）。
+ */
+.fpx-node-name { overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono, ui-monospace, monospace); }
 .fpx-node-kind {
   margin-left: auto; font-size: var(--fs-10, 10px); color: var(--text-mute);
   border: 1px solid var(--border); border-radius: var(--r-xs); padding: 0 4px;
@@ -1283,6 +1375,24 @@
 /* ---------- 链接状态圆点（#126 #127）---------- */
 /* 卡片上的链接指示：圆点 + 数字，圆点颜色随状态变。
    此前是 emoji「🔗」——字形与配色随系统变，且无法跟随主题。 */
+/*
+ * #292 链接明细行的状态点。
+ *
+ * **必须有独立定义**：此前给它定尺寸的只有 `.fpx-badge .fpx-link-dot`
+ * （徽章内那一处），而明细行不在徽章里 → 匹配不上 → 空的 <span> 是
+ * 0×0、**完全不可见**。用户展开卡片看到一排链接，没有任何状态标识，
+ * 只能逐个悬停看提示。
+ */
+.fpx-link-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.fpx-link-dot.valid { background: var(--accent); }
+.fpx-link-dot.broken { background: var(--text-mute); }
+.fpx-link-dot.conflict { background: var(--danger, #c8555a); }
 .fpx-badge .fpx-link-dot {
   width: 6px; height: 6px; border-radius: 50%; flex: none;
   display: inline-block;
@@ -1338,6 +1448,28 @@
 
 .fpx-cards::-webkit-scrollbar,
 .fpx-log::-webkit-scrollbar,
+/*
+ * #292 链接明细容器。
+ *
+ * **必须有基础定义**：此前只有下面那堆 `::-webkit-scrollbar` 伪元素规则。
+ * 后果两层：
+ *   · 不是 flex column → 多行之间没有 gap，行挨着行挤在一起；
+ *   · **没有 overflow** → 那条 8px 窄滚动条、"悬停才显形"的样式
+ *     **永远不生效**，因为压根没有溢出。而一个项目可以连十几条
+ *     （预设 agent 名就有 22 个），全展开会把单张卡片撑到几屏高，
+ *     **把别的卡片全挤出视野** —— 用户看到的是"展开一个，其余全不见了"。
+ *
+ * 写好了滚动条样式却没给 overflow，是最典型的"看起来做完了"：
+ * 代码在那儿、注释在那儿，就是不工作。
+ */
+.fpx-links {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 168px;
+  overflow: auto;
+  padding-left: 2px;
+}
 .fpx-links::-webkit-scrollbar,
 .fpx-rail::-webkit-scrollbar { width: 8px; height: 8px; }
 
@@ -1821,10 +1953,27 @@
 .fpx-link-text {
   min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* #282 标识符用等宽：`l` / `1` / `I` 在比例字体下几乎分不出来 */
+  font-family: var(--font-mono, ui-monospace, monospace);
 }
 .fpx-link-group {
   min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/*
+ * #292 链接明细行。
+ *
+ * **基础定义此前一直缺失**（只有几条带 `:not()` 的修饰规则）：
+ *   · 不是 flex → 元素挤成一团；
+ *   · 更隐蔽的是 `.fpx-link-state { margin-left: auto }` **只在 flex
+ *     容器里生效**，所以"失效/冲突"不会被推到最右，而是紧贴组名，
+ *     看上去像组名的一部分。
+ */
+.fpx-link-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 .fpx-link-row:not(.broken):not(.conflict) .fpx-link-group { cursor: default; }
 .fpx-link-state { margin-left: auto; flex: none; font-size: var(--fs-micro, 10px); opacity: .8; }
@@ -1903,10 +2052,26 @@
   background: var(--surface-sunk, rgba(128, 128, 128, .08));
   border-radius: var(--r-sm, 4px);
 }
+/*
+ * #431 自救命令。
+ *
+ * 原版写「自救命令见 TIPS：icacls "<目录>" /remove:d *S-1-1-0」，
+ * 但本版**没有 TIPS 面板** —— 照搬那句话等于给一个找不到的指针。
+ * 所以直接写出命令，且**带上当前路径**（给通用占位符用户还得自己拼，
+ * 容易抄错）。
+ *
+ * 为什么必须有：上了防删除之后**本工具自己也可能被挡住**（弹窗崩了、
+ * 或用户手改过 ACL）。没有这条命令，用户只能靠搜索去试，
+ * 而试错中很可能把目录弄成更糟的状态。
+ */
 .fpx-lock-rescue-cmd {
   display: block; margin-top: var(--sp-2, 4px);
   font-size: var(--fs-code, var(--fs-11, 11px));
-  white-space: pre; overflow-x: auto;
+  white-space: pre-wrap;
+  /* 不截断：被截断或看不出边界就会抄错命令 */
+  word-break: break-all;
+  overflow-x: auto;
+  /* 整条一次选中 */
   user-select: all;
 }
 
