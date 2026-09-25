@@ -2016,6 +2016,8 @@ function reportSkipped(
       const res = await fetchText(url, {
         headers: o.headers,
         timeoutSec: o.timeoutSec,
+        /* 节点超时 / 停止：浏览器模式能真的断开，桌面端至少不再傻等 */
+        signal: o.signal,
       });
       if (!res.ok) throw new Error(`请求失败 HTTP ${res.status}`);
       return res.text;
@@ -2131,6 +2133,8 @@ function reportSkipped(
         body: o.body,
         timeoutSec: o.timeoutSec,
         maxBytes: o.maxBytes,
+        /* 节点超时 / 停止：浏览器模式真的断开连接，桌面端不再傻等 */
+        signal: o.signal,
       });
       return { status: r.status, ok: r.ok, text: r.text, headers: r.headers };
     };

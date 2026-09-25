@@ -35,7 +35,34 @@ export type RunContext = {
   /** 只记录一次，避免循环多轮重复 push 导致数组膨胀 */
   markFailed: (id: string, scope?: Scope) => void;
   markSkipped: (id: string, scope?: Scope) => void;
+  /**
+   * 延时。**已绑上本节点的中断信号** —— 执行器一律用这个，
+   * 不要自己 import sleep：自己引的那份不带 signal，
+   * 节点超时后那个定时器仍然挂在事件循环里，进程都退不掉。
+   */
   sleep: (ms: number) => Promise<void>;
+
+  /* ---------- 中断 ---------- */
+  /**
+   * 本节点的中断信号。
+   *
+   * 什么时候会中断：这个节点超时了，或整条流程被停止。
+   *
+   * 执行器**能响应就该响应** —— 长时间的等待、网络请求都该把它传下去。
+   * 传了，超时就是"真的停了"；不传，超时仍只是"不再等它"，
+   * 底层操作还会跑完（见 engine/nodeTimeout.ts 的说明）。
+   *
+   * 响应不了的执行器（比如一次性的纯计算）不用管它，
+   * 那类操作本来也卡不住。
+   */
+  signal: AbortSignal;
+  /**
+   * 这个节点已经超时了吗。
+   *
+   * 与 signal.aborted 的区别：signal 也会因"整条流程被停止"而中断，
+   * 那是用户主动停下，不是失败。执行器要区分这两种情形时用这个。
+   */
+  timedOut: () => boolean;
 
   /* ---------- 共享累积状态（跨节点、跨轮次可见） ---------- */
   outputs: Record<string, string>;

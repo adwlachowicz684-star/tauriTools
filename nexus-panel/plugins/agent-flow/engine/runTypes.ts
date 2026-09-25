@@ -75,7 +75,12 @@ export type Executor = (
 export type Fetcher = (
   node: GraphNode,
   url: string,
-  opts: { headers: Record<string, string>; timeoutSec: number },
+  opts: {
+    headers: Record<string, string>;
+    timeoutSec: number;
+    /** 节点超时 / 停止的中断信号。能掐断的那类实现应当响应它 */
+    signal?: AbortSignal;
+  },
 ) => Promise<string>;
 
 export type LlmCallResult = { status: number; text: string };
@@ -155,6 +160,13 @@ export type HttpRequester = (
     body?: string;
     timeoutSec?: number;
     maxBytes?: number;
+    /**
+     * 节点超时 / 停止的中断信号。
+     *
+     * 实现了就能真的掐断这次请求；没实现（老的注入方）也不影响 ——
+     * 那只是回到"软超时"的行为，不是错误。
+     */
+    signal?: AbortSignal;
   },
 ) => Promise<{ status: number; ok: boolean; text: string; headers: Record<string, string> }>;
 

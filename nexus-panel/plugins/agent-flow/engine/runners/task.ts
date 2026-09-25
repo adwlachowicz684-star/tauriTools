@@ -24,6 +24,7 @@ import {
 } from '../updates';
 import type { RunContext } from '../runContext';
 import { withNodeRun, NodeFailError } from '../runnerKit';
+import { isAbortError } from '../sleep';
 
 export async function runTask(ctx: RunContext): Promise<void> {
     const {
@@ -55,6 +56,13 @@ export async function runTask(ctx: RunContext): Promise<void> {
         files: refs.map((r) => r.abs),
       };
     } catch (err) {
+      /*
+       * 取消要原样抛回去，不能裹成 NodeFailError。
+       *
+       * 裹了之后上层分不清"这一步被掐断"和"这一步真的出错" ——
+       * 而两者处置相反：被掐断的不该再记一次失败（停止时尤其不该标红）。
+       */
+      if (isAbortError(err)) throw err;
       const msg = err instanceof Error ? err.message : String(err);
       /*
         失败时也要重置字段：不清的话下游会读到上一次成功运行留下的路径，

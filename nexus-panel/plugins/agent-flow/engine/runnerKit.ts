@@ -1,5 +1,6 @@
 import type { RunContext } from './runContext';
 import { requiresOf } from './nodeRequires';
+import { isAbortError } from './sleep';
 
 /**
  * 节点执行器的样板封装。
@@ -120,7 +121,7 @@ export async function withNodeRun(
   ctx: RunContext,
   run: () => Promise<NodeRunOutput>,
 ): Promise<void> {
-  const { id, setStatus, emit, markFailed, scope, outputs, nodeFields } = ctx;
+  const { id, setStatus, emit, markFailed, markSkipped, scope, outputs, nodeFields } = ctx;
 
   setStatus(id, 'running');
   try {
@@ -154,6 +155,24 @@ export async function withNodeRun(
     });
     setStatus(id, 'success');
   } catch (err) {
+    /*
+     * 被中断 —— 分两种，处置完全相反，不能都当失败。
+     *
+     * · 本节点超时：失败在超时那一刻已经上报过（带"执行超时"的文案）。
+     *   这里直接返回，不再上报一次；即使上报也会被闸门拦掉，
+     *   但拦掉是"碰巧没出错"，不该依赖。
+     *
+     * · 整条流程被停止：那**不是失败**。
+     *   按失败上报的话，用户点了停止，日志里却多出一个红节点，
+     *   他会以为流程有错、去查那个节点 —— 而节点本身没问题。
+     *   按"跳过"处理，与上游失败导致的跳过同款展示。
+     */
+    if (isAbortError(err)) {
+      if (ctx.timedOut()) return;
+      markSkipped(id, scope);
+      setStatus(id, 'skipped');
+      return;
+    }
     const fail = err instanceof NodeFailError ? err : null;
     const msg = err instanceof Error ? err.message : String(err);
     const out = fail?.output ?? '';

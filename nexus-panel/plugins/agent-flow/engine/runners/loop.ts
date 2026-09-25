@@ -22,6 +22,7 @@ import {
 } from '../updates';
 import type { RunContext, Scope } from '../runContext';
 import { withNodeRun, NodeFailError } from '../runnerKit';
+import { isAbortError } from '../sleep';
 
 export async function runLoop(ctx: RunContext): Promise<void> {
     const {
@@ -56,6 +57,15 @@ export async function runLoop(ctx: RunContext): Promise<void> {
    */
   let executed = 0;
 
+  /**
+   * 循环体被中断时抛出的那个错误。
+   *
+   * 中断要先把"已跑了几轮"记下来再往上抛 —— 直接抛出去的话，
+   * 下面的 loop-done / loops 记录都不会执行，取消之后任务记录里
+   * 这条循环整个消失，界面上看不出跑到第几轮停的。
+   */
+  let abortedErr: unknown = null;
+
   for (let i = 0; i < res.items.length; i++) {
     if (opts.signal?.aborted) break;
     executed += 1;
@@ -69,9 +79,10 @@ export async function runLoop(ctx: RunContext): Promise<void> {
       skippedSet: new Set<string>(),
       failedSet: new Set<string>(),
     };
-    await ctx.runScope(bodyIds, iterScope);
-
+    let thrown: unknown = null;
     try {
+      await ctx.runScope(bodyIds, iterScope);
+
       if (data.collect) {
         const produced = bodyIds
           .map((b) => outputs[b] ?? '')
@@ -83,10 +94,15 @@ export async function runLoop(ctx: RunContext): Promise<void> {
         roundFailed += 1;
         if (data.onError === 'stop') break;
       }
+    } catch (err) {
+      // 只拦中断；业务错误照旧上抛，交给 withNodeRun 走失败路径
+      if (!isAbortError(err)) throw err;
+      thrown = err;
     } finally {
       // 出栈放在 finally：循环体抛异常时也不会把栈留脏
       loopStack.pop();
     }
+    if (thrown) { abortedErr = thrown; break; }
   }
 
   const total = executed;
@@ -101,6 +117,7 @@ export async function runLoop(ctx: RunContext): Promise<void> {
     id, rounds: total, failed: roundFailed,
     reason: `${res.reason}，产出 ${done} 条${warn}`, warnings: res.warnings,
   });
+  if (abortedErr) throw abortedErr;
   if (roundFailed > 0) throw new NodeFailError(`${roundFailed}/${total} 轮失败${warn}`, out);
   return { output: out };
   });

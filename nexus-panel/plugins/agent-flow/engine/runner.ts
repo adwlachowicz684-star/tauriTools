@@ -61,7 +61,36 @@ export type {
  * 关于多入边节点的取舍：只要有一条入边"还活着"就执行（OR 语义）。
  * 这样分支后汇合的场景里，走任一分支都能继续往下跑。
  */
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+/*
+ * 本文件不再自建 sleep —— 一律用 engine/sleep.ts 那份。
+ *
+ * 自己内联一份的代价：那份不带 signal，节点超时后
+ * 「等待 10 分钟」这类节点的定时器仍挂在事件循环里，进程都退不掉。
+ * 而它看起来跟超时毫无关系，排查时不会想到这里。
+ */
+import { sleep } from './sleep';
+
+/**
+ * 把上层信号串到本节点的中断源上：上层一断，这里跟着断。
+ *
+ * 反向不成立 —— 单个节点超时不代表整条流程要停，
+ * 所以只是"监听上层、转发给下层"，绝不反向 abort 上层。
+ *
+ * 返回解绑函数：跑完必须解绑。
+ * 不解绑的话，长流程里每个节点都往全局 signal 上挂一个监听，
+ * 节点越多监听越多（AbortSignal 的监听器不会因为 controller 作废而自动清），
+ * 最后变成一次泄漏 —— 而它在功能上完全正常，只有内存涨了才看得见。
+ */
+function linkAbort(up: AbortSignal | undefined, down: AbortController): () => void {
+  if (!up) return () => {};
+  if (up.aborted) {
+    down.abort();
+    return () => {};
+  }
+  const onAbort = () => down.abort();
+  up.addEventListener('abort', onAbort, { once: true });
+  return () => up.removeEventListener('abort', onAbort);
+}
 
 export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSummary> {
   /*
@@ -431,9 +460,24 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
     };
   };
 
-  const makeCtx = (id: string, node: GraphNode, scope: Scope): RunContext => ({
+  const makeCtx = (
+    id: string,
+    node: GraphNode,
+    scope: Scope,
+    signal: AbortSignal,
+  ): RunContext => ({
     id, node, graph, opts, scope, runStartedAt,
-    emit, setStatus, sleep,
+    emit, setStatus,
+    /*
+     * 绑上本节点的中断信号。
+     *
+     * 不绑的话执行器拿到的是"不带 signal 的那份"：超时之后
+     * 那一段等待仍在跑（「等待 10 分钟」的节点会一直挂在事件循环里）。
+     * 这类"标红了但其实还在跑"最难发现 —— 界面上已经结束了。
+     */
+    sleep: (ms) => sleep(ms, signal),
+    signal,
+    timedOut: () => timedOut.has(id),
     markFailed: (i, s) => markFailed(i, s ?? scope),
     markSkipped: (i, s) => markSkipped(i, s ?? scope),
     outputs, nodeFields, currentLoop,
@@ -570,8 +614,13 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
    * 循环体、并发队列都走它，套一层就全部覆盖；
    * 分散到调用点则必然漏掉某一条路径，表现为"这个节点设了超时却没生效"。
    *
-   * 这是**软超时**：见 engine/nodeTimeout.ts 开头的说明。
-   * 底层操作不会被杀掉，只是不再等它。
+   * 这里做两件事，缺一不可：
+   *  1. **判定**：到点没跑完就判失败并冻结它的写入（软超时，见 nodeTimeout.ts）
+   *  2. **中断**：把 AbortController 的 signal 交给执行器，
+   *     能响应的操作（等待、网络请求）是真的停下来，而不是继续跑完
+   *
+   * 只有第 1 条的话，超时的节点虽然标红了，底层仍在跑 ——
+   * 「等待 10 分钟」的节点会一直挂在事件循环里，进程都退不掉。
    */
   async function runNodeTimed(id: string, scope: Scope): Promise<void> {
     const node = paramNodeOf(id);
@@ -580,9 +629,27 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
       opts.nodeTimeoutSec,
     );
 
-    /* 不限时：走原路，一个定时器都不建 */
+    /*
+     * 每个节点一个中断源。
+     *
+     * 不限时也要建 —— 「停止」按钮同样要能中断正在跑的节点，
+     * 否则点了停止，那个卡在等待里的节点还得等满才肯退。
+     * 不建 controller 的话执行器拿到的 signal 就无处可绑。
+     *
+     * 与全局 signal 的关系：全局一断，本节点也要断（整条流程停了）。
+     * 反过来不成立 —— 单个节点超时不代表别的节点要停。
+     * 所以是"或"的关系，且全局那边不能反向 abort 本 controller。
+     */
+    const ac = new AbortController();
+    const unlink = linkAbort(opts.signal, ac);
+
+    /* 不限时：走原路，一个定时器都不建（但中断通道照旧给下去） */
     if (limitMs <= 0) {
-      await dispatchNode(id, node, scope);
+      try {
+        await dispatchNode(id, node, scope, ac.signal);
+      } finally {
+        unlink();
+      }
       return;
     }
 
@@ -591,12 +658,14 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
       timer = setTimeout(() => resolve('timeout'), limitMs);
     });
 
-    const work = dispatchNode(id, node, scope);
+    const work = dispatchNode(id, node, scope, ac.signal);
     /*
      * 必须挂一个 catch，而且是在 race 之前。
      *
      * 超时后我们不再 await work，它若在此后 reject 就会变成
      * unhandled rejection —— 在 Node 里会直接把整个测试进程搞挂。
+     *
+     * 中断之后执行器多半会 throws AbortError，走的正是这条路径。
      */
     work.catch(() => { /* 已经判过超时了，这里的失败不再上报 */ });
 
@@ -614,6 +683,13 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
         error: timeoutMessageOf(limitMs),
       });
       /*
+       * 中断信号要在 markFailed **之前**发出。
+       *
+       * 反过来的话，被掐断的那一步可能已经跑到"收尾"处并写回了状态 ——
+       * 而那时它还没被冻结，于是又出现"先报失败、后又成功"。
+       */
+      ac.abort();
+      /*
        * 走 markFailed 而不是只 setStatus：下游要按"上游失败"跳过。
        * 只标红而不传播的话，下游会拿空值继续跑，
        * 于是超时那一步的错误被冲淡成一堆看不懂的空结果。
@@ -627,11 +703,17 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
        * 再写一次状态；而进程想退出也会被这些 timer 拖住。
        */
       if (timer !== undefined) clearTimeout(timer);
+      unlink();
     }
   }
 
   /** 真正的按类型分派 */
-  async function dispatchNode(id: string, node: GraphNode, scope: Scope): Promise<void> {
+  async function dispatchNode(
+    id: string,
+    node: GraphNode,
+    scope: Scope,
+    signal: AbortSignal,
+  ): Promise<void> {
     /* ================================================================
      * 按注册表分发。
      *
@@ -641,7 +723,7 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
      * ================================================================ */
     const run = getRunner(node.data);
     if (run) {
-      await run(makeCtx(id, node, scope));
+      await run(makeCtx(id, node, scope, signal));
       return;
     }
     /*

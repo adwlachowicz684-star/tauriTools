@@ -3,6 +3,7 @@ import { toOsKeyringRead, type OsKeyringRead } from '../engine/osKeyring';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { CliKind, FsOp, FsNodeData } from '../types';
 import { isHttpUrl } from '../engine/llm';
+import { abortError, isAbortError } from '../engine/sleep';
 import { withinRoots } from '../engine/exportDir';
 export { withinRoots };
 
@@ -386,6 +387,16 @@ export type FetchTextOptions = {
   timeoutSec?: number;
   /** 响应体最大字节，超出截断。默认 2MB，避免异常源撑爆内存 */
   maxBytes?: number;
+  /**
+   * 外部中断信号（节点超时 / 整条流程被停止）。
+   *
+   * 给了它，超时就是"真的不等了"：浏览器路径直接断开连接，
+   * Tauri 路径至少不再傻等（Rust 侧那次请求无法从 JS 掐断，
+   * 只能等它自己结束，但结果会被丢弃）。
+   *
+   * 不给则行为与加这个字段之前完全一致 —— 只有自带的 timeoutSec 生效。
+   */
+  signal?: AbortSignal;
 };
 
 export type FetchTextResult = {
@@ -597,6 +608,48 @@ async function tauriHttpRequest(
   }
 }
 
+/* ------------------------- 中断辅助 -------------------------
+   三个小函数，供 httpRequest / fetchText 共用。
+
+   放在本文件而不是各自内联：内联的话两处写法必然慢慢分叉，
+   一处分得清取消、另一处把取消当成"请求失败"报出来 ——
+   那种错只在超时时才出现，平时看不出来。
+   -------------------------------------------------------------- */
+
+/** 已中断就立即抛，别再发这次请求 */
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError();
+}
+
+/** 把外部信号串到本请求的 controller 上，返回解绑函数 */
+function linkSignal(src: AbortSignal | undefined, ac: AbortController): () => void {
+  if (!src) return () => {};
+  if (src.aborted) {
+    ac.abort();
+    return () => {};
+  }
+  const onAbort = () => ac.abort();
+  src.addEventListener('abort', onAbort, { once: true });
+  return () => src.removeEventListener('abort', onAbort);
+}
+
+/**
+ * 让一个"掐不断"的操作至少不再被傻等。
+ *
+ * Rust 通道的请求没有对应的取消命令，只能 race：中断一到就抛，
+ * 那边跑完的结果直接丢弃。
+ */
+function raceAbort<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return p;
+  throwIfAborted(signal);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortError());
+    const done = () => signal.removeEventListener('abort', onAbort);
+    signal.addEventListener('abort', onAbort, { once: true });
+    p.then((v) => { done(); resolve(v); }, (e) => { done(); reject(e); });
+  });
+}
+
 /**
  * 发一个 HTTP 请求，返回文本 + 响应头。
  *
@@ -620,19 +673,33 @@ export async function httpRequest(
     throw new Error('地址必须以 http:// 或 https:// 开头');
   }
 
+  /* 已经中断了就别发这次请求 —— 发出去也没人接结果 */
+  throwIfAborted(opts.signal);
+
   const ua: Record<string, string> = opts.withDefaultUa === false ? {} : { 'User-Agent': UA };
   const headers = { ...ua, ...(opts.headers ?? {}) };
 
   // 1) 经 Rust 的 tauri-plugin-http（不受同源策略限制）
   let tauriFailure: HttpFailure | null = null;
   if (isTauri()) {
-    const r = await tauriHttpRequest(url, {
+    /*
+     * 中断在 Rust 通道上只能做到"不再等它"。
+     *
+     * 浏览器 fetch 能真的断开连接；而 tauri-plugin-http 的 fetch_send
+     * 一旦发出，JS 侧没有对应的取消命令（只有 fetch_cancel_body 能
+     * 掐断响应体的读取）。所以这里 race 一下：中断一到就抛，
+     * Rust 那边那次请求继续跑完，结果被丢弃。
+     *
+     * 不 race 的话，超时节点虽然标红了，这次请求仍会占满它自己的
+     * connectTimeout —— 表现为"点了停止，界面还要卡一会儿"。
+     */
+    const r = await raceAbort(tauriHttpRequest(url, {
       method: opts.method ?? 'GET',
       headers,
       body: opts.body,
       connectTimeout: timeoutMs,
       maxBytes: max,
-    });
+    }), opts.signal);
     if (r.ok) {
       return { ok: r.value.ok, status: r.value.status, text: r.value.text.slice(0, max), headers: r.value.headers };
     }
@@ -644,6 +711,8 @@ export async function httpRequest(
   // 浏览器模式：尽力而为
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
+  /* 外部中断（节点超时 / 停止）直接断掉这次连接，不是"不等了"而已 */
+  const unlink = linkSignal(opts.signal, ac);
   try {
     const res = await globalThis.fetch(url, {
       method: opts.method ?? 'GET',
@@ -659,6 +728,14 @@ export async function httpRequest(
       headers: normalizeHeaders(res.headers),
     };
   } catch (err) {
+    /*
+     * 取消要**原样抛回去**，不能裹成"请求失败"。
+     *
+     * 裹了之后上层分不清"这一步超时被掐断"和"这个地址真的请求不通" ——
+     * 而这两件事的处置完全相反：前者已经判过失败、不用再报，
+     * 后者要写进运行日志让用户去改地址。
+     */
+    if (isAbortError(err)) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     /*
      * 两条通道都不通时报出来，带上各自的真实原因。
@@ -671,6 +748,7 @@ export async function httpRequest(
     throw new Error(`${tauriHint}。`);
   } finally {
     clearTimeout(timer);
+    unlink();
   }
 }
 
@@ -689,6 +767,9 @@ export async function fetchText(url: string, opts: FetchTextOptions = {}): Promi
     throw new Error('地址必须以 http:// 或 https:// 开头');
   }
 
+  /* 已经中断就别发了：发出去也没人接结果（节点已经判过超时） */
+  throwIfAborted(opts.signal);
+
   const headers = {
     // B站接口对 UA 很敏感：不带浏览器 UA 大概率直接 -412
     'User-Agent': UA,
@@ -698,9 +779,9 @@ export async function fetchText(url: string, opts: FetchTextOptions = {}): Promi
   // 1) 经 Rust 的 tauri-plugin-http（不受同源策略限制）
   let tauriFailure: HttpFailure | undefined;
   if (hasTauri()) {
-    const r = await tauriHttpRequest(url, {
+    const r = await raceAbort(tauriHttpRequest(url, {
       method: 'GET', headers, connectTimeout: timeoutMs, maxBytes: max,
-    });
+    }), opts.signal);
     if (r.ok) return { ok: r.value.ok, status: r.value.status, text: r.value.text.slice(0, max) };
     // 通道没走通：记下具体原因（插件未启用 / scope 未放行 / 请求出错），
     // 交给下面的浏览器路径再试一次；两条都不通时报出来，而不是一律甩锅 CORS
@@ -711,6 +792,7 @@ export async function fetchText(url: string, opts: FetchTextOptions = {}): Promi
   // 浏览器模式：尽力而为
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
+  const unlink = linkSignal(opts.signal, ac);
   try {
     const res = await globalThis.fetch(url, {
       method: 'GET',
@@ -720,6 +802,8 @@ export async function fetchText(url: string, opts: FetchTextOptions = {}): Promi
     const raw = await res.text();
     return { ok: res.ok, status: res.status, text: raw.slice(0, max) };
   } catch (err) {
+    /* 取消原样抛出，不裹成"请求失败" —— 上层要能分清"被掐断"和"地址不通" */
+    if (isAbortError(err)) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     /* 与 postJson 同一套降级文案：把 Tauri 通道的真实原因透出来
        （插件未启用 / 域名未放行 / 请求失败），而不是一律甩锅 CORS ——
@@ -730,6 +814,7 @@ export async function fetchText(url: string, opts: FetchTextOptions = {}): Promi
     throw new Error(`${tauriHint}。`);
   } finally {
     clearTimeout(timer);
+    unlink();
   }
 }
 

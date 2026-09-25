@@ -1,6 +1,5 @@
 import type { RunContext } from '../runContext';
 import { withNodeRun, NodeFailError } from '../runnerKit';
-import { sleep } from '../sleep';
 import type { WaitNodeData } from '../../types';
 import { upstreamText } from '../upstream';
 
@@ -31,7 +30,14 @@ export async function runWait(ctx: RunContext): Promise<void> {
       ctx.emit({ type: 'log', message: `等待时长 ${ms}ms 超过上限，已按 ${MAX}ms 执行` });
     }
 
-    await sleep(safe);
+    /*
+     * 用 ctx.sleep 而不是 import 的那份 sleep。
+     *
+     * ctx.sleep 绑着本节点的中断信号：超时之后这段等待是真的结束，
+     * 定时器被清掉。用不带 signal 的那份的话，节点已经标红失败了，
+     * 底下还在傻等 —— 「等待 10 分钟」的节点会让进程退不掉。
+     */
+    await ctx.sleep(safe);
 
     /*
      * 输出**透传**上游，不改写数据流。

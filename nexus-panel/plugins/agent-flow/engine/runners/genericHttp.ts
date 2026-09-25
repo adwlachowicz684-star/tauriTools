@@ -72,6 +72,13 @@ export async function runGenericHttp(ctx: RunContext): Promise<void> {
       body: body || undefined,
       timeoutSec: d.timeoutSec,
       maxBytes: Math.max(1, d.maxBytesKb) * 1024,
+      /*
+       * 带上本节点的中断信号。
+       *
+       * 不传的话，超时之后这次请求仍会占满它自己的 timeoutSec：
+       * 节点已经标红失败了，界面上却还要再等一会儿才真正结束。
+       */
+      signal: ctx.signal,
     });
 
     const fields = {

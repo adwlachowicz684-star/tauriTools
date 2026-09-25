@@ -221,6 +221,13 @@ async function checkOne(
     get: (u, o) => opts.fetcher!(node, u, {
       headers: o.headers ?? headers,
       timeoutSec: o.timeoutSec ?? timeoutSec,
+      /*
+       * 本节点的中断信号。
+       *
+       * 一张卡一个订阅源，慢的那个会拖住整节点；不传的话
+       * 超时之后它还在抓，节点却已经标红 —— 用户会以为抓完了。
+       */
+      signal: ctx.signal,
     }),
     tpl: (s) => ctx.tpl(s),
   });
