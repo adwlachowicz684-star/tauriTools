@@ -48,11 +48,27 @@
   border-radius: var(--r-lg);
   /* --surface-overlay：弹窗盖在别的内容上，底板必须比普通卡片更实。
      用 --surface 的话玻璃主题下只有 7% 白，后面的界面全透上来，
-     弹窗里的文字和背景文字叠在一起根本读不了（详见 .dialog 的说明）。 */
-  background: var(--surface-overlay);
+     弹窗里的文字和背景文字叠在一起根本读不了（详见 .dialog 的说明）。
+
+     兜底链不能省 —— --surface-overlay **只有玻璃主题在 themes.js 里定义**，
+     其余 26 套靠 neumorphism.css 的 `--surface-overlay: var(--surface-raised)`
+     兜住。而 iframe 插件是独立文档，agent-flow 只 @import 了
+     tokens/controls/dialog 三份 CSS、**没有 neumorphism.css** ——
+     变量缺失时 `background: var(--surface-overlay)` 整条声明无效，
+     退化为透明，弹窗变成"没有任何底板的裸字"。
+     所以这里再兜两级，任何文档里都不会出现透明弹窗。 */
+  background: var(--surface-overlay, var(--surface-raised, var(--surface)));
   /* 叠一层固定黑色投影：主题那组双向阴影在浅色主题下最弱
-     （纯白底没有"更亮"的空间），而弹窗是最需要浮起来的容器 */
-  box-shadow: var(--sh-out-lg), var(--sh-cast-md);
+     （纯白底没有"更亮"的空间），而弹窗是最需要浮起来的容器。
+
+     末了那圈 inset 描边是**玻璃浅色主题的底板**：
+     浅色玻璃的 --surface 合成后已接近纯白（246,248,252），
+     overlay 再亮也顶不出明度差（ΔL* 只有 1.85，物理上限所限），
+     没有描边时弹窗边界完全看不出来 —— 表现就是"没有底板"。
+     用 inset box-shadow 而不是 border：不占布局、不影响 420px 宽度的
+     盒模型计算，且天然跟随 border-radius。 */
+  box-shadow: var(--sh-out-lg), var(--sh-cast-md),
+              inset 0 0 0 1px var(--dlg-edge, var(--divider));
   transform: translateY(8px) scale(.98);
   transition: transform var(--dur-base) ease;
 }
