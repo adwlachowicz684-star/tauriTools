@@ -94,6 +94,30 @@ console.log('\n=== 4. 界面接线 ===');
   /* 提示报出清理数量 */
   t('日志报出数量', /已清理 \$\{totalRemoved\(removed\)\} 个失效项/.test(grid));
 
+  /*
+   * **探测整体失效 ≠ "文件全没了"**。
+   *
+   * `img.onerror` 分不清 404 与"加载失败"（网络抖动 / 沙箱限制 /
+   * 后端图标接口没起来），两者都走 onerror；而 `staleByProbe` 那个
+   * try/catch 挡的是 throw，这里 onerror 是 resolve(false)，挡不住。
+   * PRESET_ICON_NAMES 是**随插件打包**的内置图标，不可能整批消失 ——
+   * "全部探测失败"只可能是探测链路坏了。照原样去确认清理，
+   * 会把整组内置图标清空（一次抖动清空整个图标库）。
+   */
+  t('判定探测是否整体失效',
+    /probeTargets\.length > 0 && byProbe\.length === probeTargets\.length/.test(grid));
+  t('探测失效时不采信探测结果', /probeBroken \? \[\] : byProbe/.test(grid));
+  t('all 用 staleFromProbe', /const all = \[\.\.\.byList, \.\.\.staleFromProbe\]/.test(grid));
+  {
+    /* 反面证据：all 这一行不得再直接吃 byProbe（注释已剥，只认代码） */
+    const allLine = grid.split('\n').find((l) => l.includes('const all =')) ?? '';
+    t('all 不再直接用 byProbe', allLine.length > 0 && !allLine.includes('byProbe'), allLine.trim());
+  }
+  /* 探测坏了要说出来，不能静默当成"没有失效项" */
+  t('探测失效时明确报错', /探测未成功/.test(grid));
+  t('无失效项与探测失败文案分开',
+    /probeBroken \? '探测未成功，未清理任何项' : '没有失效项'/.test(grid));
+
   /* 用 Image() 探测而不是 fetch —— 显示用的就是 img，判定口径一致 */
   t('用 Image 探测', /new Image\(\)/.test(grid));
   t('onerror 才算失效', /img\.onerror = \(\) => resolve\(false\)/.test(grid));

@@ -150,10 +150,32 @@ export function PresetIconGrid({
       img.src = presetIconUrl(n);
     }));
 
-    const all = [...byList, ...byProbe];
+    /*
+     * **探测全部失败 = 探测这条链路坏了，不是"文件全没了"**。
+     *
+     * `img.onerror` 分不清 404 与"加载失败"（网络抖动、沙箱限制、
+     * 后端图标接口没起来）—— 两者都走 onerror，`staleByProbe` 那个
+     * try/catch 挡不住（onerror 是 resolve，不是 throw）。
+     *
+     * 而 PRESET_ICON_NAMES 是**随插件打包**的内置图标，不可能整批同时消失；
+     * 真出现"全部探测失败"，只可能是探测本身坏了。
+     *
+     * 照原样往下走的话，确认框会写成「以下 N 个图标已失效（文件不存在）」
+     * —— 一句**假的判定** —— 用户点确定就把整组内置图标清空了。
+     * 一次抖动清掉整个图标库，比留着几张破图严重得多。
+     *
+     * 清单判据（`byList`）不依赖网络，仍然可信，所以只丢掉探测那一半。
+     */
+    const probeBroken = probeTargets.length > 0 && byProbe.length === probeTargets.length;
+    if (probeBroken) {
+      onLog('图标探测未成功（无法判断文件是否存在），本次不按探测结果清理', true);
+    }
+    const staleFromProbe = probeBroken ? [] : byProbe;
+
+    const all = [...byList, ...staleFromProbe];
     if (all.length === 0) {
       /* **明确说"没有"，而不是静默** —— 点了没反应用户会以为功能坏了 */
-      onLog('没有失效项');
+      onLog(probeBroken ? '探测未成功，未清理任何项' : '没有失效项');
       return;
     }
     const { groups: next, removed } = pruneGroups(effective, all);
