@@ -5,6 +5,7 @@ import {
   setVarOverride, resetVarOverride, resetAllVarOverrides,
   getVarOverrides, getBaseOverride, setBaseOverride,
   getStyleOverride, setStyleOverride, exportVarsFor,
+  getStyleParam, resetStyleParam, STYLE_PARAMS,
 } from '../../js/theme-manager.js';
 import { paramsForStyle, PARAM_GROUPS, STYLE_LABELS } from '../../js/themes.js';
 
@@ -44,7 +45,21 @@ export default function ThemeParams({
   const base = getBaseOverride(theme.id) || theme.base;
   const finalVars = exportVarsFor(theme);
   const overrides = getVarOverrides(theme.id);
-  const changedCount = Object.keys(overrides).length;
+  /*
+   * 「已改」计数必须把三类覆盖都算上，只数 varMap 会严重低估：
+   *   · 基调 / 风格覆盖（存在另一组 key）
+   *   · 风格参数（玻璃透明度 / 磨砂颗粒 / 模糊 / 立体度 / 描边强度）
+   * 只数 varMap 时，用户明明把风格改成了玻璃、透明度也调了，
+   * 这里却显示"已改 0 项" —— 与"全部还原"按钮的语义直接冲突：
+   * 看起来没东西可还原，点了却会清掉一堆。
+   */
+  const styleParamChanged = Object.values(STYLE_PARAMS)
+    .flat()
+    .filter((p: any) => getStyleParam(p.key, theme.id) != null).length;
+  const changedCount = Object.keys(overrides).length
+    + (getBaseOverride(theme.id) ? 1 : 0)
+    + (getStyleOverride(theme.id) ? 1 : 0)
+    + styleParamChanged;
 
   /*
    * 过滤规则只有两条，不要用"主题有没有自带这个变量"去过滤。
@@ -122,9 +137,22 @@ export default function ThemeParams({
                 resetAllVarOverrides(theme.id);
                 setBaseOverride(null, theme.id);
                 setStyleOverride(null, theme.id);
+                /*
+                 * 风格参数存在**另一组 key**，resetAllVarOverrides 清不到。
+                 * 漏了它，点完"全部还原"滑块仍停在用户设的值上，
+                 * 而上面的计数已经变 0 —— 用户以为还原干净了，并没有。
+                 *
+                 * 清**所有三种风格**而不只是当前风格：
+                 * 用户可能先调了玻璃的透明度再切回新拟态，
+                 * 那些残留值此刻不生效（styleParams 按风格取），
+                 * 但一切回玻璃就会冒出来，属于"还原了却没完全还原"。
+                 */
+                for (const list of Object.values(STYLE_PARAMS)) {
+                  for (const p of list as any[]) resetStyleParam(p.key, theme.id);
+                }
                 commit();
               }}
-              title="把这套主题的所有自定义项恢复为自带值"
+              title="把这套主题的所有自定义项恢复为自带值（含基调、风格与风格参数）"
             >
               全部还原
             </button>
