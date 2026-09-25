@@ -2253,6 +2253,15 @@ bootIframePlugin(async (ctx) => {
      */
     setVideoThumb: (index, nodeId, dataUrl) =>
       guard('设为封面', () => setVideoThumb(index, nodeId, dataUrl))(),
+    /**
+     * 取一张视频封面（时间轴 1/3 处，黑场则往后试）。
+     *
+     * 暴露出来是因为「附加视频」有**两条路**：画布拖放（index.js 内部）
+     * 与侧栏「附加视频…」按钮（panels.js）。早先只有拖放那条取了封面，
+     * 按钮这条路 push 的 ref 里没有 t —— 于是卡片没有封面，
+     * 用户会以为是渲染坏了。又是「同一件事两条路径、只修了一条」。
+     */
+    videoThumb: (file) => makeVideoThumb(file),
     /** 当前选中节点的节点级样式（由编辑器 nodestyle 事件回传） */
     nodeStyle: () => nodeStyleCache,
     /** 修改设置项（自动快照间隔 / 布局动画），改完立即持久化并生效 */

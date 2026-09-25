@@ -4498,17 +4498,31 @@ group('拖放：编辑器侧（真实源码）');
       JSON.stringify([null]),                 // ← 含空元素：曾被留下
       JSON.stringify([{ n: 'a' }, null]),
       JSON.stringify([JSON.stringify({ n: 'b' })]),  // ← 元素是 JSON 串
+      // 真数组（导入的 JSON 里 file/video 也可能就是数组），不总是字符串
+      [{ n: 'a' }, { n: 'b' }],
+      [{ n: 'a' }, null],
+      [],
+      [JSON.stringify({ n: 'b' })],
+      { n: 'single' },
     ];
     let same = true;
     for (const c of cases) {
       const mine = fn.refListOf(c).map((x) => (x && x.n) || '');
       const theirs = io.decodeRefList(c).map((x) => (x && x.n) || '');
-      if (mine.join('|') !== theirs.join('|')) {
+      /*
+       * 必须**连长度一起比**。
+       *
+       * 只比 `map(x => x.n).join('|')` 是假阴性：`[]` 与 `[{}]` 拼出来都是 ''，
+       * 于是「一边返回空列表、另一边返回一个无名条目」照样判为一致。
+       * 实测：输入 123 时编辑器返回 []、io 返回 [{}]（decodeRef 的纯路径兜底），
+       * 拼串相等 → 这条断言**从没在把关**。
+       */
+      if (mine.length !== theirs.length || mine.join('|') !== theirs.join('|')) {
         same = false;
         console.log('      不一致:', JSON.stringify(c), mine, theirs);
       }
     }
-    ok(same, '编辑器 refListOf 与 io.decodeRefList 结果**逐例一致**（含空数组/空元素/纯路径）');
+    ok(same, '编辑器 refListOf 与 io.decodeRefList 结果**逐例一致**（含空数组/空元素/纯路径/真数组）');
 
     // '[]' 必须真的是空列表 —— 非空就意味着画布上多一行幽灵附件
     {
@@ -8574,6 +8588,46 @@ group('getSelectedImages 必须支持真数组（否则画布画得出、侧栏�
     // 空数组要照实返回 []，写 a && a.length 会让 '[]' 掉下去
     ok(/if \(Array\.isArray\(a\)\) return a\.filter\(Boolean\);/.test(seg),
       '空数组照实返回 []（不写 a && a.length）');
+  }
+}
+
+group('两条「附加视频」路径都必须生成封面（不能只修拖放那一条）');
+
+{
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const pan = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+
+  // 拖放那条路（index.js handleDropFiles）早就存了 ref.t
+  ok(/const t = await makeVideoThumb\(f\);/.test(idx)
+    && /if \(t\) ref\.t = t;/.test(idx), '拖放路径存 ref.t（对照）');
+
+  // 取封面的能力必须暴露给面板层，否则按钮这条路拿不到
+  ok(/videoThumb: \(file\) => makeVideoThumb\(file\)/.test(idx),
+    'api.videoThumb 暴露给面板层');
+
+  /*
+   * 按钮这条路的断言：
+   * ① 真的调了 api.videoThumb（只对 video）
+   * ② 封面写进 ref.t
+   * ③ **在 focusNode() 之前**取 —— 之后还有 await 的话，
+   *    期间用户点了别处，写回就挂到新节点上了（数据错乱级）
+   */
+  {
+    const i = pan.indexOf('const attach = async (kind) => {');
+    ok(i > 0, '有 attach()');
+    const seg = pan.slice(i, i + 2000);
+    ok(/app\.api\.videoThumb\?\.\(f\)/.test(seg), '① 按钮路径也取封面');
+    ok(/if \(thumb\) ref\.t = thumb;/.test(seg), '② 封面写进 ref.t');
+    ok(/Promise\.all\(/.test(seg), '存资产与取封面并发（不串行拖慢）');
+    /*
+     * 必须**先剥注释**再找 focusNode()。
+     * 注释里就写着"都排在 focusNode() 之前"，直接 indexOf 会命中注释，
+     * 于是顺序真的反了也照样绿 —— 假阴性（本项目已多次踩到）。
+     */
+    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const fi = code.indexOf('focusNode()');
+    ok(fi > 0 && code.indexOf('videoThumb') < fi,
+      '③ 取封面排在 focusNode() 之前');
   }
 }
 

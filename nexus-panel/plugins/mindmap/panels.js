@@ -1096,12 +1096,27 @@ export function buildSide(app, opts = {}) {
         app.api.status(`「${f.name}」${io.formatSize(f.size)} 超过附件上限 ${io.formatSize(io.ASSET_MAX)}`, true);
         return;
       }
-      const id = await io.putAsset(f);
+      /*
+       * 存资产与取封面**并发**做，且都排在 focusNode() **之前**。
+       *
+       * 顺序不能反：focusNode() 之后如果还有 await，期间用户点了别处，
+       * 写回就会挂到新的选中节点上 —— 正是上方注释警告的那类数据错乱。
+       *
+       * 封面必须在这里取：拖放那条路（index.js handleDropFiles）早就存了
+       * ref.t，唯独按钮这条路没有 —— 于是「拖进来的视频有封面、
+       * 点按钮附加的没有」，看着像渲染坏了。
+       */
+      const [id, thumb] = await Promise.all([
+        io.putAsset(f),
+        kind === 'video' ? Promise.resolve(app.api.videoThumb?.(f) || null) : Promise.resolve(null),
+      ]);
       if (!id) { app.api.status('附件保存失败', true); return; }
       // 写回前切回：putAsset 和 pickFile 都是异步的，期间选中可能已丢
       if (!focusNode()) { app.api.status('请先选中一个节点再附加', true); return; }
       const list = io.decodeRefList(rawOf(kind));
-      list.push({ n: f.name, a: id, s: f.size });
+      const ref = { n: f.name, a: id, s: f.size };
+      if (thumb) ref.t = thumb;
+      list.push(ref);
       setList(kind, list);
       app.api.commit();
       refresh();
