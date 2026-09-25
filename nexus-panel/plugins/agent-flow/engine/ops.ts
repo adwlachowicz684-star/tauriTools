@@ -288,28 +288,27 @@ export function briefArg(v: unknown, max = 16): string {
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 
-/**
- * 运算符写法的**唯一**出处。
- *
- * ================= 为什么只能有一份 =================
- *
- * 以前这里有两张表（算术一张、比较一张），而任务窗口里那句
- * 「这个值是这么算出来的」又抄了第三份。
- * 三份手写表，加一个新运算只要漏改一份就对不上：
- * 卡片上写 `＋`、判据里写 `add` —— 同一个东西两种写法，
- * 而且**不报错**，只有把两处并排看才会发现。
- *
- * 现在合并成一份并导出，判据那边直接 import。
- * 有守卫盯着"不许再出现第二张符号表"。
- */
-export const OP_SIGN: Record<string, string> = {
+/** 二元算术在摘要里的写法 */
+const MATH_SIGN: Record<string, string> = {
   add: '＋', sub: '－', mul: '×', div: '÷', mod: 'mod',
+};
+
+/** 比较运算在摘要里的写法 */
+const COMPARE_SIGN: Record<string, string> = {
   eq: '＝', neq: '≠', gt: '>', gte: '≥', lt: '<', lte: '≤',
 };
 
-/** 取运算符写法；表里没有就返回 undefined（多数运算没有符号，比如「包含」） */
+/**
+ * 运算符在**纯文本**摘要里的符号（`add` → `＋`、`neq` → `≠`）。
+ *
+ * 与 opBriefParts 用的是同一份表 —— 不另写一份：
+ * 卡片上画着 `10 ≠ 5`、运行详情里却写 `10 neq 5`，是同一件事两种说法。
+ *
+ * 查不到返回 undefined，由调用方决定退回 op 本身
+ * （min / round 这类本来就是函数名写法，没有符号）。
+ */
 export function opSignOf(op: string): string | undefined {
-  return OP_SIGN[op];
+  return MATH_SIGN[op] ?? COMPARE_SIGN[op];
 }
 
 /**
@@ -356,40 +355,31 @@ export type BriefPart = {
   /**
    * 在卡片上**就地改**：改哪个字段、怎么改。
    *
-   * kind='text' 点一下变输入框；kind='select' 点一下弹下拉。
-   * 选项不写在这里 —— 从节点定义的 fields 里取（见 ArgCell），
-   * 两处各写一份列表的话，改一处就会让卡片与面板给出不同的选项。
-   */
-  /**
-   * kind:
-   *   · 'text'   单行 —— 点一下变 input，回车生效
-   *   · 'area'   多行（提示词这类长文本） —— 点一下变 textarea
-   *   · 'select' 只能选的 —— 点一下弹下拉
+   * kind='text' 点一下变输入框；kind='select' 点一下弹下拉；
+   * kind='area' 是**多行**文本（提示词这类），在卡片上占一整块。
    *
-   * 'text' 与 'area' 必须分开：多行的那几种（提示词、脚本内容）
-   * 用单行 input 会把整段挤成一行，且**按回车就提交**，
-   * 于是想换行的人一按回车就退出编辑，内容还被原样存下去了 ——
-   * 不报错，只是那段文本永远只有第一行。
+   * 选项一般不写在这里 —— 从节点定义的 fields 里取（见 ArgCell），
+   * 两处各写一份列表的话，改一处就会让卡片与面板给出不同的选项。
+   * 只有"选项不来自节点 fields"时才用下面的 options 直接给
+   * （触发方式就是这样：它的选项来自 TRIGGER_META，不是节点字段）。
    */
   edit?: {
-    /** 字段名 —— 下拉选项按它从节点定义里取，也是默认的写入目标 */
     key: string;
-    kind: 'text' | 'area' | 'select';
-    /**
-     * 写入路径，给 `entries.0.config.intervalSec` 这类嵌套字段用。
-     * 省略时就是 key 本身。
+    kind: 'text' | 'select' | 'area';
+    /*
+     * 实际**写入**的位置（点分路径，如 `entries.0.kind`）。
      *
-     * 不写这个的话，卡片只能改顶层字段 —— 而触发器的每个条件卡
-     * 都在数组里，于是"点得动、改不动"。
+     * 不填就等于 key。必须能分开，是因为 key 还有另一个用途：
+     * 它是参数连线的端口 id（argHandleId）。触发器那种"节点下面挂
+     * 多张卡"的结构里，端口叫 kind、但值要写进 entries[i].kind，
+     * 两者不是同一个东西。
+     *
+     * **不写 path 的后果**：ArgCell 会拿 key 直接 patch 顶层 ——
+     * 而 `kind` 在 TriggerNodeData 上是**节点种类**（恒为 'trigger'），
+     * 一改它，整张卡就不再是触发器，画布上直接消失。
      */
     path?: string;
-    /**
-     * 直接给出选项，用于**节点定义里没有对应 field** 的那些。
-     *
-     * 触发器条件卡的「方式」就是：`entries` 是数组，没法在 fields 里
-     * 声明一条 `kind`。不给选项的话 selectOptionsOf 查不到，
-     * 下拉展开是空的 —— 格子看着能点，点开却没东西可选。
-     */
+    /** 直接给定选项；不填则按 key 从节点 fields 反查 */
     options?: { value: string; label: string }[];
   };
 };
@@ -463,7 +453,7 @@ export function opBriefParts(kind: string, d: Record<string, unknown>): BriefPar
   ];
 
   if (kind === 'math') {
-    const sign = opSignOf(op);
+    const sign = MATH_SIGN[op];
     if (sign) return [V('a'), OP(sign), V('b')];
     // min / max 是函数名写法，写成 `min(1, 2)` 比 `1 min 2` 好认
     if (op === 'min' || op === 'max') return call(op, 'a', 'b');
@@ -488,19 +478,8 @@ export function opBriefParts(kind: string, d: Record<string, unknown>): BriefPar
           V('b'), { role: 'text', text: '~' },
           V('c'), { role: 'text', text: ']' },
         ];
-      /*
-       * 分段要把**分隔符**也画出来。
-       *
-       * 以前只画了 a 和 c，"按什么分"这一格在卡片上完全看不见 ——
-       * 而它恰恰是这一格最该确认的东西（逗号还是空格，结果完全不同）。
-       * 顺带也和规则表对上了（三个参数都列）。
-       */
       case 'split':
-        return [
-          V('a'), { role: 'text', text: ' 按 ' },
-          V('b'), { role: 'text', text: ' 分，第 ' },
-          V('c'), { role: 'text', text: ' 段' },
-        ];
+        return [V('a'), { role: 'text', text: ' 第 ' }, V('c'), { role: 'text', text: ' 段' }];
       case 'join':
         return [
           { role: 'text', text: '连接 ' }, V('a'),
@@ -513,7 +492,7 @@ export function opBriefParts(kind: string, d: Record<string, unknown>): BriefPar
   }
 
   if (kind === 'compare') {
-    const sign = opSignOf(op);
+    const sign = COMPARE_SIGN[op];
     if (sign) return [V('a'), OP(sign), V('b')];
     /*
      * 「包含 / 开头 / 结尾」也是运算符，只是写成中文字。
