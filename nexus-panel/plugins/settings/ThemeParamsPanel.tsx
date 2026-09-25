@@ -184,15 +184,20 @@ export default function ThemeParams({
                  实际生效值由 CSS 兜底（neumorphism.css 的 :root）。 */
               const undef = own === '' && overrides[p.key] == null;
               const changed = overrides[p.key] != null && overrides[p.key] !== own;
-              /* 用模板串而不是字符串拼接：静态扫描只认模板串里的
-                 字面量片段，写成 'tp-row' + (x ? ' changed' : '')
-                 会把 changed 判成"CSS 定义了却没人用"。 */
               return (
+                {/* 用模板串而不是字符串拼接：静态扫描只认模板串里的
+                    字面量片段，写成 'tp-row' + (x ? ' changed' : '')
+                    会把 changed 判成"CSS 定义了却没人用"。 */}
                 <div key={p.key} className={`tp-row${changed ? ' changed' : ''}`}>
                   <div className="tp-row-main">
                     <div className="tp-row-label">
                       {p.label}
-                      {changed ? <span className="tp-dot" title="已改（点右侧还原可退回主题自带值）" /> : null}
+                      {changed ? (
+                        <span
+                          className="tp-dot"
+                          title={own ? '已改（点右侧「还原」退回主题自带值）' : '已改（点右侧「清除」回到未定义状态）'}
+                        />
+                      ) : null}
                       {undef ? <span className="p-muted tp-undef" title="这套主题没有定义该变量，当前值来自 CSS 默认值">未定义</span> : null}
                     </div>
                     <div className="p-mono tp-row-key">{p.key}</div>
@@ -232,12 +237,19 @@ export default function ThemeParams({
                       />
                     )}
                     {changed ? (
+                      /*
+                       * 主题自带该变量时用「还原」，不自带时用「清除」 ——
+                       * 后者清掉的是用户凭空加上的值，回到"主题未定义"状态
+                       * （由 CSS 兜底）。说"还原"会让用户以为有个原值在等着。
+                       */
                       <button
                         className="p-btn sm"
-                        title={`还原为「${theme.name}」自带值：${own}`}
+                        title={own
+                          ? `还原为「${theme.name}」自带值：${own}`
+                          : `清除：该主题本就没定义 ${p.key}，清掉后回到 CSS 默认值`}
                         onClick={() => { resetVarOverride(p.key, theme.id); commit(); }}
                       >
-                        还原
+                        {own ? '还原' : '清除'}
                       </button>
                     ) : null}
                   </div>

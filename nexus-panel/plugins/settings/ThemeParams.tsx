@@ -85,11 +85,17 @@ export default function ColorField({
           onChange={(e) => onChange(e.target.value)}
           spellCheck={false}
         />
-        {original && original !== value ? (
-          <button className="p-btn sm" title={`还原为 ${original}`} onClick={() => onChange(original)}>
-            还原
-          </button>
-        ) : null}
+        {/*
+          这里**不再**自带「还原」按钮 —— 统一交给 ThemeParamsPanel 的外层。
+          两个理由：
+            · 重复：外层已有一个，颜色项会出现两个还原按钮；
+            · 误导：本处条件是 `original !== value`，而 value 取自
+              exportVarsFor（含派生与风格参数缩放）。用户只是拖了玻璃透明度
+              滑块、压根没碰这一项，value 也会与 original 不同 ——
+              于是「没改过的项也显示还原」，点下去还会把缩放结果写死，
+              之后拖滑块对这一项就失效了。
+          外层的判据才是对的：`overrides[key] != null`（用户显式改过）。
+        */}
       </div>
     );
   }
@@ -126,11 +132,7 @@ export default function ColorField({
           </span>
         </span>
       ) : null}
-      {original && original !== value ? (
-        <button className="p-btn sm" title={`还原为 ${original}`} onClick={() => onChange(original)}>
-          还原
-        </button>
-      ) : null}
+      {/* 同上：还原按钮由外层统一渲染，这里不重复给。 */}
     </div>
   );
 }
