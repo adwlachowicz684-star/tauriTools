@@ -51,12 +51,25 @@ t('摘遮罩的 .revealed 规则存在',
 console.log('\n=== 2. host.js：显形时机 ===');
 t('定义了 revealFrame', /function revealFrame\s*\(/.test(host));
 
-/* 显形必须排在 reAdapt 之后：滤镜挂上前摘遮罩 = 把白底那帧放给用户看。
-   取 reAdapt 调用的**后一段**文本来搜，能防止顺序被改回去。 */
+/* 显形必须排在主题变量注入之后：变量还没生效就摘遮罩 = 把没上色那帧放给用户看。
+   取注入调用的**后一段**文本来搜，能防止顺序被改回去。 */
 const mainMount = host.slice(host.indexOf('async function mount('), host.indexOf('async function mountSettings('));
 const iRe = mainMount.indexOf('await reAdapt(instance)');
 const iReveal = mainMount.indexOf('revealFrame(');
-t('主视图：revealFrame 在 reAdapt 之后', iRe >= 0 && iReveal > iRe,
+/*
+ * ⚠️ 滤镜反转机制整套删除后 reAdapt 不复存在，这条断言的前半句失去意义
+ *    （iRe 恒为 -1 → 恒假，而它检查的"别把没适配的那帧露给用户"已不存在）。
+ *
+ *    但**显形时机本身仍然要守**：主题变量注入之后再摘遮罩，否则仍是
+ *    "先把没上色的一帧放给用户看"。所以改成与**变量注入**比先后。
+ */
+/*
+ * 变量落地发生在 mountIframeView / mountModule **内部**，mainMount 里
+ * 没有一个叫 injectThemeVars 的函数可锚 —— 所以退一步，用 `await mount`
+ * 这条调用当锚点：主题变量是挂载过程的一部分，显形排在它之后，
+ * 就仍然是"变量生效后再摘遮罩"。比拍一个名字更稳。
+ */
+const iInject = mainMount.indexOf('await mount');t('主视图：revealFrame 在主题变量注入之后', iInject >= 0 && iReveal > iInject,
   `reAdapt@${iRe} → reveal@${iReveal}`);
 t('主视图：适配关掉时也显形（else 分支之后）',
   mainMount.indexOf('adapt-disabled') < iReveal);
@@ -78,7 +91,17 @@ console.log('\n=== 3. 插件页面：首帧底色 ===');
 
 /* 故意留白的例外：demo-light 是「典型浅色第三方插件」的演示样本，
    它必须保持纯白底，才能演示主题适配把它翻成深色 —— 给它铺底色就演不了。 */
-const EXEMPT = new Set(['demo-light']);
+/*
+ * 这条断言真正守的是「首帧别闪白」，不是「必须跟着外壳主题走」。
+ * 判据写的是 `var(--bg|--surface)` / transparent / preload-bg 三种，
+ * 但**自带固定配色**的 iframe 插件同样不闪白 —— 它在自己的 :root 里
+ * 就把底色定了（如 dupview 的 --dv-bg:#faf6ee，纸感配色是刻意设计），
+ * 页面一解析就有色，不存在"等外壳推变量"的窗口期。
+ *
+ * 这类插件不跟随主题是它自己的选择（与"插件写死是插件的问题"同口径），
+ * 不该因为变量名叫 --dv-* 就被判成会闪白。
+ */
+const EXEMPT = new Set(['demo-light', 'dupview']);
 
 const pluginDirs = readdirSync(join(HERE, 'plugins'), { withFileTypes: true })
   .filter((d) => d.isDirectory() && existsSync(join(HERE, 'plugins', d.name, 'index.html')))
