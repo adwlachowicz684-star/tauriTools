@@ -10,13 +10,13 @@
 
 import { effectiveCombo, formatCombo, isHotkeyId } from './hotkeys';
 
-/** 工具栏按钮 → 快捷键 id 的映射。只有真有键位的才登记 */
-export const TOOLBAR_HINT_IDS: Record<string, string> = {
-  备份: 'backupNow',
-  使用说明: 'toggleTips',
-  刷新: 'refresh',
-  清除无效项: 'clearInvalid',
-};
+/*
+ * 不再做「按钮文案 → 键位 id」的映射表。
+ *
+ * 原因：按钮文案会随措辞改（"备份"改"立即备份"），而 id 是键位表的键 ——
+ * 靠文案反查 id 的话，改一次措辞就**静默失去提示**（不报错，只是按钮上
+ * 不再显示键位）。调用方直接传 id（`comboHint('backupNow')`）就没有这层耦合。
+ */
 
 /**
  * 取某个动作当前生效的键位（已应用用户覆盖），用于显示。
@@ -52,21 +52,18 @@ export function shouldShowHint(
 }
 
 /**
- * 按钮文案 + 键位拼成一行时的显示文本。
+ * 工具栏按钮上要显示的键位串（已格式化），拿不到就是空串。
  *
- * 键位放**文字后面**而不是做成角标：按钮本来就不宽，
- * 角标会挤压文字；一行小字更省地方，也更好读。
+ * 这是 App 侧**唯一**的入口：显示与否的判据（开关 / 有 id / 没被取消绑定）
+ * 和格式化都在这里，调用方不该再各写一份 `showHints && isHotkeyId(...)`。
  */
-export function hintText(
-  label: string,
-  actionId: string | undefined,
+export function toolbarHint(
+  actionId: string,
   overrides: Record<string, string> | null | undefined,
   isMac: boolean,
   enabled: boolean,
 ): string {
-  if (!shouldShowHint(enabled, actionId, overrides)) return label;
-  /* 不用 `actionId!` 非空断言：测试要直接吃这份源码，
-     而剥离器会把 `!` 留在表达式里（`x!` 不是它能处理的形态）。 */
-  const id = actionId ?? '';
-  return `${label}  ${comboHintOf(id, overrides, isMac)}`;
+  if (!shouldShowHint(enabled, actionId, overrides)) return '';
+  /* 不用 `actionId!`：测试直接吃这份源码，剥离器处理不了 `x!` 这种形态 */
+  return comboHintOf(actionId ?? '', overrides, isMac);
 }

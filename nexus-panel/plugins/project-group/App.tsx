@@ -11,9 +11,9 @@ import type { FpxStoreReady } from './hooks/useFpx';
 import { useCardHotkeys } from './hooks/useCardHotkeys';
 import { useChainActions } from './hooks/useChainActions';
 import { useLayoutMemory } from './hooks/useLayoutMemory';
-import {
-  effectiveCombo, formatCombo, isHotkeyId, IS_MAC, type HotkeyId,
-} from './utils/hotkeys';
+import { IS_MAC, type HotkeyId } from './utils/hotkeys';
+import { toolbarHint } from './utils/hint';
+import { copyText as copyTextImpl } from './utils/clipboard';
 import { clampLogMax } from './utils/log';
 import { skipDropToTab } from './utils/tabs';
 
@@ -52,6 +52,13 @@ export default function App() {
       try {
         const evs = await s.api.watchPoll();
         for (const ev of evs) {
+          /* #177 overflow 必须先判并 continue：落进下面的 else 会被显示成
+             「受保护目录发生改动：xxx」—— 把"我们漏报了"伪装成"发生了改动"，
+             比不显示更糟：用户会据此以为自己看清了全部改动。 */
+          if (ev.kind === 'overflow') {
+            s.pushLog(`监控事件过多，部分记录已截断（${ev.path} 附近）`, true);
+            continue;
+          }
           const what = ev.kind === 'added' ? '新增' : ev.kind === 'removed' ? '被删除' : '发生改动';
           s.pushLog(`受保护目录${what}：${ev.path}`, ev.kind === 'removed');
         }
@@ -77,6 +84,14 @@ export default function App() {
     s.api.watchStart(boot.config.watchIntervalSecs)
       .then((ok) => {
         setWatchOn(ok);
+        /* `ok` 是 bool（线程真起来了吗），不是抛异常。返回 false 时原来
+           照样记"已恢复"，与 ToolsPanel 那处同一个 bug：配置写着启用、
+           按钮显示"停止监听"，而线程没起来 → 一条告警都没有。
+           说清配置仍是"启用"：下次进入还会重试。 */
+        if (!ok) {
+          s.pushLog('恢复监听失败：线程未能启动（配置仍是"启用"，下次进入会重试）', true);
+          return;
+        }
         s.pushLog('已按上次设置恢复受保护目录监听');
       })
       .catch((e) => s.pushLog(`恢复监听失败：${String(e)}`, true));
@@ -153,10 +168,14 @@ export default function App() {
 
   /* #50 键位从 HOTKEYS 动态取：手抄的话改了键位按钮上还是旧值 */
   const showHints = boot?.config.showShortcuts ?? true;
+  /* #50 键位一律走 utils/hint.ts，不在这里内联第二份 —— 此前正是
+     内联了一份，hint.ts 整份没人 import，改语义必然只改一边。
+     按**动作 id**取（不按按钮文案）：文案改了会静默丢提示。 */
+  const hotkeyOverrides = boot?.config.hotkeys ?? null;
+  /** 已格式化、可直接显示的键位串；没键位（或被取消绑定）返回空串 */
   const comboHint = useCallback(
-    (id: string) => (showHints && isHotkeyId(id)
-      ? effectiveCombo(id, boot?.config.hotkeys ?? null) : ''),
-    [showHints, boot?.config.hotkeys],
+    (id: string) => toolbarHint(id, hotkeyOverrides, IS_MAC, showHints),
+    [showHints, hotkeyOverrides],
   );
 
 
@@ -295,42 +314,14 @@ export default function App() {
   const openPath = (p: string, mode: 'auto' | 'dir' | 'containing' | 'editor' = 'auto') =>
     s.api.openPath(p, mode).catch((e) => s.pushLog(String((e as Error)?.message ?? e), true));
 
-  /**
-   * 复制文本到剪贴板。
-   * 主力走后端（不受 iframe 沙箱权限限制）；后端不可用时退回 Clipboard API，
-   * 再不行用 execCommand 兜底 —— 三档都失败才提示，避免出现"点了没反应"。
+  /*
+   * 复制文本：三档兜底（后端 → Clipboard API → execCommand）。
+   * 整段在 `utils/clipboard.ts`，不在这里 —— App 已顶到结构护栏上限，
+   * 且这段与界面无关，放进来只会挤占行数。
    */
-  const copyText = async (text: string) => {
-    try {
-      if (await s.api.copyText(text)) {
-        ctx.toast('已复制', 'ok');
-        return;
-      }
-      s.pushLog('复制失败：后端未能写入剪贴板', true);
-    } catch {
-      // 后端命令可能不存在（旧版本 Rust 未编译进来），静默降级到浏览器 API
-    }
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-        ctx.toast('已复制', 'ok');
-        return;
-      }
-    } catch { /* 继续兜底 */ }
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      const ok = document.execCommand('copy');
-      document.body.removeChild(ta);
-      ctx.toast(ok ? '已复制' : '复制失败', ok ? 'ok' : 'err');
-    } catch {
-      ctx.toast('复制失败', 'err');
-    }
-  };
+  const copyText = useCallback((text: string) =>
+    copyTextImpl({ api: s.api, toast: ctx.toast, log: s.pushLog }, text),
+  [s.api, s.pushLog, ctx.toast]);
 
   /* ---------------- 卡片右键菜单 ---------------- */
   const menus = (kind: CardKind) => (card: CardInfo): MenuItem[] => {
@@ -467,7 +458,15 @@ export default function App() {
     let cancelled = false;
     s.api.chainActions()
       .then((l) => { if (!cancelled) setChainActions(l); })
-      .catch(() => { if (!cancelled) setChainActions([]); });
+      /* 拉取失败必须说出来：此前 catch 里只 setChainActions([])，
+         把界面清空成"没有任何动作"（侧栏空、快捷键没反应、右键菜单空），
+         全程无提示 —— 用户会以为自己没配过，甚至去重建、覆盖正常数据。
+         清空仍要做（否则停在旧清单上），但要说明"是没拉到"而非"没有"。 */
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setChainActions([]);
+        s.pushLog(`读取连锁动作失败：${errText(e)}（界面已显示为"无动作"，配置本身未改动）`, true);
+      });
     return () => { cancelled = true; };
   }, [bootReady, s.api, chainVersion]);
 
@@ -612,12 +611,16 @@ export default function App() {
     for (const e of r.relinkErrors ?? []) s.pushLog(`链接重建失败：${e}`, true);
   }, [s]);
 
-  /** 内容区条目改名：改完重扫一遍目录 */
-  const doRenameContent = useCallback(async (path: string, name: string) => {
+  /* 内容区条目改名：改完重扫一遍目录。
+     必须把成败返回调用方：此前是 void + 内部静默 return，弹窗那侧只能
+     无条件 return true —— 失败时弹窗照常关闭（像成功了），名字其实没变，
+     而弹窗里那句「改名未成功」从此成了死代码。 */
+  const doRenameContent = useCallback(async (path: string, name: string): Promise<boolean> => {
     const r = await s.run('改名', () => s.api.renameContentItem(path, name));
-    if (!r) return;
+    if (!r) return false;
     s.pushLog(`已改名为「${name}」`);
     await s.scan(s.focusDir);
+    return true;
   }, [s]);
 
   /**
@@ -829,7 +832,7 @@ export default function App() {
               发送到 AI
             </button>
             <button className="p-btn sm" onClick={() => setDialog({ type: 'backup' })}>
-              备份{comboHint('backupNow') && <span className="fpx-key">{formatCombo(comboHint('backupNow'), IS_MAC)}</span>}
+              备份{comboHint('backupNow') && <span className="fpx-key">{comboHint('backupNow')}</span>}
             </button>
             <button
               className="p-btn sm"
@@ -847,17 +850,17 @@ export default function App() {
                 s.refresh();
               }}
             >
-              刷新{comboHint('refresh') && <span className="fpx-key">{formatCombo(comboHint('refresh'), IS_MAC)}</span>}
+              刷新{comboHint('refresh') && <span className="fpx-key">{comboHint('refresh')}</span>}
             </button>
             <button
               className="p-btn sm"
               title="摘掉页签里已不存在的路径（F8）"
               onClick={() => void s.clearInvalid()}
             >
-              清除无效项{comboHint('clearInvalid') && <span className="fpx-key">{formatCombo(comboHint('clearInvalid'), IS_MAC)}</span>}
+              清除无效项{comboHint('clearInvalid') && <span className="fpx-key">{comboHint('clearInvalid')}</span>}
             </button>
             <button className="p-btn sm" onClick={() => setHelp(true)}>
-              使用说明{comboHint('toggleTips') && <span className="fpx-key">{formatCombo(comboHint('toggleTips'), IS_MAC)}</span>}
+              使用说明{comboHint('toggleTips') && <span className="fpx-key">{comboHint('toggleTips')}</span>}
             </button>
             {/* 页签管理（#23）：两栏页签集中一处增删改序。
                 页签条上的 ⋮ 菜单仍在（就地改更顺手），这里给的是"整理"入口 */}
@@ -1189,7 +1192,9 @@ function Column({
    * @param target 绝对路径（direct=true）或名字（direct=false，拿不到路径时兜底）
    * @param direct true = 直接导入，不要再弹对话框
    */
-  onExternalDrop?: (target: string, direct: boolean) => void;
+  /* #360 tabIndex：拖到**页签**上时指定落到哪个页签，卡片区触发时为
+     undefined（落到当前活动页签）。后端早就支持，缺的一直是入口没接上。 */
+  onExternalDrop?: (target: string, direct: boolean, tabIndex?: number) => void;
   /**
    * #14 拖进来的东西**不是文件夹**时告知用户。
    *
@@ -1241,6 +1246,11 @@ function Column({
         onEditingDone={() => setEditingTab(-1)}
         onDropCard={(path, tabIndex) => onMoveToTab(path, tabIndex)}
         onMoveTab={onMoveTab}
+        /* #360 拖文件夹到页签上 → 落到**那个**页签。
+           此前这里没传：TabBar 的 onDrop 里根本没有外部分支，
+           拖到页签上直接回弹、界面毫无变化。 */
+        onExternalDrop={onExternalDrop}
+        onExternalNotice={onExternalNotice}
       />
 
       <CardGrid

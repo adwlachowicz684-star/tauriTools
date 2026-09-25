@@ -228,16 +228,6 @@ export function makeApi(ctx: PluginContext) {
 
     mcpStatus: () => call<{ running: boolean }>('fpx_mcp_status'),
 
-    /*
-     * 手动触发一次客户端注册自愈（#42）。
-     *
-     * 启动时会自动跑一次，但用户事后装了新的客户端、或配置文件被改回去，
-     * 没有这个入口就只能重启面板才能再自愈。
-     * 返回人类可读的多行结果（改了哪些文件 / 跳过了哪些），
-     * 失败信息也在里面 —— 所以不抛异常，直接显示给用户。
-     */
-    mcpRegister: () => call<string>('fpx_mcp_register'),
-
     importIcons: (fromDir: string) => call<string[]>('fpx_import_icons', { from_dir: fromDir }),
 
     /** 数据目录里的图标 → data URI（沙箱内无法直接用本地路径显示） */

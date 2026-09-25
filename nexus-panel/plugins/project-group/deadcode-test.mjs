@@ -276,14 +276,78 @@ console.log('\n=== 8. #50 键位提示必须接线到 utils/hint.ts ★ ===');
   const app = fs.readFileSync(path.join(PG, 'App.tsx'), 'utf8');
   t('App.tsx 从 utils/hint 取键位逻辑',
     /from '\.\/utils\/hint'/.test(app));
-  t('三个函数都用上了（不是只 import 一个）',
-    /comboHintOf\(/.test(app) && /shouldShowHint\(/.test(app) && /TOOLBAR_HINT_IDS\[/.test(app));
+  /*
+   * 入口收敛成一个 `toolbarHint`：显示判据（开关 / 有 id / 没被取消绑定）
+   * 与格式化都在 hint.ts 里，App 侧只管传 id。
+   *
+   * 不再检验 TOOLBAR_HINT_IDS（"按钮文案 → id" 的映射表已删）：
+   * 靠文案反查 id，改一次措辞就静默丢提示；直接传 id 没有这层耦合。
+   */
+  t('走唯一的 toolbarHint 入口', /toolbarHint\(/.test(app));
   /* 反面证据：不允许再内联一份 effectiveCombo / isHotkeyId 的拼装 */
   t('App.tsx 不再内联自己的 effectiveCombo 拼装',
     !/effectiveCombo\(/.test(app) && !/isHotkeyId\(/.test(app));
-  /* 按钮文案 → 键位 id 的映射只有一份（在 hint.ts 里） */
-  t('按钮里不再手抄键位 id',
-    !/comboHint\('(backupNow|refresh|clearInvalid|toggleTips)'\)/.test(app));
+  t('hint.ts 里不再有文案→id 映射表', !/TOOLBAR_HINT_IDS/.test(app));
+}
+
+console.log('\n=== 9. import 路径必须指向真实存在的文件 ★ ===');
+/*
+ * 这一节是被一次**改名没改引用**逼出来的：
+ *
+ * `dialogs.tsx` → `dialogCards.tsx` 的改名只改了文件、没改 DialogsHub.tsx
+ * 里的 `from './dialogs'` —— Vite 直接 "Failed to resolve import"，
+ * **整个插件编译不过**。而这类断链：
+ *   · 编辑器里不报（只有 TS 找不到模块才会报）
+ *   · 语法检查不报（括号配对那套不管路径）
+ *   · 死文件扫描也不报（它查的是"有没有人 import"，不是"import 指向谁"）
+ *
+ * 而且 Windows 上更隐蔽：`./Dialogs` 与 `./dialogs` 指向同一份文件，
+ * 本地跑得好好的，推到 CI（Linux）才炸 —— 反过来同样成立。
+ */
+{
+  const files = [];
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(ts|tsx)$/.test(e.name)) files.push(p);
+    }
+  };
+  walk(PG);
+  t('扫描到了源码文件（判据非空）', files.length > 30, `${files.length} 个`);
+
+  /*
+   * 用 `existsSync` 判，不能用"扫描到的文件集合"判：
+   * 插件里有一半 import 指向插件**之外**（`../../js/plugin-sdk.js`、
+   * `../../src/nexus-react`、`../../color-picker/...`），
+   * 用集合判会把它们全报成"不存在" —— 而它们恰恰是最该被验到的。
+   */
+  const bad = [];
+  for (const f of files) {
+    const src = fs.readFileSync(f, 'utf8');
+    for (const m of src.matchAll(/from\s+'(\.[^']+)'/g)) {
+      const spec = m[1];
+      const base = path.resolve(path.dirname(f), spec);
+      const cands = [
+        base, base + '.ts', base + '.tsx', base + '.js', base + '.jsx', base + '.css',
+        path.join(base, 'index.ts'), path.join(base, 'index.tsx'), path.join(base, 'index.js'),
+      ];
+      if (!cands.some((c) => fs.existsSync(c))) bad.push(`${path.relative(PG, f)} → ${spec}`);
+    }
+  }
+  t('没有指向不存在文件的相对 import',
+    bad.length === 0, bad.slice(0, 5).join(' | ') || '无');
+
+  /* 反面：两个文件仅大小写不同 → Windows 上无法共存，且解析会漂 */
+  const byLower = new Map();
+  for (const f of files) {
+    const k = f.toLowerCase();
+    byLower.set(k, (byLower.get(k) || []).concat(path.relative(PG, f)));
+  }
+  const clash = [...byLower.values()].filter((v) => v.length > 1);
+  t('没有仅大小写不同的同名文件（Windows 无法共存）',
+    clash.length === 0, clash.map((v) => v.join(' vs ')).join(' | ') || '无');
 }
 
 done();

@@ -263,8 +263,21 @@ console.log('\n=== #360 拖到页签上 → 落到**那个**页签 ★★ ===');
   /* 五、外层 Column 要把回调接过去（漏了就是"页签上没反应"） */
   t('Column 的 prop 带 tabIndex',
     /onExternalDrop\?: \(target: string, direct: boolean, tabIndex\?: number\) => void;/.test(app));
-  t('TabBar 接到 onExternalDrop',
-    /onMoveTab=\{onMoveTab\}[\s\S]{0,300}onExternalDrop=\{onExternalDrop\}/.test(app));
+  /*
+   * 不能钉"两个 prop 相隔 N 字符"：中间夹了 #82 / #287 两处说明注释后
+   * 距离就超了，断言误报 —— 而真正要钉的是"TabBar 的 JSX 里传了这个 prop"。
+   * 改成先切出 `<TabBar ... />` 那一段再判。
+   */
+  {
+    const iTab = app.indexOf('<TabBar');
+    const iEnd = app.indexOf('/>', iTab);
+    /* 两端都判存在：indexOf 找不到返回 -1，`-1 > iTab` 恒假会让
+       tabJsx 变空 → 断言假失败（不是空跑，但也指向不明）。 */
+    const tabJsx = iTab >= 0 && iEnd >= 0 && iEnd > iTab ? app.slice(iTab, iEnd) : '';
+    t('TabBar 接到 onExternalDrop',
+      iTab >= 0 && /onExternalDrop=\{onExternalDrop\}/.test(tabJsx),
+      `iTab=${iTab}`);
+  }
 
   /* 六、高亮类要有基础定义，且与内部移动高亮区分 */
   t('页签有 external 高亮类', /fpx-tab\.external/.test(css));

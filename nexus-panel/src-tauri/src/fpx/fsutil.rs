@@ -362,14 +362,48 @@ fn try_lock(path: &Path, token: &str) -> std::io::Result<Option<fs::File>> {
     {
         Ok(mut f) => {
             use std::io::Write;
-            let _ = writeln!(f, "token={token}");
+            /*
+             * 写 token 失败**不能**用 `let _ =` 吞掉，也不能就此返回"拿到锁"。
+             *
+             * token 是释放时认领这把锁的唯一凭据（见 `FileLockGuard::drop`）。
+             * 写不进去的话锁文件是**空的**，于是：
+             *   1. 本次调用照样返回 Ok(Some) —— 调用方以为拿到锁，照常写数据；
+             *   2. drop 时 read_owner_token 读到 None → 判定"不是我的锁"
+             *      → **不删**；
+             *   3. 锁文件留在那儿，mtime 是刚写的 → 后续每个实例都判为
+             *      "未过期" → 一路等到 LOCK_WAIT_MS 超时，报
+             *      「另一个实例可能正在写入」。
+             *
+             * 于是从这一刻起，之后每一次保存都会挂满等待上限再失败，
+             * 而报错指向"是不是还有个实例没关"——完全指向错了地方。
+             * 真相只是这一次 writeln! 失败（磁盘满 / 权限），而它被吞了。
+             *
+             * 拿一把"永远不会被释放"的锁，比直接告诉调用方拿不到更糟：
+             * 后者至少报错准确。所以写失败要**删掉刚建的文件**并返回 Err。
+             */
+            if let Err(e) = writeln!(f, "token={token}") {
+                let _ = fs::remove_file(path);
+                return Err(e);
+            }
+            /*
+             * pid / 时间只是给人看的诊断信息，写失败不影响互斥
+             * （判定一律看 mtime），所以这里可以吞。
+             */
             let _ = writeln!(
                 f,
                 "pid={} at={:?}",
                 std::process::id(),
                 std::time::SystemTime::now()
             );
-            let _ = f.flush();
+            /*
+             * flush 同样不能吞：token 必须真的落到盘上。
+             * 只在页缓存里、而进程随后崩溃的话，drop 读回来的就是空文件，
+             * 后果与上面写失败完全一样（锁永不释放）。
+             */
+            if let Err(e) = f.flush() {
+                let _ = fs::remove_file(path);
+                return Err(e);
+            }
             Ok(Some(f))
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),

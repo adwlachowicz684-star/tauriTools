@@ -73,8 +73,13 @@ console.log('\n=== 3. HotkeyId 收窄（3 处：App + hint×2）===');
    * 由 App.tsx 调用。钉"App 里写 showHints && isHotkeyId"会在接线后误报；
    * 真正要钉的是**判定逻辑只有一份**（收窄函数定义在 hotkeys.ts）。
    */
-  t('App 走 hint.ts 的 shouldShowHint（不内联守卫）',
-    /shouldShowHint\(/.test(app) && !/isHotkeyId\(/.test(app));
+  /*
+   * 入口已收敛成 `toolbarHint`（显示判据 + 格式化都在 hint.ts）。
+   * 钉"App 调用了它、且不内联 isHotkeyId/effectiveCombo"——
+   * 钉具体哪个内部函数会在重构时误报（shouldShowHint 现在是内部实现）。
+   */
+  t('App 走 hint.ts 的 toolbarHint（不内联守卫）',
+    /toolbarHint\(/.test(app) && !/isHotkeyId\(/.test(app) && !/effectiveCombo\(/.test(app));
   t('hint 的 comboHintOf 用了', /isHotkeyId\(actionId\) \? effectiveCombo/.test(hint));
   t('hint 的 shouldShowHint 用了', /isHotkeyId\(actionId\) \? !!effectiveCombo/.test(hint));
   /* 不许用 as 断言抹平 */

@@ -20,7 +20,7 @@ const { t, done } = makeT();
 const HK = await loadTs(path.join(HERE, 'utils/hotkeys.ts'));
 const H = await loadTs(path.join(HERE, 'utils/hint.ts'));
 const { effectiveCombo, formatCombo, HOTKEYS } = HK;
-const { comboHintOf, shouldShowHint, hintText, TOOLBAR_HINT_IDS } = H;
+const { comboHintOf, shouldShowHint, toolbarHint } = H;
 
 console.log('\n=== 1. 键位一律动态取（不手抄）===');
 {
@@ -46,20 +46,21 @@ console.log('\n=== 2. 取消绑定后不显示（核心）===');
     JSON.stringify(comboHintOf('backupNow', { backupNow: '' }, false)));
   t('取消绑定后 shouldShowHint 为假',
     shouldShowHint(true, 'backupNow', { backupNow: '' }) === false);
-  t('取消绑定后按钮文案不带任何键位',
-    hintText('备份', 'backupNow', { backupNow: '' }, false, true) === '备份',
-    hintText('备份', 'backupNow', { backupNow: '' }, false, true));
+  t('取消绑定后按钮上没有任何键位',
+    toolbarHint('backupNow', { backupNow: '' }, false, true) === '',
+    JSON.stringify(toolbarHint('backupNow', { backupNow: '' }, false, true)));
   /* 反面：没取消绑定时，同一个函数要能带上键位 */
-  t('正常时按钮文案带键位',
-    hintText('备份', 'backupNow', null, false, true) === '备份  F7',
-    hintText('备份', 'backupNow', null, false, true));
+  t('正常时按钮上带键位',
+    toolbarHint('backupNow', null, false, true) === 'F7',
+    toolbarHint('backupNow', null, false, true));
 }
 
 console.log('\n=== 3. 开关（#50 的设置项）===');
 {
   t('开关关闭 → 不显示', shouldShowHint(false, 'backupNow', null) === false);
-  t('开关关闭 → 文案不带键位',
-    hintText('备份', 'backupNow', null, false, false) === '备份');
+  t('开关关闭 → 按钮上不带键位',
+    toolbarHint('backupNow', null, false, false) === '',
+    JSON.stringify(toolbarHint('backupNow', null, false, false)));
   t('开关开启 → 显示', shouldShowHint(true, 'backupNow', null) === true);
   t('未映射的动作（无 actionId）→ 不显示',
     shouldShowHint(true, undefined, null) === false);
@@ -67,15 +68,20 @@ console.log('\n=== 3. 开关（#50 的设置项）===');
     shouldShowHint(true, 'nope', null) === false);
 }
 
-console.log('\n=== 4. 映射表里的 id 都真实存在 ===');
+console.log('\n=== 4. 界面上用到的键位 id 都真实存在 ===');
 {
+  /*
+   * 原来是"hint.ts 里的映射表"，现在调用方直接传 id（不再有映射表）：
+   * 改文案不会静默丢提示了，但**拼错 id** 同样静默丢提示 ——
+   * 所以直接从 App.tsx 里把 comboHint('xxx') 抠出来逐个验真。
+   */
+  const app = fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8');
   const ids = new Set(HOTKEYS.map((h) => h.id));
-  const bad = Object.entries(TOOLBAR_HINT_IDS)
-    .filter(([, id]) => !ids.has(id));
-  t('映射表的每个 id 都在 HOTKEYS 里',
-    bad.length === 0, bad.map(([k, v]) => `${k}→${v}`).join(',') || '无');
-  t('映射表非空', Object.keys(TOOLBAR_HINT_IDS).length > 0,
-    `${Object.keys(TOOLBAR_HINT_IDS).length} 项`);
+  const used = [...app.matchAll(/comboHint\('([^']+)'\)/g)].map((m) => m[1]);
+  const bad = used.filter((id) => !ids.has(id));
+  t('抠到了界面上用到的 id（判据非空）', used.length >= 4, `${used.length} 个`);
+  t('每个 id 都在 HOTKEYS 里',
+    bad.length === 0, bad.join(',') || '无');
 }
 
 console.log('\n=== 5. 界面接线 ===');
@@ -93,6 +99,9 @@ console.log('\n=== 5. 界面接线 ===');
    */
   t('键位值走 comboHint（动态）而非写死',
     /<span className="fpx-key">\{comboHint\(/.test(app));
+  /* 显示与否的判据在 utils/hint.ts，App 不内联第二份 */
+  t('App 不内联 effectiveCombo / isHotkeyId',
+    !/effectiveCombo\(/.test(app) && !/isHotkeyId\(/.test(app));
   t('按钮里没有硬编码的键位文字',
     !/>备份 F7</.test(app) && !/备份\s*F7\s*</.test(app));
   /* 关键：取消绑定时 span 整体不渲染，而不是渲染成默认键 */

@@ -131,7 +131,13 @@ console.log('\n=== 5. chainActions 拉取失败必须说出来 ★ ===');
   /* 但必须说明"配置没动"，否则用户会以为配置丢了 */
   t('提示里说明配置本身未改动', /配置本身未改动/.test(APP));
   /* pushLog 进了依赖数组：useCallback 稳定成员，不加会 lint 报警 */
-  t('依赖里带了 s.pushLog', /\[bootReady, s\.api, s\.pushLog, chainVersion\]/.test(APPCODE));
+  /*
+   * 依赖数组里要有 pushLog：它是 useCallback 的稳定成员，
+   * 不加会 lint 报警 —— 而 lint 报警在 CI 里常被忽略，
+   * 于是"复制失败的原因"这条日志可能被无声地砍掉。
+   * 只钉"包含 s.pushLog"，不钉整个数组（顺序/成员会随重构变）。
+   */
+  t('依赖里带了 s.pushLog', /useCallback\([\s\S]{0,400}\[[^\]]*s\.pushLog[^\]]*\]/.test(APPCODE));
 }
 
 done();
