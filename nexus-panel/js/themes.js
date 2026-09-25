@@ -164,6 +164,112 @@ export const STYLE_PARAMS = {
   ],
 };
 
+/* ==================================================================
+   主题参数总表（THEME_PARAM_SPEC）
+   ------------------------------------------------------------------
+   目标：**主题的所有变量都能被用户改到**。
+   用户应该能从零调出任意一套内置主题，或把内置主题 A 调到 B ——
+   所以只要主题数据里写过的变量，这里就得有一项；反过来，
+   这里每一项都必须是主题数据里真实存在的变量（有断言守着）。
+
+   为什么要有这张表，而不是让 UI 直接遍历 THEME_VARS：
+     THEME_VARS 只回答"有哪些名字"，回答不了"该怎么改" ——
+       它是颜色还是长度？能调的区间是多少？只对哪种风格有意义？
+     没有这张表，UI 就只能给每个变量都塞一个文本框，
+     用户面对 30 个裸变量名无从下手（谁也不知道 --sh-light 是干什么的）。
+
+   刻意**不含**派生量（--divider / --edge / --hairline / --mask /
+   --scroll-thumb / --badge-fg / --accent-glow）：
+     它们由 theme-manager 从底色算出，作用是"任何情况下都保证可见"。
+     放给用户改，就会出现"把分隔线调成透明，然后整个界面糊成一片"，
+     且用户不会意识到是自己调坏的。要改就改它们的源头（--bg）。
+
+   type 决定控件形式：
+     color  —— 取色器（原值带 alpha 时额外给一条透明度滑块）
+     length —— 数字滑块 + px
+     number —— 数字滑块 + 自定义单位（% 或纯数值）
+     enum   —— 下拉，只能取 options 里的值
+
+   styles 限定"只对哪些风格有意义"（缺省 = 所有风格）：
+     磨砂四层只有玻璃用得上，给新拟态显示一个"颗粒强度"，
+     用户调了没反应，只会以为坏了。
+   ================================================================== */
+
+export const PARAM_GROUPS = [
+  { key: 'base', label: '基底', desc: '界面的底色与各层面板色。改这里影响最大 —— 派生量（分隔线、滚动条）都从 --bg 算' },
+  { key: 'shape', label: '塑形', desc: '双向阴影的暗部与亮部。新拟态靠它撑出立体，扁平风把两者调近即可隐形' },
+  { key: 'text', label: '文本', desc: '文字的四级层次。改完建议确认对比度 —— 正文对底色建议不低于 4.5' },
+  { key: 'main', label: '主色', desc: '强调色与环境色。状态色不在这里，它们语义固定' },
+  { key: 'status', label: '状态色', desc: '成功 / 运行中 / 警告 / 危险。有固定语义，改了会让用户误解提示含义，一般不建议动' },
+  { key: 'style', label: '风格', desc: '描边与模糊。决定这套主题靠什么勾边界' },
+  { key: 'frost', label: '磨砂', desc: '玻璃风格的四层质感：饱和度补偿 / 颗粒 / 混合模式 / 边缘高光' },
+  { key: 'radius', label: '圆角', desc: '四档圆角。扁平风偏硬朗（小值），新拟态偏软（大值）' },
+];
+
+export const THEME_PARAM_SPEC = [
+  /* ---- 基底 ---- */
+  { key: '--bg', label: '底色', group: 'base', type: 'color', desc: '整个界面的最底层颜色。分隔线、滚动条滑块都从它派生' },
+  { key: '--surface', label: '卡片面', group: 'base', type: 'color', desc: '卡片、面板的底色。新拟态下与底色同值（靠阴影区分），扁平/玻璃下略高于底色' },
+  { key: '--surface-sunk', label: '凹陷面', group: 'base', type: 'color', desc: '输入框、凹槽这类"压下去"的面' },
+  { key: '--surface-raised', label: '浮起面', group: 'base', type: 'color', desc: '比卡片更高一档的面（悬停、选中）' },
+  { key: '--surface-overlay', label: '浮层底', group: 'base', type: 'color', desc: '弹窗、吐司、下拉这类盖在别的内容上的容器。必须比卡片面更实 —— 半透明会让底下的文字透上来与浮层里的字叠在一起' },
+  /* bg-image 是渐变串（不是颜色），能填任意 CSS 渐变。
+     外放为文本是刻意的：做成可视化编辑器收益很小，而"贴一段渐变"是
+     很多用户真实会做的事（从别处抄一个好看的）。 */
+  { key: '--bg-image', label: '背景渐变', group: 'base', type: 'text', desc: '填一段 CSS 渐变（如 radial-gradient(...)），留空为纯色底。只影响带背景图的主题' },
+
+  /* ---- 塑形 ---- */
+  { key: '--sh-dark', label: '暗部阴影', group: 'shape', type: 'color', desc: '右下方向的暗影色。新拟态靠它撑出"凸起"的一边' },
+  { key: '--sh-light', label: '亮部高光', group: 'shape', type: 'color', desc: '左上方向的亮边色。与暗部一起构成立体感' },
+
+  /* ---- 文本 ---- */
+  { key: '--text', label: '正文', group: 'text', type: 'color', desc: '主要文字。对比度要求最高' },
+  { key: '--text-soft', label: '次正文', group: 'text', type: 'color', desc: '略弱于正文的次级文字' },
+  { key: '--text-dim', label: '次级', group: 'text', type: 'color', desc: '说明性文字' },
+  { key: '--text-mute', label: '最弱', group: 'text', type: 'color', desc: '占位符、禁用态这类最不重要的文字' },
+
+  /* ---- 主色 ---- */
+  { key: '--accent', label: '强调色', group: 'main', type: 'color', desc: '按钮、选中态、链接的颜色' },
+  { key: '--env-color', label: '环境色', group: 'main', type: 'color', desc: '第二个主色，只作次要点缀。不影响状态色' },
+
+  /* ---- 状态色 ---- */
+  { key: '--ok', label: '成功', group: 'status', type: 'color', desc: '成功提示。语义固定，改了会让用户误解' },
+  { key: '--running', label: '运行中', group: 'status', type: 'color', desc: '进行中的状态指示' },
+  { key: '--warn', label: '警告', group: 'status', type: 'color', desc: '警告提示' },
+  { key: '--danger', label: '危险', group: 'status', type: 'color', desc: '错误与危险操作' },
+
+  /* ---- 风格 ---- */
+  /* transparent 是合法值（新拟态就靠它让位给阴影），
+     所以颜色控件必须能表示"透明" —— 见设置页的 alpha 处理。 */
+  { key: '--border', label: '描边', group: 'style', type: 'color', desc: '元素边界的描边色。新拟态为 transparent（让阴影塑形），扁平/玻璃才着色' },
+  { key: '--blur', label: '模糊半径', group: 'style', type: 'length', min: 0, max: 40, step: 1, unit: 'px', desc: '背景虚化程度。0 为不模糊，只有玻璃风格用得上' },
+
+  /* ---- 磨砂（仅玻璃）---- */
+  { key: '--saturate', label: '饱和度补偿', group: 'frost', type: 'number', min: 100, max: 220, step: 5, unit: '%', styles: ['glass'], desc: '高斯模糊会压低饱和度，这里补回来。低于 100% 会发灰，是"廉价玻璃"和"真玻璃"的分水岭' },
+  { key: '--frost-grain', label: '颗粒强度', group: 'frost', type: 'number', min: 0, max: 0.15, step: 0.005, unit: '', styles: ['glass'], desc: '磨砂的物理颗粒感。0 只是"虚化"不是"磨砂"；超过 0.15 就变成可见噪点' },
+  { key: '--frost-blend', label: '颗粒混合', group: 'frost', type: 'enum', options: ['overlay', 'soft-light'], styles: ['glass'], desc: '颗粒与底色的混合方式。深色用 overlay，浅色用 soft-light（overlay 在浅底上会显脏）' },
+  { key: '--frost-edge', label: '边缘高光', group: 'frost', type: 'color', styles: ['glass'], desc: '玻璃边缘的一圈高光，勾出厚度' },
+
+  /* ---- 圆角 ---- */
+  { key: '--r-xl', label: '特大', group: 'radius', type: 'length', min: 0, max: 32, step: 1, unit: 'px', desc: '最大一档圆角（大卡片、弹窗）' },
+  { key: '--r-lg', label: '大', group: 'radius', type: 'length', min: 0, max: 28, step: 1, unit: 'px', desc: '' },
+  { key: '--r-md', label: '中', group: 'radius', type: 'length', min: 0, max: 24, step: 1, unit: 'px', desc: '' },
+  { key: '--r-sm', label: '小', group: 'radius', type: 'length', min: 0, max: 20, step: 1, unit: 'px', desc: '控件（按钮、输入框）的圆角' },
+];
+
+/** 主题数据里真实出现过、但**不该**给用户改的变量（派生量） */
+export const DERIVED_VARS = [
+  '--accent-glow', '--hairline', '--divider', '--edge',
+  '--mask', '--scroll-thumb', '--badge-fg',
+];
+
+/** 取某风格可用的参数项；styles 未指定表示所有风格通用 */
+export function paramsForStyle(style) {
+  return THEME_PARAM_SPEC.filter(
+    (p) => !p.styles || p.styles.includes(style),
+  );
+}
+
 /** 取某风格的参数列表；未知风格（自定义主题没写 style）返回空数组，设置页就不显示这一节 */
 export function styleParams(style) {
   return STYLE_PARAMS[style] || [];

@@ -11,7 +11,7 @@
  */
 
 import {
-  PRESET_THEMES, THEME_VARS, ACCENT_SWATCHES, ACCENT_SWATCHES_LIGHT,
+  PRESET_THEMES, THEME_VARS, DERIVED_VARS, ACCENT_SWATCHES, ACCENT_SWATCHES_LIGHT,
   DEFAULT_THEME_ID, swatchFor, styleParams, BG_PRESETS, findBgPreset,
 } from './themes.js';
 
@@ -353,7 +353,122 @@ function applyStyleParams(vars, theme) {
   return vars;
 }
 
-function deriveVars(theme) {
+/**
+ * 主题的元数据覆盖：深浅 / 风格。
+ *
+ * 为什么这两个也要能改：
+ *   用户想"把这套深色新拟态改成浅色版"，只改颜色是不够的 ——
+ *   base 决定派生量的方向（分隔线用微白还是微黑）、插件的基调、
+ *   浏览器表单控件的配色。不改 base 的话，界面变浅了但分隔线还是
+ *   浅色、几乎看不见，看着像坏了。
+ */
+function applyMetaOverride(theme) {
+  if (!theme) return theme;
+  let b = null;
+  let st = null;
+  try {
+    b = localStorage.getItem(KEY_BASE_OVR + ':' + theme.id);
+    st = localStorage.getItem(KEY_STYLE_OVR + ':' + theme.id);
+  } catch { /* 存储不可用：用原值 */ }
+  if (!b && !st) return theme;
+  return {
+    ...theme,
+    base: b === 'dark' || b === 'light' ? b : theme.base,
+    style: st || theme.style,
+  };
+}
+
+/** 把用户逐项覆盖的变量叠加进变量表 */
+function applyVarOverrides(vars, theme) {
+  let map = {};
+  try {
+    map = JSON.parse(localStorage.getItem(varMapKey(theme.id)) || '{}');
+  } catch { /* 手改坏了不该让主题整个崩掉 */ }
+  for (const [k, val] of Object.entries(map)) {
+    if (typeof val === 'string' && val !== '') vars[k] = val;
+  }
+}
+
+const varMapKey = (themeId) => `${KEY_VAR}:${themeId || current?.id || getThemeId()}`;
+
+function readVarMap(themeId) {
+  try {
+    const m = JSON.parse(localStorage.getItem(varMapKey(themeId)) || '{}');
+    return m && typeof m === 'object' ? m : {};
+  } catch { return {}; }
+}
+
+function writeVarMap(themeId, map) {
+  try { localStorage.setItem(varMapKey(themeId), JSON.stringify(map)); } catch { /* 忽略 */ }
+}
+
+/** @returns {string|null} 该变量在此主题下的用户覆盖值，未覆盖为 null */
+export function getVarOverride(name, themeId) {
+  const v = readVarMap(themeId)[name];
+  return typeof v === 'string' && v !== '' ? v : null;
+}
+
+/** 全部覆盖（name → value），供设置页判断"哪些项被改过" */
+export function getVarOverrides(themeId) {
+  return readVarMap(themeId);
+}
+
+export function setVarOverride(name, value, themeId) {
+  const m = readVarMap(themeId);
+  if (value == null || value === '') delete m[name];
+  else m[name] = String(value);
+  writeVarMap(themeId, m);
+  return m;
+}
+
+export function resetVarOverride(name, themeId) {
+  const m = readVarMap(themeId);
+  delete m[name];
+  writeVarMap(themeId, m);
+}
+
+/** 清空该主题下的所有变量覆盖 */
+export function resetAllVarOverrides(themeId) {
+  writeVarMap(themeId, {});
+}
+
+/* ---- 元数据覆盖的读写 ---- */
+export function getBaseOverride(themeId) {
+  const id = themeId || current?.id || getThemeId();
+  try {
+    const v = localStorage.getItem(KEY_BASE_OVR + ':' + id);
+    return v === 'dark' || v === 'light' ? v : null;
+  } catch { return null; }
+}
+
+export function setBaseOverride(base, themeId) {
+  const id = themeId || current?.id || getThemeId();
+  try {
+    if (!base) localStorage.removeItem(KEY_BASE_OVR + ':' + id);
+    else localStorage.setItem(KEY_BASE_OVR + ':' + id, base);
+  } catch { /* 忽略 */ }
+}
+
+export function getStyleOverride(themeId) {
+  const id = themeId || current?.id || getThemeId();
+  try { return localStorage.getItem(KEY_STYLE_OVR + ':' + id); } catch { return null; }
+}
+
+export function setStyleOverride(style, themeId) {
+  const id = themeId || current?.id || getThemeId();
+  try {
+    if (!style) localStorage.removeItem(KEY_STYLE_OVR + ':' + id);
+    else localStorage.setItem(KEY_STYLE_OVR + ':' + id, style);
+  } catch { /* 忽略 */ }
+}
+
+function deriveVars(rawTheme) {
+  /*
+   * 先叠元数据覆盖（深浅 / 风格），再算变量 ——
+   * 否则用户把深色主题改成浅色后，--divider 仍按深色取微白，
+   * 结果是"界面变浅了但分隔线消失了"。
+   */
+  const theme = applyMetaOverride(rawTheme);
   const v = { ...theme.vars };
   const dark = theme.base === 'dark';
 
@@ -369,6 +484,17 @@ function deriveVars(theme) {
      派生量（--divider / --edge / --scroll-thumb 等）是"保证可见"的兜底，
      随用户滑块一起变淡就会失去兜底作用。 */
   applyStyleParams(v, theme);
+
+  /* 用户逐项覆盖。
+     ------------------------------------------------------------------
+     位置刻意在**风格参数之后、派生量之前**：
+       · 之后 —— 用户显式填的值优先于滑块缩放的结果。
+         否则"手动把 --surface 调实"会被玻璃透明度滑块再乘一遍，
+         用户改了没效果，只会以为控件坏了。
+       · 之前 —— 派生量（--divider / --hairline / --scroll-thumb）
+         从 --bg 算出，用户改了底色后它们要跟着一起变，
+         放在派生之后就会停留在旧底色的取值上。 */
+  applyVarOverrides(v, theme);
 
   // 强调色辉光
   v['--accent-glow'] = rgba(v['--accent'], dark ? 0.32 : 0.22);
@@ -581,6 +707,19 @@ const clampLight = (n) => (isNaN(n) ? 0 : Math.max(-50, Math.min(50, n)));
  * 串到别的主题上必然不合适。
  */
 const KEY_STYLE = 'nexus:style-param';
+/*
+ * 主题变量的用户覆盖。
+ * ------------------------------------------------------------------
+ * 存法与 styleKey / shiftKey 完全一致：**按主题 id 分档**。
+ * 在 A 主题把底色改成蓝色，不该让 B 主题也变蓝 —— 每套主题是独立的设计，
+ * 串了就等于"调一个坏一堆"，用户再也不敢动这些滑块。
+ */
+const KEY_VAR = 'nexus:theme-var';
+/* 元数据覆盖（base 深浅 / style 风格）。
+   这两个不是 CSS 变量，而是主题的"身份"，单独存。
+   注意不能复用 KEY_STYLE —— 那个是风格参数的键前缀。 */
+const KEY_BASE_OVR = 'nexus:theme-base-ovr';
+const KEY_STYLE_OVR = 'nexus:theme-style-ovr';
 const styleKey = (paramKey, themeId) =>
   `${KEY_STYLE}:${paramKey}:${themeId || current?.id || getThemeId()}`;
 
@@ -826,7 +965,11 @@ function adaptSwatchToBase(color, base) {
   return idx >= 0 ? cur[idx][0] : color;
 }
 
-function applyTo(theme, accent, envColor) {
+function applyTo(rawTheme, accent, envColor) {
+  /* 统一在这里叠元数据覆盖：本函数后面还要用 theme.base 决定
+     colorScheme、data-theme-base、首屏防闪的 preload-base ——
+     用未覆盖的 theme 会让"改成浅色"之后滚动条与表单控件仍是深色的。 */
+  const theme = applyMetaOverride(rawTheme);
   const vars = deriveVars(theme);
   if (accent) {
     vars['--accent'] = accent;
@@ -1080,7 +1223,13 @@ export function resetColors() {
 
 /** 把当前主题 + 强调色另存为自定义主题 */
 export function saveAsCustom(name) {
-  const theme = current || findTheme(getThemeId());
+  const raw = current || findTheme(getThemeId());
+  /*
+   * 固化元数据覆盖：用户把深色主题改成浅色后保存，新主题必须记成浅色 ——
+   * 否则副本一加载就退回深色，白调一场（覆盖是按**原主题 id** 存的，
+   * 副本 id 不同，那层覆盖根本读不到）。
+   */
+  const theme = applyMetaOverride(raw);
   const vars = deriveVars(theme);
   const accent = getAccent();
   if (accent) {
@@ -1096,7 +1245,13 @@ export function saveAsCustom(name) {
     base: theme.base,
     style: theme.style,
     custom: true,
-    vars,
+    /* 剔掉派生量再存。
+       deriveVars 的结果里混着 --divider / --hairline / --scroll-thumb 这些算出来的值，
+       存进去等于把它们钉死：以后改底色，分隔线不会跟着变。
+       它们本该每次从 --bg 重算（这也是不给用户改的原因）。 */
+    vars: Object.fromEntries(
+      Object.entries(vars).filter(([k]) => !DERIVED_VARS.includes(k)),
+    ),
   };
   return saveCustomTheme(custom);
 }
