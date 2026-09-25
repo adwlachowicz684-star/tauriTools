@@ -259,5 +259,110 @@ console.log('\n=== 5. 目录选择器 load 的同一竞态 ===');
   t('load 里取代号', /const seq = \+\+loadSeq\.current/.test(code));
 }
 
+console.log('\n=== 6. 图标选择器：连按 F6 会打开错卡片（会改错东西）===');
+{
+  const A = path.join(HERE, 'App.tsx');
+  const src = fs.readFileSync(A, 'utf8');
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '');
+  const i = code.indexOf('const openIconPicker = async (card: CardInfo) =>');
+  t('找到 openIconPicker', i >= 0);
+
+  function arrowBody(s, anchor) {
+    const k = s.indexOf(anchor);
+    const open = s.indexOf('{', s.indexOf('=>', k));
+    let d = 0, j = open;
+    for (; j < s.length; j++) {
+      if (s[j] === '{') d++;
+      else if (s[j] === '}') { d--; if (d === 0) break; }
+    }
+    return s.slice(open, j + 1);
+  }
+  const body = arrowBody(code, 'const openIconPicker = async (card: CardInfo) =>')
+    .replace(/iconPickerSeq/g, '__seq')
+    .replace(/\bsetIconFiles\b/g, '__setFiles')
+    .replace(/\bsetDialog\b/g, '__setDialog')
+    .replace(/\bs\.pushLog\b/g, '__log')
+    .replace(/\bctx\.toast\b/g, '__toast')
+    .replace(/\bs\.api\b/g, 'api')
+    .replace(/errText\(e\)/g, 'String(e && e.message)');
+
+  /* listIcons() 不带参数，靠**调用次序**区分快慢：第 1 次卡住，第 2 次立刻回 */
+  const gates = [];
+  let nCall = 0;
+  const seq = { current: 0 };
+  let dlg = null;
+  const fn = new Function('__seq', '__setFiles', '__setDialog', '__log', '__toast', 'api',
+    `return async (card) => ${body};`);
+  const open = fn(seq, () => {}, (v) => { dlg = v; }, () => {}, () => {}, {
+    listIcons: async () => {
+      const k = nCall++;
+      if (k === 0) await new Promise((r) => gates.push(r));
+      return ['x.png'];
+    },
+  });
+
+  const p1 = open({ path: '/A', name: 'A' });   // 第 1 次，卡住
+  const p2 = open({ path: '/B', name: 'B' });   // 第 2 次，立刻回
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  t('先回来的那次按 B 打开', dlg?.card?.path === '/B', String(dlg?.card?.path));
+  gates[0]();
+  await Promise.all([p1, p2]);
+  t('慢的回来后不改弹窗（核心：否则图标会设到 A 上）',
+    dlg?.card?.path === '/B', String(dlg?.card?.path));
+
+  t('声明了 iconPickerSeq', /const iconPickerSeq = useRef\(0\)/.test(code));
+  t('取代号', /const seq = \+\+iconPickerSeq\.current/.test(code));
+}
+
+console.log('\n=== 7. 内容扫描：切目录后被旧结果覆盖 ===');
+{
+  const U = path.join(HERE, 'hooks', 'useFpx.ts');
+  const src = fs.readFileSync(U, 'utf8');
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '');
+  const i = code.indexOf('const scan = useCallback(async (root: string');
+  t('找到 scan', i >= 0);
+  const body = (() => {
+    const open = code.indexOf('{', code.indexOf('=>', i));
+    let d = 0, j = open;
+    for (; j < code.length; j++) {
+      if (code[j] === '{') d++;
+      else if (code[j] === '}') { d--; if (d === 0) break; }
+    }
+    return code.slice(open, j + 1);
+  })()
+    .replace(/scanSeq/g, '__seq')
+    .replace(/\bsetContent\b/g, '__setContent')
+    .replace(/\brun\b/g, '__run')
+    .replace(/\bcontentKind\b/g, '__kind');
+
+  /* run(title, fn) 的替身：第 1 次（/dirA）卡住，第 2 次（/dirB）立刻回 */
+  const gates = [];
+  let nCall = 0;
+  const seq = { current: 0 };
+  let items = null;
+  const fn = new Function('__seq', '__setContent', '__run', 'api', '__kind',
+    `return async (root, kind) => ${body};`);
+  const scan = fn(seq, (v) => { items = v; }, async (_n, f) => {
+    const k = nCall++;
+    if (k === 0) await new Promise((r) => gates.push(r));
+    return f();
+  }, { scanContent: async (root) => [{ path: `${root}/x`, name: 'x' }] }, 'all');
+
+  const p1 = scan('/dirA');
+  const p2 = scan('/dirB');
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  t('快的结果已落地', Array.isArray(items) && items[0]?.path === '/dirB/x', String(items?.[0]?.path));
+  gates[0]();
+  await Promise.all([p1, p2]);
+  t('慢的回来后不覆盖（核心：否则列表显示的是 A 的文件）',
+    items?.[0]?.path === '/dirB/x', String(items?.[0]?.path));
+
+  t('声明了 scanSeq', /const scanSeq = useRef\(0\)/.test(code));
+  t('scan 里取代号', /const seq = \+\+scanSeq\.current/.test(code));
+  t('落地前判代号', /if \(scanSeq\.current !== seq\) return;\s*\n\s*if \(items\)/.test(code));
+}
+
 fs.rmSync(REACT, { force: true });
 done();

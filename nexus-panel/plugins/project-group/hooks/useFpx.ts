@@ -25,6 +25,8 @@ export function useFpx() {
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<LogLine[]>([]);
   const [content, setContent] = useState<ContentItem[]>([]);
+  /** 内容扫描代号，见下方 scan 的说明：快速切换目录时用它丢弃过期结果 */
+  const scanSeq = useRef(0);
   const [contentKind, setContentKind] = useState<'all' | 'agent' | 'skill' | 'rule'>('all');
 
   const [selProject, setSelProject] = useState<string | null>(null);
@@ -699,7 +701,18 @@ export function useFpx() {
 
   const scan = useCallback(async (root: string, kind: typeof contentKind = contentKind) => {
     if (!root) { setContent([]); return; }
+    /*
+     * 本次扫描的代号，回来时对不上就丢弃。
+     *
+     * 没有它的场景：在目录 A（文件多、扫得慢）上扫，没扫完就切到目录 B（快）→
+     * B 的结果先落地，**随后被 A 那次覆盖成 A 的内容**。
+     * 界面于是显示"B 的路径 + A 的文件列表"，没有任何报错 ——
+     * 用户会照着这份列表去打开 / 改名，而那些文件根本不在当前目录里
+     * （改名就会打到别处去）。
+     */
+    const seq = ++scanSeq.current;
     const items = await run('扫描内容', () => api.scanContent(root, kind));
+    if (scanSeq.current !== seq) return;
     if (items) setContent(items);
   }, [api, contentKind, run]);
 

@@ -32,6 +32,8 @@ export default function App() {
   const { ctx, boot } = s;
   const [dialog, setDialog] = useState<Dialog>({ type: 'none' });
   const [iconFiles, setIconFiles] = useState<string[]>([]);
+  /** 图标选择器打开代号，见 openIconPicker 的说明：连按 F6 时用它丢弃过期响应 */
+  const iconPickerSeq = useRef(0);
 
   useEffect(() => { ctx.setTitle('项目组分配'); }, [ctx]);
   useEffect(() => { ctx.setBadge(boot?.links.length ?? 0); }, [ctx, boot?.links.length]);
@@ -105,7 +107,6 @@ export default function App() {
    * 菜单图层的宿主节点。
    * 必须是 state 而不是 ref：ref 在首次渲染时还是 null，
    * 用 state 才能在挂载完成后触发一次重渲染，把节点交给 ContextMenu。
-   *
    * 位置不能往下挪：下面有 `if (s.loading)` / `if (!boot)` 两个提前 return，
    * hook 一旦落在它们之后，首帧（loading）就调不到、次帧调得到，
    * React 会直接抛 "Rendered more hooks than during the previous render"
@@ -131,7 +132,6 @@ export default function App() {
 
   /**
    * 内容区当前选中的条目（受控于本组件）。
-   *
    * 提升到这一层是为了给 mod+D（原版 OpenMarkdown）：快捷键注册在 App 层，
    * 而选中项原本是 ContentPanel 的内部 state，拿不到。
    */
@@ -181,10 +181,8 @@ export default function App() {
 
   /**
    * Ctrl/⌘ + M 启停 MCP server（#221 ToggleMcp）。
-   *
    * 这里走"先查状态再反向操作"而不是本地记一个布尔：MCP 也可能被
    * `--mcp` 独立进程或上一次会话留着，本地布尔会与实际状态脱节。
-   *
    * `mcpStop` 返回的是 **bool**（真的停了吗），不是抛异常 —— 与
    * `watchStop` 同一类。此前这里 `await` 了却不用返回值，于是停止失败时
    * 照样记「已停止」+ 绿色 toast，而端口实际还占着：
@@ -293,7 +291,6 @@ export default function App() {
 
   /**
    * 某个项目组卡片属于第几个分类。
-   *
    * 堆叠布局下 activeTab.group 不再代表"看得见的那个分类"，
    * 移除卡片时必须知道它究竟登记在哪个分类里，否则点移除毫无反应
    * （更糟的是日志还显示"已移除"）。
@@ -382,12 +379,10 @@ export default function App() {
 
   /**
    * 活动页签的**实时镜像**（#708）。
-   *
    * 拖拽过程中若发生自动切页签（悬停切页签），`onMove` 里闭包捕获的
    * `s.activeTab.project` 可能是**切换前的旧值**——用户眼前看到的是新页签的卡片，
    * 落点却算到旧页签去，卡片被移到完全不是他瞄准的那个页签里。
    * 这类"移动成功但位置不对"比报错更难发现，因为它不会失败、只是东西不见了。
-   *
    * ref 每次渲染同步，读取时永远是当前值。所有**在拖拽回调里读页签索引**的地方
    * 都必须走这个 ref，不能直接用 state。
    */
@@ -398,7 +393,6 @@ export default function App() {
   const [chainActions, setChainActions] = useState<ChainAction[]>([]);
   /**
    * 拉取动作的代次号。
-   *
    * 依赖不能放 `boot` 本身：applySnapshot 每次都造一个新 boot 对象，
    * 于是加一张卡片、拖一次排序都会重新拉一次动作清单；而后端返回的永远是
    * 一个新数组，引用一变就触发下面那个注册副作用——侧边栏被整体拆掉重建、
@@ -573,16 +567,21 @@ export default function App() {
   };
 
   const openIconPicker = async (card: CardInfo) => {
+    /* 本次打开的代号，回来时对不上就丢弃。
+       没有它的场景：在 A 上按 F6（读盘慢），没等弹窗出来又切到 B 按 F6（快）→
+       弹窗先按 B 打开、随后被 A 那次改成 A。
+       后果不是"显示错"，而是**改错东西**：弹窗写着 A，用户挑的图标被设到 A 上，
+       而他要改的是 B —— 没有任何报错，往往很久以后才发现 A 的图标不对。 */
+    const seq = ++iconPickerSeq.current;
     try {
       const files = await s.api.listIcons();
+      if (iconPickerSeq.current !== seq) return;
       setIconFiles(files);
       setDialog({ type: 'icons', card });
     } catch (e) {
-      /*
-       * 只记日志的话，F6 / 「改图标」按下去**界面毫无变化** ——
-       * 用户看不到日志面板里的那一行，只会以为按钮坏了。
-       * 这里是"打开弹窗"这条路的唯一入口，失败必须让他看见。
-       */
+      if (iconPickerSeq.current !== seq) return;
+      /* 只记日志的话 F6 按下去界面毫无变化，用户只会以为按钮坏了。
+         这是打开弹窗的唯一入口，失败必须让他看见。 */
       const m = `读取图标目录失败：${errText(e)}`;
       s.pushLog(m, true);
       ctx.toast(m, 'err');
