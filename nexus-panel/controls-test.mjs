@@ -253,6 +253,24 @@ console.log('\n=== 3.5 主题参数表（规整管理）===');
       ? '已改用 getResolvedBase()'
       : '仍有用 getCurrent().base，改基调后显示错的深浅');
 
+  /* 3.5r 手填的 --bg-image 必须优先于背景预设 / 自定义图。
+     两者写同一个变量，无条件覆盖的话，"选了预设背景之后参数表改 --bg-image
+     完全没反应" —— 又是"改了没效果"这一类最难自查的问题。 */
+  t('手填背景图优先于背景预设',
+    /manualBg/.test(tmSrc) && /if \(!manualBg && supportsBgImage\(theme\)\)/.test(tmSrc),
+    /manualBg/.test(tmSrc) ? '用户显式值不会被背景区覆盖' : '背景区仍无条件覆盖，参数表该项无效');
+
+  /* 3.5s 删除自定义主题要清掉它留下的全部覆盖（都按 id 分档，
+     主题删了就再没人读得到，只会在存储里堆孤儿键）。 */
+  const delSrc = tmSrc.match(/export function deleteCustomTheme[\s\S]{0,900}?\n}/);
+  const db = delSrc ? delSrc[0] : '';
+  t('删除主题会清理它的覆盖残留',
+    /removeItem\(varMapKey\(id\)\)/.test(db)
+      && /KEY_BASE_OVR/.test(db) && /KEY_STYLE_OVR/.test(db) && /styleKey\(/.test(db),
+    /removeItem\(varMapKey\(id\)\)/.test(db)
+      ? '变量 / 基调 / 风格 / 风格参数 均已清'
+      : '只删主题本身，覆盖残留会永久占用存储');
+
   /* 3.5k UI 必须取 resolved 版 —— 否则用户改了风格后，
      "该显示哪些控件"仍按旧风格判断（玻璃滑块不出现、背景图不显示） */
   const appSrc = stripComments(read('plugins/settings/App.tsx'));
