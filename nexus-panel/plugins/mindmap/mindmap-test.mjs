@@ -8814,6 +8814,32 @@ group('中心主题必须有 data.id（否则新建画布后无法附加任何�
   }
 }
 
+group('focusNode 必须检查 selectNodeById 的返回值（否则附件挂错节点还假成功）');
+
+{
+  const pan = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+
+  // 编辑器侧：靠 id 遍历找节点，找不到返回 false
+  ok(/window\.__minderSelectNode = function \(uid\)/.test(html)
+    && /if \(!found\) return false;/.test(html),
+    '__minderSelectNode 找不到节点时返回 false（前提确认）');
+
+  const i = pan.indexOf('const focusNode = () => {');
+  ok(i > 0, '有 focusNode()');
+  const seg = pan.slice(i, i + 900);
+  const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  ok(/if \(!id\) return false;/.test(code), '无 id 时返回 false（提示用户去选节点）');
+  /*
+   * 关键：不能是「调完就 return true」。
+   * 正则要求 return 语句里直接用上 selectNodeById 的结果。
+   */
+  ok(/return\s+!!?app\.bridge\?\.selectNodeById\?\.\(id\);/.test(code),
+    '返回 selectNodeById 的结果（不能调完就 return true）');
+  ok(!/app\.bridge\?\.selectNodeById\?\.\(id\);\s*\n\s*return true;/.test(code),
+    '不是「先调再 return true」的老写法');
+}
+
 group('导出为交换格式 → 导出为交换格式（单画布）');
 
 {

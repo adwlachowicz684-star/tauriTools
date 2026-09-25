@@ -1071,8 +1071,16 @@ export function buildSide(app, opts = {}) {
     const focusNode = () => {
       const id = _pendingNodeId || app.bridge?.getSelectedNodeId?.() || '';
       if (!id) return false;
-      app.bridge?.selectNodeById?.(id);
-      return true;
+      /*
+       * **必须检查 selectNodeById 的返回值**。
+       *
+       * 它靠 id 遍历整棵树去找节点（见编辑器 __minderSelectNode），
+       * 找不到就返回 false —— 比如附加过程中用户把那个节点删了。
+       * 早先这里不看返回值、一律 return true，于是：
+       *   写回作用于「当前选中节点」（可能是**另一个**节点，或根本没有），
+       *   而界面照样提示「已附加 xxx」—— 附件挂错地方甚至丢失，假成功。
+       */
+      return !!app.bridge?.selectNodeById?.(id);
     };
     /** 弹选择框**之前**调用：把当前节点 id 存下来 */
     const rememberNode = () => { _pendingNodeId = app.bridge?.getSelectedNodeId?.() || ''; };
