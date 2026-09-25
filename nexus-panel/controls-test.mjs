@@ -1610,7 +1610,19 @@ console.log('\n=== 28. 尺度量必须走令牌（圆角 / 层级 / 状态色 / 
      而共享的 --sp-* 是单档位（上下左右同一个数），硬套会改变观感 ——
      与上面那段"存量 5px/7px 是另一套节奏"是同一件事，所以抬基线而不是改令牌。
      再超就该问一句：是新 UI 没复用既有类，还是确实又有新控件。 */
-  const AF_BASELINE = 639, PG_BASELINE = 265;
+  /*
+   * 639 → 649：上游两块**新增控件**（不是既有类没复用）：
+   *   1) 更新检测多目标卡片（.upd-cards / .upd-card / .upd-add …）
+   *   2) 组合框 + 超时输入（.insp-timeout / .insp-size-group）
+   * 其中 4 处**单值** gap（6/4/8/10px）已改用 --sp-3/2/4/5 —— 值精确对应，
+   *   计算值分毫不差，纯粹是让它走令牌。剩下的是不对称值
+   *   （`2px 5px`、`9px 12px`）和 gap:3px（--sp-* 是 2/4/6/8，没有 3 这一档），
+   *   硬套会改变观感，与上面"存量 5px/7px 是另一套节奏"同理。
+   *
+   * ⚠️ 抬基线只在「新增确实来自新控件」时才成立。若下次再超，先做上面的
+   *    单值→令牌替换，够不到再查是不是新 UI 忘了复用既有类。
+   */
+  const AF_BASELINE = 649, PG_BASELINE = 265;
   const nowAf = spacingOf(af), nowPg = spacingOf(pg);
   t('agent-flow 间距未继续恶化（不超过基线）', nowAf <= AF_BASELINE,
     `当前 ${nowAf} / 基线 ${AF_BASELINE}`);
