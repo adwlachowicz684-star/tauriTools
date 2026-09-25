@@ -29,7 +29,6 @@ import { CredentialPanel, canUse } from './components/CredentialPanel';
 // 卡片上的参数格要能就地改，得拿到 App 的 patchNode ——
 // 卡片是经 nodeTypes 交给 xyflow 渲染的，不是 App 的直接子组件，只能走 Context
 import { NodePatchProvider } from './components/ArgCell';
-import { setInPath } from './engine/objPath';
 import { useCredentialVault, VAULT_MODE_META, CRED_KEY } from './hooks/useCredentialVault';
 import { useStackLayout } from './hooks/useStackLayout';
 import { useTaskStore } from './hooks/useTaskStore';
@@ -251,17 +250,17 @@ function applyThemeMode(mode: ThemeMode) {
 export default function App() {
   const init = useMemo(loadCanvases, []);
   /*
-   * 老画布迁移：把节点上内联的大模型配置收进连接。
+   * 老画布迁移：把节点上内联的大模型配置收进凭据。
    *
    * ------------------------------------------------------------------
    * 为什么放在这里而不是 effect
    * ------------------------------------------------------------------
    *
-   * 连接是异步解密的（可能要等口令），effect 里跑会与解密竞态 ——
-   * 解密完成前跑，连接列表是空的，于是每个节点各建一条重复连接。
+   * 凭据是异步解密的（可能要等口令），effect 里跑会与解密竞态 ——
+   * 解密完成前跑，凭据列表是空的，于是每个节点各建一条重复凭据。
    *
-   * 放在连接落地的那一刻（switchMode / 解锁 之后）跑，连接必然已就位。
-   * 且它幂等，多跑一次也不会多出连接。
+   * 放在凭据落地的那一刻（switchMode / 解锁 之后）跑，凭据必然已就位。
+   * 且它幂等，多跑一次也不会多出凭据。
    */
   const [canvases, setCanvases] = useState<Canvas[]>(init.canvases);
   /*
@@ -449,7 +448,7 @@ export default function App() {
     refreshMcp: doRefreshMcp,
   } = useMcpRegistry({ initCanvases: init.canvases, onLog: pushLog });
   /*
-   * 连接库（加密存储 / 解锁 / 换保管方式）。
+   * 凭据库（加密存储 / 解锁 / 换保管方式）。
    *
    * 抽成 hook 是因为它是全应用最独立的一块：只依赖画布列表（迁移老节点上的
    * 内联密钥）和写日志的回调，与画布交互、执行流程都不相干。
@@ -468,21 +467,7 @@ export default function App() {
   } = vault;
 
   /*
-   * 打开连接管理器并停在「服务」页。
-   *
-   * 与 openCredentials 的区别：那个走的是"聚焦到某一种密钥"，
-   * 而 MCP 服务不在 credentials 里（它是库里的另一页），
-   * 所以要单独设 credPage —— 只设 credFocus 的话打开后停在「密钥」页，
-   * 用户点"去连接管理器添加"看到的还是密钥列表，找不到加服务的地方。
-   */
-  const openMcpLibrary = useCallback(() => {
-    setCredPage('mcp');
-    setCredFocus('');
-    setCredOpen(true);
-  }, [setCredPage, setCredFocus, setCredOpen]);
-
-  /*
-   * 接住「打开连接管理器」。
+   * 接住「打开凭据中心」。
    *
    * 链路三段，缺任一段都是**点了没反应、且不报错**：
    *   ① 右上角 MCP 按钮 → 宿主 emit('nexus:open-credentials')
@@ -513,7 +498,7 @@ export default function App() {
 
 
   /**
-   * 保存连接前的校验。
+   * 保存凭据前的校验。
    *
    * GitHub 令牌真的去打一次 /user：既能确认令牌有效，
    * 又能从 X-OAuth-Scopes 读出读写权限（面板据此填 capabilities）。
@@ -551,7 +536,7 @@ export default function App() {
   /*
    * 拉取模型清单：GET /v1/models。
    *
-   * 交给外部注入而不是写死在连接面板里 —— 面板因此保持可在测试里验证、不碰网络。
+   * 交给外部注入而不是写死在凭据面板里 —— 面板因此保持可在测试里验证、不碰网络。
    *
    * 401 / 403 单独说一句：那种情况多半是密钥不对，
    * 而通用的"拉取失败"会让人以为是地址填错了，排查方向就偏了。
@@ -816,6 +801,37 @@ function reportSkipped(
 
   /* ---------------- 节点编辑 ---------------- */
 
+  /*
+   * 按**点分路径**写入（如 `entries.0.kind`），逐层克隆、不改原对象。
+   *
+   * 为什么需要：触发器是"一个节点下挂多张卡"（data.entries[i]），
+   * 卡片上的就地编辑要写进数组里的某一项，而 patchNode 原本只做顶层
+   * 浅合并。若把 `entries.0.kind` 当成**一整个键名**浅合并进去，
+   * 会凭空多出一个字面名叫 "entries.0.kind" 的字段 ——
+   * 真正的 entries 一项没动，界面上看不出变化，值却永远存不进去。
+   *
+   * 数组下标用字符串也能索引到（JS 里 a['0'] === a[0]），
+   * 但克隆时必须按数组展开，否则 {...arr} 会把数组变成对象。
+   */
+  const setByPath = (target: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> => {
+    const segs = path.split('.');
+    const root: Record<string, unknown> = { ...target };
+    let cur = root;
+    for (let i = 0; i < segs.length - 1; i += 1) {
+      const seg = segs[i];
+      const next = cur[seg];
+      const cloned = Array.isArray(next)
+        ? ([...next] as unknown as Record<string, unknown>)
+        : next && typeof next === 'object'
+          ? { ...(next as Record<string, unknown>) }
+          : {};
+      cur[seg] = cloned;
+      cur = cloned;
+    }
+    cur[segs[segs.length - 1]] = value;
+    return root;
+  };
+
   const patchNode = useCallback((id: string, patch: Record<string, unknown>) => {
     setNodes((ns) => ns.map((n) => {
       if (n.id !== id) return n;
@@ -827,26 +843,12 @@ function reportSkipped(
        * 明明选了，看着像没生效。
        */
       /*
-       * 支持点号路径 —— 卡片上要改的不全是顶层字段。
-       *
-       * 触发器的每个条件卡是 `entries.0.config.intervalSec` 这种。
-       * 不解析路径的话，`{'entries.0.kind': 'cron'}` 会真的建出一个
-       * 叫这个名字的顶层字段：不报错，界面上却毫无变化 ——
-       * 因为没有任何地方读它。
+       * 键名里带 '.' 的走嵌套写入，其余照旧浅合并 ——
+       * 这样不传 path 的调用方（绝大多数）完全不受影响。
        */
       let next = { ...n.data } as Record<string, unknown>;
       for (const [k, v] of Object.entries(patch)) {
-        /*
-         * 带点号的是路径，要走 setInPath 按层级写进去。
-         *
-         * 这段注释以前就写在上面，但代码是 `next[k] = v` ——
-         * 于是 `{'entries.0.kind': 'cron'}` 真的建出一个叫这个名字的
-         * 顶层字段：不报错，界面上毫无变化，因为没有任何地方读它。
-         * 触发器卡片上的条件一直改不动，根子就在这里。
-         */
-        next = k.includes('.')
-          ? (setInPath(next, k, v) as Record<string, unknown>)
-          : { ...next, [k]: v };
+        next = k.includes('.') ? setByPath(next, k, v) : { ...next, [k]: v };
       }
       if (patch.canvasId !== undefined && !patch.canvasName) {
         const snap = snapshotCanvasName(patch.canvasId, canvases);
@@ -2032,7 +2034,7 @@ function reportSkipped(
      * GitHub 执行器。
      *
      * 这里只补"发请求"这一环（github.ts 里的策略与解析是纯函数，已有单测）。
-     * 令牌优先取连接库里的，没有才用节点内联值 —— 与 OCR / 翻译节点一致。
+     * 令牌优先取凭据库里的，没有才用节点内联值 —— 与 OCR / 翻译节点一致。
      * cli 方案不接线：run_node 是给 AI CLI 用的，跑不了 git，
      * 硬塞一个会让它"看起来能用"然后在真机上失败，不如明确报"未提供 git 执行器"。
      */
@@ -2979,8 +2981,6 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
               activeCanvasId={activeId ?? undefined}
               themeMode={themeMode}
               onThemeModeChange={setThemeMode}
-              mcpLibrary={mcpServers}
-              onOpenMcpLibrary={openMcpLibrary}
             />
           </fieldset>
         </div>
@@ -3036,10 +3036,10 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
       </div>
 
       {/*
-        连接管理器挂在这里（af-body-row 之外），不跟着右栏走。
+        凭据中心挂在这里（af-body-row 之外），不跟着右栏走。
 
         以前它写在右栏里，而任务 / 历史视图下右栏不渲染 ——
-        于是从"管理连接"按钮点进来会毫无反应：面板根本没被渲染，
+        于是从"填写凭据"按钮点进来会毫无反应：面板根本没被渲染，
         连报错都没有。
 
         它本来就是全屏遮罩（.cred-mask 是 position:fixed），
