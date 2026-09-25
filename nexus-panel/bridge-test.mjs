@@ -211,10 +211,16 @@ t('主题应用后回执 theme-applied（外壳据此才去采样，避免读到
   shellGot.some((m) => m.type === 'theme-applied'),
   `收到 ${shellGot.filter((m) => m.type === 'theme-applied').length} 次回执`);
 
-/* 7. 隔离态自报基调（主题适配的兜底通道） */
+/*
+ * ⚠️ 原来这里断言"隔离态插件必须自报基调"，那是**滤镜反转机制**的兜底通道。
+ *   机制整套删除后（主题只由外壳推送变量，插件渲染成什么样就是什么样），
+ *   base-report 已无任何消费者 —— 留着断言只会要求一段死代码必须存在。
+ *
+ *   改成断言它的反面：通道已下线，不再有 base-report 上报。
+ */
 const baseReports = shellGot.filter((m) => m.type === 'base-report');
-t('隔离态下插件自报了基调（否则主题适配会静默失效）',
-  baseReports.length > 0, `上报 ${baseReports.length} 次，base=${baseReports[0]?.base}`);
+t('滤镜机制下线后不再有 base-report 上报（该通道已无消费者）',
+  baseReports.length === 0, `收到 ${baseReports.length} 次`);
 
 /* 8. 直连通道确实被切断（这是隔离的目的） */
 let directBlocked = false;
