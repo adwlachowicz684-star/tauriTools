@@ -287,6 +287,23 @@ console.log('\n=== 3.5 主题参数表（规整管理）===');
       ? 'index.js 同步为 exportVarsFor(t)'
       : 'index.js 仍读 t.vars');
 
+  /* 3.5u 还原按钮只能由外层提供，且主题不自带时文案为「清除」。
+     ColorField 内部那份的判据是 `original !== value`，而 value 含派生与
+     风格参数缩放 —— 用户只是拖了玻璃透明度滑块，没碰过的项也会显示还原，
+     点下去还会把缩放结果写死（之后滑块对这一项失效）。 */
+  const cfSrc = stripComments(read('plugins/settings/ThemeParams.tsx'));
+  t('ColorField 不再自带还原按钮（避免重复与误显示）',
+    !/<button[^>]*onClick=\{\(\) => onChange\(original\)\}/.test(cfSrc),
+    !/<button[^>]*onChange\(original\)/.test(cfSrc)
+      ? '已统一由外层渲染'
+      : '内部仍带还原按钮，颜色项会显示两个');
+  const tppSrc = stripComments(read('plugins/settings/ThemeParamsPanel.tsx'));
+  t('主题不自带时还原按钮文案为「清除」',
+    /\{own \? '还原' : '清除'\}/.test(tppSrc),
+    /\{own \? '还原' : '清除'\}/.test(tppSrc)
+      ? '已按主题是否自带区分文案'
+      : '一律写"还原"，未定义的项会让人以为有原值可回');
+
   /* 3.5k UI 必须取 resolved 版 —— 否则用户改了风格后，
      "该显示哪些控件"仍按旧风格判断（玻璃滑块不出现、背景图不显示） */
   const appSrc = stripComments(read('plugins/settings/App.tsx'));
