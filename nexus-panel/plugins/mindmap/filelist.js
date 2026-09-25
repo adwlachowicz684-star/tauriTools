@@ -78,6 +78,8 @@ export function buildFileList(app) {
     searchBodyEl.style.display = p === 'search' ? '' : 'none';
 
     const isSearch = p === 'search';
+    // 切回文件列表时先补一次重建：搜索期间跳过的 refresh 会留下过期内容
+    if (p === 'files' && filesDirty) refresh();
     // 标题与「＋ / 📁」随面板切换：搜索结果页没有"新建脑图"的语义，
     // 留着两个按钮会出现"点了没反应"（它们建的仍是文件，但页面不是文件列表）
     titleEl.textContent = isSearch
@@ -256,9 +258,24 @@ export function buildFileList(app) {
 
   /* ---------------------- 渲染 ---------------------- */
 
+  /*
+   * 文件列表因为「搜索态下被藏起来了」而跳过重建时，要**记一笔账**。
+   *
+   * 原实现是直接 return，理由写的是"重建纯属白费（还会把搜索区挤下去）"。
+   * 后半句不成立：搜索态下 bodyEl 是 display:none（apply() 里设的），
+   * 往里追加子节点不会影响任何可见布局。
+   *
+   * 真正的问题在**另一头**：跳过期间如果文件有增删/改名/切换当前文件，
+   * 之后 showFiles(true) 只做 apply()（切 display），不会重建 ——
+   * 于是用户切回文件列表看到的是**过期内容**：
+   * 新建的文件不在、删掉的还在、高亮停在切换前的那个文件上。
+   * 而 setSearch(null) 那条路径同样会把 panel 置回 'files' 且不重建。
+   */
+  let filesDirty = false;
+
   function refresh() {
-    // 搜索态下文件列表是隐藏的，重建它纯属白费（还会把搜索区挤下去）
-    if (panel === 'search') return;
+    if (panel === 'search') { filesDirty = true; return; }
+    filesDirty = false;
     const { files, folders, currentId } = api.fileState();
     bodyEl.innerHTML = '';
 

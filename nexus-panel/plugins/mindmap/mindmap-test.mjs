@@ -8238,6 +8238,43 @@ group('📚 提示语必须区分「有没有结果可退回」与「当前是�
   }
 }
 
+group('搜索态下跳过 refresh 后，切回文件列表必须补一次重建');
+
+{
+  const fl = fs.readFileSync(path.join(HERE, 'filelist.js'), 'utf8');
+
+  /*
+   * refresh() 在 panel === 'search' 时早退（省一次 DOM 重建）。
+   * 但 showFiles(true) / setSearch(null) 把 panel 置回 'files' 时只调
+   * apply()（切 display），**不会重建** —— 于是用户切回文件列表看到的是
+   * 搜索之前的旧内容：新建的文件不在、删掉的还在、高亮也停在旧文件上。
+   *
+   * 修法：早退时置 filesDirty，apply() 切到 'files' 时补一次 refresh。
+   */
+  ok(/let filesDirty = false;/.test(fl), '有 filesDirty 标记');
+  ok(/if \(panel === 'search'\)\s*\{\s*filesDirty = true;\s*return;\s*\}/.test(fl),
+    '搜索态早退时置 dirty（不是直接 return）');
+  /*
+   * 这条断言最初写成 /filesDirty = false;/ —— 而**声明** `let filesDirty = false;`
+   * 本身就含这个子串，于是把"重建后清零"那一行删掉，断言照样绿。
+   * 必须排除声明：只匹配**不以 let/const/var 开头**的那次赋值。
+   */
+  ok(/(^|[^\w])filesDirty = false;/.test(fl.replace(/let filesDirty = false;/g, ''))
+    && !/let filesDirty = false;\s*\n\s*const \{ files/.test(fl),
+    '真正重建后清掉 dirty（排除声明那一行）');
+  // 补刷必须发生在 apply() 里、且只在切到 files 时
+  {
+    const i0 = fl.indexOf('function apply() {');
+    const i1 = fl.indexOf('\n  }', i0);
+    const body = fl.slice(i0, i1 > 0 ? i1 : i0 + 900);
+    ok(/if \(p === 'files' && filesDirty\) refresh\(\);/.test(body),
+      'apply() 里切回 files 且 dirty 时补一次 refresh');
+  }
+  // 反证：只写 dirty 却不补刷，等于没修
+  ok(fl.indexOf('filesDirty') !== fl.lastIndexOf('filesDirty'),
+    'filesDirty 被**多处**引用（不是只声明不使用的死变量）');
+}
+
 group('导出为交换格式 → 导出为交换格式（单画布）');
 
 {
