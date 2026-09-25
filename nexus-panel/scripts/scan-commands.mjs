@@ -109,20 +109,75 @@ function collectAnnotated(files) {
   return map;
 }
 
-/** A：generate_handler![...] 里的命令名 */
+/*
+ * 剥注释后再解析。
+ *
+ * 不剥的话，块内注释里的 `#[tauri::command]` 会被当成条目
+ * （split('::').pop() 得到 "command"），混进注册集合里刷假报告；
+ * 更糟的是注释里出现 `generate_handler!` 字样时（本仓库 349 行就有一处），
+ * 若它排在真实调用之前，正则会先匹配到注释 —— 于是扫到一段空块，
+ * ① ③ 全报 0 条。那是最糟的假绿：报告说"一致"，其实压根没检查。
+ */
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    /* 行注释：`//` 前面不是 `:`（避免吃掉 http://） */
+    .replace(/(?<![:\w])\/\/[^\n]*/g, '');
+}
+
+/** A：generate_handler![...] 里的命令名 -> 模块前缀（裸名为 ''） */
 function collectRegistered(src) {
-  const m = src.match(/generate_handler!\s*\[([\s\S]*?)\n\s*\]/);
+  const clean = stripComments(src);
+  const m = clean.match(/generate_handler!\s*\[([\s\S]*?)\n\s*\]/);
   if (!m) return null;
   /*
    * 条目形如 `fpx::fpx_bootstrap` 或 `rust_ping`。
    * 命令名 = 最后一段（Tauri 以函数名注册，模块路径不算）。
+   *
+   * 同时记住**模块前缀**：带本仓库模块前缀却找不到定义的，
+   * 是必然的编译错误（E0425），不能和"外部 crate 的命令"混为一谈。
    */
-  return new Set(
-    m[1].split(',')
-      .map((x) => x.trim())
-      .filter(Boolean)
-      .map((x) => x.split('::').pop()),
-  );
+  const out = new Map();
+  for (const raw of m[1].split(',')) {
+    const x = raw.trim();
+    if (!x) continue;
+    /* 只认形如 mod::name 的整段：前后不能还有别的标识符/空白标识符 */
+    const q = x.match(/^([A-Za-z_]\w*)::([a-z_0-9]+)$/);
+    if (q) { out.set(q[2], q[1]); continue; }
+    if (/^[a-z_0-9]+$/.test(x)) { out.set(x, ''); continue; }
+    /* 其余（注释残留、多行片段）丢弃，别当命令 */
+  }
+  return out;
+}
+
+/*
+ * 本仓库的模块名 + 每个模块里**所有** fn 名（不管有没有 #[tauri::command]）。
+ *
+ * 用来区分两种完全不同的故障：
+ *   函数整个没了   → 八成是被"同步本地改动"这类提交覆盖掉的，得补回来
+ *   函数还在、只是缺标注 → 新增命令时忘了加属性，补个属性就行
+ * 两者修法不同，但症状一样（编译不过），混在一起报会误导排查方向。
+ */
+function collectModuleShape(files, rsRoot) {
+  const modules = new Set();
+  const fns = new Map();
+  for (const f of files) {
+    const rel = path.relative(rsRoot, f).replace(/\\/g, '/');
+    let mod = null;
+    const dm = rel.match(/^(\w+)\/.*\.rs$/);
+    const fm = rel.match(/^(\w+)\.rs$/);
+    if (dm) mod = dm[1];
+    else if (fm && fm[1] !== 'main') mod = fm[1];
+    if (!mod) continue;
+    modules.add(mod);
+    const set = fns.get(mod) || new Set();
+    for (const mm of fs.readFileSync(f, 'utf8')
+      .matchAll(/^\s*(?:pub\s+)?(?:async\s+)?fn\s+([a-z_0-9]+)/gm)) {
+      set.add(mm[1]);
+    }
+    fns.set(mod, set);
+  }
+  return { modules, fns };
 }
 
 /* ---------------------------------------------------------------- */
@@ -219,10 +274,35 @@ const annoNotReg = [...annotated.keys()].filter((n) => !registered.has(n))
 say('① 有 #[tauri::command] 但没进 generate_handler!（调不通）', annoNotReg,
   '要么补进 generate_handler!，要么删掉标注/函数 —— 不能留着骗人');
 
-/* ② 注册了但没标注 —— 通常无害（可能是外部 crate），但值得看一眼 */
-const regNotAnno = [...registered].filter((n) => !annotated.has(n)).sort();
-say('② 注册了但没有 #[tauri::command] 标注', regNotAnno,
-  '确认是不是本仓库定义的；外部 crate 的命令可以不管');
+/*
+ * ② 注册了但没标注。
+ *
+ * 以前这里统一写成"通常无害，可能是外部 crate，可以不管" ——
+ * 那是**误判的根源**：fpx::fpx_mcp_register 就被这条措辞放过去了，
+ * 而它带本仓库 `fpx::` 前缀、fpx 模块里根本没有这个函数，
+ * 是必然的编译错误（E0425），跟"外部 crate"没有任何关系。
+ *
+ * 所以按"模块前缀是否属于本仓库"拆成三档，措辞分别定性。
+ */
+const { modules: localModules, fns: moduleFns } = collectModuleShape(files, rsRoot);
+const missingFn = [];
+const missingAnno = [];
+const foreign = [];
+for (const [n, mod] of [...registered.entries()].sort()) {
+  if (annotated.has(n)) continue;
+  if (!mod || !localModules.has(mod)) {
+    foreign.push(mod ? `${mod}::${n}` : n);
+    continue;
+  }
+  if (moduleFns.get(mod)?.has(n)) missingAnno.push(`${mod}::${n}`);
+  else missingFn.push(`${mod}::${n}`);
+}
+say('②-a 注册了、模块是本仓库的、但函数整个不存在 —— cargo build 必失败', missingFn,
+  '不是"可以不管"：E0425。九成是被同步类提交覆盖丢了，从备份/历史里把函数补回来');
+say('②-b 函数存在但缺 #[tauri::command] 标注', missingAnno,
+  '补上属性即可（macro 要求的，缺了注册不过）');
+say('②-c 无前缀或外部模块 —— 才真的可以不管', foreign,
+  '确认是不是外部 crate 提供的命令');
 
 /* ③ 白名单里有但 Rust 侧没注册 —— 有权限却调不通 */
 const allowNotReg = [...allowed].filter((n) => !registered.has(n)).sort();
@@ -230,7 +310,7 @@ say('③ 前端白名单里有、但 Rust 侧没注册', allowNotReg,
   '写成"有权限"却永远失败，比明确拒绝更难排查 —— 删掉或补注册');
 
 /* ④ 注册了但白名单没放行 —— 已知现状，不算错，只做统计 */
-const regNotAllow = [...registered].filter((n) => !allowed.has(n)).sort();
+const regNotAllow = [...registered.keys()].filter((n) => !allowed.has(n)).sort();
 console.log(`\n④ 注册了但前端白名单未放行：${regNotAllow.length} 条（默认拒绝，属正常）`);
 if (regNotAllow.length && process.env.VERBOSE) {
   for (const x of regNotAllow) console.log(`   ${x}`);

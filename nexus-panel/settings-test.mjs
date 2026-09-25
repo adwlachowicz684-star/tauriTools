@@ -912,8 +912,35 @@ const pmBody = pm.slice(pmStart, pm.indexOf('\n/**\n * 快捷键总览。', pmSt
 t('卡片里有 entry（行式时它是挨着名称的一行小字，一挤就截断）',
   /tb-card-entry/.test(pmBody) && /p\.entry/.test(pmBody));
 t('卡片里有样式审计徽标', /StyleAuditBadge/.test(pmBody));
-t('卡片里有基调下拉（适配策略）',
-  /tb-card-select/.test(pmBody) && /PLUGIN_THEMES/.test(pmBody));
+/*
+ * 这里**刻意不写死选项源的名字**。
+ *
+ * 远端已把"基调（PLUGIN_THEMES：auto/dark/light）"换成
+ * "适配策略（ADAPT_POLICIES：自动检测 / 总是反转 / 从不反转）"，
+ * controls-test 里也明确钉了「设置面板不再把 PLUGIN_THEMES 当成用户选项」。
+ * 原先这条断言写的是 `/PLUGIN_THEMES/` —— 于是改名之后它一直红，
+ * 而红的原因只是"改了名"，下拉本身好好的。
+ * 这类假报告最麻烦的地方不是噪音，是把真问题稀释掉。
+ *
+ * 真正要守护的是两件事：
+ *   ① 卡上确实有这个下拉；
+ *   ② 下拉**真有 option 可挑** —— 空下拉点了没反应，是最难发现的一种坏。
+ */
+const selAt = pmBody.indexOf('tb-card-select');
+/*
+ * 取到 `</select>` 为止，**不是固定字符数**。
+ *
+ * 固定窗口两头都会错，而且错的方向相反：
+ *   · 太小：本轮踩过 —— 400 字符装不下"跟随全局"那行 option，
+ *     于是**正确代码被判红**，看着像下拉坏了，其实好好的；
+ *   · 太大：会跨到后面别的 select（比如全局适配策略那个），
+ *     于是**把本块的 option 全删掉也照样绿** —— 假绿，比假红更危险。
+ *
+ * 用闭合标签当右边界，两边都不会漂。
+ */
+const selEnd = pmBody.indexOf('</select>', selAt);
+t('卡片里有基调/适配策略下拉，且下拉真有选项',
+  selAt >= 0 && selEnd > selAt && /<option/.test(pmBody.slice(selAt, selEnd)));
 t('卡片里有移除/内置（卸载入口在卡上，不用再去别处找）',
   /移除/.test(pmBody) && /p\.builtin/.test(pmBody));
 t('卡片里有右上角两个按钮（加入/取消 + 展示/隐藏）',

@@ -578,5 +578,91 @@ console.log('\n--- 14. 第三方能力硬禁止（第二道锁）---');
   resetBuiltinIds();
 }
 
+/* ---------------------------------------------------------------- */
+/*
+ * --- 15. 注册了但找不到定义，必须按"是否本仓库模块"分档 ---
+ *
+ * 这一节是**上一轮误判的直接产物**：fpx::fpx_mcp_register 带本仓库
+ * `fpx::` 前缀、fpx 模块里却没这个函数，是必然的编译错误（E0425）。
+ * 但旧版把 ② 统一写成"通常无害，可能是外部 crate，可以不管"，
+ * 于是它被当成"别人的既有问题"放过去了 —— cargo build 必失败却没人知道。
+ *
+ * 所以这里钉死三档的归属，而不只是"有没有报出来"。
+ */
+console.log('\n--- 15. ② 按模块归属分三档（fpx_mcp_register 的教训）---');
+{
+  const { out } = run({
+    mainRs: [
+      'mod fpx;',
+      'fn main(){}',
+      '.invoke_handler(tauri::generate_handler![',
+      '  fpx::fpx_gone_entirely,',
+      '  fpx::fpx_exists_no_anno,',
+      '  ext_crate::zzz_foreign,',
+      '])',
+      '',
+    ].join('\n'),
+    extra: {
+      /* 只有 fn、没有 #[tauri::command] → 归 ②-b（补属性即可） */
+      'fpx.rs': 'pub fn fpx_exists_no_anno() -> String { "".into() }\n',
+    },
+    policy: POLICY,
+    caps: { app_version: 'R' },
+  });
+
+  const secA = out.split('②-b')[0];
+  const secB = out.split('②-c')[0].split('②-b')[1] || '';
+  const secC = out.split('②-c')[1] || '';
+
+  t('函数整个不存在 → 归 ②-a', /②-a/.test(out) && /fpx_gone_entirely/.test(secA));
+  t('②-a 的措辞是"必失败"（不是"可以不管"）', /必失败|E0425/.test(secA));
+  t('②-a 点明了多半是被覆盖丢了', /覆盖/.test(secA));
+
+  t('有 fn 但缺标注 → 归 ②-b', /fpx_exists_no_anno/.test(secB));
+  t('②-b 说清只要补属性', /补上属性|标注/.test(secB));
+
+  t('外部模块 → 才归 ②-c（可以不管）', /zzz_foreign/.test(secC));
+
+  /* 三档必须互斥：同一条不能既在 ②-a 又在 ②-b */
+  t('三档互斥（②-a 里不出现缺标注那条）', !/fpx_exists_no_anno/.test(secA));
+  t('三档互斥（②-b 里不出现整个丢失那条）', !/fpx_gone_entirely/.test(secB));
+}
+
+/* ---------------------------------------------------------------- */
+/*
+ * --- 16. 注释里的 generate_handler! 不能把扫描器带偏 ---
+ *
+ * 真实仓库 main.rs 的注释里就写着 "generate_handler! 里" 这种话。
+ * 一旦它在真实调用**之前**出现，正则会先匹配注释里的块 ——
+ * 于是解析到一段空/假的注册列表，① ③ 全报 0 条。
+ * 那是最糟的假绿：报告说"一致"，其实压根没检查。
+ */
+console.log('\n--- 16. 注释里的 generate_handler! / 假条目不得干扰解析 ---');
+{
+  const { out, code } = run({
+    mainRs: [
+      'mod a;',
+      '/* 陷阱：这里也写了 generate_handler![',
+      '     trap_only_in_comment,',
+      '   ] 以及 #[tauri::command] */',
+      'fn main(){}',
+      '.invoke_handler(tauri::generate_handler![',
+      '  /* 块内注释里也有 b::fake_from_comment 这种假条目 */',
+      '  app_version,',
+      '])',
+      '',
+    ].join('\n'),
+    extra: { 'a.rs': '#[tauri::command]\npub fn app_version() -> String { "1".into() }\n' },
+    policy: POLICY,
+    caps: { app_version: 'R' },
+  });
+
+  t('没有因为注释里的块而报"没解析到"', code !== 2, `code=${code}`);
+  /* 若误匹配注释块，registered 里就没有 app_version，① 会把它报成"标了没注册" */
+  t('真实块被正确采用（app_version 没被误报成未注册）', !/①[\s\S]*app_version/.test(out));
+  t('块内注释的假条目不算命令', !/fake_from_comment/.test(out));
+  t('注释里的 #[tauri::command] 没被当成条目名', !/②[\s\S]*\bcommand\b/.test(out));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

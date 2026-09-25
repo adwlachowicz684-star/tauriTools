@@ -187,6 +187,18 @@ export const COMMAND_CAPS = {
   fpx_mcp_tools: 'R',
   fpx_watch_poll: 'R',
 
+  /*
+   * 手动触发 MCP 客户端注册自愈（#42）。
+   *
+   * 定 W，但要比普通 W 多看一眼：它写的**不是本应用的数据目录**，
+   * 而是用户 home 下**其它应用**的配置文件
+   * （claude_desktop_config.json 之类，见 fpx::mcp::client_config_paths）。
+   * 也就是"一个应用去改另一个应用的配置"—— 影响面超出本程序。
+   * register_clients 只改本服务那一条 key、不删别人的条目，
+   * 所以定 W 而不是 M（不开网络、不起进程）。
+   */
+  fpx_mcp_register: 'W',
+
   /* ---- 这两条**刻意留 unknown** ---- */
   /*
    * mm_print / mm_svg_to_pdf：会调起系统打印对话框、导出 PDF 文件。

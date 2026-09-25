@@ -129,6 +129,8 @@ export function SettingsBody({
      此前这个字段**连界面入口都没有** —— 只有 model.rs 里的字段与 Default，
      全库无读取点也无写入点。用户根本看不到它，更谈不上生效。 */
   const [closeMcpOnExit, setCloseMcpOnExit] = useState(config.closeMcpOnExit ?? false);
+  /* #42 手动注册自愈的进行中标记（与 winBusy 分开：那是拖放区专用的） */
+  const [mcpRegBusy, setMcpRegBusy] = useState(false);
   const [mcpTools, setMcpTools] = useState<Record<string, boolean>>({ ...config.mcpTools });
   const [toolRows, setToolRows] = useState<McpToolRow[]>([]);
   const [status, setStatus] = useState<BackupAutoStatus | null>(null);
@@ -788,6 +790,32 @@ export function SettingsBody({
             ))}
           </div>
         )}
+        {/*
+         * #42 手动注册入口。
+         * 后端启动时会自动跑一次 register_clients，但用户事后新装了客户端、
+         * 或配置被别的程序改回去，就只有重启面板才能再自愈 ——
+         * 「重启碰巧好了」不算能修。所以这里给一个显式入口。
+         */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+          <button
+            className="p-btn"
+            disabled={mcpRegBusy}
+            title="把本服务的 MCP 入口写回各客户端的配置文件"
+            onClick={() => {
+              setMcpRegBusy(true);
+              api.mcpRegister()
+                /* 返回的是人类可读的多行结果；空串代表"都已最新、无需改动" */
+                .then((r) => onLog(r || '客户端配置都已是最新，未做改动', false))
+                .catch((e) => onLog(errText(e), true))
+                .finally(() => setMcpRegBusy(false));
+            }}
+          >
+            {mcpRegBusy ? '注册中…' : '立即注册到客户端'}
+          </button>
+          <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+            结果会打在日志里
+          </span>
+        </div>
       </div>
 
       {dirPicker && (

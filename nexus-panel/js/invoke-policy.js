@@ -203,6 +203,8 @@ export const PLUGIN_COMMANDS = {
     'fpx_list_icons',
     'fpx_mcp_status',
     'fpx_mcp_tools',
+    /* #42 手动注册自愈入口；W 类（会改用户 home 下其它应用的 MCP 配置） */
+    'fpx_mcp_register',
     'fpx_quick_roots',
     'fpx_save_chain_actions',
     'fpx_save_chain_clients',
