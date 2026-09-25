@@ -220,13 +220,13 @@ export interface Snapshot {
   groupTabs: TabInfo[];
   links: LinkRow[];
   /*
-   * 本次操作里"做了但没做成"的说明（比如某名字被普通目录占着没能删）。
+   * 本次操作的**附加说明**（不是错误），对应 Rust 的 link_notices。
    *
-   * 这类情况**不算失败**（其余都成功了），走错误通道会把整次操作报成失败；
-   * 不报的话用户以为都成了 —— 他取消了那个名字，界面上却还占着位置。
+   * 典型场景：某个名字被普通目录/文件占用，为免误删内容已跳过。
+   * 操作本身成功了，但它确实没按用户勾选的全部执行 ——
+   * 不说的话用户以为勾了就建好了。
    */
   linkNotices?: string[];
-
 }
 
 export interface ContentItem {
@@ -414,10 +414,8 @@ export interface BackupTargets {
 export interface BackupAutoStatus {
   running: boolean;
   minutes: number;
-  /** 上次**成功**的自动备份时刻；未成功跑过为 null */
+  /** 上次自动备份时刻；未跑过为 null */
   lastRun: string | null;
-  /** 上次自动备份的失败原因；成功 / 未跑过为 null */
-  lastError: string | null;
 }
 
 export type CardKind = 'project' | 'group';
