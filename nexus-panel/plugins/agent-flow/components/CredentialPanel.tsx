@@ -16,7 +16,7 @@ import { PROVIDER_META, type LlmProvider } from '../engine/llm';
 import type { VaultMode } from '../engine/credentialStore';
 
 /**
- * 凭据中心。
+ * 连接管理器。
  *
  * 三件事：
  *  1. 保存前先校验 —— 手滑粘错一个字符，要等到节点运行时才报 401 就太晚了
@@ -38,7 +38,7 @@ const CAP_LABEL: Record<string, string> = {
   'llm:vision': '识图',
 };
 
-/** 哪些节点在用这条凭据 */
+/** 哪些节点在用这条连接 */
 function usersOf(list: Credential[], id: string): string[] {
   const out: string[] = [];
   for (const kind of Object.keys(NODE_NEEDS)) {
@@ -84,7 +84,7 @@ export function CredentialPanel({
   cryptoWarn?: string;
   /** 上一次解锁失败的原因 */
   unlockError?: string;
-  /* ---- MCP 服务（全局库，与凭据同一处管） ---- */
+  /* ---- 服务（全局库，与密钥同一处管） ---- */
   mcpServers?: GlobalMcpServer[];
   onMcpChange?: (next: GlobalMcpServer[]) => void;
   /** MCP 协议是否已接入。未接入时状态位明说，不给假绿勾 */
@@ -95,13 +95,13 @@ export function CredentialPanel({
   mcpRefreshing?: boolean;
   /**
    * 打开时停在哪一页。由外部（工具栏 MCP 状态插件）指定 ——
-   * 从 MCP 状态点进来就该直接看到 MCP 服务，而不是先看到凭据列表
+   * 从 MCP 状态点进来就该直接看到服务，而不是先看到密钥列表
    * 再让用户自己找标签页。
    */
   initialPage?: 'cred' | 'mcp';
 }) {
   /*
-   * 顶部分「凭据 / MCP 服务」两页。
+   * 顶部分「密钥 / 服务」两页。
    *
    * 两者性质一致：都是"这台机器上有什么外部能力"，
    * 都是全局的、都不随画布导出。分开两个入口的话，
@@ -221,7 +221,7 @@ export function CredentialPanel({
         ) : (
           <>
         <div className="cred-tip">
-          密钥只存在本机，不会随画布导出 —— 导出的文件里只有凭据 ID。
+          密钥只存在本机，不会随画布导出 —— 导出的文件里只有连接 ID。
         </div>
 
         {cryptoWarn ? <div className="cred-err">{cryptoWarn}</div> : null}
@@ -246,9 +246,9 @@ export function CredentialPanel({
                   if (m === 'passphrase') {
                     const p = await prompt({
                       title: '设置解锁口令',
-                      message: '之后每次打开凭据都要输入这个口令。忘了就只能重新填一遍所有凭据。',
+                      message: '之后每次打开连接管理器都要输入这个口令。忘了就只能重新填一遍所有密钥。',
                       placeholder: '解锁口令',
-                      validate: (v) => (v ? null : '口令不能为空'),
+                      validate: (v: string) => (v ? null : '口令不能为空'),
                     });
                     if (p) onChangeMode('passphrase', p);
                     return;
@@ -273,7 +273,7 @@ export function CredentialPanel({
         {locked ? (
           <div className="cred-edit">
             <div className="p-muted" style={{ fontSize: 'var(--fs-body, 12px)' }}>
-              凭据已用口令加密。输入口令后才会解密到内存，磁盘上始终是密文。
+              连接已用口令加密。输入口令后才会解密到内存，磁盘上始终是密文。
             </div>
             <label className="p-row">
               <span className="p-muted field-label">口令</span>
@@ -346,13 +346,13 @@ export function CredentialPanel({
             </div>
 
             {/*
-              大模型凭据要多收三样：服务商、API 地址、模型清单。
+              大模型密钥要多收三样：服务商、API 地址、模型清单。
 
               以前这三样（外加密钥）每个用到的节点上各存一份 ——
               同一个 key 要在每个节点填一遍，换 key 要改好几处，
               漏一处表现为"这个节点连的还是旧 key"且不报错。
 
-              现在节点只存"用哪个凭据 + 用哪个模型"。
+              现在节点只存"用哪个密钥 + 用哪个模型"。
             */}
             {(editing.kind === 'llm' || editing.kind === 'cli') ? (
               <>
@@ -495,7 +495,7 @@ export function CredentialPanel({
 
         <div className="cred-list" style={locked ? { display: 'none' } : undefined}>
           {credentials.length === 0 ? (
-            <div className="p-muted">还没有凭据。上面选一种添加。</div>
+            <div className="p-muted">还没有连接。上面选一种添加。</div>
           ) : (
             credentials.map((c) => (
               <div key={c.id} className="cred-item">
@@ -540,7 +540,7 @@ export function CredentialPanel({
   );
 }
 
-/** 供给节点面板用：判断某凭据能否给某节点用 */
+/** 供给节点面板用：判断某条连接能否给某节点用 */
 export function canUse(cred: Credential, nodeKind: string): boolean {
   return missingCapabilities(cred.capabilities, NODE_NEEDS[nodeKind] || []).length === 0;
 }
