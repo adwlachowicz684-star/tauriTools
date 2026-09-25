@@ -271,6 +271,22 @@ console.log('\n=== 3.5 主题参数表（规整管理）===');
       ? '变量 / 基调 / 风格 / 风格参数 均已清'
       : '只删主题本身，覆盖残留会永久占用存储');
 
+  /* 3.5t 主题卡片缩略图必须按**实际生效**值渲染。
+     用 t.vars 读不到任何用户改动（基调/风格覆盖、逐项变量、风格参数、强调色），
+     "把深色主题改成浅色"之后列表里仍是深色卡片 —— 与实际效果对不上。
+     两套实现（App.tsx / index.js）都要改，否则无构建模式下又不一致。 */
+  const appCleanCard = stripComments(read('plugins/settings/App.tsx'));
+  t('卡片缩略图反映用户改动（Vite 版）',
+    /exportVarsFor\(t\)/.test(appCleanCard) && !/const v = t\.vars;/.test(appCleanCard),
+    /exportVarsFor\(t\)/.test(appCleanCard)
+      ? '已改用 exportVarsFor(t)'
+      : '仍读 t.vars，改完之后缩略图不变');
+  t('卡片缩略图反映用户改动（无构建版）',
+    /exportVarsFor\(t\)/.test(idxSrc) && !/const v = t\.vars;/.test(idxSrc),
+    /exportVarsFor\(t\)/.test(idxSrc)
+      ? 'index.js 同步为 exportVarsFor(t)'
+      : 'index.js 仍读 t.vars');
+
   /* 3.5k UI 必须取 resolved 版 —— 否则用户改了风格后，
      "该显示哪些控件"仍按旧风格判断（玻璃滑块不出现、背景图不显示） */
   const appSrc = stripComments(read('plugins/settings/App.tsx'));
