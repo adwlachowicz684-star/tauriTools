@@ -22,7 +22,18 @@ export function useFpx() {
 
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
+  /*
+   * 忙态用**计数**而不是布尔。
+   *
+   * 布尔的问题：两个操作并发时，先结束的那个把 busy 置回 false，
+   * 而另一个还在跑 —— 界面上「进行中」消失了，操作却没完。
+   * 用户据此以为已经做完，接着点下一个操作，两个请求撞在一起。
+   *
+   * 计数：只要还有任何一个在飞就是忙。
+   */
+  const [busyCount, setBusyCount] = useState(0);
+  /** 当前在做什么（`run` 的 label），供界面显示「正在…」。 */
+  const [busyLabel, setBusyLabel] = useState('');
   const [log, setLog] = useState<LogLine[]>([]);
   const [content, setContent] = useState<ContentItem[]>([]);
   /** 内容扫描代号，见下方 scan 的说明：快速切换目录时用它丢弃过期结果 */
@@ -97,7 +108,8 @@ export function useFpx() {
 
   /** 统一套一层：出错记日志 + toast，不再到处 try/catch */
   const run = useCallback(async <T,>(label: string, fn: () => Promise<T>): Promise<T | null> => {
-    setBusy(true);
+    setBusyCount((c) => c + 1);
+    setBusyLabel(label);
     try {
       const r = await fn();
       return r;
@@ -107,7 +119,10 @@ export function useFpx() {
       ctx.toast(msg, 'err');
       return null;
     } finally {
-      if (alive.current) setBusy(false);
+      /* 卸载后不该再 setState（React 会警告），但计数**仍要减**：
+         不减的话若同一实例被复用，busy 会永远停在真。
+         Math.max(0, ...) 兜住异常路径下的重复减。 */
+      if (alive.current) setBusyCount((c) => Math.max(0, c - 1));
     }
   }, [ctx, pushLog]);
 
@@ -765,7 +780,7 @@ export function useFpx() {
   }, [api, applySnapshot, ci, pushLog, run]);
 
   return {
-    ctx, api, boot, loading, busy, log, pushLog, clearLog, run,
+    ctx, api, boot, loading, busy: busyCount > 0, busyLabel, log, pushLog, clearLog, run,
     renameFolder, clearInvalid,
     // 搬家 / 改名等新命令返回的是 RenameResult（含 snapshot），
     // 需要由调用方自己把快照并回界面——之前只有内部路径用得到，现在对外暴露。

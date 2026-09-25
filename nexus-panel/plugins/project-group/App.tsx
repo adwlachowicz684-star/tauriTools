@@ -16,16 +16,12 @@ import { toolbarHint } from './utils/hint';
 import { copyText as copyTextImpl } from './utils/clipboard';
 import { clampLogMax } from './utils/log';
 import { skipDropToTab } from './utils/tabs';
-
-
-
 import { Splitter } from './components/Splitter';
+import { BusyIndicator } from './components/BusyIndicator';
 import { useIconThumbs } from './hooks/useIconThumbs';
 import type {
   CardInfo, CardKind, ChainAction, ContentItem,
 } from './types';
-
-
 
 export default function App() {
   const s = useFpx();
@@ -772,7 +768,6 @@ export default function App() {
   useCardHotkeys(ctx, {
     open: needCard((c) => openPath(c.path, 'dir')),
     /* 同上：#419 之后 lock 必须带 kind，紧邻的 rename 就带了 focus */
-    /* 同上：#419 之后 lock 必须带 kind，紧邻的 rename 就带了 focus */
     lock: needCard((c) => setDialog({ type: 'lock', card: c, kind: focus })),
     rename: needCard((c) => setDialog({ type: 'rename', card: c, kind: focus })),
     move: needCard((c) => void s.moveCardAcross(
@@ -1156,6 +1151,9 @@ export default function App() {
 
       {/* 菜单统一渲染到这里（原因见 ui.tsx 的注释）：脱离 .p-card 的层叠上下文 */}
       <div className="fpx-menu-layer" ref={setMenuLayer} />
+
+      {/* 全局「进行中」。延迟显示 + 最短停留都收在组件里，这里只管接线 */}
+      <BusyIndicator busy={s.busy} label={s.busyLabel} />
     </div>
     </MenuLayerContext.Provider>
   );

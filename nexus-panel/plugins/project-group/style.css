@@ -2078,3 +2078,60 @@
 /* 账面固定（仅登记、无系统权限）：与 .lock（真实 ACL 保护）区分开 ——
    lock 用 --text-dim 表示"已生效"，pin 更淡一档表示"只是记录，不是真限制"。 */
 .fpx-badge.pin { color: var(--text-mute); opacity: .75; }
+
+/* 全局「进行中」提示（右下角胶囊）
+   ------------------------------------------------------------------
+   为什么需要它：`useFpx` 的 `busy` 此前没人读，长操作（备份整树遍历、
+   枚举编辑器）期间界面**毫无反应**，用户分不清是慢还是卡死，只能再点一次。
+
+   为什么必须 `pointer-events: none`：它浮在右下角，而右下角正是日志区的
+   「复制全部 / 清空」按钮。挡住点击的话，用户会以为按钮坏了 ——
+   而它出现的时机恰好就是他想去点别的按钮的时候。
+
+   层级取 40：高于侧栏（--z-rail 30），低于弹窗遮罩（900）。
+   弹窗打开时要被遮罩盖住 —— 那时用户正在看弹窗，不该被它分心。 */
+.fpx-busy {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--sh-in-sm, 0 1px 4px rgba(0, 0, 0, .18));
+  font-size: var(--fs-11, 11px);
+  color: var(--text-dim);
+  pointer-events: none;
+  /* 显隐用透明度而不是 display：display 切换没有过渡，会硬闪一下 */
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity .15s ease, transform .15s ease;
+}
+
+.fpx-busy[data-on="1"] { opacity: 1; transform: none; }
+
+/* 转圈。用 border 三边着色而不是引入图片/图标字体：零依赖、随主题变色 */
+.fpx-busy-dot {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: fpx-busy-spin .7s linear infinite;
+}
+
+@keyframes fpx-busy-spin { to { transform: rotate(360deg); } }
+
+/* 减少动效偏好下停掉旋转：持续转圈对前庭敏感的人是负担。
+   改成静态的点 + 半透明脉冲，仍在"表达在忙"，但不制造运动。 */
+@media (prefers-reduced-motion: reduce) {
+  .fpx-busy-dot { animation: none; border-top-color: var(--border); background: var(--accent); }
+  .fpx-busy[data-on="1"] .fpx-busy-dot { animation: fpx-busy-pulse 1.4s ease-in-out infinite; }
+}
+
+@keyframes fpx-busy-pulse { 50% { opacity: .35; } }
