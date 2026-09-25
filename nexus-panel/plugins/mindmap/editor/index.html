@@ -716,46 +716,30 @@
                 }
             });
 
-            var VideoIcon = kity.createClass('VideoIcon', {
-                base: kity.Group,
-                constructor: function () {
-                    this.callBase();
-                    this.width = 20;
-                    this.height = 16;
-                    // 同 FileIcon：底框用 none，不能用 transparent（会变黑块）
-                    this.frame = new kity.Rect(20, 16, 0, -8, 3).fill('none');
-                    // 三角是实心填充，不显式上色就是黑的。
-                    // 构造时就给默认色：paint 万一没跑到也不会变成黑三角。
-                    this.path = (new kity.Path).setPathData('M-6,-6 L6,0 L-6,6 Z')
-                        .fill('#AEB6C4').stroke('#AEB6C4', 1);
-                    this.addShapes([this.frame, this.path]);
-                    this.on('mouseover', function () { this.frame.fill('rgba(90, 141, 214, 0.25)'); })
-                        .on('mouseout', function () { this.frame.fill('none'); });
-                    this.setStyle('cursor', 'pointer');
-                },
-                paint: function (color) {
-                    try {
-                        this.frame.stroke(color, 1.2);
-                        this.path.fill(color).stroke(color, 1);
-                    } catch (e) {}
-                    return this;
-                }
-            });
+            /* VideoIcon 已删除：改成「附件画进节点框内」之后就不再有
+             * 「画在节点右侧的小图标」这一路，这个类从此没人实例化。
+             * 留着只会让人以为视频图标还会画在框外。视频现在是框内的卡片
+             * （vcard + 播放三角 + 数量角标）。
+             */
             // 不能把 FileRenderer 挂进 _rendererClasses['right']：core 的 renderNodeBatch 按 b[0] 节点
             // 的渲染器数整体迭代，根节点无 right 渲染器、子节点多一个时，g._renderers[c] 会取到 undefined，
             // 在 "e.contentBox=..." 处抛 "Cannot set properties of undefined (setting 'contentBox')"，
             // 使子节点无法布局、全部堆在画布中心。改为 noderender 事件把文件图标作为独立形状绘制到节点渲染层，
             // 与下方分组边界/组标签钩子同构，既保留文件图标又不扰动渲染器数组。
             try {
-                // 文件/视频图标各自独立绘制（noderender 内一起清理重建），节点可同时挂两者：
-                // 文件在 baseX，存在文件时视频右移 20 与文件并排，互不覆盖。
+                // 附件（图片 / 视频 / 文件）全部画在**节点框内**：从节点盒下沿
+                // 往下排，排完撑高 _contentBox 并让外框跟着变大。
+                // 每类各自独立绘制、noderender 内一起清理重建，所以节点可以
+                // 同时挂多类而不互相覆盖。
                 km.on('noderender', function (e) {
                     var node = e && e.node;
                     if (!node) return;
                     try {
-                        var old = node._kmFileIcon, oldv = node._kmVideoIcon;
+                        // 只清 _kmFileIcon —— _kmVideoIcon 从来没被赋值过
+                        // （视频画成框内卡片，不走"右侧小图标"这条路），
+                        // 之前那段清理永远拿到 null，白跑一趟。
+                        var old = node._kmFileIcon;
                         if (old) { if (old.remove) old.remove(); node._kmFileIcon = null; }
-                        if (oldv) { if (oldv.remove) oldv.remove(); node._kmVideoIcon = null; }
                         var oldLabels = node._kmLabels || [];
                         for (var li = 0; li < oldLabels.length; li++) {
                             if (oldLabels[li] && oldLabels[li].remove) {
@@ -778,7 +762,6 @@
                         // 而且错得隐蔽（节点改了文字才暴露）。
                         node._kmBaseBox = box;
                         if (!box || !box.height) return;
-                        var baseX = box.right + node.getStyle('space-left');
                         var y = box.cy;
                         var rc = node.getRenderContainer();
                         if (!rc || !rc.appendShape) return;

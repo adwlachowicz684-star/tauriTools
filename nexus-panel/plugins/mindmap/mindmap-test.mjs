@@ -1051,9 +1051,27 @@ group('画布附件图标配色');
   ok(/this\.outline\.stroke\(color/.test(icons) && /this\.fold\.stroke\(color/.test(icons),
     'FileIcon 用 paint() 给轮廓与折角上描边');
 
-  // 13.4 视频图标：外框与三角都要显式上色（原来三角没设 fill → 默认黑）
-  ok(/this\.frame\.stroke\(color,\s*1\.2\)/.test(icons), 'VideoIcon 外框上色');
-  ok(/this\.path\.fill\(color\)\.stroke\(color,\s*1\)/.test(icons), 'VideoIcon 三角也显式上色');
+  /* 13.4 VideoIcon 已删除：改成「附件画进节点框内」之后，视频是框内卡片
+   * （vcard + 播放三角 + 数量角标），不再有「节点右侧小图标」这一路。
+   * 这个类从那以后就没人实例化 —— 留着只会让人以为视频图标还会画在框外。
+   * 这里锁住它不再出现，防止有人把死代码加回来。
+   */
+  ok(!/var VideoIcon = kity\.createClass/.test(html), 'VideoIcon 已删除（从未实例化，是死代码）');
+  /* baseX 同样是死代码：旧实现把图标画在节点**右侧**（box.right + space-left），
+   * 改成「附件画进框内」后它就没人用了，但声明还留着。
+   * 留着的代价是有人会照它去改位置，于是又画回框外。
+   */
+  ok(!/var baseX\s*=/.test(html), 'baseX 已删除（旧"图标画在节点右侧"的残留，声明后从未使用）');
+  /* _kmVideoIcon 同理：该字段从来没被赋值过（视频画成框内卡片），
+   * 旧的清理逻辑 `if (oldv) { oldv.remove() }` 永远拿到 null 白跑一趟。
+   * 留着会让人以为存在"视频右侧小图标"这条路要清理。
+   */
+  // 先剥注释再匹配 —— 注释里引用了这个名字，不剥的话断言命中注释本身，
+  // 于是"代码里真的又引用了"也照样绿（假阴性，本项目已多次遇到）
+  ok(!/_kmVideoIcon/.test(html.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')),
+    '不再引用 _kmVideoIcon（该字段从未被赋值，清理永远空转）');
+  ok(!/this\.frame\.stroke\(color/.test(icons), '不再有 VideoIcon 的 frame 上色');
+  ok(!/this\.path\.fill\(color\)\.stroke\(color/.test(icons), '不再有 VideoIcon 的三角上色');
   ok(!/stroke\('#8A90A0',\s*1\.2\)/.test(icons), '不再硬编码 #8A90A0（改为跟随节点色）');
 
   // 13.5 悬停提示：光看图标认不出挂的是哪个文件
@@ -4204,7 +4222,7 @@ group('画布附件区渲染（真实源码）');
 {
   /*
    * 用 editor/index.html 里的**真实源码**跑（iconColor + refListOf + imageListOf
-   * + FileIcon/VideoIcon + noderender 钩子），不是复刻一份 ——
+   * + FileIcon + noderender 钩子），不是复刻一份 ——
    * 复刻的话实现改了测试还是绿的。
    */
   const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
@@ -5090,12 +5108,13 @@ group('附件图标不能是黑块：fill 必须用 none 而不是 transparent')
 {
   const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
   const fiAt = html.indexOf("var FileIcon = kity.createClass('FileIcon'");
-  const fiEnd = html.indexOf("var VideoIcon = kity.createClass('VideoIcon'");
-  const viEnd = html.indexOf("var FileIcon", fiEnd + 10) > 0
-    ? html.indexOf("var FileIcon", fiEnd + 10) : html.length;
+  /* VideoIcon 已删除，所以不能再拿它当切片结束锚点 —— 换成后面那条
+   * 稳定存在的注释（"不能把 FileRenderer 挂进"）。
+   * 锚点一旦失效，slice 会切到别处（甚至空串），断言就变成假阴性。
+   */
+  const fiEnd = html.indexOf('// 不能把 FileRenderer 挂进');
   const fi = html.slice(fiAt, fiEnd);
-  const vi = html.slice(fiEnd, Math.min(fiEnd + 1200, viEnd));
-  ok(fiAt > 0 && fiEnd > fiAt, '能定位到 FileIcon / VideoIcon 源码');
+  ok(fiAt > 0 && fiEnd > fiAt, '能定位到 FileIcon 源码');
 
   // 核心：SVG 1.1 的 fill 不接受 transparent（那是 CSS 关键字），
   // 渲染器认不出就回退默认黑色 —— 整个矩形糊成黑块。none 才是标准值。
@@ -5119,9 +5138,7 @@ group('附件图标不能是黑块：fill 必须用 none 而不是 transparent')
   }
   ok(!/\.fill\('transparent'\)/.test(fi.replace(/\/\*[\s\S]*?\*\//g, '')),
     'FileIcon 代码里不再出现 fill(transparent)');
-  ok(!/fill\('transparent'\)/.test(vi), 'VideoIcon 不再用 fill(transparent)');
   ok(/\.fill\('none'\)/.test(fi), 'FileIcon 底框用 fill(none)');
-  ok(/\.fill\('none'\)/.test(vi), 'VideoIcon 底框用 fill(none)');
 
   // 注释曾写着「fill 保持 none」而代码写 transparent —— 注释与实现不符，
   // 这类不一致必须靠断言锁住，不能只靠注释
@@ -5131,8 +5148,6 @@ group('附件图标不能是黑块：fill 必须用 none 而不是 transparent')
   // mouseout 恢复态同样不能用 transparent（悬停过一次之后就会变黑块）
   ok(/mouseout', function \(\) \{ this\.rect\.fill\('none'\)/.test(fi),
     'FileIcon mouseout 恢复到 none（不是 transparent）');
-  ok(/mouseout', function \(\) \{ this\.frame\.fill\('none'\)/.test(vi),
-    'VideoIcon mouseout 恢复到 none');
 
   // 对照：kity 的 fill 实现是 `a && setAttribute('fill', a.toString())`
   // 传 'none' 会正确写入属性；这正是要的
@@ -5383,10 +5398,8 @@ group('图标：构造时就有默认色（不靠 paint 才不黑）');
 {
   const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
   const fiAt = html.indexOf('var FileIcon = kity.createClass');
-  const fiEnd = html.indexOf('var VideoIcon = kity.createClass');
-  const viEnd = html.indexOf('var FileIcon = kity.createClass', fiEnd);
+  const fiEnd = html.indexOf('// 不能把 FileRenderer 挂进');
   const fi = html.slice(fiAt, fiEnd);
-  const vi = html.slice(fiEnd, viEnd < 0 ? fiEnd + 1400 : viEnd);
 
   // FileIcon：轮廓自带填充 + 描边（paint 漏了也不会是黑块）
   ok(/this\.outline[\s\S]{0,200}\.fill\('rgba/.test(fi),
@@ -5395,9 +5408,8 @@ group('图标：构造时就有默认色（不靠 paint 才不黑）');
   // 折角单独一条 path，且 fill none —— 合在一起会被填充盖住
   ok(/this\.fold[\s\S]{0,160}\.fill\('none'\)/.test(fi),
     '折角是独立 path 且 fill none（合并会被填充盖掉）');
-  // VideoIcon 三角：实心填充，不设就是 SVG 默认黑
-  ok(/setPathData\('M-6,-6 L6,0 L-6,6 Z'\)[\s\S]{0,120}\.fill\('#AEB6C4'\)/.test(vi),
-    'VideoIcon 三角构造时就有填充色（不设就是默认黑）');
+  // VideoIcon 已删除（见上）—— 视频现在画成框内卡片
+  ok(!/M-6,-6 L6,0 L-6,6 Z/.test(html), 'VideoIcon 的三角路径已随类一起删除');
 
   // 行为级：真的跑一遍 FileIcon，确认不 paint 也不是黑
   {
