@@ -5,6 +5,8 @@ import {
   /* resolved 版：带深浅/风格覆盖。用户改了基调后 getCurrent().base 仍是旧值，
      统计区会显示错的深浅（与 App.tsx 同款修复）。 */
   getResolvedBase,
+  /* 卡片缩略图要按实际生效值渲染（含用户改动），不能只读 t.vars */
+  exportVarsFor,
   getAccent, saveAsCustom, deleteCustomTheme, ACCENT_SWATCHES,
 } from '../../js/theme-manager.js';
 import { styleLabel, STYLE_LABELS as THEME_STYLE_LABELS } from '../../js/themes.js';
@@ -223,9 +225,15 @@ export default definePlugin({
       grid.innerHTML = '';
       const activeId = getThemeId();
 
-      /** 一张主题卡片：预览区直接用主题自己的配色渲染，所见即所得 */
+      /** 一张主题卡片：预览区按**实际生效**的配色渲染（含用户改动），所见即所得 */
       const card = (t) => {
-        const v = t.vars;
+        /*
+         * 用 exportVarsFor(t) 而非 t.vars ——
+         * t.vars 不含基调/风格覆盖、逐项变量、风格参数、强调色，
+         * 用户改完之后卡片缩略图仍是旧样子，列表与实际对不上。
+         * 与 App.tsx 同款修复（两套实现必须同步，否则无构建模式下又不一致）。
+         */
+        const v = exportVarsFor(t);
         return h('button.theme-card', {
           class: t.id === activeId ? 'active' : '',
           title: t.desc || t.name,
