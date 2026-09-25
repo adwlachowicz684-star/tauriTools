@@ -11,6 +11,9 @@ use crate::fpx::safety::check_executable;
 // 只在 Windows 用：非 Windows 的 opener 不走 shell，无二次解析风险
 #[cfg(windows)]
 use crate::fpx::safety::safe_cmd_arg;
+// macOS 的 .app 走 `open -a`，同样要把参数挡在 shell 元字符之外
+#[cfg(target_os = "macos")]
+use crate::fpx::safety::safe_cmd_arg;
 
 /* ---------------------------- 目录浏览（给内嵌目录选择器用） ---------------------------- */
 
@@ -237,6 +240,39 @@ pub fn open_path(path: &str, mode: &str, editor_path: &str) -> Result<(), String
             if editor.is_empty() {
                 open_default(p)
             } else {
+                /*
+                 * macOS：`.app` 是**目录**，不是可执行文件。
+                 *
+                 * `editor::enumerate` 特意用 `exe.exists()` 而不是 `is_file()`
+                 * 去收它们（注释里写明：用 is_file 会把 /Applications 下的编辑器全漏掉），
+                 * 于是 VS Code.app / Cursor.app 这些**一定**会出现在选择列表里。
+                 * 而 `check_executable` 要求 `is_file()` —— 直接过校验的话，
+                 * 列表里最显眼的这几项**点了必然失败**，报「编辑器不可用（可执行文件不存在）」。
+                 * 用户只会以为"这个软件选不了编辑器"，而真相是两条规则对 `.app`
+                 * 的判定不一致（清单里"用 exists 收、用 is_file 验"正是这种错配）。
+                 *
+                 * 正解是走系统 opener：`open -a <.app> <文件>`。
+                 * 不是把它从列表里剔掉 —— 那等于在 macOS 上砍掉主要那几个编辑器。
+                 */
+                #[cfg(target_os = "macos")]
+                {
+                    let ep = Path::new(editor);
+                    if editor.to_lowercase().ends_with(".app") && ep.is_dir() {
+                        if !safe_cmd_arg(editor) {
+                            return Err(format!("编辑器路径含不安全字符，已拒绝启动: {editor}"));
+                        }
+                        let ps = p.to_string_lossy().to_string();
+                        if !safe_cmd_arg(&ps) {
+                            return Err(format!("路径含特殊字符，已拒绝打开: {ps}"));
+                        }
+                        return Command::new("open")
+                            .args(["-a", editor])
+                            .arg(p)
+                            .spawn()
+                            .map(|_| ())
+                            .map_err(|e| format!("无法启动编辑器: {e}"));
+                    }
+                }
                 // editor 来自配置。配置一旦被污染，"打开方式"就变成了"执行任意程序"，
                 // 所以先过一遍校验：存在性 + 扩展名白名单 + 无 shell 元字符
                 check_executable(Path::new(editor))

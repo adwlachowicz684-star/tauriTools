@@ -128,6 +128,60 @@ console.log('\n=== 7. 后端命令 ===');
   }
 }
 
+console.log('\n=== 7b. macOS 的 .app 编辑器：能列出来就必须能打开 ★★ ===');
+{
+  const sys = fs.readFileSync(path.join(RS, 'sys.rs'), 'utf8');
+  const sysCode = sys.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const ed = fs.readFileSync(path.join(RS, 'editor.rs'), 'utf8');
+  const edCode = ed.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+  /*
+   * `editor::enumerate` 用 `exe.exists()` 收候选 —— 注释明写：
+   * 「macOS 的 .app 是目录，用 is_file 会把它们全漏掉」。
+   * 于是 VS Code.app / Cursor.app **一定**出现在选择列表里。
+   * 而 `open_path(mode="editor")` 走 `check_executable`，那条要求 `is_file()`
+   * （`looks_like_path` 为真时）。两条规则对 `.app` 判定不一致：
+   * 列表里最显眼的几项**点了必然失败**，报「编辑器不可用（可执行文件不存在）」。
+   * 用户只会以为"这软件选不了编辑器"，而真相无从查起。
+   */
+  t('enumerate 用 exists() 收候选（.app 才不会被漏掉）',
+    /if exe\.exists\(\) && seen\.insert\(key\)/.test(edCode));
+  t('check_executable 要求 is_file（两条规则确实不同，故必须在 open_path 里兜住）',
+    /if !p\.is_file\(\) \{\s*\n\s*return Err\(format!\("可执行文件不存在/.test(
+      fs.readFileSync(path.join(RS, 'safety.rs'), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')));
+
+  /* 兜住的方式：走系统 opener `open -a <.app> <文件>` */
+  t('open_path 认 .app 目录',
+    /editor\.to_lowercase\(\)\.ends_with\("\.app"\) && ep\.is_dir\(\)/.test(sysCode));
+  t('用 open -a 启动', /Command::new\("open"\)\s*\n\s*\.args\(\["-a", editor\]\)/.test(sysCode));
+
+  /* **顺序**：必须在 check_executable 之前，否则先被 is_file 判死，分支永远走不到 */
+  const iApp = sysCode.indexOf('ends_with(".app")');
+  const iChk = sysCode.indexOf('check_executable(Path::new(editor))');
+  t('两端的锚点都真实存在', iApp >= 0 && iChk >= 0);
+  t('（两端都找到时才比较）.app 分支在 check_executable 之前',
+    iApp >= 0 && iChk >= 0 && iApp < iChk);
+
+  /*
+   * 不能把 .app 直接交给 `Command::new(editor)` —— 目录不可 exec。
+   * 且该分支必须 `return`，不能只是算完往下掉（掉下去就进了 check_executable）。
+   *
+   * 注意：这条必须像上面那条顺序断言一样**先判锚点存在**。
+   * 第一版没判，结果整段被删掉时 indexOf 返回 -1、切片落到文件开头，
+   * 断言照样通过 —— 即"护栏本身空跑"，比没有更糟。
+   */
+  const tail = iApp >= 0 && iChk >= 0 ? sysCode.slice(iApp, iChk) : '';
+  t('（锚点都在时才判）.app 分支内不出现 Command::new(editor)',
+    iApp >= 0 && iChk >= 0 && !/Command::new\(editor\)/.test(tail));
+  t('（锚点都在时才判）.app 分支是 return，不往下掉',
+    iApp >= 0 && iChk >= 0 && /return Command::new\("open"\)/.test(tail));
+
+  /* macOS 分支里也要挡 shell 元字符：exe 与路径都来自配置 / 磁盘 */
+  t('.app 分支校验编辑器路径', /编辑器路径含不安全字符/.test(sys));
+  t('.app 分支校验文件参数', /路径含特殊字符，已拒绝打开/.test(sys));
+}
+
 console.log('\n=== 8. 服务契约不一致（记录，不在本轮修改）===');
 {
   const sdk = path.join(HERE, '../../js/plugin-sdk.js');
