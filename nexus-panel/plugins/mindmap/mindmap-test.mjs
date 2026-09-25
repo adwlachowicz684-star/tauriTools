@@ -6214,10 +6214,12 @@ group('左侧搜索结果面板（复用文件库底框）');
   // 另一处还在，断言照样绿。必须各自限定在自己的函数片段内。
   const loadSeg = idx.slice(idx.indexOf('async function loadSheet()'),
     idx.indexOf('function applyOptions()'));
-  ok(/fileList\?\.setSearch\(null\)/.test(loadSeg), '换画布后清空（旧结果已失效）');
+  // 换成 clearSearchState()：它同时清编辑器高亮框 + 左侧面板 + 顶栏状态文字。
+  // 只断言 setSearch(null) 会漏掉最要紧的那一条（画布上的框残留）。
+  ok(/clearSearchState\(\)/.test(loadSeg), '换画布后清空（旧结果已失效）');
   const inputSeg = idx.slice(idx.indexOf("const searchInput = h('input.mm-input'"),
     idx.indexOf("toolbar.appendChild(group(searchInput"));
-  ok(/oninput[\s\S]{0,220}setSearch\(null\)/.test(inputSeg),
+  ok(/oninput[\s\S]{0,220}clearSearchState\(\)/.test(inputSeg),
     '关键字删空后立刻退出搜索态（不等回车）');
 
   // ---- 4) 越界不能"假装成功" ----
@@ -8417,6 +8419,50 @@ group('popupMenu 再点同一个锚点必须收起（不能叠层）');
 
   // 反证：不能把 openMenu 设成永不清理
   ok(src.split('openMenu').length - 1 >= 6, 'openMenu 被多处引用（不是只声明一次）');
+}
+
+group('清空搜索必须连带清掉画布上的高亮框（不能只收面板）');
+
+{
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+
+  /*
+   * 实测（真实编辑器页，数带 #0A84FF 描边的形状）：
+   *   搜索前 0 → search("子") 后 1 → **清空输入框后仍是 1** →
+   *   显式 search("") 后 0。
+   *
+   * 根因：filelist 只管面板，从头到尾不通知编辑器；而编辑器的高亮框
+   * 只有两条清除路径（search('') 与「点到别的节点」），
+   * 都不经过外壳的清空动作。于是清空输入框 → 面板收起 → 蓝框还挂在画布上。
+   */
+  ok(/function clearSearchState\(\)/.test(idx), '有 clearSearchState() 收口函数');
+
+  // 三件事缺一不可
+  {
+    const i = idx.indexOf('function clearSearchState()');
+    const seg = idx.slice(i, i + 420);
+    ok(/bridge\?\.search\?\.\(''\)/.test(seg),
+      '① 调 bridge.search(\'\')（只有它才会走到 resetSearch → 清高亮框）');
+    ok(/fileList\?\.setSearch\(null\)/.test(seg), '② 清左侧结果面板');
+    ok(/searchStatusEl\.textContent = ''/.test(seg), '③ 清顶栏「1/2」状态文字');
+    ok(/classList\.remove\('warn'\)/.test(seg), '③ 顺带去掉 warn 高亮（留着会一直红着）');
+  }
+
+  // 两处调用点都必须走它，不能有一处绕回只清面板
+  ok(/if \(!searchInput\.value\.trim\(\)\) clearSearchState\(\);/.test(idx),
+    '输入框删空 → 走 clearSearchState');
+  {
+    const i = idx.indexOf('clearSearchState();\n    // 切换/重载画布会重置编辑器历史基线');
+    ok(i > 0, '换画布 → 走 clearSearchState');
+  }
+
+  // search('') 失败不能连带把面板也清掉 —— 但有 try/catch 兜住
+  {
+    const i = idx.indexOf('function clearSearchState()');
+    const seg = idx.slice(i, i + 420);
+    ok(/try \{ bridge\?\.search\?\.\(''\); \} catch/.test(seg),
+      'bridge.search 包 try/catch（编辑器未就绪时只清本地，不该中断）');
+  }
 }
 
 group('导出为交换格式 → 导出为交换格式（单画布）');

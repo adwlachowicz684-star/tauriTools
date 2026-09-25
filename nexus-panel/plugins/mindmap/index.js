@@ -377,6 +377,36 @@ bootIframePlugin(async (ctx) => {
 
   /** 高亮当前页签。侧栏也会自行切页（例如点节点附件会跳到「文件」页），
    *  所以这里由 side 的 onPage 回调驱动，而不是只在点击时更新。 */
+  // 顶栏搜索状态文字（buildToolbar 里赋值）。退出搜索态时要把它一起清掉。
+  let searchStatusEl = null;
+
+  /**
+   * 退出搜索态。
+   *
+   * 三处必须**一起**清，缺任何一处都是残留：
+   *   1. 编辑器侧的高亮框 —— 只有 `bridge.search('')` 才会走到
+   *      resetSearch() → clearSearchMark()；
+   *   2. 左侧结果面板 —— fileList.setSearch(null)；
+   *   3. 顶栏的「1/2」状态文字。
+   *
+   * 早先只做了 2：清空输入框后面板收起了，但**画布上那个蓝色高亮框一直挂着**。
+   *
+   * 实测（真实编辑器页，数带 #0A84FF 描边的形状）：
+   *   搜索前 0 → search("子") 后 1 → 清空输入框后 **仍是 1** →
+   *   显式 search("") 后 0。
+   *
+   * 根因是 filelist 只管面板，从头到尾不通知编辑器；而编辑器的高亮框
+   * 只有两条清除路径（search('') 与点到别的节点），都不经过外壳的清空动作。
+   */
+  function clearSearchState() {
+    try { bridge?.search?.(''); } catch { /* 编辑器未就绪就只清本地，不该因此中断 */ }
+    withStableRoot(() => fileList?.setSearch(null));
+    if (searchStatusEl) {
+      searchStatusEl.textContent = '';
+      searchStatusEl.classList.remove('warn');
+    }
+  }
+
   function syncSideTabs(page) {
     if (!sideTabsEl) return;
     [...sideTabsEl.children].forEach((b, i) => {
@@ -389,6 +419,7 @@ bootIframePlugin(async (ctx) => {
 
     // 搜索
     const searchInfo = h('span.mm-search-info', {}, '');
+    searchStatusEl = searchInfo;
     /**
      * 执行一次搜索：定位到下一个匹配 + 顶栏状态 + 左侧结果面板。
      *
@@ -410,7 +441,7 @@ bootIframePlugin(async (ctx) => {
       oninput: () => {
         // 关键字被删空 → 立刻退出搜索态。
         // 等回车才清的话，面板会一直挂着上一次的结果，看着像"搜索坏了"
-        if (!searchInput.value.trim()) withStableRoot(() => fileList?.setSearch(null));
+        if (!searchInput.value.trim()) clearSearchState();
       },
       onkeydown: (e) => {
         if (e.key !== 'Enter') return;
@@ -971,7 +1002,7 @@ bootIframePlugin(async (ctx) => {
     redoStack = [];
     // 换画布后旧搜索结果全部失效（节点都换了），不清会让用户点到一个
     // 根本不在这张画布上的"结果"，然后定位失败
-    withStableRoot(() => fileList?.setSearch(null));
+    clearSearchState();
     // 切换/重载画布会重置编辑器历史基线，锁必须解 ——
     // 否则会拿旧栈标记去操作新画布（与 resetHistory 同理）
     pendingRedo = null;
