@@ -105,3 +105,13 @@
   max-height: 220px;
   overflow: auto;
 }
+
+/* 插件页要让两栏各自滚，外层就不能再滚 —— 否则出现双层滚动条。
+   这条**只能放本文件**：本文件只在 iframe 模式加载（module.tsx 刻意不引，
+   因为 #root 会命中宿主根容器）。同页模式下 .set-body 没有 flex:1，
+   若在这里给 overflow:hidden，内容会被裁掉且无从察觉。 */
+.set-body.fill {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}

@@ -98,7 +98,14 @@ console.log('\n=== 3. 状态与主题变量 ===');
     !/:\s*#[0-9a-f]{3,8}/i.test(css.replace(/--sh-cast[^;]+;/g, ''))
     || /:\s*#[0-9a-f]{3,8}/i.test(css) === false);
   t('圆角走 --r-* 变量', !/border-radius:\s*\d+px/.test(css));
-  t('时长走 --dur-* 变量', !/transition:[^;]*\b\d+m?s\b/.test(css));
+  /*
+   * 先剥掉 var(...) 再判 —— 否则 `var(--dur-fast, 120ms)` 里的兜底值
+   * 会被当成写死时长。不引 tokens.css 的文档就靠那个兜底活着，
+   * 判成违规等于逼人把兜底删掉（删了才真会坏）。
+   * 与"颜色兜底不算硬编码"是同一条原则。
+   */
+  const cssNoFb = css.replace(/var\([^)]*\)/g, 'VAR');
+  t('时长走 --dur-* 变量', !/transition:[^;]*\b\d+m?s\b/.test(cssNoFb));
 }
 
 console.log('\n=== 4. 重复定义清理干净 ===');

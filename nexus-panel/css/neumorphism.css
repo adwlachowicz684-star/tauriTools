@@ -1769,11 +1769,6 @@ html.theme-transition *:not(.spinner) {
 /* 顶部一行总览（共几个插件 / 右上角几个按钮）。
    不放在卡片里：它是**对着整片矩阵**的说明，缩进任何一张卡都会读成
    那张卡自己的属性。压暗 + 小字，扫视时不会跟分组标题抢注意力。 */
-.tb-summary {
-  font-size: var(--fs-11, 11px);
-  color: var(--text-dim);
-  margin-top: var(--sp-4, 8px);
-}
 /* 入口文件路径。等宽是因为路径里的分隔符与层级要靠字形对齐才读得出
    结构；截断而不是换行 —— 卡片高度必须一致，否则矩阵会出现参差的空洞。 */
 .tb-card-entry {
@@ -1804,12 +1799,3 @@ html.theme-transition *:not(.spinner) {
    块间用间距而不是分隔线：这一片本身就在一个带边框的面板里，
    再画横线会把它切成互不相干的几块，反而看不出同属"右上角按钮"。 */
 .tb-group { margin-top: var(--sp-6, 12px); }
-.tb-group-head {
-  display: flex; align-items: baseline;
-  gap: var(--sp-4, 8px);
-  flex-wrap: wrap;
-}
-.tb-group-title {
-  font-size: var(--fs-12, 12px);
-  font-weight: var(--fw-strong, 600);
-}
