@@ -632,6 +632,23 @@ export function saveCustomTheme(theme) {
 }
 export function deleteCustomTheme(id) {
   saveCustomThemes(getCustomThemes().filter((t) => t.id !== id));
+  /*
+   * 一并清掉这套主题留下的所有覆盖：变量 / 基调 / 风格 / 风格参数。
+   *
+   * 它们都按**主题 id** 分档存储，主题删了之后没人再读得到，
+   * 只会永久占着 localStorage —— 反复"新建→调一通→删除"会不断累积垃圾。
+   * 更麻烦的是排查时会在存储里看到一堆孤儿键，分不清哪些还有效。
+   *
+   * 不重算界面：删的是已不存在的主题，当前主题不受影响。
+   */
+  try {
+    localStorage.removeItem(varMapKey(id));
+    localStorage.removeItem(KEY_BASE_OVR + ':' + id);
+    localStorage.removeItem(KEY_STYLE_OVR + ':' + id);
+    for (const list of Object.values(STYLE_PARAMS)) {
+      for (const p of list) localStorage.removeItem(styleKey(p.key, id));
+    }
+  } catch { /* 存储不可用时忽略 */ }
 }
 
 /* ---------------------------- 主题查找 ---------------------------- */
@@ -1113,7 +1130,20 @@ function applyTo(rawTheme, accent, envColor) {
      给没有背景图的主题硬塞一张图，会盖掉主题的底色设计，
      而且那些主题的文字/卡片对比度本来就是按纯色底算的 ——
      压上一张图后可能整片看不清，用户只会觉得"这套主题坏了"。 */
-  if (supportsBgImage(theme)) {
+  /*
+   * 用户**手填**的 --bg-image 优先于背景预设与自定义图。
+   * ------------------------------------------------------------------
+   * 两套机制会打架：参数表里有 --bg-image 输入框，背景区也有预设宫格
+   * 与上传入口，两者写的是同一个变量。原先背景区在 deriveVars 之后无条件
+   * 覆盖，于是"选了预设背景之后，参数表里改 --bg-image 完全没反应"。
+   *
+   * 判定"手填"用 varMap 而不是"值不等于主题自带值"：
+   * 主题本身可能就带渐变（10 套玻璃主题的 --bg-image 都是渐变），
+   * 那种情况下值相同不代表用户没填过。
+   * 与"用户显式值优先于滑块缩放"是同一条原则。
+   */
+  const manualBg = getVarOverrides(theme.id)['--bg-image'];
+  if (!manualBg && supportsBgImage(theme)) {
     const custom = getBgImage();
     if (custom) vars['--bg-image'] = 'url("' + escapeCssUrl(custom) + '")';
     /* 预设背景与自定义图**互斥**：后者优先（它是用户特意挑的图）。
