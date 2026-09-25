@@ -388,7 +388,7 @@ select optgroup {
   padding: 8px var(--ctl-pad, 10px);
   font: inherit;
   font-size: var(--ctl-fs, 13px);
-  line-height: var(--lh-relaxed, 1.6);
+  line-height: line-height: var(--lh-relaxed, 1.6);
   color: var(--text);
   background: var(--surface-sunk, var(--surface));
   border: 0;
@@ -574,7 +574,7 @@ select optgroup {
 .mm-vthumb-empty,
 .fpx-empty {
   color: var(--text-dim);
-  line-height: var(--lh-loose, 1.7);
+  line-height: line-height: var(--lh-loose, 1.7);
   text-align: center;
 }
 
@@ -678,7 +678,7 @@ select optgroup {
   max-width: 320px;
   border-radius: var(--r-sm);
   font-size: var(--fs-12, 12px);
-  line-height: var(--lh-normal, 1.5);
+  line-height: line-height: var(--lh-normal, 1.5);
   color: var(--text);
   /* 与弹窗同理：用 --surface-overlay，玻璃主题下 --surface 只有 7% 白 */
   background: var(--surface-overlay);
@@ -978,7 +978,7 @@ input[type='range']:disabled {
   margin-top: 4px;
   font-size: var(--fs-11, 11px);
   color: var(--danger);
-  line-height: var(--lh-tight, 1.45);
+  line-height: line-height: var(--lh-tight, 1.45);
 }
 
 /* ------------------------------------------------------------
@@ -1149,7 +1149,7 @@ input[type='range']:disabled {
   width: 100%;
   text-align: center;
   font-size: var(--fs-note, 11px);
-  line-height: var(--lh-normal, 1.5);
+  line-height: line-height: var(--lh-normal, 1.5);
 }
 
 /* ============================================================
@@ -1434,4 +1434,303 @@ input[type='range']:disabled {
   .nx-bgpreset { transition: none; }
   .nx-bgpreset:hover { transform: none; }
   .nx-bgpreset:active { transform: none; }
+}
+
+/* 可折叠设置分组（.set-group）与配置行（.cfg-row）
+   --------------------------------------------------------------------
+   为什么要有 .set-group：
+     设置项一多就一屏放不下，只能往下一直滚 —— 滚到下面连"自己在改哪个
+     插件"都看不出来（标题早滚出可视区了）。折叠后每组收起态只占一行，
+     十几个设置项也只占十来行，展开哪组交给用户决定。
+
+   为什么要有 .cfg-row（而不是继续写内联 style）：
+     这三处原先全是内联 padding/boxShadow/fontSize，属于"影子样式"——
+     内联优先级高于任何 CSS 类，改外层 CSS 完全无效，且不被静态扫描覆盖。
+     抽成类之后同一处观感只有一份定义。
+
+   全部走令牌：尺寸用 --sp-*、字号用 --fs-*、圆角用 --r-*、阴影用 --sh-*，
+   不写裸值 —— 裸值会让这里的观感脱离整套主题体系（切主题时不跟着变）。
+*/
+.set-group {
+  margin-top: var(--sp-5, 10px);
+  border-radius: var(--r-sm, 9px);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-sm);
+  /* 圆角内裁：展开的内容顶到圆角处不会露出方角 */
+  overflow: hidden;
+}
+
+.set-group-head {
+  /* 用 button 就得自己清掉浏览器默认观感 */
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3, 6px);
+  padding: var(--sp-4, 8px) var(--sp-5, 10px);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-13, 13px);
+  text-align: left;
+  cursor: pointer;
+}
+
+.set-group-head:hover { filter: brightness(var(--hover-bright, 1.06)); }
+
+/*
+ * 箭头旋转而不是换字符：换字符（▸/▾）在两种字形宽度不一致的字体下
+ * 会让标题左右跳动；旋转是同一个字形，不会位移。
+ */
+.set-group-caret {
+  flex: none;
+  transition: transform var(--dur-fast, 120ms) ease;
+  transform: rotate(0deg);
+}
+
+.set-group.open .set-group-caret { transform: rotate(90deg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .set-group-caret { transition: none; }
+}
+
+.set-group-title { flex: 1; min-width: 0; }
+
+.set-group-badge {
+  flex: none;
+  font-size: var(--fs-11, 11px);
+  color: var(--text-soft, var(--text));
+}
+
+.set-group-body { padding: 0 var(--sp-5, 10px) var(--sp-5, 10px); }
+
+.set-group-hint {
+  font-size: var(--fs-11, 11px);
+  line-height: var(--lh-relaxed, 1.6);
+  margin-bottom: var(--sp-4, 8px);
+}
+
+/* 配置行：左文右控件 */
+.cfg-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5, 10px);
+  padding: var(--sp-5, 10px) var(--sp-6, 12px);
+  margin-top: var(--sp-4, 8px);
+  border-radius: var(--r-sm, 9px);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-sm);
+}
+
+.cfg-row-main { flex: 1; min-width: 0; }
+
+.cfg-row-label { font-size: var(--fs-13, 13px); }
+
+.cfg-row-desc {
+  font-size: var(--fs-11, 11px);
+  margin-top: var(--sp-1, 2px);
+  line-height: var(--lh-relaxed, 1.6);
+}
+
+.cfg-row-note {
+  font-size: var(--fs-11, 11px);
+  line-height: var(--lh-relaxed, 1.6);
+  margin-top: var(--sp-5, 10px);
+}
+
+.cfg-row-note-sep {
+  padding-top: var(--sp-5, 10px);
+  border-top: 1px solid var(--hairline);
+}
+
+/* 插件页双栏（.pg-*）
+   --------------------------------------------------------------------
+   ⚠️ 刻意放在 controls.css 而**不是** settings.css：
+      设置插件是双模的（registry 里 noBuild ? './index.js' : './module.tsx'），
+      而 module.tsx **刻意不引入 settings.css** —— 那份文件里的 #root 规则
+      会命中宿主自己的 React 根容器，把整个外壳改成 flex 列（module.tsx
+      头部注释写了这个坑）。
+      放那里等于同页模式下双栏样式根本不加载。
+
+   高度链不能依赖父容器：
+      同页模式挂在 .plugin-root 里、由宿主的 #stage-scroll 滚，
+      外层没有 flex 高度链，写 flex:1 + min-height:0 会塌陷成 0 高。
+      所以 .pg-items 用 max-height（vh）自己限高，不依赖任何祖先。
+/* 插件页：左列表 + 右详情
+   --------------------------------------------------------------------
+   原先把所有插件做成一张张卡片平铺成矩阵（.tb-shop）。插件一多就是一条
+   无限长的带：想改第 20 个插件得一路滚到底，而且滚着滚着连"自己在哪"
+   都忘了 —— 分组标题早滚出可视区了。
+
+   改成分栏后：
+     · 左列只放图标 + 名称，一屏能容下几十个，基本不用滚（真要滚也是它自己内滚）
+     · 右列只渲染**当前选中**那一个插件的完整设置，内容长就右列自己内滚
+     · 选中态始终可见，不会出现"不知道在改谁"
+
+   高度链是这里唯一的坑：
+     #root(flex 列, height:100%) → .set-body.fill(flex:1, overflow:hidden)
+     → .pg-page(flex 列, flex:1) → .pg-wrap(flex:1, min-height:0)
+     → .pg-list / .pg-detail(min-height:0, 各自 overflow-y:auto)
+
+   每一层都要 min-height:0 —— flex 子项默认 min-height:auto 会被内容顶开，
+   少写一层 overflow 就失效，表现为"右列不滚、整页跟着滚"，正是要修的毛病。
+
+   为什么 .set-body 要临时改 overflow:hidden：它平时是滚动容器（其它标签页
+   靠它滚）。插件页要让两栏各自滚，外层就不能再滚，否则出现双层滚动条。
+*/
+.pg-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pg-page-head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-5, 10px);
+  margin-bottom: var(--sp-4, 8px);
+}
+
+.pg-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: var(--sp-5, 10px);
+}
+
+/* 左列：定宽，不随内容撑开；窄屏时收成上半区（见下面媒体查询） */
+.pg-list {
+  flex: none;
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pg-search { flex: none; margin-bottom: var(--sp-4, 8px); }
+
+/*
+ * 用 max-height（vh）而不是 flex:1 —— 后者依赖祖先有确定的高度链，
+ * 同页模式下没有那条链（滚动交给宿主 #stage-scroll），会塌陷成 0 高，
+ * 表现为"左列一个插件都不显示"且不报错。vh 不依赖任何祖先。
+ */
+.pg-items {
+  flex: 1;
+  min-height: 0;
+  max-height: 56vh;
+  overflow-y: auto;
+}
+
+.pg-group { margin-bottom: var(--sp-5, 10px); }
+
+/* 拖拽容器：本身不设观感，但要有定义 ——
+   没有定义的类名等于裸奔，间距全靠继承，各组之间会挤成一片。 */
+.pg-group-items { display: flex; flex-direction: column; }
+
+.pg-group-head {
+  font-size: var(--fs-11, 11px);
+  color: var(--text-soft, var(--text));
+  padding: 0 var(--sp-3, 6px);
+  margin-bottom: var(--sp-2, 4px);
+}
+
+.pg-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3, 6px);
+  padding: var(--sp-3, 6px) var(--sp-4, 8px);
+  margin-bottom: var(--sp-2, 4px);
+  border: 0;
+  border-radius: var(--r-sm, 9px);
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-12, 12px);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pg-item:hover { background: var(--surface-sunk); }
+
+.pg-item.on {
+  background: var(--surface-raised);
+  box-shadow: var(--sh-out-sm);
+}
+
+.pg-item-icon { flex: none; }
+
+/* 名称可能很长，必须省略号收口 ——
+   不收口会把左列撑宽，右列被挤没了（flex 子项默认 min-width:auto）。 */
+.pg-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pg-item-tag {
+  flex: none;
+  font-size: var(--fs-11, 11px);
+  color: var(--text-soft, var(--text));
+}
+
+/*
+ * 右列：内容长就这里滚，左列与页头不动。
+ * 同样**不给死高度** —— 同页模式下没有高度链，设了就塌陷。
+ * 不滚时（同页）由外层 #stage-scroll 兜着，只是会一起滚，可接受。
+ */
+.pg-detail {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding-right: var(--sp-2, 4px);
+}
+
+.pg-detail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5, 10px);
+  padding-bottom: var(--sp-4, 8px);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.pg-detail-icon { font-size: var(--fs-18, 18px); flex: none; }
+
+.pg-detail-name { font-size: var(--fs-15, 15px); }
+
+.pg-detail-sub {
+  font-size: var(--fs-11, 11px);
+  margin-top: var(--sp-1, 2px);
+}
+
+.pg-kv {
+  display: flex;
+  gap: var(--sp-5, 10px);
+  font-size: var(--fs-12, 12px);
+  padding: var(--sp-2, 4px) 0;
+}
+
+.pg-kv-k {
+  flex: none;
+  width: 72px;
+  color: var(--text-soft, var(--text));
+}
+
+.pg-kv-v { flex: 1; min-width: 0; word-break: break-all; }
+
+.pg-actions {
+  display: flex;
+  gap: var(--sp-4, 8px);
+  margin-top: var(--sp-6, 12px);
+}
+
+/* 窄屏：两栏并排会各只剩一条缝，改上下堆叠。
+   左列限高 40% —— 不限高的话插件一多会把右列整个顶出屏外。 */
+@media (max-width: 720px) {
+  .pg-wrap { flex-direction: column; }
+  .pg-list { width: auto; max-height: 40%; }
 }
