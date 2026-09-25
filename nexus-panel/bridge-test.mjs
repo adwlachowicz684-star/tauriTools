@@ -137,7 +137,6 @@ deliver({
   theme: shellState.theme,
   view: 'main',
   isolated: true,
-  reportBase: true,
 });
 await sleep(80);
 deliver({ channel: 'nexus-bridge-v1', type: 'mount' });

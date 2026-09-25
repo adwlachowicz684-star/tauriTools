@@ -57,7 +57,6 @@ tm.applyTheme(darkA.id);
 t('全局深色时未配置 → resolvePluginTheme 为 null', host.resolvePluginTheme(PID) === null);
 t('varsForPlugin 等同全局',
   JSON.stringify(host.varsForPlugin(PID)) === JSON.stringify(tm.exportVars()));
-t('baseForPlugin 等同全局', host.baseForPlugin(PID) === tm.getBase());
 
 /* ---------- 3. 只跟随深浅，不跟随同基调换主题 ---------- */
 console.log('\n=== 3. 只跟随深浅 ===');
@@ -95,18 +94,6 @@ tm.applyTheme(darkB.id);
 t('填了深色 → 深色下生效', host.resolvePluginTheme(PID)?.id === darkA.id);
 tm.applyTheme(lightB.id);
 t('没填浅色 → 浅色下跟随全局', host.resolvePluginTheme(PID) === null);
-
-/* ---------- 6. baseForPlugin 取插件自己的基调 ---------- */
-console.log('\n=== 6. 适配用的基调取插件自己那套 ===');
-setPluginConfig(PID, { themeDark: darkA.id, themeLight: lightA.id });
-tm.applyTheme(lightB.id);                       // 全局浅色，插件自选浅色 → 一致
-t('插件与全局同基调 → base 相同', host.baseForPlugin(PID) === tm.getBase());
-// 构造"全局与插件基调不同"：全局深色 B，但深槽故意留空、浅槽有值
-// —— 此时插件跟随全局深色，base 应仍为 dark
-setPluginConfig(PID, { themeDark: null, themeLight: lightA.id });
-tm.applyTheme(darkB.id);
-t('深槽为空、全局深色 → base 仍为 dark（跟随全局）', host.baseForPlugin(PID) === 'dark',
-  host.baseForPlugin(PID));
 
 /* ---------- 7. 变量确实不同（不是空壳） ---------- */
 console.log('\n=== 7. 变量内容 ===');
@@ -148,9 +135,6 @@ const hostSrc = src('js/host.js');
 t('init 消息用 varsForPlugin', /type: 'init', manifest, theme: varsForPlugin\(manifest\.id\)/.test(hostSrc));
 t('pushTheme 用 varsForPlugin', /send\(iframe, \{ type: 'theme', theme: varsForPlugin\(pluginId\) \}\)/.test(hostSrc));
 t('module 容器应用了内联变量', /applyThemeVarsTo\(container, varsForPlugin\(manifest\.id\)\)/.test(hostSrc));
-t('adaptInput 带了 panelBase', /panelBase: baseForPlugin\(manifest\.id\)/.test(hostSrc));
-t('normalizer 支持传入 panelBase',
-  /if \(o\.panelBase\) \{\s*panelBase = o\.panelBase;/.test(src('js/theme-normalizer.js')));
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

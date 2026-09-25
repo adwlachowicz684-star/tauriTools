@@ -370,7 +370,7 @@ console.log('\n=== 7. 死样式分类：档位类留用、真废弃清零 ===');
     'react-flow__handle', 'react-flow__edge', 'react-flow__background-pattern',
     'react-flow__controls', 'react-flow__minimap',
     /* 以拼接/模板方式挂类，静态扫描取不到但实测在用 */
-    'nexus-adapted', 'tb-card', 'trig-card']);
+    'tb-card', 'trig-card']);
 
   /*
    * 前缀族：agent-flow 触发器 / 节点徽标这一族的类名

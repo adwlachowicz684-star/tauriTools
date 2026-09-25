@@ -13,7 +13,6 @@ globalThis.getComputedStyle = dom.window.getComputedStyle;
 
 const tm = await import('./js/theme-manager.js');
 const { PRESET_THEMES, THEME_VARS, ACCENT_SWATCHES } = await import('./js/themes.js');
-const { installAdapter, setPolicy } = await import('./js/theme-normalizer.js');
 
 let pass = 0, fail = 0;
 const t = (name, cond, extra = '') => {
@@ -126,40 +125,6 @@ const root = document.documentElement;
   const ctl = readFileSync('css/controls.css', 'utf8');
   t('勾选标记备了黑勾（data-badge-fg=dark 时切换）',
     /data-badge-fg='dark'/.test(ctl));
-}
-
-/* ---------- 0c. 插件的 followsTheme 与"是否真的跟随"一致 ---------- */
-{
-  const reg = readFileSync('plugins/registry.js', 'utf8');
-  /* 按 "id: '" 切成块，避免用含换行的正则（会被当成真实换行截断） */
-  const marks = reg.split("id: '").slice(1)
-    .map((chunk) => ({ id: chunk.slice(0, chunk.indexOf("'")), body: chunk.slice(0, 900) }))
-    .filter((x) => /followsTheme:\s*true/.test(x.body))
-    .map((x) => x.id);
-  /* 真跟随 = 插件的 CSS/HTML 里读外壳主题变量。
-     判据量化：≥3 处引用 --bg/--surface/--text/--accent 之一。 */
-  const SHELL = ['--bg', '--surface', '--surface-raised', '--surface-sunk', '--text', '--text-dim', '--accent'];
-  const follows = [];
-  const { readdirSync, existsSync } = await import('node:fs');
-  for (const dir of readdirSync('plugins')) {
-    let hits = 0;
-    for (const f of ['styles.css', 'style.css', 'index.html']) {
-      const fp = `plugins/${dir}/${f}`;
-      if (!existsSync(fp)) continue;
-      const txt = readFileSync(fp, 'utf8');
-      /* 'var\\(' —— 少一层转义的话 JS 里就是 var( ，( 会被当成分组起点 */
-      for (const v of SHELL) hits += (txt.match(new RegExp('var\\(' + v + '[),]', 'g')) || []).length;
-    }
-    if (hits >= 3) follows.push({ id: dir, hits });
-  }
-  const missing = follows.filter((x) => !marks.includes(x.id)).map((x) => `${x.id}(${x.hits}处)`);
-  t('读了外壳变量的插件都标了 followsTheme', missing.length === 0,
-    missing.join(', ') || `已标：${marks.join(', ')}`);
-
-  /* 反向：标了却几乎不读外壳变量的（标错 → 该加的滤镜没加） */
-  const wrong = marks.filter((id) => !follows.some((f) => f.id === id));
-  t('标了 followsTheme 的插件确实读外壳变量（无错标）', wrong.length === 0, wrong.join(', '));
-  console.log('   跟随主题的插件：' + follows.map((f) => `${f.id}(${f.hits})`).join('  '));
 }
 
 /* ---------- 1. 预设完整性 ---------- */
@@ -320,58 +285,6 @@ tm.applyTheme(custom.id);
 t('自定义主题可应用', tm.getCurrent().id === custom.id);
 tm.deleteCustomTheme(custom.id);
 t('自定义主题可删除', !tm.listThemes().some((x) => x.id === custom.id));
-
-/* ---------- 7. 基调联动：面板变浅后，深色插件需要反转 ---------- */
-function buildPlugin(bg, color) {
-  const el = document.createElement('div');
-  el.innerHTML = `<div style="background:${bg};color:${color}"><h1 style="color:${color}">x</h1>
-    <div style="background:${bg};color:${color}">y</div></div>`;
-  document.body.appendChild(el);
-  return el;
-}
-
-async function adapt(manifest, el) {
-  const wrap = document.createElement('div');
-  wrap.appendChild(el);
-  document.body.appendChild(wrap);
-  let info = null;
-  const teardown = await installAdapter({
-    manifest, wrap, target: el, root: el, isIframe: false,
-    onInfo: (i) => { info = i; },
-  });
-  return { el, wrap, teardown, info };
-}
-
-setPolicy('auto');
-localStorage.removeItem('nexus:accent');
-
-// 面板深色 + 插件浅色 → 应反转
-tm.applyTheme('neumorph-dark');
-const a1 = await adapt({ id: 'p1', theme: 'light' }, buildPlugin('#ffffff', '#333333'));
-t('深色面板 + 浅色插件 → 施加反转', a1.el.style.filter.includes('invert'), a1.info?.reason);
-a1.teardown();
-
-// 面板深色 + 插件深色 → 不反转
-const a2 = await adapt({ id: 'p2', theme: 'dark' }, buildPlugin('#2b2f36', '#d9dee8'));
-t('深色面板 + 深色插件 → 不反转', a2.el.style.filter === '', a2.info?.reason);
-a2.teardown();
-
-// 面板浅色 + 插件深色 → 应反转（这是本轮新增的双向能力）
-tm.applyTheme('neumorph-light');
-const a3 = await adapt({ id: 'p3', theme: 'dark' }, buildPlugin('#2b2f36', '#d9dee8'));
-t('浅色面板 + 深色插件 → 施加反转（双向）', a3.el.style.filter.includes('invert'), a3.info?.reason);
-a3.teardown();
-
-// 面板浅色 + 插件浅色 → 不反转
-const a4 = await adapt({ id: 'p4', theme: 'light' }, buildPlugin('#ffffff', '#333333'));
-t('浅色面板 + 浅色插件 → 不反转', a4.el.style.filter === '', a4.info?.reason);
-a4.teardown();
-
-/* ---------- 8. 自动检测（不声明 theme 时） ---------- */
-tm.applyTheme('neumorph-dark');
-const a5 = await adapt({ id: 'p5' }, buildPlugin('#ffffff', '#333333'));
-t('未声明 theme 时自动检测为浅色并反转', a5.el.style.filter.includes('invert'), a5.info?.pluginBase);
-a5.teardown();
 
 /* ---------- 9. 订阅通知 ---------- */
 let notified = 0;

@@ -39,7 +39,6 @@ const t = (name, cond, extra = '') => {
 
 const ext = await import('./js/external-policy.js');
 const cfg = await import('./js/plugin-config.js');
-const nz = await import('./js/theme-normalizer.js');
 
 /* ---------- A. 外域判定 ---------- */
 console.log('\n--- A. 外域判定（哪些入口算危险） ---');
@@ -155,26 +154,6 @@ wrap.style.position = 'relative';
 dom.window.document.body.appendChild(wrap);
 
 const mkManifest = (theme) => ({ id: 'iso-plugin', name: '隔离插件', theme });
-
-// 不传 reportedBase：采样失败 → 视为与面板同基调 → 不反转（旧行为，会留白块）
-const r1 = await nz.installAdapter({
-  manifest: mkManifest(undefined), wrap, target: iframe, root: null,
-  isIframe: true, doc: null,
-});
-const adaptedWithoutReport = iframe.style.filter !== '';
-t('无自报时：采样失败→不反转（这正是要修的坑）', !adaptedWithoutReport,
-  adaptedWithoutReport ? '意外反转了' : '未反转');
-
-// 传 reportedBase='light'：即使采样不到也能正确判定并反转
-iframe.style.filter = '';
-const r2 = await nz.installAdapter({
-  manifest: mkManifest(undefined), wrap, target: iframe, root: null,
-  isIframe: true, doc: null, reportedBase: 'light',
-});
-const adaptedWithReport = iframe.style.filter !== '';
-t('有自报时：即使隔离也能正确反转', adaptedWithReport,
-  adaptedWithReport ? '已施加滤镜' : '仍未反转');
-r2?.();
 
 /* ---------- F. A7 坏函数已修 ---------- */
 console.log('\n--- F. 主题改写工具 ---');

@@ -82,7 +82,6 @@ deliver({
   theme: { '--bg': '#2b2f36' },
   view: 'main',
   isolated: false,
-  reportBase: false,
 });
 
 t('收到 init 不再重复发 ready（否则 ready↔init 无限往返）',
