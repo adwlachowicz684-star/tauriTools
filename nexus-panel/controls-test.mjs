@@ -108,6 +108,50 @@ console.log('\n=== 3. 状态与主题变量 ===');
   t('时长走 --dur-* 变量', !/transition:[^;]*\b\d+m?s\b/.test(cssNoFb));
 }
 
+console.log('\n=== 3.5 主题参数表（规整管理）===');
+{
+  /*
+   * 这三条的由来：目标是"用户能调出任意一套内置主题"，
+   * 那就要求主题数据里写过的变量**用户都改得到**。
+   * 只靠人肉维护迟早漏 —— 新增主题时随手加一个变量，
+   * 设置页没有对应项，这个变量就成了"只有改 JSON 才能动"的暗桩。
+   */
+  const tm = await import('./js/themes.js');
+  const { THEME_PARAM_SPEC, PARAM_GROUPS, PRESET_THEMES, DERIVED_VARS, THEME_VARS } = tm;
+  const spec = new Set(THEME_PARAM_SPEC.map((p) => p.key));
+  const derived = new Set(DERIVED_VARS);
+
+  /* 3.5a 主题里真实出现过的变量，必须都能改到（派生量除外 —— 它们由底色算出） */
+  const used = new Set();
+  for (const t of PRESET_THEMES) for (const k of Object.keys(t.vars || {})) used.add(k);
+  const unreachable = [...used].filter((k) => !spec.has(k) && !derived.has(k));
+  t('主题用到的变量用户都能改到', unreachable.length === 0,
+    unreachable.join(', ') || `${used.size} 个变量全部有对应控件`);
+
+  /* 3.5b 反向：参数表不能凭空造变量 ——
+     造一个主题里没有的，控件改了也不生效（applyTo 只写 THEME_VARS 里的） */
+  const bogus = [...spec].filter((k) => !THEME_VARS.includes(k));
+  t('参数表没有凭空造的变量', bogus.length === 0,
+    bogus.join(', ') || `${spec.size} 项全部在 THEME_VARS 内`);
+
+  /* 3.5c 分组必须都存在于 PARAM_GROUPS ——
+     组名写错（比如 'frost' 写成 'frosted'）会让那一整组静默不渲染，
+     用户翻遍设置页找不到磨砂那几项，而测试全绿。 */
+  const gkeys = new Set(PARAM_GROUPS.map((g) => g.key));
+  const badGroup = THEME_PARAM_SPEC.filter((p) => !gkeys.has(p.group));
+  t('每个参数都归属已定义的分组', badGroup.length === 0,
+    badGroup.map((p) => `${p.key}→${p.group}`).join(', ') || '全部分组有效');
+
+  /* 3.5d 滑块型必须有区间 —— 缺 min/max 的 range 会退化成 0~100，
+     对 --frost-grain（0~0.15）这种量纲就是"轻轻一拖就爆表"。 */
+  const badRange = THEME_PARAM_SPEC.filter(
+    (p) => (p.type === 'length' || p.type === 'number')
+      && (typeof p.min !== 'number' || typeof p.max !== 'number' || p.max <= p.min),
+  );
+  t('滑块型参数都有合法区间', badRange.length === 0,
+    badRange.map((p) => p.key).join(', ') || '区间全部有效');
+}
+
 console.log('\n=== 4. 重复定义清理干净 ===');
 {
   /* 同一条规则若在两处都写完整实现，改一处就会漏另一处 ——
