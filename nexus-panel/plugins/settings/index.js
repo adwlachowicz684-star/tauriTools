@@ -2,9 +2,12 @@ import { definePlugin, h } from '../../js/plugin-sdk.js';
 import { isInsideTauri, getTauri } from '../../js/tauri-core.js';
 import {
   listThemes, applyTheme, setAccent, getThemeId, getCurrent,
+  /* resolved 版：带深浅/风格覆盖。用户改了基调后 getCurrent().base 仍是旧值，
+     统计区会显示错的深浅（与 App.tsx 同款修复）。 */
+  getResolvedBase,
   getAccent, saveAsCustom, deleteCustomTheme, ACCENT_SWATCHES,
 } from '../../js/theme-manager.js';
-import { styleLabel } from '../../js/themes.js';
+import { styleLabel, STYLE_LABELS as THEME_STYLE_LABELS } from '../../js/themes.js';
 import { prompt as askPrompt } from '../../js/dialog.js';
 import { SHELL_SHORTCUT_SPECS, shellComboSet, normCombo } from '../../js/shell-shortcuts.js';
 import {
@@ -284,12 +287,26 @@ export default definePlugin({
         );
       };
 
-      // 按基调分组，主题多了才好找
+      /*
+       * 按**风格**分组，不按深浅 —— 与 App.tsx 保持一致。
+       *
+       * 两套实现必须同步：registry 按 noBuild 选择走 index.js 还是 module.tsx，
+       * 用户用无构建模式打开时看到的就是这份。各写一份迟早漂移
+       * （一边按风格分、一边还按深浅分，改了的人以为改全了）。
+       *
+       * 为什么按风格：
+       *   深浅只是同一套设计的两个取值，用户真正要挑的是"哪种质感"。
+       *   按深浅分时，想找玻璃要在两堆里各翻一遍，
+       *   而这两堆里的玻璃本就是同一套设计的深浅两版，该挨在一起。
+       *   深浅信息没丢 —— 卡片角标仍显示风格，缩略图本身就是深浅的直观呈现。
+       *
+       * 没写 style 的老自定义主题单列"其它"：
+       *   混进任何一组都是错的，它们的观感不属于那个风格。
+       */
       const all = listThemes();
-      const groups = [
-        ['深色', all.filter((t) => t.base === 'dark')],
-        ['浅色', all.filter((t) => t.base === 'light')],
-      ];
+      const groups = Object.entries(THEME_STYLE_LABELS)
+        .map(([k, label]) => [label, all.filter((t) => t.style === k)])
+        .concat([['其它', all.filter((t) => !t.style || !THEME_STYLE_LABELS[t.style])]]);
       for (const [label, items] of groups) {
         if (!items.length) continue;
         const g = h('div.theme-group', {},
@@ -816,7 +833,7 @@ export default definePlugin({
           h('div.p-stat', {}, h('div.k', {}, '应用'), h('div.v', { style: { fontSize: '15px' } }, 'Nexus Panel')),
           h('div.p-stat', {}, h('div.k', {}, '版本'), h('div.v', { style: { fontSize: '15px' } }, version)),
           h('div.p-stat', {}, h('div.k', {}, '当前主题'), h('div.v', { style: { fontSize: '15px' } }, getCurrent().name)),
-          h('div.p-stat', {}, h('div.k', {}, '基调'), h('div.v', { style: { fontSize: '15px' } }, getCurrent().base === 'dark' ? '深色' : '浅色')),
+          h('div.p-stat', {}, h('div.k', {}, '基调'), h('div.v', { style: { fontSize: '15px' } }, getResolvedBase() === 'dark' ? '深色' : '浅色')),
         ),
         h('div.p-muted', { style: { marginTop: '14px', lineHeight: '1.9' } },
           '快捷键：⌘/Ctrl + B 收起侧边栏 · ⌘/Ctrl + R 重载当前插件'),
