@@ -613,6 +613,26 @@
             function cssFontFamily(name) {
                 var s = String(name == null ? '' : name).trim();
                 if (!s) return 'sans-serif';
+                /*
+                 * 先按**逗号拆开**再逐个处理。
+                 *
+                 * 字体名经常是回退链（"Microsoft YaHei, sans-serif"）。
+                 * 整体加引号会得到 `"Microsoft YaHei, sans-serif"` ——
+                 * 这是一个**包含逗号的单个字体名**，CSS 解析失败，
+                 * 赋值被静默忽略（虽有读回校验兜底，但那样就永远走估算了）。
+                 * 拆开逐个加引号才是 `"Microsoft YaHei", sans-serif`。
+                 */
+                var parts = s.split(','), out = [];
+                for (var k = 0; k < parts.length; k++) {
+                    out.push(quoteOneFamily(parts[k]));
+                }
+                return out.join(', ');
+            }
+
+            /** 单个字体名 → 可安全拼进 CSS font 简写的片段 */
+            function quoteOneFamily(raw) {
+                var s = String(raw == null ? '' : raw).trim();
+                if (!s) return 'sans-serif';
                 if (s.indexOf('"') >= 0 || s.indexOf("'") >= 0) return s;      // 已带引号
                 var low = s.toLowerCase();
                 for (var i = 0; i < _GENERIC_FAMILIES.length; i++) {
@@ -645,8 +665,16 @@
                      */
                     var readBack = '';
                     try { readBack = String(_mtCtx.font || ''); } catch (e2) { readBack = ''; }
+                    /*
+                     * 两边**都要**去引号再比对。
+                     * 只去 fam 的不行：读回值是 `13px "microsoft yahei", sans-serif`，
+                     * 而 probe 是去引号后的 `microsoft yahei, sans-serif` ——
+                     * 读回里 yahei 后面还夹着一个引号，子串匹配会**失败**，
+                     * 于是明明设置成功了却被判成失败、白退回估算。
+                     */
                     var probe = fam.replace(/["']/g, '').toLowerCase();
-                    if (!readBack || (probe && readBack.toLowerCase().indexOf(probe) < 0)) return null;
+                    var back = readBack.replace(/["']/g, '').toLowerCase();
+                    if (!readBack || (probe && back.indexOf(probe) < 0)) return null;
                     var r = _mtCtx.measureText(str);
                     var w = (r && Number.isFinite(r.width)) ? r.width : null;
                     if (w === null) return null;

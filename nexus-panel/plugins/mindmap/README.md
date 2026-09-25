@@ -1961,7 +1961,11 @@ __kmDefaultValign = (cbox, bb) => (cbox.height - bb.height) > 1 ? 'bottom' : 'mi
 
 两道防线：
 
-**① `cssFontFamily()` 加引号**（写成 string 形式可容纳任意字符）：
+**① `cssFontFamily()` 加引号**，且**先按逗号拆开**再逐个处理：
+
+字体名经常是回退链（`Microsoft YaHei, sans-serif`）。整体加引号会得到
+`"Microsoft YaHei, sans-serif"` —— 那是一个**含逗号的单字体名**，CSS
+解析失败。拆开逐个加引号才是 `"Microsoft YaHei", sans-serif`。
 
 ```js
 'Microsoft YaHei' → '"Microsoft YaHei"'
@@ -1969,8 +1973,13 @@ __kmDefaultValign = (cbox, bb) => (cbox.height - bb.height) > 1 ? 'bottom' : 'mi
 'sans-serif'      → 'sans-serif'   ← 通用族名是关键字，**不能**加引号
 ```
 
-**② 赋值后读回校验**：把去引号小写化后的字体名拿去 `ctx.font` 的读回值里
-比对，命中才算这次设置真的生效，否则返回 null 走回落。
+**② 赋值后读回校验**：把字体名拿去 `ctx.font` 的读回值里比对，命中才算
+这次设置真的生效，否则返回 null 走回落。
+
+⚠️ **两边都要去引号再比对**。浏览器读回的是
+`13px "microsoft yahei", sans-serif`（带引号），而 probe 是去引号后的
+`microsoft yahei, sans-serif` —— 只去 fam 一侧的话，`yahei` 后面还夹着
+一个引号，子串匹配失败：**明明设置成功却被判成失败**，白退回估算。
 
 ## 附件名的「测量字体」与「渲染字体」不是同一支
 

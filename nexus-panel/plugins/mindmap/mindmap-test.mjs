@@ -7974,6 +7974,15 @@ group('附件画进节点框内（节点撑高，不再被相邻节点遮挡）'
       eq(cf(''), 'sans-serif', '空 → 回落 sans-serif');
       eq(cf(null), 'sans-serif', 'null → 回落 sans-serif（不能抛错）');
       eq(cf('  Arial  '), '"Arial"', '先 trim 再加引号');
+      // 字体**回退链**必须按逗号拆开逐个加引号。
+      // 整体加引号会得到 `"Microsoft YaHei, sans-serif"` —— 那是"一个含逗号
+      // 的字体名"，CSS 解析失败 → 赋值被忽略 → 永远走估算（等于白测）。
+      eq(cf('Microsoft YaHei, sans-serif'), '"Microsoft YaHei", sans-serif',
+        '回退链：逐个加引号，通用族名那一段不加');
+      eq(cf('微软雅黑, SimSun, serif'), '"微软雅黑", "SimSun", serif', '中文回退链');
+      eq(cf('"Microsoft YaHei", sans-serif'), '"Microsoft YaHei", sans-serif',
+        '已带引号的回退链 → 原样（不重复加）');
+      ok(!/^"[^"]*,/.test(cf('A B, serif')), '结果里不能有"引号跨过逗号"的形态');
     }
     /* 4d-3) 读回校验：ctx.font 赋值被忽略时要能发现
      * 造一个"设不进去"的 ctx（font 恒为旧值），此时必须返回 null 走回落，
@@ -8002,6 +8011,28 @@ group('附件画进节点框内（节点撑高，不再被相邻节点遮挡）'
       // 请求 sans-serif，但读回恒为 "99px monospace" → 不含 sans-serif → 判失败 → 回落
       eq(m3.estTextW('中', 12, 'sans-serif'), 12,
         'ctx.font 设不进去时返回估算值（不是拿着旧字体量出来的 123）');
+    }
+    /* 4d-4) 反过来：**设置成功**时不能被误判成失败。
+     * 浏览器读回的是 `13px "microsoft yahei", sans-serif`（带引号），
+     * 而 probe 是去引号后的 `microsoft yahei, sans-serif` ——
+     * 只去 fam 一侧的引号、不去读回值那一侧，子串匹配会失败，
+     * 明明成功却退回估算。
+     */
+    {
+      let store = '99px monospace';
+      const c2 = {
+        measureText: (t) => ({ width: t.length * 7 }),
+        get font() { return store; },
+        set font(v) { store = v; },       // 真能设进去
+      };
+      const doc4 = { createElement: () => ({ getContext: () => c2 }) };
+      const m4 = new Function('document', chunk + '; return { estTextW };')(doc4);
+      // 若能设进去：读回含 "microsoft yahei" → 校验通过 → 用测量值 7/字
+      eq(m4.estTextW('ab', 12, 'Microsoft YaHei'), 14,
+        '设置成功时要用测量值（2 字 ×7=14），不能误判成失败退回估算');
+      // 回退链：读回 `13px "microsoft yahei", sans-serif`，两边都去引号后才对得上
+      eq(m4.estTextW('ab', 12, 'Microsoft YaHei, sans-serif'), 14,
+        '回退链也能通过读回校验（两边都要去引号再比对）');
     }
 
     /* 4e) 为什么必须真测：0.55 是拉丁**小写**的平均宽度，宽字符远不止
