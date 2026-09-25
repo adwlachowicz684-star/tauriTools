@@ -142,7 +142,23 @@ export function ArgCell({ nodeId, type, part, className, data }: ArgCellProps) {
   const [draft, setDraft] = useState<string | null>(null);
 
   const edit = part.edit;
-  const options = edit?.kind === 'select' ? selectOptionsOf(type, edit.key, data) : [];
+  /*
+   * 写入位置：优先 edit.path（点分路径），没有就退回 edit.key。
+   *
+   * 两者必须能分开 —— key 同时是**连线端口 id**（下面 argHandleId 用的就是
+   * 它）。触发器那种"节点下挂多张卡"的结构里，端口叫 kind、值却要写进
+   * entries[i].kind；只用 key 会把 TriggerNodeData.kind（节点种类，恒为
+   * 'trigger'）改掉，整张卡随即不再是触发器、从画布上消失。
+   */
+  const writeKey = edit?.path ?? edit?.key ?? '';
+  /*
+   * 选项：edit.options 直接给了就用它，否则按 key 从节点 fields 反查。
+   * 触发方式的选项来自 TRIGGER_META，不在节点 fields 里 —— 不接住
+   * edit.options 的话它一个选项都拿不到，下拉是空的（等于不能改）。
+   */
+  const options = edit?.kind === 'select'
+    ? (edit.options ?? selectOptionsOf(type, edit.key, data))
+    : [];
   const canSelect = Boolean(patch && edit && options.length > 0);
   const isArea = edit?.kind === 'area';
   const canEdit = Boolean(patch && edit && (edit.kind === 'text' || isArea));
@@ -187,7 +203,7 @@ export function ArgCell({ nodeId, type, part, className, data }: ArgCellProps) {
         <select
           className="node-arg-sel nodrag nopan"
           value={part.raw ?? ''}
-          onChange={(e) => patch?.(nodeId, { [edit.key]: e.target.value })}
+          onChange={(e) => patch?.(nodeId, { [writeKey]: e.target.value })}
           onMouseDown={(e: MouseEvent) => e.stopPropagation()}
         >
           {options.map((o) => (
@@ -202,7 +218,7 @@ export function ArgCell({ nodeId, type, part, className, data }: ArgCellProps) {
 
   if (draft !== null && edit) {
     const commit = () => {
-      patch?.(nodeId, { [edit.key]: draft });
+      patch?.(nodeId, { [writeKey]: draft });
       setDraft(null);
     };
     /*
