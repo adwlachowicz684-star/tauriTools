@@ -522,17 +522,34 @@ export class EditorBridge {
   }
 
   /**
-   * 中心主题的屏幕 x（诊断用）。
+   * 告知编辑器：画布容器在屏幕上横向移动了 dLeft px（文件库展开/收起挤窄所致）。
    *
-   * 只用于定位/排查，不参与补偿 —— 画布几何恒定后没有位移可补。
+   * 容器位移**只能由父页面测**：编辑器侧在 iframe 内，取 #minder-container
+   * 的 getBoundingClientRect().left 得到的是相对 iframe 视口的坐标，父页面把
+   * iframe 挤到右边时它恒定不变 —— 测不出来。
    *
-   * @returns {number|null} 取不到返回 null（不是 0）
+   * 编辑器在自己那次 resize 里把「容器位移 + 内核自动居中的位移」一并补掉。
+   * 这里只传容器位移、不传补偿量 —— 内核到底补了几成只有编辑器量得准。
+   *
+   * 编辑器侧没有这个能力时静默跳过 —— 补偿是锦上添花，
+   * 不该因此弹出「XX 失败」去打扰用户。
    */
-  rootScreenX() {
-    const v = this._safe('读取中心位置', (m) => m.rootScreenX());
-    return typeof v === 'number' && isFinite(v) ? v : null;
+  notifyLayoutShift(dLeft) {
+    if (!this.ready || !this.minder) return false;
+    const fn = this.minder.notifyLayoutShift;
+    if (typeof fn !== 'function') return false;
+    try { return fn.call(this.minder, dLeft) === true; } catch { return false; }
   }
 
+  /**
+   * 相对平移视图。
+   *
+   * 用于补内核 resize 补偿**漏掉的那一半**：内核只补 (新宽-旧宽)/2，
+   * 画布左边缘却移动了整整一个 Δ，于是内容净位移 Δ/2。
+   * 调用方再补一个 Δ/2 即可让内容回到原处。
+   *
+   * @param {number} dx 正 = 内容右移
+   */
   panBy(dx, dy) {
     return this._safe('平移视图', (m) => m.panBy(dx, dy));
   }
@@ -657,9 +674,24 @@ export class EditorBridge {
       if (!n) return [];
       const many = n.getData?.('images');
       if (many) {
+        /*
+         * 可能是**真数组**（导入的 JSON 里 images 就是数组），不总是字符串。
+         * 只做 JSON.parse 的话，数组会被 String() 化再解析：
+         *   ['a','b'] → "a,b" → 解析失败 → 退回单图 image → []
+         *
+         * 后果是**画布画得出、侧栏读不到**：编辑器侧的 imageListOf（画横幅）
+         * 早就能处理真数组，这里没有 → 侧栏「图片」栏显示「当前节点没有
+         * 图片附件」，但画布上明明有两张图。用户只会以为面板坏了。
+         * 又是「同一件事两条路径、只修了一条」。
+         *
+         * 实测：images 为 ['...AAA','...BBB'] 真数组时，本函数返回 []。
+         */
+        if (Object.prototype.toString.call(many) === '[object Array]') {
+          return many.filter(Boolean);
+        }
         try {
           const a = JSON.parse(many);
-          if (Array.isArray(a) && a.length) return a.filter(Boolean);
+          if (Array.isArray(a)) return a.filter(Boolean);   // 空数组照实返回 []
         } catch { /* 坏数据退回单图 */ }
       }
       const one = n.getData?.('image');

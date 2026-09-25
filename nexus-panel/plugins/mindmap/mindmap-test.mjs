@@ -8550,6 +8550,33 @@ group('所有 async 按钮处理器必须有错误兜底（否则点了静默失
   }
 }
 
+group('getSelectedImages 必须支持真数组（否则画布画得出、侧栏读不到）');
+
+{
+  const src = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+  // 编辑器画横幅用的 imageListOf 早就处理真数组了
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  ok(/function imageListOf\(node\)/.test(html)
+    && /\[object Array\]/.test(html), '编辑器侧 imageListOf 处理真数组（对照）');
+
+  /*
+   * 实测：节点 images 为 ['...AAA','...BBB'] 真数组时，
+   * editor-bridge 的 getSelectedImages 返回 [] ——
+   * 画布上画着两张图，侧栏却显示「当前节点没有图片附件」。
+   */
+  {
+    const i = src.indexOf('getSelectedImages()');
+    ok(i > 0, '有 getSelectedImages');
+    const seg = src.slice(i, i + 900);
+    ok(/Object\.prototype\.toString\.call\(many\) === '\[object Array\]'/.test(seg),
+      '识别真数组（不能只做 JSON.parse）');
+    ok(/return many\.filter\(Boolean\);/.test(seg), '真数组直接返回（不经过 parse）');
+    // 空数组要照实返回 []，写 a && a.length 会让 '[]' 掉下去
+    ok(/if \(Array\.isArray\(a\)\) return a\.filter\(Boolean\);/.test(seg),
+      '空数组照实返回 []（不写 a && a.length）');
+  }
+}
+
 group('导出为交换格式 → 导出为交换格式（单画布）');
 
 {
