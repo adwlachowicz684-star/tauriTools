@@ -926,6 +926,25 @@ console.log('\n=== 20. 字号走语义档（agent-flow）===');
   const undef = [...used].filter((k) => !defined[k]);
   t('agent-flow 用到的语义档都已在 tokens.css 定义', undef.length === 0,
     undef.join(', ') || `用到 ${used.size} 档`);
+  /*
+   * 20.2c --fs-code 必须**独立定义**，不能指到别的语义档上。
+   *
+   * 变异测试实测：把它改成 `var(--fs-title)` 后全部断言仍然全绿 ——
+   * 上面两条只查"名字存在、插件引用了合法名字"，
+   * 查不到"它指的到底是哪一档"。
+   *
+   * 为什么必须独立：等宽字体在**相同 px 下视觉比比例字体小**
+   * （x-height 更小）。所以等宽片段需要自己的一档，
+   * 直接共用正文档会让代码与正文并排时明显对不齐。
+   * 当前 --fs-code 与 --fs-note 同为 11px 是**刻意的**（视觉等大），
+   * 但定义上必须是两条，否则改正文档会误伤所有等宽片段。
+   */
+  {
+    const codeDef = /--fs-code:\s*([^;]+);/.exec(tk);
+    t('--fs-code 独立定义（值不指向别的语义档，避免误伤所有等宽片段）',
+      !!codeDef && !/var\(--fs-(?:title|body|note|micro)\b/.test(codeDef[1]),
+      codeDef ? codeDef[1].trim() : '未找到定义');
+  }
 
   /* 20.3 同一选择器不得有多处不同档位的 font-size（响应式覆盖除外） */
   const noMedia = strip(af).replace(/@media[^{]*\{[\s\S]*?\n\}/g, '')
@@ -1911,6 +1930,23 @@ console.log('\n=== 36. 取色弹窗：主题适配与不滚动 ===');
   t('服务浮层层级走 --z-* 令牌', /z-index:\s*var\(--z-/.test(shown));
   t('服务层级档位已在 tokens.css 定义',
     /--z-service\s*:/.test(read('css/tokens.css')));
+
+  /*
+   * --border 必须是 transparent（或至少不指向 --divider）。
+   *
+   * 变异测试实测：把它改成 `var(--divider)` 后全部断言仍然全绿 ——
+   * 现有断言只守住"虚线/描边不要**引用** --border"（第 836 行 BAD 表），
+   * 守不住 --border **自身**被改成可见色。
+   *
+   * 而 --border 的语义就是**风格开关**：新拟态用阴影塑形，
+   * 边界必须透明；一旦它变成可见色，14 套新拟态主题的
+   * 立体感会被一圈实线框死，风格直接失效。
+   */
+  {
+    const b = /--border:\s*([^;]+);/.exec(stripComments(read('css/neumorphism.css')));
+    t('--border 仍是 transparent（风格开关，不可改成可见色）',
+      !!b && /transparent/.test(b[1]), b ? b[1].trim() : '未找到');
+  }
 
   /* 描边用 --divider：--border 在新拟态下是 transparent（风格开关，非保证可见） */
   t('吸管提示边框用 --divider 而非 --border',
