@@ -62,8 +62,21 @@ t('EOF（n==0）时正常退出', /if n == 0 \{\s*\n\s*break;/.test(stdioBody));
 t('空行跳过', /if text\.is_empty\(\) \{\s*\n\s*continue;/.test(stdioBody));
 t('解析失败回 -32700 而不是崩',
   /"code": -32700/.test(stdioBody) && /解析失败/.test(stdioBody));
+/*
+ * ⚠️ 早先写的是 `/-32700[\s\S]{0,200}continue;/`：200 字符是个拍脑袋的窗口。
+ *    真实实现里 -32700 与 continue 之间夹着 write_out 的**三分支结果处理**
+ *    （Ok(true)/Ok(false)/Err(w)），实际间距 ~330 字符，超出窗口 → 假阴性。
+ *
+ *    改成按**语法结构**取：从 serde_json::from_str 的 Err(e) 分支起、
+ *    到该分支闭合为止。这样以后在中间再插入处理也不会脱靶。
+ */
+const iParseErr = stdioBody.indexOf('Err(e) => {');
+const parseErrArm = iParseErr >= 0
+  ? stdioBody.slice(iParseErr, stdioBody.indexOf('\n        };', iParseErr))
+  : '';
 t('解析失败后 continue（一行坏数据不能打死整个 server）',
-  /"code": -32700[\s\S]{0,200}continue;/.test(stdioBody));
+  /"code":\s*-32700/.test(parseErrArm) && /continue;/.test(parseErrArm),
+  `分支长度 ${parseErrArm.length}`);
 
 console.log('\n=== 4. flush（不 flush 客户端会一直等）===');
 t('有专门的 write_out 做写 + flush', /fn write_out<W: Write>/.test(mcp));
