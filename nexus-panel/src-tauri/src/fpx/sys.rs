@@ -419,8 +419,45 @@ pub fn apply_lock(path: &str, deny_delete: bool, deny_write: bool) -> Result<Str
 
     #[cfg(windows)]
     {
-        // 先清掉旧的 deny，避免叠加
-        let _ = run_cmd("icacls", &[path.to_string(), "/remove:d".to_string(), "Everyone".to_string()]);
+        /*
+         * 先清掉旧的 deny，避免叠加。
+         *
+         * 这里**不能**再 `let _ =` 吞掉 —— 解除失败却返回 Ok("已解除保护")，
+         * 是一次会留下后果的假成功：用户点了「解除保护」、界面也这么说，
+         * 而目录仍然被系统拦着。之后他删不掉 / 改不动，却想不到是这次解除
+         * 没生效（报错在几分钟前的那一次操作里，且当时显示的是成功）。
+         *
+         * 也不能**只看退出码就报错**：`icacls /remove:d` 在「没有匹配 ACE」
+         * 时的退出码未经实测，若它非 0，一律报错会让"解除保护"在从未加过
+         * 锁的目录上永远失败 —— 那比现在更糟（本来好好的功能变成不可用）。
+         *
+         * 所以分两步：退出码非 0 时**读回实际状态**再定。
+         * 仍然拒绝 → 真的失败，报出来；已经没有 deny → 属于"本来就没东西可清"，
+         * 放过。这样两头的错都不会犯，且不依赖退出码的具体语义。
+         */
+        let rm = run_cmd("icacls", &[path.to_string(), "/remove:d".to_string(), "Everyone".to_string()]);
+        let removed_ok = match &rm {
+            Ok(out) => out.status.success(),
+            Err(_) => false,
+        };
+        if !removed_ok {
+            /*
+             * 读回失败时**不能**据此报错：那只是"我们不知道"（icacls 输出
+             * 换了语言 / 解析不到），据此报错会把一次可能成功的解除判成失败。
+             * 这条通路是"宁可放过，不可误报"。
+             */
+            let still = lock_state(path).map(|st| st.any()).unwrap_or(false);
+            if still {
+                let why = match &rm {
+                    Err(e) => e.clone(),
+                    Ok(out) => String::from_utf8_lossy(&out.stderr).trim().to_string(),
+                };
+                return Err(format!("解除保护失败（目录仍处于受保护状态）{}{}",
+                    if why.is_empty() { String::new() } else { format!(": {why}") },
+                    "；可尝试以管理员身份重试，或手动执行：icacls "".to_string()
+                        + path + "" /remove:d Everyone"));
+            }
+        }
         if !deny_delete && !deny_write {
             return Ok("已解除保护".into());
         }
@@ -608,10 +645,33 @@ pub fn apply_icon(dir: &str, icon_ref: &str) -> Result<String, String> {
                 build_icon_resource_line(&file, index)
             ),
         };
+        /*
+         * 摘属性这一步**可以**失败：ini 可能还不存在（下面才创建），
+         * 也可能本来就没有 +s/+h。attrib 对"无属性可摘"返回非 0，
+         * 据此报错会让首次设置永远失败。所以这里保留 Best-effort。
+         */
         let _ = run_cmd("attrib", &["-s".to_string(), "-h".to_string(), ini_arg()]);
         write_ini_text(&ini, &content)?;
-        // 文件夹加 +s（让资源管理器读取 ini）；ini 本身加 +h +s（隐藏它）
-        let _ = run_cmd("attrib", &["+s".to_string(), p.to_string_lossy().to_string()]);
+        /*
+         * 文件夹的 +s **必须检查**：资源管理器只在目录带系统属性时才读
+         * 它的 desktop.ini。这一步失败的话 ini 写得再对也**根本不会被读取**
+         * —— 用户看到的是"设了图标、资源管理器没变"，而回包说"已写入"，
+         * 无从知道是属性没加上。
+         *
+         * 常见失败原因就是目录被自己设了「防写入」（WriteAttributes 被 deny），
+         * 那正是 #427 的 `with_unlock` 要解决的；若**在窗口内仍然失败**，
+         * 说明还有别的拦截，必须说出来而不是静默继续。
+         */
+        let sout = run_cmd("attrib", &["+s".to_string(), p.to_string_lossy().to_string()]);
+        match sout {
+            Ok(out) if out.status.success() => {}
+            Ok(out) => return Err(format!(
+                "已写入 desktop.ini，但未能给目录加系统属性（+s），资源管理器不会读取它: {}",
+                String::from_utf8_lossy(&out.stderr).trim())),
+            Err(e) => return Err(format!("已写入 desktop.ini，但未能给目录加系统属性（+s）: {e}")),
+        }
+        // ini 自身加 +h +s 只是**外观**（不在资源管理器里显示这个文件），
+        // 失败不影响图标生效，所以这里可以 Best-effort。
         let _ = run_cmd("attrib", &["+h".to_string(), "+s".to_string(), ini_arg()]);
         /*
          * 写完后必须通知 Shell，否则资源管理器仍拿旧缓存渲染 ——

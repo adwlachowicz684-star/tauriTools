@@ -91,6 +91,29 @@ console.log('\n=== 4. 原有的保护没被改坏 ===');
   t('ini 本身仍 +h +s（隐藏它）', /attrib", &\["\+h".*, "\+s"/.test(sys) || /\+"\.\.\." \+h/.test(sys) || /\+h/.test(sys));
 }
 
+console.log('\n=== 4b. 文件夹 +s 必须检查成败 ★ ===');
+{
+  /*
+   * 资源管理器只在目录带系统属性时才读它的 desktop.ini。
+   * 这一步失败的话 ini 写得再对也**根本不会被读取** —— 用户看到的是
+   * "设了图标、资源管理器没变"，而回包说"已写入资源管理器图标"。
+   * 此前用 `let _ =` 吞掉，无从知道是属性没加上。
+   */
+  t('不再用 let _ = 吞掉文件夹 +s（反面证据）',
+    !/let _ = run_cmd\("attrib", &\["\+s"\.to_string\(\), p\.to_string_lossy\(\)/.test(sys));
+  t('+s 失败会返回错误', /Ok\(out\) => return Err\(format!\([\s\S]{0,200}?未能给目录加系统属性/.test(sys));
+  t('报错说明后果（资源管理器不会读取它）', /资源管理器不会读取它/.test(sys));
+  /*
+   * 摘属性那步**必须**保留 Best-effort：ini 可能还不存在（下面才创建），
+   * attrib 对"无属性可摘"返回非 0，据此报错会让首次设置永远失败。
+   */
+  t('摘 ini 属性仍是 Best-effort（不存在时 attrib 会失败）',
+    /let _ = run_cmd\("attrib", &\["-s"\.to_string\(\), "-h"\.to_string\(\), ini_arg\(\)\]\);/.test(sys));
+  /* ini 自身的 +h +s 只是外观，失败不影响图标生效 */
+  t('ini 自身 +h +s 仍是 Best-effort',
+    /let _ = run_cmd\("attrib", &\["\+h"\.to_string\(\), "\+s"\.to_string\(\), ini_arg\(\)\]\);/.test(sys));
+}
+
 console.log('\n=== 5. 图标来源优先级：GUI 映射 > desktop.ini ★★ ===');
 {
   /*

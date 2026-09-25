@@ -50,6 +50,30 @@ console.log('\n=== 2. 解除保护要能清掉两条 ===');
     `remove=${iRem} deny=${iDeny}`);
 }
 
+console.log('\n=== 2b. 解除失败不能谎报「已解除保护」★ ===');
+{
+  /*
+   * 此前是 `let _ = run_cmd("icacls", ... /remove:d ...)` —— 失败被整个吞掉，
+   * 紧接着 `return Ok("已解除保护")`。于是点了「解除保护」、界面也这么说，
+   * 而目录仍然被系统拦着；用户要过一阵子才发现删不掉，且想不到是这次解除没生效。
+   */
+  const i = sys.indexOf('pub fn apply_lock');
+  const j = sys.indexOf('\npub fn ', i + 1);
+  const k = sys.indexOf('\nfn ', i + 1);
+  const ends = [j, k].filter((x) => x > 0);
+  const blk = sys.slice(i, Math.min(...ends));
+  /* 反面证据：不再有 let _ = 吞掉这次 remove */
+  t('不再用 let _ = 吞掉 /remove:d（反面证据）',
+    !/let _ = run_cmd\("icacls"[\s\S]{0,120}?\/remove:d/.test(blk));
+  t('退出码非 0 时会读回实际状态', /let removed_ok = match &rm/.test(blk));
+  t('读回仍拒绝才报错', /if still \{/.test(blk));
+  /* 读回失败时**不能**据此报错：那只是"我们不知道"，据此报错会把一次
+     可能成功的解除判成失败。这条是"宁可放过不可误报"。 */
+  t('读回失败按"不知道"处理，不误报', /unwrap_or\(false\)/.test(blk));
+  /* 报错要给出可自救的命令，否则用户只知道失败了、不知道怎么办 */
+  t('报错带可自救的 icacls 命令', /\/remove:d Everyone/.test(blk));
+}
+
 console.log('\n=== 3. 非 Windows 分支没被改坏 ===');
 {
   t('Unix 仍用 chmod 近似', /0o555/.test(sys));
