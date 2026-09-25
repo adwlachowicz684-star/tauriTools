@@ -496,6 +496,30 @@ function deriveVars(rawTheme) {
          放在派生之后就会停留在旧底色的取值上。 */
   applyVarOverrides(v, theme);
 
+  /*
+   * 玻璃风格的浮层底：主题没自带时**必须派生**，不能靠 CSS 兜底。
+   * ------------------------------------------------------------------
+   * 场景：用户把一套新拟态主题改成玻璃风格（风格也是参数了）。
+   * 新拟态主题压根没有 --surface-overlay，改完后弹窗就退回
+   * neumorphism.css 的兜底值 —— 那是按"面板本来就实"设计的，
+   * 在半透明面板上等于弹窗没有底板，底下文字透上来与弹窗文字叠一起
+   * （用户此前报过这个问题，当时是靠给 6 套玻璃主题补 overlay 解决的，
+   *   但那条路覆盖不到"非玻璃主题改成玻璃"这条新路径）。
+   *
+   * 只在 glass 且缺失时派生：其余风格的面板本就实心，
+   * CSS 兜底够用，无谓派生反而会改动现有观感。
+   */
+  if (theme.style === 'glass' && v['--surface-overlay'] == null) {
+    const src = v['--surface-raised'] || v['--surface'];
+    const c = src ? parseColor(src) : null;
+    if (c) {
+      /* 每通道 +4、alpha 0.96 —— 与玻璃主题自带的
+         raised rgba(43,49,68,.94) → overlay rgba(47,53,74,.96) 同比例 */
+      const lift = (x) => Math.min(255, Math.round(x) + 4);
+      v['--surface-overlay'] = `rgba(${lift(c.r)}, ${lift(c.g)}, ${lift(c.b)}, 0.96)`;
+    }
+  }
+
   // 强调色辉光
   v['--accent-glow'] = rgba(v['--accent'], dark ? 0.32 : 0.22);
 
@@ -801,14 +825,59 @@ function clampAlphaMin(str, floor) {
   return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${floor})`;
 }
 
+/*
+ * 缩放某色的 alpha 通道。
+ *
+ * ⚠️ 必须**同时认 hex 与 rgba()** —— 这是实测出来的一个真 bug：
+ *
+ *   新拟态主题的 --surface / --surface-sunk 是不透明 hex
+ *   （深色新拟态：#2b2f36 / #282c33）。用户把这套主题改成玻璃风格后，
+ *   设置页会出现"玻璃透明度"滑块（STYLE_PARAMS 按风格渲染），
+ *   但它缩放的 --surface 是 hex —— 原实现只认 rgba()、对 hex 原样返回，
+ *   于是**滑块拖到底也一点变化都没有**，用户只会以为控件坏了。
+ *
+ *   这与"立体度"必须用 deviation 模式（而非 alpha）是同一个根因的两半：
+ *   三种风格的原始值写法不同，缩放手段就得跟着变。
+ *   当时只修了新拟态的一半，玻璃这一半漏了。
+ *
+ * hex 视作 alpha=1（不透明）参与缩放，语义正确：hex 就是不透明色。
+ */
 function scaleAlpha(str, k) {
-  const m = /^rgba?\(([^)]+)\)$/.exec(String(str || '').trim());
-  if (!m) return str;
-  const parts = m[1].split(',').map((s) => s.trim());
-  if (parts.length < 4) return str;          // rgb() 没有 alpha，改不了
-  const a = Math.max(0, Math.min(1, parseFloat(parts[3]) * k));
-  if (!isFinite(a)) return str;
-  return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${Number(a.toFixed(3))})`;
+  const s = String(str || '').trim();
+  if (!s || s === 'transparent' || s === 'none') return str;
+
+  let r;
+  let g;
+  let b;
+  let a;
+
+  const m = /^rgba?\(([^)]+)\)$/.exec(s);
+  if (m) {
+    const parts = m[1].split(/[,/\s]+/).filter(Boolean).map((x) => x.trim());
+    if (parts.length < 3) return str;
+    /* 通道可能是百分比（rgb(50% 20% 10%)），统一换算到 0-255 */
+    const to255 = (x) => (x.endsWith('%')
+      ? Math.round((parseFloat(x) / 100) * 255)
+      : Math.round(parseFloat(x)));
+    [r, g, b] = [to255(parts[0]), to255(parts[1]), to255(parts[2])];
+    /* rgb()（三参数）没有 alpha，视作 1 参与缩放 ——
+       否则"rgb(36,41,57)"这种写法同样调不动 */
+    a = parts.length > 3 ? parseFloat(parts[3]) : 1;
+    if (![r, g, b].every(Number.isFinite) || !isFinite(a)) return str;
+  } else {
+    const hm = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(s);
+    if (!hm) return str;                      // 渐变、命名色等：改不了就原样返回
+    let h = hm[1];
+    if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+    const n = parseInt(h.slice(0, 6), 16);
+    r = (n >> 16) & 255;
+    g = (n >> 8) & 255;
+    b = n & 255;
+    a = h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1;
+  }
+
+  const na = Math.max(0, Math.min(1, a * k));
+  return `rgba(${r}, ${g}, ${b}, ${Number(na.toFixed(3))})`;
 }
 
 /**
@@ -1117,6 +1186,18 @@ const KEY_BG_IMAGE = 'nexus:bg-image';
 export function supportsBgImage(theme) {
   const t = theme || current || findTheme(getThemeId());
   if (!t) return false;
+  /*
+   * 玻璃风格**无论主题有没有自带背景渐变**，都允许配背景。
+   *
+   * 玻璃的观感来自"背后有东西可透"，没有背景的玻璃就是一块实心板。
+   * 原先只看主题自带 --bg-image，于是"把新拟态改成玻璃"之后
+   * 背景图与预设宫格两块 UI 全部不显示 —— 用户想配都配不了。
+   *
+   * 其余风格维持原判：给实心面板硬塞一张图会盖掉底色设计，
+   * 而那些主题的文字对比度本就是按纯色底算的。
+   */
+  const style = getStyleOverride(t.id) || t.style;
+  if (style === 'glass') return true;
   const v = deriveVars(t)['--bg-image'];
   return !!v && v !== 'none';
 }

@@ -193,6 +193,15 @@ export const STYLE_PARAMS = {
    styles 限定"只对哪些风格有意义"（缺省 = 所有风格）：
      磨砂四层只有玻璃用得上，给新拟态显示一个"颗粒强度"，
      用户调了没反应，只会以为坏了。
+
+     ⚠️ 但**不要用它去过滤"主题有没有自带这个变量"** ——
+     那会把"从内置主题 A 调到 B"这条路径堵死：
+     新拟态主题不自带 --surface-overlay / --saturate / --frost-* / --r-*，
+     用户把风格改成玻璃后，这些项若因"主题没自带"被隐藏，
+     就永远调不出玻璃质感（弹窗还会退回没有底板的状态）。
+     缺值就该显示出来让用户填，而不是藏起来。
+
+   managedBy 标记"由另一套 UI 管理"，参数表不重复渲染（见 --accent 的说明）。
    ================================================================== */
 
 export const PARAM_GROUPS = [
@@ -229,8 +238,17 @@ export const THEME_PARAM_SPEC = [
   { key: '--text-mute', label: '最弱', group: 'text', type: 'color', desc: '占位符、禁用态这类最不重要的文字' },
 
   /* ---- 主色 ---- */
-  { key: '--accent', label: '强调色', group: 'main', type: 'color', desc: '按钮、选中态、链接的颜色' },
-  { key: '--env-color', label: '环境色', group: 'main', type: 'color', desc: '第二个主色，只作次要点缀。不影响状态色' },
+  /*
+   * managedBy: 'palette' —— 这两项**不进参数表**，由上方专门的色板 UI 管。
+   *
+   * 不是偷懒，是避免两套机制打架：色板存的是 KEY_ACCENT（用户全局、
+   * 跨主题生效），参数表存的是 varOverride（按主题 id 分档）。
+   * 两处都能改同一个变量时，用户点参数表的"还原"会退回主题自带值，
+   * 但色板那份覆盖还在、随后又被叠加回去 ——
+   * 表现为"点了还原却没反应"，且无从解释。
+   */
+  { key: '--accent', label: '强调色', group: 'main', type: 'color', managedBy: 'palette', desc: '按钮、选中态、链接的颜色。由上方「强调色」色板调整' },
+  { key: '--env-color', label: '环境色', group: 'main', type: 'color', managedBy: 'palette', desc: '第二个主色，只作次要点缀。由上方「环境色」色板调整' },
 
   /* ---- 状态色 ---- */
   { key: '--ok', label: '成功', group: 'status', type: 'color', desc: '成功提示。语义固定，改了会让用户误解' },
@@ -242,7 +260,9 @@ export const THEME_PARAM_SPEC = [
   /* transparent 是合法值（新拟态就靠它让位给阴影），
      所以颜色控件必须能表示"透明" —— 见设置页的 alpha 处理。 */
   { key: '--border', label: '描边', group: 'style', type: 'color', desc: '元素边界的描边色。新拟态为 transparent（让阴影塑形），扁平/玻璃才着色' },
-  { key: '--blur', label: '模糊半径', group: 'style', type: 'length', min: 0, max: 40, step: 1, unit: 'px', desc: '背景虚化程度。0 为不模糊，只有玻璃风格用得上' },
+  /* styles 限定 glass：模糊是玻璃的特征，给扁平/新拟态显示一个"模糊半径"
+     拖了也不会有任何变化（它们的面板本就不透明），属于典型的假控件。 */
+  { key: '--blur', label: '模糊半径', group: 'style', type: 'length', min: 0, max: 40, step: 1, unit: 'px', styles: ['glass'], desc: '背景虚化程度。0 为不模糊，只有玻璃风格用得上' },
 
   /* ---- 磨砂（仅玻璃）---- */
   { key: '--saturate', label: '饱和度补偿', group: 'frost', type: 'number', min: 100, max: 220, step: 5, unit: '%', styles: ['glass'], desc: '高斯模糊会压低饱和度，这里补回来。低于 100% 会发灰，是"廉价玻璃"和"真玻璃"的分水岭' },
@@ -263,10 +283,17 @@ export const DERIVED_VARS = [
   '--mask', '--scroll-thumb', '--badge-fg',
 ];
 
-/** 取某风格可用的参数项；styles 未指定表示所有风格通用 */
+/**
+ * 取某风格下**由参数表渲染**的参数项。
+ *
+ * 两条过滤，缺一不可：
+ *   · styles     —— 只对某些风格有意义（磨砂 / 模糊只给玻璃）
+ *   · managedBy  —— 由另一套 UI 管的（accent / env 走色板），
+ *                   这里再渲染一份会让两套存储互相打架
+ */
 export function paramsForStyle(style) {
   return THEME_PARAM_SPEC.filter(
-    (p) => !p.styles || p.styles.includes(style),
+    (p) => !p.managedBy && (!p.styles || p.styles.includes(style)),
   );
 }
 
