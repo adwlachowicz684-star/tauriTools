@@ -2364,7 +2364,16 @@
                                     var nodes = m.getSelectedNodes();
                                     nodes.forEach(function (n) {
                                         if (scope === 'text') {
-                                            ['font-family', 'font-size', 'font-weight', 'font-style', 'color', 'font-strikethrough', 'text-align'].forEach(function (k) { n.setData(k); });
+                                            /*
+                                             * 'vertical-align' 必须在这里。
+                                             *
+                                             * 面板「文字」节里「水平」与「垂直」是并排的两个对齐控件，
+                                             * 早先只清了 'text-align'，**漏了 'vertical-align'** ——
+                                             * 于是点「清除文字样式」后水平对齐复位了、垂直对齐还留着。
+                                             * 同一个节里两个同类控件一个清一个不清，用户只会以为按钮坏了。
+                                             */
+                                            ['font-family', 'font-size', 'font-weight', 'font-style', 'color',
+                                             'font-strikethrough', 'text-align', 'vertical-align'].forEach(function (k) { n.setData(k); });
                                         } else if (scope === 'node') {
                                             n.setData('background');
                                             n.setData('node-radius');

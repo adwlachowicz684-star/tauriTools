@@ -8725,6 +8725,60 @@ group('exec/快捷键引用的命令名必须真的注册过（否则静默失�
   }
 }
 
+group('「清除文字样式」必须清掉文字节能设的**每一个**键');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  const pan = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+
+  /*
+   * BUG：scope==='text' 的清除列表里漏了 'vertical-align'。
+   * 面板「文字」节里「水平」「垂直」是并排的两个对齐控件，
+   * 一个清一个不清 → 点了「清除文字样式」垂直对齐还留着，像按钮坏了。
+   */
+  /*
+   * **必须先剥注释**再取数组。
+   *
+   * 不剥的话有两个问题：
+   *   1. 切片里注释占了大半，700 字符根本装不到数组结尾（实测 ei = -1）；
+   *   2. 更要命的是注释里就写着 'vertical-align'、'text-align' 这些键名，
+   *      直接在原文上跑正则会把注释里的也算进去 —— 键真的被删了，
+   *      断言照样绿。**又一处假阴性**。
+   */
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const i = html.indexOf("scope === 'text'");
+  ok(i > 0, '有 text scope 分支');
+  const seg = strip(html.slice(i, i + 1500));
+  const bi = seg.indexOf('[');
+  const ei = seg.indexOf(']', bi);
+  ok(bi >= 0 && ei > bi, '取到 text scope 的键数组');
+  const arr = seg.slice(bi, ei + 1);
+  const keys = [...arr.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  ok(keys.includes('vertical-align'), '清 vertical-align（曾漏）');
+  ok(keys.includes('text-align'), '清 text-align（对照）');
+
+  /*
+   * 通用守卫：面板「文字」节里每个内核命令对应的数据键，
+   * 都必须在 text 的清除列表里。否则「能设却清不掉」。
+   */
+  const CMD2KEY = {
+    fontfamily: 'font-family', fontsize: 'font-size', forecolor: 'color',
+    bold: 'font-weight', italic: 'font-style', strikethrough: 'font-strikethrough',
+    textalign: 'text-align', valign: 'vertical-align',
+  };
+  const si = pan.indexOf("sectionAct('文字'");
+  ok(si > 0, '面板有「文字」节');
+  const sseg = pan.slice(si, si + 4200);
+  const bad = [];
+  for (const m of sseg.matchAll(/run\(\s*'([a-zA-Z]+)'/g)) {
+    const key = CMD2KEY[m[1]];
+    if (key && !keys.includes(key)) bad.push(m[1] + '→' + key);
+  }
+  // 颜色行里那个清除回调不走 run，单独确认它用的是 text scope
+  ok(bad.length === 0,
+    '文字节每个命令的键都在清除列表里（缺失：' + (bad.join('、') || '无') + '）');
+}
+
 group('导出为交换格式 → 导出为交换格式（单画布）');
 
 {
