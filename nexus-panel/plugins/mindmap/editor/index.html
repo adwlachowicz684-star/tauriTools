@@ -996,6 +996,19 @@
                             var fn = new kity.Text(flabel);
                             try {
                                 fn.setSize(attachmentFontSize(node)).fill(color).setTextAnchor('start');
+                                /*
+                                 * 字体必须**显式设成测量时用的那一支**（ffam）。
+                                 *
+                                 * 不设的话 SVG 的 font-family 走继承，而本页 html/body
+                                 * 都没设 font-family（见 <head>），实际落到浏览器默认
+                                 * 字体（Chrome 是标准字体，通常是**衬线**）。
+                                 * 于是「按 sans-serif 量宽度」和「按衬线字体画出来」
+                                 * 对不上 —— 量窄了文件名照样戳出外框，量宽了留一片空白。
+                                 *
+                                 * 显式设了之后两边同源，宽度必然一致。顺带也让附件名
+                                 * 跟随节点字体（与 attachmentFontSize 跟随节点字号同理）。
+                                 */
+                                try { fn.setFontFamily(ffam); } catch (e4) {}
                                 fn.setStyle('pointer-events', 'none');
                                 fn.setTranslate(rowLeft + 20, fy + 4);
                             } catch (e3) {}

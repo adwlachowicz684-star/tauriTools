@@ -7965,6 +7965,21 @@ group('附件画进节点框内（节点撑高，不再被相邻节点遮挡）'
       const j = html.indexOf('var rowW = 20 + estTextW(');
       const seg2 = html.slice(Math.max(0, j - 400), j + 60);
       ok(/estTextW\(flabel, ffs, ffam\)/.test(html), '文件行把字号与字体一起传给 estTextW');
+      /* 测量用的字体必须**就是**画出来的那一支。
+       * 只传 ffam 给 estTextW 而 setFontFamily 不设的话，SVG 走继承落到浏览器
+       * 默认字体（本页 html/body 都没设 font-family），两边不同源 ——
+       * 量出来的宽度和画布上画的对不上，等于白测。
+       */
+      ok(/fn\.setFontFamily\(ffam\)/.test(html),
+        '附件名显式设成测量用的那一支字体（测量与渲染必须同源）');
+      // setFontFamily 要包在自己的 try 里：它抛错不能连累后面的
+      // setStyle('pointer-events','none') —— 那会让文件名挡住点击
+      {
+        const k = html.indexOf('fn.setFontFamily(ffam)');
+        const seg3 = html.slice(Math.max(0, k - 200), k + 120);
+        ok(/try \{ fn\.setFontFamily\(ffam\); \} catch/.test(seg3),
+          'setFontFamily 单独 try（抛错不能连累后面的 pointer-events）');
+      }
       ok(/toLowerCase\(\) === 'default'/.test(seg2),
         "字体 'default' 视作未设置（kity 的占位值，当真会量出错误的宽度）");
     }

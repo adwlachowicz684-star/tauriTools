@@ -1949,6 +1949,27 @@ __kmDefaultValign = (cbox, bb) => (cbox.height - bb.height) > 1 ? 'bottom' : 'mi
 
 真正的问题在另一头：**是文字被推下来了，不是视频没动**。
 
+## 附件名的「测量字体」与「渲染字体」不是同一支
+
+上一轮给 `estTextW` 加了真实测量（`measureText`），并按节点字体去量。
+但**画出来的那一支并不是它**：
+
+```js
+var fn = new kity.Text(flabel);
+fn.setSize(...).fill(color).setTextAnchor('start');   // ← 没设 font-family
+```
+
+SVG 的 `font-family` 走继承，而本页 `<head>` 里 html/body **都没设**
+font-family，于是实际落到浏览器默认字体（Chrome 的标准字体，通常是
+**衬线**）。结果：「按 sans-serif 量」对上「按衬线字体画」—— 量窄了
+文件名照样戳出外框，量宽了留一片空白，等于白测。
+
+修法：显式 `fn.setFontFamily(ffam)`，让**测量与渲染同源**。顺带也让附件名
+跟随节点字体（与 `attachmentFontSize` 跟随节点字号同理）。
+
+⚠️ `setFontFamily` 要包在**自己的** try 里：它抛错会连累后面的
+`setStyle('pointer-events','none')`，那样文件名会挡住点击。
+
 ## 附件改画进节点框内后遗留的死代码
 
 改成「附件画进节点框内」之后，旧的「画在节点右侧的小图标」这一路整个
