@@ -171,12 +171,38 @@ console.log('\n=== 3.5 主题参数表（规整管理）===');
   t('切到玻璃风格后关键参数都可调', blocked.length === 0,
     blocked.join(', ') || `${CRITICAL.length} 项关键参数均可填（新拟态主题本身不带也能填）`);
 
+  const tmSrc = read('js/theme-manager.js');
+
+  /* 3.5j 覆盖写入后必须重新应用主题。
+     只写 localStorage 不重算是**界面毫无变化** —— :root 上的变量只在
+     applyTo 里写。setAccent / setStyleParam 都做了这件事，
+     新增的 varOverride / baseOverride / styleOverride 最初漏了。 */
+  for (const fn of ['setVarOverride', 'resetVarOverride', 'resetAllVarOverrides',
+    'setBaseOverride', 'setStyleOverride']) {
+    const m2 = tmSrc.match(
+      new RegExp(`export function ${fn}[\\s\\S]{0,600}?\\n\\}`),
+    );
+    const body = m2 ? m2[0] : '';
+    t(`${fn} 写完后会重新应用主题`, /reapply\(/.test(body),
+      /reapply\(/.test(body) ? '已触发 applyTo + 订阅通知' : '只写了存储，界面不会变');
+  }
+
+  /* 3.5k UI 必须取 resolved 版 —— 否则用户改了风格后，
+     "该显示哪些控件"仍按旧风格判断（玻璃滑块不出现、背景图不显示） */
+  const appSrc = read('plugins/settings/App.tsx');
+  t('设置页用 resolved 版取风格与基调',
+    /styleParams\(th\?\.style\)/.test(appSrc) && /getCurrentResolved\(\);?\s*\n?\s*const list/.test(appSrc)
+      || /const th = getCurrentResolved\(\);/.test(appSrc),
+    '风格参数与完整参数均取 resolved');
+  t('色板按 resolved 基调取色档',
+    !/swatchFor\(getBase\(\)\)/.test(appSrc),
+    '已无 swatchFor(getBase())');
+
   /* 3.5h 玻璃风格缺 --surface-overlay 时必须派生。
      不派生的后果是"把新拟态改成玻璃后弹窗没有底板"——
      当时给 6 套玻璃主题补 overlay 只覆盖了"本来就是玻璃"的路径，
      覆盖不到"非玻璃改成玻璃"这条新路径。
      （逻辑依赖 localStorage 与 :root，只能做源码级校验） */
-  const tmSrc = read('js/theme-manager.js');
   t('玻璃风格缺浮层底时会派生（防弹窗无底板回归）',
     /style\s*===\s*'glass'\s*&&\s*v\['--surface-overlay'\]\s*==\s*null/.test(tmSrc),
     'deriveVars 内有 glass overlay 派生');

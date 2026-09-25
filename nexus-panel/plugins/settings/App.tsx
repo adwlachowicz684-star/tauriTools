@@ -21,6 +21,10 @@ import { useDragReorder } from '../../js/drag-reorder-react.js';
 import {
   listThemes, applyTheme, setAccent, setEnvColor, resetColors,
   getThemeId, getAccent, getEnvColor, getBase,
+  /* resolved 版：带深浅/风格覆盖。UI 一律用它 ——
+     用户改了风格后，getCurrent().style 仍是旧值，
+     会让"该出现哪些控件"判断错（详见 theme-manager 的说明）。 */
+  getCurrent, getCurrentResolved, getResolvedBase,
   getHueShift, getLightShift, setThemeShift,
   /* 单项复位：把「恢复默认」做成每个调节项各自的小按钮，
      而不是一个"恢复主题自带配色"大按钮 ——
@@ -916,7 +920,7 @@ export default function Settings() {
   const customColorButton = (slot: 'accent' | 'env') => {
     const cur = slot === 'env' ? getEnvColor() : getAccent();
     const isPreset = !!cur
-      && swatchFor(getBase()).some(([c]) => c.toLowerCase() === cur.toLowerCase());
+      && swatchFor(getResolvedBase()).some(([c]) => c.toLowerCase() === cur.toLowerCase());
     return (
       <>
         <button
@@ -1220,7 +1224,7 @@ export default function Settings() {
             强调色（叠加在当前主题之上 · 按钮 / 选中态 / 链接）
           </div>
           <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)' }}>
-            {swatchFor(getBase()).map(([c, label]) => {
+            {swatchFor(getResolvedBase()).map(([c, label]) => {
               const cur = getAccent();
               return (
                 <button
@@ -1253,7 +1257,7 @@ export default function Settings() {
             成功 / 错误 / 运行中 / 警告 为固定语义色，不随这里变化
           </div>
           <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)' }}>
-            {swatchFor(getBase()).map(([c, label]) => {
+            {swatchFor(getResolvedBase()).map(([c, label]) => {
               const cur = getEnvColor();
               return (
                 <button
@@ -1325,7 +1329,7 @@ export default function Settings() {
                 玻璃 → 透明度 / 模糊半径    新拟态 → 立体度    扁平 → 描边强度
               给玻璃调"立体度"没有意义，因此只渲染**当前主题风格**对应的那几项。 */}
           {(() => {
-            const th = getCurrent();
+            const th = getCurrentResolved();
             const list = styleParams(th?.style) as StyleParam[];
             if (!list.length) return null;
             return (
@@ -1379,10 +1383,10 @@ export default function Settings() {
               主题数据里的每个变量都能在这里改到（派生量除外）。
               目标是"能调出任意一套内置主题"，而不是只能挑现成的。 */}
           <div className="p-muted" style={{ marginTop: 'var(--sp-8, 16px)', fontSize: 'var(--fs-13, 13px)' }}>
-            完整参数（{getCurrent().name}）
+            完整参数（{getCurrentResolved().name}）
           </div>
           <ThemeParamsPanel
-            theme={getCurrent()}
+            theme={getCurrentResolved()}
             onChanged={() => { rerender(); void syncThemeToShell(); }}
           />
 
