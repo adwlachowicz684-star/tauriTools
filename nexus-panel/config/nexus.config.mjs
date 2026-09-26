@@ -73,7 +73,10 @@ export const TAURI_CONFIGS = {
  */
 export const BASE_CSP = {
   'default-src': ["'self'"],
-  'script-src': ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+  // 'wasm-unsafe-eval'：PlantUML 的 viz-global 是 WASM（Graphviz 编译版），
+  // 少了它浏览器不允许编译 WASM —— 控制台只有一条 warning，界面上表现为
+  // 「一直转圈」，完全看不出是 CSP 问题。mermaid 不需要它（纯 JS 画图）。
+  'script-src': ["'self'", "'unsafe-inline'", "'unsafe-eval'", "'wasm-unsafe-eval'"],
   'style-src': ["'self'", "'unsafe-inline'"],
   'img-src': ["'self'", 'data:', 'asset:', 'http://asset.localhost', 'blob:'],
   'font-src': ["'self'", 'data:'],
