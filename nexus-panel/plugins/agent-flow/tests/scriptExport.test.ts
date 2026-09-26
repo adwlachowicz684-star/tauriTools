@@ -190,3 +190,41 @@ test('有参数连线的节点在脚本里要标注（不能静默取手填值�
   assert.ok(/paramLinkNoteOf\(g, id, '# '\)/.test(src), 'shell 要标');
   assert.ok(/paramLinkNoteOf\(g, id, '    # '\)/.test(src), 'python 要标');
 });
+
+/* ================= 大模型节点 ================= */
+
+/*
+ * 合并后 llmChat 一度在 describe 里没有分支，落到 default 返回空串 ——
+ * 导出的说明里这个节点没有描述，且**不进 skipped**（描述为空不算"翻译不出来"），
+ * 所以没有任何痕迹。只能靠对账发现。
+ */
+test('大模型节点在说明里有描述（合并后最容易落到 default）', () => {
+  const one = (use, extra = {}) => exportFlow(g([n('a1', 'llmChat', { use, model: 'gpt-4o', ...extra })]), 'markdown');
+  assert.match(one('chat').text, /调用大模型/, '自由对话要有描述');
+  assert.match(one('ocr').text, /识别图片/, '图片识别要有描述');
+  assert.match(one('translate', { targetLang: '英文' }).text, /英文/, '翻译要带上目标语言');
+});
+
+test('python：大模型走 _llm 辅助函数，密钥不落盘', () => {
+  const r = exportFlow(g([n('a1', 'llmChat', { prompt: '写首诗', model: 'gpt-4o', system: '你是诗人' })]), 'python');
+  // python 的变量名是小写的 out_a1（shVar 才是大写），别照抄 shell 的写法
+  assert.ok(/out_a1 = _llm\(/.test(r.text), `应调用 _llm，实际：${r.text}`);
+  assert.ok(/def _llm\(/.test(r.text), '必须带上 _llm 定义，否则调用了不存在的函数');
+  assert.ok(/os\.environ/.test(r.text), '地址与密钥必须走环境变量');
+  // 反过来：脚本里不许出现任何密钥字段
+  assert.ok(!/apiKey|api_key/.test(r.text), '脚本里不该出现密钥');
+});
+
+test('python：本地图片的识别留 TODO，不静默退化成纯文本提问', () => {
+  const r = exportFlow(g([n('a1', 'llmChat', { use: 'ocr', imageSource: 'file', path: '/x/y.png' })]), 'python');
+  assert.ok(r.skipped.some((s) => s.id === 'a1'), '本地图片模式应进 skipped');
+  assert.ok(!/out_a1 = _llm/.test(r.text), '不该生成一条缺了图片的调用');
+});
+
+test('shell：大模型不做，但要说清"用 python 版"而不是"没做"', () => {
+  const r = exportFlow(g([n('a1', 'llmChat', { prompt: 'hi' })]), 'shell');
+  const s = r.skipped.find((x) => x.id === 'a1');
+  assert.ok(s, '应进 skipped');
+  assert.match(s.reason, /python/, '应指向 python 版');
+  assert.ok(!/没有对应的 shell 写法/.test(s.reason), '不该用 default 那句笼统的话');
+});

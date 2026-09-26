@@ -238,6 +238,23 @@ function shellLine(n: GraphNode, skipped: Skipped[]): string | null {
       const body = str(d.body) ? ` --data ${shq(v('body'))}` : '';
       return `${me}=$(curl -sS -X ${method}${body} "${url}")   # ${n.id}: HTTP ${method}`;
     }
+    /*
+     * 大模型节点：shell 里不生成。
+     *
+     * 请求体是一坨嵌套 JSON，用单引号包 python -c 那一套
+     * （见 extract 的做法）在提示词里出现引号时就会断 ——
+     * 生成的脚本看着完整，跑起来是语法错。
+     *
+     * 这里明确说"用 python 版"，而不是落到 default 那句
+     * "这类节点没有对应的 shell 写法"：后者让人以为这个功能没做，
+     * 而实际情况是**有对应写法，只是不在 shell 里**。
+     */
+    case 'llmChat':
+      skipped.push({
+        id: n.id, kind,
+        reason: '调用大模型需要拼嵌套 JSON 请求体，shell 一行表达不安全 —— 请导出 python 版',
+      });
+      return null;
     default:
       skipped.push({ id: n.id, kind, reason: '这类节点没有对应的 shell 写法' });
       return null;
@@ -331,6 +348,45 @@ function pyLine(n: GraphNode, skipped: Skipped[], indent = ''): string | null {
       const body = str(d.body) ? `, data=${v('body')}` : '';
       return `${indent}${me} = requests.${method}(${url}${body}).text   # ${n.id}`;
     }
+    /*
+     * 大模型节点。
+     *
+     * ================= 密钥绝不能写进导出脚本 =================
+     *
+     * 脚本是要落到磁盘上的文件，而节点的地址与密钥来自**连接**。
+     * 把密钥原样写进脚本，等于把口令以明文存了一份在导出目录里 ——
+     * 用户会以为自己只是导出了一份流程。
+     *
+     * 所以密钥与地址一律走环境变量，脚本里只留模型名与提示词。
+     *
+     * ================= 为什么用辅助函数而不是内联 =================
+     *
+     * 请求体是一坨嵌套 JSON，内联进一行的结果没人看得懂，
+     * 而多行又与"一个节点一行"的结构对不上。
+     * 抽出 _llm / _llm_img，与既有的 _jget 同一套做法。
+     */
+    case 'llmChat': {
+      const use = str(d.use || 'chat');
+      const model = pyq(str(d.model) || '');
+      const sys = v('system');
+      const sysArg = str(d.system) ? `, system=${sys}` : '';
+      if (use === 'ocr') {
+        /*
+         * 本地图片要先读成 base64 才能放进请求体 ——
+         * 那不是"一行"，硬拼只会生成一份看起来完整其实跑不通的脚本。
+         * 明确留 TODO，而不是静默退化成纯文本提问。
+         */
+        if (str(d.imageSource || 'url') === 'file') {
+          skipped.push({
+            id: n.id, kind,
+            reason: '图片识别用的是本地图片，脚本里要先 base64 编码，已留 TODO',
+          });
+          return null;
+        }
+        return `${indent}${me} = _llm_img(${v('prompt')}, ${pyq(str(d.url))}, model=${model}${sysArg})   # ${n.id}: 图片识别`;
+      }
+      return `${indent}${me} = _llm(${v('prompt')}, model=${model}${sysArg})   # ${n.id}: 调用大模型`;
+    }
     default:
       skipped.push({ id: n.id, kind, reason: '这类节点没有对应的 python 写法' });
       return null;
@@ -372,9 +428,54 @@ function toPython(g: Graph): ExportResult {
     '    return cur',
     '',
     '',
+  ];
+  /*
+   * 图里有大模型节点才带上这两个函数。
+   *
+   * 无条件加的话每份脚本都多二十行与本次流程无关的代码，
+   * 而"按需加"的判定必须看**节点种类**而不是导出的行 ——
+   * 图片识别的本地图片模式是 return null（留 TODO），
+   * 按导出行判会把函数漏掉，脚本里就调用了一个不存在的 _llm。
+   */
+  const hasLlm = g.nodes.some((x) => str((x.data as Record<string, unknown> | undefined)?.kind) === 'llmChat');
+  if (hasLlm) {
+    lines.push(
+      'def _llm(prompt, model="", system=""):',
+      '    """调用 OpenAI 兼容接口 —— 地址与密钥取自环境变量，不落盘"""',
+      '    return _llm_call(prompt, model, system, None)',
+      '',
+      '',
+      'def _llm_img(prompt, image_url, model="", system=""):',
+      '    """同上，但带上图片地址"""',
+      '    return _llm_call(prompt, model, system, image_url)',
+      '',
+      '',
+      'def _llm_call(prompt, model, system, image_url):',
+      '    import os',
+      '    msgs = []',
+      '    if system:',
+      '        msgs.append({"role": "system", "content": system})',
+      '    if image_url:',
+      '        msgs.append({"role": "user", "content": [',
+      '            {"type": "text", "text": prompt},',
+      '            {"type": "image_url", "image_url": {"url": image_url}},',
+      '        ]})',
+      '    else:',
+      '        msgs.append({"role": "user", "content": prompt})',
+      '    r = requests.post(',
+      '        os.environ.get("LLM_BASE_URL", "").rstrip("/") + "/chat/completions",',
+      '        headers={"Authorization": "Bearer " + os.environ.get("LLM_API_KEY", "")},',
+      '        json={"model": model, "messages": msgs},',
+      '    )',
+      '    return r.json()["choices"][0]["message"]["content"]',
+      '',
+      '',
+    );
+  }
+  lines.push(
     'def main():',
     '    input_text = ""',
-  ];
+  );
   if (lines[lines.length - 1] === '    input_text = ""') lines.push('');
   let count = 0;
   for (const id of order) {
@@ -488,6 +589,22 @@ function briefOf(d: Record<string, unknown>, kind: string): string {
     }
     case 'clock': return `输出当前时间（格式 ${str(d.format)}）`;
     case 'translate': return `翻译成 ${str(d.targetLang)}`;
+    /*
+     * 大模型节点 —— 合并出来的那一个。
+     *
+     * **以前这里根本没有 llmChat 这一支**，于是它落到 default 返回空串：
+     * 导出的 markdown / 说明里这个节点**没有描述**，
+     * 拿着脚本对照画布时看不出这一步干了什么。
+     *
+     * 不报错、也不留 TODO（skipped 只记翻译不出来的节点，
+     * 而描述是空串并不算"翻译不出来"）—— 所以只能靠对账发现。
+     */
+    case 'llmChat': {
+      const use = str(d.use || 'chat');
+      if (use === 'ocr') return '调用大模型识别图片内容';
+      if (use === 'translate') return `调用大模型翻译成 ${str(d.targetLang)}`;
+      return `调用大模型问一句（${str(d.model) || '未指定模型'}）`;
+    }
     case 'task': return `跑一条 CLI 指令`;
     default: return '';
   }
