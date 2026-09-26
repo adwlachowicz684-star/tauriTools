@@ -119,7 +119,7 @@ import {
 } from './engine/runner';
 import { TriggerScheduler } from './engine/triggers';
 import type { CanvasConfig } from './engine/canvasConfig';
-import { type CanvasParam, migrateEnvVars, paramRefsOfNodes } from './engine/canvasParams';
+import { type CanvasParam, migrateEnvVars, paramRefsOfNodes, paramRunValue } from './engine/canvasParams';
 import {
   makeCanvas, nextCanvasName, renameCanvas, removeCanvas, nextActiveId,
   updateCanvasContent, updateCanvasConfig, canvasConfigOf, sortForDisplay, toMeta,
@@ -2307,7 +2307,8 @@ function reportSkipped(
     for (const p of activeParams) {
       const n = String(p?.name ?? '').trim();
       if (!n) continue;
-      paramsForRun[n] = String(p.value ?? '');
+      // 走 paramRunValue：布尔卡要收敛成 true/false，不能把「真」这个字填进模板
+      paramsForRun[n] = paramRunValue(p);
     }
 
     /*

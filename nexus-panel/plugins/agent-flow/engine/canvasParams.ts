@@ -45,6 +45,17 @@
  *
  * 各写一份扫描逻辑，就会出现"面板说缺、跑起来却不报错"。
  * 所以扫名字的函数放这里，大家共用同一份。
+ *
+ * ================= 一张卡一个参数 =================
+ *
+ * 参数在面板上是**卡片**（与常量节点同一套形态），每张卡有名字、种类、值、说明。
+ *
+ * 卡要有 id，不是多此一举：列表的 React key 若用 name，
+ * 用户每敲一个字 key 就变一次 → 输入框被整块重建 → **打一个字就失焦**。
+ * 这类"能输入但打不了字"的表现最难归因，容易误判成输入框的毛病。
+ *
+ * 种类（文本 / 数字 / 布尔）与常量卡共用同一套（types.ts 的 ConstValueType）：
+ * 各定义一份就会出现"这边叫数字、那边叫 num"，且都不报错。
  */
 
 /* ------------------------------------------------------------------ */
@@ -57,13 +68,49 @@ export const PARAM_PREFIX = 'params';
 /** 旧称，仍要认 —— 早期注释里承诺过 {{env.NAME}} */
 export const PARAM_ALIASES = ['params', 'env'] as const;
 
+import { normBoolText } from '../types';
+
 export type CanvasParam = {
+  /**
+   * 卡片的稳定句柄。
+   *
+   * 列表 key 用 id 而不是 name —— 用 name 的话改一个字就整块重建输入框，
+   * 表现为"打一个字光标就跳走"。
+   */
+  id?: string;
   /** 参数名。允许中文 —— 中文用户写 {{params.输出目录}} 比拼音清楚得多 */
   name: string;
   value: string;
+  /** 值的种类。老数据没有 → 按 text。与常量卡共用同一套 */
+  valueType?: CanvasParamType;
   /** 说明：这个参数是干什么的。复用给别人时靠它知道该填什么 */
   note?: string;
 };
+
+/** 参数卡的种类。与常量卡同一套（types.ts 的 ConstValueType） */
+export type CanvasParamType = 'text' | 'num' | 'bool';
+
+/** 新卡的 id。前缀固定，便于在存档里一眼认出 */
+export function newParamId(): string {
+  return `cp${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** 卡片的列表 key。老数据没有 id 时按下标兜底 */
+export function paramKeyOf(p: CanvasParam, i: number): string {
+  return p?.id || `p${i}`;
+}
+
+/**
+ * 运行时真正填进模板的值。
+ *
+ * 布尔卡要收敛成 'true' / 'false' —— 否则卡片上写着「真」、
+ * 模板替换出来的却是「真」这个字，下游判真假时永远走假分支，
+ * 属于"看着对、跑着不对"。
+ */
+export function paramRunValue(p: CanvasParam): string {
+  const raw = String(p?.value ?? '');
+  return p?.valueType === 'bool' ? normBoolText(raw) : raw;
+}
 
 /** 定义了哪些 vs 引用了哪些 的比对结果 */
 export type ParamIssue = {
@@ -220,7 +267,7 @@ export function diffParamIssue(
 export function makeParamsFor(names: string[]): CanvasParam[] {
   return norm(names)
     .filter((n) => isValidParamName(n))
-    .map((n) => ({ name: n, value: '', note: '' }));
+    .map((n) => ({ id: newParamId(), name: n, value: '', note: '' }));
 }
 
 /**
@@ -242,10 +289,46 @@ export function ensureParams(
   for (const n of norm(names)) {
     if (defined.has(n)) continue;
     if (!isValidParamName(n)) continue;
-    out.push({ name: n, value: '', note: '' });
+    out.push({ id: newParamId(), name: n, value: '', note: '' });
     defined.add(n);
   }
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* 卡片自身的问题                                                      */
+/* ------------------------------------------------------------------ */
+
+/** 参数卡自身的问题。结构与 canvasConfig 的 ConfigIssue 同形，可直接并入 */
+export type ParamCardIssue = { field: string; message: string };
+
+/**
+ * 参数卡本身的问题（空名 / 名字不合法 / 重名）。
+ *
+ * 数组形态才可能出这些事 —— 旧的 env.vars 是对象，键天然唯一。
+ * 其中**重名**是要命的：取值按名字查表，两张卡同名时后写的静默覆盖先写的，
+ * 界面上两张卡都在、值却只有一份生效，且不报错。
+ */
+export function paramIssues(params: CanvasParam[] | undefined): ParamCardIssue[] {
+  const issues: ParamCardIssue[] = [];
+  const seen = new Set<string>();
+  (params ?? []).forEach((p, i) => {
+    const raw = String(p?.name ?? '');
+    const n = raw.trim();
+    if (!n) {
+      issues.push({ field: `第 ${i + 1} 张`, message: '没填名字 —— {{params.名字}} 取不到它' });
+      return;
+    }
+    if (!isValidParamName(n)) {
+      issues.push({ field: n, message: '名字含点号或以数字开头 —— 模板里取不到' });
+      return;
+    }
+    if (seen.has(n)) {
+      issues.push({ field: n, message: '重名了 —— 取值按名字查表，后一张会盖掉前一张' });
+    }
+    seen.add(n);
+  });
+  return issues;
 }
 
 /* ------------------------------------------------------------------ */
@@ -261,6 +344,10 @@ export function ensureParams(
  * 现在统一到 params，老存档里的值搬过来即可，不丢。
  *
  * 已经存在同名参数的以 params 为准 —— 它才是现在生效的那份。
+ *
+ * 搬过来的老条目 id 由名字派生（env:名字），**不能用随机数**：
+ * 这个函数在渲染期被反复调用，随机 id 会让列表 key 每次都变，
+ * 于是老变量那张卡是"打一个字就失焦"。派生 id 才是稳定的。
  */
 export function migrateEnvVars(
   params: CanvasParam[] | undefined,
@@ -271,7 +358,7 @@ export function migrateEnvVars(
   for (const [k, v] of Object.entries(envVars ?? {})) {
     const name = String(k ?? '').trim();
     if (!name || defined.has(name)) continue;
-    out.push({ name, value: String(v ?? '') });
+    out.push({ id: `env:${name}`, name, value: String(v ?? '') });
     defined.add(name);
   }
   return out;
@@ -280,7 +367,16 @@ export function migrateEnvVars(
 /* ------------------------------------------------------------------ */
 
 function cloneParam(p: CanvasParam): CanvasParam {
-  const next: CanvasParam = { name: String(p?.name ?? '').trim(), value: String(p?.value ?? '') };
+  /*
+   * id 与 valueType 必须跟着走 —— 丢掉 id 的话，列表 key 变成按下标兜底，
+   * 删掉中间一张卡后剩下的卡会整块重建（表现为输入框失焦、光标跳走）。
+   */
+  const next: CanvasParam = {
+    id: p?.id || newParamId(),
+    name: String(p?.name ?? '').trim(),
+    value: String(p?.value ?? ''),
+  };
+  if (p?.valueType) next.valueType = p.valueType;
   if (p?.note) next.note = p.note;
   return next;
 }

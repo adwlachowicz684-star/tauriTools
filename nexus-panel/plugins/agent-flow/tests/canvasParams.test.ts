@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {
   scanParamRefs, paramRefsOfNodes, paramValue, diffParamIssue,
   ensureParams, makeParamsFor, migrateEnvVars, isValidParamName,
+  paramIssues, paramRunValue, paramKeyOf, newParamId,
   PARAM_PREFIX,
 } from '../engine/canvasParams';
 
@@ -184,8 +185,105 @@ test('旧存档迁移：空表也能跑', () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* 参数卡                                                              */
+/* ------------------------------------------------------------------ */
+
+test('重名必须报出来 —— 后一张会静默盖掉前一张', () => {
+  /*
+   * 旧的 env.vars 是对象，键天然唯一，不可能重名；
+   * 改成卡片数组后重名就出现了，而取值是按名字查表的 ——
+   * 界面上两张卡都在、值却只有一份生效，且不报错。
+   */
+  const out = paramIssues([
+    { id: 'a', name: '输出目录', value: 'x' },
+    { id: 'b', name: '输出目录', value: 'y' },
+  ]);
+  assert.equal(out.length, 1);
+  assert.match(out[0].message, /重名/);
+});
+
+test('空名要报 —— {{params.名字}} 取不到它', () => {
+  const out = paramIssues([{ id: 'a', name: '  ', value: 'x' }]);
+  assert.equal(out.length, 1);
+  assert.match(out[0].message, /没填名字/);
+});
+
+test('不合规的名字要报 —— 点号或以数字开头', () => {
+  assert.equal(paramIssues([{ id: 'a', name: 'a.b', value: '' }]).length, 1);
+  assert.equal(paramIssues([{ id: 'a', name: '2ab', value: '' }]).length, 1);
+  assert.equal(paramIssues([{ id: 'a', name: '输出目录', value: '' }]).length, 0, '中文名合法');
+});
+
+test('布尔卡的值要收敛成 true / false', () => {
+  /*
+   * 不收敛的话，模板替换出来的是「真」这个字，
+   * 下游判真假时永远走假分支 —— 看着对、跑着不对。
+   */
+  assert.equal(paramRunValue({ name: '开关', value: '真', valueType: 'bool' }), 'true');
+  assert.equal(paramRunValue({ name: '开关', value: 'maybe', valueType: 'bool' }), 'false');
+  assert.equal(paramRunValue({ name: '路径', value: 'D:\\a' }), 'D:\\a', '文本卡原样输出');
+});
+
+test('老 env.vars 的 id 必须由名字派生 —— 随机 id 会让输入框失焦', () => {
+  /*
+   * migrateEnvVars 在渲染期被反复调用。给老条目随机 id 的话，
+   * 每次渲染 key 都变 → 整块重建 → 表现为"打一个字光标就跳走"。
+   */
+  const a = migrateEnvVars(undefined, { A: '1' });
+  const b = migrateEnvVars(undefined, { A: '1' });
+  assert.equal(a[0].id, b[0].id, '同一个老变量两次迁移必须拿到同一个 id');
+  assert.equal(paramKeyOf(a[0], 0), paramKeyOf(b[0], 0));
+});
+
+test('ensureParams 不能把已有卡的 id 冲掉', () => {
+  /*
+   * cloneParam 丢 id 的话，列表 key 退回按下标 ——
+   * 删掉中间一张卡，后面所有卡都会重建（失焦、光标跳走）。
+   */
+  const out = ensureParams([{ id: 'keep', name: 'A', value: '1' }], ['B']);
+  assert.equal(out[0].id, 'keep');
+  assert.ok(out[1].id, '新卡要有 id');
+});
+
+test('newParamId 前缀固定且各不相同', () => {
+  assert.match(newParamId(), /^cp/);
+  assert.notEqual(newParamId(), newParamId());
+});
+
+/* ------------------------------------------------------------------ */
 /* 源码守卫                                                            */
 /* ------------------------------------------------------------------ */
+
+test('参数卡：面板必须写 params，不是写老的 env.vars', () => {
+  /*
+   * 界面写 env.vars 的话，卡片上新增的 id / valueType 存不进去 ——
+   * 下次打开种类就变回文本、key 也不稳，且不报错。
+   */
+  const t = fs.readFileSync(path.join(ROOT, 'components/inspectors/CanvasConfigPanel.tsx'), 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(t, /params:\s*next/, '编辑参数卡要写回 config.params');
+  assert.doesNotMatch(t, /vars\[[^\]]+\]\s*=\s*ev\.target\.value/, '不能还在写 env.vars');
+});
+
+test('参数卡：脱敏要覆盖 params —— 只挡 env.vars 等于没挡', () => {
+  /*
+   * 面板上挂着"不要在这里填密钥"的提示，而参数卡现在是填值的地方。
+   * 只脱敏 env.vars 的话，卡里的密钥会跟着导出的画布一起出去。
+   */
+  const t = fs.readFileSync(path.join(ROOT, 'engine/canvasStore.ts'), 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(t, /params:\s*redactParams\(/, 'redactSecrets 要脱敏 params');
+});
+
+test('运行注入要走 paramRunValue —— 布尔卡不能把「真」这个字填进模板', () => {
+  /*
+   * 卡片上选「真」、模板里替换出来的却是「真」 → 下游判真假永远走假分支。
+   * 这类"看着对、跑着不对"靠肉眼对不出来，只能钉在源码上。
+   */
+  const t = fs.readFileSync(path.join(ROOT, 'App.tsx'), 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(t, /paramsForRun\[n\]\s*=\s*paramRunValue\(/, '必须用 paramRunValue 取值');
+});
 
 test('模板 TOKEN 必须支持中文', () => {
   /*

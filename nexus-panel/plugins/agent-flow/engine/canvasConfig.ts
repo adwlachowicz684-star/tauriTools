@@ -25,6 +25,7 @@
 
 /** MCP 服务的配置。命令与地址二选一 */
 import type { CanvasParam } from './canvasParams';
+import { migrateEnvVars, paramIssues } from './canvasParams';
 
 export type McpServer = {
   id: string;
@@ -129,10 +130,15 @@ export function validateCanvasConfig(cfg: CanvasConfig): ConfigIssue[] {
     }
   }
 
-  for (const k of Object.keys(cfg?.env?.vars ?? {})) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) {
-      issues.push({ field: k, message: '变量名只能用字母、数字、下划线，且不能以数字开头' });
-    }
+  /*
+   * 参数卡现在是**唯一**的数据源，env.vars 只是老存档的残留
+   * （读取时被 migrateEnvVars 搬进来）。所以校验合并后的那份 ——
+   * 只校验 params 的话，老存档里名字不合规的变量查不出来，
+   * 而它们照样会被引用（{{params.1bad}}），表现是"取不到值"且不报错。
+   */
+  const allParams = migrateEnvVars(cfg?.params, cfg?.env?.vars);
+  for (const it of paramIssues(allParams)) {
+    issues.push({ field: it.field, message: it.message });
   }
   return issues;
 }

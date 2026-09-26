@@ -166,6 +166,13 @@ const RUNNER_OF: Record<string, string[]> = {
   canvasIn: ['engine/runners/canvasPort.ts'],
   canvasOut: ['engine/runners/canvasPort.ts'],
   /*
+   * CLI 的文件字段不在 runner 里拼 —— buildFileFields 在 engine/files.ts，
+   * runner 只是把它展开进 fields。只登记 runner 文件的话，
+   * 对账会去 task.ts 里找 fileName 而找不到（它写的是 ...buildFileFields(refs)），
+   * 于是**明明能取到值的口子被误报成执行器没写**。
+   */
+  task: ['engine/runners/task.ts', 'engine/files.ts'],
+  /*
    * HTTP 的三个具名输出（状态码 / 是否成功 / 响应长度）。
    *
    * 执行器一直在写，登记表里却长期没有这一项 —— 于是卡片上只有一个
@@ -220,6 +227,47 @@ test('产出具名输出的节点必须有端口（反方向：漏登记）', ()
     assert.ok(
       inStatic || dyn,
       `${kind} 的执行器在写具名输出，但 outputsOf 里没有它 —— 卡片上一个口子都拖不出来`,
+    );
+  }
+});
+
+/*
+ * 上面那条遍历的是 RUNNER_OF —— 一张**手写**清单。
+ *
+ * 手写清单挡不住它自己漏：task（CLI）的执行器一直在写八个文件字段，
+ * 而它压根不在 RUNNER_OF 里，于是那条守卫安安静静地报绿。
+ * 这正是"手写表各写一份会漏"的老问题 —— 守卫自己犯了它要防的错。
+ *
+ * 所以这里再从 runnerRegistry **推导**一遍：
+ * kind → 执行器函数 → 所在文件 → 文件里有没有写 fields。
+ * 推导出的集合里任何一个没登记端口，就是漏。
+ */
+test('产出具名输出的节点必须有端口（从执行器注册表推导，不靠手写清单）', () => {
+  if (!SRC) return;
+  const reg = readSrc('engine/runnerRegistry.ts');
+
+  // import { runA, runB } from './runners/x'  →  函数 → 文件
+  const fnToFile: Record<string, string> = {};
+  for (const m of reg.matchAll(/import\s*\{([^}]+)\}\s*from\s*'\.\/(runners\/[\w]+)'/g)) {
+    for (const fn of m[1].split(',')) fnToFile[fn.trim()] = `engine/${m[2]}.ts`;
+  }
+  // RUNNERS 表：'kind': runXxx
+  const i = reg.indexOf('const RUNNERS');
+  assert.ok(i >= 0, 'runnerRegistry 里找不到 RUNNERS 表');
+  const pairs = [...reg.slice(i).matchAll(/'?([\w-]+)'?:\s*(run\w+)/g)];
+  assert.ok(pairs.length > 20, `RUNNERS 表只解析出 ${pairs.length} 项 —— 守卫正则可能失效了`);
+
+  for (const [, kind, fn] of pairs) {
+    const file = fnToFile[fn];
+    if (!file) continue; // 无从查证的不猜（宁可漏报，不可误报）
+    const src = readSrc(file);
+    // 两种写法：return { fields: {...} }  /  const fields = {...}  /  fields[k] = v
+    if (!/fields\s*[:=]|fields\[/.test(src)) continue;
+    const inStatic = Object.prototype.hasOwnProperty.call(NODE_OUTPUTS, kind);
+    const dyn = kind === 'llmChat' || kind === 'const';
+    assert.ok(
+      inStatic || dyn,
+      `${kind}（${file}）在执行器里写了具名字段，但 outputsOf 没登记 —— 卡片上拖不出这个口子`,
     );
   }
 });

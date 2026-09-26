@@ -244,6 +244,27 @@ export const FILE_FIELD_HINT: Record<string, string> = {
   fileCount: '识别到的文件数量',
 };
 
+/**
+ * 文件字段的**短名** —— 输出卡片上那一格要放得下。
+ *
+ * 与 FILE_FIELD_HINT 的区别是用途：hint 是悬浮提示里那句完整说明，
+ * 这个是一两个字的格子标题。直接拿 hint 当标签的话，
+ * 「第一个文件的完整路径」会把卡片撑成一整行。
+ *
+ * 字段**清单**仍然只有 FILE_FIELD_NAMES 一处 ——
+ * 这两张表只是同一批 key 的两种说法。
+ */
+export const FILE_FIELD_LABEL: Record<string, string> = {
+  file: '文件路径',
+  files: '全部路径',
+  fileRel: '原始路径',
+  fileName: '文件名',
+  fileNames: '全部文件名',
+  fileDir: '所在目录',
+  fileExt: '扩展名',
+  fileCount: '文件数',
+};
+
 /** 手动模式：把用户填的多行文本当成路径列表 */
 export function parseManualPaths(text: string, workdir?: string): FileRef[] {
   const wd = (workdir ?? '').trim().replace(/[\\/]+$/, '');

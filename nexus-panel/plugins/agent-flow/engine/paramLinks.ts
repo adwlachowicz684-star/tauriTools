@@ -34,6 +34,7 @@
 
 import type { GraphEdge, GraphNode } from '../types';
 import { constItemKey, constItemLabel, constsOf, type ConstNodeData } from '../types';
+import { FILE_FIELD_LABEL, FILE_FIELD_NAMES } from './files';
 import { specOf } from './nodeSpec';
 import { argExpectOf, type ArgTypeIssue, type ValueKind } from './argTypes';
 
@@ -259,6 +260,23 @@ export const NODE_OUTPUTS: Record<string, OutPort[]> = {
     { key: OUT_DEFAULT, label: '结论' },
     { key: '端口' },
     { key: '说明' },
+  ],
+  /*
+   * CLI（task）的八个文件字段。
+   *
+   * 执行器一直在写（见 buildFileFields），登记表里却长期没有这一项 ——
+   * 于是卡片上只有一个「结论」口，"CLI 刚生成的那个文件叫什么"
+   * 只能靠 {{节点id.fileName}} 模板在下游写一遍才拿得到。
+   *
+   * 八个全登记，不挑子集：FILE_FIELD_NAMES 是"有哪些字段"的唯一定义处，
+   * 挑子集等于在两处各写一份"哪些算数"，漏一个就又是够不着的口子。
+   *
+   * label 用短名（FILE_FIELD_LABEL），hint 是那句完整说明（悬浮提示用）——
+   * 两者用途不同，但**字段清单只有 FILE_FIELD_NAMES 一处**。
+   */
+  task: [
+    { key: OUT_DEFAULT, label: '结论' },
+    ...FILE_FIELD_NAMES.map((k) => ({ key: k, label: FILE_FIELD_LABEL[k] ?? k })),
   ],
 };
 

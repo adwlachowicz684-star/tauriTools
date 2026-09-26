@@ -263,6 +263,34 @@ test('脱敏: serialize 后不含明文密钥', () => {
 });
 
 
+test('脱敏: 参数卡里的密钥也要挡住', () => {
+  /*
+   * 参数卡（全局环境变量）现在是画布上填值的地方，
+   * 而面板上还挂着"不要在这里填密钥"的提示 ——
+   * 只脱敏 env.vars 的话，承诺了会挡、实际没挡，导出即泄露。
+   */
+  const state = {
+    canvases: [
+      {
+        ...makeCanvas('A', { id: 'a' }),
+        config: {
+          mcpServers: [],
+          env: { vars: {} },
+          params: [
+            { id: 'p1', name: 'API_KEY', value: 'sk-leak' },
+            { id: 'p2', name: '输出目录', value: 'D:\\out' },
+          ],
+        },
+      },
+    ],
+    activeId: 'a',
+  };
+  const r = redactSecrets(state);
+  const ps = (r.canvases[0] as any).config.params;
+  assert.equal(ps[0].value, '', '像密钥的名字要被清空');
+  assert.equal(ps[1].value, 'D:\\out', '普通参数不能误伤');
+});
+
 test('脱敏: redactSecrets 覆盖每个画布', () => {
   const state = {
     canvases: [

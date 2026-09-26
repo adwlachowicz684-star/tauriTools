@@ -10,6 +10,7 @@
  * 用惰性取值而不是在模块顶层直接 import —— 见下面 canvasConfigOf 的实现。
  */
 import { type CanvasConfig, emptyCanvasConfig } from './canvasConfig';
+import type { CanvasParam } from './canvasParams';
 import { SECRET_PATHS } from './sanitize';
 
 /*
@@ -346,6 +347,21 @@ export function redactEnv(vars: Record<string, string>): Record<string, string> 
   return out;
 }
 
+/**
+ * 参数卡的脱敏。
+ *
+ * 参数卡现在是画布上填值的地方（env.vars 已不再由界面写入），
+ * 只脱敏 env.vars 的话，**填在卡里的密钥会跟着导出的画布一起出去**。
+ * 而界面上那句"不要在这里填密钥"还挂着 ——
+ * 承诺了会挡、实际没挡，属于"忘了就出事"。
+ */
+export function redactParams(list: CanvasParam[] | undefined): CanvasParam[] {
+  return (list ?? []).map((p) => ({
+    ...p,
+    value: looksLikeSecretName(String(p?.name ?? '')) ? '' : String(p?.value ?? ''),
+  }));
+}
+
 /** 整个持久化状态脱敏（每个画布的节点都过一遍） */
 export function redactSecrets(state: PersistedState): PersistedState {
   return {
@@ -358,6 +374,7 @@ export function redactSecrets(state: PersistedState): PersistedState {
             config: {
               ...c.config,
               env: { ...(c.config.env ?? { vars: {} }), vars: redactEnv(c.config.env?.vars ?? {}) },
+              params: redactParams(c.config.params),
             },
           }
         : {}),

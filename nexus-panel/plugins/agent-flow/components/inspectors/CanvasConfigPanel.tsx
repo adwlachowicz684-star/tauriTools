@@ -5,6 +5,10 @@ import {
   mcpEntryDrifted, syncMcpFromLibrary, type McpLibraryEntry,
 } from '../../engine/canvasConfig';
 import { EXPORT_FORMATS } from '../../engine/scriptExport';
+import {
+  migrateEnvVars, newParamId, paramKeyOf, type CanvasParamType, type CanvasParam,
+} from '../../engine/canvasParams';
+import { CONST_TYPE_LABEL, normBoolText } from '../../types';
 
 /**
  * 画布设置 —— MCP 服务、全局环境变量、导出脚本。
@@ -50,6 +54,9 @@ type Props = {
   onOpenMcpLibrary?: () => void;
 };
 
+/** 参数卡的种类。与常量卡共用同一份名字表，不另写一份 */
+const PARAM_KINDS: CanvasParamType[] = ['text', 'num', 'bool'];
+
 function newServer(): McpServer {
   return {
     id: `mcp${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`,
@@ -78,6 +85,43 @@ function CanvasConfigPanel({
   const mustPick = mcpChoiceRequired(servers);
 
   const commitServers = (next: McpServer[]) => onChange({ ...config, mcpServers: next });
+
+  /*
+   * 参数卡 —— 显示的是「params + 老 env.vars 合并」的结果。
+   *
+   * 只显示 params 的话，老存档里填在 env.vars 的变量会从界面上消失，
+   * 而运行时（migrateEnvVars）照样读得到 ——
+   * 于是"看不见却还在生效"，用户以为删掉了、值却还在替换。
+   *
+   * 任何编辑都写回 params（整份一起写）：env.vars 原样留着不动，
+   * 它是老存档的残留，同名以 params 为准，不会被重复显示。
+   */
+  const envCards: CanvasParam[] = migrateEnvVars(config.params, config.env?.vars);
+  const writeParams = (next: CanvasParam[]) => onChange({ ...config, params: next });
+
+  const patchParam = (i: number, part: Partial<CanvasParam>) =>
+    writeParams(envCards.map((t, j) => (j === i ? { ...t, ...part } : t)));
+
+  const removeParamAt = (i: number) => {
+    const gone = envCards[i];
+    writeParams(envCards.filter((_, j) => j !== i));
+    /*
+     * 删掉的那张若只存在于老的 env.vars 里，光删 params 是删不掉的 ——
+     * 下一轮合并又把它搬回来，表现为"删了又冒出来"。
+     */
+    const legacyId = String(gone?.id ?? '');
+    if (legacyId.startsWith('env:') && config.env?.vars) {
+      const vars = { ...(config.env?.vars ?? {}) };
+      delete vars[String(gone?.name ?? '').trim()];
+      onChange({ ...config, params: envCards.filter((_, j) => j !== i), env: { ...(config.env ?? { vars: {} }), vars } });
+    }
+  };
+
+  const addParam = () => {
+    let i = 1;
+    while (envCards.some((p) => (p.name ?? '').trim() === `参数${i}`)) i += 1;
+    writeParams([...envCards, { id: newParamId(), name: `参数${i}`, value: '', valueType: 'text', note: '' }]);
+  };
 
   const patchServer = (id: string, patch: Partial<McpServer>) => {
     onChange({
@@ -276,18 +320,19 @@ function CanvasConfigPanel({
         )}
       </div>
 
-      {/* ---------- 环境变量 ---------- */}
+      {/* ---------- 全局环境变量（参数卡） ---------- */}
       <div className="cfg-sec">
         <button type="button" className="cfg-title" onClick={() => setOpenEnv(!openEnv)}>
           <span>{openEnv ? '▾' : '▸'}</span>
           全局环境变量
-          <em>{Object.keys(config.env?.vars ?? {}).length} 个</em>
+          <em>{envCards.length} 个</em>
         </button>
 
         {openEnv && (
           <div className="cfg-body">
             <p className="cfg-hint">
-              节点里用 <code>{'{{env.NAME}}'}</code> 引用。
+              节点里用 <code>{'{{params.名字}}'}</code> 引用 —— 名字允许中文，
+              <code>{'{{env.NAME}}'}</code> 是旧称，仍然认。
             </p>
             {/*
               密钥提示必须写在**填之前** ——
@@ -298,47 +343,101 @@ function CanvasConfigPanel({
               明文值会跟着画布存档一起落盘。
             </p>
 
-            {Object.entries(config.env?.vars ?? {}).map(([k, val]) => (
-              <div className="cfg-row" key={k}>
-                <input type="text" className="cfg-k" value={k} readOnly />
-                <input
-                  type="text"
-                  className="cfg-mono"
-                  value={val}
-                  placeholder="值"
-                  onChange={(ev) => {
-                    const vars = { ...(config.env?.vars ?? {}) };
-                    vars[k] = ev.target.value;
-                    onChange({ ...config, env: { ...(config.env ?? { vars: {} }), vars } });
-                  }}
-                />
-                <button
-                  type="button"
-                  className="cfg-del"
-                  title="删除"
-                  onClick={() => {
-                    const vars = { ...(config.env?.vars ?? {}) };
-                    delete vars[k];
-                    onChange({ ...config, env: { ...(config.env ?? { vars: {} }), vars } });
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
+            {envCards.length === 0 && (
+              <p className="cfg-empty">
+                还没有参数 —— 同一个模块拖到不同画布上，靠这里的名字各取各的值。
+              </p>
+            )}
 
-            <button
-              type="button"
-              className="cfg-add"
-              onClick={() => {
-                const vars = { ...(config.env?.vars ?? {}) };
-                let i = 1;
-                while (`VAR_${i}` in vars) i += 1;
-                vars[`VAR_${i}`] = '';
-                onChange({ ...config, env: { ...(config.env ?? { vars: {} }), vars } });
-              }}
-            >
-              ＋ 加一个变量
+            {envCards.map((t, i) => {
+              const vt: CanvasParamType = t.valueType ?? 'text';
+              return (
+                <div className="trig-card upd-card" key={paramKeyOf(t, i)}>
+                  <div className="upd-card-head">
+                    <span className="upd-icon">🔧</span>
+                    <input
+                      className="p-input upd-name-input"
+                      value={t.name ?? ''}
+                      placeholder={`参数${i + 1}`}
+                      title="卡名即 {{params.名字}} 里引用的名字"
+                      onChange={(e) => patchParam(i, { name: e.target.value })}
+                    />
+                    <span className="task-grow" />
+                    <button
+                      type="button"
+                      className="insp-size-btn"
+                      title="删掉这一张（其余不受影响）"
+                      onClick={() => removeParamAt(i)}
+                    >
+                      删除
+                    </button>
+                  </div>
+
+                  <label className="p-row">
+                    <span className="p-muted" style={{ width: 64, flex: 'none' }}>种类</span>
+                    <select
+                      className="p-input"
+                      value={vt}
+                      onChange={(e) => patchParam(i, { valueType: e.target.value as CanvasParamType })}
+                    >
+                      {PARAM_KINDS.map((k) => (
+                        <option key={k} value={k}>{CONST_TYPE_LABEL[k]}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {vt === 'bool' ? (
+                    <label className="p-row">
+                      <span className="p-muted" style={{ width: 64, flex: 'none' }}>值</span>
+                      <select
+                        className="p-input"
+                        /* 与运行时取值共用同一份规范化 —— 各判一次的话，
+                           这里选着「真」、模板里替换出来的却是别的字 */
+                        value={normBoolText(t.value)}
+                        onChange={(e) => patchParam(i, { value: e.target.value })}
+                      >
+                        <option value="true">真（true）</option>
+                        <option value="false">假（false）</option>
+                      </select>
+                    </label>
+                  ) : vt === 'num' ? (
+                    <label className="p-row">
+                      <span className="p-muted" style={{ width: 64, flex: 'none' }}>值</span>
+                      <input
+                        className="p-input"
+                        value={t.value ?? ''}
+                        placeholder="如 42"
+                        onChange={(e) => patchParam(i, { value: e.target.value })}
+                      />
+                    </label>
+                  ) : (
+                    <label className="p-col">
+                      <span className="p-muted">值</span>
+                      <textarea
+                        className="p-input"
+                        rows={2}
+                        value={t.value ?? ''}
+                        placeholder="原样填进 {{params.名字}}"
+                        onChange={(e) => patchParam(i, { value: e.target.value })}
+                      />
+                    </label>
+                  )}
+
+                  <label className="p-col">
+                    <span className="p-muted">说明（可选）</span>
+                    <input
+                      className="p-input"
+                      value={t.note ?? ''}
+                      placeholder="这个参数是干什么的 —— 复用给别人时靠它知道该填什么"
+                      onChange={(e) => patchParam(i, { note: e.target.value })}
+                    />
+                  </label>
+                </div>
+              );
+            })}
+
+            <button type="button" className="cfg-add" onClick={addParam}>
+              ＋ 加一个参数
             </button>
           </div>
         )}
