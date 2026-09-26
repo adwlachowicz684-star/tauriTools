@@ -10,6 +10,17 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 
 mod af_flow;
 mod fpx;
+/*
+ * updater / dupview 的 mod 声明。
+ *
+ * ⚠️ 这两条被同步提交覆盖丢过多次（第 5 次了）。丢了的表现极难定位：
+ *    .rs 文件还在、命令也都标了 #[tauri::command]，但少了 `mod` 声明
+ *    这个文件就**不参与编译** —— 编译不报错（main.rs 没引用它，Rust 根本不看），
+ *    运行时才报 "command not found"，界面上就是「检查更新」点了没反应。
+ *    一致性扫描器（command-consistency-test.mjs 第 ⑥ 组）专盯这个。
+ */
+mod updater;
+mod dupview;
 
 /// 连通性测试：前端 ctx.invoke('rust_ping', { payload })
 #[tauri::command]
@@ -297,7 +308,24 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         // http：OCR / 翻译 / 订阅源抓取，绕过 webview 同源策略
         .plugin(tauri_plugin_http::init())
+        /*
+         * updater：应用自更新。官方插件，验签（minisign）与平台差异都已处理好。
+         *
+         * ⚠️ 少了这一行，updater.rs 里的 `app.updater()` 会编译失败：
+         *    那个方法来自 `UpdaterExt` trait，插件没初始化，编译器就"看不见"它
+         *    （E0599），而报错指向 updater.rs —— 很容易被当成那个文件写错了。
+         *    这和文件开头必须 `use tauri::Manager` 是同一类坑。
+         *
+         * 注意：它的 JS 命令（plugin:updater|*）**没有**写进 capabilities，
+         * 本项目只走 src/updater.rs 的自有命令，不把"下载并安装"暴露给 webview。
+         */
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(fpx::store::FpxState::new())
+        /*
+         * dupview（试卷查重）的共享状态。
+         * 少了这行：命令一被调用就 panic 整个进程（不是"这个功能不能用"）。
+         */
+        .manage(dupview::DupState::new())
         .manage(af_flow::ProcRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(af_flow::WatchRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(af_flow::WebhookRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
@@ -342,6 +370,24 @@ fn main() {
              */
             af_flow::af_os_keyring_get, af_flow::af_os_keyring_set,
             af_flow::af_os_keyring_delete,
+            /*
+             * updater（应用自更新）三条 —— 见上面的 mod updater 注释。
+             * 少了这三条：设置 → 更新 点「检查更新」没反应，且运行时才报
+             * "command not found"。
+             */
+            updater::updater_check, updater::updater_install, updater::updater_relaunch,
+            /*
+             * dupview（试卷查重）十三条 —— 同样被覆盖丢过。
+             * 少了它们：插件界面里每个操作都失败，且不报具体原因。
+             * 必须带 `dupview::` 前缀（写裸名会编译失败：找不到定义）。
+             */
+            dupview::dupview_roots, dupview::dupview_list, dupview::dupview_pages,
+            dupview::dupview_scan_status, dupview::dupview_scan, dupview::dupview_scanall,
+            dupview::dupview_browse, dupview::dupview_delete, dupview::dupview_restore,
+            dupview::dupview_addroot, dupview::dupview_delroot, dupview::dupview_dir_done,
+            dupview::dupview_rename,
+            /* 常用文件夹：folder-picker 服务与设置页共用，读 + 整表覆盖写。 */
+            fpx::fpx_list_fav_dirs, fpx::fpx_save_fav_dirs,
             tray_toggle_window
         ])
         .setup(move |app| {

@@ -799,7 +799,9 @@ function applyThemeVars(vars, hostBase) {
      native 模式的插件不该吃这套（它固定深色），
      所以 agent-flow 的选择器是 [data-af-mode="follow"][data-nexus-base="light"]。 */
   try { document.documentElement.dataset.nexusBase = base; } catch { /* 忽略 */ }
-  return base;                        // 供调用方回报给外壳（base-report）
+  // 返回基调：宿主已通过 themeBase 下发权威值，这里不再需要回传给外壳。
+  // （旧版曾据此发 base-report 供外壳做滤镜反转，那套适配已废弃。）
+  return base;
 }
 
 /** 粗略判断一个颜色是浅是深，用于设置 color-scheme */
@@ -841,17 +843,6 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
   let isolated = false;              // 是否处于功能隔离（去掉 allow-same-origin）
   let openArgs = null;               // 宿主打开本插件时带进来的参数（E2）
   let mounted = false;               // mount 只允许执行一次
-  /*
-   * 宿主是否要求本插件自报基调（init 消息的 reportBase 字段）。
-   *
-   * 两类插件要报：
-   *   · 隔离态 —— 外壳进不去 iframe 采样，只能靠插件自己报；
-   *   · followsTheme —— 插件自己跟着面板主题变色，外壳按老印象采样会判反
-   *     （已变浅却被判成"插件深色"→ 施加反转 → 二次翻转成黑）。
-   * 记住这个标记是为了**主题更新时重报**：只在 init 报一次的话，
-   * 切主题后 reportedBase 还是旧值，适配会照旧基调下滤镜。
-   */
-  let needReportBase = false;
   // 宿主的 origin，由 init 消息带过来，作为 postMessage 的 targetOrigin。
   //
   // 为什么需要：隔离态下本插件是 opaque origin，**读不到** parent 的 origin
@@ -934,8 +925,6 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
          * 正是注释里反复提的那种最难排查的问题。
          */
         if ('openArgs' in d) openArgs = d.openArgs ?? null;
-        // 宿主要求自报基调 → 置位，供后续 theme 更新时重报
-        if (d.reportBase) needReportBase = true;
       } else {
         manifest = manifest || d.manifest;
       }
@@ -943,17 +932,6 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
       if (d.theme) {
         currentTheme = d.theme;
         const base = applyThemeVars(d.theme, d.themeBase);
-        /*
-         * 重报基调：切主题后本插件颜色已变，外壳记着的 reportedBase 是**旧值**，
-         * 照它判定就会在新主题下把滤镜加反（已变浅 → 被二次翻转成黑）。
-         *
-         * 必须排在 theme-applied **之前**：外壳收到 theme-applied 才去采样，
-         * 先收到新基调，那一次采样才会用对。反过来的话本次采样仍用旧值，
-         * 要再等一轮才纠正 —— 用户看到的就是"闪一下又变回去"。
-         */
-        if (needReportBase && d.type === 'theme') post({ type: 'base-report', base });
-        // 首报：init 这一次也要发，否则外壳在挂载期还没有任何基调可依据
-        if (needReportBase && d.type === 'init') post({ type: 'base-report', base });
         /* 回执：告诉外壳"新变量已落地"，pushTheme 正在等这条消息。
            不回的话外壳只能等超时兜底（400ms）才 resolve。
            d.theme 为空时不回 —— 没写任何变量，谈不上"已生效"。 */
