@@ -726,6 +726,40 @@ group('Tab → 插入下级节点');
     ok(/bridge\?\.focusCanvas\(\)/.test(rseg), '回调里真的调 bridge.focusCanvas()（空回调等于没修）');
   }
 
+  // 8.7e selectNodeById 的返回值必须验（切不回去就写错节点 → 数据错乱 + 假成功）
+  /*
+   * `__minderSelectNode` 靠 id 遍历整棵树找节点，找不到返回 false。
+   * 不看返回值的话，后面的 getSelectedVideo()/getSelectedFile() 读到的是
+   * **当前选中节点**的列表 —— 于是附件被写到另一个节点上，界面还提示成功。
+   * 这是 BUG 14（focusNode）同一个坑在另外两条路径上的复发。
+   */
+  {
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    /*
+     * 通用守卫：**所有** `bridge.selectNodeById(x);` 独立成句的写法都必须在
+     * 条件里判返回值。只盯着 setVideoThumb 一处的话，下次再有人写一句
+     * 裸调用，测试照样全绿。
+     */
+    const bare = [...code.matchAll(/(?<![!=<>])bridge\.selectNodeById\([^)]*\)\s*;/g)];
+    ok(bare.length === 0,
+      `不允许裸调用 selectNodeById 而不验返回值（当前 ${bare.length} 处）`);
+    // 每条路径都必须显式拦住"切不回去"
+    ok(/if\s*\(!nodeId\)\s*\{\s*status\(/.test(code),
+      'setVideoThumb：nodeId 为空时直接失败（不能跳过切换写当前选中）');
+    ok(/if\s*\(!bridge\?\.selectNodeById\?\.\(nodeId\)\)/.test(code),
+      'setVideoThumb：切不回原节点时直接失败');
+    for (const who of ['源节点已不存在，无法移动', '目标节点已不存在，无法移动']) {
+      ok(code.includes(who), `moveAttachment：${who.slice(0, 3)}时中止`);
+    }
+    // 顺序：必须先切回再取列表 —— 反了读到的就是错的列表
+    {
+      const i = code.indexOf('function setVideoThumb');
+      const seg = code.slice(i, i + 1600);
+      ok(seg.indexOf('selectNodeById') < seg.indexOf('getSelectedVideo'),
+        'setVideoThumb：先切回节点再取列表（顺序不能反）');
+    }
+  }
+
   // 8.7d 通用弹层（js/dialog.js 的 confirm/alert/prompt）用完也要还焦点
   /*
    * 项目里存在**两套**弹层：panels.js 的本地 dialog()/popupMenu()（8.7c 已修）

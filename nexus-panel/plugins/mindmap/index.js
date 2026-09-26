@@ -1343,8 +1343,20 @@ bootIframePlugin(async (ctx) => {
     // 与当前选中节点并不必然相同（drop 事件里虽然 select 了一次，
     // 但从那时到这里的 postMessage 是异步的，期间选中态可能已被改变）。
     // 读错节点 → 把别的节点的整份附件列表复制过来，是数据错乱级别的 bug。
-
-    if (nodeId) bridge.selectNodeById(nodeId);
+    //
+    // 所以这里必须验返回值，且 nodeId 为空时不能"跳过锁定继续跑"。
+    // 原来写的是 `if (nodeId) bridge.selectNodeById(nodeId);` —— 两个问题：
+    //   ① 不看返回值。跨 iframe postMessage 期间目标节点可能已被删掉，
+    //      切不回去的话下面三条 getSelectedX 读的是**当前选中节点**的列表，
+    //      于是把别的节点的整份附件列表读出来、再把自己的文件追加进去、
+    //      写回到那个错的节点上 —— 源节点凭空少一批、目标节点多一批，
+    //      界面提示「已附加 n 个文件」，典型的假成功 + 数据错乱。
+    //   ② nodeId 为空时直接跳过锁定，同样落到"写当前选中"。
+    if (!nodeId) { status('缺少目标节点信息，无法附加', true); return; }
+    if (!bridge.selectNodeById(nodeId)) {
+      status('目标节点已不存在，无法附加', true);
+      return;
+    }
 
     // 现有列表**只在开头读一次**：循环里不写回，读到的永远是同一份，
     // 全部攒在本地数组里、最后一次性写回（写三次会触发三次重排与三次历史记录）
@@ -1394,8 +1406,22 @@ bootIframePlugin(async (ctx) => {
       }
     }
 
-    // 写回前重新锁定目标节点（见上方注释）
-    if (nodeId) bridge.selectNodeById(nodeId);
+    /*
+     * 写回前重新锁定目标节点（见上方注释）。
+     *
+     * 同样必须验返回值：**切不回去就一行都不写**。
+     * 存文件的循环里有多次 await（IndexedDB、FileReader、视频取帧），
+     * 这期间目标节点完全可能已被删除。此时 setImages/setVideo/setFile
+     * 会写到**当前选中节点**上 —— 那批图/视频/文件凭空出现在别的节点，
+     * 而用户拖放的那个节点什么都没有，界面还提示「已附加 n 个」。
+     *
+     * 丢一次拖放（可重试）远好过污染另一个节点（很难发现、更难清理），
+     * 所以这里直接中止并说明。已入库的资产变成孤儿，不会污染任何节点。
+     */
+    if (!bridge.selectNodeById(nodeId)) {
+      status('目标节点已不存在，已取消附加', true);
+      return;
+    }
     if (nImg) bridge.setImages(imgs);
     if (nVid) bridge.setVideo(io.encodeRefList(vids));
     if (nFile) bridge.setFile(io.encodeRefList(fils));
@@ -1565,7 +1591,28 @@ bootIframePlugin(async (ctx) => {
    */
   function setVideoThumb(index, nodeId, dataUrl) {
     if (!dataUrl) return false;
-    if (nodeId) bridge.selectNodeById(nodeId);
+    /*
+     * 切回目标节点**必须验返回值**，而且必须是**硬性前置**，不是"有 id 就试着切一下"。
+     *
+     * `__minderSelectNode` 靠 id 遍历整棵树找节点，找不到返回 false ——
+     * 典型场景：浮层开着的时候用户按 Delete 把那个节点删了（遮罩挡的是
+     * 指针事件，键盘照样进到画布）。
+     *
+     * 早先这里写的是 `if (nodeId) bridge.selectNodeById(nodeId);` ——
+     * 既不看返回值，nodeId 为空时还干脆跳过切换。于是失败之后
+     * `getSelectedVideo()` 读到的是**当前选中节点**的视频：
+     *   · 那个节点没视频  → 索引越界，报「找不到对应的视频」（还算看得见）；
+     *   · 那个节点也有 2 个视频 → 索引合法，**把 A 的封面静默写到 B 的第 2 个视频上**，
+     *     界面还提示「已设为该视频的封面」。数据错乱 + 假成功，最难查的那种。
+     *
+     * 所以这里两件事都要做：id 为空直接失败；切不回去也直接失败。
+     * 且必须在**取列表之前**切 —— 顺序反了读到的就是错的列表。
+     */
+    if (!nodeId) { status('找不到对应的节点（请先选中该视频所在节点）', true); return false; }
+    if (!bridge?.selectNodeById?.(nodeId)) {
+      status('原节点已不存在，无法设置封面', true);
+      return false;
+    }
     const list = io.decodeRefList(bridge?.getSelectedVideo?.());
     const i = Number(index);
     if (!(i >= 0 && i < list.length)) { status('找不到对应的视频', true); return false; }
@@ -1603,20 +1650,32 @@ bootIframePlugin(async (ctx) => {
       else bridge.setFile(io.encodeRefList(list));
     };
 
+    /*
+     * 三次 selectNodeById **都必须验返回值**。
+     *
+     * 与 setVideoThumb 同一个坑：`__minderSelectNode` 找不到节点返回 false，
+     * 而不看返回值的话，后面 read() 读到的就是**当前选中节点**的列表 ——
+     * 于是"从 A 取一项加到 B"变成了"从当前节点取一项加到当前节点"，
+     * 或者更糟：源与目标都指向同一个错的节点，先加后删等于原地打转，
+     * 界面却提示「已把 1 个附件移到另一个节点」。
+     *
+     * 尤其第 2 步：先加后删的顺序本是为了"最坏重复、绝不丢失"，
+     * 而切错节点会让这个顺序反过来变成"加到了错的节点、又从错的节点删一项"。
+     */
     // 1) 源：取出要移走的那一项（**不急着删**）
-    bridge.selectNodeById(fromId);
+    if (!bridge.selectNodeById(fromId)) { status('源节点已不存在，无法移动', true); return; }
     const src = read();
     const one = src[i];
     if (one === undefined) { status('找不到要移动的附件', true); return; }
 
     // 2) 目标：先加上
-    bridge.selectNodeById(toId);
+    if (!bridge.selectNodeById(toId)) { status('目标节点已不存在，无法移动', true); return; }
     const dst = read();
     dst.push(one);
     write(dst);
 
     // 3) 源：确认加成功了再删
-    bridge.selectNodeById(fromId);
+    if (!bridge.selectNodeById(fromId)) { status('源节点已不存在，附件可能重复', true); return; }
     const src2 = read();
     src2.splice(i, 1);
     write(src2);
