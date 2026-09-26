@@ -284,8 +284,11 @@ const referenced = (name) => {
 t('project-group 不再自带色盘组件（无引用，或文件已删）',
   (!has('plugins/project-group/components/ColorPicker.tsx') || !referenced('ColorPicker'))
   && (!has('plugins/project-group/components/SvPanel.tsx') || !referenced('SvPanel')));
+/* 引用点现在在 dialogCards.tsx —— 旧断言读的是已删除的 dialogs.tsx，
+   文件不存在时 src() 直接抛错，整份测试**崩掉**（不是报红），
+   后面的断言一条都不跑。崩比红更危险：看着像有问题，实则会掩盖真问题。 */
 t('project-group 改为引用共享组件',
-  /from '\.\.\/\.\.\/color-picker\/ColorPicker'/.test(src('plugins/project-group/components/dialogs.tsx')));
+  /from '\.\.\/\.\.\/color-picker\/ColorPicker'/.test(src0('plugins/project-group/components/dialogCards.tsx')));
 
 /* 颜色定义只应有一份：在 color-picker/color.ts */
 const sharedColor = src('plugins/color-picker/color.ts');
@@ -424,8 +427,13 @@ t('服务没有传 compact 关掉功能', !/compact/.test(cpMain));
 console.log('\n=== 10i. 搬迁没留下悬空引用 ===');
 /* dialogs.tsx 曾残留 api={api} —— 组件已不接受这个 prop，
    传了是 TS 错（也是"以为传了其实没用"的错觉来源）。 */
-const dlgSrc2 = src('plugins/project-group/components/dialogs.tsx');
-const pickerUse = dlgSrc2.slice(dlgSrc2.indexOf('<ColorPicker'));
+/* 同样读的是已删除的 dialogs.tsx —— 读不到会把整份测试崩掉。
+   改用 dialogCards.tsx，并先断言文件在（否则空串会让下一条假绿）。 */
+t('搬迁后的 dialogCards.tsx 仍在', has('plugins/project-group/components/dialogCards.tsx'));
+const dlgSrc2 = src0('plugins/project-group/components/dialogCards.tsx');
+const at = dlgSrc2.indexOf('<ColorPicker');
+const pickerUse = at < 0 ? '' : dlgSrc2.slice(at);
+t('dialogCards 里确实用到了 ColorPicker（避免空串假绿）', at >= 0);
 t('dialogs 不再传 api（组件已不接受）', !/api=\{api\}/.test(pickerUse));
 /* bootIframePlugin 的 d.ts 曾只有 2 个参数，而 JS 实现有 3 个 ——
    声明落后于实现会让"其实能跑"的代码看起来是错的。 */
@@ -499,7 +507,34 @@ const demoSrc = src('plugins/demo-service/index.js');
 t('用 bootServicePlugin 声明', /bootServicePlugin\(\{/.test(demoSrc));
 t('提供了方法', /async pick\(|async describe\(|async shade\(/.test(demoSrc));
 
-console.log('\n=== 12. 语法（node --check，权威）===');
+console.log('\n=== 12. 挂载竞态必须放行服务（token=null） ===');
+/* 服务挂载与插件设置面板走 mountModule(..., null)：不写 state.mounting，
+   所以永远"不等于"当前 token。竞态校验若不带 `token &&`，用户打开过
+   任意插件后 state.mounting 就永久是非 null 的 Symbol，此后**所有
+   module 型服务挂载返回 null** → 界面报「服务插件挂载失败: xxx」。
+   症状只在"打开过插件之后"出现，极易误判成服务自身坏了。 */
+const hostCode = stripComments(hostSrc);
+const fnBody = (sig) => {
+  const i = hostCode.indexOf(sig);
+  if (i < 0) return '';
+  let d = 0;
+  for (let k = hostCode.indexOf('{', i); k < hostCode.length; k++) {
+    if (hostCode[k] === '{') d += 1;
+    else if (hostCode[k] === '}') { d -= 1; if (d === 0) return hostCode.slice(i, k + 1); }
+  }
+  return '';
+};
+for (const sig of ['async function mountModule(', 'async function mountIframeView(']) {
+  const body = fnBody(sig);
+  const races = [...body.matchAll(/state\.mounting !== token/g)];
+  const guarded = races.every(
+    (m) => /token &&\s*$/.test(body.slice(Math.max(0, m.index - 12), m.index)),
+  );
+  t(`${sig.replace('async function ', '').replace('(', '')} 有竞态校验`, races.length > 0);
+  t(`${sig.replace('async function ', '').replace('(', '')} 竞态校验放行 token=null`, guarded);
+}
+
+console.log('\n=== 13. 语法（node --check，权威）===');
 for (const f of ['js/host.js', 'js/plugin-sdk.js', 'plugins/registry.js',
   'js/shell.js', 'plugins/demo-service/index.js',
   'plugins/icon-picker/index.js',

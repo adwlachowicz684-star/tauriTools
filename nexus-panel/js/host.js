@@ -804,7 +804,22 @@ export function createHost(opts = {}) {
     } catch (err) {
       throw new Error(`无法加载插件入口：${manifest.entry}\n${err?.message || err}`);
     }
-    if (state.mounting !== token) return null;
+    /*
+     * 竞态校验：这次挂载是否已经作废。
+     *
+     * ⚠️ token 为 null 必须放行 —— 它表示**不参与主视图竞态**的挂载：
+     *   · 服务插件（ensureService 传 null，见下面第 400 行附近）
+     *   · 插件自己的设置面板视图
+     * 这两类挂载不写 state.mounting，也就永远不可能"等于"当前 token。
+     * 少了 `token &&`，state.mounting 在用户打开过任意插件后就一直是非 null
+     * 的 Symbol，于是此后**所有 module 型服务挂载都返回 null** ——
+     * 表现为「服务插件挂载失败: xxx」，且只在"打开过插件之后"才出现，
+     * 启动后第一次调用反而正常，极易误判成服务自身的问题。
+     *
+     * iframe 路径（mountIframeView 里的两处）早就写了 `token &&`，
+     * 这条是同一语义、唯一漏掉的一处。
+     */
+    if (token && state.mounting !== token) return null;
 
     const def = mod.default || mod.plugin;
     if (!def || typeof def.mount !== 'function') {
