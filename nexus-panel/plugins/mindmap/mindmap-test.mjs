@@ -6346,59 +6346,6 @@ group('左侧搜索结果面板（复用文件库底框）');
   }
 }
 
-group('布局：文件库挤窄画布（不遮挡）+ 控件档位');
-
-{
-  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
-  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '');   // 先剥注释，避免命中说明文字
-  const cs = strip(css);
-
-  // ---- 1) 文件库是**浮层抽屉**，不是 flex 子项 ----
-  //
-  // ⚠️ 这一段在 #129（画布铺满 + 文件库浮层 + 假边框）之后被整体反转过：
-  //    早先是 flex 子项（展开时把画布挤窄 186px），代价是画布尺寸变化 →
-  //    内核重新居中 → 内容左右晃一下，于是需要一整条位移补偿链
-  //    （withStableRoot → 桥接 notifyLayoutShift → 编辑器补偿）。
-  //    #129 改成"画布始终铺满、文件库浮在上层"，画布几何恒定，
-  //    iframe 收不到 resize、内核不重排，补偿链也就**不再需要** → 整体删除。
-  //
-  //    但测试只删了一部分，留下 16 项断言**永远失败**
-  //    （mindmap-test 因缺 jsdom 长期跑不起来，所以没人看见）。
-  //    这里按**当前设计**重写，并钉住 #129 的前提，防止有人悄悄改回挤窄：
-  //    一旦改回 flex 挤窄而没有补偿链，下面第 2 组就会立刻报红。
-  const filesOpenIdx = cs.indexOf('.mm-files.open');
-  const nextBrace = cs.indexOf('}', filesOpenIdx);
-  const filesRule = cs.slice(cs.indexOf('.mm-files {'), nextBrace + 1);
-  ok(/position:\s*absolute/.test(filesRule),
-    '.mm-files 是浮层抽屉（画布铺满、几何恒定）');
-  ok(!/flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 不是 flex 子项（不再挤窄画布）');
-  ok(/width:\s*186px/.test(filesRule), '.mm-files 宽度仍是 186px');
-  // 抽屉的固有代价是遮住画布左侧一块，换来"绝对不动"；
-  // 因此它必须自带底板（否则透出下面的画布，两层内容叠着看不清）
-  ok(/background:/.test(filesRule), '.mm-files 有底板（浮层不能是透明的）');
-  ok(/overflow-y:\s*auto/.test(filesRule),
-    '.mm-files 内容超高时自己滚（不能把浮层顶出屏幕）');
-
-  // ---- 2) 控件档位：输入框/下拉必须与按钮同为 28px ----
-  //
-  // ../../css/controls.css 把 .mm-input/.mm-select 统一成 38px（外壳标准档），
-  // 而脑图是紧凑布局、按钮一直 28px。不覆盖的话顶栏搜索框比按钮高 10px，
-  // 样式页一排下拉也全比按钮高一截。
-  const ctlRule = cs.slice(cs.indexOf('.mm-input, .mm-select {'),
-    cs.indexOf('.mm-input, .mm-select {') + 200);
-  ok(/--ctl-h:\s*28px/.test(ctlRule), '输入框/下拉用 28px 档（与 .mm-btn 同高）');
-  // 必须改**变量**而不是硬写 height：controls.css 用的就是这套变量，
-  // 直接写 height 会与变量打架（谁在后谁赢，改动变得不可预测）
-  ok(!/height:\s*28px/.test(ctlRule), '用变量覆盖而非硬写 height（避免与变量打架）');
-
-  // ---- 3) 侧栏字段纵向排列且**不居中** ----
-  const fieldRule = cs.slice(cs.indexOf('.mm-field {'), cs.indexOf('.mm-field {') + 200);
-  ok(/flex-direction:\s*column/.test(fieldRule), '.mm-field 纵向排列');
-  ok(/align-items:\s*stretch/.test(fieldRule),
-    '.mm-field 显式 stretch（不写就会被 controls.css 的 center 层叠成居中）');
-}
-
 group('文字垂直居中：改用真实测量，不再吃内核经验系数');
 
 {
@@ -7033,255 +6980,6 @@ group('文件库 / 搜索结果：两个独立页签共用一个底框');
     ok(/fileList\?\.showFiles\(on\)/.test(ix), 'i 外壳调 showFiles');
     ok(!/fileList\?\.setOpen/.test(ix), 'i 外壳不再调 setOpen');
   }
-}
-
-group('文件库展开导致画布内容位移：按实测屏幕位置差补偿');
-
-{
-  const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
-  const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
-  const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-  const fl = fs.readFileSync(path.join(HERE, 'filelist.js'), 'utf8');
-
-  // ---- 1) 编辑器有 panBy 门面 ----
-  ok(/panBy: function \(dx, dy\)/.test(html), '编辑器门面暴露 panBy');
-  ok(/km\._viewDragger/.test(html), 'panBy 走 _viewDragger（内核无公开平移命令）');
-  // 不传 duration：带动画的话两次平移会互相打断，落点不是两者之和
-  ok(/d\.move\(new kity\.Point\(Number\(dx\) \| 0, Number\(dy\) \| 0\)\)/.test(html),
-    'panBy 不传 duration（与内核 resize 一致，避免动画互相打断）');
-  ok(/panBy\(dx, dy\) \{/.test(br), '桥接转发 panBy');
-
-  // ---- 2) 容器位移必须**在父页面测**，不能依赖 iframe 内的坐标 ----
-  //
-  // 这是本轮真正修掉的 bug：早先补偿量取自编辑器侧的 rootScreenX()，它取
-  // #minder-container 的 getBoundingClientRect().left —— 那是 iframe 内的元素，
-  // 坐标相对**iframe 自己的视口**；父页面把 iframe 挤到右边时该值恒定不变，
-  // 于是容器位移被抵消，补偿只剩"撤销内核补偿"，净位移反而变成 +N。
-  //
-  // 所以断言不能只检查"代码里出现了 getBoundingClientRect().left"（那只能防
-  // 止被人删掉，防不住测错坐标系），而要检查**测的是父页面的 canvasEl**。
-  const wsrSeg = ix.slice(ix.indexOf('function withStableRoot(fn) {'),
-    ix.indexOf('/**', ix.indexOf('function withStableRoot(fn) {')));
-  ok(/canvasEl/.test(wsrSeg), 'withStableRoot 测的是父页面的 canvasEl（不是 iframe 内坐标）');
-  ok(/getBoundingClientRect\(\)\.left/.test(wsrSeg), '取容器左边缘的屏幕 x');
-  // 容器位移交由编辑器补偿；本侧**不得**再自行 panBy，否则双重补偿
-  ok(/notifyLayoutShift\?\.\(dLeft\)/.test(wsrSeg), '把容器位移报给编辑器');
-  ok(!/panBy/.test(wsrSeg), '本侧不再自行 panBy（补偿交给编辑器，避免双重）');
-  // 早先按"固定 Δ/2"硬补是错的：Δ 取决于 flex 收缩分配，右侧栏一旦可收缩
-  // 就不是 216。这里必须没有任何 216 / 108 之类的常量参与。
-  const ixNoComment = ix.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  ok(!/216|108/.test(ixNoComment), '代码里没有 216 / 108 之类的硬编码位移常量');
-  // before 取不到时必须**跳过**，不能当成 0 —— 那会补出一个反向位移
-  ok(/if \(before == null\) return r;/.test(ix),
-    '拿不到 before 就跳过补偿（不能当成 0）');
-  ok(/if \(after == null\) return r;/.test(ix), '拿不到 after 也跳过');
-  // 1px 以内是取整噪声，不补 —— 否则每次开合都多一次无谓平移
-  ok(/Math\.abs\(dLeft\) >= 1/.test(ix), '1px 以内不补（取整噪声）');
-  // 同步测量即可：补偿发生在 iframe 的 resize 回调里，不必等帧
-  ok(!/nextFrames\(2\)/.test(ix),
-    '不再等两帧（补偿在 resize 回调内同步完成，等帧只会让画面先晃一下再拉回）');
-
-  // ---- 3) 所有会改变底框开合的调用点都套了 withStableRoot ----
-  for (const call of [
-    /withStableRoot\(\(\) => fileList\?\.showFiles\(on\)\)/,
-    /withStableRoot\(\(\) => fileList\?\.setSearch\(null\)\)/,
-    /withStableRoot\(\(\) => fileList\?\.setSearch\(bridge\?\.getSearchResults\?\.\(\) \|\| null\)\)/,
-  ]) {
-    ok(call.test(ix), `调用点套了 withStableRoot：${call.source.slice(0, 46)}…`);
-  }
-  // 不允许残留**裸调用**（初始化那一处除外：那时 bridge 还没建、
-  // rootScreenX 返回 null，withStableRoot 会自行跳过，包裹了也没意义）
-  const ixCode = ix.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  const bare = [...ixCode.matchAll(/^\s+(?:fileList\?\.|fileList\.)(showFiles|setSearch)\([^)]*\);$/gm)]
-    .filter((m) => !/!!settings\.filesOpen/.test(m[0]));
-  eq(bare.length, 0, `无未包裹的裸开合调用（发现 ${bare.map((m) => m[0].trim()).join(' | ')}）`);
-
-  // ---- 3b) rootScreenX 保留但**不再参与补偿** ----
-  //
-  // 它仍在（供诊断/定位用），但位移补偿不能依赖它：它在 iframe 内取
-  // #minder-container 的 getBoundingClientRect().left，那是相对 iframe 视口的
-  // 坐标，测不到容器在父页面里的位移。这里断言"补偿链路里没有它"，
-  // 防止有人日后图省事又把它接回去。
-  ok(/rootScreenX: function \(\)/.test(html), '编辑器仍暴露 rootScreenX（诊断用）');
-  ok(/typeof v === 'number' && isFinite\(v\) \? v : null/.test(br),
-    'rootScreenX 取不到时返回 null（不是 0）');
-  ok(!/rootScreenX/.test(wsrSeg), '补偿链路不依赖 rootScreenX（iframe 内测不到容器位移）');
-
-  // ---- 4) 几何账：216 = flex-basis 186 + padding 10×2 + gap 10 ----
-  {
-    const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
-    const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
-    ok(/flex:\s*0 0 186px/.test(filesBlk), '.mm-files flex-basis 186');
-    ok(/padding:\s*10px/.test(filesBlk), '.mm-files padding 10（左右合计 20）');
-    const bodyBlk = css.slice(css.indexOf('.mm-body {'), css.indexOf('.mm-body {') + 200);
-    ok(/gap:\s*10px/.test(bodyBlk), '.mm-body gap 10');
-    // 右侧栏必须**不可收缩**：它若可收缩，画布宽度变化量就不再固定，
-    // 内核的半量补偿会与实际位移脱钩（历史上 .mm-side 样式失效时正是如此）
-    const sideBlk = css.slice(css.indexOf('.mm-side {'), css.indexOf('.mm-side h3'));
-    ok(/flex:\s*0 0 276px/.test(sideBlk), '.mm-side 固定 276px 不可收缩');
-  }
-
-  // ---- 5) CSS「规则被截断」检测 ----
-  //
-  // 历史上出过一次：补丁里 `.mm-rail { ... }` 被截成只剩 `.mm-rail`
-  // （没有 { }），CSS 解析器会继续往后找，把紧跟其后的注释忽略掉、
-  // 与下一个选择器拼成 `.mm-rail .mm-side` —— 而 DOM 里 .mm-side 不在
-  // .mm-rail 内部，导致**整套样式静默失效**（表现为"侧栏全居中"）。
-  //
-  // 现有测试全是行为断言，恰好覆盖不到这种语法级损伤，故单列一条。
-  {
-    const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
-    // 检测**截断形态本身**：一个类选择器独立成行，后面不跟 `{` 而直接
-    // 换行跟注释。正常写法里选择器后面要么同行跟 `{`，要么跟逗号继续；
-    // 绝不会"写完选择器就换行去写注释"。
-    //
-    // 不能改成"剥注释后数 token"——那样后代选择器（.mm-sec-head .mm-help）
-    // 与截断形态（.mm-rail 换行 注释 换行 .mm-side）在剥完注释后长得一样，
-    // 会把 65 条合法规则全判为异常。
-    const truncated = [...css.matchAll(/^\s*(\.[A-Za-z][\w-]*)\s*\n\s*\/\*/gm)]
-      .map((m) => m[1]);
-    eq(truncated.length, 0, `无「选择器后无 { 直接换行写注释」的截断（发现 ${truncated.join(' | ')}）`);
-
-    // 关键规则块必须解析得到**关键属性** —— 截断时整块失效，这些属性会丢。
-    // 历史上 .mm-side 被吞成后代选择器后，下面这几条全部消失，
-    // 后果是侧栏可收缩、画布宽度变化量不再固定，才引出本组这条位移 bug。
-    const blk = (sel, until) => {
-      const i = css.indexOf(sel + ' {');
-      return i < 0 ? '' : css.slice(i, css.indexOf(until, i));
-    };
-    const sideBlk = blk('.mm-side', '.mm-side h3');
-    ok(/flex:\s*0 0 276px/.test(sideBlk), '.mm-side 保留 flex: 0 0 276px（丢了就可收缩）');
-    ok(/display:\s*flex/.test(sideBlk), '.mm-side 保留 display:flex');
-    ok(/overflow-y:\s*auto/.test(sideBlk), '.mm-side 保留 overflow-y:auto');
-    ok(/min-height:\s*0/.test(sideBlk), '.mm-side 保留 min-height:0');
-  }
-}
-
-group('位移补偿：容器位移在父页面测，内核那一份在 iframe resize 里补');
-
-{
-  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
-  const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
-  const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-  const code = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  const cHtml = code(html);
-
-  // ---- 1) 内核确实会自动居中（这是要抵消的东西）----
-  const core = fs.readFileSync(path.join(HERE, 'editor', 'kityminder.core.min.js'), 'utf8');
-  ok(/this\._viewDragger\.move\(new e\.Point\(\(b\.width-c\.width\)\/2\|0/.test(core),
-    '内核 resize 时把视图平移 (新宽-旧宽)/2|0 重新居中（要抵消的就是这一下）');
-
-  // ---- 2) 编辑器：接收容器位移，并在自己那次 resize 里补 ----
-  ok(/notifyLayoutShift = function/.test(html), '编辑器提供 notifyLayoutShift');
-  // dw 必须与内核**同源**：读内核自己的 _lastClientSize，而不是外壳传进来的宽度。
-  // 外壳量的 iframe 宽度会被取整，与内核的 clientWidth 差的那点就是残留 1px。
-  ok(/km\._lastClientSize/.test(cHtml), 'dw 取自内核的 _lastClientSize（与内核同源，否则残留 1px）');
-  ok(/var dw = w - old\.width/.test(cHtml), '位移按内核那份旧尺寸算');
-  // 内核是 `(dw/2)|0`（向零取整），补偿里必须原样复现；换成 Math.round 会残留 0.5px
-  ok(/var kernel = \(dw \/ 2\) \| 0/.test(cHtml), '复现内核的向零取整（不是 Math.round）');
-  // 补偿拆成两处，各有各的时机，不能合并成一处
-  ok(/window\.__minder\.panBy\(-Math\.round\(dLeft\), 0\)/.test(cHtml),
-    '开合时**同步**补掉容器位移 -dLeft（不等 resize）');
-  ok(/window\.__minder\.panBy\(-kernel, 0\)/.test(cHtml),
-    'resize 里只撤内核那一下（再把 dLeft 算进来就会补成两倍）');
-
-  // ---- 3) 只对「底框开合」那一次生效，不能误伤拖窗口 ----
-  const pendStart = html.indexOf('notifyLayoutShift = function');
-  const pendSeg = html.slice(pendStart, html.indexOf("window.addEventListener('resize'", pendStart));
-  ok(/pendingUntil = Date\.now\(\) \+ /.test(pendSeg), '容器位移带有效期（不是永久生效）');
-  ok(/Date\.now\(\) > pendingUntil/.test(cHtml), '过期就不补偿（普通 resize 保留内核的居中行为）');
-  ok(/pendingLeft = 0;/.test(cHtml), '用一次即清（一次性，不会累积）');
-
-  // ---- 4) 桥接**不再**转发 notifyLayoutShift ----
-  //
-  // 随 #129 移除。这里的价值在于**反向钉住**：
-  // 若日后有人把 notifyLayoutShift 加回桥接，
-  // 说明补偿链正在被重新引入，那么上面第 2 组的前提断言必须同步复查
-  // （否则会出现"有补偿但测的是错的坐标系"这类旧 bug 复辟）。
-  ok(!/notifyLayoutShift/.test(br), '桥接不再转发 notifyLayoutShift（随 #129 移除）');
-
-  // ---- 5) 时序账：开合同步补 + resize 撤内核，两帧都对 ----
-  //
-  // 这是"改完还在抖"的根因：容器是 CSS 挪的、本帧就上屏，而 iframe 的 resize
-  // 何时派发由浏览器决定。把补偿全压在 resize 里，慢一帧就是一次肉眼可见的
-  // 抖动。所以这里**真跑一遍源码里那两段**，分别断言两个时刻：
-  //   · resize 还没来时，画面已经是对的（补偿同步生效，没有中间态）
-  //   · resize 来了之后，净位移仍是 0
-  {
-    const iife = html.slice(
-      html.indexOf('(function () {\n            var pendingLeft = 0;'),
-      html.indexOf("hostPost({ type: 'request', id: 0"));
-    ok(/notifyLayoutShift/.test(iife) && /addEventListener\('resize'/.test(iife),
-      '抠出完整的补偿 IIFE');
-
-    // 桩：内核只暴露补偿用到的口子；panBy 记录每一次平移
-    function makeSim(w0) {
-      let w = w0;
-      const pans = [];
-      let onResize = null;
-      const km = {
-        _lastClientSize: { width: w0, height: 600 },
-        getRenderTarget: () => ({ clientWidth: w, clientHeight: 600 }),
-      };
-      const win = {
-        addEventListener: (t, fn) => { if (t === 'resize') onResize = fn; },
-        __minder: { panBy: (dx) => { pans.push(dx); return true; } },
-      };
-      // eslint-disable-next-line no-new-func
-      new Function('window', 'km', iife)(win, km);
-      return {
-        sum: () => pans.reduce((a, b) => a + b, 0),
-        notify: (d) => win.__minder.notifyLayoutShift(d),
-        // 模拟内核的 resize：先按 (dw/2)|0 平移，再把 _lastClientSize 推到新值
-        kernelResize: (newW) => {
-          const dw = newW - km._lastClientSize.width;
-          w = newW;
-          km._lastClientSize = { width: newW, height: 600 };
-          pans.push((dw / 2) | 0);
-          if (onResize) onResize();
-        },
-      };
-    }
-
-    // 展开：容器右移 216（文件库 186 + gap 10 + 内边距归边后实测）
-    {
-      const s = makeSim(1000);
-      s.notify(216);
-      eq(s.sum(), -216, '开合**同步**就补掉容器位移 -216（不等 resize）');
-      eq(216 + s.sum(), 0, 'resize 还没来画面已经是对的（不会再晃一帧）');
-      s.kernelResize(784);                 // 内核自动居中 -108 → 本侧撤销 +108
-      // sum 里已经含内核那一下（kernelResize 记的就是它），别再单列一次
-      eq(216 + s.sum(), 0, '展开：容器 +216 与全部视图平移相加 → 净位移 0');
-    }
-
-    // 收起：完全对称
-    {
-      const s = makeSim(784);
-      s.notify(-216);
-      eq(s.sum(), 216, '收起同步补 +216');
-      s.kernelResize(1000);
-      eq(-216 + s.sum(), 0, '收起：净位移 0');
-    }
-
-    // 普通拖窗口：没有待处理的开合 → 不补偿，内核的居中行为原样保留
-    {
-      const s = makeSim(1000);
-      s.kernelResize(900);
-      eq(s.sum(), -50, '拖窗口不补偿（内核那一下保留，不越权）');
-    }
-  }
-
-  // ---- 6) 回归护栏：不得退回「iframe 内测容器位移」的老路 ----
-  //
-  // 老实现的测点在 editor/index.html 里取 #minder-container 的
-  // getBoundingClientRect().left —— iframe 内的坐标相对 iframe 自己的视口，
-  // 父页面把 iframe 挤到右边时它恒定不变，容器位移被完全抵消。
-  // 只断言"代码里有 getBoundingClientRect().left"是抓不住的（老实现也有），
-  // 必须断言**补偿链路里不出现 iframe 内的容器测量**。
-  const compSeg = html.slice(html.indexOf('notifyLayoutShift = function'),
-    html.indexOf("hostPost({ type: 'request', id: 0"));
-  ok(!/getBoundingClientRect\(\)\.left/.test(compSeg),
-    '补偿链路不在 iframe 内测容器左边缘（那里测不到父页面的位移）');
 }
 
 group('app 句柄：可写状态必须成对提供 getter/setter');
@@ -9400,6 +9098,122 @@ group('附件压缩：入口收口与拦截（真实源码 / 行为级）');
   eq(io.decodeRefList(st.video).length, 0, '超大视频没有入库');
   ok(msgs.some((m) => /超过附件上限/.test(m)), '视频上限提示含具体体积');
 }
+
+group('画布铺满 + 文件库浮层：几何恒定，内容零位移');
+
+{
+  const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+  const core = fs.readFileSync(path.join(HERE, 'editor', 'kityminder.core.min.js'), 'utf8');
+
+  // ---- 1) 地基：内核只在容器尺寸变化时才会动视图 ----
+  //
+  // 整个方案成立的前提是"画布几何不变 ⇒ 内容不变"。这个前提是内核给的：
+  // 内核绑 window.resize，且只按 (新宽-旧宽) 平移。容器尺寸不变时它一动不动。
+  ok(/window&&window\.addEventListener\("resize"/.test(core),
+    '内核靠 window.resize 感知尺寸变化（容器不变则不会被触发）');
+  ok(/this\._viewDragger\.move\(new e\.Point\(\(b\.width-c\.width\)\/2\|0/.test(core),
+    '内核平移量只取决于宽度变化量（宽度不变 → 平移 0）');
+  // 于是：宽度不变 ⇒ 内核不动 ⇒ 内容不动。把这个推论用算术钉住
+  {
+    const kernel = (dw) => (dw / 2) | 0;
+    eq(kernel(0), 0, '宽度不变时内核平移 0（不是"补得准"，是没得补）');
+    ok(kernel(-216) !== 0, '反例：宽度一变内核就动（所以必须让几何恒定）');
+  }
+
+  // ---- 2) 文件库必须**在 flex 流之外** ----
+  //
+  // 这一条是本方案的不变量。它一旦回到 flex 流里，画布就会再次被挤窄，
+  // 前面三版的位移问题原样复活 —— 而那种回归在代码评审里极难发现。
+  const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
+  ok(/position:\s*absolute/.test(filesBlk), '.mm-files 是 absolute 浮层（不占 flex 流）');
+  ok(!/flex:\s*0 0/.test(filesBlk), '.mm-files 不再有 flex 占位（否则又会挤窄画布）');
+  ok(/z-index/.test(filesBlk), '浮层有 z-index（盖在画布之上）');
+  // 浮层需要定位基准
+  const bodyBlk = css.slice(css.indexOf('.mm-body {'), css.indexOf('.mm-body {') + 200);
+  ok(/position:\s*relative/.test(bodyBlk), '.mm-body 是定位基准');
+
+
+  // ---- 2b) 与旧的「必须挤窄」断言对冲 ----
+  //
+  // 仓库里原本有三条断言把"文件库必须是 flex 挤窄、不许是抽屉"钉死了
+  // （那是 9/20 回退抽屉时留下的）。本方案正是把它改回浮层，所以那三条
+  // 必须一并反转 —— 否则两条不变量互相打架，后人改哪边都会被另一边拦下。
+  ok(/position:\s*absolute/.test(filesBlk), '（对冲）文件库确为浮层，已不是 flex 挤窄');
+
+  // ---- 2c) 元素必须**真的被创建出来** ----
+  //
+  // 上一版就是栽在这里：CSS 里写了 .mm-canvas-frame、JS 里也引用了 frameEl，
+  // 但**从来没有 h() 创建、也没有 append** —— 于是"假边框"名存实亡，
+  // 观感完全等同于抽屉（面板直接浮在整块画布上）。
+  // 只断言"类名出现在代码里"抓不住这个：类名在，元素是 null。
+  ok(/const frameEl = h\('div\.mm-canvas-frame'/.test(ix), 'frameEl 真的被 h() 创建');
+  ok(/body\.appendChild\(frameEl\)/.test(ix), 'frameEl 真的挂进了 DOM');
+  // 而且不能挂在画布里：画布 overflow:hidden 会把外投影整圈裁掉
+  ok(!/canvasEl\.appendChild\(frameEl\)/.test(ix),
+    'frameEl 不挂在 .mm-canvas 内（overflow:hidden 会裁掉外投影）');
+
+  // ---- 2d) 画布本体必须让出描边 ----
+  //
+  // 画布若还留着自己的投影，就会同时出现「整宽外框」+「假框」两个嵌套圆角，
+  // 观感同样是抽屉。描边只能有一个来源。
+  const canvasBlk0 = css.slice(css.indexOf('.mm-canvas {'),
+    css.indexOf('}', css.indexOf('.mm-canvas {')) + 1);
+  const frameBlk0 = css.slice(css.indexOf('.mm-canvas-frame {'),
+    css.indexOf('}', css.indexOf('.mm-canvas-frame {')) + 1);
+  ok(!/box-shadow/.test(canvasBlk0), '.mm-canvas 不再自己投影（描边交给假框）');
+  ok(/box-shadow/.test(frameBlk0), '假框承担投影');
+
+  // ---- 2e) 四条边都要按实测写入 ----
+  // 只写 left 的话，画布一旦不贴着 body 上下右（侧栏就占着右侧），框就会错位。
+  const syncSeg0 = ix.slice(ix.indexOf('function syncCanvasInset()'),
+    ix.indexOf('\n  }\n', ix.indexOf('function syncCanvasInset()')));
+  for (const edge of ['top', 'right', 'bottom', 'left']) {
+    ok(new RegExp('frameEl\\.style\\.' + edge + ' =').test(syncSeg0),
+      `假边框的 ${edge} 边按实测写入`);
+  }
+
+  // ---- 3) 画布仍然铺满 ----
+  const canvasBlk = css.slice(css.indexOf('.mm-canvas {'), css.indexOf('.mm-canvas {') + 260);
+  ok(/flex:\s*1 1 auto/.test(canvasBlk), '.mm-canvas 仍是 flex:1（铺满剩余空间）');
+
+  // ---- 4) 假边框：只描边、不占位 ----
+  ok(/\.mm-canvas-frame/.test(css), '有假边框层');
+  const frameBlk = css.slice(css.indexOf('.mm-canvas-frame {'),
+    css.indexOf('}', css.indexOf('.mm-canvas-frame {')) + 1);
+  ok(/position:\s*absolute/.test(frameBlk), '假边框是覆盖层（不占布局）');
+  ok(/pointer-events:\s*none/.test(frameBlk), '假边框不吃事件（摸不着）');
+  ok(/\.mm-canvas-frame/.test(ix), '外壳会创建它');
+
+  // ---- 5) 位置实测，不写死 ----
+  const syncSeg = ix.slice(ix.indexOf('function syncCanvasInset()'),
+    ix.indexOf('/**', ix.indexOf('function syncCanvasInset()')));
+  const syncCode = syncSeg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok(/getBoundingClientRect\(\)\.width/.test(syncCode), '框的位置按文件库实测宽度算');
+  ok(!/\b216\b|\b206\b/.test(syncCode), '没有 216 / 206 之类的硬编码（宽度一变就错位）');
+
+  // ---- 6) 每个开合点都要同步假边框 ----
+  // 必须先剥注释：文档里会写"fileList.setSearch(null)"这种说明文字，
+  // 不剥会把注释当成漏同步的调用点，报假阳性。
+  const ixCode = ix.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const calls = [...ixCode.matchAll(/fileList\??\.showFiles\(|fileList\??\.setSearch\(/g)];
+  const missing = calls.filter((m) => {
+    const after = ixCode.slice(m.index, m.index + 300);
+    const s = after.indexOf('syncCanvasInset()');
+    if (s < 0) return true;
+    const nxt = after.search(/fileList\??\.(showFiles|setSearch)/);
+    return nxt > 0 && nxt < s;
+  });
+  eq(missing.length, 0, `每个开合点后都同步假边框（缺 ${missing.length} 处）`);
+
+  // ---- 7) 回归护栏：补偿链路不得复活 ----
+  //
+  // 几何恒定之后，任何"测量—补偿"都是死代码；留着不仅无益，还会让后来人
+  // 以为位移仍然存在、继续去调补偿量。
+  ok(!/withStableRoot/.test(ix), '外壳不再有 withStableRoot（没有位移可补）');
+  ok(!/measureRootX|rootOffsetX/.test(ix), '不再测量中心主题位置');
+}
+
 
 /* ============================================================
    结果

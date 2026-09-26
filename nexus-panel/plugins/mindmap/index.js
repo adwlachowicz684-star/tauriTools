@@ -173,6 +173,10 @@ bootIframePlugin(async (ctx) => {
 
   const statusEl = h('span.mm-status', {}, '初始化…');
   const canvasEl = h('div.mm-canvas', {});
+  // 假边框：把"画布被挤窄"的边界**画**出来。
+  // 必须挂在 .mm-body 上、不能挂进 .mm-canvas —— 画布有 overflow:hidden，
+  // 会把这层的外投影整圈裁掉（这正是"假边框看不见"的直接原因）。
+  const frameEl = h('div.mm-canvas-frame', {});
   const loadingEl = h('div.mm-loading', {}, '编辑器加载中…');
   canvasEl.appendChild(loadingEl);
 
@@ -400,7 +404,8 @@ bootIframePlugin(async (ctx) => {
    */
   function clearSearchState() {
     try { bridge?.search?.(''); } catch { /* 编辑器未就绪就只清本地，不该因此中断 */ }
-    withStableRoot(() => fileList?.setSearch(null));
+    fileList?.setSearch(null);
+    syncCanvasInset();
     if (searchStatusEl) {
       searchStatusEl.textContent = '';
       searchStatusEl.classList.remove('warn');
@@ -433,7 +438,8 @@ bootIframePlugin(async (ctx) => {
       searchInfo.classList.toggle('warn', st.warn);
       // 结果列表单独取：search() 每调一次就推进到下一个匹配，
       // 若让它顺带返回列表，"刷新列表"就会连带多跳一格
-      withStableRoot(() => fileList?.setSearch(bridge?.getSearchResults?.() || null));
+      fileList?.setSearch(bridge?.getSearchResults?.() || null);
+      syncCanvasInset();
     }
     const searchInput = h('input.mm-input', {
       placeholder: '搜索节点…',
@@ -876,39 +882,41 @@ bootIframePlugin(async (ctx) => {
   }
 
   /**
-   * 在底框开合前后把画布内容**钉在同一处**。
+   * 同步「假边框」的位置。
    *
-   * 位移来自两处，二者必须都算上：
-   *   · 容器左边缘右移（CSS 决定，`getBoundingClientRect().left` 实测）
-   *   · 内核 resize 时的「自动重新居中」—— 它平移 (新宽-旧宽)/2|0
+   * 画布容器**始终铺满**整块主体区（文件库移出了 flex 流，改成浮层），
+   * 所以文件库开合时画布的几何一点都不变 —— iframe 不会收到 resize，
+   * 内核不会重排，画布内容**零位移**。这是"内容不动"的根本解法：
+   * 不去补偿位移，而是让位移从根上不发生。
    *
-   * 这里只负责测**容器位移**并告知编辑器；内核那一份由编辑器在自己的
-   * resize 回调里量（见 editor/index.html 的 notifyLayoutShift 一节）。
-   * 分工的原因：内核补了几成，只有编辑器侧拿得到同源数据。
+   * 既然画布真的铺满了，视觉上"画布被挤到文件库右边"那个框就只能画出来：
+   * `.mm-canvas-frame` 是一层 pointer-events:none 的覆盖物，只描边不占位，
+   * 它的左边缘跟着文件库走。看得见，摸不着，也不影响画布一个像素。
    *
-   * 必须在本模块（**父页面**）里测容器位移。早期把测点放在编辑器侧的
-   * `rootScreenX()` 里，取 `#minder-container` 的 getBoundingClientRect().left
-   * —— 那是 iframe 内的元素，坐标相对 **iframe 自己的视口**，父页面把
-   * iframe 挤到右边时它恒定不变，于是容器位移被完全抵消，测出来的差
-   * 只剩内核那一份，补偿反而把内核的正确补偿撤销了，净位移变成 +N
-   * （比不补偿更严重）。
-   *
-   * 同步测量即可，不需要等帧：补偿发生在 iframe 的 resize 回调里，
-   * 本函数只要在 resize 派发前把位移报出去就够了。
-   *
-   * @param {Function} fn 会改变底框开合的操作（同步执行）
+   * 位置一律**实测**：文件库宽度、gap 任一变动写死的数都会失配，框就会错位。
    */
-  function withStableRoot(fn) {
-    const cv = canvasEl;
-    const before = cv ? cv.getBoundingClientRect().left : null;
-    const r = fn();
-    if (before == null) return r;        // 量不到容器位置 → 不补，不能当成 0
-    const after = cv ? cv.getBoundingClientRect().left : null;
-    if (after == null) return r;
-    const dLeft = after - before;
-    // 1px 以内是取整噪声，不补 —— 否则每次开合都多一次无谓的平移
-    if (Math.abs(dLeft) >= 1) bridge?.notifyLayoutShift?.(dLeft);
-    return r;
+  function syncCanvasInset() {
+    if (!frameEl || !fileList || !canvasEl) return;
+    const br = body.getBoundingClientRect();
+    const cr = canvasEl.getBoundingClientRect();
+    const gap = parseFloat(getComputedStyle(body).columnGap
+      || getComputedStyle(body).gap || '10') || 10;
+    // 上/右/下贴齐画布本体（画布是铺满的，所以这几条边恒定）
+    frameEl.style.top = Math.round(cr.top - br.top) + 'px';
+    frameEl.style.right = Math.round(br.right - cr.right) + 'px';
+    frameEl.style.bottom = Math.round(br.bottom - cr.bottom) + 'px';
+
+    const panelLeft = Math.round(cr.left - br.left);
+    // 文件库贴着画布左缘浮着，位置与它"还占着 flex 位"时一致
+    fileList.el.style.left = panelLeft + 'px';
+    if (!fileList.isOpen()) {
+      frameEl.style.left = panelLeft + 'px';   // 收起：框就是整块画布
+      return;
+    }
+    const w = fileList.el.getBoundingClientRect().width;
+    // 展开：框的左边缘 = 文件库右缘 + 一个 gap —— 于是看上去画布被挤窄了，
+    // 而画布元素本身一动没动（宽高不变 ⇒ iframe 收不到 resize ⇒ 内容零位移）
+    frameEl.style.left = Math.round(panelLeft + w + gap) + 'px';
   }
 
   /**
@@ -921,7 +929,8 @@ bootIframePlugin(async (ctx) => {
    */
   function toggleFiles(force) {
     const on = force == null ? !fileList?.isFilesPanel?.() : !!force;
-    withStableRoot(() => fileList?.showFiles(on));
+    fileList?.showFiles(on);
+    syncCanvasInset();
     const showing = !!fileList?.isFilesPanel?.();
     settings.filesOpen = showing;
     store.settings.save(settings);
@@ -2391,8 +2400,10 @@ bootIframePlugin(async (ctx) => {
   //   左侧：文件库（Web 版多文档功能，C# 没有；默认收起，点 📚 展开）
   //   右侧：属性侧栏（样式/标签/主题/文件），C# 里固定 276px 常驻
   body.insertBefore(fileList.el, canvasEl);
+  body.appendChild(frameEl);
   body.appendChild(side.el);
   fileList.showFiles(!!settings.filesOpen);
+  syncCanvasInset();
   captureShellErrors();
   buildRail();
   renderTabs();

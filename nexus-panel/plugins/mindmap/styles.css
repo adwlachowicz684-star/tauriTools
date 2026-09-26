@@ -291,14 +291,10 @@ html, body {
    左边缘由 JS 按文件库实测位置写入（见 index.js 的 syncCanvasInset）。 */
 .mm-canvas-frame {
   position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: 0;
   border-radius: var(--r, 14px);
   box-shadow: var(--sh-out-md);
   pointer-events: none;
-  z-index: 4;
+  z-index: 5;
 }
 
 .mm-canvas {
@@ -308,7 +304,9 @@ html, body {
   border-radius: var(--r, 14px);
   overflow: hidden;
   background: var(--surface-sunk);
-  box-shadow: var(--sh-out-md);
+  /* 注意：**不再自己投影** —— 那道边由 .mm-canvas-frame 画。
+     画布本体是铺满的，若它还留着投影，会同时出现整宽外框 + 假框两个
+     嵌套圆角，看上去就是"面板浮在画布上"（抽屉）而不是"画布被挤窄"。 */
 }
 
 .mm-loading {
