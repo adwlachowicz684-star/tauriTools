@@ -2044,6 +2044,38 @@ group('行内编辑贴合节点');
     'traverse 之前不得提前 return —— 提前返回会让 traverse 永远执行不到，等于只补 root');
 }
 
+/*
+ * 17.15 importText 必须 await —— km.importData('markdown') 是异步的。
+ *
+ * 实测（真实 Chrome）：
+ *     const r = km.importData('markdown', MD);
+ *     r instanceof Promise === true
+ *     同步继续读 km.getRoot() → 仍是**旧树**；等 600ms 后才是新树。
+ *
+ * 原先没 await，于是后面三句全部跑在旧树上：
+ *   1. ensureRootId() 给旧树补 id → 新树 id 全空 → 整棵树挂不上附件；
+ *   2. km.refresh() 刷新旧树 → 画面可能停在导入前；
+ *   3. _historyCommitBaseline() 把基线设成旧树 → 导入后第一次编辑入栈时
+ *      基线是旧树，**按一次撤销就把刚导入的内容整个撤掉**。
+ *
+ * 修复后实测：importText 返回 Promise，树里全部节点都有 id。
+ */
+{
+  const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  const i0 = ed.indexOf('importText:');
+  const seg = ed.slice(i0, ed.indexOf('// 关键：km.exportData()', i0));
+  const scode = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  ok(/async function/.test(scode), 'importText 是 async（importData 是异步的，不 await 会跑在旧树上）');
+  ok(/await km\.importData\(/.test(scode), '必须 await km.importData(...)');
+  const iAwait = scode.indexOf('await km.importData');
+  const iEnsure = scode.indexOf('ensureRootId()');
+  const iRefresh = scode.indexOf('km.refresh()');
+  const iBase = scode.indexOf('_historyCommitBaseline()');
+  ok(iAwait >= 0 && iEnsure > iAwait, 'ensureRootId() 必须在 await 之后（否则补的是旧树）');
+  ok(iRefresh > iAwait, 'km.refresh() 必须在 await 之后（否则刷新的是旧树）');
+  ok(iBase > iEnsure, '基线提交必须在补 id 之后（否则「补 id」会被当成一次编辑入栈）');
+}
+
 {
   // 17.7 行为级：验证 zoom 换算确实是必要的（对照旧算法）
   //      模拟 SVG transform scale(zoom) 下的两种算法

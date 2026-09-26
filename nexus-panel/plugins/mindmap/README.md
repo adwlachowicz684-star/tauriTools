@@ -2962,5 +2962,42 @@ id（内核补的）且会被保存 —— 于是「自己从头建的图」正�
 改法：`ensureRootId()` 改为 `km.getRoot().traverse(...)` 给每个缺 id 的节点补上
 （已有 id 不动，不覆盖用户数据）。
 
+> 注：真实的「导入 Markdown 文件」走的是 formats.js 解析成 sheets 后走
+> `importJson`，实测那条路 id 正常（端到端注入 .md 文件验证过）。下面这条
+> 是**公开门面** `window.__minder.importText` 自己的问题。
+
+## importText 没 await 异步的 importData，三条后果都落在旧树上 ★
+
+实测（真实 Chrome）：
+
+```js
+const r = km.importData('markdown', MD);
+r instanceof Promise === true;              // ← 异步
+// 同步继续读 km.getRoot() → 仍是**旧树**；等 600ms 后才是新树
+```
+
+而 `importText` 原先没 await，于是后面三句全部跑在**旧树**上：
+
+| 语句 | 后果 |
+|---|---|
+| `ensureRootId()` | 给旧树补 id → **新树 id 全空** → 整棵树挂不上附件 |
+| `km.refresh()` | 刷新旧树 → 画面可能停在导入前 |
+| `_historyCommitBaseline()` | 基线设成旧树 → 导入后第一次编辑入栈时基线是旧树，**按一次撤销就把刚导入的内容整个撤掉** |
+
+三条都是「导入看起来成功了、之后才炸」，最难归因。
+
+实测对比（走门面 `importText`）：
+
+```
+修复前：设计:undefined | 前端:undefined | 后端:undefined
+        | 开发:undefined | 测试:undefined | 项目:undefined
+修复后：设计:g1q4mvusmuiig5jy | 前端:xsdwph24muiig5jz | …
+```
+
+改法：`importText` 改 async，`await km.importData(...)` 之后再补 id / refresh /
+提交基线。顺序上 `ensureRootId()` 必须仍在 `_historyCommitBaseline()` 之前 ——
+反了的话「补 id」这次改动会触发 contentchange 被当成一次编辑入栈，用户第一次
+按撤销撤掉的是「补 id」而不是他自己的编辑。
+
 > 2000 层而非 10000 层：jsdom 的 `DOMParser` 在约 2000~5000 层时自己就 parsererror 了，
 > 测不到 xmind.js。2000 层已远超 `MAX_DEPTH`(200)，足以验证截断逻辑。

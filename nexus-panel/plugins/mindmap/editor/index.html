@@ -3029,9 +3029,38 @@
                 _historyCommitBaseline();   // 导入即为新的历史基线，之前的编辑不再回退
                 return true;
             },
-            importText: function (md) {
+            /*
+             * **`km.importData('markdown', md)` 是异步的** —— 实测（真实 Chrome）：
+             *
+             *     const before = km.getRoot().data.text;
+             *     const r = km.importData('markdown', MD);
+             *     const afterSync = km.getRoot().data.text;   // 仍是 before！
+             *     r instanceof Promise                        // true
+             *     // 等 600ms 后 root 才变成 MD 的根节点
+             *
+             * 原先这里**没 await**，于是后面三句全部跑在**旧树**上：
+             *
+             *   1. `ensureRootId()` 给旧树补 id → 新树的 id **全空**
+             *      → 整棵树挂不上附件（「请先选中一个节点再附加」）；
+             *   2. `km.refresh()` 刷新旧树 → 画面可能停在导入前；
+             *   3. `_historyCommitBaseline()` 把基线设成**旧树** → 导入后
+             *      第一次编辑入栈时基线是旧树，**按一次撤销就把刚导入的
+             *      内容整个撤掉**。
+             *
+             * 三条都是「导入看起来成功了、之后才炸」，最难归因。
+             *
+             * 注：当前**没有活的调用方**（Markdown 导入走 formats.js 解析成
+             * sheets 后走 importJson，实测那条路 id 正常）。但这仍是公开门面
+             * + bridge.importMarkdown 的后端，留着是个坑，故修掉。
+             *
+             * 顺序：ensureRootId() 必须在 _historyCommitBaseline() **之前** ——
+             * 反了的话「补 id」这次改动会触发 contentchange 被当成一次编辑入栈，
+             * 用户第一次按撤销撤掉的是「补 id」而不是他自己的编辑。
+             */
+            importText: async function (md) {
                 commitEditingBeforeSwap();
-                km.importData('markdown', md);   // core 内置 markdown 协议
+                try { await km.importData('markdown', md); } catch (e) { /* 内核解析失败时不该连累门面 */ }
+                ensureRootId();
                 km.refresh();
                 _historyCommitBaseline();
                 _applyCanvasTheme();          // 导入可能触发 setTheme，补回画布配色
