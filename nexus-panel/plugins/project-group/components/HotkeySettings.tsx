@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   HOTKEYS, GROUP_LABEL, comboFromEvent, findConflicts, formatCombo, hotkeysByGroup,
   normalizeCombo, type HotkeyId,
@@ -6,6 +6,27 @@ import {
 
 const IS_MAC = typeof navigator !== 'undefined'
   && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
+
+/**
+ * draft 里**真正算「已自定义」**的键 —— 与默认不同的那几项。
+ *
+ * 判据必须与「存出去的形态」完全一致（两处共用它），否则界面上两个信号
+ * 会互相矛盾、且刷新前后不一致：
+ *   · 取消绑定是**显式空串**，此前计数用 `normalizeCombo(v)` 非空判定，
+ *     空串被算成 0 —— 用户取消了 3 个绑定，界面显示「已自定义 0 项」，
+ *     而「全部恢复默认」按钮仍可点（draft 非空）：一个说没改、一个说改了；
+ *   · 把键位改**回**默认值仍被算成已自定义 —— 显示「已自定义 1 项」，
+ *     但它根本不会存出去，保存后重开显示 0 项。
+ *
+ * 放在模块级而不是组件内：它是纯函数，放这里才能被单测直接加载
+ * （组件里的闭包只能写"源码里有这行"的文本断言，测不到判据对不对）。
+ */
+export function customizedKeys(d: Record<string, string>): string[] {
+  return Object.keys(d).filter((k) => {
+    const def = HOTKEYS.find((h) => h.id === k)?.combo ?? '';
+    return normalizeCombo(d[k]) !== normalizeCombo(def);
+  });
+}
 
 /**
  * 常规快捷键自定义（#51 #432）。
@@ -25,7 +46,6 @@ export function HotkeySettings({
   /** 正在录入哪一项；null = 没在录入 */
   const [capturing, setCapturing] = useState<HotkeyId | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({ ...(value ?? {}) });
-  const inputRef = useRef<HTMLDivElement>(null);
 
   // 外部值变了（保存后重新加载）同步进来
   useEffect(() => { setDraft({ ...(value ?? {}) }); }, [value]);
@@ -39,14 +59,12 @@ export function HotkeySettings({
    * 只剔除「与默认相同」的项；**显式空串要保留** —— 它代表"用户主动取消了这个绑定"，
    * 若也一并剔除，读回来没有这个键就会退回默认值，
    * 用户以为取消了，重启后又活了。
+   *
+   * 判据走 `customizedKeys`，与界面上「已自定义 N 项」同源。
    */
   const commit = (d: Record<string, string>) => {
     const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(d)) {
-      const def = HOTKEYS.find((h) => h.id === k)?.combo ?? '';
-      if (normalizeCombo(v) === normalizeCombo(def)) continue;
-      out[k] = v;
-    }
+    for (const k of customizedKeys(d)) out[k] = d[k];
     onChange(Object.keys(out).length ? out : null);
   };
 
@@ -88,12 +106,14 @@ export function HotkeySettings({
   return (
     <div>
       <div className="p-row" style={{ marginBottom: 'var(--sp-4, 8px)' }}>
+        {/* 两个判据都走 customizedKeys：一个说"改了 N 项"、另一个却置灰/可点，
+            用户就分不清自己到底有没有改过 */}
         <button className="p-btn" onClick={resetAll}
-          disabled={Object.keys(draft).length === 0}>
+          disabled={customizedKeys(draft).length === 0}>
           全部恢复默认
         </button>
         <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
-          已自定义 {Object.keys(draft).filter((k) => normalizeCombo(draft[k])).length} 项
+          已自定义 {customizedKeys(draft).length} 项
         </span>
       </div>
 
@@ -145,9 +165,6 @@ export function HotkeySettings({
         {IS_MAC ? 'mod = ⌘' : 'mod = Ctrl'}。
         浏览器自身占用的键（如 F5、Ctrl+L）可能拦不住，标 ⚠ 的即是。
       </div>
-
-      {/* 录入时把焦点吸到一个空容器：否则输入框里的按键会被组件吃掉 */}
-      {capturing && <div ref={inputRef} tabIndex={-1} />}
     </div>
   );
 }
