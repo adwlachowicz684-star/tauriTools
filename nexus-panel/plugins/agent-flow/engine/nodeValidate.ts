@@ -6,7 +6,7 @@ import type {
   PlayAudioNodeData, ClockNodeData, ConstNodeData, ModuleNodeData,
   JoinNodeData, GateNodeData, ThrottleNodeData, TimeoutNodeData, RetryNodeData,
 } from '../types';
-import { targetsOf, UPDATE_SOURCE_META, needsFeedUrl } from '../types';
+import { targetsOf, UPDATE_SOURCE_META, needsFeedUrl, constsOf, constItemLabel } from '../types';
 import { triggerEntriesOf, entryEnabled, mergeConfig } from './triggerEntries';
 import { argTypeIssues, type ArgTypeIssue } from './argTypes';
 
@@ -380,7 +380,23 @@ function vClock(d: ClockNodeData): V {
 }
 
 function vConst(d: ConstNodeData): V {
-  return blank(d.value) ? warn('值是空的，会输出空字符串') : ok();
+  /*
+   * 按**每一张卡**判，而不是只看顶层 value。
+   *
+   * 只看顶层的话，第一张填了、第二张空着时徽章是绿的 ——
+   * 而第二张卡接到下游会输出空串，连线一根没少，界面上却毫无提示。
+   */
+  const items = constsOf(d);
+  const empties = items.filter((it) => blank(it.value));
+  if (empties.length === 0) return ok();
+  const one = empties.length === 1 && items.length > 1
+    ? `「${constItemLabel(empties[0], items.indexOf(empties[0]))}」`
+    : '';
+  return warn(
+    items.length > 1
+      ? `有 ${empties.length} 张卡的值是空的${one}，会输出空字符串`
+      : '值是空的，会输出空字符串',
+  );
 }
 
 function vModule(d: ModuleNodeData): V {

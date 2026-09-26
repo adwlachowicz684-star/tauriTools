@@ -107,7 +107,7 @@
 |---|---|---|---|---|---|
 | [beep](nodes/beep.params.md) | any（透传上游） | any | playAudioReader | 响一声：系统音效或本地音频文件 | `nodes/defs/beep.ts` |
 | [clock](nodes/clock.params.md) | text（文本） | none | — | 输出当前时间，常用于生成带时间戳的文件名 | `nodes/defs/clock.ts` |
-| [const](nodes/const.params.md) | text（文本） | none | — | 输出一个固定值给下游（种类在卡片上切） | `nodes/defs/const.ts` |
+| [const](nodes/const.params.md) | text（文本） | none | — | 放若干个固定值，每张卡一个输出端口 | `nodes/defs/const.ts` |
 | [log](nodes/log.params.md) | any（透传上游） | any | — | 往运行日志里写一条，不影响数据流 | `nodes/defs/log.ts` |
 | [module](nodes/module.params.md) | any（透传上游） | any | — | 多个节点打包复用 | `nodes/defs/module.ts` |
 | [play-audio](nodes/play-audio.params.md) | any（透传上游） | any | playAudioReader | 已并入「播放声音」节点 —— 新画布请用播放声音，来源选「本地文件」 | `nodes/defs/playAudio.ts` |

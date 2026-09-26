@@ -21,6 +21,7 @@
  */
 
 import type { Graph, GraphNode } from '../types';
+import { constsOf, constItemLabel, type ConstNodeData } from '../types';
 import { topoLayers } from './topo';
 import { opBrief } from './ops';
 import { paramLinksOf, linksInto, outLabelOf, OUT_DEFAULT } from './paramLinks';
@@ -172,8 +173,9 @@ function paramLinkNoteOf(
      * 拿着脚本去对照画布时会对不上，那正是这段注释要避免的事。
      */
     const srcKind = str((src?.data as Record<string, unknown> | undefined)?.kind) || undefined;
+    const srcRec = src?.data as Record<string, unknown> | undefined;
     const what = l.sourceArg && l.sourceArg !== OUT_DEFAULT
-      ? `的「${outLabelOf(srcKind, l.sourceArg)}」`
+      ? `的「${outLabelOf(srcKind, l.sourceArg, srcRec)}」`
       : '的输出';
     return `${prefix}注意：参数「${l.targetArg}」在画布上来自「${srcName}」${what}，`
       + `这里取的是节点上填的值 —— 两者可能不同`;
@@ -202,8 +204,23 @@ function shellLine(n: GraphNode, skipped: Skipped[]): string | null {
       const body = v('text').split('"').join('\\"');
       return `echo "${tag}${body}"   # ${n.id}`;
     }
-    case 'const':
-      return `${me}=${shq(v('value'))}   # ${n.id}: 常量`;
+    case 'const': {
+      const cards = constsOf(n.data as unknown as ConstNodeData);
+      /*
+       * 多张卡只导出第一张，并**明说**导出不全。
+       *
+       * 脚本里的模板 {{id.卡名}} 是按**节点**展开成 $OUT_ID 的（见 subst），
+       * 取不到第二张卡 —— 静默只写第一张的话，用户拿到一份
+       * "少了一半常量"的脚本而毫无线索，跑出来的值也不对。
+       */
+      if (cards.length > 1) {
+        skipped.push({
+          id: n.id, kind,
+          reason: `这个常量节点有 ${cards.length} 张卡，脚本只导出第一张「${constItemLabel(cards[0], 0)}」`,
+        });
+      }
+      return `${me}=${shq(subst(str(cards[0]?.value ?? ''), 'sh'))}   # ${n.id}: 常量`;
+    }
     case 'clock':
       return `${me}=$(date ${shq(v('format') || '+%Y-%m-%d %H:%M:%S')})   # ${n.id}: 当前时间`;
     case 'extract': {
@@ -285,8 +302,16 @@ function pyLine(n: GraphNode, skipped: Skipped[], indent = ''): string | null {
       const arg = tag ? `f"${tag}", ${v('text')}` : v('text');
       return `${indent}print(${arg})   # ${n.id}`;
     }
-    case 'const':
-      return `${indent}${me} = ${v('value')}   # ${n.id}: 常量`;
+    case 'const': {
+      const cards = constsOf(n.data as unknown as ConstNodeData);
+      if (cards.length > 1) {
+        skipped.push({
+          id: n.id, kind,
+          reason: `这个常量节点有 ${cards.length} 张卡，脚本只导出第一张「${constItemLabel(cards[0], 0)}」`,
+        });
+      }
+      return `${indent}${me} = ${subst(str(cards[0]?.value ?? ''), 'py')}   # ${n.id}: 常量`;
+    }
     case 'clock': {
       // format 是 strftime 格式串，不是模板 —— 不做 {{}} 替换
       const fmt = str(d.format) || '%Y-%m-%d %H:%M:%S';
@@ -454,7 +479,13 @@ function briefOf(d: Record<string, unknown>, kind: string): string {
     case 'log': return `记录一条日志：${str(d.text).slice(0, 60)}`;
     case 'generic-http': return `${str(d.method || 'GET')} ${str(d.url).slice(0, 60)}`;
     case 'extract': return `按 ${str(d.mode || 'json')} 规则从上游取值`;
-    case 'const': return `输出固定值 ${str(d.value).slice(0, 40)}`;
+    case 'const': {
+      const cards = constsOf(d as unknown as ConstNodeData);
+      const first = str(cards[0]?.value).slice(0, 40);
+      return cards.length > 1
+        ? `输出 ${cards.length} 个固定值（首个 ${first}）`
+        : `输出固定值 ${first}`;
+    }
     case 'clock': return `输出当前时间（格式 ${str(d.format)}）`;
     case 'translate': return `翻译成 ${str(d.targetLang)}`;
     case 'task': return `跑一条 CLI 指令`;

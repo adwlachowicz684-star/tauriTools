@@ -336,7 +336,30 @@ export const SPECS: Record<string, NodeSpec> = {
   beep: S('any', 'any', '透传上游（只是响一声）'),
   'play-audio': S('any', 'any', '透传上游（只是播放音频）'),
   clock: S('text', 'none', '格式化后的当前时间'),
-  const: S('text', 'none', '常量值（支持模板）'),
+  /*
+   * 常量是多张卡（items 数组），fields 写不出数组结构 ——
+   * 走自定义面板，参数说明在这里手写。
+   * 不写的话 AI 会以为常量只有 value 一个字段，加不出第二张卡。
+   */
+  /*
+   * 常量：只有 items 一组数据，没有顶层的 value / valueType。
+   *
+   * 参数说明手写（manualParams）—— fields 是平面的，写不出"卡片数组"。
+   * 说明里若还列 value / valueType 那两个老字段，AI 会往一个没人读的
+   * 地方写值：界面不报错、跑出来也不变，是最难查的一类。
+   */
+  const: S('text', 'none', '第一张卡的值（多卡时见具名输出）', {
+    manualParams: true,
+    params: [
+      {
+        key: 'items',
+        desc: '常量卡列表（唯一数据源）。每张 = { id, name, valueType, value }；'
+          + 'valueType 取 text / num / bool，name 是输出端口名与模板引用名 '
+          + '（{{节点id.卡名}}），value 支持 {{模板}}。连线记的是卡 id，改名不断线。'
+          + '新建时至少一张卡；要加值就往 items 里加一张，不要建顶层字段。',
+      },
+    ],
+  }),
   log: S('any', 'any', '原样透传上游 —— 插在链中间不破坏数据'),
 
   // 运算

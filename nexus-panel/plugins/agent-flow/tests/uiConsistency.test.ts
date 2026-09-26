@@ -1214,11 +1214,17 @@ test('任务流程图不再写死高度（撑到界面底端）', () => {
 test('常量合并成一个节点，种类仍是卡片上可切的一格', () => {
   const def = read(path.join(ROOT, 'nodes', 'defs', 'const.ts'));
   assert.doesNotMatch(def, /presets:/, 'const 还在列预设 —— 侧栏会有三条常量入口');
-  assert.match(def, /key: 'valueType'/, 'const 缺「种类」字段 —— 只能在新建时定死');
+  /*
+   * 种类走自定义面板（fields 写不出卡片数组），
+   * 所以盯面板里有种类下拉，而不是盯 def 里的 fields。
+   */
+  const insp = read(path.join(ROOT, 'components', 'inspectors', 'ConstInspector.tsx'));
+  assert.match(insp, /valueType/, '面板里没有种类 —— 卡的种类改不了');
 
   /* 卡片上必须给出种类格，否则切种类只能回去开面板 */
   const tn = read(path.join(ROOT, 'components', 'ToolNode.tsx'));
   const body = tn.slice(tn.indexOf('export function ConstNode'));
+  assert.match(body, /constsOf\(/, '卡片没按卡渲染 —— 加再多卡也只显示一个值');
   /*
    * 必须盯"种类格真的进了 parts"，不能只盯 pick('valueType') 存在：
    * 定义了 kind 却没塞进 parts，那一格在画布上根本不出现 ——
@@ -1227,7 +1233,7 @@ test('常量合并成一个节点，种类仍是卡片上可切的一格', () =>
   const m2 = body.slice(0, 2000).match(/parts=\{([^}]*)\}/);
   assert.ok(m2 && /\bkind\b/.test(m2[1]),
     '卡片上没有种类格 —— 改种类又变成"打开面板改一项"');
-  assert.match(body.slice(0, 2000), /pick\('valueType'/,
+  assert.match(body.slice(0, 2500), /CONST_TYPE_LABEL\[vt\]/,
     '种类格不是下拉 —— 切种类点不动');
 
   /* 产出种类必须按 valueType 走，否则数字常量会被当成文本 */

@@ -18,9 +18,9 @@ const E = (id: string, s: string, t: string): ModuleEdge => ({ id, source: s, ta
 function chain() {
   return {
     nodes: [
-      { id: 'A', data: { kind: 'const', label: 'A', value: 'a' } },
-      { id: 'B', data: { kind: 'const', label: 'B', value: '{{A.output}}' } },
-      { id: 'C', data: { kind: 'const', label: 'C', value: 'c' } },
+      { id: 'A', data: { kind: 'const', label: 'A', items: [{ id: 'c0', value: 'a' }] } },
+      { id: 'B', data: { kind: 'const', label: 'B', items: [{ id: 'c0', value: '{{A.output}}' }] } },
+      { id: 'C', data: { kind: 'const', label: 'C', items: [{ id: 'c0', value: 'c' }] } },
     ],
     edges: [E('e1', 'A', 'B'), E('e2', 'B', 'C')],
   };
@@ -122,12 +122,12 @@ test('空模块没有出入口', () => {
 
 test('存模块前剥掉 status / output / error', () => {
   const cleaned = stripRuntimeNodes([
-    { id: 'A', data: { kind: 'const', status: 'success', output: '旧输出', error: '', value: 'x' } },
+    { id: 'A', data: { kind: 'const', status: 'success', output: '旧输出', error: '', items: [{ id: 'c0', value: 'x' }] } },
   ]);
   const d = (cleaned[0] as { data: Record<string, unknown> }).data;
   assert.equal(d.status, undefined);
   assert.equal(d.output, undefined);
-  assert.equal(d.value, 'x', '配置字段要保留');
+  assert.deepEqual(d.items, [{ id: 'c0', value: 'x' }], '配置字段要保留');
 });
 
 test('剥掉 last* 前缀的运行时字段', () => {
@@ -187,7 +187,12 @@ test('展开：内部模板引用要改写成新 id', () => {
   const def = { ...chain(), id: 'md1', name: 'M', color: '', createdAt: 0 };
   const g = expandModules({ nodes: [modNode('inst', 'md1')] as N[], edges: [] }, () => def);
   const b = g.nodes.find((n) => n.id === 'inst__B') as N;
-  assert.equal(b.data?.value, '{{inst__A.output}}');
+  /*
+   * 常量只有 items 一组数据 —— 模板引用在**卡里**，
+   * 展开时 rewriteData 递归改写了数组，所以这里读 items[0].value。
+   * 只读顶层 value 的话，漏改的表现是模板渲染成空串，不报错。
+   */
+  assert.deepEqual(b.data?.items, [{ id: 'c0', value: '{{inst__A.output}}' }]);
 });
 
 test('展开：外部 → 模块 接到每个入口', () => {
@@ -243,7 +248,7 @@ test('展开：模块 → 模块 是笛卡尔积', () => {
 });
 
 test('展开：脱钩的实例用自己的 inner，不查模块库', () => {
-  const ownInner = { nodes: [{ id: 'Z', data: { kind: 'const', value: 'z' } }], edges: [] };
+  const ownInner = { nodes: [{ id: 'Z', data: { kind: 'const', items: [{ id: 'c0', value: 'z' }] } }], edges: [] };
   const g = expandModules(
     { nodes: [modNode('inst', 'md1', ownInner)] as N[], edges: [] },
     () => null,   // 模块库里查不到
@@ -259,10 +264,10 @@ test('展开：模块被删了留下占位节点，不崩', () => {
 
 test('展开：非模块节点原样保留', () => {
   const g = expandModules(
-    { nodes: [{ id: 'p', data: { kind: 'const', value: 'x' } }] as N[], edges: [] },
+    { nodes: [{ id: 'p', data: { kind: 'const', items: [{ id: 'c0', value: 'x' }] } }] as N[], edges: [] },
     () => null,
   );
-  assert.deepEqual(g.nodes, [{ id: 'p', data: { kind: 'const', value: 'x' } }]);
+  assert.deepEqual(g.nodes, [{ id: 'p', data: { kind: 'const', items: [{ id: 'c0', value: 'x' }] } }]);
 });
 
 test('展开：内部节点重置为待运行（不带旧结果）', () => {

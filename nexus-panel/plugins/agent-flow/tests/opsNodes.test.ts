@@ -40,7 +40,7 @@ async function run(
 
 test('数学：模板取上游值再相加（模板本身不算数）', async () => {
   const { summary } = await run(
-    [node('a', 'const', { value: '7' }), node('m', 'math', { op: 'add', a: '{{a.output}}', b: '5' })],
+    [node('a', 'const', { items: [{ id: 'c0', value: '7' }] }), node('m', 'math', { op: 'add', a: '{{a.output}}', b: '5' })],
     [edge('a', 'm')],
   );
   assert.equal(summary.ok, true);
@@ -49,7 +49,7 @@ test('数学：模板取上游值再相加（模板本身不算数）', async ()
 
 test('文本：拼接上游内容', async () => {
   const { summary } = await run(
-    [node('a', 'const', { value: 'hi' }), node('t', 'text', { op: 'concat', a: '{{a.output}}', b: '!' })],
+    [node('a', 'const', { items: [{ id: 'c0', value: 'hi' }] }), node('t', 'text', { op: 'concat', a: '{{a.output}}', b: '!' })],
     [edge('a', 't')],
   );
   assert.equal(summary.outputs.t, 'hi!');
@@ -85,7 +85,7 @@ test('变量：写入后再读取', async () => {
 test('变量：写入时留空则取上游输出', async () => {
   const { summary } = await run(
     [
-      node('a', 'const', { value: '来自上游' }),
+      node('a', 'const', { items: [{ id: 'c0', value: '来自上游' }] }),
       node('w', 'var', { mode: 'set', name: 'x' }),
     ],
     [edge('a', 'w')],
@@ -107,7 +107,7 @@ test('变量：{{var.名字}} 在模板里也能取到', async () => {
   const { summary } = await run(
     [
       node('w', 'var', { mode: 'set', name: 'n', value: '99' }),
-      node('c', 'const', { value: '结果是 {{var.n}}' }),
+      node('c', 'const', { items: [{ id: 'c0', value: '结果是 {{var.n}}' }] }),
     ],
     [edge('w', 'c')],
   );
@@ -115,7 +115,7 @@ test('变量：{{var.名字}} 在模板里也能取到', async () => {
 });
 
 test('变量：没赋值时 {{var.x}} 保留原样提示', async () => {
-  const { summary } = await run([node('c', 'const', { value: '结果是 {{var.nope}}' })]);
+  const { summary } = await run([node('c', 'const', { items: [{ id: 'c0', value: '结果是 {{var.nope}}' }] })]);
   assert.equal(summary.outputs.c, '结果是 {{var.nope}}');
 });
 
@@ -123,7 +123,7 @@ test('变量：没赋值时 {{var.x}} 保留原样提示', async () => {
 
 test('停止 · 整个流程：下游不再执行', async () => {
   const { summary, order } = await run(
-    [node('a', 'const', { value: 'x' }), node('s', 'stop', { mode: 'all' }), node('d', 'const', { value: 'D' })],
+    [node('a', 'const', { items: [{ id: 'c0', value: 'x' }] }), node('s', 'stop', { mode: 'all' }), node('d', 'const', { items: [{ id: 'c0', value: 'D' }] })],
     [edge('a', 's'), edge('s', 'd')],
   );
   assert.ok(order.includes('s'));
@@ -135,11 +135,11 @@ test('停止 · 整个流程：下游不再执行', async () => {
 test('停止 · 这条分支：别的分支照跑', async () => {
   const { order } = await run(
     [
-      node('a', 'const', { value: 'A' }),
+      node('a', 'const', { items: [{ id: 'c0', value: 'A' }] }),
       node('s', 'stop', { mode: 'branch' }),
-      node('d', 'const', { value: 'D' }),
-      node('b', 'const', { value: 'B' }),
-      node('e', 'const', { value: 'E' }),
+      node('d', 'const', { items: [{ id: 'c0', value: 'D' }] }),
+      node('b', 'const', { items: [{ id: 'c0', value: 'B' }] }),
+      node('e', 'const', { items: [{ id: 'c0', value: 'E' }] }),
     ],
     [edge('a', 's'), edge('s', 'd'), edge('a', 'b'), edge('b', 'e')],
   );
@@ -149,7 +149,7 @@ test('停止 · 这条分支：别的分支照跑', async () => {
 
 test('停止：上游数据仍透传给下游节点本身', async () => {
   const { summary } = await run(
-    [node('a', 'const', { value: '透传我' }), node('s', 'stop', { mode: 'all' })],
+    [node('a', 'const', { items: [{ id: 'c0', value: '透传我' }] }), node('s', 'stop', { mode: 'all' })],
     [edge('a', 's')],
   );
   assert.equal(summary.outputs.s, '透传我');
@@ -170,7 +170,7 @@ test('人工输入：拿到人填的内容', async () => {
 test('人工输入：提示语支持模板（能把上游内容显示给人看）', async () => {
   let seen = '';
   await run(
-    [node('a', 'const', { value: '上游内容' }), node('q', 'ask', { prompt: '确认：{{a.output}}' })],
+    [node('a', 'const', { items: [{ id: 'c0', value: '上游内容' }] }), node('q', 'ask', { prompt: '确认：{{a.output}}' })],
     [edge('a', 'q')],
     { askHuman: async (p) => { seen = p; return 'ok'; } },
   );

@@ -37,6 +37,9 @@
  * 卡片要用它，单测要在纯 Node 下跑它。
  */
 
+/* 常量的卡是数组结构，读法得与画布 / 执行器同一份（见 types.ts 的 constsOf） */
+import { constItemKey, constItemLabel, constsOf, type ConstNodeData } from '../types';
+
 /** 参数期望的种类 */
 export type ArgKind =
   /** 数字（能参与加减乘除、比大小） */
@@ -289,6 +292,29 @@ export function valueKindOf(v: unknown): ValueKind {
 /* 校验                                                                */
 /* ------------------------------------------------------------------ */
 
+/** 常量卡的错参：数字卡填了非数字 */
+function constCardIssues(data: Record<string, unknown>): ArgTypeIssue[] {
+  const items = constsOf(data as unknown as ConstNodeData);
+  const out: ArgTypeIssue[] = [];
+  items.forEach((it, i) => {
+    if ((it.valueType ?? 'text') !== 'num') return;
+    const v = String(it.value ?? '').trim();
+    if (!v) return;
+    /* 模板引用在编辑时没有值，判什么都算错 —— 一律放行（误报更糟） */
+    if (v.includes('{{')) return;
+    const actual = valueKindOf(v);
+    if (actual === 'num' || actual === 'unknown') return;
+    out.push({
+      key: constItemKey(it, i),
+      label: constItemLabel(it, i),
+      expect: 'num',
+      actual,
+      message: `「${constItemLabel(it, i)}」是数字卡，现在填的是${KIND_HINT[actual]}`,
+    });
+  });
+  return out;
+}
+
 export type ArgTypeIssue = {
   /** 出问题的参数 key */
   key: string;
@@ -318,6 +344,17 @@ export function argTypeIssues(
   data: Record<string, unknown> | undefined | null,
 ): ArgTypeIssue[] {
   if (!dataKind || !data) return [];
+  /*
+   * 常量：按**每一张卡**判，卡的数量由用户随时增删 ——
+   * 规则表里写不出"第几张是什么种类"，只能现场算。
+   *
+   * 必须放在按 op 分派**之前**：const 的规则是按 valueType 分层的，
+   * 而多卡之后节点上没有统一的 valueType（每张卡各有一个），
+   * 走进分派会取到 undefined → 没有规则 → 直接放行。
+   * 表现是第二张数字卡里填了 abc 也不标「错参」，
+   * 它接到「大于」上算出来是 0，看不出原因。
+   */
+  if (dataKind === 'const') return constCardIssues(data);
   const rule = RULES[dataKind];
   if (!rule) return [];
 

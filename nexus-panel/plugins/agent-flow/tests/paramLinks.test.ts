@@ -6,6 +6,7 @@ import {
   producesArgOf, paramLinkIssues, applyParamLinks, linksInto,
   argHandleId, parseArgHandle, isParamHandles, OUT_HANDLE,
   outHandleId, parseOutHandle, normalizeParamEdges, OUT_DEFAULT,
+  outputsOf, outKindOf, outLabelOf,
 } from '../engine/paramLinks';
 import { argTypeIssues, argExpectOf } from '../engine/argTypes';
 import { topoLayers } from '../engine/topo';
@@ -101,30 +102,92 @@ test('老参数连线（裸 out）仍被认成参数连线，渲染时补成输�
 });
 
 test('常量按种类产出不同的值种类', () => {
-  assert.equal(producesArgOf('const', { valueType: 'num' }), 'num');
-  assert.equal(producesArgOf('const', { valueType: 'bool' }), 'bool');
-  assert.equal(producesArgOf('const', { valueType: 'text' }), 'text');
-  // 老存档没有 valueType —— 按 text，那正是它当初的行为
+  /*
+   * 种类在**卡**上，节点上没有顶层 valueType 了 ——
+   * 两份数据就得每次写卡都镜像一遍，漏一处是"显示改了、跑出来还是旧的"。
+   */
+  const one = (vt: string) => ({ items: [{ id: 'a', valueType: vt, value: '1' }] });
+  assert.equal(producesArgOf('const', one('num')), 'num');
+  assert.equal(producesArgOf('const', one('bool')), 'bool');
+  assert.equal(producesArgOf('const', one('text')), 'text');
+  /* 没有卡时按 text —— 主输出是空串，空串既不是数字也不是布尔 */
   assert.equal(producesArgOf('const', {}), 'text');
   assert.equal(producesArgOf('const'), 'text');
 });
 
 test('数字常量填了文字时报「错参」', () => {
-  const issues = argTypeIssues('const', { valueType: 'num', value: 'abc' });
+  /*
+   * 键是**卡片 id**而不是 'value' —— 常量是多张卡，
+   * 报错要能落到具体那一张上（卡片按 key 标红）。
+   */
+  const one = (vt: string, v: string) => ({ items: [{ id: 'a', name: '阈值', valueType: vt, value: v }] });
+  const issues = argTypeIssues('const', one('num', 'abc'));
   assert.equal(issues.length, 1, '数字常量填 abc 要报出来');
-  assert.equal(issues[0].key, 'value');
+  assert.equal(issues[0].key, 'a');
   assert.equal(issues[0].expect, 'num');
 
-  assert.deepEqual(argTypeIssues('const', { valueType: 'num', value: '42' }), [], '数字不该报');
-  assert.deepEqual(argTypeIssues('const', { valueType: 'text', value: 'abc' }), [], '文本什么都能填');
-  assert.deepEqual(argTypeIssues('const', { valueType: 'bool', value: 'true' }), [], '布尔不校验');
+  assert.deepEqual(argTypeIssues('const', one('num', '42')), [], '数字不该报');
+  assert.deepEqual(argTypeIssues('const', one('text', 'abc')), [], '文本什么都能填');
+  assert.deepEqual(argTypeIssues('const', one('bool', 'true')), [], '布尔不校验');
   // 模板放行：编辑时没有值，判成什么都可能是猜
-  assert.deepEqual(argTypeIssues('const', { valueType: 'num', value: '{{x.output}}' }), []);
+  assert.deepEqual(argTypeIssues('const', one('num', '{{x.output}}')), []);
+});
+
+test('多张常量卡：各自按自己的种类校验', () => {
+  const d = {
+    kind: 'const',
+    items: [
+      { id: 'a', name: '阈值', valueType: 'num', value: '10' },
+      { id: 'b', name: '开关', valueType: 'bool', value: 'true' },
+      { id: 'c', name: '备注', valueType: 'num', value: 'abc' },
+    ],
+  };
+  const issues = argTypeIssues('const', d);
+  assert.equal(issues.length, 1, '只有「备注」是数字卡却填了文字');
+  assert.equal(issues[0].key, 'c', '要指到具体那一张卡');
+  assert.equal(issues[0].label, '备注', '文案要写卡名，不写 id');
+});
+
+test('多张常量卡：每张各有一个具名输出端口', () => {
+  const d = {
+    kind: 'const',
+    items: [
+      { id: 'a', name: '阈值', valueType: 'num', value: '10' },
+      { id: 'b', name: '开关', valueType: 'bool', value: 'true' },
+    ],
+  };
+  const ports = outputsOf('const', d);
+  assert.deepEqual(ports.map((p) => p.key), [OUT_DEFAULT, 'a', 'b']);
+  assert.equal(outLabelOf('const', 'a', d), '阈值', '报错要写卡名');
+  /* 种类按**那一张卡**判：阈值是数字、开关是布尔 —— 一律按文本会误报 */
+  assert.equal(outKindOf('const', 'a', d), 'num');
+  assert.equal(outKindOf('const', 'b', d), 'bool');
+});
+
+test('多张常量卡：连线按卡取值，各取各的', async () => {
+  const g: Graph = {
+    nodes: [
+      { id: 'src', data: { kind: 'const', items: [
+        { id: 'a', name: '阈值', valueType: 'num', value: '10' },
+        { id: 'b', name: '开关', valueType: 'bool', value: 'true' },
+      ] } },
+      { id: 't1', data: { kind: 'text', op: 'upper', a: '', b: '' } },
+      { id: 't2', data: { kind: 'text', op: 'upper', a: '', b: '' } },
+    ] as unknown as GraphNode[],
+    edges: [
+      { id: 'p1', source: 'src', target: 't1', data: { kind: 'param', sourceArg: 'a', targetArg: 'a' } },
+      { id: 'p2', source: 'src', target: 't2', data: { kind: 'param', sourceArg: 'b', targetArg: 'a' } },
+    ] as unknown as GraphEdge[],
+  };
+  const r = await runGraph(g, { input: '', onEvent: () => {} });
+  assert.equal(r.ok, true);
+  assert.equal(r.outputs.t1, '10', '第一根取「阈值」');
+  assert.equal(r.outputs.t2, 'TRUE', '第二根取「开关」');
 });
 
 test('数字常量接到「大于」合法，接到「包含」报错参', () => {
   const nodes = [
-    { id: 'c1', data: { kind: 'const', valueType: 'num', value: '10' } },
+    { id: 'c1', data: { kind: 'const', items: [{ id: 'a', valueType: 'num', value: '10' }] } },
     { id: 'm1', data: { kind: 'math', op: 'add' } },
   ] as unknown as GraphNode[];
   const links = [{ id: 'p', source: 'c1', target: 'm1', targetArg: 'a' }];
@@ -134,7 +197,7 @@ test('数字常量接到「大于」合法，接到「包含」报错参', () =>
   void toText;
   // 文本常量接到同样位置也不该报（数学要数字，文本常量是 text → 该报）
   const textNodes = [
-    { id: 'c2', data: { kind: 'const', valueType: 'text', value: 'x' } },
+    { id: 'c2', data: { kind: 'const', items: [{ id: 'a', valueType: 'text', value: 'x' }] } },
     { id: 'm1', data: { kind: 'math', op: 'add' } },
   ] as unknown as GraphNode[];
   const bad = paramLinkIssues(textNodes, [{ id: 'p', source: 'c2', target: 'm1', targetArg: 'a' }]);
@@ -304,7 +367,7 @@ test('同一个参数连两条线只认第一条 —— 否则取值取决于存
 test('端到端：连了线，目标参数拿到上游输出', async () => {
   const g: Graph = {
     nodes: [
-      N('src', 'const', { value: 'hello' }),
+      N('src', 'const', { items: [{ id: 'c0', value: 'hello' }] }),
       N('dst', 'text', { op: 'upper', a: '', b: '' }),
     ],
     edges: [makeParamEdge('src', 'dst', 'a')],
@@ -318,7 +381,7 @@ test('端到端：参数连线不会让节点多跑一次', async () => {
   const seen: string[] = [];
   const g: Graph = {
     nodes: [
-      N('src', 'const', { value: 'v' }),
+      N('src', 'const', { items: [{ id: 'c0', value: 'v' }] }),
       N('dst', 'text', { op: 'upper', a: '', b: '' }),
     ],
     edges: [makeParamEdge('src', 'dst', 'a')],
@@ -362,7 +425,7 @@ test('参数连线不产生流程依赖：来源被关掉，目标照常跑', as
    */
   const g: Graph = {
     nodes: [
-      N('src', 'const', { value: 'v', disabled: true }),
+      N('src', 'const', { items: [{ id: 'c0', value: 'v' }], disabled: true }),
       N('dst', 'text', { op: 'upper', a: 'zz', b: '' }),
     ],
     edges: [makeParamEdge('src', 'dst', 'a')],

@@ -235,7 +235,8 @@ function OutCard({ type, data }: { type: string; data: Record<string, unknown> }
   if ((spec?.produces ?? 'any') === 'none') return null;
 
   const kind = (data.kind as string | undefined) ?? type;
-  const ports = outputsOf(kind);
+  /* 常量节点的端口按卡片数量现场算（会增删），必须把 data 传进去 */
+  const ports = outputsOf(kind, data);
   const out = String((data as { output?: unknown }).output ?? '').trim();
   /*
    * 上次跑出来的**具名字段**。

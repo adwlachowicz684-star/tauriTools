@@ -46,7 +46,7 @@ async function run(
 
 test('两条分支都到齐：合并输出', async () => {
   const { summary } = await run(
-    [node('a', 'const', { value: 'A' }), node('b', 'const', { value: 'B' }), node('j', 'join')],
+    [node('a', 'const', { items: [{ id: 'c0', value: 'A' }] }), node('b', 'const', { items: [{ id: 'c0', value: 'B' }] }), node('j', 'join')],
     [edge('a', 'j'), edge('b', 'j')],
   );
   assert.equal(summary.ok, true);
@@ -56,8 +56,8 @@ test('两条分支都到齐：合并输出', async () => {
 test('自定义分隔符', async () => {
   const { summary } = await run(
     [
-      node('a', 'const', { value: 'A' }),
-      node('b', 'const', { value: 'B' }),
+      node('a', 'const', { items: [{ id: 'c0', value: 'A' }] }),
+      node('b', 'const', { items: [{ id: 'c0', value: 'B' }] }),
       node('j', 'join', { joinBy: ' + ' }),
     ],
     [edge('a', 'j'), edge('b', 'j')],
@@ -80,8 +80,8 @@ test('没有入边：失败，不静默放行', async () => {
 test('严格：全部到齐才放行', async () => {
   const { summary } = await run(
     [
-      node('a', 'const', { value: 'A' }),
-      node('b', 'const', { value: 'B' }),
+      node('a', 'const', { items: [{ id: 'c0', value: 'A' }] }),
+      node('b', 'const', { items: [{ id: 'c0', value: 'B' }] }),
       node('j', 'join', { mode: 'strict' }),
     ],
     [edge('a', 'j'), edge('b', 'j')],
@@ -97,11 +97,11 @@ test('严格：全部到齐才放行', async () => {
 test('严格：有输入被跳过时算没收集全，下游不执行', async () => {
   const { summary, order } = await run(
     [
-      node('a', 'const', { value: 'A' }),
+      node('a', 'const', { items: [{ id: 'c0', value: 'A' }] }),
       // b 会失败（const 没 value 也行，这里用一个必然失败的等待）
       node('b', 'wait', { ms: '不是数字' }),
       node('j', 'join', { mode: 'strict' }),
-      node('down', 'const', { value: 'D' }),
+      node('down', 'const', { items: [{ id: 'c0', value: 'D' }] }),
     ],
     [edge('a', 'j'), edge('b', 'j'), edge('j', 'down')],
   );
@@ -112,7 +112,7 @@ test('严格：有输入被跳过时算没收集全，下游不执行', async ()
 test('严格：失败时说明缺了几条', async () => {
   const { summary } = await run(
     [
-      node('a', 'const', { value: 'A' }),
+      node('a', 'const', { items: [{ id: 'c0', value: 'A' }] }),
       node('b', 'wait', { ms: 'x' }),
       node('j', 'join', { mode: 'strict' }),
     ],
@@ -129,7 +129,7 @@ test('严格：失败时说明缺了几条', async () => {
  */
 test('宽松汇合不阻断流程（与严格模式形成对照）', async () => {
   const { summary, order } = await run(
-    [node('a', 'const', { value: 'A' }), node('j', 'join'), node('down', 'const', { value: 'D' })],
+    [node('a', 'const', { items: [{ id: 'c0', value: 'A' }] }), node('j', 'join'), node('down', 'const', { items: [{ id: 'c0', value: 'D' }] })],
     [edge('a', 'j'), edge('j', 'down')],
   );
   assert.equal(summary.ok, true);
@@ -140,8 +140,8 @@ test('宽松汇合不阻断流程（与严格模式形成对照）', async () =>
 test('输出为空的输入不产生多余空行', async () => {
   const { summary } = await run(
     [
-      node('a', 'const', { value: 'A' }),
-      node('b', 'const', { value: '' }),
+      node('a', 'const', { items: [{ id: 'c0', value: 'A' }] }),
+      node('b', 'const', { items: [{ id: 'c0', value: '' }] }),
       node('j', 'join'),
     ],
     [edge('a', 'j'), edge('b', 'j')],

@@ -33,6 +33,7 @@
  */
 
 import type { GraphEdge, GraphNode } from '../types';
+import { constItemKey, constItemLabel, constsOf, type ConstNodeData } from '../types';
 import { specOf } from './nodeSpec';
 import { argExpectOf, type ArgTypeIssue, type ValueKind } from './argTypes';
 
@@ -244,8 +245,30 @@ export const NODE_OUTPUTS: Record<string, OutPort[]> = {
   ],
 };
 
-/** 某个节点的输出参数清单。老数据 / 未登记的类型 → 单输出 */
-export function outputsOf(dataKind: string | undefined | null): OutPort[] {
+/**
+ * 某个节点的输出参数清单。老数据 / 未登记的类型 → 单输出。
+ *
+ * ================= 常量是**动态**的 =================
+ *
+ * 常量节点上的卡由用户随时增删，端口数量跟着变 ——
+ * 静态表写不出"现在有几张卡"，所以 const 走 data 现场算。
+ * 只有一张卡时也照样给具名端口：多一个口子不会让人困惑
+ * （标签写着卡名），而"有时有、有时没有"才会。
+ */
+export function outputsOf(
+  dataKind: string | undefined | null,
+  data?: Record<string, unknown> | null,
+): OutPort[] {
+  if (dataKind === 'const') {
+    const items = constsOf(data as unknown as ConstNodeData);
+    return [
+      { key: OUT_DEFAULT, label: '结论' },
+      ...items.map((it, i) => ({
+        key: constItemKey(it, i),
+        label: constItemLabel(it, i),
+      })),
+    ];
+  }
   const list = dataKind ? NODE_OUTPUTS[dataKind] : undefined;
   return list && list.length > 0 ? list : [{ key: OUT_DEFAULT }];
 }
@@ -268,9 +291,19 @@ export function outKindOf(
   data?: Record<string, unknown> | null,
 ): ValueKind {
   if (key && key !== OUT_DEFAULT) {
-    const hit = outputsOf(dataKind).find((p) => p.key === key);
+    const hit = outputsOf(dataKind, data).find((p) => p.key === key);
     /* 具名字段：登记了就按登记，没登记（自定义输出）一律按文本 */
-    return hit?.kind ?? 'text';
+    if (hit?.kind) return hit.kind;
+    /*
+     * 常量卡按**这张卡的种类**判：数字卡接到「大于」上合法、
+     * 布尔卡接到条件判定上合法。一律按文本会让前者被误报成错参。
+     */
+    if (dataKind === 'const' && hit) {
+      const items = constsOf(data as unknown as ConstNodeData);
+      const it = items.find((x, i) => constItemKey(x, i) === key);
+      return it?.valueType ?? 'text';
+    }
+    return 'text';
   }
   return producesArgOf(dataKind, data);
 }
@@ -281,8 +314,12 @@ export function outKindOf(
  * 报错里写「接的是上游 title（文本）」没人看得懂 ——
  * 用户见的是卡片上那行「标题」。
  */
-export function outLabelOf(dataKind: string | undefined | null, key: string | undefined | null): string {
-  const ports = outputsOf(dataKind);
+export function outLabelOf(
+  dataKind: string | undefined | null,
+  key: string | undefined | null,
+  data?: Record<string, unknown> | null,
+): string {
+  const ports = outputsOf(dataKind, data);
   const hit = key ? ports.find((p) => p.key === key) : undefined;
   return hit ? outLabel(hit) : (key ?? OUT_DEFAULT);
 }
@@ -513,16 +550,18 @@ export function producesArgOf(
     case 'gate':
       return 'bool';
     /*
-     * 常量：**按种类**产出。
+     * 常量：**按第一张卡的种类**产出。
      *
      * 三种常量 dataKind 都是 'const'，产出的值种类却不同
-     * （数字常量出 num、布尔常量出 bool）—— 不读 valueType 的话
+     * （数字常量出 num、布尔常量出 bool）—— 不读种类的话
      * 数字常量接到「大于」上会被当成文本，报不该报的「错参」。
      *
-     * 老存档没有 valueType，一律按 text —— 那正是它当初的行为。
+     * 读的是 items[0]：主输出就是第一张卡，两者必须一致。
+     * 具体某一张卡走 outKindOf（按卡 id 找）。
      */
     case 'const': {
-      const vt = String(data?.valueType ?? 'text');
+      const items = constsOf(data as unknown as ConstNodeData);
+      const vt = String(items[0]?.valueType ?? 'text');
       if (vt === 'num') return 'num';
       if (vt === 'bool') return 'bool';
       return 'text';
@@ -642,7 +681,7 @@ export function paramLinkIssues(
     if (actual === expect) continue;
 
     const what = link.sourceArg && link.sourceArg !== OUT_DEFAULT
-      ? `上游「${outLabelOf(srcKind, link.sourceArg)}」`
+      ? `上游「${outLabelOf(srcKind, link.sourceArg, srcData)}」`
       : '上游输出';
 
     (out[link.target] ??= []).push({

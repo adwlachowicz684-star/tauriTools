@@ -2,7 +2,9 @@ import type { NodeProps } from '@xyflow/react';
 import { NodeShell } from './NodeShell';
 import { ArgLine } from './ArgCell';
 import type { BriefPart } from '../engine/ops';
-import { BEEP_PRESET_META, CONST_TYPE_LABEL, normBoolText, type ConstValueType, type BeepNodeData, type WaitNodeData, type LogNodeData, type PlayAudioNodeData, type ClockNodeData, type ConstNodeData } from '../types';
+import {
+  BEEP_PRESET_META, CONST_TYPE_LABEL, normBoolText, constItemKey, constItemLabel, constsOf,
+  type ConstValueType, type ConstItem, type BeepNodeData, type WaitNodeData, type LogNodeData, type PlayAudioNodeData, type ClockNodeData, type ConstNodeData } from '../types';
 import type {
   WaitFlowNode, LogFlowNode, BeepFlowNode, PlayAudioFlowNode,
   ClockFlowNode, ConstFlowNode,
@@ -42,8 +44,8 @@ function Card({
 }
 
 /** 一个可就地编辑的参数格 */
-function val(key: string, text: string, raw: string): BriefPart {
-  return { role: 'val', text, key, raw, edit: { key, kind: 'text' } };
+function val(key: string, text: string, raw: string, edit?: Partial<NonNullable<BriefPart['edit']>>): BriefPart {
+  return { role: 'val', text, key, raw, edit: { key, kind: 'text', ...edit } };
 }
 
 /**
@@ -51,8 +53,8 @@ function val(key: string, text: string, raw: string): BriefPart {
  *
  * raw 给的是**当前值**而不是显示文字 —— 下拉要靠它定位"现在选的是哪一项"。
  */
-function pick(key: string, text: string, raw: string): BriefPart {
-  return { role: 'op', text, raw, edit: { key, kind: 'select' } };
+function pick(key: string, text: string, raw: string, edit?: Partial<NonNullable<BriefPart['edit']>>): BriefPart {
+  return { role: 'op', text, raw, edit: { key, kind: 'select', ...edit } };
 }
 
 /** 毫秒数太长读着累，超过 1 秒就换成秒 */
@@ -214,39 +216,74 @@ export function ClockNode({ id, data, selected }: NodeProps<ClockFlowNode>) {
 
 export function ConstNode({ id, data, selected }: NodeProps<ConstFlowNode>) {
   const d = data as ConstNodeData;
-  const v = d.value === undefined || d.value === null ? '' : String(d.value);
+  const list = constsOf(d);
+
   /*
-   * 布尔常量的值走下拉（真 / 假），其余走输入框。
+   * 整份写 items —— 不写点号路径（items.0.value）。
    *
-   * 三种种类共用同一个 value 字段、按 valueType 分流，
-   * 卡片上必须跟着分 —— 一律给输入框的话，布尔常量可以填进
-   * 「是」「maybe」这类下游认不出的值，而面板里明明是下拉。
-   */
-  const vt: ConstValueType = d.valueType ?? 'text';
-  const isBool = vt === 'bool';
-  /*
-   * 布尔走 dropdown，且显示值与**运行输出**用同一份规范化。
+   * 点号路径在 items 尚不存在时会凭空建出一个没有 id 的对象，
+   * 卡片渲染拿不到稳定 key、连线（按 id 记的）跟着漂。
    *
-   * 不共用的话：老存档里存着「是」「maybe」这类写法时，卡片显示「（空）」
-   * 而运行输出 'false'/'true' —— 看着没值、跑着有值，是最难查的一类。
+   * 也不需要"镜像回顶层"那一步了：顶层没有 value / valueType 字段，
+   * 数据只有 items 这一份，不存在两边对不上的可能。
    */
-  const boolNorm = normBoolText(v);
-  const cell: BriefPart = isBool
-    ? pick('value', boolNorm === 'true' ? '真' : '假', boolNorm)
-    : val('value', v, v);
-  /*
-   * 种类也画成一格（下拉）—— 三种常量合并成一个节点之后，
-   * 切种类不能只剩"打开面板改一项"这条老路。
-   */
-  const kind: BriefPart = pick('valueType', CONST_TYPE_LABEL[vt], vt);
+  const writeAll = (next: ConstItem[]): Record<string, unknown> => ({ items: next });
+
   return (
-    <Card
+    <NodeShell
       id={id}
       type="const"
       data={d}
       selected={selected}
       tag="常量"
-      parts={v ? [kind, cell] : [kind, { role: 'text', text: '（空）' }]}
-    />
+      footExtra={<span className="node-line--foot">常量 · {list.length} 张卡</span>}
+    >
+      <div className="const-cards">
+        {list.map((it, i) => {
+          const vt: ConstValueType = it.valueType ?? 'text';
+          const name = constItemLabel(it, i);
+          const raw = String(it.value ?? '');
+          const idx = i;
+          /** 改这一张卡的某个字段（整份写） */
+          const set = (part: Partial<ConstItem>) =>
+            writeAll(list.map((x, j) => (j === idx ? { ...x, ...part } : x)));
+          const kind: BriefPart = pick(`k${constItemKey(it, i)}`, CONST_TYPE_LABEL[vt], vt, {
+            apply: (v) => set({ valueType: v as ConstValueType }),
+          });
+          /*
+           * 布尔卡的值走下拉，其余走输入框 —— 与面板一致。
+           * 一律给输入框的话，布尔卡能填进「是」「maybe」这类
+           * 下游认不出的值，而面板里明明是下拉。
+           */
+          const norm = normBoolText(raw);
+          const cell: BriefPart = vt === 'bool'
+            ? pick(
+              constItemKey(it, i),
+              norm === 'true' ? '真' : '假',
+              norm,
+              { apply: (v) => set({ value: v }) },
+            )
+            : val(
+              constItemKey(it, i),
+              raw,
+              raw,
+              { apply: (v) => set({ value: v }) },
+            );
+          return (
+            <div className="const-card" key={constItemKey(it, i)}>
+              <div className="const-card-head">
+                <span className="const-card-name" title={name}>{name}</span>
+              </div>
+              <ArgLine
+                nodeId={id}
+                type="const"
+                data={d as unknown as Record<string, unknown>}
+                parts={raw ? [kind, cell] : [kind, { role: 'text', text: '（空）' }]}
+              />
+            </div>
+          );
+        })}
+      </div>
+    </NodeShell>
   );
 }

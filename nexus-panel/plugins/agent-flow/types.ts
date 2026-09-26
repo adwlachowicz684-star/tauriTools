@@ -2148,6 +2148,72 @@ export type ClockNodeData = {
   error: string;
 };
 
+/**
+ * 常量节点上的一张卡。
+ *
+ * 一个常量节点可以放**多张卡**（价格、阈值、开关……），每张卡各产出
+ * 一个值、各带一个输出端口 —— 于是"把阈值接到大于上、把价格接到写入上"
+ * 不用摆三个节点，也不用连线互相看不见。
+ */
+export type ConstItem = {
+  id: string;
+  /**
+   * 这张卡的名字。
+   *
+   * 两个用途，都必须是人能读的中文：
+   *   · 输出端口的名字（卡片上那一行、报错文案里"接的是上游「价格」"）
+   *   · 模板引用 {{节点id.价格}} 读的字段
+   * 留空则显示默认值（见 constItemLabel）。
+   */
+  name?: string;
+  /** 值种类。老数据没有 → 按 text */
+  valueType?: ConstValueType;
+  /** 固定输出。支持模板 */
+  value: string;
+};
+
+/** 卡片的显示名。没起名时退回种类名，保证输出端口永远有名字可显示 */
+export function constItemLabel(it: ConstItem, i: number): string {
+  return (it.name ?? '').trim() || `${CONST_TYPE_LABEL[it.valueType ?? 'text']}${i + 1}`;
+}
+
+/**
+ * 常量卡的**连线键**：连线上记的是它，且改名不会断线。
+ *
+ * 用 id 而不是 name，是因为 name 由用户随时改 ——
+ * 用 name 当键的话，改一次名，已经连好的线就取不到值了
+ * （表现为"保留手填值"，不报错，最难查）。
+ * 模板引用仍用 name（要人能读懂），由执行器额外写一份。
+ */
+export function constItemKey(it: ConstItem, i: number): string {
+  return it.id || `c${i}`;
+}
+
+/**
+ * 一个常量节点有哪些卡。
+ *
+ * items 是**唯一**的数据源 —— 没有"顶层 value / valueType 合成一张"的兜底。
+ *
+ * 曾经有过兜底（老节点只有顶层两个字段，读时合成一张），它带来三处代价：
+ *   · 顶层字段必须与第一张卡双向镜像，写卡时漏一处就是
+ *     "界面看着改了、跑出来还是旧的"，且不报错
+ *   · 卡的 id 是合成出来的常量 'c0'，不是用户那张卡的 id
+ *   · 只读顶层字段的地方（导出说明）永远只看得见第一张卡
+ * 老画布不管，兜底撤掉，数据只有一份。
+ */
+export function constsOf(d: ConstNodeData | null | undefined): ConstItem[] {
+  /*
+   * 可选链不是多余的：producesArgOf 允许不带 data 调用（"这个节点产出什么"），
+   * 那是**合法**用法 —— 少了它会直接抛 TypeError，而不是返回"没有卡"。
+   */
+  return Array.isArray(d?.items) ? d.items : [];
+}
+
+/** 新卡的 id。前缀固定，便于在存档里一眼认出 */
+export function newConstId(): string {
+  return `ci${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export type ConstNodeData = {
   /** 画布显示高度；不填按中号处理 */
   size?: NodeSize;
@@ -2161,14 +2227,13 @@ export type ConstNodeData = {
   kind: 'const';
   label: string;
   /**
-   * 常量种类。
+   * 常量卡 —— **唯一的数据源**。
    *
-   * 老节点没有这个字段 —— 一律按 'text' 处理（那正是它当初的行为）。
-   * 用 `=== false` 之类的写法在这里是错的：缺省该落到 text，不是别的。
+   * 每张卡各自有 valueType / value，节点上不再有顶层的那两个字段：
+   * 两份数据意味着每次写卡都要镜像一遍，漏一处就是
+   * "卡片显示变了、跑出来还是旧的"，且不报错。
    */
-  valueType?: ConstValueType;
-  /** 固定输出。支持模板（模板在运行时求值，所以"常量"也可以是动态拼出来的） */
-  value: string;
+  items: ConstItem[];
   status: NodeStatus;
   output: string;
   error: string;
@@ -2903,21 +2968,32 @@ export function makeAskNode(id: string, partial: Record<string, unknown> = {}): 
   };
 }
 
+/**
+ * 新建常量节点 —— 至少带**一张**卡。
+ *
+ * 空 items 的节点在画布上是一张卡都没有：没有输出端口、主输出空串，
+ * 而节点看着挺正常。所以创建时保证有一张，删到零张的事由面板拦（见 ConstInspector）。
+ */
 export function makeConstNode(id: string, partial: Partial<ConstNodeData> = {}): GraphNode {
-  const vt: ConstValueType = partial.valueType ?? 'text';
+  const items: ConstItem[] = partial.items?.length
+    ? partial.items
+    : [{
+      id: newConstId(),
+      name: '',
+      valueType: 'text',
+      /*
+       * 值留空即可 —— 空串在卡片上是「（空）」，用户一眼看见要填什么。
+       * （布尔卡曾经默认 'true'，是为了避免空值在下游判定时两边不靠；
+       *   现在种类是用户自己切的，切完就在面板上选真/假，不需要猜默认值。）
+       */
+      value: '',
+    }];
   return {
     id,
     data: {
       kind: 'const',
       label: partial.label ?? '常量',
-      valueType: vt,
-      /*
-       * 布尔常量的默认值必须是 'true'，不能是空串。
-       *
-       * 空串输出空串，下游条件节点拿到空值既不等于 true 也不等于 false，
-       * 判定结果取决于它自己的兜底 —— 而用户拖进来时想的是"给个 false"。
-       */
-      value: partial.value ?? (vt === 'bool' ? 'true' : ''),
+      items,
       status: 'idle',
       output: '',
       error: '',

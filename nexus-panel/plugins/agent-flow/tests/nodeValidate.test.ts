@@ -167,7 +167,7 @@ test('当前时间：没格式判红', () => {
 });
 
 test('常量：空值只判黄（输出空串，流程仍能跑）', () => {
-  assert.equal(level('const', { value: '' }), 'warn');
+  assert.equal(level('const', { items: [{ id: 'c0', value: '' }] }), 'warn');
 });
 
 test('日志：没有必填项，恒绿', () => {

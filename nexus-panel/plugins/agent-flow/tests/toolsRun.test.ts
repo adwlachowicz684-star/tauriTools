@@ -69,12 +69,12 @@ test('等待节点：负数要失败', async () => {
 });
 
 test('常量节点：原样输出', async () => {
-  const { summary } = await run([mk('const', 'c1', { value: '固定内容' })], []);
+  const { summary } = await run([mk('const', 'c1', { items: [{ id: 'c0', value: '固定内容' }] })], []);
   assert.equal(summary.outputs.c1, '固定内容');
 });
 
 test('常量节点：支持模板', async () => {
-  const { summary } = await run([mk('const', 'c1', { value: '前缀-{{input}}' })], [], 'X');
+  const { summary } = await run([mk('const', 'c1', { items: [{ id: 'c0', value: '前缀-{{input}}' }] })], [], 'X');
   assert.equal(summary.outputs.c1, '前缀-X');
 });
 
@@ -90,7 +90,7 @@ test('当前时间：没填格式要失败（而非输出空）', async () => {
 
 test('日志节点：不改变数据流，上游内容原样透传', async () => {
   const { summary } = await run(
-    [mk('const', 'c1', { value: '原文' }), mk('log', 'l1', { text: '到这了' })],
+    [mk('const', 'c1', { items: [{ id: 'c0', value: '原文' }] }), mk('log', 'l1', { text: '到这了' })],
     [{ id: 'e1', source: 'c1', target: 'l1' }],
   );
   assert.equal(summary.outputs.l1, '原文', '日志节点必须原样透传');
@@ -105,7 +105,7 @@ test('日志节点：会发出 log 事件', async () => {
 
 test('日志节点：留空则记上游内容', async () => {
   const { events } = await run(
-    [mk('const', 'c1', { value: '上游来的' }), mk('log', 'l1', { text: '' })],
+    [mk('const', 'c1', { items: [{ id: 'c0', value: '上游来的' }] }), mk('log', 'l1', { text: '' })],
     [{ id: 'e1', source: 'c1', target: 'l1' }],
   );
   const logs = events.filter((e) => e.type === 'log');
@@ -120,7 +120,7 @@ test('日志节点：error 级别也不让流程失败', async () => {
   const { summary } = await run(
     [
       mk('log', 'l1', { text: '出问题了', level: 'error' }),
-      mk('const', 'c2', { value: '仍应执行' }),
+      mk('const', 'c2', { items: [{ id: 'c0', value: '仍应执行' }] }),
     ],
     [{ id: 'e1', source: 'l1', target: 'c2' }],
   );

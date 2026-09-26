@@ -1488,6 +1488,14 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
  * 每个监听目标一张卡（与触发条件卡片同款底板 ——
  * 两类卡都是"一个节点里并列的若干项"，各写一套迟早长得不一样）。
  */
+/* 常量卡：一张卡一个值、一个输出端口 */
+.const-cards { display: flex; flex-direction: column; gap: var(--sp-3); }
+.const-card { display: flex; flex-direction: column; gap: 2px; }
+.const-card-head { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+.const-card-name {
+  font-size: var(--fs-note, 11px); color: var(--af-mute);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
 .upd-cards { display: flex; flex-direction: column; gap: var(--sp-3); }
 .upd-card { display: flex; flex-direction: column; gap: 3px; }
 .upd-card.is-off { opacity: 0.55; }

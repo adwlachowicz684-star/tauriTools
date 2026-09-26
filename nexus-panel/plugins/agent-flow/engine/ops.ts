@@ -384,6 +384,17 @@ export type BriefPart = {
     path?: string;
     /** 直接给定选项；不填则按 key 从节点 fields 反查 */
     options?: { value: string; label: string }[];
+    /*
+     * 这一个值要怎么**落盘**。返回的是整份 patch（可以一次改多个字段）。
+     *
+     * 不填就走 `{ [path ?? key]: v }` —— 单个字段够用时不必写它。
+     * 必须写它的场景：节点下挂多张卡（常量卡 / 触发器条目），
+     * 一次改动要写**整份数组**，还要顺带同步顶层的镜像字段。
+     * 用点分路径写单字段的话，老节点上没有那个数组，
+     * setInPath 会凭空建出一个缺 id / 缺种类的对象 ——
+     * 卡片渲染时读它直接抛错，整棵 React 树崩掉。
+     */
+    apply?: (v: string) => Record<string, unknown>;
   };
 };
 

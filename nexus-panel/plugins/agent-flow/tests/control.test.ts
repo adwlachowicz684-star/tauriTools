@@ -35,9 +35,9 @@ async function run(
 test('闸门 · 立即模式：满足条件则透传', async () => {
   const { summary, order } = await run(
     [
-      node('a', 'const', { value: 'hello' }),
+      node('a', 'const', { items: [{ id: 'c0', value: 'hello' }] }),
       node('g', 'gate', { mode: 'now', check: 'contains', value: 'ell' }),
-      node('d', 'const', { value: 'D' }),
+      node('d', 'const', { items: [{ id: 'c0', value: 'D' }] }),
     ],
     [edge('a', 'g'), edge('g', 'd')],
   );
@@ -49,9 +49,9 @@ test('闸门 · 立即模式：满足条件则透传', async () => {
 test('闸门 · 立即模式：不满足则失败且下游跳过', async () => {
   const { summary, order } = await run(
     [
-      node('a', 'const', { value: 'hello' }),
+      node('a', 'const', { items: [{ id: 'c0', value: 'hello' }] }),
       node('g', 'gate', { mode: 'now', check: 'contains', value: 'zzz' }),
-      node('d', 'const', { value: 'D' }),
+      node('d', 'const', { items: [{ id: 'c0', value: 'D' }] }),
     ],
     [edge('a', 'g'), edge('g', 'd')],
   );
@@ -62,7 +62,7 @@ test('闸门 · 立即模式：不满足则失败且下游跳过', async () => {
 
 test('闸门 · 比对值没填时报错，而不是一律放行', async () => {
   const { summary } = await run(
-    [node('a', 'const', { value: 'x' }), node('g', 'gate', { mode: 'now', check: 'contains' })],
+    [node('a', 'const', { items: [{ id: 'c0', value: 'x' }] }), node('g', 'gate', { mode: 'now', check: 'contains' })],
     [edge('a', 'g')],
   );
   assert.equal(summary.ok, false, '选了 contains 却没填比对值应失败');
@@ -71,7 +71,7 @@ test('闸门 · 比对值没填时报错，而不是一律放行', async () => {
 test('闸门 · 等待超时后按配置照样放行（带 warn）', async () => {
   const { summary } = await run(
     [
-      node('a', 'const', { value: 'hello' }),
+      node('a', 'const', { items: [{ id: 'c0', value: 'hello' }] }),
       node('g', 'gate', {
         mode: 'wait', check: 'contains', value: 'zzz',
         timeoutMs: 60, pollMs: 50, onTimeout: 'pass',
@@ -86,7 +86,7 @@ test('闸门 · 等待超时后按配置照样放行（带 warn）', async () =>
 test('闸门 · 等待超时后按配置中断', async () => {
   const { summary } = await run(
     [
-      node('a', 'const', { value: 'hello' }),
+      node('a', 'const', { items: [{ id: 'c0', value: 'hello' }] }),
       node('g', 'gate', {
         mode: 'wait', check: 'contains', value: 'zzz',
         timeoutMs: 60, pollMs: 50, onTimeout: 'fail',
@@ -102,9 +102,9 @@ test('闸门 · 等待超时后按配置中断', async () => {
 test('限流 · 间隔为 0 时直接放行并透传', async () => {
   const { summary, order } = await run(
     [
-      node('a', 'const', { value: 'A' }),
+      node('a', 'const', { items: [{ id: 'c0', value: 'A' }] }),
       node('t', 'throttle', { minIntervalMs: 0 }),
-      node('d', 'const', { value: 'D' }),
+      node('d', 'const', { items: [{ id: 'c0', value: 'D' }] }),
     ],
     [edge('a', 't'), edge('t', 'd')],
   );
@@ -123,7 +123,7 @@ test('限流 · 间隔为 0 时直接放行并透传', async () => {
 test('限流 · 放行上限按节点各自计数', async () => {
   const { summary } = await run(
     [
-      node('a', 'const', { value: 'A' }),
+      node('a', 'const', { items: [{ id: 'c0', value: 'A' }] }),
       node('t1', 'throttle', { minIntervalMs: 0, maxPerRun: 1 }),
       node('t2', 'throttle', { minIntervalMs: 0, maxPerRun: 1 }),
     ],
@@ -137,7 +137,7 @@ test('限流 · 放行上限按节点各自计数', async () => {
 test('限流 · 上限为 1 且只有一个节点时放行', async () => {
   const { summary } = await run(
     [
-      node('a', 'const', { value: 'A' }),
+      node('a', 'const', { items: [{ id: 'c0', value: 'A' }] }),
       node('t', 'throttle', { minIntervalMs: 0, maxPerRun: 1 }),
     ],
     [edge('a', 't')],
@@ -150,9 +150,9 @@ test('限流 · 上限为 1 且只有一个节点时放行', async () => {
 test('超时熔断 · 预算充足则放行并透传', async () => {
   const { summary, order } = await run(
     [
-      node('a', 'const', { value: 'A' }),
+      node('a', 'const', { items: [{ id: 'c0', value: 'A' }] }),
       node('t', 'timeout', { budgetMs: 60000 }),
-      node('d', 'const', { value: 'D' }),
+      node('d', 'const', { items: [{ id: 'c0', value: 'D' }] }),
     ],
     [edge('a', 't'), edge('t', 'd')],
   );
@@ -168,10 +168,10 @@ test('超时熔断 · 超预算即中断', async () => {
    */
   const { summary, order } = await run(
     [
-      node('a', 'const', { value: 'A' }),
+      node('a', 'const', { items: [{ id: 'c0', value: 'A' }] }),
       node('w', 'wait', { ms: 80 }),
       node('t', 'timeout', { budgetMs: 10 }),
-      node('d', 'const', { value: 'D' }),
+      node('d', 'const', { items: [{ id: 'c0', value: 'D' }] }),
     ],
     [edge('a', 'w'), edge('w', 't'), edge('t', 'd')],
   );
@@ -181,7 +181,7 @@ test('超时熔断 · 超预算即中断', async () => {
 
 test('超时熔断 · 预算无效要报错（静默放行等于没配）', async () => {
   const { summary } = await run(
-    [node('a', 'const', { value: 'A' }), node('t', 'timeout', { budgetMs: 0 })],
+    [node('a', 'const', { items: [{ id: 'c0', value: 'A' }] }), node('t', 'timeout', { budgetMs: 0 })],
     [edge('a', 't')],
   );
   assert.equal(summary.ok, false);
@@ -192,7 +192,7 @@ test('超时熔断 · 预算无效要报错（静默放行等于没配）', asyn
 test('重试 · 内容合格就不重跑', async () => {
   const { summary, order } = await run(
     [
-      node('a', 'const', { value: 'ok' }),
+      node('a', 'const', { items: [{ id: 'c0', value: 'ok' }] }),
       node('r', 'retry', { target: 'a', times: 3, check: 'nonempty', intervalMs: 0 }),
     ],
     [edge('a', 'r')],
@@ -210,7 +210,7 @@ test('重试 · 内容合格就不重跑', async () => {
 test('重试 · 不合格会真的重跑目标节点', async () => {
   const { summary, order } = await run(
     [
-      node('a', 'const', { value: '' }),
+      node('a', 'const', { items: [{ id: 'c0', value: '' }] }),
       node('r', 'retry', { target: 'a', times: 2, check: 'nonempty', intervalMs: 0 }),
     ],
     [edge('a', 'r')],
@@ -222,9 +222,9 @@ test('重试 · 不合格会真的重跑目标节点', async () => {
 test('重试 · 用完次数仍不合格要失败，不静默放行', async () => {
   const { summary, order } = await run(
     [
-      node('a', 'const', { value: '' }),
+      node('a', 'const', { items: [{ id: 'c0', value: '' }] }),
       node('r', 'retry', { target: 'a', times: 1, check: 'nonempty', intervalMs: 0 }),
-      node('d', 'const', { value: 'D' }),
+      node('d', 'const', { items: [{ id: 'c0', value: 'D' }] }),
     ],
     [edge('a', 'r'), edge('r', 'd')],
   );
@@ -234,7 +234,7 @@ test('重试 · 用完次数仍不合格要失败，不静默放行', async () =
 
 test('重试 · 目标不存在要报清楚', async () => {
   const { summary } = await run(
-    [node('a', 'const', { value: 'x' }), node('r', 'retry', { target: '不存在的节点', times: 1 })],
+    [node('a', 'const', { items: [{ id: 'c0', value: 'x' }] }), node('r', 'retry', { target: '不存在的节点', times: 1 })],
     [edge('a', 'r')],
   );
   assert.equal(summary.ok, false);
@@ -242,7 +242,7 @@ test('重试 · 目标不存在要报清楚', async () => {
 
 test('重试 · 没填目标要报错', async () => {
   const { summary } = await run(
-    [node('a', 'const', { value: 'x' }), node('r', 'retry', { times: 1 })],
+    [node('a', 'const', { items: [{ id: 'c0', value: 'x' }] }), node('r', 'retry', { times: 1 })],
     [edge('a', 'r')],
   );
   assert.equal(summary.ok, false);
@@ -262,7 +262,7 @@ test('控制器一律透传上游，不改写数据', async () => {
   ];
   for (const k of kinds) {
     const { summary } = await run(
-      [node('a', 'const', { value: 'PAYLOAD' }), node('c', k.kind, k.extra)],
+      [node('a', 'const', { items: [{ id: 'c0', value: 'PAYLOAD' }] }), node('c', k.kind, k.extra)],
       [edge('a', 'c')],
     );
     assert.equal(summary.outputs.c, 'PAYLOAD', `${k.kind} 应原样透传`);

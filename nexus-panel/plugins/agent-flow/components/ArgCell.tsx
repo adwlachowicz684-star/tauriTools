@@ -209,7 +209,7 @@ export function ArgCell({ nodeId, type, part, className, data }: ArgCellProps) {
         <select
           className="node-arg-sel nodrag nopan"
           value={part.raw ?? ''}
-          onChange={(e) => patch?.(nodeId, { [writeKey]: e.target.value })}
+          onChange={(e) => patch?.(nodeId, edit.apply ? edit.apply(e.target.value) : { [writeKey]: e.target.value })}
           onMouseDown={(e: MouseEvent) => e.stopPropagation()}
         >
           {options.map((o) => (
@@ -224,7 +224,7 @@ export function ArgCell({ nodeId, type, part, className, data }: ArgCellProps) {
 
   if (draft !== null && edit) {
     const commit = () => {
-      patch?.(nodeId, { [writeKey]: draft });
+      patch?.(nodeId, edit.apply ? edit.apply(draft) : { [writeKey]: draft });
       setDraft(null);
     };
     /*
