@@ -42,6 +42,18 @@
 | `timeoutSec` | number | 超时（秒） | — | — |
 | `targets` | 隐藏（不在面板字段里） | 要盯的目标列表（唯一数据源）。每张 = { id, kind, name, feedUrl, enabled, lastSeenId }；kind 决定盯哪个平台（取值是完整拼写如 bilibili，不是节点 type bili），feedUrl 是订阅源地址 —— 除 youtube / podcast 外都没有官方源，地址要照 UPDATE_SOURCE_META[kind].route 的示例拼。新建节点用 def.create()，它会直接落一份 targets；不要建顶层的 source / feedUrl —— 老存档缺 targets 时由 targetsOf() 读时合成一张卡，那是兼容路径，不是写入路径。 | `bilibili` / `wechat` / `xiaohongshu` / `weibo` / `zhihu` / `douyin` / `kuaishou` / `toutiao` / `douban` / `juejin` / `csdn` / `jianshu` / `v2ex` / `youtube` / `twitter` / `podcast` / `github` / `custom` | — |
 
+## 具名输出（除「结论」外还能取到什么）
+
+用 `{{节点id.字段名}}` 取，或直接从卡片上对应的那个出口拖线。
+
+| 字段名 | 显示名 | 值种类 |
+|---|---|---|
+| `updated` | 是否有更新 | bool |
+| `title` | 标题 | text |
+| `url` | 链接 | text |
+| `date` | 时间 | text |
+
+
 ## 建节点的正确方式
 
 用 `def.create()`（即 `makeXxxNode`）建节点，它会填好默认值。

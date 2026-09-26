@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   deriveParams, describeBlock, describeAll, conventions, pickBrief, producesDescOf,
-  type FieldLike,
+  catalog, outFieldsOf, type FieldLike,
 } from '../engine/blockApi';
+import { NODE_OUTPUTS } from '../engine/paramLinks';
 
 /**
  * 积木描述 API —— 运行时查询接口（docs/ 是它的离线快照）。
@@ -147,4 +148,59 @@ test('产出说明取得到（fallback 用）', () => {
   // 未知 kind 给空串，不能抛
   assert.equal(producesDescOf('nope'), '');
   assert.equal(producesDescOf(undefined), '');
+});
+
+/* ================= 具名输出字段 ================= */
+
+/*
+ * 以下三条盯的是同一件事的**两个方向**：
+ *
+ *   1. 契约里能取到（不然 AI 只能猜字段名，猜错是静默的空串）
+ *   2. 清单来自 NODE_OUTPUTS，不是这里另写一份（写两份必然漂移）
+ *
+ * 只做方向 1 的话，把 outFieldsOf 改成一个写死的常量数组也能过，
+ * 而那正是"同一件事写两遍"的开头。所以方向 2 用**反向对账**：
+ * NODE_OUTPUTS 里登记的每个 kind，catalog 里都必须有对应字段。
+ */
+
+test('具名输出字段进了契约 —— AI 不再只能猜 {{节点id.字段名}}', () => {
+  const byKind = new Map(catalog().map((b) => [b.kind, b]));
+  for (const [kind, ports] of Object.entries(NODE_OUTPUTS)) {
+    const named = ports.filter((p) => p.key !== 'out');
+    if (named.length === 0) continue;
+    const info = byKind.get(kind);
+    assert.ok(info, `${kind} 不在契约里`);
+    assert.equal(
+      info.outFields.length,
+      named.length,
+      `${kind} 的具名输出字段数对不上：契约 ${info.outFields.length} vs 出口表 ${named.length}`,
+    );
+  }
+});
+
+test('CLI 的八个文件字段能从契约取到（不是只有「结论」一个口）', () => {
+  const task = catalog().find((b) => b.kind === 'task');
+  assert.ok(task);
+  const keys = task.outFields.map((f) => f.key);
+  assert.ok(keys.includes('fileName'), 'CLI 产出的文件名必须可取');
+  assert.ok(keys.includes('file'), 'CLI 产出的文件路径必须可取');
+  assert.ok(keys.length >= 8, `CLI 应有 8 个文件字段，实际 ${keys.length}`);
+  // 标签是人话名字，不是 key
+  for (const f of task.outFields) {
+    assert.ok(f.label.length > 0, `${f.key} 没有显示名`);
+  }
+});
+
+test('窗格字段写在契约里 —— paneField 是函数调用，扫描器看不见', () => {
+  for (const kind of ['task', 'llmChat']) {
+    const info = catalog().find((b) => b.kind === kind);
+    assert.ok(info, `${kind} 不在契约里`);
+    const keys = info.hiddenParams.map((p) => p.key);
+    assert.ok(keys.includes('paneId'), `${kind} 的 paneId 没写进 hiddenParams`);
+  }
+});
+
+test('不传清单时 outFields 为空 —— 那是"没提供"，不是"没有字段"', () => {
+  assert.deepEqual(outFieldsOf('math'), []);
+  assert.ok(outFieldsOf('update').some((f) => f.key === 'title'));
 });

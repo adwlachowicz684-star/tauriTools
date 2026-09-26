@@ -22,7 +22,7 @@
 
 > `imageReader` 是**按需**的：只有满足特定条件时才需要（见参数页）。
 
-共 16 项：
+共 17 项：
 
 | 参数 | 类型 | 说明 | 取值 | 显示条件 |
 |---|---|---|---|---|
@@ -42,9 +42,20 @@
 | `temperature` | number | 温度；越低越稳定，越高越发散；占位：留空用窗格的，再没有则 0.3 | — | ` → isChat` |
 | `maxTokens` | number | 最大输出 token；占位：留空不限制 | — | — |
 | `jsonMode` | switch | 占位：要求结构化 JSON 输出 | — | — |
+| `paneId` | 隐藏（不在面板字段里） | 所属任务窗格（apiPane）的 id。留空 = 不挂窗格。挂了之后：system / temperature 没填时用窗格那一份，连接与模型也可继承。由 paneField 卡片组提供。 | — | — |
+
+## 具名输出（除「结论」外还能取到什么）
+
+用 `{{节点id.字段名}}` 取，或直接从卡片上对应的那个出口拖线。
+
+| 字段名 | 显示名 | 值种类 |
+|---|---|---|
+| `text` | 内容 | text |
+| `chars` | 字数 | num |
+
 
 ## 建节点的正确方式
 
 用 `def.create()`（即 `makeXxxNode`）建节点，它会填好默认值。
 手工拼 `{ kind: 'llmChat' }` 会缺默认字段 ——
-本控件尤其要注意 `llm` / `use` / `imageSource` / `url` / `path` / `detail` / `targetLang` / `sourceLang` / `glossary`，它不在面板字段里。
+本控件尤其要注意 `llm` / `use` / `imageSource` / `url` / `path` / `detail` / `targetLang` / `sourceLang` / `glossary` / `paneId`，它不在面板字段里。

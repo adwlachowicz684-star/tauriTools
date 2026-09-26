@@ -34,6 +34,16 @@
 | `glossary` | textarea | 术语表（可选）；每行一条「原文=译文」，保证专有名词译法一致；占位：GPU=图形处理器\nTransformer=变换器 | — | — |
 | `llm` | 隐藏（不在面板字段里） | 大模型配置 { url, model, apiKey, timeoutSec }。由 llm-config 卡片组提供，建节点时 def.create() 会填默认值 | — | — |
 
+## 具名输出（除「结论」外还能取到什么）
+
+用 `{{节点id.字段名}}` 取，或直接从卡片上对应的那个出口拖线。
+
+| 字段名 | 显示名 | 值种类 |
+|---|---|---|
+| `text` | 译文 | text |
+| `chars` | 字数 | num |
+
+
 ## 建节点的正确方式
 
 用 `def.create()`（即 `makeXxxNode`）建节点，它会填好默认值。

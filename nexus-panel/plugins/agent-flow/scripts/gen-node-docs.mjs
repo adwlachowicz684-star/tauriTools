@@ -486,7 +486,13 @@ ${g.usedBy.length ? g.usedBy.map((u) => `- [\`${u.kind}\`](../nodes/${u.kind}.pa
 /* ================= 组装 ================= */
 const cards = collectCardGroups();
 
-const blocks = spec.blockCatalog();
+/*
+ * 用 api.catalog() 而不是 spec.blockCatalog() ——
+ * 后者不传清单，outFields 恒为空数组，于是文档里永远看不到
+ * 「除主输出外还能取到哪些字段」，而空数组与"这个节点没有具名字段"
+ * 在界面上长得一模一样。
+ */
+const blocks = api.catalog();
 const byKind = new Map(blocks.map((b) => [b.kind, b]));
 
 /** 参数：优先派生自 fields；manualParams 的用契约定好的 params */
@@ -751,6 +757,23 @@ ${b.producesDesc ?? '（无说明）'}
         .filter(Boolean).join('；') || '—';
       p += `| \`${r.key}\`${r.required ? ' **必填**' : ''} | ${r.type} | ${hint} | ${opts} | ${r.when ? `\`${r.when}\`` : '—'} |\n`;
     }
+  }
+
+  /*
+   * 具名输出字段 —— 除主输出外，还能用 {{节点id.字段名}} 取到的那些。
+   *
+   * 这一段此前**完全没有**：文档只说"可以用 {{节点id.字段名}} 取附加字段"，
+   * 却没说每个节点有哪些字段名。于是只能猜，猜错不是报错而是取到空串。
+   */
+  const outs = b.outFields ?? [];
+  if (outs.length) {
+    p += `\n## 具名输出（除「结论」外还能取到什么）\n\n`;
+    p += `用 \`{{节点id.字段名}}\` 取，或直接从卡片上对应的那个出口拖线。\n\n`;
+    p += `| 字段名 | 显示名 | 值种类 |\n|---|---|---|\n`;
+    for (const f of outs) {
+      p += `| \`${f.key}\` | ${f.label} | ${f.kind ?? 'text'} |\n`;
+    }
+    p += '\n';
   }
 
   p += `\n## 建节点的正确方式

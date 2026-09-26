@@ -25,8 +25,49 @@
 
 import {
   SPECS, specOf, TEMPLATE_VARS, CAPABILITY_SIGNATURES,
-  EDGE_SHAPE, BRANCH_EDGE_EXAMPLE, type NodeSpec,
+  EDGE_SHAPE, BRANCH_EDGE_EXAMPLE, blockCatalog,
+  type NodeSpec, type OutField,
 } from './nodeSpec';
+
+/*
+ * ================= 具名输出字段从这里进契约 =================
+ *
+ * 字段的**唯一定义处**是 paramLinks 的 NODE_OUTPUTS（它还决定了卡片上
+ * 画几个可拖的出口）。nodeSpec 刻意不 import paramLinks —— 依赖方向是
+ * paramLinks → nodeSpec，反着来就是环。
+ *
+ * 所以由这一层（能 import 两边）把清单喂进去，nodeSpec 只留类型与位置。
+ * 少走这一步，契约里 outFields 恒为空数组，而**空数组与"这个节点
+ * 没有具名字段"长得一模一样** —— 又是一个安静的缺口。
+ */
+import { outputsOf, OUT_DEFAULT, outLabel } from './paramLinks';
+
+/**
+ * 某个节点除主输出外还能取到哪些字段。
+ *
+ * 用于 `{{节点id.字段名}}` 模板，也是卡片上那些可拖出口的同一份清单。
+ * 常量（const）与大模型（llmChat）的字段随卡片 / 用途变动，
+ * 这里给的是不带 data 时的默认形状，够 AI 知道"有这类字段可取"。
+ */
+export function outFieldsOf(kind: string): OutField[] {
+  const ports = outputsOf(kind);
+  const out: OutField[] = [];
+  for (const p of ports) {
+    if (p.key === OUT_DEFAULT) continue;
+    out.push({ key: p.key, label: outLabel(p), ...(p.kind ? { kind: p.kind } : {}) });
+  }
+  return out;
+}
+
+/**
+ * 全部积木的**完整**契约（nodeSpec.blockCatalog 不传清单时 outFields 为空）。
+ *
+ * 给 AI 消费时一律用这个，不要用 nodeSpec.blockCatalog() ——
+ * 后者拿不到具名输出字段。
+ */
+export function catalog() {
+  return blockCatalog(outFieldsOf);
+}
 
 /**
  * 字段的最小形状。
@@ -74,6 +115,8 @@ export type BlockDesc = {
   signatures: Record<string, string>;
   /** 不在 fields 里、因此派生不出来的参数 */
   hiddenParams: { key: string; desc: string; options?: string[] }[];
+  /** 除主输出外还能取到的具名输出字段，用于 {{节点id.字段名}} */
+  outFields: OutField[];
   /** 从 fields 派生的参数；没给 fields 时为空 */
   params: ParamRow[];
   /** 面板上的提示（note 块） */
@@ -203,6 +246,7 @@ export function describeBlock(kind: string, fields?: FieldLike[]): BlockDesc | n
       desc: p.desc ?? '',
       options: p.options,
     })),
+    outFields: outFieldsOf(kind),
     params,
     notes: derived.notes,
     paramsFromFields: !spec.manualParams,

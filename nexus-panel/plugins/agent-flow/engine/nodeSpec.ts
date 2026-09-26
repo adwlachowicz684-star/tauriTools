@@ -147,6 +147,47 @@ export type NodeSpec = {
   manualParams?: boolean;
   /** manualParams 时手写的参数说明 */
   params?: ParamSpec[];
+  /**
+   * 除主输出外还能取到的**具名输出字段**。
+   *
+   * ================= 为什么契约里必须有这一项 =================
+   *
+   * TEMPLATE_VARS 里明写了 `{{节点id.字段名}}` 可以取"节点产出附加字段"，
+   * 并且 warn 说"字段名由各节点的 nodeFields 决定，不是所有节点都有"。
+   * 但在补上这一项之前，**没有任何一处告诉消费方每个节点有哪些字段名** ——
+   * AI 只能猜，猜错的结果不是报错，而是模板取到空串：
+   * 下游拿到空值继续往下跑，界面与日志都正常，只有结果不对。
+   *
+   * 卡片上那些可拖的出口（NODE_OUTPUTS）对 AI 也不可见：它拼的是数据，
+   * 不是拖线，所以"有功能但够不着"这一侧只能靠这里补。
+   *
+   * ================= 为什么不在这里手抄一份清单 =================
+   *
+   * 字段的**唯一定义处**是 engine/paramLinks.ts 的 NODE_OUTPUTS
+   * （它是"卡片上画几个出口、连线取哪个值"的依据）。
+   * 在这里再写一份就是同一件事写两遍，加字段时漏改必然漂移 ——
+   * 而漂移的表现恰恰又是"少几个能取的值"，安静且难发现。
+   *
+   * 所以这里只留**类型与位置**，值由 blockCatalog(outFieldsOf) 注入：
+   * engine/blockApi.ts 能 import paramLinks（nodeSpec 不能，依赖方向是
+   * paramLinks → nodeSpec），由它把真实清单喂进来。
+   */
+  outFields?: OutField[];
+};
+
+/**
+ * 一个具名输出字段。
+ *
+ * label 用**人话名字**（如「标题」「状态码」），不是 key ——
+ * 报错文案与模板提示里出现的都该是前者。
+ */
+export type OutField = {
+  /** 字段名，用于 {{节点id.字段名}} 与连线取值 */
+  key: string;
+  /** 显示名 */
+  label: string;
+  /** 这个值的种类（用于参数连线校验）。不写按文本 */
+  kind?: string;
 };
 
 export type ParamSpec = {
@@ -214,8 +255,26 @@ export const SPECS: Record<string, NodeSpec> = {
     ],
   }),
 
-  // 任务：CLI 的输出
-  task: S('text', 'any', 'CLI 的执行输出'),
+  /*
+   * 任务：CLI 的输出。
+   *
+   * paneId 是**函数调用产出的字段**（paneField()），不是字面量对象 ——
+   * 源码扫描器认不出函数调用，于是文档参数表里**没有它**，
+   * AI 拼装时也就不知道"CLI 节点可以挂窗格、共享配置从窗格继承"。
+   *
+   * 这类字段正是 hiddenParams 存在的理由：fields 里看不出来，
+   * 但它是真实可写的键（走 def.create() 或 patch 都行）。
+   */
+  task: S('text', 'any', 'CLI 的执行输出', {
+    hiddenParams: [
+      {
+        key: 'paneId',
+        desc: '所属任务窗格（taskPane）的 id。留空 = 不挂窗格。'
+          + '挂了之后：节点上填了的项优先，没填的从窗格继承（工作目录 / 默认连接 / 模型 / 自动批准）'
+          + ' —— 窗格改一次，整组跟着变。由 paneField 卡片组提供。',
+      },
+    ],
+  }),
 
   // 流程控制
   /*
@@ -301,6 +360,17 @@ export const SPECS: Record<string, NodeSpec> = {
       { key: 'targetLang', desc: '仅 use=translate：目标语言。可填预设码（zh / en），也可填「简练的文言文」这类自由描述', required: true },
       { key: 'sourceLang', desc: '仅 use=translate：源语言，留空或 auto 让模型自动判断' },
       { key: 'glossary', desc: '仅 use=translate：术语表，每行「原文=译文」' },
+      /*
+       * 同 task：paneField() 是函数调用，扫描器看不出，
+       * 文档参数表里没有这一项。不写在这里，AI 拼出来的大模型节点
+       * 永远拿不到窗格上那一份连接 / 模型 / 角色设定 / 温度。
+       */
+      {
+        key: 'paneId',
+        desc: '所属任务窗格（apiPane）的 id。留空 = 不挂窗格。'
+          + '挂了之后：system / temperature 没填时用窗格那一份，连接与模型也可继承。'
+          + '由 paneField 卡片组提供。',
+      },
     ],
   }),
 
@@ -612,6 +682,13 @@ export type BlockInfo = {
   hiddenParams: ParamSpec[];
   /** true 表示参数需从 fields 派生（本文件不重复写） */
   paramsFromFields: boolean;
+  /**
+   * 除主输出外还能取到的具名输出字段。
+   *
+   * 不传 outFieldsOf 时为空 —— 那不是"这个节点没有具名字段"，
+   * 而是"调用方没能提供清单"。要完整版请用 blockApi 的 catalog()。
+   */
+  outFields: OutField[];
 };
 
 /**
@@ -621,7 +698,9 @@ export type BlockInfo = {
  * 再抄一份就是"同一件事写两遍"，改一处忘另一处必然漂移。
  * 参数由调用方用 fields 派生（deriveParams），这里只标出去哪儿取。
  */
-export function blockCatalog(): BlockInfo[] {
+export function blockCatalog(
+  outFieldsOf?: (kind: string) => OutField[],
+): BlockInfo[] {
   return Object.keys(SPECS).sort().map((k) => {
     const s = SPECS[k];
     return {
@@ -632,6 +711,7 @@ export function blockCatalog(): BlockInfo[] {
       requires: s.requires ?? [],
       hiddenParams: s.hiddenParams ?? [],
       paramsFromFields: !s.manualParams,
+      outFields: outFieldsOf ? outFieldsOf(k) : [],
     };
   });
 }
