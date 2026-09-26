@@ -159,6 +159,29 @@ test('提示音：音量越界判红', () => {
   assert.equal(level('beep', { volume: 0.5 }), 'ok');
 });
 
+/**
+ * 「提示音」与「播放音频」合并成「播放声音」后，校验器一度没跟上：
+ * 本地文件这条路的 path 空着是绿灯（执行器抛「没填音频文件路径」），
+ * 而没填 volume 的老存档却被标红（执行器按默认 0.6 正常播）。
+ *
+ * 漏报与误报同时存在，且都源于"校验器没跟着执行器走"。
+ */
+test('播放声音：选了本地文件却没填路径判红', () => {
+  assert.equal(level('beep', { source: 'file', path: '', volume: 0.6 }), 'error');
+  assert.equal(level('beep', { source: 'file', path: '/a.mp3', volume: 0.6 }), 'ok');
+});
+
+test('播放声音：系统音效那条路不要求路径', () => {
+  assert.equal(level('beep', { source: 'preset', preset: 'success', path: '' }), 'ok');
+  /* 缺省即 preset（老存档没有 source 字段） */
+  assert.equal(level('beep', { preset: 'success', path: '' }), 'ok');
+});
+
+test('播放声音：没填音量不判红（执行器用默认 0.6）', () => {
+  assert.equal(level('beep', { source: 'preset', preset: 'success' }), 'ok');
+  assert.equal(level('beep', { source: 'preset', preset: 'success', volume: '' }), 'ok');
+});
+
 test('播放音频：没路径判红', () => {
   assert.equal(level('play-audio', { path: '' }), 'error');
 });

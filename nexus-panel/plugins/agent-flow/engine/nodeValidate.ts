@@ -401,9 +401,40 @@ function vWait(d: WaitNodeData): V {
   return ok();
 }
 
+/*
+ * 播放声音（合并后的节点：系统音效 / 本地文件两条路）。
+ *
+ * ================= 为什么不能照抄 vPlayAudio =================
+ *
+ * 这个节点是「提示音」与「播放音频」合并出来的，用 source 切换声源。
+ * 而这份校验在合并后**一直没跟上**，两处都错了，且错的方向相反：
+ *
+ *   ① 漏报：source='file' 且 path 空着 → 徽章绿灯，
+ *      而执行器 throw '没填音频文件路径'，跑起来才失败。
+ *      与表格四件套那次是同一类：执行器抛错、编辑期完全看不见。
+ *
+ *   ② 误报：没填 volume（老存档就没有这个字段）→ 徽章报红
+ *      「音量要在 0~1 之间」，而执行器按默认 0.6 正常播放。
+ *      误报比漏报更糟：用户会去改一个本来能跑的节点。
+ *
+ * 两条都源于"校验器没跟着执行器走"。执行器对 volume 的约定写在那边
+ * 的注释里：**空 = 用默认，显式填了越界值才是错**。这里必须一致。
+ */
 function vBeep(d: BeepNodeData): V {
-  const v = Number(d.volume);
-  if (!Number.isFinite(v) || v < 0 || v > 1) return error('音量要在 0~1 之间');
+  const raw: unknown = d.volume;
+  const empty = raw === undefined || raw === null || raw === '';
+  const v = empty ? 0.6 : Number(raw);
+  if (!Number.isFinite(v) || v < 0 || v > 1) {
+    return error(`音量要在 0~1 之间，当前是 ${String(raw)}`);
+  }
+  /*
+   * source 缺省 'preset'（老存档没有这个字段，它们当初就是系统音效）；
+   * 只有本地文件这条路才需要路径 —— 反过来在系统音效模式下要求 path，
+   * 用户会在一个根本不显示的输入框上找问题。
+   */
+  if ((d.source ?? 'preset') === 'file' && blank(d.path)) {
+    return error('没填音频文件路径');
+  }
   return ok();
 }
 
