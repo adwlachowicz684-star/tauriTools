@@ -301,6 +301,12 @@ export const plugins = [
     icon: '📂',
     kind: 'service',
     type: 'module',
+    /*
+     * ⚠️ interactive 不能少：不标的话宿主不会把容器浮出来，
+     * pick 的 Promise **永远悬着** —— 既不报错也不返回，
+     * 界面上就是「浏览」按钮点了没反应。（folder-picker-test.mjs 钉着）
+     */
+    interactive: true,
     entry: './plugins/folder-picker/module.js',
     version: '1.0.0',
     builtin: true,

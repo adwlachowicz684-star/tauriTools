@@ -22,6 +22,9 @@ import {
 } from '../../js/themes.js';
 /* 颜色拆分/合并与 React 版共用同一份（js/theme-color.js） */
 import { splitColor, joinColor } from '../../js/theme-color.js';
+/* 常用文件夹：归一化 / 去重 / 上限与 React 版、folder-picker 共用同一份。
+   各写一份迟早在某处漏掉"去尾部斜杠"，于是同一个目录被判成两条收藏。 */
+import { normPath, favLabel, favIndexOf, FAV_MAX } from '../../js/fav-dirs.js';
 import { prompt as askPrompt } from '../../js/dialog.js';
 import { SHELL_SHORTCUT_SPECS, shellComboSet, normCombo } from '../../js/shell-shortcuts.js';
 import {
@@ -184,6 +187,7 @@ export default definePlugin({
       external: h('div', {}),
       files: h('div', {}),
       shortcuts: h('div', {}),
+      favdirs: h('div', {}),
       window: h('div', {}),
       about: h('div', {}),
     };
@@ -193,6 +197,7 @@ export default definePlugin({
       ['external', '外链'],
       ['files', '文件'],
       ['shortcuts', '快捷键'],
+      ['favdirs', '常用文件夹'],
       ['window', '窗口'],
       ['about', '关于'],
     ];
@@ -1003,7 +1008,152 @@ export default definePlugin({
       card.appendChild(h('div.p-muted', {
         style: { marginTop: '10px', fontSize: '11px', lineHeight: '1.6' },
       }, '标题栏 ⇲ 按钮随时可以直接藏到托盘，与这里的选择无关。'));
-      pages.window.appendChild(card);
+      /* ============ 4.5 常用文件夹 ============ */
+    /*
+     * 与 React 版（plugins/settings/FavDirsCard.tsx）同款。
+     *
+     * 为什么无构建版必须有这一页：
+     *   第 52 节断言要求两版分页一致 —— 少一个 tab 在另一种构建模式下
+     *   就是整块功能消失，而且不报错。
+     *
+     * 【改名走整表替换】
+     *   后端 fpx_save_fav_dirs 是整表替换，不是单条增删改。
+     *   前端先改本地数组再整表写回，写完**必须重新拉一次** ——
+     *   不重拉的话界面显示的是"我以为存成了的样子"，
+     *   一旦后端因为去重 / 上限截断了某条，界面就和磁盘不一致，
+     *   而这种不一致不会报错，要等下次打开才发现。
+     */
+    {
+      const listBox = h('div', {});
+      const errBox = h('div', {});
+      const draftInput = h('input.p-input', {
+        type: 'text',
+        placeholder: '粘贴要收藏的目录完整路径，回车加入',
+        style: { flex: '1', height: '30px', fontSize: '12px', padding: '0 10px', minWidth: '0' },
+      });
+      let favs = [];
+      let busy = false;
+
+      const setErr = (m) => { errBox.textContent = m || ''; errBox.style.display = m ? '' : 'none'; };
+
+      const refresh = async () => {
+        try {
+          const list = await ctx.invoke('fpx_list_fav_dirs');
+          favs = (list || []).map((f) => ({
+            path: normPath(f && f.path),
+            label: String((f && f.label) || '').trim(),
+          })).filter((f) => !!f.path);
+          setErr('');
+        } catch (e) {
+          favs = [];
+          setErr(String((e && e.message) || e));
+        }
+      };
+
+      const save = async (next) => {
+        busy = true;
+        try {
+          await ctx.invoke('fpx_save_fav_dirs', {
+            dirs: next.map((f) => ({ path: f.path, label: f.label || null })),
+          });
+          await refresh();
+          renderFavs();
+          return true;
+        } catch (e) {
+          ctx.toast(String((e && e.message) || e), 'err');
+          return false;
+        } finally {
+          busy = false;
+        }
+      };
+
+      const add = async (raw) => {
+        const p = normPath(raw);
+        if (!p || busy) return;
+        if (favIndexOf(favs, p) >= 0) { ctx.toast('这个目录已经在常用里了', 'err'); return; }
+        if (favs.length >= FAV_MAX) { ctx.toast(`常用文件夹最多 ${FAV_MAX} 个`, 'err'); return; }
+        if (await save(favs.concat([{ path: p, label: '' }]))) draftInput.value = '';
+      };
+
+      /* 浏览：调统一的选择服务，不在设置页里再写一套选择器。
+         失败必须明确提示 —— 点了没反应，用户只会认为是按钮坏了。 */
+      const browse = async () => {
+        try {
+          const r = await ctx.services.call('folder-picker', 'pick', {
+            title: '选择要收藏的文件夹',
+            startPath: (draftInput.value || '').trim(),
+            allowCreate: false,
+          });
+          const p = normPath(r && r.path);
+          if (p) await add(p);
+        } catch (e) {
+          ctx.toast(`打开目录选择器失败：${String((e && e.message) || e)}（也可以直接粘贴路径）`, 'err');
+        }
+      };
+
+      const renderFavs = () => {
+        listBox.innerHTML = '';
+        if (!favs.length) {
+          listBox.appendChild(h('div.p-muted', {}, '还没有常用文件夹。'));
+          return;
+        }
+        for (const f of favs) {
+          const nameInput = h('input.p-input.sm', {
+            value: f.label,
+            placeholder: '昵称（可留空）',
+            style: { flex: '1', minWidth: '0' },
+          });
+          listBox.appendChild(h('div.p-row', {},
+            h('div.p-mono', { style: { flex: '1', minWidth: '0', wordBreak: 'break-all' } }, f.path),
+            nameInput,
+            h('button.p-btn.sm', {
+              type: 'button',
+              onclick: async () => {
+                const i = favIndexOf(favs, f.path);
+                if (i < 0) return;
+                const next = favs.slice();
+                next[i] = { path: f.path, label: (nameInput.value || '').trim() };
+                await save(next);
+              },
+            }, '改名'),
+            h('button.p-btn.sm', {
+              type: 'button',
+              onclick: async () => {
+                const i = favIndexOf(favs, f.path);
+                if (i < 0) return;
+                await save(favs.filter((_, k) => k !== i));
+              },
+            }, '删除'),
+          ));
+        }
+      };
+
+      draftInput.onkeydown = (e) => { if (e.key === 'Enter') add(draftInput.value); };
+
+      pages.favdirs.appendChild(
+        h('div.p-card', {},
+          h('h2', {}, '常用文件夹'),
+          h('div.p-muted', { style: { marginBottom: 'var(--sp-6, 12px)', lineHeight: '1.9' } },
+            '在这里收藏的目录，会出现在所有「选择文件夹」的界面顶部（项目组、agent-flow 共用同一份）。',
+            h('br', {}),
+            '可以只填路径 —— 不填昵称时显示文件夹本身的名称：',
+            favs.length ? ` 当前 ${favs.length} / ${FAV_MAX} 条。` : ` 上限 ${FAV_MAX} 条。`),
+          errBox,
+          h('div.p-row', { style: { marginTop: '10px' } },
+            draftInput,
+            h('button.p-btn', { type: 'button', onclick: () => add(draftInput.value) }, '＋ 加入'),
+            h('button.p-btn', { type: 'button', onclick: () => browse() }, '浏览…'),
+          ),
+          listBox,
+        ),
+      );
+
+      errBox.style.display = 'none';
+      await refresh();
+      renderFavs();
+    }
+
+    pages.window.appendChild(card);
 
       // 初值：走桥接读（iframe 隔离态下本地读不到用户的实际选择）
       ctx.shell.window.getCloseAction()

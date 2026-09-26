@@ -26,6 +26,20 @@ export interface IconGroup {
   icons: string[];
 }
 
+/**
+ * 收藏目录（工具级，不是某个插件的私有配置）。
+ *
+ * 存在 FpxConfig.fav_dirs 里、由 Rust 侧统一读写 ——
+ * 所以在哪个界面收藏的，在另一个界面同样看得见。
+ * 纯函数（归一化 / 去重 / 上限）在 js/fav-dirs.js，
+ * 设置页卡片与 folder-picker 共用同一份。
+ */
+export interface FavDir {
+  path: string;
+  /** 昵称。未起名时为 null，界面回退显示路径末段 */
+  label: string | null;
+}
+
 export interface FpxConfig {
   /** config schema 版本。老配置没有这个键，后端按 1 处理并在加载时升级 */
   schemaVersion: number;
@@ -41,6 +55,14 @@ export interface FpxConfig {
   linkAgentsPinned: string[];
   tagColors: Record<string, string>;
   customColors: string[];
+  /**
+   * 收藏目录列表。上限见 js/fav-dirs.js 的 FAV_MAX（与 Rust FAV_DIR_MAX 一致）。
+   *
+   * ⚠️ 曾经漏过这个字段：Rust 侧加了 fav_dirs，TS 这边没有，
+   * 跨端校验直接判"Rust 有但 TS 无"。而前端是经 invoke 读写它的，
+   * 不镜像到类型里，谁拿到 config 都想不到还有这一项。
+   */
+  favDirs: FavDir[];
   folderIcons: Record<string, string>;
   /** #13 界面专属图标（不写 desktop.ini）。界面上优先显示这一套 */
   folderGuiIcons: Record<string, string>;
