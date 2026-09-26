@@ -780,6 +780,26 @@ bootIframePlugin(async (ctx) => {
 
   /* ------------------------- 文件库（多文档） ------------------------- */
 
+  /**
+   * 写「索引类」数据（文件列表 / 文件夹列表 / 单个文档）并**检查返回值**。
+   *
+   * store.set 是「吞异常返回 false」而不是抛出 —— 所以 try/catch **完全抓不到**，
+   * 必须检查返回值。早先这些调用点**既不 await 也不检查**（有的连 await 都没有），
+   * 配额触顶时界面照样提示「已删除」「已重命名」「已移动」「已新建文件夹」，
+   * 重开插件就回滚 —— 假成功，比直接报错难发现得多。
+   *
+   * 与 persist() 的差别只是文案：那个存的是画布内容，这里存的是列表/文档本身。
+   *
+   * @param {string} label 失败时说给用户听的是什么（如「文件列表」）
+   * @param {Function} run 真正执行写入（返回 Promise<boolean>）
+   * @returns {Promise<boolean>}
+   */
+  async function saveStore(label, run) {
+    const ok = await run();
+    if (!ok) status(`保存失败：${label}未能写入本地库（可能是空间不足）`, true);
+    return ok;
+  }
+
   function renderFiles() {
     fileList?.refresh();
   }
@@ -804,7 +824,9 @@ bootIframePlugin(async (ctx) => {
   async function switchToFile(id) {
     currentFileId = id;
     settings.lastFileId = id;
-    await store.settings.save(settings);
+    // 写失败（配额）只是"下次启动回到上一个文件"，不拦住切换本身 ——
+    // 但必须说出来，否则用户以为记住了。
+    await saveStore('设置', () => store.settings.save(settings));
     workbook = (await store.doc(id).load()) || wb.newWorkbook();
     workbook.sheets = wb.normalizeSheets(workbook.sheets);
     resetHistory();
@@ -833,13 +855,15 @@ bootIframePlugin(async (ctx) => {
       await persist();
     }
     const id = newFileId();
-    await store.doc(id).save(wb.newWorkbook());
+    // 空工作簿写不进去的话，新文件打开就是空的且后续保存可能覆盖别的键 ——
+    // 直接中止，别留一个"建出来了但存不下"的半成品。
+    if (!await saveStore('脑图内容', () => store.doc(id).save(wb.newWorkbook()))) return;
     const base = '未命名脑图';
     let name = base;
     let n = 1;
     while (fileIndex.some((f) => f.name === name)) name = `${base} ${++n}`;
     fileIndex.push({ id, name, folderId });
-    await store.files.save(fileIndex);
+    await saveStore('文件列表', () => store.files.save(fileIndex));
     renderFiles();
     status('已新建：' + name);
     await openFile(id);
@@ -851,7 +875,7 @@ bootIframePlugin(async (ctx) => {
     const name = await askText({ label: '脑图名称', defaultValue: f.name });
     if (name == null) return;
     f.name = name.trim() || f.name;
-    store.files.save(fileIndex);
+    await saveStore('文件列表', () => store.files.save(fileIndex));
     renderFiles();
     status('已重命名');
   }
@@ -864,9 +888,19 @@ bootIframePlugin(async (ctx) => {
     const f = fileIndex.find((x) => x.id === id);
     if (!f) return;
     if (!await askConfirm({ message: `删除「${f.name}」？该脑图下的所有画布都会一并删除。`, danger: true })) return;
-    fileIndex = fileIndex.filter((x) => x.id !== id);
-    await store.files.save(fileIndex);
-    await store.doc(id).del();
+    /*
+     * 先改内存再写盘，写失败必须**回滚内存**。
+     * 否则列表里已经没有它、磁盘上还在 —— 界面显示"已删除"，
+     * 下次打开又冒出来，比直接报错更让人困惑。
+     * 用 splice 按原下标插回，顺序不会乱。
+     */
+    const at = fileIndex.indexOf(f);
+    if (at >= 0) fileIndex.splice(at, 1);
+    if (!await saveStore('文件列表', () => store.files.save(fileIndex))) {
+      if (at >= 0) fileIndex.splice(at, 0, f);
+      return;
+    }
+    await saveStore('脑图内容', () => store.doc(id).del());
     if (id === currentFileId) {
       if (fileIndex.length) await switchToFile(fileIndex[0].id);
       else await createFile(null);        // 删光了也要能继续用
@@ -879,7 +913,7 @@ bootIframePlugin(async (ctx) => {
     const name = await askText({ label: '文件夹名称', defaultValue: '新建文件夹' });
     if (name == null) return;
     foldersList.push({ id: newFolderId(), name: name.trim() || '新建文件夹', collapsed: false });
-    await store.folders.save(foldersList);
+    await saveStore('文件夹列表', () => store.folders.save(foldersList));
     renderFiles();
     status('已新建文件夹');
   }
@@ -890,7 +924,7 @@ bootIframePlugin(async (ctx) => {
     const name = await askText({ label: '文件夹名称', defaultValue: fo.name });
     if (name == null) return;
     fo.name = name.trim() || fo.name;
-    store.folders.save(foldersList);
+    await saveStore('文件夹列表', () => store.folders.save(foldersList));
     renderFiles();
   }
 
@@ -902,17 +936,17 @@ bootIframePlugin(async (ctx) => {
     if (!await askConfirm({ message: `删除文件夹「${fo.name}」？里面 ${n} 个脑图会移到根目录，不会被删除。`, danger: true })) return;
     for (const f of fileIndex) if (f.folderId === id) f.folderId = null;
     foldersList = foldersList.filter((x) => x.id !== id);
-    await store.files.save(fileIndex);
-    await store.folders.save(foldersList);
+    await saveStore('文件列表', () => store.files.save(fileIndex));
+    await saveStore('文件夹列表', () => store.folders.save(foldersList));
     renderFiles();
     status('已删除文件夹');
   }
 
-  function toggleFolder(id) {
+  async function toggleFolder(id) {
     const fo = foldersList.find((x) => x.id === id);
     if (!fo) return;
     fo.collapsed = !fo.collapsed;
-    store.folders.save(foldersList);
+    await saveStore('文件夹列表', () => store.folders.save(foldersList));
     renderFiles();
   }
 
@@ -920,8 +954,12 @@ bootIframePlugin(async (ctx) => {
     const f = fileIndex.find((x) => x.id === fileId);
     if (!f || f.folderId === folderId) return;
     if (folderId && !foldersList.some((x) => x.id === folderId)) return;
+    const oldFolderId = f.folderId;
     f.folderId = folderId;
-    await store.files.save(fileIndex);
+    if (!await saveStore('文件列表', () => store.files.save(fileIndex))) {
+      f.folderId = oldFolderId;   // 写失败就别让界面停在"已经移过去了"的样子
+      return;
+    }
     renderFiles();
     const to = folderId ? (foldersList.find((x) => x.id === folderId)?.name || '文件夹') : '根目录';
     status(`已把「${f.name}」移到 ${to}`);
@@ -975,12 +1013,14 @@ bootIframePlugin(async (ctx) => {
    * 搜索结果），否则切到文件。最终是否显示文件由 fileList 决定 ——
    * 外壳不能自己算，否则两者的状态会各说各话。
    */
-  function toggleFiles(force) {
+  async function toggleFiles(force) {
     const on = force == null ? !fileList?.isFilesPanel?.() : !!force;
     withStableRoot(() => fileList?.showFiles(on));
     const showing = !!fileList?.isFilesPanel?.();
     settings.filesOpen = showing;
-    store.settings.save(settings);
+    // 早先这里连 await 都没有：写失败的话面板开关了、下次启动又回到默认，
+    // 用户会以为「文件库开合记不住」。store.set 吞异常返回 false，不查就不知道。
+    await saveStore('设置', () => store.settings.save(settings));
     buildRail();
   }
 

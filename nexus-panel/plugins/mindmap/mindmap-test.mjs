@@ -726,6 +726,64 @@ group('Tab → 插入下级节点');
     ok(/bridge\?\.focusCanvas\(\)/.test(rseg), '回调里真的调 bridge.focusCanvas()（空回调等于没修）');
   }
 
+  // 8.7f store 索引写入必须检查返回值（store.set 吞异常返回 false）
+  /*
+   * store.set 是「catch 住异常、返回 false」，所以 try/catch **完全抓不到**写失败。
+   * 早先文件列表 / 文件夹列表的这些写入点既不 await 也不检查返回值
+   * （有的连 await 都没有），配额触顶时界面照样提示「已删除」「已重命名」，
+   * 重开插件就回滚 —— 假成功。
+   *
+   * 守卫从 statusEl 定义处开始扫：更早的迁移路径里 statusEl 还在 TDZ，
+   * 那时候没法给用户提示（且失败只会让下次启动重跑迁移，无副作用）。
+   */
+  {
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const from = code.indexOf('const statusEl');
+    const tail = code.slice(from);
+    ok(/async\s+function\s+saveStore\s*\(\s*label\s*,\s*run\s*\)/.test(tail), '定义了 saveStore 助手');
+    {
+      const h = tail.slice(tail.indexOf('async function saveStore'), tail.indexOf('async function saveStore') + 520);
+      ok(/const\s+ok\s*=\s*await\s+run\(\)/.test(h), 'saveStore：await 写入结果');
+      ok(/if\s*\(\s*!ok\s*\)\s*status\(/.test(h), 'saveStore：失败时提示用户（吞掉就是假成功）');
+    }
+    /*
+     * 通用守卫：statusEl 之后**不允许**再出现裸的 store.*.save( / doc().del(。
+     * 只断言某几处改好了的话，下次新增一个调用点又会漏。
+     */
+    /*
+     * 判定「这个写入有没有人管返回值」：
+     *   ① 直接 `await store.X.save(...)` / `const ok = await ...` —— 自己会判；
+     *   ② 包在 `saveStore('...', () => store.X.save(...))` 里 —— 助手会判。
+     * 两条都不是 = 写失败了没人知道。
+     *
+     * 用「前面 70 字符里有没有 saveStore(」来判断②：这些调用点都是
+     * `saveStore('文件列表', () => store.files.save(fileIndex))` 这种一行形式，
+     * 窗口足够且不会误判。
+     */
+    const unguarded = (re, tag) => {
+      const bad = [];
+      for (const m of tail.matchAll(re)) {
+        const pre = tail.slice(Math.max(0, m.index - 70), m.index);
+        /*
+         * 只看 `await store.X.save(...)` 是**不够的** —— 那样"await 了但没人
+         * 检查返回值"会漏网（变异验证实测：把 addFile 改回裸 save，断言照样绿）。
+         * 所以要求两者之一：
+         *   ① 包在 saveStore(...) 里（助手统一提示）；
+         *   ② 结果赋给了变量，且调用点自己会判（const ok / saved / key =）。
+         */
+        if (pre.includes('saveStore(')) continue;
+        if (/=\s*await\s*$/.test(pre)) continue;
+        bad.push(tail.slice(m.index, m.index + 46));
+      }
+      ok(bad.length === 0, `不允许无人检查返回值的${tag}写入（当前 ${bad.length} 处：${bad.slice(0, 3).join(' | ')}）`);
+    };
+    unguarded(/store\.(?:files|folders|themes|settings)\.(?:save|del)\(/g, '索引');
+    unguarded(/store\.doc\([^)]*\)\.(?:save|del)\(/g, '文档');
+    // 写失败要回滚内存，否则列表与磁盘不一致
+    ok(/fileIndex\.splice\(at,\s*0,\s*f\)/.test(tail), 'deleteFile：写失败按原下标插回（顺序不乱）');
+    ok(/f\.folderId\s*=\s*oldFolderId/.test(tail), 'moveFile：写失败回滚归属');
+  }
+
   // 8.7e selectNodeById 的返回值必须验（切不回去就写错节点 → 数据错乱 + 假成功）
   /*
    * `__minderSelectNode` 靠 id 遍历整棵树找节点，找不到返回 false。
