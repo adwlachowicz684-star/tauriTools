@@ -34,7 +34,7 @@
 
 import type { GraphEdge, GraphNode } from '../types';
 import { constItemKey, constItemLabel, constsOf, type ConstNodeData } from '../types';
-import { FILE_FIELD_LABEL, FILE_FIELD_NAMES } from './files';
+import { FILE_FIELD_KIND, FILE_FIELD_LABEL, FILE_FIELD_NAMES } from './files';
 import { specOf } from './nodeSpec';
 import { argExpectOf, type ArgTypeIssue, type ValueKind } from './argTypes';
 
@@ -276,7 +276,11 @@ export const NODE_OUTPUTS: Record<string, OutPort[]> = {
    */
   task: [
     { key: OUT_DEFAULT, label: '结论' },
-    ...FILE_FIELD_NAMES.map((k) => ({ key: k, label: FILE_FIELD_LABEL[k] ?? k })),
+    ...FILE_FIELD_NAMES.map((k) => ({
+      key: k,
+      label: FILE_FIELD_LABEL[k] ?? k,
+      kind: FILE_FIELD_KIND[k] ?? 'text',
+    })),
   ],
 };
 

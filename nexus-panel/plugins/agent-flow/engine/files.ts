@@ -265,6 +265,21 @@ export const FILE_FIELD_LABEL: Record<string, string> = {
   fileCount: '文件数',
 };
 
+/**
+ * 文件字段的**值种类** —— 输出端口登记时要带上，不写则一律按文本。
+ *
+ * 只有 fileCount 是数量。它确实是 `String(refs.length)`、值本身是字符串，
+ * 但语义是"有几个文件"：下游拿它做「文件数 > 3」是最自然的用法，
+ * 而按文本登记会把这条线判成「错参」——**把本来正确的接法标红**，
+ * 这比漏报更糟。消费方本来就会 num() 解析，登记成 num 不会让运行时出错。
+ *
+ * 与 LABEL / HINT 同理：字段**清单**仍然只有 FILE_FIELD_NAMES 一处，
+ * 这几张表只是同一批 key 的几种说法。
+ */
+export const FILE_FIELD_KIND: Record<string, 'num' | 'text'> = {
+  fileCount: 'num',
+};
+
 /** 手动模式：把用户填的多行文本当成路径列表 */
 export function parseManualPaths(text: string, workdir?: string): FileRef[] {
   const wd = (workdir ?? '').trim().replace(/[\\/]+$/, '');

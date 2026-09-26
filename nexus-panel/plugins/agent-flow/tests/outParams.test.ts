@@ -340,3 +340,17 @@ test('所有测试文件的 AF_SRC 指向同一个仓库', () => {
   /* 顺带确认 srcScan 能用：指错了会静默跳过全部源码守卫 */
   assert.ok(path.isAbsolute(AF_SRC));
 });
+
+test('CLI 输出的「文件数」按数量登记（不是文本）', () => {
+  if (!SRC) return;
+  const links = readSrc('engine/paramLinks.ts');
+  const files = readSrc('engine/files.ts');
+  /*
+   * fileCount 的值是 String(refs.length)，看着像文本 ——
+   * 但语义是"有几个文件"。按文本登记的话，把它接到「大于」上
+   * 会被判成「错参」：把本来正确的接法标红，比漏报更糟。
+   */
+  assert.match(files, /export const FILE_FIELD_KIND/, '要有字段种类表');
+  assert.match(files, /fileCount: 'num'/, '文件数要按数量登记');
+  assert.match(links, /kind: FILE_FIELD_KIND\[k\]/, '登记端口时要带上种类');
+});
