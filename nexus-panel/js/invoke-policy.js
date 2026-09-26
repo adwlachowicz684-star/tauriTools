@@ -127,6 +127,23 @@ export const PLUGIN_COMMANDS = {
   md: ['fpx_read_file', 'fpx_copy_text', 'fpx_export_text', 'fpx_open_path'],
 
   /*
+   * folder-picker —— 统一目录选择服务（内置）。
+   *
+   * 它是**服务插件**（kind: service），项目组与 agent-flow 的
+   * 「选择文件夹」界面都委托给它，所以常用文件夹只有一份数据。
+   *
+   *   · fpx_quick_roots     系统快速起点（桌面/文档/下载…）
+   *   · fpx_list_dirs       列子目录
+   *   · fpx_list_fav_dirs   读常用文件夹
+   *   · fpx_save_fav_dirs   写常用文件夹（整表替换）
+   *
+   * ⚠️ fpx_list_dirs 能列任意路径的子目录（与 fpx_read_file 同理，
+   *    不经 guard），等于能摸清整块磁盘的布局。
+   *    所以 folder-picker 必须保持 builtin: true，不给第三方。
+   */
+  'folder-picker': ['fpx_quick_roots', 'fpx_list_dirs', 'fpx_list_fav_dirs', 'fpx_save_fav_dirs'],
+
+  /*
    * agent-flow
    * ----------------------------------------------------------
    * 清单由 scripts/scan-invoke.mjs 实测得出（对照源码 + Rust 已注册命令），

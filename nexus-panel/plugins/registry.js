@@ -272,6 +272,40 @@ export const plugins = [
     builtin: true,
     description: '检查并安装应用更新（GitHub + Gitee 双端点，正式版 / 内部测试双通道）',
   },
+  /*
+   * folder-picker —— 统一的「选择文件夹」服务（内置）。
+   *
+   * 【为什么要它】
+   * 原先项目组与 agent-flow **各有一套**选目录的界面，
+   * 于是"常用文件夹"得存两份、收藏逻辑写两遍 ——
+   * 只要某处漏掉归一化（去尾部斜杠），同一个目录就被判成两条：
+   * 界面上出现两个一模一样的条目，删掉一个另一个还在，且不报错。
+   *
+   * 【四个字段都不能少】
+   *   · kind:'service' —— 它没有自己的页面，是被别人调用的。
+   *   · type:'module'  —— 同页。刻意不做 iframe：选择器要跟随宿主主题，
+   *                        iframe 是独立文档，主页面 CSS 进不去
+   *                        （demo-iframe 打开后"只有文字"就是这个原因）。
+   *   · builtin:true   —— 白名单里有 fpx_list_dirs，而它**不经 guard**，
+   *                        能列任意路径的子目录（等于摸清整块磁盘布局）。
+   *                        这种能力不给第三方。
+   *   · 不加 requiresBuild —— 入口是纯 JS，两种模式都能跑。
+   *
+   * 【这条若被覆盖掉，不会报错】
+   * 表现是设置页「浏览」点了没反应（services.call 找不到该 id）。
+   * folder-picker-test.mjs 里钉住了这条。
+   */
+  {
+    id: 'folder-picker',
+    name: '目录选择',
+    icon: '📂',
+    kind: 'service',
+    type: 'module',
+    entry: './plugins/folder-picker/module.js',
+    version: '1.0.0',
+    builtin: true,
+    description: '统一的「选择文件夹」服务：常用文件夹、快速起点、面包屑、新建子目录（项目组与 agent-flow 共用）',
+  },
   {
     id: 'demo-service',
     name: '示例·取色服务',

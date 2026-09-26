@@ -30,7 +30,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, State};
 
 use model::{
-    Bootstrap, ContentItem, DirEntryLite, FpxConfig, LinkRecord, LinkRow, Snapshot, TabInfo,
+    Bootstrap, ContentItem, DirEntryLite, FavDir, FpxConfig, LinkRecord, LinkRow, Snapshot, TabInfo,
     RenameIconResult,
 };
 use store::FpxState;
@@ -1180,6 +1180,63 @@ pub(crate) fn core_set_tag_color(
     })
 }
 
+/// 常用文件夹上限。前端 fav-dirs.js 的 FAV_MAX 必须与这里一致，
+/// 否则会出现"界面上能加、存回去被截断"，且不报错。
+pub(crate) const FAV_DIR_MAX: usize = 40;
+
+/// 路径归一化：统一斜杠、去尾部斜杠。
+///
+/// 【为什么必须归一化】
+/// 不去尾部斜杠，`D:\work` 与 `D:\work\` 会被判成两条收藏 ——
+/// 界面上出现两个一模一样的条目，删掉一个另一个还在，且不报错。
+///
+/// 【根目录要留那一根斜杠】
+/// `/` 去尾会变成空串，Unix 下就回不到根了。
+fn fav_norm_path(p: &str) -> String {
+    let s = p.trim().replace('\\', "/");
+    if s.is_empty() { return String::new(); }
+    if s.len() == 1 { return s; }
+    let t = s.trim_end_matches('/');
+    if t.is_empty() { return "/".to_string(); }
+    t.to_string()
+}
+
+pub(crate) fn core_list_fav_dirs(dir: &std::path::Path) -> Vec<FavDir> {
+    let cfg = match store::load_config(dir) { Ok(c) => c, Err(_) => return Vec::new() };
+    cfg.fav_dirs.clone()
+}
+
+/// 整表替换（去重保序、归一化、截断）。
+///
+/// 【为什么是整表替换而不是单条增删改】
+/// 三个界面（选择器 / 设置页 / 将来的调用方）都要改这张表，
+/// 单条增删改要给每种改动配一条命令（add/remove/rename），
+/// 而"改名"本质是"先读全表、改一条、写回"—— 前端已经在做了，
+/// 再拆成命令只是把同样的逻辑在 Rust 侧重写一遍。
+pub(crate) fn core_save_fav_dirs(
+    dir: &std::path::Path,
+    dirs: Vec<FavDir>,
+) -> Result<Snapshot, String> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut out: Vec<FavDir> = Vec::new();
+    for d in dirs {
+        let path = fav_norm_path(&d.path);
+        if path.is_empty() || out.len() >= FAV_DIR_MAX { continue; }
+        let key = path.to_lowercase();
+        if seen.contains(&key) { continue; }
+        seen.push(key);
+        let label = d.label
+            .as_deref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        out.push(FavDir { path, label });
+    }
+    store::with_config(dir, |cfg| {
+        cfg.fav_dirs = out.clone();
+        Ok(snapshot(dir, cfg))
+    })
+}
+
 pub(crate) fn core_save_custom_colors(
     dir: &std::path::Path,
     colors: Vec<String>,
@@ -1784,6 +1841,114 @@ pub(crate) fn stable_icon_ref(icons_dir: &std::path::Path, icon_ref: &str) -> St
     format!("{}|{}", dest.to_string_lossy(), index)
 }
 
+/// 把图标文件读成 data URI，供沙箱里的前端 <img> 直接显示。
+/// 数据目录是本地路径，iframe 内用 file:// 会被浏览器拦，只能这样传。
+/// 内置图标不走这里（它们随插件发布，前端用相对 URL 直接取）。
+///
+/// 只接受数据目录 icons/ 下的文件、以及配置里已登记过的图标引用 ——
+/// 此前只查 `is_file()`，任意 ≤2MB 的文件都能被读成 data URI。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_icon_data(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+    path: String,
+) -> Result<String, String> {
+    let dir = store::data_dir(&app, &state)?;
+    core_icon_data(&dir, &path)
+}
+
+/**
+ * 清洗图标文件名：防路径穿越与非法字符。
+ *
+ * 抽出来是因为**改名和保存都要用**。抄两份的话，
+ * 哪天改了清洗规则（比如允许某个字符），另一个就会悄悄用旧规则 ——
+ * 表现为"能保存但不能改名"，或反之。
+ */
+pub(crate) fn sanitize_icon_name(name: &str) -> String {
+    name.chars()
+        .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/**
+ * 为"同步到资源管理器"准备一个**路径纯 ASCII** 的图标引用。
+ *
+ * --------------------------------------------------------------------
+ * 对齐原版 `FolderIconService.CopyIconToCache` / `GetStableName`：
+ *
+ * > desktop.ini 中的 IconResource 路径若含非 ASCII 字符（中文、空格、
+ * > 特殊符号），不同编码下极易乱码导致图标加载失败。
+ *
+ * 本版图标名直接来自用户文件，中文**是常态**。中文名写进 desktop.ini 后，
+ * 资源管理器可能读不出来 —— 而界面里却显示得好好的（界面走的是配置里的
+ * 另一条路径）。用户看到的是"同步了但资源管理器没变"，无从下手。
+ *
+ * 做法：非 ASCII 时复制一份到 `icons/_shellcache/<稳定名>`，
+ * desktop.ini 引用那份副本。**不动** `folder_icons` 里登记的原路径 ——
+ * 改登记值会让界面里的图标跟着变，那是另一套东西，不该被牵连。
+ *
+ * @param icons_dir 数据目录下的 icons/
+ * @param icon_ref  形如 `文件路径|索引`
+ */
+#[cfg(windows)]
+pub(crate) fn stable_icon_ref(icons_dir: &std::path::Path, icon_ref: &str) -> String {
+    let mut parts = icon_ref.splitn(2, '|');
+    let file = parts.next().unwrap_or("").trim();
+    let index = parts.next().and_then(|s| s.trim().parse::<i32>().ok()).unwrap_or(0);
+    if file.is_empty() { return icon_ref.to_string(); }
+
+    /*
+     * 已经是纯 ASCII 且不含空格 → 原样返回。
+     * 空格由 `build_icon_resource_line` 的引号处理，不必为此复制一份。
+     */
+    if file.is_ascii() && !file.contains(' ') { return icon_ref.to_string(); }
+
+    let src = std::path::Path::new(file);
+    if !src.is_file() { return icon_ref.to_string(); }
+
+    let cache = icons_dir.join("_shellcache");
+    if std::fs::create_dir_all(&cache).is_err() { return icon_ref.to_string(); }
+
+    /*
+     * 稳定名 = 哈希前缀 + ASCII 化的原名。
+     *
+     * 哈希只用来**避免重名**，不需要密码学强度 ——
+     * 所以不引 sha1 依赖（动 Cargo.toml 的代价远大于收益），
+     * 用 FNV-1a 64：同一路径永远得到同一前缀，重名概率足够低。
+     */
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in file.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    let prefix = format!("{:08x}", h);
+    let stem = src
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "icon".to_string());
+    /* 只留 ASCII 字母数字与 - _，其余（含中文、空格）统一换成 _ */
+    let safe: String = stem
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let ext = src
+        .extension()
+        .map(|s| format!(".{}", s.to_string_lossy()))
+        .unwrap_or_else(|| ".ico".to_string());
+    let dest = cache.join(format!("{prefix}_{safe}{ext}"));
+
+    /*
+     * 复制失败就退回原路径 —— 不能因为取不到副本就不写 desktop.ini，
+     * 那会让"同步到资源管理器"整个功能静默失效。
+     * 中文路径至少还有机会被 Shell 正确解析（本版 ini 是按 UTF-16 写的）。
+     */
+    if std::fs::copy(src, &dest).is_err() { return icon_ref.to_string(); }
+
+    format!("{}|{}", dest.to_string_lossy(), index)
+}
+
 /// 非 Windows 下原样返回（那里根本不写 desktop.ini）。
 #[cfg(not(windows))]
 pub(crate) fn stable_icon_ref(_icons_dir: &std::path::Path, icon_ref: &str) -> String {
@@ -1999,6 +2164,27 @@ pub fn fpx_save_custom_colors(
 ) -> Result<Snapshot, String> {
     let dir = store::data_dir(&app, &state)?;
     core_save_custom_colors(&dir, colors)
+}
+
+/// 列出常用文件夹（工具级，所有目录选择器共用）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_list_fav_dirs(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+) -> Vec<FavDir> {
+    let dir = match store::data_dir(&app, &state) { Ok(d) => d, Err(_) => return Vec::new() };
+    core_list_fav_dirs(&dir)
+}
+
+/// 保存常用文件夹（整表替换）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_save_fav_dirs(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+    dirs: Vec<FavDir>,
+) -> Result<Snapshot, String> {
+    let dir = store::data_dir(&app, &state)?;
+    core_save_fav_dirs(&dir, dirs)
 }
 
 /// 打开数据目录（方便备份 / 手工改配置）。

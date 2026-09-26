@@ -17,6 +17,25 @@ pub struct TabItem {
     pub items: Vec<String>,
 }
 
+/// 一条「常用文件夹」：目录路径 + 可选昵称。
+///
+/// 【为什么不校验目录是否存在】
+/// 用户完全可能想收藏一个**暂时不在**的位置：现在没插的 U 盘、
+/// 还没挂载的网络盘、等会儿才创建的目录。保存时就拒绝等于不让人收藏，
+/// 而"收藏一个用不了的位置"的代价只是打开时提示一下，比存不下来小得多。
+///
+/// 【label 为什么是 Option 而不是 String】
+/// 没起昵称的条目写出去应该是"没有这个字段"，而不是空串 ——
+/// 空串在界面上要额外判一次，且将来想区分「用户清空了昵称」和
+/// 「从来没设过」时会分不开。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FavDir {
+    pub path: String,
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
 /// ACL 保护项：路径 + 两个档位。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -104,6 +123,14 @@ pub struct FpxConfig {
     /// 用户在色盘里保存的自定义常用色（#RRGGBB，最多 24 个）。
     #[serde(default)]
     pub custom_colors: Vec<String>,
+    /// 常用文件夹（工具级）：所有「选择文件夹」的界面共用这一份。
+    ///
+    /// 【为什么存在 Config 里而不是单独一个文件】
+    /// 它和 custom_colors 同构：都是"用户自己攒的小表"，
+    /// 走 load_config / save_config 就能复用现成的读改写与备份，
+    /// 不必再发明一套存储。
+    #[serde(default)]
+    pub fav_dirs: Vec<FavDir>,
     /// 文件夹图标（**会同步到资源管理器**的那套）：路径 → 图标引用。
     #[serde(default)]
     pub folder_icons: IconMap,
@@ -366,6 +393,7 @@ impl Default for FpxConfig {
             tag_colors: HashMap::new(),
             tag_gui_colors: HashMap::new(),
             custom_colors: Vec::new(),
+            fav_dirs: Vec::new(),
             folder_icons: HashMap::new(),
             folder_gui_icons: HashMap::new(),
             locks: vec![],
