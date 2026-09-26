@@ -301,6 +301,39 @@ function buildCtx(base) {
       return transport.request('invoke', { cmd, args });
     },
 
+    /**
+     * 本地**绝对路径** → webview 能加载的 asset 协议地址。
+     *
+     * Rust 侧返回的图片路径是磁盘绝对路径（如 `C:\...\_imgs\xxx.png`），
+     * 直接塞进 `<img src>` 会被当成相对 URL 而 404 —— 症状是缩略图**全部裂开**，
+     * 且不报任何错。必须转成本地 asset 地址。
+     *
+     * 【为什么必须是同步的】
+     * 调用方拿到返回值就直接拼进 DOM（`src="' + apiU(it.img) + '"`），
+     * 返回 Promise 只会让 src 变成 [object Promise]。所以这里不走
+     * `await getTauri()`，而是直接读全局注入的同步 API，读不到就自己拼。
+     *
+     * @param {string} filePath 磁盘绝对路径
+     * @param {string} protocol 默认 'asset'
+     * @returns {string}
+     */
+    convertFileSrc(filePath, protocol = 'asset') {
+      const w = typeof window !== 'undefined' ? window : globalThis;
+      const g = w.__TAURI_INTERNALS__;
+      const fn = (g && g.convertFileSrc) || (w.__TAURI__ && w.__TAURI__.tauri && w.__TAURI__.tauri.convertFileSrc);
+      if (typeof fn === 'function') {
+        try {
+          return fn(filePath, protocol);
+        } catch {
+          /* 落到下面自己拼 */
+        }
+      }
+      /* 兜底：与 Tauri 的规则一致 —— Windows 上是 http://asset.localhost/… */
+      const p = encodeURIComponent(filePath || '');
+      const isWin = typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows');
+      return isWin ? `http://${protocol}.localhost/${p}` : `${protocol}://${p}`;
+    },
+
     /** 事件总线：插件之间 / 插件与外壳通信 */
     on(event, handler) {
       return bus.on(event, handler, id);

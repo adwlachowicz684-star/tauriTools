@@ -37,19 +37,75 @@ fn idx_of(path: &str) -> String {
     format!("{:x}", h)[..8].to_string()
 }
 
-/// 从文件名/所在目录名猜学科；猜不到就取【】里的标签，再不行是 "?"。
+/// 在一段文本里找学科关键词。
+fn subj_in(text: &str) -> Option<&'static str> {
+    SUBJ.iter().find(|k| text.contains(**k)).map(|k| *k)
+}
+
+/// 摘掉 `(缺英语)` `(无数学)` 这类"否定说明"片段，其余括号内容保留。
+///
+/// 目录名常写成 `…南京中华中学(10.17-10.18)(缺英语)` —— 意思是"这套卷子唯独缺英语"，
+/// 拿它去做关键词匹配，整目录的化学卷子都会被判成英语。匹配前先摘掉这类括号。
+fn strip_neg(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut buf = String::new();
+    let mut pair: Option<(char, char)> = None; // (开括号, 闭括号)
+    for c in text.chars() {
+        match pair {
+            None if c == '(' || c == '（' => {
+                pair = Some(if c == '(' { ('(', ')') } else { ('（', '）') });
+                buf.clear();
+            }
+            None => out.push(c),
+            Some((op, cl)) if c == cl => {
+                let neg = buf.contains('缺') || buf.contains('无') || buf.contains("不含");
+                if !neg {
+                    out.push(op);
+                    out.push_str(&buf);
+                    out.push(c);
+                }
+                pair = None;
+            }
+            Some(_) => buf.push(c),
+        }
+    }
+    /* 括号没闭合：把吞掉的内容原样补回，别把名字截断 */
+    if let Some((op, _)) = pair {
+        out.push(op);
+        out.push_str(&buf);
+    }
+    out
+}
+
+/// 第一个 【…】 标签的内容；没有就是 None。
+fn tag_of(name: &str) -> Option<String> {
+    let s = name.find('【')? + '【'.len_utf8();
+    let rest = &name[s..];
+    let e = rest.find('】')?;
+    Some(rest[..e].to_string())
+}
+
+/// 猜学科：文件名 → 末级目录名 → 【】标签里找学科词 → "其他"。
+///
+/// 【为什么文件名必须优先、目录只兜底】
+/// 旧实现拿**整条父路径**做 contains，且目录和文件名在同一循环里按 SUBJ 顺序竞争
+/// （"英语"排在"化学"前面）。于是 `…(缺英语)` 这种目录说明会盖掉文件名里的
+/// "化学" —— 一整个目录的卷子全进了英语分区。目录信息只当**临时参考**：
+/// 只有文件名认不出时才用，且只取最后一级（上层常是"英语"总目录，会污染全部子文件）。
 fn subj_of(name: &str, base: &str) -> String {
-    for k in SUBJ {
-        if base.contains(k) || name.contains(k) {
-            return (*k).to_string();
+    if let Some(s) = subj_in(&strip_neg(name)) {
+        return (*s).to_string();
+    }
+    let last = base.rsplit(|c| c == '\\' || c == '/').next().unwrap_or("");
+    if let Some(s) = subj_in(&strip_neg(last)) {
+        return (*s).to_string();
+    }
+    if let Some(t) = tag_of(name) {
+        if let Some(s) = subj_in(&t) {
+            return (*s).to_string();
         }
     }
-    if let Some(s) = name.find('【') {
-        if let Some(e) = name[s + 3..].find('】') {
-            return name[s + 3..s + 3 + e].to_string();
-        }
-    }
-    "?".into()
+    "其他".into()
 }
 
 /// 撞名家族基底名：去掉 `_2` `_3` 这类副本后缀。
@@ -432,7 +488,14 @@ pub fn build_list(app: &AppHandle) -> Result<ListOut, String> {
 
     /* 排序：目录按名字、文件按（家族, 名字）—— 与 python 版一致，
        否则每次扫描后列表顺序会变，用户刚看过的位置就找不到了。 */
-    subjects.sort_by_key(|s| SUBJ.iter().position(|x| x == s).unwrap_or(99));
+    /* "其他"永远排最后；认不出的自定义学科（如"日语"）排在正式学科之后。 */
+    subjects.sort_by_key(|s| {
+        if s == "其他" {
+            100
+        } else {
+            SUBJ.iter().position(|x| x == s).unwrap_or(99)
+        }
+    });
     for n in &mut root_nodes {
         sort_tree(n, &done_map);
     }
