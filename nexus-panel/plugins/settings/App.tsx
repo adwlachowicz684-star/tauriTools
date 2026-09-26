@@ -582,9 +582,37 @@ function PluginManager({
                     const ai = appIndex.get(p.id);
                     const dragProps = isApp && ai !== undefined ? appsDrag.getItemProps(ai) : undefined;
                     return (
-                      <button
+                      {/*
+                        这里**必须是 <div> 不能是 <button>**。
+
+                        HTML5 原生拖拽（draggable）在表单控件上不启动：
+                        WebKit（WKWebView / WebKitGTK，也就是 macOS 与 Linux 上的
+                        Tauri 内核）明确忽略 <button draggable>，Chromium 上也长期
+                        不可靠。表现就是"按住拖不动"——dragstart 根本不来。
+
+                        这一行此前确实是 <div>（旧卡片 .tb-card 也是 div），
+                        改成行式布局时顺手换成了 <button>，拖拽就静默失效了：
+                        不报错、不崩溃，只是拖不起来。
+
+                        换成 div 后 button 的两项原生好处要自己补：
+                          · 可聚焦  → tabIndex=0
+                          · 可键盘触发 → onKeyDown 处理 Enter / Space
+                          · 文本不可选 → .pg-item 里加 user-select:none
+                            （button 内文本本就选不中；div 能选，拖的时候
+                             会变成"选中文字"而不是"拖起整行"）
+                      */}
+                      <div
                         key={p.id}
                         {...dragProps}
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={active?.id === p.id}
+                        onKeyDown={(e: any) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();   // Space 否则会滚动页面
+                            setSelId(p.id);
+                          }
+                        }}
                         /* className 放在 spread **之后**：拖拽内核也会返回
                            className（拖拽态），写在前面会被它覆盖。 */
                         className={
@@ -601,7 +629,7 @@ function PluginManager({
                         <span className="pg-item-icon">{p.icon ?? '◌'}</span>
                         <span className="pg-item-name">{p.name ?? p.id}</span>
                         {p.builtin ? <span className="pg-item-tag">内置</span> : null}
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
