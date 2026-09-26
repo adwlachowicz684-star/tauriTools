@@ -5,6 +5,9 @@ import {
   /* resolved 版：带深浅/风格覆盖。用户改了基调后 getCurrent().base 仍是旧值，
      统计区会显示错的深浅（与 App.tsx 同款修复）。 */
   getResolvedBase,
+  /* 按 id 解析单个主题的元数据（基调/风格已套覆盖）。
+     主题列表里每张卡片都要显示自己**实际**的风格与深浅。 */
+  resolveThemeMeta,
   /* 卡片缩略图要按实际生效值渲染（含用户改动），不能只读 t.vars */
   exportVarsFor,
   getAccent, saveAsCustom, deleteCustomTheme, ACCENT_SWATCHES,
@@ -277,9 +280,11 @@ export default definePlugin({
             // 名字用当前主题的正文色（.theme-name 定义），不能取 v['--text'] ——
             // 那是被预览主题的颜色，深色面板下预览浅色主题会变成深色字压深色底
             h('div.theme-name', {}, t.name),
-            h('span.theme-badge', {}, styleLabel(t.style)),
+            /* 同上：角标要写实际风格（用户改过的显示改后的值） */
+            h('span.theme-badge', {}, styleLabel(resolveThemeMeta(t).style)),
           ),
-          h('div.theme-desc', {}, t.desc || (t.base === 'dark' ? '深色' : '浅色')),
+          /* 深浅同理：基调也是参数（可只改基调不动颜色），读解析后的值 */
+          h('div.theme-desc', {}, t.desc || (resolveThemeMeta(t).base === 'dark' ? '深色' : '浅色')),
           t.custom
             ? h('button.theme-del', {
                 title: '删除该自定义主题',
@@ -313,8 +318,13 @@ export default definePlugin({
        */
       const all = listThemes();
       const groups = Object.entries(THEME_STYLE_LABELS)
-        .map(([k, label]) => [label, all.filter((t) => t.style === k)])
-        .concat([['其它', all.filter((t) => !t.style || !THEME_STYLE_LABELS[t.style])]]);
+        /* 按**实际**风格分组：用户把某套改成玻璃后它现在就是玻璃。
+           用原始 t.style 会让它留在原组，而缩略图已是玻璃观感。 */
+        .map(([k, label]) => [label, all.filter((t) => resolveThemeMeta(t).style === k)])
+        .concat([['其它', all.filter((t) => {
+          const st = resolveThemeMeta(t).style;
+          return !st || !THEME_STYLE_LABELS[st];
+        })]]);
       for (const [label, items] of groups) {
         if (!items.length) continue;
         const g = h('div.theme-group', {},

@@ -12,6 +12,7 @@
  */
 import {
   listThemes, applyTheme, getThemeId, onChange, deleteCustomTheme, exportVarsFor,
+  resolveThemeMeta,
 } from './theme-manager.js';
 import { styleLabel, STYLE_LABELS } from './themes.js';
 
@@ -72,11 +73,16 @@ export function openThemePicker({ anchor, onPick } = {}) {
     const groups = [
       ...Object.entries(STYLE_LABELS).map(([k, label]) => [
         label,
-        all.filter((t) => (t.style || 'neumorph') === k),
+        /* 按**实际**风格分组：用户把某套主题改成玻璃后，它现在就是玻璃，
+           该归到玻璃组。用原始 t.style 的话会留在原组，而缩略图已是玻璃观感。 */
+        all.filter((t) => (resolveThemeMeta(t).style || 'neumorph') === k),
       ]),
       /* 没写 style 的（老自定义主题）单列一组 ——
          混进任何一组都是错的：它们的观感不属于那个风格。 */
-      ['其它', all.filter((t) => !t.style || !STYLE_LABELS[t.style])],
+      ['其它', all.filter((t) => {
+        const st = resolveThemeMeta(t).style;
+        return !st || !STYLE_LABELS[st];
+      })],
     ].filter(([, items]) => items.length);
 
     for (const [label, items] of groups) {
@@ -175,12 +181,15 @@ export function openThemePicker({ anchor, onPick } = {}) {
     name.textContent = t.name;
     const badge = document.createElement('span');
     badge.className = 'theme-badge';
-    badge.textContent = styleLabel(t.style);
+    /* 同上：角标要写**实际**风格，用户改过的得显示改后的值。 */
+    badge.textContent = styleLabel(resolveThemeMeta(t).style);
     foot.append(name, badge);
 
     const desc = document.createElement('div');
     desc.className = 'theme-desc';
-    desc.textContent = t.desc || (t.base === 'dark' ? '深色' : '浅色');
+    /* 深浅同理：基调也是参数（可只改基调不动颜色），这里要读解析后的值，
+       否则卡片写"深色"而缩略图与角标已是浅色观感。 */
+    desc.textContent = t.desc || (resolveThemeMeta(t).base === 'dark' ? '深色' : '浅色');
 
     btn.append(prev, foot, desc);
 

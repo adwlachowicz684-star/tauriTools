@@ -3060,5 +3060,45 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
       ? '已标' : '未标 → 同页插件按文档教的写法永远匹配不上');
 }
 
+
+/* ============================================================
+   50. 主题列表显示的风格 / 深浅必须是解析后的值
+   ------------------------------------------------------------
+   基调与风格本身都是参数了（可只改基调不动颜色、可把新拟态改成玻璃）。
+   列表里若读原始 t.style / t.base，卡片会写"新拟态 / 深色"，
+   而缩略图已是玻璃浅色观感 —— 与实际对不上，且缩略图用的
+   exportVarsFor 是对的，只有文字没跟上，最难察觉。
+   ============================================================ */
+{
+  const picker = stripComments(read('js/theme-picker.js'));
+  const app = stripComments(read('plugins/settings/App.tsx'));
+  const nb = stripComments(read('plugins/settings/index.js'));
+
+  t('快速选择器按解析后的风格分组',
+    /resolveThemeMeta\(t\)\.style/.test(picker),
+    /resolveThemeMeta\(t\)\.style/.test(picker) ? '已用解析值'
+      : '仍用 t.style → 改过风格的主题留在原组');
+
+  t('快速选择器角标写解析后的风格',
+    /styleLabel\(resolveThemeMeta\(t\)\.style\)/.test(picker),
+    /styleLabel\(resolveThemeMeta\(t\)\.style\)/.test(picker) ? '已用解析值' : '角标仍是原风格');
+
+  t('快速选择器深浅文案用解析后的基调',
+    /resolveThemeMeta\(t\)\.base === 'dark'/.test(picker),
+    /resolveThemeMeta\(t\)\.base === 'dark'/.test(picker) ? '已用解析值' : '仍用 t.base');
+
+  t('React 版设置页三处都用解析后的元数据',
+    (app.match(/resolveThemeMeta\(t\)/g) || []).length >= 4,
+    `${(app.match(/resolveThemeMeta\(t\)/g) || []).length} 处`);
+
+  t('无构建版设置页也用解析后的元数据',
+    /resolveThemeMeta\(t\)\.style/.test(nb) && /resolveThemeMeta\(t\)\.base/.test(nb),
+    '分组 / 角标 / 深浅');
+
+  t('resolveThemeMeta 已导出（三处 UI 都依赖它）',
+    /export function resolveThemeMeta/.test(read('js/theme-manager.js')),
+    /export function resolveThemeMeta/.test(read('js/theme-manager.js')) ? '已导出' : '未导出 → 三处 import 全崩');
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
