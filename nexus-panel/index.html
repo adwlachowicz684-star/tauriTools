@@ -83,9 +83,9 @@
           <button class="nav-item" id="btn-add" title="安装插件">
             <span class="nav-icon">＋</span><span class="nav-label">安装插件</span>
           </button>
-          <button class="nav-item" id="btn-settings" title="设置">
-            <span class="nav-icon">⚙</span><span class="nav-label">设置</span>
-          </button>
+          <!-- 「设置」不再在这里硬编码：settings 是 registry 里的真插件，
+               renderSidebar() 已把它渲染进 #plugin-list。两处都写会出现
+               两个一模一样的「⚙ 设置」，用户分不清该点哪个。 -->
           <!-- 元素检查器已抽成工具栏插件（toolbar-inspector），
                显示在标题栏右上角，不再占侧边栏一格。 -->
         </div>
