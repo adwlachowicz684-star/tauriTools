@@ -889,7 +889,7 @@ export function createHost(opts = {}) {
          关闭（默认）—— 带 allow-same-origin，插件与外壳同源，可直连，无需桥接
          开启      —— 去掉它，插件碰不到 parent/localStorage/Tauri IPC，全走桥接
        两种模式下 ctx.* API 完全一致，插件代码不用改。 */
-    const { isolated, adaptTheme } = getPluginConfig(manifest.id);
+    const { isolated } = getPluginConfig(manifest.id);
     iframe.setAttribute(
       'sandbox',
       isolated
@@ -1008,15 +1008,6 @@ export function createHost(opts = {}) {
               type: 'init', manifest, theme: varsForPlugin(manifest.id), view,
               openArgs,                         // 打开参数（E2），与 module 同语义
               isolated,                         // 插件据此决定能力探测方式
-              /* 让插件自报基调。两种场景：
-                 1) 隔离插件 —— 外壳读不到 contentDocument，采样会静默失败
-                 2) followsTheme 插件 —— 它自己跟随面板主题，基调该由它说了算。
-                    外壳采样反而会误判：变量已推过去、界面已变浅，
-                    但采样仍可能读到残留深色区域判成 dark，于是施加 invert
-                    把已变浅的部分二次翻转（"变白一秒后又变黑"）。
-                 上报值用 sampleOwnBase() 读插件自己的 body 背景：
-                 follow 模式 → 等于面板基调 → 不加滤镜；
-                 native 模式 → 固定深色 → 该加就加。 */
               // 宿主自报 origin，供插件回发消息时用作 targetOrigin。
               // 隔离态下插件是 opaque origin，读不到 parent.location，
               // 只能靠这里告诉它 —— 否则它只能通配 '*'。
@@ -1146,7 +1137,7 @@ export function createHost(opts = {}) {
 
     return Object.assign(inst0, {
       manifest, wrap, target: iframe, root: null, iframe, bridgeHandler, cleanupFns, hasSettings,
-      isolated, adaptTheme,
+      isolated,
       serviceCalls,
       /** 向本 iframe 服务发一次调用，等它的 service.res */
       callService(method, args) {
@@ -1829,7 +1820,6 @@ export function collectDiagnostics(manifest, err, extra = {}) {
     },
     config: cfg ? {
       功能隔离: cfg.isolated ? '开启（不可访问 parent/localStorage）' : '关闭（同源直连）',
-      主题适配: cfg.adaptTheme ? '开启' : '关闭',
       深色策略: cfg.themeDark || '(跟随全局)',
       浅色策略: cfg.themeLight || '(跟随全局)',
     } : { 说明: '无插件配置（manifest 缺少 id）' },

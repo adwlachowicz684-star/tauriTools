@@ -785,9 +785,6 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
   let ctxReady;
   let resolveMount;
   let view = 'main';                 // 'main' | 'settings'
-  /* 宿主是否要求本插件自报基调（隔离插件 / followsTheme 插件）。
-     记下来是因为 theme 更新时也要重报 —— 只在 init 报一次的话，
-     切主题后外壳手上还是旧基调，判定必然错。 */
   let currentTheme = {};             // 外壳推来的主题变量，供 ctx.theme 读取
   let isolated = false;              // 是否处于功能隔离（去掉 allow-same-origin）
   let openArgs = null;               // 宿主打开本插件时带进来的参数（E2）

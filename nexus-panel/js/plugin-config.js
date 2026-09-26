@@ -10,16 +10,17 @@
  *      开        ：去掉 allow-same-origin，插件碰不到外壳任何东西，
  *                一切都得走 postMessage 桥接（ctx.store / ctx.invoke 等照常）。
  *
- *   2. 主题适配 adaptTheme
- *      开（默认）：外壳判定插件基调，与面板不一致时自动反转统一。
- *                隔离开启时外壳读不到插件内部，改由插件自报基调。
- *      关        ：完全不碰插件外观，保持它自己的样子。
+ *   2. 主题 themeDark / themeLight —— 插件自选的主题，null 表示跟随全局
+ *      （详见 DEFAULTS 上方的说明）
  *
- * 两个维度自由组合，互不牵连：
- *   隔离关 + 适配开 → 外壳穿透采样，最精准
- *   隔离关 + 适配关 → 原样呈现
- *   隔离开 + 适配开 → 插件自报基调，自动适配
- *   隔离开 + 适配关 → 原样呈现
+ * ⚠️ 这里原先还有第三个字段 adaptTheme（主题适配开关）。
+ * 它控制的是那套"外壳判定插件基调、与面板不一致就罩滤镜反转"的机制 ——
+ * 该机制已整套删除：现在外壳只把主题变量推给插件，
+ * 插件渲染成什么样就是什么样，插件自己写死配色是插件自己的事。
+ * 字段连同 shouldAdaptTheme() 一并删除（它已无任何调用者），
+ * 设置页（App.tsx / index.js）与外壳抽屉（shell.js）里的对应开关也已删掉。
+ *
+ * 旧配置里残留的 adaptTheme 值无害 —— 没人读它了。
  */
 
 const KEY = (id) => `nexus:plugin-cfg:${id}`;
@@ -36,7 +37,6 @@ const EVENT = 'nexus:plugin-cfg-changed';
  */
 export const DEFAULTS = {
   isolated: false,
-  adaptTheme: true,
   themeDark: null,
   themeLight: null,
 };
@@ -64,4 +64,3 @@ export function onPluginConfigChange(fn) {
 
 /** 供引擎快速读取 */
 export const isIsolated = (id) => getPluginConfig(id).isolated;
-export const shouldAdaptTheme = (id) => getPluginConfig(id).adaptTheme;
