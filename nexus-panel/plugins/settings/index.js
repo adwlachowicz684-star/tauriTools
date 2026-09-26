@@ -8,6 +8,8 @@ import {
   /* 按 id 解析单个主题的元数据（基调/风格已套覆盖）。
      主题列表里每张卡片都要显示自己**实际**的风格与深浅。 */
   resolveThemeMeta,
+  /* 组内排序：暗色在前、浅色在后。与 App.tsx / 快速选择器共用同一实现 */
+  sortThemesBaseFirst,
   /* 卡片缩略图要按实际生效值渲染（含用户改动），不能只读 t.vars */
   exportVarsFor,
   getAccent, saveAsCustom, deleteCustomTheme, ACCENT_SWATCHES,
@@ -337,11 +339,11 @@ export default definePlugin({
       const groups = Object.entries(THEME_STYLE_LABELS)
         /* 按**实际**风格分组：用户把某套改成玻璃后它现在就是玻璃。
            用原始 t.style 会让它留在原组，而缩略图已是玻璃观感。 */
-        .map(([k, label]) => [label, all.filter((t) => resolveThemeMeta(t).style === k)])
-        .concat([['其它', all.filter((t) => {
+        .map(([k, label]) => [label, sortThemesBaseFirst(all.filter((t) => (resolveThemeMeta(t).style || 'neumorph') === k))])
+        .concat([['其它', sortThemesBaseFirst(all.filter((t) => {
           const st = resolveThemeMeta(t).style;
           return !st || !THEME_STYLE_LABELS[st];
-        })]]);
+        }))]]);
       for (const [label, items] of groups) {
         if (!items.length) continue;
         const g = h('div.theme-group', {},

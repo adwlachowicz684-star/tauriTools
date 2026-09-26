@@ -38,9 +38,17 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
    */
   const themeRow = (label: string, key: 'themeDark' | 'themeLight', base: 'dark' | 'light') => {
     const all = listThemes().filter((t) => t.base === base);
+    /*
+     * 纵向排布（.cfg-row.col），不用默认的"左文右控件"。
+     *
+     * 下拉框宽度由最长选项决定，而深色 / 浅色两套里最长的主题名不同 ——
+     * 横排时两个下拉一宽一窄、右端对不齐，同组里开关那行又是对齐的，
+     * 整组看着就没排好。纵向下两个下拉都铺满，自然等宽。
+     * 长名字也不会把左列文字挤扁。
+     */
     return (
-      <div key={key} className="cfg-row">
-        <div className="cfg-row-main">
+      <div key={key} className="cfg-row col">
+        <div className="cfg-row-head">
           <div className="cfg-row-label">{label}</div>
           <div className="p-muted cfg-row-desc">
             {base === 'dark' ? '整体主题为深色时，本插件用这套' : '整体主题为浅色时，本插件用这套'}

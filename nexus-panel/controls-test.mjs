@@ -3323,5 +3323,184 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
     '滤掉的话删了底部按钮就没入口了');
 }
 
+/* ============================================================
+   54. 三类插件是页签，不是上下堆叠的三组
+   ------------------------------------------------------------
+   三类插件加起来二十多个，堆在左列就是一条长带 —— 要滚过整组
+   "工具栏"才能看到"服务"，而每次只会操作其中一类。改成页签后
+   左列一次只显示一类。
+
+   两条容易漏的：
+     · 页签必须能**真的切**（onClick 调 setKind）。只验证"存在
+       role=tab"的话，写死一个页签也能全绿。
+     · 选中插件必须在**当前页签内**找。仍在全量 all 里找的话，
+       切到"服务"页签后右列显示的还是上一个页签的插件 ——
+       左列明明没列它，看着像坏了。
+   ============================================================ */
+{
+  const stripJsx = (s) => s
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/^\s*\/\/.*$/gm, ' ');
+  const appSrc = stripJsx(read('plugins/settings/App.tsx'));
+
+  t('插件页用页签（role=tablist）而不是分组堆叠',
+    /role="tablist"/.test(appSrc) && !/pg-group-head/.test(appSrc),
+    /role="tablist"/.test(appSrc) ? '是页签' : '仍是分组堆叠');
+
+  t('页签点了真的会切（onClick 改 kind）',
+    /onClick=\{[^}]*setKind\(/.test(appSrc),
+    /onClick=\{[^}]*setKind\(/.test(appSrc) ? '会切' : '页签点了没反应');
+
+  /*
+   * 三个页签由 GROUPS.map 生成，源码里 role="tab" 只写了一次 ——
+   * 数出现次数永远是 1，那是**我的判据错**，不是功能错。
+   * 真正要钉的是 GROUPS 里三类齐全（少一类就少一个页签）。
+   */
+  const gBlock = appSrc.slice(appSrc.indexOf('const GROUPS'), appSrc.indexOf('const orderedFor'));
+  t('三个类别都进了页签（app / toolbar / service）',
+    ["'app'", "'toolbar'", "'service'"].every((k) => gBlock.includes(k))
+      && /GROUPS\.map/.test(appSrc),
+    ["'app'", "'toolbar'", "'service'"].filter((k) => !gBlock.includes(k)).join(',') || '三类齐全');
+
+  /*
+   * 选中项在**当前页签的列表**里找。
+   * 判据落在 curItems 上 —— 写 all.find 就是切了页签右列不跟着变。
+   */
+  t('选中插件只在当前页签内找（切页签后右列跟着变）',
+    /const sel = curItems\.find/.test(appSrc) && /const active = sel \|\| curItems\[0\]/.test(appSrc),
+    /const sel = curItems\.find/.test(appSrc)
+      ? '在页签内找' : '仍在全量列表里找 → 切页签后右列显示的还是上一类');
+
+  /*
+   * 当前页签为空（通常是被搜索过滤空了）要退回有内容的那一类。
+   * 不退回的话左列空白、右列还显示着上一个插件。
+   */
+  t('当前页签为空时退回有内容的类别',
+    /const effKind = counts\[kind\] > 0/.test(appSrc),
+    /counts\[kind\] > 0/.test(appSrc) ? '会退回' : '不退回 → 左列空白右列却还显示着插件');
+}
+
+/* ============================================================
+   55. 插件主题两行是纵向排布
+   ------------------------------------------------------------
+   那两行的控件是**下拉框**，宽度由最长选项决定，而深色 / 浅色
+   两套里最长的主题名不同 —— 横排时两个下拉一宽一窄、右端对不齐，
+   同组里开关那行又是对齐的，整组看着就是没排好。
+   纵向（.cfg-row.col）后两个下拉都 width:100%，自然等宽。
+   ============================================================ */
+{
+  const stripJsx = (s) => s
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/^\s*\/\/.*$/gm, ' ');
+
+  /*
+   * ⚠️ 截取范围必须是 themeRow 函数本身，不能从 title="插件主题" 往后切 ——
+   * themeRow **定义在上面**（约 39 行），而 SettingGroup 的 title 在下面
+   * （约 125 行），往后切什么都取不到，断言就恒假。
+   * 第一版我正是这么写错的：报"仍是左文右控件"，可代码明明已改。
+   */
+  const sb = stripJsx(read('src/components/SandboxSection.tsx'));
+  const iR = sb.indexOf('const themeRow');
+  const rBlock = sb.slice(iR, iR + 900);
+  t('React 版插件主题行用纵向排布',
+    iR >= 0 && /cfg-row col/.test(rBlock) && /cfg-row-head/.test(rBlock),
+    iR < 0 ? '找不到 themeRow（判据取样失效）'
+      : (/cfg-row col/.test(rBlock) ? '纵向' : '仍是左文右控件 → 两个下拉宽度不一致'));
+
+  /* 无构建版：与 React 版同构，只改一边会两边观感不一致 */
+  const sh = stripJsx(read('js/shell.js'));
+  const iS = sh.indexOf('const themeRow');
+  const sBlock = sh.slice(iS, iS + 900);
+  t('无构建版插件主题行也用纵向排布',
+    iS >= 0 && /cfg-row\.col/.test(sBlock) && /cfg-row-head/.test(sBlock),
+    iS < 0 ? '找不到 themeRow（判据取样失效）'
+      : (/cfg-row\.col/.test(sBlock) ? '纵向' : '仍是横排 → 两版观感不一致'));
+
+  /*
+   * CSS 必须真的让 col 生效，且下拉铺满。
+   * 只钉"代码里写了 col"是不够的 —— CSS 里没有对应规则的话，
+   * 类名挂上去也没有任何效果，而这类"改了没反应"最难发现。
+   */
+  const css = read('css/controls.css').replace(/\/\*[\s\S]*?\*\//g, ' ');
+  t('.cfg-row.col 有对应样式（纵向 + 下拉铺满）',
+    /\.cfg-row\.col\s*\{[^}]*flex-direction:\s*column/.test(css)
+      && /\.cfg-row\.col\s*>\s*\.p-input[^{]*\{[^}]*width:\s*100%/.test(css),
+    /\.cfg-row\.col\s*\{[^}]*flex-direction:\s*column/.test(css)
+      ? '已定义' : 'CSS 里没有 → 加了类名也不生效');
+}
+
+
+
+/* ============================================================
+   54. 主题列表：组内暗色在前、浅色在后
+   ------------------------------------------------------------
+   三处主题列表（设置页 React 版 / 标题栏快速选择器 / 设置页无构建版）
+   都按**风格**分组，组内顺序原本直接沿用 PRESET_THEMES 的数组顺序，
+   深浅是混着的（深→浅→深→浅）。用户要"暗色全部放前面，浅色放后面"。
+
+   ⓘ 只排分组**内部**，不动分组本身：分组按风格是用户明确要的主分类，
+     深浅只是同一套设计的两个取值。若改成"全局深色在前"，同一种风格
+     会被拆到列表首尾两处，找起来反而更乱。
+
+   ⚠️ 必须按**实际**基调排（resolveThemeMeta），不能用 t.base 原始值：
+     基调本身也是参数，用户可以只改基调不改颜色；用原始值排，那套主题
+     会留在深色区，而缩略图已经是浅色 —— 位置和观感对不上。
+   ============================================================ */
+{
+  const stripComments = (s) => s
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/^\s*\/\/.*$/gm, ' ');
+
+  const tm = stripComments(read('js/theme-manager.js'));
+  const iFn = tm.indexOf('export function sortThemesBaseFirst');
+  const fn = iFn < 0 ? '' : tm.slice(iFn, iFn + 500);
+
+  t('theme-manager 导出 sortThemesBaseFirst', iFn >= 0,
+    iFn < 0 ? '没有这个函数 → 三处无法共用' : '已导出');
+
+  /*
+   * 判据落在函数**体内**：只钉"文件里出现过这个名字"的话，
+   * 把实现改成 const list = []（一项都不排）断言照样全绿 ——
+   * import 语句里的名字就足以让它通过。这是本项目反复栽的
+   * "钉存在性、不钉接线"，这次直接在函数体内找。
+   */
+  t('排序取的是**实际**基调，不是 t.base 原始值',
+    iFn >= 0 && /resolveThemeMeta/.test(fn) && !/[^.\w]t\.base/.test(fn),
+    iFn < 0 ? '取样失效' : (/resolveThemeMeta/.test(fn) ? '用 resolved'
+      : '用了原始值 → 改过基调的主题会排错位置'));
+  t('暗色排在浅色之前（light 记 1、其余记 0）',
+    /base\s*===\s*'light'\s*\?\s*1\s*:\s*0/.test(fn),
+    /base\s*===\s*'light'\s*\?\s*1\s*:\s*0/.test(fn) ? '顺序正确'
+      : '方向反了或没写 → 浅色会排到前面');
+
+  /* 三处都要用：只改一边，同一套主题在两个界面里顺序就不一致 */
+  const SITES = [
+    ['设置页（React 版）', 'plugins/settings/App.tsx'],
+    ['标题栏快速选择器', 'js/theme-picker.js'],
+    ['设置页（无构建版）', 'plugins/settings/index.js'],
+  ];
+  for (const [label, file] of SITES) {
+    const s = stripComments(read(file));
+    /* 去掉 import 行，只数真实调用 */
+    /* 数的是 `sortThemesBaseFirst(` —— import 行没有括号，不会混进来。
+       第一版我多减了一次"import 行"，把 2 处判成 1 处，三处全假红。 */
+    const calls = (s.match(/sortThemesBaseFirst\(/g) || []).length;
+    t(`${label} 的分组都走了共用排序`, calls >= 2,
+      calls >= 2 ? `${calls} 处`
+        : `只用了 ${calls} 处 → 风格组与「其它」组没排全，两侧顺序不一致`);
+  }
+
+  /*
+   * 无构建版此前写的是 resolveThemeMeta(t).style === k，**没有**
+   * `|| 'neumorph'` 兜底：没写 style 的主题在 React 版归入新拟态，
+   * 在无构建版却落进「其它」—— 同一套主题在两个界面分组不同。
+   * 共用排序时顺手统一了，这里钉住防再漂。
+   */
+  const idx = stripComments(read('plugins/settings/index.js'));
+  t('无构建版风格分组与 React 版同款兜底（|| \'neumorph\'）',
+    /resolveThemeMeta\(t\)\.style\s*\|\|\s*'neumorph'/.test(idx),
+    /resolveThemeMeta\(t\)\.style\s*\|\|\s*'neumorph'/.test(idx) ? '一致'
+      : '缺兜底 → 无 style 的主题分组与 React 版不同');
+}
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

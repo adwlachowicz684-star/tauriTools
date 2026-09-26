@@ -29,6 +29,9 @@ import {
      主题列表里每张卡片都要显示自己**实际**的风格与深浅 ——
      上面那三个只管当前主题，列表场景用不了。 */
   resolveThemeMeta,
+  /* 组内排序：暗色在前、浅色在后。三处主题列表（本文件 / 无构建版 /
+     标题栏快速选择器）共用它，避免各自写一遍导致顺序不一致。 */
+  sortThemesBaseFirst,
   getHueShift, getLightShift, setThemeShift,
   /* 单项复位：把「恢复默认」做成每个调节项各自的小按钮，
      而不是一个"恢复主题自带配色"大按钮 ——
@@ -328,6 +331,15 @@ function PluginManager({
   /* 当前选中的插件 id。null 表示还没选过（此时退回第一个）。 */
   const [selId, setSelId] = useState<string | null>(null);
   const [q, setQ] = useState('');
+  /*
+   * 当前页签（三类插件）。默认停在"应用插件" —— 它是数量最多、
+   * 也是用户最常来改的一类（排序、加入右上角）。
+   *
+   * 为什么是页签而不是上下堆叠的三组：三类插件加起来二十多个，
+   * 堆在一起左列就是一条长带，要滚过"工具栏"整组才能看到"服务"，
+   * 而每次只会操作其中一类 —— 页签一次只显示一类，左列短得多。
+   */
+  const [kind, setKind] = useState<'app' | 'toolbar' | 'service'>('app');
 
   const hidden = new Set(hiddenIds());
   const extra = new Set(extraIds());
@@ -373,20 +385,30 @@ function PluginManager({
   const appOrder = (plugins || []).filter((p: any) => kindOf(p) === 'app');
   const appIndex = new Map(appOrder.map((p: any, i: number) => [p.id, i]));
 
-  const GROUPS: { key: string; title: string; hint: string }[] = [
-    {
-      key: 'toolbar',
-      title: '工具栏插件',
-      hint: '显示在标题栏右上角 · 自带入口，只能隐藏 / 展示',
-    },
+  /*
+   * 三类插件。**顺序即页签顺序**：应用插件在最前，它数量最多、
+   * 也是用户最常来改的一类（拖动排序、加入右上角）。
+   *
+   * short 是页签上的短标签 —— 左列只有 220px，三个页签平分各约 70px，
+   * 写"应用插件 12"会挤到换行或省略。
+   */
+  const GROUPS: { key: string; title: string; short: string; hint: string }[] = [
     {
       key: 'app',
       title: '应用插件',
+      short: '应用',
       hint: '显示在侧边栏 · 可拖动排序 · 可加入右上角按钮',
+    },
+    {
+      key: 'toolbar',
+      title: '工具栏插件',
+      short: '工具栏',
+      hint: '显示在标题栏右上角 · 自带入口，只能隐藏 / 展示',
     },
     {
       key: 'service',
       title: '服务插件',
+      short: '服务',
       hint: '后台运行不进界面，由其它插件通过 ctx.services.call 调用',
     },
   ];
@@ -414,11 +436,36 @@ function PluginManager({
     || String(p?.entry ?? '').toLowerCase().includes(kw);
 
   /*
-   * 选中的插件：**选了一个但被搜索过滤掉了，就退回第一个匹配的**。
-   * 不退回的话右列会空白，而左列明明还列着东西 —— 看着像坏了。
+   * 每类的**命中数**（页签上的角标）。
+   *
+   * 用命中数而不是总数：搜索"md"时页签显示"1 / 0 / 0"，用户一眼
+   * 就知道该去哪个页签找；显示总数的话，切过去才发现是空的。
    */
-  const sel = all.find((p: any) => p.id === selId) || null;
-  const active = sel && hit(sel) ? sel : (all.find(hit) || null);
+  const counts: Record<string, number> = {};
+  for (const g of GROUPS) counts[g.key] = orderedFor(g.key).filter(hit).length;
+
+  /*
+   * 有效页签：当前页签一个都没有（通常是被搜索过滤空了），就退到
+   * 第一个有内容的类。
+   *
+   * 不退回的话左列空白、右列还显示着上一个页签选中的插件 ——
+   * 左列明明空着却说在改某个插件，看着像坏了。
+   *
+   * 刻意**纯派生、不写 state**：写 state 就得在搜索变化时同步它，
+   * 两个 state 互相触发很容易绕成循环，而派生值永远自洽。
+   */
+  const effKind = counts[kind] > 0
+    ? kind
+    : (GROUPS.find((g) => counts[g.key] > 0)?.key ?? kind);
+
+  const curItems = orderedFor(effKind).filter(hit);
+
+  /*
+   * 选中的插件：**在当前页签内**找；找不到（切了页签 / 被搜索过滤掉）
+   * 就退回当前页签第一个。不退回的话右列会空白，而左列明明还列着东西。
+   */
+  const sel = curItems.find((p: any) => p.id === selId) || null;
+  const active = sel || curItems[0] || null;
 
   type CardBtn = { label: string; title: string; act?: () => void; disabled?: boolean };
 
@@ -578,26 +625,46 @@ function PluginManager({
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
+        {/* ---------------- 三类插件的页签 ----------------
+             用 button + aria-selected 而不是 div：键盘可达、自带 role，
+             不用补 tabIndex / onKeyDown / role 三件套。
+             角标是命中数，搜索时能直接看出该去哪个页签。 */}
+        <div className="pg-tabs" role="tablist" aria-label="插件类别">
+          {GROUPS.map((g) => (
+            <button
+              key={g.key}
+              type="button"
+              role="tab"
+              aria-selected={g.key === effKind}
+              className={'pg-tab' + (g.key === effKind ? ' on' : '')}
+              title={`${g.title} · ${g.hint}`}
+              onClick={() => setKind(g.key as 'app' | 'toolbar' | 'service')}
+            >
+              {g.short}
+              <span className="pg-tab-n">{counts[g.key]}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* 当前页签那一类的说明。放在列表上方而不是塞进 title ——
+            悬停才看得到的话，等于没有。 */}
+        <div className="pg-kind-hint p-muted">
+          {GROUPS.find((g) => g.key === effKind)?.hint}
+        </div>
+
         <div className="pg-items">
-          {GROUPS.map((g) => {
-            const items = orderedFor(g.key).filter(hit);
-            const isApp = g.key === 'app';
-            return (
-              <div key={g.key} className="pg-group">
-                {/* 空组**标题保留、卡片区不渲染** —— 否则"这类插件一个都没有"
-                    和"这类插件没被列出来"看起来一样，都会被当成漏了。 */}
-                <div className="pg-group-head">{g.title} · {items.length}</div>
-                <div
-                  className="pg-group-items"
-                  ref={isApp ? appsRef : undefined}
-                  onDragOver={isApp ? appsDrag.onDragOver : undefined}
-                  onDrop={isApp ? (e: DragEvent) => e.preventDefault() : undefined}
-                >
-                  {items.map((p: any) => {
-                    const ai = appIndex.get(p.id);
-                    const dragProps = isApp && ai !== undefined ? appsDrag.getItemProps(ai) : undefined;
-                    /*
-                       ⚠️ 这段注释必须留在 `return (` **之外**。
+          <div className="pg-group">
+            <div
+              className="pg-group-items"
+              ref={effKind === 'app' ? appsRef : undefined}
+              onDragOver={effKind === 'app' ? appsDrag.onDragOver : undefined}
+              onDrop={effKind === 'app' ? (e: DragEvent) => e.preventDefault() : undefined}
+            >
+              {curItems.map((p: any) => {
+                const ai = appIndex.get(p.id);
+                const dragProps = effKind === 'app' && ai !== undefined ? appsDrag.getItemProps(ai) : undefined;
+                /*
+                   ⚠️ 这段注释必须留在 `return (` **之外**。
                        JSX 里用大括号包起来的注释是**表达式**而不是注释，
                        写在 return ( 内会被当成返回的对象字面量，紧跟其后的
                        <div …> 直接语法错（esbuild: Expected ")" but found "key"）。
@@ -618,43 +685,41 @@ function PluginManager({
                           · 文本不可选 → .pg-item 里加 user-select:none
                             （button 内文本本就选不中；div 能选，拖的时候
                              会变成"选中文字"而不是"拖起整行"）
-                    */
-                    return (
-                      <div
-                        key={p.id}
-                        {...dragProps}
-                        role="button"
-                        tabIndex={0}
-                        aria-pressed={active?.id === p.id}
-                        onKeyDown={(e: any) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();   // Space 否则会滚动页面
-                            setSelId(p.id);
-                          }
-                        }}
-                        /* className 放在 spread **之后**：拖拽内核也会返回
-                           className（拖拽态），写在前面会被它覆盖。 */
-                        className={
-                          'pg-item'
-                          + (active?.id === p.id ? ' on' : '')
-                          + (dragProps && appsDrag.dragFrom === ai ? ' nx-drag-dragging' : '')
-                        }
-                        onClick={() => setSelId(p.id)}
-                        title={p.name ?? p.id}
-                      >
-                        {dragProps ? (
-                          <span className="nx-drag-handle" title="按住这里拖动可调整侧边栏顺序">⠿</span>
-                        ) : null}
-                        <span className="pg-item-icon">{p.icon ?? '◌'}</span>
-                        <span className="pg-item-name">{p.name ?? p.id}</span>
-                        {p.builtin ? <span className="pg-item-tag">内置</span> : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
+                */
+                return (
+                  <div
+                    key={p.id}
+                    {...dragProps}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={active?.id === p.id}
+                    onKeyDown={(e: any) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();   // Space 否则会滚动页面
+                        setSelId(p.id);
+                      }
+                    }}
+                    /* className 放在 spread **之后**：拖拽内核也会返回
+                       className（拖拽态），写在前面会被它覆盖。 */
+                    className={
+                      'pg-item'
+                      + (active?.id === p.id ? ' on' : '')
+                      + (dragProps && appsDrag.dragFrom === ai ? ' nx-drag-dragging' : '')
+                    }
+                    onClick={() => setSelId(p.id)}
+                    title={p.name ?? p.id}
+                  >
+                    {dragProps ? (
+                      <span className="nx-drag-handle" title="按住这里拖动可调整侧边栏顺序">⠿</span>
+                    ) : null}
+                    <span className="pg-item-icon">{p.icon ?? '◌'}</span>
+                    <span className="pg-item-name">{p.name ?? p.id}</span>
+                    {p.builtin ? <span className="pg-item-tag">内置</span> : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1174,14 +1239,14 @@ export default function Settings() {
                 label,
                 /* 按**实际**风格分组：用户把某套改成玻璃后它现在就是玻璃。
                    用原始 t.style 会让它留在原组，而缩略图已是玻璃观感。 */
-                all.filter((t) => (resolveThemeMeta(t).style || 'neumorph') === k),
+                sortThemesBaseFirst(all.filter((t) => (resolveThemeMeta(t).style || 'neumorph') === k)),
               ] as [string, typeof all]),
               /* 没写 style 的（老自定义主题）单列一组 ——
                  混进任何一组都是错的：它们的观感根本不属于那个风格。 */
-              ['其它', all.filter((t) => {
+              ['其它', sortThemesBaseFirst(all.filter((t) => {
                 const st = resolveThemeMeta(t).style;
                 return !st || !THEME_STYLE_LABELS[st];
-              })],
+              }))],
             ];
             return groups.filter(([, items]) => items.length).map(([label, items]) => (
               <div className="theme-group" key={label}>
