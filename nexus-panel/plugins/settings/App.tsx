@@ -581,8 +581,11 @@ function PluginManager({
                   {items.map((p: any) => {
                     const ai = appIndex.get(p.id);
                     const dragProps = isApp && ai !== undefined ? appsDrag.getItemProps(ai) : undefined;
-                    return (
-                      {/*
+                    /*
+                       ⚠️ 这段注释必须留在 `return (` **之外**。
+                       JSX 里用大括号包起来的注释是**表达式**而不是注释，
+                       写在 return ( 内会被当成返回的对象字面量，紧跟其后的
+                       <div …> 直接语法错（esbuild: Expected ")" but found "key"）。
                         这里**必须是 <div> 不能是 <button>**。
 
                         HTML5 原生拖拽（draggable）在表单控件上不启动：
@@ -600,7 +603,8 @@ function PluginManager({
                           · 文本不可选 → .pg-item 里加 user-select:none
                             （button 内文本本就选不中；div 能选，拖的时候
                              会变成"选中文字"而不是"拖起整行"）
-                      */}
+                    */
+                    return (
                       <div
                         key={p.id}
                         {...dragProps}

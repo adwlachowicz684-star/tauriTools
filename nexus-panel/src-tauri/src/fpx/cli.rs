@@ -377,7 +377,7 @@ fn migrate(
         }
         let yes = pre.iter().filter(|i| i.note == "将搬迁").count();
         return format!("预演（未做任何改动）：共 {} 项，其中将搬迁 {} 项\n{}",
-            pre.len(), yes, render(yes, pre.len() - yes, 0, 0, &pre));
+            pre.len(), yes, render(yes, pre.len() - yes, 0, 0, &[], &pre));
     }
 
     /* 动手之前先把两份数据文件的**副本**留下来。

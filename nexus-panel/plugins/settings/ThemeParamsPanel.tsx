@@ -184,10 +184,12 @@ export default function ThemeParams({
                  实际生效值由 CSS 兜底（neumorphism.css 的 :root）。 */
               const undef = own === '' && overrides[p.key] == null;
               const changed = overrides[p.key] != null && overrides[p.key] !== own;
+              /* ⚠️ 注释必须在 return ( 之外：大括号注释在 JSX 里是表达式，
+                 写进 return 的括号会被当成返回的对象字面量 → 语法错。 */
+              /* 用模板串而不是字符串拼接：静态扫描只认模板串里的
+                 字面量片段，写成 'tp-row' + (x ? ' changed' : '')
+                 会把 changed 判成"CSS 定义了却没人用"。 */
               return (
-                {/* 用模板串而不是字符串拼接：静态扫描只认模板串里的
-                    字面量片段，写成 'tp-row' + (x ? ' changed' : '')
-                    会把 changed 判成"CSS 定义了却没人用"。 */}
                 <div key={p.key} className={`tp-row${changed ? ' changed' : ''}`}>
                   <div className="tp-row-main">
                     <div className="tp-row-label">
