@@ -67,8 +67,19 @@ export function useLayoutMemory({ s, config }: UseLayoutMemoryArgs) {
     setLogHeight(clampLogHeight(dragBase.current.height + delta));
   }, []);
 
+  /*
+   * ⚠️ 配置字段叫 logRowHeight，本地 state 叫 logHeight —— 两个名字不同，
+   * 这里必须显式写成 `logRowHeight: logHeight`。
+   *
+   * 曾两次被写成裸的 `saveLayout({ logRowHeight })`：本作用域根本没有
+   * 这个变量，ESM 是严格模式，**拖完日志分隔条松手那一下就是 ReferenceError**，
+   * 布局永远存不进去。一直没暴露是因为不拖分隔条就走不到这条路径。
+   *
+   * （本修复曾被上游整文件改动覆盖回来过一次，故在此写明判据，
+   *   以免再被"看着像是字段名简写"而改回去。）
+   */
   const onLogResizeEnd = useCallback(() => {
-    saveLayout({ logRowHeight });
+    saveLayout({ logRowHeight: logHeight });
     dragBase.current = { ...dragBase.current, height: logHeight };
   }, [saveLayout, logHeight]);
 

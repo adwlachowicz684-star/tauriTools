@@ -2094,13 +2094,15 @@
   position: fixed;
   right: 12px;
   bottom: 12px;
-  z-index: 40;
+  /* 悬浮条：--z-float(50) 正是"插件内悬浮条 / 通知"这一档。
+     写死 40 看不出它该排在哪 —— 高于普通内容、低于下拉菜单(60)。 */
+  z-index: var(--z-float);
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 5px 11px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--surface);
   box-shadow: var(--sh-in-sm, 0 1px 4px rgba(0, 0, 0, .18));
   font-size: var(--fs-11, 11px);
@@ -2122,7 +2124,8 @@
   border: 2px solid var(--border);
   border-top-color: var(--accent);
   border-radius: 50%;
-  animation: fpx-busy-spin .7s linear infinite;
+  /* 转圈走 --anim-spin（800ms）。原写死 .7s=700ms，差 100ms 无感。 */
+  animation: fpx-busy-spin var(--anim-spin) linear infinite;
 }
 
 @keyframes fpx-busy-spin { to { transform: rotate(360deg); } }
@@ -2131,7 +2134,9 @@
    改成静态的点 + 半透明脉冲，仍在"表达在忙"，但不制造运动。 */
 @media (prefers-reduced-motion: reduce) {
   .fpx-busy-dot { animation: none; border-top-color: var(--border); background: var(--accent); }
-  .fpx-busy[data-on="1"] .fpx-busy-dot { animation: fpx-busy-pulse 1.4s ease-in-out infinite; }
+  .fpx-busy[data-on="1"] .fpx-busy-dot {     /* 呼吸原写死 1.4s。--anim-pulse 是 600ms，直接替换会明显变快，
+       故取它的 2 倍（1.2s）—— 既走令牌，又最接近原观感。 */
+    animation: fpx-busy-pulse calc(var(--anim-pulse) * 2) ease-in-out infinite; }
 }
 
 @keyframes fpx-busy-pulse { 50% { opacity: .35; } }
