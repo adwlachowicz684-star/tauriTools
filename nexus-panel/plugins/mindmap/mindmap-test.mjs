@@ -1850,7 +1850,11 @@ group('行内编辑贴合节点');
  */
 {
   const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
-  const kb = ed.slice(ed.indexOf("el.addEventListener('keydown'"), ed.indexOf("el.addEventListener('keydown'") + 1600);
+  // 用**结构**收尾而不是固定长度：keydown 块以 layoutEditLayer(el, node) 结束。
+  // 早先写死 1600 字符，注释一长就把 __minderInsertChild 挤出切片，
+  // 断言变成恒假 —— 代码一点没改却报红。
+  const kbAt = ed.indexOf("el.addEventListener('keydown'");
+  const kb = ed.slice(kbAt, ed.indexOf('layoutEditLayer(el, node)', kbAt));
   const kcode = kb.replace(/\/\*[\s\S]*?\*\//g, '');
   ok(/ev\.key === 'Tab'/.test(kcode), '编辑层单独处理 Tab');
   ok(/closeTextEditor\(true\);/.test(kcode), 'Tab 先提交当前文字');
@@ -4490,7 +4494,9 @@ group('A29 搜索失败状态三态分流');
   ok(/function runSearch\(/.test(idx), 'A29 抽出 runSearch（回车与定位共用）');
   {
     const tb = idx.slice(idx.indexOf('const searchInput = h('), idx.indexOf('toolbar.appendChild(h(\'div.mm-sep\''));
-    ok(/onkeydown[\s\S]{0,200}runSearch\(\)/.test(tb), 'A29 回车调 runSearch');
+    // 同样是固定长度窗口被注释撑爆的问题：0,200 装不下 Enter 分支前的说明，
+    // 于是「回车调 runSearch」这条恒假。放宽到 900（够长且仍限于 searchInput 块内）。
+    ok(/onkeydown[\s\S]{0,900}runSearch\(\)/.test(tb), 'A29 回车调 runSearch');
   }
   eq((idx.match(/B\('定位', \(\) => runSearch\(\)/g) || []).length, 1,
     'A29 定位按钮调 runSearch（与回车同一实现）');
@@ -4884,6 +4890,51 @@ group('BUG 39 导入的快照不得被滚动清理删掉');
   ok(!!ib, '找到 importBackups');
   ok(/trimBackups\(addedKeys\)/.test(ib[0]), '导入后清理必须带上 addedKeys');
   ok(/addedKeys\.add\(ok\)/.test(ib[0]), '把 putBackup 返回的 key 收进保护集合');
+}
+
+/* ------------------------------------------------------------------
+   BUG 40/41：中文输入法按回车「选候选词」被当成提交 / 发起搜索
+   ------------------------------------------------------------------ */
+group('输入法组合期不得把 Enter 当成提交或搜索');
+
+{
+  const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+
+  // ① 行内编辑层：Enter 提交前必须先看组合态
+  const layer = ed.slice(ed.indexOf("el.addEventListener('keydown', function (ev) {"));
+  const lbody = layer.slice(0, layer.indexOf('layoutEditLayer'));
+  ok(/ev\.isComposing/.test(lbody), '行内编辑层：Enter/Tab 前先判 isComposing');
+  ok(/closeTextEditor\(true\)/.test(lbody), '行内编辑层仍然会在正常 Enter 时提交');
+  // 守卫必须在 Enter 分支**之前**
+  ok(lbody.indexOf('isComposing') < lbody.indexOf("ev.key === 'Enter'"),
+    '组合态判断必须排在 Enter 分支之前');
+
+  // ② 外框标签输入框
+  const lab = ed.slice(ed.indexOf("_labelInput.addEventListener('keydown'"));
+  const l2 = lab.slice(0, lab.indexOf('blur'));
+  ok(/e\.isComposing/.test(l2), '外框标签输入框：提交前先判 isComposing');
+  ok(l2.indexOf('isComposing') < l2.indexOf("e.key === 'Enter'"),
+    '外框标签：组合态判断排在 Enter 之前');
+
+  // ③ 搜索框
+  // 从 placeholder 往前找到 searchInput 的定义，再取它的 onkeydown 块
+  const phAt = idx.indexOf("placeholder: '搜索节点…'");
+  const sb = idx.slice(phAt, phAt + 1400);
+  const sb2 = sb.slice(0, sb.indexOf('runSearch();') + 40);
+  ok(/e\.isComposing/.test(sb2), '搜索框：Enter 发起搜索前先判 isComposing');
+  ok(sb2.indexOf('isComposing') < sb2.indexOf('runSearch();'),
+    '搜索框：组合态判断排在 runSearch 之前');
+
+  // ④ 数值输入框
+  const ns = pn.slice(pn.indexOf("onkeydown: (e) => {"), pn.indexOf("onkeydown: (e) => {") + 600);
+  ok(/e\.isComposing/.test(ns), '数值输入框：步进/确定前先判 isComposing');
+
+  // ⑤ 四处都必须同时看 keyCode 229（老 WebView 上 isComposing 不可靠）
+  const all = ed + idx + pn;
+  const n229 = (all.match(/keyCode === 229/g) || []).length;
+  eq(n229, 4, '四处都要同时看 keyCode 229');
 }
 
 group('交换格式接入 UI');

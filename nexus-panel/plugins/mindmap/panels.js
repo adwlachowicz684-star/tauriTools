@@ -521,6 +521,9 @@ export function numSpinner(o) {
     title: o.title || '',
     onchange: (e) => emit(e.target.value),
     onkeydown: (e) => {
+      // 输入法组合中：方向键在选候选、回车在上屏，都不是"确定这个数值"。
+      // 虽然这是数值框，但中文输入法下同样会进组合态，一并挡掉。
+      if (e.isComposing || e.keyCode === 229) return;
       // ↑ / ↓ 与按钮同义；输入框里按方向键挪光标是另一回事，这里直接接管
       if (e.key === 'ArrowUp') { e.preventDefault(); emit(cur + 1); }
       else if (e.key === 'ArrowDown') { e.preventDefault(); emit(cur - 1); }

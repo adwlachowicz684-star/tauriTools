@@ -552,6 +552,16 @@ bootIframePlugin(async (ctx) => {
       },
       onkeydown: (e) => {
         if (e.key !== 'Enter') return;
+        /*
+         * 输入法组合中按回车是「把候选词上屏」，此刻框里还是拼音。
+         *
+         * 不拦的话搜索会用拼音去跑 —— 实测：画布上有「设计文档」，
+         * 输入 sheji 后按回车选「设计」，状态栏显示「无匹配」。
+         * 用户只会以为是搜索坏了。
+         * （keyCode 229 是 Chrome 组合期的统一码；isComposing 在部分
+         *  WebView 版本上不可靠，两个一起看最稳。）
+         */
+        if (e.isComposing || e.keyCode === 229) return;
         e.preventDefault();
         runSearch();
       },

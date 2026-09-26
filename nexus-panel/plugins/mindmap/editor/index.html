@@ -2205,6 +2205,9 @@
                     'font:12px "Microsoft YaHei";padding:2px 6px;outline:none;';
                 document.body.appendChild(_labelInput);
                 _labelInput.addEventListener('keydown', function (e) {
+                    // 输入法组合中：Enter 是「候选词上屏」，不是提交。
+                    // 不拦的话打中文外框标签，一按回车选词标签就变成了拼音。
+                    if (e.isComposing || e.keyCode === 229) { e.stopPropagation(); return; }
                     // 必须 stopPropagation：否则按键会冒泡到 km receiver 触发画布快捷键。
                     // 原先只 preventDefault 不 stop，于是编辑外框标签时按 Enter 会顺带
                     // 插入一个同级节点、按方向键会跑偏选中。
@@ -3800,6 +3803,19 @@
                 'line-height:' + Math.round(lh) + 'px;';
             el.addEventListener('blur', function () { closeTextEditor(true); });
             el.addEventListener('keydown', function (ev) {
+                /*
+                 * 输入法组合中必须整个放行。
+                 *
+                 * 打中文时按 Enter 是「把候选词上屏」，此刻节点里的还是拼音。
+                 * 不拦的话这一下 Enter 会被当成「提交并结束编辑」—— 实测：
+                 * 输入 sheji 后按回车选词，编辑层直接关闭，节点文字变成 "sheji"。
+                 * 用户看到的是「打不了中文 / 一选词就跑掉」。
+                 * Escape（取消候选）与 Tab（部分输入法切候选）同理。
+                 *
+                 * keyCode 229 是 Chrome 在组合期给的统一码；isComposing 在部分
+                 * WebView 版本上不可靠，两个一起看最稳。
+                 */
+                if (ev.isComposing || ev.keyCode === 229) { ev.stopPropagation(); return; }
                 if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ev.stopPropagation(); closeTextEditor(true); }
                 else if (ev.key === 'Tab') {
                     ev.preventDefault(); ev.stopPropagation();
