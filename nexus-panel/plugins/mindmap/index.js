@@ -977,6 +977,10 @@ bootIframePlugin(async (ctx) => {
     fo.name = name.trim() || fo.name;
     await saveStore('文件夹列表', () => store.folders.save(foldersList));
     renderFiles();
+    // 必须有这句：renameFile 说完「已重命名」就结束了，这里原本什么都不说。
+    // 同一个列表里两种重命名，一个有回执一个没有，用户会以为文件夹改名没生效
+    // （名字确实改了，但状态栏还停在上一句，看着像点了没反应）。
+    status('已重命名文件夹');
   }
 
   /** 只删文件夹，里面的文件移到根目录（不连带删除，避免误删内容） */

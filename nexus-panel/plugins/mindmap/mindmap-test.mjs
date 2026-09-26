@@ -4801,6 +4801,24 @@ group('BUG 36 导入无大纲文件不得替换画布');
   ok(/当前画布未改动/.test(sc), '提示里说明当前画布未改动');
 }
 
+/* ------------------------------------------------------------------
+   BUG 37：重命名文件夹不说话（与 renameFile 不一致）
+   ------------------------------------------------------------------ */
+group('BUG 37 文件库两种重命名都要有回执');
+
+{
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const rf = idx.match(/async function renameFile\(id\)\s*\{[\s\S]*?\n  \}/);
+  const rfo = idx.match(/async function renameFolder\(id\)\s*\{[\s\S]*?\n  \}/);
+  ok(!!rf, '找到 renameFile');
+  ok(!!rfo, '找到 renameFolder');
+  ok(/status\(/.test(rf[0]), 'renameFile 有回执');
+  ok(/status\(/.test(rfo[0]), 'renameFolder 也要有回执（原来没有，与 renameFile 不一致）');
+  // 两者都要写盘：不写的话下次启动名字又回去了
+  ok(/saveStore\(/.test(rf[0]), 'renameFile 写盘');
+  ok(/saveStore\(/.test(rfo[0]), 'renameFolder 写盘');
+}
+
 group('交换格式接入 UI');
 
 {
