@@ -2409,6 +2409,10 @@ html.theme-transition *:not(.spinner) {
 .md-recent-item {
   flex: 1;
   min-width: 0;
+  /* 长路径不裁会把右边的 × 挤出可视区；三条配套，缺一不生效 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   text-align: left;
   border: 0;
   background: transparent;
@@ -2416,7 +2420,6 @@ html.theme-transition *:not(.spinner) {
   font-size: 12px;
   padding: var(--sp-1, 4px) var(--sp-2, 8px);
   cursor: pointer;
-  /* 路径可能很长：不裁会把右边的 × 挤出可视区 */
 }
 /* 目录选择器浮层（.fp-*）
    --------------------------------------------------------------------
