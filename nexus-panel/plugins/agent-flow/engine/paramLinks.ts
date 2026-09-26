@@ -233,6 +233,23 @@ export const NODE_OUTPUTS: Record<string, OutPort[]> = {
     { key: '行数', kind: 'num' },
     { key: '摘要' },
   ],
+  /*
+   * HTTP 的三个具名输出。
+   *
+   * 执行器一直都在产出（status / ok / len），但登记表里没有这一项 ——
+   * 于是卡片上只有一个「结论」口，状态码拖不出来。
+   * 而"请求成功了吗"恰恰是最常被下游问的一句，
+   * 只能靠解析整段响应体去猜，是典型的"有功能但够不着"。
+   *
+   * kind 标 num / bool 是为了参数连线能校验：
+   * 状态码接到「大于」上合法，接到「包含」上会报「错参」。
+   */
+  'generic-http': [
+    { key: OUT_DEFAULT, label: '结论' },
+    { key: 'status', label: '状态码', kind: 'num' },
+    { key: 'ok', label: '是否成功', kind: 'bool' },
+    { key: 'len', label: '响应长度', kind: 'num' },
+  ],
   canvasIn: [
     { key: OUT_DEFAULT, label: '结论' },
     { key: '端口' },
@@ -254,6 +271,20 @@ export const NODE_OUTPUTS: Record<string, OutPort[]> = {
  * 静态表写不出"现在有几张卡"，所以 const 走 data 现场算。
  * 只有一张卡时也照样给具名端口：多一个口子不会让人困惑
  * （标签写着卡名），而"有时有、有时没有"才会。
+ *
+ * ================= 大模型（llmChat）同样要现场算 =================
+ *
+ * 它产出的字段名恒为 text / chars，但**叫什么**随用途变：
+ * 翻译用途下那是「译文」，不是「内容」。
+ *
+ * 更关键的是它**必须**进这张表：AI 三个节点合并成一个之后，
+ * 执行器产出具名字段、旧节点（ocr / translate）也登记着，
+ * 唯独合并后的 llmChat 没登记 —— 于是卡片上只有一个「结论」口，
+ * 「内容」「字数」拖不出来，而界面不报错、也不说少了什么，
+ * 用户只会以为这个节点本来就没有具名输出。
+ *
+ * 这正是"两处各写一份、改一处漏一处"的那一类：
+ * 合并改了执行器与卡片，登记表没跟上。
  */
 export function outputsOf(
   dataKind: string | undefined | null,
@@ -267,6 +298,14 @@ export function outputsOf(
         key: constItemKey(it, i),
         label: constItemLabel(it, i),
       })),
+    ];
+  }
+  if (dataKind === 'llmChat') {
+    const use = String((data as { use?: unknown } | null | undefined)?.use ?? '');
+    return [
+      { key: OUT_DEFAULT, label: '结论' },
+      { key: 'text', label: use === 'translate' ? '译文' : '内容', kind: 'text' },
+      { key: 'chars', label: '字数', kind: 'num' },
     ];
   }
   const list = dataKind ? NODE_OUTPUTS[dataKind] : undefined;

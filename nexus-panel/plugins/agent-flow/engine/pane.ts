@@ -24,6 +24,7 @@ import type {
   TaskNodeData, TaskPaneNodeData, ApiPaneNodeData, LlmChatNodeData, CliKind,
 } from '../types';
 import { topoLayers } from './topo';
+import { paramLinksOf } from './paramLinks';
 
 /** 窗格节点的两种 kind */
 export const PANE_KINDS = ['taskPane', 'apiPane'] as const;
@@ -294,9 +295,24 @@ export function withPaneContext(
  *
  * 成环的节点排不进 layers（topoLayers 会把它们放进 cyclic），
  * 这里自然取不到 —— 拿不到就少一段上下文，比编一个顺序出来强。
+ *
+ * ================= 排序必须计入参数连线 =================
+ *
+ * 窗格里两个成员之间可能只有参数连线（A 的输出填进 B 的某个参数），
+ * 没有流程连线。不计入的话 A 与 B 在同一层，谁先谁后由 nodes 数组
+ * 的创建顺序决定 —— 而执行顺序是 runner 那边**计入了**参数连线排的。
+ *
+ * 两份顺序不一致的后果：B 实际比 A 先跑完（按这里排的顺序取上下文），
+ * 于是 A 刚产出的结果被当成"上一步"喂给 B，讲不通；
+ * 反过来 B 排到 A 之前，则 A 的输出根本取不到，静默少一段。
+ *
+ * 所以这里与 runner 用同一份排序输入 —— 各排一份迟早对不上。
  */
 export function panePrevOutputs(
-  graph: { nodes?: readonly AnyNode[]; edges?: readonly { source: string; target: string }[] } | null | undefined,
+  graph: {
+    nodes?: readonly AnyNode[];
+    edges?: readonly { source: string; target: string; sourceHandle?: string | null; targetHandle?: string | null; data?: unknown }[];
+  } | null | undefined,
   nodeId: string,
   paneId: string | null | undefined,
   outputs: Readonly<Record<string, string | undefined>> | undefined,
@@ -308,7 +324,8 @@ export function panePrevOutputs(
   if (members.size === 0) return [];
 
   const order: string[] = [];
-  for (const layer of topoLayers(graph as never).layers) {
+  const links = paramLinksOf((graph.edges ?? []) as never);
+  for (const layer of topoLayers(graph as never, links).layers) {
     for (const nid of layer) order.push(nid);
   }
 

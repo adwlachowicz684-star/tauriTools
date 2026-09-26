@@ -228,6 +228,24 @@ test('CLI 窗格的「共享上下文」必须在运行时拼进提示词', () =
   assert.match(src, /id, node, opts, emit, graph,/);
 });
 
+test('panePrevOutputs 的排序要计入参数连线', () => {
+  if (!process.env.AF_SRC) return;
+  /*
+   * 少传第二个参数，排序就只按流程边算。窗格里两个成员之间常常
+   * **只有参数连线**（A 的输出填进 B 的某个参数），于是 A 与 B 落在
+   * 同一层，先后由 nodes 数组的创建顺序决定 —— 而执行顺序是 runner
+   * 那边计入了参数连线排的。两份顺序不一致，上下文就会错乱或缺失，
+   * 且不报错。
+   */
+  const src = readSrc('engine/pane.ts');
+  assert.match(
+    src,
+    /topoLayers\([\s\S]{0,80}?,\s*[\s\S]{0,40}?\)\.layers/,
+    'panePrevOutputs 的 topoLayers 要带上参数连线',
+  );
+  assert.match(src, /paramLinksOf\(/, '要复用 paramLinksOf，不要自己再判一遍什么是参数连线');
+});
+
 test('panePrevOutputs：只取同窗格、排在本节点之前、已产出的输出', () => {
   /*
    * 顺序错了上下文就讲不通（"第 1 步"其实是第 4 步才跑到的节点），

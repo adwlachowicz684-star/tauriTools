@@ -165,7 +165,64 @@ const RUNNER_OF: Record<string, string[]> = {
   filter: ['engine/runners/table.ts'],
   canvasIn: ['engine/runners/canvasPort.ts'],
   canvasOut: ['engine/runners/canvasPort.ts'],
+  /*
+   * HTTP 的三个具名输出（状态码 / 是否成功 / 响应长度）。
+   *
+   * 执行器一直在写，登记表里却长期没有这一项 —— 于是卡片上只有一个
+   * 「结论」口，"请求成功了吗"只能靠解析整段响应体去猜。
+   * 补登记的**同时**必须在这儿补映射，否则对账会漏掉它：
+   * 本条守卫正是靠 RUNNER_OF 才知道该去哪个文件核字段名。
+   */
+  'generic-http': ['engine/runners/genericHttp.ts'],
 };
+
+/*
+ * 大模型（llmChat）的输出是**动态**的（不在 NODE_OUTPUTS 里，走 outputsOf
+ * 的分支），所以上面那条按 NODE_OUTPUTS 遍历的对账**够不着**它。
+ *
+ * 而它恰恰是最容易漏的一个：AI 三节点合并成一个时，执行器与卡片都改了，
+ * 登记表没跟上 —— 表现是新建的大模型节点拖不出「内容」「字数」，
+ * 而同用途的老节点（ocr / translate）却有。
+ */
+test('大模型节点的具名输出与执行器写入的 fields 对得上', () => {
+  if (!SRC) return;
+  const src = readSrc('engine/runners/llmChat.ts');
+  const ports = outputsOf('llmChat', { use: 'translate' });
+  const keys = ports.map((p) => p.key).filter((k) => k !== OUT_DEFAULT);
+  assert.deepEqual(keys, ['text', 'chars'], '大模型要给出「内容/译文」与「字数」两个具名输出');
+  for (const k of keys) {
+    const re = new RegExp(`['"]?${k}['"]?\\s*:|[{,]\\s*${k}\\s*[,}]`);
+    assert.ok(re.test(src), `大模型的输出「${k}」在执行器里找不到 —— 连了线取不到值`);
+  }
+  /* 翻译用途下那一栏叫「译文」，不叫「内容」 */
+  const labelOf = (use: string) =>
+    outputsOf('llmChat', { use }).find((p) => p.key === 'text')?.label;
+  assert.equal(labelOf('translate'), '译文', '翻译用途下应显示「译文」');
+  assert.equal(labelOf('chat'), '内容', '对话用途下应显示「内容」');
+});
+
+/*
+ * 上面那条是**正向**对账（登记了 → 执行器里真有这个字段）。
+ * 它挡不住反方向：某个节点**压根没登记**，于是遍历 NODE_OUTPUTS
+ * 时它根本不在列表里，守卫安安静静地报绿。
+ *
+ * 我做过故障注入验证：把 generic-http 的登记整段删掉，
+ * 上面那条**照绿** —— 表现正是"执行器在写、卡片上一个口子都没有"。
+ *
+ * 所以这里反向再钉一道：RUNNER_OF 是"谁在产出具名输出"的清单，
+ * 名单上的每一个都必须真的有端口可拖，否则就是"有功能但够不着"。
+ */
+test('产出具名输出的节点必须有端口（反方向：漏登记）', () => {
+  if (!SRC) return;
+  for (const kind of Object.keys(RUNNER_OF)) {
+    const inStatic = Object.prototype.hasOwnProperty.call(NODE_OUTPUTS, kind);
+    const dyn = kind === 'llmChat' || kind === 'const';
+    assert.ok(
+      inStatic || dyn,
+      `${kind} 的执行器在写具名输出，但 outputsOf 里没有它 —— 卡片上一个口子都拖不出来`,
+    );
+  }
+});
 
 test('登记的输出字段必须与执行器实际写入的 fields 对得上', () => {
   if (!SRC) return;
