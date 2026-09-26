@@ -185,6 +185,36 @@
     (function () {
         var km = window.__km = new kityminder.Minder({ renderTo: '#minder-container' });
         km.enable();                       // 进编辑态；只读场景换成 km.disable()
+
+        /*
+         * 键盘输入的入口（隐藏 input.km-receiver）必须**手动补建**。
+         *
+         * 内核是在 `paperrender` 事件里建它的：
+         *   registerInitHook: this.on('paperrender', () => this._initKeyReceiver())
+         * 而 `paperrender` 只在 `renderTo()` 里 fire 一次，且 renderTo() 是
+         * **构造函数里**跑的 —— 那一刻 initHook 还没注册，事件早就发完了。
+         * 实测：构造后 importJson → refresh → select，fire 的事件序列里
+         * **一次 paperrender 都没有**，`.km-receiver` 始终不存在。
+         *
+         * 没有 receiver 的后果（这一条链实测复现过）：
+         *   1. km.focus() 只 fire('focus')，真正去 focus receiver 的那句监听
+         *      正是在 _initKeyReceiver 里注册的 —— 于是 km.focus() 变成空操作，
+         *      activeElement 停在 iframe 的 <body> 上；
+         *   2. 行内编辑器收尾的 closeTextEditor() 末尾就是 km.focus()，
+         *      同样空转；编辑层 div 被 remove 后焦点掉回 body；
+         *   3. 焦点在 iframe 里时，keydown **不跨 iframe 冒泡**，外层
+         *      bindKeyForward 收不到，iframe 内又没有按键处理 ——
+         *      Tab 走浏览器默认导航，焦点越过 iframe 边界落到
+         *      父文档里 iframe 之后的第一个可聚焦元素 = **右侧属性面板**。
+         *
+         * 表现：「画布里连续按 Tab，焦点高亮跑到右侧面板上」，而且每隔一次
+         * 才建出一个节点（另一次被焦点导航吃掉），也就是早先反馈的
+         * 「按 Tab 要按两次才建出节点」。
+         *
+         * 补建之后：km.focus() 真正落到 receiver，Tab 在内层就被
+         * preventDefault，焦点不再越界。
+         */
+        try { if (km._initKeyReceiver && !km._keyReceiver) km._initKeyReceiver(); } catch (e) {}
         // 布局过渡动画开关由设置面板控制（WPF 侧导航前注入 window.__kmAnimateLayout）：
         // 关闭（默认）时打开画布/展开收起不播节点扩散动画，直接显示最终布局；开启则保留 300ms 过渡。
         if (!window.__kmAnimateLayout) km.setOption('layoutAnimationDuration', 0);
@@ -3455,6 +3485,47 @@
             return 1;
         }
 
+        /**
+         * 编辑层定位。打开时算一次，**画布一变换就要重算**。
+         *
+         * 编辑层是绝对定位在容器上的 HTML，而画布位移/缩放是 SVG transform ——
+         * 它不会带着 HTML 走，所以变换后不重算，编辑框就飘在半空。
+         *
+         * 早先的做法是「一变换就提交关闭」（bail）。那会**误伤刚打开的编辑层**：
+         * 插入节点后内核会自动把镜头移到新节点上，而这次 viewchange 是**异步**
+         * 到达的 —— 排在 beginTextEdit **之后**。于是每次插节点刚打开的编辑框
+         * 立刻被关掉，表现为：
+         *
+         *     连续按 Tab，隔一次才进得了编辑态（CE 数 1 → 0 → 1 → 0）。
+         *
+         * 实测：把 viewchange 吞掉后每次都进得去（CE 恒为 1），确认元凶就是它。
+         *
+         * 改成重定位：既跟住节点，又不打断输入。
+         */
+        function layoutEditLayer(el, node) {
+            try {
+                var c = document.getElementById('minder-container');
+                if (!el || !node || !c) return;
+                var cRect = c.getBoundingClientRect();
+                var group = nodeTextGroup(node);
+                var tx = group ? (group.getElementsByTagName('text')[0] || group) : null;
+                var ws = (tx && window.getComputedStyle) ? window.getComputedStyle(tx) : null;
+                var box = (group && group.getBoundingClientRect) ? group.getBoundingClientRect() : null;
+                var zoom = currentZoom();
+                var fs = (ws ? parseFloat(ws.fontSize) : 0) || 14;
+                el.style.fontSize = (fs * zoom) + 'px';
+                if (box) {
+                    var lineCount = Math.max(1, group.getElementsByTagName('text').length);
+                    el.style.lineHeight = Math.round((box.height / lineCount) || (fs * zoom * 1.5)) + 'px';
+                    el.style.left = Math.max(0, Math.round(box.left - cRect.left)) + 'px';
+                    el.style.top = Math.max(0, Math.round(box.top - cRect.top)) + 'px';
+                    el.style.minWidth = Math.max(60, Math.round(box.width)) + 'px';
+                    el.style.width = 'auto';
+                } else {
+                    el.style.left = '12px'; el.style.top = '12px'; el.style.minWidth = '120px';
+                }
+            } catch (e) {}
+        }
         function beginTextEdit(node, clientX, clientY) {
             if (!node) node = km.getSelectedNode();
             if (!node || editLayer) return;
@@ -3510,15 +3581,7 @@
                 else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeTextEditor(false); }
                 else { ev.stopPropagation(); }
             });
-            if (box) {
-                el.style.left = Math.max(0, Math.round(box.left - cRect.left)) + 'px';
-                el.style.top = Math.max(0, Math.round(box.top - cRect.top)) + 'px';
-                // 宽度随内容增长（min-width 保底），不写死 —— 写死就等于截断
-                el.style.minWidth = Math.max(60, Math.round(box.width)) + 'px';
-                el.style.width = 'auto';
-            } else {
-                el.style.left = '12px'; el.style.top = '12px'; el.style.minWidth = '120px';
-            }
+            layoutEditLayer(el, node);
 
             // 隐藏原 SVG 文字。编辑层盖在上面，任何 1px 偏差都会看到叠影 ——
             // 藏掉之后，观感就是「字直接在节点里被改」。
@@ -3558,7 +3621,7 @@
          * 且提交时会按新坐标算，等于把错位状态固化下来。
          */
         (function () {
-            function bail() { if (editLayer) closeTextEditor(true); }
+            function bail() { if (editLayer) layoutEditLayer(editLayer.input, editLayer.node); }
             try { km.on('zoom', bail); } catch (e) {}
             try { km.on('viewchange', bail); } catch (e) {}
         })();

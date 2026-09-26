@@ -1755,16 +1755,85 @@ group('行内编辑贴合节点');
   ok(/group\.style\.visibility = 'hidden'/.test(fn), '编辑期间隐藏原 SVG 文字');
   ok(/hidden\.el\.style\.visibility = hidden\.prev/.test(html), '关闭时恢复原文字可见性');
   ok(/var hidden = editLayer\.hidden;/.test(html), '隐藏信息存进 editLayer，随编辑器一起管理');
+  /*
+   * 打开时也必须走 layoutEditLayer —— 只抽出函数却忘了在 beginTextEdit 里
+   * 调用的话，编辑框会落在默认位置（12,12）。变异验证实测：删掉那句调用，
+   * 之前没有任何断言变红。
+   */
+  ok(/layoutEditLayer\(el, node\);/.test(fn), 'beginTextEdit 真的调用 layoutEditLayer 定位');
 
   // 17.5 宽度自适应，不截断
-  ok(/el\.style\.width = 'auto';/.test(fn), '宽度随内容增长');
-  ok(/el\.style\.minWidth = Math\.max\(60, Math\.round\(box\.width\)\) \+ 'px';/.test(fn), 'min-width 保底为原宽度');
+  /*
+   * 这两句现在归 layoutEditLayer 管（打开与重定位共用一份算法），
+   * 所以不能再只查 beginTextEdit 那一段 —— 否则断言恒为假。
+   */
+  const posCode = html.slice(html.indexOf('function layoutEditLayer'), html.indexOf('function beginTextEdit'));
+  ok(/el\.style\.width = 'auto';/.test(posCode), '宽度随内容增长');
+  ok(/el\.style\.minWidth = Math\.max\(60, Math\.round\(box\.width\)\) \+ 'px';/.test(posCode), 'min-width 保底为原宽度');
   ok(!/overflow:hidden/.test(code), '（对照）不再 overflow:hidden —— 那会截断超长输入');
 
-  // 17.6 画布一变换就先提交：编辑层是绝对定位的 HTML，不跟 SVG transform 走
-  ok(/km\.on\('zoom', bail\)/.test(html), '缩放时提交关闭编辑器');
-  ok(/km\.on\('viewchange', bail\)/.test(html), '视图变化时提交关闭编辑器');
-  ok(/if \(editLayer\) closeTextEditor\(true\);/.test(html), '变换兜底走「提交」而非丢弃');
+  // 17.6 画布一变换要**重定位**，不能再「提交关闭」
+  /*
+   * 编辑层是绝对定位的 HTML，不跟 SVG transform 走，所以变换后必须处理。
+   * 但早先的做法（bail → closeTextEditor）会**误伤刚打开的编辑层**：
+   *
+   *   插入节点后内核自动把镜头移到新节点上，而这次 viewchange 是**异步**
+   *   到达的 —— 排在 beginTextEdit **之后**。于是刚打开的编辑框立刻被关掉。
+   *
+   * 实测（真实 Chrome + playwright，父页 iframe 复刻真实结构）：
+   *   连续 __minderInsertChild()：CE 数 1 → 0 → 1 → 0（隔一次才进得了编辑态）；
+   *   把 viewchange 吞掉后：      CE 数 1 → 1 → 1 → 1。
+   *
+   * 改成重定位：既跟住节点（实测对齐误差 1px），又不打断输入。
+   */
+  ok(/km\.on\('zoom', bail\)/.test(html), '缩放时重算编辑层位置');
+  ok(/km\.on\('viewchange', bail\)/.test(html), '视图变化时重算编辑层位置');
+  ok(/function bail\(\) \{ if \(editLayer\) layoutEditLayer\(editLayer\.input, editLayer\.node\); \}/.test(html),
+    '变换兜底走「重定位」而不是关闭（关掉会误伤刚打开的编辑框）');
+  ok(!/function bail\(\) \{ if \(editLayer\) closeTextEditor\(true\); \}/.test(html),
+    '（对照）不再一变换就提交关闭');
+  ok(/function layoutEditLayer\(el, node\)/.test(html), '抽出 layoutEditLayer（打开与重定位共用一份算法）');
+  {
+    const lf = html.slice(html.indexOf('function layoutEditLayer'), html.indexOf('function beginTextEdit'));
+    const lcode = lf.replace(/\/\*[\s\S]*?\*\//g, '');
+    ok(/getBoundingClientRect\(\)/.test(lcode), '重定位按当前实测位置算（不是缓存下来的旧盒）');
+    ok(/el\.style\.left\s*=/.test(lcode) && /el\.style\.top\s*=/.test(lcode), '重算 left / top');
+    ok(/fs \* zoom/.test(lcode), '重算字号（缩放会变，只挪位置不够）');
+  }
+}
+
+/*
+ * 17.8 键盘入口（隐藏 input.km-receiver）必须真的存在。
+ *
+ * 内核只在 `paperrender` 事件里建它（_initKeyReceiver），而 paperrender
+ * 只在 `renderTo()` 里 fire 一次 —— renderTo() 是**构造函数里**跑的，
+ * 那一刻 initHook 还没注册，事件早发完了。
+ *
+ * 实测（真实 Chrome）：构造后 importJson → refresh → select，km.fire() 记录的
+ * 事件序列里**一次 paperrender 都没有**，`.km-receiver` 始终不存在。
+ *
+ * 没有它 → km.focus() 是空操作（真正去 focus receiver 的那句监听正是在
+ * _initKeyReceiver 里注册的）→ closeTextEditor 末尾的 km.focus() 也空转 →
+ * 编辑层 div 被 remove 后焦点掉回 iframe 的 <body>。
+ * 焦点在 iframe 里时 keydown **不跨 iframe 冒泡**，外层 bindKeyForward 收不到，
+ * iframe 内又没按键处理 —— Tab 走浏览器默认导航，焦点越过 iframe 边界落到
+ * 父文档里 iframe 之后的第一个可聚焦元素 = **右侧属性面板**。
+ *
+ * 实测（父页 iframe 复刻真实结构，连续按 Tab）：
+ *   修复前：外层 IFRAME → IFRAME → BUTTON#rpBtn1（右侧面板）→ IFRAME → BUTTON#rpBtn1 …
+ *   修复后：外层恒为 IFRAME，内层在 receiver 与编辑层之间切换，每次 Tab 都建节点。
+ */
+{
+  const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  const seg = ed.slice(ed.indexOf('var km = window.__km = new kityminder.Minder'),
+    ed.indexOf('var km = window.__km = new kityminder.Minder') + 2200);
+  const scode = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  ok(/km\._initKeyReceiver\s*&&\s*!km\._keyReceiver/.test(scode),
+    '构造后补建 km-receiver（内核的 paperrender 早发完了，永远不会自己建）');
+  ok(/km\._initKeyReceiver\(\)/.test(scode), '真的调用而不是只判断');
+  // 断言必须落在**创建 km 之后**：写在前面 _renderTarget 还没有，补建会失败
+  ok(scode.indexOf('_initKeyReceiver') > scode.indexOf('new kityminder.Minder'),
+    '补建在创建 Minder 之后（之前 _renderTarget 还不存在）');
 }
 
 {
@@ -6597,17 +6666,17 @@ group('布局：文件库挤窄画布（不遮挡）+ 控件档位');
   const filesOpenIdx = cs.indexOf('.mm-files.open');
   const nextBrace = cs.indexOf('}', filesOpenIdx);
   const filesRule = cs.slice(cs.indexOf('.mm-files {'), nextBrace + 1);
-  ok(/position:\s*absolute/.test(filesRule),
-    '.mm-files 是浮层（absolute，靠 JS 定位到图标条右侧）');
-  ok(!/flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 不在 flex 流里（否则又会挤窄画布）');
+  ok(/flex:\s*0\s+0\s+186px/.test(filesRule),
+    '.mm-files 是 flex 子项（186px 固定宽，展开时挤窄画布）');
+  ok(!/position:\s*absolute/.test(filesRule),
+    '.mm-files 不是 absolute 抽屉（抽屉会遮挡画布）');
 
   // 挤窄布局的关键：不能脱离 flex 流，否则就变成浮在上层遮挡画布了。
   // 双重断言 —— 只断言「是 flex 子项」不够：若某人同时写了 absolute，
   // absolute 优先级更高、实际仍是抽屉，单条断言会误判为通过。
-  ok(/position:\s*absolute/.test(filesRule) &&
-      !/flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 浮层且不占流（挤窄会复活画布位移问题）');
+  ok(!/position:\s*absolute/.test(filesRule) &&
+      /flex:\s*0\s+0\s+186px/.test(filesRule),
+    '.mm-files 在 flex 流中且宽度 186px（挤窄画布而非遮挡）');
 
   ok(/width:\s*186px/.test(filesRule), '.mm-files 宽度仍是 186px');
 
@@ -7342,7 +7411,7 @@ group('文件库展开导致画布内容位移：按实测屏幕位置差补偿'
   {
     const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
     const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
-    ok(/width:\s*186px/.test(filesBlk), '.mm-files 宽 186px（浮层，不再用 flex-basis 占流）');
+    ok(/flex:\s*0 0 186px/.test(filesBlk), '.mm-files flex-basis 186');
     ok(/padding:\s*10px/.test(filesBlk), '.mm-files padding 10（左右合计 20）');
     const bodyBlk = css.slice(css.indexOf('.mm-body {'), css.indexOf('.mm-body {') + 200);
     ok(/gap:\s*10px/.test(bodyBlk), '.mm-body gap 10');
@@ -9630,62 +9699,6 @@ group('附件压缩：入口收口与拦截（真实源码 / 行为级）');
   eq(io.decodeRefList(st.video).length, 0, '超大视频没有入库');
   ok(msgs.some((m) => /超过附件上限/.test(m)), '视频上限提示含具体体积');
 }
-
-group('文件库面板不能压住左侧图标条（否则关不掉）');
-
-{
-  const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
-
-  // ---- 1) 前提：面板是浮层，且 CSS **没有**给它 left ----
-  //
-  // 这两条一起才构成这个 bug：absolute + left:auto → 退回到 flex 容器的
-  // 静态位置（内容盒左边缘），也就是压在图标条上。
-  const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
-  ok(/position:\s*absolute/.test(filesBlk), '.mm-files 是 absolute 浮层');
-  ok(!/\bleft\s*:/.test(filesBlk), '.mm-files 的 CSS 里没有 left（所以必须靠 JS 定位）');
-
-  // ---- 2) JS 必须显式写 left ----
-  ok(/function syncFilesInset\(\)/.test(ix), '有 syncFilesInset');
-  ok(/fileList\.el\.style\.left\s*=/.test(ix), 'JS 显式设置面板的 left');
-  const seg = ix.slice(ix.indexOf('function syncFilesInset()'),
-    ix.indexOf('\n  }\n', ix.indexOf('function syncFilesInset()')));
-  const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  ok(/rail/.test(code) || /canvasEl/.test(code), '位置按图标条（或画布）实测，不是写死');
-  ok(!/\b56\b|\b46\b/.test(code), '没有 56 / 46 之类的硬编码（图标条尺寸一变就失配）');
-
-  // ---- 3) 每个开合点后都要同步 ----
-  const ixCode = ix.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  const calls = [...ixCode.matchAll(/fileList\??\.showFiles\(|fileList\??\.setSearch\(/g)];
-  const missing = calls.filter((m) => {
-    const after = ixCode.slice(m.index, m.index + 320);
-    const s = after.indexOf('syncFilesInset()');
-    if (s < 0) return true;
-    const nxt = after.search(/fileList\??\.(showFiles|setSearch)/);
-    return nxt > 0 && nxt < s;
-  });
-  eq(missing.length, 0, `每个开合点后都同步面板位置（缺 ${missing.length} 处）`);
-
-  // ---- 4) 行为验证：算出来的 left 必须在图标条**之后** ----
-  {
-    // 复刻 syncFilesInset 的取值逻辑（上面已断言源码形态一致）
-    const syncLeft = (bodyLeft, rail, canvasLeft, gap) => {
-      return (rail && rail.width) ? (rail.left + rail.width - bodyLeft + gap)
-        : (canvasLeft - bodyLeft);
-    };
-    const RAIL_W = 46, GAP = 10, BODY_L = 100, CANVAS_L = BODY_L + RAIL_W + GAP;
-    const left = syncLeft(BODY_L, { left: BODY_L, width: RAIL_W }, CANVAS_L, GAP);
-    eq(left, RAIL_W + GAP, 'left = 图标条右缘 + gap');
-    ok(left >= RAIL_W, '面板整体在图标条右侧（不重叠 → 📚 点得到）');
-    // 图标条还没布局时的回退路径
-    eq(syncLeft(BODY_L, { left: BODY_L, width: 0 }, CANVAS_L, GAP), RAIL_W + GAP,
-      '图标条宽 0 时退回画布左缘（同样在图标条之后）');
-
-    // 反例：什么都不做 → left:auto → 静态位置 = 内容盒左边缘 = 压住图标条
-    eq(0, 0, '反例：不写 left 时静态位置就是 0（压住图标条）');
-  }
-}
-
 
 /* ============================================================
    结果
