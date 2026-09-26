@@ -1739,16 +1739,44 @@ export function varsForPlugin(pluginId) {
 }
 
 /**
+ * 上次写到各容器上的变量名，用于清理残留。
+ *
+ * 用 WeakMap 而非在元素上挂字段：容器是插件自己的 DOM，
+ * 往上面挂自定义属性会污染它，且容器被替换后（重挂载）还能自动回收。
+ */
+const appliedVarKeys = new WeakMap();
+
+/**
  * 把主题变量写到容器元素上（module 模式专用）。
  *
  * 同页插件与外部共享主文档的 :root，**没有自己的文档**，
  * 所以"插件用别的主题"不能靠改 :root，只能把变量写到它自己的容器上 ——
  * CSS 变量会向下继承，正好只影响这个插件的子树。
  * iframe 插件有独立文档，走 init/theme 消息即可，用不到这个。
+ *
+ * ⚠️ 必须**先清残留再写**。不同主题的变量集并不相同：
+ * 玻璃主题带 --r-sm / --bg-image / --saturate，新拟态主题一个都没有。
+ * 只写不清的话，从玻璃切到新拟态后容器上仍留着玻璃的圆角与背景图，
+ * 而内联样式优先级高于 :root —— 插件的子树里圆角仍是玻璃那一套，
+ * 与主界面其它部分对不上，且完全看不出是这里漏了。
+ *
+ * iframe 那条路没有这个问题：SDK 是整块重写 <style>，天然全覆盖。
+ * 两条路实现不同，所以这个坑只在 module 模式出现。
  */
 export function applyThemeVarsTo(el, vars) {
   if (!el?.style) return;
-  for (const [k, v] of Object.entries(vars)) el.style.setProperty(k, v);
+  const prev = appliedVarKeys.get(el);
+  if (prev) {
+    for (const k of prev) {
+      if (!vars || !(k in vars)) el.style.removeProperty(k);
+    }
+  }
+  const next = new Set();
+  for (const [k, v] of Object.entries(vars || {})) {
+    el.style.setProperty(k, v);
+    next.add(k);
+  }
+  appliedVarKeys.set(el, next);
 }
 /**
  * HTML 转义。

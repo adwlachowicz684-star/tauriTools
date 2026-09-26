@@ -2971,5 +2971,31 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
   }
 }
 
+
+/* ============================================================
+   48. module 模式主题变量不得残留
+   ------------------------------------------------------------
+   同页插件的变量写在**容器的内联样式**上，内联优先级高于 :root。
+   不同主题的变量集不同（玻璃带 --r-sm / --bg-image / --saturate，
+   新拟态一个都没有），只写不清的话，从玻璃切到新拟态后
+   插件子树里仍留着玻璃的圆角与背景图，与主界面对不上。
+
+   iframe 那条路没有这个问题（SDK 整块重写 <style>，天然全覆盖），
+   所以这里只钉 module 模式这一条。
+   ============================================================ */
+{
+  const hostSrc = stripComments(read('js/host.js'));
+  const fn = /export function applyThemeVarsTo[\s\S]{0,1200}?\n\}/.exec(hostSrc);
+  const body = fn ? fn[0] : '';
+  t('module 模式写主题变量前会先清残留（removeProperty）',
+    /removeProperty/.test(body),
+    /removeProperty/.test(body) ? '已清理' : '只写不清 → 切主题后旧变量残留');
+  t('清理是基于"上次写过哪些键"而非清空全部（模块级 WeakMap 记录）',
+    /appliedVarKeys/.test(body) && /new WeakMap\(\)/.test(hostSrc),
+    /new WeakMap\(\)/.test(hostSrc) ? 'WeakMap 记录' : '未记录上次键');
+  t('元断言：确实取到了 applyThemeVarsTo 函数体',
+    body.length > 200, `${body.length} 字符`);
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -911,10 +911,9 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
       if (d.theme) {
         currentTheme = d.theme;
         applyThemeVars(d.theme);
-        // 回执：告诉外壳"新变量已生效，可以放心采样了"。
-        // 没有它，外壳可能在变量落地前就采样 → 读到旧色 → 基调误判 → 反转错。
-        // 回执：告诉外壳"新变量已生效，可以放心采样了"。
-        // 没有它，外壳可能在变量落地前就采样 → 读到旧色 → 基调误判 → 反转错。
+        /* 回执：告诉外壳"新变量已落地"，pushTheme 正在等这条消息。
+           不回的话外壳只能等超时兜底（400ms）才 resolve。
+           d.theme 为空时不回 —— 没写任何变量，谈不上"已生效"。 */
         if (d.type === 'theme') post({ type: 'theme-applied' });
       }
       if (d.type !== 'init') return;             // 纯更新，不走挂载流程
