@@ -2881,5 +2881,95 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
     `shell ${shellSrc.length} / host ${hostSrc.length} / cfg ${cfgSrc.length}`);
 }
 
+
+/* ============================================================
+   47. 主题参数必须真的生效（不许有"改了没反应"的假控件）
+   ------------------------------------------------------------
+   用户的目标是"能调出任意内置主题"，前提是参数表里每一项改了都有反应。
+   假控件的特征是不报错、不崩溃、测试全绿 —— 只有肉眼能发现，
+   所以这里**逐项实测**：设一个与当前不同的值，看 :root 上是否真的变了。
+
+   ⚠️ 探针值必须与当前值不同。第一版给 --frost-blend 用了 options[0]
+   （'overlay'），而它本来就是 overlay，值没变 → 判成"没反应"，
+   属于**无效变异体**。enum 要挑一个与当前不同的选项。
+   ============================================================ */
+{
+  const { THEME_PARAM_SPEC, PRESET_THEMES } = await import('./js/themes.js');
+  const savedDoc = globalThis.document;
+  const savedLS = globalThis.localStorage;
+  const store47 = {};
+  const sink47 = new Map();
+  try {
+    const el = {
+      style: {
+        setProperty: (k, v) => sink47.set(k, String(v)),
+        getPropertyValue: (k) => sink47.get(k) || '',
+        removeProperty: (k) => sink47.delete(k),
+      },
+      dataset: {},
+      classList: { add() {}, remove() {}, contains: () => false },
+    };
+    globalThis.document = { documentElement: el, body: el };
+    globalThis.localStorage = {
+      getItem: (k) => (store47[k] !== undefined ? store47[k] : null),
+      setItem: (k, v) => { store47[k] = String(v); },
+      removeItem: (k) => { delete store47[k]; },
+    };
+    const tm = await import('./js/theme-manager.js?v=p47');
+
+    /* 三种风格各取一套：风格过滤（styles 字段）会让某些参数只对特定风格显示，
+       只测一种风格的话，另外两种的专属参数等于没验。 */
+    const themes = [
+      PRESET_THEMES.find((x) => x.style === 'glass' && x.base === 'dark'),
+      PRESET_THEMES.find((x) => x.style === 'neumorph' && x.base === 'dark'),
+      PRESET_THEMES.find((x) => x.style === 'flat' && x.base === 'light'),
+    ].filter(Boolean);
+
+    const probe = (it, cur) => {
+      if (it.type === 'color') return '#ff00ff';
+      if (it.type === 'text') return 'probe-xyz';
+      if (it.type === 'length') return '33px';
+      if (it.type === 'number') return it.max != null ? String(Math.round(it.max * 0.7)) : '77';
+      if (it.type === 'enum') {
+        /* 必须挑一个与当前**不同**的选项，否则值没变、判不出效果 */
+        const opts = (it.options || []).map((o) => (typeof o === 'string' ? o : o?.value));
+        return opts.find((o) => o && o !== cur) || opts[0];
+      }
+      return 'probe';
+    };
+
+    const dead = [];
+    let checked = 0;
+    for (const th of themes) {
+      for (const it of THEME_PARAM_SPEC) {
+        sink47.clear();
+        tm.applyTheme(th.id, null, null, { userInitiated: false });
+        const before = sink47.get(it.key);
+        const val = probe(it, before);
+        if (val == null || val === before) continue;      // 探针无效则跳过
+        /* 签名是 (name, value, themeId) —— 主题 id 在**最后**。
+           第一版我传成了 (themeId, key, value)，结果写出
+           key='nexus:theme-var:#ff00ff'、value='{"id":"--bg"}'，
+           84 项全部"没反应"，差点误判成整块功能坏了。 */
+        tm.setVarOverride(it.key, val, th.id);
+        tm.applyTheme(th.id, null, null, { userInitiated: false });
+        checked++;
+        if (sink47.get(it.key) === before) dead.push(`${th.id} ${it.key}`);
+      }
+    }
+    t('主题参数表里没有假控件（逐项实测：改了 :root 真的变）',
+      dead.length === 0,
+      dead.length ? dead.slice(0, 5).join(' / ') : `${checked} 项组合全部生效`);
+    t('参数生效测试确实跑到了组合（元断言，防跳过导致空绿）',
+      checked >= THEME_PARAM_SPEC.length,
+      `实测 ${checked} 组 / 参数 ${THEME_PARAM_SPEC.length} 个`);
+  } catch (e) {
+    t('主题参数生效实测', false, '跑不起来：' + e.message);
+  } finally {
+    globalThis.document = savedDoc;
+    globalThis.localStorage = savedLS;
+  }
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
