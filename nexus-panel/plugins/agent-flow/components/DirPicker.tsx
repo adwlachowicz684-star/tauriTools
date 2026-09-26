@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNexus } from '../../../src/nexus-react';
 import { listDirs, listQuickRoots, listFsRoots, type DirEntryLite } from '../lib/tauri';
 import { withinRoots } from '../engine/exportDir';
 
@@ -46,13 +47,19 @@ export default function DirPicker({
     return () => { alive.current = false; };
   }, []);
 
+  /** 授权根是否拉完。委托服务前必须等它 —— 见下方委托的说明。 */
+  const [ready, setReady] = useState(false);
+
   useEffect(() => {
-    void listQuickRoots()
-      .then((r) => { if (alive.current) setRoots(r); })
-      .catch(() => { /* 起点列不出来不影响手动输入 */ });
-    void listFsRoots()
-      .then((r) => { if (alive.current) setAuthorized(r); })
-      .catch(() => { /* 查不到就当全部未授权，不影响使用 */ });
+    const jobs = [
+      listQuickRoots()
+        .then((r) => { if (alive.current) setRoots(r); })
+        .catch(() => { /* 起点列不出来不影响手动输入 */ }),
+      listFsRoots()
+        .then((r) => { if (alive.current) setAuthorized(r); })
+        .catch(() => { /* 查不到就当全部未授权，不影响使用 */ }),
+    ];
+    void Promise.allSettled(jobs).then(() => { if (alive.current) setReady(true); });
   }, []);
 
   const load = useCallback(async (p: string) => {
@@ -83,6 +90,60 @@ export default function DirPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial, roots.length]);
 
+  /*
+   * 委托给全工具统一的 folder-picker 服务（与项目组共用同一份常用文件夹）。
+   *
+   * 【为什么传 marks / extraAction】
+   * 这两样是 agent-flow 特有的语义，不传就等于丢功能：
+   *   · marks        —— 「已授权」标记。选了未授权目录会写失败，
+   *                     而"选的时候看不出来、写完才报错"比失败本身更让人困惑。
+   *   · extraAction  —— 「设为默认」。服务返回 { path, action }，
+   *                     action === 'default' 时才同时落默认目录。
+   *
+   * 【为什么等 ready 才委托】
+   * authorized 是异步拉的。不等就委托的话 marks.list 是空数组，
+   * 面板里所有目录都显示"未标记"——看着像授权信息丢了，
+   * 实际只是委托太早。
+   *
+   * 【为什么保留下面的旧界面（降级）】
+   * 服务条目被同步覆盖掉时，没有兜底就是所有选目录入口同时失灵。
+   */
+  const [fallback, setFallback] = useState<string | null>(null);
+  const delegated = useRef(false);
+  const ctx = useNexus();
+
+  useEffect(() => {
+    if (!ready) return;
+    if (delegated.current) return;   // StrictMode 下 effect 跑两次，不挡会连开两个
+    delegated.current = true;
+    void (async () => {
+      try {
+        const ok = await ctx.services.available('folder-picker');
+        if (!ok) throw new Error('未找到 folder-picker 服务');
+        const r: any = await ctx.services.call('folder-picker', 'pick', {
+          title,
+          startPath: initial || '',
+          allowCreate: true,
+          marks: { list: authorized, label: '已授权', hint: '未授权（选中后会自动申请）' },
+          extraAction: onPickAsDefault ? { id: 'default', label: '设为默认' } : null,
+        });
+        if (r?.path) {
+          const p = String(r.path);
+          if (r.action === 'default' && onPickAsDefault) { onPickAsDefault(p); onPick(p); }
+          else onPick(p);
+          return;
+        }
+        onCancel();   // 取消是正常结束，不能弹回旧界面
+      } catch (e: any) {
+        setFallback(String(e?.message ?? e));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
+  // 还在委托中：一个节点都不渲染，否则两套界面叠在一起
+  if (fallback === null) return null;
+
   const up = useMemo(() => {
     const s = String(cwd ?? '').replace(/[\\/]+$/, '');
     const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
@@ -109,6 +170,11 @@ export default function DirPicker({
           </button>
         </div>
 
+        {fallback ? (
+          <div className="dirpicker-err">
+            ⚠ 统一选择器不可用（{fallback}），已退回内置界面
+          </div>
+        ) : null}
         {err ? <div className="dirpicker-err">⚠ {err}</div> : null}
 
         {roots.length > 0 ? (

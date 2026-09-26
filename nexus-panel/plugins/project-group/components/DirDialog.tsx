@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNexus } from '../../../src/nexus-react';
 import type { Api } from '../api';
 import type { DirEntryLite } from '../types';
 import { Modal } from './ui';
@@ -81,6 +82,52 @@ export function DirDialog({
     });
   }, [api, load]);
 
+  /*
+   * 委托给全工具统一的 folder-picker 服务。
+   * ------------------------------------------------------------
+   * 为什么委托而不继续用下面这套界面：
+   * 项目组与 agent-flow 各有一套选目录 UI 时，"常用文件夹"得存两份、
+   * 收藏逻辑写两遍；只要某处漏掉归一化（去尾部斜杠），同一个目录就被判成
+   * 两条收藏 —— 界面上两个一模一样的条目，删掉一个另一个还在，且不报错。
+   *
+   * 为什么还要留着下面这套（降级）：
+   * 服务条目一旦被同步覆盖掉，没有兜底就是**所有**选目录入口同时失灵。
+   * 本项目已经反复出现"整块被同步抹掉"的事故，所以这里宁可多留一份。
+   *
+   * fallback 的含义（三态，刻意用 null 表示"还在委托中"）：
+   *   null            → 尚未判定，此时**不能**渲染自己的界面，
+   *                     否则两套界面会同时出现（浮层在上、这个在下）
+   *   非空字符串      → 委托失败，退回内置界面，并把原因显示出来
+   */
+  const [fallback, setFallback] = useState<string | null>(null);
+  const delegated = useRef(false);
+  const ctx = useNexus();
+
+  useEffect(() => {
+    // StrictMode 下 effect 会跑两次；不挡住就会连开两个选择器，
+    // 后一个把前一个的 session 顶掉，用户看到的是"闪一下就没了"。
+    if (delegated.current) return;
+    delegated.current = true;
+    void (async () => {
+      try {
+        const ok = await ctx.services.available('folder-picker');
+        if (!ok) throw new Error('未找到 folder-picker 服务');
+        const r: any = await ctx.services.call('folder-picker', 'pick', {
+          title, startPath: '', allowCreate: !!allowCreate, hint: hint || '',
+        });
+        // 取消（path 为空）也是正常结束：不能因为用户取消了就弹回内置界面
+        if (r?.path) { onPick(String(r.path)); onClose(); return; }
+        onClose();
+      } catch (e: any) {
+        setFallback(String(e?.message ?? e));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 还在委托中：一个节点都不渲染
+  if (fallback === null) return null;
+
   const crumbs = useMemo(() => {
     if (!path) return [];
     // 分隔符要跟着原路径走：Unix 用 /，Windows 用 \。
@@ -124,6 +171,15 @@ export function DirDialog({
         </>
       }
     >
+      {/*
+        降级**必须**把原因说出来：用户刚点过「浏览」，弹出来的却是另一套
+        旧界面，不说原因就只会以为是"软件抽风了"。
+      */}
+      {fallback ? (
+        <div className="fpx-dirhint">
+          统一选择器不可用（{fallback}），已退回内置界面。
+        </div>
+      ) : null}
       {hint && (
         <div className="fpx-dirhint">
           {hint}

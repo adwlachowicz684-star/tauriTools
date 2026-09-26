@@ -30,8 +30,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, State};
 
 use model::{
-    Bootstrap, ContentItem, DirEntryLite, FpxConfig, LinkRecord, LinkRow, Snapshot, TabInfo,
-    RenameIconResult,
+    Bootstrap, ContentItem, DirEntryLite, FavDir, FpxConfig, LinkRecord, LinkRow, Snapshot,
+    TabInfo, RenameIconResult,
 };
 use store::FpxState;
 
@@ -1196,6 +1196,55 @@ pub(crate) fn core_save_custom_colors(
     })
 }
 
+
+/* ------------------------- 常用文件夹 ------------------------- */
+
+/// 读常用文件夹。
+pub(crate) fn core_list_fav_dirs(dir: &std::path::Path) -> Result<Vec<FavDir>, String> {
+    let cfg = store::load_config(dir);
+    Ok(cfg.fav_dirs)
+}
+
+/// 写常用文件夹。
+///
+/// 【去重按归一化后的路径，不按原始字符串】
+/// `D:\\work` 与 `D:\\work\\` 是同一个目录，只去尾部斜杠还不够 ——
+/// Windows 上盘符大小写（`d:\\` / `D:\\`）也指向同一处。
+/// 不去重的话界面上会出现两个一模一样的条目，删掉一个另一个还在，还不报错。
+///
+/// 【上限 FAV_DIR_MAX】
+/// 这是个"快速入口"列表，超过一屏就失去意义了。
+/// 必须写成具名常量：裸 40 散在代码里，将来要调上限时改一处漏一处，
+/// 而界面上的表现只是"存了第 41 条却看不见"，不报错。
+pub(crate) const FAV_DIR_MAX: usize = 40;
+
+pub(crate) fn core_save_fav_dirs(
+    dir: &std::path::Path,
+    items: Vec<FavDir>,
+) -> Result<Vec<FavDir>, String> {
+    let mut out: Vec<FavDir> = Vec::new();
+    for it in items {
+        let norm = normalize_fav_path(&it.path);
+        if norm.is_empty() || out.len() >= FAV_DIR_MAX { continue; }
+        if out.iter().any(|x| normalize_fav_path(&x.path) == norm) { continue; }
+        out.push(FavDir { path: norm, label: it.label });
+    }
+    store::with_config(dir, |cfg| {
+        cfg.fav_dirs = out.clone();
+        Ok(())
+    })?;
+    Ok(out)
+}
+
+/// 路径归一化：去首尾空白、统一分隔符、去掉末尾分隔符。
+/// 盘符（Windows）保留原样 —— 大小写差异由调用方按需处理，
+/// 这里强行改小写会让"用户输入的"和"存下来的"看起来不一样，反而更难核对。
+fn normalize_fav_path(p: &str) -> String {
+    let t = p.trim().replace('\\', "/");
+    let t = t.trim_end_matches('/');
+    t.to_string()
+}
+
 /* ---------------------------- 命令 ---------------------------- */
 
 /// 启动加载：数据目录 + 配置 + 卡片状态 + 链接记录 + 预设 agent 名单。
@@ -1997,6 +2046,28 @@ pub fn fpx_save_custom_colors(
 ) -> Result<Snapshot, String> {
     let dir = store::data_dir(&app, &state)?;
     core_save_custom_colors(&dir, colors)
+}
+
+
+/// 读常用文件夹。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_list_fav_dirs(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+) -> Result<Vec<FavDir>, String> {
+    let dir = store::data_dir(&app, &state)?;
+    core_list_fav_dirs(&dir)
+}
+
+/// 写常用文件夹（整份覆盖）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fpx_save_fav_dirs(
+    app: AppHandle,
+    state: State<'_, FpxState>,
+    items: Vec<FavDir>,
+) -> Result<Vec<FavDir>, String> {
+    let dir = store::data_dir(&app, &state)?;
+    core_save_fav_dirs(&dir, items)
 }
 
 /// 打开数据目录（方便备份 / 手工改配置）。

@@ -104,6 +104,19 @@ console.log('=== 1. 扫描器自身：必须分得清真假 ===');
   t('属性访问不误取', !collectUsedClasses('a.map(x => x.length)').has('map'));
   t('拼接前缀 level- 不误取',
     !collectUsedClasses('className={`node-dot level-${x}`}').has('level-'));
+  /* 2c：裸三元 className={x ? 'a err' : 'a'}
+     —— 少了这条，fpx-log-line / fpx-picker / fpx-stack-box 这类
+        确实在挂的类会被判成死样式（实测：三处一起误报）。 */
+  t('裸三元两个分支都取到',
+    collectUsedClasses("className={x.isError ? 'fpx-log-line err' : 'fpx-log-line'}").has('fpx-log-line'));
+  t('裸三元不取条件里的比较值',
+    !collectUsedClasses("className={tab === 'mine' ? ' on' : ''}").has('mine'));
+  /* 2d：类名抽成导出常量（export const PUML_BOX_CLASS = 'md-puml-box'）
+     —— DOM 上挂的是标识符，不认这种写法就永远"没人用"。 */
+  t('类名常量能取到',
+    collectUsedClasses("export const PUML_BOX_CLASS = 'md-puml-box';").has('md-puml-box'));
+  t('普通字符串常量不误取',
+    !collectUsedClasses("const GREETING = 'hello world';").has('hello'));
   t('截断规则能查到', findTruncatedRules('.mm-rail\n  /* 注释 */\n  color: red;').length > 0);
   t('正常规则不误报', findTruncatedRules('.mm-rail {\n color: red;\n}').length === 0);
   t('选择器换行合法写法不误报',
@@ -154,6 +167,25 @@ console.log('\n=== 3. 实扫：不得有新增死类名 ===');
     'nexus-view-settings', 'nexus-isolated',
     // 工具栏按钮的标记类（'tb-btn tb-toolbar-btn'），样式由 .tb-btn 承担
     'tb-toolbar-btn',
+    /*
+     * 目录服务的两个输入框标识（'input.p-input.fp-name'）。
+     * 外观由同串的 .p-input 承担、布局由父级 .fp-namerow / .fp-newrow
+     * 承担（见 neumorphism.css 里 `.fp-namerow .p-input { flex:1 }`）。
+     * 它们只是给 JS 认节点用的钩子，硬编样式等于凭空发明行为。
+     */
+    /*
+     * 前缀拼接：代码写的是 `md-toc-lv${it.level}`，
+     * 真实挂到 DOM 上的是 md-toc-lv1 … md-toc-lv6 —— CSS 里六个都有定义。
+     * 扫描器取到的是拼接前的字面量 md-toc-lv，精确匹配自然落空。
+     */
+    'md-toc-lv',
+    /*
+     * ── 三类：压根不是 CSS 类名 ──
+     * xmind 导入时把 XML 节点名写进 JSON 的 class 字段（sheet / topic /
+     * boundary），是**数据**不是样式，永远不会有对应 CSS 规则。
+     * 不登记会一直被当成"代码用了但没定义"，淹没真正的新增损伤。
+     */
+    'sheet', 'topic', 'boundary',
   ];
 
   const r = scanDeadClasses({ root: HERE, cssFiles: CSS_FILES, excludeSrc: EXCLUDE_SRC });
@@ -290,6 +322,11 @@ console.log('\n=== 6. 反向校验：代码用了但 CSS 没定义 ===');
     'nexus-isolated', 'nexus-view-settings',
     'mm-print-root', 'mm-print-svg',
     'tb-toolbar-btn', 'side-picker', 'nx-insp-',
+    /* 与上一节 KNOWN_DEAD 同源，两处理由一致：
+       · fp-name/fp-newname —— 标记钩子，视觉由 .p-input、布局由父级承担
+       · md-toc-lv         —— 前缀拼接，实际是 md-toc-lv1…lv6（CSS 都有）
+       · sheet/topic/boundary —— xmind 的 JSON class 字段，是数据不是样式 */
+    'md-toc-lv', 'sheet', 'topic', 'boundary',
   ]);
 
   const missing = [...used].filter((c) => !defined.has(c) && !ALLOW.has(c));
@@ -381,7 +418,12 @@ console.log('\n=== 7. 死样式分类：档位类留用、真废弃清零 ===');
     'react-flow__handle', 'react-flow__edge', 'react-flow__background-pattern',
     'react-flow__controls', 'react-flow__minimap',
     /* 以拼接/模板方式挂类，静态扫描取不到但实测在用 */
-    'tb-card', 'trig-card']);
+    'tb-card', 'trig-card',
+    /*
+     * md-puml-box：类名抽成了导出常量（plantuml.js 的 PUML_BOX_CLASS），
+     * DOM 上挂的是标识符，扫描器 2d 分支之前取不到字面量 → 被判死样式。
+     */
+    'md-puml-box']);
 
   /*
    * 前缀族：agent-flow 触发器 / 节点徽标这一族的类名
@@ -397,7 +439,7 @@ console.log('\n=== 7. 死样式分类：档位类留用、真废弃清零 ===');
    * status-error 这些**确实在用**的类会被当成死样式。
    * 与 trg- / kind- 那族同源，同样按前缀放行。
    */
-  const FAMILY = /^(trg|trig|kind|upd|stack|task|insp|node|side|status)-/;
+  const FAMILY = /^(trg|trig|kind|upd|stack|task|insp|node|side|status)-|^md-toc-lv/;
 
   const realDead = dead.filter((c) => !TIER.test(c) && !ALIAS.has(c) && !FAMILY.test(c));
 
