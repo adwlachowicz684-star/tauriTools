@@ -843,7 +843,7 @@ export function createHost(opts = {}) {
        所以只能把变量写到它自己的容器上（CSS 变量向下继承，只影响这个子树）。
        iframe 插件走 init/theme 消息，用不到这里。
        注意要在 mount 前写：插件挂载时可能立刻读变量做初始化配色。 */
-    applyThemeVarsTo(container, varsForPlugin(manifest.id));
+    applyThemeVarsTo(container, varsForPlugin(manifest.id), pluginThemeBase(manifest.id));
 
     const result = await def.mount(ctx);
     return { manifest, def, ctx, wrap, target: container, root: container,
@@ -1006,6 +1006,8 @@ export function createHost(opts = {}) {
             send(iframe, {
               // 插件可能自选了主题（见 varsForPlugin）；没有则等同全局
               type: 'init', manifest, theme: varsForPlugin(manifest.id), view,
+              /* 基调直接给权威值，别让插件按 --bg 亮度猜（理由见 pluginThemeBase）。 */
+              themeBase: pluginThemeBase(manifest.id),
               openArgs,                         // 打开参数（E2），与 module 同语义
               isolated,                         // 插件据此决定能力探测方式
               // 宿主自报 origin，供插件回发消息时用作 targetOrigin。
@@ -1601,7 +1603,7 @@ export function createHost(opts = {}) {
     if (inst.iframe) {
       await pushTheme(inst.iframe, inst.manifest?.id);
     } else if (inst.root) {
-      applyThemeVarsTo(inst.root, varsForPlugin(inst.manifest?.id));
+      applyThemeVarsTo(inst.root, varsForPlugin(inst.manifest?.id), pluginThemeBase(inst.manifest?.id));
     }
   }
 
@@ -1642,7 +1644,7 @@ export function createHost(opts = {}) {
       const timer = setTimeout(finish, 400);      // 兜底：不能无限等
       try {
         window.addEventListener('message', onAck);
-        send(iframe, { type: 'theme', theme: varsForPlugin(pluginId) });
+        send(iframe, { type: 'theme', theme: varsForPlugin(pluginId), themeBase: pluginThemeBase(pluginId) });
       } catch { finish(); }
     });
   }
@@ -1739,6 +1741,24 @@ export function varsForPlugin(pluginId) {
 }
 
 /**
+ * 该插件实际处在哪个基调（深色 / 浅色）。
+ *
+ * 为什么要单独给这个值，而不是让插件自己从 --bg 推断：
+ * 用户可以在设置页只改基调、不动 --bg（基调本身也是参数了）。
+ * 此时 --bg 仍是深色值，按亮度推断会判成 dark，而面板实际是浅色 ——
+ * 插件 CSS 里 `[data-nexus-base="light"]` 那一档永远匹配不上，
+ * 于是"浅底上的品牌色变体"这类按基调切档的写法静默失效
+ * （深色底上对比度很好的浅色字，放到浅底上只有 1.1~2.5，基本看不见）。
+ *
+ * 推断在绝大多数情况下是对的，只在"改基调不改底色"这个组合下错，
+ * 所以一直没被发现。这里直接给权威值，插件不必再猜。
+ */
+export function pluginThemeBase(pluginId) {
+  const t = resolvePluginTheme(pluginId);
+  return t ? t.base : themeManager.getResolvedBase();
+}
+
+/**
  * 上次写到各容器上的变量名，用于清理残留。
  *
  * 用 WeakMap 而非在元素上挂字段：容器是插件自己的 DOM，
@@ -1763,8 +1783,17 @@ const appliedVarKeys = new WeakMap();
  * iframe 那条路没有这个问题：SDK 是整块重写 <style>，天然全覆盖。
  * 两条路实现不同，所以这个坑只在 module 模式出现。
  */
-export function applyThemeVarsTo(el, vars) {
+export function applyThemeVarsTo(el, vars, base) {
   if (!el?.style) return;
+  /*
+   * 插件自选主题时，它的基调可能与全局不同（设置页可配 themeDark/themeLight）。
+   * 变量写在容器上，容器子树会就近取到；但 `[data-nexus-base=...]` 这类
+   * 按基调切档的选择器读的是**文档根**上的属性 —— 那里是全局基调。
+   * 于是一个"自选了浅色主题"的插件，在深色全局下仍走深色档，
+   * 浅底上的品牌色变体对比度 1.1~2.5，基本看不见。
+   * 所以容器上也要标一份，让容器子树里的选择器取到正确的那档。
+   */
+  if (base && el.dataset) el.dataset.nexusBase = base;
   const prev = appliedVarKeys.get(el);
   if (prev) {
     for (const k of prev) {

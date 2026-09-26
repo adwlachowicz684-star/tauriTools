@@ -1206,6 +1206,19 @@ function applyTo(rawTheme, accent, envColor) {
   root.dataset.theme = theme.id;
   root.dataset.themeBase = theme.base;
   root.dataset.themeStyle = theme.style || 'neumorph';
+  /*
+   * 同页（module 模式）插件与外壳共享主文档，它读不到 iframe 那份
+   * data-nexus-base（只有 SDK 在 iframe 自己的文档上设过）。
+   *
+   * 于是插件 CSS 想"按基调切两档"（注释里教的 [data-nexus-base="light"]）
+   * 在 module 模式下**永远匹配不上** —— 不报错、不报红，只是浅色下
+   * 那一档静默失效，正是最难发现的那种问题。
+   *
+   * 这里在主文档上补一份，让同一套插件 CSS 在 iframe / module 两种模式下
+   * 写法一致。代价是多一个属性，但比"看模式换选择器"可靠得多 —— 后者
+   * 一旦有人把 entry 从 .html 改成 .tsx（iframe → module），浅色档就全废了。
+   */
+  root.dataset.nexusBase = theme.base;
   /* 叠在 --accent 上的前景色现在是按强调色明暗派生的（黑或白），
      而 SVG data URI **读不到 CSS 变量** —— 勾选标记只能硬编码颜色。
      用这个根属性把"该用黑勾还是白勾"告诉 CSS。

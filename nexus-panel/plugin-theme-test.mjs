@@ -117,8 +117,8 @@ t('同步逻辑抽成了函数（主题变化与配置变化共用）',
 t('onThemeChange 也走同一个函数',
   /onThemeChange\(\(\) => syncThemeToInstance\(state\.instance\)\)/.test(hostSrc2));
 t('推送两条路都覆盖（iframe 推消息 / module 重写内联变量）',
-  /await pushTheme\(inst\.iframe, inst\.manifest\?\.id\)/.test(hostSrc2)
-  && /applyThemeVarsTo\(inst\.root, varsForPlugin\(inst\.manifest\?\.id\)\)/.test(hostSrc2));
+  /await pushTheme\(inst\.iframe,\s*inst\.manifest\?\.id\)/.test(hostSrc2)
+  && /applyThemeVarsTo\(inst\.root,\s*varsForPlugin\(inst\.manifest\?\.id\)/.test(hostSrc2));
 
 /* 文案：主题改动不应再提示"重载" */
 const shellSrc = src('js/shell.js');
@@ -133,8 +133,8 @@ t('React 版说明标注立即生效', /立即生效/.test(src('src/components/S
 console.log('\n=== 8. 调用点接线 ===');
 const hostSrc = src('js/host.js');
 t('init 消息用 varsForPlugin', /type: 'init', manifest, theme: varsForPlugin\(manifest\.id\)/.test(hostSrc));
-t('pushTheme 用 varsForPlugin', /send\(iframe, \{ type: 'theme', theme: varsForPlugin\(pluginId\) \}\)/.test(hostSrc));
-t('module 容器应用了内联变量', /applyThemeVarsTo\(container, varsForPlugin\(manifest\.id\)\)/.test(hostSrc));
+t('pushTheme 用 varsForPlugin', /send\(iframe, \{ type: 'theme', theme: varsForPlugin\(pluginId\)/.test(hostSrc));
+t('module 容器应用了内联变量', /applyThemeVarsTo\(container,\s*varsForPlugin\(manifest\.id\)/.test(hostSrc));
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
