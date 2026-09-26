@@ -4935,6 +4935,20 @@ group('输入法组合期不得把 Enter 当成提交或搜索');
   const all = ed + idx + pn;
   const n229 = (all.match(/keyCode === 229/g) || []).length;
   eq(n229, 4, '四处都要同时看 keyCode 229');
+
+  // ⑥ 通用弹层（js/dialog.js）：重命名脑图 / 文件夹 / 分组 / 画布都走它
+  const root = path.join(HERE, '..', '..');
+  const dg = fs.readFileSync(path.join(root, 'js/dialog.js'), 'utf8');
+  const inp = dg.slice(dg.indexOf("input.addEventListener('keydown'"));
+  const ibody = inp.slice(0, inp.indexOf('Escape'));
+  ok(/e\.isComposing/.test(ibody), '弹层输入框：确定前先判 isComposing');
+  ok(ibody.indexOf('isComposing') < ibody.indexOf("e.key === 'Enter'"),
+    '弹层输入框：组合态判断排在 Enter 之前');
+  // 全局那个负责 Escape 关窗与 Tab 焦点陷阱，同样要放行组合期
+  const gk = dg.slice(dg.indexOf('function onKeydown'), dg.indexOf('function onKeydown') + 700);
+  ok(/e\.isComposing/.test(gk), '弹层全局 keydown：Escape/Tab 前先判 isComposing');
+  ok(gk.indexOf('isComposing') < gk.indexOf("e.key === 'Escape'"),
+    '弹层全局：组合态判断排在 Escape 之前');
 }
 
 group('交换格式接入 UI');

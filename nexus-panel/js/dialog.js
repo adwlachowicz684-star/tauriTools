@@ -88,6 +88,13 @@ function trapFocus(root, e) {
 function onKeydown(e) {
   const top = stack[stack.length - 1];
   if (!top) return;
+  /*
+   * 组合期一律不接管按键。
+   *
+   * Escape 在输入法里是「取消候选」、Tab 是部分输入法的切候选键，
+   * 都不该关弹窗 / 不该被焦点陷阱抢走 —— 否则打中文打到一半弹窗就没了。
+   */
+  if (e.isComposing || e.keyCode === 229) return;
   if (e.key === 'Escape') {
     // 已经在处理别的事（比如有更内层的原生菜单）时不抢
     e.preventDefault();
@@ -294,6 +301,18 @@ export function prompt(o) {
     });
 
     input.addEventListener('keydown', (e) => {
+      /*
+       * 输入法组合中按回车是「把候选词上屏」，此刻 input.value 还是拼音。
+       *
+       * 不拦的后果（实测）：重命名脑图时打 "zhongyao" 再按回车选「重要」，
+       * 弹窗当场确定，**文件名被改成拼音 zhongyao** —— 而且已经落盘。
+       * 新建文件夹 / 重命名文件夹 / 分组 / 重命名画布走的是同一个输入框，
+       * 全都中招。
+       *
+       * keyCode 229 是 Chrome 组合期的统一码；isComposing 在部分 WebView
+       * 版本上不可靠，两个一起看最稳。
+       */
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === 'Enter') {
         e.preventDefault();
         if (submit()) h.close(input.value);
