@@ -24,7 +24,7 @@ export default function PluginSettingsDrawer({
    * 这里必须显式区分：**不能**靠引擎去挂载兜底 —— SDK 的 settingsFn
    * 缺省时会回退 mainFn（js/plugin-sdk.js:641），结果抽屉里显示的是
    * 插件主界面而不是设置。所以拿不到就干脆不挂，只显示占位提示，
-   * 外壳那段（沙箱 / 主题适配开关）照样可用。
+   * 外壳那段（沙箱 / 插件主题）照样可用。
    */
   hasPluginSettings?: boolean;
 }) {
@@ -73,7 +73,8 @@ export default function PluginSettingsDrawer({
         <header className="drawer-head">
           <div className="drawer-title">
             <h2>⚙ {manifest.name}</h2>
-            <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+            {/* 用 .drawer-sub 而不是内联 fontSize —— 与无构建版同一份定义 */}
+            <span className="drawer-sub">
               {manifest.type === 'iframe' ? '沙箱模式' : '同页模式'}
               {manifest.version ? ` · v${manifest.version}` : ''}
             </span>
@@ -89,7 +90,7 @@ export default function PluginSettingsDrawer({
                 ? <div className="nx-empty drawer-empty">
                     「{manifest.name}」没有提供自己的设置面板。
                     <br />
-                    下面的沙箱与主题适配由外壳提供，对所有插件都有效。
+                    下面的沙箱与插件主题由外壳提供，对所有插件都有效。
                   </div>
                 : <div className="loader"><div className="spinner" />正在载入设置…</div>}
           </div>
