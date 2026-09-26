@@ -83,8 +83,8 @@ t('两个外壳都接了工具栏插槽',
 t('React 的 WinAction 类型仍含 hide', /'topmost' \| 'hide'/.test(tbSrc));
 
 console.log('\n=== 6. 按钮位置：主题 与 最小化 之间 ===');
-/* 只取标题栏那一块：页面后面还有 btn-add / btn-settings / btn-inspect
-   等侧边栏按钮，在整份 HTML 上取会让"✕ 在最右"这条恒假。
+/* 只取标题栏那一块：页面后面还有 btn-add / btn-inspect 等侧边栏按钮
+   （btn-settings 已移除，见下），在整份 HTML 上取会让"✕ 在最右"这条恒假。
    —— 与 theme-bridge / tray-test 那几次是同一类坑：断言要先切出范围。 */
 const tbBlock = htmlSrc.slice(htmlSrc.indexOf('id="titlebar"'), htmlSrc.indexOf('</header>'));
 const btns = [...tbBlock.matchAll(/id="([\w-]+)"/g)].map((m) => m[1]);
