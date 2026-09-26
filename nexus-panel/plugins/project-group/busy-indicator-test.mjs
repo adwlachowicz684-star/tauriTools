@@ -24,6 +24,27 @@ const strip = (s) => s.split('\n')
   .filter((l) => !/^\s*\/\//.test(l) && !/^\s*\*/.test(l) && !/^\s*\/\*/.test(l))
   .join('\n');
 
+/* ---------- CSS 判定辅助 ----------
+   层级早已改成命名变量（--z-float），钉 `z-index: 40` 必然过期 ——
+   真正要守的是「低于遮罩」这个**关系**，所以解析出数值再比。 */
+const TOKENS = read('../../css/tokens.css');
+const cssRule = (css, sel) => {
+  const i = css.indexOf(`\n${sel} {`);
+  if (i < 0) return '';
+  const j = css.indexOf('\n}', i);
+  return j < 0 ? css.slice(i) : css.slice(i, j + 2);
+};
+/** 解析 `z-index: var(--z-x, 900)` / `z-index: 50`，查不到返回 NaN（判不出来就报红，不静默放过） */
+const zOf = (decl) => {
+  const m = /z-index:\s*(?:var\((--z-[a-z]+)(?:\s*,\s*(\d+))?\)|(\d+))/.exec(decl);
+  if (!m) return NaN;
+  if (m[3]) return Number(m[3]);
+  const tm = new RegExp(`${m[1]}:\\s*(\\d+)`).exec(TOKENS);
+  if (tm) return Number(tm[1]);
+  return m[2] ? Number(m[2]) : NaN;
+};
+const Z_MASK = zOf('z-index: var(--z-mask)');
+
 console.log('=== 1. 忙态是计数，不是布尔 ===');
 {
   const hook = strip(read('hooks/useFpx.ts'));
@@ -97,35 +118,17 @@ console.log('\n=== 5. 无障碍与不挡操作 ===');
   t('转圈标记 aria-hidden', /aria-hidden="true"/.test(src));
 
   const css = read('style.css');
-  t('样式里有 .fpx-busy', /\.fpx-busy \{/.test(css));
+  const busyRule = cssRule(css, '.fpx-busy');
+  t('样式里有 .fpx-busy（切片锚点有效）', busyRule !== '');
   /*
-   * ⚠️ 钉**语义**（层级低于遮罩），不钉字面量 `z-index: 40`。
-   * 原断言写死 40，后来改成走 --z-float(50) 令牌 —— 语义没变
-   * （仍远高于侧栏 30、远低于遮罩 900），字面量断言却立刻误报。
-   * 真要守的是"别高到盖住弹窗"，所以读 tokens 里的实际值来判。
-   *
-   * 另：这里必须用 strip() 剥注释。块内 z-index 前面有一段说明，
-   * 不剥的话 "z-index: 40" 这类字样可能出现在注释里被误判成还在。
+   * 用**块体**判，不用 `\.fpx-busy \{[\s\S]{0,400}?` 这种固定窗口：
+   * 规则里带中文注释，随便加两句就超出 400，断言随即恒假 ——
+   * 而它红起来指向的是"没写 pointer-events"，会误导排查方向。
    */
-  {
-    const cssC = strip(css);
-    const tokens = read('../../css/tokens.css');
-    const num = (name) => {
-      const m = new RegExp('--' + name + ':\\s*(\\d+)').exec(tokens);
-      return m ? Number(m[1]) : null;
-    };
-    const decl = /\.fpx-busy \{[\s\S]{0,600}?z-index:\s*([^;]+);/.exec(cssC)?.[1]?.trim() || '';
-    const lit = /^\d+$/.test(decl) ? Number(decl) : null;
-    const viaVar = /^var\(--([\w-]+)\)$/.exec(decl)?.[1];
-    const z = lit != null ? lit : (viaVar ? num(viaVar) : null);
-    const mask = num('z-mask');
-    t('层级低于弹窗遮罩（不盖住弹窗）',
-      z != null && mask != null && z < mask,
-      `z-index=${decl}（${z}）vs 遮罩 ${mask}`);
-  }
-  /* 同上：剥注释后再找。块内注释较长，400 字符的窗口不够。 */
-  t('不挡点击（pointer-events: none）',
-    /\.fpx-busy \{[\s\S]{0,600}?pointer-events: none/.test(strip(css)));
+  t('不挡点击（pointer-events: none）', /pointer-events: none/.test(busyRule));
+  const zBusy = zOf(busyRule);
+  t('层级低于弹窗遮罩（不盖住弹窗）',
+    Number.isFinite(zBusy) && zBusy < Z_MASK, `z=${zBusy} mask=${Z_MASK}`);
   t('尊重减少动效偏好', /prefers-reduced-motion: reduce[\s\S]{0,200}fpx-busy-dot/.test(css));
 }
 
@@ -177,29 +180,17 @@ console.log('\n=== 6. 时间逻辑真跑（穷举，不只是文本）===');
 console.log('\n=== 7. 弹窗内的长操作必须自己给反馈 ===');
 {
   /*
-   * 全局指示器 z-index 40，**低于弹窗遮罩**。这是有意的：弹窗打开时用户
-   * 正在看弹窗，不该被右下角分心。
+   * 全局指示器层级（--z-float 50）**低于弹窗遮罩**（--z-mask 900）。
+   * 这是有意的：弹窗打开时用户正在看弹窗，不该被右下角分心。
    *
    * 由此推出一条硬约束：**弹窗内的长操作不能指望全局指示器**，
    * 必须自己给反馈。这一节钉的正是这条例外下的漏网之鱼。
    */
   const css = read('style.css');
-  {
-    const cssC = strip(css);
-    const tokens = read('../../css/tokens.css');
-    const num = (name) => {
-      const m = new RegExp('--' + name + ':\\s*(\\d+)').exec(tokens);
-      return m ? Number(m[1]) : null;
-    };
-    const decl = /\.fpx-busy \{[\s\S]{0,600}?z-index:\s*([^;]+);/.exec(cssC)?.[1]?.trim() || '';
-    const lit = /^\d+$/.test(decl) ? Number(decl) : null;
-    const viaVar = /^var\(--([\w-]+)\)$/.exec(decl)?.[1];
-    const z = lit != null ? lit : (viaVar ? num(viaVar) : null);
-    const mask = num('z-mask');
-    t('全局指示器层级低于遮罩（因此弹窗内要自备反馈）',
-      z != null && mask != null && z < mask,
-      `z=${z} < 遮罩 ${mask} → 弹窗打开时被盖住，弹窗内需自备反馈`);
-  }
+  const zb = zOf(cssRule(css, '.fpx-busy'));
+  t('全局指示器层级低于遮罩（因此弹窗内要自备反馈）',
+    Number.isFinite(zb) && Number.isFinite(Z_MASK) && zb < Z_MASK,
+    `z=${zb} mask=${Z_MASK}`);
 
   const full = read('components/dialogCards.tsx');
   /*

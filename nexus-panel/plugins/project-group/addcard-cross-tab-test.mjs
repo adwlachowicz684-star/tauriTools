@@ -24,7 +24,7 @@ console.log('\n=== 1. 跨所有页签查重 ===');
    * 用户以为改了却发现另一处没变，或者删了却在别处又冒出来。
    */
   t('不再只看当前页签', !/if \(list\[idx\]\?\.items\.some/.test(hook));
-  t('遍历全部页签', /const owner = list\.findIndex\(\(t\) => t\.items\.some/.test(hook));
+  t('遍历全部页签', /const owner = list\.findIndex\(\s*\(t\) => t\.items\.some/.test(hook));
   t('命中则拒绝', /if \(owner >= 0\) \{/.test(hook));
 }
 
@@ -35,11 +35,28 @@ console.log('\n=== 2. 提示要说出在哪个页签 ===');
    * 说清页签名才是"告诉他下一步怎么办"。
    */
   t('提示带页签名', /该文件夹已在页签「\$\{list\[owner\]\.name\}」中/.test(hook));
-  /* 与 #91 一致：大小写不敏感 —— Windows 下两条登记指向同一个目录 */
+  /*
+   * 与 #91 一致：**Windows 下**大小写不敏感（两条登记指向同一个目录）。
+   *
+   * 归一必须走 `api.normalizeKey`，不能就地再写一份 —— 此前那份
+   * `replace(/[\\/]+$/, '').toLowerCase()` 与后端 `store::normalize_key`
+   * 差两点，而两点**各自**都会改到用户没要求改的东西：
+   *   · 无条件小写：Linux / macOS 上 `Foo` 与 `foo` 是两个不同目录却被判成
+   *     同一个 —— 添加一个仅大小写不同的目录会被拒，提示还指向另一个名字
+   *     看着不一样的文件夹（他只会以为软件坏了）；
+   *   · 不统一分隔符：`D:\\a` 与 `D:/a` 是同一个目录却判成两个 —— 查重漏掉，
+   *     同一个文件夹被登记进两个页签，正是本文件第 1 节要防的那件事。
+   */
+  t('归一走 normalizeKey', /normalizeKey\(c\.path, ci\) === normalizeKey\(path, ci\)/.test(hook));
+  t('不再就地抄一份归一', !/const norm = \(p: string\) => p\.replace/.test(hook));
+  /* 大小写只在 Windows 忽略：其他平台 `A` 与 `a` 是两个不同目录 */
+  t('ci 由平台决定', /const ci = boot\?\.platform === 'windows';/.test(hook));
+  /* api.ts 那份是唯一实现：去尾分隔符 + 统一分隔符 + 仅 ci 时转小写 */
+  const apiSrc = strip(fs.readFileSync(path.join(HERE, 'api.ts'), 'utf8'));
   /* 正则里反斜杠转义层数太多，直接用字符串包含判定更稳 */
-  t('去尾斜杠归一', hook.includes("p.replace(/[\\\\/]+$/, '')"));
-  t('归一转小写', hook.includes("p.replace(/[\\\\/]+\$/, '').toLowerCase()"));
-  t('比较用归一值', /norm\(c\.path\) === norm\(path\)/.test(hook));
+  t('去尾斜杠归一', apiSrc.includes("p.trim().replace(/[\\\\/]+$/, '')"));
+  t('统一分隔符', apiSrc.includes(".replace(/\\\\/g, '/')"));
+  t('仅 ci 时转小写', /return ci \? s\.toLowerCase\(\) : s;/.test(apiSrc));
 }
 
 console.log('\n=== 3. 落库仍在指定页签 ===');

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { FpxConfig, LinkDetail } from '../types';
+import { normalizeKey } from '../api';
 import { Modal } from './ui';
 
 /**
@@ -17,11 +18,19 @@ import { Modal } from './ui';
  * 必须让用户事先看见，而不是建完才发现别处断了。
  */
 export function LinkPickDialog({
-  project, group, config, allNames, details, onConfirm, onClose,
+  project, group, config, allNames, details, ci = false, onConfirm, onClose,
 }: {
   project: string;
   group: string;
   config: FpxConfig;
+  /**
+   * 路径比较是否忽略大小写 —— **只能**由平台决定（Windows 为 true）。
+   *
+   * 不能就地写死 true：Linux / macOS 的文件系统大小写敏感，
+   * `/g` 与 `/G` 是两个不同的项目组。按"忽略大小写"比会把指向别组的
+   * 链接判成"已指向本组" → 默认勾上 → 用户一点确定就把别组链接抢过来。
+   */
+  ci?: boolean;
   /** 全部链接名（预设显示名 + 自定义），已按置顶排序 */
   allNames: string[];
   /*
@@ -46,14 +55,23 @@ export function LinkPickDialog({
   );
 
   /*
-   * 路径比对**不能**直接用 ===。
+   * 路径比对**不能**直接用 ===，也不能就地另写一份归一。
    *
    * 后端按磁盘反查出来的目标可能带尾分隔符（`D:\\g\\` 与 `D:\\g`），
-   * 而 Windows 路径大小写不敏感。直接比会把"已连本组"判成"指向别组"：
+   * 同一种写法也可能混用 `\` 与 `/`。直接比会把"已连本组"判成"指向别组"：
    * 提示错 + 默认不勾选 → 用户什么都没勾，一按确定该链接就被删了。
+   *
+   * 此前这里是一份 `replace(/[\\/]+$/, '').toLowerCase()`，与后端
+   * `store::normalize_key` 差两点，**两个方向都会改到用户没要求改的东西**：
+   *   · 无条件小写：非 Windows 上把两个不同的组判成同一个 → 指向别组的链接
+   *     被判成"已指向本组" → 默认勾上 → 点确定就把别组链接**抢过来**；
+   *   · 不统一分隔符：`D:\g` 与 `D:/g` 判成两个 → 已连本组的被判成别组 →
+   *     默认不勾 → 点确定就被**删掉**。
+   *
+   * 所以一律走 `api.normalizeKey`，与后端同一套规则；大小写是否忽略由 `ci`
+   * 决定（Windows 才为 true，见该 prop 的说明）。
    */
-  const norm = (p: string) => p.replace(/[\\/]+$/, '').toLowerCase();
-  const samePath = (a: string, b: string) => norm(a) === norm(b);
+  const samePath = (a: string, b: string) => normalizeKey(a, ci) === normalizeKey(b, ci);
 
   /*
    * 该名字当前是否已建链接、指向哪儿（用于「将换绑」提示）。

@@ -69,4 +69,78 @@ console.log('\n=== 4. 写入路径仍安全 ===');
   t('写失败清临时文件', /fs::remove_file\(&tmp\)\.ok\(\);/.test(store));
 }
 
+console.log('\n=== 5. 路径归一只有一套规则（前端不得自带副本）★★ ===');
+{
+  /*
+   * 历史教训（store.rs 里也写着）：这个文件原先不带分隔符统一，
+   * sys.rs 另有一份"无条件小写"，前端 api.ts 又是第三份。
+   * **三套规则并存是多个路径匹配 bug 的共同根因**，所以全量扫一遍。
+   *
+   * 判据取那份最常见的副本：去尾分隔符 + 无条件 toLowerCase。
+   * 它与 normalize_key 差两点，而两点**各自**都会改到用户没要求改的东西：
+   *   · 无条件小写：非 Windows 上 `Foo` / `foo` 是两个不同目录却被判成同一个
+   *     → 查重误拦（加不进去）/ 换绑误判（把别组链接抢过来）；
+   *   · 不统一分隔符：`D:\a` 与 `D:/a` 本是一个目录却判成两个
+   *     → 查重漏掉（同一文件夹登记进两个页签）/ 已连本组被判成别组（一点确定就被删）。
+   */
+  const srcFiles = [];
+  const walk = (d) => {
+    for (const e of fs.readdirSync(path.join(HERE, d), { withFileTypes: true })) {
+      const rel = `${d}/${e.name}`;
+      if (e.isDirectory()) { if (e.name !== 'preseticons') walk(rel); continue; }
+      if (/\.(ts|tsx)$/.test(e.name)) srcFiles.push(rel);
+    }
+  };
+  for (const d of ['.', 'components', 'hooks', 'utils']) {
+    if (d === '.') {
+      for (const e of fs.readdirSync(HERE, { withFileTypes: true })) {
+        if (e.isFile() && /\.(ts|tsx)$/.test(e.name)) srcFiles.push(e.name);
+      }
+    } else walk(d);
+  }
+
+  /*
+   * 先剥注释再扫：两处修复说明里都**引用了**那段旧代码（要写清它错在哪），
+   * 不剥的话这两条说明本身就会命中 —— 那是**假报警**，而假报警比没有更糟：
+   * 后来人会学着忽略它，或者为了让报警消失把说明删掉。
+   */
+  const stripDoc = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  const BAD = /\.replace\(\/\[\\\\\/\]\+\$\/, ''\)\s*\.toLowerCase\(\)/;
+  const hits = srcFiles.filter((f) => {
+    const s = stripDoc(fs.readFileSync(path.join(HERE, f), 'utf8'));
+    return BAD.test(s);
+  });
+  t('前端没有任何"无条件小写"的路径归一副本', hits.length === 0, hits.join('、'));
+  /* 护栏自己不能空跑：扫到 0 个文件等于什么都没验（前面踩过多次） */
+  t('确实扫到了源文件', srcFiles.length >= 20, `srcFiles=${srcFiles.length}`);
+
+  /* api.ts 那份是唯一入口：只在 ci 为真时转小写、且统一分隔符 */
+  const api = fs.readFileSync(path.join(HERE, 'api.ts'), 'utf8');
+  t('normalizeKey 统一分隔符', /replace\(\/\\\\\/g, '\/'\)/.test(api));
+  t('normalizeKey 只在 ci 时转小写', /return ci \? s\.toLowerCase\(\) : s;/.test(api));
+
+  /*
+   * 两处调用点都要按平台给 ci。
+   * 只钉"有 ci 参数"是漏报的 —— 默认 false 也能通过，
+   * 而 Windows 上少了大小写不敏感会让 `D:\a` / `d:\A` 判成两个。
+   */
+  const hook = fs.readFileSync(path.join(HERE, 'hooks/useFpx.ts'), 'utf8');
+  const hub = fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8');
+  /*
+   * 必须限定到 addCard 查重那一段，不能全文件判。
+   *
+   * 全文件判 `const ci = boot?.platform === 'windows'` 是**空跑**的：
+   * 本文件另有两处同样的 ci（删除卡片、内容区），只钉字面量的话，
+   * 把查重这处的 ci 去掉，断言照样通过 —— 而 Windows 上少了大小写不敏感，
+   * `D:\a` 与 `d:\A` 会被判成两个目录，查重漏掉。
+   */
+  const iAdd = hook.indexOf('const addCard = useCallback');
+  const iOwner = hook.indexOf('const owner = list.findIndex', iAdd);
+  const dedup = hook.slice(iAdd, iOwner + 400);
+  t('锚点取到查重那一段', iAdd >= 0 && iOwner > iAdd, `iAdd=${iAdd} iOwner=${iOwner}`);
+  t('查重那一段按平台给 ci', /const ci = boot\?\.platform === 'windows';/.test(dedup));
+  t('查重走 normalizeKey', /normalizeKey\(c\.path, ci\) === normalizeKey\(path, ci\)/.test(dedup));
+  t('换绑判定按平台给 ci', /ci=\{boot\.platform === 'windows'\}/.test(hub));
+}
+
 done();

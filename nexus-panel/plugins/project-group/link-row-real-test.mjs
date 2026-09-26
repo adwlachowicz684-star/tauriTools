@@ -116,10 +116,25 @@ console.log('\n=== 8. #198 链接名勾选：换绑提示要按磁盘实际，�
   t('Hub 从卡片 linkDetails 取', /return c\.linkDetails/.test(hub));
   t('Hub 传的是 details 而非 links', /details=\{cardDetails\(boot/.test(hub));
 
-  /* 二、路径比对不能直接用 ===：后端反查的目标可能带尾反斜杠。
-     不等就会把"已连本组"误判成"要换绑" —— 提示错 + 默认不勾选 → 一取消就被删。 */
-  t('有尾分隔符归一化比对', /replace\(\/\[\\\\\/\]\+\$\/, ''\)/.test(dlg));
-  t('比对大小写不敏感', /toLowerCase\(\)/.test(dlg));
+  /* 二、路径比对不能直接用 ===，也不能就地另写一份归一。
+     此前那份 `replace(/[\\/]+$/, '').toLowerCase()` 与后端 normalize_key 差两点，
+     而两点**各自**都会改到用户没要求改的东西：
+       · 无条件小写 → 非 Windows 上把"指向别组"判成"已指向本组"
+         → 默认勾上 → 用户一点确定就把别组链接**抢过来**；
+       · 不统一分隔符 → `D:\g` 与 `D:/g` 判成两个 → 已连本组的被判成别组
+         → 默认不勾 → 一按确定就被**删掉**。 */
+  t('走 normalizeKey 而非就地归一',
+    /normalizeKey\(a, ci\) === normalizeKey\(b, ci\)/.test(dlg));
+  /*
+   * 反面证据：组件里不得再残留那份无条件小写的本地 norm。
+   * 只钉"有 normalizeKey"是**漏报**的 —— 两者可以并存，而本地那份仍在生效，
+   * 断言却照样通过（这正是前面反复踩到的"断言空跑"）。
+   */
+  t('不再残留无条件小写的本地 norm',
+    !/const norm = \(p: string\) => p\.replace\(\/\[\\\\\/\]\+\$\/, ''\)\.toLowerCase\(\)/.test(dlg));
+  /* 大小写是否忽略由 ci 决定，不能写死 true（非 Windows 上是两个不同目录） */
+  t('ci 由调用方给、默认 false', /ci = false/.test(dlg) && /normalizeKey\(a, ci\)/.test(dlg));
+  t('ci 由平台决定', /ci=\{boot\.platform === 'windows'\}/.test(hub));
   t('rebind 用 samePath 判定', /const rebind = target !== undefined && !samePath\(target, group\)/.test(dlg));
 
   /* 三、他组占用的名字**默认不勾选**（原版 MakeCheck 明写）。

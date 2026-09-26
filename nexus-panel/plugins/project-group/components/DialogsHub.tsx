@@ -554,6 +554,7 @@ export function Dialogs(props: DialogsProps) {
           config={boot.config}
           allNames={boot.allNames ?? []}
           details={cardDetails(boot, confirmLink.project)}
+          ci={boot.platform === 'windows'}
           onConfirm={(names) => {
             setConfirmLink(null);
             /* #200 走 sync 而不是 create：取消勾选的名字要真的删掉、释放名字。

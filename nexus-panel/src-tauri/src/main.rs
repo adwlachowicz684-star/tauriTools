@@ -10,28 +10,6 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 
 mod af_flow;
 mod fpx;
-/*
- * updater —— 应用自更新（src/updater.rs）。
- *
- * ⚠️ 这一行被同步提交覆盖丢失过多次（2026-09-26 已第 4 次）：
- * updater.rs 文件还在、命令也在，但少了 mod 声明就**不参与编译**，
- * 注册列表里自然也没有它们 —— 结果是运行时 "command not found"，
- * 界面上「检查更新」点了没反应，而编译和实际报错都指向别处。
- * 改这个文件后请跑 `npm run scan:commands`（updater-test.mjs 钉了这一条）。
- */
-mod updater;
-/*
- * dupview —— 「试卷查重」插件的原生后端（src/dupview/）。
- * 13 条命令与 plugins/registry.js 的登记、js/command-caps.js 的分级、
- * Cargo.toml 的 pdfium-render / image / rayon 依赖**都已齐备**，
- * 只差这一行 —— 少了它，整个目录不参与编译，插件里每个操作都
- * 会 "command not found"，而编译不报错（这正是它难发现的原因）。
- *
- * ⚠️ 命令必须带 `dupview::` 前缀。此前有一版写成裸名
- * （dupview_roots, dupview_list, …），那会在 main.rs 里找不到定义
- * 而**编译失败**。改完请跑 `npm run scan:commands`。
- */
-mod dupview;
 
 /// 连通性测试：前端 ctx.invoke('rust_ping', { payload })
 #[tauri::command]
@@ -319,16 +297,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         // http：OCR / 翻译 / 订阅源抓取，绕过 webview 同源策略
         .plugin(tauri_plugin_http::init())
-        /* updater：应用自更新。官方插件，验签（minisign）与平台差异都已处理好。
-           缺了这一行，updater.rs 里的 app.updater_builder() 会因 UpdaterExt
-           trait 未初始化而编译失败（E0599），且报错指向 updater.rs 而非这里。 */
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(fpx::store::FpxState::new())
-        /* ⚠️ 少了这一行，dupview 的每条命令一被调用就 panic
-           （tauri: `state() called before manage()` → 进程 abort）。
-           编译期完全看不出来，warning 里只有一句
-           "associated function `new` is never used" —— 那就是它没被管理的信号。 */
-        .manage(dupview::DupState::new())
         .manage(af_flow::ProcRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(af_flow::WatchRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(af_flow::WebhookRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
@@ -342,8 +311,7 @@ fn main() {
             fpx::fpx_remove_card,
             fpx::fpx_save_style, fpx::fpx_list_icons, fpx::fpx_icon_data, fpx::fpx_save_icon_data,
             fpx::fpx_rename_icon,
-            fpx::fpx_pick_color, fpx::fpx_save_custom_colors, fpx::fpx_list_fav_dirs, fpx::fpx_save_fav_dirs,
-            fpx::fpx_open_data_dir, fpx::fpx_open_backup_dir,
+            fpx::fpx_pick_color, fpx::fpx_save_custom_colors, fpx::fpx_open_data_dir, fpx::fpx_open_backup_dir,
             fpx::fpx_backup, fpx::fpx_list_editors, fpx::fpx_set_editor, fpx::fpx_edit_file,
             fpx::fpx_read_text, fpx::fpx_write_text, fpx::fpx_export_text,
             fpx::fpx_chain_clients, fpx::fpx_save_chain_clients, fpx::fpx_move_card_across,
@@ -374,14 +342,6 @@ fn main() {
              */
             af_flow::af_os_keyring_get, af_flow::af_os_keyring_set,
             af_flow::af_os_keyring_delete,
-            /* updater 三条 —— 缺了它们的表现：设置页「检查更新」点了没反应，
-               运行时 command not found，编译不报错（这正是难查的原因）。 */
-            updater::updater_check, updater::updater_install, updater::updater_relaunch,
-            /* 「试卷查重」13 条。与 mod dupview; 成对出现，缺一不可。 */
-            dupview::dupview_roots, dupview::dupview_addroot, dupview::dupview_delroot, dupview::dupview_scan_status, dupview::dupview_scan, dupview::dupview_scanall, dupview::dupview_list, dupview::dupview_pages, dupview::dupview_rename, dupview::dupview_delete, dupview::dupview_restore, dupview::dupview_dir_done, dupview::dupview_browse,
-            /* ⚠️ tray_toggle_window 必须留在**末位**：tray-test.mjs 钉了
-               「末尾紧接 ])」这一写法，插到它后面会让断言失败。
-               新增命令请加在它**前面**。 */
             tray_toggle_window
         ])
         .setup(move |app| {
@@ -498,11 +458,6 @@ fn main() {
              * （关掉面板仍想让客户端连着），所以由开关决定。
              */
             if let tauri::RunEvent::Exit = event {
-                /* 「试卷查重」的扫描跑在后台线程里（可能正在渲染几百份卷子），
-                   退出时置取消标志让它尽快收手 —— 否则线程会一直跑到自然结束，
-                   表现为"关了面板后磁盘还在响好几秒"。
-                   少了这一行编译只多一句 "request_cancel is never used"。 */
-                crate::dupview::request_cancel(app_handle);
                 let should_stop = crate::fpx::store::resolve_data_dir(app_handle)
                     .map(|dir| crate::fpx::store::load_config(&dir).close_mcp_on_exit)
                     .unwrap_or(false);

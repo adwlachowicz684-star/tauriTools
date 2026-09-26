@@ -143,10 +143,25 @@ console.log('\n=== 3. 顺序断言必须两端都判存在 ===');
     }
     /* 逐个 t( ... ) 语句（用括号配对粗切） */
     for (const m of src.matchAll(/\bt\(/g)) {
+      /*
+       * `.test(` 里的 `t(` 也会被 `\bt\(` 命中（`.` 不是词字符，
+       * 所以 `t` 前面照样算词边界）。不跳过的话会从一个正则字面量中间
+       * 开始配对，切出来的"语句"是半截的。
+       */
+      if (src[m.index - 1] === '.') continue;
       let depth = 0; let j = m.index;
       for (; j < src.length; j += 1) {
-        if (src[j] === '(') depth += 1;
-        else if (src[j] === ')') { depth -= 1; if (depth === 0) break; }
+        /*
+         * 正则字面量里的转义括号不算配对。
+         *
+         * `t('ensure_ranges 仍在', /fn ensure_ranges\(/.test(store))` 里
+         * 那个 `\(` 会让深度多涨 1，于是一直回落不到 0 —— 切片一路吃到
+         * **后面好几条语句**去，把这些语句里的 indexOf 比较也算到它头上。
+         * 报出来的名字（"ensure_ranges 仍在"）因此根本不是有问题的那条，
+         * 查的人会照着错误的方向找。
+         */
+        if (src[j] === '(' && src[j - 1] !== '\\') depth += 1;
+        else if (src[j] === ')' && src[j - 1] !== '\\') { depth -= 1; if (depth === 0) break; }
       }
       const stmt = src.slice(m.index, j + 1);
       if (!/\.indexOf\s*\(/.test(stmt)) continue;

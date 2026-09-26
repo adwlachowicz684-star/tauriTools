@@ -290,12 +290,25 @@ export function useFpx() {
      * 页签一多用户根本不知道该去哪儿找。
      */
     /*
-     * 归一 = 去尾斜杠 + 转小写（对齐原版 `FindDuplicate` 的 OrdinalIgnoreCase）。
-     * 只去尾斜杠的话，`D:\\a` 与 `d:\\A` 会被当成两个不同条目 ——
-     * 而它们在 Windows 下是同一个目录。
+     * 归一**必须**走 `normalizeKey`，不能就地再写一份。
+     *
+     * 此前这里是一份 `p.replace(/[\\/]+$/, '').toLowerCase()`，
+     * 与后端 `store::normalize_key` 差两处，而两个方向各有后果：
+     *   · **无条件转小写**：Linux / macOS 上 `Foo` 与 `foo` 是**两个不同目录**
+     *     （ext4 / APFS 默认大小写敏感），这里却判成同一个 —— 用户要添加一个
+     *     仅大小写不同的目录会被拒，提示还指向另一个名字看着不一样的文件夹，
+     *     他只会以为软件坏了；
+     *   · **不统一分隔符**：`D:\a` 与 `D:/a` 是同一个目录，这里判成两个 ——
+     *     查重**漏掉**，同一个文件夹被登记进两个页签，正是上面那段说的后果。
+     *
+     * `ci` 只在 Windows 为 true：那边文件名大小写不敏感，`D:\a` 与 `d:\A`
+     * 确实指向同一个目录（对齐原版 `FindDuplicate` 的 OrdinalIgnoreCase）。
+     * 其他平台一律按原样比，宁可漏查（看得见）也不能误合并（看不见）。
      */
-    const norm = (p: string) => p.replace(/[\\/]+$/, '').toLowerCase();
-    const owner = list.findIndex((t) => t.items.some((c) => norm(c.path) === norm(path)));
+    const ci = boot?.platform === 'windows';
+    const owner = list.findIndex(
+      (t) => t.items.some((c) => normalizeKey(c.path, ci) === normalizeKey(path, ci)),
+    );
     if (owner >= 0) {
       ctx.toast(`该文件夹已在页签「${list[owner].name}」中`, 'err');
       return;
