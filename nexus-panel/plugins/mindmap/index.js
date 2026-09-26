@@ -395,7 +395,34 @@ bootIframePlugin(async (ctx) => {
        * 用**状态检查**而不是给每个锚点补标记：后者要改 panels.js 里所有
        * popupMenu 调用点，将来新加一个又会漏。
        */
-      if (document.querySelector('.mm-menu-mask')) return;
+      /*
+       * **只要此刻有浮层开着就别抢**。
+       *
+       * 上面那条只认标记，而 popupMenu 的锚点按钮（数值输入框的 ▾、
+       * 导出格式等）是 panels.js 里用 h() 直接建的、**不带标记**。
+       * 于是点 ▾ 的这一次 click 会继续冒泡到这里，菜单刚打开、
+       * 焦点就被塞回画布。
+       *
+       * **更要紧的是"按钮自己开的浮层"**：本节开头那条注释说
+       * "弹层挂在 document.body 上、不在 root 内，天然不会被命中 ——
+       * 正好，浮层开着时不该动焦点"，这只对**点在浮层里**成立。
+       * 而**点侧栏按钮打开浮层**时 target 在 root 内、委托照样触发，
+       * 于是浮层刚打开焦点就被抢走。实测（jsdom 复刻真实冒泡序列）：
+       *
+       *   点「重命名脑图」→ prompt 打开并 focus 了 input → 委托 refocus
+       *     → activeElement 变成 iframe，**在输入框里打字没有反应**；
+       *   点「历史快照」→ 面板浮层打开 → 同样被抢
+       *     → 浮层开着时 Delete / Tab / Enter 作用在背后的画布上。
+       *
+       * 三条路都必须查：
+       *   .mm-menu-mask  panels.js 的 popupMenu
+       *   .mm-mask       panels.js 的 dialog()
+       *   .nx-mask       js/dialog.js 的 confirm / alert / prompt
+       *
+       * 用**状态检查**而不是给每个锚点补标记：后者要改 panels.js 里所有
+       * 调用点，将来新加一个又会漏。
+       */
+      if (document.querySelector('.mm-menu-mask, .mm-mask, .nx-mask')) return;
       refocusCanvas();
     };
     root.addEventListener('click', onClick);
@@ -415,7 +442,14 @@ bootIframePlugin(async (ctx) => {
     const attrs = {
       onclick: (e) => {
         const r = onclick?.(e);
-        if (opt.refocus !== false) refocusCanvas();
+        /*
+         * 与 root 委托同一个判断：按钮自己开的浮层（confirm / prompt /
+         * 导出菜单等）此刻正开着，不能把焦点抢回画布。
+         * refocus:false 只标了「设置」一个，逐个标必然漏。
+         */
+        if (opt.refocus !== false && !document.querySelector('.mm-menu-mask, .mm-mask, .nx-mask')) {
+          refocusCanvas();
+        }
         return r;
       },
       title: opt.title || '',

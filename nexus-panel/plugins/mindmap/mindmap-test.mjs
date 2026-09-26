@@ -682,8 +682,13 @@ group('Tab → 插入下级节点');
   ok(/const\s+unbindRefocus\s*=\s*bindRefocusClick\(\)/.test(src), '初始化时绑定归还焦点监听');
   ok(/unbindRefocus\?\.\(\)/.test(src), '卸载时注销归还焦点监听');
   {
+    /*
+     * 切片窗口必须够大：函数体里的注释很长（解释了三条豁免的原因），
+     * 窗口小到只装得下注释的话，后面的 addEventListener 就落在窗口外，
+     * 断言变成恒真的假阴性。
+     */
     const rf = src.slice(src.indexOf('function bindRefocusClick'),
-      src.indexOf('function bindRefocusClick') + 1400);
+      src.indexOf('function bindRefocusClick') + 3000);
     const code = rf.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     ok(/root\.addEventListener\('click',\s*onClick\)/.test(code), '挂在 root 上（事件委托，重建 DOM 不用重绑）');
     ok(/root\.removeEventListener\('click',\s*onClick\)/.test(code), '返回注销函数');
@@ -700,8 +705,16 @@ group('Tab → 插入下级节点');
      * 用状态检查（查 .mm-menu-mask）而不是给每个锚点补标记：后者要改
      * panels.js 里所有 popupMenu 调用点，将来新加一个又会漏。
      */
-    ok(/document\.querySelector\('\.mm-menu-mask'\)/.test(code),
-      '弹出菜单开着时不抢焦点（否则菜单开着 Delete 会删节点）');
+    /*
+     * 必须**限定在 onClick 体内**再查。
+     *
+     * 直接在整个 code 片段上查，会命中**后面 B() 里那一份** ——
+     * 变异验证实测：把 root 委托改回只查 .mm-menu-mask，断言照样绿
+     * （因为 B() 那份还带着完整类名）。这是本项目反复踩的假阴性。
+     */
+    const bodySeg = code.slice(code.indexOf('const onClick'), code.indexOf("root.addEventListener('click', onClick)"));
+    ok(/document\.querySelector\('\.mm-menu-mask, \.mm-mask, \.nx-mask'\)/.test(bodySeg),
+      'root 委托：有浮层开着时不抢焦点（菜单 / 面板浮层 / confirm-prompt 三条路都要查）');
     ok(/closest\?\.\('\[data-no-refocus\]'\)/.test(code), '放过标了 data-no-refocus 的按钮');
     ok(/refocusCanvas\(\);/.test(code), '其余一律把焦点还给画布');
     // 只断言存在是不够的：这条曾经写成「注释里提到」就算通过
@@ -887,7 +900,9 @@ group('Tab → 插入下级节点');
       "refocus:false 的按钮打上 data-no-refocus 标记");
     ok(/opt\.refocus\s*===\s*false/.test(bseg2), '只在 refocus 显式为 false 时打标记');
   }
-  ok(/if \(opt\.refocus !== false\) refocusCanvas\(\)/.test(bseg),
+  ok(/if \(opt\.refocus !== false && !document\.querySelector\('\.mm-menu-mask, \.mm-mask, \.nx-mask'\)\)/.test(bseg),
+    'B() 同样只在没有浮层开着时才归还（refocus:false 只是其中一条理由）');
+  ok(/if \(opt\.refocus !== false\)/.test(bseg) || /opt\.refocus !== false/.test(bseg),
     '可跳过归还（refocus:false）—— 打开模态浮层时画布不能继续吃快捷键');
 }
 
