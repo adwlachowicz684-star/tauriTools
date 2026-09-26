@@ -7,6 +7,7 @@ import {
   TEMPLATE_VARS, CAPABILITY_SIGNATURES, EDGE_SHAPE, BRANCH_EDGE_EXAMPLE,
 } from '../engine/nodeSpec';
 import { REQUIRES, requiresOf } from '../engine/nodeRequires';
+import { UPDATE_SOURCE_KEYS } from '../types';
 
 /** 仓库根；由 run-tests.sh 导出（测试在 $OUT/tests 下跑） */
 const AF_SRC = process.env.AF_SRC || '';
@@ -320,22 +321,53 @@ test('有 fields 的节点不能标 manualParams（参数该自动派生）', ()
 
 
 /**
- * update 的 source 取值是 'bilibili'（完整拼写），不是 'bili'。
+ * 更新检测合并成"一个节点盯多平台"之后，契约必须跟着改。
  *
- * 'bili' 是节点的 **type**，'bilibili' 是 data.source 的取值 ——
- * 两者只差一个音节，盲测时写成 'bili' 导致走不进 bilibili 分支，
- * 掉进 wechat 分支去 trim 空的 feedUrl，报
- * "Cannot read properties of undefined (reading 'trim')"，
- * 与"取值写错"完全对不上号。
+ * 上一版这里写的是单目标时代的 `source` 且只列了 bilibili / wechat。
+ * 那份契约会经 blockCatalog() 喂给拼装方，于是拼出来的流程
+ * **永远用不上其余 15 个平台**，而老字段靠 targetsOf() 读时合成、
+ * 流程照样能跑 —— 不报错，只是能力少了一大截。
+ *
+ * 平台清单必须与 UPDATE_SOURCE_KEYS 一致，且不能退回 source 那个旧键。
  */
-test('update 的 source 取值必须是 bilibili（完整拼写）', () => {
+test('update 的契约写的是 targets 数组（不是单目标的 source）', () => {
   const hp = SPECS['update']?.hiddenParams ?? [];
-  const src = hp.find((p) => p.key === 'source');
-  assert.ok(src, 'update 必须有 source 的隐藏参数说明');
+  const tg = hp.find((p) => p.key === 'targets');
+  assert.ok(tg, 'update 必须有 targets 的隐藏参数说明（多目标合并后 source 已不是写入路径）');
   assert.ok(
-    src.options && src.options.includes('bilibili') && !src.options.includes('bili'),
-    `source 取值写成 ${JSON.stringify(src.options)} 了 —— `
-    + "应为 ['bilibili','wechat']（'bili' 是 type，不是 source 取值）",
+    !hp.some((p) => p.key === 'source'),
+    '不该再写 source —— 它是老存档的兼容字段，写出来会误导拼装方往顶层填值',
+  );
+  assert.ok(
+    tg.options && tg.options.includes('bilibili') && !tg.options.includes('bili'),
+    `kind 取值写成 ${JSON.stringify(tg.options)} 了 —— `
+    + "要填完整拼写 'bilibili'（'bili' 是节点 type，不是 kind 取值）",
+  );
+  assert.ok(
+    tg.desc.includes('feedUrl'),
+    '要说明 feedUrl —— 除 youtube / podcast 外都靠第三方订阅源，'
+    + '不提的话拼装方不会填，节点会一直解析失败且看不出原因',
+  );
+});
+
+/**
+ * 平台清单必须逐一覆盖，不能只有合并前那两个。
+ *
+ * 拿 UPDATE_SOURCE_KEYS 对账而不是手抄一份"应该有小红书"——
+ * 抄清单本身就会漏，而漏了之后这条守卫照样报绿。
+ */
+test('update 的平台清单与 UPDATE_SOURCE_KEYS 完全一致', () => {
+  const hp = SPECS['update']?.hiddenParams ?? [];
+  const tg = hp.find((p) => p.key === 'targets');
+  assert.ok(tg?.options, 'targets 要给出平台取值');
+  assert.deepEqual(
+    [...tg.options].sort(),
+    [...UPDATE_SOURCE_KEYS].sort(),
+    '平台清单与 UPDATE_SOURCE_META 不一致 —— 加平台时漏了契约这一处',
+  );
+  assert.ok(
+    UPDATE_SOURCE_KEYS.length > 2,
+    '平台不止两个（这条防的是清单被写死成合并前的 bilibili / wechat）',
   );
 });
 
@@ -470,4 +502,37 @@ test('读表格不再自己判能力（交给 runnerKit 统一校验）', () => 
     /if \(!ctx\.opts\.tableReader\)/,
     '执行器里不该再留一份自写的能力校验',
   );
+});
+
+/**
+ * 每个注册了的积木都得有契约 —— 反向对账，不靠手抄清单。
+ *
+ * 原有的"契约覆盖已知的全部积木"只查了 8 个必须项加一个数量下限，
+ * 于是**新节点漏写契约时它照样报绿**：漏掉的节点压根不在
+ * SPECS 里，遍历 SPECS 自然不会碰到它。
+ *
+ * 漏契约的后果同样是安静的：specOf 返回 null，canConnect 一律放行，
+ * 拼装时的坑一个都拦不住（"等待插在链中间截断数据"正是靠契约拦的）。
+ *
+ * 所以这里从 nodes/defs 的源码里把 dataKind 全量抓出来，逐一对账。
+ */
+test('每个注册的积木都有契约（从 defs 源码反向对账）', () => {
+  const dir = path.join(AF_SRC, 'nodes', 'defs');
+  if (!fs.existsSync(dir)) return;
+  const kinds = new Set<string>();
+  for (const f of fs.readdirSync(dir)) {
+    if (!/\.tsx?$/.test(f)) continue;
+    const src = fs.readFileSync(path.join(dir, f), 'utf-8');
+    if (!/registerNode\(/.test(src)) continue; // 纯字段模块（如 updateFields）不注册节点
+    for (const m of src.matchAll(/dataKind:\s*'([a-zA-Z_-]+)'/g)) kinds.add(m[1]);
+  }
+  assert.ok(kinds.size >= 30, `只抓到 ${kinds.size} 种，正则可能失效了`);
+
+  /*
+   * 容器与占位：它们没有端口、不参与执行，specOf 返回 null 是**设计如此**
+   * —— 写死在白名单里，是为了让"忘了写契约"和"刻意不写"能分得开。
+   */
+  const NO_SPEC = new Set(['frame', 'taskPane', 'apiPane']);
+  const missing = [...kinds].filter((k) => !NO_SPEC.has(k) && !SPECS[k]);
+  assert.deepEqual(missing, [], `这些积木没有契约：${missing.join(', ')}`);
 });
