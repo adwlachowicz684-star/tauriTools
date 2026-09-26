@@ -2784,5 +2784,55 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
     /BG_PRESETS\.filter/.test(cleanSet) ? '已过滤' : '未过滤（全列）');
 }
 
+
+/* ============================================================
+   45. 两处主题列表必须一致（设置页 / 标题栏快速选择器）
+   ------------------------------------------------------------
+   theme-picker.js 是原生 DOM 实现的，与设置页的 React 实现是**两套代码**。
+   每次改一处漏另一处，就会出现"同一个应用给两套答案"，
+   而这不会报错 —— 只能靠肉眼发现。所以把一致性钉成断言。
+   ============================================================ */
+{
+  const pickSrc = stripComments(read('js/theme-picker.js'));
+  const setSrc = stripComments(read('plugins/settings/App.tsx'));
+  const idxSrc = stripComments(read('plugins/settings/index.js'));
+
+  /*
+   * ---- 45.1 快速选择器按风格分组，与设置页同 ----
+   *
+   * ⚠️ 本小节只钉 **theme-picker.js**。
+   * 设置页两版（App.tsx / index.js）的分组与缩略图断言在第 41 节已有，
+   * 且判据更严（同时要求"有 STYLE_LABELS"且"没有 ['深色', ...] 字面量"）。
+   * 我一开始在这里又加了两条松版本（只查 STYLE_LABELS 出现过），
+   * 结果：判据为 true 但详情文本却算出"仍在按深浅分"——
+   * 因为详情用了**另一套**更宽泛的正则，匹配到了无关文字。
+   * 断言绿、详情自相矛盾，比没有断言更糟：它会让人以为验证过了。
+   * 松断言还会掩盖严断言的报红，所以直接删掉，不重复钉。
+   */
+  const pickerByStyle = /STYLE_LABELS/.test(pickSrc)
+    && !/\['深色', all\.filter/.test(pickSrc)
+    && !/base === 'dark'[\s\S]{0,60}base === 'light'/.test(pickSrc);
+  t('快速选择器按风格分组（不是深色/浅色）',
+    pickerByStyle,
+    pickerByStyle ? '已按风格（与设置页同）' : '仍在按深浅分');
+
+  /* ---- 45.2 缩略图取值一致：都得走 exportVarsFor ----
+   *
+   * 用 t.vars 读的是主题**自带**原始值，读不到用户改的：
+   * 基调/风格覆盖、逐项变量、风格参数、强调色全丢，
+   * 卡片显示与实际效果不符，用户会以为改动没保存。
+   * 三处渲染主题卡片的地方都得走 exportVarsFor。 */
+  const usesRaw = (src) => /=\s*t\.vars\s*\|\|/.test(src) || /const v = t\.vars/.test(src);
+  t('快速选择器缩略图走 exportVarsFor（不是裸 t.vars）',
+    /exportVarsFor\(t\)/.test(pickSrc) && !usesRaw(pickSrc),
+    usesRaw(pickSrc) ? '仍在用裸 t.vars' : '已走 exportVarsFor');
+  /* 设置页两版的缩略图断言在第 41 节已有，这里不重复。 */
+
+  /* ---- 45.3 元断言：三处文件都真的读到了（防止路径变了导致空跑） ---- */
+  t('三处主题列表源码都取到了（元断言，防扫描范围失效）',
+    pickSrc.length > 1000 && setSrc.length > 1000 && idxSrc.length > 1000,
+    `picker ${pickSrc.length} / App ${setSrc.length} / index ${idxSrc.length}`);
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

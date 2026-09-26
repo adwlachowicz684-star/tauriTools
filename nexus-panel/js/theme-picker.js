@@ -10,8 +10,10 @@
  *   设置页里是全量管理（还能调强调色 / 色相 / 存自定义主题）
  * 两处共用 .theme-card / .theme-prev 这套样式，改样式记得一起看。
  */
-import { listThemes, applyTheme, getThemeId, onChange, deleteCustomTheme } from './theme-manager.js';
-import { styleLabel } from './themes.js';
+import {
+  listThemes, applyTheme, getThemeId, onChange, deleteCustomTheme, exportVarsFor,
+} from './theme-manager.js';
+import { styleLabel, STYLE_LABELS } from './themes.js';
 
 let current = null;   // { root, mask, offChange, onPick }
 
@@ -56,9 +58,25 @@ export function openThemePicker({ anchor, onPick } = {}) {
     head.append(t1, t2, t3);
     body.appendChild(head);
 
+    /*
+     * 按**风格**分组，与设置页保持一致。
+     *
+     * 这里原先按深色 / 浅色分 —— 设置页改成按风格分组后没有同步，
+     * 于是同一个应用在两处给出两套分组方式：用户在设置页里习惯了
+     * "新拟态 / 扁平 / 玻璃"，到快速选择器里又要按深色浅色找一遍。
+     *
+     * 为什么按风格更好：深浅只是同一套设计的两个取值，
+     * 想找"玻璃"不该在深色和浅色两堆里各翻一遍 ——
+     * 那两堆里的玻璃本就是同一套设计的深浅两版，该挨在一起。
+     */
     const groups = [
-      ['深色', all.filter((t) => t.base === 'dark')],
-      ['浅色', all.filter((t) => t.base === 'light')],
+      ...Object.entries(STYLE_LABELS).map(([k, label]) => [
+        label,
+        all.filter((t) => (t.style || 'neumorph') === k),
+      ]),
+      /* 没写 style 的（老自定义主题）单列一组 ——
+         混进任何一组都是错的：它们的观感不属于那个风格。 */
+      ['其它', all.filter((t) => !t.style || !STYLE_LABELS[t.style])],
     ].filter(([, items]) => items.length);
 
     for (const [label, items] of groups) {
@@ -82,7 +100,16 @@ export function openThemePicker({ anchor, onPick } = {}) {
 
   /** 一张主题卡片。全部用 DOM 构造器 + textContent，主题名不会变成 HTML */
   const card = (t) => {
-    const v = t.vars || {};
+    /*
+     * ⚠️ 用 exportVarsFor 而不是 t.vars。
+     *
+     * t.vars 是主题**自带**的原始值，读不到基调 / 风格覆盖、
+     * 逐项变量、风格参数、强调色 —— 用户把一套主题改成浅色、
+     * 调了一通之后，这里显示的还是深色原样，与实际效果对不上，
+     * 用户会以为改动没保存。
+     * 与设置页主题卡片同一处修正（那边改了，这里当时漏了）。
+     */
+    const v = exportVarsFor(t) || {};
     const active = t.id === getThemeId();
     const btn = document.createElement('button');
     btn.type = 'button';
