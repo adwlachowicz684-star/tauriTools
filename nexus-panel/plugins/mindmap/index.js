@@ -15,7 +15,7 @@
 
 import { bootIframePlugin, h } from '../../js/plugin-sdk.js';
 import '../../css/dialog.css';
-import { confirm as askConfirm, alert as askAlert, prompt as askText } from '../../js/dialog.js';
+import { confirm as _askConfirm, alert as _askAlert, prompt as _askText } from '../../js/dialog.js';
 import { EditorBridge } from './editor-bridge.js';
 import { DEFAULT_THEME, DEFAULT_LAYOUT, isBuiltinTheme, deriveCanvasTheme,
   mergePresetThemes } from './themes.js';
@@ -333,6 +333,20 @@ bootIframePlugin(async (ctx) => {
    * 这类同步模态，焦点会在用户关掉对话框之后才移动，顺序正好。
    */
   const refocusCanvas = () => { try { bridge?.focusCanvas(); } catch { /* ignore */ } };
+
+  /*
+   * 通用弹层（js/dialog.js 的 confirm / alert / prompt）用完也要还焦点。
+   *
+   * 与 panels.js 里那套同理：mount() 记的 prevFocus 是**触发它的按钮**
+   * （浏览器在 mousedown 就聚焦了，早于 click 委托），关闭时还原回去，
+   * 于是重命名画布 / 删除脑图 / 新建文件夹这类操作之后，
+   * Delete / 方向键 / F2 / Ctrl+B 又失效了。
+   *
+   * 用 finally：取消、关闭、抛错都要还。
+   */
+  const askConfirm = async (o) => { try { return await _askConfirm(o); } finally { refocusCanvas(); } };
+  const askAlert = async (o) => { try { return await _askAlert(o); } finally { refocusCanvas(); } };
+  const askText = async (o) => { try { return await _askText(o); } finally { refocusCanvas(); } };
 
   /**
    * opt.refocus:false 用于「点击后焦点不该回画布」的按钮 ——

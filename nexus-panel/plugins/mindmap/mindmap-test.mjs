@@ -726,6 +726,53 @@ group('Tab → 插入下级节点');
     ok(/bridge\?\.focusCanvas\(\)/.test(rseg), '回调里真的调 bridge.focusCanvas()（空回调等于没修）');
   }
 
+  // 8.7d 通用弹层（js/dialog.js 的 confirm/alert/prompt）用完也要还焦点
+  /*
+   * 项目里存在**两套**弹层：panels.js 的本地 dialog()/popupMenu()（8.7c 已修）
+   * 与 js/dialog.js 的 confirm/alert/prompt。后者 mount() 里记的是
+   * `prevFocus = document.activeElement` —— 那是**触发它的按钮**（浏览器在
+   * mousedown 就聚焦了，早于我们的 click 委托），关闭时还原回去，
+   * 于是重命名画布 / 删除脑图 / 新建文件夹 / 新建分组之后快捷键又失效。
+   * 只修本地 dialog() 的话，这些路径全是漏网的。
+   */
+  for (const [file, restore] of [['panels.js', 'refocusCanvasAfterPopup'], ['index.js', 'refocusCanvas']]) {
+    const t = fs.readFileSync(path.join(HERE, file), 'utf8');
+    // 必须改为别名导入 —— 直接用原名就说明没包装
+    ok(new RegExp("import\\s*\\{[^}]*confirm\\s+as\\s+_askConfirm").test(t),
+      `${file}：confirm 改别名导入（否则说明没包装）`);
+    ok(new RegExp("prompt\\s+as\\s+_askText").test(t), `${file}：prompt 改别名导入`);
+    for (const nm of ['Confirm', 'Alert', 'Text']) {
+      const re = new RegExp(`const\\s+ask${nm}\\s*=\\s*async\\s*\\(\\s*o\\s*\\)\\s*=>\\s*\\{`);
+      ok(re.test(t), `${file}：ask${nm} 已包装`);
+    }
+    /*
+     * finally 而不是 then：取消/关闭/抛错都要还。
+     *
+     * 必须**逐个**查三个包装 —— 只查 askConfirm 的话，把 askText 改成不归还
+     * 断言照样绿（变异验证实测：那条变异没被抓到）。
+     */
+    for (const nm of ['Confirm', 'Alert', 'Text']) {
+      /*
+       * 只取**这一行**。
+       *
+       * 用固定长度切片会**串到下一个包装上**：把 askConfirm 改成不归还，
+       * 而窗口里却带着 askAlert 的 finally + 归还 —— 断言照样绿
+       * （变异验证实测：那条变异没被抓到）。
+       */
+      const i0 = t.indexOf(`const ask${nm} = async`);
+      const wseg = t.slice(i0, t.indexOf('\n', i0) > 0 ? t.indexOf('\n', i0) : undefined);
+      ok(/finally\s*\{/.test(wseg) && new RegExp(restore + '\\(\\)').test(wseg),
+        `${file}：ask${nm} 用 finally 归还（取消也要还）`);
+    }
+  }
+  // 不能残留"绕过包装"的直接调用
+  for (const file of ['panels.js', 'index.js']) {
+    const t = fs.readFileSync(path.join(HERE, file), 'utf8');
+    const code = t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const direct = [...code.matchAll(/_ask(?:Confirm|Alert|Text)\s*\(/g)];
+    ok(direct.length === 3, `${file}：_ask* 只出现在 3 处包装内（当前 ${direct.length} 处）`);
+  }
+
   // B() 的 refocus:false 必须落到 data-no-refocus 上，否则 root 那条统一监听
   // 会把这条刻意的例外破坏掉（浮层开着时焦点又回到画布背后）
   {

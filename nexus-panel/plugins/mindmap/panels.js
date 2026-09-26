@@ -11,7 +11,7 @@
  */
 
 import { h } from '../../js/plugin-sdk.js';
-import { confirm as askConfirm, alert as askAlert, prompt as askText } from '../../js/dialog.js';
+import { confirm as _askConfirm, alert as _askAlert, prompt as _askText } from '../../js/dialog.js';
 import { THEMES, LAYOUTS, blankTheme, DEFAULT_THEME, themeSeed, sanitizePalette } from './themes.js';
 
 /**
@@ -32,6 +32,22 @@ export function setPopupRefocus(fn) { refocusAfterPopup = fn; }
 function refocusCanvasAfterPopup() {
   try { refocusAfterPopup?.(); } catch { /* 焦点归还失败不该拦住关闭 */ }
 }
+
+/**
+ * 通用弹层（js/dialog.js 那一套：confirm / alert / prompt）用完同样要还焦点。
+ *
+ * 【为什么本地 dialog() 修了还不够】panels.js 里存在**两套**弹层：
+ * 本地的 dialog()/popupMenu()（已修）与 js/dialog.js 的 confirm/alert/prompt。
+ * 后者 mount() 里记的是 `prevFocus = document.activeElement`，关闭时
+ * `prevFocus.focus()` 还原 —— 而那个 prevFocus 是**触发它的按钮**（浏览器在
+ * mousedown 就把它聚焦了，早于我们的 click 委托）。于是关掉之后焦点又回到
+ * 侧栏按钮上，Delete / 方向键 / F2 / Ctrl+B 照样失效。
+ *
+ * 用 finally 而不是 then：取消、关闭、抛错都要还，否则「取消之后又是坏的」。
+ */
+const askConfirm = async (o) => { try { return await _askConfirm(o); } finally { refocusCanvasAfterPopup(); } };
+const askAlert = async (o) => { try { return await _askAlert(o); } finally { refocusCanvasAfterPopup(); } };
+const askText = async (o) => { try { return await _askText(o); } finally { refocusCanvasAfterPopup(); } };
 
 /**
  * 主题重名时加序号（纯函数，可测）。
