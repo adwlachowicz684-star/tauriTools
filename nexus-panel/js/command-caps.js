@@ -14,10 +14,13 @@
  *    等人来定，也不能让一条危险命令被默认归成 R1 ——
  *    后者的代价是"看起来安全，实际危险"。
  *
- * ② **本表不参与拦截**。
- *    它只做登记与报告。真正拦不拦由 invoke-policy.js 决定。
- *    这样即便某条定级有争议，也不会造成功能阻断 ——
- *    分级是给人看的，不是给机器执行的。
+ * ② **本表参与拦截，所以"留 unknown"不是中性选择**。
+ *    invoke-policy.js 的 checkInvoke 直接读它：
+ *      · THIRD_DENY_CAPS = ['M'] —— 按 capOf() 的返回值禁第三方
+ *      · 组合风险拦截 —— 按 capsOf() 算出的等级组合判红区
+ *    两条都**只认显式等级**，unknown 一条都不命中，
+ *    于是留 unknown 的命令对所有防护隐身（详见 KEEP_UNKNOWN）。
+ *    早期注释写"本表不参与拦截"是错的，已更正。
  *
  * ③ **刻意先不做 @cap 源码标注**。
  *    草案想把等级写进 Rust 源码的文档注释里。但那是 72 处的
@@ -245,22 +248,60 @@ export const COMMAND_CAPS = {
    */
   fpx_mcp_register: 'W',
 
-  /* ---- 这两条**刻意留 unknown** ---- */
+  /* ---- 常用文件夹：读列表 ---- */
+  fpx_chain_actions: 'R',
+  fpx_chain_clients: 'R',
+
   /*
-   * mm_print / mm_svg_to_pdf：会调起系统打印对话框、导出 PDF 文件。
-   * 说它是"读"肯定不对（有副作用），说它是"写"又不完全
-   * （写到哪由用户选）。拿不准就不写 —— 留在 unknown 里让
-   * 真正用过这个功能的人来定，比我猜要好。
+   * ⚠️ 定 M，不是 W。
    *
-   * fpx_open_path / fpx_open_data_dir / fpx_open_backup_dir：
-   * "用系统默认程序打开"—— 会启动外部进程（算 M？）还是只算
-   * 一次性的用户意图表达（算 W？）取决于打开的目标是否可控。
-   * 同样留给使用者判断。
-   *
-   * fpx_copy_text：写剪贴板。剪贴板算用户数据吗？算，但它同时
-   * 也是"复制"这个最基础操作的载体，标 W 会让几乎所有插件都带 W。
-   * 先留 unknown。
+   * 它自己的实现注释写着：mode=auto 在 Windows 上 `start "" <path>`
+   * 对 .exe/.bat 就是**执行**，等于一条任意执行通道。
+   * 现在靠 ensure_path_in 把目标收口到数据目录内压住了风险 ——
+   * 但**收口是降险，不是消除**：将来谁放宽了 ensure_path_in，
+   * 这条就立刻变回任意执行。定 M 才能让第三方禁令持续生效。
    */
+  fpx_open_path: 'M',
+};
+
+/**
+ * 刻意留 unknown 的命令 —— **必须逐条登记并写理由**。
+ *
+ * ⚠️⚠️ 为什么不能"不写就算了" ⚠️⚠️
+ *
+ * 早期这里写着"拿不准就不写，留在 unknown 里等人来定"。
+ * 那个推理有个前提错误：**unknown 不是中性状态，它是隐身状态**。
+ *
+ *   · THIRD_DENY_CAPS = ['M'] —— unknown 不在里面，第三方禁令绕过
+ *   · COMBO_RULES 按等级组合   —— unknown 不参与，M+S / M+W 红区绕过
+ *   · capsOf 的 counts.unknown —— 只计数，不进 levels
+ *
+ * 也就是说一条留 unknown 的命令，在风险画像里**完全不可见**：
+ * 既不告警也不拦截。所以"先留着"不是保守，是把它从所有防护里摘出去。
+ *
+ * 因此改成显式名单：想留 unknown 必须在这里登记并说明理由。
+ * 没登记又没分级 = command-consistency-test 第 17 组会报红。
+ */
+export const KEEP_UNKNOWN = {
+  /* 调起系统打印对话框。有副作用，但输出目标由用户在对话框里选，
+     插件无法指定；非 macOS 分支直接返回 Err（见 main.rs）。 */
+  mm_print: '弹对话框、目标由用户选；非 macOS 直接不可用',
+
+  /* svg → pdf 是**纯计算**，返回 String，不落盘。
+     只加载系统字体做矢量转换，没有写操作。 */
+  mm_svg_to_pdf: '纯计算，返回字符串不写文件',
+
+  /* 打开本程序的数据目录。无路径参数，目标固定，
+     不是"任意路径打开"（那是 fpx_open_path，已定 M）。 */
+  fpx_open_data_dir: '目标固定为本程序数据目录，无外部参数',
+
+  /* 同上，kind 只有 group/project 两个取值，目标仍由 resolver 固定。 */
+  fpx_open_backup_dir: '目标由 backup::resolve_dir 固定，kind 仅两值',
+
+  /* 写剪贴板。算副作用，但它是"复制"这个最基础操作的载体，
+     标 W 会让几乎所有插件都带 W（进而触发 destructive 黄区），
+     反而淹没真正的信号。保持 unknown，等有明确判据再定。 */
+  fpx_copy_text: '写剪贴板：定级会让几乎所有插件带 W，信号被淹没',
 };
 
 /**

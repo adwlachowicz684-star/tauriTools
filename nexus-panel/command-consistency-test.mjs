@@ -302,7 +302,18 @@ console.log('\n--- 11. 死条目：能力表里写了不存在的命令必须报
   const fs2 = await import('node:fs');
   const mainRs = fs2.readFileSync(path.join(root, 'src-tauri', 'src', 'main.rs'), 'utf8');
   const m = mainRs.match(/generate_handler!\s*\[([\s\S]*?)\n\s*\]/);
-  const reg = new Set(m[1].split(',').map((x) => x.trim()).filter(Boolean).map((x) => x.split('::').pop()));
+  /*
+   * 必须先剥注释再切条目。
+   * 注册列表里到处是"上面一行注释 + 下面一组命令名"的写法（af_flow / updater / dupview），
+   * 按逗号切的时候注释会和它后面第一个命令名粘成同一个元素 ——
+   * 于是那个命令名变成 "/* … *​/ dupview_roots"，比对永远不命中。
+   * 之前没暴露只是因为带注释的这几组恰好不在 COMMAND_CAPS 里：
+   * 一旦有人在注释下方放一条能力表里的命令，这里就会**假红**，
+   * 而看现象只会以为"那条没注册"。扫描器本身（第 8 节）是剥注释的，
+   * 这一节当初漏了，两边行为不一致。
+   */
+  const body = m[1].replace(/\/\*[\s\S]*?\*\//g, '');
+  const reg = new Set(body.split(',').map((x) => x.trim()).filter(Boolean).map((x) => x.split('::').pop()));
   const dead = Object.keys(COMMAND_CAPS).filter((c) => !reg.has(c));
   t('能力表里没有死条目', dead.length === 0, dead.join(','));
   /*
@@ -406,7 +417,14 @@ console.log('\n--- 12. 能力拦截必须**按信任等级**分别生效 ---');
 
   /* ② 第三方插件：命中红色组合时，参与该组合的等级被拒 */
   resetBuiltinIds();   // 谁都不注入 → 全部按第三方
-  const [redId, redCmds] = reds[0];
+  /*
+   * reds 为空时直接解构会 TypeError 崩进程 —— 崩了后面的组**一条都不跑**，
+   * 于是"白名单被整体破坏"这种事故会被这里挡住，看起来像"只有一处红"。
+   * 崩 ≠ 红：先断言有数据，再给个空兜底让后续正常跑完。
+   */
+  t('存在命中红色组合的插件（否则这节测了个空）', reds.length > 0,
+    '白名单里找不到红色组合，检查 PLUGIN_COMMANDS 是否被破坏');
+  const [redId, redCmds] = reds[0] || ['', []];
   /*
    * 第三方现在走**双白名单**：插件声明 + 用户放行，缺一不可。
    *
@@ -662,6 +680,64 @@ console.log('\n--- 16. 注释里的 generate_handler! / 假条目不得干扰解
   t('真实块被正确采用（app_version 没被误报成未注册）', !/①[\s\S]*app_version/.test(out));
   t('块内注释的假条目不算命令', !/fake_from_comment/.test(out));
   t('注释里的 #[tauri::command] 没被当成条目名', !/②[\s\S]*\bcommand\b/.test(out));
+}
+
+/* ---------------------------------------------------------------- */
+/*
+ * --- 17. 进了插件白名单的命令，必须有显式等级或显式登记为 unknown ---
+ *
+ * 2026-09-26 全量清点时发现 8 条白名单命令在 COMMAND_CAPS 里查不到。
+ * 后果不是"报告少几行"，而是**对所有防护隐身**：
+ *   · THIRD_DENY_CAPS = ['M'] 只认显式 'M' → 第三方禁令绕过
+ *   · COMBO_RULES 按等级组合 → unknown 不参与 → M+S / M+W 红区绕过
+ *
+ * 所以这里断言的方向与"死条目"相反：
+ * 死条目是"能力表里有、实际不存在"；这里是"白名单里有、能力表里没有"。
+ * 后者此前**没有任何断言覆盖**。
+ */
+console.log('\n--- 17. 白名单命令不得在能力表里隐身 ---');
+{
+  const caps = await import('./js/command-caps.js');
+  const graded = new Set(Object.keys(caps.COMMAND_CAPS));
+  const keep = new Set(Object.keys(caps.KEEP_UNKNOWN || {}));
+
+  /* 白名单：invoke-policy.js 的 PLUGIN_COMMANDS */
+  const polSrc = fs.readFileSync(path.join(root, 'js', 'invoke-policy.js'), 'utf8');
+  const stripped = polSrc
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|\s)\/\/[^\n]*/g, '$1');
+  const blk = stripped.slice(stripped.indexOf('PLUGIN_COMMANDS'));
+  const body = blk.slice(blk.indexOf('{') + 1, blk.indexOf('\n}'));
+  const allow = new Set();
+  for (const [, lst] of body.matchAll(/\[([^\]]*)\]/g)) {
+    for (const m of lst.matchAll(/'([a-z_]\w*)'/g)) allow.add(m[1]);
+  }
+
+  t('白名单解析到了条目（解析不出必须报错，不能静默当 0）', allow.size > 50, `解析到 ${allow.size} 条`);
+
+  const hidden = [...allow].filter((c) => !graded.has(c) && !keep.has(c));
+  t(
+    '白名单命令要么有显式等级、要么登记在 KEEP_UNKNOWN',
+    hidden.length === 0,
+    hidden.join(', '),
+  );
+
+  /*
+   * 反向：KEEP_UNKNOWN 里必须是**真的**没分级的。
+   * 若某条已经在 COMMAND_CAPS 里定了级，还挂在 KEEP_UNKNOWN 上，
+   * 那这份名单就成了"怎么改都不报错"的摆设。
+   */
+  const dup = [...keep].filter((c) => graded.has(c));
+  t('KEEP_UNKNOWN 里没有已经定级的条目', dup.length === 0, dup.join(', '));
+
+  /* 每条 KEEP_UNKNOWN 都要写理由 —— 否则后人看不出当初为什么留 */
+  const noWhy = [...keep].filter((c) => !caps.KEEP_UNKNOWN[c] || caps.KEEP_UNKNOWN[c].length < 5);
+  t('KEEP_UNKNOWN 每条都写了理由', noWhy.length === 0, noWhy.join(', '));
+
+  /* 收口本身要生效：fpx_open_path 已定 M，第三方必须被禁 */
+  t('fpx_open_path 已定 M（自述任意执行通道）', caps.capOf('fpx_open_path') === 'M', caps.capOf('fpx_open_path'));
+  t('fpx_chain_actions 已定 R', caps.capOf('fpx_chain_actions') === 'R', caps.capOf('fpx_chain_actions'));
+  t('fpx_chain_clients 已定 R', caps.capOf('fpx_chain_clients') === 'R', caps.capOf('fpx_chain_clients'));
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
