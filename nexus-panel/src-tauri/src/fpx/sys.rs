@@ -136,7 +136,14 @@ pub fn validate_name(raw: &str) -> Result<String, String> {
     if name.ends_with('.') {
         return Err("名称不能以句点结尾（Windows 会静默去掉，导致配置里的名字与磁盘不一致）".into());
     }
-    if name.len() > 120 { return Err("名称过长（上限 120 字符）".into()); }
+    /*
+     * 按**字符数**算，不能用 `name.len()`（字节数）。
+     *
+     * 中文一个字 3 字节：按字节判的话 40 个汉字就超限，而报错写的是
+     * "上限 120 字符" —— 用户数着自己打了 50 个字，却被告知超过 120，
+     * 于是以为是别的地方出了问题（这条报错指向不了真正的原因）。
+     */
+    if name.chars().count() > 120 { return Err("名称过长（上限 120 字符）".into()); }
     Ok(name.to_string())
 }
 

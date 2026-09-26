@@ -221,10 +221,20 @@ pub fn read_preview(path: &str, max: usize) -> Result<String, String> {
         String::from_utf8_lossy(&buf).to_string()
     };
 
-    if text.len() > max {
-        // 必须退到字符边界再截：String::truncate 在非边界上会 panic，
-        // 中文文件按字节截断几乎必然命中。
-        let end = super::store::safe_truncate_at(&text, max);
+    /*
+     * 按**字符数**判定，不能用 `text.len()`（那是字节数）。
+     *
+     * `max` 的语义是"最多给多少个字符"（上面的预算也是按 `max * 4` 折算的），
+     * 而中文一个字 3 字节 —— 拿字节数去比，2 万字的中文文件会被判成超长，
+     * 再按字节截到 20000，实际只剩约 6600 字。
+     *
+     * 用户看到的是同一句「内容过长，已截断」，但中文文件只拿到应有的 1/3，
+     * 而界面上没有任何线索说明"为什么这么短"（他只会以为是文件本身就这么点）。
+     */
+    if text.chars().count() > max {
+        // 退到字符边界再截：String::truncate 落在非边界上会 panic。
+        // 取第 max 个字符的字节下标 —— 直接拿 max 当字节下标就会回到上面的错。
+        let end = text.char_indices().nth(max).map(|(i, _)| i).unwrap_or(text.len());
         text.truncate(end);
         text.push_str("\n\n…（内容过长，已截断）");
     }
