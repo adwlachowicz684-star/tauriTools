@@ -13,7 +13,7 @@
  *   · 所以断言的是"输出里含预期类别关键字"，而不是"只要不全绿就算通过"
  */
 
-import { readFileSync, writeFileSync, statSync, utimesSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,20 +31,10 @@ const t = (name, cond, extra = '') => {
 
 const backups = new Map();
 function backup(path) {
-  if (backups.has(path)) return;
-  const abs = P(path);
-  /* 连 mtime 一起存：本测试会把源码改一遍再还原，内容虽然一模一样，
-     但 mtime 会被推进到"刚刚"，于是 dist-integrity-test 的
-     「产物不早于最新源码」判定在全仓扫描里必红（它跑在本测试之后）。
-     还原时把 mtime 写回去，守卫才不会误报。 */
-  backups.set(path, { text: readFileSync(abs, 'utf8'), mtime: statSync(abs).mtime });
+  if (!backups.has(path)) backups.set(path, readFileSync(P(path), 'utf8'));
 }
 function restore(path) {
-  const b = backups.get(path);
-  if (!b) return;
-  const abs = P(path);
-  writeFileSync(abs, b.text);
-  try { utimesSync(abs, b.mtime, b.mtime); } catch { /* 忽略：还原失败也不该让测试红 */ }
+  if (backups.has(path)) writeFileSync(P(path), backups.get(path));
 }
 function restoreAll() {
   for (const p of backups.keys()) restore(p);

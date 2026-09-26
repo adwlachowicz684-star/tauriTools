@@ -201,6 +201,9 @@ export const COMMAND_CAPS = {
   fpx_save_style: 'W',
   fpx_save_icon_data: 'W',
   fpx_save_custom_colors: 'W',
+  /* 常用文件夹（工具级，所有目录选择器共用） */
+  fpx_list_fav_dirs: 'R',
+  fpx_save_fav_dirs: 'W',
   fpx_import_icons: 'W',
   fpx_set_editor: 'W',
   fpx_edit_file: 'W',
