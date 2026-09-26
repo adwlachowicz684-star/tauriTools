@@ -73,9 +73,18 @@ const blank = (v: unknown): boolean => !String(v ?? '').trim();
 function vTask(d: TaskNodeData): V {
   if (blank(d.prompt)) return error('没填提示词 —— CLI 无从下手');
   const msgs: string[] = [];
+  /*
+   * 挂了窗格的节点，这两项可能是从窗格继承来的（见 engine/pane.ts）。
+   * 一律说"会用默认目录"是句假话：窗格上配了目录，跑的就是那个目录，
+   * 而节点上确实空着 —— 界面报一句与实际不符的提示，
+   * 用户会照着它去改一个本来没问题的节点。
+   *
+   * 所以挂在窗格下的节点改成让人去看窗格，而不是替它下结论。
+   */
+  const inPane = !blank(d.paneId);
   // 都有默认值兜底：用默认工作目录、用该 CLI 的默认模型
-  if (blank(d.workdir)) msgs.push('没填工作目录，会用默认目录');
-  if (blank(d.model)) msgs.push('没指定模型，会用默认模型');
+  if (blank(d.workdir)) msgs.push(inPane ? '没填工作目录，看窗格上配了没有' : '没填工作目录，会用默认目录');
+  if (blank(d.model)) msgs.push(inPane ? '没指定模型，看窗格上配了没有' : '没指定模型，会用默认模型');
   return msgs.length ? warn(...msgs) : ok();
 }
 

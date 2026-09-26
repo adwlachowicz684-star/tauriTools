@@ -23,6 +23,7 @@
 import type {
   TaskNodeData, TaskPaneNodeData, ApiPaneNodeData, LlmChatNodeData, CliKind,
 } from '../types';
+import { topoLayers } from './topo';
 
 /** 窗格节点的两种 kind */
 export const PANE_KINDS = ['taskPane', 'apiPane'] as const;
@@ -254,4 +255,46 @@ export function withPaneContext(
     .join('\n');
 
   return `【前面步骤的结果】\n${head}\n\n【本次任务】\n${body}`;
+}
+
+/**
+ * 同一窗格内、排在**本节点之前**且已经跑完的成员输出，按执行顺序。
+ *
+ * ================= 为什么按拓扑序而不是节点数组序 =================
+ *
+ * graph.nodes 是创建顺序，与执行顺序无关。按它取的话，
+ * "第 1 步的结果"可能是流程里第 4 步才跑到的节点 ——
+ * 上下文本身没错位、也没报错，只是顺序讲不通，读起来像乱的。
+ *
+ * 顺带过滤掉本节点自己：跑循环时它上一轮的输出已经在 outputs 里了，
+ * 不自带来的话，第二轮会把第一轮的结果当成"上一步"再喂一遍。
+ *
+ * 成环的节点排不进 layers（topoLayers 会把它们放进 cyclic），
+ * 这里自然取不到 —— 拿不到就少一段上下文，比编一个顺序出来强。
+ */
+export function panePrevOutputs(
+  graph: { nodes?: readonly AnyNode[]; edges?: readonly { source: string; target: string }[] } | null | undefined,
+  nodeId: string,
+  paneId: string | null | undefined,
+  outputs: Readonly<Record<string, string | undefined>> | undefined,
+): string[] {
+  const id = String(paneId ?? '').trim();
+  if (!id || !graph?.nodes?.length) return [];
+
+  const members = new Set(paneMembersOf(graph.nodes, id));
+  if (members.size === 0) return [];
+
+  const order: string[] = [];
+  for (const layer of topoLayers(graph as never).layers) {
+    for (const nid of layer) order.push(nid);
+  }
+
+  const out: string[] = [];
+  for (const nid of order) {
+    if (nid === nodeId) break; // 只取排在本节点之前的
+    if (!members.has(nid)) continue;
+    const v = outputs?.[nid];
+    if (typeof v === 'string' && v.trim().length > 0) out.push(v);
+  }
+  return out;
 }

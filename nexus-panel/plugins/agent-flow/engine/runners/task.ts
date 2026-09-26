@@ -15,6 +15,7 @@ import {
   type ChatMessage, type ContentPart,
 } from '../llm';
 import { resolveParams } from '../params';
+import { findPane, resolveTaskPane, withPaneContext, panePrevOutputs } from '../pane';
 import { evaluateCondition } from '../condition';
 import { resolveParallel, effectiveConcurrency, MAX_CONCURRENCY } from '../parallel';
 import { resolveLoopItems, makeLoopCtx, type LoopResolve } from '../loop';
@@ -28,12 +29,23 @@ import { isAbortError } from '../sleep';
 
 export async function runTask(ctx: RunContext): Promise<void> {
     const {
-    id, node, opts, emit,
+    id, node, opts, emit, graph,
     sleep, outputs, nodeFields, currentLoop,
   } = ctx;
 
   const td = node.data as TaskNodeData;
-  const rendered = ctx.tpl(td.prompt);
+
+  /*
+   * 窗格只影响"节点上没填的项"，这里先算出生效配置再往下用。
+   *
+   * 共享上下文在这里拼、不写回 prompt：写回的话它会留在存档里，
+   * 第二次跑看到的上下文是第一次的结果，越跑越长（见 withPaneContext）。
+   */
+  const pane = findPane(graph?.nodes ?? [], td.paneId);
+  const eff = resolveTaskPane(td, pane);
+  const rendered = eff.shareContext
+    ? withPaneContext(ctx.tpl(td.prompt), panePrevOutputs(graph, id, td.paneId, outputs), true)
+    : ctx.tpl(td.prompt);
 
   await withNodeRun(ctx, async () => {
     emit({ type: 'node-start', id, rendered });

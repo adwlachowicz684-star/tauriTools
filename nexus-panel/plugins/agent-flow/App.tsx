@@ -96,7 +96,7 @@ import {
   frameDelta, makeFrame,
 } from './engine/frames';
 import { withDefault } from './engine/nodeDefaults';
-import { isPaneNode, paneMembersOf } from './engine/pane';
+import { isPaneNode, paneMembersOf, findPane, resolveTaskPane } from './engine/pane';
 import { specOf, canConnect } from './engine/nodeSpec';
 import { getDefByDataKind } from './nodes/registry';
 import CanvasTabs from './components/CanvasTabs';
@@ -2216,9 +2216,17 @@ function reportSkipped(
       const doneRef: { current: DonePayload | null } = { current: null };
       // 执行器只会被任务节点调用：条件/触发器/并发节点在执行器内部处理并 continue
       const d = node.data as TaskNodeData;
+      /*
+       * 工作目录 / 模型 / 自动批准一律走窗格解析后的生效值。
+       *
+       * 直接读 d 的话，窗格上填的目录永远轮不上 ——
+       * 节点上没填目录时传下去的是空串，CLI 就跑在默认目录里，
+       * 而窗格卡片上明明写着那个目录：界面说一套、跑的是另一套，且不报错。
+       */
+      const eff = resolveTaskPane(d, findPane(graph?.nodes ?? [], d.paneId));
       await runCli(
-        { runId, cli: d.cli, cmd: DEFAULT_CMD[d.cli], prompt: rendered,
-          workdir: d.workdir, model: d.model, yolo: d.yolo },
+        { runId, cli: eff.cli, cmd: DEFAULT_CMD[eff.cli], prompt: rendered,
+          workdir: eff.workdir, model: eff.model, yolo: eff.yolo },
         {
           onStdout: (c) => onChunk(c),
           onStderr: (c) => onChunk(c),

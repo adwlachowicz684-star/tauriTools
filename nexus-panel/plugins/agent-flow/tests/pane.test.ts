@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { readSrc } from './srcScan';
 import {
-  paneOptionsOf, findPane, isPaneNode, paneMembersOf,
+  paneOptionsOf, findPane, isPaneNode, paneMembersOf, panePrevOutputs,
   resolveTaskPane, resolveApiPane, withPaneContext, DEFAULT_TEMPERATURE,
 } from '../engine/pane';
 import {
@@ -203,4 +203,80 @@ test('复制时 paneId 跟着重指向（窗格在集合内改指副本）', () 
    * 界面上两个窗格却分不清哪个挂了谁。
    */
   assert.match(src, /if \(map\[p\]\) d\.paneId = map\[p\]/);
+});
+
+test('CLI 节点执行前必须结算窗格（工作目录/模型/自动批准）', () => {
+  /*
+   * 执行器直接读 d.workdir / d.model 的话，窗格上填的那份永远轮不上：
+   * 节点上没填目录时传下去的是空串，CLI 就跑在默认目录里，
+   * 而窗格卡片上明明写着目录 —— 界面一套、跑的是另一套，且不报错。
+   */
+  const src = readSrc('App.tsx');
+  assert.match(src, /resolveTaskPane\(d, findPane\(/);
+  assert.match(src, /workdir: eff\.workdir, model: eff\.model, yolo: eff\.yolo/);
+});
+
+test('CLI 窗格的「共享上下文」必须在运行时拼进提示词', () => {
+  /*
+   * resolveTaskPane 只算出 shareContext，不把它用起来就是个摆设开关：
+   * 勾了之后流程照旧各跑各的，而开关本身没有任何提示。
+   */
+  const src = readSrc('engine/runners/task.ts');
+  assert.match(src, /withPaneContext\(/);
+  assert.match(src, /panePrevOutputs\(/);
+  // 拼上下文必须在流程里取到图与已产出的输出
+  assert.match(src, /id, node, opts, emit, graph,/);
+});
+
+test('panePrevOutputs：只取同窗格、排在本节点之前、已产出的输出', () => {
+  /*
+   * 顺序错了上下文就讲不通（"第 1 步"其实是第 4 步才跑到的节点），
+   * 而上下文本身不错位也不报错，只是读起来像乱的。
+   */
+  const g = {
+    nodes: [
+      { id: 'p1', data: { kind: 'taskPane' } },
+      { id: 'a', data: { paneId: 'p1' } },
+      { id: 'b', data: { paneId: 'p1' } },
+      { id: 'c', data: { paneId: 'p1' } },
+      { id: 'x', data: {} },
+    ],
+    edges: [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+    ],
+  };
+  const outputs = { a: 'A 的结果', b: 'B 的结果', c: 'C 的结果', x: '别人的' };
+  assert.deepEqual(panePrevOutputs(g, 'c', 'p1', outputs), ['A 的结果', 'B 的结果']);
+  // 自己上一轮的输出不能算"上一步"，否则循环第二轮会把第一轮再喂一遍
+  assert.deepEqual(panePrevOutputs(g, 'b', 'p1', outputs), ['A 的结果']);
+  // 别的窗格 / 没挂窗格 / 还没产出，都是空
+  assert.deepEqual(panePrevOutputs(g, 'c', 'p2', outputs), []);
+  assert.deepEqual(panePrevOutputs(g, 'c', '', outputs), []);
+  assert.deepEqual(panePrevOutputs(g, 'c', 'p1', {}), []);
+});
+
+test('withPaneContext：上下文不写回 prompt（只影响本次运行）', () => {
+  const merged = withPaneContext('本次任务', ['第一步', '第二步'], true);
+  assert.match(merged, /【前面步骤的结果】/);
+  assert.match(merged, /本次任务/);
+  // 关掉开关就必须原样返回，一个字都不能加
+  assert.equal(withPaneContext('本次任务', ['第一步'], false), '本次任务');
+});
+
+test('挂了窗格的 CLI 节点不再谎报"会用默认目录"', () => {
+  /*
+   * 节点上没填目录、但窗格上配了 —— 实际跑的是窗格那个目录。
+   * 这时报"会用默认目录"是句假话，用户会照着它去改一个没问题的节点。
+   */
+  const src = readSrc('engine/nodeValidate.ts');
+  /*
+   * 盯**定义那一行**而不是三目里的两个分支。
+   *
+   * 只断言分支文案的话，把 inPane 改成常量 false 照样通过 ——
+   * 文案还在、判断没了，守卫却报绿。这正是"守卫比没有守卫更糟"的那类。
+   */
+  assert.match(src, /const inPane = !blank\(d\.paneId\)/);
+  assert.match(src, /inPane \? '没填工作目录，看窗格上配了没有'/);
+  assert.match(src, /inPane \? '没指定模型，看窗格上配了没有'/);
 });
