@@ -261,6 +261,35 @@ export default function App() {
     }
   }, [contentSel, ctx, s]);
 
+  /*
+   * 「阅读」：只把文件交给 md 插件**看**，不写盘。
+   *
+   * 与上面的 openMarkdown（编辑）分工：
+   *   · 编辑 —— 先用内置编辑器改，取消/无结果再退回外部编辑器，改完写回
+   *   · 阅读 —— 只读，交给 md 插件打开
+   * 两者并存的原因是场景不同：多数时候只是想看一眼 README，
+   * 走编辑流程会先读一遍再等编辑器，慢且有误触改写的风险。
+   *
+   * 【扩展名白名单】只放行文本后缀。拿二进制（.png/.exe）去读会
+   * 得到一堆乱码**且不报错** —— 用户只会以为文档坏了，想不到是自己选错了文件。
+   */
+  const readMarkdown = useCallback(async () => {
+    if (!contentSel) {
+      ctx.toast('请先在内容浏览里选中一个条目', 'err');
+      return;
+    }
+    if (!/\.(md|markdown|mdown|mkd|txt)$/i.test(contentSel.name)) {
+      ctx.toast('只支持 md / markdown / mdown / mkd / txt 文本文件', 'err');
+      return;
+    }
+    const ok = await ctx.openPlugin?.('md', { path: contentSel.path });
+    /* false = 宿主没受理（md 插件不存在 / 本插件非内置）。
+       不打理就是"点了没反应"，必须给提示。 */
+    if (!ok) {
+      ctx.toast('打开 Markdown 阅读器失败', 'err');
+    }
+  }, [contentSel, ctx]);
+
   const projectCards = useMemo(
     () => boot?.projectTabs[s.activeTab.project]?.items ?? [],
     [boot, s.activeTab.project],
@@ -1035,6 +1064,27 @@ export default function App() {
               */}
               <div className="p-row fpx-col-head">
                 <h2 style={{ margin: 0 }}>内容浏览</h2>
+                {/*
+                  「阅读」与「编辑」并存：
+                  disabled 而不是隐藏 —— 藏起来用户找不到入口，
+                  且会误以为"这个列表不支持打开"。
+                */}
+                <button
+                  className="p-btn sm"
+                  disabled={!contentSel}
+                  onClick={readMarkdown}
+                  title="用 Markdown 阅读器只读打开选中的条目"
+                >
+                  阅读
+                </button>
+                <button
+                  className="p-btn sm"
+                  disabled={!contentSel}
+                  onClick={openMarkdown}
+                  title="在编辑器里打开并写回"
+                >
+                  编辑
+                </button>
               </div>
               <ContentPanel
                 api={s.api}
