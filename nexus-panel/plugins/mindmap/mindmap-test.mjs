@@ -4819,6 +4819,37 @@ group('BUG 37 文件库两种重命名都要有回执');
   ok(/saveStore\(/.test(rfo[0]), 'renameFolder 写盘');
 }
 
+/* ------------------------------------------------------------------
+   BUG 38：删除文件夹时写盘顺序反了 —— 文件会凭空消失
+   ------------------------------------------------------------------ */
+group('BUG 38 删除文件夹不得留下「文件谁都不属于」的中间态');
+
+{
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const m = idx.match(/async function deleteFolder\(id\)\s*\{[\s\S]*?\n  \}/);
+  ok(!!m, '找到 deleteFolder');
+  const fn = m[0];
+
+  // 顺序：files 的 saveStore 必须排在 folders 的**之前**
+  const iFiles = fn.indexOf("saveStore('文件列表'");
+  const iFolders = fn.indexOf("saveStore('文件夹列表'");
+  ok(iFiles > 0, 'deleteFolder 写文件列表');
+  ok(iFolders > 0, 'deleteFolder 写文件夹列表');
+  ok(iFiles < iFolders, '先写文件列表再删文件夹（反了会让文件谁都不属于、凭空消失）');
+
+  // 文件列表写失败必须回滚，否则文件夹已删、文件却还挂着旧 folderId
+  ok(/f\.folderId = id;/.test(fn), '写失败把文件回滚回文件夹');
+
+  // 两处都要检查返回值：只查一处，另一处失败照样留中间态
+  const n = (fn.match(/if \(!await saveStore\(/g) || []).length;
+  eq(n, 2, '两处写盘都要检查返回值');
+
+  // createFolder 写失败也要撤回来（与 createFile 的「存不下就别建」一致）
+  const cf = idx.match(/async function createFolder\(\)\s*\{[\s\S]*?\n  \}/);
+  ok(!!cf, '找到 createFolder');
+  ok(/foldersList\.pop\(\)/.test(cf[0]), 'createFolder 写失败要撤回新建的文件夹');
+}
+
 group('交换格式接入 UI');
 
 {

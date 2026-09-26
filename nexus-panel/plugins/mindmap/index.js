@@ -963,8 +963,14 @@ bootIframePlugin(async (ctx) => {
   async function createFolder() {
     const name = await askText({ label: '文件夹名称', defaultValue: '新建文件夹' });
     if (name == null) return;
-    foldersList.push({ id: newFolderId(), name: name.trim() || '新建文件夹', collapsed: false });
-    await saveStore('文件夹列表', () => store.folders.save(foldersList));
+    const fo = { id: newFolderId(), name: name.trim() || '新建文件夹', collapsed: false };
+    foldersList.push(fo);
+    // 写失败要撤回来：与 createFile 一致（那边是「存不下就别建」）。
+    // 留着的话界面显示"已新建文件夹"，下次启动它又不在了 —— 比直接说失败更困惑。
+    if (!await saveStore('文件夹列表', () => store.folders.save(foldersList))) {
+      foldersList.pop();
+      return;
+    }
     renderFiles();
     status('已新建文件夹');
   }
@@ -989,10 +995,29 @@ bootIframePlugin(async (ctx) => {
     if (!fo) return;
     const n = fileIndex.filter((f) => f.folderId === id).length;
     if (!await askConfirm({ message: `删除文件夹「${fo.name}」？里面 ${n} 个脑图会移到根目录，不会被删除。`, danger: true })) return;
-    for (const f of fileIndex) if (f.folderId === id) f.folderId = null;
+    /*
+     * 顺序很关键：**先**把文件落到根目录，**再**删文件夹。
+     *
+     * 反过来（先删文件夹、再写文件）一旦文件列表写失败，磁盘上就是
+     * 「文件还带着这个 folderId、但文件夹已经没了」—— 下次启动时这些文件
+     * 既不在根目录（folderId 非空）、也不属于任何文件夹（folders 里没有它），
+     * 于是**整份脑图凭空消失**，界面上一个都不显示。
+     *
+     * 按现在的顺序，最坏也只是「文件已到根目录、文件夹没删掉」：
+     * 内容一个不少，用户看到文件夹还在，可以再点一次。
+     */
+    const moved = fileIndex.filter((f) => f.folderId === id);
+    for (const f of moved) f.folderId = null;
+    if (!await saveStore('文件列表', () => store.files.save(fileIndex))) {
+      for (const f of moved) f.folderId = id;      // 回滚：文件回到文件夹里
+      return;
+    }
+    const at = foldersList.indexOf(fo);
     foldersList = foldersList.filter((x) => x.id !== id);
-    await saveStore('文件列表', () => store.files.save(fileIndex));
-    await saveStore('文件夹列表', () => store.folders.save(foldersList));
+    // 文件夹没删掉就让它回到列表 —— 磁盘上它还在，内存里也该在，两边才一致
+    if (!await saveStore('文件夹列表', () => store.folders.save(foldersList))) {
+      if (at >= 0) foldersList.splice(at, 0, fo);
+    }
     renderFiles();
     status('已删除文件夹');
   }
