@@ -1308,8 +1308,29 @@
                                  * 跟随节点字体（与 attachmentFontSize 跟随节点字号同理）。
                                  */
                                 try { fn.setFontFamily(ffam); } catch (e4) {}
-                                fn.setStyle('pointer-events', 'none');
+                                /*
+                                 * 文件名**必须能接收指针事件，且必须绑交互**。
+                                 *
+                                 * 原实现只给左边的图标 fic 绑了 bindAttach，
+                                 * 文件名这个 text 既没绑、还显式设了
+                                 * pointer-events:none —— 于是整行里唯一的
+                                 * 可点/可拖区域只有那个 11px 宽的图标。
+                                 *
+                                 * 实测（真实 Chrome，文件行总宽 54、图标仅 11）：
+                                 *   拖/点图标   → ghost 出现、高亮出现、文件移动 ✓
+                                 *   拖/点文件名 → ghost 元素都不存在，文件纹丝不动 ✗
+                                 * 单击对比更直接：图标发 openattach:file，
+                                 * 文件名只发 selchange（等于只是选中了节点）。
+                                 *
+                                 * 用户的本能是照着**名字**点，不是照小图标点，
+                                 * 所以等于「点了没反应 / 拖不动」。
+                                 *
+                                 * 两处必须一起改：只去掉 pointer-events 而没绑 →
+                                 * 事件落到节点上，仍然打不开；只绑而保留 none →
+                                 * handler 根本收不到。
+                                 */
                                 fn.setTranslate(rowLeft + 20, fy + 4);
+                                bindAttach(fn, 'file', fi, fils[fi], flabel, node);
                             } catch (e3) {}
                             push(fn);
                             attW = Math.max(attW, rowW);

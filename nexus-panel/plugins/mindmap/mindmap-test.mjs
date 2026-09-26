@@ -4951,6 +4951,41 @@ group('输入法组合期不得把 Enter 当成提交或搜索');
     '弹层全局：组合态判断排在 Escape 之前');
 }
 
+/* ------------------------------------------------------------------
+   BUG 43：文件行只有 11px 的小图标可点/可拖，文件名整片是死的
+   ------------------------------------------------------------------ */
+group('文件行的文件名必须能点能拖（不能只绑图标）');
+
+{
+  const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  // 文件这一节：从注释起，到该行收尾的 `top += 24;` 止
+  const s0 = ed.indexOf('/* ---- 文件：每行一个 ---- */');
+  ok(s0 > 0, '找得到文件行那一节');
+  const sec = ed.slice(s0, ed.indexOf('top += 24;', s0));
+
+  // ① 文件名这个 text 必须绑了交互（原来只绑了图标 fic）
+  ok(/bindAttach\(fn,\s*'file'/.test(sec), '文件名 text 必须绑 bindAttach（原来只有图标绑了）');
+  // ② 绑完还不够：原来它还被显式设了 pointer-events:none，
+  //    不去掉的话 handler 根本收不到 —— 两处必须一起改
+  ok(!/fn\.setStyle\('pointer-events',\s*'none'\)/.test(sec),
+    '文件名 text 不能再设 pointer-events:none（否则绑了也收不到）');
+  // ③ 图标仍然要绑（别修了新的丢了旧的）
+  ok(/bindAttach\(fic,\s*'file'/.test(sec), '图标仍然要绑');
+  // ④ 顺序：bindAttach 要在 push(fn) 之前（与图标一致）
+  ok(sec.indexOf("bindAttach(fn") < sec.indexOf('push(fn)'),
+    'bindAttach(fn) 必须在 push(fn) 之前');
+
+  /*
+   * ⑤ 反向确认其余装饰仍然是 none —— 别把「装饰不该拦截」也一起改掉了。
+   *    计数 cnt / 缩略图 vt / 角标 badge / 角标数字 bnum / 序号 vseq
+   *    都压在大块可点图形上，去掉 none 反而会让它们挡住点击。
+   */
+  for (const v of ['cnt', 'vt', 'badge', 'bnum', 'vseq']) {
+    ok(new RegExp(v + "\\.setStyle\\('pointer-events',\\s*'none'\\)").test(ed),
+      `装饰 ${v} 仍应设 pointer-events:none`);
+  }
+}
+
 group('交换格式接入 UI');
 
 {
@@ -5091,7 +5126,14 @@ group('画布附件区渲染（真实源码）');
     const r = render({ file: JSON.stringify([{ n: '报告.pdf' }]) });
     eq(r.texts.length, 1, '1 个文件 → 1 行文字');
     eq(r.texts[0].content, '报告.pdf', '行上显示文件名');
-    eq(r.texts[0].styles['pointer-events'], 'none', '文字不可点击（点图标才打开）');
+    /*
+     * 早先这条断言写的是 `=== 'none'`，理由「文字不可点击（点图标才打开）」。
+     * 那正是 BUG 43 本身：整行里只有 11px 的图标可点，文件名整片是死的，
+     * 而用户的本能是照着名字点。断言忠实于错误实现，于是永远绿。
+     * 现在文字要能点（且下面确认它真的绑了交互）。
+     */
+    ok(r.texts[0].styles['pointer-events'] !== 'none',
+      '文件名可点击（早先设成 none，等于整行只有图标能点）');
   }
   {
     const r = render({ file: JSON.stringify([{ n: '一.pdf' }, { n: '二.pdf' }, { n: '三.pdf' }]) });
