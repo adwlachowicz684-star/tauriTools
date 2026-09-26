@@ -155,6 +155,40 @@ export function collectUsedClasses(src) {
     }
   }
   /*
+   * 2c: 裸三元 —— className={x.isError ? 'fpx-log-line err' : 'fpx-log-line'}
+   *
+   * 与 2a2 的区别：2a2 要求 `{` 之后**紧跟引号**，而这里 `{` 之后是条件
+   * 表达式（`l.isError ?`），于是整条匹配不上 → fpx-log-line / fpx-picker /
+   * fpx-stack-box 这类**确实在挂**的类被判成死样式。
+   *
+   * 只取三元**分支**里的字面量，不取条件里的：
+   *   `tab === 'mine' ? ' on' : ''` 中 'mine' 是比较值，不是类名。
+   * 判据是"字面量后面紧跟的字符" —— 紧跟 `?` 的是条件值（跳过），
+   * 其余（紧跟 `:` 或 `}`）是分支值（取）。与 2b 用的是同一套判据。
+   */
+  for (const m of src.matchAll(/class(?:Name)?\s*=\s*\{([^{}]*)\}/g)) {
+    const expr = m[1];
+    if (!expr.includes('?')) continue;
+    for (const s of expr.matchAll(/['"`]([^'"`]*)['"`]/g)) {
+      let k = (s.index ?? 0) + s[0].length;
+      while (k < expr.length && /\s/.test(expr[k])) k++;
+      if (expr[k] === '?') continue; // 条件值，不是类名
+      addTokens(s[1]);
+    }
+  }
+  /*
+   * 2d: 导出的类名常量 —— export const PUML_BOX_CLASS = 'md-puml-box'
+   *
+   * 类名被抽成常量后，DOM 上挂的是标识符而不是字面量串，
+   * 于是 CSS 里那个类永远"没人用" → 被判成死样式。
+   * 只认名字里带 CLASS/CLS 的常量，避免把普通字符串常量也当类名。
+   */
+  for (const m of src.matchAll(
+    /\bconst\s+[A-Za-z_$][\w$]*(?:CLASS|CLS|Cls|Class)[\w$]*\s*=\s*['"`]([^'"`]+)['"`]/g,
+  )) {
+    addTokens(m[1]);
+  }
+  /*
    * 3: hyperscript 简写 —— 任意创建辅助函数的 'tag.class' 形式
    *
    * ⚠️ 原来只认 `h(`。而 plugins/folder-picker/module.js 用的是它自己
@@ -279,6 +313,48 @@ export function collectUsedClasses(src) {
       }
     }
   }
+  /*
+   * 7: el('div.fp-panel') —— **类名写在标签串里**（tag.class 简写）
+   *
+   * 这是 folder-picker 服务（plugins/folder-picker/module.js）的写法：
+   *     function el(tag, props = {}, ...kids) {
+   *       const [head, ...rest] = String(tag).split('.');
+   *       node.className = rest.join(' ');
+   *
+   * 类名既不是第二参（分支 5 要求 el 的第二参是 cls），
+   * 也不是 class= 属性（分支 6 要求属性对象），
+   * 而是**第一参里点号后面的那几段**。1~6 一条都匹配不到。
+   *
+   * 后果与分支 5 那次完全同形（双向失明）：
+   *   · 方向1 看新类名（改坏后的 .fp-panelx），代码里确实没有 → 该报死样式，
+   *     但旧类名已从 CSS 消失，无从对照；
+   *   · 方向2 看旧类名 fp-panel，而它压根没被提取出来。
+   * 实测：不认这种写法时，新增的 20 个 .fp-* 全部被报成"真废弃"，
+   * 基线从 41 涨到 62 —— 而它们每一个都在用。
+   *
+   * 【判据必须绑到实现上】
+   * 只有当本文件的 el **真的**把 tag 按点号拆开当类名时（`.split('.')`）
+   * 才走这条分支。无条件匹配 el('div.xxx') 会把标签名误当类名，
+   * 也会把别处"带点的字符串第一参"误判进来。
+   */
+  const elSplitsTag = /String\s*\(\s*tag\s*\)\s*\.split\s*\(\s*['"`]\.['"`]\s*\)/.test(src)
+    || /tag\s*\.split\s*\(\s*['"`]\.['"`]\s*\)/.test(src);
+  if (elSplitsTag) {
+    /*
+     * ⚠️ 字符类里**必须有连字符**：类名普遍带 `-`（fp-panel / md-toc-lv）。
+     * 早先写的是 [\w.] —— \w 不含 `-`，于是遇到第一个连字符就停，
+     * 后半截吃掉后要求收引号却撞上 `-`，整条匹配失败。
+     * 后果是这一个分支**对所有带连字符的类名全部失效**：
+     * folder-picker 整份 module.js 提取出 0 个类名，
+     * 于是它所有样式都被判成"CSS 定义了、代码没人用"（假死样式），
+     * 而反方向 —— 样式真被删了 —— 同样发现不了。两个方向一起瞎。
+     */
+    for (const m of src.matchAll(/\bel\(\s*['"`]([a-zA-Z][\w.-]*)['"`]/g)) {
+      const parts = String(m[1]).split('.');
+      if (parts.length < 2) continue;                 // 纯标签，没有类名
+      for (const p of parts.slice(1)) addTokens(p);
+    }
+  }
   return out;
 }
 
@@ -396,7 +472,19 @@ export function scanDeadClasses({ root, cssFiles, srcDirs = null, allowDead = []
     if (exRe && exRe.test(rel)) continue;
     let txt = '';
     try { txt = readFileSync(f, 'utf-8'); } catch { continue; }
-    for (const c of collectUsedClasses(txt)) {
+    /*
+     * 必须先剥注释再提取。
+     *
+     * 收集实现（collectUsedClasses）认 `class="…"` / `className=` 等字面
+     * 写法，而**注释里举例**时同样会出现这些写法。不剥的话注释里的
+     * 类名会被当成真实用法报出来（实测：md 的 text-of.js 注释里写了
+     * `<span class="hljs-keyword">` 举例，被判成"代码用了但没定义"）。
+     *
+     * 更隐蔽的是它只影响这一条路径：调用方的内联扫描自己剥了注释，
+     * 于是同一份代码两套扫描结果不一致 —— 一边报、一边不报，
+     * 看起来像随机波动，实际是本函数少了一步。
+     */
+    for (const c of collectUsedClasses(stripComments(txt))) {
       if (!used.has(c)) used.set(c, relative(root, f));
     }
   }
