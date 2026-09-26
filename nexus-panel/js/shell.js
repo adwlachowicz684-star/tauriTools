@@ -75,8 +75,8 @@ const host = createHost({
     },
     onOpen: (id) => navigate(id),
     // 「⚙ 设置」对**每个**插件都显示，不再要求插件自带设置面板：
-    // 抽屉里除了插件自定义设置，还有外壳固定提供的那一段（沙箱隔离、
-    // 主题适配开关），这两项对任何插件都有实际意义，点开永远有内容。
+    // 抽屉里除了插件自定义设置，还有外壳固定提供的那一段（沙箱隔离），
+    // 它对任何插件都有实际意义，点开永远有内容。
     // 所以显隐只看"有没有激活插件"，不看插件有没有 settings。
     // host 在此处可能尚未赋值（createHost 期间同步回调），故用可选链。
     onSettingsAvailable: (has) => {
@@ -261,14 +261,21 @@ async function openPluginSettings() {
       <div class="nx-empty drawer-empty">
         「${escapeHtml(manifest.name)}」没有提供自己的设置面板。
         <br />
-        下面的沙箱与主题适配由外壳提供，对所有插件都有效。
+        下面的沙箱设置由外壳提供，对所有插件都有效。
       </div>`;
   }
 }
 
 /**
- * 抽屉里由外壳提供的固定区块：沙箱隔离 / 主题适配 两个独立开关 + 本插件的外链。
+ * 抽屉里由外壳提供的固定区块：沙箱隔离开关 + 本插件的外链。
  * 放在插件自己的设置内容**下方**，两者互不干扰。
+ *
+ * ⚠️ 这里原先还有第二个开关「主题适配」（adaptTheme）。
+ * 它控制的是那套给插件罩滤镜、把浅色翻深色的机制 —— 该机制已整套删除
+ * （外壳推变量，插件渲染成什么样就是什么样，插件写死是插件自己的事）。
+ * 机制没了之后这个开关就成了"拨了没反应"的假控件，一并删掉。
+ * 清理时只删了设置页（App.tsx）那半边，shell.js 这半边漏了 ——
+ * 所以无构建模式下打开插件抽屉，仍能看到一个毫无作用的开关。
  */
 function renderShellSection(box, manifest) {
   if (!box) return;
@@ -299,15 +306,10 @@ function renderShellSection(box, manifest) {
     on: '切断插件直连主平台的通道，同时彻底阻断插件之间互访；ctx.invoke / store / 事件 / 主题 等能力通过桥接完整保留。',
     off: '插件与主平台同源，可直连访问（parent / localStorage / Tauri IPC）；代价是插件之间理论上也能互访。',
   };
-  const adaptTexts = {
-    on: '基调与面板不一致时自动反转统一（隔离时由插件自报基调）。',
-    off: '完全不动插件外观，保持它自己的配色。',
-  };
 
   const rows = [];
   for (const [label, keyName, texts] of [
     ['严格沙箱', 'isolated', isoTexts],
-    ['主题适配', 'adaptTheme', adaptTexts],
   ]) {
     const t = toggleRow(label, '', keyName);
     t.hint.textContent = cfg[keyName] ? texts.on : texts.off;
@@ -503,12 +505,6 @@ function openAddDialog() {
           <option value="iframe">沙箱 iframe（默认·推荐）</option>
           <option value="module">同页模块（可直调 Rust）</option>
         </select></div>
-      <div><div class="p-muted" style="margin-bottom:6px">插件自身基调（影响主题适配）</div>
-        <select class="p-input" id="p-theme">
-          <option value="auto">自动检测</option>
-          <option value="dark">与面板同基调（不适配）</option>
-          <option value="light">与面板相反（需适配）</option>
-        </select></div>
     </div>
     </div>
     <div class="p-muted" style="font-size:11px;line-height:1.6;margin-top:10px">
@@ -548,7 +544,6 @@ function openAddDialog() {
       name, entry, custom: true,
       type: box.querySelector('#p-type').value,
       icon: box.querySelector('#p-icon').value.trim() || '◌',
-      theme: box.querySelector('#p-theme').value,
     };
     saveCustomPlugins([...getCustomPlugins(), p]);
     mask.remove();

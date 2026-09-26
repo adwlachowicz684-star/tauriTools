@@ -2022,7 +2022,7 @@ console.log('\n=== 34. agent-flow 文字属性档位 ===');
 }
 
 
-console.log('\n=== 36. 取色弹窗：主题适配与不滚动 ===');
+console.log('\n=== 36. 取色弹窗：跟随主题变量与不滚动 ===');
 {
   const css = read('plugins/color-picker/style.css');
   const host = read('js/host.js');
@@ -2030,7 +2030,7 @@ console.log('\n=== 36. 取色弹窗：主题适配与不滚动 ===');
   const cp = read('plugins/color-picker/ColorPicker.tsx');
   const sc = stripComments(css);
 
-  /* ---- 主题适配 ---- */
+  /* ---- 跟随主题变量（注意：与已删除的滤镜开关 adaptTheme 不是一回事）---- */
 
   /*
    * 服务浮层底色必须是 **--surface-overlay**（弹窗层），不能是 --surface（面板层）。
@@ -2832,6 +2832,53 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
   t('三处主题列表源码都取到了（元断言，防扫描范围失效）',
     pickSrc.length > 1000 && setSrc.length > 1000 && idxSrc.length > 1000,
     `picker ${pickSrc.length} / App ${setSrc.length} / index ${idxSrc.length}`);
+}
+
+
+/* ============================================================
+   46. 滤镜机制删除后不得有残留
+   ------------------------------------------------------------
+   那套"外壳判定插件基调、不一致就罩滤镜反转"的机制已整套删除。
+   它的 UI（主题适配开关）当时只删了设置页半边，
+   外壳抽屉（shell.js）那半边漏了 —— 无构建模式下打开插件抽屉，
+   会看到一个"拨了没反应"的假控件，而**没有任何测试守卫它**。
+
+   这类残留不报错、不崩溃，只能靠肉眼发现，所以钉成断言。
+
+   ⚠️ 所有匹配都必须剥注释：本轮在 shell.js / plugin-config.js 里
+   写了说明这段历史的注释，注释里必然出现 adaptTheme 字样，
+   不剥的话断言匹配到注释、永远为假（本项目已踩过 N 次）。
+   ============================================================ */
+{
+  const shellSrc = stripComments(read('js/shell.js'));
+  const hostSrc = stripComments(read('js/host.js'));
+  const cfgSrc = stripComments(read('js/plugin-config.js'));
+
+  /* ---- 46.1 活代码里不得出现 adaptTheme ---- */
+  t('外壳抽屉不再有 adaptTheme 开关（滤镜已删除，留着就是拨了没反应的假控件）',
+    !/adaptTheme/.test(shellSrc),
+    /adaptTheme/.test(shellSrc) ? '仍有引用' : '已清除');
+  t('host.js 不再解构 / 透传 adaptTheme',
+    !/adaptTheme/.test(hostSrc),
+    /adaptTheme/.test(hostSrc) ? '仍有引用' : '已清除');
+  t('plugin-config 不再有 adaptTheme 默认值与 shouldAdaptTheme',
+    !/adaptTheme/.test(cfgSrc) && !/shouldAdaptTheme/.test(cfgSrc),
+    /adaptTheme|shouldAdaptTheme/.test(cfgSrc) ? '仍有残留' : '已清除');
+
+  /* ---- 46.2 UI 上不得再有「主题适配」这个标签 ---- */
+  t('抽屉不再渲染「主题适配」这一行',
+    !/主题适配/.test(shellSrc),
+    /主题适配/.test(shellSrc) ? '仍在渲染' : '已移除');
+
+  /* ---- 46.3 死字段 p-theme（写 manifest.theme，已无读取者）---- */
+  t('添加插件表单不再有「插件自身基调」下拉（manifest.theme 已无读取者）',
+    !/p-theme/.test(shellSrc),
+    /p-theme/.test(shellSrc) ? '仍在渲染' : '已移除');
+
+  /* ---- 46.4 元断言：三个文件都真读到了（防路径变了导致空跑）---- */
+  t('三个外壳文件都取到内容（元断言，防扫描范围失效）',
+    shellSrc.length > 5000 && hostSrc.length > 10000 && cfgSrc.length > 500,
+    `shell ${shellSrc.length} / host ${hostSrc.length} / cfg ${cfgSrc.length}`);
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
