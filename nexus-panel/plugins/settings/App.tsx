@@ -25,6 +25,10 @@ import {
      用户改了风格后，getCurrent().style 仍是旧值，
      会让"该出现哪些控件"判断错（详见 theme-manager 的说明）。 */
   getCurrent, getCurrentResolved, getResolvedBase,
+  /* 按 id 解析单个主题的元数据（基调/风格已套覆盖）。
+     主题列表里每张卡片都要显示自己**实际**的风格与深浅 ——
+     上面那三个只管当前主题，列表场景用不了。 */
+  resolveThemeMeta,
   getHueShift, getLightShift, setThemeShift,
   /* 单项复位：把「恢复默认」做成每个调节项各自的小按钮，
      而不是一个"恢复主题自带配色"大按钮 ——
@@ -1157,11 +1161,16 @@ export default function Settings() {
             const groups: [string, typeof all][] = [
               ...styles.map(([k, label]) => [
                 label,
-                all.filter((t) => (t.style || 'neumorph') === k),
+                /* 按**实际**风格分组：用户把某套改成玻璃后它现在就是玻璃。
+                   用原始 t.style 会让它留在原组，而缩略图已是玻璃观感。 */
+                all.filter((t) => (resolveThemeMeta(t).style || 'neumorph') === k),
               ] as [string, typeof all]),
               /* 没写 style 的（老自定义主题）单列一组 ——
                  混进任何一组都是错的：它们的观感根本不属于那个风格。 */
-              ['其它', all.filter((t) => !t.style || !THEME_STYLE_LABELS[t.style])],
+              ['其它', all.filter((t) => {
+                const st = resolveThemeMeta(t).style;
+                return !st || !THEME_STYLE_LABELS[st];
+              })],
             ];
             return groups.filter(([, items]) => items.length).map(([label, items]) => (
               <div className="theme-group" key={label}>
@@ -1237,9 +1246,11 @@ export default function Settings() {
                               不能取 v['--text'] —— 那是被预览主题的颜色，
                               深色面板下预览浅色主题会变成深色字压深色底 */}
                           <div className="theme-name">{t.name}</div>
-                          <span className="theme-badge">{styleLabel(t.style)}</span>
+                          <span className="theme-badge">{styleLabel(resolveThemeMeta(t).style)}</span>
                         </div>
-                        <div className="theme-desc">{t.desc || (t.base === 'dark' ? '深色' : '浅色')}</div>
+                        {/* 深浅同理：基调也是参数（可只改基调不动颜色），
+                            这里要读解析后的值，否则卡片写"深色"而缩略图已是浅色。 */}
+                        <div className="theme-desc">{t.desc || (resolveThemeMeta(t).base === 'dark' ? '深色' : '浅色')}</div>
                         {t.custom ? (
                           <button
                             className="theme-del"

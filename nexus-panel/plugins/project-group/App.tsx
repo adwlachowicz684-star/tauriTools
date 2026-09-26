@@ -261,6 +261,35 @@ export default function App() {
     }
   }, [contentSel, ctx, s]);
 
+  /*
+   * 「阅读」：直接把文件交给 md 插件只读打开。
+   *
+   * 与上面的「编辑」（openMarkdown）并存，两者不是一回事：
+   * 编辑要先读一遍全文、等内置编辑器返回、再写盘；只是想看一眼 README
+   * 时走这条链路既慢又有误触改写的风险。md 插件早已支持
+   * openArgs.path（只读打开），此前只是没人调它。
+   *
+   * 扩展名白名单：拿二进制去 md 里读会得到一堆乱码**且不报错**，
+   * 用户只会以为文档坏了。所以只放行文本类。
+   */
+  const readMarkdown = useCallback(async () => {
+    if (!contentSel) {
+      ctx.toast('请先在内容浏览里选中一个条目', 'err');
+      return;
+    }
+    if (!/\.(md|markdown|mdown|mkd|txt)$/i.test(contentSel.path)) {
+      ctx.toast('只支持 md / markdown / txt 文本', 'err');
+      return;
+    }
+    const ok = await ctx.openPlugin?.('md', { path: contentSel.path });
+    /* 返回 false 必须打理：不打理就是"点了没反应"。 */
+    if (!ok) {
+      const m = '打开 Markdown 阅读器失败';
+      s.pushLog(m, true);
+      ctx.toast(m, 'err');
+    }
+  }, [contentSel, ctx, s]);
+
   const projectCards = useMemo(
     () => boot?.projectTabs[s.activeTab.project]?.items ?? [],
     [boot, s.activeTab.project],
@@ -787,6 +816,7 @@ export default function App() {
     toggleMcp: () => void toggleMcp(),
     toggleSidebar: () => setRailCollapsed((v) => !v),
     openMarkdown,
+    readMarkdown,
     // 有弹窗打开时整组让路：否则在对话框里按 Delete 会改到看不见的卡片
     // （开关类的三条不受此限，见 useCardHotkeys 的 ALWAYS_ON）
   }, !!boot && dialog.type === 'none' && !help && !confirmLink, boot?.config.hotkeys);
@@ -1035,6 +1065,29 @@ export default function App() {
               */}
               <div className="p-row fpx-col-head">
                 <h2 style={{ margin: 0 }}>内容浏览</h2>
+                {/*
+                  「阅读」与「编辑」并存，不是重复：
+                  编辑要先读全文 → 等内置编辑器 → 写盘；只是想看一眼 README
+                  时走那条链路既慢又有误触改写的风险。阅读直接交给 md 插件
+                  只读打开（openArgs.path）。
+                  disabled 而非隐藏 —— 藏起来用户根本找不到入口。
+                */}
+                <button
+                  className="p-btn sm"
+                  disabled={!contentSel}
+                  onClick={readMarkdown}
+                  title={contentSel ? `阅读 ${contentSel.name}` : '先选中一个条目'}
+                >
+                  阅读
+                </button>
+                <button
+                  className="p-btn sm"
+                  disabled={!contentSel}
+                  title={contentSel ? `编辑 ${contentSel.name}` : '先选中一个条目'}
+                  onClick={openMarkdown}
+                >
+                  编辑
+                </button>
               </div>
               <ContentPanel
                 api={s.api}

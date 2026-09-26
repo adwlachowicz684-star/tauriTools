@@ -389,6 +389,20 @@ function applyMetaOverride(theme) {
   };
 }
 
+/**
+ * 取某个主题的**元数据真值**（基调 / 风格已套上用户覆盖）。
+ *
+ * 与 getResolvedBase / getResolvedStyle 的区别：那两个只管**当前**主题，
+ * 这个是按 id 逐个解析，给"列出所有主题"这类场景用
+ * （快速选择器里每张卡片都要显示自己真实的风格与深浅）。
+ *
+ * 不套覆盖的话：用户把某套主题改成玻璃后，卡片角标仍写"新拟态"、
+ * 深浅写"深色"，与实际观感对不上 —— 缩略图已经反映改动了，文字却没跟上。
+ */
+export function resolveThemeMeta(theme) {
+  return applyMetaOverride(theme);
+}
+
 /** 把用户逐项覆盖的变量叠加进变量表 */
 function applyVarOverrides(vars, theme) {
   let map = {};
