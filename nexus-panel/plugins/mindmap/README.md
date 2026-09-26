@@ -2922,5 +2922,45 @@ bridge.historyClear();    // ← 又把基线清成 null，前功尽弃
 改法：`clear()` 以**当前内容**重设基线（`_baseline = _historySnap()`）——
 这本来就是「以当前内容为新的历史起点」的语义。
 
+## 导入进来的节点全部挂不上附件 ★★
+
+上一节那条只补了 **root**，于是「中心主题能挂附件、它的子节点全都不能」——
+而画布上绝大多数节点恰恰都是子节点，等于功能基本不可用。
+
+内核只给「新建出来的」节点自动补 id，导入进来的**一律不补**（root 与非 root 都不补）。
+而上层的 `getSelectedNodeId()` 读的正是 `n.data.id`：
+
+```js
+const n = km.getSelectedNode();
+return (n && n.data && n.data.id) || '';
+```
+
+实测（门面 importJson 一棵 `{R:[A,B]}`）：
+
+```
+A=id:undefined | B=id:undefined | R=id:iay409fmmuihbwji
+                                  ↑ 只有 root 被补上
+```
+
+于是任何一个没有 id 的节点，`rememberNode()` 存到空 id → `focusNode()` 返回
+false → 提示「**请先选中一个节点再附加**」。用户明明选着那个节点。
+「附加视频 / 图片」「移除附件」「设为封面」全部中招（都靠 id 回锁节点）。
+
+**受影响的不只是手工构造的 JSON**：`formats.js` 的 `make()` 就是
+`{ data: { text } }`（不带 id），所以 **XMind / Markdown / OPML / Freemind /
+TXT 等所有导入格式**进来的节点全都没有 id。而新建画布后 Tab 出来的节点有
+id（内核补的）且会被保存 —— 于是「自己从头建的图」正常、「导入进来的图」坏，
+这是最难查的那类不一致。
+
+实测（真实 Chrome，完整插件 + 宿主桩，走门面 `importJson`）：
+
+| | 选中导入的子节点 → 附加文件 |
+|---|---|
+| 只补 root | 「请先选中一个节点再附加」，`data.file` 未写入 |
+| 补全树 | 附加成功，`data.file` 正确写入 |
+
+改法：`ensureRootId()` 改为 `km.getRoot().traverse(...)` 给每个缺 id 的节点补上
+（已有 id 不动，不覆盖用户数据）。
+
 > 2000 层而非 10000 层：jsdom 的 `DOMParser` 在约 2000~5000 层时自己就 parsererror 了，
 > 测不到 xmind.js。2000 层已远超 `MAX_DEPTH`(200)，足以验证截断逻辑。

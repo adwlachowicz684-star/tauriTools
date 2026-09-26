@@ -2004,6 +2004,46 @@ group('行内编辑贴合节点');
   ok(/_baseline == null/.test(ed), '（对照）contentchange 里仍有 _baseline == null 这道哨兵');
 }
 
+/*
+ * 17.14 ensureRootId 必须遍历整棵树补 id，不能只补 root。
+ *
+ * 内核只给「新建出来的」节点自动补 id，导入进来的**一律不补**（root 与非 root 都不补）。
+ * 而上层的 getSelectedNodeId() 读的正是 n.data.id —— 于是任何一个没有 id 的节点，
+ * 「附加文件/视频/图片、移除附件、设为封面」全部用不了：rememberNode() 存到空 id →
+ * focusNode() 返回 false → 提示「请先选中一个节点再附加」。用户明明选着那个节点。
+ *
+ * 早先只补 root，于是「中心主题能挂附件、它的子节点全都不能」——而画布上绝大多数
+ * 节点恰恰都是子节点。受影响的不只是手工 JSON：formats.js 的 make() 就是
+ * `{ data: { text } }`（不带 id），所以 XMind / Markdown / OPML / Freemind / TXT
+ * 等**所有导入格式**进来的节点都没有 id。新建画布后 Tab 出来的节点有 id（内核补的）
+ * 且会被保存，于是「自己从头建的图」正常、「导入进来的图」坏 —— 最难查的那类不一致。
+ *
+ * 实测（真实 Chrome，完整插件 + 宿主桩，走门面 importJson）：
+ *   只补 root：导入 {R:[A]} → 选中 A → 附加文件 → 「请先选中一个节点再附加」
+ *   补全树  ：同上                          → 附加成功，data.file 写入
+ */
+{
+  const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  const i0 = ed.indexOf('function ensureRootId()');
+  const seg = ed.slice(i0, i0 + 2400);
+  const scode = seg.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok(/getRoot\(\)\.traverse\(/.test(scode), 'ensureRootId 遍历整棵树补 id（只补 root 会让所有子节点都挂不上附件）');
+  ok(/n\.data\.id = /.test(scode), '给每个缺 id 的节点都赋上 id');
+  /*
+   * 第三条最初写成「不允许出现 `if (r.data.id) return;`」——**抓不到变异**：
+   * 把提前 return 换成别的写法（`if (true) return;`、`if (!r.data.id) {...} return;`）
+   * 断言照样绿，因为 traverse 那段代码**还在源码里**，只是永远执行不到。
+   *
+   * 判定「只补了 root」的真正特征是：**在 traverse 之前就 return 掉了**。
+   * 所以直接取 `var r = ...` 到 `traverse(` 之间的代码，里面出现 return 即失败。
+   */
+  const iVar = scode.indexOf('var r = km.getRoot');
+  const iTrav = scode.indexOf('traverse(');
+  ok(iVar >= 0 && iTrav > iVar, '（结构）取到「读 root → traverse」这段');
+  ok(!/\breturn\b/.test(scode.slice(iVar, iTrav)),
+    'traverse 之前不得提前 return —— 提前返回会让 traverse 永远执行不到，等于只补 root');
+}
+
 {
   // 17.7 行为级：验证 zoom 换算确实是必要的（对照旧算法）
   //      模拟 SVG transform scale(zoom) 下的两种算法
