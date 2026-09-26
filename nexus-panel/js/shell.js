@@ -277,39 +277,79 @@ async function openPluginSettings() {
  * 清理时只删了设置页（App.tsx）那半边，shell.js 这半边漏了 ——
  * 所以无构建模式下打开插件抽屉，仍能看到一个毫无作用的开关。
  */
+/*
+ * 可折叠分组（原生版）。
+ *
+ * ⚠️ 必须与 React 版的 SettingGroup（src/components/SettingGroup.tsx）**同构**：
+ * 抽屉有两套外壳（Vite 的 src/ 与无构建的 js/shell.js），
+ * 观感不一致时用户在不同构建模式下看到的是两个界面。
+ * 类名、结构、aria 都对齐那一版，不另起炉灶。
+ *
+ * 用 <button> 而不是 div+onClick：键盘可达、自带 role。
+ * 在 div 上挂 onClick 要补 role/tabIndex/onKeyDown 三件套，
+ * 漏一件就是"鼠标能点、键盘点不了"。
+ */
+function settingGroup({ title, badge, hint, defaultOpen = false, rows }) {
+  const open = !!defaultOpen;
+  const caret = h('span.set-group-caret', { 'aria-hidden': 'true' }, '▸');
+  const head = h('button.set-group-head', {
+    type: 'button',
+    'aria-expanded': String(open),
+  }, caret, h('span.set-group-title', {}, title),
+     badge ? h('span.set-group-badge', {}, String(badge)) : null);
+
+  const body = h('div.set-group-body', { hidden: open ? undefined : 'hidden' },
+    hint ? h('div.set-group-hint.p-muted', {}, hint) : null,
+    ...rows.filter(Boolean));
+
+  const sec = h('section.set-group' + (open ? '.open' : ''), {}, head, body);
+  head.onclick = () => {
+    const nowOpen = sec.classList.toggle('open');
+    head.setAttribute('aria-expanded', String(nowOpen));
+    /* 🔑 收起时必须真的把内容移出可访问树。
+       只加 CSS 的 display:none 的话，读屏与 Ctrl+F 仍会命中里面的文字，
+       用户"找到了"却看不到 —— 比不折叠还难用。 */
+    if (nowOpen) body.removeAttribute('hidden'); else body.setAttribute('hidden', 'hidden');
+  };
+  return sec;
+}
+
 function renderShellSection(box, manifest) {
   if (!box) return;
   const cfg = getPluginConfig(manifest.id);
 
-  /* 开关行。
-     ⚠️ 这里原先每个样式都用内联 style 写死（字号、间距、圆角，
-     以及直接拼出来的 inset 阴影）。
-     内联写法的代价是：观感改不动，且绕过了全部令牌 ——
-     玻璃主题下那圈硬编码的凹陷阴影照样压出来。
-     现在一律挂 .dw-* 类，观感只在 CSS 里调。 */
+  /*
+   * ⚠️ 这里原先每个样式都用内联 style 写死（字号、间距、圆角，
+   * 以及直接拼出来的 inset 阴影）。
+   * 内联写法的代价是：优先级高于任何 CSS 类，改外层 CSS 完全无效，
+   * 且绕过了全部令牌 —— 玻璃主题下那圈硬编码凹陷照样压出来。
+   *
+   * 现在一律复用共享层的 .cfg-row / .set-group（css/controls.css），
+   * 与 React 版 SandboxSection 同一套类名 —— 不再各写一份观感。
+   */
   const toggleRow = (label, keyName, texts) => {
-    const dot = h('span', { class: 'dw-dot' });
+    const dot = h('span.dw-dot');
     const txt = h('span', {}, cfg[keyName] ? '已开启' : '已关闭');
-    const btn = h('button', {
-      class: `dw-switch${cfg[keyName] ? ' on' : ''}`,
+    const btn = h('button.dw-switch', {
+      class: cfg[keyName] ? 'on' : '',
       type: 'button',
       /* 无障碍：读屏要能念出当前是开还是关，而不是只念一个"按钮" */
       'aria-pressed': String(!!cfg[keyName]),
     }, dot, txt);
-    const hint = h('div.dw-row-hint', {}, cfg[keyName] ? texts.on : texts.off);
+    const desc = h('div.p-muted.cfg-row-desc', {}, cfg[keyName] ? texts.on : texts.off);
     btn.onclick = () => {
       const next = setPluginConfig(manifest.id, { [keyName]: !getPluginConfig(manifest.id)[keyName] });
       const on = !!next[keyName];
       btn.classList.toggle('on', on);
       btn.setAttribute('aria-pressed', String(on));
       txt.textContent = on ? '已开启' : '已关闭';
-      hint.textContent = on ? texts.on : texts.off;
+      desc.textContent = on ? texts.on : texts.off;
       toast('已保存，重载插件后生效', 'ok');
     };
-    return h('div.dw-row', {},
-      h('div.dw-row-main', {},
-        h('div.dw-row-label', {}, label),
-        hint,
+    return h('div.cfg-row', {},
+      h('div.cfg-row-main', {},
+        h('div.cfg-row-label', {}, label),
+        desc,
       ),
       btn,
     );
@@ -326,7 +366,7 @@ function renderShellSection(box, manifest) {
      但不会跟着用户在同基调里换主题（比如从石墨换到极光）。 */
   const themeRow = (label, key, base) => {
     const all = listThemes().filter((t) => t.base === base);
-    const sel = h('select.p-input.dw-select', {},
+    const sel = h('select.p-input.sm', {},
       h('option', { value: '' }, '跟随全局'),
       ...all.map((t) => h('option', { value: t.id, selected: cfg[key] === t.id }, t.name)),
     );
@@ -336,10 +376,11 @@ function renderShellSection(box, manifest) {
       // 与上面「沙箱」开关不同 —— 那个确实要重载。
       toast('已保存', 'ok');
     };
-    return h('div.dw-row', {},
-      h('div.dw-row-main', {},
-        h('div.dw-row-label', {}, label),
-        h('div.dw-row-hint', {}, base === 'dark' ? '整体主题为深色时，本插件用这套' : '整体主题为浅色时，本插件用这套'),
+    return h('div.cfg-row', {},
+      h('div.cfg-row-main', {},
+        h('div.cfg-row-label', {}, label),
+        h('div.p-muted.cfg-row-desc', {},
+          base === 'dark' ? '整体主题为深色时，本插件用这套' : '整体主题为浅色时，本插件用这套'),
       ),
       sel,
     );
@@ -347,53 +388,54 @@ function renderShellSection(box, manifest) {
 
   box.innerHTML = '';
   box.appendChild(
-    h('section.dw-sec', {},
-      h('h3.dw-sec-title', {}, '沙箱'),
-      h('div.dw-sec-desc', {}, '改动在下次加载该插件时生效。'),
-      toggleRow('严格沙箱', 'isolated', isoTexts),
-      manifest.type !== 'iframe'
-        ? h('div.dw-row-hint', { style: { marginTop: 'var(--sp-4)' } },
-            '同页插件不受影响 —— 它本来就跑在主页面里。')
-        : null,
-      h('div.dw-note', {},
-        '注意：「严格沙箱」切断的是直连通道，不是能力。以下能力',
-        h('b', {}, '无论开关如何都照常可用'),
-        '（它们在主平台侧执行）：ctx.invoke 调 Rust、ctx.store 持久化、'
-        + 'ctx.on/emit 跨插件事件、ctx.setTitle/setBadge/toast、主题同步。',
-      ),
-    ),
-    h('section.dw-sec', {},
-      h('h3.dw-sec-title', {}, '插件主题'),
-      h('div.dw-sec-desc', {},
-        '分别为深色 / 浅色各挑一套。选好后，本插件只跟随整体主题的',
+    settingGroup({
+      title: '沙箱',
+      badge: cfg.isolated ? '严格' : '宽松',
+      defaultOpen: true,
+      hint: '改动在下次加载该插件时生效。',
+      rows: [
+        toggleRow('严格沙箱', 'isolated', isoTexts),
+        manifest.type !== 'iframe'
+          ? h('div.p-muted.cfg-row-note', {}, '同页插件不受影响 —— 它本来就跑在主页面里。')
+          : null,
+        h('div.p-muted.cfg-row-note.cfg-row-note-sep', {},
+          '注意：「严格沙箱」切断的是直连通道，不是能力。以下能力',
+          h('b', {}, '无论开关如何都照常可用'),
+          '（它们在主平台侧执行）：ctx.invoke 调 Rust、ctx.store 持久化、'
+          + 'ctx.on/emit 跨插件事件、ctx.setTitle/setBadge/toast、主题同步。'),
+      ],
+    }),
+    settingGroup({
+      title: '插件主题',
+      badge: (cfg.themeDark || cfg.themeLight) ? '已指定' : '跟随全局',
+      hint: [h('span', {}, '分别为深色 / 浅色各挑一套。选好后，本插件只跟随整体主题的'),
         h('b', {}, '深浅'),
-        '在自己这两套之间切换，不再跟随你在同基调里换哪套主题。留空则跟随全局。'),
-      themeRow('深色时用', 'themeDark', 'dark'),
-      themeRow('浅色时用', 'themeLight', 'light'),
-    ),
+        h('span', {}, '在自己这两套之间切换，不再跟随你在同基调里换哪套主题。留空则跟随全局。修改'),
+        h('b', {}, '立即生效'),
+        h('span', {}, '，无需重载。')],
+      rows: [themeRow('深色时用', 'themeDark', 'dark'), themeRow('浅色时用', 'themeLight', 'light')],
+    }),
   );
 
   // 本插件登记的外链
   const mine = extPolicy.listHosts().filter((x) => x.pluginId === manifest.id);
-  if (mine.length) {
-    box.appendChild(
-      h('section.dw-sec', {},
-        h('h3.dw-sec-title', {}, `外链 · ${mine.length}`),
-        h('div.dw-sec-desc', {},
-          '扫描插件入口得到。全局策略与逐条放行在「设置 → 外链」里改。'),
-        ...mine.map((x) => hostRow(x)),
-      ),
-    );
-  }
+  box.appendChild(settingGroup({
+    title: '外链',
+    badge: String(mine.length),
+    hint: '扫描插件入口得到。全局策略与逐条放行在「设置 → 外链」里改。',
+    rows: mine.length
+      ? mine.map((x) => hostRow(x))
+      : [h('div.p-muted.cfg-row-note', {}, '这个插件没有发起外部请求。')],
+  }));
 }
 
 function hostRow(x) {
   const label = x.status === 'trusted' ? '已信任'
     : x.status === 'blocked' ? '已禁止' : '待决定';
-  return h('div.dw-host', {},
-    h('div.dw-host-main', {},
-      h('div.dw-host-name', {}, x.host),
-      h('div.dw-host-meta', {}, `${extPolicy.KIND_LABELS[x.kind] || x.kind} · ${label}`),
+  return h('div.cfg-row', {},
+    h('div.cfg-row-main', {},
+      h('div.p-mono.cfg-row-label', {}, x.host),
+      h('div.p-muted.cfg-row-desc', {}, `${extPolicy.KIND_LABELS[x.kind] || x.kind} · ${label}`),
     ),
     h('span.p-tag', {
       class: x.status === 'trusted' ? 'ok' : x.status === 'blocked' ? 'danger' : '',

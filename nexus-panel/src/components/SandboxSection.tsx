@@ -75,10 +75,19 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
                 : '插件与主平台同源，可直连访问（parent / localStorage / Tauri IPC）；代价是插件之间理论上也能互访。'}
             </div>
           </div>
+          {/*
+            胶囊开关 + 状态点，而不是一个写着"已开启/已关闭"的按钮。
+            后者在凹陷底板的行里既像按钮又像标签，点不点得动全凭猜。
+            与无构建版（js/shell.js 的 renderShellSection）同一个类名，
+            两版共用 css/controls.css 里的那份定义。
+          */}
           <button
-            className={'p-btn sm' + (cfg.isolated ? ' primary' : '')}
+            type="button"
+            className={'dw-switch' + (cfg.isolated ? ' on' : '')}
+            aria-pressed={cfg.isolated}
             onClick={() => toggle('isolated')}
           >
+            <span className="dw-dot" />
             {cfg.isolated ? '已开启' : '已关闭'}
           </button>
         </div>

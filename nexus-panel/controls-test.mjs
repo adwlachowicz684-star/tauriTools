@@ -3102,43 +3102,80 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
 
 
 /* ============================================================
-   51. 插件设置抽屉：观感走 CSS 类，不再内联写死
+   51. 插件设置抽屉：两套外壳必须同构
    ------------------------------------------------------------
-   抽屉里的外壳区块原先每个样式都内联写死（字号、间距、圆角，
-   以及直接拼出来的 inset 阴影）。内联写法的代价是：观感改不动，
-   且绕过了全部令牌 —— 玻璃主题下那圈硬编码凹陷照样压出来。
+   抽屉有两个实现（Vite 的 src/components/PluginSettingsDrawer.tsx +
+   SandboxSection.tsx，无构建的 js/shell.js 的 renderShellSection）。
+
+   ⚠️ 观感改一处、漏另一处是这里最容易踩的坑：
+   两套代码各自渲染，谁也不会报"另一边没同步"。
+   所以这里钉的是**两边用同一套类名**，而不是各自长得对不对。
+
+   另：外壳区块原先每个样式都内联写死（字号、间距、圆角、inset 阴影）。
+   内联优先级高于任何 CSS 类 —— 改外层 CSS 完全无效，且绕过全部令牌。
    ============================================================ */
 {
   const shell = stripComments(read('js/shell.js'));
-  const css = stripComments(read('css/neumorphism.css'));
-
-  /* 抽屉外壳区块不得再拼 inset 阴影 */
-  t('抽屉外壳区块不再内联写死 inset 阴影',
-    !/renderShellSection[\s\S]{0,2600}?boxShadow\s*:\s*['"`]inset/.test(shell),
-    /renderShellSection[\s\S]{0,2600}?boxShadow\s*:\s*['"`]inset/.test(shell)
-      ? '仍有内联 inset 阴影 → 玻璃主题下会压出不该有的凹陷' : '已走 .dw-* 类');
-
-  /* 观感类都要有定义，不然挂上去没有任何效果且不报错 */
-  for (const c of ['dw-sec', 'dw-sec-title', 'dw-row', 'dw-row-hint', 'dw-switch', 'dw-host']) {
-    t(`.${c} 在 CSS 里有定义`, new RegExp('\\.' + c + '[\\s,{:.]').test(css));
-  }
-  t('开关有状态点（不靠文字表意）', /\.dw-switch\s+on\s+\.dw-dot|\.dw-switch\.on\s+\.dw-dot/.test(css)
-    || /\.dw-switch\.on/.test(css));
-
-  /* 分区标题用 h3 —— 抽屉标题栏已有一个 h2，再来同级大标题读不出主次 */
-  t('分区标题是 h3（不与抽屉标题 h2 同级）',
-    /h\('h3\.dw-sec-title'/.test(shell)
-    && !/h\('h2[.']/.test(shell.slice(shell.indexOf('renderShellSection'))));
+  const rsx = stripComments(read('src/components/SandboxSection.tsx'));
+  /* React 版的折叠在 SettingGroup.tsx 里，SandboxSection 只是**用它** */
+  const sgp = stripComments(read('src/components/SettingGroup.tsx'));
+  const css = stripComments(read('css/neumorphism.css')) + stripComments(read('css/controls.css'));
 
   /*
-   * 🔑 外壳区块与插件区必须对齐：#dw-shell 原先**完全没有内边距** ——
-   * 上面的 .drawer-body 缩在 16px 18px 里，下面这块贴着抽屉边，
-   * 两块根本不对齐，这是它"没排版"的第一眼原因。
-   *
-   * ⚠️ 只查**第一条** #dw-shell 规则：下面还有一条
-   * `.drawer-body:empty + #dw-shell { padding-top }`，
-   * 用全局正则的话那条会把主规则失效的情况救活（实测破坏验证全绿）。
+   * 🔑 取样范围必须是 settingGroup() **连同** renderShellSection()：
+   * 折叠逻辑在 settingGroup 里，而它定义在 renderShellSection **之前** ——
+   * 只截后者会把折叠整段排除掉，断言变成"永远看不到折叠"，
+   * 于是下面几条在折叠被删掉时依然全绿。
    */
+  const rss = (() => {
+    const i = shell.indexOf('function settingGroup');
+    return i < 0 ? '' : shell.slice(i, shell.indexOf('function hostRow', i));
+  })();
+  t('能定位到抽屉外壳区块片段（含折叠）', rss.length > 0
+    && /renderShellSection/.test(rss));
+
+  /* 1) 不再内联写死 inset 阴影 —— 玻璃主题下那圈凹陷必须能被令牌关掉 */
+  t('抽屉外壳区块不再内联写死 inset 阴影',
+    !/boxShadow\s*:\s*['"`]inset/.test(rss),
+    /boxShadow\s*:\s*['"`]inset/.test(rss)
+      ? '仍有内联 inset 阴影 → 玻璃主题下会压出不该有的凹陷' : '已走 .cfg-row 类');
+
+  /* 2) 两版共用同一套类名 —— 各写一份观感必然漂移 */
+  for (const c of ['set-group', 'cfg-row', 'cfg-row-main', 'cfg-row-label']) {
+    t(`无构建版用 .${c}`, new RegExp('[.\\s"\']' + c).test(rss));
+    /*
+     * React 版不直接写 .cfg-row 之外的那些类名 —— 它用 <SettingGroup> 组件，
+     * set-group-* 那套类名在 SettingGroup.tsx 里所以 sgp 为准。
+     * 判据因此分两处：行类名看 rsx，分组类名看 sgp。
+     */
+    t(`React 版用 .${c}`,
+      new RegExp('[.\\s"\']' + c).test(rsx) || new RegExp('[.\\s"\']' + c).test(sgp));
+  }
+  /* React 版必须是**复用** SettingGroup 组件，而不是自己再写一套折叠 */
+  t('React 版复用 SettingGroup 组件（不另写折叠）',
+    /<SettingGroup/.test(rsx) && !/set-group-head/.test(rsx));
+
+  /* 3) 折叠：无构建版此前完全没有，外链一多就只能一直往下滚 */
+  t('无构建版有折叠分组', /set-group-head/.test(rss));
+  t('折叠用 button（键盘可达，不是 div+onClick）',
+    /h\('button\.set-group-head'/.test(rss) && /className="set-group-head"/.test(sgp));
+
+  /* 4) aria-expanded 必须跟着状态走 —— 写死 true 的话读屏会以为内容一直在 */
+  t('aria-expanded 跟随状态（无构建版）',
+    /'aria-expanded'/.test(rss) && /setAttribute\('aria-expanded'/.test(rss));
+  t('aria-expanded 跟随状态（React 版）', /aria-expanded=\{open\}/.test(sgp));
+
+  /* 5) 收起时内容必须移出可访问树。
+     只加 CSS 的 display:none 的话，读屏与 Ctrl+F 仍会命中里面的文字，
+     用户"找到了"却看不到 —— 比不折叠还难用。 */
+  t('收起时把内容移出可访问树（无构建版）',
+    /setAttribute\('hidden'/.test(rss) && /removeAttribute\('hidden'/.test(rss));
+
+  /* 6) 开关两版同一套画法（胶囊 + 状态点），不是各写一个按钮 */
+  t('开关两版都用 dw-switch', /dw-switch/.test(rss) && /dw-switch/.test(rsx));
+  t('dw-switch 有关/开两态', /\.dw-switch\.on/.test(css));
+
+  /* 7) 外壳区与上方插件区必须对齐：#dw-shell 原先完全没有内边距 */
   {
     const i = css.indexOf('#dw-shell {');
     const block = i < 0 ? '' : css.slice(i, css.indexOf('}', i));
@@ -3146,6 +3183,14 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
       /padding/.test(block),
       /padding/.test(block) ? '已对齐' : '缺 padding → 与上方插件区不对齐');
   }
+
+  /* 8) 已删除的「主题适配」不能再出现在界面文案里 ——
+     滤镜机制整套删了，写着它等于告诉用户有个不存在的开关。 */
+  const drawerTsx = stripComments(read('src/components/PluginSettingsDrawer.tsx'));
+  t('抽屉文案不再提已删除的「主题适配」',
+    !/主题适配/.test(drawerTsx) && !/主题适配/.test(rss));
+  t('类型声明不再有已删除的 adaptTheme 字段',
+    !/^\s*adaptTheme\s*:/m.test(stripComments(read('js/plugin-config.d.ts'))));
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);

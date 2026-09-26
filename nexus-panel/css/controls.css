@@ -1543,6 +1543,44 @@ input[type='range']:disabled {
   border-top: 1px solid var(--hairline);
 }
 
+/* 开关（抽屉 / 设置行里的胶囊开关）
+   --------------------------------------------------------------------
+   原先是个 .p-btn（30px 高、卡片色底板）里塞"已开启/已关闭"，
+   在凹陷底板的行里它既像按钮又像标签，点不点得动全凭猜。
+   改成胶囊 + 状态点：关是灰点灰字，开是主色点亮起、文字提到正文色，
+   不靠"底板变成主色"来表意 —— 那需要一套"主色上的文字色"令牌，
+   而项目里没有现成的，凭空引一个不如换种画法。 */
+.dw-switch {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: 26px;
+  padding: 0 var(--sp-5);
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--text-mute);
+  font-size: var(--fs-note);
+  cursor: pointer;
+  box-shadow: var(--sh-out-sm);
+  transition: color, background-color, box-shadow var(--t);
+}
+.dw-switch:hover { color: var(--text-dim); }
+.dw-switch:active { box-shadow: var(--sh-in-xs); }
+.dw-switch .dw-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--text-mute);
+  flex: none;
+  transition: background-color var(--t);
+}
+.dw-switch.on { color: var(--text); }
+.dw-switch.on .dw-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
 /* 插件页双栏（.pg-*）
    --------------------------------------------------------------------
    ⚠️ 刻意放在 controls.css 而**不是** settings.css：

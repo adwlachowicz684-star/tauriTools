@@ -307,7 +307,7 @@ export default function App() {
   const closePluginSettings = useCallback(() => setSettingsOpen(false), []);
 
   /* 「⚙ 设置」对每个插件都显示，不再要求插件自带设置面板 ——
-     抽屉里除了插件自定义设置，还有外壳固定提供的沙箱 / 主题适配开关，
+     抽屉里除了插件自定义设置，还有外壳固定提供的沙箱 / 插件主题，
      对任何插件都有意义，所以点开永远有内容。
      插件没有自定义设置时，抽屉只显示那段外壳区块 + 占位提示。 */
   const openPluginSettings = useCallback(() => {
