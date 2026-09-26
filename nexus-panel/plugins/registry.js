@@ -69,6 +69,11 @@ export const plugins = [
        于是看到"变白一秒后又变黑"，像切换了好几次。
        native 模式（固定深色）仍需要滤镜 —— 所以不能写死"永不适配"，
        要靠插件自报基调动态判定。详见 README 3.7.10。 */
+    /*
+     * 宿主据此在 init 里带 reportBase，要求插件把基调报回来
+     * （隔离态同理）。只声明不报，外壳手上仍是旧值，切主题时会判反。
+     */
+    followsTheme: true,
     description: '工作流编排画布（跟随面板主题）',
   },
   {
@@ -213,6 +218,32 @@ export const plugins = [
     entry: './plugins/md-editor/index.html',
     version: '1.0.0',
     description: '左编辑右预览的 md 编辑器，返回编辑后的文本',
+  },
+  /*
+   * md —— 侧边栏里的 Markdown 阅读器（app 入口）。
+   *
+   * 【三个字段缺一不可，少了都不报错】
+   *   · type:'module' —— 同页挂载才能继承宿主主题变量；用 iframe 会重演
+   *     demo-iframe 打开后"只有文字"的问题
+   *   · requiresBuild:true —— 依赖 react-markdown 等裸模块名，无构建模式不可用
+   *   · followsTheme:true —— 让宿主把主题推给它
+   *
+   * 【这条被同步覆盖丢过多次】
+   * 丢了的表现是侧边栏根本没有「Markdown」入口，用户以为没做过这个功能，
+   * 而 md-render 服务仍在、md 插件目录仍在 —— 只有本条断言会报出来。
+   */
+  {
+    id: 'md',
+    name: 'Markdown',
+    icon: '▤',
+    type: 'module',
+    entry: './plugins/md/module.tsx',
+    version: '0.1.0',
+    theme: 'dark',
+    requiresBuild: true,
+    builtin: true,
+    followsTheme: true,
+    description: 'Markdown 阅读：粘贴/拖入/服务调用，跟随面板主题',
   },
   /*
    * md-render —— 给**其它插件**调用的 Markdown 渲染服务（md 插件 E3 入口）。

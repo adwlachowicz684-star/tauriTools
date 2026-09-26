@@ -1010,12 +1010,35 @@ export function createHost(opts = {}) {
               themeBase: pluginThemeBase(manifest.id),
               openArgs,                         // 打开参数（E2），与 module 同语义
               isolated,                         // 插件据此决定能力探测方式
+              /*
+               * 是否要求插件自报基调（base-report）。两类插件需要：
+               *   · 隔离态 —— 外壳进不去 iframe 采样，只能靠插件自己报；
+               *   · followsTheme —— 插件自己跟着面板主题变色，外壳照旧采样会误判：
+               *     切到浅色后插件已变浅，采样却按旧印象判“插件深色”→ 施加反转
+               *     → 已变浅的部分被二次翻转成黑，且中间有一段无滤镜的空窗，
+               *       看上去像连切了好几次主题。让它自报，基调由它说了算。
+               */
+              reportBase: (isolated || !!manifest.followsTheme),
               // 宿主自报 origin，供插件回发消息时用作 targetOrigin。
               // 隔离态下插件是 opaque origin，读不到 parent.location，
               // 只能靠这里告诉它 —— 否则它只能通配 '*'。
               hostOrigin: window.location.origin || '*',
             });
             send(iframe, { type: 'mount' });
+            break;
+          case 'base-report':
+            /*
+             * 插件自报基调。两类插件会报（见 init 的 reportBase 字段）：
+             * 隔离态（外壳读不到它的 DOM）与 followsTheme（颜色会跟着变）。
+             *
+             * 写进 inst0 而不是等完整实例：握手阶段就要能读，
+             * 那时 Object.assign 还没执行。
+             *
+             * ⚠️ 少了这个 case，插件报了也等于白报 —— reportedBase 永远是空，
+             * 适配只能退回采样/声明，跟随主题的插件照样被二次翻转，
+             * 而且不报错（看起来像"报了没生效"）。
+             */
+            if (d.base === 'light' || d.base === 'dark') inst0.reportedBase = d.base;
             break;
           case 'mounted':
             clearTimeout(timeout);
