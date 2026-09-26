@@ -68,13 +68,7 @@ export function useLayoutMemory({ s, config }: UseLayoutMemoryArgs) {
   }, []);
 
   const onLogResizeEnd = useCallback(() => {
-    /*
-     * ⚠️ 字段名是配置里的 logRowHeight，变量是本地 state 的 logHeight。
-     * 写成 `saveLayout({ logRowHeight })` 时本作用域没有这个变量，
-     * ESM 严格模式下**松手那一下就是 ReferenceError**；不拖分隔条
-     * 走不到这条路径，所以一直没暴露。
-     */
-    saveLayout({ logRowHeight: logHeight });
+    saveLayout({ logRowHeight });
     dragBase.current = { ...dragBase.current, height: logHeight };
   }, [saveLayout, logHeight]);
 

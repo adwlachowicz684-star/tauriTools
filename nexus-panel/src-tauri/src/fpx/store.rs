@@ -935,7 +935,18 @@ fn build_card(
         has_link: has_link > 0,
         has_broken: broken > 0,
         has_conflict: conflict > 0,
-        link_count: has_link,
+        /*
+         * 链接**总数**（含失效 / 冲突），对齐原版 `LinkCount = LinkRows.Count`。
+         *
+         * 此前算的是**有效**条数（`has_link`），于是徽章数字与展开后的
+         * 行数对不上：3 条链接全失效时徽章显示 "0"，点开却是 3 行 ——
+         * 而 "0" 旁边还挂着红点（有失效项），两个信号互相矛盾，
+         * 用户既不相信 0 也不知道有 3 条要修。
+         *
+         * 注意 `has_link`（"有没有有效链接"）语义不变 ——
+         * 它决定的是徽章显不显示，全失效时确实"没有一条是通的"。
+         */
+        link_count: details.len(),
         linked_group: rec.map(|r| r.group.clone()).filter(|s| !s.is_empty())
             .or_else(|| fb_name.filter(|s| !s.is_empty())),
         locked: lock.map(|l| l.deny_delete || l.deny_write).unwrap_or(false),

@@ -2094,13 +2094,13 @@
   position: fixed;
   right: 12px;
   bottom: 12px;
-  z-index: var(--z-float, 40);
+  z-index: 40;
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 5px 11px;
   border: 1px solid var(--border);
-  border-radius: var(--r-pill, 999px);
+  border-radius: 999px;
   background: var(--surface);
   box-shadow: var(--sh-in-sm, 0 1px 4px rgba(0, 0, 0, .18));
   font-size: var(--fs-11, 11px);
@@ -2122,7 +2122,7 @@
   border: 2px solid var(--border);
   border-top-color: var(--accent);
   border-radius: 50%;
-  animation: fpx-busy-spin var(--anim-spin, .7s) linear infinite;
+  animation: fpx-busy-spin .7s linear infinite;
 }
 
 @keyframes fpx-busy-spin { to { transform: rotate(360deg); } }
@@ -2131,7 +2131,7 @@
    改成静态的点 + 半透明脉冲，仍在"表达在忙"，但不制造运动。 */
 @media (prefers-reduced-motion: reduce) {
   .fpx-busy-dot { animation: none; border-top-color: var(--border); background: var(--accent); }
-  .fpx-busy[data-on="1"] .fpx-busy-dot { animation: fpx-busy-pulse var(--anim-pulse, 1.4s) ease-in-out infinite; }
+  .fpx-busy[data-on="1"] .fpx-busy-dot { animation: fpx-busy-pulse 1.4s ease-in-out infinite; }
 }
 
 @keyframes fpx-busy-pulse { 50% { opacity: .35; } }

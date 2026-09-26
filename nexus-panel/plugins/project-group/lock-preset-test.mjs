@@ -287,4 +287,33 @@ console.log('\n=== 13. #431 icacls 自救命令要写出来 ★ ===');
   t('命令不截断（word-break: break-all）', /word-break: break-all/.test(cblk));
 }
 
+console.log('\n=== 6. 保护日志必须报实际档位，不能回显三个布尔 ===');
+{
+  /*
+   * 原样回显 `防删除=${dd} 防写入=${dw}` 会说谎：
+   * 勾「仅账面固定」时两个都是 false，日志写成一片 false ——
+   * 用户以为自己什么都没设上，而配置里其实已经登记了固定。
+   *
+   * 判据与 MCP `set_lock` 的 strength/note 一致（#138），
+   * 两条路说的是同一件事，各写一套必然漂移。
+   */
+  const src = fs.readFileSync(path.join(HERE, 'hooks/useFpx.ts'), 'utf8');
+  const start = src.indexOf('const setLock = useCallback');
+  t('能定位到 setLock（切片锚点有效）', start >= 0);
+  const blk = src.slice(start, src.indexOf('}, [api, applySnapshot, ctx, pushLog, run]);', start));
+  const code = blk.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  t('日志不再回显 raw 布尔（反面证据）',
+    !/防删除=\$\{denyDelete\}/.test(code) && !/防写入=\$\{denyWrite\}/.test(code));
+  t('算出档位名', /const strength = /.test(code));
+  t('四档齐全', /'只读保护'/.test(code) && /'防删除'/.test(code)
+    && /'防写入'/.test(code) && /'仅账面固定'/.test(code));
+  t('无保护也覆盖（全关是真的解除，不能漏）', /'无保护'/.test(code));
+  t('账面固定要明说无系统拦截', /无系统级拦截/.test(code));
+  /* toast 也不能一律说"已更新"——解除与设上是两回事 */
+  t('toast 区分解除与设上', /strength === '无保护' \? '已解除保护'/.test(code));
+  t('日志里带路径', /pushLog\(`\$\{path\} 保护/.test(code));
+}
+
+
 done();

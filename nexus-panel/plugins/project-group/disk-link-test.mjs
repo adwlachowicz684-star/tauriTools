@@ -87,4 +87,31 @@ console.log('\n=== 5. 界面确有展示（改了才看得见）===');
   t('组名来自 linkedGroup', /card\.linkedGroup/.test(app));
 }
 
+console.log('\n=== 6. 徽章数字必须是链接总数，且异常要说出来 ===');
+{
+  /*
+   * 原版 `LinkCount = LinkRows.Count` —— 是**所有链接名**的条数，含失效
+   * 与冲突。此前算的是有效条数，于是徽章数字与展开后的行数对不上：
+   * 3 条全失效时徽章显示 "0"，点开却是 3 行，而 "0" 旁边还挂着红点，
+   * 两个信号互相矛盾 —— 用户既不相信 0，也不知道有 3 条要修。
+   */
+  const rs = fs.readFileSync(path.join(HERE, '../../src-tauri/src/fpx/store.rs'), 'utf8');
+  t('link_count 取明细总条数', /link_count: details\.len\(\),/.test(rs));
+  /* 反面证据：不能再是"有效条数" */
+  t('link_count 不再是 has_link（反面证据）', !/link_count: has_link,/.test(rs));
+  /*
+   * has_link 的语义**不能跟着改**：它决定徽章显不显示，
+   * 全失效时确实"没有一条是通的"，改成总数会让空徽章也挂出来。
+   */
+  t('has_link 仍是有效条数（语义不变）', /has_link: has_link > 0,/.test(rs));
+
+  const cg = fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8');
+  /* 光有颜色圆点不够：收起状态下"3 条里有 1 条坏了"和"3 条都好"长得一样 */
+  t('可展开徽章的 title 会说出冲突', /有冲突，点击展开查看/.test(cg));
+  t('可展开徽章的 title 会说出失效', /有失效，点击展开查看/.test(cg));
+  t('可展开徽章的 title 带条数', /title=\{`\$\{c\.linkCount\} 条链接/.test(cg));
+  t('不可展开徽章的 title 也带条数', /已建 \$\{c\.linkCount\} 条链接/.test(cg));
+}
+
+
 done();

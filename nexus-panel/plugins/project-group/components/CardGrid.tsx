@@ -870,7 +870,17 @@ export function CardGrid({
             {(c.linkDetails?.length ?? 0) > 0 ? (
               <button
                 className="fpx-badge link expandable"
-                title="展开 / 收起链接明细"
+                /*
+                 * 数字是**链接总数**（含失效 / 冲突，对齐原版 LinkCount）。
+                 * 只显示一个数字 + 颜色圆点的话，"3 条里有 1 条坏了"和
+                 * "3 条都好着"在收起状态下长得一样 —— 用户不展开就不知道
+                 * 有事要处理。所以圆点变色之外，title 也要把异常说出来。
+                 */
+                title={`${c.linkCount} 条链接${
+                  c.hasConflict ? '（有冲突，点击展开查看）'
+                    : c.hasBroken ? '（有失效，点击展开查看）'
+                      : '（点击展开 / 收起明细）'
+                }`}
                 onClick={(e) => { e.stopPropagation(); toggleLinks(c.path); }}
               >
                 <span className={`fpx-link-dot ${
@@ -881,7 +891,7 @@ export function CardGrid({
               </button>
             ) : (
               c.hasLink && (
-                <span className="fpx-badge link" title="已建链接">
+                <span className="fpx-badge link" title={`已建 ${c.linkCount} 条链接`}>
                   <span className={`fpx-link-dot ${
                     c.hasConflict ? 'conflict' : c.hasBroken ? 'broken' : 'valid'
                   }`} />

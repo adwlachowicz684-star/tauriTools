@@ -715,8 +715,33 @@ export function useFpx() {
     const snap = await run('设置保护', () => api.setLock(path, denyDelete, denyWrite, accountOnly));
     if (snap) {
       applySnapshot(snap);
-      pushLog(`${path} 保护：防删除=${denyDelete} 防写入=${denyWrite}`);
-      ctx.toast('保护已更新', 'ok');
+      /*
+       * 报**实际档位**，不能原样回显三个布尔。
+       *
+       * 原样回显会说谎：勾「仅账面固定」时 dd/dw 都是 false，日志就写成
+       * "防删除=false 防写入=false" —— 用户看到一片 false，只会以为自己
+       * 什么都没设上，而配置里其实已经登记了固定。
+       * 反过来，账面固定与真 ACL 在配置里是同一个数组的两档，
+       * 界面徽章显示「仅固定」、日志却说"防删除=false"，两边对不上。
+       *
+       * 判据与 MCP `set_lock` 的 strength / note 一致（#138）——
+       * 两条路说的是同一件事，各写一套必然漂移。
+       *
+       * 能走到这里就说明 ACL 真的落了：后端 `apply_lock` 失败会返回 Err，
+       * `run` 收到 null，根本进不到这个分支。所以按 (dd, dw, ao) 报是实的，
+       * 不需要再回读磁盘。
+       */
+      const strength = denyDelete && denyWrite ? '只读保护'
+        : denyDelete ? '防删除'
+          : denyWrite ? '防写入'
+            : accountOnly ? '仅账面固定' : '无保护';
+      const note = strength === '仅账面固定'
+        ? '（仅登记在案，无系统级拦截）'
+        : strength === '无保护'
+          ? '（已解除，并撤掉原有 ACL）'
+          : '（ACL 已生效，删除/改名被系统拒绝）';
+      pushLog(`${path} 保护：${strength}${note}`);
+      ctx.toast(strength === '无保护' ? '已解除保护' : `保护已设为${strength}`, 'ok');
     }
   }, [api, applySnapshot, ctx, pushLog, run]);
 
