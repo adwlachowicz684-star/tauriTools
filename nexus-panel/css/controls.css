@@ -1524,6 +1524,34 @@ input[type='range']:disabled {
 
 .cfg-row-main { flex: 1; min-width: 0; }
 
+/* 纵向排布：控件是**长文本下拉**时用
+   --------------------------------------------------------------------
+   默认 .cfg-row 是"左文右控件"，适合控件窄的行（开关、数字）。
+   但插件主题那两行的控件是下拉框，**宽度由最长选项决定** ——
+   深色那套最长的名字与浅色那套不同，两个下拉就一宽一窄、右端对不齐，
+   且 flex 默认可压缩，窄容器里下拉会被压扁到文字截断，
+   而同组里开关那行又是对齐的 —— 整组看着就是"没排好"。
+
+   所以这类行改成纵向：标题占一行、控件在下一行铺满。
+   两个下拉都 `width:100%`，自然等宽且右端齐平，长主题名也有足够空间。 */
+.cfg-row.col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-3, 6px);
+}
+
+.cfg-row.col > .cfg-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3, 6px);
+}
+
+/* desc 与 label 同一行时不再需要上边距（那是给上下堆叠用的） */
+.cfg-row.col .cfg-row-desc { margin-top: 0; }
+
+.cfg-row.col > .p-input,
+.cfg-row.col > select { width: 100%; flex: none; }
+
 .cfg-row-label { font-size: var(--fs-13, 13px); }
 
 .cfg-row-desc {
@@ -1649,6 +1677,64 @@ input[type='range']:disabled {
 
 .pg-search { flex: none; margin-bottom: var(--sp-4, 8px); }
 
+/* 三类插件的页签（应用 / 工具栏 / 服务）
+   --------------------------------------------------------------------
+   左列只有 220px，三个页签平分各约 70px，所以标签用短名（"应用"），
+   完整名与说明放在 title 与下方那行 pg-kind-hint ——
+   悬停才看得到的说明等于没有。
+
+   选中态沿用 .set-tab.active 的做法：改颜色 + 外凸阴影，
+   **不改 font-weight** —— 字重会改字形宽度，按钮宽度跟着变，整排会跳。 */
+.pg-tabs {
+  flex: none;
+  display: flex;
+  gap: var(--sp-2, 4px);
+  margin-bottom: var(--sp-3, 6px);
+}
+
+.pg-tab {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2, 4px);
+  height: 26px;
+  padding: 0 var(--sp-2, 4px);
+  border: 0;
+  border-radius: var(--r-sm, 9px);
+  background: var(--surface-sunk, var(--surface));
+  box-shadow: var(--sh-in-sm);
+  color: var(--text-soft, var(--text));
+  font-family: inherit;
+  font-size: var(--fs-12, 12px);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--t), background var(--t), box-shadow var(--t);
+}
+
+.pg-tab:hover { color: var(--text); }
+
+.pg-tab.on {
+  color: var(--accent);
+  background: var(--surface);
+  box-shadow: var(--sh-out-sm);
+}
+
+/* 角标是**命中数**：搜索时能一眼看出该去哪个页签找 */
+.pg-tab-n { font-size: var(--fs-11, 11px); color: var(--text-mute); }
+
+.pg-tab.on .pg-tab-n { color: var(--accent); }
+
+/* 当前类别的一句话说明。紧贴页签下方，跟着页签变。 */
+.pg-kind-hint {
+  flex: none;
+  font-size: var(--fs-11, 11px);
+  line-height: var(--lh-relaxed, 1.6);
+  padding: 0 var(--sp-2, 4px);
+  margin-bottom: var(--sp-3, 6px);
+}
+
 /*
  * 用 max-height（vh）而不是 flex:1 —— 后者依赖祖先有确定的高度链，
  * 同页模式下没有那条链（滚动交给宿主 #stage-scroll），会塌陷成 0 高，
@@ -1667,12 +1753,9 @@ input[type='range']:disabled {
    没有定义的类名等于裸奔，间距全靠继承，各组之间会挤成一片。 */
 .pg-group-items { display: flex; flex-direction: column; }
 
-.pg-group-head {
-  font-size: var(--fs-11, 11px);
-  color: var(--text-soft, var(--text));
-  padding: 0 var(--sp-3, 6px);
-  margin-bottom: var(--sp-2, 4px);
-}
+/* .pg-group-head（分组标题）已随"三组堆叠 → 三个页签"一起移除：
+   页签一次只显示一类，组内不再需要标题行（类别名已在页签上）。
+   留着这段就是没人用的孤儿样式，后来者会以为还有个标题要渲染。 */
 
 /* 行是**可拖拽**的（draggable 挂在这一行上，不只是手柄）。
 
