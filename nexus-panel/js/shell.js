@@ -678,7 +678,11 @@ async function initToolbar() {
    * 否则会出现"插件渲染一份 + 硬编码一份"的两套按钮。
    */
   $('#btn-add').onclick = openAddDialog;
-  $('#btn-settings').onclick = () => navigate('settings');
+  /*
+   * 「设置」不在这里接线：按钮已从 index.html 的 #sidebar-foot 移除。
+   * settings 是 registry 里的真插件，renderSidebar() 会把它渲染进
+   * #plugin-list —— 两处都写就是侧边栏里两个一模一样的「⚙ 设置」。
+   */
 
   /* 开发者模式 · 元素检查器已抽成工具栏插件（toolbar-inspector），
      按钮渲染与高亮态同步都归它自己。这里只剩快捷键（installInspector）。 */
