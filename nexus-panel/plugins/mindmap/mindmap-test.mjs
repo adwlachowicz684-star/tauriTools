@@ -688,6 +688,20 @@ group('Tab → 插入下级节点');
     ok(/root\.addEventListener\('click',\s*onClick\)/.test(code), '挂在 root 上（事件委托，重建 DOM 不用重绑）');
     ok(/root\.removeEventListener\('click',\s*onClick\)/.test(code), '返回注销函数');
     ok(/isTextTarget\(t\)/.test(code), '文本控件里不抢焦点（否则打不了字）');
+    /*
+     * 弹出菜单开着时必须跳过。
+     *
+     * popupMenu 的锚点按钮（数值输入框的 ▾ 等）是 panels.js 里用 h() 直接
+     * 建的、**不带 data-no-refocus 标记**，所以上面那条拦不住它。
+     * 实测（复刻真实冒泡序列：锚点 onclick 先开菜单、click 再冒泡到 root）：
+     *   修复前 抢焦点 1 次 —— 菜单开着，Delete/方向键却会作用到节点上；
+     *   修复后 0 次。
+     *
+     * 用状态检查（查 .mm-menu-mask）而不是给每个锚点补标记：后者要改
+     * panels.js 里所有 popupMenu 调用点，将来新加一个又会漏。
+     */
+    ok(/document\.querySelector\('\.mm-menu-mask'\)/.test(code),
+      '弹出菜单开着时不抢焦点（否则菜单开着 Delete 会删节点）');
     ok(/closest\?\.\('\[data-no-refocus\]'\)/.test(code), '放过标了 data-no-refocus 的按钮');
     ok(/refocusCanvas\(\);/.test(code), '其余一律把焦点还给画布');
     // 只断言存在是不够的：这条曾经写成「注释里提到」就算通过

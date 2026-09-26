@@ -379,6 +379,23 @@ bootIframePlugin(async (ctx) => {
       const t = e.target;
       if (isTextTarget(t)) return;
       if (t?.closest?.('[data-no-refocus]')) return;
+      /*
+       * **还有弹出菜单开着就别抢**。
+       *
+       * 上面那条只认标记，而 popupMenu 的锚点按钮（数值输入框的 ▾、
+       * 导出格式等）是 panels.js 里用 h() 直接建的、**不带标记**。
+       * 于是点 ▾ 的这一次 click 会继续冒泡到这里，菜单刚打开、
+       * 焦点就被塞回画布。
+       *
+       * 后果不只是"焦点位置不对"：菜单本身没有键盘监听（只听 pointerdown
+       * 关闭），而画布有 —— 菜单开着时Delete / 方向键 / Backspace 会**直接
+       * 作用到节点上**。用户点开圆角预设想选个值，手一滑按了 Delete，
+       * 节点就没了。这正是本节开头"浮层开着时不该动焦点"要防的事。
+       *
+       * 用**状态检查**而不是给每个锚点补标记：后者要改 panels.js 里所有
+       * popupMenu 调用点，将来新加一个又会漏。
+       */
+      if (document.querySelector('.mm-menu-mask')) return;
       refocusCanvas();
     };
     root.addEventListener('click', onClick);
