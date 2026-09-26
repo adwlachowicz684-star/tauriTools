@@ -216,8 +216,9 @@
   --sidebar-w:    86px;
   --sidebar-open: 218px;
 
-  /* 动效 */
-  --t: 200ms cubic-bezier(.4, 0, .2, 1);
+  /* 动效：--t 已移到 tokens.css（原因见那里的注释）——
+     controls.css 也用 var(--t)，而有些插件只 import tokens/controls/dialog、
+     不 import 本文件，定义在这里它们就拿不到，整条 transition 会静默失效。 */
 
   color-scheme: dark;
 }
@@ -1351,7 +1352,7 @@ html[data-theme-style='glass'] .err-box::before {
   content: '';
   position: absolute;
   inset: 0;
-  z-index: 0;
+  z-index: var(--z-flat);
   pointer-events: none;
   border-radius: inherit;
   background-image: var(--frost-noise);
@@ -1777,13 +1778,14 @@ html.theme-transition *:not(.spinner) {
   padding: var(--sp-4, 8px) var(--sp-5, 10px);
   border-radius: var(--r-sm, 9px);
   background: var(--surface-sunk);
-  box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);
+  /* 走 --sh-in-sm：与 tokens.css 那一档数值完全一致（inset 2px/5px）。
+     在这里重写一遍等于同时维护两份，改档位时容易只改一边。 */
+  box-shadow: var(--sh-in-sm);
 }
 /* 已加入的给一圈内描边：一眼能分出"已经在右上角了"和"还可以加"，
    不靠颜色区分 —— 语义色（--accent）留给状态，不要拿来当装饰。 */
 .tb-card.joined {
-  box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light),
-              inset 0 0 0 1px var(--accent);
+  box-shadow: var(--sh-in-sm), inset 0 0 0 1px var(--accent);
 }
 /* 已隐藏的整卡压暗：右上角没有它，卡片也不该是"待命"的观感。 */
 .tb-card.is-hidden { opacity: .55; }
@@ -2143,7 +2145,7 @@ html.theme-transition *:not(.spinner) {
   overflow-x: auto;
   padding: 8px;
   border: 1px solid var(--edge, #3a3a3a);
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: var(--surface-sunk, #1e1e1e);
 }
 .md-puml-box svg {
@@ -2188,7 +2190,10 @@ html.theme-transition *:not(.spinner) {
   margin-left: auto;
 }
 .md-export .md-btn:disabled {
-  opacity: 0.45;
+  /* 走 --ctl-disabled-opacity，不写死 .45：全仓 6 种写法已合并为一个
+     变量（定义在 controls.css，本文件第 98 行已 @import），
+     想调整"禁用看起来有多淡"只改那一处即可。 */
+  opacity: var(--ctl-disabled-opacity);
   cursor: not-allowed;
 }
 .markdown-body h1, .markdown-body h2,
@@ -2215,7 +2220,7 @@ html.theme-transition *:not(.spinner) {
 .markdown-body code {
   background: var(--surface);
   color: var(--text);
-  border-radius: 3px;
+  border-radius: var(--r-xs);
   padding: 1px 4px;
   font-family: var(--font-mono);
   font-size: .9em;
@@ -2344,13 +2349,16 @@ html.theme-transition *:not(.spinner) {
 /* 右键菜单：fixed + z-index 才不会被引流区裁掉 */
 .md-menu {
   position: fixed;
-  z-index: 60;
+  z-index: var(--z-menu);
   min-width: 140px;
   padding: var(--sp-1, 4px) 0;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm, 6px);
-  box-shadow: var(--shadow-md, 0 6px 20px rgba(0, 0, 0, .28));
+  border-radius: var(--r-xs);
+  /* 原写 var(--shadow-md, 0 6px 20px rgba(0,0,0,.28))：--shadow-md 在全仓
+     从未定义过，真正生效的一直是那个兜底值 —— 等于写死，却看着像走了令牌。
+     改为投射档 --sh-cast-sm（浮层压暗背景，本就刻意不跟主题色）。 */
+  box-shadow: var(--sh-cast-sm);
 }
 .md-menu-item {
   display: block;
@@ -2373,7 +2381,7 @@ html.theme-transition *:not(.spinner) {
   margin-bottom: var(--sp-3, 8px);
   padding: var(--sp-2, 8px);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--r-xs);
   background: var(--surface);
 }
 .md-recent-h {
@@ -2667,7 +2675,7 @@ html.theme-transition *:not(.spinner) {
   font-size: var(--fs-12, 12px);
   color: var(--text-dim);
   pointer-events: none;
-  transition: opacity .18s ease;
+  transition: opacity var(--dur-base) ease;
 }
 /* 隐藏态：visibility 而非 display —— 见上方说明。
    保留 pointer-events:none 是因为它只是提示，不该拦住底下的点击。 */
@@ -2685,7 +2693,11 @@ html.theme-transition *:not(.spinner) {
   flex: 0 0 auto;
   border-radius: 50%;
   background: var(--accent);
-  animation: fpx-busy-pulse 1s ease-in-out infinite;
+  /* 呼吸节奏原写死 1s。--anim-pulse 是 600ms，直接替换会明显变快；
+     取 2 倍（1.2s），与 project-group/style.css 里那条更具体的
+     `.fpx-busy[data-on="1"] .fpx-busy-dot` 保持同一节奏 —— 两份是
+     同一个元素，速度不一致会看出「亮起瞬间突然变了个频率」。 */
+  animation: fpx-busy-pulse calc(var(--anim-pulse) * 2) ease-in-out infinite;
 }
 @keyframes fpx-busy-pulse {
   0%, 100% { opacity: .35; transform: scale(.85); }
@@ -2724,7 +2736,7 @@ html.theme-transition *:not(.spinner) {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 0;
+  z-index: var(--z-flat);
 }
 
 .fp-dirname:hover { filter: brightness(var(--hover-bright, 1.06)); }

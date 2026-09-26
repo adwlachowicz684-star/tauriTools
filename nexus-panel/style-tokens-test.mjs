@@ -182,6 +182,11 @@ for (const f of all) {
     // agent-flow 用自己的 --af-* 令牌（含辉光与状态色描边），等价且自洽
     if (/var\(--af-(cast|glow|ok|accent)/.test(v)) continue;
     if (/var\(--glow|var\(--accent-glow/.test(v)) continue;
+    /* 色盘游标的光晕 --fpx-marker-halo：零偏移、只有模糊 —— 没有方向
+       就没有明暗，不是立体感。颜色必须写死：游标叠在任意颜色的色盘上，
+       换成主题色会在同色区域整个消失（与 .mm-vthumb-play 的白三角同理）。
+       它走 var()，上面的形态判据看不到真实值，只能按名字放行。 */
+    if (/^var\(--fpx-marker-halo\)$/.test(v)) continue;
     // 单方向的投影（标题栏向下、侧边栏向右）走 --sh-dark 也算跟主题
     if (/^0 \d+px \d+px var\(--sh-dark\)$/.test(v)) continue;
     if (/^\d+px 0 \d+px var\(--sh-dark\)$/.test(v)) continue;
@@ -453,7 +458,9 @@ console.log('\n=== 10a. 各插件按钮阴影统一（由主题管） ===');
     /--ctl-shadow:\s*var\(--sh-out-md\)/.test(rootBlock));
 
   /* 关键对照：agent-flow 与 mindmap 的按钮必须来自同一档位 */
-  const afBtns = ['.toolbar button', '.kind-btn', '.af-lib-btn', '.mod-btn', '.btn-like'];
+  /* .af-lib-btn 已不存在：全仓（CSS 与 TSX）都搜不到这个类名了。
+     留着只会让下面两条为「一个不存在的元素」永久报红。 */
+  const afBtns = ['.toolbar button', '.kind-btn', '.mod-btn', '.btn-like'];
   /* .mm-mini 不在内：它是**透明背景**的图标按钮（background: transparent），
      没有"面"可以凸起 —— 常态就该是平的，hover 时才显出背景。
      给透明元素加外凸阴影只会得到一个漂浮的影子，反而更怪。 */
@@ -503,7 +510,7 @@ console.log('\n=== 10a. 各插件按钮阴影统一（由主题管） ===');
      .on、.active 上变化都是同一类问题。 */
   const SIZE_PROPS = ['font-weight', 'font-size', 'padding', 'border-width',
                       'letter-spacing', 'width', 'height', 'min-width', 'min-height', 'margin'];
-  const STATE_SEL = /:(hover|active|focus)|(\.on\b)|(\.active\b)|(\.primary\b)|(\.sel\b)|(\.selected\b)|(\.current\b)|(\.checked\b)|\[aria-selected/;
+  const STATE_SEL = /:(hover|active|focus)|(\.on(?![\w-]))|(\.active\b)|(\.primary\b)|(\.sel(?![\w-]))|(\.selected\b)|(\.current\b)|(\.checked\b)|\[aria-selected/;
   const layoutShift = [];
   for (const f of ['css/controls.css', 'css/dialog.css', 'css/neumorphism.css',
                    'plugins/project-group/style.css', 'plugins/agent-flow/styles.css',
@@ -514,6 +521,10 @@ console.log('\n=== 10a. 各插件按钮阴影统一（由主题管） ===');
       const sel = m[1].trim();
       if (!STATE_SEL.test(sel)) continue;
       const body = m[2];
+      /* 侧栏 rail 的 .hover-mode 是**刻意浮出**：外层 slot 固定 40px 且
+         overflow:visible，展开的是内部那层，兄弟节点不会动 —— 这里的
+         「尺寸变化」就是功能本身（收起时只显示图标，悬停才出文字）。 */
+      if (/\.hover-mode/.test(sel)) continue;
       for (const prop of SIZE_PROPS) {
         if (!new RegExp('(?:^|;|\\s)' + prop + '\\s*:').test(body)) continue;
         /* ::before/::after 是装饰性伪元素，撑的是自己不是宿主 → 不算布局位移 */
