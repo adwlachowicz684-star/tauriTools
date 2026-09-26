@@ -40,10 +40,10 @@
 | `firstRunAsUpdate` | switch | 默认关闭：刚配好就触发一次下游通常是误报；占位：首次运行（还没有基线）时算作更新 | — | — |
 | `outputFormat` | select | 输出格式 | `bool` / `detail` | — |
 | `timeoutSec` | number | 超时（秒） | — | — |
-| `source` | 隐藏（不在面板字段里） | 数据源。由节点类型决定（bili 与 wechat 两个 type 共用一份 update data），建节点时用对应的 def.create() | `bilibili` / `wechat` | — |
+| `targets` | 隐藏（不在面板字段里） | 要盯的目标列表（唯一数据源）。每张 = { id, kind, name, feedUrl, enabled, lastSeenId }；kind 决定盯哪个平台（取值是完整拼写如 bilibili，不是节点 type bili），feedUrl 是订阅源地址 —— 除 youtube / podcast 外都没有官方源，地址要照 UPDATE_SOURCE_META[kind].route 的示例拼。新建节点用 def.create()，它会直接落一份 targets；不要建顶层的 source / feedUrl —— 老存档缺 targets 时由 targetsOf() 读时合成一张卡，那是兼容路径，不是写入路径。 | `bilibili` / `wechat` / `xiaohongshu` / `weibo` / `zhihu` / `douyin` / `kuaishou` / `toutiao` / `douban` / `juejin` / `csdn` / `jianshu` / `v2ex` / `youtube` / `twitter` / `podcast` / `github` / `custom` | — |
 
 ## 建节点的正确方式
 
 用 `def.create()`（即 `makeXxxNode`）建节点，它会填好默认值。
 手工拼 `{ kind: 'update' }` 会缺默认字段 ——
-本控件尤其要注意 `source`，它不在面板字段里。
+本控件尤其要注意 `targets`，它不在面板字段里。

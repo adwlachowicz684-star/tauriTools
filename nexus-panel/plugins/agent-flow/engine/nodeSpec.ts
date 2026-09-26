@@ -28,6 +28,13 @@
  */
 
 import { REQUIRES } from './nodeRequires';
+/*
+ * 平台清单从 types.ts 派生，不在这里手抄一份。
+ *
+ * 抄一份就是"同一件事写两遍"：加平台时漏改这里，
+ * 契约会安静地少几个平台 —— 不报错，只是 AI 拼出来的流程用不上。
+ */
+import { UPDATE_SOURCE_KEYS } from '../types';
 
 /*
  * ================= 模板变量语义 =================
@@ -299,24 +306,49 @@ export const SPECS: Record<string, NodeSpec> = {
 
   // 外部服务
   /*
-   * 更新检测其实**有** fields（bili 与 wechat 共用 updateFields），
+   * 更新检测其实**有** fields（各平台共用 updateFields），
    * 参数该从字段派生 —— 盲测时标成 manualParams 且只写了 source，
    * 结果 AI 不知道还要填 biliUid / feedUrl，跑出来
    * "Cannot read properties of undefined (reading 'trim')"。
    *
-   * source 不在 fields 里（由 bili / wechat 两个 type 在建节点时写入），
-   * 所以放 hiddenParams。
+   * ================= 合并成多目标之后 =================
+   *
+   * 现在的更新检测是**一个节点盯多个平台**：数据在 targets 数组里，
+   * 每张卡自己带 kind（盯哪个平台）与 feedUrl（订阅源地址）。
+   *
+   * 而这份契约在合并后**一直没跟上** —— 它还写着单目标时代的
+   * `source` 且只列了 bilibili / wechat 两个取值。后果是：
+   *
+   *   blockCatalog() 是给 AI 拼装用的，它告诉消费方"这个节点只有两个平台"，
+   *   于是拼出来的流程永远用不上小红书 / 微博 / 知乎等其余 15 个平台；
+   *   而且 contract 里没提 feedUrl，AI 也不会去填。
+   *
+   * 这类失效**不报错**：老字段靠 targetsOf() 读时合成，流程照样能跑，
+   * 只是能力少了一大截，而界面与日志看着都正常。
+   *
+   * 平台清单刻意从 UPDATE_SOURCE_KEYS 派生，不在这里手抄 ——
+   * 抄一份就必然漂移（这行的上一版就是漂移的活证据）。
    */
   update: S('bool', 'none', '是否有更新（true / false）—— 给条件节点判断', {
     hiddenParams: [
       /*
-       * 取值是 'bilibili'（完整拼写），不是 'bili' ——
-       * 'bili' 是节点的 **type**，'bilibili' 是 data.source 的取值。
+       * kind 的取值是 'bilibili'（完整拼写），不是 'bili' ——
+       * 'bili' 是节点的 **type**，'bilibili' 是 kind 的取值。
        * 盲测时写成 'bili' 导致走不进 bilibili 分支，
        * 掉进 wechat 分支去 trim 空的 feedUrl，报
        * "Cannot read properties of undefined (reading 'trim')"。
        */
-      { key: 'source', desc: '数据源。由节点类型决定（bili 与 wechat 两个 type 共用一份 update data），建节点时用对应的 def.create()', options: ['bilibili', 'wechat'] },
+      {
+        key: 'targets',
+        desc: '要盯的目标列表（唯一数据源）。每张 = { id, kind, name, feedUrl, enabled, lastSeenId }；'
+          + 'kind 决定盯哪个平台（取值是完整拼写如 bilibili，不是节点 type bili），'
+          + 'feedUrl 是订阅源地址 —— 除 youtube / podcast 外都没有官方源，'
+          + '地址要照 UPDATE_SOURCE_META[kind].route 的示例拼。'
+          + '新建节点用 def.create()，它会直接落一份 targets；不要建顶层的 source / feedUrl —— '
+          + '老存档缺 targets 时由 targetsOf() 读时合成一张卡，那是兼容路径，不是写入路径。',
+        options: UPDATE_SOURCE_KEYS,
+        required: true,
+      },
     ],
   }),
   'github-update': S('json', 'none', '仓库最新信息（JSON）'),
