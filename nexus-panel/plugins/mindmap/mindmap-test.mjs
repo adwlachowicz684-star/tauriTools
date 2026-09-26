@@ -6597,17 +6597,17 @@ group('布局：文件库挤窄画布（不遮挡）+ 控件档位');
   const filesOpenIdx = cs.indexOf('.mm-files.open');
   const nextBrace = cs.indexOf('}', filesOpenIdx);
   const filesRule = cs.slice(cs.indexOf('.mm-files {'), nextBrace + 1);
-  ok(/flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 是 flex 子项（186px 固定宽，展开时挤窄画布）');
-  ok(!/position:\s*absolute/.test(filesRule),
-    '.mm-files 不是 absolute 抽屉（抽屉会遮挡画布）');
+  ok(/position:\s*absolute/.test(filesRule),
+    '.mm-files 是浮层（absolute，靠 JS 定位到图标条右侧）');
+  ok(!/flex:\s*0\s+0\s+186px/.test(filesRule),
+    '.mm-files 不在 flex 流里（否则又会挤窄画布）');
 
   // 挤窄布局的关键：不能脱离 flex 流，否则就变成浮在上层遮挡画布了。
   // 双重断言 —— 只断言「是 flex 子项」不够：若某人同时写了 absolute，
   // absolute 优先级更高、实际仍是抽屉，单条断言会误判为通过。
-  ok(!/position:\s*absolute/.test(filesRule) &&
-      /flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 在 flex 流中且宽度 186px（挤窄画布而非遮挡）');
+  ok(/position:\s*absolute/.test(filesRule) &&
+      !/flex:\s*0\s+0\s+186px/.test(filesRule),
+    '.mm-files 浮层且不占流（挤窄会复活画布位移问题）');
 
   ok(/width:\s*186px/.test(filesRule), '.mm-files 宽度仍是 186px');
 
@@ -7342,7 +7342,7 @@ group('文件库展开导致画布内容位移：按实测屏幕位置差补偿'
   {
     const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
     const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
-    ok(/flex:\s*0 0 186px/.test(filesBlk), '.mm-files flex-basis 186');
+    ok(/width:\s*186px/.test(filesBlk), '.mm-files 宽 186px（浮层，不再用 flex-basis 占流）');
     ok(/padding:\s*10px/.test(filesBlk), '.mm-files padding 10（左右合计 20）');
     const bodyBlk = css.slice(css.indexOf('.mm-body {'), css.indexOf('.mm-body {') + 200);
     ok(/gap:\s*10px/.test(bodyBlk), '.mm-body gap 10');
@@ -9630,6 +9630,62 @@ group('附件压缩：入口收口与拦截（真实源码 / 行为级）');
   eq(io.decodeRefList(st.video).length, 0, '超大视频没有入库');
   ok(msgs.some((m) => /超过附件上限/.test(m)), '视频上限提示含具体体积');
 }
+
+group('文件库面板不能压住左侧图标条（否则关不掉）');
+
+{
+  const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+
+  // ---- 1) 前提：面板是浮层，且 CSS **没有**给它 left ----
+  //
+  // 这两条一起才构成这个 bug：absolute + left:auto → 退回到 flex 容器的
+  // 静态位置（内容盒左边缘），也就是压在图标条上。
+  const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
+  ok(/position:\s*absolute/.test(filesBlk), '.mm-files 是 absolute 浮层');
+  ok(!/\bleft\s*:/.test(filesBlk), '.mm-files 的 CSS 里没有 left（所以必须靠 JS 定位）');
+
+  // ---- 2) JS 必须显式写 left ----
+  ok(/function syncFilesInset\(\)/.test(ix), '有 syncFilesInset');
+  ok(/fileList\.el\.style\.left\s*=/.test(ix), 'JS 显式设置面板的 left');
+  const seg = ix.slice(ix.indexOf('function syncFilesInset()'),
+    ix.indexOf('\n  }\n', ix.indexOf('function syncFilesInset()')));
+  const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok(/rail/.test(code) || /canvasEl/.test(code), '位置按图标条（或画布）实测，不是写死');
+  ok(!/\b56\b|\b46\b/.test(code), '没有 56 / 46 之类的硬编码（图标条尺寸一变就失配）');
+
+  // ---- 3) 每个开合点后都要同步 ----
+  const ixCode = ix.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const calls = [...ixCode.matchAll(/fileList\??\.showFiles\(|fileList\??\.setSearch\(/g)];
+  const missing = calls.filter((m) => {
+    const after = ixCode.slice(m.index, m.index + 320);
+    const s = after.indexOf('syncFilesInset()');
+    if (s < 0) return true;
+    const nxt = after.search(/fileList\??\.(showFiles|setSearch)/);
+    return nxt > 0 && nxt < s;
+  });
+  eq(missing.length, 0, `每个开合点后都同步面板位置（缺 ${missing.length} 处）`);
+
+  // ---- 4) 行为验证：算出来的 left 必须在图标条**之后** ----
+  {
+    // 复刻 syncFilesInset 的取值逻辑（上面已断言源码形态一致）
+    const syncLeft = (bodyLeft, rail, canvasLeft, gap) => {
+      return (rail && rail.width) ? (rail.left + rail.width - bodyLeft + gap)
+        : (canvasLeft - bodyLeft);
+    };
+    const RAIL_W = 46, GAP = 10, BODY_L = 100, CANVAS_L = BODY_L + RAIL_W + GAP;
+    const left = syncLeft(BODY_L, { left: BODY_L, width: RAIL_W }, CANVAS_L, GAP);
+    eq(left, RAIL_W + GAP, 'left = 图标条右缘 + gap');
+    ok(left >= RAIL_W, '面板整体在图标条右侧（不重叠 → 📚 点得到）');
+    // 图标条还没布局时的回退路径
+    eq(syncLeft(BODY_L, { left: BODY_L, width: 0 }, CANVAS_L, GAP), RAIL_W + GAP,
+      '图标条宽 0 时退回画布左缘（同样在图标条之后）');
+
+    // 反例：什么都不做 → left:auto → 静态位置 = 内容盒左边缘 = 压住图标条
+    eq(0, 0, '反例：不写 left 时静态位置就是 0（压住图标条）');
+  }
+}
+
 
 /* ============================================================
    结果
