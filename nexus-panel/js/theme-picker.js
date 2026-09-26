@@ -13,6 +13,7 @@
 import {
   listThemes, applyTheme, getThemeId, onChange, deleteCustomTheme, exportVarsFor,
   resolveThemeMeta,
+  sortThemesBaseFirst,
 } from './theme-manager.js';
 import { styleLabel, STYLE_LABELS } from './themes.js';
 
@@ -75,14 +76,14 @@ export function openThemePicker({ anchor, onPick } = {}) {
         label,
         /* 按**实际**风格分组：用户把某套主题改成玻璃后，它现在就是玻璃，
            该归到玻璃组。用原始 t.style 的话会留在原组，而缩略图已是玻璃观感。 */
-        all.filter((t) => (resolveThemeMeta(t).style || 'neumorph') === k),
+        sortThemesBaseFirst(all.filter((t) => (resolveThemeMeta(t).style || 'neumorph') === k)),
       ]),
       /* 没写 style 的（老自定义主题）单列一组 ——
          混进任何一组都是错的：它们的观感不属于那个风格。 */
-      ['其它', all.filter((t) => {
+      ['其它', sortThemesBaseFirst(all.filter((t) => {
         const st = resolveThemeMeta(t).style;
         return !st || !STYLE_LABELS[st];
-      })],
+      }))],
     ].filter(([, items]) => items.length);
 
     for (const [label, items] of groups) {

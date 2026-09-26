@@ -376,8 +376,13 @@ function renderShellSection(box, manifest) {
       // 与上面「沙箱」开关不同 —— 那个确实要重载。
       toast('已保存', 'ok');
     };
-    return h('div.cfg-row', {},
-      h('div.cfg-row-main', {},
+    /*
+     * 纵向排布（.cfg-row.col）—— 与 React 版 SandboxSection 同构。
+     * 下拉宽度由最长选项决定，深色/浅色两套最长的名字不同，横排时
+     * 两个下拉一宽一窄、右端对不齐。纵向都铺满就等宽了。
+     */
+    return h('div.cfg-row.col', {},
+      h('div.cfg-row-head', {},
         h('div.cfg-row-label', {}, label),
         h('div.p-muted.cfg-row-desc', {},
           base === 'dark' ? '整体主题为深色时，本插件用这套' : '整体主题为浅色时，本插件用这套'),

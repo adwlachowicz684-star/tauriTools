@@ -403,6 +403,24 @@ export function resolveThemeMeta(theme) {
   return applyMetaOverride(theme);
 }
 
+/**
+ * 主题排序：暗色在前，浅色在后（同基调内保持原相对顺序）。
+ *
+ * ⓘ 只排**分组内部**的顺序，不动分组本身：分组按风格（新拟态 / 扁平 / 玻璃），
+ *   那是用户明确要的主分类，深浅只是同一套设计的两个取值。
+ *   若改成"全局深色在前"，同一种风格会被拆到列表首尾两处，找起来反而更乱。
+ *
+ * ⚠️ 必须按**实际**基调排，不能用 t.base 原始值：
+ *   用户可以把一套深色主题改成浅色（基调本身也是参数），
+ *   用原始值排它会留在深色区，而缩略图已经是浅色 —— 位置和观感对不上。
+ *
+ * sort 稳定（ES2019 起规范保证），所以同基调内不会被打乱。
+ */
+export function sortThemesBaseFirst(list) {
+  const rank = (t) => (resolveThemeMeta(t).base === 'light' ? 1 : 0);
+  return [...list].sort((a, b) => rank(a) - rank(b));
+}
+
 /** 把用户逐项覆盖的变量叠加进变量表 */
 function applyVarOverrides(vars, theme) {
   let map = {};
