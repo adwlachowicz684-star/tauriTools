@@ -11,8 +11,17 @@ import {
   /* 卡片缩略图要按实际生效值渲染（含用户改动），不能只读 t.vars */
   exportVarsFor,
   getAccent, saveAsCustom, deleteCustomTheme, ACCENT_SWATCHES,
+  /* 逐项变量覆盖：主题参数面板要用（无构建版此前完全没有这块 UI） */
+  setVarOverride, resetVarOverride, resetAllVarOverrides, getVarOverrides,
+  getResolvedStyle,
 } from '../../js/theme-manager.js';
-import { styleLabel, STYLE_LABELS as THEME_STYLE_LABELS } from '../../js/themes.js';
+import {
+  styleLabel, STYLE_LABELS as THEME_STYLE_LABELS,
+  /* 参数总表与分组 —— 面板按它渲染，不硬编码 28 项 */
+  PARAM_GROUPS, paramsForStyle,
+} from '../../js/themes.js';
+/* 颜色拆分/合并与 React 版共用同一份（js/theme-color.js） */
+import { splitColor, joinColor } from '../../js/theme-color.js';
 import { prompt as askPrompt } from '../../js/dialog.js';
 import { SHELL_SHORTCUT_SPECS, shellComboSet, normCombo } from '../../js/shell-shortcuts.js';
 import {
@@ -245,6 +254,9 @@ export default definePlugin({
             ctx.toast(`已切换到「${t.name}」`, 'ok');
             renderThemes();
             renderAccents();
+            /* 参数面板必须跟着换：它渲染的是**当前**主题的值，
+               不重渲染的话切了主题还显示上一套的参数。 */
+            renderParams();
           },
         },
           h('div.theme-prev', {
@@ -382,6 +394,166 @@ export default definePlugin({
         }, '＋ 保存为自定义主题'),
       ),
     );
+    /* ============ 2.5 主题参数（规格驱动） ============ */
+    /*
+     * 为什么无构建版必须有这一段：
+     *   「主题的所有参数都外放给用户」是硬要求，而它此前**只在 React 版**
+     *   （ThemeParamsPanel.tsx）实现 —— 无构建模式下打开设置页，
+     *   主题页只有缩略图 / 强调色 / 保存，28 个参数一项都改不了。
+     *   两套实现漏一半，正是这个项目反复踩的坑。
+     *
+     * 为什么是"遍历规格"而不是照抄 React 版那个 442 行组件：
+     *   THEME_PARAM_SPEC 已经是数据（类型 / 区间 / 单位 / 说明 / 适用风格），
+     *   照抄等于再养一套必然漂移的实现。
+     *   这里只写渲染器，控件形式由 type 决定 —— 将来加变量改 themes.js 一处，
+     *   两套 UI 同时生效。
+     */
+    const paramsBox = h('div.tp-params', {});
+    const renderParams = () => {
+      paramsBox.innerHTML = '';
+      const tid = getThemeId();
+      const t = getCurrent();
+      const style = getResolvedStyle();
+      const eff = exportVarsFor(t) || {};
+      const list = paramsForStyle(style);
+      const ov = getVarOverrides(tid) || {};
+
+      const field = (p) => {
+        const cur = eff[p.key] != null ? eff[p.key] : ((t.vars && t.vars[p.key]) || '');
+        const changed = Object.prototype.hasOwnProperty.call(ov, p.key);
+        const resetAttrs = {
+          type: 'button',
+          title: changed ? '清除我改的值' : '该项未改动',
+          onclick: () => { resetVarOverride(p.key, tid); renderParams(); renderThemes(); },
+        };
+        /* disabled 不能传 undefined —— h() 会把它写成字符串 "undefined"，
+           浏览器眼里那就是"存在即禁用"。未改动时才真的加这个属性。 */
+        if (!changed) resetAttrs.disabled = 'disabled';
+        const reset = h('button.p-btn.sm', resetAttrs, '还原');
+
+        let ctl;
+        if (p.type === 'color') {
+          const c = splitColor(cur);
+          if (!c) {
+            /*
+             * 解析不了的值（transparent / none / 渐变）不硬塞进取色器 ——
+             * 那会显示成黑色，用户点一下就把"透明"改成了黑，与意图相反。
+             * 只给文本框，让用户自己决定写什么。
+             */
+            ctl = h('div.tp-color', {},
+              h('span.tp-chip.tp-chip-none', { title: '当前值：' + (cur || '（空）') }),
+              h('input.p-input.sm.tp-hex', {
+                value: cur, spellcheck: 'false',
+                onchange: (e) => { setVarOverride(p.key, e.target.value, tid); renderParams(); },
+              }),
+            );
+          } else {
+            const num = h('span.tp-alpha-num', {}, c.alpha.toFixed(2));
+            ctl = h('div.tp-color', {},
+              h('span.tp-chip', { style: { background: cur }, title: cur }),
+              h('input.tp-picker', {
+                type: 'color', value: c.hex,
+                /* 拖动过程中只应用、不重渲染 —— 重渲染会销毁这个 input，
+                   取色面板当场被关掉。 */
+                oninput: (e) => setVarOverride(p.key, joinColor(e.target.value, c.alpha), tid),
+              }),
+              h('input.p-input.sm.tp-hex', {
+                value: cur, spellcheck: 'false',
+                onchange: (e) => { setVarOverride(p.key, e.target.value, tid); renderParams(); },
+              }),
+              h('input.tp-alpha', {
+                type: 'range', min: '0', max: '1', step: '0.01', value: String(c.alpha),
+                oninput: (e) => {
+                  const a = Number(e.target.value);
+                  num.textContent = a.toFixed(2);
+                  setVarOverride(p.key, joinColor(c.hex, a), tid);
+                },
+              }),
+              num,
+            );
+          }
+        } else if (p.type === 'enum') {
+          ctl = h('select.p-input.sm', {
+            onchange: (e) => { setVarOverride(p.key, e.target.value, tid); renderParams(); },
+          }, ...(p.options || []).map((o) => h('option', { value: o, selected: cur === o }, o)));
+        } else if (p.type === 'text') {
+          ctl = h('input.p-input.sm', {
+            value: cur, spellcheck: 'false',
+            onchange: (e) => { setVarOverride(p.key, e.target.value, tid); renderParams(); },
+          });
+        } else {
+          const val = parseFloat(cur) || 0;
+          const out = h('span.tp-num-val', {}, String(cur));
+          ctl = h('div.tp-num', {},
+            h('input', {
+              type: 'range', min: String(p.min), max: String(p.max),
+              step: String(p.step), value: String(val),
+              oninput: (e) => {
+                const v = e.target.value + (p.unit || '');
+                out.textContent = v;
+                setVarOverride(p.key, v, tid);
+              },
+            }),
+            out,
+          );
+        }
+
+        return h('div.tp-row', { class: changed ? 'tp-changed' : '' },
+          h('div.tp-meta', {},
+            h('div.tp-meta-row', {},
+              h('span.tp-dot', {}),
+              h('span.tp-meta-k', {}, p.label),
+              h('code.p-mono', {}, p.key),
+            ),
+            p.desc ? h('div.p-muted.tp-hint', {}, p.desc) : null,
+          ),
+          h('div.tp-row-ctl', {}, ctl, reset),
+        );
+      };
+
+      for (const g of PARAM_GROUPS) {
+        const items = list.filter((p) => p.group === g.key);
+        if (!items.length) continue;
+        const body = h('div.set-group-body', {},
+          h('div.p-muted.tp-group-desc', {}, g.desc),
+          ...items.map(field));
+        const head = h('button.set-group-head', { type: 'button', 'aria-expanded': 'false' },
+          h('span.set-group-caret', { 'aria-hidden': 'true' }, '▸'),
+          h('span.set-group-title', {}, g.label),
+          h('span.set-group-badge', {}, String(items.length)));
+        const sec = h('section.set-group', {}, head, body);
+        /* 收起时必须真的移出可访问树：只加 display:none 的话
+           Ctrl+F 还能搜到里面的字，用户"找到了"却看不见。 */
+        body.hidden = true;
+        head.onclick = () => {
+          const open = sec.classList.toggle('open');
+          head.setAttribute('aria-expanded', String(open));
+          body.hidden = !open;
+        };
+        paramsBox.appendChild(sec);
+      }
+    };
+    renderParams();
+
+    themeSection.appendChild(
+      h('div.p-card', { style: { marginTop: '16px' } },
+        h('h3', {}, '主题参数'),
+        h('div.p-muted', {},
+          '逐项调整当前主题。改完可用上面的「保存为自定义主题」固化成一套新主题。'),
+        h('div.p-row', { style: { marginTop: '10px' } },
+          h('button.p-btn', {
+            onclick: () => {
+              resetAllVarOverrides(getThemeId());
+              ctx.toast('已全部还原为当前主题自带值', 'ok');
+              renderParams();
+              renderThemes();
+            },
+          }, '全部还原'),
+        ),
+        paramsBox,
+      ),
+    );
+
     pages.theme.appendChild(themeSection);
 
     /* ============ 3. 插件管理 ============ */
