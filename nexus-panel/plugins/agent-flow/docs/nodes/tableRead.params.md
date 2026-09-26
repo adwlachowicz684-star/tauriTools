@@ -9,11 +9,15 @@
 - **node.type**：`tableRead`
 - **源文件**：`nodes/defs/tableRead.ts`
 - **产出**：table（table）　**接受**：none
-- **需要的外部能力**：无（纯本地，浏览器模式也能跑）
+- **需要的外部能力**：`tableReader`
 
 ## 它做什么
 
 表格内容（CSV 文本）
+
+## 能力签名
+
+- `tableReader`: `(path) => Promise<string>（表格文件的文本）`
 
 ## 注意
 

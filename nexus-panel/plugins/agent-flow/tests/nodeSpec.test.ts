@@ -425,3 +425,49 @@ test('侧栏短说明与展开块顶行都走 pickBrief', () => {
     assert.match(src, /pickBrief\(/, `${rel} 要调用 pickBrief 取一句话说明`);
   }
 });
+
+/**
+ * 执行器用到的能力必须在 REQUIRES 里登记。
+ *
+ * 漏登记的失效方式是**安静**的：界面契约里的 requires 从 REQUIRES 派生，
+ * 没登记就显示绿灯；跑起来要么报 "xxx is not a function"（CLI 那种连
+ * 自写校验都没有的），要么靠执行器里另一份措辞兜着。两种都查不出来。
+ */
+test('执行器用到的外部能力都登记在 REQUIRES 里', () => {
+  if (!AF_SRC) return;
+  const rtSrc = fs.readFileSync(path.join(AF_SRC, 'engine/runTypes.ts'), 'utf-8');
+  const m = /export type RunOptions = \{([\s\S]*?)\n\};/.exec(rtSrc);
+  assert.ok(m, '读不到 RunOptions');
+  /* 可选的函数型字段才是"能力"；params / input 之类是数据，不是能力 */
+  const caps = [...m[1].matchAll(/^\s{2}([A-Za-z_]\w*)\??:\s*\(/gm)].map((x) => x[1]);
+  const skip = new Set(['askHuman', 'onEvent', 'input']); // 有优雅降级 / 非能力
+  const registered = new Set(
+    Object.values(REQUIRES).flatMap((l) => (l ?? []).map((r) => r.key)),
+  );
+  const dir = path.join(AF_SRC, 'engine/runners');
+  for (const f of fs.readdirSync(dir)) {
+    if (!f.endsWith('.ts')) continue;
+    const src = fs.readFileSync(path.join(dir, f), 'utf-8');
+    for (const c of caps) {
+      if (skip.has(c)) continue;
+      if (!new RegExp(`opts\\.${c}\\b`).test(src)) continue;
+      assert.ok(registered.has(c), `${f} 用到了能力 ${c}，但 REQUIRES 里没登记`);
+    }
+  }
+  /* 反向钉住这次补的两条 —— 上面那条是通用扫描，这条保证例子本身在 */
+  assert.ok(REQUIRES.task?.some((r) => r.key === 'executor'), 'CLI 要登记命令行执行能力');
+  assert.ok(
+    REQUIRES.tableRead?.some((r) => r.key === 'tableReader'),
+    '读表格要登记表格读取能力',
+  );
+});
+
+test('读表格不再自己判能力（交给 runnerKit 统一校验）', () => {
+  if (!AF_SRC) return;
+  const src = fs.readFileSync(path.join(AF_SRC, 'engine/runners/table.ts'), 'utf-8');
+  assert.doesNotMatch(
+    src,
+    /if \(!ctx\.opts\.tableReader\)/,
+    '执行器里不该再留一份自写的能力校验',
+  );
+});

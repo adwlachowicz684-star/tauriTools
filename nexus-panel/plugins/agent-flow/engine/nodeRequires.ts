@@ -85,6 +85,22 @@ export const REQUIRES: Table = {
       ),
     },
   ],
+  /*
+   * CLI（task）节点：唯一的外部能力是命令行执行器。
+   *
+   * 没登记时它没有**任何**前置校验 —— 执行器里直接 `opts.executor(...)`，
+   * 缺能力时抛的是 "opts.executor is not a function"，
+   * 与"当前环境跑不了命令行"差了十万八千里，AI 也无从提前判断。
+   */
+  task: [{ key: 'executor', label: '命令行执行' }],
+  /*
+   * 读表格：只有「读表格」这一步要读盘，推导/筛选/汇总接的是上游的表。
+   *
+   * 没登记时它靠执行器里自写的一句校验兜着 —— 措辞与别处不一致，
+   * 且界面（契约里的 requires 是从这张表派生的）根本不知道它需要能力，
+   * 于是画布上显示绿灯、跑起来才报错。
+   */
+  tableRead: [{ key: 'tableReader', label: '表格读取' }],
   'github-update': [{ key: 'githubFetch', label: 'GitHub 拉取', failOutput: 'false' }],
   'github-push': [{ key: 'githubPush', label: 'GitHub 推送' }],
   // 提取节点不在此列：它是纯本地字符串处理，不需要任何执行器
