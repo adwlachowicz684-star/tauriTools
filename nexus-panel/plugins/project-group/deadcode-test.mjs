@@ -153,6 +153,18 @@ console.log('\n=== 6. CSS 类不得是死代码（跨插件）★ ===');
    * 只在插件内扫描 = 误删正在用的东西 —— 与 PRESET_COLORS 是同一个坑。
    *
    * 整词匹配：`fpx-color` 不能命中 `fpx-color-dot`（后者仍在用）。
+   *
+   * 2026-09-27 补：引用来源必须**包含其他插件的 CSS**。
+   * 只扫 .tsx 会把"别的 CSS 用选择器引用它"这一类漏掉 ——
+   * 本轮 `fpx-mini` 就是这么被判成死类的：它在 project-group 内无引用，
+   * 但 color-picker/style.css 里有 `.fpx-picker-label .fpx-mini`。
+   * 那是真实的样式引用意图，判死会导致误删。
+   *
+   * 已知局限（诚实记下，不假装判据完美）：这样算"在用"，
+   * 只看得到"有没有人引用"，看不出"有没有元素真的挂上这个类"。
+   * 当前 `fpx-mini` 整条链上其实都没有元素在挂 ——
+   * 它和 color-picker 那条规则**目前都是死的**，只是死在更外层。
+   * 真正的清理要连 color-picker 一起动，属于上游地盘，已单独报告。
    */
   const css = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8');
   const classes = new Set();
@@ -169,9 +181,30 @@ console.log('\n=== 6. CSS 类不得是死代码（跨插件）★ ===');
    * 测试文件里的类名只出现在断言字符串里，不代表真实使用；
    * 真实引用只在 .tsx 的 className 中。
    */
+  /*
+   * 引用来源 = 所有插件的 .ts/.tsx + **其他插件的 CSS**。
+   * 必须排除本插件自己的 style.css —— 否则每个类都能匹配到自己的定义，
+   * 断言恒真 = 空跑。
+   */
+  const ownCss = path.join(HERE, 'style.css');
+  const otherCss = [];
+  {
+    const walk = (dir) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (e.name === 'node_modules' || e.name === '.git') continue;
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (/\.css$/.test(e.name) && path.resolve(p) !== path.resolve(ownCss)) {
+          otherCss.push(fs.readFileSync(p, 'utf8'));
+        }
+      }
+    };
+    walk(path.join(ROOT, 'plugins'));
+  }
   const src = [...texts.entries()]
     .filter(([f]) => /\.tsx?$/.test(f))
     .map(([, v]) => v)
+    .concat(otherCss)
     .join('\n');
   const dead = [];
   for (const c of classes) {

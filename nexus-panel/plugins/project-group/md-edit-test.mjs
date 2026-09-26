@@ -193,17 +193,27 @@ console.log('\n=== 8. 服务契约不一致（记录，不在本轮修改）==='
     const svc = fs.readFileSync(mdSvc, 'utf8');
     t('sdk 注释说取消 resolve(null)',
       /resolve\(null\) —— \*\*用户取消\*\*/.test(jsTxt));
-    t('但 md-editor 实现是 reject(已取消)',
-      /reject\(new Error\('已取消'\)\)/.test(svc));
-    t('注释：.d.ts 写的是 reject',
-      /取消则 reject/.test(dtsTxt));
     /*
-     * 这个不一致是**故意不改**的：调用方两边都判，服务改任一种都不会挂。
-     * 记录在此，等宿主侧统一时再删掉其中一条分支。
+     * 2026-09-27：上游已把两边统一 —— md-editor 的取消由
+     * `reject(new Error('已取消'))` 改成 `resolve(null)`，与 sdk / .d.ts
+     * 的契约一致。此前这里钉的是"实现是 reject（与契约不一致）"，
+     * 那个不一致**已经不存在了**，断言随之过期。
      *
-     * 原先这里写的是 `t(..., true)` —— 占位断言，什么都不验。
-     * 真正要钉的是"调用方确实两边都判"：只判一边的话，
-     * 服务改成另一种语义时调用方会静默走错分支（取消被当成失败，或反之）。
+     * 现在钉的是"契约一致"本身：这一点比钉某一种实现更重要 ——
+     * 将来谁再把取消改回 reject，这里会立刻报出来，
+     * 而调用方（下面那两条）依然两边都认，不会挂。
+     */
+    t('md-editor 取消走 resolve(null)（与契约一致）',
+      /resolve\(null\)/.test(svc));
+    t('不再有 reject(已取消) 这种与契约相反的实现',
+      !/reject\(new Error\('已取消'\)\)/.test(svc));
+    t('契约：取消 resolve(null)、真出错才 reject',
+      /resolve\(null\) —— \*\*用户取消\*\*/.test(dtsTxt)
+      && /reject\(错误\)/.test(dtsTxt));
+    /*
+     * 调用方两边都判仍是**必要的**，不因为契约统一了就删：
+     * 第三方服务不必照此约定，只认一边的话服务换语义就会静默走错分支
+     * （取消被当成失败，或反之）。
      */
     /*
      * 调用方在 App.tsx（本插件没有 index.tsx）。

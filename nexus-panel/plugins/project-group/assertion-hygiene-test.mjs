@@ -58,7 +58,21 @@ function walk(root, exts) {
   return res;
 }
 
-const SRC = [...walk(PLUG, ['.ts', '.tsx', '.css']), ...walk(RS, ['.rs'])];
+/*
+ * 必须**跨插件 + 含 .js**，否则会误报。
+ *
+ * 本轮实测：md-edit-test 里那条 `resolve(null)` 钉的是
+ * `plugins/md-editor/index.js`（服务的真实实现），而本文件原先只收
+ * 本插件的 .ts/.tsx/.css —— strippedAll 里根本没有那份源码，
+ * 于是 `re.test(fullAll) && !re.test(strippedAll)` 成立 → 误报成"只验注释"。
+ *
+ * 断言本来就会跨插件取源码（sdk、md-editor、host.js 都常被断言读），
+ * 判据范围不跟着跨，就等于把这些断言一律判死。
+ */
+const SRC = [
+  ...walk(path.join(PLUG, '..'), ['.ts', '.tsx', '.css', '.js']),
+  ...walk(RS, ['.rs']),
+];
 let fullAll = ''; let strippedAll = '';
 for (const p of SRC) {
   try {

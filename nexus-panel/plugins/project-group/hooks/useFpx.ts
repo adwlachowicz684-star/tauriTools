@@ -314,6 +314,7 @@ export function useFpx() {
       ctx.toast(`该文件夹已在页签「${list[owner].name}」中`, 'err');
       return;
     }
+    let added = false;
     const snap = await updateConfig((d) => {
       const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
       /*
@@ -331,6 +332,7 @@ export function useFpx() {
       if (tabs.length === 0) return;
       const at = clampIndex(idx, tabs.length - 1);
       tabs[at].items.push(path);
+      added = true;
     });
     /*
      * **保存失败就到此为止，绝不再报"已添加"**（`updateConfig` 失败返回 null）。
@@ -344,6 +346,12 @@ export function useFpx() {
      * 之后所有"对选中项操作"（改名/改色/删除）都会作用到一个空目标上。
      */
     if (!snap) return;
+    /*
+     * 同上：`tabs.length === 0` 时一张卡都没加进去，snap 却照样非 null。
+     * 此时若继续，日志写「已添加」、并把这张**并不存在**的卡选中 ——
+     * 正是下面这段注释要防的那种后果。
+     */
+    if (!added) return;
     pushLog(`已添加${kind === 'project' ? '项目' : '项目组'}：${path}`);
     // 拖入后是否自动选中由设置项决定（原版 autoSelect 的语义）
     if (boot?.config.autoSelect ?? true) {
@@ -592,14 +600,26 @@ export function useFpx() {
    */
   const moveTab = useCallback(async (kind: CardKind, from: number, to: number) => {
     if (from === to) return;
+    let did = false;
     const snap = await updateConfig((d) => {
       const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
       if (from < 0 || from >= tabs.length) return;
       if (to < 0 || to >= tabs.length) return;
-      const [moved] = tabs.splice(from, 1);
-      tabs.splice(to, 0, moved);
+      const [m] = tabs.splice(from, 1);
+      tabs.splice(to, 0, m);
+      did = true;
     });
     if (!snap) return;
+    /*
+     * **没真移动就不能平移选中项。**
+     *
+     * `updateConfig` 只表示"保存成功"，**不表示 mutate 真的改了东西** ——
+     * 索引越界时上面两个 return 让页签顺序原样不动，snap 照样非 null。
+     * 若就此平移高亮，用户看到的是「页签顺序没变、内容却变成别处的」：
+     * 卡片区显示另一个页签的内容，而页签条上高亮也跳了，全程无报错。
+     * 他只会以为刚才那次拖动生效了，于是照着错的内容继续操作。
+     */
+    if (!did) return;
     // 索引平移交给纯函数：见 utils/tabs.ts 的说明（这段算术写错很隐蔽）
     setActiveTab((s) => ({ ...s, [kind]: activeAfterMove(s[kind], from, to) }));
   }, [updateConfig]);

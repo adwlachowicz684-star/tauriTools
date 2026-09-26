@@ -154,6 +154,48 @@ t('canMove 与 activeAfterMove 的边界一致（末项下移无意义）',
   canMove(2, 3, 1) === false && canMove(0, 3, -1) === false);
 
 
+console.log('\n=== 9. 「改了 0 条也报成功」（updateConfig 的陷阱）===');
+{
+  /*
+   * `updateConfig` 的返回值只表示**保存成功**，不表示 mutate 真的改了东西。
+   * mutate 里因越界 / 空列表而 `return` 时，snap 照样非 null。
+   *
+   * 于是调用方若只看 snap，就会出现"界面和日志说做成了、实际什么都没改"：
+   *   · moveTab 越界 → 页签顺序没变，却把高亮平移到别处
+   *     （用户看到"页签没动、内容变成别处的"）
+   *   · addCard 遇空页签列表 → 一张没加进去，却记「已添加」并选中它
+   *     （之后对"选中项"的改名/改色/删除全作用在一个空目标上）
+   *
+   * 两处都必须用**自己的标志**再判一次。这里钉的是那个标志确实存在、
+   * 且**在产生副作用之前**拦住 —— 顺序写反（先 setActiveTab / pushLog
+   * 再判）等于没拦。
+   */
+  const h = fs.readFileSync(path.join(HERE, 'hooks/useFpx.ts'), 'utf8');
+
+  /* moveTab：did 标志 + 在 setActiveTab 之前拦住 */
+  const mv = h.slice(h.indexOf('const moveTab = useCallback'), h.indexOf('const removeTab = useCallback'));
+  t('moveTab 切片取到了', mv.length > 200, `len=${mv.length}`);
+  t('moveTab 有 did 标志', /let did = false/.test(mv));
+  t('moveTab 真的置位 did', /did = true/.test(mv));
+  const iDidGuard = mv.indexOf('if (!did) return;');
+  const iSetActive = mv.indexOf('setActiveTab(');
+  t('moveTab 先判 did 再平移选中项',
+    iDidGuard > 0 && iSetActive > 0 && iDidGuard < iSetActive,
+    `did=${iDidGuard} setActive=${iSetActive}`);
+
+  /* addCard：added 标志 + 在 pushLog 之前拦住 */
+  const ad = h.slice(h.indexOf('const addCard = useCallback'), h.indexOf('const removeCardFull'));
+  t('addCard 切片取到了', ad.length > 500, `len=${ad.length}`);
+  t('addCard 有 added 标志', /let added = false/.test(ad));
+  t('addCard 真的置位 added', /added = true/.test(ad));
+  const iAddedGuard = ad.indexOf('if (!added) return;');
+  const iPushLog = ad.indexOf('pushLog(`已添加');
+  t('addCard 先判 added 再记「已添加」',
+    iAddedGuard > 0 && iPushLog > 0 && iAddedGuard < iPushLog,
+    `added=${iAddedGuard} pushLog=${iPushLog}`);
+}
+
+
 console.log('\n=== #27 页签 × 关闭按钮 ===');
 {
   const g = fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8')

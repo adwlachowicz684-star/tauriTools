@@ -108,7 +108,32 @@ console.log('\n=== 3. 接到正规流程，而不是静默 ===');
    */
   const conf = R('../../src-tauri/tauri.conf.json');
   const host = R('../../js/host.js');
-  t('宿主已开启 dragDropEnabled（否则拿不到路径）', /"dragDropEnabled"\s*:\s*true/.test(conf));
+  /*
+   * 2026-09-27：上游把 `dragDropEnabled` 改成了 **false**。
+   *
+   * 原因在 agent-flow 侧：Tauri 为 true 时会**接管 webview 拖放**，
+   * 页面内的 HTML5 拖放（侧栏拖节点进画布）收不到 drop 事件。
+   * 那是同一个 tauri.conf.json、同一个窗口开关 —— 两个插件要求相反，
+   * 不可能同时满足。当前以 agent-flow 为准（false）。
+   *
+   * 对本插件的影响：Tauri 不接管 → File 上没有 `path` →
+   * 「拖入即导入」退化成"弹对话框让用户重选一次"。
+   * 功能还在，只是多一步；**不是崩溃**。
+   *
+   * 所以这里不再钉 true —— 那是共享配置，本插件无权单方面改回去
+   * （改回去会破坏 agent-flow 的核心交互）。改为钉真正属于本插件、
+   * 且**当前必须成立**的那件事：拿不到路径时必须优雅回落。
+   * 这条比钉开关更重要：开关被别人改只会退化，回落路径断了才是
+   * "拖进来毫无反应"。
+   */
+  const dsort = R('utils/dragSort.ts');
+  t('拿不到路径时回落为文件夹名（不是空串）',
+    /target:\s*path\s*\|\|\s*name/.test(dsort));
+  t('拿不到路径时 direct=false（调用方据此弹对话框）',
+    /direct:\s*!!path/.test(dsort));
+  /* 钉住"当前确实是 false"，将来若有人改回 true，这条会提醒他先解冲突 */
+  t('（现状）dragDropEnabled=false，agent-flow 与本插件的冲突未解',
+    /"dragDropEnabled"\s*:\s*false/.test(conf));
   t('宿主装了文档级拖放守卫', /addEventListener\('drop', stop\)/.test(host));
   /* 调用点必须在 createHost 内、且在插件挂载之前；找不到调用点直接判失败而不是跳过 */
   const gi = host.indexOf('installDropGuard();');
