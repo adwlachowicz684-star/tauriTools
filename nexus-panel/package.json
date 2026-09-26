@@ -174,7 +174,10 @@
     "test:updater": "node updater-test.mjs",
     "test:window-action": "node window-action-test.mjs",
     "test:xss": "node xss-test.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "release:stable": "node scripts/publish-update.mjs --channel=stable",
+    "release:beta": "node scripts/publish-update.mjs --channel=beta",
+    "test:publish-update": "node publish-update-test.mjs"
   },
   "dependencies": {
     "@plantuml/core": "1.2026.8",

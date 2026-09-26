@@ -38,6 +38,19 @@ pub const CHANNEL_STABLE: &str = "stable";
 pub const CHANNEL_BETA: &str = "beta";
 
 /*
+ * 通道 → Release tag。
+ *
+ * ⚠️ 这两个是**单一事实来源**：scripts/publish-update.mjs 直接从本文件
+ * 正则解析它们，不另抄一份。抄一份的下场是：脚本往 `v1-updater` 传、
+ * 客户端却去 `updater-stable` 找 —— 两边都对，只是永远对不上，
+ * 表现为"我明明发布了，客户端却说没更新"，且不报错。
+ * publish-update-test.mjs 有一条断言把两者钉在一起（解析出的 tag 必须
+ * 真的出现在 endpoints_for 拼出的 URL 里）。
+ */
+pub const TAG_STABLE: &str = "updater-stable";
+pub const TAG_BETA: &str = "updater-beta";
+
+/*
  * 公钥占位符标记。**不要**把真实私钥提交进仓库 ——
  * 生成方式见 docs/更新与签名.md。
  */
@@ -81,11 +94,17 @@ fn normalize_channel(channel: Option<&str>) -> &'static str {
 }
 
 /// 通道 → 端点列表。**顺序有意义**：GitHub 在前，Gitee 在后兜底。
+/// 通道 → Release tag。与 CHANNEL_* 一一对应，抽成函数是为了让
+/// publish-update.mjs 解析的常量与这里真正拼进 URL 的值是同一个。
+fn tag_for(channel: &str) -> &'static str {
+    match channel {
+        CHANNEL_BETA => TAG_BETA,
+        _ => TAG_STABLE,
+    }
+}
+
 fn endpoints_for(channel: &str) -> Vec<String> {
-    let tag = match channel {
-        CHANNEL_BETA => "updater-beta",
-        _ => "updater-stable",
-    };
+    let tag = tag_for(channel);
     vec![
         format!("{GH_RELEASE}/{tag}/latest.json"),
         format!("{GITEE_RELEASE}/{tag}/latest.json"),
