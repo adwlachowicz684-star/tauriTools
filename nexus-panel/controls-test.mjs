@@ -3026,10 +3026,15 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
     /themeBase:\s*pluginThemeBase\(/.test(hostSrc) ? '已带（init 与 theme 两处）'
       : '未带 → 插件只能按 --bg 猜');
 
+  /* ⚠️ 判据里不写死变量名：参数名曾从 base 改成 hostBase（避免与下面
+     的 const base 撞名），写死 'base ===' 会让这条恒假 —— 表现为
+     "功能明明在，断言却说未用权威值"。所以只钉语义：
+     有个变量与 'light'/'dark' 比较（权威值），且兜底调 isLightColor。 */
+  const authBase = /(?:host)?[Bb]ase\s*===\s*'light'\s*\|\|\s*(?:host)?[Bb]ase\s*===\s*'dark'/;
   t('SDK 优先用宿主给的基调，只在缺失时才回退推断',
-    /base === 'light' \|\| base === 'dark'/.test(sdkSrc)
+    authBase.test(sdkSrc)
       && /isLightColor\(vars\['--bg'\]\)/.test(sdkSrc),
-    /base === 'light' \|\| base === 'dark'/.test(sdkSrc)
+    authBase.test(sdkSrc)
       ? '权威值优先 + 推断兜底（兼容老宿主）' : '未用权威值');
 
   /* ⚠️ applyThemeVars 只收 vars，**没有**消息对象 d。
@@ -3267,6 +3272,55 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
   t('豁免清单没有多余的项（updater 落地后应删除）',
     EXEMPT.every((k) => (b || []).includes(k) && !(a || []).includes(k)),
     EXEMPT.join(', '));
+}
+
+/* ============================================================
+   53. 侧边栏「设置」入口只能有一个
+   ------------------------------------------------------------
+   settings 是注册在 registry 里的**真插件**，visiblePlugins() 已经把
+   它渲染进 #plugin-list。而 sidebar-foot 里曾硬编码过第二个「⚙ 设置」
+   按钮 —— 两者 className 都叫 nav-item、图标文字完全一样，用户看到
+   侧边栏里两个「⚙ 设置」，分不清该点哪个；底部那份还不受设置页的
+   排序控制。两套实现（React / 无构建）当时都重复了。
+
+   这类"同一入口两处渲染"是本项目反复出现的病（工具栏按钮、设置页…），
+   所以钉死：foot 里不许再有，且 registry 必须提供 settings（否则删
+   foot 后用户彻底找不到设置入口 —— 那是比重复更糟的死锁）。
+   ============================================================ */
+{
+  /* 剥注释：本测试自己写的说明文字里也有「设置」「⚙」等字样，
+     不剥的话判据会匹配到说明本身，断言变成永远为真。 */
+  const strip = (s) => s
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/\{?\/\*[\s\S]*?\*\/\}?/g, ' ')
+    .replace(/^\s*\/\/.*$/gm, ' ');
+
+  const sideSrc = strip(read('src/components/Sidebar.tsx'));
+  const htmlSrc2 = strip(read('index.html'));
+
+  t('React 版侧边栏底部不再硬编码「设置」按钮',
+    !/onSelect\(\s*'settings'\s*\)/.test(sideSrc),
+    /onSelect\(\s*'settings'\s*\)/.test(sideSrc)
+      ? '仍在 → 与 #plugin-list 里的 settings 插件条目重复' : '只有列表里那一个');
+
+  t('无构建版侧边栏底部不再硬编码「设置」按钮',
+    !/btn-settings/.test(htmlSrc2),
+    /btn-settings/.test(htmlSrc2)
+      ? '仍在 → 与 renderSidebar() 渲染的 settings 条目重复' : '只有列表里那一个');
+
+  /* 元断言：settings 必须仍是 registry 里的插件。
+     删 foot 的前提是列表里那份一定在 —— 若哪天把它从 registry 挪走
+     （或给它标了 kind:'service'/'toolbar' 从而被 visiblePlugins 滤掉），
+     用户就彻底进不去设置了，而这不会有任何报错。 */
+  const regSrc = read('plugins/registry.js');
+  t('registry 里仍有 settings 插件（删底部按钮的前提）',
+    /id:\s*'settings'/.test(regSrc),
+    /id:\s*'settings'/.test(regSrc) ? '在 → 列表里一定有入口' : '不在 → 用户将无任何设置入口');
+  const visSrc = strip(read('js/host.js'));
+  t('settings 不会被 visiblePlugins 滤掉（kind 不是 service/toolbar）',
+    !/id:\s*'settings'[\s\S]{0,300}?kind:\s*'(service|toolbar)'/.test(regSrc)
+      && /kind\s*!==\s*'service'/.test(visSrc),
+    '滤掉的话删了底部按钮就没入口了');
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
