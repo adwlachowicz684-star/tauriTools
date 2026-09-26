@@ -71,10 +71,10 @@ export default function Sidebar({
           <span className="nav-icon">＋</span>
           <span className="nav-label">安装插件</span>
         </button>
-        <button className="nav-item" onClick={() => onSelect('settings')} title="设置">
-          <span className="nav-icon">⚙</span>
-          <span className="nav-label">设置</span>
-        </button>
+        {/* 「设置」不再在这里硬编码一份：settings 是注册在 registry 里的
+            真插件，visiblePlugins() 已经把它渲染进 #plugin-list 了。
+            两处都写会变成侧边栏里两个长得一模一样的「⚙ 设置」——
+            用户分不清该点哪个，且底部这份不受设置页的排序控制。 */}
         {/* 元素检查器已移到标题栏右上角（toolbar-inspector 插件） */}
       </div>
     </aside>
