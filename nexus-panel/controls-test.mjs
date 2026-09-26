@@ -3100,5 +3100,53 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
     /export function resolveThemeMeta/.test(read('js/theme-manager.js')) ? '已导出' : '未导出 → 三处 import 全崩');
 }
 
+
+/* ============================================================
+   51. 插件设置抽屉：观感走 CSS 类，不再内联写死
+   ------------------------------------------------------------
+   抽屉里的外壳区块原先每个样式都内联写死（字号、间距、圆角，
+   以及直接拼出来的 inset 阴影）。内联写法的代价是：观感改不动，
+   且绕过了全部令牌 —— 玻璃主题下那圈硬编码凹陷照样压出来。
+   ============================================================ */
+{
+  const shell = stripComments(read('js/shell.js'));
+  const css = stripComments(read('css/neumorphism.css'));
+
+  /* 抽屉外壳区块不得再拼 inset 阴影 */
+  t('抽屉外壳区块不再内联写死 inset 阴影',
+    !/renderShellSection[\s\S]{0,2600}?boxShadow\s*:\s*['"`]inset/.test(shell),
+    /renderShellSection[\s\S]{0,2600}?boxShadow\s*:\s*['"`]inset/.test(shell)
+      ? '仍有内联 inset 阴影 → 玻璃主题下会压出不该有的凹陷' : '已走 .dw-* 类');
+
+  /* 观感类都要有定义，不然挂上去没有任何效果且不报错 */
+  for (const c of ['dw-sec', 'dw-sec-title', 'dw-row', 'dw-row-hint', 'dw-switch', 'dw-host']) {
+    t(`.${c} 在 CSS 里有定义`, new RegExp('\\.' + c + '[\\s,{:.]').test(css));
+  }
+  t('开关有状态点（不靠文字表意）', /\.dw-switch\s+on\s+\.dw-dot|\.dw-switch\.on\s+\.dw-dot/.test(css)
+    || /\.dw-switch\.on/.test(css));
+
+  /* 分区标题用 h3 —— 抽屉标题栏已有一个 h2，再来同级大标题读不出主次 */
+  t('分区标题是 h3（不与抽屉标题 h2 同级）',
+    /h\('h3\.dw-sec-title'/.test(shell)
+    && !/h\('h2[.']/.test(shell.slice(shell.indexOf('renderShellSection'))));
+
+  /*
+   * 🔑 外壳区块与插件区必须对齐：#dw-shell 原先**完全没有内边距** ——
+   * 上面的 .drawer-body 缩在 16px 18px 里，下面这块贴着抽屉边，
+   * 两块根本不对齐，这是它"没排版"的第一眼原因。
+   *
+   * ⚠️ 只查**第一条** #dw-shell 规则：下面还有一条
+   * `.drawer-body:empty + #dw-shell { padding-top }`，
+   * 用全局正则的话那条会把主规则失效的情况救活（实测破坏验证全绿）。
+   */
+  {
+    const i = css.indexOf('#dw-shell {');
+    const block = i < 0 ? '' : css.slice(i, css.indexOf('}', i));
+    t('#dw-shell 主规则有内边距（与 .drawer-body 对齐）',
+      /padding/.test(block),
+      /padding/.test(block) ? '已对齐' : '缺 padding → 与上方插件区不对齐');
+  }
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -82,8 +82,19 @@ console.log('=== 1. 扫描器自身：必须分得清真假 ===');
    * 第二参是**属性对象**不是类名；第一版修复没看签名，
    * 把 preview / sv / hue / grid / cell / panes 全报成无样式类名。
    */
-  t('el 第二参是属性对象时不得当类名（签名必须看）',
-    !collectUsedClasses("const el = (tag, attrs = {}, ...kids) => {};\nconst d = el('div', { class: 'preview' });").has('preview'));
+  /*
+   * ⚠️ 这条原来钉的是 `el('div', { class: 'preview' })` 里 preview **不该**被取。
+   * 那是当年修"属性键名被误当类名"时把样例构造错了 ——
+   * preview 放在 class 的**值**位置上时，它就是会真实挂到 DOM 的类名，
+   * 不取的话这类写法（el/h 的属性对象）全部漏报。
+   *
+   * 真正要守的是：**键名**不当类名。样例里 preview/sv/hue 当年正是键名。
+   * 所以拆成两条，各钉一半。
+   */
+  t('el 第二参是属性对象时，键名不得当类名（签名必须看）',
+    !collectUsedClasses("const el = (tag, attrs = {}, ...kids) => {};\nconst d = el('div', { preview: 1, sv: 2 });").has('preview'));
+  t('el 第二参属性对象里的 class 值仍要取',
+    collectUsedClasses("const el = (tag, attrs = {}, ...kids) => {};\nconst d = el('div', { class: 'preview' });").has('preview'));
   t('模板串字面量部分', collectUsedClasses('className={`fpx-link-row ${d.state}`}').has('fpx-link-row'));
   t('模板串 ${} 不误取', !collectUsedClasses('className={`a ${undefinedVar}`}').has('undefinedVar'));
   t('三元里的状态类 open',
