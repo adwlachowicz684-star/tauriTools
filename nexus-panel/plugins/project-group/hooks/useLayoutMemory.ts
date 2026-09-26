@@ -71,7 +71,7 @@ export function useLayoutMemory({ s, config }: UseLayoutMemoryArgs) {
    * ⚠️ 配置字段叫 logRowHeight，本地 state 叫 logHeight —— 两个名字不同，
    * 这里必须显式写成 `logRowHeight: logHeight`。
    *
-   * 曾两次被写成裸的 `saveLayout({ logRowHeight })`：本作用域根本没有
+   * 曾两次被写成裸的 `saveLayout` 调用（只传 `{ logRowHeight }`）：本作用域根本没有
    * 这个变量，ESM 是严格模式，**拖完日志分隔条松手那一下就是 ReferenceError**，
    * 布局永远存不进去。一直没暴露是因为不拖分隔条就走不到这条路径。
    *
