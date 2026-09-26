@@ -3001,3 +3001,80 @@ r instanceof Promise === true;              // ← 异步
 
 > 2000 层而非 10000 层：jsdom 的 `DOMParser` 在约 2000~5000 层时自己就 parsererror 了，
 > 测不到 xmind.js。2000 层已远超 `MAX_DEPTH`(200)，足以验证截断逻辑。
+
+---
+
+## BUG 34：撤销 / 重做快捷键从来没接上（只有工具栏两个按钮能用）
+
+**现象**：工具栏的 ↶ / ↷ **是好的**，Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z **全部无效**。
+
+实测（真实 Chrome，完整插件 + 宿主桩）：
+
+| 操作 | 结果 |
+|---|---|
+| 点「下级」建节点 → 点工具栏 ↶ | 节点消失 ✓ |
+| 点「下级」建节点 → 按 Ctrl+Z | 节点**还在** ✗ |
+| 同上 → Ctrl+Shift+Z / Ctrl+Y | 同样无效 ✗ |
+
+### 根因：内核的默认快捷键表里没有撤销
+
+内核 `addCommandShortcutKeys` 的默认表只有 **6 个**（实测从 min.js 抠出的全部
+字面量）：`ctrl+a` / `ctrl+b` / `ctrl+c` / `ctrl+i` / `ctrl+v` / `ctrl+x`。
+**没有 ctrl+z / ctrl+y**；命令表里也**根本没有 undo / redo 命令**（实测 52 个
+命令：appendchildnode … zoomout，无 undo/redo）。
+
+编辑器页这边原先只额外挂了 `copynodestyle` / `pastenodestyle` 两个。于是
+撤销/重做**只有按钮一条路**，键盘从来没接。
+
+### 修法
+
+编辑器页在 `document` 捕获阶段补 Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z，走 `callHost`
+让宿主执行 —— **不能直接调 `window.editor.history.undo()`**：宿主的
+`undo()/redo()` 里有 `pendingRedo` 锁，保证「一次撤销序列只用一条栈」，绕过它
+会在两条栈之间跳；状态栏的「已撤销」也在宿主那边出。
+
+宿主侧 `onHostRequest` 增加 `undo` / `redo` 两个 action。
+
+### 一个必须守住的边界：km-receiver 本身就是 `<input>`
+
+第一版按常规写「焦点在 input/textarea 里就跳过」，结果**快捷键完全不生效**：
+
+```
+编辑器收到 keydown: ["Control ctrl=true tgt=INPUT", "z ctrl=true tgt=INPUT"]
+                                        ↑ 画布的键盘入口 km-receiver 就是 INPUT
+```
+
+画布的键盘入口 `km-receiver` 本身是 `<input>`，笼统跳过所有 input 等于把画布
+自己也跳掉了。真正该跳过的只有「编辑层」那一个 —— 那时 Ctrl+Z 该撤的是文字，
+不是整个脑图。
+
+改为：显式识别 `km-receiver` 放行、只拦 `editLayer.input` 与 contentEditable。
+
+实测（真实 Chrome）：
+
+| 场景 | 结果 |
+|---|---|
+| 建节点 → Ctrl+Z | `R` ← 撤销生效 |
+| 建节点 → Ctrl+Z → Ctrl+Shift+Z | `,R` ← 重做生效 |
+| 建节点 → Ctrl+Z → Ctrl+Y | `,R` ← 重做生效 |
+| **编辑态里** Ctrl+Z | `R` 不变 ← 正确地没去撤脑图 |
+
+### 又一条假阴性（第 23 次）
+
+新加的断言初版写成 `ok(/k === 'z'/.test(seg), '撤销快捷键')`。变异验证时把 undo
+分支的键改成 `'q'`，**断言照样绿** —— 因为 redo 分支里也有 `k === 'z'`
+（`'y' || ('z' && shiftKey)`）。改成匹配**完整组合**
+（`k === 'z' && !e.shiftKey`）才真在把关。
+
+### 顺带修的三条过期断言
+
+`ensureRootId` 改成遍历整棵树之后，早先那三条断言失效了：
+
+- 固定窗口 `slice(i, i+900)` —— 现在函数上面的注释就超过 900 字符，整段切在
+  注释里，赋值语句根本不在窗口内 → **恒假**
+- `if (!r) return;` 是「没有 root」的合法守卫，被「traverse 之前不得 return」
+  误判 → 断言里显式排除它
+- `importText` 已改成 `async function`，正则没跟 → 恒假
+
+三条都是「代码是对的、断言错了」，属于测试自身腐烂，不修的话比没有断言更糟
+（看着在把关，其实从没跑过）。

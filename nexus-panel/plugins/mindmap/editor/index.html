@@ -3863,6 +3863,47 @@
             // F2 编辑选中节点（kity 的 km-receiver 会吞掉常规按键，用捕获阶段兜底）
             if (e.key === 'F2') { e.preventDefault(); beginTextEdit(null, null, null); }
         }, true);
+        /*
+         * **撤销 / 重做快捷键：内核根本没有绑定，必须在这里补。**
+         *
+         * 实测（真实 Chrome，走完整插件）：
+         *   点「下级」建出节点 → 点工具栏 ↶ → 节点消失        ← 按钮是好的
+         *   点「下级」建出节点 → 按 Ctrl+Z   → 节点**还在**
+         *   Ctrl+Shift+Z / Ctrl+Y 同样无效。
+         *
+         * 原因：内核 `addCommandShortcutKeys` 的默认表里只有
+         * ctrl+a / b / c / i / v / x **六个**（实测从 min.js 抠出的全部字面量），
+         * 没有 ctrl+z / ctrl+y；而命令表里也**根本没有 undo / redo 命令**
+         * （实测 52 个命令：appendchildnode … zoomout，无 undo/redo）。
+         * 编辑器页这边除了 copynodestyle/pastenodestyle 也没再加别的。
+         * 于是撤销/重做只有工具栏两个按钮能用，键盘完全没接。
+         *
+         * 走 callHost 让宿主执行，而不是直接调 window.editor.history：
+         * 宿主的 undo()/redo() 里有「一次撤销序列只用一条栈」的锁
+         * （pendingRedo），直接在这里调会绕过它。
+         */
+        document.addEventListener('keydown', function (e) {
+            if (!(e.ctrlKey || e.metaKey)) return;
+            var k = (e.key || '').toLowerCase();
+            // 编辑层里（input/textarea）让浏览器自己撤文字，不去撤整个脑图
+            var t = e.target;
+            var tag = t && t.tagName ? String(t.tagName).toLowerCase() : '';
+            // **km-receiver 本身就是 <input>** —— 画布的键盘入口就是它。
+            // 笼统地「input 里一律跳过」会把画布自己也跳掉，快捷键永远不生效
+            // （实测：按下后编辑器收到 keydown，但被这条判断挡下）。
+            // 真正要跳过的只有「编辑层」那一个：那时 Ctrl+Z 该撤的是文字。
+            var isReceiver = !!(t && t.classList && t.classList.contains('km-receiver'));
+            var isEditLayer = !!(editLayer && editLayer.input && t === editLayer.input);
+            if (isEditLayer || (t && t.isContentEditable)) return;
+            if ((tag === 'input' || tag === 'textarea') && !isReceiver) return;
+            var act = null;
+            if (k === 'z' && !e.shiftKey) act = 'undo';
+            else if (k === 'y' || (k === 'z' && e.shiftKey)) act = 'redo';
+            if (!act) return;
+            e.preventDefault();
+            e.stopPropagation();
+            try { callHost(act); } catch (err) { /* 宿主未就绪就算了 */ }
+        }, true);
         window.editSelected = function () { beginTextEdit(null, null, null); };
 
         /**

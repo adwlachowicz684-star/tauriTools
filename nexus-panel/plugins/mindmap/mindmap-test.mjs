@@ -1930,7 +1930,8 @@ group('行内编辑贴合节点');
   ok(/importJson: function \(data\) \{\s*\n?\s*commitEditingBeforeSwap\(\);/.test(ed)
      || /importJson: function \(data\) \{\s+commitEditingBeforeSwap\(\);/.test(ed),
     '__minder.importJson 门面里也先提交');
-  ok(/importText: function \(md\) \{\s+commitEditingBeforeSwap\(\);/.test(ed),
+  // importText 已改为 async（importData 是异步的，不 await 会跑在旧树上）
+  ok(/importText: (?:async )?function \(md\) \{\s+commitEditingBeforeSwap\(\);/.test(ed),
     '__minder.importText 门面里也先提交');
   ok(/commitEditingBeforeSwap\(\); km\.importJson\(JSON\.parse\(snap\)\)/.test(ed),
     '撤销/重做那条 importJson 路径也先提交');
@@ -2040,8 +2041,51 @@ group('行内编辑贴合节点');
   const iVar = scode.indexOf('var r = km.getRoot');
   const iTrav = scode.indexOf('traverse(');
   ok(iVar >= 0 && iTrav > iVar, '（结构）取到「读 root → traverse」这段');
-  ok(!/\breturn\b/.test(scode.slice(iVar, iTrav)),
+  // `if (!r) return;` 是「根本没有 root」的合法守卫，不算提前返回；
+  // 要抓的是 `if (r.data.id) return;` 那种「root 有 id 就整个不遍历」。
+  const between = scode.slice(iVar, iTrav).replace(/if \(!r\) return;/g, '');
+  ok(!/\breturn\b/.test(between),
     'traverse 之前不得提前 return —— 提前返回会让 traverse 永远执行不到，等于只补 root');
+}
+
+/*
+ * 17.16 撤销 / 重做快捷键必须真的接上。
+ *
+ * 实测（真实 Chrome，完整插件）：
+ *   点「下级」建节点 → 点工具栏 ↶      → 节点消失（按钮是好的）
+ *   点「下级」建节点 → 按 Ctrl+Z       → 节点**还在**（快捷键没接）
+ *   Ctrl+Shift+Z / Ctrl+Y 同样无效。
+ *
+ * 根因：内核 addCommandShortcutKeys 的默认表只有 ctrl+a/b/c/i/v/x 六个
+ * （实测从 min.js 抠出的全部字面量），没有 ctrl+z/ctrl+y；命令表里也根本没有
+ * undo / redo 命令（实测 52 个命令中无）。编辑器页原先只额外挂了
+ * copynodestyle/pastenodestyle。于是撤销/重做只有工具栏两个按钮能用。
+ */
+{
+  const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  const seg = ed.slice(ed.indexOf('撤销 / 重做快捷键'), ed.indexOf('撤销 / 重做快捷键') + 3200).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  ok(/ctrlKey\s*\|\|\s*e\.metaKey/.test(seg), '撤销快捷键：识别 ctrl 与 meta（macOS 的 Cmd）');
+  /*
+   * 必须匹配**完整组合**，不能只查 `k === 'z'`：
+   * undo 是 `'z' && !shiftKey`、redo 是 `'y' || ('z' && shiftKey)`，
+   * 两者都含 `k === 'z'`。只查字面量的话，把 undo 分支的键改掉
+   * （比如改成 'q'）断言照样绿 —— 变异验证时才发现这条是恒真的假阴性。
+   */
+  ok(/k\s*===\s*'z'\s*&&\s*!e\.shiftKey/.test(seg), '撤销快捷键：ctrl+z（不带 shift）');
+  ok(/k\s*===\s*'y'/.test(seg), '重做快捷键：ctrl+y');
+  ok(/k\s*===\s*'z'\s*&&\s*e\.shiftKey/.test(seg), '重做快捷键：ctrl+shift+z');
+  ok(/callHost\(\s*act\s*\)/.test(seg), '必须走 callHost 让宿主执行（宿主有 pendingRedo 单栈锁）');
+  ok(/preventDefault/.test(seg) && /stopPropagation/.test(seg), '必须 preventDefault + stopPropagation');
+
+  // km-receiver 本身就是 <input>：笼统跳过所有 input 会把画布自己也跳掉
+  ok(/km-receiver/.test(seg), '必须区分 km-receiver 与编辑层（km-receiver 本身就是 input）');
+  ok(/isEditLayer/.test(seg), '编辑层里要跳过（那时 Ctrl+Z 该撤的是文字）');
+  ok(!/if \(tag === 'input' \|\| tag === 'textarea'\|\) return;/.test(seg), '不得笼统跳过所有 input');
+
+  const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const host = ix.slice(ix.indexOf('onHostRequest'), ix.indexOf('onHostRequest') + 2000).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  ok(/action === 'undo'/.test(host), '宿主要应答编辑器的 undo 请求');
+  ok(/action === 'redo'/.test(host), '宿主要应答编辑器的 redo 请求');
 }
 
 /*
@@ -9342,9 +9386,15 @@ group('中心主题必须有 data.id（否则新建画布后无法附加任何�
   ok(/function ensureRootId\(\)/.test(html), '编辑器定义了 ensureRootId');
   {
     const i = html.indexOf('function ensureRootId()');
-    const seg = html.slice(i, i + 900);
-    ok(/r\.data\.id = /.test(seg), '确实写入 data.id');
-    ok(/if \(r\.data\.id\) return;/.test(seg), '已有 id 时不动（不覆盖用户数据）');
+    /*
+     * 窗口必须够大：ensureRootId 上面那段「为什么必须遍历整棵树」的注释已经
+     * 超过 900 字符，取 900 会**整段切在注释里** —— 赋值语句根本不在窗口内，
+     * 于是这两条断言变成恒假（注释一长就从「在把关」退化成「摆设」）。
+     * 这是本项目第 N 次栽在「固定长度切片」上，故这里直接取到函数结束。
+     */
+    const seg = html.slice(i, i + 2600);
+    ok(/n\.data\.id = /.test(seg), '确实写入 data.id（遍历里的逐节点赋值）');
+    ok(/if \(n\.data\.id\) return;/.test(seg), '已有 id 时不动（逐节点跳过，不覆盖用户数据）');
   }
   // importJson 之后必须调它；只定义不调用等于没修
   {

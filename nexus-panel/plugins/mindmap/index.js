@@ -508,7 +508,6 @@ bootIframePlugin(async (ctx) => {
   function clearSearchState() {
     try { bridge?.search?.(''); } catch { /* 编辑器未就绪就只清本地，不该因此中断 */ }
     withStableRoot(() => fileList?.setSearch(null));
-    syncFilesInset();
     if (searchStatusEl) {
       searchStatusEl.textContent = '';
       searchStatusEl.classList.remove('warn');
@@ -542,7 +541,6 @@ bootIframePlugin(async (ctx) => {
       // 结果列表单独取：search() 每调一次就推进到下一个匹配，
       // 若让它顺带返回列表，"刷新列表"就会连带多跳一格
       withStableRoot(() => fileList?.setSearch(bridge?.getSearchResults?.() || null));
-      syncFilesInset();
     }
     const searchInput = h('input.mm-input', {
       placeholder: '搜索节点…',
@@ -1059,30 +1057,6 @@ bootIframePlugin(async (ctx) => {
   }
 
   /**
-   * 把文件库面板摆到左侧图标条**右边**。
-   *
-   * `.mm-files` 是 absolute 浮层（为了不挤窄画布），但 CSS 里**没有写 left** ——
-   * 绝对定位元素在 `left:auto` 时会退回"静态位置"，而它是 flex 容器的子项，
-   * 静态位置 = 容器内容盒左边缘（`justify-content: flex-start`），也就是
-   * **压在左侧图标条上**：📚 开关被挡住，面板就关不掉了。
-   *
-   * 所以必须显式给 left：图标条右缘 + 一个 gap。
-   * 数值实测，不写死 —— 图标条按钮数/尺寸一变，写死的数就会失配。
-   */
-  function syncFilesInset() {
-    if (!fileList || !body) return;
-    const br = body.getBoundingClientRect();
-    const cs = getComputedStyle(body);
-    const gap = parseFloat(cs.columnGap || cs.gap || '10') || 10;
-    // 图标条还没布局（宽 0）时退回用画布左缘 —— 两者等价，都是"图标条之后"
-    const rr = rail ? rail.getBoundingClientRect() : null;
-    const cr = canvasEl ? canvasEl.getBoundingClientRect() : null;
-    const x = (rr && rr.width) ? (rr.right - br.left + gap)
-      : (cr ? (cr.left - br.left) : 0);
-    fileList.el.style.left = Math.round(x) + 'px';
-  }
-
-  /**
    * 文件库面板展开/隐藏。
    *
    * 与搜索结果是**两个独立页签**共用一个底框，所以"开合"不是简单的
@@ -1093,7 +1067,6 @@ bootIframePlugin(async (ctx) => {
   async function toggleFiles(force) {
     const on = force == null ? !fileList?.isFilesPanel?.() : !!force;
     withStableRoot(() => fileList?.showFiles(on));
-    syncFilesInset();
     const showing = !!fileList?.isFilesPanel?.();
     settings.filesOpen = showing;
     // 早先这里连 await 都没有：写失败的话面板开关了、下次启动又回到默认，
@@ -2626,7 +2599,6 @@ bootIframePlugin(async (ctx) => {
   body.insertBefore(fileList.el, canvasEl);
   body.appendChild(side.el);
   fileList.showFiles(!!settings.filesOpen);
-  syncFilesInset();
   captureShellErrors();
   buildRail();
   renderTabs();
@@ -2690,6 +2662,15 @@ bootIframePlugin(async (ctx) => {
         return { ok: true };
       }
       if (action === 'log') { status(String(payload || '')); return { ok: true }; }
+      /*
+       * 编辑器页的 Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z 走这里。
+       *
+       * 为什么不直接在编辑器页调 window.editor.history.undo()：
+       * undo()/redo() 里的 pendingRedo 锁保证「一次撤销序列只用一条栈」，
+       * 绕过它就会在两条栈之间跳；而且状态栏的「已撤销」也在这里出。
+       */
+      if (action === 'undo') { undo(); return { ok: true }; }
+      if (action === 'redo') { redo(); return { ok: true }; }
       return { ok: false };
     },
   });
