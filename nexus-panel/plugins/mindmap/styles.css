@@ -294,7 +294,7 @@ html, body {
   border-radius: var(--r, 14px);
   box-shadow: var(--sh-out-md);
   pointer-events: none;
-  z-index: 5;
+  z-index: var(--z-inline);
 }
 
 .mm-canvas {
@@ -1048,7 +1048,7 @@ video.mm-video {
   position: absolute;
   top: 0;
   bottom: 0;
-  z-index: 6;
+  z-index: var(--z-raised);
   width: 186px;
   display: none;
   flex-direction: column;

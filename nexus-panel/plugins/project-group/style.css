@@ -1168,7 +1168,7 @@
  */
 .fpx-ca-gap {
   height: 2px; margin: 1px 0;
-  border-radius: 1px;
+  border-radius: 0;   /* 2px 高的插入条，圆角无意义（写 1px 会被样式守卫判为裸 px） */
   background: var(--accent);
   /* 不给辉光：列表本身很窄，加辉光会糊成一片，反而看不清落点 */
 }
@@ -1984,7 +1984,7 @@
    用 transform 而不是换字符 —— 换字符会导致字形宽度变化推挤右侧内容。 */
 .fpx-link-arrow {
   display: inline-flex; flex: none; margin-left: auto;
-  transition: transform .15s ease;
+  transition: transform var(--dur-fast) ease;
 }
 .fpx-link-arrow.open { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) {
@@ -2112,7 +2112,7 @@
   /* 显隐用透明度而不是 display：display 切换没有过渡，会硬闪一下 */
   opacity: 0;
   transform: translateY(4px);
-  transition: opacity .15s ease, transform .15s ease;
+  transition: opacity var(--dur-fast) ease, transform var(--dur-fast) ease;
 }
 
 .fpx-busy[data-on="1"] { opacity: 1; transform: none; }

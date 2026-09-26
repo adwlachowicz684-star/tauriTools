@@ -1327,6 +1327,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 }
 .tab-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 .tab-count {
+  font-variant-numeric: tabular-nums;
   font-size: var(--fs-micro, 10px); background: var(--af-raised); color: var(--af-dim);
   border-radius: 8px; padding: 0 5px;
 }
@@ -1972,7 +1973,8 @@ input.mono, textarea.mono {
   position: sticky; top: 0; background: var(--af-panel);
   font-size: var(--fs-title, 13px);
   font-weight: var(--fw-strong);}
-.task-count { font-size: var(--fs-micro, 10px); color: var(--af-mute); margin-right: auto; }
+.task-count {
+  font-variant-numeric: tabular-nums; font-size: var(--fs-micro, 10px); color: var(--af-mute); margin-right: auto; }
 .task-item { padding: 9px 12px; border-bottom: 1px solid var(--af-divider); cursor: pointer; }
 .task-item.is-active { background: var(--af-item); }
 .task-item-top { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
@@ -2051,7 +2053,8 @@ input.mono, textarea.mono {
 .task-group-head:hover { background: var(--af-raised); }
 .task-group-name { font-size: var(--fs-body, 12px); font-weight: var(--fw-strong, 600);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-group-count { font-size: var(--fs-micro, 10px); color: var(--af-mute);
+.task-group-count {
+  font-variant-numeric: tabular-nums; font-size: var(--fs-micro, 10px); color: var(--af-mute);
   padding: 0 6px; border-radius: var(--r-pill, 999px); background: var(--af-bg); }
 .task-group-dur { margin-left: auto; font-size: var(--fs-note, 11px); color: var(--af-mute); }
 .task-row { padding: 7px 12px 7px 24px; border-bottom: 1px solid var(--af-divider);
@@ -3017,6 +3020,7 @@ input.mono, textarea.mono {
 .mcp-sec-title:hover { background: rgba(255, 255, 255, .06); }
 .mcp-sec-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mcp-sec-count {
+  font-variant-numeric: tabular-nums;
   flex: 0 0 auto; font-size: var(--fs-micro, 10px); padding: 0 5px; border-radius: 8px;
   background: rgba(255, 255, 255, .1); color: var(--af-dim, #8b93a7);
 }
