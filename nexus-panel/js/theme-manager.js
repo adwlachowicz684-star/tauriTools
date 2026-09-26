@@ -1166,7 +1166,19 @@ function applyTo(rawTheme, accent, envColor) {
        不互斥的话两个都设了会出现"图上叠渐变"，谁也看不清。 */
     else {
       const preset = findBgPreset(getBgPreset());
-      if (preset) vars['--bg-image'] = preset.css;
+      /*
+       * ⚠️ 预设的 base 必须与当前基调一致才应用。
+       *
+       * 每个预设都是**按深浅设计**的（BG_PRESETS 里有 base 字段）：
+       * 晨雾 / 沙丘是浅色渐变，深海 / 极光是深色渐变。
+       * 实测深色主题压上浅色预设，正文对比度只剩 1.05~1.14 ——
+       * 深色主题的浅色文字落在浅色渐变上，等于白底白字，整片看不见。
+       *
+       * 这条校验防的是"切深浅之后残留"：用户先选了深海（dark），
+       * 之后把主题改成浅色，预设不会自动清 —— 没有这层校验时，
+       * 界面会停在"浅色主题 + 深色渐变"的坏组合上，且不报错。
+       */
+      if (preset && preset.base === theme.base) vars['--bg-image'] = preset.css;
     }
   }
 
