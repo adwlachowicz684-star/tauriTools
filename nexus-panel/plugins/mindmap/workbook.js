@@ -185,6 +185,26 @@ export function workbookToMarkdown(sheets) {
   return blocks.join('\n');
 }
 
+/**
+ * 这段文本里有几条 ATX 标题行（即能当大纲用的行数）。
+ *
+ * 为什么需要它：`markdownToSheet()` 对**任何**输入都会给出一棵树 ——
+ * 一条标题都没有时返回 `emptyContent()`，也就是一张空的「中心主题」画布。
+ * 于是「导入一个根本不是大纲的文件」不会报错，而是**静默地**拿一张空画布
+ * 把用户现有的全部画布顶掉（导入是整体替换、且不可撤销），状态栏还写
+ * 「已保存」。导入方必须先问一句「这里到底有没有大纲」，没有就别替换。
+ *
+ * 只数**能解析成节点**的行（`#` 后有非空白内容），与 markdownToSheet 的
+ * 正则口径保持一致 —— 否则两边判断会不一致：这里说有、那边解析出来是空的。
+ */
+export function markdownRowCount(md) {
+  let n = 0;
+  for (const raw of String(md || '').split(/\r?\n/)) {
+    if (/^\s{0,3}#{1,6}\s+\S/.test(raw)) n++;
+  }
+  return n;
+}
+
 /** Markdown → 画布数组（识别 '## 画布：' 分块；无分块时视作单画布） */
 export function markdownToWorkbook(md) {
   const text = String(md || '');

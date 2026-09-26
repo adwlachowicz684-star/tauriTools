@@ -4751,6 +4751,56 @@ group('格式识别 detectFormat（内容优先于扩展名）');
   eq(f.detectFormat('{ not json', 'x'), null, '花括号开头但不是合法 JSON → 不判 json');
 }
 
+/* ------------------------------------------------------------------
+   BUG 36：导入「没有大纲的文件」会静默拿一张空画布顶掉全部画布
+   ------------------------------------------------------------------ */
+group('BUG 36 导入无大纲文件不得替换画布');
+
+{
+  const wb = await import('./workbook.js');
+
+  // markdownToSheet 对任何输入都给一棵树 —— 这正是 BUG 的根源，
+  // 所以必须由调用方先数一数有没有大纲。
+  eq(typeof wb.markdownRowCount, 'function', '导出 markdownRowCount');
+  eq(wb.markdownRowCount('# a\n## b'), 2, '数 ATX 标题行');
+  eq(wb.markdownRowCount('随便一段话\n第二行'), 0, '无大纲 → 0');
+  eq(wb.markdownRowCount(''), 0, '空文本 → 0');
+  eq(wb.markdownRowCount('#'), 0, '只有 # 没有内容 → 0（与解析器口径一致）');
+  eq(wb.markdownRowCount('   ##  缩进标题'), 1, '允许缩进');
+  eq(wb.markdownRowCount('####### 七个#'), 0, '超过 6 个 # 不算标题');
+
+  // 现象侧：空文本确实会产出一张「中心主题」空画布 —— 所以不能拿它替换
+  const s0 = wb.markdownToWorkbook('随便一段话');
+  eq(s0.length, 1, '无大纲也会产出 1 张画布（所以必须在调用方拦）');
+  ok(/中心主题/.test(String(s0[0].content)), '产出的正是空的「中心主题」');
+
+  // 源码侧：两条入口都必须先判
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  // 起点必须是 noOutline 本身：它定义在 importFile **之前**，
+  // 从 importFile 开始切的话这段根本不在窗口里，三条断言会全部恒假。
+  const i0 = idx.indexOf('function noOutline(');
+  ok(i0 >= 0, 'noOutline 定义在 importFile 之前（起点有效）');
+  const seg = idx.slice(i0, i0 + 7000);
+  const sc = seg.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  ok(/function noOutline\(/.test(sc), '抽出 noOutline 判定（两条入口共用）');
+  ok(/markdownRowCount\(/.test(sc), '判定用 markdownRowCount');
+
+  // 两处调用点都要在，只修一处另一条路照样丢数据。
+  //
+  // ⚠️ 这里必须写成**不带 !** 的形式。第一版我照着自己写错的源码
+  // （`if (!noOutline(...)) return;`）写了这条断言，于是断言忠实于错误实现、
+  // 恒为绿 —— 而实际行为是**反的**：有大纲的文件被拒、没有大纲的被放行。
+  // 断言若只是复述实现，就永远抓不到「实现本身方向错了」这种问题。
+  const n = (sc.match(/if \(noOutline\(text, f\.name\)\) return;/g) || []).length;
+  eq(n, 2, 'Markdown 分支与兜底分支都要拦（各 1 处）');
+  // 反向形式一旦出现就是上面那个错误，必须判失败
+  ok(!/if \(!noOutline\(/.test(sc), '不得写成 !noOutline（方向相反会让有大纲的被拒、没大纲的被放行）');
+
+  // 报错要说清「当前画布未改动」，否则用户以为什么都没发生
+  ok(/当前画布未改动/.test(sc), '提示里说明当前画布未改动');
+}
+
 group('交换格式接入 UI');
 
 {

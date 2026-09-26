@@ -2208,6 +2208,21 @@ bootIframePlugin(async (ctx) => {
     ctx.toast(r === 'fallback' ? `${what} 已导出（由浏览器选择保存位置）` : `${what} 已保存`, 'ok');
   }
 
+  /**
+   * 报告「这个文件里没有可导入的大纲」并中止导入。
+   *
+   * 抽出来是因为**两个**分支都要用：显式 Markdown、以及 JSON 解析失败后的
+   * 兜底。只修一处的话，另一条路照样会拿一张空画布把内容顶掉。
+   *
+   * @returns {boolean} true = 里头确实没有大纲（调用方应 return）
+   */
+  function noOutline(text, name) {
+    if (wb.markdownRowCount(text)) return false;
+    ctx.toast('无法识别该文件', 'err');
+    status(`无法识别「${name}」：里面没有大纲结构（Markdown 需至少一个 # 标题行）。当前画布未改动。`, true);
+    return true;
+  }
+
   async function importFile() {
     // 交换格式一并收进来：用户常把 .opml 存成 .xml、把 .mmd 存成 .txt，
     // 所以后缀放宽，真正的判断交给 detectFormat 按**内容**嗅探（见下）。
@@ -2270,12 +2285,21 @@ bootIframePlugin(async (ctx) => {
       sheets = [{ id: wb.newSheetId(), title: fmt.baseTitle(f.name), content, theme: null, layout: null }];
       form = kind;
     } else if (kind === 'markdown' || /\.(md|markdown|txt)$/i.test(f.name)) {
+      // 一条大纲都没有就别往下走：`markdownToWorkbook()` 对任何输入都会给出
+      // 一张画布（无标题时给空的「中心主题」），而导入是**整体替换且不可撤销** ——
+      // 拿它顶掉现有画布等于静默清空用户的全部内容，状态栏还写「已保存」。
+      if (noOutline(text, f.name)) return;
       sheets = wb.markdownToWorkbook(text);
       form = 'markdown';
     } else {
       const parsed = wb.parseWorkbook(text);
       if (parsed) { sheets = parsed.sheets; form = parsed.form; }
-      else { sheets = wb.markdownToWorkbook(text); form = 'markdown(兜底)'; }   // 兜底：当 Markdown 试一次
+      else {
+        // 兜底：当 Markdown 试一次。同样必须先确认里头真有大纲。
+        if (noOutline(text, f.name)) return;
+        sheets = wb.markdownToWorkbook(text);
+        form = 'markdown(兜底)';
+      }
     }
     if (!sheets || !sheets.length) { ctx.toast('无法识别该文件', 'err'); return; }
 
