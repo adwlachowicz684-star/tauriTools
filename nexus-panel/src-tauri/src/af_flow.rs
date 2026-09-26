@@ -34,6 +34,18 @@ pub struct RunRequest {
     pub workdir: String,
     pub model: String,
     pub yolo: bool,
+    /// 是否接着上一次会话继续（codebuddy 的 `-c`）。
+    ///
+    /// ================= 为什么只在 codebuddy 上带 =================
+    ///
+    /// traecli 官方只给了交互式 TUI 与 `-p` 非交互两种，没有"按 id 恢复"
+    /// 这类参数（见 docs）。把 `-c` 也给它带上的话，它多半会当成未知选项
+    /// 直接报错退出 —— 表现为"开了会话衔接之后，窗格里的节点全部失败"，
+    /// 而不是"这个 CLI 不支持"，排查方向会整个偏掉。
+    ///
+    /// 所以能不能接力由前端按 CLI 种类判断，这里只管拼。
+    #[serde(default)]
+    pub cont: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -68,6 +80,13 @@ fn build_args(req: &RunRequest) -> Vec<String> {
     }
     if req.yolo {
         args.push("-y".into());
+    }
+    /*
+     * `-c` 放在最后：它是"接着上次会话"，读的是 CLI 自己记的会话状态，
+     * 与前面那些选项没有顺序依赖；放最后改动最小，也最好注释。
+     */
+    if req.cont && !is_trae {
+        args.push("-c".into());
     }
     args
 }
@@ -172,12 +191,8 @@ pub async fn run_node(
 
 /// 终止以 `root` 为根的整棵进程树。返回 Err 时**不代表一个都没杀掉**，
 /// 只代表至少有一刀没成功；调用方按"尽力而为"处理。
-///
-/// `pub(crate)` 是为了让 dupview 模块复用：那边要停的是 python 后端，
-/// 而 Windows 的 taskkill /T 与 Unix 的 /proc 递归属于平台细节，
-/// 各写一份必然只改一边。
 #[cfg(windows)]
-pub(crate) fn kill_process_tree(root: u32) -> Result<(), String> {
+fn kill_process_tree(root: u32) -> Result<(), String> {
     // /T = 连子孙一起，/F = 强制。一条命令搞定，比逐个枚举可靠也快得多
     let out = std::process::Command::new("taskkill")
         .args(["/PID", &root.to_string(), "/T", "/F"])
@@ -191,7 +206,7 @@ pub(crate) fn kill_process_tree(root: u32) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-pub(crate) fn kill_process_tree(root: u32) -> Result<(), String> {
+fn kill_process_tree(root: u32) -> Result<(), String> {
     /// 自底向上：先递归清干净子孙，最后才是本体
     fn rec(pid: u32, depth: usize, errs: &mut Vec<String>) {
         // 深度兜底：ppid 理论上不该成环，但 /proc 读到的是内核快照，

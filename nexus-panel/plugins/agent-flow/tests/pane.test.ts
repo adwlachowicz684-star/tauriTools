@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { readSrc } from './srcScan';
 import {
-  paneOptionsOf, findPane, isPaneNode, paneMembersOf, panePrevOutputs,
+  paneOptionsOf, findPane, isPaneNode, paneMembersOf, panePrevOutputs, supportsRelay,
   resolveTaskPane, resolveApiPane, withPaneContext, DEFAULT_TEMPERATURE,
 } from '../engine/pane';
 import {
@@ -279,4 +279,47 @@ test('挂了窗格的 CLI 节点不再谎报"会用默认目录"', () => {
   assert.match(src, /const inPane = !blank\(d\.paneId\)/);
   assert.match(src, /inPane \? '没填工作目录，看窗格上配了没有'/);
   assert.match(src, /inPane \? '没指定模型，看窗格上配了没有'/);
+});
+
+test('canRelay：窗格开了开关，还要看 CLI 支不支持', () => {
+  /*
+   * 只看窗格开关的话，traecli 也会被带上 `-c`，
+   * 而它把未知选项当错误直接退出 —— 用户看到的是"开了开关节点全挂了"，
+   * 想不到根因是 CLI 不支持。
+   */
+  const on = makeTaskPaneNode('p1', { relaySession: true }).data;
+  const off = makeTaskPaneNode('p1', { relaySession: false }).data;
+
+  assert.equal(resolveTaskPane(taskWith({ paneId: 'p1', cli: 'codebuddy' }), { id: 'p1', data: on }).canRelay, true);
+  assert.equal(resolveTaskPane(taskWith({ paneId: 'p1', cli: 'traecli' }), { id: 'p1', data: on }).canRelay, false);
+  assert.equal(resolveTaskPane(taskWith({ paneId: 'p1', cli: 'codebuddy' }), { id: 'p1', data: off }).canRelay, false);
+  // 没挂窗格就谈不上接力
+  assert.equal(resolveTaskPane(taskWith({ cli: 'codebuddy' }), null).canRelay, false);
+
+  assert.equal(supportsRelay('codebuddy'), true);
+  assert.equal(supportsRelay('traecli'), false);
+  assert.equal(supportsRelay(undefined), false);
+});
+
+test('会话衔接：第一个成员不带 -c，后面的才带', () => {
+  /*
+   * 第一个带上 `-c` 接的是 CLI 全局记的那一次 ——
+   * 可能是用户在自己终端里刚跑过的，表现为节点读到了一段没见过的历史。
+   */
+  const src = readSrc('App.tsx');
+  assert.match(src, /const cont = eff\.canRelay && eff\.paneId !== '' && paneSessions\.current\.has\(eff\.paneId\)/);
+  assert.match(src, /yolo: eff\.yolo, cont \}/);
+  // 每次开跑前清空：留着的话第二次跑的第一个节点也会去接上一轮
+  assert.match(src, /paneSessions\.current\.clear\(\)/);
+});
+
+test('Rust 侧：接力参数只给非 traecli 拼', () => {
+  /*
+   * 后端拼参数时若不区分 CLI，traecli 会拿到 `-c` 并当未知选项报错退出。
+   * 这个分支在前端判完后仍然要在后端挡一道 —— 前端改坏了不该让 CLI 崩。
+   */
+  // 从插件目录往上两级才是 src-tauri（仓库根在 nexus-panel 的父级）
+  const src = readSrc('../../src-tauri/src/af_flow.rs');
+  assert.match(src, /if req\.cont && !is_trae \{\s*args\.push\("-c"\.into\(\)\);/);
+  assert.match(src, /pub cont: bool/);
 });

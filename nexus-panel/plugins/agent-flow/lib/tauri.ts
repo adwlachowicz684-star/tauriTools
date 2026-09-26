@@ -86,6 +86,13 @@ export type RunRequest = {
   workdir: string;
   model: string;
   yolo: boolean;
+  /**
+   * 接着这个窗格上一次的会话继续（codebuddy 的 `-c`）。
+   *
+   * 只对**窗格里第二个及以后**的节点为 true —— 第一个没有"上一次"可接。
+   * traecli 不支持接力，调用方不会给它置 true（置了会被当成未知选项报错）。
+   */
+  cont?: boolean;
 };
 
 export type DonePayload = { code: number | null; success: boolean };

@@ -135,9 +135,24 @@ export type ResolvedTaskPane = {
   yolo: boolean;
   /** 窗格是否要求共享上下文 */
   shareContext: boolean;
+  /**
+   * 这个节点能不能接上一次会话（要先看 CLI 支持不支持）。
+   *
+   * 窗格开了开关、且这个节点的 CLI **本身**支持接力才为 true ——
+   * 窗格开关只是"想接力"，能不能接得上取决于 CLI。
+   */
+  canRelay: boolean;
   /** 命中的窗格 id；没挂窗格时是空串 */
   paneId: string;
 };
+
+/** 支持「接着上次会话」的 CLI。traecli 官方没有给恢复参数，不能带 */
+export const RELAY_CLIS: readonly CliKind[] = ['codebuddy'];
+
+/** 这个 CLI 支不支持接力 */
+export function supportsRelay(cli: CliKind | string | undefined | null): boolean {
+  return RELAY_CLIS.includes(String(cli ?? '') as CliKind);
+}
 
 /**
  * CLI 节点 + 它的窗格 → 真正生效的配置。
@@ -160,13 +175,21 @@ export function resolveTaskPane(
 ): ResolvedTaskPane {
   const p = (pane?.data ?? null) as TaskPaneNodeData | null;
   const paneId = p ? String(pane!.id) : '';
+  const cli = (d.cli ?? p?.cli ?? 'codebuddy') as CliKind;
   return {
-    cli: (d.cli ?? 'codebuddy') as CliKind,
+    cli,
     workdir: filled(d.workdir) ? String(d.workdir) : String(p?.workdir ?? ''),
     model: filled(d.model) ? String(d.model) : String(p?.model ?? ''),
     credentialId: filled(d.credentialId) ? String(d.credentialId) : String(p?.credentialId ?? ''),
     yolo: Boolean(d.yolo) || Boolean(p?.yolo),
     shareContext: p ? p.shareContext !== false : false,
+    /*
+     * 能不能接力 = 窗格开了 && CLI 支持。
+     * 只看窗格开关的话，traecli 也会被带上 `-c`，
+     * 而它把这个参数当未知选项、直接报错退出 ——
+     * 用户看到的是"开了开关之后节点全挂了"，想不到是 CLI 不支持。
+     */
+    canRelay: Boolean(p?.relaySession) && supportsRelay(cli),
     paneId,
   };
 }

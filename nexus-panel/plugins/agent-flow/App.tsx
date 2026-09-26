@@ -706,6 +706,16 @@ export default function App() {
   const rfInstance = useRef<ReactFlowInstance<FlowNode, FlowEdge> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const activeRuns = useRef<Map<string, string>>(new Map());
+  /*
+   * 本次运行里"已经开过会话"的窗格 id。
+   *
+   * 会话衔接只对窗格里**第二个及以后**的节点生效 —— 第一个没有"上一次"可接，
+   * 带上 `-c` 接的是 CLI 全局记的那一次，可能是用户在自己终端里跑的那次。
+   *
+   * 每次开跑前清空：留着的话第二次跑的第一个节点也会去接上一次跑的会话，
+   * 表现为"每次重跑，第一个节点的回答里都带着上一轮的上下文"。
+   */
+  const paneSessions = useRef<Set<string>>(new Set());
 
   const selected = nodes.find((n) => n.id === selectedId) ?? null;
   /*
@@ -2129,6 +2139,7 @@ function reportSkipped(
     setView('tasks');
     setSummary(null);
     activeRuns.current.clear();
+    paneSessions.current.clear();
     const controller = new AbortController();
     abortRef.current = controller;
     const stamp = String(Date.now());
@@ -2224,9 +2235,17 @@ function reportSkipped(
        * 而窗格卡片上明明写着那个目录：界面说一套、跑的是另一套，且不报错。
        */
       const eff = resolveTaskPane(d, findPane(graph?.nodes ?? [], d.paneId));
+      /*
+       * 会话衔接：这个窗格本次已经开过会话，就带上 `-c` 接着那一次跑。
+       *
+       * 第一个成员不带 —— 它没有"上一次"，带上去接的是 CLI 全局记的那一次，
+       * 可能是用户在自己终端里跑的，表现为"节点读到了一段没见过的历史"。
+       */
+      const cont = eff.canRelay && eff.paneId !== '' && paneSessions.current.has(eff.paneId);
+      if (eff.canRelay && eff.paneId !== '') paneSessions.current.add(eff.paneId);
       await runCli(
         { runId, cli: eff.cli, cmd: DEFAULT_CMD[eff.cli], prompt: rendered,
-          workdir: eff.workdir, model: eff.model, yolo: eff.yolo },
+          workdir: eff.workdir, model: eff.model, yolo: eff.yolo, cont },
         {
           onStdout: (c) => onChunk(c),
           onStderr: (c) => onChunk(c),

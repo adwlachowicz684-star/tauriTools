@@ -2387,6 +2387,25 @@ export type TaskPaneNodeData = {
    * 适合"几个独立任务凑一批跑"的场景。
    */
   shareContext?: boolean;
+  /**
+   * 是否让窗格里的成员**接着同一个会话**跑（codebuddy 的 `-c`）。
+   *
+   * ================= 与 shareContext 的区别 ====================
+   *
+   * shareContext 是把上游的输出**抄进提示词**——下游看得到上游说了什么，
+   * 但 CLI 那边每次都是全新会话，项目上下文要重新加载一遍。
+   *
+   * relaySession 是 CLI 自己接着上次继续——会话历史在它那边，
+   * 不用重加载上下文，也省 token。代价是成员之间变成**强串行**：
+   * "上一次会话"是 CLI 全局记的，两个并行节点会互相串到对方那一次上。
+   *
+   * ================= 为什么默认关 ====================
+   *
+   * 它依赖 CLI 自己维护"上一次"这个全局状态。若用户在别处
+   * （比如自己开着的终端里）刚跑过同一个 CLI，接力的可能是那一次会话 ——
+   * 表现为"节点读到了一段没见过的历史"。默认关，要的人自己开。
+   */
+  relaySession?: boolean;
 };
 
 export function makeTaskPaneNode(id: string, partial: Partial<TaskPaneNodeData> = {}): GraphNode {
@@ -2402,6 +2421,7 @@ export function makeTaskPaneNode(id: string, partial: Partial<TaskPaneNodeData> 
       credentialId: partial.credentialId ?? '',
       yolo: partial.yolo,
       shareContext: partial.shareContext ?? true,
+      relaySession: partial.relaySession ?? false,
     } as TaskPaneNodeData,
   };
 }
