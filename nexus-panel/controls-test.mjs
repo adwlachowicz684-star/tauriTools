@@ -3193,5 +3193,81 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
     !/^\s*adaptTheme\s*:/m.test(stripComments(read('js/plugin-config.d.ts'))));
 }
 
+/* ============================================================
+   52. 设置插件：两套实现不得再漂移
+   ------------------------------------------------------------
+   设置插件是双模的（registry 按 noBuild 选 plugins/settings/index.js
+   还是 module.tsx）。两套代码各写一份，谁都不会报"另一边没同步"——
+   这是本项目反复出现的问题模式。
+
+   本节钉的是"功能面一致"，不只是"类名存在"（后者由 dead-class 守）。
+   ============================================================ */
+{
+  const nb = stripComments(read('plugins/settings/index.js'));
+  const rj = stripComments(read('plugins/settings/App.tsx'));
+  const tp = stripComments(read('plugins/settings/ThemeParams.tsx'));
+
+  /* 1) 颜色解析逻辑必须只有一份。
+        留在 .tsx 里的话无构建版 import 不到（原生 ESM 不转译），
+        只能复制一份 —— 那就是下一次漂移的起点。 */
+  t('颜色解析只有一份：ThemeParams 不再本地定义 splitColor',
+    !/function splitColor/.test(tp) && !/function joinColor/.test(tp));
+  t('两版都从共享模块取颜色解析',
+    /js\/theme-color\.js/.test(tp) && /js\/theme-color\.js/.test(nb));
+
+  /*
+   * 2) 无构建版必须有主题参数面板。
+   *    此前它只在 React 版存在 —— 无构建模式下 28 个参数一项都改不了，
+   *    而"所有参数外放"是硬要求。
+   *
+   * ⚠️ 判据必须落在 **renderParams 函数体内**，不能查整个文件：
+   *    只查文件的话，import 语句里那个 paramsForStyle 就足以让它通过 ——
+   *    哪怕面板被改成 `const list = []`（一项都不渲染）照样全绿。
+   *    这正是"钉存在性、不钉接线"的老问题。
+   */
+  const iRP = nb.indexOf('const renderParams');
+  /* 片段要够长：field() 本身一百多行，截太短会把「遍历 PARAM_GROUPS」
+     那一行排除在外 —— 断言变成永远看不到它，于是被改成硬编码时也全绿。 */
+  const seg = iRP < 0 ? '' : nb.slice(iRP, iRP + 9000);
+  t('能定位到无构建版的参数渲染函数', seg.length > 0);
+  const hasPanel = /paramsForStyle/.test(seg) && /setVarOverride/.test(seg) && /tp-row/.test(seg);
+  t('无构建版有主题参数面板（规格驱动）', hasPanel,
+    hasPanel ? '存在' : '缺失 → 无构建模式下用户改不了任何主题参数');
+
+  /* 3) 必须是"遍历规格"，不能硬编码具体变量。
+        硬编码 28 个 key 的话，themes.js 加一个变量这里就漏一个，
+        而且不会报错 —— 只是用户看不到那一项。 */
+  t('参数面板遍历 PARAM_GROUPS 而非硬编码变量', /PARAM_GROUPS/.test(seg));
+  t('参数面板不硬编码 --bg 等具体变量名',
+    !/h\(\s*'[^']*'\s*,\s*\{[^}]*\}[^)]*--bg'/.test(seg));
+
+  /* 4) 两版分页清单必须一致（豁免项要写明理由）。
+        少一个 tab 在无构建模式下就是整块功能消失，且不报错。 */
+  const tabsOf = (src) => {
+    const i = src.indexOf('const TABS');
+    if (i < 0) return null;
+    const j = src.indexOf('];', i);
+    if (j < 0) return null;
+    return [...src.slice(i, j).matchAll(/\[\s*'([a-z-]+)'\s*,\s*'([^']+)'\s*\]/g)]
+      .map((m) => m[1]);
+  };
+  const a = tabsOf(nb);
+  const b = tabsOf(rj);
+  t('能解析出两版分页清单', !!a && !!b, a && b ? `${a.length} / ${b.length}` : '解析失败');
+  /*
+   * 豁免：'update' 目前只在 React 版。
+   * 它依赖 updater（Rust 侧尚无 mod updater），用户明确说过"updater 先不管"，
+   * 所以这里不强行要求无构建版补上 —— 但写进豁免清单，
+   * 将来 updater 落地时这条会提醒"另一边也要加"。
+   */
+  const EXEMPT = ['update'];
+  const miss = (b || []).filter((k) => !(a || []).includes(k) && !EXEMPT.includes(k));
+  t('React 版的每个分页在无构建版都存在（豁免除外）', miss.length === 0,
+    miss.length ? `无构建版缺：${miss.join(', ')}` : '一致');
+  t('豁免清单没有多余的项（updater 落地后应删除）',
+    EXEMPT.every((k) => (b || []).includes(k) && !(a || []).includes(k)),
+    EXEMPT.join(', '));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

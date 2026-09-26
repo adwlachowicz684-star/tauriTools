@@ -13,47 +13,15 @@ import type { ReactNode } from 'react';
  * 两者拼回 rgba()。alpha 为 1 时输出 hex，避免"明明不透明却写成长串 rgba"。
  */
 
-/** 把任意颜色串拆成 { hex, alpha }；解析不了的（transparent / 渐变）返回 null */
-function splitColor(v: string): { hex: string; alpha: number } | null {
-  const s = String(v || '').trim();
-  if (!s || s === 'transparent' || s === 'none') return null;
-
-  if (s.startsWith('#')) {
-    let h = s.slice(1);
-    if (h.length === 3) h = h.split('').map((c) => c + c).join('');
-    if (h.length === 8) {
-      // #rrggbbaa —— CSS Color 4，浏览器已普遍支持
-      return { hex: '#' + h.slice(0, 6), alpha: parseInt(h.slice(6, 8), 16) / 255 };
-    }
-    if (h.length === 6) return { hex: '#' + h, alpha: 1 };
-    return null;
-  }
-
-  const m = s.match(/^rgba?\(([^)]+)\)$/i);
-  if (!m) return null;
-  const parts = m[1].split(/[,/\s]+/).filter(Boolean).map((x) => x.trim());
-  if (parts.length < 3) return null;
-  const to255 = (x: string) => {
-    if (x.endsWith('%')) return Math.round((parseFloat(x) / 100) * 255);
-    return Math.round(parseFloat(x));
-  };
-  const [r, g, b] = [to255(parts[0]), to255(parts[1]), to255(parts[2])];
-  if ([r, g, b].some((n) => !Number.isFinite(n))) return null;
-  const a = parts.length > 3 ? parseFloat(parts[3]) : 1;
-  const hex = '#' + [r, g, b].map((n) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0')).join('');
-  return { hex, alpha: Number.isFinite(a) ? Math.max(0, Math.min(1, a)) : 1 };
-}
-
-/** hex + alpha → CSS 串。alpha 为 1 时输出 hex（更短、也更好读） */
-function joinColor(hex: string, alpha: number) {
-  if (alpha >= 1) return hex;
-  const n = parseInt(hex.slice(1), 16);
-  const r = (n >> 16) & 255;
-  const g = (n >> 8) & 255;
-  const b = n & 255;
-  /* 保留两位小数：0.9 而不是 0.9000000000000001 */
-  return `rgba(${r}, ${g}, ${b}, ${Math.round(alpha * 100) / 100})`;
-}
+/*
+ * 解析/合并逻辑在 js/theme-color.js —— **刻意不写在这里**。
+ *
+ * 设置插件是双模的（registry 按 noBuild 选 plugins/settings/index.js
+ * 还是 module.tsx），无构建版跑原生 ESM，import 不到 .tsx。
+ * 写在这里它只能复制一份，两边迟早漂移（改了 React 版，
+ * 无构建版仍按旧规则解析，alpha 处理不一致就是典型的症状）。
+ */
+import { splitColor, joinColor } from '../../js/theme-color.js';
 
 export { splitColor, joinColor };
 
