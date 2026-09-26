@@ -13,8 +13,20 @@
  * 与 nodes/defs/ 里的 `run` 字段指向**同一个函数**，不是两份实现：
  *   nodes/defs/task.ts   → run: runTask   （供 UI 侧自描述）
  *   本文件               → task: runTask   （供引擎分发）
- * 新增节点时两处都要挂上。漏挂引擎这张表的话该节点会"直通"（不报错、不产出），
- * 现有 694 项测试会立刻失败 —— 所以漏了是能被发现的。
+ * 新增节点时两处都要挂上。
+ *
+ * ================= 漏挂**不会**被现有测试发现 =================
+ *
+ * 以前这里写着"漏了现有 694 项测试会立刻失败"，那是错的：
+ * AI 三个节点合并成 llmChat 之后，它就一直没挂在这张表上，
+ * 而 2200 多项测试全绿。
+ *
+ * 因为漏挂的表现是"直通"—— 节点照常显示完成、不报错、
+ * 输出留空（runner.ts 对没有执行器的节点刻意不报错）。
+ * 用户看到的是"大模型节点跑完了，什么也没吐出来"，
+ * 而同用途的老节点（ocr / translate）却正常。
+ *
+ * 所以必须有显式的对账守卫：见 tests/runnerRegistry.test.ts。
  */
 import type { RunContext } from './runContext';
 import { runTask } from './runners/task';
@@ -24,6 +36,7 @@ import { runParallel } from './runners/parallel';
 import { runLoop } from './runners/loop';
 import { runFs } from './runners/fs';
 import { runOcr } from './runners/ocr';
+import { runLlmChat } from './runners/llmChat';
 import { runTranslate } from './runners/translate';
 import { runUpdate } from './runners/update';
 import { runGithubUpdate } from './runners/githubUpdate';
@@ -55,6 +68,7 @@ const RUNNERS: Record<string, NodeRunner | undefined> = {
   loop: runLoop,
   fs: runFs,
   ocr: runOcr,
+  llmChat: runLlmChat,
   translate: runTranslate,
   // bili / wechat 两个 type 共用一份 data（kind='update'），执行器也共用
   update: runUpdate,

@@ -8,6 +8,8 @@ import assert from 'node:assert/strict';
  */
 import { runGraph } from '../engine/runner';
 import { makeNode } from '../types';
+import { getRunner } from '../engine/runnerRegistry';
+import { validateNode } from '../engine/nodeValidate';
 
 /**
  * 节点注册表相关的引擎侧行为。
@@ -66,4 +68,55 @@ test('未知 kind 不会污染下游模板（下游拿到空串而非崩溃）',
     onEvent: () => {},
   });
   assert.deepEqual(seen, ['B:v=']);
+});
+
+/* ------------------------------------------------------------------ */
+
+/*
+ * 漏挂执行器是**静默**的：runner 对没有执行器的节点刻意不报错，
+ * 照常发 node-done、输出留空。所以只能靠对账发现 ——
+ * 上面那几条"未知 kind 不崩"的测试恰恰说明了它不会报错。
+ *
+ * 事实依据：AI 三个节点合并成 llmChat 之后，它一直没挂进注册表，
+ * 而当时 2200 多项测试全绿。用户看到的是"大模型节点跑完了，
+ * 什么也没吐出来"，同用途的老节点（ocr / translate）却正常。
+ */
+test('每种真实节点都要挂上执行器（合并节点最容易漏）', () => {
+  /*
+   * 这些不是漏挂：
+   *   frame / taskPane / apiPane —— 容器，不参与执行
+   *   canvasRef / module         —— 纯编排占位，直通是设计如此
+   */
+  const BY_DESIGN = new Set(['frame', 'taskPane', 'apiPane', 'canvasRef', 'module']);
+  const kinds = [
+    'task', 'trigger', 'condition', 'parallel', 'loop', 'fs', 'ocr', 'translate',
+    'llmChat', 'update', 'github-update', 'github-push', 'generic-http', 'extract',
+    'wait', 'log', 'beep', 'play-audio', 'clock', 'const', 'join', 'gate',
+    'throttle', 'timeout', 'retry', 'math', 'text', 'compare', 'random', 'var',
+    'stop', 'ask', 'canvasIn', 'canvasOut', 'tableRead', 'derive', 'filter', 'agg',
+  ];
+  for (const k of kinds) {
+    assert.ok(getRunner({ kind: k }), `${k} 没有执行器 —— 会直通：跑完不报错、输出留空`);
+  }
+  /* 反向：设计上就该没有的，别哪天被误挂上去 */
+  for (const k of BY_DESIGN) {
+    assert.equal(getRunner({ kind: k }), undefined, `${k} 是纯容器/占位，不该有执行器`);
+  }
+});
+
+test('大模型节点要有校验（合并后最容易整类漏掉）', () => {
+  const v = (d) => validateNode({ data: { kind: 'llmChat', ...d } });
+  /*
+   * 合并前 ocr / translate 各自都有校验，合并后的 llmChat 一度没有 ——
+   * 空提示词、没选连接都显示绿灯，跑起来才失败。
+   */
+  const noCred = v({ credentialId: '', llm: { apiKey: '' } });
+  assert.notEqual(noCred.level, 'ok', '没选连接也没填密钥应当有提示');
+  const ocrNoImg = v({ credentialId: 'c', use: 'ocr', imageSource: 'file', path: '' });
+  assert.equal(ocrNoImg.level, 'error', '图片识别没填图片路径应当报缺参');
+  const transNoLang = v({ credentialId: 'c', use: 'translate', targetLang: '' });
+  assert.notEqual(transNoLang.level, 'ok', '翻译没填目标语言应当有提示');
+  /* 反向：配齐了就别乱报红（误报比漏报更糟） */
+  assert.equal(v({ credentialId: 'c', prompt: '', use: 'chat' }).level, 'ok',
+    '提示词空着不判错 —— 它可能靠 {{上游.output}} 取内容');
 });

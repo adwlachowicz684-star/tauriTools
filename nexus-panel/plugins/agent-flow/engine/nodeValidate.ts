@@ -5,6 +5,7 @@ import type {
   ExtractNodeData, TaskNodeData, WaitNodeData, BeepNodeData,
   PlayAudioNodeData, ClockNodeData, ConstNodeData, ModuleNodeData,
   JoinNodeData, GateNodeData, ThrottleNodeData, TimeoutNodeData, RetryNodeData,
+  LlmChatNodeData,
 } from '../types';
 import { targetsOf, UPDATE_SOURCE_META, needsFeedUrl, constsOf, constItemLabel } from '../types';
 import { triggerEntriesOf, entryEnabled, mergeConfig } from './triggerEntries';
@@ -209,6 +210,40 @@ function vOcr(d: OcrNodeData): V {
     return warn('没选连接也没填密钥，调用模型时可能失败');
   }
   return ok();
+}
+
+/*
+ * 大模型节点（AI 三节点合并后的那一个）。
+ *
+ * ================= 为什么必须单列 =================
+ *
+ * 合并之前是 ocr / translate 两个 kind，各有自己的校验函数；
+ * 合并之后的 kind 是 llmChat，而这张表里长期没有它 ——
+ * 于是新建的大模型节点**完全没有校验**：
+ *
+ *   · 提示词空着 → 徽章绿灯
+ *   · 没选连接 → 徽章绿灯（老节点反而会警告）
+ *
+ * 表现是"配了个空节点，界面说没问题，跑起来才知道"。
+ * 这类缺失不报错，只能靠对账发现（见 tests/registry.test.ts）。
+ */
+function vLlmChat(d: LlmChatNodeData): V {
+  const msgs: string[] = [];
+  const use = d.use ?? 'chat';
+  /*
+   * 提示词为空不判错：它可能挂在某个上游后面，靠 {{上游.output}} 取内容，
+   * 校验器拿不到边，判断不了"有没有上游" —— 宁可漏报也不要误报红色。
+   */
+  if (blank(d.credentialId) && blank(d.llm?.apiKey)) {
+    msgs.push('没选连接也没填密钥，调用模型时可能失败');
+  }
+  if (use === 'ocr') {
+    if (d.imageSource === 'file' && blank(d.path)) return error('没填图片路径');
+    if (d.imageSource !== 'file' && blank(d.url)) return error('没填图片地址');
+  }
+  /* 翻译缺目标语言：模型会自由发挥，译成的语言不受控 */
+  if (use === 'translate' && blank(d.targetLang)) msgs.push('没填目标语言');
+  return msgs.length ? warn(...msgs) : ok();
 }
 
 function vTranslate(d: TranslateNodeData): V {
@@ -426,6 +461,7 @@ const VALIDATORS: Table = {
   fs: vFs as never,
   ocr: vOcr as never,
   translate: vTranslate as never,
+  llmChat: vLlmChat as never,
   update: vUpdate as never,
   'github-update': vGithubUpdate as never,
   'github-push': vGithubPush as never,
