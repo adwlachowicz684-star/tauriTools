@@ -5,7 +5,8 @@ import type {
   ExtractNodeData, TaskNodeData, WaitNodeData, BeepNodeData,
   PlayAudioNodeData, ClockNodeData, ConstNodeData, ModuleNodeData,
   JoinNodeData, GateNodeData, ThrottleNodeData, TimeoutNodeData, RetryNodeData,
-  LlmChatNodeData,
+  LlmChatNodeData, TableReadNodeData, DeriveNodeData, FilterNodeData,
+  AggNodeData, VarNodeData,
 } from '../types';
 import { targetsOf, UPDATE_SOURCE_META, needsFeedUrl, constsOf, constItemLabel } from '../types';
 import { triggerEntriesOf, entryEnabled, mergeConfig } from './triggerEntries';
@@ -439,6 +440,49 @@ function vModule(d: ModuleNodeData): V {
   return ok();
 }
 
+/*
+ * ---------------- 表格四件套 ----------------
+ *
+ * 这四个**此前一条规则都没有** —— 执行器里明明写着
+ *     if (!path) throw new NodeFailError('没填表格文件路径');
+ * 而 VALIDATORS 表里没有 tableRead / derive / filter / agg 这四个键。
+ * 于是画布圆点恒绿、跑起来才失败，且失败原因（"没填表格文件路径"）
+ * 在编辑期完全看不见。
+ *
+ * 判红而不是判黄：这四项**没有默认值兜底**，空着必然抛错阻断。
+ *
+ * 不校验"上游有没有接表" —— 那是图级信息，validateNode 只看单个节点，
+ * 上游没接时执行器会给出更准确的提示（"前面要接一个「读表格」节点"）。
+ */
+function vTableRead(d: TableReadNodeData): V {
+  return blank(d.path) ? error('没填表格文件路径') : ok();
+}
+
+function vDerive(d: DeriveNodeData): V {
+  const msgs: string[] = [];
+  if (blank(d.newCol)) msgs.push('没填新列名');
+  if (blank(d.expr)) msgs.push('没填公式');
+  return msgs.length ? error(...msgs) : ok();
+}
+
+function vFilter(d: FilterNodeData): V {
+  return blank(d.cond) ? error('没填筛选条件') : ok();
+}
+
+function vAgg(d: AggNodeData): V {
+  return blank(d.col) ? error('没填要汇总的列名') : ok();
+}
+
+/*
+ * 变量：名字是唯一的必填项。
+ *
+ * set 模式下 value 空着是合法的 —— 执行器会取上游输出当值。
+ * 判它缺参的话，用户会去填一个本来该由上游给的值。
+ */
+function vVar(d: VarNodeData): V {
+  return blank(d.name) ? error('没填变量名') : ok();
+}
+
 /* ------------------------------------------------------------------ */
 /* 分派                                                                */
 /* ------------------------------------------------------------------ */
@@ -478,6 +522,11 @@ const VALIDATORS: Table = {
   throttle: vThrottle as never,
   timeout: vTimeout as never,
   retry: vRetry as never,
+  tableRead: vTableRead as never,
+  derive: vDerive as never,
+  filter: vFilter as never,
+  agg: vAgg as never,
+  var: vVar as never,
 };
 
 /**

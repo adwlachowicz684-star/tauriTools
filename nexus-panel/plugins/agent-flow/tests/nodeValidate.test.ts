@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateNode, worstLevel, type IssueLevel } from '../engine/nodeValidate';
+import { readSrc } from './srcScan';
 
 /**
  * 节点配置校验 —— 三档预警的判定。
@@ -207,4 +208,101 @@ test('汇总取最严重的一档', () => {
   assert.equal(worstLevel(['warn', 'error']), 'error');
   assert.equal(worstLevel(['ok']), 'ok');
   assert.equal(worstLevel([]), 'ok');
+});
+
+/* ---------------- 表格四件套 ---------------- */
+
+test('读表格：没路径判红（执行器会抛"没填表格文件路径"）', () => {
+  assert.equal(level('tableRead', { path: '' }), 'error');
+  assert.equal(level('tableRead', { path: '   ' }), 'error');
+});
+
+test('读表格：有路径判绿', () => {
+  assert.equal(level('tableRead', { path: '/tmp/a.csv' }), 'ok');
+});
+
+test('推导：列名与公式分开报，不合并成一句', () => {
+  const r = validateNode(nd('derive', { newCol: '', expr: '' }));
+  assert.equal(r.level, 'error');
+  assert.equal(r.messages.length, 2);
+});
+
+test('推导：齐全判绿', () => {
+  assert.equal(level('derive', { newCol: '总价', expr: '单价 * 数量' }), 'ok');
+});
+
+test('筛选：没条件判红', () => {
+  assert.equal(level('filter', { cond: '' }), 'error');
+  assert.equal(level('filter', { cond: '数量 > 0' }), 'ok');
+});
+
+test('汇总：没列名判红', () => {
+  assert.equal(level('agg', { col: '' }), 'error');
+  assert.equal(level('agg', { col: '数量', op: 'sum' }), 'ok');
+});
+
+/* ---------------- 变量 ---------------- */
+
+test('变量：没名字判红', () => {
+  assert.equal(level('var', { name: '', mode: 'set' }), 'error');
+  assert.equal(level('var', { name: 'x', mode: 'set' }), 'ok');
+});
+
+test('变量：set 模式值空着不判红（会取上游输出）', () => {
+  assert.equal(level('var', { name: 'x', mode: 'set', value: '' }), 'ok');
+});
+
+/* ---------------- 覆盖度：有执行器的种类都得有说法 ---------------- */
+
+/**
+ * 有执行器的节点种类，要么在 VALIDATORS 里有规则，
+ * 要么在下面这份白名单里写清"为什么不需要"。
+ *
+ * 只做正向对账（登记了 → 规则真存在）抓不到这一类：
+ * 表格四件套和变量**压根不在表里**，遍历表时它们根本不出现，
+ * 于是四项恒绿、跑到才炸，测试却一直全绿。
+ */
+const NO_VALIDATOR_NEEDED: Record<string, string> = {
+  // 由 engine/argTypes.ts 统一按运算判（缺参 / 错参），不进 VALIDATORS
+  math: 'argTypes 按 op 判',
+  compare: 'argTypes 按 op 判',
+  text: 'argTypes 按 op 判',
+  random: 'argTypes 按 op 判',
+  // 没有必填项：留空则记上游内容
+  log: '无必填项',
+  // 只发停止信号
+  stop: '无必填项',
+  /*
+   * 提示词留空有默认值「请输入内容」；
+   * 且"用户到底填不填"是运行时才发生的事，编辑期判不了。
+   */
+  ask: '必填与否取决于运行时输入',
+  // 纯接口标记，运行时透传
+  canvasIn: '无必填项',
+  canvasOut: '无必填项',
+};
+
+test('每个有执行器的节点种类都有校验规则，或白名单里写了理由', () => {
+  const regSrc = readSrc('engine/runnerRegistry.ts');
+  const valSrc = readSrc('engine/nodeValidate.ts');
+
+  const runnersBlock = regSrc.match(/const RUNNERS[^=]*=\s*\{([\s\S]*?)\n\};/);
+  assert.ok(runnersBlock, '没找到 RUNNERS 表');
+
+  const kinds = [...runnersBlock[1].matchAll(/^\s*'?([a-zA-Z][\w-]*)'?:\s*run\w+,/gm)]
+    .map((m) => m[1]);
+  assert.ok(kinds.length >= 30, `RUNNERS 种类数异常：${kinds.length}`);
+
+  const validatorsBlock = valSrc.match(/const VALIDATORS[^=]*=\s*\{([\s\S]*?)\n\};/);
+  assert.ok(validatorsBlock, '没找到 VALIDATORS 表');
+  const covered = new Set(
+    [...validatorsBlock[1].matchAll(/^\s*'?([a-zA-Z][\w-]*)'?:\s*v\w+/gm)].map((m) => m[1]),
+  );
+
+  const missing = kinds.filter((k) => !covered.has(k) && !NO_VALIDATOR_NEEDED[k]);
+  assert.deepEqual(missing, [], `这些种类有执行器却没有校验规则：${missing.join('、')}`);
+
+  // 白名单里不该留已经补上规则的项 —— 留着就会掩盖"规则被摘掉"
+  const stale = Object.keys(NO_VALIDATOR_NEEDED).filter((k) => covered.has(k));
+  assert.deepEqual(stale, [], `白名单里的这些已经有规则了，该删掉：${stale.join('、')}`);
 });
