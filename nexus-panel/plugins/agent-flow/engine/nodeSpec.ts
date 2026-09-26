@@ -269,6 +269,34 @@ export const SPECS: Record<string, NodeSpec> = {
     ],
   }),
 
+  /*
+   * 合并后的大模型节点：一个节点覆盖三种用途。
+   *
+   * **以前这里根本没有 llmChat 这一条** —— 它是后来加的节点，
+   * 契约没跟上。后果是导出脚本与"这条链在本机能不能跑"的判定
+   * 对它一无所知：没配 llmCaller 时直接抛 "is not a function"，
+   * 而 ocr / translate 有契约，会给出"未提供大模型调用执行器"。
+   * 合并后三种用途都走这一个 kind，补上这一条才算对齐。
+   */
+  llmChat: S('text', ['text', 'files', 'any'], '模型的回复文本', {
+    hiddenParams: [
+      { key: 'llm', desc: '大模型配置 { url, model, apiKey, timeoutSec }。由 llm-config 卡片组提供，建节点时 def.create() 会填默认值' },
+      /*
+       * use 决定后面哪些字段生效 —— 不写清楚的话 AI 拼出来一个
+       * use='translate' 却不填 targetLang 的节点，运行时才报
+       * "未指定目标语言"，而拼装阶段看不出问题。
+       */
+      { key: 'use', desc: '用途', options: ['chat', 'ocr', 'translate'] },
+      { key: 'imageSource', desc: '仅 use=ocr："file" 走本地读图（需 imageReader 能力），"url" 走网络地址', options: ['file', 'url'] },
+      { key: 'url', desc: '仅 use=ocr 且 imageSource=url：图片地址，需 http(s) 或 data:image/ 开头' },
+      { key: 'path', desc: '仅 use=ocr 且 imageSource=file：本地图片路径' },
+      { key: 'detail', desc: '仅 use=ocr：图片细节', options: ['auto', 'low', 'high'] },
+      { key: 'targetLang', desc: '仅 use=translate：目标语言。可填预设码（zh / en），也可填「简练的文言文」这类自由描述', required: true },
+      { key: 'sourceLang', desc: '仅 use=translate：源语言，留空或 auto 让模型自动判断' },
+      { key: 'glossary', desc: '仅 use=translate：术语表，每行「原文=译文」' },
+    ],
+  }),
+
   // 外部服务
   /*
    * 更新检测其实**有** fields（bili 与 wechat 共用 updateFields），

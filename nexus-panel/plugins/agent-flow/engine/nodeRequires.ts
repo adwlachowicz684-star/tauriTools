@@ -46,6 +46,21 @@ export const REQUIRES: Table = {
   ],
   translate: [{ key: 'llmCaller', label: '大模型调用' }],
   /*
+   * 合并后的大模型节点：三种用途都要 llmCaller，
+   * 其中「图片识别 + 本地文件」多要一个读图能力。
+   *
+   * 不登记的话，没有 llmCaller 时 opts.llmCaller!() 直接抛
+   * "is not a function" —— 与"你没配连接"差了十万八千里。
+   */
+  llmChat: [
+    {
+      key: 'imageReader',
+      label: '图片读取',
+      when: (d) => d.use === 'ocr' && d.imageSource === 'file',
+    },
+    { key: 'llmCaller', label: '大模型调用' },
+  ],
+  /*
    * 网络抓取只在**有订阅源类目标**时才需要。
    *
    * 一个节点可能只盯 GitHub 仓库（走 githubFetch，不碰网络抓取）——
@@ -80,6 +95,20 @@ export const REQUIRES: Table = {
    * 不登记 —— 它们在浏览器模式下也能跑。
    */
   'play-audio': [{ key: 'playAudioReader', label: '音频读取' }],
+  /*
+   * 合并后的「播放声音」节点：只有来源选「本地文件」才需要读盘能力。
+   *
+   * 不写 when 的话，纯系统音效的节点会因为"没有音频读取能力"直接失败 ——
+   * 而它根本不读盘（Web Audio 实时合成），浏览器模式下也能响。
+   * 那是**误报**，用户会以为必须装桌面端才能用提示音。
+   */
+  beep: [
+    {
+      key: 'playAudioReader',
+      label: '音频读取',
+      when: (d) => d.source === 'file',
+    },
+  ],
 };
 
 /** 取某节点数据所需的能力清单（已按 when 过滤） */

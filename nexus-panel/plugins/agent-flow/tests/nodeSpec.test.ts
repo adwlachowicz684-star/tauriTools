@@ -6,7 +6,7 @@ import {
   SPECS, specOf, canConnect, canStack, blockCatalog, PORT_LABEL,
   TEMPLATE_VARS, CAPABILITY_SIGNATURES, EDGE_SHAPE, BRANCH_EDGE_EXAMPLE,
 } from '../engine/nodeSpec';
-import { REQUIRES } from '../engine/nodeRequires';
+import { REQUIRES, requiresOf } from '../engine/nodeRequires';
 
 /** 仓库根；由 run-tests.sh 导出（测试在 $OUT/tests 下跑） */
 const AF_SRC = process.env.AF_SRC || '';
@@ -212,10 +212,23 @@ test('能力需求：按 kind 从 REQUIRES 自动回填，不手写', () => {
   }
 });
 
+/**
+ * 纯本地节点在**默认配置**下不需要任何外部能力（浏览器模式也能跑）。
+ *
+ * 这里查 requiresOf 而不是静态 SPECS[k].requires：
+ * 「播放声音」的能力需求是**条件式**的（只有来源选「本地文件」才要读盘），
+ * 静态清单里必然带着那个 key，用静态清单判就会把"系统音效也要装桌面端"
+ * 这种误报当成对的 —— 而用户看到的正是运行时判定。
+ */
 test('能力需求：纯本地节点的 requires 为空（浏览器模式也能跑）', () => {
   for (const k of ['wait', 'log', 'beep', 'clock', 'const', 'extract', 'join', 'gate']) {
-    assert.equal(SPECS[k]?.requires.length ?? 0, 0, `${k} 不该需要外部能力`);
+    assert.equal(requiresOf({ kind: k }).length, 0, `${k} 不该需要外部能力`);
   }
+  /* 条件式需求：选了本地文件才要读盘，选系统音效仍然不要 */
+  assert.equal(requiresOf({ kind: 'beep', source: 'preset' }).length, 0,
+    '系统音效不该要读盘能力（它不读盘）');
+  assert.ok(requiresOf({ kind: 'beep', source: 'file' }).length > 0,
+    '本地音频文件必须登记读盘能力');
 });
 
 test('能力需求：具体取值正确（AI 据此判断链能否在本机跑）', () => {

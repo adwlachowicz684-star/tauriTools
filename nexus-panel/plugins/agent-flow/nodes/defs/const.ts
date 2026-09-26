@@ -1,29 +1,38 @@
-import { makeConstNode, type ConstValueType } from '../../types';
+import { CONST_TYPE_LABEL, makeConstNode, type ConstValueType } from '../../types';
 import { ConstNode } from '../../components/ToolNode';
 import { type FieldDef } from '../../components/inspectors/fields';
 import { runConst } from '../../engine/runners/const';
 import { registerNode } from '../registry';
 
 /*
- * 三种常量是**三个预设**，不是一个节点上的下拉框。
+ * 三种常量（文本 / 数字 / 布尔）合并成**一个**节点，种类在卡片上直接切。
  *
- * 下拉框的代价：拖进来的永远是"文本常量"，想用布尔得先拖进来、
- * 再点开面板、再改一项 —— 三步，而且前两步看到的东西都是错的
- * （侧栏写着"常量"，卡片上写着"常量"，面板里才第一次出现"种类"）。
- * 三步之后还要回头改标签。
+ * ================= 为什么现在能合并了 =================
  *
- * 预设展开后侧栏直接列出三条，拖进来就是对的那个。
- * 与「任务」的两种 CLI 同一套机制（meta.presets）。
+ * 以前列成三条侧栏预设，理由是"下拉框要三步才能改种类"：
+ * 拖进来 → 点开面板 → 改一项，且前两步看到的都是"文本常量"。
+ *
+ * 现在卡片上的参数格能就地编辑（见 ArgCell），种类那一格本身就是下拉，
+ * 切种类是**一下** —— 三步的理由不成立，三条侧栏入口也就没必要了。
+ *
+ * 产出的值种类仍按 valueType 走（argTypes / paramLinks 都读它），
+ * 所以合并**不损失**参数类型校验：数字常量接到「大于」上照样合法。
  */
 
-/** 三种常量的侧栏颜色。数字偏蓝、布尔偏紫，与它们产出的值种类呼应 */
-export const CONST_TYPE_COLOR: Record<ConstValueType, string> = {
-  text: '#94a3b8',
-  num: '#60a5fa',
-  bool: '#c084fc',
-};
-
 const fields: FieldDef[] = [
+  /*
+   * 种类放第一项：它决定下面那一格长什么样（多行 / 单行 / 下拉）。
+   */
+  {
+    type: 'select',
+    key: 'valueType',
+    label: '种类',
+    options: (['text', 'num', 'bool'] as ConstValueType[]).map((vt) => ({
+      value: vt,
+      label: CONST_TYPE_LABEL[vt],
+    })),
+    hint: '决定产出的值种类：数字能接比大小，布尔能接条件判定',
+  },
   /*
    * 值这一项按种类换控件：
    *
@@ -63,7 +72,7 @@ const fields: FieldDef[] = [
   },
   {
     type: 'note',
-    content: '产出的种类由常量类型决定：数字常量接到「大于」上合法，接到「包含」上会报错参。',
+    content: '产出的种类由上面的「种类」决定：选了数字接到「大于」上合法，接到「包含」上会报错参。卡片上点种类那格就能切。',
   },
 ];
 
@@ -75,14 +84,7 @@ registerNode({
     color: '#94a3b8',
     category: 'tools',
     idPrefix: 'cv',
-    sub: '输出一个固定值给下游',
-    presets: () =>
-      (['text', 'num', 'bool'] as ConstValueType[]).map((vt) => ({
-        key: `const:${vt}`,
-        label: vt === 'text' ? '文本常量' : vt === 'num' ? '数字常量' : '布尔常量',
-        color: CONST_TYPE_COLOR[vt],
-        init: () => makeConstNode('', { valueType: vt }).data,
-      })),
+    sub: '输出一个固定值给下游（种类在卡片上切）',
   },
   create: (id, partial) => makeConstNode(id, (partial ?? {}) as never).data,
   Canvas: ConstNode,

@@ -110,13 +110,21 @@ const fields: FieldDef[] = [
   },
 ];
 
+/**
+ * legacy：已并入「大模型」节点（用途选「图片识别」）。
+ *
+ * 标 legacy 而不是删掉，是因为老画布上还有这种节点 ——
+ * 删掉会让它们变未知节点，卡片上的字段与 runner 全部失效。
+ * 侧栏不再列出（registry 跳过 legacy），但老画布照常能打开运行。
+ */
 registerNode({
   type: 'ocr',
   dataKind: 'ocr',
   meta: {
     varGroups: ['llm-config'],
-    label: '图片识别 OCR', color: '#f472b6', category: 'ai', idPrefix: 'ocr',
-    sub: '把图片里的文字读出来（需视觉大模型）' },
+    legacy: true,
+    label: '图片识别 OCR（旧）', color: '#f472b6', category: 'ai', idPrefix: 'ocr',
+    sub: '已并入「大模型」节点 —— 新画布请用大模型节点，用途选「图片识别」' },
   create: (id, partial) => makeOcrNode(id, (partial ?? {}) as never).data,
   Canvas: OcrNode,
   fields: () => fields,

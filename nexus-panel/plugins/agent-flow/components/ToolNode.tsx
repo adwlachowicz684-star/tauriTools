@@ -2,7 +2,7 @@ import type { NodeProps } from '@xyflow/react';
 import { NodeShell } from './NodeShell';
 import { ArgLine } from './ArgCell';
 import type { BriefPart } from '../engine/ops';
-import { BEEP_PRESET_META, type BeepNodeData, type WaitNodeData, type LogNodeData, type PlayAudioNodeData, type ClockNodeData, type ConstNodeData } from '../types';
+import { BEEP_PRESET_META, CONST_TYPE_LABEL, normBoolText, type ConstValueType, type BeepNodeData, type WaitNodeData, type LogNodeData, type PlayAudioNodeData, type ClockNodeData, type ConstNodeData } from '../types';
 import type {
   WaitFlowNode, LogFlowNode, BeepFlowNode, PlayAudioFlowNode,
   ClockFlowNode, ConstFlowNode,
@@ -112,20 +112,54 @@ export function LogNode({ id, data, selected }: NodeProps<LogFlowNode>) {
 
 export function BeepNode({ id, data, selected }: NodeProps<BeepFlowNode>) {
   const d = data as BeepNodeData;
+  /*
+   * 缺省 'preset'：老存档没有 source 字段，而它们当初的行为正是系统音效。
+   * 用 `=== 'file'` 之外的写法（比如默认 file）会让老节点凭空变成一个
+   * 「没填文件路径」的坏节点 —— 而它其实是好的。
+   */
+  const isFile = d.source === 'file';
   const preset = String(d.preset ?? 'success');
   const meta = BEEP_PRESET_META[d.preset ?? 'success'];
   const vol = Math.round(Number(d.volume ?? 0.6) * 100);
+  const volPart = val('volume', `${vol}%`, String(d.volume ?? 0.6));
+
+  /*
+   * 文件模式：显示文件名，但**编辑初值是完整路径**。
+   * 用文件名当初值的话，点一下输入框里就只剩文件名，
+   * 一失焦等于把完整路径改成了文件名 —— 不报错，只是运行时找不到文件。
+   */
+  if (isFile) {
+    const p = String(d.path ?? '').trim();
+    const name = p ? p.split(/[\\/]/).pop() ?? p : '（未填文件）';
+    return (
+      <Card
+        id={id}
+        type="beep"
+        data={d}
+        selected={selected}
+        tag="播放声音"
+        parts={[
+          { role: 'text', text: '文件' },
+          val('path', name, p),
+          { role: 'text', text: '·' },
+          volPart,
+          ...(d.waitForEnd === false ? [{ role: 'text' as const, text: '· 不等待' }] : []),
+        ]}
+      />
+    );
+  }
+
   return (
     <Card
       id={id}
       type="beep"
       data={d}
       selected={selected}
-      tag="提示音"
+      tag="播放声音"
       parts={[
         pick('preset', meta?.label ?? preset, preset),
         { role: 'text', text: '·' },
-        val('volume', `${vol}%`, String(d.volume ?? 0.6)),
+        volPart,
       ]}
     />
   );
@@ -188,10 +222,23 @@ export function ConstNode({ id, data, selected }: NodeProps<ConstFlowNode>) {
    * 卡片上必须跟着分 —— 一律给输入框的话，布尔常量可以填进
    * 「是」「maybe」这类下游认不出的值，而面板里明明是下拉。
    */
-  const isBool = (d.valueType ?? 'text') === 'bool';
+  const vt: ConstValueType = d.valueType ?? 'text';
+  const isBool = vt === 'bool';
+  /*
+   * 布尔走 dropdown，且显示值与**运行输出**用同一份规范化。
+   *
+   * 不共用的话：老存档里存着「是」「maybe」这类写法时，卡片显示「（空）」
+   * 而运行输出 'false'/'true' —— 看着没值、跑着有值，是最难查的一类。
+   */
+  const boolNorm = normBoolText(v);
   const cell: BriefPart = isBool
-    ? pick('value', v === 'false' ? '假' : v === 'true' ? '真' : '（空）', v)
+    ? pick('value', boolNorm === 'true' ? '真' : '假', boolNorm)
     : val('value', v, v);
+  /*
+   * 种类也画成一格（下拉）—— 三种常量合并成一个节点之后，
+   * 切种类不能只剩"打开面板改一项"这条老路。
+   */
+  const kind: BriefPart = pick('valueType', CONST_TYPE_LABEL[vt], vt);
   return (
     <Card
       id={id}
@@ -199,7 +246,7 @@ export function ConstNode({ id, data, selected }: NodeProps<ConstFlowNode>) {
       data={d}
       selected={selected}
       tag="常量"
-      parts={v ? [cell] : [{ role: 'text', text: '（空）' }]}
+      parts={v ? [kind, cell] : [kind, { role: 'text', text: '（空）' }]}
     />
   );
 }

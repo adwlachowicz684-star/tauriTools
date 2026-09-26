@@ -92,16 +92,23 @@ const fields: FieldDef[] = [
   },
 ];
 
+/**
+ * legacy：已并入「大模型」节点（用途选「翻译」）。
+ *
+ * 标 legacy 而不是删掉，是因为老画布上还有这种节点 ——
+ * 删掉会让它们变未知节点。侧栏不再列出，老画布照常能打开运行。
+ */
 registerNode({
   type: 'translate',
   dataKind: 'translate',
   meta: {
     varGroups: ['llm-config'],
-    label: '翻译',
+    legacy: true,
+    label: '翻译（旧）',
     color: '#38bdf8',
     category: 'ai',
     idPrefix: 'ty',
-    sub: '把文本翻成另一种语言（需自己的 API Key）',
+    sub: '已并入「大模型」节点 —— 新画布请用大模型节点，用途选「翻译」',
   },
   create: (id, partial) => makeTranslateNode(id, (partial ?? {}) as never).data,
   Canvas: TranslateNode,

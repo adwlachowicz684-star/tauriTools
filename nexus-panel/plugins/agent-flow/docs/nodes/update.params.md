@@ -6,10 +6,10 @@
 [← 回到索引](../README.md)
 
 - **分类**：外部服务
-- **node.type**：`bili` / `wechat`（多个 type 共用一份 data）
+- **node.type**：`bili` / `update` / `wechat`（多个 type 共用一份 data）
 - **源文件**：`nodes/defs/bili.ts`
 - **产出**：bool（是/否）　**接受**：none
-- **需要的外部能力**：`fetcher`、`githubFetch`
+- **需要的外部能力**：`fetcher`, `githubFetch`
 
 ## 它做什么
 
@@ -18,6 +18,11 @@
 ## 能力签名
 
 - `fetcher`: `(node, url, { headers, timeoutSec }) => Promise<string>`
+- `githubFetch`: `抓取仓库信息 => Promise<信息对象>`
+
+> `fetcher` 是**按需**的：只有满足特定条件时才需要（见参数页）。
+
+> `githubFetch` 是**按需**的：只有满足特定条件时才需要（见参数页）。
 
 ## 注意
 

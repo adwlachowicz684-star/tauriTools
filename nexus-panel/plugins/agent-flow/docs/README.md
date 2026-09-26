@@ -7,8 +7,8 @@
 
 | 类别 | 装的是什么 | 入口 |
 |---|---|---|
-| **节点** | 一个积木（39 种） | 下面按分类的表 |
-| **参数卡片** | 一组参数（如某个仓库地址） | [卡片](#参数卡片)（4 组） |
+| **节点** | 一个积木（40 种） | 下面按分类的表 |
+| **参数卡片** | 一组参数（如某个仓库地址） | [卡片](#参数卡片)（0 组） |
 | **模块** | 多个节点编成的组合 | [module](reuse/module.md) |
 | **自定义预设** | 一个配好的节点 | [custom-preset](reuse/custom-preset.md) |
 | **节点默认值** | 决定新建节点长什么样 | [defaults](reuse/defaults.md) |
@@ -88,8 +88,9 @@
 
 | kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
-| [ocr](nodes/ocr.params.md) | text（文本） | text / files / any | imageReader, llmCaller | 把图片里的文字读出来（需视觉大模型） | `nodes/defs/ocr.tsx` |
-| [translate](nodes/translate.params.md) | text（文本） | text | llmCaller | 把文本翻成另一种语言（需自己的 API Key） | `nodes/defs/translate.tsx` |
+| [llmChat](nodes/llmChat.params.md) | text（文本） | text / files / any | imageReader, llmCaller | 调一次大模型：自由对话 / 图片识别 / 翻译 | `nodes/defs/llmChat.tsx` |
+| [ocr](nodes/ocr.params.md) | text（文本） | text / files / any | imageReader, llmCaller | 已并入「大模型」节点 —— 新画布请用大模型节点，用途选「图片识别」 | `nodes/defs/ocr.tsx` |
+| [translate](nodes/translate.params.md) | text（文本） | text | llmCaller | 已并入「大模型」节点 —— 新画布请用大模型节点，用途选「翻译」 | `nodes/defs/translate.tsx` |
 
 ## 外部服务
 
@@ -98,18 +99,18 @@
 | [generic-http](nodes/generic-http.params.md) | json（JSON） | any | httpRequester | 填地址与参数即可调任意接口 | `nodes/defs/genericHttp.tsx` |
 | [github-push](nodes/github-push.params.md) | text（文本） | any | githubPush | 把改动提交并推到远端分支 | `nodes/defs/github_push.tsx` |
 | [github-update](nodes/github-update.params.md) | json（JSON） | none | githubFetch | 检测仓库有没有新提交 / 新 Release（令牌填一次共用） | `nodes/defs/github_update.tsx` |
-| [update](nodes/update.params.md) | bool（是/否） | none | fetcher | 是否有更新（true / false）—— 给条件节点判断 | `nodes/defs/bili.ts` |
+| [update](nodes/update.params.md) | bool（是/否） | none | fetcher, githubFetch | 是否有更新（true / false）—— 给条件节点判断 | `nodes/defs/bili.ts` |
 
 ## 工具
 
 | kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
-| [beep](nodes/beep.params.md) | any（透传上游） | any | — | 跑完了响一声，适合长时间无人值守的流程 | `nodes/defs/beep.ts` |
+| [beep](nodes/beep.params.md) | any（透传上游） | any | playAudioReader | 响一声：系统音效或本地音频文件 | `nodes/defs/beep.ts` |
 | [clock](nodes/clock.params.md) | text（文本） | none | — | 输出当前时间，常用于生成带时间戳的文件名 | `nodes/defs/clock.ts` |
-| [const](nodes/const.params.md) | text（文本） | none | — | 输出一个固定值给下游 | `nodes/defs/const.ts` |
+| [const](nodes/const.params.md) | text（文本） | none | — | 输出一个固定值给下游（种类在卡片上切） | `nodes/defs/const.ts` |
 | [log](nodes/log.params.md) | any（透传上游） | any | — | 往运行日志里写一条，不影响数据流 | `nodes/defs/log.ts` |
 | [module](nodes/module.params.md) | any（透传上游） | any | — | 多个节点打包复用 | `nodes/defs/module.ts` |
-| [play-audio](nodes/play-audio.params.md) | any（透传上游） | any | playAudioReader | 播放本地音频文件 | `nodes/defs/playAudio.ts` |
+| [play-audio](nodes/play-audio.params.md) | any（透传上游） | any | playAudioReader | 已并入「播放声音」节点 —— 新画布请用播放声音，来源选「本地文件」 | `nodes/defs/playAudio.ts` |
 | [wait](nodes/wait.params.md) | any（透传上游） | any | — | 暂停一段时间再往下跑 | `nodes/defs/wait.ts` |
 
 ## 参数卡片
@@ -118,10 +119,7 @@
 
 | 卡片组 | 管哪些字段 | 能用在 |
 |---|---|---|
-| [地址卡片](cards/github-repo.md) | `owner`, `repo`, `branch` | `github-push`, `github-update` |
-| [接口卡片](cards/http-endpoint.md) | `url`, `method` | `generic-http` |
-| [模型卡片](cards/llm-config.md) | `llm` | `ocr`, `translate` |
-| [目录卡片](cards/workdir.md) | `workdir` | `github-push` |
+
 
 拖到节点上会校验三件事：组已注册、节点声明支持这个组、值通过 validate。
 

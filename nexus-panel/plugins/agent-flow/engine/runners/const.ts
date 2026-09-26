@@ -1,6 +1,6 @@
 import type { RunContext } from '../runContext';
 import { withNodeRun } from '../runnerKit';
-import type { ConstNodeData, ConstValueType } from '../../types';
+import { normBoolText, type ConstNodeData, type ConstValueType } from '../../types';
 
 /**
  * 常量节点：输出一个固定值给下游。
@@ -26,13 +26,7 @@ export async function runConst(ctx: RunContext): Promise<void> {
 
   await withNodeRun(ctx, async () => {
     const raw = ctx.tpl(String(d.value ?? ''));
-    return { output: vt === 'bool' ? normBool(raw) : raw };
+    return { output: vt === 'bool' ? normBoolText(raw) : raw };
   });
 }
 
-/** 把各种"真"的写法收敛成 'true' / 'false' */
-function normBool(raw: string): string {
-  const s = raw.trim().toLowerCase();
-  if (['true', '1', 'yes', 'y', 'on', '是', '真'].includes(s)) return 'true';
-  return 'false';
-}

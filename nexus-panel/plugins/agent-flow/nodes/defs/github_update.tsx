@@ -56,7 +56,12 @@ registerNode({
   dataKind: 'github-update',
   meta: {
     varGroups: ['github-repo'],
-    label: '更新检测',
+    /*
+     * 名字必须避开「更新检测」—— 那是 17 平台那个现行节点的名字。
+     * 两处同名时，运行日志 / 报错 / 面板里都只写「更新检测」，
+     * 排查时无从分辨到底跑的是哪一个（而 legacy 这个已不再进侧栏）。
+     */
+    label: '仓库更新（旧）',
     color: '#a78bfa',
     legacy: true,
     category: 'external',

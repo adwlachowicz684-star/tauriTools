@@ -36,11 +36,18 @@ registerNode({
   type: 'play-audio',
   dataKind: 'play-audio',
   meta: {
-    label: '播放音频',
+    /*
+     * legacy：已并入「播放声音」节点（声音来源选「本地文件」）。
+     *
+     * 标 legacy 而不是删掉，是因为老画布上还有这种节点 ——
+     * 删掉会让它们变未知节点。侧栏不再列出，老画布照常能打开运行。
+     */
+    legacy: true,
+    label: '播放音频（旧）',
     color: '#fbbf24',
     category: 'tools',
     idPrefix: 'pa',
-    sub: '播放本地音频文件',
+    sub: '已并入「播放声音」节点 —— 新画布请用播放声音，来源选「本地文件」',
   },
   create: (id, partial) => makePlayAudioNode(id, (partial ?? {}) as never).data,
   Canvas: PlayAudioNode,

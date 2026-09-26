@@ -1197,28 +1197,57 @@ test('任务流程图不再写死高度（撑到界面底端）', () => {
     '画布模式的流程图没挂 task-flow--fill —— CSS 写了也不会生效');
 });
 
-/* ================= 常量：三种预设，不是一个节点上的下拉框 ================= */
+/* ================= 常量：合成一个节点，种类在卡片上切 ================= */
 
 /*
- * 三种常量（文本 / 数字 / 布尔）必须是**三个侧栏预设**。
+ * 三种常量（文本 / 数字 / 布尔）合并成**一个**侧栏入口。
  *
- * 做成一个节点上的下拉框的话，拖进来的永远是"文本常量"，
- * 想用布尔得先拖进来、再点开面板、再改一项 —— 三步，
- * 而前两步看到的东西（侧栏名、卡片标题）都是错的。
+ * 以前列成三条预设，理由是"下拉框要三步才能改种类"；卡片参数格能就地
+ * 编辑之后，种类那格本身就是下拉，切种类只要一下，三条入口就不再必要。
  *
- * 更关键的是：三种常量**产出的值种类不同**（num / bool / text），
- * 不分开就无法参与参数类型校验 —— 数字常量接到「大于」上才合法。
+ * 但**产出的值种类仍必须按 valueType 走** —— 这正是合并不能丢的东西：
+ * 数字常量接到「大于」上才合法，一律按文本判会把正确的流程标红（误报）。
+ *
+ * 两端都要盯：只合并侧栏不把种类做成卡片上的一格（又退回三步），
+ * 或做了格子但产出不读 valueType（校验全乱），都是合并失败。
  */
-test('常量展开成三种预设（文本/数字/布尔）', () => {
+test('常量合并成一个节点，种类仍是卡片上可切的一格', () => {
   const def = read(path.join(ROOT, 'nodes', 'defs', 'const.ts'));
-  assert.match(def, /presets:/, 'const 没有 presets —— 三种常量在侧栏选不到');
-  for (const vt of ['text', 'num', 'bool']) {
-    assert.match(def, new RegExp(`'${vt}'`), `预设里没有 ${vt} 常量`);
-  }
+  assert.doesNotMatch(def, /presets:/, 'const 还在列预设 —— 侧栏会有三条常量入口');
+  assert.match(def, /key: 'valueType'/, 'const 缺「种类」字段 —— 只能在新建时定死');
+
+  /* 卡片上必须给出种类格，否则切种类只能回去开面板 */
+  const tn = read(path.join(ROOT, 'components', 'ToolNode.tsx'));
+  const body = tn.slice(tn.indexOf('export function ConstNode'));
+  /*
+   * 必须盯"种类格真的进了 parts"，不能只盯 pick('valueType') 存在：
+   * 定义了 kind 却没塞进 parts，那一格在画布上根本不出现 ——
+   * 而正则照样命中，守卫会**假装通过**。
+   */
+  const m2 = body.slice(0, 2000).match(/parts=\{([^}]*)\}/);
+  assert.ok(m2 && /\bkind\b/.test(m2[1]),
+    '卡片上没有种类格 —— 改种类又变成"打开面板改一项"');
+  assert.match(body.slice(0, 2000), /pick\('valueType'/,
+    '种类格不是下拉 —— 切种类点不动');
+
   /* 产出种类必须按 valueType 走，否则数字常量会被当成文本 */
   const pl = read(path.join(ROOT, 'engine', 'paramLinks.ts'));
   assert.match(pl, /case 'const'/, 'producesArgOf 不认 const —— 三种常量产出同一个种类');
   assert.match(pl, /valueType/, 'producesArgOf 不读 valueType —— 数字常量会被判成文本');
+});
+
+/**
+ * 布尔常量的卡片显示必须与运行输出同一份规范化。
+ *
+ * 各写一份的话：老存档里存着「是」「maybe」时卡片显示「（空）」、
+ * 运行却输出 'true'/'false' —— 看着没值、跑着有值。
+ */
+test('布尔常量的显示与运行共用同一份规范化', () => {
+  const tn = read(path.join(ROOT, 'components', 'ToolNode.tsx'));
+  const rc = read(path.join(ROOT, 'engine', 'runners', 'const.ts'));
+  assert.match(tn, /normBoolText/, '卡片没用 normBoolText —— 显示会与运行不一致');
+  assert.match(rc, /normBoolText/, '执行器没用 normBoolText —— 与卡片各写一份');
+  assert.doesNotMatch(rc, /function normBool\b/, '执行器里还留着私有 normBool —— 两份实现');
 });
 
 /* ================= 输出端口：参数连线从输出卡片拖出 ================= */

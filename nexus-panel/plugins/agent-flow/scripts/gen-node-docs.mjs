@@ -208,7 +208,17 @@ function constValueOf(file, name) {
 }
 
 function collectCardGroups() {
-  const src = fs.readFileSync(path.join(ROOT, 'nodes', 'cardGroups.ts'), 'utf-8');
+  /*
+   * 卡片组那一层已经从代码里移除了（nodes/cardGroups.ts 不再存在），
+   * 而这份脚本还在硬读它 —— 于是**整份文档生成直接崩**，
+   * 节点文档一起生成不出来（新增节点会卡在"缺 xxx.params.md"）。
+   *
+   * 改成缺文件就返回空、跳过卡片层：**不删**已有的 docs/cards/*.md
+   * （不写文件即可，删掉会让索引里的链接指向空文件）。
+   */
+  const p = path.join(ROOT, 'nodes', 'cardGroups.ts');
+  if (!fs.existsSync(p)) return [];
+  const src = fs.readFileSync(p, 'utf-8');
   const groups = [];
 
   // 逐个 `const X_GROUP: CardGroupDef = { ... };`
