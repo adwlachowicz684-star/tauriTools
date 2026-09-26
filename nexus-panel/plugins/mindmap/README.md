@@ -2877,5 +2877,50 @@ r.then(fn) 的返回值上同样没有 .catch
 > 宿主并不调用它 —— 宿主走 `bridge.exportSvg()` + `svgToPngBlob`。所以属于
 > **潜在**问题而非现网故障，但留着是个坑，顺手修掉。
 
+## 撤销/重做在每次加载画布后彻底失效 ★
+
+`history.clear()` 把基线置成了 **null**：
+
+```js
+clear: function () { _undoStack = []; _redoStack = []; _baseline = null; }
+```
+
+而 `contentchange` 的入栈条件是：
+
+```js
+km.on('contentchange', function () {
+    if (_historyLock || _baseline == null) return;   ← 永远 return
+    ...
+});
+```
+
+`_baseline == null` 是「历史系统尚未初始化」的**哨兵**。clear() 把它打回这个
+状态，于是此后**所有编辑都不再入栈** —— `canUndo()` 恒为 false，点 ↶ / ↷
+一点反应都没有，也**不报错**。
+
+触发路径是**每次 loadSheet 都走**（index.js）：
+
+```
+bridge.importJson(...)    // 门面 → _historyCommitBaseline() → 基线正常
+...
+bridge.historyClear();    // ← 又把基线清成 null，前功尽弃
+```
+
+而 loadSheet 在「启动 / 新建画布 / 切换画布 / 重载编辑器」都会跑 —— 也就是
+**每次拿到画布后撤销就是坏的**，直到用户手工导入一次才恢复。原注释写的是
+「编辑器侧已自动 commit 新基线，这里再显式清一次双保险」，恰恰是这次
+「双保险」把基线清没了。
+
+实测（真实 Chrome，完整插件 + 宿主桩）：
+
+| 场景 | canUndo() |
+|---|---|
+| 启动后直接 Tab 建两个节点 | **false**（坏） |
+| 手工 `__minder.importJson` 一次再建节点 | true（对照，说明只有基线是问题） |
+| **修复后**：启动后建节点 | **true**，↶ 正常回退 |
+
+改法：`clear()` 以**当前内容**重设基线（`_baseline = _historySnap()`）——
+这本来就是「以当前内容为新的历史起点」的语义。
+
 > 2000 层而非 10000 层：jsdom 的 `DOMParser` 在约 2000~5000 层时自己就 parsererror 了，
 > 测不到 xmind.js。2000 层已远超 `MAX_DEPTH`(200)，足以验证截断逻辑。

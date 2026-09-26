@@ -3539,7 +3539,37 @@
             },
             canUndo: function () { return _undoStack.length > 0; },
             canRedo: function () { return _redoStack.length > 0; },
-            clear: function () { _undoStack = []; _redoStack = []; _baseline = null; }
+            /*
+             * **基线必须重设成当前内容，不能置 null。**
+             *
+             * 置 null 会让撤销/重做**彻底失效**，而且不报任何错：
+             *
+             *   km.on('contentchange', function () {
+             *       if (_historyLock || _baseline == null) return;   ← 永远 return
+             *       ...
+             *   });
+             *
+             * `_baseline == null` 本来是「历史系统尚未初始化」的哨兵；
+             * clear() 把它打回这个状态，于是此后**所有编辑都不再入栈**，
+             * canUndo() 恒为 false，点 ↶ / ↷ 一点反应都没有。
+             *
+             * 触发路径是**每次 loadSheet 都走**（index.js）：
+             *
+             *   bridge.importJson(...)      // 门面 → _historyCommitBaseline() → 基线 OK
+             *   ...
+             *   bridge.historyClear();      // ← 又把基线清成 null，前功尽弃
+             *
+             * 而 loadSheet 在「启动 / 新建画布 / 切换画布 / 重载编辑器」都会跑，
+             * 也就是**每次拿到画布后撤销就是坏的**，直到用户手工导入一次才恢复。
+             *
+             * 实测（真实 Chrome，完整插件 + 宿主桩）：
+             *   启动 → Tab 建两个节点 → canUndo() === false（坏）
+             *   手工 __minder.importJson 一次 → Tab 建节点 → canUndo() === true（对照）
+             * 修复后：启动 → Tab 建节点 → canUndo() === true，undo() 正常回退。
+             *
+             * clear() 的语义本来就是「以当前内容为新的历史起点」，重采样正合原意。
+             */
+            clear: function () { _undoStack = []; _redoStack = []; _baseline = _historySnap(); }
         };
         // SVG 的 <text> 不可编辑（SVG 1.1 没有 contenteditable），故双击/F2 时在节点
         // 文字正上方盖一个样式仿真的 contentEditable 层：同色/同字/同字号、透明无边框，

@@ -1966,6 +1966,44 @@ group('行内编辑贴合节点');
   ok(/catch \(e\) \{ fail\(e\); \}/.test(scode), '连 .then 本身抛错也要落失败态');
 }
 
+/*
+ * 17.13 history.clear() 不能把基线置 null —— 那会让撤销/重做彻底失效。
+ *
+ * 编辑器页的 contentchange 处理是：
+ *
+ *     km.on('contentchange', function () {
+ *         if (_historyLock || _baseline == null) return;   ← 永远 return
+ *         ...
+ *     });
+ *
+ * `_baseline == null` 是「历史系统还没初始化」的哨兵。clear() 把它打回这个
+ * 状态，于是此后**所有编辑都不再入栈**：canUndo() 恒为 false，点 ↶ / ↷
+ * 没有任何反应，也不报错。
+ *
+ * 触发路径是**每次 loadSheet 都走**（index.js）：
+ *
+ *     bridge.importJson(...)    // 门面 → _historyCommitBaseline() → 基线正常
+ *     ...
+ *     bridge.historyClear();    // ← 又把基线清成 null，前功尽弃
+ *
+ * 而 loadSheet 在「启动 / 新建画布 / 切换画布 / 重载编辑器」都会跑 ——
+ * 也就是**每次拿到画布后撤销就是坏的**，直到用户手工导入一次才恢复。
+ *
+ * 实测（真实 Chrome，完整插件 + 宿主桩）：
+ *   启动 → Tab 建两个节点 → canUndo() === false            （坏）
+ *   手工 __minder.importJson 一次 → 建节点 → canUndo() === true（对照）
+ *   修复后：启动 → 建节点 → canUndo() === true，↶ 正常回退。
+ */
+{
+  const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  const seg = ed.slice(ed.indexOf('window.editor = window.editor'), ed.indexOf('window.editor = window.editor') + 2600);
+  const scode = seg.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok(!/_baseline = null/.test(scode), 'clear() 不再把基线置 null（置 null 会让所有编辑都不入栈）');
+  ok(/clear: function \(\) \{ _undoStack = \[\]; _redoStack = \[\]; _baseline = _historySnap\(\); \}/.test(scode),
+    'clear() 以**当前内容**重设基线（语义本就是「以当前内容为新的历史起点」）');
+  ok(/_baseline == null/.test(ed), '（对照）contentchange 里仍有 _baseline == null 这道哨兵');
+}
+
 {
   // 17.7 行为级：验证 zoom 换算确实是必要的（对照旧算法）
   //      模拟 SVG transform scale(zoom) 下的两种算法
