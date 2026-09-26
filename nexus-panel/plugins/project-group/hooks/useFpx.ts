@@ -4,6 +4,7 @@ import { errText, makeApi, normalizeKey } from '../api';
 import { LOG_MAX_LINES_DEFAULT, clampLogMax } from '../utils/log';
 import { clampIndex } from '../utils/dragSort';
 import { activeAfterMove, activeAfterRemove } from '../utils/tabs';
+import { lockStrengthText } from '../utils/lockPresets';
 import type {
   Bootstrap, CardKind, ContentItem, FpxConfig, LinkRow, Snapshot, TabInfo,
 } from '../types';
@@ -758,11 +759,15 @@ export function useFpx() {
        * `run` 收到 null，根本进不到这个分支。所以按 (dd, dw, ao) 报是实的，
        * 不需要再回读磁盘。
        */
-      const strength = denyDelete && denyWrite ? '只读保护'
-        : denyDelete ? '防删除'
-          : denyWrite ? '防写入'
-            : accountOnly ? '仅账面固定' : '无保护';
-      const note = strength === '仅账面固定'
+      /*
+       * 档位名走 utils/lockPresets 的档位表查，不在这里另起一套叫法。
+       *
+       * 此前这里把"既防删又防写"叫「只读保护」，而弹窗里同一个档位
+       * 叫「完全保护」—— 用户点的是后者，日志与 toast 说的是前者，
+       * 他会以为自己点错了。措辞必须与界面上给的名字同源。
+       */
+      const strength = lockStrengthText(denyDelete, denyWrite, accountOnly);
+      const note = strength === '账面固定'
         ? '（仅登记在案，无系统级拦截）'
         : strength === '无保护'
           ? '（已解除，并撤掉原有 ACL）'

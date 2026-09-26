@@ -16,7 +16,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
 
 const U = await loadTs(path.join(HERE, 'utils/lockPresets.ts'));
-const { LOCK_PRESETS, CUSTOM_PRESET_ID, presetOf, applyPreset } = U;
+const { LOCK_PRESETS, CUSTOM_PRESET_ID, presetOf, applyPreset, lockStrengthText } = U;
 
 console.log('\n=== 1. 档位表 ===');
 t('共 5 档', LOCK_PRESETS.length === 5, `${LOCK_PRESETS.length} 档`);
@@ -29,6 +29,35 @@ t('每档都有说明', LOCK_PRESETS.every((p) => p.hint));
 t('顺序按强度递增（固定排在最后，它是最轻的）',
   LOCK_PRESETS.map((p) => p.id).join(',') === 'none,delete,write,full,account',
   LOCK_PRESETS.map((p) => p.id).join(','));
+
+console.log('\n=== 1b. lockStrengthText：档位名必须来自档位表 ===');
+/*
+ * 为什么需要这一节：
+ * 同一档位此前有两个名字 —— 档位表叫「完全保护」，而设置成功的
+ * 日志里叫「只读保护」；「账面固定」在另一处又叫「仅账面固定」。
+ * 用户在弹窗点的是档位表里的名字，事后看到的却是另一套，
+ * 他会以为自己点错了或没设上。档位名**只应有一份**。
+ */
+t('都关 → 无保护', lockStrengthText(false, false) === '无保护');
+t('仅防删 → 防删除', lockStrengthText(true, false) === '防删除');
+t('仅防写 → 防写入', lockStrengthText(false, true) === '防写入');
+t('都开 → 完全保护（与档位表同名，不是"只读保护"）',
+  lockStrengthText(true, true) === '完全保护', lockStrengthText(true, true));
+t('仅固定 → 账面固定（与档位表同名）',
+  lockStrengthText(false, false, true) === '账面固定', lockStrengthText(false, false, true));
+/* 档位表里没有的组合（固定 + 防删）：不能显示一个错的档位名 */
+t('未预设组合退回逐项拼接，不谎报档位',
+  lockStrengthText(true, false, true) === '防删除', lockStrengthText(true, false, true));
+/* 名字必须与档位表逐字一致 —— 这是对"同源"最直接的证明 */
+{
+  const table = new Map(LOCK_PRESETS.map((p) => [p.id, p.label]));
+  t('四档名与档位表逐字一致',
+    lockStrengthText(false, false) === table.get('none')
+    && lockStrengthText(true, false) === table.get('delete')
+    && lockStrengthText(false, true) === table.get('write')
+    && lockStrengthText(true, true) === table.get('full')
+    && lockStrengthText(false, false, true) === table.get('account'));
+}
 
 console.log('\n=== 2. presetOf：开关 → 档位 ===');
 t('都关 → none', presetOf(false, false, false) === 'none');
@@ -148,8 +177,14 @@ console.log('\n=== #21 账面固定（与 ACL 是两件事）===');
   t('仅固定显示小锁 🔒', /🔒/.test(grid));
   t('两者互斥（三元，不会同显）',
     /c\.locked \? \([\s\S]{0,200}?c\.accountFixed \?/.test(grid));
-  /* 盾牌的 title 要说清是 ACL（硬保护） */
-  t('盾牌 title 标明 ACL', /title="ACL 已保护/.test(grid));
+  /* 盾牌的 title 要说清是 ACL（硬保护）
+     —— 且必须报**实际档位**：写死"防删除/防写入"的话，只设了防写入时
+        title 仍在说防删除，用户 hover 看到的是一句与事实不符的话，
+        而界面上没有别处能核对（只有一个盾牌图标）。 */
+  t('盾牌 title 标明 ACL', /title=\{`ACL 已保护·\$\{lockStrengthText\(/.test(grid));
+  /* 反面证据：不许再出现写死档位的 title */
+  t('盾牌 title 不再写死档位',
+    !/title="ACL 已保护·防删除\/防写入"/.test(grid));
   t('小锁 title 标明无系统权限', /title="账面固定（仅登记，无系统权限）"/.test(grid));
 
   /* 前端类型与后端字段都要有（跨端一致由 cross-end-check 兜） */
@@ -306,9 +341,17 @@ console.log('\n=== 6. 保护日志必须报实际档位，不能回显三个布�
   t('日志不再回显 raw 布尔（反面证据）',
     !/防删除=\$\{denyDelete\}/.test(code) && !/防写入=\$\{denyWrite\}/.test(code));
   t('算出档位名', /const strength = /.test(code));
-  t('四档齐全', /'只读保护'/.test(code) && /'防删除'/.test(code)
-    && /'防写入'/.test(code) && /'仅账面固定'/.test(code));
-  t('无保护也覆盖（全关是真的解除，不能漏）', /'无保护'/.test(code));
+  /*
+   * 四档名**不再硬编码在这里**，改走 utils/lockPresets 的档位表。
+   *
+   * 此前这里自己写了一套（「只读保护」/「仅账面固定」），而弹窗档位表里
+   * 同一档叫「完全保护」/「账面固定」—— 用户点的是后者，日志说的是前者。
+   * 界面上给的名字与事后告诉他的名字必须同源，所以源头只应有一份。
+   */
+  t('档位名走档位表（不再自造叫法）', /lockStrengthText\(denyDelete, denyWrite, accountOnly\)/.test(code));
+  t('不再硬编码档位名（反面证据）',
+    !/'只读保护'/.test(code) && !/'仅账面固定'/.test(code));
+  t('无保护也覆盖（全关是真的解除，不能漏）', /strength === '无保护'/.test(code));
   t('账面固定要明说无系统拦截', /无系统级拦截/.test(code));
   /* toast 也不能一律说"已更新"——解除与设上是两回事 */
   t('toast 区分解除与设上', /strength === '无保护' \? '已解除保护'/.test(code));

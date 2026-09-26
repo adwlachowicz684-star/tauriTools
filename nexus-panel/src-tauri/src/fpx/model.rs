@@ -61,18 +61,6 @@ pub const CURRENT_SCHEMA: u32 = 2;
 /// 插件独立配置（对应 data-dir/config.json）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-/// 常用文件夹条目。
-///
-/// `label` 是昵称：用户可能想给一堆 `D:\\work\\…` 起个好认的名字。
-/// 用 Option 而不是空字符串，是为了区分"没起过名"和"起了个空名"——
-/// 前者界面上回退显示目录名，后者是用户主动清空。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FavDir {
-    pub path: String,
-    #[serde(default)]
-    pub label: Option<String>,
-}
-
 pub struct FpxConfig {
     /// schema 版本；老配置里没有这个键，反序列化时按 1 处理。
     /// 加载路径会把它升到 `CURRENT_SCHEMA` 并写回。
@@ -116,17 +104,6 @@ pub struct FpxConfig {
     /// 用户在色盘里保存的自定义常用色（#RRGGBB，最多 24 个）。
     #[serde(default)]
     pub custom_colors: Vec<String>,
-    /// 常用文件夹（工具页签「常用文件夹」与项目组 / agent-flow 的选择器共用一份）。
-    ///
-    /// 【为什么路径和昵称分开存】
-    /// 只存路径的话，界面上显示的是完整路径 —— 同一个盘下的几个目录长得都像
-    /// `D:\\work\\2026\\…`，一眼分不清。昵称是可选项，没填就显示最后一段目录名。
-    ///
-    /// 【为什么不校验目录是否存在】
-    /// 收藏的时候它完全可以还不存在：U 盘没插、网络盘没连、目录还没建。
-    /// 保存时就拒绝，等于不让人收藏"待会儿才有"的位置。
-    #[serde(default)]
-    pub fav_dirs: Vec<FavDir>,
     /// 文件夹图标（**会同步到资源管理器**的那套）：路径 → 图标引用。
     #[serde(default)]
     pub folder_icons: IconMap,
@@ -389,7 +366,6 @@ impl Default for FpxConfig {
             tag_colors: HashMap::new(),
             tag_gui_colors: HashMap::new(),
             custom_colors: Vec::new(),
-            fav_dirs: Vec::new(),
             folder_icons: HashMap::new(),
             folder_gui_icons: HashMap::new(),
             locks: vec![],

@@ -6,6 +6,7 @@ import { ContextMenu, type MenuItem } from './ui';
 import { useEdgeAutoScroll } from '../hooks/useEdgeAutoScroll';
 import { canRemove } from '../utils/tabs';
 import { displayIcon } from '../utils/icons';
+import { lockStrengthText } from '../utils/lockPresets';
 
 export { DRAG_MIME, TAB_DRAG_MIME } from '../utils/dragSort';
 /**
@@ -934,7 +935,19 @@ export function CardGrid({
                 而"以为被拦着其实没有"比"以为没拦其实有"更危险：
                 前者会让人放心去删，然后撞上一条看不见的权限。 */}
             {c.locked ? (
-              <span className="fpx-badge lock" title="ACL 已保护·防删除/防写入">🛡</span>
+              /*
+               * title 必须报**实际档位**，不能写死"防删除/防写入"。
+               *
+               * 后端同时给了 denyDelete / denyWrite 两个细字段，锁其实有三档
+               * （只读保护 / 防删除 / 防写入）。写死的话只设了防写入时 title
+               * 仍说"防删除/防写入" —— 用户 hover 看到的是一句与事实不符的话，
+               * 而他无从发现：界面上只有一个盾牌图标，没有别处能核对。
+               * 按 title 的理解去操作就会撞上意外结果，进而怀疑整个保护功能。
+               *
+               * 措辞与保护弹窗（dialogCards 的 liveText）、与 setLock 日志
+               * 保持一致 —— 同一件事三处各写一套，必然有一套先说谎。
+               */
+              <span className="fpx-badge lock" title={`ACL 已保护·${lockStrengthText(c.denyDelete, c.denyWrite)}`}>🛡</span>
             ) : (c.accountFixed ? (
               <span className="fpx-badge pin" title="账面固定（仅登记，无系统权限）">🔒</span>
             ) : null)}

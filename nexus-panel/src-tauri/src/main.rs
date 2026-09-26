@@ -10,16 +10,6 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 
 mod af_flow;
 mod fpx;
-/*
- * ⚠️ 这两行是"参与编译"的开关，缺了它们整个文件不编译：
- *   · mod updater; —— 缺了则三条 updater_* 命令在运行时报 "command not found"，
- *     界面上是设置页「检查更新」点了没反应，**编译不报错**
- *     （因为 main.rs 没引用它，Rust 根本不看那个文件）。
- *   · mod dupview; —— 同上，13+ 条 dupview_* 命令全部失效。
- * 这两条已被同步提交覆盖丢失过多次（一致性扫描器的第 ⑥ 组专门盯这个）。
- */
-mod updater;
-mod dupview;
 
 /// 连通性测试：前端 ctx.invoke('rust_ping', { payload })
 #[tauri::command]
@@ -307,24 +297,10 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         // http：OCR / 翻译 / 订阅源抓取，绕过 webview 同源策略
         .plugin(tauri_plugin_http::init())
-        /*
-         * updater 插件**必须**初始化：
-         * src/updater.rs 里 build_updater() 调的是 app.updater_builder()，
-         * 这个方法来自 tauri_plugin_updater::UpdaterExt —— 插件没注册，
-         * 编译器就看不见它（E0599：no method named updater_builder），
-         * 而报错指向 updater.rs，很容易被当成那个文件写错了。
-         */
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(fpx::store::FpxState::new())
         .manage(af_flow::ProcRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(af_flow::WatchRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(af_flow::WebhookRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
-        /*
-         * 试卷查重的状态。缺了这一行，**编译得过**，但任何 dupview_* 命令
-         * 一被调用就 panic（state::<DupState>() 取不到）—— 是"崩整个进程"
-         * 而不是"这个功能不能用"。
-         */
-        .manage(dupview::DupState::new())
         .invoke_handler(tauri::generate_handler![
             rust_ping, app_version, window_action, set_window_icon,
             mm_print, mm_print_support, mm_svg_to_pdf, mm_pdf_vector_support, mm_open_devtools,
@@ -366,27 +342,7 @@ fn main() {
              */
             af_flow::af_os_keyring_get, af_flow::af_os_keyring_set,
             af_flow::af_os_keyring_delete,
-            tray_toggle_window,
-            /*
-             * 应用自更新三条（M 类：对外请求 / 下载安装 / 重启进程）。
-             * 只给内置 updater 插件用，第三方禁 M。
-             */
-            updater::updater_check, updater::updater_install, updater::updater_relaunch,
-            /*
-             * 试卷查重。此前**整条没接**：文件在、命令也在，只差这里 ——
-             * 没注册就是运行时 "command not found"，界面上每个操作都失败。
-             */
-            dupview::dupview_roots, dupview::dupview_addroot, dupview::dupview_delroot,
-            dupview::dupview_list, dupview::dupview_pages, dupview::dupview_scan,
-            dupview::dupview_scanall, dupview::dupview_scan_status, dupview::dupview_dir_done,
-            dupview::dupview_browse, dupview::dupview_delete, dupview::dupview_restore,
-            dupview::dupview_rename,
-            /*
-             * 常用文件夹（工具页签「常用文件夹」与各处选择文件夹窗口共用一份）。
-             * 保存**不校验目录是否存在**：用户可能想收藏一个暂时没插的 U 盘
-             * 或还没建的位置，保存时就拒绝等于不让人收藏。
-             */
-            fpx::fpx_list_fav_dirs, fpx::fpx_save_fav_dirs
+            tray_toggle_window
         ])
         .setup(move |app| {
             /* 托盘图标。

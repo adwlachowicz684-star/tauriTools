@@ -93,6 +93,34 @@ export function presetOf(
 }
 
 /**
+ * 当前开关组合对应哪个**档位名**（给日志 / 徽章 title / toast 用）。
+ *
+ * 为什么必须走这张表查、而不是各处自己拼字符串：
+ * 同一档位此前有两个名字 —— 档位表里叫「完全保护」，
+ * 而设置成功的日志里叫「只读保护」。用户在弹窗点的是「完全保护」，
+ * 回头看到的却是"已设为只读保护"，只会以为自己点错了、或者没设上。
+ * **界面上给的名字，和事后告诉他的名字，必须是同一个。**
+ *
+ * 走表查还顺带保证：将来改档位名（比如把「防写入」改成「只读」），
+ * 所有显示处一起跟着变，不会出现"改了一半"的两套叫法。
+ *
+ * 查不到（将来新增开关后的组合）退回逐项拼接 ——
+ * 那时宁可显示啰嗦但准确的"防删除 + 防写入"，也不能显示一个
+ * 与事实不符的档位名。
+ */
+export function lockStrengthText(
+  denyDelete: boolean, denyWrite: boolean, accountOnly = false,
+): string {
+  const hit = LOCK_PRESETS.find(
+    (p) => p.denyDelete === denyDelete && p.denyWrite === denyWrite
+      && p.accountOnly === accountOnly,
+  );
+  if (hit) return hit.label;
+  return [denyDelete ? '防删除' : '', denyWrite ? '防写入' : '']
+    .filter(Boolean).join(' + ') || '无保护';
+}
+
+/**
  * 应用某个档位：**清掉档外的选项**。
  *
  * 这一点是 #22 的关键 —— 档位不是"再加一个开关"，
