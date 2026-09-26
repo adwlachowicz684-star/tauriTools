@@ -1352,6 +1352,10 @@ bootIframePlugin(async (ctx) => {
     if (!Array.isArray(list) || !list.length) { status('文件里没有快照数据', true); return; }
 
     const mine = new Set((await store.listBackups()).map((b) => b.ts));
+    // 记下本次写入的 key：它们必须躲过随后的滚动清理。
+    // 导入的历史快照 ts 普遍比本机现有的更旧，而清理从最旧的开始删 ——
+    // 不保护的话「已导入 N 份」的提示和「列表里一份都没有」会同时出现。
+    const addedKeys = new Set();
     let added = 0, skipped = 0;
     for (const b of list) {
       // ts 缺失的快照无法排序，也无法去重 —— 宁可跳过也不要塞进库里
@@ -1359,9 +1363,9 @@ bootIframePlugin(async (ctx) => {
       if (!b || typeof b.ts !== 'number' || !Array.isArray(b.sheets)) { skipped++; continue; }
       if (mine.has(b.ts)) { skipped++; continue; }
       const ok = await store.putBackup({ ts: b.ts, sheets: b.sheets, activeId: b.activeId });
-      if (ok) { added++; mine.add(b.ts); } else skipped++;
+      if (ok) { added++; mine.add(b.ts); addedKeys.add(ok); } else skipped++;
     }
-    await trimBackups();
+    await trimBackups(addedKeys);
     status(`已导入 ${added} 份快照${skipped ? `，跳过 ${skipped} 份（重复或格式不符）` : ''}`);
   }
 
@@ -1369,12 +1373,31 @@ bootIframePlugin(async (ctx) => {
    * 按当前上限滚动清理旧快照。
    * 份数调小后必须立刻收敛，否则要等到下次备份才生效 —— 期间快照数一直超上限。
    */
-  async function trimBackups() {
+  /**
+   * 按当前上限滚动清理旧快照。
+   *
+   * 份数调小后必须立刻收敛，否则要等到下次备份才生效 —— 期间快照数一直超上限。
+   *
+   * @param {Set<string>} [protect] 本次**不参与**清理的 key。
+   *   导入场景必须传：从别的机器带回的历史快照 ts 通常比本机现有的更旧，
+   *   而清理是「最旧的先删」，于是刚导入的那几份会第一个被删掉 ——
+   *   界面提示「已导入 N 份」，列表里却一份都没有。
+   */
+  async function trimBackups(protect = null) {
     try {
       const n = Number(settings.backupMax);
       const limit = Number.isFinite(n) && n >= 1 ? Math.floor(n) : store.BACKUP_KEEP;
       const all = (await store.keys('backup:')).sort();
-      for (let i = 0; i < all.length - limit; i++) await store.del(all[i]);
+      const keep = protect instanceof Set ? protect : null;
+      let over = all.length - limit;
+      // 不能写成 `for (i=0; i<over; i++) del(all[i])`：
+      // 跳过的受保护快照不占额度，那个写法会少删或越界。
+      for (const k of all) {
+        if (over <= 0) break;
+        if (keep && keep.has(k)) continue;
+        await store.del(k);
+        over--;
+      }
     } catch (e) {
       status('清理旧快照失败：' + (e?.message || e), true);
     }

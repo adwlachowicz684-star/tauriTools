@@ -3248,7 +3248,11 @@ group('P0 主题与备份');
   ok(/new Set\(\(await store\.listBackups\(\)\)\.map\(\(b\) => b\.ts\)\)/.test(imp), 'A42 导入按 ts 去重');
   ok(/if \(mine\.has\(b\.ts\)\) \{ skipped\+\+; continue; \}/.test(imp), 'A42 重复的跳过（不覆盖本机现有快照）');
   ok(/typeof b\.ts !== 'number'/.test(imp), 'A42 缺 ts 的跳过（否则列表里会出现 undefined 时间戳条目）');
-  ok(/await trimBackups\(\);/.test(imp), 'A42 导入结束后统一清理一次（逐份清理会删掉刚写进去的）');
+  // 形式从 trimBackups() 变成 trimBackups(addedKeys)：
+  // 「统一清理一次」这个意图不变（仍然只在末尾调一次），但必须带上保护集合 ——
+  // 不带的话统一清理反而会把刚导入的历史快照**整批**删掉（BUG 39）：
+  // 它们 ts 更旧，而清理从最旧的开始删。
+  ok(/await trimBackups\(addedKeys\);/.test(imp), 'A42 导入结束后统一清理一次（且带上保护集合）');
 
   const st = (fs.readFileSync(path.join(HERE, 'store.js'), 'utf8')).replace(/\r\n/g, '\n');
   ok(/export async function putBackup\(snapshot\)/.test(st), 'A42 store 新增 putBackup（指定时间戳写入）');
@@ -4848,6 +4852,38 @@ group('BUG 38 删除文件夹不得留下「文件谁都不属于」的中间态
   const cf = idx.match(/async function createFolder\(\)\s*\{[\s\S]*?\n  \}/);
   ok(!!cf, '找到 createFolder');
   ok(/foldersList\.pop\(\)/.test(cf[0]), 'createFolder 写失败要撤回新建的文件夹');
+}
+
+/* ------------------------------------------------------------------
+   BUG 39：导入的历史快照被随后的滚动清理立刻删掉
+   ------------------------------------------------------------------ */
+group('BUG 39 导入的快照不得被滚动清理删掉');
+
+{
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const st = fs.readFileSync(path.join(HERE, 'store.js'), 'utf8');
+
+  // putBackup 必须把 key 交出来，导入方才保护得了
+  const pb = st.match(/export async function putBackup\(snapshot\)\s*\{[\s\S]*?\n\}/);
+  ok(!!pb, '找到 putBackup');
+  ok(/return \(await set\(key, snapshot\)\) \? key : null;/.test(pb[0]),
+    'putBackup 成功时返回 key（否则导入方无法保护刚写入的那几份）');
+
+  // trimBackups 必须接受保护集合
+  const tb = idx.match(/async function trimBackups\([^)]*\)\s*\{[\s\S]*?\n  \}/);
+  ok(!!tb, '找到 trimBackups');
+  ok(/protect/.test(tb[0]), 'trimBackups 接受 protect 参数');
+  ok(/keep\.has\(k\)/.test(tb[0]), '清理时跳过受保护的 key');
+
+  // 关键：额度计算不能因跳过而错位
+  ok(!/for \(let i = 0; i < all\.length - limit; i\+\+\)/.test(tb[0]),
+    '不得再用「按下标删前 N 个」的写法（跳过受保护项时会少删/越界）');
+
+  // importBackups 必须把本次写入的 key 传进去
+  const ib = idx.match(/async function importBackups\(\)\s*\{[\s\S]*?\n  \}/);
+  ok(!!ib, '找到 importBackups');
+  ok(/trimBackups\(addedKeys\)/.test(ib[0]), '导入后清理必须带上 addedKeys');
+  ok(/addedKeys\.add\(ok\)/.test(ib[0]), '把 putBackup 返回的 key 收进保护集合');
 }
 
 group('交换格式接入 UI');

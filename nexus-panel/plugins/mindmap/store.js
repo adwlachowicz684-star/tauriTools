@@ -257,7 +257,10 @@ export async function pushBackup(snapshot, keep = BACKUP_KEEP) {
 export async function putBackup(snapshot) {
   if (!snapshot || typeof snapshot.ts !== 'number') return false;
   const key = K_BACKUP + String(snapshot.ts).padStart(14, '0');
-  return await set(key, snapshot);
+  // 成功时返回 key 而不是 true —— 导入方要拿它去保护刚写入的快照
+  // （见 index.js 的 importBackups：不保护的话会被随后的滚动清理立刻删掉）。
+  // 写入失败返回 null；ts 非法返回 false。三者都是 falsy，`if (ok)` 兼容。
+  return (await set(key, snapshot)) ? key : null;
 }
 
 /** 备份列表（新→旧） */
