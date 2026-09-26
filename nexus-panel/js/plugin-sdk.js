@@ -749,7 +749,11 @@ export function createModuleContext({
    ============================================================ */
 
 /** 把外壳主题变量写进 iframe 的 :root（覆盖式更新，支持反复调用） */
-function applyThemeVars(vars) {
+/**
+ * @param {object} vars     主题变量
+ * @param {string} [base]   宿主给的权威基调（'light' | 'dark'），可省略
+ */
+function applyThemeVars(vars, base) {
   if (!vars) return;
   let s = document.getElementById('nexus-theme-vars');
   if (!s) {
@@ -768,8 +772,22 @@ function applyThemeVars(vars) {
    * 且不报错。isLightColor 自身已处理空值（返回 false → dark），
    * 这层门是多余的。
    */
-  const base = isLightColor(vars['--bg']) ? 'light' : 'dark';
-  document.documentElement.style.colorScheme = base;
+  /*
+   * 基调优先用宿主给的权威值（第二个参数，来自消息的 themeBase 字段）。
+   *
+   * 只在没有时才回退按 --bg 亮度推断：老版本宿主不传这个字段。
+   * 为什么不能只靠推断 —— 用户可以在设置页只改基调、不动 --bg，
+   * 此时 --bg 仍是深色值，推断会判成 dark 而面板实际是浅色，
+   * 于是插件 CSS 里 [data-nexus-base="light"] 那一档永远匹配不上。
+   *
+   * ⚠️ 这里不能去引用外层消息对象 d —— 本函数只收 vars，
+   * 引用 d 会是 ReferenceError（严格模式下整个 SDK 挂掉）。
+   * 基调必须由调用方显式传进来。
+   */
+  const resolvedBase = (base === 'light' || base === 'dark')
+    ? base
+    : (isLightColor(vars['--bg']) ? 'light' : 'dark');
+  document.documentElement.style.colorScheme = resolvedBase;
   /* 把基调也写成 data 属性，供插件 CSS 按基调切档。
      光有 colorScheme 不够：那是给浏览器原生控件用的，CSS 选择器读不到。
      而插件里常有些"品牌色的浅色变体"（错误文字、代码段…），
@@ -780,7 +798,7 @@ function applyThemeVars(vars) {
          [data-nexus-base="light"] { --my-err: #b91c1c; }   浅色档
      native 模式的插件不该吃这套（它固定深色），
      所以 agent-flow 的选择器是 [data-af-mode="follow"][data-nexus-base="light"]。 */
-  try { document.documentElement.dataset.nexusBase = base; } catch { /* 忽略 */ }
+  try { document.documentElement.dataset.nexusBase = resolvedBase; } catch { /* 忽略 */ }
 }
 
 /** 粗略判断一个颜色是浅是深，用于设置 color-scheme */
@@ -910,7 +928,7 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
       // 把主题变量写到 iframe 的 :root，保证视觉与外壳一致
       if (d.theme) {
         currentTheme = d.theme;
-        applyThemeVars(d.theme);
+        applyThemeVars(d.theme, d.themeBase);
         /* 回执：告诉外壳"新变量已落地"，pushTheme 正在等这条消息。
            不回的话外壳只能等超时兜底（400ms）才 resolve。
            d.theme 为空时不回 —— 没写任何变量，谈不上"已生效"。 */

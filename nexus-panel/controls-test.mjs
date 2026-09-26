@@ -1733,8 +1733,19 @@ console.log('\n=== 30. 玻璃透明度方向 + 弹框不透明地板 ===');
 
   /* 基调判定不该被不相关的变量否决 */
   const sdk = read('js/plugin-sdk.js');
+  /*
+   * ⚠️ 钉**语义**，不钉字面量。
+   * 原文断言写的是 `const base = isLightColor(...) ? ...` 这一整行，
+   * 后来基调改成"优先用宿主传来的权威值、推断只作兜底"（见第 49 节），
+   * 变量名随之改成 resolvedBase —— 字面量断言立刻误报，
+   * 而它真正要守的语义（不看 --text）一点没变。
+   */
+  const cleanSdk = stripComments(sdk);
   t('基调只看底色，不被 --text 是否存在否决',
-    /const base = isLightColor\(vars\['--bg'\]\) \? 'light' : 'dark';/.test(sdk));
+    !/vars\['--text'\]\s*&&\s*isLightColor/.test(cleanSdk)
+      && /isLightColor\(vars\['--bg'\]\)/.test(cleanSdk),
+    !/vars\['--text'\]\s*&&\s*isLightColor/.test(cleanSdk)
+      ? '以 --bg 为判据，无 --text 门' : '仍用 --text 存在性否决底色判据');
 }
 
 
@@ -2995,6 +3006,58 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
     /new WeakMap\(\)/.test(hostSrc) ? 'WeakMap 记录' : '未记录上次键');
   t('元断言：确实取到了 applyThemeVarsTo 函数体',
     body.length > 200, `${body.length} 字符`);
+}
+
+
+/* ============================================================
+   49. 基调必须传给插件，不能让它按 --bg 亮度猜
+   ------------------------------------------------------------
+   基调本身也是参数了：用户可以只改基调、不动 --bg。
+   此时 --bg 仍是深色值，按亮度推断判成 dark，而面板实际是浅色 ——
+   插件 CSS 里 [data-nexus-base="light"] 那一档永远匹配不上，
+   "浅底上的品牌色变体"这类按基调切档的写法静默失效。
+   ============================================================ */
+{
+  const hostSrc = stripComments(read('js/host.js'));
+  const sdkSrc = stripComments(read('js/plugin-sdk.js'));
+
+  t('宿主向插件推送权威基调（init / theme 消息带 themeBase）',
+    /themeBase:\s*pluginThemeBase\(/.test(hostSrc),
+    /themeBase:\s*pluginThemeBase\(/.test(hostSrc) ? '已带（init 与 theme 两处）'
+      : '未带 → 插件只能按 --bg 猜');
+
+  t('SDK 优先用宿主给的基调，只在缺失时才回退推断',
+    /base === 'light' \|\| base === 'dark'/.test(sdkSrc)
+      && /isLightColor\(vars\['--bg'\]\)/.test(sdkSrc),
+    /base === 'light' \|\| base === 'dark'/.test(sdkSrc)
+      ? '权威值优先 + 推断兜底（兼容老宿主）' : '未用权威值');
+
+  /* ⚠️ applyThemeVars 只收 vars，**没有**消息对象 d。
+     曾写成在函数体里引用 d.themeBase —— 严格模式下就是 ReferenceError，
+     整个 SDK 挂掉。基调必须由调用方显式传参。 */
+  /* 上面几条只钉了"函数支持收基调"与"宿主会发 themeBase"，
+     没钉**调用处真的把值传进去** —— 破坏验证时把 d.themeBase 去掉，
+     断言仍全绿（函数签名没变、宿主消息也没变，只是没传）。
+     所以必须单独钉这一处。 */
+  t('SDK 调用 applyThemeVars 时真的把 themeBase 传了进去',
+    /applyThemeVars\(d\.theme,\s*d\.themeBase\)/.test(sdkSrc),
+    /applyThemeVars\(d\.theme,\s*d\.themeBase\)/.test(sdkSrc)
+      ? '已传' : '没传 → 权威值白给，仍走推断');
+
+  t('SDK 未在 applyThemeVars 内部引用外层消息对象 d（会 ReferenceError）',
+    !/function applyThemeVars\([^)]*\)[\s\S]{0,1600}?\bd\.themeBase\b/.test(sdkSrc),
+    /function applyThemeVars\([^)]*\)[\s\S]{0,1600}?\bd\.themeBase\b/.test(sdkSrc)
+      ? '内部引用了 d —— 严格模式下崩溃' : '由参数传入');
+
+  t('同页插件容器也标基调（插件自选主题时基调可能与全局不同）',
+    /el\.dataset\.nexusBase\s*=\s*base/.test(hostSrc),
+    /el\.dataset\.nexusBase\s*=\s*base/.test(hostSrc)
+      ? '容器已标' : '只标了文档根 → 自选浅色主题的插件仍走深色档');
+
+  t('外壳主文档也标 data-nexus-base（同页插件与 iframe 写法一致）',
+    /root\.dataset\.nexusBase\s*=\s*theme\.base/.test(read('js/theme-manager.js')),
+    /root\.dataset\.nexusBase\s*=\s*theme\.base/.test(read('js/theme-manager.js'))
+      ? '已标' : '未标 → 同页插件按文档教的写法永远匹配不上');
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
