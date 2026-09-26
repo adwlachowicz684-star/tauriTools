@@ -1476,8 +1476,11 @@ console.log('\n=== 26. 背景图预设必须有界面入口 ===');
    */
   const app = read('plugins/settings/App.tsx');
   t('设置页引入了 BG_PRESETS', /import\s*\{[^}]*BG_PRESETS[^}]*\}\s*from/.test(app));
-  t('设置页渲染了预设缩略图', /BG_PRESETS\.map\(/.test(app));
-  t('预设可点（有 onClick）', /BG_PRESETS\.map\([\s\S]{0,600}?onClick/.test(app));
+  /* 判据容忍 `BG_PRESETS.filter(...).map(...)`：
+     这三条钉的是「预设有 UI 入口」这个语义，不是「必须直接 map」这一写法 ——
+     钉写法的话，中间加一层按基调过滤就会误报（实测踩到）。 */
+  t('设置页渲染了预设缩略图', /BG_PRESETS[\s\S]{0,200}?\.map\(/.test(app));
+  t('预设可点（有 onClick）', /BG_PRESETS[\s\S]{0,300}?\.map\([\s\S]{0,600}?onClick/.test(app));
   t('再点一次可取消（回到主题自带）', /setBgPreset\(\s*on\s*\?\s*''\s*:\s*p\.id\s*\)/.test(app));
 
   const css = stripComments(read('css/controls.css'));
@@ -1532,7 +1535,7 @@ console.log('\n=== 27. 数据驱动的调节项必须有界面入口 ===');
 
   /* 背景图预设：曾加过一次，随后被他人整文件覆盖而无人察觉 ——
      所以这条断言要一直留着，作为"再次丢失"的哨兵。 */
-  t('背景图预设仍有界面入口', /BG_PRESETS\.map\(/.test(app));
+  t('背景图预设仍有界面入口', /BG_PRESETS[\s\S]{0,200}?\.map\(/.test(app));
   t('预设可点且可取消', /setBgPreset\(\s*on\s*\?\s*''\s*:\s*p\.id\s*\)/.test(app));
 }
 
@@ -2699,6 +2702,86 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
   } finally {
     globalThis.localStorage = saved2;
   }
+}
+
+
+/* ============================================================
+   44. 预设背景必须按基调匹配
+   ------------------------------------------------------------
+   每个预设都带 base（按深浅设计的渐变）。深色主题压上浅色渐变时
+   正文对比度只剩 1.05~1.14 —— 白底白字、整片看不见。
+   这类问题不报错不崩溃，只能靠肉眼发现，所以数据与应用两层都要钉。
+   ============================================================ */
+{
+  const { BG_PRESETS, PRESET_THEMES } = await import('./js/themes.js');
+
+  /* ---- 44.1 数据层 ---- */
+  const noBase = BG_PRESETS.filter((p) => p.base !== 'light' && p.base !== 'dark');
+  t('每个预设背景都标了合法的 base（按深浅设计的渐变）',
+    noBase.length === 0,
+    noBase.length ? noBase.map((p) => p.id).join(', ') : `${BG_PRESETS.length} 个全部标注`);
+  t('深浅两档预设都有（缺一档就等于那类用户没得选）',
+    BG_PRESETS.some((p) => p.base === 'light') && BG_PRESETS.some((p) => p.base === 'dark'),
+    `light ${BG_PRESETS.filter((p) => p.base === 'light').length} / dark ${BG_PRESETS.filter((p) => p.base === 'dark').length}`);
+
+  /* ---- 44.2 应用层：深色主题 + 浅色预设 → 不该生效 ---- */
+  const savedDoc = globalThis.document;
+  const savedLS = globalThis.localStorage;
+  const store44 = {};
+  const sink44 = new Map();
+  try {
+    const el = {
+      style: {
+        setProperty: (k, v) => sink44.set(k, String(v)),
+        getPropertyValue: (k) => sink44.get(k) || '',
+        removeProperty: (k) => sink44.delete(k),
+      },
+      dataset: {},
+      classList: { add() {}, remove() {}, contains: () => false },
+    };
+    globalThis.document = { documentElement: el, body: el };
+    globalThis.localStorage = {
+      getItem: (k) => (store44[k] !== undefined ? store44[k] : null),
+      setItem: (k, v) => { store44[k] = String(v); },
+      removeItem: (k) => { delete store44[k]; },
+    };
+    const tm = await import('./js/theme-manager.js?v=bg44');
+
+    /* 必须是**支持背景图的**主题（玻璃风格），否则 supportsBgImage 返回 false，
+       两组都不应用 —— A 组会假绿（"没套用"其实是因为根本不支持，不是因为校验）。 */
+    const darkTheme = PRESET_THEMES.find((x) => x.base === 'dark' && x.style === 'glass')
+      || PRESET_THEMES.find((x) => x.base === 'dark');
+    const lightPreset = BG_PRESETS.find((p) => p.base === 'light');
+    const darkPreset = BG_PRESETS.find((p) => p.base === 'dark');
+
+    // A：深色主题 + 浅色预设 → 不应用
+    store44['nexus:bg-preset'] = lightPreset.id;
+    const a = tm.applyTheme(darkTheme.id, null, null, { userInitiated: false });
+    const gotA = (a && a.vars && a.vars['--bg-image']) || '';
+    const lightStops = (lightPreset.css.match(/#[0-9a-f]{6}/gi) || []);
+    t('深色主题不会套用浅色预设（否则正文对比度 1.05 = 白底白字）',
+      !lightStops.some((c) => gotA.includes(c)),
+      gotA ? gotA.slice(0, 36) : '（未应用）');
+
+    // B：深色主题 + 深色预设 → 正常应用（校验不能误伤同档）
+    store44['nexus:bg-preset'] = darkPreset.id;
+    const b = tm.applyTheme(darkTheme.id, null, null, { userInitiated: false });
+    const gotB = (b && b.vars && b.vars['--bg-image']) || '';
+    t('深色主题能正常套用深色预设（校验不能误伤同档）',
+      gotB.includes('gradient'),
+      gotB ? gotB.slice(0, 36) : '（未应用）');
+  } catch (e) {
+    t('预设背景基调校验', false, '跑不起来：' + e.message);
+  } finally {
+    globalThis.document = savedDoc;
+    globalThis.localStorage = savedLS;
+  }
+
+  /* ---- 44.3 UI 层：设置页只列当前基调的预设 ---- */
+  const cleanSet = stripComments(read('plugins/settings/App.tsx'));
+  t('设置页按基调过滤预设背景（不给会把界面弄坏的选项）',
+    /BG_PRESETS\.filter\([\s\S]{0,120}?base[\s\S]{0,60}?\)/.test(cleanSet),
+    /BG_PRESETS\.filter/.test(cleanSet) ? '已过滤' : '未过滤（全列）');
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);

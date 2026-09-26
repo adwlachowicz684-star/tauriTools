@@ -1504,10 +1504,18 @@ export default function Settings() {
           {/* ---------- 预设背景 ----------
               BG_PRESETS 曾只在 themes.js 里有数据、界面没有入口，
               用户能看见的只有一个「选择图片…」按钮，10 个预设全部不可达。
-              主题不带背景图时不显示（与上面的占位同理）。 */}
+              主题不带背景图时不显示（与上面的占位同理）。
+
+              ⚠️ 只列与**当前基调**匹配的预设。
+              每个预设都是按深浅设计的（BG_PRESETS 带 base 字段）：
+              晨雾/沙丘是浅色渐变，深海/极光是深色渐变。
+              全列出来的话，用户在深色主题下选「晨雾」，
+              浅色渐变会把深色主题的浅色文字压没 ——
+              实测正文对比度只剩 1.05~1.14，等于白底白字。
+              与其让用户选了才发现坏了，不如一开始就不给这个选项。 */}
           {supportsBgImage() ? (
             <div className="nx-bgpresets">
-              {BG_PRESETS.map((p) => {
+              {BG_PRESETS.filter((p) => p.base === getResolvedBase()).map((p) => {
                 const on = getBgPreset() === p.id;
                 return (
                   <button
