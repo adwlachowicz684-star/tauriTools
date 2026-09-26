@@ -1636,11 +1636,21 @@ input[type='range']:disabled {
   margin-bottom: var(--sp-2, 4px);
 }
 
+/* 行是**可拖拽**的（draggable 挂在这一行上，不只是手柄）。
+
+   这里必须用 div 而不是 button —— 原生拖拽在表单控件上不启动，
+   WebKit 明确忽略 <button draggable>，表现是"按住拖不动"。
+   详见 App.tsx 里那段说明。 */
 .pg-item {
   width: 100%;
   display: flex;
   align-items: center;
   gap: var(--sp-3, 6px);
+  /* button 内的文本本就选不中，换成 div 后能选了 ——
+     按住一拖会变成"选中一片文字"而不是"拖起整行"，
+     所以这里补回来。 */
+  user-select: none;
+  -webkit-user-select: none;
   padding: var(--sp-3, 6px) var(--sp-4, 8px);
   margin-bottom: var(--sp-2, 4px);
   border: 0;

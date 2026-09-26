@@ -2523,5 +2523,76 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
     `层级${zv.length}/时长${dv.length}/行高${lv.length}/间距${sv.length}/圆角${rv.length}/字重${fw.length}`);
 }
 
+
+/* ============================================================
+   42. 可拖拽的行不能是表单控件
+   ------------------------------------------------------------
+   原生 HTML5 拖拽（draggable）在表单控件上不启动：
+   WebKit（macOS / Linux 上的 Tauri 内核）明确忽略 <button draggable>，
+   Chromium 上也长期不可靠。症状是"按住拖不动"，而 dragstart 根本不来 ——
+   不报错、不崩溃，只能靠肉眼发现。
+
+   这条断言守的是"元素类型"这个**看不见**的前提：
+   类名、事件、逻辑全对也没用，标签名写错整块功能就静默失效。
+   —— 这正是它值得单独钉住的原因。
+   ============================================================ */
+{
+
+  /* 找出所有展开拖拽 props 的元素，取它**最近的**开标签名。
+     取"最后一个 <" 而不是正则匹配整段 —— JSX 开标签与 {...spread}
+     之间还夹着别的属性，整段匹配很脆。 */
+  const FORBIDDEN = ['button', 'input', 'select', 'textarea', 'a', 'label'];
+  const bad = [];
+  let seen = 0;
+
+  const files = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === 'node_modules' || e.name === '.git' || e.name.startsWith('.')) continue;
+      const fp = join(dir, e.name);
+      if (e.isDirectory()) walk(fp);
+      else if (/\.(tsx|jsx|js|mjs)$/.test(e.name)) files.push(fp);
+    }
+  };
+  walk(join(HERE, 'plugins'));
+  walk(join(HERE, 'js'));
+
+  for (const fp of files) {
+    const src = stripComments(readFileSync(fp, 'utf8'));
+    /* 拖拽 props 的命名：dragProps / xxxDrag.getItemProps / {...rowDrag} 等。
+       这里按"展开的 props 里含 getItemProps 调用，或变量名叫 *drag*"来认。 */
+    const re = /\{\.\.\.([A-Za-z_$][\w$]*)\}/g;
+    let m;
+    while ((m = re.exec(src))) {
+      const name = m[1];
+      if (!/drag/i.test(name)) continue;
+      /* 这个变量是不是来自 useDragReorder 的 getItemProps：
+         同文件里应有 `xxx.getItemProps(` 或 `const xxx = ...getItemProps`，
+         或它是 useDragReorder 的返回值解构。宽松判定：变量名含 drag 即可，
+         漏报比误报安全（误报只是多查一处）。 */
+      const before = src.slice(Math.max(0, m.index - 600), m.index);
+      const lt = before.lastIndexOf('<');
+      const tag = lt >= 0 ? (before.slice(lt + 1).match(/^[a-zA-Z][\w-]*/) || [])[0] : null;
+      if (!tag) continue;
+      seen++;
+      if (FORBIDDEN.includes(tag)) {
+        bad.push(`${fp.replace(HERE + '/', '')}: <${tag}> 展开了 {...${name}}`);
+      }
+    }
+  }
+
+  t('可拖拽行没有用表单控件（button/input 等拖不动）', bad.length === 0,
+    bad.slice(0, 3).join(' | ') || `已检查 ${seen} 处拖拽展开`);
+  t('确实扫到了拖拽展开（防止断言空跑）', seen > 0, `seen=${seen}`);
+
+  /* 换成 div 后要自己补 user-select:none ——
+     button 内的文本选不中，div 能选，一拖就变成"选中文字"。 */
+  const ctl = stripComments(read('css/controls.css'));
+  const pgItem = (ctl.match(/\.pg-item\s*\{[^}]*\}/) || [''])[0];
+  t('.pg-item 补了 user-select:none（换 div 后替代 button 的原生不可选）',
+    /pg-item/.test(ctl) && /user-select:\s*none/.test(pgItem),
+    pgItem ? '已补' : '.pg-item 未找到');
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
