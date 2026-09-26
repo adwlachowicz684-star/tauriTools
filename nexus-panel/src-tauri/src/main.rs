@@ -324,6 +324,11 @@ fn main() {
            trait 未初始化而编译失败（E0599），且报错指向 updater.rs 而非这里。 */
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(fpx::store::FpxState::new())
+        /* ⚠️ 少了这一行，dupview 的每条命令一被调用就 panic
+           （tauri: `state() called before manage()` → 进程 abort）。
+           编译期完全看不出来，warning 里只有一句
+           "associated function `new` is never used" —— 那就是它没被管理的信号。 */
+        .manage(dupview::DupState::new())
         .manage(af_flow::ProcRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(af_flow::WatchRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(af_flow::WebhookRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
@@ -492,6 +497,11 @@ fn main() {
              * （关掉面板仍想让客户端连着），所以由开关决定。
              */
             if let tauri::RunEvent::Exit = event {
+                /* 「试卷查重」的扫描跑在后台线程里（可能正在渲染几百份卷子），
+                   退出时置取消标志让它尽快收手 —— 否则线程会一直跑到自然结束，
+                   表现为"关了面板后磁盘还在响好几秒"。
+                   少了这一行编译只多一句 "request_cancel is never used"。 */
+                crate::dupview::request_cancel(app_handle);
                 let should_stop = crate::fpx::store::resolve_data_dir(app_handle)
                     .map(|dir| crate::fpx::store::load_config(&dir).close_mcp_on_exit)
                     .unwrap_or(false);

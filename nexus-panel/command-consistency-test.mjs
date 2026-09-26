@@ -740,5 +740,46 @@ console.log('\n--- 17. 白名单命令不得在能力表里隐身 ---');
   t('fpx_chain_clients 已定 R', caps.capOf('fpx_chain_clients') === 'R', caps.capOf('fpx_chain_clients'));
 }
 
+console.log('\n=== State 型状态必须被 manage（否则命令一被调用就 panic 整个进程）===');
+{
+  /*
+   * Tauri 的 app.state::<T>() / try_state::<T>() 在 T 没被 .manage() 过时
+   * 直接 panic：「state() called before manage() for …」，而且发生在
+   * **事件回调**里 —— 崩的是整个进程（应用直接没了），不是单个插件报错。
+   *
+   * 编译期看不出来，只在 warning 里留一句
+   * "associated function `new` is never used"（不留神就划过去）。
+   *
+   * 实测踩过（2026-09-26）：main.rs 少了
+   * `.manage(dupview::DupState::new())`，打开「试卷查重」插件 = 进程 abort。
+   * 那次是被同步提交静默删掉的，命令注册、mod 声明都在，唯独少了这一行。
+   */
+  const rsRoot = path.join(root, 'src-tauri', 'src');
+  const files = [];
+  (function walk(d) {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.rs')) files.push(p);
+    }
+  })(rsRoot);
+
+  const mainRs = fs.readFileSync(path.join(rsRoot, 'main.rs'), 'utf8');
+  /* 按行找 .manage(，只要该行提到类型名就算管过 ——
+     manage 的实参写法五花八门（X::new() / X(Mutex::new(..))），
+     钉具体写法会误报。 */
+  const managed = mainRs.split('\n').filter((l) => l.includes('.manage('));
+
+  const used = new Set();
+  for (const f of files) {
+    const src = fs.readFileSync(f, 'utf8');
+    for (const m of src.matchAll(/(?:try_)?state::<([A-Za-z_]\w*)>\(\)/g)) used.add(m[1]);
+  }
+  const missing = [...used].filter((T) => !managed.some((l) => l.includes(T)));
+  t('扫到了 state 取用点（扫描本身没失效）', used.size > 0, String(used.size));
+  t('每个 state::<T>() 取用的类型都在 main.rs 里 manage 过',
+    missing.length === 0, missing.length ? `缺 manage：${missing.join(', ')}` : '');
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
