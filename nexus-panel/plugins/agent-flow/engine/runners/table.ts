@@ -33,9 +33,11 @@ export async function runTableRead(ctx: RunContext): Promise<void> {
     const path = ctx.tpl(String(d.path ?? '')).trim();
     if (!path) throw new NodeFailError('没填表格文件路径');
 
-    if (!ctx.opts.tableReader) {
-      throw new NodeFailError('读表格需要桌面端（当前环境没有文件读取能力）');
-    }
+    /*
+     * 不在这里自己判 tableReader 有没有 —— REQUIRES 里已登记，
+     * runnerKit 会在进入本函数**之前**统一校验（措辞与别处一致）。
+     * 留一份在这里就是"同一件事写两遍"，改了那边忘了这里是迟早的事。
+     */
     let text: string;
     try {
       text = await ctx.opts.tableReader(path);

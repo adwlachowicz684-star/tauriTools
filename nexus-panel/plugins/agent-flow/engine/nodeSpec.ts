@@ -446,6 +446,8 @@ export const CAPABILITY_SIGNATURES: Record<string, string> = {
   githubPush: '推送文件 => Promise<string>',
   imageReader: '(path) => Promise<string>（data URL）',
   playAudioReader: '(path) => Promise<string>（data URL）',
+  executor: '(node, rendered, onChunk) => Promise<string>（CLI 的完整输出）',
+  tableReader: '(path) => Promise<string>（表格文件的文本）',
 };
 
 /*

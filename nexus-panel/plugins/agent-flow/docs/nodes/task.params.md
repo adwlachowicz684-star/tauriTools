@@ -9,11 +9,15 @@
 - **node.type**：`task`
 - **源文件**：`nodes/defs/task.tsx`
 - **产出**：text（文本）　**接受**：any
-- **需要的外部能力**：无（纯本地，浏览器模式也能跑）
+- **需要的外部能力**：`executor`
 
 ## 它做什么
 
 CLI 的执行输出
+
+## 能力签名
+
+- `executor`: `(node, rendered, onChunk) => Promise<string>（CLI 的完整输出）`
 
 共 5 项：
 

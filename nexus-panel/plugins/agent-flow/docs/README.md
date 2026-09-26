@@ -33,7 +33,7 @@
 
 | kind | 产出 | 接受 | 能力 | 说明 | 源文件 |
 |---|---|---|---|---|---|
-| [task](nodes/task.params.md) | text（文本） | any | — | 让命令行工具干一件事，拿它的输出 | `nodes/defs/task.tsx` |
+| [task](nodes/task.params.md) | text（文本） | any | executor | 让命令行工具干一件事，拿它的输出 | `nodes/defs/task.tsx` |
 
 ## 流程控制
 
@@ -75,7 +75,7 @@
 | [agg](nodes/agg.params.md) | text（文本） | table | — | 对一列求和 / 平均 / 最大 | `nodes/defs/agg.ts` |
 | [derive](nodes/derive.params.md) | table（table） | table | — | 对每一行套公式，算出新的一列 | `nodes/defs/derive.ts` |
 | [filter](nodes/filter.params.md) | table（table） | table | — | 只保留满足条件的行 | `nodes/defs/filter.ts` |
-| [tableRead](nodes/tableRead.params.md) | table（table） | none | — | 读一个 CSV / TSV 表格 | `nodes/defs/tableRead.ts` |
+| [tableRead](nodes/tableRead.params.md) | table（table） | none | tableReader | 读一个 CSV / TSV 表格 | `nodes/defs/tableRead.ts` |
 
 ## 文件与数据
 
@@ -170,3 +170,5 @@
 | `githubPush` | `推送文件 => Promise<string>` |
 | `imageReader` | `(path) => Promise<string>（data URL）` |
 | `playAudioReader` | `(path) => Promise<string>（data URL）` |
+| `executor` | `(node, rendered, onChunk) => Promise<string>（CLI 的完整输出）` |
+| `tableReader` | `(path) => Promise<string>（表格文件的文本）` |
