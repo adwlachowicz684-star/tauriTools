@@ -1848,3 +1848,254 @@ html.theme-transition *:not(.spinner) {
    块间用间距而不是分隔线：这一片本身就在一个带边框的面板里，
    再画横线会把它切成互不相干的几块，反而看不出同属"右上角按钮"。 */
 .tb-group { margin-top: var(--sp-6, 12px); }
+
+/* 目录选择器浮层（.fp-*）
+   --------------------------------------------------------------------
+   ⚠️ 刻意写在宿主主样式表，**不是** plugins/folder-picker/ 下另起一份：
+      folder-picker 是 kind:'service' 的 module 插件，被弹成浮层显示；
+      它自己目录里的 style.css 在部分加载路径下不引入，
+      那时弹出来就只剩文字（demo-iframe 踩过的同款坑）。
+      写在这里则只要宿主样式在，浮层就一定有样子。
+
+   module.js 里**一个内联 style 都没有**（0 处），
+   所以下面这些类就是它全部的观感来源 —— 少一条就是一处裸奔。
+
+   全部走令牌：切主题（尤其玻璃）时跟着变，不写裸值。
+*/
+.fp-panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4, 8px);
+  padding: var(--sp-6, 12px);
+  border-radius: var(--r-lg, 20px);
+  background: var(--surface-overlay, var(--surface-raised));
+  box-shadow: var(--sh-out-lg, 0 8px 24px rgba(0, 0, 0, .28));
+  color: var(--text);
+  font-size: var(--fs-body, 13px);
+  /* 浮层必须自己滚：目录多时列表会顶出容器，
+     没有 overflow 就顶到遮罩外面去，下半截点不到。 */
+  overflow: hidden;
+}
+
+.fp-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4, 8px);
+  /* 标题行不随内容滚动 */
+  flex: none;
+}
+
+/* 标题吃掉剩余宽度，把关闭按钮挤到最右 */
+.fp-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-h3, 15px);
+  font-weight: var(--fw-strong, 600);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fp-x {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--r-sm, 9px);
+  background: transparent;
+  color: var(--text-dim, var(--text));
+  font-family: inherit;
+  font-size: var(--fs-body, 13px);
+  cursor: pointer;
+}
+
+.fp-x:hover { filter: brightness(var(--hover-bright, 1.06)); }
+
+.fp-hint {
+  flex: none;
+  font-size: var(--fs-11, 11px);
+  line-height: var(--lh-relaxed, 1.6);
+  color: var(--text-dim, var(--text));
+}
+
+/* 常用文件夹：一排胶囊，多了换行而不是横向溢出 */
+.fp-chips {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3, 6px);
+  max-height: 72px;
+  overflow-y: auto;
+}
+
+.fp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2, 4px);
+  max-width: 100%;
+  padding: var(--sp-2, 4px) var(--sp-4, 8px);
+  border: 0;
+  border-radius: var(--r-pill, 999px);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-sm);
+  color: var(--text-soft, var(--text));
+  font-family: inherit;
+  font-size: var(--fs-11, 11px);
+  cursor: pointer;
+}
+
+.fp-chip:hover { filter: brightness(var(--hover-bright, 1.06)); }
+
+/*
+ * .plain = 快速起点（盘符 / 家目录这类兜底入口）。
+ * 它与"收藏"是两种东西：收藏是用户自己加的，快速起点是系统给的兜底，
+ * 摆在同一排胶囊里必须能一眼分开 —— 否则用户会以为自己收藏了 C: 盘。
+ * 用更弱的文字色 + 虚线描边区分，不动底色（动底色会破坏整排的节奏）。
+ */
+.fp-chip.plain {
+  color: var(--text-dim, var(--text));
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+.fp-chip.on { color: var(--accent); }
+
+/* 名字过长时截断 —— 收藏可能是一长串路径 */
+.fp-chip > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 删除收藏：只在胶囊内露一个小叉，不单独占一行 */
+.fp-chip-x {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-mute, var(--text-dim));
+  font-family: inherit;
+  font-size: var(--fs-11, 11px);
+  cursor: pointer;
+}
+
+.fp-chip-x:hover { color: var(--danger); }
+
+.fp-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3, 6px);
+}
+
+/* 路径输入框自己撑开 */
+.fp-bar > .p-input { flex: 1; min-width: 0; }
+
+.fp-crumbs {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1, 2px);
+  font-size: var(--fs-11, 11px);
+}
+
+.fp-crumb {
+  border: 0;
+  padding: 0 var(--sp-1, 2px);
+  background: transparent;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: var(--fs-11, 11px);
+  cursor: pointer;
+}
+
+.fp-crumb:hover { text-decoration: underline; }
+
+.fp-crumb-sep { color: var(--text-mute, var(--text-dim)); }
+
+.fp-cur { color: var(--text-soft, var(--text)); }
+
+.fp-err {
+  flex: none;
+  padding: var(--sp-3, 6px) var(--sp-4, 8px);
+  border-radius: var(--r-sm, 9px);
+  background: var(--surface-sunk);
+  color: var(--danger);
+  font-size: var(--fs-11, 11px);
+  line-height: var(--lh-relaxed, 1.6);
+}
+
+.fp-err:empty { display: none; }
+
+/* 目录列表：唯一会滚的区域 */
+.fp-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1, 2px);
+  padding: var(--sp-2, 4px);
+  border-radius: var(--r-sm, 9px);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-sm);
+}
+
+.fp-dirrow { display: flex; align-items: center; gap: var(--sp-3, 6px); }
+
+/* 目录名按钮吃掉整行宽度：整行可点，不是只有文字那几个像素能点 */
+.fp-dirname {
+  flex: 1;
+  min-width: 0;
+  padding: var(--sp-3, 6px) var(--sp-4, 8px);
+  border: 0;
+  border-radius: var(--r-sm, 9px);
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-body, 13px);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fp-dirname:hover { filter: brightness(var(--hover-bright, 1.06)); }
+
+/* 改名 / 新建子目录的输入框：在行内吃掉剩余宽度。
+   这两个类不只是 JS 钩子 —— 少了 flex 它们会在窄容器里被挤成 0 宽。 */
+.fp-name,
+.fp-newname { flex: 1; min-width: 0; }
+
+/*
+ * 改名 / 新建子目录的输入框：在行内吃掉剩余宽度。
+ * 这两个类不只是 JS 钩子 —— 少了 flex 它们会在窄容器里被挤成 0 宽。
+ */
+.fp-name,
+.fp-newname { flex: 1; min-width: 0; }
+
+.fp-namerow,
+.fp-newrow {
+  flex: none;
+  display: flex;
+  gap: var(--sp-3, 6px);
+}
+
+.fp-namerow > .p-input,
+.fp-newrow > .p-input { flex: 1; min-width: 0; }
+
+.fp-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-3, 6px);
+}
+
+.fp-ok-tag { color: var(--ok); }
+
+@media (prefers-reduced-motion: reduce) {
+  .fp-panel { transition: none; }
+}

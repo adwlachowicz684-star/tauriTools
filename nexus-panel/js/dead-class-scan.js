@@ -154,9 +154,26 @@ export function collectUsedClasses(src) {
       }
     }
   }
-  // 3: h('div.mm-foo') / h('.mm-foo')
-  for (const m of src.matchAll(/\bh\(\s*['"`]([a-zA-Z][\w]*)((?:[.#][\w-]+)*)['"`]/g)) {
-    for (const tok of (m[2] || '').split('.')) {
+  /*
+   * 3: hyperscript 简写 —— 任意创建辅助函数的 'tag.class' 形式
+   *
+   * ⚠️ 原来只认 `h(`。而 plugins/folder-picker/module.js 用的是它自己
+   * 定义的 `el('div.fp-panel')`，于是这个插件 22 个 fp-* 类名**全部**
+   * 被判成死样式 —— 而它们其实一个样式都没有（CSS 里根本没写），
+   * 真正该报的是"代码用了、CSS 没定义"，反向失明导致漏报。
+   *
+   * 这是本项目第 6 次栽在"类名走函数参数、扫描器不认"上
+   * （nx-mask / mm-* / dw-* / pg-* …），所以这次不按函数名白名单补，
+   * 改成**按形态判**：第一个 . 之前必须是真实 HTML 标签名。
+   * 这样 `console.log('a.b')` 之类不会被误取，也不用再逐个加函数名。
+   */
+  const TAG = 'div|span|button|input|select|textarea|label|a|ul|li|ol|p|h[1-6]|small|code|pre'
+    + '|section|header|footer|aside|nav|main|article|table|tr|td|th|img|svg|i|b|strong|em'
+    + '|form|option|dialog|figure|figcaption';
+  for (const m of src.matchAll(
+    new RegExp("\\b[A-Za-z_$][\\w$]*\\(\\s*['\"`](?:" + TAG + ")((?:[.#][\\w-]+)+)['\"`]", 'g'),
+  )) {
+    for (const tok of (m[1] || '').split(/[.#]/)) {
       const name = tok.trim();
       if (name && /^[A-Za-z_-][\w-]*$/.test(name)) out.add(name);
     }

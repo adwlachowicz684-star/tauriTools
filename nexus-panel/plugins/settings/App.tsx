@@ -54,6 +54,16 @@ import { swatchFor, styleLabel, styleParams, BG_PRESETS } from '../../js/themes.
 import { auditPlugin, summarize, LEVEL_ORDER } from '../../js/style-audit.js';
 import ExternalCard from './ExternalCard';
 import FilesCard from './FilesCard';
+/*
+ * 常用文件夹：收藏一份目录并给它起个昵称，之后任何「选择文件夹」的界面
+ * （项目组的浏览、agent-flow 的导出目录）都能一步到达。
+ *
+ * ⚠️ 这张卡片此前**写好了却没有任何地方 import**（纯死代码）——
+ * 功能等于没做完：用户只能在某个选择器里收藏「当前正看着的那个」目录，
+ * 批量改名、清理失效条目（盘拔了 / 目录删了）在那里做不了，
+ * 而恰恰是「找不到了」才想删它。
+ */
+import FavDirsCard from './FavDirsCard';
 import WindowCard from './WindowCard';
 import UpdateCard from './UpdateCard';
 import SettingGroup from '../../src/components/SettingGroup';
@@ -66,7 +76,7 @@ import SandboxSection from '../../src/components/SandboxSection';
 import { prompt } from '../../js/dialog.js';
 import { SHELL_SHORTCUT_SPECS, shellComboSet, normCombo } from '../../js/shell-shortcuts.js';
 
-type TabKey = 'theme' | 'plugins' | 'external' | 'files' | 'shortcuts' | 'window' | 'update' | 'about';
+type TabKey = 'theme' | 'plugins' | 'external' | 'files' | 'shortcuts' | 'favdirs' | 'window' | 'update' | 'about';
 
 /**
  * styleParams() 住在 js/themes.js（JS，没有类型声明），返回的每项结构是
@@ -102,6 +112,7 @@ const TABS: [TabKey, string][] = [
   ['external', '外链'],
   ['files', '文件'],
   ['shortcuts', '快捷键'],
+  ['favdirs', '常用文件夹'],
   ['window', '窗口'],
   ['update', '更新'],
   ['about', '关于'],
@@ -1622,6 +1633,7 @@ export default function Settings() {
       {tab === 'external' ? <ExternalCard /> : null}
       {tab === 'files' ? <FilesCard /> : null}
       {tab === 'shortcuts' ? <ShortcutsCard unknown={pluginsUnknown} /> : null}
+      {tab === 'favdirs' ? <FavDirsCard /> : null}
       {tab === 'window' ? <WindowCard /> : null}
       {tab === 'update' ? <UpdateCard /> : null}
 
