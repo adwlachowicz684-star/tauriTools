@@ -43,7 +43,10 @@ const cards = () => [...document.querySelectorAll('.theme-pop .theme-card')];
 t('渲染出全部主题卡片', cards().length === listThemes().length,
   `${cards().length} / ${listThemes().length}`);
 t('每个卡片都有缩略图', cards().every((c) => c.querySelector('.theme-prev')));
-t('分组标题存在（深色/浅色）',
+/* 措辞已改：分组从「深色/浅色」改成按**风格**（新拟态/扁平/玻璃），
+   与设置页保持一致。这里只验"有分组标题"，两种分法都满足，
+   但名字必须跟着改 —— 留着旧措辞会误导后来者以为还在按深浅分。 */
+t('分组标题存在（按风格：新拟态/扁平/玻璃）',
   document.querySelectorAll('.theme-pop .theme-group-title').length >= 1);
 t('当前主题被标记为 active',
   cards().filter((c) => c.classList.contains('active')).length === 1);
