@@ -62,7 +62,16 @@ console.log('\n=== 2. 直接 await api.* 的异步函数必须走 run（否则�
   const b = fn('removeCardFull');
   t('removeCardFull 走 run', /await run\('移除卡片'/.test(b));
   t('成功日志在 run 内部（失败就不写）', b.indexOf("run('移除卡片'") < b.indexOf('已移除'));
-  t('依赖里带上 run', /\[api, refresh, pushLog, run\]/.test(b));
+  /*
+   * 钉整个依赖数组的字面量会**过窄**：加一个依赖（如 boot）就误报，
+   * 而误报往往被"顺手改成字面量"消掉，等于把断言废了。
+   * 真正要保证的是 `run` 在依赖里（不在的话闭包捕获的是旧 run）。
+   */
+  const dm = /\},\s*\[([^\]]*)\]\);/.exec(b);
+  const deps = (dm ? dm[1] : '').split(',').map((s) => s.trim()).filter(Boolean);
+  t('依赖里带上 run', deps.includes('run'), deps.join('|'));
+  /* boot.platform 决定大小写敏感判据，漏了会按旧平台值比较 */
+  t('依赖里带上 boot', deps.includes('boot'), deps.join('|'));
 }
 
 console.log('\n=== 3. 统一错误包装本身没坏 ===');

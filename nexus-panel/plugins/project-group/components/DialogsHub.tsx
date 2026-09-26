@@ -19,6 +19,8 @@ import { ConfirmDialog } from './ui';
 import { Splitter } from './Splitter';
 import { LinkPickDialog } from './LinkPickDialog';
 import { clampPanelHeight } from '../utils/layout';
+/* 页签里定位卡片必须与后端同一规则（normalize_key）比较，见 remove 弹窗处注释 */
+import { normalizeKey } from '../api';
 import {
   effectiveCombo, formatCombo, GROUP_LABEL, hotkeysByGroup, IS_MAC,
 } from '../utils/hotkeys';
@@ -365,14 +367,26 @@ export function Dialogs(props: DialogsProps) {
           kind={dialog.kind}
           onClose={() => setDialog({ type: 'none' })}
           onConfirm={(keep) => {
+            /* 定位卡片所在页签必须按归一化键比，与后端 `normalize_key` 同规则。
+               按原文精确比会在路径写法不同时找不到 → -1；而 -1 原来退化成传 null，
+               null 的语义是「从**所有**页签里删」：卡片在别的页签里的登记被一并抹掉，
+               且 still() 判为"不在任何页签" → 图标 / 标签色 / 链接按 keep 清掉。 */
+            const ci = s.boot?.platform === 'windows';
+            const cardPath = dialog.card.path;
+            const key = normalizeKey(cardPath, ci);
             const idx = (dialog.kind === 'group'
               ? (s.boot?.groupTabs ?? []).findIndex(
-                (t) => (t.items ?? []).some((c) => c.path === dialog.card.path),
+                (t) => (t.items ?? []).some((c) => normalizeKey(c.path, ci) === key),
               )
               : undefined);
+            /* 找不到就**不删**：退回 null 会扩大删除范围（见上）。 */
+            if (idx !== undefined && idx < 0) {
+              s.pushLog(`未移除：卡片不在任何项目组页签里（${cardPath}）`, true);
+              return;
+            }
             void s.removeCardFull(
-              dialog.kind, dialog.card.path,
-              idx === undefined || idx < 0 ? null : idx, keep,
+              dialog.kind, cardPath,
+              idx === undefined ? null : idx, keep,
             );
           }}
         />

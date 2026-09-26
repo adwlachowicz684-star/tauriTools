@@ -356,11 +356,25 @@ export function useFpx() {
      * 结果刷新后卡片还在）。
      */
     await run('移除卡片', async () => {
-      await api.removeCard(path, kind, tabIndex, keep);
+      const snap = await api.removeCard(path, kind, tabIndex, keep);
+      /*
+       * 是否真的移走了，必须**查回包再说**。
+       *
+       * 后端按归一化键匹配，而 tabIndex 来自调用方（可能是活动页签而非卡片
+       * 实际所在页签）。对不上时这次是空操作：后端照样返回成功快照，
+       * 若这里无条件记「已移除」，用户点完删除看到卡片还在 ——
+       * 日志却说移走了，他无从判断是没生效还是刷新慢。
+       */
+      const ci = boot?.platform === 'windows';
+      const key = normalizeKey(path, ci);
+      const tabs = (kind === 'group' ? snap.groupTabs : snap.projectTabs) ?? [];
+      const left = tabIndex === null || tabIndex === undefined
+        ? tabs.some((t) => (t.items ?? []).some((p) => normalizeKey(p.path, ci) === key))
+        : (tabs[tabIndex]?.items ?? []).some((p) => normalizeKey(p.path, ci) === key);
       await refresh();
-      pushLog(`已移除：${path}`);
+      pushLog(left ? `未移除：该卡片仍登记在页签里（${path}）` : `已移除：${path}`, left);
     });
-  }, [api, refresh, pushLog, run]);
+  }, [api, boot, refresh, pushLog, run]);
 
   /*
    * 是否真的删掉了，必须**记录并说出来**。

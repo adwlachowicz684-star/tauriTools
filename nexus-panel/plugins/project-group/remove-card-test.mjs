@@ -121,4 +121,58 @@ console.log('\n=== 7. 前端 api ===');
   t('传三个 keep', /keep_link: keep\.link, keep_icon: keep\.icon, keep_color: keep\.color/.test(api));
 }
 
+console.log('\n=== 8. 定位页签必须与后端同规则；找不到不能扩大删除范围 ★★ ===');
+/*
+ * 后端 `fpx_remove_card` 用 `normalize_key` 匹配（Windows 下大小写不敏感、
+ * 去尾部分隔符）。弹窗里若按原文精确比定位卡片所在页签，路径写法不同时
+ * `findIndex` 返回 -1；而 -1 原来会退化成传 `null`，`null` 的语义是
+ * **「从所有页签里删」**：
+ *   · 卡片在别的页签里的登记被一并抹掉（用户只想删这一个）
+ *   · `still()` 于是判为"不在任何页签" → 图标 / 标签色 / 链接按 keep 清掉
+ * 即改了不该改的地方，且全程无提示。
+ */
+{
+  const host = strip(fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8'));
+  const i = host.indexOf("dialog.type === 'remove'");
+  const blk = host.slice(i, i + 1200);
+
+  t('按归一化键定位页签', /normalizeKey\(c\.path, ci\) === key/.test(blk));
+  /* 反面证据：只钉"有 normalizeKey"会漏 —— 旧的精确比可能同时还在 */
+  t('不再按原文精确比', !/c\.path === /.test(blk));
+  t('用 boot.platform 决定大小写敏感', /s\.boot\?\.platform === 'windows'/.test(blk));
+
+  /* -1 必须早退，不能退化成 null */
+  const iGuard = blk.indexOf('idx < 0');
+  const iCall = blk.indexOf('s.removeCardFull(');
+  t('找不到时早退', iGuard >= 0 && iCall >= 0 && iGuard < iCall);
+  t('早退会记日志', /未移除：卡片不在任何项目组页签里/.test(blk));
+  t('只有未取到下标时才传 null', /idx === undefined \? null : idx/.test(blk));
+  t('不再有 idx < 0 也传 null 的兜底', !/idx === undefined \|\| idx < 0 \? null/.test(blk));
+}
+
+console.log('\n=== 9. 「已移除」必须查回包再说，不能无条件写 ★ ===');
+/*
+ * 后端按归一化键匹配，而 tabIndex 来自调用方（可能是活动页签而非卡片
+ * 实际所在页签）。对不上时这次是**空操作**：后端照样返回成功快照，
+ * 若这里无条件记「已移除」，用户点完删除看到卡片还在，
+ * 而日志说移走了 —— 他分不清是没生效还是刷新慢。
+ */
+{
+  const src = strip(fs.readFileSync(path.join(HERE, 'hooks/useFpx.ts'), 'utf8'));
+  const i = src.indexOf('const removeCardFull = useCallback(');
+  const b = src.slice(i, src.indexOf('\n  }, [', i));
+
+  t('取到后端回包', /const snap = await api\.removeCard\(/.test(b));
+  t('按归一化键判还在不在', /normalizeKey\(p\.path, ci\) === key/.test(b));
+
+  const iLeft = b.indexOf('const left =');
+  const iLog = b.indexOf('pushLog(');
+  t('先算是否还在再写日志', iLeft >= 0 && iLog >= 0 && iLeft < iLog, `left=${iLeft} log=${iLog}`);
+  t('还在时改说「未移除」', /left \? `未移除：该卡片仍登记在页签里/.test(b));
+  t('还在时按错误通道记', /pushLog\(left \?[\s\S]{0,120}?, left\)/.test(b));
+  /* 指定下标只查那一个页签；传 null 是"全删"才查所有页签 */
+  t('指定下标时只查该页签', /tabs\[tabIndex\]\?\.items/.test(b));
+  t('传 null 时查所有页签', /tabs\.some\(\(t\) => \(t\.items/.test(b));
+}
+
 done();

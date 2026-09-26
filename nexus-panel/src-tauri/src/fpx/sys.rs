@@ -497,7 +497,8 @@ pub fn apply_lock(path: &str, deny_delete: bool, deny_write: bool) -> Result<Str
                 };
                 return Err(format!("解除保护失败（目录仍处于受保护状态）{}{}",
                     if why.is_empty() { String::new() } else { format!(": {why}") },
-                    format!("；可尝试以管理员身份重试，或手动执行：icacls \"{path}\" /remove:d Everyone")));
+                    "；可尝试以管理员身份重试，或手动执行：icacls "".to_string()
+                        + path + "" /remove:d Everyone"));
             }
         }
         if !deny_delete && !deny_write {
