@@ -695,6 +695,37 @@ group('Tab → 插入下级节点');
        && code.indexOf('refocusCanvas();') < code.indexOf("root.addEventListener('click', onClick)"),
       'refocusCanvas() 落在 onClick 体内（不是只在注释里出现）');
   }
+  // 8.7c 弹层（dialog / popupMenu）关掉后同样要归还焦点
+  /*
+   * 它们挂在 document.body 上、不在 root 内，上面那条委托监听够不到。
+   * 而关掉时里面的按钮被 remove —— 实测 activeElement 退回 <body>，
+   * 画布的隐藏 input 收不到键，于是**关掉任何一个弹层之后** Delete /
+   * 方向键 / F2 / Ctrl+B 全部失效。这是 8.7b 同一根因的另一半。
+   */
+  {
+    const ps = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+    ok(/export\s+function\s+setPopupRefocus/.test(ps), 'panels 暴露注入口 setPopupRefocus');
+    ok(/function\s+refocusCanvasAfterPopup\s*\(\s*\)/.test(ps), '定义了 refocusCanvasAfterPopup');
+    // dialog 的 close
+    const dseg = ps.slice(ps.indexOf('function dialog('), ps.indexOf('function dialog(') + 1200);
+    const dcode = dseg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(/refocusCanvasAfterPopup\(\);/.test(dcode), 'dialog 关闭时归还焦点');
+    ok(dcode.indexOf('refocusCanvasAfterPopup();') > dcode.indexOf('mask.remove();'),
+      'dialog：先 remove 再归还（不是只在注释里出现）');
+    // popupMenu 的 close
+    const mseg = ps.slice(ps.indexOf('export function popupMenu'), ps.indexOf('export function popupMenu') + 1400);
+    const mcode = mseg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(/refocusCanvasAfterPopup\(\);/.test(mcode), 'popupMenu 关闭时归还焦点');
+    ok(mcode.indexOf('refocusCanvasAfterPopup();') > mcode.indexOf('mask.remove();'),
+      'popupMenu：先 remove 再归还（不是只在注释里出现）');
+  }
+  // 注入的必须是真的 focusCanvas，空回调等于没修
+  {
+    const rseg = src.slice(src.indexOf('setPopupRefocus('), src.indexOf('setPopupRefocus(') + 300);
+    ok(/setPopupRefocus\s*\(\s*\(\s*\)\s*=>\s*\{/.test(rseg), '插件层注入了回调');
+    ok(/bridge\?\.focusCanvas\(\)/.test(rseg), '回调里真的调 bridge.focusCanvas()（空回调等于没修）');
+  }
+
   // B() 的 refocus:false 必须落到 data-no-refocus 上，否则 root 那条统一监听
   // 会把这条刻意的例外破坏掉（浮层开着时焦点又回到画布背后）
   {

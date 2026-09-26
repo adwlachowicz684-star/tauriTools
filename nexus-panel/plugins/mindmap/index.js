@@ -24,7 +24,7 @@ import * as diag from './diagnostics.js';
 import * as store from './store.js';
 import * as io from './io.js';
 import { buildSide, openVideo, openPreview, openSettings, confirmDialog,
-  openPrintSettings, openDiagnostics, searchStatusText } from './panels.js';
+  openPrintSettings, openDiagnostics, searchStatusText, setPopupRefocus } from './panels.js';
 import { attachTabDrag } from './tab-drag.js';
 import * as fmt from './formats.js';
 import { buildFileList } from './filelist.js';
@@ -2512,6 +2512,10 @@ bootIframePlugin(async (ctx) => {
   // 侧栏/页签/文件库点完把焦点还给画布（详见 bindRefocusClick 的注释）：
   // 不这么做的话，用过侧栏之后 Delete / 方向键 / F2 等快捷键全部失效。
   const unbindRefocus = bindRefocusClick();
+  // 弹层（dialog / popupMenu）挂在 document.body 上、不在 root 内，上面那条
+  // 委托监听够不到。关掉时按钮被 remove、activeElement 退回 <body>，于是
+  // 关掉任何一个弹层后快捷键同样失效 —— 这里注入回调让它们关完也还回去。
+  setPopupRefocus(() => { try { bridge?.focusCanvas(); } catch { /* ignore */ } });
 
   const ok = await bridge.load();
   if (!ok) {

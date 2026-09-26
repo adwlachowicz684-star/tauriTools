@@ -15,6 +15,25 @@ import { confirm as askConfirm, alert as askAlert, prompt as askText } from '../
 import { THEMES, LAYOUTS, blankTheme, DEFAULT_THEME, themeSeed, sanitizePalette } from './themes.js';
 
 /**
+ * 弹层关闭后「把焦点还给画布」的回调，由插件层注入。
+ *
+ * **为什么需要**：dialog / popupMenu 都挂在 `document.body` 上（不在 root 内），
+ * 关掉时里面的按钮被 remove —— 浏览器此时把 activeElement 退回 `<body>`
+ * （实测确认）。而画布的键盘输入全靠 iframe 里一个隐藏 input.km-receiver
+ * 持有焦点才收得到，于是**关掉任何一个弹层之后，Delete / 方向键 / F2 /
+ * Ctrl+B 全部失效**，直到用户再点一下画布。
+ *
+ * 不直接在这里 import bridge：panels.js 的约定是「所有面板只依赖传入的
+ * app 句柄，不直接持有状态」，而 dialog()/popupMenu() 是模块级函数、
+ * 拿不到那个 app。故用注入。
+ */
+let refocusAfterPopup = null;
+export function setPopupRefocus(fn) { refocusAfterPopup = fn; }
+function refocusCanvasAfterPopup() {
+  try { refocusAfterPopup?.(); } catch { /* 焦点归还失败不该拦住关闭 */ }
+}
+
+/**
  * 主题重名时加序号（纯函数，可测）。
  *
  * 导入不检查重名的话，同名主题会堆成一列，用户分不清哪个是哪个 ——
@@ -1842,6 +1861,7 @@ function dialog(title, children, onClose, opt) {
     if (cleaned) return;
     cleaned = true;
     mask.remove();
+    refocusCanvasAfterPopup();
     try { onClose?.(); } catch { /* 清理失败不该拦住关闭 */ }
   };
   mask.appendChild(
@@ -1921,6 +1941,9 @@ export function popupMenu(anchorEl, items) {
   }
   const close = () => {
     mask.remove();
+    // 同理 dialog：菜单项按钮被 remove 后 activeElement 退回 <body>，
+    // 画布收不到键。选完预设立刻把焦点还回去。
+    refocusCanvasAfterPopup();
     document.removeEventListener('pointerdown', onDoc, true);
     if (openMenu && openMenu.close === close) openMenu = null;
   };
