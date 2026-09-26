@@ -10,16 +10,27 @@
  *   3. 切换后立即通知订阅者 —— 外壳用它来刷新 iframe 插件与重算适配
  */
 
+/*
+ * ⚠️ STYLE_PARAMS 必须**同时出现在 import 里**，不能只写
+ *   `export { STYLE_PARAMS } from './themes.js'`
+ * 那种写法是**纯转发**：它把符号转出去，但**不会把它引入本模块的作用域**。
+ * 于是本文件任何地方直接写 STYLE_PARAMS 都是 ReferenceError。
+ *
+ * 实测踩到过一次：deleteCustomTheme() 里遍历它清风格参数覆盖，
+ * 那行一抛异常，被外面的 `catch {}` 吞掉 —— 于是**清理从这行起全部中断**，
+ * 基调/风格之后的偏移键一个都没删，而界面上"删除成功"照常提示。
+ * 这正是空 catch 最危险的地方：不报错、不崩溃，功能静默少做一半。
+ */
 import {
   PRESET_THEMES, THEME_VARS, DERIVED_VARS, ACCENT_SWATCHES, ACCENT_SWATCHES_LIGHT,
-  DEFAULT_THEME_ID, swatchFor, styleParams, BG_PRESETS, findBgPreset,
+  DEFAULT_THEME_ID, swatchFor, styleParams, STYLE_PARAMS, BG_PRESETS, findBgPreset,
 } from './themes.js';
 
 export { ACCENT_SWATCHES, ACCENT_SWATCHES_LIGHT, swatchFor, PRESET_THEMES, THEME_VARS };
 /* 风格参数表转出去：设置页要按当前风格渲染对应的滑块 */
-export { STYLE_PARAMS } from './themes.js';
+export { STYLE_PARAMS };
 /* 预设背景表：设置页要渲染可选宫格 */
-export { BG_PRESETS } from './themes.js';
+export { BG_PRESETS };
 
 const KEY_THEME = 'nexus:theme';
 const KEY_ACCENT = 'nexus:accent';
@@ -648,6 +659,11 @@ export function deleteCustomTheme(id) {
     for (const list of Object.values(STYLE_PARAMS)) {
       for (const p of list) localStorage.removeItem(styleKey(p.key, id));
     }
+    /* 色相 / 明暗偏移同样是**按主题 id** 分档的（shiftKey），
+       此前漏了这两类 —— 与上面几类是同一个疏漏：
+       只要存储键带主题 id，删主题时就都得清，漏一类就多一批孤儿键。 */
+    localStorage.removeItem(shiftKey(KEY_HUE, id));
+    localStorage.removeItem(shiftKey(KEY_LIGHT, id));
   } catch { /* 存储不可用时忽略 */ }
 }
 
@@ -1388,6 +1404,20 @@ export function resetColors() {
   return applyTheme(getThemeId(), null, null, { userInitiated: true });
 }
 
+/**
+ * 另存时该剔掉哪些变量。
+ *
+ * 派生量（DERIVED_VARS）一律剔；此外还要剔**本次**由 deriveVars 现算出来的
+ * --surface-overlay —— 但主题自带的那份要留（见 saveAsCustom 里的说明）。
+ */
+function derivedForSave(theme, vars) {
+  const set = new Set(DERIVED_VARS);
+  if (theme?.vars?.['--surface-overlay'] == null && vars['--surface-overlay'] != null) {
+    set.add('--surface-overlay');
+  }
+  return set;
+}
+
 /** 把当前主题 + 强调色另存为自定义主题 */
 export function saveAsCustom(name) {
   const raw = current || findTheme(getThemeId());
@@ -1415,9 +1445,19 @@ export function saveAsCustom(name) {
     /* 剔掉派生量再存。
        deriveVars 的结果里混着 --divider / --hairline / --scroll-thumb 这些算出来的值，
        存进去等于把它们钉死：以后改底色，分隔线不会跟着变。
-       它们本该每次从 --bg 重算（这也是不给用户改的原因）。 */
+       它们本该每次从 --bg 重算（这也是不给用户改的原因）。
+
+       ⚠️ --surface-overlay **不能无条件加进 DERIVED_VARS** 来剔 ——
+       那会把玻璃主题**自带**的 overlay 一起剔掉，副本加载后弹窗就没有底板了
+       （用户此前报过"玻璃主题下弹窗没有底板"，那条路就是这么走出来的）。
+
+       正确的判据是"**本次**是不是派生出来的"：
+         · 主题自带（玻璃 6 套都有）  → 是设计值，必须留
+         · 风格改成 glass 后现算的    → 是从 --surface-raised 推的，必须剔
+       后者不剔的后果：用户把新拟态改成玻璃后另存，副本里钉着一个写死的
+       rgba，以后再改底色 / 改 --surface，弹窗底板不再重算，停在旧值上。 */
     vars: Object.fromEntries(
-      Object.entries(vars).filter(([k]) => !DERIVED_VARS.includes(k)),
+      Object.entries(vars).filter(([k]) => !derivedForSave(theme, vars).has(k)),
     ),
   };
   return saveCustomTheme(custom);

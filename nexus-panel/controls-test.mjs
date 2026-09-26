@@ -2594,5 +2594,112 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
     pgItem ? '已补' : '.pg-item 未找到');
 }
 
+
+/* ============================================================
+   43. 主题管理器的两处静默失效
+   ------------------------------------------------------------
+   这一节的两条都是**实测踩到**的：不报错、不崩溃，功能悄悄少做一半。
+   ============================================================ */
+{
+  const tmSrc = read('js/theme-manager.js');
+
+  /* ---- 43.1 `export { X } from './y.js'` 是纯转发，本模块作用域里没有 X ----
+   *
+   * 实测：deleteCustomTheme() 里写了 Object.values(STYLE_PARAMS)，
+   * 而 STYLE_PARAMS 只被 `export { STYLE_PARAMS } from './themes.js'` 转发、
+   * 从没进 import 列表 —— 那一行直接 ReferenceError。
+   *
+   * 更糟的是外面包着 `catch {}`：异常被吞，清理从这行起**全部中断**，
+   * 后面的偏移键一个都没删，而界面上"删除成功"照常提示。
+   * 空 catch 碰上未定义符号 = 静默少做一半，是最难查的一类。 */
+  const cleanSrc = stripComments(tmSrc);
+  const imp = new Set();
+  for (const m of cleanSrc.matchAll(/import\s*\{([^}]+)\}\s*from/g)) {
+    m[1].split(',').forEach((x) => {
+      const n = x.trim().split(/\s+as\s+/).pop().trim();
+      if (n) imp.add(n);
+    });
+  }
+  const fwdBad = [];
+  for (const m of cleanSrc.matchAll(/export\s*\{([^}]+)\}\s*from\s*['"][^'"]+['"]/g)) {
+    for (const raw of m[1].split(',')) {
+      const n = raw.trim().split(/\s+as\s+/).pop().trim();
+      if (!n || imp.has(n)) continue;
+      const body = cleanSrc.replace(m[0], '');
+      if (new RegExp(`\\b${n}\\b`).test(body)) fwdBad.push(n);
+    }
+  }
+  t('转发出去的符号若在本模块内使用，必须同时 import（否则 ReferenceError）',
+    fwdBad.length === 0,
+    fwdBad.join(', ') || '无');
+
+  /* ---- 43.2 删除自定义主题要清掉所有「按主题 id 分档」的键 ----
+   *
+   * 覆盖键一共 5 类：变量 / 基调 / 风格 / 风格参数 / 色相+明暗偏移。
+   * 只清前几类的话，反复"新建→调一通→删除"会不断累积孤儿键。
+   * 这条直接调真函数验证，而不是检查"代码里写了几行 removeItem" ——
+   * 后者在异常被 catch 吞掉时依然全绿（实测就是这样漏的）。 */
+  const store = {};
+  const savedLS = globalThis.localStorage;
+  globalThis.localStorage = {
+    getItem: (k) => (k in store ? store[k] : null),
+    setItem: (k, v) => { store[k] = String(v); },
+    removeItem: (k) => { delete store[k]; },
+  };
+  try {
+    const tm = await import('./js/theme-manager.js');
+    const id = 'custom-probe';
+    tm.saveCustomTheme({ id, name: 'p', base: 'dark', style: 'flat', vars: {} });
+    store[`nexus:theme-var:${id}`] = '{}';
+    store[`nexus:theme-base-ovr:${id}`] = 'light';
+    store[`nexus:theme-style-ovr:${id}`] = 'glass';
+    store[`nexus:style-param:glass-alpha:${id}`] = '80';
+    store[`nexus:hue-shift:${id}`] = '40';
+    store[`nexus:light-shift:${id}`] = '-10';
+    tm.deleteCustomTheme(id);
+    const left = Object.keys(store).filter((k) => k.includes(id));
+    t('删除自定义主题清掉了全部 5 类覆盖键',
+      left.length === 0,
+      left.length ? '残留 ' + left.join(', ') : '5 类全清');
+  } catch (e) {
+    t('删除自定义主题清掉了全部 5 类覆盖键', false, '跑不起来：' + e.message);
+  } finally {
+    globalThis.localStorage = savedLS;
+  }
+
+  /* ---- 43.3 另存为副本：派生的 overlay 不能固化，主题自带的必须留 ---- */
+  const store2 = {};
+  const saved2 = globalThis.localStorage;
+  globalThis.localStorage = {
+    getItem: (k) => (k in store2 ? store2[k] : null),
+    setItem: (k, v) => { store2[k] = String(v); },
+    removeItem: (k) => { delete store2[k]; },
+  };
+  try {
+    const tm = await import('./js/theme-manager.js?v=probe');
+    const { PRESET_THEMES } = await import('./js/themes.js');
+
+    // A：新拟态改成玻璃 → overlay 是现算的，不该固化
+    store2['nexus:theme'] = 'neumorph-dark';
+    store2['nexus:theme-style-ovr:neumorph-dark'] = 'glass';
+    const a = tm.saveAsCustom('A');
+    // B：玻璃主题自带的 overlay 是设计值，必须留
+    store2['nexus:theme'] = 'glass-dark';
+    delete store2['nexus:theme-style-ovr:glass-dark'];
+    const b = tm.saveAsCustom('B');
+
+    t('另存副本不固化派生的 --surface-overlay（否则钉死、改底色不跟着变）',
+      a.style === 'glass' && a.vars['--surface-overlay'] == null,
+      a.vars['--surface-overlay'] ?? '已剔除');
+    t('另存副本保留玻璃主题自带的 --surface-overlay（剔了弹窗就没底板）',
+      b.vars['--surface-overlay'] != null,
+      b.vars['--surface-overlay'] ?? '丢了');
+  } catch (e) {
+    t('另存副本的 overlay 处理', false, '跑不起来：' + e.message);
+  } finally {
+    globalThis.localStorage = saved2;
+  }
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
