@@ -1017,18 +1017,58 @@ pub fn write_json_any<T: serde::Serialize>(path: &std::path::Path, value: &T) ->
 
 /// 按**完整文件路径**读链接记录（与 load_records 不同：那个收的是目录）。
 pub fn load_records_from_exact(path: &std::path::Path) -> Result<Vec<LinkRecord>, String> {
-    // 同上：这里读的是同一个 link-record.json，两种形态都要认。
-    if !path.exists() { return Ok(Vec::new()); }
-    read_json_any::<RecordFile>(path).map(|f| f.into_links())
+    /*
+     * 必须走 `load_strict`，不能用 `read_json_any`：
+     *
+     * `read_json_any` 只把错误变成 Err，既不另存现场、也不记进 CORRUPT_SITES。
+     * 于是两条保护同时落空：
+     *   1. 原文没有任何副本 —— 损坏即彻底丢失，无从抢救；
+     *   2. `save_records_to` 的写入拦截**无从触发**（它按 CORRUPT_SITES 判断，
+     *      列表是空的一律放行）。
+     *
+     * 两者叠加的后果是一条完整的数据销毁链：账本损坏 → 本函数返回 Err →
+     * `load_records_from` 的 `unwrap_or_default()` 得到**空列表** →
+     * 调用方（迁移）把空列表整份写回 → 所有链接记录瞬间蒸发，
+     * 且现场一份都没留下。
+     */
+    match load_strict::<RecordFile>(path) {
+        // 文件不存在时 load_strict 返回 default（空），首次运行属正常。
+        // 两种形态（{links:[]} 与裸数组）也由 RecordFile 的 untagged 认，
+        // 与 load_records 同。
+        LoadOutcome::Ok(f) => Ok(f.into_links()),
+        LoadOutcome::Corrupted { backup, reason } => Err(format!(
+            "{} 读取失败（{reason}），已暂停一切写入以保护现场。\n\
+             损坏内容已另存为：{}\n\
+             请检查并修好该文件，或删除它让程序重建（现场副本不会丢）。",
+            path.display(),
+            backup.display()
+        )),
+    }
 }
 
-/// 按完整文件路径读链接记录；文件不存在时返回空（首次运行属正常）。
-pub fn load_records_from(path: &std::path::Path) -> Vec<LinkRecord> {
-    load_records_from_exact(path).unwrap_or_default()
-}
+/*
+ * 这里原本还有一个"宽松版" `load_records_from`：读失败就 `unwrap_or_default()`
+ * 返回空列表。它已被删除，**不要再加回来**。
+ *
+ * 它不是"方便"，而是一个会把数据清零的陷阱：账本损坏时它给出空列表，
+ * 调用方（迁移、自检）拿它当正常数据用 —— 迁移把空列表写回真实账本，
+ * 所有链接记录瞬间蒸发；自检则报「读到 0 条」加往返一致（0 → 0），
+ * 在最该报警的场景下报平安。
+ *
+ * 一律用 `load_records_from_exact`，由调用方显式决定读到坏数据该怎么办。
+ */
 
 /// 按**完整文件路径**写链接记录（与 save_records 不同：那个收的是目录）。
 pub fn save_records_to(path: &std::path::Path, records: &[LinkRecord]) -> Result<(), String> {
+    /*
+     * 与 `save_records` 同一道闸：损坏现场未处理前禁止覆盖。
+     *
+     * 此前这里没有 guard，而调用方（命令行迁移）读的正是**真实账本**：
+     * `load_records_from` 在损坏时返回空列表，写回去就是全库蒸发，
+     * 且原文被覆盖、现场不留一份。守卫依赖 CORRUPT_SITES，
+     * 所以 `load_records_from_exact` 那侧的现场登记同样不能少。
+     */
+    guard_against_corrupt(path)?;
     #[derive(serde::Serialize)]
     struct File<'a> {
         links: &'a [LinkRecord],

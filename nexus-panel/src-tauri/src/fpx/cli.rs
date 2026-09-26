@@ -75,7 +75,19 @@ pub fn self_check(config_path: &str, record_path: &str, out_dir: &str) -> String
     }
 
     // ---- 2. link-record 往返（在临时副本上做增删改）----
-    let records = store::load_records_from(Path::new(record_path));
+    /*
+     * 必须用 exact 版本：账本损坏时 `load_records_from` 返回空列表，
+     * 于是自检报「读到 0 条」+ 往返一致（0 → 0）——**全部通过**。
+     * 自检的意义就是发现问题，而它在最该报警的场景下报平安，
+     * 用户据此以为账本是好的，直到哪天要恢复链接才发现全没了。
+     */
+    let records = match store::load_records_from_exact(Path::new(record_path)) {
+        Ok(v) => v,
+        Err(e) => {
+            check(false, format!("link-record 无法读取: {e}"), &mut lines, &mut pass);
+            Vec::new()
+        }
+    };
     lines.push(String::new());
     lines.push(format!("-- link-record: 读到 {} 条 --", records.len()));
 
@@ -390,6 +402,20 @@ fn migrate(
         Err(e) => format!("[警告] 备份失败（仍继续）：{e}"),
     };
 
+    /*
+     * 账本**在搬任何目录之前**先读一次，损坏就当场停手。
+     *
+     * 放到最后写回那一步才检查的话，此刻目录已经搬走、config 已经改写，
+     * 而账本写不回去 —— 停在一个半完成的状态上，比一开始就停手难收拾得多。
+     *
+     * 用 `load_records_from`（吞错误）同样不行：损坏时它返回**空列表**，
+     * 于是"全部记录都没了"被当成正常数据继续跑下去。
+     */
+    let mut records = match store::load_records_from_exact(Path::new(rec_path)) {
+        Ok(v) => v,
+        Err(e) => return format!("账本读取失败，未做任何迁移：{e}"),
+    };
+
     let mut items: Vec<MigItem> = Vec::new();
     let (mut moved, mut skipped, mut failed) = (0, 0, 0);
 
@@ -475,7 +501,7 @@ fn migrate(
     }
 
     // ---- 链接记录：项目搬走改 project；项目组搬走改 group 与 lib，并重建 junction ----
-    let mut records = store::load_records_from(Path::new(rec_path));
+    // records 已在动手前读好（损坏时那边就返回了，不会走到这里）
     for it in &items {
         if !it.note.is_empty() { continue; }
         let key = store::normalize_key(&it.src);

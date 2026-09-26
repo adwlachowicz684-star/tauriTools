@@ -132,14 +132,21 @@ console.log('\n=== 4. 账本两种历史形态都要认（#452 相关，原版 L
   t('有对象形态变体（links）', /Object \{[\s\S]{0,120}links: Vec<LinkRecord>/.test(store));
   t('有裸数组形态变体', /Array\(Vec<LinkRecord>\)/.test(store));
 
-  /* 二、两个读取入口都要换成它（漏一处 = 从那个入口读仍是"损坏"） */
+  /* 二、三个读取入口都要换成它（漏一处 = 从那个入口读仍是"损坏"） */
   t('load_records_strict 用它',
     /load_strict::<RecordFile>\(&dir\.join\("link-record\.json"\)\)/.test(store));
+  /*
+   * 三处：load_records_strict / load_records / load_records_from_exact。
+   * 此前 from_exact 走的是 read_json_any —— 它同样认 RecordFile，
+   * 所以"两种形态都认"这条本意是满足的；但 read_json_any 不登记损坏现场，
+   * 于是 save_records_to 的写入拦截无从触发（详见 record-corrupt-guard-test）。
+   * 本条钉的是入口数量，不是具体函数名 —— 钉函数名会在换实现时误报。
+   */
   t('load_records 用它',
-    (store.match(/load_strict::<RecordFile>/g) || []).length >= 2,
+    (store.match(/load_strict::<RecordFile>/g) || []).length >= 3,
     '命中 ' + (store.match(/load_strict::<RecordFile>/g) || []).length + ' 处');
   t('load_records_from_exact 也用它',
-    /read_json_any::<RecordFile>\(path\)/.test(store));
+    /load_strict::<RecordFile>\(path\)/.test(store));
 
   /* 三、**反面证据**：不允许再有只认 links 的局部 struct */
   t('没有残留的局部 File 结构体（反面证据）',
