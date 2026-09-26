@@ -407,6 +407,59 @@
                     return null;
                 }
 
+                /*
+                 * 节点脱离 minder 之后 `getStyle()` 会抛 —— 在**这一层**拦。
+                 *
+                 * 内核：
+                 *     MinderNode.getStyle = function (a) {
+                 *         return this.getMinder().getNodeStyle(this, a)
+                 *     }
+                 * `importJson` 换树后旧节点被 detach，`getMinder()` 返回 undefined，
+                 * 于是抛 `Cannot read properties of undefined (reading 'getNodeStyle')`。
+                 *
+                 * 实测（真实 Chrome）：选中一个节点 → importJson 换树 → 按 F2，
+                 * 冒出这条未捕获异常，栈是：
+                 *     MinderNode.getStyle ← **OutlineRenderer.update** ← renderNodeBatch
+                 * 注意是 OutlineRenderer 而不是 TextRenderer —— 只给 TextRenderer
+                 * 打补丁是**不够的**，同一批次里排在后面的 renderer 照样抛。
+                 *
+                 * 而 renderNodeBatch 是个循环：任何一个 update 抛错，
+                 * **整批后续节点的渲染就全部跳过**。
+                 *
+                 * 所以守在 `Node.prototype.getStyle` 这一层：所有 renderer 都走它，
+                 * 一处拦住就够了。返回 null 是安全的 —— getStyle 本来就允许返回 null。
+                 */
+                /*
+                 * 上面那个门面只管得住「插件层走 __minder.importJson」这一条路。
+                 * 编辑器页内部还有几处直接 `km.importJson(...)`（新建画布、
+                 * 撤销重做等），所以**直接 patch 实例方法** —— 一处覆盖所有路径。
+                 */
+                (function patchImportJson() {
+                    try {
+                        if (km.__kmImportPatched) return;
+                        var origImport = km.importJson;
+                        if (typeof origImport !== 'function') return;
+                        km.__kmImportPatched = true;
+                        km.importJson = function () {
+                            commitEditingBeforeSwap();
+                            return origImport.apply(this, arguments);
+                        };
+                    } catch (e) {}
+                })();
+
+                (function patchNodeGetStyle() {
+                    try {
+                        var NP = (window.kityminder && kityminder.Node && kityminder.Node.prototype) || null;
+                        if (!NP || typeof NP.getStyle !== 'function' || NP.__kmGetStylePatched) return;
+                        NP.__kmGetStylePatched = true;
+                        var origGetStyle = NP.getStyle;
+                        NP.getStyle = function (a) {
+                            if (typeof this.getMinder === 'function' && !this.getMinder()) return null;
+                            return origGetStyle.apply(this, arguments);
+                        };
+                    } catch (e) {}
+                })();
+
                 var TR = findTextRenderer();
                 if (!TR) return false;
                 // 幂等：编辑器重复初始化时不再多套一层
@@ -416,6 +469,32 @@
                 var origUpdate = TR.prototype.update;
 
                 TR.prototype.update = function () {
+                    /*
+                     * 节点已经脱离 minder 就直接跳过。
+                     *
+                     * 内核 `MinderNode.getStyle` 是：
+                     *     getStyle: function (a) { return this.getMinder().getNodeStyle(this, a) }
+                     * 而 `importJson` 换树后旧节点被 detach，`getMinder()` 返回 **undefined**，
+                     * 于是 TextRenderer.update 内部抛：
+                     *     Cannot read properties of undefined (reading 'getNodeStyle')
+                     *
+                     * 实测（真实 Chrome）：
+                     *   select 一个节点 → importJson 换树 → 按 F2 → 冒出这条未捕获异常。
+                     *   不 select 直接换树则不出现 —— 选中态的渲染是**延迟**的，
+                     *   排队时旧节点还在，轮到它时树已经换掉了。
+                     *
+                     * 危害不只是日志里多一行：renderNode 的循环里任何一个 update
+                     * 抛错，**整个批次后续节点的渲染就都跳过了**。
+                     *
+                     * 返回**空 Box** 而不是 null/undefined —— 内核紧接着会
+                     * `contentBox.merge(box)`，而 Box.merge 里是
+                     * `new Box(a.x, a.y, a.width, a.height)`，传 null 会二次抛错。
+                     * 空盒是安全的：节点反正已经 detach、不显示了。
+                     */
+                    var _n = arguments[1];
+                    if (_n && typeof _n.getMinder === 'function' && !_n.getMinder()) {
+                        return (window.kity && kity.Box) ? new kity.Box(0, 0, 0, 0) : { x: 0, y: 0, width: 0, height: 0 };
+                    }
                     var box = origUpdate.apply(this, arguments);
                     try {
                         /*
@@ -2939,6 +3018,7 @@
 
         window.__minder = {
             importJson: function (data) {
+                commitEditingBeforeSwap();
                 var d = (typeof data === 'string') ? JSON.parse(data) : data;
                 // 自定义主题由 C# 在 import 之后注册并切换；此处带上未注册的主题名会让 importJson 直接抛错，
                 // 故先摘掉，让画布内容先恢复出来，主题稍后由 setTheme 补上。
@@ -2950,6 +3030,7 @@
                 return true;
             },
             importText: function (md) {
+                commitEditingBeforeSwap();
                 km.importData('markdown', md);   // core 内置 markdown 协议
                 km.refresh();
                 _historyCommitBaseline();
@@ -3365,7 +3446,7 @@
         function _historySnap() { try { return JSON.stringify(km.exportJson()); } catch (e) { return null; } }
         function _historyApply(snap) {
             _historyLock = true;
-            try { km.importJson(JSON.parse(snap)); km.refresh(); } catch (e) {} finally { _historyLock = false; }
+            try { commitEditingBeforeSwap(); km.importJson(JSON.parse(snap)); km.refresh(); } catch (e) {} finally { _historyLock = false; }
         }
         /**
          * 保证中心主题有 data.id。
@@ -3431,6 +3512,25 @@
         // 并把原 SVG 文字藏起来 —— 观感就是「直接在节点上打字」。
         // Enter/失焦应用（走 core 的 text 命令并重排布局），Esc 取消。
         var editLayer = null;
+        /**
+         * 换树之前先收掉正在编辑的文字。
+         *
+         * 编辑层是**独立于节点树**的 HTML：它记着 `editLayer.node`，换树
+         * （importJson / 撤销重做）之后那个节点已经不在树上了，但编辑层
+         * **不会被自动关掉**。实测（真实 Chrome）：
+         *
+         *   编辑中输入"正在输入" → importJson 换新树 → 编辑层还在，
+         *   显示"正在输入"；继续输入 ZZZ → 新树纹丝不动，输入**凭空消失**。
+         *
+         * 更糟的是后续若触发 closeTextEditor，`execCommand('text', v)` 会
+         * 落到**当前选中节点**上（旧节点选不中了），于是把旧节点的文字
+         * **写到新节点上** —— 数据错乱。
+         *
+         * 所以必须**在换树之前**提交：那一刻旧节点还在树上。
+         */
+        function commitEditingBeforeSwap() {
+            try { if (editLayer && typeof closeTextEditor === 'function') closeTextEditor(true); } catch (e) {}
+        }
         function closeTextEditor(apply) {
             if (!editLayer) return;
             var node = editLayer.node, el = editLayer.input;
@@ -3577,7 +3677,34 @@
             el.addEventListener('blur', function () { closeTextEditor(true); });
             el.addEventListener('keydown', function (ev) {
                 if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ev.stopPropagation(); closeTextEditor(true); }
-                else if (ev.key === 'Tab') { ev.preventDefault(); ev.stopPropagation(); closeTextEditor(true); }
+                else if (ev.key === 'Tab') {
+                    ev.preventDefault(); ev.stopPropagation();
+                    closeTextEditor(true);
+                    /*
+                     * 提交完**立刻再建一个子节点**。
+                     *
+                     * 少了这一句就是「按 Tab 要按两次才建出节点」的正主：
+                     *   Tab #1  建节点并进入编辑态
+                     *   Tab #2  只提交、退出编辑，焦点回到 receiver —— **不建节点**
+                     *   Tab #3  才建下一个
+                     * 连着录一串子节点时，用户每建一个都要多按一次，
+                     * 观感就是「Tab 有时候没反应」。
+                     *
+                     * 顺序不能反：必须先 closeTextEditor —— insertNode 里
+                     * beginTextEdit 开头有 `if (editLayer) return`，
+                     * 编辑层还开着的话新节点根本进不去编辑态。
+                     *
+                     * Enter 不这么办：它在编辑态里就是「提交并结束」，改成建同级
+                     * 会让「输完按回车」凭空多出一个空节点，风险大于收益。
+                     */
+                    /*
+                     * 走门面而不是直接调 insertChildNode()：后者定义在
+                     * `kmShortcut('Tab', ...)` 附近、不在这个 keydown 回调的
+                     * 作用域链里（实测运行时报 insertChildNode is not defined），
+                     * 而 __minderInsertChild 是同一件事的对外入口。
+                     */
+                    if (window.__minderInsertChild) window.__minderInsertChild();
+                }
                 else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeTextEditor(false); }
                 else { ev.stopPropagation(); }
             });

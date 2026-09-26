@@ -2796,7 +2796,61 @@ DOM（底框开合 + 两个 body 互斥 + 标题与按钮随面板切换）。
 
 实测：连续 `__minderInsertChild()`，CE 数 `1 → 0 → 1 → 0`；吞掉 viewchange 后 `1 → 1 → 1 → 1`。
 改成**重定位**（抽出 `layoutEditLayer`，打开与重定位共用一份算法）：实测对齐误差 1px，
-输入与提交正常。
+输入与提交正常。缩放跟随也实测过（zoom 100/150/50 三档，编辑层字号 14/21/7px，
+与节点文字组的屏幕高度完全一致）。
+
+## 编辑态按 Tab 只提交、不建下一个
+
+这是「按 Tab 要按两次才建出节点」的正主：
+
+```
+Tab #1  建节点并进入编辑态
+Tab #2  只提交、退出编辑，焦点回到 receiver —— **不建节点**
+Tab #3  才建下一个
+```
+
+连着录一串子节点时，每建一个都要多按一次。实测（真实 Chrome，
+`Tab 子1 → Tab 子2 → Tab 子3`）：
+
+| | 节点数 |
+|---|---|
+| 修复前 | 1 → 2 → 2 → 3 |
+| 修复后 | 1 → 2 → 3 → 4，且每次都还在编辑态 |
+
+修法：编辑层的 Tab 分支在提交后立刻再插一个子节点。顺序不能反 ——
+`insertNode` 里 `beginTextEdit` 开头有 `if (editLayer) return`，
+编辑层还开着的话新节点进不去编辑态。
+
+Enter **不**跟着建同级：「输完按回车」凭空多出一个空节点，风险大于收益。
+
+## 换树后 getStyle 抛错 / 编辑层残留
+
+两个都发生在 `importJson`（新建画布 / 打开旧文件 / 切换画布 / 撤销重做）时：
+
+**① `Node.getStyle` 抛 `Cannot read properties of undefined (reading 'getNodeStyle')`**
+
+内核是 `getStyle: function (a) { return this.getMinder().getNodeStyle(this, a) }`，
+换树后旧节点被 detach，`getMinder()` 返回 undefined。实测栈是
+`MinderNode.getStyle ← **OutlineRenderer.update** ← renderNodeBatch` ——
+注意不是 TextRenderer，只给 TextRenderer 打补丁**不够**：`renderNodeBatch`
+是个循环，同批里排在后面的 renderer 照样抛，而且任何一个 update 抛错，
+**整批后续节点的渲染全部跳过**。所以守在 `Node.prototype.getStyle` 这一层。
+
+**② 编辑层残留**
+
+编辑层记着 `editLayer.node`，换树后那个节点不在树上了，编辑层却不会自动关：
+
+```
+编辑中输入"正在输入" → importJson 换新树 → 编辑层还在、显示"正在输入"
+继续输入 ZZZ        → 新树纹丝不动，输入凭空消失
+```
+
+更糟的是之后若触发 `closeTextEditor`，`execCommand('text', v)` 会落到
+**当前选中节点**上（旧节点已选不中），把旧节点的文字写到新节点上。
+
+修法：换树**之前**先提交（那一刻旧节点还在树上），并且 patch `km.importJson`
+**实例方法**而不是只改 `__minder.importJson` 门面 —— 编辑器页内部还有几处
+直接 `km.importJson(...)`（新建画布、撤销重做），只改门面覆盖不到。
 
 > 2000 层而非 10000 层：jsdom 的 `DOMParser` 在约 2000~5000 层时自己就 parsererror 了，
 > 测不到 xmind.js。2000 层已远超 `MAX_DEPTH`(200)，足以验证截断逻辑。

@@ -1836,6 +1836,106 @@ group('行内编辑贴合节点');
     '补建在创建 Minder 之后（之前 _renderTarget 还不存在）');
 }
 
+/*
+ * 17.9 编辑态里按 Tab 要**接着建下一个**，不能只提交。
+ *
+ * 少了这一句就是「按 Tab 要按两次才建出节点」的正主：
+ *   Tab #1  建节点并进入编辑态
+ *   Tab #2  只提交、退出编辑 —— **不建节点**
+ *   Tab #3  才建下一个
+ *
+ * 实测（真实 Chrome，模拟连续录入 R → Tab 子1 → Tab 子2 → Tab 子3）：
+ *   修复前  节点数 1 → 2 → 2 → 3（每建一个要多按一次）
+ *   修复后  节点数 1 → 2 → 3 → 4，且每次都还在编辑态
+ */
+{
+  const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  const kb = ed.slice(ed.indexOf("el.addEventListener('keydown'"), ed.indexOf("el.addEventListener('keydown'") + 1600);
+  const kcode = kb.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok(/ev\.key === 'Tab'/.test(kcode), '编辑层单独处理 Tab');
+  ok(/closeTextEditor\(true\);/.test(kcode), 'Tab 先提交当前文字');
+  ok(/__minderInsertChild/.test(kcode), '提交完立刻再建一个子节点（否则每建一个要按两次 Tab）');
+  ok(kcode.indexOf('closeTextEditor(true);') < kcode.indexOf('__minderInsertChild'),
+    '顺序是先提交再建（反了的话新节点进不去编辑态）');
+  /*
+   * Enter **不**跟着建同级 —— 「输完按回车」凭空多出一个空节点，
+   * 风险大于收益。这里守住它别被顺手改掉。
+   */
+  ok(/ev\.key === 'Enter' && !ev\.shiftKey\) \{ ev\.preventDefault\(\); ev\.stopPropagation\(\); closeTextEditor\(true\); \}/.test(kcode),
+    'Enter 仍是「提交并结束」，不建同级');
+}
+
+/*
+ * 17.10 节点脱离 minder 后 getStyle 会抛 —— 守在 Node.prototype 这一层。
+ *
+ * 内核：getStyle = function (a) { return this.getMinder().getNodeStyle(this, a) }
+ * importJson 换树后旧节点被 detach，getMinder() 返回 undefined → 抛
+ *   Cannot read properties of undefined (reading 'getNodeStyle')
+ *
+ * 实测（真实 Chrome）：选中一个节点 → importJson 换树 → 按 F2 → 冒出这条
+ * 未捕获异常，栈是
+ *   MinderNode.getStyle ← **OutlineRenderer.update** ← renderNodeBatch
+ *
+ * 注意是 OutlineRenderer 而不是 TextRenderer —— 早先只给 TextRenderer 打了
+ * 补丁，**不够**：renderNodeBatch 是个循环，同批里排在后面的 renderer 照样抛，
+ * 而且任何一个 update 抛错，**整批后续节点的渲染就全部跳过**。
+ */
+{
+  const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  const seg = ed.slice(ed.indexOf('function patchNodeGetStyle'), ed.indexOf('function patchNodeGetStyle') + 1400);
+  const scode = seg.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok(/function patchNodeGetStyle\(\)/.test(scode), '定义了 patchNodeGetStyle');
+  ok(/kityminder\.Node\.prototype/.test(scode), '打在 Node.prototype 上（所有 renderer 都走 getStyle，一处拦住就够）');
+  ok(/typeof this\.getMinder === 'function' && !this\.getMinder\(\)/.test(scode), '只在节点已脱离 minder 时拦截');
+  ok(/return null;/.test(scode), '返回 null（getStyle 本来就允许返回 null，不是吞异常）');
+  ok(/origGetStyle\.apply\(this, arguments\)/.test(scode), '其余情况照原样走');
+  ok(/__kmGetStylePatched/.test(scode), '幂等标记（编辑器重复初始化时不套两层）');
+}
+
+/*
+ * 17.11 换树之前必须先收掉正在编辑的文字。
+ *
+ * 编辑层记着 `editLayer.node`，而 importJson / 撤销重做会把整棵树换掉 ——
+ * 那个节点不在树上了，编辑层却**不会自动关掉**。实测（真实 Chrome）：
+ *
+ *   编辑中输入"正在输入" → importJson 换新树 → 编辑层还在、显示"正在输入"；
+ *   继续输入 ZZZ → 新树纹丝不动，输入**凭空消失**。
+ *
+ * 更糟的是之后若触发 closeTextEditor，`execCommand('text', v)` 会落到
+ * **当前选中节点**上（旧节点已经选不中），把旧节点的文字写到新节点上。
+ *
+ * 所以必须**在换树之前**提交 —— 那一刻旧节点还在树上。
+ *
+ * 打在**实例方法**上而不是只改 __minder.importJson 门面：编辑器页内部还有
+ * 几处直接 km.importJson(...)(新建画布、撤销重做)，只改门面覆盖不到。
+ */
+{
+  const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  const seg = ed.slice(ed.indexOf('function commitEditingBeforeSwap'), ed.indexOf('function closeTextEditor'));
+  const scode = seg.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok(/function commitEditingBeforeSwap\(\)/.test(scode), '定义了 commitEditingBeforeSwap');
+  ok(/if \(editLayer && typeof closeTextEditor === 'function'\)/.test(scode),
+    '只在真有编辑层时才提交（没有就别空跑一次 closeTextEditor）');
+  ok(/closeTextEditor\(true\)/.test(scode), '走「提交」而不是丢弃（用户的输入不能白打）');
+
+  const pj = ed.slice(ed.indexOf('function patchImportJson'), ed.indexOf('function patchNodeGetStyle'));
+  const pcode = pj.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok(/function patchImportJson\(\)/.test(pcode), 'patch 挂在实例方法上（覆盖门面之外的直调路径）');
+  ok(/km\.importJson\s*=\s*function/.test(pcode), '替换的是 km.importJson 本身');
+  ok(/commitEditingBeforeSwap\(\);/.test(pcode), '替换体里真的先提交');
+  ok(/origImport\.apply\(this, arguments\)/.test(pcode), '提交之后照常导入');
+  ok(/__kmImportPatched/.test(pcode), '幂等标记');
+
+  // 门面那两条路也要有（双保险，且 importText 走的是另一个入口）
+  ok(/importJson: function \(data\) \{\s*\n?\s*commitEditingBeforeSwap\(\);/.test(ed)
+     || /importJson: function \(data\) \{\s+commitEditingBeforeSwap\(\);/.test(ed),
+    '__minder.importJson 门面里也先提交');
+  ok(/importText: function \(md\) \{\s+commitEditingBeforeSwap\(\);/.test(ed),
+    '__minder.importText 门面里也先提交');
+  ok(/commitEditingBeforeSwap\(\); km\.importJson\(JSON\.parse\(snap\)\)/.test(ed),
+    '撤销/重做那条 importJson 路径也先提交');
+}
+
 {
   // 17.7 行为级：验证 zoom 换算确实是必要的（对照旧算法）
   //      模拟 SVG transform scale(zoom) 下的两种算法
