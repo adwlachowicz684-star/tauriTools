@@ -1263,9 +1263,21 @@ function applyTo(rawTheme, accent, envColor) {
 
 export function applyTheme(id, accent, envColor, opts = {}) {
   const theme = findTheme(id);
+  /*
+   * ⚠️ 强调色适配必须用**实际**基调，不能用 theme.base 自带值。
+   *
+   * 基调本身也是参数：用户可以把一套深色主题改成浅色。
+   * 若这里按自带的 'dark' 适配，强调色会停在"深色底上用的亮档"，
+   * 而面板实际是浅色 —— 浅底上的亮色强调色对比度不足，看着发灰。
+   *
+   * 更糟的是同一次调用里出现了两套 base：applyTo 内部（以及它算的
+   * --accent-glow）用的是 applyMetaOverride 之后的值，这里却用原始值，
+   * 于是 --accent 与 --accent-glow 可能分别按深/浅两档算，两者对不上。
+   */
+  const metaBase = applyMetaOverride(theme).base;
   flashTransition();
-  const a = adaptSwatchToBase(accent ?? getAccent(), theme.base);
-  const e = adaptSwatchToBase(envColor ?? getEnvColor(), theme.base);
+  const a = adaptSwatchToBase(accent ?? getAccent(), metaBase);
+  const e = adaptSwatchToBase(envColor ?? getEnvColor(), metaBase);
   const applied = applyTo(theme, a, e);
   current = theme;
   try {
@@ -1287,7 +1299,8 @@ export function applyTheme(id, accent, envColor, opts = {}) {
 /** 只改强调色，保持当前主题 */
 export function setAccent(accent) {
   const theme = current || findTheme(getThemeId());
-  const a = adaptSwatchToBase(accent, theme.base);
+  /* 同 applyTheme：必须按**实际**基调适配，不能用 theme.base 自带值 */
+  const a = adaptSwatchToBase(accent, applyMetaOverride(theme).base);
   const applied = applyTo(theme, a, getEnvColor());
   try { localStorage.setItem(KEY_ACCENT, a); } catch {}
   listeners.forEach((fn) => {
@@ -1299,7 +1312,8 @@ export function setAccent(accent) {
 /** 只改环境色，保持当前主题与强调色 */
 export function setEnvColor(envColor) {
   const theme = current || findTheme(getThemeId());
-  const e = adaptSwatchToBase(envColor, theme.base);
+  /* 同 applyTheme：必须按**实际**基调适配，不能用 theme.base 自带值 */
+  const e = adaptSwatchToBase(envColor, applyMetaOverride(theme).base);
   const applied = applyTo(theme, getAccent(), e);
   try { localStorage.setItem(KEY_ENV, e); } catch {}
   listeners.forEach((fn) => {

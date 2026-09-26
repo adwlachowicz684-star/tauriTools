@@ -3501,6 +3501,66 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
     /resolveThemeMeta\(t\)\.style\s*\|\|\s*'neumorph'/.test(idx),
     /resolveThemeMeta\(t\)\.style\s*\|\|\s*'neumorph'/.test(idx) ? '一致'
       : '缺兜底 → 无 style 的主题分组与 React 版不同');
+
+  /*
+   * 插件自选主题：目标主题自己被改过基调时，也要按**实际**基调判。
+   *
+   * 基调本身是参数，用户可以把任何一套改成浅色。校验若只看 t.base
+   * 自带值，X 被改成浅色后仍算深色主题 → 深槽里的 X 通过校验 →
+   * 插件拿到实际为浅色的变量，深色面板上突然冒出一块浅色。
+   *
+   * 与 getResolvedBase（管"当前"基调）是同一处根因的两半：
+   * 一个管当前、一个管目标，只修一半等于没修。
+   *
+   * ⓘ 判据落在 resolvePluginTheme / pluginThemeBase **函数体内**：
+   *   文件级 /themeManager\.resolveThemeMeta/ 会被文件里其它调用点满足，
+   *   把这两处改回 t.base 也照样全绿 —— 那是"钉存在性、不钉接线"。
+   */
+  const hostSrc2 = stripComments(read('js/host.js'));
+  const iRp = hostSrc2.indexOf('export function resolvePluginTheme');
+  const rpBlock = iRp < 0 ? '' : hostSrc2.slice(iRp, iRp + 1200);
+  t('resolvePluginTheme 的基调校验取实际值',
+    iRp >= 0 && /resolveThemeMeta\(t\)\.base\s*!==\s*base/.test(rpBlock)
+      && !/[^.\w]t\.base\s*!==\s*base/.test(rpBlock),
+    iRp < 0 ? '取样失效'
+      : (/resolveThemeMeta\(t\)\.base\s*!==\s*base/.test(rpBlock) ? '用实际值'
+        : '用了 t.base → 改过基调的主题会误判'));
+
+  const iPb = hostSrc2.indexOf('export function pluginThemeBase');
+  const pbBlock = iPb < 0 ? '' : hostSrc2.slice(iPb, iPb + 700);
+  t('pluginThemeBase 回实际基调而非自带值',
+    iPb >= 0 && /resolveThemeMeta\(t\)\.base\s*:/.test(pbBlock)
+      && !/return t \? t\.base/.test(pbBlock),
+    iPb < 0 ? '取样失效'
+      : (/return t \? t\.base/.test(pbBlock) ? '用了自带值 → 插件按错档渲染'
+        : '用实际值'));
+
+  /*
+   * 强调色 / 环境色适配：三处（applyTheme / setAccent / setEnvColor）。
+   *
+   * adaptSwatchToBase 按基调挑亮档或暗档。用 theme.base 自带值的话，
+   * 用户把深色主题改成浅色之后，强调色仍停在"深底用的亮档" ——
+   * 浅底上对比度不足，看着发灰。
+   *
+   * 而且同一次调用里会出现两套 base：applyTo 内部算的 --accent-glow
+   * 用的是覆盖后的值，这里却用原始值，两者对不上。
+   *
+   * ⓘ 判据用"整仓 adaptSwatchToBase 调用里不许出现 theme.base"：
+   *   逐点钉会漏掉将来新增的调用点，而这类"取错 base"是同因反复犯的。
+   */
+  const tmSrc2 = stripComments(read('js/theme-manager.js'));
+  /*
+   * ⚠️ 不能写 `adaptSwatchToBase\([^)]*\)`：实参里有 `getAccent()` 这种
+   *    嵌套括号，`[^)]*` 会在内层 `)` 处截断，匹配到的是
+   *    `adaptSwatchToBase(accent ?? getAccent()` —— 压根没扫到第二个实参，
+   *    于是"改回 theme.base"这种破坏它照样全绿（我第一版就是这么错的）。
+   *    改成整行匹配，避开嵌套括号问题。
+   */
+  const adaptCalls = tmSrc2.split('\n').filter((l) => /adaptSwatchToBase\(/.test(l));
+  const rawBase = adaptCalls.filter((c) => /theme\.base/.test(c));
+  t('强调色/环境色适配不再用 theme.base 原始值',
+    adaptCalls.length >= 4 && rawBase.length === 0,
+    `共 ${adaptCalls.length} 处调用，其中 ${rawBase.length} 处用原始值${rawBase.length ? '：' + rawBase[0] : ''}`);
 }
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

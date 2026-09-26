@@ -1744,7 +1744,17 @@ export function resolvePluginTheme(pluginId) {
   const want = base === 'light' ? cfg.themeLight : cfg.themeDark;
   if (!want) return null;
   const t = findTheme(want);
-  if (!t || t.base !== base) return null;
+  /*
+   * ⚠️ 校验必须用**实际**基调，不能用 t.base 原始值。
+   *
+   * 基调本身也是参数：用户可以把 X 主题改成浅色。若 X 恰好被填进了
+   * "深色时用"槽，t.base 仍是它自带的 'dark'，校验通过 → 插件拿到
+   * 实际为浅色的 X 变量，深底面板上突然冒出一块浅色。
+   *
+   * 与上面 getResolvedBase 是同一处根因的两半：一个管"当前"基调，
+   * 一个管"目标主题"基调，少了后者这套校验等于只看一半。
+   */
+  if (!t || themeManager.resolveThemeMeta(t).base !== base) return null;
   return t;
 }
 
@@ -1769,7 +1779,14 @@ export function varsForPlugin(pluginId) {
  */
 export function pluginThemeBase(pluginId) {
   const t = resolvePluginTheme(pluginId);
-  return t ? t.base : themeManager.getResolvedBase();
+  /*
+   * ⚠️ 同样要取**实际**基调。返回 t.base 原始值的话：
+   * 用户给插件指定了 X 主题、之后又把 X 改成浅色，这里仍回 'dark'，
+   * 于是插件按深色档渲染，而拿到的是 X 的浅色变量 ——
+   * 插件 CSS 里 `[data-nexus-base="dark"]` 那一档的深色文字压在浅底上，
+   * 对比度掉到 1.x，基本看不见，且不报错。
+   */
+  return t ? themeManager.resolveThemeMeta(t).base : themeManager.getResolvedBase();
 }
 
 /**
