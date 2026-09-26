@@ -219,7 +219,7 @@ async function openPluginSettings() {
     <header class="drawer-head">
       <div class="drawer-title">
         <h2>⚙ ${escapeHtml(manifest.name)}</h2>
-        <span class="p-muted" style="font-size:11px">
+        <span class="drawer-sub">
           ${manifest.type === 'iframe' ? '沙箱模式' : '同页模式'}${manifest.version ? ' · v' + escapeHtml(manifest.version) : ''}
         </span>
       </div>
@@ -281,25 +281,38 @@ function renderShellSection(box, manifest) {
   if (!box) return;
   const cfg = getPluginConfig(manifest.id);
 
-  const toggleRow = (label, desc, keyName) => {
-    const btn = h('button.p-btn', {
-      class: cfg[keyName] ? 'primary' : '',
-      style: { height: '30px', padding: '0 12px', fontSize: '12px', flex: 'none' },
-    }, cfg[keyName] ? '已开启' : '已关闭');
-    const hint = h('div.p-muted', { style: { fontSize: '11px', marginTop: '2px', lineHeight: '1.7' } }, '');
-    return { btn, hint, row: h('div.p-row', {
-      style: {
-        padding: '12px 14px', marginTop: '10px', borderRadius: 'var(--r)',
-        background: 'var(--surface-sunk)',
-        boxShadow: 'inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light)',
-      },
-    },
-      h('div', { style: { flex: '1', minWidth: '0' } },
-        h('div', { style: { fontSize: '13px' } }, label),
+  /* 开关行。
+     ⚠️ 这里原先每个样式都用内联 style 写死（字号、间距、圆角，
+     以及直接拼出来的 inset 阴影）。
+     内联写法的代价是：观感改不动，且绕过了全部令牌 ——
+     玻璃主题下那圈硬编码的凹陷阴影照样压出来。
+     现在一律挂 .dw-* 类，观感只在 CSS 里调。 */
+  const toggleRow = (label, keyName, texts) => {
+    const dot = h('span', { class: 'dw-dot' });
+    const txt = h('span', {}, cfg[keyName] ? '已开启' : '已关闭');
+    const btn = h('button', {
+      class: `dw-switch${cfg[keyName] ? ' on' : ''}`,
+      type: 'button',
+      /* 无障碍：读屏要能念出当前是开还是关，而不是只念一个"按钮" */
+      'aria-pressed': String(!!cfg[keyName]),
+    }, dot, txt);
+    const hint = h('div.dw-row-hint', {}, cfg[keyName] ? texts.on : texts.off);
+    btn.onclick = () => {
+      const next = setPluginConfig(manifest.id, { [keyName]: !getPluginConfig(manifest.id)[keyName] });
+      const on = !!next[keyName];
+      btn.classList.toggle('on', on);
+      btn.setAttribute('aria-pressed', String(on));
+      txt.textContent = on ? '已开启' : '已关闭';
+      hint.textContent = on ? texts.on : texts.off;
+      toast('已保存，重载插件后生效', 'ok');
+    };
+    return h('div.dw-row', {},
+      h('div.dw-row-main', {},
+        h('div.dw-row-label', {}, label),
         hint,
       ),
       btn,
-    ) };
+    );
   };
 
   const isoTexts = {
@@ -307,52 +320,26 @@ function renderShellSection(box, manifest) {
     off: '插件与主平台同源，可直连访问（parent / localStorage / Tauri IPC）；代价是插件之间理论上也能互访。',
   };
 
-  const rows = [];
-  for (const [label, keyName, texts] of [
-    ['严格沙箱', 'isolated', isoTexts],
-  ]) {
-    const t = toggleRow(label, '', keyName);
-    t.hint.textContent = cfg[keyName] ? texts.on : texts.off;
-    t.btn.onclick = () => {
-      const next = setPluginConfig(manifest.id, { [keyName]: !getPluginConfig(manifest.id)[keyName] });
-      t.btn.classList.toggle('primary', !!next[keyName]);
-      t.btn.textContent = next[keyName] ? '已开启' : '已关闭';
-      t.hint.textContent = next[keyName] ? texts.on : texts.off;
-      toast('已保存，重载插件后生效', 'ok');
-    };
-    rows.push(t.row);
-  }
-
   /* ---- 插件自选主题：深色一套、浅色一套 ----
      语义不是"锁定深浅"，而是"整体是深色时用哪套、浅色时用哪套"：
      两个都选了，插件就跟着整体的深浅在自己这两套之间切，
      但不会跟着用户在同基调里换主题（比如从石墨换到极光）。 */
   const themeRow = (label, key, base) => {
     const all = listThemes().filter((t) => t.base === base);
-    const sel = h('select.p-input', {
-      style: { height: '30px', fontSize: '12px', padding: '0 8px', flex: '1', minWidth: '0' },
-    },
+    const sel = h('select.p-input.dw-select', {},
       h('option', { value: '' }, '跟随全局'),
       ...all.map((t) => h('option', { value: t.id, selected: cfg[key] === t.id }, t.name)),
     );
     sel.onchange = () => {
       setPluginConfig(manifest.id, { [key]: sel.value || null });
       // 主题是即时生效的（host 订阅了配置变更并会重推变量），不需要重载。
-      // 与上面「沙箱与主题」两个开关不同 —— 那两个确实要重载。
+      // 与上面「沙箱」开关不同 —— 那个确实要重载。
       toast('已保存', 'ok');
     };
-    return h('div.p-row', {
-      style: {
-        padding: '12px 14px', marginTop: '10px', borderRadius: 'var(--r)',
-        background: 'var(--surface-sunk)',
-        boxShadow: 'inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light)',
-      },
-    },
-      h('div', { style: { flex: '1', minWidth: '0' } },
-        h('div', { style: { fontSize: '13px' } }, label),
-        h('div.p-muted', {
-          style: { fontSize: '11px', marginTop: '2px', lineHeight: '1.7' },
-        }, base === 'dark' ? '整体主题为深色时，本插件用这套' : '整体主题为浅色时，本插件用这套'),
+    return h('div.dw-row', {},
+      h('div.dw-row-main', {},
+        h('div.dw-row-label', {}, label),
+        h('div.dw-row-hint', {}, base === 'dark' ? '整体主题为深色时，本插件用这套' : '整体主题为浅色时，本插件用这套'),
       ),
       sel,
     );
@@ -360,30 +347,24 @@ function renderShellSection(box, manifest) {
 
   box.innerHTML = '';
   box.appendChild(
-    h('div.p-card', {},
-      h('h2', {}, '沙箱与主题'),
-      h('div.p-muted', { style: { lineHeight: '1.9' } },
-        '两个开关互相独立。改动在下次加载该插件时生效。'),
-      ...rows,
+    h('section.dw-sec', {},
+      h('h3.dw-sec-title', {}, '沙箱'),
+      h('div.dw-sec-desc', {}, '改动在下次加载该插件时生效。'),
+      toggleRow('严格沙箱', 'isolated', isoTexts),
       manifest.type !== 'iframe'
-        ? h('div.p-muted', { style: { marginTop: '10px', fontSize: '11px' } },
+        ? h('div.dw-row-hint', { style: { marginTop: 'var(--sp-4)' } },
             '同页插件不受影响 —— 它本来就跑在主页面里。')
         : null,
-      h('div.p-muted', {
-        style: {
-          marginTop: '12px', paddingTop: '10px', fontSize: '10.5px', lineHeight: '1.8',
-          borderTop: '1px solid var(--hairline)',
-        },
-      },
+      h('div.dw-note', {},
         '注意：「严格沙箱」切断的是直连通道，不是能力。以下能力',
         h('b', {}, '无论开关如何都照常可用'),
         '（它们在主平台侧执行）：ctx.invoke 调 Rust、ctx.store 持久化、'
         + 'ctx.on/emit 跨插件事件、ctx.setTitle/setBadge/toast、主题同步。',
       ),
     ),
-    h('div.p-card', {},
-      h('h2', {}, '插件主题'),
-      h('div.p-muted', { style: { lineHeight: '1.9', marginBottom: '4px' } },
+    h('section.dw-sec', {},
+      h('h3.dw-sec-title', {}, '插件主题'),
+      h('div.dw-sec-desc', {},
         '分别为深色 / 浅色各挑一套。选好后，本插件只跟随整体主题的',
         h('b', {}, '深浅'),
         '在自己这两套之间切换，不再跟随你在同基调里换哪套主题。留空则跟随全局。'),
@@ -396,9 +377,9 @@ function renderShellSection(box, manifest) {
   const mine = extPolicy.listHosts().filter((x) => x.pluginId === manifest.id);
   if (mine.length) {
     box.appendChild(
-      h('div.p-card', {},
-        h('h2', {}, `外链 · ${mine.length}`),
-        h('div.p-muted', { style: { marginBottom: '10px', fontSize: '11px' } },
+      h('section.dw-sec', {},
+        h('h3.dw-sec-title', {}, `外链 · ${mine.length}`),
+        h('div.dw-sec-desc', {},
           '扫描插件入口得到。全局策略与逐条放行在「设置 → 外链」里改。'),
         ...mine.map((x) => hostRow(x)),
       ),
@@ -409,17 +390,10 @@ function renderShellSection(box, manifest) {
 function hostRow(x) {
   const label = x.status === 'trusted' ? '已信任'
     : x.status === 'blocked' ? '已禁止' : '待决定';
-  return h('div.p-row', {
-    style: {
-      padding: '10px 12px', marginTop: '8px', borderRadius: 'var(--r-sm)',
-      background: 'var(--surface-sunk)',
-      boxShadow: 'inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light)',
-    },
-  },
-    h('div', { style: { flex: '1', minWidth: '0' } },
-      h('div.p-mono', { style: { fontSize: '12px' } }, x.host),
-      h('div.p-muted', { style: { fontSize: '10.5px', marginTop: '2px' } },
-        `${extPolicy.KIND_LABELS[x.kind] || x.kind} · ${label}`),
+  return h('div.dw-host', {},
+    h('div.dw-host-main', {},
+      h('div.dw-host-name', {}, x.host),
+      h('div.dw-host-meta', {}, `${extPolicy.KIND_LABELS[x.kind] || x.kind} · ${label}`),
     ),
     h('span.p-tag', {
       class: x.status === 'trusted' ? 'ok' : x.status === 'blocked' ? 'danger' : '',

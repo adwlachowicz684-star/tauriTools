@@ -228,6 +228,40 @@ export function collectUsedClasses(src) {
       }
     }
   }
+  /*
+   * 6: h('button', { class: 'dw-switch', ... }) —— h() 的**属性对象**
+   *
+   * 与分支 5 同源：类名既不是 class=/className= 的属性值，
+   * 也不是 h('div.mm-foo') 的简写，而是作为属性对象的字段值传进去。
+   *
+   * 这是本仓库 h() 最常见的用法（js/shell.js 里到处都是），
+   * 不认的话这些类名一律被判成"CSS 里定义了、代码里没人用" ——
+   * 于是往 CSS 里新加的 .dw-* 会被报成死样式，改观感的人只能去改白名单，
+   * 白名单一长就再也没人分得清哪条是真废弃。
+   *
+   * 判据用 \bclass\s*: 而不是匹配 h( 上下文：
+   *   · React/JSX 用 className，不会撞；
+   *   · 类型声明里的 `class?: string` 是 `class?` 不是 `class:`，也不会撞；
+   *   · classList.add 已被分支 4 覆盖，写法不同不冲突。
+   */
+  for (const m of src.matchAll(/\bclass\s*:\s*(?:"([^"]*)"|'([^']*)'|`([^`]*)`)/g)) {
+    const body = (m[1] ?? m[2] ?? m[3] ?? '');
+    for (const part of body.split(/\$\{[^}]*\}/)) addTokens(part);
+    /*
+     * 模板串里的三元分支（class: `dw-switch${on ? ' on' : ''}`）
+     * 也是会真实挂到 DOM 上的类，不取就会漏。
+     * 沿用模板串那条分支的判据：后面紧跟 ? 的是**条件值**，跳过。
+     */
+    for (const inner of body.matchAll(/\$\{([^}]*)\}/g)) {
+      const expr = inner[1];
+      for (const sm of expr.matchAll(/['"`]([^'"`]*)['"`]/g)) {
+        let k = (sm.index ?? 0) + sm[0].length;
+        while (k < expr.length && /\s/.test(expr[k])) k++;
+        if (expr[k] === '?') continue;
+        addTokens(sm[1]);
+      }
+    }
+  }
   return out;
 }
 
