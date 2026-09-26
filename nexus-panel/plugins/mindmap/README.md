@@ -2852,5 +2852,30 @@ Enter **不**跟着建同级：「输完按回车」凭空多出一个空节点�
 **实例方法**而不是只改 `__minder.importJson` 门面 —— 编辑器页内部还有几处
 直接 `km.importJson(...)`（新建画布、撤销重做），只改门面覆盖不到。
 
+## exportPng 用了内核 Promise 上不存在的 .catch
+
+`km.exportData('png')` 返回的是 **kityminder 自带的 Promise**，不是原生
+Promise。实测（真实 Chrome）：
+
+```
+typeof r.then   === 'function'
+typeof r.catch  === 'undefined'      ← 没有
+r.then(fn) 的返回值上同样没有 .catch
+```
+
+所以 `.then(ok).catch(err)` 会在 `.catch` 处**同步抛**
+`TypeError: ... .catch is not a function`。两重后果：
+
+1. 调用方拿到异常，看着像导出失败；
+2. **catch 根本没注册上** —— 导出真失败时 `__mindmapPng` 永远停在
+   `'pending'`，轮询方永远收到 `'PENDING'`，既没结果也没报错，**永久卡住**。
+
+改成两参数 `then(ok, err)`（这类 thenable 都支持这个形态），并加 30 秒超时
+兜底 —— 异常路径下两个回调可能**都不触发**。
+
+> 说明：这条路径（触发 + 轮询 `window.__mindmapPng`）是 WPF 移植遗留，当前
+> 宿主并不调用它 —— 宿主走 `bridge.exportSvg()` + `svgToPngBlob`。所以属于
+> **潜在**问题而非现网故障，但留着是个坑，顺手修掉。
+
 > 2000 层而非 10000 层：jsdom 的 `DOMParser` 在约 2000~5000 层时自己就 parsererror 了，
 > 测不到 xmind.js。2000 层已远超 `MAX_DEPTH`(200)，足以验证截断逻辑。

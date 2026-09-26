@@ -3049,12 +3049,46 @@
             // 是异步的且 WebView2 ExecuteScriptAsync 不等 Promise，故触发后把结果写 window 变量，
             // C# 侧循环调用 pollExportPng() 轮询取回（成功 'OK:'+base64 dataUrl，失败 'ERR:'+msg，未就绪 'PENDING'）。
             exportPng: function () {
+                /*
+                 * 内核的 `exportData()` 返回的是 **kityminder 自带的 Promise**，
+                 * 不是原生 Promise —— 它只有 `.then`，**没有 `.catch`**，而且
+                 * `.then()` 的返回值上同样没有。实测（真实 Chrome）：
+                 *
+                 *     typeof r.then  === 'function'
+                 *     typeof r.catch === 'undefined'      ← 没有
+                 *     r.then(fn) 返回 Object，也没有 .catch
+                 *
+                 * 所以原来的 `.then(ok).catch(err)` 会在 `.catch` 处**同步抛**
+                 *     TypeError: ... .catch is not a function
+                 *
+                 * 两重后果：
+                 *   1. 调用方（脚本注入）直接拿到一个异常，看起来导出失败了；
+                 *   2. 更要命的是 **catch 从来没注册上** —— 导出真的失败时
+                 *      __mindmapPng 永远停在 'pending'，轮询方永远收到
+                 *      'PENDING'，既没有结果也没有报错，**永久卡住**。
+                 *
+                 * 改法：用**两参数 then(ok, err)** —— 这是这类 thenable 都支持的
+                 * 标准形态。再加超时兜底：异常路径也可能两个回调都不触发。
+                 */
                 window.__mindmapPng = { state: 'pending', data: '', err: '' };
-                km.exportData('png').then(function (dataUrl) {
-                    window.__mindmapPng = { state: 'done', data: dataUrl, err: '' };
-                }).catch(function (e) {
+                var settled = false;
+                function done(dataUrl) {
+                    if (settled) return;
+                    settled = true;
+                    window.__mindmapPng = { state: 'done', data: dataUrl || '', err: '' };
+                }
+                function fail(e) {
+                    if (settled) return;
+                    settled = true;
                     window.__mindmapPng = { state: 'done', data: '', err: String(e && (e.message || e)) };
-                });
+                }
+                try {
+                    km.exportData('png').then(done, fail);
+                } catch (e) { fail(e); }
+                // 兜底：内核图片解码可能既不 resolve 也不 reject
+                setTimeout(function () {
+                    if (!settled) fail(new Error('导出超时'));
+                }, 30000);
                 return true;
             },
             pollExportPng: function () {

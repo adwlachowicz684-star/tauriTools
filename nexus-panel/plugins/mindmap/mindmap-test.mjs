@@ -1936,6 +1936,36 @@ group('行内编辑贴合节点');
     '撤销/重做那条 importJson 路径也先提交');
 }
 
+/*
+ * 17.12 exportPng 必须用两参数 then —— 内核 Promise 没有 .catch。
+ *
+ * `km.exportData('png')` 返回的是 **kityminder 自带的 Promise**，实测：
+ *     typeof r.then  === 'function'
+ *     typeof r.catch === 'undefined'       ← 没有
+ *     r.then(fn) 的返回值上也没有 .catch
+ *
+ * 所以 `.then(ok).catch(err)` 会在 `.catch` 处**同步抛**
+ * `TypeError: ... .catch is not a function`。两重后果：
+ *   1. 调用方拿到异常，看着像导出失败；
+ *   2. **catch 根本没注册上** —— 导出真失败时 __mindmapPng 永远 'pending'，
+ *      轮询方永远收到 'PENDING'，既没结果也没报错，**永久卡住**。
+ */
+{
+  const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  const seg = ed.slice(ed.indexOf('exportPng: function ()'), ed.indexOf('pollExportPng: function ()'));
+  const scode = seg.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok(!/\.catch\(/.test(scode), '不再用 .catch（内核 Promise 上没有这个方法）');
+  ok(/\.then\(done, fail\)/.test(scode), '改用两参数 then(ok, err) —— thenable 都支持这个形态');
+  ok(/var settled = false;/.test(scode) && /if \(settled\) return;/.test(scode), '幂等：两个回调只生效一个');
+  /*
+   * 正则窗口必须放宽到 200：setTimeout 的回调体（含缩进换行）远不止 80 字符，
+   * 写窄了断言会**恒为假** —— 超时兜底那行被删掉也照样绿。
+   */
+  ok(/setTimeout\([\s\S]{0,200}30000/.test(scode), '超时兜底（异常路径可能两个回调都不触发）');
+  ok(/if \(!settled\) fail\(/.test(scode), '超时后写入失败状态，而不是永远 PENDING');
+  ok(/catch \(e\) \{ fail\(e\); \}/.test(scode), '连 .then 本身抛错也要落失败态');
+}
+
 {
   // 17.7 行为级：验证 zoom 换算确实是必要的（对照旧算法）
   //      模拟 SVG transform scale(zoom) 下的两种算法
