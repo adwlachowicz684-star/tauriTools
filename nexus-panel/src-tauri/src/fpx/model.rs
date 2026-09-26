@@ -58,6 +58,20 @@ pub type IconMap = HashMap<String, String>;
 /// 缺失 = 1（这个字段本身是新加的，老配置里没有它）。
 pub const CURRENT_SCHEMA: u32 = 2;
 
+/// 常用文件夹（工具级）：所有目录选择器共用的快速入口。
+///
+/// `label` 是用户起的昵称；没有昵称时是空串，界面按路径最后一段显示。
+/// 两个字段都带 `#[serde(default)]`：老配置里没有这个键，
+/// 而前端 `normalizeFavs()` 也可能只给 `path`，缺了默认值会整条反序列化失败
+/// —— 表现为"收藏列表读出来是空的"，且不报具体原因。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FavDir {
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
 /// 插件独立配置（对应 data-dir/config.json）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,6 +118,16 @@ pub struct FpxConfig {
     /// 用户在色盘里保存的自定义常用色（#RRGGBB，最多 24 个）。
     #[serde(default)]
     pub custom_colors: Vec<String>,
+    /// 常用文件夹（工具级）：所有目录选择器共用的快速入口。
+    ///
+    /// 上限 `FAV_DIR_MAX`（40）由 fpx/mod.rs 写入时截断 —— 这是个"一步到达"
+    /// 列表，超过一屏就失去意义了。
+    ///
+    /// 【这条被同步覆盖丢过】丢了的表现是 `fpx_list_fav_dirs` /
+    /// `fpx_save_fav_dirs` 两条命令编译不过（字段不存在），
+    /// 而前端有降级，界面上只是"常用文件夹永远是空的"，不报错。
+    #[serde(default)]
+    pub fav_dirs: Vec<FavDir>,
     /// 文件夹图标（**会同步到资源管理器**的那套）：路径 → 图标引用。
     #[serde(default)]
     pub folder_icons: IconMap,
@@ -366,6 +390,7 @@ impl Default for FpxConfig {
             tag_colors: HashMap::new(),
             tag_gui_colors: HashMap::new(),
             custom_colors: Vec::new(),
+            fav_dirs: Vec::new(),
             folder_icons: HashMap::new(),
             folder_gui_icons: HashMap::new(),
             locks: vec![],

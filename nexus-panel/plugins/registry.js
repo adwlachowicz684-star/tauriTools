@@ -60,20 +60,6 @@ export const plugins = [
     entry: './plugins/agent-flow/index.html',
     // React + TSX，需要 Vite；无构建模式下自动隐藏
     requiresBuild: true,
-    /* 自己跟随面板主题，不需要反转滤镜（L2/L3）。
-       agent-flow 默认就是 follow 模式：--af-* 直接读面板推来的 --bg /
-       --surface / --text，它**自己就会**跟着主题变浅，色彩原样保留。
-       不给这个标记的后果：切到浅色 → 界面已变浅（白）→ 适配系统照旧
-       采样判成"插件深色"→ 施加 invert → 已变浅的部分被二次翻转（黑）。
-       且 reAdapt 先 teardown 再异步采样，中间约 790ms 无滤镜，
-       于是看到"变白一秒后又变黑"，像切换了好几次。
-       native 模式（固定深色）仍需要滤镜 —— 所以不能写死"永不适配"，
-       要靠插件自报基调动态判定。详见 README 3.7.10。 */
-    /*
-     * 宿主据此在 init 里带 reportBase，要求插件把基调报回来
-     * （隔离态同理）。只声明不报，外壳手上仍是旧值，切主题时会判反。
-     */
-    followsTheme: true,
     description: '工作流编排画布（跟随面板主题）',
   },
   {
@@ -226,7 +212,6 @@ export const plugins = [
    *   · type:'module' —— 同页挂载才能继承宿主主题变量；用 iframe 会重演
    *     demo-iframe 打开后"只有文字"的问题
    *   · requiresBuild:true —— 依赖 react-markdown 等裸模块名，无构建模式不可用
-   *   · followsTheme:true —— 让宿主把主题推给它
    *
    * 【这条被同步覆盖丢过多次】
    * 丢了的表现是侧边栏根本没有「Markdown」入口，用户以为没做过这个功能，
@@ -242,7 +227,6 @@ export const plugins = [
     theme: 'dark',
     requiresBuild: true,
     builtin: true,
-    followsTheme: true,
     description: 'Markdown 阅读：粘贴/拖入/服务调用，跟随面板主题',
   },
   /*
