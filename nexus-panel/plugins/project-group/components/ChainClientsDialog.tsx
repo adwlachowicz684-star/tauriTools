@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import type { Api } from '../api';
 import { errText } from '../api';
-import type { CustomChainClient } from '../types';
+import type { ChainClient, CustomChainClient } from '../types';
+import { isBuiltinClientId } from '../utils/clientDetect';
 import { Modal } from './ui';
 
 const blank = (): CustomChainClient => ({ id: '', name: '', exe: null, scheme: null });
@@ -14,13 +15,24 @@ const blank = (): CustomChainClient => ({ id: '', name: '', exe: null, scheme: n
  * 登记后强制出现在客户端列表里（绕过自动检测）。
  */
 export function ChainClientsDialog({
-  api, initial, onClose, onLog,
+  api, initial, onClose, onLog, onSaved,
 }: {
   api: Api;
   /** 当前已登记的清单 */
   initial: CustomChainClient[];
   onClose: () => void;
   onLog: (m: string, isError?: boolean) => void;
+  /**
+   * 保存成功后回传后端返回的完整可选列表。
+   *
+   * 为什么非走不可：这一路是**直接调后端命令**，不走设置页的 save()，
+   * 于是外层 `config.customChainClients` 不刷新。再次打开本弹窗时
+   * `initial` 还是保存前的旧清单 —— 用户这时再加一个并保存，
+   * 后端整份覆盖（`cfg.custom_chain_clients = list`），
+   * **上一次登记的客户端被静默抹掉**。不报错，也没有任何提示，
+   * 表现为"加第二个时第一个不见了"，而用户只会以为自己没加成功。
+   */
+  onSaved?: (shown: ChainClient[]) => void;
 }) {
   const [list, setList] = useState<CustomChainClient[]>(initial.map((c) => ({ ...c })));
   const [saving, setSaving] = useState(false);
@@ -39,6 +51,19 @@ export function ChainClientsDialog({
     const ids = list.map((c) => c.id.trim());
     if (ids.some((v) => !v)) { setErr('标识不能为空'); return; }
     if (new Set(ids).size !== ids.length) { setErr('标识重复'); return; }
+    /*
+     * 与内置客户端重名：后端 `detect()` 会把这一项整条跳过
+     * （内置项已在列表里），于是登记了却一次都不生效 ——
+     * 不报错，下拉里还看得到同名的内置项，用户会以为生效的是自己填的那条。
+     * 必须在这里拦住，不能让它"保存成功却不生效"。
+     */
+    for (const c of list) {
+      const id = c.id.trim();
+      if (isBuiltinClientId(id)) {
+        setErr(`「${id}」与内置客户端重名，请换一个标识（重名时后端会忽略你登记的这一项）`);
+        return;
+      }
+    }
     for (const c of list) {
       if (!c.exe?.trim() && !c.scheme?.trim()) {
         setErr(`「${c.id}」需要至少填一项：程序路径 或 URL scheme`);
@@ -55,6 +80,8 @@ export function ChainClientsDialog({
         scheme: c.scheme?.trim() ? c.scheme.trim() : null,
       })));
       onLog(`已保存 ${list.length} 个自定义客户端，当前可选 ${shown.length} 个`);
+      /* 回传让外层刷新 config 与检测汇总，否则下次打开本弹窗拿到的是旧清单 */
+      onSaved?.(shown);
       onClose();
     } catch (e) {
       setErr(errText(e));

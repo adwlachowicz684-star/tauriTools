@@ -48,6 +48,7 @@ const BACKUP_PRESETS: { value: number; label: string }[] = [
  */
 export function SettingsBody({
   api, config, dataDir, onLog, onSaved, onChainActionsChanged, onResetLayout, onDevModeChange, onShowShortcutsChange,
+  onChainClientsChanged,
 }: {
   api: Api;
   config: FpxConfig;
@@ -62,6 +63,14 @@ export function SettingsBody({
    * 用户刚加的自定义动作要等到下一次别的写操作才冒出来。
    */
   onChainActionsChanged?: () => void;
+  /**
+   * 自定义连锁客户端保存后的刷新（与 onChainActionsChanged 同理）。
+   *
+   * 那一路走的是 `saveChainClients`，返回的是客户端数组而不是 Snapshot，
+   * 外层 boot 不会变 —— 不刷新则下次打开登记弹窗拿到的是旧清单，
+   * 再保存一次会把先前登记的整份覆盖掉。
+   */
+  onChainClientsChanged?: () => void;
   /** 恢复默认布局（三栏比例 / 日志高度）；拖乱了给个回头路 */
   onResetLayout?: () => void;
   /** 开发者模式开关（#46） */
@@ -395,6 +404,11 @@ export function SettingsBody({
         initial={config.customChainClients}
         onClose={() => setClientsOpen(false)}
         onLog={onLog}
+        onSaved={(shown) => {
+          /* 直接采用后端返回的最新列表，省一次重新检测 */
+          setDetected(shown);
+          onChainClientsChanged?.();
+        }}
       />
     );
   }

@@ -38,6 +38,26 @@ export interface DetectSummary {
 export const FALLBACK_CLIENT_ID = 'opencode';
 
 /**
+ * 后端 chain.rs::CLIENTS 的 id 镜像（顺序即内置展示顺序）。
+ *
+ * 为什么前端也要有一份：手动登记客户端时若用了与内置相同的标识，
+ * 后端 `detect()` 会**静默跳过**这一项
+ * （`if list.iter().any(|x| x.id == id) { continue; }`），
+ * 于是"登记了却完全不生效" —— 不报错，下拉里还看得到同名的内置项，
+ * 用户会以为生效的是自己填的那条（路径 / scheme 其实一次都没用过）。
+ * 只能在这里提前拦住。client-detect-test.mjs 比对两边，改任一侧都要同步另一侧。
+ */
+export const BUILTIN_CLIENT_IDS: readonly string[] = [
+  'opencode', 'trae', 'trae-cn', 'cursor', 'vscode', 'chatgpt', 'claude', 'windsurf', 'kimi', 'workbuddy',
+];
+
+/** 标识是否与内置客户端重名（重名那一项会被后端静默忽略） */
+export function isBuiltinClientId(id: string): boolean {
+  const v = (id ?? '').trim();
+  return BUILTIN_CLIENT_IDS.some((x) => x === v);
+}
+
+/**
  * 汇总检测结果。
  *
  * 区分「真装了 opencode」与「只是兜底」**只能靠 installed**：

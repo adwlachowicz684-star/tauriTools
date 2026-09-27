@@ -149,6 +149,13 @@ export default function PluginSettings() {
           })}
           onLog={log}
           onSaved={save}
+          /*
+           * 这两处保存走的是专用命令，返回数组而不是 Snapshot，
+           * 外层 boot 不会变：不刷新则刚加的自定义动作 / 自定义客户端
+           * 要等到下一次别的写操作才冒出来（右键菜单、侧边栏、登记弹窗都还是旧的）。
+           */
+          onChainActionsChanged={() => void load()}
+          onChainClientsChanged={() => void load()}
         />
       </div>
 
