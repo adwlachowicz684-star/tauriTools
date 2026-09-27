@@ -103,6 +103,7 @@
     "test:pg-folder-lock-ace": "node plugins/project-group/folder-lock-ace-test.mjs",
     "test:pg-hint": "node plugins/project-group/hint-test.mjs",
     "test:pg-hotkeys": "node plugins/project-group/hotkeys-test.mjs",
+    "test:pg-ime-guard": "node plugins/project-group/ime-guard-test.mjs",
     "test:pg-hotkey-settings": "node plugins/project-group/hotkey-settings-test.mjs",
     "test:pg-ico-build": "node plugins/project-group/ico-build-test.mjs",
     "test:pg-icon-clip": "node plugins/project-group/icon-clip-test.mjs",

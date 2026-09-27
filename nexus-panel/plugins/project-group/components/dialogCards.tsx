@@ -8,6 +8,7 @@ import { PresetIconGrid } from './PresetIconGrid';
 import { CheckLine, Modal } from './ui';
 import { prompt } from '../../../js/dialog.js';
 import { LOCK_PRESETS, applyPreset, presetOf, CUSTOM_PRESET_ID } from '../utils/lockPresets';
+import { isComposing } from '../utils/ime';
 
 const EMOJIS = ['📁', '🤖', '🧠', '⚙', '🎨', '📦', '🧩', '🚀', '🧪', '📚', '🔧', '💡', '🛠', '🧭', '🏷', '🗂'];
 
@@ -61,7 +62,7 @@ export function CreateDialog({
         <div className="fpx-field">
           <label>名称</label>
           <input className="p-input" autoFocus value={name} onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) submit(); }} />
+            onKeyDown={(e) => { if (isComposing(e.nativeEvent)) return; if (e.key === 'Enter' && name.trim()) submit(); }} />
         </div>
 
         <div className="fpx-field">

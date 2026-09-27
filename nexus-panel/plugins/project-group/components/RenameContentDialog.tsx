@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { isComposing } from '../utils/ime';
 
 /**
  * 内容区条目改名（agent / skill / rule）。
@@ -82,6 +83,7 @@ export function RenameContentDialog({
             disabled={busy}
             onChange={(e) => { setValue(e.target.value); setError(''); }}
             onKeyDown={(e) => {
+              if (isComposing(e.nativeEvent)) return;
               if (e.key === 'Enter') void submit();
               if (e.key === 'Escape') onClose();
             }}

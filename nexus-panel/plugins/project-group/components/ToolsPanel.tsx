@@ -7,6 +7,7 @@ import type {
   BackupResult, CardKind, ChainAction, ChainClient, CaptureResult, EditorCandidate, FpxConfig,
 } from '../types';
 import { DirDialog } from './DirDialog';
+import { isComposing } from '../utils/ime';
 import { Modal } from './ui';
 
 /* ---------------------------- 备份 ---------------------------- */
@@ -228,7 +229,7 @@ export function EditorDialog({
         <div className="p-row">
           <input className="p-input" defaultValue={config.editToolPath ?? ''}
             placeholder="程序完整路径"
-            onKeyDown={(e) => { if (e.key === 'Enter') pick(e.currentTarget.value.trim()); }} />
+            onKeyDown={(e) => { if (isComposing(e.nativeEvent)) return; if (e.key === 'Enter') pick(e.currentTarget.value.trim()); }} />
           <button
             className="p-btn"
             onClick={(e) => {

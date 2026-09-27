@@ -4,6 +4,7 @@ import { CardGrid, type DragPayload } from './CardGrid';
 import { swapIndexWithDeadZone } from '../utils/dragSort';
 import { BOX_DRAG_MIME, parseBoxDrag } from '../utils/dragSort';
 import { ContextMenu, type MenuItem } from './ui';
+import { isComposing } from '../utils/ime';
 
 /**
  * 项目组栏：所有分类纵向堆叠、各自可折叠（对照 WPF 原版的 groupBoxes）。
@@ -246,6 +247,7 @@ export function StackedGroups({
                     setEditing(-1);
                   }}
                   onKeyDown={(e) => {
+                    if (isComposing(e.nativeEvent)) return;
                     if (e.key === 'Enter') e.currentTarget.blur();
                     if (e.key === 'Escape') {
   /*

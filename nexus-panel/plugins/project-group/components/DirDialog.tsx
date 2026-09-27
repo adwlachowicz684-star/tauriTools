@@ -3,6 +3,7 @@ import { useNexus } from '../../../src/nexus-react';
 import type { Api } from '../api';
 import type { DirEntryLite } from '../types';
 import { Modal } from './ui';
+import { isComposing } from '../utils/ime';
 
 /**
  * 内嵌目录选择器：不依赖系统文件对话框（Tauri 未装 dialog 插件时也能用），
@@ -197,7 +198,7 @@ export function DirDialog({
           value={input}
           placeholder="粘贴完整路径后回车"
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') load(input.trim()); }}
+          onKeyDown={(e) => { if (isComposing(e.nativeEvent)) return; if (e.key === 'Enter') load(input.trim()); }}
         />
         <button className="p-btn" onClick={() => load(input.trim())}>前往</button>
       </div>

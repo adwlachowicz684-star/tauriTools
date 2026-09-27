@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CardInfo, CardKind } from '../types';
+import { isComposing } from '../utils/ime';
 
 /**
  * 改名对话框：改的是磁盘上的真实文件夹名，不是界面上的显示名。
@@ -65,6 +66,7 @@ export function RenameDialog({
             disabled={busy}
             onChange={(e) => { setName(e.target.value); setError(''); }}
             onKeyDown={(e) => {
+              if (isComposing(e.nativeEvent)) return;
               if (e.key === 'Enter') void submit();
               if (e.key === 'Escape') onClose();
             }}

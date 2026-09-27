@@ -5,6 +5,7 @@ import {
   pinIndexOf, sameName, usableLinkName,
 } from '../utils/linkAgents';
 import { CheckLine } from './ui';
+import { isComposing } from '../utils/ime';
 
 /** 链接名开关主体（不带 Modal）：预设 + 自定义，缺失视为开启；支持改名 / 厂商标注 / 备注 */
 export function LinkAgentBody({
@@ -331,6 +332,7 @@ export function LinkAgentBody({
                   });
                 }}
                 onKeyDown={(e) => {
+                  if (isComposing(e.nativeEvent)) return;
                   if (e.key === 'Enter') { e.currentTarget.blur(); return; }
                   if (e.key === 'Escape') {
                     /* 取消这次编辑：清掉草稿即回到当前值 */
@@ -375,7 +377,7 @@ export function LinkAgentBody({
       <div className="p-row" style={{ marginTop: 'var(--sp-6, 12px)' }}>
         <input className="p-input" value={draft} placeholder="自定义链接名，如 .myagent"
           onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustom(); } }} />
+          onKeyDown={(e) => { if (isComposing(e.nativeEvent)) return; if (e.key === 'Enter') { e.preventDefault(); addCustom(); } }} />
         <button className="p-btn" onClick={addCustom}>添加</button>
       </div>
       {err && <div className="p-muted" style={{ color: 'var(--danger)' }}>{err}</div>}

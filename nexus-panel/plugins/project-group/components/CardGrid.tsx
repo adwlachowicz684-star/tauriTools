@@ -7,6 +7,7 @@ import { useEdgeAutoScroll } from '../hooks/useEdgeAutoScroll';
 import { canRemove } from '../utils/tabs';
 import { displayIcon } from '../utils/icons';
 import { lockStrengthText } from '../utils/lockPresets';
+import { isComposing } from '../utils/ime';
 
 export { DRAG_MIME, TAB_DRAG_MIME } from '../utils/dragSort';
 /**
@@ -351,6 +352,8 @@ export function TabBar({
               onChange={(e) => setDraft(e.target.value)}
               onBlur={() => endEdit(true)}
               onKeyDown={(e) => {
+                /* 组合中这一下回车是「选词」，不是「提交改名」 */
+                if (isComposing(e.nativeEvent)) return;
                 if (e.key === 'Enter') endEdit(true);
                 if (e.key === 'Escape') {
   /*

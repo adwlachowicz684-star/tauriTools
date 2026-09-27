@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { CardKind, TabInfo } from '../types';
 import { canMove, canRemove } from '../utils/tabs';
 import { ConfirmDialog, Modal } from './ui';
+import { isComposing } from '../utils/ime';
 
 /**
  * 页签管理面板（#26 / 清单 #23）：两栏页签集中一处管理。
@@ -118,6 +119,7 @@ export function TabManagerDialog({
                   onChange={(e) => setDraft(e.target.value)}
                   onBlur={() => void commitEdit()}
                   onKeyDown={(e) => {
+                    if (isComposing(e.nativeEvent)) return;
                     if (e.key === 'Enter') { e.preventDefault(); void commitEdit(); }
                     if (e.key === 'Escape') {
   e.preventDefault();

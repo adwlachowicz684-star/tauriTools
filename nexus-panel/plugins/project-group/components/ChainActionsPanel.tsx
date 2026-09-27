@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Api } from '../api';
 import { errText } from '../api';
 import { canRemove, defaultIconOf, defaultNameOf } from '../utils/chainBuiltins';
+import { isComposing } from '../utils/ime';
 import type { ChainAction, ChainClient } from '../types';
 import { PlaceholderBar } from './PlaceholderBar';
 /* #147 模板框高度自适应：与 #146 图标网格共用同一个测量 hook */
@@ -448,6 +449,9 @@ export function ChainActionsPanel({
                     value={cur.shortcut ?? ''}
                     onChange={(e) => patch(cur.id, { shortcut: e.target.value || null })}
                     onKeyDown={(e) => {
+                      /* 组合中一律放行：这里的 preventDefault 会把键从输入法手里
+                         抢走（组合直接断掉），而组合期的 e.key 也不是真按键。 */
+                      if (isComposing(e.nativeEvent)) return;
                       // 直接按出来的组合键填进去，免得手打出拼写错误
                       if (e.key === 'Tab' || e.key === 'Enter') return;
                       e.preventDefault();
