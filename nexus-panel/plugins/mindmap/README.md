@@ -3757,3 +3757,77 @@ if (r.a) await app.api.gcAssets?.();
 
 另外修了一条**把 BUG 写成期望值**的旧断言 —— 它原本断言
 `if (r.a) await io.dropAsset(r.a)` 必须存在，等于把这个 BUG 锁死在测试里。
+
+
+---
+
+## Mermaid 根节点引号嵌套，往返损坏中心主题文字（BUG 49）
+
+### 现象
+
+「导出 Mermaid → 再导回来」之后，**中心主题**变成一串带着方括号的怪东西：
+
+```
+导出前：项目(2024)
+导回后：["项目(2024)"]
+```
+
+子节点不受影响，只有根节点中招 —— 所以看起来特别像「Mermaid 解析坏了」。
+
+### 根因
+
+```js
+lines.push(pad + (r.depth === 0 ? `root((${mermaidLabel(r.text)}))` : mermaidLabel(r.text)));
+```
+
+`mermaidLabel` 在文字含特殊字符（括号 / `#` / 引号 / 中括号 …）时
+**本身**就是 `["文字"]`（方括号 + 引号）。再无脑套一层 `(())` 得到：
+
+```
+root((["项目(2024)"]))
+```
+
+两层括号嵌套，Mermaid 认不出来；而 `mermaidTextOf` 读回来只能拿到整串
+`["项目(2024)"]`。实测 4 例损坏：括号 / `#` / 引号 / 中括号。
+
+### 修法
+
+需要引号时改用 `root["文字"]`（方形节点），不再套 `(())`：
+
+```js
+label.charCodeAt(0) === 91 /* '[' */ ? 'root' + label : `root((${label}))`
+```
+
+形状从圆变方是视觉上的小退化，但往返是**正确性**问题，正确性优先。
+不需要引号时仍保持 `root((文字))`（中心主题的惯用圆形）。
+
+### 测试
+
+- 五种特殊字符的中心主题逐一往返比对（括号 / `#` / 引号 / 中括号 / 花括号）
+- 普通文字仍是 `root((…))`
+- 不得再出现 `(([` 这种嵌套
+
+顺带把 PlantUML / FreeMind / OPML 也套上同一组往返断言 ——
+实测它们本来就一致，加断言是为了将来改坏时能立刻红。
+
+### 变异验证
+
+2 处全部抓到：改回无脑 `root((label))`、引号情形仍套 `(())`。
+
+### 这一轮排查过的其它模块（未发现 BUG）
+
+`layout-thumbs.js`（纯数据）、`diagnostics.js`（纯函数）、
+`tag-badges.js`（纯函数）、`filelist.js`（面板状态机与拖拽）、
+`preset-icons.js`（图标库 UI 与分组管理）、`io.js` 的打印 / PNG / SVG 尺寸换算、
+`index.js` 的六种导出与 `printMap`、`store.js` 的读写与备份列举。
+
+其中确认**不是** BUG 的几点：
+
+- `exportData('svg')` 确实同时给出 `width` / `height` / `viewBox`
+  （真实 Chrome 实测 `width="152" height="80" viewBox="0 0 152 80"`），
+  所以 `pngScaleDims` 能取到尺寸，PNG 导出链路成立
+- `exportTxt` 导出的是工作簿 JSON 而非文本大纲 —— 注释里写明是对齐
+  C# 原版的行为，属有意设计
+- `removeIcon` / `renameIcon` / `moveIcon` / `moveGroup` / `copyBuiltinTo`
+  五个导出确实没有 UI 调用点（死代码）。这是**功能缺失**而非行为错误
+  （删单个图标目前只能删整个分组），需要 UI 设计决策，未擅自改动

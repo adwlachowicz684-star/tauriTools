@@ -10895,6 +10895,67 @@ group('移除附件无条件删资产，共享它的其它节点跟着失效（B
   ok(/if \(removed && !quiet\)/.test(strip(idx)), 'quiet 时才不写回收状态');
 }
 
+group('Mermaid 根节点引号嵌套，往返损坏中心主题文字（BUG 49）');
+
+{
+  const fmt = await import('file://' + path.join(HERE, 'formats.js'));
+
+  const mk = (rootText, kids = []) => JSON.stringify({
+    root: { data: { text: rootText }, children: kids.map((k) => ({ data: { text: k } })) },
+  });
+  const textsOf = (content) => {
+    const out = [];
+    const v = (n) => { out.push(n.data.text); (n.children || []).forEach(v); };
+    v(JSON.parse(content).root);
+    return out;
+  };
+
+  /*
+   * 根节点原来是 `root((${mermaidLabel(text)}))`。
+   * 而 mermaidLabel 在文字含特殊字符时**本身**就是 `["文字"]`，
+   * 再套一层 (()) 得到 `root((["项目(2024)"]))` —— 两层括号嵌套，
+   * Mermaid 认不出；mermaidTextOf 读回来只能拿到整串 `["项目(2024)"]`。
+   *
+   * 实测 4 例损坏：括号 / # / 引号 / 中括号。
+   * 「导出成 Mermaid → 再导回来」中心主题就变成一串带方括号的怪东西。
+   */
+  const cases = [
+    ['括号', '项目(2024)'],
+    ['井号', '话题#1'],
+    ['引号', '他说"好"'],
+    ['中括号', '阶段[一]'],
+    ['花括号', '范围{a}'],
+  ];
+  for (const [cn, rootText] of cases) {
+    const src = mk(rootText, ['子1', '子(2)']);
+    const back = fmt.fromMermaid(fmt.toMermaid(src));
+    ok(back !== null, `${cn}：导回不能是 null`);
+    eq(textsOf(back || '{"root":{"data":{"text":"?"}}}')[0], rootText,
+      `${cn}：中心主题文字必须原样往返（不能带着方括号回来）`);
+  }
+
+  // 不需要引号时保持圆形 root((…))，视觉不变
+  const plain = fmt.toMermaid(mk('中心主题', ['子1']));
+  ok(/root\(\(中心主题\)\)/.test(plain), '普通文字仍是 root((…))（中心主题的圆形）');
+  // 需要引号时改用 root[“…”]，不能再出现 (([ 这种嵌套
+  const quoted = fmt.toMermaid(mk('项目(2024)', []));
+  ok(!/\(\(\[/.test(quoted), '不得出现 ((["…"]) 这种两层括号嵌套');
+  ok(/root\["项目\(2024\)"\]/.test(quoted), '需要引号时写成 root["…"]');
+
+  // 其它四种格式顺带一起守（实测都一致，别将来改坏了）
+  const rt = (to, from) => {
+    for (const [, rootText] of cases) {
+      const src = mk(rootText, ['子']);
+      const back = from(to(src));
+      eq(textsOf(back || '{"root":{"data":{"text":"?"}}}')[0], rootText,
+        `PlantUML/其它格式同样要往返一致`);
+    }
+  };
+  rt(fmt.toPlantUml, fmt.fromPlantUml);
+  rt(fmt.toFreemind, fmt.fromFreemind);
+  rt((c) => fmt.toOpml(c, 'T'), fmt.fromOpml);
+}
+
 /* ============================================================
    结果
    ============================================================ */

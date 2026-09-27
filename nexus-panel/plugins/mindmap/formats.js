@@ -317,7 +317,23 @@ export function toMermaid(content) {
   const lines = ['mindmap'];
   for (const r of rows) {
     const pad = '  '.repeat(r.depth + 1);
-    lines.push(pad + (r.depth === 0 ? `root((${mermaidLabel(r.text)}))` : mermaidLabel(r.text)));
+    const label = mermaidLabel(r.text);
+    /*
+     * 根节点**不能**无脑写成 `root((${label}))`。
+     *
+     * label 在文字含特殊字符时本身就是 `["文字"]`（方括号 + 引号），
+     * 再套一层 `(())` 就变成 `root((["项目(2024)"]))` —— 两层括号嵌套，
+     * Mermaid 认不出，而 mermaidTextOf 读回来只能拿到整串
+     * `["项目(2024)"]`（实测 4 例：括号 / # / 引号 / 中括号全部损坏），
+     * 于是「导出成 Mermaid 再导回来」中心主题就变成一串带着方括号的怪东西。
+     *
+     * 需要引号时改用 `root["文字"]`（方形节点）—— 形状从圆变方是
+     * 视觉上的小退化，但往返才是正确性问题，正确性优先。
+     * 不需要引号时保持 `root((文字))`（圆形，中心主题的惯用形状）。
+     */
+    lines.push(pad + (r.depth === 0
+      ? (label.charCodeAt(0) === 91 /* '[' */ ? 'root' + label : `root((${label}))`)
+      : label));
   }
   return lines.join('\n') + '\n';
 }
