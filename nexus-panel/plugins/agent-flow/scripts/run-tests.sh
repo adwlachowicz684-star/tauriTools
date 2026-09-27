@@ -94,8 +94,14 @@ echo "   产物在 $OUT"
 # 之前踩过测试不真编译，这次是文档不真生成。
 # ------------------------------------------------------------------
 echo "== 重新生成文档 =="
-AF_OUT="$OUT" node "$HERE/scripts/gen-node-docs.mjs" >> /tmp/afts-gendocs.log 2>&1 \
-  || echo "   文档生成失败（见 /tmp/afts-gendocs.log）"
+# 失败必须**中断**：只打印一句的话，测试会拿上一轮留下的旧 md 去断言，
+# 于是"生成器坏了"表现为"测试全绿" —— 比不生成还糟。
+AF_OUT="$OUT" node "$HERE/scripts/gen-node-docs.mjs" >> /tmp/afts-gendocs.log 2>&1
+if [ $? -ne 0 ]; then
+  echo "✗ 文档生成失败，测试中止（见 /tmp/afts-gendocs.log）"
+  tail -20 /tmp/afts-gendocs.log
+  exit 1
+fi
 
 # ------------------------------------------------------------------
 # 跑测试

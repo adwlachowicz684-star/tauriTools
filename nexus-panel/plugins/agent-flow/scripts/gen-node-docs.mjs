@@ -602,6 +602,38 @@ function paramsOf(kind, b) {
       rows.push(r);
     }
     rows.notes = derived.notes;
+
+    /*
+     * ================= 自检：声明的键一个都不能少 =================
+     *
+     * parseFields 是**按块切分**的，切错一块就整块消失。
+     * 已经因此丢过两次字段：
+     *   1. `{` 与 `type:` 之间夹注释 → HTTP 的 url/method 没了
+     *   2. 单行写法 `{ key: 'x', ..., type: 'text' }` → 容器的名称没了
+     *
+     * 两次都是"不报错，只是少几行"。所以这里**换一条独立的取数路径**：
+     * 不去相信块的切分结果，而是直接在源码里把所有 `key: 'x'` 全扫出来
+     * （外加 custom 块的 spec.keys），再和最终进表的键做对账。
+     *
+     * 两条路径互相独立，任何一条漏了都会被另一条逮住 ——
+     * 这是"同一件事必须有两条独立证据"原则在本文件里的第三次应用。
+     */
+    const declared = new Set();
+    for (const ff of fieldFiles) {
+      const src = fs.readFileSync(path.join(ROOT, 'nodes', 'defs', ff), 'utf-8');
+      for (const m of src.matchAll(/key:\s*'([^']+)'/g)) declared.add(m[1]);
+      for (const m of src.matchAll(/spec:\s*\{\s*keys:\s*\[([^\]]+)\]/g)) {
+        for (const k of m[1].matchAll(/'([^']+)'/g)) declared.add(k[1]);
+      }
+    }
+    const missing = [...declared].filter((k) => !seen.has(k));
+    if (missing.length) {
+      throw new Error(
+        `【文档生成中止】${kind}：源码里声明了 ${missing.length} 个键，参数表里没有 —— ${missing.join(' / ')}\n`
+        + '这是字段块被解析器整块跳过的典型症状，不是"这个参数不用写进文档"。'
+        + '直接跳过会产出一份缺项的文档，而缺的往往是最关键那一项。',
+      );
+    }
   }
   // 契约里手写的（manualParams 或 hiddenParams）
   for (const p of spec.SPECS[kind]?.params ?? []) {
