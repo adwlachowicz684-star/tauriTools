@@ -5,7 +5,8 @@
  * 而界面上显示的还是旧数字，看起来像"改了没生效"。
  *
  * 数据来源：package.json（声明）+ node_modules 下各包的 package.json（实装）
- *           + 源码 import 扫描（谁在用）+ Cargo.toml（Rust 侧）
+ *           + 源码 import 扫描（谁在用）+ requireDep 扫描（谁取运行时那份）
+ *           + Cargo.toml（Rust 侧）
  *
  * （这里刻意不写 node_modules/<星号>/package.json：星号紧跟斜杠会提前闭合
  *   块注释，整个清单文件直接语法错误，且报错指向文件末尾而不是这行。）
@@ -14,7 +15,7 @@
  * 运行时再去读只会得到一份空列表，而且不报错。
  */
 export const DEPS_MANIFEST = {
-  "generatedAt": "2026-09-26T23:35:05.576Z",
+  "generatedAt": "2026-09-27T16:53:49.884Z",
   "depsDir": "shared",
   "dirNote": "当前 node_modules 是共享副本（软链接），里面的版本与本仓库无关，故不判定实装版本",
   "summary": {
@@ -38,6 +39,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "md"
       ],
+      "runtimeUsedBy": [],
       "pinned": true,
       "note": "≥1.2026.6 才是 MIT，低版本是 GPL-3.0-or-later —— 必须精确锁定，不能加 ^",
       "install": "npm i @plantuml/core@1.2026.8"
@@ -52,6 +54,7 @@ export const DEPS_MANIFEST = {
         "agent-flow",
         "外壳"
       ],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "与 Cargo 侧的 tauri 必须同为 2.x，跨大版本会有静默的类型漂移",
       "install": "npm i @tauri-apps/api@^2"
@@ -65,6 +68,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "agent-flow"
       ],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i @xyflow/react@^12.11.6"
@@ -76,6 +80,9 @@ export const DEPS_MANIFEST = {
       "dev": false,
       "status": "unknown",
       "usedBy": [
+        "md"
+      ],
+      "runtimeUsedBy": [
         "md"
       ],
       "pinned": false,
@@ -100,6 +107,7 @@ export const DEPS_MANIFEST = {
         "测试/脚本",
         "设置"
       ],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i react@^18.3.1"
@@ -118,6 +126,7 @@ export const DEPS_MANIFEST = {
         "外壳",
         "测试/脚本"
       ],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i react-dom@^18.3.1"
@@ -133,6 +142,7 @@ export const DEPS_MANIFEST = {
         "md-render",
         "测试/脚本"
       ],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "MD 渲染核心；不带它 md 与 md-render 两个入口一起失效",
       "install": "npm i react-markdown@^10.1.0"
@@ -146,6 +156,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "md"
       ],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i rehype-highlight@^7.0.0"
@@ -159,6 +170,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "md"
       ],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i rehype-slug@^6.0.0"
@@ -172,6 +184,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "md"
       ],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i remark-gfm@^4.0.1"
@@ -183,6 +196,7 @@ export const DEPS_MANIFEST = {
       "dev": true,
       "status": "unknown",
       "usedBy": [],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i @tauri-apps/cli@^2 -D"
@@ -194,6 +208,7 @@ export const DEPS_MANIFEST = {
       "dev": true,
       "status": "unknown",
       "usedBy": [],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i @types/react@^18.3.12 -D"
@@ -205,6 +220,7 @@ export const DEPS_MANIFEST = {
       "dev": true,
       "status": "unknown",
       "usedBy": [],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i @types/react-dom@^18.3.1 -D"
@@ -218,6 +234,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "测试/脚本"
       ],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i @vitejs/plugin-react@^4.3.4 -D"
@@ -232,6 +249,7 @@ export const DEPS_MANIFEST = {
         "mindmap",
         "测试/脚本"
       ],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i jsdom@^24.1.3 -D"
@@ -246,6 +264,7 @@ export const DEPS_MANIFEST = {
         "外壳",
         "测试/脚本"
       ],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i typescript@^5.6.3 -D"
@@ -259,6 +278,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "测试/脚本"
       ],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i vite@^5.4.11 -D"
@@ -270,6 +290,7 @@ export const DEPS_MANIFEST = {
       "dev": true,
       "status": "unknown",
       "usedBy": [],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i tough-cookie@* -D"
@@ -281,6 +302,7 @@ export const DEPS_MANIFEST = {
       "dev": true,
       "status": "unknown",
       "usedBy": [],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i iconv-lite@* -D"
@@ -292,6 +314,7 @@ export const DEPS_MANIFEST = {
       "dev": true,
       "status": "unknown",
       "usedBy": [],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i tr46@* -D"
@@ -303,6 +326,7 @@ export const DEPS_MANIFEST = {
       "dev": true,
       "status": "unknown",
       "usedBy": [],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i cssstyle@* -D"
@@ -314,6 +338,7 @@ export const DEPS_MANIFEST = {
       "dev": true,
       "status": "unknown",
       "usedBy": [],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i rrweb-cssom@* -D"
@@ -325,6 +350,7 @@ export const DEPS_MANIFEST = {
       "dev": true,
       "status": "unknown",
       "usedBy": [],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i parse5@* -D"
@@ -336,6 +362,7 @@ export const DEPS_MANIFEST = {
       "dev": true,
       "status": "unknown",
       "usedBy": [],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i ws@* -D"
@@ -351,6 +378,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "测试/脚本"
       ],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "源码里 import 了，但 package.json 没写 —— 换台机器 clone 后才会暴露",
       "install": "npm i acorn"
@@ -364,6 +392,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "测试/脚本"
       ],
+      "runtimeUsedBy": [],
       "pinned": false,
       "note": "源码里 import 了，但 package.json 没写 —— 换台机器 clone 后才会暴露",
       "install": "npm i esbuild"
@@ -379,6 +408,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "Rust"
       ],
+      "runtimeUsedBy": [],
       "pinned": true,
       "note": "",
       "install": "cargo add image@0.25.6"
@@ -394,6 +424,7 @@ export const DEPS_MANIFEST = {
         "macos",
         "linux"
       ],
+      "runtimeUsedBy": [],
       "pinned": true,
       "note": "按平台分别指定 feature",
       "install": "cargo add keyring@3"
@@ -407,6 +438,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "Rust"
       ],
+      "runtimeUsedBy": [],
       "pinned": true,
       "note": "",
       "install": "cargo add md5@0.8.1"
@@ -420,6 +452,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "Rust"
       ],
+      "runtimeUsedBy": [],
       "pinned": true,
       "note": "",
       "install": "cargo add notify@6"
@@ -433,6 +466,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "Rust"
       ],
+      "runtimeUsedBy": [],
       "pinned": true,
       "note": "",
       "install": "cargo add pdfium-render@0.9.4"
@@ -446,6 +480,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "Rust"
       ],
+      "runtimeUsedBy": [],
       "pinned": true,
       "note": "",
       "install": "cargo add rayon@1.10.0"
@@ -459,6 +494,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "Rust"
       ],
+      "runtimeUsedBy": [],
       "pinned": true,
       "note": "",
       "install": "cargo add serde@1"
@@ -472,6 +508,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "Rust"
       ],
+      "runtimeUsedBy": [],
       "pinned": true,
       "note": "",
       "install": "cargo add serde_json@1"
@@ -485,6 +522,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "Rust"
       ],
+      "runtimeUsedBy": [],
       "pinned": true,
       "note": "",
       "install": "cargo add svg2pdf@0.13.0"
@@ -498,6 +536,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "Rust"
       ],
+      "runtimeUsedBy": [],
       "pinned": true,
       "note": "",
       "install": "cargo add tauri@2"
@@ -511,6 +550,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "Rust"
       ],
+      "runtimeUsedBy": [],
       "pinned": true,
       "note": "",
       "install": "cargo add tauri-plugin-http@2"
@@ -524,6 +564,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "Rust"
       ],
+      "runtimeUsedBy": [],
       "pinned": true,
       "note": "",
       "install": "cargo add tauri-plugin-shell@2"
@@ -537,6 +578,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "Rust"
       ],
+      "runtimeUsedBy": [],
       "pinned": true,
       "note": "",
       "install": "cargo add tauri-plugin-single-instance@2"
@@ -550,6 +592,7 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "Rust"
       ],
+      "runtimeUsedBy": [],
       "pinned": true,
       "note": "",
       "install": "cargo add tauri-plugin-updater@2"

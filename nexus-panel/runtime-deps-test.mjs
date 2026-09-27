@@ -21,6 +21,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const read = (p) => fs.readFileSync(path.join(HERE, p), 'utf8');
@@ -405,12 +406,73 @@ const fb = async () => BUNDLE;
   t('指定了版本而装的是另一个版本 → 用它而不是误判为已装', r.source === 'bundle', r.source);
 }
 
+/* ---------- 7b. 装了有没有人用：必须提前说，不能装完才发现没效果 ---------- */
+{
+  const manifest = (await import('./js/deps-manifest.js')).DEPS_MANIFEST;
+  const all = [...manifest.npm, ...manifest.undeclared];
+
+  const withRt = all.filter((d) => (d.runtimeUsedBy ?? []).length > 0);
+  t('至少有一个包有运行时消费方（扫描没整体失效）', withRt.length > 0, `n=${withRt.length}`);
+
+  const mm = all.find((d) => d.name === 'mermaid');
+  t('mermaid 的运行时消费方是 md', !!mm && (mm.runtimeUsedBy ?? []).includes('md'), JSON.stringify(mm && mm.runtimeUsedBy));
+  /*
+   * 「不含外壳」这条是防假阳性：js/plugin-sdk.js 的用法示例注释里
+   * 正好写着 ctx.requireDep('mermaid', ...)。不剥注释，"外壳"就会被
+   * 记成消费方 —— 于是"扫不出真消费方"这类失效会被永久掩盖。
+   */
+  t('mermaid 的运行时消费方不含"外壳"（注释示例不算）',
+    !!mm && !(mm.runtimeUsedBy ?? []).includes('外壳'), JSON.stringify(mm && mm.runtimeUsedBy));
+
+  t('consumerNoteOf：有消费方 → 不提示',
+    rt.consumerNoteOf({ kind: 'runtime', dev: false, install: 'npm i mermaid@^12.0.0', runtimeUsedBy: ['md'] }) === null);
+  t('consumerNoteOf：无消费方 → 给说明',
+    typeof rt.consumerNoteOf({ kind: 'runtime', dev: false, install: 'npm i rehype-highlight@^7', runtimeUsedBy: [] }) === 'string');
+  t('consumerNoteOf：本来就装不了 → 不重复提示',
+    rt.consumerNoteOf({ kind: 'rust', install: 'cargo add serde' }) === null);
+  t('说明不能是空串（界面会出现"没有解释的提示"）', (rt.RT_NO_CONSUMER || '').length >= 20, String((rt.RT_NO_CONSUMER || '').length));
+
+  /*
+   * 必须**重跑一遍扫描**再比对，不能只验已提交的清单：
+   * js/deps-manifest.js 是静态文件，扫描器改坏了它也不会变 ——
+   * 于是"不扫 requireDep 了""清单忘了重跑"这两类失效都测不到。
+   */
+  const tmp = path.join(HERE, '_deps_scan_out.mjs');
+  let fresh = null;
+  try {
+    execFileSync(process.execPath, ['scripts/scan-deps.mjs', '--out', tmp, '--quiet'], { cwd: HERE });
+    fresh = (await import(`./_deps_scan_out.mjs?v=${Date.now()}`)).DEPS_MANIFEST;
+  } finally {
+    try { fs.unlinkSync(tmp); } catch {}
+  }
+  t('扫描器能重跑（--out 到临时文件）', !!fresh);
+  if (fresh) {
+    const fAll = [...fresh.npm, ...fresh.undeclared];
+    const fMm = fAll.find((d) => d.name === 'mermaid');
+    t('重跑后 mermaid 仍被 md 运行时取用', !!fMm && (fMm.runtimeUsedBy ?? []).includes('md'), JSON.stringify(fMm && fMm.runtimeUsedBy));
+    const drift = fAll.filter((d) => {
+      const old = all.find((x) => x.name === d.name);
+      return !old || JSON.stringify(old.runtimeUsedBy ?? []) !== JSON.stringify(d.runtimeUsedBy ?? []);
+    });
+    t('已提交清单与重跑结果一致（清单没忘重跑）', drift.length === 0,
+      drift.map((d) => d.name).join(','));
+  }
+
+  const scan = read('scripts/scan-deps.mjs');
+  t('扫描器扫 requireDep 取用点', /runtimeDepsOf\(/.test(scan) && /requireDep\s*\(/.test(scan));
+  t('扫 requireDep 前先剥注释', /function runtimeDepsOf[\s\S]{0,300}stripComments\(raw\)/.test(scan));
+  t('清单每条都有 runtimeUsedBy 字段', all.every((d) => Array.isArray(d.runtimeUsedBy)));
+}
+
 const cardText = read('plugins/settings/DepsCard.tsx');
 t('DepsCard 接入 runtime-deps', /js\/runtime-deps\.js/.test(cardText));
 t('DepsCard 用 canInstall 决定按钮显隐', /canInstall\(/.test(cardText));
 t('不能装时必须显示理由（不能只是没按钮）', /blockReasonOf\(/.test(cardText) && /不适合运行时安装/.test(cardText));
 t('装完真 import 一次（验可加载）', /loadRuntimeDep\(/.test(cardText));
 t('后端未接入时禁用按钮并提示', /rtMissing/.test(cardText) && /disabled=\{running \|\| rtMissing\}/.test(cardText));
+t('装了没人取用的包要提前说明（不是装完才发现没效果）',
+  /consumerNoteOf\(/.test(cardText) && /\{noUse \?/.test(cardText));
+t('有运行时消费方时显示是谁在用', /rtUsers/.test(cardText) && /装了会被/.test(cardText));
 
 t('plugin-sdk 暴露 ctx.requireDep', /requireDep\(name, opts = \{\}\)/.test(read('js/plugin-sdk.js')));
 t('plugin-sdk 从 runtime-deps 引入 requireDep',

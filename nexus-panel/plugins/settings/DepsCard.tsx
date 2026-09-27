@@ -5,6 +5,7 @@ import { copyText } from '../../js/clipboard.js';
 import {
   blockReasonOf,
   canInstall,
+  consumerNoteOf,
   installRuntimeDep,
   listRuntimeDeps,
   loadRuntimeDep,
@@ -49,6 +50,8 @@ type Item = {
   dev: boolean;
   status: string;
   usedBy: string[];
+  /** 运行时取用方（ctx.requireDep）。空数组 = 装了也没人读。 */
+  runtimeUsedBy?: string[];
   pinned: boolean;
   note: string;
   install: string;
@@ -261,6 +264,14 @@ export default function DepsCard() {
          * rust / 开发时那两类，标签上已经写了 crate / 开发时，不必重复。
          */
         const why = can ? '' : d.kind === 'runtime' && !d.dev ? blockReasonOf(d) || '' : '';
+        /*
+         * 能装、但装了没人取用的，必须提前说清楚。
+         * 不说的话：用户点了「安装」、看到"已安装并验证可加载"，
+         * 而渲染行为一点没变 —— 这种"装成功但没效果"不报错也不红，
+         * 只会让人以为功能还没做完。
+         */
+        const noUse = can ? consumerNoteOf(d) : null;
+        const rtUsers = (d.runtimeUsedBy ?? []).filter(Boolean);
         const running = busy === k;
         return (
           <div
@@ -296,6 +307,12 @@ export default function DepsCard() {
             ) : null}
 
             {why ? <div className="dep-note dep-blocked">不适合运行时安装 —— {why}</div> : null}
+
+            {noUse ? <div className="dep-note">{noUse}</div> : null}
+
+            {can && !hit && rtUsers.length ? (
+              <div className="dep-note">装了会被 {rtUsers.join('、')} 取用（优先用装的那份，加载失败自动回退打包版）</div>
+            ) : null}
 
             {showCmd ? (
               <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)' }}>
