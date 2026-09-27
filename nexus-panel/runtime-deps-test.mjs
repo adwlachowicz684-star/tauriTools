@@ -63,6 +63,65 @@ t('canInstall 拒绝开发时依赖', rt.canInstall({ kind: 'runtime', dev: true
 t('canInstall 接受运行时依赖', rt.canInstall({ kind: 'runtime', dev: false, install: 'npm i mermaid@^12.0.0' }) === true);
 t('canInstall 拒绝解析不出的', rt.canInstall({ kind: 'runtime', install: '' }) === false);
 
+/* ---------- 1b. 装了反而坏的包必须拒绝 ---------- */
+
+/**
+ * 【这一组守什么】
+ * 一键装进来的包会在**宿主上下文**里被插件 import。有几类包装进去不是
+ * "没用"，而是直接把功能弄坏，而且坏的样子**完全指不到"刚装了它"**：
+ *
+ *   · react / react-dom / react-markdown / @xyflow/react
+ *     → CDN 单文件自带一份 react = 第二份实例 → Invalid hook call。
+ *       用户只会看到"某个插件崩了"，不会想到是依赖页签里的那次点击。
+ *   · @tauri-apps/api
+ *     → 靠 window.__TAURI_INTERNALS__ 与 Rust 侧通信，版本必须与 Cargo
+ *       侧一致 → 装外部版本 = 能 import、但所有调用静默失败。
+ *   · @plantuml/core
+ *     → 要先注入 viz-global.js 才能用，单文件装了也用不了。
+ *
+ * 所以这里钉的是：**这些包必须判为不可安装，且必须给得出理由**。
+ * 只判 false 而不给理由也不行 —— 界面上按钮消失了，用户会以为功能没做完。
+ */
+const BLOCKED = Object.keys(rt.RT_BLOCKED || {});
+t('存在"装了反而坏"的拒绝名单', BLOCKED.length > 0);
+
+for (const n of BLOCKED) {
+  const item = { name: n, kind: 'runtime', dev: false, install: `npm i ${n}@1.2.3` };
+  t(`拒绝一键安装 ${n}`, rt.canInstall(item) === false);
+  // 理由要能显示给用户看懂，不能是空串或一句话都没有
+  t(`${n} 有可显示的理由（≥10 字）`, String(rt.blockReasonOf(item) || '').length >= 10);
+}
+
+// 不误伤：真正适合运行时装的必须仍然可装
+for (const n of ['mermaid', 'rehype-highlight', 'rehype-slug', 'remark-gfm']) {
+  t(`不误伤 ${n}（仍可一键安装）`,
+    rt.canInstall({ name: n, kind: 'runtime', dev: false, install: `npm i ${n}@^1.0.0` }) === true);
+}
+
+/*
+ * canInstall 与 blockReasonOf 必须共用一处判定。
+ * 两者各写一份的后果：界面出现"能装但理由非空"或"不能装却没理由可显示"
+ * ——前者按钮给了却显示一句警告，后者按钮消失且无任何解释。
+ */
+const mf = await import('./js/deps-manifest.js');
+const allItems = [
+  ...((mf.DEPS_MANIFEST && mf.DEPS_MANIFEST.npm) || []).map((d) => ({ ...d, kind: d.dev ? 'dev' : 'runtime' })),
+  ...((mf.DEPS_MANIFEST && mf.DEPS_MANIFEST.crates) || []).map((d) => ({ ...d, kind: 'rust' })),
+];
+t('manifest 里有条目（扫描本身没失效）', allItems.length > 0, `n=${allItems.length}`);
+t('canInstall 与 blockReasonOf 一致（无"能装却给理由"/"不能装却没理由"）',
+  allItems.every((d) => rt.canInstall(d) === (rt.blockReasonOf(d) === null)));
+
+/*
+ * 防僵尸：名单里的包名必须真的还在 manifest 里。
+ * 写错一个字、或者某个包早已从项目移除，名单就悄悄失效 —— 那时界面
+ * 重新给出「安装」按钮，而没有任何断言会红。
+ */
+const known = new Set(allItems.map((d) => d.name));
+t('拒绝名单里的包名都真实存在（防写错/防僵尸）',
+  BLOCKED.every((n) => known.has(n)),
+  BLOCKED.filter((n) => !known.has(n)).join(','));
+
 /* ---------- 2. 文件名必须能被后端解析回来（前后端契约） ---------- */
 
 /**
@@ -349,6 +408,7 @@ const fb = async () => BUNDLE;
 const cardText = read('plugins/settings/DepsCard.tsx');
 t('DepsCard 接入 runtime-deps', /js\/runtime-deps\.js/.test(cardText));
 t('DepsCard 用 canInstall 决定按钮显隐', /canInstall\(/.test(cardText));
+t('不能装时必须显示理由（不能只是没按钮）', /blockReasonOf\(/.test(cardText) && /不适合运行时安装/.test(cardText));
 t('装完真 import 一次（验可加载）', /loadRuntimeDep\(/.test(cardText));
 t('后端未接入时禁用按钮并提示', /rtMissing/.test(cardText) && /disabled=\{running \|\| rtMissing\}/.test(cardText));
 
@@ -358,7 +418,14 @@ t('plugin-sdk 从 runtime-deps 引入 requireDep',
 
 const mb = read('plugins/md/MermaidBlock.tsx');
 t('md 的 mermaid 走 requireDep 取用（装过优先）', /ctx\.requireDep\('mermaid'/.test(mb));
-t('md 取 mermaid 有打包版兜底', /fallback = \(\) => import\('mermaid'\)/.test(mb));
+/*
+ * 不写死 `fallback = () => import('mermaid')` 这个字面形式：
+ * 实际写法是 `async () => await import('mermaid')` —— 因为 md-mermaid-test
+ * 那条"mermaid 不能进首屏 bundle"找的是 `await import('mermaid')`。
+ * 这里要守的是"有 fallback，且 fallback 动态 import mermaid"，不是它的写法。
+ */
+t('md 取 mermaid 有打包版兜底',
+  /fallback\s*=\s*(async\s*)?\(\)\s*=>/.test(mb) && /import\('mermaid'\)/.test(mb));
 
 const ip = read('js/invoke-policy.js');
 t('md 白名单只给 list（不给 install/remove）',
