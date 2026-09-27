@@ -243,6 +243,12 @@ export const PLUGIN_COMMANDS = {
   settings: [
     'af_fs_allow_root', 'af_fs_disallow_root', 'af_fs_list_roots', 'app_version',
     'fpx_copy_text',
+    /*
+     * 运行时依赖三条：依赖页签的「一键安装」。
+     * fpx_rt_dep_install 是 M 类（从远端装可执行代码），所以**只给
+     * 设置页这个内置插件** —— 第三方调它会被 THIRD_DENY_CAPS 硬禁。
+     */
+    'fpx_rt_dep_list', 'fpx_rt_dep_install', 'fpx_rt_dep_remove',
   ],
 
   /* 色盘服务要用系统吸管 —— 与 fpx_pick_color 命令对应 */

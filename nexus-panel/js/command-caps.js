@@ -204,6 +204,17 @@ export const COMMAND_CAPS = {
   /* 常用文件夹（工具级，所有目录选择器共用） */
   fpx_list_fav_dirs: 'R',
   fpx_save_fav_dirs: 'W',
+  /*
+   * 运行时依赖（js/runtime-deps.js + src-tauri/src/rt_dep.rs）
+   *
+   * install 定 **M**，不是 W —— 它写的虽然是工具自己的目录，但写进去的是
+   * **从远端取来的代码**，之后会被插件在宿主上下文里 import 执行。
+   * 这就是一条代码注入面：谁能调它，谁就能让工具执行任意远端代码。
+   * 定 W 的话第三方插件也能拿到（THIRD_DENY_CAPS 只禁 M）。
+   */
+  fpx_rt_dep_list: 'R',
+  fpx_rt_dep_install: 'M',
+  fpx_rt_dep_remove: 'W',
   fpx_import_icons: 'W',
   fpx_set_editor: 'W',
   fpx_edit_file: 'W',
