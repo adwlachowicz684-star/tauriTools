@@ -2781,7 +2781,9 @@ html.theme-transition *:not(.spinner) {
 .dep-chip { padding: 0 10px; font-size: var(--fs-12, 12px); }
 .dep-chip.on {
   color: var(--accent);
-  box-shadow: inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light);
+  /* 与 --sh-in-md 数值完全一致：别把档位抄一遍，
+     抄了就与 tokens.css 那份必然漂移（改一档忘另一处）。 */
+  box-shadow: var(--sh-in-md);
 }
 .dep-item { min-width: 0; overflow: hidden; }
 .dep-name { font-size: var(--fs-13, 13px); color: var(--text); word-break: break-all; }
