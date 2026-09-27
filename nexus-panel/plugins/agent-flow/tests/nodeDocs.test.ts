@@ -446,3 +446,42 @@ test('update 的参数表只有 targets，没有合并前的顶层字段', () =>
   }
   assert.ok(table.includes('`targets`'), 'targets 必须在参数表里（它是唯一数据源）');
 });
+
+/**
+ * 「最不能少的那几行」必须在参数表里。
+ *
+ * ================= 这些是怎么丢的 =================
+ *
+ * 生成器切分字段块用的正则只跳过空白、不认注释：
+ *   /\{\s*\n?\s*type:/
+ *
+ * 而字段块恰恰是"越重要越想写注释"的地方 ——
+ * genericHttp 的 url/method 块写了"方法与地址同行"，
+ * github_update 的 owner/repo 块写了"两个框同一行"。
+ * 于是这两块**被静默跳过**，参数表里没有 url、没有 owner/repo。
+ *
+ * 后果：拼装方照文档拼出来的 HTTP 节点**不知道要填地址**，
+ * 拼出来的仓库更新节点不知道要填哪个仓库。不报错，只是少几行 ——
+ * 而少的恰好是最不能少的。
+ *
+ * 所以这里盯的是最终产物（生成的 md），不是中间某个函数。
+ */
+const ESSENTIAL: Record<string, string[]> = {
+  'generic-http': ['url', 'method'],
+  'github-update': ['owner', 'repo'],
+  update: ['outputFormat', 'timeoutSec', 'userAgent', 'firstRunAsUpdate'],
+};
+
+test('每个节点"最不能少"的参数都在参数表里', () => {
+  for (const [kind, keys] of Object.entries(ESSENTIAL)) {
+    const s = fs.readFileSync(path.join(nodesDir, `${kind}.params.md`), 'utf-8');
+    const table = s.slice(s.indexOf('| 参数 |'), s.indexOf('## 具名输出'));
+    for (const k of keys) {
+      assert.ok(
+        table.includes(`\`${k}\``),
+        `${kind}.params.md 的参数表缺 \`${k}\` —— `
+        + '这类字段块通常带注释，生成器切分时容易整块跳过',
+      );
+    }
+  }
+});

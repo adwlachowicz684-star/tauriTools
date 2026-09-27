@@ -498,6 +498,30 @@ export const SPECS: Record<string, NodeSpec> = {
         options: UPDATE_SOURCE_KEYS,
         required: true,
       },
+      /*
+       * 下面四项是**节点级**参数：所有目标共用，不在卡片里。
+       *
+       * 它们与 biliUid / biliMode / biliCookie / feedUrl 那套旧字段
+       * **名字完全不同、互不重叠**，但上一版文档把两者混在了一张表里
+       * （因为旧版 bili / wechat 与 update 共用 dataKind），
+       * 于是"去掉废弃字段"时把它们一起去掉了 ——
+       * 而执行器一直在读：timeoutSec 缺了就退回默认 15 秒，
+       * outputFormat 缺了就退回布尔输出。不报错，只是配不上去。
+       */
+      {
+        key: 'outputFormat',
+        desc: '输出格式：bool 只给 true / false（给条件节点判断），detail 额外带上标题 / 链接 / 时间',
+        options: ['bool', 'detail'],
+      },
+      { key: 'timeoutSec', desc: '每个目标的抓取超时（秒）；留空用默认 15' },
+      {
+        key: 'userAgent',
+        desc: '自定义 User-Agent；部分订阅源会拒绝默认的非浏览器 UA，留空用默认值',
+      },
+      {
+        key: 'firstRunAsUpdate',
+        desc: '首次运行（还没有基线）时也算作更新。默认关闭 —— 刚配好就触发一次下游通常是误报',
+      },
     ],
   }),
   'github-update': S('json', 'none', '仓库最新信息（JSON）'),

@@ -84,7 +84,22 @@ function parseFields(file) {
   const src = fs.readFileSync(path.join(ROOT, 'nodes', 'defs', file), 'utf-8');
   const m0 = src.match(/const fields[^=]*=\s*\[/);
   const body = m0 ? src.slice(m0.index + m0[0].length) : src;
-  const starts = [...body.matchAll(/\{\s*\n?\s*type:\s*'([a-zA-Z]+)'/g)].map((m) => m.index);
+  /*
+   * `{` 与 `type:` 之间**允许有注释**。
+   *
+   * 原来的写法是 /\{\s*\n?\s*type:/ —— 只跳过空白，不认注释。
+   * 而字段块恰恰是"越重要越想写注释"的地方：
+   *
+   *   genericHttp.tsx 的 url/method 块（注释讲"方法与地址同行"）
+   *   github_update.tsx 的 owner/repo 块（注释讲"两个框同一行"）
+   *
+   * 于是这两块**被静默跳过**，生成的参数表里没有 url、没有 owner/repo ——
+   * 拼装方照文档拼出来的 HTTP 节点根本不知道要填地址。
+   * 不报错，只是少几行；而少了的恰好是最不能少的那几行。
+   */
+  const starts = [...body.matchAll(
+    /\{\s*(?:\/\/[^\n]*\n\s*|\/\*[\s\S]*?\*\/\s*)*type:\s*'([a-zA-Z]+)'/g,
+  )].map((m) => m.index);
   starts.push(body.length);
   const out = [];
   for (let i = 0; i < starts.length - 1; i++) {

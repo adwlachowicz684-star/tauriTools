@@ -23,10 +23,12 @@ HTTP 响应正文
 
 > 输出响应正文。状态码存在 {{本节点.status}}，配合「数据提取」节点可取出 JSON 字段。
 
-共 7 项：
+共 9 项：
 
 | 参数 | 类型 | 说明 | 取值 | 显示条件 |
 |---|---|---|---|---|
+| `url` | custom | 由手写面板渲染（通常带上游变量插入按钮） | — | — |
+| `method` | custom | 由手写面板渲染（通常带上游变量插入按钮） | — | — |
 | `headersText` | textarea | 请求头；留空即可；填了 Authorization 就不会再自动加连接令牌；占位：每行一条，如：\nX-Token: abc123 | — | — |
 | `body` | textarea | 请求体；请求体里可以引用上游输出；占位：{"key": "value"}，支持 {{上游.output}} | — | `d → d.method === 'POST' || d.method === 'PUT' || d.method === 'PATCH'` |
 | `bodyIsJson` | switch | 占位：按 JSON 发送（自动补 Content-Type） | — | `d → d.method === 'POST' || d.method === 'PUT' || d.method === 'PATCH'` |
