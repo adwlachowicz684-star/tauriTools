@@ -41,11 +41,35 @@ export function useLayoutMemory({ s, config }: UseLayoutMemoryArgs) {
       .catch((e) => s.pushLog(`布局保存失败：${errText(e)}`, true));
   }, [s]);
 
+  /*
+   * 与 state 同步的影子值 —— **落盘必须读它，不能读闭包里的 state**。
+   *
+   * 分隔条支持键盘微调（方向键 ±8 / Shift ±24），那条路径里 `onDelta` 与
+   * `onEnd` 是**同一次事件里同步连着调**的：setColStars 还没重渲染，
+   * onEnd 若读闭包里的 colStars，拿到的是调整**前**的旧值。
+   * 于是界面确实变了、写进 config 的却是旧值 —— 下次打开又回到原样，
+   * 全程不报错，用户只会觉得"键盘调的宽度记不住"。
+   *
+   * 连按还会更明显：dragBase 被旧值覆盖回去，第二次按的结果与第一次相同，
+   * 表现为"按好几下只跳一格"。
+   */
+  const colStarsRef = useRef<number[]>(colStars);
+  const logHeightRef = useRef<number>(logHeight);
+
+  const applyColStars = useCallback((next: number[]) => {
+    colStarsRef.current = next;
+    setColStars(next);
+  }, []);
+  const applyLogHeight = useCallback((next: number) => {
+    logHeightRef.current = next;
+    setLogHeight(next);
+  }, []);
+
   const onColResize = useCallback((i: number) => (delta: number) => {
     const total = colsRef.current?.getBoundingClientRect().width ?? 0;
     if (total <= 0) return;
-    setColStars(resizeColStars(dragBase.current.stars, i, delta, total));
-  }, []);
+    applyColStars(resizeColStars(dragBase.current.stars, i, delta, total));
+  }, [applyColStars]);
 
   /*
    * 松手时把当前布局写回 config。
@@ -59,13 +83,14 @@ export function useLayoutMemory({ s, config }: UseLayoutMemoryArgs) {
    * 必然已重渲染过，回调拿到的就是最新值。
    */
   const onColResizeEnd = useCallback(() => {
-    saveLayout({ colStars });
-    dragBase.current = { ...dragBase.current, stars: colStars };
-  }, [saveLayout, colStars]);
+    const next = colStarsRef.current;
+    saveLayout({ colStars: next });
+    dragBase.current = { ...dragBase.current, stars: next };
+  }, [saveLayout]);
 
   const onLogResize = useCallback((delta: number) => {
-    setLogHeight(clampLogHeight(dragBase.current.height + delta));
-  }, []);
+    applyLogHeight(clampLogHeight(dragBase.current.height + delta));
+  }, [applyLogHeight]);
 
   /*
    * ⚠️ 配置字段叫 logRowHeight，本地 state 叫 logHeight —— 两个名字不同，
@@ -79,19 +104,22 @@ export function useLayoutMemory({ s, config }: UseLayoutMemoryArgs) {
    *   以免再被"看着像是字段名简写"而改回去。）
    */
   const onLogResizeEnd = useCallback(() => {
-    saveLayout({ logRowHeight: logHeight });
-    dragBase.current = { ...dragBase.current, height: logHeight };
-  }, [saveLayout, logHeight]);
+    const next = logHeightRef.current;
+    saveLayout({ logRowHeight: next });
+    dragBase.current = { ...dragBase.current, height: next };
+  }, [saveLayout]);
 
   /** 配置被外部改了（MCP 侧 / 设置页保存）→ 同步回来 */
   useEffect(() => {
     const next = normalizeColStars(config?.colStars);
+    colStarsRef.current = next;
     setColStars(next);
     dragBase.current = { ...dragBase.current, stars: next };
   }, [config?.colStars]);
 
   useEffect(() => {
     const next = clampLogHeight(config?.logRowHeight);
+    logHeightRef.current = next;
     setLogHeight(next);
     dragBase.current = { ...dragBase.current, height: next };
   }, [config?.logRowHeight]);

@@ -607,6 +607,12 @@ function HelpDialog({
   /* 拖动中的高度 + 起点快照（相对起点算总位移，避免逐帧累加漂移） */
   const baseRef = useRef(height ?? 0);
   const [dragH, setDragH] = useState<number | null>(null);
+  /*
+   * 拖动高度的影子值 —— **提交时必须读它，不能读闭包里的 dragH**，理由同
+   * ui.tsx：键盘微调时 onDelta 与 onEnd 在同一次事件里同步连着调，
+   * 读闭包会拿到 null，高度闪一下就被弹回，键盘调高度完全无效。
+   */
+  const dragHRef = useRef<number | null>(null);
   const shownH = dragH ?? height ?? null;
 
   return (
@@ -669,9 +675,14 @@ function HelpDialog({
           <Splitter
             dir="vertical"
             ariaLabel="调整使用说明面板高度"
-            onDelta={(d) => setDragH(clampPanelHeight(baseRef.current + d) ?? baseRef.current)}
+            onDelta={(d) => {
+              const v = clampPanelHeight(baseRef.current + d) ?? baseRef.current;
+              dragHRef.current = v;
+              setDragH(v);
+            }}
             onEnd={() => {
-              const next = dragH;
+              const next = dragHRef.current;
+              dragHRef.current = null;
               setDragH(null);
               if (next != null) {
                 baseRef.current = next;

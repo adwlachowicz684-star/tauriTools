@@ -225,11 +225,19 @@ console.log('\n=== 9. setState updater 里不得有副作用 ★ ===');
     }
   }
   t('useLayoutMemory 的 updater 里无副作用调用', bad.length === 0, bad.join('、'));
-  /* 反面证据：现在应当直接读闭包值（依赖里带上它） */
-  t('onColResizeEnd 依赖里带 colStars',
-    /onColResizeEnd = useCallback\([\s\S]{0,220}?\}, \[saveLayout, colStars\]\)/.test(lm));
-  t('onLogResizeEnd 依赖里带 logHeight',
-    /onLogResizeEnd = useCallback\([\s\S]{0,220}?\}, \[saveLayout, logHeight\]\)/.test(lm));
+  /*
+   * 反面证据：落盘必须读**影子值**（ref），不能读闭包里的 state。
+   *
+   * 分隔条支持键盘微调，那条路径里 onDelta 与 onEnd 在**同一次事件里同步连着调**，
+   * setState 还没重渲染 —— 读闭包拿到的是调整**前**的旧值，界面变了而 config
+   * 没变，下次打开又回原样，全程不报错。所以这里不再要求"依赖里带上 colStars"，
+   * 改为要求读 ref（ref 不进依赖数组，也就不受这条约束）。
+   * 行为验证见 splitter-commit-test.mjs（真跑 hook）。
+   */
+  t('onColResizeEnd 读影子值而非闭包 colStars',
+    /onColResizeEnd = useCallback\([\s\S]{0,220}?colStarsRef\.current/.test(lm));
+  t('onLogResizeEnd 读影子值而非闭包 logHeight',
+    /onLogResizeEnd = useCallback\([\s\S]{0,220}?logHeightRef\.current/.test(lm));
 }
 
 console.log('\n=== 链接行数：按归一化键找，不能报出「0 个链接」===');

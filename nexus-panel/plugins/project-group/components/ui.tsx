@@ -111,6 +111,15 @@ export function Modal({
      逐帧累加会舍入漂移，拖久了数字对不上。 */
   const baseRef = useRef(height ?? 0);
   const [dragH, setDragH] = useState<number | null>(null);
+  /*
+   * 拖动高度的影子值 —— **提交时必须读它，不能读闭包里的 dragH**。
+   *
+   * 分隔条支持键盘微调（方向键 ±8 / Shift ±24），那条路径里 onDelta 与 onEnd
+   * 在**同一次事件里同步连着调**：setDragH 还没重渲染，onEnd 读到的仍是 null，
+   * 于是 `if (next != null)` 不成立 → 高度闪一下就被 setDragH(null) 弹回，
+   * 键盘调高度**完全无效**，且不报错、无任何提示。
+   */
+  const dragHRef = useRef<number | null>(null);
   const shownH = dragH ?? height ?? null;
 
   useEffect(() => {
@@ -151,9 +160,14 @@ export function Modal({
           <Splitter
             dir="vertical"
             ariaLabel="调整面板高度"
-            onDelta={(d) => setDragH(clampPanelHeight(baseRef.current + d) ?? baseRef.current)}
+            onDelta={(d) => {
+              const v = clampPanelHeight(baseRef.current + d) ?? baseRef.current;
+              dragHRef.current = v;
+              setDragH(v);
+            }}
             onEnd={() => {
-              const next = dragH;
+              const next = dragHRef.current;
+              dragHRef.current = null;
               setDragH(null);
               if (next != null) {
                 baseRef.current = next;

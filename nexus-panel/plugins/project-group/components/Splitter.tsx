@@ -11,7 +11,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  *     布局是高频连续变化，拖一格写一次会把整份 config 反复重写
  *     （还要过跨进程文件锁），拖动本身也会卡。松手才写。
  *   · 用 **pointer 事件** 而非 mouse：触屏 / 触控板同样可用，
- *     且 setPointerCapture 能保证鼠标移出元素也不断连。
+ *     移出元素也不断连靠 window 级监听（move/up/cancel 全挂在 window 上），
+     而不是 setPointerCapture —— 本组件没有调用它，别照旧注释去"补"：
+     一旦捕获，事件会改投到本元素，与 window 监听二选一，两套并存最容易出事。
  *   · 拖动时给 body 加 `user-select: none`：否则会一路选中文字，
  *     视觉上像"整页被框选"，非常干扰。
  */
@@ -36,9 +38,26 @@ export function Splitter({
   const startRef = useRef(0);
   const lastRef = useRef(0);
 
+  /** 与 state 同步的拖动标记：卸载清理要读它，而 cleanup 里读不到最新 state */
+  const draggingRef = useRef(false);
+
+  /*
+   * 拖动中若本组件被卸载（弹窗被关掉、切到别的页面），`fpx-no-select`
+   * 会**永久留在 body 上** —— 之后整个界面都选不中文字，且没有任何提示
+   * 能指向这里。`stop()` 只在松手时跑，覆盖不到这条路径。
+   *
+   * 只在"自己正在拖"时才摘：本组件存在多个实例（三栏两条 + 弹窗里几条），
+   * 无条件摘会让别的实例拖动中被自己卸载这一下顺手清掉，禁用失效。
+   */
+  useEffect(() => () => {
+    if (draggingRef.current) document.body.classList.remove('fpx-no-select');
+    draggingRef.current = false;
+  }, []);
+
   const stop = useCallback(() => {
     if (!dragging) return;
     setDragging(false);
+    draggingRef.current = false;
     document.body.classList.remove('fpx-no-select');
     onEnd?.();
   }, [dragging, onEnd]);
@@ -76,6 +95,7 @@ export function Splitter({
         startRef.current = dir === 'horizontal' ? e.clientX : e.clientY;
         lastRef.current = 0;
         setDragging(true);
+        draggingRef.current = true;
         document.body.classList.add('fpx-no-select');
       }}
       /* 键盘可达性：方向键微调。没有它的话纯鼠标才能调，
@@ -87,6 +107,17 @@ export function Splitter({
         if (e.key !== dec && e.key !== inc) return;
         e.preventDefault();
         const step = (e.key === inc ? 1 : -1) * (e.shiftKey ? 24 : 8);
+        /*
+         * ⚠️ `onEnd` 是紧跟着**同步**调用的，此时 React 还没重渲染，
+         * 调用方若在 onEnd 里读闭包里的当前值，读到的是**调整前**的旧值，
+         * 于是"界面变了、落盘的还是旧值"，下次打开又回到原样，且不报错。
+         *
+         * 拖动路径没这个问题：pointermove 与 pointerup 是两次事件，
+         * 中间必然已经重渲染过。
+         *
+         * 所以调用方的 onEnd 必须能拿到"刚刚 set 进去的新值"（读 ref），
+         * 不能依赖闭包。见 useLayoutMemory 里的 colStarsRef / logHeightRef。
+         */
         onDelta(step);
         onEnd?.();
       }}
