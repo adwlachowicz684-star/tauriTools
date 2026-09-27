@@ -5410,7 +5410,7 @@ group('拖放：编辑器侧（真实源码）');
     ok(/exec\('image', null\)/.test(si),
       '横幅模式下清掉 image —— 两个字段都有值会画出两张图');
     // setImage 必须清横幅，否则「清除图标」点不掉多图
-    const setImg = br.slice(br.indexOf('setImage(url)'), br.indexOf('setImage(url)') + 500);
+    const setImg = br.slice(br.indexOf('setImage(url, opt)'), br.indexOf('setImage(url, opt)') + 500);
     ok(/exec\('images', null\)/.test(setImg),
       'setImage 同时清 images（否则多图时「清除图标」点不掉）');
   }
@@ -5575,16 +5575,29 @@ group('图片互斥：image 与 images 不能同时有值（行为级）');
   function makeRunner(src, name) {
     return new Function('return ({ ' + src + ' });')()[name];
   }
+  /*
+   * BUG 58 之后 setImage / setImages 会先读「单图 / 图标」槽位再决定让不让位，
+   * 所以这个替身除了 exec 还得提供那几个内部方法。
+   * 这里给的是**槽位为空**的默认实现：本组断言盯的是 image / images 的互斥，
+   * 与槽位里放的是图标还是图片无关（那部分由 BUG 58 那一组单独把关）。
+   */
+  function makeSelf(log) {
+    return {
+      exec(name2, value) { log.push([name2, value]); return true; },
+      _isIconUrl(u) { return !!u && /^data:image\/svg\+xml/i.test(String(u)); },
+      _imageSlot() { return { url: '', isIcon: false }; },
+      getSelectedImages() { return []; },
+      _appendImage(url) { log.push(['images', JSON.stringify([url])]); },
+    };
+  }
   function runSetImages(list) {
     const log = [];
-    const self = { exec(name2, value) { log.push([name2, value]); return true; } };
-    makeRunner(si, 'setImages').call(self, list);
+    makeRunner(si, 'setImages').call(makeSelf(log), list);
     return log;
   }
   function runSetImage(url) {
     const log = [];
-    const self = { exec(name2, value) { log.push([name2, value]); return true; } };
-    makeRunner(setImg, 'setImage').call(self, url);
+    makeRunner(setImg, 'setImage').call(makeSelf(log), url);
     return log;
   }
 
@@ -9419,9 +9432,11 @@ group('getSelectedImages 必须支持真数组（否则画布画得出、侧栏�
    * 画布上画着两张图，侧栏却显示「当前节点没有图片附件」。
    */
   {
-    const i = src.indexOf('getSelectedImages()');
+    // 必须找**定义**：_appendImage 里也调了 getSelectedImages()，
+    // 只 indexOf('getSelectedImages()') 会落到那个调用点上，切片装不到函数体
+    const i = src.indexOf('getSelectedImages() {');
     ok(i > 0, '有 getSelectedImages');
-    const seg = src.slice(i, i + 900);
+    const seg = src.slice(i, i + 1800);
     ok(/Object\.prototype\.toString\.call\(many\) === '\[object Array\]'/.test(seg),
       '识别真数组（不能只做 JSON.parse）');
     ok(/return many\.filter\(Boolean\);/.test(seg), '真数组直接返回（不经过 parse）');
@@ -11410,6 +11425,172 @@ group('快捷键说明：不得重复、且必须列出撤销与复制粘贴（B
   ok(has('Ctrl + C / X / V'), '列出了复制/剪切/粘贴');
   ok(has('Ctrl + A'), '列出了 Ctrl + A（全选）');
   ok(has('Tab'), '列出了 Tab');
+}
+
+/* ============================================================
+   BUG 58 · 节点图标与图片附件共用 data.image 槽位（互相静默覆盖）
+   ============================================================ */
+
+group('BUG 58 · 图标库与图片附件共用 data.image，后写的把先写的整串覆盖（永久丢失）');
+{
+  const eb = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  // 注释里大量引用这些名字，不剥的话命中的是注释本身 —— 代码真改坏了照样绿
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const E = strip(eb);
+  const C = strip(pn);
+
+  /*
+   * 背景（真实 Chrome 实测）：
+   *   先挂照片 → 再应用图标 → 照片 dataURL **被整串覆盖、永久丢失**
+   *   （inline 存储，别处没有副本），而界面提示「已应用图标：xxx」，
+   *   用户完全不知道照片没了。先图标后图片同理。
+   * 根因：两者都走 image 命令、都写 data.image 这一个槽位。
+   */
+
+  // 1) 必须有判据：图标库产出的必然是内联 SVG，附件图片经 imageToInline 压成 JPEG/PNG
+  ok(/_isIconUrl\s*\(/.test(E) && E.includes('svg\\+xml'),
+    'editor-bridge：有 _isIconUrl 判据（图标=内联 SVG，图片=JPEG/PNG，存量数据无需迁移）');
+
+  // 2) setImage 必须能区分「写图标」与「写图片」
+  ok(/setImage\s*\(\s*url\s*,\s*opt\s*\)/.test(E),
+    'editor-bridge：setImage 带 opt 参数（同一槽位上两类内容必须能区分）');
+
+  const i0 = E.indexOf('setImage(url, opt)');
+  ok(i0 > 0, 'editor-bridge：能定位 setImage');
+  const iEnd = E.indexOf('setNote(');
+  const body = E.slice(i0, iEnd > i0 ? iEnd : i0 + 2000);
+
+  ok(/const\s+isIcon\s*=\s*!!\s*\(\s*opt\s*&&\s*opt\.icon\s*\)/.test(body),
+    'setImage：从 opt.icon 取「这次写的是不是图标」');
+  ok(/const\s+slot\s*=\s*this\._imageSlot\(\)/.test(body),
+    'setImage：先读当前槽位（不知道槽里是谁就没法判断要不要让位）');
+
+  // 3) 写图标：槽里若已是图片，必须先让进横幅 —— 这是「不丢数据」的关键
+  const bIcon = body.indexOf('if (isIcon) {');
+  const bPhoto = body.indexOf('// 写图片');
+  const iconBranch = bIcon > 0 ? body.slice(bIcon, bPhoto > bIcon ? bPhoto : bIcon + 900) : '';
+  ok(iconBranch.length > 0, 'setImage：能取到「写图标」分支');
+  ok(/slot\.url\s*&&\s*!slot\.isIcon[\s\S]{0,120}_appendImage\(slot\.url\)/.test(iconBranch),
+    'setImage 写图标：槽里是图片时先让它进 images 横幅（否则照片永久丢失）');
+  // 剥过注释后行内标记没了，改用代码特征定位两个分支
+  ok(/_appendImage\(slot\.url\);[\s\S]{0,40}return this\.exec\('image', url\)/.test(body),
+    'setImage 写图标：让位之后立刻写图标并返回，其间不得清 images（否则刚让位的图片又没了）');
+  // 按大括号配对取「写图标」分支：剥注释后行内标记没了，固定长度切片会串到下一个分支
+  {
+    const bi = body.indexOf('if (isIcon) {');
+    let bj = -1, depth = 0;
+    for (let k = body.indexOf('{', bi); k >= 0 && k < body.length; k++) {
+      if (body[k] === '{') depth++;
+      else if (body[k] === '}') { depth--; if (!depth) { bj = k; break; } }
+    }
+    const ibr = bi >= 0 && bj > bi ? body.slice(bi, bj + 1) : '';
+    ok(ibr.length > 0, 'setImage：按括号配准取到「写图标」分支');
+    ok(!/exec\(\s*'images'\s*,\s*null\s*\)/.test(ibr),
+      'setImage 写图标分支不得清 images（会把刚让位过去的图片又删掉）');
+  }
+
+  // 4) 写图片：槽里若是图标，图片走横幅，不能顶掉图标
+  ok(/if\s*\(slot\.url\s*&&\s*slot\.isIcon\)[\s\S]{0,80}_appendImage\(url\)/.test(body),
+    'setImage 写图片：槽里是图标时图片走横幅（不能把图标顶掉）');
+
+  // 5) 清除：只清自己这一类。「清除节点图标」不该连带删掉用户挂的照片
+  ok(/isIcon\s*&&\s*slot\.url\s*&&\s*!slot\.isIcon\s*\)\s*return true/.test(body),
+    'setImage 清除：槽里放的是图片时，「清除图标」必须放过（否则连照片一起删）');
+
+  // 6) setImages：图标占用槽位时，1 张图也要走横幅
+  const j0 = E.indexOf('setImages(list)');
+  const jEnd = E.indexOf('getSelectedNodeId');
+  const sbody = E.slice(j0, jEnd > j0 ? jEnd : j0 + 1600);
+  ok(/iconBusy\s*=\s*!!\s*\(\s*slot\.url\s*&&\s*slot\.isIcon\s*\)/.test(sbody),
+    'setImages：判定槽位是否被图标占用');
+  ok(/arr\.length === 1 && !iconBusy/.test(sbody),
+    'setImages：图标占用槽位时，1 张图也走横幅而不是覆盖图标');
+
+  // 7) 读取：槽里是图标时不算图片附件
+  // 必须找**定义**：_appendImage 里也调了 this.getSelectedImages()，
+  // 只 indexOf('getSelectedImages()') 会落到那个调用点上（定长窗口随后被新代码撑爆）
+  const g0 = E.indexOf('getSelectedImages() {');
+  const gbody = E.slice(g0, g0 + 2600);
+  ok(/one\s*&&\s*!this\._isIconUrl\(one\)/.test(gbody),
+    'getSelectedImages：槽里是图标时不算图片（否则侧栏列出图标、删图会误删图标、追加第二张时把图标算进基数）');
+
+  // 8) 调用点：图标库必须标 icon
+  ok(/setImage\(url,\s*\{\s*icon:\s*true\s*\}\)/.test(C),
+    'panels：图标库应用图标时标 icon:true');
+  ok(/setImage\(null,\s*\{\s*icon:\s*true\s*\}\)/.test(C),
+    'panels：「清除节点图标」标 icon:true（否则会把图片一起删掉）');
+}
+
+/* ============================================================
+   BUG 59 · 超链接 / 备注输入框不回显（只有 set 没有 get）
+   ============================================================ */
+
+group('BUG 59 · 超链接与备注输入框必须回显（否则已有值看不见、改一个字符要整条重打）');
+{
+  const eb = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const E = strip(eb);
+
+  /*
+   * 实测（真实 Chrome）：节点已存 hyperlink / note，切到「标签」页两个框
+   * 都是空的，重新选中该节点仍然空。内核的 hyperlink / note 命令都在
+   * （52 个命令里都有），data 也写得进 —— 缺的只是**读取**这条路：
+   * editor-bridge 只有 setHyperlink / setNote，没有对应的 get。
+   *
+   * 后果不只是「看不见」：想改一个字符必须整条重打，
+   * 而且看着像这个节点没有超链接。
+   */
+
+  // 1) 必须有两个 getter（不是只加个 value 就完事 —— 值得有来源）
+  for (const [fn, key] of [['getSelectedHyperlink', 'hyperlink'], ['getSelectedNote', 'note']]) {
+    const i = E.indexOf(fn + '()');
+    ok(i > 0, `editor-bridge：有 ${fn}()`);
+    const seg = E.slice(i, i + 500);
+    ok(seg.includes(`getData?.('${key}')`),
+      `${fn}() 读的是 data.${key}（写进去了却读别的字段等于没修）`);
+    ok(/\|\|\s*''/.test(seg),
+      `${fn}()：读不到时回落空串（返回 undefined 会让 value 变成 "undefined"）`);
+  }
+
+  /*
+   * 2) 两个输入框都必须带 value。
+   *
+   * 这里**不能用剥过注释的文本去定位**：panels.js 里有 `'image/*'` 这类字面量，
+   * 剥注释的块注释正则会从 `'image/*'` 的星号斜杠开始一路吞到下一个块注释收尾，
+   * 整段「标签」页被吃掉 —— 断言会静默失效（实测：剥完之后「超链接」0 次出现）。
+   * 所以下面一律在**原文**上做，且按大括号配对取块。
+   */
+  ok(/value:\s*app\.bridge\.getSelectedHyperlink/.test(pn),
+    '超链接输入框有 value（否则每次打开都是空的）');
+  ok(/value:\s*app\.bridge\.getSelectedNote/.test(pn),
+    '备注输入框有 value（否则每次打开都是空的）');
+
+  // 3) 通用守卫：任何一个 input.mm-input 都不能漏 value —— 防下一个输入框重蹈覆辙
+  {
+    const bad = [];
+    const re = /h\('input\.mm-input',\s*\{/g;
+    let m;
+    while ((m = re.exec(pn))) {
+      let dep = 1, k = m.index + m[0].length - 1;
+      for (; k < pn.length && dep > 0; k++) {
+        if (pn[k] === '{') dep++;
+        else if (pn[k] === '}') dep--;
+      }
+      const body = pn.slice(m.index, k);
+      if (!/\bvalue:/.test(body)) {
+        bad.push(pn.slice(0, m.index).split('\n').length + ': ' + body.replace(/\s+/g, ' ').slice(0, 70));
+      }
+    }
+    ok(bad.length >= 0, 'panels：扫描到 input.mm-input 定义');
+    eq(bad.length, 0,
+      'panels 里每个 input.mm-input 都要有 value（漏了就变成只写不读）'
+      + (bad.length ? ' → ' + bad.join(' | ') : ''));
+    // 至少要有 2 个带回显的（超链接 + 备注），防止扫描本身空转
+    const withVal = (pn.match(/h\('input\.mm-input',\s*\{[\s\S]{0,400}?\bvalue:/g) || []).length;
+    ok(withVal >= 2, `至少有 2 个 input.mm-input 带了 value（实测 ${withVal} 个）`);
+  }
 }
 
 /* ============================================================

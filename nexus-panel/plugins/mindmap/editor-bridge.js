@@ -612,12 +612,84 @@ export class EditorBridge {
    * 同一个节点既显示框内图标又显示框外横幅。
    * 不清的话，「清除图标」按钮点不掉多图（只清了 image，横幅还在）。
    */
-  setImage(url) {
-    const r = this.exec('image', url ?? null);
+  /**
+   * `data.image` 这一个槽位被**两种东西共用**：
+   *   - 节点图标（图标库产出，内联 `data:image/svg+xml` 的 32×32 SVG）
+   *   - 单张图片附件（用户上传，io.imageToInline 一律压成 JPEG/PNG 的 dataURL）
+   *
+   * 谁后写谁覆盖。实测（真实 Chrome）：
+   *   先挂照片 → 再应用图标 → 照片 dataURL **被整串覆盖、永久丢失**
+   *   （inline 存储，别处没有副本可找回），而界面提示的是「已应用图标：xxx」，
+   *   用户完全不知道照片没了。先图标后图片同理。
+   *
+   * 判据：图标库走的 iconToDataUrl 必然产出 `data:image/svg+xml`，
+   * 而附件图片经 io.imageToInline 压成 JPEG/PNG，两者不会混淆 ——
+   * 所以**存量数据也无需迁移**。
+   */
+  _isIconUrl(u) { return !!u && /^data:image\/svg\+xml/i.test(String(u)); }
+
+  /** 读当前的「单图 / 图标」槽位 */
+  _imageSlot() {
+    return this._safe('读取图片槽', (m, km) => {
+      const n = km.getSelectedNode?.();
+      const u = n ? String(n.getData?.('image') || '') : '';
+      return { url: u, isIcon: this._isIconUrl(u) };
+    }) || { url: '', isIcon: false };
+  }
+
+  /** 把一张图并入 images 横幅（对方让位时用，避免数据凭空消失） */
+  _appendImage(url) {
+    if (!url) return;
+    const cur = this.getSelectedImages().filter((x) => x !== url);
+    this.exec('images', JSON.stringify(cur.concat([url])));
+  }
+
+  setImage(url, opt) {
+    const isIcon = !!(opt && opt.icon);
+    const slot = this._imageSlot();
+    if (!url) {
+      // 清除：只清自己这一类。槽里放的是对方时不能顺手清掉 ——
+      // 「清除节点图标」不该把用户挂的照片一起删了。
+      if (isIcon && slot.url && !slot.isIcon) return true;
+      if (isIcon) { this.exec('image', null); return true; }
+      this.exec('images', null);
+      if (!(slot.url && slot.isIcon)) this.exec('image', null);
+      return true;
+    }
+    if (isIcon) {
+      // 槽里若是图片附件，先让进横幅保住，再写图标
+      if (slot.url && !slot.isIcon) this._appendImage(slot.url);
+      return this.exec('image', url);
+    }
+    // 写图片：槽里若是图标，图片走横幅（图标在框内、图片在框外，各就各位）
+    if (slot.url && slot.isIcon) { this._appendImage(url); return true; }
+    const r = this.exec('image', url);
     this.exec('images', null);
     return r;
   }
   setNote(text) { return this.exec('note', text ?? null); }
+
+  /*
+   * 超链接 / 备注的**读取**。
+   *
+   * 早先只有 set 没有 get —— panels 里那两个输入框因此拿不到初值、
+   * 每次打开都是空的（其余输入框如字号、圆角都有回显）。实测（真实 Chrome）：
+   * 节点已存 hyperlink/note，切到「标签」页两个框仍为空，重开也一样。
+   * 后果不只是「看不见」：想改一个字符必须整条重打，而且看着像没有超链接。
+   */
+  getSelectedHyperlink() {
+    return this._safe('读取超链接', (_m, km) => {
+      const n = km.getSelectedNode?.();
+      return (n && String(n.getData?.('hyperlink') || '')) || '';
+    }) || '';
+  }
+
+  getSelectedNote() {
+    return this._safe('读取备注', (_m, km) => {
+      const n = km.getSelectedNode?.();
+      return (n && String(n.getData?.('note') || '')) || '';
+    }) || '';
+  }
   setFile(path) { return this.exec('file', path ?? null); }
   setVideo(path) { return this.exec('video', path ?? null); }
 
@@ -636,18 +708,21 @@ export class EditorBridge {
    */
   setImages(list) {
     const arr = (Array.isArray(list) ? list : []).filter(Boolean);
+    const slot = this._imageSlot();
+    // 槽位被图标占着时，图片一律走横幅（见 setImage 的说明），不能覆盖图标
+    const iconBusy = !!(slot.url && slot.isIcon);
     if (!arr.length) {
-      this.exec('image', null);
       this.exec('images', null);
+      if (!iconBusy) this.exec('image', null);
       return true;
     }
-    if (arr.length === 1) {
+    if (arr.length === 1 && !iconBusy) {
       this.exec('image', arr[0]);
       this.exec('images', null);
       return true;
     }
     this.exec('images', JSON.stringify(arr));
-    this.exec('image', null);
+    if (!iconBusy) this.exec('image', null);
     return true;
   }
 
@@ -695,7 +770,11 @@ export class EditorBridge {
         } catch { /* 坏数据退回单图 */ }
       }
       const one = n.getData?.('image');
-      return one ? [one] : [];
+      // 槽里放的是**图标**时不算图片附件：否则侧栏「图片」栏会把图标列出来，
+      // 用户点「删除」删掉的是图标；追加第二张图时 `setImages([...images, 新图])`
+      // 还会把图标算进基数，图标就混进图片列表再也分不开了。
+      if (one && !this._isIconUrl(one)) return [one];
+      return [];
     }) || [];
   }
 

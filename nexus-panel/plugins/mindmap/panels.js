@@ -1662,21 +1662,27 @@ export function buildSide(app, opts = {}) {
       ),
       section('超链接',
         h('input.mm-input', {
+          // 必须回显：`value` 缺省时每次 render 都是空框 ——
+          // 节点上已有超链接也看不出来，想改一个字符只能整条重打。
+          value: app.bridge.getSelectedHyperlink?.() || '',
           placeholder: 'https://…（清空后回车移除）',
           onchange: (e) => {
             const v = e.target.value.trim();
             app.bridge.setHyperlink(v || null);
             app.api.commit();
+            refresh();
           },
         }),
       ),
       section('备注',
         h('input.mm-input', {
+          value: app.bridge.getSelectedNote?.() || '',
           placeholder: '节点备注（清空后回车移除）',
           onchange: (e) => {
             const v = e.target.value.trim();
             app.bridge.setNote(v || null);
             app.api.commit();
+            refresh();
           },
         }),
       ),
@@ -2566,7 +2572,10 @@ export async function openIconLibrary(app) {
           // 尺寸不用自己设：内核 image 命令会先 new Image() 探测真实尺寸
           // 再写 imageSize（受 maxImageWidth/Height 限制，默认 200）。
           // SVG 里写了明确的 width/height 属性，所以能正确探测到。
-          app.bridge.setImage(url);
+          // 标成图标（icon）：data.image 这一个槽位图片与图标共用，
+          // 不标的话后写的会**整串覆盖**先写的 —— 用户挂的照片会被图标
+          // 顶掉且永久丢失（inline dataURL 别处没有副本）。
+          app.bridge.setImage(url, { icon: true });
           app.api.commit();
           app.api.status(`已应用图标：${ic.name}`);
         }, (m) => app.api.status(m, true)),
@@ -2725,7 +2734,7 @@ export async function openIconLibrary(app) {
             onclick: safe('导入图片', () => importIcons(), (m) => app.api.status(m, true)),
             title: '把图片导入当前分组',
           }, '导入…'),
-          h('button.mm-btn', { onclick: () => { app.bridge.setImage(null); app.api.commit(); app.api.status('已清除节点图标'); } }, '清除节点图标'),
+          h('button.mm-btn', { onclick: () => { app.bridge.setImage(null, { icon: true }); app.api.commit(); app.api.status('已清除节点图标'); } }, '清除节点图标'),
         ),
         hint,
       ),
