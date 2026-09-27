@@ -156,6 +156,7 @@
     "test:react": "node smoke-react.mjs",
     "test:registry": "node test-registry-test.mjs",
     "test:responsive": "node responsive-test.mjs",
+    "test:rtdeps": "node runtime-deps-test.mjs",
     "test:service-available": "node service-available-test.mjs",
     "test:service-plugin": "node service-plugin-test.mjs",
     "test:settings": "node settings-test.mjs",

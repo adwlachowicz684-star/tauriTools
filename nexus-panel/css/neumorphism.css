@@ -2789,6 +2789,9 @@ html.theme-transition *:not(.spinner) {
   margin-left: 6px; padding: 1px 6px; border-radius: var(--r-sm);
   font-size: var(--fs-11, 11px); color: var(--text-mute); background: var(--surface);
 }
+/* 「已装 xx」要能一眼看出来 —— 不写这条它就和「运行时/锁定」那些灰色
+   标签长得一模一样，用户得逐个读文字才知道装没装。 */
+.dep-tag.ok { color: var(--ok); font-weight: var(--fw-strong, 600); }
 .dep-badge { flex: 0 0 auto; padding: 1px 8px; border-radius: var(--r-sm); font-size: var(--fs-11, 11px); }
 .dep-badge.ok { color: var(--ok); }
 .dep-badge.err { color: var(--danger); }
