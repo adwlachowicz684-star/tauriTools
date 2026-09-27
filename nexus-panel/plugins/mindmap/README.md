@@ -3926,3 +3926,80 @@ BUG 51：根因修复抓到；另做了一组对照变异（把 `mdia` 也移出
 H.265 / VP9 / Opus / AAC 识别；纯音频 M4A；无音轨视频；旋转元数据
 （分辨率取容器里的编码尺寸而非 `videoWidth`，与注释一致）；
 非视频文件、截断文件、空文件均不崩。
+
+
+---
+
+## XMind 互操作两处（BUG 52 / BUG 53）
+
+`xmind.js` 里 `kityminder.json`（本工具无损快照）与 `content.json`（给别的 XMind
+软件看的）是两份数据。**既有测试只覆盖了 native 往返** —— 快照一直在，
+所以 content.json 那一份的毛病从来没被测到。本轮补上了。
+
+这两处只在两种时候暴露：① 用别的 XMind 软件打开导出文件；
+② 快照缺失/损坏（别的软件产出的文件）走 zen 档导回。
+
+### BUG 52：多附件节点的 href 变成整个 JSON 数组串
+
+```js
+let att = str(data.video) || str(data.file);   // ← 拿到的是整个数组串
+```
+
+多附件改造后这两个字段存的是 **JSON 数组串**（"写一定是数组"）。
+`str()` 拿到的就是整个数组串：它不在 `packs` 里（键是单项引用）、
+`toFileUri()` 也认不出，于是 `toFileUri(att) || att` 回落成原文，
+一整串转义 JSON 写进 href。
+
+实测导出后的 content.json：
+
+```
+修复前 "href": "[\"{\\\"n\\\":\\\"报告.pdf\\\",\\\"a\\\":\\\"asFILE1\\\",\\\"s\\\":10}\"]"
+修复后 "href": "resources/kma_0_报告.pdf"
+```
+
+**注意这不是「多附件才有」**：插件现在写的一律是数组串，
+所以**挂 1 个附件同样中招**。
+
+后果：别的 XMind 软件里是一串乱码死链；走 zen 档导回时，
+`parseZen` 还会把它当成 `data.hyperlink` 存下来 —— 附件**变成乱码链接**而不是丢失。
+
+改法：用 `refListOf()` 按列表取，取第一项（content.json 的 href 只能挂一个），
+video 优先与原来保持一致。
+
+### BUG 53：多图节点导出后一张图都不剩
+
+`buildImage()` 只读 `data.image`（单张），而多图横幅在 `data.images`。
+挂 2 张以上的节点导出后 content.json **没有 image 字段**，
+在别的 XMind 软件里就是纯文字节点。
+
+XMind 一个 topic 只挂一张图，取横幅第一张。
+
+### 顺带：zen 档导入时包内 `.mp4` 落进了 `file`
+
+```js
+} else if (isPackRef(href)) {
+  data.file = href;          // ← 不判扩展名
+}
+```
+
+而上面 `file:///` 那一支是判的：`isVideoName(localFile) ? video : file`。
+包内名字是 `kma_<序号>_<原名>`，扩展名完整保留，判得出来 —— 两支不一致。
+实测 `resources/kma_1_演示.mp4` 导入后变成**文件**附件，没有封面也播不了。
+
+### 测试
+
+新增一组，跑真实 `writeXMind` + `zipRead` 解包验 content.json，
+再**去掉 native 快照**强制走 zen 档导回（模拟别的软件产出的文件）。
+14 条断言，覆盖 href 形态、多图、zen 档还原。
+
+### 变异验证
+
+3 处全部抓到：href 改回 `str()`（一次红 **9 条**）、buildImage 不认 images、
+包内路径不判视频扩展名。
+
+### 一个值得记的点
+
+这组测试差点写成「元素取 `.n`」—— 而 `readXMind` 回写的数组里
+每一项是**引用对象串**（`{\"n\":…}`），不是对象，直接取 `.n` 是 undefined。
+用 `io.decodeRefList()` 归一才对。跟前面 BUG 8/32 那个
+"真数组 vs JSON 串"的老坑是同一类：同一个字段在不同阶段形态不同。

@@ -538,7 +538,19 @@ function buildTopic(kmNode, packs) {
   // 已打包的写包内相对路径，未打包的写 file:/// 本地路径。
   let href = str(data.hyperlink);
   if (!href || !href.trim()) {
-    let att = str(data.video) || str(data.file);
+    /*
+     * **必须按列表取**：多附件改造后 data.file / data.video 存的是
+     * **JSON 数组串**（写一定是数组），直接 str() 拿到的是整个数组串 ——
+     * 它既不在 packs 里（键是单项引用）、也不是路径（toFileUri 返回 null），
+     * 于是原样落进 href。实测导出后 content.json 里是：
+     *   "href": "[\"{\\\"n\\\":\\\"报告.pdf\\\",...}\"]"
+     * 别的 XMind 软件打开就是一串乱码死链；本工具走 zen 档导回时，
+     * parseZen 还会把它当成 hyperlink 存起来，附件直接变成乱码链接。
+     *
+     * content.json 的 href 只能挂一个，取列表第一项（video 优先，与原来一致）。
+     */
+    const firstRef = (raw) => { const l = refListOf(raw); return l.length ? str(l[0]) : null; };
+    let att = firstRef(data.video) || firstRef(data.file);
     if (att && att.trim()) {
       href = packs && packs.has(att) ? packs.get(att) : (toFileUri(att) || att);
     }
@@ -591,7 +603,17 @@ function buildLabels(node) {
 }
 
 function buildImage(data) {
-  const src = str(data.image);
+  /*
+   * 单张在 data.image，多张在 data.images（横幅）—— 两者互斥。
+   * 只认 image 的话，挂了 2 张以上的节点导出后 content.json **一张图都没有**，
+   * 在别的 XMind 软件里打开就是纯文字节点。
+   * XMind 一个 topic 只挂一张图，这里取横幅的第一张。
+   */
+  let src = str(data.image);
+  if (!src || !src.trim()) {
+    const many = refListOf(data.images);
+    src = many.length ? str(many[0]) : null;
+  }
   if (!src || !src.trim()) return null;
   const img = { src };
   const { w, h } = parseSize(data.imageSize);
@@ -699,7 +721,14 @@ function buildKmNode(topic, depth = 0, counter = null) {
     if (isVideoName(localFile)) data.video = localFile;
     else data.file = localFile;
   } else if (isPackRef(href)) {
-    data.file = href;
+    /*
+     * 包内相对路径也要按扩展名分视频 / 文件。
+     * 少了这一步，`resources/kma_1_演示.mp4` 会被当成**文件**附件存下来 ——
+     * 导入后视频卡片变成普通文件卡片，没有封面也播不了。
+     * 包内名字是 `kma_<序号>_<原名>`，扩展名完整保留，判得出来。
+     */
+    if (isVideoName(href)) data.video = href;
+    else data.file = href;
   } else if (href && href.trim()) {
     data.hyperlink = href;
   }

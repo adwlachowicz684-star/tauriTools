@@ -11061,6 +11061,90 @@ group('视频帧率对齐：真正的 24fps 被判成 23.976（BUG 50）');
   eq(r.duration, 10, '时长 = duration / timescale = 10s');
 }
 
+group('XMind 互操作：content.json 的 href 与 image（BUG 52 / 53）');
+
+/*
+ * kityminder.json 是「本工具无损快照」，往返一直正常 —— 所以这两处只在
+ * **别人用 XMind 打开**、或 **快照不在（别的软件产出的文件 / 快照损坏）走 zen 档**
+ * 时才暴露。正因如此它们长期没被测到：既有测试只覆盖了 native 往返。
+ */
+{
+  const xmind = await import('./xmind.js');
+  const io = await import('./io.js');
+
+  const node = (text, extra = {}) => ({ data: { id: 'n' + text, text, ...extra }, children: [] });
+  const R_PDF = JSON.stringify({ n: '报告.pdf', a: 'asFILE1', s: 10 });
+  const R_MP4 = JSON.stringify({ n: '演示.mp4', a: 'asVID1', s: 20 });
+  const IMG1 = 'data:image/png;base64,AAAA';
+  const IMG2 = 'data:image/png;base64,BBBB';
+
+  const root = node('中心主题');
+  root.children.push(node('A', { file: JSON.stringify([R_PDF]) }));
+  root.children.push(node('B', { file: JSON.stringify([R_PDF, R_MP4]) }));
+  root.children.push(node('C', { video: JSON.stringify([R_MP4]) }));
+  root.children.push(node('D', { images: JSON.stringify([IMG1, IMG2]), imageSize: '180*101' }));
+  const sheets = [{ id: 'sh1', title: '画布1', theme: null, layout: null, content: JSON.stringify({ root }) }];
+
+  const lib = { asFILE1: new TextEncoder().encode('PDF'), asVID1: new TextEncoder().encode('MP4') };
+  const loadAsset = async (ref) => {
+    const o = typeof ref === 'string' && ref[0] === '{' ? JSON.parse(ref) : {};
+    return lib[o.a] || null;
+  };
+
+  const buf = new Uint8Array(await (await xmind.writeXMind(sheets, 'sh1', loadAsset)).arrayBuffer());
+  const entries = await xmind.zipRead(buf);
+  const cj = JSON.parse(new TextDecoder().decode(entries.get('content.json')));
+
+  const flat = [];
+  (function w(t) { flat.push(t); (t.children?.attached || []).forEach(w); })(cj[0].rootTopic);
+  const byTitle = {};
+  for (const t of flat) byTitle[t.title] = t;
+
+  /* ---- BUG 52：多附件的 href 变成整个 JSON 数组串 ----
+   *
+   * 原来 `let att = str(data.video) || str(data.file);`
+   * 而多附件改造后这两个字段是**数组串** —— str() 拿到的就是整个数组串，
+   * 它不在 packs 里（键是单项引用）、toFileUri 也认不出，于是原样写进 href。
+   * 实测导出后是：
+   *   "href": "[\"{\\\"n\\\":\\\"报告.pdf\\\",\\\"a\\\":\\\"asFILE1\\\",\\\"s\\\":10}\"]"
+   * 别的 XMind 软件里就是一串乱码死链。
+   */
+  eq(byTitle['A'].href, 'resources/kma_0_报告.pdf', '单附件：href 是包内相对路径');
+  eq(byTitle['B'].href, 'resources/kma_0_报告.pdf', '多附件：href 取第一项的包内路径（不是整个数组串）');
+  eq(byTitle['C'].href, 'resources/kma_1_演示.mp4', '视频优先：href 取视频的包内路径');
+  ok(!String(byTitle['A'].href).includes('\\"'), 'href 里不得残留 JSON 引号转义');
+  ok(!String(byTitle['B'].href).startsWith('['), 'href 不得是数组串（以 [ 开头）');
+
+  /* ---- BUG 53：多图节点导出后一张图都不剩 ----
+   *
+   * buildImage 只读 data.image，而多图横幅在 data.images。
+   * XMind 一个 topic 只挂一张图，取横幅第一张。
+   */
+  eq(byTitle['D'].image?.src, IMG1, '多图节点导出时带上了第一张图（原来一张都没有）');
+
+  /* ---- 去掉 native 快照，强制走 zen 档导回 ----
+   * 模拟「别的软件改过的 xmind」或快照损坏：此时 content.json 是唯一数据源。
+   */
+  const only = [...entries.entries()].filter(([k]) => k !== 'kityminder.json');
+  const buf2 = await xmind.zipWrite(only.map(([name, data]) => ({ name, data })));
+  const rr = await xmind.readXMind(new Uint8Array(await new Blob([buf2]).arrayBuffer()),
+    async (name, bytes) => JSON.stringify({ n: name, a: 'NEW_' + name, s: bytes.length }));
+  eq(rr.source, 'zen', '无 native 快照时走 zen 档');
+
+  const back = JSON.parse(rr.sheets[0].content).root;
+  const bd = {};
+  for (const c of back.children) bd[c.data.text] = c.data;
+
+  // 修复前：这里会是 hyperlink（一串乱码），file / video 全空 —— 附件直接没了
+  ok(!bd['A'].hyperlink, '附件不得被当成乱码超链接存下来');
+  ok(!!bd['A'].file, 'zen 档导入后文件附件还原为 file');
+  ok(!!bd['C'].video, 'zen 档导入后 .mp4 还原为 video（不能落进 file）');
+  // 数组里每一项是「引用对象串」，要用 decodeRefList 归一（不能直接取 .n）
+  eq(io.decodeRefList(bd['C'].video)[0]?.n, '演示.mp4', 'zen 档导入的视频名正确');
+  ok(!JSON.stringify(bd['A'].file).includes('resources/'), 'zen 档导入后引用已换成本地资产 id');
+  eq(bd['D'].image, IMG1, 'zen 档导入后图片还原');
+}
+
 /* ============================================================
    结果
    ============================================================ */
