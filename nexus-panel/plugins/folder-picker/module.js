@@ -3,10 +3,16 @@
  * ============================================================
  * 任何插件需要用户选一个目录，都调它：
  *
- *   const path = await ctx.services.call('folder-picker', 'pick', {
+ *   const r = await ctx.services.call('folder-picker', 'pick', {
  *     title: '选择项目根目录', startPath: '', allowCreate: true,
  *   });
- *   // 取消 / 关闭 → null
+ *   const path = r?.path;      // 取消 / 关闭 → null
+ *   const action = r?.action;  // 'pick'，或 extraAction.id（如 'default'）
+ *
+ * ⚠️ 返回的是**对象** { path, action }，不是裸字符串，也不随入参变化。
+ *    照着早年"返回路径字符串"的写法去接，
+ *    拿到的是对象而 `if (r)` 恒为真 —— 路径变成 "[object Object]"，
+ *    一路静默错到写盘才发现。（详见 commitPick 上的返回契约注释）
  *
  * 为什么做成服务而不是各插件各写一份
  * ------------------------------------------------------------
@@ -117,7 +123,7 @@ export default {
       return { name: '目录选择', version: VERSION, methods: ['describe', 'pick', 'listFavs', 'addFav', 'removeFav'] };
     },
 
-    /** 打开选择器，返回选中的路径；取消返回 null。 */
+    /** 打开选择器。返回固定为 { path, action }，path 为 null 即取消。 */
     pick(args = {}, ctx) {
       const panel = ctx?.__fp;
       if (!panel) {
@@ -547,6 +553,25 @@ function createPanel(ctx) {
     removeFav,
     open(args) {
       return new Promise((resolve, reject) => {
+        /*
+         * ⚠️ 会话互斥：先把上一个未结束的会话收掉，再开新的。
+         *
+         * 没有这一步，第二个调用方进来时 `session` 被直接顶掉，
+         * 前一个调用的 resolve **永远不会被调用** ——
+         * 它的 await 再也不返回，界面表现为"点了浏览，然后什么都没发生"，
+         * 而且不报错（Promise 悬着既不 resolve 也不 reject）。
+         *
+         * 为什么按"取消"收掉而不是 reject：
+         * 取消是调用方**本来就要处理**的正常分支（两个调用方都写了
+         * `r?.path` 为空时的收尾）；reject 则要求每个调用方都 try/catch，
+         * 漏写的那个变成 unhandled rejection，同样是"点了没反应"。
+         */
+        if (session) {
+          const prev = session;
+          session = null;
+          try { prev.stop?.(); } catch { /* 解除失败不影响收尾 */ }
+          prev.resolve({ path: null, action: null });
+        }
         session = { resolve, reject, args: args || {}, stop: null };
         /*
          * 两条"用户不点按钮就走掉"的退路：Esc 与点遮罩。

@@ -192,5 +192,39 @@ t('点遮罩有退路（否则 Promise 永远悬着）', /watchHidden/.test(mod)
 t('Esc 有退路', /Escape'\) cancel\(\)/.test(mod));
 t('未挂上时抛错而不是静默返回 null', /服务尚未挂载/.test(mod));
 
+console.log('\n【九】并发互斥与文档契约');
+/*
+ * 会话互斥：open 里必须先把上一个未结束的 session 收掉。
+ *
+ * 少了它，第二个调用方进来时 session 被直接顶掉，前一个 resolve
+ * 永远不被调用 —— 那个 await 再也不返回，界面表现为
+ * "点了浏览，然后什么都没发生"，而且**不报错**（悬着既不 resolve
+ * 也不 reject），是最难查的那一类。
+ */
+const openFn = (() => {
+  const i = mod.indexOf('open(args) {');
+  if (i < 0) return '';
+  return mod.slice(i, i + 1400);
+})();
+t('open 里先收掉上一个会话（否则前一个 Promise 永远悬着）',
+  /if \(session\) \{[\s\S]{0,400}?prev\.resolve\(\{ path: null/.test(openFn));
+t('互斥收尾按"取消"而不是 reject（调用方本来就处理取消分支）',
+  /prev\.resolve\(\{ path: null, action: null \}\)/.test(openFn));
+t('收掉旧会话时先解除它的监听（否则旧 Esc 监听会取消新会话）',
+  /prev\.stop\?\.\(\)/.test(openFn));
+
+/*
+ * 文档契约：头部用法示例必须按对象取值。
+ *
+ * 早年写的是 `const path = await call(...)` / "取消返回 null"。
+ * 照它写的人拿到的是对象，而 `if (r)` 恒为真 ——
+ * 路径变成 "[object Object]"，一路静默错到写盘才发现。
+ */
+t('用法示例按 { path, action } 取值', /const r = await ctx\.services\.call/.test(mod)
+  && /const path = r\?\.path;/.test(mod));
+t('用法示例不再写"返回路径字符串"', !/const path = await ctx\.services\.call/.test(mod));
+t('取消写成 path 为 null，不是整体返回 null',
+  /path = r\?\.path;[\s\S]{0,120}取消 \/ 关闭 → null/.test(mod));
+
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
 process.exit(fail ? 1 : 0);
