@@ -388,6 +388,12 @@ fn main() {
             dupview::dupview_rename,
             /* 常用文件夹：folder-picker 服务与设置页共用，读 + 整表覆盖写。 */
             fpx::fpx_list_fav_dirs, fpx::fpx_save_fav_dirs,
+            /*
+             * 运行时依赖三条（rt_dep.rs）—— 装包 / 列已装 / 移除。
+             * 少了它们：设置 → 依赖 里的「安装」点了没反应（前端会明确提示
+             * 后端未接入，而不是静默失败）。
+             */
+            rt_dep::fpx_rt_dep_list, rt_dep::fpx_rt_dep_install, rt_dep::fpx_rt_dep_remove, rt_dep::fpx_rt_dep_versions,
             tray_toggle_window
         ])
         .setup(move |app| {

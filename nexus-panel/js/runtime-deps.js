@@ -35,6 +35,7 @@ export const RT_DEP_DIR = 'deps';
 export const CMD_LIST = 'fpx_rt_dep_list';
 export const CMD_INSTALL = 'fpx_rt_dep_install';
 export const CMD_REMOVE = 'fpx_rt_dep_remove';
+export const CMD_VERSIONS = 'fpx_rt_dep_versions';
 
 /**
  * 明确的失败原因。
@@ -315,6 +316,39 @@ export async function listRuntimeDeps(ctx) {
   if (r && r.__error) return { missing: false, list: [], error: r.__error };
   const list = (r && (r.list ?? r)) || [];
   return { missing: false, list: Array.isArray(list) ? list : [] };
+}
+
+/**
+ * 取某包在 CDN 上的可用版本列表 —— 界面上那个版本下拉的数据来源。
+ *
+ * 【为什么不缓存】
+ * 缓存会让测试互相串味（上一个用例塞进去的值会影响下一个），而它省下的
+ * 只是一次网络往返 —— 这个列表只在用户点开版本框时才拉一次。缓存交给
+ * 调用方（界面组件）按包名维护。
+ *
+ * 【为什么失败要返回 error 而不是抛】
+ * 拿不到版本列表**不该阻断安装**：用户还能手填。抛出去的话调用方要么
+ * try/catch 兜住（很容易漏写），要么整个安装区渲染不出来 —— 那等于把
+ * "一个辅助信息没取到"升级成"装不了了"。
+ *
+ * 【为什么过滤预发布版本】
+ * `1.2.3-beta.1` 这类在 CDN 上未必有对应的 ESM 构建，装进去可能是个空壳，
+ * 而报错离这一步已经很远。宁可少给几个选项。
+ */
+export async function fetchRuntimeDepVersions(ctx, name, opts = {}) {
+  const n = String(name || '').trim();
+  if (!n) return { list: [], error: '包名为空' };
+  const r = await callCmd(ctx, CMD_VERSIONS, { name: n });
+  if (r && r.__missing) return { missing: true, list: [] };
+  if (r && r.__error) return { list: [], error: r.__error };
+  const raw = (r && (r.versions ?? r)) || [];
+  const list = Array.isArray(raw)
+    ? raw.filter((x) => typeof x === 'string' && x && !x.includes('-'))
+    : [];
+  if (!list.length) return { list: [], error: (r && r.error) || '没取到可用版本' };
+  /* 倒序（新在前）+ 截断。排序规则只在 cmpVersion 一处，别再写一份。 */
+  const max = opts.max || 30;
+  return { list: list.slice().sort((a, b) => cmpVersion(b, a)).slice(0, max) };
 }
 
 /**
