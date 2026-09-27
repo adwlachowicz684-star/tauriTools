@@ -183,7 +183,7 @@ test('索引里的分类标签都来自 NODE_CATEGORY_META（不手写）', () =
     ...labels,
     // 索引里的固定小节（不是分类）
     '连线判据（先看这个）', '模板变量', '边的写法', '能力签名',
-    '参数卡片', '复用件',
+    '变量组', '复用件',
   ]);
   for (const h of headings) {
     assert.ok(known.has(h), `索引里出现了不在 NODE_CATEGORY_META 里的分类：${h}`);
@@ -294,7 +294,7 @@ test('预设页说清了存的时候剥掉什么（尤其是运行时与密钥�
 
 test('统一索引收录了全部五类', () => {
   const idx = fs.readFileSync(path.join(DOCS, 'README.md'), 'utf-8');
-  for (const k of ['节点', '参数卡片', '模块', '自定义预设', '节点默认值']) {
+  for (const k of ['节点', '变量', '模块', '自定义预设', '节点默认值']) {
     assert.ok(idx.includes(k), `索引里漏了「${k}」`);
   }
 });
