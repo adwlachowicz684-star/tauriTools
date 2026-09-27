@@ -416,10 +416,18 @@ function missingCtx() {
 /* ---------- 4. 接线：少一处都是"点了没反应" ---------- */
 
 const mainText = read('src-tauri/src/main.rs');
-t('main.rs 有 mod rt_dep（缺了整个文件不参与编译）', /^mod rt_dep;/m.test(mainText));
+/*
+ * 措辞改过：原来写"缺了整个文件不参与编译"，跟 updater / dupview 那两条
+ * 一模一样。但后果不同 —— 下面注册写的是 `rt_dep::fpx_rt_dep_xxx`，
+ * 模块没声明就是 unresolved module（E0433），**cargo build 直接红**；
+ * 而 updater 缺了是编译照过、运行时才 command not found。
+ * 措辞不分开，这条就会被当成"回头再说"，实际是项目构建不出来。
+ */
+t('main.rs 有 mod rt_dep（缺了 cargo build 直接失败 E0433）', /^mod rt_dep;/m.test(mainText));
 t('注册 fpx_rt_dep_list', /rt_dep::fpx_rt_dep_list/.test(mainText));
 t('注册 fpx_rt_dep_install', /rt_dep::fpx_rt_dep_install/.test(mainText));
 t('注册 fpx_rt_dep_remove', /rt_dep::fpx_rt_dep_remove/.test(mainText));
+t('注册 fpx_rt_dep_versions', /rt_dep::fpx_rt_dep_versions/.test(mainText));
 t('注册带 rt_dep:: 前缀（写裸名会编译失败）', !/(?<!rt_dep::)fpx_rt_dep_install(?![\s\S]{0,0})/.test(mainText.replace(/rt_dep::fpx_rt_dep_install/g, '')));
 
 const capsText = read('js/command-caps.js');

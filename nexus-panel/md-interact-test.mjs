@@ -208,11 +208,46 @@ t('CSS 有 .md-toc', /\.md-toc \{/.test(cssC));
 t('CSS 有 .md-menu 且是 fixed（不定会被引流区裁掉）',
   /\.md-menu \{[\s\S]{0,120}?position: fixed;/.test(cssC));
 t('CSS 有 .md-menu-item', /\.md-menu-item \{/.test(cssC));
-/* md 段全部走令牌：写死色值切主题时不跟随，且不报错 */
-const mdCss = cssC.slice(cssC.indexOf('.md-code-bar'));
+/*
+ * md 段全部走令牌：写死色值切主题时不跟随，且不报错。
+ *
+ * 【两处都修过，都是假红的来源】
+ *
+ * 1. 切片：原来 `slice(indexOf('.md-code-bar'))` 一路切到**文件末尾**。
+ *    于是任何在 md 之后新增的样式段（比如依赖页签的 .dep-tag.warn）
+ *    都被算进 "md 的样式" —— 别人加个带兜底色的规则，这条就红了，
+ *    而 md 本身一点没变。跟"窗口太大跨到别的下拉"是同一类坑。
+ *    现在切到下一个顶层注释分节（/* ==== …）为止，越界就报错而不是静默。
+ *
+ * 2. 判定：`var(--warn, #e0a030)` 里的 #e0a030 是**兜底值**，
+ *    只在变量读不到时才生效 —— 它不是写死色值，切主题时仍跟随变量。
+ *    原来只排除了 rgba()，没排除 var() 的兜底，于是这类规则一律误判。
+ *    先把 var(...) 整段挖掉再找裸色值。
+ */
+/*
+ * 定位方式也换过：先试"切到下一个分节注释"，但 cssC 是经过 strip() 的
+ * —— 分节注释本身就是 /* ==== … *​/，被剥掉了，定位必然失败。
+ * 改成直接抓 `.md-` 开头的选择器块：不依赖任何分节标记，
+ * 而且天然不会把 .dep-tag 这类别的段算进来。
+ */
+const mdBlocks = [...cssC.matchAll(/\.md-[^{]*\{[\s\S]*?\}/g)].map((m) => m[0]);
+/*
+ * 抓不到任何块 = 选择器改名 / CSS 没读到 / 正则失效。
+ * 这时候"没写死色值"会永远绿 —— 必须报错，不能当成没问题。
+ */
+if (mdBlocks.length === 0) {
+  console.log('❌ 没抓到任何 .md- 规则块 —— 扫描器失效，不要当成"没问题"');
+  process.exit(2);
+}
+const mdCss = mdBlocks.join('\n');
+t('md 样式块只含 .md- 段（没把别的样式算进来）', !/\.dep-tag|\.fp-|\.dw-/.test(mdCss));
+const bareHex = (s) => (s
+  .replace(/rgba?\([^)]*\)/g, '')     // 半透明叠加层本就没法写成 var()
+  .replace(/var\([^)]*\)/g, '')       // var() 的兜底色不算写死
+  .match(/#[0-9a-fA-F]{3,6}\b/g) || []);
 t('md 交互样式不写死色值（走 var()）',
-  !/#[0-9a-fA-F]{3,6}\b/.test(mdCss.replace(/rgba?\([^)]*\)/g, '')),
-  (mdCss.match(/#[0-9a-fA-F]{3,6}\b/g) || []).join(','));
+  bareHex(mdCss).length === 0,
+  bareHex(mdCss).join(','));
 
 /*
  * 刻意**不钉死数组字面量**。

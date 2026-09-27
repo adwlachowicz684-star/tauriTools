@@ -1025,14 +1025,23 @@ export function createHost(opts = {}) {
               openArgs,                         // 打开参数（E2），与 module 同语义
               isolated,                         // 插件据此决定能力探测方式
               /*
-               * 是否要求插件自报基调（base-report）。两类插件需要：
-               *   · 隔离态 —— 外壳进不去 iframe 采样，只能靠插件自己报；
-               *   · followsTheme —— 插件自己跟着面板主题变色，外壳照旧采样会误判：
-               *     切到浅色后插件已变浅，采样却按旧印象判“插件深色”→ 施加反转
-               *     → 已变浅的部分被二次翻转成黑，且中间有一段无滤镜的空窗，
-               *       看上去像连切了好几次主题。让它自报，基调由它说了算。
+               * 这里原本有 `reportBase: (isolated || !!manifest.followsTheme)`
+               * —— 要求插件自报基调（base-report）。整套废弃并删除了，原因：
+               *
+               *   1. 它服务于"外壳采样 → 加滤镜反转"那套适配。上游已把
+               *      theme / followsTheme 收成单一约定：外壳把变量推到哪，
+               *      插件就渲染到哪，不做反转也不做覆盖（见 plugins/registry.js
+               *      里"注册表里没有基调声明字段"那段注释）。
+               *      没有滤镜，就不存在"二次翻转成黑"这个问题 ——
+               *      自报基调要修的 bug 在新方案下压根不会发生。
+               *   2. 就算保留，`reportedBase` 在全仓**没有任何一处读它**：
+               *      只有写入没有读取，是死机制。留着只会让人以为
+               *      "值从哪来"这一步已经解决了，实际没人用。
+               *
+               * 删掉的是字段与 base-report 这个 case，插件侧对应逻辑
+               * （plugin-sdk.js 里的 needReportBase）同样已删。
+               * 若哪天重新需要，必须连"谁来读"一起实现，否则又是死写入。
                */
-              reportBase: (isolated || !!manifest.followsTheme),
               // 宿主自报 origin，供插件回发消息时用作 targetOrigin。
               // 隔离态下插件是 opaque origin，读不到 parent.location，
               // 只能靠这里告诉它 —— 否则它只能通配 '*'。
@@ -1040,20 +1049,11 @@ export function createHost(opts = {}) {
             });
             send(iframe, { type: 'mount' });
             break;
-          case 'base-report':
-            /*
-             * 插件自报基调。两类插件会报（见 init 的 reportBase 字段）：
-             * 隔离态（外壳读不到它的 DOM）与 followsTheme（颜色会跟着变）。
-             *
-             * 写进 inst0 而不是等完整实例：握手阶段就要能读，
-             * 那时 Object.assign 还没执行。
-             *
-             * ⚠️ 少了这个 case，插件报了也等于白报 —— reportedBase 永远是空，
-             * 适配只能退回采样/声明，跟随主题的插件照样被二次翻转，
-             * 而且不报错（看起来像"报了没生效"）。
-             */
-            if (d.base === 'light' || d.base === 'dark') inst0.reportedBase = d.base;
-            break;
+          /*
+           * 这里原本有 `case 'base-report'`（插件自报基调，写进 inst0.reportedBase）。
+           * 整套删掉了 —— 见 init 处 reportBase 字段的注释。
+           * 删了之后插件若仍发 base-report，会走到 default 分支被忽略，不会有副作用。
+           */
           case 'mounted':
             clearTimeout(timeout);
             /* 新挂载的 iframe 要立刻同步检查器状态 ——

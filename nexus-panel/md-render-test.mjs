@@ -180,10 +180,21 @@ if (mdEntry) {
     /type:\s*'module'/.test(e));
   t('md 是内置插件 builtin:true', /builtin:\s*true/.test(e));
   /*
-   * followsTheme —— 少了它，切浅色主题时"变白一秒后又变黑"，
-   * 像切换了好几次。它错了不报错，只能靠断言钉。
+   * 反向断言：registry 里**不该**再有 followsTheme。
+   *
+   * 这条原本是正向的（"md 标了 followsTheme"），写于自报基调那套方案时期。
+   * 后来上游把 theme / followsTheme 收成单一约定（外壳推变量、插件照渲染，
+   * 不做反转也无需自报），整套自报基调被废弃删除：
+   * host.js 的 reportBase 字段与 base-report case、plugin-sdk 的 needReportBase
+   * 都已删，follow-theme-test.mjs 也随之删除。
+   *
+   * 为什么改成反向而不是直接删掉这条断言：
+   *   直接删的话，哪天有人又把 followsTheme 加回 registry，没有任何东西会响，
+   *   于是出现"声明了但没人读"的死字段 —— 比现在这条红更糟。
+   *   反向钉住，加回来就会红，且红的原因一目了然。
    */
-  t('md 标了 followsTheme', /followsTheme:\s*true/.test(e));
+  t('registry 里没有 followsTheme（自报基调那套已废弃）',
+    !/followsTheme/.test(e));
   t('md 入口指向 module.tsx（glob 只匹配这个命名）',
     /entry:\s*'\.\/plugins\/md\/module\.tsx'/.test(e));
 }
@@ -256,8 +267,8 @@ process.exit(fails.length ? 1 : 0);
  *      → 应红「javascript: 协议被拦截」
  * 5. urlTransform 去掉 data:image 放行
  *      → 应红「data:image 图片不被剥成空串」
- * 6. registry 去掉 followsTheme
- *      → 应红「md 标了 followsTheme」
+ * 6. registry 加回 followsTheme
+ *      → 应红「registry 里没有 followsTheme」（自报基调已废弃，加回来就是死字段）
  * 7. CSS 去掉 .md-src 的 user-select
  *      → 应红「md 源文本框可选中」
  * 8. CSS 里把 var(--surface-sunk) 换成 #222
