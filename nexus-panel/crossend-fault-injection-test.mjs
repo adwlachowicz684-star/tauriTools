@@ -29,6 +29,41 @@ const t = (name, cond, extra = '') => {
 
 /* ---------------- 工具 ---------------- */
 
+/* 【本测试会真的改源码，所以必须自带"残留清理"】
+   注入是在**真实源文件**上做的：model.rs 里插一个假字段、types.ts 里
+   插一个假字段。inject() 有 try/finally 兜着，但**进程被 SIGKILL
+   （外部 timeout / 手工 Ctrl-C 后再 kill）时 finally 根本不会执行**，
+   注入就永久留在工作区里。
+
+   后果比"跑一次红"严重得多：残留的 `pub brand_new_field_for_test: bool`
+   没有 #[serde(default)]，会被当成**必填字段**推上去 —— 所有现存
+   config.json 反序列化直接失败，等于把用户配置全打坏。而且它看起来
+   就是一行普通字段，推上去没人会发现。
+
+   所以两道保险：
+     1）开跑前先清残留（下面这段）—— 上一次被 kill 也能自愈；
+     2）注册异常与信号钩子，尽最大努力 restoreAll()。 */
+const INJECT_MARKERS = [
+  ['src-tauri/src/fpx/model.rs', 'pub brand_new_field_for_test: bool,'],
+  ['plugins/project-group/types.ts', 'brandNewFieldForTest: boolean;'],
+];
+{
+  let cleaned = 0;
+  for (const [rel, marker] of INJECT_MARKERS) {
+    const abs = P(rel);
+    let s;
+    try { s = readFileSync(abs, 'utf8'); } catch { continue; }
+    if (!s.includes(marker)) continue;
+    const kept = s.split('\n').filter((l) => !l.includes(marker)).join('\n');
+    writeFileSync(abs, kept);
+    cleaned++;
+  }
+  if (cleaned) {
+    console.log(`⚠️  开跑前清掉 ${cleaned} 处上次中断留下的注入残留`
+      + '（进程被 kill 时 try/finally 不会执行）');
+  }
+}
+
 const backups = new Map();
 function backup(path) {
   if (backups.has(path)) return;
@@ -49,6 +84,13 @@ function restore(path) {
 function restoreAll() {
   for (const p of backups.keys()) restore(p);
 }
+/* 尽最大努力：SIGINT / SIGTERM / 未捕获异常时仍能还原。
+   SIGKILL 拦不住（finally 也不执行），那种情况靠上面的开跑前清理兜底。 */
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(sig, () => { restoreAll(); process.exit(130); });
+}
+process.on('uncaughtException', (e) => { restoreAll(); console.error(e); process.exit(1); });
+process.on('unhandledRejection', (e) => { restoreAll(); console.error(e); process.exit(1); });
 
 /** 跑一次校验，返回 { out, code, crashed } */
 function runCheck() {

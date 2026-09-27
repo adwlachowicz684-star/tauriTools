@@ -33,6 +33,16 @@ import {
   toolbarEntriesOf, wantsEntry, hiddenIds, extraIds,
   toggleHidden, addExtra, removeExtra,
 } from '../../js/toolbar-plugin.js';
+/* 依赖清单：数据与判定逻辑都在共享模块里，两版只读同一份。
+   各写一份的话，无构建模式下看到的"声明 vs 实装"就会与正式模式对不上 ——
+   而这个页签的全部价值就在于"两栏摆在一起对照"。 */
+import { DEPS_MANIFEST, DEP_STATUS } from '../../js/deps-manifest.js';
+import { copyText } from '../../js/clipboard.js';
+import {
+  blockReasonOf, canInstall, consumerNoteOf,
+  installRuntimeDep, listRuntimeDeps, loadRuntimeDep,
+  removeRuntimeDep, specOf,
+} from '../../js/runtime-deps.js';
 
 /**
  * 右上角按钮（工具栏入口）管理 —— 与 React 版 ToolbarSection 同能力。
@@ -186,6 +196,7 @@ export default definePlugin({
     const pages = {
       theme: h('div', {}),
       plugins: h('div', {}),
+      deps: h('div', {}),
       external: h('div', {}),
       files: h('div', {}),
       shortcuts: h('div', {}),
@@ -196,6 +207,7 @@ export default definePlugin({
     const TABS = [
       ['theme', '主题'],
       ['plugins', '插件'],
+      ['deps', '依赖'],
       ['external', '外链'],
       ['files', '文件'],
       ['shortcuts', '快捷键'],
@@ -1153,6 +1165,249 @@ export default definePlugin({
       errBox.style.display = 'none';
       await refresh();
       renderFavs();
+    }
+
+    /* ============ 依赖 ============
+       与 React 版 DepsCard 同能力：声明 / 实装 / 谁在用 / 还差什么。
+
+       为什么无构建版也必须有：本项目反复栽在"源码里 import 了、package.json
+       里没有"这类失效上 —— 它不报错、不红、界面退化但不崩。无构建模式下
+       看不到这张表，就等于这一整类问题在该模式下彻底隐形。 */
+    {
+      const m = DEPS_MANIFEST || {};
+      const STATUS = DEP_STATUS || {};
+      const ISSUE = new Set(['missing', 'mismatch', 'undeclared']);
+      const FILTERS = [
+        ['all', '全部'], ['issue', '有问题'],
+        ['runtime', '运行时'], ['dev', '开发时'], ['rust', 'Rust'],
+      ];
+      const all = [
+        ...(m.npm || []).map((d) => ({ ...d, kind: d.dev ? 'dev' : 'runtime' })),
+        ...(m.undeclared || []).map((d) => ({ ...d, kind: 'runtime' })),
+        ...(m.crates || []).map((d) => ({ ...d, kind: 'rust' })),
+      ];
+      const keyOf = (n, v) => `${n}@${v || ''}`;
+
+      let filter = 'all';
+      let q = '';
+      let installed = [];
+      let rtMissing = false;
+      let busyKey = '';
+      let msg = null;   // { k, text, bad }
+
+      const noteBox = h('div', {});
+      const statBox = h('div.p-grid', { style: { marginBottom: 'var(--sp-6, 12px)' } });
+      const listBox = h('div', {});
+      const qInput = h('input.p-input.sm', {
+        type: 'text',
+        placeholder: '搜包名或插件',
+        style: { flex: '1', minWidth: '0', height: '30px', fontSize: 'var(--fs-12, 12px)', padding: '0 10px' },
+        oninput: (e) => { q = e.target.value; renderList(); },
+      });
+      const filterRow = h('div.p-row.dep-filters', { style: { marginBottom: 'var(--sp-6, 12px)' } });
+      for (const [k, label] of FILTERS) {
+        filterRow.appendChild(h('button.p-btn.sm.dep-chip' + (k === 'all' ? ' on' : ''), {
+          type: 'button',
+          onclick: () => {
+            filter = k;
+            for (const b of filterRow.children) {
+              if (b.classList.contains('dep-chip')) b.className = 'p-btn sm dep-chip' + (b.dataset.k === k ? ' on' : '');
+            }
+            renderList();
+          },
+          'data-k': k,
+        }, label));
+      }
+      filterRow.appendChild(qInput);
+
+      const installedOf = (item) => {
+        const spec = specOf(item.install);
+        if (!spec) return null;
+        if (spec.version) {
+          const hit = installed.find((d) => d.name === spec.name && d.version === spec.version);
+          if (hit) return hit;
+        }
+        return installed.find((d) => d.name === spec.name) || null;
+      };
+
+      const matched = () => {
+        const kw = q.trim().toLowerCase();
+        return all.filter((d) => {
+          if (filter === 'issue' && !ISSUE.has(d.status)) return false;
+          if (filter === 'runtime' && d.kind !== 'runtime') return false;
+          if (filter === 'dev' && d.kind !== 'dev') return false;
+          if (filter === 'rust' && d.kind !== 'rust') return false;
+          if (!kw) return true;
+          return d.name.toLowerCase().includes(kw)
+            || (d.usedBy || []).join(',').toLowerCase().includes(kw);
+        });
+      };
+
+      const renderNote = () => {
+        noteBox.innerHTML = '';
+        if (rtMissing) {
+          noteBox.appendChild(h('div.dep-note', {
+            style: { marginBottom: 'var(--sp-6, 12px)', color: 'var(--warn)' },
+          }, '后端尚未接入运行时依赖（fpx_rt_dep_install），「安装」暂不可用 —— 请更新到支持该命令的版本，或复制命令后在源码目录执行。'));
+        }
+        if (installed.length) {
+          noteBox.appendChild(h('div.p-muted.dep-note', { style: { marginBottom: 'var(--sp-6, 12px)' } },
+            '已装进工具内部：' + installed.map((d) => `${d.name}@${d.version}`).join('、')));
+        }
+      };
+
+      const renderList = () => {
+        const list = matched();
+        listBox.innerHTML = '';
+        if (!list.length) {
+          listBox.appendChild(h('div.p-muted', { style: { padding: '12px 0' } }, '没有匹配的依赖。'));
+          return;
+        }
+        for (const d of list) {
+          const st = STATUS[d.status] || { label: d.status, tone: 'mute' };
+          const showCmd = ISSUE.has(d.status) || d.status === 'missing';
+          const spec = specOf(d.install);
+          const k = keyOf(spec?.name || d.name, spec?.version || '');
+          const hit = installedOf(d);
+          const can = canInstall(d);
+          /* 不能装时必须写出理由 —— 静默无按钮会被当成"功能没做完"，
+             而真相是"装了会出事"（第二份 react 实例、宿主契约包等）。 */
+          const why = can ? '' : (d.kind === 'runtime' && !d.dev ? blockReasonOf(d) || '' : '');
+          /* 能装、但装了没人取用的，必须提前说清楚：
+             否则用户点了安装、看到"已安装并验证"，而渲染行为一点没变。 */
+          const noUse = can ? consumerNoteOf(d) : null;
+          const rtUsers = (d.runtimeUsedBy || []).filter(Boolean);
+          const running = busyKey === k;
+
+          const head = h('div.p-row', {},
+            h('div', { style: { flex: '1', minWidth: '0' } },
+              h('span.p-mono.dep-name', {}, d.name),
+              d.pinned ? h('span.dep-tag', { title: '精确锁定的版本' }, '锁定') : null,
+              h('span.dep-tag', {}, d.kind === 'rust' ? 'crate' : d.kind === 'dev' ? '开发时' : '运行时'),
+              hit ? h('span.dep-tag.ok', {}, '已装 ' + hit.version) : null,
+            ),
+            h('span.dep-badge.' + st.tone, {}, st.label),
+          );
+
+          const meta = h('div.dep-meta', {},
+            `声明 ${d.declared ?? '—'} · 实装 ${d.installed ?? '—'}`
+              + (d.usedBy?.length ? ` · 用于 ${d.usedBy.join('、')}` : ''));
+
+          const body = h('div.dep-item', {
+            style: {
+              padding: '10px 12px', marginTop: 'var(--sp-4, 8px)', borderRadius: 'var(--r-sm)',
+              background: 'var(--surface-sunk)',
+              boxShadow: 'inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light)',
+            },
+          }, head, meta);
+
+          if (d.note) body.appendChild(h('div.dep-note', {}, d.note));
+          if (msg && msg.k === k) {
+            body.appendChild(h('div.dep-note', {
+              style: { color: msg.bad ? 'var(--danger)' : 'var(--ok)' },
+            }, msg.text));
+          }
+          if (why) body.appendChild(h('div.dep-note.dep-blocked', {}, '不适合运行时安装 —— ' + why));
+          if (noUse) body.appendChild(h('div.dep-note', {}, noUse));
+          if (can && !hit && rtUsers.length) {
+            body.appendChild(h('div.dep-note', {}, `装了会被 ${rtUsers.join('、')} 取用（优先用装的那份，加载失败自动回退打包版）`));
+          }
+          if (showCmd) {
+            body.appendChild(h('div.p-row', { style: { marginTop: 'var(--sp-4, 8px)' } },
+              h('code.p-mono.dep-cmd', {}, d.install),
+              h('button.p-btn.sm', {
+                type: 'button',
+                onclick: async () => {
+                  const ok = await copyText(ctx, d.install);
+                  ctx.toast(ok ? '已复制安装命令' : '复制失败 —— 请手动选中命令后复制', ok ? 'ok' : 'err');
+                },
+              }, '复制'),
+            ));
+          }
+          if (can) {
+            body.appendChild(h('div.p-row', { style: { marginTop: 'var(--sp-4, 8px)' } },
+              hit
+                ? h('button.p-btn.sm', {
+                  type: 'button',
+                  disabled: running,
+                  onclick: async () => {
+                    busyKey = k; msg = null; renderList();
+                    const r = await removeRuntimeDep(ctx, spec.name, spec.version || '');
+                    msg = r.ok ? { k, text: '已移除', bad: false } : { k, text: r.error || '移除失败', bad: true };
+                    await refresh();
+                  },
+                }, running ? '移除中…' : '移除')
+                : h('button.p-btn.sm.primary', {
+                  type: 'button',
+                  disabled: running || rtMissing,
+                  title: rtMissing ? '后端尚未接入' : '从 CDN 装进工具内部',
+                  onclick: async () => {
+                    busyKey = k; msg = null; renderList();
+                    const r = await installRuntimeDep(ctx, d);
+                    if (!r.ok) {
+                      msg = { k, text: r.error || '安装失败', bad: true };
+                      busyKey = ''; await refresh(); return;
+                    }
+                    /*
+                     * 装完必须真 import 一次。"文件在、import 报错"是最常见的
+                     * 假成功：CDN 给的 ESM 里可能带浏览器不认的语法。不在这里验，
+                     * 用户会在某个插件里才看到报错，而那时已不知道是哪一步出的问题。
+                     */
+                    try {
+                      await loadRuntimeDep(ctx, r.name, r.version, r.file);
+                      msg = { k, text: '已安装并验证可加载', bad: false };
+                    } catch (e) {
+                      msg = {
+                        k,
+                        text: `已下载，但这个包加载不了（可能依赖 node 内建模块）：${String(e?.message || e)}`,
+                        bad: true,
+                      };
+                    }
+                    await refresh();
+                  },
+                }, running ? '安装中…' : '安装'),
+            ));
+          }
+          listBox.appendChild(body);
+        }
+      };
+
+      const refresh = async () => {
+        const r = await listRuntimeDeps(ctx);
+        rtMissing = !!r.missing;
+        installed = r.list || [];
+        busyKey = '';
+        renderNote();
+        renderList();
+      };
+
+      const issues = all.filter((d) => ISSUE.has(d.status)).length;
+      for (const [k, v] of [['总数', all.length], ['有问题', issues],
+        ['npm 包', (m.npm || []).length], ['Rust crate', (m.crates || []).length]]) {
+        statBox.appendChild(h('div.p-stat', {}, h('div.k', {}, k), h('div.v', {}, String(v))));
+      }
+
+      pages.deps.appendChild(
+        h('div.p-card', {},
+          h('h2', {}, '依赖'),
+          h('div.p-muted', { style: { marginBottom: 'var(--sp-6, 12px)', lineHeight: '1.9' } },
+            '工具里的依赖集中在这里看：package.json 的声明、实际装到的版本、以及谁在用。',
+            h('br', {}),
+            '清单由 ', h('span.p-mono', {}, 'npm run deps:scan'), ' 生成（',
+            h('span.p-mono', {}, 'js/deps-manifest.js'), '），改动依赖后重跑一次即可刷新。',
+            h('br', {}),
+            h('span', { style: { color: 'var(--text-mute)' } },
+              '「安装」装的是运行时依赖：从 CDN 取单文件存进工具内部，之后由插件动态 import —— 不是改 package.json（打包产物里没有 npm，改了也不生效）。'),
+          ),
+          m.dirNote ? h('div.p-muted.dep-note', { style: { marginBottom: 'var(--sp-6, 12px)' } }, String(m.dirNote)) : null,
+          noteBox,
+          statBox,
+          filterRow,
+          listBox,
+        ),
+      );
+
+      await refresh();
     }
 
     pages.window.appendChild(card);

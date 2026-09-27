@@ -578,3 +578,53 @@ test('每个节点"最不能少"的参数都在参数表里', () => {
     }
   }
 });
+
+/**
+ * 参数页的**键名**要与契约一致（双向）。
+ *
+ * ================= 这次踩到的 =================
+ *
+ * 有一版 task.params.md 里写着「隐藏参数 `zzz`」—— 那是故障注入
+ * （把 hiddenParams 的 key 改名，验证守卫接得住）之后**重新生成了文档
+ * 却没还原**留下的。它 committed 了，而 2246 条测试全绿：
+ * 已有的守卫只比对「产出 / 接受 / 能力」三列，不比对键名。
+ *
+ * 后果是文档告诉 AI「CLI 节点有个叫 zzz 的隐藏参数」。
+ * AI 照着写 `zzz` 字段 → 不报错，窗格就是挂不上。
+ * 这是文档类漂移最典型的形态：文档还在、看着也像那么回事、
+ * 代码不报错，只是拼出来的流程少了一环。
+ *
+ * ================= 为什么双向 =================
+ *
+ * 只查「契约里声明的键文档里都有」抓不到 zzz ——
+ * zzz 不在契约里，遍历契约自然碰不到它。
+ * 所以还要反过来：文档里出现的隐藏参数键，必须都在契约里。
+ */
+test('参数页的键名与契约一致（双向，防故障注入残留）', () => {
+  for (const b of blockCatalog()) {
+    const spec = SPECS[b.kind];
+    const declared = [...(spec?.params ?? []), ...(spec?.hiddenParams ?? [])]
+      .map((p) => p.key);
+    const s = fs.readFileSync(path.join(nodesDir, `${b.kind}.params.md`), 'utf-8');
+
+    for (const k of declared) {
+      assert.ok(
+        s.includes(`\`${k}\``),
+        `${b.kind}.params.md 缺契约里声明的 ${k} —— `
+        + '改了 nodeSpec 要重跑 scripts/gen-node-docs.mjs',
+      );
+    }
+
+    /* 反向：文档里的隐藏参数键必须都在契约里 */
+    const okKeys = new Set(declared);
+    const hidden = [...s.matchAll(/^\|\s*`([^`]+)`\s*\|\s*隐藏（不在面板字段里）/gm)]
+      .map((m) => m[1]);
+    for (const k of hidden) {
+      assert.ok(
+        okKeys.has(k),
+        `${b.kind}.params.md 里的隐藏参数 \`${k}\` 不在契约里 —— `
+        + '这是与代码不一致的旧版本（故障注入后忘了还原时就是这样）',
+      );
+    }
+  }
+});

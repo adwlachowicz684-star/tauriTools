@@ -137,6 +137,8 @@
     "test:pg-hotkey-capture": "node plugins/project-group/hotkey-capture-test.mjs",
     "test:pg-hotkey-settings": "node plugins/project-group/hotkey-settings-test.mjs",
     "test:pg-hotkeys": "node plugins/project-group/hotkeys-test.mjs",
+    "test:pg-ime-guard": "node plugins/project-group/ime-guard-test.mjs",
+    "test:pg-hotkey-settings": "node plugins/project-group/hotkey-settings-test.mjs",
     "test:pg-ico-build": "node plugins/project-group/ico-build-test.mjs",
     "test:pg-icon-clip": "node plugins/project-group/icon-clip-test.mjs",
     "test:pg-icon-del-hover": "node plugins/project-group/icon-del-hover-test.mjs",
