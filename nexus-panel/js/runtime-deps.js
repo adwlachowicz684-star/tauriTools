@@ -57,6 +57,20 @@ export function safeFileOf(name, version) {
   return `${n}@${v || 'latest'}.mjs`;
 }
 
+/**
+ * 版本归一化 —— 与 safeFileOf 对版本做的事**完全一致**。
+ *
+ * 为什么单列一个函数：判断"已装的是不是声明的那个"时，两边口径必须相同。
+ * 声明写 `^12.0.0`、落盘文件名是 `mermaid@12.0.0.mjs`、list 还原出的版本是
+ * `12.0.0` —— 直接拿字符串比必然不等，于是"装的就是它"被误判成"装了别的
+ * 版本"，界面上凭空多出一条"与声明不符"。
+ */
+export function normVersion(version) {
+  return String(version || '')
+    .trim()
+    .replace(/[^0-9A-Za-z._-]/g, '');
+}
+
 /** CDN 上取 ESM 单文件的地址。 */
 export function entryUrlOf(name, version) {
   const v = String(version || '').trim();
@@ -263,11 +277,64 @@ export async function installRuntimeDep(ctx, item) {
   };
 }
 
-export async function removeRuntimeDep(ctx, name, version) {
-  const r = await callCmd(ctx, CMD_REMOVE, { name, version, file: safeFileOf(name, version) });
+/**
+ * 移除一条。
+ *
+ * ⚠️ 第 4 个参数 file **必须优先用后端 list 给的那个**，不要自己拼。
+ *
+ * 文件命名规则是两处各写一份（本文件 safeFileOf / Rust 侧 safe_file_of），
+ * 靠人工保持一致。一旦哪天规则变了，用 safeFileOf 重新拼出来的名字就会
+ * 指向一个**不存在的文件**：后端对"文件不存在"按成功返回（目标是"这条不再
+ * 存在"），于是点「移除」后刷新，那条还在 —— 界面上看就是"移除无效"。
+ *
+ * 而 list 返回的 file 是 deps 目录里**真实存在的名字**，拿它删永远不会
+ * 删空、也不会删错。多版本共存时这一点尤其要紧：见 installedVersionsOf()。
+ */
+export async function removeRuntimeDep(ctx, name, version, file) {
+  const f = String(file || '').trim() || safeFileOf(name, version);
+  const r = await callCmd(ctx, CMD_REMOVE, { name, version, file: f });
   if (r && r.__missing) return { ok: false, error: RT_ERR.noCmd, missing: true };
   if (r && r.__error) return { ok: false, error: r.__error };
   return { ok: true };
+}
+
+/**
+ * 这个包**所有**已装的版本。
+ *
+ * 【为什么不能只取第一个】
+ * 清单里的声明版本是会变的（^12.0.0 → ^13.0.0）。换版本后旧文件仍留在
+ * deps 目录里，于是同一个包可能装着多份。只 `find(name)` 取第一个的下场是：
+ *
+ *   界面显示「已装 12.0.0」（排序最小的那个）
+ *   点「移除」→ 按**声明版本**拼文件名 → 删掉的是 13.0.0（没显示的那个）
+ *   刷新 → 12.0.0 还在 → 用户看到的是"移除失效"
+ *
+ * 而且那个没被显示的版本从此**没有任何入口能删它**，只能在磁盘上越堆越多。
+ * 所以这里返回全部，界面逐条列出、逐条可删。
+ */
+export function installedVersionsOf(installed, item) {
+  const spec = specOf(item && item.install);
+  if (!spec) return [];
+  const list = Array.isArray(installed) ? installed : [];
+  return list.filter((d) => d && d.name === spec.name);
+}
+
+/**
+ * 已装版本里与声明**不符**的那些（旧版本 / 换了声明后残留的）。
+ *
+ * 返回它们是为了让"该清理"这件事**看得见**：不标出来的话，用户只会看到
+ * 列表里有个"已装 X"，无从判断那是当前的还是上一版留下的。
+ */
+export function staleVersionsOf(installed, item) {
+  const spec = specOf(item && item.install);
+  const want = normVersion(spec ? spec.version : '');
+  /*
+   * 声明里没写版本（install 是 `npm i xxx`）时**无法判定**该装哪个 ——
+   * 这时返回空，不把已装的都标成"与声明不符"。
+   * 无法判定却硬标，界面上就是"装着的每个版本都像错的"，比不标更糟。
+   */
+  if (!want) return [];
+  return installedVersionsOf(installed, item).filter((d) => normVersion(d.version) !== want);
 }
 
 /**
