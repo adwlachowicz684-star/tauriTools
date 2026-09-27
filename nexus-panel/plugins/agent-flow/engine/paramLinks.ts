@@ -607,9 +607,35 @@ export function producesArgOf(
       return 'num';
     // 产出 true / false 文本
     case 'compare':
-    case 'update':
-    case 'gate':
       return 'bool';
+    /*
+     * 更新检测：**按 outputFormat 判**。
+     *
+     *   bool   → 输出就是 String(updated)，即 "true" / "false"
+     *   detail → 输出是多行文本（"true\n标题: …\n链接: …"），是文本不是布尔
+     *
+     * 一律按 bool 算的话，detail 模式下把输出接到文本参数上会被判「错参」——
+     * 而它确实是文本。误报比漏报更糟（会引着人去改本来正确的接法）。
+     */
+    case 'update':
+      return String((data as Record<string, unknown> | undefined)?.outputFormat ?? 'bool') === 'detail'
+        ? 'text'
+        : 'bool';
+    /*
+     * 闸门**不是**布尔 —— 它是透传。
+     *
+     * 满足放行条件时输出的是上游原文（`'hello'`），不满足时直接失败、
+     * 压根没有输出。它从不产出 "true" / "false"。
+     *
+     * 把它列进 bool 会同时犯两种错：
+     *   · 接到文本参数 → 报「错参」（误报，它本来就是文本）
+     *   · 接到布尔参数 → 放行，但实际拿到 "hello"（静默错，更糟）
+     *
+     * 与 throttle / timeout / log 同属透传，一律 unknown（不参与校验）。
+     * 这条是靠跑执行器实测出来的（`tests/paramLinkRuntime.test.ts`），
+     * 不是看代码推的 —— 之前正是"看代码觉得它该是布尔"。
+     */
+    // 'gate' 不在此列：见上
     /*
      * 常量：**按第一张卡的种类**产出。
      *
