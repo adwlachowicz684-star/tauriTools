@@ -1,6 +1,6 @@
-# 目录卡片（workdir）
+# 目录变量（workdir）
 
-> 自动生成，不要手改。源文件：`nodes/cardGroups.ts`
+> 自动生成，不要手改。源文件：`nodes/variableGroups.ts`
 
 [← 回到索引](../README.md)
 

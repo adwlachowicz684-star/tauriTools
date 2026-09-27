@@ -8,7 +8,7 @@
 | 类别 | 装的是什么 | 入口 |
 |---|---|---|
 | **节点** | 一个积木（40 种） | 下面按分类的表 |
-| **参数卡片** | 一组参数（如某个仓库地址） | [卡片](#参数卡片)（0 组） |
+| **变量** | 一组参数（如某个仓库地址），多个节点可共用 | [变量组](#变量组)（4 组） |
 | **模块** | 多个节点编成的组合 | [module](reuse/module.md) |
 | **自定义预设** | 一个配好的节点 | [custom-preset](reuse/custom-preset.md) |
 | **节点默认值** | 决定新建节点长什么样 | [defaults](reuse/defaults.md) |
@@ -113,13 +113,17 @@
 | [play-audio](nodes/play-audio.params.md) | any（透传上游） | any | playAudioReader | 已并入「播放声音」节点 —— 新画布请用播放声音，来源选「本地文件」 | `nodes/defs/playAudio.ts` |
 | [wait](nodes/wait.params.md) | any（透传上游） | any | — | 暂停一段时间再往下跑 | `nodes/defs/wait.ts` |
 
-## 参数卡片
+## 变量组
 
-一组参数存成卡片，拖到节点上就套用。改了节点会**脱钩**成「自定义」。
+一组参数存成变量，拖到节点上就套用；改**变量本身**时所有引用它的节点一起变
+（不想共用就在选择器上点「脱离」）。
 
-| 卡片组 | 管哪些字段 | 能用在 |
+| 变量组 | 管哪些字段 | 能用在 |
 |---|---|---|
-
+| [地址变量](cards/github-repo.md) | `owner`, `repo`, `branch` | `github-push`, `github-update` |
+| [接口变量](cards/http-endpoint.md) | `url`, `method` | `generic-http` |
+| [模型变量](cards/llm-config.md) | `llm` | `llmChat`, `ocr`, `translate` |
+| [目录变量](cards/workdir.md) | `workdir` | `github-push` |
 
 拖到节点上会校验三件事：组已注册、节点声明支持这个组、值通过 validate。
 

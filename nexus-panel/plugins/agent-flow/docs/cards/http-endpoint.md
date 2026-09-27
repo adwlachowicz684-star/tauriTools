@@ -1,6 +1,6 @@
-# 接口卡片（http-endpoint）
+# 接口变量（http-endpoint）
 
-> 自动生成，不要手改。源文件：`nodes/cardGroups.ts`
+> 自动生成，不要手改。源文件：`nodes/variableGroups.ts`
 
 [← 回到索引](../README.md)
 

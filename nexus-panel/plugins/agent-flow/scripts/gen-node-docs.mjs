@@ -18,7 +18,7 @@
  *   docs/README.md              统一索引 —— 五类可拖用的东西都在这里
  *   docs/nodes/<kind>.md        节点说明层：分类、产出/接受、能力、坑
  *   docs/nodes/<kind>.params.md 节点参数层：完整参数表 + 用法
- *   docs/cards/<group>.md       参数卡片组：管哪些字段、用在哪些节点
+ *   docs/cards/<group>.md       变量组：管哪些字段、用在哪些节点
  *   docs/reuse/*.md             复用件：模块 / 自定义预设 / 默认值
  *
  * 分层的理由：不用一次加载全部。AI 在第一层就能做连接判断
@@ -29,7 +29,7 @@
  * 除了节点，还有四样也是"能拖出来用的"，一并收录 —— 用户可以不用，
  * 但不能没有，而且它们不占多少上下文：
  *
- *   参数卡片   一组参数（如某个仓库地址），拖用后脱钩
+ *   变量       一组参数（如某个仓库地址），拖用后可共用
  *   模块       多个节点编成的组合，改库全体跟着变
  *   自定义预设 一个配好的节点，从侧栏拖出来用
  *   节点默认值 决定新建的同类节点长什么样
@@ -153,13 +153,17 @@ for (const f of defFiles) {
 }
 
 /*
- * ================= 参数卡片组 =================
+ * ================= 变量组 =================
  *
  * 收录理由：卡片也是"能拖出来用的" —— 拖到节点上就套用一组参数。
  * 用户可以把当前值存成卡片，之后从面板或卡片库里选。
  *
- * 数据来自 nodes/cardGroups.ts 的 registerCardGroup(...)，
- * 加上各 defs 里 meta.cardGroups 的反向关联（哪些节点能用这组）。
+ * 数据来自 nodes/variableGroups.ts 的 registerVariableGroup(...)，
+ * 加上各 defs 里 meta.varGroups 的反向关联（哪些节点能用这组）。
+ *
+ * 改名留痕：这一层最早叫「参数卡片」，源文件 nodes/cardGroups.ts、
+ * 节点侧声明 cardGroups。改名后脚本没跟上，静默产出 0 组 ——
+ * 详见 collectCardGroups 里的注释。
  */
 /*
  * 从 .ts 源文件提取类型定义的顶层字段。
@@ -209,20 +213,30 @@ function constValueOf(file, name) {
 
 function collectCardGroups() {
   /*
-   * 卡片组那一层已经从代码里移除了（nodes/cardGroups.ts 不再存在），
-   * 而这份脚本还在硬读它 —— 于是**整份文档生成直接崩**，
-   * 节点文档一起生成不出来（新增节点会卡在"缺 xxx.params.md"）。
+   * 「参数卡片」这一层已经改名成「变量」，源文件从 nodes/cardGroups.ts
+   * 挪到 nodes/variableGroups.ts（类型 CardGroupDef → VariableGroupDef，
+   * 节点侧声明 cardGroups → varGroups）。
    *
-   * 改成缺文件就返回空、跳过卡片层：**不删**已有的 docs/cards/*.md
-   * （不写文件即可，删掉会让索引里的链接指向空文件）。
+   * 而这份脚本还在硬读旧文件 —— 上一版的处理是"文件不存在就返回空"，
+   * 于是**静默产出 0 组**：索引里那一节变成空表，而
+   * docs/cards/*.md 还留着 4 个指向 nodes/cardGroups.ts 的孤儿页
+   * （那个文件已经不存在了）。AI 照着索引点进去，读到的全是死内容。
+   *
+   * 静默空正是这次要防的症状，所以这里改成：读不到就**直接抛错**，
+   * 让文档生成失败，而不是生成一份"看着完整、内容已废"的文档。
    */
-  const p = path.join(ROOT, 'nodes', 'cardGroups.ts');
-  if (!fs.existsSync(p)) return [];
+  const p = path.join(ROOT, 'nodes', 'variableGroups.ts');
+  if (!fs.existsSync(p)) {
+    throw new Error(`找不到 ${p} —— 变量组的源文件挪过地方，本脚本要跟着改，不要静默跳过`);
+  }
   const src = fs.readFileSync(p, 'utf-8');
   const groups = [];
 
-  // 逐个 `const X_GROUP: CardGroupDef = { ... };`
-  const blocks = src.split(/const\s+\w+_GROUP\s*:\s*CardGroupDef\s*=\s*\{/).slice(1);
+  // 逐个 `const X_GROUP: VariableGroupDef = { ... };`
+  const blocks = src.split(/const\s+\w+_GROUP\s*:\s*VariableGroupDef\s*=\s*\{/).slice(1);
+  if (blocks.length === 0) {
+    throw new Error(`${p} 里没解析出任何变量组 —— 正则可能失效了（改名/换写法时要同步）`);
+  }
   for (const b of blocks) {
     const g = {
       group: (b.match(/group:\s*'([^']+)'/) ?? [])[1],
@@ -261,7 +275,7 @@ function collectCardGroups() {
     g.usedBy = [];
     for (const f of fs.readdirSync(path.join(ROOT, 'nodes', 'defs'))) {
       const ds = fs.readFileSync(path.join(ROOT, 'nodes', 'defs', f), 'utf-8');
-      const cg = ds.match(/cardGroups:\s*\[([^\]]+)\]/);
+      const cg = ds.match(/varGroups:\s*\[([^\]]+)\]/);
       if (!cg) continue;
       const list = [...cg[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
       if (!list.includes(g.group)) continue;
@@ -322,7 +336,7 @@ ${(typeFieldsOf(MOD_FILE, 'ModuleDef') ?? []).map((r) => `- \`${r.name}\`: \`${r
 | 改模块库里的定义 | **所有实例跟着变** |
 | 改某个实例内部的节点 | 该实例**脱钩**成独立副本，不再跟随 |
 
-「库是库、实例是实例」 —— 与参数卡片、自定义预设是同一套语义。
+「库是库、实例是实例」 —— 与变量、自定义预设是同一套语义。
 
 ## 执行时
 
@@ -439,7 +453,7 @@ function writeCards(groups) {
   for (const g of groups) {
     let s = `# ${g.label}（${g.group}）
 
-> 自动生成，不要手改。源文件：\`nodes/cardGroups.ts\`
+> 自动生成，不要手改。源文件：\`nodes/variableGroups.ts\`
 
 [← 回到索引](../README.md)
 
@@ -592,7 +606,7 @@ let idx = `# 可拖用的东西 — 统一索引
 | 类别 | 装的是什么 | 入口 |
 |---|---|---|
 | **节点** | 一个积木（${blocks.length} 种） | 下面按分类的表 |
-| **参数卡片** | 一组参数（如某个仓库地址） | [卡片](#参数卡片)（${cards.length} 组） |
+| **变量** | 一组参数（如某个仓库地址），多个节点可共用 | [变量组](#变量组)（${cards.length} 组） |
 | **模块** | 多个节点编成的组合 | [module](reuse/module.md) |
 | **自定义预设** | 一个配好的节点 | [custom-preset](reuse/custom-preset.md) |
 | **节点默认值** | 决定新建节点长什么样 | [defaults](reuse/defaults.md) |
@@ -631,11 +645,12 @@ for (const cat of order) {
   idx += '\n';
 }
 
-idx += `## 参数卡片
+idx += `## 变量组
 
-一组参数存成卡片，拖到节点上就套用。改了节点会**脱钩**成「自定义」。
+一组参数存成变量，拖到节点上就套用；改**变量本身**时所有引用它的节点一起变
+（不想共用就在选择器上点「脱离」）。
 
-| 卡片组 | 管哪些字段 | 能用在 |
+| 变量组 | 管哪些字段 | 能用在 |
 |---|---|---|
 ${cards.map((g) => `| [${g.label}](cards/${g.group}.md) | ${g.keys.map((k) => `\`${k}\``).join(', ')} | ${g.usedBy.map((u) => `\`${u.kind}\``).join(', ') || '—'} |`).join('\n')}
 
@@ -790,4 +805,4 @@ writeCards(cards);
 writeReuse();
 
 fs.writeFileSync(path.join(DOCS, 'README.md'), idx);
-console.log(`✅ 已生成 docs/：索引 + ${n} 个参数页 + ${cards.length} 个卡片组 + 3 个复用件说明`);
+console.log(`✅ 已生成 docs/：索引 + ${n} 个参数页 + ${cards.length} 个变量组 + 3 个复用件说明`);

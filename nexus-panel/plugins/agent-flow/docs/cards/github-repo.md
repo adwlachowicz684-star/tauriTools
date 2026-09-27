@@ -1,6 +1,6 @@
-# 地址卡片（github-repo）
+# 地址变量（github-repo）
 
-> 自动生成，不要手改。源文件：`nodes/cardGroups.ts`
+> 自动生成，不要手改。源文件：`nodes/variableGroups.ts`
 
 [← 回到索引](../README.md)
 
@@ -19,13 +19,13 @@ GitHub 仓库地址：owner / repo / branch
 ## 能用在哪些节点
 
 - [`github-push`](../nodes/github-push.params.md) — 推送
-- [`github-update`](../nodes/github-update.params.md) — 更新检测
+- [`github-update`](../nodes/github-update.params.md) — 仓库更新（旧）
 
 拖到节点上时会校验：节点必须**声明支持**这个组，否则拒绝并说明原因。
 
 ## 什么情况下这张卡片不能用
 
-校验规则：`validate: (v) => (asText(v.repo) ? null : '没填仓库名，套上去也是空的'),`
+校验规则：`validate: (v) => (asText(v.repo) ? null : '没填仓库名，引用上去也是空的'),`
 
 返回非空即拒绝 —— 这是为了挡住"看着能拖、套上去是空的"这类错配。
 

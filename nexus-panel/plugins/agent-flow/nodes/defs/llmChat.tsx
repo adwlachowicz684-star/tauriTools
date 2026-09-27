@@ -289,6 +289,19 @@ registerNode({
     category: 'ai',
     idPrefix: 'lc',
     sub: '调一次大模型：自由对话 / 图片识别 / 翻译',
+    /*
+     * 合并时漏了这一行 —— ocr / translate 都声明了 llm-config 变量组，
+     * 合并后的大模型节点却没有。
+     *
+     * 后果是双份的，且都不报错：
+     *   · 属性面板不渲染模型变量选择器（fields.tsx 按 meta.varGroups 渲染）
+     *   · 把模型变量拖到这个节点上会被**明确拒绝**（App 里 checkVarForNode
+     *     按同一份 meta.varGroups 判定，会弹「这个变量用不上」）
+     *
+     * 于是"几个节点共用一份模型配置"这个能力，在推荐节点上反而用不了，
+     * 只有在被标 legacy 的老节点上还能用 —— 正是合并漏挂的典型症状。
+     */
+    varGroups: ['llm-config'],
   },
   create: (id, partial) => makeLlmChatNode(id, (partial ?? {}) as never).data,
   Canvas: LlmChatNode,

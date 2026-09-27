@@ -1,6 +1,6 @@
-# 模型卡片（llm-config）
+# 模型变量（llm-config）
 
-> 自动生成，不要手改。源文件：`nodes/cardGroups.ts`
+> 自动生成，不要手改。源文件：`nodes/variableGroups.ts`
 
 [← 回到索引](../README.md)
 
@@ -16,8 +16,9 @@
 
 ## 能用在哪些节点
 
+- [`llmChat`](../nodes/llmChat.params.md) — 大模型
 - [`ocr`](../nodes/ocr.params.md)
-- [`translate`](../nodes/translate.params.md) — 翻译
+- [`translate`](../nodes/translate.params.md) — 翻译（旧）
 
 拖到节点上时会校验：节点必须**声明支持**这个组，否则拒绝并说明原因。
 
