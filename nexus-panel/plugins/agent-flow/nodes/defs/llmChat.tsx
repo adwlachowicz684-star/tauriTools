@@ -12,6 +12,7 @@ import {
 } from '../../components/inspectors/fields';
 import { runLlmChat } from '../../engine/runners/llmChat';
 import { registerNode } from '../registry';
+import { card } from '../paramCards';
 
 /**
  * 大模型节点 —— 一个节点覆盖三种用途。
@@ -131,53 +132,22 @@ const fields = (_d: Record<string, unknown>, p?: FieldRenderProps): FieldDef[] =
       ),
     },
 
-    {
-      type: 'select',
-      key: 'detail',
-      label: '图片细节',
-      when: () => isOcr,
-      options: [
-        { value: 'auto', label: '自动' },
-        { value: 'low', label: '低（省 token）' },
-        { value: 'high', label: '高（识别更准）' },
-      ],
-    },
+    /* 与旧的 OCR 节点共用同一张卡（见 nodes/paramCards.ts） */
+    card('llm.detail', { when: () => isOcr }),
 
-    /* ---- 翻译：目标/源语言 + 术语表 ---- */
-    {
-      type: 'chips',
-      key: 'targetLang',
-      label: '目标语言',
-      when: () => isTrans,
-      options: () => TARGET_LANGS.map((l) => ({ value: l.code, label: l.label })),
-    },
-    {
-      // 选了预设语言时这行没必要出现，直接隐藏
-      type: 'text',
-      key: 'targetLang',
-      label: '目标语言（自定义）',
+    /*
+     * ---- 翻译：目标/源语言 + 术语表 ----
+     *
+     * 与旧的 translate 节点共用同一批卡片（见 nodes/paramCards.ts）。
+     * 这里的覆盖只有 when —— 大模型节点上这几项只在用途=翻译时出现；
+     * 卡片本身（含"选了预设语言就隐藏自定义那行"）在库里定义一次。
+     */
+    card('llm.targetLang', { when: () => isTrans }),
+    card('llm.targetLangCustom', {
       when: (d) => isTrans && !TARGET_LANGS.some((l) => l.code === d.targetLang),
-      placeholder: '如「简练的文言文」',
-    },
-    {
-      type: 'text',
-      key: 'sourceLang',
-      label: '源语言',
-      when: () => isTrans,
-      placeholder: '留空自动识别',
-      toUI: (v) => (v === 'auto' ? '' : v),
-      fromUI: (v) => (String(v).trim() || 'auto'),
-      hint: '留空让模型自动判断；填了能减少误判（如「日语」）',
-    },
-    {
-      type: 'textarea',
-      key: 'glossary',
-      label: '术语表（可选）',
-      when: () => isTrans,
-      rows: 3,
-      placeholder: 'GPU=图形处理器\nTransformer=变换器',
-      hint: '每行一条「原文=译文」，保证专有名词译法一致',
-    },
+    }),
+    card('llm.sourceLang', { when: () => isTrans }),
+    card('llm.glossary', { when: () => isTrans }),
 
     /* ---- 自由对话：角色提示词 ---- */
     {
@@ -238,12 +208,8 @@ const fields = (_d: Record<string, unknown>, p?: FieldRenderProps): FieldDef[] =
       placeholder: '留空不限制',
     },
 
-    {
-      type: 'switch',
-      key: 'jsonMode',
-      label: '',
-      placeholder: '要求结构化 JSON 输出',
-    },
+    /* 与 API 任务窗格共用同一张卡（见 nodes/paramCards.ts） */
+    card('llm.jsonMode'),
 
     {
       type: 'note',

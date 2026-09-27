@@ -80,6 +80,126 @@ for (const m of (catBlock?.[1] ?? '').matchAll(/^\s*'?([a-zA-Z]+)'?:\s*\{\s*labe
 }
 
 /* ================= 从 defs 派生参数 ================= */
+/**
+ * 参数卡片库（nodes/paramCards.ts）的解析。
+ *
+ * ============ 为什么文档生成器必须认得它 ============
+ *
+ * 参数抽成卡片之后，节点里写的是 `card('sound.path')` 而不是字面量块。
+ * 生成器只认字面量的话，**这些参数会从参数表里整个消失** ——
+ * 表现不是报错，而是文档里写着"这个控件没有可调参数"，
+ * 而面板上明明有三个输入框。
+ *
+ * 这正是"节点层与参数层分开"这件事最容易漏的一处：
+ * 改了节点、漏了读节点的那个人（这里是文档生成器）。
+ */
+let CARD_LIB = null;
+function cardLib() {
+  if (CARD_LIB) return CARD_LIB;
+  const p = path.join(ROOT, 'nodes', 'paramCards.ts');
+  /*
+   * 读不到就**抛错**，不返回空 Map。
+   *
+   * 返回空的话，所有 card() 调用都会被当成"没有这个字段"跳过 ——
+   * 生成的参数表整片少掉，而文档看起来是完整的（只是"没有可调参数"）。
+   * 这正是本仓库三令五申要防的"静默失效"，见上面同类注释。
+   */
+  if (!fs.existsSync(p)) {
+    throw new Error('文档生成器找不到 nodes/paramCards.ts，无法展开参数卡片');
+  }
+  const src = fs.readFileSync(p, 'utf-8');
+  const m = src.match(/export const PARAM_CARDS[^=]*=\s*\{/);
+  const body = m ? src.slice(m.index + m[0].length) : '';
+  const lib = new Map();
+  /*
+   * 每条形如  'sound.path': { ... },
+   * 用 `'id': {` 定位，再做花括号配对取到整块。
+   */
+  for (const mm of body.matchAll(/'([A-Za-z][\w.]*)':\s*\{/g)) {
+    let depth = 0;
+    let j = mm.index + mm[0].length - 1;
+    for (; j < body.length; j++) {
+      if (body[j] === '{') depth++;
+      else if (body[j] === '}') { depth--; if (!depth) break; }
+    }
+    lib.set(mm[1], body.slice(mm.index + mm[0].length, j));
+  }
+  CARD_LIB = lib;
+  return lib;
+}
+
+/** 找出 body 里所有 card('id', {...}) 调用的位置与内容 */
+function parseCardCalls(body) {
+  const out = [];
+  const lib = cardLib();
+  const re = /card\(\s*'([^']+)'/g;
+  for (const m of body.matchAll(re)) {
+    const id = m[1];
+    if (!lib.has(id)) continue;
+    // 取可选的第二个参数（覆盖对象）
+    let over = '';
+    let j = m.index + m[0].length;
+    while (j < body.length && /[\s,]/.test(body[j])) j++;
+    if (body[j] === '{') {
+      let depth = 0;
+      let k = j;
+      for (; k < body.length; k++) {
+        if (body[k] === '{') depth++;
+        else if (body[k] === '}') { depth--; if (!depth) break; }
+      }
+      over = body.slice(j + 1, k);
+    }
+    out.push({ at: m.index, id, over });
+  }
+  return out;
+}
+
+/**
+ * 卡片调用 → 可解析的"块文本"。
+ *
+ * **覆盖写在库内容之前**：下面的解析用 match 取第一个命中，
+ * 覆盖放前面才能真正盖住库里的同名属性（放后面就等于没传）。
+ */
+function blockOfCard({ id, over }) {
+  let text = `{ ${over} ${cardLib().get(id) ?? ''} }`;
+  /*
+   * when 写成**函数引用**（如 `when: whenSoundFile`）时要展开。
+   *
+   * 不展开的话，"显示条件"那一列会变成 ——，
+   * 文档就丢掉了"这一项只在声音来源=本地文件时出现"这个信息 ——
+   * 而它恰恰是读者最容易漏看、又最该知道的一条。
+   * 失效方式是安静的：文档看着完整，只是少一列。
+   */
+  /*
+   * 只认"标识符"形态的 when（`(?!\()` 排除掉 `when: (d) => ...` 内联写法）。
+   *
+   * 不能写成 `[,]}` 收尾 —— 覆盖写在库内容**之前**，
+   * `when: whenSoundFile` 后面跟的是库块里的 `type:`，不是逗号或花括号，
+   * 那样匹配不上（文档里"显示条件"那一列就一直是 ——）。
+   */
+  const w = text.match(/when:\s*(?!\()([A-Za-z_$][\w$]*)/);
+  if (w && w[1] !== 'd') {
+    const fn = cardSrc().match(
+      new RegExp(`function\\s+${w[1]}\\s*\\([^)]*\\)[^\\{]*\\{\\s*return\\s+([\\s\\S]*?);\\s*\\}`),
+    );
+    if (fn) text = text.replace(w[0], `when: (d) => ${fn[1].trim()}`);
+  }
+  return text;
+}
+
+/** paramCards.ts 的原文（解析 when 函数引用时要读它） */
+let CARD_SRC = null;
+function cardSrc() {
+  if (CARD_SRC === null) {
+    const p = path.join(ROOT, 'nodes', 'paramCards.ts');
+    if (!fs.existsSync(p)) {
+      throw new Error('文档生成器找不到 nodes/paramCards.ts，无法展开 when 函数引用');
+    }
+    CARD_SRC = fs.readFileSync(p, 'utf-8');
+  }
+  return CARD_SRC;
+}
+
 function parseFields(file) {
   const src = fs.readFileSync(path.join(ROOT, 'nodes', 'defs', file), 'utf-8');
   const m0 = src.match(/const fields[^=]*=\s*\[/);
@@ -128,8 +248,21 @@ function parseFields(file) {
   const starts = [...new Set([...startsA, ...startsB])].sort((a, b) => a - b);
   starts.push(body.length);
   const out = [];
-  for (let i = 0; i < starts.length - 1; i++) {
-    const seg = body.slice(starts[i], starts[i + 1]);
+  /*
+   * 除了字面量块，还要认 **card() 调用** —— 见 parseCardCalls。
+   * 两者的起点混在一起按位置排序，参数表的**顺序**才与面板上的一致。
+   */
+  const cardStarts = parseCardCalls(body).map((c) => ({ at: c.at, card: c }));
+  const all = [
+    ...starts.slice(0, -1).map((at) => ({ at, card: null })),
+    ...cardStarts,
+  ].sort((a, b) => a.at - b.at);
+  all.push({ at: body.length, card: null });
+
+  for (let i = 0; i < all.length - 1; i++) {
+    const seg = all[i].card
+      ? blockOfCard(all[i].card)
+      : body.slice(all[i].at, all[i + 1].at);
     const t = seg.match(/type:\s*'([a-zA-Z]+)'/)?.[1];
     if (!t) continue;
     if (t === 'note') {
@@ -624,6 +757,22 @@ function paramsOf(kind, b) {
       for (const m of src.matchAll(/key:\s*'([^']+)'/g)) declared.add(m[1]);
       for (const m of src.matchAll(/spec:\s*\{\s*keys:\s*\[([^\]]+)\]/g)) {
         for (const k of m[1].matchAll(/'([^']+)'/g)) declared.add(k[1]);
+      }
+      /*
+       * 第三条取数路径：**card() 调用**。
+       *
+       * 前两条都只扫字面量，认不出 `card('sound.path')` ——
+       * 于是"生成器不认卡片调用"这个故障**完全无痕**：
+       * 参数表整片少掉，文档看着完整，测试全绿。
+       * （注入验证过：把 parseCardCalls 摘掉，2285 项测试一条不红。）
+       *
+       * 这里从卡片库取 key 补进 declared，缺失就会走到下面的 throw。
+       */
+      for (const m of src.matchAll(/card\(\s*'([^']+)'/g)) {
+        const blk = cardLib().get(m[1]);
+        if (!blk) continue;
+        const k = blk.match(/key:\s*'([^']+)'/)?.[1];
+        if (k) declared.add(k);
       }
     }
     const missing = [...declared].filter((k) => !seen.has(k));

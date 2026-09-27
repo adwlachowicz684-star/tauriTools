@@ -132,9 +132,22 @@ test('文档生成器读 variableGroups.ts，读不到要抛错而不是静默�
    *
    * （第一版我就写成了整串匹配：注入故障后它照样报绿。）
    */
-  const m = src.match(/const\s+p\s*=\s*path\.join\([^)]*?,\s*'([^']+\.ts)'\s*\);/);
-  assert.ok(m, '没解析出采集变量组时读的源文件那一行，正则可能失效了');
-  assert.equal(m[1], 'variableGroups.ts', '生成器读的不是 variableGroups.ts');
+  /*
+   * 找**所有**这种行，而不是取第一个。
+   *
+   * 取第一个的话，别人在生成器里新增一个读别的源文件的函数
+   * （比如读 nodes/paramCards.ts 展开卡片定义），
+   * 只要它位置更靠前，这条守卫就会**误报** ——
+   * 而误报会把人引去改一段本来就正确的代码。
+   */
+  const ms = [
+    ...src.matchAll(/const\s+p\s*=\s*path\.join\([^)]*?,\s*'([^']+\.ts)'\s*\);/g),
+  ].map((x) => x[1]);
+  assert.ok(ms.length > 0, '没解析出任何读源文件的那一行，正则可能失效了');
+  assert.ok(
+    ms.includes('variableGroups.ts'),
+    `生成器读的不是 variableGroups.ts（实际读的：${ms.join(', ')}）`,
+  );
 
   assert.ok(
     !/'cardGroups\.ts'/.test(src),

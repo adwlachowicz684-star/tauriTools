@@ -41,7 +41,7 @@
 | `prompt` | custom | 由手写面板渲染（通常带上游变量插入按钮） | — | — |
 | `temperature` | number | 温度；越低越稳定，越高越发散；占位：留空用窗格的，再没有则 0.3 | — | ` → isChat` |
 | `maxTokens` | number | 最大输出 token；占位：留空不限制 | — | — |
-| `jsonMode` | switch | 占位：要求结构化 JSON 输出 | — | — |
+| `jsonMode` | switch | 不是所有模型都支持；不支持的会返回错误而不是悄悄返回普通文本；占位：要求结构化 JSON 输出 | — | — |
 | `paneId` | 隐藏（不在面板字段里） | 所属任务窗格（apiPane）的 id。留空 = 不挂窗格。挂了之后：system / temperature 没填时用窗格那一份，连接与模型也可继承。由 paneField 卡片组提供。 | — | — |
 
 ## 具名输出（除「结论」外还能取到什么）

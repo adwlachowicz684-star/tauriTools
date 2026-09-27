@@ -31,9 +31,9 @@
 |---|---|---|---|---|
 | `source` | select | 声音来源 | — | — |
 | `preset` | select | 音效 | `动态（PRESETS.map）` | `d → (d.source ?? 'preset') === 'preset'` |
-| `path` | text | 音频文件；支持模板，如 {{上游.output}}；建议 mp3 / wav / ogg；占位：/path/to/sound.mp3 | — | `d → d.source === 'file'` |
+| `path` | text | 音频文件；支持模板，如 {{上游.output}}；建议 mp3 / wav / ogg；占位：/path/to/sound.mp3 | — | `d → (d.source ?? 'preset') === 'file'` |
 | `volume` | number | 音量；0 ~ 1，默认 0.6 | — | — |
-| `waitForEnd` | switch | 占位：播完再往下走（关掉则立即继续，声音继续放） | — | `d → d.source === 'file'` |
+| `waitForEnd` | switch | 占位：播完再往下走（关掉则立即继续，声音继续放） | — | `d → (d.source ?? 'preset') === 'file'` |
 
 ## 建节点的正确方式
 

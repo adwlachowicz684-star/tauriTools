@@ -3,6 +3,7 @@ import { PaneNode } from '../../components/PaneNode';
 import { CliModelPanel } from '../../components/inspectors/shared';
 import { type FieldDef } from '../../components/inspectors/fields';
 import { registerNode } from '../registry';
+import { card } from '../paramCards';
 
 /**
  * CLI 任务窗格。
@@ -63,13 +64,11 @@ const fields: FieldDef[] = [
       />
     ),
   },
-  {
-    type: 'switch',
-    key: 'yolo',
-    label: '',
-    placeholder: '自动批准工具调用（-y）',
+  /* 与「任务」节点共用同一张卡（见 nodes/paramCards.ts） */
+  card('cli.yolo', {
     hint: '权限放宽项：窗格开了，里面节点就算没开也按开处理',
-  },
+  }),
+
   {
     type: 'switch',
     key: 'shareContext',

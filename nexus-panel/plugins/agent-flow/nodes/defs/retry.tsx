@@ -3,6 +3,7 @@ import { RetryNode } from '../../components/ControlNode';
 import type { FieldDef } from '../../components/inspectors/fields';
 import { runRetry } from '../../engine/runners/retry';
 import { registerNode } from '../registry';
+import { card } from '../paramCards';
 
 /**
  * 重试 —— 上游成功了但内容不合格时，重跑它直到合格。
@@ -33,24 +34,13 @@ const fields: FieldDef[] = [
     step: 500,
     hint: '毫秒',
   },
-  {
-    type: 'select',
-    key: 'check',
-    label: '合格条件',
-    options: [
-      { value: 'nonempty', label: '非空', hint: '有内容就行' },
-      { value: 'contains', label: '包含', hint: '含有指定文本' },
-      { value: 'notContains', label: '不包含', hint: '不含指定文本（如响应里没有 error）' },
-      { value: 'regex', label: '正则', hint: '用正则表达式匹配' },
-    ],
-  },
-  {
-    type: 'text',
-    key: 'value',
-    label: '比对值',
-    placeholder: '要包含的文本 / 正则表达式',
-    when: (d) => d.check !== 'nonempty',
-  },
+  /*
+   * 这两张与「闸门」节点共用（见 nodes/paramCards.ts）。
+   * 选项完全一致，只有标签不同 —— 闸门叫「条件」，重试叫「合格条件」，
+   * 那是刻意的：一个判放不放行，一个判跑得对不对。
+   */
+  card('cmp.check', { label: '合格条件' }),
+  card('cmp.value'),
   {
     type: 'note',
     content: '上游**执行失败**时本节点不会运行（失败会沿边传播）。这里处理的是"跑成功了但内容不对"。',

@@ -3,6 +3,7 @@ import { GateNode } from '../../components/ControlNode';
 import type { FieldDef } from '../../components/inspectors/fields';
 import { runGate } from '../../engine/runners/gate';
 import { registerNode } from '../registry';
+import { card } from '../paramCards';
 
 /**
  * 闸门 —— 满足条件才放行下游。
@@ -20,24 +21,13 @@ const fields: FieldDef[] = [
       { value: 'now', label: '立即', hint: '不满足就直接失败，下游跳过' },
     ],
   },
-  {
-    type: 'select',
-    key: 'check',
-    label: '条件',
-    options: [
-      { value: 'nonempty', label: '非空', hint: '有内容就行' },
-      { value: 'contains', label: '包含', hint: '含有指定文本' },
-      { value: 'notContains', label: '不包含', hint: '不含指定文本（如响应里没有 error）' },
-      { value: 'regex', label: '正则', hint: '用正则表达式匹配' },
-    ],
-  },
-  {
-    type: 'text',
-    key: 'value',
-    label: '比对值',
-    placeholder: '要包含的文本 / 正则表达式',
-    when: (d) => d.check !== 'nonempty',
-  },
+  /*
+   * 这两张与「重试」节点共用（见 nodes/paramCards.ts）。
+   * 选项完全一致，只有标签不同 —— 闸门叫「条件」，重试叫「合格条件」，
+   * 那是刻意的：一个判放不放行，一个判跑得对不对。
+   */
+  card('cmp.check', { label: '条件' }),
+  card('cmp.value'),
   {
     type: 'number',
     key: 'timeoutMs',

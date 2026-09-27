@@ -7,6 +7,7 @@ import {
 } from '../../components/inspectors/fields';
 import { runOcr } from '../../engine/runners/ocr';
 import { registerNode } from '../registry';
+import { card } from '../paramCards';
 
 const fields: FieldDef[] = [
   {
@@ -93,16 +94,8 @@ const fields: FieldDef[] = [
     hint: '留空用上面的默认提示（按原顺序输出，不解释）',
   },
 
-  {
-    type: 'select',
-    key: 'detail',
-    label: '图片细节',
-    options: [
-      { value: 'auto', label: '自动' },
-      { value: 'low', label: '低（省 token）' },
-      { value: 'high', label: '高（识别更准）' },
-    ],
-  },
+  /* 与「大模型」节点共用同一张卡（见 nodes/paramCards.ts） */
+  card('llm.detail'),
 
   {
     type: 'note',

@@ -6,6 +6,7 @@ import { BeepNode } from '../../components/ToolNode';
 import { type FieldDef } from '../../components/inspectors/fields';
 import { runBeep } from '../../engine/runners/beep';
 import { registerNode } from '../registry';
+import { card, whenSoundFile } from '../paramCards';
 
 /**
  * 播放声音 —— 一个节点覆盖两种声源。
@@ -42,32 +43,13 @@ const fields: FieldDef[] = [
     })),
   },
 
-  {
-    type: 'text',
-    key: 'path',
-    label: '音频文件',
-    when: (d) => d.source === 'file',
-    placeholder: '/path/to/sound.mp3',
-    hint: '支持模板，如 {{上游.output}}；建议 mp3 / wav / ogg',
-  },
-
-  {
-    type: 'number',
-    key: 'volume',
-    label: '音量',
-    min: 0,
-    max: 1,
-    step: 0.1,
-    hint: '0 ~ 1，默认 0.6',
-  },
-
-  {
-    type: 'switch',
-    key: 'waitForEnd',
-    label: '',
-    when: (d) => d.source === 'file',
-    placeholder: '播完再往下走（关掉则立即继续，声音继续放）',
-  },
+  /*
+   * 下面三张都取自参数卡片层 —— 旧的 play-audio 节点用的是同一批，
+   * 各写一份的话改一处漏一处（表现是"两个节点的音量范围不一样"，且不报错）。
+   */
+  card('sound.path', { when: whenSoundFile }),
+  card('sound.volume'),
+  card('sound.waitForEnd', { when: whenSoundFile }),
 
   {
     type: 'note',

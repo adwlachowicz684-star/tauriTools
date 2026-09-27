@@ -7,6 +7,7 @@ import {
 } from '../../components/inspectors/fields';
 import { runTask } from '../../engine/runners/task';
 import { registerNode } from '../registry';
+import { card } from '../paramCards';
 
 /**
  * 任务节点：字段不多，但提示词那一栏要带一整套上游变量插入按钮，
@@ -83,13 +84,9 @@ const fields = (_d: Record<string, unknown>, ctx?: FieldRenderProps): FieldDef[]
     label: '工作目录',
     placeholder: '留空用当前目录',
   },
-  {
-    type: 'switch',
-    key: 'yolo',
-    label: '',
-    placeholder: '自动批准工具调用（-y）',
-    hint: '省去每次确认，但 CLI 会直接改文件',
-  },
+  /* 与「任务窗格」共用同一张卡（见 nodes/paramCards.ts） */
+  card('cli.yolo', { hint: '省去每次确认，但 CLI 会直接改文件' }),
+
   /*
    * 挂了窗格之后，本节点上**没填的**项（工作目录 / 模型 / 连接）从窗格继承。
    * 填了的仍然以这里为准 —— 否则改一次窗格就把精心配好的节点盖掉了。

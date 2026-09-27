@@ -1,5 +1,4 @@
 import { makeTranslateNode } from '../../types';
-import { TARGET_LANGS } from '../../engine/llm';
 import TranslateNode from '../../components/TranslateNode';
 import { LlmConfigPanel } from '../../components/inspectors/shared';
 import {
@@ -7,6 +6,7 @@ import {
 } from '../../components/inspectors/fields';
 import { runTranslate } from '../../engine/runners/translate';
 import { registerNode } from '../registry';
+import { card } from '../paramCards';
 
 /**
  * 迁移到字段声明后的样子：除了「待翻译内容」要带上游变量插入按钮
@@ -26,30 +26,10 @@ const fields: FieldDef[] = [
   },
   { type: 'credential', key: 'credentialId', credentialKind: 'translate' },
 
-  {
-    type: 'chips',
-    key: 'targetLang',
-    label: '目标语言',
-    options: () => TARGET_LANGS.map((l) => ({ value: l.code, label: l.label })),
-  },
-  {
-    // 选了预设语言时这行没必要出现，直接隐藏
-    type: 'text',
-    key: 'targetLang',
-    label: '目标语言（自定义）',
-    placeholder: '如「简练的文言文」',
-    when: (d) => !TARGET_LANGS.some((l) => l.code === d.targetLang),
-  },
-
-  {
-    type: 'text',
-    key: 'sourceLang',
-    label: '源语言',
-    placeholder: '留空自动识别',
-    toUI: (v) => (v === 'auto' ? '' : v),
-    fromUI: (v) => (String(v).trim() || 'auto'),
-    hint: '留空让模型自动判断；填了能减少误判（如「日语」）',
-  },
+  /* 与「大模型」节点共用同一批翻译卡片（见 nodes/paramCards.ts） */
+  card('llm.targetLang'),
+  card('llm.targetLangCustom'),
+  card('llm.sourceLang'),
 
   {
     type: 'custom',
@@ -73,14 +53,7 @@ const fields: FieldDef[] = [
     ),
   },
 
-  {
-    type: 'textarea',
-    key: 'glossary',
-    label: '术语表（可选）',
-    rows: 3,
-    placeholder: 'GPU=图形处理器\nTransformer=变换器',
-    hint: '每行一条「原文=译文」，保证专有名词译法一致',
-  },
+  card('llm.glossary'),
 
   {
     type: 'note',

@@ -3,6 +3,7 @@ import { PaneNode } from '../../components/PaneNode';
 import { LlmConfigPanel } from '../../components/inspectors/shared';
 import { type FieldDef } from '../../components/inspectors/fields';
 import { registerNode } from '../registry';
+import { card } from '../paramCards';
 
 /**
  * API 任务窗格。
@@ -54,13 +55,8 @@ const fields: FieldDef[] = [
     step: 0.1,
     placeholder: '留空用 0.3',
   },
-  {
-    type: 'switch',
-    key: 'jsonMode',
-    label: '',
-    placeholder: '要求结构化 JSON 输出',
-    hint: '不是所有模型都支持；不支持的会返回错误而不是悄悄返回普通文本',
-  },
+  /* 与「大模型」节点共用同一张卡（见 nodes/paramCards.ts） */
+  card('llm.jsonMode'),
 ];
 
 registerNode({
