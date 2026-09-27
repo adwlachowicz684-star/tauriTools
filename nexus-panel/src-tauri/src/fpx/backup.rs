@@ -434,7 +434,24 @@ fn sync_tree(src_root: &Path, dst_root: &Path, append_only: bool, r: &mut Backup
     let mut src_files: HashMap<String, (u64, i64)> = HashMap::new();
     let mut src_dirs: HashSet<String> = HashSet::new();
     let mut seen: HashSet<(u64, u64)> = HashSet::new();
+    /*
+     * 枚举是否**完整**，必须在这里就记下来。
+     *
+     * 下面的第 2 步是"镜像删除"：备份目录里凡是 src_files 中没有的相对路径，
+     * 一律当成"源里已删掉"而清除。这个判据成立的前提是 src_files 覆盖了源目录
+     * 的**全部**文件。
+     *
+     * 而 collect_source 对枚举失败是"记一条错误然后继续"（权限不足、Windows 上
+     * 文件被占用、目录回路都走这条）。这时 src_files 是**残缺**的 —— 那些没枚举到
+     * 的文件在镜像判据里与"源里已删掉"完全无法区分，于是会被从**备份里删掉**。
+     *
+     * 后果比报错严重得多：源还在，但备份里的那一份没了，而备份存在的唯一意义就是
+     * "源出事时还有一份"。用户看到的只是上面几条枚举失败 + 一个 deleted_files
+     * 计数，两者看起来毫无关系，他不会知道备份被清了一块。
+     */
+    let errs_before = r.errors.len();
     collect_source(src_root, Path::new(""), &mut src_files, &mut src_dirs, r, &mut seen);
+    let incomplete = r.errors.len() > errs_before;
 
     // 1) 新增 / 更新
     for (rel, (len, mt)) in &src_files {
@@ -459,6 +476,23 @@ fn sync_tree(src_root: &Path, dst_root: &Path, append_only: bool, r: &mut Backup
     }
 
     if append_only { return Ok(()); }
+
+    /*
+     * 枚举不完整就**不做镜像删除**，只保留新增/更新的结果。
+     *
+     * 不做删除的代价比做错删除小得多：备份里多留几份旧文件（下次跑完整时会清掉），
+     * 而错删是**不可逆**的 —— 被删的那份只有备份里有，源上那次枚举失败恰恰说明
+     * 源那边也读不顺畅。宁可留垃圾，不可丢数据。
+     */
+    if incomplete {
+        r.errors.push(format!(
+            "[跳过] 源目录 {} 枚举不完整（上面 {} 条枚举失败），本次不做镜像删除，\
+             备份目录里的旧内容原样保留",
+            src_root.display(),
+            r.errors.len() - errs_before
+        ));
+        return Ok(());
+    }
 
     // 2) 镜像删除多余文件
     for p in walk(dst_root, true) {
