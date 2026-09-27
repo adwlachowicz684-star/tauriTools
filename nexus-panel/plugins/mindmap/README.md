@@ -4080,3 +4080,60 @@ snow / fish / wire 要求 ≥ 4；fresh 系列保持深字不变（防止为了�
 字号 0、颜色名、空对象）全部按预期回落；`mergePresetThemes` 的 removed
 永久跳过与用户版优先都正确；主题编辑器的保存路径（registerTheme → saveThemes
 判返回值 → refreshSide）完整。
+
+
+---
+
+## detectFormat：ATX 标题必须先于「裸 * 列表」判断（BUG 55）
+
+### 现象
+
+导入一个「既有 `#` 标题、又用 `*` 当项目符号」的 Markdown 文件，
+**标题全部丢失**，只剩列表项。
+
+```
+'# 项目\n## 设计\n* 要点一\n* 要点二'
+
+  原解析 → plantuml → 「要点一 / 要点二」   ← 项目、设计都没了
+  改后   → markdown → 「项目 / 设计」
+```
+
+### 根因
+
+`detectFormat` 里这两条的顺序反了：
+
+```js
+if (/^\*+\s+\S/m.test(head)) return 'plantuml';   // ← PlantUML 片段嗅探
+if (/^\s*#{1,6}\s+\S/m.test(head)) return 'markdown';
+```
+
+`/^\*+\s+\S/` 是 PlantUML 片段的嗅探（无 `@startmindmap` 包裹时），
+而 Markdown 用 `*` 当项目符号**同样命中**它。两者同时出现时 plantuml 先返回，
+`fromPlantUml()` 只读 `*` 行，`# 项目` / `## 设计` 直接被丢掉。
+
+### 判据
+
+PlantUML mindmap 的行首只有 `*`/`**`，**不会**出现 `# 标题`；
+而带 `#` 标题的文件必然是 Markdown。两者同时出现时，Markdown 是唯一合理解。
+所以把 ATX 判断提到前面。
+
+只有 `* ` 列表、没有标题的文件仍走 plantuml —— 实测那样解析是对的
+（`* 项目\n  * 子一` → `项目 / 子一`），不该被这次改动带坏，测试里锁住了。
+
+### 测试
+
+新增一组 13 条：混排、单标题、纯列表、减号列表、`@startmindmap`、
+`**` 递增片段，以及 OPML / FreeMind / Mermaid 不受影响。
+
+### 变异验证
+
+2 处全部抓到：顺序换回、删掉裸 `*` 的 plantuml 嗅探（后者会让纯列表
+误判成 markdown，被「纯 * 列表仍判为 plantuml」这条拦下）。
+
+### 顺带实测确认没问题的
+
+`printSvg` 全链路（真实 Chrome + 打印媒体模拟）：面板容器 `display:none`、
+打印根 `display:block`、SVG 去掉宽高后按 viewBox 等比铺满 900×585
+（viewBox 是 123×80，比例正确）、标题临时改写为画布名。
+`pdfDpi`（取宽高比最小值、只缩不放、mm→pt 换算）、`svgSize`（width/height
+优先、viewBox 兜底）、`pngScaleDims`（倍率夹在 1~8）都逐项核对过。

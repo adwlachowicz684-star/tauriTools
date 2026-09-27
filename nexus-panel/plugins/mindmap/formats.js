@@ -490,9 +490,23 @@ export function detectFormat(text, name = '') {
   if (/<map\b/i.test(head)) return 'freemind';
   if (/^\s*mindmap\s*$/im.test(head.split('\n')[0] || '') || /^\s*mindmap\s*$/im.test(head)) return 'mermaid';
   if (/@startmindmap/i.test(head)) return 'plantuml';
-  // PlantUML 片段（无包裹标记）
-  if (/^\*+\s+\S/m.test(head)) return 'plantuml';
+  /*
+   * **ATX 标题必须先于「裸 * 列表」判断** —— 顺序反了会丢内容。
+   *
+   * 后一条 `/^\*+\s+\S/` 是 PlantUML 片段的嗅探（无 @startmindmap 包裹时），
+   * 而 Markdown 用 `*` 当项目符号同样命中它。实测：
+   *
+   *   '# 项目\n## 设计\n* 要点一\n* 要点二'
+   *     原顺序 → plantuml → 解析成「要点一 | 要点二」
+   *             **两个标题全丢**，只剩列表项
+   *     改后   → markdown → 「项目 / 设计」，符合文件本意
+   *
+   * 判据：PlantUML mindmap 的行首是 `*`/`**`，**不会**出现 `# 标题`；
+   * 而带 `#` 标题的文件必然是 Markdown。两者同时出现时，Markdown 是唯一合理解。
+   */
   if (/^\s*#{1,6}\s+\S/m.test(head)) return 'markdown';
+  // PlantUML 片段（无包裹标记）—— 走到这里说明没有 ATX 标题，不会误吃 Markdown
+  if (/^\*+\s+\S/m.test(head)) return 'plantuml';
 
   // 兜底：按扩展名
   if (ext === 'xmind') return 'xmind';

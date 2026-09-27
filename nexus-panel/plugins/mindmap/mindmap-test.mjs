@@ -11200,6 +11200,62 @@ group('新建主题的种子：文字色必须按节点底色选，不能按画�
     `classic 因 sub 跨侧无法兼顾，但不低于修复前（实测 ${all['classic'].toFixed(2)}）`);
 }
 
+group('detectFormat：ATX 标题必须先于「裸 * 列表」判断，否则丢标题（BUG 55）');
+
+/*
+ * `/^\*+\s+\S/` 是 PlantUML 片段的嗅探（无 @startmindmap 包裹时），
+ * 而 Markdown 用 `*` 当项目符号同样命中它。detectFormat 里它排在
+ * ATX 标题**之前**，于是「既有 # 标题、又有 * 列表」的 Markdown 被判成 plantuml：
+ *
+ *   '# 项目\n## 设计\n* 要点一\n* 要点二'
+ *     原顺序 → plantuml → 解析成「要点一 | 要点二」
+ *             **两个标题全丢**（项目 / 设计都没了）
+ *     改后   → markdown → 「项目 / 设计」
+ *
+ * 判据：PlantUML mindmap 的行首只有 `*`/`**`，不会出现 `# 标题`；
+ * 而带 `#` 标题的文件必然是 Markdown。两者同时出现时 Markdown 是唯一合理解。
+ */
+{
+  const F = await import('./formats.js');
+  const WB = await import('./workbook.js');
+
+  const flat = (content) => {
+    const o = [];
+    (function x(n, d) { o.push(n.data.text); (n.children || []).forEach((c) => x(c, d + 1)); })(JSON.parse(content).root);
+    return o;
+  };
+
+  // 混排：标题 + 星号列表 —— 这是本次 BUG 的核心用例
+  const mixed = '# 项目\n## 设计\n* 要点一\n* 要点二\n';
+  eq(F.detectFormat(mixed, 'x.md'), 'markdown', '标题与 * 列表混排时判为 markdown（不能是 plantuml）');
+  eq(F.detectFormat(mixed, 'x.txt'), 'markdown', '后缀不是 .md 也一样（按内容嗅探）');
+  {
+    const got = flat(WB.markdownToWorkbook(mixed)[0].content);
+    ok(got.includes('项目'), ` markdown 分支保留了中心主题（实际 ${JSON.stringify(got)}）`);
+    ok(got.includes('设计'), ' markdown 分支保留了二级标题');
+  }
+
+  // 单标题 + 星号列表
+  eq(F.detectFormat('# 项目\n* 子一\n', 'x.md'), 'markdown', '单标题 + 星号列表判为 markdown');
+  // 只有星号列表、没有标题 → 仍走 plantuml（解析结果是对的，见下）
+  eq(F.detectFormat('* 项目\n  * 子一\n', 'x.md'), 'plantuml', '无标题的纯 * 列表仍判为 plantuml（与改动前一致）');
+  {
+    const c = F.fromPlantUml('* 项目\n  * 子一\n');
+    const got = flat(c);
+    eq(got.join('|'), '项目|子一', '纯 * 列表走 plantuml 解析仍正确（不能被这次改动带坏）');
+  }
+
+  // 标题 + 减号列表（本来就没问题，防止改坏）
+  eq(F.detectFormat('# 项目\n- 子一\n', 'x.md'), 'markdown', '标题 + 减号列表判为 markdown');
+  // 完整 PlantUML 与片段都不受影响
+  eq(F.detectFormat('@startmindmap\n* 项目\n@endmindmap', 'x.puml'), 'plantuml', '带 @startmindmap 仍是 plantuml');
+  eq(F.detectFormat('* 项目\n** 子\n', 'x.puml'), 'plantuml', 'PlantUML 片段（** 递增）仍是 plantuml');
+  // 其它格式不受影响
+  eq(F.detectFormat('<opml version="2.0"></opml>', 'x.opml'), 'opml', 'OPML 不受影响');
+  eq(F.detectFormat('<map version="1.0.1"></map>', 'x.mm'), 'freemind', 'FreeMind 不受影响');
+  eq(F.detectFormat('mindmap\n  root((x))', 'x.mmd'), 'mermaid', 'Mermaid 不受影响');
+}
+
 /* ============================================================
    结果
    ============================================================ */
