@@ -19,12 +19,14 @@
 
 - 它**不需要输入**（`接受 = none`），通常作为链的起点。
 
-共 2 项：
+共 4 项：
 
 | 参数 | 类型 | 说明 | 取值 | 显示条件 |
 |---|---|---|---|---|
-| `mode` **必填** | — | 触发方式 | `manual` / `interval` / `cron` / `watch` / `webhook` / `conversation` | — |
-| `enabled` | — | 是否启用 | — | — |
+| `triggers` **必填** | — | 触发方式列表（可以同时挂多种，任一满足即触发）。写单个字符串与写单元素数组等价 | `manual` / `interval` / `cron` / `watch` / `webhook` / `chat` | — |
+| `config` | — | 各类触发方式的配置，按 kind 取对应字段，未用到的留默认即可：intervalSec（interval，最小 10）/ cronExpr（cron，五段表达式）/ watchDir + watchExts + 防抖（watch）/ 端口与路径（webhook） | — | — |
+| `input` | — | 手动触发时的初始文本（其余方式由事件内容填入） | — | — |
+| `enabled` | — | 是否启用；false 时该触发器不参与任何触发判定 | — | — |
 
 ## 建节点的正确方式
 

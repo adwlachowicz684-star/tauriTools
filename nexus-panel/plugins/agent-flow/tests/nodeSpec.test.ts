@@ -536,3 +536,103 @@ test('每个注册的积木都有契约（从 defs 源码反向对账）', () =>
   const missing = [...kinds].filter((k) => !NO_SPEC.has(k) && !SPECS[k]);
   assert.deepEqual(missing, [], `这些积木没有契约：${missing.join(', ')}`);
 });
+
+/**
+ * manualParams 的手写参数说明必须覆盖节点真实可填的字段。
+ *
+ * 这条是盲测炸出来的：loop 只写了 mode / maxIterations 两个，
+ * 而 makeLoopNode 实际初始化 8 个 —— 漏掉的 times / separator /
+ * source / pattern / onError / collect 拼装方一概不知，
+ * 于是拼出来的循环**永远是默认那一套**（list、3 次、\n、出错继续）。
+ *
+ * 危害等级比"少几个可选值"高一档：流程能跑、不报错、界面看着也正常，
+ * 只是行为永远是默认值，用户只会觉得"这个节点怎么不听我的"。
+ *
+ * trigger 更极端：契约写的是单值 `mode`，而实际字段早在改成"一个节点
+ * 可挂多种触发方式"时就变成了 `triggers` 数组（且最后一种从
+ * `conversation` 改名成 `chat`）。拼装方照契约写 `mode: 'webhook'`，
+ * 运行时读 `triggers` 得到空数组 —— **这个触发器永远不会触发**。
+ *
+ * 反向也钉住：契约里写了但实际没有的键同样要报（比如 condition 的
+ * `op`，那是规则里的字段，不是节点顶层参数），否则说明又会漂移。
+ */
+test('manualParams 节点的契约参数与 makeXxxNode 的真实字段对得上', () => {
+  /*
+   * types.ts 是 ts（不含 JSX），测试链路能直接读源码 ——
+   * 但要走 AF_SRC，因为测试跑在 $OUT/tests 下，相对路径到不了仓库。
+   */
+  const typesSrc = fs.readFileSync(path.join(AF_SRC, 'types.ts'), 'utf-8');
+
+  /** 运行时状态字段：不是参数，拼装方不该写 */
+  const RUNTIME = new Set([
+    'status', 'output', 'error', 'kind', 'label', 'labelMode',
+    'badge', 'collapsed', 'lastFiredAt', 'lastFiredKind',
+  ]);
+
+  /** 从 `export function makeXxxNode` 的 return 里抓 data 的字段名 */
+  const realFields = (fn: string): Set<string> => {
+    const m = typesSrc.match(
+      new RegExp(`export function ${fn}\\([\\s\\S]*?\\n\\}`),
+    );
+    if (!m) return new Set();
+    return new Set(
+      [...m[0].matchAll(/^\s{6}(\w+):/gm)].map((x) => x[1]).filter((k) => !RUNTIME.has(k)),
+    );
+  };
+
+  /** manualParams 节点 → 它在 types.ts 里的构造函数名 */
+  const FN: Record<string, string> = {
+    trigger: 'makeTriggerNode',
+    condition: 'makeConditionNode',
+    loop: 'makeLoopNode',
+    parallel: 'makeParallelNode',
+  };
+
+  for (const [dk, fn] of Object.entries(FN)) {
+    const spec = SPECS[dk];
+    assert.ok(spec, `${dk} 没有契约`);
+    assert.ok(spec.manualParams, `${dk} 应该是 manualParams（本条只盯手写说明）`);
+
+    const real = realFields(fn);
+    assert.ok(real.size > 0, `${fn} 没抓到字段，正则可能失效了`);
+
+    const declared = new Set([
+      ...(spec.params ?? []).map((p) => p.key),
+      ...(spec.hiddenParams ?? []).map((p) => p.key),
+    ]);
+
+    const missing = [...real].filter((k) => !declared.has(k));
+    assert.deepEqual(
+      missing, [],
+      `${dk} 漏了这些真实字段的参数说明：${missing.join(', ')}`
+      + ' —— 拼装方会永远用默认值，且不报错',
+    );
+
+    /*
+     * 反向：契约写了但实际不存在的键。
+     * 例外是 rules 这种嵌套结构里的键（op 属于规则项，不是节点顶层），
+     * 只报**顶层**里没有的 —— 用"是否在 real 里"判断会误伤，
+     * 所以这里只查"契约声明的顶层键里有没有明显写错的旧名"。
+     */
+    for (const k of declared) {
+      if (k === 'op') continue; // 规则项字段，非节点顶层
+      assert.ok(
+        real.has(k) || k === 'items',
+        `${dk} 契约写了 \`${k}\`，但 ${fn} 里没有这个字段 —— 说明契约已漂移`,
+      );
+    }
+  }
+
+  /* trigger 的取值清单必须与类型一致（conversation 是改版前的旧名） */
+  const tg = SPECS['trigger']?.params?.find((p) => p.key === 'triggers');
+  assert.ok(tg, 'trigger 必须有 triggers 的说明（mode 是改版前的旧字段）');
+  assert.ok(
+    !SPECS['trigger']?.params?.some((p) => p.key === 'mode'),
+    'trigger 不该再写 mode —— 它已不存在，写出来拼装方会写一个没人读的字段',
+  );
+  assert.deepEqual(
+    [...(tg.options ?? [])].sort(),
+    ['chat', 'cron', 'interval', 'manual', 'watch'] .concat(['webhook']).sort(),
+    'triggers 的取值清单必须与 TriggerKind 一致（conversation 已改名 chat）',
+  );
+});
