@@ -56,8 +56,39 @@ t('safeFileOf 把 @ 与斜杠换成下划线',
 t('safeFileOf 版本为空时落 latest', rt.safeFileOf('mermaid', '') === 'mermaid@latest.mjs');
 t('safeFileOf 一律 .mjs 结尾', rt.safeFileOf('mermaid', '^12.0.0').endsWith('.mjs'));
 
-t('entryUrlOf 走 +esm 端点', rt.entryUrlOf('mermaid', '^12.0.0') === 'https://cdn.jsdelivr.net/npm/mermaid@^12.0.0/+esm');
+/*
+ * ⚠️ 这一条原先写的是 `mermaid@^12.0.0/+esm` —— 等于把 bug 固化成期望。
+ * 实测（curl）：
+ *   https://cdn.jsdelivr.net/npm/mermaid@^12.0.0/+esm → 502（取不到）
+ *   https://cdn.jsdelivr.net/npm/mermaid@12.0.0/+esm  → 200
+ * 而 manifest 里绝大多数声明都是 `^x.y.z`，于是"一键安装"对绝大多数包
+ * 都是点了就失败。断言改成"URL 里不得出现范围符号"。
+ */
+t('entryUrlOf 走 +esm 端点', rt.entryUrlOf('mermaid', '12.0.0') === 'https://cdn.jsdelivr.net/npm/mermaid@12.0.0/+esm',
+  rt.entryUrlOf('mermaid', '12.0.0'));
+t('entryUrlOf 剥掉 ^ 等范围符号（带 ^ 的 URL 实测 502）',
+  rt.entryUrlOf('mermaid', '^12.0.0') === 'https://cdn.jsdelivr.net/npm/mermaid@12.0.0/+esm',
+  rt.entryUrlOf('mermaid', '^12.0.0'));
+t('entryUrlOf 剥掉 ~', rt.entryUrlOf('mermaid', '~12.0.0') === 'https://cdn.jsdelivr.net/npm/mermaid@12.0.0/+esm');
 t('entryUrlOf 无版本时不写 @', rt.entryUrlOf('mermaid', '') === 'https://cdn.jsdelivr.net/npm/mermaid/+esm');
+t('URL 里不带任何范围符号（^ ~ > < 空格 || *）',
+  !/[\^~>< ]|\|\||\*/.test(rt.entryUrlOf('mermaid', '^12.0.0').replace('https://cdn.jsdelivr.net/npm/', '')),
+  rt.entryUrlOf('mermaid', '^12.0.0'));
+
+/* ---------- 1b. 版本归一化：URL / 文件名 / 显示 三者必须指同一版本 ---------- */
+
+t('pinnedVersionOf 剥 ^', rt.pinnedVersionOf('^12.0.0').version === '12.0.0' && rt.pinnedVersionOf('^12.0.0').ok === true,
+  JSON.stringify(rt.pinnedVersionOf('^12.0.0')));
+t('pinnedVersionOf 剥 ~', rt.pinnedVersionOf('~1.2.3').version === '1.2.3');
+t('pinnedVersionOf 保留精确版本', rt.pinnedVersionOf('12.0.0').version === '12.0.0');
+t('pinnedVersionOf 留空 = 最新版', rt.pinnedVersionOf('').ok === true && rt.pinnedVersionOf('').latest === true);
+t('pinnedVersionOf 拒绝复合范围（>=1.0.0 <2）', rt.pinnedVersionOf('>=1.0.0 <2').ok === false);
+t('pinnedVersionOf 拒绝 || 与 *', rt.pinnedVersionOf('1.x || 2.x').ok === false && rt.pinnedVersionOf('*').ok === false);
+t('URL 的版本 == 文件名的版本（否则显示与实际不符）', (() => {
+  const u = rt.entryUrlOf('mermaid', '^12.0.0');
+  const f = rt.safeFileOf('mermaid', rt.pinnedVersionOf('^12.0.0').version);
+  return u.includes('@12.0.0/') && f === 'mermaid@12.0.0.mjs';
+})());
 
 t('canInstall 拒绝 Rust crate', rt.canInstall({ kind: 'rust', install: 'cargo add serde' }) === false);
 t('canInstall 拒绝开发时依赖', rt.canInstall({ kind: 'runtime', dev: true, install: 'npm i -D vitest' }) === false);
@@ -209,6 +240,59 @@ function missingCtx() {
     kind: 'rust', install: 'cargo add serde',
   });
   t('crate 不进入安装流程', r.ok === false && /不适合运行时安装/.test(r.error || ''), r.error);
+}
+
+{
+  /*
+   * 版本框里填复合范围，必须在发命令之前就拒绝 ——
+   * 不能等 CDN 报 404 再说"下载失败"（那时用户会去查网络）。
+   */
+  let called = 0;
+  const r = await rt.installRuntimeDep(stubCtx(async () => { called++; return { ok: true }; }), {
+    kind: 'runtime', dev: false, install: 'npm i mermaid@^12.0.0',
+  }, { version: '>=12.0.0 <13' });
+  t('复合范围明确拒绝（不说"下载失败"）',
+    r.ok === false && /范围/.test(r.error || '') && /写死一个版本号/.test(r.error || ''), r.error);
+  t('复合范围不发请求（避免拿归一化出的假版本去下载）', called === 0);
+}
+
+{
+  /* 填了不像版本号的东西同理：拼出来是 404，而报错会指向网络 */
+  let called = 0;
+  const r = await rt.installRuntimeDep(stubCtx(async () => { called++; return { ok: true }; }), {
+    kind: 'runtime', dev: false, install: 'npm i mermaid@^12.0.0',
+  }, { version: 'abc' });
+  t('不像版本号时明确拒绝', r.ok === false && /版本号看着不对/.test(r.error || ''), r.error);
+  t('不像版本号时不发请求', called === 0);
+  const r2 = await rt.installRuntimeDep(stubCtx(async () => ({ ok: true })), {
+    kind: 'runtime', dev: false, install: 'npm i mermaid@^12.0.0',
+  }, { version: '12' });
+  t('允许写不完整的版本（12 → 取 12.x 最新）', r2.ok === true && r2.version === '12', r2.error || r2.version);
+}
+
+{
+  /* 界面手填的版本必须真的被用上：URL、文件名、返回的版本一致 */
+  let args = null;
+  const ctx = stubCtx(async (_cmd, a) => { args = a; return { ok: true }; });
+  const r = await rt.installRuntimeDep(ctx, {
+    kind: 'runtime', dev: false, install: 'npm i mermaid@^12.0.0',
+  }, { version: '13.1.0' });
+  t('手填版本进 URL', !!args && args.url === 'https://cdn.jsdelivr.net/npm/mermaid@13.1.0/+esm', args && args.url);
+  t('手填版本进文件名', !!args && args.file === 'mermaid@13.1.0.mjs', args && args.file);
+  t('手填版本回传给界面（显示的就是装的）', r.ok === true && r.version === '13.1.0', r.version);
+}
+
+{
+  /* 声明带 ^ 时，装下来的版本是剥掉 ^ 的那个，与文件名、显示一致 */
+  let args = null;
+  const ctx = stubCtx(async (_cmd, a) => { args = a; return { ok: true }; });
+  const r = await rt.installRuntimeDep(ctx, {
+    kind: 'runtime', dev: false, install: 'npm i mermaid@^12.0.0',
+  });
+  t('声明带 ^ 时按具体版本装（不是原样带 ^）', !!args && args.url.includes('@12.0.0/') && !/[\^]/.test(args.url),
+    args && args.url);
+  t('返回的版本与文件名同源', r.ok === true && r.version === '12.0.0' && r.file === 'mermaid@12.0.0.mjs',
+    `${r.version} / ${r.file}`);
 }
 
 {
@@ -571,6 +655,23 @@ t('后端未接入时禁用按钮并提示', /rtMissing/.test(cardText) && /disa
 t('装了没人取用的包要提前说明（不是装完才发现没效果）',
   /consumerNoteOf\(/.test(cardText) && /\{noUse \?/.test(cardText));
 t('有运行时消费方时显示是谁在用', /rtUsers/.test(cardText) && /装了会被/.test(cardText));
+
+/*
+ * 版本输入框：装哪个版本由用户说了算。
+ * 只断言"有输入框"是假绿 —— 输入框存在但没接到 doInstall，
+ * 表现是"填了版本、装的还是旧的"，且不报错。所以两条一起钉。
+ */
+t('DepsCard 有版本输入框', /className="p-input dep-ver"/.test(cardText));
+t('版本框默认值来自 pinnedVersionOf（不是原样带 ^）',
+  /value=\{ver\[k\] \?\? \(spec \? pinnedVersionOf\(spec\.version\)\.version : ''\)\}/.test(cardText));
+t('填的版本真的传进 doInstall',
+  /onClick=\{\(\) => doInstall\(d, ver\[k\]\)\}/.test(cardText) &&
+  /async \(item: Item, override\?: string\)/.test(cardText));
+t('doInstall 把 override 交给 installRuntimeDep',
+  /installRuntimeDep\(ctx, item, \{ version: override \}\)/.test(cardText));
+t('装完提示里带实际版本（不是笼统说"已安装"）', /已安装 \$\{r\.version/.test(cardText));
+t('.dep-ver 有样式（等宽，版本号要能分清 l/1/I）',
+  /\.dep-ver\s*\{[^}]*font-family/.test(read('css/neumorphism.css')));
 
 t('plugin-sdk 暴露 ctx.requireDep', /requireDep\(name, opts = \{\}\)/.test(read('js/plugin-sdk.js')));
 t('plugin-sdk 从 runtime-deps 引入 requireDep',

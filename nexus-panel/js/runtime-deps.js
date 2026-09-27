@@ -47,6 +47,10 @@ export const RT_ERR = {
   notSupported: '这个包不适合运行时安装（Rust crate / 需要 node 内建模块的包）',
   network: '下载失败 —— 检查网络，或稍后重试',
   empty: '下载到的内容是空的 —— CDN 可能不支持这个包的 ESM 构建',
+  range:
+    '声明的版本是复合范围（如 >=1.0.0 <2 或 1.x || 2.x），CDN 定位不到具体版本 —— ' +
+    '请在版本框里写死一个版本号（如 12.0.0），或先在 package.json 锁定',
+  badVer: '版本号看着不对 —— 请写成 12.0.0 这种形式（不要带 ^ ~ 之外的符号）',
   removed: '已移除',
 };
 
@@ -97,10 +101,53 @@ export function cmpVersion(a, b) {
   return 0;
 }
 
-/** CDN 上取 ESM 单文件的地址。 */
+/**
+ * 复合范围的样子：`>=1.0.0 <2`、`1.x || 2.x`、`*`。
+ *
+ * 这些**没法**靠剥符号得到一个具体版本（`>=1.0.0 <2` 剥完是 `1.0.02`，
+ * 拼进 URL 是 404）。所以单独识别出来，让调用方明确拒绝，而不是拿一个
+ * 拼出来的假版本去下载。
+ */
+const RANGE_RE = /[<>]|\|\||\s|\*/;
+
+/**
+ * 把声明里的版本规范（可能是范围）解析成一个**能直接拼进 URL 的具体版本**。
+ *
+ * 为什么必须先归一化再拼 URL（实测）：
+ *   https://cdn.jsdelivr.net/npm/mermaid@^12.0.0/+esm   → 502（下载失败）
+ *   https://cdn.jsdelivr.net/npm/mermaid@12.0.0/+esm    → 200
+ * 也就是说：**带 ^ 的 URL 根本取不到东西**。而 manifest 里绝大多数声明
+ * 都是 `^12.0.0` 这种范围，于是一键安装对绝大多数包都是"点了就失败"。
+ *
+ * 归一化的第二个理由（更要紧）：URL、落盘文件名、列表里显示的版本
+ * **必须指同一个版本**。safeFileOf 一直在剥范围符号（落盘是
+ * `mermaid@12.0.0.mjs`），若 URL 仍带 ^，即便 CDN 肯解析范围，装进来的
+ * 也会是范围内最新的那个（比如 12.3.0），而界面显示的是 `12.0.0` ——
+ * 显示与实际不符，且无从察觉。
+ *
+ * 复合范围（`>=1.0.0 <2`）无法定位到具体版本，返回 ok:false 让调用方
+ * 明确拒绝；不做猜测、也不退化成 latest（那同样是"装的不是显示的那份"）。
+ */
+export function pinnedVersionOf(version) {
+  const raw = String(version || '').trim();
+  if (!raw) return { version: '', ok: true, latest: true };
+  if (RANGE_RE.test(raw)) return { version: normVersion(raw), ok: false, reason: 'range' };
+  const v = normVersion(raw);
+  if (!v) return { version: '', ok: false, reason: 'empty' };
+  return { version: v, ok: true, latest: false };
+}
+
+/**
+ * CDN 上取 ESM 单文件的地址。
+ *
+ * 版本一律先过 pinnedVersionOf 剥掉 ^ / ~ 等范围符号，理由见它的注释。
+ * 复合范围这里退化成"不带版本"（即 latest），但**调用方必须先查
+ * pinnedVersionOf().ok**，别拿这个退化结果去装 —— 见 installRuntimeDep。
+ */
 export function entryUrlOf(name, version) {
-  const v = String(version || '').trim();
-  const pkg = v ? `${name}@${v}` : String(name || '');
+  const pin = pinnedVersionOf(version);
+  const v = pin.ok ? pin.version : '';
+  const pkg = v ? `${String(name || '')}@${v}` : String(name || '');
   return `${RT_DEP_CDN}/${pkg}/+esm`;
 }
 
@@ -286,16 +333,36 @@ export async function listRuntimeDeps(ctx) {
  * ⚠️ 唯一会被覆盖的情况是**同名同版本**（文件名相同）—— 那是"重装"，
  * 不是"清旧"。别把这两件事混在一起做。
  */
-export async function installRuntimeDep(ctx, item) {
+export async function installRuntimeDep(ctx, item, opts = {}) {
   if (!canInstall(item)) {
     return { ok: false, error: item && item.kind === 'rust' ? RT_ERR.notSupported : RT_ERR.noSpec };
   }
   const spec = specOf(item.install);
+  if (!spec) return { ok: false, error: RT_ERR.noSpec };
+  /*
+   * 版本优先用调用方给的（界面上用户手填的那个），没有才用声明的。
+   * "装哪个版本"交给用户 —— 与多版本共存时"留哪个"交给用户是同一个取舍：
+   * 后台替他挑一个，界面上看不出挑了什么。
+   */
+  const want = String((opts && opts.version) || '').trim() || spec.version;
+  const pin = pinnedVersionOf(want);
+  /*
+   * 复合范围必须在这里明确拒绝。
+   * 不拒绝的话会拿 `>=1.0.0 <2` 归一化出来的 `1.0.02` 去下载 → 404，
+   * 而错误只显示"下载失败"，用户会去查网络，永远查不到根因。
+   */
+  if (!pin.ok) return { ok: false, error: RT_ERR.range };
+  /*
+   * 手填的版本必须以数字开头。
+   * 不查的话，填个 `abc` 会拼出 `mermaid@abc/+esm` → 404，
+   * 而错误只显示"下载失败"，用户会去查网络 —— 根因却在输入框里。
+   */
+  if (pin.version && !/^\d/.test(pin.version)) return { ok: false, error: RT_ERR.badVer };
   const r = await callCmd(ctx, CMD_INSTALL, {
     name: spec.name,
-    version: spec.version,
-    url: entryUrlOf(spec.name, spec.version),
-    file: safeFileOf(spec.name, spec.version),
+    version: pin.version,
+    url: entryUrlOf(spec.name, pin.version),
+    file: safeFileOf(spec.name, pin.version),
   });
 
   if (r && r.__missing) return { ok: false, error: RT_ERR.noCmd, missing: true };
@@ -309,8 +376,8 @@ export async function installRuntimeDep(ctx, item) {
   return {
     ok: true,
     name: spec.name,
-    version: spec.version,
-    file: (r && r.file) || safeFileOf(spec.name, spec.version),
+    version: pin.version,
+    file: (r && r.file) || safeFileOf(spec.name, pin.version),
   };
 }
 

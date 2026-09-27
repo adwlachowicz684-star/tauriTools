@@ -2834,6 +2834,15 @@ html.theme-transition *:not(.spinner) {
   user-select: text; -webkit-user-select: text;
   overflow-x: auto; white-space: nowrap;
 }
+/*
+ * 版本输入框。
+ * 等宽是刻意的：版本号要能一眼看出 12.0.0 与 12.0.0-beta 的差别，
+ * 比例字体下 l / 1 / I 分不清。
+ */
+.dep-ver {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--fs-11, 11px);
+}
 
 @media (prefers-reduced-motion: reduce) {
   .dep-chip { transition: none; }
