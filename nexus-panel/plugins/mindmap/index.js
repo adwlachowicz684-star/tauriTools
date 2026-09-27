@@ -28,6 +28,7 @@ import { buildSide, openVideo, openPreview, openSettings, confirmDialog,
 import { attachTabDrag } from './tab-drag.js';
 import * as fmt from './formats.js';
 import { buildFileList } from './filelist.js';
+import * as picons from './preset-icons.js';
 import * as xmind from './xmind.js';
 
 /** 外壳桥接频道（plugin-sdk 的 BRIDGE_CHANNEL），用于捕获运行时主题切换 */
@@ -984,10 +985,114 @@ bootIframePlugin(async (ctx) => {
    * 删除文件。删的是当前文件时直接切到另一个（不能走 openFile，
    * 它会先 persist 到刚删掉的 doc 上，等于把内容写回去）。
    */
+/**
+ * 回收「没有任何地方再引用」的附件本体。
+ *
+ * ============================================================
+ * 为什么要做
+ * ============================================================
+ * 附件字节存在 IndexedDB（asset:<id>），节点 data 里只记引用串。
+ * 而引用会在这些场景消失、本体却留在库里：
+ *
+ *   · 删掉一个**节点**（内核 remove 命令）—— 只有「侧栏移除附件」
+ *     那条路会调 dropAsset，删节点不走那里；
+ *   · 删掉整个**脑图文件** —— 只清了 doc:<id>，附件一个没动；
+ *   · 移除附件时 confirm 之后、dropAsset 之前出错。
+ *
+ * 单个视频上限 100MB，反复挂了删、删了挂，配额会被孤儿慢慢吃满 ——
+ * 而配额一满，所有 store.set 都会失败（正是 BUG 23/45 那些假成功
+ * 集中爆发的触发条件）。
+ *
+ * ============================================================
+ * 为什么是「扫全量」而不是「删谁就清谁的」
+ * ============================================================
+ * 同一个 assetId 会被**多个节点共享**：复制节点时 data 是浅拷贝，
+ * 引用串整体带走，于是两个节点指向同一份资产。
+ * 删掉其中一个就 dropAsset，另一个节点的附件当场失效 ——
+ * 而且是从「引用还在、字节没了」这种最难查的方式失效。
+ * 所以只能按「全库还有没有人在引用它」来判，不能按「谁删了它」来判。
+ *
+ * ============================================================
+ * 安全性：读不全就不动手
+ * ============================================================
+ * 只要**任何一个**脑图文件读不出来，就可能漏掉它引用的资产，
+ * 那样回收会误删仍在使用的附件 —— 直接中止，宁可让孤儿继续留着。
+ * 同理，历史快照与用户图标的引用也必须算进 live，否则
+ * 「删文件 → 从快照恢复」会发现附件全没了。
+ *
+ * @returns {Promise<{removed:number, bytes:number, aborted:boolean}>}
+ */
+async function gcOrphanAssets() {
+  const live = new Set();
+  const addRefs = (sheets) => {
+    try { for (const a of wb.collectAssetRefs(sheets || [])) live.add(a); } catch { /* 坏数据跳过 */ }
+  };
+
+  /*
+   * ① 当前正在编辑的工作簿（内存里，最可靠）。
+   *
+   * 但**只在它还存在于文件列表里时**才算数 ——
+   * deleteFile 删掉的正是当前文件时，fileIndex 里已经没有 currentFileId，
+   * 而 workbook 变量还装着那个文件的内容（switchToFile 要晚一步才跑）。
+   * 不加这个判断的话，被删文件的附件会被当成「还在用」而躲过回收，
+   * 于是这次回收一次都删不掉 —— 修了等于没修。
+   */
+  if (fileIndex.some((fi) => fi.id === currentFileId)) addRefs(workbook?.sheets);
+
+  // ② 其余仍在列表里的文件 —— 读不出就**整体中止**
+  for (const fit of fileIndex) {
+    if (fit.id === currentFileId) continue;         // ① 已覆盖
+    let doc = null;
+    try { doc = await store.doc(fit.id).load(); } catch { doc = null; }
+    if (!doc?.sheets) return { removed: 0, bytes: 0, aborted: true };
+    addRefs(doc.sheets);
+  }
+
+  // ③ 历史快照：删文件后从快照恢复时，附件必须还在
+  try {
+    for (const b of await store.listBackups()) addRefs(b?.sheets);
+  } catch { /* 列举失败只是少一层保护，不中止 */ }
+
+  // ④ 用户图标也用 asset:<id> 存本体，不在任何画布里，必须显式排除
+  try {
+    for (const g of await picons.loadLibrary()) {
+      for (const ic of g?.icons || []) {
+        if (ic?.kind === 'user' && ic.assetId) live.add(ic.assetId);
+      }
+    }
+  } catch { /* 同上 */ }
+
+  /*
+   * 上面四步都跑完、且没有中止，才敢动手删。
+   *
+   * 判定是「扫全部 asset: 键、逐个问还有没有人引用」，而不是
+   * 「拿一份 sheets 去清」—— 后者要先读出被删文件的画布，而 fileIndex
+   * 一移除就再也拿不到它的引用了。deleteFile 能在删除之后直接调它，
+   * 正是因为它不依赖那个文件还在。
+   */
+  let removed = 0;
+  let bytes = 0;
+  try {
+    for (const k of await store.keys('asset:')) {
+      const aid = k.slice('asset:'.length);
+      if (!aid || live.has(aid)) continue;
+      const rec = await store.get(k, null);
+      bytes += Number(rec?.size) || 0;
+      await store.del(k);
+      removed++;
+    }
+  } catch (e) {
+    status('清理未引用附件失败：' + (e?.message || e), true);
+  }
+  if (removed) status(`已回收 ${removed} 个未引用附件（约 ${io.formatSize(bytes)}）`);
+  return { removed, bytes, aborted: false };
+}
+
   async function deleteFile(id) {
     const f = fileIndex.find((x) => x.id === id);
     if (!f) return;
     if (!await askConfirm({ message: `删除「${f.name}」？该脑图下的所有画布都会一并删除。`, danger: true })) return;
+
     /*
      * 先改内存再写盘，写失败必须**回滚内存**。
      * 否则列表里已经没有它、磁盘上还在 —— 界面显示"已删除"，
@@ -1002,6 +1107,10 @@ bootIframePlugin(async (ctx) => {
     }
     await saveStore('脑图内容', () => store.doc(id).del());
     let remembered = true;
+    // 回收这个脑图留下的附件本体。
+    // 必须在 switchToFile **之前**调用：切换后 workbook 已是另一个文件的
+    // 内容，而 gcOrphanAssets 拿 workbook 做「仍然在用」的基准，晚一步基准就错了。
+    await gcOrphanAssets();
     if (id === currentFileId) {
       if (fileIndex.length) remembered = await switchToFile(fileIndex[0].id);
       else await createFile(null);        // 删光了也要能继续用

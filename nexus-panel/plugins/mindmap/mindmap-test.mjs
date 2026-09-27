@@ -10711,6 +10711,129 @@ group('写盘失败不能被随后的「已重命名 / 已新建」盖掉');
   }
 }
 
+group('collectAssetRefs 漏掉列表形式的多附件（BUG 46）');
+
+{
+  const wb = await import('file://' + path.join(HERE, 'workbook.js'));
+
+  /*
+   * 单节点多附件改造之后，data.file / data.video 存的是 **JSON 数组串**
+   * （哪怕只有一个附件也是数组），而不是单个对象串。
+   *
+   * 旧实现自己 `JSON.parse(v)` 一次，然后读 `ref.a` —— 数组没有 .a，
+   * 于是**列表形式的多附件全部漏掉**，只收得到老式的单对象串。
+   */
+  const mk = (fileVal, videoVal) => [{
+    id: 's1', title: '画布 1',
+    content: JSON.stringify({
+      root: { data: { text: '中心主题' }, children: [
+        { data: { text: 'A', file: fileVal, video: videoVal } },
+      ] },
+    }),
+  }];
+
+  // ① 列表形式（新格式，改造后写出来的都是这种）
+  const listSheets = mk(
+    JSON.stringify([{ n: '报告.pdf', a: 'asDOC1', s: 2e6 }, { n: '数据.xlsx', a: 'asDOC2', s: 3e6 }]),
+    JSON.stringify([{ n: 'demo.mp4', a: 'asVID1', s: 5e7 }]),
+  );
+  const got = wb.collectAssetRefs(listSheets).slice().sort();
+  eq(got.join(','), 'asDOC1,asDOC2,asVID1',
+    '列表形式的多附件必须全部收得到（旧实现只收得到 1 个）');
+
+  // ② 单对象形式（老数据）仍然要认
+  const oneSheets = mk(JSON.stringify({ n: '老文件.pdf', a: 'asOLD1', s: 1 }), undefined);
+  eq(wb.collectAssetRefs(oneSheets).join(','), 'asOLD1', '单对象串（老数据）仍要收得到');
+
+  // ③ 真数组（导入的 JSON 里可能是数组而不是串）
+  const arrSheets = [{ id: 's1', title: 'c', content: JSON.stringify({
+    root: { data: { text: 'R', file: [{ n: 'x', a: 'asARR1', s: 1 }] } },
+  }) }];
+  eq(wb.collectAssetRefs(arrSheets).join(','), 'asARR1', '真数组形式也要收得到');
+
+  // ④ 数组元素是 JSON 串
+  const strElem = [{ id: 's1', title: 'c', content: JSON.stringify({
+    root: { data: { text: 'R', file: [JSON.stringify({ n: 'y', a: 'asSTR1', s: 1 })] } },
+  }) }];
+  eq(wb.collectAssetRefs(strElem).join(','), 'asSTR1', '数组元素是 JSON 串时也要收得到');
+
+  // ⑤ 纯路径（C# 遗留）没有资产 id，不该被收进来
+  const legacy = mk('/老路径/文件.pdf', undefined);
+  eq(wb.collectAssetRefs(legacy).length, 0, '纯路径引用没有资产 id，不入集合');
+
+  // ⑥ 走 decodeRefList：不能是自己 JSON.parse 的实现
+  const src = fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8');
+  const body = src.slice(src.indexOf('export function collectAssetRefs'));
+  ok(/decodeRefList\(/.test(body), 'collectAssetRefs 必须复用 decodeRefList（不能自己 parse 一次）');
+  ok(!/JSON\.parse\(v\)/.test(body), 'collectAssetRefs 不得自己 JSON.parse 单值（漏列表）');
+}
+
+group('删除脑图后附件本体变成孤儿（BUG 47）');
+
+{
+  /*
+   * 附件字节存在 IndexedDB 的 asset:<id>，节点 data 只记引用串。
+   * 引用消失的路径有三条：删节点、删整个脑图文件、移除附件中途出错。
+   * 而 dropAsset 只在「侧栏移除单个附件」一处被调用 —— 其余全是孤儿，
+   * 且**全仓库没有任何回收入口**（store.js 连 assetKeys() 都没有）。
+   *
+   * 单个视频上限 100MB，反复挂了删会持续吃配额；配额一满所有 store.set
+   * 都失败，正是 BUG 23/45 那些「假成功」集中爆发的触发条件。
+   */
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const code = strip(idx);
+
+  ok(/async function gcOrphanAssets\(\)/.test(code), '必须有孤儿附件回收函数');
+
+  // 删文件后要真的调用它
+  {
+    const i = code.indexOf('async function deleteFile(id) {');
+    const end = code.indexOf('\n  }\n', i);
+    const body = code.slice(i, end);
+    ok(/await gcOrphanAssets\(\)/.test(body), 'deleteFile 必须调用 gcOrphanAssets（否则删文件留一堆孤儿）');
+    // 顺序：必须在 switchToFile 之前（切换后 workbook 就换成别的文件了）
+    ok(body.indexOf('gcOrphanAssets()') < body.indexOf('switchToFile('),
+      'gcOrphanAssets 必须在 switchToFile 之前（晚一步基准就换成别的文件了）');
+  }
+
+  // 关键正确性：删的正是当前文件时，workbook 不能被算作「仍在用」
+  {
+    /*
+     * 不能按「下一个 `\n  }\n`」切 —— 函数里的 for 循环结尾和函数结尾
+     * **同缩进**，那样会在第一个循环处就把函数截断，后面的断言全落在
+     * 半截代码上（实测：三条断言同时失效）。
+     * 用大括号配对找真正的结尾。
+     */
+    const i = code.indexOf('async function gcOrphanAssets()');
+    const braceAt = code.indexOf('{', i);
+    let depth = 0, end = -1;
+    for (let k = braceAt; k < code.length; k++) {
+      if (code[k] === '{') depth++;
+      else if (code[k] === '}') { depth--; if (depth === 0) { end = k; break; } }
+    }
+    const body = code.slice(i, end + 1);
+    /*
+     * 最容易写错的一处：① 无条件 addRefs(workbook?.sheets)。
+     * 删当前文件时 fileIndex 里已经没有 currentFileId，但 workbook 变量
+     * 还装着那个文件的内容（switchToFile 要晚一步才跑）——
+     * 于是被删文件的附件被当成「还在用」，这次回收**一个都删不掉**。
+     * 代码看着有、运行时是死的，和 BUG 11「只定义不注册」同一类。
+     */
+    ok(/fileIndex\.some\(\(fi\)\s*=>\s*fi\.id === currentFileId\)/.test(body),
+      '① 当前 workbook 只有仍在文件列表里时才算 live（否则删当前文件时回收恒不生效）');
+    // ② 其余文件读不出来就整体中止，宁可留着也不能误删
+    ok(/return \{ removed: 0, bytes: 0, aborted: true \}/.test(body),
+      '② 任一文件读不出来必须整体中止（读不全就等于可能误删）');
+    // ③ 快照：删文件后从快照恢复，附件必须还在
+    ok(/store\.listBackups\(\)/.test(body), '③ 历史快照的引用必须算 live（否则恢复后附件全丢）');
+    // ④ 图标：用户图标也用 asset:<id> 存，不在任何画布里
+    ok(/picons\.loadLibrary\(\)/.test(body), '④ 用户图标的资产必须算 live（否则图标全被删）');
+    // 判定方式是扫全量 asset 键，而不是拿一份 sheets 去清
+    ok(/store\.keys\('asset:'\)/.test(body), '必须扫全量 asset: 键判定孤儿（不能只清某份 sheets）');
+  }
+}
+
 /* ============================================================
    结果
    ============================================================ */

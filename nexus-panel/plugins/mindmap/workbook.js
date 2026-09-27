@@ -10,6 +10,7 @@
  */
 
 import { DEFAULT_THEME, DEFAULT_LAYOUT } from './themes.js';
+import { decodeRefList } from './io.js';
 
 const SHEET_MARK = /^##\s*画布[:：]\s*(.*)$/;
 
@@ -266,11 +267,21 @@ export function collectAssetRefs(sheets = []) {
     if (d) {
       for (const k of ['file', 'video']) {
         const v = d[k];
-        if (typeof v !== 'string' || !v) continue;
-        try {
-          const ref = JSON.parse(v);
+        if (v == null || v === '') continue;
+        /*
+         * 必须走 decodeRefList，不能自己 JSON.parse 一次就当单个对象用。
+         *
+         * 单节点多附件改造后，`file`/`video` 存的是 **JSON 数组串**
+         * （哪怕只有一个附件也是数组）；自己 parse 出来是 Array，
+         * 再读 `ref.a` 恒为 undefined —— 于是**列表形式的多附件全部漏掉**，
+         * 只收得到老式的「单对象串」。
+         *
+         * decodeRefList 已经把「数组串 / 单对象串 / 数组元素是 JSON 串 /
+         * 纯路径兜底」四种形态都处理好了，这里没有理由再写一套。
+         */
+        for (const ref of decodeRefList(v)) {
           if (ref && typeof ref.a === 'string' && ref.a) ids.add(ref.a);
-        } catch { /* 纯路径引用，无资产 id，跳过 */ }
+        }
       }
     }
     for (const c of node?.children || []) visit(c);
