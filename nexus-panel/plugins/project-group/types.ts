@@ -125,6 +125,25 @@ export interface FpxConfig {
   devMode: boolean;
   /** 按钮上显示快捷键提示（#50），默认开 */
   showShortcuts: boolean;
+  /**
+   * 常用文件夹（工具级，对应 Rust `fav_dirs`）。所有目录选择器共用。
+   *
+   * 【这条被同步覆盖丢过两次】丢了的表现很隐蔽：
+   * 后端那两条命令（fpx_list_fav_dirs / fpx_save_fav_dirs）照常编译
+   * （字段在 Rust 侧是存在的），前端也有降级分支，
+   * 界面上只是"常用文件夹永远是空的"，不报错也不红。
+   * 只有跨端校验会指出它 —— 所以这条字段必须有，别再删。
+   */
+  favDirs: FavDir[];
+}
+
+/**
+ * 常用文件夹条目（对应 Rust `FavDir`）。
+ * label 为 null / 空时，界面显示目录本身的名称。
+ */
+export interface FavDir {
+  path: string;
+  label: string | null;
 }
 
 export interface CardInfo {

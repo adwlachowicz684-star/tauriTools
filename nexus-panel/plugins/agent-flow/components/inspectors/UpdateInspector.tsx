@@ -339,7 +339,7 @@ export function UpdateInspector({ node, onChange }: {
       </label>
       <label className="p-row">
         <span className="p-muted" style={{ width: 64, flex: 'none' }} />
-        <label className="p-row" style={{ gap: 6 }}>
+        <label className="p-row" style={{ gap: 'var(--sp-3, 6px)' }}>
           <input
             type="checkbox"
             checked={d.firstRunAsUpdate === true}

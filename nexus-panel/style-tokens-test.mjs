@@ -623,12 +623,36 @@ console.log('\n=== 10a. 各插件按钮阴影统一（由主题管） ===');
      会让断言永远失败。用"选择器里不含 :"来筛。 */
   /* 抓完整选择器组（可能跨多行），再排除含 :hover / :active 的变体。
      只查 `([.\w-]+)` 会漏掉逗号分隔的后续行，于是 ":hover" 那组里
-     后面的 `.fpx-log:hover` 被单抓出来当成常态规则。 */
-  const pgThumbs = [...pgCss.matchAll(/((?:[.\w-]+(?::hover|:active)?,?\s*)+::-webkit-scrollbar-thumb)\s*\{([^}]*)\}/g)]
-    .filter((m) => !/:hover|:active/.test(m[1]));
+     后面的 `.fpx-log:hover` 被单抓出来当成常态规则。
+
+     【这里原来是一条正则，会把整个测试挂死】
+       /((?:[.\w-]+(?::hover|:active)?,?\s*)+::-webkit-scrollbar-thumb)\s*\{([^}]*)\}/g
+     组内三段全是可省量词（+、?、?、\s*），又要求以固定串收尾，
+     在 project-group/style.css（几千行、绝大多数位置匹配不上）上
+     会指数级回溯 —— 表现为"跑满两分钟不退出、CPU 打满"，
+     而且**不报错**，只看得出最后一行停在某条断言上，极难定位。
+     改成线性扫描：先找字面量，再向前取选择器、向后取规则体。 */
+  let pgThumbs = [];
+  {
+    const NEEDLE = '::-webkit-scrollbar-thumb';
+    let at = 0;
+    while ((at = pgCss.indexOf(NEEDLE, at)) !== -1) {
+      const brace = pgCss.indexOf('{', at);
+      if (brace === -1) { at += NEEDLE.length; continue; }
+      const close = pgCss.indexOf('}', brace);
+      /* 选择器：向前回到上一个块边界（} / { / ;），取到 { 之前为止 */
+      const prev = Math.max(pgCss.lastIndexOf('}', at), pgCss.lastIndexOf('{', at),
+                            pgCss.lastIndexOf(';', at));
+      const sel = pgCss.slice(prev + 1, brace).trim();
+      pgThumbs.push([sel, close === -1 ? '' : pgCss.slice(brace + 1, close)]);
+      at = close === -1 ? brace + 1 : close;
+    }
+  }
+  pgThumbs = pgThumbs.filter((m) => !/:hover|:active/.test(m[0]));
   t('project-group 滑块平时透明（与全局一致）',
-    pgThumbs.length > 0 && pgThumbs.every((m) => /background:\s*transparent/.test(m[2])),
-    pgThumbs.map((m) => m[1] + (/background:\s*transparent/.test(m[2]) ? '✓' : '✗')).join(', ') || '未找到');
+    pgThumbs.length > 0 && pgThumbs.every((m) => /background:\s*transparent/.test(m[1])),
+    pgThumbs.map((m) => m[0].replace(/\s+/g, ' ').slice(0, 40)
+      + (/background:\s*transparent/.test(m[1]) ? '✓' : '✗')).join(', ') || '未找到');
   t('project-group 悬停时显形',
     /:hover::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*var\(--border\)/.test(pg));
 
@@ -653,16 +677,31 @@ console.log('\n=== 10b. 标题三档统一 ===');
   };
   const af = read('plugins/agent-flow/styles.css');
 
-  for (const sel of ['.side-head', '.af-lib-title']) {
+  /* .af-lib-title 已不存在（全仓 CSS/TSX 都搜不到）—— 与之前 .af-lib-btn
+     同理：钉一个不存在的元素只会永久报红。改钉真实存在的 .side-head /
+     .side-title。
+
+     另外这里原本只认 `var(--title-1-fs)` 字面量，而 agent-flow 走的是
+     别名 `--fs-title`（tokens.css 里 `--fs-title: var(--title-1-fs, 13px)`）。
+     别名与真名是同一档，钉字面量属于"钉写法不钉语义"。
+     所以两者都接受，但额外守住别名确实指向一档 —— 否则别名哪天改指二档，
+     这条断言会一直绿而界面已经错档。 */
+  const tkAll = read('css/tokens.css') + read('plugins/agent-flow/styles.css');
+  t('别名 --fs-title 确实指向一档（不是另一套尺度）',
+    /--fs-title:\s*var\(--title-1-fs/.test(tkAll));
+
+  const TIER1_FS = /var\(--title-1-fs|var\(--fs-title/;
+  const TIER1_FW = /var\(--title-1-fw|var\(--fw-strong/;
+  for (const sel of ['.side-head', '.side-title']) {
     const b = has(af, sel);
     t(`${sel} 走一档（栏标题）`,
-      /var\(--title-1-fs/.test(b) && /var\(--title-1-fw/.test(b),
+      TIER1_FS.test(b) && TIER1_FW.test(b),
       b.trim().slice(0, 60) || '无规则');
   }
   /* 画布库原来多一层 opacity:.8，比另两个淡 —— 弱化必须换档位或换色，
      用 opacity 会随底板明暗漂 */
   t('栏标题不用 opacity 弱化（会随底板明暗漂）',
-    !/opacity/.test(has(af, '.af-lib-title')));
+    !/opacity/.test(has(af, '.side-head')));
   /* 中文没有大小写，text-transform 只剩 letter-spacing 在起作用 */
   t('分组标题不再用 uppercase（中文无效，只剩字间距噪声）',
     !/text-transform/.test(has(af, '.side-title')));
@@ -696,7 +735,9 @@ console.log('\n=== 11. 内联样式走令牌（审计盲区收口）===');
     }
     /* 裸间距值：此前 marginTop: 8 ×19、marginTop: 10 ×13 … 全是凭手感写的 */
     for (const m of text.matchAll(
-      /\b(marginTop|marginBottom|marginLeft|marginRight|gap|padding):\s*(\d+)\b/g)) {
+      /* 不含 0：0 是"没有间距"，档位里没有 --sp-0，也无从谈"跟着尺度走"。
+         把它算进来只会逼人去写 --sp-0，或者干脆用内联 0 之外的写法绕开。 */
+      /\b(marginTop|marginBottom|marginLeft|marginRight|gap|padding):\s*([1-9]\d*)\b/g)) {
       bare.push(`${p}: ${m[1]} ${m[2]}`);
     }
   }
