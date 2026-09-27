@@ -13,6 +13,22 @@ import { UPDATE_SOURCE_KEYS } from '../types';
 const AF_SRC = process.env.AF_SRC || '';
 
 /**
+ * def 文件里"有没有声明字段清单"。
+ *
+ * 三种写法都要认：
+ *   const fields: FieldDef[] = [ ... ]
+ *   const fields = (d, ctx) => [ ... ]        ← task / llmChat
+ *   fields: () => updateFields                ← bili / wechat（引用别处）
+ *   fields: canvasRefFields                   ← canvasRef（直接引用）
+ *
+ * 只认前两种会把后两种判成"没有 fields"，于是守卫会要求它们标
+ * manualParams —— 那是误报，比漏报更糟。
+ */
+const hasFieldsDecl = (src: string) =>
+  /const\s+fields\s*[:=]/.test(src)
+  || /fields:\s*(?:\(\)\s*=>\s*)?[A-Za-z_$][\w$]*/.test(src);
+
+/**
  * 节点契约 —— 决定两个积木能不能接。
  *
  * 重点是 'mark' 与 'any' 的区分：前者**截断**上游数据，
@@ -305,8 +321,18 @@ test('有 fields 的节点不能标 manualParams（参数该自动派生）', ()
     const src = fs.readFileSync(path.join(dir, f), 'utf-8');
     const dk = src.match(/dataKind:\s*'([^']+)'/);
     if (!dk) continue;
-    // 有 fields 声明：const fields 或 fields: () => xxx
-    const hasFields = /const\s+fields\s*[:=]/.test(src) || /fields:\s*\(\)\s*=>/.test(src);
+    /*
+     * legacy 节点要跳过 —— 它们与现行节点**共用 dataKind**
+     * （bili.ts / wechat.ts 的 dataKind 都是 'update'），
+     * 拿它们的 fields 去约束现行 kind 的契约是错的：
+     * 现行 update 走 Inspector、根本没有 fields，而这两个老节点
+     * 还带着合并前那套 updateFields。
+     *
+     * 不跳过的话，这条守卫会逼着 update 不能标 manualParams，
+     * 于是文档参数表重新派生出 biliUid / feedUrl 那 8 项废弃字段。
+     */
+    if (/legacy:\s*true/.test(src)) continue;
+    const hasFields = hasFieldsDecl(src);
     const spec = SPECS[dk[1]];
     if (!spec) continue;
     if (hasFields) {
@@ -314,6 +340,47 @@ test('有 fields 的节点不能标 manualParams（参数该自动派生）', ()
         !spec.manualParams,
         `${f}（${dk[1]}）有 fields，不该标 manualParams —— `
         + '标了就等于告诉 AI"参数只有我列的几个"，会漏掉真实参数',
+      );
+    }
+  }
+});
+
+/**
+ * 反过来也要钉住：没有 fields 的 kind 必须标 manualParams。
+ *
+ * update 就是活例 —— 它走 Inspector、自己没有 fields，但 legacy 的
+ * bili / wechat 与它共用 dataKind，于是"自动派生"会去读 updateFields.tsx，
+ * 把合并前那 8 项（biliUid / biliMode / biliCookie / feedUrl …）排在最前，
+ * 真正的 targets 反而挤到最后一行且标成"隐藏"。
+ *
+ * 照那份文档拼出来的节点去填顶层 biliUid / feedUrl，而 targetsOf() 的
+ * 兼容路径会把它们合成一张卡 —— 能跑、不报错，但只能盯一个源。
+ */
+test('没有 fields 的 kind 要标 manualParams（否则会派生出别人的旧字段）', () => {
+  assert.ok(AF_SRC, 'AF_SRC 未设置');
+  const dir = path.join(AF_SRC, 'nodes', 'defs');
+  const byKind = new Map<string, { has: boolean; legacyOnly: boolean }>();
+  for (const f of fs.readdirSync(dir)) {
+    const src = fs.readFileSync(path.join(dir, f), 'utf-8');
+    const dk = src.match(/dataKind:\s*'([^']+)'/);
+    if (!dk) continue;
+    const legacy = /legacy:\s*true/.test(src);
+    const hasFields = hasFieldsDecl(src);
+    const cur = byKind.get(dk[1]) ?? { has: false, legacyOnly: true };
+    if (!legacy) {
+      cur.legacyOnly = false;
+      if (hasFields) cur.has = true;
+    }
+    byKind.set(dk[1], cur);
+  }
+  for (const [kind, v] of byKind) {
+    const spec = SPECS[kind];
+    if (!spec || v.legacyOnly) continue;
+    if (!v.has) {
+      assert.ok(
+        spec.manualParams,
+        `${kind} 自己没有 fields（走自定义面板），该标 manualParams —— `
+        + '不标的话文档会去派生同 dataKind 的其它文件的字段，拿到的是废弃的那套',
       );
     }
   }
@@ -331,7 +398,14 @@ test('有 fields 的节点不能标 manualParams（参数该自动派生）', ()
  * 平台清单必须与 UPDATE_SOURCE_KEYS 一致，且不能退回 source 那个旧键。
  */
 test('update 的契约写的是 targets 数组（不是单目标的 source）', () => {
-  const hp = SPECS['update']?.hiddenParams ?? [];
+  /*
+   * params 与 hiddenParams 都要看：update 现在标了 manualParams，
+   * targets 写在 params 里（它是面板上的卡片列表，不是隐藏字段）。
+   * 只看 hiddenParams 的话，把 targets 挪到 params 就会报
+   * "缺 targets" —— 那是守卫绑死了位置，不是契约真缺。
+   */
+  const sp = SPECS['update'];
+  const hp = [...(sp?.params ?? []), ...(sp?.hiddenParams ?? [])];
   const tg = hp.find((p) => p.key === 'targets');
   assert.ok(tg, 'update 必须有 targets 的隐藏参数说明（多目标合并后 source 已不是写入路径）');
   assert.ok(
@@ -357,7 +431,8 @@ test('update 的契约写的是 targets 数组（不是单目标的 source）', 
  * 抄清单本身就会漏，而漏了之后这条守卫照样报绿。
  */
 test('update 的平台清单与 UPDATE_SOURCE_KEYS 完全一致', () => {
-  const hp = SPECS['update']?.hiddenParams ?? [];
+  const sp = SPECS['update'];
+  const hp = [...(sp?.params ?? []), ...(sp?.hiddenParams ?? [])];
   const tg = hp.find((p) => p.key === 'targets');
   assert.ok(tg?.options, 'targets 要给出平台取值');
   assert.deepEqual(

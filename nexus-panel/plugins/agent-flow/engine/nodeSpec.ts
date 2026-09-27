@@ -460,9 +460,26 @@ export const SPECS: Record<string, NodeSpec> = {
    *
    * 平台清单刻意从 UPDATE_SOURCE_KEYS 派生，不在这里手抄 ——
    * 抄一份就必然漂移（这行的上一版就是漂移的活证据）。
+   *
+   * ================= 为什么必须标 manualParams =================
+   *
+   * 这个 kind **自己没有 fields**（update.tsx 走 Inspector），
+   * 但文档生成器是按 dataKind 收文件的，而 legacy 的 bili.ts / wechat.ts
+   * **dataKind 同样是 'update'** 且写着 `fields: () => updateFields`。
+   *
+   * 于是"自动派生"会去读 updateFields.tsx，抓出合并前那 8 项旧字段
+   * （biliUid / biliMode / biliCookie / feedUrl / userAgent …）排在最前面，
+   * 真正的 targets 反而被挤到最后一行、还被标成"隐藏"。
+   *
+   * 后果不是报错，而是**教错**：照那份文档去填顶层的 biliUid / feedUrl，
+   * targetsOf() 的兼容路径会把它们合成一张卡 —— 能跑、不报错，
+   * 但只能盯一个源，想盯小红书时合成出来的是默认那一种。
+   *
+   * 所以这里显式声明 manualParams，让参数表只写 targets。
    */
   update: S('bool', 'none', '是否有更新（true / false）—— 给条件节点判断', {
-    hiddenParams: [
+    manualParams: true,
+    params: [
       /*
        * kind 的取值是 'bilibili'（完整拼写），不是 'bili' ——
        * 'bili' 是节点的 **type**，'bilibili' 是 kind 的取值。

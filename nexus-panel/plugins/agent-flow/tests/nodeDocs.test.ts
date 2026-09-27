@@ -346,15 +346,26 @@ test('参数表的取值列不能出现 undefined', () => {
 });
 
 /**
- * fields 常常不在主 def 文件里（bili.ts 写 `fields: () => updateFields`，
- * 真清单在同目录的 updateFields.tsx）。
- * 只看主文件会让参数表只剩一两项，真正的 biliUid / feedUrl 全丢 ——
- * AI 拼出来会缺参数，报 "Cannot read properties of undefined (reading 'trim')"。
+ * fields 用间接引用时也要解析到（canvasRef 写 `fields: canvasRefFields`）。
+ *
+ * ================= 为什么不再拿 update 当例子 =================
+ *
+ * 这条原先断言 update.params.md 含 biliUid / feedUrl —— 那是**合并前**
+ * 的形状：当时 update 就是 bili / wechat，共用 updateFields。
+ *
+ * 合并成多目标之后 update 走 Inspector、自己没有 fields，
+ * 而 legacy 的 bili / wechat **dataKind 仍是 'update'**，
+ * 于是"自动派生"会去读 updateFields.tsx，把 biliUid 那 8 项废弃字段
+ * 排在最前、真正的 targets 挤到最后且标成"隐藏"。
+ *
+ * 那条断言也就从"防漏"变成了"把错的那版钉成标准" ——
+ * 这类守卫比没有守卫更糟：它会逼人把好不容易修对的文档改回去。
+ * 所以改成盯 canvasRef，并另加一条反方向的守卫（见文末）。
  */
-test('fields 在别的文件里时也要解析到（update 是这类）', () => {
-  const s = fs.readFileSync(path.join(nodesDir, 'update.params.md'), 'utf-8');
-  for (const k of ['biliUid', 'feedUrl', 'biliMode']) {
-    assert.ok(s.includes(`\`${k}\``), `update.params.md 缺 ${k} —— fields 的间接引用没跟上`);
+test('fields 用间接引用时也要解析到（canvasRef 是这类）', () => {
+  const s = fs.readFileSync(path.join(nodesDir, 'canvasRef.params.md'), 'utf-8');
+  for (const k of ['canvasId', 'displayName']) {
+    assert.ok(s.includes(`\`${k}\``), `canvasRef.params.md 缺 ${k} —— fields 的间接引用没跟上`);
   }
 });
 
@@ -406,4 +417,32 @@ test('参数页的键名与契约一致（双向，防故障注入残留）', ()
       );
     }
   }
+});
+
+/**
+ * 更新检测的参数表不能出现合并前那套顶层字段。
+ *
+ * 这是"文档派生"踩的坑：update.tsx 自己没有 fields（走 Inspector），
+ * 但 legacy 的 bili.ts / wechat.ts 与它**共用 dataKind 'update'**，
+ * 而生成器是按 dataKind 收文件的 —— 于是它会去读 updateFields.tsx，
+ * 派生出 biliUid / biliMode / biliCookie / feedUrl 这 8 项旧字段，
+ * 排在 targets 前面。
+ *
+ * 后果不是报错，而是**教错**：照文档去填顶层 biliUid / feedUrl，
+ * targetsOf() 的兼容路径会合成一张卡，能跑、不报错，
+ * 但只能盯一个源 —— 想盯小红书却拿到默认的那种。
+ *
+ * 所以盯最终产物（生成的 md），而不是盯中间某个函数。
+ */
+test('update 的参数表只有 targets，没有合并前的顶层字段', () => {
+  const s = fs.readFileSync(path.join(nodesDir, 'update.params.md'), 'utf-8');
+  const table = s.slice(s.indexOf('| 参数 |'), s.indexOf('## 具名输出'));
+  for (const k of ['biliUid', 'biliMode', 'biliCookie', 'source']) {
+    assert.ok(
+      !table.includes(`\`${k}\``),
+      `update.params.md 的参数表里还有 \`${k}\` —— `
+      + '那是合并前单目标时代的顶层字段，写出来会误导拼装方往顶层填值',
+    );
+  }
+  assert.ok(table.includes('`targets`'), 'targets 必须在参数表里（它是唯一数据源）');
 });
