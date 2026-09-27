@@ -247,11 +247,35 @@ const S = (
  */
 export const SPECS: Record<string, NodeSpec> = {
   // 起点：产出流程输入
+  /*
+   * 触发器改成"一个节点可挂多种触发方式"之后，契约必须跟着改。
+   *
+   * 上一版这里写的是单值 `mode`，且 options 里最后一种是 `conversation`
+   * —— 实际类型早已是 `triggers: TriggerKind[]`，最后一种叫 `chat`。
+   *
+   * 这份契约经 blockCatalog() 喂给拼装方，于是它拼出来的节点
+   * 写的是 `mode: 'webhook'`，而运行时读的是 `triggers` 数组 ——
+   * 数组为空 = **这个触发器永远不会触发**，且不报错、界面看着也正常
+   * （卡片上还显示着触发方式那一行）。比"少几个可选平台"严重一档。
+   */
   trigger: S('text', 'none', '流程的初始输入（手动文本 / 触发带来的内容）', {
     manualParams: true,
     params: [
-      { key: 'mode', desc: '触发方式', required: true, options: ['manual', 'interval', 'cron', 'watch', 'webhook', 'conversation'] },
-      { key: 'enabled', desc: '是否启用' },
+      {
+        key: 'triggers',
+        desc: '触发方式列表（可以同时挂多种，任一满足即触发）。'
+          + '写单个字符串与写单元素数组等价',
+        required: true,
+        options: ['manual', 'interval', 'cron', 'watch', 'webhook', 'chat'],
+      },
+      {
+        key: 'config',
+        desc: '各类触发方式的配置，按 kind 取对应字段，未用到的留默认即可：'
+          + 'intervalSec（interval，最小 10）/ cronExpr（cron，五段表达式）/ '
+          + 'watchDir + watchExts + 防抖（watch）/ 端口与路径（webhook）',
+      },
+      { key: 'input', desc: '手动触发时的初始文本（其余方式由事件内容填入）' },
+      { key: 'enabled', desc: '是否启用；false 时该触发器不参与任何触发判定' },
     ],
   }),
 
@@ -301,13 +325,51 @@ export const SPECS: Record<string, NodeSpec> = {
       { key: 'op', desc: '算子。常用：nonEmpty / isEmpty / contains / notContains / equals / always', options: ['nonEmpty', 'isEmpty', 'contains', 'notContains', 'equals', 'always'] },
     ],
   }),
+  /*
+   * 循环只写了 mode / maxIterations 两个，而实际可填的有 8 个 ——
+   * 漏掉的 times / separator / source / pattern / onError / collect
+   * 拼装方一概不知，于是拼出来的循环永远是默认的那一套
+   * （list 模式、3 次、\n 分隔、出错继续、汇总开启）。
+   * 流程能跑、不报错，只是行为永远是默认值 —— 正是最难查的一类。
+   */
   loop: S('any', 'any', '透传（循环体每轮一次，done 出口汇总一次）', {
     manualParams: true,
-    params: [{ key: 'mode', desc: '循环方式' }, { key: 'maxIterations', desc: '最大轮数' }],
+    params: [
+      {
+        key: 'mode',
+        desc: '循环方式：times = 固定次数；list = 把上游输出按分隔符切成列表逐条跑；'
+          + 'glob = 文件通配符展开（配合文件节点用）',
+        required: true,
+        options: ['times', 'list', 'glob'],
+      },
+      { key: 'times', desc: 'times 模式下的迭代次数（1-1000）' },
+      { key: 'separator', desc: 'list 模式的分隔符，默认 \\n。注意它是真换行符，不是字面 "\\n"' },
+      { key: 'source', desc: 'list 模式下取哪个上游的输出（节点 id）；留空用拼接后的上游输出' },
+      { key: 'pattern', desc: 'glob 模式的通配符，如 src/**/*.ts' },
+      { key: 'maxIterations', desc: '最大轮数上限（安全网，超出即停）' },
+      { key: 'onError', desc: '某一轮失败时：continue = 跳过继续；stop = 整个循环停下', options: ['continue', 'stop'] },
+      { key: 'collect', desc: '是否把每轮结果汇总到 done 出口；false 时 done 出口不带内容' },
+    ],
   }),
   parallel: S('any', 'any', '透传', {
     manualParams: true,
-    params: [{ key: 'mode', desc: '并发模式' }, { key: 'concurrency', desc: '并发度' }],
+    params: [
+      {
+        key: 'mode',
+        desc: '并发模式：fixed = 固定并发数；byRule = 按条件规则从上到下第一条命中的决定；'
+          + 'all = 不限制，全部并行',
+        required: true,
+        options: ['fixed', 'byRule', 'all'],
+      },
+      { key: 'concurrency', desc: 'fixed 模式下的并发度（同时跑几个）' },
+      {
+        key: 'rules',
+        desc: 'byRule 模式的规则列表，从上到下判定、第一条命中即用其并发数。'
+          + '每条 = { id, op, value, concurrency, label? }；op 与条件节点同一套算子。'
+          + 'mode 为 byRule 时必填，否则并发数无从决定',
+      },
+      { key: 'fallbackConcurrency', desc: 'byRule 模式下所有规则都没命中时用的并发数' },
+    ],
   }),
 
   // 文件与数据

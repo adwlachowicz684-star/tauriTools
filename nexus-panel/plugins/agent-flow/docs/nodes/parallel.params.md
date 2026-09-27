@@ -15,12 +15,14 @@
 
 透传
 
-共 2 项：
+共 4 项：
 
 | 参数 | 类型 | 说明 | 取值 | 显示条件 |
 |---|---|---|---|---|
-| `mode` | — | 并发模式 | — | — |
-| `concurrency` | — | 并发度 | — | — |
+| `mode` **必填** | — | 并发模式：fixed = 固定并发数；byRule = 按条件规则从上到下第一条命中的决定；all = 不限制，全部并行 | `fixed` / `byRule` / `all` | — |
+| `concurrency` | — | fixed 模式下的并发度（同时跑几个） | — | — |
+| `rules` | — | byRule 模式的规则列表，从上到下判定、第一条命中即用其并发数。每条 = { id, op, value, concurrency, label? }；op 与条件节点同一套算子。mode 为 byRule 时必填，否则并发数无从决定 | — | — |
+| `fallbackConcurrency` | — | byRule 模式下所有规则都没命中时用的并发数 | — | — |
 
 ## 建节点的正确方式
 
