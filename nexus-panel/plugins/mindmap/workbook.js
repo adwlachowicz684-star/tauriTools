@@ -138,7 +138,25 @@ export function sheetToMarkdown(content) {
   function walk(n, depth) {
     if (!n) return;
     const text = String(n?.data?.text ?? '').replace(/\s*\n\s*/g, ' ').trim();
-    lines.push('#'.repeat(Math.min(depth + 1, 6)) + ' ' + text);
+    const sharp = '#'.repeat(Math.min(depth + 1, 6));
+    let line = sharp + ' ' + text;
+    /*
+     * 二级节点的文字若以「画布：」开头，拼出来的行正好是**分块标记**。
+     *
+     * 实测（单画布导出 → 导回）：
+     *   节点「画布：设计」→ 导出成 `## 画布：设计`
+     *   → 导回时被 SHEET_MARK 当成**新画布的分隔符**
+     *   → 1 张画布变成 2 张：
+     *        [0] 项目            ← 两个子节点全没了
+     *        [1] 设计（根=开发） ← 「画布：设计」变成画布标题而丢失，
+     *                             兄弟节点「开发」被抬成新画布的中心主题
+     *   即：原节点消失 + 层级错位 + 画布数变化，三样一起来。
+     *
+     * 转义成 `## \画布：设计`：SHEET_MARK 要求 `##` 后紧跟「画布」，
+     * 前面多了反斜杠就不再命中，分块判定安全；导回时再把这个反斜杠去掉。
+     */
+    if (SHEET_MARK.test(line)) line = sharp + ' \\' + text;
+    lines.push(line);
     for (const c of n.children || []) walk(c, depth + 1);
   }
 }
@@ -153,7 +171,14 @@ export function markdownToSheet(md) {
     const m = raw.match(/^(#{1,6})\s+(.*)$/);
     if (!m) continue;
     const depth = m[1].length - 1;              // '#' → 0（中心主题）
-    const text = m[2].trim();
+    let text = m[2].trim();
+    /*
+     * 解掉 sheetToMarkdown 为避开分块标记加的反斜杠（见那里的注释）。
+     *
+     * **只**解 `\画布：` 这一种形态，不做通用去反斜杠 ——
+     * 否则从别处导入的 Markdown 里以 `\` 开头的节点文字会被改掉。
+     */
+    if (/^\\画布[:：]/.test(text)) text = text.slice(1);
     if (!text) continue;
     rows.push({ depth, text });
   }

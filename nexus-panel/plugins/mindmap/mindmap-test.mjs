@@ -11256,6 +11256,87 @@ group('detectFormat：ATX 标题必须先于「裸 * 列表」判断，否则丢
   eq(F.detectFormat('mindmap\n  root((x))', 'x.mmd'), 'mermaid', 'Mermaid 不受影响');
 }
 
+group('Markdown 往返：二级节点叫「画布：X」会被当成分块标记，节点丢失（BUG 56）');
+
+/*
+ * `workbookToMarkdown` 的分块标记是 `## 画布：<标题>`（SHEET_MARK）。
+ * 而节点文字原样拼在 `#` 之后 —— 于是**二级**节点只要叫「画布：X」，
+ * 导出的行正好命中分块标记，导回时整棵树的层级与画布数一起坏掉。
+ *
+ * 实测（单画布，根「项目」，子「画布：设计」「开发」）：
+ *   修复前 → 2 张画布：[0] 项目（子节点全丢） / [1] 设计（根变成「开发」）
+ *   修复后 → 1 张画布：项目 / 画布：设计 / 开发
+ */
+{
+  const WB = await import('./workbook.js');
+
+  const flat = (content) => {
+    const o = [];
+    (function x(n, d) { o.push(n.data.text); (n.children || []).forEach((c) => x(c, d + 1)); })(JSON.parse(content).root);
+    return o;
+  };
+  const sheet = (title, rootText, kids) => ({
+    id: 's1', title, theme: null, layout: null,
+    content: JSON.stringify({
+      root: { data: { text: rootText }, children: kids.map((k) => ({ data: { text: k }, children: [] })) },
+      template: 'default', theme: 'fresh-blue-compat',
+    }),
+  });
+
+  // 核心用例：全角冒号
+  {
+    const md = WB.workbookToMarkdown([sheet('我的图', '项目', ['画布：设计', '开发'])]);
+    const back = WB.markdownToWorkbook(md);
+    eq(back.length, 1, '二级节点叫「画布：设计」时往返后仍是 1 张画布（修复前变 2 张）');
+    eq(back[0].title, '我的图', '画布标题未被顶掉');
+    eq(flat(back[0].content).join('|'), '项目|画布：设计|开发',
+      '节点「画布：设计」原样回来（修复前它变成画布标题而丢失）');
+  }
+
+  // 半角冒号同样命中 SHEET_MARK
+  {
+    const md = WB.workbookToMarkdown([sheet('我的图', '项目', ['画布:设计', '开发'])]);
+    const back = WB.markdownToWorkbook(md);
+    eq(back.length, 1, '半角「画布:设计」同样不能触发分块');
+    eq(flat(back[0].content).join('|'), '项目|画布:设计|开发', '半角形态往返无损');
+  }
+
+  // 转义只能影响这一处：其它文字不得以任何方式被改动
+  {
+    const md = WB.workbookToMarkdown([sheet('我的图', '项目', ['设计', '开发'])]);
+    ok(!md.includes('\\'), `普通文字不得出现转义反斜杠（实际含 \\：${md.includes('\\')}）`);
+    const back = WB.markdownToWorkbook(md);
+    eq(flat(back[0].content).join('|'), '项目|设计|开发', '普通节点往返不变（防止转义改坏正常文字）');
+  }
+
+  // 通用去反斜杠会改掉别人的 Markdown —— 只解 `\画布：` 这一种
+  {
+    const back = WB.markdownToWorkbook('# 根\n## \\普通反斜杠\n## \\画布：X\n');
+    const t = flat(back[0].content);
+    ok(t.includes('\\普通反斜杠'), '从别处导入的 `\\开头` 文字不得被改掉');
+    ok(t.includes('画布：X'), '本工具加的转义要被解掉');
+  }
+
+  // 多画布分块本身不受影响
+  {
+    const md = WB.workbookToMarkdown([
+      sheet('A图', '甲', ['子1']),
+      sheet('B图', '乙', ['子2']),
+    ]);
+    const back = WB.markdownToWorkbook(md);
+    eq(back.length, 2, '多画布仍是 2 张（分块标记照常工作）');
+    eq(back[0].title, 'A图', '第一张标题正确');
+    eq(back[1].title, 'B图', '第二张标题正确');
+    eq(flat(back[1].content).join('|'), '乙|子2', '第二张内容正确');
+  }
+
+  // 转义后仍要能被 markdownRowCount 认成大纲行（否则会被判「无法识别」而拒导入）
+  {
+    const md = WB.workbookToMarkdown([sheet('我的图', '项目', ['画布：设计'])]);
+    ok(WB.markdownRowCount(md) > 0, '带转义的行仍计入大纲行数（不会被 noOutline 拒掉）');
+  }
+}
+
 /* ============================================================
    结果
    ============================================================ */
