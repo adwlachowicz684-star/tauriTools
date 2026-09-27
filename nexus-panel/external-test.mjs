@@ -120,48 +120,43 @@ t('待决定的会被列出', ext.pendingHosts().length >= 0);
 const csp = ext.suggestCsp();
 t('建议 CSP 含已信任域名', !csp || csp.includes('new.example.com'), csp ? '已生成' : '（无信任项）');
 
-/* ---------- D. 沙箱配置：两个开关独立 ---------- */
-console.log('\n--- D. 沙箱 / 主题 两个开关互相独立 ---');
+/* ---------- D. 沙箱开关 ---------- */
+/*
+ * ⓘ 这里原本是「沙箱 / 主题适配 两个开关互相独立」。
+ *   主题适配（adaptTheme / 自报基调 / 滤镜反转）整套已删除：
+ *   现在只有一个机制 —— 外壳把主题变量推给插件，插件渲染成什么样就是什么样。
+ *   所以 D 节只保留沙箱开关本身，E / F 两节（自报基调兜底、lightenToDarkVars）
+ *   整块删除。
+ *
+ *   这些断言此前"存在但没人看得见"：external-test 依赖真实 DOM，
+ *   沙盒里的 jsdom 曾是一个 0.0.0-shim 的假包（querySelectorAll 恒返回 []），
+ *   测试根本跑不到这里。换回真 jsdom 后，F 节直接 ReferenceError（nz 未定义），
+ *   D 节 3 项转红 —— 都是删机制时漏掉的残留。
+ */
+console.log('\n--- D. 沙箱开关 ---');
 ext.savePolicy({ mode: 'smart', hosts: {} });
 const ID = 'test-plugin';
-t('默认：不隔离 + 适配主题',
-  cfg.getPluginConfig(ID).isolated === false && cfg.getPluginConfig(ID).adaptTheme === true);
+t('默认：不隔离', cfg.getPluginConfig(ID).isolated === false);
 
 cfg.setPluginConfig(ID, { isolated: true });
-t('只开隔离：主题适配不受影响',
-  cfg.getPluginConfig(ID).isolated === true && cfg.getPluginConfig(ID).adaptTheme === true);
-
-cfg.setPluginConfig(ID, { adaptTheme: false });
-t('再关主题适配：隔离仍为开',
-  cfg.getPluginConfig(ID).isolated === true && cfg.getPluginConfig(ID).adaptTheme === false);
+t('可以打开隔离', cfg.getPluginConfig(ID).isolated === true);
 
 cfg.setPluginConfig(ID, { isolated: false });
-t('只关隔离：主题适配保持关',
-  cfg.getPluginConfig(ID).isolated === false && cfg.getPluginConfig(ID).adaptTheme === false);
+t('可以关掉隔离', cfg.getPluginConfig(ID).isolated === false);
 
-cfg.setPluginConfig(ID, { adaptTheme: true });
+cfg.setPluginConfig(ID, { isolated: true });
 t('配置按插件 id 隔离，互不干扰',
-  cfg.getPluginConfig('other-plugin').isolated === false
-  && cfg.getPluginConfig('other-plugin').adaptTheme === true);
+  cfg.getPluginConfig(ID).isolated === true
+  && cfg.getPluginConfig('other-plugin').isolated === false);
 
-/* ---------- E. 隔离插件的主题兜底 ---------- */
-console.log('\n--- E. 隔离插件靠自报基调完成适配 ---');
-// 造一个"读不到内部"的 iframe（模拟隔离）
-const iframe = dom.window.document.createElement('iframe');
-Object.defineProperty(iframe, 'contentDocument', { get: () => null });   // 隔离 → 采样通道关闭
-const wrap = dom.window.document.createElement('div');
-wrap.style.position = 'relative';
-dom.window.document.body.appendChild(wrap);
-
-const mkManifest = (theme) => ({ id: 'iso-plugin', name: '隔离插件', theme });
-
-/* ---------- F. A7 坏函数已修 ---------- */
-console.log('\n--- F. 主题改写工具 ---');
-const out = nz.lightenToDarkVars('#ffffff; color:#222222; background:#f5f5f5;');
-t('输出是合法 CSS（括号配平）',
-  (out.match(/\(/g) || []).length === (out.match(/\)/g) || []).length, out);
-t('白色被替换为 --surface', out.includes('var(--surface)'), out.slice(0, 60));
-t('深色文字被替换为 --text', out.includes('var(--text)'));
+/*
+ * 滤镜机制已删除的确认式断言：防止它哪天被加回来而没人发现。
+ * 只写"没有"这类否定式断言容易假绿（代码不存在时自然通过），
+ * 所以这里钉的是**配置层**：getPluginConfig 的结果里不该再有这个键。
+ */
+t('主题适配开关已随滤镜机制一并删除',
+  !('adaptTheme' in cfg.getPluginConfig(ID)),
+  Object.keys(cfg.getPluginConfig(ID)).join(','));
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
