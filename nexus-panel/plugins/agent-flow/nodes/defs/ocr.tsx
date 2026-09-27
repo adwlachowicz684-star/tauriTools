@@ -1,13 +1,11 @@
 import { makeOcrNode, IMAGE_SOURCE_META, defaultOcrPrompt, type ImageSource } from '../../types';
-import { canReadImage } from '../../lib/tauri';
 import OcrNode from '../../components/OcrNode';
 import { LlmConfigPanel } from '../../components/inspectors/shared';
-import {
-  Field, VarBar, upstreamTokens, upstreamFileTokens, type FieldDef,
-} from '../../components/inspectors/fields';
+import type { FieldDef } from '../../components/inspectors/fields';
 import { runOcr } from '../../engine/runners/ocr';
 import { registerNode } from '../registry';
 import { card } from '../paramCards';
+import { renderImageUrl, renderImagePath } from '../imageCards';
 
 const fields: FieldDef[] = [
   {
@@ -38,51 +36,29 @@ const fields: FieldDef[] = [
     hint: (d) => IMAGE_SOURCE_META[(d.imageSource as ImageSource) ?? 'url']?.hint,
   },
 
+  /*
+   * 这两块的 render 与「大模型」节点共用（见 nodes/imageCards.tsx）。
+   *
+   * spec.keys 留在节点上：它是契约与参数文档取参数名的唯一来源，
+   * 写在节点里能被逐块对账。以前这份抄 llmChat 时把它抄错了
+   * （地址那块写成 ['path']、本地路径那块写成 ['prompt','detail']），
+   * 于是文档里"图片地址"被写成 path，真正的 path 反而没出现，且不报错。
+   * tests/paramCards.test.ts 盯着 key 必须属于 spec.keys。
+   */
   {
     type: 'custom',
-    spec: { keys: ['path'], kind: 'text' },
+    spec: { keys: ['url'], kind: 'text' },
     key: 'url',
     when: (d) => (d.imageSource ?? 'url') === 'url',
-    render: (p) => (
-      <Field label="图片地址">
-        <VarBar
-          title="可引用："
-          tokens={upstreamTokens(p.upstream)}
-          onInsert={(t) => p.onChange(String(p.d.url ?? '') + t)}
-        />
-        <input
-          className="p-input mono"
-          value={String(p.d.url ?? '')}
-          placeholder="https://.../image.png"
-          onChange={(e) => p.onChange(e.target.value)}
-        />
-      </Field>
-    ),
+    render: renderImageUrl,
   },
 
   {
     type: 'custom',
-    spec: { keys: ['prompt', 'detail'], kind: 'textarea' },
+    spec: { keys: ['path'], kind: 'text' },
     key: 'path',
     when: (d) => d.imageSource === 'file',
-    render: (p) => (
-      <Field
-        label="本地路径"
-        hint={!canReadImage() ? '浏览器模式不能读本地图片，请用桌面端运行' : undefined}
-      >
-        <VarBar
-          title="可引用："
-          tokens={upstreamFileTokens(p.upstream).filter((t) => t.text.endsWith('.file}}'))}
-          onInsert={(t) => p.onChange(String(p.d.path ?? '') + t)}
-        />
-        <input
-          className="p-input mono"
-          value={String(p.d.path ?? '')}
-          placeholder="/path/to/screenshot.png"
-          onChange={(e) => p.onChange(e.target.value)}
-        />
-      </Field>
-    ),
+    render: renderImagePath,
   },
 
   {

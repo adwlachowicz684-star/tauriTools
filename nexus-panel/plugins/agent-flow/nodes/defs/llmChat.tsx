@@ -3,16 +3,16 @@ import {
   type ImageSource, type LlmUse,
 } from '../../types';
 import { TARGET_LANGS } from '../../engine/llm';
-import { canReadImage } from '../../lib/tauri';
 import LlmChatNode from '../../components/LlmChatNode';
 import { LlmConfigPanel } from '../../components/inspectors/shared';
 import {
-  Field, VarBar, upstreamTokens, upstreamFileTokens, paneField,
+  Field, VarBar, upstreamTokens, paneField,
   type FieldDef, type FieldRenderProps,
 } from '../../components/inspectors/fields';
 import { runLlmChat } from '../../engine/runners/llmChat';
 import { registerNode } from '../registry';
 import { card } from '../paramCards';
+import { renderImageUrl, renderImagePath } from '../imageCards';
 
 /**
  * 大模型节点 —— 一个节点覆盖三种用途。
@@ -85,26 +85,16 @@ const fields = (_d: Record<string, unknown>, p?: FieldRenderProps): FieldDef[] =
       hint: (d) => IMAGE_SOURCE_META[(d.imageSource as ImageSource) ?? 'url']?.hint,
     },
 
+    /*
+     * 这两块的 render 与旧的 OCR 节点共用（见 nodes/imageCards.tsx）。
+     * 与 ocr 只差一个 when —— 大模型节点上它们还要看用途是不是图片识别。
+     */
     {
       type: 'custom',
       spec: { keys: ['url'], kind: 'text' },
       key: 'url',
       when: (d) => isOcr && (d.imageSource ?? 'url') === 'url',
-      render: (pp) => (
-        <Field label="图片地址">
-          <VarBar
-            title="可引用："
-            tokens={upstreamTokens(pp.upstream)}
-            onInsert={(t) => pp.onChange(String(pp.d.url ?? '') + t)}
-          />
-          <input
-            className="p-input mono"
-            value={String(pp.d.url ?? '')}
-            placeholder="https://.../image.png"
-            onChange={(e) => pp.onChange(e.target.value)}
-          />
-        </Field>
-      ),
+      render: renderImageUrl,
     },
 
     {
@@ -112,24 +102,7 @@ const fields = (_d: Record<string, unknown>, p?: FieldRenderProps): FieldDef[] =
       spec: { keys: ['path'], kind: 'text' },
       key: 'path',
       when: (d) => isOcr && d.imageSource === 'file',
-      render: (pp) => (
-        <Field
-          label="本地路径"
-          hint={!canReadImage() ? '浏览器模式不能读本地图片，请用桌面端运行' : undefined}
-        >
-          <VarBar
-            title="可引用："
-            tokens={upstreamFileTokens(pp.upstream).filter((t) => t.text.endsWith('.file}}'))}
-            onInsert={(t) => pp.onChange(String(pp.d.path ?? '') + t)}
-          />
-          <input
-            className="p-input mono"
-            value={String(pp.d.path ?? '')}
-            placeholder="/path/to/screenshot.png"
-            onChange={(e) => pp.onChange(e.target.value)}
-          />
-        </Field>
-      ),
+      render: renderImagePath,
     },
 
     /* 与旧的 OCR 节点共用同一张卡（见 nodes/paramCards.ts） */

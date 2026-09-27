@@ -173,3 +173,99 @@ test('card() 返回的是拷贝，改它不会污染库里那张', () => {
   );
   assert.equal(PARAM_CARDS['sound.volume'].hint, '0 ~ 1，默认 0.6');
 });
+
+/*
+ * ==================================================================
+ * custom 块的 spec.keys 必须与它自己的 key 对上
+ *
+ * ================= 为什么要盯 =================
+ *
+ * `spec.keys` 是**契约与参数文档取参数名的唯一来源**：
+ *   · engine/nodeSpec.ts 的 deriveParams() —— 拼装方看到的字段清单
+ *   · scripts/gen-node-docs.mjs —— docs/nodes/*.params.md 的参数表
+ * 而 `key` 只用于面板内部的字段身份。两个名字不一致时，
+ * **契约与文档会去宣传另一个名字**，全程不报错。
+ *
+ * 实际踩到的一次：ocr.tsx 抄 llmChat 的两块图片字段时把 spec.keys 抄错了
+ * （地址那块写成 ['path']、本地路径那块写成 ['prompt','detail']），
+ * 于是 ocr 的参数文档里"图片地址"被写作 `path`，真正的 `path` 没出现，
+ * 而「识别要求 / 图片细节」被挂上了"图片来源=本地文件"的显示条件。
+ *
+ * 这种错在 2285 条测试里安静地待着 ——
+ * 因为之前的守卫只做正向对账（声明了什么就有什么），
+ * 从不检查"声明的名字是不是它自己"。
+ * ==================================================================
+ */
+test('custom 块的 spec.keys 必须包含它自己的 key', () => {
+  const files = [
+    ...defFiles().map((f) => 'nodes/defs/' + f),
+    /* 带 JSX 的共用卡也扫：那里同样会写 spec.keys */
+    'nodes/imageCards.tsx',
+  ];
+  const bad: string[] = [];
+
+  for (const rel of files) {
+    const src = stripComments(readSrc(rel));
+    for (const m of src.matchAll(/type:\s*'custom'/g)) {
+      /*
+       * 只看这一块里 `render:` 之前的部分：
+       * spec 与 key 都写在 render 前面，截到 render 就不会
+       * 顺带把下一个字段的 key 也捞进来。
+       */
+      const head = src.slice(m.index, m.index + 400).split('render:')[0];
+      const sm = head.match(/spec:\s*\{\s*keys:\s*\[([^\]]+)\]/);
+      if (!sm) continue; // 没有 spec.keys 的走 deriveParams 的兜底分支，不管
+      const km = head.match(/key:\s*'([^']+)'/);
+      if (!km) continue; // 只有 spec.keys、没有 key 的块（如整组面板），不比对
+      const keys = sm[1]
+        .split(',')
+        .map((s) => s.trim().replace(/^'|'$/g, ''))
+        .filter(Boolean);
+      if (!keys.includes(km[1])) {
+        bad.push(`${rel}: key='${km[1]}' 但 spec.keys=[${keys.join(', ')}]`);
+      }
+    }
+  }
+
+  assert.deepEqual(
+    bad,
+    [],
+    'custom 块的 spec.keys 与 key 对不上 —— 契约与参数文档会宣传错的参数名（不报错）：\n  '
+    + bad.join('\n  '),
+  );
+});
+
+test('图片那两块的 render 由 llmChat 与 ocr 共用一份，不许各写一份', () => {
+  /*
+   * 各写一份正是 spec.keys 被抄错的那次事故的来源：
+   * 抄的时候 render（二十几行 JSX）会被认真对待，
+   * 而 spec.keys 这种一行的小字段最容易照抄错。
+   *
+   * 断言取两处：
+   *   1. 两个节点都用的是 nodes/imageCards.tsx 里那一份
+   *   2. JSX 的**内容**（"图片地址"这个 label）不出现在任何 def 里
+   *      —— 谁把它抄回节点，第 2 条立刻红
+   */
+  for (const f of ['llmChat.tsx', 'ocr.tsx']) {
+    const src = stripComments(readSrc('nodes/defs/' + f));
+    assert.ok(
+      /render:\s*renderImageUrl/.test(src) && /render:\s*renderImagePath/.test(src),
+      `${f} 没有用 nodes/imageCards.tsx 里共用的 render（图片那两块又各写了一份？）`,
+    );
+  }
+
+  const lib = stripComments(readSrc('nodes/imageCards.tsx'));
+  assert.ok(
+    /renderImageUrl/.test(lib) && /renderImagePath/.test(lib),
+    'nodes/imageCards.tsx 里找不到这两份 render —— 守卫匹配不到会假通过',
+  );
+
+  const copied = defFiles().filter((f) =>
+    stripComments(readSrc('nodes/defs/' + f)).includes('图片地址'),
+  );
+  assert.deepEqual(
+    copied,
+    [],
+    `这些 def 里出现了「图片地址」的 JSX —— 应该改用 nodes/imageCards.tsx：${copied.join(', ')}`,
+  );
+});

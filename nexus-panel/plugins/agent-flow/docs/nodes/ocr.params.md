@@ -33,9 +33,9 @@
 | `imageSource` | select | 图片来源 | — | — |
 | `url` | custom | 由手写面板渲染（通常带上游变量插入按钮） | — | `d → (d.imageSource ?? 'url') === 'url'` |
 | `credentialId` | credential | — | — | — |
-| `path` | custom | 由手写面板渲染（通常带上游变量插入按钮） | — | `d → (d.imageSource ?? 'url') === 'url'` |
-| `prompt` | textarea | 识别要求；留空用上面的默认提示（按原顺序输出，不解释） | — | `d → d.imageSource === 'file'` |
-| `detail` | select | 图片细节 | `auto` / `low` / `high` | `d → d.imageSource === 'file'` |
+| `path` | custom | 由手写面板渲染（通常带上游变量插入按钮） | — | `d → d.imageSource === 'file'` |
+| `prompt` | textarea | 识别要求；留空用上面的默认提示（按原顺序输出，不解释） | — | — |
+| `detail` | select | 图片细节 | `auto` / `low` / `high` | — |
 | `llm` | 隐藏（不在面板字段里） | 大模型配置 { url, model, apiKey, timeoutSec }。由 llm-config 卡片组提供，建节点时 def.create() 会填默认值 | — | — |
 
 ## 具名输出（除「结论」外还能取到什么）
