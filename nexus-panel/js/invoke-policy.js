@@ -124,7 +124,16 @@ export const PLUGIN_COMMANDS = {
    *     （本注释刻意全程不带引号：command-consistency 会把带引号的
    *      连续串当成命令名，写错一个就会被报成"白名单里有但没注册"。）
    */
-  md: ['fpx_read_file', 'fpx_copy_text', 'fpx_export_text', 'fpx_open_path'],
+  /*
+   * md —— 阅读器。
+   *
+   * fpx_rt_dep_list：**只给 list，不给 install/remove**。
+   * md 要的是"取用"已装进来的 mermaid（ctx.requireDep），让它能用上
+   * 新版本而不必重打包；装与卸仍归设置页（install 是 M 类，见 settings 段）。
+   * 只给 list 的话，md 顶多读到一个文件名列表，装不了东西 ——
+   * 这正是想要的：取用与安装是两件事，不该因为"要用"就连带拿到"能装"。
+   */
+  md: ['fpx_read_file', 'fpx_copy_text', 'fpx_export_text', 'fpx_open_path', 'fpx_rt_dep_list'],
 
   /*
    * folder-picker —— 统一目录选择服务（内置）。

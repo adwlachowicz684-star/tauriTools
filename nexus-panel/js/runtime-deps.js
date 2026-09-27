@@ -204,3 +204,100 @@ export async function resolveRuntimeDepPath(ctx, name, version) {
   const hit = list.find((d) => d && d.name === name && (!version || d.version === version));
   return hit ? hit.path || hit.file : '';
 }
+
+/* ============================================================
+   取用（消费侧）—— requireDep
+   ============================================================ */
+
+/**
+ * 取一个包来用：装过就用装进来的，没装就用打包进产物的那一份。
+ *
+ * 返回 `{ mod, source, error }`：
+ *   source = 'runtime'  用的是 deps/ 里装的那份（可换版本、不必重打包）
+ *          = 'bundle'   用的是构建时打进产物那一份（fallback）
+ *          = 'none'     两边都没有
+ *
+ * 【为什么"装了但 import 失败"必须回退，不能报错】
+ * 运行时依赖是**增强**，不是基础功能。装的那份坏了（CDN 给的 ESM
+ * 带了浏览器不认的语法、或依赖 node 内建模块）就整篇图全挂，
+ * 等于把一个可选增强变成了单点故障 —— 用户还得先卸载才能恢复正常。
+ * 所以失败一律回退到打包版：功能不降级，只是少了一次可换版本的好处。
+ *
+ * 【为什么决策要缓存（只定一次来源）】
+ * ① 每块图都探测一次：一篇 20 张图就是 20 次 invoke + 20 次 import，
+ *    而结论根本不会变。
+ * ② 更要紧的是 —— 有些库（mermaid）的 themeVariables 是**模块级全局**。
+ *    一会儿用运行时版、一会儿用打包版，两份实例的设置互相踩，
+ *    表现为"图偶发画错颜色"，而没人会想到这是加载来源不一致。
+ *    所以来源**一次定死**，包括"回退"这个决策本身也要缓存：
+ *    不缓存的话每块图都会重试一次坏文件，既慢又可能出现
+ *    "前几张用打包版、后几张又尝试运行时版"的混合态。
+ *
+ * 【为什么探测失败要当作"没装"，而不是抛错】
+ * 后端没接这条命令（老版本）、或这次 invoke 失败，都不该让图挂掉 ——
+ * 打包版是一定能用的。把它当成"没装"就自动走打包版，行为与老版本一致。
+ */
+const depDecisions = new Map();
+
+export async function requireDep(ctx, name, opts = {}) {
+  const version = String(opts.version || '').trim();
+  const key = `${name}@${version || '*'}`;
+  const hit = depDecisions.get(key);
+  if (hit) return hit;
+
+  const p = decideDep(ctx, name, version, opts).catch((e) => ({
+    mod: null,
+    source: 'none',
+    error: String((e && e.message) || e || '取用失败'),
+  }));
+  depDecisions.set(key, p);
+  return p;
+}
+
+async function decideDep(ctx, name, version, opts) {
+  const { fallback = null, importModule = defaultImporter } = opts;
+
+  /*
+   * 这里**故意不写 try/catch**。
+   *
+   * 探测失败（后端没接这条命令、或插件没拿到授权）是在更上游被吸收的：
+   * callCmd() 把 invoke 的异常转成 `{ __missing }` / `{ __error }`，
+   * listRuntimeDeps() 再转成"空列表 + error 字段"，**不抛**。
+   *
+   * 所以这里拿到的一定是字符串（'' 表示没装）。
+   * 早先这里写过一层 try/catch，它**从来不会进入** ——
+   * 看起来是兜底，实际是死代码，还会让人以为失败在这里被处理了，
+   * 从而忽略上游那处真正的行为（见 runtime-deps-test 第 7 组第 ④ 条）。
+   */
+  const installed = await resolveRuntimeDepPath(ctx, name, version);
+
+  if (installed) {
+    const url = toAssetUrl(ctx, installed);
+    try {
+      const mod = await importModule(url);
+      if (mod) return { mod, source: 'runtime', error: '' };
+    } catch (e) {
+      /* 落到下面回退 */
+      if (!fallback) {
+        return { mod: null, source: 'none', error: String((e && e.message) || e) };
+      }
+      return { mod: await fallback(), source: 'bundle', error: String((e && e.message) || e) };
+    }
+  }
+
+  if (!fallback) return { mod: null, source: 'none', error: '' };
+  try {
+    return { mod: await fallback(), source: 'bundle', error: '' };
+  } catch (e) {
+    return { mod: null, source: 'none', error: String((e && e.message) || e) };
+  }
+}
+
+function defaultImporter(url) {
+  return import(/* @vite-ignore */ url);
+}
+
+/** 仅供测试：清掉决策缓存。 */
+export function __clearDepDecisions() {
+  depDecisions.clear();
+}
