@@ -2772,3 +2772,39 @@ html.theme-transition *:not(.spinner) {
 @media (prefers-reduced-motion: reduce) {
   .fp-panel { transition: none; }
 }
+
+/* ---- 设置页「依赖」页签 ----
+   这些类名由 plugins/settings/DepsCard.tsx 使用，样式**必须**进主样式表：
+   写在插件自己的 settings.css 里，弹出来会变成只有文字
+   （demo-iframe 打开后只有文字就是这个原因）。 */
+.dep-filters { flex-wrap: wrap; gap: var(--sp-4, 8px); }
+.dep-chip { padding: 0 10px; font-size: var(--fs-12, 12px); }
+.dep-chip.on {
+  color: var(--accent);
+  box-shadow: inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light);
+}
+.dep-item { min-width: 0; overflow: hidden; }
+.dep-name { font-size: var(--fs-13, 13px); color: var(--text); word-break: break-all; }
+.dep-tag {
+  margin-left: 6px; padding: 1px 6px; border-radius: var(--r-sm);
+  font-size: var(--fs-11, 11px); color: var(--text-mute); background: var(--surface);
+}
+.dep-badge { flex: 0 0 auto; padding: 1px 8px; border-radius: var(--r-sm); font-size: var(--fs-11, 11px); }
+.dep-badge.ok { color: var(--ok); }
+.dep-badge.err { color: var(--danger); }
+.dep-badge.warn { color: var(--warn); }
+.dep-badge.mute { color: var(--text-mute); }
+.dep-meta { margin-top: 4px; font-size: var(--fs-11, 11px); color: var(--text-mute); word-break: break-all; }
+.dep-note { margin-top: 4px; font-size: var(--fs-11, 11px); color: var(--text-mute); line-height: 1.7; }
+.dep-cmd {
+  flex: 1; min-width: 0; padding: 4px 8px; border-radius: var(--r-sm);
+  font-size: var(--fs-11, 11px); color: var(--text); background: var(--surface);
+  /* 复制失败时要能手动选中：根 body 的 user-select 是 none，
+     不显式声明就选不中，而复制不了也选不了最让人无从下手。 */
+  user-select: text; -webkit-user-select: text;
+  overflow-x: auto; white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dep-chip { transition: none; }
+}

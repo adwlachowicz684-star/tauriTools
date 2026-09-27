@@ -235,7 +235,15 @@ export const PLUGIN_COMMANDS = {
   /* settings 虽然是 iframe 插件，但它是**外壳的一部分**：
      授权目录管理就是它干的。所以它拿到 af_fs_* 三个命令。
      别的插件没有 —— 这正是"插件给自己授权目录"这类提权被挡住的原因。 */
-  settings: ['af_fs_allow_root', 'af_fs_disallow_root', 'af_fs_list_roots', 'app_version'],
+  /*
+   * fpx_copy_text —— 依赖页签要复制安装命令。
+   * 它是 S 类（写剪贴板），且设置页是内置插件；不给它的话
+   * navigator.clipboard 在插件里会**静默失败**，表现就是"点了没反应"。
+   */
+  settings: [
+    'af_fs_allow_root', 'af_fs_disallow_root', 'af_fs_list_roots', 'app_version',
+    'fpx_copy_text',
+  ],
 
   /* 色盘服务要用系统吸管 —— 与 fpx_pick_color 命令对应 */
   'color-picker': ['fpx_pick_color'],
