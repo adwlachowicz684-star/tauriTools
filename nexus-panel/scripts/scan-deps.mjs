@@ -143,6 +143,43 @@ function importsOf(raw) {
   return out;
 }
 
+/**
+ * 抽**运行时取用点**：ctx.requireDep('mermaid', { ... })
+ * ------------------------------------------------------------
+ * 它和 importsOf 是两回事，不能混：
+ *   · importsOf  → 构建期就打进产物的那份（静态 import）
+ *   · 这里       → 运行时从工具内部 deps/ 目录动态取的那份
+ *
+ * 【为什么必须单独扫出一列】
+ * 依赖页签上有「安装」按钮，装的是运行时那份。而目前只有 mermaid 真有
+ * 插件用 requireDep 去取 —— 其余包（rehype-highlight / rehype-slug /
+ * remark-gfm 这些渲染管线包）装进去**没有任何代码会去读它**：
+ * 界面显示"已安装并验证可加载"，而渲染行为一点没变。
+ * 这种"装成功但没效果"是最难自查的一类 —— 它不报错、不红。
+ * 所以要把"有没有运行时消费方"扫出来摆在界面上，而不是让人猜。
+ *
+ * 【必须先剥注释】
+ * js/plugin-sdk.js 的用法示例注释里正好写着 `ctx.requireDep('mermaid', ...)`。
+ * 不剥注释，"外壳"就会被记成 mermaid 的运行时消费方，
+ * 于是"扫不出真消费方"这类失效会被这条假阳性永久掩盖。
+ *
+ * 【为什么只认字符串字面量第一参】
+ * 测试里 `rt.requireDep(ctx, 'mermaid', ...)` 的第一参是 ctx，不是包名；
+ * 只匹配引号开头的第一参，天然不会把测试算成消费方。
+ */
+function runtimeDepsOf(raw) {
+  const src = stripComments(raw);
+  const out = new Set();
+  const re = /\brequireDep\s*\(\s*['"`]([^'"`\n]+)['"`]/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const name = pkgOf(m[1]);
+    if (!name) continue;
+    out.add(name);
+  }
+  return out;
+}
+
 /** 归属：哪个插件在用。用于回答"这条依赖到底是谁要的"。 */
 function ownerOf(rel) {
   if (rel.startsWith('plugins/')) {
@@ -251,16 +288,24 @@ function build() {
     ...rootFiles(),
   ];
 
-  /** name → Set(owner) */
+  /** name → Set(owner)：构建期静态 import 的使用方 */
   const used = new Map();
+  /** name → Set(owner)：运行时 requireDep 的取用方（见 runtimeDepsOf） */
+  const rtUsed = new Map();
   for (const rel of files) {
     const src = (() => { try { return fs.readFileSync(path.join(ROOT, rel), 'utf8'); } catch { return ''; } })();
     if (!src) continue;
+    const owner = ownerOf(rel);
     for (const name of importsOf(src)) {
       if (!used.has(name)) used.set(name, new Set());
-      used.get(name).add(ownerOf(rel));
+      used.get(name).add(owner);
+    }
+    for (const name of runtimeDepsOf(src)) {
+      if (!rtUsed.has(name)) rtUsed.set(name, new Set());
+      rtUsed.get(name).add(owner);
     }
   }
+  const rtOwnersOf = (name) => [...(rtUsed.get(name) ?? [])].sort();
 
   /** 软链接目录下不读版本 —— 读到的是全局那份，与本仓库无关 */
   const installedVer = (name) => {
@@ -288,6 +333,7 @@ function build() {
       dev: !!dev,
       status,
       usedBy: owners,
+      runtimeUsedBy: rtOwnersOf(name),
       pinned: !!decl && !/^[\^~>=<*\s]/.test(String(decl)),
       note: NOTES[name] ?? '',
       install: decl ? `npm i ${name}@${decl}${dev ? ' -D' : ''}` : `npm i ${name}`,
@@ -310,6 +356,7 @@ function build() {
       dev: false,
       status: 'undeclared',
       usedBy: [...owners].sort(),
+      runtimeUsedBy: rtOwnersOf(name),
       pinned: false,
       note: '源码里 import 了，但 package.json 没写 —— 换台机器 clone 后才会暴露',
       install: `npm i ${name}`,
@@ -324,6 +371,7 @@ function build() {
     dev: false,
     status: 'ok',
     usedBy: c.platform.length ? c.platform : ['Rust'],
+    runtimeUsedBy: [],
     pinned: /^\d/.test(c.declared),
     note: c.platform.length ? '按平台分别指定 feature' : '',
     install: `cargo add ${c.name}@${c.declared}`,
@@ -362,6 +410,18 @@ function build() {
 const args = process.argv.slice(2);
 const manifest = build();
 
+/*
+ * --out <file>：写到别处（默认写 js/deps-manifest.js）。
+ * 给**测试**用的：它要重新跑一遍扫描、与已提交的清单比对，
+ * 才能同时守住两件事 ——
+ *   ① 扫描器坏了（不扫 requireDep 了）
+ *   ② 清单忘了重跑（源码加了消费方，清单还是旧的）
+ * 只比对已提交的清单，上面两件都测不到：清单是静态文件，
+ * 改扫描器不会让它变。
+ */
+const outArg = args.indexOf('--out');
+const OUT = outArg >= 0 ? args[outArg + 1] : path.join(ROOT, SELF);
+
 if (args.includes('--check')) {
   const bad = [...manifest.npm, ...manifest.undeclared].filter(
     (d) => d.status === 'missing' || d.status === 'mismatch' || d.status === 'undeclared');
@@ -380,7 +440,8 @@ const body = `/**
  * 而界面上显示的还是旧数字，看起来像"改了没生效"。
  *
  * 数据来源：package.json（声明）+ node_modules 下各包的 package.json（实装）
- *           + 源码 import 扫描（谁在用）+ Cargo.toml（Rust 侧）
+ *           + 源码 import 扫描（谁在用）+ requireDep 扫描（谁取运行时那份）
+ *           + Cargo.toml（Rust 侧）
  *
  * （这里刻意不写 node_modules/<星号>/package.json：星号紧跟斜杠会提前闭合
  *   块注释，整个清单文件直接语法错误，且报错指向文件末尾而不是这行。）
@@ -402,8 +463,8 @@ export const DEP_STATUS = {
 
 export default DEPS_MANIFEST;
 `;
-fs.writeFileSync(path.join(ROOT, SELF), body, 'utf8');
+fs.writeFileSync(OUT, body, 'utf8');
 if (!args.includes('--quiet')) {
-  console.log(`已生成 ${SELF}`);
+  console.log(`已生成 ${path.relative(ROOT, OUT) || SELF}`);
   console.log(`  npm ${manifest.summary.npm} · crate ${manifest.summary.crates} · 缺失 ${manifest.summary.missing} · 版本不符 ${manifest.summary.mismatch} · 未声明 ${manifest.summary.undeclared} · 未被引用 ${manifest.summary.unused} · 未判定 ${manifest.summary.unknown}`);
 }

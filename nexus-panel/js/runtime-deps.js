@@ -172,6 +172,42 @@ export function canInstall(item) {
   return blockReasonOf(item) === null;
 }
 
+/**
+ * 装了**暂时没人用**的说明。
+ * ------------------------------------------------------------
+ * 【为什么要单独写一条，而不是照旧只给个安装按钮】
+ * 依赖页签目前只有 mermaid 真有插件用 ctx.requireDep 去取运行时那份；
+ * 其余可安装的包（rehype-highlight / rehype-slug / remark-gfm 这类
+ * 渲染管线包）在构建期就被 Vite 打进了产物，运行时装进去**没有任何
+ * 代码会去读它** —— 界面显示"已安装并验证可加载"，而渲染行为一点没变。
+ *
+ * 这类"装成功但没效果"不报错、不红，用户只会以为功能还没做完。
+ * 所以要把话说在按钮之前，而不是让人装完自己发现。
+ *
+ * 【为什么这类包不做运行时热替换】
+ * 渲染管线被四个入口共用（粘贴 / 拖入 / service / 宿主传路径）。
+ * 一旦允许"某个入口用运行时版、另一个用打包版"，同一段 md 在两处
+ * 渲染出的结果就会不同 —— 那正是 F11 花一整轮修掉的失效形态，
+ * 不能为了"换一个语法高亮版本"把它再引进来。
+ * 要换这类包的版本：改 package.json 后重新构建。
+ */
+export const RT_NO_CONSUMER =
+  '当前没有插件用 ctx.requireDep 取用运行时版本 —— 装进去暂时不会被用到。' +
+  '渲染管线这类包在构建期已打进产物，换版本请改 package.json 后重新构建。';
+
+/**
+ * 能装、但装了没人取用时返回说明；有消费方或本来就装不了则返回 null。
+ *
+ * 装不了的走 blockReasonOf（那是"装了会出事"，比"装了没用"更严重），
+ * 这里不重复给第二条说明 —— 两句话挤在一起，反而都不看了。
+ */
+export function consumerNoteOf(item) {
+  if (!item) return null;
+  if (!canInstall(item)) return null;
+  if ((item.runtimeUsedBy ?? []).length > 0) return null;
+  return RT_NO_CONSUMER;
+}
+
 /** 调后端命令；命令不存在时返回明确的 noCmd，而不是抛异常后静默。 */
 async function callCmd(ctx, cmd, args) {
   if (!ctx || typeof ctx.invoke !== 'function') return { __missing: true };

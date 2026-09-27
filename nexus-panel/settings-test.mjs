@@ -883,8 +883,14 @@ console.log('\n=== 右上角按钮卡片按 kind 分三组 ===');
 const appSrc = src('plugins/settings/App.tsx');
 const cssSrc = src('css/neumorphism.css');
 
-t('定义了三组（工具栏 / 应用 / 服务）',
-  /key:\s*'toolbar'[\s\S]{0,300}key:\s*'app'[\s\S]{0,300}key:\s*'service'/.test(appSrc));
+/*
+ * 顺序 = 页签顺序，且**应用在前**：它数量最多、也是默认停留的那一组
+ * （见 App.tsx GROUPS 上的注释）。早先这里钉的是"工具栏在前"，
+ * 与 09-26 那次"三类改页签"重构后的实现不一致 —— 于是这条一直是红的。
+ * 红着不放比改它更糟：一套长期有红的测试，真红会被当成噪音一起忽略。
+ */
+t('定义了三组，且顺序为 应用 / 工具栏 / 服务',
+  /key:\s*'app'[\s\S]{0,300}key:\s*'toolbar'[\s\S]{0,300}key:\s*'service'/.test(appSrc));
 t('有分类函数（把 kind 归一到三组之一）',
   /kindOf[\s\S]{0,200}'toolbar'\s*\?\s*'toolbar'/.test(appSrc),
   '漏了归一化的话，未标注的插件会掉进 undefined 组、整组消失');
@@ -969,8 +975,10 @@ t('卡片里有移除/内置（卸载入口在卡上，不用再去别处找）'
 t('卡片里有右上角两个按钮（加入/取消 + 展示/隐藏）',
   /addExtra\(p\.id\)/.test(pmBody) && /removeExtra\(p\.id\)/.test(pmBody)
   && /toggleHidden\(e\.id\)/.test(pmBody));
+/* 组别判断的写法由 isApp 改成 effKind === 'app'（重构后变量名变了，语义没变）。
+   两种写法都接受 —— 要守的是"只有应用组挂拖拽属性"，不是某个变量名。 */
 t('拖拽只作用于应用组（服务组不在侧边栏，排了没处生效）',
-  /isApp && ai !== undefined \? appsDrag\.getItemProps\(ai\)/.test(pmBody));
+  /(?:isApp|effKind === 'app')\s*&&\s*ai !== undefined \?\s*appsDrag\.getItemProps\(ai\)/.test(pmBody));
 
 /* 卡片不能引用组件外的名字 —— 那是编译期 TS2304、运行时 undefined。 */
 t('外壳动作经 props 传入（onRemove），不直接引用外层函数',
