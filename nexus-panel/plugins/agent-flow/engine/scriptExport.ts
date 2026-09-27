@@ -21,7 +21,7 @@
  */
 
 import type { Graph, GraphNode } from '../types';
-import { constsOf, constItemLabel, type ConstNodeData } from '../types';
+import { constsOf, constItemLabel, constItemKey, type ConstNodeData } from '../types';
 import { topoLayers } from './topo';
 import { opBrief } from './ops';
 import { paramLinksOf, linksInto, outLabelOf, OUT_DEFAULT } from './paramLinks';
@@ -80,17 +80,75 @@ const pyVar = (id: string): string =>
  * python 返回**带引号的表达式**（"…" 或 f"…"），因为 python 里
  * 字符串字面量必须有引号，而 URL 漏引号会直接语法错误。
  */
-function subst(tpl: string, style: 'sh' | 'py'): string {
+/**
+ * 常量卡的**引用表**：`节点id.卡名` → 该卡的键（连线键，即卡 id）。
+ *
+ * ================= 为什么必须单独建这张表 =================
+ *
+ * 常量多卡之后，下游引用的写法是 `{{c1.价格}}`（执行器按卡名往 fields 里
+ * 再写一份，模板要人能读懂的名字）。而 subst 原来的逻辑是
+ * 「按**节点**展开」—— `{{c1.价格}}` 会被换成 `$OUT_C1`，
+ * 也就是**第一张卡**的值。
+ *
+ * 不报错、脚本看着完全正常，只是取到的是另一张卡的值。
+ * 这比"取不到"难查得多：取不到会留下 `{{}}` 的痕迹，取错什么痕迹都没有。
+ *
+ * 值存**卡的键**（id）而不是卡名：卡名由用户随时改，且可能是中文——
+ * 中文进 shVar 会被洗成 `_`，两张卡都变成 `OUT_C1__`，变量名直接撞车。
+ * 卡的键是稳定的 ASCII（建卡时生成），不会撞。
+ */
+export function constCardRefs(g: Graph): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const n of g.nodes ?? []) {
+    const d = (n.data ?? {}) as Record<string, unknown>;
+    if (str(d.kind ?? (n as { type?: string }).type) !== 'const') continue;
+    constsOf(d as unknown as ConstNodeData).forEach((it, i) => {
+      const key = constItemKey(it, i);
+      const name = constItemLabel(it, i);
+      if (!name) return;
+      out.set(`${n.id}.${name}`, key);
+    });
+  }
+  return out;
+}
+
+function subst(tpl: string, style: 'sh' | 'py', cardRef?: Map<string, string>): string {
   const raw = String(tpl ?? '');
   if (!raw) return style === 'sh' ? '' : '""';
 
   let hasRef = false;
   // 先把引用收出来，避免后面的引号转义把它们弄坏
   const slots: string[] = [];
-  const body = raw.replace(/\{\{\s*([A-Za-z0-9_.]+)\s*\}\}/g, (_m, path: string) => {
+  /*
+   * 字符集必须与**运行时**的 template.ts 一致（含中文、连字符、下划线）。
+   *
+   * 以前这里是 `[A-Za-z0-9_.]`，不含中文 —— 而常量卡的默认名是
+   * 「文本1」「数字2」这类中文（用户不改名时就是它）。
+   * 于是 `{{c1.价格}}` **整段匹配不上**，原样留在脚本里。
+   * 运行时用的是另一份正则（支持中文），能取到值 ——
+   * 于是"画布上跑是对的、导出成脚本就变成字面量 {{c1.价格}}"，
+   * 没有任何报错，只有结果不对。
+   */
+  const body = raw.replace(/\{\{\s*([A-Za-z0-9_.\-\u4e00-\u9fa5]+)\s*\}\}/g, (_m, path: string) => {
     const parts = String(path).split('.');
     const id = parts[0];
     hasRef = true;
+
+    /*
+     * 常量卡：指向**那一张卡**自己的变量，不是整个节点的变量。
+     * 变量名用卡的键（稳定、ASCII），见 constCardRefs。
+     */
+    if (cardRef && parts.length > 1) {
+      const cardKey = cardRef.get(String(path));
+      if (cardKey) {
+        const cv = style === 'sh'
+          ? `$${shVar(id)}_${shVar(cardKey).replace(/^OUT_/, '')}`
+          : `${pyVar(id)}_${pyVar(cardKey).replace(/^out_/, '')}`;
+        slots.push(cv);
+        return `\u0000${slots.length - 1}\u0000`;
+      }
+    }
+
     if (id === 'input' || id === 'env' || id === 'loop') {
       const rest = parts.slice(1).join('_');
       const name = `INPUT${rest ? `_${rest.toUpperCase()}` : ''}`.replace(/[^A-Z0-9_]/g, '_');
@@ -186,10 +244,10 @@ function paramLinkNoteOf(
 /* Shell                                                               */
 /* ------------------------------------------------------------------ */
 
-function shellLine(n: GraphNode, skipped: Skipped[]): string | null {
+function shellLine(n: GraphNode, skipped: Skipped[], cardRef?: Map<string, string>): string | null {
   const d = (n.data ?? {}) as Record<string, unknown>;
   const kind = str(d.kind ?? d.type);
-  const v = (k: string) => subst(str(d[k]), 'sh');
+  const v = (k: string) => subst(str(d[k]), 'sh', cardRef);
   const me = shVar(n.id);
 
   switch (kind) {
@@ -205,21 +263,32 @@ function shellLine(n: GraphNode, skipped: Skipped[]): string | null {
       return `echo "${tag}${body}"   # ${n.id}`;
     }
     case 'const': {
-      const cards = constsOf(n.data as unknown as ConstNodeData);
       /*
-       * 多张卡只导出第一张，并**明说**导出不全。
+       * 每张卡各导出一个变量：`OUT_ID` 是第一张（整节点的默认引用），
+       * `OUT_ID_卡键` 是那一张卡 —— 下游写 `{{id.卡名}}` 时指向后者。
        *
-       * 脚本里的模板 {{id.卡名}} 是按**节点**展开成 $OUT_ID 的（见 subst），
-       * 取不到第二张卡 —— 静默只写第一张的话，用户拿到一份
-       * "少了一半常量"的脚本而毫无线索，跑出来的值也不对。
+       * ================= 为什么不再"只导第一张" =================
+       *
+       * 以前这里只写 `OUT_ID` 并往 skipped 里记一句"导出不全"。
+       * 但 downstream 引用 `{{id.卡名}}` 时会被 subst 换成 `OUT_ID`，
+       * 也就是**第一张卡**的值 —— 不报错、脚本看着正常，只是值错了。
+       * 记一句 skipped 挡不住这个（用户不会把 skipped 和值错联系起来）。
+       *
+       * 卡的值里可能还含 {{env.X}} 之类，所以仍要过一遍 subst；
+       * 但**不能**带 cardRef —— 常量卡的值引用另一张卡没有意义，
+       * 传进去反而可能自引用到还没定义的变量。
        */
-      if (cards.length > 1) {
-        skipped.push({
-          id: n.id, kind,
-          reason: `这个常量节点有 ${cards.length} 张卡，脚本只导出第一张「${constItemLabel(cards[0], 0)}」`,
-        });
-      }
-      return `${me}=${shq(subst(str(cards[0]?.value ?? ''), 'sh'))}   # ${n.id}: 常量`;
+      const cards = constsOf(n.data as unknown as ConstNodeData);
+      const lines: string[] = [];
+      cards.forEach((it, i) => {
+        const cardVar = `${me}_${shVar(constItemKey(it, i)).replace(/^OUT_/, '')}`;
+        lines.push(`${cardVar}=${shq(subst(str(it.value ?? ''), 'sh'))}`
+          + `   # ${n.id} 的卡「${constItemLabel(it, i)}」`);
+        // 第一张同时是整节点的默认引用（{{id}} 不带卡名时取它）
+        if (i === 0) lines.push(`${me}=$${cardVar}   # ${n.id}: 常量（默认取第一张）`);
+      });
+      if (lines.length === 0) return null;
+      return lines.join('\n');
     }
     case 'clock':
       return `${me}=$(date ${shq(v('format') || '+%Y-%m-%d %H:%M:%S')})   # ${n.id}: 当前时间`;
@@ -285,11 +354,12 @@ function toShell(g: Graph): ExportResult {
     'set -euo pipefail',
     '',
   ];
+  const cardRef = constCardRefs(g);
   let count = 0;
   for (const id of order) {
     const n = g.nodes.find((x) => x.id === id);
     if (!n) continue;
-    const line = shellLine(n, skipped);
+    const line = shellLine(n, skipped, cardRef);
     if (line) { lines.push(line); count += 1; }
     else { lines.push(`# TODO 未翻译：${id}（${str((n.data as Record<string, unknown>)?.kind ?? '')}）`); }
     lines.push(...paramLinkNoteOf(g, id, '# '));
@@ -301,10 +371,15 @@ function toShell(g: Graph): ExportResult {
 /* Python                                                              */
 /* ------------------------------------------------------------------ */
 
-function pyLine(n: GraphNode, skipped: Skipped[], indent = ''): string | null {
+function pyLine(
+  n: GraphNode,
+  skipped: Skipped[],
+  indent = '',
+  cardRef?: Map<string, string>,
+): string | null {
   const d = (n.data ?? {}) as Record<string, unknown>;
   const kind = str(d.kind ?? d.type);
-  const v = (k: string) => subst(str(d[k]), 'py');
+  const v = (k: string) => subst(str(d[k]), 'py', cardRef);
   const me = pyVar(n.id);
 
   switch (kind) {
@@ -320,14 +395,20 @@ function pyLine(n: GraphNode, skipped: Skipped[], indent = ''): string | null {
       return `${indent}print(${arg})   # ${n.id}`;
     }
     case 'const': {
+      // 每张卡各导出一个变量，理由见 shell 那一支
       const cards = constsOf(n.data as unknown as ConstNodeData);
-      if (cards.length > 1) {
-        skipped.push({
-          id: n.id, kind,
-          reason: `这个常量节点有 ${cards.length} 张卡，脚本只导出第一张「${constItemLabel(cards[0], 0)}」`,
-        });
-      }
-      return `${indent}${me} = ${subst(str(cards[0]?.value ?? ''), 'py')}   # ${n.id}: 常量`;
+      const lines: string[] = [];
+      cards.forEach((it, i) => {
+        const cardVar = `${me}_${pyVar(constItemKey(it, i)).replace(/^out_/, '')}`;
+        lines.push(`${indent}${cardVar} = ${subst(str(it.value ?? ''), 'py')}`
+          + `   # ${n.id} 的卡「${constItemLabel(it, i)}」`);
+        // 第一张同时是整节点的默认引用（{{id}} 不带卡名时取它）
+        if (i === 0) {
+          lines.push(`${indent}${me} = ${cardVar}   # ${n.id}: 常量（默认取第一张）`);
+        }
+      });
+      if (lines.length === 0) return null;
+      return lines.join('\n');
     }
     case 'clock': {
       // format 是 strftime 格式串，不是模板 —— 不做 {{}} 替换
@@ -477,11 +558,12 @@ function toPython(g: Graph): ExportResult {
     '    input_text = ""',
   );
   if (lines[lines.length - 1] === '    input_text = ""') lines.push('');
+  const cardRef = constCardRefs(g);
   let count = 0;
   for (const id of order) {
     const n = g.nodes.find((x) => x.id === id);
     if (!n) continue;
-    const line = pyLine(n, skipped, '    ');
+    const line = pyLine(n, skipped, '    ', cardRef);
     if (line) { lines.push(line); count += 1; }
     else { lines.push(`    # TODO 未翻译：${id}（${str((n.data as Record<string, unknown>)?.kind ?? '')}）`); }
     lines.push(...paramLinkNoteOf(g, id, '    # '));

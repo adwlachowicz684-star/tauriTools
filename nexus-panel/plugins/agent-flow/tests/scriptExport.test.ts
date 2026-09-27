@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { exportFlow, exportAll, EXPORT_FORMATS } from '../engine/scriptExport';
 import { readSrc } from './srcScan';
+import { readSrc } from './srcScan';
 
 const n = (id: string, kind: string, data = {}) => ({
   id, data: { kind, label: id, status: 'idle', output: '', error: '', ...data },
@@ -227,4 +228,90 @@ test('shell：大模型不做，但要说清"用 python 版"而不是"没做"', 
   assert.ok(s, '应进 skipped');
   assert.match(s.reason, /python/, '应指向 python 版');
   assert.ok(!/没有对应的 shell 写法/.test(s.reason), '不该用 default 那句笼统的话');
+});
+
+/* ==================================================================
+ * 常量多卡 + 中文卡名的导出
+ *
+ * ================= 这次踩到的（两个叠在一起） =================
+ *
+ * ① subst 的正则不含中文（`[A-Za-z0-9_.]`），而常量卡的**默认名**是
+ *    「文本1」「数字2」这类中文 —— 用户不改名时引用就是中文。
+ *    于是 `{{c1.价格}}` 整段匹配不上，**原样留在脚本里**。
+ *    运行时用的是另一份正则（template.ts，支持中文）能取到值，
+ *    于是"画布上跑是对的、导出成脚本变成字面量 {{c1.价格}}"，不报错。
+ *
+ * ② 就算匹配上了，subst 是按**节点**展开的 —— `{{c1.价格}}` 换成
+ *    `$OUT_C1`，也就是**第一张卡**的值。
+ *    不报错、脚本看着完全正常（变量名都长得一样），只是值是另一张卡的。
+ *    这比 ① 难查：① 至少留下 {{}} 的痕迹，② 什么痕迹都没有。
+ * ==================================================================
+ */
+
+const constCards = () => ({
+  items: [
+    { id: 'k1', name: '阈值', valueType: 'num', value: '10' },
+    { id: 'k2', name: '价格', valueType: 'num', value: '99' },
+  ],
+});
+
+test('常量多卡：每张卡各导出一个变量，不再只导第一张', () => {
+  const r = exportFlow(g([n('c1', 'const', constCards())]), 'python');
+  assert.ok(/out_c1_k1 = "10"/.test(r.text), `第一张卡要有自己的变量：${r.text}`);
+  assert.ok(/out_c1_k2 = "99"/.test(r.text), `第二张卡也要有：${r.text}`);
+  // 整节点的默认引用仍存在（{{c1}} 不带卡名时取它）
+  assert.ok(/out_c1 = out_c1_k1/.test(r.text), '{{c1}} 不带卡名时取第一张');
+  assert.ok(
+    !r.skipped.some((s) => s.id === 'c1'),
+    '不再报"导出不全" —— 现在每张卡都导出了',
+  );
+});
+
+test('常量多卡：下游引用 {{id.卡名}} 要指向那一张卡，不是第一张', () => {
+  const graph = g(
+    [n('c1', 'const', constCards()), n('l1', 'log', { text: '{{c1.价格}}' })],
+    [e('c1', 'l1')],
+  );
+  const r = exportFlow(graph, 'python');
+  assert.ok(/out_c1_k2/.test(r.text), `应引用「价格」那张卡的变量：${r.text}`);
+  assert.ok(
+    !/print\((f?"?)?"?\{\{/.test(r.text),
+    `模板{{}}不许原样留在脚本里（说明正则没匹配上中文卡名）：${r.text}`,
+  );
+  assert.ok(!/print\(.*out_c1_k1/.test(r.text), `不该取成第一张卡「阈值」：${r.text}`);
+});
+
+test('常量多卡：shell 同样按卡导出（且每行顶格）', () => {
+  const graph = g(
+    [n('c1', 'const', constCards()), n('l1', 'log', { text: '{{c1.价格}}' })],
+    [e('c1', 'l1')],
+  );
+  const r = exportFlow(graph, 'shell');
+  assert.ok(/OUT_C1_K2='99'/.test(r.text), `第二张卡要有变量：${r.text}`);
+  assert.ok(/echo "\$OUT_C1_K2"/.test(r.text), `应引用第二张卡：${r.text}`);
+  // 缩进：shell 不需要缩进，多了会看着像被包在某个块里
+  assert.ok(!/\n {6}OUT_C1/.test(r.text), 'shell 的常量行不该有缩进');
+});
+
+test('中文卡名：导出与运行时必须同一套字符集（template.ts 早已放开）', () => {
+  /*
+   * ================= 这条守卫的来历 =================
+   *
+   * template.ts（运行时）早就修过一次：
+   *   「原来是 `[A-Za-z0-9_.\-]`，于是 {{params.输出目录}} 这种中文名
+   *     整句匹配不上，原样留下 —— 用户看到'没生效'」
+   * 那次**只改了运行时，漏了导出这一份**（scriptExport.ts 的 subst）。
+   *
+   * 于是同一个中文名：画布上跑能取到值，导出成脚本就变成字面量
+   * `{{c1.价格}}` —— 不报错，只有结果不对。
+   * 这是"同一件事两份实现，改一份漏一份"的典型。
+   *
+   * 所以这里不去解析正则（解析别人的正则太脆，写法一变就静默失效），
+   * 只钉住一件事：**两份都得放开中文**。
+   */
+  const tpl = readSrc('engine/template.ts');
+  const exp = readSrc('engine/scriptExport.ts');
+  const CN = '\\u4e00-\\u9fa5';
+  assert.ok(tpl.includes(CN), '运行时模板必须认中文（template.ts 的 TOKEN）');
+  assert.ok(exp.includes(CN), '导出的 subst 必须认中文 —— 漏了它，中文卡名会原样留在脚本里');
 });
