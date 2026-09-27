@@ -293,11 +293,41 @@ export function valueKindOf(v: unknown): ValueKind {
 /* ------------------------------------------------------------------ */
 
 /** 常量卡的错参：数字卡填了非数字 */
+/**
+ * 某一张常量卡**期望什么值种类**。
+ *
+ * ================= 为什么只有 num 有期望 =================
+ *
+ * 文本卡什么都能填（没有"错的文本"），布尔卡的值在面板/卡片上都是下拉
+ * （选不到非法值）。只有数字卡会"看着填了却算不出来"——
+ * `abc` 进 num() 变 0，接到「大于」上是 0 > x，全程不报错。
+ *
+ * 布尔不返回 'bool' 是因为 ArgKind 里没有它 —— 硬塞一个不存在的种类
+ * 会让"连了文本"被判成类型不符，那又是误报（文本填进布尔卡是能用的）。
+ * **宁可漏报也不要误报**。
+ *
+ * ================= 为什么手填与连线必须同源 =================
+ *
+ * 手填走 constCardIssues、连线走 argExpectOf，两边各判一次的话，
+ * 改了一边忘了另一边就出现"手填报错、连线不报"（或反过来）。
+ * 而这种不一致没有任何提示 —— 用户只会以为"那条路本来就不校验"。
+ */
+export function constCardExpect(
+  data: Record<string, unknown>,
+  key: string,
+): ArgKind | null {
+  const items = constsOf(data as unknown as ConstNodeData);
+  const idx = items.findIndex((it, i) => constItemKey(it, i) === key);
+  if (idx < 0) return null;
+  return (items[idx].valueType ?? 'text') === 'num' ? 'num' : null;
+}
+
 function constCardIssues(data: Record<string, unknown>): ArgTypeIssue[] {
   const items = constsOf(data as unknown as ConstNodeData);
   const out: ArgTypeIssue[] = [];
   items.forEach((it, i) => {
-    if ((it.valueType ?? 'text') !== 'num') return;
+    // 与连线校验用同一份判定 —— 各写一份就会漂移（见 constCardExpect）
+    if (constCardExpect(data, constItemKey(it, i)) !== 'num') return;
     const v = String(it.value ?? '').trim();
     if (!v) return;
     /* 模板引用在编辑时没有值，判什么都算错 —— 一律放行（误报更糟） */
@@ -404,6 +434,23 @@ export function argExpectOf(
   key: string,
 ): ArgKind | null {
   if (!dataKind || !data) return null;
+
+  /*
+   * 常量：**按那一张卡的种类**判，不能走规则表。
+   *
+   * 规则表里 const 那条写的是 `by: 'valueType'` —— 而常量改成多卡片之后
+   * 节点上**没有顶层 valueType 了**（每张卡各有一个，数据在 items 里）。
+   * 走进规则表会取到 undefined → 没有规则 → 返回 null → **放行**。
+   *
+   * 后果是"数字卡用连线接了一个文本上游"不报「错参」，
+   * 而手填同样的内容却会报（constCardIssues 读 items）。
+   * 同一个值，手填报错、连线不报 —— 用户只会以为连线那条路不校验。
+   *
+   * 与 argTypeIssues 用**同一份**判定（constCardExpect），
+   * 两边各写一份就会漂移：改了卡片规则忘了这里，表现又是"连了线不报"。
+   */
+  if (dataKind === 'const') return constCardExpect(data, key);
+
   const rule = RULES[dataKind];
   if (!rule) return null;
 

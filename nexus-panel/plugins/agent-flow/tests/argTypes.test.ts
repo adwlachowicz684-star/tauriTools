@@ -275,3 +275,103 @@ test('规则表列出的参数与卡片摘要画出来的一致', () => {
     );
   }
 });
+
+/* ==================================================================
+ * 常量卡：手填的判定与连线的判定必须是同一份
+ *
+ * ================= 这次踩到的 =================
+ *
+ * 常量改成多卡片之后，节点上**没有顶层 valueType** 了
+ * （每张卡各有一个，数据在 items 里）。而 `argExpectOf` 走的是
+ * 「按 data[rule.by] 查规则表」那条通用路径 ——
+ * 对 const 来说 rule.by 是 'valueType'，取到 undefined → 没规则 → 返回 null。
+ *
+ * null 的含义是"这个参数没有明确期望"，于是**一律放行**：
+ * 数字卡用连线接了一个文本上游，不报「错参」。
+ * 而手填同样的内容会报（constCardIssues 读 items，走的是另一条路）。
+ *
+ * 同一个值，手填报错、连线不报 —— 用户只会以为连线那条路本来就不校验，
+ * 于是数字卡里躺着 abc，接到「大于」上算出来是 0，全程不报错。
+ *
+ * 这是与"闸门被当成布尔"同一类的错：**声明与实读不一致**，
+ * 区别只是这次不一致的是"查询路径"而不是"声明的值"。
+ * ==================================================================
+ */
+import { argExpectOf, constCardExpect } from '../engine/argTypes';
+import { constItemKey } from '../types';
+
+const CARD = (id: string, value: string, valueType = 'text') => ({ id, value, valueType });
+
+test('常量卡 · 连线期望：数字卡要数字，其余放行', () => {
+  const numData = { kind: 'const', items: [CARD('c0', '7', 'num')] };
+  assert.equal(
+    argExpectOf('const', numData, constItemKey({ id: 'c0' } as never, 0)),
+    'num',
+    '数字卡连线上游时，期望必须是数字 —— 否则"接了文本"不报，算出来是 0',
+  );
+
+  const textData = { kind: 'const', items: [CARD('c0', 'hi', 'text')] };
+  assert.equal(
+    argExpectOf('const', textData, constItemKey({ id: 'c0' } as never, 0)),
+    null,
+    '文本卡什么都能填，没有明确期望',
+  );
+
+  const boolData = { kind: 'const', items: [CARD('c0', 'true', 'bool')] };
+  assert.equal(
+    argExpectOf('const', boolData, constItemKey({ id: 'c0' } as never, 0)),
+    null,
+    '布尔卡的值在界面上是下拉（选不到非法值），不校验 —— '
+    + '报 bool 会变成误报（ArgKind 里没有 bool，硬塞会把"接了文本"标红）',
+  );
+});
+
+test('常量卡 · 手填与连线同源：同一个数字卡，两边都得认它是数字', () => {
+  const data = { kind: 'const', items: [CARD('c0', 'abc', 'num')] };
+  const key = constItemKey({ id: 'c0' } as never, 0);
+
+  // 手填：数字卡里填 abc → 报「错参」
+  const issues = argTypeIssues('const', data);
+  assert.equal(issues.length, 1, '手填 abc 要报（这是既有的、正确的行为）');
+  assert.equal(issues[0].expect, 'num');
+
+  // 连线：同一个卡的期望必须是同一份判定
+  assert.equal(argExpectOf('const', data, key), 'num');
+  assert.equal(constCardExpect(data, key), 'num');
+});
+
+test('常量卡 · 卡名改了不断线（键是 id 不是名字）', () => {
+  const items = [CARD('c0', '1', 'num'), CARD('x9', 'hi', 'text')];
+  const data = { kind: 'const', items };
+  assert.equal(constCardExpect(data, 'c0'), 'num');
+  assert.equal(constCardExpect(data, 'x9'), null);
+  assert.equal(constCardExpect(data, '不存在'), null, '找不到卡时不猜，放行');
+});
+
+test('源码守卫 · argExpectOf 必须特判 const（不能走规则表）', () => {
+  /*
+   * 为什么需要这条：规则表里 const 那条写的是 by: 'valueType'，
+   * 而顶层已经没有这个字段了。哪天有人"顺手"把特判删掉让它走通用路径，
+   * 表现是**静默放行**（不是报错），2200 多项测试照样全绿。
+   */
+  const src = readSrc('engine/argTypes.ts');
+  const fn = src.slice(src.indexOf('export function argExpectOf'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  assert.ok(
+    body.includes("dataKind === 'const'"),
+    'argExpectOf 里没有 const 特判 —— 它会走规则表取 data.valueType，'
+    + '而多卡之后顶层没有这个字段 → 没有规则 → 返回 null → 连线不校验',
+  );
+  assert.ok(
+    body.includes('constCardExpect'),
+    'const 特判必须调 constCardExpect，与手填校验共用同一份判定',
+  );
+  // constCardIssues 也必须走同一份，不能再写一遍 valueType 判断
+  const issuesFn = src.slice(src.indexOf('function constCardIssues'));
+  const issuesBody = issuesFn.slice(0, issuesFn.indexOf('\n}'));
+  assert.ok(
+    issuesBody.includes('constCardExpect'),
+    'constCardIssues 要复用 constCardExpect —— 各写一份就会漂移，'
+    + '漂移的表现是"手填报错、连线不报"',
+  );
+});
