@@ -3688,3 +3688,72 @@ if (ref && typeof ref.a === 'string' && ref.a) ids.add(ref.a);
 流程上又犯了一次「备份被变异污染」：备份文件在变异循环里被覆盖成
 变异后的版本，导致后续还原把坏代码写回。备份必须在每次改动后重取，
 不能跨轮复用 —— 上一轮刚说过，这轮又犯了。
+
+
+---
+
+## 移除附件会删掉**别的节点正在用**的资产（BUG 48）
+
+### 现象
+
+```
+给节点 A 挂一个附件 → Ctrl+C / Ctrl+V 复制出节点 B
+→ 在侧栏把 B 的附件「移除」
+→ 回到 A 点开附件 → 「附件数据已丢失」
+```
+
+引用还在、字节没了。用户完全不会把这两件事联系起来。
+
+### 根因：assetId 是字符串，克隆后一模一样
+
+内核的 clone 是深拷贝：
+
+```js
+f.clone = function (a) { return JSON.parse(JSON.stringify(a)); }
+```
+
+data 对象确实是两个，但 `assetId` 是**字符串**，复制出来完全一致。
+真实 Chrome 实测（`/opt/chromium` 加载真实 kityminder）：
+
+```
+命令数 40 | copy: true | paste: true      ← Ctrl+C/Ctrl+V 可达
+克隆后 data.file = [{"n":"报告.pdf","a":"asSHARED1","s":1234}]
+data 同一对象: false
+★ assetId 相同: true
+```
+
+而 `removeAt` 里是：
+
+```js
+if (r.a) await io.dropAsset(r.a);     // ← 不问还有没有人在用
+```
+
+### 修法
+
+改交给 `gcOrphanAssets`（上一轮加的、按「全库还有没有人在引用」判定的回收）：
+
+```js
+if (r.a) await app.api.gcAssets?.();
+```
+
+### 一个必须处理的顺序坑
+
+`commit()` **只排了个延时保存**，内存里的 `workbook.sheets` 还是移除**之前**
+的内容。直接跑 gc 会看到那个引用还在，于是判定「还在用」——
+**回收一次都删不掉**，代码看着有、运行时是死的。
+
+所以 `gcAssets` 内部先 `capture()`（同步把编辑器最新内容收回内存）。
+这一点如果不做变异验证根本发现不了：测试全绿、功能全废。
+
+### 测试
+
+- 移除附件路径**不得**再出现 `io.dropAsset`
+- 必须调 `gcAssets`，且在 `commit()` 之后
+- `gcAssets` 必须自己 `capture()`
+
+### 变异验证
+
+3 处全部抓到：改回无条件 dropAsset / 完全不回收 / gcAssets 不 capture。
+
+另外修了一条**把 BUG 写成期望值**的旧断言 —— 它原本断言
+`if (r.a) await io.dropAsset(r.a)` 必须存在，等于把这个 BUG 锁死在测试里。

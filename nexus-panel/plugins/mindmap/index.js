@@ -1022,7 +1022,7 @@ bootIframePlugin(async (ctx) => {
  *
  * @returns {Promise<{removed:number, bytes:number, aborted:boolean}>}
  */
-async function gcOrphanAssets() {
+async function gcOrphanAssets(quiet = false) {
   const live = new Set();
   const addRefs = (sheets) => {
     try { for (const a of wb.collectAssetRefs(sheets || [])) live.add(a); } catch { /* 坏数据跳过 */ }
@@ -1084,7 +1084,8 @@ async function gcOrphanAssets() {
   } catch (e) {
     status('清理未引用附件失败：' + (e?.message || e), true);
   }
-  if (removed) status(`已回收 ${removed} 个未引用附件（约 ${io.formatSize(bytes)}）`);
+  // quiet：调用方随后自己会写一句状态（如「已移除…」），这里再写就被盖掉了
+  if (removed && !quiet) status(`已回收 ${removed} 个未引用附件（约 ${io.formatSize(bytes)}）`);
   return { removed, bytes, aborted: false };
 }
 
@@ -2889,6 +2890,18 @@ async function gcOrphanAssets() {
       guard('打开附件', () => openAttachment(raw, index, nodeId))();
     },
     // 拖放附加（图片 / 视频 / 任意文件）
+    /**
+     * 回收无人引用的附件本体（侧栏「移除附件」用）。
+     *
+     * 不能直接 dropAsset：资产 id 会被多个节点共享（复制节点即共享，
+     * 见 panels.js removeAt 的注释）。这里先 capture() 把编辑器最新内容
+     * 收回内存 —— commit() 只排了个延时保存，不 capture 的话扫到的还是
+     * 移除**之前**的旧内容，那个资产会被判成「还在用」，回收一次都删不掉。
+     */
+    gcAssets: guard('回收附件', async () => {
+      capture();
+      await gcOrphanAssets(true);
+    }),
     onDropFiles: (files, nodeId) => { guard('拖放附加', () => handleDropFiles(files, nodeId))(); },
     onDropMiss: () => status('请拖到节点上（拖到空白处不会新建节点）'),
     // 附件在节点间拖拽移动

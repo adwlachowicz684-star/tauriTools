@@ -1454,7 +1454,14 @@ group('附件：file 与 video 互不干扰');
       'setList 按 kind 选择 setter（不会同时调两个）');
     ok(/list\.splice\(index, 1\)/.test(rm), '只删指定那一个（不是清空整类）');
     ok(/confirmDialog\(/.test(rm), '移除前确认（不可逆）');
-    ok(/if \(r\.a\) await io\.dropAsset\(r\.a\)/.test(rm), '同步删掉资产本体');
+    /*
+     * 早先这条断言写的是 `if (r.a) await io.dropAsset(r.a)` —— 把 BUG 48
+     * 本身当成了期望值：无条件 dropAsset 会删掉**被别的节点共享**的资产
+     * （复制节点时 assetId 是字符串、克隆出来一模一样）。
+     * 现在改走按引用判定的 gcAssets。
+     */
+    ok(!/io\.dropAsset\(/.test(rm), '移除附件不得无条件 dropAsset（会删掉共享资产）');
+    ok(/app\.api\.gcAssets\?\.\(\)/.test(rm), '移除附件走 gcAssets（按引用判定后再回收）');
     // 附加必须是追加
     const atStart = src.indexOf('const attach = async (kind)');
     const at = src.slice(atStart, src.indexOf('const removeAt', atStart));
@@ -10784,7 +10791,8 @@ group('删除脑图后附件本体变成孤儿（BUG 47）');
   const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
   const code = strip(idx);
 
-  ok(/async function gcOrphanAssets\(\)/.test(code), '必须有孤儿附件回收函数');
+  // 不写死签名（有 quiet 参数），只锚函数名
+  ok(/async function gcOrphanAssets\(/.test(code), '必须有孤儿附件回收函数');
 
   // 删文件后要真的调用它
   {
@@ -10805,7 +10813,12 @@ group('删除脑图后附件本体变成孤儿（BUG 47）');
      * 半截代码上（实测：三条断言同时失效）。
      * 用大括号配对找真正的结尾。
      */
-    const i = code.indexOf('async function gcOrphanAssets()');
+    /*
+     * 不能写死 `async function gcOrphanAssets()` —— 加了 quiet 参数之后
+     * 签名就变了，锚点找不到会从头开始切，整组断言集体失效。
+     * 只锚函数名。
+     */
+    const i = code.indexOf('async function gcOrphanAssets(');
     const braceAt = code.indexOf('{', i);
     let depth = 0, end = -1;
     for (let k = braceAt; k < code.length; k++) {
@@ -10832,6 +10845,54 @@ group('删除脑图后附件本体变成孤儿（BUG 47）');
     // 判定方式是扫全量 asset 键，而不是拿一份 sheets 去清
     ok(/store\.keys\('asset:'\)/.test(body), '必须扫全量 asset: 键判定孤儿（不能只清某份 sheets）');
   }
+}
+
+group('移除附件无条件删资产，共享它的其它节点跟着失效（BUG 48）');
+
+{
+  /*
+   * 内核 clone 是 `JSON.parse(JSON.stringify(data))`（kityminder.core.min.js 实测）：
+   * data 深拷贝，但 assetId 是**字符串**，复制出来一模一样。
+   * 真实 Chrome 实测：克隆节点的 data.file 仍指向 asSHARED1，
+   * 且内核命令表里确实有 copy / paste（Ctrl+C / Ctrl+V 可达）。
+   *
+   * 于是：复制一个带附件的节点 → 两个节点共享同一份字节 →
+   * 在侧栏移除其中一个 → 旧实现无条件 dropAsset → 另一个节点点开只剩
+   * 「附件数据已丢失」。引用还在、字节没了，最难查的那种失效。
+   */
+  const pnl = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const pc = strip(pnl);
+
+  // ① 移除附件不得再直接 dropAsset
+  ok(!/io\.dropAsset\(/.test(pc),
+    '移除附件不得直接 dropAsset（资产可能被别的节点共享）');
+
+  // ② 必须交给按引用判定的回收
+  {
+    const i = pc.indexOf('const removeAt = async (kind, index) => {');
+    ok(i > 0, '找到 removeAt');
+    const seg = pc.slice(i, i + 2600);
+    ok(/app\.api\.gcAssets\?\.\(\)/.test(seg),
+      'removeAt 必须改调 gcAssets（按「还有没有人在引用」判定）');
+    ok(seg.indexOf('gcAssets') > seg.indexOf('app.api.commit()'),
+      'gcAssets 必须在 commit 之后（先把引用从列表里摘掉再判定）');
+  }
+
+  // ③ gcAssets 必须自己 capture()：commit 只是排了个延时保存
+  {
+    const j = strip(idx).indexOf('gcAssets: guard(');
+    ok(j > 0, 'api 里有 gcAssets');
+    const seg = strip(idx).slice(j, j + 400);
+    ok(/capture\(\)/.test(seg),
+      'gcAssets 必须先 capture()（不收回编辑器内容就会扫到移除前的旧数据，回收恒不生效）');
+  }
+
+  // ④ gcOrphanAssets 支持 quiet —— 否则它写的状态会盖掉「已移除…」
+  ok(/async function gcOrphanAssets\(quiet = false\)/.test(strip(idx)),
+    'gcOrphanAssets 支持 quiet（调用方随后自己会写状态）');
+  ok(/if \(removed && !quiet\)/.test(strip(idx)), 'quiet 时才不写回收状态');
 }
 
 /* ============================================================

@@ -1184,8 +1184,24 @@ export function buildSide(app, opts = {}) {
       if (!focusNode()) { app.api.status('请先选中一个节点再移除附件', true); return; }
       list.splice(index, 1);
       setList(kind, list);
-      if (r.a) await io.dropAsset(r.a);
       app.api.commit();
+      /*
+       * 不能无条件 dropAsset(r.a) —— 同一个 assetId 会被**多个节点共享**。
+       *
+       * 内核的 clone 是 `JSON.parse(JSON.stringify(data))`：data 是深拷贝，
+       * 但 assetId 是**字符串**，复制出来一模一样（真实 Chrome 实测：
+       * 克隆节点的 data.file 仍指向 asSHARED1）。于是 Ctrl+C / Ctrl+V
+       * 复制一个带附件的节点后，两个节点指向同一份字节。
+       *
+       * 这时移除其中一个就 dropAsset，另一个节点的附件**当场失效** ——
+       * 而且是以「引用还在、字节没了」的方式失效，点开只说
+       * 「附件数据已丢失」，用户完全不知道是上一次移除造成的。
+       *
+       * 改成交给 gcOrphanAssets：它按「全库还有没有人在引用」判定，
+       * 还有人用就留着。走到这里时 commit 只是排了个延时保存，
+       * 内存里的 sheets 还是旧的 —— 所以 gcAssets 内部会先 capture()。
+       */
+      if (r.a) await app.api.gcAssets?.();
       refresh();
       app.api.status(`已移除${label}：${r.n || '（未命名）'}`);
     };
