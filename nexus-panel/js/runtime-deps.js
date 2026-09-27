@@ -71,6 +71,32 @@ export function normVersion(version) {
     .replace(/[^0-9A-Za-z._-]/g, '');
 }
 
+/**
+ * 版本自然序比较：9 排在 10 前面。
+ *
+ * 直接用字符串排会变成 "10.0.0" < "9.0.0"，于是列表里 10 排在 9 前面。
+ * 单看不觉得有问题，但"顺序"本身会被当成有含义（最上面那个像是最新的），
+ * 用户据此判断该删哪个，就可能删错。显示顺序要么对，要么干脆不暗示含义。
+ */
+export function cmpVersion(a, b) {
+  const pa = String(a ?? '').split('.');
+  const pb = String(b ?? '').split('.');
+  const n = Math.max(pa.length, pb.length);
+  for (let i = 0; i < n; i++) {
+    const x = parseInt(pa[i], 10);
+    const y = parseInt(pb[i], 10);
+    const bothNum = !Number.isNaN(x) && !Number.isNaN(y);
+    if (bothNum) {
+      if (x !== y) return x - y;
+      continue;
+    }
+    /* 一段是数字一段不是（如 12.0.0-rc）时退回字符串比，避免 NaN 把顺序搅乱 */
+    const s = String(pa[i] ?? '').localeCompare(String(pb[i] ?? ''));
+    if (s !== 0) return s;
+  }
+  return 0;
+}
+
 /** CDN 上取 ESM 单文件的地址。 */
 export function entryUrlOf(name, version) {
   const v = String(version || '').trim();
@@ -248,6 +274,17 @@ export async function listRuntimeDeps(ctx) {
  * 装一个包。
  * 返回 { ok, name, version, file?, error? } —— 不用抛异常表达失败，
  * 因为调用方（界面）要的是把原因显示出来，而不是走 catch 分支后什么都不做。
+ *
+ * 【装新不清旧 —— 多版本并存留不留由用户决定】
+ *
+ * 装一个新版本时**不动**同名包的其它版本。旧版本可能是用户特意留着的
+ * （回滚用、对比用、或有插件钉住了旧版行为），后台替他删掉，等于替他做了
+ * "留哪个"的决定 —— 而界面上他根本看不出来少了什么，只会莫名其妙。
+ *
+ * 所以这里的契约是：装 = 只写目标文件；留不留 = 用户在界面上逐条点「移除」。
+ *
+ * ⚠️ 唯一会被覆盖的情况是**同名同版本**（文件名相同）—— 那是"重装"，
+ * 不是"清旧"。别把这两件事混在一起做。
  */
 export async function installRuntimeDep(ctx, item) {
   if (!canInstall(item)) {
@@ -316,7 +353,7 @@ export function installedVersionsOf(installed, item) {
   const spec = specOf(item && item.install);
   if (!spec) return [];
   const list = Array.isArray(installed) ? installed : [];
-  return list.filter((d) => d && d.name === spec.name);
+  return list.filter((d) => d && d.name === spec.name).slice().sort((x, y) => cmpVersion(x.version, y.version));
 }
 
 /**
