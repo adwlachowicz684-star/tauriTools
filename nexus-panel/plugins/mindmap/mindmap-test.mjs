@@ -10369,6 +10369,149 @@ group('图片交互：两段式打开 + 默认放大 + 选中后可拖大小');
   }
 }
 
+group('页签拖拽：插入竖条必须收掉、回弹动画必须看得见');
+
+{
+  /*
+   * 行为级：真跑 attachTabDrag 的状态机，不靠正则。
+   * jsdom 里 rect 全是 0，所以给容器/页签/follow 各自伪造尺寸，
+   * 否则 swapIndex 永远算不出换位，两条分支都走不到。
+   */
+  const { attachTabDrag } = await import('./tab-drag.js');
+  const doc = globalThis.document;
+  globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
+  globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+
+  const R = (l, w) => ({ left: l, right: l + w, top: 0, bottom: 30, width: w, height: 30, x: l, y: 0 });
+  // follow 是拖拽中动态克隆出来的，按它的 style.left 算 rect
+  const origGBCR = dom.window.Element.prototype.getBoundingClientRect;
+  dom.window.Element.prototype.getBoundingClientRect = function () {
+    if (this.classList && this.classList.contains('mm-tab-follow')) {
+      return R(parseFloat(this.style.left) || 0, 100);
+    }
+    return origGBCR.call(this);
+  };
+
+  function build(ids) {
+    const c = doc.createElement('div');
+    for (const id of ids) {
+      const t = doc.createElement('div');
+      t.setAttribute('data-tab-id', id);
+      c.appendChild(t);
+    }
+    doc.body.appendChild(c);
+    // 注意：**必须**把下标固定成 const 再塞进闭包。写成 =() => R(i*100)
+    // 的话三个闭包共享同一个 i，循环结束后全变成 R(300,100) —— 那样
+    // swapIndex 永远算不出换位，「真的换了顺序」这条前提直接不成立。
+    [...c.children].forEach((t, k) => {
+      t.getBoundingClientRect = () => R(k * 100, 100);
+      Object.defineProperty(t, 'offsetWidth', { value: 100, configurable: true });
+    });
+    c.getBoundingClientRect = () => R(0, 300);
+    return c;
+  }
+  function pe(type, x) {
+    const e = new dom.window.Event(type, { bubbles: true, cancelable: true });
+    Object.assign(e, { clientX: x, clientY: 10, button: 0, pointerId: 1 });
+    return e;
+  }
+  const fire = (el, type, x) => el.dispatchEvent(pe(type, x));
+
+  /** 跑一次拖拽；steps 是越过阈值后的 move 序列 */
+  async function drag(c, fromIdx, moves) {
+    const t = [...c.children][fromIdx];
+    fire(t, 'pointerdown', 50);
+    for (const x of moves) fire(doc, 'pointermove', x);
+    fire(doc, 'pointerup', moves[moves.length - 1]);
+    await new Promise((r) => setTimeout(r, 400));   // 等回弹动画
+  }
+
+  // ---- 场景1：真的换位（commit 分支） ----
+  {
+    const c = build(['A', 'B', 'C']);
+    let order = ['A', 'B', 'C'];
+    const d = attachTabDrag(c, {
+      getOrder: () => order.slice(),
+      onReorder: (o) => { order = o.slice(); },
+      canDrag: () => true,
+    });
+    await drag(c, 0, [260, 260]);
+    eq(order.join('|'), 'B|A|C', '拖动真的换了顺序（前提：这条分支走到了）');
+    eq(doc.querySelectorAll('.mm-tab-insertbar').length, 0,
+      'commit 分支：松手后 document 里不留插入竖条');
+    eq(doc.querySelectorAll('.mm-tab-follow').length, 0, 'commit 分支：follow 已收');
+    d.destroy(); c.remove();
+  }
+
+  // ---- 场景2：未换位（springBack 分支） ----
+  {
+    const c = build(['A', 'B', 'C']);
+    let order = ['A', 'B', 'C'];
+    const d = attachTabDrag(c, {
+      getOrder: () => order.slice(),
+      onReorder: (o) => { order = o.slice(); },
+      canDrag: () => true,
+    });
+    const t0 = [...c.children][0];
+    fire(t0, 'pointerdown', 50);
+    fire(doc, 'pointermove', 60);
+    fire(doc, 'pointermove', 60);
+    // 松手**瞬间**就查：此时 follow 必须还在 DOM，否则动画等于没有
+    fire(doc, 'pointerup', 60);
+    const f = doc.querySelector('.mm-tab-follow');
+    ok(!!f, 'springBack：松手瞬间 follow 仍在 DOM（动画才看得见）');
+    if (f) {
+      ok(/left/.test(String(f.style.transition)) && /opacity/.test(String(f.style.transition)),
+        'springBack：transition 真的设上了（含 left 与 opacity）');
+      eq(f.style.opacity, '0', 'springBack：目标透明度为 0（渐隐飞回）');
+    }
+    await new Promise((r) => setTimeout(r, 400));
+    eq(doc.querySelectorAll('.mm-tab-follow').length, 0, 'springBack：动画结束后 follow 移除');
+    eq(doc.querySelectorAll('.mm-tab-insertbar').length, 0, 'springBack：竖条也不留');
+    eq(order.join('|'), 'A|B|C', 'springBack：顺序未变');
+    d.destroy(); c.remove();
+  }
+
+  // ---- 场景3：连拖多次不累积 ----
+  /*
+   * 竖条是 position:fixed + z-index:9998 的 2px 竖线，漏收的话
+   * **拖几次就叠几条**：屏幕上会留着好几条跟着上次落点的竖线。
+   */
+  {
+    const c = build(['A', 'B', 'C']);
+    let order = ['A', 'B', 'C'];
+    const d = attachTabDrag(c, {
+      getOrder: () => order.slice(),
+      onReorder: (o) => { order = o.slice(); },
+      canDrag: () => true,
+    });
+    await drag(c, 0, [260, 260]);
+    await drag(c, 1, [60, 60]);
+    await drag(c, 2, [160, 160]);
+    eq(doc.querySelectorAll('.mm-tab-insertbar').length, 0,
+      '连拖 3 次：竖条一条都不留（漏收会累积成 3 条）');
+    eq(doc.querySelectorAll('.mm-tab-follow').length, 0, '连拖 3 次：follow 也全收');
+    d.destroy(); c.remove();
+  }
+
+  // ---- 源码契约：cleanup 必须同时收 follow 与 bar ----
+  {
+    const src = fs.readFileSync(path.join(HERE, 'tab-drag.js'), 'utf8');
+    const ci = src.indexOf('function cleanup()');
+    ok(ci > 0, '有 cleanup()');
+    const seg = src.slice(ci, ci + 700);
+    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(/st\?\.follow\)\s*\{\s*st\.follow\.remove\(\);\s*\}/.test(code), 'cleanup 收 follow');
+    ok(/st\?\.bar\)\s*\{\s*st\.bar\.remove\(\);\s*\}/.test(code), 'cleanup 收 bar（漏了会留竖条）');
+    // springBack 必须先把 follow 摘下来，否则 cleanup 会先把它 remove 掉
+    const si = src.indexOf('function springBack(el)');
+    const sseg = src.slice(si, si + 500);
+    const scode = sseg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(/if \(follow\) st\.follow = null;/.test(scode),
+      'springBack 先把 follow 从 st 上摘下（否则 cleanup 先 remove，动画看不见）');
+  }
+}
+
 /* ============================================================
    结果
    ============================================================ */

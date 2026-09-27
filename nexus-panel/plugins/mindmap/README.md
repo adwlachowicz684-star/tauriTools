@@ -3395,3 +3395,76 @@ if (e.isComposing || e.keyCode === 229) return;
 
 其中「只判单图」这一处，是新分组里的断言**和**旧的 clearSelect 分组一起红的 ——
 旧分组原本断言「选中图片必须 select([], true)」，与新设计冲突，已按新语义改写。
+
+
+---
+
+## 页签拖拽：插入竖条永不消失、回弹动画根本看不见
+
+### 现象
+
+拖动画布页签排序之后：
+
+1. **屏幕上留着一条 2px 的竖线** —— 位置就是刚才的落点，怎么点都去不掉
+2. **拖几次就叠几条** —— 实测连拖 3 次，document 里躺着 3 个（连同前两个场景共 5 个）
+3. **取消拖拽时没有回弹动画** —— 页签是"啪"地跳回去，不是飞回去
+
+### 根因一：cleanup() 只收了 follow，漏了 bar
+
+```js
+function cleanup() {
+  stopAutoScroll();
+  if (st?.follow) { st.follow.remove(); }
+  // ← 没有 st.bar
+  if (st?.el) st.el.classList.remove('dragging', 'drop-target');
+  st = null;
+}
+```
+
+`st.bar` 是 `beginDrag()` 里创建的插入竖条（`position:fixed` + `z-index:9998`），
+全文件**只有创建和改样式，没有任何一处 remove**。它是落点指示器，拖拽期间
+该在，但松手后必须收 —— 漏了就变成一条永远挂着的固定定位竖线。
+
+### 根因二：springBack 先 cleanup，再给 follow 设动画
+
+```js
+const follow = st.follow;
+const r = el.getBoundingClientRect();
+cleanup();          // ← 里面 st.follow.remove()，元素已脱离 DOM
+follow.style.transition = ...;   // 设在一个游离节点上，谁也看不见
+```
+
+先把 follow 从 `st` 上摘下来（`st.follow = null`）再调 cleanup，
+由 springBack 自己的 `setTimeout` 负责最终移除。
+
+### 修法
+
+`cleanup()` 补 `if (st?.bar) { st.bar.remove(); }`；
+`springBack()` 在 cleanup 前先摘 follow。
+
+实测（jsdom 跑真实状态机）：
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| 换位后竖条残留 | 1 | **0** |
+| 连拖 3 次后竖条总数 | 3（累积） | **0** |
+| 回弹瞬间 follow 是否还在 DOM | **false** | **true**（opacity=0、transition 已设） |
+
+### 测试
+
+这一组是**行为级**的：真跑 `attachTabDrag` 的状态机、派发真实
+pointer 事件，不靠正则匹配源码。jsdom 里 `getBoundingClientRect` 全是 0，
+所以给容器/页签/follow 各自伪造尺寸，否则 `swapIndex` 永远算不出换位，
+两条分支都走不到。
+
+写的时候自己踩了一个坑：给页签批量设 rect 时写成 `() => R(i * 100)`，
+三个闭包共享同一个 `i`，循环结束全变成 `R(300, 100)` —— 于是
+「真的换了顺序」这条**前提**直接不成立，后面所有断言都在空转。
+必须把下标固定成 `forEach` 的 `k` 再塞进闭包。
+
+### 变异验证
+
+3 处全部抓到：cleanup 不收 bar / springBack 不摘 follow / follow 立即 remove。
+
+顺带删掉了误提交进库的临时探针 `menu_tmp.mjs`（早先 wip 提交带进来的，
+25 行，无任何引用）。

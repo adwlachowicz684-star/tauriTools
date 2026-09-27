@@ -56,9 +56,18 @@ export function attachTabDrag(container, opts = {}) {
 
   /* ---------------- 生命周期 ---------------- */
 
+  /**
+   * 收尾：停滚动、摘掉跟随元素与**插入竖条**、清掉拖拽态 class。
+   *
+   * 竖条（st.bar）必须一起收。它是 `position:fixed` + `z-index:9998` 的
+   * 2px 竖线，早先这里**只收了 follow、漏了 bar** —— 实测每次拖完
+   * document 里都剩一个 `.mm-tab-insertbar`，屏幕上留着一条跟着上次落点
+   * 的竖线，而且**拖几次就叠几条**（它只增不减）。
+   */
   function cleanup() {
     stopAutoScroll();
     if (st?.follow) { st.follow.remove(); }
+    if (st?.bar) { st.bar.remove(); }
     if (st?.el) st.el.classList.remove('dragging', 'drop-target');
     st = null;
   }
@@ -96,11 +105,19 @@ export function attachTabDrag(container, opts = {}) {
     lastDragEndAt = Date.now();
   }
 
-  /** A57 回弹：跟随元素动画飞回原标签位置再清理 */
+  /**
+   * A57 回弹：跟随元素动画飞回原标签位置再清理。
+   *
+   * **先把 follow 从 st 上摘下来再 cleanup**，否则 cleanup 会顺手
+   * `follow.remove()` —— 元素已经脱离 DOM，后面设的 transition / left / top
+   * 全落在一个游离节点上，动画**根本看不见**（实测松手瞬间 follow 已不在
+   * document 里）。摘下来之后由这里的 setTimeout 负责最终移除。
+   */
   function springBack(el) {
     if (!st) return;
     const follow = st.follow;
     const r = el.getBoundingClientRect();
+    if (follow) st.follow = null;   // 交给本函数收尾，别让 cleanup 先摘
     cleanup();
     if (!follow) return;
     follow.style.transition = `left ${SPRING_MS}ms cubic-bezier(.2,.8,.3,1), top ${SPRING_MS}ms cubic-bezier(.2,.8,.3,1), opacity ${SPRING_MS}ms`;
