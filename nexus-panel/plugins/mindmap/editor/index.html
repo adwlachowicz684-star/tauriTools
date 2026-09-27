@@ -4422,6 +4422,42 @@
             kmShortcut('ctrl+r', function () { km.execCommand('textalign', 'right'); });
             // 复制/粘贴节点样式（无值命令）
             try { km.addCommandShortcutKeys({ copynodestyle: 'ctrl+shift+c', pastenodestyle: 'ctrl+shift+v' }); } catch (e) {}
+            /*
+             * **复制 / 剪切 / 粘贴节点：内核声明了却根本没注册，必须在这里补。**
+             *
+             * 实测（真实 Chrome，钩住 Minder.prototype.addCommandShortcutKeys
+             * 记录每次注册，共只有 5 次调用）：
+             *
+             *   {"arrangeup":"normal::alt+Up","arrangedown":"normal::alt+Down"}
+             *   {"bold":"ctrl+b","italic":"ctrl+i"}
+             *   {"resetlayout":"Ctrl+Shift+L"}
+             *   {"appendsiblingnode":…,"appendchildnode":…,
+             *    "appendparentnode":…,"removenode":…}
+             *   {"zoomin":"ctrl+=","zoomout":"ctrl+-"}
+             *
+             * —— 没有 copy / cut / paste 那一次。而命令表里这三个命令**是有的**
+             *    （40 个命令里含 copy/cut/paste），只是没有键绑上去。
+             *
+             * 后果（同一份实测，选中节点后派发真实 keydown，带正确 keyCode）：
+             *   Ctrl+B → queryCommandState('bold') 0 → 1      ← 对照组，正常
+             *   Ctrl+C 然后 Ctrl+V → 节点数 4 → 4             ← 完全没反应
+             *   execCommand('copy')+'paste' → 4 → 6            ← 命令本身没问题
+             *
+             * 即「命令在、键不通」。而插件里**没有任何复制/粘贴节点的按钮**，
+             * 键盘是唯一入口 —— 于是这个功能等于完全不可用。
+             *
+             * 为什么内核没注册上：ClipboardModule 在 `kity.Browser.gecko`
+             * 为假时才会 return commandShortcutKeys（源码里两个分支）：
+             *   真 → {commands, clipBoardEvents, sendToClipboard}
+             *   假 → {commands, commandShortcutKeys, sendToClipboard}
+             * 实测 Chrome 下 gecko=false、webkit=true，走的是假分支，
+             * 但那次 addCommandShortcutKeys 调用**没有发生**（hook 日志里没有）。
+             * 不去猜更深的原因，这里直接补上即可。
+             *
+             * Ctrl+A 不用补：它由模块 events 里的 `normal.keydown` 处理，
+             * 实测有效（选中从 [A] 变成 [中心,C,B,A]）。
+             */
+            try { km.addCommandShortcutKeys({ copy: 'ctrl+c', cut: 'ctrl+x', paste: 'ctrl+v' }); } catch (e) {}
 
             // ---- 方向键导航：只移动光标，不折叠 ----
             // 说明：core 并没有实现方向键导航。它只在键码表里预留了 isSelectedNodeKey

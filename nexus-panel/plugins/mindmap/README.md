@@ -4199,3 +4199,73 @@ if (/^\\画布[:：]/.test(text)) text = text.slice(1);
 和 BUG 49（Mermaid 根节点引号嵌套）、BUG 52/53（XMind content.json）
 是同一族：**导出格式没有为「用户数据恰好长得像格式标记」留转义口**。
 区别是那两个在别人的软件里坏，这个在本工具自己的往返上就坏。
+
+
+---
+
+## 复制 / 剪切 / 粘贴节点：内核提供了命令却没绑键（BUG 57）
+
+### 现象
+
+选中节点按 **Ctrl+C 再 Ctrl+V 没有任何反应**，而帮助里白纸黑字写着
+「Ctrl + C / X / V 复制 / 剪切 / 粘贴节点」。插件里**也没有**对应的按钮，
+键盘是唯一入口 —— 于是这个功能等于完全没有。
+
+### 根因：命令在、键不通
+
+内核 ClipboardModule 提供了 `copy` / `cut` / `paste` 三个命令
+（实测 40 个命令里都有，`execCommand('copy')` + `execCommand('paste')`
+确实能克隆子树），但**没有把它们注册成快捷键**。
+
+实测：钩住 `Minder.prototype.addCommandShortcutKeys` 记下每次注册，
+整个初始化只有 **5 次**调用：
+
+```js
+{arrangeup:"normal::alt+Up", arrangedown:"normal::alt+Down"}
+{bold:"ctrl+b", italic:"ctrl+i"}
+{resetlayout:"Ctrl+Shift+L"}
+{appendsiblingnode:…, appendchildnode:…, appendparentnode:…, removenode:…}
+{zoomin:"ctrl+=", zoomout:"ctrl+-"}
+```
+
+没有 copy / cut / paste 那一次。源码里 ClipboardModule 只在
+`kity.Browser.gecko` 为假时才 return `commandShortcutKeys`
+（真 → `clipBoardEvents`），实测 Chrome 下 `gecko=false / webkit=true`
+走的是假分支，但那次注册**没有发生**。不去猜更深的原因，直接补上即可。
+
+### 实测对照（真实 Chrome，派发带正确 keyCode 的 keydown）
+
+| 操作 | 结果 |
+|---|---|
+| Ctrl+B | `queryCommandState('bold')` 0 → 1 ← 对照组正常 |
+| Ctrl+C 然后 Ctrl+V | 节点数 4 → 4 ← 完全没反应 |
+| `execCommand('copy')` + `execCommand('paste')` | 4 → 6 ← 命令本身没问题 |
+
+补上 `km.addCommandShortcutKeys({ copy:'ctrl+c', cut:'ctrl+x', paste:'ctrl+v' })`
+之后：4 → 6（A 与 A1 被克隆到 B 下），Ctrl+B 仍正常，Ctrl+X 6 → 3。
+
+注意 **Ctrl+A 全选是好的**（由模块 events 里的 `normal.keydown` 处理，
+实测选中从 `[A]` 变成 `[中心,C,B,A]`），不要一并"修"。
+
+### 一个测试写法上的坑
+
+我第一版派发的 `KeyboardEvent` 没带 `keyCode`，于是 Ctrl+A 也"失效"了 ——
+差点把正常功能当成 BUG 报上去。内核的 `isShortcutKey()` 认的是 `keyCode`，
+合成事件必须显式给（Chrome 不会从 `key` 反推）。
+
+### 附带修的：快捷键说明窗口
+
+* `Ctrl + C / X / V` 被写了**两遍**，窗口里同一行出现两次；
+* 撤销 / 重做（编辑器页补的，见 BUG 34）**压根没列** ——
+  用户翻遍说明找不到怎么撤销。
+
+现在去重、补齐，并把复制粘贴的归属从"内核注册"改成"编辑器页补齐"
+（它确实是我们补的，不是内核给的）。
+
+### 变异验证
+
+5 处全部抓到：删掉补注册 / 只补 copy 漏 cut+paste /
+说明里加回重复条目 / 删掉撤销 / 删掉复制粘贴。
+
+（过程中有一次 M3、M4 报的是 M2 的失败项 —— 我在两个变异之间**忘了还原
+editor/index.html**，拿污染后的状态跑的。重做并每次还原后 5 处才是真抓到。）

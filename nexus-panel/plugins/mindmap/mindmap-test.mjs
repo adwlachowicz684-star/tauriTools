@@ -11337,6 +11337,81 @@ group('Markdown 往返：二级节点叫「画布：X」会被当成分块标记
   }
 }
 
+group('复制/剪切/粘贴节点：内核提供了命令却没绑键，编辑器页必须补（BUG 57）');
+
+/*
+ * 内核 ClipboardModule 提供了 copy/cut/paste 三个命令（实测 40 个命令里有），
+ * 但**没有**把它们注册成快捷键。实测（真实 Chrome，钩住
+ * Minder.prototype.addCommandShortcutKeys 记下每次注册）只有 5 次调用：
+ *
+ *   {arrangeup, arrangedown} / {bold, italic} / {resetlayout}
+ *   {appendsiblingnode, appendchildnode, appendparentnode, removenode}
+ *   {zoomin, zoomout}
+ *
+ * —— 没有 copy/cut/paste。而插件里**没有任何复制粘贴节点的按钮**，
+ *    键盘是唯一入口，于是这功能等于完全不可用。
+ *
+ * 同一份实测（选中节点后派发带正确 keyCode 的 keydown）：
+ *   Ctrl+B → queryCommandState('bold') 0 → 1      ← 对照组正常
+ *   Ctrl+C 然后 Ctrl+V → 节点数 4 → 4             ← 完全没反应
+ *   execCommand('copy') + execCommand('paste') → 4 → 6   ← 命令本身没问题
+ *
+ * 补上 addCommandShortcutKeys({copy:'ctrl+c',cut:'ctrl+x',paste:'ctrl+v'})
+ * 后实测：4 → 6（A 与 A1 被克隆到 B 下），Ctrl+B 仍正常，Ctrl+X 6 → 3。
+ */
+{
+  const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+
+  // 剥注释：注释里大量复述这三个键名，不剥的话命中的是注释而不是代码
+  const code = ed.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  const reg = /addCommandShortcutKeys\(\{[^}]*copy:\s*'ctrl\+c'[^}]*\}\)/;
+  const m = code.match(reg);
+  ok(!!m, "编辑器页注册了 copy:'ctrl+c'（否则复制节点没有入口）");
+
+  const seg = m ? m[0] : '';
+  ok(/cut:\s*'ctrl\+x'/.test(seg), "同一处注册了 cut:'ctrl+x'（剪切不能漏）");
+  ok(/paste:\s*'ctrl\+v'/.test(seg), "同一处注册了 paste:'ctrl+v'（粘贴不能漏）");
+
+  // 只定义不调用 = 没修（与 BUG 11 同类）
+  ok(/km\.addCommandShortcutKeys\(\{\s*copy:/.test(code),
+    '必须是 km.addCommandShortcutKeys(...) 的调用，而不是只写一个字面量');
+}
+
+group('快捷键说明：不得重复、且必须列出撤销与复制粘贴（BUG 57 附带）');
+
+/*
+ * 快捷键说明窗口早先把 `Ctrl + C / X / V` 写了**两遍**，同一行出现两次；
+ * 而撤销/重做（编辑器页补的）压根没列 —— 用户翻遍说明找不到怎么撤销。
+ */
+{
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const m = pn.match(/const SHORTCUTS = \[([\s\S]*?)\n\];/);
+  ok(!!m, '取到 SHORTCUTS 数组');
+  const body = m ? m[1] : '';
+
+  // 剥注释后再取条目，否则注释里提到的键名会被算进去
+  const entries = [...body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    .matchAll(/\['([^']+)',\s*'([^']*)'\]/g)].map((x) => ({ key: x[1], desc: x[2] }));
+
+  ok(entries.length >= 20, `条目数量合理（实际 ${entries.length} 条）`);
+
+  const seen = new Map();
+  const dup = [];
+  for (const e of entries) {
+    if (seen.has(e.key)) dup.push(e.key);
+    else seen.set(e.key, e.desc);
+  }
+  eq(dup.length, 0, `没有重复的快捷键条目${dup.length ? '（重复：' + dup.join(' / ') + '）' : ''}`);
+
+  const has = (frag) => entries.some((e) => e.key.includes(frag));
+  ok(has('Ctrl + Z'), '列出了 Ctrl + Z（撤销）');
+  ok(has('Ctrl + Y'), '列出了 Ctrl + Y（重做）');
+  ok(has('Ctrl + C / X / V'), '列出了复制/剪切/粘贴');
+  ok(has('Ctrl + A'), '列出了 Ctrl + A（全选）');
+  ok(has('Tab'), '列出了 Tab');
+}
+
 /* ============================================================
    结果
    ============================================================ */

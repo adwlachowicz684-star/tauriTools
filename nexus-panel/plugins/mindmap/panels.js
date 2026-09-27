@@ -2892,6 +2892,22 @@ const SHORTCUTS = [
   ['Ctrl + R', '水平右对齐'],
   ['Ctrl + Shift + C', '复制节点样式'],
   ['Ctrl + Shift + V', '粘贴节点样式'],
+  /*
+   * 撤销 / 重做**必须列出来**：这两个键是编辑器页自己补的
+   * （内核既没有 undo/redo 命令，也没有 ctrl+z / ctrl+y 键），
+   * 不写在这里的话，用户翻遍说明也找不到「怎么撤销」，
+   * 只能去点工具栏的 ↶ / ↷ —— 而那两个按钮常常被顶栏收拢盖住。
+   */
+  ['Ctrl + Z', '撤销'],
+  ['Ctrl + Y / Ctrl + Shift + Z', '重做'],
+  /*
+   * 复制 / 剪切 / 粘贴节点：同样**只能**由编辑器页补。
+   *
+   * 内核 ClipboardModule 虽然提供了 copy/cut/paste 三个命令，却**没有**
+   * 把它们注册成快捷键（实测钩住 addCommandShortcutKeys 只抓到 5 次注册，
+   * 没有这三个）；而插件里也没有对应的按钮 —— 不补就等于这功能完全没有入口。
+   */
+  ['Ctrl + C / X / V', '复制 / 剪切 / 粘贴节点（含子树，根不可复制）'],
   // —— 页面补齐：内核只登记了键码、未实现行为，由 editor/index.html 实现 ——
   ['↑ / ↓', '在兄弟节点间移动'],
   ['←', '移到父节点（只移动，不折叠）'],
@@ -2901,16 +2917,25 @@ const SHORTCUTS = [
   ['/', '折叠 / 展开选中节点（来回切换）'],
   ['Alt + 1~5', '从选中节点展开到第 N 级（更深层收起）'],
   // —— 内核 commandShortcutKeys 注册 ——
-  // ClipboardModule 提供 copy/cut/paste 命令并注册了这组快捷键；
-  // DragTree 提供节点拖拽（含多选，见 getSelectedAncestors）。
-  ['Ctrl + C / X / V', '复制 / 剪切 / 粘贴节点（含子树，根不可复制）'],
+  // 实测只有这 5 组：alt+up/down、ctrl+b/i、Ctrl+Shift+L、
+  // Enter/Insert/Tab/Shift+Tab/Del/Backspace、ctrl+=/ctrl+-。
   ['Alt + ↑ / ↓', '节点上移 / 下移'],
   ['Shift + Tab', '插入上级节点'],
   ['Ctrl + Shift + L', '整理布局'],
   ['Ctrl + = / -', '画布缩放'],
   ['Ctrl + A', '全选'],
-  ['Ctrl + C / X / V', '复制 / 剪切 / 粘贴节点'],
 ];
+
+/*
+ * 早先这里把 `Ctrl + C / X / V` 写了**两遍**（一次归到「内核注册」、
+ * 一次又单独列在末尾）—— 快捷键说明窗口里同一行出现两次。
+ * 由下面的测试锁住：不允许重复键名。
+ *
+ * 另外它们的归属也要改：实测内核**并没有**把 copy/cut/paste 注册成快捷键
+ * （钩住 addCommandShortcutKeys 只抓到 5 次注册，没有这三个），
+ * 是编辑器页补上的，所以列在「编辑器页补齐」里才准确。
+ */
+
 
 /** 快捷键说明浮层：快捷键由编辑器页面注册，插件无法改写，只能如实列出 */
 export function openShortcuts(app) {
