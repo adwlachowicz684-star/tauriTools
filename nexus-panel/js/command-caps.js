@@ -215,6 +215,11 @@ export const COMMAND_CAPS = {
   fpx_rt_dep_list: 'R',
   fpx_rt_dep_install: 'M',
   fpx_rt_dep_remove: 'W',
+  /*
+   * versions 定 **R**：它只是去 CDN 读一份版本清单，不写盘、不执行任何东西。
+   * 定高会让第三方插件无谓地被禁掉 —— 分级决定的是"谁能调"，不是"危不危险"。
+   */
+  fpx_rt_dep_versions: 'R',
   fpx_import_icons: 'W',
   fpx_set_editor: 'W',
   fpx_edit_file: 'W',

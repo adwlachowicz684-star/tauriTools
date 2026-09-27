@@ -10,6 +10,7 @@ import {
   listRuntimeDeps,
   loadRuntimeDep,
   removeRuntimeDep,
+  fetchRuntimeDepVersions,
   specOf,
   safeFileOf,
   installedVersionsOf,
@@ -87,6 +88,18 @@ function keyOf(name: string, version: string) {
   return `${name}@${version || ''}`;
 }
 
+/**
+ * 版本下拉（datalist）的 id。
+ *
+ * 包名里可能有 `@` / `/` 这类不适合做 DOM id 的字符（scope 包尤其），
+ * 直接拼会得到一个选择器里写不出来、querySelector 也取不到的 id ——
+ * 表现是"下拉绑定了但没选项"，而且不报错。
+ */
+function depListId(spec: any, nameKey: string) {
+  const n = String((spec && spec.name) || nameKey || 'dep');
+  return `dep-ver-${n.replace(/[^A-Za-z0-9]/g, '_')}`;
+}
+
 export default function DepsCard() {
   const ctx = useNexus();
   const [filter, setFilter] = useState('all');
@@ -97,6 +110,26 @@ export default function DepsCard() {
   const [msg, setMsg] = useState<{ k: string; text: string; bad: boolean } | null>(null);
   /* 用户手填的版本（键与 busy/msg 一致）。留空 = 用声明里的版本。 */
   const [ver, setVer] = useState<Record<string, string>>({});
+  /*
+   * 远端可用版本（按包名存）。**只在用户点开版本框时才拉** ——
+   * 打开设置页就为每一行发一个外部请求，既慢，也会让"我只是想看看装了什么"
+   * 变成一次联网行为。
+   */
+  const [vers, setVers] = useState<Record<string, string[]>>({});
+  const [versErr, setVersErr] = useState<Record<string, string>>({});
+
+  const loadVers = useCallback(
+    async (name: string) => {
+      if (!name || vers[name] || versErr[name]) return;
+      const r = await fetchRuntimeDepVersions(ctx, name);
+      if (r.error || r.missing) {
+        setVersErr((s) => ({ ...s, [name]: r.missing ? '后端未接入版本列表' : String(r.error || '取不到版本列表') }));
+        return;
+      }
+      setVers((s) => ({ ...s, [name]: r.list || [] }));
+    },
+    [ctx, vers, versErr],
+  );
 
   const all = useMemo(itemsOf, []);
   const m: any = DEPS_MANIFEST;
@@ -410,14 +443,35 @@ export default function DepsCard() {
                  * 带 ^ 的地址根本取不到东西。而 URL、落盘文件名、列表里显示的
                  * 版本必须指同一个版本，否则会出现"显示 12.0.0、实际装了 12.3.0"。
                  */}
+                {/*
+                 * 版本框用 datalist 而不是 select：既能从远端列表里挑，也能手填。
+                 * 只给 select 的话，拿不到列表（断网 / CDN 没这个包）就等于
+                 * 完全装不了 —— 而这两件事是独立的失败域。
+                 */}
                 <input
                   className="p-input dep-ver"
+                  list={depListId(spec, nameKey)}
                   style={{ width: '108px', fontSize: 'var(--fs-12, 12px)', padding: '0 8px' }}
                   value={ver[k] ?? (spec ? pinnedVersionOf(spec.version).version : '')}
                   placeholder={spec ? pinnedVersionOf(spec.version).version || '最新' : '版本'}
                   onChange={(e) => setVer({ ...ver, [k]: e.target.value })}
-                  title="要装的具体版本号，留空用声明里的版本"
+                  onFocus={() => loadVers(spec?.name || nameKey)}
+                  title="要装的具体版本号，留空用声明里的版本；点开可看到远端可用版本"
                 />
+                <datalist id={depListId(spec, nameKey)}>
+                  {(vers[spec?.name || nameKey] || []).map((v) => (
+                    <option key={v} value={v} />
+                  ))}
+                </datalist>
+                {versErr[spec?.name || nameKey] ? (
+                  /*
+                   * 取不到列表必须说一声，且要指明"可以手填"。
+                   * 不说的话用户只会看到下拉是空的，以为这个包没有版本可选。
+                   */
+                  <span className="dep-tag warn" title={versErr[spec?.name || nameKey]}>
+                    取不到版本列表，可手填
+                  </span>
+                ) : null}
                 <button
                   className="p-btn sm primary"
                   disabled={running || rtMissing}

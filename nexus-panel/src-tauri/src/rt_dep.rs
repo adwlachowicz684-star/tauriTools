@@ -200,3 +200,72 @@ pub fn fpx_rt_dep_remove(app: tauri::AppHandle, file: String) -> Result<bool, St
     fs::remove_file(&target).map_err(|e| format!("删除失败: {}", e))?;
     Ok(true)
 }
+
+/// npm 包名合法性。拼进 URL 之前必须过这一道。
+///
+/// 不校验的后果不是"报错难看"，而是能拼出任意路径段（比如 `../`），
+/// 请求被发到不该发的地方 —— 而由于目标是只读的 GET，表面上还看不出异常。
+fn is_npm_name(name: &str) -> bool {
+    if name.is_empty() || name.len() > 214 {
+        return false;
+    }
+    if name.contains("..") || name.contains("//") {
+        return false;
+    }
+    let chars_ok = name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@' | '/'));
+    if !chars_ok {
+        return false;
+    }
+    match name.matches('/').count() {
+        // 普通包名
+        0 => true,
+        // scope 包：必须是 @scope/name 这种形式
+        1 => name.starts_with('@') && name.len() > 2 && !name[1..].starts_with('/'),
+        _ => false,
+    }
+}
+
+/// 取回某包在 CDN 上的可用版本列表 —— 界面上那个版本下拉的数据来源。
+///
+/// 【为什么走后端而不是前端 fetch】
+/// 页面的 connect-src 只放行 self / ipc，前端直接 fetch 外部域名会被拦，
+/// 而报出来的是 CSP 违规而不是"网络不通"，很容易被误判成代码写错了。
+/// 这里与下载走同一条路（Rust 直连），CSP 一个字都不用改。
+///
+/// 【失败必须明确报，不能返回空列表】
+/// "这个包没有可用版本"和"这次没取到"是两种提示：后者要告诉用户可以手填。
+/// 返回空列表会把两者混成一种，用户会以为是包的问题。
+///
+/// 【为什么过滤掉预发布版本】
+/// `1.2.3-beta.1` 这类在 CDN 上未必有 `+esm` 构建，装进去可能是个空壳文件，
+/// 而报错离这一步已经很远。宁可少给几个选项。
+///
+/// 【为什么不在后端排序】
+/// 排序规则（自然序）前端 js/runtime-deps.js 的 cmpVersion 已经有一份，
+/// 两边各写一份迟早漂移，而漂移的表现只是"列表顺序怪怪的"，没人会去查。
+#[tauri::command]
+pub async fn fpx_rt_dep_versions(name: String) -> Result<Vec<String>, String> {
+    if !is_npm_name(&name) {
+        return Err(format!("包名不合法: {}", name));
+    }
+    let url = format!("https://data.jsdelivr.com/v1/package/npm/{}", name);
+    let text = fetch_text(&url).await?;
+    let v: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("版本列表解析失败: {}", e))?;
+    let arr = v
+        .get("versions")
+        .and_then(|x| x.as_array())
+        .ok_or_else(|| "版本列表里没有 versions 字段".to_string())?;
+    let out: Vec<String> = arr
+        .iter()
+        .filter_map(|x| x.get("version").and_then(|s| s.as_str()))
+        .map(|s| s.to_string())
+        .filter(|s| !s.contains('-'))
+        .collect();
+    if out.is_empty() {
+        return Err("没取到任何正式版本（可能是包名不对，或 CDN 上没有这个包）".into());
+    }
+    Ok(out)
+}

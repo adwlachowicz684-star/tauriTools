@@ -713,6 +713,104 @@ t('多版本时界面写明不会替你删旧版本', /不会<\/strong>替你删
 t('界面每一份都有独立的移除按钮（不是整包一个）',
   /onClick=\{\(\) => doRemove\(h\)\}/.test(card));
 
+/* ---------- 6. 版本列表（界面上的版本下拉） ---------- */
+/*
+ * 这一节守的是：版本下拉只是一条**辅助信息**，它一旦出问题不能连累
+ * "安装"本身。两者是独立的网络请求、独立的失败域。
+ */
+
+const rtSrc = read('js/runtime-deps.js');
+const rsSrc = read('src-tauri/src/rt_dep.rs');
+
+/** 只关心 versions 这一条命令的假 ctx。 */
+function vCtx(impl) {
+  let n = 0;
+  return {
+    n: () => n,
+    invoke: async (cmd, args) => {
+      n++;
+      return impl(cmd, args);
+    },
+  };
+}
+
+{
+  const ctx = vCtx(async () => ({
+    versions: ['12.0.0', '12.1.0', '11.9.0', '13.0.0-beta.1', '9.0.0', '10.0.0'],
+  }));
+  const r = await rt.fetchRuntimeDepVersions(ctx, 'mermaid');
+  t('版本列表过滤掉预发布版本', !r.list.some((v) => v.includes('-')), r.list.join(','));
+  t('版本列表按自然序倒序（10 排在 9 后面，而不是前面）',
+    r.list.join(',') === '12.1.0,12.0.0,11.9.0,10.0.0,9.0.0', r.list.join(','));
+}
+
+{
+  const ctx = vCtx(async () => ({ versions: Array.from({ length: 40 }, (_, i) => `${i}.0.0`) }));
+  const r = await rt.fetchRuntimeDepVersions(ctx, 'mermaid');
+  t('版本列表截断（不把几百个版本塞进下拉）', r.list.length === 30, `len=${r.list.length}`);
+}
+
+{
+  const ctx = vCtx(async () => {
+    throw new Error('command fpx_rt_dep_versions not found');
+  });
+  const r = await rt.fetchRuntimeDepVersions(ctx, 'mermaid');
+  t('后端未接入版本列表时不抛（界面照样能装）', r.missing === true && r.list.length === 0);
+}
+
+{
+  const ctx = vCtx(async () => {
+    throw new Error('下载失败 HTTP 502');
+  });
+  const r = await rt.fetchRuntimeDepVersions(ctx, 'mermaid');
+  t('取版本列表失败时返回 error 而不是抛', !!r.error && r.list.length === 0, String(r.error));
+  t('失败原因带得上后端给的原文', /502/.test(String(r.error)), String(r.error));
+}
+
+{
+  const ctx = vCtx(async () => ({ versions: [] }));
+  const r = await rt.fetchRuntimeDepVersions(ctx, 'mermaid');
+  t('后端给空列表时当成失败（否则界面会显示"没有版本可选"）', !!r.error && r.list.length === 0);
+}
+
+{
+  const ctx = vCtx(async () => ({}));
+  await rt.fetchRuntimeDepVersions(ctx, '');
+  t('包名为空时一个请求都不发', ctx.n() === 0, `n=${ctx.n()}`);
+}
+
+/* 装包这条路径**不能**依赖版本列表 —— 拿不到列表就该还能手填装 */
+t('installRuntimeDep 不依赖版本列表（两者是独立失败域）',
+  !/fetchRuntimeDepVersions/.test(rtSrc.split('export async function installRuntimeDep')[1] || ''));
+
+/* 后端：拼 URL 之前必须校验包名，否则能拼出任意路径段 */
+t('后端取版本列表前校验包名（不能直接拼进 URL）',
+  /fn is_npm_name/.test(rsSrc) && /if !is_npm_name\(&name\)/.test(rsSrc));
+t('包名校验挡得住 .. 与多级路径',
+  /name\.contains\("\.\."\)/.test(rsSrc) && /matches!\(c, '\.' \| '_' \| '-' \| '@' \| '\/'\)/.test(rsSrc));
+t('版本列表走 https（与下载同一条路，CSP 不用改）',
+  /https:\/\/data\.jsdelivr\.com\/v1\/package\/npm\//.test(rsSrc));
+t('后端过滤预发布版本', /!s\.contains\('-'\)/.test(rsSrc));
+/*
+ * 顺序只有一个地方说了算（前端 cmpVersion）。后端再排一次就会变成两份
+ * 排序规则，而漂移的表现只是"列表顺序怪怪的"，没人会去查。
+ */
+t('后端不另排一次序（排序规则只在 cmpVersion 一处）',
+  !/out\.sort\(\)/.test(rsSrc) && /排序规则/.test(rsSrc));
+
+/* 界面 */
+t('版本框绑定了 datalist（能挑）', /list=\{depListId\(spec, nameKey\)\}/.test(card));
+t('datalist 渲染出选项', /<datalist id=\{depListId\(spec, nameKey\)\}>/.test(card));
+t('只在点开版本框时才去拉列表（不是打开设置页就发一堆请求）',
+  /onFocus=\{\(\) => loadVers\(spec\?\.name \|\| nameKey\)\}/.test(card));
+t('datalist 的 id 做了字符清洗（scope 包名里的 @ 和 / 会毁掉选择器）',
+  /function depListId/.test(card) && /replace\(\/\[\^A-Za-z0-9\]\/g, '_'\)/.test(card));
+t('取不到版本列表时给出提示', /取不到版本列表，可手填/.test(card));
+t('取不到版本列表时把原因留在 title 上（不是只留一句"失败"）',
+  /title=\{versErr\[spec\?\.name \|\| nameKey\]\}/.test(card));
+t('版本列表失败不禁用「安装」按钮（还能手填装）',
+  /disabled=\{running \|\| rtMissing\}/.test(card) && !/disabled=\{[^}]*versErr/.test(card));
+
 console.log(`\n运行时依赖：${pass} 通过 / ${fails.length} 失败`);
 for (const f of fails) console.log('  ✗ ' + f);
 process.exit(fails.length ? 1 : 0);
