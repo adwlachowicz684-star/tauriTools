@@ -10617,6 +10617,100 @@ group('浮层必须能用 Escape 关掉（外壳的 dialog 能，插件的不能
   clearAll();
 }
 
+group('写盘失败不能被随后的「已重命名 / 已新建」盖掉');
+
+{
+  /*
+   * 继 BUG 23（store.set 吞异常返回 false）之后的**第二层**问题：
+   * 那一轮给所有写点套上了 saveStore（会判返回值、失败时写一句红字），
+   * 但有几处的调用方**不判返回值**，紧接着又无条件写了一句成功文案 ——
+   * saveStore 刚写的「保存失败：…」当场被盖掉。
+   *
+   * 后果正是 store.js 注释里点名要防的假成功：
+   *   界面说「已重命名」，重开插件名字变回旧的；
+   *   界面说「已新建」，重开列表里没有它（内容留在 doc:<id> 成了孤儿）。
+   */
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+
+  /**
+   * 把 index.js 按顶层 `async function` / `function` 切成若干函数体。
+   * 只切到下一个同缩进的 `  }` 为止，够用。
+   */
+  function fnBodies(src) {
+    const out = [];
+    const re = /^  (?:async )?function (\w+)\s*\(/gm;
+    let m;
+    const at = [];
+    while ((m = re.exec(src))) at.push({ name: m[1], i: m.index });
+    for (let k = 0; k < at.length; k++) {
+      const end = k + 1 < at.length ? at[k + 1].i : src.length;
+      out.push({ name: at[k].name, body: src.slice(at[k].i, end) });
+    }
+    return out;
+  }
+
+  /** 去掉注释，否则注释里引用的 saveStore/status 会被当成真实调用 */
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+  const offenders = [];
+  for (const f of fnBodies(idx)) {
+    const code = strip(f.body);
+    // 找所有 saveStore 调用，看它所在的这条语句是不是 `if (!await saveStore(`
+    const re = /(if\s*\(\s*!\s*)?await\s+saveStore\(/g;
+    let m;
+    while ((m = re.exec(code))) {
+      const checked = !!m[1];
+      if (checked) continue;
+      // 未判返回值：这条调用**之后**，函数里还能出现「成功态」status 吗？
+      const rest = code.slice(m.index + m[0].length);
+      const sre = /status\(\s*(['"`])((?:\\.|(?!\1).)*)\1\s*\)/g;
+      let sm;
+      while ((sm = sre.exec(rest))) {
+        // 带 `, true` 的是告警，不算成功文案
+        const tail = rest.slice(sm.index + sm[0].length, sm.index + sm[0].length + 12);
+        if (!/,\s*true\s*\)/.test(tail)) {
+          offenders.push(`${f.name}(): ${sm[2].slice(0, 20)}`);
+        }
+      }
+    }
+  }
+  eq(offenders.length, 0,
+    '未判 saveStore 返回值的调用点，其后不得再写成功文案（会盖掉失败提示）'
+    + (offenders.length ? ' → ' + offenders.join(' / ') : ''));
+
+  // 三处修复本身：必须判返回值
+  for (const [fn, key] of [['renameFile', '文件列表'], ['renameFolder', '文件夹列表'], ['createFile', '文件列表']]) {
+    const f = fnBodies(idx).find((x) => x.name === fn);
+    ok(!!f, `有 ${fn}()`);
+    const code = strip(f.body);
+    ok(new RegExp(`if\\s*\\(\\s*!\\s*await\\s+saveStore\\('${key}'`).test(code),
+      `${fn}()：${key} 写入必须判返回值（否则失败被成功文案盖掉）`);
+  }
+
+  // 回滚：写失败要把内存里的改动撤回来，不能停在"看起来改好了"的样子
+  {
+    const rf = strip(fnBodies(idx).find((x) => x.name === 'renameFile').body);
+    ok(/const\s+prevName\s*=\s*f\.name;/.test(rf), 'renameFile：改动前先存旧名字');
+    ok(/f\.name\s*=\s*prevName;/.test(rf), 'renameFile：写失败回滚名字');
+    const rf2 = strip(fnBodies(idx).find((x) => x.name === 'renameFolder').body);
+    ok(/fo\.name\s*=\s*prevName;/.test(rf2), 'renameFolder：写失败回滚名字');
+    const cf = strip(fnBodies(idx).find((x) => x.name === 'createFile').body);
+    ok(/fileIndex\.pop\(\);/.test(cf), 'createFile：写失败把新项从内存撤回来');
+  }
+
+  // 切文件：switchToFile 必须把「设置没写成功」交回调用方
+  {
+    const st = strip(fnBodies(idx).find((x) => x.name === 'switchToFile').body);
+    ok(/return\s+okSettings;/.test(st), 'switchToFile：返回设置写入结果（供调用方带上后果）');
+    const of = strip(fnBodies(idx).find((x) => x.name === 'openFile').body);
+    ok(/remembered\s*\?\s*''\s*:\s*'（未能记住/.test(of), 'openFile：没记住要说出来，不能被「已打开」盖掉');
+    // deleteFile 也会切文件（删掉当前文件时），同样不能把提示盖掉
+    const df = strip(fnBodies(idx).find((x) => x.name === 'deleteFile').body);
+    ok(/remembered\s*\?\s*''\s*:\s*'（未能记住/.test(df), 'deleteFile：切到别的文件时也不能盖掉「未记住」');
+    ok(/let\s+remembered\s*=\s*true;/.test(df), 'deleteFile：remembered 初值为 true（没切文件就不该报）');
+  }
+}
+
 /* ============================================================
    结果
    ============================================================ */

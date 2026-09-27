@@ -882,12 +882,21 @@ bootIframePlugin(async (ctx) => {
   }
 
   /** 只做「载入并切换」，不保存当前文件（保存由 openFile 负责） */
+  /**
+   * 切到另一个脑图文件。
+   *
+   * @returns {Promise<boolean>} 设置（lastFileId）是否写成功。
+   *   返回它是因为**每个**调用方在切换之后都会再写一句状态
+   *   （「已打开：…」「已删除：…」），那会把 saveStore 的失败提示直接盖掉 ——
+   *   于是「下次启动回到上一个文件」这件要紧事一句都不说。
+   *   调用方拿到 false 时要把这个后果带进自己的那句话里。
+   */
   async function switchToFile(id) {
     currentFileId = id;
     settings.lastFileId = id;
     // 写失败（配额）只是"下次启动回到上一个文件"，不拦住切换本身 ——
     // 但必须说出来，否则用户以为记住了。
-    await saveStore('设置', () => store.settings.save(settings));
+    const okSettings = await saveStore('设置', () => store.settings.save(settings));
     workbook = (await store.doc(id).load()) || wb.newWorkbook();
     workbook.sheets = wb.normalizeSheets(workbook.sheets);
     resetHistory();
@@ -895,6 +904,7 @@ bootIframePlugin(async (ctx) => {
     renderFiles();
     await loadSheet();
     updateBadge();
+    return okSettings;
   }
 
   /** 打开另一个脑图文件：先收当前编辑并落盘，失败则拒绝切换（避免丢内容） */
@@ -904,8 +914,9 @@ bootIframePlugin(async (ctx) => {
     capture();
     const saved = await persist();
     if (!saved) { status('切换失败：当前脑图没能保存', true); return; }
-    await switchToFile(id);
-    status('已打开：' + (fileIndex.find((f) => f.id === id)?.name || ''));
+    const remembered = await switchToFile(id);
+    status('已打开：' + (fileIndex.find((f) => f.id === id)?.name || '')
+      + (remembered ? '' : '（未能记住：下次启动会回到上一个文件）'));
   }
 
   async function createFile(folderId = null) {
@@ -924,7 +935,24 @@ bootIframePlugin(async (ctx) => {
     let n = 1;
     while (fileIndex.some((f) => f.name === name)) name = `${base} ${++n}`;
     fileIndex.push({ id, name, folderId });
-    await saveStore('文件列表', () => store.files.save(fileIndex));
+    /*
+     * 必须判返回值：早先这里 `await saveStore(...)` 之后无条件
+     * `status('已新建：' + name)` —— 而 saveStore 失败时**已经**写过一句
+     * 「保存失败：文件列表未能写入本地库」，紧接着就被这句成功文案盖掉了。
+     * 用户看到「已新建」，下次启动列表里却没有它（内容留在 doc:<id> 成了孤儿）。
+     *
+     * 写失败要把内存里的这一项撤回来，并且不能切过去 —— 切过去之后
+     * currentFileId 指向一个下次不存在的 id。
+     */
+    if (!await saveStore('文件列表', () => store.files.save(fileIndex))) {
+      fileIndex.pop();
+      // 内容已经写进 doc:<id> 了，要清掉，否则就是一个没人引用的孤儿键。
+      // store.js 里的 docKeys() 至今**没有调用方**（没有启动时的孤儿回收），
+      // 所以这里不清理就永远留着。走 saveStore 是为了让失败也说出来 ——
+      // 裸调 `.del()` 的话写失败没人知道，和本次要修的毛病是同一类。
+      await saveStore('脑图内容', () => store.doc(id).del());
+      return;
+    }
     renderFiles();
     status('已新建：' + name);
     await openFile(id);
@@ -935,8 +963,19 @@ bootIframePlugin(async (ctx) => {
     if (!f) return;
     const name = await askText({ label: '脑图名称', defaultValue: f.name });
     if (name == null) return;
+    const prevName = f.name;
     f.name = name.trim() || f.name;
-    await saveStore('文件列表', () => store.files.save(fileIndex));
+    /*
+     * 判返回值 + 回滚，理由同 createFile：
+     * saveStore 失败时写的「保存失败」会被下面的 `status('已重命名')` 盖掉，
+     * 于是界面说改好了、下次启动又变回旧名字 —— 正是 store.js 注释里
+     * 点名要防的那种「假成功」。
+     */
+    if (!await saveStore('文件列表', () => store.files.save(fileIndex))) {
+      f.name = prevName;
+      renderFiles();
+      return;
+    }
     renderFiles();
     status('已重命名');
   }
@@ -962,12 +1001,14 @@ bootIframePlugin(async (ctx) => {
       return;
     }
     await saveStore('脑图内容', () => store.doc(id).del());
+    let remembered = true;
     if (id === currentFileId) {
-      if (fileIndex.length) await switchToFile(fileIndex[0].id);
+      if (fileIndex.length) remembered = await switchToFile(fileIndex[0].id);
       else await createFile(null);        // 删光了也要能继续用
     }
     renderFiles();
-    status('已删除：' + f.name);
+    status('已删除：' + f.name
+      + (remembered ? '' : '（未能记住：下次启动会回到上一个文件）'));
   }
 
   async function createFolder() {
@@ -990,8 +1031,14 @@ bootIframePlugin(async (ctx) => {
     if (!fo) return;
     const name = await askText({ label: '文件夹名称', defaultValue: fo.name });
     if (name == null) return;
+    const prevName = fo.name;
     fo.name = name.trim() || fo.name;
-    await saveStore('文件夹列表', () => store.folders.save(foldersList));
+    // 同 renameFile：写失败的「保存失败」不能被成功文案盖掉
+    if (!await saveStore('文件夹列表', () => store.folders.save(foldersList))) {
+      fo.name = prevName;
+      renderFiles();
+      return;
+    }
     renderFiles();
     // 必须有这句：renameFile 说完「已重命名」就结束了，这里原本什么都不说。
     // 同一个列表里两种重命名，一个有回执一个没有，用户会以为文件夹改名没生效
