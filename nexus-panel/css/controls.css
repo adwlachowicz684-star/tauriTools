@@ -1751,6 +1751,17 @@ input[type='range']:disabled {
 
 /* 拖拽容器：本身不设观感，但要有定义 ——
    没有定义的类名等于裸奔，间距全靠继承，各组之间会挤成一片。 */
+/* 插件管理里的分组标题（"应用 · 6" 这类）。
+   没样式的表现：分组名与卡片区贴在一起，且分组名跟普通卡片一个字号，
+   看不出它是分组 —— 于是"这类插件一个都没有"和"这类插件没被列出来"
+   看起来一样（App.tsx 里那段注释就是这个意思）。 */
+.pg-group-head {
+  font-size: var(--fs-11, 11px);
+  color: var(--text-mute);
+  letter-spacing: .04em;
+  padding: var(--sp-4, 8px) 0 var(--sp-3, 6px);
+}
+
 .pg-group-items { display: flex; flex-direction: column; }
 
 /* .pg-group-head（分组标题）已随"三组堆叠 → 三个页签"一起移除：

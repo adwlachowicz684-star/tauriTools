@@ -10,31 +10,11 @@
  *
  * 所以：能用后端就用后端，用不了才退前端，两条都不成就明确报 false，
  * 由调用方提示 —— 绝不允许"点了没反应"。
+ *
+ * 【实现已上移到 js/clipboard.js】
+ * 设置页的「依赖」页签同样要复制（安装命令）。各写一份的话，
+ * 将来某一处改了降级顺序，另一处就变成"复制失败但不报错"。
+ * 本文件保留导出，md 内的调用方不用改。
  */
 
-/**
- * @param {{invoke?: Function}|null|undefined} ctx
- * @param {string} text
- * @returns {Promise<boolean>}
- */
-export async function copyText(ctx, text) {
-  if (!text) return false;
-
-  if (typeof ctx?.invoke === 'function') {
-    try {
-      await ctx.invoke('fpx_copy_text', { text });
-      return true;
-    } catch {
-      /* 落到下面走前端兜底。
-         不在这里 return false：后端失败不代表前端也失败，
-         直接判死会把本来能复制的场景变成"点不动"。 */
-    }
-  }
-
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
+export { copyText } from '../../js/clipboard.js';

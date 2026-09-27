@@ -67,6 +67,12 @@ import FilesCard from './FilesCard';
  * 而恰恰是「找不到了」才想删它。
  */
 import FavDirsCard from './FavDirsCard';
+/*
+ * 依赖：工具里所有依赖的统一视图（npm 包 + Rust crate）。
+ * 放在「插件」旁边，是因为插件能不能跑起来直接取决于依赖在不在 ——
+ * 两者是一件事的两面，分开放会让人只在插件出问题时才想起查依赖。
+ */
+import DepsCard from './DepsCard';
 import WindowCard from './WindowCard';
 import UpdateCard from './UpdateCard';
 import SettingGroup from '../../src/components/SettingGroup';
@@ -79,7 +85,7 @@ import SandboxSection from '../../src/components/SandboxSection';
 import { prompt } from '../../js/dialog.js';
 import { SHELL_SHORTCUT_SPECS, shellComboSet, normCombo } from '../../js/shell-shortcuts.js';
 
-type TabKey = 'theme' | 'plugins' | 'external' | 'files' | 'shortcuts' | 'favdirs' | 'window' | 'update' | 'about';
+type TabKey = 'theme' | 'plugins' | 'deps' | 'external' | 'files' | 'shortcuts' | 'favdirs' | 'window' | 'update' | 'about';
 
 /**
  * styleParams() 住在 js/themes.js（JS，没有类型声明），返回的每项结构是
@@ -112,6 +118,7 @@ function shellGlobal(): any {
 const TABS: [TabKey, string][] = [
   ['theme', '主题'],
   ['plugins', '插件'],
+  ['deps', '依赖'],
   ['external', '外链'],
   ['files', '文件'],
   ['shortcuts', '快捷键'],
@@ -1693,6 +1700,9 @@ export default function Settings() {
         </>
       ) : null}
 
+
+      {/* ---------------- 依赖 ---------------- */}
+      {tab === 'deps' ? <DepsCard /> : null}
 
       {/* ---------------- 外链 ---------------- */}
       {tab === 'external' ? <ExternalCard /> : null}
