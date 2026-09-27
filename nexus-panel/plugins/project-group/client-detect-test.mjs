@@ -44,13 +44,26 @@ console.log('\n=== 3. 一个都没检出 → 引导登记 ===');
   t('不是"只剩兜底"', r.fallbackOnly === false);
 }
 
-console.log('\n=== 4. 只剩兜底项 → 必须说清楚（核心）===');
+console.log('\n=== 4. 兜底项与"真装了"必须分开（核心）===');
 {
-  const r = summarizeDetection([C('opencode', 'opencode')]);
-  t('数量为 1', r.count === 1);
-  t('标记为"只剩兜底"', r.fallbackOnly === true);
-  t('提示里点明这可能只是兜底', /兜底/.test(r.hint), r.hint);
-  t('提示里点明"并非真的检测到"', /并非真的检测|而非真的/.test(r.hint), r.hint);
+  /* 真装了 opencode：installed 为 true，就是普通的一个检出项。
+     早先按"总数恰为 1 且是 opencode"判成兜底，于是明明装了却被
+     告知"这可能只是兜底，而非真的检测到它" —— 主动给出与事实相反的判断。 */
+  const r = summarizeDetection([C('opencode', 'opencode', true)]);
+  t('真装了 → 数量为 1', r.count === 1);
+  t('真装了 → 不算"只剩兜底"', r.fallbackOnly === false);
+  t('真装了 → 不显示兜底告警', r.hint === '', r.hint);
+  t('真装了 → 名字正常列出', r.names === 'opencode', r.names);
+}
+{
+  /* 后端 detect() 一个都没检出时塞进来的兜底项，installed 为 false。
+     这才是真正要说清楚"并非真的检测到它"的场景。 */
+  const r = summarizeDetection([C('opencode', 'opencode', false)]);
+  t('真兜底 → 数量为 0', r.count === 0);
+  t('真兜底 → 标记为"只剩兜底"', r.fallbackOnly === true);
+  t('真兜底 → 提示里点明这只是兜底', /兜底/.test(r.hint), r.hint);
+  t('真兜底 → 提示里点明"并非真的检测到"', /并非真的检测/.test(r.hint), r.hint);
+  t('真兜底 → 仍给出登记引导', /自定义客户端/.test(r.hint), r.hint);
 }
 {
   /* 装了 opencode **还装了别的** → 不是兜底，不该有那条提示 */

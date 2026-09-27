@@ -40,10 +40,14 @@ export const FALLBACK_CLIENT_ID = 'opencode';
 /**
  * 汇总检测结果。
  *
- * 为什么"只剩 opencode"要单独提示：`detect()` 在**一个都没检出**时会强制把
- * opencode 塞进列表（原版同样处理）。所以列表里看到 opencode 有两种可能 ——
- * 真的装了，或者只是兜底。数量上无法区分，但"总数恰好为 1 且就是它"
- * 基本可以断定是兜底，此时不说清楚，用户会以为自己装好了。
+ * 区分「真装了 opencode」与「只是兜底」**只能靠 installed**：
+ * `detect()` 在一个都没检出时塞进来的那个 opencode 带 `installed:false`，
+ * 而真装了时它是 `installed:true`。两者在数量与名字上完全一样。
+ *
+ * 早先按「总数恰为 1 且就是它」判，两头都错：
+ *   · `found` 已过滤掉 `installed:false`，兜底项根本不在里面 → 真兜底时永远判不出；
+ *   · 真装了 opencode 时反而命中 → 界面告诉用户"这可能只是兜底，而非真的检测到它"，
+ *     而他明明装了。这不是少给信息，是**主动给出一个与事实相反的判断**。
  */
 export function summarizeDetection(list: ChainClient[]): DetectSummary {
   const found = (list ?? []).filter((c) => c.installed);
@@ -52,13 +56,14 @@ export function summarizeDetection(list: ChainClient[]): DetectSummary {
      而剥离器会把紧跟右括号的 `|| x` 当成类型联合给删掉（见 testkit.mjs）。 */
   const labels = found.map((c) => (c.name ? c.name : c.id));
   const names = labels.join('、');
-  const fallbackOnly = count === 1 && found[0]?.id === FALLBACK_CLIENT_ID;
+  const fallback = (list ?? []).find((c) => c.id === FALLBACK_CLIENT_ID && !c.installed);
+  const fallbackOnly = count === 0 && !!fallback;
 
   let hint = '';
-  if (count === 0) {
+  if (fallbackOnly) {
+    hint = `一个都没检测到，列表里的 ${fallback?.name || FALLBACK_CLIENT_ID} 只是"一个都没检出"时的兜底项，并非真的检测到它。可点「自定义客户端」手动登记。`;
+  } else if (count === 0) {
     hint = '一个都没检测到。可点「自定义客户端」手动登记，否则发送时会退回到 opencode。';
-  } else if (fallbackOnly) {
-    hint = `只检出 ${found[0]?.name || FALLBACK_CLIENT_ID}，这很可能只是"一个都没检出"时的兜底项，而非真的检测到它。`;
   }
   return { count, names, hint, fallbackOnly };
 }
