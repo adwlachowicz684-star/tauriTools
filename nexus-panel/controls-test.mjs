@@ -2226,8 +2226,14 @@ console.log('\n=== 38. 类型收紧代替非空断言（boot 就绪由调用方�
    * ESM 是严格模式 → 拖完日志分隔条松手那一下直接 ReferenceError。
    * 一直没被发现是因为不拖分隔条就走不到这条路径。
    */
-  t('保存日志高度时用的是 logHeight 而不是未定义的 logRowHeight',
-    /saveLayout\(\{\s*logRowHeight:\s*logHeight\s*\}\)/.test(lm));
+  /* 判据钉**语义**而不是变量名：这里只要"显式取了某个已声明的值"就对。
+     此前钉的是字面量 `logRowHeight: logHeight`，而上游把取值改成了
+     `next`（= logHeightRef.current），语义完全正确却照样报红 ——
+     又一次"钉写法不钉语义"。真正要防的是下面那条：裸简写。 */
+  const lmSave = /saveLayout\(\{\s*logRowHeight:\s*([^}\s]+)\s*\}\)/.exec(stripComments(lm));
+  t('保存日志高度时显式取值（不是裸简写）',
+    !!lmSave && lmSave[1] !== 'logRowHeight',
+    lmSave ? `取值=${lmSave[1]}` : '未找到 saveLayout({ logRowHeight: … })');
   /*
    * 必须先剥注释再匹配：上面修复时我把"曾写成 saveLayout({ logRowHeight })"
    * 这句话写进了注释里，不剥注释的话这条断言会匹配到注释本身而永远报红
