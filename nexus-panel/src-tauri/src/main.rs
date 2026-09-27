@@ -11,16 +11,27 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 mod af_flow;
 mod fpx;
 /*
- * updater / dupview 的 mod 声明。
+ * updater / dupview / rt_dep 的 mod 声明。
  *
- * ⚠️ 这两条被同步提交覆盖丢过多次（第 5 次了）。丢了的表现极难定位：
- *    .rs 文件还在、命令也都标了 #[tauri::command]，但少了 `mod` 声明
- *    这个文件就**不参与编译** —— 编译不报错（main.rs 没引用它，Rust 根本不看），
- *    运行时才报 "command not found"，界面上就是「检查更新」点了没反应。
- *    一致性扫描器（command-consistency-test.mjs 第 ⑥ 组）专盯这个。
+ * ⚠️ 这三行被同步提交覆盖丢过多次（updater / dupview 各 5 次以上）。
+ *    少了 `mod` 声明，那个 .rs 文件就**不参与编译** —— 文件还在、
+ *    命令也都标了 #[tauri::command]，看起来一切正常。
+ *
+ * 【但三者的后果不同，不能一律当成"运行时 command not found"】
+ *   · updater / dupview 缺了 → **编译照样过**。因为 main.rs 除了这里的
+ *     mod 声明之外没有别处引用模块名，Rust 根本不看那个文件。
+ *     运行时才报 "command not found"，界面上是「检查更新」点了没反应。
+ *   · rt_dep 缺了 → **编译直接失败（E0433）**。因为 generate_handler! 里
+ *     写的是 `rt_dep::fpx_rt_dep_list` 这种带模块名的路径，模块未声明
+ *     就是 unresolved module，cargo build 立刻红。
+ *
+ * 也就是说 rt_dep 这条不是"功能静默失效"，是**项目根本构建不出来** ——
+ * 比前两条严重一档。一致性扫描器（command-consistency-test.mjs 第 ⑥ 组）
+ * 只报"不参与编译"，不区分这两档，所以这里写明，免得被当成同一类略过。
  */
 mod updater;
 mod dupview;
+mod rt_dep;
 
 /// 连通性测试：前端 ctx.invoke('rust_ping', { payload })
 #[tauri::command]

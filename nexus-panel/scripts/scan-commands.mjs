@@ -348,7 +348,26 @@ say('⑤ 同名命令定义了多份（只有一份会被注册）', dups,
       return !declared.has(path.basename(dir));
     })
     .sort();
-  say('⑥ .rs 文件没有对应的 mod 声明（不参与编译）', orphans,
+  /*
+   * 同一个"缺 mod 声明"，后果分两档，必须分开说 —— 不分开就会被当成
+   * 同一类略过（rt_dep 那次就是这么漏掉的）：
+   *
+   *   档 1 编译必失败（E0433）：generate_handler! 里写了 `rt_dep::fxxx`
+   *        这种带模块名的路径。模块没声明就是 unresolved module，
+   *        cargo build 立刻红 —— **整个项目构建不出来**，不是某个功能失效。
+   *   档 2 静默失效：main.rs 没有别处引用模块名，Rust 根本不看那个文件，
+   *        编译照样过，运行时才 command not found（updater / dupview 属于这档）。
+   *
+   * 报告里写明是哪一档，否则修的人按"回头再说"处理，就变成构建挂掉。
+   */
+  const referencedMods = new Set([...registered.values()].filter(Boolean));
+  const labelled = orphans.map((rel) => {
+    const base = path.basename(rel, '.rs');
+    return referencedMods.has(base)
+      ? `${rel}   ← 编译必失败（注册列表引用了 ${base}:: ，E0433）`
+      : `${rel}   ← 编译能过，但运行时 command not found`;
+  });
+  say('⑥ .rs 文件没有对应的 mod 声明（不参与编译）', labelled,
     '整个文件都不会被编译 —— 在里面改代码不会有任何效果');
 }
 

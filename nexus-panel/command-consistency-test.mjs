@@ -212,6 +212,56 @@ console.log('\n--- 7. 真实仓库自检 ---');
 }
 
 /* ---------------------------------------------------------------- */
+/*
+ * 7b. ⑥ 必须分两档："编译必失败" 与 "编译能过但运行时失效"
+ *
+ * 由来：rt_dep.rs 丢过一次 mod 声明。当时 ⑥ 报的是
+ * "整个文件都不会被编译 —— 在里面改代码不会有任何效果"，
+ * 而 updater / dupview 丢的时候也是这句 —— 于是三件事被当成同一类。
+ * 但 rt_dep 缺了是 **cargo build 直接失败**（注册列表写了 rt_dep:: 前缀），
+ * 另外两个缺了是编译照过、运行时才 command not found。
+ * 措辞一样 → 修的人按"回头再说"处理 → 项目构建挂掉。
+ */
+console.log('\n--- 7b. ⑥ 分档：编译必失败 vs 运行时才失效 ---');
+{
+  /* 档 1：注册列表带模块名引用 → 必失败 */
+  const a = run({
+    mainRs: [
+      'fn main(){}',
+      '.invoke_handler(tauri::generate_handler![',
+      '  rt_dep::fpx_rt_dep_list,',
+      '])',
+      '',
+    ].join('\n'),
+    extra: { 'rt_dep.rs': '#[tauri::command]\npub fn fpx_rt_dep_list() -> String { "".into() }\n' },
+    policy: POLICY,
+    caps: { fpx_rt_dep_list: 'M' },
+  });
+  const secA = a.out.split('⑥')[1] || '';
+  t('被引用却没 mod 声明 → 报"编译必失败"', /编译必失败/.test(secA), secA.slice(0, 200));
+  t('点明是 E0433', /E0433/.test(secA));
+  t('指明是哪个模块', /rt_dep/.test(secA));
+
+  /* 档 2：没有别处引用模块名 → 编译能过 */
+  const b = run({
+    mainRs: [
+      'fn main(){}',
+      '.invoke_handler(tauri::generate_handler![',
+      '  app_version,',
+      '])',
+      '',
+    ].join('\n'),
+    extra: { 'a.rs': '#[tauri::command]\npub fn app_version() -> String { "1".into() }\n' },
+    policy: POLICY,
+    caps: { app_version: 'R' },
+  });
+  const secB = b.out.split('⑥')[1] || '';
+  t('没被引用且没 mod 声明 → 不谎报"编译必失败"', !/编译必失败/.test(secB), secB.slice(0, 200));
+  /* 两档互斥：同一条不能既说必失败又说能过（措辞必须真的分开了） */
+  t('两档措辞互斥', /编译必失败/.test(secA) !== /编译必失败/.test(secB));
+}
+
+/* ---------------------------------------------------------------- */
 console.log('\n--- 8. 白名单解析不出来必须报错（不能静默当 0 条）---');
 {
   const { out, code } = run({
