@@ -42,6 +42,16 @@ pub struct RtDep {
     pub size: u64,
 }
 
+/// 整包卸载的结果。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PurgeResult {
+    pub name: String,
+    /// 实际删掉的份数。0 = 这个包本来就没装（不算失败）。
+    pub removed: usize,
+    pub files: Vec<String>,
+}
+
 /// deps 目录。不存在就建 —— 首次安装时它必然不存在，
 /// 不建的话后面的写入会失败，而错误信息指向写文件而不是目录缺失。
 fn deps_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -57,15 +67,22 @@ fn deps_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// 包名安全化：与前端 js/runtime-deps.js 的 safeNameOf 必须一致。
+///
+/// 单独抽出来，是因为"整包卸载"要按它算前缀 —— 前缀规则再写一份，
+/// 就可能和落盘规则漂移（见 fpx_rt_dep_purge）。
+fn safe_name_of(name: &str) -> String {
+    name.chars()
+        .map(|c| if c == '@' || c == '/' || c == '\\' { '_' } else { c })
+        .collect()
+}
+
 /// 文件名安全化：与前端 js/runtime-deps.js 的 safeFileOf 必须一致。
 ///
 /// 两边不一致的后果：前端按 A 名字去 import，后端按 B 名字落盘 ——
 /// 安装报成功，加载永远找不到文件，且不报错。
 fn safe_file_of(name: &str, version: &str) -> String {
-    let n: String = name
-        .chars()
-        .map(|c| if c == '@' || c == '/' || c == '\\' { '_' } else { c })
-        .collect();
+    let n = safe_name_of(name);
     let v: String = version
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
@@ -199,6 +216,47 @@ pub fn fpx_rt_dep_remove(app: tauri::AppHandle, file: String) -> Result<bool, St
     }
     fs::remove_file(&target).map_err(|e| format!("删除失败: {}", e))?;
     Ok(true)
+}
+
+/// 整包卸载：把一个包在 deps 目录里的**所有文件**一次删掉。
+///
+/// 【为什么需要它，而不只是逐条 remove】
+/// 一个包可能装着多份（换过声明版本后旧文件仍在），逐条删要求每一份都
+/// 在界面上有对应的一行。而"已装但清单里没有"的那些（装过之后又从
+/// package.json 移除）压根不会出现在清单行里 —— 界面看不见，也就删不掉，
+/// 只能在磁盘上越堆越多。整包卸载按包名走，与清单无关。
+///
+/// 【判归属必须用 `安全名 + "@"` 前缀，不能用 startsWith(name)】
+/// 反例：包 `md` 的前缀 `md@` 不会误伤 `md-viewer@1.0.0.mjs`；
+/// 而按 `startsWith("md")` 判就会把它一起删掉 —— **跨包删除**，
+/// 且被删的那个在界面上根本没出现过，用户无从察觉。
+///
+/// 【删不掉要报，不能跳过继续】
+/// 单个文件删除失败（被占用 / 权限）如果静默跳过，返回成功，
+/// 用户刷新后看到"还有一份" —— 那时已经不知道是没删还是又装回来了。
+#[tauri::command]
+pub fn fpx_rt_dep_purge(app: tauri::AppHandle, name: String) -> Result<PurgeResult, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("包名为空".into());
+    }
+    let prefix = format!("{}@", safe_name_of(&name));
+    let dir = deps_dir(&app)?;
+    let rd = fs::read_dir(&dir).map_err(|e| format!("读取 deps 目录失败: {}", e))?;
+    let mut files: Vec<String> = Vec::new();
+    for entry in rd.flatten() {
+        let f = entry.file_name().to_string_lossy().to_string();
+        if !f.ends_with(".mjs") || !f.starts_with(&prefix) {
+            continue;
+        }
+        fs::remove_file(dir.join(&f)).map_err(|e| format!("删除 {} 失败: {}", f, e))?;
+        files.push(f);
+    }
+    Ok(PurgeResult {
+        name,
+        removed: files.len(),
+        files,
+    })
 }
 
 /// npm 包名合法性。拼进 URL 之前必须过这一道。

@@ -819,6 +819,126 @@ t('取不到版本列表时把原因留在 title 上（不是只留一句"失败
 t('版本列表失败不禁用「安装」按钮（还能手填装）',
   /disabled=\{running \|\| rtMissing\}/.test(card) && !/disabled=\{[^}]*versErr/.test(card));
 
+
+/* ---------- 8. 整包卸载（purge）—— 残留必须看得见、删得掉 ---------- */
+
+/*
+ * 这一组守的是"清理"这一侧。
+ *
+ * 缺口从哪来：DepsCard 按 js/deps-manifest.js **逐行**渲染，而运行时依赖
+ * 是装进工具目录的、与清单无关。于是一个包装过之后又被从 package.json
+ * 删掉，它就再也不会出现在任何一行里 —— **看不见，就删不掉**，
+ * 只能在磁盘上越堆越多。整包卸载按包名走，与清单里还有没有这一项无关。
+ */
+
+t('CMD_PURGE 常量存在（前端与后端对同一个命令名）', rt.CMD_PURGE === 'fpx_rt_dep_purge');
+
+/* ① 归属判定：必须用「安全名 + @」前缀，不能 startsWith(name) */
+t('safeNameOf 把 scope 包的 @ 和 / 换掉', rt.safeNameOf('@plantuml/core') === '_plantuml_core',
+  rt.safeNameOf('@plantuml/core'));
+t('depPrefixOf 是 安全名 + @', rt.depPrefixOf('@plantuml/core') === '_plantuml_core@', rt.depPrefixOf('@plantuml/core'));
+/*
+ * 跨包删除是这条链路上最坏的一类错：被删的那个包在界面上从没出现过，
+ * 用户根本无从察觉，只会觉得"磁盘上的东西莫名其妙少了"。
+ */
+t('前缀判据不会跨包误伤（md 不会删掉 md-viewer）',
+  !'md-viewer@1.0.0.mjs'.startsWith(rt.depPrefixOf('md')) &&
+    'md@1.0.0.mjs'.startsWith(rt.depPrefixOf('md')));
+t('前缀判据不会把无版本的杂文件算进来', !'md.mjs'.startsWith(rt.depPrefixOf('md')));
+
+/* ② 真跑：返回删掉的份数 */
+{
+  const ctx = stubCtx(async (cmd, args) => {
+    if (cmd === rt.CMD_PURGE) return { removed: 3, files: ['mermaid@11.mjs', 'mermaid@12.mjs', 'mermaid@13.mjs'] };
+    return {};
+  });
+  const r = await rt.purgeRuntimeDep(ctx, 'mermaid');
+  t('整包卸载返回删掉的份数', r.ok === true && r.removed === 3 && r.files.length === 3, JSON.stringify(r));
+}
+
+/* ③ removed === 0 不算失败 —— 目标是"不再存在"，它此前在不在没意义 */
+{
+  const ctx = stubCtx(async () => ({ removed: 0, files: [] }));
+  const r = await rt.purgeRuntimeDep(ctx, 'mermaid');
+  t('没装过时整包卸载算成功（removed=0）', r.ok === true && r.removed === 0);
+}
+
+/* ④ 命令不存在要明说，不能静默、也不能把进程崩掉 */
+{
+  let r = null; let threw = false;
+  try { r = await rt.purgeRuntimeDep(missingCtx(), 'mermaid'); } catch (e) { threw = true; }
+  t('整包卸载命令不存在时给出明确原因且不抛', !threw && r && r.ok === false && r.missing === true);
+}
+
+/* ⑤ 包名为空时一个请求都不发 */
+{
+  let n = 0;
+  const ctx = { invoke: async () => { n++; return {}; }, convertFileSrc: (x) => `asset://${x}` };
+  const r = await rt.purgeRuntimeDep(ctx, '   ');
+  t('整包卸载包名为空时直接返回（不发请求）', r.ok === false && n === 0, `n=${n}`);
+}
+
+/* ⑥ 残留识别：按安全名比对，不能把 scope 包全误判成残留 */
+{
+  const installed = [
+    { name: '_plantuml_core', version: '1.2026.8' },
+    { name: 'mermaid', version: '12.0.0' },
+    { name: 'gone-pkg', version: '1.0.0' },
+  ];
+  const o = rt.orphanDepsOf(installed, ['@plantuml/core', 'mermaid']);
+  t('残留只挑清单里没有的', o.length === 1 && o[0].name === 'gone-pkg', JSON.stringify(o.map((x) => x.name)));
+  /*
+   * 后端从文件名还原出的 name 是安全化过的（`_plantuml_core`），
+   * 清单里写的是 `@plantuml/core`。直接比字符串会把它判成残留 ——
+   * 界面上凭空多出一堆"清单里没有"，而真相只是命名口径不同。
+   */
+  t('scope 包不因命名口径被误判成残留',
+    !rt.orphanDepsOf(installed, ['@plantuml/core', 'mermaid', 'gone-pkg']).some((x) => x.name === '_plantuml_core'));
+  t('清单为空时全部算残留（不是全不算）', rt.orphanDepsOf(installed, []).length === 3);
+  t('已装为空时不报错', rt.orphanDepsOf(null, ['mermaid']).length === 0);
+}
+
+/* ⑦ 接线：少一处就是"点了没反应" */
+t('注册 fpx_rt_dep_purge', /rt_dep::fpx_rt_dep_purge/.test(mainText));
+t('purge 定 W（与 remove 同级，不是 M）', /fpx_rt_dep_purge:\s*'W'/.test(capsText));
+/*
+ * 白名单断言必须**先剥注释**：注释里写着命令名，不剥的话把真项删掉
+ * 断言照样匹配注释里的字样 → 假绿（本项目已多次踩到）。
+ */
+t('settings 白名单含 purge', /fpx_rt_dep_purge/.test(policyCode));
+
+/* ⑧ 后端：整包卸载自身的收口 */
+const rsPurge = rsText.slice(rsText.indexOf('pub fn fpx_rt_dep_purge'));
+t('后端 purge 用 safe_name_of 算前缀（不另写一份命名规则）',
+  /let prefix = format!\("\{\}@", safe_name_of\(&name\)\)/.test(rsPurge));
+t('后端 purge 按前缀 + .mjs 双重判据', /starts_with\(&prefix\)/.test(rsPurge) && /ends_with\("\.mjs"\)/.test(rsPurge));
+t('后端 purge 拒绝空包名', /包名为空/.test(rsPurge));
+/*
+ * 删除失败必须往外报，不能跳过继续。
+ * 跳过的话返回成功，用户刷新后看到"还有一份"，那时已无从区分
+ * 是没删掉还是又装回来了。
+ */
+t('后端 purge 删除失败要报错（不静默跳过）', !/let _ =/.test(rsPurge) && /\?;/m.test(rsPurge));
+t('后端 safe_file_of 复用 safe_name_of（命名规则只有一份）',
+  /fn safe_file_of[\s\S]{0,200}safe_name_of\(name\)/.test(rsText));
+
+/* ⑨ 界面：整包卸载与残留区都要有入口 */
+/*
+ * 整包卸载的入口必须**按调用点**断言，不能只查文案出现过。
+ * 文件里的注释和说明文字都写着"整包卸载"，只查 `整包卸载` 的话，
+ * 把按钮删掉断言照样全绿 —— 假绿，而且是最难发现的那种。
+ */
+t('每个已装的包都有整包卸载入口（按调用点断言，不是查文案）',
+  /onClick=\{\(\) => doPurge\(nameKey\)\}/.test(cardText));
+t('残留区每行都有整包卸载入口', /onClick=\{\(\) => doPurge\(on\)\}/.test(cardText));
+t('界面有残留区（已装但清单里没有）', /dep-orphans/.test(cardText) && /orphanDepsOf/.test(cardText));
+/*
+ * 「移除」只删那一行、「整包卸载」按包名删全部 —— 两种动作的区别必须
+ * 在界面上说得出来，否则用户会以为「移除」点了没清干净而反复点。
+ */
+t('界面说明了整包卸载与逐条移除的区别', /整包卸载 = 删掉/.test(cardText));
+t('残留区有样式（否则与清单行没有视觉区分）', /\.dep-orphans\s*\{/.test(read('css/neumorphism.css')));
+
 console.log(`\n运行时依赖：${pass} 通过 / ${fails.length} 失败`);
 for (const f of fails) console.log('  ✗ ' + f);
 process.exit(fails.length ? 1 : 0);

@@ -36,6 +36,8 @@ export const CMD_LIST = 'fpx_rt_dep_list';
 export const CMD_INSTALL = 'fpx_rt_dep_install';
 export const CMD_REMOVE = 'fpx_rt_dep_remove';
 export const CMD_VERSIONS = 'fpx_rt_dep_versions';
+/** 整包卸载（一个包的所有已装文件一次删掉）。 */
+export const CMD_PURGE = 'fpx_rt_dep_purge';
 
 /**
  * 明确的失败原因。
@@ -55,9 +57,32 @@ export const RT_ERR = {
   removed: '已移除',
 };
 
+/**
+ * 包名安全化 —— 与 Rust 侧 `safe_name_of` 必须一致。
+ *
+ * 单列一个函数，是因为**整包卸载要按它算前缀**（见 purgeRuntimeDep）。
+ * 前缀规则再写一份就可能和落盘规则漂移：落盘用 `A@`，前缀按 `B@` 判，
+ * 结果是整包卸载永远删不到东西、还报成功 —— 界面上就是"清不掉"。
+ */
+export function safeNameOf(name) {
+  return String(name || '').trim().replace(/[@/\\]/g, '_');
+}
+
+/**
+ * 一个包在 deps 目录里的文件名前缀。
+ *
+ * ⚠️ 判归属**必须用 `安全名 + "@"`**，不能用 `startsWith(name)`：
+ * 包 `md` 的前缀 `md@` 不会误伤 `md-viewer@1.0.0.mjs`；
+ * 而按 `startsWith("md")` 判就会把它一起删掉 —— 跨包删除，且被删的
+ * 那个在界面上根本没出现过，用户无从察觉。
+ */
+export function depPrefixOf(name) {
+  return `${safeNameOf(name)}@`;
+}
+
 /** scoped 包（@scope/name）与斜杠都要换掉，否则会当成目录。 */
 export function safeFileOf(name, version) {
-  const n = String(name || '').trim().replace(/[@/\\]/g, '_');
+  const n = safeNameOf(name);
   const v = String(version || '').trim().replace(/[^0-9A-Za-z._-]/g, '');
   return `${n}@${v || 'latest'}.mjs`;
 }
@@ -434,6 +459,48 @@ export async function removeRuntimeDep(ctx, name, version, file) {
   if (r && r.__missing) return { ok: false, error: RT_ERR.noCmd, missing: true };
   if (r && r.__error) return { ok: false, error: r.__error };
   return { ok: true };
+}
+
+/**
+ * 整包卸载：把这个包在工具内部的所有已装文件一次删掉。
+ *
+ * 【为什么不能只靠逐条 remove】
+ * 逐条删要求每一份在界面上都有对应的一行。而"已装但清单里没有"的那些
+ * （装过之后又从 package.json 移除）根本不会出现在清单行里 ——
+ * 界面看不见，也就删不掉，只能在磁盘上越堆越多。
+ * 整包卸载按包名走，与清单是否还有这一项无关。
+ *
+ * 【removed === 0 不算失败】
+ * 目标是"这个包不再存在"，它此前在不在没有意义。报失败会让界面上
+ * 出现一个无法恢复的错误态，而用户能做的只有再点一次。
+ */
+export async function purgeRuntimeDep(ctx, name) {
+  const n = String(name || '').trim();
+  if (!n) return { ok: false, error: '包名为空' };
+  const r = await callCmd(ctx, CMD_PURGE, { name: n });
+  if (r && r.__missing) return { ok: false, error: RT_ERR.noCmd, missing: true };
+  if (r && r.__error) return { ok: false, error: r.__error };
+  const removed = Number((r && (r.removed ?? r)) || 0);
+  return { ok: true, removed, files: Array.isArray(r && r.files) ? r.files : [] };
+}
+
+/**
+ * 已装、但清单里已经没有的那些（残留）。
+ *
+ * 【为什么会有一类东西】
+ * 装过运行时依赖之后，如果它后来被从 package.json 里删掉，
+ * js/deps-manifest.js 就不再有这一项 —— DepsCard 是按清单逐行渲染的，
+ * 于是它**永远不会被显示出来**：看不见，就删不掉。
+ *
+ * 【为什么按安全名比对】
+ * 后端从文件名还原出的 name 是安全化过的（`_plantuml_core`），
+ * 清单里写的是 `@plantuml/core`。直接比字符串会全部判成残留 ——
+ * 界面上凭空多出一堆"清单里没有"，而真相只是命名口径不同。
+ */
+export function orphanDepsOf(installed, manifestNames) {
+  const known = new Set((manifestNames || []).map((n) => safeNameOf(n)));
+  const list = Array.isArray(installed) ? installed : [];
+  return list.filter((d) => d && !known.has(String(d.name)));
 }
 
 /**

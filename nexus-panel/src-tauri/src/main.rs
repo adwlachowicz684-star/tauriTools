@@ -399,6 +399,24 @@ fn main() {
             dupview::dupview_rename,
             /* 常用文件夹：folder-picker 服务与设置页共用，读 + 整表覆盖写。 */
             fpx::fpx_list_fav_dirs, fpx::fpx_save_fav_dirs,
+            /*
+             * 运行时依赖（rt_dep）五条 —— 依赖页签的「安装 / 移除 / 版本下拉 / 整包卸载」。
+             *
+             * rt_dep.rs 里五条**都有** #[tauri::command] 和完整实现，但此前
+             * **一条都没进 generate_handler!**（连 list 都没有）。于是：
+             *   · 前端能力表（js/command-caps.js）标了这四条；
+             *   · settings 插件的白名单也授权了；
+             *   · 界面上「安装」按钮照常显示，点了却是 "command not found"；
+             *   · 而 DepsCard 有降级提示，把它显示成"后端尚未接入运行时依赖"
+             *     —— **看起来像功能还没做完，实际只是漏注册**。
+             *
+             * 这也是一致性扫描器的盲区：它比对的是 Rust 源码标注与注册列表，
+             * 不看前端的 command-caps.js，所以"前端配齐、后端未注册"没人管。
+             * 已给扫描器加了第 ⑦ 组补这个洞（见 command-consistency-test.mjs）。
+             */
+            rt_dep::fpx_rt_dep_list, rt_dep::fpx_rt_dep_install,
+            rt_dep::fpx_rt_dep_remove, rt_dep::fpx_rt_dep_versions,
+            rt_dep::fpx_rt_dep_purge,
             tray_toggle_window
         ])
         .setup(move |app| {
