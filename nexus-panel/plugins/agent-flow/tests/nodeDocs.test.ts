@@ -515,6 +515,56 @@ test('字段块数量对账：解析器不能静默跳过任何一块', () => {
   }
 });
 
+/**
+ * run-tests.sh 必须挂着真实类型检查。
+ *
+ * 为什么需要这条守卫：编译用的那份配置是 strict: false，
+ * 判别联合窄化失效 —— 于是"某分支上不存在的字段"这类错查不出来，
+ * 而 2200 多项测试全绿。真实项目跑的是 strict: true。
+ *
+ * 已经靠这个组合骗过自己三次（不真编译 / 不真生成文档 / 生成失败不中断），
+ * 这是第四次，所以钉住调用点：哪天被人为了"跑得快"摘掉，测试立刻红。
+ */
+test('run-tests.sh 会跑真实类型检查（strict: true）', () => {
+  assert.ok(SRC, 'AF_SRC 未设置');
+  const sh = fs.readFileSync(path.join(SRC, 'scripts', 'run-tests.sh'), 'utf-8');
+  /*
+   * 必须盯**真正的调用行**，不能只查字符串出现。
+   *
+   * 我第一版写的是 sh.includes('check-types.sh') —— 而注释里也有这串字，
+   * 于是把调用点整个摘掉，守卫照样报绿。
+   * 这和之前"只断言 pick('valueType') 存在"那次是同一个错：
+   * 断言太松，等于没有守卫，而且会让人以为有人守着。
+   */
+  const callLines = sh
+    .split(/\r?\n/)
+    .filter((l) => l.includes('check-types.sh') && !l.trimStart().startsWith('#'));
+  assert.equal(
+    callLines.length,
+    1,
+    `run-tests.sh 里有 ${callLines.length} 行非注释的 check-types.sh 字面量（应为 1）—— `
+    + '只跑 strict:false 的编译会让真类型错误全绿通过',
+  );
+  assert.ok(
+    /bash\s+/.test(callLines[0]),
+    `check-types.sh 那行不是 bash 调用：${callLines[0]}`,
+  );
+  // 而且必须是"失败即中断"，不能是 `|| true` / `|| echo`
+  assert.ok(
+    /if\s+!\s+bash/.test(sh),
+    'check-types.sh 的调用包在 if ! 里 —— 失败必须中断，不能打印一句就继续',
+  );
+  assert.ok(
+    !/check-types\.sh[^\n]*\|\|/.test(sh),
+    'check-types.sh 的调用带了 || 兜底 —— 失败会被吞掉，测试照样全绿',
+  );
+  const ct = fs.readFileSync(path.join(SRC, 'scripts', 'check-types.sh'), 'utf-8');
+  assert.ok(
+    ct.includes('WHY'),
+    'check-types.sh 必须有带理由的白名单（WHY），否则环境产物会被当成真错误',
+  );
+});
+
 test('每个节点"最不能少"的参数都在参数表里', () => {
   for (const [kind, keys] of Object.entries(ESSENTIAL)) {
     const s = fs.readFileSync(path.join(nodesDir, `${kind}.params.md`), 'utf-8');
