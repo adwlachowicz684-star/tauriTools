@@ -115,8 +115,26 @@ export function LinkPickDialog({
     return next;
   });
 
-  const all = picked.size === allNames.length;
-  const toggleAll = () => setPicked(all ? new Set() : new Set(allNames));
+  /*
+   * 「全选」的取值**必须排除他组占用**的那批 —— 与 `reset` 同一口径。
+   *
+   * 此前是 `new Set(allNames)`，把它们一并勾上：用户点一下「全选」再点确定，
+   * 就把别的项目组的链接**全抢过来了**，而他根本没打算动那边。底部说明与
+   * `ownedElsewhere` 的注释都写明这类名字要"手动逐个勾"，一键全选等于绕过
+   * 这道确认，且全程不报错——正是"改了用户没要求改的东西"。
+   *
+   * 仍然包含设置里**关掉**的名字：临时多建一个正是本弹窗存在的意义
+   * （见文件头注释），那是用户的显式意图，不该替他过滤掉。
+   *
+   * `all` 也按这批判，不能按 `allNames.length`：默认勾选不含他组占用，
+   * 按全量判会让按钮永远显示「全选」，用户点了才发现多勾了一堆。
+   */
+  const selectable = useMemo(
+    () => allNames.filter((n) => !ownedElsewhere.has(n)),
+    [allNames, ownedElsewhere],
+  );
+  const all = picked.size === selectable.length;
+  const toggleAll = () => setPicked(all ? new Set() : new Set(selectable));
 
   /*
    * 只按启用名单重置，而不是全选 —— 全选会把一堆平时关着的名字都打开。
@@ -140,6 +158,27 @@ export function LinkPickDialog({
     [allNames, existing, picked, group],
   );
 
+  /*
+   * 按钮文案与禁用判据必须**同一套口径**。
+   *
+   * 此前 `disabled={picked.size === 0}`：全部取消勾选（picked 为空）而其中
+   * 若干已指向本组时，行上标着「将删除」、按钮也写着「删除 K 个」，
+   * 而按钮是**灰的** —— 界面承诺了一个动作却拒绝执行，且不给任何解释。
+   * 于是"把链接全删掉"这个正当操作做不了，用户只能留一个不想要的勾选凑数。
+   *
+   * 后端 `core_sync_links` 的删除判据是"不在名单里且确实指向本组"
+   * （outside + ownedByThis），所以传**空名单**正是"全删"的正确写法，
+   * 不是无操作——按钮不该在这种时候禁用。
+   */
+  const noop = picked.size === 0 && dropCount === 0;
+  const confirmLabel = noop
+    ? '建立 0 个链接'
+    : picked.size === 0
+      ? `删除 ${dropCount} 个链接`
+      : dropCount > 0
+        ? `建立 ${picked.size} 个、删除 ${dropCount} 个`
+        : `建立 ${picked.size} 个链接`;
+
   return (
     <Modal
       title="选择要建立的链接"
@@ -149,13 +188,13 @@ export function LinkPickDialog({
         <>
           <button className="p-btn" onClick={onClose}>取消</button>
           <button
-            className="p-btn primary"
-            disabled={picked.size === 0}
+            /* 纯删除时转 danger：点下去会**少**东西，用主色（"确认新建"的
+               观感）会让人按错，而这里没有任何二次确认。 */
+            className={picked.size === 0 && !noop ? 'p-btn danger' : 'p-btn primary'}
+            disabled={noop}
             onClick={() => onConfirm(allNames.filter((n) => picked.has(n)))}
           >
-            {dropCount > 0
-              ? `建立 ${picked.size} 个、删除 ${dropCount} 个`
-              : `建立 ${picked.size} 个链接`}
+            {confirmLabel}
           </button>
         </>
       }
