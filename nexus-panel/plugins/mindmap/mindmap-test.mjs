@@ -9748,7 +9748,17 @@ group('全仓不得再引用不存在的 km.clearSelect（改用 select([], true
   ok(/km\.select\(ns,\s*true\)/.test(code), 'select 门面：select(ns, true)');
   ok(/km\.select\(node,\s*true\)/.test(code), '搜索定位：select(node, true)');
   ok(/km\.select\(root,\s*true\)/.test(code), 'focusRoot：select(root, true)');
-  ok(/km\.select\(\[\],\s*true\)/.test(code), '选中图片：select([], true) 纯清空');
+  /*
+   * 选中图片那一处**不再**强行 select([], true)。
+   * 它触发的 selectionchange 是异步派发的，等事件到达时 _suppressSelClear
+   * 早已复位，onSelChanged 立刻把刚设好的 _selImg 清掉 —— 实测每次点击
+   * 都停在「选中」这一步，第二段（打开）永远走不到。
+   * 改成保留节点选中，由 onSelChanged 判「当前选中是否还是它」。
+   */
+  ok(/cur === _selImg \|\| cur === _kmImgSelNode/.test(code),
+    '选中图片：保留节点选中，由 onSelChanged 判当前选中是否仍是它');
+  ok(!/km\.select\(\[\],\s*true\)/.test(code),
+    '不再用 select([], true) 强行反选（异步 selectionchange 会清掉图片选中态）');
 }
 
 group('导出为交换格式 → 导出为交换格式（单画布）');
@@ -10230,6 +10240,133 @@ group('附件压缩：入口收口与拦截（真实源码 / 行为级）');
   await handle([{ name: 'movie.mp4', type: 'video/mp4', size: 200 * 1024 * 1024 }], 'N1');
   eq(io.decodeRefList(st.video).length, 0, '超大视频没有入库');
   ok(msgs.some((m) => /超过附件上限/.test(m)), '视频上限提示含具体体积');
+}
+
+group('图片交互：两段式打开 + 默认放大 + 选中后可拖大小');
+
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+
+  // ================= 单图：第一次点选中，再点才打开 =================
+  const hi = html.indexOf('function hookNodeImage(node)');
+  ok(hi > 0, '有 hookNodeImage()');
+  {
+    const end = html.indexOf('function refreshImageClicks()', hi);
+    const seg = html.slice(hi, end > hi ? end : hi + 2500);
+    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(/sh\.node\.addEventListener\('mouseup'/.test(code),
+      '图片上监听 mouseup（按下不拦截 → 内核照常选中/拖动节点）');
+    ok(/if \(_selImg === node\) openImagePreview\(node\)/.test(code)
+      && /else selectImage\(node\)/.test(code),
+      '已选中再点 = 打开预览；未选中 = 先选中（两段式）');
+    ok(/Math\.abs\(ev\.clientX - d\.x\) \+ Math\.abs\(ev\.clientY - d\.y\) > CLICK_SLOP/.test(code),
+      '位移超过阈值算拖动、不算单击（拖画布不会误弹预览）');
+    ok(!/imgHitTest\(ev, sh\) !== 'sel'/.test(code),
+      '不是「只有边缘 4px 才响应」的旧写法（中心大片点了没反应）');
+  }
+
+  // ================= 多图横幅：同样两段式 =================
+  const mi = html.indexOf("if (d.kind === 'image' && d.node");
+  ok(mi > 0, '多图点击有「两段式」分支');
+  {
+    const seg = html.slice(mi, mi + 900);
+    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(/d\.node\._kmImgSel !== d\.index/.test(code),
+      '判据是「这张是不是已经选中」而不是「有没有选中过」');
+    ok(/return;/.test(code), '第一段只选中、直接 return（不发 openattach）');
+    ok(/openAttach\(d\.node, d\.kind, d\.index, d\.ref\)/.test(code),
+      '第二段才真正打开');
+  }
+
+  // ================= 选中态不能被紧随的 selectionchange 清掉 =================
+  const oi = html.indexOf('function onSelChanged()');
+  ok(oi > 0, '有 onSelChanged()');
+  {
+    const end = html.indexOf('function removeImageDirect', oi);
+    const seg = html.slice(oi, end > oi ? end : oi + 1200);
+    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(/cur === _selImg \|\| cur === _kmImgSelNode/.test(code),
+      '单图与多图的选中态**都要**判（少判一个 → 第二段永远走不到）');
+    ok(!/km\.select\(\[\], true\)/.test(code), '不在清除路径里强行反选节点');
+  }
+  // 强行反选会把刚设好的选中态连带清掉
+  {
+    const si = html.indexOf('function selectImage(node)');
+    const end = html.indexOf('// ---- 显示定位跟随 ----', si);
+    const seg = html.slice(si, end > si ? end : si + 1600);
+    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(!/km\.select\(\[\], true\)/.test(code),
+      'selectImage 不再强行 select([], true)（异步 selectionchange 会把选中态清掉）');
+  }
+
+  // ================= 缩放手柄：必须用 DOM 浮层 =================
+  const di = html.indexOf('function drawImgHandles(node)');
+  ok(di > 0, '有 drawImgHandles()');
+  {
+    const end = html.indexOf('function startHandleDrag', di);
+    const seg = html.slice(di, end > di ? end : di + 2000);
+    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(/document\.createElement\('div'\)/.test(code), '手柄是 HTML div');
+    ok(/position:fixed/.test(code), '手柄用 fixed 定位（视口坐标，不受 CTM 影响）');
+    ok(!/new kity\.Rect\(HANDLE/.test(code), '不再是 kity.Rect（会被节点 RC 盖住按不到）');
+    ok(!/rc\.appendShape/.test(code), '不再挂进 root 的 renderContainer');
+    ok(/nwse-resize/.test(code) && /nesw-resize/.test(code), '四个角光标区分方向');
+  }
+  // 拖动：等比 + 钳制
+  {
+    const vi = html.indexOf('function onHandleMove(ev)');
+    ok(vi > 0, '有 onHandleMove()');
+    const end = html.indexOf('function onHandleUp', vi);
+    const seg = html.slice(vi, end > vi ? end : vi + 1200);
+    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(/var ratio = d\.oh \/ d\.ow/.test(code) && /nw \* ratio/.test(code),
+      '等比缩放（不按位移直接改高 → 图片会变形）');
+    ok(/nw = Math\.max\(MIN_IMG, Math\.min\(MAX_IMG,/.test(code)
+      && /nh = Math\.max\(MIN_IMG, Math\.min\(MAX_IMG, nw \* ratio\)\)/.test(code),
+      '宽高都钳在 MIN/MAX 之间（高按等比算完再钳）');
+    ok(/var sign = \(d\.corner === 1 \|\| d\.corner === 3\) \? 1 : -1/.test(code),
+      '左右两半边方向相反（拖左边角不会反向放大）');
+    ok(/km\.fire\('contentchange'\)/.test(html.slice(html.indexOf('function onHandleUp'), html.indexOf('function onHandleUp') + 500)),
+      '松手后记一次快照（否则刷新尺寸回退）');
+  }
+
+  // ================= 默认尺寸放大 =================
+  {
+    const seg = html.slice(html.indexOf('var mw = 320'), html.indexOf('var mw = 320') + 300);
+    ok(/var mw = 320, mh = 320;/.test(seg), '单图上限 320（原 200 太小）');
+    ok(/m\.getOption\('maxImageWidth'\) \|\| 320/.test(seg), '回退值同步改成 320');
+  }
+  {
+    const iw = html.indexOf('var iw = Math.max(120');
+    ok(iw > 0, '多图横幅有尺寸');
+    const seg = html.slice(iw, iw + 220);
+    const code = seg.replace(/\/\/[^\n]*/g, '');
+    ok(/Math\.max\(120, Math\.min\(180, box\.width \|\| 180\)\)/.test(code),
+      '横幅 120~180（原 64~96 看不清）');
+    ok(/Math\.round\(iw \* 9 \/ 16\)/.test(code), '横幅按 16:9 给高');
+  }
+
+  // ================= 跨 IIFE 共享必须放在外层 =================
+  {
+    /*
+     * 判据用**行首缩进**：顶层是 4 空格，IIFE 内是 8 或 12。
+     * 早先这两个定义放在图片 IIFE 里，另一个 IIFE（附件区）访问就
+     * ReferenceError（实测 PageError: _kmImgSelNode is not defined）。
+     */
+    ok(/\n {4}function mmImageAtPoint\(/.test(html),
+      'mmImageAtPoint 在顶层（4 空格缩进，不在任何 IIFE 内）');
+    ok(/\n {4}var _kmImgSelNode = null;/.test(html),
+      '_kmImgSelNode 同样在顶层');
+  }
+  // 双击不能进文字编辑
+  {
+    const dbi = html.indexOf("km.on('dblclick', function (e)");
+    ok(dbi > 0, '有 dblclick 处理');
+    const seg = html.slice(dbi, dbi + 700);
+    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(/mmImageAtPoint\(oe\.clientX, oe\.clientY\)/.test(code),
+      '双击图片不进文字编辑（否则同时弹预览和编辑框）');
+  }
 }
 
 /* ============================================================

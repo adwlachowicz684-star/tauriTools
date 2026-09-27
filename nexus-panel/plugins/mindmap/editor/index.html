@@ -220,6 +220,31 @@
         if (!window.__kmAnimateLayout) km.setOption('layoutAnimationDuration', 0);
         km.setTheme('fresh-blue');
 
+    /*
+     * 下面两个是**跨 IIFE 共享**的，必须放在顶层。
+     *
+     * 图片交互分在两处实现：`data.image`（单图，内核 ImageRenderer 画）
+     * 在一个 IIFE 里，`data.images`（多图横幅，附件区自己画）在另一个
+     * IIFE 里。早先把它们定义在其中一处，另一处访问就
+     * ReferenceError —— 实测「已选中但未打开」的多图节点记录与
+     * 双击命中判定都因此抛错（PageError: _kmImgSelNode is not defined）。
+     * 两个 IIFE 互不嵌套，只能提到外层作用域。
+     */
+    var _kmImgSelNode = null;   // 上一次「点了但还没打开」的多图节点
+
+    /** 从屏幕坐标反查是否点在图片上（单图 / 多图横幅都认） */
+    function mmImageAtPoint(x, y) {
+        if (x == null || y == null) return null;
+        var el = null;
+        try { el = document.elementFromPoint(x, y); } catch (e) {}
+        var cur = el, guard = 0;
+        while (cur && guard++ < 30) {
+            if (cur.__mmImgNode) return { node: cur.__mmImgNode, kind: cur.__mmImgKind || 'single' };
+            cur = cur.parentNode;
+        }
+        return null;
+    }
+
         // ---- 文件附件支持（自注册 file 命令 + 节点右侧文件图标渲染器；点击图标经 WPF 打开文件）----
         // 必须在首次渲染（importJson）前把渲染器类挂进 _rendererClasses，节点渲染时才带出文件图标。
         (function () {
@@ -291,9 +316,15 @@
             /** 异步取真实尺寸；失败返回 null（保留占位尺寸，图照样能画） */
             function loadFitSize(url, m, cb) {
                 try {
-                    var mw = 200, mh = 200;
-                    try { mw = m.getOption('maxImageWidth') || 200; } catch (e) {}
-                    try { mh = m.getOption('maxImageHeight') || 200; } catch (e) {}
+                    /*
+                     * 默认上限 320（实测原为 200）。
+                     * 一张 600×400 的图被缩到 200 宽，节点上只剩一小块，
+                     * 用户反馈「图片显示得太小了」。
+                     * 320 是权衡值：再大就撑得节点失衡、布局横向溢出。
+                     */
+                    var mw = 320, mh = 320;
+                    try { mw = m.getOption('maxImageWidth') || 320; } catch (e) {}
+                    try { mh = m.getOption('maxImageHeight') || 320; } catch (e) {}
                     // typeof 对未声明变量是安全的（不抛 ReferenceError）——
                     // 测试用 new Function 跑这段时不一定注入 document
                     if (typeof document === 'undefined' || !document.createElement) { cb(null); return; }
@@ -336,7 +367,9 @@
                     // 设置：先同步写上（含占位尺寸）让**读取立即生效**，
                     // 真实尺寸异步补上后再 render 一次
                     var url = String(value);
-                    var ph = { width: 120, height: 120 };
+                    // 占位取 4:3，与多数截图/照片的常见比例接近，
+                    // 真实尺寸异步回来后跳变幅度更小（原来是 120 正方形）
+                    var ph = { width: 240, height: 180 };
                     nodes.forEach(function (n) {
                         n.setData('image', url);
                         n.setData('imageSize', ph);
@@ -1113,8 +1146,14 @@
                         if (imgs.length) {
                             var ii = node._kmImgIdx || 0;
                             if (!(ii >= 0 && ii < imgs.length)) ii = 0;
-                            var iw = Math.max(64, Math.min(96, box.width || 96));
-                            var ih = 60;
+                            /*
+                             * 实测原为 max(64, min(96, ...)) × 60 —— 一张图只有
+                             * 90×54 的可见区域（还要再减 6 的内边距），
+                             * 照片放上去什么都看不清。
+                             * 改成 max(120, min(180, ...)) 并按 16:9 给高。
+                             */
+                            var iw = Math.max(120, Math.min(180, box.width || 180));
+                            var ih = Math.round(iw * 9 / 16);
                             var ix = cx - iw / 2;
                             /*
                              * 底板是**装饰**：它围出图片区，但自己不该接收点击。
@@ -1122,10 +1161,19 @@
                              * 于是边缘那 3px 环带会命中底板 —— 底板没绑事件，
                              * 点了既不打开图片、也选不中节点，看着像"点空了"。
                              */
+                            // 选中态：底板描边加粗换色。多图的「选中」没有别的
+                            // 视觉出口 —— 不加的话用户看不出第一次点生效了，
+                            // 于是会以为单击没反应（实际是选中了，再点才打开）。
+                            var _imgSel = (node._kmImgSel === ii);
                             push(decor(new kity.Rect(iw, ih, ix, top, 4)
-                                .fill('rgba(255,255,255,0.07)').stroke(color, 1)));
+                                .fill('rgba(255,255,255,0.07)')
+                                .stroke(_imgSel ? '#2B6CB0' : color, _imgSel ? 2.5 : 1)));
                             try {
                                 var im = new kity.Image(imgs[ii], iw - 6, ih - 6, ix + 3, top + 3);
+                                // 打标记供 imageAtPoint 反查（双击判定要用）
+                                try {
+                                    if (im.node) { im.node.__mmImgNode = node; im.node.__mmImgKind = 'multi'; }
+                                } catch (e4) {}
                                 bindAttach(im, 'image', ii, imgs[ii], '图片 ' + (ii + 1), node);
                                 push(im);
                             } catch (e3) {}
@@ -1491,6 +1539,25 @@
                 if (!d) return;
                 if (!d.moved) {
                     // 没超过死区 = 单击：走原来的打开行为
+                    /*
+                     * 图片走两段式：第一次点 = 选中（底板描边加粗），
+                     * 已选中后再点 / 双击 = 打开预览。
+                     *
+                     * 与单图（data.image）保持同一套手感 —— 早先多图是
+                     * 点一下就打开，单图点了没反应，两条路不一致。
+                     */
+                    if (d.kind === 'image' && d.node && d.node._kmImgSel !== d.index) {
+                        try {
+                            if (_kmImgSelNode && _kmImgSelNode !== d.node) {
+                                _kmImgSelNode._kmImgSel = -1;
+                                _kmImgSelNode.render();
+                            }
+                            d.node._kmImgSel = d.index;
+                            _kmImgSelNode = d.node;
+                            d.node.render();
+                        } catch (e) {}
+                        return;
+                    }
                     openAttach(d.node, d.kind, d.index, d.ref);
                     return;
                 }
@@ -2285,6 +2352,22 @@
             var _selRect = null;           // 高亮矩形（kity.Rect）
             var _themeColor = null;        // 主题选中描边色，找不到时回退默认蓝
             var _suppressSelClear = false; // 自身 clearSelect 触发的 selectionchange 不导火索清选中
+            var _downPt = null;            // 图片上按下的起点（抬手时判单击还是拖动）
+            var CLICK_SLOP = 4;            // 位移超过它就当拖动，不算单击
+            var HANDLE = 8;                // 缩放手柄边长
+            var MIN_IMG = 32, MAX_IMG = 800;   // 图片尺寸钳制范围
+            var _selHandles = [];          // 当前选中图片的缩放手柄
+            var _dragH = null;             // 手柄拖动状态
+            /*
+             * 两段式打开：**第一次点 = 选中，双击 / 已选中后再点 = 打开预览**。
+             *
+             * 早先单图点了只是选中节点、打不开预览，而多图（data.images 横幅）
+             * 却是点一下就打开 —— 同一件事两条路不一致。
+             * 而且单击就打开有个硬伤：想拖动画布时若在图上松手，会莫名弹出预览。
+             *
+             * 双击不用单独监听：两次 click 依次是「选中」「打开」，天然就是
+             * 双击打开。也不需要 dblclick 分支（那条只用于拦住文字编辑）。
+             */
 
             function hasImg(n) { return !!(n && n.getData && n.getData('image')); }
             function getOkImageShape(node) {
@@ -2309,9 +2392,21 @@
                 if (!r || !r.width || !r.height) return 'miss';
                 var x = ev.clientX, y = ev.clientY;
                 if (x < r.left - 2 || x > r.right + 2 || y < r.top - 2 || y > r.bottom + 2) return 'miss';
-                if (r.width < EDGE * 2.5 || r.height < EDGE * 2.5) return 'sel'; // 图标类小图：整幅即边缘
-                if (x <= r.left + EDGE || x >= r.right - EDGE || y <= r.top + EDGE || y >= r.bottom - EDGE) return 'sel';
-                return 'core';
+                return 'hit';
+            }
+
+            /** 打开单图预览（data.image 这一路） */
+            function openImagePreview(node) {
+                if (!node || !node.getData) return;
+                var url = node.getData('image');
+                if (!url) return;
+                try { km.select && km.select(node, true); } catch (e) {}
+                hostPost({
+                    type: 'openattach',
+                    kind: 'image', index: 0, raw: url,
+                    nodeId: (node.data && node.data.id) || '',
+                    list: null,
+                });
             }
             function hookNodeImage(node) {
                 if (!node || !hasImg(node)) return;
@@ -2319,13 +2414,28 @@
                 if (!sh || !sh.node) return;
                 if (sh.node.__imgHook) return;
                 sh.node.__imgHook = 1;
+                // 打标记供 imageAtPoint 反查（双击判定要用）
+                sh.node.__mmImgNode = node;
+                sh.node.__mmImgKind = 'single';
+                /*
+                 * **不拦截 mousedown**：让内核照常处理选中 / 拖动节点，
+                 * 只在抬手时判「单击」再决定选中还是打开。
+                 * 早先边缘命中就 preventDefault + selectImage，于是图片中心
+                 * 那一大片点了完全没反应（实测 90×60 的图，中心属 'core'）。
+                 */
                 sh.node.addEventListener('mousedown', function (ev) {
                     if (!sh.node || !hasImg(node)) return;
                     if (ev.button === 2) return;
-                    if (imgHitTest(ev, sh) !== 'sel') return;
-                    ev.preventDefault();
-                    ev.stopPropagation();
-                    selectImage(node);
+                    _downPt = (imgHitTest(ev, sh) === 'miss') ? null : { x: ev.clientX, y: ev.clientY };
+                });
+                sh.node.addEventListener('mouseup', function (ev) {
+                    var d = _downPt;
+                    _downPt = null;
+                    if (!d || !sh.node || !hasImg(node)) return;
+                    if (ev.button === 2) return;
+                    if (Math.abs(ev.clientX - d.x) + Math.abs(ev.clientY - d.y) > CLICK_SLOP) return;
+                    if (_selImg === node) openImagePreview(node);   // 已选中 → 打开
+                    else selectImage(node);                          // 未选中 → 选中
                 });
             }
             function refreshImageClicks() {
@@ -2364,6 +2474,110 @@
                     _selRect = rect;
                 } catch (e) {}
             }
+            function removeImgHandles() {   // 手柄是 div，remove() 即可
+                for (var k = 0; k < _selHandles.length; k++) {
+                    try { _selHandles[k].remove(); } catch (e) {}
+                }
+                _selHandles = [];
+            }
+            /**
+             * 选中图片后画四个角的缩放手柄。
+             *
+             * 没有它就没法改图片大小 —— imageSize 只能靠代码写，
+             * 用户拿到一张显示过大的图只能删掉重加。
+             *
+             * 手柄画在根渲染容器上（与高亮框同一层），位置由屏幕包围盒
+             * 反算到 RC 坐标；画布平移 / 缩放后 refreshImageHighlight 会重画。
+             */
+            /**
+             * 选中图片后画四个角的缩放手柄。
+             *
+             * **用 HTML 浮层而不是 SVG 图形**：早先画成 kity.Rect 挂在
+             * root 的 renderContainer 上，实测被节点自己的 RC（含图片）盖住 ——
+             * elementFromPoint 在角点上返回的是别的 path —— 手柄一次都
+             * 收不到 mousedown，拖动完全无效（实测拖完 imageSize 纹丝不动）。
+             * 想挂更上层时发现 `km.getPaper().getRoot` **根本不存在**
+             * （实测 paper 只有 node/shapeNode/resourceNode 等键），无从挂载。
+             * 改成 position:fixed 的 div：坐标直接用视口包围盒，
+             * 不受 SVG 层级与 CTM 影响。
+             */
+            function drawImgHandles(node) {
+                removeImgHandles();
+                if (!node) return;
+                var sh = getOkImageShape(node);
+                if (!sh || !sh.node) return;
+                var r = null;
+                try { r = sh.node.getBoundingClientRect(); } catch (e) {}
+                if (!r || !r.width || !r.height) return;
+                var host = document.body;
+                if (!host) return;
+                var cs = [[r.left, r.top], [r.right, r.top], [r.left, r.bottom], [r.right, r.bottom]];
+                for (var qi = 0; qi < cs.length; qi++) {
+                    (function (idx) {
+                        var hd = document.createElement('div');
+                        hd.className = 'mm-img-handle';
+                        hd.style.cssText = 'position:fixed;z-index:99999;box-sizing:border-box;' +
+                            'width:' + HANDLE + 'px;height:' + HANDLE + 'px;' +
+                            'left:' + Math.round(cs[idx][0] - HANDLE / 2) + 'px;' +
+                            'top:' + Math.round(cs[idx][1] - HANDLE / 2) + 'px;' +
+                            'background:#fff;border:1.5px solid ' + (_themeColor || '#2B6CB0') + ';' +
+                            'cursor:' + ((idx === 0 || idx === 3) ? 'nwse-resize' : 'nesw-resize') + ';';
+                        hd.__mmHandle = idx;
+                        hd.addEventListener('mousedown', function (ev) { startHandleDrag(ev, node, idx); });
+                        host.appendChild(hd);
+                        _selHandles.push(hd);
+                    })(qi);
+                }
+            }
+            function startHandleDrag(ev, node, corner) {
+                if (ev.button != null && ev.button !== 0) return;
+                if (ev.preventDefault) ev.preventDefault();
+                if (ev.stopPropagation) ev.stopPropagation();
+                var sz = null;
+                try { sz = node.getData('imageSize'); } catch (e) {}
+                var ow = sz && sz.width ? sz.width : 0;
+                var oh = sz && sz.height ? sz.height : 0;
+                if (!ow || !oh) {
+                    // 没有 imageSize（例如直接导入的 JSON）时退回当前显示尺寸
+                    var sh = getOkImageShape(node);
+                    if (sh && sh.node) {
+                        var r = null;
+                        try { r = sh.node.getBoundingClientRect(); } catch (e) {}
+                        if (r && r.width && r.height) { ow = r.width; oh = r.height; }
+                    }
+                }
+                if (!ow || !oh) return;
+                _dragH = { node: node, corner: corner, x0: ev.clientX, ow: ow, oh: oh };
+            }
+            /**
+             * 手柄拖动：按**宽度**的位移等比缩放，保持宽高比不变
+             * （不然图片会变形，比尺寸不合适更难看）。
+             * 角在右半边时向右拖是放大，左半边则相反。
+             */
+            function onHandleMove(ev) {
+                var d = _dragH;
+                if (!d) return;
+                var dx = ev.clientX - d.x0;
+                var sign = (d.corner === 1 || d.corner === 3) ? 1 : -1;
+                var nw = Math.max(MIN_IMG, Math.min(MAX_IMG, d.ow + sign * dx));
+                var ratio = d.oh / d.ow;
+                var nh = Math.max(MIN_IMG, Math.min(MAX_IMG, nw * ratio));
+                try {
+                    d.node.setData('imageSize', { width: Math.round(nw), height: Math.round(nh) });
+                    d.node.render();
+                } catch (e) {}
+                try { km.layout(); } catch (e) {}
+                drawImgRect(d.node);
+                drawImgHandles(d.node);
+            }
+            function onHandleUp() {
+                var d = _dragH;
+                if (!d) return;
+                _dragH = null;
+                // 让宿主记一次快照，否则刷新后尺寸又回去了
+                try { km.fire('contentchange'); } catch (e) {}
+            }
+
             function removeImgRect() {
                 if (_selRect) {
                     try { _selRect.remove(); } catch (e) {}
@@ -2371,15 +2585,18 @@
                 }
             }
             function refreshImageHighlight() {
-                if (_selImg && hasImg(_selImg)) drawImgRect(_selImg);
+                if (_selImg && hasImg(_selImg)) { drawImgRect(_selImg); drawImgHandles(_selImg); }
                 else if (_selImg) clearImgSelection();
             }
+
             function clearImgSelection() {
                 if (!_selImg && !_selRect) return;
                 _selImg = null;
                 _selEl = null;
                 removeImgRect();
+                removeImgHandles();
             }
+
             function selectImage(node) {
                 if (!node || !hasImg(node)) return;
                 removeImgRect();
@@ -2387,20 +2604,57 @@
                 _selEl = null;
                 var sh = getOkImageShape(node);
                 if (sh) _selEl = sh.node;
-                _suppressSelClear = true;      // 反选节点，让画面只留图片高亮
                 /*
-                 * 内核没有 clearSelect：这句会抛 TypeError 被下面的 catch 吞掉，
-                 * 于是节点选中**根本没被清掉** —— 画面上同时有节点选中框和图片
-                 * 高亮框两套高亮，而代码意图是"只留图片高亮"。
-                 * select([], true)：第二个参数先清空，传空数组即纯清空。
+                 * **不再强行清空节点选中**。
+                 *
+                 * 早先这里调 `km.select([], true)` 想「只留图片高亮」。但它会
+                 * 触发 selectionchange，而内核是**异步**派发的：等事件到达时
+                 * _suppressSelClear 早就复位了，onSelChanged 立刻把刚设好的
+                 * _selImg 清掉。实测后果是「每次点击都只是选中，永远打不开」
+                 * —— 第一次点设好又被清，第二次点仍是「未选中 → 选中」。
+                 *
+                 * 改成保留节点选中（点图片本来也该选中它所在的节点），
+                 * 由 onSelChanged 里的「当前选中节点是否还是它」来判是否清除。
+                 * 两套高亮并不冲突：图片高亮是描边 + 四角缩放手柄，
+                 * 与节点选中框一眼能分开。
                  */
-                try { km.select && km.select([], true); } catch (e) {}
-                _suppressSelClear = false;
                 refreshThemeColor();
                 drawImgRect(node);
+                drawImgHandles(node);
             }
             // ---- 显示定位跟随 ----
-            function onSelChanged() { if (_suppressSelClear) return; clearImgSelection(); }
+            function onSelChanged() {
+                if (_suppressSelClear) return;
+                var cur = null;
+                try { cur = km.getSelectedNode && km.getSelectedNode(); } catch (e) {}
+                /*
+                 * 选中的仍是图片所在节点 → 保留图片选中态，否则两段式的
+                 * 第二段永远走不到（每次都从「未选中」重新开始）。
+                 *
+                 * 单图（_selImg）与多图（_kmImgSelNode）都要判：只判前者的话
+                 * 多图点第一次记下的状态会被这次事件清掉，第二次点击又变成
+                 * 「选中」，实测两次点击都没有 openattach。
+                 */
+                if (cur && (cur === _selImg || cur === _kmImgSelNode)) return;
+                clearImgSelection();
+                /*
+                 * 多图选中态只在**真的切到别的节点**时才清。
+                 *
+                 * 不分青红皂白地清会有个后果：点图片时内核也会选中该节点，
+                 * 紧随其后的 selectionchange 把刚记下的 _kmImgSelNode 清掉，
+                 * 于是第二次点击又变成「选中」，永远打不开预览
+                 * （实测两次点击都没有 openattach）。
+                 */
+                if (_kmImgSelNode) {
+                    var cur = null;
+                    try { cur = km.getSelectedNode && km.getSelectedNode(); } catch (e) {}
+                    if (cur === _kmImgSelNode) return;
+                    var n = _kmImgSelNode;
+                    _kmImgSelNode = null;
+                    try { n._kmImgSel = -1; n.render(); } catch (e) {}
+                }
+            }
+
             function removeImageDirect(node) {
                 try { node.setData('image'); } catch (e) {}
                 try { node.setData('imageTitle'); } catch (e) {}
@@ -2425,11 +2679,16 @@
             }
             function onDocImgMouseDown(ev) {
                 if (!_selImg) return;
+                // 按在缩放手柄上不算「点别处」—— 否则手柄一按就消失，拖不动
+                var t = ev.target;
+                if (t && t.__mmHandle != null) return;
                 var el = _selEl;
                 if (el && (ev.target === el || (el.contains && el.contains(ev.target)))) return;
                 clearImgSelection();
             }
+
             try { km.on('noderender', function (e) { hookNodeImage(e && e.node); }); } catch (e) {}
+            try { km.on('viewchange', function () { refreshImageHighlight(); }); } catch (e) {}
             try { km.on('layoutfinish', function () { refreshImageHighlight(); }); } catch (e) {}
             try { km.on('contentchange', function () { setTimeout(function () { refreshImageHighlight(); refreshImageClicks(); }, 0); }); } catch (e) {}
             try { km.on('import', function () { setTimeout(function () { refreshImageHighlight(); refreshImageClicks(); }, 0); }); } catch (e) {}
@@ -2437,6 +2696,8 @@
             try { km.on('selectionclear', onSelChanged); } catch (e) {}
             document.addEventListener('keydown', onImgKey, true);
             document.addEventListener('mousedown', onDocImgMouseDown, true);
+            document.addEventListener('mousemove', onHandleMove);
+            document.addEventListener('mouseup', onHandleUp);
             refreshThemeColor();
             refreshImageClicks();
         })();
@@ -3891,9 +4152,16 @@
             } catch (e) {}
         }
         km.on('dblclick', function (e) {
+            var oe = e && e.originEvent;
+            /*
+             * 双击图片 = 打开预览，**不能**进入文字编辑。
+             * 打开本身由第二次 mouseup 完成（第一次选中、第二次打开），
+             * 这里只负责把「双击进编辑」这条默认行为挡掉 ——
+             * 不挡的话双击图片会同时弹出预览和文字编辑框。
+             */
+            if (oe && mmImageAtPoint(oe.clientX, oe.clientY)) return;
             var node = km.getSelectedNode();
             if (!node) return;
-            var oe = e && e.originEvent;
             beginTextEdit(node, oe && oe.clientX != null ? oe.clientX : null, oe && oe.clientY != null ? oe.clientY : null);
         });
         document.getElementById('minder-container').addEventListener('keydown', function (e) {
@@ -4466,3 +4734,5 @@ function _kmParseColor(c) {
     </script>
 </body>
 </html>
+
+
