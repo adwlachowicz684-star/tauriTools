@@ -14,6 +14,7 @@ import {
   safeFileOf,
   installedVersionsOf,
   staleVersionsOf,
+  pinnedVersionOf,
 } from '../../js/runtime-deps.js';
 
 /**
@@ -94,6 +95,8 @@ export default function DepsCard() {
   const [rtMissing, setRtMissing] = useState(false);
   const [busy, setBusy] = useState<string>('');
   const [msg, setMsg] = useState<{ k: string; text: string; bad: boolean } | null>(null);
+  /* 用户手填的版本（键与 busy/msg 一致）。留空 = 用声明里的版本。 */
+  const [ver, setVer] = useState<Record<string, string>>({});
 
   const all = useMemo(itemsOf, []);
   const m: any = DEPS_MANIFEST;
@@ -138,12 +141,12 @@ export default function DepsCard() {
   }, [ctx]);
 
   const doInstall = useCallback(
-    async (item: Item) => {
+    async (item: Item, override?: string) => {
       const spec = specOf(item.install);
       const k = keyOf(spec?.name || item.name, spec?.version || '');
       setBusy(k);
       setMsg(null);
-      const r = await installRuntimeDep(ctx, item);
+      const r = await installRuntimeDep(ctx, item, { version: override });
       if (!r.ok) {
         setMsg({ k, text: r.error || '安装失败', bad: true });
         setBusy('');
@@ -157,7 +160,7 @@ export default function DepsCard() {
        */
       try {
         await loadRuntimeDep(ctx, r.name!, r.version!, r.file);
-        setMsg({ k, text: '已安装并验证可加载', bad: false });
+        setMsg({ k, text: `已安装 ${r.version || '最新版'} 并验证可加载`, bad: false });
       } catch (e) {
         setMsg({
           k,
@@ -393,10 +396,32 @@ export default function DepsCard() {
 
             {can && !hasExact ? (
               <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)' }}>
+                {/*
+                 * 版本框：默认填声明里归一化后的具体版本（^12.0.0 → 12.0.0），
+                 * 用户可以改。
+                 *
+                 * 【为什么要能改】
+                 * 装哪个版本也是"用户说了算"—— 与多版本共存时"留哪个"是同一个
+                 * 取舍。后台替他挑，界面上看不出挑了什么。
+                 *
+                 * 【为什么默认填剥掉 ^ 的具体版本，而不是原样带 ^】
+                 * 实测：https://cdn.jsdelivr.net/npm/mermaid@^12.0.0/+esm → 502，
+                 *       https://cdn.jsdelivr.net/npm/mermaid@12.0.0/+esm  → 200
+                 * 带 ^ 的地址根本取不到东西。而 URL、落盘文件名、列表里显示的
+                 * 版本必须指同一个版本，否则会出现"显示 12.0.0、实际装了 12.3.0"。
+                 */}
+                <input
+                  className="p-input dep-ver"
+                  style={{ width: '108px', fontSize: 'var(--fs-12, 12px)', padding: '0 8px' }}
+                  value={ver[k] ?? (spec ? pinnedVersionOf(spec.version).version : '')}
+                  placeholder={spec ? pinnedVersionOf(spec.version).version || '最新' : '版本'}
+                  onChange={(e) => setVer({ ...ver, [k]: e.target.value })}
+                  title="要装的具体版本号，留空用声明里的版本"
+                />
                 <button
                   className="p-btn sm primary"
                   disabled={running || rtMissing}
-                  onClick={() => doInstall(d)}
+                  onClick={() => doInstall(d, ver[k])}
                   title={rtMissing ? '后端尚未接入' : '从 CDN 装进工具内部'}
                 >
                   {running ? '安装中…' : '安装'}
