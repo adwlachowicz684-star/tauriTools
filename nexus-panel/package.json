@@ -118,6 +118,7 @@
     "test:pg-click-debounce": "node plugins/project-group/click-debounce-test.mjs",
     "test:pg-clients": "node plugins/project-group/chain-clients-test.mjs",
     "test:pg-clipboard": "node plugins/project-group/clipboard-test.mjs",
+    "test:pg-color-forward": "node plugins/project-group/color-forward-test.mjs",
     "test:pg-config-normalize": "node plugins/project-group/config-normalize-test.mjs",
     "test:pg-config-schema": "node plugins/project-group/config-schema-test.mjs",
     "test:pg-confirm": "node plugins/project-group/chain-confirm-test.mjs",
