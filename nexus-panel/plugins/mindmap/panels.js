@@ -1799,6 +1799,15 @@ export function buildSide(app, opts = {}) {
               if (isCurrent) await app.api.applyTheme(DEFAULT_THEME);
               app.customThemes = (app.customThemes || []).filter((x) => x.id !== t.id);
               await app.api.markPresetRemoved(t.id);
+              /*
+               * 上面两行只管住了「正在看的那一张」。
+               * **别的画布**可能也在用这个主题（多画布是常态），
+               * 它们的 sheet.theme 会留下一个已注销的 id —— 本次会话看不出来
+               * （编辑器内存里还注册着），重载后就注册不到，setTheme 抛错被吞，
+               * 于是画布停在错误配色、主题页一个高亮都没有、当前主题名显示成裸 id。
+               * 所以这里要把**所有**引用它的画布一起回退并落盘。
+               */
+              const nFixed = await app.api.reassignTheme?.(t.id) || 0;
               const ok = await app.api.saveThemes();
               if (!ok) {
                 app.api.status('删除失败（未写入本地库）', true);
@@ -1806,9 +1815,12 @@ export function buildSide(app, opts = {}) {
                 return;
               }
               refresh();
-              app.api.status(isCurrent
+              // 别的画布也被回退了必须说出来：用户看不到那些画布，
+              // 不说的话他会以为「我删个主题怎么别的画布配色也变了」
+              const other = nFixed && !isCurrent ? `，另有 ${nFixed} 张画布已回退到内置主题` : '';
+              app.api.status((isCurrent
                 ? `已删除「${t.name}」并回退到内置主题`
-                : `已删除「${t.name}」`);
+                : `已删除「${t.name}」`) + other);
             }, (m) => app.api.status(m, true)),
             title: '删除',
           }, '✕'),

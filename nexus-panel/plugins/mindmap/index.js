@@ -119,6 +119,21 @@ bootIframePlugin(async (ctx) => {
   function refreshSideIfNeeded() {
     try { if (side?.current?.() === 'file') side.refresh(); } catch { /* ignore */ }
   }
+
+  /**
+   * 换画布 / 换文件后**无条件**重刷侧栏。
+   *
+   * 与 refreshSideIfNeeded 的分工：那个是「选中节点变了」，只刷文件页；
+   * 这个是「画布整体换了」，必须全刷 —— 主题页读的是 app.sheet.theme、
+   * 布局网格读的是 app.sheet.layout，不刷的话高亮仍停在**上一张**画布上。
+   *
+   * 实测（真实 Chrome）：画布1=清新绿 → 新建画布2=清新红 → 切回画布1，
+   * 编辑器主题已是 fresh-green，侧栏却仍高亮「清新红」；新建画布2 那一刻
+   * 就已经不一致（编辑器 fresh-blue、侧栏还高亮清新绿）。
+   */
+  function refreshSideNow() {
+    try { side?.refresh?.(); } catch { /* 侧栏还没建好（启动期） */ }
+  }
   let saveTimer = null;
   let lastBackupAt = 0;
   let lastBackupFp = null;      // 最新快照的指纹，用于「内容没变就不重复备份」
@@ -1350,6 +1365,8 @@ async function gcOrphanAssets(quiet = false) {
     // 否则会拿旧栈标记去操作新画布（与 resetHistory 同理）
     pendingRedo = null;
     updateBadge();
+    // 整张画布都换了，侧栏不能再沿用上一张的选中态（主题/布局高亮）
+    refreshSideNow();
   }
 
   function applyOptions() {
@@ -2678,6 +2695,30 @@ async function gcOrphanAssets(quiet = false) {
     // 列表里**看不到新主题**，必须切走页签再切回来才出现 ——
     // 用户会以为没保存成功，其实已经存进本地库了。
     refreshSide: () => { try { side?.refresh?.(); } catch { /* 侧栏还没建好 */ } },
+    /**
+     * 删除主题后，把**所有**还引用它的画布改回内置主题。
+     *
+     * 原先只处理「正在看的那一张」（面板里 `cur === t.id` 才回退），
+     * 于是别的画布仍留着已注销的 theme id —— 本次会话里看不出来
+     * （编辑器内存里还注册着），重载后注册不到，setTheme 抛错被吞，
+     * 画布停在错误配色、主题页连一个高亮都没有、当前主题名显示成裸 id。
+     * 又是「同一条约束只修了当前这一条路径」。
+     *
+     * @returns {Promise<number>} 被回退的画布数
+     */
+    reassignTheme: guard('回退主题引用', async (fromId) => {
+      if (!fromId) return 0;
+      let n = 0;
+      for (const s of workbook.sheets) {
+        if (s.theme === fromId) { s.theme = DEFAULT_THEME; n++; }
+      }
+      if (!n) return 0;
+      // 当前画布也在其中时，编辑器侧要跟着切（否则画布与数据不一致）
+      if (sheet()?.theme === DEFAULT_THEME) bridge?.setTheme(DEFAULT_THEME);
+      await persist();
+      refreshSideNow();
+      return n;
+    }),
     applyTheme: guard('应用主题', applyTheme),
     applyLayout: guard('应用布局', applyLayout),
     toast: (m, t) => ctx.toast(m, t),

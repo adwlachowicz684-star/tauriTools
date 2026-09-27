@@ -11594,6 +11594,87 @@ group('BUG 59 · 超链接与备注输入框必须回显（否则已有值看不
 }
 
 /* ============================================================
+   BUG 60 · 切换画布后主题/布局页不刷新；删主题只回退当前画布
+   ============================================================ */
+
+group('BUG 60 · 换画布后侧栏必须跟着换；删主题要回退**所有**引用它的画布');
+{
+  const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+
+  /**
+   * 实测（真实 Chrome，走完整 UI）：
+   *   画布1 设为清新绿 → 新建画布2（编辑器 fresh-blue，侧栏却仍高亮清新绿）
+   *   → 画布2 设为清新红 → 切回画布1（编辑器 fresh-green，侧栏仍高亮清新红）
+   * 编辑器与侧栏指向的不是同一张画布。
+   *
+   * 根因：loadSheet() 换了 s.theme / s.layout，却只刷了「文件页」
+   * （refreshSideIfNeeded 里 `side?.current?.() === 'file'`）。
+   * 那条判断管的是**选中节点变了**，而换画布时 open() 不会被调用，
+   * 页面不重建 —— 于是主题页 / 布局网格一直沿用上一张画布的值。
+   */
+
+  // ① 必须有一个「无条件重刷」的入口（不是复用只刷文件页的那个）
+  ok(/function refreshSideNow\(\)/.test(ix), 'index：有 refreshSideNow()（无条件重刷）');
+  {
+    const i = ix.indexOf('function refreshSideNow()');
+    let dep = 0, k = ix.indexOf('{', i);
+    for (let j = k; j < ix.length; j++) {
+      if (ix[j] === '{') dep++;
+      else if (ix[j] === '}') { dep--; if (!dep) { k = j; break; } }
+    }
+    const body = ix.slice(i, k + 1);
+    ok(/side\?\.refresh\?\.\(\)/.test(body), 'refreshSideNow() 调的是 side.refresh（可选链，启动期不炸）');
+    // 不能又退化成只刷文件页 —— 那就和没加一样
+    ok(!/current\?\.\(\)\s*===\s*'file'/.test(body),
+      'refreshSideNow() 不能只刷文件页（那就和 refreshSideIfNeeded 一样了）');
+  }
+
+  // ② loadSheet() 必须真的调它 —— 只定义不调用 = 没修（BUG 11 同款）
+  {
+    const i = ix.indexOf('async function loadSheet()');
+    ok(i > 0, 'index：能定位 loadSheet');
+    let dep = 0, k = -1;
+    for (let j = ix.indexOf('{', i); j < ix.length; j++) {
+      if (ix[j] === '{') dep++;
+      else if (ix[j] === '}') { dep--; if (!dep) { k = j; break; } }
+    }
+    const body = ix.slice(i, k + 1);
+    ok(/refreshSideNow\(\)/.test(body), 'loadSheet() 末尾调用 refreshSideNow()（换画布后重刷侧栏）');
+  }
+
+  // ③ 删主题：必须回退**所有**引用它的画布，不能只管当前这张
+  ok(/reassignTheme:\s*guard\(/.test(ix), 'index：api 暴露 reassignTheme');
+  {
+    const i = ix.indexOf('reassignTheme: guard(');
+    let dep = 0, k = -1;
+    for (let j = ix.indexOf('{', i); j < ix.length; j++) {
+      if (ix[j] === '{') dep++;
+      else if (ix[j] === '}') { dep--; if (!dep) { k = j; break; } }
+    }
+    const body = ix.slice(i, k + 1);
+    ok(/for \(const s of workbook\.sheets\)/.test(body),
+      'reassignTheme 遍历**全部**画布（只改当前那张 = 别的画布仍悬空）');
+    ok(/s\.theme === fromId/.test(body), 'reassignTheme 按 theme id 匹配');
+    ok(/await persist\(\)/.test(body), 'reassignTheme 回退后要落盘（不落盘重载又回退到悬空 id）');
+  }
+
+  // ④ 面板删除主题的处理里必须真的调它
+  {
+    const i = pn.indexOf("safe('删除主题'");
+    ok(i > 0, 'panels：能定位删除主题处理器');
+    let dep = 0, k = -1;
+    for (let j = pn.indexOf('{', i); j < pn.length; j++) {
+      if (pn[j] === '{') dep++;
+      else if (pn[j] === '}') { dep--; if (!dep) { k = j; break; } }
+    }
+    const body = pn.slice(i, k + 1);
+    ok(/app\.api\.reassignTheme\?\.\(t\.id\)/.test(body),
+      '删除主题后调用 reassignTheme(t.id)（否则别的画布留悬空主题 id）');
+  }
+}
+
+/* ============================================================
    结果
    ============================================================ */
 
