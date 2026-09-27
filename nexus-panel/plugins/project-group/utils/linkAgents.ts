@@ -159,7 +159,41 @@ export function usableLinkName(name: string): boolean {
   const n = name.trim();
   if (!n) return false;
   if (/[\\/:*?"<>|]/.test(n)) return false;
+  if (isReservedWinName(n)) return false;
   return n.replace(/^\.+/, '').trim().length > 0;
+}
+
+/**
+ * Windows 保留设备名 —— 在**任何目录、带任何扩展名**都建不出文件/链接：
+ * `D:\proj\CON` 会被解析到控制台设备而不是目录。
+ *
+ * 后果是建链时 mklink 失败，而错误只说"mklink 失败"并指向 `CON`
+ * 这个看着完全正常的名字 —— 用户只会以为磁盘或权限出了问题。
+ *
+ * 这份清单与后端 `sys::is_reserved_name` 的 RESERVED **逐项镜像**，
+ * 有断言比对两侧（改一处不改另一处会直接报红）：抄两份必然漂移，
+ * 而"前端放行、后端才拒"恰恰只有两套规则不一致时才出现 —— 那时报错
+ * 又会回到"指向不明"的原状。
+ */
+export const WIN_RESERVED_NAMES: readonly string[] = [
+  'CON', 'PRN', 'AUX', 'NUL', 'CONIN$', 'CONOUT$',
+  'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+  'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+];
+
+/**
+ * 判据要点（每条都对应一个误伤或漏判）：
+ *   - 取**第一个点之前**的主名：`CON.txt` 同样保留，扩展名不算数
+ *   - **完全相等**才判保留，不能用 startsWith：否则 `config` / `console`
+ *     这些以保留名开头的常用名会被误拒，那比漏判更糟
+ *   - 大小写不敏感：Windows 上 `con` 与 `CON` 是同一个
+ *   - `.CON` 的主名为空，与 Windows 实际行为一致（不判保留）
+ */
+export function isReservedWinName(name: string): boolean {
+  const stem = (name.split('.')[0] ?? '').trim();
+  if (!stem) return false;
+  const up = stem.toUpperCase();
+  return WIN_RESERVED_NAMES.includes(up);
 }
 
 /** 置顶列表里某名字的下标（-1 无）；大小写不敏感（#354）。 */

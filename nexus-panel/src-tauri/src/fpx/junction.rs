@@ -164,6 +164,16 @@ pub fn normalize_name(raw: &str, prepend_dot: bool) -> Option<String> {
     if name.is_empty() || name.trim_start_matches('.').is_empty() { return None; }
     if name.contains('/') || name.contains('\\') { return None; }
     if name.chars().any(|c| matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|')) { return None; }
+    /*
+     * Windows 保留设备名（CON / NUL / COM1…）在**任何目录、任何扩展名**下
+     * 都建不出链接，而 mklink 的失败信息只说"mklink 失败"，指向一个看着
+     * 完全正常的名字 —— 用户无从下手。必须在 normalize 这一步就判掉，
+     * 让调用方拿到 None（"这名字不可用"）而不是一个必然失败的完整路径。
+     *
+     * 判据复用 sys::is_reserved_name，不在这里另写一份：抄两份必然漂移，
+     * 而"前端放行、后端才拒"恰恰是两套规则不一致时才出现的。
+     */
+    if crate::fpx::sys::is_reserved_name(&name) { return None; }
     Some(name)
 }
 

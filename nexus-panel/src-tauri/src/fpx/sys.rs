@@ -144,7 +144,42 @@ pub fn validate_name(raw: &str) -> Result<String, String> {
      * 于是以为是别的地方出了问题（这条报错指向不了真正的原因）。
      */
     if name.chars().count() > 120 { return Err("名称过长（上限 120 字符）".into()); }
+    if is_reserved_name(name) {
+        return Err("名称是 Windows 保留设备名（CON / NUL / COM1 等），无法创建".into());
+    }
     Ok(name.to_string())
+}
+
+/**
+ * 是否为 Windows 保留设备名（CON / PRN / AUX / NUL / COM1-9 / LPT1-9）。
+ *
+ * 这些名字在**任何目录下、带任何扩展名**都建不出来：`D:\proj\CON` 会被
+ * 解析到控制台设备而不是目录。于是
+ *   - 新建 → CreateDirectory 失败，报"拒绝访问"，指向一个看着完全正常的名字
+ *   - 建链接 → mklink 失败，报错同样指向不明
+ * 两者都不说"这个名字不能用"，用户只会以为磁盘或权限出了问题。
+ *
+ * 判据要点（每条都对应一个误伤或漏判）：
+ *   - 取**第一个点之前**的主名：`CON.txt` 同样是保留的，扩展名不算数
+ *   - **完全相等**才判保留，不能用 starts_with：否则 `config` / `console`
+ *     这些以保留名开头的正常名字会被误拒（那比漏判更糟，等于砍掉常用名）
+ *   - 大小写不敏感：Windows 上 `con` 与 `CON` 是同一个
+ *   - 尾点已在上面单独挡掉，这里不再重复处理
+ *
+ * 在 Linux 上也一并拒绝，是刻意的：本工具的 junction / desktop.ini / ACL
+ * 全是 Windows 语义，且配置可能跨机器同步 —— 在 Linux 上放行的 `CON`
+ * 同步到 Windows 就是建不出来的死条目。宁可在两头都挡。
+ */
+pub fn is_reserved_name(name: &str) -> bool {
+    const RESERVED: [&str; 24] = [
+        "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    let stem = name.split('.').next().unwrap_or("").trim();
+    if stem.is_empty() { return false; }
+    let upper = stem.to_uppercase();
+    RESERVED.contains(&upper.as_str())
 }
 
 /// 新建文件夹：parent 为空时用 quick_roots 首个；hierarchy 为可选的页签层级子目录。
