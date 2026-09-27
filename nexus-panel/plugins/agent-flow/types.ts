@@ -2189,6 +2189,43 @@ export function constItemKey(it: ConstItem, i: number): string {
   return it.id || `c${i}`;
 }
 
+/** 常量卡自身的问题。与 canvasParams 的 ParamCardIssue 同形，可直接并入 */
+export type ConstCardIssue = { field: string; message: string };
+
+/**
+ * 常量卡本身的问题（重名）。
+ *
+ * ================= 为什么必须盯 =================
+ *
+ * 执行器按卡名往 fields 里再写一份（模板引用要人能读懂的名字）：
+ *     fields[卡id] = v;      ← 参数连线按这个取
+ *     fields[卡名] = v;      ← {{节点id.卡名}} 按这个取
+ * 两张卡同名时**后写的静默覆盖先写的**，于是模板取到的是后那张 ——
+ * 而界面上两张卡都在、连线也都在（连线按 id，不受影响）、都不报错。
+ *
+ * 参数卡（canvasParams.paramIssues）那边已经盯了重名，
+ * 常量卡这边此前没有 —— 同样的形态、同样的失效方式，只盯一边就是漏一半。
+ *
+ * 只报重名，不报空名：空名时端口还有默认显示名，
+ * 且参数连线照样能用，那不是"取错值"，不值得标红。
+ */
+export function constIssues(items: ConstItem[]): ConstCardIssue[] {
+  const issues: ConstCardIssue[] = [];
+  const seen = new Set<string>();
+  (items ?? []).forEach((it, i) => {
+    const n = String(it?.name ?? '').trim();
+    if (!n) return;
+    if (seen.has(n)) {
+      issues.push({
+        field: n,
+        message: `重名了 —— {{节点id.${n}}} 只会取到后一张，连线不受影响（它按卡 id 取）`,
+      });
+    }
+    seen.add(n);
+  });
+  return issues;
+}
+
 /**
  * 一个常量节点有哪些卡。
  *

@@ -8,7 +8,10 @@ import type {
   LlmChatNodeData, TableReadNodeData, DeriveNodeData, FilterNodeData,
   AggNodeData, VarNodeData,
 } from '../types';
-import { targetsOf, UPDATE_SOURCE_META, needsFeedUrl, constsOf, constItemLabel } from '../types';
+import {
+  targetsOf, UPDATE_SOURCE_META, needsFeedUrl,
+  constsOf, constItemLabel, constIssues,
+} from '../types';
 import { triggerEntriesOf, entryEnabled, mergeConfig } from './triggerEntries';
 import { argTypeIssues, type ArgTypeIssue } from './argTypes';
 
@@ -455,6 +458,15 @@ function vConst(d: ConstNodeData): V {
    */
   const items = constsOf(d);
   const empties = items.filter((it) => blank(it.value));
+
+  /*
+   * 重名：模板 {{节点id.卡名}} 只会取到后一张。
+   * 判红而不是判黄 —— 空值只是"输出空串"，重名是"取到了错的值"，
+   * 后者更难发现（连线按 id，不受影响，于是线也看不出问题）。
+   */
+  const dup = constIssues(items);
+  if (dup.length > 0) return error(...dup.map((x) => `${x.field}：${x.message}`));
+
   if (empties.length === 0) return ok();
   const one = empties.length === 1 && items.length > 1
     ? `「${constItemLabel(empties[0], items.indexOf(empties[0]))}」`

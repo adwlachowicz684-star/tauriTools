@@ -155,6 +155,48 @@ test('有卡空着时要提醒（只看第一张的话第二张的空值没人�
   assert.match((v.messages ?? []).join(' '), /备注/, '要说清是**哪一张**卡空着');
 });
 
+/*
+ * 两张卡同名：执行器按卡名往 fields 里写一份给模板引用，后写的盖掉先写的
+ * —— 于是 {{节点id.阈值}} 取到的是后那张。而连线按卡 id，**不受影响**，
+ * 界面上线也在、卡也在、都不报错，只有模板取值是错的。
+ *
+ * 参数卡（canvasParams.paramIssues）那边早盯了重名，常量卡这边此前没有 ——
+ * 同样的形态只盯一边，等于漏一半。
+ */
+test('两张卡同名要报出来（模板只取得到后一张）', () => {
+  const d = {
+    kind: 'const',
+    items: [
+      { id: 'a', name: '阈值', valueType: 'num', value: '10' },
+      { id: 'b', name: '阈值', valueType: 'num', value: '99' },
+    ],
+  } as unknown as ConstNodeData;
+  const v = validateNode({ data: d });
+  assert.equal(v.level, 'error', '重名要判红');
+  assert.match((v.messages ?? []).join(' '), /阈值/, '要说清是哪个名字重了');
+});
+
+test('名字不重时不报（别把正常的卡标红）', () => {
+  const d = {
+    kind: 'const',
+    items: [
+      { id: 'a', name: '阈值', valueType: 'num', value: '10' },
+      { id: 'b', name: '价格', valueType: 'num', value: '99' },
+    ],
+  } as unknown as ConstNodeData;
+  assert.equal(validateNode({ data: d }).level, 'ok', '不重名不该报');
+});
+
+test('重名的检测只在一处（校验器与面板共用 constIssues）', () => {
+  if (!AF_SRC) return;
+  const val = readSrc('engine/nodeValidate.ts');
+  assert.match(val, /constIssues\(/, 'nodeValidate 要调用 constIssues，不能自己再判一遍');
+
+  /* 面板要能看到是**哪一张**重了 —— 只在圆点上提示，用户还得自己找 */
+  const insp = readSrc('components/inspectors/ConstInspector.tsx');
+  assert.match(insp, /constIssues\(/, 'ConstInspector 也要用同一份 constIssues');
+});
+
 test('错参指名到卡，而不是笼统的「值」', () => {
   const issues = argTypeIssues('const', {
     kind: 'const',

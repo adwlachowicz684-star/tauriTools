@@ -1,6 +1,6 @@
 import type { FlowNode } from '../../flowTypes';
 import {
-  CONST_TYPE_LABEL, constsOf, newConstId, normBoolText,
+  CONST_TYPE_LABEL, constsOf, constIssues, newConstId, normBoolText,
   type ConstNodeData, type ConstItem, type ConstValueType,
 } from '../../types';
 
@@ -24,6 +24,11 @@ export function ConstInspector({ node, onChange }: {
 }) {
   const d = node.data as ConstNodeData;
   const list = constsOf(d);
+  /*
+   * 重名的卡名。检测在 types.ts 的 constIssues 一处 ——
+   * 校验器（圆点）与这里共用同一份，不各写一遍。
+   */
+  const dupNames = new Set(constIssues(list).map((x) => x.field));
 
   const writeAll = (next: ConstItem[]) => onChange(node.id, { items: next });
 
@@ -67,6 +72,12 @@ export function ConstInspector({ node, onChange }: {
                   </button>
                 ) : null}
               </div>
+
+              {String(t.name ?? '').trim() && dupNames.has(String(t.name ?? '').trim()) ? (
+                <div className="cond-issue error">
+                  重名了 —— {'{{节点id.'}{String(t.name ?? '').trim()}{'}}'} 只会取到后一张（连线按卡 id，不受影响）
+                </div>
+              ) : null}
 
               <label className="p-row">
                 <span className="p-muted" style={{ width: 64, flex: 'none' }}>种类</span>
