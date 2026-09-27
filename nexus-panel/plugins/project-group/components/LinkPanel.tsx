@@ -342,7 +342,22 @@ export function LinkAgentBody({
                       return n;
                     });
                     clearRenameErr(p.original);
-                    e.currentTarget.blur();
+                    /*
+                     * **这里不能 blur()** —— 与上面 Enter 那条不同。
+                     *
+                     * blur() 会同步派发 onBlur，而 onBlur 正是提交改名的那一条路，
+                     * 它提交的是 `e.target.value`（DOM 里的值）。setState 是批处理的：
+                     * 这个处理函数还没跑完，DOM 里仍是用户刚编辑的文本 ——
+                     * 于是 onBlur 拿编辑值去 rename，「取消」变成「照改不误」：
+                     * renames 真被写成了新名（保存后建链目录名随之改变），
+                     * 而界面上草稿又被清掉了、显示回原名，
+                     * 用户以为自己取消了，实际已经改了。
+                     *
+                     * 这个框是**常驻**的（不像别的改名框那样进编辑态才挂载），
+                     * 所以"退出这次编辑"既不需要卸载也不需要 blur：清掉草稿后
+                     * React 会把值回滚到 shown，之后正常离开时 onBlur 拿到的
+                     * 就是当前名，rename 判定"没变"直接返回，一个字都不会写。
+                     */
                     /* #250 同上：只退出这次编辑，别让事件冒到上面的浮层 */
                     e.stopPropagation();
                   }

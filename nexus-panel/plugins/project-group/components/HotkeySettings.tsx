@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import {
   HOTKEYS, GROUP_LABEL, comboFromEvent, findConflicts, formatCombo, hotkeysByGroup,
-  normalizeCombo, type HotkeyId,
+  MODIFIER_KEYS, normalizeCombo, type HotkeyId,
 } from '../utils/hotkeys';
+import { isComposing } from '../utils/ime';
 
 const IS_MAC = typeof navigator !== 'undefined'
   && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
@@ -45,6 +46,8 @@ export function HotkeySettings({
 }) {
   /** 正在录入哪一项；null = 没在录入 */
   const [capturing, setCapturing] = useState<HotkeyId | null>(null);
+  /** 录入期间的一次性提示（"这一下不算"之类）；不能再静默 */
+  const [tip, setTip] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({ ...(value ?? {}) });
 
   // 外部值变了（保存后重新加载）同步进来
@@ -84,24 +87,74 @@ export function HotkeySettings({
 
   const resetAll = () => { setDraft({}); onChange(null); };
 
-  // 录入模式：全局捕获按键
+  /*
+   * 录入模式：全局捕获按键。
+   *
+   * 两种"这一下不算"必须分开处理，混在一起会出两种失效：
+   *
+   *   · **单按修饰键**是正常的中间态（用户正要按 Ctrl+A 里的那个 Ctrl），
+   *     要吞掉（否则单按 Alt 会激活菜单栏）并继续等，**不能提示**——
+   *     提示了就是每录一个组合键都闪一句"未识别"。
+   *
+   *   · **无法识别的键**（NumLock / ContextMenu / 输入法组合期的 Process 等）
+   *     必须**说出来**。此前这里静默什么都不做：界面仍显示「请按键…」，
+   *     而本监听还挂在 capture 阶段吞掉**全部**按键——于是整个界面的键盘
+   *     操作（上下键选卡、F5 刷新、Delete 删除）全部失效，
+   *     唯一的线索只有那个小按钮上的四个字，用户根本不会注意到。
+   *     卡在这种状态里比直接报错难查得多。
+   *
+   * 组合期（IME）必须最先判、且**不能吞**：那一帧的键归输入法，
+   * 吞掉会让输入法状态错乱，而且 `e.key` 是 'Process'，
+   * 录出来的组合也是错的。
+   *
+   * 依赖里带上 `draft`：`setOne` 是用当前 draft 拼新值的，
+   * 只依赖 capturing 的话，录入期间 draft 若被别处改过（比如点了↺、
+   * 或外部 value 同步进来），这里会用**旧 draft** 去拼，把那次改动盖掉。
+   */
   useEffect(() => {
     if (!capturing) return;
     const onKey = (e: KeyboardEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.key === 'Escape') { setCapturing(null); return; }
-      // Backspace/Delete = 取消绑定
+      /* 组合期：这一下归输入法，不吞也不录 */
+      if (isComposing(e)) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        setCapturing(null);
+        setTip(null);
+        return;
+      }
+      /* 单按修饰键：还在等后面的实键，不是无效键 */
+      if (MODIFIER_KEYS.includes(e.key)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      // Backspace/Delete = 取消绑定（所有键位都允许取消，用 ↺ 可恢复默认）
       if ((e.key === 'Backspace' || e.key === 'Delete') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        e.stopPropagation();
         setOne(capturing, '');
         return;
       }
       const c = comboFromEvent(e);
-      if (c) setOne(capturing, c);
+      if (c) {
+        e.preventDefault();
+        e.stopPropagation();
+        setOne(capturing, c);
+        return;
+      }
+      /*
+       * 到这里的都是"这一下不构成组合"的键。
+       * 不明说就等于把用户锁在录入态里，所以必须给提示。
+       * 只 stopPropagation（不惊动应用内快捷键）、**不** preventDefault：
+       * 留着浏览器默认行为，界面看上去才不像死掉。
+       */
+      e.stopPropagation();
+      setTip(`未识别「${e.key}」这个键，仍在录入中；按 Esc 或再点一次该键位可退出`);
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [capturing]);
+  }, [capturing, draft]);
 
   return (
     <div>
@@ -116,6 +169,10 @@ export function HotkeySettings({
           已自定义 {customizedKeys(draft).length} 项
         </span>
       </div>
+
+      {tip && (
+        <div className="fpx-hotkey-warn" role="status">{tip}</div>
+      )}
 
       {conflicts.length > 0 && (
         <div className="fpx-hotkey-warn">
@@ -141,8 +198,14 @@ export function HotkeySettings({
                   <span className="fpx-hotkey-label">{h.label}</span>
                   <button
                     className="p-btn fpx-hotkey-val"
-                    onClick={() => setCapturing(h.id)}
-                    title="点击后按下新键位；Esc 取消，Del 取消绑定"
+                    /* 再点一次同一个键位 = 退出录入。
+                       没有这个出口的话，用户一旦按了个识别不出来的键，
+                       就只能靠 Esc 退出——而他未必知道还在录入中。 */
+                    onClick={() => {
+                      setTip(null);
+                      setCapturing(capturing === h.id ? null : h.id);
+                    }}
+                    title="点击后按下新键位；Esc 或再点一次取消，Del 取消绑定"
                   >
                     {capturing === h.id ? '请按键…' : formatCombo(cur, IS_MAC)}
                   </button>

@@ -4,6 +4,7 @@ import {
 import { createPortal } from 'react-dom';
 import { Splitter } from './Splitter';
 import { clampPanelHeight } from '../utils/layout';
+import { isComposing } from '../utils/ime';
 
 /**
  * 菜单图层：所有右键菜单 / 「⋯」菜单统一渲染到这里，而不是留在各自的卡片里。
@@ -51,6 +52,18 @@ export function useEscapeLayer(handler: () => void) {
     const token = Symbol('esc-layer');
     escStack.push(token);
     const onKey = (e: KeyboardEvent) => {
+      /*
+       * 组合期（IME）这一下 Esc 是「取消这次候选词」，不是关闭浮层。
+       *
+       * 输入框自己的 onKeyDown 虽然有组合期守卫，但它只是 `return`
+       * —— **没有 stopPropagation**，事件照样冒到 window，
+       * 于是用户想丢掉刚打的几个字，整个弹窗却关了，
+       * 里面没保存的编辑一起没了（utils/ime.ts 里列的第 4 条后果）。
+       *
+       * 判据放在**这一层**而不是要求每个输入框都记得拦：
+       * 浮层自己负责"不该关的时候别关"，漏一个输入框也不会出事。
+       */
+      if (isComposing(e)) return;
       if (e.key !== 'Escape') return;
       if (escStack[escStack.length - 1] !== token) return;   // 不是最上层就不处理
       h.current();

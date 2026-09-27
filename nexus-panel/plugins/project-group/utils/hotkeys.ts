@@ -42,8 +42,6 @@ export interface HotkeyDef {
   group: HotkeyGroup;
   /** 该键位是否被浏览器/系统占用，界面上给个提醒 */
   note?: string;
-  /** 是否允许取消绑定（留空 = 不响应） */
-  allowEmpty?: boolean;
 }
 
 export const HOTKEYS: HotkeyDef[] = [
@@ -191,10 +189,20 @@ function formatKeyName(k: string): string {
  * 从 KeyboardEvent 反推 combo 字符串（设置界面"按下新键"用）。
  * 返回 null 表示这一下不构成有效组合（比如只按了一个修饰键）。
  */
+/**
+ * 单按这些键不构成组合（修饰键 / 状态键）。
+ *
+ * **全项目只此一份**：`comboFromEvent` 用它判定"这一下不算"，
+ * 设置界面的录入监听也用它区分"正在按修饰键"与"按了个无法识别的键"——
+ * 抄两份的话，往一边加一个键名（比如某些键盘的 `Fn`），
+ * 录入态就会把正常的中间态当成无效键、给用户报错。
+ */
+export const MODIFIER_KEYS = ['Shift', 'Control', 'Alt', 'Meta', 'AltGraph', 'CapsLock'];
+
 export function comboFromEvent(e: KeyboardEvent): string | null {
   const k = e.key;
   // 单按修饰键不算
-  if (['Shift', 'Control', 'Alt', 'Meta', 'AltGraph', 'CapsLock'].includes(k)) return null;
+  if (MODIFIER_KEYS.includes(k)) return null;
 
   const parts: string[] = [];
   const ctrl = e.ctrlKey || e.metaKey; // 统一记作 mod
