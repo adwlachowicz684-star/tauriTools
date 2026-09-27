@@ -1866,6 +1866,39 @@ export function buildSide(app, opts = {}) {
 /* =========================== 浮层 =========================== */
 
 /**
+ * Escape 关浮层的事件处理器（dialog / popupMenu 共用）。
+ *
+ * **为什么需要**：外壳自己的 `js/dialog.js`、`theme-picker.js` 都响应
+ * Escape，本文件的 dialog() / popupMenu() 却一个监听器都没有 —— 实测
+ * 按 Esc 浮层纹丝不动，只能点遮罩或「关闭」按钮。
+ * 图片/视频预览这类「看完就走」的浮层尤其明显。
+ *
+ * 两条细节：
+ *
+ * 1. **只关最上面那层**。多层叠开时（浮层上再开弹出菜单）Esc 应当逐层收，
+ *    而不是一次全关。判据是 DOM 顺序：后 append 的在上面，与 z-index
+ *    一致（--z-menu 60 > --z-float 50）。
+ * 2. **组合期必须放过**。中文输入法里 Escape 是「取消候选」，在浮层的
+ *    输入框里打字时按 Esc 选词不该把浮层关掉（与编辑器里那处守卫同源）。
+ *
+ * @param {HTMLElement} mask 本层的遮罩
+ * @param {Function} close   关闭本层
+ * @returns {(e: KeyboardEvent) => void}
+ */
+export function escCloser(mask, close) {
+  return function onEsc(e) {
+    if (!e || e.key !== 'Escape') return;
+    if (e.isComposing || e.keyCode === 229) return;
+    const masks = document.querySelectorAll('.mm-mask, .mm-menu-mask');
+    if (masks.length && masks[masks.length - 1] !== mask) return;   // 不是最上层
+    e.preventDefault();
+    e.stopPropagation();
+    close();
+  };
+}
+
+
+/**
  * 通用浮层。
  * @param onClose 关闭时的清理钩子：点遮罩、点关闭按钮、外部调 close() 都会触发，
  *   用于释放 Blob URL 之类的一次性资源。
@@ -1876,9 +1909,11 @@ function dialog(title, children, onClose, opt) {
   // 会把大图压到要左右拖动才看得全。
   const dlgCls = 'div.mm-dialog' + (opt && opt.wide ? '.wide' : '');
   let cleaned = false;
+  let onEsc = null;
   const close = () => {
     if (cleaned) return;
     cleaned = true;
+    if (onEsc) document.removeEventListener('keydown', onEsc, true);
     mask.remove();
     refocusCanvasAfterPopup();
     try { onClose?.(); } catch { /* 清理失败不该拦住关闭 */ }
@@ -1892,6 +1927,8 @@ function dialog(title, children, onClose, opt) {
   );
   mask.addEventListener('click', (e) => { if (e.target === mask) close(); });
   document.body.appendChild(mask);
+  onEsc = escCloser(mask, close);
+  document.addEventListener('keydown', onEsc, true);
   return { mask, close };
 }
 
@@ -1958,7 +1995,9 @@ export function popupMenu(anchorEl, items) {
     prev.close();
     return { close: () => {} };
   }
+  let onEsc = null;
   const close = () => {
+    if (onEsc) document.removeEventListener('keydown', onEsc, true);
     mask.remove();
     // 同理 dialog：菜单项按钮被 remove 后 activeElement 退回 <body>，
     // 画布收不到键。选完预设立刻把焦点还回去。
@@ -1993,6 +2032,8 @@ export function popupMenu(anchorEl, items) {
   document.addEventListener('pointerdown', onDoc, true);
   // 开新的之前先收掉上一个（锚点不同的情况），否则同样是叠层
   if (openMenu) { const p0 = openMenu; openMenu = null; p0.close(); }
+  onEsc = escCloser(mask, close);
+  document.addEventListener('keydown', onEsc, true);
   openMenu = { anchor: anchorEl, close };
   return { close };
 }

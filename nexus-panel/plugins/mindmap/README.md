@@ -3468,3 +3468,69 @@ pointer 事件，不靠正则匹配源码。jsdom 里 `getBoundingClientRect` �
 
 顺带删掉了误提交进库的临时探针 `menu_tmp.mjs`（早先 wip 提交带进来的，
 25 行，无任何引用）。
+
+
+---
+
+## 浮层关不掉：Escape 在插件里完全没接
+
+### 现象
+
+打开插件里**任何一个**浮层（图片预览、视频播放、打印设置、诊断、
+主题编辑器、图标库、确认框、导出格式菜单），按 **Esc** 什么都不会发生。
+只能去点遮罩或者「关闭」按钮。
+
+图片/视频预览这类「看完就走」的浮层尤其明显 —— 手已经按了 Esc，
+画面却纹丝不动，只能再挪鼠标去点。
+
+### 根因：整个插件里没有一处 keydown 监听 Escape
+
+```js
+// dialog()：只有遮罩点击
+mask.addEventListener('click', (e) => { if (e.target === mask) close(); });
+
+// popupMenu()：只有 document 的 pointerdown
+document.addEventListener('pointerdown', onDoc, true);
+```
+
+全仓搜 `Escape` 只剩两处，且都不是浮层：
+`tab-drag.js`（拖拽取消）和编辑器 iframe 里的文字编辑。
+
+**这不是「我们故意不支持」** —— 外壳自己的 `js/dialog.js` 与
+`theme-picker.js` 都处理 Escape，只有插件这份漏了。用户按 Esc 的预期
+是外壳养成的，插件不响应就成了「这个框坏了」。
+
+### 修法
+
+抽出 `escCloser(mask, close)`，dialog() 与 popupMenu() 共用。
+
+两个必须守住的边界：
+
+**① 只关最上面那层。** 浮层上还能再开弹出菜单（如打印设置里的下拉），
+Esc 应当逐层收，一次全关会让用户觉得「我明明只按了一下」。判据是 DOM
+顺序：后 append 的在上面，与 z-index 一致（`--z-menu` 60 > `--z-float` 50）。
+
+**② 组合期必须放过。** 中文输入法里 Escape 是「取消候选」。浮层里
+带输入框（重命名、打印设置），打字时按 Esc 选词不该把浮层关掉。
+与编辑器那处同源：`e.isComposing || e.keyCode === 229` 两个都看。
+
+另外 `close()` 里必须注销监听 —— 否则每开一次浮层就往 document 上
+多挂一个。
+
+### 实测（jsdom 真开浮层、真派发 keydown）
+
+| 场景 | 结果 |
+|---|---|
+| 菜单开着按 Esc | 关 ✓ |
+| `isComposing` / `keyCode 229` 时按 Esc | **不关** ✓ |
+| 浮层 + 菜单叠开，第一次 Esc | 只收菜单，浮层还在 ✓ |
+| 再按一次 | 收掉浮层，确认框 resolve false ✓ |
+
+顺带把「输入法组合期」那条计数断言从 4 改到 5 —— 浮层这处也是同一类守卫，
+少一处就红。改的时候差点写成 `ed + idx + pn + pns`，把 panels.js 拼了
+两份导致重复计数（报 7 而不是 5），已修正。
+
+### 变异验证
+
+5 处全部抓到：菜单不注册 / 浮层不注册 / 去掉组合态守卫 /
+去掉「只关最上层」/ close 不注销监听。

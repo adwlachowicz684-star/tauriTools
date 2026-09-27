@@ -4931,10 +4931,16 @@ group('输入法组合期不得把 Enter 当成提交或搜索');
   const ns = pn.slice(pn.indexOf("onkeydown: (e) => {"), pn.indexOf("onkeydown: (e) => {") + 600);
   ok(/e\.isComposing/.test(ns), '数值输入框：步进/确定前先判 isComposing');
 
-  // ⑤ 四处都必须同时看 keyCode 229（老 WebView 上 isComposing 不可靠）
-  const all = ed + idx + pn;
+  // ⑤ 每处都必须同时看 keyCode 229（老 WebView 上 isComposing 不可靠）
+  /*
+   * 计数从 4 变 5：panels.js 的 escCloser 也是一处 —— 浮层里带输入框
+   * （重命名、打印设置），中文输入法下按 Esc 是「取消候选」，
+   * 不放过的话打中文打到一半浮层就没了。
+   * 写死数字是为了「少一处就红」，新增一处必须同步改这里。
+   */
+  const all = ed + idx + pn;   // pn 就是 panels.js，别再拼一份（会重复计数）
   const n229 = (all.match(/keyCode === 229/g) || []).length;
-  eq(n229, 4, '四处都要同时看 keyCode 229');
+  eq(n229, 5, '五处都要同时看 keyCode 229（含新增的浮层 Esc）');
 
   // ⑥ 通用弹层（js/dialog.js）：重命名脑图 / 文件夹 / 分组 / 画布都走它
   const root = path.join(HERE, '..', '..');
@@ -10510,6 +10516,105 @@ group('页签拖拽：插入竖条必须收掉、回弹动画必须看得见');
     ok(/if \(follow\) st\.follow = null;/.test(scode),
       'springBack 先把 follow 从 st 上摘下（否则 cleanup 先 remove，动画看不见）');
   }
+}
+
+group('浮层必须能用 Escape 关掉（外壳的 dialog 能，插件的不能）');
+
+{
+  /*
+   * 行为级：真 import panels.js、真开浮层、真派发 keydown。
+   * 前提（避免把「测试环境碰巧如此」当成根因）：外壳 js/dialog.js 与
+   * theme-picker.js 都处理 Escape，本插件的 dialog/popupMenu 原先一个都没有。
+   */
+  globalThis.KeyboardEvent = dom.window.KeyboardEvent;
+  const P = await import('./panels.js');
+  ok(typeof P.popupMenu === 'function', 'panels 导出 popupMenu');
+  ok(typeof P.escCloser === 'function', 'panels 导出 escCloser（可测）');
+
+  const nMenu = () => document.querySelectorAll('.mm-menu-mask').length;
+  const nDlg = () => document.querySelectorAll('.mm-mask').length;
+  const clearAll = () => document.querySelectorAll('.mm-menu-mask,.mm-mask').forEach((e) => e.remove());
+  const esc = (o = {}) => {
+    const e = new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    if (o.composing) Object.defineProperty(e, 'isComposing', { value: true });
+    if (o.k229) Object.defineProperty(e, 'keyCode', { value: 229 });
+    document.dispatchEvent(e);
+  };
+
+  const anchor = document.createElement('button');
+  document.body.appendChild(anchor);
+  // 同一个锚点连开会被 toggle 收掉，所以每次开新的都用独立锚点
+  const openMenu = () => {
+    const a = document.createElement('button');
+    document.body.appendChild(a);
+    return P.popupMenu(a, [{ label: 'A', onSelect() {} }]);
+  };
+
+  // ---- 基本：Esc 关弹出菜单 ----
+  clearAll();
+  {
+    const h1 = openMenu();
+    eq(nMenu(), 1, '菜单已打开（前提）');
+    esc();
+    eq(nMenu(), 0, '按 Escape 关掉弹出菜单');
+    h1.close();
+  }
+
+  // ---- 组合态：中文输入法里 Esc 是「取消候选」，不能关 ----
+  clearAll();
+  {
+    const h1 = openMenu();
+    esc({ composing: true });
+    eq(nMenu(), 1, 'isComposing 时不关（否则打字选词把浮层关了）');
+    esc({ k229: true });
+    eq(nMenu(), 1, 'keyCode 229 时不关（老 WebView 只有这个信号）');
+    esc();
+    eq(nMenu(), 0, '正常 Escape 仍然能关（没把守卫写成一律忽略）');
+    h1.close();
+  }
+
+  // ---- 分层：浮层上再开菜单，Esc 逐层收，不能一次全关 ----
+  clearAll();
+  {
+    let resolved = null;
+    const p = P.confirmDialog('标题', '内容').then((v) => { resolved = v; });
+    await new Promise((r) => setTimeout(r, 20));
+    eq(nDlg(), 1, '浮层已打开（前提）');
+    const h1 = openMenu();
+    eq(nMenu(), 1, '浮层之上又开了菜单（前提）');
+    esc();
+    eq(nMenu(), 0, '第一次 Esc 只收最上面那层（菜单）');
+    eq(nDlg(), 1, '第一次 Esc **不**连带收掉下面的浮层');
+    esc();
+    eq(nDlg(), 0, '第二次 Esc 收掉浮层');
+    await p;
+    eq(resolved, false, 'Esc 关掉确认框 = 取消（resolve false）');
+    h1.close();
+  }
+
+  // ---- 源码契约：两处都要注册并在 close 里注销 ----
+  {
+    const src = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+    const di = src.indexOf('function dialog(title, children, onClose, opt)');
+    ok(di > 0, '有 dialog()');
+    const dseg = src.slice(di, src.indexOf('function confirmDialog', di));
+    const dcode = dseg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(/onEsc = escCloser\(mask, close\);/.test(dcode), 'dialog 注册 Esc');
+    ok(/removeEventListener\('keydown', onEsc, true\)/.test(dcode), 'dialog 关闭时注销 Esc（不残留监听）');
+
+    const mi = src.indexOf('export function popupMenu(');
+    const mseg = src.slice(mi, mi + 3000);
+    const mcode = mseg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(/onEsc = escCloser\(mask, close\);/.test(mcode), 'popupMenu 注册 Esc');
+    ok(/removeEventListener\('keydown', onEsc, true\)/.test(mcode), 'popupMenu 关闭时注销 Esc');
+
+    // 守卫本身：最上层才关、组合期放过
+    const ei = src.indexOf('export function escCloser(');
+    const ecode = src.slice(ei, ei + 900).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(/e\.isComposing \|\| e\.keyCode === 229/.test(ecode), 'escCloser 放过输入法组合期');
+    ok(/masks\[masks\.length - 1\] !== mask/.test(ecode), 'escCloser 只关最上面那层');
+  }
+  clearAll();
 }
 
 /* ============================================================
