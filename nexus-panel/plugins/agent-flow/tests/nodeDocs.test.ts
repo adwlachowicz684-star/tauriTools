@@ -472,6 +472,49 @@ const ESSENTIAL: Record<string, string[]> = {
   update: ['outputFormat', 'timeoutSec', 'userAgent', 'firstRunAsUpdate'],
 };
 
+/**
+ * 字段块不能被解析器静默跳过 —— 这次是**从源头数**。
+ *
+ * 前面那条只断言三个已知节点的关键字段还在，属于"事后补救"：
+ * 它守得住这三个，守不住第四个。
+ *
+ * 这条改成对每个 def 文件做**数量对账**：
+ *   源码里出现的 type: 'x' 次数 == 解析器切出的块数
+ *
+ * 两种漏法都能接住：
+ *   · `{` 与 type 之间夹注释（HTTP 的 url/method 就是这么丢的）
+ *   · 单行写法 `{ key: 'label', ..., type: 'text' }`（容器的名称字段）
+ *
+ * 第二种目前只出现在三个容器节点上（它们不生成参数页，所以还没出事），
+ * 但只要有人把某个**执行节点**的字段写成单行，那一项就会凭空消失。
+ */
+test('字段块数量对账：解析器不能静默跳过任何一块', () => {
+  assert.ok(SRC, 'SRC 未设置');
+  const dir = path.join(SRC, 'nodes', 'defs');
+  for (const f of fs.readdirSync(dir)) {
+    const src = fs.readFileSync(path.join(dir, f), 'utf-8');
+    const m0 = src.match(/const fields[^=]*=\s*\[/);
+    if (!m0) continue;
+    const rest = src.slice(m0.index! + m0[0].length);
+    const endM = rest.match(/\n\];/);
+    const body = endM ? rest.slice(0, endM.index) : rest;
+    const total = (body.match(/type:\s*'([a-zA-Z]+)'/g) ?? []).length;
+    const a = [...body.matchAll(
+      /\{\s*(?:\/\/[^\n]*\n\s*|\/\*[\s\S]*?\*\/\s*)*type:\s*'([a-zA-Z]+)'/g,
+    )].map((m) => m.index!);
+    const b = [...body.matchAll(
+      /^\s*\{[^\n]*type:\s*'[a-zA-Z]+'[^\n]*\},?\s*$/gm,
+    )].map((m) => m.index! + m[0].indexOf('{'));
+    const starts = new Set([...a, ...b]);
+    assert.equal(
+      starts.size,
+      total,
+      `${f}：源码里有 ${total} 个字段块，解析器只切出 ${starts.size} 个 —— `
+      + '有块被静默跳过了（注释位置？单行写法？），对应参数会凭空消失',
+    );
+  }
+});
+
 test('每个节点"最不能少"的参数都在参数表里', () => {
   for (const [kind, keys] of Object.entries(ESSENTIAL)) {
     const s = fs.readFileSync(path.join(nodesDir, `${kind}.params.md`), 'utf-8');

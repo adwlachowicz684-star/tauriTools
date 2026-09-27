@@ -83,7 +83,18 @@ for (const m of (catBlock?.[1] ?? '').matchAll(/^\s*'?([a-zA-Z]+)'?:\s*\{\s*labe
 function parseFields(file) {
   const src = fs.readFileSync(path.join(ROOT, 'nodes', 'defs', file), 'utf-8');
   const m0 = src.match(/const fields[^=]*=\s*\[/);
-  const body = m0 ? src.slice(m0.index + m0[0].length) : src;
+  /*
+   * 扫到字段数组的**结尾**为止，不是一直扫到文件末尾。
+   *
+   * 原来没有上界，于是 registerNode 里的 `type: 'apiPane'` 也被当成
+   * 一个字段块 —— 好在它没 key 会被丢掉，所以一直没暴露。
+   * 但这是个定时炸弹：哪天有人在 registerNode 里写个带 key 的对象，
+   * 参数表就会多出一行来路不明的东西。
+   */
+  const endM = m0 ? src.slice(m0.index + m0[0].length).match(/\n\];/) : null;
+  const body = m0
+    ? src.slice(m0.index + m0[0].length, m0.index + m0[0].length + (endM ? endM.index : src.length))
+    : src;
   /*
    * `{` 与 `type:` 之间**允许有注释**。
    *
@@ -97,9 +108,24 @@ function parseFields(file) {
    * 拼装方照文档拼出来的 HTTP 节点根本不知道要填地址。
    * 不报错，只是少几行；而少了的恰好是最不能少的那几行。
    */
-  const starts = [...body.matchAll(
+  /*
+   * 两种写法都要认：
+   *
+   *   A. 多行块 —— `{` 后面（可能夹着注释）就是 type
+   *   B. 单行块 —— `{ key: 'label', label: '名称', type: 'text', ... }`
+   *
+   * 只认 A 的话，B 那一整块会被静默跳过。
+   * 目前用到 B 的是三个容器节点（组合框 / 两种任务窗格）的名称字段 ——
+   * 它们不生成参数页所以还没出事，但只要有人把某个**执行节点**的字段
+   * 写成单行，那一项就会从参数表里凭空消失。
+   */
+  const startsA = [...body.matchAll(
     /\{\s*(?:\/\/[^\n]*\n\s*|\/\*[\s\S]*?\*\/\s*)*type:\s*'([a-zA-Z]+)'/g,
   )].map((m) => m.index);
+  const startsB = [...body.matchAll(
+    /^\s*\{[^\n]*type:\s*'[a-zA-Z]+'[^\n]*\},?\s*$/gm,
+  )].map((m) => m.index + m[0].indexOf('{'));
+  const starts = [...new Set([...startsA, ...startsB])].sort((a, b) => a - b);
   starts.push(body.length);
   const out = [];
   for (let i = 0; i < starts.length - 1; i++) {
