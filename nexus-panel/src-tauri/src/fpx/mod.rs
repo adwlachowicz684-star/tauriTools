@@ -723,13 +723,39 @@ pub(crate) fn core_clear_invalid(dir: &std::path::Path) -> Result<model::ClearRe
 /// 前端拿到的 bootstrap 快照里可能还是旧值（缓存为空）。若直接照前端传来的写回，
 /// 用户只要再点一次「保存设置」，刚扫出来的缓存就被清空、下次又得重扫一遍。
 /// 所以该字段以磁盘上的值为准，不受前端草稿影响。
+///
+/// mcp_token 同属这一类，见函数体内注释：它更隐蔽（界面不展示、日志不提），
+/// 一旦被抹掉表现为"AI 客户端忽然全部连不上"，而地址看起来完全没变。
 pub(crate) fn core_save_config(dir: &std::path::Path, config: &FpxConfig) -> Result<Snapshot, String> {
     // 事务化：读到的必须是磁盘最新值，且整段期间不许别人插进来。
     // 这是前端「保存设置」与 MCP 共用的入口，不锁的话两边会互相覆盖。
     store::with_config(dir, |cfg| {
         let cache = std::mem::take(&mut cfg.editor_pick_cache);
+        /*
+         * mcp_token 同理，而且后果比缓存被清空严重得多。
+         *
+         * 令牌是 MCP server **启动时**才生成的（`mcp::ensure_token`）：
+         * 发现为空就现生成一把写进配置。而前端 bootstrap 通常发生在这之前，
+         * 于是前端草稿里的 mcpToken 恒为 null —— 它从未拿到过这把钥匙。
+         *
+         * 整份覆盖若不保住磁盘值，用户只要改一次设置就会把令牌抹成 null：
+         *   · 下次启动 server 又生成一把**新的**
+         *   · 地址没变、钥匙变了，已经配好的 AI 客户端从此 401
+         *   · 而界面从头到尾不展示令牌，日志也不提，用户无从知道该去改哪里
+         *
+         * 只在他**确实传了非空值**时才采用（给将来轮换留个口子）；
+         * 传 null 一律理解为"我不知道"，不是"请清除"。
+         */
+        let token = cfg.mcp_token.take();
         *cfg = config.clone();
         cfg.editor_pick_cache = cache;   // 以磁盘值为准，不受前端草稿影响
+        cfg.mcp_token = config
+            .mcp_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or(token);
         /* 版本号一律改写为**当前**的，不沿用前端传来的值。
            前端拿到的快照可能是旧版本（比如刚从 v1 配置读出来还没写回），
            照抄就会把"未迁移"这个状态一直传下去。 */
