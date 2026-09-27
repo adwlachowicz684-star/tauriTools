@@ -293,9 +293,13 @@ test('模板 TOKEN 必须支持中文', () => {
    */
   const t = fs.readFileSync(path.join(ROOT, 'engine/template.ts'), 'utf-8')
     .replace(/\/\*[\s\S]*?\*\//g, '');   // 注释里会原样写出这段正则，不剥会假阴性
-  const m = t.match(/const TOKEN = \/([^\n]+)\/g;/);
-  assert.ok(m, '没找到 TOKEN 定义');
-  assert.match(m[1], /\\u4e00-\\u9fa5/, 'TOKEN 要支持中文，否则中文参数名静默失效');
+  /*
+   * 现在字符集收敛到 template.ts 的 REF_CHARS 一处（tokenRe() 用它拼），
+   * 所以这里钉常量那一行，不再钉 `const TOKEN = /.../` 的写法。
+   */
+  const m = t.match(/const REF_CHARS = '([^']+)'/);
+  assert.ok(m, '没找到 REF_CHARS 定义');
+  assert.ok(m[1].includes('u4e00'), '引用字符集要支持中文，否则中文参数名静默失效');
 });
 
 test('runner 要把 params 传进模板', () => {

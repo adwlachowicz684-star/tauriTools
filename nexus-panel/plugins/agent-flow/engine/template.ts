@@ -5,17 +5,53 @@ export type RenderResult = {
   missing: string[];
 };
 
-/*
- * 支持中文。
+
+/* ==================================================================
+ * 引用路径的字符集 —— 全仓库**唯一**定义处。
  *
- * 原来是 `[A-Za-z0-9_.\-]`，于是 {{params.输出目录}} 这种中文名
- * **整句匹配不上**，原样留下 —— 用户看到"没生效"，
- * 而模板层连 missing 都不会记（它根本没识别出这是个变量）。
- * 中文用户起参数名用中文最清楚，所以这里必须放开。
+ * ================= 为什么不能再抄第二份 =================
  *
- * 边界仍由 {{ }} 限定，放宽内部字符集不会误吞正文。
+ * 这份字符集以前在 template.ts（运行时渲染）和 scriptExport.ts
+ * （导出脚本）里各写了一份。template.ts 那次为修中文参数名放开了
+ * \u4e00-\u9fa5，**scriptExport.ts 没跟着改** ——
+ *
+ *   同一个 {{c1.价格}}：画布上跑能取到值，导出成脚本变成字面量。
+ *   不报错，只有结果不对（而且留下来的 {{}} 看着像"用户自己写的正文"）。
+ *
+ * 这是"同一件事两份实现，改一份漏一份"的典型，
+ * 所以这里只留一处定义，其余全部来取。
+ *
+ * 支持中文（见上）。边界仍由 {{ }} 限定，放宽内部字符集不会误吞正文。
+ * ==================================================================
  */
-const TOKEN = /\{\{\s*([A-Za-z0-9_.\-\u4e00-\u9fa5]+)\s*\}\}/g;
+const REF_CHARS = 'A-Za-z0-9_.\\-\\u4e00-\\u9fa5';
+
+/** 引用的**第一段**是节点 id / params 这类名字，不含 `.` 与 `-`（后面紧跟 `.`） */
+const REF_HEAD_CHARS = 'A-Za-z0-9_\\u4e00-\\u9fa5';
+
+/** 名字（参数名 / 卡名）能用的字符 —— 与"引用能取到的名字"同源 */
+export const REF_NAME_CHARS = REF_HEAD_CHARS;
+/** 名字的**首字符**：不许是数字（否则 {{1a}} 会被当成数字解析） */
+export const REF_NAME_FIRST = 'A-Za-z_\\u4e00-\\u9fa5';
+
+/**
+ * 完整引用 `{{a.b.c}}`。
+ *
+ * 每次返回**新实例**：`/g` 正则带 lastIndex 状态，
+ * 两个调用方共用一个实例会互相踩（一个 replace 跑到一半，
+ * 另一个进来把 lastIndex 抹了，表现是"偶尔漏替换"）。
+ */
+export function tokenRe(): RegExp {
+  return new RegExp(`\\{\\{\\s*([${REF_CHARS}]+)\\s*\\}\\}`, 'g');
+}
+
+/**
+ * 只取引用的头一段 `{{id.` —— 改节点 id 时要顺带改写引用。
+ * 字符集与 tokenRe 同源（否则 id 含中文时扫不到，引用就断在原地）。
+ */
+export function refHeadRe(): RegExp {
+  return new RegExp(`\\{\\{\\s*([${REF_HEAD_CHARS}]+)\\s*\\.`, 'g');
+}
 
 export type RenderCtx = {
   outputs: Record<string, string>;
@@ -77,7 +113,7 @@ export type RenderCtx = {
  */
 export function renderTemplate(tpl: string, ctx: RenderCtx): RenderResult {
   const missing: string[] = [];
-  const text = tpl.replace(TOKEN, (_m, rawKey: string) => {
+  const text = tpl.replace(tokenRe(), (_m, rawKey: string) => {
     const key = rawKey.trim();
     const path = key.includes('.') ? key : `${key}.output`;
     const [nodeId, field] = path.split('.');
@@ -158,7 +194,7 @@ export function renderTemplate(tpl: string, ctx: RenderCtx): RenderResult {
  */
 export function paramRefsIn(text: string): string[] {
   const out = new Set<string>();
-  for (const m of text.matchAll(TOKEN)) {
+  for (const m of text.matchAll(tokenRe())) {
     const key = String(m[1] ?? '').trim();
     const dot = key.indexOf('.');
     const ns = dot < 0 ? key : key.slice(0, dot);

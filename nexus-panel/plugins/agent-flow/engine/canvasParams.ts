@@ -69,6 +69,7 @@ export const PARAM_PREFIX = 'params';
 export const PARAM_ALIASES = ['params', 'env'] as const;
 
 import { normBoolText } from '../types';
+import { REF_NAME_CHARS, REF_NAME_FIRST } from './template';
 
 export type CanvasParam = {
   /**
@@ -129,11 +130,19 @@ export type ParamIssue = {
  *
  * 允许中文、字母、数字、下划线，不能以数字开头。
  * 不含 `.` —— 点号是模板里的路径分隔符（{{params.a}} 的首段即参数名）。
+ *
+ * ================= 字符集必须从 template.ts 取 =================
+ *
+ * 这里判的是"用户能起什么名字"，template.ts 的 REF_CHARS 判的是
+ * "引用时能取到什么名字"。**两者必须一致**，否则：
+ *   这边放开了某个字符（比如中文），引用那边的正则却不含它 ——
+ *   用户起了个合法的名字、填进模板却取不到值，且不报错。
+ *   这正是当初中文参数名那次 bug 的形状（只是方向反过来）。
  */
 export function isValidParamName(name: string): boolean {
   const s = String(name ?? '').trim();
   if (!s) return false;
-  return /^[A-Za-z_\u4e00-\u9fa5][A-Za-z0-9_\u4e00-\u9fa5]*$/.test(s);
+  return new RegExp(`^[${REF_NAME_FIRST}][${REF_NAME_CHARS}]*$`).test(s);
 }
 
 /* ------------------------------------------------------------------ */

@@ -311,7 +311,8 @@ test('中文卡名：导出与运行时必须同一套字符集（template.ts �
    */
   const tpl = readSrc('engine/template.ts');
   const exp = readSrc('engine/scriptExport.ts');
-  const CN = '\\u4e00-\\u9fa5';
-  assert.ok(tpl.includes(CN), '运行时模板必须认中文（template.ts 的 TOKEN）');
-  assert.ok(exp.includes(CN), '导出的 subst 必须认中文 —— 漏了它，中文卡名会原样留在脚本里');
+  // 只钉 u4e00 这个片段：中文字符集在源码里的转义层数随写法变，
+  // "考虑了中文"才是要守的事（详见 tests/refToken.test.ts）
+  assert.ok(tpl.includes('u4e00'), '运行时模板必须认中文（template.ts 的 REF_CHARS）');
+  assert.ok(/tokenRe\(\)/.test(exp), '导出必须调用 tokenRe()（自带一份就会再分叉）');
 });

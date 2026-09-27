@@ -29,6 +29,7 @@
  */
 
 import type { AnyNode, AnyEdge } from './moduleTypes';
+import { refHeadRe } from './template';
 
 /* ------------------------------------------------------------------ */
 /* 类型                                                                */
@@ -361,11 +362,13 @@ export function rewriteDataTemplates(
   return out;
 }
 
-const REF_RE = /\{\{\s*([A-Za-z0-9_\u4e00-\u9fa5]+)\s*\./g;
-
+/*
+ * 字符集取 template.ts 的 refHeadRe()，不自己写 ——
+ * 否则哪天放开/收紧了引用的字符集，这里扫不到，改 id 后引用就断在原地。
+ */
 function rewriteRefsInText(text: string, idMap: Map<string, string>): string {
   if (!text.includes('{{')) return text;
-  return text.replace(REF_RE, (m, id: string) => {
+  return text.replace(refHeadRe(), (m, id: string) => {
     const to = idMap.get(id);
     return to ? `{{${to}.` : m;
   });

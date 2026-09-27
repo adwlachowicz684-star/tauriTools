@@ -23,6 +23,7 @@
 import type { Graph, GraphNode } from '../types';
 import { constsOf, constItemLabel, constItemKey, type ConstNodeData } from '../types';
 import { topoLayers } from './topo';
+import { tokenRe } from './template';
 import { opBrief } from './ops';
 import { paramLinksOf, linksInto, outLabelOf, OUT_DEFAULT } from './paramLinks';
 
@@ -120,7 +121,7 @@ function subst(tpl: string, style: 'sh' | 'py', cardRef?: Map<string, string>): 
   // 先把引用收出来，避免后面的引号转义把它们弄坏
   const slots: string[] = [];
   /*
-   * 字符集必须与**运行时**的 template.ts 一致（含中文、连字符、下划线）。
+   * 字符集直接取 template.ts 的 tokenRe() —— 不再自己写一份。
    *
    * 以前这里是 `[A-Za-z0-9_.]`，不含中文 —— 而常量卡的默认名是
    * 「文本1」「数字2」这类中文（用户不改名时就是它）。
@@ -129,7 +130,7 @@ function subst(tpl: string, style: 'sh' | 'py', cardRef?: Map<string, string>): 
    * 于是"画布上跑是对的、导出成脚本就变成字面量 {{c1.价格}}"，
    * 没有任何报错，只有结果不对。
    */
-  const body = raw.replace(/\{\{\s*([A-Za-z0-9_.\-\u4e00-\u9fa5]+)\s*\}\}/g, (_m, path: string) => {
+  const body = raw.replace(tokenRe(), (_m, path: string) => {
     const parts = String(path).split('.');
     const id = parts[0];
     hasRef = true;
