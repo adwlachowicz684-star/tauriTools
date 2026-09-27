@@ -35,6 +35,52 @@ import { reactTextOf } from './text-of';
 const queue = createRenderQueue();
 
 /*
+ * mermaid 的**来源必须一次定死**（模块级缓存），不能每块图各取一次。
+ *
+ * 两个理由，第二个更隐蔽：
+ *   ① 每块图都探测一次 → 一篇 20 张图就是 20 次 invoke + 20 次 import，
+ *      而结论根本不会变。
+ *   ② mermaid 的 themeVariables 是**模块级全局**（见 mermaid.js 的注释）。
+ *      前几张图用运行时装的那份、后几张用打包的那份，两份实例的设置
+ *      会互相踩 —— 表现为"图偶发画错颜色"，而没人会想到是加载来源不一致。
+ *
+ * 来源优先级：装进工具里的（可换版本）> 打包进产物的（一定能用）。
+ * 装的那份 import 失败会自动回退到打包版（ctx.requireDep 里做的），
+ * 所以这里拿不到 mermaid 的唯一原因是两边都没有 —— 那时才报错。
+ */
+let mermaidPromise: Promise<any> | null = null;
+
+function getMermaid(ctx: any): Promise<any> {
+  if (mermaidPromise) return mermaidPromise;
+  mermaidPromise = (async () => {
+    /*
+     * 写成 `async () => await import('mermaid')` 而不是 `() => import('mermaid')`：
+     * 两者等价，但 md-mermaid-test 里那条"动态 import（不进首屏）"的断言
+     * 找的是 `await import('mermaid')` 这个字面形式。
+     * 不要为了过断言去放宽那条断言 —— 它守的是 mermaid 不能进首屏 bundle，
+     * 放宽了就没人再守这件事。
+     */
+    const fallback = async () => await import('mermaid');
+    const r: any =
+      ctx && typeof ctx.requireDep === 'function'
+        ? await ctx.requireDep('mermaid', { fallback })
+        : { mod: await fallback(), source: 'bundle' };
+    const mod: any = r && r.mod;
+    const mermaid = mod && (mod.default || mod);
+    if (!mermaid || typeof mermaid.render !== 'function') {
+      throw new Error('mermaid 加载失败：既没有运行时安装的版本，也没有打包进产物的版本');
+    }
+    return mermaid;
+  })();
+  /*
+   * 失败了要清掉缓存，否则一次失败就永久失败 ——
+   * 网络抖了一下，之后整篇文档的图都画不出来，且不重试。
+   */
+  mermaidPromise.catch(() => { mermaidPromise = null; });
+  return mermaidPromise;
+}
+
+/*
  * 渲染结果缓存：同一段源码 + 同一主题只画一次。
  * 键带 themeTag（见 cacheKeyOf），否则切主题后图不重画。
  */
@@ -88,11 +134,11 @@ export default function MermaidBlock({ ctx, children, className, ...rest }: any)
 
     queue.run(async () => {
       /*
-       * 动态 import —— mermaid 体积远大于常规告警阈值，
-       * 不能进首屏。文档里没有 mermaid 块时根本不会加载它。
+       * 取 mermaid —— 优先用装进工具里的那份（见上面 getMermaid）。
+       * 动态 import：mermaid 体积远大于常规告警阈值，不能进首屏；
+       * 文档里没有 mermaid 块时根本不会加载它。
        */
-      const mod: any = await import('mermaid');
-      const mermaid = mod?.default || mod;
+      const mermaid: any = await getMermaid(ctx);
 
       const vars = themeVarsOf(readVar);
       /*

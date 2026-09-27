@@ -111,10 +111,23 @@ function missingCtx() {
 }
 
 {
-  const r = await rt.installRuntimeDep(missingCtx(), {
-    kind: 'runtime', dev: false, install: 'npm i mermaid@^12.0.0',
-  });
-  t('命令不存在时给出明确原因（不是静默失败）', r.ok === false && /尚未接入/.test(r.error || ''), r.error);
+  /*
+   * 必须包 try/catch，不能让它崩进程。
+   *
+   * installRuntimeDep 是**声明为不抛**的（失败体现在 r.error）。
+   * 若 callCmd 哪天改成往外抛，这里会直接崩 —— 崩了之后
+   * 后面的断言一条都不执行，看起来像"有红"，实际把真正的失败
+   * 掩盖掉了（本项目已多次踩到：崩 ≠ 红）。包成失败断言才守得住。
+   */
+  let r = null;
+  let threw = false;
+  try {
+    r = await rt.installRuntimeDep(missingCtx(), {
+      kind: 'runtime', dev: false, install: 'npm i mermaid@^12.0.0',
+    });
+  } catch (e) { threw = true; }
+  t('命令不存在时给出明确原因（不是静默失败）',
+    !threw && r && r.ok === false && /尚未接入/.test(r.error || ''), threw ? '抛异常了' : r && r.error);
 }
 
 {
@@ -150,8 +163,12 @@ function missingCtx() {
 }
 
 {
-  const r = await rt.removeRuntimeDep(missingCtx(), 'mermaid', '12.0.0');
-  t('移除时命令不存在也明说', r.ok === false && /尚未接入/.test(r.error || ''));
+  /* 同 installRuntimeDep：声明为不抛，所以要包成失败断言而不是让它崩进程 */
+  let r = null;
+  let threw = false;
+  try { r = await rt.removeRuntimeDep(missingCtx(), 'mermaid', '12.0.0'); } catch { threw = true; }
+  t('移除时命令不存在也明说', !threw && r && r.ok === false && /尚未接入/.test(r.error || ''),
+    threw ? '抛异常了' : r && r.error);
 }
 
 /* ---------- 4. 接线：少一处都是"点了没反应" ---------- */
@@ -204,11 +221,149 @@ t('后端注释说明为何不用 app.http()', /HttpExt|reqwest/.test(rsText));
 
 /* ---------- 6. 界面接线 ---------- */
 
+/* ---------- 7. 取用（requireDep）—— 真跑，注入 importModule ---------- */
+
+/*
+ * 这一组守的是**消费侧**：装进来的包到底有没有被用上。
+ *
+ * 最容易错的三处，错了都不报错：
+ *   ① 装的那份坏了就整篇图全挂 —— 必须回退到打包版。
+ *      运行时依赖是增强，不是基础功能，它一坏功能就全没，
+ *      等于把可选增强变成单点故障。
+ *   ② 每块图各取一次来源 —— 两份 mermaid 实例的 themeVariables
+ *      是模块级全局，会互相踩，表现为"图偶发画错颜色"。
+ *   ③ 探测失败（后端没接 / 没授权）当成错误抛出去 ——
+ *      那会让本来能用打包版的功能一起挂掉。
+ */
+
+function makeCtx(list, opts = {}) {
+  return {
+    invoked: 0,
+    async invoke(cmd) {
+      this.invoked++;
+      if (opts.invokeError) throw new Error(opts.invokeError);
+      if (cmd === rt.CMD_LIST) return { list };
+      return {};
+    },
+    convertFileSrc: (p2) => `asset://${String(p2 || '').replace(/\\/g, '/')}`,
+  };
+}
+
+const BUNDLE = { tag: 'bundle' };
+const RUNTIME = { tag: 'runtime' };
+const fb = async () => BUNDLE;
+
+/* ① 装过 → 用装进来的 */
+{
+  rt.__clearDepDecisions();
+  const ctx = makeCtx([{ name: 'mermaid', version: '12.0.0', path: 'C:/deps/mermaid@12.0.0.mjs' }]);
+  const r = await rt.requireDep(ctx, 'mermaid', { fallback: fb, importModule: async () => RUNTIME });
+  t('装过就用装进来的那份', r.source === 'runtime' && r.mod === RUNTIME, r.source);
+  t('装过时**不**去加载打包版', r.error === '');
+}
+
+/* ② 没装 → 用打包版 */
+{
+  rt.__clearDepDecisions();
+  const ctx = makeCtx([]);
+  const r = await rt.requireDep(ctx, 'mermaid', { fallback: fb, importModule: async () => RUNTIME });
+  t('没装就用打包版', r.source === 'bundle' && r.mod === BUNDLE, r.source);
+}
+
+/* ③ 装的那份坏了 → 回退打包版，且**不报错** */
+{
+  rt.__clearDepDecisions();
+  const ctx = makeCtx([{ name: 'mermaid', version: '12.0.0', path: 'C:/deps/bad.mjs' }]);
+  const r = await rt.requireDep(ctx, 'mermaid', {
+    fallback: fb,
+    importModule: async () => { throw new Error('Unexpected token'); },
+  });
+  t('装的那份 import 失败 → 回退打包版', r.source === 'bundle' && r.mod === BUNDLE, r.source);
+  t('回退时保留失败原因（便于排查，但不阻断）', /Unexpected token/.test(r.error || ''));
+}
+
+/* ④ 探测失败（后端没接 / 没授权 / 抛异常）→ 当作没装，走打包版 */
+{
+  rt.__clearDepDecisions();
+  const ctx = makeCtx([], { invokeError: 'command not found' });
+  const r = await rt.requireDep(ctx, 'mermaid', { fallback: fb, importModule: async () => RUNTIME });
+  t('探测抛异常时按"没装"处理，走打包版', r.source === 'bundle' && r.mod === BUNDLE, r.source);
+}
+{
+  rt.__clearDepDecisions();
+  /* ctx 连 invoke 都没有（老版本 SDK / iframe 未注入）也要能走打包版 */
+  const r = await rt.requireDep(null, 'mermaid', { fallback: fb, importModule: async () => RUNTIME });
+  t('ctx 为空时也能走打包版，不抛', r.source === 'bundle' && r.mod === BUNDLE, r.source);
+}
+/*
+ * 真正守住"探测失败不抛"的是 listRuntimeDeps / callCmd 那一层：
+ * 它把异常转成"空列表 + error"，而不是往外抛。
+ * 只测 requireDep 的结果测不到这一层（requireDep 的结果在两种实现下都一样），
+ * 所以在这里直接断言它不抛 —— 这一条也是上一版那条假绿的替代。
+ */
+{
+  const ctx = makeCtx([], { invokeError: 'boom' });
+  let threw = false;
+  let out = null;
+  try { out = await rt.listRuntimeDeps(ctx); } catch { threw = true; }
+  t('探测失败不抛异常（转成空列表 + error）', !threw && Array.isArray(out.list) && out.list.length === 0, threw ? '抛了' : JSON.stringify(out));
+}
+{
+  const out = await rt.listRuntimeDeps(null);
+  t('后端没接这条命令时返回 missing 标记而不是抛', out.missing === true, JSON.stringify(out));
+}
+
+/* ⑤ 两边都没有 → source none，不抛 */
+{
+  rt.__clearDepDecisions();
+  const ctx = makeCtx([]);
+  const r = await rt.requireDep(ctx, 'mermaid', { importModule: async () => RUNTIME });
+  t('没有打包版兜底时返回 none', r.source === 'none' && r.mod === null, r.source);
+}
+
+/* ⑥ 决策缓存：来源只定一次 */
+{
+  rt.__clearDepDecisions();
+  const ctx = makeCtx([{ name: 'mermaid', version: '12.0.0', path: 'C:/deps/bad.mjs' }]);
+  let importCalls = 0;
+  const opts = {
+    fallback: fb,
+    importModule: async () => { importCalls++; throw new Error('bad'); },
+  };
+  await rt.requireDep(ctx, 'mermaid', opts);
+  await rt.requireDep(ctx, 'mermaid', opts);
+  const invokedAfter = ctx.invoked;
+  await rt.requireDep(ctx, 'mermaid', opts);
+  t('第二次起不再重复探测（invoke 只调一次）', invokedAfter === 1, `invoked=${invokedAfter}`);
+  t('回退决策也被缓存（坏文件只试一次）', importCalls === 1, `importCalls=${importCalls}`);
+}
+
+/* ⑦ 装过且版本不匹配指定版本时，不误用 */
+{
+  rt.__clearDepDecisions();
+  const ctx = makeCtx([{ name: 'mermaid', version: '11.0.0', path: 'C:/deps/m11.mjs' }]);
+  const r = await rt.requireDep(ctx, 'mermaid', { version: '12.0.0', fallback: fb, importModule: async () => RUNTIME });
+  t('指定了版本而装的是另一个版本 → 用它而不是误判为已装', r.source === 'bundle', r.source);
+}
+
 const cardText = read('plugins/settings/DepsCard.tsx');
 t('DepsCard 接入 runtime-deps', /js\/runtime-deps\.js/.test(cardText));
 t('DepsCard 用 canInstall 决定按钮显隐', /canInstall\(/.test(cardText));
 t('装完真 import 一次（验可加载）', /loadRuntimeDep\(/.test(cardText));
 t('后端未接入时禁用按钮并提示', /rtMissing/.test(cardText) && /disabled=\{running \|\| rtMissing\}/.test(cardText));
+
+t('plugin-sdk 暴露 ctx.requireDep', /requireDep\(name, opts = \{\}\)/.test(read('js/plugin-sdk.js')));
+t('plugin-sdk 从 runtime-deps 引入 requireDep',
+  /import \{ requireDep as loadDep \} from '\.\/runtime-deps\.js'/.test(read('js/plugin-sdk.js')));
+
+const mb = read('plugins/md/MermaidBlock.tsx');
+t('md 的 mermaid 走 requireDep 取用（装过优先）', /ctx\.requireDep\('mermaid'/.test(mb));
+t('md 取 mermaid 有打包版兜底', /fallback = \(\) => import\('mermaid'\)/.test(mb));
+
+const ip = read('js/invoke-policy.js');
+t('md 白名单只给 list（不给 install/remove）',
+  /md: \[[^\]]*'fpx_rt_dep_list'/.test(ip) &&
+  !/md: \[[^\]]*fpx_rt_dep_(install|remove)/.test(ip));
 
 console.log(`\n运行时依赖：${pass} 通过 / ${fails.length} 失败`);
 for (const f of fails) console.log('  ✗ ' + f);

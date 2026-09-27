@@ -11,6 +11,13 @@
  */
 
 import { getTauri } from './tauri-core.js';
+/*
+ * 运行时依赖的**取用**入口（js/runtime-deps.js）。
+ * 安装/卸载那条链归设置页（见 invoke-policy 里 settings 的白名单注释），
+ * 这里只提供"取来用"，插件因此不必自己拼 asset 地址、也不必自己判断
+ * 装没装 —— 那些判断错一步就是"装了却用不上"，且不报错。
+ */
+import { requireDep as loadDep } from './runtime-deps.js';
 
 export const BRIDGE_CHANNEL = 'nexus-bridge-v1';
 
@@ -377,6 +384,30 @@ function buildCtx(base) {
       claim: (path, meta = {}) => transport.request('fs.claim', { path, meta }),
       claims: () => transport.request('fs.claims', {}),
       release: (path) => transport.request('fs.release', { path }),
+    },
+
+    /**
+     * 取用一个运行时依赖 —— 装过就用装进来的，没装就用打包进产物的那份。
+     *
+     *   const { mod, source } = await ctx.requireDep('mermaid', {
+     *     version: '12.0.0',
+     *     fallback: () => import('mermaid'),   // 没装 / 装的那份坏了时用它
+     *   });
+     *
+     * 返回 `{ mod, source, error }`，source 是 'runtime' | 'bundle' | 'none'。
+     * **不抛异常** —— 取不到是常态（多数包根本没装），抛了会让每个
+     * 调用方都写一遍 try/catch，漏写的那个就变成"点了没反应"。
+     *
+     * 为什么"装的那份坏了"要回退而不是报错：
+     *   运行时依赖是增强，不是基础功能。它一坏就整篇图全挂，
+     *   等于把可选增强变成单点故障，用户还得先卸载才能恢复。
+     *
+     * 默认安全：插件没有 `fpx_rt_dep_list` 授权时，探测会失败，
+     * 而探测失败按"没装"处理 —— 于是第三方插件永远走打包版，
+     * 不需要额外的开关。
+     */
+    requireDep(name, opts = {}) {
+      return loadDep(ctx, name, opts);
     },
 
     /** 修改标题栏 / 内容区标题 */
