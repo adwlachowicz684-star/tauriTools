@@ -11145,6 +11145,61 @@ group('XMind 互操作：content.json 的 href 与 image（BUG 52 / 53）');
   eq(bd['D'].image, IMG1, 'zen 档导入后图片还原');
 }
 
+group('新建主题的种子：文字色必须按节点底色选，不能按画布底色（BUG 54）');
+
+/*
+ * PRESET_THEMES 的注释里写着一条硬约束：
+ *   "registerCustomTheme() 内部三级节点共用同一个文字色，
+ *    于是 root / main / sub 三个背景必须落在同一明暗侧 ——
+ *    只要有一级跨到对面，同一个文字色必然在某一级上看不清"
+ * 预置主题那一组由 mm-palette-test 逐项断言盯住了；
+ * **themeSeed（新建主题的种子）这条路径没有** —— 于是这个坑只在种子上发作。
+ *
+ * 原写法 `isLightColor(b.bg) ? '#333333' : '#E8E8E8'` 看的是**画布**底色，
+ * 而 THEMES 里有四套是「深色画布 + 浅色节点」：
+ *   snow / classic / fish : bg = #3A4144（深），root = #E9DF98（浅）
+ *   wire                  : bg = #000000（深），root = #999999（中浅）
+ * 按 bg 判 → 深色画布 → 选浅字 → 浅字画到浅色节点上，实测最小对比度：
+ *   snow 1.11 / classic 1.11 / fish 1.11 / wire 2.33
+ * 也就是说：切到「雪白」再点「新建主题」，得到的主题**文字几乎完全看不见**。
+ */
+{
+  const th = await import('./themes.js');
+
+  const worst = (p) => Math.min(
+    th.contrastRatio(p.textColor, p.rootBackground),
+    th.contrastRatio(p.textColor, p.mainBackground),
+    th.contrastRatio(p.textColor, p.subBackground),
+  );
+
+  const all = {};
+  for (const t of th.THEMES) all[t.value] = worst(th.themeSeed(t.value, []));
+
+  // 修复后：四个「深色画布 + 浅色节点」的主题全部改用深字
+  ok(all['snow'] >= 4, `雪白（snow）种子文字对比度 ≥ 4（实测 ${all['snow'].toFixed(2)}，修复前 1.11）`);
+  ok(all['fish'] >= 4, `青色（fish）种子文字对比度 ≥ 4（实测 ${all['fish'].toFixed(2)}，修复前 1.11）`);
+  ok(all['wire'] >= 4, `线框灰（wire）种子文字对比度 ≥ 4（实测 ${all['wire'].toFixed(2)}，修复前 2.33）`);
+  eq(th.themeSeed('snow', []).textColor, '#333333', 'snow 的种子改用深色文字（原来按画布判成了 #E8E8E8）');
+  eq(th.themeSeed('wire', []).textColor, '#333333', 'wire 的种子改用深色文字');
+
+  // 浅色系列必须保持深字（不能为了修上面把这边改反）
+  eq(th.themeSeed('fresh-blue', []).textColor, '#333333', 'fresh-blue 仍是深色文字');
+  ok(all['fresh-blue'] >= 4, `fresh-blue 种子对比度 ≥ 4（实测 ${all['fresh-blue'].toFixed(2)}）`);
+
+  // 通用下限：任何内置主题的种子都不该跌到「几乎看不见」
+  const low = Object.entries(all).filter(([, v]) => v < 1.2);
+  eq(low.length, 0, `没有内置主题的种子对比度低于 1.2（实测最低 ${Math.min(...Object.values(all)).toFixed(2)}）`);
+
+  /*
+   * classic 是**已知**的例外：它的 sub = 'transparent' 回落成画布底色
+   * #3A4144（深），而 root / main 是浅色 —— 三级真的跨了侧。
+   * 这是 THEMES 数据本身的问题，任何单一文字色都救不了，
+   * 所以这里只要求它不低于修复前（1.11），并把原因写清楚。
+   */
+  ok(all['classic'] >= 1.1,
+    `classic 因 sub 跨侧无法兼顾，但不低于修复前（实测 ${all['classic'].toFixed(2)}）`);
+}
+
 /* ============================================================
    结果
    ============================================================ */

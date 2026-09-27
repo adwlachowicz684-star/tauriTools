@@ -227,9 +227,39 @@ export function themeSeed(themeValue, customThemes = []) {
 
   const b = THEMES.find((t) => t.value === themeValue) || THEMES.find((t) => t.value === DEFAULT_THEME);
   const fallbackBg = b.bg;
+  const subBg = b.sub === 'transparent' ? fallbackBg : b.sub;
+
+  /*
+   * 文字色必须按**节点底色**选，不能按画布底色 —— 文字是画在节点上的。
+   *
+   * 原写法 `isLightColor(b.bg) ? '#333333' : '#E8E8E8'` 看的是画布，
+   * 而 THEMES 里有四套是**深色画布 + 浅色节点**（snow / classic / fish / wire）：
+   * bg = #3A4144 或 #000000（深），root = #E9DF98 / #999999（浅）。
+   * 按 bg 判出来是「深色画布 → 用浅字」，而浅字画到浅色节点上 ——
+   *
+   *   实测（十个内置主题逐个算 textColor 对 root/main/sub 的最小对比度）
+   *   snow    1.11    ← 几乎完全看不见
+   *   classic 1.11
+   *   fish    1.11
+   *   wire    2.33
+   *
+   * 而 PRESET_THEMES 的注释里早就写明了这条硬约束：
+   * "registerCustomTheme() 内部三级节点共用同一个文字色，
+   *  于是 root/main/sub 三个背景必须落在同一明暗侧 —— 只要有一级跨到对面，
+   *  同一个文字色必然在某一级上看不清"。
+   * 预置主题那一组由 mm-palette-test 逐项断言盯住了，
+   * **themeSeed 这条种子路径没有** —— 又是同一个坑在两条路上不对称。
+   *
+   * 改法：两个候选各自算一遍在三级节点底色上的**最小**对比度，取更优的那个。
+   * 候选仍只用原本就在用的这两个（#333 / #E8E8E8），不引入新的视觉风格。
+   */
+  const nodeBgs = [b.root, b.main, subBg];
+  const worstContrast = (c) => Math.min(...nodeBgs.map((bg) => contrastRatio(c, bg)));
+  const textColor = worstContrast('#333333') >= worstContrast('#E8E8E8') ? '#333333' : '#E8E8E8';
+
   return {
     background: b.bg,
-    textColor: isLightColor(b.bg) ? '#333333' : '#E8E8E8',
+    textColor,
     selectedColor: b.root,
     connectColor: b.root,
     connectWidth: 2,
@@ -242,7 +272,7 @@ export function themeSeed(themeValue, customThemes = []) {
     mainRadius: 3,
     mainSpace: 5,
     mainMargin: 20,
-    subBackground: b.sub === 'transparent' ? fallbackBg : b.sub,
+    subBackground: subBg,
     subFontSize: 12,
     subRadius: 5,
     subSpace: 5,
