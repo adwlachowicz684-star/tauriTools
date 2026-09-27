@@ -154,4 +154,40 @@ console.log('\n=== 6. MCP 停止同样返回 bool，不能谎报「已停止」�
   t('App 失败要说出来', /端口可能仍在监听/.test(seg2));
 }
 
+console.log('\n=== 7. 监听间隔：两条分支必须夹到同一个值 ★ ===');
+{
+  /*
+   * 后端 `watch::start` 一律 `interval_secs.max(5)`，前端只有"开始"那条
+   * 跟着夹，"停止"那条写的是未夹取的 `interval`。填 1（或清空 → 0）再停止，
+   * 配置里就存下 1 / 0 —— 而实际每 5 秒才查一次。
+   *
+   * 界面照原样显示 1，用户以为 1 秒查一次：**告警延迟是他以为的 5 倍**，
+   * 且没有任何提示。对"受保护目录被改动就告警"这条线，差的是发现时机，
+   * 而他只会把延迟归到"这软件反应慢"上 —— 显示与实际不符（#63 同源）。
+   */
+  const w = read('../../src-tauri/src/fpx/watch.rs');
+  t('后端自己也会夹到最小 5 秒', /interval_secs\.max\(5\)/.test(w));
+
+  t('停止那条写的是夹取后的值',
+    /onSaved\(\{ watchEnabled: false, watchIntervalSecs: secs \}\)/.test(tpCode));
+  t('开始那条同样',
+    /onSaved\(\{ watchEnabled: true, watchIntervalSecs: secs \}\)/.test(tpCode));
+  /* 反面证据：不再有把原始 interval 直接落盘的地方 */
+  t('不再把未夹取的 interval 落盘', !/watchIntervalSecs: interval/.test(tpCode));
+
+  const iClamp = tpCode.indexOf('const secs = Math.max(5, interval);');
+  const iStop = tpCode.indexOf('const ok = await api.watchStop(');
+  const iStart2 = tpCode.indexOf('const ok = await api.watchStart(');
+  t('夹取写在两条分支之前',
+    iClamp >= 0 && iStop >= 0 && iStart2 >= 0 && iClamp < iStop && iClamp < iStart2,
+    `clamp@${iClamp} stop@${iStop} start@${iStart2}`);
+
+  /* 框里显示的值也要跟着改 —— 否则显示 1、实际 5 的分裂仍然存在 */
+  t('夹取后同步输入框', /if \(secs !== interval\) setInterval\(secs\);/.test(tpCode));
+
+  /* 成功文案报的是夹取后的值，不是用户填的那个 */
+  t('开始文案报夹取后的间隔',
+    /onLog\(`已开始监听受保护目录（每 \$\{secs\} 秒检查一次）`\)/.test(tpCode));
+}
+
 done();

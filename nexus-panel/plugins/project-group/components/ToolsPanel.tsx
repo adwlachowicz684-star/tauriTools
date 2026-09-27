@@ -535,6 +535,22 @@ export function ServiceBody({
    * 写成 true 又起不来，等于把"恢复"这条路也堵死了。
    */
   const toggleWatch = async () => {
+    /*
+     * 间隔的夹取**只做一次、两条分支共用**。
+     *
+     * 此前只有"开始"那条夹（`Math.max(5, interval)`），"停止"那条写的是
+     * 未夹取的 `interval`。输入框是 `type="number" min={5}`，但 min 只管校验、
+     * 挡不住手填 —— 填 1（或清空 → `Number('')` = 0）再点停止，
+     * 配置里就存下 1 / 0，而后端 `watch::start` 一律 `interval_secs.max(5)`。
+     *
+     * 于是设置页照原样显示 1，实际每 5 秒才查一次：**告警延迟是用户以为的 5 倍，
+     * 且没有任何提示**。对"受保护目录被改动就告警"这条线来说，
+     * 差的是发现时机，而用户会把延迟归到"这软件反应慢"上。
+     *
+     * 顺手把框里的值也改成夹取后的 —— 显示必须与实际一致（#63 同源）。
+     */
+    const secs = Math.max(5, interval);
+    if (secs !== interval) setInterval(secs);
     try {
       if (watchOn) {
         const ok = await api.watchStop();
@@ -544,10 +560,9 @@ export function ServiceBody({
           onLog('停止监听失败：监听线程可能仍在运行，请重启插件', true);
           return;
         }
-        onSaved({ watchEnabled: false, watchIntervalSecs: interval });
+        onSaved({ watchEnabled: false, watchIntervalSecs: secs });
         onLog('已停止监听');
       } else {
-        const secs = Math.max(5, interval);
         const ok = await api.watchStart(secs);
         setWatchOn(ok);
         onWatchToggled(ok);

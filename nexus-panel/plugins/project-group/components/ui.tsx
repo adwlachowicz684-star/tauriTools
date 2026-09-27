@@ -278,10 +278,23 @@ export function ConfirmDialog({
    *
    * Esc **不在这里处理**：本组件渲染的就是 Modal，Esc 交给 Modal 那层
    * （#250）。这里再监听一次的话，同一个 Esc 会被两个层各处理一遍。
+   *
+   * **焦点在按钮 / 表单控件上时一律不接管回车**。
+   * 回车对这些元素自带默认行为（激活按钮 = 触发它的 click），
+   * 而 window 上的监听在这一步**之前**就跑完了，于是：
+   *   · 焦点在「取消」上按回车 → 先把 onConfirm 跑一遍，再关窗 ——
+   *     用户按的是取消，执行的却是那个标着 danger 的删除；
+   *   · 焦点在「确定」上按回车 → window 一次 + 按钮默认激活一次，跑两遍。
+   * 两种都不报错，只是"按了取消却真删了 / 一次操作做了两遍"，
+   * 而用户无从把这归到"焦点在哪"上。交给默认行为就不会有这两条。
    */
+  const INTERACTIVE = 'button, a, input, select, textarea, [role="button"], [contenteditable]';
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Enter') return;
+      /* 焦点在可激活元素上 → 让它的默认行为去处理，这里不再补一次 */
+      const el = e.target as HTMLElement | null;
+      if (el?.closest?.(INTERACTIVE)) return;
       onConfirm();
       onClose();
     };
