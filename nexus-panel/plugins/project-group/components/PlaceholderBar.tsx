@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import {
   GROUP_TITLE, insertAtCursor, placeholdersByGroup, type PlaceholderDef,
 } from '../utils/placeholders';
@@ -23,6 +23,26 @@ export function PlaceholderBar({
   /** 插入后要把光标还原到这个位置；见 insertAtCursor 的说明 */
   const caretRef = useRef<number | null>(null);
 
+  /**
+   * 这个 textarea 是否**被聚焦过**。
+   *
+   * `selectionStart` 对没聚焦过的框返回 0，而 0 是"光标在开头"的真实取值 ——
+   * 于是 `el?.selectionStart ?? null` 那句兜底在真实场景里永远取不到 null：
+   * 用户打开面板、一次都没点进框里就按占位符按钮，token 会插到**最前面**，
+   * 把已有模板整段挤到后面。他看到的是"我点了插入，内容跑到开头了"。
+   *
+   * 只有真正聚焦过（或上次插入后由 applyCaret 主动聚焦）才算"有光标信息"；
+   * 没聚焦过就按 insertAtCursor 的约定传 null —— 追加到末尾。
+   */
+  const everFocused = useRef(false);
+  useEffect(() => {
+    const el = targetRef.current;
+    if (!el) return;
+    const onFocus = () => { everFocused.current = true; };
+    el.addEventListener('focus', onFocus);
+    return () => { el.removeEventListener('focus', onFocus); };
+  }, [targetRef]);
+
   const applyCaret = () => {
     const el = targetRef.current;
     const caret = caretRef.current;
@@ -34,10 +54,11 @@ export function PlaceholderBar({
 
   const insert = (p: PlaceholderDef) => {
     const el = targetRef.current;
+    const known = everFocused.current;
     const { next, caret } = insertAtCursor(
       value,
-      el?.selectionStart ?? null,
-      el?.selectionEnd ?? null,
+      known ? el?.selectionStart ?? null : null,
+      known ? el?.selectionEnd ?? null : null,
       p.token,
     );
     caretRef.current = caret;

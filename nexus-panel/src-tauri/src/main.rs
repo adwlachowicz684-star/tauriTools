@@ -21,12 +21,6 @@ mod fpx;
  */
 mod updater;
 mod dupview;
-/*
- * 运行时依赖（rt_dep）—— 把 npm 包装进工具内部，供插件在运行时动态 import。
- * 同样要盯住：少了 `mod rt_dep;` 这行，rt_dep.rs 就不参与编译，
- * 界面上「安装」点了没反应，而编译不报错。
- */
-mod rt_dep;
 
 /// 连通性测试：前端 ctx.invoke('rust_ping', { payload })
 #[tauri::command]
@@ -394,12 +388,6 @@ fn main() {
             dupview::dupview_rename,
             /* 常用文件夹：folder-picker 服务与设置页共用，读 + 整表覆盖写。 */
             fpx::fpx_list_fav_dirs, fpx::fpx_save_fav_dirs,
-            /*
-             * 运行时依赖三条（rt_dep.rs）—— 装包 / 列已装 / 移除。
-             * 少了它们：设置 → 依赖 里的「安装」点了没反应（前端会明确提示
-             * 后端未接入，而不是静默失败）。
-             */
-            rt_dep::fpx_rt_dep_list, rt_dep::fpx_rt_dep_install, rt_dep::fpx_rt_dep_remove, rt_dep::fpx_rt_dep_versions,
             tray_toggle_window
         ])
         .setup(move |app| {

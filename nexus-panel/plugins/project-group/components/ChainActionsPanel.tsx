@@ -3,6 +3,8 @@ import type { Api } from '../api';
 import { errText } from '../api';
 import { canRemove, defaultIconOf, defaultNameOf } from '../utils/chainBuiltins';
 import { isComposing } from '../utils/ime';
+/* 修饰键名单用 utils/hotkeys 那一份（那里注明"全项目只此一份"） */
+import { MODIFIER_KEYS } from '../utils/hotkeys';
 import type { ChainAction, ChainClient } from '../types';
 import { PlaceholderBar } from './PlaceholderBar';
 /* #147 模板框高度自适应：与 #146 图标网格共用同一个测量 hook */
@@ -454,7 +456,19 @@ export function ChainActionsPanel({
                       if (isComposing(e.nativeEvent)) return;
                       // 直接按出来的组合键填进去，免得手打出拼写错误
                       if (e.key === 'Tab' || e.key === 'Enter') return;
+                      /*
+                       * 退格 / 删除 / Esc 交回输入框自己处理（用户的本意是清空或放弃）。
+                       * 不交回的话 preventDefault 会把它们吃掉，再被下面录成
+                       * 'Backspace' / 'Delete' / 'Escape' 三个**裸键**；存下来就是
+                       * 三个应用级热键 —— 之后在任何输入框里按退格、或按 Esc 关弹窗，
+                       * 都会顺带触发一次"发送给 AI"。
+                       */
+                      if (e.key === 'Backspace' || e.key === 'Delete' || e.key === 'Escape') return;
                       e.preventDefault();
+                      /* 不带修饰键的裸键同样不录，理由完全一样。 */
+                      if (!e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) return;
+                      /* 只按下修饰键（组合还没按完）也不算一条组合 */
+                      if (MODIFIER_KEYS.includes(e.key)) return;
                       const parts: string[] = [];
                       if (e.ctrlKey) parts.push('Ctrl');
                       if (e.altKey) parts.push('Alt');
