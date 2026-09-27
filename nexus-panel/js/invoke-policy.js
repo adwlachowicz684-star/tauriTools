@@ -258,6 +258,7 @@ export const PLUGIN_COMMANDS = {
      * 设置页这个内置插件** —— 第三方调它会被 THIRD_DENY_CAPS 硬禁。
      */
     'fpx_rt_dep_list', 'fpx_rt_dep_install', 'fpx_rt_dep_remove', 'fpx_rt_dep_versions',
+    'fpx_rt_dep_purge',
   ],
 
   /* 色盘服务要用系统吸管 —— 与 fpx_pick_color 命令对应 */

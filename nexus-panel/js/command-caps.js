@@ -220,6 +220,13 @@ export const COMMAND_CAPS = {
    * 定高会让第三方插件无谓地被禁掉 —— 分级决定的是"谁能调"，不是"危不危险"。
    */
   fpx_rt_dep_versions: 'R',
+  /*
+   * purge（整包卸载）定 **W**，与 remove 同级：它删的是工具自己的
+   * deps 目录，不涉及用户数据，也不是从远端取代码执行（那是 install，M）。
+   * 定 W 意味着第三方插件也能删 —— 这是可接受的：删掉只会让插件
+   * 回退到打包版（requireDep 有 fallback），不会让功能消失。
+   */
+  fpx_rt_dep_purge: 'W',
   fpx_import_icons: 'W',
   fpx_set_editor: 'W',
   fpx_edit_file: 'W',

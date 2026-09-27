@@ -2813,6 +2813,13 @@ html.theme-transition *:not(.spinner) {
   max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .dep-inst-row .dep-meta { margin-top: 0; }
+/* 残留区（已装、但清单里已没有的）。给它一个可见的边界 ——
+   它是"清单之外的东西"，与下面的清单行没有视觉区分的话，
+   用户会以为是某个包的附属内容，而不是需要单独清理的一坨。 */
+.dep-orphans {
+  padding: 8px 10px; border-radius: var(--r-sm);
+  box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);
+}
 .dep-badge { flex: 0 0 auto; padding: 1px 8px; border-radius: var(--r-sm); font-size: var(--fs-11, 11px); }
 .dep-badge.ok { color: var(--ok); }
 .dep-badge.err { color: var(--danger); }

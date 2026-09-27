@@ -9,7 +9,10 @@ import {
   installRuntimeDep,
   listRuntimeDeps,
   loadRuntimeDep,
+  purgeRuntimeDep,
   removeRuntimeDep,
+  orphanDepsOf,
+  safeNameOf,
   fetchRuntimeDepVersions,
   specOf,
   safeFileOf,
@@ -100,6 +103,14 @@ function depListId(spec: any, nameKey: string) {
   return `dep-ver-${n.replace(/[^A-Za-z0-9]/g, '_')}`;
 }
 
+/**
+ * 整包卸载的键。与 keyOf（含版本）分开 —— 整包动作与版本无关，
+ * 用同一个键会出现"点整包卸载、单行的按钮也一起转圈"。
+ */
+function pkgKeyOf(name: string) {
+  return `pkg:${name}`;
+}
+
 export default function DepsCard() {
   const ctx = useNexus();
   const [filter, setFilter] = useState('all');
@@ -168,6 +179,14 @@ export default function DepsCard() {
 
   const issues = all.filter((d) => ISSUE.has(d.status)).length;
 
+  /*
+   * 残留：已装、但清单里没有的那些。
+   * 比对用**安全名**（`@plantuml/core` ↔ `_plantuml_core`）—— 后端从文件名
+   * 还原出的 name 是安全化过的，直接比字符串会把所有 scope 包误判成残留。
+   */
+  const manifestNames = useMemo(() => all.map((d) => d.name), [all]);
+  const orphans = useMemo(() => orphanDepsOf(installed, manifestNames), [installed, manifestNames]);
+
   const copy = useCallback(async (text: string) => {
     const ok = await copyText(ctx, text);
     ctx.toast(ok ? '已复制安装命令' : '复制失败 —— 请手动选中命令后复制', ok ? 'ok' : 'err');
@@ -233,6 +252,31 @@ export default function DepsCard() {
     [ctx, refresh],
   );
 
+  /*
+   * 整包卸载：这个包在工具内部的所有文件一次删掉。
+   *
+   * 与逐条 remove 的区别要写在界面上 —— 用户分不清两者时，会以为
+   * 「移除」点了没清干净而去反复点，实际它本来就只删那一行。
+   */
+  const doPurge = useCallback(
+    async (name: string) => {
+      const n = String(name || '').trim();
+      if (!n) return;
+      const k = pkgKeyOf(n);
+      setBusy(k);
+      setMsg(null);
+      const r = await purgeRuntimeDep(ctx, n);
+      setMsg(
+        r.ok
+          ? { k, text: `已卸载 ${n} 的全部 ${r.removed} 个文件`, bad: false }
+          : { k, text: r.error || '整包卸载失败', bad: true },
+      );
+      await refresh();
+      setBusy('');
+    },
+    [ctx, refresh],
+  );
+
   return (
     <div className="p-card">
       <h2>依赖</h2>
@@ -264,6 +308,36 @@ export default function DepsCard() {
       {installed.length ? (
         <div className="p-muted dep-note" style={{ marginBottom: 'var(--sp-6, 12px)' }}>
           已装进工具内部：{installed.map((d) => `${d.name}@${d.version}`).join('、')}
+        </div>
+      ) : null}
+
+      {/*
+       * 残留区：**已装、但清单里已经没有**的那些。
+       *
+       * 这类东西此前是彻底看不见的 —— DepsCard 按 js/deps-manifest.js 逐行
+       * 渲染，装过之后又被从 package.json 删掉的包，不会再出现在任何一行里：
+       * 看不见，就删不掉，只能在磁盘上越堆越多。整包卸载按包名走，
+       * 与清单里还有没有这一项无关，所以放在这里统一清。
+       */}
+      {orphans.length ? (
+        <div className="dep-orphans" style={{ marginBottom: 'var(--sp-6, 12px)' }}>
+          <div className="dep-note" style={{ color: 'var(--warn)' }}>
+            已装但清单里已经没有（{orphans.length} 项）—— 不列出来的话它们没有任何入口可删
+          </div>
+          {orphans.map((o: any) => {
+            const on = String(o.name || '');
+            const ok2 = pkgKeyOf(on);
+            return (
+              <div key={ok2} className="dep-inst-row">
+                <span className="p-mono dep-inst-ver">{on}@{o.version || '—'}</span>
+                <span className="dep-tag warn">残留</span>
+                {o.size ? <span className="dep-meta">{Math.max(1, Math.round(o.size / 1024))} KB</span> : null}
+                <button className="p-btn sm" disabled={busy === ok2} onClick={() => doPurge(on)}>
+                  {busy === ok2 ? '卸载中…' : '整包卸载'}
+                </button>
+              </div>
+            );
+          })}
         </div>
       ) : null}
 
@@ -359,7 +433,7 @@ export default function DepsCard() {
 
             {d.note ? <div className="dep-note">{d.note}</div> : null}
 
-            {msg && (msg.k === k || msg.k.startsWith(`${nameKey}@`)) ? (
+            {msg && (msg.k === k || msg.k === pkgKeyOf(nameKey) || msg.k.startsWith(`${nameKey}@`)) ? (
               <div className="dep-note" style={{ color: msg.bad ? 'var(--danger)' : 'var(--ok)' }}>
                 {msg.text}
               </div>
@@ -406,6 +480,25 @@ export default function DepsCard() {
                  * "安装没覆盖干净"，而去反复重装（重装同名同版本只会覆盖
                  * 同一份，旧的那份永远不会被清掉）。
                  */}
+                {/*
+                 * 整包卸载。与上面逐条「移除」的区别必须看得出来：
+                 * 「移除」只删那一行（那一份），「整包卸载」按包名删全部。
+                 * 不写清楚的话，用户会以为「移除」点了没清干净而反复点，
+                 * 实际它本来就只删一份。
+                 */}
+                <div className="dep-inst-row">
+                  <span className="dep-meta">
+                    整包卸载 = 删掉 {nameKey} 在工具内部的全部 {hits.length} 个文件
+                  </span>
+                  <button
+                    className="p-btn sm"
+                    disabled={busy === pkgKeyOf(nameKey)}
+                    onClick={() => doPurge(nameKey)}
+                    title="与上面逐条「移除」不同：这个按包名删，清单里没有的残留也能清掉"
+                  >
+                    {busy === pkgKeyOf(nameKey) ? '卸载中…' : '整包卸载'}
+                  </button>
+                </div>
                 {hits.length > 1 ? (
                   <div className="dep-note">
                     装新版本<strong>不会</strong>替你删旧版本 —— 上面每一份都独立保留，留哪个由你决定，
