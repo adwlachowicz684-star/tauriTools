@@ -64,10 +64,18 @@ t('每个测试文件都被某个 npm script 引用（否则等于没写）',
 /* ---- ② script 指向的文件必须存在 ---- */
 const missing = [];
 for (const [k, v] of Object.entries(scripts)) {
+  /* 脚本可能是 `cd 子目录 && node xxx.mjs` —— 那 xxx.mjs 相对的是
+     子目录，不是仓库根。第一版不懂 cd，于是把**唯一一条**写了 cd 的
+     script（test:pg-chain-panel-input）判成"指向的文件不存在" ——
+     纯假阳性。这里把 cd 前缀剥掉再拼路径。
+     （那条 script 本身也已改成根目录相对，与其他 168 条一致；
+       但守卫不能依赖"大家都别写 cd"，否则下一个人写了就又误报。） */
+  const cdm = /(?:^|[&|;]\s*)cd\s+([^\s&|;]+)/.exec(v);
+  const baseDir = cdm ? join(HERE, cdm[1]) : HERE;
   for (const m of v.matchAll(/node\s+([^\s&|]+\.mjs)/g)) {
     const p = m[1];
     if (!p.includes('test')) continue;
-    if (!existsSync(join(HERE, p))) missing.push(`${k} → ${p}`);
+    if (!existsSync(join(baseDir, p))) missing.push(`${k} → ${p}`);
   }
 }
 t('npm script 指向的测试文件都真实存在',
