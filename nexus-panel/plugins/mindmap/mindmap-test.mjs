@@ -10956,6 +10956,111 @@ group('Mermaid 根节点引号嵌套，往返损坏中心主题文字（BUG 49�
   rt((c) => fmt.toOpml(c, 'T'), fmt.fromOpml);
 }
 
+group('视频帧率对齐：真正的 24fps 被判成 23.976（BUG 50）');
+
+{
+  const mi = await import('file://' + path.join(HERE, 'mediainfo.js'));
+
+  /* ---- 手工搭一个最小可解析的 MP4（ftyp + moov + 一条视频轨） ----
+   * 不依赖 ffmpeg / 外部素材，测试自带；顺带把 box 解析的偏移也钉住。 */
+  const u32b = (n) => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0, 0); return b; };
+  const u16b = (n) => { const b = Buffer.alloc(2); b.writeUInt16BE(n & 0xffff, 0); return b; };
+  const z = (n) => Buffer.alloc(n);
+  const box = (type, ...parts) => {
+    const body = Buffer.concat(parts.map((x) => (Buffer.isBuffer(x) ? x : Buffer.from(x, 'binary'))));
+    return Buffer.concat([u32b(body.length + 8), Buffer.from(type, 'ascii'), body]);
+  };
+
+  /**
+   * @param {number} samples 总采样数（stts 求和）
+   * @param {number} timescale 轨道时间刻度
+   * @param {number} duration 轨道时长（以 timescale 为单位）
+   */
+  const mp4 = (samples, timescale, duration, qt = false) => {
+    const avc1Body = Buffer.concat([
+      z(6),                      // reserved[6]
+      u16b(1),                   // data_reference_index
+      z(16),                     // pre_defined / reserved / pre_defined[3]
+      u16b(1920), u16b(1080),    // width / height  （偏移 24 / 26）
+      z(8),                      // horiz / vert resolution
+      z(4),                      // reserved
+      u16b(1),                   // frame_count
+      z(32),                     // compressorname
+      u16b(24),                  // depth
+      z(2),                      // pre_defined
+      box('avcC', Buffer.from([1, 100, 0, 31])),   // High@3.1
+    ]);
+    const stsd = box('stsd', z(4), u32b(1), box('avc1', avc1Body));
+    // stts：entry_count=1，一条 (sample_count, sample_delta)
+    const stts = box('stts', z(4), u32b(1), u32b(samples), u32b(1));
+    const stbl = box('stbl', stsd, stts);
+    // qt=true 模拟 QuickTime(.mov)：minf 里还有一份 hdlr（数据引用处理器 'url '）
+    const qthdlr = qt ? box('hdlr', z(8), Buffer.from('url ', 'ascii'), z(12)) : null;
+    const minf = box('minf', ...(qthdlr ? [qthdlr] : []), stbl);
+    const mdhd = box('mdhd', z(4), u32b(0), u32b(0), u32b(timescale), u32b(duration), z(4));
+    const hdlr = box('hdlr', z(8), Buffer.from('vide', 'ascii'), z(12));
+    const mdia = box('mdia', mdhd, hdlr, minf);
+    const trak = box('trak', mdia);
+    const mvhd = box('mvhd', z(4), u32b(0), u32b(0), u32b(timescale), u32b(duration), z(80));
+    const moov = box('moov', mvhd, trak);
+    const ftyp = box('ftyp', Buffer.from('isom', 'ascii'), z(4));
+    return Buffer.concat([ftyp, moov]);
+  };
+
+  const fpsOf = (samples, timescale, duration) => {
+    const buf = new Uint8Array(mp4(samples, timescale, duration));
+    return mi.parseMp4(buf)?.frameRate;
+  };
+
+  /*
+   * 原实现是「按数组顺序返回第一个落在容差 0.03 内的常用值」：
+   *   const common = [23.976, 24, 25, 29.97, 30, ...];
+   *   for (const c of common) if (Math.abs(f - c) < 0.03) return c;
+   * 23.976 排在 24 前面、两者只差 0.024（< 0.03），
+   * 于是**真正的 24fps 一律被判成 23.976**。
+   *
+   * 实测（ffmpeg 生成的真实文件）24fps 的 mp4 与 webm 都显示 23.976，
+   * 而 24fps 是电影的标准帧率，很常见。
+   * 29.97 与 30 只差 0.03，恰好等于容差，靠 `<` 严格小于侥幸没中招。
+   */
+  eq(fpsOf(240, 600, 6000), 24, '24fps 必须显示 24（不能变成 23.976）');
+  eq(fpsOf(240, 1000, 10010), 23.976, '23.976fps 保持 23.976');
+  eq(fpsOf(300, 1000, 10010), 29.97, '29.97fps 保持 29.97');
+  eq(fpsOf(300, 600, 6000), 30, '30fps 保持 30（不能被 29.97 吃掉）');
+  eq(fpsOf(250, 600, 6000), 25, '25fps 保持 25');
+  eq(fpsOf(600, 600, 6000), 60, '60fps 保持 60（不能被 59.94 吃掉）');
+  // 非常见值：不走对齐，保留三位小数
+  eq(fpsOf(157, 600, 6000), 15.7, '非常见帧率原样保留');
+
+  /*
+   * minf 里的 hdlr 把 mdia 里读到的 'vide' 覆盖成 'url '（BUG 51）
+   *
+   * walkBoxes 会自动递归进容器 box，而 parseTrak 又**显式**走进 minf 找 stbl ——
+   * 于是 minf 的子 box 被当成 mdia 的子 box 交给同一个回调，
+   * QuickTime 的 minf 里那份 hdlr（handler = 'url '）就把刚读到的 'vide' 冲掉了。
+   * kind 变成 'url '，既不是 video 也不是 audio，
+   * 分辨率 / 编码 / 帧率**全部丢失**，只剩 mvhd 给的时长还显示得出来。
+   *
+   * ISO 的 .mp4 通常不在 minf 里放 hdlr，所以这个坑只在 .mov 上暴露 ——
+   * 而容器识别明确写着支持 MP4/**MOV**。
+   */
+  const qt = mi.parseMp4(new Uint8Array(mp4(240, 600, 6000, true)));
+  ok(!!qt, 'QuickTime .mov 能解析出来');
+  eq(qt.tracks[0]?.kind, 'video', 'minf 里的 hdlr 不得把 kind 从 video 冲掉');
+  eq(qt.width, 1920, '.mov 分辨率仍能读出来');
+  eq(qt.videoCodec, 'H.264', '.mov 视频编码仍能读出来');
+  eq(qt.frameRate, 24, '.mov 帧率仍能读出来');
+  eq(qt.container, 'MP4/MOV', '.mov 容器识别为 MP4/MOV');
+
+  // 顺带钉住同一条解析链上的其它字段（避免改 fps 时把别处改坏）
+  const r = mi.parseMp4(new Uint8Array(mp4(240, 600, 6000)));
+  eq(r.width, 1920, '分辨率宽解析正确');
+  eq(r.height, 1080, '分辨率高解析正确');
+  eq(r.videoCodec, 'H.264', '视频编码识别为 H.264');
+  eq(r.videoCodecDetail, 'High@3.1', '编码档位识别为 High@3.1');
+  eq(r.duration, 10, '时长 = duration / timescale = 10s');
+}
+
 /* ============================================================
    结果
    ============================================================ */

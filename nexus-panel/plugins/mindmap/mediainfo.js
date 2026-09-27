@@ -42,7 +42,16 @@ const ascii = (b, o, n) => {
 /* --------------------------- MP4 / MOV --------------------------- */
 
 /** 需要继续往下钻的容器 box */
-const MP4_CONTAINERS = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl', 'edts', 'dinf', 'mvex', 'moof', 'traf', 'udta']);
+/*
+ * 注意 **不含 'minf'**：parseTrak 会显式走进 minf 找 stbl。
+ * 若让 walkBoxes 再自动递归一次，minf 的子 box 就会被当成 **mdia 的子 box**
+ * 交给同一个回调处理 —— 而 QuickTime(.mov) 的 minf 里带有一个 hdlr
+ * （数据引用处理器，handler 是 'url '），它会把 mdia 里刚读到的 'vide'
+ * **覆盖掉**，于是整条视频轨的 kind 变成 'url '，既不是 video 也不是 audio，
+ * 分辨率 / 编码 / 帧率全部丢失。实测：.mov 只剩时长，其余全是「—」。
+ * （ISO 的 .mp4 通常不在 minf 里放 hdlr，所以这个问题只在 .mov 上暴露。）
+ */
+const MP4_CONTAINERS = new Set(['moov', 'trak', 'mdia', 'stbl', 'edts', 'dinf', 'mvex', 'moof', 'traf', 'udta']);
 
 /**
  * 遍历 box 列表。
@@ -270,10 +279,26 @@ function postProcess(out) {
 
 function roundFps(f) {
   if (!f || !isFinite(f)) return 0;
-  // 常见帧率对齐，避免 29.97 显示成 29.97002997
+  /*
+   * 常见帧率对齐，避免 29.97 显示成 29.97002997。
+   *
+   * 必须取**最接近**的那一个，不能「命中第一个在容差内的就返回」。
+   *
+   * 原写法按数组顺序返回第一个命中的：23.976 排在 24 前面，
+   * 而两者只差 0.024、小于容差 0.03 —— 于是**真正的 24fps 会被判成 23.976**。
+   * 实测（ffmpeg 生成的真实文件）：24fps 的 mp4 / webm 一律显示 23.976，
+   * 而 24fps 正是电影的标准帧率，很常见。
+   * （29.97 与 30 只差 0.03，恰好等于容差，靠 `<` 严格小于侥幸没中招。）
+   */
   const common = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 120];
-  for (const c of common) if (Math.abs(f - c) < 0.03) return c;
-  return Math.round(f * 1000) / 1000;
+  const TOL = 0.03;
+  let best = null;
+  let bestD = TOL;
+  for (const c of common) {
+    const d = Math.abs(f - c);
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  return best !== null ? best : Math.round(f * 1000) / 1000;
 }
 
 /** stsd 四字符码 → 人类可读的编码名 */
