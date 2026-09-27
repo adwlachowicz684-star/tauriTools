@@ -189,6 +189,19 @@ bootIframePlugin(async (ctx) => {
 
   const statusEl = h('span.mm-status', {}, '初始化…');
   const canvasEl = h('div.mm-canvas', {});
+  /* 假画框：画布本体**始终铺满**主体区（文件库是浮层、不占位），
+     "被文件库挤到右边"这个观感完全由这一层描边画出来。
+
+     为什么要这么绕：直接让画布真被挤窄，容器尺寸一变 → iframe 收到
+     resize → 内核把视图重新居中 → 内容左右晃一下。而画框是绝对定位
+     的描边层，pointer-events:none，它挪动时画布一个像素都不动。
+
+     ⚠️ 这一层**必须由 JS 创建** —— 早先只在 styles.css 里写了
+     .mm-canvas-frame 规则却没人建这个元素，于是画布压根没有那道边，
+     观感退化成"一个面板浮在画布上"（抽屉），正是本设计要避免的样子。
+     而 CSS 规则孤零零地留着，谁都不会发现它从未生效。 */
+  const canvasFrameEl = h('div.mm-canvas-frame', {});
+  canvasEl.appendChild(canvasFrameEl);
   const loadingEl = h('div.mm-loading', {}, '编辑器加载中…');
   canvasEl.appendChild(loadingEl);
 
@@ -524,6 +537,8 @@ bootIframePlugin(async (ctx) => {
   function clearSearchState() {
     try { bridge?.search?.(''); } catch { /* 编辑器未就绪就只清本地，不该因此中断 */ }
     withStableRoot(() => fileList?.setSearch(null));
+    // 搜索结果也占同一个底框：清掉后画框要收回去，否则左边空出一条
+    syncCanvasInset();
     if (searchStatusEl) {
       searchStatusEl.textContent = '';
       searchStatusEl.classList.remove('warn');
@@ -557,6 +572,7 @@ bootIframePlugin(async (ctx) => {
       // 结果列表单独取：search() 每调一次就推进到下一个匹配，
       // 若让它顺带返回列表，"刷新列表"就会连带多跳一格
       withStableRoot(() => fileList?.setSearch(bridge?.getSearchResults?.() || null));
+      syncCanvasInset();   // 搜索结果一出现，画框就要让位
     }
     const searchInput = h('input.mm-input', {
       placeholder: '搜索节点…',
@@ -1268,6 +1284,35 @@ async function gcOrphanAssets(quiet = false) {
   }
 
   /**
+   * 把假画框的左边缘对齐到底框（文件库 / 搜索结果）的右边缘。
+   *
+   * 底框是**浮层**（absolute），不占位；画布本体铺满整块主体区、从不移动。
+   * 所以"画布被挤窄"完全靠这一层描边来演：left 往右让出底框的宽度+间距，
+   * 看上去画布就"窄了"，而画布里的内容一个像素都没动。
+   *
+   * 判据必须是**可见性**而不是"宽度非 0"：底框 display:none 时宽度测出来
+   * 就是 0，看着能凑合用；但淡出动画期间宽度还是 186、display 已变 none，
+   * 按宽度算会让画框在收起后又弹回去一下。getComputedStyle 拿的是最终值。
+   *
+   * 不必只挂在 toggleFiles 上：搜索结果也占**同一个**底框，两者宽度一致，
+   * 所以这里只读底框当前几何，谁占着都一样。
+   */
+  function syncCanvasInset() {
+    if (!canvasFrameEl) return;
+    const fl = fileList?.el;
+    if (!fl) { canvasFrameEl.style.left = '0px'; return; }
+    let open = false;
+    try { open = getComputedStyle(fl).display !== 'none'; } catch { open = true; }
+    if (!open) { canvasFrameEl.style.left = '0px'; return; }
+    const cr = canvasEl.getBoundingClientRect();
+    const fr = fl.getBoundingClientRect();
+    // 与 .mm-body 的 gap 对齐（10px）；底框完全盖住画布时不让位
+    const gap = 10;
+    const left = Math.max(0, Math.min(fr.right - cr.left + gap, cr.width));
+    canvasFrameEl.style.left = Math.round(left) + 'px';
+  }
+
+  /**
    * 文件库面板展开/隐藏。
    *
    * 与搜索结果是**两个独立页签**共用一个底框，所以"开合"不是简单的
@@ -1278,6 +1323,9 @@ async function gcOrphanAssets(quiet = false) {
   async function toggleFiles(force) {
     const on = force == null ? !fileList?.isFilesPanel?.() : !!force;
     withStableRoot(() => fileList?.showFiles(on));
+    // 底框开合后画框要跟着让位 —— 漏了这一步就是"文件库飘在画布上"，
+    // 而画布本身毫无变化（它本来就不动），所以不会有任何报错提示。
+    syncCanvasInset();
     const showing = !!fileList?.isFilesPanel?.();
     settings.filesOpen = showing;
     // 早先这里连 await 都没有：写失败的话面板开关了、下次启动又回到默认，
@@ -2883,6 +2931,10 @@ async function gcOrphanAssets(quiet = false) {
   body.insertBefore(fileList.el, canvasEl);
   body.appendChild(side.el);
   fileList.showFiles(!!settings.filesOpen);
+  // 启动时文件库可能是开着的（settings.filesOpen 记着上次的状态），
+  // 画框得一开始就让到正确位置；只在 toggleFiles 里同步的话，
+  // 开着重进页面会先闪一下"画框占满整宽"再跳过去。
+  syncCanvasInset();
   captureShellErrors();
   buildRail();
   renderTabs();

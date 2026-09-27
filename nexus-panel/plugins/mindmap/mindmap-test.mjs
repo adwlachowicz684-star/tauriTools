@@ -7201,36 +7201,57 @@ group('左侧搜索结果面板（复用文件库底框）');
 
 group('布局：文件库挤窄画布（不遮挡）+ 控件档位');
 
+group('布局：文件库浮层 + 假画框（画布不动）');
+
 {
   const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+  const idxJs = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '');   // 先剥注释，避免命中说明文字
   const cs = strip(css);
 
-  // ---- 1) 文件库是 flex 子项，与画布并排 ----
+  // ---- 1) 文件库是**浮层**，画布本体铺满不动 ----
   //
-  // 为什么是挤窄而不是抽屉：抽屉会遮住画布左侧 186px，用户看到的内容
-  // 比关着时还少；挤窄下画布只是变窄 186px，可见区域仍然完整。
-  // 代价是画布尺寸变化 → 内核把视图重新居中 → 内容左右晃一下，
-  // 但偏移量很小（≤93px）、只在展开/收起瞬间发生，属可接受范围。
-  // 切片必须停在「下一个 }」而非 .open 处 —— 因为 .open 规则前还夹着
-  // 整整一段 15 行的注释块（含「为什么不用覆盖式抽屉」），那里面没有
-  // width:186px。不跳过注释就会断言失败（假阴性），逼得人去改实现。
+  // 走过三种方案，最终是「浮层 + 假画框」：
+  //   挤窄 → 画布尺寸真变 → iframe resize → 内核重新居中 → 内容晃动；
+  //   纯抽屉 → 盖住画布左侧 186px，看到的比关着时还少。
+  // 现行方案兼具两者：画布铺满、一个像素不动，"被挤窄"只由 .mm-canvas-frame
+  // 那层描边演出来。
+  //
+  // 切片必须停在「下一个 }」而非 .open 处 —— .open 规则前夹着长注释块，
+  // 不剥注释就会断言失败（假阴性），逼得人去改实现。
   const filesOpenIdx = cs.indexOf('.mm-files.open');
   const nextBrace = cs.indexOf('}', filesOpenIdx);
   const filesRule = cs.slice(cs.indexOf('.mm-files {'), nextBrace + 1);
-  ok(/flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 是 flex 子项（186px 固定宽，展开时挤窄画布）');
-  ok(!/position:\s*absolute/.test(filesRule),
-    '.mm-files 不是 absolute 抽屉（抽屉会遮挡画布）');
+  ok(/position:\s*absolute/.test(filesRule),
+    '.mm-files 是 absolute 浮层（不占位，画布几何不变）');
+  ok(!/flex:\s*0\s+0\s+186px/.test(filesRule),
+    '.mm-files 不再是 flex 子项（真挤窄会让画布收到 resize）');
 
-  // 挤窄布局的关键：不能脱离 flex 流，否则就变成浮在上层遮挡画布了。
-  // 双重断言 —— 只断言「是 flex 子项」不够：若某人同时写了 absolute，
-  // absolute 优先级更高、实际仍是抽屉，单条断言会误判为通过。
-  ok(!/position:\s*absolute/.test(filesRule) &&
-      /flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 在 flex 流中且宽度 186px（挤窄画布而非遮挡）');
+  // 双重断言 —— 只断言「不是 flex 子项」不够：那样可能两种都没写，
+  // 底框就成了普通块级元素、把整个主体区顶开。
+  ok(/position:\s*absolute/.test(filesRule) && !/flex:\s*0\s+0\s+186px/.test(filesRule),
+    '.mm-files 脱离 flex 流且绝对定位（浮在上层）');
 
   ok(/width:\s*186px/.test(filesRule), '.mm-files 宽度仍是 186px');
+
+  // ---- 1.5) 假画框：观感的来源，必须真的存在 ----
+  //
+  // ⚠️ 这一层曾是**只有 CSS 规则、JS 从不创建**的幽灵元素：
+  //    styles.css 里 .mm-canvas-frame 写得清清楚楚，index.js 里却没人 new 它，
+  //    于是画布压根没有那道边，观感退化成"面板浮在画布上"——
+  //    正是本设计要避免的样子，且不报任何错。
+  //  所以这里钉**两端**：CSS 有规则 **且** JS 真的建了这个元素。
+  const frameRule = cs.slice(cs.indexOf('.mm-canvas-frame {'), cs.indexOf('}', cs.indexOf('.mm-canvas-frame {')) + 1);
+  ok(/pointer-events:\s*none/.test(frameRule), '假画框 pointer-events:none（看得见摸不着）');
+  ok(/position:\s*absolute/.test(frameRule), '假画框绝对定位（不占位）');
+  ok(/h\('div\.mm-canvas-frame'/.test(idxJs),
+    'index.js 真的创建了 .mm-canvas-frame（否则规则是空的，画布没边）');
+  // 光建元素不够：left 必须跟着底框走，否则边永远贴着左边、等于没让位
+  ok(/function syncCanvasInset/.test(idxJs), '有 syncCanvasInset 同步画框左边缘');
+  ok(/canvasFrameEl\.style\.left\s*=/.test(idxJs), 'syncCanvasInset 真的写入 left');
+  // 三个入口都要同步：开合、搜索出结果、清搜索。漏一个就"这次没跟上"
+  const syncCalls = (idxJs.match(/syncCanvasInset\(\)/g) || []).length;
+  ok(syncCalls >= 4, `syncCanvasInset 至少被调用 4 处（定义+开合+搜索+清除），实测 ${syncCalls}`);
 
   // ---- 2) 控件档位：输入框/下拉必须与按钮同为 28px ----
   //
@@ -7959,14 +7980,22 @@ group('文件库展开导致画布内容位移：按实测屏幕位置差补偿'
     'rootScreenX 取不到时返回 null（不是 0）');
   ok(!/rootScreenX/.test(wsrSeg), '补偿链路不依赖 rootScreenX（iframe 内测不到容器位移）');
 
-  // ---- 4) 几何账：216 = flex-basis 186 + padding 10×2 + gap 10 ----
+  // ---- 4) 几何账：底框 186 宽 + padding 10×2，画框让位 = 186 + gap 10 ----
   {
     const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
     const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
-    ok(/flex:\s*0 0 186px/.test(filesBlk), '.mm-files flex-basis 186');
+    ok(/width:\s*186px/.test(filesBlk), '.mm-files 宽 186（浮层，不再是 flex-basis）');
     ok(/padding:\s*10px/.test(filesBlk), '.mm-files padding 10（左右合计 20）');
+    // 底框是浮层后 .mm-body 的 gap 不再作用于它（absolute 不参与 flex 排布），
+    // 但 syncCanvasInset 让位时要**沿用同一个 10px**，否则画框与底框之间
+    // 的缝会比"真挤窄"时宽/窄一截，两个状态切换时观感对不上。
     const bodyBlk = css.slice(css.indexOf('.mm-body {'), css.indexOf('.mm-body {') + 200);
     ok(/gap:\s*10px/.test(bodyBlk), '.mm-body gap 10');
+    {
+      const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+      const seg = idx.slice(idx.indexOf('function syncCanvasInset'), idx.indexOf('function syncCanvasInset') + 900);
+      ok(/const gap = 10;/.test(seg), 'syncCanvasInset 让位间距与 .mm-body gap 一致（10）');
+    }
     // 右侧栏必须**不可收缩**：它若可收缩，画布宽度变化量就不再固定，
     // 内核的半量补偿会与实际位移脱钩（历史上 .mm-side 样式失效时正是如此）
     const sideBlk = css.slice(css.indexOf('.mm-side {'), css.indexOf('.mm-side h3'));
