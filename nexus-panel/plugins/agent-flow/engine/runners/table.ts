@@ -37,10 +37,14 @@ export async function runTableRead(ctx: RunContext): Promise<void> {
      * 不在这里自己判 tableReader 有没有 —— REQUIRES 里已登记，
      * runnerKit 会在进入本函数**之前**统一校验（措辞与别处一致）。
      * 留一份在这里就是"同一件事写两遍"，改了那边忘了这里是迟早的事。
+     *
+     * 类型上 tableReader 仍是可选的（不是每个环境都有表格能力），所以调用处
+     * 用 ! 把这个前提显式写出来：能进到本函数，就说明 runnerKit 已校验过。
+     * 这不是掩盖类型，是把"谁负责保证它存在"说清楚。
      */
     let text: string;
     try {
-      text = await ctx.opts.tableReader(path);
+      text = await ctx.opts.tableReader!(path);
     } catch (err) {
       throw new NodeFailError(err instanceof Error ? err.message : String(err));
     }
