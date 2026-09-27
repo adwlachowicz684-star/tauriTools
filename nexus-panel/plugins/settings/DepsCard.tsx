@@ -12,6 +12,8 @@ import {
   removeRuntimeDep,
   specOf,
   safeFileOf,
+  installedVersionsOf,
+  staleVersionsOf,
 } from '../../js/runtime-deps.js';
 
 /**
@@ -106,17 +108,13 @@ export default function DepsCard() {
     refresh();
   }, [refresh]);
 
+  /*
+   * 一个包可能装着**多份**（换过声明版本后旧文件仍在），所以这里取全部。
+   * 只取第一个的后果见 js/runtime-deps.js 的 installedVersionsOf 注释：
+   * 界面显示 A、点移除删掉的是 B，刷新后 A 还在 —— 看着像"移除失效"。
+   */
   const installedOf = useCallback(
-    (item: Item) => {
-      const spec = specOf(item.install);
-      if (!spec) return null;
-      if (spec.version) {
-        const hit = installed.find((d) => d.name === spec.name && d.version === spec.version);
-        if (hit) return hit;
-      }
-      // 声明为范围（^1.2.3）时按包名匹配 —— 已装的是解析后的具体版本
-      return installed.find((d) => d.name === spec.name) || null;
-    },
+    (item: Item) => installedVersionsOf(installed, item),
     [installed],
   );
 
@@ -173,14 +171,26 @@ export default function DepsCard() {
     [ctx, refresh],
   );
 
+  /*
+   * 移除的是**这一条已装记录**，不是"这个包"。
+   *
+   * 早先按声明版本拼文件名去删，多版本共存时会出现：
+   *   界面显示 12.0.0（排序最小的那份）、点移除却删掉 13.0.0
+   *   → 刷新后 12.0.0 还在 → 用户看到"移除失效"
+   * 现在直接用后端 list 给的真实文件名，删的就是显示的这一行。
+   */
   const doRemove = useCallback(
-    async (item: Item) => {
-      const spec = specOf(item.install);
-      if (!spec) return;
-      const k = keyOf(spec.name, spec.version || '');
+    async (hit: any) => {
+      if (!hit) return;
+      const name = String(hit.name || '');
+      const k = keyOf(name, hit.version || '');
       setBusy(k);
-      const r = await removeRuntimeDep(ctx, spec.name, spec.version || '');
-      setMsg(r.ok ? { k, text: '已移除', bad: false } : { k, text: r.error || '移除失败', bad: true });
+      const r = await removeRuntimeDep(ctx, name, hit.version || '', hit.file);
+      setMsg(
+        r.ok
+          ? { k, text: `已移除 ${name}@${hit.version || '—'}`, bad: false }
+          : { k, text: r.error || '移除失败', bad: true },
+      );
       await refresh();
       setBusy('');
     },
@@ -254,8 +264,17 @@ export default function DepsCard() {
         const st = STATUS[d.status] ?? { label: d.status, tone: 'mute' };
         const showCmd = ISSUE.has(d.status) || d.status === 'missing';
         const spec = specOf(d.install);
-        const k = keyOf(spec?.name || d.name, spec?.version || '');
-        const hit = installedOf(d);
+        const nameKey = spec?.name || d.name;
+        const k = keyOf(nameKey, spec?.version || '');
+        /*
+         * 一个包可能装着**多份**（换过声明版本后旧文件仍在），所以取全部。
+         * 只取第一个的下场：显示 A、点移除删掉的是 B，刷新后 A 还在 ——
+         * 界面上看就是"移除失效"，而且 B 从此没有任何入口能删。
+         */
+        const hits = installedOf(d);
+        const staleNames = new Set(staleVersionsOf(installed, d).map((x) => String(x.version)));
+        /** 是否已有与声明一致的那份 —— 没有才显示「安装」。 */
+        const hasExact = hits.some((h) => !staleNames.has(String(h.version)));
         const can = canInstall(d);
         /*
          * 不能装时**必须把理由写出来**，不能只是不显示按钮 ——
@@ -288,7 +307,11 @@ export default function DepsCard() {
                 <span className="p-mono dep-name">{d.name}</span>
                 {d.pinned ? <span className="dep-tag" title="精确锁定的版本">锁定</span> : null}
                 <span className="dep-tag">{d.kind === 'rust' ? 'crate' : d.kind === 'dev' ? '开发时' : '运行时'}</span>
-                {hit ? <span className="dep-tag ok">已装 {hit.version}</span> : null}
+                {hits.length === 1 ? (
+                  <span className="dep-tag ok">已装 {hits[0].version}</span>
+                ) : hits.length > 1 ? (
+                  <span className="dep-tag warn">已装 {hits.length} 个版本</span>
+                ) : null}
               </div>
               <span className={`dep-badge ${st.tone}`}>{st.label}</span>
             </div>
@@ -300,7 +323,7 @@ export default function DepsCard() {
 
             {d.note ? <div className="dep-note">{d.note}</div> : null}
 
-            {msg && msg.k === k ? (
+            {msg && (msg.k === k || msg.k.startsWith(`${nameKey}@`)) ? (
               <div className="dep-note" style={{ color: msg.bad ? 'var(--danger)' : 'var(--ok)' }}>
                 {msg.text}
               </div>
@@ -310,8 +333,42 @@ export default function DepsCard() {
 
             {noUse ? <div className="dep-note">{noUse}</div> : null}
 
-            {can && !hit && rtUsers.length ? (
+            {can && !hasExact && rtUsers.length ? (
               <div className="dep-note">装了会被 {rtUsers.join('、')} 取用（优先用装的那份，加载失败自动回退打包版）</div>
+            ) : null}
+
+            {/*
+             * 已装的每一份都单独列一行、单独可删。
+             * 合并成一个「移除」按钮的话，删的是哪一份在界面上无从判断 ——
+             * 多版本共存时必然出现"删了没显示的那份、显示的还在"。
+             */}
+            {hits.length ? (
+              <div className="dep-installed">
+                {hits.map((h: any) => {
+                  const hk = keyOf(h.name || nameKey, h.version || '');
+                  const runningThis = busy === hk;
+                  const isStale = staleNames.has(String(h.version));
+                  return (
+                    <div key={hk} className="dep-inst-row">
+                      <span className="p-mono dep-inst-ver">{h.version || '—'}</span>
+                      {isStale ? (
+                        <span className="dep-tag warn" title="声明版本已变，这份是残留的旧文件">与声明不符</span>
+                      ) : (
+                        <span className="dep-tag ok">已装</span>
+                      )}
+                      {h.size ? <span className="dep-meta">{Math.max(1, Math.round(h.size / 1024))} KB</span> : null}
+                      <button className="p-btn sm" disabled={runningThis} onClick={() => doRemove(h)}>
+                        {runningThis ? '移除中…' : '移除'}
+                      </button>
+                    </div>
+                  );
+                })}
+                {staleNames.size ? (
+                  <div className="dep-note">
+                    「与声明不符」的是换了声明版本后残留的旧文件，可逐条移除（不影响构建产物里那份）。
+                  </div>
+                ) : null}
+              </div>
             ) : null}
 
             {showCmd ? (
@@ -321,22 +378,16 @@ export default function DepsCard() {
               </div>
             ) : null}
 
-            {can ? (
+            {can && !hasExact ? (
               <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)' }}>
-                {hit ? (
-                  <button className="p-btn sm" disabled={running} onClick={() => doRemove(d)}>
-                    {running ? '移除中…' : '移除'}
-                  </button>
-                ) : (
-                  <button
-                    className="p-btn sm primary"
-                    disabled={running || rtMissing}
-                    onClick={() => doInstall(d)}
-                    title={rtMissing ? '后端尚未接入' : '从 CDN 装进工具内部'}
-                  >
-                    {running ? '安装中…' : '安装'}
-                  </button>
-                )}
+                <button
+                  className="p-btn sm primary"
+                  disabled={running || rtMissing}
+                  onClick={() => doInstall(d)}
+                  title={rtMissing ? '后端尚未接入' : '从 CDN 装进工具内部'}
+                >
+                  {running ? '安装中…' : '安装'}
+                </button>
               </div>
             ) : null}
           </div>

@@ -2792,6 +2792,25 @@ html.theme-transition *:not(.spinner) {
 /* 「已装 xx」要能一眼看出来 —— 不写这条它就和「运行时/锁定」那些灰色
    标签长得一模一样，用户得逐个读文字才知道装没装。 */
 .dep-tag.ok { color: var(--ok); font-weight: var(--fw-strong, 600); }
+/* 「与声明不符」「已装 N 个版本」—— 必须和 ok 那个区分开，
+   否则"装着两份、其中一份是残留"这件事在界面上完全看不见。 */
+.dep-tag.warn { color: var(--warn, #e0a030); font-weight: var(--fw-strong, 600); }
+/* 已装版本逐条列出：一个包可能装着多份（换过声明版本后旧的仍在）。
+   三条缺一不可：
+     · 没有 margin-top → 行与 dep-meta 挤在一起，分不清是同一条还是下一条
+     · 没有 min-width  → 包名长时移除按钮被挤出右边，看着像没有按钮
+     · 没有 flex-wrap  → 窄屏上按钮换行即错位                            */
+.dep-installed { margin-top: 6px; }
+.dep-inst-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 4px; padding: 3px 0; min-width: 0;
+}
+.dep-inst-ver {
+  font-size: var(--fs-12, 12px); color: var(--text);
+  /* 版本号短，但 scoped 包的文件名可能很长 —— 不截断会把按钮顶出屏幕 */
+  max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dep-inst-row .dep-meta { margin-top: 0; }
 .dep-badge { flex: 0 0 auto; padding: 1px 8px; border-radius: var(--r-sm); font-size: var(--fs-11, 11px); }
 .dep-badge.ok { color: var(--ok); }
 .dep-badge.err { color: var(--danger); }

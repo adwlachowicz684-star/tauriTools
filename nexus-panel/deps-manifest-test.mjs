@@ -122,8 +122,13 @@ t('DepsCard 读的是清单而不是运行时读文件',
   '运行时读 package.json 在打包产物里读不到，只会得到空列表');
 
 /* ---- 样式必须进主样式表 ---- */
-for (const c of ['dep-filters', 'dep-chip', 'dep-badge', 'dep-meta', 'dep-cmd', 'dep-tag', 'dep-note', 'dep-name', 'dep-item']) {
-  t(`主样式表有 .${c}`, cssText.includes(`.${c}`));
+/*
+ * 用 `includes('.' + c)` 是**假绿**：`.dep-installed-x {` 也含 `.dep-installed`
+ * 这个子串，于是样式真被改名成另一个类照样报"有"。
+ * 必须要求类名后面紧跟 空白 / { / , —— 即"它真的被当成选择器写了规则"。
+ */
+for (const c of ['dep-filters', 'dep-chip', 'dep-badge', 'dep-meta', 'dep-cmd', 'dep-tag', 'dep-note', 'dep-name', 'dep-item', 'dep-installed', 'dep-inst-row', 'dep-inst-ver']) {
+  t(`主样式表有 .${c}`, new RegExp(`\\.${c}[\\s,{]`).test(cssText));
 }
 t('安装命令可手动选中（body 的 user-select 是 none）', /\.dep-cmd[\s\S]{0,400}user-select:\s*text/.test(cssText));
 

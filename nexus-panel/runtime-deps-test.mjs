@@ -231,6 +231,55 @@ function missingCtx() {
     threw ? '抛异常了' : r && r.error);
 }
 
+/* ---------- 3b. 多版本共存：删的必须是显示的那一行的版本 ---------- */
+/*
+ * 换过声明版本后旧文件仍在 deps 目录里，同一个包就装着多份。
+ * 只取第一个的下场：显示 12.0.0、点移除删掉 13.0.0，刷新后 12.0.0 还在
+ * —— 界面上看就是"移除失效"，而 13.0.0 从此没有任何入口能删。
+ */
+{
+  t('normVersion 剥掉 ^ 等范围符号', rt.normVersion('^12.0.0') === '12.0.0', rt.normVersion('^12.0.0'));
+  t('normVersion 对精确版本不动', rt.normVersion('12.0.0') === '12.0.0');
+
+  const installed = [
+    { name: 'mermaid', version: '12.0.0', file: 'mermaid@12.0.0.mjs' },
+    { name: 'mermaid', version: '13.0.0', file: 'mermaid@13.0.0.mjs' },
+    { name: 'rehype-slug', version: '6.0.0', file: 'rehype-slug@6.0.0.mjs' },
+  ];
+  const item13 = { kind: 'runtime', dev: false, install: 'npm i mermaid@^13.0.0' };
+  const got = rt.installedVersionsOf(installed, item13);
+  t('installedVersionsOf 返回该包的全部版本（不是只取第一个）', got.length === 2, `实际 ${got.length}`);
+
+  const stale = rt.staleVersionsOf(installed, item13);
+  t('staleVersionsOf 只标与声明不符的那份',
+    stale.length === 1 && stale[0].version === '12.0.0', stale.map((x) => x.version).join(','));
+  t('范围声明能认出精确版本那份是当前的',
+    rt.staleVersionsOf(installed, { install: 'npm i mermaid@^12.0.0' }).every((x) => x.version === '13.0.0'));
+  t('声明里没写版本时不硬标 stale（无法判定就不标）',
+    rt.staleVersionsOf(installed, { install: 'npm i mermaid' }).length === 0);
+
+  /* 移除必须拿 list 给的真实文件名，不能按声明版本重拼 */
+  let seen = null;
+  const ctx = stubCtx(async (cmd, a) => {
+    if (cmd === 'fpx_rt_dep_remove') { seen = a; return { ok: true }; }
+    return { ok: true };
+  });
+  /*
+   * 关键在于**传入的 file 与按声明版本拼出来的不同**：
+   * 这正是"显示 12.0.0、声明是 ^13.0.0"的场景 —— 若按声明版本重拼就会
+   * 去删 mermaid@13.0.0.mjs（没显示的那个），而这一条删不掉。
+   * 用同版本的例子测，两种实现结果恰好相同，断言就成了摆设。
+   */
+  await rt.removeRuntimeDep(ctx, 'mermaid', '^13.0.0', 'mermaid@12.0.0.mjs');
+  t('移除用传入的真实文件名（不用声明版本重拼）',
+    seen && seen.file === 'mermaid@12.0.0.mjs', seen && seen.file);
+
+  seen = null;
+  await rt.removeRuntimeDep(ctx, 'mermaid', '^12.0.0');
+  t('没给文件名时退回 safeFileOf（不静默不删）',
+    seen && seen.file === 'mermaid@12.0.0.mjs', seen && seen.file);
+}
+
 /* ---------- 4. 接线：少一处都是"点了没反应" ---------- */
 
 const mainText = read('src-tauri/src/main.rs');
@@ -493,6 +542,18 @@ const ip = read('js/invoke-policy.js');
 t('md 白名单只给 list（不给 install/remove）',
   /md: \[[^\]]*'fpx_rt_dep_list'/.test(ip) &&
   !/md: \[[^\]]*fpx_rt_dep_(install|remove)/.test(ip));
+
+/* ---------- 5. 界面：多版本时删的必须是那一行 ---------- */
+
+const card = read('plugins/settings/DepsCard.tsx');
+t('界面按"已装记录"移除（传 hit.file，不是按声明版本重拼）',
+  /removeRuntimeDep\(ctx, name, hit\.version \|\| '', hit\.file\)/.test(card));
+t('界面不再把整个 item 交给移除（那只猜得出声明版本）',
+  !/doRemove\(d\)/.test(card));
+t('界面列出该包的全部已装版本', /installedVersionsOf\(installed, item\)/.test(card));
+t('界面标出与声明不符的版本', /staleVersionsOf\(installed, d\)/.test(card) && /与声明不符/.test(card));
+t('多版本时标题不谎称只有一个', /已装 \{hits\.length\} 个版本/.test(card));
+t('已有与声明一致的那份时不显示「安装」', /can && !hasExact \? \(/.test(card));
 
 console.log(`\n运行时依赖：${pass} 通过 / ${fails.length} 失败`);
 for (const f of fails) console.log('  ✗ ' + f);
