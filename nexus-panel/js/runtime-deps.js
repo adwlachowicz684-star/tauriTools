@@ -98,12 +98,78 @@ export function specOf(install) {
   return { name, version };
 }
 
+/**
+ * 装了反而坏 / 装了也用不了的包 —— 必须拒绝，并且理由要能说清"装了会怎样"。
+ * ------------------------------------------------------------
+ *
+ * 【为什么不能只凭"它是运行时依赖"就放行】
+ * canInstall 早先只排除 rust 与 dev，于是下面这六条全都显示「安装」按钮。
+ * 而它们装进去的下场分别是：
+ *
+ *   · react / react-dom / react-markdown / @xyflow/react
+ *     → CDN 的单文件把 react 一起打进去 = **第二份 react 实例**，
+ *       任何插件一用就是 Invalid hook call。而这个报错**完全指不到**
+ *       "你刚装了运行时依赖"这一步 —— 用户只会看到某个插件崩了。
+ *
+ *   · @tauri-apps/api
+ *     → 它靠 window.__TAURI_INTERNALS__ 与宿主 Rust 侧通信，版本必须
+ *       和 Cargo 侧一致。装一份外部版本 = 能 import、但所有调用静默失败。
+ *
+ *   · @plantuml/core
+ *     → 必须先注入 viz-global.js（classic script）再 import ESM，
+ *       单文件装进去也用不了；且 ≤1.2026.5 是 GPL-3.0，不能随手换版本。
+ *
+ * 这不是保守：这六条里**每一条的失败都不指向这里**，是本项目最难归因的
+ * 那一类。宁可不给按钮，也不能让人踩进去。
+ *
+ * 【为什么是显式名单而不是自动推断依赖树】
+ * 判断"某个包依赖 react"需要读子包的 package.json —— 打包产物里没有
+ * node_modules，客户端拿不到依赖树。自动推断在这里做不到，所以宁可显式
+ * 列出并给理由；配套的防僵尸断言见 runtime-deps-test（名单里的名字必须
+ * 真的在 manifest 里，写错或包已移除时立刻红）。
+ */
+export const RT_BLOCKED = {
+  'react':
+    '宿主已有一份 react。装进来的是第二份实例，插件一用就是 Invalid hook call，而报错完全指不到"刚装了运行时依赖"这一步。要换版本请改 package.json 后重新构建。',
+  'react-dom':
+    '同 react：装进来的是第二份实例，与宿主的渲染器不是同一个，报错同样指不到这里。',
+  'react-markdown':
+    'CDN 单文件会把 react 一起打进去 —— 那是第二份 react 实例，用它的插件会 Invalid hook call。',
+  '@xyflow/react':
+    '同上：单文件里自带一份 react，与宿主那份并存即冲突。',
+  '@tauri-apps/api':
+    '它靠 window.__TAURI_INTERNALS__ 与宿主 Rust 侧通信，版本必须和 Cargo 侧一致。装一份外部版本会"能 import、但所有调用静默失败"。',
+  '@plantuml/core':
+    '它必须先注入 viz-global.js（classic script）再 import ESM，单文件装进去也用不了；且 ≤1.2026.5 是 GPL-3.0，不能随手换版本。',
+};
+
+/**
+ * 为什么这条**不能**一键安装；能装则返回 null。
+ *
+ * canInstall 与它共用这一处判定，不会出现"能装但理由非空"或
+ * "不能装却没理由可显示"的不一致 —— 界面要的就是把理由显示出来，
+ * 而不是静默地不显示按钮（那样用户只会以为功能没做完）。
+ */
+export function blockReasonOf(item) {
+  if (!item) return null;
+  if (item.kind === 'rust') return 'Rust crate 走 cargo，不是运行时能装的。';
+  if (item.dev) return '开发时依赖不进打包产物，装了也没人用。';
+  // 以 install 字段为准，与 specOf 的口径一致（declared 可能是范围或 null）
+  const spec = specOf(item.install);
+  if (!spec) return RT_ERR.noSpec;
+  /*
+   * 用 hasOwnProperty 而不是 `RT_BLOCKED[name] || null`：
+   * 后者在理由被写成空串时会当成"没命中"→ 按钮又出现了。
+   * 名单命中就该拒绝；理由为空是**缺陷**（界面会出现"没有解释的禁用"），
+   * 由测试那条"理由 ≥10 字"兜住，不在这里悄悄兜底成一句提示。
+   */
+  if (!Object.prototype.hasOwnProperty.call(RT_BLOCKED, spec.name)) return null;
+  return RT_BLOCKED[spec.name] || null;
+}
+
 /** 哪些条目根本不该出现"一键安装"按钮。 */
 export function canInstall(item) {
-  if (!item) return false;
-  if (item.kind === 'rust') return false; // crate 走 cargo，不是运行时能装的
-  if (item.dev) return false; // 开发时依赖不进产物，装了也没人用
-  return !!specOf(item.install);
+  return blockReasonOf(item) === null;
 }
 
 /** 调后端命令；命令不存在时返回明确的 noCmd，而不是抛异常后静默。 */

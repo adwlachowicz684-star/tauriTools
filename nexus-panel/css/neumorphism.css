@@ -2799,6 +2799,14 @@ html.theme-transition *:not(.spinner) {
 .dep-badge.mute { color: var(--text-mute); }
 .dep-meta { margin-top: 4px; font-size: var(--fs-11, 11px); color: var(--text-mute); word-break: break-all; }
 .dep-note { margin-top: 4px; font-size: var(--fs-11, 11px); color: var(--text-mute); line-height: 1.7; }
+/* 「不适合运行时安装」的说明：比普通 note 更显眼一点 ——
+   它是"为什么没有安装按钮"的唯一解释，混在灰字里会被当成没写。 */
+.dep-blocked {
+  padding: 4px 8px; border-radius: var(--r-sm); margin-top: 6px;
+  font-size: var(--fs-11, 11px); line-height: 1.7;
+  color: var(--text-mute); background: var(--surface-sunk);
+  border-left: 2px solid var(--warn, #e0a030);
+}
 .dep-cmd {
   flex: 1; min-width: 0; padding: 4px 8px; border-radius: var(--r-sm);
   font-size: var(--fs-11, 11px); color: var(--text); background: var(--surface);

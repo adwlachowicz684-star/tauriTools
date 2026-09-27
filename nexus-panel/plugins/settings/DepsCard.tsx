@@ -3,6 +3,7 @@ import { useNexus } from '../../src/nexus-react';
 import { DEPS_MANIFEST, DEP_STATUS } from '../../js/deps-manifest.js';
 import { copyText } from '../../js/clipboard.js';
 import {
+  blockReasonOf,
   canInstall,
   installRuntimeDep,
   listRuntimeDeps,
@@ -253,6 +254,13 @@ export default function DepsCard() {
         const k = keyOf(spec?.name || d.name, spec?.version || '');
         const hit = installedOf(d);
         const can = canInstall(d);
+        /*
+         * 不能装时**必须把理由写出来**，不能只是不显示按钮 ——
+         * 静默无按钮会被当成"功能没做完"，而真相是"装了会出事"。
+         * 只显示被 RT_BLOCKED 拦下的那类（第二份 react 实例、宿主契约包等）：
+         * rust / 开发时那两类，标签上已经写了 crate / 开发时，不必重复。
+         */
+        const why = can ? '' : d.kind === 'runtime' && !d.dev ? blockReasonOf(d) || '' : '';
         const running = busy === k;
         return (
           <div
@@ -286,6 +294,8 @@ export default function DepsCard() {
                 {msg.text}
               </div>
             ) : null}
+
+            {why ? <div className="dep-note dep-blocked">不适合运行时安装 —— {why}</div> : null}
 
             {showCmd ? (
               <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)' }}>
