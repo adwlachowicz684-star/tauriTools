@@ -280,6 +280,55 @@ function missingCtx() {
     seen && seen.file === 'mermaid@12.0.0.mjs', seen && seen.file);
 }
 
+/* ---------- 3c. 装新不清旧：多版本并存留不留由用户决定 ---------- */
+/*
+ * 装新版本时**不许**替用户删旧版本。旧版本可能是他特意留的（回滚 / 对比 /
+ * 有插件钉住旧行为），后台删掉等于替他做决定，而界面上他看不出少了什么。
+ * 契约：装 = 只写目标文件；删 = 用户逐条点「移除」。
+ */
+{
+  t('cmpVersion 自然序：9 在 10 前面（字符串比会反过来）', rt.cmpVersion('9.0.0', '10.0.0') < 0);
+  t('cmpVersion 逐段比数字', rt.cmpVersion('12.0.0', '12.10.0') < 0 && rt.cmpVersion('12.10.0', '12.9.0') > 0);
+  t('cmpVersion 相同返回 0', rt.cmpVersion('12.0.0', '12.0.0') === 0);
+
+  const installed = [
+    { name: 'mermaid', version: '13.0.0', file: 'c.mjs' },
+    { name: 'mermaid', version: '9.0.0', file: 'a.mjs' },
+    { name: 'mermaid', version: '12.0.0', file: 'b.mjs' },
+  ];
+  const got = rt.installedVersionsOf(installed, { install: 'npm i mermaid@^13.0.0' });
+  t('多版本按自然序展示（顺序会被当成有含义）',
+    got.map((x) => x.version).join(',') === '9.0.0,12.0.0,13.0.0', got.map((x) => x.version).join(','));
+  t('排序不改原数组（避免污染调用方状态）', installed[0].version === '13.0.0');
+
+  /*
+   * 行为级：**真跑** install，断言它一条 remove 都不发。
+   * 只看注释里写没写"不清旧"是不够的 —— 注释和实现漂移过太多次了。
+   */
+  const calls = [];
+  const ctx = stubCtx(async (cmd, a) => {
+    calls.push(cmd);
+    if (cmd === 'fpx_rt_dep_list') return [{ name: 'mermaid', version: '12.0.0', file: 'mermaid@12.0.0.mjs' }];
+    if (cmd === 'fpx_rt_dep_install') return { ok: true, file: 'mermaid@13.0.0.mjs' };
+    return { ok: true };
+  });
+  await rt.installRuntimeDep(ctx, { kind: 'runtime', dev: false, install: 'npm i mermaid@^13.0.0' });
+  t('装新版本时一条 remove 都不发（不清旧）',
+    !calls.includes('fpx_rt_dep_remove'), calls.join(','));
+  t('装新版本只写目标那一个文件',
+    calls.filter((c) => c === 'fpx_rt_dep_install').length === 1, calls.join(','));
+
+  /*
+   * 后端同理：install 里不许出现删除动作。
+   * 切片仍截止到下一个函数 —— 一路切到末尾会被 remove 那份兜住（假绿）。
+   */
+  const iI = rsText.indexOf('pub async fn fpx_rt_dep_install');
+  const iR = rsText.indexOf('pub fn fpx_rt_dep_remove');
+  const rsI = rsText.slice(iI, iR > iI ? iR : rsText.length);
+  t('后端 install 不含任何删除动作（清旧只能在用户点移除时发生）',
+    !/remove_file|remove_dir|fs::remove/.test(rsI));
+}
+
 /* ---------- 4. 接线：少一处都是"点了没反应" ---------- */
 
 const mainText = read('src-tauri/src/main.rs');
@@ -554,6 +603,14 @@ t('界面列出该包的全部已装版本', /installedVersionsOf\(installed, it
 t('界面标出与声明不符的版本', /staleVersionsOf\(installed, d\)/.test(card) && /与声明不符/.test(card));
 t('多版本时标题不谎称只有一个', /已装 \{hits\.length\} 个版本/.test(card));
 t('已有与声明一致的那份时不显示「安装」', /can && !hasExact \? \(/.test(card));
+/*
+ * 多版本时必须**把"不会替你删旧版本"写出来**。
+ * 不说明的话，用户看到两份会以为"安装没覆盖干净"，于是反复重装 ——
+ * 而重装同名同版本只覆盖同一份，旧的那份永远清不掉，问题看起来"修不好"。
+ */
+t('多版本时界面写明不会替你删旧版本', /不会<\/strong>替你删旧版本/.test(card));
+t('界面每一份都有独立的移除按钮（不是整包一个）',
+  /onClick=\{\(\) => doRemove\(h\)\}/.test(card));
 
 console.log(`\n运行时依赖：${pass} 通过 / ${fails.length} 失败`);
 for (const f of fails) console.log('  ✗ ' + f);
