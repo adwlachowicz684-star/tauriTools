@@ -135,7 +135,12 @@ console.log('\n=== 8. #198 链接名勾选：换绑提示要按磁盘实际，�
   /* 大小写是否忽略由 ci 决定，不能写死 true（非 Windows 上是两个不同目录） */
   t('ci 由调用方给、默认 false', /ci = false/.test(dlg) && /normalizeKey\(a, ci\)/.test(dlg));
   t('ci 由平台决定', /ci=\{boot\.platform === 'windows'\}/.test(hub));
-  t('rebind 用 samePath 判定', /const rebind = target !== undefined && !samePath\(target, group\)/.test(dlg));
+  /* 钉的是"用 samePath 判定"，不是钉整条表达式的字面量 ——
+     钉死字面量会在判据新增条件时误报（本仓已多次栽在过窄的断言上）。 */
+  t('rebind 用 samePath 判定', /const rebind = [^;]*!samePath\(target, group\)/.test(dlg));
+  /* 「将换绑」只有**勾上**才会发生：没勾时 sync 不动它（只删指向本组的）。
+     不看勾选状态就标「将换绑」，等于告知一个不会发生的后果。 */
+  t('rebind 跟着勾选状态', /const rebind = isPicked && [^;]*!samePath\(target, group\)/.test(dlg));
 
   /* 三、他组占用的名字**默认不勾选**（原版 MakeCheck 明写）。
      默认勾上的话，用户直接点确定就把别组链接抢过来了 ——

@@ -124,6 +124,22 @@ export function LinkPickDialog({
    */
   const reset = () => setPicked(new Set(enabled.filter((n) => !ownedElsewhere.has(n))));
 
+  /*
+   * 取消勾选**且当前指向本组**的那些名字：sync 会真的把它们删掉
+   * （见 core_sync_links 里 ownedByThis 那段）。
+   *
+   * 这个数必须显示在按钮上 —— 只写「建立 N 个」的话，"取消勾选"这个
+   * 有后果的动作在界面上完全不可见，用户点完确定才发现链接少了几个，
+   * 而那时对话框已经关了，无从对照。
+   */
+  const dropCount = useMemo(
+    () => allNames.filter((n) => {
+      const t = existing.get(n);
+      return t !== undefined && !picked.has(n) && samePath(t, group);
+    }).length,
+    [allNames, existing, picked, group],
+  );
+
   return (
     <Modal
       title="选择要建立的链接"
@@ -137,7 +153,9 @@ export function LinkPickDialog({
             disabled={picked.size === 0}
             onClick={() => onConfirm(allNames.filter((n) => picked.has(n)))}
           >
-            建立 {picked.size} 个链接
+            {dropCount > 0
+              ? `建立 ${picked.size} 个、删除 ${dropCount} 个`
+              : `建立 ${picked.size} 个链接`}
           </button>
         </>
       }
@@ -167,13 +185,26 @@ export function LinkPickDialog({
         )}
         {allNames.map((n) => {
           const target = existing.get(n);
-          // 有记录、且指向的不是本次目标 → 这次会改指过去
-          const rebind = target !== undefined && !samePath(target, group);
+          const isPicked = picked.has(n);
+          /*
+           * 三个徽章**都必须跟着勾选状态走**，只按"现在指向哪儿"判定会
+           * 说谎 —— 而 sync 的实际动作恰恰由勾选状态决定：
+           *
+           *   · 指向别组但**没勾** → sync 不会动它（只删指向本组的），
+           *     标「将换绑」等于告诉用户一个不会发生的后果；
+           *   · 已指向本组但**取消勾选** → sync 会真把它删掉，
+           *     标「已建·不会变动」等于保证了一个相反的结果。
+           * 两种误报都会让人做错决定：前者不敢勾（该建的漏掉），
+           * 后者放心取消（链接悄悄没了）。
+           */
+          const rebind = isPicked && target !== undefined && !samePath(target, group);
+          const willDrop = !isPicked && target !== undefined && samePath(target, group);
+          const keeps = isPicked && target !== undefined && samePath(target, group);
           return (
             <label key={n} className="fpx-pick-row">
               <input
                 type="checkbox"
-                checked={picked.has(n)}
+                checked={isPicked}
                 onChange={() => toggle(n)}
               />
               <span className="p-mono">{n}</span>
@@ -182,8 +213,18 @@ export function LinkPickDialog({
                   将换绑
                 </span>
               )}
-              {target !== undefined && samePath(target, group) && (
-                <span className="fpx-badge dim" title="已指向本项目组，不会变动">已建</span>
+              {willDrop && (
+                <span className="fpx-badge warn" title="已指向本项目组；取消勾选会在点「确定」后删除它">
+                  将删除
+                </span>
+              )}
+              {keeps && (
+                <span className="fpx-badge dim" title="已指向本项目组，保持不变">已建</span>
+              )}
+              {!isPicked && target !== undefined && !samePath(target, group) && (
+                <span className="fpx-badge dim" title={`当前指向：${target}；未勾选，本次不会改动`}>
+                  他组占用
+                </span>
               )}
             </label>
           );
@@ -194,6 +235,8 @@ export function LinkPickDialog({
         「将换绑」表示该名字当前指向别的项目组，建立后会被改指到本项目组——
         原指向会断开。这类名字默认<b>不勾选</b>，需要的话请手动勾上
         （勾上即表示同意把它从原项目组挪过来）。
+        「将删除」表示它已指向本项目组，取消勾选会在点「确定」后真的删掉。
+        指向别组又没勾的（「他组占用」）本次<b>不会</b>被改动。
         「设置」里开启「快速链接」可跳过此步，直接按默认名单建立。
       </div>
     </Modal>
