@@ -68,7 +68,11 @@ export function attachTabDrag(container, opts = {}) {
     stopAutoScroll();
     if (st?.follow) { st.follow.remove(); }
     if (st?.bar) { st.bar.remove(); }
-    if (st?.el) st.el.classList.remove('dragging', 'drop-target');
+    // 'drop-target' 曾在这里被移除，但它**从未被添加过**，CSS 里也没有
+    // 对应规则 —— 是上一代插入反馈方案（drop-before/drop-after）改名时
+    // 残留的第三个名字。现行方案的落点指示是独立的竖条 st.bar。
+    // 留着无害但会误导：下一个人会以为这里漏了 add。已去掉。
+    if (st?.el) st.el.classList.remove('dragging');
     st = null;
   }
 
