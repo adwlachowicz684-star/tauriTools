@@ -149,6 +149,57 @@ test('同一个参数不许在两个以上节点里各写一份字面量', () =>
   );
 });
 
+test('库里导出的每个函数都要有人用（防「抽了没接上」）', () => {
+  /*
+   * ================= 这条守卫的来历 =================
+   *
+   * soundSourceHint 抽进 paramCards 之后**一个调用点都没有**，
+   * 而 nodes/defs/beep.ts 里 inline 写着同一句表达式。
+   *
+   * 于是"声音来源的说明"有两个真源：库里那份没人读，节点里那份才是真的。
+   * 两份的兜底值一旦写得不一样（这里 'preset'、那里 'file'），
+   * 表现是"换了音效来源，卡片出现了、说明还是上一种的" ——
+   * 不报错，只有文字不对，而且只有并排看两个文件才找得到原因。
+   *
+   * 这正是"抽公共层"最容易留的尾巴：**抽了、没接上**。
+   * 抽的那个人以为完事了，用的人还在原地写自己的那份。
+   *
+   * 所以这里不做"卡片 id 被几个节点用"那种统计（那条已有），
+   * 而是直接问：库里 export 出来的东西，有没有人 import 它。
+   * ==================================================================
+   */
+  const lib = readSrc('nodes/paramCards.ts');
+  const exported = [...lib.matchAll(/export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)]
+    .map((m) => m[1]);
+  assert.ok(exported.length >= 3, `没扫到库里的导出函数：${exported.join(', ')}`);
+
+  // 除 paramCards.ts 之外的全部源码（含测试）—— 谁用了它都算
+  const users = new Set<string>();
+  const walk = (dir: string): void => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name === 'docs' || e.name === 'node_modules') continue;
+        walk(abs);
+      } else if (/\.tsx?$/.test(e.name) && !abs.endsWith(path.join('nodes', 'paramCards.ts'))) {
+        users.add(stripComments(fs.readFileSync(abs, 'utf-8')));
+      }
+    }
+  };
+  walk(AF_SRC);
+
+  const all = [...users].join('\n');
+  const dead = exported.filter(
+    (n) => !new RegExp(`(?<![\w$.])${n}(?![\w$])`).test(all),
+  );
+  assert.deepEqual(
+    dead,
+    [],
+    `paramCards.ts 里这些导出没人用 —— 要么接上，要么删掉`
+    + `（留着就是第二个真源，改了不生效也不报错）：${dead.join(', ')}`,
+  );
+});
+
 test('card() 取不存在的 id 要抛错（不能静默返回空字段）', () => {
   /*
    * 静默返回 {} 的话，面板上会凭空多出一个没有 type 的字段 ——

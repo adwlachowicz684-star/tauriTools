@@ -6,7 +6,7 @@ import { BeepNode } from '../../components/ToolNode';
 import { type FieldDef } from '../../components/inspectors/fields';
 import { runBeep } from '../../engine/runners/beep';
 import { registerNode } from '../registry';
-import { card, whenSoundFile } from '../paramCards';
+import { card, soundSourceHint, whenSoundFile } from '../paramCards';
 
 /**
  * 播放声音 —— 一个节点覆盖两种声源。
@@ -28,7 +28,16 @@ const fields: FieldDef[] = [
     key: 'source',
     label: '声音来源',
     options: SOURCES.map((k) => ({ value: k, label: SOUND_SOURCE_META[k].label })),
-    hint: (d) => SOUND_SOURCE_META[(d.source as SoundSource) ?? 'preset']?.hint,
+    /*
+     * 说明文字取参数卡片层的 soundSourceHint —— 它和下面三张卡用的
+     * whenSoundFile 是一对（同一个"当前来源"的两种读法）。
+     *
+     * 以前这里 inline 写了同一句表达式，而 paramCards 里的 soundSourceHint
+     * **一个调用点都没有**（抽了没接上）。两份的兜底值一旦写得不一样
+     * （比如这里写 'preset'、那里写 'file'），表现是"换了音效来源，
+     * 卡片出现了、说明还是上一种的" —— 不报错，只有文字不对。
+     */
+    hint: soundSourceHint,
   },
 
   {

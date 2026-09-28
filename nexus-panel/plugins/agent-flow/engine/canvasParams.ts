@@ -69,7 +69,7 @@ export const PARAM_PREFIX = 'params';
 export const PARAM_ALIASES = ['params', 'env'] as const;
 
 import { normBoolText } from '../types';
-import { REF_NAME_CHARS, REF_NAME_FIRST } from './template';
+import { tokenRe, REF_NAME_CHARS, REF_NAME_FIRST } from './template';
 
 export type CanvasParam = {
   /**
@@ -158,7 +158,26 @@ export function isValidParamName(name: string): boolean {
  */
 export function scanParamRefs(text: string): string[] {
   const out = new Set<string>();
-  const TOKEN = /\{\{\s*([^}\s]+)\s*\}\}/g;
+  /*
+   * 分词必须取 template.ts 的 tokenRe()。
+   *
+   * 以前这里自带一份 `\{\{\s*([^}\s]+)\s*\}\}` —— 那是**第三份**引用字符集
+   * （另两份是运行时渲染与导出脚本，那两份早已收敛到 tokenRe()）。
+   *
+   * 自带的这份比 tokenRe() 宽（除 `}` 和空白外什么都收），于是它能扫出
+   * 渲染器根本不认的写法 —— 比如 {{params.名称！}} 里的全角叹号不在
+   * REF_CHARS 内，renderTemplate 会把它整句留下，而本函数照样报
+   * "引用了参数「名称！」"。
+   *
+   * 后果是**声明与实读不一致**：模块存档记下"我引用了它"、
+   * 面板列出"引用了但没定义"、运行前检查也报缺，可真跑起来
+   * 那个引用从未被替换 —— 用户照提示补齐了参数，结果还是不对。
+   *
+   * 失效方式很安静：两边都不报错，只是"扫到的"和"能取到的"不是一回事。
+   * 而 refToken.test.ts 那条"字符集只有两处"的守卫抓不到它 ——
+   * 本函数用的是 `[^}\s]` 而不是中文区间，压根不含 u4e00。
+   */
+  const TOKEN = tokenRe();
   const raw = String(text ?? '');
   let m: RegExpExecArray | null;
   TOKEN.lastIndex = 0;

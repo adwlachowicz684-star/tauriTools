@@ -78,6 +78,42 @@ test('参数名校验与"引用能取到的名字"同源', () => {
   assert.ok(!cp.includes(CN), 'canvasParams.ts 里不该再硬写一份名字字符集');
 });
 
+test('扫参数引用也必须用 tokenRe()（不许自带第三份）', () => {
+  /*
+   * 以前 engine/canvasParams.ts 的 scanParamRefs 自带一份
+   * `\{\{\s*([^}\s]+)\s*\}\}` —— 那是**第三份**引用字符集
+   * （另两份早已收敛到 tokenRe()）。
+   *
+   * 自带的这份比 tokenRe() 宽（除 `}` 和空白外什么都收），
+   * 于是它能扫出渲染器根本不认的写法：{{params.名称！}} 里的全角叹号
+   * 不在 REF_CHARS 内，renderTemplate 会整句留下，而 scanParamRefs 照样
+   * 报"引用了参数「名称！」"。
+   *
+   * 后果是**声明与实读不一致**：模块存档记下"我引用了它"、面板列出
+   * "引用了但没定义"、运行前检查也报缺，可真跑起来那个引用从未被替换
+   * —— 用户照提示补齐了参数，结果还是不对，且不报错。
+   *
+   * 上面那条"中文字符集只有两处"的守卫抓不到它：
+   * 本函数用的是 `[^}\s]`，压根不含 u4e00。
+   */
+  const cp = readSrc('engine/canvasParams.ts');
+  assert.ok(
+    /from '\.\/template'/.test(cp) && /tokenRe\(\)/.test(cp),
+    'canvasParams.ts 必须 import 并调用 template.ts 的 tokenRe()',
+  );
+  /*
+   * 只钉**正则字面量** `/\{\{`，不钉字符串里的 {{...}}。
+   *
+   * 本文件有一条报错文案写着「没填名字 —— {{params.名字}} 取不到它」，
+   * 那是给用户看的正文，钉太宽会把它也判成"自带字符集" ——
+   * 守卫自己误报，比不报更糟（会逼人去改一句本来正确的提示语）。
+   */
+  assert.ok(
+    !/\/\{\{/.test(cp),
+    'canvasParams.ts 里不该再自带一份 {{...}} 正则（扫到的名字必须和渲染时认的一致）',
+  );
+});
+
 test('每次调用返回新实例（/g 正则带 lastIndex，共用会互相踩）', async () => {
   const { tokenRe } = await import('../engine/template');
   const a = tokenRe();
