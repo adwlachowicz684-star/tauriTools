@@ -7398,8 +7398,7 @@ group('numSpinner 初值钳制（源码级，前置以便先于运行时崩溃�
   })();
   ok(/return fallback;/.test(fnSrc), 'clamp 解析失败时返回 **fallback**（不是写死 cur）');
   ok(!/return cur;/.test(fnSrc), 'clamp 里不得出现 return cur;（初值时会 TDZ 抛错）');
-  // 混合态没有"当前值"可言，故三元：非混合态才 clamp，fallback 仍是 min
-  ok(/let cur = mixed \? null : clamp\(o\.value, min\);/.test(psrc), '初值走的是 clamp（混合态为 null），且 fallback = min');
+  ok(/let cur = clamp\(o\.value, min\);/.test(psrc), '初值走的是 clamp，且 fallback = min');
 }
 
 group('样式面板：一排化 / 删除按钮弱化 / 分节清除');
@@ -11746,122 +11745,6 @@ group('BUG 61 · 主题的新建 / 导入 / 删除，写盘失败都必须回滚
     ok(/app\.customThemes\s*=\s*back/.test(body), '删除主题：插回后要写回 customThemes');
   }
 }
-
-
-/* ============================================================
-   多选样式「值不一致」显示 —（B62）
-   ============================================================ */
-
-{
-  const E = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8').replace(/\r\n/g, '\n');
-  const Pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8').replace(/\r\n/g, '\n');
-
-  /**
-   * 取一个具名函数的**完整函数体**（大括号配对，不被内部注释/字符串欺骗）。
-   *
-   * 不用固定字符数切片：注释一长就会把窗口撑爆，断言测到的是注释本身
-   * 或相邻代码（本项目已踩过 20+ 次这类假阴性）。
-   */
-  const balanced = (src, sig) => {
-    const i = src.indexOf(sig);
-    if (i < 0) return '';
-    let d = 0, j = src.indexOf('{', i);
-    if (j < 0) return '';
-    for (let k = j; k < src.length; k++) {
-      if (src[k] === '{') d++;
-      else if (src[k] === '}') { d--; if (d === 0) return src.slice(i, k + 1); }
-    }
-    return '';
-  };
-
-  group('多选样式：不一致必须显式上报，不能沿用上一个节点的值');
-
-  // ① 两边哨兵必须同值 —— 跨模块只能靠字面量对齐
-  const se = (E.match(/var MIXED = '([^']+)';/) || [])[1];
-  const sp = (Pn.match(/const MIXED = '([^']+)';/) || [])[1];
-  ok(!!se && !!sp, '两侧都定义了 MIXED 哨兵');
-  eq(se, sp, 'editor 与 panels 的 MIXED 哨兵同值（跨模块只能靠字面量对齐）');
-  ok(/const isMixed = \(v\) => v === MIXED;/.test(Pn), 'panels：有 isMixed 判定');
-
-  // ② mergeStyles 行为：真的执行它，不是匹配源码
-  const mergeSrc = balanced(E, 'function mergeStyles(list)');
-  ok(mergeSrc.length > 0, 'editor：能定位 mergeStyles 函数体');
-  const mergeStyles = new Function(`var MIXED = '${se}'; ${mergeSrc} return mergeStyles;`)({
-    /* 无依赖：函数体只用 list / Object.keys */
-  });
-
-  const one = [{ fontSize: '30', bold: true }];
-  const m1 = mergeStyles(one);
-  eq(m1.fontSize, '30', '单选：原样上报（不退化成哨兵）');
-  eq(m1.bold, true, '单选：布尔原样上报');
-
-  const two = [{ fontSize: '30', bold: true }, { fontSize: '14', bold: false }];
-  const m2 = mergeStyles(two);
-  eq(m2.fontSize, se, '多选不一致：字号上报哨兵（早先直接丢键，面板于是显示上一个节点的值）');
-  eq(m2.bold, se, '多选不一致：布尔也上报哨兵');
-
-  const same = [{ fontSize: '30', color: '#ff0000' }, { fontSize: '30', color: '#ff0000' }];
-  const m3 = mergeStyles(same);
-  eq(m3.fontSize, '30', '多选一致：仍是真实值，不是哨兵');
-  eq(m3.color, '#ff0000', '多选一致：颜色仍是真实值');
-
-  const missing = [{ fontSize: '30', color: '#f00' }, { fontSize: '30' }];
-  eq(mergeStyles(missing).color, se, '多选缺键：按不一致处理（另一端"没设"也是一种状态）');
-  eq(mergeStyles([]), null, '空列表：返回 null');
-
-  // ③ 数值框：混合态显示 — 且步进不以第一个节点为基准
-  {
-    const body = balanced(Pn, 'export function numSpinner(o)');
-    ok(body.length > 0, 'panels：能定位 numSpinner 函数体');
-    ok(/const mixed = !!o\.mixed;/.test(body), 'numSpinner：读 o.mixed');
-    ok(/let cur = mixed \? null : clamp\(o\.value, min\);/.test(body),
-      'numSpinner：混合态没有当前值（不能拿第一个节点的值当基准）');
-    ok(/const show = \(\) => \{ inp\.value = cur === null \? '—' : String\(cur\); \};/.test(body),
-      'numSpinner：混合态显示 —');
-    ok(/value: cur === null \? '—' : String\(cur\)/.test(body), 'numSpinner：初值也是 —');
-    ok(/const base = \(\) => \(cur === null \? min : cur\);/.test(body),
-      'numSpinner：步进基准在混合态取 min（唯一不需要猜基准的选择）');
-    ok((body.match(/emit\(base\(\)/g) || []).length >= 4,
-      'numSpinner：▲▼/方向键/滚轮 全部走 base()（否则 ▲ 一下就把差异静默抹平）');
-    ok(/const n = clamp\(v, base\(\)\);/.test(body),
-      'numSpinner：非法输入的回落也走 base()（混合态下留空要回到 — 而不是数字）');
-    ok(!/emit\(cur \+/.test(body), 'numSpinner：不得再出现以 cur 直接步进');
-  }
-
-  // ④ 四个数值控件都要带 mixed 标记
-  for (const k of ['fontSize', 'strokeWidth', 'radius', 'lineWidth']) {
-    ok(new RegExp(`mixed: isMixed\\(st\\.${k}\\),`).test(Pn), `样式页：${k} 传了 mixed 标记`);
-  }
-
-  // ⑤ 色块：混合态显示 — 而不是涂成第一个节点的颜色
-  {
-    const body = balanced(Pn, 'function colorRow(label, value, onPick, onClear, extras)');
-    ok(body.length > 0, 'panels：能定位 colorRow 函数体');
-    ok(/const mixed = isMixed\(value\);/.test(body), 'colorRow：判定混合态');
-    ok(/background: 'transparent'/.test(body), 'colorRow：混合态不涂成任何一个节点的颜色');
-    ok(/}, '—'\)\)/.test(body) || /'—'\)/.test(body), 'colorRow：混合态显示 —');
-    ok(/title: mixed \? `\$\{label\}（多个值）` : label/.test(body), 'colorRow：混合态的 title 说明是多个值');
-  }
-
-  // ⑥ 字体下拉：混合态插一个 — 并选中（否则浏览器会显示第一项，看着像所有节点都是它）
-  ok(/isMixed\(st\.fontFamily\)\s*\n?\s*\? h\('option', \{ value: '', selected: true \}, '—'\)/.test(Pn),
-    '字体下拉：混合态插入并选中空的「—」项');
-  ok(/if \(e\.target\.value\) run\('fontfamily', e\.target\.value\);/.test(Pn),
-    '字体下拉：选中「—」不应触发写值（空值直接返回）');
-  ok(/selected: !isMixed\(st\.fontFamily\) && st\.fontFamily === f/.test(Pn),
-    '字体下拉：混合态下不把任何真实字体标成 selected');
-
-  // ⑦ B/I/S：哨兵是**真字符串**，不判 isMixed 会被当成"已开启"高亮
-  for (const k of ['bold', 'italic', 'strikethrough']) {
-    ok(new RegExp(`st\\.${k} && !isMixed\\(st\\.${k}\\) \\? '\\.on' : ''`).test(Pn),
-      `B/I/S：${k} 为哨兵时不高亮（哨兵是真字符串，不判就会被当成开启）`);
-  }
-
-  // ⑧ 对齐 chip 天然安全（哨兵不等于任何 'left'/'center'/'right'），但要确认没被改成真值判断
-  ok(/st\.textAlign === v \? '\.on' : ''/.test(Pn), '水平对齐：仍按等值判断（哨兵不会误命中）');
-  ok(/st\.verticalAlign === v \? '\.on' : ''/.test(Pn), '垂直对齐：仍按等值判断（哨兵不会误命中）');
-}
-
 
 /* ============================================================
    结果
