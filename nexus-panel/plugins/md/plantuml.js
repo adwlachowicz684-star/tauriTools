@@ -168,7 +168,7 @@ export async function loadPlantUML(opts = {}) {
   const {
     vizUrl,
     mod: givenMod = null,
-    loadScript = defaultLoadScript,
+    loadScript = injectClassic,
     importModule = defaultImportModule,
   } = opts;
 
@@ -212,7 +212,17 @@ export async function loadPlantUML(opts = {}) {
  */
 
 
-function defaultLoadScript(src) {
+/*
+ * 以**经典脚本**注入一个地址。
+ *
+ * 导出是为了让消费方（PlantUMLBlock）在注入运行时伴生时能立刻置位
+ * `__nexusVizLoaded` —— 不然回退到打包版时 vizUrl 会被再注入一次，
+ * viz-global 被执行两次（全局布局器被重置两次）。
+ *
+ * async=false 是必须的：默认 async 会在 DOM 上乱序执行，
+ * 而这里的语义就是"必须执行完再往下走"。
+ */
+export function injectClassic(src) {
   return new Promise((resolve, reject) => {
     const s = document.createElement('script');
     s.src = src;

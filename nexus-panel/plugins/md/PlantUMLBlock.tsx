@@ -32,19 +32,43 @@ import { reactTextOf } from './text-of';
 import vizUrl from '@plantuml/core/viz-global.js?url';
 
 /*
- * 引擎模块缓存：ES module 本身只 import 一次，这里存的是
- * "已经 resolve 的 Promise"，避免多张图同时触发多次 dynamic import。
+ * 引擎模块缓存：存的是"已经 resolve 的 Promise"，避免多张图同时触发
+ * 多次 dynamic import。
+ *
+ * 更关键的是 —— **来源必须一次定死**（与 mermaid 同一个理由）：
+ * 引擎是 TeaVM 单实例，内部持有 WASM 布局器的**全局状态**。一会儿用
+ * 运行时装的那份、一会儿用打包的那份，两份实例各自初始化一次全局布局器，
+ * 表现为"某几张图布局错乱"，而没人会想到是加载来源不一致。
  */
 let enginePromise: Promise<any> | null = null;
 
-function getEngine(): Promise<any> {
+function getEngine(ctx: any): Promise<any> {
   if (enginePromise) return enginePromise;
   enginePromise = (async () => {
-    const { loadPlantUML } = await import('./plantuml');
-    return loadPlantUML({
-      vizUrl,
-      importModule: () => import('@plantuml/core/plantuml.js'),
+    const { loadPlantUML, injectClassic } = await import('./plantuml');
+    /* 打包版那条路：viz-global 先以经典脚本注入，再 import ESM */
+    const fallback = async () =>
+      await loadPlantUML({
+        vizUrl,
+        importModule: () => import('@plantuml/core/plantuml.js'),
+      });
+    if (!ctx || typeof ctx.requireDep !== 'function') return fallback();
+    const r: any = await ctx.requireDep('@plantuml/core', {
+      fallback,
+      /*
+       * 伴生注入成功就立刻置位：万一后面 ESM import 失败走回 fallback，
+       * loadPlantUML 的幂等守卫会跳过 vizUrl，viz-global 不会被**执行两次**
+       * （全局布局器被重置两次 → 部分图布局错乱，报错指不到这里）。
+       */
+      loadClassic: async (url: string) => {
+        await injectClassic(url);
+        globalThis.__nexusVizLoaded = true;
+      },
     });
+    const mod = r && r.mod;
+    if (!mod) throw new Error('PlantUML 引擎加载失败：既没有运行时版本也没有打包版本');
+    /* 运行时路：伴生已注入，不能再走 vizUrl+import；打包路：fallback 已校验过 */
+    return r.source === 'runtime' ? loadPlantUML({ mod }) : mod;
   })();
   /*
    * 失败了要把缓存清掉，否则**一次失败就永久失败** ——
@@ -78,7 +102,7 @@ export default function PlantUMLBlock({ ctx, children, className, ...rest }: any
     setErr('');
 
     pumlQueue.run(async () => {
-      const engine = await getEngine();
+      const engine = await getEngine(ctx);
       return renderToStringP(engine, toLines(code));
     }).then((svg: string) => {
       if (cancelled || !alive.current) return;

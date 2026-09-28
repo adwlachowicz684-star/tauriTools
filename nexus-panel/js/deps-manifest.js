@@ -15,7 +15,7 @@
  * 运行时再去读只会得到一份空列表，而且不报错。
  */
 export const DEPS_MANIFEST = {
-  "generatedAt": "2026-09-27T16:53:49.884Z",
+  "generatedAt": "2026-09-28T22:34:45.941Z",
   "depsDir": "shared",
   "dirNote": "当前 node_modules 是共享副本（软链接），里面的版本与本仓库无关，故不判定实装版本",
   "summary": {
@@ -39,7 +39,9 @@ export const DEPS_MANIFEST = {
       "usedBy": [
         "md"
       ],
-      "runtimeUsedBy": [],
+      "runtimeUsedBy": [
+        "md"
+      ],
       "pinned": true,
       "note": "≥1.2026.6 才是 MIT，低版本是 GPL-3.0-or-later —— 必须精确锁定，不能加 ^",
       "install": "npm i @plantuml/core@1.2026.8"
