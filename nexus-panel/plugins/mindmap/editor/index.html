@@ -2281,7 +2281,27 @@
                         }
                     });
                 } catch (e) {}
+                /*
+                 * 序号必须**接着已有外框往下发**。
+                 *
+                 * _boundarySeq 是这个 IIFE 的局部变量，只在新加外框时 ++，
+                 * 从不读回画布里现存的 gid。于是：打开一份已经带外框（bg1）
+                 * 的画布 → 再给别的节点加外框 → 新组也拿到 **bg1**
+                 * （++0 还是 1），_groupNodes.set('bg1', ...) 把第一组的节点
+                 * 数组整个顶掉：
+                 *   · 画面上只剩一个框（第一组的框当场消失）；
+                 *   · 两组节点身上都写着 bg1，rebuildGroups 后合并成一组，
+                 *     存盘再打开就是一个横跨两组的大框。
+                 * 实测（真实 Chrome）：A/B 载入时 bg1，给 C/D 加外框后
+                 * C/D 也是 bg1，画布上外框数 1（应为 2）。
+                 */
+                var maxSeq = 0;
+                Object.keys(groups).forEach(function (gid) {
+                    var m = /^bg(\d+)$/.exec(gid);
+                    if (m) maxSeq = Math.max(maxSeq, parseInt(m[1], 10) || 0);
+                });
                 for (var g in groups) _groupNodes.set(g, groups[g]);
+                if (maxSeq > _boundarySeq) _boundarySeq = maxSeq;
                 renderAllBoundaries();
             }
             function ensureLabelInput() {
@@ -3023,7 +3043,20 @@
                                 if (vva) o.verticalAlign = String(vva).toLowerCase().trim();
                                 return o;
                             }
-                            // 多选：只上报所有选中节点一致的键，不一致（mixed）保持面板现值
+                            /*
+                             * 多选合并：一致的键原样上报，不一致的键上报 **MIXED 哨兵**。
+                             *
+                             * 早先不一致时是 `if (same) outp[k] = v;` —— 直接**丢掉**这个键。
+                             * 面板侧 `nodeStyleCache` 于是保留着**上一次的值**，界面显示的是
+                             * 一个并非任何选中节点真实状态的数字。实测：选中字号 30 的节点
+                             * 和字号 14 的节点，面板字号栏可能显示 30 —— 用户以为两个都是
+                             * 30，按 ▲ 一下全变成 31，两个节点的差异被悄无声息地抹平了。
+                             *
+                             * 所以不一致必须**显式上报**，让界面显示「—」而不是撒谎。
+                             * 哨兵值用不可能与真实值相撞的字符串（字号是数字串、颜色是
+                             * #RRGGBB、字体是字体名、布尔是真布尔）。
+                             */
+                            var MIXED = '__mixed__';
                             function mergeStyles(list) {
                                 if (!list || list.length === 0) return null;
                                 var base = list[0], outp = {};
@@ -3033,7 +3066,7 @@
                                         var other = list[i];
                                         if (!other || !(k in other) || other[k] !== v) { same = false; break; }
                                     }
-                                    if (same) outp[k] = v;
+                                    outp[k] = same ? v : MIXED;
                                 });
                                 return outp;
                             }

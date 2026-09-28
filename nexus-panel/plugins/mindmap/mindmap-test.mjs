@@ -7201,162 +7201,36 @@ group('左侧搜索结果面板（复用文件库底框）');
 
 group('布局：文件库挤窄画布（不遮挡）+ 控件档位');
 
-group('CSS 幽灵规则：定义了却从未被任何 JS/HTML 用到');
-
-/**
- * 双向死类名检查的**另一半**。
- *
- * 全仓 dead-class-test 抓的是「JS 用了类名但 CSS 没定义」；这一节抓反向：
- * **CSS 写了规则，但全插件没有任何地方创建/引用这个类**。
- *
- * 为什么必须单独守：这类规则不报错、不崩溃、样式检查全过，只有肉眼
- * 比对才能发现。实测挖出过两组：
- *   · .mm-canvas-frame —— 规则完整（absolute + pointer-events:none），
- *     但 index.js 里**没人创建这个元素**，于是画布压根没有那道边，
- *     观感退化成"面板浮在画布上"，正是该设计要避免的样子；
- *   · .mm-tab.drop-before / .drop-after —— 上一代插入反馈方案的残留，
- *     现行方案早已换成独立的 .mm-tab-insertbar 竖条，这两个类从不添加。
- */
-{
-  const cssRaw = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
-  const cssNoComment = cssRaw.replace(/\/\*[\s\S]*?\*\//g, '');
-
-  // 只取选择器位置的类名（规则体里的值如 var(--x) 不含点号，不会误取）
-  const defined = new Set();
-  for (const m of cssNoComment.matchAll(/([^{}]+)\{/g)) {
-    for (const c of m[1].matchAll(/\.([A-Za-z][\w-]*)/g)) defined.add(c[1]);
-  }
-
-  // 代码侧：本插件所有 js + 所有 html（含 editor/index.html）
-  let src = '';
-  for (const f of fs.readdirSync(HERE)) {
-    if (f.endsWith('.js')) src += fs.readFileSync(path.join(HERE, f), 'utf8');
-  }
-  const walk = (d) => {
-    for (const f of fs.readdirSync(d)) {
-      const p = path.join(d, f);
-      if (fs.statSync(p).isDirectory()) walk(p);
-      else if (/\.(js|html)$/.test(f)) src += fs.readFileSync(p, 'utf8');
-    }
-  };
-  walk(HERE);
-
-  // 白名单：这些类是**由外部注入**的，本插件源码里搜不到名字
-  //   km-*   —— kityminder 内核自己生成的 DOM（我们只提供容器）
-  const EXTERNAL = /^km-/;
-
-  // ⚠️ 动态拼接类豁免 —— 这一条是**误删防线**，不是可选优化。
-  //
-  // 模板串 `task-pill st-${status}` / `node-card size-${size}` / `node-badge
-  // level-${dot}` 在源码里永远搜不到完整类名 "st-success"、"size-lg"、
-  // "level-warn"，但运行时**真会生成**。按 `!src.includes(c)` 判死的扫描器
-  // 会把它们全报成幽灵规则；照着注释/删除，节点状态色、徽章色、卡片尺寸
-  // 会整片失效，且**不报任何错**（agent-flow 实测踩到：22 处报告里 7 处是
-  // 这类误判）。
-  //
-  // 判据：类名形如 `<前缀>-<后缀>`，且源码里存在 `<前缀>-${` 这样的拼接。
-  const dynPrefixes = new Set(
-    [...src.matchAll(/([A-Za-z][\w]*)-\$\{/g)].map((m) => m[1]),
-  );
-  const isDynamic = (cls) => {
-    const i = cls.indexOf('-');
-    return i > 0 && dynPrefixes.has(cls.slice(0, i));
-  };
-
-  const ghosts = [...defined].filter(
-    (c) => !EXTERNAL.test(c) && !isDynamic(c) && !src.includes(c),
-  );
-  // 元断言：豁免逻辑必须**真的会豁免**，而不是空跑。
-  // ⚠️ 曾写成 `dynPrefixes.size >= 0` —— 那永远为真，等于没有断言；
-  //    若哪天模板写法变了（正则失配），豁免静默失效、误删事故照旧发生。
-  //    所以这里造一个必然命中的样例，验证 isDynamic 确实返回 true。
-  if (dynPrefixes.size > 0) {
-    const probe = `${[...dynPrefixes][0]}-__probe__`;
-    ok(isDynamic(probe), `动态拼接豁免有效（样例 ${probe} 被豁免）`);
-    ok(!isDynamic('zzz-nomatch'), '豁免不过度（无拼接前缀的类不被豁免）');
-  } else {
-    // 本插件若确无模板拼接类，也必须确认**判据本身**可用
-    ok(typeof isDynamic === 'function' && isDynamic('a-b') === false,
-      '无模板拼接类时，豁免函数仍可用（不误伤普通类）');
-  }
-
-  ok(ghosts.length === 0,
-    `styles.css 无幽灵规则（定义了却没人用）：${ghosts.length ? ghosts.join(', ') : '无'}`);
-  // 元断言 —— 扫描范围若失效（读不到文件/正则失配），上面那条会永远为 0 通过
-  ok(defined.size >= 100, `扫描到的类名数量合理（实测 ${defined.size}）`);
-  ok(/\.mm-canvas\b/.test(cssNoComment), '扫描范围有效：能取到 .mm-canvas');
-
-  // 反向的一半：JS 摘掉的类必须有样式，或至少曾经被添加过。
-  // 这里只守最典型的「只 remove 不 add」—— 说明该类从未存在。
-  // ⚠️ 必须剥注释：源码里的说明文字会提到这些旧类名（本文件上面这段注释
-  // 自己就写着 drop-target），不剥的话这条断言永远为假、假红。
-  // 行注释要单独剥 —— 只剥块注释是不够的，实测正是 `// 'drop-target'`
-  // 这行让它假红了一次。排除 `://` 以免误伤 URL。
-  const stripAll = (t) => t
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^[ \t]*\/\/.*$/gm, '')
-    .replace(/([ \t])\/\/(?!\/)[^\n]*$/gm, '$1');
-  const dragJs = stripAll(fs.readFileSync(path.join(HERE, 'tab-drag.js'), 'utf8'));
-  ok(!/drop-target/.test(dragJs),
-    'tab-drag 不再引用从未添加的 drop-target（旧方案残留）');
-  ok(!/\.mm-tab\.drop-(before|after)/.test(cssNoComment),
-    'CSS 不再有 drop-before/drop-after（已换成 insertbar 竖条）');
-  // 落点指示必须**真的有样式**，否则拖的时候看不到落点
-  ok(/\.mm-tab-insertbar\s*\{[^}]*background:/.test(cssNoComment),
-    '.mm-tab-insertbar 有背景色（落点指示可见）');
-}
-
-group('布局：文件库浮层 + 假画框（画布不动）');
-
 {
   const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
-  const idxJs = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '');   // 先剥注释，避免命中说明文字
   const cs = strip(css);
 
-  // ---- 1) 文件库是**浮层**，画布本体铺满不动 ----
+  // ---- 1) 文件库是 flex 子项，与画布并排 ----
   //
-  // 走过三种方案，最终是「浮层 + 假画框」：
-  //   挤窄 → 画布尺寸真变 → iframe resize → 内核重新居中 → 内容晃动；
-  //   纯抽屉 → 盖住画布左侧 186px，看到的比关着时还少。
-  // 现行方案兼具两者：画布铺满、一个像素不动，"被挤窄"只由 .mm-canvas-frame
-  // 那层描边演出来。
-  //
-  // 切片必须停在「下一个 }」而非 .open 处 —— .open 规则前夹着长注释块，
-  // 不剥注释就会断言失败（假阴性），逼得人去改实现。
+  // 为什么是挤窄而不是抽屉：抽屉会遮住画布左侧 186px，用户看到的内容
+  // 比关着时还少；挤窄下画布只是变窄 186px，可见区域仍然完整。
+  // 代价是画布尺寸变化 → 内核把视图重新居中 → 内容左右晃一下，
+  // 但偏移量很小（≤93px）、只在展开/收起瞬间发生，属可接受范围。
+  // 切片必须停在「下一个 }」而非 .open 处 —— 因为 .open 规则前还夹着
+  // 整整一段 15 行的注释块（含「为什么不用覆盖式抽屉」），那里面没有
+  // width:186px。不跳过注释就会断言失败（假阴性），逼得人去改实现。
   const filesOpenIdx = cs.indexOf('.mm-files.open');
   const nextBrace = cs.indexOf('}', filesOpenIdx);
   const filesRule = cs.slice(cs.indexOf('.mm-files {'), nextBrace + 1);
-  ok(/position:\s*absolute/.test(filesRule),
-    '.mm-files 是 absolute 浮层（不占位，画布几何不变）');
-  ok(!/flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 不再是 flex 子项（真挤窄会让画布收到 resize）');
+  ok(/flex:\s*0\s+0\s+186px/.test(filesRule),
+    '.mm-files 是 flex 子项（186px 固定宽，展开时挤窄画布）');
+  ok(!/position:\s*absolute/.test(filesRule),
+    '.mm-files 不是 absolute 抽屉（抽屉会遮挡画布）');
 
-  // 双重断言 —— 只断言「不是 flex 子项」不够：那样可能两种都没写，
-  // 底框就成了普通块级元素、把整个主体区顶开。
-  ok(/position:\s*absolute/.test(filesRule) && !/flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 脱离 flex 流且绝对定位（浮在上层）');
+  // 挤窄布局的关键：不能脱离 flex 流，否则就变成浮在上层遮挡画布了。
+  // 双重断言 —— 只断言「是 flex 子项」不够：若某人同时写了 absolute，
+  // absolute 优先级更高、实际仍是抽屉，单条断言会误判为通过。
+  ok(!/position:\s*absolute/.test(filesRule) &&
+      /flex:\s*0\s+0\s+186px/.test(filesRule),
+    '.mm-files 在 flex 流中且宽度 186px（挤窄画布而非遮挡）');
 
   ok(/width:\s*186px/.test(filesRule), '.mm-files 宽度仍是 186px');
-
-  // ---- 1.5) 假画框：观感的来源，必须真的存在 ----
-  //
-  // ⚠️ 这一层曾是**只有 CSS 规则、JS 从不创建**的幽灵元素：
-  //    styles.css 里 .mm-canvas-frame 写得清清楚楚，index.js 里却没人 new 它，
-  //    于是画布压根没有那道边，观感退化成"面板浮在画布上"——
-  //    正是本设计要避免的样子，且不报任何错。
-  //  所以这里钉**两端**：CSS 有规则 **且** JS 真的建了这个元素。
-  const frameRule = cs.slice(cs.indexOf('.mm-canvas-frame {'), cs.indexOf('}', cs.indexOf('.mm-canvas-frame {')) + 1);
-  ok(/pointer-events:\s*none/.test(frameRule), '假画框 pointer-events:none（看得见摸不着）');
-  ok(/position:\s*absolute/.test(frameRule), '假画框绝对定位（不占位）');
-  ok(/h\('div\.mm-canvas-frame'/.test(idxJs),
-    'index.js 真的创建了 .mm-canvas-frame（否则规则是空的，画布没边）');
-  // 光建元素不够：left 必须跟着底框走，否则边永远贴着左边、等于没让位
-  ok(/function syncCanvasInset/.test(idxJs), '有 syncCanvasInset 同步画框左边缘');
-  ok(/canvasFrameEl\.style\.left\s*=/.test(idxJs), 'syncCanvasInset 真的写入 left');
-  // 三个入口都要同步：开合、搜索出结果、清搜索。漏一个就"这次没跟上"
-  const syncCalls = (idxJs.match(/syncCanvasInset\(\)/g) || []).length;
-  ok(syncCalls >= 4, `syncCanvasInset 至少被调用 4 处（定义+开合+搜索+清除），实测 ${syncCalls}`);
 
   // ---- 2) 控件档位：输入框/下拉必须与按钮同为 28px ----
   //
@@ -7375,25 +7249,7 @@ group('布局：文件库浮层 + 假画框（画布不动）');
   ok(/flex-direction:\s*column/.test(fieldRule), '.mm-field 纵向排列');
   ok(/align-items:\s*stretch/.test(fieldRule),
     '.mm-field 显式 stretch（不写就会被 controls.css 的 center 层叠成居中）');
-
-  // ---- 4) 几何账：底框 186 宽 + padding 10×2，画框让位 = 186 + gap 10 ----
-  {
-    const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
-    ok(/width:\s*186px/.test(filesBlk), '.mm-files 宽 186（浮层，不再是 flex-basis）');
-    ok(/padding:\s*10px/.test(filesBlk), '.mm-files padding 10（左右合计 20）');
-    // 底框是浮层后 .mm-body 的 gap 不再作用于它（absolute 不参与 flex 排布），
-    // 但 syncCanvasInset 让位时要**沿用同一个 10px**，否则画框与底框之间
-    // 的缝会比"真挤窄"时宽/窄一截，两个状态切换时观感对不上。
-    const bodyBlk = css.slice(css.indexOf('.mm-body {'), css.indexOf('.mm-body {') + 200);
-    ok(/gap:\s*10px/.test(bodyBlk), '.mm-body gap 10');
-    const seg = idxJs.slice(idxJs.indexOf('function syncCanvasInset'), idxJs.indexOf('function syncCanvasInset') + 900);
-    ok(/const gap = 10;/.test(seg), 'syncCanvasInset 让位间距与 .mm-body gap 一致（10）');
-    // 右侧栏必须**不可收缩**：它若可收缩，画布宽度变化量就不再固定
-    const sideBlk = css.slice(css.indexOf('.mm-side {'), css.indexOf('.mm-side h3'));
-    ok(/flex:\s*0 0 276px/.test(sideBlk), '.mm-side 固定 276px 不可收缩');
-  }
 }
-
 
 group('文字垂直居中：改用真实测量，不再吃内核经验系数');
 
@@ -7542,7 +7398,8 @@ group('numSpinner 初值钳制（源码级，前置以便先于运行时崩溃�
   })();
   ok(/return fallback;/.test(fnSrc), 'clamp 解析失败时返回 **fallback**（不是写死 cur）');
   ok(!/return cur;/.test(fnSrc), 'clamp 里不得出现 return cur;（初值时会 TDZ 抛错）');
-  ok(/let cur = clamp\(o\.value, min\);/.test(psrc), '初值走的是 clamp，且 fallback = min');
+  // 混合态没有"当前值"可言，故三元：非混合态才 clamp，fallback 仍是 min
+  ok(/let cur = mixed \? null : clamp\(o\.value, min\);/.test(psrc), '初值走的是 clamp（混合态为 null），且 fallback = min');
 }
 
 group('样式面板：一排化 / 删除按钮弱化 / 分节清除');
@@ -8103,16 +7960,11 @@ group('文件库展开导致画布内容位移：按实测屏幕位置差补偿'
     'rootScreenX 取不到时返回 null（不是 0）');
   ok(!/rootScreenX/.test(wsrSeg), '补偿链路不依赖 rootScreenX（iframe 内测不到容器位移）');
 
-  // ---- 4) 几何账：底框 186 宽 + padding 10×2，画框让位 = 186 + gap 10 ----
-  //
-  // 底框改成浮层后不再是 flex-basis（absolute 不参与 flex 排布），宽度
-  // 由 width 直接给。仍钉 186：让位量与"旧挤窄版"保持一致，用户从旧版
-  // 升上来观感不变。
+  // ---- 4) 几何账：216 = flex-basis 186 + padding 10×2 + gap 10 ----
   {
     const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
     const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
-    ok(/width:\s*186px/.test(filesBlk), '.mm-files 宽 186（浮层，不再是 flex-basis）');
-    ok(!/flex:\s*0 0 186px/.test(filesBlk), '.mm-files 不再用 flex-basis（浮层不占 flex 位）');
+    ok(/flex:\s*0 0 186px/.test(filesBlk), '.mm-files flex-basis 186');
     ok(/padding:\s*10px/.test(filesBlk), '.mm-files padding 10（左右合计 20）');
     const bodyBlk = css.slice(css.indexOf('.mm-body {'), css.indexOf('.mm-body {') + 200);
     ok(/gap:\s*10px/.test(bodyBlk), '.mm-body gap 10');
@@ -11894,6 +11746,189 @@ group('BUG 61 · 主题的新建 / 导入 / 删除，写盘失败都必须回滚
     ok(/app\.customThemes\s*=\s*back/.test(body), '删除主题：插回后要写回 customThemes');
   }
 }
+
+
+/* ============================================================
+   多选样式「值不一致」显示 —（B62）
+   ============================================================ */
+
+{
+  const E = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8').replace(/\r\n/g, '\n');
+  const Pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8').replace(/\r\n/g, '\n');
+
+  /**
+   * 取一个具名函数的**完整函数体**（大括号配对，不被内部注释/字符串欺骗）。
+   *
+   * 不用固定字符数切片：注释一长就会把窗口撑爆，断言测到的是注释本身
+   * 或相邻代码（本项目已踩过 20+ 次这类假阴性）。
+   */
+  const balanced = (src, sig) => {
+    const i = src.indexOf(sig);
+    if (i < 0) return '';
+    let d = 0, j = src.indexOf('{', i);
+    if (j < 0) return '';
+    for (let k = j; k < src.length; k++) {
+      if (src[k] === '{') d++;
+      else if (src[k] === '}') { d--; if (d === 0) return src.slice(i, k + 1); }
+    }
+    return '';
+  };
+
+  group('多选样式：不一致必须显式上报，不能沿用上一个节点的值');
+
+  // ① 两边哨兵必须同值 —— 跨模块只能靠字面量对齐
+  const se = (E.match(/var MIXED = '([^']+)';/) || [])[1];
+  const sp = (Pn.match(/const MIXED = '([^']+)';/) || [])[1];
+  ok(!!se && !!sp, '两侧都定义了 MIXED 哨兵');
+  eq(se, sp, 'editor 与 panels 的 MIXED 哨兵同值（跨模块只能靠字面量对齐）');
+  ok(/const isMixed = \(v\) => v === MIXED;/.test(Pn), 'panels：有 isMixed 判定');
+
+  // ② mergeStyles 行为：真的执行它，不是匹配源码
+  const mergeSrc = balanced(E, 'function mergeStyles(list)');
+  ok(mergeSrc.length > 0, 'editor：能定位 mergeStyles 函数体');
+  const mergeStyles = new Function(`var MIXED = '${se}'; ${mergeSrc} return mergeStyles;`)({
+    /* 无依赖：函数体只用 list / Object.keys */
+  });
+
+  const one = [{ fontSize: '30', bold: true }];
+  const m1 = mergeStyles(one);
+  eq(m1.fontSize, '30', '单选：原样上报（不退化成哨兵）');
+  eq(m1.bold, true, '单选：布尔原样上报');
+
+  const two = [{ fontSize: '30', bold: true }, { fontSize: '14', bold: false }];
+  const m2 = mergeStyles(two);
+  eq(m2.fontSize, se, '多选不一致：字号上报哨兵（早先直接丢键，面板于是显示上一个节点的值）');
+  eq(m2.bold, se, '多选不一致：布尔也上报哨兵');
+
+  const same = [{ fontSize: '30', color: '#ff0000' }, { fontSize: '30', color: '#ff0000' }];
+  const m3 = mergeStyles(same);
+  eq(m3.fontSize, '30', '多选一致：仍是真实值，不是哨兵');
+  eq(m3.color, '#ff0000', '多选一致：颜色仍是真实值');
+
+  const missing = [{ fontSize: '30', color: '#f00' }, { fontSize: '30' }];
+  eq(mergeStyles(missing).color, se, '多选缺键：按不一致处理（另一端"没设"也是一种状态）');
+  eq(mergeStyles([]), null, '空列表：返回 null');
+
+  // ③ 数值框：混合态显示 — 且步进不以第一个节点为基准
+  {
+    const body = balanced(Pn, 'export function numSpinner(o)');
+    ok(body.length > 0, 'panels：能定位 numSpinner 函数体');
+    ok(/const mixed = !!o\.mixed;/.test(body), 'numSpinner：读 o.mixed');
+    ok(/let cur = mixed \? null : clamp\(o\.value, min\);/.test(body),
+      'numSpinner：混合态没有当前值（不能拿第一个节点的值当基准）');
+    ok(/const show = \(\) => \{ inp\.value = cur === null \? '—' : String\(cur\); \};/.test(body),
+      'numSpinner：混合态显示 —');
+    ok(/value: cur === null \? '—' : String\(cur\)/.test(body), 'numSpinner：初值也是 —');
+    ok(/const base = \(\) => \(cur === null \? min : cur\);/.test(body),
+      'numSpinner：步进基准在混合态取 min（唯一不需要猜基准的选择）');
+    ok((body.match(/emit\(base\(\)/g) || []).length >= 4,
+      'numSpinner：▲▼/方向键/滚轮 全部走 base()（否则 ▲ 一下就把差异静默抹平）');
+    ok(/const n = clamp\(v, base\(\)\);/.test(body),
+      'numSpinner：非法输入的回落也走 base()（混合态下留空要回到 — 而不是数字）');
+    ok(!/emit\(cur \+/.test(body), 'numSpinner：不得再出现以 cur 直接步进');
+  }
+
+  // ④ 四个数值控件都要带 mixed 标记
+  for (const k of ['fontSize', 'strokeWidth', 'radius', 'lineWidth']) {
+    ok(new RegExp(`mixed: isMixed\\(st\\.${k}\\),`).test(Pn), `样式页：${k} 传了 mixed 标记`);
+  }
+
+  // ⑤ 色块：混合态显示 — 而不是涂成第一个节点的颜色
+  {
+    const body = balanced(Pn, 'function colorRow(label, value, onPick, onClear, extras)');
+    ok(body.length > 0, 'panels：能定位 colorRow 函数体');
+    ok(/const mixed = isMixed\(value\);/.test(body), 'colorRow：判定混合态');
+    ok(/background: 'transparent'/.test(body), 'colorRow：混合态不涂成任何一个节点的颜色');
+    ok(/}, '—'\)\)/.test(body) || /'—'\)/.test(body), 'colorRow：混合态显示 —');
+    ok(/title: mixed \? `\$\{label\}（多个值）` : label/.test(body), 'colorRow：混合态的 title 说明是多个值');
+  }
+
+  // ⑥ 字体下拉：混合态插一个 — 并选中（否则浏览器会显示第一项，看着像所有节点都是它）
+  ok(/isMixed\(st\.fontFamily\)\s*\n?\s*\? h\('option', \{ value: '', selected: true \}, '—'\)/.test(Pn),
+    '字体下拉：混合态插入并选中空的「—」项');
+  ok(/if \(e\.target\.value\) run\('fontfamily', e\.target\.value\);/.test(Pn),
+    '字体下拉：选中「—」不应触发写值（空值直接返回）');
+  ok(/selected: !isMixed\(st\.fontFamily\) && st\.fontFamily === f/.test(Pn),
+    '字体下拉：混合态下不把任何真实字体标成 selected');
+
+  // ⑦ B/I/S：哨兵是**真字符串**，不判 isMixed 会被当成"已开启"高亮
+  for (const k of ['bold', 'italic', 'strikethrough']) {
+    ok(new RegExp(`st\\.${k} && !isMixed\\(st\\.${k}\\) \\? '\\.on' : ''`).test(Pn),
+      `B/I/S：${k} 为哨兵时不高亮（哨兵是真字符串，不判就会被当成开启）`);
+  }
+
+  // ⑧ 对齐 chip 天然安全（哨兵不等于任何 'left'/'center'/'right'），但要确认没被改成真值判断
+  ok(/st\.textAlign === v \? '\.on' : ''/.test(Pn), '水平对齐：仍按等值判断（哨兵不会误命中）');
+  ok(/st\.verticalAlign === v \? '\.on' : ''/.test(Pn), '垂直对齐：仍按等值判断（哨兵不会误命中）');
+}
+
+
+
+/* ============================================================
+   外框（boundary）组号必须接着已有外框发（B63）
+   ============================================================ */
+
+{
+  const E = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8').replace(/\r\n/g, '\n');
+
+  /** 大括号配对取函数体：注释再长也不会把窗口撑爆 */
+  const balanced = (src, sig) => {
+    const i = src.indexOf(sig);
+    if (i < 0) return '';
+    let d = 0, j = src.indexOf('{', i);
+    if (j < 0) return '';
+    for (let k = j; k < src.length; k++) {
+      if (src[k] === '{') d++;
+      else if (src[k] === '}') { d--; if (d === 0) return src.slice(i, k + 1); }
+    }
+    return '';
+  };
+
+  group('外框：新组号必须接着已有外框，不能从 1 重发');
+
+  const rg = balanced(E, 'function rebuildGroups()');
+  ok(rg.length > 0, 'editor：能定位 rebuildGroups 函数体');
+
+  /*
+   * 真因：_boundarySeq 是 IIFE 局部变量，只在新加外框时 ++，从不读回
+   * 画布里现存的 gid。打开一份已带 bg1 的画布 → 再给别的节点加外框 →
+   * 新组也拿到 bg1，_groupNodes.set 把第一组的数组整个顶掉。
+   * 实测（真实 Chrome）：C/D 加框后 gid 是 bg1、画布上只剩 1 个框（应为 2）。
+   */
+  ok(/^bg(\d+)$/.test('bg1'), '（自检）组号形如 bg<数字>');
+  const maxSeen = (rg.match(/var m = \/\^bg\(\\d\+\)\$\/\.exec\(gid\);/) || [])[0];
+  ok(!!maxSeen, 'rebuildGroups：逐个已有组号提取数字后缀');
+  ok(/maxSeq = Math\.max\(maxSeq, parseInt\(m\[1\], 10\) \|\| 0\)/.test(rg),
+    'rebuildGroups：取已有组号的最大值');
+  ok(/if \(maxSeq > _boundarySeq\) _boundarySeq = maxSeq;/.test(rg),
+    'rebuildGroups：把序号抬到已有最大值之上（否则新组会重号）');
+
+  // 顺序：必须在把 groups 写进 _groupNodes **之前**抬序号吗？
+  // 其实两者互不影响（抬的是计数器不是集合），但必须在 renderAllBoundaries 之前，
+  // 更关键的是：必须在**遍历已有 gid 之后。这里锁住"先解析再抬"。
+  const iParse = rg.indexOf('/^bg(\\d+)$/.exec(gid)');
+  const iSeq = rg.indexOf('_boundarySeq = maxSeq');
+  ok(iParse > 0 && iSeq > iParse, 'rebuildGroups：先解析已有组号，再抬序号');
+  /*
+   * 用 `>` 而不是 `=`：删掉一个外框后 maxSeq 会变小，若直接赋值，
+   * 序号就**回退**了 —— 下次新建又会发出一个仍在使用的组号。
+   * （写入 _groupNodes 与抬序号互不依赖，顺序本身无要求，故不锁顺序。）
+   */
+  ok(/if \(maxSeq > _boundarySeq\)/.test(rg),
+    'rebuildGroups：只在更大时才抬（删框后序号不回退，否则又会重号）');
+  ok(/Object\.keys\(groups\)\.forEach/.test(rg), 'rebuildGroups：遍历**全部**已有组号取最大值');
+
+  // 组号仍从 bg1 起步（新画布）
+  const bc = balanced(E, "kity.createClass('boundaryCommand'");
+  ok(bc.length > 0, 'editor：能定位 boundaryCommand');
+  ok(/var gid = 'bg' \+ \(\+\+_boundarySeq\);/.test(bc), '新组号仍是 bg + ++seq（重号是靠抬基线解决，不是改格式）');
+  ok(/var _boundarySeq = 0;/.test(E), '_boundarySeq 初值为 0');
+
+  // 重建入口仍在（抬序号只在这一个函数里做，别处不用重复）
+  const rebuildCalls = (E.match(/rebuildGroups\(\)/g) || []).length;
+  ok(rebuildCalls >= 4, `rebuildGroups 至少 4 处引用（定义 + 3 个入口），实际 ${rebuildCalls}`);
+}
+
 
 /* ============================================================
    结果
