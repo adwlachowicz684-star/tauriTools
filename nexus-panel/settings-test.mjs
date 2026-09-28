@@ -995,10 +995,30 @@ const shopBlock = (() => {
 })();
 const w = Number((shopBlock.match(/minmax\((\d+)px/) || [])[1] || 0);
 t('卡片列宽放大到 300px 量级（原 148px 装不下管理项）', w >= 280, `${w}px`);
-t('卡片内新增的行有样式（entry / field）',
-  /\.tb-card-entry\s*\{/.test(cssPm)
-  && /\.tb-card-field\s*\{/.test(cssPm),
-  '只有类名没有规则 = 内容裸排');
+/*
+ * ⚠️ 这里原有一条「卡片内新增的行有样式（entry / field）」断言，
+ * 要求 .tb-card-entry 与 .tb-card-field 两条规则存在。**已删除**，原因：
+ *
+ *   1. 这两个是**幽灵类名**：全仓代码 0 处引用，只剩 neumorphism.css
+ *      1820 行的说明注释与本条断言在提它们。卡片矩阵改成「左列表 + 右详情」
+ *      之后那两行 UI 就撤掉了，规则却留了下来。
+ *   2. 它与 mindmap-test「CSS 幽灵规则」一节**直接打架**：那一节要求
+ *      .tb-card-entry / .tb-card-field / .tb-group **不存在**。两条断言
+ *      不可能同时满足 —— 于是 settings-test 长期红 1，而改哪一边都会
+ *      让另一边红，谁也修不动。
+ *
+ * 这个方向已移交 **dead-class-test 的 A 维（代码用了、CSS 没定义）**：
+ *   它同时扫 plugins/settings/index.js（无构建版卡片矩阵）与
+ *   css/neumorphism.css，守的是**实际挂在 DOM 上**的类名
+ *   （tb-card-top / tb-card-icon / tb-card-name / tb-card-meta /
+ *    tb-card-btns / tb-shop），比钉两个没人用的类名有意义得多。
+ *
+ * 实测依据（不是推断）：把 neumorphism.css 里的 .tb-card-top 规则删掉，
+ *   dead-class-test 立刻红 2 条（「白名单之外的新增死类名」+
+ *   「代码用了但 CSS 没定义」），并点名来源 plugins/settings/index.js。
+ *
+ * 别再把这条加回来 —— 两处各维护一份类名清单，迟早漂移。
+ */
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
