@@ -7244,7 +7244,41 @@ group('CSS 幽灵规则：定义了却从未被任何 JS/HTML 用到');
   // 白名单：这些类是**由外部注入**的，本插件源码里搜不到名字
   //   km-*   —— kityminder 内核自己生成的 DOM（我们只提供容器）
   const EXTERNAL = /^km-/;
-  const ghosts = [...defined].filter((c) => !EXTERNAL.test(c) && !src.includes(c));
+
+  // ⚠️ 动态拼接类豁免 —— 这一条是**误删防线**，不是可选优化。
+  //
+  // 模板串 `task-pill st-${status}` / `node-card size-${size}` / `node-badge
+  // level-${dot}` 在源码里永远搜不到完整类名 "st-success"、"size-lg"、
+  // "level-warn"，但运行时**真会生成**。按 `!src.includes(c)` 判死的扫描器
+  // 会把它们全报成幽灵规则；照着注释/删除，节点状态色、徽章色、卡片尺寸
+  // 会整片失效，且**不报任何错**（agent-flow 实测踩到：22 处报告里 7 处是
+  // 这类误判）。
+  //
+  // 判据：类名形如 `<前缀>-<后缀>`，且源码里存在 `<前缀>-${` 这样的拼接。
+  const dynPrefixes = new Set(
+    [...src.matchAll(/([A-Za-z][\w]*)-\$\{/g)].map((m) => m[1]),
+  );
+  const isDynamic = (cls) => {
+    const i = cls.indexOf('-');
+    return i > 0 && dynPrefixes.has(cls.slice(0, i));
+  };
+
+  const ghosts = [...defined].filter(
+    (c) => !EXTERNAL.test(c) && !isDynamic(c) && !src.includes(c),
+  );
+  // 元断言：豁免逻辑必须**真的会豁免**，而不是空跑。
+  // ⚠️ 曾写成 `dynPrefixes.size >= 0` —— 那永远为真，等于没有断言；
+  //    若哪天模板写法变了（正则失配），豁免静默失效、误删事故照旧发生。
+  //    所以这里造一个必然命中的样例，验证 isDynamic 确实返回 true。
+  if (dynPrefixes.size > 0) {
+    const probe = `${[...dynPrefixes][0]}-__probe__`;
+    ok(isDynamic(probe), `动态拼接豁免有效（样例 ${probe} 被豁免）`);
+    ok(!isDynamic('zzz-nomatch'), '豁免不过度（无拼接前缀的类不被豁免）');
+  } else {
+    // 本插件若确无模板拼接类，也必须确认**判据本身**可用
+    ok(typeof isDynamic === 'function' && isDynamic('a-b') === false,
+      '无模板拼接类时，豁免函数仍可用（不误伤普通类）');
+  }
 
   ok(ghosts.length === 0,
     `styles.css 无幽灵规则（定义了却没人用）：${ghosts.length ? ghosts.join(', ') : '无'}`);

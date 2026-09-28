@@ -2707,13 +2707,19 @@ html.theme-transition *:not(.spinner) {
    依据（创建时没传色调、也没有 tone/hue 计算），凭空写一个色值等于
    替所有被适配的插件发明观感。等视觉意图定了再补，那时定位与
    pointer-events 都已就位，加上去即可生效。
-   ============================================================ */
+   ============================================================ *//* [幽灵规则 neumorphism.css:2710] .nexus-tone-overlay
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .nexus-tone-overlay {
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: var(--z-flat);
 }
+*/
+
 
 .fp-dirname:hover { filter: brightness(var(--hover-bright, 1.06)); }
 

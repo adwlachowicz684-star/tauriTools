@@ -912,8 +912,14 @@
 
 /* ---------- 色盘 ---------- */
 .fpx-preview-def { color: var(--text-mute); text-shadow: none; }
-.fpx-hex { width: 110px; flex: none; }
+.fpx-hex { width: 110px; flex: none; }/* [幽灵规则 style.css:915] .fpx-mini
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .fpx-mini { height: 24px; padding: 0 8px; font-size: var(--fs-11, 11px); }
+*/
+
 
 /* 卡片上的标签色点 */
 

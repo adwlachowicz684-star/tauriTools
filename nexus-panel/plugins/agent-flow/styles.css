@@ -550,18 +550,36 @@ body { background: var(--af-bg); color: var(--af-fg); }
 /* 复制 / 移动的第二条路径：视觉上并入同一组，不另起一块 */
 .node-line--path.is-sub { margin-top: -2px; opacity: .85; }
 /* 会改动磁盘的操作换红底 —— 扫一眼就知道这组不是只读 */
-.node-line--path.is-danger { color: #fecaca; background: #2a1414; border-color: #5a2020; }
+.node-line--path.is-danger { color: #fecaca; background: #2a1414; border-color: #5a2020; }/* [幽灵规则 styles.css:553] .node-line__op
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 
 .node-line__op {
   flex: none; background: #1d4d5a; color: #bae6fd;
   border-radius: var(--af-r-xs); padding: 1px 6px; font-size: var(--fs-note, 11px);
 }
+*/
+
+/* [幽灵规则 styles.css:565] .node-line--path.is-danger .node-line__op
+   随父类 .node-line__op 一并停用（父类规则已注释）；恢复父类时同步取消本段注释。
+   危险路径上的操作标记。暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
 .node-line--path.is-danger .node-line__op { background: #5a2020; color: #fecaca; }
+*/
+
 .node-line__code {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-family: var(--af-mono); font-size: var(--fs-code, 11px);
-}
+}/* [幽灵规则 styles.css:563] .node-line__arrow
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .node-line__arrow { flex: none; color: var(--af-dim); }
+*/
+
 
 .node-line--preview {
   background: var(--af-sunk); border-radius: var(--af-r-sm);
@@ -1037,33 +1055,105 @@ textarea.p-input { height: auto; resize: vertical; line-height: var(--lh-normal,
   padding: 10px 12px; margin-bottom: 10px; background: var(--af-sunk);
 }
 .trg.off { opacity: .55; }
-.trg.editing { border-color: var(--af-accent); }
+.trg.editing { border-color: var(--af-accent); }/* [幽灵规则 styles.css:1040] .trg-head
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .trg-head { display: flex; align-items: center; gap: var(--sp-4); }
+*/
+/* [幽灵规则 styles.css:1041] .trg-icon
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .trg-icon { font-size: var(--fs-14, 14px); }
+*/
+/* [幽灵规则 styles.css:1042] .trg-name
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .trg-name { font-weight: var(--fw-strong, 600); font-size: var(--fs-body, 12px); }
+*/
+/* [幽灵规则 styles.css:1043] .trg-kind
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .trg-kind {
   font-size: var(--fs-note, 11px); color: var(--af-dim); background: var(--af-raised);
   border-radius: var(--af-r-xs); padding: 2px 6px;
 }
+*/
+/* [幽灵规则 styles.css:1047] .trg-meta
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .trg-meta {
   display: flex; justify-content: space-between; gap: var(--sp-5);
   margin-top: 6px; font-size: var(--fs-note, 11px); color: var(--af-soft);
 }
+*/
+/* [幽灵规则 styles.css:1051] .trg-edit
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .trg-edit {
   margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--af-divider);
 }
+*/
+
+/* [幽灵规则 styles.css:1103] .trg-edit .field
+   随父类 .trg-edit 一并停用（父类规则已注释）；恢复父类时同步取消本段注释。
+   触发器编辑区字段。暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
 .trg-edit .field { margin-bottom: 10px; }
+*/
+/* [幽灵规则 styles.css:1055] .trg-edit input[type=text], .trg-edit input:not([type])
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .trg-edit input[type=text], .trg-edit input:not([type]) {
   background: var(--af-sunk); border: 1px solid var(--af-input-line); color: var(--af-fg);
   border-radius: var(--af-r-sm); padding: 6px 9px; font-size: var(--fs-body, 12px); width: 100%;
 }
+*/
+
+/* [幽灵规则 styles.css:1114] .trg-edit input.invalid
+   随父类 .trg-edit 一并停用（父类规则已注释）；恢复父类时同步取消本段注释。
+   触发器编辑区非法输入。暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
 .trg-edit input.invalid { border-color: var(--af-bad); }
+*/
+
+/* [幽灵规则 styles.css:1115] .trg-edit .err
+   随父类 .trg-edit 一并停用（父类规则已注释）；恢复父类时同步取消本段注释。
+   触发器编辑区错误提示。暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
 .trg-edit .err { color: var(--af-t-err2); font-size: var(--fs-body, 12px); margin-top: 4px; }
+*/
+/* [幽灵规则 styles.css:1061] .trg-edit .ok-line
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .trg-edit .ok-line { color: var(--af-ok); font-size: var(--fs-body, 12px); margin-top: 4px; }
+*/
+/* [幽灵规则 styles.css:1062] .trg-edit code
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .trg-edit code {
   font-size: var(--fs-code, 11px);
   background: var(--af-raised); padding: 1px 4px; border-radius: 3px; font-family: var(--af-mono);
 }
+*/
+
 
 button.mini {
   background: var(--af-raised); border: 1px solid var(--af-line); color: var(--af-fg);
@@ -1226,7 +1316,11 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   color: var(--af-fg, #e6e6e6);
   border-bottom-color: var(--af-accent, #3b82f6);
   background: rgba(255, 255, 255, 0.04);
-}
+}/* [幽灵规则 styles.css:1229] .pane-dot
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .pane-dot {
   min-width: 16px;
   padding: 0 4px;
@@ -1236,6 +1330,8 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   font-size: var(--fs-micro, 10px);
   line-height: 16px;
 }
+*/
+
 
 /* 标签内容区：吃掉剩余高度，自己滚动 */
 .pane-body {
@@ -1442,8 +1538,18 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 
 /* ---------------- 触发器：一个节点多种方式 ---------------- */
 
-/* 属性面板里的多选区 */
+/* 属性面板里的多选区 *//* [幽灵规则 styles.css:1517] .trig-multi
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .trig-multi { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: 4px; }
+*/
+/* [幽灵规则 styles.css:1446] .trig-check
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .trig-check {
   display: flex; align-items: center; gap: 7px;
   padding: 5px 8px; border-radius: var(--af-r-sm); cursor: pointer;
@@ -1452,15 +1558,47 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   font-size: var(--fs-body, 12px); color: var(--af-dim);
   transition: border-color var(--af-dur-fast), background var(--af-dur-fast);
   box-shadow: var(--ctl-shadow);}
+*/
+/* [幽灵规则 styles.css:1454] .trig-check:hover
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .trig-check:hover { border-color: var(--af-soft); }
+*/
+
+/* [幽灵规则 styles.css:1546] .trig-check.on
+   随父类 .trig-check 一并停用（父类规则已注释）；恢复父类时同步取消本段注释。
+   触发器勾选态。暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
 .trig-check.on {
   border-color: #eab308;
   background: rgba(234, 179, 8, .1);
   color: var(--af-fg);
 }
+*/
+/* [幽灵规则 styles.css:1460] .trig-check input
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .trig-check input { accent-color: #eab308; cursor: pointer; }
+*/
+/* [幽灵规则 styles.css:1461] .trig-check-icon
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .trig-check-icon { flex: none; width: 14px; text-align: center; font-size: var(--fs-body, 12px); }
+*/
+/* [幽灵规则 styles.css:1462] .trig-check-label
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .trig-check-label { flex: 1; }
+*/
+
 
 /* 节点卡片上的方式清单 */
 .trig-list { display: flex; flex-direction: column; gap: 3px; margin: 4px 0 2px; }
@@ -1531,9 +1669,15 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 .upd-summary code {
   font-family: var(--af-mono); font-size: var(--fs-code, 11px); color: var(--af-soft);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block;
-}
+}/* [幽灵规则 styles.css:1534] .upd-foot
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 
 .upd-foot { display: flex; align-items: center; gap: var(--sp-4); margin: 4px 0 2px; }
+*/
+
 .upd-verdict {
   font-size: var(--fs-note, 11px); padding: 1px 7px; border-radius: var(--r-pill, 999px);
   border: 1px solid var(--af-divider);
@@ -1550,14 +1694,30 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* 属性面板 */
+/* 属性面板 *//* [幽灵规则 styles.css:1661] .upd-badge-row
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .upd-badge-row {
   display: flex; align-items: center; gap: 7px;
   font-size: var(--fs-micro, 10px); color: var(--af-fg);
   padding: 6px 8px; border-radius: var(--af-r-sm);
   border: 1px solid var(--af-line); background: var(--af-sunk);
 }
+*/
+
+/* [幽灵规则 styles.css:1680] .upd-badge-row .dim
+   随父类 .upd-badge-row 一并停用（父类规则已注释）；恢复父类时同步取消本段注释。
+   更新徽章行弱化文字。暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
 .upd-badge-row .dim { font-size: var(--fs-micro, 10px); }
+*/
+/* [幽灵规则 styles.css:1560] .upd-baseline
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 
 .upd-baseline {
   margin-top: 6px; padding: 7px 9px; border-radius: var(--af-r-sm);
@@ -1565,11 +1725,25 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   font-size: var(--fs-note, 11px); color: var(--af-soft);
   display: flex; flex-direction: column; gap: var(--sp-2); align-items: flex-start;
 }
+*/
+/* [幽灵规则 styles.css:1567] .upd-baseline code
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .upd-baseline code {
   font-family: var(--af-mono); font-size: var(--fs-code, 11px); color: var(--af-fg);
   word-break: break-all;
 }
+*/
+
+/* [幽灵规则 styles.css:1704] .upd-baseline .dim
+   随父类 .upd-baseline 一并停用（父类规则已注释）；恢复父类时同步取消本段注释。
+   更新基线弱化文字。暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
 .upd-baseline .dim { font-size: var(--fs-note, 11px); }
+*/
+
 
 .upd-test {
   margin: 6px 0 0; padding: 8px 10px; border-radius: var(--af-r-sm);
@@ -1638,14 +1812,42 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 /* 例外：图标字形，font-size 是尺寸不是字号 */
 .cond-rule .cond-op-icon { font-family: var(--af-mono); font-size: var(--fs-note, 11px); opacity: .85; }
 
-/* 算子选择：分类按钮网格 */
+/* 算子选择：分类按钮网格 *//* [幽灵规则 styles.css:1761] .cond-ops
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .cond-ops { display: flex; flex-direction: column; gap: 5px; margin: 6px 0; }
+*/
+/* [幽灵规则 styles.css:1642] .cond-op-group
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .cond-op-group { display: flex; align-items: flex-start; gap: var(--sp-3); }
+*/
+/* [幽灵规则 styles.css:1643] .cond-op-group-title
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .cond-op-group-title {
   flex: none; width: 52px; padding-top: 4px;
   font-size: var(--fs-title, 13px); color: var(--af-dim); cursor: help;
   font-weight: var(--fw-strong);}
+*/
+/* [幽灵规则 styles.css:1647] .cond-op-items
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .cond-op-items { flex: 1; display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+*/
+/* [幽灵规则 styles.css:1648] .cond-op-btn
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .cond-op-btn {
   display: inline-flex; align-items: center; gap: var(--sp-2);
   padding: 3px 9px; border-radius: var(--af-r-ctl); cursor: pointer;
@@ -1653,15 +1855,29 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   border: 1px solid var(--af-line); background: var(--af-sunk);
   transition: border-color var(--af-dur-fast), color var(--af-dur-fast), background var(--af-dur-fast);
   box-shadow: var(--ctl-shadow-sm);}
+*/
+/* [幽灵规则 styles.css:1655] .cond-op-btn:hover
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .cond-op-btn:hover { border-color: var(--af-soft); color: var(--af-fg); }
+*/
+
 .cond-op-btn.on {
   /* 同上：选中态用描边而非字重 */
   -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
 }
 
 /* 例外：这里是**图标字形**，font-size 是「画多大」而不是「字多大」，
-   不参与等宽文本档的统一（与 mindmap 的 .mm-num-caret 同理）。 */
+   不参与等宽文本档的统一（与 mindmap 的 .mm-num-caret 同理）。 *//* [幽灵规则 styles.css:1813] .cond-op-btn-icon
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .cond-op-btn-icon { font-family: var(--af-mono); font-size: var(--fs-body, 12px); }
+*/
+
 
 /* 算子语义提示 */
 .cond-hint {
@@ -1967,12 +2183,18 @@ input.mono, textarea.mono {
   padding: 0 4px; border-radius: var(--r-pill, 999px); background: var(--af-ok); color: #06210f;
   font-size: var(--fs-micro, 10px); line-height: 15px; }
 
-/* 列表头 —— 现在列表在左栏，头部就是 .side-head，这条只留空态文案用的间距 */
+/* 列表头 —— 现在列表在左栏，头部就是 .side-head，这条只留空态文案用的间距 *//* [幽灵规则 styles.css:2120] .task-list-head
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .task-list-head { display: flex; align-items: center; gap: var(--sp-4);
   padding: 9px 12px; border-bottom: 1px solid var(--af-divider);
   position: sticky; top: 0; background: var(--af-panel);
   font-size: var(--fs-title, 13px);
   font-weight: var(--fw-strong);}
+*/
+
 .task-count {
   font-variant-numeric: tabular-nums; font-size: var(--fs-micro, 10px); color: var(--af-mute); margin-right: auto; }
 .task-item { padding: 9px 12px; border-bottom: 1px solid var(--af-divider); cursor: pointer; }
@@ -2113,13 +2335,25 @@ input.mono, textarea.mono {
  * 这里每条都只覆盖窄栏下必须改的那一两个属性，且有说明为什么改。
  * 别把它们当重复合并掉 —— 合并后窄栏下就会挤成一团。
  */
-/* 列表头对齐 .side-head 的观感：更矮、更轻 */
+/* 列表头对齐 .side-head 的观感：更矮、更轻 *//* [幽灵规则 styles.css:2266] .task-list-head
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .task-list-head {
   padding: 11px 12px 8px;
   background: var(--af-bg);
   font-size: var(--fs-title, 13px);
 }
+*/
+/* [幽灵规则 styles.css:2121] .task-list-head strong
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .task-list-head strong { font-weight: var(--fw-strong, 600); color: var(--af-fg); }
+*/
+
 
 /* 允许换行：任务行三列元信息在 280px 下放得开，
    但历史行还有两个操作按钮，挤的时候换行总比重叠好 */
@@ -2616,7 +2850,12 @@ input.mono, textarea.mono {
 /* 属性面板的「存为自定义」。
    字段型面板放在标题行，四个整体自定义面板放在「节点名称」那一行的标签里，
    所以两者都要能排布：一个 flex 子项，一个嵌在 span 里靠 margin-left 顶到右边。 */
-.insp-save, .save-as-custom { flex: none; font-size: var(--fs-note, 11px); white-space: nowrap; }
+/* [幽灵规则 styles.css:2811] .insp-save —— 只摘选择器，规则本体保留
+   全仓代码 0 处引用（已排除模板拼接类），判定为旧 UI 残留。
+   ⚠️ 本条与 .save-as-custom **共用同一规则体**：后者在
+      components/inspectors/SaveAsCustom.tsx 里真在用，所以不能整条注释，
+      只把 .insp-save 从选择器里摘掉。恢复时把它加回选择器即可。 */
+.save-as-custom { flex: none; font-size: var(--fs-note, 11px); white-space: nowrap; }
 .field-label-row {
   display: flex; align-items: center; gap: var(--sp-4);
 }
@@ -2784,7 +3023,13 @@ input.mono, textarea.mono {
 .node-card.size-sm .node-badge { font-size: var(--fs-micro, 10px); padding: 0 5px; }
 .node-card.size-sm .node-foot { margin-top: 3px; font-size: var(--fs-micro, 10px); }
 /* 矮卡片上的参数卡片也要收紧，否则它比标题还占地方 */
+/* [幽灵规则 styles.css:2979] .node-card.size-sm .card-chip
+   全仓代码 0 处引用（已排除 st-${} / level-${} / size-${} 等模板拼接类），判定为旧 UI 残留。
+   小尺寸卡片上的 chip。暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
 .node-card.size-sm .card-chip { font-size: var(--fs-micro, 10px); padding: 0 5px; }
+*/
+
 
 .node-card.size-lg { padding: 12px 14px; }
 .node-card.size-lg .node-title { font-size: var(--fs-title, 13px); }
@@ -2867,24 +3112,48 @@ input.mono, textarea.mono {
   content: ''; position: absolute; left: 8px; right: 8px; top: 0; height: 1px;
   background: linear-gradient(90deg, transparent, var(--af-line) 15%, var(--af-line) 85%, transparent);
 }
-/* 串顶的折叠按钮与串长标记 */
+/* 串顶的折叠按钮与串长标记 *//* [幽灵规则 styles.css:3026] .stack-bar
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .stack-bar {
   display: flex; align-items: center; gap: 5px;
   margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--af-divider);
   font-size: var(--fs-micro, 10px); color: var(--af-dim);
 }
+*/
+/* [幽灵规则 styles.css:2875] .stack-bar-btn
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .stack-bar-btn {
   border: 1px solid var(--af-line); border-radius: 4px; cursor: pointer;
   background: transparent; color: var(--af-dim); font-family: inherit;
   font-size: var(--fs-body, 12px); padding: 0 6px;
   transition: color var(--af-dur-fast), border-color var(--af-dur-fast);
   box-shadow: var(--ctl-shadow-sm);}
+*/
+/* [幽灵规则 styles.css:2881] .stack-bar-btn:hover
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .stack-bar-btn:hover { color: var(--af-fg); border-color: var(--af-accent); }
+*/
+/* [幽灵规则 styles.css:2882] .stack-count
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .stack-count {
   font-variant-numeric: tabular-nums;
   padding: 0 5px; border-radius: var(--r-pill, 999px);
   background: var(--af-raised); color: var(--af-dim);
 }
+*/
+
 
 /* ------------------------------------------------------------------ */
 /* 画布设置面板（MCP 服务 / 环境变量 / 导出脚本）                        */
@@ -2929,18 +3198,36 @@ input.mono, textarea.mono {
   padding: 7px; margin-bottom: 7px; display: flex; flex-direction: column; gap: 5px;
 }
 .canvas-config .cfg-row { display: flex; gap: 5px; align-items: center; }
-/* 参数说明：可选填，所以视觉上比值更轻，不能抢主次 */
+/* 参数说明：可选填，所以视觉上比值更轻，不能抢主次 *//* [幽灵规则 styles.css:3106] .cfg-note
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .cfg-note {
   flex: 1 1 90px; min-width: 0; font-size: var(--fs-note, 11px);
   background: var(--af-bg); color: var(--af-mute);
   border: 1px solid var(--af-line); border-radius: var(--r-sm, 4px); padding: 3px 6px;
 }
-/* 缺失清单：每个名字一个 code，横排换行 */
+*/
+
+/* 缺失清单：每个名字一个 code，横排换行 *//* [幽灵规则 styles.css:3112] .cfg-miss-list
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .cfg-miss-list { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: 5px 0; }
+*/
+/* [幽灵规则 styles.css:2939] .cfg-miss-list code
+   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .cfg-miss-list code {
   font-size: var(--fs-note, 11px); padding: 1px 6px; border-radius: var(--r-pill, 999px);
   background: var(--af-raised); color: var(--af-fg); border: 1px solid var(--af-line);
 }
+*/
+
 
 .canvas-config .cfg-row input { flex: 1; min-width: 0; }
 .canvas-config .cfg-k {

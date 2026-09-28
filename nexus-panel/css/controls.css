@@ -397,7 +397,11 @@ select optgroup {
   outline: none;
   resize: vertical;
 }
-.nx-textarea,
+/* ⚠️ 焦点环必须**两个类都带 :focus**。
+   曾写成 `.nx-textarea, .p-textarea:focus` —— 逗号分隔的选择器各自独立，
+   :focus 只属于 .p-textarea，于是 .nx-textarea **任何时候都有焦点环**
+   （本该只在聚焦时出现）。改选择器时极易再犯，故在此写明。 */
+.nx-textarea:focus,
 .p-textarea:focus { box-shadow: var(--sh-in-md), 0 0 0 2px var(--accent-glow); }
 
 /* ------------------------------------------------------------
