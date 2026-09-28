@@ -326,6 +326,29 @@ export function collectUsedClasses(src) {
     }
   }
   /*
+   * 6b: class: 'tb-card' + (joined ? ' joined' : '') —— **拼接 + 三元**
+   *
+   * 分支 6 的正则只吃到紧跟 class: 的**那一个**字符串字面量，
+   * 拼接在后面的 `' joined'` `' is-hidden'` 一个都取不到。
+   * 实测（2026-09-29）：joined 因此被判"全仓 0 引用"，
+   * 只能靠 TIER 白名单兜着 —— 而白名单只压住"报红"，压不住失效：
+   * 真把 .tb-card.joined 的规则删掉，静默无声，卡片不再区分
+   * "已在右上角"和"还能加"，而没人会往样式上想。
+   *
+   * 判据与分支 5 / 6 完全同源：字面量后面紧跟 `?` 的是**条件值**，跳过；
+   * 其余（紧跟 `:` 或 `)` 或 `}`）是分支值或普通拼接段，取。
+   * 不另发明规则，是为了避免"同一语义两套判据"必然产生的漂移。
+   */
+  for (const m of src.matchAll(/\bclass\s*:\s*["'`][^"'`]*["'`]\s*(\+[^,;\n}]{0,160})/g)) {
+    const expr = m[1];
+    for (const sm of expr.matchAll(/['"`]([^'"`]*)['"`]/g)) {
+      let k = (sm.index ?? 0) + sm[0].length;
+      while (k < expr.length && /\s/.test(expr[k])) k++;
+      if (expr[k] === '?') continue;
+      addTokens(sm[1]);
+    }
+  }
+  /*
    * 7: el('div.fp-panel') —— **类名写在标签串里**（tag.class 简写）
    *
    * 这是 folder-picker 服务（plugins/folder-picker/module.js）的写法：
