@@ -217,8 +217,11 @@ export function LinkAgentBody({
   const vendorPick = (src: Record<string, string>): Record<string, string> => {
     const out: Record<string, string> = {};
     const presetVendorOf = new Map(presetRows.map((r) => [r.shown, r.vendor]));
+    const keys = Object.keys(src);
     for (const n of allNames) {
-      const v = (src[n] ?? '').trim();
+      /* 同上：查键不敏感，否则旧大小写那份厂商覆盖会被静默丢掉 */
+      const k = keys.find((x) => sameName(x, n));
+      const v = k === undefined ? '' : (src[k] ?? '').trim();
       if (!v) continue;
       const pv = (presetVendorOf.get(n) ?? '').trim();
       if (pv && v === pv) continue;
@@ -251,11 +254,24 @@ export function LinkAgentBody({
   };
 
   const submit = () => {
-    // 只保留「名字仍存在且值非空」的项，避免删掉链接名后残留孤儿备注 / 厂商覆盖
+    /*
+     * 只保留「名字仍存在且值非空」的项，避免删掉链接名后残留孤儿备注 / 厂商覆盖。
+     *
+     * **查键一律不敏感（#354）**：用 `src[n]` 精确取的话，config 里存的是
+     * 旧大小写时（手改过 config、或从更老版本迁移上来）取不到 → 整条被当成
+     * 幽灵项丢掉。而界面上这一项显示得好好的（sortByPin / CheckLine 都按
+     * 不敏感匹配），于是"看着在、保存后没了"—— 用户写的备注就这么消失，
+     * 日志却写着"链接名设置已保存"。
+     *
+     * 取值后**把键写回当前显示名**：顺带把旧大小写归一化，
+     * 否则写出去的还是旧键，下次打开再丢一次。
+     */
     const pick = (src: Record<string, string>) => {
       const out: Record<string, string> = {};
+      const keys = Object.keys(src);
       for (const n of allNames) {
-        const v = (src[n] ?? '').trim();
+        const k = keys.find((x) => sameName(x, n));
+        const v = k === undefined ? '' : (src[k] ?? '').trim();
         if (v) out[n] = v;
       }
       return out;
@@ -266,8 +282,16 @@ export function LinkAgentBody({
       if (!to.trim() || to === from) continue;
       keptRenames[from] = to.trim();
     }
-    // 置顶只保留当前仍存在的名字，避免删掉链接名后列表里留着幽灵项
-    const keptPinned = pinned.filter((n) => allNames.includes(n));
+    /*
+     * 置顶只保留当前仍存在的名字，避免删掉链接名后列表里留着幽灵项。
+     *
+     * **判据必须与 sortByPin 一致（不敏感）**：用 `includes` 精确比的话，
+     * config 里存的是旧大小写时这一项会被整个过滤掉 ——
+     * 而界面上 sortByPin 按不敏感匹配、它**确实排在最前面**，
+     * 于是"看着置顶着，保存完刷新就没了"，日志还写着已保存。
+     * 表现与 #354 修的那四处一模一样，只是发生在落盘这一步。
+     */
+    const keptPinned = pinned.filter((n) => allNames.some((x) => sameName(x, n)));
     onSave({
       linkAgents: map,
       custom,

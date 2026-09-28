@@ -84,23 +84,41 @@ export function resetToPreset(rows: PresetRow[], cur: LinkAgentState): LinkAgent
 
   for (const { original, shown } of rows) {
     if (shown === original) {
-      // 没改名，只需清掉可能存在的厂商标注（留空即回退预设值）
-      delete vendors[shown];
+      // 没改名，只需清掉可能存在的厂商标注（留空即回退预设值）。
+      // 同下：查键不敏感，否则旧大小写那份删不掉、覆盖不会回落。
+      const vk = Object.keys(vendors).find((k) => sameName(k, shown));
+      if (vk !== undefined) delete vendors[vk];
       continue;
     }
     delete renames[original];
+    /*
+     * #354 以下四处查键一律**不敏感**，与 sortByPin / togglePin 同一套判据。
+     *
+     * 用 `in` / `indexOf` 精确找的话，config 里存的是旧大小写时
+     * （手改过 config、或从更老版本迁移上来）**找不到** → 不迁移，于是：
+     *   · 备注 / 开关仍挂在旧显示名上，而名字已变回原名 ——
+     *     submit() 的 pick() 再精确取一次照样取不到，
+     *     于是当成"幽灵项"整条丢掉，用户写的备注**静默消失**；
+     *   · 置顶同理：界面上仍排在最前（sortByPin 是不敏感的），
+     *     保存完刷新却没了 —— 表现就是"置顶没记住"；
+     *   · 厂商覆盖删不掉 → 恢复预设后没有回落到预设自带的厂商。
+     * 三条都是"界面这一个样子、落盘另一个样子"，且都不报错。
+     */
     // 厂商：清掉显示名上的覆盖，回落到预设自带的厂商
-    delete vendors[shown];
+    const vendorKey = Object.keys(vendors).find((k) => sameName(k, shown));
+    if (vendorKey !== undefined) delete vendors[vendorKey];
     // 开关 / 备注 / 置顶：键从"旧显示名"迁到"原名"
-    if (shown in map) {
-      map[original] = map[shown];
-      delete map[shown];
+    const mapKey = Object.keys(map).find((k) => sameName(k, shown));
+    if (mapKey !== undefined) {
+      map[original] = map[mapKey];
+      delete map[mapKey];
     }
-    if (shown in remarks) {
-      remarks[original] = remarks[shown];
-      delete remarks[shown];
+    const remarkKey = Object.keys(remarks).find((k) => sameName(k, shown));
+    if (remarkKey !== undefined) {
+      remarks[original] = remarks[remarkKey];
+      delete remarks[remarkKey];
     }
-    const i = pinned.indexOf(shown);
+    const i = pinIndexOf(pinned, shown);
     if (i !== -1) pinned[i] = original;
   }
 
