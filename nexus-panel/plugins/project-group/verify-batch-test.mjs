@@ -63,8 +63,15 @@ console.log('\n=== 4. #195 全局异常兜底（白屏 → 报错 + 出口）===
   t('渲染路径外只记日志', /componentDidCatch[\s\S]{0,160}?console\.error/.test(eb));
   /* 主视图与设置页是两个 iframe，只包一层的话另一边崩了照样白屏 */
   t('两边各包一层', /ErrorBoundary label="主视图"/.test(main) && /ErrorBoundary label="设置页"/.test(main));
-  /* 错误状态多半在磁盘配置里，不给出口就只能关掉重开 */
-  t('给重试出口', /onClick=\{\(\) => this\.setState\(\{ err: null \}\)\}/.test(eb));
+  /*
+   * 错误状态多半在磁盘配置里，不给出口就只能关掉重开。
+   *
+   * 不能钉 `setState({ err: null })` 这个**旧写法**：它只是把错误清掉重挂一遍，
+   * 而重挂一遍拿到的是同一份坏数据、照样再错 —— 界面闪一下又回到错误，
+   * 与「按钮失灵」无法区分。现在走 retry()，并在重试仍失败时明说。
+   * 这里只钉"有出口"，具体判定归 error-boundary-test。
+   */
+  t('给重试出口', /onClick=\{\(\) => this\.retry\(\)\}/.test(eb) && /retry\(\): void \{/.test(eb));
   t('CSS 限高防顶开窗口', /\.fpx-crash-msg \{[\s\S]{0,200}?max-height/.test(R('style.css')));
 }
 

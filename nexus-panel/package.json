@@ -133,6 +133,7 @@
     "test:pg-drag": "node plugins/project-group/drag-sort-test.mjs",
     "test:pg-drop-springback": "node plugins/project-group/drop-springback-test.mjs",
     "test:pg-escape-layer": "node plugins/project-group/escape-layer-test.mjs",
+    "test:pg-error-boundary": "node plugins/project-group/error-boundary-test.mjs",
     "test:pg-external-drop": "node plugins/project-group/external-drop-test.mjs",
     "test:pg-feedback": "node plugins/project-group/feedback-test.mjs",
     "test:pg-file-lock": "node plugins/project-group/file-lock-token-test.mjs",

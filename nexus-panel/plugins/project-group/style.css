@@ -1161,6 +1161,14 @@
   font-family: var(--font-mono); font-size: var(--fs-11, 11px);
   white-space: pre-wrap; word-break: break-all;
 }
+/* 重试后仍然出错时的说明：不能和错误本身一个颜色，否则看着像堆栈的一部分 */
+.fpx-crash-hint {
+  margin: 0 0 10px; padding: 8px;
+  border-left: 3px solid var(--warning, var(--accent));
+  background: var(--surface);
+  font-size: var(--fs-12, 12px); line-height: 1.6;
+  color: var(--text-dim);
+}
 
 /* #148 / #149 连锁动作拖拽重排
  * 插入条画在**缝隙**上而不是整项高亮：列表行挨得紧，
