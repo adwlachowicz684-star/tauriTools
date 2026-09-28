@@ -111,14 +111,28 @@ export async function runLoop(ctx: RunContext): Promise<void> {
     ? collected.join('\n\n')
     : `[循环] ${res.reason}，共 ${total} 轮`;
 
-  const warn = res.warnings.length ? `；${res.warnings.join('；')}` : '';
+  /**
+   * onError=continue（跳过失败轮、继续跑完）且不是全败时，整条循环算**成功**。
+   *
+   * 为什么必须看 onError：以前只在"要不要 break"处读了它，最后这句
+   * `roundFailed > 0` 却无条件抛错 —— 于是 continue 与 stop 殊途同归：
+   * 循环照样红、下游 done 分支照样不跑。用户选了"继续下一轮"，
+   * 看到的唯一差别只是"多跑了几轮"，失败结局一模一样。
+   *
+   * 仍然失败的两种情况：
+   *   · onError=stop —— 用户明确要求遇错即停；
+   *   · 全败 —— 3 轮全挂还说"循环成功"没有意义。
+   */
+  const tolerant = data.onError === 'continue' && roundFailed > 0 && roundFailed < total;
+  const allWarn = tolerant ? [...res.warnings, `跳过 ${roundFailed} 轮失败`] : res.warnings;
+  const warn = allWarn.length ? `；${allWarn.join('；')}` : '';
   emit({ type: 'loop-done', id, rounds: total, failed: roundFailed });
   loops.push({
     id, rounds: total, failed: roundFailed,
-    reason: `${res.reason}，产出 ${done} 条${warn}`, warnings: res.warnings,
+    reason: `${res.reason}，产出 ${done} 条${warn}`, warnings: allWarn,
   });
   if (abortedErr) throw abortedErr;
-  if (roundFailed > 0) throw new NodeFailError(`${roundFailed}/${total} 轮失败${warn}`, out);
+  if (roundFailed > 0 && !tolerant) throw new NodeFailError(`${roundFailed}/${total} 轮失败${warn}`, out);
   return { output: out };
   });
 }

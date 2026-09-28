@@ -161,6 +161,11 @@ export function LoopInspector({ node, edges, onChange }: {
           <option value="stop">立即停止循环</option>
         </select>
       </label>
+      <small className="dim">
+        {d.onError === 'continue'
+          ? '失败的轮被跳过、继续跑完；还有成功的轮就算完成（记录里仍记失败轮数），全部轮都失败才算整条循环失败'
+          : '一有轮失败就停下，整条循环失败'}
+      </small>
 
       <label className="check">
         <input

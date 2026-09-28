@@ -347,7 +347,7 @@ export const SPECS: Record<string, NodeSpec> = {
       { key: 'source', desc: 'list 模式下取哪个上游的输出（节点 id）；留空用拼接后的上游输出' },
       { key: 'pattern', desc: 'glob 模式的通配符，如 src/**/*.ts' },
       { key: 'maxIterations', desc: '最大轮数上限（安全网，超出即停）' },
-      { key: 'onError', desc: '某一轮失败时：continue = 跳过继续；stop = 整个循环停下', options: ['continue', 'stop'] },
+      { key: 'onError', desc: '某一轮失败时：continue = 跳过该轮继续，只要还有成功的轮整条循环就算完成（全部轮都失败才算失败）；stop = 整个循环停下', options: ['continue', 'stop'] },
       { key: 'collect', desc: '是否把每轮结果汇总到 done 出口；false 时 done 出口不带内容' },
     ],
   }),

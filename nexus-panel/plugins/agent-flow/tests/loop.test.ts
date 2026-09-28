@@ -327,6 +327,62 @@ test('循环体失败：onError=stop 时立即停止', async () => {
   assert.equal(summary.loops[0].failed, 1);
 });
 
+/*
+  onError 以前只在"要不要 break"处被读，最后那句 roundFailed > 0
+  却无条件抛错 —— 于是 continue 与 stop 殊途同归：整条循环照样红、
+  done 分支照样不跑，用户选了"继续下一轮"却看不出任何差别。
+  下面两条把"跳过失败轮后到底算成功还是失败"钉死。
+*/
+test('循环体失败：onError=continue 且还有成功轮 → 整条循环算完成，done 分支照跑', async () => {
+  const graph: Graph = {
+    nodes: [
+      makeLoopNode('l', { mode: 'times', times: 3, onError: 'continue' }),
+      makeNode('b1'),
+      makeNode('d1'),
+    ],
+    edges: [
+      edge('l', 'b1', { loopRole: 'body' }),
+      edge('l', 'd1', { loopRole: 'done' }),
+    ],
+  };
+  let n = 0;
+  const summary = await runGraph(graph, {
+    concurrency: 1,
+    executor: async (node) => {
+      // 只数循环体：done 分支也会走 executor，混进来会多数一轮
+      if (node.id !== 'b1') return 'ok';
+      n += 1;
+      if (n === 2) throw new Error('boom');
+      return 'ok';
+    },
+    onEvent: () => {},
+  });
+  assert.equal(n, 3, 'continue 应跑满 3 轮');
+  assert.equal(summary.loops[0].failed, 1, '失败轮数仍要记下来');
+  assert.ok(!summary.failed.includes('l'), 'continue 且还有成功轮时，循环本身不该失败');
+  assert.ok(
+    summary.loops[0].warnings.some((w) => w.includes('跳过 1 轮失败')),
+    '要留下"跳过 N 轮"的痕迹，否则界面上看不出有轮被跳过',
+  );
+  assert.ok(summary.outputs['d1'] !== undefined, '循环算完成后 done 分支要照跑');
+});
+
+test('循环体失败：onError=continue 但全部轮都失败 → 整条循环仍失败', async () => {
+  const graph: Graph = {
+    nodes: [
+      makeLoopNode('l', { mode: 'times', times: 3, onError: 'continue' }),
+      makeNode('b1'),
+    ],
+    edges: [edge('l', 'b1', { loopRole: 'body' })],
+  };
+  const summary = await runGraph(graph, {
+    concurrency: 1,
+    executor: async () => { throw new Error('boom'); },
+    onEvent: () => {},
+  });
+  assert.ok(summary.failed.includes('l'), '一轮都没跑成时不能报成功');
+});
+
 test('循环节点解析失败 → 循环体与 done 都不执行', async () => {
   const graph: Graph = {
     nodes: [
