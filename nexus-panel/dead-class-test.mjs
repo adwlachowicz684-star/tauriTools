@@ -100,6 +100,18 @@ console.log('=== 1. 扫描器自身：必须分得清真假 ===');
   t('三元里的状态类 open',
     collectUsedClasses("className={`fpx-link-arrow${x ? ' open' : ''}`}").has('open'));
   t('hyperscript', collectUsedClasses("h('div.mm-foo.bar', x)").has('mm-foo'));
+  /*
+   * ⚠️ class: 后的**拼接 + 三元**必须认 —— settings 的插件卡片就写
+   * `class: 'tb-card' + (joined ? ' joined' : '') + (hid ? ' is-hidden' : '')`。
+   * 只取紧跟 class: 的那一个字面量的话，joined / is-hidden 全是 0 引用，
+   * 只能靠 TIER 白名单压住 —— 而白名单压得住报红、压不住失效：
+   * 删掉 .tb-card.joined 的规则**一条都不红**（2026-09-29 实测 A/B：
+   * 修复前删规则 55/0 全绿，修复后报红并点名 plugins/settings/index.js）。
+   */
+  t('class: 拼接三元里的分支类要取',
+    collectUsedClasses("class: 'tb-card' + (joined ? ' joined' : '')").has('joined'));
+  t('class: 拼接三元不取条件里的比较值',
+    !collectUsedClasses("class: 'tb-card' + (tab === 'mine' ? ' on' : '')").has('mine'));
   t('classList.add', collectUsedClasses("el.classList.add('is-on')").has('is-on'));
   /*
    * ⚠️ 可选链写法必须认 —— host.js 摘插件 iframe 遮罩的唯一入口就是
@@ -437,6 +449,20 @@ console.log('\n=== 7. 死样式分类：档位类留用、真废弃清零 ===');
     'md-puml-box']);
 
   /*
+   * 运行时档位类：类名**经变量传递**，静态扫描在原理上取不到
+   * （不是扫描器写漏了，是 `dep-badge ${st.tone}` 的值只有运行时才知道）。
+   *
+   *  · mute —— js/deps-manifest.js 的 DEP_STATUS 里 unused / unknown
+   *    两个状态的 tone 值，经 DepsCard.tsx 的 `dep-badge ${st.tone}`
+   *    与 index.js 的 `h('span.dep-badge.' + st.tone)` 挂到 DOM 上。
+   *
+   * 放进白名单只是"不报红"，不等于"有守卫"。所以紧随其后加了
+   * 档位值 ↔ 规则 的双向断言：删掉 .dep-badge.mute 会立刻报红，
+   * 而不是像 joined 修复前那样静默失效。
+   */
+  const RUNTIME_TONE = new Set(['mute']);
+
+  /*
    * 前缀族：agent-flow 触发器 / 节点徽标这一族的类名
    * 多以 `${prefix}-${x}` 动态拼出（trg-icon / trg-name / kind-icon …），
    * 单看成员名在源码里找不到，但整族都在用。
@@ -452,7 +478,8 @@ console.log('\n=== 7. 死样式分类：档位类留用、真废弃清零 ===');
    */
   const FAMILY = /^(trg|trig|kind|upd|stack|task|insp|node|side|status)-|^md-toc-lv/;
 
-  const realDead = dead.filter((c) => !TIER.test(c) && !ALIAS.has(c) && !FAMILY.test(c));
+  const realDead = dead.filter((c) => !TIER.test(c) && !ALIAS.has(c) && !FAMILY.test(c)
+    && !RUNTIME_TONE.has(c));
 
   /*
    * 冻结基线而不是要求清零。
@@ -474,6 +501,36 @@ console.log('\n=== 7. 死样式分类：档位类留用、真废弃清零 ===');
   const DEAD_BASELINE = 41;
   t('真废弃未继续增加（不超过基线）', realDead.length <= DEAD_BASELINE,
     `当前 ${realDead.length} / 基线 ${DEAD_BASELINE}：${realDead.slice(0, 6).join(', ')}`);
+
+  /*
+   * 运行时档位类（mute）不能只靠白名单蒙混过关 —— 白名单只压住报红，
+   * 压不住"样式被删了没人知道"。这里双向钉死：
+   *
+   *   ① 每个 tone 值都必须有 .dep-badge.<tone> 规则；
+   *   ② 每条 .dep-badge.X 规则都必须对应一个还在用的 tone 值。
+   *
+   * 少了①：删掉 .dep-badge.mute，徽标颜色静默丢失（不报错）。
+   * 少了②：改状态名后旧规则留着，永远没人能发觉它已经没人用。
+   *
+   * ⚠️ 必须先断言"取到了档位值"。deps-manifest.js 要是改名或改写法，
+   * matchAll 返回空集 → ① 恒真，变成假绿（本项目已在 caps.js、
+   * 命令一致性上栽过这类"守了个空"）。
+   */
+  const toneFile = join(ROOT, 'js/deps-manifest.js');
+  const toneSrc = existsSync(toneFile) ? readFileSync(toneFile, 'utf8') : '';
+  const tones = new Set([...toneSrc.matchAll(/tone:\s*'([^']+)'/g)].map((m) => m[1]));
+  t('档位表取到了值（断言没守空）', tones.size >= 3, `取到 ${tones.size} 个：${[...tones].join(', ')}`);
+
+  const cssText = css.map((f) => readFileSync(f, 'utf8')).join('\n');
+  const noRule = [...tones].filter((x) => !new RegExp(`\\.dep-badge\\.${x}\\b`).test(cssText));
+  t('每个 tone 档位都有对应规则（删了会静默失效）', noRule.length === 0,
+    noRule.join(', ') || `${tones.size} 个档位全部有规则`);
+
+  const badgeTones = new Set(
+    [...cssText.matchAll(/\.dep-badge\.([a-z][a-z0-9-]*)/g)].map((m) => m[1]));
+  const orphanTone = [...badgeTones].filter((x) => !tones.has(x));
+  t('没有用不到的 badge 档位规则', orphanTone.length === 0,
+    orphanTone.join(', ') || `${badgeTones.size} 条规则全部对应在用档位`);
 
   /* 白名单反向校验：某项若已在 CSS 里被删掉，就必须移出表内，
      否则白名单只增不减，慢慢变成"什么都往里塞"而失去意义。 */
