@@ -7201,57 +7201,36 @@ group('左侧搜索结果面板（复用文件库底框）');
 
 group('布局：文件库挤窄画布（不遮挡）+ 控件档位');
 
-group('布局：文件库浮层 + 假画框（画布不动）');
-
 {
   const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
-  const idxJs = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '');   // 先剥注释，避免命中说明文字
   const cs = strip(css);
 
-  // ---- 1) 文件库是**浮层**，画布本体铺满不动 ----
+  // ---- 1) 文件库是 flex 子项，与画布并排 ----
   //
-  // 走过三种方案，最终是「浮层 + 假画框」：
-  //   挤窄 → 画布尺寸真变 → iframe resize → 内核重新居中 → 内容晃动；
-  //   纯抽屉 → 盖住画布左侧 186px，看到的比关着时还少。
-  // 现行方案兼具两者：画布铺满、一个像素不动，"被挤窄"只由 .mm-canvas-frame
-  // 那层描边演出来。
-  //
-  // 切片必须停在「下一个 }」而非 .open 处 —— .open 规则前夹着长注释块，
-  // 不剥注释就会断言失败（假阴性），逼得人去改实现。
+  // 为什么是挤窄而不是抽屉：抽屉会遮住画布左侧 186px，用户看到的内容
+  // 比关着时还少；挤窄下画布只是变窄 186px，可见区域仍然完整。
+  // 代价是画布尺寸变化 → 内核把视图重新居中 → 内容左右晃一下，
+  // 但偏移量很小（≤93px）、只在展开/收起瞬间发生，属可接受范围。
+  // 切片必须停在「下一个 }」而非 .open 处 —— 因为 .open 规则前还夹着
+  // 整整一段 15 行的注释块（含「为什么不用覆盖式抽屉」），那里面没有
+  // width:186px。不跳过注释就会断言失败（假阴性），逼得人去改实现。
   const filesOpenIdx = cs.indexOf('.mm-files.open');
   const nextBrace = cs.indexOf('}', filesOpenIdx);
   const filesRule = cs.slice(cs.indexOf('.mm-files {'), nextBrace + 1);
-  ok(/position:\s*absolute/.test(filesRule),
-    '.mm-files 是 absolute 浮层（不占位，画布几何不变）');
-  ok(!/flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 不再是 flex 子项（真挤窄会让画布收到 resize）');
+  ok(/flex:\s*0\s+0\s+186px/.test(filesRule),
+    '.mm-files 是 flex 子项（186px 固定宽，展开时挤窄画布）');
+  ok(!/position:\s*absolute/.test(filesRule),
+    '.mm-files 不是 absolute 抽屉（抽屉会遮挡画布）');
 
-  // 双重断言 —— 只断言「不是 flex 子项」不够：那样可能两种都没写，
-  // 底框就成了普通块级元素、把整个主体区顶开。
-  ok(/position:\s*absolute/.test(filesRule) && !/flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 脱离 flex 流且绝对定位（浮在上层）');
+  // 挤窄布局的关键：不能脱离 flex 流，否则就变成浮在上层遮挡画布了。
+  // 双重断言 —— 只断言「是 flex 子项」不够：若某人同时写了 absolute，
+  // absolute 优先级更高、实际仍是抽屉，单条断言会误判为通过。
+  ok(!/position:\s*absolute/.test(filesRule) &&
+      /flex:\s*0\s+0\s+186px/.test(filesRule),
+    '.mm-files 在 flex 流中且宽度 186px（挤窄画布而非遮挡）');
 
   ok(/width:\s*186px/.test(filesRule), '.mm-files 宽度仍是 186px');
-
-  // ---- 1.5) 假画框：观感的来源，必须真的存在 ----
-  //
-  // ⚠️ 这一层曾是**只有 CSS 规则、JS 从不创建**的幽灵元素：
-  //    styles.css 里 .mm-canvas-frame 写得清清楚楚，index.js 里却没人 new 它，
-  //    于是画布压根没有那道边，观感退化成"面板浮在画布上"——
-  //    正是本设计要避免的样子，且不报任何错。
-  //  所以这里钉**两端**：CSS 有规则 **且** JS 真的建了这个元素。
-  const frameRule = cs.slice(cs.indexOf('.mm-canvas-frame {'), cs.indexOf('}', cs.indexOf('.mm-canvas-frame {')) + 1);
-  ok(/pointer-events:\s*none/.test(frameRule), '假画框 pointer-events:none（看得见摸不着）');
-  ok(/position:\s*absolute/.test(frameRule), '假画框绝对定位（不占位）');
-  ok(/h\('div\.mm-canvas-frame'/.test(idxJs),
-    'index.js 真的创建了 .mm-canvas-frame（否则规则是空的，画布没边）');
-  // 光建元素不够：left 必须跟着底框走，否则边永远贴着左边、等于没让位
-  ok(/function syncCanvasInset/.test(idxJs), '有 syncCanvasInset 同步画框左边缘');
-  ok(/canvasFrameEl\.style\.left\s*=/.test(idxJs), 'syncCanvasInset 真的写入 left');
-  // 三个入口都要同步：开合、搜索出结果、清搜索。漏一个就"这次没跟上"
-  const syncCalls = (idxJs.match(/syncCanvasInset\(\)/g) || []).length;
-  ok(syncCalls >= 4, `syncCanvasInset 至少被调用 4 处（定义+开合+搜索+清除），实测 ${syncCalls}`);
 
   // ---- 2) 控件档位：输入框/下拉必须与按钮同为 28px ----
   //
@@ -7980,22 +7959,14 @@ group('文件库展开导致画布内容位移：按实测屏幕位置差补偿'
     'rootScreenX 取不到时返回 null（不是 0）');
   ok(!/rootScreenX/.test(wsrSeg), '补偿链路不依赖 rootScreenX（iframe 内测不到容器位移）');
 
-  // ---- 4) 几何账：底框 186 宽 + padding 10×2，画框让位 = 186 + gap 10 ----
+  // ---- 4) 几何账：216 = flex-basis 186 + padding 10×2 + gap 10 ----
   {
     const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
     const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
-    ok(/width:\s*186px/.test(filesBlk), '.mm-files 宽 186（浮层，不再是 flex-basis）');
+    ok(/flex:\s*0 0 186px/.test(filesBlk), '.mm-files flex-basis 186');
     ok(/padding:\s*10px/.test(filesBlk), '.mm-files padding 10（左右合计 20）');
-    // 底框是浮层后 .mm-body 的 gap 不再作用于它（absolute 不参与 flex 排布），
-    // 但 syncCanvasInset 让位时要**沿用同一个 10px**，否则画框与底框之间
-    // 的缝会比"真挤窄"时宽/窄一截，两个状态切换时观感对不上。
     const bodyBlk = css.slice(css.indexOf('.mm-body {'), css.indexOf('.mm-body {') + 200);
     ok(/gap:\s*10px/.test(bodyBlk), '.mm-body gap 10');
-    {
-      const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-      const seg = idx.slice(idx.indexOf('function syncCanvasInset'), idx.indexOf('function syncCanvasInset') + 900);
-      ok(/const gap = 10;/.test(seg), 'syncCanvasInset 让位间距与 .mm-body gap 一致（10）');
-    }
     // 右侧栏必须**不可收缩**：它若可收缩，画布宽度变化量就不再固定，
     // 内核的半量补偿会与实际位移脱钩（历史上 .mm-side 样式失效时正是如此）
     const sideBlk = css.slice(css.indexOf('.mm-side {'), css.indexOf('.mm-side h3'));
@@ -8228,9 +8199,12 @@ group('app 句柄：可写状态必须成对提供 getter/setter');
     'saveThemes 落盘读的是模块级 customThemes');
 
   // ---- 4) 三条受影响路径都还在（说明 setter 不是死代码）----
+  // 现在是 **6 处**：3 处正向赋值（导入 / 删除 / 编辑保存）+
+  // 3 处写盘失败时的回滚（BUG 61）。当初写死 3 是在给「setter 不是死代码」
+  // 当证据，现在这个证据要跟着实现走 —— 写成 3 会把 BUG 61 的回滚挡在门外。
   const pjOnly = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
-  eq((pjOnly.match(/app\.customThemes\s*=/g) || []).length, 3,
-    'panels.js 有三处赋值（导入 / 删除 / 编辑保存主题）');
+  eq((pjOnly.match(/app\.customThemes\s*=/g) || []).length, 6,
+    'panels.js 有六处赋值（3 处正向 + 3 处写盘失败回滚，见 BUG 61）');
 }
 
 group('清除按钮图标 / 样式间距 / 媒体查看尺寸');
@@ -11700,6 +11674,75 @@ group('BUG 60 · 换画布后侧栏必须跟着换；删主题要回退**所有*
     const body = pn.slice(i, k + 1);
     ok(/app\.api\.reassignTheme\?\.\(t\.id\)/.test(body),
       '删除主题后调用 reassignTheme(t.id)（否则别的画布留悬空主题 id）');
+  }
+}
+
+/* ============================================================
+   BUG 61 · 主题写盘失败不回滚内存（与 createFolder / renameFile 同一条约束）
+   ============================================================ */
+
+group('BUG 61 · 主题的新建 / 导入 / 删除，写盘失败都必须回滚内存');
+{
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+
+  /**
+   * createFile / createFolder / renameFile / moveFile / deleteFile / deleteFolder
+   * 都在 saveStore 返回 false 时把内存改回去（界面与磁盘两边一致）。
+   * 主题的三条路**一条都没回滚**：
+   *
+   *   · 导入主题：内存里多一份，磁盘没有 → 主题页显示它、点上去也能用
+   *     （编辑器注册的是内存对象），重载就消失 —— 假可用；
+   *   · 删除主题：内存里没了，磁盘还在 → 下一次 refresh() 它就从列表消失，
+   *     用户以为删掉了，重载又冒出来；
+   *   · 编辑保存：内存里换成新值，磁盘是旧值 → 重载回到旧主题，白改一次。
+   *
+   * 又是「同一条约束只修了部分路径」。
+   *
+   * 下面的断言都用**结构定位**（先剥注释、按大括号配对取函数体），
+   * 不用定长切片 —— 定长切片会被后加的注释撑爆，变成恒真断言。
+   */
+  const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const P = strip(pn);
+
+  const takeBlock = (at) => {
+    let dep = 0;
+    for (let j = P.indexOf('{', at); j < P.length; j++) {
+      if (P[j] === '{') dep++;
+      else if (P[j] === '}') { dep--; if (!dep) return P.slice(at, j + 1); }
+    }
+    return '';
+  };
+
+  // ① 编辑器保存：留住 prevList 并在失败时还原
+  {
+    const at = P.indexOf('const save = async () =>');
+    ok(at > 0, 'panels：能定位主题编辑器 save');
+    const body = takeBlock(at);
+    ok(/const prevList\s*=\s*app\.customThemes/.test(body), '编辑保存：写盘前留住原数组 prevList');
+    ok(/if \(!saved\)[\s\S]{0,200}app\.customThemes\s*=\s*prevList/.test(body),
+      '编辑保存：写盘失败时把 customThemes 还原为 prevList');
+  }
+
+  // ② 导入主题：失败撤回
+  {
+    const at = P.indexOf('async function importThemeFile()');
+    ok(at > 0, 'panels：能定位 importThemeFile');
+    const body = takeBlock(at);
+    ok(/const prevList\s*=\s*app\.customThemes/.test(body), '导入主题：写盘前留住原数组');
+    ok(/if \(!okSave\)[\s\S]{0,220}app\.customThemes\s*=\s*prevList/.test(body),
+      '导入主题：写盘失败时撤回（否则主题页显示一个重载就没了的主题）');
+  }
+
+  // ③ 删除主题：失败按原下标插回
+  {
+    const at = P.indexOf("safe('删除主题'");
+    ok(at > 0, 'panels：能定位删除主题处理器');
+    const body = takeBlock(at);
+    ok(/findIndex\(\(x\)\s*=>\s*x\.id\s*===\s*t\.id\)/.test(body),
+      '删除主题：先记下原下标（顺序乱了会让 core 的主题解析漂移）');
+    ok(/if \(!ok\)[\s\S]{0,400}back\.splice\(at,\s*0,\s*t\)/.test(body),
+      '删除主题：写盘失败时按原下标插回');
+    ok(/app\.customThemes\s*=\s*back/.test(body), '删除主题：插回后要写回 customThemes');
   }
 }
 
