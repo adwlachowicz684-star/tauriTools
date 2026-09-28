@@ -76,7 +76,33 @@ export const BASE_CSP = {
   // 'wasm-unsafe-eval'：PlantUML 的 viz-global 是 WASM（Graphviz 编译版），
   // 少了它浏览器不允许编译 WASM —— 控制台只有一条 warning，界面上表现为
   // 「一直转圈」，完全看不出是 CSP 问题。mermaid 不需要它（纯 JS 画图）。
-  'script-src': ["'self'", "'unsafe-inline'", "'unsafe-eval'", "'wasm-unsafe-eval'"],
+  //
+  // asset: / http://asset.localhost —— 运行时依赖（「设置 → 依赖」一键装进来
+  // 的 npm 包）落在应用数据目录 deps/ 下，js/runtime-deps.js 用
+  // convertFileSrc 把它转成 asset 协议再动态 import()。
+  // 按 CSP 规范动态 import 受 **script-src** 管辖，而 'self' 只等于页面自己的
+  // 源（tauri.localhost），**不匹配** asset.localhost —— 少了这两项，
+  // 每个运行时依赖的 import 都被静默拦掉。
+  //
+  // 这个失效特别难发现，因为它会被上游的兜底逻辑吃掉：
+  // ctx.requireDep 的设计是「运行时那份 import 失败就回退到打包版」
+  // （见 js/runtime-deps.js 的说明），于是装完界面显示「已安装」、
+  // 渲染也正常，但用的**始终是旧的那份** —— 功能不报错、不降级，
+  // 只是「一键换版本」这件事从头到尾没生效。
+  //
+  // 安全权衡：放行 asset 协议意味着「能写进 $APPDATA 的东西可被当脚本执行」。
+  // 第二道防线是 tauri.conf.json 的 assetProtocol.scope（只放行
+  // $APPDATA/** 与 $RESOURCE/**），CSP 本身无法按路径收窄。
+  // 注意 js/external-policy.js 那套（**外部**插件的 CSP）刻意**不给** asset，
+  // 那是有意的安全边界，不要照这里补。
+  'script-src': [
+    "'self'",
+    "'unsafe-inline'",
+    "'unsafe-eval'",
+    "'wasm-unsafe-eval'",
+    'asset:',
+    'http://asset.localhost',
+  ],
   'style-src': ["'self'", "'unsafe-inline'"],
   'img-src': ["'self'", 'data:', 'asset:', 'http://asset.localhost', 'blob:'],
   'font-src': ["'self'", 'data:'],
