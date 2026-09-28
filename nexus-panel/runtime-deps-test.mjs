@@ -464,7 +464,14 @@ const rsInstall = rsText.slice(iInstall, iRemove > iInstall ? iRemove : rsText.l
 const rsRemove = rsText.slice(iRemove);
 t('install 校验文件名含 .. 或斜杠', /file\.contains\("\.\."\)/.test(rsInstall));
 t('remove 校验文件名含 .. 或斜杠', /file\.contains\("\.\."\)/.test(rsRemove));
-t('后端只允许 .mjs 落盘', /只允许 \.mjs/.test(rsInstall));
+/*
+ * 主体必须是 .mjs。
+ * 断言写结构（`!file.ends_with(".mjs")`）而不是写死提示文案 ——
+ * 文案改了就假红，而"拒了没有"这件事跟文案没关系。
+ */
+t('后端只接受 .mjs 作为主体落盘', /!file\.ends_with\("\.mjs"\)/.test(rsInstall));
+t('后端 remove 只认运行时依赖自己的文件后缀',
+  /is_rt_file\(&file\)/.test(rsRemove), rsRemove.match(/is_rt_file[^\n]*/g));
 t('后端检查空内容', /is_empty\(\)/.test(rsText));
 t('后端以目录为清单（不另存索引，避免不一致）', /read_dir/.test(rsText));
 t('后端注释说明为何不用 app.http()', /HttpExt|reqwest/.test(rsText));
@@ -911,7 +918,19 @@ t('settings 白名单含 purge', /fpx_rt_dep_purge/.test(policyCode));
 const rsPurge = rsText.slice(rsText.indexOf('pub fn fpx_rt_dep_purge'));
 t('后端 purge 用 safe_name_of 算前缀（不另写一份命名规则）',
   /let prefix = format!\("\{\}@", safe_name_of\(&name\)\)/.test(rsPurge));
-t('后端 purge 按前缀 + .mjs 双重判据', /starts_with\(&prefix\)/.test(rsPurge) && /ends_with\("\.mjs"\)/.test(rsPurge));
+t('后端 purge 按前缀 + 后缀双重判据', /starts_with\(&prefix\)/.test(rsPurge) && /is_rt_file\(&f\)/.test(rsPurge));
+/*
+ * is_rt_file 必须同时认 .mjs 与 .classic.js。
+ * 只认 .mjs 的话，伴生文件会**永远留在磁盘上**：那个包已经显示"已卸载"，
+ * 却还躺着它的 Graphviz 运行时，而且没有任何入口能再删它 ——
+ * 正是整包卸载这条要修的失效形态，不能在这里又开一个口子。
+ */
+{
+  const iFn = rsText.indexOf('fn is_rt_file');
+  const rsFn = rsText.slice(iFn, iFn > 0 ? rsText.indexOf(String.fromCharCode(10) + '}', iFn) : 0);
+  t('is_rt_file 同时认 .mjs 与 .classic.js',
+    /ends_with\("\.mjs"\)/.test(rsFn) && /ends_with\("\.classic\.js"\)/.test(rsFn), rsFn);
+}
 t('后端 purge 拒绝空包名', /包名为空/.test(rsPurge));
 /*
  * 删除失败必须往外报，不能跳过继续。
@@ -938,6 +957,211 @@ t('界面有残留区（已装但清单里没有）', /dep-orphans/.test(cardTex
  */
 t('界面说明了整包卸载与逐条移除的区别', /整包卸载 = 删掉/.test(cardText));
 t('残留区有样式（否则与清单行没有视觉区分）', /\.dep-orphans\s*\{/.test(read('css/neumorphism.css')));
+
+/* ---------- ⑨ 伴生文件：ESM 主体 + 经典脚本 ---------- */
+/*
+ * 有些包不是一个 ESM 单文件就够的：@plantuml/core 的 Graphviz 布局
+ * 由 viz-global.js 提供，而它是经典脚本（实测无顶层 export{}），
+ * 必须以 <script> 加载、且**先于** ESM import。
+ *
+ * 这一组守三件事：地址要取原始文件、伴生要一起装、加载顺序不能反。
+ * 任一条错了的表现都是"装成功但没效果"，不报错。
+ */
+{
+  t('伴生包取原始 ESM 文件，不走 +esm（重打包是多余的一次失败面）',
+    rt.entryUrlOf('@plantuml/core', '1.2026.8').endsWith('/plantuml.js'),
+    rt.entryUrlOf('@plantuml/core', '1.2026.8'));
+  t('伴生包的主地址不含 +esm', !rt.entryUrlOf('@plantuml/core', '1.2026.8').includes('+esm'));
+  t('伴生地址指向原始经典脚本（转成 ESM 就不挂全局了）',
+    rt.classicUrlOf('@plantuml/core', '1.2026.8').endsWith('/viz-global.js') &&
+      !rt.classicUrlOf('@plantuml/core', '1.2026.8').includes('+esm'),
+    rt.classicUrlOf('@plantuml/core', '1.2026.8'));
+  t('不需要伴生的包返回 null', rt.classicUrlOf('mermaid', '12.0.0') === null);
+  t('普通包仍是 +esm', rt.entryUrlOf('mermaid', '^12.0.0').includes('+esm'));
+
+  /*
+   * @plantuml/core 已从禁用名单移除 —— 但只有在伴生机制真的存在时才成立。
+   * 这两条一起钉住：少任何一条，它就会变成"装了却缺零件"。
+   */
+  t('@plantuml/core 已解禁（伴生机制在，不再是单文件装不了的形态）',
+    !Object.prototype.hasOwnProperty.call(rt.RT_BLOCKED || {}, '@plantuml/core'));
+  t('解禁的伴生包确实在 RT_CLASSIC 里（防止解禁了却没人下载伴生）',
+    !!rt.classicSpecOf('@plantuml/core'));
+
+  /* 命名规则：前端与后端必须一致（与 safeFileOf 那条同构） */
+  /*
+   * 只断言结构（用了 safe_name_of + safe_ver_of、后缀是 .classic.js），
+   * 不把 `&name` / 参数顺序也钉死 —— 那些改了不影响契约，
+   * 钉太死只会让"改了个写法"变成假红。
+   */
+  t('classicFileOf 与 Rust classic_file_of 同构',
+    /format!\("\{\}@\{\}\.classic\.js", safe_name_of\(/i.test(rsText) &&
+      /safe_ver_of\(/.test(rsText.slice(rsText.indexOf('fn classic_file_of'), rsText.indexOf('fn classic_file_of') + 300)));
+  t('后端版本归一化只有一份（ESM 与伴生共用 safe_ver_of）',
+    (rsText.match(/fn safe_ver_of/g) || []).length === 1);
+
+  /* 行为：真跑 install，伴生地址必须显式带上（null 也不许省略） */
+  {
+    let args = null;
+    const ctx = stubCtx(async (cmd, a) => {
+      if (cmd === 'fpx_rt_dep_install') { args = a; return { ok: true, file: 'x.mjs' }; }
+      if (cmd === 'fpx_rt_dep_list') return [];
+      return { ok: true };
+    });
+    await rt.installRuntimeDep(ctx, { kind: 'runtime', dev: false, install: 'npm i @plantuml/core@1.2026.8' });
+    t('装伴生包时带上了 classicUrl', !!(args && typeof args.classicUrl === 'string' && args.classicUrl.includes('viz-global.js')),
+      JSON.stringify(args));
+
+    args = null;
+    await rt.installRuntimeDep(ctx, { kind: 'runtime', dev: false, install: 'npm i mermaid@^12.0.0' });
+    /*
+     * 不需要伴生时必须显式 null，不能是 undefined。
+     * 有些桥接层会把 undefined 当成"没传"，于是伴生不下载也不报错。
+     */
+    t('不需要伴生时 classicUrl 显式为 null（不是 undefined）',
+      !!args && args.classicUrl === null, JSON.stringify(args));
+  }
+
+  /* 行为：真跑 requireDep，伴生必须**先于** ESM 注入 */
+  {
+    const order = [];
+    const ctx = stubCtx(async (cmd) => {
+      if (cmd === 'fpx_rt_dep_list') {
+        return [{
+          name: '@plantuml/core', version: '1.2026.8',
+          file: '_plantuml_core@1.2026.8.mjs', path: '/deps/_plantuml_core@1.2026.8.mjs',
+          classicFile: '_plantuml_core@1.2026.8.classic.js', size: 10,
+        }];
+      }
+      return { ok: true };
+    });
+    rt.__clearDepDecisions();
+    const r = await rt.requireDep(ctx, '@plantuml/core', {
+      fallback: async () => ({ tag: 'bundle' }),
+      importModule: async () => { order.push('esm'); return { renderToString() {} }; },
+      loadClassic: async () => { order.push('classic'); return true; },
+    });
+    t('伴生先于 ESM 加载（顺序反了 = 引擎缺零件，报错离这步很远）',
+      order.join(',') === 'classic,esm', order.join(','));
+    t('伴生在的时候用运行时那份', r.source === 'runtime', r.source);
+
+    /* 伴生注入失败必须回退，不能带着缺零件的引擎继续 */
+    rt.__clearDepDecisions();
+    const r2 = await rt.requireDep(ctx, '@plantuml/core', {
+      fallback: async () => ({ tag: 'bundle' }),
+      importModule: async () => ({ renderToString() {} }),
+      loadClassic: async () => { throw new Error('viz 404'); },
+    });
+    t('伴生加载失败回退打包版（不带缺零件的引擎继续）',
+      r2.source === 'bundle' && /伴生/.test(r2.error), r2.source + ' | ' + r2.error);
+  }
+
+  /*
+   * 原子性：所有下载都完成后才允许落盘。
+   * 边下边写的话，伴生下载失败会留下"主体在、伴生不在"的半装状态 ——
+   * 界面显示已安装，插件加载才发现缺零件，而且用户没法重试（重装先看到已安装）。
+   */
+  {
+    const lastFetch = rsInstall.lastIndexOf('fetch_text(');
+    const firstWrite = rsInstall.indexOf('fs::write(');
+    t('后端先下完所有文件再落盘（不留半装状态）',
+      lastFetch >= 0 && firstWrite > lastFetch, `fetch@${lastFetch} write@${firstWrite}`);
+    t('后端伴生下载失败时明说未落盘、可重试', /未落盘，可重试/.test(rsInstall));
+  }
+
+  /* 重试：CDN 会偶发 502（实测同一个地址时好时坏） */
+  {
+    /*
+     * 必须断言**循环真的用了**这个常量。
+     * 只查 `const FETCH_ATTEMPTS` 存在不够：把循环改成 `0..1` 常量照样在，
+     * 于是"取消重试"这种改动一点不红（本轮 D1 实测就是这么 MISS 的）。
+     */
+    t('后端真的按重试次数循环（不是只定义了个常量）',
+      /for _ in 0\.\.FETCH_ATTEMPTS/.test(rsText));
+    t('后端区分瞬时失败与永久失败', /fn is_transient/.test(rsText));
+    t('只对 5xx 与连接失败重试（4xx 重试多少次都一样）',
+      /starts_with\("HTTP 5"\)/.test(rsText) && !/starts_with\("HTTP 4"\)/.test(rsText));
+    t('非瞬时失败直接返回，不空跑重试', /if !is_transient\(&e\)/.test(rsText));
+  }
+}
+
+/* ---------- ⑩ CSP：运行时依赖靠 asset 协议加载 ---------- */
+
+/*
+ * 装在工具内部的包落在应用数据目录 deps/ 下，js/runtime-deps.js 用
+ * convertFileSrc 转成 asset 协议后**动态 import()**。
+ * 按 CSP 规范动态 import 受 script-src 管辖，而 'self' 只等于页面自己的源
+ * （tauri.localhost），**不匹配** asset.localhost。
+ *
+ * 少了这两项的表现极其隐蔽：requireDep 的设计是"运行时那份 import 失败就
+ * 回退到打包版"，于是装完界面显示「已安装」、渲染也正常，但用的始终旧的
+ * 那份 —— 不报错、不降级，只是「一键换版本」从头到尾没生效。
+ */
+const CSP_ASSET = ['asset:', 'http://asset.localhost'];
+
+/**
+ * 从 `script-src 'self' ...;` 整串里切出**某一条**指令。
+ *
+ * ⚠️ 必须按指令切段，不能用 `csp.includes('asset:')`：
+ * img-src 与 media-src **一直**带着 asset，那样写恒为真 ——
+ * 把 script-src 里的 asset 删干净照样全绿。这是本项目反复出现的
+ * "查存在性、不查那一处"的假绿（command-consistency / md-service 都栽过）。
+ */
+function directiveOf(csp, name) {
+  const seg = String(csp).split(';').map((s) => s.trim())
+    .find((s) => s === name || s.startsWith(`${name} `));
+  return seg || '';
+}
+
+/** 从 BASE_CSP 的 JS 字面量里切出某条指令的数组内容 */
+function baseDirectiveOf(src, name) {
+  const m = src.match(new RegExp(`['"]?${name}['"]?:\\s*\\[([^\\]]*)\\]`));
+  return m ? m[1] : '';
+}
+
+const cfgSrc = read('config/nexus.config.mjs');
+const baseScript = baseDirectiveOf(cfgSrc, 'script-src');
+t('BASE_CSP 的 script-src 放行 asset 协议',
+  baseScript.length > 0 && CSP_ASSET.every((a) => baseScript.includes(a)),
+  `script-src = [${baseScript}]`);
+/*
+ * 反向自测：判据本身不能是恒真的。
+ * 直接查整个文件里有没有 asset: —— img-src/media-src 一直有，恒真。
+ * 断言"这个恒真写法确实存在"没意义；要紧的是上面那条用的是切段后的结果，
+ * 所以这里钉住"切出来的 script-src 段里没有 asset 就是红"（见破坏验证）。
+ */
+t('script-src 段的判据不是恒真（img-src 段确实不含 unsafe-eval 可证切段有效）',
+  baseDirectiveOf(cfgSrc, 'img-src').includes('data:') &&
+  !baseDirectiveOf(cfgSrc, 'img-src').includes('unsafe-eval'));
+
+/* 两份 tauri 配置 + 两个入口 HTML：改一处忘一处，CSP 只在一侧生效 */
+for (const f of ['src-tauri/tauri.conf.json', 'src-tauri/tauri.vite.conf.json']) {
+  const txt = read(f);
+  const csps = [...txt.matchAll(/"(?:dev)?csp":\s*"([^"]+)"/g)].map((m) => m[1]);
+  t(`${f} 的 csp/devCsp 至少有一条`, csps.length > 0);
+  for (const csp of csps) {
+    const seg = directiveOf(csp, 'script-src');
+    t(`${f} 的 script-src 放行 asset 协议`,
+      seg.length > 0 && CSP_ASSET.every((a) => seg.includes(a)), seg);
+  }
+}
+for (const f of ['index.html', 'index.react.html']) {
+  const txt = read(f);
+  const m = txt.match(/content="([^"]*script-src[^"]*)"/);
+  const seg = m ? directiveOf(m[1], 'script-src') : '';
+  t(`${f} 的 CSP meta 放行 asset 协议`,
+    seg.length > 0 && CSP_ASSET.every((a) => seg.includes(a)), seg);
+}
+
+/*
+ * 反向边界：js/external-policy.js 那套是**外部**插件的 CSP，
+ * 刻意**不给** asset —— 外部插件不该读应用数据目录。
+ * 有人为了"两边统一"把它补上，就等于把 deps/ 暴露给外部插件。
+ */
+const extSrc = read('js/external-policy.js');
+const extSeg = (extSrc.match(/script-src\s+([^;`]+)/) || [, ''])[1];
+t('外部插件的 CSP 不放行 asset（有意的安全边界，不要照 BASE_CSP 补）',
+  extSeg.length > 0 && CSP_ASSET.every((a) => !extSeg.includes(a)), extSeg);
 
 console.log(`\n运行时依赖：${pass} 通过 / ${fails.length} 失败`);
 for (const f of fails) console.log('  ✗ ' + f);

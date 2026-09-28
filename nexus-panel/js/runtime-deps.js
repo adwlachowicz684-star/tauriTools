@@ -171,10 +171,71 @@ export function pinnedVersionOf(version) {
  * pinnedVersionOf().ok**，别拿这个退化结果去装 —— 见 installRuntimeDep。
  */
 export function entryUrlOf(name, version) {
+  /*
+   * 需要伴生的包取**原始 ESM 文件**，不走 `+esm`。
+   * 理由见 RT_CLASSIC：这类包的主体本身就是 ESM，重打包是多余的一次失败面；
+   * 而它的伴生必须保持经典脚本形态，两者得走同一套地址规则。
+   */
+  const spec = classicSpecOf(name);
+  if (spec) return rawUrlOf(name, version, spec.esm);
   const pin = pinnedVersionOf(version);
   const v = pin.ok ? pin.version : '';
   const pkg = v ? `${String(name || '')}@${v}` : String(name || '');
   return `${RT_DEP_CDN}/${pkg}/+esm`;
+}
+
+/**
+ * 需要「经典脚本伴生」的包 —— 包名 → 包内**原始文件名**。
+ *
+ * 【为什么要单独一张表】
+ * 这些包的 ESM 主体自己跑不起来：它依赖一个**不是 ES module** 的文件，
+ * 那文件在全局挂变量，必须以普通 `<script>` 加载，且**必须先于** ESM import。
+ * 只装主体，插件拿到的是个缺零件的引擎，报错也指不到"少装了伴生"。
+ *
+ * 【已实测（1.2026.8）】
+ *   · plantuml.js   —— 末尾 `export{C as render,D as renderToString}`，
+ *                      且**没有任何 import 语句** → 自洽 ESM，直接用原始文件
+ *   · viz-global.js —— 全文没有顶层 `export{}`，是 UMD/经典脚本，
+ *                      挂全局 Viz 给 plantuml.js 用 → 必须 <script> 加载
+ *
+ * 【为什么这两个都取原始文件，不走 `+esm`】
+ * 主体本来就是 ESM，转不转都一样（还多一次 3.9MB 的重打包，失败面更大）；
+ * 伴生**不能**转 —— 转成 ESM 后"挂全局"这个动作就不发生了，
+ * 表现为下载成功、引擎却依旧找不到 Viz。
+ *
+ * 【为什么这里写的是包内文件名，而不是完整 URL】
+ * URL 由 classicUrlOf 拼，基址与版本规则只有一处（entryUrlOf 那套）。
+ * 各写一份完整 URL 就又是一处命名/地址漂移。
+ */
+export const RT_CLASSIC = {
+  '@plantuml/core': { esm: 'plantuml.js', classic: 'viz-global.js' },
+};
+
+/** 需要伴生的包名。 */
+export function classicSpecOf(name) {
+  return RT_CLASSIC[String(name || '')] || null;
+}
+
+/** 伴生在 CDN 上的地址。不需要伴生的包返回 null。 */
+export function classicUrlOf(name, version) {
+  const spec = classicSpecOf(name);
+  if (!spec) return null;
+  return rawUrlOf(name, version, spec.classic);
+}
+
+/** 包内某个原始文件在 CDN 上的地址（不带 `+esm`）。 */
+export function rawUrlOf(name, version, rel) {
+  const pin = pinnedVersionOf(version);
+  const v = pin.ok ? pin.version : '';
+  const pkg = v ? `${String(name || '')}@${v}` : String(name || '');
+  return `${RT_DEP_CDN}/${pkg}/${rel}`;
+}
+
+/** classic 伴生在 deps 目录里的文件名 —— 与 Rust 侧 classic_file_of 必须一致。 */
+export function classicFileOf(name, version) {
+  const n = safeNameOf(name);
+  const v = normVersion(version);
+  return `${n}@${v || 'latest'}.classic.js`;
 }
 
 /**
@@ -228,12 +289,13 @@ export function specOf(install) {
  *     → 它靠 window.__TAURI_INTERNALS__ 与宿主 Rust 侧通信，版本必须
  *       和 Cargo 侧一致。装一份外部版本 = 能 import、但所有调用静默失败。
  *
- *   · @plantuml/core
- *     → 必须先注入 viz-global.js（classic script）再 import ESM，
- *       单文件装进去也用不了；且 ≤1.2026.5 是 GPL-3.0，不能随手换版本。
  *
- * 这不是保守：这六条里**每一条的失败都不指向这里**，是本项目最难归因的
+ * 这不是保守：这五条里**每一条的失败都不指向这里**，是本项目最难归因的
  * 那一类。宁可不给按钮，也不能让人踩进去。
+ *
+ * 注：@plantuml/core **曾经**在这里。它是"ESM 主体 + 经典脚本伴生"的典型，
+ * 之前单文件方案确实装不了 —— 现在伴生机制有了（见 RT_CLASSIC），
+ * 所以它已从本名单移除。移除的依据是实测过两个文件的形态，不是推测。
  *
  * 【为什么是显式名单而不是自动推断依赖树】
  * 判断"某个包依赖 react"需要读子包的 package.json —— 打包产物里没有
@@ -252,8 +314,6 @@ export const RT_BLOCKED = {
     '同上：单文件里自带一份 react，与宿主那份并存即冲突。',
   '@tauri-apps/api':
     '它靠 window.__TAURI_INTERNALS__ 与宿主 Rust 侧通信，版本必须和 Cargo 侧一致。装一份外部版本会"能 import、但所有调用静默失败"。',
-  '@plantuml/core':
-    '它必须先注入 viz-global.js（classic script）再 import ESM，单文件装进去也用不了；且 ≤1.2026.5 是 GPL-3.0，不能随手换版本。',
 };
 
 /**
@@ -422,6 +482,12 @@ export async function installRuntimeDep(ctx, item, opts = {}) {
     version: pin.version,
     url: entryUrlOf(spec.name, pin.version),
     file: safeFileOf(spec.name, pin.version),
+    /*
+     * 伴生地址不需要时必须是**显式 null**，不能省略这个字段。
+     * 省略会让后端收到 undefined → 有些桥接层会把它当成"没传"，
+     * 于是伴生不下载也不报错：装完显示成功，插件加载才发现缺零件。
+     */
+    classicUrl: classicUrlOf(spec.name, pin.version),
   });
 
   if (r && r.__missing) return { ok: false, error: RT_ERR.noCmd, missing: true };
@@ -572,10 +638,16 @@ export function toAssetUrl(ctx, path) {
   return `http://asset.localhost/${p.replace(/^\/+/, '')}`;
 }
 
-/** 从已装列表里找某一条的文件路径。 */
-export async function resolveRuntimeDepPath(ctx, name, version) {
+/** 从已装列表里找某一条（返回整条，含伴生信息）。 */
+export async function resolveRuntimeDep(ctx, name, version) {
   const { list } = await listRuntimeDeps(ctx);
   const hit = list.find((d) => d && d.name === name && (!version || d.version === version));
+  return hit || null;
+}
+
+/** 从已装列表里找某一条的文件路径。 */
+export async function resolveRuntimeDepPath(ctx, name, version) {
+  const hit = await resolveRuntimeDep(ctx, name, version);
   return hit ? hit.path || hit.file : '';
 }
 
@@ -629,7 +701,11 @@ export async function requireDep(ctx, name, opts = {}) {
 }
 
 async function decideDep(ctx, name, version, opts) {
-  const { fallback = null, importModule = defaultImporter } = opts;
+  const {
+    fallback = null,
+    importModule = defaultImporter,
+    loadClassic = defaultClassicLoader,
+  } = opts;
 
   /*
    * 这里**故意不写 try/catch**。
@@ -643,9 +719,33 @@ async function decideDep(ctx, name, version, opts) {
    * 看起来是兜底，实际是死代码，还会让人以为失败在这里被处理了，
    * 从而忽略上游那处真正的行为（见 runtime-deps-test 第 7 组第 ④ 条）。
    */
-  const installed = await resolveRuntimeDepPath(ctx, name, version);
+  const hit = await resolveRuntimeDep(ctx, name, version);
+  const installed = hit ? hit.path || hit.file : '';
 
   if (installed) {
+    /*
+     * 伴生（经典脚本）必须**先于** ESM import 注入。
+     *
+     * 顺序反了的表现不是"报错说顺序错了"，而是引擎加载成功、一渲染就
+     * 报"找不到 Viz" —— 报错离这一步很远，而且看起来像图本身写错了。
+     *
+     * 只对**确实声明了伴生**的包做这件事：给任意包装一个经典脚本，
+     * 等于允许一段未经审查的脚本在宿主上下文里执行。
+     */
+    if (hit && hit.classicFile && classicSpecOf(name)) {
+      try {
+        await loadClassic(toAssetUrl(ctx, classicPathOf(hit)));
+      } catch (e) {
+        /*
+         * 伴生注入失败 = 这份运行时依赖不完整，直接回退打包版。
+         * 不能带着"缺零件的引擎"继续 —— 那会渲染到一半才失败。
+         */
+        const msg = `伴生脚本加载失败: ${String((e && e.message) || e)}`;
+        if (!fallback) return { mod: null, source: 'none', error: msg };
+        return { mod: await fallback(), source: 'bundle', error: msg };
+      }
+    }
+
     const url = toAssetUrl(ctx, installed);
     try {
       const mod = await importModule(url);
@@ -669,6 +769,45 @@ async function decideDep(ctx, name, version, opts) {
 
 function defaultImporter(url) {
   return import(/* @vite-ignore */ url);
+}
+
+/**
+ * 伴生文件在磁盘上的完整路径。
+ *
+ * 优先用后端 list 给的 classicFile（那是从磁盘事实得出的），
+ * 没有才按规则拼 —— 与 remove 必须用 list 给的 file 是同一个道理：
+ * 自己拼出来的是"应该叫什么"，list 给的是"实际叫什么"。
+ */
+export function classicPathOf(hit) {
+  if (!hit) return '';
+  if (hit.classicPath) return hit.classicPath;
+  const base = hit.path || hit.file || '';
+  if (hit.classicFile && base) {
+    const idx = base.lastIndexOf(hit.file || '');
+    if (idx >= 0) return base.slice(0, idx) + hit.classicFile;
+  }
+  return classicFileOf(hit.name, hit.version);
+}
+
+/**
+ * 以普通 <script> 注入一个地址。
+ *
+ * async=false 是必须的：默认的 async 会在 DOM 上乱序执行，
+ * 而这里的语义就是"必须先执行完再往下走"。
+ */
+function defaultClassicLoader(url) {
+  return new Promise((resolve, reject) => {
+    if (typeof document === 'undefined') {
+      reject(new Error('当前环境没有 document，无法注入经典脚本'));
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = url;
+    s.async = false;
+    s.onload = () => resolve(true);
+    s.onerror = () => reject(new Error('伴生脚本加载失败'));
+    document.head.appendChild(s);
+  });
 }
 
 /** 仅供测试：清掉决策缓存。 */

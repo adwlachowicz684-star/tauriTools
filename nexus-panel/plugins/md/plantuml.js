@@ -167,6 +167,7 @@ export const PUML_BOX_CLASS = 'md-puml-box';
 export async function loadPlantUML(opts = {}) {
   const {
     vizUrl,
+    mod: givenMod = null,
     loadScript = defaultLoadScript,
     importModule = defaultImportModule,
   } = opts;
@@ -176,6 +177,21 @@ export async function loadPlantUML(opts = {}) {
    * 在模块里写死相对路径是错的：构建后目录结构变了，
    * 相对路径指到一个不存在的文件 —— 404 且错误信息指不到这里。
    */
+  /*
+   * 已经拿到引擎模块（运行时依赖那条路，伴生脚本在 requireDep 里就注入好了）
+   * 就**直接返回**，不要再走 vizUrl + import。
+   *
+   * 再走一遍的下场：viz-global 被执行两次，全局布局器状态被重置两次 ——
+   * 表现为某几张图的布局是错的，而报错指不到"多加载了一次"。
+   */
+  if (givenMod) {
+    if (typeof givenMod.renderToString !== 'function') {
+      throw new Error('PlantUML 引擎加载失败：传入的模块未导出 renderToString');
+    }
+    globalThis.__nexusVizLoaded = true;
+    return givenMod;
+  }
+
   if (!vizUrl) throw new Error('loadPlantUML 缺少 vizUrl');
 
   if (!globalThis.__nexusVizLoaded) {
