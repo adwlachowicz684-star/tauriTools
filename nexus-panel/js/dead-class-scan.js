@@ -212,8 +212,20 @@ export function collectUsedClasses(src) {
       if (name && /^[A-Za-z_-][\w-]*$/.test(name)) out.add(name);
     }
   }
-  // 4: classList.add('x') / toggle / remove / contains
-  for (const m of src.matchAll(/classList\.(?:add|toggle|remove|contains)\s*\(\s*['"`]([^'"`]+)['"`]/g)) {
+  /*
+   * 4: classList.add('x') / toggle / remove / contains
+   *
+   * ⚠️ 方法访问必须接受**可选链**写法（`classList?.add`）。
+   * 实测（2026-09-29）：host.js 里 `iframe?.classList?.add('revealed')`
+   * 是插件 iframe 摘遮罩的唯一入口，而原正则只认 `classList.`，
+   * 于是 `revealed` 被判成"全仓 0 引用"。
+   *
+   * 后果是双向的，且都很隐蔽：
+   *   · A 维漏报 —— 真把 .revealed 的样式删了也不报红，
+   *     表现是插件 iframe 永远隐身（遮罩摘不掉），不报错、难归因；
+   *   · D 维误报 —— 它在用却被列进"真废弃"候选，诱导人去删。
+   */
+  for (const m of src.matchAll(/classList\??\.(?:add|toggle|remove|contains)\s*\(\s*['"`]([^'"`]+)['"`]/g)) {
     for (const tok of m[1].split(/\s+/)) {
       const name = tok.trim();
       if (name && /^[A-Za-z_-][\w-]*$/.test(name)) out.add(name);
