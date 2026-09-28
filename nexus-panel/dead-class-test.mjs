@@ -101,6 +101,17 @@ console.log('=== 1. 扫描器自身：必须分得清真假 ===');
     collectUsedClasses("className={`fpx-link-arrow${x ? ' open' : ''}`}").has('open'));
   t('hyperscript', collectUsedClasses("h('div.mm-foo.bar', x)").has('mm-foo'));
   t('classList.add', collectUsedClasses("el.classList.add('is-on')").has('is-on'));
+  /*
+   * ⚠️ 可选链写法必须认 —— host.js 摘插件 iframe 遮罩的唯一入口就是
+   * `iframe?.classList?.add('revealed')`。认不出时 revealed 被判成
+   * "全仓 0 引用"：真把 .revealed 样式删了也不报红（插件永远隐身、
+   * 不报错），同时它还会混进"真废弃"候选诱导人去删。
+   */
+  t('classList?.add（可选链）同样要取',
+    collectUsedClasses("iframe?.classList?.add('revealed')").has('revealed'));
+  t('classList?.toggle / ?.remove 同样要取',
+    collectUsedClasses("x?.classList?.toggle('revealed', on)").has('revealed')
+    && collectUsedClasses("x?.classList?.remove('revealed')").has('revealed'));
   t('属性访问不误取', !collectUsedClasses('a.map(x => x.length)').has('map'));
   t('拼接前缀 level- 不误取',
     !collectUsedClasses('className={`node-dot level-${x}`}').has('level-'));
