@@ -216,6 +216,21 @@ bootIframePlugin(async (ctx) => {
   function syncCanvasInset() {
     const filesEl = fileList && fileList.el;
     if (!filesEl) return;
+    /*
+     * 先把浮层的**左**边缘钉到画布左边缘，再去量它的右边缘。
+     *
+     * 它是 .mm-body 的绝对定位子项，而 .mm-body 的最左边是图标条
+     * （📚 / ⌖ / 展开层级）。CSS 里只给了 top/bottom 没给 left，静态位置
+     * 于是落在 body 内容起点 —— 展开后整条图标条被盖在下面：
+     * 实测 elementFromPoint 打在 📚 上命中的是面板标题，而 📚 正是**收起
+     * 文件列表**那颗按钮，等于打开了就点不回去（BUG 65）。
+     *
+     * 用 offsetLeft（相对同一个 offsetParent=.mm-body）而不是写死像素：
+     * 图标条宽度随按钮增减变化，写死就会错开。
+     */
+    try {
+      filesEl.style.left = `${Math.max(0, Math.round(canvasEl.offsetLeft))}px`;
+    } catch { /* 量不到就沿用 CSS 默认，不至于让面板消失 */ }
     let visible = false;
     try { visible = getComputedStyle(filesEl).display !== 'none'; } catch { return; }
     if (!visible) { canvasFrameEl.style.left = ''; return; }
@@ -2926,6 +2941,13 @@ async function gcOrphanAssets(quiet = false) {
   syncCanvasInset();
   captureShellErrors();
   buildRail();
+  /*
+   * 图标条建好之后**必须再同步一次**：syncCanvasInset 是按 canvasEl.offsetLeft
+   * 实测浮层左边缘的，而 buildRail() 会往图标条里塞按钮、把画布整体往右推。
+   * 上面那次同步发生在 buildRail() 之前，量到的是"空图标条"的宽度 ——
+   * 若上次会话文件库是展开的，浮层就会偏左、压住半条图标条（BUG 65）。
+   */
+  syncCanvasInset();
   renderTabs();
   renderFiles();
 

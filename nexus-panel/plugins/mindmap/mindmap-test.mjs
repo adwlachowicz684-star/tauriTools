@@ -7999,11 +7999,17 @@ group('文件库展开导致画布内容位移：按实测屏幕位置差补偿'
     'rootScreenX 取不到时返回 null（不是 0）');
   ok(!/rootScreenX/.test(wsrSeg), '补偿链路不依赖 rootScreenX（iframe 内测不到容器位移）');
 
-  // ---- 4) 几何账：216 = flex-basis 186 + padding 10×2 + gap 10 ----
+  // ---- 4) 几何账 ----
+  //
+  // ⚠️ 这一条曾钉成 `flex: 0 0 186px`（挤窄画布方案），而实现早已改成
+  //    浮层（absolute + width）。**改实现前先读这段注释** —— 断言过期
+  //    会把正确的实现判成错，逼着人去"修"一个没坏的东西。
+  //    浮层方案下画布尺寸恒定，几何账只剩"面板自身宽度"。
   {
     const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
     const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
-    ok(/flex:\s*0 0 186px/.test(filesBlk), '.mm-files flex-basis 186');
+    ok(/width:\s*186px/.test(filesBlk), '.mm-files 宽 186px（浮层，不再是 flex 子项）');
+    ok(/position:\s*absolute/.test(filesBlk), '.mm-files 是浮层（不参与挤压、画布尺寸不变）');
     ok(/padding:\s*10px/.test(filesBlk), '.mm-files padding 10（左右合计 20）');
     const bodyBlk = css.slice(css.indexOf('.mm-body {'), css.indexOf('.mm-body {') + 200);
     ok(/gap:\s*10px/.test(bodyBlk), '.mm-body gap 10');
@@ -12032,6 +12038,70 @@ group('BUG 61 · 主题的新建 / 导入 / 删除，写盘失败都必须回滚
     return j < 0 ? '' : ob.slice(j, i);
   })();
   ok(/askConfirm/.test(restoreSeg), '恢复快照：仍走 askConfirm（与清空对称）');
+}
+
+
+/* ============================================================
+   BUG 65 · 文件库浮层压住整条左侧图标条（含「收起」那颗 📚）
+   ============================================================ */
+
+group('BUG 65 · 文件库浮层的左边缘必须钉在画布上，不能盖住图标条');
+{
+  const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+
+  /*
+   * 实测（真实 Chrome + 真实 styles.css，复制 .mm-body 骨架）：
+   *
+   *   rail 0..46 │ canvas 56..890 │ .mm-files 绝对定位、CSS 只给了 top/bottom
+   *
+   *   不显式给 left 时静态位置落在 .mm-body 内容起点 → 浮层占据 0..206，
+   *   整条 rail 被盖在下面：elementFromPoint 打在 📚 上命中的是面板标题
+   *   （.mm-files-title），而 📚 正是**收起文件列表**那颗按钮 ——
+   *   打开了就点不回去，⌖ 聚焦和「展开层级」也一起够不着。
+   *
+   *   给 left = canvasEl.offsetLeft 后：浮层 56..262、假框 left=206，
+   *   elementFromPoint 重新命中按钮本身。
+   */
+  const fnSeg = ix.slice(ix.indexOf('function syncCanvasInset() {'),
+    ix.indexOf('/**', ix.indexOf('function syncCanvasInset() {')));
+  ok(fnSeg.length > 0, '能定位 syncCanvasInset 函数体');
+
+  // 1) 必须真的给浮层写 left —— 只改 CSS 或只改 DOM 父级都守不住：
+  //    图标条宽度随按钮增减变化，写死像素会错开，故用实测的 offsetLeft。
+  ok(/filesEl\.style\.left\s*=/.test(fnSeg),
+    'syncCanvasInset 实测写入浮层的 left（不是靠 CSS 静态位置）');
+  ok(/canvasEl\.offsetLeft/.test(fnSeg),
+    '用 canvasEl.offsetLeft 取画布左边缘（同一个 offsetParent，随图标条宽度自适应）');
+
+  // 2) 顺序：先钉左边缘，再量右边缘。
+  //    反过来的话量到的是旧的（偏左的）rect，假框会跟着偏。
+  const iSetLeft = fnSeg.indexOf('filesEl.style.left');
+  ok(iSetLeft > 0, '函数里有写 left 这一步');
+  ok(/getBoundingClientRect/.test(fnSeg.slice(iSetLeft)),
+    '写 left 在量 rect 之前（先钉左边缘再量右边缘）');
+  ok(/canvasFrameEl\.style\.left\s*=\s*''/.test(fnSeg),
+    '浮层不可见时假框回到全宽（left 置空）');
+
+  // 3) 图标条建好之后必须**再同步一次**。
+  //
+  //    初始化顺序是 setLayoutHook → showFiles → syncCanvasInset → buildRail：
+  //    buildRail() 往 rail 里塞按钮会把画布整体往右推，而那次同步发生在
+  //    它之前、量到的是"空图标条"的宽度。上次会话文件库是展开状态时，
+  //    浮层就会偏左压住半条图标条 —— 这是"只修了函数、没修调用时机"。
+  // 两个下标都必须从 setLayoutHook 之后开始找 —— 直接 indexOf('renderTabs();')
+  // 会命中文件里更早的那一处（页签重建那条路径），切出来的 initSeg 是空串，
+  // 于是两条断言**恒为假**（不是实现错了，是切片错了）。
+  const iHook = ix.indexOf('fileList.setLayoutHook(syncCanvasInset)');
+  const initSeg = ix.slice(iHook, ix.indexOf('renderTabs();', iHook));
+  const iRail = initSeg.indexOf('buildRail();');
+  const iSync = initSeg.lastIndexOf('syncCanvasInset();');
+  ok(iRail > 0, '初始化段里有 buildRail()');
+  ok(iSync > iRail, 'buildRail() 之后还有一次 syncCanvasInset()（图标条宽度变了要重测）');
+
+  // 4) CSS 侧：浮层必须仍是浮层（别为了修这个把方案退回"挤窄画布"）
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+  const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
+  ok(/position:\s*absolute/.test(filesBlk), '.mm-files 仍是浮层（画布尺寸不随开合变化）');
 }
 
 
