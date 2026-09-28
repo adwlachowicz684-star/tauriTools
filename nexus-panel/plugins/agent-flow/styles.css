@@ -1040,7 +1040,15 @@ textarea.p-input { height: auto; resize: vertical; line-height: var(--lh-normal,
    弹窗现在统一用 js/dialog.js + css/dialog.css（.nx-mask / .nx-dlg）。
    留着只会让人误以为还有另一套弹窗可以改。 */
 
+/* [幽灵规则 styles.css:1043] .add-row
+   全仓代码 0 处引用（已排除模板拼接类、外部库类、修饰类、类名查表写法）。
+   实际在用的是 .upd-add-row（components/inspectors/UpdateInspector.tsx:280），
+   判定为改名后遗留的旧类名。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .add-row { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; margin-bottom: 14px; }
+*/
 .kind-btn {
   display: inline-flex; align-items: center; gap: var(--sp-3);
   background: var(--af-raised); border: 1px solid var(--af-line); color: var(--af-fg);
@@ -1048,14 +1056,31 @@ textarea.p-input { height: auto; resize: vertical; line-height: var(--lh-normal,
   box-shadow: var(--ctl-shadow);}
 .kind-btn:hover:not(:disabled) { border-color: var(--af-accent); }
 .kind-btn:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
+/* [幽灵规则 styles.css:1051] .kind-icon
+   全仓代码 0 处引用。实际在用的是 .trig-kind-icon
+   （components/TriggerNode.tsx:156），判定为改名后遗留的旧类名。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .kind-icon { font-size: var(--fs-14, 14px); }
+*/
+
+/* [幽灵规则 styles.css:1053] .trg（整族：.trg / .trg.off / .trg.editing）
+   全仓代码 0 处引用。实际在用的是 .trg-btn-static（App.tsx:2934），
+   而 .trg-head / .trg-icon / .trg-name / .trg-kind / .trg-meta 此前已同样停用，
+   整族判定为旧触发器 UI 的残留。
+   ⚠️ .trg.off / .trg.editing 的 off / editing 本身在别处仍被使用，
+      这两个**复合**规则随 .trg 一起失效，别单独恢复。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
 
 .trg {
   border: 1px solid var(--af-line); border-radius: 10px;
   padding: 10px 12px; margin-bottom: 10px; background: var(--af-sunk);
 }
 .trg.off { opacity: .55; }
-.trg.editing { border-color: var(--af-accent); }/* [幽灵规则 styles.css:1040] .trg-head
+.trg.editing { border-color: var(--af-accent); }
+*//* [幽灵规则 styles.css:1040] .trg-head
    全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
    暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
 /*
@@ -1163,7 +1188,16 @@ button.mini:hover:not(:disabled) { border-color: var(--af-accent); }
 button.mini:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 button.mini.danger:hover { border-color: var(--af-bad); color: var(--af-t-err2); }
 
-/* 开关 */
+/* [幽灵规则 styles.css:1165] 开关整族：.switch / .switch .slider
+   全仓代码 0 处引用。项目里的开关实际都用带前缀的类名
+   （.mcp-switch / .insp-switch / .view-switch / .task-view-switch /
+     .cond-logic-switch / .nx-toggle 等），裸 .switch 与它的 .slider 子元素
+   是早期手写开关的残留。
+   ⚠️ .slider 只作为 .switch 的子元素出现，随 .switch 一起停用，
+      别单独恢复（单独恢复仍然不会有元素挂上它）。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .switch { position: relative; width: 34px; height: 18px; flex: none; }
 .switch input { opacity: 0; width: 0; height: 0; }
 .switch .slider {
@@ -1176,6 +1210,7 @@ button.mini.danger:hover { border-color: var(--af-bad); color: var(--af-t-err2);
 }
 .switch input:checked + .slider { background: var(--af-accent); }
 .switch input:checked + .slider::before { transform: translateX(16px); }
+*/
 
 .dim { color: var(--af-dim); font-size: var(--fs-note, 11px); }
 
@@ -1527,7 +1562,13 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   color: #fecaca; background: #2a1414; border-color: #5a2020;
 }
 
-/* 节点库副标题：列出该节点可选的具体类型 */
+/* [幽灵规则 styles.css:1531] .side-sub
+   全仓代码 0 处引用。空态已统一用 .side-empty ——
+   tests/classNames.test.ts 里还有一条断言专门禁止再拿 .side-sub 当空态
+   （"不该再用 .side-sub 当空态"），所以它不是"尚未启用"，是"已弃用"。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .side-sub {
   margin: -2px 0 2px 22px;
   font-size: var(--fs-note, 11px);
@@ -1535,6 +1576,7 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   color: var(--af-soft);
   word-break: break-all;
 }
+*/
 
 /* ---------------- 触发器：一个节点多种方式 ---------------- */
 
@@ -2097,9 +2139,15 @@ input.mono, textarea.mono {
   font-family: var(--af-mono); font-size: var(--fs-code, 11px);
 }
 
-/* API Key 行：输入框 + 显示/隐藏按钮 */
+/* [幽灵规则 styles.css:2101] .key-row（含 .key-row input）
+   全仓代码 0 处引用 —— 连"曾经用过"的痕迹都没有（grep 结果为 0，
+   不是改名残留）。判定为写了就没接上的规则。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .key-row { display: flex; gap: 5px; align-items: center; }
 .key-row input { flex: 1; min-width: 0; }
+*/
 
 /* ------------------------------------------------------------------ */
 /* 补漏：下面几个 class 此前只在 TSX 里用了，CSS 里没定义，
@@ -2197,8 +2245,17 @@ input.mono, textarea.mono {
 
 .task-count {
   font-variant-numeric: tabular-nums; font-size: var(--fs-micro, 10px); color: var(--af-mute); margin-right: auto; }
+/* [幽灵规则 styles.css:2200] .task-item（含 .task-item.is-active）
+   全仓代码 0 处引用。实际在用的是 .task-item-top / .task-item-meta
+   （HistoryPanel.tsx:172 / TaskPanel.tsx:189），容器本身没有挂 .task-item，
+   所以"整行内边距 + 底部分隔线 + 选中底色"这套容器样式从来没生效过。
+   ⚠️ 若要恢复，应优先给容器补挂 class="task-item"，而不是只解注释。
+   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
+/*
+
 .task-item { padding: 9px 12px; border-bottom: 1px solid var(--af-divider); cursor: pointer; }
 .task-item.is-active { background: var(--af-item); }
+*/
 .task-item-top { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
 .task-name { font-size: var(--fs-body, 12px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-pill { font-size: var(--fs-micro, 10px); padding: 1px 7px; border-radius: var(--r-pill, 999px); flex: none;

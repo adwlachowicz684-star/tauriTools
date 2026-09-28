@@ -2281,6 +2281,22 @@
                         }
                     });
                 } catch (e) {}
+                /*
+                 * 把计数器抬到画布里已有组号之上。
+                 *
+                 * _boundarySeq 只在"新加外框"时 ++，从不读回画布里现存的 gid。
+                 * 于是打开一份已带 bg1 的画布、再给别的节点加外框 → 新组也拿到
+                 * bg1，_groupNodes.set 把第一组的数组整个顶掉，画布上只剩 1 个框。
+                 *
+                 * 用 `>` 而不是 `=`：删掉一个外框后 maxSeq 会变小，直接赋值会让
+                 * 序号**回退**，下次新建又发出一个仍在使用的组号。
+                 */
+                var maxSeq = 0;
+                Object.keys(groups).forEach(function (gid) {
+                    var m = /^bg(\d+)$/.exec(gid);
+                    if (m) maxSeq = Math.max(maxSeq, parseInt(m[1], 10) || 0);
+                });
+                if (maxSeq > _boundarySeq) _boundarySeq = maxSeq;
                 for (var g in groups) _groupNodes.set(g, groups[g]);
                 renderAllBoundaries();
             }

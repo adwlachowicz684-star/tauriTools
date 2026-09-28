@@ -465,6 +465,138 @@ export function walkFiles(root, exts) {
 }
 
 /**
+ * 类名在 CSS 里的**出现形态**：独立（`.foo`）还是修饰（`.父.foo`）。
+ *
+ * 返回 Map<类名, { solo: number, parents: Set<string> }>。
+ *
+ * 为什么要区分：像 `.nx-row.end`、`.task-bar-in.cancelled`、`.nx-btn.solid`
+ * 这类**只在复合选择器里出现**的类，本质是父类的状态修饰档，
+ * 命运跟着父类走 —— 父类在用，它就是"暂未使用的档位"；
+ * 父类是备用档位（nx-/p-/nm-/mm-），它同样是备用。
+ *
+ * 把它们当成独立幽灵规则去停用，等于把父类的一档悄悄删掉：
+ * 不报错、测试也不红，只有界面上某个状态不再有对应观感时才被发现。
+ *
+ * 实现上先把规则体去掉（只留选择器），再数每个选择器里有几个点类：
+ * 只有它自己 → 独立；还有别人 → 修饰，那些"别人"就是它的父类。
+ */
+export function analyzeClassForms({ root, cssFiles }) {
+  const forms = new Map();
+  const touch = (c) => {
+    if (!forms.has(c)) forms.set(c, { solo: 0, parents: new Set() });
+    return forms.get(c);
+  };
+  for (const f of cssFiles) {
+    const p = join(root, f);
+    if (!existsSync(p)) continue;
+    let txt = '';
+    try { txt = stripComments(readFileSync(p, 'utf-8')); } catch { continue; }
+    // 去掉规则体：只保留选择器部分，免得 `url(.png)` 之类被当成类名
+    const selOnly = txt.replace(/\{[^}]*\}/g, '|');
+    for (const sel of selOnly.split('|')) {
+      const cs = [...sel.matchAll(/\.([A-Za-z][\w-]*)/g)].map((m) => m[1]);
+      if (!cs.length) continue;
+      for (const c of cs) {
+        const e = touch(c);
+        if (cs.length === 1) e.solo += 1;
+        else for (const o of cs) if (o !== c) e.parents.add(o);
+      }
+    }
+  }
+  return forms;
+}
+
+/** 类的名字里带 cls / class（含驼峰变体，如 editCls / ARG_CLASS） */
+const CLASS_NISH = /cls|class/i;
+
+/**
+ * 收集**类名上下文**里的字符串字面量用到的类名。
+ *
+ * 针对的是这种写法（agent-flow 的 ArgCell.tsx 真实代码）：
+ *
+ *   const ARG_CLASS: Record<Role, string> = { val: 'node-arg', op: 'node-arg is-op', ... };
+ *   const editCls = isArea ? 'node-arg-area nodrag nopan' : 'node-arg-in nodrag nopan';
+ *   const cls = `${className}${edit ? ' is-editable' : ''}${part.key ? ' node-arg-port' : ''}`;
+ *
+ * 源码里没有 `class="node-arg"`，按 `class=`/`className=` 提取的扫描器
+ * 会把它们全判成"CSS 定义了、代码没用"。照着停用会**弄坏正在用的样式**
+ * （参数格子的下凹观感、多行参数框），且不报错。
+ *
+ * 更讽刺的是 ArgCell.tsx 里那段注释：作者**刻意**把 `role-${p.role}`
+ * 改成查表，就是为了让"类名必须先在 CSS 里定义"这条守卫能抓到拼错的
+ * 类名 —— 而反向守卫（本函数要解决的这一维）当时还不存在，
+ * 于是查表写法反而被判成死规则，**正好抵消了作者的用心**。
+ *
+ * 收窄口径（避免把普通字符串也当类名，实测裸字面量会误伤 27 处）：
+ *   1. 字面量所在行、或它所属的对象字面量，名字里得有 cls / class
+ *   2. 字面量得**整体**由类名形态的 token 构成（不含 `$ { }` 之外的怪字符）
+ *   3. 模板串先剥掉 `${...}` 再分词
+ */
+export function collectClassLiterals({ root, files }) {
+  const out = new Set();
+  const add = (s) => {
+    /*
+     * 模板串里的类名常常**躲在 `${...}` 内部**：
+     *   const cls = `${className}${edit ? ' is-editable' : ''}${part.key ? ' node-arg-port' : ''}`;
+     *
+     * ⚠️ 不能整段剥掉 `${...}` —— 那会把 ' node-arg-port' 一起剥没，
+     *    这条真在用的类名又被判成幽灵规则。
+     * ⚠️ 也不能直接在原串上按引号切 —— `${... : ''}` 里的空串会让引号
+     *    配对错位，实测 ' node-arg-port' 会被切进一段 `}${part.key ? ` 里，
+     *    因含 `}$` 被形态检查否掉。
+     *
+     * 所以只**摘掉 `${` 与 `}` 这两个定界符**保留内部文本，再按引号取串：
+     * 里面的 ' is-editable' / ' node-arg-port' 就都能正常取到了。
+     */
+    const str = String(s).replace(/\$\{/g, ' ').replace(/\}/g, ' ');
+    /*
+     * ⚠️ 引号内容允许**空串**（`{0,120}` 而不是 `{1,120}`）：
+     * `${edit ? ' is-editable' : ''}` 里的 `''` 如果不被单独吃掉，
+     * 引号配对就会整体错位一格 —— 实测 ' node-arg-port' 被切进
+     * `   part.key ? ` 这种含空格/点的片段里，形态检查否掉，于是漏收。
+     */
+    const quoted = [...str.matchAll(/'([^'\n]{0,120})'|"([^"\n]{0,120})"/g)]
+      .map((m) => m[1] ?? m[2] ?? '');
+    // 没有引号串时（裸模板段 `${cls} on`），整段按 token 处理
+    const parts = quoted.length ? quoted : [str];
+    for (const part of parts) {
+      const toks = part.trim().split(/\s+/).filter(Boolean);
+      // 一个类名最长 40 字符；整串超过 6 个 token 多半不是类名清单
+      if (!toks.length || toks.length > 6) continue;
+      if (!toks.every((t) => /^[A-Za-z][\w-]{0,40}$/.test(t))) continue;
+      for (const t of toks) out.add(t);
+    }
+  };
+  const LIT = /'([^'\n]{1,120})'|"([^"\n]{1,120})"|`([^`\n]{1,120})`/g;
+
+  for (const f of files) {
+    let txt = '';
+    try { txt = stripComments(readFileSync(f, 'utf-8')); } catch { continue; }
+    const lines = txt.split('\n');
+
+    // 名字含 cls/class 的**对象字面量**：值在后续若干行里
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(/([A-Za-z_$][\w$]*)\s*(?::[^=]*)?=\s*\{/);
+      if (!m || !CLASS_NISH.test(m[1])) continue;
+      const buf = [];
+      let depth = 0;
+      for (let j = i; j < lines.length && j < i + 200; j++) {
+        buf.push(lines[j]);
+        for (const ch of lines[j]) { if (ch === '{') depth++; else if (ch === '}') depth--; }
+        if (depth <= 0 && j > i) break;
+      }
+      for (const mm of buf.join('\n').matchAll(LIT)) add(mm[1] || mm[2] || mm[3] || '');
+    }
+    // 行内含 cls/class 标识符
+    for (const line of lines) {
+      if (!CLASS_NISH.test(line)) continue;
+      for (const mm of line.matchAll(LIT)) add(mm[1] || mm[2] || mm[3] || '');
+    }
+  }
+  return out;
+}
+
+/**
  * 主扫描。
  * @param {object} o
  * @param {string} o.root        仓库/插件根
@@ -547,10 +679,27 @@ export function scanDeadClasses({ root, cssFiles, srcDirs = null, allowDead = []
     if (!used.has(c)) orphan.push(c);
   }
 
+  /*
+   * 两条**减噪判据**，供调用方判定 orphan 时豁免。
+   *
+   * 两者都是"误删防线"：orphan 这一维天生容易把在用样式判成死的
+   * （修饰档、查表写法），而误停用的后果是界面静默变样且不报错。
+   * 放在扫描器里算，是为了让调用方不必各自再 walk 一遍文件 ——
+   * 各写一份必然漂移（本仓库已多次栽在这种"两套实现"上）。
+   */
+  const forms = analyzeClassForms({ root, cssFiles });
+  const classLiterals = collectClassLiterals({
+    root,
+    files: srcFiles.filter((f) => {
+      const rel = relative(root, f);
+      return !(exRe && exRe.test(rel)) && !/node_modules/.test(rel);
+    }),
+  });
+
   const truncated = [];
   for (const { file, text } of cssText) {
     for (const h of findTruncatedRules(text)) truncated.push({ file, head: h });
   }
 
-  return { defined, used, dead, orphan, truncated };
+  return { defined, used, dead, orphan, truncated, forms, classLiterals };
 }
