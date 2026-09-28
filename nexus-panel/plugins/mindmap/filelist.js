@@ -23,6 +23,9 @@ const DND = 'application/x-mm-file';
 export function buildFileList(app) {
   const api = app.api;
 
+  /** 底框开合后的宿主回调（同步画布假边框）；由 setLayoutHook 注入 */
+  let layoutHook = null;
+
   let dragId = null;      // 当前被拖动的文件 id
 
   const bodyEl = h('div.mm-files-body', {});
@@ -87,6 +90,18 @@ export function buildFileList(app) {
       : '脑图文件';
     newFileBtn.style.display = isSearch ? 'none' : '';
     newFolderBtn.style.display = isSearch ? 'none' : '';
+
+    /*
+     * 底框开合会改变**画布那道假边框**该从哪里起。
+     *
+     * 本面板是**浮层**（position:absolute 盖在画布上），画布本身不动；
+     * 但画布上另有一层 .mm-canvas-frame 假描边，它必须让到浮层右边缘，
+     * 否则浮层压在描边上、看着像"一个面板浮在画布上"（正是这个设计要
+     * 避免的样子）。宿主通过 setLayoutHook 注入同步逻辑。
+     */
+    if (typeof layoutHook === 'function') {
+      try { layoutHook(); } catch { /* 画布尚未挂载时不致命 */ }
+    }
   }
 
   /**
@@ -339,6 +354,8 @@ export function buildFileList(app) {
 
   return {
     el, refresh, setSearch,
+    /** 注册底框开合回调；传 null 撤销 */
+    setLayoutHook: (fn) => { layoutHook = fn; },
     showFiles, toggleFiles,
     isSearchMode: () => panel === 'search',
     isFilesPanel: () => panel === 'files',

@@ -189,8 +189,42 @@ bootIframePlugin(async (ctx) => {
 
   const statusEl = h('span.mm-status', {}, '初始化…');
   const canvasEl = h('div.mm-canvas', {});
+  /*
+   * 画布上的**假描边框**。
+   *
+   * 文件库是**浮层**（absolute，盖在画布上），画布本身不参与挤压、尺寸不变。
+   * 但直接盖上去看着就是"一个面板浮在画布上"，分不清哪块是画布；
+   * 所以画布上另铺一层只描边、不拦截鼠标的假边框，并让它**让到浮层右
+   * 边缘**——视觉上画布像是被挤窄了，实际内核视图尺寸没动（不会重新
+   * 居中、内容不晃）。
+   *
+   * ⚠️ 这层元素必须真的被创建：此前 styles.css 里写了 .mm-canvas-frame
+   * 全套规则，但全仓 JS **没有任何地方创建它**，于是描边从未出现
+   * （"只有样式没有元素"的幽灵规则，不报错、肉眼才看得出）。
+   */
+  const canvasFrameEl = h('div.mm-canvas-frame', {});
+  canvasEl.appendChild(canvasFrameEl);
   const loadingEl = h('div.mm-loading', {}, '编辑器加载中…');
   canvasEl.appendChild(loadingEl);
+
+  /**
+   * 让假边框的**左**边缘对齐文件库浮层的右边缘。
+   *
+   * 判定用**可见性**而不是"宽度非 0"：淡出动画期间元素还有 186px 宽，
+   * 但 display 已是 none，按宽度算会让描边在收起后又弹回去。
+   */
+  function syncCanvasInset() {
+    const filesEl = fileList && fileList.el;
+    if (!filesEl) return;
+    let visible = false;
+    try { visible = getComputedStyle(filesEl).display !== 'none'; } catch { return; }
+    if (!visible) { canvasFrameEl.style.left = ''; return; }
+    try {
+      const a = filesEl.getBoundingClientRect();
+      const b = canvasEl.getBoundingClientRect();
+      canvasFrameEl.style.left = `${Math.max(0, Math.round(a.right - b.left))}px`;
+    } catch { canvasFrameEl.style.left = ''; }
+  }
 
   /**
    * 页签区：吃掉所有剩余空间，页签多到放不下时**自己**横向滚动。
@@ -2882,7 +2916,14 @@ async function gcOrphanAssets(quiet = false) {
   //   右侧：属性侧栏（样式/标签/主题/文件），C# 里固定 276px 常驻
   body.insertBefore(fileList.el, canvasEl);
   body.appendChild(side.el);
+  /*
+   * 钩子要**先注册再首次 showFiles**：若顺序反了，上次会话是展开状态时，
+   * 首帧描边还没让位，会看到描边从全宽跳到让位后的位置（闪一下）。
+   * apply() 内部也会调它，所以这里只需保证首次之前已挂上。
+   */
+  fileList.setLayoutHook(syncCanvasInset);
   fileList.showFiles(!!settings.filesOpen);
+  syncCanvasInset();
   captureShellErrors();
   buildRail();
   renderTabs();

@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = dirname(fileURLToPath(import.meta.url));
 import {
   stripComments, collectDefinedClasses, collectUsedClasses,
-  findTruncatedRules, scanDeadClasses,
+  findTruncatedRules, scanDeadClasses, walkFiles,
 } from './js/dead-class-scan.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -558,6 +558,93 @@ console.log('\n=== 7. 死样式分类：档位类留用、真废弃清零 ===');
    */
   t('共享层动效组不含 .fpx-card（保留其自有三态）',
     !/\.fpx-card\b/.test(baseSel));
+}
+
+console.log('\n=== 8. 幽灵规则（CSS 定义了、代码没用）：只增不减 ===');
+{
+  /*
+   * 与上一节是**相反的一维**：
+   *   第 7 节盯 dead   —— 代码用了、CSS 没定义（挂了类名没样式）
+   *   本节   盯 orphan —— CSS 定义了、代码没用（写了样式没人挂）
+   *
+   * 此前只有前者有常驻断言，后者全靠临时脚本跑，于是死规则能长期积累
+   * （实测存量 125 处）。本轮补上，口径与上一节一致：**不追求清零，
+   * 只冻结基线**。
+   *
+   * 为什么不追求清零：存量里有大量"组合选择器里的修饰类"
+   * （.nx-row.end / .task-bar-in.cancelled / .nx-tag.accent），
+   * 它们命运跟着父类走，父类是备用档位时它们也是备用；
+   * 逐个核实代价极高，而误删会让正在用的档位**静默失效**（不报错）。
+   */
+  /*
+   * 必须**自己跑一次**扫描：上面第 1/2 节的 r 在各自的块作用域里，
+   * 这里取不到（写成裸 orphan 会 ReferenceError，整份测试直接崩）。
+   */
+  const or = scanDeadClasses({ root: HERE, cssFiles: CSS_FILES, excludeSrc: EXCLUDE_SRC });
+  const { orphan, defined: orDefined } = or;
+
+  const EXTERNAL = [/^km-/, /^react-flow__/, /^hljs/];
+  // 备用档位：跨插件共享、供新界面直接挂用，文档里已就地标注"保留"
+  const RESERVED = [/^nx-/, /^nm-/, /^p-/];
+  // md 插件整体按约定先不动
+  const MD = [/^md-/];
+
+  /*
+   * 动态拼接豁免 —— 这是**误删防线**，不是可选优化。
+   *
+   * 模板串 `task-pill st-${status}` / `node-card size-${size}` 在源码里
+   * 永远搜不到完整类名 "st-success"、"size-lg"，但运行时真会生成。
+   * 按"`!used.has(c)`"判死的扫描器会把它们全报成幽灵规则；
+   * 照着注释停用，节点状态色、徽章色、卡片尺寸会整片失效且不报错。
+   *
+   * agent-flow 实测踩到：22 处报告里 7 处是这类误判。
+   */
+  const srcText = [...walkFiles(ROOT, ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.html', '.rs'])]
+    .filter((f) => !/\.min\.js$/.test(f))
+    .map((f) => { try { return readFileSync(f, 'utf-8'); } catch { return ''; } })
+    .join('\n');
+  const dynPrefixes = new Set(
+    [...srcText.matchAll(/([A-Za-z][\w]*)-\$\{/g)].map((m) => m[1]),
+  );
+  const isDynamic = (c) => {
+    const i = c.indexOf('-');
+    return i > 0 && dynPrefixes.has(c.slice(0, i));
+  };
+
+  const orphanRest = orphan.filter(
+    (c) => !isDynamic(c)
+      && !EXTERNAL.some((r) => r.test(c))
+      && !RESERVED.some((r) => r.test(c))
+      && !MD.some((r) => r.test(c)),
+  );
+
+  /*
+   * 冻结基线。42 = 本轮实测存量。
+   * 清掉一处就应该同步下调这个数字 —— 否则"只增不减"会退化成
+   * "永远差 42 才报红"，失去意义。
+   */
+  const ORPHAN_BASELINE = 42;
+  t('幽灵规则未继续增加（不超过基线）', orphanRest.length <= ORPHAN_BASELINE,
+    `当前 ${orphanRest.length} / 基线 ${ORPHAN_BASELINE}：${orphanRest.slice(0, 8).join(', ')}`);
+
+  /*
+   * 元断言：豁免逻辑必须**真的会豁免**，而不是空跑。
+   *
+   * ⚠️ 曾写成 `dynPrefixes.size >= 0` —— 那永远为真，等于没有断言；
+   *    若模板写法变了（正则失配），豁免静默失效、误删事故照旧。
+   *    所以这里造一个必然命中的样例，验证 isDynamic 确实返回 true。
+   */
+  if (dynPrefixes.size > 0) {
+    const probe = `${[...dynPrefixes][0]}-__probe__`;
+    t('动态拼接豁免有效', isDynamic(probe), `样例 ${probe} 被豁免`);
+    t('动态拼接豁免不过度', !isDynamic('zzz-nomatch'), '无拼接前缀的类不被豁免');
+  } else {
+    t('无拼接类时豁免函数仍可用', isDynamic('a-b') === false, '不误伤普通类');
+  }
+
+  // 元断言：扫描范围得有效，否则 orphan 为空、上面那条永远通过
+  t('幽灵规则扫描范围有效', orphan.length > 0 && orDefined.size > 100,
+    `orphan ${orphan.length} / defined ${orDefined.size}`);
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
