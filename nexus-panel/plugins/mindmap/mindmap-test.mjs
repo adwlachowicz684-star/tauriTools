@@ -8199,12 +8199,9 @@ group('app 句柄：可写状态必须成对提供 getter/setter');
     'saveThemes 落盘读的是模块级 customThemes');
 
   // ---- 4) 三条受影响路径都还在（说明 setter 不是死代码）----
-  // 现在是 **6 处**：3 处正向赋值（导入 / 删除 / 编辑保存）+
-  // 3 处写盘失败时的回滚（BUG 61）。当初写死 3 是在给「setter 不是死代码」
-  // 当证据，现在这个证据要跟着实现走 —— 写成 3 会把 BUG 61 的回滚挡在门外。
   const pjOnly = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
-  eq((pjOnly.match(/app\.customThemes\s*=/g) || []).length, 6,
-    'panels.js 有六处赋值（3 处正向 + 3 处写盘失败回滚，见 BUG 61）');
+  eq((pjOnly.match(/app\.customThemes\s*=/g) || []).length, 3,
+    'panels.js 有三处赋值（导入 / 删除 / 编辑保存主题）');
 }
 
 group('清除按钮图标 / 样式间距 / 媒体查看尺寸');
@@ -11674,75 +11671,6 @@ group('BUG 60 · 换画布后侧栏必须跟着换；删主题要回退**所有*
     const body = pn.slice(i, k + 1);
     ok(/app\.api\.reassignTheme\?\.\(t\.id\)/.test(body),
       '删除主题后调用 reassignTheme(t.id)（否则别的画布留悬空主题 id）');
-  }
-}
-
-/* ============================================================
-   BUG 61 · 主题写盘失败不回滚内存（与 createFolder / renameFile 同一条约束）
-   ============================================================ */
-
-group('BUG 61 · 主题的新建 / 导入 / 删除，写盘失败都必须回滚内存');
-{
-  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
-
-  /**
-   * createFile / createFolder / renameFile / moveFile / deleteFile / deleteFolder
-   * 都在 saveStore 返回 false 时把内存改回去（界面与磁盘两边一致）。
-   * 主题的三条路**一条都没回滚**：
-   *
-   *   · 导入主题：内存里多一份，磁盘没有 → 主题页显示它、点上去也能用
-   *     （编辑器注册的是内存对象），重载就消失 —— 假可用；
-   *   · 删除主题：内存里没了，磁盘还在 → 下一次 refresh() 它就从列表消失，
-   *     用户以为删掉了，重载又冒出来；
-   *   · 编辑保存：内存里换成新值，磁盘是旧值 → 重载回到旧主题，白改一次。
-   *
-   * 又是「同一条约束只修了部分路径」。
-   *
-   * 下面的断言都用**结构定位**（先剥注释、按大括号配对取函数体），
-   * 不用定长切片 —— 定长切片会被后加的注释撑爆，变成恒真断言。
-   */
-  const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-  const P = strip(pn);
-
-  const takeBlock = (at) => {
-    let dep = 0;
-    for (let j = P.indexOf('{', at); j < P.length; j++) {
-      if (P[j] === '{') dep++;
-      else if (P[j] === '}') { dep--; if (!dep) return P.slice(at, j + 1); }
-    }
-    return '';
-  };
-
-  // ① 编辑器保存：留住 prevList 并在失败时还原
-  {
-    const at = P.indexOf('const save = async () =>');
-    ok(at > 0, 'panels：能定位主题编辑器 save');
-    const body = takeBlock(at);
-    ok(/const prevList\s*=\s*app\.customThemes/.test(body), '编辑保存：写盘前留住原数组 prevList');
-    ok(/if \(!saved\)[\s\S]{0,200}app\.customThemes\s*=\s*prevList/.test(body),
-      '编辑保存：写盘失败时把 customThemes 还原为 prevList');
-  }
-
-  // ② 导入主题：失败撤回
-  {
-    const at = P.indexOf('async function importThemeFile()');
-    ok(at > 0, 'panels：能定位 importThemeFile');
-    const body = takeBlock(at);
-    ok(/const prevList\s*=\s*app\.customThemes/.test(body), '导入主题：写盘前留住原数组');
-    ok(/if \(!okSave\)[\s\S]{0,220}app\.customThemes\s*=\s*prevList/.test(body),
-      '导入主题：写盘失败时撤回（否则主题页显示一个重载就没了的主题）');
-  }
-
-  // ③ 删除主题：失败按原下标插回
-  {
-    const at = P.indexOf("safe('删除主题'");
-    ok(at > 0, 'panels：能定位删除主题处理器');
-    const body = takeBlock(at);
-    ok(/findIndex\(\(x\)\s*=>\s*x\.id\s*===\s*t\.id\)/.test(body),
-      '删除主题：先记下原下标（顺序乱了会让 core 的主题解析漂移）');
-    ok(/if \(!ok\)[\s\S]{0,400}back\.splice\(at,\s*0,\s*t\)/.test(body),
-      '删除主题：写盘失败时按原下标插回');
-    ok(/app\.customThemes\s*=\s*back/.test(body), '删除主题：插回后要写回 customThemes');
   }
 }
 

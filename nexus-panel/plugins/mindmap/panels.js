@@ -1742,16 +1742,9 @@ export function buildSide(app, opts = {}) {
       name,
       palette,
     };
-    const prevList = app.customThemes;
     app.customThemes = [...(app.customThemes || []), copy];
     const okSave = await app.api.saveThemes();
-    if (!okSave) {
-      // 同上：写不进去就把这份撤回来。留着的话主题页会显示它、点上去也能用
-      // （编辑器注册的是内存里的对象），但重载就没了 —— 假可用，比直接说失败更坑。
-      app.customThemes = prevList;
-      app.api.status('导入失败（未写入本地库）', true);
-      return;
-    }
+    if (!okSave) { app.api.status('导入失败（未写入本地库）', true); return; }
     app.bridge.registerTheme(copy);
     app.api.applyTheme(copy.id);
     refresh();
@@ -1804,9 +1797,6 @@ export function buildSide(app, opts = {}) {
               // 这里改成「只有删的是当前主题才回退」——删别的主题不该打扰用户。
               const isCurrent = cur === t.id;
               if (isCurrent) await app.api.applyTheme(DEFAULT_THEME);
-              // 记住下标：写盘失败要按原位插回，顺序乱了会让 core 的
-              // 主题解析跟着漂移（registerCustomThemes 注释里点名的那条）。
-              const at = (app.customThemes || []).findIndex((x) => x.id === t.id);
               app.customThemes = (app.customThemes || []).filter((x) => x.id !== t.id);
               await app.api.markPresetRemoved(t.id);
               /*
@@ -1820,13 +1810,6 @@ export function buildSide(app, opts = {}) {
               const nFixed = await app.api.reassignTheme?.(t.id) || 0;
               const ok = await app.api.saveThemes();
               if (!ok) {
-                // 磁盘上它还在，内存里也必须还在 —— 否则下次任何一次 refresh()
-                // 都会让它从列表消失，用户以为删掉了，重载却又冒出来。
-                if (at >= 0) {
-                  const back = [...(app.customThemes || [])];
-                  back.splice(at, 0, t);
-                  app.customThemes = back;
-                }
                 app.api.status('删除失败（未写入本地库）', true);
                 if (isCurrent) await app.api.applyTheme(t.id);   // 回滚，别把用户卡在中间态
                 return;
@@ -2214,20 +2197,12 @@ export function openThemeEditor(app, theme, seedTheme) {
     editing.name = nameInput.value.trim() || '自定义主题';
     const ok = app.bridge.registerTheme(editing);
     if (!ok) { app.api.status('主题注册失败（编辑器未就绪？）', true); return; }
-    // 保存前先留住原数组：写盘失败要把内存还原回去。
-    // 与 createFolder / renameFile 同一条约束 —— 不还原的话界面上是新值、
-    // 磁盘上是旧值，重载后回到旧主题，用户白改一次还以为存上了。
-    const prevList = app.customThemes;
     const list = (app.customThemes || []).filter((x) => x.id !== editing.id);
     list.push(editing);
     app.customThemes = list;
     // saveThemes 失败是「返回 false」而非抛异常，不判断就会提示成功实则没存上
     const saved = await app.api.saveThemes();
-    if (!saved) {
-      app.customThemes = prevList;
-      app.api.status('主题保存失败（未写入本地库）', true);
-      return;
-    }
+    if (!saved) { app.api.status('主题保存失败（未写入本地库）', true); return; }
     app.api.applyTheme(editing.id);
     // **必须重刷侧栏**：主题列表是在 pageTheme() 里按 app.customThemes
     // 现算的，不刷的话新建的主题不会出现在列表里，得切走页签再切回来才看得到
