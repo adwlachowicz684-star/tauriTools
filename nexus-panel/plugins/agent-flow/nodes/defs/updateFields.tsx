@@ -1,6 +1,7 @@
 import { UPDATE_SOURCE_META, type UpdateNodeData } from '../../types';
 import { UpdateTestPanel } from '../../components/inspectors/UpdateTestPanel';
 import type { FieldDef } from '../../components/inspectors/fields';
+import { card } from '../paramCards';
 
 /**
  * B站与公众号共用的字段清单。
@@ -67,13 +68,14 @@ export const updateFields: FieldDef[] = [
       { value: 'detail', label: '附带标题、链接、时间' },
     ],
   },
-  {
-    type: 'number',
-    key: 'timeoutSec',
-    label: '超时（秒）',
-    min: 1,
-    max: 120,
-  },
+  /*
+   * 与「HTTP 请求」共用同一张卡（见 nodes/paramCards.ts）。
+   *
+   * 上限这里压到 120：一次轮询要跑完全部监听目标，
+   * 单个源拖太久会把整体拖垮；HTTP 节点只发一个请求，所以是 300。
+   * 两个数都写进覆盖里而不是只留库里那个 —— 否则改库会顺带改掉这边。
+   */
+  card('http.timeoutSec', { max: 120 }),
 ];
 
 /** 试跑与重置基线。挂在字段清单之后 */

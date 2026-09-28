@@ -118,6 +118,21 @@ export type FieldDef = {
   inline?: boolean;
   /** credential 类型用：决定需要哪些能力的连接条目 */
   credentialKind?: string;
+  /**
+   * 这个输入框的内容会走模板渲染（{{上游.output}} / {{params.x}} 之类）。
+   *
+   * 渲染层据此**统一**给出可点击的插入按钮 —— 节点不用自己写一遍。
+   * 以前是各节点自己在 placeholder 里写一句"支持 {{上游.output}}"，
+   * 只有任务 / 大模型 / 翻译 / 识图四个节点额外手写了一排插入按钮；
+   * 其余十几个明明支持模板的字段连句提示都没有，
+   * 用户只能手打，打错了（拼错节点 id）要到运行日志里才看得见。
+   *
+   * 标了这个就一定要真的走 ctx.tpl —— 见 tests/tplFields.test.ts，
+   * 它按执行器里真实的 ctx.tpl 调用对账，防止"按钮插进去不生效"。
+   */
+  tpl?: boolean;
+  /** tpl 用：追加的固定 token，如 '{{input}}' */
+  tplExtra?: string[];
 
   /* ---- paramCard 类型用 ---- */
   /** 卡片组名。同组卡片跨节点类型共享，如 'github-repo' */
@@ -534,9 +549,27 @@ function renderField(
     />
   ) : null;
 
+  /*
+   * 「支持模板」的输入框统一挂一条插入按钮。
+   *
+   * 只给 text / textarea 挂：number 那种是 <input type="number">，
+   * 模板根本敲不进去（浏览器会把非数字的输入直接吞掉）——
+   * 等待节点的 ms 就踩过这个，说明写着"支持模板"却打不进模板。
+   *
+   * 没有上游时 VarBar 自己返回 null，不占地方。
+   */
+  const varBar = f.tpl && f.key && (type === 'text' || type === 'textarea') ? (
+    <VarBar
+      title="插入："
+      tokens={upstreamTokens(p.upstream, f.tplExtra ?? [])}
+      onInsert={(t) => set(String(value ?? '') + t)}
+    />
+  ) : null;
+
   return (
     <Field key={f.key} label={strOf(f.label, p.d)} hint={hint} inline={f.inline} ops={ops}>
       {body()}
+      {varBar}
     </Field>
   );
 }

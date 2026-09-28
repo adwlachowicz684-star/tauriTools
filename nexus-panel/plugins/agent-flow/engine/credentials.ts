@@ -144,6 +144,19 @@ export const NODE_NEEDS: Record<string, Capability[]> = {
   translate: ['llm:chat'],
   'github-update': ['github:read'],
   'github-push': ['github:write'],
+  /*
+   * 通用 HTTP：**显式登记为空**。
+   *
+   * 它不需要任何能力 —— 连接里那把密钥怎么用由用户自己决定
+   * （填进请求头、拼进 URL……），所以任何连接都能选。
+   *
+   * 那为什么不干脆不登记？因为 `NODE_NEEDS[拼错的] || []` 与"真的没有要求"
+   * 长得一模一样，而前者是**静默失效**：筛选悄悄关掉，下拉框里出现所有连接
+   * （一把只有读权限的令牌也能选给推送节点），全程不报错。
+   * 登记为空，就把"没登记"和"登记为空"分开了 ——
+   * tests/credentialKinds.test.ts 盯着这条。
+   */
+  'generic-http': [],
 };
 
 export function needsOf(nodeKind: string): Capability[] {

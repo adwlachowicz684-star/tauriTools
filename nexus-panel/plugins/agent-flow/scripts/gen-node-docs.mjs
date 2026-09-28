@@ -128,6 +128,30 @@ function cardLib() {
   return lib;
 }
 
+/*
+ * 找出 body 里所有 credCard('kind') 调用的位置。
+ *
+ * ============ 为什么它要单独一条路 ============
+ *
+ * 凭据那一格也抽成卡片了（`credCard('github-push')`），
+ * 但它**不在 PARAM_CARDS 里** —— 库里存的是"每个节点要哪种凭据"之外的东西，
+ * 凭据卡的字段形状是固定的（type: 'credential' / key: 'credentialId'），
+ * 变的只有 credentialKind。
+ *
+ * 所以上面的 `card('id')` 那条路匹配不到它：
+ * 正则 `/card\(/'` 确实也能命中 `credCard(`（字符串里含 card(），
+ * 但取到的 id 是 'github-push'，库里没有，**被静默 continue 掉**。
+ *
+ * 后果是参数表里整行消失：文档不再列出 credentialId，
+ * 而"这个节点要哪种连接"恰恰是拼装时第一个要确认的事。
+ */
+function parseCredCalls(body) {
+  return [...body.matchAll(/credCard\(\s*'([^']+)'/g)].map((m) => ({
+    at: m.index,
+    kind: m[1],
+  }));
+}
+
 /** 找出 body 里所有 card('id', {...}) 调用的位置与内容 */
 function parseCardCalls(body) {
   const out = [];
@@ -253,16 +277,20 @@ function parseFields(file) {
    * 两者的起点混在一起按位置排序，参数表的**顺序**才与面板上的一致。
    */
   const cardStarts = parseCardCalls(body).map((c) => ({ at: c.at, card: c }));
+  const credStarts = parseCredCalls(body).map((c) => ({ at: c.at, cred: c }));
   const all = [
     ...starts.slice(0, -1).map((at) => ({ at, card: null })),
     ...cardStarts,
+    ...credStarts,
   ].sort((a, b) => a.at - b.at);
   all.push({ at: body.length, card: null });
 
   for (let i = 0; i < all.length - 1; i++) {
     const seg = all[i].card
       ? blockOfCard(all[i].card)
-      : body.slice(all[i].at, all[i + 1].at);
+      : all[i].cred
+        ? `{ type: 'credential', key: 'credentialId', credentialKind: '${all[i].cred.kind}' }`
+        : body.slice(all[i].at, all[i + 1].at);
     const t = seg.match(/type:\s*'([a-zA-Z]+)'/)?.[1];
     if (!t) continue;
     if (t === 'note') {
@@ -774,6 +802,15 @@ function paramsOf(kind, b) {
         const k = blk.match(/key:\s*'([^']+)'/)?.[1];
         if (k) declared.add(k);
       }
+      /*
+       * credCard() 走的是另一条路（见 parseCredCalls），
+       * 所以这里补一句：用了它就说明这个节点有 credentialId。
+       *
+       * 不补的话，"生成器认不出 credCard" 这个故障照样无痕 ——
+       * declared 里没有 credentialId、参数表里也没有，
+       * 两条路径同时缺，谁也抓不到谁（正是这次踩到的）。
+       */
+      if (/credCard\(\s*'/.test(src)) declared.add('credentialId');
     }
     const missing = [...declared].filter((k) => !seen.has(k));
     if (missing.length) {

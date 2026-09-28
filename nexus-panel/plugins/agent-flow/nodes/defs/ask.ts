@@ -18,8 +18,9 @@ const fields: FieldDef[] = [
     rows: 3,
     placeholder: '如：请确认这个标题是否合适',
     hint: '支持模板，可以把上游内容显示给人看',
+    tpl: true,
   },
-  { type: 'text', key: 'value', label: '预填内容', placeholder: '可留空' },
+  { type: 'text', key: 'value', label: '预填内容', placeholder: '可留空', tpl: true },
   {
     type: 'switch',
     key: 'required',

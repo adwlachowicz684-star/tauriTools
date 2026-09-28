@@ -4,6 +4,7 @@ import { OrderPicker } from '../../components/inspectors/shared';
 import { type FieldDef } from '../../components/inspectors/fields';
 import { runGithubPush } from '../../engine/runners/githubPush';
 import { registerNode } from '../registry';
+import { credCard } from '../paramCards';
 
 const fields: FieldDef[] = [
   {
@@ -35,15 +36,17 @@ const fields: FieldDef[] = [
     label: '提交信息',
     placeholder: '支持 {{上游.output}}',
     inline: true,
+    tpl: true,
   },
   {
     type: 'textarea',
     key: 'filesText',
     label: '文件（每行一条 路径=内容）',
     rows: 5,
+    tpl: true,
     placeholder: 'README.md=# 标题\nnotes/{{date}}.txt={{上游.output}}',
   },
-  { type: 'credential', key: 'credentialId', credentialKind: 'github-push' },
+  credCard('github-push'),
   {
     type: 'custom',
     spec: { keys: ['order'], kind: 'switch' },

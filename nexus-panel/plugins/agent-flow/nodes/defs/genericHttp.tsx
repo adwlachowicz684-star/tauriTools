@@ -3,6 +3,7 @@ import { HttpCard } from '../../components/GenericNode';
 import type { FieldDef } from '../../components/inspectors/fields';
 import { runGenericHttp } from '../../engine/runners/genericHttp';
 import { registerNode } from '../registry';
+import { card, credCard } from '../paramCards';
 
 /**
  * 通用 HTTP 请求节点 —— "参数型自定义节点"的主力。
@@ -45,6 +46,7 @@ const fields: FieldDef[] = [
     rows: 3,
     placeholder: '每行一条，如：\nX-Token: abc123',
     hint: '留空即可；填了 Authorization 就不会再自动加连接令牌',
+    tpl: true,
   },
   {
     type: 'textarea',
@@ -52,6 +54,7 @@ const fields: FieldDef[] = [
     label: '请求体',
     rows: 5,
     placeholder: '{"key": "value"}，支持 {{上游.output}}',
+    tpl: true,
     when: (d) => d.method === 'POST' || d.method === 'PUT' || d.method === 'PATCH',
     hint: '请求体里可以引用上游输出',
   },
@@ -62,15 +65,14 @@ const fields: FieldDef[] = [
     placeholder: '按 JSON 发送（自动补 Content-Type）',
     when: (d) => d.method === 'POST' || d.method === 'PUT' || d.method === 'PATCH',
   },
-  { type: 'credential', key: 'credentialId', credentialKind: 'generic-http' },
-  {
-    type: 'number',
-    key: 'timeoutSec',
-    label: '超时（秒）',
-    min: 1,
-    max: 300,
+  credCard('generic-http'),
+  card('http.timeoutSec', {
     inline: true,
-  },
+    /*
+     * 上限与更新检测那张卡不一样（300 vs 120），见 paramCards 的说明。
+     * 这里不写 max 就用库里的 300 —— HTTP 可能要拉大响应体。
+     */
+  }),
   {
     type: 'number',
     key: 'maxBytesKb',

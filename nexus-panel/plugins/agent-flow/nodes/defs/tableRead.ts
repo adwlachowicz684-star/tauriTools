@@ -17,6 +17,7 @@ const fields: FieldDef[] = [
     label: '文件路径',
     placeholder: '如：/Users/me/数值表.csv',
     hint: 'CSV / TSV。Excel 里「另存为 → CSV」即可得到',
+    tpl: true,
   },
   {
     type: 'select',

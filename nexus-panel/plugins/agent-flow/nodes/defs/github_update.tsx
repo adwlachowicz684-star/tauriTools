@@ -5,6 +5,7 @@ import { Field, type FieldDef } from '../../components/inspectors/fields';
 
 import { runGithubUpdate } from '../../engine/runners/githubUpdate';
 import { registerNode } from '../registry';
+import { credCard } from '../paramCards';
 
 const fields: FieldDef[] = [
   {
@@ -39,7 +40,7 @@ const fields: FieldDef[] = [
     inline: true,
     hint: '填了会与本地 HEAD 比对，只关心"本地是否落后"时很有用',
   },
-  { type: 'credential', key: 'credentialId', credentialKind: 'github-update' },
+  credCard('github-update'),
   {
     type: 'custom',
     spec: { keys: ['order'], kind: 'switch' },

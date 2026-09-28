@@ -6,7 +6,7 @@ import { registerNode } from '../registry';
 
 /** 汇总 —— 对某一列求一个总数，用于看整体指标 */
 const fields: FieldDef[] = [
-  { type: 'text', key: 'col', label: '列名', placeholder: '如：伤害' },
+  { type: 'text', key: 'col', label: '列名', placeholder: '如：伤害', tpl: true },
   {
     type: 'select',
     key: 'op',

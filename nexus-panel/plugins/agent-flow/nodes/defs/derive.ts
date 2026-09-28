@@ -13,12 +13,13 @@ import { registerNode } from '../registry';
  *   攻击力 * (1 + 暴击率) - 防御力 * 0.5
  */
 const fields: FieldDef[] = [
-  { type: 'text', key: 'newCol', label: '新列名', placeholder: '如：伤害' },
+  { type: 'text', key: 'newCol', label: '新列名', placeholder: '如：伤害', tpl: true },
   {
     type: 'textarea',
     key: 'expr',
     label: '公式',
     rows: 4,
+    tpl: true,
     placeholder: '攻击力 * (1 + 暴击率) - 防御力 * 0.5',
     hint: '直接写列名，不用加括号',
   },

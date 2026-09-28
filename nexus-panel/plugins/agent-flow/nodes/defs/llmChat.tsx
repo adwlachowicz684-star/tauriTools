@@ -1,6 +1,6 @@
 import {
-  makeLlmChatNode, IMAGE_SOURCE_META, LLM_USE_META, defaultOcrPrompt,
-  type ImageSource, type LlmUse,
+  makeLlmChatNode, LLM_USE_META, defaultOcrPrompt,
+  type LlmUse,
 } from '../../types';
 import { TARGET_LANGS } from '../../engine/llm';
 import LlmChatNode from '../../components/LlmChatNode';
@@ -72,18 +72,12 @@ const fields = (_d: Record<string, unknown>, p?: FieldRenderProps): FieldDef[] =
     paneField('apiPane', p?.nodes),
 
     /* ---- 图片识别：来源 + 地址/路径 ---- */
-    {
-      type: 'select',
-      key: 'imageSource',
-      label: '图片来源',
-      when: () => isOcr,
-      options: () =>
-        (Object.keys(IMAGE_SOURCE_META) as ImageSource[]).map((k) => ({
-          value: k,
-          label: IMAGE_SOURCE_META[k].label,
-        })),
-      hint: (d) => IMAGE_SOURCE_META[(d.imageSource as ImageSource) ?? 'url']?.hint,
-    },
+
+    /*
+     * 与旧 OCR 节点共用同一张卡（见 nodes/paramCards.ts）。
+     * 差别只有"用途是图片识别时才出现"，那是这个节点的事，写在覆盖里。
+     */
+    card('llm.imageSource', { when: () => isOcr }),
 
     /*
      * 这两块的 render 与旧的 OCR 节点共用（见 nodes/imageCards.tsx）。

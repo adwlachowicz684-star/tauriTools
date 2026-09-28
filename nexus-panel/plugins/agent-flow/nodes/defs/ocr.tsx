@@ -1,10 +1,10 @@
-import { makeOcrNode, IMAGE_SOURCE_META, defaultOcrPrompt, type ImageSource } from '../../types';
+import { makeOcrNode, defaultOcrPrompt } from '../../types';
 import OcrNode from '../../components/OcrNode';
 import { LlmConfigPanel } from '../../components/inspectors/shared';
 import type { FieldDef } from '../../components/inspectors/fields';
 import { runOcr } from '../../engine/runners/ocr';
 import { registerNode } from '../registry';
-import { card } from '../paramCards';
+import { card, credCard } from '../paramCards';
 import { renderImageUrl, renderImagePath } from '../imageCards';
 
 const fields: FieldDef[] = [
@@ -22,19 +22,10 @@ const fields: FieldDef[] = [
       />
     ),
   },
-  { type: 'credential', key: 'credentialId', credentialKind: 'ocr' },
+  credCard('ocr'),
 
-  {
-    type: 'select',
-    key: 'imageSource',
-    label: '图片来源',
-    options: () =>
-      (Object.keys(IMAGE_SOURCE_META) as ImageSource[]).map((k) => ({
-        value: k,
-        label: IMAGE_SOURCE_META[k].label,
-      })),
-    hint: (d) => IMAGE_SOURCE_META[(d.imageSource as ImageSource) ?? 'url']?.hint,
-  },
+  /* 与「大模型」节点共用同一张卡（见 nodes/paramCards.ts） */
+  card('llm.imageSource'),
 
   /*
    * 这两块的 render 与「大模型」节点共用（见 nodes/imageCards.tsx）。

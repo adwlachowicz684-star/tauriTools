@@ -25,8 +25,8 @@ const fields: FieldDef[] = [
       { value: 'endsWith', label: '结尾是' },
     ],
   },
-  { type: 'text', key: 'a', label: '左边', placeholder: '支持 {{上游.output}}' },
-  { type: 'text', key: 'b', label: '右边', placeholder: '要比较的值' },
+  { type: 'text', key: 'a', label: '左边', placeholder: '支持 {{上游.output}}', tpl: true },
+  { type: 'text', key: 'b', label: '右边', placeholder: '要比较的值', tpl: true },
   {
     type: 'note',
     content: '两边都能转成数字时按数字比（否则 "10" 会小于 "9"），否则按文本比。输出 true / false。',

@@ -21,7 +21,7 @@ const fields: FieldDef[] = [
       { value: 'get', label: '读取', hint: '把变量的值取出来给下游' },
     ],
   },
-  { type: 'text', key: 'name', label: '变量名', placeholder: '如：总数、上次时间' },
+  { type: 'text', key: 'name', label: '变量名', placeholder: '如：总数、上次时间', tpl: true },
   {
     type: 'textarea',
     key: 'value',
@@ -29,6 +29,7 @@ const fields: FieldDef[] = [
     rows: 3,
     placeholder: '留空则用上游输出',
     hint: '支持模板',
+    tpl: true,
     when: (d) => d.mode !== 'get',
   },
   {

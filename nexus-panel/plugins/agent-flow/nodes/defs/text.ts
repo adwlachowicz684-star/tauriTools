@@ -23,14 +23,14 @@ const fields: FieldDef[] = [
       { value: 'repeat', label: '重复' },
     ],
   },
-  { type: 'textarea', key: 'a', label: '文本', rows: 3, placeholder: '支持 {{上游.output}}' },
+  { type: 'textarea', key: 'a', label: '文本', rows: 3, placeholder: '支持 {{上游.output}}', tpl: true },
   {
-    type: 'text', key: 'b', label: '第二个值',
+    type: 'text', key: 'b', label: '第二个值', tpl: true,
     placeholder: '拼接的内容 / 要替换掉的文本 / 起始位置',
     when: (d) => !['length', 'upper', 'lower', 'trim'].includes(String(d.op)),
   },
   {
-    type: 'text', key: 'c', label: '第三个值',
+    type: 'text', key: 'c', label: '第三个值', tpl: true,
     placeholder: '替换成 / 结束位置 / 第几段',
     when: (d) => ['replace', 'substr', 'split'].includes(String(d.op)),
   },

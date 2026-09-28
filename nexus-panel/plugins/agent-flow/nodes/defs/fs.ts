@@ -29,12 +29,14 @@ const fields: FieldDef[] = [
     label: '路径',
     placeholder: '/abs/or/relative/path',
     hint: '支持模板变量，如 {{upstream.output}} / {{loop.item}}',
+    tpl: true,
   },
   {
     type: 'text',
     key: 'target',
     label: '目标路径',
     placeholder: '/path/to/dest',
+    tpl: true,
     when: (d) => Boolean(FS_OP_META[d.op as FsOp]?.needsTarget),
   },
   {
@@ -43,6 +45,7 @@ const fields: FieldDef[] = [
     label: '内容',
     rows: 6,
     placeholder: '写入的内容，支持 {{模板变量}}',
+    tpl: true,
     when: (d) => Boolean(FS_OP_META[d.op as FsOp]?.needsContent),
   },
   {

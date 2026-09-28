@@ -18,12 +18,12 @@ const fields: FieldDef[] = [
     ],
   },
   {
-    type: 'text', key: 'a', label: '最小值 / 选项列表',
+    type: 'text', key: 'a', label: '最小值 / 选项列表', tpl: true,
     placeholder: '整数时填最小值；选一个时填 "a,b,c"',
     when: (d) => String(d.op) !== 'bool',
   },
   {
-    type: 'text', key: 'b', label: '最大值',
+    type: 'text', key: 'b', label: '最大值', tpl: true,
     when: (d) => ['int', 'float'].includes(String(d.op)),
   },
   {

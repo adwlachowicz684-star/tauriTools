@@ -11,6 +11,7 @@ const fields: FieldDef[] = [
     key: 'cond',
     label: '保留条件',
     rows: 3,
+    tpl: true,
     placeholder: '等级 >= 50',
     hint: '也可以用算术：暴击伤害 - 1000（结果大于 0 的行保留）',
   },

@@ -13,6 +13,7 @@ import {
   constsOf, constItemLabel, constIssues,
 } from '../types';
 import { triggerEntriesOf, entryEnabled, mergeConfig } from './triggerEntries';
+import { tokenRe } from './template';
 import { argTypeIssues, type ArgTypeIssue } from './argTypes';
 
 /**
@@ -399,7 +400,22 @@ function vExtract(d: ExtractNodeData): V {
 }
 
 function vWait(d: WaitNodeData): V {
-  const ms = Number(d.ms);
+  /*
+   * 模板引用**跳过**数字判定。
+   *
+   * 执行器明确支持 `ms: '{{上游.output}}'`（见 runners/wait 里的 ctx.tpl），
+   * 而编辑期拿不到上游的输出值 —— 这里按纯数字算的话，
+   * 一条完全正确的模板会被 Number() 判成 NaN，圆点直接报红
+   * 「等待时长不是有效数字」。用户于是去改一个本来能跑的节点，
+   * 改完（填成固定数字）反而把模板能力丢了。
+   *
+   * 判定用的是模板层唯一的字符集定义（engine/template），
+   * 不在这里另写一份 —— 模板语法改了这里自动跟着变。
+   */
+  const raw = String(d.ms ?? '');
+  if (tokenRe().test(raw)) return ok();
+
+  const ms = Number(raw);
   if (!Number.isFinite(ms) || ms < 0) return error('等待时长不是有效数字');
   return ok();
 }

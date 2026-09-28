@@ -30,9 +30,9 @@ const fields: FieldDef[] = [
       { value: 'abs', label: '绝对值' },
     ],
   },
-  { type: 'text', key: 'a', label: '第一个数', placeholder: '支持 {{上游.output}}' },
+  { type: 'text', key: 'a', label: '第一个数', placeholder: '支持 {{上游.output}}', tpl: true },
   {
-    type: 'text', key: 'b', label: '第二个数', placeholder: '支持 {{上游.output}}',
+    type: 'text', key: 'b', label: '第二个数', placeholder: '支持 {{上游.output}}', tpl: true,
     // 单目运算（取整、绝对值）不需要第二个数
     when: (d) => !['round', 'floor', 'ceil', 'abs'].includes(String(d.op)),
   },

@@ -6,7 +6,7 @@ import {
 } from '../../components/inspectors/fields';
 import { runTranslate } from '../../engine/runners/translate';
 import { registerNode } from '../registry';
-import { card } from '../paramCards';
+import { card, credCard } from '../paramCards';
 
 /**
  * 迁移到字段声明后的样子：除了「待翻译内容」要带上游变量插入按钮
@@ -24,7 +24,7 @@ const fields: FieldDef[] = [
       />
     ),
   },
-  { type: 'credential', key: 'credentialId', credentialKind: 'translate' },
+  credCard('translate'),
 
   /* 与「大模型」节点共用同一批翻译卡片（见 nodes/paramCards.ts） */
   card('llm.targetLang'),

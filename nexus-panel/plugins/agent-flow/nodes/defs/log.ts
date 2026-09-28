@@ -22,6 +22,7 @@ const fields: FieldDef[] = [
     label: '要记的内容',
     rows: 4,
     placeholder: '支持 {{上游.output}}；留空则记上游传过来的内容',
+    tpl: true,
   },
   {
     type: 'note',

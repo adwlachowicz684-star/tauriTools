@@ -43,7 +43,12 @@
  */
 import type { FieldDef } from '../components/inspectors/fields';
 import { TARGET_LANGS } from '../engine/llm';
-import { SOUND_SOURCE_META, type SoundSource } from '../types';
+import {
+  IMAGE_SOURCE_META,
+  SOUND_SOURCE_META,
+  type ImageSource,
+  type SoundSource,
+} from '../types';
 
 /** 一张参数卡片：本质上就是一份 FieldDef（必须有 key） */
 export type ParamCard = FieldDef & { key: string };
@@ -63,6 +68,7 @@ export const PARAM_CARDS: Record<string, ParamCard> = {
     label: '音频文件',
     placeholder: '/path/to/sound.mp3',
     hint: '支持模板，如 {{上游.output}}；建议 mp3 / wav / ogg',
+    tpl: true,
   },
 
   'sound.volume': {
@@ -130,6 +136,23 @@ export const PARAM_CARDS: Record<string, ParamCard> = {
 
   /* ---------------- 大模型·图片：llmChat 与 ocr（旧）共用 -------------- */
 
+  /*
+   * 两个节点的差别只有"什么时候出现这张卡"：
+   * 旧 OCR 节点永远是图片识别，大模型节点还要看用途是不是图片识别。
+   * 那是**节点的事**，所以由节点覆盖 when，库里不带。
+   */
+  'llm.imageSource': {
+    type: 'select',
+    key: 'imageSource',
+    label: '图片来源',
+    options: () =>
+      (Object.keys(IMAGE_SOURCE_META) as ImageSource[]).map((k) => ({
+        value: k,
+        label: IMAGE_SOURCE_META[k].label,
+      })),
+    hint: (d) => IMAGE_SOURCE_META[(d.imageSource as ImageSource) ?? 'url']?.hint,
+  },
+
   'llm.detail': {
     type: 'select',
     key: 'detail',
@@ -188,6 +211,25 @@ export const PARAM_CARDS: Record<string, ParamCard> = {
     when: (d) => d.check !== 'nonempty',
   },
 
+  /* ---------------- 超时：generic-http 与 update 共用 ------------------ */
+
+  /*
+   * 上限两个节点不一样（HTTP 300、更新检测 120），
+   * 由节点各自覆盖 max —— 库里只放"都一样的那部分"。
+   *
+   * 为什么不一刀切成一个数：这两个数的来历找不到依据，
+   * 改小会让本来能配的长超时配不出来，改大又超出更新检测原本的意图
+   * （它一次轮询要跑全部监听目标，单个源拖太久会把整体拖垮）。
+   * 所以先**原样保留**，把差异显式写在覆盖里，等确认了再统一。
+   */
+  'http.timeoutSec': {
+    type: 'number',
+    key: 'timeoutSec',
+    label: '超时（秒）',
+    min: 1,
+    max: 300,
+  },
+
   /* ---------------- CLI：task 与 taskPane 共用 ------------------------- */
 
   'cli.yolo': {
@@ -215,6 +257,21 @@ export function card(id: string, over?: Partial<FieldDef>): FieldDef {
     throw new Error(`没有这张参数卡片：${id}`);
   }
   return over ? { ...base, ...over } : { ...base };
+}
+
+/**
+ * 凭据卡 —— "填凭据"这一类参数只有一张。
+ *
+ * 节点只说"我要哪种连接"（github-push / ocr / generic-http …），
+ * 筛选规则由 engine/credentials.ts 的 NODE_NEEDS 一处决定。
+ *
+ * 以前是五个节点各写一行 `{ type:'credential', key:'credentialId', credentialKind:'x' }`。
+ * 抄写最容易出的错是 kind 拼错或漏登记 —— 而 `NODE_NEEDS[拼错的] || []`
+ * 会**静默退化成"不筛选"**：下拉框里出现所有连接（GitHub 令牌也能选给
+ * 识图节点），全程不报错。tests/credentialKinds.test.ts 盯着这条。
+ */
+export function credCard(kind: string): FieldDef {
+  return { type: 'credential', key: 'credentialId', credentialKind: kind };
 }
 
 /**
