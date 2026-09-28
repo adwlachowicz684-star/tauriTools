@@ -1417,8 +1417,9 @@ pub fn fpx_remove_card(
                  * 报错的，同类操作一个报错一个静默，静默那个迟早变成
                  * 查不出来的问题。
                  */
+                let tab_count = tabs.len();
                 let t = tabs.get_mut(i).ok_or_else(|| {
-                    format!("页签下标 {i} 越界（共 {} 个页签）", tabs.len())
+                    format!("页签下标 {i} 越界（共 {tab_count} 个页签）")
                 })?;
                 t.items.retain(|p| store::normalize_key(p) != key);
             }

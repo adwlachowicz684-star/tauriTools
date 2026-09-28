@@ -65,6 +65,24 @@ image = "0.25.6"
 md5 = "0.8.1"
 rayon = "1.10.0"
 
+# zip：dupview 的「打包为 ZIP」右键菜单（src/dupview/pack.rs）要用。
+# 内置纯 Rust 实现，不调 7z / WinRAR —— 这个插件要"下载下来就能用"，
+# 不能假设别人机器上装了什么。代价只是体积。
+#
+# 这个 crate **本来就在依赖树里**（tauri-plugin-updater 在 Windows 上依赖它），
+# 所以引它不增加下载量。但 updater 用的是 default-features = false，
+# 压缩功能是关的 —— 必须由这里显式开 `deflate-flate2`，
+# 否则 CompressionMethod::Deflated 写出来的条目不会真压缩（Stored 一样）。
+# `deflate-flate2` 拉的是 flate2（已在树里）的默认后端 miniz_oxide（纯 Rust），
+# 不引入 C 依赖。刻意不开 default：那会带进 aes/bzip2/lzma/zstd/xz 等一堆用不上的东西。
+zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
+
+# regex：dupview 的改名规则引擎（src/dupview/rename.rs）要用。
+# 那套规则是从 python 的 re 模块移植的，正则里带 Unicode 字符类与括号捕获；
+# 换成手写扫描容易在边界上跑偏，而"与旧版逐字一致"正是这份引擎的全部价值。
+# 它本来就在依赖树里（tauri 间接依赖），加进来不增加下载量。
+regex = "1"
+
 # ---- OS 凭据管理器（保险箱主密钥）----
 # 主密钥存进 OS 凭据管理器，而不是应用数据目录 ——
 # 这样"拷走整个目录"解不开凭据。

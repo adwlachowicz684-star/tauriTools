@@ -388,15 +388,18 @@ fn main() {
              */
             updater::updater_check, updater::updater_install, updater::updater_relaunch,
             /*
-             * dupview（试卷查重）十三条 —— 同样被覆盖丢过。
+             * dupview（试卷查重）十八条 —— 同样被覆盖丢过。
              * 少了它们：插件界面里每个操作都失败，且不报具体原因。
              * 必须带 `dupview::` 前缀（写裸名会编译失败：找不到定义）。
+             *
+             * 逐页图拆成 pageinfo（只读页数）+ page（渲一页）两条：
+             * 旧版一条 dupview_pages 会把整份卷子一次渲完才返回，
+             * 22 页要等好几秒、期间灯箱一片空白。拆开后前端能边渲边显示。
+             * 后 4 条是文件树右键菜单用的：批量「已解决」（done_set）、
+             * 批量改名（rename_preview 预览 + rename_all 执行）、打包 ZIP（pack_zip）。
+             * 末尾 open_in_explorer 也是右键菜单用的：在系统文件管理器中打开该目录。
              */
-            dupview::dupview_roots, dupview::dupview_list, dupview::dupview_pages,
-            dupview::dupview_scan_status, dupview::dupview_scan, dupview::dupview_scanall,
-            dupview::dupview_browse, dupview::dupview_delete, dupview::dupview_restore,
-            dupview::dupview_addroot, dupview::dupview_delroot, dupview::dupview_dir_done,
-            dupview::dupview_rename,
+            dupview::dupview_roots, dupview::dupview_addroot, dupview::dupview_delroot, dupview::dupview_scan_status, dupview::dupview_scan, dupview::dupview_scanall, dupview::dupview_list, dupview::dupview_pageinfo, dupview::dupview_page, dupview::dupview_rename, dupview::dupview_delete, dupview::dupview_restore, dupview::dupview_dir_done, dupview::dupview_browse, dupview::dupview_done_set, dupview::dupview_rename_preview, dupview::dupview_rename_all, dupview::dupview_pack_zip, dupview::dupview_open_in_explorer,
             /* 常用文件夹：folder-picker 服务与设置页共用，读 + 整表覆盖写。 */
             fpx::fpx_list_fav_dirs, fpx::fpx_save_fav_dirs,
             /*
@@ -417,6 +420,9 @@ fn main() {
             rt_dep::fpx_rt_dep_list, rt_dep::fpx_rt_dep_install,
             rt_dep::fpx_rt_dep_remove, rt_dep::fpx_rt_dep_versions,
             rt_dep::fpx_rt_dep_purge,
+            /* ⚠️ tray_toggle_window 必须留在**末位**：tray-test.mjs 钉了
+               「末尾紧接 ])」这一写法，插到它后面会让断言失败。
+               新增命令请加在它**前面**。 */
             tray_toggle_window
         ])
         .setup(move |app| {
@@ -533,6 +539,12 @@ fn main() {
              * （关掉面板仍想让客户端连着），所以由开关决定。
              */
             if let tauri::RunEvent::Exit = event {
+                /*
+                 * 退出时取消查重后台扫描 —— 被上游静默删过（第 5 次）。
+                 * 少了这一行：扫描线程不随进程退出收敛（拖着 pdfium 句柄），
+                 * 编译上只多一句 "request_cancel is never used"，不报错。
+                 */
+                crate::dupview::request_cancel(app_handle);
                 let should_stop = crate::fpx::store::resolve_data_dir(app_handle)
                     .map(|dir| crate::fpx::store::load_config(&dir).close_mcp_on_exit)
                     .unwrap_or(false);

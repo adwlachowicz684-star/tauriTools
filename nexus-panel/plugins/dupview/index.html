@@ -87,7 +87,7 @@ header .sub{font-size:12px;color:#cbbfa8;margin-left:auto}
 .card.sub{border:3px solid #d98a2b;box-shadow:0 0 8px rgba(217,138,43,.3)}
 .card.ylw{border:3px solid #d8b23a;box-shadow:0 0 8px rgba(216,178,58,.35)}
 .card.dim{opacity:.45;filter:grayscale(.85)}
-.card.dim .thumb{pointer-events:none}
+/* 已删除的卡片照旧可点开预览：文件只是被移进 _trash，后端会回落到回收目录取图。 */
 .card .tagmd{position:absolute;top:0;right:0;background:#4f9d5a;color:#fff;font-size:10px;padding:2px 7px;border-bottom-left-radius:8px;font-weight:700;z-index:2}
 .card .tagtxt{position:absolute;top:0;right:0;background:#4a78c2;color:#fff;font-size:10px;padding:2px 7px;border-bottom-left-radius:8px;font-weight:700;z-index:2}
 .card .tagsup{position:absolute;top:0;right:0;background:#8a5fc0;color:#fff;font-size:10px;padding:2px 7px;border-bottom-left-radius:8px;font-weight:700;z-index:2}
@@ -115,8 +115,12 @@ header .sub{font-size:12px;color:#cbbfa8;margin-left:auto}
 .ldc .main{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;overflow:auto;width:100%}
 .ldc .main img{max-width:96%;max-height:100%;box-shadow:0 4px 22px rgba(0,0,0,.6);cursor:zoom-out}
 .ldc .strip{flex:0 0 auto;display:flex;gap:8px;overflow-x:auto;max-width:100%;padding:6px;background:#241f1a;border-radius:8px}
-.ldc .strip .pgv{width:64px;flex:0 0 auto;cursor:pointer;border:2px solid transparent;border-radius:4px;opacity:.75;background:#fff}
+.ldc .strip .pgv{width:64px;min-height:88px;flex:0 0 auto;cursor:pointer;border:2px solid transparent;border-radius:4px;opacity:.75;background:#fff}
 .ldc .strip .pgv.on{border-color:#e6c181;opacity:1}
+/* 该页大图正在渲染：调暗该格作为反馈，但不动大图区，避免闪白。 */
+.ldc .strip .pgv.ld{opacity:.35}
+.ldc .pl{color:#9a8d7c;font-size:12px;padding:6px 12px}
+.ldc .pl.err{color:#c99}
 .ldc .cap{color:#cdbfae;font-size:12px;text-align:center;max-width:90vw;word-break:break-all}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#3a3328;color:#f3ecdf;padding:9px 20px;border-radius:6px;font-size:13px;display:none;z-index:99}
 .dirbox{position:relative}
@@ -142,6 +146,48 @@ header .sub{font-size:12px;color:#cbbfa8;margin-left:auto}
 .be-empty .be-et{font-size:16px;font-weight:700;margin-bottom:8px}
 .be-empty .be-ed{color:#8a7f6b;margin-bottom:16px}
 .be-diag{background:#f3ead6;border:1px solid #e6dcc6;border-radius:6px;padding:10px 12px;margin:16px 0 0;white-space:pre-wrap;word-break:break-all;font-size:11px;color:#6a5c3a;line-height:1.7}
+
+/* ---- 文件树右键菜单 ----
+   定位 fixed、挂在 body 下：树本身是滚动容器，若挂在节点里，
+   滚动时菜单会跟着跑、还会被 #tree 的 overflow 裁掉。 */
+.cmenu{position:fixed;z-index:300;left:0;top:0;min-width:196px;background:#3a3328;border:1px solid #6a5c3a;border-radius:8px;padding:5px;box-shadow:0 8px 24px rgba(0,0,0,.45);display:none}
+.cmenu.open{display:block}
+.cmenu .chd{font-size:10px;color:#a08c63;padding:5px 10px 3px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmenu .ci{display:flex;align-items:center;gap:8px;font-size:12px;color:#f3ecdf;padding:6px 10px;border-radius:5px;cursor:pointer;white-space:nowrap}
+.cmenu .ci:hover{background:#5a5040}
+.cmenu .ci .ck{margin-left:auto;font-size:10px;color:#a08c63;padding-left:12px}
+.cmenu .ci:hover .ck{color:#d9c9a6}
+.cmenu .csep{height:1px;background:#5c5142;margin:4px 6px}
+
+/* ---- 通用弹窗（改名预览 / 覆盖询问）---- */
+.modal{position:fixed;inset:0;background:rgba(20,16,12,.5);display:none;align-items:center;justify-content:center;z-index:400;padding:24px}
+.modal.open{display:flex}
+.mbox{background:#faf6ee;border:1px solid #d9c9a6;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.4);display:flex;flex-direction:column;max-width:min(940px,96vw);max-height:88vh;min-width:440px}
+.mbox.small{min-width:380px;max-width:480px}
+.mhead{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid #e6dcc6;font-size:14px;font-weight:700;color:#4a412f}
+.mhead .mx{margin-left:auto;border:0;background:transparent;font-size:19px;line-height:1;color:#8a7f6b;cursor:pointer;padding:0 4px}
+.mhead .mx:hover{color:#4a412f}
+.msum{padding:10px 16px;font-size:12px;color:#6a5c3a;line-height:1.7;border-bottom:1px solid #f0e8d6;word-break:break-all}
+.msum .warn{color:#b5533f;font-weight:700}
+.mlist{overflow:auto;padding:8px 16px 12px}
+.mrow{display:flex;align-items:center;gap:10px;font-size:12px;padding:5px 9px;border-radius:6px;border:1px solid #eee3cc;margin-bottom:4px;background:#fff;word-break:break-all}
+.mrow .od{color:#8a7f6b;flex:1 1 40%;min-width:0}
+.mrow .ar{flex:0 0 auto;color:#bda87a}
+.mrow .nw{color:#3a3328;font-weight:700;flex:1 1 40%;min-width:0}
+.mrow .dsc{flex:0 0 auto;font-size:10px;color:#8a7f6b;background:#f3ead6;border-radius:4px;padding:1px 6px;white-space:nowrap}
+/* 冲突项：目标名撞车（同目录改后重名 / 目标已被计划外文件占着）—— 描边突出 */
+.mrow.collide{border:2px solid #c9533f;background:#fdf1ee}
+.mrow.collide .nw{color:#b5533f}
+.mrow.collide .dsc{background:#f6d9d2;color:#8f3a2b}
+.mfoot{display:flex;gap:10px;justify-content:flex-end;padding:12px 16px;border-top:1px solid #e6dcc6}
+.mfoot .fbtn{background:#e8dfc9;color:#6a5c3a;border:1px solid #d8cdb0}
+.mfoot .fbtn:hover{background:#ddd2b8}
+.mfoot .fbtn.primary{background:#a98a52;color:#fff;border-color:#a98a52;font-weight:700}
+.mfoot .fbtn.primary:hover{background:#b8995e}
+.mfoot .fbtn.danger{background:#b5533f;color:#fff;border-color:#b5533f}
+.mfoot .fbtn.danger:hover{background:#984232}
+.mfoot .fbtn:disabled{opacity:.45;cursor:default}
+.mfoot .fbtn:disabled:hover{background:#e8dfc9}
 </style></head><body>
 <header><h1>改名重名文件 · OCR高相似 · 截图对比</h1>
 <div class="filters">
@@ -180,6 +226,18 @@ header .sub{font-size:12px;color:#cbbfa8;margin-left:auto}
 <div class="ldc" id="ldc"><div class="main" id="main"></div><div class="strip" id="strip"></div><div class="cap" id="cap"></div></div>
 <div class="toast" id="toast"></div>
 <div class="tip" id="tip"></div>
+<div class="cmenu" id="cmenu"></div>
+<div class="modal" id="rnModal"><div class="mbox">
+<div class="mhead"><span id="rnTitle">改名预览</span><button class="mx" onclick="rnClose()" data-tip="关闭">×</button></div>
+<div class="msum" id="rnSum"></div>
+<div class="mlist" id="rnList"></div>
+<div class="mfoot"><button class="fbtn" onclick="rnClose()">取消</button><button class="fbtn primary" id="rnGo" onclick="rnExec()">执行改名</button></div>
+</div></div>
+<div class="modal" id="askModal"><div class="mbox small">
+<div class="mhead"><span id="askTitle"></span></div>
+<div class="msum" id="askText"></div>
+<div class="mfoot" id="askBtns"></div>
+</div></div>
 <script>
 /* 原生后端：没有 python 服务、没有 8767 端口，数据命令一律走 invoke。
    下面这个 apiU 只负责**图片地址**这一件事。 */
@@ -590,6 +648,229 @@ document.addEventListener('click',function(e){
     if(p&&p.classList.contains('open'))p.classList.remove('open');
   });
 });
+
+/* ===========================================================================
+   文件树右键菜单
+   ---------------------------------------------------------------------------
+   五个动作，全部按**绝对路径**（节点的 full）操作磁盘：
+     已解决        把该目录（含子目录）下所有「目录|学科」标成已解决 / 取消
+     刷新          对该目录做一次增量扫描（后端只扫这一个目录，其余索引原样保留）
+     改名          按计划目标名批量改名，分「仅本目录 / 含子目录」两项
+     打包为 ZIP    在目录的父目录下生成同名压缩包（已存在时弹窗询问）
+     资源管理器    调系统文件管理器打开该目录（只读，不改磁盘）
+   =========================================================================== */
+var CMENU_NODE=null;
+
+function closeCMenu(){var m=document.getElementById('cmenu');if(m)m.classList.remove('open');CMENU_NODE=null;}
+
+/* 汇总该节点（含子目录）下所有「目录|学科」。dir 为空的（根目录下直接放的
+   文件）跳过 —— 前端 setDone 与后端 dir_done 都按"目录非空"判定，
+   收进来也标不上，只会让「已解决」看起来点了没反应。 */
+function subtreeDoneKeys(n){
+  var keys=[],seen={};
+  (function walk(x){
+    (x.files||[]).forEach(function(it){
+      if(!x.dir||!it.subj)return;
+      var k=x.dir+'|'+it.subj;
+      if(!seen[k]){seen[k]=1;keys.push(k);}
+    });
+    (x.kids||[]).forEach(walk);
+  })(n);
+  return keys;
+}
+function splitKey(k){var i=k.indexOf('|');return [k.slice(0,i),k.slice(i+1)];}
+
+function buildCMenuHTML(n){
+  var keys=subtreeDoneKeys(n);
+  var allDone=keys.length>0&&keys.every(function(k){var p=splitKey(k);return isDone(p[0],p[1]);});
+  var hasKids=(n.kids||[]).length>0;
+  var h='';
+  h+='<div class="chd" data-tip="'+esc(n.full||n.path)+'">'+esc(n.name)+'</div>';
+  h+='<div class="ci" data-act="done" data-tip="把该目录'
+    +(hasKids?'及其子目录':'')+'下所有学科标记为已解决；已全部解决时再点一次即取消">'
+    +(allDone?'取消已解决':'已解决')
+    +'<span class="ck">'+(keys.length?'全部学科':'无可标记')+'</span></div>';
+  h+='<div class="ci" data-act="scan" data-tip="只对这一层目录做增量扫描：新放进去的文件读入并比对，其余目录的索引原样保留">刷新<span class="ck">增量扫描</span></div>';
+  h+='<div class="csep"></div>';
+  h+='<div class="chd">改名（按计划目标名）</div>';
+  h+='<div class="ci" data-act="ren1" data-tip="只改本层目录里的文件，先弹预览再执行">全部改名<span class="ck">仅本目录</span></div>';
+  h+='<div class="ci" data-act="ren2" data-tip="连同子目录里的文件一起改，先弹预览再执行">全部改名<span class="ck">含子目录</span></div>';
+  h+='<div class="csep"></div>';
+  h+='<div class="ci" data-act="zip" data-tip="打包成一个 ZIP 存到该目录的父目录下（ZIP 内保留顶层文件夹）；已存在同名文件时会先询问">打包为 ZIP<span class="ck">存到父目录</span></div>';
+  h+='<div class="ci" data-act="reveal" data-tip="调系统的文件管理器（Windows 资源管理器 / macOS 访达）打开该目录，插件窗口不会关">在资源管理器中打开<span class="ck">系统窗口</span></div>';
+  return h;
+}
+function openCMenu(x,y,path){
+  var n=findNode(path);if(!n)return;
+  CMENU_NODE=path;
+  var m=document.getElementById('cmenu');
+  m.innerHTML=buildCMenuHTML(n);
+  m.classList.add('open');
+  /* 量一次尺寸再定位：菜单可能贴到视口右/下边缘外，翻到光标另一侧。 */
+  var w=m.offsetWidth,h=m.offsetHeight;
+  if(x+w>window.innerWidth-8)x=Math.max(8,window.innerWidth-w-8);
+  if(y+h>window.innerHeight-8)y=Math.max(8,window.innerHeight-h-8);
+  m.style.left=x+'px';m.style.top=y+'px';
+}
+document.getElementById('tree').addEventListener('contextmenu',function(e){
+  var node=e.target.closest?e.target.closest('.tnode'):null;
+  if(!node)return;
+  e.preventDefault();
+  openCMenu(e.clientX,e.clientY,node.getAttribute('data-path'));
+});
+document.getElementById('cmenu').onclick=function(e){
+  var it=e.target.closest('.ci');if(!it)return;
+  var act=it.getAttribute('data-act');
+  var path=CMENU_NODE;
+  var n=path?findNode(path):null;
+  closeCMenu();
+  if(!n)return;
+  if(act==='done')doDirDoneAll(n);
+  else if(act==='scan')doDirScan(n);
+  else if(act==='ren1')doRenameAll(n,false);
+  else if(act==='ren2')doRenameAll(n,true);
+  else if(act==='zip')doPackZip(n);
+  else if(act==='reveal')doReveal(n);
+};
+document.addEventListener('click',function(e){if(!e.target.closest('#cmenu'))closeCMenu();});
+window.addEventListener('blur',closeCMenu);
+window.addEventListener('resize',closeCMenu);
+window.addEventListener('keydown',function(e){if(e.key==='Escape'){closeCMenu();rnClose();}});
+/* 树内滚动时菜单会悬在原地、指向错行，直接收起。capture 才能收到内层滚动。 */
+document.addEventListener('scroll',closeCMenu,true);
+
+/* ---- 动作一：批量「已解决」---- */
+async function doDirDoneAll(n){
+  var keys=subtreeDoneKeys(n);
+  if(!keys.length){toast('该目录下没有可标记的文件');return;}
+  var all=keys.every(function(k){var p=splitKey(k);return isDone(p[0],p[1]);});
+  var on=!all;
+  try{
+    var j=await cmdDoneSet(keys,on);
+    if(!j.ok){toast('操作失败：'+(j.err||''));return;}
+    keys.forEach(function(k){var p=splitKey(k);setDone(p[0],p[1],on);});
+    toast((on?'已标记解决 ':'已取消解决 ')+keys.length+' 项');
+    recalc();buildTree();
+    if(FILT.done){pickDefault();renderView();}
+  }catch(e){toast('操作失败：'+beErr(e));}
+}
+
+/* ---- 动作二：刷新（对该目录做增量扫描）----
+   后端只扫这一个目录：新放进去的文件读入，其余目录的索引原样保留
+   （见 scan.rs 的「域外条目保留」）。 */
+async function doDirScan(n){
+  var p=n.full;
+  if(!p){toast('该节点没有绝对路径，无法扫描');return;}
+  try{
+    var j=await cmdScan(p);
+    if(!j.ok){toast('刷新失败：'+(j.err||''));return;}
+    toast(j.started?'开始刷新该目录…':'已在扫描中…');
+    frLoad();frPoll(true);
+  }catch(e){toast('刷新失败：'+beErr(e));}
+}
+
+/* ---- 动作三：批量改名（先预览，再执行）---- */
+var RN={path:'',recursive:false,rows:[]};
+async function doRenameAll(n,recursive){
+  var p=n.full;
+  if(!p){toast('该节点没有绝对路径，无法改名');return;}
+  toast('正在生成改名预览…');
+  var j;
+  try{j=await cmdRenamePreview(p,recursive);}catch(e){toast('预览失败：'+beErr(e));return;}
+  if(!j.ok){toast('预览失败：'+(j.err||''));return;}
+  if(!j.total){toast('该目录下没有需要改名的文件');return;}
+  RN={path:p,recursive:recursive,rows:j.rows||[]};
+  rnRender(n,j);
+}
+function rnRender(n,j){
+  document.getElementById('rnTitle').textContent='改名预览 · '+n.name;
+  var coll=j.collide||0;
+  var sum='目录：'+esc(RN.path)+'<br>共 <b>'+j.total+'</b> 个文件将被改名'
+    +(RN.recursive?'（含子目录）':'（仅本目录）');
+  if(coll)sum+='<br><span class="warn">⚠ 其中 '+coll+' 项目标名冲突（红框标出），执行时会跳过不改</span>';
+  document.getElementById('rnSum').innerHTML=sum;
+  var h='';
+  RN.rows.forEach(function(r){
+    h+='<div class="mrow'+(r.collide?' collide':'')+'">'
+      +'<span class="od" data-tip="'+esc(r.dir+'\\'+r.old)+'">'+esc(r.old)+'</span>'
+      +'<span class="ar">→</span>'
+      +'<span class="nw" data-tip="'+esc(r.new)+'">'+esc(r.new)+'</span>'
+      +(r.collide?'<span class="dsc">'+(r.why==='dup'?'目标重名':'目标已存在')+'</span>':'')
+      +'</div>';
+  });
+  document.getElementById('rnList').innerHTML=h;
+  var go=document.getElementById('rnGo');
+  go.disabled=false;go.textContent='执行改名（'+j.total+'）';
+  document.getElementById('rnModal').classList.add('open');
+}
+function rnClose(){var m=document.getElementById('rnModal');if(m)m.classList.remove('open');}
+async function rnExec(){
+  var go=document.getElementById('rnGo');
+  go.disabled=true;go.textContent='改名中…';
+  var j;
+  try{j=await cmdRenameAll(RN.path,RN.recursive);}
+  catch(e){go.disabled=false;go.textContent='执行改名';toast('改名失败：'+beErr(e));return;}
+  rnClose();
+  if(!j.ok){toast('改名失败：'+(j.err||''));return;}
+  var msg='已改名 '+j.renamed+' 个';
+  if(j.skipped)msg+='，跳过 '+j.skipped+' 个（目标冲突）';
+  if(j.errs&&j.errs.length)msg+='，失败 '+j.errs.length+' 个';
+  toast(msg);
+  /* 名字变了 → 家族重排、缩略图缓存迁移，整棵树重取最省事也最不会出错。 */
+  try{await reloadAll();}catch(e){}
+}
+
+/* ---- 动作四：打包为 ZIP（目标已存在时弹窗三选一）---- */
+async function doPackZip(n){
+  var p=n.full;
+  if(!p){toast('该节点没有绝对路径，无法打包');return;}
+  var j;
+  try{j=await cmdPackZip(p,'auto');}catch(e){toast('打包失败：'+beErr(e));return;}
+  if(j.ok){toast('已打包 '+j.files+' 个文件 → '+(j.target||''));return;}
+  if(j.err!=='exists'){toast('打包失败：'+(j.err||''));return;}
+  var pick=await ask('目标 ZIP 已存在','已存在同名压缩包：\n'+j.target+'\n\n请选择处理方式：',[
+    {label:'覆盖',val:'overwrite',cls:'danger'},
+    {label:'加时间戳另存',val:'timestamp',cls:'primary'},
+    {label:'取消',val:'cancel'}
+  ]);
+  if(!pick||pick==='cancel'){toast('已取消打包');return;}
+  var k;
+  try{k=await cmdPackZip(p,pick);}catch(e){toast('打包失败：'+beErr(e));return;}
+  if(!k.ok){toast('打包失败：'+(k.err||''));return;}
+  toast('已打包 '+k.files+' 个文件 → '+(k.target||''));
+}
+
+/* ---- 动作五：在资源管理器中打开 ----
+   纯"看一眼这个目录里到底有什么"，不改任何东西，所以失败也只在底部提示，
+   不弹窗打断 —— 与改名/打包那几条（要用户二次确认）区分开。 */
+async function doReveal(n){
+  var p=n.full||n.path;
+  if(!p){toast('该节点没有绝对路径，无法打开');return;}
+  var j;
+  try{j=await cmdReveal(p);}catch(e){toast('打开失败：'+beErr(e));return;}
+  if(!j.ok){toast('打开失败：'+(j.err||''));return;}
+  toast('已在文件管理器中打开');
+}
+
+/* 通用询问弹窗：按钮列表由调用方给，返回被点按钮的 val（点 × / Esc 之外没有默认）。 */
+function ask(title,text,btns){
+  return new Promise(function(resolve){
+    var m=document.getElementById('askModal');
+    document.getElementById('askTitle').textContent=title;
+    document.getElementById('askText').innerHTML=esc(text).replace(/\n/g,'<br>');
+    var bar=document.getElementById('askBtns');bar.innerHTML='';
+    var done=false;
+    function fin(v){if(done)return;done=true;m.classList.remove('open');resolve(v);}
+    btns.forEach(function(b){
+      var el=document.createElement('button');
+      el.className='fbtn'+(b.cls?' '+b.cls:'');
+      el.textContent=b.label;
+      el.onclick=function(){fin(b.val);};
+      bar.appendChild(el);
+    });
+    m.classList.add('open');
+  });
+}
 function ensureBox(leaf,subj){
   const key=leaf.path+'|'+(subj||'');
   if(!CACHE[key])CACHE[key]=buildBox(leaf,subj);
@@ -675,7 +956,7 @@ function renderCard(it){
         else if(it.sub){tag='被包含方(子集)';tcls='tagsub';}
         else if(it.txtsame){tag='文本一致';tcls='tagtxt';}
         else if(it.ylw){tag='疑似>0.3';tcls='tagylw';}
-        return '<div class="'+cls+'" data-name="'+esc(it.name)+'" data-path="'+esc(it.path)+'" data-fam="'+esc(it.fam||'')+'">'
+        return '<div class="'+cls+'" data-name="'+esc(it.name)+'" data-path="'+esc(it.path)+'" data-idx="'+esc(it.idx||'')+'" data-fam="'+esc(it.fam||'')+'">'
           +(tag?'<div class="'+tcls+'"'+(ttip?' data-tip="'+esc(ttip)+'"':'')+'>'+tag+'</div>':'')
           +'<div class="thumb" onclick="zoom(this)"><img loading="lazy" src="'+it.img+'" alt=""></div>'
           +'<div class="meta"><div class="fname" data-tip="'+esc(it.name)+'">'+esc(it.name)+'</div>'
@@ -686,31 +967,104 @@ function renderCard(it){
               :'<button class="btn-ren" onclick="ren(this)">改名</button><button class="btn-del" onclick="del(this)">删除</button>')+'</div>'
           +'</div>';
 }
+/* 逐页取图的缓存。键是文件路径，值是 {path,idx,n,thumbs,fulls,picked}。 */
 var PAGE_CACHE={};
+
+/* 打开灯箱看整份卷子。
+   【旧实现为什么慢】
+   一条 dupview_pages 在后端把**整份**卷子按 1000px 渲完才返回，
+   22 页要等好几秒，期间灯箱一片空白 —— 这就是"首次打开很慢"的来源。
+   而且缩略条每格只有 64px，却和大图一样按 1000px 渲，十几倍算力白花。
+
+   【现在三段式】
+   ① 立刻用卡片上那张已缓存的缩略图顶上（零等待，先看得见）；
+   ② 只取页数，把缩略条的格子摆出来（读 PDF 头，不渲染）；
+   ③ 串行取 160px 小图逐格填充，同时优先取第 1 页的 1000px 大图；
+      点某一格再按需取该页大图，取过就缓存。
+   观感从"白等几秒、整排同时出现"变成"一格格冒出来"。 */
 function zoom(el){
   const card=el.closest('.card');
   const path=card.getAttribute('data-path');
+  const idx=card.getAttribute('data-idx');
   const name=card.getAttribute('data-name');
-  const L=document.getElementById('ldc');const main=document.getElementById('main');
-  const strip=document.getElementById('strip');const cap=document.getElementById('cap');
-  main.innerHTML='<img src="'+el.querySelector('img').src+'">';
-  strip.innerHTML='<div style="color:#9a8d7c;padding:6px 12px;font-size:12px">加载各页…</div>';
-  cap.textContent=name;L.style.display='flex';
-  function show(j){
-    if(!j.ok){strip.innerHTML='<div style="color:#c9a;padding:6px 12px">无法渲染: '+esc(j.err||'')+'</div>';return;}
-    main.innerHTML='<img src="'+j.pages[0]+'">';
-    cap.textContent=name+' · 共 '+j.pages.length+' 页';
+  /* 已删除的文件照样能预览（后端回落到 _trash 取图），标题里标明状态，
+     免得看见图就以为文件还在原处。 */
+  const label=name+(card.classList.contains('dim')?'（已删除）':'');
+  const L=document.getElementById('ldc'),main=document.getElementById('main');
+  const strip=document.getElementById('strip'),cap=document.getElementById('cap');
+  const th=el.querySelector('img');
+
+  /* ① 先顶上卡片缩略图：它扫描时就渲好了，webview 也已缓存。 */
+  main.innerHTML='<img src="'+(th?th.src:'')+'">';
+  cap.textContent=label;L.style.display='flex';
+
+  /* 同一次打开期间的状态。换了文件就整体换一份，不会串页。
+     `idx` 参与判定：文件改名后 path 会变，idx 不变。 */
+  const old=PAGE_CACHE[path];
+  const S=(old&&old.idx===idx)?old:(PAGE_CACHE[path]={path:path,idx:idx,n:0,thumbs:{},fulls:{},picked:0});
+
+  /* 取某页大图填进大图区。已有缓存直接换；没有就现取 ——
+     取的过程中保留当前画面，只把那一格调暗作反馈，避免闪一下空白。 */
+  function pick(i){
+    S.picked=i;
+    strip.querySelectorAll('.pgv').forEach(function(x){
+      x.classList.toggle('on',+x.getAttribute('data-i')===i);
+    });
+    const u=S.fulls[i];
+    if(u){main.innerHTML='<img src="'+u+'">';return;}
+    const cell=strip.querySelector('.pgv[data-i="'+i+'"]');
+    if(cell)cell.classList.add('ld');
+    cmdPage(path,idx,i,'f').then(function(j){
+      if(cell)cell.classList.remove('ld');
+      if(S!==PAGE_CACHE[path]||!j.ok)return;
+      S.fulls[i]=apiU(j.url);
+      if(S.picked===i)main.innerHTML='<img src="'+S.fulls[i]+'">';
+    }).catch(function(){if(cell)cell.classList.remove('ld');});
+  }
+
+  /* 缩略图**串行**填：前一格出来再取下一格。
+     并发发几十个 invoke 会让 pdfium 在多线程上同渲同一份文档（不安全），
+     也抢不到带宽；串行反而第一格出得更快。 */
+  function fillT(i){
+    if(i>=S.n||S!==PAGE_CACHE[path])return;
+    cmdPage(path,idx,i,'t').then(function(j){
+      if(S!==PAGE_CACHE[path])return;
+      if(j.ok){
+        S.thumbs[i]=apiU(j.url);
+        const im=strip.querySelector('.pgv[data-i="'+i+'"]');
+        if(im)im.src=S.thumbs[i];
+      }
+      fillT(i+1);
+    }).catch(function(){fillT(i+1);});
+  }
+
+  /* 页数已知：铺格子（JS 缓存里已有的缩略图先填上，重开时不必再等），
+     再补没取到的格子、并把当前页大图取回来。 */
+  function layout(){
+    cap.textContent=label+' · 共 '+S.n+' 页';
     let html='';
-    j.pages.forEach(function(u,i){html+='<img class="pgv'+(i===0?' on':'')+'" src="'+u+'" alt="'+(i+1)+'">';});
+    for(let i=0;i<S.n;i++){
+      html+='<img class="pgv'+(S.picked===i?' on':'')+'" data-i="'+i+'"'
+        +(S.thumbs[i]?' src="'+S.thumbs[i]+'"':'')+' alt="">';
+    }
     strip.innerHTML=html;
     strip.querySelectorAll('.pgv').forEach(function(im){
-      im.onclick=function(){main.innerHTML='<img src="'+im.src+'">';
-        strip.querySelectorAll('.pgv').forEach(function(x){x.classList.remove('on')});
-        im.classList.add('on');};
+      im.onclick=function(){pick(+im.getAttribute('data-i'));};
     });
+    if(!S.fulls[S.picked])pick(S.picked);
+    for(let i=0;i<S.n;i++){if(!S.thumbs[i]){fillT(i);break;}}
   }
-  if(PAGE_CACHE[path]){show(PAGE_CACHE[path]);return;}
-  cmdPages(path).then(function(j){if(j&&j.pages)j.pages=j.pages.map(apiU);PAGE_CACHE[path]=j;show(j);}).catch(function(){strip.innerHTML='<div style="color:#c99">加载失败</div>';});
+
+  if(S.n){layout();return;}
+  strip.innerHTML='<div class="pl">读取页数…</div>';
+  cmdPageInfo(path,idx).then(function(j){
+    if(S!==PAGE_CACHE[path])return;
+    if(!j.ok){strip.innerHTML='<div class="pl err">'+esc(j.err||'无法读取页数')+'</div>';return;}
+    S.n=j.n;S.picked=0;layout();
+  }).catch(function(e){
+    if(S!==PAGE_CACHE[path])return;
+    strip.innerHTML='<div class="pl err">加载失败：'+esc(e&&e.message?e.message:'请重试')+'</div>';
+  });
 }
 document.getElementById('ldc').onclick=function(e){if(e.target===this||e.target.id==='main')this.style.display='none';};
 async function ren(btn){
@@ -855,11 +1209,18 @@ async function cmdAddRoot(p){return beCtx().invoke('dupview_addroot',{path:p})}
 async function cmdDelRoot(p){return beCtx().invoke('dupview_delroot',{path:p})}
 async function cmdBrowse(){return beCtx().invoke('dupview_browse',{})}
 async function cmdList(){return beCtx().invoke('dupview_list',{})}
-async function cmdPages(path){return beCtx().invoke('dupview_pages',{path:path})}
+async function cmdPageInfo(path,idx){return beCtx().invoke('dupview_pageinfo',{path:path,idx:idx})}
+async function cmdPage(path,idx,index,size){return beCtx().invoke('dupview_page',{path:path,idx:idx,index:index,size:size})}
 async function cmdRename(path,nn){return beCtx().invoke('dupview_rename',{path:path,newname:nn})}
 async function cmdDirDone(d,sj){return beCtx().invoke('dupview_dir_done',{dir:d,subj:sj})}
 async function cmdDelete(path){return beCtx().invoke('dupview_delete',{path:path})}
 async function cmdRestore(path){return beCtx().invoke('dupview_restore',{path:path})}
+/* 文件树右键菜单的四条。参数名与 Rust 侧逐字对应（都是单词，无需驼峰转换）。 */
+async function cmdDoneSet(keys,on){return beCtx().invoke('dupview_done_set',{keys:keys,on:on})}
+async function cmdRenamePreview(path,recursive){return beCtx().invoke('dupview_rename_preview',{path:path,recursive:recursive})}
+async function cmdRenameAll(path,recursive){return beCtx().invoke('dupview_rename_all',{path:path,recursive:recursive})}
+async function cmdPackZip(path,mode){return beCtx().invoke('dupview_pack_zip',{path:path,mode:mode})}
+async function cmdReveal(path){return beCtx().invoke('dupview_open_in_explorer',{path:path})}
 /* 原生化后没有"后端进程"可起停：渲染、比对都编译进 exe 里，随面板一起就绪。
    这一整条 python 时代的启停栏直接隐藏 —— 留着只会让人去点一个
    已经不存在的「启动后端」。BE 对象只留 ready 这一个语义。 */

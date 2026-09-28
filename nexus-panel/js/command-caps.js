@@ -160,11 +160,15 @@ export const COMMAND_CAPS = {
    */
   dupview_roots: 'S',
   dupview_list: 'S',
-  dupview_pages: 'S',
+  dupview_pageinfo: 'S',
+  dupview_page: 'S',
   dupview_scan_status: 'S',
   dupview_scan: 'S',
   dupview_scanall: 'S',
   dupview_browse: 'S',
+  // 批量改名的预览：只读计划文件与磁盘是否存在，返回"旧名 → 新名"清单，
+  // 不改任何东西。定 S 的理由同上一组 —— 返回值里是用户文件的完整路径。
+  dupview_rename_preview: 'S',
 
   /* ---- W：写用户数据 ---- */
 
@@ -180,12 +184,41 @@ export const COMMAND_CAPS = {
   dupview_delete: 'W',
   dupview_restore: 'W',
 
+  /*
+   * 试卷查重：改用户文件名。
+   *
+   * 单文件改名（dupview_rename）与批量改名（dupview_rename_all）都动的是
+   * **用户磁盘上的真名**，改错了要靠用户自己回忆原名 —— 与 delete 同级。
+   * 之前 dupview_rename 一直漏登记，挂着 unknown（等于对防护隐身），一并补上。
+   */
+  dupview_rename: 'W',
+  dupview_rename_all: 'W',
+
+  /*
+   * 试卷查重：打包成 ZIP。
+   *
+   * 看起来只是"读一遍再写一个压缩包"，但它**在用户的试卷目录里新建文件**
+   * （落在目录的父目录下），且目标已存在时还能覆盖 —— 按"看得到的效果"定 W。
+   */
+  dupview_pack_zip: 'W',
+
   // 试卷查重：写的是插件自己的配置（roots.json 根目录列表、done.json 处理标记）。
   // 不涉及用户文件，但会被上面的处置命令拿来决定"能处置哪些文件"，
   // 所以同样按写来管 —— 篡改根目录列表等于扩大处置范围。
   dupview_addroot: 'W',
   dupview_delroot: 'W',
   dupview_dir_done: 'W',
+  // 批量「已解决」：右键菜单一次写多个 `目录|学科` 键，与 dir_done 同一份 done.json。
+  dupview_done_set: 'W',
+
+  /*
+   * 试卷查重：打开系统文件管理器落在该目录。
+   *
+   * 看起来只是"弹个窗口"，但它做的是**启动外部进程**（explorer / open / xdg-open），
+   * 且入参是任意路径 —— 与 fpx_open_path 同类，按本表取向归 M（起进程）。
+   * 定 S 会低估：S 只进"读"类组合，M 才是"能拉起东西"的信号。
+   */
+  dupview_open_in_explorer: 'M',
 
   fpx_save_config: 'W',
   fpx_create_link: 'W',

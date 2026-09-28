@@ -32,7 +32,10 @@ const MAP_FILE: &str = "_work/map.json";
 ///
 /// 用路径而不是序号 —— 序号会随扫描顺序变化，一旦变了，
 /// 上一轮生成的缩略图就全部对不上，等于缓存全废。
-fn idx_of(path: &str) -> String {
+///
+/// `pub(crate)`：改名命令（mod.rs）要靠它算出新路径的新编号，
+/// 好把缩略图 / docx 缓存跟着挪过去。算法只能有一份，不能各写一遍。
+pub(crate) fn idx_of(path: &str) -> String {
     let h = md5::compute(path.as_bytes());
     format!("{:x}", h)[..8].to_string()
 }
@@ -110,7 +113,8 @@ fn subj_of(name: &str, base: &str) -> String {
 
 /// 撞名家族基底名：去掉 `_2` `_3` 这类副本后缀。
 /// 同一份卷子被复制多次时，文件名往往只差这个后缀。
-fn base_of(name: &str) -> String {
+/// 改名命令也用它 —— 改过名的文件，家族名跟着新名走。
+pub fn base_of(name: &str) -> String {
     let stem = match name.rfind('.') {
         Some(i) => &name[..i],
         None => name,
@@ -140,7 +144,8 @@ fn norm(s: &str) -> String {
     s.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
-/// 递归收集 PDF（docx 需要 LibreOffice 转 PDF，单独处理，见 docx_to_pdf）。
+/// 递归收集 PDF 与 docx。docx 不能直接渲染，扫描时先经 `docx::pdf_cache`
+/// 转成 PDF（缓存复用），之后的链路与 PDF 完全一样。
 fn collect_files(root: &Path, out: &mut Vec<PathBuf>) {
     let mut stack = vec![root.to_path_buf()];
     while let Some(d) = stack.pop() {
@@ -152,12 +157,10 @@ fn collect_files(root: &Path, out: &mut Vec<PathBuf>) {
             let p = e.path();
             if p.is_dir() {
                 stack.push(p);
-            } else if p
-                .extension()
-                .and_then(|x| x.to_str())
-                .map(|x| x.eq_ignore_ascii_case("pdf"))
-                .unwrap_or(false)
-            {
+                continue;
+            }
+            let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("");
+            if ext.eq_ignore_ascii_case("pdf") || ext.eq_ignore_ascii_case("docx") {
                 out.push(p);
             }
         }
@@ -195,11 +198,6 @@ pub fn start(app: &AppHandle, roots: Vec<String>) -> Result<bool, String> {
     Ok(true)
 }
 
-/// 文件名 → 撞名家族名。改名命令要用它重算家族（改名后可能并进另一族）。
-pub fn family_of(name: &str) -> String {
-    norm(&base_of(name))
-}
-
 fn set_status(app: &AppHandle, phase: &str, done: u32, total: u32, msg: &str) {
     if let Ok(mut s) = app.state::<DupState>().status.lock() {
         s.phase = phase.into();
@@ -215,6 +213,10 @@ fn cancelled(app: &AppHandle) -> bool {
 
 /// 扫描主流程。返回 Err 时由调用方写进 status.err。
 fn run(app: &AppHandle, roots: Vec<String>) -> Result<(), String> {
+    /* 标记本线程为"扫描侧"：渲染闸据此让出锁给交互取图，
+       否则一轮内容比对会把用户点开的试卷饿到桥接超时（见 pdf::render_guard）。 */
+    super::pdf::mark_scan_thread();
+
     let dir = super::data_dir(app)?;
     let imgdir = dir.join("_imgs");
 
@@ -225,13 +227,14 @@ fn run(app: &AppHandle, roots: Vec<String>) -> Result<(), String> {
     }
     files.sort();
     let total = files.len() as u32;
-    set_status(app, "收集文件", 0, total, &format!("共 {} 个 PDF", total));
+    set_status(app, "收集文件", 0, total, &format!("共 {} 个文件", total));
 
     /* ---- 2. 逐文件登记 + 渲染首页缩略图 ----
        增量：本轮新出现的文件数要报给前端（它据此决定"自动扫描完成"
        要不要弹提示 —— 没新增就静默结束，避免每次开面板都弹一下）。 */
     let prev: Vec<Item> = super::read_json(&dir.join(MAP_FILE));
-    let prev_paths: HashSet<String> = prev.iter().map(|x| x.path.clone()).collect();
+    let prev_by_path: HashMap<String, Item> =
+        prev.iter().map(|x| (x.path.clone(), x.clone())).collect();
     let done = Arc::new(AtomicU32::new(0));
     let mut items: Vec<Item> = Vec::new();
 
@@ -251,30 +254,52 @@ fn run(app: &AppHandle, roots: Vec<String>) -> Result<(), String> {
             .unwrap_or_default();
         let size = std::fs::metadata(f).map(|m| m.len()).unwrap_or(0);
 
-        /* 缩略图：已存在就跳过。渲染是整个扫描里最贵的一步，
+        /* 实际要渲染的载体：docx 先转 PDF（命中缓存则零开销），其余就是自己。 */
+        let src = if name.to_ascii_lowercase().ends_with(".docx") {
+            super::docx::pdf_cache(&dir, &idx, &path)
+        } else {
+            Some(PathBuf::from(&path))
+        };
+
+        /* 缩略图与页数：上一轮已有就沿用。渲染是整个扫描里最贵的一步，
            第二次扫描应当几乎是瞬时完成的。 */
+        let old = prev_by_path.get(&path);
         let thumb = imgdir.join(format!("{}.png", idx));
         let mut img: Option<String> = None;
+        let mut pages = 0u32;
         if thumb.exists() {
             img = Some(thumb.to_string_lossy().to_string());
-        } else if let Ok(g) = super::pdf::first_page_gray(f) {
-            if super::pdf::save_png(&g, &thumb).is_ok() {
-                img = Some(thumb.to_string_lossy().to_string());
+            pages = old.map(|p| p.pages).unwrap_or(0);
+        } else if let Some(sp) = &src {
+            if let Ok(g) = super::pdf::first_page_gray(sp) {
+                if super::pdf::save_png(&g, &thumb).is_ok() {
+                    img = Some(thumb.to_string_lossy().to_string());
+                }
+            }
+        }
+        if pages == 0 {
+            if let Some(sp) = &src {
+                pages = super::pdf::page_count(sp).unwrap_or(0) as u32;
             }
         }
 
         items.push(Item {
             subj: subj_of(&name, &base_dir),
-            fam: norm(&base_of(&name)),
+            /* 先用"原名去掉副本后缀"占位；真正的计划目标名由 refresh_plan
+               按改名规则统一回填（规则要看整棵树才能定模次/卷别）。 */
+            fam: old
+                .map(|p| p.fam.clone())
+                .unwrap_or_else(|| norm(&base_of(&name))),
             path,
             name,
             idx,
             size,
-            md5: String::new(),
-            md5same: false,
-            ylw: false,
-            csim: false,
-            deleted: false,
+            pages,
+            md5: old.map(|p| p.md5.clone()).unwrap_or_default(),
+            md5same: old.map(|p| p.md5same).unwrap_or(false),
+            ylw: old.map(|p| p.ylw).unwrap_or(false),
+            txtsame: old.map(|p| p.txtsame).unwrap_or(false),
+            dim: false,
             img,
         });
 
@@ -284,27 +309,90 @@ fn run(app: &AppHandle, roots: Vec<String>) -> Result<(), String> {
         }
     }
 
+    /* ---- 2b. 把已删除的条目并回来 ----
+       删除 = 移出试卷目录（新版移到 _trash，旧版移到 `_试卷整理已删备份`），
+       磁盘上已经看不见，扫描自然扫不到。不并回来的话卡片会凭空消失，
+       用户既看不到"已删除"状态，也没法还原。 */
+    merge_deleted(&mut items, &prev_by_path);
+
+    /* ---- 2c. 本次没扫到的「域外」条目原样保留 ----
+       `items` 只由**本次扫到的根**重建，所以一次只扫一部分时，其余目录的
+       条目必须原样留下，否则会被整批丢掉 —— 表现为"别的文件夹突然空了"。
+
+       这个坑不只文件树右键的「刷新」（可能只扫一个子目录）会踩，
+       已登记多个根目录时点某一个根的「重新扫描」同样会踩：
+       扫 A 会把 B 的条目从 map.json 里抹掉。
+
+       域内（被扫到的根之下）没扫到的，才是磁盘上确实没了 ——
+       标了「已删除」的已由 merge_deleted 并回，其余按消失处理，不保留。 */
+    let scanned: HashSet<String> = items.iter().map(|x| x.path.clone()).collect();
+    for (path, p) in &prev_by_path {
+        if scanned.contains(path) || p.dim {
+            continue;
+        }
+        if roots.iter().any(|r| under_scope(path, r)) {
+            continue;
+        }
+        items.push(p.clone());
+    }
+
     /* ---- 3. 同尺寸 → 同 MD5 分组（字节级相同）---- */
     set_status(app, "MD5 分组", 0, total, "");
     md5_group_mark(&mut items);
 
     /* ---- 4. 内容一致分组（三级筛选）---- */
     set_status(app, "内容比对", 0, total, "");
-    content_group_mark(&mut items, &imgdir);
+    content_group_mark(&mut items, &imgdir, &dir);
 
-    /* ---- 5. 落盘 ---- */
+    /* ---- 5. 计划目标名：按改名规则全量重算，并覆盖写 dup_families.json ---- */
+    set_status(app, "生成改名计划", 0, total, "");
+    /* 计划文件写不进去（被别的进程占着）不该连累整轮扫描：fam 已经算好回填在
+       内存条目里，map.json 照写，只把失败原因挂到状态上让用户看见。 */
+    let plan_err = super::refresh_plan(app, &mut items).err();
+
+    /* ---- 6. 落盘 ---- */
     super::write_json(&dir.join(MAP_FILE), &items)?;
     let added = items
         .iter()
-        .filter(|it| !prev_paths.contains(&it.path))
+        .filter(|it| !prev_by_path.contains_key(&it.path))
         .count() as u32;
     if let Ok(mut s) = app.state::<DupState>().status.lock() {
         s.running = false;
         s.phase = "完成".into();
         s.added = added;
         s.msg = format!("{} 个文件（新增 {}）", items.len(), added);
+        if let Some(e) = plan_err {
+            s.err = format!("改名计划写入失败：{e}");
+        }
     }
     Ok(())
+}
+
+/// 把已删除的条目并回列表。
+///
+/// 删除状态记在条目自己的 `dim` 上（`_work/map.json`），所以这里只认上一轮索引：
+/// 上一轮标了 `dim` 而这一轮扫不到的，就是被删掉的那批。
+///
+/// 旧版 python 把"删了哪些"记在外部的 `deleted.json`、元数据记在 `dup_map.json`；
+/// 那两份已经在 `super::migrate_legacy` 里一次性并进条目，运行期不再读。
+fn merge_deleted(items: &mut Vec<Item>, prev: &HashMap<String, Item>) {
+    let scanned: HashSet<String> = items.iter().map(|x| x.path.clone()).collect();
+    for (path, p) in prev {
+        if p.dim && !scanned.contains(path) {
+            items.push(p.clone());
+        }
+    }
+}
+
+/// `path` 是否位于 `root` 目录之下（含 root 自身）。
+///
+/// 判定"这条旧索引在不在本次扫描范围内"用。两侧都过 `norm_dir` 归一化：
+/// 大小写不敏感、分隔符统一、去尾分隔符 —— 磁盘上读来的路径与 roots.json
+/// 里存的路径，形态未必逐字相同，直接比字符串会把同一条判成两条。
+fn under_scope(path: &str, root: &str) -> bool {
+    let p = super::norm_dir(path);
+    let r = super::norm_dir(root);
+    p == r || p.starts_with(&format!("{r}\\"))
 }
 
 /// 全局「同尺寸 → 同 MD5」分组：字节级完全相同的文件全部标 md5same。
@@ -344,8 +432,8 @@ fn md5_group_mark(items: &mut [Item]) {
 /// 内容一致检测：首页感知哈希取候选 → 32x32 缩略图预筛 → 逐页像素比对确认。
 ///
 /// 三级里任何一级不过都直接丢弃这对，只有走到最后一级并且相似度达标的
-/// 才标 csim（内容一致）。
-fn content_group_mark(items: &mut [Item], imgdir: &Path) {
+/// 才标 txtsame（内容一致）。
+fn content_group_mark(items: &mut [Item], imgdir: &Path, dir: &Path) {
     /* 先算出每个文件的哈希与 32x32 缩略图，算一次复用多次。 */
     let mut hashes: Vec<Option<String>> = vec![None; items.len()];
     let mut thumbs: Vec<Option<Vec<u8>>> = vec![None; items.len()];
@@ -379,11 +467,12 @@ fn content_group_mark(items: &mut [Item], imgdir: &Path) {
     }
 
     for (i, j) in pairs {
-        let s = sim::pix_sim(Path::new(&items[i].path), Path::new(&items[j].path));
+        /* 逐页比对打开的是 src_path：docx 走转换后的 PDF。 */
+        let s = sim::pix_sim(&super::src_path(dir, &items[i]), &super::src_path(dir, &items[j]));
         if let Some(v) = s {
             if v >= CSIM_THR {
-                items[i].csim = true;
-                items[j].csim = true;
+                items[i].txtsame = true;
+                items[j].txtsame = true;
             } else {
                 items[i].ylw = true;
                 items[j].ylw = true;
@@ -507,6 +596,12 @@ pub fn build_list(app: &AppHandle) -> Result<ListOut, String> {
 }
 
 /// 沿目录分段把文件挂到对应节点上，沿途缺的节点顺手建出来。
+///
+/// 【每个节点都要有绝对路径 full】
+/// 右键菜单的"刷新 / 改名 / 打包 ZIP"都按绝对路径操作，前端拿到的树必须
+/// 每层都能定位到磁盘目录。叶子节点直接用文件父目录 `full`；中间节点用
+/// **父节点的 full + 段名**推导 —— 不能用入参 `full` 拼，它是"文件的父目录"
+/// 而非"当前节点目录"，层级越深差得越远。
 fn place(node: &mut TreeNode, segs: &[&str], rel: &str, full: &str, item: &Item) {
     if segs.is_empty() {
         node.dir = Some(rel.to_string());
@@ -516,11 +611,12 @@ fn place(node: &mut TreeNode, segs: &[&str], rel: &str, full: &str, item: &Item)
     }
     let seg = segs[0];
     if !node.kids.iter().any(|k| k.name == seg) {
+        let child_full = node.full.as_ref().map(|f| format!("{}\\{}", f, seg));
         node.kids.push(TreeNode {
             name: seg.to_string(),
             path: format!("{}\\{}", node.path, seg),
             dir: None,
-            full: None,
+            full: child_full,
             done_subs: vec![],
             kids: vec![],
             files: None,
