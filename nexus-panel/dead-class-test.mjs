@@ -638,7 +638,7 @@ console.log('\n=== 8. 幽灵规则（CSS 定义了、代码没用）：只增不
    * 这里取不到（写成裸 orphan 会 ReferenceError，整份测试直接崩）。
    */
   const or = scanDeadClasses({ root: HERE, cssFiles: CSS_FILES, excludeSrc: EXCLUDE_SRC });
-  const { orphan, defined: orDefined } = or;
+  const { orphan, defined: orDefined, forms, classLiterals } = or;
 
   const EXTERNAL = [/^km-/, /^react-flow__/, /^hljs/];
   // 备用档位：跨插件共享、供新界面直接挂用，文档里已就地标注"保留"
@@ -668,21 +668,107 @@ console.log('\n=== 8. 幽灵规则（CSS 定义了、代码没用）：只增不
     return i > 0 && dynPrefixes.has(c.slice(0, i));
   };
 
-  const orphanRest = orphan.filter(
+  /*
+   * 豁免三：修饰类（**从不独立出现**、只在 `.父.子` 里挂过的类）。
+   *
+   * `.nx-row.end` / `.task-bar-in.cancelled` / `.nx-btn.solid` 这类是父类的
+   * 状态档，命运跟着父类走 —— 父类在用它就是"暂未启用的档位"，
+   * 父类是备用档位它同样是备用。把它们当独立幽灵规则停用，
+   * 等于悄悄删掉父类的一档：不报错、不红，只有某个状态没了观感才发现。
+   *
+   * 实测这一条就豁免掉 28 处（占未豁免存量的绝大部分），
+   * 是存量从 42 降到 0 的主因 —— 也就是说**此前报的 42 处里绝大多数
+   * 本来就不该报**。
+   */
+  const isModifier = (c) => {
+    const f = forms.get(c);
+    return !!f && f.solo === 0 && f.parents.size > 0;
+  };
+  /*
+   * 豁免四：类名上下文里的字符串字面量（查表 / 类名变量）。
+   *
+   *   const ARG_CLASS = { val: 'node-arg', op: 'node-arg is-op', ... };
+   *   const editCls = isArea ? 'node-arg-area nodrag nopan' : 'node-arg-in nodrag nopan';
+   *   const cls = `${className}${...}${part.key ? ' node-arg-port' : ''}`;
+   *
+   * 源码里没有 `class="node-arg"`，只按 class=/className= 提取的扫描器
+   * 会把它们全判成死规则；照着停用会弄坏**正在用**的样式
+   * （参数格子的下凹观感、多行参数框），且不报错。
+   *
+   * ⚠️ 最讽刺的一点：ArgCell.tsx 里那段注释写明作者**刻意**把
+   *    `role-${p.role}` 改写成查表，就是为了让"类名必须先在 CSS 里定义"
+   *    这条守卫能抓到拼错的类名。而反向守卫（本节）当时还不存在，
+   *    查表写法反而被判成死规则 —— 正好抵消了作者的用心。
+   *    现在两维都认它，改写成查表的收益才真正兑现。
+   */
+  const isInClassLiteral = (c) => classLiterals.has(c);
+
+  const orphanRaw = orphan.filter(
     (c) => !isDynamic(c)
       && !EXTERNAL.some((r) => r.test(c))
       && !RESERVED.some((r) => r.test(c))
       && !MD.some((r) => r.test(c)),
   );
+  const orphanRest = orphanRaw.filter((c) => !isModifier(c) && !isInClassLiteral(c));
 
   /*
-   * 冻结基线。42 = 本轮实测存量。
-   * 清掉一处就应该同步下调这个数字 —— 否则"只增不减"会退化成
-   * "永远差 42 才报红"，失去意义。
+   * 基线归零。
+   *
+   * 42 → 0 不是靠放宽口径糊过去的，而是**逐个核实**后的结果：
+   *   · 28 处是修饰类（命运跟父类，本来就不该报）→ 扫描器层面豁免
+   *   ·  5 处是类名查表/变量写法（真的在用）→ 扫描器层面豁免
+   *   ·  7 处是真死规则 → 逐个注释停用并备注（见下）
+   *   ·  2 处随上述一起消失
+   *
+   * ⚠️ 归零后这条就成了硬闸：**新增一处幽灵规则立刻报红**。
+   *    若某次新增确属"先写样式后接代码"，请连代码一起提交，
+   *    或走修饰类/查表写法让扫描器认得出来 —— 不要上调这个数字。
    */
-  const ORPHAN_BASELINE = 42;
+  const ORPHAN_BASELINE = 0;
   t('幽灵规则未继续增加（不超过基线）', orphanRest.length <= ORPHAN_BASELINE,
     `当前 ${orphanRest.length} / 基线 ${ORPHAN_BASELINE}：${orphanRest.slice(0, 8).join(', ')}`);
+
+  /*
+   * 元断言：两条新豁免必须**真的减掉了东西**，而不是空跑。
+   *
+   * ⚠️ 曾把同类元断言写成 `dynPrefixes.size >= 0`（永远为真），
+   *    结果口径失配时防线静默失效、误删事故照旧。这里改成看**实际豁免量**。
+   */
+  const modCut = orphanRaw.filter(isModifier);
+  const litCut = orphanRaw.filter((c) => !isModifier(c) && isInClassLiteral(c));
+  t('修饰类豁免有效', modCut.length > 0, `豁免 ${modCut.length} 处：${modCut.slice(0, 5).join(', ')}`);
+  t('类名查表豁免有效', litCut.length > 0, `豁免 ${litCut.length} 处：${litCut.slice(0, 5).join(', ')}`);
+
+  /*
+   * 定向元断言：node-arg-port **必须**被认成在用。
+   * 它藏在 `${part.key ? ' node-arg-port' : ''}` 里，是提取逻辑最容易漏的一档
+   * （整段剥 `${...}` 会把它剥没；不处理空串 `''` 会让引号配对错位）。
+   * 漏了它就会被当成幽灵规则停用 → 参数端口样式失效且不报错。
+   */
+  t('模板串内的类名也被认成在用', isInClassLiteral('node-arg-port'),
+    'node-arg-port（ArgCell.tsx 的 cls 模板串）');
+
+  /*
+   * 已停用的 7 处：必须**停用着、且还能加回来**。
+   *
+   * 只钉"没在 defined 里"是不够的 —— 直接删掉也满足那条，
+   * 而用户明确要求"先注释停用并备注，万一删错了能直接加回来"。
+   * 所以两条一起钉：源码里还在（可恢复）+ 不参与解析（确已停用）。
+   */
+  const AF = rd('plugins/agent-flow/styles.css');
+  const STOPPED = ['add-row', 'kind-icon', 'trg', 'switch', 'side-sub', 'key-row', 'task-item'];
+  /*
+   * ⚠️ 必须钉**规则体**（`.类名 {`），不能只钉"出现过这个字符串"。
+   * 第一版写成 `\.add-row[\s,{:.]`，结果把停用备注的标题
+   * `/* [幽灵规则 styles.css:1043] .add-row *\/` 也算成了"还在" ——
+   * 实测把规则体整段删掉后这条断言**依然全绿**，等于没断言。
+   */
+  const stillThere = STOPPED.filter((c) => new RegExp(`\\.${c}\\s*\\{`).test(AF));
+  const stillActive = STOPPED.filter((c) => orDefined.has(c));
+  t('停用的 7 处幽灵规则仍保留在源码里（可加回）', stillThere.length === STOPPED.length,
+    `保留 ${stillThere.length}/${STOPPED.length}${stillThere.length < STOPPED.length ? ` 缺失：${STOPPED.filter((c) => !stillThere.includes(c)).join(', ')}` : ''}`);
+  t('停用的 7 处幽灵规则确实未参与解析', stillActive.length === 0,
+    stillActive.length ? `仍在生效：${stillActive.join(', ')}` : '全部已停用');
 
   /*
    * 元断言：豁免逻辑必须**真的会豁免**，而不是空跑。
