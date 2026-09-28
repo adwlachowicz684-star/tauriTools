@@ -7289,6 +7289,7 @@ group('布局：文件库浮层 + 画布假描边让位 + 控件档位');
     '.mm-field 显式 stretch（不写就会被 controls.css 的 center 层叠成居中）');
 }
 
+
 group('文字垂直居中：改用真实测量，不再吃内核经验系数');
 
 {
@@ -7436,7 +7437,8 @@ group('numSpinner 初值钳制（源码级，前置以便先于运行时崩溃�
   })();
   ok(/return fallback;/.test(fnSrc), 'clamp 解析失败时返回 **fallback**（不是写死 cur）');
   ok(!/return cur;/.test(fnSrc), 'clamp 里不得出现 return cur;（初值时会 TDZ 抛错）');
-  ok(/let cur = clamp\(o\.value, min\);/.test(psrc), '初值走的是 clamp，且 fallback = min');
+  // 混合态没有"当前值"可言，故三元：非混合态才 clamp，fallback 仍是 min
+  ok(/let cur = mixed \? null : clamp\(o\.value, min\);/.test(psrc), '初值走的是 clamp（混合态为 null），且 fallback = min');
 }
 
 group('样式面板：一排化 / 删除按钮弱化 / 分节清除');
@@ -7997,15 +7999,11 @@ group('文件库展开导致画布内容位移：按实测屏幕位置差补偿'
     'rootScreenX 取不到时返回 null（不是 0）');
   ok(!/rootScreenX/.test(wsrSeg), '补偿链路不依赖 rootScreenX（iframe 内测不到容器位移）');
 
-  // ---- 4) 几何账：216 = 浮层宽 186 + padding 10×2 + gap 10 ----
-  //
-  // ⚠️ 原先钉的是 `flex: 0 0 186px`（挤窄布局）。改成浮层后宽度靠
-  //    `width: 186px` 给，不再是 flex-basis —— 判据必须跟着改，
-  //    否则会一直红、且误导人去把实现改回挤窄。
+  // ---- 4) 几何账：216 = flex-basis 186 + padding 10×2 + gap 10 ----
   {
     const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
     const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
-    ok(/width:\s*186px/.test(filesBlk), '.mm-files 宽 186px（浮层，非 flex-basis）');
+    ok(/flex:\s*0 0 186px/.test(filesBlk), '.mm-files flex-basis 186');
     ok(/padding:\s*10px/.test(filesBlk), '.mm-files padding 10（左右合计 20）');
     const bodyBlk = css.slice(css.indexOf('.mm-body {'), css.indexOf('.mm-body {') + 200);
     ok(/gap:\s*10px/.test(bodyBlk), '.mm-body gap 10');
@@ -8241,9 +8239,12 @@ group('app 句柄：可写状态必须成对提供 getter/setter');
     'saveThemes 落盘读的是模块级 customThemes');
 
   // ---- 4) 三条受影响路径都还在（说明 setter 不是死代码）----
+  // 现在是 **6 处**：3 处正向赋值（导入 / 删除 / 编辑保存）+
+  // 3 处写盘失败时的回滚（BUG 61）。当初写死 3 是在给「setter 不是死代码」
+  // 当证据，现在这个证据要跟着实现走 —— 写成 3 会把 BUG 61 的回滚挡在门外。
   const pjOnly = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
-  eq((pjOnly.match(/app\.customThemes\s*=/g) || []).length, 3,
-    'panels.js 有三处赋值（导入 / 删除 / 编辑保存主题）');
+  eq((pjOnly.match(/app\.customThemes\s*=/g) || []).length, 6,
+    'panels.js 有六处赋值（3 处正向 + 3 处写盘失败回滚，见 BUG 61）');
 }
 
 group('清除按钮图标 / 样式间距 / 媒体查看尺寸');
@@ -11715,6 +11716,324 @@ group('BUG 60 · 换画布后侧栏必须跟着换；删主题要回退**所有*
       '删除主题后调用 reassignTheme(t.id)（否则别的画布留悬空主题 id）');
   }
 }
+
+/* ============================================================
+   BUG 61 · 主题写盘失败不回滚内存（与 createFolder / renameFile 同一条约束）
+   ============================================================ */
+
+group('BUG 61 · 主题的新建 / 导入 / 删除，写盘失败都必须回滚内存');
+{
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+
+  /**
+   * createFile / createFolder / renameFile / moveFile / deleteFile / deleteFolder
+   * 都在 saveStore 返回 false 时把内存改回去（界面与磁盘两边一致）。
+   * 主题的三条路**一条都没回滚**：
+   *
+   *   · 导入主题：内存里多一份，磁盘没有 → 主题页显示它、点上去也能用
+   *     （编辑器注册的是内存对象），重载就消失 —— 假可用；
+   *   · 删除主题：内存里没了，磁盘还在 → 下一次 refresh() 它就从列表消失，
+   *     用户以为删掉了，重载又冒出来；
+   *   · 编辑保存：内存里换成新值，磁盘是旧值 → 重载回到旧主题，白改一次。
+   *
+   * 又是「同一条约束只修了部分路径」。
+   *
+   * 下面的断言都用**结构定位**（先剥注释、按大括号配对取函数体），
+   * 不用定长切片 —— 定长切片会被后加的注释撑爆，变成恒真断言。
+   */
+  const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const P = strip(pn);
+
+  const takeBlock = (at) => {
+    let dep = 0;
+    for (let j = P.indexOf('{', at); j < P.length; j++) {
+      if (P[j] === '{') dep++;
+      else if (P[j] === '}') { dep--; if (!dep) return P.slice(at, j + 1); }
+    }
+    return '';
+  };
+
+  // ① 编辑器保存：留住 prevList 并在失败时还原
+  {
+    const at = P.indexOf('const save = async () =>');
+    ok(at > 0, 'panels：能定位主题编辑器 save');
+    const body = takeBlock(at);
+    ok(/const prevList\s*=\s*app\.customThemes/.test(body), '编辑保存：写盘前留住原数组 prevList');
+    ok(/if \(!saved\)[\s\S]{0,200}app\.customThemes\s*=\s*prevList/.test(body),
+      '编辑保存：写盘失败时把 customThemes 还原为 prevList');
+  }
+
+  // ② 导入主题：失败撤回
+  {
+    const at = P.indexOf('async function importThemeFile()');
+    ok(at > 0, 'panels：能定位 importThemeFile');
+    const body = takeBlock(at);
+    ok(/const prevList\s*=\s*app\.customThemes/.test(body), '导入主题：写盘前留住原数组');
+    ok(/if \(!okSave\)[\s\S]{0,220}app\.customThemes\s*=\s*prevList/.test(body),
+      '导入主题：写盘失败时撤回（否则主题页显示一个重载就没了的主题）');
+  }
+
+  // ③ 删除主题：失败按原下标插回
+  {
+    const at = P.indexOf("safe('删除主题'");
+    ok(at > 0, 'panels：能定位删除主题处理器');
+    const body = takeBlock(at);
+    ok(/findIndex\(\(x\)\s*=>\s*x\.id\s*===\s*t\.id\)/.test(body),
+      '删除主题：先记下原下标（顺序乱了会让 core 的主题解析漂移）');
+    ok(/if \(!ok\)[\s\S]{0,400}back\.splice\(at,\s*0,\s*t\)/.test(body),
+      '删除主题：写盘失败时按原下标插回');
+    ok(/app\.customThemes\s*=\s*back/.test(body), '删除主题：插回后要写回 customThemes');
+  }
+}
+
+
+/* ============================================================
+   多选样式「值不一致」显示 —（B62）
+   ============================================================ */
+
+{
+  const E = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8').replace(/\r\n/g, '\n');
+  const Pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8').replace(/\r\n/g, '\n');
+
+  /**
+   * 取一个具名函数的**完整函数体**（大括号配对，不被内部注释/字符串欺骗）。
+   *
+   * 不用固定字符数切片：注释一长就会把窗口撑爆，断言测到的是注释本身
+   * 或相邻代码（本项目已踩过 20+ 次这类假阴性）。
+   */
+  const balanced = (src, sig) => {
+    const i = src.indexOf(sig);
+    if (i < 0) return '';
+    let d = 0, j = src.indexOf('{', i);
+    if (j < 0) return '';
+    for (let k = j; k < src.length; k++) {
+      if (src[k] === '{') d++;
+      else if (src[k] === '}') { d--; if (d === 0) return src.slice(i, k + 1); }
+    }
+    return '';
+  };
+
+  group('多选样式：不一致必须显式上报，不能沿用上一个节点的值');
+
+  // ① 两边哨兵必须同值 —— 跨模块只能靠字面量对齐
+  const se = (E.match(/var MIXED = '([^']+)';/) || [])[1];
+  const sp = (Pn.match(/const MIXED = '([^']+)';/) || [])[1];
+  ok(!!se && !!sp, '两侧都定义了 MIXED 哨兵');
+  eq(se, sp, 'editor 与 panels 的 MIXED 哨兵同值（跨模块只能靠字面量对齐）');
+  ok(/const isMixed = \(v\) => v === MIXED;/.test(Pn), 'panels：有 isMixed 判定');
+
+  // ② mergeStyles 行为：真的执行它，不是匹配源码
+  const mergeSrc = balanced(E, 'function mergeStyles(list)');
+  ok(mergeSrc.length > 0, 'editor：能定位 mergeStyles 函数体');
+  const mergeStyles = new Function(`var MIXED = '${se}'; ${mergeSrc} return mergeStyles;`)({
+    /* 无依赖：函数体只用 list / Object.keys */
+  });
+
+  const one = [{ fontSize: '30', bold: true }];
+  const m1 = mergeStyles(one);
+  eq(m1.fontSize, '30', '单选：原样上报（不退化成哨兵）');
+  eq(m1.bold, true, '单选：布尔原样上报');
+
+  const two = [{ fontSize: '30', bold: true }, { fontSize: '14', bold: false }];
+  const m2 = mergeStyles(two);
+  eq(m2.fontSize, se, '多选不一致：字号上报哨兵（早先直接丢键，面板于是显示上一个节点的值）');
+  eq(m2.bold, se, '多选不一致：布尔也上报哨兵');
+
+  const same = [{ fontSize: '30', color: '#ff0000' }, { fontSize: '30', color: '#ff0000' }];
+  const m3 = mergeStyles(same);
+  eq(m3.fontSize, '30', '多选一致：仍是真实值，不是哨兵');
+  eq(m3.color, '#ff0000', '多选一致：颜色仍是真实值');
+
+  const missing = [{ fontSize: '30', color: '#f00' }, { fontSize: '30' }];
+  eq(mergeStyles(missing).color, se, '多选缺键：按不一致处理（另一端"没设"也是一种状态）');
+  eq(mergeStyles([]), null, '空列表：返回 null');
+
+  // ③ 数值框：混合态显示 — 且步进不以第一个节点为基准
+  {
+    const body = balanced(Pn, 'export function numSpinner(o)');
+    ok(body.length > 0, 'panels：能定位 numSpinner 函数体');
+    ok(/const mixed = !!o\.mixed;/.test(body), 'numSpinner：读 o.mixed');
+    ok(/let cur = mixed \? null : clamp\(o\.value, min\);/.test(body),
+      'numSpinner：混合态没有当前值（不能拿第一个节点的值当基准）');
+    ok(/const show = \(\) => \{ inp\.value = cur === null \? '—' : String\(cur\); \};/.test(body),
+      'numSpinner：混合态显示 —');
+    ok(/value: cur === null \? '—' : String\(cur\)/.test(body), 'numSpinner：初值也是 —');
+    ok(/const base = \(\) => \(cur === null \? min : cur\);/.test(body),
+      'numSpinner：步进基准在混合态取 min（唯一不需要猜基准的选择）');
+    ok((body.match(/emit\(base\(\)/g) || []).length >= 4,
+      'numSpinner：▲▼/方向键/滚轮 全部走 base()（否则 ▲ 一下就把差异静默抹平）');
+    ok(/const n = clamp\(v, base\(\)\);/.test(body),
+      'numSpinner：非法输入的回落也走 base()（混合态下留空要回到 — 而不是数字）');
+    ok(!/emit\(cur \+/.test(body), 'numSpinner：不得再出现以 cur 直接步进');
+  }
+
+  // ④ 四个数值控件都要带 mixed 标记
+  for (const k of ['fontSize', 'strokeWidth', 'radius', 'lineWidth']) {
+    ok(new RegExp(`mixed: isMixed\\(st\\.${k}\\),`).test(Pn), `样式页：${k} 传了 mixed 标记`);
+  }
+
+  // ⑤ 色块：混合态显示 — 而不是涂成第一个节点的颜色
+  {
+    const body = balanced(Pn, 'function colorRow(label, value, onPick, onClear, extras)');
+    ok(body.length > 0, 'panels：能定位 colorRow 函数体');
+    ok(/const mixed = isMixed\(value\);/.test(body), 'colorRow：判定混合态');
+    ok(/background: 'transparent'/.test(body), 'colorRow：混合态不涂成任何一个节点的颜色');
+    ok(/}, '—'\)\)/.test(body) || /'—'\)/.test(body), 'colorRow：混合态显示 —');
+    ok(/title: mixed \? `\$\{label\}（多个值）` : label/.test(body), 'colorRow：混合态的 title 说明是多个值');
+  }
+
+  // ⑥ 字体下拉：混合态插一个 — 并选中（否则浏览器会显示第一项，看着像所有节点都是它）
+  ok(/isMixed\(st\.fontFamily\)\s*\n?\s*\? h\('option', \{ value: '', selected: true \}, '—'\)/.test(Pn),
+    '字体下拉：混合态插入并选中空的「—」项');
+  ok(/if \(e\.target\.value\) run\('fontfamily', e\.target\.value\);/.test(Pn),
+    '字体下拉：选中「—」不应触发写值（空值直接返回）');
+  ok(/selected: !isMixed\(st\.fontFamily\) && st\.fontFamily === f/.test(Pn),
+    '字体下拉：混合态下不把任何真实字体标成 selected');
+
+  // ⑦ B/I/S：哨兵是**真字符串**，不判 isMixed 会被当成"已开启"高亮
+  for (const k of ['bold', 'italic', 'strikethrough']) {
+    ok(new RegExp(`st\\.${k} && !isMixed\\(st\\.${k}\\) \\? '\\.on' : ''`).test(Pn),
+      `B/I/S：${k} 为哨兵时不高亮（哨兵是真字符串，不判就会被当成开启）`);
+  }
+
+  // ⑧ 对齐 chip 天然安全（哨兵不等于任何 'left'/'center'/'right'），但要确认没被改成真值判断
+  ok(/st\.textAlign === v \? '\.on' : ''/.test(Pn), '水平对齐：仍按等值判断（哨兵不会误命中）');
+  ok(/st\.verticalAlign === v \? '\.on' : ''/.test(Pn), '垂直对齐：仍按等值判断（哨兵不会误命中）');
+}
+
+
+
+/* ============================================================
+   外框（boundary）组号必须接着已有外框发（B63）
+   ============================================================ */
+
+{
+  const E = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8').replace(/\r\n/g, '\n');
+
+  /** 大括号配对取函数体：注释再长也不会把窗口撑爆 */
+  const balanced = (src, sig) => {
+    const i = src.indexOf(sig);
+    if (i < 0) return '';
+    let d = 0, j = src.indexOf('{', i);
+    if (j < 0) return '';
+    for (let k = j; k < src.length; k++) {
+      if (src[k] === '{') d++;
+      else if (src[k] === '}') { d--; if (d === 0) return src.slice(i, k + 1); }
+    }
+    return '';
+  };
+
+  group('外框：新组号必须接着已有外框，不能从 1 重发');
+
+  const rg = balanced(E, 'function rebuildGroups()');
+  ok(rg.length > 0, 'editor：能定位 rebuildGroups 函数体');
+
+  /*
+   * 真因：_boundarySeq 是 IIFE 局部变量，只在新加外框时 ++，从不读回
+   * 画布里现存的 gid。打开一份已带 bg1 的画布 → 再给别的节点加外框 →
+   * 新组也拿到 bg1，_groupNodes.set 把第一组的数组整个顶掉。
+   * 实测（真实 Chrome）：C/D 加框后 gid 是 bg1、画布上只剩 1 个框（应为 2）。
+   */
+  ok(/^bg(\d+)$/.test('bg1'), '（自检）组号形如 bg<数字>');
+  const maxSeen = (rg.match(/var m = \/\^bg\(\\d\+\)\$\/\.exec\(gid\);/) || [])[0];
+  ok(!!maxSeen, 'rebuildGroups：逐个已有组号提取数字后缀');
+  ok(/maxSeq = Math\.max\(maxSeq, parseInt\(m\[1\], 10\) \|\| 0\)/.test(rg),
+    'rebuildGroups：取已有组号的最大值');
+  ok(/if \(maxSeq > _boundarySeq\) _boundarySeq = maxSeq;/.test(rg),
+    'rebuildGroups：把序号抬到已有最大值之上（否则新组会重号）');
+
+  // 顺序：必须在把 groups 写进 _groupNodes **之前**抬序号吗？
+  // 其实两者互不影响（抬的是计数器不是集合），但必须在 renderAllBoundaries 之前，
+  // 更关键的是：必须在**遍历已有 gid 之后。这里锁住"先解析再抬"。
+  const iParse = rg.indexOf('/^bg(\\d+)$/.exec(gid)');
+  const iSeq = rg.indexOf('_boundarySeq = maxSeq');
+  ok(iParse > 0 && iSeq > iParse, 'rebuildGroups：先解析已有组号，再抬序号');
+  /*
+   * 用 `>` 而不是 `=`：删掉一个外框后 maxSeq 会变小，若直接赋值，
+   * 序号就**回退**了 —— 下次新建又会发出一个仍在使用的组号。
+   * （写入 _groupNodes 与抬序号互不依赖，顺序本身无要求，故不锁顺序。）
+   */
+  ok(/if \(maxSeq > _boundarySeq\)/.test(rg),
+    'rebuildGroups：只在更大时才抬（删框后序号不回退，否则又会重号）');
+  ok(/Object\.keys\(groups\)\.forEach/.test(rg), 'rebuildGroups：遍历**全部**已有组号取最大值');
+
+  // 组号仍从 bg1 起步（新画布）
+  const bc = balanced(E, "kity.createClass('boundaryCommand'");
+  ok(bc.length > 0, 'editor：能定位 boundaryCommand');
+  ok(/var gid = 'bg' \+ \(\+\+_boundarySeq\);/.test(bc), '新组号仍是 bg + ++seq（重号是靠抬基线解决，不是改格式）');
+  ok(/var _boundarySeq = 0;/.test(E), '_boundarySeq 初值为 0');
+
+  // 重建入口仍在（抬序号只在这一个函数里做，别处不用重复）
+  const rebuildCalls = (E.match(/rebuildGroups\(\)/g) || []).length;
+  ok(rebuildCalls >= 4, `rebuildGroups 至少 4 处引用（定义 + 3 个入口），实际 ${rebuildCalls}`);
+}
+
+
+
+/* ============================================================
+   清空快照必须先确认（B64）
+   ============================================================ */
+
+{
+  const Pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8').replace(/\r\n/g, '\n');
+  const balanced = (src, sig) => {
+    const i = src.indexOf(sig);
+    if (i < 0) return '';
+    let d = 0, j = src.indexOf('{', i);
+    if (j < 0) return '';
+    for (let k = j; k < src.length; k++) {
+      if (src[k] === '{') d++;
+      else if (src[k] === '}') { d--; if (d === 0) return src.slice(i, k + 1); }
+    }
+    return '';
+  };
+
+  group('清空快照：必须先确认，不能点一下就全删');
+
+  const ob = balanced(Pn, "export async function openBackups(");
+  ok(ob.length > 0, 'panels：能定位 openBackups 函数体');
+
+  /*
+   * 实测（真实 Chrome）：有 1 份快照时点「清空快照」，列表**直接**变
+   * 「暂无快照」，中间没有任何确认 —— 而同一个弹窗里的「恢复快照」
+   * 反倒有 danger 确认（恢复还会先存一份当前状态）。破坏性更大、
+   * 更不可逆的操作没有确认，是明确的漏。
+   */
+  // 取「按钮定义」整段：从 onclick 到按钮标签收尾（`}, '清空快照'),`）。
+  // 只切到 `'清空快照'` 字面量的话，它紧跟在 safe( 后面，切片只有十几字符，
+  // 断言会**恒为假** —— 之后改坏实现也照样红不了，等于没在把关。
+  const seg = (() => {
+    const i = ob.indexOf("}, '清空快照'),");
+    const j = i < 0 ? -1 : ob.lastIndexOf('onclick:', i);
+    return j < 0 ? '' : ob.slice(j, i);
+  })();
+  ok(seg.length > 0, 'panels：能定位「清空快照」按钮的 onclick');
+  ok(/askConfirm/.test(seg), '清空快照：走 askConfirm 二次确认');
+  ok(/danger:\s*true/.test(seg), '清空快照：确认框标 danger（与删除脑图 / 移除附件 / 恢复快照一致）');
+
+  // 顺序：确认必须在删之前。
+  //
+  // 只比「askConfirm 与 clearBackups 的先后」是不够的 —— 把 `if (!ok) return;`
+  // 挪到 clearBackups **之后**，askConfirm 依然在前面，那条断言照样绿，
+  // 而实际行为已经是「不管确认结果，先删再说」。
+  // 所以守的是「取消守卫」相对 clearBackups 的位置。
+  const iAsk = seg.indexOf('askConfirm');
+  const iGuard = seg.search(/if\s*\(!ok\)\s*return;/);
+  const iClear = seg.indexOf('store.clearBackups');
+  ok(iAsk > 0 && iClear > iAsk, '清空快照：askConfirm 在 clearBackups 之前');
+  ok(iGuard > 0 && iClear > iGuard, '清空快照：取消守卫在 clearBackups 之前（否则等于先删再问）');
+  ok(/if\s*\(!n\)/.test(seg) && /没有可清空的快照/.test(seg),
+    '清空快照：一份都没有时直接说明，不弹无意义的确认框');
+
+  // 恢复快照本来就有确认，锁住别被带坏
+  const restoreSeg = (() => {
+    const i = ob.indexOf("}, '恢复'),");
+    const j = i < 0 ? -1 : ob.lastIndexOf('onclick:', i);
+    return j < 0 ? '' : ob.slice(j, i);
+  })();
+  ok(/askConfirm/.test(restoreSeg), '恢复快照：仍走 askConfirm（与清空对称）');
+}
+
 
 /* ============================================================
    结果

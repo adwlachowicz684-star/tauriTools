@@ -132,6 +132,21 @@ import * as mi from './mediainfo.js';
 import * as picons from './preset-icons.js';
 import * as tb from './tag-badges.js';
 
+/*
+ * 多选「值不一致」的哨兵。
+ *
+ * 必须与编辑器页 `mergeStyles` 里的那个常量**同值** —— 两边是两个模块
+ * （编辑器在 iframe 里、面板在外壳），跨不过来，只能各写一份。
+ * 靠值相等来对齐，故这里和那边都用同一个字面量并在测试中双向锁定。
+ *
+ * 为什么不能用 undefined / null 表示不一致：面板侧 `nodeStyleCache` 是
+ * 「上一次的值」，undefined 会被当成「没上报、保持现值」，界面于是显示
+ * 一个并非任何选中节点真实状态的数字（见 editor 里 mergeStyles 的注释）。
+ */
+const MIXED = '__mixed__';
+/** 是否为「多选且值不一致」。真值永不相撞：字号是数字串、颜色是 #RRGGBB。 */
+const isMixed = (v) => v === MIXED;
+
 const FONTS = ['微软雅黑', '宋体', '黑体', '楷体', 'Arial', 'Consolas', 'sans-serif'];
 const SIZES = [12, 14, 16, 18, 20, 24, 28, 32, 40];
 // 字号的微调范围。必须比预设档位**更宽**：预设最小 12、最大 40，
@@ -425,17 +440,32 @@ function quietBtn(title, onclick) {
  * 拆开后用户要理解为两组不同的东西，而它们其实是同一组。
  */
 function colorRow(label, value, onPick, onClear, extras) {
+  const mixed = isMixed(value);
+  const shown = mixed ? '#4A90D9' : (value || '#4A90D9');
   const inp = h('input', {
     type: 'color',
-    value: value || '#4A90D9',
+    value: shown,
     style: { position: 'absolute', inset: '0', opacity: '0', width: '100%', height: '100%', cursor: 'pointer' },
     oninput: (e) => onPick(e.target.value),
   });
   const sw = h('button.mm-swatch', {
-    style: { background: value || '#4A90D9', position: 'relative' },
-    title: label,
+    /*
+     * 混合态显示「—」而不是随便挑一个颜色。
+     *
+     * 色块是一个纯色方块，没有任何"第几个选中节点"的上下文 ——
+     * 若把它涂成 base（第一个选中节点）的颜色，就是在**替用户做决定**：
+     * 用户看到一块红色，会以为所有选中节点都是红色，于是点一下"清除"
+     * 就把其中一个节点的自定义颜色抹掉了。
+     */
+    style: mixed
+      ? { background: 'transparent', position: 'relative', border: '1px dashed rgba(255,255,255,0.45)' }
+      : { background: shown, position: 'relative' },
+    title: mixed ? `${label}（多个值）` : label,
     onclick: () => inp.click(),
-  }, inp);
+  }, inp, mixed ? h('span', {
+    style: { position: 'absolute', inset: '0', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: '12px', color: 'rgba(255,255,255,0.75)', pointerEvents: 'none' },
+  }, '—') : null);
   return h('div.mm-row', {},
     h('span.mm-label', { style: { minWidth: '48px' } }, label),
     sw,
@@ -505,38 +535,49 @@ export function numSpinner(o) {
    *
    * fallback 传 min：初值解析不出来时用下限 —— 此时没有"上一次的值"可用。
    */
-  let cur = clamp(o.value, min);
+  /*
+   * 混合态（多选且各节点值不同）：框里显示「—」，且**没有当前值**。
+   *
+   * 不能拿第一个节点的值当基准 —— 那样 ▲ 一下就把所有选中的字号统一成
+   * 「第一个节点的值 + 1」，用户只是想微调，结果差异被静默抹平。
+   * cur 为 null 时步进从 min 起步：这是唯一不需要"猜一个基准"的选择，
+   * 且结果一定落在允许范围内（▲ 得 min+1，▼ 被钳回 min）。
+   */
+  const mixed = !!o.mixed;
+  let cur = mixed ? null : clamp(o.value, min);
+  const show = () => { inp.value = cur === null ? '—' : String(cur); };
+  const base = () => (cur === null ? min : cur);
   const emit = (v) => {
-    const n = clamp(v, cur);
-    if (n === cur) { inp.value = String(n); return; }   // 无变化就别回调，免得白记一次撤销
+    const n = clamp(v, base());
+    if (n === cur) { show(); return; }   // 无变化就别回调，免得白记一次撤销
     cur = n;
-    inp.value = String(n);
+    show();
     o.onChange?.(n);
   };
 
   const inp = h('input.mm-num', {
     type: 'text',
     inputmode: 'numeric',
-    value: String(cur),
-    title: o.title || '',
+    value: cur === null ? '—' : String(cur),
+    title: mixed ? `${o.title || ''}（多个值）` : (o.title || ''),
     onchange: (e) => emit(e.target.value),
     onkeydown: (e) => {
       // 输入法组合中：方向键在选候选、回车在上屏，都不是"确定这个数值"。
       // 虽然这是数值框，但中文输入法下同样会进组合态，一并挡掉。
       if (e.isComposing || e.keyCode === 229) return;
       // ↑ / ↓ 与按钮同义；输入框里按方向键挪光标是另一回事，这里直接接管
-      if (e.key === 'ArrowUp') { e.preventDefault(); emit(cur + 1); }
-      else if (e.key === 'ArrowDown') { e.preventDefault(); emit(cur - 1); }
+      if (e.key === 'ArrowUp') { e.preventDefault(); emit(base() + 1); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); emit(base() - 1); }
       else if (e.key === 'Enter') { e.preventDefault(); emit(inp.value); }
     },
   });
   // 失焦时把非法输入还原成当前值 —— 留着 "abc" 在框里，用户会以为真的设成了
-  inp.addEventListener('blur', () => { inp.value = String(cur); });
+  inp.addEventListener('blur', show);
 
   const arrow = (glyph, delta, tip) => h('button.mm-num-arrow', {
     tabindex: '-1',
     title: tip,
-    onclick: () => { emit(cur + delta); inp.focus(); },
+    onclick: () => { emit(base() + delta); inp.focus(); },
   }, glyph);
 
   const caret = h('button.mm-num-arrow.mm-num-caret', {
@@ -570,7 +611,7 @@ export function numSpinner(o) {
     locked = true;
     // 只看方向，不看 delta 大小：惯性滚动的 delta 能攒到几百，
     // 按量换算会一次跳很多格
-    emit(cur + (e.deltaY < 0 ? 1 : -1));
+    emit(base() + (e.deltaY < 0 ? 1 : -1));
     clearTimeout(idle);
     idle = setTimeout(() => { locked = false; }, WHEEL_GAP);
   }, { passive: false });
@@ -1458,9 +1499,19 @@ export function buildSide(app, opts = {}) {
           h('span.mm-label', { style: { minWidth: '48px' } }, '字体'),
           h('select.mm-select', {
             style: { flex: '1 1 auto' },
-            onchange: (e) => run('fontfamily', e.target.value),
-          }, ...FONTS.map((f) =>
-            h('option', { value: f, selected: st.fontFamily === f }, f))),
+            onchange: (e) => { if (e.target.value) run('fontfamily', e.target.value); },
+          },
+          /*
+           * 混合态插一个 value 为空的「—」并选中它。
+           * 不插的话浏览器会把**第一项**（微软雅黑）显示出来 —— 而下拉框
+           * 没有"未选中"的视觉，用户会以为所有选中节点都是微软雅黑。
+           * 选它不应触发写值，故 onchange 里空值直接返回。
+           */
+          isMixed(st.fontFamily)
+            ? h('option', { value: '', selected: true }, '—')
+            : null,
+          ...FONTS.map((f) =>
+            h('option', { value: f, selected: !isMixed(st.fontFamily) && st.fontFamily === f }, f))),
         ),
         h('div.mm-row', {},
           h('span.mm-label', { style: { minWidth: '48px' } }, '字号'),
@@ -1468,6 +1519,7 @@ export function buildSide(app, opts = {}) {
           // 原来是下拉框，改一次要两步（点开 → 找值），而且没法微调。
           numSpinner({
             value: st.fontSize, min: MIN_FS, max: MAX_FS,
+            mixed: isMixed(st.fontSize),
             list: SIZES, title: '字号（滚轮 / ▲▼ 微调，▾ 选预设）',
             onChange: (v) => run('fontsize', v),
           }),
@@ -1481,17 +1533,17 @@ export function buildSide(app, opts = {}) {
             // 与前面的色块**留一段空隙**：颜色（取色）与 B/I/S（字形开关）
             // 是两套东西，紧贴着会看成一组控件。空隙放在这一组的第一个上，
             // 而不是给每个 chip 都加 —— 那是"间距"不是"分隔"。
-            h('button.mm-chip' + (st.bold ? '.on' : ''), {
+            h('button.mm-chip' + (st.bold && !isMixed(st.bold) ? '.on' : ''), {
               style: { fontWeight: '700', marginLeft: '14px' },
               onclick: () => run('bold'),
               title: '加粗',
             }, 'B'),
-            h('button.mm-chip' + (st.italic ? '.on' : ''), {
+            h('button.mm-chip' + (st.italic && !isMixed(st.italic) ? '.on' : ''), {
               style: { fontStyle: 'italic' },
               onclick: () => run('italic'),
               title: '斜体',
             }, 'I'),
-            h('button.mm-chip' + (st.strikethrough ? '.on' : ''), {
+            h('button.mm-chip' + (st.strikethrough && !isMixed(st.strikethrough) ? '.on' : ''), {
               style: { textDecoration: 'line-through' },
               onclick: () => run('strikethrough'),
               title: '删除线',
@@ -1526,6 +1578,7 @@ export function buildSide(app, opts = {}) {
           h('span.mm-label', { style: { minWidth: '48px' } }, '线宽'),
           numSpinner({
             value: st.strokeWidth, min: 1, max: 12,
+            mixed: isMixed(st.strokeWidth),
             list: WIDTHS, title: '节点描边线宽（滚轮 / ▲▼ 微调，▾ 选预设）',
             onChange: (w) => set({ strokeWidth: w }),
           }),
@@ -1536,6 +1589,7 @@ export function buildSide(app, opts = {}) {
             // 上限 MAX_RADIUS(20)：见 RADII 的说明 —— 圆角超过节点较短边的
             // 一半会被 kity 静默钳住，给再大的范围也只是"拖了没反应"
             value: st.radius, min: 0, max: MAX_RADIUS,
+            mixed: isMixed(st.radius),
             list: RADII, title: '节点圆角（滚轮 / ▲▼ 微调，▾ 选预设）',
             onChange: (r) => set({ radius: r }),
           }),
@@ -1547,6 +1601,7 @@ export function buildSide(app, opts = {}) {
           h('span.mm-label', { style: { minWidth: '48px' } }, '线宽'),
           numSpinner({
             value: st.lineWidth, min: 1, max: 12,
+            mixed: isMixed(st.lineWidth),
             list: WIDTHS, title: '连线线宽（滚轮 / ▲▼ 微调，▾ 选预设）',
             onChange: (w) => set({ lineWidth: w }),
           }),
@@ -1742,9 +1797,16 @@ export function buildSide(app, opts = {}) {
       name,
       palette,
     };
+    const prevList = app.customThemes;
     app.customThemes = [...(app.customThemes || []), copy];
     const okSave = await app.api.saveThemes();
-    if (!okSave) { app.api.status('导入失败（未写入本地库）', true); return; }
+    if (!okSave) {
+      // 同上：写不进去就把这份撤回来。留着的话主题页会显示它、点上去也能用
+      // （编辑器注册的是内存里的对象），但重载就没了 —— 假可用，比直接说失败更坑。
+      app.customThemes = prevList;
+      app.api.status('导入失败（未写入本地库）', true);
+      return;
+    }
     app.bridge.registerTheme(copy);
     app.api.applyTheme(copy.id);
     refresh();
@@ -1797,6 +1859,9 @@ export function buildSide(app, opts = {}) {
               // 这里改成「只有删的是当前主题才回退」——删别的主题不该打扰用户。
               const isCurrent = cur === t.id;
               if (isCurrent) await app.api.applyTheme(DEFAULT_THEME);
+              // 记住下标：写盘失败要按原位插回，顺序乱了会让 core 的
+              // 主题解析跟着漂移（registerCustomThemes 注释里点名的那条）。
+              const at = (app.customThemes || []).findIndex((x) => x.id === t.id);
               app.customThemes = (app.customThemes || []).filter((x) => x.id !== t.id);
               await app.api.markPresetRemoved(t.id);
               /*
@@ -1810,6 +1875,13 @@ export function buildSide(app, opts = {}) {
               const nFixed = await app.api.reassignTheme?.(t.id) || 0;
               const ok = await app.api.saveThemes();
               if (!ok) {
+                // 磁盘上它还在，内存里也必须还在 —— 否则下次任何一次 refresh()
+                // 都会让它从列表消失，用户以为删掉了，重载却又冒出来。
+                if (at >= 0) {
+                  const back = [...(app.customThemes || [])];
+                  back.splice(at, 0, t);
+                  app.customThemes = back;
+                }
                 app.api.status('删除失败（未写入本地库）', true);
                 if (isCurrent) await app.api.applyTheme(t.id);   // 回滚，别把用户卡在中间态
                 return;
@@ -2197,12 +2269,20 @@ export function openThemeEditor(app, theme, seedTheme) {
     editing.name = nameInput.value.trim() || '自定义主题';
     const ok = app.bridge.registerTheme(editing);
     if (!ok) { app.api.status('主题注册失败（编辑器未就绪？）', true); return; }
+    // 保存前先留住原数组：写盘失败要把内存还原回去。
+    // 与 createFolder / renameFile 同一条约束 —— 不还原的话界面上是新值、
+    // 磁盘上是旧值，重载后回到旧主题，用户白改一次还以为存上了。
+    const prevList = app.customThemes;
     const list = (app.customThemes || []).filter((x) => x.id !== editing.id);
     list.push(editing);
     app.customThemes = list;
     // saveThemes 失败是「返回 false」而非抛异常，不判断就会提示成功实则没存上
     const saved = await app.api.saveThemes();
-    if (!saved) { app.api.status('主题保存失败（未写入本地库）', true); return; }
+    if (!saved) {
+      app.customThemes = prevList;
+      app.api.status('主题保存失败（未写入本地库）', true);
+      return;
+    }
     app.api.applyTheme(editing.id);
     // **必须重刷侧栏**：主题列表是在 pageTheme() 里按 app.customThemes
     // 现算的，不刷的话新建的主题不会出现在列表里，得切走页签再切回来才看得到
@@ -2525,8 +2605,31 @@ export async function openBackups(app) {
           (m) => app.api.status(m, true)),
       }, '立即备份'),
       h('button.mm-btn', {
-        onclick: safe('清空快照', async () => { await store.clearBackups(); await render(); },
-          (m) => app.api.status(m, true)),
+        /*
+         * 清空 = 把**全部**历史副本一次性删掉，且没有任何回滚路径
+         * （快照就是为了「误操作后可回滚」而存在的，清空等于把这条退路也拆了）。
+         *
+         * 早先这里是点一下就删：实测（真实 Chrome）点完列表直接变「暂无快照」，
+         * 中间没有任何确认。同一个弹窗里「恢复快照」反而是有 danger 确认的
+         * （openBackups 里的 askConfirm）—— 而恢复至少还会先存一份当前状态。
+         * 破坏性更大、且更不可逆的操作反而没确认，是明显的漏。
+         *
+         * 与仓库既有约定一致：删除脑图 / 移除附件 / 删除分组 / 恢复快照
+         * 全部走 askConfirm({ danger: true })。
+         */
+        onclick: safe('清空快照', async () => {
+          const n = (await store.listBackups()).length;
+          if (!n) { app.api.status('没有可清空的快照', true); return; }
+          const ok = await askConfirm({
+            title: '清空快照',
+            message: `确定清空全部 ${n} 份历史快照？\n\n清空后无法回滚到任何一个历史时间点，此操作不可恢复。`,
+            danger: true,
+          });
+          if (!ok) return;
+          await store.clearBackups();
+          await render();
+          app.api.status(`已清空 ${n} 份快照`);
+        }, (m) => app.api.status(m, true)),
       }, '清空快照'),
     ),
   ]
