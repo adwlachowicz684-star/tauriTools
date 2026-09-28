@@ -361,10 +361,13 @@ html, body {
   box-shadow: var(--sh-out-sm);
 }
 .mm-tab { user-select: none; }
-.mm-tab.dragging { opacity: .4; }
-/* 拖拽插入位置竖条：对齐 C# 版的「插入位置竖条指示器」 */
-.mm-tab.drop-before { box-shadow: inset 2px 0 0 var(--accent), var(--sh-in-sm); }
-.mm-tab.drop-after  { box-shadow: inset -2px 0 0 var(--accent), var(--sh-in-sm); }
+
+/* ⚠️ 这里曾有 `.mm-tab.drop-before / .drop-after` 两条规则，是**上一代**
+   插入反馈方案（在目标页签上画 inset 高亮）。现行方案是独立的竖条
+   `.mm-tab-insertbar`，那两个类 tab-drag.js 从不添加 —— 纯死规则，已删。
+   另有一条 `.mm-tab.dragging { opacity:.4 }` 与下面的完整版重复定义、
+   特异性相同、位置在前，实际永不生效，也已删。
+   这两处都由 mindmap-test 的「CSS 幽灵规则」一节守着。 */
 
 /* A53–A57 页签拖拽（Pointer Events 状态机，见 tab-drag.js） */
 
