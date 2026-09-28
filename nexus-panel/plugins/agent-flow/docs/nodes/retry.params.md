@@ -26,7 +26,7 @@
 | `target` | text | 重试哪个节点；填要重跑的节点 id（卡片底部那行就是）；占位：节点 id，如 h1 | — | — |
 | `times` | number | 最多重试几次 | — | — |
 | `intervalMs` | number | 每次间隔；毫秒 | — | — |
-| `check` | select | 合格条件；有内容就行 | `nonempty` / `contains` / `notContains` / `regex` | — |
+| `check` | select | 合格条件 | `nonempty` / `contains` / `notContains` / `regex` | — |
 | `value` | text | 比对值；占位：要包含的文本 / 正则表达式 | — | `d → d.check !== 'nonempty'` |
 
 ## 建节点的正确方式

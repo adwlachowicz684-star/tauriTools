@@ -15,6 +15,7 @@ import {
 import { triggerEntriesOf, entryEnabled, mergeConfig } from './triggerEntries';
 import { tokenRe } from './template';
 import { argTypeIssues, type ArgTypeIssue } from './argTypes';
+import { isPassCheck, passCheckLabel } from './passCheck';
 
 /**
  * 节点配置校验 —— 画布圆点的三色预警。
@@ -350,13 +351,29 @@ function vJoin(d: JoinNodeData): V {
  * 共同点：不产生数据，所以"配置不全"的判据是**能不能做出判定**，
  * 而不是"内容填了没" —— 内容来自上游。
  */
+/**
+ * 闸门与重试共用的「判定方式 + 比对值」校验。
+ *
+ * 取值清单不再这里手写 —— 它在 passCheck.ts 的 PASS_CHECK_OPTIONS 里，
+ * 和面板下拉是同一份。手写一份的话，加一种判定方式时
+ * 面板能选、校验却报「取值不对」，而两者看起来都是"对的"。
+ *
+ * 报错文案用中文名（passCheckLabel），不吐内部取值 ——
+ * 「选了「notContains」但没填比对值」里的 notContains 是内部名，用户看不懂。
+ */
+function vPassCheck(d: { check?: string; value?: unknown }, what: string): V {
+  const c = String(d.check ?? 'nonempty');
+  if (!isPassCheck(c)) return error(`${what}取值不对`);
+  if (c !== 'nonempty' && !String(d.value ?? '').trim()) {
+    return error(`选了「${passCheckLabel(c)}」但没填比对值`);
+  }
+  return ok();
+}
+
 function vGate(d: GateNodeData): V {
   if (!['wait', 'now'].includes(String(d.mode ?? 'wait'))) return error('判定方式取值不对');
-  const c = String(d.check ?? 'nonempty');
-  if (!['nonempty', 'contains', 'notContains', 'regex'].includes(c)) return error('条件取值不对');
-  if (c !== 'nonempty' && !String(d.value ?? '').trim()) {
-    return error(`选了「${c}」但没填比对值`);
-  }
+  const r = vPassCheck(d, '条件');
+  if (r) return r;
   if (d.mode === 'wait') {
     const t = Number(d.timeoutMs);
     if (!Number.isFinite(t) || t < 0) return error('最长等待不是有效毫秒数');
@@ -382,11 +399,8 @@ function vRetry(d: RetryNodeData): V {
   if (!String(d.target ?? '').trim()) return error('没填要重试哪个节点');
   const t = Number(d.times);
   if (!Number.isFinite(t) || t < 0) return error('重试次数不是有效数字');
-  const c = String(d.check ?? 'nonempty');
-  if (!['nonempty', 'contains', 'notContains', 'regex'].includes(c)) return error('合格条件取值不对');
-  if (c !== 'nonempty' && !String(d.value ?? '').trim()) {
-    return error(`选了「${c}」但没填比对值`);
-  }
+  const r = vPassCheck(d, '合格条件');
+  if (r) return r;
   return ok();
 }
 

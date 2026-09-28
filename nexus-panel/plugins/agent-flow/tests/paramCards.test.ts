@@ -27,6 +27,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readSrc, AF_SRC } from './srcScan';
 import { PARAM_CARDS, card } from '../nodes/paramCards';
+import {
+  PASS_CHECK_OPTIONS, PASS_CHECK_LABEL, isPassCheck, passCheckLabel,
+} from '../engine/passCheck';
 
 const DEFS = path.join(AF_SRC, 'nodes', 'defs');
 
@@ -319,4 +322,100 @@ test('图片那两块的 render 由 llmChat 与 ocr 共用一份，不许各写�
     [],
     `这些 def 里出现了「图片地址」的 JSX —— 应该改用 nodes/imageCards.tsx：${copied.join(', ')}`,
   );
+});
+
+/*
+ * ==================================================================
+ * 判定方式（闸门「条件」/ 重试「合格条件」）只有一处定义
+ *
+ * ================= 为什么盯这条 =================
+ *
+ * 这份取值清单以前散在五处：types.ts 的类型、passCheck.ts 的类型与
+ * PASS_CHECK_LABEL、paramCards.ts 的 options、nodeValidate.ts 里**两处**
+ * 硬编码数组。
+ *
+ * 已经付出过代价：两份标签分叉成「正则」（面板）与「匹配正则」（节点卡片），
+ * 同一个取值两个中文名，用户会以为是两个不同的判定方式；
+ * 校验器还把内部取值 notContains 直接拼进提示里。
+ *
+ * 现在唯一定义处是 passCheck.ts 的 PASS_CHECK_OPTIONS，其余全派生。
+ * 下面钉住"不许再长出第二份"。
+ * ==================================================================
+ */
+test('判定方式：取值清单只许在 passCheck.ts 定义一份', () => {
+  const lib = stripComments(readSrc('engine/passCheck.ts'));
+  assert.ok(
+    /PASS_CHECK_OPTIONS/.test(lib),
+    'engine/passCheck.ts 里找不到 PASS_CHECK_OPTIONS —— 守卫匹配不到会假通过',
+  );
+
+  /*
+   * 卡片层不许再抄一份字面量：抄了之后加一种判定方式要改两处，
+   * 漏一处是"面板能选、校验报取值不对"。
+   */
+  const cards = stripComments(readSrc('nodes/paramCards.ts'));
+  assert.ok(
+    !/value:\s*'nonempty'/.test(cards),
+    'nodes/paramCards.ts 里又写了一份判定方式字面量 —— 应改为 options: () => PASS_CHECK_OPTIONS',
+  );
+  assert.ok(
+    /PASS_CHECK_OPTIONS/.test(cards),
+    'nodes/paramCards.ts 没有引用 PASS_CHECK_OPTIONS —— 守卫要能匹配到这条',
+  );
+
+  const v = stripComments(readSrc('engine/nodeValidate.ts'));
+  assert.ok(
+    !/\['nonempty'/.test(v),
+    'engine/nodeValidate.ts 里又硬编码了一份取值数组 —— 应改用 isPassCheck()',
+  );
+  assert.ok(
+    /isPassCheck/.test(v) && /passCheckLabel/.test(v),
+    'engine/nodeValidate.ts 没有用 isPassCheck / passCheckLabel',
+  );
+});
+
+test('判定方式：选项、标签、校验用同一份（运行时对账）', () => {
+  const opts = PASS_CHECK_OPTIONS;
+  assert.ok(opts.length >= 4, '判定方式至少四种');
+
+  // 每个取值都有中文名（节点卡片上的 tag 直接读这张表）
+  for (const o of opts) {
+    assert.equal(
+      PASS_CHECK_LABEL[o.value],
+      o.label,
+      `取值 ${o.value} 的中文名与选项不一致 —— 面板与卡片会显示两个名字`,
+    );
+    assert.ok(isPassCheck(o.value), `${o.value} 应被 isPassCheck 认下`);
+  }
+  assert.ok(!isPassCheck('nope'), '未收录的取值不该通过校验');
+  assert.equal(passCheckLabel('notContains'), '不包含');
+  assert.equal(passCheckLabel('不存在的'), '不存在的', '认不出时退回原值，不编造');
+});
+
+test('判定方式：校验报错用中文名，不吐内部取值', () => {
+  const src = stripComments(readSrc('engine/nodeValidate.ts'));
+  assert.ok(
+    /passCheckLabel\(c\)/.test(src),
+    '报错文案还在直接拼内部取值 —— 用户会看到「选了「notContains」但没填比对值」',
+  );
+});
+
+/*
+ * 取值那一列退化成「动态（XXX）」时**没有任何测试会红** ——
+ * 我实测过：把生成器的常量展开摘掉，2303 条照样全绿，
+ * 而参数表从 `nonempty / contains / notContains / regex` 变成一句占位话。
+ *
+ * 文档看着还在，只是"这一项有哪些取值"没了 —— 又是安静的失效。
+ * 所以这里断言最终产物（跑测试前已重新生成），而不是中间函数。
+ */
+test('判定方式：参数文档的取值列要列出全部取值，不许退化成「动态」', () => {
+  for (const f of ['gate', 'retry']) {
+    const md = fs.readFileSync(path.join(AF_SRC, 'docs', 'nodes', `${f}.params.md`), 'utf-8');
+    const row = md.split('\n').find((l) => l.includes('| `check` |'));
+    assert.ok(row, `${f}.params.md 里没有 check 这一行`);
+    for (const v of PASS_CHECK_OPTIONS.map((o) => o.value)) {
+      assert.ok(row!.includes(v), `${f} 的取值列里没有 ${v} —— 生成器没展开 PASS_CHECK_OPTIONS`);
+    }
+    assert.ok(!row!.includes('动态'), `${f} 的取值列退化成了「动态（…）」`);
+  }
 });

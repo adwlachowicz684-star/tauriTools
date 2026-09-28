@@ -43,6 +43,7 @@
  */
 import type { FieldDef } from '../components/inspectors/fields';
 import { TARGET_LANGS } from '../engine/llm';
+import { PASS_CHECK_OPTIONS } from '../engine/passCheck';
 import {
   IMAGE_SOURCE_META,
   SOUND_SOURCE_META,
@@ -186,17 +187,17 @@ export const PARAM_CARDS: Record<string, ParamCard> = {
    *   闸门判"放不放行"，重试判"跑得对不对"，措辞本就不该一样）。
    *
    * 所以这张卡只带 options，label 由节点覆盖。
+   *
+   * options 取自 passCheck.ts 的 PASS_CHECK_OPTIONS —— 判定方式的唯一定义处。
+   * 这里再抄一份的话，加一种判定方式要改两处，漏一处就是
+   * "面板上下拉里有、校验却报取值不对"。两份标签已经分叉过一次：
+   * 卡片上写「匹配正则」、面板上写「正则」。
    */
   'cmp.check': {
     type: 'select',
     key: 'check',
     label: '条件',
-    options: [
-      { value: 'nonempty', label: '非空', hint: '有内容就行' },
-      { value: 'contains', label: '包含', hint: '含有指定文本' },
-      { value: 'notContains', label: '不包含', hint: '不含指定文本（如响应里没有 error）' },
-      { value: 'regex', label: '正则', hint: '用正则表达式匹配' },
-    ],
+    options: () => PASS_CHECK_OPTIONS,
   },
 
   'cmp.value': {

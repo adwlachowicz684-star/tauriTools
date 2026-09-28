@@ -24,7 +24,7 @@
 | 参数 | 类型 | 说明 | 取值 | 显示条件 |
 |---|---|---|---|---|
 | `mode` | select | 判定方式；轮询到满足为止，超时按下面配置处理 | `wait` / `now` | — |
-| `check` | select | 条件；有内容就行 | `nonempty` / `contains` / `notContains` / `regex` | — |
+| `check` | select | 条件 | `nonempty` / `contains` / `notContains` / `regex` | — |
 | `value` | text | 比对值；占位：要包含的文本 / 正则表达式 | — | `d → d.check !== 'nonempty'` |
 | `timeoutMs` | number | 最长等待；毫秒 | — | `d → d.mode === 'wait'` |
 | `pollMs` | number | 轮询间隔；毫秒 | — | `d → d.mode === 'wait'` |

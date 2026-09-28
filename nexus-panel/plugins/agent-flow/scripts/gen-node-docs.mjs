@@ -211,17 +211,108 @@ function blockOfCard({ id, over }) {
   return text;
 }
 
-/** paramCards.ts 的原文（解析 when 函数引用时要读它） */
+/** paramCards.ts 的原文（解析 when / hint 函数引用时要读它） */
 let CARD_SRC = null;
 function cardSrc() {
   if (CARD_SRC === null) {
     const p = path.join(ROOT, 'nodes', 'paramCards.ts');
     if (!fs.existsSync(p)) {
-      throw new Error('文档生成器找不到 nodes/paramCards.ts，无法展开 when 函数引用');
+      throw new Error('文档生成器找不到 nodes/paramCards.ts，无法展开 when / hint 函数引用');
     }
     CARD_SRC = fs.readFileSync(p, 'utf-8');
   }
   return CARD_SRC;
+}
+
+/**
+ * 在 engine/ 下找 `export const <name> = [ ... ]` 的字面量数组，
+ * 取出里面的 value / label / hint。
+ *
+ * ============ 为什么需要它 ============
+ *
+ * 判定方式那张卡的 options 改成 `() => PASS_CHECK_OPTIONS` 之后
+ * （取值清单收进 passCheck.ts 作单一来源），原来的"动态"分支只会
+ * 打出 `动态（PASS_CHECK_OPTIONS）` —— 参数表从
+ * `nonempty / contains / notContains / regex` 退化成一句占位话。
+ *
+ * 那正是"修好了一处、弄坏了读它的人"：文档看着还在，取值却没了。
+ * 所以这里把常量真正展开，展不开才退回 `动态（名）`。
+ */
+function constArrayOf(name) {
+  const dir = path.join(ROOT, 'engine');
+  for (const f of fs.readdirSync(dir)) {
+    if (!f.endsWith('.ts')) continue;
+    const src = fs.readFileSync(path.join(dir, f), 'utf-8');
+    const m = src.match(new RegExp(`export const ${name}\\b[^=]*=\\s*\\[`));
+    if (!m) continue;
+    let depth = 0;
+    let j = m.index + m[0].length - 1;
+    for (; j < src.length; j++) {
+      if (src[j] === '[') depth++;
+      else if (src[j] === ']') { depth--; if (!depth) break; }
+    }
+    const body = src.slice(m.index + m[0].length - 1, j);
+    const opts = [...body.matchAll(
+      /value:\s*'([^']+)',\s*\n?\s*label:\s*'([^']*)'(?:,\s*\n?\s*hint:\s*'([^']*)')?/g,
+    )].map((mm) => ({ value: mm[1], label: mm[2], hint: mm[3] ?? '' }));
+    if (opts.length) return opts;
+  }
+  return null;
+}
+
+/**
+ * 取 paramCards.ts 里某个函数的 return 表达式。
+ *
+ * when / hint 都可能写成**函数引用**（`when: whenSoundFile`、
+ * `hint: soundSourceHint`）—— 只认内联箭头的话，这两列都会变成 ——。
+ */
+function fnReturnOf(name) {
+  const m = cardSrc().match(
+    new RegExp(`function\\s+${name}\\s*\\([^)]*\\)[^\\{]*\\{\\s*return\\s+([\\s\\S]*?);\\s*\\}`),
+  );
+  return m ? m[1].trim() : null;
+}
+
+/**
+ * 「查 META 表取 hint」的表达式 → 实际文字。
+ *
+ * `SOUND_SOURCE_META[(d.source as SoundSource) ?? 'preset']?.hint ?? ''`
+ * 这种形态展开成代码的话，读者只看到一堆符号，看不出说明是什么。
+ * types.ts 里那张表是 `Record<X, { label, hint }>`，把它解出来即可。
+ *
+ * 解不出来就返回 null，由调用方退回代码形态 —— 宁可显示表达式，
+ * 也不能像以前那样静默变成 ——（那等于"这一项没有说明"）。
+ */
+/**
+ * 主类型文件的原文（META 表都在 `types.ts`，不在 `nodes/types.ts`）。
+ *
+ * 这两个是**不同的文件**：nodes/types.ts 只有 10KB 且不含 META 表，
+ * 上面那个 typesSrc 读的是它 —— 拿它去解引用必然一无所获，
+ * 而"解不出来"又会静默退回代码形态，看着像修好了其实没修好。
+ */
+let ROOT_TYPES = null;
+function rootTypes() {
+  if (ROOT_TYPES === null) {
+    const p = path.join(ROOT, 'types.ts');
+    if (!fs.existsSync(p)) {
+      throw new Error('文档生成器找不到 types.ts，无法解引用 META 表');
+    }
+    ROOT_TYPES = fs.readFileSync(p, 'utf-8');
+  }
+  return ROOT_TYPES;
+}
+
+function hintTextOf(expr) {
+  const m = expr.match(/^([A-Za-z_$][\w$]*)\[[\s\S]*?\]\?\.\s*hint/);
+  if (!m) return null;
+  const t = rootTypes().match(
+    new RegExp(`export const ${m[1]}[^=]*=\\s*\\{([\\s\\S]*?)\\n\\};`),
+  );
+  if (!t) return null;
+  const rows = [...t[1].matchAll(
+    /(\w+):\s*\{\s*label:\s*'([^']*)',\s*\n?\s*hint:\s*'([^']*)'/g,
+  )].map((r) => `${r[2]} → ${r[3]}`);
+  return rows.length ? rows.join('；') : null;
 }
 
 function parseFields(file) {
@@ -302,7 +393,23 @@ function parseFields(file) {
     const key = seg.match(/key:\s*'([^']+)'/)?.[1];
     const label = seg.match(/label:\s*'([^']+)'/)?.[1];
     const ph = seg.match(/placeholder:\s*'([^']*)'/)?.[1];
-    const hint = seg.match(/hint:\s*'([^']*)'/)?.[1];
+    /*
+     * hint 有两种写法：字符串字面量，和**函数引用**（`hint: soundSourceHint`）。
+     *
+     * 只认第一种的话，函数引用那一格在文档里变成 ——：
+     * 读者以为"这一项没有说明"，而它其实是"说明随当前取值变化"——
+     * 恰恰是最该写出来的一条。失效方式同样是安静的：文档看着完整，少一格。
+     */
+    let hint = seg.match(/hint:\s*'([^']*)'/)?.[1] ?? null;
+    if (!hint) {
+      const ident = seg.match(/hint:\s*([A-Za-z_$][\w$]*)\s*,/);
+      if (ident && ident[1] !== 'd') {
+        const expr = fnReturnOf(ident[1]);
+        hint = expr
+          ? (hintTextOf(expr) ?? `(d) => ${expr.replace(/\s+as\s+[\w$]+/g, '')}`)
+          : null;
+      }
+    }
     const when = seg.match(/when:\s*\(([^)]*)\)\s*=>\s*([^,\n]+)/);
     const specKeys = seg.match(/spec:\s*\{\s*keys:\s*\[([^\]]+)\]/);
     /*
@@ -318,7 +425,10 @@ function parseFields(file) {
       .map((m) => ({ value: m[1], label: m[2], hint: '' }));
     if (opts.length === 0) {
       const dyn = seg.match(/options:\s*\(\)\s*=>\s*([A-Za-z_$][\w$.]*)/);
-      if (dyn) opts = [{ value: `动态（${dyn[1]}）`, label: '', hint: '' }];
+      if (dyn) {
+        // 常量数组能展开就真展开，展不开才退回占位（见 constArrayOf）
+        opts = constArrayOf(dyn[1]) ?? [{ value: `动态（${dyn[1]}）`, label: '', hint: '' }];
+      }
     }
     out.push({
       type: t,
