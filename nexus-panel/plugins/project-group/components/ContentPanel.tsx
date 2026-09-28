@@ -243,9 +243,29 @@ export function ContentPanel({
         }
         try {
           const r = await api.renameSkillSegment(moves, newName);
+          /*
+           * 成不成只看 `moved`，不能只看"命令没报错"。
+           *
+           * 后端 `skipped` 计的是"源已不存在"（条目在扫描之后被删掉了），
+           * 全被跳过时 moved = 0 —— **一个文件都没动**，层级名还是旧的。
+           * 这时照旧日志写「已把层级 A 改为 B」就是谎报：下面 return true
+           * 会让弹窗立刻关闭，刷新后层级名纹丝未动，
+           * 用户只会以为改名"没记住"，而真相没有任何线索指向它。
+           *
+           * 返回 false 让 RenameContentDialog 留在原地并显示
+           * 「改名未成功，请查看日志」—— 弹窗不关才有机会看见这条原因。
+           */
+          if (r.moved === 0) {
+            onLog(
+              `层级未改名：${r.skipped} 个条目的源已不存在`
+              + '（可能在上次刷新之后被删掉了），请刷新后重试',
+              true,
+            );
+            return false;
+          }
           onLog(
             `已把层级「${n.name}」改为「${newName}」：${r.moved} 个条目`
-            + (r.skipped > 0 ? `，跳过 ${r.skipped} 个` : ''),
+            + (r.skipped > 0 ? `，跳过 ${r.skipped} 个（源已不存在）` : ''),
           );
           onRefresh();
           return true;

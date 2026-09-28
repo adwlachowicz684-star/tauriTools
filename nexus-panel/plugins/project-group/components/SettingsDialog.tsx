@@ -141,14 +141,44 @@ export function SettingsBody({
   const [mcpTools, setMcpTools] = useState<Record<string, boolean>>({ ...config.mcpTools });
   const [toolRows, setToolRows] = useState<McpToolRow[]>([]);
   const [status, setStatus] = useState<BackupAutoStatus | null>(null);
+  /*
+   * 「读不到」与「读到了但为空」必须分开记，不能都塞进 status = null。
+   *
+   * 两者在界面上的说法完全不同：读不到要说"读取失败"，
+   * 真没有才说"还没备份过"。合成一个 null 的话只能二选一，
+   * 选哪个都会在另一种情况下给出与事实相反的陈述。
+   */
+  const [statusErr, setStatusErr] = useState('');
+  /** 同上：图标列表是"读不到"还是"目录里真没有" */
+  const [iconErr, setIconErr] = useState('');
 
   // 工具清单与自动备份状态都取自后端；清单以工具名为准，开关状态用本地草稿覆盖
   useEffect(() => {
     // 三项都做了空值兜底：后端理论上不返回 null，但一旦返回（旧版本 / 异常路径），
     // 下面 toolRows.length / iconFiles.length 会直接让整个设置页白屏。
     api.mcpTools().then((r) => setToolRows(r ?? [])).catch((e) => onLog(errText(e), true));
-    api.backupAutoStatus().then(setStatus).catch(() => { /* 状态拿不到不影响设置 */ });
-    api.listIcons().then((r) => setIconFiles(r ?? [])).catch(() => { /* 拿不到就不显示图标列表 */ });
+    /*
+     * 这两条**不能**静默。它们的取值直接决定下面两处文案说的是什么：
+     *
+     * · backupAutoStatus 读不到 → status 恒为 null → 那行说明永远停在
+     *   「设置后由后台定时执行」，而它**同时也是显示"自动备份失败原因"
+     *   的唯一位置**。于是备份一直在失败、界面一直显示风平浪静 ——
+     *   正是这行下面那段注释写明"必须优先显示"要防的场景，被静默 catch
+     *   从源头掐断了。
+     * · listIcons 读不到 → iconFiles 为空 → 面板说「数据目录 icons/ 下
+     *   还没有图标」，还会引导用户"先拖入 / 粘贴一个"。用户明明已经导入
+     *   过一堆（卡片图标里能正常选用），照着这条提示再导一次，
+     *   后端重名会自动加 (1)，白白多出一堆副本。
+     *
+     * 两条都是**断言性陈述**，不是"加载中"。界面主动给出与事实相反的判断，
+     * 比什么都不显示更糟 —— 后者用户还会再点一次，前者他直接照做。
+     */
+    api.backupAutoStatus()
+      .then((s) => { setStatus(s); setStatusErr(''); })
+      .catch((e) => { setStatus(null); setStatusErr(errText(e)); });
+    api.listIcons()
+      .then((r) => { setIconFiles(r ?? []); setIconErr(''); })
+      .catch((e) => { setIconFiles([]); setIconErr(errText(e)); });
   }, [api, onLog]);
 
   // 图标是本地文件，沙箱里要后端转 data URI 才显示得出来
@@ -250,7 +280,18 @@ export function SettingsBody({
       } else {
         onLog('自动备份未能启动，请检查备份设置后重试', true);
       }
-      setStatus((s) => (s ? { ...s, running, minutes: autoMinutes } : s));
+      /*
+       * 刚问过后端"到底在不在跑"，这份就是**当前真实状态** ——
+       * 即便之前 backupAutoStatus 没读到（status 为 null），
+       * 现在也该补上并清掉那条错误。
+       * 旧写法 `s ? {...} : s` 在 status 为 null 时整个 no-op，
+       * 于是上面日志写着「自动备份已启用」、下面说明仍停在
+       * 「设置后由后台定时执行」—— 两个信号说的是两回事。
+       */
+      setStatus((s) => (s
+        ? { ...s, running, minutes: autoMinutes }
+        : { running, minutes: autoMinutes, lastRun: null, lastError: null }));
+      setStatusErr('');
       onLog('设置已保存');
     } catch (e) {
       onLog(errText(e), true);
@@ -553,7 +594,13 @@ export function SettingsBody({
 
         {iconFiles.length === 0 ? (
           <div className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
-            数据目录 icons/ 下还没有图标。可先拖入 / 粘贴一个，或在卡片的「图标与标签」里导入。
+            {/* 「读不到」不能说成「还没有」：后者会引导用户再导一次，
+                而后端重名会自动加 (1)，白白多出一堆副本。
+                已设好的卡片图标不受影响，括号里说清楚，
+                免得他以为自己的图标丢了。 */}
+            {iconErr
+              ? `图标列表读取失败：${iconErr}（不影响已设好的卡片图标）`
+              : '数据目录 icons/ 下还没有图标。可先拖入 / 粘贴一个，或在卡片的「图标与标签」里导入。'}
           </div>
         ) : (
           <div className="fpx-settings-icons">
@@ -730,7 +777,14 @@ export function SettingsBody({
               ? `自动备份失败：${status.lastError}`
               : status?.lastRun
                 ? `上次自动备份：${status.lastRun}${status.running ? '，运行中' : ''}`
-                : '设置后由后台定时执行，改动在保存时生效'}
+                /* 读不到 ≠ 没在跑：这时不能说"设置后由后台定时执行"，
+                   那句话暗示"还没生效"，而它可能正在跑、甚至正在失败。
+                   括号里点明不影响设置，免得把它当成需要处理的故障。 */
+                : statusErr
+                  ? `自动备份状态读取失败：${statusErr}（不影响下面的设置）`
+                  : status?.running
+                    ? '自动备份运行中（尚无执行记录）'
+                    : '设置后由后台定时执行，改动在保存时生效'}
           </div>
         </div>
         {dirRow('备份根目录（两类共用）', backupDir, setBackupDir, 'bu',

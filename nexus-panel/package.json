@@ -177,6 +177,7 @@
     "test:pg-remove-card": "node plugins/project-group/remove-card-test.mjs",
     "test:pg-rename-relink": "node plugins/project-group/rename-relink-test.mjs",
     "test:pg-saveguard": "node plugins/project-group/saveguard-test.mjs",
+    "test:pg-seg-rename-truth": "node plugins/project-group/seg-rename-truth-test.mjs",
     "test:pg-select": "node plugins/project-group/select-test.mjs",
     "test:pg-selfwrite": "node plugins/project-group/self-write-test.mjs",
     "test:pg-settings-datadir": "node plugins/project-group/settings-datadir-test.mjs",
