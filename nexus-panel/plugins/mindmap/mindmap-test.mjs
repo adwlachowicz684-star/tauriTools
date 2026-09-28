@@ -7199,38 +7199,76 @@ group('左侧搜索结果面板（复用文件库底框）');
   }
 }
 
-group('布局：文件库挤窄画布（不遮挡）+ 控件档位');
+group('布局：文件库浮层 + 画布假描边让位 + 控件档位');
 
 {
   const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
   const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '');   // 先剥注释，避免命中说明文字
   const cs = strip(css);
 
-  // ---- 1) 文件库是 flex 子项，与画布并排 ----
+  // ---- 1) 文件库是**浮层**，画布不动，靠画布上的假描边框让位 ----
   //
-  // 为什么是挤窄而不是抽屉：抽屉会遮住画布左侧 186px，用户看到的内容
-  // 比关着时还少；挤窄下画布只是变窄 186px，可见区域仍然完整。
-  // 代价是画布尺寸变化 → 内核把视图重新居中 → 内容左右晃一下，
-  // 但偏移量很小（≤93px）、只在展开/收起瞬间发生，属可接受范围。
-  // 切片必须停在「下一个 }」而非 .open 处 —— 因为 .open 规则前还夹着
-  // 整整一段 15 行的注释块（含「为什么不用覆盖式抽屉」），那里面没有
-  // width:186px。不跳过注释就会断言失败（假阴性），逼得人去改实现。
+  // ⚠️ 这一组曾钉反了方向（钉成"flex 子项、挤窄画布"），而实现早已改成
+  //    浮层。于是 4 条长期红着，且容易被误读成"实现错了要去改实现"——
+  //    实际是断言过期。**改实现前先读这段注释**。
+  //
+  // 为什么是浮层而不是挤窄：挤窄会让画布尺寸真的变化 → 内核把视图重新
+  // 居中 → 内容左右晃一下。改成浮层后画布尺寸恒定，代价是浮层会盖住
+  // 画布左侧 186px；为免看着像"面板浮在画布上分不清边界"，画布上另铺
+  // 一层 .mm-canvas-frame 假描边，并让它**让到浮层右边缘**。
+  //
+  // 切片必须停在「下一个 }」而非 .open 处 —— .open 规则前夹着长注释块，
+  // 不跳过注释就会把注释正文当选择器（假阴性）。
   const filesOpenIdx = cs.indexOf('.mm-files.open');
   const nextBrace = cs.indexOf('}', filesOpenIdx);
   const filesRule = cs.slice(cs.indexOf('.mm-files {'), nextBrace + 1);
-  ok(/flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 是 flex 子项（186px 固定宽，展开时挤窄画布）');
-  ok(!/position:\s*absolute/.test(filesRule),
-    '.mm-files 不是 absolute 抽屉（抽屉会遮挡画布）');
-
-  // 挤窄布局的关键：不能脱离 flex 流，否则就变成浮在上层遮挡画布了。
-  // 双重断言 —— 只断言「是 flex 子项」不够：若某人同时写了 absolute，
-  // absolute 优先级更高、实际仍是抽屉，单条断言会误判为通过。
-  ok(!/position:\s*absolute/.test(filesRule) &&
-      /flex:\s*0\s+0\s+186px/.test(filesRule),
-    '.mm-files 在 flex 流中且宽度 186px（挤窄画布而非遮挡）');
-
+  ok(/position:\s*absolute/.test(filesRule),
+    '.mm-files 是浮层（absolute，盖在画布上而非挤窄画布）');
   ok(/width:\s*186px/.test(filesRule), '.mm-files 宽度仍是 186px');
+
+  // 画布**不参与挤压**：保持 flex:1 1 auto，尺寸不随浮层开合变化。
+  // 这是浮层方案的全部意义 —— 画布一动，内核就会重新居中、内容晃动。
+  const canvasRule = cs.slice(cs.indexOf('.mm-canvas {'),
+    cs.indexOf('}', cs.indexOf('.mm-canvas {')) + 1);
+  ok(/flex:\s*1\s+1\s+auto/.test(canvasRule) &&
+      !/flex:\s*0\s+0/.test(canvasRule),
+    '.mm-canvas 不参与挤压（尺寸恒定，浮层开合不引起视图重新居中）');
+
+  // 假描边框必须**真的有规则**：此前规则写了、元素从没被创建，
+  // 于是描边从未出现（幽灵规则，不报错）。下面第 2 条钉元素侧。
+  const frameRule = cs.slice(cs.indexOf('.mm-canvas-frame {'),
+    cs.indexOf('}', cs.indexOf('.mm-canvas-frame {')) + 1);
+  ok(/position:\s*absolute/.test(frameRule) && /pointer-events:\s*none/.test(frameRule),
+    '.mm-canvas-frame 是画布上的假描边（absolute 且不拦鼠标）');
+
+  /*
+   * 光有规则不算数 —— 元素必须**真的被创建**。
+   *
+   * 这是本组最要命的一条：此前 styles.css 写了整套 .mm-canvas-frame 规则，
+   * 但全仓 JS 没有任何地方创建它，于是描边从未出现。它不报错、测试也
+   * 不红（因为只查了 CSS），只有肉眼能发现。
+   */
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const idxNC = idx.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok(/h\(\s*['"]div\.mm-canvas-frame['"]/.test(idxNC),
+    '画布上真的创建了 .mm-canvas-frame 元素（不是只有样式规则）');
+
+  // 同步函数必须存在且真的写入 left
+  const syncFn = idxNC.slice(idxNC.indexOf('function syncCanvasInset'),
+    idxNC.indexOf('function syncCanvasInset') + 900);
+  ok(/function syncCanvasInset/.test(idxNC), '存在 syncCanvasInset 同步函数');
+  ok(/canvasFrameEl\.style\.left\s*=/.test(syncFn),
+    'syncCanvasInset 真的写入 left（不是空函数）');
+
+  // 至少 4 个调用点：初始化 / 开合 / 搜索出结果 / 清除搜索，都要让位
+  const calls = (idxNC.match(/syncCanvasInset\(\)/g) || []).length;
+  ok(calls >= 2, `syncCanvasInset 在宿主侧有调用（实测 ${calls} 处）`);
+
+  // 文件库侧必须提供钩子，且开合时真的调它
+  const fl = fs.readFileSync(path.join(HERE, 'filelist.js'), 'utf8');
+  const flNC = fl.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok(/setLayoutHook/.test(flNC), 'filelist 暴露 setLayoutHook（底框开合通知宿主）');
+  ok(/layoutHook\(\)/.test(flNC), 'filelist 的 apply() 里真的调用了 layoutHook');
 
   // ---- 2) 控件档位：输入框/下拉必须与按钮同为 28px ----
   //
@@ -7959,11 +7997,15 @@ group('文件库展开导致画布内容位移：按实测屏幕位置差补偿'
     'rootScreenX 取不到时返回 null（不是 0）');
   ok(!/rootScreenX/.test(wsrSeg), '补偿链路不依赖 rootScreenX（iframe 内测不到容器位移）');
 
-  // ---- 4) 几何账：216 = flex-basis 186 + padding 10×2 + gap 10 ----
+  // ---- 4) 几何账：216 = 浮层宽 186 + padding 10×2 + gap 10 ----
+  //
+  // ⚠️ 原先钉的是 `flex: 0 0 186px`（挤窄布局）。改成浮层后宽度靠
+  //    `width: 186px` 给，不再是 flex-basis —— 判据必须跟着改，
+  //    否则会一直红、且误导人去把实现改回挤窄。
   {
     const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
     const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
-    ok(/flex:\s*0 0 186px/.test(filesBlk), '.mm-files flex-basis 186');
+    ok(/width:\s*186px/.test(filesBlk), '.mm-files 宽 186px（浮层，非 flex-basis）');
     ok(/padding:\s*10px/.test(filesBlk), '.mm-files padding 10（左右合计 20）');
     const bodyBlk = css.slice(css.indexOf('.mm-body {'), css.indexOf('.mm-body {') + 200);
     ok(/gap:\s*10px/.test(bodyBlk), '.mm-body gap 10');

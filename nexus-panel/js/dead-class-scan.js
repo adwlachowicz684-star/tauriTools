@@ -452,6 +452,17 @@ export function walkFiles(root, exts) {
 export function scanDeadClasses({ root, cssFiles, srcDirs = null, allowDead = [], excludeSrc = null }) {
   const defined = new Set();
   const cssText = [];
+  /*
+   * 关于「注释停用」的死规则在这里的去向：
+   *
+   * 本仓库把死规则定为「注释停用 + 备注」（不直接删，便于整段加回来），
+   * 而 collectDefinedClasses **内部已经调用 stripComments**（见其第一行），
+   * 所以被注释掉的规则**不会被收进 defined**——停用即等于未定义。
+   *
+   * 这一点正是下面 orphan（幽灵规则）能度量清理进度的前提：
+   * 清掉一处，orphan 就少一处；若哪天有人改成"不剥注释"地提取，
+   * 停用就不再生效、进度也无法度量，且不会有任何报错。
+   */
   for (const f of cssFiles) {
     const p = join(root, f);
     if (!existsSync(p)) continue;
