@@ -38,6 +38,12 @@ const pkg = JSON.parse(read('package.json'));
 const conf = read('src-tauri/tauri.conf.json');
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '');
 const pumlC = strip(puml);
+/*
+ * 组件也要剥注释后再查。
+ * 实测过的假绿：`fallback` 这个词在 requireDep 那段**注释**里也出现，
+ * 不剥的话把真正的 `fallback,` 删掉，正则照样匹配到注释里的那个词 → 红 0。
+ */
+const blkC = strip(blk);
 
 /* ============================================================
    0. 许可证与体积（这两条是"能不能用"的前提，放最前面）
@@ -208,6 +214,22 @@ t('加载失败清掉缓存（否则一次失败＝永久失败）',
   /enginePromise\.catch\(\(\) => \{ enginePromise = null; \}\)/.test(blk));
 t('引擎模块只 import 一次（多图并发不重复 import）',
   /if \(enginePromise\) return enginePromise;/.test(blk));
+
+/* ---- 运行时依赖取用（否则「依赖页签」装的 @plantuml/core 没人用） ---- */
+t('引擎取用走 ctx.requireDep（不然运行时装的那份永远没人读）',
+  /ctx\.requireDep\('@plantuml\/core'/.test(blkC));
+t('requireDep 带 fallback（装的那份坏了要回退打包版，不能整篇图挂掉）',
+  /requireDep\('@plantuml\/core', \{[\s\S]{0,240}fallback/.test(blkC));
+t('fallback 是**动态** import 打包版（1.4MB 引擎不进首屏 bundle）',
+  /import\('@plantuml\/core\/plantuml\.js'\)/.test(blk));
+t('运行时伴生注入后立刻置位 __nexusVizLoaded（否则回退时 viz-global 被执行两次）',
+  /loadClassic:[\s\S]{0,260}__nexusVizLoaded = true/.test(blkC));
+t('运行时路**不再**走 vizUrl+import（避免二次执行重置全局布局器）',
+  /r\.source === 'runtime' \? loadPlantUML\(\{ mod \}\) : mod/.test(blkC));
+t('两边都没有时明确报错（不静默）',
+  /既没有运行时版本也没有打包版本/.test(blk));
+t('plantuml.js 导出 injectClassic 供消费方注入伴生',
+  /export function injectClassic\(/.test(puml));
 
 /* ============================================================
    5. 组件表现
