@@ -1228,7 +1228,23 @@ async function gcOrphanAssets(quiet = false) {
       if (at >= 0) fileIndex.splice(at, 0, f);
       return;
     }
-    await saveStore('脑图内容', () => store.doc(id).del());
+    /*
+     * 删文档本体也要**接住返回值**。
+     *
+     * 前一轮把「写盘失败被成功文案盖掉」逐个修了（renameFile / createFile /
+     * renameFolder / deleteFolder / moveFile / openFile），这一句是同一类里的
+     * 漏网者 —— 它后面紧跟的 `status('已删除：' + …)` 会把 saveStore 刚写的
+     * 红字当场盖掉。
+     *
+     * 后果比"没提示"更实在：doc:<id> **真的还在磁盘上**，而 fileIndex 已经
+     * 没有它了 —— 没有任何入口再读它，于是这份内容**永久占着 IndexedDB 配额**
+     * （正是资产层那条"孤儿"的同款问题，只不过这次是整份脑图）。
+     * 界面却说「已删除：X」—— 假成功，且用户无从察觉。
+     *
+     * 回滚不了（文件列表已落盘，插回去会跟磁盘不一致），所以按 switchToFile
+     * 那套既定做法：把后果**带进自己那句话**。
+     */
+    const docCleared = await saveStore('脑图内容', () => store.doc(id).del());
     let remembered = true;
     // 回收这个脑图留下的附件本体。
     // 必须在 switchToFile **之前**调用：切换后 workbook 已是另一个文件的
@@ -1240,6 +1256,7 @@ async function gcOrphanAssets(quiet = false) {
     }
     renderFiles();
     status('已删除：' + f.name
+      + (docCleared ? '' : '（内容未能清除：仍占用本地存储空间）')
       + (remembered ? '' : '（未能记住：下次启动会回到上一个文件）'));
   }
 

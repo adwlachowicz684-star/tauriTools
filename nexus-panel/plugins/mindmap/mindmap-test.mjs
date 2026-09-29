@@ -10728,21 +10728,66 @@ group('写盘失败不能被随后的「已重命名 / 已新建」盖掉');
   for (const f of fnBodies(idx)) {
     const code = strip(f.body);
     // 找所有 saveStore 调用，看它所在的这条语句是不是 `if (!await saveStore(`
-    const re = /(if\s*\(\s*!\s*)?await\s+saveStore\(/g;
+    const re = /await\s+saveStore\(/g;
     let m;
     while ((m = re.exec(code))) {
-      const checked = !!m[1];
+      /*
+       * 「判了返回值」有两种写法，都得认：
+       *   ① `if (!await saveStore(...))` —— 直接取反
+       *   ② `const ok = await saveStore(...)` —— 接住再用（deleteFile 的修法）
+       * 早先只认 ①，于是 ② 会被当成"没判"报出来（误报）。
+       * 判据就是调用点前面那个非空字符：`!`（取反）或 `=`（赋值）。
+       */
+      const pre = code.slice(0, m.index).replace(/\s+$/, '');
+      const checked = /[!=]$/.test(pre);
       if (checked) continue;
       // 未判返回值：这条调用**之后**，函数里还能出现「成功态」status 吗？
-      const rest = code.slice(m.index + m[0].length);
-      const sre = /status\(\s*(['"`])((?:\\.|(?!\1).)*)\1\s*\)/g;
-      let sm;
-      while ((sm = sre.exec(rest))) {
-        // 带 `, true` 的是告警，不算成功文案
-        const tail = rest.slice(sm.index + sm[0].length, sm.index + sm[0].length + 12);
-        if (!/,\s*true\s*\)/.test(tail)) {
-          offenders.push(`${f.name}(): ${sm[2].slice(0, 20)}`);
+      let rest = code.slice(m.index + m[0].length);
+      /*
+       * **只看这条路径真正能走到的部分**：遇到 `return` 就截断。
+       *
+       * createFile 里那条 `await saveStore('脑图内容', …del())` 位于
+       * 「文件列表写失败」的 if 块内，后面紧跟着 `return;` ——
+       * if 块外的 `status('已新建：' + name)` 根本执行不到。
+       * 不截断就会把它报成违规（误报），反而把真违规（deleteFile）淹掉。
+       */
+      const retAt = rest.search(/(^|[^\w$])return([^\w$]|$)/);
+      if (retAt >= 0) rest = rest.slice(0, retAt);
+      /*
+       * **必须按括号配平取整条 status(...) 调用**，不能用
+       * `/status\(\s*(['"`])…\1\s*\)/` 那种"字符串后面紧跟右括号"的写法。
+       *
+       * deleteFile 里的那句是
+       *   status('已删除：' + f.name + (remembered ? '' : '（未能记住…）'))
+       * —— 字符串后面是 ` + f.name`，不是 `)`，原正则**根本不匹配**，
+       * 于是这条守卫对它一直是**空转**的（变异验证里删掉整段修复也照样绿）。
+       * 这是本项目第 25 次踩到"断言绿但没在把关"。
+       */
+      let from = 0;
+      for (;;) {
+        const at = rest.indexOf('status(', from);
+        if (at < 0) break;
+        from = at + 7;
+        // 括号配平取完整调用（字符串里的括号要跳过，简单处理：只数未转义的）
+        let depth = 0, i = at + 6, inStr = null, end = -1;
+        for (; i < rest.length; i++) {
+          const ch = rest[i];
+          if (inStr) {
+            if (ch === '\\') { i++; continue; }
+            if (ch === inStr) inStr = null;
+            continue;
+          }
+          if (ch === '"' || ch === "'" || ch === '`') { inStr = ch; continue; }
+          if (ch === '(') depth++;
+          else if (ch === ')') { depth--; if (depth === 0) { end = i; break; } }
         }
+        if (end < 0) break;
+        const call = rest.slice(at, end + 1);
+        // 第一个参数必须是字符串字面量（变量/模板走不到这里的判定）
+        if (!/^status\(\s*['"`]/.test(call)) continue;
+        // 以 `, true)` 结尾的是告警；`status(x, isErr)` 这种变量也当告警跳过
+        if (/,\s*(true|[A-Za-z_$][\w$]*)\s*\)$/.test(call)) continue;
+        offenders.push(`${f.name}(): ${call.slice(0, 46)}`);
       }
     }
   }
@@ -10792,6 +10837,18 @@ group('写盘失败不能被随后的「已重命名 / 已新建」盖掉');
     ok(/let\s+remembered\s*=\s*true;/.test(df), 'deleteFile：remembered 初值为 true（没切文件就不该报）');
     ok(/\(await switchToFile\([^)]*\)\)\.remembered/.test(df),
       'deleteFile：取返回值的 .remembered（返回值已不是布尔）');
+    /*
+     * 删文档**本体**也要接住返回值 —— 这是同一类里的漏网者。
+     *
+     * 文件列表已落盘、删不掉就回滚不了，所以按既定做法把后果**带进自己那句话**
+     * （与 openFile 的「未能记住」同款），而不是指望 saveStore 那句红字能活着。
+     * 不接返回值 → 红字被「已删除：X」当场盖掉，而 doc:<id> 真的还在磁盘上
+     * 永久占配额（没有任何入口再读它）。
+     */
+    ok(/const\s+docCleared\s*=\s*await\s+saveStore\('脑图内容'/.test(df),
+      'deleteFile：删文档本体要接住返回值（doc:<id> 删不掉会永久占配额）');
+    ok(/docCleared\s*\?\s*''\s*:\s*'（/.test(df),
+      'deleteFile：没删掉要把后果带进「已删除」那句（不能只靠 saveStore 的红字）');
   }
 }
 
