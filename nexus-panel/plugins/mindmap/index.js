@@ -834,8 +834,13 @@ bootIframePlugin(async (ctx) => {
     workbook.activeId = copy.id;
     renderTabs();
     await loadSheet();
-    await persist();
-    status('已复制画布：' + copy.title);
+    /*
+     * 必须接返回值：persist() 写失败时它自己写过一句红字「保存失败」，
+     * 而紧跟着这句「已复制画布」会把它**盖掉** —— 用户以为存了，
+     * 重载后副本没了却完全不知情（与 switchToFile 那套口径一致）。
+     */
+    const ok = await persist();
+    status('已复制画布：' + copy.title + (ok ? '' : '（未能保存：重载后该副本会丢失）'));
   }
 
   async function removeSheet(id) {
@@ -1047,7 +1052,13 @@ bootIframePlugin(async (ctx) => {
     // 此时 persist 会把内容写回刚删掉的 doc 键，留下一份没人引用的垃圾数据。
     if (fileIndex.some((f) => f.id === currentFileId)) {
       capture();
-      await persist();
+      /*
+       * 必须判返回值：这里保存的是**当前**文件。写失败就切去新文件，
+       * 当前文件最后一次编辑就没了；而后面那句「已新建」会把 persist 写的
+       * 红字盖掉，用户完全不知情。与 switchSheet 的「读取失败已取消切换」同口径。
+       */
+      const saved = await persist();
+      if (!saved) { status('新建已取消：当前脑图的修改没能保存', true); return; }
     }
     const id = newFileId();
     // 空工作簿写不进去的话，新文件打开就是空的且后续保存可能覆盖别的键 ——
@@ -2306,16 +2317,20 @@ async function gcOrphanAssets(quiet = false) {
     }
     bridge.setTheme(name);
     s.theme = name;
-    await persist();
+    // 同轴：不接返回值的话写失败时这句会把 persist 的红字盖掉 ——
+    // 用户以为换了主题，重载后主题变回去。
+    const ok = await persist();
     // 显示名而不是 id：侧栏高亮写的是「清新蓝」，状态栏回「fresh-blue」会对不上
-    status('主题：' + themeLabelOf(name, customThemes));
+    status('主题：' + themeLabelOf(name, customThemes)
+      + (ok ? '' : '（未能保存：重载后会回到上一个主题）'));
   }
 
   async function applyLayout(name) {
     bridge.setTemplate(name);
     sheet().layout = name;
-    await persist();
-    status('布局：' + layoutLabelOf(name));
+    const ok = await persist();
+    status('布局：' + layoutLabelOf(name)
+      + (ok ? '' : '（未能保存：重载后会回到上一个布局）'));
   }
 
   async function saveThemes() {
@@ -2612,10 +2627,16 @@ async function gcOrphanAssets(quiet = false) {
         workbook.activeId = r.activeId || workbook.sheets[0].id;
         renderTabs();
         await loadSheet();
-        await persist();
+        /*
+         * 导入是**整体替换**：走到这里时旧的画布内容已经被顶掉了。
+         * 所以保存失败不是「少个提示」——重载后会**回到导入前的内容**，
+         * 而用户刚看到的是「已导入」，等于一次静默回滚。必须说出来。
+         */
+        const ok = await persist();
         const srcTip = { native: '无损快照', zen: 'XMind Zen 格式', legacy: 'XMind 8 老版格式' }[r.source] || r.source;
-        status(`已导入 ${workbook.sheets.length} 张画布（${srcTip}${r.attachments ? `，${r.attachments} 个附件` : ''}）`);
-        ctx.toast(`已导入 ${workbook.sheets.length} 张画布`, 'ok');
+        status(`已导入 ${workbook.sheets.length} 张画布（${srcTip}${r.attachments ? `，${r.attachments} 个附件` : ''}）`
+          + (ok ? '' : '；未能写入本地库，重载后会回到导入前的内容'));
+        ctx.toast(ok ? `已导入 ${workbook.sheets.length} 张画布` : '已导入，但保存失败', ok ? 'ok' : 'err');
       } catch (e) {
         status('XMind 导入失败：' + (e?.message || e), true);
         ctx.toast('XMind 导入失败', 'err');
@@ -2683,13 +2704,15 @@ async function gcOrphanAssets(quiet = false) {
     workbook.activeId = sheets[0].id;
     renderTabs();
     await loadSheet();
-    await persist();
+    // 同上：整体替换后再写失败 = 重载回到导入前，而界面刚说过「已导入」
+    const ok = await persist();
     // A31 把识别到的形态说出来
     const formTip = { workbook: '多画布包', single: '单画布', markdown: 'Markdown',
       'markdown(兜底)': 'Markdown（未按 JSON 解析，走了兜底）',
       freemind: 'FreeMind', opml: 'OPML', mermaid: 'Mermaid', plantuml: 'PlantUML' }[form] || form;
-    status(`已导入 ${sheets.length} 张画布（识别为：${formTip}）`);
-    ctx.toast(`已导入 ${sheets.length} 张画布`, 'ok');
+    status(`已导入 ${sheets.length} 张画布（识别为：${formTip}）`
+      + (ok ? '' : '；未能写入本地库，重载后会回到导入前的内容'));
+    ctx.toast(ok ? `已导入 ${sheets.length} 张画布` : '已导入，但保存失败', ok ? 'ok' : 'err');
 
     // B22 跨机迁移提示：必须**在导入成功后立刻**说，
     // 不能等用户点到那个节点才发现 —— 那时他已经以为文件坏了。

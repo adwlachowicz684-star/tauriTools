@@ -12910,6 +12910,90 @@ group('状态栏主题/布局显示名：不能把 id 直接给用户（BUG 76�
 }
 
 /* ============================================================
+   BUG 77 · await persist() 不判返回值，成功文案盖掉「保存失败」
+   ============================================================ */
+
+group('写盘失败不得被成功文案盖掉：await persist() 必须判返回值（BUG 77）');
+
+/*
+ * persist() 内部写失败会 status 一句红字「保存失败」，但它是**覆盖式**的：
+ * 调用方紧接着再写一句「已复制画布」「已导入 N 张画布」就把它顶掉了。
+ *
+ * 导入那条最要命 —— 导入是**整体替换**，走到 persist 时旧内容已被顶掉，
+ * 写失败意味着重载后回到导入前，而界面刚说过「已导入」：一次静默回滚。
+ *
+ * 修法与 switchToFile 一致：接返回值，把后果带进自己那句话。
+ *
+ * 断言写成**通用守卫**而不是逐条列举：以后新增 persist 调用点会自动被查。
+ */
+{
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  /** 按大括号配平取出 call 之后的整个调用（call 从 idx 开始，形如 `status(`） */
+  const takeCall = (t, idx) => {
+    let depth = 0, i = t.indexOf('(', idx);
+    for (let j = i; j < t.length; j++) {
+      if (t[j] === '(') depth++;
+      else if (t[j] === ')') { depth--; if (!depth) return t.slice(idx, j + 1); }
+      else if (t[j] === '`') { // 跳过模板串，避免串里的 ) 干扰配平
+        j++; while (j < t.length && t[j] !== '`') { if (t[j] === '\\') j++; j++; }
+      }
+    }
+    return t.slice(idx);
+  };
+
+  /*
+   * 找所有 `await persist()`，看它前面是不是判了返回值。
+   *
+   * 窗口取**紧随其后 600 字符**而不是「到本函数结束」：要防的是"紧接着盖掉",
+   * 那必然就在下面一两行。早先按函数边界切，边界判定一失败（对象字面量里的
+   * `async (fromId) => {` 匹配不到 `
+  function`）就一路扫到文件尾，
+   * 把别的函数的 status 全算进来，误报一片 —— 又是"守卫在报假警"。
+   */
+  const WIN = 600;
+  const bad = [];
+  let pos = 0;
+  for (;;) {
+    const i = code.indexOf('await persist()', pos);
+    if (i < 0) break;
+    pos = i + 10;
+    const before = code.slice(Math.max(0, i - 24), i);
+    // 判返回值的两种写法：`const ok = await persist()` / `if (!await persist())`
+    const judged = /=\s*$/.test(before) || /!\s*$/.test(before);
+    if (judged) continue;
+    // 取 min(WIN, 到下一个顶层 `\n  }`)：只查"紧接着"的几句，
+    // 否则会把下一个函数的 status 也算进来（addSheet 就吃过这个误报）
+    let cut = code.indexOf('\n  }', i);
+    if (cut < 0) cut = i + WIN;
+    const seg = code.slice(i, Math.min(cut, i + WIN));
+    let off = 0;
+    for (;;) {
+      const j = seg.indexOf('status(', off);
+      if (j < 0) break;
+      off = j + 7;
+      const call = takeCall(seg, j);
+      // 失败态以 `, true)` 结尾 —— 那是抱怨，不是报喜
+      if (!/,\s*true\s*\)$/.test(call)) { bad.push(call.slice(0, 70)); break; }
+    }
+  }
+  eq(bad.length, 0, '未判返回值的 persist 之后不得写成功文案：' + bad.join(' | '));
+
+  // 判了返回值就得**把后果说出来**，不能只是判了却什么都不讲
+  ok(/新建已取消：当前脑图的修改没能保存/.test(code), 'createFile 保存失败要中止新建并说明');
+  ok(/未能保存：重载后会回到上一个主题/.test(code), 'applyTheme 失败要把后果说进文案');
+  ok(/未能保存：重载后会回到上一个布局/.test(code), 'applyLayout 失败要把后果说进文案');
+  // 三处必须把后果说进文案里（不能只是判了返回值却什么都不说）
+  ok(/copy\.title \+ \(ok \? '' : '（未能保存/.test(code), '复制画布失败时要把「未能保存」说进文案');
+  ok(/未能写入本地库，重载后会回到导入前的内容/.test(code), '导入失败时要把「重载回到导入前」说出来');
+  ok(/ctx\.toast\(ok \? `已导入 \$\{sheets\.length\} 张画布` : '已导入，但保存失败'/.test(code),
+    '导入失败时 toast 必须是 err 而不是 ok');
+  ok(/ctx\.toast\(ok \? `已导入 \$\{workbook\.sheets\.length\} 张画布` : '已导入，但保存失败'/.test(code),
+    'XMind 导入失败时 toast 必须是 err');
+}
+
+/* ============================================================
    结果
    ============================================================ */
 
