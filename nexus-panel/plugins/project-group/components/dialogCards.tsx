@@ -3,6 +3,16 @@ import type { Api } from '../api';
 import { errText } from '../api';
 import type { CardKind, IconGroup, LockStateLive } from '../types';
 import { ColorPicker } from '../../color-picker/ColorPicker';
+/* 色盘的样式**只**在 color-picker/style.css 里，而 ColorPicker.tsx 本身
+   不 import 它（由 color-picker 自己的 main.tsx 引入）。
+   本插件是**另一个 iframe 文档**，只加载 plugins/project-group/style.css
+   —— 那份里 22 个 fpx-* 色盘类只定义了 0 个（此前唯一的 .fpx-hex 还是
+   给"秒数输入框"借用的，已改名 .pg-num）。
+   所以这里必须显式引：否则内嵌色盘渲染出来就是一坨没有布局的裸文字
+   （.fpx-sv / .fpx-hue / .fpx-picker-visual 全都没定义），
+   且不报错、不崩溃 —— 与 folder-picker 那次同类。
+   删掉这行 = 内嵌色盘残废。 */
+import '../../color-picker/style.css';
 import { DirDialog } from './DirDialog';
 import { PresetIconGrid } from './PresetIconGrid';
 import { CheckLine, Modal } from './ui';
