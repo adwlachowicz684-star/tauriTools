@@ -80,10 +80,25 @@ for (const entry of ENTRIES) {
   t(`${entry} 可达`, !!css);
   if (!css) continue;
 
+  /*
+   * ⚠️ 兜底必须按**出现位置**判，不能按变量名全局去重。
+   *
+   * 此前 withFb 是"只要该变量在文件里**任何一处**带过兜底，就算安全"。
+   * 于是出现这种漏网（真实存在的，--muted）：
+   *     行 2102  color: var(--text-dim, var(--muted, #888));   ← 有兜底
+   *     行 2294  color: var(--muted);                          ← 无兜底
+   * 后者整条 color 失效，但被前者"洗白"，守卫全绿。
+   *
+   * 变量是否安全取决于**每一次**引用；只要有一次裸引用且变量未定义，
+   * 那一处就是幽灵，必须报出来。
+   */
   const used = new Set([...css.matchAll(/var\(\s*(--[a-z0-9-]+)/g)].map((m) => m[1]));
-  const withFb = new Set([...css.matchAll(/var\(\s*(--[a-z0-9-]+)\s*,/g)].map((m) => m[1]));
+  const bareRef = new Set();   /* 至少有一次**不带兜底**的引用 */
+  for (const m of css.matchAll(/var\(\s*(--[a-z0-9-]+)\s*([,)])/g)) {
+    if (m[2] === ')') bareRef.add(m[1]);
+  }
   const defined = new Set([...css.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
-  const ghost = [...used].filter((v) => !defined.has(v) && !withFb.has(v)
+  const ghost = [...used].filter((v) => !defined.has(v) && bareRef.has(v)
     && !ALLOW.has(v) && !THEME_PUSHED.has(v));
   t(`${entry} 无幽灵变量`, ghost.length === 0, ghost.length ? ghost.join('、') : '');
 }
