@@ -164,6 +164,7 @@
     "test:pg-lock": "node plugins/project-group/lock-preset-test.mjs",
     "test:pg-lock-live-state": "node plugins/project-group/lock-live-state-test.mjs",
     "test:pg-log": "node plugins/project-group/log-test.mjs",
+    "test:pg-mcp-addcard-guard": "node plugins/project-group/mcp-addcard-guard-test.mjs",
     "test:pg-mcp-create": "node plugins/project-group/mcp-create-folder-test.mjs",
     "test:pg-mcp-exit": "node plugins/project-group/mcp-exit-test.mjs",
     "test:pg-mcp-token-keep": "node plugins/project-group/mcp-token-keep-test.mjs",
