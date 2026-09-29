@@ -21,6 +21,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+/* 剥注释走全仓共用实现（test-scan-utils.mjs），不要再在本文件里内联一份。
+   ⚠️ 本文件里 strip 是**块注释 + 行注释**两档（要扫 JS/HTML 里的 // 说明），
+   所以引 stripCommentsJs；只剥块注释的 stripComments 会漏掉行注释里的字样。
+   曾因批量迁移时删了本地定义却没补导入，整个文件 ReferenceError 直接崩 ——
+   而跑不起来表现为"测试挂了"，很容易被误当成被测代码有问题。 */
+import { stripCommentsJs as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -695,7 +701,7 @@ group('Tab → 插入下级节点');
      */
     const rf = src.slice(src.indexOf('function bindRefocusClick'),
       src.indexOf('function bindRefocusClick') + 3000);
-    const code = rf.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = strip(rf);
     ok(/root\.addEventListener\('click',\s*onClick\)/.test(code), '挂在 root 上（事件委托，重建 DOM 不用重绑）');
     ok(/root\.removeEventListener\('click',\s*onClick\)/.test(code), '返回注销函数');
     ok(/isTextTarget\(t\)/.test(code), '文本控件里不抢焦点（否则打不了字）');
@@ -741,13 +747,13 @@ group('Tab → 插入下级节点');
     ok(/function\s+refocusCanvasAfterPopup\s*\(\s*\)/.test(ps), '定义了 refocusCanvasAfterPopup');
     // dialog 的 close
     const dseg = ps.slice(ps.indexOf('function dialog('), ps.indexOf('function dialog(') + 1200);
-    const dcode = dseg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const dcode = strip(dseg);
     ok(/refocusCanvasAfterPopup\(\);/.test(dcode), 'dialog 关闭时归还焦点');
     ok(dcode.indexOf('refocusCanvasAfterPopup();') > dcode.indexOf('mask.remove();'),
       'dialog：先 remove 再归还（不是只在注释里出现）');
     // popupMenu 的 close
     const mseg = ps.slice(ps.indexOf('export function popupMenu'), ps.indexOf('export function popupMenu') + 1400);
-    const mcode = mseg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const mcode = strip(mseg);
     ok(/refocusCanvasAfterPopup\(\);/.test(mcode), 'popupMenu 关闭时归还焦点');
     ok(mcode.indexOf('refocusCanvasAfterPopup();') > mcode.indexOf('mask.remove();'),
       'popupMenu：先 remove 再归还（不是只在注释里出现）');
@@ -770,7 +776,7 @@ group('Tab → 插入下级节点');
    * 那时候没法给用户提示（且失败只会让下次启动重跑迁移，无副作用）。
    */
   {
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = strip(src);
     const from = code.indexOf('const statusEl');
     const tail = code.slice(from);
     ok(/async\s+function\s+saveStore\s*\(\s*label\s*,\s*run\s*\)/.test(tail), '定义了 saveStore 助手');
@@ -825,7 +831,7 @@ group('Tab → 插入下级节点');
    * 这是 BUG 14（focusNode）同一个坑在另外两条路径上的复发。
    */
   {
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = strip(src);
     /*
      * 通用守卫：**所有** `bridge.selectNodeById(x);` 独立成句的写法都必须在
      * 条件里判返回值。只盯着 setVideoThumb 一处的话，下次再有人写一句
@@ -893,7 +899,7 @@ group('Tab → 插入下级节点');
   // 不能残留"绕过包装"的直接调用
   for (const file of ['panels.js', 'index.js']) {
     const t = fs.readFileSync(path.join(HERE, file), 'utf8');
-    const code = t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = strip(t);
     const direct = [...code.matchAll(/_ask(?:Confirm|Alert|Text)\s*\(/g)];
     ok(direct.length === 3, `${file}：_ask* 只出现在 3 处包装内（当前 ${direct.length} 处）`);
   }
@@ -938,7 +944,7 @@ group('新建画布按钮（＋）位置');
 
   // 注释里也会提到这些属性名（说明"为什么不能加"），断言前先剥掉注释，
   // 否则会被自己写的说明文字误伤。
-  const css = (fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8')).replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+  const css = strip((fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8')).replace(/\r\n/g, '\n'));
   const footCss = css.slice(css.indexOf('.mm-foot {'), css.indexOf('.mm-status {'));
   ok(!/overflow-x/.test(footCss),
     '.mm-foot 不再 overflow-x:auto —— 整条底栏滚动会把「＋」和状态一起滚出视野');
@@ -985,7 +991,7 @@ group('面板分布：左文件库 / 中画布 / 右属性侧栏');
 
 {
   // 10.5 侧栏自身：常驻 276px，且**不含**页签（页签在顶栏，不占侧栏高度）
-  const css = (fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8')).replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+  const css = strip((fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8')).replace(/\r\n/g, '\n'));
   const sideCss = css.slice(css.indexOf('.mm-side {'), css.indexOf('.mm-side h3'));
   ok(/flex:\s*0 0 276px/.test(sideCss), '侧栏固定 276px（与 C# Column 1 的 Width="276" 一致）');
   ok(/display:\s*flex/.test(sideCss), '侧栏默认显示（常驻，不靠 .open 打开）');
@@ -1237,7 +1243,7 @@ group('附件卡片 / 视频预览');
 
   // 12.6 ▶ 提示不能拦点击：拦了就和容器双重触发 / 点不动
   {
-    const css = (fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8')).replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+    const css = strip((fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8')).replace(/\r\n/g, '\n'));
     const playCss = css.slice(css.indexOf('.mm-vthumb-play {'), css.indexOf('.mm-vthumb.playing .mm-vthumb-play'));
     ok(/pointer-events:\s*none/.test(playCss), '▶ 覆盖层 pointer-events:none（点击交给容器，避免双重触发）');
   }
@@ -1306,7 +1312,7 @@ group('画布附件图标配色');
    */
   // 先剥注释再匹配 —— 注释里引用了这个名字，不剥的话断言命中注释本身，
   // 于是"代码里真的又引用了"也照样绿（假阴性，本项目已多次遇到）
-  ok(!/_kmVideoIcon/.test(html.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')),
+  ok(!/_kmVideoIcon/.test(strip(html)),
     '不再引用 _kmVideoIcon（该字段从未被赋值，清理永远空转）');
   ok(!/this\.frame\.stroke\(color/.test(icons), '不再有 VideoIcon 的 frame 上色');
   ok(!/this\.path\.fill\(color\)\.stroke\(color/.test(icons), '不再有 VideoIcon 的三角上色');
@@ -1693,7 +1699,7 @@ group('主题配色条');
 
 {
   // 16.8 transparent 段必须有可见标记 —— 否则「透明」和「白色」看起来一样
-  const css = (fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8')).replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+  const css = strip((fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8')).replace(/\r\n/g, '\n'));
   // 切到本规则块的 `}` 为止 —— 固定 400 会越界到下一条规则，
   // 越界后测到的就是**别的规则**的属性了（同 exportExchange 那个假阳性）。
   const segStart = css.indexOf('.mm-sw.transparent {');
@@ -1808,7 +1814,7 @@ group('行内编辑贴合节点');
   ok(/function layoutEditLayer\(el, node\)/.test(html), '抽出 layoutEditLayer（打开与重定位共用一份算法）');
   {
     const lf = html.slice(html.indexOf('function layoutEditLayer'), html.indexOf('function beginTextEdit'));
-    const lcode = lf.replace(/\/\*[\s\S]*?\*\//g, '');
+    const lcode = strip(lf);
     ok(/getBoundingClientRect\(\)/.test(lcode), '重定位按当前实测位置算（不是缓存下来的旧盒）');
     ok(/el\.style\.left\s*=/.test(lcode) && /el\.style\.top\s*=/.test(lcode), '重算 left / top');
     ok(/fs \* zoom/.test(lcode), '重算字号（缩放会变，只挪位置不够）');
@@ -1840,7 +1846,7 @@ group('行内编辑贴合节点');
   const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
   const seg = ed.slice(ed.indexOf('var km = window.__km = new kityminder.Minder'),
     ed.indexOf('var km = window.__km = new kityminder.Minder') + 2200);
-  const scode = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const scode = strip(seg);
   ok(/km\._initKeyReceiver\s*&&\s*!km\._keyReceiver/.test(scode),
     '构造后补建 km-receiver（内核的 paperrender 早发完了，永远不会自己建）');
   ok(/km\._initKeyReceiver\(\)/.test(scode), '真的调用而不是只判断');
@@ -1868,7 +1874,7 @@ group('行内编辑贴合节点');
   // 断言变成恒假 —— 代码一点没改却报红。
   const kbAt = ed.indexOf("el.addEventListener('keydown'");
   const kb = ed.slice(kbAt, ed.indexOf('layoutEditLayer(el, node)', kbAt));
-  const kcode = kb.replace(/\/\*[\s\S]*?\*\//g, '');
+  const kcode = strip(kb);
   ok(/ev\.key === 'Tab'/.test(kcode), '编辑层单独处理 Tab');
   ok(/closeTextEditor\(true\);/.test(kcode), 'Tab 先提交当前文字');
   ok(/__minderInsertChild/.test(kcode), '提交完立刻再建一个子节点（否则每建一个要按两次 Tab）');
@@ -1900,7 +1906,7 @@ group('行内编辑贴合节点');
 {
   const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
   const seg = ed.slice(ed.indexOf('function patchNodeGetStyle'), ed.indexOf('function patchNodeGetStyle') + 1400);
-  const scode = seg.replace(/\/\*[\s\S]*?\*\//g, '');
+  const scode = strip(seg);
   ok(/function patchNodeGetStyle\(\)/.test(scode), '定义了 patchNodeGetStyle');
   ok(/kityminder\.Node\.prototype/.test(scode), '打在 Node.prototype 上（所有 renderer 都走 getStyle，一处拦住就够）');
   ok(/typeof this\.getMinder === 'function' && !this\.getMinder\(\)/.test(scode), '只在节点已脱离 minder 时拦截');
@@ -1929,14 +1935,14 @@ group('行内编辑贴合节点');
 {
   const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
   const seg = ed.slice(ed.indexOf('function commitEditingBeforeSwap'), ed.indexOf('function closeTextEditor'));
-  const scode = seg.replace(/\/\*[\s\S]*?\*\//g, '');
+  const scode = strip(seg);
   ok(/function commitEditingBeforeSwap\(\)/.test(scode), '定义了 commitEditingBeforeSwap');
   ok(/if \(editLayer && typeof closeTextEditor === 'function'\)/.test(scode),
     '只在真有编辑层时才提交（没有就别空跑一次 closeTextEditor）');
   ok(/closeTextEditor\(true\)/.test(scode), '走「提交」而不是丢弃（用户的输入不能白打）');
 
   const pj = ed.slice(ed.indexOf('function patchImportJson'), ed.indexOf('function patchNodeGetStyle'));
-  const pcode = pj.replace(/\/\*[\s\S]*?\*\//g, '');
+  const pcode = strip(pj);
   ok(/function patchImportJson\(\)/.test(pcode), 'patch 挂在实例方法上（覆盖门面之外的直调路径）');
   ok(/km\.importJson\s*=\s*function/.test(pcode), '替换的是 km.importJson 本身');
   ok(/commitEditingBeforeSwap\(\);/.test(pcode), '替换体里真的先提交');
@@ -1971,7 +1977,7 @@ group('行内编辑贴合节点');
 {
   const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
   const seg = ed.slice(ed.indexOf('exportPng: function ()'), ed.indexOf('pollExportPng: function ()'));
-  const scode = seg.replace(/\/\*[\s\S]*?\*\//g, '');
+  const scode = strip(seg);
   ok(!/\.catch\(/.test(scode), '不再用 .catch（内核 Promise 上没有这个方法）');
   ok(/\.then\(done, fail\)/.test(scode), '改用两参数 then(ok, err) —— thenable 都支持这个形态');
   ok(/var settled = false;/.test(scode) && /if \(settled\) return;/.test(scode), '幂等：两个回调只生效一个');
@@ -2015,7 +2021,7 @@ group('行内编辑贴合节点');
 {
   const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
   const seg = ed.slice(ed.indexOf('window.editor = window.editor'), ed.indexOf('window.editor = window.editor') + 2600);
-  const scode = seg.replace(/\/\*[\s\S]*?\*\//g, '');
+  const scode = strip(seg);
   ok(!/_baseline = null/.test(scode), 'clear() 不再把基线置 null（置 null 会让所有编辑都不入栈）');
   ok(/clear: function \(\) \{ _undoStack = \[\]; _redoStack = \[\]; _baseline = _historySnap\(\); \}/.test(scode),
     'clear() 以**当前内容**重设基线（语义本就是「以当前内容为新的历史起点」）');
@@ -2044,7 +2050,7 @@ group('行内编辑贴合节点');
   const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
   const i0 = ed.indexOf('function ensureRootId()');
   const seg = ed.slice(i0, i0 + 2400);
-  const scode = seg.replace(/\/\*[\s\S]*?\*\//g, '');
+  const scode = strip(seg);
   ok(/getRoot\(\)\.traverse\(/.test(scode), 'ensureRootId 遍历整棵树补 id（只补 root 会让所有子节点都挂不上附件）');
   ok(/n\.data\.id = /.test(scode), '给每个缺 id 的节点都赋上 id');
   /*
@@ -2080,7 +2086,7 @@ group('行内编辑贴合节点');
  */
 {
   const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
-  const seg = ed.slice(ed.indexOf('撤销 / 重做快捷键'), ed.indexOf('撤销 / 重做快捷键') + 3200).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const seg = strip(ed.slice(ed.indexOf('撤销 / 重做快捷键'), ed.indexOf('撤销 / 重做快捷键') + 3200));
   ok(/ctrlKey\s*\|\|\s*e\.metaKey/.test(seg), '撤销快捷键：识别 ctrl 与 meta（macOS 的 Cmd）');
   /*
    * 必须匹配**完整组合**，不能只查 `k === 'z'`：
@@ -2100,7 +2106,7 @@ group('行内编辑贴合节点');
   ok(!/if \(tag === 'input' \|\| tag === 'textarea'\|\) return;/.test(seg), '不得笼统跳过所有 input');
 
   const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-  const host = ix.slice(ix.indexOf('onHostRequest'), ix.indexOf('onHostRequest') + 2000).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const host = strip(ix.slice(ix.indexOf('onHostRequest'), ix.indexOf('onHostRequest') + 2000));
   ok(/action === 'undo'/.test(host), '宿主要应答编辑器的 undo 请求');
   ok(/action === 'redo'/.test(host), '宿主要应答编辑器的 redo 请求');
 }
@@ -2125,7 +2131,7 @@ group('行内编辑贴合节点');
   const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
   const i0 = ed.indexOf('importText:');
   const seg = ed.slice(i0, ed.indexOf('// 关键：km.exportData()', i0));
-  const scode = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const scode = strip(seg).replace(/\/\/.*$/gm, '');
   ok(/async function/.test(scode), 'importText 是 async（importData 是异步的，不 await 会跑在旧树上）');
   ok(/await km\.importData\(/.test(scode), '必须 await km.importData(...)');
   const iAwait = scode.indexOf('await km.importData');
@@ -4896,7 +4902,7 @@ group('BUG 36 导入无大纲文件不得替换画布');
   const i0 = idx.indexOf('function noOutline(');
   ok(i0 >= 0, 'noOutline 定义在 importFile 之前（起点有效）');
   const seg = idx.slice(i0, i0 + 7000);
-  const sc = seg.replace(/\/\*[\s\S]*?\*\//g, '');
+  const sc = strip(seg);
 
   ok(/function noOutline\(/.test(sc), '抽出 noOutline 判定（两条入口共用）');
   ok(/markdownRowCount\(/.test(sc), '判定用 markdownRowCount');
@@ -6150,7 +6156,7 @@ group('附件图标不能是黑块：fill 必须用 none 而不是 transparent')
       ok(x + w <= 12, `rect 右边界不压到文件名（右=${x + w} ≤ 12）`);
     }
   }
-  ok(!/\.fill\('transparent'\)/.test(fi.replace(/\/\*[\s\S]*?\*\//g, '')),
+  ok(!/\.fill\('transparent'\)/.test(strip(fi)),
     'FileIcon 代码里不再出现 fill(transparent)');
   ok(/\.fill\('none'\)/.test(fi), 'FileIcon 底框用 fill(none)');
 
@@ -7097,7 +7103,7 @@ group('展开层级按钮：移到左侧图标条');
     const lvl = rail.slice(rail.indexOf("levelGroup('层级'"), rail.indexOf("levelGroup('展开'"));
     const exp = rail.slice(rail.indexOf("levelGroup('展开'"));
     ok(/中心主题/.test(lvl), '「层级」提示写明以中心主题为准');
-    ok(!/选中节点/.test(lvl.replace(/\/\*[\s\S]*?\*\//g, '')),
+    ok(!/选中节点/.test(strip(lvl)),
       '「层级」不再以选中节点为准');
     ok(/选中节点/.test(exp), '「展开」以当前选中节点为准');
   }
@@ -7301,7 +7307,7 @@ group('布局：文件库浮层 + 画布假描边让位 + 控件档位');
 
 {
   const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
-  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '');   // 先剥注释，避免命中说明文字
+  /* 剥注释走全仓共用实现（test-scan-utils.mjs），不再各写一份 */
   const cs = strip(css);
 
   // ---- 1) 文件库是**浮层**，画布不动，靠画布上的假描边框让位 ----
@@ -7347,7 +7353,7 @@ group('布局：文件库浮层 + 画布假描边让位 + 控件档位');
    * 不红（因为只查了 CSS），只有肉眼能发现。
    */
   const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-  const idxNC = idx.replace(/\/\*[\s\S]*?\*\//g, '');
+  const idxNC = strip(idx);
   ok(/h\(\s*['"]div\.mm-canvas-frame['"]/.test(idxNC),
     '画布上真的创建了 .mm-canvas-frame 元素（不是只有样式规则）');
 
@@ -7364,7 +7370,7 @@ group('布局：文件库浮层 + 画布假描边让位 + 控件档位');
 
   // 文件库侧必须提供钩子，且开合时真的调它
   const fl = fs.readFileSync(path.join(HERE, 'filelist.js'), 'utf8');
-  const flNC = fl.replace(/\/\*[\s\S]*?\*\//g, '');
+  const flNC = strip(fl);
   ok(/setLayoutHook/.test(flNC), 'filelist 暴露 setLayoutHook（底框开合通知宿主）');
   ok(/layoutHook\(\)/.test(flNC), 'filelist 的 apply() 里真的调用了 layoutHook');
 
@@ -7407,7 +7413,7 @@ group('文字垂直居中：改用真实测量，不再吃内核经验系数');
   // 关键：**不再**要求节点显式设过 vertical-align。
   // 注意必须先剥注释 —— 新写的注释里引用了旧写法 `if (!va) return;`，
   // 不剥掉的话删没删这句断言都是绿的（假阳性）。
-  const htmlCode = html.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const htmlCode = strip(html);
   ok(!/if \(!va\) return;/.test(htmlCode),
     '不再因未设 vertical-align 而跳过校正（这正是偏移一直没生效的那一环）');
   // 测不到真实边界时必须保持内核落点，不能设 0
@@ -7606,7 +7612,7 @@ group('样式面板：一排化 / 删除按钮弱化 / 分节清除');
     ok(qs.length >= 3, '存在弱化按钮（清除类）');
     // 弱化按钮不能是常规实心按钮：否则整页一排排按钮，主操作被淹没
     const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
-    const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '');
+    /* 同上：共用 strip */
     const cs = strip(css);
     const qr = cs.slice(cs.indexOf('.mm-btn.quiet {'), cs.indexOf('.mm-btn.quiet:hover'));
     ok(/background:\s*none/.test(qr), '弱化按钮无底板');
@@ -7619,7 +7625,7 @@ group('样式面板：一排化 / 删除按钮弱化 / 分节清除');
   // ---- 5) 徽章单排：行内不换行 ----
   {
     const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
-    const cs = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const cs = strip(css);
     const br = cs.slice(cs.indexOf('.mm-badge-row {'), cs.indexOf('.mm-badge-row {') + 200);
     ok(/flex-wrap:\s*nowrap/.test(br), '徽章行不换行（10 格始终一排）');
     ok(/justify-content:\s*space-between/.test(br), '徽章行用 space-between（窄屏压缩间隙而非掉行）');
@@ -7709,7 +7715,7 @@ group('导入导出页：标题右侧圆形问号 + 悬浮说明');
   // ---- 5) 样式：fixed + 默认不显示 ----
   {
     const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
-    const cs = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const cs = strip(css);
     const tr = cs.slice(cs.indexOf('.mm-helptip {'), cs.indexOf('.mm-helptip.open'));
     ok(/position:\s*fixed/.test(tr), '提示框 position:fixed（配合挂 body，不受祖先裁剪）');
     ok(/display:\s*none/.test(tr), '默认 display:none（不只是透明，否则仍会挡住点击）');
@@ -7822,7 +7828,7 @@ group('顶栏瘦身 / 聚焦中心主题 / 搜索不阻断选中 / 布局选中�
   const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
   const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
   const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
-  const code = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const code = strip;   /* 直接用共用实现，不再包一层 */
 
   // ---- 1) 顶栏「新建 / 复制」已移除 ----
   ok(!/B\('新建', guard\('新建画布'/.test(idx), '顶栏「新建」按钮已移除');
@@ -8059,7 +8065,7 @@ group('文件库展开导致画布内容位移：按实测屏幕位置差补偿'
   ok(!/panBy/.test(wsrSeg), '本侧不再自行 panBy（补偿交给编辑器，避免双重）');
   // 早先按"固定 Δ/2"硬补是错的：Δ 取决于 flex 收缩分配，右侧栏一旦可收缩
   // 就不是 216。这里必须没有任何 216 / 108 之类的常量参与。
-  const ixNoComment = ix.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const ixNoComment = strip(ix);
   ok(!/216|108/.test(ixNoComment), '代码里没有 216 / 108 之类的硬编码位移常量');
   // before 取不到时必须**跳过**，不能当成 0 —— 那会补出一个反向位移
   ok(/if \(before == null\) return r;/.test(ix),
@@ -8081,7 +8087,7 @@ group('文件库展开导致画布内容位移：按实测屏幕位置差补偿'
   }
   // 不允许残留**裸调用**（初始化那一处除外：那时 bridge 还没建、
   // rootScreenX 返回 null，withStableRoot 会自行跳过，包裹了也没意义）
-  const ixCode = ix.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const ixCode = strip(ix);
   const bare = [...ixCode.matchAll(/^\s+(?:fileList\?\.|fileList\.)(showFiles|setSearch)\([^)]*\);$/gm)]
     .filter((m) => !/!!settings\.filesOpen/.test(m[0]));
   eq(bare.length, 0, `无未包裹的裸开合调用（发现 ${bare.map((m) => m[0].trim()).join(' | ')}）`);
@@ -8159,7 +8165,7 @@ group('位移补偿：容器位移在父页面测，内核那一份在 iframe re
   const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
   const br = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
   const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-  const code = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const code = strip;   /* 直接用共用实现，不再包一层 */
   const cHtml = code(html);
 
   // ---- 1) 内核确实会自动居中（这是要抵消的东西）----
@@ -8689,7 +8695,7 @@ group('Tab 建节点：一次就成（不再多出一条孤立连线）');
   ok(!/km\.appendNode\(/.test(src), '源码里已无 km.appendNode 调用');
   // 全文都不该再有 layout(数字)：km.layout() 不接受参数，写了也是静默忽略。
   // 先剥掉注释再匹配 —— 否则会命中「写 layout(100) 会被忽略」这句说明文字
-  const codeOnly = html.replace(/\/\*[\s\S]*?\*\//g, '').split('\n')
+  const codeOnly = strip(html).split('\n')
     .filter((l) => !/^\s*\*/.test(l) && !/^\s*\/\//.test(l)).join('\n');
   ok(!/km\.layout\(\s*\d/.test(codeOnly),
     '全文无 km.layout(数字)（该参数会被静默忽略，写了是误导）');
@@ -9626,7 +9632,7 @@ group('两条「附加视频」路径都必须生成封面（不能只修拖放�
      * 注释里就写着"都排在 focusNode() 之前"，直接 indexOf 会命中注释，
      * 于是顺序真的反了也照样绿 —— 假阴性（本项目已多次踩到）。
      */
-    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = strip(seg);
     const fi = code.indexOf('focusNode()');
     ok(fi > 0 && code.indexOf('videoThumb') < fi,
       '③ 取封面排在 focusNode() 之前');
@@ -9747,7 +9753,7 @@ group('「清除文字样式」必须清掉文字节能设的**每一个**键');
    *      直接在原文上跑正则会把注释里的也算进去 —— 键真的被删了，
    *      断言照样绿。**又一处假阴性**。
    */
-  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  /* 剥注释走顶部 import 的共用 strip（test-scan-utils.mjs），不再各写一份 */
   const i = html.indexOf("scope === 'text'");
   ok(i > 0, '有 text scope 分支');
   const seg = strip(html.slice(i, i + 1500));
@@ -9836,7 +9842,7 @@ group('focusNode 必须检查 selectNodeById 的返回值（否则附件挂错�
   const i = pan.indexOf('const focusNode = () => {');
   ok(i > 0, '有 focusNode()');
   const seg = pan.slice(i, i + 900);
-  const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const code = strip(seg);
   ok(/if \(!id\) return false;/.test(code), '无 id 时返回 false（提示用户去选节点）');
   /*
    * 关键：不能是「调完就 return true」。
@@ -9873,7 +9879,7 @@ group('内核没有 clearSelect —— 两处「清空选中」写法全部失�
   ok(si > 0, '有 apply(ns)');
   {
     const seg = html.slice(si, si + 900);
-    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = strip(seg);
     ok(!/km\.clearSelect\(\)/.test(code), '不再调用不存在的 km.clearSelect()');
     ok(/km\.select\(ns,\s*true\)/.test(code),
       '一次 select(数组, true) 全选（不是循环逐个 select(n, true)）');
@@ -9891,7 +9897,7 @@ group('内核没有 clearSelect —— 两处「清空选中」写法全部失�
   ok(fi > 0, '有 focusSearchResult()');
   {
     const seg = html.slice(fi, fi + 1200);
-    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = strip(seg);
     ok(!/km\.clearSelect/.test(code), '不再引用不存在的 km.clearSelect');
     ok(/km\.select\s*&&\s*km\.select\(node,\s*true\)/.test(code),
       '定位用 select(node, true) —— 先清空再选');
@@ -9914,7 +9920,7 @@ group('全仓不得再引用不存在的 km.clearSelect（改用 select([], true
    * 逐个断言只能防住已发现的。这里扫**全仓**：只要代码（剥注释后）里还出现
    * km.clearSelect，不管在哪一律判失败。
    */
-  const code = html.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const code = strip(html);
   const hits = [...code.matchAll(/km\.clearSelect/g)];
   ok(hits.length === 0,
     `编辑器代码里不得再出现 km.clearSelect（当前 ${hits.length} 处）`);
@@ -10428,7 +10434,7 @@ group('图片交互：两段式打开 + 默认放大 + 选中后可拖大小');
   {
     const end = html.indexOf('function refreshImageClicks()', hi);
     const seg = html.slice(hi, end > hi ? end : hi + 2500);
-    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = strip(seg);
     ok(/sh\.node\.addEventListener\('mouseup'/.test(code),
       '图片上监听 mouseup（按下不拦截 → 内核照常选中/拖动节点）');
     ok(/if \(_selImg === node\) openImagePreview\(node\)/.test(code)
@@ -10445,7 +10451,7 @@ group('图片交互：两段式打开 + 默认放大 + 选中后可拖大小');
   ok(mi > 0, '多图点击有「两段式」分支');
   {
     const seg = html.slice(mi, mi + 900);
-    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = strip(seg);
     ok(/d\.node\._kmImgSel !== d\.index/.test(code),
       '判据是「这张是不是已经选中」而不是「有没有选中过」');
     ok(/return;/.test(code), '第一段只选中、直接 return（不发 openattach）');
@@ -10459,7 +10465,7 @@ group('图片交互：两段式打开 + 默认放大 + 选中后可拖大小');
   {
     const end = html.indexOf('function removeImageDirect', oi);
     const seg = html.slice(oi, end > oi ? end : oi + 1200);
-    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = strip(seg);
     ok(/cur === _selImg \|\| cur === _kmImgSelNode/.test(code),
       '单图与多图的选中态**都要**判（少判一个 → 第二段永远走不到）');
     ok(!/km\.select\(\[\], true\)/.test(code), '不在清除路径里强行反选节点');
@@ -10469,7 +10475,7 @@ group('图片交互：两段式打开 + 默认放大 + 选中后可拖大小');
     const si = html.indexOf('function selectImage(node)');
     const end = html.indexOf('// ---- 显示定位跟随 ----', si);
     const seg = html.slice(si, end > si ? end : si + 1600);
-    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = strip(seg);
     ok(!/km\.select\(\[\], true\)/.test(code),
       'selectImage 不再强行 select([], true)（异步 selectionchange 会把选中态清掉）');
   }
@@ -10480,7 +10486,7 @@ group('图片交互：两段式打开 + 默认放大 + 选中后可拖大小');
   {
     const end = html.indexOf('function startHandleDrag', di);
     const seg = html.slice(di, end > di ? end : di + 2000);
-    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = strip(seg);
     ok(/document\.createElement\('div'\)/.test(code), '手柄是 HTML div');
     ok(/position:fixed/.test(code), '手柄用 fixed 定位（视口坐标，不受 CTM 影响）');
     ok(!/new kity\.Rect\(HANDLE/.test(code), '不再是 kity.Rect（会被节点 RC 盖住按不到）');
@@ -10493,7 +10499,7 @@ group('图片交互：两段式打开 + 默认放大 + 选中后可拖大小');
     ok(vi > 0, '有 onHandleMove()');
     const end = html.indexOf('function onHandleUp', vi);
     const seg = html.slice(vi, end > vi ? end : vi + 1200);
-    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = strip(seg);
     ok(/var ratio = d\.oh \/ d\.ow/.test(code) && /nw \* ratio/.test(code),
       '等比缩放（不按位移直接改高 → 图片会变形）');
     ok(/nw = Math\.max\(MIN_IMG, Math\.min\(MAX_IMG,/.test(code)
@@ -10538,7 +10544,7 @@ group('图片交互：两段式打开 + 默认放大 + 选中后可拖大小');
     const dbi = html.indexOf("km.on('dblclick', function (e)");
     ok(dbi > 0, '有 dblclick 处理');
     const seg = html.slice(dbi, dbi + 700);
-    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = strip(seg);
     ok(/mmImageAtPoint\(oe\.clientX, oe\.clientY\)/.test(code),
       '双击图片不进文字编辑（否则同时弹预览和编辑框）');
   }
@@ -10675,13 +10681,13 @@ group('页签拖拽：插入竖条必须收掉、回弹动画必须看得见');
     const ci = src.indexOf('function cleanup()');
     ok(ci > 0, '有 cleanup()');
     const seg = src.slice(ci, ci + 700);
-    const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = strip(seg);
     ok(/st\?\.follow\)\s*\{\s*st\.follow\.remove\(\);\s*\}/.test(code), 'cleanup 收 follow');
     ok(/st\?\.bar\)\s*\{\s*st\.bar\.remove\(\);\s*\}/.test(code), 'cleanup 收 bar（漏了会留竖条）');
     // springBack 必须先把 follow 摘下来，否则 cleanup 会先把它 remove 掉
     const si = src.indexOf('function springBack(el)');
     const sseg = src.slice(si, si + 500);
-    const scode = sseg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const scode = strip(sseg);
     ok(/if \(follow\) st\.follow = null;/.test(scode),
       'springBack 先把 follow 从 st 上摘下（否则 cleanup 先 remove，动画看不见）');
   }
@@ -10767,19 +10773,19 @@ group('浮层必须能用 Escape 关掉（外壳的 dialog 能，插件的不能
     const di = src.indexOf('function dialog(title, children, onClose, opt)');
     ok(di > 0, '有 dialog()');
     const dseg = src.slice(di, src.indexOf('function confirmDialog', di));
-    const dcode = dseg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const dcode = strip(dseg);
     ok(/onEsc = escCloser\(mask, close\);/.test(dcode), 'dialog 注册 Esc');
     ok(/removeEventListener\('keydown', onEsc, true\)/.test(dcode), 'dialog 关闭时注销 Esc（不残留监听）');
 
     const mi = src.indexOf('export function popupMenu(');
     const mseg = src.slice(mi, mi + 3000);
-    const mcode = mseg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const mcode = strip(mseg);
     ok(/onEsc = escCloser\(mask, close\);/.test(mcode), 'popupMenu 注册 Esc');
     ok(/removeEventListener\('keydown', onEsc, true\)/.test(mcode), 'popupMenu 关闭时注销 Esc');
 
     // 守卫本身：最上层才关、组合期放过
     const ei = src.indexOf('export function escCloser(');
-    const ecode = src.slice(ei, ei + 900).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const ecode = strip(src.slice(ei, ei + 900));
     ok(/e\.isComposing \|\| e\.keyCode === 229/.test(ecode), 'escCloser 放过输入法组合期');
     ok(/masks\[masks\.length - 1\] !== mask/.test(ecode), 'escCloser 只关最上面那层');
   }
@@ -10819,7 +10825,7 @@ group('写盘失败不能被随后的「已重命名 / 已新建」盖掉');
   }
 
   /** 去掉注释，否则注释里引用的 saveStore/status 会被当成真实调用 */
-  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  /* 剥注释走顶部 import 的共用 strip（test-scan-utils.mjs），不再各写一份 */
 
   const offenders = [];
   for (const f of fnBodies(idx)) {
@@ -11019,7 +11025,7 @@ group('删除脑图后附件本体变成孤儿（BUG 47）');
    * 都失败，正是 BUG 23/45 那些「假成功」集中爆发的触发条件。
    */
   const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  /* 剥注释走顶部 import 的共用 strip（test-scan-utils.mjs），不再各写一份 */
   const code = strip(idx);
 
   // 不写死签名（有 quiet 参数），只锚函数名
@@ -11093,7 +11099,7 @@ group('移除附件无条件删资产，共享它的其它节点跟着失效（B
    */
   const pnl = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  /* 剥注释走顶部 import 的共用 strip（test-scan-utils.mjs），不再各写一份 */
   const pc = strip(pnl);
 
   // ① 移除附件不得再直接 dropAsset
@@ -11594,7 +11600,7 @@ group('复制/剪切/粘贴节点：内核提供了命令却没绑键，编辑�
   const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
 
   // 剥注释：注释里大量复述这三个键名，不剥的话命中的是注释而不是代码
-  const code = ed.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const code = strip(ed);
 
   const reg = /addCommandShortcutKeys\(\{[^}]*copy:\s*'ctrl\+c'[^}]*\}\)/;
   const m = code.match(reg);
@@ -11622,7 +11628,7 @@ group('快捷键说明：不得重复、且必须列出撤销与复制粘贴（B
   const body = m ? m[1] : '';
 
   // 剥注释后再取条目，否则注释里提到的键名会被算进去
-  const entries = [...body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  const entries = [...strip(body)
     .matchAll(/\['([^']+)',\s*'([^']*)'\]/g)].map((x) => ({ key: x[1], desc: x[2] }));
 
   ok(entries.length >= 20, `条目数量合理（实际 ${entries.length} 条）`);
@@ -11652,7 +11658,7 @@ group('BUG 58 · 图标库与图片附件共用 data.image，后写的把先写�
   const eb = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
   const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   // 注释里大量引用这些名字，不剥的话命中的是注释本身 —— 代码真改坏了照样绿
-  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  /* 剥注释走顶部 import 的共用 strip（test-scan-utils.mjs），不再各写一份 */
   const E = strip(eb);
   const C = strip(pn);
 
@@ -11746,7 +11752,7 @@ group('BUG 59 · 超链接与备注输入框必须回显（否则已有值看不
 {
   const eb = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
   const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
-  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  /* 剥注释走顶部 import 的共用 strip（test-scan-utils.mjs），不再各写一份 */
   const E = strip(eb);
 
   /*
@@ -11914,7 +11920,7 @@ group('BUG 61 · 主题的新建 / 导入 / 删除，写盘失败都必须回滚
    * 下面的断言都用**结构定位**（先剥注释、按大括号配对取函数体），
    * 不用定长切片 —— 定长切片会被后加的注释撑爆，变成恒真断言。
    */
-  const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  /* 同上：共用 strip */
   const P = strip(pn);
 
   const takeBlock = (at) => {
@@ -12502,7 +12508,7 @@ group('BUG 68 · 图标库每次重建预览都要先回收上一批 Blob URL');
    */
   const iRS = seg.indexOf('const renderGrid = async () => {');
   const rbody = seg.slice(iRS, seg.indexOf('\n  };', iRS));
-  const rcode = rbody.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const rcode = strip(rbody);
   ok(rcode.length > 0, '能切出 renderGrid 函数体（剥注释后非空）');
   const iRelease = rcode.indexOf('releaseMediaUrls();');
   const iInner = rcode.indexOf('grid.innerHTML');
@@ -12596,7 +12602,7 @@ group('BUG 69 · 删除主题必须二次确认（不可逆，且会连带改掉
    * 会命中**注释**而不是代码，于是把 danger 改成 false 也照样绿
    * （变异验证里就是这么漏掉的）。
    */
-  const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const code = strip(body);
   ok(code.length > 0, '能剥出「删除主题」处理器的代码体');
   ok(/askConfirm\(/.test(code), '删除主题：走 askConfirm 二次确认');
   ok(/danger:\s*true/.test(code), '删除主题：确认框标 danger（与其它删除操作一致）');
