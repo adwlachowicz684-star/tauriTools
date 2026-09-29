@@ -253,5 +253,205 @@ console.log('\n=== 运行时注入变量（brushVars）不被误判 ===');
     notDefined.length === 0, notDefined.join(', ') || '无残留');
 }
 
+
+{
+  /* ---- 跨文件重复定义且属性冲突 ----
+     同一个选择器在两个 CSS 文件里都写了、且同一属性给了不同值：
+     谁生效取决于 @import 顺序，**改加载顺序就会静默换一套观感**，
+     而且两边看着都"有定义"，死类名扫描也查不出来。
+
+     所以钉一条只增不减的基线：存量先登记清楚（哪些是刻意的分层覆盖），
+     以后新增一处立刻报红。
+
+     扫描范围必须排除两种形态，否则全是假警报：
+       1. @media 块（尤其 forced-colors 无障碍兜底，本就该覆盖常规值）
+       2. @keyframes 里的 from/to（不是选择器）
+     排除 @media 要用"整块剔除"而不是只删开头 —— 只删开头会让后面的
+     规则被误挂到 @media 之前的位置上。 */
+  const cssFiles = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (['node_modules', '.git', 'target', 'dist', 'build'].includes(e.name)) continue;
+      const full = join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.name.endsWith('.css')) cssFiles.push(full);
+    }
+  };
+  walk(HERE);
+
+  const killMedia = (t) => {
+    /* 整块剔除 @media：从 @media 的 { 起做括号配对 */
+    let out = '', i = 0;
+    while (i < t.length) {
+      const m = t.slice(i).match(/@media[^{]*\{/);
+      if (!m) { out += t.slice(i); break; }
+      out += t.slice(i, i + m.index);
+      let d = 1, j = i + m.index + m[0].length;
+      while (j < t.length && d > 0) { if (t[j] === '{') d++; else if (t[j] === '}') d--; j++; }
+      i = j;
+    }
+    return out;
+  };
+
+  const propsOf = (body) => {
+    const o = {};
+    for (const d of body.split(';')) {
+      const k = d.indexOf(':');
+      if (k > 0) o[d.slice(0, k).trim()] = d.slice(k + 1).trim();
+    }
+    return o;
+  };
+
+  const byFile = new Map();
+  for (const f of cssFiles) {
+    const t = killMedia(strip(readFileSync(f, 'utf8')));
+    const m = new Map();
+    for (const r of t.matchAll(/([^{}@]+?)\{([^{}]*)\}/g)) {
+      const sel = r[1].trim().replace(/\s+/g, ' ');
+      if (!sel || /^\d+%$/.test(sel)) continue;      /* keyframes 百分比 */
+      if (/^(from|to)$/.test(sel)) continue;              /* keyframes 起止帧不是选择器 */
+      if (sel.startsWith('@')) continue;
+      const props = propsOf(r[2]);
+      for (const s of sel.split(',')) {
+        const k = s.trim();
+        if (!k) continue;
+        m.set(k, Object.assign(m.get(k) || {}, props));
+      }
+    }
+    byFile.set(f, m);
+  }
+
+  const seen = new Map();
+  for (const [f, m] of byFile) {
+    for (const [sel, props] of m) {
+      if (!seen.has(sel)) seen.set(sel, []);
+      seen.get(sel).push([f, props]);
+    }
+  }
+
+  /*
+   * ⚠️ 不能"只要任一值含 var() 就跳过比较"。
+   *
+   * 此前正是这么写的（`!/\bvar\(/.test(a+b)`），后果是**令牌化越彻底、守卫越瞎**：
+   * 把间距收口到 --sp-* 之后，`.p-row` 的 `12px ↔ 8px` 变成
+   * `var(--sp-6) ↔ var(--sp-4)`，两边都带 var()，守卫直接判"不冲突"，
+   * 三条真实冲突从清单里消失了（表现为"已知清单里有已消失的选择器"报红）。
+   *
+   * 正确做法：--sp-* / --fs-* / --dur-* / --anim-* / --z-* 是**静态尺度**
+   * （定义在 tokens.css，不随主题变），可以求值后比较；
+   * --surface / --accent / --r-sm 这类才是**主题相关**，值随主题变，
+   * 无法静态判定，只能跳过。
+   */
+  const STATIC = /^--(sp|fs|dur|anim|z)-/;
+  const staticTok = new Map();
+  {
+    const tk = strip(readFileSync(join(HERE, 'css/tokens.css'), 'utf8'));
+    for (const m of tk.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) {
+      if (STATIC.test(m[1])) staticTok.set(m[1], m[2].trim());
+    }
+  }
+  /* 递归求值；遇到主题相关令牌就放弃（返回 null） */
+  const resolve = (v, depth = 0) => {
+    if (depth > 4 || !/\bvar\(/.test(v)) return v;
+    let out = v;
+    for (const m of [...v.matchAll(/var\(\s*(--[\w-]+)\s*(?:,\s*([^)]*))?\)/g)]) {
+      const def = staticTok.get(m[1]);
+      const lit = def !== undefined ? def : (m[2] || '').trim();
+      if (!lit || /\bvar\(/.test(lit)) return null;   /* 主题相关，无法静态比较 */
+      out = out.split(m[0]).join(lit);
+    }
+    return /\bvar\(/.test(out) ? null : out.replace(/\s+/g, ' ').trim();
+  };
+
+  const conflicts = [];
+  for (const [sel, list] of seen) {
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        const [fa, pa] = list[i], [fb, pb] = list[j];
+        if (fa === fb) continue;
+        const clash = Object.keys(pa).filter((k) => {
+          if (!(k in pb)) return false;
+          const ra = resolve(pa[k]), rb = resolve(pb[k]);
+          /* 有一边求不出值（主题相关）→ 无法判定，不报 */
+          if (ra === null || rb === null) return false;
+          return ra !== rb;
+        });
+        if (clash.length) conflicts.push({ sel, a: fa, b: fb, clash });
+      }
+    }
+  }
+
+  /* 刻意的分层覆盖：共享层给基础、插件层给 overrides。
+     这类必须写清楚是谁在覆盖谁，否则后人删掉共享层那一份，
+     插件层会静默缺掉 display/gap/padding 等一堆属性。 */
+  const KNOWN = [
+    /* 共享层给基础值、主题层/插件层给 override —— 这类分层的**加载顺序是确定的**
+       （插件 CSS 先 @import 共享层，自己再覆盖），所以不是 bug，
+       但删掉共享层那一份会让插件层静默缺掉一堆属性，故此登记备查。 */
+    '.p-input', '.p-tag', '.p-row', '.tp-row', '.upd-notes', '.fpx-busy-dot',
+    '.mm-field',   /* controls 8px/center；mindmap 覆盖成 5px/stretch */
+    '.mm-chip',    /* controls 给 22px 标签形态；mindmap 覆盖成 26px 按钮形态 */
+    /*
+     * ⚠️ 这两条是**陷阱**，不是"两边都对"：
+     * dialog.css 在文件里**完整重写**了 .nx-btn / .nx-input 的基础形态
+     * （按钮 32px + 描边、输入框 13px），而所有入口的加载顺序都是
+     * controls.css → dialog.css，同级同权重下**后者胜**。
+     * 于是 controls.css 里那份基础定义在任何文档里都不生效 ——
+     * 谁去 controls.css 改按钮高度都会发现"改了没反应"。
+     *
+     * 之所以登记而不是直接删掉 dialog.css 那份：
+     * 有入口只引 dialog.css、不引 controls.css（color-picker/index.js），
+     * 删了那份会让那些文档里的按钮/输入框变成裸元素。
+     * 真要收拾，得先把 dialog.css 那份收窄成 `.nx-dlg .nx-btn` 之类的
+     * 作用域写法 —— 那会改变观感，属于需要产品拍板的事。
+     */
+    '.nx-btn', '.nx-input',
+    /*
+     * .fpx-busy 在 neumorphism.css（外壳主文档）与 project-group/style.css
+     * 各有一份。project-group 在 Vite 模式下两份都加载（main.tsx 先引
+     * neumorphism 再引 style.css），所以这里不是"永不共现" —— 登记备查。
+     */
+    '.fpx-busy',
+  ];
+
+  const unknown = conflicts.filter((c) => !KNOWN.includes(c.sel));
+  t('跨文件重复定义且属性冲突的，都在已知清单里',
+    unknown.length === 0,
+    unknown.map((c) => `${c.sel}(${c.clash.join('/')}) ${c.a.split('/').pop()}↔${c.b.split('/').pop()}`).join('; ')
+    || `已知 ${KNOWN.length} 处；扫描 ${cssFiles.length} 个 CSS`);
+
+  /* 元断言 1：扫描器真的扫到了东西（否则上面永远是绿） */
+  t('跨文件冲突扫描范围有效', cssFiles.length >= 5 && seen.size >= 50,
+    `CSS ${cssFiles.length} 个 / 选择器 ${seen.size} 个`);
+
+  /* 元断言 2：KNOWN 里的选择器确实还存在 —— 若哪天 mm-chip 合并成一处，
+     这条会提醒把清单清掉，避免清单变成永远对不上的死账 */
+  const stale = KNOWN.filter((k) => !conflicts.some((c) => c.sel === k));
+  t('已知清单里没有已合并/消失的选择器', stale.length === 0,
+    stale.join(', ') || KNOWN.join(', '));
+
+  /* 元断言 3：探针有效 —— 造一个必然冲突的选择器，必须被认出来
+     （这条防的是"扫描器坏了但基线恰好还是 0"） */
+  {
+    const probeSel = 'zz-conflict-probe-xyz';
+    const fake = new Map();
+    fake.set('a.css', new Map([[probeSel, { height: '1px' }]]));
+    fake.set('b.css', new Map([[probeSel, { height: '2px' }]]));
+    const seen2 = new Map([[probeSel, [
+      ['a.css', { height: '1px' }], ['b.css', { height: '2px' }]]]]);
+    let hit = 0;
+    for (const [sel, list] of seen2) {
+      for (let i = 0; i < list.length; i++)
+        for (let j = i + 1; j < list.length; j++) {
+          const [fa, pa] = list[i], [fb, pb] = list[j];
+          if (fa === fb) continue;
+          if (Object.keys(pa).filter((k) => k in pb && pa[k] !== pb[k]).length) hit++;
+        }
+    }
+    t('冲突判据本身有效（探针）', hit === 1, `探针命中 ${hit} 次`);
+  }
+}
+
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

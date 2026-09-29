@@ -82,7 +82,7 @@
   color: var(--text);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
 }
 
 /* 内容区：可滚动。min-height:0 不能省 —— flex 子项默认 auto，
@@ -107,11 +107,11 @@
 .nx-dlg-msg.nx-warn { color: var(--warn); }
 
 /* ---------- 输入框（prompt） ---------- */
-.nx-dlg-field { display: flex; flex-direction: column; gap: 8px; }
+.nx-dlg-field { display: flex; flex-direction: column; gap: var(--sp-4); }
 .nx-dlg-label { font-size: var(--fs-11, 11px); color: var(--text-dim); }
 .nx-input {
   width: 100%;
-  padding: 8px 10px;
+  padding: var(--sp-4) var(--sp-5);
   font: inherit;
   font-size: var(--fs-13, 13px);
   color: var(--text);
@@ -136,11 +136,11 @@
   display: flex;
   justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--sp-5);
 }
 .nx-btn {
   height: 32px;
-  padding: 0 16px;
+  padding: 0 var(--sp-8);
   font: inherit;
   font-size: var(--fs-12, 12px);
   color: var(--text-dim);
