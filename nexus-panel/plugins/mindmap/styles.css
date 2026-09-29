@@ -9,6 +9,14 @@
 
 @import url('../../css/tokens.css');
 @import url('../../css/controls.css');
+/* 通用弹窗（js/dialog.js 依赖它）。
+   ⚠️ 必须走 CSS @import，不能在 index.js 里写 `import '...dialog.css'`：
+   本插件的入口是 index.html（无 noBuild 分支，两种模式都走它），
+   而**无构建模式下浏览器加载的是原生 ESM** —— ESM 不能 import CSS，
+   服务器返回 text/css 会被判成"不是 JS 模块"，整个 index.js 加载失败，
+   表现为"插件一片空白"，且控制台只有一条 MIME 报错，极难联想到这里。
+   详见 css/dialog.css 顶部：插件一律自己 @import。 */
+@import url('../../css/dialog.css');
 
 :root {
   --bezel:         rgba(255, 255, 255, .12);   /* 输入控件的外圈 */

@@ -2162,6 +2162,66 @@ console.log('\n=== 36. 取色弹窗：跟随主题变量与不滚动 ===');
   }
 }
 
+console.log('\n=== 36b. 无构建模式下 JS 不能 import CSS ===');
+{
+  /*
+   * 无构建模式加载的是**原生 ESM**，ESM 不支持 import 样式表：
+   * 服务器返回 text/css，浏览器判成"不是 JS 模块" → 整个入口模块加载失败。
+   * 表现是「插件一片空白、功能全无」，控制台只有一条 MIME 报错，
+   * 极难联想到是少写了一句 @import。
+   *
+   * 所以样式一律走 CSS 侧的 @import / <link>（两种模式都成立）；
+   * 只有「registry 里 entry 带 noBuild 分支、本文件只在 Vite 下才被加载」
+   * 的那些（如各插件的 main.tsx）才允许 JS import。
+   */
+  const pdir = join(HERE, 'plugins');
+  const reg = stripComments(read('plugins/registry.js'));
+
+  /* 判据是**插件整体**是否只在构建模式下出现，而不是单看 entry 写法：
+     很多插件的 entry 是 index.html（无 noBuild 三元），靠
+     `requiresBuild: true` 在无构建模式下被隐藏 —— 它们内部的
+     .tsx / main.tsx 本来就跑不起来，import CSS 自然无害。
+     只按 entry 三元判断会把 agent-flow / project-group 这类误报成违规。 */
+  const idPos = [...reg.matchAll(/\n    id:\s*'([^']+)',/g)].map((m) => [m.index, m[1]]);
+  const buildOnly = new Set();
+  idPos.forEach(([pos, bid], i) => {
+    const seg = reg.slice(pos, i + 1 < idPos.length ? idPos[i + 1][0] : reg.length);
+    const rb = /requiresBuild:\s*([^\n,]+)/.exec(seg);
+    if (!rb) return;
+    const v = rb[1].trim();
+    /* true —— 恒需要构建；!noBuild —— 有构建时才需要（无构建被隐藏） */
+    if (v === 'true' || v === '!noBuild') buildOnly.add(bid);
+  });
+
+  const files = [];
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (['node_modules', 'dist', 'build'].includes(e.name)) continue;
+      const f = join(d, e.name);
+      if (e.isDirectory()) walk(f); else if (/\.(?:js|jsx|ts|tsx)$/.test(e.name)) files.push(f);
+    }
+  };
+  walk(pdir);
+
+  const bad = [];
+  for (const f of files) {
+    const rel = './' + f.slice(HERE.length + 1);
+    const owner = rel.split('/')[2];          /* ./plugins/<owner>/... */
+    if (buildOnly.has(owner)) continue;        /* 无构建下根本不加载 */
+    const t = stripComments(readFileSync(f, 'utf8'));
+    if (/import\s+['"][^'"]+\.css['"]/.test(t)) bad.push(rel);
+  }
+  t('无构建模式下会被加载的插件，不在 JS/TS 里 import CSS',
+    bad.length === 0,
+    bad.join('; ') || `扫 ${files.length} 个源文件；仅构建插件豁免 ${buildOnly.size} 个`);
+
+  /* 元断言：buildOnly 真的抓到了东西，且 files 规模合理
+     （否则"豁免全部"会让上面恒真） */
+  t('无构建守卫扫描范围有效',
+    buildOnly.size >= 3 && files.length >= 50 && buildOnly.has('mindmap') === false,
+    `仅构建插件 ${buildOnly.size} 个（含 mindmap? ${buildOnly.has('mindmap')}）/ 源文件 ${files.length} 个`);
+}
+
 console.log('\n=== 37. 类型检查暴露的两类真 bug ===');
 {
   /*

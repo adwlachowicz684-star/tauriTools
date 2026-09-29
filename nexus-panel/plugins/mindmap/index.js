@@ -14,7 +14,10 @@
  */
 
 import { bootIframePlugin, h } from '../../js/plugin-sdk.js';
-import '../../css/dialog.css';
+/* dialog.css **不能**在这里 import：本文件的入口是 index.html
+   （registry 里没有 noBuild 分支，两种模式都加载它），
+   无构建模式下是原生 ESM，import CSS 会让整个模块加载失败。
+   已改由 styles.css 顶部 @import（index.html 用 <link> 加载它）。 */
 import { confirm as _askConfirm, alert as _askAlert, prompt as _askText } from '../../js/dialog.js';
 import { EditorBridge } from './editor-bridge.js';
 import { DEFAULT_THEME, DEFAULT_LAYOUT, isBuiltinTheme, deriveCanvasTheme,
