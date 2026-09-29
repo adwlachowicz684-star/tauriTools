@@ -19,6 +19,7 @@ import {
   installedVersionsOf,
   staleVersionsOf,
   pinnedVersionOf,
+  depUsageSnapshot,
 } from '../../js/runtime-deps.js';
 
 /**
@@ -128,6 +129,15 @@ export default function DepsCard() {
    */
   const [vers, setVers] = useState<Record<string, string[]>>({});
   const [versErr, setVersErr] = useState<Record<string, string>>({});
+  /*
+   * 取用台账（按包名存最近一条）。
+   *
+   * 「已安装并验证可加载」说的是**安装那一步**；而插件实际渲染时可能因为
+   * 别的原因回退到打包版（那份坏了、伴生没注上）。这两件事能同时成立、
+   * 且都不报错 —— 用户看到的就是"装了却没效果"。所以这里把运行时的
+   * 真实结论也摆出来。
+   */
+  const [usage, setUsage] = useState<Record<string, any>>({});
 
   const loadVers = useCallback(
     async (name: string) => {
@@ -149,6 +159,18 @@ export default function DepsCard() {
     const r = await listRuntimeDeps(ctx);
     setRtMissing(!!r.missing);
     setInstalled(r.list || []);
+    /*
+     * 台账是模块级内存里的东西，不是后端数据 —— 它与 list 一起刷新，
+     * 不单独发请求。同页插件（md）与设置页共享同一个模块实例才读得到。
+     */
+    try {
+      const snap = (depUsageSnapshot() || []) as any[];
+      const byName: Record<string, any> = {};
+      for (const u of snap) if (u && u.name && !byName[u.name]) byName[u.name] = u;
+      setUsage(byName);
+    } catch {
+      /* 台账读不到绝不能让整个页签挂掉 */
+    }
   }, [ctx]);
 
   useEffect(() => {
@@ -445,6 +467,38 @@ export default function DepsCard() {
 
             {can && !hasExact && rtUsers.length ? (
               <div className="dep-note">装了会被 {rtUsers.join('、')} 取用（优先用装的那份，加载失败自动回退打包版）</div>
+            ) : null}
+
+            {/*
+             * 生效状态：装进去的那份**到底用上没有**。
+             *
+             * 三态必须分开写，不能合并：
+             *   ① 在用装的那份（绿）
+             *   ② 装了、但取用时回退到打包版（黄）—— 这才是"静默没效果"
+             *   ③ 本次会话还没被取用过（灰）—— 只是还没打开用它的插件
+             * ②③ 并成一句的话，用户会去卸载重装、查 CDN，而真相只是"没渲染过"。
+             */}
+            {hits.length ? (
+              <div className="dep-inst-row">
+                {usage[d.name] && usage[d.name].source === 'runtime' ? (
+                  <span className="dep-tag ok" title="插件这次真的用了装进来的这份">
+                    实际在用这份 {usage[d.name].version || ''}
+                  </span>
+                ) : usage[d.name] && usage[d.name].source === 'bundle' ? (
+                  <span className="dep-tag warn" title={usage[d.name].error || ''}>
+                    装了，但实际在用打包版
+                  </span>
+                ) : (
+                  <span className="dep-meta">本次会话还没被取用（打开用它的插件渲染一次后再刷新）</span>
+                )}
+                <button className="p-btn sm" onClick={() => refresh()} title="重新读一次取用记录">
+                  刷新状态
+                </button>
+              </div>
+            ) : null}
+
+            {usage[d.name] && usage[d.name].source === 'bundle' && usage[d.name].error ? (
+              <div className="dep-note dep-blocked">回退原因：{usage[d.name].error}</div>
             ) : null}
 
             {/*

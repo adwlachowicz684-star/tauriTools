@@ -692,19 +692,87 @@ export async function resolveRuntimeDepPath(ctx, name, version) {
  */
 const depDecisions = new Map();
 
+/**
+ * 取用台账：装进去的那份**到底用上没有**。
+ *
+ * 【为什么要单独记一份】
+ * `requireDep` 的三个返回值里，`source` 只有调用它的那个插件看得见。
+ * 而最常见的失效恰恰是：装的那份 import 失败 → 静默回退打包版 →
+ * 功能照常，**但用户以为自己换的版本生效了**。这在设置页上看不出来：
+ * 安装那一步确实成功（装完会真 import 一次验证），坏的是后来的取用。
+ * 于是"已安装并验证可加载"和"实际在用打包版"可以同时成立，且互不矛盾。
+ *
+ * 所以把每次取用的结论落到这里的模块级台账，由设置页读出来展示。
+ * 同一页面内的插件（md / settings 都是同页模块）共享这一个模块实例。
+ *
+ * 【为什么"没记录"要单独成一档，不能并进"没用上"】
+ * 台账是**本次会话的运行时事实**：插件还没渲染过任何东西时本来就空。
+ * 把它显示成"装了没效果"，会让人去卸载、重装、查 CDN，
+ * 而真实原因只是"还没打开过用它那个插件"。
+ */
+const depUsage = new Map();
+
+function usageKey(name, version) {
+  return `${name}@${String(version || '').trim() || '*'}`;
+}
+
+function recordUsage(name, requested, r) {
+  try {
+    depUsage.set(usageKey(name, r && r.version ? r.version : requested), {
+      name,
+      requested: String(requested || '').trim(),
+      version: String((r && r.version) || '').trim(),
+      source: (r && r.source) || 'none',
+      error: (r && r.error) || '',
+      at: Date.now(),
+    });
+  } catch {
+    /* 台账只是展示用，写不进去绝不能影响取用本身 */
+  }
+}
+
+/** 某个包的取用记录（多版本会返回多条），没有则返回空数组。 */
+export function depUsageOf(name) {
+  const out = [];
+  for (const v of depUsage.values()) if (v.name === name) out.push(v);
+  return out.sort((a, b) => (b.at || 0) - (a.at || 0));
+}
+
+/** 全部取用记录（设置页用）。 */
+export function depUsageSnapshot() {
+  return [...depUsage.values()].sort((a, b) => (b.at || 0) - (a.at || 0));
+}
+
+/** 仅供测试：清掉台账。 */
+export function __clearDepUsage() {
+  depUsage.clear();
+}
+
 export async function requireDep(ctx, name, opts = {}) {
   const version = String(opts.version || '').trim();
   const key = `${name}@${version || '*'}`;
   const hit = depDecisions.get(key);
   if (hit) return hit;
 
-  const p = decideDep(ctx, name, version, opts).catch((e) => ({
-    mod: null,
-    source: 'none',
-    error: String((e && e.message) || e || '取用失败'),
-  }));
+  const p = decideAndRecord(ctx, name, version, opts).catch((e) => {
+    const r = { mod: null, source: 'none', error: String((e && e.message) || e || '取用失败') };
+    recordUsage(name, version, r);
+    return r;
+  });
   depDecisions.set(key, p);
   return p;
+}
+
+/*
+ * 记台账这件事刻意放在 decideDep 外面。
+ *
+ * 放在里面要在四个返回点各写一次，漏一处就是"那种情况下台账不更新" ——
+ * 而漏掉的那处正好是最需要看见的回退路径。
+ */
+async function decideAndRecord(ctx, name, version, opts) {
+  const r = await decideDep(ctx, name, version, opts);
+  recordUsage(name, version, r);
+  return r;
 }
 
 async function decideDep(ctx, name, version, opts) {
@@ -756,7 +824,12 @@ async function decideDep(ctx, name, version, opts) {
     const url = toAssetUrl(ctx, installed);
     try {
       const mod = await importModule(url);
-      if (mod) return { mod, source: 'runtime', error: '' };
+      /*
+       * 带上实际用的版本：台账要显示"在用运行时版 12.0.0"。
+       * 不能拿 requested 顶替 —— 请求时常不指定版本（''），
+       * 显示成"在用打包版/在用 *"就等于没说。
+       */
+      if (mod) return { mod, source: 'runtime', error: '', version: String(hit.version || '') };
     } catch (e) {
       /* 落到下面回退 */
       if (!fallback) {

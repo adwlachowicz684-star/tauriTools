@@ -1163,6 +1163,95 @@ const extSeg = (extSrc.match(/script-src\s+([^;`]+)/) || [, ''])[1];
 t('外部插件的 CSP 不放行 asset（有意的安全边界，不要照 BASE_CSP 补）',
   extSeg.length > 0 && CSP_ASSET.every((a) => !extSeg.includes(a)), extSeg);
 
+
+/* ---------- 7c. 取用台账：装了到底用上没有，必须看得见 ---------- */
+/*
+ * 这一组守的是"装成功却没效果"的**最后一种形态**：
+ *
+ * 安装那一步是真成功的（装完会真 import 一次验证），但插件真正渲染时
+ * 那份坏了 → 静默回退打包版。于是"已安装并验证可加载"与"实际在用打包版"
+ * 可以同时成立、都不报错 —— 用户在设置页上完全看不出来。
+ * requireDep 的 source 只有调用它的那个插件看得见，所以必须落到模块级
+ * 台账，由设置页读出来。
+ */
+
+/* ① 用上装的那份 */
+{
+  rt.__clearDepDecisions();
+  rt.__clearDepUsage();
+  const ctx = makeCtx([{ name: 'mermaid', version: '12.0.0', path: 'C:/deps/mermaid@12.0.0.mjs' }]);
+  await rt.requireDep(ctx, 'mermaid', { fallback: fb, importModule: async () => RUNTIME });
+  const u = rt.depUsageOf('mermaid');
+  t('用上装的那份 → 台账记 runtime', u.length === 1 && u[0].source === 'runtime', JSON.stringify(u));
+  t('台账带**实际版本**（空或 * 等于没说）', !!u[0] && u[0].version === '12.0.0', JSON.stringify(u[0] || null));
+}
+
+/* ② 装的那份坏了 → 回退，台账必须记成 bundle + 原因 */
+{
+  rt.__clearDepDecisions();
+  rt.__clearDepUsage();
+  const ctx = makeCtx([{ name: 'mermaid', version: '12.0.0', path: 'C:/deps/bad.mjs' }]);
+  await rt.requireDep(ctx, 'mermaid', {
+    fallback: fb,
+    importModule: async () => { throw new Error('Unexpected token'); },
+  });
+  const u = rt.depUsageOf('mermaid');
+  t('回退到打包版 → 台账记 bundle（这才是"装了没效果"）',
+    u.length === 1 && u[0].source === 'bundle', JSON.stringify(u));
+  t('回退时台账带原因（否则用户无从排查）',
+    /Unexpected token/.test((u[0] || {}).error || ''), (u[0] || {}).error);
+}
+
+/* ③ 没取用过 → 空。这一档必须**区别于**上面的回退 */
+{
+  rt.__clearDepDecisions();
+  rt.__clearDepUsage();
+  t('没取用过 → 台账为空（不能当成"装了没效果"）', rt.depUsageOf('mermaid').length === 0);
+}
+
+/* ④ 快照与清空 */
+{
+  rt.__clearDepDecisions();
+  rt.__clearDepUsage();
+  const ctx = makeCtx([{ name: 'mermaid', version: '12.0.0', path: 'C:/deps/m12.mjs' }]);
+  await rt.requireDep(ctx, 'mermaid', { fallback: fb, importModule: async () => RUNTIME });
+  const snap = rt.depUsageSnapshot();
+  t('depUsageSnapshot 能取到全部记录（设置页按包名建索引）',
+    snap.some((x) => x && x.name === 'mermaid' && x.source === 'runtime'), JSON.stringify(snap));
+  rt.__clearDepUsage();
+  t('__clearDepUsage 清得掉', rt.depUsageOf('mermaid').length === 0);
+}
+
+/* ④b 按包名过滤：多个包都有记录时不能串台 */
+{
+  rt.__clearDepDecisions();
+  rt.__clearDepUsage();
+  const c1 = makeCtx([{ name: 'mermaid', version: '12.0.0', path: 'C:/deps/m12.mjs' }]);
+  await rt.requireDep(c1, 'mermaid', { fallback: fb, importModule: async () => RUNTIME });
+  const c2 = makeCtx([{ name: 'rehype-slug', version: '6.0.0', path: 'C:/deps/slug.mjs' }]);
+  await rt.requireDep(c2, 'rehype-slug', { fallback: fb, importModule: async () => RUNTIME });
+  const u = rt.depUsageOf('mermaid');
+  t('depUsageOf 只返回该包的记录（多包并存不串台）',
+    u.length === 1 && u.every((x) => x && x.name === 'mermaid'), JSON.stringify(u));
+  t('另一个包也有自己的记录', rt.depUsageOf('rehype-slug').length === 1);
+  rt.__clearDepUsage();
+}
+
+/* ⑤ 界面：三态必须都渲染出来，且判据用**剥注释后**的代码 */
+{
+  const cardCodeRt = cardText.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  t('DepsCard 读取用台账', /depUsageSnapshot\(\)/.test(cardCodeRt));
+  t('refresh 里一并刷新台账（台账是内存事实，不与 list 一起刷就不会变）',
+    /depUsageSnapshot\(\)/.test(cardCodeRt) && /setUsage\(/.test(cardCodeRt));
+  t('界面有"实际在用这份"这一态', /实际在用这份/.test(cardCodeRt));
+  t('界面有"装了但实际在用打包版"这一态', /装了，但实际在用打包版/.test(cardCodeRt));
+  t('界面有"本次会话还没被取用"这一态（不能并进"没效果"）',
+    /本次会话还没被取用/.test(cardCodeRt));
+  t('回退原因要显示出来', /回退原因/.test(cardCodeRt));
+  t('有刷新入口（台账是运行时事实，不手动刷不会变）',
+    /刷新状态/.test(cardCodeRt) && /onClick=\{\(\) => refresh\(\)\}/.test(cardCodeRt));
+}
+
 console.log(`\n运行时依赖：${pass} 通过 / ${fails.length} 失败`);
 for (const f of fails) console.log('  ✗ ' + f);
 process.exit(fails.length ? 1 : 0);
