@@ -113,7 +113,32 @@ export function constCardRefs(g: Graph): Map<string, string> {
   return out;
 }
 
-function subst(tpl: string, style: 'sh' | 'py', cardRef?: Map<string, string>): string {
+/**
+ * 引用里"脚本这一侧没有对应物"的那几类。
+ *
+ * ================= 为什么不能静默给个变量名 =================
+ *
+ * {{params.X}} / {{env.X}}（画布参数）的值**不在图数据里** —— 它们存在
+ * 画布配置上，而 export 只拿到 nodes + edges（Graph 类型就没有 params 字段）。
+ * {{loop.*}} 同理：循环结构本身就没法翻译成脚本（见下面 toShell 的说明）。
+ *
+ * 以前这两类与 input 一起被拼成 `INPUT_XXX`：
+ *   · shell → `$INPUT_XXX` 从未定义，`set -u` 下直接退出
+ *   · python → `input_xxx` 未定义，NameError
+ * 而 {{input}} 更糟：它拼出的是 **`input`** —— python 的内建函数，
+ * `f"{input}"` 渲染成 `<built-in function input>`，**不报错、值永远错**。
+ *
+ * 所以与运行时（template.ts）保持同一口径：解析不了就**保留 {{原样}}**，
+ * 让人一眼看出这里没接上；同时回调通知调用方，记进 skipped 让界面也提示。
+ */
+const UNRESOLVABLE_REF = new Set(['params', 'env', 'loop']);
+
+function subst(
+  tpl: string,
+  style: 'sh' | 'py',
+  cardRef?: Map<string, string>,
+  onUnresolved?: (key: string) => void,
+): string {
   const raw = String(tpl ?? '');
   if (!raw) return style === 'sh' ? '' : '""';
 
@@ -150,11 +175,24 @@ function subst(tpl: string, style: 'sh' | 'py', cardRef?: Map<string, string>): 
       }
     }
 
-    if (id === 'input' || id === 'env' || id === 'loop') {
-      const rest = parts.slice(1).join('_');
-      const name = `INPUT${rest ? `_${rest.toUpperCase()}` : ''}`.replace(/[^A-Z0-9_]/g, '_');
-      slots.push(style === 'sh' ? `$${name}` : name.toLowerCase());
-    } else {
+    /*
+     * 全局输入：脚本里真有这个变量（shell 的 $INPUT_TEXT / python 的 input_text）。
+     *
+     * {{input}} 与 {{input.output}} 是同一个东西 ——
+     * template.ts 里 nodeId==='input' 时不看 field，一律返回 ctx.input。
+     * 所以这里也**不拼 rest**，两种写法都指向同一个变量。
+     * 以前 {{input.output}} 被拼成 INPUT_OUTPUT（从未定义），
+     * {{input}} 被拼成 python 的 input（内建函数）—— 见 UNRESOLVABLE_REF 的说明。
+     */
+    if (id === 'input') {
+      slots.push(style === 'sh' ? '$INPUT_TEXT' : 'input_text');
+      return `\u0000${slots.length - 1}\u0000`;
+    }
+    if (UNRESOLVABLE_REF.has(id)) {
+      onUnresolved?.(String(path));
+      return `{{${path}}}`;
+    }
+    else {
       /*
        * shell 里要的是 `$OUT_E1` 这个**字符串内容**（后面会被拼进
        * 别的引号里），不是 JS 变量插值 —— 写成模板串 `${...}`
@@ -173,8 +211,23 @@ function subst(tpl: string, style: 'sh' | 'py', cardRef?: Map<string, string>): 
     return out;
   }
 
-  // python：字面量部分要转义，引用部分拼进 f-string
+  /*
+   * python：字面量部分要转义，引用部分拼进 f-string。
+   *
+   * 花括号也要翻倍 —— f-string 里 `{{` 才渲染出一个 `{`。
+   * 不翻倍的话，上面保留下来的 `{{params.X}}` 会被 f-string 吃掉一层，
+   * 变成 `{params.X}`：看着还像占位符，但**与运行时留下的痕迹不一样**，
+   * 用户照着去搜 `{{params.X}}` 搜不到。
+   *
+   * 顺带把用户自己写的 `{` 也一并修对了 —— 以前它没被转义，
+   * 生成的是 `f"a{b"` 这种语法错 / 静默吞字的脚本。
+   */
   let out = body.split('"').join('\\"');
+  /*
+   * 只在真的要生成 f-string 时才翻倍 ——
+   * 没有引用时输出的是普通 `"..."`，那里的 `{` 就是字面量，翻了反而错。
+   */
+  if (hasRef) out = out.split('{').join('{{').split('}').join('}}');
   for (let i = 0; i < slots.length; i += 1) {
     out = out.split(`\u0000${i}\u0000`).join(`{${slots[i]}}`);
   }
@@ -248,7 +301,9 @@ function paramLinkNoteOf(
 function shellLine(n: GraphNode, skipped: Skipped[], cardRef?: Map<string, string>): string | null {
   const d = (n.data ?? {}) as Record<string, unknown>;
   const kind = str(d.kind ?? d.type);
-  const v = (k: string) => subst(str(d[k]), 'sh', cardRef);
+  const v = (k: string) => subst(str(d[k]), 'sh', cardRef, (key) => {
+    skipped.push({ id: n.id, kind, reason: `引用了 ${'{{'}${key}${'}}'} —— 画布参数/循环变量不在图数据里，脚本里请自行补上` });
+  });
   const me = shVar(n.id);
 
   switch (kind) {
@@ -354,6 +409,16 @@ function toShell(g: Graph): ExportResult {
     '#       未翻译的节点在下方以 "# TODO" 标出。',
     'set -euo pipefail',
     '',
+    /*
+     * 全局输入 {{input}} 在脚本里的对应物。
+     *
+     * python 那侧一直是 `input_text = ""`（在 main() 里），
+     * 而 shell 这边**根本没有** —— {{input}} 被拼成 $INPUT，
+     * set -u 下直接 unbound variable 退出。
+     * 名字跟 python 对齐（INPUT_TEXT），两边才是同一件事。
+     */
+    'INPUT_TEXT=""   # 全局输入 {{input}}：整段流程的入参',
+    '',
   ];
   const cardRef = constCardRefs(g);
   let count = 0;
@@ -380,7 +445,9 @@ function pyLine(
 ): string | null {
   const d = (n.data ?? {}) as Record<string, unknown>;
   const kind = str(d.kind ?? d.type);
-  const v = (k: string) => subst(str(d[k]), 'py', cardRef);
+  const v = (k: string) => subst(str(d[k]), 'py', cardRef, (key) => {
+    skipped.push({ id: n.id, kind, reason: `引用了 ${'{{'}${key}${'}}'} —— 画布参数/循环变量不在图数据里，脚本里请自行补上` });
+  });
   const me = pyVar(n.id);
 
   switch (kind) {
