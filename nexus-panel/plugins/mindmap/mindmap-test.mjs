@@ -21,7 +21,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { stripCommentsJs as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -9651,7 +9650,8 @@ group('「清除文字样式」必须清掉文字节能设的**每一个**键');
    *      直接在原文上跑正则会把注释里的也算进去 —— 键真的被删了，
    *      断言照样绿。**又一处假阴性**。
    */
-    const i = html.indexOf("scope === 'text'");
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const i = html.indexOf("scope === 'text'");
   ok(i > 0, '有 text scope 分支');
   const seg = strip(html.slice(i, i + 1500));
   const bi = seg.indexOf('[');
@@ -10722,7 +10722,8 @@ group('写盘失败不能被随后的「已重命名 / 已新建」盖掉');
   }
 
   /** 去掉注释，否则注释里引用的 saveStore/status 会被当成真实调用 */
-  
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
   const offenders = [];
   for (const f of fnBodies(idx)) {
     const code = strip(f.body);
@@ -10864,7 +10865,8 @@ group('删除脑图后附件本体变成孤儿（BUG 47）');
    * 都失败，正是 BUG 23/45 那些「假成功」集中爆发的触发条件。
    */
   const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-    const code = strip(idx);
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const code = strip(idx);
 
   // 不写死签名（有 quiet 参数），只锚函数名
   ok(/async function gcOrphanAssets\(/.test(code), '必须有孤儿附件回收函数');
@@ -10937,7 +10939,8 @@ group('移除附件无条件删资产，共享它的其它节点跟着失效（B
    */
   const pnl = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-    const pc = strip(pnl);
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const pc = strip(pnl);
 
   // ① 移除附件不得再直接 dropAsset
   ok(!/io\.dropAsset\(/.test(pc),
@@ -11495,7 +11498,8 @@ group('BUG 58 · 图标库与图片附件共用 data.image，后写的把先写�
   const eb = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
   const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   // 注释里大量引用这些名字，不剥的话命中的是注释本身 —— 代码真改坏了照样绿
-    const E = strip(eb);
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const E = strip(eb);
   const C = strip(pn);
 
   /*
@@ -11588,7 +11592,8 @@ group('BUG 59 · 超链接与备注输入框必须回显（否则已有值看不
 {
   const eb = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
   const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
-    const E = strip(eb);
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const E = strip(eb);
 
   /*
    * 实测（真实 Chrome）：节点已存 hyperlink / note，切到「标签」页两个框
@@ -12351,6 +12356,100 @@ group('BUG 68 · 图标库每次重建预览都要先回收上一批 Blob URL');
     'renderGrid：回收在清空 DOM 之前（剥注释后判定）');
   ok((seg.match(/releaseMediaUrls\(\);/g) || []).length >= 2,
     '回收至少调用两处（重建时 + 关闭时）');
+}
+
+
+/* ============================================================
+   BUG 69 · 删除主题没有二次确认：✕ 紧挨 ✎，删了就永久没了
+   ============================================================ */
+
+group('BUG 69 · 删除主题必须二次确认（不可逆，且会连带改掉别的画布）');
+{
+  const { buildSide } = await import('./panels.js');
+
+  /*
+   * 行为级验证：真实建出主题页、真实点那颗 ✕，看**有没有弹确认框**。
+   * 只看源码正则不够 —— 那会漏掉「问了但问在删之后」这种写法。
+   */
+  const calls = [];
+  const env = {
+    api: {
+      status: (m) => calls.push(['status', m]), commit() {},
+      selectedRef: () => null, selectedRefs: () => [], selectedImages: () => [],
+      applyLayout: () => {}, applyTheme: () => {},
+      saveThemes: async () => true,
+      markPresetRemoved: async () => { calls.push(['markPresetRemoved']); return true; },
+      reassignTheme: async () => 0,
+      nodeStyle: () => ({}), setNodeStyle: () => {},
+    },
+    bridge: { getSelectedNodeId: () => 'n1' },
+    customThemes: [{ id: 'mm-preset-1', name: '我的主题', palette: {} }],
+    sheet: { theme: 'fresh-blue', layout: 'default' },
+  };
+  const el = buildSide(env, {});
+  el.open('theme');
+
+  const sec = [...el.el.querySelectorAll('.mm-field')]
+    .find((f) => f.querySelector('h3')?.textContent === '配色主题');
+  ok(!!sec, '能定位「配色主题」节');
+
+  const del = [...(sec?.querySelectorAll('button') || [])]
+    .find((b) => b.getAttribute('title') === '删除');
+  ok(!!del, '能定位自定义主题行的 ✕（删除）');
+  ok(!![...(sec?.querySelectorAll('button') || [])]
+    .find((b) => b.getAttribute('title') === '编辑'), '✎（编辑）与 ✕ 同排 —— 所以容易点偏');
+
+  // 清场：确保点之前页面上没有任何弹层
+  for (const m of [...document.querySelectorAll('.nx-mask')]) m.remove();
+  eq(document.querySelectorAll('.nx-mask').length, 0, '点击前没有弹层');
+
+  del.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  // 让 async 处理器跑过第一个 await
+  for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
+
+  const masks = document.querySelectorAll('.nx-mask').length;
+  ok(masks >= 1, '点 ✕ 会先弹确认框（不弹就是直接删）');
+  eq(env.customThemes.length, 1, '确认框还开着时主题**没有**被删（问在删之前）');
+  ok(!calls.some((c) => c[0] === 'markPresetRemoved'),
+    '确认框还开着时没有去写 removedPresets（预置主题一旦写就永久消失）');
+
+  // 收尾：把弹出的确认框关掉，别污染后面的用例
+  const cancel = [...document.querySelectorAll('.nx-mask .nx-btn')]
+    .find((b) => /取消/.test(b.textContent || ''));
+  ok(!!cancel, '确认框上有「取消」');
+  cancel?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
+  /*
+   * 取消必须**真的不删**。
+   * 这条是行为级的：只看源码正则抓不到「await 了确认框却不看返回值」——
+   * 那种写法弹框照弹，点取消也照样删。
+   */
+  eq(env.customThemes.length, 1, '点了取消 → 主题仍在（不是点了取消也删）');
+  ok(!calls.some((c) => c[0] === 'markPresetRemoved'), '点了取消 → 没有写 removedPresets');
+  ok(!calls.some((c) => c[0] === 'status' && /已删除/.test(String(c[1]))),
+    '点了取消 → 不提示「已删除」');
+  for (const m of [...document.querySelectorAll('.nx-mask')]) m.remove();
+
+  // ---- 源码侧：确认框必须与其它破坏性操作一致地标 danger ----
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const iDel = pn.indexOf("onclick: safe('删除主题'");
+  ok(iDel > 0, '能定位「删除主题」处理器');
+  const body = pn.slice(iDel, pn.indexOf("title: '删除'", iDel));
+  /*
+   * **必须先剥注释再断言。**
+   * 这段的说明里为了讲清「其它删除操作长什么样」，写了
+   * `askConfirm({ danger: true })` 这个字面量 —— 直接在原文里匹配
+   * 会命中**注释**而不是代码，于是把 danger 改成 false 也照样绿
+   * （变异验证里就是这么漏掉的）。
+   */
+  const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok(code.length > 0, '能剥出「删除主题」处理器的代码体');
+  ok(/askConfirm\(/.test(code), '删除主题：走 askConfirm 二次确认');
+  ok(/danger:\s*true/.test(code), '删除主题：确认框标 danger（与其它删除操作一致）');
+  const iAsk = body.indexOf('askConfirm(');
+  const iMut = body.indexOf('app.customThemes =');
+  ok(iAsk > 0 && iMut > iAsk, '删除主题：确认在改动 customThemes 之前');
+  ok(/if\s*\(!\s*await\s+askConfirm\(/.test(body), '删除主题：取消就 return，不往下删');
 }
 
 /* ============================================================
