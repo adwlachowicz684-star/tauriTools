@@ -377,9 +377,15 @@ console.log('\n=== 5. 有意保留的差异还在（不能为了统一改观感�
     /width:\s*100%/.test(ruleOf(shell, '.p-input')));
   t('外壳 .p-input 仍用更深的内凹',
     /--sh-in-lg/.test(ruleOf(shell, '.p-input')));
+  /*
+   * ⚠️ 钉语义、不钉字面量。
+   * 原来是 `/gap:\s*12px/`，把间距收口到 --sp-* 之后这条就红了 ——
+   * 值仍是 12px（--sp-6），只是写法变了。钉写法会在每次令牌化时误报，
+   * 而真正坏了（间距被改成别的值）又抓不到。
+   */
   t('外壳 .p-row 仍默认换行、间距 12px',
     /flex-wrap:\s*wrap/.test(ruleOf(shell, '.p-row'))
-    && /gap:\s*12px/.test(ruleOf(shell, '.p-row')));
+    && /gap:\s*(12px|var\(--sp-6\))/.test(ruleOf(shell, '.p-row')));
   t('外壳 .p-muted 仍用更弱的 --text-mute',
     /--text-mute/.test(ruleOf(shell, '.p-muted')));
   t('外壳 .p-tag 仍是胶囊圆角（与 .mm-chip 方角有意区分）',

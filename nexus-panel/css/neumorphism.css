@@ -342,8 +342,8 @@ body {
 #titlebar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 12px 0 16px;
+  gap: var(--sp-5);
+  padding: 0 var(--sp-6) 0 var(--sp-8);
   background: var(--surface);
   box-shadow: 0 4px 10px var(--sh-dark);
   z-index: var(--z-sticky);
@@ -392,7 +392,7 @@ body {
 
 
 
-.tb-btns { display: flex; gap: 8px; }
+.tb-btns { display: flex; gap: var(--sp-4); }
 .tb-btn {
   /* 不用 transition: all —— 它连 width / padding / font-size 一起动画，
      将来谁加个尺寸属性就会变成"缓慢变形"。显式列出只让颜色与阴影过渡。 */
@@ -458,8 +458,8 @@ body {
   box-shadow: 6px 0 14px var(--sh-dark);
   display: flex;
   flex-direction: column;
-  padding: 14px 12px;
-  gap: 12px;
+  padding: var(--sp-7) var(--sp-6);
+  gap: var(--sp-6);
   z-index: var(--z-raised);
   overflow: hidden;
 }
@@ -474,14 +474,14 @@ body {
   cursor: pointer;
   box-shadow: var(--sh-out-md);
   transition: color, background-color, box-shadow, padding var(--t);
-  display: flex; align-items: center; justify-content: center; gap: 8px;
+  display: flex; align-items: center; justify-content: center; gap: var(--sp-4);
   font-size: var(--fs-13, 13px);
   flex: none;
 }
 .side-toggle:active { box-shadow: var(--sh-in-md); }
 .side-toggle span { white-space: nowrap; text-overflow: ellipsis; opacity: 0; width: 0; transition: opacity var(--t); font-size: var(--fs-12, 12px); }
 #body.open .side-toggle span { opacity: 1; width: auto; }
-#body.open .side-toggle { justify-content: flex-start; padding: 0 12px; }
+#body.open .side-toggle { justify-content: flex-start; padding: 0 var(--sp-6); }
 
 #plugin-list {
   flex: 1;
@@ -490,8 +490,8 @@ body {
   overflow-x: hidden;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 4px 2px;
+  gap: var(--sp-5);
+  padding: var(--sp-2) var(--sp-1);
 }
 
 .nav-item {
@@ -502,8 +502,8 @@ body {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 14px;
+  gap: var(--sp-6);
+  padding: 0 var(--sp-7);
   border: 0;
   border-radius: var(--r);
   background: var(--surface);
@@ -552,7 +552,7 @@ body {
   position: absolute;
   right: 10px; top: 10px;
   min-width: 16px; height: 16px;
-  padding: 0 4px;
+  padding: 0 var(--sp-2);
   border-radius: var(--r-sm);
   background: var(--danger);
   color: var(--badge-fg);
@@ -562,7 +562,7 @@ body {
   font-weight: var(--fw-strong, 600);
 }
 
-#sidebar-foot { display: flex; flex-direction: column; gap: 10px; flex: none; }
+#sidebar-foot { display: flex; flex-direction: column; gap: var(--sp-5); flex: none; }
 
 /* ---------- 内容区 ---------- */
 #main {
@@ -574,7 +574,7 @@ body {
   grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
-  padding: 14px 16px 16px 4px;
+  padding: var(--sp-7) var(--sp-8) var(--sp-8) var(--sp-2);
 }
 #main-inner {
   display: grid;
@@ -589,8 +589,8 @@ body {
 #plugin-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 18px;
+  gap: var(--sp-6);
+  padding: 0 var(--sp-9);
   border-bottom: 1px solid var(--hairline);
 }
 #plugin-bar h1 {
@@ -610,11 +610,11 @@ body {
   flex: 0 1 auto;
   color: var(--text-mute); }
 .bar-actions { margin-left: auto; display: flex; flex: none;
-  gap: 8px; }
+  gap: var(--sp-4); }
 .bar-btn {
   /* 不用 transition: all —— 它连 width / padding / font-size 一起动画，
      将来谁加个尺寸属性就会变成"缓慢变形"。显式列出只让颜色与阴影过渡。 */
-  height: 30px; padding: 0 12px;
+  height: 30px; padding: 0 var(--sp-6);
   border: 0; border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--text-dim);
@@ -630,7 +630,7 @@ body {
   position: relative;
   min-height: 0;
   overflow: hidden;
-  padding: 18px;
+  padding: var(--sp-9);
 }
 #stage-scroll {
   position: absolute;
@@ -663,7 +663,7 @@ body {
   word-break: break-all;
   max-height: 220px;
   overflow: auto;
-  padding: 12px;
+  padding: var(--sp-6);
   border-radius: var(--r-sm);
   background: var(--surface-sunk);
   box-shadow: var(--sh-in-md);
@@ -676,7 +676,7 @@ body {
   -webkit-user-select: text;
   cursor: text;
 }
-.err-box .row { margin-top: 16px; display: flex; gap: 10px; }
+.err-box .row { margin-top: 16px; display: flex; gap: var(--sp-5); }
 
 /* ---------- 更新说明（UpdateCard 里的 upd-notes）----------
    与 .err-box 同理：根 body 的 user-select:none 会继承进来，
@@ -688,7 +688,7 @@ body {
   word-break: break-word;
   max-height: 220px;
   overflow: auto;
-  padding: 10px 12px;
+  padding: var(--sp-5) var(--sp-6);
   border-radius: var(--r-sm);
   background: var(--surface-sunk);
   box-shadow: var(--sh-in-md);
@@ -706,7 +706,7 @@ body {
 .err-diag { margin-top: 16px; border-top: 1px solid var(--divider); padding-top: 12px; }
 .err-diag > summary {
   cursor: pointer; font-size: var(--fs-12, 12px); color: var(--text-dim);
-  list-style: none; display: flex; align-items: center; gap: 6px;
+  list-style: none; display: flex; align-items: center; gap: var(--sp-3);
   user-select: none;
 }
 .err-diag > summary::-webkit-details-marker { display: none; }
@@ -715,7 +715,7 @@ body {
 }
 .err-diag[open] > summary::before { transform: rotate(90deg); }
 .err-diag > summary:hover { color: var(--text); }
-.err-diag-actions { margin: 10px 0; display: flex; gap: 8px; }
+.err-diag-actions { margin: var(--sp-5) 0; display: flex; gap: var(--sp-4); }
 /*
  * 日志正文：等宽 + 限制高度，长堆栈不会把整个错误框撑到屏幕外。
  *
@@ -733,7 +733,7 @@ body {
   word-break: break-word;
   max-height: 260px;
   overflow: auto;
-  padding: 12px;
+  padding: var(--sp-6);
   border-radius: var(--r-sm);
   background: var(--surface-sunk);
   box-shadow: var(--sh-in-sm);
@@ -742,7 +742,7 @@ body {
 /* ---------- 加载态 ---------- */
 .loader {
   height: 100%;
-  display: flex; align-items: center; justify-content: center; gap: 10px;
+  display: flex; align-items: center; justify-content: center; gap: var(--sp-5);
   color: var(--text-mute); font-size: var(--fs-12, 12px);
 }
 
@@ -764,8 +764,8 @@ body {
      · .loading-inner（外壳用它包圈 + 两行字：插件名 + 状态文案）
      · .loading-done 这个类名（JS 里用的是它，不是 controls 的 .done） */
 .plugin-loading .loading-inner {
-  display: flex; align-items: center; gap: 10px;
-  padding: 14px 20px;
+  display: flex; align-items: center; gap: var(--sp-5);
+  padding: var(--sp-7) 20px;
   border-radius: var(--r-lg);
   background: var(--surface-overlay);
   box-shadow: var(--sh-out-md);
@@ -795,7 +795,7 @@ body {
   position: fixed;
   z-index: var(--z-tooltip, 1200);
   max-width: 280px;
-  padding: 6px 10px;
+  padding: var(--sp-3) var(--sp-5);
   border-radius: var(--r-sm);
   font-size: var(--fs-12, 12px);
   line-height: 1.6;
@@ -848,9 +848,9 @@ body {
   z-index: calc(var(--z-inspector, 1500) + 1);
   display: none;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   max-width: 460px;
-  padding: 5px 10px;
+  padding: 5px var(--sp-5);
   border-radius: var(--r-xs, 6px);
   font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: #e8eaed;
@@ -865,7 +865,7 @@ body {
 .nx-insp-size   { color: #b9c0cc; }
 .nx-insp-plugin {
   color: #ffd479;
-  padding: 1px 6px;
+  padding: 1px var(--sp-3);
   border-radius: var(--r-xs, 3px);
   background: rgba(255, 212, 121, .14);
 }
@@ -914,7 +914,7 @@ body.nx-inspecting * { cursor: crosshair !important; }
   font-weight: var(--fw-strong, 600);
   color: var(--text);
   margin-bottom: 14px;
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: var(--sp-4);
 }
 .p-card h2::before {
   content: "";
@@ -924,7 +924,7 @@ body.nx-inspecting * { cursor: crosshair !important; }
   box-shadow: var(--glow-sm);
 }
 
-.p-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+.p-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--sp-8); }
 
 
 /* 外壳输入框的基础实现在 css/controls.css（与 .nx-input / .mm-input 同组）。
@@ -934,14 +934,14 @@ body.nx-inspecting * { cursor: crosshair !important; }
    两条都必须留：直接套用统一层会让现有输入框变窄、凹陷变浅。 */
 .p-input {
   width: 100%;
-  padding: 0 14px;
+  padding: 0 var(--sp-7);
   box-shadow: var(--sh-in-lg);
 }
 .p-input:focus { box-shadow: var(--sh-in-lg), 0 0 0 2px var(--accent-glow); }
 
 /* 以下四条的基础实现同样在 controls.css，这里只写外壳与默认值的差异：
    .p-row 默认换行且间距更大；.p-muted 用更弱的 --text-mute */
-.p-row { gap: 12px; flex-wrap: wrap; }
+.p-row { gap: var(--sp-6); flex-wrap: wrap; }
 .p-muted { color: var(--text-mute); }
 .p-tag {
   /* 胶囊圆角 + 内凹是外壳标签的观感，与脑图 .mm-chip 的方角外凸不同 ——
@@ -952,7 +952,7 @@ body.nx-inspecting * { cursor: crosshair !important; }
   box-shadow: var(--sh-in-sm);
 }
 .p-stat {
-  padding: 16px;
+  padding: var(--sp-8);
   border-radius: var(--r);
   background: var(--surface-sunk);
   box-shadow: var(--sh-in-lg);
@@ -1150,8 +1150,8 @@ body.nx-inspecting * { cursor: crosshair !important; }
   align-items: center;
   justify-content: space-between;
   min-width: 0;
-  gap: 12px;
-  padding: 14px 18px;
+  gap: var(--sp-6);
+  padding: var(--sp-7) var(--sp-9);
   background: var(--surface-overlay);
   /* 必须用 --divider：--border 是风格开关，新拟态下是 transparent，
      用它会让这条分隔线整条消失（与 agent-flow 那次同一个坑） */
@@ -1184,13 +1184,13 @@ body.nx-inspecting * { cursor: crosshair !important; }
 /* 内容区：标题栏固定，剩下的可滚动 —— min-height:0 不能省，
    flex 子项默认 min-height:auto，会被内容顶开导致滚动失效 */
 .drawer-scroll { flex: 1; min-height: 0; overflow: auto; }
-.drawer-body { padding: 16px 18px; }
+.drawer-body { padding: var(--sp-8) var(--sp-9); }
 /* 抽屉只有 420px，而 .err-box 是给居中弹窗设计的（620px + 40px 外边距），
    直接放进来会又窄又偏，这里按抽屉宽度重排 */
 .drawer-body .err-box { max-width: none; margin: 0; }
 
 .drawer-empty {
-  padding: 14px 16px;
+  padding: var(--sp-7) var(--sp-8);
   border-radius: var(--r);
   color: var(--text-dim);
   font-size: var(--fs-12, 12px);
@@ -1375,12 +1375,12 @@ html.theme-transition *:not(.spinner) {
 .theme-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(152px, 1fr));
-  gap: 14px;
+  gap: var(--sp-7);
 }
 /* 标题栏弹出层里用更密的网格，一屏能看更多套 */
 .theme-grid.compact {
   grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
-  gap: 10px;
+  gap: var(--sp-5);
 }
 
 /* ---------- 标题栏主题弹出层 ---------- */
@@ -1412,8 +1412,8 @@ html.theme-transition *:not(.spinner) {
   display: flex;
   align-items: baseline;
   min-width: 0;
-  gap: 8px;
-  padding: 13px 16px 9px;
+  gap: var(--sp-4);
+  padding: 13px var(--sp-8) 9px;
   font-size: var(--title-1-fs, 13px);
   font-weight: var(--title-1-fw, 600);
   border-bottom: 1px solid var(--hairline);
@@ -1426,7 +1426,7 @@ html.theme-transition *:not(.spinner) {
   color: var(--text-mute);
 }
 .theme-pop-body {
-  padding: 12px 16px 16px;
+  padding: var(--sp-6) var(--sp-8) var(--sp-8);
   overflow-y: auto;
 }
 /* ---------- 分组容器（设置页与弹出层共用同一套结构） ----------------
@@ -1437,7 +1437,7 @@ html.theme-transition *:not(.spinner) {
    裸 div，上下间距为 0，卡片直接压在标题文字上。 */
 .theme-group + .theme-group { margin-top: 24px; }
 .theme-group-title {
-  margin: 0 0 10px;
+  margin: 0 0 var(--sp-5);
   padding-left: 2px;
   font-size: var(--title-2-fs, 12px);
   font-weight: var(--title-2-fw, 600);
@@ -1448,11 +1448,11 @@ html.theme-transition *:not(.spinner) {
 .theme-pop-body .theme-group + .theme-group { margin-top: 16px; }
 .theme-pop-body .theme-group:first-child .theme-group-title { margin-top: 2px; }
 /* 弹出层里卡片更紧凑：预览矮一点、名称字号小一点 */
-.theme-pop .theme-prev { height: 48px; padding: 8px 10px; gap: 7px; }
+.theme-pop .theme-prev { height: 48px; padding: var(--sp-4) var(--sp-5); gap: 7px; }
 .theme-pop .theme-prev .sw { width: 26px; height: 26px; border-radius: var(--r-sm); }
-.theme-pop .theme-foot { padding: 7px 10px 1px; }
+.theme-pop .theme-foot { padding: 7px var(--sp-5) 1px; }
 .theme-pop .theme-name { font-size: var(--fs-12, 12px); }
-.theme-pop .theme-desc { padding: 0 10px 9px; font-size: var(--fs-10, 10px); }
+.theme-pop .theme-desc { padding: 0 var(--sp-5) 9px; font-size: var(--fs-10, 10px); }
 .theme-pop .theme-badge { font-size: var(--fs-10, 10px); padding: 1px 5px; }
 
 /* ---------- 设置页分页 ----------
@@ -1473,14 +1473,14 @@ html.theme-transition *:not(.spinner) {
 .set-wrap {
   display: flex;
   align-items: flex-start;
-  gap: 14px;
+  gap: var(--sp-7);
   flex: 1;
   min-height: 0;
 }
 .set-tabs {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--sp-2);
   flex: none;
   width: 136px;
   position: sticky;
@@ -1503,7 +1503,7 @@ html.theme-transition *:not(.spinner) {
    */
   position: relative;
   height: 38px;
-  padding: 0 12px 0 16px;
+  padding: 0 var(--sp-6) 0 var(--sp-8);
   display: flex;
   align-items: center;
   text-align: left;
@@ -1619,10 +1619,10 @@ html.theme-transition *:not(.spinner) {
 .theme-prev {
   position: relative;
   height: 58px;
-  padding: 10px 11px;
+  padding: var(--sp-5) 11px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   overflow: hidden;
 }
 .theme-prev .sw { width: 30px; height: 30px; border-radius: var(--r-sm); flex: none; }
@@ -1631,11 +1631,11 @@ html.theme-transition *:not(.spinner) {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--sp-2);
 }
 .tp-line { height: 4px; width: 100%; border-radius: var(--r-pill); opacity: .95; }
 .tp-line.dim { width: 62%; opacity: .65; }
-.tp-row { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
+.tp-row { display: flex; align-items: center; gap: var(--sp-2); margin-top: 2px; }
 .theme-prev .bar { flex: 1; height: 8px; border-radius: var(--r-pill); }
 .theme-prev .bar.s { flex: none; width: 18px; opacity: .6; }
 /* 当前主题：缩略图很小，光靠描边看不出来，再补一个勾 */
@@ -1650,8 +1650,8 @@ html.theme-transition *:not(.spinner) {
 .theme-foot {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px 2px;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-6) var(--sp-1);
 }
 /* 主题名用**当前主题**的正文色，不是预览主题自己的 --text。
    卡片底板、阴影、描边都是当前主题的（--surface / --sh-*），
@@ -1676,7 +1676,7 @@ html.theme-transition *:not(.spinner) {
 /* 风格角标：新拟态 / 扁平 / 玻璃 */
 .theme-badge {
   flex: none;
-  padding: 1px 6px;
+  padding: 1px var(--sp-3);
   border-radius: var(--r-pill);
   font-size: var(--fs-10, 10px);
   line-height: 1.6;
@@ -1684,7 +1684,7 @@ html.theme-transition *:not(.spinner) {
   background: var(--surface-sunk);
   box-shadow: var(--sh-in-xs);
 }
-.theme-desc { padding: 0 12px 11px; font-size: var(--fs-11, 11px); color: var(--text-mute); line-height: 1.5; }
+.theme-desc { padding: 0 var(--sp-6) 11px; font-size: var(--fs-11, 11px); color: var(--text-mute); line-height: 1.5; }
 .theme-del {
   position: absolute; top: 6px; right: 6px;
   width: 20px; height: 20px; border: 0; border-radius: 50%;
@@ -2087,7 +2087,7 @@ html.theme-transition *:not(.spinner) {
  * （看不全，且没有滚动条提示）。
  */
 .md-mm {
-  margin: 10px 0;
+  margin: var(--sp-5) 0;
   overflow-x: auto;
 }
 .md-mm svg {
@@ -2100,7 +2100,7 @@ html.theme-transition *:not(.spinner) {
   display: flex;
   align-items: center;
   color: var(--text-dim, var(--muted, #888));
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 /* 语法错误：图源码一起显示出来 —— 只显示错误消息的话，
    用户没法对照改（且不知道是自己写错了还是插件坏了） */
@@ -2110,12 +2110,12 @@ html.theme-transition *:not(.spinner) {
 }
 .md-mm-msg {
   color: var(--danger, #ff6b6b);
-  font-size: 12px;
+  font-size: var(--fs-12);
   margin-bottom: 6px;
 }
 .md-mm-src {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
   opacity: 0.8;
 }
 
@@ -2135,9 +2135,9 @@ html.theme-transition *:not(.spinner) {
  * （看不全，且没有滚动条提示）。
  */
 .md-puml-box {
-  margin: 10px 0;
+  margin: var(--sp-5) 0;
   overflow-x: auto;
-  padding: 8px;
+  padding: var(--sp-4);
   border: 1px solid var(--edge, #3a3a3a);
   border-radius: var(--r-xs);
   background: var(--surface-sunk, #1e1e1e);
@@ -2154,7 +2154,7 @@ html.theme-transition *:not(.spinner) {
   display: flex;
   align-items: center;
   color: var(--text-dim, var(--muted, #888));
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 /* 语法错误：源码一起显示 —— 只显示错误消息的话用户没法对照改 */
 .md-puml-err {
@@ -2163,12 +2163,12 @@ html.theme-transition *:not(.spinner) {
 }
 .md-puml-msg {
   color: var(--danger, #ff6b6b);
-  font-size: 12px;
+  font-size: var(--fs-12);
   margin-bottom: 6px;
 }
 .md-puml-src {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
   opacity: 0.8;
 }
 
@@ -2180,7 +2180,7 @@ html.theme-transition *:not(.spinner) {
  */
 .md-export {
   display: inline-flex;
-  gap: 6px;
+  gap: var(--sp-3);
   margin-left: auto;
 }
 .md-export .md-btn:disabled {
@@ -2215,7 +2215,7 @@ html.theme-transition *:not(.spinner) {
   background: var(--surface);
   color: var(--text);
   border-radius: var(--r-xs);
-  padding: 1px 4px;
+  padding: 1px var(--sp-2);
   font-family: var(--font-mono);
   font-size: .9em;
 }
@@ -2289,12 +2289,12 @@ html.theme-transition *:not(.spinner) {
   border-bottom: 1px solid var(--border);
 }
 .md-code-lang {
-  font-size: 11px;
+  font-size: var(--fs-11);
   letter-spacing: .04em;
   color: var(--text-mute);
 }
 .md-code-copy {
-  font-size: 11px;
+  font-size: var(--fs-11);
   padding: 2px var(--sp-2, 8px);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm, 4px);
@@ -2328,7 +2328,7 @@ html.theme-transition *:not(.spinner) {
   border: 0;
   background: transparent;
   color: var(--text-mute);
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.7;
   padding: 1px 0;
   cursor: pointer;
@@ -2361,7 +2361,7 @@ html.theme-transition *:not(.spinner) {
   border: 0;
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: var(--sp-2, 8px) var(--sp-3, 12px);
   cursor: pointer;
 }
@@ -2411,7 +2411,7 @@ html.theme-transition *:not(.spinner) {
   border: 0;
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: var(--sp-1, 4px) var(--sp-2, 8px);
   cursor: pointer;
 }
@@ -2633,7 +2633,7 @@ html.theme-transition *:not(.spinner) {
   border: 0;
   background: transparent;
   color: var(--text-mute);
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1;
   padding: 2px var(--sp-1, 4px);
   cursor: pointer;
@@ -2778,7 +2778,7 @@ html.theme-transition *:not(.spinner) {
    写在插件自己的 settings.css 里，弹出来会变成只有文字
    （demo-iframe 打开后只有文字就是这个原因）。 */
 .dep-filters { flex-wrap: wrap; gap: var(--sp-4, 8px); }
-.dep-chip { padding: 0 10px; font-size: var(--fs-12, 12px); }
+.dep-chip { padding: 0 var(--sp-5); font-size: var(--fs-12, 12px); }
 .dep-chip.on {
   color: var(--accent);
   /* 与 --sh-in-md 数值完全一致：别把档位抄一遍，
@@ -2788,7 +2788,7 @@ html.theme-transition *:not(.spinner) {
 .dep-item { min-width: 0; overflow: hidden; }
 .dep-name { font-size: var(--fs-13, 13px); color: var(--text); word-break: break-all; }
 .dep-tag {
-  margin-left: 6px; padding: 1px 6px; border-radius: var(--r-sm);
+  margin-left: 6px; padding: 1px var(--sp-3); border-radius: var(--r-sm);
   font-size: var(--fs-11, 11px); color: var(--text-mute); background: var(--surface);
 }
 /* 「已装 xx」要能一眼看出来 —— 不写这条它就和「运行时/锁定」那些灰色
@@ -2804,7 +2804,7 @@ html.theme-transition *:not(.spinner) {
      · 没有 flex-wrap  → 窄屏上按钮换行即错位                            */
 .dep-installed { margin-top: 6px; }
 .dep-inst-row {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap;
   margin-top: 4px; padding: 3px 0; min-width: 0;
 }
 .dep-inst-ver {
@@ -2817,12 +2817,12 @@ html.theme-transition *:not(.spinner) {
    它是"清单之外的东西"，与下面的清单行没有视觉区分的话，
    用户会以为是某个包的附属内容，而不是需要单独清理的一坨。 */
 .dep-orphans {
-  padding: 8px 10px; border-radius: var(--r-sm);
+  padding: var(--sp-4) var(--sp-5); border-radius: var(--r-sm);
   /* 走 --sh-in-sm：数值与它完全一致，在文件里重写一遍的话换主题/调档位
      都不会跟着变（且守卫只能按字面量比对，抄对了也照样报红） */
   box-shadow: var(--sh-in-sm);
 }
-.dep-badge { flex: 0 0 auto; padding: 1px 8px; border-radius: var(--r-sm); font-size: var(--fs-11, 11px); }
+.dep-badge { flex: 0 0 auto; padding: 1px var(--sp-4); border-radius: var(--r-sm); font-size: var(--fs-11, 11px); }
 .dep-badge.ok { color: var(--ok); }
 .dep-badge.err { color: var(--danger); }
 .dep-badge.warn { color: var(--warn); }
@@ -2832,13 +2832,13 @@ html.theme-transition *:not(.spinner) {
 /* 「不适合运行时安装」的说明：比普通 note 更显眼一点 ——
    它是"为什么没有安装按钮"的唯一解释，混在灰字里会被当成没写。 */
 .dep-blocked {
-  padding: 4px 8px; border-radius: var(--r-sm); margin-top: 6px;
+  padding: var(--sp-2) var(--sp-4); border-radius: var(--r-sm); margin-top: 6px;
   font-size: var(--fs-11, 11px); line-height: 1.7;
   color: var(--text-mute); background: var(--surface-sunk);
   border-left: 2px solid var(--warn, #e0a030);
 }
 .dep-cmd {
-  flex: 1; min-width: 0; padding: 4px 8px; border-radius: var(--r-sm);
+  flex: 1; min-width: 0; padding: var(--sp-2) var(--sp-4); border-radius: var(--r-sm);
   font-size: var(--fs-11, 11px); color: var(--text); background: var(--surface);
   /* 复制失败时要能手动选中：根 body 的 user-select 是 none，
      不显式声明就选不中，而复制不了也选不了最让人无从下手。 */

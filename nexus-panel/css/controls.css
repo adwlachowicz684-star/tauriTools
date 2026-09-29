@@ -151,7 +151,7 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--sp-3);
   white-space: nowrap;
   transition: color var(--dur-fast), box-shadow var(--dur-fast),
     background var(--dur-fast), opacity var(--dur-fast);
@@ -412,7 +412,7 @@ select optgroup {
 .mm-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-2);
   height: 22px;
   padding: 0 9px;
   font-size: var(--fs-11, 11px);
@@ -438,7 +438,7 @@ select optgroup {
 .mm-field {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
 }
 .nx-row.wrap,
 .p-row.wrap { flex-wrap: wrap; }
@@ -542,7 +542,7 @@ select optgroup {
    用它分隔线会整条消失 —— 这个坑在 agent-flow 和抽屉标题栏上踩过两次 */
 .nx-sep {
   height: 1px;
-  margin: 12px 0;
+  margin: var(--sp-6) 0;
   background: var(--divider);
   border: 0;
 }
@@ -591,7 +591,7 @@ select optgroup {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: var(--sp-7);
   color: var(--text-mute);
 }
 .nx-empty-mark {
@@ -638,8 +638,8 @@ select optgroup {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 14px 20px;
+  gap: var(--sp-5);
+  padding: var(--sp-7) 20px;
   color: var(--text-dim);
   font-size: var(--fs-12, 12px);
 }
@@ -661,8 +661,8 @@ select optgroup {
 .nx-loading .nx-loading-inner {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 14px 20px;
+  gap: var(--sp-5);
+  padding: var(--sp-7) 20px;
   border-radius: var(--r-lg);
   background: var(--surface-overlay);
   box-shadow: var(--sh-out-md);
@@ -678,7 +678,7 @@ select optgroup {
    ------------------------------------------------------------ */
 .nx-toast,
 .toast {
-  padding: 11px 16px;
+  padding: 11px var(--sp-8);
   max-width: 320px;
   border-radius: var(--r-sm);
   font-size: var(--fs-12, 12px);
@@ -710,7 +710,7 @@ select optgroup {
   bottom: 20px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-5);
   z-index: var(--z-toast);
   pointer-events: none;
 }
@@ -1074,7 +1074,7 @@ input[type='range']:disabled {
    光标交给行自己，手柄保持朴素。 */
 .nx-drag-handle {
   flex: none;
-  padding: 0 2px;
+  padding: 0 var(--sp-1);
   color: var(--text-mute);
   font-size: var(--fs-13, 13px);
   line-height: 1;
@@ -1138,7 +1138,7 @@ input[type='range']:disabled {
      看着像"图标和一句没对齐的话"，不像一个完整的状态说明。 */
   flex-direction: column;
   gap: var(--sp-3, 6px);
-  padding: 8px;
+  padding: var(--sp-4);
   /* 用 --divider 而不是 --border —— 后者是**风格开关**，
      新拟态下它是 transparent，画出来等于没有（这个坑踩过三次）。 */
   border: 1px dashed var(--divider, var(--text-mute));
@@ -1174,7 +1174,7 @@ input[type='range']:disabled {
    常态不压满透明度是刻意的：虚线 + 透明底已经很弱，再压到很低会
    让人看不清；.65 是能看出"可点"又不抢主内容的档位。 */
 .nx-add {
-  display: flex; align-items: center; justify-content: center; gap: 6px;
+  display: flex; align-items: center; justify-content: center; gap: var(--sp-3);
   border: 1px dashed var(--add-line);
   border-radius: var(--add-r);
   background: var(--add-bg);
@@ -1421,7 +1421,7 @@ input[type='range']:disabled {
   position: absolute;
   right: 3px;
   bottom: 1px;
-  font-size: 11px;
+  font-size: var(--fs-11);
   line-height: 1;
   /* ✓ 直接压在预设渐变上，而渐变的明暗与当前主题**无关**
      （浅色主题也能选「星夜」这种深色预设）—— 所以不能继承 --text，
@@ -1431,7 +1431,7 @@ input[type='range']:disabled {
      比写死 #fff 稳：强调色是亮黄时白字对比度只有 1.09，等于没有。 */
   background: var(--accent);
   color: var(--badge-fg, #fff);
-  padding: 0 2px;
+  padding: 0 var(--sp-1);
 }
 
 @media (prefers-reduced-motion: reduce) {
