@@ -325,9 +325,14 @@ export function partitionMissing(icons = [], live = new Set()) {
  * 和之前踩过的「深色界面上纯黑 = 看不见」是同一类问题 ——
  * 用户只看到一堆占位，不知道是图标坏了还是加载慢。
  *
- * @returns {Promise<{removed:number, groups:number}>} 清掉了多少个、涉及几组
+ * @param {object} [opts]
+ * @param {boolean} [opts.dryRun=false] 只统计不落盘 —— 界面要先问一句再动手
+ * @returns {Promise<{removed:number, groups:number, aborted:boolean, saved:boolean}>}
+ *   清掉了多少个、涉及几组；aborted = 资产读不出来、一个都没动；
+ *   saved = 磁盘与结果一致（无需写入，或写入成功）
  */
-export async function pruneMissing() {
+export async function pruneMissing(opts = {}) {
+  const dryRun = !!(opts && opts.dryRun);
   const groups = await loadLibrary();
   let removed = 0;
   let touched = 0;
@@ -340,11 +345,39 @@ export async function pruneMissing() {
       if (ic?.kind === 'user' && ic.assetId) ids.add(ic.assetId);
     }
   }
+
+  /*
+   * 判据必须是「资产**真的**不在了」，不能是「这次没读出来」。
+   *
+   * store.get 读失败时是「吞异常、返回默认值 null」（见 store.js 读路径的
+   * 注释），于是 `rec?.blob` 为假 —— 与「这个图标的资产确实没了」
+   * **长得一模一样**。
+   *
+   * 后果很实在：一次偶发的读失败（IndexedDB 被禁用 / 单条记录损坏 /
+   * 大 Blob 读取被打断）就会把**整个用户图标库**判定为失效 ——
+   * 条目被删、结果写回磁盘。而资产字节往往还在库里，于是图标没了、
+   * 字节留着，变成没人引用的孤儿；图标库没有撤销，删掉就是永久的。
+   *
+   * 判据用 lastStoreError 的**前后差**而不是「非空」：store 记的是
+   * 「最近一次」错误，只看非空会把更早留下的旧错误当成这次的失败。
+   */
   const live = new Set();
+  let aborted = false;
   for (const id of ids) {
+    const errBefore = store.lastStoreError();
     const rec = await store.get('asset:' + id, null);
+    const errAfter = store.lastStoreError();
+    if (errAfter && errAfter !== errBefore) {
+      // 这条读不出来 —— 当成「未知」，保留图标，绝不删
+      store.resetStoreError();
+      aborted = true;
+      continue;
+    }
     if (rec?.blob) live.add(id);
   }
+  // 有一条没读出来就整体中止：宁可留着几个空白占位，也不能赌一把把
+  // 整个库删掉 —— 前者看得见、可重试，后者不可逆。
+  if (aborted) return { removed: 0, groups: 0, aborted: true, saved: false };
 
   for (const g of groups) {
     if (g.builtin) continue;   // 内置分组由代码生成，改了下次加载会被覆盖回去
@@ -355,8 +388,14 @@ export async function pruneMissing() {
     touched++;
   }
 
-  if (removed > 0) await saveUserGroups(groups);
-  return { removed, groups: touched };
+  if (removed > 0 && !dryRun) {
+    // saveUserGroups 走 store.set —— 失败是返回 false 而不是抛出，
+    // 不检查就会在「根本没存进去」的情况下回报清理成功：界面说清掉了，
+    // 重载后图标又回来了（而资产确实已经没了，于是变成永久空白）。
+    const saved = await saveUserGroups(groups);
+    return { removed, groups: touched, aborted: false, saved };
+  }
+  return { removed, groups: touched, aborted: false, saved: removed === 0 };
 }
 
 /* ------------------------------------------------------------

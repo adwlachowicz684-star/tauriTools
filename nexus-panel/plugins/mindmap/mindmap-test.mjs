@@ -112,7 +112,11 @@ function installIndexedDB() {
   const dbs = new Map();
   // 故障注入开关：让「写失败 / 读失败」这两条路径能被测到。
   // 桩必须真的把这些失败传回给 store.js，否则 store 层的错误处理就是没验证过的空壳。
-  const ctl = { failPut: false, failTx: false, failOpen: false };
+  // failGetPrefix：只让**指定前缀**的 key 读失败。
+  // failTx 是「整库不可用」，用它测不出「只有某几条读挂了」的真实场景
+  // （IndexedDB 单条记录损坏 / 大 Blob 读取被打断）—— 而那正是会把
+  // 「读不出来」误判成「资产没了」的入口。
+  const ctl = { failPut: false, failTx: false, failOpen: false, failGetPrefix: '' };
 
   class FakeRequest {
     constructor() {
@@ -138,6 +142,7 @@ function installIndexedDB() {
     get(key) {
       const r = new FakeRequest();
       if (ctl.failTx) this._new(r), r._fail(new Error('事务失败（注入）'));
+      else if (ctl.failGetPrefix && String(key).startsWith(ctl.failGetPrefix)) this._new(r), r._fail(new Error('读取失败（注入）'));
       else r._done(this.data.has(key) ? structuredClone(this.data.get(key)) : undefined);
       return this._new(r);
     }
@@ -2596,6 +2601,98 @@ const picons = await import('./preset-icons.js');
     ok(true, '（跳过）用户分组数量不符，跳过最后一组删除测试');
   }
 }
+
+group('清理失效图标：资产「读不出来」不得当成「已失效」删掉（BUG 71）');
+
+{
+  const io = await import('./io.js');
+  /*
+   * store.get 读失败时是「吞异常、返回默认值 null」（见 store.js 读路径注释），
+   * 于是 pruneMissing 里 `rec?.blob` 为假 —— 与「这个图标的资产确实没了」
+   * **长得一模一样**。
+   *
+   * 一次偶发的读失败（IndexedDB 被禁用、单条记录损坏、大 Blob 读取被打断）
+   * 就会把**整个用户图标库**判定为失效：图标条目被删、写回磁盘，
+   * 而资产字节可能还在库里 —— 于是图标没了、字节留着，变成没人引用的孤儿。
+   * 图标库没有撤销，删掉就是永久的。
+   */
+  let lib = await picons.loadLibrary();
+  for (const g of lib.filter((x) => !x.builtin)) await picons.deleteGroup(g.id);
+  const g = await picons.addGroup('失效测试组');
+  const a1 = await io.putAsset(new Blob(['png-1'], { type: 'image/png' }));
+  const a2 = await io.putAsset(new Blob(['png-2'], { type: 'image/png' }));
+  ok(!!a1 && !!a2, '两个图标资产已入库');
+  await picons.addIcon(g.id, { kind: 'user', name: 'i1', assetId: a1 });
+  await picons.addIcon(g.id, { kind: 'user', name: 'i2', assetId: a2 });
+
+  // 资产都在 → 一个都不该清
+  const r0 = await picons.pruneMissing();
+  eq(r0.removed, 0, '资产都在时清理不到任何图标');
+
+  // 只让 asset: 的读取失败（iconlib 本身照常可读 —— 否则测的就是另一条路）
+  ctl.failGetPrefix = 'asset:';
+  const r1 = await picons.pruneMissing();
+  ctl.failGetPrefix = '';
+  store.resetStoreError();
+  eq(r1.removed, 0, '资产读不出来时不得删除任何图标（读失败 ≠ 已失效）');
+  ok(r1.aborted === true, '读失败要中止清理并回报 aborted');
+
+  lib = await picons.loadLibrary();
+  const gg = lib.find((x) => x.id === g.id);
+  eq(((gg && gg.icons) || []).length, 2, '用户图标一个都没被删');
+
+  // 真的失效（资产确实没了）才删 —— 这条路必须仍然工作
+  await store.del('asset:' + a2);
+  const r2 = await picons.pruneMissing();
+  eq(r2.removed, 1, '资产确实丢失的那一个才被清理');
+  ok(r2.saved !== false, '清理结果已落盘');
+  lib = await picons.loadLibrary();
+  const gg2 = lib.find((x) => x.id === g.id);
+  eq(((gg2 && gg2.icons) || []).length, 1, '只剩还在的那个图标');
+
+  // dryRun：只统计不落盘（供界面先问一句再动手）
+  await store.del('asset:' + a1);
+  const dry = await picons.pruneMissing({ dryRun: true });
+  eq(dry.removed, 1, 'dryRun 报出会清掉 1 个');
+  lib = await picons.loadLibrary();
+  const gg3 = lib.find((x) => x.id === g.id);
+  eq(((gg3 && gg3.icons) || []).length, 1, 'dryRun 不落盘：图标还在');
+
+  /*
+   * 写盘失败必须回报出来。
+   *
+   * 只断言 `saved !== false` 是**空转**的：把实现写成 `saved: true`
+   * 照样绿（变异验证 M4 就是这么漏掉的）。必须真的注入一次写失败，
+   * 看它是否回报 false —— 否则界面会说「已清理 N 个」，
+   * 重载后图标又回来，而资产确实已经没了，于是变成永久空白。
+   */
+  ctl.failPut = true;
+  const r3 = await picons.pruneMissing();
+  ctl.failPut = false;
+  store.resetStoreError();
+  eq(r3.removed, 1, '写盘失败时仍报出清理数量');
+  eq(r3.saved, false, '图标库写盘失败要回报 saved:false（不能假装成功）');
+
+  // ---- 界面层：先问一句、并照实说写盘结果 ----
+  const psrc = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const pi = psrc.slice(psrc.indexOf('const pruneIcons = async ()'));
+  const piBody = pi.slice(0, pi.indexOf('\n  };'));
+  ok(/askConfirm\(/.test(piBody), '清理失效图标：走二次确认（批量删除且不可逆）');
+  ok(/danger:\s*true/.test(piBody), '清理失效图标：确认框标 danger');
+  /*
+   * 顺序才是关键：必须先 dryRun 拿到数量、确认之后再真删。
+   * 只断言「出现了 askConfirm」抓不到「先删后问」——
+   * 那样用户看到的确认框是在东西已经没了之后弹的。
+   */
+  const iDry = piBody.indexOf('dryRun: true');
+  const iAsk = piBody.indexOf('askConfirm(');
+  const iReal = piBody.indexOf('await picons.pruneMissing();');
+  ok(iDry >= 0 && iAsk > iDry, '清理失效图标：先 dryRun 统计再确认');
+  ok(iReal > iAsk, '清理失效图标：确认之后才真正删除');
+  ok(/r\.removed && !r\.saved/.test(piBody), '清理失效图标：写盘失败要照实说');
+  ok(/dry\.aborted/.test(piBody), '清理失效图标：读不出来时中止并说明');
+}
+
 
 {
   // ---- 内置图标不进持久化 ----

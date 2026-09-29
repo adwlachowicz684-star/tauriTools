@@ -2847,11 +2847,42 @@ export async function openIconLibrary(app) {
     await addImageFiles(files);
   };
 
-  /** A18 清理失效图标（资产已读不到的条目） */
+  /**
+   * A18 清理失效图标（资产已读不到的条目）。
+   *
+   * **先看会清掉什么，再动手**。这是不可逆的批量删除 ——
+   * 条目从图标库里移除并写回本地库，而图标库没有撤销栈。
+   * 与删除主题 / 删除画布 / 清空快照同一类，必须先让用户看见数量。
+   *
+   * 数量可能很意外：一次本地存储异常就可能让一批图标同时"读不到"，
+   * 用户预期的是清掉两三个空白占位，实际报出来的可能是十几二十个。
+   */
   const pruneIcons = async () => {
+    const dry = await picons.pruneMissing({ dryRun: true });
+    if (dry.aborted) {
+      app.api.status('清理已中止：图标资产读不出来，未删除任何图标（可能是本地存储异常）', true);
+      return;
+    }
+    if (!dry.removed) { app.api.status('没有失效图标'); return; }
+
+    if (!await askConfirm({
+      message: `清理 ${dry.removed} 个失效图标？\n\n`
+        + '这些图标的本地数据已丢失（界面上显示为空白），清理后会从图标库中移除，无法恢复。',
+      danger: true,
+    })) return;
+
     const r = await picons.pruneMissing();
-    if (!r.removed) { app.api.status('没有失效图标'); return; }
+    if (r.aborted) {
+      app.api.status('清理已中止：图标资产读不出来，未删除任何图标（可能是本地存储异常）', true);
+      return;
+    }
     await reload();
+    // 写盘失败要照实说：不检查的话界面说清掉了、重载又回来，
+    // 而资产确实没了 —— 于是变成永久空白，比不清理更糟。
+    if (r.removed && !r.saved) {
+      app.api.status('清理失败：图标库未能写入本地库（可能是空间不足）', true);
+      return;
+    }
     app.api.status(`已清理 ${r.removed} 个失效图标（涉及 ${r.groups} 个分组）`);
   };
 
