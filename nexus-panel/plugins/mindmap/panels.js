@@ -12,7 +12,8 @@
 
 import { h } from '../../js/plugin-sdk.js';
 import { confirm as _askConfirm, alert as _askAlert, prompt as _askText } from '../../js/dialog.js';
-import { THEMES, LAYOUTS, blankTheme, DEFAULT_THEME, themeSeed, sanitizePalette } from './themes.js';
+import { THEMES, LAYOUTS, blankTheme, DEFAULT_THEME, DEFAULT_LAYOUT, themeSeed, sanitizePalette,
+  themeLabelOf, layoutLabelOf } from './themes.js';
 
 /**
  * 弹层关闭后「把焦点还给画布」的回调，由插件层注入。
@@ -1821,10 +1822,9 @@ export function buildSide(app, opts = {}) {
   function pageTheme() {
     const cur = app.sheet?.theme || 'fresh-blue';
     // 当前主题的显示名（新建种子提示用）：自定义主题有 name，内置主题查 THEMES
-    const curName = (app.customThemes || []).find((x) => x.id === cur)?.name
-      || THEMES.find((x) => x.value === cur)?.label
-      || cur;
-    const curLayout = app.sheet?.layout || 'default';
+    // 与状态栏同源：都用 themeLabelOf，别再抄一份映射（抄两份迟早对不上）
+    const curName = themeLabelOf(cur, app.customThemes);
+    const curLayout = app.sheet?.layout || DEFAULT_LAYOUT;
 
     const list = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
       ...THEMES.map((t) =>

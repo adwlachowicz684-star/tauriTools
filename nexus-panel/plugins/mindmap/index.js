@@ -14,14 +14,11 @@
  */
 
 import { bootIframePlugin, h } from '../../js/plugin-sdk.js';
-/* dialog.css **不能**在这里 import：本文件的入口是 index.html
-   （registry 里没有 noBuild 分支，两种模式都加载它），
-   无构建模式下是原生 ESM，import CSS 会让整个模块加载失败。
-   已改由 styles.css 顶部 @import（index.html 用 <link> 加载它）。 */
+import '../../css/dialog.css';
 import { confirm as _askConfirm, alert as _askAlert, prompt as _askText } from '../../js/dialog.js';
 import { EditorBridge } from './editor-bridge.js';
 import { DEFAULT_THEME, DEFAULT_LAYOUT, isBuiltinTheme, deriveCanvasTheme,
-  mergePresetThemes } from './themes.js';
+  mergePresetThemes, THEMES, LAYOUTS, themeLabelOf, layoutLabelOf } from './themes.js';
 import * as wb from './workbook.js';
 import * as diag from './diagnostics.js';
 import * as store from './store.js';
@@ -2310,14 +2307,15 @@ async function gcOrphanAssets(quiet = false) {
     bridge.setTheme(name);
     s.theme = name;
     await persist();
-    status('主题：' + name);
+    // 显示名而不是 id：侧栏高亮写的是「清新蓝」，状态栏回「fresh-blue」会对不上
+    status('主题：' + themeLabelOf(name, customThemes));
   }
 
   async function applyLayout(name) {
     bridge.setTemplate(name);
     sheet().layout = name;
     await persist();
-    status('布局：' + name);
+    status('布局：' + layoutLabelOf(name));
   }
 
   async function saveThemes() {

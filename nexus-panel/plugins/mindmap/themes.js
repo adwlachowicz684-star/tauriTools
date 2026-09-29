@@ -48,6 +48,32 @@ export const DEFAULT_THEME = 'fresh-blue';
 export const DEFAULT_LAYOUT = 'default';
 
 /**
+ * 主题 id → 显示名（纯函数，可测）。
+ *
+ * 状态栏与面板**必须**用它，不能直接把 id 拼进文案：id 是给内核看的
+ * （`fresh-blue` / `mm-preset-xxx`），用户看到的是「清新蓝」这类名字。
+ * 早先 applyTheme 写的是 `status('主题：' + name)`，于是点「清新蓝」
+ * 状态栏回一句「主题：fresh-blue」—— 和侧栏高亮上的「清新蓝」对不上，
+ * 用户会以为点错了。
+ *
+ * 自定义主题优先于内置：两者 id 可能撞车（预设主题就是按内置名生成的），
+ * 而此刻用户真正选中的是自定义那份。
+ *
+ * 取不到时回落 id 本身而不是空串 —— 显示一串裸 id 至少还能排查，
+ * 空白则什么都看不出来。
+ */
+export function themeLabelOf(name, customThemes = []) {
+  const t = (customThemes || []).find((x) => x.id === name);
+  if (t && t.name) return t.name;
+  return THEMES.find((x) => x.value === name)?.label || name;
+}
+
+/** 布局 id → 显示名（纯函数，可测）。同上，不能把 id 直接给用户看。 */
+export function layoutLabelOf(name) {
+  return LAYOUTS.find((x) => x.value === name)?.label || name;
+}
+
+/**
  * 自定义主题的默认调色板。
  * 键名刻意与 kityminder-core 主题表解耦：编辑器页的 registerCustomTheme() 负责
  * 把这套扁平字段翻译进 core 的主题对象（含默认值兜底）。
