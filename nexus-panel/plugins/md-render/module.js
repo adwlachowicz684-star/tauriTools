@@ -38,11 +38,8 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown from 'react-markdown';
-import {
-  REMARK_PLUGINS,
-  REHYPE_PLUGINS,
-  urlTransform,
-} from '../md/render-config.js';
+import { urlTransform } from '../md/render-config.js';
+import { resolvePlugins } from '../md/pipeline.js';
 
 /**
  * 服务版本。调用方可以用来判断能力，宿主面板也会显示。
@@ -53,14 +50,25 @@ export const VERSION = '0.1.0';
  * 渲染一段 Markdown 为 HTML 字符串。
  *
  * @param {{ text?: string, className?: string }} args
- * @returns {string} HTML
+ * @param {any} ctx 服务方法的第二参（宿主 dispatchServiceCall 传入）
+ * @returns {Promise<string>} HTML
+ *
+ * 【为什么这里变成异步】
+ * 渲染管线要先问一句"工具里有没有装这个包"（见 md/pipeline.js），
+ * 那是一次 invoke —— 同步方法里没法等。宿主 dispatchServiceCall
+ * 是 `return await fn(args, ctx)`，返回 Promise 完全成立。
+ *
+ * ⚠️ 调用方必须 await。不 await 拿到的是 Promise 而不是字符串，
+ * 往 innerHTML 里一塞就变成 "[object Promise]" —— 不报错、页面照常显示。
+ * 仓库里唯一的调用方（md-editor 的预览）已经是 await 的。
  *
  * 刻意不 catch：渲染失败应该让调用方知道（throw 会被 callService 传回去），
  * 静默返回空串会让调用方以为"渲染成功但内容是空的"，排查方向全错。
  */
-function renderToHtml(args) {
+async function renderToHtml(args, ctx) {
   const text = String(args?.text ?? '');
   const className = args?.className || 'markdown-body';
+  const { remark, rehype } = await resolvePlugins(ctx);
   return renderToStaticMarkup(
     React.createElement(
       'div',
@@ -68,8 +76,8 @@ function renderToHtml(args) {
       React.createElement(
         ReactMarkdown,
         {
-          remarkPlugins: REMARK_PLUGINS,
-          rehypePlugins: REHYPE_PLUGINS,
+          remarkPlugins: remark,
+          rehypePlugins: rehype,
           urlTransform,
           children: text,
         },
@@ -85,8 +93,16 @@ function renderToHtml(args) {
  * 同页调用方拿到它可以用自己的 ReactMarkdown 渲染成元素（而不是字符串），
  * 好处是能接自己的事件、也不用 innerHTML。
  */
-function renderConfig() {
-  return { remarkPlugins: REMARK_PLUGINS, rehypePlugins: REHYPE_PLUGINS, urlTransform };
+/**
+ * 同 renderToHtml 的原因变异步：要等管线解析完。
+ *
+ * 返回的是**解析后的**插件数组（可能是工具里装的那份），
+ * 与 renderToHtml 走同一个缓存 —— 同页调用方自己渲染出来的结果，
+ * 和让本服务渲染出来的结果因此一致（这正是 F11 修掉的失效形态）。
+ */
+async function renderConfig(args, ctx) {
+  const { remark, rehype } = await resolvePlugins(ctx);
+  return { remarkPlugins: remark, rehypePlugins: rehype, urlTransform };
 }
 
 function info() {

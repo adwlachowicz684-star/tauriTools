@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { REMARK_PLUGINS, REHYPE_PLUGINS, urlTransform } from './render-config';
+import { urlTransform } from './render-config';
+import { BUNDLED_PLUGINS, resolvePlugins } from './pipeline';
 import {
   classifyDrop,
   multiFileNote,
@@ -219,6 +220,21 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
   const [toc, setToc] = useState<any[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
 
+  /*
+   * 渲染管线的插件集 —— 挂载时先用打包版，解析完成后换成"装进工具里
+   * 的那份"（见 pipeline.js）。
+   *
+   * 为什么要走一遍 state 而不是直接用常量：
+   *   取运行时那份是**异步**的（一次 invoke + 可能的动态 import），
+   *   而首屏不能等它 —— 等的话，装了包的用户每次打开阅读器都要先
+   *   卡一下才出字。先用打包版出内容，解析好了再换，代价是一次重渲染。
+   *
+   *   ⚠️ 换插件时必须**清掉块缓存**（见下面那个 effect）：
+   *   缓存的键是块文本，插件换了而键没变，已经渲染过的块会继续用旧插件
+   *   渲染出来的元素 —— 表现是"装了新版 gfm，但翻回前面那几段还是老的"。
+   */
+  const [plugins, setPlugins] = useState(BUNDLED_PLUGINS);
+
   /* 滚动高亮：挂在**容器**上而不是 window ——
      滚动的是 .md-out 自己，window 根本不滚，挂上去永远不触发。 */
   const docKey = fileName || '__untitled__';
@@ -306,13 +322,25 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
    * remark/rehype 整条管线。这是"敲一个键就整篇重解析"的解法。
    */
   const cacheRef = useRef(createBlockCache());
+
+  /*
+   * 换插件必须清缓存 —— 见上面 plugins state 的注释。
+   *
+   * 只清一次（解析只有一次结果），但**必须连带让 body 重算**：
+   * 缓存清了而 renderBlock 不重建，拿到的还是上一次的元素引用。
+   * renderBlock 的依赖里带 plugins，所以这里只需清缓存即可。
+   */
+  useEffect(() => {
+    cacheRef.current = createBlockCache();
+  }, [plugins]);
+
   const renderBlock = useCallback((text: string) => {
     const hit = cacheRef.current.get(text);
     if (hit) return hit;
     const el = (
       <ReactMarkdown
-        remarkPlugins={REMARK_PLUGINS}
-        rehypePlugins={REHYPE_PLUGINS}
+        remarkPlugins={plugins.remark}
+        rehypePlugins={plugins.rehype}
         urlTransform={urlTransform}
         components={components}
       >
@@ -321,7 +349,19 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
     );
     cacheRef.current.set(text, el);
     return el;
-  }, [components]);
+  }, [components, plugins]);
+
+  /*
+   * 解析渲染管线的运行时来源（见 pipeline.js）。
+   * 没有 ctx / 装的那份坏了 → 拿到的就是打包版，行为与改动前一致。
+   */
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve(resolvePlugins(ctx))
+      .then((p) => { if (alive && p) setPlugins(p); })
+      .catch(() => { /* 解析失败就继续用打包版，不打断阅读 */ });
+    return () => { alive = false; };
+  }, [ctx]);
 
   const body = useMemo(
     () =>

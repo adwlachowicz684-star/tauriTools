@@ -83,10 +83,21 @@ t('服务目录与 app 目录分开（一个目录只能有一个同页入口）
    ============================================================ */
 console.log('\n=== 3. 与 app 入口共用渲染配置 ===');
 
-t('服务 import 的是 md/render-config.js（不是自己抄一份）',
-  /from\s+'\.\.\/md\/render-config\.js'/.test(src));
-t('app 入口也用同一份 render-config',
-  /render-config/.test(read('plugins/md/App.tsx')));
+/*
+ * 共用渲染配置的证据**改成查链路**：
+ * 服务不再直接 import 打包版插件数组 —— 它要用的是"解析后"的那份
+ * （可能来自工具里装的包，见 md/pipeline.js），所以 import 的是
+ * pipeline.js；而 pipeline.js 自己从 render-config.js 取打包版。
+ *
+ * 只断言"服务 import 了 render-config"会漏掉真正的漂移：服务可以
+ * import 了却用自己的一份数组渲染。查两级才钉得住"唯一来源"。
+ */
+t('服务 import 的是 md/pipeline.js（解析入口，不是自己抄一份配置）',
+  /from\s+'\.\.\/md\/pipeline\.js'/.test(src));
+t('pipeline.js 的打包版取自 md/render-config.js（唯一来源，没有第二份）',
+  /from\s+'\.\/render-config\.js'/.test(read('plugins/md/pipeline.js')));
+t('app 入口也走同一个解析入口（两个入口不会渲染出两种结果）',
+  /from\s+'\.\/pipeline'/.test(read('plugins/md/App.tsx')));
 
 /* ============================================================
    4. 行为：真跑渲染
@@ -102,6 +113,11 @@ try {
 }
 
 if (def) {
+  /*
+   * renderToHtml 现在返回 Promise（要等管线解析，见 module.js 的注释）。
+   * 这里**必须 await** —— 不 await 的话断言拿到的是 Promise 对象，
+   * 而 `.startsWith` 会直接抛，看起来像"服务坏了"而不是"忘了等"。
+   */
   const render = (text) => def.methods.renderToHtml({ text });
 
   t('methods 暴露 renderToHtml', typeof def.methods?.renderToHtml === 'function');
@@ -113,50 +129,52 @@ if (def) {
   /* 外层必须包 markdown-body：调用方靠这个类接样式。
      少了它，同页调用方拿到 HTML 也没有任何样式（变成"只有文字"）。 */
   t('外层包 .markdown-body（调用方靠它接样式）',
-    render('# x').startsWith('<div class="markdown-body">'));
+    (await render('# x')).startsWith('<div class="markdown-body">'));
 
   /* ---- GFM ---- */
   t('表格渲染成 <table>',
-    /<table>/.test(render('| a | b |\n|---|---|\n| 1 | 2 |')));
+    /<table>/.test(await render('| a | b |\n|---|---|\n| 1 | 2 |')));
   t('任务列表渲染成 checkbox',
-    /type="checkbox"/.test(render('- [ ] 待办')));
+    /type="checkbox"/.test(await render('- [ ] 待办')));
 
   /* ---- singleTilde: false（三态里最容易被当成冗余的那条）----
      注意用**成对单波浪** `~单~`：单个不闭合的波浪本来就不触发删除线，
      拿它当用例，配置删了照样绿 —— 是假断言。 */
-  const delHtml = render('~~删~~ 与 ~单~');
+  const delHtml = await render('~~删~~ 与 ~单~');
   t('成对双波浪 → <del>', /<del>删<\/del>/.test(delHtml));
   t('成对单波浪 → 原样（singleTilde:false 生效）',
     /~单~/.test(delHtml) && !/<del>单<\/del>/.test(delHtml));
 
   /* ---- slug（TOC 锚点）---- */
   t('标题带 id（rehype-slug 生效，TOC 才有锚点）',
-    /<h2 id="[^"]+"/.test(render('## 标题一')));
+    /<h2 id="[^"]+"/.test(await render('## 标题一')));
 
   /* ---- 代码高亮 ---- */
   t('代码块带 hljs 类（rehype-highlight 生效）',
-    /class="hljs/.test(render('```js\nconst a=1;\n```')));
+    /class="hljs/.test(await render('```js\nconst a=1;\n```')));
 
   /* ---- 安全 ---- */
   t('<script> 被转义（不装 rehype-raw 的默认行为）',
-    render('<script>alert(1)</script>').includes('&lt;script&gt;'));
+    (await render('<script>alert(1)</script>')).includes('&lt;script&gt;'));
   /*
    * urlTransform 是独立于 sanitize 的第二道关卡。
    * 这里验证它真的把 javascript: 剥掉了 —— 自研版把这原样输出成了 href。
    */
-  const jsHtml = render('[x](javascript:alert(1))');
+  const jsHtml = await render('[x](javascript:alert(1))');
   t('javascript: 协议被 urlTransform 剥掉',
     /<a href="">/.test(jsHtml) && !/javascript:/.test(jsHtml));
   t('data:image/ 被放行（base64 内嵌图不被剥空）',
-    /src="data:image\/png;base64,AAA"/.test(render('![x](data:image/png;base64,AAA)')));
+    /src="data:image\/png;base64,AAA"/.test(await render('![x](data:image/png;base64,AAA)')));
 
   /* ---- 边界 ---- */
+  const emptyHtml = await def.methods.renderToHtml({});
   t('空文本不抛，返回空的 markdown-body',
-    def.methods.renderToHtml({}) === '<div class="markdown-body"></div>');
-  t('非字符串输入不抛', typeof def.methods.renderToHtml({ text: 123 }) === 'string');
+    emptyHtml === '<div class="markdown-body"></div>');
+  const numHtml = await def.methods.renderToHtml({ text: 123 });
+  t('非字符串输入不抛', typeof numHtml === 'string');
 
   /* ---- renderConfig ---- */
-  const cfg = def.methods.renderConfig();
+  const cfg = await def.methods.renderConfig();
   t('renderConfig 返回 remark/rehype 插件数组与 urlTransform',
     Array.isArray(cfg.remarkPlugins) && Array.isArray(cfg.rehypePlugins) &&
     typeof cfg.urlTransform === 'function');
