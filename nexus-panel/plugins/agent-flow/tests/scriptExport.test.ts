@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { exportFlow, exportAll, EXPORT_FORMATS } from '../engine/scriptExport';
 import { readSrc } from './srcScan';
-import { readSrc } from './srcScan';
 
 const n = (id: string, kind: string, data = {}) => ({
   id, data: { kind, label: id, status: 'idle', output: '', error: '', ...data },
@@ -315,4 +314,77 @@ test('中文卡名：导出与运行时必须同一套字符集（template.ts �
   // "考虑了中文"才是要守的事（详见 tests/refToken.test.ts）
   assert.ok(tpl.includes('u4e00'), '运行时模板必须认中文（template.ts 的 REF_CHARS）');
   assert.ok(/tokenRe\(\)/.test(exp), '导出必须调用 tokenRe()（自带一份就会再分叉）');
+});
+
+/* ================= 全局输入 / 画布参数 / 循环变量 ================= */
+
+test('{{input}} 不能导出成 python 的内建函数名 input', () => {
+  /*
+   * ================= 这条守卫的来历 =================
+   *
+   * subst 把 {{input}} 拼成 `INPUT` → python 小写化成 **`input`**，
+   * 而 input 是 python 的内建函数 —— f"{input}" 渲染出
+   * `<built-in function input>`。**不报错，值永远错**，是最难查的一类。
+   *
+   * 顺带：{{input.output}} 被拼成 INPUT_OUTPUT（脚本里从未定义），
+   * 而运行时 template.ts 里 nodeId==='input' 时**不看 field**，
+   * 两种写法是同一个东西 —— 所以这里两种写法都断言。
+   */
+  const graph = g([
+    n('a1', 'log', { text: '{{input}}' }),
+    n('a2', 'log', { text: '{{input.output}}' }),
+  ]);
+  const py = exportFlow(graph, 'python');
+  assert.ok(!/\bf"\{input\}"|\{input_output\}/.test(py.text), `实际：${py.text}`);
+  assert.ok(py.text.includes('f"{input_text}"'), `实际：${py.text}`);
+
+  const sh = exportFlow(graph, 'shell');
+  assert.ok(sh.text.includes('echo "$INPUT_TEXT"'), `实际：${sh.text}`);
+  // shell 侧必须真的定义这个变量，否则 set -u 下直接退出
+  assert.ok(/^INPUT_TEXT=/m.test(sh.text), `shell 里没有定义 INPUT_TEXT：${sh.text}`);
+});
+
+test('画布参数与循环变量：导出时保留 {{原样}} 并记进 skipped', () => {
+  /*
+   * 这两类的值**不在图数据里**（Graph 只有 nodes + edges），
+   * 循环结构本身也翻不成脚本。所以与运行时同一口径：保留痕迹 + 提示。
+   *
+   * 以前它们被拼成 INPUT_XXX / OUT_PARAMS：
+   *   · shell → 未定义变量，set -u 下退出
+   *   · python → NameError
+   * 都不是"看得懂"的失败。
+   */
+  const graph = g([
+    n('p1', 'log', { text: '{{params.价格}}' }),
+    n('p2', 'log', { text: '{{env.NAME}}' }),
+    n('p3', 'log', { text: '{{loop.item}}' }),
+  ]);
+  for (const fmt of ['shell', 'python'] as const) {
+    const r = exportFlow(graph, fmt);
+    for (const key of ['params.价格', 'env.NAME', 'loop.item']) {
+      // 痕迹要能真渲染出来 —— python 的 f-string 会吃掉一层花括号，
+      // 所以源码里必须是翻倍后的写法，这里断言的是**渲染结果**
+      assert.ok(
+        r.text.includes('{{' + key + '}}') || r.text.includes('{{{{' + key + '}}}}'),
+        `${fmt} 没留下 ${key} 的痕迹：${r.text}`,
+      );
+    }
+    assert.ok(
+      r.skipped.some((s) => s.reason.includes('{{params.价格}}')),
+      `${fmt} 没把 params 引用记进 skipped：${JSON.stringify(r.skipped)}`,
+    );
+  }
+});
+
+test('python：f-string 里的花括号要翻倍，占位符才不会被吃掉一层', () => {
+  /*
+   * f"{{params.X}}" 渲染出 `{params.X}` —— 少一层，
+   * 与运行时留下的 `{{params.X}}` 对不上，用户照着去搜会搜不到。
+   * 所以生成的是 `{{{{params.X}}}}`（渲染回两层）。
+   */
+  const r = exportFlow(g([n('p1', 'log', { text: '{{params.X}}' })]), 'python');
+  assert.ok(r.text.includes('{{{{params.X}}}}'), `实际：${r.text}`);
+  // 没有引用时输出的是普通字符串，那里的 { 是字面量，不该翻倍
+  const plain = exportFlow(g([n('p2', 'log', { text: 'a{b' })]), 'python');
+  assert.ok(plain.text.includes('"a{b"'), `没引用时不该翻倍：${plain.text}`);
 });
