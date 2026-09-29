@@ -12754,6 +12754,106 @@ group('Mermaid 字面 #quot; / #35; 被当成转义还原，往返改内容（BU
 }
 
 /* ============================================================
+   BUG 74 · 节点文字含控制字符 → 导出的 .opml/.mm 是无效 XML，导不回来
+   BUG 75 · 制表符被 XML 属性规范化吞成空格
+   ============================================================ */
+
+group('XML 导出：非法字符让文件整体报废；制表符被吞（BUG 74 / BUG 75）');
+
+/*
+ * 节点文字里带 0x07 / 0x0C 这类控制字符时（从终端、PDF、其它软件粘进来很常见），
+ * escXml 原样输出 —— 而 XML 1.0 **不允许**这些字符，写数字引用 `&#7;` 同样非法。
+ * 于是导出的 .opml / .mm 是无效 XML：DOMParser 报 parsererror，
+ * readXmlNodes 返回 null，fromOpml / fromFreemind 返回 null。
+ *
+ * 后果是**本插件导出的文件，本插件自己导不回来**：导入时提示"无法识别该文件"，
+ * 整份导入失败（实测六种控制字符全部 null）。别的软件同样打不开。
+ *
+ * 无法保留原字符（XML 1.0 里没有合法写法），只能按 nodeText 的惯例换成空格 ——
+ * 丢一个字符远好过整份文件报废。
+ *
+ * 另外：裸 tab 在 XML 属性值里会被规范化成空格，于是 `a\tb` 走 OPML 往返变成
+ * `a b`，而 Mermaid / XMind 原样保留 —— 同一段文字换个格式就换个样子。
+ * 写成 `&#9;`（字符引用不走属性规范化）即可保住。
+ */
+{
+  const f = await import('./formats.js');
+  const mk = (t) => JSON.stringify({
+    root: { data: { text: 'R' }, children: [{ data: { text: t }, children: [] }] },
+    template: 'default', theme: 'fresh-blue-compat',
+  });
+  const back1 = (fn, t) => {
+    const b = fn(mk(t));
+    if (!b) return null;
+    const k = JSON.parse(b).root.children || [];
+    return k.length === 1 ? k[0].data.text : '<条数不对>';
+  };
+
+  // ① 六种控制字符：往返不再返回 null（修复前整份导入失败）
+  for (const [name, t] of [
+    ['BEL 0x07', 'a\x07b'], ['FF 0x0C', 'a\x0cb'], ['VT 0x0B', 'a\x0bb'],
+    ['SOH 0x01', 'a\x01b'], ['ESC 0x1B', 'a\x1bb'], ['NUL 0x00', 'a\x00b'],
+  ]) {
+    const o = back1((x) => f.fromOpml(f.toOpml(x, 'T')), t);
+    const m = back1((x) => f.fromFreemind(f.toFreemind(x)), t);
+    ok(o !== null, `OPML：${name} 不再是无效 XML（修复前 fromOpml 返回 null）`, String(o));
+    ok(m !== null, `FreeMind：${name} 不再是无效 XML（修复前 fromFreemind 返回 null）`, String(m));
+    eq(o, 'a b', `OPML：${name} 换成空格而不是整份报废`);
+    eq(m, 'a b', `FreeMind：${name} 换成空格而不是整份报废`);
+  }
+
+  // ② 导出的 XML 里不得再出现非法字符，且能被解析
+  {
+    const xml = f.toOpml(mk('a\x07b\x0cc'), 'T');
+    ok(!/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(xml), '导出的 OPML 文本不含非法控制字符');
+    const d = new DOMParser().parseFromString(xml, 'application/xml');
+    eq(d.getElementsByTagName('parsererror').length, 0, '导出的 OPML 能被 XML 解析器接受');
+    eq(d.getElementsByTagName('outline').length, 2, '两个节点都在（根 + 子节点）');
+  }
+
+  // ③ 代理对不能被误删：不带 u 标志会把 emoji 当成两个非法码元
+  {
+    const t = 'a\u{1F600}b';
+    eq(back1((x) => f.fromOpml(f.toOpml(x, 'T')), t), t, 'emoji 往返原样保留（u 标志保住代理对）');
+    eq(f.escXml('a\u{1F600}b'), 'a\u{1F600}b', 'escXml 不破坏 emoji');
+    eq(f.escXml('a\uD83Db').length, 3, '孤立代理项仍被清掉');
+  }
+
+  // ④ 制表符保住（BUG 75）
+  {
+    eq(f.escXml('a\tb'), 'a&#9;b', 'escXml 把 tab 写成 &#9;');
+    eq(f.unescXml('a&#9;b'), 'a\tb', 'unescXml 认 &#9;（无 DOM 时的兜底路径也要对）');
+    eq(back1((x) => f.fromOpml(f.toOpml(x, 'T')), 'a\tb'), 'a\tb', 'OPML 往返保住 tab（修复前变 a b）');
+    eq(back1((x) => f.fromFreemind(f.toFreemind(x)), 'a\tb'), 'a\tb', 'FreeMind 往返保住 tab');
+    // Mermaid 本来就保得住，两种格式现在一致
+    eq(back1((x) => f.fromMermaid(f.toMermaid(x)), 'a\tb'), 'a\tb', 'Mermaid 往返同样保住 tab');
+  }
+
+  // ⑤ 常规转义不受影响
+  {
+    eq(f.escXml(`a&b<c>d"e'f`), 'a&amp;b&lt;c&gt;d&quot;e&apos;f', '五种常规转义不变');
+    eq(f.unescXml(f.escXml(`a&b<c>d"e'f`)), `a&b<c>d"e'f`, '常规转义往返一致');
+    eq(f.unescXml(f.escXml('a\tb&c')), 'a\tb&c', 'tab 与 & 同时出现时也对');
+    eq(back1((x) => f.fromOpml(f.toOpml(x, 'T')), 'a&b<c>"d"'), 'a&b<c>"d"', 'OPML 往返保留 & < > 引号');
+  }
+
+  // ⑥ 源码断言：非法字符清理 + tab 转义，两条都得在
+  {
+    const src = fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8').replace(/\r\n/g, '\n');
+    const i = src.indexOf('export function escXml');
+    ok(i > 0, '能定位 escXml');
+    const body = src.slice(i, i + 900);
+    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    ok(code.length > 0, '能剥出 escXml 的代码体（注释里同样写着控制字符，必须先剥）');
+    ok(/replace\(XML_ILLEGAL/.test(code), 'escXml 会清掉 XML 非法字符（只做常规转义就是 BUG 74）');
+    ok(/\\t/g.test(code) && /&#9;/.test(code), 'escXml 把 tab 写成 &#9;（漏了就是 BUG 75）');
+    const iIllegal = src.indexOf('const XML_ILLEGAL');
+    ok(iIllegal > 0 && /\/gu/.test(src.slice(iIllegal, iIllegal + 200)),
+      'XML_ILLEGAL 正则必须带 u 标志（不带会把 emoji 当成两个非法码元删掉）');
+  }
+}
+
+/* ============================================================
    结果
    ============================================================ */
 

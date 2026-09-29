@@ -34,18 +34,43 @@ const DEFAULT_THEME = 'fresh-blue-compat';
    ------------------------------------------------------------ */
 
 /**
+ * XML 1.0 里**根本不允许出现**的字符（连写成 `&#1;` 这样的数字引用也非法）。
+ * 合法集：#x9 #xA #xD #x20-#xD7FF #xE000-#xFFFD #x10000-#x10FFFF。
+ *
+ * 必须带 `u` 标志：不带时字符串按 UTF-16 码元切分，emoji（代理对）会被
+ * 当成两个非法码元一起删掉 —— 实测 `a😀b` 会变成 `a  b`。
+ * 带 u 后按码点匹配，代理对是一个码点，不再命中。
+ */
+const XML_ILLEGAL = /[\u{0}-\u{8}\u{B}\u{C}\u{E}-\u{1F}\u{D800}-\u{DFFF}\u{FFFE}\u{FFFF}]/gu;
+
+/**
  * XML 属性/文本转义（纯函数，可测）。
  *
  * `&` 必须**第一个**替换，否则会把后面生成的 `&amp;` 里的 & 又转义一遍，
  * 变成 `&amp;amp;`。
+ *
+ * 两件容易漏的事（BUG 74 / BUG 75）：
+ *
+ * ① **先清掉 XML 非法字符**。节点文字里带 0x07、0x0C 这类控制字符时
+ * （从终端、PDF、其它软件粘进来的很常见），导出的 .opml / .mm 是**无效 XML**
+ * —— DOMParser 直接报 parsererror，`fromOpml`/`fromFreemind` 返回 null。
+ * 后果是：本插件导出的文件，本插件自己导不回来（提示"无法识别该文件"，
+ * 整份导入失败），别的软件也打不开。数字引用救不了（XML 1.0 里同样非法），
+ * 只能替换掉；按 nodeText 的惯例换成空格。
+ *
+ * ② **制表符要写成 `&#9;`**。XML 的属性值规范化会把裸 tab 变成空格，
+ * 于是 `a\tb` 走 OPML 往返变成 `a b`，而 Mermaid / XMind 原样保留 ——
+ * 同一段文字换个格式就换了个样子。字符引用不走属性规范化，能保住原字符。
  */
 export function escXml(s) {
   return String(s ?? '')
+    .replace(XML_ILLEGAL, ' ')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+    .replace(/'/g, '&apos;')
+    .replace(/\t/g, '&#9;');
 }
 
 /** XML 实体反转义（供无 DOM 环境兜底；有 DOMParser 时由它处理） */
@@ -55,6 +80,7 @@ export function unescXml(s) {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
+    .replace(/&#9;/g, '\t')
     .replace(/&amp;/g, '&');
 }
 
