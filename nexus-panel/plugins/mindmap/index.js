@@ -842,9 +842,36 @@ bootIframePlugin(async (ctx) => {
     if (workbook.sheets.length <= 1) { status('至少保留一张画布', true); return; }
     const i = workbook.sheets.findIndex((s) => s.id === id);
     if (i < 0) return;
-    workbook.sheets.splice(i, 1);
+
+    /*
+     * 删除单张画布必须二次确认（danger），与「删除脑图文件」一致。
+     *
+     * 早先删除文件 / 删除文件夹 / 移除附件 / 删除分组 / 清空快照全都走确认，
+     * **删画布是唯一漏网的** —— 而它偏偏最容易误触：✕ 就长在页签上，
+     * 用户点页签是为了切换画布，一次手滑就把整张画布删掉了。
+     *
+     * 而且删掉之后**完全找不回来**，三条退路一条都不通：
+     *   ① 紧跟其后的 persist() 立刻落盘；
+     *   ② 撤销栈存的是节点内容快照，覆盖不到画布增删；
+     *   ③ 这条路径不走自动保存，于是也不会留一份快照 ——
+     *      连「历史快照」里都翻不到。
+     */
+    const name = workbook.sheets[i]?.title || '';
+    if (!await askConfirm({
+      message: `删除画布「${name}」？该画布的全部内容会一并删除，且撤销找不回来。`,
+      danger: true,
+    })) return;
+
+    /*
+     * 确认期间让出了控制权，画布可能已被别的操作改过 —— 下标必须重新取，
+     * 否则会把**另一张**画布删掉（i 是确认之前算的）。
+     */
+    const at = workbook.sheets.findIndex((s) => s.id === id);
+    if (at < 0) return;
+    if (workbook.sheets.length <= 1) { status('至少保留一张画布', true); return; }
+    workbook.sheets.splice(at, 1);
     if (workbook.activeId === id) {
-      workbook.activeId = workbook.sheets[Math.min(i, workbook.sheets.length - 1)].id;
+      workbook.activeId = workbook.sheets[Math.min(at, workbook.sheets.length - 1)].id;
       await loadSheet();
     }
     renderTabs();

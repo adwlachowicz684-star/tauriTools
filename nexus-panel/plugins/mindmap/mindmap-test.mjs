@@ -12196,6 +12196,63 @@ group('BUG 66 · 切换脑图文件时，读取失败必须中止切换（不能
 }
 
 
+
+/* ============================================================
+   BUG 67 · 删除画布没有二次确认，误点页签 ✕ 就永久丢一张画布
+   ============================================================ */
+
+group('BUG 67 · 删除画布必须二次确认（✕ 长在页签上，删完不可恢复）');
+{
+  const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+
+  /*
+   * 删除脑图文件 / 删除文件夹 / 移除附件 / 删除分组 / 清空快照全都走 askConfirm，
+   * 唯独 removeSheet 是直接 splice + persist()。
+   *
+   * 而它偏偏**最容易误触**：✕ 长在页签里，用户点页签本意是切换画布，
+   * 手一滑就是删掉整张。删掉之后三条退路一条都不通：
+   *   ① 紧跟其后的 persist() 立刻落盘；
+   *   ② 撤销栈存的是节点内容快照，覆盖不到画布增删；
+   *   ③ 这条路径不走自动保存，于是也不留快照 —— 连「历史快照」里都翻不到。
+   * 所以确认框是**唯一**防线，必须补上。
+   */
+  const rs = ix.slice(ix.indexOf('async function removeSheet(id) {'),
+    ix.indexOf('/**', ix.indexOf('async function removeSheet(id) {')));
+  ok(rs.length > 0, '能定位 removeSheet 函数体');
+
+  // ① 必须真的问一句，且与删文件一致地标 danger
+  ok(/askConfirm\(/.test(rs), 'removeSheet：走 askConfirm 二次确认');
+  ok(/danger:\s*true/.test(rs), 'removeSheet：确认框标 danger（与删除脑图文件一致）');
+
+  // ② 顺序：取消必须发生在 splice 之前 —— 反过来就等于「先删再问」
+  const iAsk = rs.indexOf('askConfirm(');
+  const iSplice = rs.indexOf('sheets.splice(');
+  ok(iAsk > 0 && iSplice > iAsk, 'removeSheet：确认在 splice 之前（否则等于先删再问）');
+  ok(/if\s*\(!\s*await\s+askConfirm\(/.test(rs), 'removeSheet：取消就 return，不往下删');
+
+  // ③ 确认期间让出了控制权，下标必须**重新取** —— 用确认前算的 i 会删错画布
+  ok(/const\s+at\s*=\s*workbook\.sheets\.findIndex\(/.test(rs),
+    'removeSheet：确认之后重新取下标');
+  ok(/sheets\.splice\(at,\s*1\)/.test(rs),
+    'removeSheet：splice 用的是重取后的 at（不是确认前的 i）');
+  ok(!/sheets\.splice\(i,\s*1\)/.test(rs),
+    'removeSheet：不再拿确认前的旧下标 i 去 splice');
+
+  // ④ 只剩一张时不能删 —— 且确认之后要再判一次（期间可能又删了别的）
+  const nSingle = (rs.match(/sheets\.length\s*<=\s*1/g) || []).length;
+  ok(nSingle >= 2, 'removeSheet：只剩一张的守卫在确认前后各判一次（' + nSingle + ' 处）');
+
+  // ⑤ 这条路径确实不写快照 —— 所以确认是唯一防线。
+  //    将来若给删画布补了快照，这条断言要跟着改，别当成过期断言直接删。
+  ok(!/pushBackup/.test(rs), 'removeSheet：不写快照（因此确认是唯一防线）');
+
+  // ⑥ 页签 ✕ 的入口仍然指向 removeSheet（别为了加确认把入口改没了）
+  const iX = ix.indexOf("title: '删除该画布'");
+  ok(iX > 0, '能定位页签 ✕（删除该画布）');
+  ok(/removeSheet\(/.test(ix.slice(Math.max(0, iX - 300), iX + 200)),
+    '页签 ✕ 仍指向 removeSheet');
+}
+
 /* ============================================================
    结果
    ============================================================ */
