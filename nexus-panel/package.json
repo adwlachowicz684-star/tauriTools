@@ -67,6 +67,7 @@
     "test:owned": "node owned-test.mjs",
     "test:owned-timer": "node owned-timer-test.mjs",
     "test:pg": "node plugins/project-group/drag-payload-test.mjs",
+    "test:pg-backup-report-truth": "node plugins/project-group/backup-report-truth-test.mjs",
     "test:plugin-admit": "node plugin-admit-test.mjs",
     "test:plugin-theme": "node plugin-theme-test.mjs",
     "test:react": "node smoke-react.mjs",

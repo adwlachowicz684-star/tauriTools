@@ -76,6 +76,23 @@ export function useFpx() {
     setLog((l) => [{ at: now(), text, isError }, ...l].slice(0, max));
   }, []);
 
+  /*
+   * 改小上限后**立刻**把已有的日志截断。
+   *
+   * `pushLog` 只在**新增**时 slice，所以把 500 改成 50 之后已有那 300 条不会被动。
+   * 而界面上写的是「{s.log.length}/{logMax}」，于是显示成 "300/50" ——
+   * 当前条数比上限还大，且会随新日志进来逐条往下掉，
+   * 表现为"我什么都没做，数字自己在变小"。
+   *
+   * 更麻烦的是显示区只渲染 `slice(0, logMax)`：数字说 300、实际只看得到 50 条，
+   * 「复制全部」也就只能拿到 50 条。两个信号互相矛盾，用户无从判断哪个是真的。
+   */
+  const logMaxLines = boot?.config?.logMaxLines;
+  useEffect(() => {
+    const max = logMaxRef.current;
+    setLog((l) => (l.length > max ? l.slice(0, max) : l));
+  }, [logMaxLines]);
+
   /** 清空日志（原版 ClearCommand）。
    *  只是会话内的操作流水，不是业务数据，清了不损失任何登记。 */
   const clearLog = useCallback(() => setLog([]), []);

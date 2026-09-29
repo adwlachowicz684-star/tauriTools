@@ -36,8 +36,36 @@ export function BackupDialog({
     try {
       const r = await api.backup(kind, dir.trim() || null, appendOnly);
       setResult(r);
-      onLog(`备份${kind === 'group' ? '项目组' : '项目'}完成：${r.sources} 个源，新增 ${r.newFiles}、更新 ${r.updatedFiles}`);
-      for (const e of r.errors.slice(0, 5)) onLog(e, true);
+      const label = kind === 'group' ? '项目组' : '项目';
+      const errN = r.errors.length;
+      /*
+       * 一个源都没处理上、却带着原因 —— 那是**整体被跳过**
+       * （后端 backup.rs 的「已有备份正在进行，本次未执行」走的就是这条）。
+       *
+       * 这里若照旧写「完成」，是彻底的谎报：磁盘上一个文件都没动，
+       * 界面却说备份做完了。而备份的意义只在"源出事时还有一份"，
+       * 用户要等到真的去找那份备份时才会发现它不存在。
+       */
+      if (r.sources === 0 && errN > 0) {
+        onLog(`备份${label}未执行：${r.errors[0]}`, true);
+      } else {
+        /*
+         * 有异常必须写出来，不能只说"完成"。
+         *
+         * `errors` 记的是"这个文件没备份进去"（枚举失败 / 复制失败 / 冲突跳过），
+         * 所以有异常 = **这份备份不完整**。而后端 `BackupResult::summary()`
+         * 自带「异常 N 条」，MCP 回包用的正是它 —— 这里不带的话，
+         * 同一件事就有了两个说法：MCP 说"异常 30 条"、界面日志说"完成"。
+         */
+        onLog(
+          `备份${label}完成${errN ? `，但有 ${errN} 处异常（备份不完整）` : ''}`
+            + `：${r.sources} 个源，新增 ${r.newFiles}、更新 ${r.updatedFiles}`,
+          errN > 0,
+        );
+        for (const e of r.errors.slice(0, 5)) onLog(e, true);
+        /* 只转 5 条却不说明还有多少，用户会以为就这 5 个 */
+        if (errN > 5) onLog(`……还有 ${errN - 5} 条异常，见结果区「异常 ${errN} 条」`, true);
+      }
       onSaved({
         backupDir: dir.trim() || null,
         backupProjectDir: projectDir.trim() || null,
@@ -110,6 +138,11 @@ export function BackupDialog({
               <summary className="p-muted">异常 {result.errors.length} 条</summary>
               <ul className="fpx-errlist">
                 {result.errors.slice(0, 20).map((e, i) => <li key={i}>{e}</li>)}
+                {/* 折叠标题写着"异常 N 条"，只列 20 条的话数与内容对不上，
+                    用户会以为界面坏了或者自己数错了 */}
+                {result.errors.length > 20 && (
+                  <li className="p-muted">……还有 {result.errors.length - 20} 条未列出</li>
+                )}
               </ul>
             </details>
           )}
