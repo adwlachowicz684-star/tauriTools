@@ -216,6 +216,21 @@ bootIframePlugin(async (ctx) => {
   function syncCanvasInset() {
     const filesEl = fileList && fileList.el;
     if (!filesEl) return;
+    /*
+     * 先把浮层的**左**边缘钉到画布左边缘，再去量它的右边缘。
+     *
+     * 它是 .mm-body 的绝对定位子项，而 .mm-body 的最左边是图标条
+     * （📚 / ⌖ / 展开层级）。CSS 里只给了 top/bottom 没给 left，静态位置
+     * 于是落在 body 内容起点 —— 展开后整条图标条被盖在下面：
+     * 实测 elementFromPoint 打在 📚 上命中的是面板标题，而 📚 正是**收起
+     * 文件列表**那颗按钮，等于打开了就点不回去（BUG 65）。
+     *
+     * 用 offsetLeft（相对同一个 offsetParent=.mm-body）而不是写死像素：
+     * 图标条宽度随按钮增减变化，写死就会错开。
+     */
+    try {
+      filesEl.style.left = `${Math.max(0, Math.round(canvasEl.offsetLeft))}px`;
+    } catch { /* 量不到就沿用 CSS 默认，不至于让面板消失 */ }
     let visible = false;
     try { visible = getComputedStyle(filesEl).display !== 'none'; } catch { return; }
     if (!visible) { canvasFrameEl.style.left = ''; return; }
@@ -935,26 +950,54 @@ bootIframePlugin(async (ctx) => {
   /**
    * 切到另一个脑图文件。
    *
-   * @returns {Promise<boolean>} 设置（lastFileId）是否写成功。
-   *   返回它是因为**每个**调用方在切换之后都会再写一句状态
-   *   （「已打开：…」「已删除：…」），那会把 saveStore 的失败提示直接盖掉 ——
-   *   于是「下次启动回到上一个文件」这件要紧事一句都不说。
-   *   调用方拿到 false 时要把这个后果带进自己的那句话里。
+   * @returns {Promise<{switched:boolean, remembered:boolean}>}
+   *   · switched —— 到底切没切。**读失败时为 false**，调用方必须据此
+   *     停止后续动作，不能再报「已打开 / 已删除」；
+   *   · remembered —— 设置（lastFileId）是否写成功。
+   *     返回它是因为**每个**调用方在切换之后都会再写一句状态
+   *     （「已打开：…」「已删除：…」），那会把 saveStore 的失败提示直接盖掉 ——
+   *     于是「下次启动回到上一个文件」这件要紧事一句都不说。
+   *     调用方拿到 false 时要把这个后果带进自己的那句话里。
    */
   async function switchToFile(id) {
+    /*
+     * **读取必须在改动任何状态之前做，且读失败必须中止切换。**
+     *
+     * store.get 读不出来时是「吞异常、返回默认值 null」（见 store.js 读路径
+     * 的注释），于是 `|| wb.newWorkbook()` 把「读失败」当成了「这个文件还
+     * 没有内容」—— 界面立刻变成一张空脑图，而**写路径往往是好的**
+     * （配额触顶影响写入不影响读取；单条记录损坏更是只坏那一条）。
+     * 用户在空图上继续编辑，persist() 就把真内容**覆盖成空的**
+     * —— 静默丢一整份脑图，且没有任何提示。
+     *
+     * 判据用 lastStoreError 的**前后差**而不是「非空」：store 记的是
+     * 「最近一次」错误，只看非空会把更早留下的旧错误当成这次的失败，
+     * 于是每次切文件都拒绝切换。
+     *
+     * 用掉之后必须 reset：这条错误已经说给用户听了，留着会在别处重复弹。
+     */
+    const errBefore = store.lastStoreError();
+    const loaded = await store.doc(id).load();
+    const errAfter = store.lastStoreError();
+    if (!loaded && errAfter && errAfter !== errBefore) {
+      store.resetStoreError();
+      status('读取失败：' + errAfter + '（已留在当前脑图，未切换）', true);
+      return { switched: false, remembered: false };
+    }
+
     currentFileId = id;
     settings.lastFileId = id;
     // 写失败（配额）只是"下次启动回到上一个文件"，不拦住切换本身 ——
     // 但必须说出来，否则用户以为记住了。
     const okSettings = await saveStore('设置', () => store.settings.save(settings));
-    workbook = (await store.doc(id).load()) || wb.newWorkbook();
+    workbook = loaded || wb.newWorkbook();
     workbook.sheets = wb.normalizeSheets(workbook.sheets);
     resetHistory();
     renderTabs();
     renderFiles();
     await loadSheet();
     updateBadge();
-    return okSettings;
+    return { switched: true, remembered: okSettings };
   }
 
   /** 打开另一个脑图文件：先收当前编辑并落盘，失败则拒绝切换（避免丢内容） */
@@ -964,9 +1007,12 @@ bootIframePlugin(async (ctx) => {
     capture();
     const saved = await persist();
     if (!saved) { status('切换失败：当前脑图没能保存', true); return; }
-    const remembered = await switchToFile(id);
+    const r = await switchToFile(id);
+    // 没切成就别说「已打开」—— 那句会把 switchToFile 刚写的失败原因盖掉，
+    // 用户看到「已打开：X」而画布上还是另一份内容。
+    if (!r.switched) return;
     status('已打开：' + (fileIndex.find((f) => f.id === id)?.name || '')
-      + (remembered ? '' : '（未能记住：下次启动会回到上一个文件）'));
+      + (r.remembered ? '' : '（未能记住：下次启动会回到上一个文件）'));
   }
 
   async function createFile(folderId = null) {
@@ -1162,7 +1208,7 @@ async function gcOrphanAssets(quiet = false) {
     // 内容，而 gcOrphanAssets 拿 workbook 做「仍然在用」的基准，晚一步基准就错了。
     await gcOrphanAssets();
     if (id === currentFileId) {
-      if (fileIndex.length) remembered = await switchToFile(fileIndex[0].id);
+      if (fileIndex.length) remembered = (await switchToFile(fileIndex[0].id)).remembered;
       else await createFile(null);        // 删光了也要能继续用
     }
     renderFiles();
@@ -2926,6 +2972,13 @@ async function gcOrphanAssets(quiet = false) {
   syncCanvasInset();
   captureShellErrors();
   buildRail();
+  /*
+   * 图标条建好之后**必须再同步一次**：syncCanvasInset 是按 canvasEl.offsetLeft
+   * 实测浮层左边缘的，而 buildRail() 会往图标条里塞按钮、把画布整体往右推。
+   * 上面那次同步发生在 buildRail() 之前，量到的是"空图标条"的宽度 ——
+   * 若上次会话文件库是展开的，浮层就会偏左、压住半条图标条（BUG 65）。
+   */
+  syncCanvasInset();
   renderTabs();
   renderFiles();
 

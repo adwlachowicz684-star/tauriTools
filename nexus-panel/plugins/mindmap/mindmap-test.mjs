@@ -20,6 +20,7 @@ import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -7999,15 +8000,17 @@ group('文件库展开导致画布内容位移：按实测屏幕位置差补偿'
     'rootScreenX 取不到时返回 null（不是 0）');
   ok(!/rootScreenX/.test(wsrSeg), '补偿链路不依赖 rootScreenX（iframe 内测不到容器位移）');
 
-  // ---- 4) 几何账：216 = 浮层宽 186 + padding 10×2 + gap 10 ----
+  // ---- 4) 几何账 ----
   //
-  // ⚠️ 原先钉的是 `flex: 0 0 186px`（挤窄布局）。改成浮层后宽度靠
-  //    `width: 186px` 给，不再是 flex-basis —— 判据必须跟着改，
-  //    否则会一直红、且误导人去把实现改回挤窄。
+  // ⚠️ 这一条曾钉成 `flex: 0 0 186px`（挤窄画布方案），而实现早已改成
+  //    浮层（absolute + width）。**改实现前先读这段注释** —— 断言过期
+  //    会把正确的实现判成错，逼着人去"修"一个没坏的东西。
+  //    浮层方案下画布尺寸恒定，几何账只剩"面板自身宽度"。
   {
     const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
     const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
-    ok(/width:\s*186px/.test(filesBlk), '.mm-files 宽 186px（浮层，非 flex-basis）');
+    ok(/width:\s*186px/.test(filesBlk), '.mm-files 宽 186px（浮层，不再是 flex 子项）');
+    ok(/position:\s*absolute/.test(filesBlk), '.mm-files 是浮层（不参与挤压、画布尺寸不变）');
     ok(/padding:\s*10px/.test(filesBlk), '.mm-files padding 10（左右合计 20）');
     const bodyBlk = css.slice(css.indexOf('.mm-body {'), css.indexOf('.mm-body {') + 200);
     ok(/gap:\s*10px/.test(bodyBlk), '.mm-body gap 10');
@@ -10770,13 +10773,25 @@ group('写盘失败不能被随后的「已重命名 / 已新建」盖掉');
   // 切文件：switchToFile 必须把「设置没写成功」交回调用方
   {
     const st = strip(fnBodies(idx).find((x) => x.name === 'switchToFile').body);
-    ok(/return\s+okSettings;/.test(st), 'switchToFile：返回设置写入结果（供调用方带上后果）');
+    /*
+     * 返回值从「布尔（设置有没有写成功）」改成「{switched, remembered}」：
+     * 读失败时必须**中止切换**，而调用方不能再报「已打开 / 已删除」——
+     * 那句会把 switchToFile 刚写下的失败原因盖掉。
+     */
+    ok(/return\s*\{\s*switched:\s*true,\s*remembered:\s*okSettings\s*\}/.test(st),
+      'switchToFile：成功时返回 {switched:true, remembered:okSettings}');
+    ok(/return\s*\{\s*switched:\s*false,\s*remembered:\s*false\s*\}/.test(st),
+      'switchToFile：读失败时返回 switched:false（调用方据此停止后续动作）');
     const of = strip(fnBodies(idx).find((x) => x.name === 'openFile').body);
+    ok(/if\s*\(!r\.switched\)\s*return;/.test(of),
+      'openFile：没切成就别说「已打开」（会盖掉 switchToFile 的失败原因）');
     ok(/remembered\s*\?\s*''\s*:\s*'（未能记住/.test(of), 'openFile：没记住要说出来，不能被「已打开」盖掉');
     // deleteFile 也会切文件（删掉当前文件时），同样不能把提示盖掉
     const df = strip(fnBodies(idx).find((x) => x.name === 'deleteFile').body);
     ok(/remembered\s*\?\s*''\s*:\s*'（未能记住/.test(df), 'deleteFile：切到别的文件时也不能盖掉「未记住」');
     ok(/let\s+remembered\s*=\s*true;/.test(df), 'deleteFile：remembered 初值为 true（没切文件就不该报）');
+    ok(/\(await switchToFile\([^)]*\)\)\.remembered/.test(df),
+      'deleteFile：取返回值的 .remembered（返回值已不是布尔）');
   }
 }
 
@@ -12036,6 +12051,148 @@ group('BUG 61 · 主题的新建 / 导入 / 删除，写盘失败都必须回滚
     return j < 0 ? '' : ob.slice(j, i);
   })();
   ok(/askConfirm/.test(restoreSeg), '恢复快照：仍走 askConfirm（与清空对称）');
+}
+
+
+/* ============================================================
+   BUG 65 · 文件库浮层压住整条左侧图标条（含「收起」那颗 📚）
+   ============================================================ */
+
+group('BUG 65 · 文件库浮层的左边缘必须钉在画布上，不能盖住图标条');
+{
+  const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+
+  /*
+   * 实测（真实 Chrome + 真实 styles.css，复制 .mm-body 骨架）：
+   *
+   *   rail 0..46 │ canvas 56..890 │ .mm-files 绝对定位、CSS 只给了 top/bottom
+   *
+   *   不显式给 left 时静态位置落在 .mm-body 内容起点 → 浮层占据 0..206，
+   *   整条 rail 被盖在下面：elementFromPoint 打在 📚 上命中的是面板标题
+   *   （.mm-files-title），而 📚 正是**收起文件列表**那颗按钮 ——
+   *   打开了就点不回去，⌖ 聚焦和「展开层级」也一起够不着。
+   *
+   *   给 left = canvasEl.offsetLeft 后：浮层 56..262、假框 left=206，
+   *   elementFromPoint 重新命中按钮本身。
+   */
+  const fnSeg = ix.slice(ix.indexOf('function syncCanvasInset() {'),
+    ix.indexOf('/**', ix.indexOf('function syncCanvasInset() {')));
+  ok(fnSeg.length > 0, '能定位 syncCanvasInset 函数体');
+
+  // 1) 必须真的给浮层写 left —— 只改 CSS 或只改 DOM 父级都守不住：
+  //    图标条宽度随按钮增减变化，写死像素会错开，故用实测的 offsetLeft。
+  ok(/filesEl\.style\.left\s*=/.test(fnSeg),
+    'syncCanvasInset 实测写入浮层的 left（不是靠 CSS 静态位置）');
+  ok(/canvasEl\.offsetLeft/.test(fnSeg),
+    '用 canvasEl.offsetLeft 取画布左边缘（同一个 offsetParent，随图标条宽度自适应）');
+
+  // 2) 顺序：先钉左边缘，再量右边缘。
+  //    反过来的话量到的是旧的（偏左的）rect，假框会跟着偏。
+  const iSetLeft = fnSeg.indexOf('filesEl.style.left');
+  ok(iSetLeft > 0, '函数里有写 left 这一步');
+  ok(/getBoundingClientRect/.test(fnSeg.slice(iSetLeft)),
+    '写 left 在量 rect 之前（先钉左边缘再量右边缘）');
+  ok(/canvasFrameEl\.style\.left\s*=\s*''/.test(fnSeg),
+    '浮层不可见时假框回到全宽（left 置空）');
+
+  // 3) 图标条建好之后必须**再同步一次**。
+  //
+  //    初始化顺序是 setLayoutHook → showFiles → syncCanvasInset → buildRail：
+  //    buildRail() 往 rail 里塞按钮会把画布整体往右推，而那次同步发生在
+  //    它之前、量到的是"空图标条"的宽度。上次会话文件库是展开状态时，
+  //    浮层就会偏左压住半条图标条 —— 这是"只修了函数、没修调用时机"。
+  // 两个下标都必须从 setLayoutHook 之后开始找 —— 直接 indexOf('renderTabs();')
+  // 会命中文件里更早的那一处（页签重建那条路径），切出来的 initSeg 是空串，
+  // 于是两条断言**恒为假**（不是实现错了，是切片错了）。
+  const iHook = ix.indexOf('fileList.setLayoutHook(syncCanvasInset)');
+  const initSeg = ix.slice(iHook, ix.indexOf('renderTabs();', iHook));
+  const iRail = initSeg.indexOf('buildRail();');
+  const iSync = initSeg.lastIndexOf('syncCanvasInset();');
+  ok(iRail > 0, '初始化段里有 buildRail()');
+  ok(iSync > iRail, 'buildRail() 之后还有一次 syncCanvasInset()（图标条宽度变了要重测）');
+
+  // 4) CSS 侧：浮层必须仍是浮层（别为了修这个把方案退回"挤窄画布"）
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+  const filesBlk = css.slice(css.indexOf('.mm-files {'), css.indexOf('.mm-files.open'));
+  ok(/position:\s*absolute/.test(filesBlk), '.mm-files 仍是浮层（画布尺寸不随开合变化）');
+}
+
+
+/* ============================================================
+   BUG 66 · 切文件时读失败被当成「空脑图」，真内容会被覆盖
+   ============================================================ */
+
+group('BUG 66 · 切换脑图文件时，读取失败必须中止切换（不能静默开成空图）');
+{
+  const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+
+  /*
+   * store.get 读不出来时是「吞异常、返回默认值 null」（见 store.js 读路径
+   * 的注释）。switchToFile 原写法：
+   *
+   *     workbook = (await store.doc(id).load()) || wb.newWorkbook();
+   *
+   * 把「读失败」当成了「这个文件还没有内容」—— 界面立刻变成一张空脑图，
+   * 而**写路径往往是好的**（配额触顶影响写入不影响读取；单条记录损坏更是
+   * 只坏那一条）。用户在空图上继续编辑，persist() 就把真内容覆盖成空的：
+   * 静默丢一整份脑图，且一句提示都没有。
+   *
+   * 先用子进程实测 store 的读失败行为，再断言上层的守卫。
+   */
+  const probe = `const STORE_URL = 'file://' + ${JSON.stringify(path.join(HERE, 'store.js'))};
+
+    const mkTx = () => {
+      const t = {};
+      t.objectStore = () => ({ get: () => ({}), put: () => ({}), delete: () => ({}), getAllKeys: () => ({}) });
+      setTimeout(() => { if (typeof t.onerror === 'function') t.onerror(); }, 0);
+      return t;
+    };
+    const db = { transaction: () => mkTx(), objectStoreNames: { contains: () => true }, createObjectStore: () => ({}) };
+    globalThis.indexedDB = { open: () => { const r = {}; setTimeout(() => { r.result = db; r.onsuccess && r.onsuccess(); }, 0); return r; } };
+    const s = await import(STORE_URL);
+    s.resetStoreError();
+    const v = await s.doc('abc').load();
+    console.log(JSON.stringify({ v: v === null ? 'null' : String(v), err: s.lastStoreError() }));
+  `;
+
+  let out = '';
+  try {
+    out = execFileSync(process.execPath, ['--input-type=module', '-e', probe], { encoding: 'utf8' });
+  } catch (e) { out = String(e.stdout || ''); }
+  const got = (() => { try { return JSON.parse(out.trim().split('\\n').pop()); } catch { return null; } })();
+  ok(got && got.v === 'null', '实测：store.doc().load() 读失败时返回 null（不抛）', out.slice(0, 120));
+  ok(got && /读取失败/.test(got.err || ''), '实测：读失败会记进 lastStoreError（可据此判定）', String(got && got.err));
+
+  const st = ix.slice(ix.indexOf('async function switchToFile(id) {'),
+    ix.indexOf('/**', ix.indexOf('async function switchToFile(id) {')));
+  ok(st.length > 0, '能定位 switchToFile 函数体');
+
+  // ① 读必须在改动任何状态之前 —— 否则中止时已经把 currentFileId 改掉了
+  const iRead = st.indexOf('store.doc(id).load()');
+  const iCur = st.indexOf('currentFileId = id');
+  ok(iRead > 0 && iCur > iRead, '读取在 currentFileId = id 之前（失败时能干净地中止）');
+
+  // ② 判据必须是 lastStoreError 的**前后差**，不能只判非空：
+  //    store 记的是「最近一次」错误，只判非空会把更早留下的旧错误当成这次失败，
+  //    于是每次切文件都拒绝切换。
+  ok(/const\s+errBefore\s*=\s*store\.lastStoreError\(\);/.test(st), 'switchToFile：读之前先取一次 lastStoreError');
+  ok(/const\s+errAfter\s*=\s*store\.lastStoreError\(\);/.test(st), 'switchToFile：读之后再取一次');
+  ok(/errAfter\s*&&\s*errAfter\s*!==\s*errBefore/.test(st),
+    'switchToFile：判据是前后差（不是「lastStoreError 非空」）');
+  ok(/!\s*loaded\s*&&/.test(st), 'switchToFile：只在没读到内容时才判失败');
+
+  // ③ 用掉之后必须 reset —— 这条已经说给用户听了，留着会在别处重复弹
+  ok(/store\.resetStoreError\(\);/.test(st), 'switchToFile：错误已通报后清掉，避免别处重复弹');
+
+  // ④ 读到的结果要复用，不能 `|| newWorkbook()` 直接兜底还照样往下走
+  ok(/workbook\s*=\s*loaded\s*\|\|\s*wb\.newWorkbook\(\);/.test(st),
+    'switchToFile：用读到的 loaded（新文件才回落空工作簿）');
+
+  // ⑤ 调用方：没切成就不能报「已打开 / 已删除」
+  const of = ix.slice(ix.indexOf('async function openFile(id) {'),
+    ix.indexOf('/**', ix.indexOf('async function openFile(id) {')));
+  ok(/if\s*\(!r\.switched\)\s*return;/.test(of), 'openFile：没切成就直接返回，不说「已打开」');
+  ok(/r\.remembered\s*\?\s*''\s*:/.test(of), 'openFile：「未记住」读的是 r.remembered');
 }
 
 
