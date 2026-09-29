@@ -802,15 +802,6 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
 
     let s = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
 
-    /**
-     * 把一条路径登记进指定页签（#S3 抽出共用）。
-     *
-     * `add_card` 与 `create_folder` 都要往页签里塞卡片，**共用这一份** ——
-     * 各写一遍的话，越界提示的措辞、越界时的行为迟早会分叉，
-     * 而这类分叉的表现是"同一个序号在一个工具里报错、在另一个里静默改到别处"。
-     *
-     * 返回 (页签名, 是否原本已在其中)。
-     */
     /** 某类页签的数量。空清单按 1 算 —— 登记时会自动补一个「默认」。 */
     fn tab_count_of(dir: &Path, kind: &str) -> usize {
         let cfg = super::store::load_config(dir);
@@ -831,6 +822,25 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             n.saturating_sub(1))
     }
 
+    /**
+     * 把一条路径登记进指定页签（#S3 抽出共用）。
+     *
+     * `add_card` 与 `create_folder` 都要往页签里塞卡片，**共用这一份** ——
+     * 各写一遍的话，越界提示的措辞、越界时的行为迟早会分叉，
+     * 而这类分叉的表现是"同一个序号在一个工具里报错、在另一个里静默改到别处"。
+     *
+     * ⚠️ **本函数不过白名单**，调用方必须先自己过一道。
+     * 这里只有 `reject_forbidden_raw`（系统目录 / 整块盘），挡不住
+     * `~/.ssh`、`~/Documents` 这类具体子目录。
+     *
+     * 为什么强调这条：**登记 = 把路径加进 `content_roots`**，
+     * 而 `read_file` 正按 `content_roots` 收口 —— 漏了调用方那道，
+     * 就凑成"add_card 任意路径 → read_file 同一路径"的任意文件读取。
+     * 本函数被两处调用，只有挨着它的那处看得见这条说明，
+     * 所以判据写在各自的分支里（add_card 分支有完整推导）。
+     *
+     * 返回 (页签名, 是否原本已在其中)。
+     */
     fn register_card(
         dir: &Path,
         kind: &str,
@@ -1022,6 +1032,38 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             let kind = s("kind");
             let path = s("path");
             if path.is_empty() { return Err(err("path 必填")); }
+            /*
+             * 白名单**不能省**，而且必须在这里（调用方）过，不能指望 register_card。
+             * ------------------------------------------------------------------
+             * 这条漏掉的后果不是"多登记一个路径"，是一条完整的提权链：
+             *
+             *   1. `content_roots` 的第一项就是**页签登记的路径**（见 mod.rs），
+             *      于是登记 = 把该路径加进白名单；
+             *   2. `read_file` 走 `core_read_file`，它按 `content_roots` 收口；
+             *   3. 于是 `add_card(任意路径)` → `read_file(同一路径)` 就能读到
+             *      **任意文件** —— 而单看 `read_file` 是有校验的、合规的。
+             *
+             * 这正是 guard.rs 模块头里写明的教训："每个命令各写一套（或干脆不写）
+             * 路径校验，迟早漏一个" —— 这里漏的就是 add_card。
+             *
+             * `register_card` 里只有 `reject_forbidden_raw`（系统目录 / 整块盘），
+             * 它挡不住 `~/.ssh`、`~/Documents` 这类**具体子目录**：
+             * 黑名单按"家目录根"比对，子目录不在表里。所以别指望它兜住。
+             *
+             * 为什么这里可以严格收口而不误伤：白名单是组件级前缀比较，
+             * `已登记目录/子目录` 照样放行 —— 先 `create_folder`（它已校验 parent）
+             * 再登记新目录的正常流程不受影响。真正会被拒的是"与已有卡片无关的
+             * 全新位置"，而 MCP 侧本来就不该有往任意位置登记的能力
+             * （命令层不走这道，是因为那边是用户亲手用选择器挑的）。
+             */
+            within_raw(&path)?;
+            /* kind 必须二选一：`register_card` 里写的是 `if kind == "group" {…} else {…}`，
+               传错会**静默落到项目页签** —— AI 想加项目组却加进了项目，
+               回包还写着"已加入页签「X」"，看着完全成功。与 create_folder 同一判据。 */
+            if kind != "project" && kind != "group" {
+                return Err(err(&format!(
+                    "kind 只能是 project 或 group，收到「{kind}」")));
+            }
             // 用 as_u64 而不是 as_i64：JSON 里没有负数这种页签序号，
             // as_u64 顺带挡掉 -1 这种（as_i64 会收下，然后转 usize 时溢出）。
             let tab_index = args.get("tab_index").and_then(|v| v.as_u64());
