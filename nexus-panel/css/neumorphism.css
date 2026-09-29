@@ -2818,7 +2818,9 @@ html.theme-transition *:not(.spinner) {
    用户会以为是某个包的附属内容，而不是需要单独清理的一坨。 */
 .dep-orphans {
   padding: 8px 10px; border-radius: var(--r-sm);
-  box-shadow: inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);
+  /* 走 --sh-in-sm：数值与它完全一致，在文件里重写一遍的话换主题/调档位
+     都不会跟着变（且守卫只能按字面量比对，抄对了也照样报红） */
+  box-shadow: var(--sh-in-sm);
 }
 .dep-badge { flex: 0 0 auto; padding: 1px 8px; border-radius: var(--r-sm); font-size: var(--fs-11, 11px); }
 .dep-badge.ok { color: var(--ok); }
