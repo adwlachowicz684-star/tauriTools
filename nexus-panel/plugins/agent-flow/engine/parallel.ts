@@ -1,4 +1,5 @@
-import type { ParallelNodeData, ParallelRule } from '../types';
+import type { ParallelNodeData, ParallelRule, ConditionOp } from '../types';
+import { OP_META } from '../types';
 import { testCondition } from './condition';
 
 /**
@@ -89,10 +90,23 @@ export function effectiveConcurrency(resolved: number, taskCount: number): numbe
   return Math.max(1, Math.min(resolved, Math.max(1, taskCount)));
 }
 
+/**
+ * 并发规则的中文摘要（节点卡片上显示）。
+ *
+ * ============ 算子名只从 OP_META 取 ============
+ *
+ * 以前这里自带一张 opText，与 types.ts 的 OP_META、condition.ts 的
+ * describeConditionCore 各写一份，共三处。已经分叉过：
+ * 「匹配正则」（这里）vs「正则匹配」（OP_META）。
+ *
+ * 顺带修掉另一处不一致：以前**一律**拼上「比较值」，
+ * 于是选「非空」时卡片显示「非空「」→ 并发 2」——
+ * 那个空引号是"这里没问过 needsValue"留下的。
+ */
 export function describeRule(rule: ParallelRule): string {
-  const opText: Record<string, string> = {
-    contains: '包含', notContains: '不包含', equals: '等于', notEquals: '不等于',
-    startsWith: '开头是', regex: '匹配正则', nonEmpty: '非空', isEmpty: '为空', always: '总是',
-  };
-  return `${opText[rule.op] ?? rule.op}「${rule.value}」→ 并发 ${rule.concurrency}`;
+  const meta = OP_META[rule.op as ConditionOp];
+  const t = meta?.label ?? rule.op;
+  const needsValue = meta ? meta.needsValue : true;
+  const v = needsValue ? `「${rule.value}」` : '';
+  return `${t}${v}→ 并发 ${rule.concurrency}`;
 }

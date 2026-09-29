@@ -39,7 +39,7 @@ const fields: FieldDef[] = [
       <Field label="待翻译内容">
         <VarBar
           title="可引用："
-          tokens={upstreamTokens(p.upstream, ['{{input}}'])}
+          tokens={upstreamTokens(p)}
           onInsert={(t) => p.onChange(String(p.d.text ?? '') + t)}
         />
         <textarea

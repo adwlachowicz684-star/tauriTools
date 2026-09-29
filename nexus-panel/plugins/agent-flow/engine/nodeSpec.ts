@@ -34,7 +34,19 @@ import { REQUIRES } from './nodeRequires';
  * 抄一份就是"同一件事写两遍"：加平台时漏改这里，
  * 契约会安静地少几个平台 —— 不报错，只是 AI 拼出来的流程用不上。
  */
-import { UPDATE_SOURCE_KEYS } from '../types';
+import { UPDATE_SOURCE_KEYS, OP_META, type ConditionOp } from '../types';
+
+/*
+ * 算子清单同样从 types.ts 派生。
+ *
+ * 以前这里手抄了 6 个（desc 里还写了「常用」来软化它），而 OP_META 有 9 个 ——
+ * 漏掉的是 notEquals / startsWith / regex。
+ *
+ * 后果与 update 那次一模一样：拼装方只看 options，于是条件节点永远配不出
+ * 「匹配正则」「不等于」「开头是」三种规则 —— 流程能跑、不报错，
+ * 只是这三种分支你根本不会想到去用。
+ */
+const CONDITION_OPS: string[] = Object.keys(OP_META) as ConditionOp[];
 
 /*
  * ================= 模板变量语义 =================
@@ -322,7 +334,7 @@ export const SPECS: Record<string, NodeSpec> = {
         key: 'defaultBranch',
         desc: '是否启用兜底分支。true 时所有规则都未命中则走 __default__ 边（分支 id 固定）',
       },
-      { key: 'op', desc: '算子。常用：nonEmpty / isEmpty / contains / notContains / equals / always', options: ['nonEmpty', 'isEmpty', 'contains', 'notContains', 'equals', 'always'] },
+      { key: 'op', desc: '算子，判定上游文本是否满足条件', options: CONDITION_OPS },
     ],
   }),
   /*
@@ -367,6 +379,7 @@ export const SPECS: Record<string, NodeSpec> = {
         desc: 'byRule 模式的规则列表，从上到下判定、第一条命中即用其并发数。'
           + '每条 = { id, op, value, concurrency, label? }；op 与条件节点同一套算子。'
           + 'mode 为 byRule 时必填，否则并发数无从决定',
+        options: CONDITION_OPS,
       },
       { key: 'fallbackConcurrency', desc: 'byRule 模式下所有规则都没命中时用的并发数' },
     ],

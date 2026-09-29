@@ -7,6 +7,7 @@ import type { Credential } from '../../engine/credentials';
 // 并没有再导出，硬要从它拿就得让它多导出一次，平白加一层耦合
 import { FILE_FIELD_HINT } from '../../engine/files';
 import { resolveVars } from '../../engine/variables';
+import { loopTokensOf as loopTokensOfEngine } from '../../engine/loop';
 // 从 registry 拿 getVariableGroup，不能走 nodes/index（会与 defs 成环）
 import { getVariableGroup } from '../../nodes/registry';
 import { CredentialPicker } from './shared';
@@ -327,21 +328,61 @@ function FieldDefaultButton({
 export type VarToken = { text: string; title?: string; file?: boolean };
 
 /**
- * 生成"上游输出"的可插入 token：{{上游id.output}}。
+ * 生成"可引用"的可插入 token。
  *
- * 抽出来是因为这段逻辑此前在任务 / OCR / 翻译三处各写了一遍，
+ * ================= 为什么收成一处 =================
+ *
+ * 抽出来是因为这段逻辑此前在任务 / OCR / 翻译 / 识图四处各写了一遍，
  * 只是字段名不同。抄写时最容易出的错是：改了模板语法（比如加前缀）
  * 却漏掉其中一处，于是某个节点的插入按钮变废按钮 —— 点了插进去不生效。
- * 统一生成后，这类改动只需动这一个函数。
  *
- * @param upstream 上游节点 id 列表
- * @param extra    追加的固定 token，如 '{{input}}'
+ * 收成一处之后还多带出两类 token，以前**一个都没有**：
+ *
+ *  1. `{{input}}` —— 工作流全局输入，任何节点都认。
+ *     以前只有三个节点在调用处手写 `['{{input}}']`，
+ *     其余十几个支持模板的字段连这个都没有，只能手打。
+ *
+ *  2. `{{loop.item}}` / `{{loop.index}}` / `{{loop.count}}` ——
+ *     只在**本节点确实在某个循环体内**时给出。
+ *     循环变量是执行器早就支持的（engine/template.ts），
+ *     菜单里却没有任何入口：循环面板上印着一句说明，
+ *     而真正要写 `处理 {{loop.item}}` 的是循环体里的那些节点，
+ *     它们的输入框旁边一个按钮都没有。
+ *     手打拼错（写成 `{{item}}`）不报错 —— 未解析的变量只进 console，
+ *     值原样留下，下游拿着 `{{item}}` 这么一串继续跑。
+ *
+ * 谁在循环体内由 engine/loop.ts 的 isInLoopBody 判定，
+ * 与执行期用的是同一套算法（loopBodyOf）——
+ * 这里另写一份判定的话，"按钮给了但循环体不含这个节点"就是新的静默错。
+ *
+ * @param p     面板给字段的完整上下文（上游、节点、整张画布）
+ * @param extra 追加的固定 token
  */
-export function upstreamTokens(upstream: string[], extra: string[] = []): VarToken[] {
+export function upstreamTokens(
+  p: Pick<FieldRenderProps, 'upstream' | 'node' | 'nodes' | 'edges'>,
+  extra: string[] = [],
+): VarToken[] {
   return [
-    ...upstream.map((u) => ({ text: `{{${u}.output}}` })),
+    ...p.upstream.map((u) => ({ text: `{{${u}.output}}` })),
+    { text: '{{input}}' },
+    ...loopTokensOf(p).map((text) => ({ text })),
     ...extra.map((text) => ({ text })),
   ];
+}
+
+/**
+ * 循环变量的 token —— 不在循环体内就一个都不给。
+ *
+ * 判定本身在 engine/loop.ts（那里能被测试真正跑一遍）；
+ * 这里只做一件事：画布上的边把 loopRole 放在 data 里
+ * （React Flow 的边结构），转成 engine 用的顶层字段。
+ */
+function loopTokensOf(p: Pick<FieldRenderProps, 'node' | 'nodes' | 'edges'>): string[] {
+  if (!p.nodes || p.nodes.length === 0) return [];
+  const edges = p.edges.map((e) => ({
+    id: e.id, source: e.source, target: e.target, loopRole: e.data?.loopRole,
+  }));
+  return loopTokensOfEngine(p.node.id, p.nodes, edges);
 }
 
 /**
@@ -561,7 +602,7 @@ function renderField(
   const varBar = f.tpl && f.key && (type === 'text' || type === 'textarea') ? (
     <VarBar
       title="插入："
-      tokens={upstreamTokens(p.upstream, f.tplExtra ?? [])}
+      tokens={upstreamTokens(p, f.tplExtra ?? [])}
       onInsert={(t) => set(String(value ?? '') + t)}
     />
   ) : null;

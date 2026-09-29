@@ -30,6 +30,10 @@ import { PARAM_CARDS, card } from '../nodes/paramCards';
 import {
   PASS_CHECK_OPTIONS, PASS_CHECK_LABEL, isPassCheck, passCheckLabel,
 } from '../engine/passCheck';
+import { OP_META } from '../types';
+import { describeRule } from '../engine/condition';
+import { describeRule as describeParallelRule } from '../engine/parallel';
+import { describeBlock } from '../engine/blockApi';
 
 const DEFS = path.join(AF_SRC, 'nodes', 'defs');
 
@@ -417,5 +421,89 @@ test('判定方式：参数文档的取值列要列出全部取值，不许退�
       assert.ok(row!.includes(v), `${f} 的取值列里没有 ${v} —— 生成器没展开 PASS_CHECK_OPTIONS`);
     }
     assert.ok(!row!.includes('动态'), `${f} 的取值列退化成了「动态（…）」`);
+  }
+});
+
+/*
+ * ==================================================================
+ * 条件算子（OP_META）同样只许有一处中文名
+ *
+ * 与上面「判定方式」是同一类，只是规模更大：
+ * 算子名以前写在三处 —— types.ts 的 OP_META、condition.ts 的
+ * describeConditionCore、parallel.ts 的 describeRule。
+ *
+ * 已经分叉：regex 在 OP_META 里叫「正则匹配」，另两处叫「匹配正则」。
+ * 于是同一条规则，面板可视化显示「正则匹配」、节点卡片显示「匹配正则」。
+ *
+ * 「要不要带比较值」也是两份（OP_META.needsValue vs 硬编码的三元数组），
+ * 并发那处更糟：一律拼上「值」，于是选「非空」时卡片显示「非空「」」。
+ * ==================================================================
+ */
+test('条件算子：中文名与 needsValue 只从 OP_META 取', () => {
+  for (const f of ['engine/condition.ts', 'engine/parallel.ts']) {
+    const src = stripComments(readSrc(f));
+    assert.ok(
+      !/opText\s*:\s*Record/.test(src),
+      `${f} 里又自带了一张算子中文名表 —— 应改用 OP_META[op].label`,
+    );
+    assert.ok(
+      /OP_META/.test(src),
+      `${f} 没有引用 OP_META —— 守卫匹配不到会假通过`,
+    );
+    assert.ok(
+      !/\['nonEmpty',\s*'isEmpty',\s*'always'\]/.test(src),
+      `${f} 里又硬编码了一份「不需要比较值」清单 —— 应改用 OP_META[op].needsValue`,
+    );
+  }
+});
+
+test('条件算子：卡片摘要与面板可视化显示同一个名字（运行时对账）', () => {
+  const ops = Object.keys(OP_META) as Array<keyof typeof OP_META>;
+  assert.ok(ops.length >= 9, '算子至少九种');
+
+  for (const op of ops) {
+    // 节点卡片（condition）
+    const card = describeRule({ op, value: 'X', source: '' } as never);
+    assert.ok(
+      card.includes(OP_META[op].label),
+      `算子 ${op} 在条件节点卡片上没用 OP_META 的名字（得到「${card}」）`,
+    );
+    // 不需要比较值的算子，卡片上不该出现空的「」
+    if (!OP_META[op].needsValue) {
+      assert.ok(!card.includes('「'), `${op} 不需要比较值，卡片上却带了「」：${card}`);
+    }
+    // 并发节点卡片
+    const p = describeParallelRule({ op, value: 'X', concurrency: 2 } as never);
+    assert.ok(
+      p.includes(OP_META[op].label),
+      `算子 ${op} 在并发节点卡片上没用 OP_META 的名字（得到「${p}」）`,
+    );
+    if (!OP_META[op].needsValue) {
+      assert.ok(!p.includes('「'), `${op} 不需要比较值，并发卡片上却带了「」：${p}`);
+    }
+  }
+});
+
+test('条件算子：契约里的取值清单要列全，不许只写「常用」那几个', () => {
+  const src = stripComments(readSrc('engine/nodeSpec.ts'));
+  assert.ok(
+    !/常用/.test(src),
+    '契约里还在用「常用」给不完整清单打掩护 —— 拼装方只看 options，漏掉的算子等于不存在',
+  );
+
+  /*
+   * 完整契约走 describeBlock —— catalog() 只给契约侧那几列，没有 params。
+   * 用 catalog() 的话 cond.params 是 undefined，守卫会出现
+   * "Cannot read properties of undefined"，那不是守卫生效，是守卫自己写坏了。
+   */
+  const cond = describeBlock('condition');
+  assert.ok(cond, '契约里找不到 condition 节点');
+  const opParam = cond.params.find((p) => p.key === 'op');
+  assert.ok(opParam, 'condition 契约里没有 op 这一项');
+  for (const op of Object.keys(OP_META)) {
+    assert.ok(
+      opParam.options.includes(op),
+      `condition 契约的 op 清单里没有 ${op} —— 拼装方配不出这种规则（不报错）`,
+    );
   }
 });

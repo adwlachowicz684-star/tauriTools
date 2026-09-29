@@ -46,7 +46,7 @@ export function renderImageUrl(p: FieldRenderProps) {
     <Field label="图片地址">
       <VarBar
         title="可引用："
-        tokens={upstreamTokens(p.upstream)}
+        tokens={upstreamTokens(p)}
         onInsert={(t) => p.onChange(String(p.d.url ?? '') + t)}
       />
       <input

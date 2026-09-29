@@ -179,14 +179,23 @@ export function evaluateCondition(node: ConditionNodeData, ctx: EvalInput): Rule
 /**
  * 单条条件的中文摘要（简洁版，用于节点卡片）。
  * 参数只用到 op / value / source，所以规则与条件对象都能传。
+ *
+ * ============ 算子名只从 OP_META 取 ============
+ *
+ * 以前这里自带一张 opText，与 types.ts 的 OP_META 各写一份 ——
+ * **已经分叉过一次**：OP_META 里 regex 是「正则匹配」，这里的 opText 是
+ * 「匹配正则」。于是同一条规则：面板可视化（describeCondition 走 OP_META）
+ * 显示「正则匹配」，节点卡片（这里）显示「匹配正则」——
+ * 用户会以为换了算子。
+ *
+ * 「要不要带比较值」也一样：OP_META 有 needsValue，这里又按
+ * `!['nonEmpty','isEmpty','always'].includes(op)` 算了一遍。
+ * 新增一个不需要比较值的算子时，漏改这里就是卡片上多出一个空的「」。
  */
 function describeConditionCore(c: { op: ConditionOp; value?: string; source?: string }): string {
-  const opText: Record<string, string> = {
-    contains: '包含', notContains: '不包含', equals: '等于', notEquals: '不等于',
-    startsWith: '开头是', regex: '匹配正则', nonEmpty: '非空', isEmpty: '为空', always: '总是',
-  };
-  const t = opText[c.op] ?? c.op;
-  const needsValue = !['nonEmpty', 'isEmpty', 'always'].includes(c.op);
+  const meta = OP_META[c.op];
+  const t = meta?.label ?? c.op;
+  const needsValue = meta ? meta.needsValue : true;
   const src = c.source ? `${c.source} ` : '';
   return needsValue ? `${src}${t}「${c.value ?? ''}」` : `${src}${t}`;
 }

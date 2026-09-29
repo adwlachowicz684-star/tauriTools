@@ -136,7 +136,7 @@ const fields = (_d: Record<string, unknown>, p?: FieldRenderProps): FieldDef[] =
         <Field label={labelOfPrompt((pp.d.use as LlmUse) ?? 'chat')}>
           <VarBar
             title="可引用："
-            tokens={upstreamTokens(pp.upstream, ['{{input}}'])}
+            tokens={upstreamTokens(pp)}
             onInsert={(t) => pp.onChange(String(pp.d.prompt ?? '') + t)}
           />
           <textarea

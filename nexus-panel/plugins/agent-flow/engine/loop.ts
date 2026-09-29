@@ -220,7 +220,60 @@ export function loopBodyOf(loopId: string, graph: Graph): Set<string> {
   return body;
 }
 
-/** 收集图中所有循环节点及其循环体 */
+/**
+ * 循环体内可用的模板变量。
+ *
+ * 唯一的真源在这里 —— 界面上的插入按钮（components/inspectors/fields.tsx）
+ * 与给拼装方看的契约（engine/nodeSpec.ts）都从这份派生。
+ * 两边各写一份的话，加一个变量只改一处，表现是"能跑但按钮上没有"。
+ */
+export const LOOP_TOKENS = ['{{loop.item}}', '{{loop.index}}', '{{loop.count}}'] as const;
+
+/**
+ * 边的最小形状：只要能回答"谁连谁、是不是 done 出口"就够了。
+ *
+ * 画布上的边（FlowEdge）把 loopRole 放在 data 里，纯 node 测试用的边
+ * （GraphEdge）放在顶层 —— 两种都有人用。这里不要求完整类型，
+ * 否则 UI 侧要先造一批假字段才能调用，多一次转换就多一处漂移。
+ */
+type BodyEdge = { id?: string; source: string; target: string; loopRole?: 'body' | 'done' };
+
+/**
+ * 这个节点是不是在某个循环体内。
+ *
+ * 界面靠它决定要不要给出 {{loop.item}} 那一排插入按钮 ——
+ * 循环变量只在循环体内有值，循环外的节点给了也渲染不出来
+ * （renderTemplate 会当成未解析、原样留下）。
+ */
+export function isInLoopBody(
+  nodeId: string,
+  nodes: ReadonlyArray<{ id: string; data?: unknown }>,
+  edges: ReadonlyArray<BodyEdge>,
+): boolean {
+  if (nodes.length === 0 || edges.length === 0) return false;
+  const graph = {
+    nodes: nodes as Graph['nodes'],
+    edges: edges as Graph['edges'],
+  };
+  return nodes.some((n) => n?.data && isLoop(n.data as never) && loopBodyOf(n.id, graph).has(nodeId));
+}
+
+/**
+ * 这个节点能用哪些循环变量 —— 不在循环体内就一个都不给。
+ *
+ * 放在 engine（纯 .ts）而不是组件层，是为了能被**真正跑一遍**：
+ * 组件层是 .tsx，测试链路不转 JSX，只能做源码级检查，
+ * 而源码级检查拦不住"函数在、但 return 被改成了 []" ——
+ * 那种改法界面上什么变化都没有，按钮就是安静地少一排。
+ */
+export function loopTokensOf(
+  nodeId: string,
+  nodes: ReadonlyArray<{ id: string; data?: unknown }>,
+  edges: ReadonlyArray<BodyEdge>,
+): string[] {
+  return isInLoopBody(nodeId, nodes, edges) ? [...LOOP_TOKENS] : [];
+}
+
 /**
  * 收集所有循环节点及其循环体成员。
  *

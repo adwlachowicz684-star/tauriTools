@@ -29,7 +29,7 @@
 
 | 参数 | 类型 | 说明 | 取值 | 显示条件 |
 |---|---|---|---|---|
-| `source` | select | 声音来源 | — | — |
+| `source` | select | 声音来源；系统音效 → 由 Web Audio 实时合成，不需要任何音频文件，浏览器模式下也能响；本地文件 → 播放 mp3 / wav / ogg，需要读取本地文件 —— 浏览器模式下不可用 | — | — |
 | `preset` | select | 音效 | `动态（PRESETS.map）` | `d → (d.source ?? 'preset') === 'preset'` |
 | `path` | text | 音频文件；支持模板，如 {{上游.output}}；建议 mp3 / wav / ogg；占位：/path/to/sound.mp3 | — | `d → (d.source ?? 'preset') === 'file'` |
 | `volume` | number | 音量；0 ~ 1，默认 0.6 | — | — |

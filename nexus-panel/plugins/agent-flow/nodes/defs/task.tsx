@@ -37,7 +37,7 @@ const fields = (_d: Record<string, unknown>, ctx?: FieldRenderProps): FieldDef[]
       <Field label="提示词内容">
         <VarBar
           title="可引用："
-          tokens={upstreamTokens(p.upstream, ['{{input}}'])}
+          tokens={upstreamTokens(p)}
           onInsert={(t) => p.onChange(String(p.d.prompt ?? '') + t)}
         />
         {p.upstream.length > 0 ? (

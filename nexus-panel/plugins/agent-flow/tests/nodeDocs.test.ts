@@ -628,3 +628,34 @@ test('参数页的键名与契约一致（双向，防故障注入残留）', ()
     }
   }
 });
+
+/*
+ * hint 写成**函数引用**时，文档里必须出现实际文字。
+ *
+ * `hint: soundSourceHint` 不是字符串，生成器只认单引号字面量的话，
+ * 那一列的说明会静默变成 ——：读者以为"这一项没有说明"，
+ * 而它其实是"说明随当前取值变化"，恰恰最该写出来。
+ *
+ * 更隐蔽的一层：解引用要读的是**根 types.ts**，而生成器里的 typesSrc
+ * 读的是 nodes/types.ts（10KB 的小文件，不含 META 表）。读错文件时
+ * 解引用一无所获，会静默退回代码形态 `(d) => SOUND_SOURCE_META[...]`
+ * —— 看着像修好了，其实没修好。所以这里盯的是**实际文字**，
+ * 不是"这一列非空"。
+ */
+test('beep 的声音来源：hint 函数引用要展开成实际文字，不能留空或退回代码', () => {
+  const s = fs.readFileSync(path.join(nodesDir, 'beep.params.md'), 'utf-8');
+  const row = s.split('\n').find((l) => /^\|\s*`source`\s*\|/.test(l));
+  assert.ok(row, 'beep.params.md 里找不到 source 行 —— 参数表结构变了？');
+
+  assert.ok(
+    row.includes('Web Audio'),
+    'source 行的说明里没有实际文字（Web Audio）—— '
+    + 'hint 函数引用没被展开：要么是生成器认不出函数引用，'
+    + '要么是解引用读错了 types.ts（该读根 types.ts，不是 nodes/types.ts）',
+  );
+  assert.ok(
+    !row.includes('(d) =>'),
+    'source 行的说明退回成了代码表达式 —— 解引用失败时就是这样，'
+    + '读者只看到一堆符号，看不出说明是什么',
+  );
+});
