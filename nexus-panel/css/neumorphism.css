@@ -2291,7 +2291,7 @@ html.theme-transition *:not(.spinner) {
 .md-code-lang {
   font-size: 11px;
   letter-spacing: .04em;
-  color: var(--muted);
+  color: var(--text-mute);
 }
 .md-code-copy {
   font-size: 11px;
@@ -2299,7 +2299,7 @@ html.theme-transition *:not(.spinner) {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm, 4px);
   background: transparent;
-  color: var(--muted);
+  color: var(--text-mute);
   cursor: pointer;
 }
 .md-code-copy:hover { color: var(--text); border-color: var(--accent); }
@@ -2327,7 +2327,7 @@ html.theme-transition *:not(.spinner) {
   text-align: left;
   border: 0;
   background: transparent;
-  color: var(--muted);
+  color: var(--text-mute);
   font-size: 12px;
   line-height: 1.7;
   padding: 1px 0;
@@ -2384,7 +2384,7 @@ html.theme-transition *:not(.spinner) {
   justify-content: space-between;
   gap: var(--sp-2, 8px);
   font-size: var(--fs-11, 11px);
-  color: var(--muted);
+  color: var(--text-mute);
   margin-bottom: var(--sp-2, 8px);
 }
 .md-recent-list {
@@ -2632,7 +2632,7 @@ html.theme-transition *:not(.spinner) {
   flex: none;
   border: 0;
   background: transparent;
-  color: var(--muted);
+  color: var(--text-mute);
   font-size: 13px;
   line-height: 1;
   padding: 2px var(--sp-1, 4px);
@@ -2641,7 +2641,7 @@ html.theme-transition *:not(.spinner) {
 .md-recent-del:hover { color: var(--danger); }
 .md-recent-empty {
   font-size: var(--fs-11, 11px);
-  color: var(--muted);
+  color: var(--text-mute);
   padding: var(--sp-1, 4px) var(--sp-2, 8px);
 }
 

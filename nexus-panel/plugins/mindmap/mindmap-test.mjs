@@ -12680,7 +12680,7 @@ group('节点文字含 CR：PlantUML 往返静默丢节点（BUG 72）');
     const i = src.indexOf('export function nodeText');
     ok(i > 0, '能定位 nodeText');
     const body = src.slice(i, i + 700);
-    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const code = strip(body);
     ok(code.length > 0, '能剥出 nodeText 的代码体（注释里同样写着 `\\s*\\n\\s*`，必须先剥）');
     ok(!/\.replace\(\/\\s\*\\n\\s\*\/g/.test(code), 'nodeText 不得只认 \\n（那正是 BUG 72 本身）');
     ok(/\\r/.test(code), 'nodeText 的规范化字符集必须含 \\r');
@@ -12750,7 +12750,7 @@ group('Mermaid 字面 #quot; / #35; 被当成转义还原，往返改内容（BU
     const i = src.indexOf('export function mermaidLabel');
     ok(i > 0, '能定位 mermaidLabel');
     const body = src.slice(i, i + 1400);
-    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const code = strip(body);
     ok(code.length > 0, '能剥出 mermaidLabel 的代码体（注释里同样写着 #quot;，必须先剥）');
     const iHash = code.indexOf("replace(/#/g, '#35;')");
     const iQuote = code.indexOf("replace(/\"/g, '#quot;')");
@@ -12849,7 +12849,7 @@ group('XML 导出：非法字符让文件整体报废；制表符被吞（BUG 74
     const i = src.indexOf('export function escXml');
     ok(i > 0, '能定位 escXml');
     const body = src.slice(i, i + 900);
-    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const code = strip(body);
     ok(code.length > 0, '能剥出 escXml 的代码体（注释里同样写着控制字符，必须先剥）');
     ok(/replace\(XML_ILLEGAL/.test(code), 'escXml 会清掉 XML 非法字符（只做常规转义就是 BUG 74）');
     ok(/\\t/g.test(code) && /&#9;/.test(code), 'escXml 把 tab 写成 &#9;（漏了就是 BUG 75）');
