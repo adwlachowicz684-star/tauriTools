@@ -82,9 +82,23 @@ export function stringifyKm(root, template, theme) {
   });
 }
 
-/** 取节点文字（去换行、去首尾空格；空则给占位） */
+/**
+ * 取节点文字（去换行、去首尾空格；空则给占位）。
+ *
+ * **必须连同 \r 一起规范化，不能只认 \n**（BUG 72）：
+ * 只写 `\s*\n\s*` 时，单独的 CR（`\r`）、U+2028/2029 会**原样留在文字里**，
+ * 而它们又都是 JS 正则里 `.` 不匹配的"行终止符"——
+ * 于是 PlantUML 导出的行 `** 含\r回车` 在导回时被 `/^(\*+)\s*(.*)$/`
+ * 判成"不是节点行"而**整条跳过**：节点凭空消失，且不报错。
+ *
+ * \r 不是凭空构造：.xmind 的 content.json 与原生 .json 都是 JSON，
+ * JSON.parse 会如实还原文本里的 `\r` 转义，导入即带进来
+ * （.mm / .opml 走 XML 属性规范化，天然会把 \r 变空格，所以只有 JSON 系受影响）。
+ */
 export function nodeText(n, fallback = '未命名') {
-  const t = String(n?.data?.text ?? '').replace(/\s*\n\s*/g, ' ').trim();
+  const t = String(n?.data?.text ?? '')
+    .replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ')
+    .trim();
   return t || fallback;
 }
 
@@ -261,10 +275,23 @@ const MERMAID_NEEDS_QUOTE = /[()[\]{}"#;:,`]|^\s|\s$|\s\s/;
 
 /** 单个节点文字 → 安全的 Mermaid 写法（纯函数，可测） */
 export function mermaidLabel(text) {
-  const t = String(text ?? '').replace(/\s*\n\s*/g, ' ').trim();
+  const t = String(text ?? '').replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ').trim();
   if (!t) return '""';                     // 空节点也要占位，否则整张图解析失败
   if (MERMAID_NEEDS_QUOTE.test(t)) {
-    return `["${t.replace(/"/g, '#quot;')}"]`;   // Mermaid 里双引号用 #quot; 转义
+    /*
+     * **先把字面 `#` 转成 `#35;` 再转义 `"`**（BUG 73），顺序不能反：
+     * `"` 的转义产物本身就是 `#quot;`，先转引号再处理 `#`
+     * 会把刚生成的 `#quot;` 又拆成 `#35;quot;`。
+     *
+     * 不转义会怎样：unescMermaid 见到 `#quot;` / `#35;` / `#40;` / `#41;`
+     * 一律还原，于是节点里**本来写着** `a#quot;b` 的文字，导出再导回
+     * 就变成 `a"b` —— 静默改内容，且不报错。实测 `a#quot;b`→`a"b`、
+     * `a#35;b`→`a#b`。
+     *
+     * `#35;` 是 Mermaid 自己的数字实体（# 的转义），渲染出来就是 `#`，
+     * 所以转义后给别的软件看也不会变样。
+     */
+    return `["${t.replace(/#/g, '#35;').replace(/"/g, '#quot;')}"]`;
   }
   return t;
 }
@@ -291,14 +318,24 @@ export function mermaidTextOf(line) {
   return unescMermaid(String(t)).trim();
 }
 
-/** Mermaid 用 `#quot;` 等数字实体表示标点的转义形式 */
+/**
+ * Mermaid 用 `#quot;` 等数字实体表示标点的转义形式。
+ *
+ * **必须一趟扫完，不能链式多次 replace**（BUG 73）：
+ * 链式时前一条的**产物**会被后一条再吃掉 ——
+ * `#35;` 还原成 `#` 之后，紧跟的 `40;` 凑成新的 `#40;`，又被换成 `(`。
+ * 实测 `a#40;b` 被还原成 `a(b`。单趟匹配下每处只被认领一次，不重入。
+ */
 export function unescMermaid(s) {
-  return String(s ?? '')
-    .replace(/#quot;/g, '"')
-    .replace(/#35;/g, '#')
-    .replace(/#40;/g, '(')
-    .replace(/#41;/g, ')')
-    .replace(/<br\s*\/?>/gi, ' ');
+  return String(s ?? '').replace(/#(?:quot|35|40|41);|<br\s*\/?>/gi, (m) => {
+    switch (m.toLowerCase()) {
+      case '#quot;': return '"';
+      case '#35;': return '#';
+      case '#40;': return '(';
+      case '#41;': return ')';
+      default: return ' ';          // <br> / <br/>：Mermaid 的换行，这里并成一个空格
+    }
+  });
 }
 
 /**

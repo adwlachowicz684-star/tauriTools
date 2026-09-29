@@ -12607,6 +12607,153 @@ group('BUG 69 · 删除主题必须二次确认（不可逆，且会连带改掉
 }
 
 /* ============================================================
+   BUG 72 · 节点文字含 CR（\r）时 PlantUML 导回整条节点消失
+   ============================================================ */
+
+group('节点文字含 CR：PlantUML 往返静默丢节点（BUG 72）');
+
+/*
+ * `nodeText` 只把 LF 规范化成空格（正则里只写了 \n），单独的 CR 原样留下。
+ * 而 `\r` 是 JS 正则里 `.` 不匹配的"行终止符" ——
+ * PlantUML 导出的 `** 含\r回车` 在导回时被 `/^(\*+)\s*(.*)$/` 判成非节点行，
+ * **整条跳过**：节点凭空消失且不报错。
+ *
+ * \r 不是凭空构造：.xmind 的 content.json 与原生 .json 都是 JSON，
+ * JSON.parse 会如实还原 `\r` 转义，导入即带进来（实测 8 条里丢 3 条）。
+ * .mm / .opml 走 XML 属性规范化，天然把 \r 变空格，所以只有 JSON 系受影响。
+ */
+{
+  const f = await import('./formats.js');
+
+  // ① 根因：nodeText 必须连同 \r 一起规范化
+  eq(f.nodeText({ data: { text: '含\r回车' } }), '含 回车', 'nodeText 把 CR 也规范成空格（修复前原样留下 \r）');
+  eq(f.nodeText({ data: { text: '含\r\n回车' } }), '含 回车', 'CRLF 仍规范成一个空格');
+  eq(f.nodeText({ data: { text: '含\n回车' } }), '含 回车', 'LF 行为不变');
+  eq(f.nodeText({ data: { text: '含\u2028回车' } }), '含 回车', 'U+2028 同样是行终止符，一并规范');
+  eq(f.nodeText({ data: { text: '普通文字' } }), '普通文字', '普通文字不受影响');
+  eq(f.nodeText({ data: { text: '  ' } }), '未命名', '纯空白仍回落占位');
+  eq(f.nodeText({}, 'X'), 'X', '无 data 时回落 fallback');
+
+  // ② 现象：PlantUML 往返不得丢节点
+  const mk = (texts) => JSON.stringify({
+    root: { data: { text: 'R' }, children: texts.map((t) => ({ data: { text: t } })) },
+    template: 'default', theme: 'fresh-blue-compat',
+  });
+  const kids = (j) => { const o = JSON.parse(j); return (o.root.children || []).map((c) => c.data.text); };
+
+  {
+    const back = f.fromPlantUml(f.toPlantUml(mk(['含\r回车', '甲', '乙'])));
+    ok(back !== null, 'PlantUML 往返不返回 null');
+    eq(kids(back).length, 3, 'PlantUML 往返不丢节点（修复前 3 条只剩 2 条）');
+    eq(kids(back)[0], '含 回车', 'CR 节点回来了（内容按 \n 同规则规范成空格）');
+    eq(kids(back).join('|'), '含 回车|甲|乙', '顺序与内容都不变');
+  }
+
+  // ③ 四种交换格式一致：都不能丢节点（此前只有 PlantUML 丢）
+  for (const [name, round] of [
+    ['FreeMind', (t) => f.fromFreemind(f.toFreemind(t))],
+    ['OPML', (t) => f.fromOpml(f.toOpml(t, 'T'))],
+    ['Mermaid', (t) => f.fromMermaid(f.toMermaid(t))],
+    ['PlantUML', (t) => f.fromPlantUml(f.toPlantUml(t))],
+  ]) {
+    const back = round(mk(['含\r回车', '甲']));
+    ok(back !== null, `${name} 往返不返回 null`);
+    eq(kids(back).length, 2, `${name} 往返不丢节点`);
+    eq(kids(back)[0], '含 回车', `${name} 往返：CR 节点内容一致`);
+  }
+
+  // ④ 导出的中间文本里不得再出现裸 \r（否则别的软件也会解析错）
+  {
+    const pu = f.toPlantUml(mk(['含\r回车']));
+    ok(!pu.includes('\r'), 'PlantUML 导出文本不含裸 CR（导出即规范化，不把问题留给下游）');
+  }
+
+  // ⑤ 源码断言：nodeText 的字符集必须含 \r（只写 \n 就是 BUG 本身）
+  {
+    const src = fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8').replace(/\r\n/g, '\n');
+    const i = src.indexOf('export function nodeText');
+    ok(i > 0, '能定位 nodeText');
+    const body = src.slice(i, i + 700);
+    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    ok(code.length > 0, '能剥出 nodeText 的代码体（注释里同样写着 `\\s*\\n\\s*`，必须先剥）');
+    ok(!/\.replace\(\/\\s\*\\n\\s\*\/g/.test(code), 'nodeText 不得只认 \\n（那正是 BUG 72 本身）');
+    ok(/\\r/.test(code), 'nodeText 的规范化字符集必须含 \\r');
+  }
+}
+
+/* ============================================================
+   BUG 73 · Mermaid 字面实体被反转义，往返静默改内容
+   ============================================================ */
+
+group('Mermaid 字面 #quot; / #35; 被当成转义还原，往返改内容（BUG 73）');
+
+/*
+ * Mermaid 用 `#quot;` `#35;` `#40;` `#41;` 表示标点，unescMermaid 一律还原。
+ * 于是节点里**本来写着** `a#quot;b` 的文字，导出成 `["a#quot;b"]` 后
+ * 导回来变成 `a"b` —— 内容被静默改掉，且不报错。实测两条：
+ *   `a#quot;b` → `a"b`，`a#35;b` → `a#b`。
+ *
+ * 修法是把字面 `#` 先转成 Mermaid 自己的 `#` 实体 `#35;`（渲染出来仍是 `#`），
+ * **顺序必须在引号转义之前**：`"` 的转义产物就是 `#quot;`，反了会把它再拆开。
+ *
+ * 另：mermaidLabel 原先和 nodeText 一样只认 LF，这里一并修（同 BUG 72）。
+ */
+{
+  const f = await import('./formats.js');
+  const mk = (t) => JSON.stringify({
+    root: { data: { text: 'R' }, children: [{ data: { text: t }, children: [] }] },
+    template: 'default', theme: 'fresh-blue-compat',
+  });
+  const back1 = (t) => {
+    const b = f.fromMermaid(f.toMermaid(mk(t)));
+    if (!b) return null;
+    const k = JSON.parse(b).root.children || [];
+    return k.length === 1 ? k[0].data.text : null;
+  };
+
+  // ① 四条字面实体往返都不许被还原
+  for (const t of ['a#quot;b', 'a#35;b', 'a#40;b', 'a#41;b']) {
+    eq(back1(t), t, `字面 ${t} 往返原样回来（修复前被还原成别的字符）`);
+  }
+
+  // ② 真引号仍然走转义，且往返正确
+  eq(back1('a"b'), 'a"b', '真双引号往返正确（转义路径没被改坏）');
+  ok(f.mermaidLabel('a"b').includes('#quot;'), '双引号仍用 #quot; 转义');
+
+  // ③ 字面 # 被写成 #35;（Mermaid 自己的实体，渲染出来就是 #）
+  ok(f.mermaidLabel('a#quot;b').includes('#35;quot;'), '字面 #quot; 里的 # 先转成 #35;');
+  eq(f.mermaidLabel('C#'), '["C#35;"]', 'C# 里的 # 同样转义');
+  eq(back1('C#'), 'C#', 'C# 往返正确');
+
+  // ④ 顺序断言：# 的转义必须在 " 的转义之前（反了会把 #quot; 又拆开）
+  {
+    const lbl = f.mermaidLabel('a"b#c');
+    ok(lbl.includes('#35;'), '同时含引号与 # 时，#35; 仍出现');
+    ok(!/#35;quot;/.test(lbl), '不得把引号转义产物 #quot; 再拆成 #35;quot;');
+    eq(back1('a"b#c'), 'a"b#c', '引号与 # 同时出现时往返正确');
+  }
+
+  // ⑤ mermaidLabel 也要规范化 CR（与 nodeText 同一个坑）
+  eq(f.mermaidLabel('含\r回车'), '含 回车', 'mermaidLabel 同样把 CR 规范成空格（规范化后无需引号）');
+  eq(f.unescMermaid('a#35;40;b'), 'a#40;b', 'unescMermaid 一趟扫描：#35; 的产物不再被后一条吃掉');
+  eq(f.unescMermaid('x<br>y'), 'x y', 'unescMermaid 把 <br> 并成空格');
+
+  // ⑥ 源码断言：两条 replace 的先后顺序（只写引号转义就是 BUG 本身）
+  {
+    const src = fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8').replace(/\r\n/g, '\n');
+    const i = src.indexOf('export function mermaidLabel');
+    ok(i > 0, '能定位 mermaidLabel');
+    const body = src.slice(i, i + 1400);
+    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    ok(code.length > 0, '能剥出 mermaidLabel 的代码体（注释里同样写着 #quot;，必须先剥）');
+    const iHash = code.indexOf("replace(/#/g, '#35;')");
+    const iQuote = code.indexOf("replace(/\"/g, '#quot;')");
+    ok(iHash > 0, 'mermaidLabel 有 # → #35; 的转义（那正是修 BUG 73 加的）');
+    ok(iQuote > iHash, '# 的转义必须排在引号转义之前');
+  }
+}
+
+/* ============================================================
    结果
    ============================================================ */
 
