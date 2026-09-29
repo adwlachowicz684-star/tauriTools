@@ -12253,6 +12253,111 @@ group('BUG 67 · 删除画布必须二次确认（✕ 长在页签上，删完�
     '页签 ✕ 仍指向 removeSheet');
 }
 
+
+/* ============================================================
+   BUG 68 · 图标库反复重建预览会攒 Blob URL（只等浮层关闭才回收）
+   ============================================================ */
+
+group('BUG 68 · 图标库每次重建预览都要先回收上一批 Blob URL');
+{
+  const { openIconLibrary } = await import('./panels.js');
+  const pstore = await import('./store.js');
+
+  /*
+   * 用户图标的预览不是 dataURL，而是 `URL.createObjectURL(blob)`。
+   * 而 renderGrid 会被反复调用：切分组、导入图标、新建/重命名/删除分组、
+   * 清理失效 —— 每次都重建一批。原先只在**浮层关闭时**统一回收，
+   * 于是浮层开着期间每重建一次就攒一批（grid.innerHTML='' 只摘 DOM，
+   * Blob 仍在内存里）。用户图标每个最多 1MB，来回切十几趟就是几十 MB
+   * 常驻，直到刷新页面才释放。
+   *
+   * 这里用真实 openIconLibrary + 真实点击切分组来量 liveBlobUrls：
+   * 泄漏时它会随切换次数线性增长，修好则恒定。
+   */
+  await pstore.set('iconlib', {
+    groups: [{
+      id: 'g-user',
+      name: '我的图标',
+      icons: [
+        { id: 'i1', kind: 'user', name: '甲', assetId: 'asICON1' },
+        { id: 'i2', kind: 'user', name: '乙', assetId: 'asICON2' },
+      ],
+    }],
+  });
+  // 资产本体：只要有 blob 这个真值字段，renderGrid 就会为它建预览 URL
+  await pstore.set('asset:asICON1', { blob: {}, size: 1024 });
+  await pstore.set('asset:asICON2', { blob: {}, size: 1024 });
+
+  const app = {
+    api: { status() {}, commit() {} },
+    bridge: { setImage() {} },
+    settings: {},
+  };
+
+  const settle = async () => {
+    // renderGrid 是 async 且套在 safe() 里，点击后要让出几拍才跑完
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+  };
+
+  liveBlobUrls.clear();
+  const dlg = await openIconLibrary(app);
+  await settle();
+
+  // 分组按钮：内置若干组 + 末尾一个「我的图标」
+  const gbtns = () => [...(dlg.mask?.querySelectorAll('.mm-icon-groups button')
+    || dlg.el?.querySelectorAll('.mm-icon-groups button') || [])];
+  const btns = gbtns();
+  ok(btns.length >= 2, '能拿到图标库的分组按钮（' + btns.length + ' 个）');
+
+  const mine = btns.find((b) => /我的图标/.test(b.textContent || ''));
+  const builtin = btns.find((b) => /状态/.test(b.textContent || ''));
+  ok(!!mine && !!builtin, '能定位「我的图标」与内置「状态」两个分组');
+
+  const clickTo = async (b) => { b.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })); await settle(); };
+
+  // ① 切到「我的图标」：两个用户图标 → 2 个预览 URL
+  await clickTo(mine);
+  const n1 = liveBlobUrls.size;
+  eq(n1, 2, '切到用户分组后建出 2 个预览 URL');
+
+  // ② 来回切换若干次。修好则始终只有当前这一批；泄漏则每次 +2
+  await clickTo(builtin);
+  await clickTo(mine);
+  await clickTo(builtin);
+  await clickTo(mine);
+  await clickTo(builtin);
+  await clickTo(mine);
+  const n2 = liveBlobUrls.size;
+  eq(n2, 2, '来回切 6 次后仍只有当前这一批（泄漏的话会是 14）');
+
+  // ③ 关掉浮层必须全部回收
+  dlg.close?.();
+  await settle();
+  eq(liveBlobUrls.size, 0, '关闭浮层后预览 URL 全部回收');
+
+  // ④ 源码侧：回收逻辑抽成一个函数，两处共用，不再各写一份
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  const seg = pn.slice(pn.indexOf('export async function openIconLibrary(app) {'),
+    pn.indexOf('/* ------------------------- 设置', pn.indexOf('export async function openIconLibrary(app) {')));
+  ok(/const\s+releaseMediaUrls\s*=\s*\(\)\s*=>/.test(seg), '图标库：抽出 releaseMediaUrls 供两处共用');
+
+  /*
+   * 顺序断言必须**先剥注释**：renderGrid 上方的说明里为了讲清原理写了
+   * `grid.innerHTML = ''` 这个字面量，直接在原文里 indexOf 会先命中注释，
+   * 于是断言测的是注释而不是代码（本项目已多次栽在这上面）。
+   */
+  const iRS = seg.indexOf('const renderGrid = async () => {');
+  const rbody = seg.slice(iRS, seg.indexOf('\n  };', iRS));
+  const rcode = rbody.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok(rcode.length > 0, '能切出 renderGrid 函数体（剥注释后非空）');
+  const iRelease = rcode.indexOf('releaseMediaUrls();');
+  const iInner = rcode.indexOf('grid.innerHTML');
+  ok(iRelease > 0 && iInner > 0 && iRelease < iInner,
+    'renderGrid：回收在清空 DOM 之前（剥注释后判定）');
+  ok((seg.match(/releaseMediaUrls\(\);/g) || []).length >= 2,
+    '回收至少调用两处（重建时 + 关闭时）');
+}
+
 /* ============================================================
    结果
    ============================================================ */

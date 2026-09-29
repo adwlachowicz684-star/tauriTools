@@ -2672,6 +2672,19 @@ export async function openIconLibrary(app) {
 
   const renderGrid = async () => {
     const g = groups.find((x) => x.id === activeId) || groups[0];
+    /*
+     * **上一批预览的 Blob URL 必须先回收。**
+     *
+     * `grid.innerHTML = ''` 只摘掉 DOM，Blob 本身仍在内存里 ——
+     * 只有 revokeObjectURL（或页面卸载）才释放。而 renderGrid 会被反复调用：
+     * 切分组、导入图标、新建/重命名/删除分组、清理失效，每次都重建一批。
+     * 原先只在**浮层关闭时**统一回收，于是浮层开着期间每重建一次就攒一批，
+     * 用户图标每个最多 1MB，来回切十几趟就是几十 MB 常驻，直到刷新页面。
+     *
+     * 这与「粘贴监听必须解绑」是同一类：注释早就意识到要回收，
+     * 但只堵了「关闭」这一条路，没堵「重复渲染」这一条。
+     */
+    releaseMediaUrls();
     grid.innerHTML = '';
     if (!g) { grid.appendChild(h('div.mm-hint', {}, '暂无分组')); return; }
     const icons = g.icons || [];
@@ -2716,8 +2729,19 @@ export async function openIconLibrary(app) {
     }
   };
 
-  // 用户图标预览会建 Blob URL，浮层关掉时统一回收
+  /*
+   * 用户图标预览会建 Blob URL。
+   *
+   * 回收时机有**两处**，共用这一个函数：
+   *   ① 每次 renderGrid 重建之前（否则反复切分组会一直攒，见 renderGrid 里的注释）；
+   *   ② 浮层关闭时。
+   * 只做 ② 是不够的 —— 那等于浮层开着期间完全不回收。
+   */
   const mediaUrls = [];
+  const releaseMediaUrls = () => {
+    for (const u of mediaUrls) { try { URL.revokeObjectURL(u); } catch (e) { /* ignore */ } }
+    mediaUrls.length = 0;
+  };
 
   const reload = async () => {
     groups = await picons.loadLibrary();
@@ -2857,8 +2881,7 @@ export async function openIconLibrary(app) {
     h('div.mm-hint', {}, '点图标即设为选中节点的图片。图标本体存在本地库；内置图标是矢量图，不占脑图体积。'),
   ], () => {
     // 浮层关掉时回收预览用的 Blob URL，否则会一直攒着
-    for (const u of mediaUrls) { try { URL.revokeObjectURL(u); } catch (e) { /* ignore */ } }
-    mediaUrls.length = 0;
+    releaseMediaUrls();
     // 粘贴监听必须解绑：挂在 document 上不解绑会一直存活到页面关闭，
     // 且闭包捕获了本次的 groups/activeId —— 之后再开图标库会**重复触发**，
     // 一次 Ctrl+V 加进去两份图标。
