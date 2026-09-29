@@ -425,8 +425,23 @@ console.log('\n=== 10a. 各插件按钮阴影统一（由主题管） ===');
    修法是把档位提到 :root，各插件按钮引用同一档。 */
 {
   const shadowOf = (css, sel) => {
+    /*
+     * ⚠️ 必须先剥注释。
+     *
+     * 幽灵规则是「注释停用」的（用户要求：万一删错了能直接加回来），
+     * 停用块里留着完整的 `.add-row { ... }` 规则体。不剥注释的话，
+     * 下面的正则会把停用块当成真规则匹配掉，于是紧随其后的那条规则
+     * 的**选择器前缀里带着注释结束符** —— `parts` 里实际是
+     * 「注释结束符 + 换行 + .kind-btn」，永远等不到 `.kind-btn` 本身，
+     * 断言报「无阴影来源」。
+     *
+     * 实测（2026-09-29）：agent-flow 「.kind-btn 有阴影来源」就是这么红的，
+     * 而 CSS 里 .kind-btn 明明写着 var(--ctl-shadow)。代码没错，是扫描器
+     * 把注释当代码 —— 本项目第 N 次栽这个坑。
+     */
+    const src = css.replace(/\/\*[\s\S]*?\*\//g, '');
     let last = null;
-    for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    for (const m of src.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
       const parts = m[1].split(',').map((x) => x.trim());
       if (!parts.includes(sel)) continue;
       const sh = /box-shadow\s*:\s*([^;]+)/.exec(m[2]);
