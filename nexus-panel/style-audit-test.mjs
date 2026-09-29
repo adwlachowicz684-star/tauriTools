@@ -10,6 +10,9 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { auditCss, summarize, LEVEL_ORDER, SHELL_VARS, TOKEN_VARS, CONTROLS_VARS } from './js/style-audit.js';
+// 读源码做扫描前必须剥注释：注释里提到的 --grp-* / setProperty('--x') 会被
+// 当成真定义，让"不该报的没报"这类断言**假绿** —— 比报红更危险。
+import { stripComments as strip } from './test-scan-utils.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let pass = 0, fail = 0;
@@ -180,7 +183,7 @@ console.log('\n=== 运行时注入变量（brushVars）不被误判 ===');
    改成 var(--accent) 之后，设了组色的卡片会失去自己的组色。 */
 {
   const audit = await import('./js/style-audit.js');
-  const pg = readFileSync('plugins/project-group/style.css', 'utf8');
+  const pg = strip(readFileSync('plugins/project-group/style.css', 'utf8'));
   const hits = audit.auditCss(pg, 'x').filter((x) => /--grp-/.test(x.msg));
   t('--grp-* 不再被判成未定义', hits.length === 0,
     hits.map((x) => x.msg.slice(0, 40)).join(' | '));
@@ -203,14 +206,14 @@ console.log('\n=== 运行时注入变量（brushVars）不被误判 ===');
    与 brushVars 同理：名单手工维护，必须盯着它与真实注入处是否一致。 */
 {
   const audit = await import('./js/style-audit.js');
-  const shell = readFileSync('css/neumorphism.css', 'utf8');
+  const shell = strip(readFileSync('css/neumorphism.css', 'utf8'));
   const hits = audit.auditCss(shell, 'x')
     .filter((x) => /var\(--[xywh]\)/.test(x.msg));
   t('--x/--y/--w/--h 不再被判成未定义', hits.length === 0,
     hits.map((x) => x.msg.slice(0, 40)).join(' | '));
 
   const insp = existsSync('js/inspector.js')
-    ? readFileSync('js/inspector.js', 'utf8') : '';
+    ? strip(readFileSync('js/inspector.js', 'utf8')) : '';
   const injected = [...new Set(
     [...insp.matchAll(/setProperty\(\s*'(--[a-z0-9-]+)'/g)].map((m) => m[1]))];
   const missing = injected.filter((v) => !audit.RUNTIME_POSITION_VARS.includes(v));
@@ -226,7 +229,7 @@ console.log('\n=== 运行时注入变量（brushVars）不被误判 ===');
      这里忘了同步，插件用了就会被误报成"变量未定义"。
 
      所以反过来盯着：共享 CSS 里定义的每个 --ctl-* 都必须已在列表里。 */
-  const controlsCss = readFileSync(join(HERE, 'css/controls.css'), 'utf8');
+  const controlsCss = strip(readFileSync(join(HERE, 'css/controls.css'), 'utf8'));
   /* 只盯**在 :root 里定义的** --ctl-*。
      --ctl-h / --ctl-pad / --ctl-fs / --ctl-shadow 是在具体规则里定义的
      档位变量（.sm 靠覆盖它们降尺寸），属于控件内部实现，插件不该用，

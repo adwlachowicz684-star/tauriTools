@@ -51,7 +51,10 @@ function glob(pattern) {
   };
   return walk(HERE, 0).map((p) => p.slice(HERE.length + 1));
 }
-const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '');
+// 剥注释走全仓共用实现（test-scan-utils.mjs）。
+// 此前本文件里散着 8 处各自内联的同款正则，其中一处剥不干净就会导致
+// 「注释被当代码」的误报（.kind-btn 那次），统一成一份避免再漂移。
+import { stripComments as strip } from './test-scan-utils.mjs';
 
 let pass = 0, fail = 0;
 const t = (name, cond, extra = '') => {
@@ -439,7 +442,7 @@ console.log('\n=== 10a. 各插件按钮阴影统一（由主题管） ===');
      * 而 CSS 里 .kind-btn 明明写着 var(--ctl-shadow)。代码没错，是扫描器
      * 把注释当代码 —— 本项目第 N 次栽这个坑。
      */
-    const src = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const src = strip(css);
     let last = null;
     for (const m of src.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
       const parts = m[1].split(',').map((x) => x.trim());
@@ -531,7 +534,7 @@ console.log('\n=== 10a. 各插件按钮阴影统一（由主题管） ===');
                    'plugins/project-group/style.css', 'plugins/agent-flow/styles.css',
                    'plugins/mindmap/styles.css']) {
     const raw = read(f);
-    const css = raw.replace(/\/\*[\s\S]*?\*\//g, '');
+    const css = strip(raw);
     for (const m of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
       const sel = m[1].trim();
       if (!STATE_SEL.test(sel)) continue;
@@ -554,7 +557,7 @@ console.log('\n=== 10a. 各插件按钮阴影统一（由主题管） ===');
   /* 强调改用描边，而不是真字重。
      注意必须先剥掉 CSS 注释再查 —— 我们刚写进去的说明里就含
      "font-weight" 这个词，不剥会把注释当成实现，断言永远为假。 */
-  const ctlNc = read('css/controls.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  const ctlNc = strip(read('css/controls.css'));
   const block = (sel) => {
     const m = ctlNc.match(new RegExp('(?:^|\\})([^}]*?' + sel.replace(/\./g, '\\.')
       + '[^}]*?)\\{([^}]*)\\}', 's'));
@@ -587,7 +590,7 @@ console.log('\n=== 10a. 各插件按钮阴影统一（由主题管） ===');
   ];
   const numMiss = [];
   for (const [f, sel] of NUM_TARGETS) {
-    const css = read(f).replace(/\/\*[\s\S]*?\*\//g, '');
+    const css = strip(read(f));
     const m = css.match(new RegExp('(?:^|\\})[^}]*?' + sel.replace(/\./g, '\\.') + '\\s*\\{([^}]*)\\}'));
     /* 注意：同一选择器可能有多条规则（.task-group-count 有主规则 +
        响应式补充），只要**任一**条带 tabular-nums 即可（继承得到）。 */
@@ -608,7 +611,7 @@ console.log('\n=== 10a. 各插件按钮阴影统一（由主题管） ===');
   for (const f of ['css/controls.css', 'css/dialog.css', 'css/neumorphism.css',
                    'plugins/project-group/style.css', 'plugins/agent-flow/styles.css',
                    'plugins/mindmap/styles.css']) {
-    const css = read(f).replace(/\/\*[\s\S]*?\*\//g, '');
+    const css = strip(read(f));
     if (/transition:\s*all/.test(css)) allBad.push(f.split('/').pop());
   }
   t('不用 transition: all（会连尺寸一起动画）', allBad.length === 0,
@@ -620,7 +623,7 @@ console.log('\n=== 10a. 各插件按钮阴影统一（由主题管） ===');
        · 只隐形不占位 → 滚动条出现/消失时内容被挤窄（列表变长就跳一下）
 
      所以 thumb 常态 transparent（**宽度仍在**），悬停容器才上色。 */
-  const tk = read('css/tokens.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  const tk = strip(read('css/tokens.css'));
   t('滚动条始终占位（有 width/height，不会挤动内容）',
     /::-webkit-scrollbar\s*\{[^}]*width:\s*\d/.test(tk));
   t('滑块平时透明（隐形）',
@@ -633,7 +636,7 @@ console.log('\n=== 10a. 各插件按钮阴影统一（由主题管） ===');
 
   /* 插件里自己写的滚动条必须**同样的显隐逻辑**，
      否则会出现"这边隐形、那边常驻"的不一致。 */
-  const pgCss = read('plugins/project-group/style.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  const pgCss = strip(read('plugins/project-group/style.css'));
   /* 只看**常态**规则：:hover / :active 变体本来就该上色，把它们算进来
      会让断言永远失败。用"选择器里不含 :"来筛。 */
   /* 抓完整选择器组（可能跨多行），再排除含 :hover / :active 的变体。
