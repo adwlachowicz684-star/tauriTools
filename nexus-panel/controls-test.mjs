@@ -18,6 +18,7 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripComments } from './js/dead-class-scan.js';
+import { stripComments as stripBlock, stripCommentsJs as stripJs } from './test-scan-utils.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const read = (p) => readFileSync(join(HERE, p), 'utf8');
@@ -35,7 +36,7 @@ const mm = read('plugins/mindmap/styles.css');
 /* 按规则块解析：先剥注释，再用 `}` 切分，取 selector 里含目标类名的那块。
    不能直接用 `\.nx-btn\s*\{` 去匹配 —— 选择器组是多行的
    （`.nx-btn,\n.p-btn,\n.mm-btn {`），目标类名后面跟的是逗号不是花括号。 */
-const strip = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '');
+const strip = stripBlock;
 const rules = (css) => strip(css)
   .split('}')
   .map((chunk) => {
@@ -2111,9 +2112,54 @@ console.log('\n=== 36. 取色弹窗：跟随主题变量与不滚动 ===');
    */
   t('色块区可压缩（不是 flex:none）',
     /\.fpx-picker-sec\s*\{[\s\S]{0,500}flex:\s*0 1 auto/.test(sc));
+
   t('色块列表自身可滚且留至少一行',
     /\.fpx-swatches\s*\{[\s\S]{0,400}min-height:\s*26px/.test(sc) &&
     /\.fpx-swatches\s*\{[\s\S]{0,400}overflow-y:\s*auto/.test(sc));
+  /* ---- 内嵌色盘必须自带样式 ----
+     ColorPicker.tsx 自己不 import style.css（由 color-picker 的 main.tsx 引），
+     所以任何**跨插件**嵌入它的地方都得自己补引，否则在另一个 iframe 文档里
+     拿到的是一个没有布局的裸组件：不报错、不崩，只是渲染成一坨文字。 */
+  {
+    const files = [];
+    const walk = (d) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        if (['node_modules', 'dist', 'build'].includes(e.name)) continue;
+        const f = join(d, e.name);
+        if (e.isDirectory()) walk(f);
+        else if (/\.tsx?$/.test(e.name)) files.push(f);
+      }
+    };
+    walk(join(HERE, 'plugins'));
+
+    const rf = (f) => readFileSync(f, 'utf8');   /* files 里已是绝对路径，不能再走 read() 拼一次 */
+    const embedders = files.filter((f) => {
+      const t = rf(f);
+      return /import\s*\{[^}]*\bColorPicker\b[^}]*\}\s*from\s*['"][^'"]*color-picker\/ColorPicker['"]/.test(t);
+    });
+    /* 元断言：扫描器真的扫到了嵌入方（否则下面永远是绿） */
+    t('色盘嵌入方扫描有效', embedders.length >= 1,
+      `扫到 ${embedders.length} 个；plugins 下 tsx ${files.length} 个`);
+
+    const noStyle = embedders.filter((f) => {
+      const t = rf(f);
+      /* 本文件补引，或同一插件的入口已经引了 —— 两者任一即可。
+         ⚠️ 必须匹配 **import 语句本身**，不能只查字符串出现：
+         说明"为什么要补引"的注释里必然写着这个路径，
+         只查字符串的话把 import 删掉照样全绿（实测踩过）。 */
+      /* f 是绝对路径：plugins/<owner>/... → 取 plugins 之后那一段 */
+      const rel = f.slice(join(HERE, 'plugins').length + 1).split(/[/\\]/);
+      const owner = rel[0];
+      const entry = join(HERE, 'plugins', owner, 'main.tsx');
+      const IMP = /import\s+['"][^'"]*color-picker\/style\.css['"]/;
+      return !IMP.test(stripComments(t))
+        && !(existsSync(entry) && IMP.test(stripComments(rf(entry))));
+    });
+    t('跨插件嵌入 ColorPicker 的地方都补引了 color-picker/style.css',
+      noStyle.length === 0,
+      noStyle.map((f) => f.slice(f.indexOf('plugins'))).join('; ')
+      || embedders.map((f) => f.slice(f.indexOf('plugins'))).join(', '));
+  }
 }
 
 console.log('\n=== 37. 类型检查暴露的两类真 bug ===');
@@ -3344,9 +3390,8 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
        左列明明没列它，看着像坏了。
    ============================================================ */
 {
-  const stripJsx = (s) => s
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/^\s*\/\/.*$/gm, ' ');
+  /* 行注释只认行首/缩进后（URL 里的 // 不能被吞），块注释走共用实现 */
+  const stripJsx = (s) => stripJs(s);
   const appSrc = stripJsx(read('plugins/settings/App.tsx'));
 
   t('插件页用页签（role=tablist）而不是分组堆叠',
@@ -3395,9 +3440,8 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
    纵向（.cfg-row.col）后两个下拉都 width:100%，自然等宽。
    ============================================================ */
 {
-  const stripJsx = (s) => s
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/^\s*\/\/.*$/gm, ' ');
+  /* 行注释只认行首/缩进后（URL 里的 // 不能被吞），块注释走共用实现 */
+  const stripJsx = (s) => stripJs(s);
 
   /*
    * ⚠️ 截取范围必须是 themeRow 函数本身，不能从 title="插件主题" 往后切 ——
@@ -3427,7 +3471,7 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
    * 只钉"代码里写了 col"是不够的 —— CSS 里没有对应规则的话，
    * 类名挂上去也没有任何效果，而这类"改了没反应"最难发现。
    */
-  const css = read('css/controls.css').replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const css = stripBlock(read('css/controls.css'));
   t('.cfg-row.col 有对应样式（纵向 + 下拉铺满）',
     /\.cfg-row\.col\s*\{[^}]*flex-direction:\s*column/.test(css)
       && /\.cfg-row\.col\s*>\s*\.p-input[^{]*\{[^}]*width:\s*100%/.test(css),
@@ -3453,11 +3497,11 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
      会留在深色区，而缩略图已经是浅色 —— 位置和观感对不上。
    ============================================================ */
 {
-  const stripComments = (s) => s
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/^\s*\/\/.*$/gm, ' ');
+  /* 曾用同名 const 遮蔽模块级 import 的 stripComments（两套实现并存）。
+     统一走共用模块：块注释 + 行首 //。 */
+  const stripJsCode = (s) => stripJs(s);
 
-  const tm = stripComments(read('js/theme-manager.js'));
+  const tm = stripJsCode(read('js/theme-manager.js'));
   const iFn = tm.indexOf('export function sortThemesBaseFirst');
   const fn = iFn < 0 ? '' : tm.slice(iFn, iFn + 500);
 
