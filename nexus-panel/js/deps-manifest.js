@@ -15,13 +15,13 @@
  * 运行时再去读只会得到一份空列表，而且不报错。
  */
 export const DEPS_MANIFEST = {
-  "generatedAt": "2026-09-28T22:34:45.941Z",
+  "generatedAt": "2026-09-29T00:13:46.232Z",
   "depsDir": "shared",
   "dirNote": "当前 node_modules 是共享副本（软链接），里面的版本与本仓库无关，故不判定实装版本",
   "summary": {
-    "total": 40,
+    "total": 42,
     "npm": 24,
-    "crates": 14,
+    "crates": 16,
     "missing": 0,
     "mismatch": 0,
     "unused": 0,
@@ -156,9 +156,12 @@ export const DEPS_MANIFEST = {
       "dev": false,
       "status": "unknown",
       "usedBy": [
+        "md",
+        "测试/脚本"
+      ],
+      "runtimeUsedBy": [
         "md"
       ],
-      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i rehype-highlight@^7.0.0"
@@ -170,9 +173,12 @@ export const DEPS_MANIFEST = {
       "dev": false,
       "status": "unknown",
       "usedBy": [
+        "md",
+        "测试/脚本"
+      ],
+      "runtimeUsedBy": [
         "md"
       ],
-      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i rehype-slug@^6.0.0"
@@ -184,9 +190,12 @@ export const DEPS_MANIFEST = {
       "dev": false,
       "status": "unknown",
       "usedBy": [
+        "md",
+        "测试/脚本"
+      ],
+      "runtimeUsedBy": [
         "md"
       ],
-      "runtimeUsedBy": [],
       "pinned": false,
       "note": "",
       "install": "npm i remark-gfm@^4.0.1"
@@ -488,6 +497,20 @@ export const DEPS_MANIFEST = {
       "install": "cargo add rayon@1.10.0"
     },
     {
+      "name": "regex",
+      "declared": "1",
+      "installed": null,
+      "dev": false,
+      "status": "ok",
+      "usedBy": [
+        "Rust"
+      ],
+      "runtimeUsedBy": [],
+      "pinned": true,
+      "note": "",
+      "install": "cargo add regex@1"
+    },
+    {
       "name": "serde",
       "declared": "1",
       "installed": null,
@@ -598,6 +621,20 @@ export const DEPS_MANIFEST = {
       "pinned": true,
       "note": "",
       "install": "cargo add tauri-plugin-updater@2"
+    },
+    {
+      "name": "zip",
+      "declared": "4",
+      "installed": null,
+      "dev": false,
+      "status": "ok",
+      "usedBy": [
+        "Rust"
+      ],
+      "runtimeUsedBy": [],
+      "pinned": true,
+      "note": "",
+      "install": "cargo add zip@4"
     }
   ]
 };
