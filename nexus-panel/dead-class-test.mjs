@@ -790,5 +790,65 @@ console.log('\n=== 8. 幽灵规则（CSS 定义了、代码没用）：只增不
     `orphan ${orphan.length} / defined ${orDefined.size}`);
 }
 
+/* ============================================================
+ * 第 X 节：剥注释只此一份
+ * ------------------------------------------------------------
+ * 「注释和代码共用一套字符集，正则分不清」在本项目反复酿成误报：
+ *   注释里的类名 → 死类名扫描形同虚设
+ *   注释里的旧写法 → 核对远端时误判"修复没生效"
+ *   注释停用的幽灵规则 → 令牌守卫把停用块当真规则（.kind-btn 那次）
+ *
+ * 实现已抽到 test-scan-utils.mjs。这里盯住两件事：
+ *   1. 共用实现本身是对的（语义自检）
+ *   2. 不许再新增内联副本（冻结基线，只减不增）
+ */
+{
+  const mod = await import('./test-scan-utils.mjs');
+  const { stripComments, stripCommentsJs } = mod;
+
+  t('共用模块导出剥注释', typeof stripComments === 'function' && typeof stripCommentsJs === 'function');
+
+  // 语义：替换成空格而不是空串 —— 空串会把 `a/*x*/b` 粘成 `ab`
+  t('剥注释用空格不粘连', stripComments('a/*x*/b') === 'a b', JSON.stringify(stripComments('a/*x*/b')));
+  t('多行块注释可剥', stripComments('.a{\n/* c1\nc2 */\ncolor:red}').includes('color:red')
+    && !stripComments('.a{\n/* c1\nc2 */\ncolor:red}').includes('c1'));
+  // 只剥块注释，不动 // —— CSS 无 //，JS 里的 URL 更不能被吞
+  t('stripComments 不吞行注释', stripComments('a // b') === 'a // b');
+  t('stripCommentsJs 剥行注释', stripCommentsJs('a // b') === 'a ' , JSON.stringify(stripCommentsJs('a // b')));
+
+  /* 冻结基线：存量 261 处内联副本分布在 118 个测试里，逐个迁移风险不小，
+   * 但**绝不能再多**。新增一份就报红，并指明改用共用模块。
+   * 判据排除权威实现本身与本文件（守卫自身含该正则字面量）。 */
+  // 匹配源码文本 /\/\*[\s\S]*?\*\//
+  const INLINE = /\/\\\/\\\*\[\\s\\S\]\*\?\\\*\\\//g;
+  // 自检：该正则必须能命中权威实现，否则说明判据写错、断言空跑
+  const selfTxt = readFileSync('test-scan-utils.mjs', 'utf8');
+  t('内联判据自检有效', INLINE.test(selfTxt), '判据必须在权威实现上命中');
+  t('判据不误伤无关文本', !INLINE.test('const x = 1; // nothing here'), '普通文本不命中');
+
+  const SKIP = new Set(['node_modules', '.git', 'target', 'dist', 'build', '.tauri', '__pycache__']);
+  let total = 0;
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (e.isDirectory()) { if (!SKIP.has(e.name)) walk(join(d, e.name)); continue; }
+      if (!/\.(mjs|js|ts|tsx)$/.test(e.name)) continue;
+      const abs = join(d, e.name);
+      if (abs === join(HERE, 'test-scan-utils.mjs') || abs === join(HERE, 'dead-class-test.mjs')) continue;
+      let txt;
+      try { txt = readFileSync(join(d, e.name), 'utf8'); } catch { continue; }
+      const hits = txt.match(INLINE);
+      if (hits) total += hits.length;
+    }
+  };
+  walk(HERE);
+
+  const BASELINE = 261;
+  t('剥注释不再新增内联副本', total <= BASELINE,
+    total > BASELINE
+      ? `实测 ${total} 处 > 基线 ${BASELINE}；新增的请改用 import { stripComments } from './test-scan-utils.mjs'`
+      : `${total} / ${BASELINE}（存量收敛中）`);
+  t('内联副本统计范围有效', total > 0, `实测 ${total} 处`);
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

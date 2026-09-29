@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { stripCommentsJs as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -9650,8 +9651,7 @@ group('「清除文字样式」必须清掉文字节能设的**每一个**键');
    *      直接在原文上跑正则会把注释里的也算进去 —— 键真的被删了，
    *      断言照样绿。**又一处假阴性**。
    */
-  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-  const i = html.indexOf("scope === 'text'");
+    const i = html.indexOf("scope === 'text'");
   ok(i > 0, '有 text scope 分支');
   const seg = strip(html.slice(i, i + 1500));
   const bi = seg.indexOf('[');
@@ -10722,8 +10722,7 @@ group('写盘失败不能被随后的「已重命名 / 已新建」盖掉');
   }
 
   /** 去掉注释，否则注释里引用的 saveStore/status 会被当成真实调用 */
-  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-
+  
   const offenders = [];
   for (const f of fnBodies(idx)) {
     const code = strip(f.body);
@@ -10865,8 +10864,7 @@ group('删除脑图后附件本体变成孤儿（BUG 47）');
    * 都失败，正是 BUG 23/45 那些「假成功」集中爆发的触发条件。
    */
   const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-  const code = strip(idx);
+    const code = strip(idx);
 
   // 不写死签名（有 quiet 参数），只锚函数名
   ok(/async function gcOrphanAssets\(/.test(code), '必须有孤儿附件回收函数');
@@ -10939,8 +10937,7 @@ group('移除附件无条件删资产，共享它的其它节点跟着失效（B
    */
   const pnl = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-  const pc = strip(pnl);
+    const pc = strip(pnl);
 
   // ① 移除附件不得再直接 dropAsset
   ok(!/io\.dropAsset\(/.test(pc),
@@ -11498,8 +11495,7 @@ group('BUG 58 · 图标库与图片附件共用 data.image，后写的把先写�
   const eb = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
   const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   // 注释里大量引用这些名字，不剥的话命中的是注释本身 —— 代码真改坏了照样绿
-  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-  const E = strip(eb);
+    const E = strip(eb);
   const C = strip(pn);
 
   /*
@@ -11592,8 +11588,7 @@ group('BUG 59 · 超链接与备注输入框必须回显（否则已有值看不
 {
   const eb = fs.readFileSync(path.join(HERE, 'editor-bridge.js'), 'utf8');
   const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
-  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-  const E = strip(eb);
+    const E = strip(eb);
 
   /*
    * 实测（真实 Chrome）：节点已存 hyperlink / note，切到「标签」页两个框

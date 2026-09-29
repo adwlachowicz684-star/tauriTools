@@ -34,10 +34,18 @@ export const SKIP_DIRS = new Set([
  * 剥注释后再解析 —— 否则注释里写的类名会被当成已定义。
  * 实测：`/* .fpx-links-bar { gap: 8px } *\/` 这种注释会让"已修复"被误判成
  * "已定义"，扫描形同虚设。字符串里的 `}` `{` 也要一并处理。
+ *
+ * 实现已抽到 `test-scan-utils.mjs`（测试共用）。这里 re-export 是为了
+ * 不动既有的 4 个调用方；**新增调用请直接 import 那个模块**，别再引这里
+ * —— 本文件虽在 js/ 下，但运行时从不引用它，定位上属于测试工具。
+ *
+ * 注意：必须写成「先 import 再 export 该绑定」，不能只写
+ * `export { stripComments } from '…'` —— 那是**纯转发**，不会把名字引入
+ * 本模块作用域，而下面 collectDefinedClasses 等还在直接调用它
+ * （本项目在 STYLE_PARAMS 上栽过一模一样的跟头）。
  */
-export function stripComments(css) {
-  return css.replace(/\/\*[\s\S]*?\*\//g, ' ');
-}
+import { stripComments } from '../test-scan-utils.mjs';
+export { stripComments };
 
 /** 收集一个 CSS 文本里所有已定义的类名（含前缀） */
 export function collectDefinedClasses(css) {
