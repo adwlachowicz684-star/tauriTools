@@ -25,6 +25,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
@@ -34,7 +35,7 @@ const SRC = fs.readFileSync(
 
 /** 剥掉行注释与块注释，只留代码（字符串里的 // 不动，本文件不靠字符串判据） */
 function stripComments(s) {
-  return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  return strip(s).replace(/^\s*\/\/.*$/gm, '');
 }
 const code = stripComments(SRC);
 

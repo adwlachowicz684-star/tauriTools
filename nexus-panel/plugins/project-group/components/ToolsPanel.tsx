@@ -645,7 +645,7 @@ export function ServiceBody({
           <button className={watchOn ? 'p-btn danger' : 'p-btn primary'} onClick={toggleWatch}>
             {watchOn ? '停止监听' : '开始监听'}
           </button>
-          <input className="p-input fpx-hex" type="number" min={5} value={interval}
+          <input className="p-input pg-num" type="number" min={5} value={interval}
             onChange={(e) => setInterval(Number(e.target.value))} />
           <span className="p-muted">秒（最小 5）</span>
         </div>
