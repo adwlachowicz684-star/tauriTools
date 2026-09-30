@@ -816,7 +816,7 @@ console.log('\n=== 8. 幽灵规则（CSS 定义了、代码没用）：只增不
   t('stripComments 不吞行注释', stripComments('a // b') === 'a // b');
   t('stripCommentsJs 剥行注释', stripCommentsJs('a // b') === 'a ' , JSON.stringify(stripCommentsJs('a // b')));
 
-  /* 冻结基线：存量 261 处内联副本分布在 118 个测试里，逐个迁移风险不小，
+  /* 冻结基线：存量 55 处：TS 测试 21 处（跑不起来）+ 3 处刻意豁免（见下）+ 共用模块自身 2 处，逐个迁移风险不小，
    * 但**绝不能再多**。新增一份就报红，并指明改用共用模块。
    * 判据排除权威实现本身与本文件（守卫自身含该正则字面量）。 */
   // 匹配源码文本 /\/\*[\s\S]*?\*\//
@@ -842,7 +842,7 @@ console.log('\n=== 8. 幽灵规则（CSS 定义了、代码没用）：只增不
   };
   walk(HERE);
 
-  const BASELINE = 261;
+  const BASELINE = 55;
   t('剥注释不再新增内联副本', total <= BASELINE,
     total > BASELINE
       ? `实测 ${total} 处 > 基线 ${BASELINE}；新增的请改用 import { stripComments } from './test-scan-utils.mjs'`

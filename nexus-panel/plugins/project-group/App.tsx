@@ -816,7 +816,9 @@ export default function App() {
     toggleMcp: () => void toggleMcp(),
     toggleSidebar: () => setRailCollapsed((v) => !v),
     openMarkdown,
-    readMarkdown,
+    /* readMarkdown（「阅读」按钮）**不在这里**：HotkeyId 里没有它，
+       放进 actions 也永远不会被触发，只会让 HotkeyActions 多一条
+       类型错误（TS2353）。它由内容浏览栏头的按钮直接调用。 */
     // 有弹窗打开时整组让路：否则在对话框里按 Delete 会改到看不见的卡片
     // （开关类的三条不受此限，见 useCardHotkeys 的 ALWAYS_ON）
   }, !!boot && dialog.type === 'none' && !help && !confirmLink, boot?.config.hotkeys);

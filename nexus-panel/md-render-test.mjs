@@ -17,6 +17,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown from 'react-markdown';
 import {
+import { stripComments as strip } from './test-scan-utils.mjs';
   REMARK_PLUGINS,
   REHYPE_PLUGINS,
   urlTransform,
@@ -215,7 +216,7 @@ const mdCssRaw = css.slice(css.indexOf('.md-wrap'));
  * 且它出现在真正声明之前；正则一旦在注释里对上 "user-select" 就往下找
  * `:\s*text`，而注释里后面跟的是中文，匹配失败。
  */
-const mdCss = mdCssRaw.replace(/\/\*[\s\S]*?\*\//g, '');
+const mdCss = strip(mdCssRaw);
 
 t('md 源文本框可选中', /\.md-src\s*\{[\s\S]{0,400}?user-select:\s*text/.test(mdCss));
 t('md 渲染区可选中', /\.md-out\s*\{[\s\S]{0,400}?user-select:\s*text/.test(mdCss));

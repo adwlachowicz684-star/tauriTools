@@ -20,6 +20,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { stripCommentsJs as strip } from './test-scan-utils.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -36,7 +37,7 @@ const app = read('plugins/md/App.tsx');
 const css = read('css/neumorphism.css');
 const pkg = JSON.parse(read('package.json'));
 const conf = read('src-tauri/tauri.conf.json');
-const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '');
+/* 剥注释走全仓共用实现（test-scan-utils.mjs） */
 const pumlC = strip(puml);
 /*
  * 组件也要剥注释后再查。
