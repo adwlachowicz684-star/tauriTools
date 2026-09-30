@@ -24,6 +24,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const read = (rel) => readFileSync(join(HERE, rel), 'utf8');
@@ -36,7 +37,7 @@ function ok(cond, name) {
 
 /** 剥注释：断言只能看代码，否则注释里的字样会把断言喂饱（已踩过多次） */
 function stripComments(s) {
-  return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  return strip(s).replace(/\/\/[^\n]*/g, '');
 }
 
 /**

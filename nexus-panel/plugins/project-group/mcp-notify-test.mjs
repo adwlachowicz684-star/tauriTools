@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+import { stripCommentsJs as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RS = path.join(HERE, '..', '..', 'src-tauri', 'src');
@@ -26,7 +27,7 @@ const { t, done } = makeT();
 /* 注释里也会提到这些关键字（本文件自己就在提），
    所以断言一律打在**剥掉注释**的源码上 ——
    不剥的话把代码删了、注释留着，断言照样通过（空跑）。 */
-const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+/* 剥注释走全仓共用实现（test-scan-utils.mjs） */
 const mcp = strip(fs.readFileSync(path.join(RS, 'fpx', 'mcp.rs'), 'utf8'));
 
 console.log('\n=== 1. #486 通知不回包：三处必须都在 ===');

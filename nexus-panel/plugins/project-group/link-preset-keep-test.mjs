@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadTs, stripTS, makeT } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const A = await loadTs(path.join(HERE, 'utils/linkAgents.ts'));
@@ -29,7 +30,7 @@ const { t, done } = makeT();
 
 const raw = fs.readFileSync(path.join(HERE, 'components/LinkPanel.tsx'), 'utf8');
 /** 剥块注释：判"源码里有没有某个写法"时必须先剥，否则会被注释里的字样喂饱 */
-const src = raw.replace(/\/\*[\s\S]*?\*\//g, '');
+const src = strip(raw);
 
 /** 按锚点配平大括号切片（剥注释后的源码，避免锚点落在注释里） */
 function sliceFn(s, anchor) {
@@ -110,8 +111,7 @@ console.log('\n=== 4. submit：keptPinned 过滤（跑真身）===');
 
 console.log('\n=== 5. 结构：不得回到精确查键（均剥注释后判）===');
 {
-  const ua = fs.readFileSync(path.join(HERE, 'utils/linkAgents.ts'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const ua = strip(fs.readFileSync(path.join(HERE, 'utils/linkAgents.ts'), 'utf8'));
   const resetBody = sliceFn(ua, 'export function resetToPreset');
 
   t('resetToPreset 不再用 `in map` 精确查键', !/shown\s+in\s+map\b/.test(resetBody));

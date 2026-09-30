@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RS = path.join(HERE, '../../src-tauri/src/fpx');
@@ -31,7 +32,7 @@ const hk = fs.readFileSync(path.join(HERE, 'hooks/useCardHotkeys.ts'), 'utf8');
 /** 取 openMarkdown 的函数体 */
 const fn = app.slice(app.indexOf('const openMarkdown'), app.indexOf('const projectCards'));
 /** 剥掉注释后的代码（避免"注释里提到某词"被当成"代码里用了它"） */
-const code = fn.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+const code = strip(fn).replace(/\/\/[^\n]*/g, '');
 
 console.log('\n=== 1. 走内置 md 服务（不再是外部编辑器）===');
 t('调 ctx.services.md.edit', /ctx\.services\.md\.edit\(/.test(code));
@@ -131,9 +132,9 @@ console.log('\n=== 7. 后端命令 ===');
 console.log('\n=== 7b. macOS 的 .app 编辑器：能列出来就必须能打开 ★★ ===');
 {
   const sys = fs.readFileSync(path.join(RS, 'sys.rs'), 'utf8');
-  const sysCode = sys.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const sysCode = strip(sys).replace(/\/\/[^\n]*/g, '');
   const ed = fs.readFileSync(path.join(RS, 'editor.rs'), 'utf8');
-  const edCode = ed.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const edCode = strip(ed).replace(/\/\/[^\n]*/g, '');
 
   /*
    * `editor::enumerate` 用 `exe.exists()` 收候选 —— 注释明写：
@@ -148,8 +149,7 @@ console.log('\n=== 7b. macOS 的 .app 编辑器：能列出来就必须能打开
     /if exe\.exists\(\) && seen\.insert\(key\)/.test(edCode));
   t('check_executable 要求 is_file（两条规则确实不同，故必须在 open_path 里兜住）',
     /if !p\.is_file\(\) \{\s*\n\s*return Err\(format!\("可执行文件不存在/.test(
-      fs.readFileSync(path.join(RS, 'safety.rs'), 'utf8')
-        .replace(/\/\*[\s\S]*?\*\//g, '')));
+      strip(fs.readFileSync(path.join(RS, 'safety.rs'), 'utf8'))));
 
   /* 兜住的方式：走系统 opener `open -a <.app> <文件>` */
   t('open_path 认 .app 目录',
