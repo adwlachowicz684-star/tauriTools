@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { FpxConfig, LinkDetail } from '../types';
 import { normalizeKey } from '../api';
 import { Modal } from './ui';
+import { agentEnabled } from '../utils/linkAgents';
 
 /**
  * 建链时选择链接名（对应原版 LinkPickDialog）。
@@ -10,7 +11,7 @@ import { Modal } from './ui';
  * 于是每次建链都是"按设置里启用的名字全建一遍"，没法临时只建某几个，
  * 也没法临时多建一个（得先去设置里开开关再回来拖一次）。
  *
- * 默认勾选 = 设置里已启用的名字（`linkAgents[name] ?? true`，缺失视为开启，
+ * 默认勾选 = 设置里已启用的名字（`agentEnabled`，缺失视为开启、查键不敏感，
  * 与后端 `enabled_names` 的判定保持一致）。
  *
  * 「将换绑」提示：后端 `create_one` 对已存在的链接是**先删再建**，
@@ -50,7 +51,11 @@ export function LinkPickDialog({
   onClose: () => void;
 }) {
   const enabled = useMemo(
-    () => allNames.filter((n) => config.linkAgents?.[n] ?? true),
+    /* 查开关用 agentEnabled（不敏感）而不是 `config.linkAgents?.[n]`：
+       config 里存的是旧大小写时精确查读不到 → 按"启用"处理，
+       于是用户明明关掉的名字在这里**默认勾着**，点确定就建出
+       一个他不想要的链接 —— 与设置页"全不选"那条同一个根因（#354）。 */
+    () => allNames.filter((n) => agentEnabled(config.linkAgents ?? {}, n)),
     [allNames, config.linkAgents],
   );
 

@@ -118,6 +118,25 @@ pub fn all_names(cfg: &FpxConfig) -> Vec<String> {
     names
 }
 
+/// 某个链接名的开关值（缺失视为开启）。
+///
+/// **查键必须不敏感**（#354），与 `custom_names` / `enabled_names` 里的
+/// 去重判据同一套约定：config 里存的是旧大小写时（手改 config、或从更老
+/// 版本迁移上来）`HashMap::get` 找不到 → 按"开启"处理，于是用户明明
+/// 关掉的名字照样被建出来。**不报错，只是设置看起来没生效。**
+///
+/// 前端 `utils/linkAgents.ts` 的 `agentEnabled` 是同一判据，
+/// 两侧必须一起改：只改一侧的话，界面显示"关"而实际还建，
+/// 那比两侧都错更难查。
+fn agent_enabled(cfg: &FpxConfig, name: &str) -> bool {
+    let want = name.trim();
+    cfg.link_agents
+        .iter()
+        .find(|(k, _)| k.trim().eq_ignore_ascii_case(want))
+        .map(|(_, v)| *v)
+        .unwrap_or(true)
+}
+
 /// config 中启用的链接名（预设 + 自定义；缺失视为开启）。
 /// 预设名会先经过 linkAgentRenames 映射——开关状态也以**改名后的名字**为键，
 /// 与原 C# 版「改名后开关/备注/厂商键随新名迁移」一致。
@@ -126,10 +145,10 @@ pub fn enabled_names(cfg: &FpxConfig) -> Vec<String> {
     let mut names: Vec<String> = PRESET_AGENTS
         .iter()
         .map(|(n, _)| display_name(cfg, n))
-        .filter(|n| cfg.link_agents.get(n).copied().unwrap_or(true))
+        .filter(|n| agent_enabled(cfg, n))
         .collect();
     for n in custom {
-        if !cfg.link_agents.get(&n).copied().unwrap_or(true) { continue; }
+        if !agent_enabled(cfg, &n) { continue; }
         // 与已收录的名字（含改名后的预设显示名）大小写不敏感去重
         if names.iter().any(|x| x.eq_ignore_ascii_case(&n)) { continue; }
         names.push(n);

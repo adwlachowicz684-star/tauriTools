@@ -33,17 +33,43 @@ export interface LinkAgentState {
  * 于是"全选"若靠删键实现，效果对，但一旦将来默认值改成关闭就全反了。
  * 显式写值不依赖默认值是什么。
  */
+/**
+ * 按名查开关键（#354：一律不敏感、两端去空白），找不到返回 undefined。
+ *
+ * 为什么查键不能用 `n in map` / `map[n]`：config 里存的是旧大小写时
+ * （手改过 config、或从更老版本迁移上来）**找不到**，
+ * 于是读的一侧按"缺失=启用"处理、写的一侧另写一条新键 ——
+ * 结果是两条键并存：显示名那条生效、旧那条成了永远读不到的孤儿键。
+ * 用户"全不选"之后界面显示关了、实际还在建链，且没有任何报错。
+ */
+export function findEnableKey(
+  map: Record<string, boolean>, name: string,
+): string | undefined {
+  return Object.keys(map).find((k) => sameName(k, name));
+}
+
+/** 某个名字的开关值（缺失视为启用）；查键不敏感，理由同 findEnableKey */
+export function agentEnabled(map: Record<string, boolean>, name: string): boolean {
+  const k = findEnableKey(map, name);
+  return k === undefined ? true : map[k];
+}
+
 export function setAllEnabled(
   names: string[], map: Record<string, boolean>, enabled: boolean,
 ): Record<string, boolean> {
   const next = { ...map };
-  for (const n of names) next[n] = enabled;
+  for (const n of names) {
+    /* 键已存在但写法不同时必须**更新那一条**，不能另写一条：
+       两条并存的话后端精确查的是显示名那条，旧那条永远读不到，
+       于是用户的旧设置（通常是"关掉"）静默失效。 */
+    next[findEnableKey(next, n) ?? n] = enabled;
+  }
   return next;
 }
 
 /** 是否全部启用（用于决定"全选"还是"全不选"按钮的可用态） */
 export function allEnabled(names: string[], map: Record<string, boolean>): boolean {
-  return names.length > 0 && names.every((n) => map[n] ?? true);
+  return names.length > 0 && names.every((n) => agentEnabled(map, n));
 }
 
 /**
@@ -60,7 +86,10 @@ export function invertEnabled(
   names: string[], map: Record<string, boolean>,
 ): Record<string, boolean> {
   const next = { ...map };
-  for (const n of names) next[n] = !(map[n] ?? true);
+  for (const n of names) {
+    const k = findEnableKey(next, n);
+    next[k ?? n] = !(k === undefined ? true : next[k]);
+  }
   return next;
 }
 

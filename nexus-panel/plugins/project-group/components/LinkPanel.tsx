@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import type { PresetAgent, FpxConfig } from '../types';
 import {
-  allEnabled, hasNameCI, invertEnabled, resetToPreset, setAllEnabled,
-  pinIndexOf, sameName, usableLinkName,
+  allEnabled, findEnableKey, hasNameCI, invertEnabled, resetToPreset,
+  setAllEnabled, pinIndexOf, sameName, usableLinkName,
 } from '../utils/linkAgents';
 import { CheckLine } from './ui';
 import { isComposing } from '../utils/ime';
@@ -68,7 +68,19 @@ export function LinkAgentBody({
   /** 是否已全启用：决定"全选"还是"全不选"该置灰 */
   const everyOn = allEnabled(allNames, map);
 
-  const toggle = (n: string) => setMap((m) => ({ ...m, [n]: !(m[n] ?? true) }));
+  /**
+   * 单个开关（#354：查键不敏感）。
+   *
+   * **必须更新已存在的那条键，不能另写一条**：`{ ...m, [n]: ... }` 精确写
+   * 的话，config 里存的是旧大小写时会产生**两条键并存**
+   * （`.Claude` 与 `.claude`）。后端不敏感查找取的是 `find` 的第一个匹配，
+   * 而 HashMap 的迭代顺序不确定 —— 于是同一个操作每次结果可能不同，
+   * 表现为"这个开关点了有时生效有时不生效"，是所有表现里最难查的一种。
+   */
+  const toggle = (n: string) => setMap((m) => {
+    const k = findEnableKey(m, n);
+    return { ...m, [k ?? n]: !(k === undefined ? true : m[k]) };
+  });
 
   /**
    * 恢复预设（#64）：清空改名与厂商标注，名字回到预设原名。
@@ -123,12 +135,22 @@ export function LinkAgentBody({
     return withIdx.map((x) => x.r);
   };
 
-  /** 把某个键上的值迁到新键（旧键不存在则不动） */
+  /**
+   * 把某个键上的值迁到新键（旧键不存在则不动）。
+   *
+   * **查旧键必须不敏感**（#354）：config 里存的是旧大小写时
+   * `from in src` 找不到 → 不迁移，于是备注 / 厂商在改名后**静默消失**
+   * （新名在 map 里缺失，回落到默认值），而界面上那一栏就是空的，
+   * 用户只会以为自己没写过。置顶那条早就用了 pinIndexOf，
+   * 这两条跟着统一，否则改名后"置顶还在、备注没了"，更难看出是同一个原因。
+   */
   const migrate = (src: Record<string, string>, from: string, to: string) => {
-    if (from === to || !(from in src)) return src;
+    if (sameName(from, to)) return src;
+    const k = Object.keys(src).find((x) => sameName(x, from));
+    if (k === undefined) return src;
     const n = { ...src };
-    n[to] = n[from];
-    delete n[from];
+    n[to] = n[k];
+    delete n[k];
     return n;
   };
 
@@ -181,10 +203,14 @@ export function LinkAgentBody({
       return n;
     });
     setMap((m) => {
-      if (currentShown === next || !(currentShown in m)) return m;
+      /* 开关也要迁，且查旧键不敏感（#354，理由同 migrate）。
+         漏了这条的话：用户关掉过的名字改个名就变回"启用"，
+         建链时凭空多出一个他不想要的链接。 */
+      const k = findEnableKey(m, currentShown);
+      if (sameName(currentShown, next) || k === undefined) return m;
       const n = { ...m };
-      n[next] = n[currentShown];
-      delete n[currentShown];
+      n[next] = n[k];
+      delete n[k];
       return n;
     });
     setRemarks((r) => migrate(r, currentShown, next));
