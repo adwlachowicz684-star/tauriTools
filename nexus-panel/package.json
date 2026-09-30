@@ -193,6 +193,7 @@
     "test:pg-shift-anim": "node plugins/project-group/shift-anim-test.mjs",
     "test:pg-splitter-commit": "node plugins/project-group/splitter-commit-test.mjs",
     "test:pg-stack-hotzone": "node plugins/project-group/stack-head-hotzone-test.mjs",
+    "test:pg-stack-reveal-once": "node plugins/project-group/stack-reveal-once-test.mjs",
     "test:pg-structure": "node plugins/project-group/structure-test.mjs",
     "test:pg-tabs": "node plugins/project-group/tab-index-test.mjs",
     "test:pg-texttrunc-charset": "node plugins/project-group/texttrunc-charset-test.mjs",

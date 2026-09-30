@@ -107,7 +107,19 @@ export function StackedGroups({
       el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     });
     return () => cancelAnimationFrame(id);
-  }, [reveal, tabs, cardsOf]);
+    /*
+     * **依赖里不能有 cardsOf**：调用方传的是现写的箭头函数
+     * （App 里就是 `cardsOf={(i) => groupCardsOf(i)}`），每次渲染都是新的引用。
+     * 放进依赖等于"每次渲染都重跑这个 effect" —— 于是用户跳完一次之后，
+     * 之后每一次别的刷新（日志追加、忙态起落、图标缩略图回来）都会再排一次
+     * rAF，把这张卡又滚回视野。表现是"我刚滚走，它自己弹回来"，
+     * 而界面上没有任何线索说明是谁在滚，只能当成滚动条失灵。
+     *
+     * `tabs` 可以留着：它是快照上的数组，只在刷新后换引用，
+     * 那时候重跑正好补上"跳转时分类还没到"的情况。
+     * `reveal` 带自增 seq，连跳同一张卡也会重跑。
+     */
+  }, [reveal, tabs]);
 
   const toggle = (i: number) => setCollapsed((s) => {
     const n = new Set(s);
