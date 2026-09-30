@@ -21,6 +21,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { stripComments as strip } from './test-scan-utils.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -76,7 +77,7 @@ console.log('\n=== 2. 能力分级与白名单 ===');
 for (const cmd of ['updater_check', 'updater_install', 'updater_relaunch']) {
   /* 只查"表里有没有这个键"会被注释里的文字骗过去 ——
      所以先剥注释，再按 `键: '等级'` 精确匹配。 */
-  const bare = caps.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const bare = strip(caps).replace(/^\s*\/\/.*$/gm, '');
   const m = bare.match(new RegExp(`\\b${cmd}:\\s*'([A-Za-z]+)'`));
   t(`${cmd} 定级为 M`, !!m && m[1] === 'M');
 }

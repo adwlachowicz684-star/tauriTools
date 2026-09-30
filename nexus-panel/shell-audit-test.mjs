@@ -8,6 +8,7 @@ import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripComments as strip } from './test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', { url: 'http://localhost/' });
@@ -210,7 +211,7 @@ const setApp = src('plugins/settings/App.tsx');
  *    改成认「set-body 出现在 className 上」，模板串与字面量都覆盖；
  *    但**不认**注释里提到 set-body —— 那样把 class 删了也会误绿。
  */
-const setAppCode = setApp.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, '');
+const setAppCode = strip(setApp).replace(/\/\/.*/g, '');
 t('App.tsx 用 .set-body 包裹内容（分页条留在滚动区外）',
   /className=\{?[`"]set-body/.test(setAppCode));
 t('.set-body 的包裹位于分页条之后',

@@ -9,6 +9,7 @@ import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { stripComments as stripBlock, stripCommentsJs as stripJs } from './test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INDEX_HTML = path.join(HERE, 'index.html');
@@ -324,7 +325,7 @@ console.log('\n--- E. 插件行末尾定宽 ---');
     if (i < 0) return '';
     return css.slice(i, css.indexOf('}', i));
   };
-  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+  const strip = stripBlock;
 
   const act = strip(block('.p-slot-act'));
   const audit = strip(block('.p-slot-audit'));
@@ -358,7 +359,7 @@ console.log('\n--- F. 设置页竖排导航 ---');
   const css = src('css/neumorphism.css');
   const react = src('plugins/settings/App.tsx');
   const native = src('plugins/settings/index.js');
-  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+  const strip = stripBlock;
   const block = (sel) => {
     const i = css.indexOf(sel + ' {');
     if (i < 0) return '';
@@ -404,7 +405,7 @@ console.log('\n--- G. 插件按 kind 三分区 ---');
 {
   const react = src('plugins/settings/App.tsx');
   const native = src('plugins/settings/index.js');
-  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '');
+  const strip = stripJs;
   const r = strip(react), n = strip(native);
 
   t('React 版不用 kind!==service 分 app（会把 toolbar 算进去）',
@@ -571,7 +572,7 @@ console.log('\n--- G. 插件按 kind 三分区 ---');
 console.log('\n--- H. 检查器提示按平台 ---');
 {
   const m = src('plugins/toolbar-inspector/module.js');
-  const code = m.replace(/\/\*[\s\S]*?\*\//g, '');
+  const code = stripBlock(m);
   t('tip 不写死 Ctrl（Mac 上应为 ⌘）', !/tip:\s*'[^']*Ctrl/.test(code));
   t('tip 按平台生成', /get tip\(\)/.test(code) && /isMac\(\)/.test(code)
     && /⌘/.test(code) && /Ctrl/.test(code));
@@ -590,7 +591,7 @@ console.log('\n--- I. 右上角入口管理 ---');
   const tb = src('js/toolbar-plugin.js');
   const react = src('plugins/settings/App.tsx');
   const native = src('plugins/settings/index.js');
-  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+  const strip = stripBlock;
 
   /* 持久化存 localStorage：设置页与标题栏是两份模块实例，
      模块级变量会有第二份副本，改了这边那边不知道 */
@@ -629,7 +630,7 @@ console.log('\n--- I. 右上角入口管理 ---');
    F. 强调色 / 环境色的自定义色（色盘选色）
    ============================================================ */
 {
-  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '');
+  const strip = stripJs;
 
   const sa = strip(app);
   const tm = strip(src('js/theme-manager.js'));

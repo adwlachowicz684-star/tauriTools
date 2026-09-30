@@ -42,16 +42,35 @@ export function stripComments(code) {
 }
 
 /**
- * 块注释 + `//` 行注释一起剥（扫 JS/TSX 时用）。
+ * 块注释 + `//` 行注释一起剥（扫 JS/TSX/Rust 时用）。
  *
- * 与 stripComments 的区别：JS 里确实有 `//` 注释，而 CSS 没有。
+ * 与 stripComments 的区别：JS/TS/RS 里确实有 `//` 注释，而 CSS 没有。
  *
- * ⚠️ 已知风险：`https://`、`file://` 这类 URL 里的 `//` 会被当成注释开头，
- * 把该行后半截吞掉。所以**扫 CSS 请用 stripComments**，只有确认目标文本里
- * URL 误伤无碍时（既有用法已在 mindmap 2700+ 项上验证过）才用这个。
+ * 为什么行注释的判据是 `(^|\s)\/\/` 而不是裸 `\/\/`：
+ *   `https://`、`file://`、路径 `a//b` 里的 `//` 前面是 `:` 或 `:` 以外的
+ *   非空白字符，裸判据会把整行后半截吞掉 —— 实测会连真实代码一起剥掉。
+ *   行首、行尾（`x = 1; // 说明`）、缩进后这三种真注释形态，其 `//` 前面
+ *   必然是行首或空白，都能被 `(^|\s)` 覆盖，所以这个判据**既安全又不漏**。
  */
 export function stripCommentsJs(code) {
-  return stripComments(code).replace(/\/\/[^\n]*/g, '');
+  return stripComments(code).replace(/(^|\s)\/\/.*$/gm, '$1');
+}
+
+/**
+ * 块注释，替换成**空串**（stripComments 是替换成空格）。
+ *
+ * 什么时候必须用这个而不能用 stripComments：
+ *   扫 Rust 标注、扫连续 token 时（`#[tauri::command]`、`fn` 紧邻注释等），
+ *   留一个空格会把原本连续的记号切断，导致匹配失败。
+ *   实测 command-consistency 用空格版会掉 24 项 —— 不是误报，是匹配不上。
+ *
+ * 什么时候反而**不该**用这个：
+ *   注释夹在两个记号中间时（`a`、注释、`b`），去掉注释会把它们直接粘成
+ *   一个不存在的记号 `ab`。扫 CSS / 扫类名时请用 stripComments（留空格），
+ *   不要图省事用这个。
+ */
+export function stripCommentsFlat(code) {
+  return String(code).replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
 /* ---- 便捷读文件 ---- */
