@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
@@ -28,7 +29,7 @@ const read = (p) => fs.readFileSync(path.join(HERE, p), 'utf8');
 
 /** 剥掉块注释与行注释，只留代码 —— 防"注释里的字样把断言喂饱" */
 function stripComments(s) {
-  return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+  return strip(s).replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 
 /** 从 from 处的 `{` 起，配平大括号切出整段（忽略字符串与注释里的括号） */

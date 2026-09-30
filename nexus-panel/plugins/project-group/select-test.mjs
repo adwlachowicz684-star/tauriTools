@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
@@ -26,7 +27,7 @@ const contentRaw = fs.readFileSync(path.join(HERE, 'components/ContentPanel.tsx'
 /* 规则类断言必须看**剥掉注释**的源码：
    我在注释里写了旧的错误写法作为反例，直接拿原文匹配会命中自己的注释。
    这是第三次踩同一个坑，故在此写明。 */
-const content = contentRaw.replace(/\/\*[\s\S]*?\*\//g, '');
+const content = strip(contentRaw);
 const css = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8');
 
 console.log('\n=== 1. #261 右键先选中再弹菜单 ===');
@@ -88,8 +89,8 @@ console.log('\n=== 4. 样式层面：选中态有可见表现 ===');
 
 console.log('\n=== 5. #297 页签显示条目数 ===');
 {
-  const cssNC = css.replace(/\/\*[\s\S]*?\*\//g, '');
-  const gridNC = grid.replace(/\/\*[\s\S]*?\*\//g, '');
+  const cssNC = strip(css);
+  const gridNC = strip(grid);
   t('页签渲染条目数', /fpx-tab-count/.test(gridNC));
   t('取的是 items.length（不是写死的）', /\{t\.items\.length\}/.test(gridNC));
   /* 空页签要能一眼看出来，否则点进去只有一句空提示，白点一次 */
