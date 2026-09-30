@@ -26,6 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadTs, stripTS, makeT } from './testkit.mjs';
+import { stripCommentsFlat } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PG = HERE;
@@ -37,7 +38,7 @@ const {
 const { t, done } = makeT();
 
 /** 剥块注释：判"源码里有没有某个写法"时必须先剥，否则被注释里的字样喂饱 */
-const stripDoc = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '');
+const stripDoc = (s) => stripCommentsFlat(s);
 
 const lpRaw = fs.readFileSync(path.join(PG, 'components/LinkPanel.tsx'), 'utf8');
 const lp = stripDoc(lpRaw);

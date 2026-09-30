@@ -13091,8 +13091,8 @@ group('「设为封面」写回的节点必须是打开时的那个，不能是�
 
   // ④ 根因守卫：onSetThumb 不得再读 _pendingNodeId（那是上一次操作留下的）
   const psrc0 = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
-  const oa = fnBody(psrc0, 'const openAt = async (kind, ref, index) => {')
-    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const oa = stripCommentsFlat(fnBody(psrc0, 'const openAt = async (kind, ref, index) => {'))
+    .replace(/^\s*\/\/.*$/gm, '');
   const cb = oa.slice(oa.indexOf('onSetThumb'));
   ok(!/_pendingNodeId/.test(cb), 'onSetThumb 回调不得读 _pendingNodeId（它是上一次操作的残留）');
   ok(!/_pendingNodeId\s*\|\|/.test(cb), 'onSetThumb 不得用 _pendingNodeId 作首选 id');
@@ -13406,7 +13406,7 @@ group('快捷键说明 × 实际绑定：文档写的每一条都得真的接上
   const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
   const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   // 注释里大量引用这些键名，不剥的话命中的是注释本身 —— 键真没绑上去照样绿
-  const S = html.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const S = stripCommentsFlatJs(html);
 
   const KERNEL = ['ctrl+a', 'ctrl+b', 'ctrl+i', 'ctrl+shift+l', 'ctrl+=', 'ctrl+-',
     'tab', 'enter', 'shift+tab', 'del', 'backspace', 'insert', 'shift+insert',
@@ -13431,7 +13431,7 @@ group('快捷键说明 × 实际绑定：文档写的每一条都得真的接上
 
   const m = pn.match(/const SHORTCUTS = \[([\s\S]*?)\n\];/);
   ok(!!m, '取到 SHORTCUTS 数组');
-  const body = (m ? m[1] : '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const body = stripCommentsFlat(m ? m[1] : '').replace(/^\s*\/\/.*$/gm, '');
   const docKeys = [...body.matchAll(/\['([^']+)',\s*'([^']*)'\]/g)].map((x) => x[1]);
 
   /** "Ctrl + C / X / V" → ctrl+c, ctrl+x, ctrl+v —— 后段继承前段的修饰键 */

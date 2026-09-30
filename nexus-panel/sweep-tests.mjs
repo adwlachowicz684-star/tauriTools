@@ -12,7 +12,15 @@
  *   ③ N 是否为 0（0 条断言 = 没有守任何东西）
  * 不做语义判定（恒真断言得靠人读，或者靠破坏验证）。
  *
- * 运行：node sweep-tests.mjs [--only=关键字]
+ * 运行：node sweep-tests.mjs [--only=关键字] [--slice=1/6]
+ *
+ * ⚠ 两个不能省的设计（都是踩过的坑）：
+ *  A. 必须把自己排除在待跑列表之外。
+ *     entries 取自 package.json 的 test:* 脚本，而 test:sweep 指向的正是
+ *     本文件 —— 不排除就会 spawn 自己，自己再 spawn 178 个……
+ *     表现为"跑不完 / 机器被拖死"，而报错只会指向超时，看不出是递归。
+ *  B. 必须能分片。178 个脚本一次跑完远超单次命令的时长上限，
+ *     跑到一半被掐断 = 前面的结果全部丢失（明细只在最后才写盘）。
  */
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -22,11 +30,26 @@ import { fileURLToPath } from 'node:url';
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 const only = (process.argv.find(a => a.startsWith('--only=')) || '').split('=')[1] || '';
+// 分片：--slice=1/6 表示把排序后的列表均分 6 份、跑第 1 份（1-based）。
+const sliceArg = (process.argv.find(a => a.startsWith('--slice=')) || '').split('=')[1] || '';
+const SELF = 'sweep-tests.mjs';
 
-const entries = Object.entries(pkg.scripts)
+let entries = Object.entries(pkg.scripts)
   .filter(([k, v]) => k.startsWith('test:') && /\.mjs|\.cjs|\.tsx?/.test(v))
+  // A. 排除自己：test:sweep 指向本文件，不过滤就是无限 fork。
+  .filter(([, v]) => !v.includes(SELF))
   .filter(([k]) => !only || k.includes(only))
   .sort();
+
+let sliceTag = '';
+if (sliceArg) {
+  const m = sliceArg.match(/^(\d+)\/(\d+)$/);
+  if (!m) { console.error('--slice 需写成 i/n，例如 --slice=1/6'); process.exit(2); }
+  const i = Number(m[1]), n = Number(m[2]);
+  const per = Math.ceil(entries.length / n);
+  entries = entries.slice((i - 1) * per, i * per);
+  sliceTag = `[${i}/${n}]`;
+}
 
 // 汇总行的几种写法（项目里不统一，全列出来；少一种就会把正常测试误判成"没汇总"）
 const SUMMARY = [
@@ -53,7 +76,7 @@ for (const [name, cmd] of entries) {
 const bad = rows.filter(r => r.status !== 0 || r.pass === null || r.pass === 0);
 const ok = rows.filter(r => r.status === 0 && r.pass !== null && r.pass > 0);
 
-console.log(`\n共 ${rows.length} 个测试脚本`);
+console.log(`\n共 ${rows.length} 个测试脚本${sliceTag}`);
 console.log(`✅ 正常（有汇总行且断言数 > 0）：${ok.length}`);
 console.log(`⚠️  可疑：${bad.length}\n`);
 
@@ -67,8 +90,14 @@ for (const r of bad) {
   if (tail) console.log(`     ${tail}`);
 }
 
-console.log(`\n明细已写入 /data/workspace/_sweep_r117.txt`);
+// 明细落到分片各自的文件：一次跑不完，跑到一半被掐断时前面的结果不能丢。
+const outFile = `/data/workspace/.tool_output/sweep${sliceTag.replace(/\W/g, '') || '_all'}.txt`;
 const fs = await import('node:fs');
-fs.writeFileSync('/data/workspace/_sweep_r117.txt',
+fs.mkdirSync('/data/workspace/.tool_output', { recursive: true });
+fs.writeFileSync(outFile,
   rows.map(r => `${r.status}\t${r.pass}\t${r.fail}\t${r.name}\t${r.cmd}`).join('\n'));
+console.log(`\n明细已写入 ${outFile}`);
+// 标准汇总行：本文件自己也在 package.json 的 test:* 里（已排除自跑），
+// 但别人拿通用规则体检它时，没有这行就会被判成"0 条断言"。
+console.log(`通过 ${ok.length} 项，失败 ${bad.length} 项`);
 process.exit(0);
