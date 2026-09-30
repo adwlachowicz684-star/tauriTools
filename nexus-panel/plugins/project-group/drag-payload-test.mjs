@@ -6,78 +6,61 @@
  * 解析失败会抛异常中断拖拽；解析成功但结构不对（没有 kind / path）更糟 ——
  * `drag.path` 为 undefined，卡片被静默挪到错位置。
  *
- * 思路：直接调 CardGrid.tsx 导出的 parseDragPayload()，也就是三个 onDrop
- * 现在走的那一个函数。这里不另写一份校验逻辑，改了源码就一起变。
+ * 思路：直接调 parseDragPayload()（现在住在 utils/dragSort.ts），也就是三个
+ * onDrop 走的那一个函数。这里不另写一份校验逻辑，改了源码就一起变。
  */
-import { createRequire } from 'node:module';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-
-const require = createRequire(import.meta.url);
-
-/**
- * esbuild 的候选来源。
- *
- * 只保留两类：环境变量指定的路径，以及常规依赖解析（本地 node_modules 或全局副本）。
- * 此前这里写死过一条本机绝对路径（某沙盒的 .deps 目录），在别的机器上永远解析不到 ——
- * 无害，但属于环境耦合，不该进仓库。缺依赖时报下面的错即可，本来就是缺依赖。
- */
-function resolveEsbuild() {
-  for (const c of [process.env.ESBUILD_PATH, 'esbuild'].filter(Boolean)) {
-    try { return require.resolve(c); } catch { /* 换下一个候选 */ }
-  }
-  throw new Error('找不到 esbuild：请先 npm install，或用 ESBUILD_PATH 指定路径');
-}
-const esbuild = require(resolveEsbuild());
+import { fileURLToPath } from 'node:url';
+import { loadTs } from './testkit.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.join(HERE, 'components/CardGrid.tsx');
-
-/* 产物放系统临时目录，不放源码目录，两个原因：
-   1) plugins/project-group/ 正被 vite dev 的 watcher 盯着，刚写完的文件偶尔被占住；
-   2) 这个环境里 fs.rmSync 会「报告成功、文件却还在」（沙箱 safe-delete 垫片），
-      留在源码目录只会越攒越多 —— 实测 20 次并发跑完留下 18 个 1.3MB 的 .cjs。
-   扔进 os.tmpdir() 就与仓库无关了。
-   文件名还必须带 pid：批量并发跑测试时两次运行会共用同一个文件，一方 import 时
-   另一方刚把它删掉 → MODULE_NOT_FOUND，30 项断言全红，看着像测试挂了，其实是自相残杀。 */
-const OUT = path.join(os.tmpdir(), `.drag-payload-test.${process.pid}.cjs`);
-
-/* 目标文件偶尔被杀软或 watcher 短暂占住，写不进去 → 重试再判定真失败 */
-for (let i = 0; ; i++) {
-  try {
-    await esbuild.build({
-      entryPoints: [SRC],
-      bundle: true,
-      outfile: OUT,
-      format: 'cjs',
-      platform: 'node',
-      jsx: 'automatic',
-      loader: { '.css': 'empty' },
-      logLevel: 'silent',
-      /* 产物已不在项目内，react 等依赖靠这条显式指回项目 node_modules；
-         只有全局副本时再退到全局目录（沙盒 / CI） */
-      nodePaths: [path.join(HERE, '../../node_modules'), '/usr/local/lib/node_modules'],
-    });
-    break;
-  } catch (e) {
-    if (i >= 2) throw e;
-    await new Promise((r) => setTimeout(r, 150));
-  }
-}
-
-const { parseDragPayload } = await import(pathToFileURL(OUT).href);
-/* 删不掉也不算测试结论：文件在系统临时目录、名字带 pid，既不进仓库也不互相干扰，
-   真删不掉就留给系统清理。这一条以前没兜住 —— rmSync 抛 EPERM/ENOENT 时整轮判红，
-   而 30 项断言其实全绿。 */
-try { fs.rmSync(OUT, { force: true }); } catch { /* 交给系统清理 */ }
 
 let pass = 0, fail = 0;
 const t = (name, cond, extra = '') => {
   cond ? pass++ : fail++;
   console.log(`${cond ? '✅' : '❌'} ${name}${extra ? ' → ' + extra : ''}`);
 };
+
+/*
+ * 取函数真身：从 utils/dragSort.ts。
+ *
+ * 这里**曾经**打包 CardGrid.tsx 再 import 出 parseDragPayload（依赖 esbuild）。
+ * 后来该函数被抽到 utils/dragSort.ts，CardGrid 只是 import 用、**没有**再导出它，
+ * 于是打包产物里没有这个导出 → `parseDragPayload is not a function`。
+ *
+ * 失效形态值得记一笔：它不是"红几条"，而是**整份测试崩在半路** ——
+ * 前面 40 多项断言跑不完、汇总行都不打印。崩 ≠ 红：看着像环境缺依赖，
+ * 实际是这整份测试早就不守卫任何东西了。
+ * （同类问题在本项目已多次出现：崩在第 12 组、崩在 rmSync、崩在解构空数组。）
+ *
+ * 改用 testkit 的 loadTs（零依赖类型剥离），与 drag-sort-test 同一套路，
+ * 不再依赖 esbuild —— 没装构建工具也能跑。
+ */
+const ds = await loadTs(path.join(HERE, 'utils/dragSort.ts'));
+const parseDragPayload = ds.parseDragPayload;
+
+/* 取不到就**当场判红并停下**，不要往下跑。
+   往下跑的下场：第 4 节有一处直接调用（没包在 safely 里），
+   于是整份测试崩在半路、汇总行都不打印 —— 崩 ≠ 红，
+   看着像"环境缺依赖"，实际是这整份护栏早就没了。 */
+if (typeof parseDragPayload !== 'function') {
+  fail++;
+  console.log('❌ 取不到 parseDragPayload（utils/dragSort.ts 没导出它）—— 不往下跑');
+  console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
+  process.exit(1);
+}
+
+/* 测的必须就是 onDrop 用的那一个，而不是碰巧同名的另一份实现：
+   光拿到函数不够，CardGrid 得真的从这里 import（第 5 节只数调用，
+   数不到"从哪来"）。 */
+{
+  const cg = fs.readFileSync(SRC, 'utf8');
+  t('测的就是 CardGrid 用的那一个（从 utils/dragSort 引入）',
+    /import\s*\{[\s\S]{0,200}?\bparseDragPayload\b[\s\S]{0,200}?\}\s*from\s*'\.\.\/utils\/dragSort'/.test(cg) &&
+    typeof parseDragPayload === 'function');
+}
 
 /** 解析不得抛异常；返回 null 表示拒绝该载荷 */
 const safely = (raw) => {
@@ -147,19 +130,29 @@ for (const [name, raw] of [
 
 console.log('\n=== 5. 回归护栏：三处 onDrop 不得再有裸 JSON.parse ===');
 {
-  const src = fs.readFileSync(SRC, 'utf8');
+  /* 护栏要盯**解析函数住的地方**：parse* 已搬到 utils/dragSort.ts，
+     继续扫 CardGrid 只会数到 0（原来那条 `n > 0` 因此恒假 ——
+     一条永远为假又要求为真的断言，等于把护栏拆了还留着牌子）。
+     两件事分两处看：解析集中在 dragSort，onDrop 不得自己 parse。 */
+  const src = fs.readFileSync(path.join(HERE, 'utils/dragSort.ts'), 'utf8');
+  const cg = fs.readFileSync(SRC, 'utf8');
   // 修复前的写法是 `const drag: DragPayload = JSON.parse(raw)`，三处各自 parse。
   // 守的是「onDrop 里不得再有裸解析」，不是「全文件只能有一处 JSON.parse」——
   // 后来页签拖动（专用 MIME x-fpx-tab）带来了自己的载荷结构与 parseTabDrag()，
   // 那一处同样是正规校验。所以按 export function 切段，要求每处解析都在
   // parse* 函数体内；将来再新增 parseXxxDrag 也不会误红。
   const n = (src.match(/JSON\.parse\(raw\)/g) || []).length;
-  const segs = src.split(/\nexport function /).slice(1);
+  /* 切段必须把**非 export 的**函数也算进来：共享的 parseJson() 就是内部函数，
+     只按 `export function` 切的话它会被算进上一个导出函数的段里 →
+     明明是正规解析却被判成"游离"，护栏自己开始误报。 */
+  const segs = src.split(/\n(?:export )?function /).slice(1);
   const outside = segs.filter((x) => /JSON\.parse\(raw\)/.test(x) && !/^parse/.test(x)).length;
   t('JSON.parse(raw) 只出现在 parse* 载荷解析函数内', n > 0 && outside === 0,
     `共 ${n} 处，游离 ${outside} 处`);
   t('三处 onDrop 均走 parseDragPayload',
-    (src.match(/parseDragPayload\(raw\)/g) || []).length === 3);
+    (cg.match(/parseDragPayload\(raw\)/g) || []).length === 3);
+  t('onDrop 处不再有裸 JSON.parse（都交给 parseDragPayload）',
+    (cg.match(/JSON\.parse\s*\(/g) || []).length === 0);
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
