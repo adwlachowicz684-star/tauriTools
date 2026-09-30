@@ -379,6 +379,26 @@ function parseSize(s) {
   return { w: 0, h: 0 };
 }
 
+/**
+ * 读 data.imageSize。两种形态都认：
+ *
+ *   · {width, height} —— 编辑器 image 命令写的，也是**内核 ImageRenderer 读的**
+ *     （它直接用 g.width / g.height）。
+ *   · "320*240" —— 早先 zen 导入写成这种（历史包袱）。
+ *
+ * 只认字符串正是「导入后图片不显示」的根因：内核拿到字符串时
+ * g.width / g.height 是 undefined，算出的宽高是 0 —— 实测 <image> 的
+ * width/height 属性就是 "0"，图上什么都没有，且不报错。
+ */
+function sizeOf(v) {
+  if (v && typeof v === 'object') {
+    const w = num(v.width);
+    const h = num(v.height);
+    return { w: w > 0 ? w : 0, h: h > 0 ? h : 0 };
+  }
+  return parseSize(v);
+}
+
 /** 本地路径 → file URI。Web 沙箱拿不到真实路径，仅用于兼容 C# 版产出的文件 */
 function toFileUri(path) {
   const s = str(path);
@@ -616,7 +636,7 @@ function buildImage(data) {
   }
   if (!src || !src.trim()) return null;
   const img = { src };
-  const { w, h } = parseSize(data.imageSize);
+  const { w, h } = sizeOf(data.imageSize);
   if (w > 0) img.width = w;
   if (h > 0) img.height = h;
   const title = str(data.imageTitle);
@@ -759,7 +779,8 @@ function buildKmNode(topic, depth = 0, counter = null) {
       const w = num(topic.image.width);
       const h = num(topic.image.height);
       data.image = src;
-      if (w > 0 && h > 0) data.imageSize = `${Math.round(w)}*${Math.round(h)}`;
+      // 必须是 {width,height} 对象：内核 ImageRenderer 直接读 .width/.height
+      if (w > 0 && h > 0) data.imageSize = { width: Math.round(w), height: Math.round(h) };
       const t = str(topic.image.title);
       if (t && t.trim()) data.imageTitle = t;
     }
@@ -872,6 +893,37 @@ function descendantsNamed(el, name, depth = 0) {
   return out;
 }
 
+/**
+ * 只在本话题**自己**的范围内找后代：不下钻子话题。
+ *
+ * 取「节点的标记 / 图片」必须用它，不能用 descendantsNamed ——
+ * 后者会一路下钻到整棵子树，于是：
+ *
+ *   · 父话题没有图片、子话题有 → 父话题**抢到子的图片**（取 [0]，
+ *     文档序里子的 <img> 就在那儿），一张图同时出现在两个节点上；
+ *   · 父话题的优先级被**子话题的标记覆盖**（遍历是先父后子，
+ *     后写的值赢）。实测：父 priority-2、子 priority-1，
+ *     导入后父子**都是 1** —— 父的值静默丢失。
+ *
+ * 老版 content.xml 里 <children>/<topics>/<topic> 就是子话题的边界，
+ * 跨过去就属于另一个节点了。
+ */
+function ownDescendants(el, name) {
+  const out = [];
+  if (!el) return out;
+  const walk = (n, d) => {
+    if (d > MAX_DEPTH) return;
+    for (const c of n.children || []) {
+      const ln = localName(c);
+      if (ln === 'children' || ln === 'topics' || ln === 'topic') continue;
+      if (ln === name) out.push(c);
+      walk(c, d + 1);
+    }
+  };
+  walk(el, 0);
+  return out;
+}
+
 function parseLegacy(xml) {
   const doc = parseXml(xml);
   const sheets = [];
@@ -913,7 +965,7 @@ function buildKmFromXmlTopic(t, depth = 0) {
   const href = t.getAttributeNS('http://www.w3.org/1999/xlink', 'href') || t.getAttribute('href');
   if (href && href.trim()) data.hyperlink = href;
 
-  for (const mr of descendantsNamed(t, 'marker-ref').concat(descendantsNamed(t, 'marker'))) {
+  for (const mr of ownDescendants(t, 'marker-ref').concat(ownDescendants(t, 'marker'))) {
     const mid = mr.getAttribute('marker-id') || mr.getAttribute('markerId');
     if (!mid) continue;
     const pm = /^priority-(\d+)$/.exec(mid);
@@ -934,10 +986,16 @@ function buildKmFromXmlTopic(t, depth = 0) {
     if (arr.length) data.labels = arr;
   }
 
-  const imgEl = descendantsNamed(t, 'img')[0];
+  const imgEl = ownDescendants(t, 'img')[0];
   const imgSrc = imgEl?.getAttribute('src')
     || imgEl?.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
-  if (imgSrc && imgSrc.trim()) data.image = imgSrc;
+  if (imgSrc && imgSrc.trim()) {
+    data.image = imgSrc;
+    // 老版 <img> 常带 width/height；丢了它内核就不画（同 zen 路径）
+    const iw = num(imgEl?.getAttribute('width'));
+    const ih = num(imgEl?.getAttribute('height'));
+    if (iw > 0 && ih > 0) data.imageSize = { width: Math.round(iw), height: Math.round(ih) };
+  }
 
   const children = [];
   const pairs = [];

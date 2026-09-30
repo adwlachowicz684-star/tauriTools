@@ -218,6 +218,20 @@
         // 布局过渡动画开关由设置面板控制（WPF 侧导航前注入 window.__kmAnimateLayout）：
         // 关闭（默认）时打开画布/展开收起不播节点扩散动画，直接显示最终布局；开启则保留 300ms 过渡。
         if (!window.__kmAnimateLayout) km.setOption('layoutAnimationDuration', 0);
+        /*
+         * 节点图片默认上限 320（内核自带的是 200）。
+         *
+         * 一张 600×400 的图被压到 200 宽，节点上只剩一小块，用户反馈
+         * 「图片显示得太小了」。
+         *
+         * **必须改内核 option，不能只改自己那一份**：loadFitSize 里写的是
+         * `m.getOption('maxImageWidth') || 320`，而内核这个 option 默认就是 200 ——
+         * `|| 320` 那个兜底永远走不到，早先只改注释里的数字等于没改（实测
+         * 一张 320×240 的图导入后仍是 200×150）。
+         * 且这里要是自己算一套、内核另一套，同一张图在两边会算出不一样的大小。
+         */
+        try { km.setOption('maxImageWidth', 320); } catch (e) {}
+        try { km.setOption('maxImageHeight', 320); } catch (e) {}
         km.setTheme('fresh-blue');
 
     /*
@@ -334,6 +348,59 @@
                     img.src = url;
                 } catch (e) { cb(null); }
             }
+
+            // ---- 导入后补齐节点图片尺寸 ----
+            //
+            // 内核 ImageRenderer 是 `if (g) {...}` 且直接读 g.width / g.height
+            // （见 ImageRenderer.update）—— 于是：
+            //   · 没有 imageSize          → 完全不画；
+            //   · imageSize 是 "320*240"  → .width/.height 是 undefined，
+            //                               算出来宽高都是 0，同样不画。
+            // 实测（真实 Chromium，读 <image> 的 width 属性）：
+            //   {width:320,height:240} → "320"   ✓
+            //   "320*240"             → "0"     ✗
+            //   无                     → "0"     ✗
+            //
+            // 而导入进来的画布（老版 .xmind、别的软件产出的 .xmind、手改的 .json）
+            // 常常只有 image 没有尺寸 —— 图片就是一片空白，且不报任何错，
+            // 用户只会以为「导入丢了图片」。这里在 import 之后异步量一次补上。
+            (function () {
+                function needsFill(n) {
+                    var sz = null;
+                    try { sz = n.getData('imageSize'); } catch (e) {}
+                    return !!(n.getData('image')
+                        && !(sz && typeof sz === 'object' && sz.width > 0 && sz.height > 0));
+                }
+                try {
+                    km.on('import', function () {
+                        var pending = 0;
+                        var settle = function () {
+                            pending--;
+                            // 图会改变节点尺寸，最后补完重排一次，否则节点互相压住
+                            if (pending <= 0) { try { km.layout(); } catch (e) {} }
+                        };
+                        try {
+                            km.getRoot().traverse(function (n) {
+                                if (!needsFill(n)) return;
+                                var url = '';
+                                try { url = String(n.getData('image') || ''); } catch (e) {}
+                                if (!url) return;
+                                pending++;
+                                loadFitSize(url, km, function (sz) {
+                                    try {
+                                        // 期间换了图就别覆盖
+                                        if (n.getData('image') !== url) return;
+                                        if (sz) { n.setData('imageSize', sz); n.render(); }
+                                    } catch (e) {}
+                                    settle();
+                                });
+                            });
+                        } catch (e) {}
+                        // 一张都没补：pending 还是 0，不需要重排
+                        if (pending === 0) return;
+                    });
+                } catch (e) {}
+            })();
 
             // ---- 同步 image 命令（**覆盖**内核自带的异步版本）----
             //
