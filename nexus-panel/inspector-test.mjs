@@ -6,6 +6,7 @@
  */
 import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
+import { stripCommentsFlatJs } from './test-scan-utils.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -188,9 +189,7 @@ t('插件文件存在', /api\.inspector\.toggle\(\)/.test(src('plugins/toolbar-i
 {
   const insp = src('js/inspector.js');
   /* 剥注释：块注释 + 行注释。注释里提到这些选择器不算实现 */
-  const code = insp
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|\s)\/\/.*$/gm, '');
+  const code = stripCommentsFlatJs(insp);
   /*
    * 实际写法 `e.target?.closest?.('...')` —— 正则要写全 `\?\.\(`。
    * 漏掉那个点会恒假：断言永远不通过，而它想保护的回退也永远不会被发现。

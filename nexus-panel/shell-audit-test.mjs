@@ -144,7 +144,7 @@ const commentAt = css.lastIndexOf('*/', bfIdx);
 const selStart = braceAt > commentAt ? braceAt + 1 : commentAt + 2;
 const ruleOpen = css.indexOf('{', selStart);
 const rawSel = bfIdx < 0 ? '' : css.slice(selStart, ruleOpen);
-const selector = rawSel.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\s+/g, ' ').trim();
+const selector = strip(rawSel).replace(/\s+/g, ' ').trim();
 
 t('.p-card 不再带 backdrop-filter', !/\.p-card\b/.test(selector), selector.slice(0, 80) || '(空)');
 /* .dialog 同 .p-card 的理由：它里面会再开一层弹窗（IconPickDialog /
