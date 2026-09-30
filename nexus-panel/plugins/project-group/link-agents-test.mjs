@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadTs, makeT } from './testkit.mjs';
+import { stripComments as stripBlock, stripCommentsJs as stripJs } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const A = await loadTs(path.join(HERE, 'utils/linkAgents.ts'));
@@ -213,8 +214,7 @@ console.log('\n=== 反选（#96）===');
 
 /* 多个用例都要读这份源码，提到外面声明 ——
    放在某个块里的话，别的块引用会 ReferenceError。 */
-const panel = fs.readFileSync(path.join(HERE, 'components/LinkPanel.tsx'), 'utf8')
-  .replace(/\/\*[\s\S]*?\*\//g, '');
+const panel = stripBlock(fs.readFileSync(path.join(HERE, 'components/LinkPanel.tsx'), 'utf8'));
 
 console.log('\n=== #91 链接名大小写不敏感查重 ===');
 {
@@ -290,9 +290,9 @@ console.log('\n=== 8. #100 「置顶」与「固定」是两个不同功能，�
    * 直接用会让整个套件 ReferenceError 挂掉 ——
    * 这是**第三次**踩同一个坑（watch-suppress / lock-preset / 本文件）。
    */
-  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
-  const grid = strip(fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8'));
-  const link = strip(fs.readFileSync(path.join(HERE, 'components/LinkPanel.tsx'), 'utf8'));
+  const strip = stripBlock;
+  const grid = stripBlock(fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8'));
+  const link = stripBlock(fs.readFileSync(path.join(HERE, 'components/LinkPanel.tsx'), 'utf8'));
 
   /* 一、锁那边必须用「固定」（账面固定），不能用「置顶」 */
   const bi = grid.indexOf('fpx-badge pin');
@@ -310,7 +310,7 @@ console.log('\n=== 8. #100 「置顶」与「固定」是两个不同功能，�
   t('链接名那边没混进「固定」', !/固定/.test(link));
 
   /* 三、两个状态在 config 里是两个不同的键 */
-  const types = strip(fs.readFileSync(path.join(HERE, 'types.ts'), 'utf8'));
+  const types = stripBlock(fs.readFileSync(path.join(HERE, 'types.ts'), 'utf8'));
   /*
    * 键名核对（别写成猜的名字）：
    *   · `linkAgentsPinned` —— 链接名置顶清单（前端 config 字段）
@@ -332,10 +332,10 @@ console.log('\n=== #354 置顶名大小写不敏感（同 #91 #204 #310）===');
    * 这个坑已踩到第五次，每次都是"别的节里定义过"的错觉 ——
    * 那些是别的文件或局部作用域，不覆盖这里。
    */
-  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
-  const la = strip(fs.readFileSync(path.join(HERE, 'utils/linkAgents.ts'), 'utf8'));
-  const lp = strip(fs.readFileSync(path.join(HERE, 'components/LinkPanel.tsx'), 'utf8'));
-  const jn = strip(fs.readFileSync(path.join(HERE, '..', '..', 'src-tauri', 'src', 'fpx/junction.rs'), 'utf8'));
+  const strip = stripBlock;
+  const la = stripBlock(fs.readFileSync(path.join(HERE, 'utils/linkAgents.ts'), 'utf8'));
+  const lp = stripBlock(fs.readFileSync(path.join(HERE, 'components/LinkPanel.tsx'), 'utf8'));
+  const jn = stripBlock(fs.readFileSync(path.join(HERE, '..', '..', 'src-tauri', 'src', 'fpx/junction.rs'), 'utf8'));
 
   /*
    * 原版 `LinkAgentViewModel` 置顶相关四处全是 IgnoreCase：
@@ -395,9 +395,9 @@ console.log('\n=== 9. `.` / `..` 这类名字永远建不出链接，必须挡�
    * 判据与后端 `junction::normalize_name` 一致：去掉前导点后必须还剩内容。
    */
   const la = fs.readFileSync(path.join(HERE, 'utils/linkAgents.ts'), 'utf8');
-  const laCode = la.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const laCode = stripJs(la);
   const lp = fs.readFileSync(path.join(HERE, 'components/LinkPanel.tsx'), 'utf8');
-  const lpCode = lp.replace(/\/\*[\s\S]*?\*\//g, '');
+  const lpCode = stripBlock(lp);
 
   t('有 usableLinkName', /export function usableLinkName\(/.test(laCode));
   t('判据是「去前导点后还剩内容」（去前导点后判长度）',

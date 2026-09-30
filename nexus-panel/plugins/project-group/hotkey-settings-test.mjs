@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadTs, makeT, sliceWithDoc, stripTS } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COMP = path.join(HERE, 'components/HotkeySettings.tsx');
@@ -25,7 +26,7 @@ const src = fs.readFileSync(COMP, 'utf8');
 const { t, fail, done } = makeT();
 
 /** 剥掉 /** *\/ 与 // 注释后剩下的**真实代码** —— 断言只认它，避免命中说明文字 */
-const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+const code = strip(src).replace(/^\s*\/\/.*$/gm, '');
 
 /* ---------- 真身：注入真实的 HOTKEYS / normalizeCombo 后执行 ---------- */
 const hk = await loadTs(path.join(HERE, 'utils/hotkeys.ts'));

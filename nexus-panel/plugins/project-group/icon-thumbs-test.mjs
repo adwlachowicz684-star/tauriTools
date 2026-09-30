@@ -19,6 +19,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { makeT, stripTS } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
@@ -205,7 +206,7 @@ console.log('\n=== 3. 真失败仍留在 done 里，不反复重试 ===');
 console.log('\n=== 4. 源码约束（文本层，钉住上面行为的实现前提） ===');
 {
   const src = fs.readFileSync(SRC, 'utf8');
-  const codeOnly = src.replace(/\/\*[\s\S]*?\*\//g, '');
+  const codeOnly = strip(src);
   t('中断时把没回来的从 done 里摘掉',
     /for \(const p of pending\) done\.current\.delete\(p\)/.test(codeOnly));
   t('cleanup 里 alive 置 false', /alive = false/.test(codeOnly));
