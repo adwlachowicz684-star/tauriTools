@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT, loadTs } from './testkit.mjs';
+import { stripCommentsJs as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COMP = path.join(HERE, 'components');
@@ -29,8 +30,7 @@ const { t, done } = makeT();
 
 const rd = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return ''; } };
 /** 剥注释：注释里写的反例会把形态断言带偏（这个项目踩过很多次） */
-const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');
-
+/* 剥注释走全仓共用实现（test-scan-utils.mjs） */
 /* ── 1. utils/ime.ts 真身行为 ────────────────────────────────── */
 console.log('\n=== 1. isComposing 真身行为（loadTs 实跑）===');
 {

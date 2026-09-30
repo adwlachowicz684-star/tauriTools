@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
@@ -21,7 +22,7 @@ console.log('\n=== 1. 后端：改名核心（core_rename_icon）===');
 {
   const mod = fs.readFileSync(path.join(RS, 'mod.rs'), 'utf8');
   /* 只剥块注释，保留行注释里的关键信息 */
-  const src = mod.replace(/\/\*[\s\S]*?\*\//g, '');
+  const src = strip(mod);
 
   t('有 core_rename_icon', /pub\(crate\) fn core_rename_icon/.test(src));
   t('有 fpx_rename_icon 命令', /pub fn fpx_rename_icon/.test(mod));
@@ -83,12 +84,9 @@ console.log('\n=== 2. DTO 与跨端 ===');
 
 console.log('\n=== 3. 界面接线 ===');
 {
-  const dlg = fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-  const host = fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-  const cssNC = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const dlg = strip(fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8'));
+  const host = strip(fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8'));
+  const cssNC = strip(fs.readFileSync(path.join(HERE, 'style.css'), 'utf8'));
 
   t('tile 包了 wrap 层', /className="fpx-iconwrap"/.test(dlg));
   t('有改名按钮', /className="fpx-icon-rename"/.test(dlg));

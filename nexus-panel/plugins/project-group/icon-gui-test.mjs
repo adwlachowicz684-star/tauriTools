@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT, loadTs } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RS = path.join(HERE, '..', '..', 'src-tauri', 'src', 'fpx');
@@ -28,8 +29,7 @@ console.log('\n=== 1. 两套独立，互不覆盖 ===');
   t('默认值已初始化', /folder_gui_icons: HashMap::new\(\)/.test(model));
   t('CardInfo 有 gui_icon', /pub gui_icon: Option<String>/.test(model));
 
-  const mod = fs.readFileSync(path.join(RS, 'mod.rs'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const mod = strip(fs.readFileSync(path.join(RS, 'mod.rs'), 'utf8'));
   /* set_icon 按 gui_only 选目标表 */
   t('set_icon 有 gui_only 参数', /gui_only: Option<bool>/.test(mod));
   t('gui 时写 gui 表', /if gui \{[\s\S]{0,200}?folder_gui_icons\.insert/.test(mod));
@@ -45,8 +45,8 @@ console.log('\n=== 1. 两套独立，互不覆盖 ===');
 
 console.log('\n=== 2. 搬家 / 改名都要挪两套（漏了静默丢失）===');
 {
-  const cli = fs.readFileSync(path.join(RS, 'cli.rs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-  const mod = fs.readFileSync(path.join(RS, 'mod.rs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const cli = strip(fs.readFileSync(path.join(RS, 'cli.rs'), 'utf8'));
+  const mod = strip(fs.readFileSync(path.join(RS, 'mod.rs'), 'utf8'));
   t('搬家挪 gui 表', /remap\(cfg\.folder_gui_icons\.clone\(\), &key, &it\.dst\)/.test(cli));
   t('搬家挪 explorer 表', /remap\(cfg\.folder_icons\.clone\(\), &key, &it\.dst\)/.test(cli));
 
@@ -79,7 +79,7 @@ console.log('\n=== 2. 搬家 / 改名都要挪两套（漏了静默丢失）==='
 
 console.log('\n=== 3. 图标改名要同步两套（#10 × #13）===');
 {
-  const mod = fs.readFileSync(path.join(RS, 'mod.rs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const mod = strip(fs.readFileSync(path.join(RS, 'mod.rs'), 'utf8'));
   const body = mod.slice(mod.indexOf('fn core_rename_icon'));
   const seg = body.slice(0, body.indexOf('\n}\n') + 3);
   t('改名同步 explorer 表', /folder_icons\.values_mut\(\)/.test(seg));
@@ -95,8 +95,7 @@ console.log('\n=== 4. 显示优先界面那套 ===');
   t('两者都空', displayIcon({ guiIcon: null, icon: null }) === null);
 
   /* 缩略图与兜底字形**必须都用它** —— 各写一遍的话改优先级容易只改一处 */
-  const grid = fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const grid = strip(fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8'));
   t('缩略图用 displayIcon', /thumbs\?\.\[displayIcon\(c\) as string\]/.test(grid));
   t('从 utils/icons 引入（不各写一份）', /import \{ displayIcon \} from '\.\.\/utils\/icons'/.test(grid));
   t('兜底字形用 displayIcon', /function iconOf[\s\S]{0,200}?displayIcon\(c\)/.test(grid));
@@ -106,9 +105,9 @@ console.log('\n=== 4. 显示优先界面那套 ===');
 console.log('\n=== 5. 标签色的两套（#113）===');
 {
   const model = fs.readFileSync(path.join(RS, 'model.rs'), 'utf8');
-  const store = fs.readFileSync(path.join(RS, 'store.rs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-  const mod = fs.readFileSync(path.join(RS, 'mod.rs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-  const cli = fs.readFileSync(path.join(RS, 'cli.rs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const store = strip(fs.readFileSync(path.join(RS, 'store.rs'), 'utf8'));
+  const mod = strip(fs.readFileSync(path.join(RS, 'mod.rs'), 'utf8'));
+  const cli = strip(fs.readFileSync(path.join(RS, 'cli.rs'), 'utf8'));
   const types = fs.readFileSync(path.join(HERE, 'types.ts'), 'utf8');
 
   t('有 tag_gui_colors 字段', /pub tag_gui_colors: HashMap<String, String>/.test(model));
@@ -141,7 +140,7 @@ console.log('\n=== 5. 标签色的两套（#113）===');
   /* 命令参数 */
   t('save_style 有 gui_only', /gui_only: Option<bool>/.test(mod));
   t('MCP 侧走普通那套', /, false\)\s*\n\s*\.map_err\(\|e\| err\(&e\)\)/.test(
-    fs.readFileSync(path.join(RS, 'mcp.rs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')));
+    strip(fs.readFileSync(path.join(RS, 'mcp.rs'), 'utf8'))));
 
   const api = fs.readFileSync(path.join(HERE, 'api.ts'), 'utf8');
   t('前端 saveStyle 传 gui_only', /gui_only: guiOnly \?\? null/.test(api));
@@ -149,8 +148,8 @@ console.log('\n=== 5. 标签色的两套（#113）===');
 
 console.log('\n=== 5b. 卡片图标查表必须规范化 ★★ ===');
 {
-  const store = fs.readFileSync(path.join(RS, 'store.rs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-  const mcp = fs.readFileSync(path.join(RS, 'mcp.rs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const store = strip(fs.readFileSync(path.join(RS, 'store.rs'), 'utf8'));
+  const mcp = strip(fs.readFileSync(path.join(RS, 'mcp.rs'), 'utf8'));
 
   /*
    * 此前 `build_card` 里是 `cfg.folder_icons.get(path)` —— **精确**字符串比较。
@@ -178,10 +177,8 @@ console.log('\n=== 5b. 卡片图标查表必须规范化 ★★ ===');
 
 console.log('\n=== 6. 界面开关与参数传递 ===');
 {
-  const dlg = fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-  const host = fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const dlg = strip(fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8'));
+  const host = strip(fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8'));
   const api = fs.readFileSync(path.join(HERE, 'api.ts'), 'utf8');
   const types = fs.readFileSync(path.join(HERE, 'types.ts'), 'utf8');
 

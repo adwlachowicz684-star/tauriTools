@@ -30,14 +30,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT, loadTs, stripTS } from './testkit.mjs';
+import { stripCommentsJs as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
 
 const rd = (p) => fs.readFileSync(p, 'utf8');
 /** 剥注释：注释里写的反例会把形态断言带偏（这个项目踩过很多次） */
-const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');
-
+/* 剥注释走全仓共用实现（test-scan-utils.mjs） */
 /**
  * 切出一段配平的 `{ ... }`。
  * **锚点后若紧跟 `=>`，要从箭头之后找左括号** —— 否则切到的是外层

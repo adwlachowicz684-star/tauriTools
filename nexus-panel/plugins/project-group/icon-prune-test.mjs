@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT, loadTs } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
@@ -72,8 +73,7 @@ console.log('\n=== 3. 清理（pruneGroups）===');
 
 console.log('\n=== 4. 界面接线 ===');
 {
-  const grid = fs.readFileSync(path.join(HERE, 'components/PresetIconGrid.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const grid = strip(fs.readFileSync(path.join(HERE, 'components/PresetIconGrid.tsx'), 'utf8'));
 
   t('有清理按钮', /清理失效/.test(grid));
   /* 只在真的存了分组时才显示 —— 默认组是动态生成的，硬清会清出 0 项 */
