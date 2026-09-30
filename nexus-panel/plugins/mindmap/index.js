@@ -14,7 +14,13 @@
  */
 
 import { bootIframePlugin, h } from '../../js/plugin-sdk.js';
-import '../../css/dialog.css';
+/* ⚠️ 这里**不能**写 import '../../css/dialog.css' —— 原生 ESM 不能 import CSS。
+   无构建模式下浏览器直接加载本 .js，服务器返回 text/css → 浏览器判成
+   「不是 JS 模块」→ 整个 index.js 加载失败，mindmap 一片空白、功能全无，
+   控制台只有一条 MIME 报错。
+   dialog.css 已由 styles.css 顶部 @import 引入（见该文件第 19 行）。
+   本行已被合并覆盖回过 3 次（PR #218 修 → 覆盖 → 再修 → 再覆盖），
+   改动前请先跑 node controls-test.mjs。 */
 import { confirm as _askConfirm, alert as _askAlert, prompt as _askText } from '../../js/dialog.js';
 import { EditorBridge } from './editor-bridge.js';
 import { DEFAULT_THEME, DEFAULT_LAYOUT, isBuiltinTheme, deriveCanvasTheme,

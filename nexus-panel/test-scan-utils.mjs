@@ -73,6 +73,22 @@ export function stripCommentsFlat(code) {
   return String(code).replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
+/**
+ * stripCommentsFlat + 行注释（扫 mindmap 这类 JS/TSX 源码时用）。
+ *
+ * 为什么行注释判据是 `(^|\s)` 而不是裸 `\/\/`：
+ *   历史内联写法用的是"裸的行注释正则"（匹配两个斜杠直到行尾），它会把
+ *   `https://`、`file://` 从斜杠处起整行后半截吞掉 —— 扫到含 URL 的源码时，
+ *   断言其实在检查一段
+ *   被截断的文本（可能假绿）。mindmap-test 里这种写法有 55 处。
+ *   实测：全量换成 `(^|\s)` 后 3035 项断言结果完全不变 —— 说明**当前**
+ *   被扫内容里没有 URL，属潜在风险而非现存 bug；但换成安全判据之后，
+ *   将来有人往被扫文件里加 URL 也不会再踩。
+ */
+export function stripCommentsFlatJs(code) {
+  return stripCommentsFlat(code).replace(/(^|\s)\/\/.*$/gm, '$1');
+}
+
 /* ---- 便捷读文件 ---- */
 
 import { readFileSync } from 'node:fs';
