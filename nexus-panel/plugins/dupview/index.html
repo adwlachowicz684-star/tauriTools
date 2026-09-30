@@ -652,10 +652,11 @@ document.addEventListener('click',function(e){
 /* ===========================================================================
    文件树右键菜单
    ---------------------------------------------------------------------------
-   五个动作，全部按**绝对路径**（节点的 full）操作磁盘：
+   六个动作，全部按**绝对路径**（节点的 full）操作磁盘：
      已解决        把该目录（含子目录）下所有「目录|学科」标成已解决 / 取消
      刷新          对该目录做一次增量扫描（后端只扫这一个目录，其余索引原样保留）
      改名          按计划目标名批量改名，分「仅本目录 / 含子目录」两项
+     目录改名      把目录名里的【届别】与【模次】对调，分「仅本目录 / 含子目录」两项
      打包为 ZIP    在目录的父目录下生成同名压缩包（已存在时弹窗询问）
      资源管理器    调系统文件管理器打开该目录（只读，不改磁盘）
    =========================================================================== */
@@ -696,6 +697,10 @@ function buildCMenuHTML(n){
   h+='<div class="ci" data-act="ren1" data-tip="只改本层目录里的文件，先弹预览再执行">全部改名<span class="ck">仅本目录</span></div>';
   h+='<div class="ci" data-act="ren2" data-tip="连同子目录里的文件一起改，先弹预览再执行">全部改名<span class="ck">含子目录</span></div>';
   h+='<div class="csep"></div>';
+  h+='<div class="chd">目录改名（届别 ↔ 模次 对调）</div>';
+  h+='<div class="ci" data-act="dr1" data-tip="把本目录名里的【2026届】与【月考/一模…】对调成【模次】在前【届别】在后，先弹预览再执行">目录改名<span class="ck">仅本目录</span></div>';
+  h+='<div class="ci" data-act="dr2" data-tip="连同子目录一起对调（深的先改）；已是「模次在前」的目录自动跳过">目录改名<span class="ck">含子目录</span></div>';
+  h+='<div class="csep"></div>';
   h+='<div class="ci" data-act="zip" data-tip="打包成一个 ZIP 存到该目录的父目录下（ZIP 内保留顶层文件夹）；已存在同名文件时会先询问">打包为 ZIP<span class="ck">存到父目录</span></div>';
   h+='<div class="ci" data-act="reveal" data-tip="调系统的文件管理器（Windows 资源管理器 / macOS 访达）打开该目录，插件窗口不会关">在资源管理器中打开<span class="ck">系统窗口</span></div>';
   return h;
@@ -729,6 +734,8 @@ document.getElementById('cmenu').onclick=function(e){
   else if(act==='scan')doDirScan(n);
   else if(act==='ren1')doRenameAll(n,false);
   else if(act==='ren2')doRenameAll(n,true);
+  else if(act==='dr1')doDirRename(n,false);
+  else if(act==='dr2')doDirRename(n,true);
   else if(act==='zip')doPackZip(n);
   else if(act==='reveal')doReveal(n);
 };
@@ -769,8 +776,10 @@ async function doDirScan(n){
   }catch(e){toast('刷新失败：'+beErr(e));}
 }
 
-/* ---- 动作三：批量改名（先预览，再执行）---- */
-var RN={path:'',recursive:false,rows:[]};
+/* ---- 动作三：批量改名（先预览，再执行）----
+   RN.kind 区分改的是**文件**还是**目录** —— 预览弹窗是同一个，
+   但两者调的后端命令不同、返回行的字段也不同（目录行没有 dir、why）。 */
+var RN={path:'',recursive:false,rows:[],kind:'file'};
 async function doRenameAll(n,recursive){
   var p=n.full;
   if(!p){toast('该节点没有绝对路径，无法改名');return;}
@@ -779,20 +788,34 @@ async function doRenameAll(n,recursive){
   try{j=await cmdRenamePreview(p,recursive);}catch(e){toast('预览失败：'+beErr(e));return;}
   if(!j.ok){toast('预览失败：'+(j.err||''));return;}
   if(!j.total){toast('该目录下没有需要改名的文件');return;}
-  RN={path:p,recursive:recursive,rows:j.rows||[]};
+  RN={path:p,recursive:recursive,rows:j.rows||[],kind:'file'};
+  rnRender(n,j);
+}
+/* ---- 动作三之二：目录改名（届别 ↔ 模次 对调，先预览再执行）---- */
+async function doDirRename(n,recursive){
+  var p=n.full||n.path;
+  if(!p){toast('该节点没有绝对路径，无法改名');return;}
+  toast('正在生成目录改名预览…');
+  var j;
+  try{j=await cmdDirRenamePreview(p,recursive);}catch(e){toast('预览失败：'+beErr(e));return;}
+  if(!j.ok){toast('预览失败：'+(j.err||''));return;}
+  if(!j.total){toast('该目录下没有需要对调的目录名（可能已经都是「模次在前」）');return;}
+  RN={path:p,recursive:recursive,rows:j.rows||[],kind:'dir'};
   rnRender(n,j);
 }
 function rnRender(n,j){
-  document.getElementById('rnTitle').textContent='改名预览 · '+n.name;
+  var isDir=RN.kind==='dir';
+  document.getElementById('rnTitle').textContent=(isDir?'目录改名预览 · ':'改名预览 · ')+n.name;
   var coll=j.collide||0;
-  var sum='目录：'+esc(RN.path)+'<br>共 <b>'+j.total+'</b> 个文件将被改名'
+  var sum='目录：'+esc(RN.path)+'<br>共 <b>'+j.total+'</b> '+(isDir?'个目录':'个文件')+'将被改名'
     +(RN.recursive?'（含子目录）':'（仅本目录）');
   if(coll)sum+='<br><span class="warn">⚠ 其中 '+coll+' 项目标名冲突（红框标出），执行时会跳过不改</span>';
   document.getElementById('rnSum').innerHTML=sum;
   var h='';
   RN.rows.forEach(function(r){
+    var tip=(r.dir?r.dir+'\\':'')+r.old;
     h+='<div class="mrow'+(r.collide?' collide':'')+'">'
-      +'<span class="od" data-tip="'+esc(r.dir+'\\'+r.old)+'">'+esc(r.old)+'</span>'
+      +'<span class="od" data-tip="'+esc(tip)+'">'+esc(r.old)+'</span>'
       +'<span class="ar">→</span>'
       +'<span class="nw" data-tip="'+esc(r.new)+'">'+esc(r.new)+'</span>'
       +(r.collide?'<span class="dsc">'+(r.why==='dup'?'目标重名':'目标已存在')+'</span>':'')
@@ -806,13 +829,14 @@ function rnRender(n,j){
 function rnClose(){var m=document.getElementById('rnModal');if(m)m.classList.remove('open');}
 async function rnExec(){
   var go=document.getElementById('rnGo');
+  var isDir=RN.kind==='dir';
   go.disabled=true;go.textContent='改名中…';
   var j;
-  try{j=await cmdRenameAll(RN.path,RN.recursive);}
+  try{j=isDir?await cmdDirRename(RN.path,RN.recursive):await cmdRenameAll(RN.path,RN.recursive);}
   catch(e){go.disabled=false;go.textContent='执行改名';toast('改名失败：'+beErr(e));return;}
   rnClose();
   if(!j.ok){toast('改名失败：'+(j.err||''));return;}
-  var msg='已改名 '+j.renamed+' 个';
+  var msg='已改名 '+j.renamed+' '+(isDir?'个目录':'个');
   if(j.skipped)msg+='，跳过 '+j.skipped+' 个（目标冲突）';
   if(j.errs&&j.errs.length)msg+='，失败 '+j.errs.length+' 个';
   toast(msg);
@@ -1219,6 +1243,8 @@ async function cmdRestore(path){return beCtx().invoke('dupview_restore',{path:pa
 async function cmdDoneSet(keys,on){return beCtx().invoke('dupview_done_set',{keys:keys,on:on})}
 async function cmdRenamePreview(path,recursive){return beCtx().invoke('dupview_rename_preview',{path:path,recursive:recursive})}
 async function cmdRenameAll(path,recursive){return beCtx().invoke('dupview_rename_all',{path:path,recursive:recursive})}
+async function cmdDirRenamePreview(path,recursive){return beCtx().invoke('dupview_dir_rename_preview',{path:path,recursive:recursive})}
+async function cmdDirRename(path,recursive){return beCtx().invoke('dupview_dir_rename',{path:path,recursive:recursive})}
 async function cmdPackZip(path,mode){return beCtx().invoke('dupview_pack_zip',{path:path,mode:mode})}
 async function cmdReveal(path){return beCtx().invoke('dupview_open_in_explorer',{path:path})}
 /* 原生化后没有"后端进程"可起停：渲染、比对都编译进 exe 里，随面板一起就绪。

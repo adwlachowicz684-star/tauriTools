@@ -399,7 +399,7 @@ fn main() {
              * 批量改名（rename_preview 预览 + rename_all 执行）、打包 ZIP（pack_zip）。
              * 末尾 open_in_explorer 也是右键菜单用的：在系统文件管理器中打开该目录。
              */
-            dupview::dupview_roots, dupview::dupview_addroot, dupview::dupview_delroot, dupview::dupview_scan_status, dupview::dupview_scan, dupview::dupview_scanall, dupview::dupview_list, dupview::dupview_pageinfo, dupview::dupview_page, dupview::dupview_rename, dupview::dupview_delete, dupview::dupview_restore, dupview::dupview_dir_done, dupview::dupview_browse, dupview::dupview_done_set, dupview::dupview_rename_preview, dupview::dupview_rename_all, dupview::dupview_pack_zip, dupview::dupview_open_in_explorer,
+            dupview::dupview_roots, dupview::dupview_addroot, dupview::dupview_delroot, dupview::dupview_scan_status, dupview::dupview_scan, dupview::dupview_scanall, dupview::dupview_list, dupview::dupview_pageinfo, dupview::dupview_page, dupview::dupview_rename, dupview::dupview_delete, dupview::dupview_restore, dupview::dupview_dir_done, dupview::dupview_browse, dupview::dupview_done_set, dupview::dupview_rename_preview, dupview::dupview_rename_all, dupview::dupview_pack_zip, dupview::dupview_open_in_explorer, dupview::dupview_dir_rename_preview, dupview::dupview_dir_rename,
             /* 常用文件夹：folder-picker 服务与设置页共用，读 + 整表覆盖写。 */
             fpx::fpx_list_fav_dirs, fpx::fpx_save_fav_dirs,
             /*

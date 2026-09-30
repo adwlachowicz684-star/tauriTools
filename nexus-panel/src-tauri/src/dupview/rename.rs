@@ -17,6 +17,9 @@
 //!   5. 认不出单科时记【全科】，而不是整条漏出改名清单
 //!   6. 附加标记（手写版/原卷版/收集/学生版…）
 //!   7. 区域联合卷（陕晋青宁、全国Ⅰ/Ⅱ卷）
+//!   8. 内容类型按规格书 §5 取齐（`engine_fixed.py` 只认 解析/详解/解答，漏了
+//!      解读/逐题解题/试题卷分析/试题分析/试卷分析/真题分析；另补 答题纸、音频、
+//!      「+细则」后缀；并去掉规格书里没有的「听力原文」分支）
 //!
 //! 【旧版的 notes / 待复核备注为什么不搬】
 //! 那份脚本除了目标名还会产出 notes（"已按目录标注"、"按整套卷记为全科"等），
@@ -29,8 +32,8 @@
 //! _真题：  `{卷别}高考真题【{学科}】{届别}_{类型}.ext`
 //! _疑似错卷：跳过，不给目标名。
 //!
-//! 改这里的任何一条解析规则前，先拿 `engine_fixed.py` 跑一遍同样的目录，
-//! 两边输出对上了再改 —— 这份文件的价值就在于与那份脚本逐字一致。
+//! 改这里的任何一条解析规则前，先拿 `engine_fixed.py` 跑一遍同样的目录，两边输出
+//! 对上了再改 —— 除上面第 8 条那处**有意分歧**（以规格书 §5 为准），其余都要逐字一致。
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -487,13 +490,28 @@ fn parse_file(name: &str, hint_subj: &str) -> Parsed {
     }
     let subj = subj.unwrap();
 
-    let has_listen = base.contains("听力") || audio;
+    let has_listen = base.contains("听力") || base.contains("音频") || audio;
     let has_trans = base.contains("翻译");
     let has_ans = base.contains("答案");
     let has_ref = base.contains("参考");
-    let has_ana = base.contains("解析") || base.contains("详解") || base.contains("解答");
-    let has_card = base.contains("答题卡");
+    /* 解析关键词按规格书 §5 取齐（"解析版/精品解析"含"解析"、"规范解答"含"解答"，
+       无需另列）。旧工具 detectType 里的"答案分析"含"答案"，永远走不到这一支，不收。 */
+    let has_ana = [
+        "解析",
+        "详解",
+        "解答",
+        "解读",
+        "逐题解题",
+        "试题卷分析",
+        "试题分析",
+        "试卷分析",
+        "真题分析",
+    ]
+    .iter()
+    .any(|k| base.contains(k));
+    let has_card = base.contains("答题卡") || base.contains("答题纸");
     let has_std = base.contains("评分标准");
+    let has_rule = base.contains("评分细则") || base.contains("细则");
     let has_outline = base.contains("考点提纲") || base.contains("背诵提纲");
     let has_pred = base.contains("考点预测");
     /* 「真题」也算试卷 —— 漏了它，"…高考物理真题及答案解析"会被判成 _答案。 */
@@ -509,10 +527,14 @@ fn parse_file(name: &str, hint_subj: &str) -> Parsed {
             "解析",
             "详解",
             "解答",
+            "解读",
+            "逐题解题",
             "答题卡",
+            "答题纸",
             "翻译",
             "听力",
             "评分标准",
+            "细则",
             "考点",
         ]
         .iter()
@@ -524,13 +546,9 @@ fn parse_file(name: &str, hint_subj: &str) -> Parsed {
     let mut extra;
     let mut subj = subj;
     if has_listen {
-        if base.contains("原文") {
-            t = "听力原文".into();
-            extra = String::new();
-        } else {
-            t = "试卷".into();
-            extra = "（听力）".into();
-        }
+        /* 规格书 §5：听力/音频一律判 试卷（听力），不再单开「听力原文」标签。 */
+        t = "试卷".into();
+        extra = "（听力）".into();
     } else if has_trans {
         t = "试卷".into();
         extra = "_翻译".into();
@@ -572,6 +590,12 @@ fn parse_file(name: &str, hint_subj: &str) -> Parsed {
         extra = String::new();
     }
 
+    /* 「细则」是类型的一部分，跟在类型主体后面、括号修饰之前（旧工具 detectType 的
+       收尾规则），所以放在类型判定之后、附加标记之前。 */
+    if has_rule {
+        t = add_rule(&t);
+    }
+
     let mut marks = String::new();
     for (tok, mk) in EXTRA_MARKS {
         if base.contains(tok) && !marks.contains(mk) && !format!("{}{}", t, extra).contains(mk) {
@@ -581,6 +605,12 @@ fn parse_file(name: &str, hint_subj: &str) -> Parsed {
     extra.push_str(&marks);
 
     Parsed { subj, t, extra, ext }
+}
+
+/// 追加「+细则」，插在（参考）这类括号修饰之前：`试卷+答案（参考）` → `试卷+答案+细则（参考）`。
+fn add_rule(t: &str) -> String {
+    let cut = t.find('（').unwrap_or(t.len());
+    format!("{}+细则{}", &t[..cut], &t[cut..])
 }
 
 /* ---------------------------------------------------------------------------
@@ -1072,4 +1102,93 @@ pub fn rename_in_plan(plan: &mut PlanFile, old_path: &str, new_path: &str, new_n
 /// 覆盖写 —— 用户要的就是"插件自己生成的计划落在原版那个文件上"）。
 pub fn plan_path(data_dir: &Path) -> PathBuf {
     data_dir.join("_work/dup_families.json")
+}
+
+/* ---------------------------------------------------------------------------
+ * 目录改名：届别 / 模次对调
+ * -------------------------------------------------------------------------*/
+
+/// 把目录名里的【届别】与它后面第一个【模次】对调：
+/// `【江苏】【2026届】【月考】南京一中(10.20)` → `【江苏】【月考】【2026届】南京一中(10.20)`。
+///
+/// 【为什么要对调】
+/// 目录是人工整理的，排序靠名字。届别在前时，同一届的月考/一模/期末被打散在
+/// 届别后面各按模次聚拢不了；模次在前则"这一届的所有月考"挨在一起，找卷子更快。
+///
+/// 【只认"届别之后"的模次】
+/// 有的目录是 `【江苏】【最后一考】【2026届】【四模】扬州` —— 届别前后都有模次词。
+/// 取届别**之后**的第一个，才不会把"最后一考"（届别前）搬走、留下一个半截顺序。
+/// 届别后面没有模次（`【2026届】【上海】物理真题`）就不动 —— 真题目录本来不标模次。
+///
+/// 【对调不影响文件目标名】
+/// build_new 只读标签的**内容**（bands / modes / year），与标签先后顺序无关，
+/// 所以目录改名后重算计划，文件目标名一字不变 —— 这也是"先改目录再改名文件"能并行的原因。
+///
+/// 返回 None = 无需改（缺任一段，或顺序已经是要的样子）。
+pub fn swap_dir_tags(name: &str) -> Option<String> {
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut texts: Vec<String> = Vec::new();
+    for m in tag_re().captures_iter(name) {
+        let r = m.get(0)?.range();
+        spans.push((r.start, r.end));
+        texts.push(m[1].to_string());
+    }
+    let yi = texts.iter().position(|t| year_re().is_match(t))?;
+    let mi = texts
+        .iter()
+        .enumerate()
+        .skip(yi + 1)
+        .find(|(_, t)| MODES.contains(&t.as_str()))
+        .map(|(i, _)| i)?;
+    texts.swap(yi, mi);
+    let mut out = String::with_capacity(name.len());
+    let mut pos = 0usize;
+    for (i, (s, e)) in spans.iter().enumerate() {
+        out.push_str(&name[pos..*s]);
+        out.push_str(&format!("【{}】", texts[i]));
+        pos = *e;
+    }
+    out.push_str(&name[pos..]);
+    Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::swap_dir_tags;
+
+    #[test]
+    fn 届别与模次对调() {
+        assert_eq!(
+            swap_dir_tags("【江苏】【2026届】【月考】南京一中(10.20)(缺物理政治)").unwrap(),
+            "【江苏】【月考】【2026届】南京一中(10.20)(缺物理政治)"
+        );
+    }
+
+    /// 届别**前后都有**模次词时，只动届别后面那个 —— 把前面的「最后一考」
+    /// 搬走会留下半截顺序（【最后一考】本就是紧跟卷别的限定词）。
+    #[test]
+    fn 只动届别之后的模次() {
+        assert_eq!(
+            swap_dir_tags("【江苏】【最后一考】【2026届】【四模】扬州(5.20-5.22)").unwrap(),
+            "【江苏】【最后一考】【四模】【2026届】扬州(5.20-5.22)"
+        );
+    }
+
+    /// 真题目录不标模次，缺一段就不动。
+    #[test]
+    fn 缺模次不动() {
+        assert_eq!(swap_dir_tags("【2026届】【上海】物理真题(网络收集版)"), None);
+    }
+
+    /// 幂等：已经是"模次在前"的不再改 —— 否则重复执行会把顺序翻回去。
+    #[test]
+    fn 已是模次在前则不动() {
+        assert_eq!(swap_dir_tags("【江苏】【月考】【2026届】南京一中"), None);
+    }
+
+    #[test]
+    fn 无标签不动() {
+        assert_eq!(swap_dir_tags("_高三上"), None);
+        assert_eq!(swap_dir_tags("【江苏】南京一中"), None);
+    }
 }

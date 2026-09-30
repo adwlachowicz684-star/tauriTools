@@ -140,7 +140,10 @@ export const plugins = [
   },
   {
     id: 'dupview',
-    name: '试卷查重',
+    /* 显示名已由「试卷查重」改为「组卷工具」—— 插件做的事是"把散卷整理成
+       能用的卷子"（去重、改名、打包），"查重"只是其中一步，叫查重会让人
+       以为只能查。id 仍是 dupview：它是数据目录名与命令前缀，改了会丢配置。 */
+    name: '组卷工具',
     icon: '⧈',
     type: 'iframe',
     entry: './plugins/dupview/index.html',
@@ -164,7 +167,7 @@ export const plugins = [
      * （python 时代确实需要 —— 那时 backend_start/stop/status 是 M。）
      */
     builtin: true,
-    description: '试卷重名 / 重复比对：重名家族、MD5 与文本一致标注、逐页截图对比、改名与删留',
+    description: '卷子整理：重名家族与重复比对、MD5 与文本一致标注、逐页截图对比、按规则批量改名与打包',
   },
   /* ---- 服务插件：不显示在侧边栏，供其它插件调用 ----
      interactive:true —— 调用时宿主会把它临时显示成居中浮层，

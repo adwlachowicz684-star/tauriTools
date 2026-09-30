@@ -1330,3 +1330,283 @@ pub fn request_cancel(app: &AppHandle) {
         *st.cancel.lock().unwrap() = true;
     }
 }
+
+/* ---------------------------------------------------------------------------
+ * 命令：目录改名（届别 / 模次对调）
+ * -------------------------------------------------------------------------*/
+
+/// 一条待改的目录。
+struct DirSwap {
+    old_path: PathBuf,
+    new_path: PathBuf,
+    old_name: String,
+    new_name: String,
+    /// 路径深度（用于排序：深的先改）
+    depth: usize,
+}
+
+/// 目录改名预览：列出"哪些目录会改成什么"，并标出目标已存在的冲突项。
+///
+/// 与文件批量改名同一道规矩 —— 一次动几十个真实目录，执行前必须看一遍。
+#[tauri::command(async, rename_all = "snake_case")]
+pub fn dupview_dir_rename_preview(
+    _app: AppHandle,
+    path: String,
+    recursive: bool,
+) -> serde_json::Value {
+    if !Path::new(&path).is_dir() {
+        return err("目录不存在");
+    }
+    let acts = dir_swap_actions(&path, recursive);
+    let mut rows = Vec::with_capacity(acts.len());
+    let mut collide = 0u32;
+    for a in &acts {
+        let c = a.new_path.exists();
+        if c {
+            collide += 1;
+        }
+        rows.push(serde_json::json!({
+            "old": a.old_name,
+            "new": a.new_name,
+            "path": a.old_path.to_string_lossy(),
+            "collide": c,
+        }));
+    }
+    ok(serde_json::json!({"rows": rows, "total": rows.len(), "collide": collide}))
+}
+
+/// 执行目录改名：把目录下的目录名按 `rename::swap_dir_tags` 对调届别与模次。
+///
+/// 【为什么改完要同步三份文件】
+/// 目录名一变，它下面所有文件的绝对路径全变，而 map.json 的主键 idx 是**路径 MD5** ——
+/// 不同步的话：缩略图按旧 idx 找（卡片全白）、计划里的 path 指向不存在的目录
+/// （"全部改名"报一堆找不到文件）、done.json 的 `目录|学科` 键全部落空（已解决标记丢）。
+/// 所以改完必须把三份数据里的路径前缀一起换掉。
+///
+/// 冲突项（目标目录已存在）跳过不改，在 errs 里报出，由用户自行处理。
+#[tauri::command(async, rename_all = "snake_case")]
+pub fn dupview_dir_rename(app: AppHandle, path: String, recursive: bool) -> serde_json::Value {
+    let dir = match data_dir(&app) {
+        Ok(d) => d,
+        Err(e) => return err(&e),
+    };
+    if !Path::new(&path).is_dir() {
+        return err("目录不存在");
+    }
+    let acts = dir_swap_actions(&path, recursive);
+    if acts.is_empty() {
+        return ok(serde_json::json!({"renamed": 0, "skipped": 0, "errs": []}));
+    }
+    let mut errs: Vec<String> = Vec::new();
+    let mut renamed = 0u32;
+    let mut skipped = 0u32;
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for a in &acts {
+        if a.new_path.exists() {
+            skipped += 1;
+            errs.push(format!("{}：目标目录已存在", a.new_name));
+            continue;
+        }
+        match std::fs::rename(&a.old_path, &a.new_path) {
+            Ok(()) => {
+                renamed += 1;
+                pairs.push((
+                    a.old_path.to_string_lossy().to_string(),
+                    a.new_path.to_string_lossy().to_string(),
+                ));
+            }
+            Err(e) => errs.push(format!("{}：{}", a.old_name, e)),
+        }
+    }
+    if !pairs.is_empty() {
+        sync_after_dir_rename(&dir, &pairs, &mut errs);
+    }
+    ok(serde_json::json!({"renamed": renamed, "skipped": skipped, "errs": errs}))
+}
+
+/// 收集待改目录：自身 + （可选）全部子目录，深的排前面。
+///
+/// 排序很关键：父目录改名后子目录的旧路径就失效了，所以必须从最深的一层往上改。
+fn dir_swap_actions(root: &str, recursive: bool) -> Vec<DirSwap> {
+    let base = Path::new(root);
+    let mut out: Vec<DirSwap> = Vec::new();
+    let mut consider = |p: &Path| {
+        let Some(nm) = p.file_name().and_then(|x| x.to_str()) else {
+            return;
+        };
+        let Some(nn) = rename::swap_dir_tags(nm) else {
+            return;
+        };
+        let Some(parent) = p.parent() else {
+            return;
+        };
+        out.push(DirSwap {
+            old_path: p.to_path_buf(),
+            new_path: parent.join(&nn),
+            old_name: nm.to_string(),
+            new_name: nn,
+            depth: p.components().count(),
+        });
+    };
+    consider(base);
+    if recursive {
+        let mut stack = vec![base.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&d) else {
+                continue;
+            };
+            for e in rd.flatten() {
+                let p = e.path();
+                if !p.is_dir() || e.file_name().to_string_lossy().starts_with('.') {
+                    continue;
+                }
+                consider(&p);
+                stack.push(p);
+            }
+        }
+    }
+    out.sort_by(|a, b| {
+        b.depth
+            .cmp(&a.depth)
+            .then_with(|| a.old_path.cmp(&b.old_path))
+    });
+    out
+}
+
+/// 把 `s` 里开头的 `old` 换成 `new`（整串相等或位于路径首段）。
+fn replace_prefix(s: &str, old: &str, new: &str) -> String {
+    if s == old {
+        return new.to_string();
+    }
+    let pre = format!("{}\\", old);
+    if let Some(rest) = s.strip_prefix(&pre) {
+        return format!("{}\\{}", new, rest);
+    }
+    s.to_string()
+}
+
+/// 目录改名后同步 roots / map / plan / done 里的路径。
+fn sync_after_dir_rename(dir: &Path, pairs: &[(String, String)], errs: &mut Vec<String>) {
+    let rf = dir.join("_work/roots.json");
+    let mut roots: Vec<Root> = read_json(&rf);
+    let mut roots_dirty = false;
+    for r in roots.iter_mut() {
+        let old = r.path.clone();
+        let mut cur = old.clone();
+        for (o, n) in pairs {
+            cur = replace_prefix(&cur, o, n);
+        }
+        if cur != old {
+            r.path = cur;
+            roots_dirty = true;
+        }
+    }
+    if roots_dirty {
+        if let Err(e) = write_json(&rf, &roots) {
+            errs.push(format!("根目录表写入失败：{e}"));
+        }
+    }
+    let roots_snapshot = roots.clone();
+
+    let mf = dir.join("_work/map.json");
+    let mut map: Vec<Item> = read_json(&mf);
+    let mut map_dirty = false;
+    for it in map.iter_mut() {
+        let old = it.path.clone();
+        let mut cur = old.clone();
+        for (o, n) in pairs {
+            cur = replace_prefix(&cur, o, n);
+        }
+        if cur == old {
+            continue;
+        }
+        map_dirty = true;
+        let old_idx = it.idx.clone();
+        let new_idx = scan::idx_of(&cur);
+        migrate_idx_cache(dir, &old_idx, &new_idx);
+        it.path = cur;
+        it.idx = new_idx.clone();
+        if it.img.is_some() {
+            let p = dir.join("_imgs").join(format!("{new_idx}.png"));
+            it.img = p.is_file().then(|| p.to_string_lossy().to_string());
+        }
+    }
+    if map_dirty {
+        if let Err(e) = write_json(&mf, &map) {
+            errs.push(format!("索引写入失败：{e}"));
+        }
+    }
+
+    let pp = rename::plan_path(dir);
+    let mut plan: rename::PlanFile = read_json(&pp);
+    let mut plan_dirty = false;
+    for row in plan.rows.iter_mut() {
+        let old = row.path.clone();
+        let mut cur = old.clone();
+        for (o, n) in pairs {
+            cur = replace_prefix(&cur, o, n);
+        }
+        if cur == old {
+            continue;
+        }
+        plan_dirty = true;
+        /* dir 是"相对根目录"的路径，改名后必须重算 —— 否则树上的分组还挂在旧目录名下。 */
+        if let Some(r) = roots_snapshot.iter().find(|r| cur.starts_with(&r.path)) {
+            row.dir = rel_under(&cur, &r.path);
+        }
+        row.path = cur;
+    }
+    if plan_dirty {
+        plan.rebuild_families();
+        if let Err(e) = write_json(&pp, &plan) {
+            errs.push(format!("计划写入失败：{e}"));
+        }
+    }
+
+    /* done.json 的键是 `相对根目录的路径|学科`，改的也是路径前缀。 */
+    let df = dir.join("_work/done.json");
+    let mut dm: Vec<String> = read_json(&df);
+    let mut done_dirty = false;
+    for k in dm.iter_mut() {
+        let Some((rel, subj)) = k.split_once('|') else {
+            continue;
+        };
+        let old = rel.to_string();
+        let mut cur = old.clone();
+        for r in &roots_snapshot {
+            let pre = format!("{}\\", r.path);
+            let abs = format!("{}{}", pre, old);
+            let mut na = abs.clone();
+            for (o, n) in pairs {
+                na = replace_prefix(&na, o, n);
+            }
+            if na != abs {
+                cur = na.strip_prefix(&pre).unwrap_or(&na).to_string();
+                break;
+            }
+        }
+        if cur != old {
+            *k = format!("{}|{}", cur, subj);
+            done_dirty = true;
+        }
+    }
+    if done_dirty {
+        if let Err(e) = write_json(&df, &dm) {
+            errs.push(format!("已解决标记写入失败：{e}"));
+        }
+    }
+}
+
+/// 绝对路径在指定根目录下的相对目录部分（根目录下直接放的文件为 "."）。
+fn rel_under(abs: &str, root: &str) -> String {
+    Path::new(abs)
+        .parent()
+        .and_then(|p| p.strip_prefix(root).ok())
+        .map(|p| {
+            p.to_string_lossy()
+                .trim_start_matches(['\\', '/'])
+                .to_string()
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| ".".to_string())
+}

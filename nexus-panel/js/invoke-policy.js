@@ -302,13 +302,15 @@ export const PLUGIN_COMMANDS = {
     'dupview_restore',
     'dupview_dir_done',
     'dupview_browse',
-    /* 文件树右键菜单用的五条：批量已解决 / 批量改名（预览 + 执行）/ 打包 ZIP /
-       在系统文件管理器中打开该目录。 */
+    /* 文件树右键菜单用的七条：批量已解决 / 批量改名（预览 + 执行）/ 打包 ZIP /
+       在系统文件管理器中打开该目录 / 目录改名（预览 + 执行，届别与模次对调）。 */
     'dupview_done_set',
     'dupview_rename_preview',
     'dupview_rename_all',
     'dupview_pack_zip',
     'dupview_open_in_explorer',
+    'dupview_dir_rename_preview',
+    'dupview_dir_rename',
   ],
 
   'demo-iframe': ['rust_ping'],

@@ -195,6 +195,16 @@ export const COMMAND_CAPS = {
   dupview_rename_all: 'W',
 
   /*
+   * 试卷查重：改**目录名**（届别与模次对调，见 rename::swap_dir_tags）。
+   *
+   * 比改文件名更狠一层：一个目录改名，它下面所有文件的绝对路径全变，
+   * 索引编号（路径 MD5）跟着全变。定 W —— 与 rename_all 同级。
+   * 预览命令不改任何东西，归 S（理由同 dupview_rename_preview）。
+   */
+  dupview_dir_rename: 'W',
+  dupview_dir_rename_preview: 'S',
+
+  /*
    * 试卷查重：打包成 ZIP。
    *
    * 看起来只是"读一遍再写一个压缩包"，但它**在用户的试卷目录里新建文件**
