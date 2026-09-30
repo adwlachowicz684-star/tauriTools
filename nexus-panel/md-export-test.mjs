@@ -9,6 +9,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { stripCommentsJs as strip } from './test-scan-utils.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -29,7 +30,7 @@ const policy = read('js/invoke-policy.js');
 const rust = read('src-tauri/src/fpx/mod.rs');
 const mainRs = read('src-tauri/src/main.rs');
 const css = read('css/neumorphism.css');
-const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+/* 剥注释走全仓共用实现（test-scan-utils.mjs） */
 const appC = strip(app);
 
 /* ============================================================

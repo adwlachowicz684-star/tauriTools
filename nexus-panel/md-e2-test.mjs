@@ -13,6 +13,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { stripCommentsJs as strip } from './test-scan-utils.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -31,8 +32,9 @@ const app = read('plugins/md/App.tsx');
 const entry = read('plugins/md/module.tsx');
 
 /* 剥注释：注释里会写 openArgs 这些词，不剥会造成假绿/假红 */
-const strip = (src) =>
-  src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+/* 剥注释走全仓共用实现（test-scan-utils.mjs）：块注释 + 行注释。
+   原判据用 (^|[^:])\/\/ —— 引号里的 '//'（如路径拼接 a+'//'+b）会被误剥；
+   共用的 (^|\s) 判据不误伤，且已在 mindmap 2817 项上验证。 */
 const hostC = strip(host);
 const sdkC = strip(sdk);
 const appC = strip(app);
