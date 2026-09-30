@@ -4380,11 +4380,58 @@
                 } catch (e) {}
             }
             function removeSelectedNode() {
-                var sel = km.getSelectedNode();
-                if (!sel || sel.getLevel() === 0) return;   // 根节点不删
-                try { km.removeNode(sel); } catch (e) { return; }
-                // 同上：layout() 不接受参数，写 100 会被忽略
-                try { km.fire('contentchange'); km.layout(); } catch (e) {}
+                /*
+                 * **多选删除：Ctrl+A 全选之后按 Delete 必须能删。**
+                 *
+                 * 实测（真实 Chrome，5 个节点的树）：
+                 *   Ctrl+A            → getSelectedNodes() 拿到 5 个（含根）
+                 *   getSelectedNode() → 根「中心」，getLevel() === 0
+                 *   按 Delete         → 节点数 5 → 5，一个没删，也没有任何提示
+                 *
+                 * 原因：这里只看 `getSelectedNode()`（单数），而全选时它返回的
+                 * 正是**根**，于是「根节点不删」那条守卫直接 return ——
+                 * 用户看到的就是「全选了按 Delete 完全没反应」。
+                 *
+                 * 处理：多选时逐个删（根始终保留，与单选一致）。两个要点：
+                 *   1. 祖先也在名单里时，子孙已经被连带头删掉，`parent` 为空要跳过，
+                 *      否则对已脱离树的节点再删一次会抛错；
+                 *   2. **只在最后 fire 一次 contentchange** —— 每删一个都 fire
+                 *      会在撤销栈里留下 N 条，用户要按 N 次撤销才回得去。
+                 */
+                var multi = (km.getSelectedNodes && km.getSelectedNodes()) || [];
+                var list = multi.filter(function (n) {
+                    return n && typeof n.getLevel === 'function' && n.getLevel() !== 0;
+                });
+                if (!list.length) {
+                    var sel = km.getSelectedNode();
+                    if (!sel || sel.getLevel() === 0) return;   // 根节点不删
+                    list = [sel];
+                }
+                var removed = 0;
+                /*
+                 * 「还能不能删」必须**顺着 parent 一路走到根**来判，不能只看
+                 * `parent` 非空：removeNode 只把节点自己从父节点摘掉并置空它
+                 * 的 parent，**子孙仍然挂在被删掉的那个节点上**（parent 非空）。
+                 * 于是祖先与子孙同时选中时，只看 parent 会对已经脱离树的子孙
+                 * 再删一次 —— 实测（mock 跑真实源码）remove 次数 4 而不是 2。
+                 */
+                var rootNode = (km.getRoot && km.getRoot()) || null;
+                var inTree = function (n) {
+                    var p = n;
+                    while (p) { if (p === rootNode) return true; p = p.parent; }
+                    return false;
+                };
+                for (var i = 0; i < list.length; i++) {
+                    try {
+                        // 已被祖先连带头删除 → 跳过（parent 链走不到根）
+                        if (rootNode ? !inTree(list[i]) : !list[i].parent) continue;
+                        km.removeNode(list[i]);
+                        removed++;
+                    } catch (e) { /* 单个失败不拦其它节点 */ }
+                }
+                if (!removed) return;
+                try { km.fire('contentchange'); } catch (e) {}
+                try { km.layout(); } catch (e) {}
             }
 
             // 插入：Tab 子节点、Enter 同级（当前节点之后；根/无选中则插子节点）
@@ -4477,8 +4524,27 @@
             }
             kmShortcut('Enter', insertSiblingNode);
             window.__minderInsertSibling = insertSiblingNode;
-            // 删除：Delete / Backspace
-            kmShortcut('Delete', removeSelectedNode);
+            /*
+             * 删除：Delete / Backspace
+             *
+             * **键名必须是 `Del` 而不是 `Delete`** —— 内核的键码表只认前者。
+             * 实测（真实 Chrome，往 `km.addShortcut` 注册四个名字后按 Delete）：
+             *     HITS = ["Del", "del"]        ← 只有这两个命中
+             *     "Delete" / "delete" 一次都没触发
+             * 而 `addShortcut` 是 `c[a] = b`（同名覆盖、不成链），所以早先写
+             * 'Delete' 等于**注册了一个永不触发的处理器**：
+             *
+             *   1. 删除实际一直是内核的 `removenode` 命令在做（它的键名是 'Del'）；
+             *   2. 那条命令的 queryCommandState 看的是 `getSelectedNode()`（单数），
+             *      而 Ctrl+A 全选时它返回的是**根** → 状态 -1 → 命令不执行
+             *      → 实测「Ctrl+A 全选后按 Delete」节点数 5 → 5，一个没删、也没提示；
+             *   3. 上面 removeSelectedNode 里那套多选逻辑因此从来没跑过。
+             *
+             * 注：这里用 'Del' 会顶掉内核 `removenode` 命令的键（同名覆盖），
+             * 行为由本函数接管（逐个删 + 末尾只 fire 一次 contentchange）；
+             * 右键菜单里的「删除节点」走的是命令本身，不受影响。
+             */
+            kmShortcut('Del', removeSelectedNode);
             kmShortcut('Backspace', removeSelectedNode);
 
             // 格式化：加粗 / 斜体 / 删除线

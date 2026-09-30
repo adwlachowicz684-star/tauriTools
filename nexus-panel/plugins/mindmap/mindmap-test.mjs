@@ -13186,6 +13186,118 @@ group('画布配色守卫必须真的被调用（_kmApplyCritical 不得是死�
 }
 
 /* ============================================================
+   BUG 81 · Ctrl+A 全选后按 Delete 一个都删不掉
+   ============================================================ */
+
+group('BUG 81 · 删除键必须注册成内核认得的 Del，且要支持多选');
+
+{
+  const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+
+  /*
+   * 键名一律行首锚定：注释里大量提到 'Delete' 这个字面量，
+   * 不锚定的话把注册删光、注释仍在，断言照样绿（第 25 次同类）。
+   */
+  ok((ed.match(/(?:^|\n)[ \t]*kmShortcut\('Del',\s*removeSelectedNode\)/) || []).length === 1,
+    'Del 必须注册到 removeSelectedNode（内核键码表只认 Del）');
+  ok((ed.match(/(?:^|\n)[ \t]*kmShortcut\('Delete',\s*removeSelectedNode\)/) || []).length === 0,
+    '不得再注册 Delete —— 那个名字内核不认，注册了也永不触发');
+  ok((ed.match(/(?:^|\n)[ \t]*kmShortcut\('Backspace',\s*removeSelectedNode\)/) || []).length === 1,
+    'Backspace 仍然注册到同一个实现');
+
+  /* ---- 行为级：用 mock 跑真实源码 ---- */
+  const i = ed.indexOf('function removeSelectedNode()');
+  ok(i > 0, '找得到 removeSelectedNode');
+  // 边界取**紧邻的下一个函数**，不能取到后面的 kmShortcut('Del') ——
+  // 中间还夹着 insertChildNode / kmShortcut('Tab')，而 kmShortcut 是外层
+  // IIFE 的局部函数，new Function 里没有它，一执行就 ReferenceError。
+  const j = ed.indexOf('function insertChildNode()', i);
+  ok(j > i, '函数体边界（下一个函数）找得到');
+  const src = ed.slice(i, j);
+
+  /** 建 mock：removeNode 真的把节点从父节点摘掉并置空 parent */
+  function mockKm(sel) {
+    const log = [];
+    const mk = (text, parent) => {
+      const n = { data: { text }, parent, children: [], getLevel() { let d = 0, p = this.parent; while (p) { d++; p = p.parent; } return d; } };
+      if (parent) parent.children.push(n);
+      return n;
+    };
+    const root = mk('中心', null);
+    const A = mk('A', root), A1 = mk('A1', A), B = mk('B', root), B1 = mk('B1', B);
+    const km = {
+      getRoot: () => root,
+      getSelectedNodes: () => sel({ root, A, A1, B, B1 }),
+      getSelectedNode: () => (sel({ root, A, A1, B, B1 })[0] || null),
+      /*
+       * 还原真实内核的语义：只把节点自己从父节点摘掉、置空**它自己的**
+       * parent；子孙仍然挂在被删掉的那个节点上（parent 非空）。
+       * 不还原这一点，「只看 parent 非空」的写法根本暴露不出来。
+       */
+      removeNode(n) {
+        log.push('remove:' + n.data.text);
+        if (!n.parent) throw new Error('已脱离树');
+        const p = n.parent, k = p.children.indexOf(n);
+        if (k < 0) throw new Error('不在父节点里');
+        p.children.splice(k, 1);
+        n.parent = null;
+      },
+      fire: (t) => log.push('fire:' + t),
+      layout: () => log.push('layout'),
+    };
+    return { km, log, nodes: { root, A, A1, B, B1 } };
+  }
+  const run = (sel) => {
+    const m = mockKm(sel);
+    const fn = new Function('km', src + '; return removeSelectedNode;')(m.km);
+    fn();
+    return m;
+  };
+  const alive = (m) => { const t = []; (function w(x) { t.push(x.data.text); x.children.forEach(w); })(m.nodes.root); return t; };
+
+  // ① 全选（含根）：根保留，其余全删
+  {
+    const m = run((n) => [n.root, n.B, n.B1, n.A, n.A1]);
+    eq(alive(m).join(','), '中心', 'Ctrl+A 全选后 Delete：只剩根，其余全部删除');
+    const rm = m.log.filter((x) => x.startsWith('remove:'));
+    // A 与 B 各自连带头删掉 A1 / B1，子孙不该再被单独删一次
+    eq(rm.length, 2, '只删两个顶层：子孙由内核连带头删掉，不重复删');
+    ok(!rm.includes('remove:中心'), '根节点任何时候都不删');
+    eq(m.log.filter((x) => x === 'fire:contentchange').length, 1,
+      '只 fire 一次 contentchange —— 否则撤销栈会有 N 条，得按 N 次撤销');
+    eq(m.log.filter((x) => x === 'layout').length, 1, '只 layout 一次');
+  }
+
+  // ② 单选非根：与修复前一致
+  {
+    const m = run((n) => [n.A]);
+    eq(alive(m).join(','), '中心,B,B1', '单选删除仍然整棵子树一起走');
+    eq(m.log.filter((x) => x === 'fire:contentchange').length, 1, '单选也只 fire 一次');
+  }
+
+  // ③ 只选根：什么都不做，也不 fire
+  {
+    const m = run((n) => [n.root]);
+    eq(alive(m).join(','), '中心,A,A1,B,B1', '只选根按 Delete 不变');
+    eq(m.log.length, 0, '只选根时既不删也不 fire（不产生空的撤销步）');
+  }
+
+  // ④ 多选两个叶子
+  {
+    const m = run((n) => [n.A1, n.B1]);
+    eq(alive(m).join(','), '中心,A,B', '多选两个叶子都被删');
+  }
+
+  // ⑤ 祖先与子孙同时选中：子孙已被连带头删掉，不能对脱离树的节点再删一次
+  {
+    const m = run((n) => [n.A, n.A1, n.B]);
+    eq(alive(m).join(','), '中心', '祖先与子孙同时选中时不报错、结果正确');
+    eq(m.log.filter((x) => x.startsWith('remove:')).join(','), 'remove:A,remove:B',
+      '子孙已被连带头删掉，跳过（parent 为空）');
+  }
+}
+
+/* ============================================================
    结果
    ============================================================ */
 
