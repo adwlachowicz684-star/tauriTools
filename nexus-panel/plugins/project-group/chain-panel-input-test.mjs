@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const read = (p) => fs.readFileSync(path.join(HERE, p), 'utf8');
@@ -33,7 +34,7 @@ function sliceBody(src, open) {
 
 /** 去掉块注释与行尾注释，避免"注释里的字样把断言喂饱" */
 function stripComments(s) {
-  return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  return strip(s).replace(/^\s*\/\/.*$/gm, '');
 }
 
 /* ------------------------------------------------------------------ */

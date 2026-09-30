@@ -109,6 +109,19 @@ export type { DragPayload } from '../utils/dragSort';
 export function TabBar({
   tabs, active, onSelect, onAdd, onRename, onRemove, kind,
   editing: editingProp, onEditingDone, onDropCard, onMoveTab,
+  /*
+   * ⚠️ 这两个**必须在解构里列出**，光在下面的 props 类型里声明没用。
+   *
+   * 此前只写了类型、漏了解构，而 onDrop 里已经调用了
+   * `onExternalNotice?.()` / `onExternalDrop?.()` —— 于是从文件管理器
+   * 拖东西到页签上时，读到的是**未声明的标识符**，直接抛
+   * ReferenceError（不是"undefined 不是函数"，是"标识符不存在"）。
+   * `?.` 挡不住这种：它对已声明但值为空才有效。
+   *
+   * 表现是：拖进来、松手、界面毫无变化，控制台一条 ReferenceError。
+   * 类型检查能查出来（TS2304），但同样要跑 tsc 才看得见。
+   */
+  onExternalDrop, onExternalNotice,
 }: {
   /* items 是页签里的条目（App 传的是 TabInfo）。
      类型写窄成 { name: string } 会让下面读 t.items.length 报 TS2339 —— 页签上要显示

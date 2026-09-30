@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '../..');
@@ -134,7 +135,7 @@ console.log('\n=== 6. URL 唤起失败时必须真的把指令放进剪贴板 ==
      * 不剥的话把真实调用删掉、注释留着，这条照样通过（空跑）。
      * 这正是断言卫生第 1 节钉的那一类。
      */
-    const blockNC = block.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const blockNC = strip(block).replace(/^\s*\/\/.*$/gm, '');
     t(`${id} 失败分支走 paste_and_open（代码层，非注释）`,
       /paste_and_open\(def, directory, prompt\)/.test(blockNC));
     /* 反面证据：失败分支里不许再直返一个 ChainSendResult */

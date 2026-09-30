@@ -21,15 +21,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT, loadTs } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
 
 const TS = fs.readFileSync(path.join(HERE, 'utils/clipboard.ts'), 'utf8');
 /** 剥注释后再判：说明里也写了这些字样，不剥就是空跑 */
-const CODE = TS.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');
+const CODE = strip(TS).replace(/(^|\s)\/\/[^\n]*/g, '$1');
 const APP = fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8');
-const APPCODE = APP.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');
+const APPCODE = strip(APP).replace(/(^|\s)\/\/[^\n]*/g, '$1');
 
 console.log('=== 1. 三档顺序：后端必须在第一档 ===');
 {
