@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT, sliceWithDoc } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RS = path.join(HERE, '../../src-tauri/src/fpx');
@@ -171,7 +172,7 @@ console.log('\n=== 8. #177 队列溢出必须显式暴露（不能静默丢弃�
    */
   /* 本文件的剥注释函数不叫 strip —— 用 sliceWithDoc 里同样口径的那个。
      直接用未定义的 `strip` 会让整个套件崩掉（本轮就崩过一次）。 */
-  const app = fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const app = strip(fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8'));
   t('前端识别 overflow', /ev\.kind === 'overflow'/.test(app));
   t('识别后 continue（不落到通用分支）',
     /ev\.kind === 'overflow'[\s\S]{0,200}continue;/.test(app));

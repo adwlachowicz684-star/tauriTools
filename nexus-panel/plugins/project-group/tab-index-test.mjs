@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadTs, makeT } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -198,10 +199,8 @@ console.log('\n=== 9. 「改了 0 条也报成功」（updateConfig 的陷阱）
 
 console.log('\n=== #27 页签 × 关闭按钮 ===');
 {
-  const g = fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-  const cssNC = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const g = strip(fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8'));
+  const cssNC = strip(fs.readFileSync(path.join(HERE, 'style.css'), 'utf8'));
   const { canRemove } = await loadTs(path.join(HERE, 'utils/tabs.ts'));
 
   t('页签上有 × 按钮', /fpx-tab-x/.test(g));

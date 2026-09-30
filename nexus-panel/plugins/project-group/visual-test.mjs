@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT, loadTs } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
@@ -36,7 +37,7 @@ const css = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8');
    我在注释里写了 `*:focus-visible { outline: none }` 作为反例，
    直接拿原文匹配会被自己写的注释骗到 ——
    这与"注释里出现某个词 ≠ 用户能看到"是同一类坑，已踩过多次。 */
-const cssNC = css.replace(/\/\*[\s\S]*?\*\//g, '');
+const cssNC = strip(css);
 const grid = fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8');
 
 console.log('\n=== 1. 明暗幅度（#294）===');
