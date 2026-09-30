@@ -13554,7 +13554,7 @@ group('快捷键说明 × 实际绑定：文档写的每一条都得真的接上
 
   const m = pn.match(/const SHORTCUTS = \[([\s\S]*?)\n\];/);
   ok(!!m, '取到 SHORTCUTS 数组');
-  const body = (m ? m[1] : '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const body = stripCommentsFlatJs(m ? m[1] : '');
   const docKeys = [...body.matchAll(/\['([^']+)',\s*'([^']*)'\]/g)].map((x) => x[1]);
 
   /** "Ctrl + C / X / V" → ctrl+c, ctrl+x, ctrl+v —— 后段继承前段的修饰键 */

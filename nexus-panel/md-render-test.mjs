@@ -16,8 +16,8 @@ import { readFileSync } from 'fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown from 'react-markdown';
-import {
 import { stripComments as strip } from './test-scan-utils.mjs';
+import {
   REMARK_PLUGINS,
   REHYPE_PLUGINS,
   urlTransform,
