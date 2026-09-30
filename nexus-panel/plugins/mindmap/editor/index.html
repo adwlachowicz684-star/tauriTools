@@ -2282,22 +2282,26 @@
                     });
                 } catch (e) {}
                 /*
-                 * 把计数器抬到画布里已有组号之上。
+                 * 序号必须**接着已有外框往下发**。
                  *
-                 * _boundarySeq 只在"新加外框"时 ++，从不读回画布里现存的 gid。
-                 * 于是打开一份已带 bg1 的画布、再给别的节点加外框 → 新组也拿到
-                 * bg1，_groupNodes.set 把第一组的数组整个顶掉，画布上只剩 1 个框。
-                 *
-                 * 用 `>` 而不是 `=`：删掉一个外框后 maxSeq 会变小，直接赋值会让
-                 * 序号**回退**，下次新建又发出一个仍在使用的组号。
+                 * _boundarySeq 是这个 IIFE 的局部变量，只在新加外框时 ++，
+                 * 从不读回画布里现存的 gid。于是：打开一份已经带外框（bg1）
+                 * 的画布 → 再给别的节点加外框 → 新组也拿到 **bg1**
+                 * （++0 还是 1），_groupNodes.set('bg1', ...) 把第一组的节点
+                 * 数组整个顶掉：
+                 *   · 画面上只剩一个框（第一组的框当场消失）；
+                 *   · 两组节点身上都写着 bg1，rebuildGroups 后合并成一组，
+                 *     存盘再打开就是一个横跨两组的大框。
+                 * 实测（真实 Chrome）：A/B 载入时 bg1，给 C/D 加外框后
+                 * C/D 也是 bg1，画布上外框数 1（应为 2）。
                  */
                 var maxSeq = 0;
                 Object.keys(groups).forEach(function (gid) {
                     var m = /^bg(\d+)$/.exec(gid);
                     if (m) maxSeq = Math.max(maxSeq, parseInt(m[1], 10) || 0);
                 });
-                if (maxSeq > _boundarySeq) _boundarySeq = maxSeq;
                 for (var g in groups) _groupNodes.set(g, groups[g]);
+                if (maxSeq > _boundarySeq) _boundarySeq = maxSeq;
                 renderAllBoundaries();
             }
             function ensureLabelInput() {
@@ -3341,6 +3345,26 @@
                 ensureRootId();
                 km.refresh();
                 _historyCommitBaseline();   // 导入即为新的历史基线，之前的编辑不再回退
+                /*
+                 * **导入会把画布底色顶回内核主题自带的那个**。
+                 *
+                 * 内核 importJson 内部走 useTheme，而 setTheme 会执行
+                 * `c.style.background = getStyle('background')` —— 于是画布
+                 * 被刷成主题自带的底色（fresh-blue 是 #FBFBFB 近白）。
+                 * 实测（真实 Chrome）：
+                 *     setCanvasTheme(深色) → 画布 rgb(38,43,54)
+                 *     importJson(...)     → 画布 rgb(251,251,251)   ← 被顶掉
+                 *
+                 * 而 importText 早就补了这一句（注释写着"导入可能触发
+                 * setTheme，补回画布配色"），importJson 是**主路径**
+                 * （装载 / 切换画布 / 打开文件 / 撤销重做全走它），反而没补 ——
+                 * 又是一次"同一条约束只修了其中一条路"。
+                 *
+                 * 后果：画布底色取决于"最后做的是什么操作"——
+                 * 点过主题就是深色，切一次画布又变浅色，来回跳。
+                 */
+                _applyCanvasTheme();
+                _kmApplyCritical();   // 导入携带的 theme 会换掉主题项，骨架色要重判
                 return true;
             },
             /*
@@ -3378,6 +3402,7 @@
                 km.refresh();
                 _historyCommitBaseline();
                 _applyCanvasTheme();          // 导入可能触发 setTheme，补回画布配色
+                _kmApplyCritical();           // 底色变了 → 骨架色要按新底色重判
                 return true;
             },
             // 关键：km.exportData() 一律返回 Promise，而 WebView2 的 ExecuteScriptAsync 不会等待 Promise
@@ -3544,6 +3569,7 @@
                     // 门面建好后的补套也读它。直调门面时不回写，两条路径的状态就会不一致。
                     window.__kmCanvasVars = _canvasVars;
                     _applyCanvasTheme();
+                    _kmApplyCritical();   // 画布底色换了 → 连线/无填充文字要按新底色重判
                     return true;
                 } catch (e) { return false; }
             },
@@ -3565,6 +3591,20 @@
                 });
                 km.refresh();
                 _applyCanvasTheme();          // 内核 setTheme 改写了内联底色，这里补回来
+                /*
+                 * **换主题后必须重判骨架色** —— 这是「深色画布 + 浅底主题」
+                 * 这套配色唯一的兜底，早先 `_kmApplyCritical()` **定义了却
+                 * 没有任何调用点**，等于整套守卫是死的。
+                 *
+                 * 实测（真实 Chrome，默认主题 fresh-blue）：
+                 *     点「清新蓝」→ 画布 rgb(38,43,54)（深）
+                 *                 → 三级节点文字 fill = rgb(0,0,0)（纯黑）
+                 *     对比度 1.50  —— 三级及更深的文字**看不见**
+                 * 原因：fresh-* 的 sub-background 是 transparent、sub-color
+                 * 是 black，那是为它自带的 #FBFBFB 浅底设计的；画布按设计
+                 * 恒为深色档，两者一碰就糊。
+                 */
+                _kmApplyCritical();
                 return true;
             },
             // 把自定义主题（MindMapTheme 的 camelCase JSON）扁平化为 core 主题对象并写入主题表。

@@ -13118,6 +13118,73 @@ group('「设为封面」写回的节点必须是打开时的那个，不能是�
   W.HTMLMediaElement.prototype.load = savedLoad;
 }
 
+/* ------------------------------------------------------------------
+   BUG 79/80：深色画布 + 浅底主题 → 三级文字看不见；导入还把画布顶回浅色
+   ------------------------------------------------------------------ */
+group('画布配色守卫必须真的被调用（_kmApplyCritical 不得是死代码）');
+
+{
+  const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+
+  /*
+   * 计数一律用**行首锚定**的正则，不能写 /_kmApplyCritical\(\)/g。
+   *
+   * 本轮的注释里就写着「早先 `_kmApplyCritical()` 定义了却没有任何调用点」
+   * —— 那句里就含这个字面量。不加锚点的话，把四处调用全删光，
+   * 注释里那一个仍然让断言绿：又是「断言绿但没在把关」。
+   */
+  const CALLC = /(?:^|\n)[ \t]*_kmApplyCritical\(\);/g;
+  const CALLA = /(?:^|\n)[ \t]*_applyCanvasTheme\(\);/g;
+
+  const nCrit = (ed.match(CALLC) || []).length;
+  eq(nCrit, 4, '四处调用点：setCanvasTheme / setTheme / importJson / importText');
+
+  const sec = (startSig, endSig) => {
+    const a = ed.indexOf(startSig);
+    ok(a > 0, '找得到 ' + startSig.slice(0, 24));
+    const b = ed.indexOf(endSig, a);
+    ok(b > a, '找得到 ' + endSig.slice(0, 20) + ' 作为分界');
+    return ed.slice(a, b);
+  };
+
+  // ① 下发画布配色后：底色变了，骨架色必须按新底色重判
+  const sCv = sec('setCanvasTheme: function (vars) {', 'setTheme: function (theme) {');
+  // 注意：CALLC 带 /g，别用 .test()（会推进 lastIndex），一律用 match 计数
+  ok((sCv.match(CALLC) || []).length > 0, 'setCanvasTheme 后要重判骨架色');
+
+  // ② 换主题后：这是 fresh-* 三级文字看不见的唯一兜底
+  const sTh = sec('setTheme: function (theme) {', 'registerCustomTheme: function (json) {');
+  ok((sTh.match(CALLC) || []).length > 0, 'setTheme 后要重判骨架色');
+
+  // ③ importJson（主路径：装载 / 切换画布 / 打开文件）
+  const sIj = sec('importJson: function (data) {', 'importText: async function (md) {');
+  ok((sIj.match(CALLA) || []).length > 0, 'importJson 必须补回画布配色（否则被内核主题自带底色顶掉）');
+  ok((sIj.match(CALLC) || []).length > 0, 'importJson 后要重判骨架色');
+  // 必须在 km.importJson 之后补：先补再导入等于没补
+  ok(sIj.indexOf('_applyCanvasTheme();') > sIj.indexOf('km.importJson(d)'),
+    '补套画布配色必须排在内核 importJson 之后');
+
+  // ④ importText
+  const sIt = sec('importText: async function (md) {', 'exportJson: function () {');
+  ok((sIt.match(CALLA) || []).length > 0, 'importText 仍然要补回画布配色');
+  ok((sIt.match(CALLC) || []).length > 0, 'importText 后要重判骨架色');
+
+  // ⑤ 顺序：先把底色落稳，再按它重判骨架色
+  for (const [nm, s] of [['setCanvasTheme', sCv], ['setTheme', sTh], ['importJson', sIj], ['importText', sIt]]) {
+    ok(s.indexOf('_applyCanvasTheme();') >= 0 && s.indexOf('_applyCanvasTheme();') < s.indexOf('_kmApplyCritical();'),
+      nm + '：先套底色再判骨架色');
+  }
+
+  // ⑥ 守卫不是空转：黑字压在深色画布上确实远低于阈值 3
+  const rel = (c) => {
+    const f = (n) => { n /= 255; return n <= 0.03928 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+  };
+  const cr = (a, b) => { const la = rel(a), lb = rel(b), hi = Math.max(la, lb), lo = Math.min(la, lb); return (hi + 0.05) / (lo + 0.05); };
+  const blackOnDark = cr([0, 0, 0], [0x1e, 0x1e, 0x1e]);
+  ok(blackOnDark < 3, `黑字压在 #1E1E1E 上确实不达标（实测 ${blackOnDark.toFixed(2)} < 3）`);
+}
+
 /* ============================================================
    结果
    ============================================================ */
