@@ -22,6 +22,21 @@ export function useFpx() {
   const api = useMemo(() => makeApi(ctx), [ctx]);
 
   const [boot, setBoot] = useState<Bootstrap | null>(null);
+  /*
+   * 路径比较是否忽略大小写 —— 必须按平台来，不能写死。
+   * Windows 文件系统不敏感，Linux / macOS 敏感（A/a 是两个不同目录）。
+   * 无条件转小写会把两个不同项目判成同一个，标签色 / 图标 / ACL 锁会串档。
+   *
+   * ⚠️ 这行**必须在最前面**（紧跟 boot）：它只依赖 boot，下面所有
+   * useCallback 的依赖数组都会引用它。
+   * 原先它声明在文件后半段（「内容浏览」区之前），而 createLink /
+   * syncLinks 的 deps 在它**之前**就求值了 ——
+   * `const` 有暂时性死区，那两处读到的是尚未初始化的绑定，
+   * 结果是整个 useFpx 在首次渲染就抛 ReferenceError。
+   * 类型检查能查出来（TS2448 / TS2454），但**只要没人跑 tsc 就看不见**，
+   * 而这是运行时崩溃级的问题。
+   */
+  const ci = boot?.platform === 'windows';
   const [loading, setLoading] = useState(true);
   /*
    * 忙态用**计数**而不是布尔。
@@ -323,7 +338,6 @@ export function useFpx() {
      * 确实指向同一个目录（对齐原版 `FindDuplicate` 的 OrdinalIgnoreCase）。
      * 其他平台一律按原样比，宁可漏查（看得见）也不能误合并（看不见）。
      */
-    const ci = boot?.platform === 'windows';
     const owner = list.findIndex(
       (t) => t.items.some((c) => normalizeKey(c.path, ci) === normalizeKey(path, ci)),
     );
@@ -404,7 +418,6 @@ export function useFpx() {
        * 若这里无条件记「已移除」，用户点完删除看到卡片还在 ——
        * 日志却说移走了，他无从判断是没生效还是刷新慢。
        */
-      const ci = boot?.platform === 'windows';
       const key = normalizeKey(path, ci);
       const tabs = (kind === 'group' ? snap.groupTabs : snap.projectTabs) ?? [];
       const left = tabIndex === null || tabIndex === undefined
@@ -813,13 +826,6 @@ export function useFpx() {
       ctx.toast(strength === '无保护' ? '已解除保护' : `保护已设为${strength}`, 'ok');
     }
   }, [api, applySnapshot, ctx, pushLog, run]);
-
-  /**
-   * 路径比较是否忽略大小写 —— 必须按平台来，不能写死。
-   * Windows 文件系统不敏感，Linux / macOS 敏感（A/a 是两个不同目录）。
-   * 无条件转小写会把两个不同项目判成同一个，标签色 / 图标 / ACL 锁会串档。
-   */
-  const ci = boot?.platform === 'windows';
 
   /* ---------------- 内容浏览 ---------------- */
 
