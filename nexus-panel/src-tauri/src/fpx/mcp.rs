@@ -943,7 +943,28 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
                 snap.links.len()) }] })
         }
         "scan_content" => {
-            let kind = if s("kind").is_empty() { "all".to_string() } else { s("kind") };
+            /*
+             * 类别必须过白名单，不能原样传给 content::scan。
+             * ------------------------------------------------------------------
+             * scan() 内部是三个并列的 `if all || kind == "agent"` 之类，
+             * **没有 else 兜底** —— 未知值走到最后 out 仍是空的，返回 `[]`。
+             *
+             * 而空数组是**断言性**的：调用方（AI）读成"这个项目组下没有任何
+             * skill"，据此可能再去 deploy_skill 建一个、或告诉用户"没找到"。
+             * 真相只是 kind 拼错（"skills"、"Agent"），全程不报错。
+             * 这与"图标面板说 icons/ 下还没有图标"同形：回包主动给出了与
+             * 事实相反的判断，比什么都不返回更糟 —— 后者调用方还会重试。
+             *
+             * 判据调 content::is_scan_kind（类别的唯一来源），不在本文件另抄
+             * 一份字符串表：抄两份迟早漂移，而漂移的表现正是这里要防的。
+             */
+            let kind_raw = s("kind");
+            if !super::content::is_scan_kind(&kind_raw) {
+                return Err(err(&format!(
+                    "kind 只能是 {}，收到「{kind_raw}」（不传或空串等同 all）",
+                    super::content::SCAN_KINDS.join(" / "))));
+            }
+            let kind = if kind_raw.is_empty() { "all".to_string() } else { kind_raw };
             /* root 是本工具的正式参数名；为空时回退 `target`，再回退当前选中。
                原因：原版 refresh_content 走的是 ResolveTarget(args, true)，
                收 target **且允许缺省**（用当前选中）。只做名字归一化的话，
@@ -1148,12 +1169,45 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             json!({ "content": [{ "type": "text", "text": "标签颜色已保存" }] })
         }
         "backup" => {
-            let kind = if s("kind") == "group" { "group" } else { "project" };
+            /*
+             * kind 必须二选一，不能写成 `if == "group" {…} else {…}`。
+             * ------------------------------------------------------------------
+             * 那样写时，传 "Group" / "项目组" 会**静默落到 project**：整批项目
+             * 被备份进"项目备份"目录，而 AI 想备份的项目组一个都没动。
+             * 它不报错，只是做成了另一件事 —— 还顺带跑了一次大规模无谓备份。
+             *
+             * 更糟的是 `summary()` **不含类别**（"源 N 个：新增 X…"），
+             * 回包里没有任何字段能让人发现备份错了对象。等真要恢复时
+             * 才发现备份里没有项目组的内容 —— 而备份的意义恰恰只在
+             * 需要时才有，那时源目录可能已经出事了。
+             *
+             * 所以两处一起改：校验 + 回包带上类别。kind 在 schema 里标了
+             * required，故空串也报错（不像 create_folder 有"不传=不登记"，
+             * 备份没有"不备份"这个选项）。
+             */
+            let kind_raw = s("kind");
+            let kind = match kind_raw.as_str() {
+                "project" | "group" => kind_raw.clone(),
+                other => return Err(err(&format!("kind 只能是 project 或 group，收到「{other}」"))),
+            };
             let append_only = args.get("appendOnly").and_then(|v| v.as_bool()).unwrap_or(true);
             let cfg = super::store::load_config(&dir);
             // summary 是方法不是字段，别写成 r.summary
-            let r = super::backup::run(&cfg, &dir, kind, append_only);
-            json!({ "content": [{ "type": "text", "text": r.summary() }] })
+            let r = super::backup::run(&cfg, &dir, &kind, append_only);
+            let label = if kind == "group" { "项目组" } else { "项目" };
+            /*
+             * "一个源都没处理上" + 带着原因 = 整体未执行（典型是"已有备份
+             * 正在进行"）。此时磁盘上一个文件都没动，回包却仍是一句平铺的
+             * "源 0 个"，AI 会读成"没有东西可备份"。
+             * 判据与前端 ToolsPanel 一致（两处说法必须相同，否则又是一边说
+             * 跳过、一边说完成的局面）；不解析后端文案，[跳过] 是内部约定。
+             */
+            let text = if r.sources == 0 && !r.errors.is_empty() {
+                format!("未执行备份（{label}）：{}｜{}", r.summary(), r.errors[0])
+            } else {
+                format!("已备份{label}：{}", r.summary())
+            };
+            json!({ "content": [{ "type": "text", "text": text }] })
         }
         // ---- 与原版对齐、此前缺失的能力 ----
         "get_manual" => {

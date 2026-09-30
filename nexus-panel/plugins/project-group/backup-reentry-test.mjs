@@ -20,7 +20,13 @@ const mcp = F('mcp.rs');
 console.log('\n=== 1. 三条入口都经过 run（只在一处加守卫就不会漏）===');
 {
   t('手动命令走 backup::run', /backup::run\(&cfg, &dir, &kind, ao\)/.test(mod));
-  t('MCP 走 backup::run', /super::backup::run\(&cfg, &dir, kind, append_only\)/.test(mcp));
+  /*
+   * `&?kind`：kind 现在是 String（match 返回 owned），要写成 `&kind` 借用。
+   * 这是**实现细节**，钉死 `kind` 会在代码只是换了所有权写法时报红 ——
+   * 与下面"自动线程"那条注释里写的是同一类教训：要钉的是"走了 run"，
+   * 不是它怎么传参。
+   */
+  t('MCP 走 backup::run', /super::backup::run\(&cfg, &dir, &?kind, append_only\)/.test(mcp));
   /*
    * 自动线程仍要走 run（三条入口共用一处防重入的关键）。
    *

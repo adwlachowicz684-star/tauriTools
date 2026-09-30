@@ -32,6 +32,24 @@ fn rel(base: &Path, full: &Path) -> String {
         .replace('/', "\\")
 }
 
+/*
+ * `scan` 认的全部类别。**这一份是唯一来源** —— MCP 侧的参数校验必须调
+ * `is_scan_kind`，不能在 mcp.rs 里另抄一份字符串表。
+ *
+ * 抄两份的后果在两个方向都会出错，且都不报错：
+ *   · scan 新增类别而 MCP 那份没跟上 → 新类别被判非法（能力存在却用不了）
+ *   · MCP 放行了 scan 不认的值 → scan 三个 if 全不匹配，返回**空数组**，
+ *     调用方（AI）把它读成"这个项目组下没有任何 agent"，而真相只是参数拼错
+ *
+ * 空串等同 "all"（历史语义，前端 scan("all") 与不传都走这里）。
+ */
+pub const SCAN_KINDS: [&str; 4] = ["all", "agent", "skill", "rule"];
+
+/// 类别是否合法（空串 = all）。与下面 scan() 的三个 if 是同一套判据。
+pub fn is_scan_kind(kind: &str) -> bool {
+    kind.is_empty() || SCAN_KINDS.contains(&kind)
+}
+
 /// 扫描某类资源。kind: agent | skill | rule | all
 pub fn scan(root: &str, kind: &str) -> Vec<ContentItem> {
     let root = Path::new(root);
