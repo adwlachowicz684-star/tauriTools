@@ -1150,6 +1150,19 @@ export function buildSide(app, opts = {}) {
      */
     const focusNode = () => {
       const id = _pendingNodeId || app.bridge?.getSelectedNodeId?.() || '';
+      /*
+       * **用完即清**。
+       *
+       * _pendingNodeId 只代表「本次操作弹框之前选中的那个节点」，它的生命周期
+       * 必须随这次操作结束而结束。早先不清 —— 于是这个值会一直留着，
+       * 后面任何读它的地方拿到的都是**上一次操作过的节点**，而不是当前的。
+       * （曾经的受害者就是「设为封面」，见 openAt 的注释。）
+       *
+       * 清在这里而不是在每个调用点的 return 前：调用点有一堆提前 return
+       * （取消选择框 / 超上限 / 保存失败），逐个补必然漏，漏一个就复活。
+       * focusNode 是 _pendingNodeId 唯一的合法消费者，在它这里清是单点收口。
+       */
+      _pendingNodeId = '';
       if (!id) return false;
       /*
        * **必须检查 selectNodeById 的返回值**。
@@ -1257,6 +1270,24 @@ export function buildSide(app, opts = {}) {
      */
     const openAt = async (kind, ref, index) => {
       if (!ref?.a) { app.api.status('该附件来自旧版路径，无法在沙箱内打开', true); return; }
+      /*
+       * **打开那一刻就锁定节点**，不能读 _pendingNodeId。
+       *
+       * 浮层会一直开着，期间用户完全可能点别的节点，所以「设为封面」必须
+       * 写回打开时的那个节点 —— 这点原注释已经说对了。错的是**取谁**：
+       *
+       *   `_pendingNodeId` 是上一次「附加 / 移除 / 添加图片」操作留下的，
+       *   与现在打开的是不是同一个节点**毫无关系**。典型路径：
+       *     ① 选中 A → 侧栏「附加文件…」→ 记住 A（无论最终有没有真的附加）；
+       *     ② 改选 B → 点开 B 的视频 → 「设为封面」；
+       *     ③ 封面被写到 **A** 的第 i 个视频上。
+       *   · A 没有视频 → 报「找不到对应的视频」（用户明明在给 B 设封面）；
+       *   · A 也有视频 → B 的画面静默盖到 A 的视频上，界面还提示
+       *     「已设为该视频的封面」—— 数据错乱 + 假成功，最难查的那种。
+       *
+       * 必须在 **await 之前**取：io.getAsset 期间选中态同样可能变。
+       */
+      const ownerId = app.bridge?.getSelectedNodeId?.() || '';
       const asset = await io.getAsset(ref.a, true);
       if (!asset?.blob) { app.api.status('附件数据已丢失', true); return; }
       trackMediaUrl(asset.url);
@@ -1266,7 +1297,8 @@ export function buildSide(app, opts = {}) {
           index: i,
           // 传 nodeId：浮层开着时用户可能点了别的节点，不切回去会写错视频
           onSetThumb: (dataUrl) => {
-            const id = _pendingNodeId || app.bridge?.getSelectedNodeId?.() || '';
+            // 兜底取「当前选中」而不是 _pendingNodeId —— 那会是上一次操作的残留
+            const id = ownerId || app.bridge?.getSelectedNodeId?.() || '';
             app.api.setVideoThumb?.(i, id, dataUrl);
           },
         });

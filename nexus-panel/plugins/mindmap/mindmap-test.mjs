@@ -6283,7 +6283,11 @@ group('附件操作：写回前必须切回节点（选中丢失防护）');
 
   // 3) focusNode / rememberNode 的定义
   const focusAt = pnl.indexOf('const focusNode = () => {');
-  const focusSrc = pnl.slice(focusAt, focusAt + 700);
+  // 边界必须**结构性**（到下一个同级 const 为止）。早先写死 700 字符，
+  // 在函数里加一段说明注释就被撑爆 —— 于是断言查的是被截断的半截函数，
+  // 代码没坏却报红（这类"定长窗口"在本项目已经踩过好几次）。
+  const focusEnd = pnl.indexOf('const rawOf =', focusAt);
+  const focusSrc = pnl.slice(focusAt, focusEnd < 0 ? pnl.length : focusEnd);
   ok(focusAt > 0, '有 focusNode');
   ok(/_pendingNodeId \|\|/.test(focusSrc), 'focusNode 优先用记住的 nodeId');
   ok(/selectNodeById\?\.\(id\)/.test(focusSrc), 'focusNode 真的调用了 selectNodeById');
@@ -12991,6 +12995,127 @@ group('写盘失败不得被成功文案盖掉：await persist() 必须判返回
     '导入失败时 toast 必须是 err 而不是 ok');
   ok(/ctx\.toast\(ok \? `已导入 \$\{workbook\.sheets\.length\} 张画布` : '已导入，但保存失败'/.test(code),
     'XMind 导入失败时 toast 必须是 err');
+}
+
+/* ============================================================
+   「设为封面」必须写回**打开视频的那个节点**
+   ============================================================ */
+
+group('「设为封面」写回的节点必须是打开时的那个，不能是上一次操作过的（BUG 78）');
+
+{
+  const { buildSide } = await import('./panels.js');
+  const store = await import('./store.js');
+
+  // 资产入库。blob 用普通对象：jsdom 的 Blob 过不了 Node 的 structuredClone，
+  // 而 io.getAsset 只要求 rec.blob 为真、URL.createObjectURL 已被桩接管。
+  await store.set('asset:asV1', {
+    name: 'v.mp4', size: 10, type: 'video/mp4',
+    blob: { name: 'v.mp4', size: 10, type: 'video/mp4' },
+  });
+
+  /*
+   * jsdom 解不出视频画面，桩上 canvas —— 否则 grab() 返回 null，
+   * 「设为封面」会停在「还没读到画面」，根本走不到写回，测不出写回给谁。
+   *
+   * 尺寸**只桩在浮层里那一个 video 元素上**，不改 HTMLVideoElement.prototype：
+   * 前面 mediainfo 的取帧探针还挂着定时器，原型一改它们就会以为真的有画面，
+   * 接着去调 jsdom 未实现的 HTMLMediaElement.load —— 噪声能把本次结果冲掉。
+   */
+  const W = dom.window;
+  const savedGetCtx = W.HTMLCanvasElement.prototype.getContext;
+  const savedToUrl = W.HTMLCanvasElement.prototype.toDataURL;
+  // 前面 mediainfo 的取帧探针还挂着定时器，本块的若干 setTimeout(0) 会让它
+  // 在此期间触发，调 jsdom 未实现的 load —— 噪声会淹没本次结果，静音一下
+  const savedLoad = W.HTMLMediaElement.prototype.load;
+  W.HTMLMediaElement.prototype.load = () => {};
+  W.HTMLCanvasElement.prototype.getContext = () => ({ drawImage() {}, fillRect() {}, clearRect() {} });
+  W.HTMLCanvasElement.prototype.toDataURL = () => 'data:image/jpeg;base64,AAAA';
+  let curId = 'A';
+  const thumbs = [];
+  const app = {
+    api: {
+      status() {}, commit() {}, selectedRef: () => null, selectedImages: () => [],
+      // 视频列表随选中节点走：A 没有视频、B 有一个 —— 这样写错节点时
+      // setVideoThumb 要么越界报错、要么落到 A 自己的视频上，都能测出来
+      selectedRefs: (k) => (k === 'video' && curId === 'B' ? [{ n: 'v.mp4', a: 'asV1', s: 10 }] : []),
+      setVideoThumb: (i, nodeId, d) => { thumbs.push({ i, nodeId, d }); return true; },
+      gcAssets: async () => {},
+    },
+    bridge: {
+      getSelectedNodeId: () => curId,
+      selectNodeById: () => true,
+      setFile: () => {}, setVideo: () => {}, setImages: () => {},
+    },
+  };
+  const side = buildSide(app, {});
+  document.body.appendChild(side.el);
+  side.open('file');
+
+  // ① 在节点 A 上点「附加文件…」—— rememberNode() 会把 A 记下来。
+  //    只点到弹选择框为止（jsdom 里不会真的弹），记 id 这一步已经同步完成。
+  const btnByText = (root, t) => [...root.querySelectorAll('button')]
+    .find((b) => (b.textContent || '').trim() === t);
+  ok(!!btnByText(side.el, '附加文件…'), '文件页有「附加文件…」按钮');
+  btnByText(side.el, '附加文件…').click();
+
+  // ② 改选节点 B，刷新面板，点 B 那个视频的「打开」
+  curId = 'B';
+  side.refresh();
+  const openBtn = [...side.el.querySelectorAll('button.mm-mini')]
+    .find((b) => (b.textContent || '').trim() === '⤓');
+  ok(!!openBtn, '视频行有「打开」按钮');
+  openBtn.click();
+  // openAt 是 async（要 await io.getAsset），等它把浮层建出来
+  for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+
+  // 只给这一个元素桩尺寸：grab() 读的就是它
+  const vid = document.querySelector('video.mm-video');
+  ok(!!vid, '浮层里有 video 元素');
+  if (vid) {
+    Object.defineProperty(vid, 'videoWidth', { configurable: true, value: 640 });
+    Object.defineProperty(vid, 'videoHeight', { configurable: true, value: 360 });
+  }
+
+  // ③ 浮层里点「设为封面」
+  const setThumbBtn = btnByText(document.body, '设为封面');
+  ok(!!setThumbBtn, '视频浮层里有「设为封面」按钮');
+  setThumbBtn?.click();
+  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+
+  eq(thumbs.length, 1, '点「设为封面」应写回一次');
+  eq(thumbs[0]?.nodeId, 'B',
+    '★ 封面必须写到**打开视频的那个节点 B**（写成 A = 封面跑到上一次操作过的节点上）');
+  eq(thumbs[0]?.i, 0, '写回的索引是打开的那一个');
+
+  // ④ 根因守卫：onSetThumb 不得再读 _pendingNodeId（那是上一次操作留下的）
+  const psrc0 = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const oa = fnBody(psrc0, 'const openAt = async (kind, ref, index) => {')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const cb = oa.slice(oa.indexOf('onSetThumb'));
+  ok(!/_pendingNodeId/.test(cb), 'onSetThumb 回调不得读 _pendingNodeId（它是上一次操作的残留）');
+  ok(!/_pendingNodeId\s*\|\|/.test(cb), 'onSetThumb 不得用 _pendingNodeId 作首选 id');
+  /*
+   * 必须**锚定到赋值开头**：早先写的是 `/ownerId\s*\|\|/`，而
+   * `app.bridge?.getSelectedNodeId?.() || ownerId || ''` 也含 `ownerId ||`
+   * —— 顺序整个颠倒照样绿，等于没在把关（本项目第 27 次踩到）。
+   * 顺序真的重要：先读当前选中的话，浮层开着期间用户点了别的节点就写错。
+   */
+  ok(/const id = ownerId \|\| app\.bridge\?\.getSelectedNodeId/.test(cb),
+    'onSetThumb 首选打开时锁定的 ownerId（先读当前选中的话会写错节点）');
+  // ownerId 必须在 await io.getAsset **之前**取：那期间选中态同样可能变
+  ok(oa.indexOf('const ownerId') >= 0 && oa.indexOf('const ownerId') < oa.indexOf('await io.getAsset'),
+    'ownerId 在 await io.getAsset 之前锁定');
+
+  // ⑤ focusNode 用完即清：_pendingNodeId 的生命周期必须随本次操作结束
+  const fnAt = psrc0.indexOf('const focusNode = () => {');
+  const fnSrc = psrc0.slice(fnAt, psrc0.indexOf('const rawOf =', fnAt));
+  ok(/_pendingNodeId\s*=\s*''/.test(fnSrc), 'focusNode 用完即清 _pendingNodeId（否则残留会被后来的操作误用）');
+
+  document.body.removeChild(side.el);
+  W.HTMLCanvasElement.prototype.getContext = savedGetCtx;
+  W.HTMLCanvasElement.prototype.toDataURL = savedToUrl;
+  W.HTMLMediaElement.prototype.load = savedLoad;
 }
 
 /* ============================================================
