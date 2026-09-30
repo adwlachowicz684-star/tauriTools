@@ -13297,6 +13297,90 @@ group('BUG 81 · 删除键必须注册成内核认得的 Del，且要支持多�
   }
 }
 
+
+/* ============================================================
+   BUG 82 · 方向键导航被内核几何导航盖掉（页面那套 XMind 语义形同虚设）
+   ============================================================ */
+
+group('BUG 82 · 方向键：内核几何导航排在我们之后，把我们的语义整个盖掉');
+
+/*
+ * 内核**有**方向键导航，只是不是树形语义而是**几何语义**：它在
+ * layoutallfinish 时给每个节点算出「上下左右最近的节点」（_nearestNodes），
+ * 按键时按距离挑一个。该模块挂在 `"normal.keydown readonly.keydown"` 上。
+ *
+ * 而派发顺序是：先通用 `'keydown'`（addShortcut 注册的东西在这一站），
+ * 再 `'normal.keydown'` —— 内核那一脚永远踢在最后，读到的 getSelectedNode()
+ * 已经是我们刚改过的，会再挪一次。
+ *
+ * 实测（真实 Chrome + 真实键盘，6 节点 × 4 方向，修复前）：
+ *   ← 在 A 上 → C（文档写「移到父节点」，应为「中心」）
+ *   → 在 A 上 → A1x（应进入 A1，多走了一层）
+ *   → 在 B 上 → A1（B 是叶子，应不动）
+ *   ↓ 在 B 上 → B（应到 C，被内核拉了回来）
+ *   ↓ 在 C 上 → B（已到末尾，应不动）
+ */
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  // 注释里大量引用这些写法，不剥的话命中的是注释本身 —— 代码真改坏了照样绿
+  const S = html.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+  // ① 方向键**不得**再用 kmShortcut 注册（那样必被内核那一脚盖掉）
+  for (const d of ['up', 'down', 'left', 'right']) {
+    ok(!new RegExp("kmShortcut\\('" + d + "'").test(S),
+      `方向键 ${d} 不再走 addShortcut（会排在内核几何导航之前，被盖掉）`);
+  }
+
+  // ② 必须分两站：第一站记起点，第二站（排在内核之后）执行
+  ok(/km\.on\('keydown'[\s\S]{0,600}?_navFrom\s*=\s*km\.getSelectedNode\(\)/.test(S),
+    '第一站（通用 keydown）记下起点（等第二站再读就已被内核挪过）');
+  ok(/km\.on\('normal\.keydown readonly\.keydown'[\s\S]{0,600}?navNode\(d,\s*f\)/.test(S),
+    '第二站（normal.keydown）按起点执行，排在内核几何导航之后');
+
+  // ③ navNode 必须接收起点参数
+  ok(/function navNode\(dir,\s*from\)/.test(S), 'navNode 接收起点参数 from');
+  ok(/var n = from \|\| km\.getSelectedNode\(\)/.test(S), 'navNode 优先用传入的起点');
+
+  // ④ **不移动时也要显式选回起点** —— 否则「到头了就不动」会变成
+  //    「跳到几何上最近的节点」（实测 ↓ 在 C 上跳回 B）
+  ok(/var t = target \|\| n;/.test(S), '不移动时把目标回落到起点本身');
+  ok(/if \(km\.getSelectedNode\(\) !== t\) km\.select\(t, true\);/.test(S),
+    '不移动时显式选回起点（抵消内核那一脚）');
+
+  // ⑤ 注释里那条错误判断必须改掉，否则后来人还会照着它改回去
+  // 这句话只能以「早先这么写、那是错的」的历史口吻出现，不能再当作事实陈述
+  const navClaim = html.split('\n').filter((l) => l.includes('内核不提供方向键导航'));
+  ok(navClaim.length === 1 && /早先/.test(navClaim[0]) && /错的/.test(navClaim[0]),
+    '注释只是以「早先这么写、那是错的」的口吻提及，不再当作事实陈述');
+}
+
+/* ============================================================
+   BUG 83 · 「/」折叠：页面与内核各切换一次，正负相抵 = 按了跟没按一样
+   ============================================================ */
+
+group('BUG 83 · 「/」折叠键：两套实现各切一次，按了跟没按一样');
+
+/*
+ * 内核 ExpanderRenderer 模块在 `"normal.keydown"` 上自己处理了 `/`：
+ * 取选中节点的 isExpanded() 取反，对**全部选中节点**执行，
+ * 最后 layout(100) + fire contentchange（命中 root 时直接 return）。
+ *
+ * 早先页面又用 addShortcut('/') 切了一次，而 addShortcut 排在前 ——
+ *   我们 collapse A → 内核读到 isExpanded()=false → 再 expand A
+ * 钩住 expand/collapse 打点能看到一去一回两条调用，净效果是零。
+ */
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  const S = html.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+  ok(!/kmShortcut\('\/'/.test(S),
+    '「/」不再由页面注册（与内核各切一次会正负相抵）');
+  ok(/ExpanderRenderer/.test(html) && /交给内核/.test(html),
+    '注释写明「/」交给内核 ExpanderRenderer（它还支持多选、也不会把根整棵收起）');
+  ok(!/同样只有键码\(191\)被登记，行为未实现/.test(html),
+    '注释不再声称内核未实现「/」（那是错的）');
+}
+
 /* ============================================================
    结果
    ============================================================ */
