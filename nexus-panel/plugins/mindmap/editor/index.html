@@ -4328,10 +4328,30 @@
         })();
 
         // ---- 默认快捷键 ----
-        // core 仅内置 Ctrl+A 全选，以及 commandShortcutKeys 里注册的那几个
-        // （alt+up/down 上移下移、shift+tab 插入上级、ctrl+shift+l 整理布局、ctrl+=- 缩放、ctrl+c/x/v）。
-        // 「方向键导航 / / 折叠 / Alt+1-5 展开层级」**内核并未实现**（键码表里有登记、行为没写），
-        // 由本文件在下方补齐。
+        //
+        // 内核实际注册了什么，**别再靠猜**。实测（真实 Chrome，初始化完成后
+        // 打印 `km._shortcutKeys`，addCommandShortcutKeys 与 addShortcut 写的是同一张表）：
+        //
+        //   Tab / Insert            → appendchildnode      （我们覆盖了，见下）
+        //   Enter / Shift+Insert    → appendsiblingnode    （我们覆盖了）
+        //   Shift+Tab               → appendparentnode
+        //   Del / Backspace         → removenode           （我们覆盖了）
+        //   alt+Up / alt+Down       → arrangeup / arrangedown
+        //   Ctrl+Shift+L            → resetlayout
+        //   ctrl+b / ctrl+i         → bold / italic        （我们覆盖了，等价）
+        //   ctrl+= / ctrl+-         → zoomin / zoomout
+        //
+        // 另外三个不在表里、挂在 `"normal.keydown"` 上：
+        //   Ctrl+A        → 全选
+        //   方向键        → **几何**导航（按屏幕距离挑最近节点，不是树形语义）
+        //   /             → 折叠/展开（ExpanderRenderer，支持多选）
+        //
+        // **没有**的只有：copy / cut / paste（见下方 BUG 57 的补齐）、以及 Alt+1~5。
+        //
+        // 早先这里写「方向键导航 / / 折叠 / Alt+1-5 内核并未实现」—— 前两个是错的，
+        // 正是这个错误判断让下面两套语义长期互相打架（详见各自的注册处）。
+        // 结论是通用的：**先打印内核真实注册了什么，再决定补不补**，
+        // 补之前没查、就会补出一个和内核各干一次、正负相抵的死实现。
         // 行内文字编辑框已对按键 stopPropagation，编辑文字时不会误触发下方绑定。
         (function () {
             function kmShortcut(key, fn) { try { km.addShortcut(key, fn); } catch (e) {} }

@@ -13381,6 +13381,104 @@ group('BUG 83 · 「/」折叠键：两套实现各切一次，按了跟没按�
     '注释不再声称内核未实现「/」（那是错的）');
 }
 
+
+/* ============================================================
+   契约：快捷键说明里写的每一条，都必须真的有键绑上去
+   ============================================================ */
+
+group('快捷键说明 × 实际绑定：文档写的每一条都得真的接上（防「文档有、键不通」）');
+
+/*
+ * BUG 57（Ctrl+C/X/V）的教训：命令在、键没绑，而插件里没有对应按钮，
+ * 于是功能完全不可用 —— 但说明窗口里白纸黑字写着它。
+ * 这条契约把「说明」和「绑定」钉在一起：说明里列了，就必须在
+ * 「编辑器页注册」「内核已知绑定」「另有专门实现」三者之一里找得到。
+ *
+ * 内核那份是实测出来的（初始化后打印 km._shortcutKeys），**不是猜的**：
+ *   Tab/Insert→appendchildnode、Enter/Shift+Insert→appendsiblingnode、
+ *   Shift+Tab→appendparentnode、Del/Backspace→removenode、
+ *   alt+Up/alt+Down→arrangeup/arrangedown、Ctrl+Shift+L→resetlayout、
+ *   ctrl+b→bold、ctrl+i→italic、ctrl+=/ctrl+-→zoomin/zoomout；
+ * 另三个挂在 "normal.keydown" 上：Ctrl+A 全选、方向键几何导航、/ 折叠。
+ */
+{
+  const html = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
+  const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
+  // 注释里大量引用这些键名，不剥的话命中的是注释本身 —— 键真没绑上去照样绿
+  const S = html.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+  const KERNEL = ['ctrl+a', 'ctrl+b', 'ctrl+i', 'ctrl+shift+l', 'ctrl+=', 'ctrl+-',
+    'tab', 'enter', 'shift+tab', 'del', 'backspace', 'insert', 'shift+insert',
+    'alt+up', 'alt+down', 'up', 'down', 'left', 'right', '/'];
+
+  // 编辑器页自己注册的（addShortcut + addCommandShortcutKeys）
+  const bound = new Set();
+  for (const m of S.matchAll(/kmShortcut\('([^']+)'/g)) bound.add(m[1].toLowerCase());
+  for (const m of S.matchAll(/addCommandShortcutKeys\(\{([^}]*)\}\)/g)) {
+    for (const kv of m[1].matchAll(/:\s*'([^']+)'/g)) bound.add(kv[1].toLowerCase());
+  }
+  // Alt+1~5：循环里动态拼的名字，正则取不到字面量
+  if (/kmShortcut\('alt\+'\s*\+\s*lv/.test(S)) {
+    for (let i = 1; i <= 5; i++) bound.add('alt+' + i);
+  }
+  // F2：挂在容器上的捕获监听（不走 addShortcut）
+  if (/e\.key === 'F2'/.test(S)) bound.add('f2');
+  // Ctrl+Z / Ctrl+Y：走 document 上的独立监听，由「17.16 撤销/重做」那组把关
+  if (/act = 'undo'/.test(S) && /act = 'redo'/.test(S)) {
+    bound.add('ctrl+z'); bound.add('ctrl+y'); bound.add('ctrl+shift+z');
+  }
+
+  const m = pn.match(/const SHORTCUTS = \[([\s\S]*?)\n\];/);
+  ok(!!m, '取到 SHORTCUTS 数组');
+  const body = (m ? m[1] : '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const docKeys = [...body.matchAll(/\['([^']+)',\s*'([^']*)'\]/g)].map((x) => x[1]);
+
+  /** "Ctrl + C / X / V" → ctrl+c, ctrl+x, ctrl+v —— 后段继承前段的修饰键 */
+  function expand(k) {
+    let s = k.trim();
+    const ARROW = { '↑': 'up', '↓': 'down', '←': 'left', '→': 'right' };
+    for (const a of Object.keys(ARROW)) s = s.split(a).join(ARROW[a]);
+    if (s === '/') return ['/'];
+    const out = [];
+    let prefix = [];
+    for (const p of s.split('/').map((x) => x.trim()).filter(Boolean)) {
+      const toks = p.split('+').map((x) => x.trim().toLowerCase()).filter(Boolean);
+      const mods = toks.filter((t) => t === 'ctrl' || t === 'shift' || t === 'alt');
+      const main = toks.filter((t) => t !== 'ctrl' && t !== 'shift' && t !== 'alt');
+      if (!main.length) continue;
+      if (mods.length) prefix = mods;
+      const head = main[0];
+      const rng = head.match(/^(\d+)~(\d+)$/);          // "Alt + 1~5"
+      if (rng) {
+        for (let i = +rng[1]; i <= +rng[2]; i++) out.push([...prefix, i].join('+'));
+      } else if (main.length > 1) {
+        for (const x of main) out.push([...prefix, x].join('+'));
+      } else {
+        out.push([...prefix, head === 'delete' ? 'del' : head].join('+'));
+      }
+    }
+    return out;
+  }
+
+  const missing = [];
+  for (const k of docKeys) {
+    for (const one of expand(k)) {
+      // 说明里写的是 Del，内核表里的键是 del —— 已统一；这里再兜一次
+      if (bound.has(one) || KERNEL.includes(one)) continue;
+      missing.push(k + '（→ ' + one + '）');
+    }
+  }
+  eq(missing.length, 0,
+    `说明里列的每一条都真的有键绑上去${missing.length ? '（没绑：' + missing.join('、') + '）' : ''}`);
+  ok(docKeys.length >= 26, `说明条目数合理（实际 ${docKeys.length} 条）`);
+
+  // 反向兜底：方向键与「/」现在**不得**再由 addShortcut 注册（会与内核各干一次）
+  for (const d of ['up', 'down', 'left', 'right']) {
+    ok(!bound.has(d), `方向键 ${d} 不在 addShortcut 表里（否则会被内核几何导航盖掉）`);
+  }
+  ok(!bound.has('/'), '「/」不在 addShortcut 表里（否则与内核各切一次、正负相抵）');
+}
+
 /* ============================================================
    结果
    ============================================================ */
