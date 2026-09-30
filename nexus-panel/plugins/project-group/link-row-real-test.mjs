@@ -7,10 +7,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+import { stripCommentsJs as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
-const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+/* 剥注释走全仓共用实现（test-scan-utils.mjs） */
 const R = (n) => strip(fs.readFileSync(path.join(HERE, n), 'utf8'));
 
 const rs = R('../../src-tauri/src/fpx/store.rs');
@@ -175,7 +176,7 @@ console.log('\n=== 9. 「不是 junction 而是普通目录」：不删但必须
    * 不剥的话把真实代码删掉、注释留着，断言**照样通过**（第 21 次同类）。
    * 这类空跑最危险 —— 代码没了，护栏还报绿。
    */
-  const hookCode = hook.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');
+  const hookCode = strip(hook).replace(/(^|\s)\/\/[^\n]*/g, '$1');
   t('前端读 linkNotices（代码层，不含注释）', /snap\.linkNotices/.test(hookCode));
   t('前端记日志', /pushLog\(`同步链接：\$\{msg\}`, true\)/.test(hookCode));
   /*

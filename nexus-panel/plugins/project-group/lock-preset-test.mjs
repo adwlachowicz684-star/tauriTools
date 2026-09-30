@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT, loadTs } from './testkit.mjs';
+import { stripComments as stripBlock, stripCommentsJs as stripJs } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
@@ -99,10 +100,8 @@ for (const p of LOCK_PRESETS) {
 
 console.log('\n=== 5. 界面接线 ===');
 {
-  const dlg = fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-  const cssNC = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const dlg = stripBlock(fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8'));
+  const cssNC = stripBlock(fs.readFileSync(path.join(HERE, 'style.css'), 'utf8'));
 
   t('弹窗渲染档位按钮', /LOCK_PRESETS\.map/.test(dlg));
   /* 档位必须由开关推导，不能另存 state —— 存了就会漂移 */
@@ -124,10 +123,8 @@ console.log('\n=== 5. 界面接线 ===');
 
 console.log('\n=== #23 弹窗内监控告警开关 ===');
 {
-  const dlg = fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-  const host = fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const dlg = stripBlock(fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8'));
+  const host = stripBlock(fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8'));
 
   /* 必须是可选参数：弹窗在没有监控上下文的地方也能复用 */
   t('参数为可选（watchEnabled?）', /watchEnabled\?: boolean/.test(dlg));
@@ -146,12 +143,9 @@ console.log('\n=== #23 弹窗内监控告警开关 ===');
 
 console.log('\n=== #21 账面固定（与 ACL 是两件事）===');
 {
-  const dlg = fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-  const host = fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-  const grid = fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const dlg = stripBlock(fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8'));
+  const host = stripBlock(fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8'));
+  const grid = stripBlock(fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8'));
   const rs = fs.readFileSync(
     path.join(HERE, '..', '..', 'src-tauri', 'src', 'fpx', 'mod.rs'), 'utf8');
   const app7 = fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8');
@@ -198,8 +192,7 @@ console.log('\n=== 11. #138 lock_set 的 account_only / remove ★ ===');
 {
   /* 本文件没有全局 `strip`（只有各处就地 .replace），直接用会 ReferenceError
      让整个套件挂掉 —— 与 watch-suppress-test 那次同一个坑。 */
-  const mcp = fs.readFileSync(path.join(HERE, '../../src-tauri/src/fpx/mcp.rs'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const mcp = stripBlock(fs.readFileSync(path.join(HERE, '../../src-tauri/src/fpx/mcp.rs'), 'utf8'));
 
   /*
    * 一、**工具清单里必须声明**。
@@ -264,10 +257,10 @@ console.log('\n=== 12. #419 弹窗显示目标路径 + 类型徽章 ★ ===');
    * 这是**第四次**踩同一个坑（watch-suppress / lock-preset 第11节 /
    * link-agents / 本处）。每节用到的辅助函数必须就地定义或确认已存在。
    */
-  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
-  const dlg = strip(fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8'));
-  const hub = strip(fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8'));
-  const app = strip(fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8'));
+  const strip = stripBlock;
+  const dlg = stripBlock(fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8'));
+  const hub = stripBlock(fs.readFileSync(path.join(HERE, 'components/DialogsHub.tsx'), 'utf8'));
+  const app = stripBlock(fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8'));
   const css = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8');
 
   /*
@@ -300,8 +293,8 @@ console.log('\n=== 12. #419 弹窗显示目标路径 + 类型徽章 ★ ===');
 
 console.log('\n=== 13. #431 icacls 自救命令要写出来 ★ ===');
 {
-  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
-  const dlg = strip(fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8'));
+  const strip = stripBlock;
+  const dlg = stripBlock(fs.readFileSync(path.join(HERE, 'components/dialogCards.tsx'), 'utf8'));
   const css = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8');
 
   /*
@@ -336,7 +329,7 @@ console.log('\n=== 6. 保护日志必须报实际档位，不能回显三个布�
   const start = src.indexOf('const setLock = useCallback');
   t('能定位到 setLock（切片锚点有效）', start >= 0);
   const blk = src.slice(start, src.indexOf('}, [api, applySnapshot, ctx, pushLog, run]);', start));
-  const code = blk.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const code = stripJs(blk);
 
   t('日志不再回显 raw 布尔（反面证据）',
     !/防删除=\$\{denyDelete\}/.test(code) && !/防写入=\$\{denyWrite\}/.test(code));

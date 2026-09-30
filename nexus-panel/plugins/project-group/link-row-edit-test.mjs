@@ -11,10 +11,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+import { stripCommentsJs as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
-const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+/* 剥注释走全仓共用实现（test-scan-utils.mjs） */
 const grid = strip(fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8'));
 const app = strip(fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8'));
 const css = strip(fs.readFileSync(path.join(HERE, 'style.css'), 'utf8'));

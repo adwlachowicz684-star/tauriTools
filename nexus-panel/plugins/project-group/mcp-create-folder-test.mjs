@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RS = path.join(HERE, '../../src-tauri/src/fpx/mcp.rs');
@@ -137,7 +138,7 @@ console.log('\n=== 6b. 回包的链接条数必须是「这个项目的」，不
    * 注：前端 useFpx 的 createLink / syncLinks 已按归一化键找行，
    * 这里必须跟上 —— 两条通道给出互相矛盾的数字就谁都信不过了。
    */
-  const code = rs.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const code = strip(rs).replace(/\/\/[^\n]*/g, '');
   t('有 link_names_of 这个按项目取条数的辅助', /fn link_names_of\(/.test(code));
 
   const fnBody = code.slice(code.indexOf('fn link_names_of('), code.indexOf('fn call_tool('));
