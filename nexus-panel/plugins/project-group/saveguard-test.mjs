@@ -209,7 +209,7 @@ console.log('\n=== 9. setState updater 里不得有副作用 ★ ===');
  */
 {
   const lm = fs.readFileSync(path.join(HERE, 'hooks/useLayoutMemory.ts'), 'utf8');
-  const stripped = lm.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const stripped = strip(lm).replace(/\/\/[^\n]*/g, '');
   const bad = [];
   for (const m of stripped.matchAll(/set(\w+)\(\s*\(?\s*\w+\s*\)?\s*=>\s*\{/g)) {
     const varName = 'set' + m[1];

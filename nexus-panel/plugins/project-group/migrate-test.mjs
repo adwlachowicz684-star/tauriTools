@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RS = path.join(HERE, '../../src-tauri/src/fpx');
@@ -229,7 +230,7 @@ console.log('\n=== 7. #314 页签名收敛为合法单级片段 ★★ ===');
     t('重建失败被收集起来', /relink_errors\.push\(/.test(blk));
     /* 必须在**剥掉注释后**再判：说明文字里就写着 `Err(_) => {}` 这几个字，
        不剥的话断言会命中注释 → 永远为真（第 18 次踩到这类空跑） */
-    const blkCode = blk.replace(/\/\*[\s\S]*?\*\//g, '');
+    const blkCode = strip(blk);
     t('不再有空的 Err 分支', !/Err\(_\)\s*=>\s*\{\s*\}/.test(blkCode));
     t('错误信息带项目路径与链接名', /\{\}\（\{\}）：\{e\}/.test(blkCode));
 

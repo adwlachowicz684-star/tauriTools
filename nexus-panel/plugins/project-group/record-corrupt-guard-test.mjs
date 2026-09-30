@@ -20,12 +20,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+import { stripCommentsJs as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RS = path.join(HERE, '..', '..', 'src-tauri', 'src', 'fpx');
 const { t, done } = makeT();
-const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
-
+/* 剥注释走全仓共用实现（test-scan-utils.mjs） */
 /* 取某个函数体：从签名起到下一个顶层 pub fn / 文件尾。
    不切片的话，两条断言会命中文件里别处的同名字样（本文件踩过多次）。 */
 const bodyOf = (src, sig) => {
