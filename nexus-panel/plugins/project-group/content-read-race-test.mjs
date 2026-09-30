@@ -18,6 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { makeT, stripTS } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
@@ -162,7 +163,7 @@ console.log('\n=== 3. 读取失败仍要清掉并报错 ===');
 
 console.log('\n=== 4. 源码约束（文本层） ===');
 {
-  const code = raw.replace(/\/\*[\s\S]*?\*\//g, '');
+  const code = strip(raw);
   t('声明了 readSeq', /const readSeq = useRef\(0\)/.test(code));
   t('read 里取代号', /const seq = \+\+readSeq\.current/.test(code));
   /* 行尾注释也要容许：判据是"这一句后面紧跟 setText(t)"，
@@ -180,7 +181,7 @@ console.log('\n=== 5. 目录选择器 load 的同一竞态 ===');
 {
   const D = path.join(HERE, 'components', 'DirDialog.tsx');
   const src = fs.readFileSync(D, 'utf8');
-  const code = src.replace(/\/\*[\s\S]*?\*\//g, '');
+  const code = strip(src);
 
   function extractLoad(s) {
     const i = s.indexOf('const load = useCallback(async (p: string) =>');
@@ -263,7 +264,7 @@ console.log('\n=== 6. 图标选择器：连按 F6 会打开错卡片（会改错
 {
   const A = path.join(HERE, 'App.tsx');
   const src = fs.readFileSync(A, 'utf8');
-  const code = src.replace(/\/\*[\s\S]*?\*\//g, '');
+  const code = strip(src);
   const i = code.indexOf('const openIconPicker = async (card: CardInfo) =>');
   t('找到 openIconPicker', i >= 0);
 
@@ -319,7 +320,7 @@ console.log('\n=== 7. 内容扫描：切目录后被旧结果覆盖 ===');
 {
   const U = path.join(HERE, 'hooks', 'useFpx.ts');
   const src = fs.readFileSync(U, 'utf8');
-  const code = src.replace(/\/\*[\s\S]*?\*\//g, '');
+  const code = strip(src);
   const i = code.indexOf('const scan = useCallback(async (root: string');
   t('找到 scan', i >= 0);
   const body = (() => {

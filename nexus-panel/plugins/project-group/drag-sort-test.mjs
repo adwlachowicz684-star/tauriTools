@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT, loadTs } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
@@ -212,9 +213,8 @@ console.log('\n=== 图标排序（#72）===');
   const grid2Raw = fs.readFileSync(path.join(HERE, 'components/PresetIconGrid.tsx'), 'utf8');
   /* 必须剥掉注释：我在注释里写了 `resolveMoveIndex` 的名字，
      直接拿原文匹配会被自己的注释满足 —— 那样断言形同虚设。 */
-  const grid2 = grid2Raw.replace(/\/\*[\s\S]*?\*\//g, '');
-  const cssNC = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const grid2 = strip(grid2Raw);
+  const cssNC = strip(fs.readFileSync(path.join(HERE, 'style.css'), 'utf8'));
 
   /* 必须复用同一套索引纠偏，不能另写一份。
      注意要断言**具体用法**（`resolveMoveIndex(from, k`）而不是名字：
@@ -246,9 +246,8 @@ console.log('\n=== 分组重排（#73）===');
 {
   const gRaw = fs.readFileSync(path.join(HERE, 'components/PresetIconGrid.tsx'), 'utf8');
   /* 剥注释：我在注释里写了这些函数名，只查名字会被注释满足 */
-  const g = gRaw.replace(/\/\*[\s\S]*?\*\//g, '');
-  const cssNC = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const g = strip(gRaw);
+  const cssNC = strip(fs.readFileSync(path.join(HERE, 'style.css'), 'utf8'));
   const ds = fs.readFileSync(path.join(HERE, 'utils/dragSort.ts'), 'utf8');
 
   /* 索引纠偏仍复用同一套 —— 断言到具体用法，不只查名字 */
@@ -303,8 +302,7 @@ console.log('\n=== 横向落点判定的行为 ===');
 
 console.log('\n=== #116 删除按钮 hover 才现身 ===');
 {
-  const cssNC = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const cssNC = strip(fs.readFileSync(path.join(HERE, 'style.css'), 'utf8'));
 
   t('默认不显示（opacity 0）', /\.fpx-icon-del\s*\{[^}]*opacity: 0/.test(cssNC));
   t('hover 才显示', /\.fpx-icongrid-item:hover \.fpx-icon-del\s*\{[^}]*opacity: 1/.test(cssNC));
@@ -327,8 +325,7 @@ console.log('\n=== 贴边自动滚动（#104）===');
 {
   const { edgeScrollSpeed } = await loadTs(path.join(HERE, 'utils/dragSort.ts'));
   const hook = fs.readFileSync(path.join(HERE, 'hooks/useEdgeAutoScroll.ts'), 'utf8');
-  const grid3 = fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const grid3 = strip(fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8'));
   const T = 0, B = 400;   // 可视区 0..400
 
   /* 中间不动 */
@@ -379,8 +376,7 @@ console.log('\n=== 贴边自动滚动（#104）===');
 console.log('\n=== #103 拖回源页签 = 无操作 ===');
 {
   const { skipDropToTab } = await loadTs(path.join(HERE, 'utils/tabs.ts'));
-  const app5 = fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const app5 = strip(fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8'));
   const tabs = [{ items: ['/a', '/b'] }, { items: ['/c'] }];
 
   t('卡片已在目标页签 → 跳过', skipDropToTab(tabs, 0, '/a') === true);
@@ -397,10 +393,8 @@ console.log('\n=== #103 拖回源页签 = 无操作 ===');
 
 console.log('\n=== #105 空列表拖入：整区高亮而非竖条 ===');
 {
-  const g4 = fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-  const cssNC = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const g4 = strip(fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8'));
+  const cssNC = strip(fs.readFileSync(path.join(HERE, 'style.css'), 'utf8'));
 
   t('空列表时容器加 empty-over 类', /empty-over/.test(g4));
   /* 只在空列表且有拖拽时才加：否则平时就一直高亮着 */
