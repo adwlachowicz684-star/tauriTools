@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');          // nexus-panel
 const PG = HERE;                                  // plugins/project-group
@@ -254,7 +255,7 @@ console.log('\n=== 7. 不得有无人 import 的死文件 ★ ===');
     for (const f of walk(sc)) {
       let txt = '';
       try { txt = fs.readFileSync(f, 'utf8'); } catch { continue; }
-      txt = txt.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+      txt = strip(txt).replace(/\/\/[^\n]*/g, '');
       for (const m of txt.matchAll(/(?:from|import)\s*\(?\s*['"](\.[^'"]+)['"]/g)) {
         const base = path.resolve(path.dirname(f), m[1]);
         for (const c of [base, base + '.ts', base + '.tsx',

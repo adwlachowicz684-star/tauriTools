@@ -33,6 +33,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { makeT, stripTS } from './testkit.mjs';
+import { stripCommentsJs as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
@@ -40,7 +41,7 @@ const SRC = path.join(HERE, 'components/ErrorBoundary.tsx');
 const src = fs.readFileSync(SRC, 'utf8');
 
 /** 剥注释：注释里写的反例（"不是一次性的坏状态"之类）会把形态断言带偏 */
-const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');
+/* 剥注释走全仓共用实现（test-scan-utils.mjs） */
 const code = strip(src);
 
 /* ── 替身 Component：同步 setState ────────────────────────────── */

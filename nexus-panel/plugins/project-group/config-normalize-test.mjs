@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
 const store = fs.readFileSync(path.join(HERE, '../../src-tauri/src/fpx/store.rs'), 'utf8');
@@ -104,7 +105,7 @@ console.log('\n=== 5. 路径归一只有一套规则（前端不得自带副本�
    * 不剥的话这两条说明本身就会命中 —— 那是**假报警**，而假报警比没有更糟：
    * 后来人会学着忽略它，或者为了让报警消失把说明删掉。
    */
-  const stripDoc = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  const stripDoc = (s) => strip(s).replace(/^[ \t]*\/\/.*$/gm, '');
   const BAD = /\.replace\(\/\[\\\\\/\]\+\$\/, ''\)\s*\.toLowerCase\(\)/;
   const hits = srcFiles.filter((f) => {
     const s = stripDoc(fs.readFileSync(path.join(HERE, f), 'utf8'));

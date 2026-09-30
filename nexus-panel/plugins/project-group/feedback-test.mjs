@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT, loadTs } from './testkit.mjs';
+import { stripComments as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
@@ -84,10 +85,8 @@ console.log('\n=== 5. 时间显示 ===');
 
 console.log('\n=== 6. 界面接线 ===');
 {
-  const st = fs.readFileSync(path.join(HERE, 'Settings.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-  const cssNC = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const st = strip(fs.readFileSync(path.join(HERE, 'Settings.tsx'), 'utf8'));
+  const cssNC = strip(fs.readFileSync(path.join(HERE, 'style.css'), 'utf8'));
 
   t('渲染反馈条', /fpx-feedback/.test(st));
   /* 空列表不渲染 —— 不留一块空白占位 */
