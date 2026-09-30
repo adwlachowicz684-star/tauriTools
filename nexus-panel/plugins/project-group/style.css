@@ -912,7 +912,13 @@
 
 /* ---------- 色盘 ---------- */
 .fpx-preview-def { color: var(--text-mute); text-shadow: none; }
-.fpx-hex { width: 110px; flex: none; }/* [幽灵规则 style.css:915] .fpx-mini
+/* 数值输入框（受保护目录监听的"秒"）。
+   ⚠️ 这里**不能**复用 .fpx-hex —— 那是 color-picker 的十六进制颜色输入框，
+   两边布局互斥（那边 flex:1 撑满，这边 width:110px 定宽）。两个插件的
+   样式表同时在文档里时，后加载的那个会静默改掉另一个的尺寸。
+   插件自有控件一律用 pg- 前缀，别借 fpx-。 */
+.pg-num { width: 110px; flex: none; }
+/* [幽灵规则 style.css:915] .fpx-mini
    全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
    暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
 /*

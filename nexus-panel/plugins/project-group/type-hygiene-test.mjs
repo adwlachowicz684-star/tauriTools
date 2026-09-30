@@ -12,6 +12,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripCommentsJs as strip } from '../../test-scan-utils.mjs';
 
 /*
  * **不能用 `process.cwd()` 定位**。
@@ -34,7 +35,7 @@ const head = (t) => console.log('\n── ' + t);
 
 const rd = (p) => { try { return readFileSync(p, 'utf8'); } catch { return ''; } };
 const src = (rel) => rd(join(PG, rel));
-const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');
+/* 剥注释走全仓共用实现（test-scan-utils.mjs） */
 /** 只取某一行之后的正文，避免注释里的反例把断言带偏 */
 const after = (s, needle) => { const i = s.indexOf(needle); return i < 0 ? '' : s.slice(i); };
 

@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+import { stripCommentsJs as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RS = (n) => path.join(HERE, '../../src-tauri/src/fpx', n);
@@ -27,8 +28,7 @@ const content = fs.readFileSync(RS('content.rs'), 'utf8');
 const sys = fs.readFileSync(RS('sys.rs'), 'utf8');
 
 /** 剥掉块注释与整行注释，避免断言命中「说明文字」而不是真实代码 */
-const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-
+/* 剥注释走全仓共用实现（test-scan-utils.mjs） */
 console.log('\n=== 1. 内容预览：按字符判定 ===');
 {
   const fn = content.slice(content.indexOf('pub fn read_preview'), content.indexOf('pub fn skill_md_of'));

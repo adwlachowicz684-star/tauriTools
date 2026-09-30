@@ -48,8 +48,10 @@ import {
   /* 预设背景：数据存在 themes.js，设置页负责渲染成可点的缩略图。 */
   getBgPreset, setBgPreset,
   saveAsCustom, deleteCustomTheme,
-  // getCurrent：色相/明暗改为按主题各记一份后，提示文案要显示当前主题名
-  getCurrent,
+  /* ⚠️ 同一条 import 里不能出现两次同名绑定：这会让整条 import 语句
+     变成语法错误（ESM 规范：NamedImports 的 BoundNames 不得重复），
+     **整个设置插件加载失败**。上面第 27 行已经导入过 getCurrent 了
+     （色相/明暗改为按主题各记一份后，提示文案要显示当前主题名）。 */
   getCustomColors, saveCustomColors,
   onChange as onThemeChange,
 } from '../../js/theme-manager.js';
@@ -1251,7 +1253,10 @@ export default function Settings() {
               /* 没写 style 的（老自定义主题）单列一组 ——
                  混进任何一组都是错的：它们的观感根本不属于那个风格。 */
               ['其它', sortThemesBaseFirst(all.filter((t) => {
-                const st = resolveThemeMeta(t).style;
+                /* resolveThemeMeta 返回的 style 目前是 any，直接拿去索引
+                   THEME_STYLE_LABELS 会触发 TS7053（用 any 做索引）。
+                   收窄成 keyof 再取，语义不变。 */
+                const st = resolveThemeMeta(t).style as keyof typeof THEME_STYLE_LABELS | undefined;
                 return !st || !THEME_STYLE_LABELS[st];
               }))],
             ];

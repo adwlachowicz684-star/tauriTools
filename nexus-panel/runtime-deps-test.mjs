@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { stripComments as strip } from './test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const read = (p) => fs.readFileSync(path.join(HERE, p), 'utf8');
@@ -442,7 +443,7 @@ const policyText = read('js/invoke-policy.js');
  * 真正的白名单项删掉，断言照样匹配注释里的字样 → 假绿。
  * （本项目已在 command-consistency、md-service 上栽过同一类。）
  */
-const policyCode = policyText.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+const policyCode = strip(policyText).replace(/\/\/[^\n]*/g, '');
 t('settings 白名单含三条', /settings:[\s\S]{0,400}fpx_rt_dep_install/.test(policyCode));
 
 /* ---------- 5. 后端自身的安全收口 ---------- */
@@ -1239,7 +1240,7 @@ t('外部插件的 CSP 不放行 asset（有意的安全边界，不要照 BASE_
 
 /* ⑤ 界面：三态必须都渲染出来，且判据用**剥注释后**的代码 */
 {
-  const cardCodeRt = cardText.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const cardCodeRt = strip(cardText).replace(/\/\/[^\n]*/g, '');
   t('DepsCard 读取用台账', /depUsageSnapshot\(\)/.test(cardCodeRt));
   t('refresh 里一并刷新台账（台账是内存事实，不与 list 一起刷就不会变）',
     /depUsageSnapshot\(\)/.test(cardCodeRt) && /setUsage\(/.test(cardCodeRt));

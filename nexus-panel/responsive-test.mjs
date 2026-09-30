@@ -12,14 +12,14 @@
  *   940 − 侧边栏 218(展开) − padding 36 = 686px
  */
 import { readFileSync } from 'node:fs';
+import { stripCommentsJs as strip } from './test-scan-utils.mjs';
 
 let pass = 0; const fails = [];
 const t = (name, cond, extra = '') => {
   cond ? pass++ : fails.push(`${name}${extra ? ' → ' + extra : ''}`);
 };
 const read = (p) => readFileSync(p, 'utf8');
-const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '');
-
+/* 剥注释走全仓共用实现（test-scan-utils.mjs） */
 const shell = strip(read('css/neumorphism.css'));
 const dialog = strip(read('css/dialog.css'));
 const af = strip(read('plugins/agent-flow/styles.css'));
