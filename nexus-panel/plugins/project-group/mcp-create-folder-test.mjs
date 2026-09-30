@@ -114,8 +114,16 @@ console.log('\n=== 6. add_card 行为未变 ===');
   /* 先剥注释再看代码：add_card 的注释里就写着"as_i64 会收下负数"，
      不剥注释的话这条永远判失败 —— 注释里出现某个词不等于代码里用了它 */
   const addCardCode = addCard.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
-  t('add_card 仍用 as_u64 取 tab_index（挡掉负数）',
-    /as_u64/.test(addCardCode) && !/as_i64/.test(addCardCode));
+  /* 取法统一走 u()：u 内部用 as_u64（挡掉负数），且传了却解析不出要报错。
+     钉"走 u()"而不是钉 as_u64 字面量 —— 后者换个等价实现就误报 */
+  t('add_card 仍用非负整数取法取 tab_index（挡掉负数）',
+    /u\("tab_index"\)\?/.test(addCardCode) && !/as_i64/.test(addCardCode));
+  {
+    const ui = rs.indexOf('let u = |k: &str|');
+    const ublk = ui === -1 ? '' : rs.slice(ui, rs.indexOf('};', ui));
+    t('u() 存在且用 as_u64（不是 as_i64）',
+      ui !== -1 && /as_u64/.test(ublk) && !/as_i64/.test(ublk), ublk.slice(0, 200));
+  }
   t('add_card 的返回文案未变',
     /已在页签「\{tab_name\}」中，未重复添加/.test(addCard)
     && /已把 \{path\} 加入页签「\{tab_name\}」/.test(addCard));

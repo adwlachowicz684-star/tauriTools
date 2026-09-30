@@ -802,6 +802,51 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
 
     let s = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
 
+    /* 布尔与非负整数参数的取法 —— **只此一份**。
+       ------------------------------------------------------------------
+       schema 里这些参数标了 `"type": "boolean"` / `"integer"`，
+       但 AI 客户端（尤其模型手写的 arguments）常把它们写成字符串
+       `"true"` / `"2"`，或写成浮点 `2.0`。此前统一用
+       `and_then(|v| v.as_bool()).unwrap_or(默认)`：类型不符 → None →
+       **静默按默认走**，命令照常返回成功。
+
+       这属于"调用方明说了、却被当成没说"，且方向与默认值相反时最糟：
+
+         · `denyDelete: "true"` → false → 保护**没设上**，而回包 note 会
+           写「已解除全部 ACL 保护并退出账面固定」（三个 false 落到 else
+           分支）—— 用户要求上锁，回包却说已解锁，且全程无报错。
+         · `tab_index: "1"` → None → 当"没传"，登记到**自动选的页签**。
+         · `x: 1920.0` → None → **静默回退成跟随鼠标**，于是回包给出的
+           是鼠标处那个点的颜色，而 AI 会当成 (1920,1080) 的颜色报给用户。
+           这正是下面 coord 那条注释写明必须报错的场景，换条路绕过去了。
+
+       所以：没传（或显式 null）才用默认值；传了但类型不对一律报错。
+       报错好过静默 —— 前者调用方能立刻改对，后者会一直错下去还不知道。 */
+
+    /** 取布尔参数：没传用 `dflt`；传了但不是布尔 → 报错。 */
+    let b = |k: &str, dflt: bool| -> Result<bool, Value> {
+        match args.get(k) {
+            None | Some(Value::Null) => Ok(dflt),
+            Some(Value::Bool(v)) => Ok(*v),
+            Some(v) => Err(err(&format!(
+                "{k} 需要 true / false（布尔），收到 {v}"))),
+        }
+    };
+
+    /** 取可选的非负整数（页签序号）：没传 → None；传了但解析不出 → 报错。 */
+    let u = |k: &str| -> Result<Option<u64>, Value> {
+        match args.get(k) {
+            None | Some(Value::Null) => Ok(None),
+            Some(v) => match v.as_u64() {
+                Some(n) => Ok(Some(n)),
+                // as_u64 对负数、浮点、字符串一律 None —— 这三种都不能
+                // 静默当"没传"，否则序号被忽略、登记到别的页签。
+                None => Err(err(&format!(
+                    "{k} 需要非负整数，收到 {v}"))),
+            },
+        }
+    };
+
     /** 某类页签的数量。空清单按 1 算 —— 登记时会自动补一个「默认」。 */
     fn tab_count_of(dir: &Path, kind: &str) -> usize {
         let cfg = super::store::load_config(dir);
@@ -1017,7 +1062,7 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
                 other => return Err(err(&format!(
                     "kind 只能是 project 或 group，收到「{other}」（不传则只建目录、不登记）"))),
             };
-            let tab_index = args.get("tab_index").and_then(|v| v.as_u64());
+            let tab_index = u("tab_index")?;
 
             /* 越界**先查再建**：目录一旦建出来，这条命令里没法回滚。
                先查能让"序号填错"什么都不留下 —— 否则会得到一个建好了
@@ -1085,9 +1130,10 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
                 return Err(err(&format!(
                     "kind 只能是 project 或 group，收到「{kind}」")));
             }
-            // 用 as_u64 而不是 as_i64：JSON 里没有负数这种页签序号，
+            // 用 u()（as_u64）而不是 as_i64：JSON 里没有负数这种页签序号，
             // as_u64 顺带挡掉 -1 这种（as_i64 会收下，然后转 usize 时溢出）。
-            let tab_index = args.get("tab_index").and_then(|v| v.as_u64());
+            // 且传了却解析不出（"1" / 1.0）会报错，不再静默当"没传"。
+            let tab_index = u("tab_index")?;
             let (tab_name, already) = register_card(&dir, &kind, &path, tab_index)
                 .map_err(|e| err(&e))?;
             let text = if already {
@@ -1098,11 +1144,11 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             json!({ "content": [{ "type": "text", "text": text }] })
         }
         "set_lock" => {
-            let dd = args.get("denyDelete").and_then(|v| v.as_bool()).unwrap_or(false);
-            let dw = args.get("denyWrite").and_then(|v| v.as_bool()).unwrap_or(false);
+            let dd = b("denyDelete", false)?;
+            let dw = b("denyWrite", false)?;
             /* #21 / #138 账面固定：仅登记，不落系统权限。
                老调用方不带这个参数，默认 false（行为不变）。 */
-            let ao = args.get("accountOnly").and_then(|v| v.as_bool()).unwrap_or(false);
+            let ao = b("accountOnly", false)?;
             /*
              * #138 `remove`：显式解除（原版 `LockSet` 的 remove 分支）。
              *
@@ -1112,7 +1158,7 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
              * 一旦以后出现"只登记、不落 ACL"之外的第四种状态，
              * 靠"全 false 推断意图"就会做错。显式参数才不会漂移。
              */
-            let remove = args.get("remove").and_then(|v| v.as_bool()).unwrap_or(false);
+            let remove = b("remove", false)?;
             // ACL 是写操作：能对任意路径改 ACL，就能把系统目录锁死或解锁
             let path = s("path");
             within_raw(&path)?;
@@ -1190,7 +1236,7 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
                 "project" | "group" => kind_raw.clone(),
                 other => return Err(err(&format!("kind 只能是 project 或 group，收到「{other}」"))),
             };
-            let append_only = args.get("appendOnly").and_then(|v| v.as_bool()).unwrap_or(true);
+            let append_only = b("appendOnly", true)?;
             let cfg = super::store::load_config(&dir);
             // summary 是方法不是字段，别写成 r.summary
             let r = super::backup::run(&cfg, &dir, &kind, append_only);
@@ -1465,12 +1511,19 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
               所以必填列表是空的，不写 vec!["x","y"]。 */
         "pick_screen_color" => {
             let coord = |k: &str| -> Result<Option<i32>, Value> {
-                match args.get(k).and_then(|v| v.as_i64()) {
-                    None => Ok(None),
-                    // 超范围就报错，不要静默回退成"跟随鼠标"——
-                    // 那样 AI 以为取了指定坐标，实际取的是鼠标处，错了还不知道
-                    Some(n) => i32::try_from(n).map(Some)
-                        .map_err(|_| err(&format!("{k} 超出有效范围: {n}"))),
+                match args.get(k) {
+                    // 不传（或显式 null）= 跟随鼠标，这是常用且合法的路径
+                    None | Some(Value::Null) => Ok(None),
+                    /* 传了但解析不出整数（"1920" / 1920.0）**必须报错**：
+                       静默回退成跟随鼠标的话，AI 以为取的是指定坐标，
+                       实际取的是鼠标处 —— 错了还不知道，且回包无从分辨。 */
+                    Some(v) => match v.as_i64() {
+                        None => Err(err(&format!(
+                            "{k} 需要整数，收到 {v}（不传则跟随鼠标）"))),
+                        // 超范围同样报错，理由同上
+                        Some(n) => i32::try_from(n).map(Some)
+                            .map_err(|_| err(&format!("{k} 超出有效范围: {n}"))),
+                    },
                 }
             };
             let x = coord("x")?;

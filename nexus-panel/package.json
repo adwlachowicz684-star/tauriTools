@@ -171,6 +171,7 @@
     "test:pg-mcp-create": "node plugins/project-group/mcp-create-folder-test.mjs",
     "test:pg-mcp-exit": "node plugins/project-group/mcp-exit-test.mjs",
     "test:pg-mcp-token-keep": "node plugins/project-group/mcp-token-keep-test.mjs",
+    "test:pg-mcp-typed-args": "node plugins/project-group/mcp-typed-args-test.mjs",
     "test:pg-mcp-notify": "node plugins/project-group/mcp-notify-test.mjs",
     "test:pg-md": "node plugins/project-group/md-edit-test.mjs",
     "test:pg-migrate": "node plugins/project-group/migrate-test.mjs",

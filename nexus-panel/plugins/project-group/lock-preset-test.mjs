@@ -212,8 +212,9 @@ console.log('\n=== 11. #138 lock_set 的 account_only / remove ★ ===');
   /* 二、执行代码要真的读它 */
   const ci = mcp.indexOf('"set_lock" => {');
   const cblk = mcp.slice(ci, mcp.indexOf('\n        "set_tag_color"', ci + 1));
-  t('读了 accountOnly', /args\.get\("accountOnly"\)/.test(cblk));
-  t('读了 remove', /args\.get\("remove"\)/.test(cblk));
+  /* 判"真的读了"而不是钉字面量：取法统一走 b() 之后仍是读了 */
+  t('读了 accountOnly', /b\("accountOnly"/.test(cblk));
+  t('读了 remove', /b\("remove"/.test(cblk));
 
   /*
    * 三、`remove` 与三个开关互斥时必须报错，不能静默取其一。
