@@ -10,6 +10,7 @@ import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripComments as strip } from './test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const src = (p) => fs.readFileSync(path.join(HERE, p), 'utf8');
@@ -533,7 +534,7 @@ console.log('\n=== 10.7 插件不得自行 import 宿主单例模块 ===');
  */
 {
   const m = src('plugins/toolbar-inspector/module.js');
-  const code = m.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const code = strip(m).replace(/^\s*\/\/.*$/gm, '');
   t('检查器插件不 import inspector.js（状态走宿主注入）',
     !/from\s+['"][^'"]*inspector\.js['"]/.test(code));
   t('检查器插件用 api.inspector', /api\.inspector\.isOn\(\)/.test(code) && /api\.inspector\.toggle\(\)/.test(code));

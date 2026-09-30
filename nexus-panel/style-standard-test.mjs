@@ -28,6 +28,7 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SKIP_DIRS } from './js/dead-class-scan.js';
+import { stripComments as strip } from './test-scan-utils.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 
@@ -76,7 +77,7 @@ function section(title) {
 const read = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
 
 function stripComments(css) {
-  return css.replace(/\/\*[\s\S]*?\*\//g, '');
+  return strip(css);
 }
 
 /**

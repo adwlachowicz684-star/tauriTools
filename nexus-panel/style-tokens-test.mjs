@@ -54,7 +54,7 @@ function glob(pattern) {
 // 剥注释走全仓共用实现（test-scan-utils.mjs）。
 // 此前本文件里散着 8 处各自内联的同款正则，其中一处剥不干净就会导致
 // 「注释被当代码」的误报（.kind-btn 那次），统一成一份避免再漂移。
-import { stripComments as strip } from './test-scan-utils.mjs';
+import { stripCommentsJs as strip } from './test-scan-utils.mjs';
 
 let pass = 0, fail = 0;
 const t = (name, cond, extra = '') => {
