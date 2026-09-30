@@ -25,7 +25,8 @@ import { constsOf, constItemLabel, constItemKey, type ConstNodeData } from '../t
 import { topoLayers } from './topo';
 import { tokenRe } from './template';
 import { opBrief } from './ops';
-import { paramLinksOf, linksInto, outLabelOf, OUT_DEFAULT } from './paramLinks';
+import { paramLinksOf, linksInto, outLabelOf, outputsOf, OUT_DEFAULT } from './paramLinks';
+import { findPane, resolveApiPane, DEFAULT_TEMPERATURE } from './pane';
 
 export type ExportFormat = 'shell' | 'python' | 'json' | 'markdown';
 
@@ -98,6 +99,42 @@ const pyVar = (id: string): string =>
  * 中文进 shVar 会被洗成 `_`，两张卡都变成 `OUT_C1__`，变量名直接撞车。
  * 卡的键是稳定的 ASCII（建卡时生成），不会撞。
  */
+/**
+ * 图里所有**具名输出**的引用集合：`节点id.字段名`。
+ *
+ * ================= 为什么要单独收这张表 =================
+ *
+ * subst 对 `{{id.字段}}` 一律塌成 `OUT_ID`（整个节点的输出）。
+ * 对卡片上的常量那是对的（已由 constCardRefs 单独指向那张卡），
+ * 但对其余节点是**静默取错值**：
+ *
+ *   {{h1.status}}  状态码
+ *   {{h1.ok}}      是否成功
+ *   {{h1.len}}     响应长度
+ *   {{h1.out}}     响应体
+ *
+ * 四个完全不同的引用，导出后**全变成 $OUT_H1**。
+ * 脚本能跑、看着完整，只是值是错的 —— 比拼不出变量难查得多，
+ * 因为拼不出会留下 {{}} 的痕迹，取错了什么痕迹都没有。
+ *
+ * 脚本里拿不到这些字段（curl 一行拿不到状态码、CLI 改了哪些文件
+ * 只有跑完才知道），所以这里选择**保留字面量并记进 skipped**，
+ * 而不是继续塌成整个输出 —— 塌过去是"能跑但错"，留下来是"看得见"。
+ */
+export function namedOutRefs(g: Graph): Set<string> {
+  const out = new Set<string>();
+  for (const n of g.nodes ?? []) {
+    const d = (n.data ?? {}) as Record<string, unknown>;
+    const kind = str(d.kind ?? (n as { type?: string }).type);
+    // 与 outFieldsOf 同一份定义：主输出（OUT_DEFAULT）不算具名字段
+    for (const port of outputsOf(kind, d)) {
+      if (port.key === OUT_DEFAULT) continue;
+      out.add(`${n.id}.${port.key}`);
+    }
+  }
+  return out;
+}
+
 export function constCardRefs(g: Graph): Map<string, string> {
   const out = new Map<string, string>();
   for (const n of g.nodes ?? []) {
@@ -109,6 +146,41 @@ export function constCardRefs(g: Graph): Map<string, string> {
       if (!name) return;
       out.set(`${n.id}.${name}`, key);
     });
+  }
+  return out;
+}
+
+/**
+ * 大模型节点**挂了窗格之后**真正生效的配置表：节点 id → 生效值。
+ *
+ * ================= 为什么必须单独算这张表 =================
+ *
+ * 窗格的规矩是「节点没填的项从窗格继承」（见 pane.ts 的注释）。
+ * 而导出脚本读的是节点自己的 data —— 于是模型名、system 提示词、
+ * 温度全配在窗格上时，导出的脚本里 `model=""`。
+ *
+ * 不报错、脚本看着完整、也跑得起来，只是**用错了模型**。
+ * 这比拼不出变量更难查：拼不出会留下痕迹，用错了什么痕迹都没有。
+ *
+ * ================= 为什么不在这里重写一遍继承规则 =================
+ *
+ * 直接调 pane.ts 的 resolveApiPane。
+ * 继承规则（尤其是 temperature 的三级回落、yolo 取 OR）抄一份到导出侧，
+ * 改规则时漏改就是"画布上跑一个样、导出成脚本另一个样"，
+ * 而两份都不会报错。
+ */
+export function llmPaneEffOf(
+  g: Graph,
+): Map<string, ReturnType<typeof resolveApiPane>> {
+  const out = new Map<string, ReturnType<typeof resolveApiPane>>();
+  for (const n of g.nodes ?? []) {
+    const d = (n.data ?? {}) as Record<string, unknown>;
+    if (str(d.kind ?? (n as { type?: string }).type) !== 'llmChat') continue;
+    const paneId = str(d.paneId ?? '');
+    if (!paneId) continue;
+    const pane = findPane(g.nodes ?? [], paneId);
+    // 窗格被删了而 paneId 还在时按没有窗格处理（与运行时一致，见 pane.ts）
+    out.set(n.id, resolveApiPane(d as never, pane));
   }
   return out;
 }
@@ -133,11 +205,28 @@ export function constCardRefs(g: Graph): Map<string, string> {
  */
 const UNRESOLVABLE_REF = new Set(['params', 'env', 'loop']);
 
+/**
+ * 引用取不到时记进 skipped 的理由。
+ *
+ * 具名输出与画布参数是**两种不同的取不到**，理由必须分开写：
+ * 混成一句的话，用户看到"脚本里请自行补上"会以为是参数没配，
+ * 而实际是"这个字段脚本里根本没有，得换个写法"。
+ */
+function refReason(path: string): string {
+  const tpl = `{{${path}}}`;
+  const id = String(path).split('.')[0];
+  if (UNRESOLVABLE_REF.has(id)) {
+    return `引用了 ${tpl} —— 画布参数/循环变量不在图数据里，脚本里请自行补上`;
+  }
+  return `引用了 ${tpl} —— 这是个具名输出字段，脚本里取不到（塌成整个节点的输出会取错值），已原样保留`;
+}
+
 function subst(
   tpl: string,
   style: 'sh' | 'py',
   cardRef?: Map<string, string>,
   onUnresolved?: (key: string) => void,
+  namedOut?: Set<string>,
 ): string {
   const raw = String(tpl ?? '');
   if (!raw) return style === 'sh' ? '' : '""';
@@ -189,6 +278,14 @@ function subst(
       return `\u0000${slots.length - 1}\u0000`;
     }
     if (UNRESOLVABLE_REF.has(id)) {
+      onUnresolved?.(String(path));
+      return `{{${path}}}`;
+    }
+    /*
+     * 具名输出：脚本里取不到，保留字面量并记账。
+     * 见 namedOutRefs —— 塌成 OUT_ID 是"能跑但值错"。
+     */
+    if (namedOut && namedOut.has(String(path))) {
       onUnresolved?.(String(path));
       return `{{${path}}}`;
     }
@@ -298,12 +395,17 @@ function paramLinkNoteOf(
 /* Shell                                                               */
 /* ------------------------------------------------------------------ */
 
-function shellLine(n: GraphNode, skipped: Skipped[], cardRef?: Map<string, string>): string | null {
+function shellLine(
+  n: GraphNode,
+  skipped: Skipped[],
+  cardRef?: Map<string, string>,
+  namedOut?: Set<string>,
+): string | null {
   const d = (n.data ?? {}) as Record<string, unknown>;
   const kind = str(d.kind ?? d.type);
   const v = (k: string) => subst(str(d[k]), 'sh', cardRef, (key) => {
-    skipped.push({ id: n.id, kind, reason: `引用了 ${'{{'}${key}${'}}'} —— 画布参数/循环变量不在图数据里，脚本里请自行补上` });
-  });
+    skipped.push({ id: n.id, kind, reason: refReason(key) });
+  }, namedOut);
   const me = shVar(n.id);
 
   switch (kind) {
@@ -421,11 +523,12 @@ function toShell(g: Graph): ExportResult {
     '',
   ];
   const cardRef = constCardRefs(g);
+  const namedOut = namedOutRefs(g);
   let count = 0;
   for (const id of order) {
     const n = g.nodes.find((x) => x.id === id);
     if (!n) continue;
-    const line = shellLine(n, skipped, cardRef);
+    const line = shellLine(n, skipped, cardRef, namedOut);
     if (line) { lines.push(line); count += 1; }
     else { lines.push(`# TODO 未翻译：${id}（${str((n.data as Record<string, unknown>)?.kind ?? '')}）`); }
     lines.push(...paramLinkNoteOf(g, id, '# '));
@@ -442,12 +545,22 @@ function pyLine(
   skipped: Skipped[],
   indent = '',
   cardRef?: Map<string, string>,
+  paneEff?: Map<string, ReturnType<typeof resolveApiPane>>,
+  namedOut?: Set<string>,
 ): string | null {
   const d = (n.data ?? {}) as Record<string, unknown>;
   const kind = str(d.kind ?? d.type);
   const v = (k: string) => subst(str(d[k]), 'py', cardRef, (key) => {
-    skipped.push({ id: n.id, kind, reason: `引用了 ${'{{'}${key}${'}}'} —— 画布参数/循环变量不在图数据里，脚本里请自行补上` });
-  });
+    skipped.push({ id: n.id, kind, reason: refReason(key) });
+  }, namedOut);
+  /*
+   * 同上，但替换一段**给定的文本**而不是节点上的某个字段。
+   * 窗格继承来的 system 提示词也要走同一套替换 ——
+   * 否则窗格上写了 {{上游.output}} 会原样留在脚本里。
+   */
+  const vs = (s: string) => subst(str(s), 'py', cardRef, (key) => {
+    skipped.push({ id: n.id, kind, reason: refReason(key) });
+  }, namedOut);
   const me = pyVar(n.id);
 
   switch (kind) {
@@ -516,9 +629,26 @@ function pyLine(
      */
     case 'llmChat': {
       const use = str(d.use || 'chat');
-      const model = pyq(str(d.model) || '');
-      const sys = v('system');
-      const sysArg = str(d.system) ? `, system=${sys}` : '';
+      /*
+       * 挂了窗格时用**继承后**的生效值，而不是节点自己的 data。
+       *
+       * 模型名 / system / 温度常常只配在窗格上（那正是窗格存在的意义），
+       * 只读 d.model 的话导出的脚本里 model=""，用错模型且不报错。
+       * 详见 llmPaneEffOf 的注释。
+       */
+      const eff = paneEff?.get(n.id);
+      const effModel = eff ? str(eff.model) : str(d.model);
+      const effSys = eff ? str(eff.system) : str(d.system);
+      // 温度三级回落（节点 → 窗格 → 默认）由 resolveApiPane 算好，
+      // 没挂窗格时这里走同一条规则，避免出现"挂了窗格和不挂是两套算法"
+      const effTemp = eff
+        ? eff.temperature
+        : typeof d.temperature === 'number' && isFinite(d.temperature)
+          ? d.temperature
+          : DEFAULT_TEMPERATURE;
+      const model = pyq(effModel || '');
+      const sysArg = effSys ? `, system=${vs(effSys)}` : '';
+      const tempArg = effTemp === DEFAULT_TEMPERATURE ? '' : `, temperature=${effTemp}`;
       if (use === 'ocr') {
         /*
          * 本地图片要先读成 base64 才能放进请求体 ——
@@ -532,9 +662,9 @@ function pyLine(
           });
           return null;
         }
-        return `${indent}${me} = _llm_img(${v('prompt')}, ${pyq(str(d.url))}, model=${model}${sysArg})   # ${n.id}: 图片识别`;
+        return `${indent}${me} = _llm_img(${v('prompt')}, ${pyq(str(d.url))}, model=${model}${sysArg}${tempArg})   # ${n.id}: 图片识别`;
       }
-      return `${indent}${me} = _llm(${v('prompt')}, model=${model}${sysArg})   # ${n.id}: 调用大模型`;
+      return `${indent}${me} = _llm(${v('prompt')}, model=${model}${sysArg}${tempArg})   # ${n.id}: 调用大模型`;
     }
     default:
       skipped.push({ id: n.id, kind, reason: '这类节点没有对应的 python 写法' });
@@ -589,17 +719,22 @@ function toPython(g: Graph): ExportResult {
   const hasLlm = g.nodes.some((x) => str((x.data as Record<string, unknown> | undefined)?.kind) === 'llmChat');
   if (hasLlm) {
     lines.push(
-      'def _llm(prompt, model="", system=""):',
+      /*
+       * 默认值取 pane.ts 的 DEFAULT_TEMPERATURE，不在这里另写一个 0.3。
+       * 写死的话改了默认温度会出现"脚本里是 0.3、画布上跑是 0.7"，
+       * 两边都不报错。
+       */
+      `def _llm(prompt, model="", system="", temperature=${DEFAULT_TEMPERATURE}):`,
       '    """调用 OpenAI 兼容接口 —— 地址与密钥取自环境变量，不落盘"""',
-      '    return _llm_call(prompt, model, system, None)',
+      '    return _llm_call(prompt, model, system, None, temperature)',
       '',
       '',
-      'def _llm_img(prompt, image_url, model="", system=""):',
+      `def _llm_img(prompt, image_url, model="", system="", temperature=${DEFAULT_TEMPERATURE}):`,
       '    """同上，但带上图片地址"""',
-      '    return _llm_call(prompt, model, system, image_url)',
+      '    return _llm_call(prompt, model, system, image_url, temperature)',
       '',
       '',
-      'def _llm_call(prompt, model, system, image_url):',
+      `def _llm_call(prompt, model, system, image_url, temperature=${DEFAULT_TEMPERATURE}):`,
       '    import os',
       '    msgs = []',
       '    if system:',
@@ -614,7 +749,7 @@ function toPython(g: Graph): ExportResult {
       '    r = requests.post(',
       '        os.environ.get("LLM_BASE_URL", "").rstrip("/") + "/chat/completions",',
       '        headers={"Authorization": "Bearer " + os.environ.get("LLM_API_KEY", "")},',
-      '        json={"model": model, "messages": msgs},',
+      '        json={"model": model, "messages": msgs, "temperature": temperature},',
       '    )',
       '    return r.json()["choices"][0]["message"]["content"]',
       '',
@@ -627,11 +762,13 @@ function toPython(g: Graph): ExportResult {
   );
   if (lines[lines.length - 1] === '    input_text = ""') lines.push('');
   const cardRef = constCardRefs(g);
+  const namedOut = namedOutRefs(g);
+  const paneEff = llmPaneEffOf(g);
   let count = 0;
   for (const id of order) {
     const n = g.nodes.find((x) => x.id === id);
     if (!n) continue;
-    const line = pyLine(n, skipped, '    ', cardRef);
+    const line = pyLine(n, skipped, '    ', cardRef, paneEff, namedOut);
     if (line) { lines.push(line); count += 1; }
     else { lines.push(`    # TODO 未翻译：${id}（${str((n.data as Record<string, unknown>)?.kind ?? '')}）`); }
     lines.push(...paramLinkNoteOf(g, id, '    # '));

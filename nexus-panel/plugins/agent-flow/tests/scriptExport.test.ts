@@ -388,3 +388,132 @@ test('python：f-string 里的花括号要翻倍，占位符才不会被吃掉�
   const plain = exportFlow(g([n('p2', 'log', { text: 'a{b' })]), 'python');
   assert.ok(plain.text.includes('"a{b"'), `没引用时不该翻倍：${plain.text}`);
 });
+
+/* ================================================================ */
+/* 窗格继承                                                          */
+/* ================================================================ */
+
+/*
+ * 模型名 / system / 温度常常**只配在窗格上** —— 那正是窗格存在的意义。
+ * 而导出脚本读的是节点自己的 data，于是导出成 `model=""`：
+ * 脚本看着完整、也跑得起来，只是用错了模型，且不报错。
+ */
+test('python：挂了 API 窗格的大模型节点，要用继承后的生效值', () => {
+  const graph = g([
+    n('pane1', 'apiPane', { model: 'gpt-4o', system: '你是助手', temperature: 0.9 }),
+    n('c1', 'llmChat', { paneId: 'pane1', prompt: '你好' }),
+  ]);
+  const r = exportFlow(graph, 'python');
+  const line = r.text.split('\n').find((l) => l.includes('out_c1'));
+  assert.ok(line, `没有导出 c1：${r.text}`);
+  assert.ok(line.includes('model="gpt-4o"'), `模型没从窗格继承：${line}`);
+  assert.ok(line.includes('system="你是助手"'), `system 没从窗格继承：${line}`);
+  assert.ok(line.includes('temperature=0.9'), `温度没从窗格继承：${line}`);
+});
+
+/*
+ * 三级回落（节点 → 窗格 → 默认）必须只在一处实现。
+ * 导出侧另写一份的话，改规则时漏改就是"画布上一个样、脚本里另一个样"。
+ */
+test('python：节点自己填了就不被窗格盖掉（节点优先）', () => {
+  const graph = g([
+    n('pane1', 'apiPane', { model: 'pane-model' }),
+    n('c1', 'llmChat', { paneId: 'pane1', model: 'node-model', prompt: 'hi' }),
+  ]);
+  const r = exportFlow(graph, 'python');
+  const line = r.text.split('\n').find((l) => l.includes('out_c1'));
+  assert.ok(line?.includes('model="node-model"'), `没走节点优先：${line}`);
+});
+
+test('python：没挂窗格时温度走 pane.ts 的兜底，不另写一个默认值', () => {
+  const r = exportFlow(g([n('c1', 'llmChat', { prompt: 'hi' })]), 'python');
+  // 等于默认就不该出现在调用行上（免得与函数签名里那份重复）
+  const line = r.text.split('\n').find((l) => l.includes('out_c1'));
+  assert.ok(line && !line.includes('temperature='), `默认温度不该写进调用：${line}`);
+});
+
+/*
+ * 源码守卫：继承规则必须调 pane.ts，不能在导出侧抄一遍。
+ */
+test('源码：导出脚本的窗格继承走 pane.ts，不自己实现', () => {
+  const src = readSrc('engine/scriptExport.ts');
+  const body = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.ok(/from '\.\/pane'/.test(body), "scriptExport 没有 import pane");
+  assert.ok(/resolveApiPane/.test(body), '没有调 resolveApiPane');
+  assert.ok(/findPane/.test(body), '没有调 findPane');
+  /*
+   * 反过来钉：函数签名里的默认温度必须来自 DEFAULT_TEMPERATURE。
+   * 写死 0.3 的话改了默认就变成"画布上跑 0.7、脚本里还是 0.3"。
+   */
+  assert.ok(
+    /temperature=\$\{DEFAULT_TEMPERATURE\}/.test(body),
+    '函数签名写死了默认温度，没用 DEFAULT_TEMPERATURE',
+  );
+  assert.ok(
+    !/temperature=\s*0\.3/.test(body),
+    '函数签名里出现了写死的 0.3',
+  );
+});
+
+/* ================================================================ */
+/* 具名输出                                                          */
+/* ================================================================ */
+
+/*
+ * {{id.具名字段}} 以前一律塌成 $OUT_ID（整个节点的输出）。
+ * 四个完全不同的引用拿到同一个值，脚本能跑、看着完整，只是全错。
+ */
+test('shell：HTTP 的具名输出不再塌成整个响应体', () => {
+  const r = exportFlow(g([
+    n('h1', 'generic-http', { url: 'http://a', method: 'GET' }),
+    n('l1', 'log', { text: '状态={{h1.status}} 成功={{h1.ok}}' }),
+  ]), 'shell');
+  const line = r.text.split('\n').find((l) => l.includes('状态='));
+  assert.ok(line, `没导出 l1：${r.text}`);
+  assert.ok(line.includes('{{h1.status}}'), `status 被塌掉了：${line}`);
+  assert.ok(line.includes('{{h1.ok}}'), `ok 被塌掉了：${line}`);
+  assert.ok(!line.includes('$OUT_H1 }'), `仍指向整个响应体：${line}`);
+});
+
+/*
+ * 主输出（{{id.out}}）该照常取整体 —— 不能因为"有具名字段"就连它也留住。
+ */
+test('shell：主输出 {{id.out}} 仍取整个节点输出', () => {
+  const r = exportFlow(g([
+    n('h1', 'generic-http', { url: 'http://a' }),
+    n('l1', 'log', { text: '全部={{h1.out}}' }),
+  ]), 'shell');
+  const line = r.text.split('\n').find((l) => l.includes('全部='));
+  assert.ok(line?.includes('$OUT_H1'), `主输出没取整体：${line}`);
+});
+
+test('shell：取不到的具名输出要记进 skipped，理由与画布参数分开', () => {
+  const r = exportFlow(g([
+    n('h1', 'generic-http', { url: 'http://a' }),
+    n('l1', 'log', { text: '状态={{h1.status}}' }),
+  ]), 'shell');
+  const hit = r.skipped.find((s) => s.reason.includes('{{h1.status}}'));
+  assert.ok(hit, `没记进 skipped：${JSON.stringify(r.skipped)}`);
+  assert.ok(hit.reason.includes('具名输出'), `理由没说清是具名输出：${hit.reason}`);
+});
+
+test('python：具名输出同样保留字面量', () => {
+  const r = exportFlow(g([
+    n('h1', 'generic-http', { url: 'http://a' }),
+    n('l1', 'log', { text: '长度={{h1.len}}' }),
+  ]), 'python');
+  assert.ok(r.text.includes('{{h1.len}}'), `python 侧被塌掉了：${r.text}`);
+});
+
+/*
+ * 源码守卫：subst 必须认具名输出这张表。
+ * 只测"constCardRefs 存在"的话，具名输出这一路漏了照样全绿。
+ */
+test('源码：导出侧的引用替换认具名输出表（namedOutRefs）', () => {
+  const src = readSrc('engine/scriptExport.ts');
+  const body = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.ok(/namedOutRefs/.test(body), '没有 namedOutRefs');
+  assert.ok(/outputsOf\(/.test(body), '具名输出没走 outputsOf（会与卡片上的出口清单漂移）');
+  // 反向：reason 必须区分两种"取不到"
+  assert.ok(/具名输出/.test(src), 'skipped 理由没区分具名输出与画布参数');
+});
