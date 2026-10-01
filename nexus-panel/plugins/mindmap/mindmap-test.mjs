@@ -574,6 +574,148 @@ group('节点图片默认上限：必须改内核 option，不能只改注释');
   ok(/loadFitSize\(url, km,/.test(src), '补齐走 loadFitSize（与 image 命令同一套算法）');
 }
 
+group('外框（boundary）往返：range 只能表达连续区间，非连续成员必须拆段写');
+
+/*
+ * 外框成员是用户 Ctrl 多选出来的，**完全可以不连续**（给 A、C 加框、跳过 B）。
+ * 而 XMind 的 range 只能表达「首 → 尾」这一个区间，导回侧也是按 min..max 整段
+ * 应用的。于是早先「一组只写一个 (first,last)」会把中间**不在本组**的节点
+ * 一并划进来 —— 实测 A=bg1、B=无、C=bg1 导出再导回变成 A=B=C=bg1。
+ *
+ * 这里**必须剥掉本工具自己的无损快照 kityminder.json**：那条路径原样保留
+ * boundaryGroup，看不出 content.json 写错了。只留 content.json 才是
+ * 「别的软件产出的文件」的真实情形。
+ */
+{
+  const x3 = await import('./xmind.js');
+
+  /** 走一遍 zen 档往返：写 → 只留 content.json → 读回 */
+  const roundTripZen = async (kids) => {
+    const sheets = [{ id: 'sh1', title: '画布', theme: null, layout: null,
+      content: JSON.stringify({ root: { data: { id: 'nR', text: '根' }, children: kids } }) }];
+    const blob = await x3.writeXMind(sheets, 'sh1');
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const entries = await x3.zipRead(buf);
+    const cj = JSON.parse(new TextDecoder().decode(entries.get('content.json')));
+    const zenBuf = await x3.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+    const r = await x3.readXMind(new Uint8Array(zenBuf));
+    return { kids: JSON.parse(r.sheets[0].content).root.children,
+      bounds: cj[0].rootTopic.boundaries };
+  };
+
+  const kid = (id, text, g, label) =>
+    ({ data: { id, text, ...(g ? { boundaryGroup: g, boundaryLabel: label || '' } : {}) }, children: [] });
+
+  // ① 非连续：A、C 同组，B 不在任何组
+  {
+    const { kids, bounds } = await roundTripZen([
+      kid('nA', 'A', 'bg1', '第一组'), kid('nB', 'B'), kid('nC', 'C', 'bg1', '第一组'),
+    ]);
+    const g = kids.map((n) => n.data.boundaryGroup || '（无）');
+    eq(g[1], '（无）', '非连续外框：夹在中间的 B **没有**被划进来（早先 (A,C) 会把 B 一起框住）');
+    ok(!!kids[0].data.boundaryGroup && !!kids[2].data.boundaryGroup,
+      'A、C 仍各自保有外框（非连续成员没丢）', JSON.stringify(g));
+    ok(Array.isArray(bounds) && bounds.length === 2,
+      '非连续的两个成员写成**两段** boundary（格式表达不了非连续，只能拆）',
+      JSON.stringify(bounds && bounds.map((b) => b.range)));
+  }
+
+  // ② 交错：A、C 属于 bg1，B 属于 bg2
+  {
+    const { kids } = await roundTripZen([
+      kid('nA', 'A', 'bg1', '甲'), kid('nB', 'B', 'bg2', '乙'), kid('nC', 'C', 'bg1', '甲'),
+    ]);
+    ok(kids[1].data.boundaryGroup !== kids[0].data.boundaryGroup,
+      '交错分组：B 没有被 A 的组吞掉（早先 (A,C) 整段应用，B 已有组会被跳过而留在别人组里）',
+      JSON.stringify(kids.map((n) => n.data.boundaryGroup)));
+  }
+
+  // ③ 连续：A、B 同组 —— 必须仍是**同一个**组，不能拆成两段
+  {
+    const { kids, bounds } = await roundTripZen([
+      kid('nA', 'A', 'bg1', '第一组'), kid('nB', 'B', 'bg1', '第一组'), kid('nC', 'C'),
+    ]);
+    ok(kids[0].data.boundaryGroup && kids[0].data.boundaryGroup === kids[1].data.boundaryGroup,
+      '连续成员仍是同一个外框（拆段不能把连续段也拆了）',
+      JSON.stringify(kids.map((n) => n.data.boundaryGroup)));
+    eq(bounds.length, 1, '连续的两个成员只写一段 boundary');
+    eq(kids[2].data.boundaryGroup, undefined, '组外的 C 不受影响');
+  }
+
+  // ④ 成员没有 id：不能写出 (null,null) 死链
+  //
+  // topic.id 来自 data.id；没有 id 时 safeId 给 null，range 就成了 "(null,null)"。
+  // 导回侧 findIndex 全 -1、indices 为空，整条 boundary 被静默丢掉 ——
+  // 写出去的还是一个坏数据（别的软件读到 null 引用），不如干脆不写。
+  {
+    const { bounds } = await roundTripZen([
+      { data: { text: 'A', boundaryGroup: 'bg1' }, children: [] },
+      { data: { text: 'B', boundaryGroup: 'bg1' }, children: [] },
+    ]);
+    ok(!bounds || !JSON.stringify(bounds).includes('null'),
+      '成员没有 id 时不写出 (null,null) 死链', JSON.stringify(bounds));
+  }
+}
+
+group('导出 content.json：下划线与「打包失败的附件」');
+
+/*
+ * 这两条都只在 **zen 档**（content.json）里暴露 —— 本工具自己的无损快照
+ * kityminder.json 原样保留 data，看不出毛病。所以下面都强制只留 content.json，
+ * 模拟「别的软件打开 / 本工具读别处产出的文件」。
+ */
+{
+  const x4 = await import('./xmind.js');
+
+  /** 单个根节点的 zen 档往返；loadAsset 不传 = 附件打包不了 */
+  const rt = async (data, withLoadAsset) => {
+    const sheets = [{ id: 'sh1', title: '画布', theme: null, layout: null,
+      content: JSON.stringify({ root: { data, children: [] } }) }];
+    const blob = await x4.writeXMind(sheets, 'sh1', withLoadAsset ? async () => null : null);
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const entries = await x4.zipRead(buf);
+    const cj = JSON.parse(new TextDecoder().decode(entries.get('content.json')));
+    const zenBuf = await x4.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+    const r = await x4.readXMind(new Uint8Array(zenBuf));
+    return { data: JSON.parse(r.sheets[0].content).root.data, topic: cj[0].rootTopic };
+  };
+
+  // ① 删除线与下划线同时存在
+  {
+    const { data } = await rt({ id: 'n', text: 'T', strikethrough: true, underline: true });
+    ok(data.strikethrough === true && data.underline === true,
+      '同时有删除线和下划线时两个都保住（早先 else-if 只写 line-through，下划线丢失）',
+      JSON.stringify({ s: data.strikethrough, u: data.underline }));
+  }
+
+  // ② 附件打包失败：不能把引用串原样写成 href
+  {
+    const ref = JSON.stringify([{ n: '演示.mp4', a: 'asV1', s: 100 }]);
+    const { data, topic } = await rt({ id: 'n', text: 'T', video: ref }, true);
+    eq(data.hyperlink, undefined,
+      '打包失败的附件不写成乱码超链接（早先原样落 href，导回变成一条 JSON 死链）',
+      JSON.stringify(topic.href));
+  }
+
+  // ③ 打包成功时仍要走包内相对路径（不能因为上面那条把正常情况也砍了）
+  {
+    const x5 = await import('./xmind.js');
+    const ref = JSON.stringify([{ n: '演示.mp4', a: 'asV1', s: 100 }]);
+    const sheets = [{ id: 'sh1', title: '画布', theme: null, layout: null,
+      content: JSON.stringify({ root: { data: { id: 'n', text: 'T', video: ref }, children: [] } }) }];
+    const blob = await x5.writeXMind(sheets, 'sh1', async () => new Uint8Array([1, 2, 3]));
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const entries = await x5.zipRead(buf);
+    const cj = JSON.parse(new TextDecoder().decode(entries.get('content.json')));
+    ok(/^resources\//.test(String(cj[0].rootTopic.href || '')),
+      '能打包的附件仍写成包内相对路径 resources/…', String(cj[0].rootTopic.href));
+    ok([...entries.keys()].some((k) => k.startsWith('resources/')),
+      '附件字节确实进了包', [...entries.keys()].join(','));
+  }
+}
+
 /* ============================================================
    五、M4 / M5 / M6 / M7 · index.js 的源码契约
    ============================================================ */

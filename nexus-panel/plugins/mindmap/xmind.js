@@ -570,9 +570,21 @@ function buildTopic(kmNode, packs) {
      * content.json 的 href 只能挂一个，取列表第一项（video 优先，与原来一致）。
      */
     const firstRef = (raw) => { const l = refListOf(raw); return l.length ? str(l[0]) : null; };
-    let att = firstRef(data.video) || firstRef(data.file);
+    const att = firstRef(data.video) || firstRef(data.file);
     if (att && att.trim()) {
-      href = packs && packs.has(att) ? packs.get(att) : (toFileUri(att) || att);
+      /*
+       * **引用不到包内路径时不能原样写出去**。
+       *
+       * `toFileUri(att) || att` 那个兜底会把「既没打包、又不是本地路径」的
+       * 引用串**原样**落进 href —— 而单项引用是 `{"n":"报告.pdf","a":"asDOC1","s":10}`
+       * 这样的 JSON。导出后 content.json 里就是一串裸 JSON，
+       * 导回时 parseZen 把它当 hyperlink 存起来：**附件变成一条乱码超链接**。
+       *
+       * 打包失败（附件字节读不出来、引用已成孤儿）是真实会发生的：
+       * writeXMind 里 loadAsset 取不到就 `packs.delete` 撤掉映射。
+       * 与其写出一条死链，不如这条 href 干脆不写。
+       */
+      href = packs && packs.has(att) ? packs.get(att) : toFileUri(att);
     }
   }
   if (href && href.trim()) topic.href = href;
@@ -644,7 +656,24 @@ function buildImage(data) {
   return img;
 }
 
-/** 把同组外框（boundaryGroup/boundaryLabel）汇总成父节点上的 XMind boundary 区间 */
+/**
+ * 把同组外框（boundaryGroup/boundaryLabel）汇总成父节点上的 XMind boundary 区间。
+ *
+ * **必须按「连续段」拆开写，不能一组只写一个 (first,last)**。
+ *
+ * XMind 的 range 只能表达「首 → 尾」这一个区间（导回侧也是这么读的：
+ * 取所有 id 的下标，然后 min..max 整段应用）。而外框成员是用户 Ctrl 多选
+ * 出来的，**完全可以不连续**：给 A、C 加框（跳过 B）时成员下标是 0、2。
+ *
+ * 写成 (A,C) 的话，导回时 from=0、to=2，中间的 B **也被划进这个外框** ——
+ * 实测：A=bg1、B=无、C=bg1 导出再导回变成 A=C=B=bg1。
+ * 若 B 本身属于另一组，后处理时它已有 boundaryGroup 会被跳过，
+ * 于是 B 留在别人的组里 —— 同样错。
+ *
+ * 格式表达不了非连续成员，所以一组拆成多段写：每段一个 boundary，
+ * 都带本组的 title。导回后各段是各自独立的外框（画面上是几个框而不是
+ * 一个框）—— 这是格式限制下的最好结果，至少不会把无关节点框进来。
+ */
 function buildBoundaries(ordered) {
   const groups = new Map();
   ordered.forEach((item, i) => {
@@ -653,19 +682,40 @@ function buildBoundaries(ordered) {
     if (!gid) return;
     const label = str(d.boundaryLabel) ?? '';
     const g = groups.get(gid);
-    if (g) groups.set(gid, { first: g.first, last: i, label: g.label || label });
-    else groups.set(gid, { first: i, last: i, label });
+    if (g) {
+      g.idx.push(i);
+      if (!g.label) g.label = label;
+    } else {
+      groups.set(gid, { idx: [i], label });
+    }
   });
   if (groups.size === 0) return null;
 
   const arr = [];
   for (const g of groups.values()) {
-    const range = g.first === g.last
-      ? '(' + ordered[g.first].xid + ')'
-      : '(' + ordered[g.first].xid + ',' + ordered[g.last].xid + ')';
-    arr.push({ id: shortId('bd'), class: 'boundary', title: g.label, range });
+    // ordered 是从 0 递增遍历的，g.idx 天然升序
+    let start = g.idx[0];
+    let prev = start;
+    const flush = (end) => {
+      const a = ordered[start] && ordered[start].xid;
+      const b = ordered[end] && ordered[end].xid;
+      // 引用不到的 id 写了也是死链（导回时 findIndex 全 -1，整条被丢掉）
+      if (!a || !b) return;
+      const range = start === end ? '(' + a + ')' : '(' + a + ',' + b + ')';
+      arr.push({ id: shortId('bd'), class: 'boundary', title: g.label, range });
+    };
+    for (let k = 1; k < g.idx.length; k++) {
+      if (g.idx[k] === prev + 1) {
+        prev = g.idx[k];
+        continue;
+      }
+      flush(prev);
+      start = g.idx[k];
+      prev = start;
+    }
+    flush(prev);
   }
-  return arr;
+  return arr.length ? arr : null;
 }
 
 function buildStyle(data) {
@@ -677,8 +727,17 @@ function buildStyle(data) {
   }
   if (bool(data?.bold)) props['fo:font-weight'] = 'bold';
   if (bool(data?.italic)) props['fo:font-style'] = 'italic';
-  if (bool(data?.strikethrough)) props['fo:text-decoration'] = 'line-through';
-  else if (bool(data?.underline)) props['fo:text-decoration'] = 'underline';
+  /*
+   * 删除线与下划线**可以同时在**（导入别的软件的文件时常见）。
+   * 早先写的是 `if (strikethrough) ... else if (underline) ...` ——
+   * 两个都有时只写 line-through，下划线静默丢失。
+   *
+   * fo:text-decoration 本来就是空格分隔的多值属性，两个都写即可；
+   * 读回侧 applyStyle 也是分别对 /line-through/ 与 /underline/ 做匹配。
+   */
+  const deco = [bool(data?.strikethrough) ? 'line-through' : '',
+    bool(data?.underline) ? 'underline' : ''].filter(Boolean).join(' ');
+  if (deco) props['fo:text-decoration'] = deco;
   return props;
 }
 
