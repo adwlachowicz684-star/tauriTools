@@ -816,9 +816,7 @@ export default function App() {
     toggleMcp: () => void toggleMcp(),
     toggleSidebar: () => setRailCollapsed((v) => !v),
     openMarkdown,
-    /* readMarkdown（「阅读」按钮）**不在这里**：HotkeyId 里没有它，
-       放进 actions 也永远不会被触发，只会让 HotkeyActions 多一条
-       类型错误（TS2353）。它由内容浏览栏头的按钮直接调用。 */
+    readMarkdown,
     // 有弹窗打开时整组让路：否则在对话框里按 Delete 会改到看不见的卡片
     // （开关类的三条不受此限，见 useCardHotkeys 的 ALWAYS_ON）
   }, !!boot && dialog.type === 'none' && !help && !confirmLink, boot?.config.hotkeys);
@@ -957,8 +955,13 @@ export default function App() {
               onMoveToTab={(path, tabIndex) => {
                 /* #103 拖回自己所在的页签 = 取消，不做任何事。
                    不守卫的话会被 moveCard 移到该页签末尾 ——
-                   用户以为取消了，实际改了顺序，且没有任何提示。 */
-                if (skipDropToTab(boot.projectTabs, tabIndex, path)) return;
+                   用户以为取消了，实际改了顺序，且没有任何提示。
+
+                   ci 必须按平台传：Windows 上路径大小写不敏感，
+                   不传的话守卫会漏判（卡片明明在这个页签里却被当成不在），
+                   于是"拖回源页签当作取消"这件事在 Windows 上形同虚设。 */
+                const ci = boot?.platform === 'windows';
+                if (skipDropToTab(boot.projectTabs, tabIndex, path, ci)) return;
                 const n = boot.projectTabs[tabIndex]?.items.length ?? 0;
                 s.moveCard('project', path, tabIndex, n, activeTabRef.current.project);
               }}

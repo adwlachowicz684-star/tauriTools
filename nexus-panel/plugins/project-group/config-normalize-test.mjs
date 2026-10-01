@@ -115,10 +115,24 @@ console.log('\n=== 5. 路径归一只有一套规则（前端不得自带副本�
   /* 护栏自己不能空跑：扫到 0 个文件等于什么都没验（前面踩过多次） */
   t('确实扫到了源文件', srcFiles.length >= 20, `srcFiles=${srcFiles.length}`);
 
-  /* api.ts 那份是唯一入口：只在 ci 为真时转小写、且统一分隔符 */
-  const api = fs.readFileSync(path.join(HERE, 'api.ts'), 'utf8');
-  t('normalizeKey 统一分隔符', /replace\(\/\\\\\/g, '\/'\)/.test(api));
-  t('normalizeKey 只在 ci 时转小写', /return ci \? s\.toLowerCase\(\) : s;/.test(api));
+  /*
+   * 实现已从 api.ts 挪到 utils/pathKey.ts（api.ts 只留一行转发）——
+   * 原因写在 pathKey.ts 顶部：api.ts 里有泛型箭头，测试工具剥类型时加载不了，
+   * 挂在那里的纯函数就只能靠"源码里有 normalizeKey 这几个字"来验，
+   * 而文本断言证明不了判据真的对（大小写 / 尾杠到底归一了没有）。
+   *
+   * 所以这里改成**按实现扫全部源码**，不钉它在哪个文件：
+   * 钉文件的话，挪个位置就误报 —— 误报一次，后来人就学会忽略它。
+   * 同时要求"恰好一份"：谁抄了第二份会立刻报红，比钉位置更强。
+   */
+  const impls = srcFiles.filter((f) => {
+    const s = stripDoc(fs.readFileSync(path.join(HERE, f), 'utf8'));
+    return /export function normalizeKey\(/.test(s);
+  });
+  t('normalizeKey 实现恰好一份', impls.length === 1, impls.join('、'));
+  const impl = fs.readFileSync(path.join(HERE, impls[0] || 'utils/pathKey.ts'), 'utf8');
+  t('normalizeKey 统一分隔符', /replace\(\/\\\\\/g, '\/'\)/.test(impl));
+  t('normalizeKey 只在 ci 时转小写', /return ci \? s\.toLowerCase\(\) : s;/.test(impl));
 
   /*
    * 两处调用点都要按平台给 ci。
@@ -159,8 +173,23 @@ console.log('\n=== 5. 路径归一只有一套规则（前端不得自带副本�
   /* ① 值必须来自平台判断。写死 false 也能"有 ci 参数"，但 Windows 上
    *    `D:\a` / `d:\A` 判成两个目录，查重悄悄漏掉 —— 不报错，只是重复登记。 */
   t('ci 按平台求值（不能写死 true/false）', iCi >= 0 && !/const ci = (true|false);/.test(hook), `iCi=${iCi}`);
-  /* ② 声明必须先于 addCard。搬回后半段就是 TDZ，崩溃级。 */
-  t('ci 声明在查重段之前（防搬回去触发 TDZ）', iCi >= 0 && iCi < iAdd, `iCi=${iCi} iAdd=${iAdd}`);
+  /*
+   * ② 真正要守的是"addCard 用到的 ci 来自**自己这段**的声明，且先于使用"。
+   *
+   * 旧写法拿全文件 `indexOf(CI_DECL)` 的第一处去和 addCard 起点比：
+   * 而那第一处恰好就**在 addCard 内部**（文件里有三处 ci，最靠前那处是
+   * addCard 自己的），于是 iCi > iAdd 恒成立 —— 断言永远红，而它指控的
+   * TDZ 崩溃根本不存在。**守着错标准的测试比没有测试更危险**：后来人
+   * 为了让报警消失，会把 ci 搬到 addCard 之前、搬进另一个函数的闭包外，
+   * 那才真造出一个 TDZ。
+   *
+   * 改为在查重那一段内部定位：段内有声明、且声明在 `normalizeKey(…, ci)`
+   * 使用之前 —— 这条既防 TDZ，也不会因为"ci 在别的函数里"而误报。
+   */
+  const iCiIn = dedup.indexOf(CI_DECL);
+  const iUseCi = dedup.indexOf('normalizeKey(c.path, ci)');
+  t('查重段自己声明了 ci（不依赖外部绑定）', iCiIn >= 0, `iCiIn=${iCiIn}`);
+  t('ci 声明先于使用（防 TDZ）', iCiIn >= 0 && iUseCi > iCiIn, `iCiIn=${iCiIn} iUse=${iUseCi}`);
   t('查重走 normalizeKey', /normalizeKey\(c\.path, ci\) === normalizeKey\(path, ci\)/.test(dedup));
   t('换绑判定按平台给 ci', /ci=\{boot\.platform === 'windows'\}/.test(hub));
 }

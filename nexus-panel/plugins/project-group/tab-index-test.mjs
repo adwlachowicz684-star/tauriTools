@@ -230,4 +230,204 @@ console.log('\n=== #27 页签 × 关闭按钮 ===');
   t('键盘聚焦也显形', /\.fpx-tab-x:focus-visible[^}]*opacity: 1/.test(cssNC));
 }
 
+console.log('\n=== 6. activeAfterRemove ===');
+{
+  // 5 个删掉下标 2：[A B D E]，原本 C(2) 没了
+  t('删的是当前(2) → 停在 2（原本的 D 顶上来）',
+    activeAfterRemove(2, 2, 5) === 2, String(activeAfterRemove(2, 2, 5)));
+  t('当前在被删之后(4) → 左移一位到 3',
+    activeAfterRemove(4, 2, 5) === 3, String(activeAfterRemove(4, 2, 5)));
+  t('当前在被删之前(0) → 不动',
+    activeAfterRemove(0, 2, 5) === 0, String(activeAfterRemove(0, 2, 5)));
+}
+{
+  // 删最后一个：当前就在末尾(4)，删完只剩 4 个，最大下标 3
+  t('删末尾且当前在末尾 → 收敛到 3',
+    activeAfterRemove(4, 4, 5) === 3, String(activeAfterRemove(4, 4, 5)));
+  t('删末尾(4)但当前在 1 → 不动',
+    activeAfterRemove(1, 4, 5) === 1, String(activeAfterRemove(1, 4, 5)));
+}
+{
+  // 只剩 2 个删 1 个 → 结果只能是 0
+  t('2 删 1，当前 1 → 0', activeAfterRemove(1, 1, 2) === 0, String(activeAfterRemove(1, 1, 2)));
+  t('2 删 1，当前 0 → 0', activeAfterRemove(0, 1, 2) === 0, String(activeAfterRemove(0, 1, 2)));
+  t('2 删 0，当前 1 → 0', activeAfterRemove(1, 0, 2) === 0, String(activeAfterRemove(1, 0, 2)));
+}
+
+console.log('\n=== 7. activeAfterRemove：穷举不变量 ===');
+{
+  let bad = 0;
+  const N = 6;
+  for (let n = 2; n <= N; n++) {
+    for (let rm = 0; rm < n; rm++) {
+      for (let a = 0; a < n; a++) {
+        const r = activeAfterRemove(a, rm, n);
+        // 删完剩 n-1 个，合法下标 [0, n-2]
+        if (!(r >= 0 && r <= n - 2)) bad++;
+      }
+    }
+  }
+  t('所有组合都落在删后合法范围 [0, n-2]', bad === 0, `越界 ${bad} 例`);
+  // 极端：n=1 不该发生（UI 层已禁用），但要保证不产生负数
+  t('n=1 时也非负', activeAfterRemove(0, 0, 1) >= 0, String(activeAfterRemove(0, 0, 1)));
+}
+
+console.log('\n=== 8. canMove / canRemove（按钮禁用规则）===');
+t('首项不能上移', canMove(0, 3, -1) === false);
+t('末项不能下移', canMove(2, 3, 1) === false);
+t('中间项可上移', canMove(1, 3, -1) === true);
+t('中间项可下移', canMove(1, 3, 1) === true);
+t('只有一个页签时不能移', canMove(0, 1, 1) === false);
+t('越界下标不能移', canMove(5, 3, 1) === false);
+t('负下标不能移', canMove(-1, 3, 1) === false);
+t('两个及以上可删', canRemove(2) === true);
+t('只剩一个不能删', canRemove(1) === false);
+/* 与界面一致性：末项下移被禁用，正是 canMove 的用途 ——
+   界面对函数两套判断会漂移，这里给唯一答案 */
+t('canMove 与 activeAfterMove 的边界一致（末项下移无意义）',
+  canMove(2, 3, 1) === false && canMove(0, 3, -1) === false);
+
+
+console.log('\n=== 9. 「改了 0 条也报成功」（updateConfig 的陷阱）===');
+{
+  /*
+   * `updateConfig` 的返回值只表示**保存成功**，不表示 mutate 真的改了东西。
+   * mutate 里因越界 / 空列表而 `return` 时，snap 照样非 null。
+   *
+   * 于是调用方若只看 snap，就会出现"界面和日志说做成了、实际什么都没改"：
+   *   · moveTab 越界 → 页签顺序没变，却把高亮平移到别处
+   *     （用户看到"页签没动、内容变成别处的"）
+   *   · addCard 遇空页签列表 → 一张没加进去，却记「已添加」并选中它
+   *     （之后对"选中项"的改名/改色/删除全作用在一个空目标上）
+   *
+   * 两处都必须用**自己的标志**再判一次。这里钉的是那个标志确实存在、
+   * 且**在产生副作用之前**拦住 —— 顺序写反（先 setActiveTab / pushLog
+   * 再判）等于没拦。
+   */
+  const h = fs.readFileSync(path.join(HERE, 'hooks/useFpx.ts'), 'utf8');
+
+  /* moveTab：did 标志 + 在 setActiveTab 之前拦住 */
+  const mv = h.slice(h.indexOf('const moveTab = useCallback'), h.indexOf('const removeTab = useCallback'));
+  t('moveTab 切片取到了', mv.length > 200, `len=${mv.length}`);
+  t('moveTab 有 did 标志', /let did = false/.test(mv));
+  t('moveTab 真的置位 did', /did = true/.test(mv));
+  const iDidGuard = mv.indexOf('if (!did) return;');
+  const iSetActive = mv.indexOf('setActiveTab(');
+  t('moveTab 先判 did 再平移选中项',
+    iDidGuard > 0 && iSetActive > 0 && iDidGuard < iSetActive,
+    `did=${iDidGuard} setActive=${iSetActive}`);
+
+  /* addCard：added 标志 + 在 pushLog 之前拦住 */
+  const ad = h.slice(h.indexOf('const addCard = useCallback'), h.indexOf('const removeCardFull'));
+  t('addCard 切片取到了', ad.length > 500, `len=${ad.length}`);
+  t('addCard 有 added 标志', /let added = false/.test(ad));
+  t('addCard 真的置位 added', /added = true/.test(ad));
+  const iAddedGuard = ad.indexOf('if (!added) return;');
+  const iPushLog = ad.indexOf('pushLog(`已添加');
+  t('addCard 先判 added 再记「已添加」',
+    iAddedGuard > 0 && iPushLog > 0 && iAddedGuard < iPushLog,
+    `added=${iAddedGuard} pushLog=${iPushLog}`);
+}
+
+
+console.log('\n=== #27 页签 × 关闭按钮 ===');
+{
+  const g = fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const cssNC = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const { canRemove } = await loadTs(path.join(HERE, 'utils/tabs.ts'));
+
+  t('页签上有 × 按钮', /fpx-tab-x/.test(g));
+  /* 必须走同一个 onRemoveTab（带 tabRemoveCheck 保护），不能自己删 */
+  /* 远端把这个回调从 onRemoveTab 改名为 onRemove，两种都接受 */
+  t('走页签移除回调（受保护）', /onClick=\{\(e\) => \{[\s\S]{0,200}?onRemove(Tab)?\(i\)/.test(g));
+  /* 阻止冒泡：否则点击会先触发页签选中，双击时还会和重命名抢 */
+  t('阻止冒泡', /e\.stopPropagation\(\);[\s\S]{0,120}?onRemove(Tab)?\(i\)/.test(g));
+
+  /* 只剩一个页签时不显示 —— 点了会失败，按钮却在那儿，像是坏了 */
+  t('用 canRemove 判定', /canRemove\(tabs\.length\)/.test(g));
+  t('canRemove(1) = false', canRemove(1) === false);
+  t('canRemove(2) = true', canRemove(2) === true);
+  /* 编辑中不显示（会和输入框抢） */
+  t('编辑中不显示', /editing !== i/.test(g));
+  /* 拖动中不删：拖拽期间误触会把页签连同卡片一起删掉 */
+  t('阻止 × 自身被拖动', /onDragStart=\{\(e\) => e\.preventDefault\(\)\}/.test(g));
+
+  /* 提示要说明会连带删掉多少项 —— 删页签的代价比看起来大 */
+  t('title 说明连带项数', /连同里面 \$\{t\.items\.length\} 项/.test(g));
+
+  /* 样式：平时不可见、也不可点 */
+  t('默认 opacity 0', /\.fpx-tab-x\s*\{[^}]*opacity: 0/.test(cssNC));
+  t('默认不可点击（pointer-events: none）',
+    /\.fpx-tab-x\s*\{[^}]*pointer-events: none/.test(cssNC));
+  t('hover 才恢复', /\.fpx-tab:hover \.fpx-tab-x[^}]*pointer-events: auto/.test(cssNC));
+  t('键盘聚焦也显形', /\.fpx-tab-x:focus-visible[^}]*opacity: 1/.test(cssNC));
+}
+
+/* ==================================================================
+ * #103 守卫的判据必须归一（与后端 store::normalize_key 同规则）
+ * ------------------------------------------------------------------
+ * 这段是后来补的：守卫原先修过"形态不匹配"（items 是 CardInfo[] 而
+ * 拿字符串去 includes），但**判据仍是原文精确比**。
+ *
+ * 后端登记 / 摘除卡片一律走 normalize_key（去尾部分隔符 + `\`→`/` +
+ * Windows 下转小写）。这里比原文，config 里存的是旧写法时守卫失配：
+ * 卡片明明已在这个页签里，却被判成"不在" → 照常走 moveCard 挪到末尾。
+ * 即"拖回源页签 = 取消"这条规则静默失效，而它正是上面那段注释
+ * 写明要防的后果。用户以为取消了，实际改了顺序，没有任何提示。
+ * ================================================================== */
+console.log('\n=== 6. skipDropToTab：判据归一（大小写 / 尾杠 / 斜杠方向）===');
+{
+  const { skipDropToTab } = await loadTs(path.join(HERE, 'utils/tabs.ts'));
+
+  /* --- 大小写：由 ci 决定，两个方向都要对 --- */
+  const ciTabs = [{ items: ['D:/Proj/Alpha'] }];
+  t('ci=true：大小写不同 → 跳过（Windows 上同一目录）',
+    skipDropToTab(ciTabs, 0, 'd:/proj/alpha', true) === true);
+  t('ci=false：大小写不同 → 不跳过（Linux 上是两个目录）',
+    skipDropToTab(ciTabs, 0, 'd:/proj/alpha', false) === false);
+  t('ci=false：完全一致 → 仍跳过',
+    skipDropToTab(ciTabs, 0, 'D:/Proj/Alpha', false) === true);
+
+  /* --- 尾部分隔符：与平台无关，一律归一 --- */
+  t('尾杠差异 → 跳过', skipDropToTab([{ items: ['D:/Proj/A/'] }], 0, 'D:/Proj/A', false) === true);
+  t('尾杠差异（反向）→ 跳过',
+    skipDropToTab([{ items: ['D:/Proj/A'] }], 0, 'D:/Proj/A/', false) === true);
+  t('多个尾杠 → 跳过', skipDropToTab([{ items: ['D:/Proj/A//'] }], 0, 'D:/Proj/A', false) === true);
+
+  /* --- 斜杠方向：反斜杠与正斜杠是同一个路径 --- */
+  t('反斜杠 vs 正斜杠 → 跳过',
+    skipDropToTab([{ items: ['D:\\Proj\\A'] }], 0, 'D:/Proj/A', false) === true);
+
+  /* --- 对象形态（真实调用点是 CardInfo[]）配合归一 --- */
+  const cardTabs = [{ items: [{ path: 'D:/Proj/B' }] }];
+  t('对象形态 + 尾杠 → 跳过', skipDropToTab(cardTabs, 0, 'D:/Proj/B/', false) === true);
+  t('对象形态 + 大小写 + ci=true → 跳过', skipDropToTab(cardTabs, 0, 'd:/proj/b', true) === true);
+  t('对象形态 + 大小写 + ci=false → 不跳过',
+    skipDropToTab(cardTabs, 0, 'd:/proj/b', false) === false);
+
+  /* --- 边界行为不变（原来就有的，防止改判据时改坏） --- */
+  t('越界 → 不跳过（交回上层，别静默）',
+    skipDropToTab([{ items: ['/a'] }], 9, '/a', false) === false);
+  t('空页签 → 不跳过', skipDropToTab([{ items: [] }], 0, '/a', false) === false);
+  t('真不在该页签 → 不跳过',
+    skipDropToTab([{ items: ['/a', '/b'] }], 0, '/c', false) === false);
+
+  /* --- 反面证据：不得再出现原文精确比（改回旧写法必须报红） --- */
+  const tabsSrc = fs.readFileSync(path.join(HERE, 'utils/tabs.ts'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')      // 剥块注释：注释里写了旧写法字样
+    .replace(/^\s*\/\/.*$/gm, '');          // 剥行注释，同上
+  t('不再用原文精确比（=== path 已绝迹）', !/\)\s*===\s*path\b/.test(tabsSrc));
+  t('判据走 normalizeKey', /normalizeKey\(/.test(tabsSrc));
+
+  /* --- 调用处必须按平台传 ci --- */
+  const appNC = fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  t('落点处把 ci 传进去了',
+    /skipDropToTab\(boot\.projectTabs, tabIndex, path, ci\)/.test(appNC));
+  t('ci 由 platform 判定（不是写死 true/false）',
+    /const ci = boot\?\.platform === 'windows'/.test(appNC));
+}
+
 done();

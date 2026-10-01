@@ -359,7 +359,11 @@ console.log('\n=== 9. import 路径必须指向真实存在的文件 ★ ===');
    */
   const bad = [];
   for (const f of files) {
-    const src = fs.readFileSync(f, 'utf8');
+    /* **必须先剥注释**：注释里出现相对 import 的字样（比如说明
+       "不要写成 from '...' 那样"）会被当成真 import 扫进来，于是报
+       一个根本不存在的 broken import。这个扫描器自己就中过一次 ——
+       而报错只给文件名与那段字样，看不出它其实是注释。 */
+    const src = strip(fs.readFileSync(f, 'utf8')).replace(/^[ \t]*\/\/.*$/gm, '');
     for (const m of src.matchAll(/from\s+'(\.[^']+)'/g)) {
       const spec = m[1];
       const base = path.resolve(path.dirname(f), spec);

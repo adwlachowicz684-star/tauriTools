@@ -10,6 +10,18 @@ import { makeT } from './testkit.mjs';
 import { stripCommentsJs as strip } from '../../test-scan-utils.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
+/** 本插件全部源文件的相对路径（给"实现恰好一份"这类护栏用） */
+const srcFiles = [];
+{
+  const walk = (d) => {
+    for (const e of fs.readdirSync(path.join(HERE, d), { withFileTypes: true })) {
+      const rel = d === '.' ? e.name : `${d}/${e.name}`;
+      if (e.isDirectory()) { if (e.name !== 'preseticons') walk(rel); continue; }
+      if (/\.(ts|tsx)$/.test(e.name)) srcFiles.push(rel);
+    }
+  };
+  walk('.');
+}
 /* 剥注释走全仓共用实现（test-scan-utils.mjs） */
 const hook = strip(fs.readFileSync(path.join(HERE, 'hooks/useFpx.ts'), 'utf8'));
 const app = strip(fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8'));
@@ -52,12 +64,24 @@ console.log('\n=== 2. 提示要说出在哪个页签 ===');
   t('不再就地抄一份归一', !/const norm = \(p: string\) => p\.replace/.test(hook));
   /* 大小写只在 Windows 忽略：其他平台 `A` 与 `a` 是两个不同目录 */
   t('ci 由平台决定', /const ci = boot\?\.platform === 'windows';/.test(hook));
-  /* api.ts 那份是唯一实现：去尾分隔符 + 统一分隔符 + 仅 ci 时转小写 */
-  const apiSrc = strip(fs.readFileSync(path.join(HERE, 'api.ts'), 'utf8'));
+  /*
+   * 唯一实现那份：去尾分隔符 + 统一分隔符 + 仅 ci 时转小写。
+   * 不钉死在 api.ts —— 实现后来移到了 utils/pathKey.ts（api.ts 只转发），
+   * 钉文件位置会在搬家时误报，而这里要验的是**规则本身**。
+   * 改为扫全部源文件定位实现，并要求**恰好一份**（抄一份就报红）。
+   */
+  const implFiles = srcFiles.filter((f) => {
+    const s = strip(fs.readFileSync(path.join(HERE, f), 'utf8'));
+    return /return ci \? s\.toLowerCase\(\) : s;/.test(s);
+  });
+  t('归一实现恰好一份', implFiles.length === 1, implFiles.join('、'));
+  const implSrc = implFiles.length === 1
+    ? strip(fs.readFileSync(path.join(HERE, implFiles[0]), 'utf8'))
+    : '';
   /* 正则里反斜杠转义层数太多，直接用字符串包含判定更稳 */
-  t('去尾斜杠归一', apiSrc.includes("p.trim().replace(/[\\\\/]+$/, '')"));
-  t('统一分隔符', apiSrc.includes(".replace(/\\\\/g, '/')"));
-  t('仅 ci 时转小写', /return ci \? s\.toLowerCase\(\) : s;/.test(apiSrc));
+  t('去尾斜杠归一', implSrc.includes("p.trim().replace(/[\\\\/]+$/, '')"));
+  t('统一分隔符', implSrc.includes(".replace(/\\\\/g, '/')"));
+  t('仅 ci 时转小写', /return ci \? s\.toLowerCase\(\) : s;/.test(implSrc));
 }
 
 console.log('\n=== 3. 落库仍在指定页签 ===');

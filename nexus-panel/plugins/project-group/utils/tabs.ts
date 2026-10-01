@@ -8,6 +8,19 @@
  */
 
 /**
+ * 判据走 `normalizeKey`，**不在本文件另写一份归一化**。
+ *
+ * 本插件里凡比对路径的地方（useFpx / DialogsHub / LinkPickDialog / App）
+ * 都用它，为的就是与后端 `store::normalize_key` 保持同一套规则。
+ * 这里再抄一份，迟早与后端分叉 —— 而分叉的表现是"守卫时灵时不灵"：
+ * 同一个卡片，路径写法对得上时不挪、对不上时被挪到末尾。
+ *
+ * 从 `./pathKey` 引而不是 `../api`：api.ts 有泛型箭头，测试工具剥类型
+ * 后加载不了它，挂在那边的纯函数就没法真跑单测（详见 pathKey.ts 顶部）。
+ */
+import { normalizeKey } from './pathKey';
+
+/**
  * 页签重排后，当前活动页签应该落在哪。
  *
  * 规则（对应原版"其他页签实时让位"）：
@@ -91,13 +104,32 @@ export function canRemove(total: number): boolean {
 /** 页签里的条目：运行时快照是 `CardInfo`，配置里是路径字符串。 */
 export type DropItem = string | { path: string };
 
+/**
+ * @param ci 是否忽略大小写 —— **由调用方按平台传**，与后端
+ * `store::normalize_key` 同规则（只在 Windows 下转小写）。
+ *
+ * 判据必须归一，不能原文精确比：后端登记/摘除卡片一律走
+ * `normalize_key`（去尾部分隔符 + `\`→`/` + Windows 下转小写），
+ * 这里若比原文，config 里存的是旧写法（`D:\Proj\A\` 带尾杠、
+ * 或大小写不同）时守卫**失配** —— 卡片明明已在这个页签里，
+ * 却被判成"不在"，于是照常走 moveCard 挪到末尾。
+ * 正是上面那段注释写明要防的后果，换条路照样发生。
+ *
+ * 默认 false（大小写敏感）是刻意的：Linux/macOS 上 `A` 与 `a`
+ * 是两个不同的目录，判成同一个才会改错东西。**忘了传 ci 的代价是
+ * 守卫漏匹配（Windows 上多挪一次），不会误合并两个目录。**
+ */
 export function skipDropToTab(
   tabs: { items: DropItem[] }[],
   tabIndex: number,
   path: string,
+  ci = false,
 ): boolean {
   const t = tabs[tabIndex];
   if (!t) return false;
   /* 显式比较 path，而不是 includes —— 后者在形态不匹配时静默失效 */
-  return t.items.some((it) => (typeof it === 'string' ? it : it.path) === path);
+  const key = normalizeKey(path, ci);
+  return t.items.some(
+    (it) => normalizeKey(typeof it === 'string' ? it : it.path, ci) === key,
+  );
 }

@@ -386,7 +386,14 @@ console.log('\n=== #103 拖回源页签 = 无操作 ===');
   t('空页签 → 不跳过', skipDropToTab([{ items: [] }], 0, '/a') === false);
 
   /* 守卫必须真的接进落点处理里，不能只有个函数 */
-  t('落点处调用了守卫', /skipDropToTab\(boot\.projectTabs, tabIndex, path\)/.test(app5));
+  /* 参数个数不能钉死：`skipDropToTab(boot.projectTabs, tabIndex, path)` 这种
+     整串字面量在加了 ci 参数后会失效 —— 它守的本意是"落点处确实调了守卫"
+     （以及下面那条"命中就 return"），不是"恰好三个参数"。 */
+  t('落点处调用了守卫', /skipDropToTab\(boot\.projectTabs, tabIndex, path\b/.test(app5));
+  /* ci 必须按平台传，否则 Windows 上守卫漏判、"拖回源页签 = 取消"形同虚设 */
+  t('落点处按平台传了 ci',
+    /skipDropToTab\(boot\.projectTabs, tabIndex, path, ci\)/.test(app5)
+    && /const ci = boot\?\.platform === 'windows'/.test(app5));
   t('守卫命中就 return（不往下走 moveCard）',
     /if \(skipDropToTab\([^)]*\)\) return;/.test(app5));
 }
