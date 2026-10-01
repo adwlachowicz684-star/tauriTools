@@ -37,6 +37,17 @@ function renderSidebar(plugins) {
 const click = (el) => el.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 const items = () => [...list.querySelectorAll('button')];
 
+/*
+ * 必须有汇总行 + 非零退出码，否则全量体检（sweep-tests.mjs）会把它判成
+ * "退出码 0 且 0 条断言"—— 也就是「看着在跑、其实一条都没守」那一类。
+ * 原先这里只 console.log 结论、没有汇总行，体检单上一直是"可疑"。
+ */
+let pass = 0, fail = 0;
+const t = (name, cond, extra = '') => {
+  cond ? pass++ : fail++;
+  console.log(`${cond ? '✅' : '❌'} ${name}${extra ? ' → ' + extra : ''}`);
+};
+
 console.log('=== 场景：连续重建 3 次后点一次 ===');
 renderSidebar([{ id: 'a', name: 'A' }]);
 renderSidebar([{ id: 'a', name: 'A' }]);
@@ -65,10 +76,11 @@ console.log('同一节点注册 3 次后点 1 次 → navigate 调用', navigate
 const control = navigateCalls.length === 3;
 
 console.log('\n================ 结论 ================');
-console.log(once && correct
-  ? 'P1-6 推断不成立：innerHTML="" 会连节点一起丢弃，监听器随之失效，点一次只导航一次'
-  : 'P1-6 推断成立：确实存在重复触发');
-console.log(control
-  ? '对照组符合预期：不清空时才会叠加（说明检测方法本身有效）'
-  : '对照组异常：检测方法有问题，结论不可信');
-process.exit(once && correct && control ? 0 : 1);
+t('P1-6 推断不成立：innerHTML="" 连节点一起丢弃，点一次只导航一次',
+  once && correct, once ? '' : '点一次触发了多次 → 监听器真的残留了，是真 bug');
+/* 对照组必须"叠加"，否则说明这套检测方法根本测不出问题，上面那条绿是假绿 */
+t('对照组符合预期：不清空时才会叠加（证明检测方法有效）',
+  control, control ? '' : '对照组没叠加 → 检测方法有问题，上面结论不可信');
+
+console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
+process.exit(fail ? 1 : 0);
