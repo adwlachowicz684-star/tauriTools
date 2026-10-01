@@ -72,7 +72,26 @@ JSON
 python3 "$HERE/scripts/prune-orphans.py" "$HERE" "$OUT"
 
 echo "== 编译（tsc）=="
-TSC="${AF_TSC:-$(command -v tsc || echo /data/workspace/tsenv2/node_modules/.bin/tsc)}"
+# ------------------------------------------------------------------
+# 找 tsc：npm script 环境下 node_modules/.bin 在 PATH 里，`command -v tsc` 就能找到。
+#
+# 以前这里 fallback 写的是**某台机器上的绝对路径**
+# （/data/workspace/tsenv2/...）。在别的机器上 tsc 没装时，
+# 脚本会拿着那个不存在的路径去执行，报错指向一个谁都不认识的目录 ——
+# 看的人只会以为是脚本坏了，想不到是"typescript 没装"。
+#
+# 所以 fallback 改成仓库内的相对路径，再没有就**明确报错说原因**。
+# ------------------------------------------------------------------
+TSC="${AF_TSC:-$(command -v tsc || true)}"
+if [ -z "$TSC" ]; then
+  for c in node_modules/typescript/bin/tsc node_modules/.bin/tsc; do
+    if [ -x "$c" ]; then TSC="$c"; break; fi
+  done
+fi
+if [ -z "$TSC" ]; then
+  echo "✗ 找不到 tsc：typescript 是本项目的 devDependency，先跑 npm i"
+  exit 1
+fi
 "$TSC" -p "$TSCONFIG" > /tmp/afts-tsc.log 2>&1
 # noEmitOnError=false，有类型错误也会照常输出 JS；
 # 但编译本身失败（语法错）就没有产物了，要拦住

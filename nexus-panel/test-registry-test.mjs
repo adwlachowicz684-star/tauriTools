@@ -28,9 +28,19 @@ const t = (name, ok, info) => {
 /*
  * 用递归遍历而不是 glob —— glob 在 node 20 下是实验特性，
  * 且这里的目的是"一个都不漏"，显式遍历更可控。
+ *
+ * ============ 为什么判据里必须有 .test.ts ============
+ *
+ * 第一版只认 `-test.mjs`，于是 `plugins/agent-flow/tests/` 下的
+ * **104 个 .test.ts 一个都进不了 real** —— 守卫照样报告
+ * "N 个测试全部有主"，而那 104 个连被检查的资格都没有。
+ *
+ * 这比"某个测试红了没人管"更隐蔽：整批测试根本不在视野里，
+ * 报告却是绿的。所以下面另有一条断言专门守"判据没漏扫"。
  */
 const SKIP_DIR = new Set(['node_modules', '.git', 'dist', 'build', 'target', '.vite']);
 const tests = [];
+const tsOnDisk = [];
 (function walk(dir) {
   let ents = [];
   try { ents = readdirSync(dir, { withFileTypes: true }); } catch { return; }
@@ -40,6 +50,9 @@ const tests = [];
       walk(join(dir, e.name));
     } else if (/^.*-test\.mjs$/.test(e.name)) {
       tests.push(join(dir, e.name));
+    } else if (/\.test\.tsx?$/.test(e.name)) {
+      tests.push(join(dir, e.name));
+      tsOnDisk.push(join(dir, e.name));
     }
   }
 })(HERE);
@@ -55,11 +68,102 @@ const pkg = JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8'));
 const scripts = pkg.scripts || {};
 const scriptText = Object.values(scripts).join(' ');
 
-/* ---- ① 每个测试文件都要被某个 script 引用 ---- */
-const orphan = real.filter((f) => !scriptText.includes(basename(f)));
+/*
+ * ---------- 目录级运行器 ----------
+ *
+ * 有些测试**不是逐个点名的**：一个脚本跑整个目录。
+ * agent-flow 的 104 个 .test.ts 就是这样 ——
+ * `run-tests.sh` 里是一句 `node --test tests/`。
+ *
+ * 于是"文件名出现在 script 文本里"这条判据对它们**永远为假**，
+ * 硬套会把 104 个真测试全报成孤儿（而它们其实跑得好好的）。
+ *
+ * 但反过来也不能"见到 run-tests.sh 就算有主"：
+ * 真正要守的恰恰是**这个运行器自己有没有人调用**。
+ * 没人调用的 run-tests.sh，等于整个目录的测试都没人跑，
+ * 而按"见到就算"它会把 104 个全判成有主 —— 假绿。
+ *
+ * 所以覆盖成立要同时满足两条：目录下有运行器 **且** 它被 script 点名。
+ */
+const RUNNER_NAMES = ['run-tests.sh'];
+const runnersFound = [];
+/*
+ * 独立扫一遍全仓库，不要靠 coveredByRunner 的**副作用**去收集：
+ * 那边只在"文件名没被点名"时才走到，万一哪天所有文件都被写进 script，
+ * runnersFound 会是空的，①c 就变成永远通过的假绿。
+ */
+(function walkRunners(dir) {
+  let ents = [];
+  try { ents = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of ents) {
+    if (e.isDirectory()) {
+      if (SKIP_DIR.has(e.name)) continue;
+      walkRunners(join(dir, e.name));
+    } else if (RUNNER_NAMES.includes(e.name)) {
+      runnersFound.push(join(dir, e.name).replace(HERE, ''));
+    }
+  }
+})(HERE);
+
+function coveredByRunner(f) {
+  let d = dirname(f);
+  while (d.startsWith(HERE)) {
+    for (const r of RUNNER_NAMES) {
+      /*
+       * 两处都要找：运行器可能和被测文件同目录，也可能在**同级 scripts/ 下**
+       * （agent-flow 的 run-tests.sh 就在 scripts/，被测的在 tests/）。
+       * 只找同目录的话，第一版实测把 103 个真测试全报成孤儿 ——
+       * 而它们跑起来是 2326 项全过。
+       */
+      for (const p of [join(d, r), join(d, 'scripts', r)]) {
+        if (existsSync(p)) return { runner: p.replace(HERE, ''), cited: scriptText.includes(r) };
+      }
+    }
+    d = dirname(d);
+  }
+  return null;
+}
+
+/* ---- ① 每个测试文件都要被某个 script 引用（或被目录级运行器覆盖） ---- */
+const orphan = real.filter((f) => {
+  if (scriptText.includes(basename(f))) return false;
+  const c = coveredByRunner(f);
+  return !(c && c.cited);
+});
 t('每个测试文件都被某个 npm script 引用（否则等于没写）',
   orphan.length === 0,
   orphan.length ? orphan.map((f) => f.replace(HERE, '')).join(' | ') : `${real.length} 个测试全部有主`);
+
+/* ---- ①b 判据不能漏扫 .test.ts ---- */
+/*
+ * 收集判据若退回只认 -test.mjs，第 ① 条会**照样全绿** ——
+ * 因为看不见的文件压根不参与判定。漏扫的表现是"报告变干净了"，
+ * 而不是"报错"。所以另开一条，拿磁盘上真实存在的 .test.ts 对账。
+ */
+const missedTs = tsOnDisk.filter((f) => real.includes(f) === false);
+t('收集判据覆盖 .test.ts（漏扫会让整批测试悄悄消失、报告却仍是绿的）',
+  missedTs.length === 0 && tsOnDisk.length > 0,
+  /*
+   * 措辞要能一眼看出"是漏扫"而不是"本来就少"：
+   * 收集判据退回只认 .mjs 时 tsOnDisk 会变成 0，
+   * 若写成"0 个全部在视野内"，读着像通过 —— 而这一条其实是红的。
+   */
+  tsOnDisk.length === 0
+    ? '一个 .test.ts 都没收集到 —— 判据漏扫了'
+    : (missedTs.length ? `漏了 ${missedTs.length} 个` : `磁盘上 ${tsOnDisk.length} 个 .test.ts 全部在视野内`));
+
+/* ---- ①c 目录级运行器自己必须被 npm script 点名 ---- */
+/*
+ * 这条守的是 2026-10-01 查到的实况：run-tests.sh 能跑通 104 个测试
+ * （2326 项全过），但**全仓库没有任何 script / CI 引用它** ——
+ * 只在 README 里被提到。于是那 104 个测试从来没被自动执行过。
+ *
+ * 它们不红、不报错、也不出现在任何报告里，只是安静地不跑。
+ */
+const uncited = runnersFound.filter((r) => !scriptText.includes(basename(r)));
+t('目录级运行器（run-tests.sh）被 npm script 点名（否则它跑的整批测试都没人跑）',
+  runnersFound.length > 0 && uncited.length === 0,
+  runnersFound.length === 0 ? '没发现目录级运行器' : (uncited.join(' | ') || `${runnersFound.join(' | ')} 已注册`));
 
 /* ---- ② script 指向的文件必须存在 ---- */
 const missing = [];
@@ -116,7 +220,15 @@ for (const f of real) {
     || /process\.exit\(\s*(?:fail|errors|bad|nFail)/.test(src) // 跟着计数变量
     || /process\.exit\([^)]*[?:][^)]*1/.test(src)              // 三元里含 1
     || /process\.exitCode\s*=/.test(src)
-    || /throw\s+new\s+Error/.test(src);                        // 抛错也算能失败
+    || /throw\s+new\s+Error/.test(src)                        // 抛错也算能失败
+    /*
+     * node:test —— 退出码由 `node --test` 这个**运行器**决定：
+     * 有用例失败它就退出非 0。文件里自然找不到 exit / throw。
+     *
+     * 不认这条的话，104 个 .test.ts 会被整批判成"永远全绿的装饰品"——
+     * 而它们实测 2326 项**全过**，是 agent-flow 引擎唯一的回归防线。
+     */
+    || /from\s+['"]node:test['"]/.test(src);
   if (!canFail) alwaysGreen.push(f.replace(HERE, ''));
 }
 t('没有"永远全绿"的测试（必须有非 0 退出路径）',

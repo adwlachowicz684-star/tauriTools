@@ -22,6 +22,7 @@
     "tauri:dev": "tauri dev --config src-tauri/tauri.vite.conf.json",
     "tauri:dev:plain": "tauri dev",
     "test": "node smoke-test.mjs",
+    "test:af": "bash plugins/agent-flow/scripts/run-tests.sh",
     "test:audit": "node style-audit-test.mjs",
     "test:bridge": "node bridge-test.mjs",
     "test:build-entry": "node build-entry-test.mjs",
