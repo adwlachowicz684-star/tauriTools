@@ -56,6 +56,8 @@ const segU = iU >= 0 ? rs.slice(iU, rs.indexOf('fn tab_count_of', iU)) : '';
 t('用 as_u64 解析（挡掉负数，as_i64 会收下再溢出）',
   iU > 0 && /v\.as_u64\(\)/.test(segU) && !/as_i64/.test(segU),
   iU > 0 ? '' : '没找到共用解析闭包 u（判据失效，不是"解析方式不对"）');
+t('u() 对类型不符报错而不是静默当没传', /None => Err\(err\(&format!/.test(segU));
+t('tab_index 走共用闭包 u()', /let tab_index = u\("tab_index"\)\?;/.test(rs));
 t('转成 usize 后是 Option（缺省走旧路径）',
   /\.map\(\|v\| v as usize\)/.test(seg));
 
