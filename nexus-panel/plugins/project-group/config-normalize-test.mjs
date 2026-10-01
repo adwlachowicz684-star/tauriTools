@@ -183,13 +183,25 @@ console.log('\n=== 5. 路径归一只有一套规则（前端不得自带副本�
    * 为了让报警消失，会把 ci 搬到 addCard 之前、搬进另一个函数的闭包外，
    * 那才真造出一个 TDZ。
    *
-   * 改为在查重那一段内部定位：段内有声明、且声明在 `normalizeKey(…, ci)`
-   * 使用之前 —— 这条既防 TDZ，也不会因为"ci 在别的函数里"而误报。
+   * 而"段内声明"这条也**不能钉**：ci 现在被上提到了 hook 最前面
+   * （useFpx.ts 第 30 行的注释写了原因 —— 留在后半段会踩 TDZ，
+   *   createLink / syncLinks 的 deps 先求值 → 首次渲染就抛 ReferenceError）。
+   * 钉"段内声明"的下场和上面一样：后来人为了让报警消失把 ci 搬回段内，
+   * 把崩溃级 bug 请回来。
+   *
+   * 两种形态（段内声明 / 上提到最前）都得接受，**真正要守的只有一件事**：
+   *   使用点之前**存在一处**这个声明。
+   * 一处都没有、或声明落在使用点之后，都报红。
    */
-  const iCiIn = dedup.indexOf(CI_DECL);
+  const declIdx = [];
+  for (let i = hook.indexOf(CI_DECL); i >= 0; i = hook.indexOf(CI_DECL, i + 1)) declIdx.push(i);
   const iUseCi = dedup.indexOf('normalizeKey(c.path, ci)');
-  t('查重段自己声明了 ci（不依赖外部绑定）', iCiIn >= 0, `iCiIn=${iCiIn}`);
-  t('ci 声明先于使用（防 TDZ）', iCiIn >= 0 && iUseCi > iCiIn, `iCiIn=${iCiIn} iUse=${iUseCi}`);
+  const absUse = iUseCi >= 0 ? iAdd + iUseCi : -1;
+  const declBefore = declIdx.filter((i) => i < absUse);
+  t('查重用的 ci 有声明（不能凭空出现）', declIdx.length > 0, `声明 ${declIdx.length} 处`);
+  t('ci 声明先于使用（防 TDZ）', iUseCi >= 0 && declBefore.length > 0,
+    `声明 ${declIdx.join('/') || '无'}，使用绝对位置 ${absUse}`);
+  t('判据不空跑（使用点确实定位到了）', iUseCi >= 0 && absUse > iAdd, `iUse=${iUseCi}`);
   t('查重走 normalizeKey', /normalizeKey\(c\.path, ci\) === normalizeKey\(path, ci\)/.test(dedup));
   t('换绑判定按平台给 ci', /ci=\{boot\.platform === 'windows'\}/.test(hub));
 }

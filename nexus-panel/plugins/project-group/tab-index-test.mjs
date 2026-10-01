@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadTs, makeT } from './testkit.mjs';
-import { stripComments as strip } from '../../test-scan-utils.mjs';
+import { stripComments as strip, stripCommentsFlat as stripFlat, stripCommentsFlatJs as stripFlatJs } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -332,10 +332,8 @@ console.log('\n=== 9. 「改了 0 条也报成功」（updateConfig 的陷阱）
 
 console.log('\n=== #27 页签 × 关闭按钮 ===');
 {
-  const g = fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-  const cssNC = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const g = stripFlat(fs.readFileSync(path.join(HERE, 'components/CardGrid.tsx'), 'utf8'));
+  const cssNC = stripFlat(fs.readFileSync(path.join(HERE, 'style.css'), 'utf8'));
   const { canRemove } = await loadTs(path.join(HERE, 'utils/tabs.ts'));
 
   t('页签上有 × 按钮', /fpx-tab-x/.test(g));
@@ -415,15 +413,14 @@ console.log('\n=== 6. skipDropToTab：判据归一（大小写 / 尾杠 / 斜杠
     skipDropToTab([{ items: ['/a', '/b'] }], 0, '/c', false) === false);
 
   /* --- 反面证据：不得再出现原文精确比（改回旧写法必须报红） --- */
-  const tabsSrc = fs.readFileSync(path.join(HERE, 'utils/tabs.ts'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '')      // 剥块注释：注释里写了旧写法字样
-    .replace(/^\s*\/\/.*$/gm, '');          // 剥行注释，同上
+  // 剥块注释：注释里写了旧写法字样；再剥行注释，同上
+  // （行注释判据必须用 (^|\s)，裸 // 会把 https:// 从斜杠处整行吞掉）
+  const tabsSrc = stripFlatJs(fs.readFileSync(path.join(HERE, 'utils/tabs.ts'), 'utf8'));
   t('不再用原文精确比（=== path 已绝迹）', !/\)\s*===\s*path\b/.test(tabsSrc));
   t('判据走 normalizeKey', /normalizeKey\(/.test(tabsSrc));
 
   /* --- 调用处必须按平台传 ci --- */
-  const appNC = fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const appNC = stripFlat(fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8'));
   t('落点处把 ci 传进去了',
     /skipDropToTab\(boot\.projectTabs, tabIndex, path, ci\)/.test(appNC));
   t('ci 由 platform 判定（不是写死 true/false）',

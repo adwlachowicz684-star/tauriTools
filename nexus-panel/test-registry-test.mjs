@@ -16,6 +16,7 @@
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripCommentsJs } from './test-scan-utils.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 let pass = 0; let fail = 0;
@@ -243,8 +244,15 @@ t('没有"永远全绿"的测试（必须有非 0 退出路径）',
 /*
  * ⚠️ 相对路径要以**导入方所在目录**为基准，不是本文件所在目录。
  * 第一版写成了 join(HERE, rel)，而 testkit.mjs 在 plugins/project-group/ 下，
- * 拼出来当然不存在 → existsSync 全 false → "核对 0 个框架"，
- * 于是这条断言变成永远通过（这也是一种"防线在但放水"）。
+ * 拼出来当然不存在 → existsSync 全 false → "核对 0 个框架"。
+ *
+ * 而当时这条断言只判 `badKits.length === 0` —— 集合是空的时候
+ * 它**照样通过**。这就是"防线在、但放水"：注释里写明了坑，
+ * 判据却抓不到它。2026-10-01 用破坏验证（把 join(dirname(f),…)
+ * 改回 join(HERE,…)）实测确认：改动生效、界面显示"核对 0 个框架"，
+ * 而结果是 7 通过 / 0 失败。
+ *
+ * 所以判据必须加上 kits.length > 0：一个都没核对到，本身就是失守。
  */
 const kitFiles = [];
 for (const f of real) {
@@ -254,8 +262,57 @@ for (const f of real) {
 const kits = [...new Set(kitFiles)].filter((k) => existsSync(k));
 const badKits = kits.filter((k) => !/fail\s*\?\s*1\s*:\s*0/.test(readFileSync(k, 'utf8')));
 t('共享测试框架自身会按失败数退出（一处放行不能拖垮几十个测试）',
-  badKits.length === 0,
-  badKits.map((k) => k.replace(HERE, '')).join(' | ') || `核对 ${kits.length} 个框架`);
+  /*
+   * kits.length > 0 这条不能省：省了它，路径基准写错时集合为空、
+   * 断言恒真，报出来还是"核对 0 个框架"这种看着像过的措辞。
+   */
+  kitFiles.length > 0 && kits.length > 0 && badKits.length === 0,
+  kits.length === 0
+    ? `一个框架都没核对到（收集到 ${kitFiles.length} 条 testkit 引用，但拼出的路径都不存在 —— 相对路径要以导入方目录为基准）`
+    : (badKits.map((k) => k.replace(HERE, '')).join(' | ') || `核对 ${kits.length} 个框架`));
+
+/* ---- ③c 元守卫：③b 的判据不能只判"空集合" ---- */
+/*
+ * 上面那条若只写 badKits.length === 0，则"一个框架都没核对到"时它恒真——
+ * 报出来还是"核对 0 个框架"，读着像通过，实际是失守。
+ *
+ * 2026-10-01 用破坏验证实测过：把路径基准改回 join(HERE, …)，
+ * 改动确实落地、措辞确实变成"核对 0 个框架"，而结果是 7 通过 / 0 失败。
+ * 也就是注释里写着坑、判据却抓不到它。
+ *
+ * 所以这里用源码级断言把 kits.length > 0 钉死：
+ * 谁把它删了，这条立刻红。
+ *
+ * ⚠️ 必须先剥注释再查：上面这段注释里就写着 "kits.length > 0" 四个字，
+ * 不剥的话即使判据被删光，正则也会匹配到注释 —— 又一处假绿。
+ * （和 command-consistency 那条"断言查存在性、不查那一处存在"同源。）
+ *
+ * ⚠️⚠️ 只剥注释不够，剥字符串字面量也不够 —— 2026-10-02 两步都实测过：
+ *
+ *   ① 只剥注释：下面这两条**说明文字**（字符串字面量）里也写着
+ *      '判据含 kits.length > 0' / '判据里没有 kits.length > 0 …'，
+ *      判据删光了照样匹配 → 8 通过 / 0 失败，**防假绿的守卫自己就是假绿**；
+ *   ② 再剥字符串：全文件扫的替换式会在别处错配引号（本文件有模板串、
+ *      正则字面量），把判据那一段一起吞掉 → 反过来变成恒红。
+ *
+ * 两次都是"查存在性、不查那一处存在"。所以最终改成**只取判据那一段**：
+ * 从 `const kits = ` 起到 `badKits.length === 0,` 为止，
+ * 这段里没有注释也没有字符串，命中即真命中。
+ * 两个锚点任何一个找不到都必须报红（找不到 = 判据被改得认不出了，
+ * 此时静默放过比报红危险）。
+ */
+const selfSrc = stripCommentsJs(readFileSync(fileURLToPath(import.meta.url), 'utf8'));
+/*
+ * 整条判据一起匹配（不是只查 kits.length > 0 四个字）：
+ * 只查片段会命中下面两条说明文字里的同样字样（见上），那是假绿。
+ * 代价是判据重排会误报红 —— 误报红看得见、假绿看不见，两害取其轻。
+ */
+const NEED_JUDGE = /kitFiles\.length\s*>\s*0\s*&&\s*kits\.length\s*>\s*0\s*&&\s*badKits\.length\s*===\s*0/;
+t('③b 必须要求"至少核对到 1 个框架"（只判空集合 = 防线放水）',
+  NEED_JUDGE.test(selfSrc),
+  NEED_JUDGE.test(selfSrc)
+    ? '判据含 kits.length > 0'
+    : '判据里没有 kits.length > 0 —— 空集合会让 ③b 恒真');
 
 /* ---- ④ 元守卫：本文件自己也得被引用 ---- */
 t('本守卫自身也被 npm script 引用（不然它也会变成孤儿）',
