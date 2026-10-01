@@ -7,9 +7,41 @@
 //! 一个都拿不到就明确报错，不假装成功。
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(windows)]
 use crate::fpx::safety::safe_ps_literal;
+
+/// 截图文件名的进程内自增序号。
+///
+/// 为什么需要：文件名原先只按**秒**命名，同一秒内连续截两张会拿到同一个路径，
+/// **第二张静默覆盖第一张**，而两次都返回成功、路径还一模一样。
+/// 调用方（AI 常"截一张 → 做个操作 → 再截一张"做前后对比）于是拿到同一张图，
+/// 却以为这是两张 —— 这正是文件头写的"不假装成功"要避免的情形。
+static SHOT_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// 把关键字里的 `-like` 通配符转义，让匹配退化成"包含这个子串"。
+///
+/// 不转义的后果：`-like` 里 `[` `]` 是**字符类**，找 `test[1]` 实际在找 `test1`；
+/// `*` 与 `?` 同样是通配符。于是"按标题找窗口"会查错目标或查不到，
+/// **且不报错** —— AI 拿到空列表会当成"没有这个窗口"，进而做出错误判断
+/// （改截全屏、或告诉用户窗口不存在）。
+///
+/// PowerShell 的转义符是反引号；单引号字符串里反引号是字面量，
+/// 能原样交给 `-like` 解释。反引号本身由 `safe_ps_literal` 挡在前面，
+/// 所以用户输入不可能自己造出转义序列 —— **必须先校验再转义**，顺序反了
+/// 会把合法的转义字符当成不安全字符拒掉。
+#[cfg(windows)]
+fn like_literal(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if matches!(c, '*' | '?' | '[' | ']') {
+            out.push('`');
+        }
+        out.push(c);
+    }
+    out
+}
 
 /// 截图结果：落盘路径 + 尺寸（尺寸由后端能确定时才有值，拿不到即为 0）。
 #[derive(Debug, Clone, serde::Serialize)]
@@ -26,7 +58,8 @@ fn target_path(dir: &Path) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    dir.join(format!("shot_{secs}.png"))
+    let n = SHOT_SEQ.fetch_add(1, Ordering::Relaxed);
+    dir.join(format!("shot_{secs}_{n}.png"))
 }
 
 #[cfg(windows)]
@@ -132,10 +165,22 @@ pub struct WindowInfo {
 #[cfg(windows)]
 pub fn list_windows(keyword: &str) -> Result<Vec<WindowInfo>, String> {
     let kw = keyword.trim().replace('\'', "''");
+    /*
+     * 与 `capture_window` 同样的守卫：关键字也要挡住换行 / 反引号 / $( )。
+     *
+     * 这里靠单引号双写已经挡住了字符串终止，**目前**无法逃逸；但纵深不能只靠
+     * 一种手段 —— 一旦以后有人把外层改成双引号字符串（很常见的改动），
+     * `$( )` 与反引号就会立刻变成真的命令注入。守卫放在转义**之前**判，
+     * 否则 `like_literal` 补的反引号会被当成不安全字符，合法标题全被拒。
+     */
+    if !safe_ps_literal(&kw) {
+        return Err("窗口标题关键字含不安全字符，已拒绝".into());
+    }
     let filter = if kw.is_empty() {
         "$_.MainWindowTitle -ne ''".to_string()
     } else {
-        format!("$_.MainWindowTitle -ne '' -and $_.MainWindowTitle -like '*{kw}*'")
+        let pat = like_literal(&kw);
+        format!("$_.MainWindowTitle -ne '' -and $_.MainWindowTitle -like '*{pat}*'")
     };
 
     // 输出 句柄<TAB>标题，用制表符分隔，避免标题里含空格带来的歧义
@@ -185,6 +230,8 @@ pub fn capture_window(dir: &Path, keyword: &str) -> Result<CaptureResult, String
     if !safe_ps_literal(&kw_esc) {
         return Err("窗口标题含不安全字符，已拒绝".into());
     }
+    // 校验之后才转义：与 list_windows 同理，`[` `]` 在这里同样会被当成字符类
+    let kw_pat = like_literal(&kw_esc);
 
     // C# 代码走 PowerShell 的单引号 here-string：内部双引号原样保留，不用转义。
     // 先 GetWindowRect 取窗口矩形，再 CopyFromScreen 只截这一块。
@@ -201,7 +248,7 @@ public class WinRect {{
 }}
 '@;
 Add-Type -TypeDefinition $code;
-$p = Get-Process | Where-Object {{ $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like '*{kw_esc}*' }} | Select-Object -First 1;
+$p = Get-Process | Where-Object {{ $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like '*{kw_pat}*' }} | Select-Object -First 1;
 if (-not $p) {{ throw 'no-window' }};
 $h = $p.MainWindowHandle;
 $r = New-Object WinRect+RECT;
