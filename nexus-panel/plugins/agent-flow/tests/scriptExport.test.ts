@@ -6,7 +6,7 @@ import { readSrc } from './srcScan';
 const n = (id: string, kind: string, data = {}) => ({
   id, data: { kind, label: id, status: 'idle', output: '', error: '', ...data },
 });
-const e = (a: string, b: string) => ({ id: `${a}->${b}`, source: a, target: b });
+const e = (a: string, b: string, extra: Record<string, unknown> = {}) => ({ id: `${a}->${b}`, source: a, target: b, ...extra });
 
 const g = (nodes: unknown[], edges: unknown[] = []) => ({ nodes, edges }) as never;
 
@@ -594,4 +594,100 @@ test('源码：导出侧的循环体判定复用 engine/loop.ts，不自写一�
   const src = readSrc('engine/scriptExport.ts');
   const body = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
   assert.ok(/loopBodyOf/.test(body), '没复用 loopBodyOf —— 会出现两套"哪些节点算循环体"');
+});
+
+/* ================================================================ */
+/* 条件分支                                                           */
+/* ================================================================ */
+
+const rule = (id: string, label: string, op: string, value: string, source: string) =>
+  ({ id, label, op, value, source, enabled: true });
+
+/*
+ * 以前两个分支被平铺导出 —— 画布上走 A，脚本里 A、B 都跑。
+ * B 是"推送/删除"这类动作时，脚本会做出画布上不会发生的事，
+ * 且这与"拼不出变量"不同：后者留 {{}} 的痕迹，分支跑错了没有。
+ */
+test('python：条件真的生成 if/else，分支体在分支内', () => {
+  const r = exportFlow(g([
+    n('a1', 'log', { text: '甲' }),
+    n('c1', 'condition', { rules: [rule('r1', '有内容', 'nonEmpty', '', 'a1')], defaultBranch: true }),
+    n('y1', 'log', { text: '真分支' }),
+    n('n1', 'log', { text: '假分支' }),
+  ], [e('c1', 'y1', { branch: 'r1' }), e('c1', 'n1', { branch: '__default__' })]), 'python');
+  assert.ok(r.text.includes('if str(') && r.text.includes('else:'), `没生成 if/else：${r.text}`);
+  const elseAt = r.text.indexOf('else:');
+  const trueAt = r.text.indexOf('真分支');
+  const falseAt = r.text.indexOf('假分支');
+  assert.ok(trueAt < elseAt && falseAt > elseAt, '两条分支没分到 if 与 else 里');
+  // 分支体必须缩进在 if 之下，平铺的话就没有
+  assert.ok(/^\s+print/.test(r.text.split('\n').find((l) => l.includes('真分支')) ?? ''), '分支体没缩进');
+});
+
+/*
+ * 没走的那条分支，其节点在画布上 output 是空串；
+ * 脚本里不初始化就是 UnboundLocalError —— 直接崩，而不是拿到空串。
+ */
+test('python：各分支成员先初始化成空串（汇合点引用未走的分支不崩）', () => {
+  const r = exportFlow(g([
+    n('a1', 'log', { text: '甲' }),
+    n('c1', 'condition', { rules: [rule('r1', '有内容', 'nonEmpty', '', 'a1')], defaultBranch: true }),
+    n('y1', 'log', { text: '真' }),
+    n('n1', 'log', { text: '假' }),
+    n('j1', 'log', { text: '汇合 {{y1.output}}' }),
+  ], [
+    e('c1', 'y1', { branch: 'r1' }), e('c1', 'n1', { branch: '__default__' }),
+    e('y1', 'j1'), e('n1', 'j1'),
+  ]), 'python');
+  assert.ok(/out_y1 = ""/.test(r.text), `y1 没初始化：${r.text}`);
+  assert.ok(/out_n1 = ""/.test(r.text), `n1 没初始化：${r.text}`);
+  // 汇合点必须在分支之外
+  const elseAt = r.text.indexOf('else:');
+  assert.ok(r.text.indexOf('汇合') > elseAt, '汇合点跑到分支里了');
+});
+
+test('shell 不翻条件判定，但要明说各分支都会执行', () => {
+  const r = exportFlow(g([
+    n('a1', 'log', { text: '甲' }),
+    n('c1', 'condition', { rules: [rule('r1', '有内容', 'nonEmpty', '', 'a1')] }),
+    n('y1', 'log', { text: '真' }), n('n1', 'log', { text: '假' }),
+  ], [e('c1', 'y1', { branch: 'r1' }), e('c1', 'n1', { branch: '__default__' })]), 'shell');
+  assert.ok(!r.text.includes('if ['), 'shell 不该硬翻判定');
+  const hit = r.skipped.find((s) => s.id === 'c1' && s.reason.includes('都会执行'));
+  assert.ok(hit, `没说明分支都会执行：${JSON.stringify(r.skipped)}`);
+});
+
+/* 正则：JS 的 RegExp 与 python 的 re 语法不完全一致，翻了就是"看着对、判定错" */
+test('正则条件不硬翻，但要明说分支都会执行', () => {
+  const r = exportFlow(g([
+    n('a1', 'log', { text: '甲' }),
+    n('c1', 'condition', { rules: [rule('r1', '匹配', 'regex', '^a', 'a1')] }),
+    n('y1', 'log', { text: '真' }),
+  ], [e('c1', 'y1', { branch: 'r1' })]), 'python');
+  assert.ok(!r.text.includes('re.search'), '不该生成正则判定');
+  const hit = r.skipped.find((s) => s.id === 'c1' && s.reason.includes('都会执行'));
+  assert.ok(hit, `没说明：${JSON.stringify(r.skipped)}`);
+});
+
+/*
+ * log 的 output 是上游透传（runners/log.ts），而脚本以前只给 print ——
+ * 下游 {{a1.output}} 就引用了一个从未定义过的变量，跑起来 NameError。
+ * 条件分支必然引用上游，这条不修的话生成的脚本一运行就崩。
+ */
+test('log 节点在脚本里有赋值（引用它的输出不再是未定义变量）', () => {
+  for (const f of ['shell', 'python'] as const) {
+    const r = exportFlow(g([
+      n('a1', 'log', { text: '甲' }),
+      n('a2', 'log', { text: '上游是 {{a1.output}}' }),
+    ], [e('a1', 'a2')]), f);
+    const decl = f === 'shell' ? /OUT_A1=/ : /out_a1 =/;
+    assert.match(r.text, decl, `${f} 里 a1 没有赋值行：${r.text}`);
+  }
+});
+
+test('源码：条件表达式对 source 为空的情况不硬翻', () => {
+  const src = readSrc('engine/scriptExport.ts');
+  const body = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.ok(/if \(src0 === ''\) return null/.test(body), "source 为空必须翻不了（画布上是拼全部上游）");
+  assert.ok(/op === 'regex'/.test(body) && /return null/.test(body), 'regex 不该硬翻');
 });

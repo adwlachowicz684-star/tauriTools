@@ -553,6 +553,229 @@ function loopFixedTimes(d: Record<string, unknown>): number {
   return Number.isFinite(t) && t >= 1 ? t : 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* 条件分支                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 给条件表达式用的替换：取不到就**保留 {{原样}}**，
+ * 由调用方据此判定"翻不了"。
+ *
+ * 不能把 unresolved 丢掉：条件里引用的东西取不到时，
+ * 生成 `out_xxx` 就是个未定义变量，跑起来 NameError，
+ * 而留 {{}} 至少让人一眼看出这里没接上。
+ */
+function pysubst(
+  t: string,
+  cardRef?: Map<string, string>,
+  namedOut?: Set<string>,
+  loopRef?: Record<string, string> | null,
+): string {
+  return subst(t, 'py', cardRef, () => {}, namedOut, loopRef);
+}
+
+/**
+ * log 节点在脚本里的赋值行。
+ *
+ * 画布上 log 的 output 是**上游原样透传**（见 runners/log.ts），
+ * 而导出脚本以前只给一行 print —— 于是下游写 `{{a1.output}}` 时
+ * 拿到的是 `out_a1`，一个**从未定义过的变量**，跑起来直接 NameError。
+ *
+ * 这个坑对条件分支最致命：判定条件必然引用上游输出，
+ * 而上游十有八九是个 log，于是生成的脚本一运行就崩。
+ */
+function logAssignOf(
+  g: Graph,
+  id: string,
+  style: 'sh' | 'py',
+): string {
+  const ups = (g.edges ?? []).filter((e) => e.target === id).map((e) => e.source);
+  const nm = (x: string) => (style === 'sh' ? shVar(x) : pyVar(x));
+  if (ups.length === 0) {
+    return style === 'sh'
+      ? `${nm(id)}=$INPUT_TEXT`
+      : `${nm(id)} = input_text`;
+  }
+  if (ups.length === 1) {
+    return style === 'sh'
+      ? `${nm(id)}=${'$'}${nm(ups[0])}`
+      : `${nm(id)} = ${nm(ups[0])}`;
+  }
+  const joined = ups.map((u) => (style === 'sh' ? `"${'$'}${nm(u)}"` : nm(u)));
+  return style === 'sh'
+    ? `${nm(id)}="$(printf '%s\\n%s' ${joined.join(' ')})"`
+    : `${nm(id)} = "\\n".join([${joined.join(', ')}])`;
+}
+
+/** 打平后的拓扑序（与 toShell/toPython 里同一口径） */
+function flatOrder(g: Graph): string[] {
+  const { layers, cyclic } = topoLayers(g, paramLinksOf(g.edges));
+  const out: string[] = [];
+  for (const l of layers) for (const id of l) out.push(id);
+  for (const id of cyclic) out.push(id);
+  return out;
+}
+
+
+type CondItem = { op: string; value?: string; source?: string; enabled?: boolean };
+type CondRuleLike = {
+  id?: string; label?: string; op?: string; value?: string; source?: string;
+  enabled?: boolean; logic?: string; conditions?: CondItem[];
+};
+
+/** 归一化取一条规则的条件列表（与 engine/condition.ts 同一口径） */
+function ruleCondsOf(rule: CondRuleLike): CondItem[] {
+  if (rule.conditions && rule.conditions.length > 0) return rule.conditions;
+  return [{ op: str(rule.op), value: str(rule.value), source: str(rule.source) }];
+}
+
+/**
+ * 一条条件能不能翻成脚本里的判定表达式。
+ *
+ * ================= 什么情况下不翻 =================
+ *
+ * · source 为空 —— 画布上的语义是"拼接全部上游输出"，脚本里
+ *   重写一遍拼接规则就是"画布上拼了 3 个、脚本里拼 2 个"，
+ *   没有报错，只有判定结果不对。那正是这里要防的。
+ * · op 是正则 —— JS 的 RegExp 与 python 的 re 语法不完全一致，
+ *   翻过去就是"看着对、判定错"，比不翻更糟。
+ * · 替换后仍带 {{ }} —— 说明引用的东西脚本里取不到（具名输出等），
+ *   留着就是未定义变量，跑起来 NameError。
+ */
+function condExprOf(
+  c: CondItem,
+  subst: (t: string) => string,
+): string | null {
+  const src0 = str(c.source ?? '');
+  if (src0 === '') return null;
+  const op = str(c.op || 'nonEmpty');
+  if (op === 'regex') return null;
+
+  /*
+   * 只生成 python 表达式 —— shell 不翻条件，理由见 toShell 里的说明。
+   * 半翻（python 有分支、shell 没有但不吭声）比全不翻更危险，
+   * 所以 shell 侧会明确记一条"两条分支都会执行"。
+   */
+  const src = src0 === 'input' ? 'input_text' : subst(`{{${src0}.output}}`);
+  if (src.includes('{{')) return null;
+
+  const vRaw = str(c.value ?? '');
+  const val = vRaw === '' ? '' : subst(vRaw);
+  if (val.includes('{{')) return null;
+
+  /*
+   * value 为空时 contains / notContains 恒为真（与 testCondition 同一口径）——
+   * 不特判的话脚本里会变成 `"".strip() in x`，永远是 True，
+   * 而画布上也是 True，看着一致；但一旦 value 是模板且结果为空就分叉了。
+   * 所以按同一口径显式写 True。
+   */
+  if ((op === 'contains' || op === 'notContains') && val === '') return 'True';
+
+  switch (op) {
+    case 'always': return 'True';
+    case 'nonEmpty': return `str(${src}).strip() != ""`;
+    case 'isEmpty': return `str(${src}).strip() == ""`;
+    case 'contains': return `${val} in str(${src})`;
+    case 'notContains': return `${val} not in str(${src})`;
+    case 'equals': return `str(${src}).strip() == str(${val}).strip()`;
+    case 'notEquals': return `str(${src}).strip() != str(${val}).strip()`;
+    case 'startsWith': return `str(${src}).lstrip().startswith(${val})`;
+    default: return null;
+  }
+}
+
+/** 一条规则的判定表达式；翻不了返回 null */
+function ruleExprOf(
+  rule: CondRuleLike,
+  subst: (t: string) => string,
+): string | null {
+  const active = ruleCondsOf(rule).filter((c) => c.enabled !== false);
+  if (active.length === 0) return null;
+  const parts: string[] = [];
+  for (const c of active) {
+    const e = condExprOf(c, subst);
+    if (e === null) return null;
+    parts.push(e);
+  }
+  const or = str(rule.logic ?? 'and') === 'or';
+  const joiner = or ? ' or ' : ' and ';
+  return parts.length === 1 ? parts[0] : `(${parts.join(joiner)})`;
+}
+
+/** 条件节点能翻成 if / elif / else 时，各分支的表达式（按顺序） */
+export function condPlanOf(
+  d: Record<string, unknown>,
+  subst: (t: string) => string,
+): { arms: Array<{ key: string; label: string; expr: string | null }> } | null {
+  const rules = (Array.isArray(d.rules) ? d.rules : []) as CondRuleLike[];
+  const live = rules.filter((r) => r.enabled !== false);
+  if (live.length === 0) return null;
+
+  const arms: Array<{ key: string; label: string; expr: string | null }> = [];
+  for (const r of live) {
+    const expr = ruleExprOf(r, subst);
+    if (expr === null) return null; // 一条翻不了就整段不翻 —— 半翻比不翻更危险
+    arms.push({ key: str(r.id), label: str(r.label || r.id), expr });
+  }
+  if (d.defaultBranch === true) {
+    arms.push({ key: '__default__', label: '兜底', expr: null });
+  }
+  return arms.length > 0 ? { arms } : null;
+}
+
+/**
+ * 条件节点各分支的成员，以及"汇合点"（多个分支都会到达的节点）。
+ *
+ * 汇合点必须放在 if/else **之后** —— 塞进某个分支里的话，
+ * 走另一条分支时它根本不执行，而画布上两条路都会汇到它。
+ */
+export function condBranchesOf(
+  g: Graph,
+  id: string,
+): { arms: Map<string, string[]>; joins: string[] } {
+  const order = flatOrder(g);
+  const fwd = new Map<string, string[]>();
+  for (const e of g.edges) {
+    if (!fwd.has(e.source)) fwd.set(e.source, []);
+    fwd.get(e.source)!.push(e.target);
+  }
+  const walk = (starts: string[]): Set<string> => {
+    const seen = new Set<string>();
+    const stack = [...starts];
+    while (stack.length) {
+      const cur = stack.pop()!;
+      if (cur === id || seen.has(cur)) continue;
+      seen.add(cur);
+      stack.push(...(fwd.get(cur) ?? []));
+    }
+    return seen;
+  };
+
+  const startsByBranch = new Map<string, string[]>();
+  for (const e of g.edges) {
+    if (e.source !== id) continue;
+    const b = str((e as unknown as { branch?: string }).branch ?? '');
+    if (!b) continue;
+    if (!startsByBranch.has(b)) startsByBranch.set(b, []);
+    startsByBranch.get(b)!.push(e.target);
+  }
+
+  const reach = new Map<string, Set<string>>();
+  for (const [b, starts] of startsByBranch) reach.set(b, walk(starts));
+
+  const seenCount = new Map<string, number>();
+  for (const s of reach.values()) {
+    for (const x of s) seenCount.set(x, (seenCount.get(x) ?? 0) + 1);
+  }
+  const joins = order.filter((x) => (seenCount.get(x) ?? 0) >= 2);
+
+  const arms = new Map<string, string[]>();
+  for (const [b, s] of reach) {
+    arms.set(b, order.filter((x) => s.has(x) && (seenCount.get(x) ?? 0) < 2));
+  }
+  return { arms, joins };
+}
+
 function toShell(g: Graph): ExportResult {
   /*
    * topoLayers 返回分层结果（{ layers, cyclic }），没有一维的 order。
@@ -606,6 +829,23 @@ function toShell(g: Graph): ExportResult {
       const d = (n.data ?? {}) as Record<string, unknown>;
       const kind = str(d.kind ?? (n as { type?: string }).type);
 
+      /*
+       * shell 不翻条件判定：nonEmpty 在画布上是"去掉首尾空白后非空"，
+       * shell 里写成 `[ -n "$X" ]` 差的就是那一次 trim ——
+       * 看着一样、判定不同，正是这里要防的"能跑但结果不对"。
+       * 所以 python 翻、shell 明说各分支都会执行。
+       */
+      if (kind === 'condition') {
+        const { arms } = condBranchesOf(g, id);
+        const total = [...arms.values()].reduce((m, x) => m + x.length, 0);
+        if (total > 0) {
+          skipped.push({
+            id, kind,
+            reason: `条件分支在 shell 脚本里不生成判断 —— ${total} 个分支节点都会执行，而画布上只走一条；要分支请导出 python 版`,
+          });
+        }
+      }
+
       if (kind === 'loop') {
         done.add(id);
         const times = loopFixedTimes(d);
@@ -645,6 +885,8 @@ function toShell(g: Graph): ExportResult {
           });
         }
       }
+
+      if (kind === 'log') lines.push(logAssignOf(g, id, 'sh'));
 
       done.add(id);
       const line = shellLine(n, skipped, cardRef, namedOut, loopRef);
@@ -898,6 +1140,67 @@ function toPython(g: Graph): ExportResult {
       const d = (n.data ?? {}) as Record<string, unknown>;
       const kind = str(d.kind ?? (n as { type?: string }).type);
 
+      /*
+       * 条件节点：能翻就生成真的 if/elif/else。
+       * 翻不成的话**必须明说各分支都会执行** ——
+       * 画布上走 A 分支，脚本里 A、B 都跑（比如 B 是"推送/删除"），
+       * 而这与"拼不出变量"不同：后者留 {{}} 的痕迹，分支跑错了没有。
+       */
+      if (kind === 'condition') {
+        done.add(id);
+        const { arms: armOrder, joins } = condBranchesOf(g, id);
+        const subst = (t: string) => pysubst(t, cardRef, namedOut, loopRef);
+        const plan = condPlanOf(d, subst);
+
+        if (plan && plan.arms.length > 0) {
+          let opened = false;
+          const k = pyVar(id);
+          lines.push(`${indent}${k} = ""`);
+          /*
+           * 各分支的成员都先初始化成空串。
+           *
+           * 画布上没走的那条分支，其节点 output 就是空串
+           * （upstreamText 里 `outputs[u] ?? ''`），
+           * 而脚本里不初始化的话，汇合点引用它就是 UnboundLocalError ——
+           * 脚本直接崩，而不是"拿到空串"，这正是两边必须一致的地方。
+           */
+          const members0 = new Set<string>();
+          for (const a of plan.arms) {
+            for (const m of armOrder.get(a.key) ?? []) members0.add(m);
+          }
+          for (const m of flatOrder(g)) {
+            if (members0.has(m)) lines.push(`${indent}${pyVar(m)} = ""`);
+          }
+          for (const a of plan.arms) {
+            const members = armOrder.get(a.key) ?? [];
+            const head = a.expr === null
+              ? (opened ? `${indent}else:` : `${indent}if True:`)
+              : (opened ? `${indent}elif ${a.expr}:` : `${indent}if ${a.expr}:`);
+            lines.push(`${head}   # 分支：${a.label}`);
+            lines.push(`${indent}    ${k} = "走「${a.label}」"`);
+            if (members.length === 0) lines.push(`${indent}    pass`);
+            else emit(members, `${indent}    `, loopRef);
+            opened = true;
+          }
+          /*
+           * 一条分支都没生成时补 pass —— `if ...:` 下面空着是语法错误。
+           */
+          if (!opened) lines.push(`${indent}pass`);
+          // 汇合点放在分支之外：塞进某条分支的话走另一条就不执行了
+          emit(joins, indent, loopRef);
+          count += 1;
+          continue;
+        }
+
+        const branchCount = [...armOrder.values()].reduce((m, x) => m + x.length, 0);
+        if (branchCount > 0) {
+          skipped.push({
+            id, kind,
+            reason: `条件分支在脚本里不生成 if/elif —— ${branchCount} 个分支节点都会执行，而画布上只走一条`,
+          });
+        }
+      }
+
       if (kind === 'loop') {
         done.add(id);
         const times = loopFixedTimes(d);
@@ -920,6 +1223,8 @@ function toPython(g: Graph): ExportResult {
           });
         }
       }
+
+      if (kind === 'log') lines.push(`${indent}${logAssignOf(g, id, 'py')}`);
 
       done.add(id);
       const line = pyLine(n, skipped, indent, cardRef, paneEff, namedOut, loopRef);
