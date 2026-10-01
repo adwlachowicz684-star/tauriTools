@@ -2438,6 +2438,30 @@ pub fn fpx_move_card_across(
     let idx = dst_tab_index.unwrap_or(0);
 
     store::with_config(&dir, |cfg| {
+        /*
+         * 目标页签下标必须先校验，且必须在物理搬家**之前**。
+         *
+         * `relocate_cross_move` 会真把文件夹搬到另一栏的目录下；它成功了、
+         * 插页签才失败时，`with_config` 的语义是"闭包返回 Err 就不落盘"——
+         * config 里仍记着旧路径，而磁盘上的文件夹已经搬走了。卡片于是彻底
+         * 消失，连"搬到哪去了"的线索都不留。
+         *
+         * `n.max(1)`：目标栏还没有页签时 `insert_card_into_tab` 会自动补一个
+         * 「默认」页签，此时下标 0 是有效的。用裸 `len()` 会把"移到空栏"
+         * 这条正常路径一起拦掉。
+         */
+        {
+            let dst_tabs = if from_kind == "project" { &cfg.group_tabs } else { &cfg.project_tabs };
+            let n = dst_tabs.len();
+            if idx >= n.max(1) {
+                return Err(if n == 0 {
+                    format!("目标页签下标 {idx} 越界（目标栏还没有页签）")
+                } else {
+                    format!("目标页签下标 {idx} 越界（共 {n} 个页签）")
+                });
+            }
+        }
+
         // 物理搬家（可能返回"无需搬"= None）
         let relocated = if cfg.move_folder_on_cross_move {
             sys::relocate_cross_move(cfg, &path, &dst_kind)?
@@ -2450,10 +2474,10 @@ pub fn fpx_move_card_across(
         // 再插入目标类别页签末尾。两个分支分开写，避免同时对 cfg 的两个字段做可变借用。
         if from_kind == "project" {
             sys::remove_card_from_tabs(&mut cfg.project_tabs, &path);
-            sys::insert_card_into_tab(&mut cfg.group_tabs, idx, usize::MAX, &final_path);
+            sys::insert_card_into_tab(&mut cfg.group_tabs, idx, usize::MAX, &final_path)?;
         } else {
             sys::remove_card_from_tabs(&mut cfg.group_tabs, &path);
-            sys::insert_card_into_tab(&mut cfg.project_tabs, idx, usize::MAX, &final_path);
+            sys::insert_card_into_tab(&mut cfg.project_tabs, idx, usize::MAX, &final_path)?;
         }
 
         Ok(model::MoveAcrossResult { snapshot: snapshot(&dir, cfg), relocated })

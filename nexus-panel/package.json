@@ -175,6 +175,7 @@
     "test:pg-mcp-notify": "node plugins/project-group/mcp-notify-test.mjs",
     "test:pg-md": "node plugins/project-group/md-edit-test.mjs",
     "test:pg-migrate": "node plugins/project-group/migrate-test.mjs",
+    "test:pg-move-across-tab": "node plugins/project-group/move-across-tab-test.mjs",
     "test:pg-link-pick-all": "node plugins/project-group/link-pick-all-test.mjs",
     "test:pg-link-preset-keep": "node plugins/project-group/link-preset-keep-test.mjs",
     "test:pg-movecard-source": "node plugins/project-group/movecard-source-tab-test.mjs",

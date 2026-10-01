@@ -1223,12 +1223,34 @@ pub fn remove_card_from_tabs(tabs: &mut [TabItem], path: &str) {
 }
 
 /// 把路径插入目标类别指定页签的指定位置。
-pub fn insert_card_into_tab(tabs: &mut Vec<TabItem>, tab_index: usize, to_index: usize, path: &str) {
+///
+/// 页签下标越界**必须报错**，不能静默回落到最后一个页签：
+/// 静默时卡片被登记到目标栏**另一个**页签里，而前端照常记一句「已转为项目组」
+/// —— 卡片在用户眼前等于"消失了"，他只会以为按钮没反应，无从把它归到
+/// "页签下标不对"。
+///
+/// 越界输入不是理论情况：`activeTab` 存在 localStorage 里、启动时恢复，
+/// 与当前快照可能不同步（App.tsx 的 cycleTab 与 useFpx 的 moveCard 都为此
+/// 写了 clamp）。
+///
+/// 与 `fpx_remove_card` / MCP `add_card_to_tab` 保持一致：那边越界本来就报错，
+/// 同类操作一个报错一个静默，静默那个迟早变成查不出来的问题。
+///
+/// 注意 `to_index` 与 `tab_index` 语义不同：`to_index` 是"插到列表第几个"，
+/// 传 `usize::MAX` 表示追加到末尾，是正常调用，仍要夹取；`tab_index` 是
+/// 调用方指定的页签身份，不存在就该报错。
+pub fn insert_card_into_tab(
+    tabs: &mut Vec<TabItem>,
+    tab_index: usize,
+    to_index: usize,
+    path: &str,
+) -> Result<(), String> {
     if tabs.is_empty() { tabs.push(TabItem { name: "默认".into(), items: vec![] }); }
-    let i = tab_index.min(tabs.len() - 1);
-    let items = &mut tabs[i].items;
-    let at = to_index.min(items.len());
-    items.insert(at, path.to_string());
+    let n = tabs.len();
+    let t = tabs.get_mut(tab_index).ok_or_else(|| format!("页签下标 {tab_index} 越界（共 {n} 个页签）"))?;
+    let at = to_index.min(t.items.len());
+    t.items.insert(at, path.to_string());
+    Ok(())
 }
 
 pub fn list_icons(data_dir: &Path) -> Vec<String> {
