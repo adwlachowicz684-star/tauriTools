@@ -27,6 +27,7 @@ import { tokenRe } from './template';
 import { opBrief } from './ops';
 import { paramLinksOf, linksInto, outLabelOf, outputsOf, OUT_DEFAULT } from './paramLinks';
 import { findPane, resolveApiPane, DEFAULT_TEMPERATURE } from './pane';
+import { loopBodyOf } from './loop';
 
 export type ExportFormat = 'shell' | 'python' | 'json' | 'markdown';
 
@@ -227,6 +228,7 @@ function subst(
   cardRef?: Map<string, string>,
   onUnresolved?: (key: string) => void,
   namedOut?: Set<string>,
+  loopRef?: Record<string, string> | null,
 ): string {
   const raw = String(tpl ?? '');
   if (!raw) return style === 'sh' ? '' : '""';
@@ -275,6 +277,16 @@ function subst(
      */
     if (id === 'input') {
       slots.push(style === 'sh' ? '$INPUT_TEXT' : 'input_text');
+      return `\u0000${slots.length - 1}\u0000`;
+    }
+    /*
+     * 循环变量：在循环体内能翻成脚本里的真变量。
+     * 放在 UNRESOLVABLE_REF 之前 —— 那一支会把它当成"取不到"留下字面量，
+     * 而脚本里其实有对应的变量，留字面量等于白做。
+     */
+    if (loopRef && loopRef[String(path)]) {
+      // shell 要的是 `$名` 这个字符串内容，与上面 OUT_ID 同一口径
+      slots.push(style === 'sh' ? `$${loopRef[String(path)]}` : loopRef[String(path)]);
       return `\u0000${slots.length - 1}\u0000`;
     }
     if (UNRESOLVABLE_REF.has(id)) {
@@ -400,12 +412,13 @@ function shellLine(
   skipped: Skipped[],
   cardRef?: Map<string, string>,
   namedOut?: Set<string>,
+  loopRef?: Record<string, string> | null,
 ): string | null {
   const d = (n.data ?? {}) as Record<string, unknown>;
   const kind = str(d.kind ?? d.type);
   const v = (k: string) => subst(str(d[k]), 'sh', cardRef, (key) => {
     skipped.push({ id: n.id, kind, reason: refReason(key) });
-  }, namedOut);
+  }, namedOut, loopRef);
   const me = shVar(n.id);
 
   switch (kind) {
@@ -488,6 +501,58 @@ function shellLine(
   }
 }
 
+/**
+ * 图里每个循环节点的**循环体成员**（loop id → 成员 id）。
+ *
+ * 直接复用 engine/loop.ts 的 loopBodyOf ——
+ * 导出侧自己判一遍的话，"哪些节点算循环体"就会出现两套说法：
+ * 画布上跑 3 个节点、脚本里循环包了 2 个，两边都不报错。
+ */
+export function loopBodiesOf(g: Graph): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const n of g.nodes ?? []) {
+    const d = (n.data ?? {}) as Record<string, unknown>;
+    if (str(d.kind ?? (n as { type?: string }).type) !== 'loop') continue;
+    out.set(n.id, loopBodyOf(n.id, g));
+  }
+  return out;
+}
+
+/**
+ * 循环变量在脚本里的名字：`{{loop.item}}` → 该循环的变量。
+ *
+ * 变量名带循环 id —— 嵌套循环时内外层各用各的，
+ * 都叫 loop_item 的话内层会把外层的覆盖掉，
+ * 表现为"外层循环第二轮开始拿到的都是内层的最后一轮"。
+ */
+function loopVarNames(id: string, style: 'sh' | 'py'): Record<string, string> {
+  const k = style === 'sh' ? shVar(id) : pyVar(id);
+  return {
+    'loop.item': style === 'sh' ? `${k}_ITEM` : `${k}_item`,
+    'loop.index': style === 'sh' ? `${k}_INDEX` : `${k}_index`,
+    'loop.count': style === 'sh' ? `${k}_COUNT` : `${k}_count`,
+  };
+}
+
+/**
+ * 这个循环能不能翻译成脚本里的真循环。
+ *
+ * ================= 为什么只有 times 能翻 =================
+ *
+ * list 要按分隔符切上游输出、glob 要靠 Rust 展开通配符 ——
+ * 这两样在脚本里都得重写一遍切分/展开规则，
+ * 而重写的结果就是"画布上切出 5 项、脚本里切出 4 项"，
+ * 没有报错，只有轮数不对。那正是这里要防的东西。
+ *
+ * 所以只能翻 times（次数写死在节点上，脚本里原样用），
+ * 其余模式退回平铺并明说"脚本里只跑一次"。
+ */
+function loopFixedTimes(d: Record<string, unknown>): number {
+  if (str(d.mode || 'times') !== 'times') return 0;
+  const t = Math.floor(Number(d.times ?? 0));
+  return Number.isFinite(t) && t >= 1 ? t : 0;
+}
+
 function toShell(g: Graph): ExportResult {
   /*
    * topoLayers 返回分层结果（{ layers, cyclic }），没有一维的 order。
@@ -524,15 +589,72 @@ function toShell(g: Graph): ExportResult {
   ];
   const cardRef = constCardRefs(g);
   const namedOut = namedOutRefs(g);
+  const bodies = loopBodiesOf(g);
   let count = 0;
-  for (const id of order) {
-    const n = g.nodes.find((x) => x.id === id);
-    if (!n) continue;
-    const line = shellLine(n, skipped, cardRef, namedOut);
-    if (line) { lines.push(line); count += 1; }
-    else { lines.push(`# TODO 未翻译：${id}（${str((n.data as Record<string, unknown>)?.kind ?? '')}）`); }
-    lines.push(...paramLinkNoteOf(g, id, '# '));
-  }
+
+  /*
+   * 递归而不是平铺：循环体成员交给它的循环节点包起来，
+   * 平铺的话脚本里只跑一次 —— 能跑、看着完整、轮数不对，
+   * 而这恰恰是最难发现的那一类错。
+   */
+  const done = new Set<string>();
+  const emit = (ids: string[], loopRef: Record<string, string> | null): void => {
+    for (const id of ids) {
+      if (done.has(id)) continue;
+      const n = g.nodes.find((x) => x.id === id);
+      if (!n) continue;
+      const d = (n.data ?? {}) as Record<string, unknown>;
+      const kind = str(d.kind ?? (n as { type?: string }).type);
+
+      if (kind === 'loop') {
+        done.add(id);
+        const times = loopFixedTimes(d);
+        const members = (bodies.get(id) ?? new Set<string>());
+        const inner = order.filter((x) => members.has(x));
+        if (times > 0 && inner.length > 0) {
+          const nm = loopVarNames(id, 'sh');
+          const k = shVar(id);
+          lines.push(`# ${id}: 循环（固定 ${times} 次）`);
+          lines.push(`${nm['loop.count']}=${times}`);
+          lines.push(`${nm['loop.index']}=0`);
+          lines.push(`while [ "${'$'}${nm['loop.index']}" -lt "${'$'}${nm['loop.count']}" ]; do`);
+          lines.push(`  ${nm['loop.item']}=$(( ${nm['loop.index']} + 1 ))`);
+          const t0 = lines.length;
+          emit(inner, nm);
+          // 循环体按两空格缩进，读起来才看得出它们在循环里
+          for (let i = t0; i < lines.length; i += 1) {
+            if (lines[i].startsWith('  ')) continue;
+            lines[i] = `  ${lines[i]}`;
+          }
+          lines.push(`  ${nm['loop.index']}=$(( ${nm['loop.index']} + 1 ))`);
+          lines.push('done');
+          /*
+           * 循环节点的输出在画布上是"各轮收集起来的结果"，脚本里
+           * 没有等价物 —— 给空串并注明，而不是拿最后一轮顶替
+           * （顶替 = 能跑但内容不对）。
+           */
+          lines.push(`${k}=""   # 循环 ${id} 的输出是各轮收集的结果，脚本里留空`);
+          count += 1;
+          continue;
+        }
+        /* 翻不成真循环：明说循环体在脚本里只跑一次，别让人以为展开过 */
+        if (inner.length > 0) {
+          skipped.push({
+            id, kind,
+            reason: `循环体（${inner.length} 个节点）在脚本里只跑一次 —— 画布上会重复执行，脚本不是`,
+          });
+        }
+      }
+
+      done.add(id);
+      const line = shellLine(n, skipped, cardRef, namedOut, loopRef);
+      if (line) { lines.push(line); count += 1; }
+      else { lines.push(`# TODO 未翻译：${id}（${str((n.data as Record<string, unknown>)?.kind ?? '')}）`); }
+      lines.push(...paramLinkNoteOf(g, id, '# '));
+    }
+  };
+  emit(order, null);
+
   return { text: lines.join('\n') + '\n', skipped, count };
 }
 
@@ -547,12 +669,13 @@ function pyLine(
   cardRef?: Map<string, string>,
   paneEff?: Map<string, ReturnType<typeof resolveApiPane>>,
   namedOut?: Set<string>,
+  loopRef?: Record<string, string> | null,
 ): string | null {
   const d = (n.data ?? {}) as Record<string, unknown>;
   const kind = str(d.kind ?? d.type);
   const v = (k: string) => subst(str(d[k]), 'py', cardRef, (key) => {
     skipped.push({ id: n.id, kind, reason: refReason(key) });
-  }, namedOut);
+  }, namedOut, loopRef);
   /*
    * 同上，但替换一段**给定的文本**而不是节点上的某个字段。
    * 窗格继承来的 system 提示词也要走同一套替换 ——
@@ -560,7 +683,7 @@ function pyLine(
    */
   const vs = (s: string) => subst(str(s), 'py', cardRef, (key) => {
     skipped.push({ id: n.id, kind, reason: refReason(key) });
-  }, namedOut);
+  }, namedOut, loopRef);
   const me = pyVar(n.id);
 
   switch (kind) {
@@ -764,15 +887,50 @@ function toPython(g: Graph): ExportResult {
   const cardRef = constCardRefs(g);
   const namedOut = namedOutRefs(g);
   const paneEff = llmPaneEffOf(g);
+  const bodies = loopBodiesOf(g);
   let count = 0;
-  for (const id of order) {
-    const n = g.nodes.find((x) => x.id === id);
-    if (!n) continue;
-    const line = pyLine(n, skipped, '    ', cardRef, paneEff, namedOut);
-    if (line) { lines.push(line); count += 1; }
-    else { lines.push(`    # TODO 未翻译：${id}（${str((n.data as Record<string, unknown>)?.kind ?? '')}）`); }
-    lines.push(...paramLinkNoteOf(g, id, '    # '));
-  }
+
+  const emit = (ids: string[], indent: string, loopRef: Record<string, string> | null): void => {
+    for (const id of ids) {
+      if (done.has(id)) continue;
+      const n = g.nodes.find((x) => x.id === id);
+      if (!n) continue;
+      const d = (n.data ?? {}) as Record<string, unknown>;
+      const kind = str(d.kind ?? (n as { type?: string }).type);
+
+      if (kind === 'loop') {
+        done.add(id);
+        const times = loopFixedTimes(d);
+        const members = bodies.get(id) ?? new Set<string>();
+        const inner = order.filter((x) => members.has(x));
+        if (times > 0 && inner.length > 0) {
+          const nm = loopVarNames(id, 'py');
+          lines.push(`${indent}# ${id}: 循环（固定 ${times} 次）`);
+          lines.push(`${indent}${nm['loop.count']} = ${times}`);
+          lines.push(`${indent}for ${nm['loop.index']} in range(${nm['loop.count']}):`);
+          lines.push(`${indent}    ${nm['loop.item']} = str(${nm['loop.index']} + 1)`);
+          emit(inner, `${indent}    `, nm);
+          count += 1;
+          continue;
+        }
+        if (inner.length > 0) {
+          skipped.push({
+            id, kind,
+            reason: `循环体（${inner.length} 个节点）在脚本里只跑一次 —— 画布上会重复执行，脚本不是`,
+          });
+        }
+      }
+
+      done.add(id);
+      const line = pyLine(n, skipped, indent, cardRef, paneEff, namedOut, loopRef);
+      if (line) { lines.push(line); count += 1; }
+      else { lines.push(`${indent}# TODO 未翻译：${id}（${str((n.data as Record<string, unknown>)?.kind ?? '')}）`); }
+      lines.push(...paramLinkNoteOf(g, id, `${indent}# `));
+    }
+  };
+  const done = new Set<string>();
+  emit(order, '    ', null);
+
   lines.push('', '', 'if __name__ == "__main__":', '    main()', '');
   return { text: lines.join('\n'), skipped, count };
 }

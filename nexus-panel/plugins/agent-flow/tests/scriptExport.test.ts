@@ -188,7 +188,12 @@ test('有参数连线的节点在脚本里要标注（不能静默取手填值�
   const src = readSrc('engine/scriptExport.ts');
   assert.ok(/paramLinkNoteOf/.test(src), '必须显式标出参数连线造成的差异');
   assert.ok(/paramLinkNoteOf\(g, id, '# '\)/.test(src), 'shell 要标');
-  assert.ok(/paramLinkNoteOf\(g, id, '    # '\)/.test(src), 'python 要标');
+  /*
+   * python 侧不再写死 4 个空格 —— 循环体里缩进要跟着层级走，
+   * 写死的话嵌套循环内的注释会顶到行首，看着像在循环外。
+   * 所以这里盯"前缀由 indent 拼出"，而不是盯某串空格。
+   */
+  assert.ok(src.includes('paramLinkNoteOf(g, id, `${indent}# `)'), 'python 要标（且缩进跟着循环层级走）');
 });
 
 /* ================= 大模型节点 ================= */
@@ -516,4 +521,77 @@ test('源码：导出侧的引用替换认具名输出表（namedOutRefs）', ()
   assert.ok(/outputsOf\(/.test(body), '具名输出没走 outputsOf（会与卡片上的出口清单漂移）');
   // 反向：reason 必须区分两种"取不到"
   assert.ok(/具名输出/.test(src), 'skipped 理由没区分具名输出与画布参数');
+});
+
+/* ================================================================ */
+/* 循环                                                             */
+/* ================================================================ */
+
+/*
+ * 循环体以前被**平铺**导出 —— 画布上跑 3 次，脚本里只跑 1 次。
+ * 脚本能跑、看着完整，只是轮数不对，而这与"拼不出变量"不同：
+ * 后者会留下 {{}} 的痕迹，轮数错了什么痕迹都没有。
+ */
+test('python：固定次数的循环真的生成 for', () => {
+  const r = exportFlow(g([
+    n('lp', 'loop', { mode: 'times', times: 3 }),
+    n('b1', 'log', { text: '轮 {{loop.index}}' }),
+  ], [e('lp', 'b1')]), 'python');
+  assert.ok(r.text.includes('for out_lp_index in range(out_lp_count)'), `没生成 for：${r.text}`);
+  // 循环体必须在 for 内部（有缩进），平铺的话就没有
+  const forAt = r.text.indexOf('for out_lp_index');
+  const bodyAt = r.text.indexOf('轮');
+  assert.ok(bodyAt > forAt, '循环体不在循环内');
+  assert.ok(/^\s+print/.test(r.text.split('\n').find((l) => l.includes('轮')) ?? ''), '循环体没缩进');
+});
+
+test('python：循环变量换成脚本变量，不再留 {{loop.x}} 字面量', () => {
+  const r = exportFlow(g([
+    n('lp', 'loop', { mode: 'times', times: 2 }),
+    n('b1', 'log', { text: '{{loop.index}}/{{loop.item}}/{{loop.count}}' }),
+  ], [e('lp', 'b1')]), 'python');
+  assert.ok(!r.text.includes('{{loop.'), `仍留着字面量：${r.text}`);
+  assert.ok(r.text.includes('out_lp_item'), 'item 没换成变量');
+});
+
+test('shell：固定次数的循环真的生成 while', () => {
+  const r = exportFlow(g([
+    n('lp', 'loop', { mode: 'times', times: 3 }),
+    n('b1', 'log', { text: '轮 {{loop.item}}' }),
+  ], [e('lp', 'b1')]), 'shell');
+  assert.ok(r.text.includes('while [ "$OUT_LP_INDEX" -lt "$OUT_LP_COUNT" ]'), `没生成 while：${r.text}`);
+  assert.ok(r.text.includes('$OUT_LP_ITEM'), `循环变量少了 $：${r.text}`);
+  assert.ok(!r.text.includes('{{loop.'), '仍留着字面量');
+});
+
+/*
+ * 只有 times 能翻 —— list 要按分隔符切、glob 要靠 Rust 展开，
+ * 在脚本里重写一遍切分规则，结果就是"画布上 5 项、脚本里 4 项"，
+ * 没有报错，只有轮数不对。那正是这里要防的，所以宁可不翻。
+ */
+test('list 模式不硬翻，但要明说循环体在脚本里只跑一次', () => {
+  const r = exportFlow(g([
+    n('lp', 'loop', { mode: 'list', separator: '\n', source: 'a1' }),
+    n('b1', 'log', { text: '项={{loop.item}}' }),
+  ], [e('lp', 'b1')]), 'python');
+  assert.ok(!r.text.includes('for out_lp_index'), 'list 模式不该硬生成 for');
+  const hit = r.skipped.find((s) => s.id === 'lp' && s.reason.includes('只跑一次'));
+  assert.ok(hit, `没说明只跑一次：${JSON.stringify(r.skipped)}`);
+});
+
+/* 嵌套：内外层各用各的变量，都叫 loop_item 的话内层会盖掉外层 */
+test('嵌套循环用各自的变量名', () => {
+  const r = exportFlow(g([
+    n('o', 'loop', { mode: 'times', times: 2 }),
+    n('i', 'loop', { mode: 'times', times: 2 }),
+    n('b2', 'log', { text: '内 {{loop.index}}' }),
+  ], [e('o', 'i'), e('i', 'b2')]), 'python');
+  assert.ok(r.text.includes('out_o_index'), '缺外层变量');
+  assert.ok(r.text.includes('out_i_index'), '缺内层变量');
+});
+
+test('源码：导出侧的循环体判定复用 engine/loop.ts，不自写一套', () => {
+  const src = readSrc('engine/scriptExport.ts');
+  const body = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.ok(/loopBodyOf/.test(body), '没复用 loopBodyOf —— 会出现两套"哪些节点算循环体"');
 });
