@@ -118,6 +118,13 @@ function collectAnnotated(files) {
  * 若它排在真实调用之前，正则会先匹配到注释 —— 于是扫到一段空块，
  * ① ③ 全报 0 条。那是最糟的假绿：报告说"一致"，其实压根没检查。
  */
+/* ⚠ 这里刻意保留**内联**实现，不要改成 import '../test-scan-utils.mjs'。
+   实测（command-consistency-test）：本脚本会被整份复制到 /tmp/cmds-xxx/scripts/
+   下执行（用构造出来的 Rust 工程真跑），相对 import 会解析成
+   /tmp/cmds-xxx/test-scan-utils.mjs —— 那个文件不存在，
+   脚本直接 ERR_MODULE_NOT_FOUND 退出，24 项断言全红而报错只指向模块解析，
+   看不出是"为了方便共用"引入的。
+   要共用，得先让测试在复制时一并带上依赖文件。 */
 function stripComments(src) {
   return src
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
