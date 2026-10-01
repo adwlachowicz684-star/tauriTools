@@ -174,34 +174,35 @@ console.log('\n=== 5. 路径归一只有一套规则（前端不得自带副本�
    *    `D:\a` / `d:\A` 判成两个目录，查重悄悄漏掉 —— 不报错，只是重复登记。 */
   t('ci 按平台求值（不能写死 true/false）', iCi >= 0 && !/const ci = (true|false);/.test(hook), `iCi=${iCi}`);
   /*
-   * ② 真正要守的是"addCard 用到的 ci 来自**自己这段**的声明，且先于使用"。
+   * ② 真正要守的是"addCard 用到的 ci **有**声明，且该声明先于 addCard 求值"。
    *
-   * 旧写法拿全文件 `indexOf(CI_DECL)` 的第一处去和 addCard 起点比：
-   * 而那第一处恰好就**在 addCard 内部**（文件里有三处 ci，最靠前那处是
-   * addCard 自己的），于是 iCi > iAdd 恒成立 —— 断言永远红，而它指控的
-   * TDZ 崩溃根本不存在。**守着错标准的测试比没有测试更危险**：后来人
-   * 为了让报警消失，会把 ci 搬到 addCard 之前、搬进另一个函数的闭包外，
-   * 那才真造出一个 TDZ。
+   * 这里改过两轮，两轮的错法恰好相反，都值得留着当反面教材：
    *
-   * 而"段内声明"这条也**不能钉**：ci 现在被上提到了 hook 最前面
-   * （useFpx.ts 第 30 行的注释写了原因 —— 留在后半段会踩 TDZ，
-   *   createLink / syncLinks 的 deps 先求值 → 首次渲染就抛 ReferenceError）。
-   * 钉"段内声明"的下场和上面一样：后来人为了让报警消失把 ci 搬回段内，
-   * 把崩溃级 bug 请回来。
+   *   · 第一版拿全文件 `indexOf(CI_DECL)` 的第一处去和 addCard 起点比，
+   *     而那第一处当时就**在 addCard 内部**，于是 iCi > iAdd 恒成立 ——
+   *     断言永远红，而它指控的 TDZ 崩溃根本不存在。
+   *   · 第二版改成"必须在查重段**内部**有声明"。可那行 ci 后来被**上提到
+   *     文件最前面**（紧跟 boot）—— 同样是为了躲 TDZ，原因写在 useFpx.ts
+   *     的注释里：createLink / syncLinks 的依赖数组在它之前求值，`const`
+   *     有暂时性死区，那两处读到的是尚未初始化的绑定，于是 useFpx
+   *     **首次渲染就抛 ReferenceError**（整块崩，不是"这个功能不能用"）。
+   *     于是这条又变恒假 —— 而它指控的问题依然不存在。
    *
-   * 两种形态（段内声明 / 上提到最前）都得接受，**真正要守的只有一件事**：
-   *   使用点之前**存在一处**这个声明。
-   * 一处都没有、或声明落在使用点之后，都报红。
+   * 两版都不是漏报，是**负的**：真为了让报警消失去"修"，就得把 ci 搬来
+   * 搬去，最终把崩溃级 bug 请回来。守着错标准的测试比没有测试更危险。
+   *
+   * 共同病因是**钉写法而不是钉意图**（"必须在段内"是写法，"先于求值"是意图）。
+   * 现在钉意图：全文件有声明、且声明位置早于 addCard 起点。
    */
-  const declIdx = [];
-  for (let i = hook.indexOf(CI_DECL); i >= 0; i = hook.indexOf(CI_DECL, i + 1)) declIdx.push(i);
+  const iCiIn = hook.indexOf(CI_DECL);
   const iUseCi = dedup.indexOf('normalizeKey(c.path, ci)');
-  const absUse = iUseCi >= 0 ? iAdd + iUseCi : -1;
-  const declBefore = declIdx.filter((i) => i < absUse);
-  t('查重用的 ci 有声明（不能凭空出现）', declIdx.length > 0, `声明 ${declIdx.length} 处`);
-  t('ci 声明先于使用（防 TDZ）', iUseCi >= 0 && declBefore.length > 0,
-    `声明 ${declIdx.join('/') || '无'}，使用绝对位置 ${absUse}`);
-  t('判据不空跑（使用点确实定位到了）', iUseCi >= 0 && absUse > iAdd, `iUse=${iUseCi}`);
+  t('ci 有声明（不依赖外部注入）', iCiIn >= 0, `iCi=${iCiIn}`);
+  t('ci 声明先于 addCard 求值（防 TDZ）', iCiIn >= 0 && iCiIn < iAdd, `iCi=${iCiIn} iAdd=${iAdd}`);
+  /*
+   * 段内**不得另起**一个 ci：那样查重用的是被遮蔽的局部值，
+   * 上面两条（按平台求值、先于求值）就都管不到真正生效的那个了。
+   */
+  t('查重段没有遮蔽外层 ci', dedup.indexOf(CI_DECL) === -1, `dedup 内 iCi=${dedup.indexOf(CI_DECL)}`);
   t('查重走 normalizeKey', /normalizeKey\(c\.path, ci\) === normalizeKey\(path, ci\)/.test(dedup));
   t('换绑判定按平台给 ci', /ci=\{boot\.platform === 'windows'\}/.test(hub));
 }
