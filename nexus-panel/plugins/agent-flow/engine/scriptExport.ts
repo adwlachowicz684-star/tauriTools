@@ -659,7 +659,19 @@ function pysubst(
  * 判据见 tests：表里的每一项，其 runner 必须真的读上游并返回。
  */
 const PASSTHROUGH_KINDS = new Set([
-  'log', 'beep', 'playAudio', 'wait', 'retry', 'throttle', 'timeout', 'gate',
+  /*
+   * 名字必须写**真名**（dataKind），不能按 runner 文件名推 ——
+   * 上一版写的是 'playAudio'（文件名），而真名是 'play-audio'。
+   * 于是真正的播放声音节点落进"算不出来留空"，而探测时用了错名字，
+   * 看上去却是修好了 —— 名字写错的修复等于没修，且不报错。
+   */
+  'log', 'beep', 'play-audio', 'wait', 'retry', 'throttle', 'timeout', 'gate',
+  /*
+   * stop 也是透传：画布上它终止流程，但输出的是上游原文（见 runners/ops.ts
+   * 的 runStop）。上一版漏了它 —— 而漏登记的代价是脚本里 out_stop 恒空，
+   * 下游 {{s1.output}} 全线空值。
+   */
+  'stop',
 ]);
 
 /**
@@ -1000,6 +1012,16 @@ function toShell(g: Graph): ExportResult {
         skipped.push({
           id, kind,
           reason: '并发在脚本里是顺序执行 —— 结果一致，只是不并行（画布上的并发度上限在脚本里没有对应物）',
+        });
+      }
+      if (kind === 'stop') {
+        /*
+         * 停止节点在画布上会终止整个流程（或当前分支），脚本里没有对应物 ——
+         * 后面的节点照常执行。这比"输出取错"更值得说：它会**多做**事情。
+         */
+        skipped.push({
+          id, kind,
+          reason: '停止节点在脚本里不终止流程 —— 后面的节点照常执行，画布上不会',
         });
       }
       const line = shellLine(n, skipped, cardRef, namedOut, loopRef, upsOf(g, id));
@@ -1352,6 +1374,12 @@ function toPython(g: Graph): ExportResult {
         skipped.push({
           id, kind,
           reason: '并发在脚本里是顺序执行 —— 结果一致，只是不并行（画布上的并发度上限在脚本里没有对应物）',
+        });
+      }
+      if (kind === 'stop') {
+        skipped.push({
+          id, kind,
+          reason: '停止节点在脚本里不终止流程 —— 后面的节点照常执行，画布上不会',
         });
       }
       const line = pyLine(n, skipped, indent, cardRef, paneEff, namedOut, loopRef, upsOf(g, id));

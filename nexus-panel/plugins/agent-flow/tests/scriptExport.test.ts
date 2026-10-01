@@ -701,7 +701,12 @@ test('源码：条件表达式对 source 为空的情况不硬翻', () => {
  * （print / sleep / 播放）—— 从没给 out_xx 赋过值。
  * 下游写 {{xx.output}} 就拿到一个从未定义的变量，跑起来直接崩。
  */
-const PASSTHROUGH: string[] = ['beep', 'playAudio', 'wait', 'retry', 'throttle', 'timeout', 'gate'];
+/*
+ * 名字必须是**真名**（dataKind），不是 runner 文件名 ——
+ * 上一版这里写 'playAudio'，于是测的是一个根本不存在的种类，
+ * 真的 'play-audio' 反倒一直留空，而测试全绿。
+ */
+const PASSTHROUGH: string[] = ['beep', 'play-audio', 'wait', 'retry', 'throttle', 'timeout', 'gate'];
 
 for (const k of PASSTHROUGH) {
   test(`脚本里 ${k} 有赋值行（下游引用它不再是未定义变量）`, () => {
@@ -742,7 +747,50 @@ test('算不出来的节点留空并注明，不拿上游顶替', () => {
   assert.doesNotMatch(r.text, /out_b1 = out_a0/, '不该拿上游顶替');
 });
 
-/* 透传表是手抄的，必须有守卫盯住两边不漂移 */
+/*
+ * 透传表是手抄的，必须有守卫盯住两边不漂移。
+ *
+ * kind → 执行器不能按文件名推：ops.ts 一个文件装着七个执行器，
+ * 而 stop.ts 根本不存在（上一版正向守卫正是这么查的，所以它查不到 stop）。
+ * 统一按 runnerRegistry 的映射走。
+ */
+function runnerBodyOf(kind: string): string {
+  const reg = readSrc('engine/runnerRegistry.ts');
+  const fileOf: Record<string, string> = {};
+  for (const im of reg.matchAll(/import \{([^}]+)\} from '\.\/runners\/([^']+)'/g)) {
+    for (const nm of im[1].split(',')) fileOf[nm.trim()] = `${im[2]}.ts`;
+  }
+  const block = reg.match(/const RUNNERS[^=]*= \{([\s\S]*?)\n\};/);
+  assert.ok(block, '没找到 RUNNERS 表');
+  /*
+   * 键名可能是裸的（task）或带引号的（'play-audio'），`'?` 两边都要。
+   *
+   * 上一版只写 `[A-Za-z-]+` 后接 `:`，于是四个带引号的键
+   * （github-update / github-push / generic-http / play-audio）
+   * 一个都匹配不到 —— 它们后面紧跟着右引号而不是冒号。
+   * 表现是"查无此项"，而真相是"守卫自己认不出"。
+   *
+   * 下面那条数量断言就是为这个补的：只查某一项的话，
+   * 正则少匹配几个键完全看不出来。
+   */
+  const pairs = [...block![1].matchAll(/'?([A-Za-z][\w-]*)'?\s*:\s*(run\w+)\s*,/g)];
+  assert.ok(pairs.length >= 38, `只解析出 ${pairs.length} 条登记，正则可能漏了带引号的键`);
+  let fn: string | undefined;
+  for (const mt of pairs) {
+    if (mt[1] === kind) { fn = mt[2]; break; }
+  }
+  assert.ok(fn, `runnerRegistry 里没有 ${kind} 的登记（可能改名了）`);
+  const file = fileOf[fn!];
+  assert.ok(file, `${kind} 的 ${fn} 没找到所在文件`);
+  const code = readSrc(`engine/runners/${file}`);
+  const i = code.indexOf(`function ${fn!}(`);
+  assert.ok(i >= 0, `${file} 里没有 ${fn} 的定义`);
+  const j = code.indexOf('\n}\n', i);
+  return code.slice(i, j < 0 ? undefined : j)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/.*$/gm, '');
+}
+
 test('源码：透传表里的每一项，其 runner 确实读上游并返回', () => {
   const src = readSrc('engine/scriptExport.ts');
   const m = src.match(/const PASSTHROUGH_KINDS = new Set\(\[([\s\S]*?)\]\)/);
@@ -750,13 +798,7 @@ test('源码：透传表里的每一项，其 runner 确实读上游并返回', 
   const kinds = [...m![1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
   assert.ok(kinds.length > 0, '透传表为空');
   for (const k of kinds) {
-    let runner: string;
-    try {
-      runner = readSrc(`engine/runners/${k}.ts`);
-    } catch {
-      throw new Error(`透传表里的 ${k} 没有对应的 runner 文件`);
-    }
-    const body = runner.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    const body = runnerBodyOf(k);
     assert.match(body, /upstreamText\(/, `${k} 的 runner 不读上游，不该在透传表里`);
     assert.match(body, /return \{ output:/, `${k} 的 runner 没有返回值`);
   }
@@ -764,36 +806,60 @@ test('源码：透传表里的每一项，其 runner 确实读上游并返回', 
 
 /*
  * 反向：runner 里把上游当输出返回的 kind 必须都已登记。
- * 只查正向的话，新增一个透传节点忘了登记，测试照样全绿 ——
- * 而漏登记的代价正是脚本崩。
+ *
+ * ================= 上一版为什么漏掉 stop =================
+ *
+ * 它按**文件名**推 kind（ops.ts → 'ops'），而 ops.ts 一个文件里装着
+ * math / text / compare / random / var / stop / ask 七个执行器。
+ * 于是 'ops' 被当成"拿上游当输入"整份跳过 —— stop 就漏了。
+ * 后果：守卫通过、2350 条测试全绿，而脚本里 out_stop 恒空，
+ * 下游 {{s1.output}} 全线空值。
+ *
+ * 现在按 runnerRegistry 的「kind → 执行函数名」映射，逐个**函数体**查，
+ * 共享同一个文件的执行器也能各自判到。
  */
 test('源码：runner 里把上游当输出返回的 kind 都已登记', () => {
   const src = readSrc('engine/scriptExport.ts');
   const m = src.match(/const PASSTHROUGH_KINDS = new Set\(\[([\s\S]*?)\]\)/);
   const listed = new Set([...(m?.[1] ?? '').matchAll(/'([^']+)'/g)].map((x) => x[1]));
+
+  // kind → 执行函数所在文件
+  const reg = readSrc('engine/runnerRegistry.ts');
+  const fileOf: Record<string, string> = {};
+  for (const im of reg.matchAll(/import \{([^}]+)\} from '\.\/runners\/([^']+)'/g)) {
+    for (const nm of im[1].split(',')) fileOf[nm.trim()] = `${im[2]}.ts`;
+  }
+  const block = reg.match(/const RUNNERS[^=]*= \{([\s\S]*?)\n\};/);
+  assert.ok(block, '没找到 RUNNERS 表');
+  const pairs = [...block![1].matchAll(/([A-Za-z-]+)\s*:\s*(run\w+)\s*,/g)];
+
   /*
-   * 用到 upstreamText，但它是**输入**不是输出 —— 输出是抽取/运算结果。
-   * 逐个核过（extract: 抽取命中、ops: 运算值），写白名单而不是放宽判据：
-   * 放宽成"不含 upstreamText"的话，log（把上游存进变量再返回）会被放过，
-   * 于是"从透传表里删掉 log"这种退化测试全绿。
+   * 用到 upstreamText，但输出**不是**上游 —— 逐个核过：
+   * · extract：上游是被抽取的原文，输出是抽取命中
+   * · var    ：输出是变量值；只有"set 且没填 value"时才退化成上游
+   * 写白名单而不是放宽判据：放宽成"不含 upstreamText"的话，
+   * log（把上游存进变量再返回）会被放过，删它测试照样全绿。
    */
-  const NOT_OUTPUT = new Set(['extract', 'ops']);
-  const fs = require('node:fs');
-  const dir = require('node:path').join(process.env.AF_SRC ?? '', 'engine/runners');
+  const NOT_OUTPUT = new Set(['extract', 'var']);
+
   let checked = 0;
-  for (const f of fs.readdirSync(dir)) {
-    if (!f.endsWith('.ts')) continue;
-    const body = readSrc(`engine/runners/${f}`)
+  for (const [, kind, fn] of pairs) {
+    const file = fileOf[fn];
+    assert.ok(file, `${kind} 的 ${fn} 没找到所在文件（import 可能改名了）`);
+    const code = readSrc(`engine/runners/${file}`);
+    const i = code.indexOf(`function ${fn}(`);
+    assert.ok(i >= 0, `${file} 里没有 ${fn} 的定义`);
+    const j = code.indexOf('\n}\n', i);
+    const fnBody = code.slice(i, j < 0 ? undefined : j)
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/\/\/.*$/gm, '');
-    if (!/upstreamText\(/.test(body)) continue;
-    if (!/return \{ output:/.test(body)) continue;
-    const kind = f.replace(/\.ts$/, '');
+    if (!/upstreamText\(/.test(fnBody)) continue;
+    if (!/return \{ output:/.test(fnBody)) continue;
     if (NOT_OUTPUT.has(kind)) continue;
     checked += 1;
-    assert.ok(listed.has(kind), `${kind} 把上游当输出返回却没登记进 PASSTHROUGH_KINDS`);
+    assert.ok(listed.has(kind), `${kind}（${fn}）把上游当输出返回却没登记进 PASSTHROUGH_KINDS`);
   }
-  assert.ok(checked >= 8, `只核对了 ${checked} 个 runner，判据可能失效`);
+  assert.ok(checked >= 8, `只核对了 ${checked} 个执行器，判据可能失效`);
 });
 
 /* ================================================================ */

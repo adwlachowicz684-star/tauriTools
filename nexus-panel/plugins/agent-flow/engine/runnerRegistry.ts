@@ -57,6 +57,7 @@ import { runRetry } from './runners/retry';
 import { runCanvasIn, runCanvasOut } from './runners/canvasPort';
 import { runTableRead, runDerive, runFilter, runAgg } from './runners/table';
 import { runMath, runText, runCompare, runRandom, runVar, runStop, runAsk } from './runners/ops';
+import { runMcp } from './runners/mcp';
 
 export type NodeRunner = (ctx: RunContext) => Promise<void>;
 
@@ -100,6 +101,12 @@ const RUNNERS: Record<string, NodeRunner | undefined> = {
   derive: runDerive,
   filter: runFilter,
   agg: runAgg,
+  /*
+   * MCP 是**动态生成**的那一族节点（连上 server 后按工具清单长出一批），
+   * 最容易在手写这张表时被漏掉 —— 而漏掉的表现是"绿着成功、什么都没做"。
+   * 有守卫盯这里（见 tests/runnerRegistry.test.ts），别删。
+   */
+  mcp: runMcp,
 };
 
 /**
