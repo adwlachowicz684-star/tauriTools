@@ -52,28 +52,70 @@ if (sliceArg) {
 }
 
 // 汇总行的几种写法（项目里不统一，全列出来；少一种就会把正常测试误判成"没汇总"）
+//
+// ⚠️ 曾经漏掉「数字在前」那一族（"依赖清单：59 通过 / 0 失败"），后果不是漏报——
+//    退出码 0 却解析不出汇总行 → 被判成「可疑」。把 246 条断言的 runtime-deps、
+//    59 条的 deps-manifest 一起列进"可疑"，真可疑项就淹没在假警报里，
+//    体检单从此没人看。所以下面每种写法都配 FIXTURES 钉住（第 B 条已有教训）。
 const SUMMARY = [
   /通过\s*(\d+)\s*项[，,]\s*失败\s*(\d+)\s*项/,
   /(\d+)\s*passed\s*,\s*(\d+)\s*failed/i,
   /通过\s*(\d+)\s*\/\s*失败\s*(\d+)/,
   /通过\s*(\d+)\s*项/,
   /(\d+)\s*\/\s*(\d+)\s*(?:通过|通过项)/,
+  /(\d+)\s*通过\s*\/\s*(\d+)\s*失败/,   // 数字在前：deps-manifest / runtime-deps / theme-tokens / publish-update
+  /(\d+)\s*项通过/,                      // 只报通过数：md-render
 ];
+
+function parseSummary(out) {
+  for (const re of SUMMARY) {
+    const m = out.match(re);
+    if (m) return { pass: Number(m[1]), fail: m[2] !== undefined ? Number(m[2]) : 0 };
+  }
+  return { pass: null, fail: null };
+}
+
+// B. 自检：汇总格式是"约定"不是"代码"，改一行就能让体检单失明。
+//    这里把每种写法的真实样本列成 fixture，认不出就直接算失败项。
+const FIXTURES = [
+  { s: '通过 12 项，失败 0 项', pass: 12, fail: 0, why: '主流写法' },
+  { s: '通过 3 项，失败 2 项', pass: 3, fail: 2, why: '主流写法（有失败）' },
+  { s: '12 passed, 0 failed', pass: 12, fail: 0, why: '英文写法' },
+  { s: '通过 30 / 失败 0', pass: 30, fail: 0, why: '斜杠分隔（md-render）' },
+  { s: '依赖清单：59 通过 / 0 失败', pass: 59, fail: 0, why: '数字在前（deps-manifest）' },
+  { s: '运行时依赖：246 通过 / 0 失败', pass: 246, fail: 0, why: '数字在前（runtime-deps）' },
+  { s: '— 结果：50 通过 / 0 失败 —', pass: 50, fail: 0, why: '数字在前（publish-update）' },
+  { s: '✅ 全部 30 项通过', pass: 30, fail: 0, why: '只报通过数（md-render）' },
+];
+
+const isBad = (r) => r.status !== 0 || r.pass === null || r.pass === 0;
+
+const selfFails = [];
+console.log('=== 0. 自检：汇总行格式必须认得全（认不出＝体检单失明）===');
+for (const f of FIXTURES) {
+  const got = parseSummary(f.s);
+  const good = got.pass === f.pass && got.fail === f.fail;
+  console.log(`${good ? '✅' : '❌'} ${f.why} → ${JSON.stringify(f.s)}`);
+  if (!good) selfFails.push(`${f.why}：期望 ${f.pass}/${f.fail}，实得 ${got.pass}/${got.fail}`);
+}
+// 「0 条断言」是本项目最贵的一类失效（崩≠红、空跑），必须判为可疑而不是放过
+const zeroOk = isBad({ status: 0, pass: 0, fail: 0 }) === true;
+const fiveOk = isBad({ status: 0, pass: 5, fail: 0 }) === false;
+console.log(`${zeroOk ? '✅' : '❌'} 0 条断言判为可疑（不能当正常放过）`);
+console.log(`${fiveOk ? '✅' : '❌'} 有断言且退出码 0 判为正常（不能误伤）`);
+if (!zeroOk) selfFails.push('0 条断言未判为可疑');
+if (!fiveOk) selfFails.push('正常测试被误判为可疑');
 
 const rows = [];
 for (const [name, cmd] of entries) {
   const r = spawnSync('bash', ['-lc', cmd], { cwd: ROOT, encoding: 'utf8', timeout: 180000 });
   const out = (r.stdout || '') + (r.stderr || '');
-  let pass = null, fail = null;
-  for (const re of SUMMARY) {
-    const m = out.match(re);
-    if (m) { pass = Number(m[1]); fail = m[2] !== undefined ? Number(m[2]) : 0; break; }
-  }
+  const { pass, fail } = parseSummary(out);
   const crashed = r.status !== 0 && pass === null;
   rows.push({ name, cmd, status: r.status, pass, fail, crashed, out });
 }
 
-const bad = rows.filter(r => r.status !== 0 || r.pass === null || r.pass === 0);
+const bad = rows.filter(isBad);
 const ok = rows.filter(r => r.status === 0 && r.pass !== null && r.pass > 0);
 
 console.log(`\n共 ${rows.length} 个测试脚本${sliceTag}`);
@@ -90,6 +132,8 @@ for (const r of bad) {
   if (tail) console.log(`     ${tail}`);
 }
 
+for (const s of selfFails) console.log(`  ❌ 自检：${s}`);
+
 // 明细落到分片各自的文件：一次跑不完，跑到一半被掐断时前面的结果不能丢。
 const outFile = `/data/workspace/.tool_output/sweep${sliceTag.replace(/\W/g, '') || '_all'}.txt`;
 const fs = await import('node:fs');
@@ -99,5 +143,8 @@ fs.writeFileSync(outFile,
 console.log(`\n明细已写入 ${outFile}`);
 // 标准汇总行：本文件自己也在 package.json 的 test:* 里（已排除自跑），
 // 但别人拿通用规则体检它时，没有这行就会被判成"0 条断言"。
-console.log(`通过 ${ok.length} 项，失败 ${bad.length} 项`);
-process.exit(0);
+const totalFail = bad.length + selfFails.length;
+console.log(`通过 ${ok.length + (FIXTURES.length + 2 - selfFails.length)} 项，失败 ${totalFail} 项`);
+// 可疑项 + 自检失败都要以非 0 退出：体检单本身必须能被 CI 判红，
+// 否则"体检跑了但没人看退出码"又是一次静默。
+process.exit(totalFail ? 1 : 0);

@@ -138,8 +138,29 @@ console.log('\n=== 5. 路径归一只有一套规则（前端不得自带副本�
   const iAdd = hook.indexOf('const addCard = useCallback');
   const iOwner = hook.indexOf('const owner = list.findIndex', iAdd);
   const dedup = hook.slice(iAdd, iOwner + 400);
+  /*
+   * ⚠️ 这条断言曾经是**过期的**，而且过期方式最坏：它钉的是"写法"不是"意图"。
+   *
+   * 它要求 `const ci = boot?.platform === 'windows';` 出现在 addCard 查重那一段里。
+   * 后来那行被**上提到文件最前面**（紧跟 boot）—— 原因写在 useFpx.ts 的注释里：
+   *   · 它原先声明在文件后半段，而 createLink / syncLinks 的依赖数组在它**之前**求值；
+   *   · `const` 有暂时性死区，那两处读到的是尚未初始化的绑定；
+   *   · 结果是 useFpx **首次渲染就抛 ReferenceError** —— 整块崩，不是"这个功能不能用"。
+   *
+   * 于是这条断言开始恒假、一直红，而它指控的问题**根本不存在**。
+   * 它不算"漏报"，是**负的**：真去"修"它，就得把 ci 搬回后半段，
+   * 等于把崩溃级 bug 请回来。守着错标准的测试比没有测试更危险。
+   *
+   * 改为钉真正要保证的两件事（值对、且声明先于使用），写法本身不再钉死。
+   */
+  const CI_DECL = "const ci = boot?.platform === 'windows';";
+  const iCi = hook.indexOf(CI_DECL);
   t('锚点取到查重那一段', iAdd >= 0 && iOwner > iAdd, `iAdd=${iAdd} iOwner=${iOwner}`);
-  t('查重那一段按平台给 ci', /const ci = boot\?\.platform === 'windows';/.test(dedup));
+  /* ① 值必须来自平台判断。写死 false 也能"有 ci 参数"，但 Windows 上
+   *    `D:\a` / `d:\A` 判成两个目录，查重悄悄漏掉 —— 不报错，只是重复登记。 */
+  t('ci 按平台求值（不能写死 true/false）', iCi >= 0 && !/const ci = (true|false);/.test(hook), `iCi=${iCi}`);
+  /* ② 声明必须先于 addCard。搬回后半段就是 TDZ，崩溃级。 */
+  t('ci 声明在查重段之前（防搬回去触发 TDZ）', iCi >= 0 && iCi < iAdd, `iCi=${iCi} iAdd=${iAdd}`);
   t('查重走 normalizeKey', /normalizeKey\(c\.path, ci\) === normalizeKey\(path, ci\)/.test(dedup));
   t('换绑判定按平台给 ci', /ci=\{boot\.platform === 'windows'\}/.test(hub));
 }
