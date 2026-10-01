@@ -775,6 +775,36 @@ fn link_names_of(snap: &super::model::Snapshot, project: &str) -> usize {
         .unwrap_or(0)
 }
 
+/**
+ * 字符串参数的类型校验：传了但不是字符串 → 报错。
+ *
+ * 判据取自 `tools()` 的 schema（`properties[*].type == "string"`），
+ * 不在本函数手抄一份参数表 —— 抄两份必然漂移，而漂移的表现正是
+ * "新增了参数、这里没跟上，于是又静默一次"。
+ *
+ * 跳过三种情况：没传、显式 `null`（都等同于"没给"，走各自的默认值）、
+ * 以及本身就是字符串。其余一律报错。
+ *
+ * 只校验 schema 里**声明过**的参数：调用方多传的参数保持原样忽略。
+ */
+fn check_string_args(tool_name: &str, args: &Value) -> Result<(), Value> {
+    let Some(schema) = tools()
+        .into_iter()
+        .find(|t| t.get("name").and_then(|v| v.as_str()) == Some(tool_name))
+        .and_then(|t| t.get("inputSchema").cloned())
+    else { return Ok(()); };
+    let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else { return Ok(()); };
+    let Some(obj) = args.as_object() else { return Ok(()) };
+    for (k, spec) in props {
+        if spec.get("type").and_then(|v| v.as_str()) != Some("string") { continue; }
+        match obj.get(k) {
+            None | Some(Value::Null) | Some(Value::String(_)) => {}
+            Some(v) => return Err(err(&format!("{k} 需要字符串，收到 {v}"))),
+        }
+    }
+    Ok(())
+}
+
 /// 字符串看起来是不是一条路径（含分隔符或盘符），而不是一个交给 PATH 解析的命令名。
 fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
     let params = req.get("params").cloned().unwrap_or(json!({}));
@@ -799,6 +829,30 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
             }
         }
     }
+
+    /* 字符串参数的类型校验（与下面的 b() / u() 同一口径）
+       ------------------------------------------------------------------
+       `s()` 是 `and_then(as_str).unwrap_or("")`：类型不符与"没传"都得到 ""。
+       多数参数的 "" 随后会被必填校验拦住（只是报错指向了错的原因），
+       但下面几处的 "" **是有语义的默认值**，静默走下去就成了"调用方明说了、
+       却被当成没说"，而方向恰好是破坏性的：
+
+         · `set_tag_color` 的 color："" → None → **清除该卡片的标签颜色**，
+           回包仍写「标签颜色已保存」。用户设的颜色没了，全程无报错。
+         · `scan_content` 的 root："" → 回退当前选中 → 扫的是**另一个目录**，
+           回包不写扫的哪个目录，AI 会当成它指定的那个报给用户。
+         · `scan_content` 的 kind："" → all → 返回的是全类别，不是要的那类。
+         · `deploy_skill` 的 agentCmd："" → 用配置里的默认客户端 →
+           提示词被发给**另一个 AI 客户端**，进程都拉起来了才发现不对。
+           同工具的 `target` 同理："" → 用当前选择 → 生成到别的目录。
+
+       所以：按 schema 声明的 string 参数，传了但不是字符串（null 除外）
+       一律报错。判据取自 `tools()` 而不是手抄一份参数表 —— 抄两份必然漂移，
+       漂移的表现正是"新增参数忘了纳入"。
+
+       只校验 schema 里**声明过**的参数：多余参数保持原样忽略，
+       这样新增工具/参数不会误报，也不会把既有调用打断。 */
+    check_string_args(name, &args)?;
 
     let s = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
 

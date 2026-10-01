@@ -173,6 +173,7 @@
     "test:pg-mcp-token-keep": "node plugins/project-group/mcp-token-keep-test.mjs",
     "test:pg-mcp-typed-args": "node plugins/project-group/mcp-typed-args-test.mjs",
     "test:pg-mcp-notify": "node plugins/project-group/mcp-notify-test.mjs",
+    "test:pg-mcp-string-args": "node plugins/project-group/mcp-string-args-test.mjs",
     "test:pg-md": "node plugins/project-group/md-edit-test.mjs",
     "test:pg-migrate": "node plugins/project-group/migrate-test.mjs",
     "test:pg-move-across-tab": "node plugins/project-group/move-across-tab-test.mjs",
