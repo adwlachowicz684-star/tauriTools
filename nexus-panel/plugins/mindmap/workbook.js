@@ -154,8 +154,23 @@ export function sheetToMarkdown(content) {
      *
      * 转义成 `## \画布：设计`：SHEET_MARK 要求 `##` 后紧跟「画布」，
      * 前面多了反斜杠就不再命中，分块判定安全；导回时再把这个反斜杠去掉。
+     *
+     * **用户本来就以反斜杠开头时也要转义**，否则这个转义不是往返安全的：
+     *   · 文字 `\画布：设计` → 拼出的行 `## \画布：设计`
+     *     本来就不命中 SHEET_MARK，于是不加转义
+     *   · 导回时 `/^\\画布[:：]/` 照样匹配 → 去掉一个反斜杠
+     *   → **用户手打的那个反斜杠被静默吃掉**（三级节点同理：那里的行
+     *     是 `### 画布：`，本来不命中、也就没转义，导回却照样被解）。
+     *
+     * 于是 E/D 必须成对：
+     *   E：文字以 `\` 开头、或以 `画布：` 开头（会撞分块标记）→ 前面加一个 `\`
+     *   D：只在 `\` 后面跟的是 `画布：` 或又一个 `\` 时才去掉这一个
+     *   · `画布：设计` → `\画布：设计` → 解回 `画布：设计` ✓
+     *   · `\画布：设计` → `\\画布：设计` → 解回 `\画布：设计` ✓
+     *   · `\普通文字`  → `\\普通文字`  → 解回 `\普通文字` ✓
+     * 从别处导入的 `\普通文字`（没经过 E）不会被解 —— 保持「不做通用去反斜杠」。
      */
-    if (SHEET_MARK.test(line)) line = sharp + ' \\' + text;
+    if (/^\\/.test(text) || /^画布[:：]/.test(text)) line = sharp + ' \\' + text;
     lines.push(line);
     for (const c of n.children || []) walk(c, depth + 1);
   }
@@ -168,17 +183,35 @@ export function sheetToMarkdown(content) {
 export function markdownToSheet(md) {
   const rows = [];
   for (const raw of String(md || '').split(/\r?\n/)) {
-    const m = raw.match(/^(#{1,6})\s+(.*)$/);
+    /*
+     * **井号前面允许 0~3 个空格**（CommonMark：ATX 标题最多缩进三格）。
+     *
+     * 早先这里写的是 `^(#{1,6})\s+`，井号必须顶格；而 `markdownRowCount()`
+     * 用的是 `^\s{0,3}#{1,6}\s+\S`，允许缩进 —— 两个口径不一致。
+     *
+     * 后果正好是 noOutline() 那段注释点名要防的事故：
+     *   缩进写的标题 → rowCount 说「有大纲」→ 放行导入
+     *   → markdownToSheet 一条都解析不出来 → emptyContent()
+     *   → 导入是**整体替换且不可撤销**，用户的全部画布被一张空的
+     *     「中心主题」顶掉，状态栏还写「已保存」。
+     * 实测 `  # 项目 / ## 设计 / ## 开发` 就是这个结果。
+     *
+     * 缩进标题在「列表里嵌标题」「从编辑器整段复制」时很常见，
+     * 所以两边统一按 CommonMark 放宽到三格（只认空格，不认制表符 ——
+     * 制表符缩进在 CommonMark 里是代码块，不是标题）。
+     */
+    const m = raw.match(/^ {0,3}(#{1,6})\s+(.*)$/);
     if (!m) continue;
     const depth = m[1].length - 1;              // '#' → 0（中心主题）
     let text = m[2].trim();
     /*
-     * 解掉 sheetToMarkdown 为避开分块标记加的反斜杠（见那里的注释）。
+     * 解掉 sheetToMarkdown 加的前导反斜杠（见那里的注释，E/D 必须成对）。
      *
-     * **只**解 `\画布：` 这一种形态，不做通用去反斜杠 ——
-     * 否则从别处导入的 Markdown 里以 `\` 开头的节点文字会被改掉。
+     * **只**解「`\` 后面跟 `画布：`」或「`\` 后面又是一个 `\`」这两种形态，
+     * 不做通用去反斜杠 —— 否则从别处导入的 Markdown 里以 `\` 开头的
+     * 节点文字（如 `\普通文字`）会被改掉。
      */
-    if (/^\\画布[:：]/.test(text)) text = text.slice(1);
+    if (/^\\(画布[:：]|\\)/.test(text)) text = text.slice(1);
     if (!text) continue;
     rows.push({ depth, text });
   }
@@ -226,7 +259,12 @@ export function workbookToMarkdown(sheets) {
 export function markdownRowCount(md) {
   let n = 0;
   for (const raw of String(md || '').split(/\r?\n/)) {
-    if (/^\s{0,3}#{1,6}\s+\S/.test(raw)) n++;
+    /*
+     * 口径必须与 markdownToSheet() 逐字一致（见那里的注释）：
+     * 早先这里是 `\s{0,3}`（含制表符）、那边是顶格，于是「这里说有大纲、
+     * 那边解析出空画布」，导入变成静默清空。
+     */
+    if (/^ {0,3}#{1,6}\s+\S/.test(raw)) n++;
   }
   return n;
 }

@@ -5183,6 +5183,140 @@ group('BUG 36 导入无大纲文件不得替换画布');
 }
 
 /* ------------------------------------------------------------------
+   BUG 90：markdownRowCount 与 markdownToSheet 口径不一致 —— 缩进标题
+   「说有大纲、解析却出空画布」，导入等于静默清空全部画布
+   ------------------------------------------------------------------ */
+group('BUG 90 · 判「有没有大纲」与「解析大纲」必须同一套口径');
+
+/*
+ * BUG 36 补的 noOutline() 用 markdownRowCount() 当闸门，而真正解析的是
+ * markdownToSheet()。两者口径一旦不一致，事故正是 BUG 36 想防的那一个：
+ *   闸门说「有大纲」→ 放行 → 解析出一张空的「中心主题」
+ *   → 导入是**整体替换且不可撤销**，用户全部画布被一张空画布顶掉。
+ *
+ * 早先 rowCount 用 `^\s{0,3}#`（含制表符）、解析用 `^#`（顶格），
+ * 缩进写的标题（列表里嵌标题、从编辑器整段复制时很常见）就踩中这个缝：
+ * 实测 `  # 项目 / ## 设计 / ## 开发` → rowCount=3、解析出空画布。
+ */
+{
+  const wb9 = await import('./workbook.js');
+
+  /** 解析出来的第一张画布是否就是「空的中心主题」 */
+  const isBlank = (md) => {
+    const s = wb9.markdownToWorkbook(md);
+    if (!s.length) return true;
+    const root = JSON.parse(s[0].content).root;
+    return !root || (root.children || []).length === 0;
+  };
+
+  /*
+   * 契约：**只要说有大纲，解析出来就不能是空画布**。
+   * 这条比逐条列输入更有用 —— 它管的是两个函数之间的关系，
+   * 将来任何一边改了口径都会被抓住。
+   */
+  const cases = {
+    '顶格': '# 项目\n## 设计\n## 开发',
+    '两空格缩进': '  # 项目\n  ## 设计\n  ## 开发',
+    '三空格缩进': '   # 项目\n   ## 设计',
+    '四空格缩进': '    # 项目\n    ## 设计',
+    '制表符缩进': '\t# 项目\n\t## 设计',
+    '混排缩进': '# 项目\n  ## 设计\n### 开发',
+    '无大纲': '随便一段话\n第二行',
+    '空': '',
+  };
+  for (const [name, md] of Object.entries(cases)) {
+    const n = wb9.markdownRowCount(md);
+    ok(n === 0 || !isBlank(md),
+      `${name}：rowCount=${n} 与解析结果一致（说有大纲就不能解析出空画布）`,
+      `rowCount=${n} blank=${isBlank(md)}`);
+  }
+
+  // 现象侧：缩进标题必须真的解析出内容，而不是被放行后顶掉一切
+  {
+    const s = wb9.markdownToWorkbook('  # 项目\n  ## 设计\n  ## 开发');
+    const root = JSON.parse(s[0].content).root;
+    eq(root.data.text, '项目', '缩进写的中心主题能被解析出来（早先被整段忽略）');
+    eq((root.children || []).length, 2, '缩进写的子节点也能被解析出来');
+  }
+
+  // 制表符缩进：CommonMark 里是**代码块**不是标题，两边都该当没有大纲
+  eq(wb9.markdownRowCount('\t# 项目'), 0, '制表符缩进不算标题（与解析器一致，避免误放行）');
+
+  // 源码侧：两个正则必须逐字对齐（只认空格、最多三格、井号后要空白）
+  const wsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
+  ok(/raw\.match\(\/\^ \{0,3\}\(#\{1,6\}\)\\s\+\(\.\*\)\$\/\)/.test(wsrc),
+    'markdownToSheet 允许 0~3 个前导空格');
+  ok(/\/\^ \{0,3\}#\{1,6\}\\s\+\\S\//.test(wsrc), 'markdownRowCount 用同一套前导空格规则');
+  ok(!/\\s\{0,3\}#\{1,6\}/.test(wsrc), '不得再出现 \\s{0,3}（含制表符，与解析器不一致）');
+}
+
+/* ------------------------------------------------------------------
+   BUG 91：Markdown 转义不是往返安全的 —— 用户手打的反斜杠被吃掉
+   ------------------------------------------------------------------ */
+group('BUG 91 · 「画布：」转义必须成对（E/D）');
+
+/*
+ * 二级节点文字撞上 `## 画布：` 分块标记，所以要转义成一个前导反斜杠。
+ * 但转义与解转义必须成对，否则不是往返安全的：
+ *   · 用户手打 `\画布：设计` → 拼出的行本来就不命中标记 → 不加转义
+ *     → 导回时照样被解 → **用户的反斜杠被静默吃掉**（三级节点同理）
+ */
+{
+  const wb8 = await import('./workbook.js');
+
+  /** 走一遍「导出成 md → 导回」；depth=1 二级节点、depth=2 三级节点 */
+  const rt = (text, depth) => {
+    const kid = { data: { text }, children: [] };
+    const root = depth === 1
+      ? { data: { text: '根' }, children: [kid] }
+      : { data: { text: '根' }, children: [{ data: { text: '中' }, children: [kid] }] };
+    const md = wb8.sheetToMarkdown(JSON.stringify({ root }));
+    let n = JSON.parse(wb8.markdownToSheet(md)).root;
+    for (let i = 1; i < depth; i++) n = n.children[0];
+    return n.children[0].data.text;
+  };
+
+  // 会撞标记的文字：两个深度都要保住
+  for (const d of [1, 2]) {
+    eq(rt('画布：设计', d), '画布：设计', `${d}级：撞分块标记的文字往返无损`);
+    eq(rt('画布:设计', d), '画布:设计', `${d}级：半角冒号同样无损`);
+  }
+  // 用户手打的反斜杠：不能被吃掉
+  for (const d of [1, 2]) {
+    eq(rt('\\画布：设计', d), '\\画布：设计', `${d}级：手打的反斜杠不被吃掉`);
+    eq(rt('\\普通文字', d), '\\普通文字', `${d}级：手打的反斜杠（非画布）也不被吃掉`);
+  }
+  eq(rt('\\\\双反斜杠', 1), '\\\\双反斜杠', '连续两个反斜杠往返无损');
+  eq(rt('普通文字', 1), '普通文字', '普通文字不受影响');
+
+  // 从别处导入的 md：以 \ 开头的文字不该被改（不做通用去反斜杠）
+  eq(JSON.parse(wb8.markdownToSheet('# 根\n## \\普通文字')).root.children[0].data.text,
+    '\\普通文字', '别处导入的 \\普通文字 原样保留');
+
+  /*
+   * 源码侧：E 的条件与 D 的条件必须成对出现。
+   *
+   * ⚠️ 不能用 fnBody() 切函数体：sheetToMarkdown 内部就有 2 空格缩进的
+   * `function walk`，fnBody 会切在那里，切出来的片段里根本没有下面要找的
+   * 那两行 —— 断言恒假。改成「在哪个函数里、距函数头多远」来定位。
+   */
+  const wsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
+  const E = String.raw`/^\\/.test(text) || /^画布[:：]/.test(text)`;
+  const D = String.raw`/^\\(画布[:：]|\\)/.test(text)`;
+  const iSheet = wsrc.indexOf('export function sheetToMarkdown(');
+  const iFrom = wsrc.indexOf('export function markdownToSheet(');
+  const iE = wsrc.indexOf(E);
+  const iD = wsrc.indexOf(D);
+  ok(iSheet >= 0 && iE > iSheet && iE - iSheet < 2500,
+    'E 的条件在 sheetToMarkdown 里（以反斜杠开头、或撞分块标记才转义）',
+    `sheet@${iSheet} E@${iE}`);
+  ok(iFrom >= 0 && iD > iFrom && iD - iFrom < 2500,
+    'D 的条件在 markdownToSheet 里（只解紧跟「画布：」或又一个反斜杠的那一个）',
+    `from@${iFrom} D@${iD}`);
+  ok(!wsrc.includes('text.replace(/\\'), 'D 不得做通用去反斜杠（会改掉别处导入的文字）');
+}
+
+/* ------------------------------------------------------------------
    BUG 37：重命名文件夹不说话（与 renameFile 不一致）
    ------------------------------------------------------------------ */
 group('BUG 37 文件库两种重命名都要有回执');
