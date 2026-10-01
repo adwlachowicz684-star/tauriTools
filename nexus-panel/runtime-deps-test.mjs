@@ -658,7 +658,18 @@ const fb = async () => BUNDLE;
 
   const scan = read('scripts/scan-deps.mjs');
   t('扫描器扫 requireDep 取用点', /runtimeDepsOf\(/.test(scan) && /requireDep\s*\(/.test(scan));
-  t('扫 requireDep 前先剥注释', /function runtimeDepsOf[\s\S]{0,300}stripComments\(raw\)/.test(scan));
+  /* 剥注释必须发生在扫 requireDep **之前**——注释里写过的依赖名不该算成取用点，
+     否则删掉的依赖会永远留在清单里、新加的又扫不进来。
+     ⚠️ 这里钉**语义**不钉写法：扫描器用的是 stripCommentsJs（JS 源码有 // 行注释，
+     必须剥；只剥块注释的 stripComments 会把 `// foo` 整行后半截留下）。
+     钉成 stripComments\(raw\) 会在改用 Js 变体后假红——功能没变，只是换了个更准的函数。 */
+  t('扫 requireDep 前先剥注释',
+    /function runtimeDepsOf[\s\S]{0,300}stripComments(?:Js)?\s*\(\s*raw\s*\)/.test(scan));
+  t('剥的是 JS 档（连 // 行注释一起剥）',
+    /function runtimeDepsOf[\s\S]{0,300}stripCommentsJs\s*\(\s*raw\s*\)/.test(scan));
+  const decl = scan.match(/const src = (stripComments(?:Js)?\s*\(\s*raw\s*\))/);
+  t('剥注释结果确实喂给了扫描（不是剥完又用原文）',
+    !!decl && /re\.exec\(src\)/.test(scan), decl ? decl[1] : '没找到 const src = stripComments*(raw)');
   t('清单每条都有 runtimeUsedBy 字段', all.every((d) => Array.isArray(d.runtimeUsedBy)));
 }
 
