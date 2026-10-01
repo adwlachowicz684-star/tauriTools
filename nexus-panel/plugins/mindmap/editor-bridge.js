@@ -622,18 +622,46 @@ export class EditorBridge {
    *   （inline 存储，别处没有副本可找回），而界面提示的是「已应用图标：xxx」，
    *   用户完全不知道照片没了。先图标后图片同理。
    *
-   * 判据：图标库走的 iconToDataUrl 必然产出 `data:image/svg+xml`，
-   * 而附件图片经 io.imageToInline 压成 JPEG/PNG，两者不会混淆 ——
-   * 所以**存量数据也无需迁移**。
+   * 判据：**先看显式标记 `data.icon`，没有才回落到 MIME**（BUG 95）。
+   *
+   * 早先只看 MIME —— `data:image/svg+xml` 就算图标。而 io.imageToInline
+   * 对 SVG 是**直接内联原文件**（SVG 是文本、canvas 画不了，见 io.js），
+   * 所以用户从「浏览图片」或拖放挂一张 .svg 图片，产出的同样是
+   * `data:image/svg+xml` —— **被当成图标**。实测三处后果：
+   *   · 侧栏「图片」栏不列出它（getSelectedImages 跳过图标）→ 看不到也删不掉
+   *   · 点「清除节点图标」把它删了（那个按钮理应只清图标）
+   *   · 导出 XMind 时 buildImage 跳过它去取横幅 → 用户的图静默丢失
+   * 全都是**丢数据**，且用户不会把「我挂了个 svg」和「图没了」联系起来。
+   *
+   * 于是写图标时顺带落 `data.icon = true`、写图片时落 `false`，
+   * 判定时以它为准。存量节点没有这个字段，才回落到 MIME ——
+   * 那时行为与修复前一致，不会把既有图标误判成图片（回归更糟）。
    */
   _isIconUrl(u) { return !!u && /^data:image\/svg\+xml/i.test(String(u)); }
+
+  /** 槽位里的到底是图标还是图片附件：标记优先，MIME 兜底 */
+  _slotKind(node, u) {
+    const flag = node?.getData?.('icon');
+    if (flag !== undefined && flag !== null) return !!flag;
+    return this._isIconUrl(u);
+  }
+
+  /** 写入图标 / 图片标记（与 image 槽配套，供上面判定用） */
+  _markIcon(v) {
+    return this._safe('标记图标', (m, km) => {
+      const n = km.getSelectedNode?.();
+      if (!n) return false;
+      n.setData?.('icon', v);
+      return true;
+    });
+  }
 
   /** 读当前的「单图 / 图标」槽位 */
   _imageSlot() {
     return this._safe('读取图片槽', (m, km) => {
       const n = km.getSelectedNode?.();
       const u = n ? String(n.getData?.('image') || '') : '';
-      return { url: u, isIcon: this._isIconUrl(u) };
+      return { url: u, isIcon: this._slotKind(n, u) };
     }) || { url: '', isIcon: false };
   }
 
@@ -651,19 +679,34 @@ export class EditorBridge {
       // 清除：只清自己这一类。槽里放的是对方时不能顺手清掉 ——
       // 「清除节点图标」不该把用户挂的照片一起删了。
       if (isIcon && slot.url && !slot.isIcon) return true;
-      if (isIcon) { this.exec('image', null); return true; }
+      if (isIcon) { this.exec('image', null); this._markIcon(null); return true; }
       this.exec('images', null);
-      if (!(slot.url && slot.isIcon)) this.exec('image', null);
+      if (!(slot.url && slot.isIcon)) { this.exec('image', null); this._markIcon(null); }
       return true;
     }
     if (isIcon) {
       // 槽里若是图片附件，先让进横幅保住，再写图标
       if (slot.url && !slot.isIcon) this._appendImage(slot.url);
-      return this.exec('image', url);
+      const r = this.exec('image', url);
+      this._markIcon(true);
+      return r;
     }
-    // 写图片：槽里若是图标，图片走横幅（图标在框内、图片在框外，各就各位）
-    if (slot.url && slot.isIcon) { this._appendImage(url); return true; }
+    // 写图片：槽里已被占时一律「加」而不是「替」，否则旧的那张会永久丢失
+    // （inline dataURL，别处没有副本）。
+    if (slot.url) {
+      // 槽里是图标 → 图标留在框内，新图进横幅（图标在框内、图片在框外，各就各位）
+      if (slot.isIcon) { this._appendImage(url); return true; }
+      /*
+       * 槽里是图片 → 两张一起走横幅，并**腾空槽位**。
+       * 不能像图标那样「新图进横幅、旧图留槽」：侧栏 getSelectedImages 在
+       * images 有值时**只看横幅**，槽里那张既不在列表里、删也删不掉，
+       * 成了没人引用的孤儿。1 张走槽、≥2 张走横幅，统一交给 setImages。
+       */
+      const cur = this.getSelectedImages().filter((x) => x !== slot.url);
+      return this.setImages(cur.concat([slot.url, url]));
+    }
     const r = this.exec('image', url);
+    this._markIcon(false);
     this.exec('images', null);
     return r;
   }
@@ -713,16 +756,17 @@ export class EditorBridge {
     const iconBusy = !!(slot.url && slot.isIcon);
     if (!arr.length) {
       this.exec('images', null);
-      if (!iconBusy) this.exec('image', null);
+      if (!iconBusy) { this.exec('image', null); this._markIcon(null); }
       return true;
     }
     if (arr.length === 1 && !iconBusy) {
       this.exec('image', arr[0]);
+      this._markIcon(false);
       this.exec('images', null);
       return true;
     }
     this.exec('images', JSON.stringify(arr));
-    if (!iconBusy) this.exec('image', null);
+    if (!iconBusy) { this.exec('image', null); this._markIcon(null); }
     return true;
   }
 
@@ -773,7 +817,7 @@ export class EditorBridge {
       // 槽里放的是**图标**时不算图片附件：否则侧栏「图片」栏会把图标列出来，
       // 用户点「删除」删掉的是图标；追加第二张图时 `setImages([...images, 新图])`
       // 还会把图标算进基数，图标就混进图片列表再也分不开了。
-      if (one && !this._isIconUrl(one)) return [one];
+      if (one && !this._slotKind(n, one)) return [one];
       return [];
     }) || [];
   }

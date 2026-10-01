@@ -666,7 +666,35 @@ function buildTopic(kmNode, packs) {
   if (labels) topic.labels = labels;
 
   const img = buildImage(data);
-  if (img) topic.image = img;
+  if (img) {
+    topic.image = img;
+    /*
+     * BUG 97：图标 / 图片的区分必须**一起写出去**。
+     *
+     * 两者在 XMind 里形态完全相同（都是 `topic.image.src = data:image/svg+xml…`），
+     * 光看 src 分不出来 —— 判据是节点上的 `data.icon` 标记（见 isIconSrc）。
+     * 而它不是 XMind 的字段，buildKmNode 也只重建已知字段，不写出去的话
+     * 标记在导出时就断了。
+     *
+     * 什么时候会真的断：**文件被别的软件打开再存回来**。那时本工具自己
+     * 的无损快照 kityminder.json 已经被丢掉（别的软件不认识它），导回只能
+     * 走 zen 档 —— 实测导回后 `data.icon` 是 undefined，于是回落 MIME 判据，
+     * 用户自己挂的 .svg 图片又被当成图标：侧栏「图片」栏不列出它、
+     * 点「清除节点图标」会把它删掉（BUG 95 的四处后果复现）。
+     *
+     * XMind 规范里没有对应字段，只能带一个私有键。绝大多数实现（含 XMind
+     * 官方）对 content.json 的未知字段是直接忽略的，风险可接受；
+     * 而且**只在真的区分不出来时才写**（src 是 svg+xml），普通节点不受影响。
+     *
+     * 判的是**写出去的那张 src** 而不是 data.image：槽位放图标、实际导出
+     * 的是横幅里的照片时（BUG 93），标记必须跟着照片走 —— 照片是图片附件，
+     * 判成图标的话导回后那张照片就"不算图片"了。
+     */
+    if (/^data:image\/svg\+xml/i.test(String(img.src))) {
+      const slotSrc = str(data.image);
+      topic.nexusIcon = img.src === slotSrc ? !!isIconSrc(data, slotSrc) : false;
+    }
+  }
 
   const props = buildStyle(data);
   if (props && Object.keys(props).length) {
@@ -700,21 +728,56 @@ function buildLabels(node) {
   return s && s.trim() ? [s] : null;
 }
 
+/**
+ * 槽位里放的是不是**图标**。
+ *
+ * 与 editor-bridge 的 `_slotKind` 同一套判据：**先看显式标记 `data.icon`，
+ * 没有才回落到 MIME**（BUG 95）。
+ *
+ * 只看 MIME 会把用户自己挂的 .svg 图片当成图标 —— io.imageToInline 对 SVG
+ * 是原样内联的，产出的同样是 `data:image/svg+xml`。于是导出时 buildImage
+ * 跳过它、去横幅里找照片，**用户的图静默丢失**（槽位只能留一个）。
+ *
+ * 存量节点没有 icon 字段，才走 MIME 兜底 —— 那时行为与修复前一致。
+ */
+function isIconSrc(data, u) {
+  const flag = data ? data.icon : undefined;
+  if (flag !== undefined && flag !== null) return !!flag;
+  return !!u && /^data:image\/svg\+xml/i.test(String(u));
+}
+
 function buildImage(data) {
   /*
    * 单张在 data.image，多张在 data.images（横幅）—— 两者互斥。
    * 只认 image 的话，挂了 2 张以上的节点导出后 content.json **一张图都没有**，
    * 在别的 XMind 软件里打开就是纯文字节点。
    * XMind 一个 topic 只挂一张图，这里取横幅的第一张。
+   *
+   * **图标占着 image 槽时，图片附件优先**（BUG 93）。
+   *
+   * 「图标 + 照片横幅」是 BUG 58 修完之后的**正常状态**：先挂照片、再应用
+   * 图标，照片被让位到横幅、图标进槽位。而 buildImage 一律先读 image ——
+   * 于是导出到 XMind 时**照片全部静默丢失**，只留一个装饰性的图标：
+   *   实测 {image: 图标, images:[照片1,照片2]} → topic.image.src = 图标
+   * 照片是用户挂上去的、别处没有副本，图标只是从预设库里点一下就能重选的
+   * 装饰 —— 只能留一个时当然留照片。
    */
   let src = str(data.image);
-  if (!src || !src.trim()) {
-    const many = refListOf(data.images);
-    src = many.length ? str(many[0]) : null;
-  }
+  const many = refListOf(data.images);
+  const fromSlot = !!src;
+  if (isIconSrc(data, src) && many.length) src = str(many[0]) || src;
+  if (!src || !src.trim()) src = many.length ? str(many[0]) : null;
   if (!src || !src.trim()) return null;
   const img = { src };
-  const { w, h } = sizeOf(data.imageSize);
+  /*
+   * 尺寸只在**用的就是槽位那张**时才写。
+   *
+   * imageSize 是内核给槽位图探测出来的（图标也一样，见 panels 里应用图标
+   * 那段注释）。槽位放的是图标、实际导出的是横幅里的照片时，把图标的尺寸
+   * 套到照片上 —— 图标多是方的、照片多是宽的，在 XMind 里就被拉成方的。
+   * 拿不到尺寸反而是安全的：XMind 会按图片自身比例显示。
+   */
+  const { w, h } = fromSlot && src === str(data.image) ? sizeOf(data.imageSize) : { w: 0, h: 0 };
   if (w > 0) img.width = w;
   if (h > 0) img.height = h;
   const title = str(data.imageTitle);
@@ -905,6 +968,10 @@ function buildKmNode(topic, depth = 0, counter = null) {
       const w = num(topic.image.width);
       const h = num(topic.image.height);
       data.image = src;
+      // BUG 97：读回「这是图标还是用户挂的图片」的标记（见 buildTopic）。
+      // 只有布尔值才认 —— 别的软件产出的文件没有这个键，那时保持**不写**，
+      // 让 editor-bridge 的 _slotKind 回落到 MIME 判据（与修复前一致，不回归）。
+      if (typeof topic.nexusIcon === 'boolean') data.icon = topic.nexusIcon;
       // 必须是 {width,height} 对象：内核 ImageRenderer 直接读 .width/.height
       if (w > 0 && h > 0) data.imageSize = { width: Math.round(w), height: Math.round(h) };
       const t = str(topic.image.title);

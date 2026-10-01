@@ -2763,20 +2763,24 @@ async function gcOrphanAssets(quiet = false) {
    * 恰好在最需要回滚的时候找不到可用版本。
    *
    * @param {boolean} force true=即使内容相同也强制写一份
+   * @returns {Promise<boolean|null>} true=已写入 / false=写入被拒绝 /
+   *          null=内容重复未创建（不是失败）。调用方据此决定**能不能**对外
+   *          声称「已另存一份」（见 restoreBackup）。
    */
   async function backupNow(force = false) {
     capture();
     const fp = wb.fingerprintSheets(workbook.sheets);
     if (!force && fp === lastBackupFp) {
       status('内容与最新快照相同，未重复创建', false);
-      return;
+      return null;
     }
     // pushBackup 写失败返回 null（不抛），不判断就会提示「已创建」但实际没写进去
     const key = await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId }, settings.backupMax);
     lastBackupAt = Date.now();
     lastBackupFp = fp;
-    if (key) ctx.toast('已创建快照', 'ok');
-    else status('快照创建失败（本地存储写入被拒绝）', true);
+    if (key) { ctx.toast('已创建快照', 'ok'); return true; }
+    status('快照创建失败（本地存储写入被拒绝）', true);
+    return false;
   }
 
   /**
@@ -2789,13 +2793,33 @@ async function gcOrphanAssets(quiet = false) {
    */
   async function restoreBackup(b) {
     // 先给当前状态留一份，再覆盖
-    await backupNow(true);
+    const backed = await backupNow(true);
     workbook.sheets = wb.normalizeSheets(b.sheets);
     workbook.activeId = b.activeId || workbook.sheets[0].id;
     renderTabs();
     await loadSheet();
-    await persist();
+    /*
+     * 必须接返回值（BUG 96）。
+     *
+     * 这是 BUG 77 那条「未判 persist() 返回值、其后不得写成功文案」的
+     * **漏网路径** —— 那次逐条堵了导入 / 复制画布 / 换主题 / 换布局 / 新建文件，
+     * 唯独没回头扫 restoreBackup。
+     *
+     * 后果比别处更重：恢复是**整体替换**，写盘失败时磁盘上还是恢复前的
+     * 内容，而这里弹的是绿字「已从快照恢复（恢复前的状态已另存一份）」——
+     * 重载后回到旧状态，用户却以为恢复过了，可能接着在上面继续改。
+     */
+    const ok = await persist();
     lastBackupFp = wb.fingerprintSheets(workbook.sheets);
+    if (!ok) {
+      ctx.toast('已载入快照内容，但未能写入本地库（重载后会回到恢复前的状态）', 'err');
+      return;
+    }
+    // 留底失败也要说：那句「已另存一份」是用户唯一的回滚指望
+    if (backed === false) {
+      ctx.toast('已从快照恢复，但恢复前的状态未能留底（写入被拒绝）', 'warn');
+      return;
+    }
     ctx.toast('已从快照恢复（恢复前的状态已另存一份）', 'ok');
   }
 

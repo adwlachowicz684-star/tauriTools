@@ -5404,6 +5404,354 @@ group('BUG 92 · XMind 备注必须认 realHTML（plain 之外那份）');
 }
 
 /* ------------------------------------------------------------------
+   BUG 93：图标占着 image 槽时，导出 XMind 把照片全丢了
+   ------------------------------------------------------------------ */
+group('BUG 93 · 图标与照片共存时，XMind 导出必须留照片');
+
+/*
+ * 「图标 + 照片横幅」是 BUG 58 修完之后的**正常状态**：先挂照片、再应用
+ * 图标，照片被让位到 data.images 横幅、图标进 data.image 槽位。
+ * 而 buildImage 一律先读 image —— 导出到 XMind 时**照片全部静默丢失**，
+ * content.json 里只剩一个装饰性的图标。
+ */
+{
+  const x9 = await import('./xmind.js');
+  const ICON = 'data:image/svg+xml;base64,PHN2Zy8+';
+  const P1 = 'data:image/jpeg;base64,/9j/AAAA';
+  const P2 = 'data:image/png;base64,iVBORw0KGgo=';
+
+  /** 导出后读 content.json 里根话题的 image（剥掉本工具快照，走 zen 路径） */
+  const topicImage = async (data) => {
+    const sheets = [{ id: 'sh1', title: '画布', theme: null, layout: null,
+      content: JSON.stringify({ root: { data: { id: 'n1', text: '根', ...data }, children: [] } }) }];
+    const blob = await x9.writeXMind(sheets, 'sh1');
+    const en = await x9.zipRead(new Uint8Array(await new Blob([blob]).arrayBuffer()));
+    return JSON.parse(new TextDecoder().decode(en.get('content.json')))[0].rootTopic.image;
+  };
+
+  {
+    const im = await topicImage({ image: ICON, images: [P1, P2] });
+    ok(!!im && im.src === P1, '★ 图标 + 照片横幅：导出的是照片而不是图标（早先只留图标）',
+      im && im.src.slice(0, 30));
+  }
+  {
+    const im = await topicImage({ images: [P1, P2] });
+    ok(!!im && im.src === P1, '只有横幅时取第一张');
+  }
+  {
+    const im = await topicImage({ image: ICON });
+    ok(!!im && im.src === ICON, '只有图标时仍导出图标（没有照片可留）');
+  }
+
+  // 尺寸只在用的就是槽位那张时才写：把图标的尺寸套到照片上会把照片拉变形
+  {
+    const im = await topicImage({ image: P1, imageSize: { width: 640, height: 480 } });
+    ok(im.width === 640 && im.height === 480, '单张照片的尺寸要带上');
+  }
+  {
+    const im = await topicImage({ image: ICON, imageSize: { width: 320, height: 320 }, images: [P1, P2] });
+    ok(!im.width && !im.height, '★ 图标占槽时不得把图标的尺寸套到照片上（会变形）',
+      `w=${im.width} h=${im.height}`);
+  }
+
+  const xs = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+  ok(/function isIconSrc\(/.test(xs), '有图标判据（与 bridge 的 svg+xml 同一套）');
+  ok(/if \(isIconSrc\(data, src\) && many\.length\)/.test(xs), '槽位是图标时改用横幅里的照片');
+  ok(/function isIconSrc\(data, u\)/.test(xs) && /const flag = data \? data\.icon : undefined;/.test(xs),
+    '图标判据先看 data.icon 标记（MIME 只是兜底）');
+}
+
+/* ------------------------------------------------------------------
+   BUG 94：「清除节点上的图标 / 图片」点完图标还在
+   ------------------------------------------------------------------ */
+group('BUG 94 · 清除按钮两类都要清（图标与图片）');
+
+/*
+ * 按钮文案写着「清除节点上的**图标 / 图片**」，但只调了 setImage(null)。
+ * setImage(null) 的语义是「只清自己这一类」—— 不传 icon 标记时槽位上是
+ * 图标就跳过（那是图标库里「清除节点图标」的事）。于是：
+ *   · 节点上只有图标 → 点完**什么都不发生**，图标还在
+ *   · 图标 + 照片横幅 → 只清掉照片，图标留下
+ * 实测（真实 EditorBridge）：{image: 图标} → 点完 image 仍等于图标。
+ */
+{
+  const { EditorBridge } = await import('./editor-bridge.js');
+  const ICON = 'data:image/svg+xml;base64,PHN2Zy8+';
+  const P1 = 'data:image/jpeg;base64,/9j/AAAA';
+
+  const stub = (data) => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const b = new EditorBridge(host, {});
+    b.iframe = document.createElement('iframe');
+    // 必须挂进 body：没挂的话 contentWindow 是 null，桩根本塞不进去
+    document.body.appendChild(b.iframe);
+    b.ready = true;
+    const km = { _d: JSON.parse(JSON.stringify(data)),
+      getSelectedNode() { return { getData: (k) => this._d[k] }; } };
+    b.iframe.contentWindow.__km = km;
+    b.exec = (n, v) => { km._d[n] = v; return true; };
+    b._safe = (_l, fn) => { try { return fn({}, km); } catch { return null; } };
+    return { b, km };
+  };
+
+  // 面板里那个按钮现在的写法
+  const clearBoth = (b) => { b.setImage(null, { icon: true }); b.setImage(null); };
+
+  {
+    const { b, km } = stub({ image: ICON });
+    clearBoth(b);
+    ok(km._d.image === null, '★ 只有图标时也要清掉（早先点完图标还在）', String(km._d.image));
+  }
+  {
+    const { b, km } = stub({ image: ICON, images: JSON.stringify([P1]) });
+    clearBoth(b);
+    ok(km._d.image === null && km._d.images === null,
+      '★ 图标 + 横幅：两类都清（早先只剩图标）', `image=${km._d.image}`);
+  }
+  {
+    const { b, km } = stub({ image: P1 });
+    clearBoth(b);
+    ok(km._d.image === null, '只有照片时清照片');
+  }
+  {
+    const { b, km } = stub({ images: JSON.stringify([P1]) });
+    clearBoth(b);
+    ok(km._d.images === null, '只有横幅时清横幅');
+  }
+
+  // 图标库里那个「清除节点图标」只清图标 —— 照片横幅必须留下
+  {
+    const { b, km } = stub({ image: ICON, images: JSON.stringify([P1]) });
+    b.setImage(null, { icon: true });
+    ok(km._d.image === null && km._d.images !== null,
+      '「清除节点图标」不得顺手删掉照片横幅', `images=${km._d.images}`);
+  }
+
+  // 源码侧：面板那个按钮必须清两次
+  const pn = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8'));
+  const i = pn.indexOf('清除节点上的图标 / 图片');
+  ok(i >= 0, '找到该按钮');
+  const seg = pn.slice(i, i + 400);
+  ok(/setImage\(null, \{ icon: true \}\)/.test(seg) && /setImage\(null\)/.test(seg),
+    '按钮先按图标清、再按图片清（只调一次清不掉图标）');
+}
+
+/* ------------------------------------------------------------------
+   BUG 95：用户自己挂的 .svg 图片被当成图标，四处静默丢数据
+   ------------------------------------------------------------------ */
+group('BUG 95 · 用户的 SVG 图片不得被判成图标');
+
+/*
+ * 图标与图片共用 data.image 一个槽位，早先只看 MIME 区分：
+ * `data:image/svg+xml` 就算图标。而 io.imageToInline 对 SVG 是**原样内联**
+ * （SVG 是文本、体积天然小，canvas 又画不了，见 io.js），所以用户从
+ * 「浏览图片」或拖放挂一张 .svg 图片，产出的同样是 data:image/svg+xml ——
+ * 于是被当成图标，实测四处后果：
+ *   · 侧栏「图片」栏不列出它（getSelectedImages 跳过图标）→ 看不到也删不掉
+ *   · 点「清除节点图标」把它删了（那个按钮理应只清图标）
+ *   · 再挂一张照片时，照片反而被让位到横幅（槽位"被图标占着"）
+ *   · 导出 XMind 时 buildImage 跳过它去取横幅 → 用户的图静默丢失
+ * 全是丢数据，而用户不会把「我挂了个 svg」和「图没了」联系起来。
+ *
+ * 修法：写图标时顺带落 data.icon = true、写图片时落 false，判定时以它为准；
+ * 存量节点没有这个字段，才回落到 MIME（那时行为与修复前一致，不回归）。
+ */
+{
+  const { EditorBridge } = await import('./editor-bridge.js');
+  // 用户挂的 .svg 图片：MIME 与图标**完全一样**，只有标记能区分
+  const USER_SVG = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAwIiBoZWlnaHQ9IjQwMCIvPg==';
+  const ICON = 'data:image/svg+xml;base64,PHN2Zy84';
+  const PHOTO = 'data:image/jpeg;base64,/9j/AAAA';
+
+  const mk = (data) => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const b = new EditorBridge(host, {});
+    b.iframe = document.createElement('iframe');
+    document.body.appendChild(b.iframe);      // 不挂进 body 的话 contentWindow 是 null
+    b.ready = true;
+    const km = { _d: JSON.parse(JSON.stringify(data)),
+      getSelectedNode() { return { getData: (k) => km._d[k], setData: (k, v) => { km._d[k] = v; } }; } };
+    b.iframe.contentWindow.__km = km;
+    b.exec = (n, v) => { km._d[n] = v; return true; };
+    b._safe = (_l, fn) => { try { return fn({}, km); } catch { return null; } };
+    return { b, km };
+  };
+
+  // ① 挂一张 .svg 图片 → 侧栏「图片」栏必须列出它
+  {
+    const { b, km } = mk({});
+    b.setImage(USER_SVG);
+    ok(km._d.icon === false, '★ 挂图片时落 data.icon = false', String(km._d.icon));
+    ok(b.getSelectedImages().length === 1 && b.getSelectedImages()[0] === USER_SVG,
+      '★ 侧栏「图片」栏认得它是图片（早先判成图标 → 列出 0 张）',
+      JSON.stringify(b.getSelectedImages().length));
+  }
+  // ② 点「清除节点图标」不得把它删掉
+  {
+    const { b, km } = mk({});
+    b.setImage(USER_SVG);
+    b.setImage(null, { icon: true });
+    ok(km._d.image === USER_SVG,
+      '★ 「清除节点图标」保住用户的 SVG 图片（早先把它删了）', String(km._d.image));
+  }
+  // ③ 已有 SVG 图再挂照片：两张都保住（既不互相覆盖，也不产孤儿）
+  {
+    const { b, km } = mk({});
+    b.setImage(USER_SVG);
+    b.setImage(PHOTO);
+    const list = b.getSelectedImages();
+    ok(list.length === 2 && list.includes(USER_SVG) && list.includes(PHOTO),
+      '★ 已有 SVG 图再挂照片：两张都在（早先槽里那张被整串覆盖）',
+      JSON.stringify(list.length));
+    ok(!km._d.image, '两张时清空槽位（否则槽里那张侧栏读不到，成孤儿）', String(km._d.image));
+  }
+  // ④ 图标本身照旧工作：图标进槽、照片让位到横幅
+  {
+    const { b, km } = mk({});
+    b.setImage(ICON, { icon: true });
+    ok(km._d.icon === true, '应用图标时落 data.icon = true', String(km._d.icon));
+    b.setImage(PHOTO);
+    ok(km._d.image === ICON && !!km._d.images,
+      '★ 图标占槽时照片让位到横幅（BUG 58 的行为没被改坏）', `image=${km._d.image}`);
+    ok(b.getSelectedImages().length === 1 && b.getSelectedImages()[0] === PHOTO,
+      '侧栏列出的是照片，图标不算图片附件');
+  }
+  // ⑤ 存量数据（无 icon 字段）不回归：老图标仍判成图标
+  {
+    const { b } = mk({ image: ICON });
+    ok(b._imageSlot().isIcon === true, '★ 存量图标无标记时按 MIME 兜底，仍判成图标');
+  }
+  // ⑥ 存量 SVG 图片无标记时仍按 MIME（无法区分，与修复前一致）—— 不是回归
+  {
+    const { b } = mk({ image: USER_SVG });
+    ok(b._imageSlot().isIcon === true, '存量 SVG 图片无标记时行为与修复前一致（兜底）');
+  }
+
+  // ⑦ XMind 导出：用户那张 SVG 图必须被写进 topic.image（而不是被图标挤掉）
+  {
+    const X = await import('./xmind.js');
+    const one = async (d) => {
+      const sheets = [{ id: 'sh1', title: '画布', theme: null, layout: null,
+        content: JSON.stringify({ root: { data: { id: 'n1', text: '根', ...d }, children: [] } }) }];
+      const en = await X.zipRead(new Uint8Array(
+        await new Blob([await X.writeXMind(sheets, 'sh1')]).arrayBuffer()));
+      return JSON.parse(new TextDecoder().decode(en.get('content.json')))[0].rootTopic.image;
+    };
+    let im = await one({ image: USER_SVG, icon: false });
+    ok(im && im.src === USER_SVG,
+      '★ 导出 XMind 保住用户的 SVG 图片（早先被判成图标 → 取横幅 → 静默丢失）', im && im.src);
+    im = await one({ image: ICON, icon: true, images: [PHOTO] });
+    ok(im && im.src === PHOTO, '导出：槽里是图标时留照片', im && im.src);
+    im = await one({ image: ICON, images: [PHOTO] });
+    ok(im && im.src === PHOTO, '导出：存量无标记时按 MIME 兜底，仍留照片', im && im.src);
+  }
+}
+
+/* ------------------------------------------------------------------
+   BUG 97：图标 / 图片的区分没写进 XMind，zen 档往返后标记断掉
+   ------------------------------------------------------------------ */
+group('BUG 97 · XMind 必须带上「这是图标还是用户挂的图片」的标记');
+
+/*
+ * 图标与用户自己挂的 .svg 图片在 XMind 里**形态完全相同**（都是
+ * `topic.image.src = data:image/svg+xml…`），区分靠的是节点上的 data.icon
+ * 标记（BUG 95 引入）。而它不是 XMind 的字段，导出时不写出去就断了。
+ *
+ * 断掉的实际场景：**文件被别的软件打开再存回来** —— 那时本工具的无损快照
+ * kityminder.json 已被丢掉，导回只能走 zen 档。实测导回后 data.icon 是
+ * undefined，回落 MIME 判据，用户的 SVG 图又被判成图标（BUG 95 四处后果
+ * 复现：侧栏不列出、清除节点图标会删掉它）。
+ *
+ * 所以这里全部走 **zen 档往返**（剥掉 native 快照），才是真实情形。
+ */
+{
+  const X = await import('./xmind.js');
+  const USER_SVG = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAwIiBoZWlnaHQ9IjQwMCIvPg==';
+  const SVG_PHOTO = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODAwIi8+';
+  const ICON = 'data:image/svg+xml;base64,PHN2Zy84';
+  const JPEG = 'data:image/jpeg;base64,/9j/AAAA';
+
+  /** 写 → 只留 content.json → 读回（模拟被别的软件存过一遍） */
+  const zen = async (data) => {
+    const sheets = [{ id: 'sh1', title: '画布', theme: null, layout: null,
+      content: JSON.stringify({ root: { data: { id: 'nR', text: '根' },
+        children: [{ data: { id: 'n1', text: 'A', ...data }, children: [] }] } }) }];
+    const blob = await X.writeXMind(sheets, 'sh1');
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const en = await X.zipRead(buf);
+    const cj = JSON.parse(new TextDecoder().decode(en.get('content.json')));
+    const zb = await X.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+    const r = await X.readXMind(new Uint8Array(zb));
+    return { kid: JSON.parse(r.sheets[0].content).root.children[0],
+      topic: cj[0].rootTopic.children.attached[0] };
+  };
+
+  // ① 用户挂的 SVG 图片：标记必须活着回来
+  {
+    const { kid, topic } = await zen({ image: USER_SVG, icon: false });
+    ok(topic.nexusIcon === false, '导出时带上 nexusIcon=false', String(topic.nexusIcon));
+    ok(kid.data.icon === false,
+      '★ zen 档导回后仍认得它是**图片**（早先标记断掉 → 回落 MIME → 判成图标）',
+      String(kid.data.icon));
+  }
+  // ② 图标：同样要带回来（否则导回后侧栏会把图标列成图片）
+  {
+    const { kid, topic } = await zen({ image: ICON, icon: true });
+    ok(topic.nexusIcon === true, '图标导出时带 nexusIcon=true', String(topic.nexusIcon));
+    ok(kid.data.icon === true, 'zen 档导回后仍认得它是图标', String(kid.data.icon));
+  }
+  // ③ 槽位是图标、实际导出的是横幅里那张 SVG 照片（BUG 93）→ 标记跟照片走
+  {
+    const { topic } = await zen({ image: ICON, icon: true, images: [SVG_PHOTO] });
+    ok(topic.image?.src === SVG_PHOTO, '导出的是横幅里的照片', String(topic.image?.src).slice(0, 28));
+    ok(topic.nexusIcon === false,
+      '★ 标记跟**写出去的那张**走：照片是图片附件，不能跟着槽位的图标标成 true',
+      String(topic.nexusIcon));
+  }
+  // ④ 不污染：非 SVG 图片不需要这个键（JPEG 本来就分得清）
+  {
+    const { topic } = await zen({ image: JPEG, icon: false });
+    ok(topic.nexusIcon === undefined,
+      'JPEG 不写私有键（只在真的区分不出来时才写）', String(topic.nexusIcon));
+  }
+  // ⑤ 存量 / 别的软件产出的文件没有这个键 → 保持不写，回落 MIME，不回归
+  {
+    const cj = [{ rootTopic: { id: 't', title: '根',
+      children: { attached: [{ id: 'c', title: 'A', image: { src: ICON } }] } } }];
+    const zb = await X.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+    const r = await X.readXMind(new Uint8Array(zb));
+    const kid = JSON.parse(r.sheets[0].content).root.children[0];
+    ok(kid.data.icon === undefined,
+      '★ 别的软件产出的文件没有该键时不写 data.icon（回落 MIME，与修复前一致）',
+      String(kid.data.icon));
+  }
+  // ⑥ 键值不是布尔（被别的软件改成字符串 / 数字）→ 不认，回落 MIME
+  //
+  // 这条是被变异验证逼出来的：早先只测了「有布尔」与「没有键」两种，
+  // 于是把判据从 `typeof === 'boolean'` 放宽成 `!== undefined` 也照样全绿
+  // —— 断言看着在把关，实际没覆盖到这个形态。
+  {
+    const mkZen = async (v) => {
+      const cj = [{ rootTopic: { id: 't', title: '根',
+        children: { attached: [{ id: 'c', title: 'A', image: { src: ICON }, nexusIcon: v }] } } }];
+      const zb = await X.zipWrite([{ name: 'content.json',
+        data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+      const r = await X.readXMind(new Uint8Array(zb));
+      return JSON.parse(r.sheets[0].content).root.children[0];
+    };
+    ok((await mkZen('true')).data.icon === undefined,
+      'nexusIcon 是字符串时不认（回落 MIME）', String((await mkZen('true')).data.icon));
+    ok((await mkZen(1)).data.icon === undefined, 'nexusIcon 是数字时不认');
+    // 布尔仍然认
+    ok((await mkZen(false)).data.icon === false, '布尔 false 要认（这才是真信号）');
+  }
+}
+
+/* ------------------------------------------------------------------
    BUG 37：重命名文件夹不说话（与 renameFile 不一致）
    ------------------------------------------------------------------ */
 group('BUG 37 文件库两种重命名都要有回执');
@@ -6139,7 +6487,9 @@ group('图片互斥：image 与 images 不能同时有值（行为级）');
 
   /** 按大括号配对取出某个方法的**完整源码**（不靠 indexOf + 固定长度，那种切片会错位） */
   function methodSrc(name) {
-    const start = br.indexOf(name + '(');
+    // 必须锚在**行首的方法定义**上：只写 name+'(' 会先命中别的函数体里的
+    // `this.setImages(...)` 这类调用点，切出来的片段不是方法定义（语法直接报错）
+    const start = br.indexOf('\n  ' + name + '(');
     if (start < 0) return '';
     let i = br.indexOf('{', start);
     let depth = 0;
@@ -6173,6 +6523,9 @@ group('图片互斥：image 与 images 不能同时有值（行为级）');
       _imageSlot() { return { url: '', isIcon: false }; },
       getSelectedImages() { return []; },
       _appendImage(url) { log.push(['images', JSON.stringify([url])]); },
+      // BUG 95：写图片时顺带落 data.icon 标记。本组盯的是字段互斥，
+      // 标记本身由 BUG 95 那组把关，这里只要求**不能不写**。
+      _markIcon(v) { log.push(['data.icon', v]); },
     };
   }
   function runSetImages(list) {
@@ -6730,7 +7083,9 @@ group('附件操作：写回前必须切回节点（选中丢失防护）');
   ok(/getSelectedNodeId\(\)/.test(br), 'bridge 有 getSelectedNodeId（能记住当前节点）');
   {
     function methodSrc(name) {
-      const start = br.indexOf(name + '(');
+      // 必须锚在**行首的方法定义**上：只写 name+'(' 会先命中别的函数体里的
+      // `this.setImages(...)` 这类调用点，切出来的片段不是方法定义（语法直接报错）
+      const start = br.indexOf('\n  ' + name + '(');
       if (start < 0) return '';
       let i = br.indexOf('{', start);
       let d = 0;
@@ -12181,8 +12536,8 @@ group('BUG 58 · 图标库与图片附件共用 data.image，后写的把先写�
   ok(/slot\.url\s*&&\s*!slot\.isIcon[\s\S]{0,120}_appendImage\(slot\.url\)/.test(iconBranch),
     'setImage 写图标：槽里是图片时先让它进 images 横幅（否则照片永久丢失）');
   // 剥过注释后行内标记没了，改用代码特征定位两个分支
-  ok(/_appendImage\(slot\.url\);[\s\S]{0,40}return this\.exec\('image', url\)/.test(body),
-    'setImage 写图标：让位之后立刻写图标并返回，其间不得清 images（否则刚让位的图片又没了）');
+  ok(/_appendImage\(slot\.url\);[\s\S]{0,160}this\.exec\('image', url\)/.test(body),
+    'setImage 写图标：让位之后立刻写图标，其间不得清 images（否则刚让位的图片又没了）');
   // 按大括号配对取「写图标」分支：剥注释后行内标记没了，固定长度切片会串到下一个分支
   {
     const bi = body.indexOf('if (isIcon) {');
@@ -12197,9 +12552,12 @@ group('BUG 58 · 图标库与图片附件共用 data.image，后写的把先写�
       'setImage 写图标分支不得清 images（会把刚让位过去的图片又删掉）');
   }
 
-  // 4) 写图片：槽里若是图标，图片走横幅，不能顶掉图标
-  ok(/if\s*\(slot\.url\s*&&\s*slot\.isIcon\)[\s\S]{0,80}_appendImage\(url\)/.test(body),
+  // 4) 写图片：槽里已被占（图标或另一张图片）时一律「加」不「替」
+  ok(/if\s*\(slot\.url\s*\)[\s\S]{0,120}slot\.isIcon[\s\S]{0,60}_appendImage\(url\)/.test(body),
     'setImage 写图片：槽里是图标时图片走横幅（不能把图标顶掉）');
+  // BUG 95 带出来：槽里是**图片**时也不能整串覆盖（那张也是用户的图）
+  ok(/setImages\(cur\.concat\(\[slot\.url, url\]\)\)/.test(body),
+    'setImage 写图片：槽里已是图片时两张一起进横幅（互不覆盖、也不留孤儿）');
 
   // 5) 清除：只清自己这一类。「清除节点图标」不该连带删掉用户挂的照片
   ok(/isIcon\s*&&\s*slot\.url\s*&&\s*!slot\.isIcon\s*\)\s*return true/.test(body),
@@ -12219,8 +12577,12 @@ group('BUG 58 · 图标库与图片附件共用 data.image，后写的把先写�
   // 只 indexOf('getSelectedImages()') 会落到那个调用点上（定长窗口随后被新代码撑爆）
   const g0 = E.indexOf('getSelectedImages() {');
   const gbody = E.slice(g0, g0 + 2600);
-  ok(/one\s*&&\s*!this\._isIconUrl\(one\)/.test(gbody),
+  ok(/one\s*&&\s*!this\._slotKind\(n, one\)/.test(gbody),
     'getSelectedImages：槽里是图标时不算图片（否则侧栏列出图标、删图会误删图标、追加第二张时把图标算进基数）');
+  // BUG 95：判据必须是**标记优先、MIME 兜底** —— 只看 MIME 会把用户挂的 .svg
+  // 图片当成图标（io.imageToInline 对 SVG 原样内联，产出同样是 svg+xml）
+  ok(/const flag = node\?\.getData\?\.\('icon'\);[\s\S]{0,200}return this\._isIconUrl\(u\)/.test(E),
+    '_slotKind：先看 data.icon 标记，没有才回落到 MIME（存量数据不回归）');
 
   // 8) 调用点：图标库必须标 icon
   ok(/setImage\(url,\s*\{\s*icon:\s*true\s*\}\)/.test(C),
@@ -13482,6 +13844,65 @@ group('写盘失败不得被成功文案盖掉：await persist() 必须判返回
     '导入失败时 toast 必须是 err 而不是 ok');
   ok(/ctx\.toast\(ok \? `已导入 \$\{workbook\.sheets\.length\} 张画布` : '已导入，但保存失败'/.test(code),
     'XMind 导入失败时 toast 必须是 err');
+}
+
+/* ============================================================
+   BUG 96：恢复快照 —— 写盘失败仍弹绿字「已从快照恢复」
+   ============================================================ */
+
+group('恢复快照：写盘失败不得报成功，且不得谎称「已另存一份」（BUG 96）');
+
+/*
+ * BUG 77 逐条堵了导入 / 复制画布 / 换主题 / 换布局 / 新建文件，
+ * **唯独没回头扫 restoreBackup** —— 又是"同一条约束只修了部分路径"
+ * （本项目第 8 次）。这条比别处更重：
+ *
+ * 恢复是**整体替换**，写盘失败时磁盘上还是恢复前的内容，而这里弹的是
+ * 绿字「已从快照恢复（恢复前的状态已另存一份）」—— 重载后回到旧状态，
+ * 用户却以为恢复过了，可能接着在上面继续改，把"回退"这件事彻底忘掉。
+ *
+ * 而且那句「已另存一份」是用户唯一的回滚指望：恢复错了还能再退回去。
+ * backupNow 写失败时它同样是假的 —— 所以 backupNow 必须**回话**。
+ */
+{
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+  const code = stripCommentsFlatJs(src);
+
+  /** 取某函数体（按大括号配平，从 `async function NAME(` 起） */
+  const bodyOf = (name) => {
+    const i = code.indexOf('async function ' + name + '(');
+    if (i < 0) return '';
+    let s = code.indexOf('{', i), depth = 0;
+    for (let j = s; j < code.length; j++) {
+      if (code[j] === '{') depth++;
+      else if (code[j] === '}') { depth--; if (!depth) return code.slice(i, j + 1); }
+    }
+    return '';
+  };
+
+  const rb = bodyOf('restoreBackup');
+  ok(rb.length > 0, '能取到 restoreBackup');
+  ok(/const ok = await persist\(\)/.test(rb),
+    '★ restoreBackup 必须接 persist() 的返回值（早先不接）');
+  ok(/const backed = await backupNow\(true\)/.test(rb),
+    'restoreBackup 要接住「留底」的结果，否则那句「已另存一份」是没有依据的');
+
+  const iGuard = rb.indexOf('if (!ok)');
+  const iToast = rb.indexOf('已从快照恢复（恢复前的状态已另存一份）');
+  ok(iGuard >= 0 && iToast >= 0 && iGuard < iToast,
+    '★ 成功提示必须排在「写盘失败」分支之后（否则失败也报成功）',
+    `guard=${iGuard} toast=${iToast}`);
+  // 失败分支要说清后果：重载后会回到恢复前的状态
+  ok(/未能写入本地库/.test(rb), '写盘失败要说明「重载后会回到恢复前的状态」');
+  // 留底失败同样要说：那句「已另存一份」是用户唯一的退路
+  ok(/恢复前的状态未能留底/.test(rb), '留底失败时不得声称「已另存一份」');
+
+  const bn = bodyOf('backupNow');
+  ok(bn.length > 0, '能取到 backupNow');
+  ok(/if \(key\) \{ ctx\.toast\('已创建快照', 'ok'\); return true; \}/.test(bn),
+    'backupNow 成功要回 true');
+  ok(/return false;/.test(bn), 'backupNow 写失败要回 false（调用方据此决定能不能说「已另存一份」）');
+  ok(/return null;/.test(bn), 'backupNow 内容重复时回 null（那是"没做"而不是"失败"）');
 }
 
 /* ============================================================

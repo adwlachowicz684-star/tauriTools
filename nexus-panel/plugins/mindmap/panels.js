@@ -1744,7 +1744,24 @@ export function buildSide(app, opts = {}) {
             title: '从预设图标库点选（A3–A10）',
           }, '图标库…'),
           h('button.mm-btn', { onclick: pickImage }, '浏览图片…'),
-          quietBtn('清除节点上的图标 / 图片', () => { app.bridge.setImage(null); app.api.commit(); }),
+          /*
+           * 这个按钮的文案是「清除节点上的**图标 / 图片**」—— 两类都要清。
+           *
+           * 而 setImage(null) 的语义是「只清自己这一类」：不传 icon 标记时它
+           * 是「清除图片」，槽位上放的是**图标就跳过**（那是「清除节点图标」
+           * 按钮的事，见图标库里那个）。于是节点上只有图标时点这个按钮
+           * **什么都不发生**，图标还在；图标 + 照片横幅时只清掉照片、图标留下。
+           * 实测（真实 EditorBridge）：{image: 图标} → 点完 image 仍是图标。
+           *
+           * 所以先按图标清一次（槽位是照片时它会自己跳过），再按图片清一次。
+           * 顺序不能反：先清图片会把槽位照片清掉，接着清图标那次看到的空槽
+           * 也会被清一次 —— 结果一样，但先清图标更符合「两类都要清」的读法。
+           */
+          quietBtn('清除节点上的图标 / 图片', () => {
+            app.bridge.setImage(null, { icon: true });
+            app.bridge.setImage(null);
+            app.api.commit();
+          }),
         ),
         h('div.mm-hint', {}, '图标与图片都以 dataURL 内联进脑图，随文件一起导出；建议控制在 2MB 内。'),
       ),
