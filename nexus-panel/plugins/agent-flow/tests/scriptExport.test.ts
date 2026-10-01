@@ -795,3 +795,97 @@ test('源码：runner 里把上游当输出返回的 kind 都已登记', () => {
   }
   assert.ok(checked >= 8, `只核对了 ${checked} 个 runner，判据可能失效`);
 });
+
+/* ================================================================ */
+/* 汇合节点：能算出来，就得真算                                        */
+/* ================================================================ */
+
+const joined = (kind: string, extra: Record<string, unknown> = {}, sep?: string) => {
+  const data: Record<string, unknown> = { ...extra };
+  if (sep !== undefined) data.joinBy = sep;
+  return exportFlow(g([
+    n('a1', 'log', { text: '甲' }),
+    n('a2', 'log', { text: '乙' }),
+    n('j1', kind, data),
+    n('c1', 'log', { text: '汇合 {{j1.output}}' }),
+  ], [e('a1', 'j1'), e('a2', 'j1'), e('j1', 'c1')]), 'python').text;
+};
+
+test('汇合：python 里真的拼起来（跳过空串）', () => {
+  const t = joined('join');
+  assert.match(t, /out_j1 = "\\n"\.join\(\[_v for _v in \[out_a1, out_a2\] if _v != ""\]\)/, `没拼接：${t}`);
+  assert.doesNotMatch(t, /out_j1 = ""\s+# j1 的输出在脚本里算不出来/, 'join 能算出来，不该留空');
+});
+
+test('汇合：分隔符跟着节点设置走', () => {
+  const t = joined('join', {}, '\\t');
+  assert.match(t, /out_j1 = "\\t"\.join\(/, `分隔符没生效：${t}`);
+});
+
+test('汇合：只有一个上游时不生成拼接', () => {
+  const t = exportFlow(g([
+    n('a1', 'log', { text: '甲' }),
+    n('j1', 'join', {}),
+  ], [e('a1', 'j1')]), 'python').text;
+  assert.match(t, /out_j1 = out_a1/, `单上游应直接取值：${t}`);
+  assert.doesNotMatch(t, /\.join\(/, '单上游不该走拼接');
+});
+
+test('汇合：严格模式明说不翻', () => {
+  const r = exportFlow(g([
+    n('a1', 'log', { text: '甲' }),
+    n('j1', 'join', { mode: 'strict' }),
+  ], [e('a1', 'j1')]), 'python');
+  assert.ok(
+    r.skipped.some((s) => s.id === 'j1' && /严格汇合/.test(s.reason)),
+    `严格模式没记说明：${JSON.stringify(r.skipped)}`,
+  );
+});
+
+test('汇合：shell 里也真的拼起来', () => {
+  const t = exportFlow(g([
+    n('a1', 'log', { text: '甲' }),
+    n('a2', 'log', { text: '乙' }),
+    n('j1', 'join', {}),
+  ], [e('a1', 'j1'), e('a2', 'j1')]), 'shell').text;
+  assert.match(t, /OUT_J1=""/, `shell 没初始化：${t}`);
+  assert.match(t, /for _v in "\$OUT_A1" "\$OUT_A2"; do/, `shell 没遍历上游：${t}`);
+  assert.match(t, /\[ -n "\$_v" \] \|\| continue/, `shell 没跳过空串：${t}`);
+  // 换行分隔符必须是 $'\n'，真实换行会把这一行撑成两行
+  assert.ok(!/\n\n/.test(t.split('OUT_J1=""')[1]?.split('done')[0] ?? ''), 'shell 分隔符不该含真实换行');
+});
+
+/*
+ * 真跑：带输入跑一遍，确认拼出来的是"两个上游用换行连起来"。
+ * 只断言"代码里有 join"会放过"拼的是错的列表"。
+ */
+test('真跑：汇合结果等于两个上游用换行连起来', () => {
+  const t = exportFlow(g([
+    n('a1', 'log', { text: '甲' }),
+    n('a2', 'log', { text: '乙' }),
+    n('j1', 'join', {}),
+    n('c1', 'log', { text: '拿到 {{j1.output}}' }),
+  ], [e('a1', 'j1'), e('a2', 'j1'), e('j1', 'c1')]), 'python').text;
+  const body = t.replace('input_text = ""', 'input_text = "入"');
+  const out = require('node:child_process').execSync('python3', { input: body }).toString();
+  assert.match(out, /拿到 入\n入/, `拼接结果不对：${JSON.stringify(out)}`);
+});
+
+/* 说明文字不能撒谎：条件和循环已经翻了，别再说"不在这份脚本里" */
+test('源码：脚本头部的说明与实际能力一致', () => {
+  const src = readSrc('engine/scriptExport.ts');
+  assert.doesNotMatch(src, /条件\/循环\/并发\/MCP 调用不在这份脚本里/, '说明已过时：条件与循环已经能翻了');
+  assert.ok(/并发在脚本里是顺序执行/.test(src), '并发的顺序执行语义必须明说');
+});
+
+/* 并发平铺必须留下线索，否则用户以为脚本里也真并发了 */
+test('并发节点平铺时记明原因', () => {
+  const r = exportFlow(g([
+    n('p1', 'parallel', { mode: 'fixed', concurrency: 4 }),
+    n('b1', 'log', { text: 'x' }),
+  ], [e('p1', 'b1')]), 'python');
+  assert.ok(
+    r.skipped.some((s) => s.id === 'p1' && /顺序执行/.test(s.reason)),
+    `并发平铺没说明：${JSON.stringify(r.skipped)}`,
+  );
+});

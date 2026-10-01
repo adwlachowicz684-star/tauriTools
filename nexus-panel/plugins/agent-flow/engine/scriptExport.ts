@@ -27,7 +27,7 @@ import { tokenRe } from './template';
 import { opBrief } from './ops';
 import { paramLinksOf, linksInto, outLabelOf, outputsOf, OUT_DEFAULT } from './paramLinks';
 import { findPane, resolveApiPane, DEFAULT_TEMPERATURE } from './pane';
-import { loopBodyOf } from './loop';
+import { loopBodyOf, unescapeSeparator } from './loop';
 
 export type ExportFormat = 'shell' | 'python' | 'json' | 'markdown';
 
@@ -407,12 +407,85 @@ function paramLinkNoteOf(
 /* Shell                                                               */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 汇合节点在脚本里的拼接。
+ *
+ * 画布上 join 的输出是**各上游输出按分隔符拼起来、跳过空串**（见
+ * runners/join.ts）。这是**能算出来的** —— 上一轮却被归到"算不出来
+ * 留空"，于是 `{{j1.output}}` 恒为空，汇合下游全线空值。
+ *
+ * 空串跳过这条是刻意的：条件/并发分支里没走的那条，画布上 outputs
+ * 里没它（取空串）、脚本里变量是 ""（上一轮已初始化），两边都跳过它。
+ */
+function joinPartsOf(
+  n: GraphNode,
+  skipped: Skipped[],
+  ups: string[],
+): { sep: string; strict: boolean } {
+  const d = (n.data ?? {}) as Record<string, unknown>;
+  const strict = str(d.mode) === 'strict';
+  if (strict) {
+    /*
+     * 严格模式是"缺一条输入就整条失败"。脚本里所有变量都有定义，
+     * 判不出"缺没缺" —— 硬翻只会变成"看着翻了、其实没校验"。
+     */
+    skipped.push({
+      id: n.id,
+      kind: 'join',
+      reason: '严格汇合（缺一条输入就失败）在脚本里不翻 —— 脚本里变量都有定义，判不出「缺失」',
+    });
+  }
+  return { sep: unescapeSeparator(str(d.joinBy ?? '\\n')), strict };
+}
+
+/**
+ * shell 里的分隔符字面量。
+ *
+ * 含换行/制表符时不能用单引号直接包 —— 真实控制字符会**把这一行撑成
+ * 两行**，生成的脚本看着是断的（虽然 bash 仍能跑）。
+ * 用 ANSI-C 引用（$'\\n'）让它保持在一行里，人也读得懂。
+ */
+function shSepSep(sep: string): string {
+  if (/^[\x20-\x7e]*$/.test(sep)) return shq(sep);
+  return "$'" + sep
+    .split('\\').join('\\\\')
+    .split("'").join("\\'")
+    .split('\n').join('\\n')
+    .split('\t').join('\\t')
+    .split('\r').join('\\r') + "'";
+}
+
+function shellJoinOf(n: GraphNode, skipped: Skipped[], ups: string[]): string | null {
+  const { sep } = joinPartsOf(n, skipped, ups);
+  const me = shVar(n.id);
+  if (ups.length === 0) return `${me}=""   # ${n.id}: 汇合（没有输入）`;
+  if (ups.length === 1) return `${me}=${'$'}${shVar(ups[0])}   # ${n.id}: 汇合`;
+  const qsep = shSepSep(sep);
+  return [
+    `${me}=""`,
+    `for _v in ${ups.map((u) => `"${'$'}${shVar(u)}"`).join(' ')}; do`,
+    `  [ -n "$_v" ] || continue`,
+    `  if [ -z "${'$'}${me}" ]; then ${me}="$_v"; else ${me}="${'$'}${me}"${qsep}"$_v"; fi`,
+    `done   # ${n.id}: 汇合（跳过空串）`,
+  ].join('\n');
+}
+
+function pyJoinOf(n: GraphNode, skipped: Skipped[], indent: string, ups: string[]): string | null {
+  const { sep } = joinPartsOf(n, skipped, ups);
+  const me = pyVar(n.id);
+  if (ups.length === 0) return `${indent}${me} = ""   # ${n.id}: 汇合（没有输入）`;
+  if (ups.length === 1) return `${indent}${me} = ${pyVar(ups[0])}   # ${n.id}: 汇合`;
+  const list = ups.map((u) => pyVar(u)).join(', ');
+  return `${indent}${me} = ${pyq(sep)}.join([_v for _v in [${list}] if _v != ""])   # ${n.id}: 汇合（跳过空串）`;
+}
+
 function shellLine(
   n: GraphNode,
   skipped: Skipped[],
   cardRef?: Map<string, string>,
   namedOut?: Set<string>,
   loopRef?: Record<string, string> | null,
+  ups: string[] = [],
 ): string | null {
   const d = (n.data ?? {}) as Record<string, unknown>;
   const kind = str(d.kind ?? d.type);
@@ -422,6 +495,7 @@ function shellLine(
   const me = shVar(n.id);
 
   switch (kind) {
+    case 'join': return shellJoinOf(n, skipped, ups);
     case 'wait': {
       const ms = num(d.ms, 1000);
       return `sleep ${(ms / 1000).toFixed(3)}   # ${n.id}: 等待 ${ms}ms`;
@@ -632,6 +706,15 @@ function assignLineOf(g: Graph, id: string, kind: string, style: 'sh' | 'py'): s
   return style === 'sh' ? `${nm}=""   # ${tail}` : `${nm} = ""   # ${tail}`;
 }
 
+/** 某节点的直接上游（按边序，去重）—— join 拼接与透传都按这个列表 */
+function upsOf(g: Graph, id: string): string[] {
+  const seen: string[] = [];
+  for (const e of g.edges ?? []) {
+    if (e.target === id && !seen.includes(e.source)) seen.push(e.source);
+  }
+  return seen;
+}
+
 /** 打平后的拓扑序（与 toShell/toPython 里同一口径） */
 function flatOrder(g: Graph): string[] {
   const { layers, cyclic } = topoLayers(g, paramLinksOf(g.edges));
@@ -820,8 +903,9 @@ function toShell(g: Graph): ExportResult {
     '#!/usr/bin/env bash',
     '# 由画布自动生成 —— 请勿手改后指望能同步回去',
     '#',
-    '# 说明：画布里的条件/循环/并发/MCP 调用不在这份脚本里，',
-    '#       未翻译的节点在下方以 "# TODO" 标出。',
+    '# 说明：条件与「固定次数」循环已生成对应结构；',
+    '#       并发在脚本里是顺序执行（结果一致，只是不并行）；',
+    '#       其余情形及未翻译的节点在下方以 "# TODO" 标出。',
     'set -euo pipefail',
     '',
     /*
@@ -912,7 +996,13 @@ function toShell(g: Graph): ExportResult {
       }
 
       done.add(id);
-      const line = shellLine(n, skipped, cardRef, namedOut, loopRef);
+      if (kind === 'parallel') {
+        skipped.push({
+          id, kind,
+          reason: '并发在脚本里是顺序执行 —— 结果一致，只是不并行（画布上的并发度上限在脚本里没有对应物）',
+        });
+      }
+      const line = shellLine(n, skipped, cardRef, namedOut, loopRef, upsOf(g, id));
       const own = line ? new RegExp(`\\b${shVar(id)}=`).test(line) : false;
       if (!own) lines.push(assignLineOf(g, id, kind, 'sh'));
       if (line) { lines.push(line); count += 1; }
@@ -937,6 +1027,7 @@ function pyLine(
   paneEff?: Map<string, ReturnType<typeof resolveApiPane>>,
   namedOut?: Set<string>,
   loopRef?: Record<string, string> | null,
+  ups: string[] = [],
 ): string | null {
   const d = (n.data ?? {}) as Record<string, unknown>;
   const kind = str(d.kind ?? d.type);
@@ -954,6 +1045,7 @@ function pyLine(
   const me = pyVar(n.id);
 
   switch (kind) {
+    case 'join': return pyJoinOf(n, skipped, indent, ups);
     case 'wait': {
       const ms = num(d.ms, 1000);
       return `${indent}time.sleep(${ms / 1000})   # ${n.id}: 等待 ${ms}ms`;
@@ -1081,8 +1173,9 @@ function toPython(g: Graph): ExportResult {
     '#!/usr/bin/env python3',
     '"""由画布自动生成 —— 请勿手改后指望能同步回去。',
     '',
-    '画布里的条件/循环/并发/MCP 调用不在这份脚本里，',
-    '未翻译的节点在下方以 "# TODO" 标出。',
+    '条件与「固定次数」循环已生成对应结构；',
+    '并发在脚本里是顺序执行（结果一致，只是不并行）；',
+    '其余情形及未翻译的节点在下方以 "# TODO" 标出。',
     '"""',
     'import time',
     'import requests',
@@ -1250,7 +1343,18 @@ function toPython(g: Graph): ExportResult {
       }
 
       done.add(id);
-      const line = pyLine(n, skipped, indent, cardRef, paneEff, namedOut, loopRef);
+      if (kind === 'parallel') {
+        /*
+         * 并发节点在画布上是"给下游设并发度上限"，脚本里一律顺序执行 ——
+         * 结果一致（只是不并行），所以这里不翻结构，但**必须说出来**：
+         * 静默平铺的话，用户会以为脚本里也真的并发跑了。
+         */
+        skipped.push({
+          id, kind,
+          reason: '并发在脚本里是顺序执行 —— 结果一致，只是不并行（画布上的并发度上限在脚本里没有对应物）',
+        });
+      }
+      const line = pyLine(n, skipped, indent, cardRef, paneEff, namedOut, loopRef, upsOf(g, id));
       const own = line ? new RegExp(`\\b${pyVar(id)}\\s*=`).test(line) : false;
       if (!own) lines.push(`${indent}${assignLineOf(g, id, kind, 'py')}`);
       if (line) { lines.push(line); count += 1; }
