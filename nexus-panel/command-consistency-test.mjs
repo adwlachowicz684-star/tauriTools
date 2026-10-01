@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { stripCommentsJs, stripCommentsFlat, stripCommentsFlatJs } from './test-scan-utils.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
 const scanner = path.join(root, 'scripts', 'scan-commands.mjs');
@@ -362,7 +363,7 @@ console.log('\n--- 11. 死条目：能力表里写了不存在的命令必须报
    * 而看现象只会以为"那条没注册"。扫描器本身（第 8 节）是剥注释的，
    * 这一节当初漏了，两边行为不一致。
    */
-  const body = m[1].replace(/\/\*[\s\S]*?\*\//g, '');
+  const body = stripCommentsFlat(m[1]);
   const reg = new Set(body.split(',').map((x) => x.trim()).filter(Boolean).map((x) => x.split('::').pop()));
   const dead = Object.keys(COMMAND_CAPS).filter((c) => !reg.has(c));
   t('能力表里没有死条目', dead.length === 0, dead.join(','));
@@ -563,7 +564,7 @@ console.log('\n--- 13. 宿主必须在 concat 自定义插件**之前**注入内
    */
   const fs2 = await import('node:fs');
   const s2 = fs2.readFileSync(path.join(root, 'js', 'host.js'), 'utf8');
-  const codeOnly = s2.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const codeOnly = stripCommentsFlatJs(s2);
 
   const iReg = codeOnly.indexOf('registerBuiltinIds(list.map');
   const iConcat = codeOnly.indexOf("localStorage.getItem('nexus:custom-plugins')");
@@ -753,9 +754,7 @@ console.log('\n--- 17. 白名单命令不得在能力表里隐身 ---');
 
   /* 白名单：invoke-policy.js 的 PLUGIN_COMMANDS */
   const polSrc = fs.readFileSync(path.join(root, 'js', 'invoke-policy.js'), 'utf8');
-  const stripped = polSrc
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|\s)\/\/[^\n]*/g, '$1');
+  const stripped = stripCommentsJs(polSrc);
   const blk = stripped.slice(stripped.indexOf('PLUGIN_COMMANDS'));
   const body = blk.slice(blk.indexOf('{') + 1, blk.indexOf('\n}'));
   const allow = new Set();

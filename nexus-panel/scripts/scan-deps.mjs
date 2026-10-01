@@ -33,6 +33,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripCommentsJs } from '../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -124,14 +125,13 @@ function pkgOf(spec) {
  * 不剥的话，注释里举例写的 `from 'x'` 会被当成真实 import，
  * 于是冒出一批根本不存在的"未声明依赖"（本项目自己的脚本注释就踩到了）。
  */
-function stripComments(src) {
-  return String(src || '')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
-}
+/* 剥注释改用共用实现（../test-scan-utils.mjs）。
+   原来内联那份的行注释判据是 (^|[^:])，比共用实现的 (^|\s) 宽松 ——
+   `a//b` 这种写法会被它当成注释开头，把后半行吞掉；
+   扫 import 时吞掉的可能是有效代码，会漏掉真实声明。 */
 
 function importsOf(raw) {
-  const src = stripComments(raw);
+  const src = stripCommentsJs(raw);
   const out = new Set();
   const re = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*|\bexport\s+\*\s+from\s*)['"]([^'"\n]+)['"]/g;
   let m;
@@ -168,7 +168,7 @@ function importsOf(raw) {
  * 只匹配引号开头的第一参，天然不会把测试算成消费方。
  */
 function runtimeDepsOf(raw) {
-  const src = stripComments(raw);
+  const src = stripCommentsJs(raw);
   const out = new Set();
   const re = /\brequireDep\s*\(\s*['"`]([^'"`\n]+)['"`]/g;
   let m;
