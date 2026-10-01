@@ -575,16 +575,22 @@ function pysubst(
 }
 
 /**
- * log 节点在脚本里的赋值行。
+ * output 就是"上游原样透传"的那些节点。
  *
- * 画布上 log 的 output 是**上游原样透传**（见 runners/log.ts），
- * 而导出脚本以前只给一行 print —— 于是下游写 `{{a1.output}}` 时
- * 拿到的是 `out_a1`，一个**从未定义过的变量**，跑起来直接 NameError。
+ * 之所以列出来：这些节点在画布上**有输出**（下游可以引用），
+ * 但脚本里它们大多只有一行动作（print / sleep / 播放），
+ * 从没为 `out_xx` 赋过值 —— 下游写 `{{xx.output}}` 就拿一个
+ * **从未定义过的变量**，跑起来 NameError。
  *
- * 这个坑对条件分支最致命：判定条件必然引用上游输出，
- * 而上游十有八九是个 log，于是生成的脚本一运行就崩。
+ * 判据见 tests：表里的每一项，其 runner 必须真的读上游并返回。
  */
-function logAssignOf(
+const PASSTHROUGH_KINDS = new Set([
+  'log', 'beep', 'playAudio', 'wait', 'retry', 'throttle', 'timeout', 'gate',
+]);
+
+/**
+ * 上游拼接的赋值行（与画布上的 upstreamText 同一口径）。
+ */function passAssignOf(
   g: Graph,
   id: string,
   style: 'sh' | 'py',
@@ -605,6 +611,25 @@ function logAssignOf(
   return style === 'sh'
     ? `${nm(id)}="$(printf '%s\\n%s' ${joined.join(' ')})"`
     : `${nm(id)} = "\\n".join([${joined.join(', ')}])`;
+}
+
+/**
+ * 给"脚本里没有产出"的节点补的赋值行。
+ *
+ * 不补的话，下游 `{{xx.output}}` 就是一个从未定义过的变量 ——
+ * python 里 NameError、shell 里空值，脚本直接崩或静默出错，
+ * 而这恰恰是最难发现的那一类：脚本看着完整，一运行才炸。
+ *
+ * 两种值，差别是刻意的：
+ * · 确认透传的 → 上游拼接（与画布同一口径）
+ * · 其余       → 空串 + 注释，**不拿上游顶替**
+ *   顶替 = 能跑但值不对（比如数学节点的输出是算出来的，不是上游原文）
+ */
+function assignLineOf(g: Graph, id: string, kind: string, style: 'sh' | 'py'): string {
+  if (PASSTHROUGH_KINDS.has(kind)) return passAssignOf(g, id, style);
+  const nm = style === 'sh' ? shVar(id) : pyVar(id);
+  const tail = `${id} 的输出在脚本里算不出来，留空（不拿上游顶替）`;
+  return style === 'sh' ? `${nm}=""   # ${tail}` : `${nm} = ""   # ${tail}`;
 }
 
 /** 打平后的拓扑序（与 toShell/toPython 里同一口径） */
@@ -886,10 +911,10 @@ function toShell(g: Graph): ExportResult {
         }
       }
 
-      if (kind === 'log') lines.push(logAssignOf(g, id, 'sh'));
-
       done.add(id);
       const line = shellLine(n, skipped, cardRef, namedOut, loopRef);
+      const own = line ? new RegExp(`\\b${shVar(id)}=`).test(line) : false;
+      if (!own) lines.push(assignLineOf(g, id, kind, 'sh'));
       if (line) { lines.push(line); count += 1; }
       else { lines.push(`# TODO 未翻译：${id}（${str((n.data as Record<string, unknown>)?.kind ?? '')}）`); }
       lines.push(...paramLinkNoteOf(g, id, '# '));
@@ -1224,10 +1249,10 @@ function toPython(g: Graph): ExportResult {
         }
       }
 
-      if (kind === 'log') lines.push(`${indent}${logAssignOf(g, id, 'py')}`);
-
       done.add(id);
       const line = pyLine(n, skipped, indent, cardRef, paneEff, namedOut, loopRef);
+      const own = line ? new RegExp(`\\b${pyVar(id)}\\s*=`).test(line) : false;
+      if (!own) lines.push(`${indent}${assignLineOf(g, id, kind, 'py')}`);
       if (line) { lines.push(line); count += 1; }
       else { lines.push(`${indent}# TODO 未翻译：${id}（${str((n.data as Record<string, unknown>)?.kind ?? '')}）`); }
       lines.push(...paramLinkNoteOf(g, id, `${indent}# `));

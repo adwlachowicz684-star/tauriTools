@@ -691,3 +691,107 @@ test('源码：条件表达式对 source 为空的情况不硬翻', () => {
   assert.ok(/if \(src0 === ''\) return null/.test(body), "source 为空必须翻不了（画布上是拼全部上游）");
   assert.ok(/op === 'regex'/.test(body) && /return null/.test(body), 'regex 不该硬翻');
 });
+
+/* ================================================================ */
+/* 每个节点在脚本里都得有变量（否则下游引用就是未定义变量）             */
+/* ================================================================ */
+
+/*
+ * 画布上这些节点的 output 就是上游透传，而脚本里它们只有一行动作
+ * （print / sleep / 播放）—— 从没给 out_xx 赋过值。
+ * 下游写 {{xx.output}} 就拿到一个从未定义的变量，跑起来直接崩。
+ */
+const PASSTHROUGH: string[] = ['beep', 'playAudio', 'wait', 'retry', 'throttle', 'timeout', 'gate'];
+
+for (const k of PASSTHROUGH) {
+  test(`脚本里 ${k} 有赋值行（下游引用它不再是未定义变量）`, () => {
+    const r = exportFlow(g([
+      n('a0', 'log', { text: '上游' }),
+      n('b1', k, {}),
+      n('c2', 'log', { text: '下游 {{b1.output}}' }),
+    ], [e('a0', 'b1'), e('b1', 'c2')]), 'python');
+    assert.match(r.text, /out_b1 = /, `${k} 没有赋值行：${r.text}`);
+    assert.doesNotMatch(r.text, /out_b1 = ""\s+# b1 的输出在脚本里算不出来/, `${k} 该透传却留空`);
+  });
+}
+
+/*
+ * 反向：不只断言"有赋值"，而是"被引用到的每个变量都有赋值"。
+ * 只查某一个变量会放过"赋的是别的东西"。
+ */
+test('真跑：引用透传节点的输出不崩', () => {
+  const r = exportFlow(g([
+    n('a0', 'log', { text: '甲' }),
+    n('b1', 'wait', { ms: '1' }),
+    n('c2', 'log', { text: '拿到 {{b1.output}}' }),
+  ], [e('a0', 'b1'), e('b1', 'c2')]), 'python');
+  const body = r.text;
+  const refs = [...body.matchAll(/\b(out_[a-z0-9_]+)\b/g)].map((m) => m[1]);
+  for (const v of new Set(refs)) {
+    assert.match(body, new RegExp(`\\b${v} = `), `${v} 被引用却从未赋值`);
+  }
+});
+
+/* 数学节点的输出是算出来的，不是上游原文 —— 留空并注明，不拿上游顶替 */
+test('算不出来的节点留空并注明，不拿上游顶替', () => {
+  const r = exportFlow(g([
+    n('a0', 'log', { text: '上游' }),
+    n('b1', 'math', { op: 'add', a: '1', b: '2' }),
+  ], [e('a0', 'b1')]), 'python');
+  assert.match(r.text, /out_b1 = ""\s+# b1 的输出在脚本里算不出来/, `没注明：${r.text}`);
+  assert.doesNotMatch(r.text, /out_b1 = out_a0/, '不该拿上游顶替');
+});
+
+/* 透传表是手抄的，必须有守卫盯住两边不漂移 */
+test('源码：透传表里的每一项，其 runner 确实读上游并返回', () => {
+  const src = readSrc('engine/scriptExport.ts');
+  const m = src.match(/const PASSTHROUGH_KINDS = new Set\(\[([\s\S]*?)\]\)/);
+  assert.ok(m, '没找到 PASSTHROUGH_KINDS');
+  const kinds = [...m![1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  assert.ok(kinds.length > 0, '透传表为空');
+  for (const k of kinds) {
+    let runner: string;
+    try {
+      runner = readSrc(`engine/runners/${k}.ts`);
+    } catch {
+      throw new Error(`透传表里的 ${k} 没有对应的 runner 文件`);
+    }
+    const body = runner.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    assert.match(body, /upstreamText\(/, `${k} 的 runner 不读上游，不该在透传表里`);
+    assert.match(body, /return \{ output:/, `${k} 的 runner 没有返回值`);
+  }
+});
+
+/*
+ * 反向：runner 里把上游当输出返回的 kind 必须都已登记。
+ * 只查正向的话，新增一个透传节点忘了登记，测试照样全绿 ——
+ * 而漏登记的代价正是脚本崩。
+ */
+test('源码：runner 里把上游当输出返回的 kind 都已登记', () => {
+  const src = readSrc('engine/scriptExport.ts');
+  const m = src.match(/const PASSTHROUGH_KINDS = new Set\(\[([\s\S]*?)\]\)/);
+  const listed = new Set([...(m?.[1] ?? '').matchAll(/'([^']+)'/g)].map((x) => x[1]));
+  /*
+   * 用到 upstreamText，但它是**输入**不是输出 —— 输出是抽取/运算结果。
+   * 逐个核过（extract: 抽取命中、ops: 运算值），写白名单而不是放宽判据：
+   * 放宽成"不含 upstreamText"的话，log（把上游存进变量再返回）会被放过，
+   * 于是"从透传表里删掉 log"这种退化测试全绿。
+   */
+  const NOT_OUTPUT = new Set(['extract', 'ops']);
+  const fs = require('node:fs');
+  const dir = require('node:path').join(process.env.AF_SRC ?? '', 'engine/runners');
+  let checked = 0;
+  for (const f of fs.readdirSync(dir)) {
+    if (!f.endsWith('.ts')) continue;
+    const body = readSrc(`engine/runners/${f}`)
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
+    if (!/upstreamText\(/.test(body)) continue;
+    if (!/return \{ output:/.test(body)) continue;
+    const kind = f.replace(/\.ts$/, '');
+    if (NOT_OUTPUT.has(kind)) continue;
+    checked += 1;
+    assert.ok(listed.has(kind), `${kind} 把上游当输出返回却没登记进 PASSTHROUGH_KINDS`);
+  }
+  assert.ok(checked >= 8, `只核对了 ${checked} 个 runner，判据可能失效`);
+});
