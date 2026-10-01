@@ -71,9 +71,27 @@ if (fs.existsSync(rsPath)) {
   const storePath = path.join(ROOT, 'src-tauri/src/fpx/store.rs');
   const st = fs.existsSync(storePath) ? fs.readFileSync(storePath, 'utf8') : '';
   t('后端定义了 ensure_ranges', /fn ensure_ranges\(cfg: &mut FpxConfig\)/.test(st));
-  t('两处加载入口都夹（宽松 + 严格各一次）',
-    (st.match(/ensure_ranges\(&mut cfg\)/g) ?? []).length === 2,
-    `调用 ${(st.match(/ensure_ranges\(&mut cfg\)/g) ?? []).length} 处`);
+  /*
+   * 不钉"恰好两处"：新增第三个加载入口（会在损坏时带出提示那一版）之后
+   * 调用数变成四，于是误报"没夹" —— 而它其实夹了。
+   * 守的本意是**每个加载入口都夹**，不是入口一共有几个。
+   * 钉数量会让"多写一个入口"这种正常改动变成假红。
+   */
+  const loadFns = [...st.matchAll(/pub fn (load_config\w*)\(/g)].map((m) => m[1]);
+  const segOf = (name) => {
+    const i = st.indexOf(`pub fn ${name}(`);
+    if (i === -1) return '';
+    let d = 0, started = false;
+    for (let j = i; j < st.length; j++) {
+      if (st[j] === '{') { d++; started = true; }
+      else if (st[j] === '}') { d--; if (started && d === 0) return st.slice(i, j + 1); }
+    }
+    return '';
+  };
+  const missed = loadFns.filter((fn) => !/ensure_ranges\(&mut cfg\)/.test(segOf(fn)));
+  t('至少两个加载入口（宽松 + 严格）', loadFns.length >= 2, loadFns.join('、'));
+  t('每个加载入口都夹取范围（新增入口漏夹会被抓到）', missed.length === 0,
+    missed.length ? `漏夹：${missed.join('、')}` : loadFns.join('、'));
 } else {
   console.log('（跳过：未找到 model.rs）');
 }

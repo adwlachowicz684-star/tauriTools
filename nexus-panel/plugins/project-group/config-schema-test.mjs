@@ -120,9 +120,33 @@ console.log('\n=== 6. 加载路径接上了 ===');
    * 而它其实还在 —— 只是多拼了东西。
    * 真正要钉的是：`config_issues` 确实被算进去了。
    */
-  t('bootstrap 带上了体检结果',
-    /let mut notices = store::config_issues\(&dir\);/.test(mod)
-    || /config_notices: store::config_issues\(&dir\)/.test(mod));
+  /*
+   * 这里**曾经**钉死"notices 直接由体检结果初始化"那一整句的写法，
+   * 于是启动改为先取损坏提示、再把体检结果并入时立刻误报 ——
+   * 而体检结果其实还在，只是拼装方式变了。
+   * 钉写法不钉意图，是本项目最常复发的一类假红。
+   *
+   * 改成切出 bootstrap 函数体再判"里面算了体检"，拼装方式怎么变都不误报；
+   * 真漏掉才报。
+   */
+  const bootSeg = (() => {
+    const i = mod.indexOf('pub fn fpx_bootstrap');
+    if (i === -1) return '';
+    let d = 0, started = false;
+    for (let j = i; j < mod.length; j++) {
+      if (mod[j] === '{') { d++; started = true; }
+      else if (mod[j] === '}') { d--; if (started && d === 0) return mod.slice(i, j + 1); }
+    }
+    return '';
+  })();
+  t('切到 bootstrap 函数体（切空会让下面两条恒真）', bootSeg.startsWith('pub fn fpx_bootstrap'));
+  t('bootstrap 带上了体检结果', /store::config_issues\(&dir\)/.test(bootSeg));
+  /* 顺带钉顺序：损坏提示必须比体检结果更早进 notices ——
+     前端只弹首条 toast，最要紧的那句被挤到后面就根本不弹了。 */
+  const iNote = bootSeg.indexOf('store::load_config_noting');
+  const iIssue = bootSeg.indexOf('store::config_issues');
+  t('顺序锚点都存在', iNote !== -1 && iIssue !== -1, `${iNote},${iIssue}`);
+  t('损坏提示排在体检结果之前', iNote < iIssue);
   t('Bootstrap 有 config_notices 字段', /pub config_notices: Vec<String>/.test(model));
 }
 

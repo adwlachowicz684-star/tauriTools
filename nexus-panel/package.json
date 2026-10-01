@@ -208,7 +208,8 @@
     "test:pg-watch": "node plugins/project-group/watch-suppress-test.mjs",
     "test:pg-watch-toggle": "node plugins/project-group/watch-toggle-test.mjs",
     "test:pg-win-icon": "node plugins/project-group/win-icon-test.mjs",
-    "test:pg-link-switch-ci": "node plugins/project-group/link-switch-ci-test.mjs"
+    "test:pg-link-switch-ci": "node plugins/project-group/link-switch-ci-test.mjs",
+    "test:pg-config-corrupt-notice": "node plugins/project-group/config-corrupt-notice-test.mjs"
   },
   "dependencies": {
     "@plantuml/core": "1.2026.8",

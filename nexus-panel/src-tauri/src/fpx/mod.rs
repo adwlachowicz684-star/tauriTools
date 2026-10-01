@@ -1277,7 +1277,11 @@ fn normalize_fav_path(p: &str) -> String {
 #[tauri::command(rename_all = "snake_case")]
 pub fn fpx_bootstrap(app: AppHandle, state: State<'_, FpxState>) -> Result<Bootstrap, String> {
     let dir = store::data_dir(&app, &state)?;
-    let cfg = store::load_config(&dir);
+    /* 启动必须用 `load_config_noting` 而不是 `load_config`：后者在 config.json
+       读不出来时静默返回空配置，界面于是表现得像全新安装（登记全不见了），
+       而用户既不知道文件坏了、也不知道现场另存在哪 —— 他改一个设置就把空配置写回去。
+       损坏提示要排在首位：下面那段只弹首条 toast。 */
+    let (cfg, mut notices) = store::load_config_noting(&dir);
     let records = store::load_records(&dir);
     let names = junction::enabled_names(&cfg);
     /*
@@ -1293,7 +1297,7 @@ pub fn fpx_bootstrap(app: AppHandle, state: State<'_, FpxState>) -> Result<Boots
      *   · 失败**绝不阻断启动**，只把逐条错误并进 notices ——
      *     因自愈失败而让软件起不来是最糟的结果。
      */
-    let mut notices = store::config_issues(&dir);
+    notices.extend(store::config_issues(&dir));
     if !cfg.locks.is_empty() {
         let desired: Vec<(String, bool, bool)> = cfg.locks.iter()
             .filter(|l| !l.account_only)

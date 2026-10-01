@@ -386,6 +386,43 @@ pub fn load_config(dir: &Path) -> FpxConfig {
     cfg
 }
 
+/// 与 `load_config` 同一套加载规则，但**损坏时把原因一并交回调用方**。
+///
+/// 只差一件事：`load_config` 是 `unwrap_or_else(default)`，文件读不出来就
+/// 静默给一份空配置。启动走它的话，界面表现得像**全新安装** ——
+/// 页签、卡片登记、链接、锁全都不见了，而没有任何一句话说明为什么。
+///
+/// 用户看到"东西全没了"，最自然的反应是重新添加一遍，不会想到"文件坏了"；
+/// 更糟的是他随便改一个设置就把这份空配置写回磁盘，
+/// 把还能抢救的原件覆盖掉（原件由 `load_strict` 另存为 .corrupt，
+/// 但用户不知道它在哪，也就不会去找）。
+///
+/// 所以这条只给**会显示出来的入口**（启动）用；纯只读的展示路径
+/// 仍走 `load_config`，不重复提示。
+pub fn load_config_noting(dir: &Path) -> (FpxConfig, Vec<String>) {
+    match load_config_strict(dir) {
+        LoadOutcome::Ok(mut cfg) => {
+            ensure_default_tabs(&mut cfg);
+            ensure_ranges(&mut cfg);
+            migrate_config(&mut cfg);
+            (cfg, Vec::new())
+        }
+        LoadOutcome::Corrupted { backup, reason } => {
+            let mut cfg = FpxConfig::default();
+            ensure_default_tabs(&mut cfg);
+            ensure_ranges(&mut cfg);
+            /* 现场是 load_strict 另存的副本，必须把路径说出来 ——
+               只说"读取失败"的话用户还是不知道该去哪儿找自己的数据。 */
+            (cfg, vec![format!(
+                "config.json 读取失败（{reason}），本次已改用默认配置启动。\
+                 损坏的原件已另存为：{}。请先恢复它再继续操作 —— \
+                 此时保存任何设置都会用这份空配置覆盖。",
+                backup.display()
+            )])
+        }
+    }
+}
+
 /// 加载时顺带体检：返回值得提醒用户的事（未知键、迁移记录）。
 ///
 /// 与"读配置"分开，是因为**读路径不该顺手改文件** ——
