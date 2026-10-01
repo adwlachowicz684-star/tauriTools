@@ -43,8 +43,19 @@ t('说明里点明了"省略时加到第一个页签"',
   /tab_index 省略时加到第一个页签/.test(rs));
 
 console.log('\n=== 2. 解析 ===');
+/*
+ * ⚠️ 解析不再内联在 register_card 里：两个工具（create_folder 的建前预检
+ *    与 register_card 的登记校验）共用 `let u = |k: &str|` 这个闭包，
+ *    它定义在 oob_msg **之前**，不在 seg 里 —— 按 seg 断言必然假阴性。
+ *
+ *    守意图不守写法：要的是「序号用 as_u64 解析」，至于它写在闭包里还是
+ *    内联在分支里无所谓（把闭包再内联回去照样绿）。
+ */
+const iU = rs.indexOf('let u = |k: &str|');
+const segU = iU >= 0 ? rs.slice(iU, rs.indexOf('fn tab_count_of', iU)) : '';
 t('用 as_u64 解析（挡掉负数，as_i64 会收下再溢出）',
-  /args\.get\("tab_index"\)\.and_then\(\|v\| v\.as_u64\(\)\)/.test(seg));
+  iU > 0 && /v\.as_u64\(\)/.test(segU) && !/as_i64/.test(segU),
+  iU > 0 ? '' : '没找到共用解析闭包 u（判据失效，不是"解析方式不对"）');
 t('转成 usize 后是 Option（缺省走旧路径）',
   /\.map\(\|v\| v as usize\)/.test(seg));
 

@@ -13,6 +13,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { stripCommentsFlatJs } from './test-scan-utils.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -24,11 +25,16 @@ function t(name, ok, extra = '') {
   else { fail++; console.log(`❌ ${name}${extra ? ' — ' + extra : ''}`); }
 }
 
-/** 剥注释 —— 断言"那一处"之前先剥，否则注释里的字样会造出假绿。 */
+/**
+ * 剥注释 —— 断言"那一处"之前先剥，否则注释里的字样会造出假绿。
+ *
+ * 改用共用实现（此前这里是第三份内联副本）。注意行注释判据从 `(^|[^:])`
+ * 收窄成共用模块的 `(^|\s)`：前者会把 `a//b` 这类**代码里的双斜杠**也当
+ * 注释剥掉（扫到含路径的源码时等于在检查一段被截断的文本，可能假绿）。
+ * 实测换成共用实现后 37 项断言结果不变。
+ */
 function strip(src) {
-  return String(src || '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  return stripCommentsFlatJs(src || '');
 }
 
 const {
