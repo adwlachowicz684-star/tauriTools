@@ -472,6 +472,63 @@ function stripPackSeq(name) {
 }
 
 /**
+ * XMind 备注的 **XHTML → 纯文本**。
+ *
+ * XMind 把备注同时存成两份（见 buildTopic 的说明）：`plain` 是纯文本，
+ * `realHTML` 是 XHTML。别的软件（XMind 2020+、各类生成工具）常常**只写
+ * realHTML**，于是只认 plain 的读法会把备注**整条静默丢掉** —— 实测
+ * `{realHTML:{content:'<p>这是备注</p>'}}` 导入后 `data.note` 是 undefined，
+ * 节点上看着像从来没写过备注，也不报错。
+ *
+ * 直接把 XHTML 当文本存更糟：面板那个单行输入框会原样显示 `<p>第一行</p>`，
+ * 用户看到的是一串标签。所以块级标签要变成换行、行内标签去掉、实体还原。
+ */
+function htmlToPlain(html) {
+  let s = String(html ?? '');
+  if (!s) return '';
+  s = s.replace(/<br\s*\/?>/gi, '\n');
+  s = s.replace(/<\/(p|div|li|h[1-6]|tr|blockquote)>/gi, '\n');
+  s = s.replace(/<[^>]*>/g, '');                    // 剩下的（含行内标签）直接去掉
+  s = s.replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&amp;/gi, '&');                       // & 必须最后解，否则二次反转义
+  return s.replace(/[ \t]*\n[ \t]*/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * 纯文本 → XMind 备注的 XHTML（写 realHTML 时用）。
+ *
+ * 段落按空行/换行拆成 `<p>`；`&<>` 必须转义，否则 XMind 解析这段 XHTML
+ * 时会把它当成标签 —— 备注里写「a < b」就足以让整段备注显示不出来。
+ */
+function plainToHtml(text) {
+  const esc = (s) => String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const ps = String(text ?? '').split(/\n{2,}/).map((p) =>
+    `<p>${esc(p).replace(/\n/g, '<br/>')}</p>`);
+  return ps.join('');
+}
+
+/**
+ * 取一个话题的备注文本。
+ *
+ * **plain 优先**（它是纯文本、不含标签）；没有 plain 才回落到 realHTML。
+ * 两者都写了时以 plain 为准，本工具自己导出的文件才不会因为多写一份
+ * realHTML 而改变往返结果。
+ */
+function topicNote(notes) {
+  const p = str(notes?.plain?.content) ?? str(notes?.plain);
+  if (p && p.trim()) return p;
+  const h = str(notes?.realHTML?.content) ?? str(notes?.realHTML);
+  return h ? htmlToPlain(h) : '';
+}
+
+/**
  * 从附件引用里取出真实文件名。
  *
  * 两种形态都要支持：
@@ -552,7 +609,16 @@ function buildTopic(kmNode, packs) {
   };
 
   const note = str(data.note);
-  if (note) topic.notes = { plain: { content: note } };
+  /*
+   * **plain 与 realHTML 两份都写**。
+   *
+   * XMind 的规范里备注就是双字段（plain = 纯文本、realHTML = XHTML），
+   * 各类实现普遍两份都写以保证跨版本兼容。只写 plain 的话，某些读
+   * realHTML 的软件/版本打开我们导出的文件会**看不到备注**。
+   *
+   * 往返不受影响：读回时 topicNote() 以 plain 为准。
+   */
+  if (note) topic.notes = { plain: { content: note }, realHTML: { content: plainToHtml(note) } };
 
   // href：超链接优先；无超链接时把视频/文件附件写入（视频优先）。
   // 已打包的写包内相对路径，未打包的写 file:/// 本地路径。
@@ -789,7 +855,8 @@ function buildKmNode(topic, depth = 0, counter = null) {
     text: str(topic.title) ?? '',
   };
 
-  const note = str(topic.notes?.plain?.content) ?? str(topic.notes?.plain);
+  // realHTML-only 的备注（别的软件常这么写）也要读出来，见 topicNote 的说明
+  const note = topicNote(topic.notes);
   if (note) data.note = note;
 
   // href 还原：file:/// → 文件/视频附件（视频按扩展名识别）；包内相对路径先存下来，

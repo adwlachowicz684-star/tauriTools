@@ -5317,6 +5317,93 @@ group('BUG 91 · 「画布：」转义必须成对（E/D）');
 }
 
 /* ------------------------------------------------------------------
+   BUG 92：只带 realHTML 的 XMind 备注导入后整条丢失
+   ------------------------------------------------------------------ */
+group('BUG 92 · XMind 备注必须认 realHTML（plain 之外那份）');
+
+/*
+ * XMind 的备注是**双字段**：plain（纯文本）与 realHTML（XHTML）。
+ * 别的软件（XMind 2020+、各类生成工具）常常只写 realHTML，
+ * 于是只认 plain 的读法会把备注**整条静默丢掉** —— 节点上看着像从来
+ * 没写过备注，也不报错。
+ *
+ * 实测（只留 content.json 的 zen 包）：
+ *   {realHTML:{content:'<p>这是备注</p>'}} → 修复前 data.note = undefined
+ */
+{
+  const x9 = await import('./xmind.js');
+
+  /** 造一个只含 content.json 的 zen 包（模拟别的软件产出的文件） */
+  const zenWith = async (notes) => {
+    const cj = [{
+      id: 'sh1', class: 'sheet', title: '画布',
+      rootTopic: { id: 't1', class: 'topic', title: '根', ...(notes ? { notes } : {}),
+        children: { attached: [{ id: 't2', class: 'topic', title: '子' }] } },
+    }];
+    const buf = await x9.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+    const r = await x9.readXMind(new Uint8Array(buf));
+    return JSON.parse(r.sheets[0].content).root.data.note;
+  };
+
+  eq(await zenWith({ realHTML: { content: '<p>这是备注</p>' } }), '这是备注',
+    '★ 只写 realHTML 的备注必须读出来（早先整条丢失、且不报错）');
+  eq(await zenWith({ plain: { content: '纯文本' } }), '纯文本', 'plain 仍正常');
+  eq(await zenWith({ plain: { content: '纯文本' }, realHTML: { content: '<p>别的</p>' } }),
+    '纯文本', '两份都有时以 plain 为准（本工具自己导出的才不会变样）');
+
+  // XHTML 不能直接当文本存：块级标签转换行、行内标签去掉、实体还原
+  eq(await zenWith({ realHTML: { content: '<p>行1<br/>行2</p>' } }), '行1\n行2', '<br> 转成换行');
+  eq(await zenWith({ realHTML: { content: '<p>第一段</p><p>第二段</p>' } }), '第一段\n第二段', '段落转换行');
+  eq(await zenWith({ realHTML: { content: '<p><b>粗</b>与<i>斜</i></p>' } }), '粗与斜', '行内标签去掉');
+  eq(await zenWith({ realHTML: { content: '<p>a &amp; b</p>' } }), 'a & b', '&amp; 还原');
+  eq(await zenWith({ realHTML: { content: '<p>&lt;标签&gt;</p>' } }), '<标签>', '&lt;/&gt; 还原');
+  eq(await zenWith({ realHTML: { content: '<p>a&nbsp;b</p>' } }), 'a b', '&nbsp; 还原成空格');
+  ok((await zenWith(null)) === undefined, '没有备注时不得写出空串');
+
+  // 本工具导出：两份都写，且往返无损（含会破坏 XHTML 的字符）
+  const rtNote = async (note) => {
+    const sheets = [{ id: 'sh1', title: '画布', theme: null, layout: null,
+      content: JSON.stringify({ root: { data: { id: 'n1', text: '根', note }, children: [] } }) }];
+    const blob = await x9.writeXMind(sheets, 'sh1');
+    const b = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const r = await x9.readXMind(b);
+    return JSON.parse(r.sheets[0].content).root.data.note;
+  };
+  for (const note of ['普通备注', 'a < b & c', '第一行\n第二行', '带"引号"']) {
+    eq(await rtNote(note), note, `往返无损：${JSON.stringify(note)}`);
+  }
+
+  // 导出必须同时写 plain 与 realHTML，且 realHTML 里的 & < > 要转义 ——
+  // 否则备注里写「a < b」会让整段 XHTML 失效、在别的软件里显示不出来
+  {
+    const sheets = [{ id: 'sh1', title: '画布', theme: null, layout: null,
+      content: JSON.stringify({ root: { data: { id: 'n1', text: '根', note: 'a < b & c' }, children: [] } }) }];
+    const blob = await x9.writeXMind(sheets, 'sh1');
+    const en = await x9.zipRead(new Uint8Array(await new Blob([blob]).arrayBuffer()));
+    const notes = JSON.parse(new TextDecoder().decode(en.get('content.json')))[0].rootTopic.notes;
+    ok(!!(notes && notes.plain && notes.realHTML), '导出的备注同时写 plain 与 realHTML');
+    ok(/&lt;/.test(notes.realHTML.content) && /&amp;/.test(notes.realHTML.content),
+      'realHTML 里的 < 与 & 已转义（不转义会让它变成非法 XHTML）', notes.realHTML.content);
+
+    // 只留 content.json（剥掉本工具快照）再导回，仍要无损
+    const cj = JSON.parse(new TextDecoder().decode(en.get('content.json')));
+    const zen = await x9.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+    const rr = await x9.readXMind(new Uint8Array(zen));
+    eq(JSON.parse(rr.sheets[0].content).root.data.note, 'a < b & c',
+      '★ 走 zen 档（别的软件的路径）往返仍无损');
+  }
+
+  // 源码侧：读必须走 topicNote（而不是直接取 plain）、写必须两份都写
+  const xsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+  ok(/const note = topicNote\(topic\.notes\)/.test(xsrc), '读侧走 topicNote（plain 优先、回落 realHTML）');
+  ok(!/const note = str\(topic\.notes\?\.plain/.test(xsrc), '读侧不得只认 plain');
+  ok(/plain: \{ content: note \}, realHTML: \{ content: plainToHtml\(note\) \}/.test(xsrc),
+    '写侧两份都写');
+}
+
+/* ------------------------------------------------------------------
    BUG 37：重命名文件夹不说话（与 renameFile 不一致）
    ------------------------------------------------------------------ */
 group('BUG 37 文件库两种重命名都要有回执');
