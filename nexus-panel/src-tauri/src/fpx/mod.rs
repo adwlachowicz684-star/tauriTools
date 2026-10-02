@@ -2873,7 +2873,12 @@ pub fn fpx_watch_start(
     let dir = store::data_dir(&app, &state)?;
     let cfg = store::load_config(&dir);
     let secs = interval_secs.unwrap_or(cfg.watch_interval_secs);
-    let paths: Vec<String> = cfg.locks.iter().map(|l| l.path.clone()).collect();
+    /* 与监听线程同一套判据：只收真落了 ACL 的，见 watch::monitored_paths。
+       这里原样全收也不会多报事件（首轮 `last.retain` 会按 cfg_paths 剔掉），
+       但仍必须走同一个函数 —— 两处各写一份判据迟早漂移，
+       漂移的表现正是"账面固定的目录开始弹受保护告警"，而那时没人会想到
+       是这两行不一致。 */
+    let paths: Vec<String> = watch::monitored_paths(&cfg);
     watch::start(app, secs, paths);
     Ok(watch::is_running())
 }
