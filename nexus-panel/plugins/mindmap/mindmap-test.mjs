@@ -5032,6 +5032,132 @@ group('OPML（.opml）');
   eq(f.fromOpml('<opml><body></body></opml>'), null, 'OPML 无 outline → null');
 }
 
+/* ------------------------------------------------------------------
+   BUG 98：空文字节点被整行丢掉 → 子树被抬层 / 节点整个消失
+   ------------------------------------------------------------------ */
+group('BUG 98 · 空文字节点必须保留（丢行等于把子树整层抬上去）');
+
+/*
+ * rowsToKm 早先有一句 `filter(r => String(r.text ?? '').trim())`，
+ * 看着像「跳过没内容的行」，实际做的是**丢掉这一行** —— 而后面重建层级
+ * 用的是「上一行的 depth」，中间那行没了，它的子节点就挂到祖父身上。
+ *
+ * 触发它的是真实文件：Freeplane 允许空白节点（导出 `TEXT=""`）、
+ * 带格式的节点文字在 `<richcontent>` 里而 TEXT 属性可能整个不写。
+ *
+ * 全部实测过（jsdom 的真实 DOMParser，不是手写桩）：
+ *   中间为空   修复前 项目 / 设计 / 开发 / 测试  ← 设计、开发 被抬成二级
+ *   根为空     修复前 整条第一分支被虚拟根顶掉
+ *   richcontent 修复前 「设计」整个消失（不是变空，是没这个节点）
+ */
+{
+  const f = await import('./formats.js');
+  /** 树 → 「文字/深度」序列，层级错位一览便知 */
+  const flat = (n, d = 0) => [`${'  '.repeat(d)}${n.data.text}`]
+    .concat((n.children || []).flatMap((c) => flat(c, d + 1)));
+  /*
+   * 安全取子节点：**不能**直接写 `root.children[0].children[0].data.text`。
+   *
+   * 结构一旦被破坏（正是本组要抓的事），那串取值会抛 TypeError，
+   * 整个测试进程当场崩掉 —— 后面的用例一条都跑不到，
+   * 变异验证只剩头两条红，看着"抓到了"其实漏了大半。
+   * 这是变异第一次跑时真实发生过的事。
+   */
+  const down = (n, ...idx) => { let c = n; for (const i of idx) c = (c?.children || [])[i]; return c; };
+  const at = (n, ...idx) => down(n, ...idx)?.data?.text ?? null;
+  const kids = (n, ...idx) => (down(n, ...idx)?.children || []).length;
+
+  eq(f.EMPTY_NODE_TEXT, '未命名', '占位文案与导出侧 nodeText 的 fallback 同一个常量');
+  eq(f.nodeText({ data: { text: '  ' } }), f.EMPTY_NODE_TEXT, 'nodeText 空文字回落到同一个占位');
+
+  // ① 中间节点为空、且带两个子：子树不能被抬层
+  {
+    const { root } = f.rowsToKm([
+      { depth: 0, text: 'R' }, { depth: 1, text: '' }, { depth: 2, text: 'A1' }, { depth: 1, text: 'B' },
+    ]);
+    eq(JSON.stringify(flat(root)), JSON.stringify(['R', '  未命名', '    A1', '  B']),
+      '★ 空文字节点保留，子树仍挂在它下面（早先被抬成 R 的直接子）');
+    eq(kids(root, 0), 1, '★ 空节点仍有一个子（早先 A1 跑到根下）');
+  }
+  // ② 纯空格同样算空，同样不能丢
+  {
+    const { root } = f.rowsToKm([{ depth: 0, text: 'R' }, { depth: 1, text: '   ' }, { depth: 2, text: 'A1' }]);
+    eq(kids(root), 1, '纯空格节点保留');
+    eq(at(root, 0, 0), 'A1', '纯空格节点的子树不被抬层');
+  }
+  // ③ 根为空：不能拿第二行当根
+  {
+    const { root } = f.rowsToKm([{ depth: 0, text: '' }, { depth: 1, text: 'A' }, { depth: 1, text: 'B' }]);
+    eq(root.data.text, f.EMPTY_NODE_TEXT, '★ 根为空时补占位（早先第二行 A 被当成根）');
+    eq(root.children.length, 2, '根为空时两个子都还在');
+  }
+  eq(f.rowsToKm([]).root.data.text, '中心主题', '整份都空 → 仍是默认根');
+  eq(JSON.stringify(flat(f.rowsToKm([{ depth: 0, text: 'R' }, { depth: 1, text: 'A' }]).root)),
+    JSON.stringify(['R', '  A']), '基线（都非空）结构不变');
+
+  // ④ OPML 端到端：中间 outline text="" 带两个子
+  {
+    const xml = '<opml version="2.0"><body><outline text="项目">'
+      + '<outline text=""><outline text="设计"/><outline text="开发"/></outline>'
+      + '<outline text="测试"/></outline></body></opml>';
+    const root = JSON.parse(f.fromOpml(xml)).root;
+    eq(JSON.stringify(flat(root)), JSON.stringify(['项目', '  未命名', '    设计', '    开发', '  测试']),
+      '★ OPML：空 outline 的子不抬层（早先 设计/开发 与 测试 同级）');
+  }
+  // ⑤ OPML 端到端：根 outline 文字为空
+  {
+    const xml = '<opml version="2.0"><body>'
+      + '<outline text=""><outline text="设计"/></outline>'
+      + '<outline text="别的"/></body></opml>';
+    const root = JSON.parse(f.fromOpml(xml)).root;
+    eq(root.children.length, 2, '根为空：虚拟根下两个分支都在');
+    eq(root.children[0].data.text, f.EMPTY_NODE_TEXT, '★ 根为空补占位（早先整条分支被顶掉）');
+    eq(at(root, 0, 0), '设计', '根为空时子树还在它下面');
+  }
+  // ⑥ FreeMind 端到端：TEXT="" 带子
+  {
+    const xml = '<map version="1.0.1"><node TEXT="项目">'
+      + '<node TEXT=""><node TEXT="设计"/><node TEXT="开发"/></node>'
+      + '<node TEXT="测试"/></node></map>';
+    const root = JSON.parse(f.fromFreemind(xml)).root;
+    eq(JSON.stringify(flat(root)), JSON.stringify(['项目', '  未命名', '    设计', '    开发', '  测试']),
+      '★ FreeMind：TEXT="" 的节点保留且子树不抬层');
+  }
+  // ⑦ FreeMind：正文只在 <richcontent> 里、TEXT 属性整个不写
+  {
+    const xml = '<map version="1.0.1"><node TEXT="项目">'
+      + '<node><richcontent TYPE="NODE"><html><p>设计</p></html></richcontent></node>'
+      + '<node TEXT="测试"/></node></map>';
+    const root = JSON.parse(f.fromFreemind(xml)).root;
+    eq(JSON.stringify(root.children.map((c) => c.data.text)), JSON.stringify(['设计', '测试']),
+      '★ richcontent-only 节点读出正文（早先文字空 → 节点整个消失）');
+  }
+  // TYPE="NOTE" 是备注，不能当正文
+  {
+    const xml = '<map version="1.0.1"><node TEXT="项目">'
+      + '<node><richcontent TYPE="NOTE"><html><p>这是备注</p></html></richcontent></node>'
+      + '</node></map>';
+    const root = JSON.parse(f.fromFreemind(xml)).root;
+    eq(root.children[0].data.text, f.EMPTY_NODE_TEXT, 'TYPE="NOTE" 不当节点正文（回落到占位）');
+  }
+  // 有 TEXT 时以 TEXT 为准，richcontent 不能抢
+  {
+    const xml = '<map version="1.0.1"><node TEXT="项目">'
+      + '<node TEXT="旧"><richcontent TYPE="NODE"><html><p>新</p></html></richcontent></node>'
+      + '</node></map>';
+    const root = JSON.parse(f.fromFreemind(xml)).root;
+    eq(root.children[0].data.text, '旧', '有 TEXT 时以 TEXT 为准（richcontent 不抢）');
+  }
+
+  // 源码层：丢行那句 filter 不许回来
+  const fs2 = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+  ok(!/rowsToKm[\s\S]{0,400}\.filter\(\(r\)\s*=>\s*r\s*&&\s*String\(r\.text/.test(fs2),
+    '★ rowsToKm 不再按文字过滤行（丢行 = 子树抬层）');
+  ok(/text:\s*t\s*\|\|\s*EMPTY_NODE_TEXT/.test(fs2) || /EMPTY_NODE_TEXT/.test(fs2),
+    '空文字补位用的是 EMPTY_NODE_TEXT 常量（与导出侧同一个）');
+  ok(/fallbackText\s*=\s*null/.test(fs2), 'readXmlNodes 支持兜底取文本（供 richcontent 用）');
+}
+
 group('Mermaid（.mmd）');
 
 {

@@ -121,7 +121,15 @@ export function stringifyKm(root, template, theme) {
  * JSON.parse 会如实还原文本里的 `\r` 转义，导入即带进来
  * （.mm / .opml 走 XML 属性规范化，天然会把 \r 变空格，所以只有 JSON 系受影响）。
  */
-export function nodeText(n, fallback = '未命名') {
+/**
+ * 空文字节点的占位文案。
+ *
+ * 导出侧 nodeText 的 fallback 与导入侧 rowsToKm 的补位**必须是同一个**：
+ * 两边各写一份，改了一处不改另一处，往返就会凭空多出/少掉「未命名」。
+ */
+export const EMPTY_NODE_TEXT = '未命名';
+
+export function nodeText(n, fallback = EMPTY_NODE_TEXT) {
   const t = String(n?.data?.text ?? '')
     .replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ')
     .trim();
@@ -142,13 +150,39 @@ export function walkKm(node, fn, depth = 0, parent = null) {
   for (const c of node?.children || []) walkKm(c, fn, depth + 1, node);
 }
 
-/** 由 (depth, text) 序列重建 kityminder 树（纯函数，可测） */
+/**
+ * 由 (depth, text) 序列重建 kityminder 树（纯函数，可测）。
+ *
+ * **空文字的行不能丢**（BUG 98）。
+ *
+ * 早先这里有一句 `filter(r => String(r.text ?? '').trim())`，
+ * 看着像"跳过没内容的行"，实际做的是：**丢掉这一行，把它的子树整层抬上去**。
+ * 因为后面重建层级用的是"上一行的 depth"，中间那行没了，
+ * 子节点就挂到了祖父身上 —— 层级静默错位，且不报错。
+ *
+ * 触发它的是真实文件，不是刁钻输入：
+ *   · Freeplane / FreeMind 允许空白节点，导出的就是 `TEXT=""`
+ *   · 节点文字带格式时，文字在 `<richcontent>` 里，TEXT 属性可能**整个不写**
+ *     （readXmlNodes 取不到就回落空串）
+ *   · 只有 `title` 没有 `text` 的 OPML 同样落到这里
+ *
+ * 实测（OPML，中间那个 outline 文字为空且带两个子）：
+ *   修复前  项目 / 设计 / 开发 / 测试   ← 设计、开发 从三级被抬成二级
+ *   修复后  项目 / 未命名 /（设计、开发）/ 测试
+ *
+ * 根为空时更狠：整条第一分支被虚拟根顶掉（见 fromOpml 的 tops 判断）。
+ *
+ * 所以补位成占位文案保留下来，与导出侧 nodeText 的 fallback 同一个常量。
+ */
 export function rowsToKm(rows, rootFallback = '中心主题') {
-  const list = (rows || []).filter((r) => r && String(r.text ?? '').trim());
+  const list = (rows || []).filter((r) => !!r);
   if (!list.length) {
     return { root: { data: { text: rootFallback }, children: [] } };
   }
-  const make = (text) => ({ data: { text: String(text).trim() }, children: [] });
+  const make = (text) => {
+    const t = String(text ?? '').trim();
+    return { data: { text: t || EMPTY_NODE_TEXT }, children: [] };
+  };
   const root = make(list[0].text);
   const stack = [{ depth: list[0].depth, node: root }];
   for (let i = 1; i < list.length; i++) {
@@ -208,12 +242,36 @@ export function toFreemind(content) {
 }
 
 /**
+ * 取 <node> 的正文：TEXT 属性没有时回落到 <richcontent TYPE="NODE">。
+ *
+ * FreeMind / Freeplane 在节点文字带格式（粗体、颜色、换行）时，
+ * 正文写在 `<richcontent TYPE="NODE"><html>…</html></richcontent>` 里，
+ * TEXT 属性**可能整个不写**、也可能只是空的。只认 TEXT 的话，
+ * 这类节点导入后文字全空 —— 配合 rowsToKm 早先的丢行，节点会整个消失。
+ *
+ * 只在 TEXT 取不到时才用，有 TEXT 时以它为准（往返不受影响）。
+ */
+function freemindNodeText(el) {
+  const kids = el ? (el.children || el.childNodes) : null;
+  if (!kids) return null;
+  for (const c of Array.from(kids)) {
+    if (String(c.nodeName || '').toLowerCase() !== 'richcontent') continue;
+    // TYPE="NOTE" 是备注，不是节点正文
+    const ty = String(c.getAttribute?.('TYPE') || '').toUpperCase();
+    if (ty && ty !== 'NODE') continue;
+    const s = String(c.textContent || '').replace(/\s+/g, ' ').trim();
+    if (s) return s;
+  }
+  return null;
+}
+
+/**
  * FreeMind XML → 画布内容。
- * 只认 <node> 的 TEXT 属性；其余（edge/font/hook/cloud）一概忽略 ——
- * 它们承载的都是样式，本工具的主题体系不认。
+ * 只认 <node> 的 TEXT 属性（缺则回落 richcontent）；其余（edge/font/hook/cloud）
+ * 一概忽略 —— 它们承载的都是样式，本工具的主题体系不认。
  */
 export function fromFreemind(text) {
-  const rows = readXmlNodes(text, 'node', 'TEXT');
+  const rows = readXmlNodes(text, 'node', 'TEXT', freemindNodeText);
   if (!rows) return null;
   if (!rows.length) return null;
   const { root } = rowsToKm(rows);
@@ -479,7 +537,7 @@ export function fromPlantUml(text) {
  * @param {string} attr 取文字的属性名
  * @returns {Array|null} null = 解析失败（不是「空」）
  */
-function readXmlNodes(text, tag, attr) {
+function readXmlNodes(text, tag, attr, fallbackText = null) {
   const src = String(text || '').trim();
   if (!src) return null;
   let doc = null;
@@ -497,9 +555,12 @@ function readXmlNodes(text, tag, attr) {
   const rows = [];
   for (let i = 0; i < nodes.length; i++) {
     const el = nodes[i];
+    let t = el.getAttribute(attr) ?? '';
+    // 主属性取不到（缺属性 / 空值）时才用兜底 —— 有值就以它为准，往返不受影响
+    if (!String(t ?? '').trim() && fallbackText) t = fallbackText(el) ?? '';
     rows.push({
       depth: depthOf(el),
-      text: el.getAttribute(attr) ?? '',
+      text: t,
       collapsed: String(el.getAttribute('FOLDED') || '').toLowerCase() === 'true',
     });
   }
