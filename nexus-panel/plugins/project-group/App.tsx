@@ -702,13 +702,28 @@ export default function App() {
    */
   const cycleTab = (kind: CardKind, delta: number) => {
     const n = (kind === 'project' ? boot?.projectTabs.length : boot?.groupTabs.length) ?? 0;
-    if (n <= 1) return;
+    /*
+     * 翻不动的两种情形都必须说出来，不能静默 return：
+     *   ① 只有一个分类 —— 快捷键按下去毫无反应
+     *   ② 翻到的分类是空的（见下）—— 同样毫无反应
+     * 而"翻页键坏了"是用户最自然的归因，且他没有任何别的线索推翻它。
+     * 用 info 而不是 err：这不是失败，只是"没东西可翻"。
+     */
+    if (n <= 1) {
+      ctx.toast(`只有一个${kind === 'project' ? '页签' : '分类'}，无需翻页`, 'info');
+      return;
+    }
     const cur = Math.min(Math.max(0, s.activeTab[kind]), n - 1);
     const next = ((cur + delta) % n + n) % n;
     s.setActiveTab((prev) => ({ ...prev, [kind]: next }));
+    /* 项目栏切页签本身可见（高亮与列表都变），空页签也看得见是空的，
+       不需要额外提示。项目组栏纵向堆叠后切页签没有可见效果，才要靠
+       下面这句把"翻到了哪儿"讲出来。 */
     if (kind !== 'group') return;
-    const first = boot?.groupTabs[next]?.items[0]?.path;
-    if (first) { setFocus('group'); s.setSelGroup(first); }
+    const target = boot?.groupTabs[next];
+    const first = target?.items[0]?.path;
+    if (first) { setFocus('group'); s.setSelGroup(first); return; }
+    ctx.toast(`分类「${target?.name ?? String(next + 1)}」里没有项目组`, 'info');
   };
 
   /* ---------------- 左栏操作 ----------------

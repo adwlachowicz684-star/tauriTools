@@ -130,6 +130,7 @@
     "test:pg-confirm": "node plugins/project-group/chain-confirm-test.mjs",
     "test:pg-content-read-race": "node plugins/project-group/content-read-race-test.mjs",
     "test:pg-content-tree": "node plugins/project-group/content-tree-test.mjs",
+    "test:pg-cycle-tab-empty": "node plugins/project-group/cycle-tab-empty-test.mjs",
     "test:pg-deadcode": "node plugins/project-group/deadcode-test.mjs",
     "test:pg-deadzone-swap": "node plugins/project-group/deadzone-swap-test.mjs",
     "test:pg-detect": "node plugins/project-group/client-detect-test.mjs",
