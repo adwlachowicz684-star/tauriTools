@@ -40,6 +40,36 @@ static TRUNCATED: Mutex<Option<String>> = Mutex::new(None);
 static INTERVAL_SECS: AtomicU64 = AtomicU64::new(30);
 
 /**
+ * 本次该监控哪些路径 —— **只收真落了 ACL 的那批**。
+ *
+ * 为什么不能直接 `cfg.locks` 全收：`locks` 里还装着「账面固定」（#21，
+ * `account_only`）的条目，那一档的承诺就是**不落任何系统权限**
+ * （档位说明写着"只登记在案做标记，不改系统权限"）。
+ * 把它们也纳进来会有三个后果：
+ *   1. 告警文案说「**受保护**目录发生改动」，而它根本没有保护 ——
+ *      用户会据此以为自己的目录是受保护的，这是最要不得的一种误导；
+ *   2. 用户选这一档的理由恰恰是"不想动系统、不必管理员权限"，
+ *      结果被拉进一个持续遍历他整棵目录树的后台线程里（他没要求过）；
+ *   3. 白耗：每个条目每轮都要做一次上限 20 万条目的树遍历。
+ *
+ * 判据只看"是否真的落了 ACL"（`deny_delete || deny_write`），
+ * 而不是 `!account_only`：手改过的配置可能同时为真，
+ * 那时 ACL 是真落了的，用 `!account_only` 会**漏监控** ——
+ * 而漏报（该响的警报不响）比多监控严重得多，见 push_event 关于截断的说明。
+ *
+ * 与 `mod.rs` 启动自愈那处（`.filter(|l| !l.account_only)`）同源同理：
+ * 两处都在说"`locks` 不等于受保护"，只是自愈关心"别替用户落 ACL"，
+ * 这里关心"别把没保护的目录说成受保护"。
+ */
+pub(crate) fn monitored_paths(cfg: &super::model::FpxConfig) -> Vec<String> {
+    cfg.locks
+        .iter()
+        .filter(|l| l.deny_delete || l.deny_write)
+        .map(|l| l.path.clone())
+        .collect()
+}
+
+/**
  * 被临时抑制的路径（归一化键 → 抑制到什么时候）。
  *
  * **为什么需要它**：自己搬家 / 改名会改变自己正在监控的目录，
@@ -190,8 +220,8 @@ pub fn start(app: AppHandle, interval_secs: u64, paths: Vec<String>) {
                 Ok(d) => d,
                 Err(_) => continue,
             };
-            let cfg_paths: Vec<String> = super::store::load_config(&dir)
-                .locks.iter().map(|l| l.path.clone()).collect();
+            /* 只监控真落了 ACL 的目录，理由见 monitored_paths */
+            let cfg_paths: Vec<String> = monitored_paths(&super::store::load_config(&dir));
 
             let mut changed: Vec<WatchEvent> = Vec::new();
             for p in &cfg_paths {
@@ -317,7 +347,7 @@ pub fn pull() -> Vec<WatchEvent> {
 #[allow(dead_code)]
 pub fn watched_paths(app: &AppHandle) -> Vec<String> {
     let Ok(dir) = super::store::resolve_data_dir(app) else { return Vec::new() };
-    super::store::load_config(&dir).locks.iter().map(|l| l.path.clone()).collect()
+    monitored_paths(&super::store::load_config(&dir))
 }
 
 /// 数据目录（shots / backup 等同级目录都挂在它下面）。
