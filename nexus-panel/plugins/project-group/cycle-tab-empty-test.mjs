@@ -16,14 +16,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+import { stripCommentsJs } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
 const app = fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8');
 
 /** 剥注释：断言必须落在真实代码上，注释里的字样会把断言喂饱 */
-const stripComments = (s) =>
-  s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');
+/* 走全仓共用的 test-scan-utils，别再在本文件内联一份（有守卫盯着内联副本数）。
+   注意它剥行注释用的是更严格的 `(^|\s)//` 判据 —— 不会误伤 URL 里的斜杠。 */
+const stripComments = (s) => stripCommentsJs(s);
 
 const FN = 'const cycleTab = (kind: CardKind, delta: number) => {';
 const i = app.indexOf(FN);

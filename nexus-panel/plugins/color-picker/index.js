@@ -1,9 +1,24 @@
 import { bootServicePlugin } from '../../js/plugin-sdk.js';
 import { alert as showAlert } from '../../js/dialog.js';
-import '../../css/dialog.css';
+/*
+ * ⚠️ 这里**不能**写 import '../../css/dialog.css' —— 原生 ESM 不能 import CSS。
+ *
+ * 浏览器按 text/css 收到它，会判成"不是 JS 模块" → **整个 index.js 加载失败**。
+ * 症状是插件一片空白、功能全无，控制台只有一条 MIME 报错，不看控制台根本
+ * 不知道是这一行造成的。
+ *
+ * 这个错在 mindmap 上**复发过 3 次**（修好又被整份覆盖回去），所以本文件
+ * 也顺手清了同一行。css/dialog.css 顶部写着规则：插件一律在自己的 CSS 里
+ *   @import url('../../css/dialog.css');
+ * 本插件的无构建入口一旦启用，把这一行加进 style.css 即可 —— 走 CSS 的
+ * @import 才对，走 JS 的 import 永远是错的。
+ *
+ * 全仓扫描守卫：regression-guard-test.mjs 第 1 节（任何插件 JS 都不许
+ * import CSS，包括这一行注释里写的路径——那条断言读的是剥注释后的源码）。
+ */
 import {
   PRESET_COLORS, normalizeHex, hexToRgb, rgbToHex, hexToHsv, hsvToRgb, hsvToHex,
-} from '../project-group/utils/color';
+} from './color';
 
 /**
  * 取色服务（kind:'service'）
@@ -13,13 +28,16 @@ import {
  * 价值：色盘原本只在 project-group 里有一份，别的插件要用就得各拷一份；
  * 现在一份实现共用，升级也不用改调用方。
  *
- * 预设色与颜色工具都从 ../project-group/utils/color 来 ——
- * 与 project-group 的内联色盘共用同一份，避免两边各存一份 PRESET_COLORS
- * 然后慢慢漂移（同一个"常用色"在两个界面显示成不同颜色）。
+ * 颜色工具从**本目录的 ./color** 取，这是唯一实现处。
  *
- * 依赖别的插件的目录并不理想（将来独立分发时要搬走），
- * 但比复制一份定义要好：复制出来的是**会漂移的重复**，
- * 而路径依赖至少只有一处真相。
+ * 此前写的是 '../project-group/utils/color'，两个问题：
+ *   ① 方向反了 —— 那份文件顶部明写"依赖方向：project-group → color-picker
+ *      （单向，无循环）"，它只是 `export *` 转发回本目录。这里反向去取，
+ *      等于 color-picker → project-group → color-picker，绕成一个环。
+ *   ② 绕远了 —— 转发文件本身不含实现，取到的还是同一份，只多一次跳转。
+ *
+ * 与 project-group 的内联色盘共用同一份 PRESET_COLORS，避免两边各存一份
+ * 然后慢慢漂移（同一个"常用色"在两个界面显示成不同颜色）。
  */
 
 const MAX_CUSTOM = 24;

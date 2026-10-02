@@ -17,15 +17,15 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { stripCommentsJs } from '../../test-scan-utils.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const RS = join(here, '..', '..', 'src-tauri', 'src', 'fpx', 'screen.rs');
 const src = readFileSync(RS, 'utf8');
 
-/** 剥块注释与行注释：注释里出现代码字样会让结构断言假绿。 */
-const code = src
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/\/\/[^\n]*/g, '');
+/** 剥块注释与行注释：注释里出现代码字样会让结构断言假绿。
+ *  走全仓共用的 test-scan-utils，别再在本文件内联一份（有守卫盯着）。 */
+const code = stripCommentsJs(src);
 
 let pass = 0;
 const fails = [];
@@ -149,9 +149,7 @@ for (const fn of psFns) {
 
 /** 反向验证用：把 list_windows 的守卫去掉后应报出未校验项。 */
 export function auditSource(text) {
-  const c = text
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/[^\n]*/g, '');
+  const c = stripCommentsJs(text);
   const list = [];
   for (const fn of splitFns(c).filter((f) => f.body.includes('Command::new("powershell")'))) {
     const fname = (fn.head.match(/fn (\w+)/) || [])[1] || '?';

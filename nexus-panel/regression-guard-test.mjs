@@ -23,13 +23,15 @@
  *    —— 那正是"删掉实现、断言照样全绿"的假绿来源。
  * 4. 嵌套正则的转义极易写错，能用字符串包含判就别套正则。
  */
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, dirname, relative as relPath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripComments as stripBlock, stripCommentsJs as stripJs } from './test-scan-utils.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const read = (p) => readFileSync(join(HERE, p), 'utf8');
+/** 绝对路径 → 相对 HERE 的路径（喂给 code() 用） */
+const relativeTo = (abs) => relPath(HERE, abs).split('\\').join('/');
 /** 读 + 剥注释。剥完才谈"代码里有没有"，注释里的同名文本不算。 */
 const code = (p) => {
   let txt;
@@ -43,30 +45,74 @@ const t = (name, cond, extra = '') => {
   console.log(`${cond ? '✅' : '❌'} ${name}${extra ? ' → ' + extra : ''}`);
 };
 
+/* 遍历源码树（跳过体积巨大且与本守卫无关的目录） */
+const SKIP_DIR = new Set(['node_modules', '.git', 'target', 'dist', 'build', '.tauri', '__pycache__', '.jd2']);
+function walk(dir, out = []) {
+  let ents = [];
+  try { ents = readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  for (const e of ents) {
+    if (SKIP_DIR.has(e.name)) continue;
+    const p = join(dir, e.name);
+    if (e.isDirectory()) walk(p, out);
+    else if (e.isFile()) out.push(p);
+  }
+  return out;
+}
+
 /* ============================================================
- * 1. mindmap 无构建白屏（复发 3 次，最高危）
+ * 1. 无构建白屏：任何插件 JS 都不能 import CSS
  * ------------------------------------------------------------
  * 原生 ESM 不能 import CSS：浏览器拿到 text/css 会判成"不是 JS 模块"，
- * 整个 index.js 加载失败 —— mindmap 一片空白、功能全无，
- * 控制台只有一条 MIME 报错。而它的 entry 没有 noBuild 分支，
- * 两种模式都加载它，**只有无构建模式会挂**。
+ * 整个入口 JS 加载失败 —— 插件一片空白、功能全无，
+ * 控制台只有一条 MIME 报错，不看控制台根本不知道是哪一行造成的。
+ *
+ * 这一行在 mindmap 上**复发过 3 次**（修好又被整份覆盖回去），
+ * 所以这里不只盯 mindmap，改成**全仓扫描**：任何 .js 里出现都算。
+ * 全仓扫描后立刻在 color-picker/index.js 里查出同一行（已修）。
  * ============================================================ */
-console.log('=== 1. mindmap 无构建白屏 ===');
+console.log('=== 1. 无构建白屏：JS 不许 import CSS ===');
 {
-  const idx = code('plugins/mindmap/index.js');
-  t('mindmap/index.js 存在', idx !== null);
-  if (idx !== null) {
-    // 要的是"没有 import 任何 .css"，JS import 与 import() 都不行
-    const bad = idx.match(/^\s*import\s+[^;]*?['"][^'"]+\.css['"]/m);
-    t('index.js 不 import 任何 CSS（原生 ESM 不能 import CSS）', !bad,
-      bad ? `发现：${bad[0].trim().slice(0, 60)}` : '');
+  const jsFiles = walk(HERE).filter((p) => p.endsWith('.js'));
+  t('能遍历到 JS 源码', jsFiles.length > 10, `实测 ${jsFiles.length} 个 .js`);
+
+  const hits = [];
+  for (const p of jsFiles) {
+    const src = code(relativeTo(p));
+    if (!src) continue;
+    // 要的是"没有 import 任何 .css"，JS import 与 import() 都不行。
+    // 判的是剥注释后的源码 —— 注释里写的路径不算（那是假绿来源）。
+    const m = src.match(/^\s*import\s+[^;]*?['"][^'"]+\.css['"]/m)
+      || src.match(/\bimport\s*\(\s*['"][^'"]+\.css['"]\s*\)/);
+    if (m) hits.push(`${p.replace(HERE + '/', '')} → ${m[0].trim().slice(0, 50)}`);
   }
+  t('全仓 .js 都不 import CSS（原生 ESM 不能 import CSS）', hits.length === 0,
+    hits.length ? hits.join('；') : '');
+
   const css = read('plugins/mindmap/styles.css');
   t('mindmap/styles.css 存在', css !== null);
   if (css !== null) {
     // 剥注释后判，这样上方那段警告注释里写的路径不会把自己算进去
     t('styles.css 用 @import 引 dialog.css（替代 JS import）',
       /@import\s+url\(['"][^'"]*dialog\.css['"]\)/.test(stripBlock(css)));
+  }
+}
+
+/* ============================================================
+ * 1.5 插件间依赖方向
+ * ------------------------------------------------------------
+ * project-group/utils/color.ts 顶部明写：依赖方向 project-group →
+ * color-picker，单向无循环（它只是 `export *` 转发回 color-picker/color）。
+ * color-picker 反向去取就绕成环，且转发文件本身不含实现、只多一次跳转。
+ * ============================================================ */
+console.log('\n=== 1.5 插件间依赖方向 ===');
+{
+  const cp = code('plugins/color-picker/index.js');
+  t('color-picker/index.js 存在', cp !== null);
+  if (cp !== null) {
+    t('color-picker 的实现不反向依赖 project-group（单向：pg → cp）',
+      !/from\s+['"][^'"]*project-group/.test(cp));
+    t('color-picker 从本目录 ./color 取颜色工具（唯一实现处）',
+      /from\s+['"]\.\/color['"]/.test(cp));
   }
 }
 
