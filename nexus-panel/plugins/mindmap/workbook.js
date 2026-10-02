@@ -11,6 +11,14 @@
 
 import { DEFAULT_THEME, DEFAULT_LAYOUT } from './themes.js';
 import { decodeRefList } from './io.js';
+/*
+ * 空文字节点的占位文案用 formats.js 里那一个常量（见 BUG 99）。
+ *
+ * 导入侧（markdownToSheet）补位、导出侧（sheetToMarkdown）回落，
+ * 两处必须用同一个值：各写一份的话，改了一处不改另一处，
+ * Markdown 往返就会凭空多出/少掉「未命名」。
+ */
+import { EMPTY_NODE_TEXT } from './formats.js';
 
 const SHEET_MARK = /^##\s*画布[:：]\s*(.*)$/;
 
@@ -137,7 +145,16 @@ export function sheetToMarkdown(content) {
 
   function walk(n, depth) {
     if (!n) return;
-    const text = String(n?.data?.text ?? '').replace(/\s*\n\s*/g, ' ').trim();
+    let text = String(n?.data?.text ?? '').replace(/\s*\n\s*/g, ' ').trim();
+    /*
+     * 空文字必须回落成占位文案，不能导出成 `## `（井号后面什么都没有）。
+     *
+     * BUG 99：导回时 markdownToSheet 早先对空标题整行 `continue`，
+     * 于是 `## ` 这一行被丢掉、它的子树**整层抬到祖父身上**。
+     * 两边一起修才叫往返安全：这里补占位，那边不再丢行。
+     * 占位与 OPML / FreeMind 那条路是同一个常量（formats.EMPTY_NODE_TEXT）。
+     */
+    if (!text) text = EMPTY_NODE_TEXT;
     const sharp = '#'.repeat(Math.min(depth + 1, 6));
     let line = sharp + ' ' + text;
     /*
@@ -212,7 +229,24 @@ export function markdownToSheet(md) {
      * 节点文字（如 `\普通文字`）会被改掉。
      */
     if (/^\\(画布[:：]|\\)/.test(text)) text = text.slice(1);
-    if (!text) continue;
+    /*
+     * **空标题不能丢行**（BUG 99）。
+     *
+     * 早先这里是一句 `if (!text) continue;`，看着像"跳过没内容的行"，
+     * 实际做的是：丢掉这一行，把它的子树**整层抬到祖父身上** ——
+     * 层级静默错位，且不报错。与 formats.rowsToKm 那个 bug 是同一类，
+     * 只是这条路径自己又抄了一份重建逻辑，所以上一次没被一起修掉。
+     *
+     * 实测：
+     *   '# R\n## \n### A1\n### A2\n## B'
+     *     修复前 → R / A1 / A2 / B   ← A1、A2 从三级被抬成二级
+     *     修复后 → R / 未命名 /（A1、A2）/ B
+     *
+     * 触发它的是真实文件：从 Typora / Obsidian / 幕布 之类工具导出的
+     * Markdown 里，空标题行（有 # 但没写标题）并不罕见；
+     * 本工具自己导出的文件在节点文字为空白时也会写出 `## `（见 sheetToMarkdown）。
+     */
+    if (!text) text = EMPTY_NODE_TEXT;
     rows.push({ depth, text });
   }
   if (!rows.length) return emptyContent();
@@ -253,8 +287,11 @@ export function workbookToMarkdown(sheets) {
  * 把用户现有的全部画布顶掉（导入是整体替换、且不可撤销），状态栏还写
  * 「已保存」。导入方必须先问一句「这里到底有没有大纲」，没有就别替换。
  *
- * 只数**能解析成节点**的行（`#` 后有非空白内容），与 markdownToSheet 的
- * 正则口径保持一致 —— 否则两边判断会不一致：这里说有、那边解析出来是空的。
+ * 只数**能解析成节点**的行，与 markdownToSheet 的正则口径保持一致 ——
+ * 否则两边判断会不一致：这里说有、那边解析出来是空的。
+ *
+ * 「能解析成节点」包括**空标题**（`## `）：BUG 99 之后空标题会补成占位节点，
+ * 不再被丢掉，所以这里也必须算一条，否则又变成"那边有节点、这里说没有"。
  */
 export function markdownRowCount(md) {
   let n = 0;
@@ -263,8 +300,12 @@ export function markdownRowCount(md) {
      * 口径必须与 markdownToSheet() 逐字一致（见那里的注释）：
      * 早先这里是 `\s{0,3}`（含制表符）、那边是顶格，于是「这里说有大纲、
      * 那边解析出空画布」，导入变成静默清空。
+     *
+     * `(\s+\S|\s+$)`：井号后跟内容算一条；**光有井号和空格**也算一条 ——
+     * 空标题现在会补成占位节点（BUG 99），不数就又对不上。
+     * 井号后什么都没有（`##`）不在此列：解析器要求 `\s+`，那边同样不认。
      */
-    if (/^ {0,3}#{1,6}\s+\S/.test(raw)) n++;
+    if (/^ {0,3}#{1,6}(\s+\S|\s+$)/.test(raw)) n++;
   }
   return n;
 }

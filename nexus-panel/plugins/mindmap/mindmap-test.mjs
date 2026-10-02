@@ -5158,6 +5158,79 @@ group('BUG 98 · 空文字节点必须保留（丢行等于把子树整层抬上
   ok(/fallbackText\s*=\s*null/.test(fs2), 'readXmlNodes 支持兜底取文本（供 richcontent 用）');
 }
 
+/* ------------------------------------------------------------------
+   BUG 99：Markdown 导入时空标题同样被整行丢掉
+   ------------------------------------------------------------------
+   BUG 98 修的是 formats.rowsToKm（OPML / FreeMind 走它），
+   而 Markdown 这条路**自己抄了一份**重建逻辑（markdownToSheet 里的
+   `if (!text) continue;`），同一个毛病又犯了一遍 —— 这正是
+   「同一份逻辑抄两遍」的代价，改一处不改另一处就漏。
+   ------------------------------------------------------------------ */
+group('BUG 99 · Markdown 空标题同样不能丢行');
+
+{
+  const wb = await import('./workbook.js');
+  const f98 = await import('./formats.js');
+  const flat = (n, d = 0) => [`${'  '.repeat(d)}${n.data.text}`]
+    .concat((n.children || []).flatMap((c) => flat(c, d + 1)));
+  /* 安全取值：结构被破坏时不能直接抛（见 BUG 98 组的说明） */
+  const down = (n, ...idx) => { let c = n; for (const i of idx) c = (c?.children || [])[i]; return c; };
+  const at = (n, ...idx) => down(n, ...idx)?.data?.text ?? null;
+  const kids = (n, ...idx) => (down(n, ...idx)?.children || []).length;
+  const rt = (md) => flat(JSON.parse(wb.markdownToSheet(md)).root);
+
+  eq(wb.sheetToMarkdown(JSON.stringify({ root: { data: { text: 'R' } } })).trim(), '# R',
+    '基线：单节点导出不变');
+
+  // ① 中间空标题带两个子：子树不能被抬层
+  eq(JSON.stringify(rt('# R\n## \n### A1\n### A2\n## B')),
+    JSON.stringify(['R', '  未命名', '    A1', '    A2', '  B']),
+    '★ 空标题保留，子树仍挂在它下面（早先 A1/A2 被抬成 R 的直接子）');
+  // ② 三级空标题
+  eq(JSON.stringify(rt('# R\n## A\n### \n#### X\n## B')),
+    JSON.stringify(['R', '  A', '    未命名', '      X', '  B']),
+    '三级空标题同样保留（不只是二级）');
+  // ③ 根是空标题：不能拿第二行当根
+  {
+    const root = JSON.parse(wb.markdownToSheet('# \n## A\n## B')).root;
+    eq(root.data.text, f98.EMPTY_NODE_TEXT, '★ 根为空标题时补占位（早先第二行 A 被当成根）');
+    eq(kids(root), 2, '根为空标题时两个子都还在');
+    eq(at(root, 1), 'B', '根为空标题时顺序不变');
+  }
+
+  // ④ 往返：节点文字为空白（导出侧也必须补占位，否则又写出 `## `）
+  {
+    const mid = { data: { text: '   ' }, children: [{ data: { text: 'A1' }, children: [] }] };
+    const md = wb.sheetToMarkdown(JSON.stringify({ root: { data: { text: 'R' }, children: [mid] } }));
+    ok(!/^##\s*$/m.test(md), '★ 导出侧不写出空标题行（早先 `## ` 导回就把子树抬层）');
+    eq(at(JSON.parse(wb.markdownToSheet(md)).root, 0), f98.EMPTY_NODE_TEXT,
+      '空白节点往返后是占位文案（不是被丢掉）');
+    eq(at(JSON.parse(wb.markdownToSheet(md)).root, 0, 0), 'A1', '★ 空白节点的子树不被抬层');
+  }
+  // ⑤ 正常树往返不变
+  {
+    const src = { root: { data: { text: 'R' }, children: [
+      { data: { text: 'A' }, children: [{ data: { text: 'A1' }, children: [] }] },
+      { data: { text: 'B' }, children: [] },
+    ] } };
+    const md = wb.sheetToMarkdown(JSON.stringify(src));
+    eq(JSON.stringify(rt(md)), JSON.stringify(['R', '  A', '    A1', '  B']), '正常树往返结构不变');
+  }
+
+  // ⑥ 闸门口径：空标题现在能解析出节点，rowCount 就必须算它
+  eq(wb.markdownRowCount('## '), 1, '★ 空标题算一条大纲行（与解析器一致）');
+  eq(wb.markdownRowCount('##'), 0, '井号后什么都没有 → 不算（解析器要求 \\s+）');
+  eq(wb.markdownRowCount('#'), 0, '只有 # 没有内容 → 0（既有口径）');
+  eq(wb.markdownRowCount('# R\n## \n### A1'), 3, '空标题与正常标题一起计数');
+
+  // 源码层：丢行那句 continue 不许回来；占位必须是同一个常量
+  const wsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
+  ok(!/if\s*\(!text\)\s*continue;/.test(wsrc), '★ markdownToSheet 不再丢空行（丢行 = 子树抬层）');
+  ok(/import \{ EMPTY_NODE_TEXT \} from '\.\/formats\.js'/.test(wsrc),
+    '占位用的是 formats.js 的 EMPTY_NODE_TEXT（两条导入路径同一个常量）');
+  ok(/if\s*\(!text\)\s*text = EMPTY_NODE_TEXT;/.test(wsrc), 'sheetToMarkdown 空文字回落占位');
+}
+
 group('Mermaid（.mmd）');
 
 {
@@ -5372,7 +5445,13 @@ group('BUG 90 · 判「有没有大纲」与「解析大纲」必须同一套口
   const wsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
   ok(/raw\.match\(\/\^ \{0,3\}\(#\{1,6\}\)\\s\+\(\.\*\)\$\/\)/.test(wsrc),
     'markdownToSheet 允许 0~3 个前导空格');
-  ok(/\/\^ \{0,3\}#\{1,6\}\\s\+\\S\//.test(wsrc), 'markdownRowCount 用同一套前导空格规则');
+  /*
+   * BUG 99 之后空标题会补成占位节点，所以 rowCount 的口径从「井号后有非空白内容」
+   * 放宽成「井号后有内容 **或** 只有空白」—— 与解析器逐字对齐。
+   * 只认 `\s+\S` 的话，「那边解析出占位节点、这里说没有大纲」又对不上了。
+   */
+  ok(/\/\^ \{0,3\}#\{1,6\}\(\\s\+\\S\|\\s\+\$\)\//.test(wsrc),
+    'markdownRowCount 用同一套前导空格规则（含空标题，与解析器一致）');
   ok(!/\\s\{0,3\}#\{1,6\}/.test(wsrc), '不得再出现 \\s{0,3}（含制表符，与解析器不一致）');
 }
 
