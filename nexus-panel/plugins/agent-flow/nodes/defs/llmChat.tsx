@@ -239,5 +239,4 @@ registerNode({
   create: (id, partial) => makeLlmChatNode(id, (partial ?? {}) as never).data,
   Canvas: LlmChatNode,
   fields,
-  run: runLlmChat,
 });

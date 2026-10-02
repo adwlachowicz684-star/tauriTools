@@ -56,5 +56,4 @@ registerNode({
   create: (id, partial) => makeJoinNode(id, (partial ?? {}) as never).data,
   Canvas: JoinNode,
   fields: () => fields,
-  run: runJoin,
 });

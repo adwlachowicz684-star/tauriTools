@@ -109,5 +109,4 @@ registerNode({
   create: (id, partial) => makeGenericHttpNode(id, (partial ?? {}) as never).data,
   Canvas: HttpCard,
   fields: () => fields,
-  run: runGenericHttp,
 });

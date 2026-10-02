@@ -32,5 +32,4 @@ registerNode({
   create: (id, partial) => makeAggNode(id, partial ?? {}).data,
   Canvas: TableNode,
   fields: () => fields,
-  run: runAgg,
 });

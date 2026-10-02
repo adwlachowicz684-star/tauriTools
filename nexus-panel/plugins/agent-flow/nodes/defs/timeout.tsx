@@ -38,5 +38,4 @@ registerNode({
   create: (id, partial) => makeTimeoutNode(id, (partial ?? {}) as never).data,
   Canvas: TimeoutNode,
   fields: () => fields,
-  run: runTimeout,
 });

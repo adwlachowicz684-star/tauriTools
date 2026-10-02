@@ -130,5 +130,4 @@ registerNode({
   create: (id, partial) => makeNode(id, (partial ?? {}) as Partial<TaskNodeData>).data,
   Canvas: TaskNode,
   fields,
-  run: runTask,
 });

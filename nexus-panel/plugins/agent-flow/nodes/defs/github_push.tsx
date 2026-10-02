@@ -75,5 +75,4 @@ registerNode({
   create: (id, partial) => makeGithubPushNode(id, (partial ?? {}) as never).data,
   Canvas: GithubPushNode,
   fields: () => fields,
-  run: runGithubPush,
 });

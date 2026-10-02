@@ -17,5 +17,4 @@ registerNode({
   create: (id, partial) => makeParallelNode(id, (partial ?? {}) as never).data,
   Canvas: ParallelNode,
   Inspector: ParallelInspector,
-  run: runParallel,
 });

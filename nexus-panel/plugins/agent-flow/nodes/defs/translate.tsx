@@ -86,5 +86,4 @@ registerNode({
   create: (id, partial) => makeTranslateNode(id, (partial ?? {}) as never).data,
   Canvas: TranslateNode,
   fields: () => fields,
-  run: runTranslate,
 });

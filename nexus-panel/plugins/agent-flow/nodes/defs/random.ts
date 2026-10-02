@@ -39,5 +39,4 @@ registerNode({
   create: (id, partial) => makeRandomNode(id, partial ?? {}).data,
   Canvas: OpNode,
   fields: () => fields,
-  run: runRandom,
 });

@@ -25,5 +25,4 @@ registerNode({
   Canvas: UpdateNode,
   fields: () => updateFields,
   panelFooter: updateFooter,
-  run: runUpdate,
 });

@@ -81,5 +81,4 @@ registerNode({
   create: (id, partial) => makeBeepNode(id, (partial ?? {}) as never).data,
   Canvas: BeepNode,
   fields: () => fields,
-  run: runBeep,
 });

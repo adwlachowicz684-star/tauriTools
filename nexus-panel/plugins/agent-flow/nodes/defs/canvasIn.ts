@@ -35,5 +35,4 @@ registerNode({
   create: (id, partial) => makeCanvasInNode(id, partial ?? {}).data,
   Canvas: CanvasRefNode,
   fields: () => fields,
-  run: runCanvasIn,
 });

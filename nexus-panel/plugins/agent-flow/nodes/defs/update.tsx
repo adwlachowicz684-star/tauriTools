@@ -68,5 +68,4 @@ registerNode({
   },
   Canvas: UpdateNode,
   Inspector: UpdateInspector,
-  run: runUpdate,
 });

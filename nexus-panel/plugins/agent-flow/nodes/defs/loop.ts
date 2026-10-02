@@ -17,5 +17,4 @@ registerNode({
   create: (id, partial) => makeLoopNode(id, (partial ?? {}) as never).data,
   Canvas: LoopNode,
   Inspector: LoopInspector,
-  run: runLoop,
 });

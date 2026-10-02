@@ -75,5 +75,4 @@ registerNode({
   create: (id, partial) => makeGateNode(id, (partial ?? {}) as never).data,
   Canvas: GateNode,
   fields: () => fields,
-  run: runGate,
 });

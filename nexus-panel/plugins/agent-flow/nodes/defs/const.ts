@@ -53,5 +53,4 @@ registerNode({
    * 有 fields 却不标 manualParams 是错的（测试盯着），反过来也一样。
    */
   Inspector: ConstInspector,
-  run: runConst,
 });

@@ -42,5 +42,4 @@ registerNode({
   create: (id, partial) => makeDeriveNode(id, partial ?? {}).data,
   Canvas: TableNode,
   fields: () => fields,
-  run: runDerive,
 });

@@ -47,5 +47,4 @@ registerNode({
   create: (id, partial) => makeTextNode(id, partial ?? {}).data,
   Canvas: OpNode,
   fields: () => fields,
-  run: runText,
 });

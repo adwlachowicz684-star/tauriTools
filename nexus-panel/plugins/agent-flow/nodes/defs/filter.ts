@@ -28,5 +28,4 @@ registerNode({
   create: (id, partial) => makeFilterNode(id, partial ?? {}).data,
   Canvas: TableNode,
   fields: () => fields,
-  run: runFilter,
 });

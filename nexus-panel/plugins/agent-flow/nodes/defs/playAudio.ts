@@ -36,5 +36,4 @@ registerNode({
   create: (id, partial) => makePlayAudioNode(id, (partial ?? {}) as never).data,
   Canvas: PlayAudioNode,
   fields: () => fields,
-  run: runPlayAudio,
 });

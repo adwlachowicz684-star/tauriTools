@@ -49,5 +49,4 @@ registerNode({
   create: (id, partial) => makeMathNode(id, partial ?? {}).data,
   Canvas: OpNode,
   fields: () => fields,
-  run: runMath,
 });

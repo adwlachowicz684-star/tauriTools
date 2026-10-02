@@ -43,5 +43,4 @@ registerNode({
   create: (id, partial) => makeLogNode(id, (partial ?? {}) as never).data,
   Canvas: LogNode,
   fields: () => fields,
-  run: runLog,
 });

@@ -40,5 +40,4 @@ registerNode({
   create: (id, partial) => makeCompareNode(id, partial ?? {}).data,
   Canvas: OpNode,
   fields: () => fields,
-  run: runCompare,
 });

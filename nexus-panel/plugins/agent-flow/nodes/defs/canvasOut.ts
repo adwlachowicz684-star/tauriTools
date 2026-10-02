@@ -37,5 +37,4 @@ registerNode({
   create: (id, partial) => makeCanvasOutNode(id, partial ?? {}).data,
   Canvas: CanvasRefNode,
   fields: () => fields,
-  run: runCanvasOut,
 });

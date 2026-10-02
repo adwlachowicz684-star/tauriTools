@@ -3,7 +3,6 @@ import type { NodeProps, NodeTypes } from '@xyflow/react';
 import type { NodeData, GraphNode } from '../types';
 import type { FlowNode, FlowEdge } from '../flowTypes';
 import type { Credential } from '../engine/credentials';
-import type { RunContext } from '../engine/runContext';
 /* 必须保持 `import type`：fields 属于组件层，而注册表（nodes/registry）依赖本文件。
    一旦变成值导入，组件层就会被拉进注册表的运行时依赖，
    重新形成 registry → components → nodes → registry 的环（详见
@@ -239,9 +238,26 @@ export type NodeDef = {
   panelFooter?: (p: FieldRenderProps) => React.ReactNode;
   /** 属性面板。不给则按 fields 自动渲染；两者都没给则为空面板 */
   Inspector?: ComponentType<NodeInspectorProps>;
-  /**
-   * 执行器。不提供时该节点只做"直通"：不产出输出、直接成功。
-   * 纯编排类节点（并发控制的某些模式）可以不给。
+  /*
+   * ================= 这里**没有** run 字段，是刻意的 =================
+   *
+   * 以前有过 `run?: (ctx) => Promise<void>`，四十个 def 都老老实实写上了。
+   * 但**全仓没有任何一处消费它** —— 执行分发走的是
+   * `engine/runnerRegistry.ts` 里那张按 dataKind 索引的 RUNNERS 表，
+   * 而 GraphNode 只有 {id, data}，拿不到 type，查不到 def。
+   *
+   * 于是出现了两份清单：def 里写一份、RUNNERS 里写一份。
+   * 真正生效的只有后者，前者是"看着接上了、其实没接" 的假象 ——
+   * 一个 def 写了 run 却漏登记进 RUNNERS，节点就会
+   * **绿着成功、输出为空、什么都没做**（runner.ts 的兜底分支），
+   * 不报错、日志干净，是最难查的一类失效。
+   *
+   * 依赖方向也不允许反过来：engine/runners/* 被 nodes/defs/* import，
+   * 若 runnerRegistry 再去 import nodes/registry 就是环。
+   * 所以执行器**只能**由 engine 那张表持有。
+   *
+   * 加执行器的唯一正确姿势：在 RUNNERS 里按 dataKind 登记。
+   * 有守卫盯"def 里有 dataKind 却在 RUNNERS 里查不到"（容器类在白名单里），
+   * 见 tests/runnerRegistry.test.ts。
    */
-  run?: (ctx: RunContext) => Promise<void>;
 };

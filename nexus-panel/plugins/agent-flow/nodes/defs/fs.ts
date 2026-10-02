@@ -96,5 +96,4 @@ registerNode({
   create: (id, partial) => makeFsNode(id, (partial ?? {}) as never).data,
   Canvas: FsNode,
   fields: () => fields,
-  run: runFs,
 });

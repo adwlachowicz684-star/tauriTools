@@ -22,9 +22,6 @@ import { NodeShell } from '../components/NodeShell';
 import type { FieldDef } from '../components/inspectors/fields';
 import type { NodeDef } from './types';
 import { registerNode } from './registry';
-import { withNodeRun, NodeFailError } from '../engine/runnerKit';
-import { missingRequired } from '../engine/mcpTools';
-import type { RunContext } from '../engine/runContext';
 import { createMcpData, mcpColorOf, slugify, type NodeBlueprint } from '../engine/mcpTools';
 
 /** 蓝图 → 字段清单 */
@@ -82,13 +79,17 @@ export function defOf(bp: NodeBlueprint): NodeDef {
     Canvas: McpNodeCard,
     fields: () => fieldsOf(bp),
     /*
-     * 执行器这一轮**不接协议**。
+     * 这里**不写 run** —— NodeDef 早已没有这个字段（见 nodes/types.ts
+     * 里的说明）：它全仓无人消费，写了只是"看着接上了"。
      *
-     * 留空意味着节点会"直通成功"而不真的调用 ——
-     * 那是最糟的结果（看着跑通了，其实什么都没做）。
-     * 所以给一个明确失败的执行器，把"还没接上"说出来。
+     * 这一族节点的执行器在 engine/runners/mcp.ts，按 dataKind='mcp'
+     * 登记在 engine/runnerRegistry.ts 的 RUNNERS 里 ——
+     * 那是唯一真正生效的地方。
+     *
+     * 它当前明确失败（协议通道还没接上）而不是静默直通：
+     * 直通的表现是"绿着成功、输出为空、一次请求都没发"，
+     * 用户以为调了工具其实什么都没做 —— 那是这里要防的结果。
      */
-    run: runPlaceholder(bp),
   };
 }
 
@@ -124,21 +125,6 @@ function McpNodeCard({ id, type, data, selected }: NodeProps) {
  * 不过**必填参数缺失会先报缺参数** —— 那是用户能修的问题，
  * 优先说它，而不是笼统一句"协议没接上"。
  */
-function runPlaceholder(bp: NodeBlueprint) {
-  return async function runMcpPlaceholder(ctx: RunContext): Promise<void> {
-    await withNodeRun(ctx, async () => {
-      const d = (ctx.node.data ?? {}) as Record<string, unknown>;
-      const miss = missingRequired(d, bp);
-      if (miss.length > 0) {
-        throw new NodeFailError(`缺必填参数：${miss.join('、')}`);
-      }
-      throw new NodeFailError(
-        `「${bp.tool}」由 ${bp.server} 提供，但 MCP 协议还没接上 —— 配好通道后才能真的调用`,
-      );
-    });
-  };
-}
-
 /** 批量注册一批蓝图 */
 export function registerBlueprints(list: NodeBlueprint[]): void {
   for (const bp of list) registerNode(defOf(bp));

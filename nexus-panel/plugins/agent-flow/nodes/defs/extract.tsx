@@ -76,5 +76,4 @@ registerNode({
   create: (id, partial) => makeExtractNode(id, (partial ?? {}) as never).data,
   Canvas: ExtractCard,
   fields: () => fields,
-  run: runExtract,
 });

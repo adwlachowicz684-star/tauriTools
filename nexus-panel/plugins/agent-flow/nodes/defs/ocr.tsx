@@ -88,5 +88,4 @@ registerNode({
   create: (id, partial) => makeOcrNode(id, (partial ?? {}) as never).data,
   Canvas: OcrNode,
   fields: () => fields,
-  run: runOcr,
 });

@@ -60,5 +60,4 @@ registerNode({
   create: (id, partial) => makeRetryNode(id, (partial ?? {}) as never).data,
   Canvas: RetryNode,
   fields: () => fields,
-  run: runRetry,
 });

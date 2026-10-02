@@ -72,5 +72,4 @@ registerNode({
   create: (id, partial) => makeGithubUpdateNode(id, (partial ?? {}) as never).data,
   Canvas: GithubUpdateNode,
   fields: () => fields,
-  run: runGithubUpdate,
 });

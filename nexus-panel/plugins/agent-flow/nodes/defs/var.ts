@@ -45,5 +45,4 @@ registerNode({
   create: (id, partial) => makeVarNode(id, partial ?? {}).data,
   Canvas: OpNode,
   fields: () => fields,
-  run: runVar,
 });

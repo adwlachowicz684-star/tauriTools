@@ -53,5 +53,4 @@ registerNode({
   },
   Canvas: TriggerNode,
   Inspector: TriggerInspector,
-  run: runTrigger,
 });

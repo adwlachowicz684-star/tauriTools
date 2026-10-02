@@ -69,57 +69,81 @@ test('MCP 节点不再静默成功（旧行为是这个测试要防的）', asyn
   assert.equal((done as { ok?: boolean }).ok, false, '不该 ok:true —— 那正是"看着跑通了其实没做"');
 });
 
-/* ================================================================ */
-/* 两份清单对账：nodes/defs 的 run  ↔  RUNNERS                        */
-/* ================================================================ */
-
 const defsDir = join(AF_SRC, 'nodes/defs');
 
-function defRuns(): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const f of readdirSync(defsDir)) {
-    if (!f.endsWith('.ts') && !f.endsWith('.tsx')) continue;
-    const s = readFileSync(join(defsDir, f), 'utf-8');
-    const k = s.match(/dataKind:\s*'([^']+)'/);
-    const r = s.match(/^\s*run:\s*(\w+),/m);
-    if (k) out.set(k[1], r ? r[1] : '');
-  }
-  return out;
-}
-
+/** 从 runnerRegistry 源码里解析出「种类 → 执行器」这张表 */
 function runners(): Map<string, string> {
   const src = readSrc('engine/runnerRegistry.ts');
   const blk = src.slice(src.indexOf('const RUNNERS'), src.indexOf('\n};', src.indexOf('const RUNNERS')));
   const out = new Map<string, string>();
-  for (const m of blk.matchAll(/^\s*'?([a-zA-Z0-9_-]+)'?:\s*(\w+),/gm)) out.set(m[1], m[2]);
+  for (const m of blk.matchAll(/'?([A-Za-z][\w-]*)'?\s*:\s*(run\w+)\s*,/g)) out.set(m[1], m[2]);
   return out;
 }
 
-test('源码：def 声明了 run 的种类，RUNNERS 里必须有', () => {
-  const D = defRuns();
+/* ================================================================ */
+/* defs 里每个会执行的种类，RUNNERS 里都得有                           */
+/* ================================================================ */
+
+/*
+ * 容器类不参与执行，刻意没有执行器。
+ *
+ * 白名单**必须逐项写明理由** —— 否则"忘了登记"和"刻意不登记"长得一样，
+ * 守卫就退化成一条能随手放宽的清单。
+ */
+const NO_RUNNER_NEEDED: Record<string, string> = {
+  frame: '组合框：只框住一批节点，不执行',
+  taskPane: 'CLI 窗格：提供共享配置，不执行',
+  apiPane: 'API 窗格：提供共享配置，不执行',
+  module: '模块：展开成内部节点后由它们各自执行',
+  canvasRef: '画布引用：指向另一张画布，本身不执行',
+};
+
+function defKinds(): string[] {
+  return [...readdirSync(defsDir)]
+    .filter((f) => f.endsWith('.ts') || f.endsWith('.tsx'))
+    .flatMap((f) => {
+      const s = readFileSync(join(defsDir, f), 'utf-8');
+      return [...s.matchAll(/dataKind:\s*'([^']+)'/g)].map((m) => m[1]);
+    });
+}
+
+test('源码：def 的每个种类，要么有执行器，要么在白名单里', () => {
   const R = runners();
-  assert.ok(D.size >= 40, `只读到 ${D.size} 个 def，判据可能失效`);
-  assert.ok(R.size >= 38, `只读到 ${R.size} 个执行器，判据可能失效`);
-  for (const [kind, fn] of D) {
-    if (!fn) continue; // 容器类（frame / 窗格…）不执行，刻意没有 run
-    assert.ok(R.has(kind), `${kind} 的 def 写了 run: ${fn}，但 RUNNERS 里没有它 —— 会静默直通成功`);
-    assert.equal(R.get(kind), fn, `${kind} 的执行器不一致：def=${fn} RUNNERS=${R.get(kind)}`);
-  }
+  const kinds = [...new Set(defKinds())];
+  assert.ok(kinds.length >= 40, `只读到 ${kinds.length} 个种类，判据可能失效`);
+  const missing = kinds.filter((k) => !R.has(k) && !NO_RUNNER_NEEDED[k]);
+  assert.deepEqual(
+    missing, [],
+    `这些种类有 def 却没有执行器 —— 会静默直通成功（绿着、空输出、什么都没做）：${missing.join('、')}`,
+  );
+  const stale = Object.keys(NO_RUNNER_NEEDED).filter((k) => R.has(k));
+  assert.deepEqual(stale, [], `白名单里的这些已经有执行器了，该删掉：${stale.join('、')}`);
 });
 
 /*
- * 反向：RUNNERS 里多出来的，def 那边也得对得上。
- * 只查正向的话，写错 kind 名（比如 'playAudio' 写成 'play-audio'）
- * 会变成"两边各说一份"，而 def 那条路根本不执行。
+ * 反向：RUNNERS 里多出来的种类，defs 里也得找得到。
+ * 只查正向的话，kind 名写错（'play-audio' 写成 'playAudio'）会变成
+ * "两边各说一份"，而 def 那边根本没人执行 —— 且不报错。
  */
-test('源码：RUNNERS 里的每一项，def 那边也对得上', () => {
-  const D = defRuns();
-  const R = runners();
-  for (const [kind, fn] of R) {
-    if (kind === 'mcp') continue; // 动态生成，不在 defs 里
-    assert.ok(D.has(kind), `RUNNERS 里的 ${kind} 没有对应的 def`);
-    assert.equal(D.get(kind), fn, `${kind} 的执行器不一致：def=${D.get(kind)} RUNNERS=${fn}`);
+test('源码：RUNNERS 里的每个种类，defs 里也有（mcp 是动态生成，单独算）', () => {
+  const kinds = new Set(defKinds());
+  const extra = [...runners().keys()].filter((k) => k !== 'mcp' && !kinds.has(k));
+  assert.deepEqual(extra, [], `RUNNERS 里这些种类在 defs 里查不到：${extra.join('、')}`);
+});
+
+/*
+ * NodeDef 早已没有 run 字段（见 nodes/types.ts 的说明）：
+ * 它全仓无人消费，写了只是"看着接上了、其实没接"。
+ * 这条盯住那个假象别回来。
+ */
+test('源码：def 里不许再写 run 字段（那是没人消费的假象）', () => {
+  const bad: string[] = [];
+  for (const f of readdirSync(defsDir)) {
+    if (!f.endsWith('.ts') && !f.endsWith('.tsx')) continue;
+    const s = readFileSync(join(defsDir, f), 'utf-8');
+    if (/^[ \t]*run:[ \t]*run\w+,/m.test(s)) bad.push(f);
   }
+  assert.deepEqual(bad, [], `这些 def 还在写 run: —— 执行器要登记进 RUNNERS 才生效：${bad.join('、')}`);
 });
 
 /* 动态生成的种类不在 defs 里，只能单独钉住 —— 漏了它就是本轮那种失效 */

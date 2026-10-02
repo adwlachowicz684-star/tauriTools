@@ -40,5 +40,4 @@ registerNode({
   create: (id, partial) => makeWaitNode(id, (partial ?? {}) as never).data,
   Canvas: WaitNode,
   fields: () => fields,
-  run: runWait,
 });

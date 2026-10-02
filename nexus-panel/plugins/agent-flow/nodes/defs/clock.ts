@@ -30,5 +30,4 @@ registerNode({
   create: (id, partial) => makeClockNode(id, (partial ?? {}) as never).data,
   Canvas: ClockNode,
   fields: () => fields,
-  run: runClock,
 });

@@ -32,5 +32,4 @@ registerNode({
   create: (id, partial) => makeStopNode(id, partial ?? {}).data,
   Canvas: OpNode,
   fields: () => fields,
-  run: runStop,
 });

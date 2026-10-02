@@ -41,5 +41,4 @@ registerNode({
   create: (id, partial) => makeThrottleNode(id, (partial ?? {}) as never).data,
   Canvas: ThrottleNode,
   fields: () => fields,
-  run: runThrottle,
 });

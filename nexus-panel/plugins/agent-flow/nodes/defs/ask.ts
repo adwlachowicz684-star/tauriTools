@@ -40,5 +40,4 @@ registerNode({
   create: (id, partial) => makeAskNode(id, partial ?? {}).data,
   Canvas: OpNode,
   fields: () => fields,
-  run: runAsk,
 });

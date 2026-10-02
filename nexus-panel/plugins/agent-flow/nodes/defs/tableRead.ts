@@ -44,5 +44,4 @@ registerNode({
   create: (id, partial) => makeTableReadNode(id, partial ?? {}).data,
   Canvas: TableNode,
   fields: () => fields,
-  run: runTableRead,
 });
