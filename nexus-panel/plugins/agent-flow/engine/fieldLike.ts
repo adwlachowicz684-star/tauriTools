@@ -55,6 +55,41 @@ function pickText(v: unknown, data: Record<string, unknown>): string | null {
   return typeof v === 'string' ? v : null;
 }
 
+/*
+ * spec 的形状。**必须写成类型别名**：内联的对象类型注解会被本仓的
+ * TS→mjs 脚本剥坏（见本文件顶部那两处同类坑）。
+ */
+type SpecLike = { keys?: unknown };
+
+/**
+ * custom 块声明的额外键。
+ *
+ * ================= 来源只有一个：FieldDef 上的 spec.keys =================
+ *
+ * custom 是"手写一段 JSX"的逃生口，它读写哪些键从外面看不出来，
+ * 只能靠 spec.keys 声明（engine/nodeSpec.ts 的 deriveParams 就是这么取的）。
+ *
+ * 本函数以前读的是 `f.extraKeys` —— 而**全仓库没有任何一个节点定义写过
+ * extraKeys**（只有测试里手写过）。于是契约侧的参数表把 custom 块声明的
+ * 键**全丢了**：侧栏说明里 HTTP 节点不显示 url / method，
+ * 而 url 是它唯一真正的必填参数 ——
+ * "挑节点时看到的说明"里偏偏没有最该填的那一项，且全程不报错。
+ *
+ * 更麻烦的是测试喂的是 extraKeys 这个真实代码里不存在的字段，
+ * 于是两千多条测试一路全绿 —— 测试与实现各说一份，
+ * 谁也没发现另一边是空的。
+ */
+function specKeysOf(f: Record<string, unknown>): string[] | undefined {
+  const spec = f.spec as SpecLike | undefined;
+  const keys = spec ? spec.keys : undefined;
+  if (!Array.isArray(keys)) return undefined;
+  const out: string[] = [];
+  for (const k of keys) {
+    if (typeof k === 'string' && k.length > 0) out.push(k);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 /**
  * 转成 deriveParams 认的形状。
  *
@@ -97,9 +132,14 @@ export function fieldLikeOf(
        * 不猜：猜错的显示条件比不显示更误导。
        */
       when: null,
-      extraKeys: Array.isArray(f.extraKeys)
-        ? (f.extraKeys as unknown[]).map((k) => String(k))
-        : undefined,
+      /*
+       * spec.keys 优先 —— 它是唯一真实来源。
+       * 退回 f.extraKeys 只为兼容直接喂 FieldLike 的调用方（测试就是）。
+       */
+      extraKeys: specKeysOf(f)
+        ?? (Array.isArray(f.extraKeys)
+          ? (f.extraKeys as unknown[]).map((k) => String(k))
+          : undefined),
       options,
       content: typeof f.content === 'string' ? f.content : null,
     });

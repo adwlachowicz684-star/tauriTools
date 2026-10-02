@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -74,4 +74,71 @@ test('未注册节点的兜底定义必须缓存（否则画布卡片与面板�
     '缺少 fallbacks 缓存表：getDef() 在渲染里被反复调用，未注册类型每次都新造一份 def，' +
       '其 Canvas/Inspector 也是新引用，导致组件反复重挂载。',
   );
+});
+
+/* ================================================================ */
+/* 面板三件套的优先级：写了却不渲染的三种组合                        */
+/* ================================================================ */
+
+/*
+ * inspectorOf 的判定是**短路**的：
+ *
+ *   if (def.Inspector) return def.Inspector;          ← fields 到此为止
+ *   if (def.fields)   return makeInspector(fields, panelFooter);
+ *   return EmptyInspector;                            ← panelFooter 到此为止
+ *
+ * 于是两种组合是"写了却不渲染"，而且都不报错：
+ *
+ *  1. 同时给 Inspector 与 fields —— fields 被完全忽略。
+ *     更糟的是**参数文档仍按 def.fields 生成**：文档说这个节点有这些参数，
+ *     界面上一个都不显示。这是"文档与界面对不上"里最难查的一种。
+ *
+ *  2. 只给 panelFooter 不给 fields —— 走进 EmptyInspector 分支，
+ *     footer 永远不出现（那正是"试跑一下"这类按钮挂的地方）。
+ *
+ * 目前两种组合都不存在（45 个 def 逐个扫过），但没有任何东西拦着它们长出来。
+ */
+const DEFS_DIR = 'nodes/defs';
+
+function defFiles(): string[] {
+  return readdirSync(join(SRC!, DEFS_DIR)).filter((f) => f.endsWith('.ts') || f.endsWith('.tsx'));
+}
+
+/** 认 `fields:` 与 `fields,` 两种写法 —— 少认简写会把 def 判成"没有字段" */
+function hasProp(src: string, prop: string): boolean {
+  const s = stripComments(src).replace(/^\s*\/\/.*$/gm, '');
+  return new RegExp(`\\b${prop}\\s*[:,]`).test(s);
+}
+
+test('def 不得同时给 Inspector 与 fields（fields 会被整个忽略）', () => {
+  const bad = defFiles().filter((f) => {
+    const s = readFileSync(join(SRC!, DEFS_DIR, f), 'utf8');
+    return hasProp(s, 'Inspector') && hasProp(s, 'fields');
+  });
+  assert.deepEqual(
+    bad, [],
+    `这些 def 同时给了 Inspector 与 fields —— inspectorOf 会直接返回 Inspector，fields 一个都不渲染，` +
+      `而参数文档仍按 fields 生成，于是"文档说有、界面没有"：${bad.join('、')}`,
+  );
+});
+
+test('def 给了 panelFooter 就必须也给 fields（否则 footer 永远不渲染）', () => {
+  const bad = defFiles().filter((f) => {
+    const s = readFileSync(join(SRC!, DEFS_DIR, f), 'utf8');
+    return hasProp(s, 'panelFooter') && !hasProp(s, 'fields');
+  });
+  assert.deepEqual(
+    bad, [],
+    `这些 def 只给了 panelFooter —— 没有 fields 时 inspectorOf 走 EmptyInspector 分支，` +
+      `footer 永远显示不出来：${bad.join('、')}`,
+  );
+});
+
+test('def 至少要有 fields 或 Inspector（否则面板只有一句「还没有配置面板」）', () => {
+  const bad = defFiles().filter((f) => {
+    const s = readFileSync(join(SRC!, DEFS_DIR, f), 'utf8');
+    if (!s.includes('registerNode(')) return false; // 字段库等不是 def
+    return !hasProp(s, 'fields') && !hasProp(s, 'Inspector');
+  });
+  assert.deepEqual(bad, [], `这些 def 既无 fields 也无 Inspector：${bad.join('、')}`);
 });
