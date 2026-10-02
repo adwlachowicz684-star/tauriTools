@@ -263,21 +263,31 @@ struct MigItem {
 /**
  * #314 把页签名收敛为合法的单级目录片段；不合法返回 `None`。
  *
- * 不合法 = 空 / 纯空白 / `.` / `..` / 含路径分隔符或 Windows 文件名非法字符 / 含控制符。
+ * 判据**不在本文件里**：直接复用 `sys::validate_name_as`（见函数内的说明）。
+ * 不合法 = 空 / 纯空白 / `.` / `..` / 纯点串 / 含控制符 / 含路径分隔符或
+ * Windows 文件名非法字符（`\ / : * ? " < > |`）/ 以句点结尾 / 超过 120 字符 /
+ * 是 Windows 保留设备名（CON / NUL / COM1 等）。
  *
- * 字符集用 **Windows 的**非法集（`\ / : * ? " < > |`）而不是"当前平台"的：
+ * 字符集用 **Windows 的**非法集而不是"当前平台"的：
  * 迁移目标是给资源管理器用的目录名，按当前平台判的话同一份 config
  * 换台机器跑就会得出不同结论 —— 而用户名/页签名里出现这些字符本就不该被接受。
  */
 pub fn safe_segment(name: &str) -> Option<String> {
-    if name.trim().is_empty() { return None; }
-    let s = name.trim();
-    if s == "." || s == ".." { return None; }
-    for c in s.chars() {
-        if c.is_control() { return None; }
-        if matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { return None; }
-    }
-    Some(s.to_string())
+    /*
+     * 判据**不再自己写一份**，收敛到 sys::validate_name_as。
+     *
+     * 此前这里是独立的四行（空白 / `.` `..` / 控制符 / 分隔符），而新建那条路
+     * （sys::resolve_new_target）走的是 sys::validate_name。两套规则不一致，
+     * 后果在两个方向都有：
+     *   · 页签名 `CON` / `NUL`：迁移这里**放行** → 真去建 `root\CON`
+     *     → Windows 上 CreateDirectory 失败，报「无法创建目标目录 拒绝访问」，
+     *       一个看着很正常的名字配上一句指向不明的错；
+     *   · 页签名带控制符 / 末位是句点：新建被拒、迁移却放行，
+     *     于是"能建不能迁"或反过来，同一个页签两条路结论相反。
+     *
+     * 统一之后：两边对同一个页签名给出同一个结论，且跳过原因里带页签名本身。
+     */
+    super::sys::validate_name_as(name, "页签名").ok()
 }
 
 fn migrate(

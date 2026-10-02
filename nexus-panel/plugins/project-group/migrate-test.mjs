@@ -178,17 +178,30 @@ console.log('\n=== 7. #314 页签名收敛为合法单级片段 ★★ ===');
   const c0 = cli.lastIndexOf('/**', i);
   const fn = cli.slice(c0 > 0 ? c0 : i, i + 900);
 
-  /* 一、必须挡住能拼出**多层级**或越出目标根的字符。
-     页签名直接拿去 root.join(seg)，含 \ 或 / 会拼出多级路径 ——
-     项目被搬到用户没指定的地方，而报告里只写"已搬迁"。 */
-  t('挡住反斜杠', /'\\\\'/.test(fn));
-  t('挡住斜杠', /\| '\/' /.test(fn));
-  t('挡住冒号', /\| ':' /.test(fn));
-  t('挡住通配符', /\| '\*' /.test(fn));
-  t('挡住引号与尖括号', /'"' \| '<' \| '>' \| '\|'/.test(fn));
-  t('挡住控制符', /is_control\(\)/.test(fn));
-  t('挡住 . 与 ..', /s == "\." \|\| s == "\.\."/.test(fn));
-  t('挡住空白', /trim\(\)\.is_empty\(\)/.test(fn));
+  /*
+   * 一、必须挡住能拼出**多层级**或越出目标根的字符。
+   * 页签名直接拿去 root.join(seg)，含 \ 或 / 会拼出多级路径 ——
+   * 项目被搬到用户没指定的地方，而报告里只写"已搬迁"。
+   *
+   * 判据此前是 safe_segment 自己写的四行，现在收敛到 sys::validate_name_as。
+   * 所以这里**不再钉 safe_segment 里的字面量**（那是钉写法不是钉意图，
+   * 换个实现就误报），改成：① safe_segment 必须走共用的那份；
+   * ② 那份里确实挡住这些字符。
+   */
+  t('safe_segment 走共用的 validate_name_as', /super::sys::validate_name_as\(/.test(fn));
+  {
+    const sy = fs.readFileSync(path.join(RS, 'sys.rs'), 'utf8');
+    const v = sy.slice(sy.indexOf('pub fn validate_name_as'), sy.indexOf('pub fn validate_name_as') + 1600);
+    t('取到共用判据（自检）', v.includes('what') && v.includes('matches!'), v.slice(0, 80));
+    t('挡住反斜杠', /'\\\\'/.test(v));
+    t('挡住斜杠', /\| '\/' /.test(v));
+    t('挡住冒号', /\| ':' /.test(v));
+    t('挡住通配符', /\| '\*' /.test(v));
+    t('挡住引号与尖括号', /'"' \| '<' \| '>' \| '\|'/.test(v));
+    t('挡住控制符', /is_control\(\)/.test(v));
+    t('挡住 . 与 ..', /name == "\." \|\| name == "\.\."/.test(v));
+    t('挡住空白', /is_empty\(\)/.test(v));
+  }
 
   /* 二、必须用**Windows** 的非法字符集，而不是"当前平台"的。
      按当前平台判的话，同一份 config 换台机器跑结论就不同。 */

@@ -67,8 +67,15 @@ console.log('\n=== 3. 名称不能以句点结尾（原版 ValidateName）★ ==
    * 之后所有按名字去查的操作（打开 / 改名 / 删除）都查不到。
    * 这是"显示与实际不一致"且没有任何报错的一类，必须在入口挡掉。
    */
-  const i = sys.indexOf('pub fn validate_name(');
+  /*
+   * 判据本体在 `validate_name_as`（`validate_name` 只是 `what = "名称"` 的转发）：
+   * 报错里的字段名由 `what` 决定，页签名那条要报"页签名"而不是"名称"，
+   * 否则用户改的是项目名、报错说的也是"名称"，指向不了真正的原因。
+   * 所以这里钉**实现所在**的那个函数，不再钉转发壳。
+   */
+  const i = sys.indexOf('pub fn validate_name_as(');
   const b = sys.slice(i, sys.indexOf('\npub fn ', i + 1));
+  t('取到判据本体（自检）', b.includes('what') && b.includes('is_reserved_name'), b.slice(0, 80));
   t('有句点结尾校验', /name\.ends_with\('\.'\)/.test(b));
   t('报错说明后果', /Windows 会静默去掉/.test(b));
   /* . / .. 的旧判定不能丢 */

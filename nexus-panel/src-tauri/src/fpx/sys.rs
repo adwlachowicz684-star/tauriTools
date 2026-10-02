@@ -113,14 +113,47 @@ pub fn quick_roots() -> Vec<DirEntryLite> {
 /* ---------------------------- 新建项目 / 项目组 ---------------------------- */
 
 /// 校验名称，非法返回 Err；合法返回去除首尾空白的名称。
+///
+/// 就是 `validate_name_as(raw, "名称")`：报错里的"名称"二字由 `what` 决定，
+/// 见 `validate_name_as` 的说明（同一个字段两处校验、两处都写"名称"，
+/// 报错就指向不了真正出问题的那一个）。
 pub fn validate_name(raw: &str) -> Result<String, String> {
+    validate_name_as(raw, "名称")
+}
+
+/**
+ * 带**字段名**的名称校验：非法返回 Err，合法返回去空白后的名称。
+ *
+ * 为什么 `what` 是必需的，而不是统一写"名称"：
+ *
+ * `resolve_new_target` 里 `name`（新建的项目名）与 `hierarchy`（页签名）
+ * 都要过这一套规则。此前两者都报「名称不能包含 \ / : ...」，而用户敲的是
+ * **项目名** —— 出问题的却是**页签名**。他看到"名称不能包含 /"只会去改
+ * 自己刚打的项目名，改十次还是同一句报错，而页签名从来没被怀疑过。
+ * 报错指向不了真正的原因，比不报错更容易让人放弃。
+ *
+ * 所以页签名那条传 `页签名「A:B」`，报错变成
+ * 「页签名「A:B」不能包含 \ / : * ? " < > | 等字符」——一眼看出该改哪个。
+ *
+ * 判据本身只有这一份：页签名在迁移那条路上（cli::safe_segment）也走它，
+ * 两份规则迟早漂移，漂移的表现正是"这边放行、那边拒绝"。
+ */
+pub fn validate_name_as(raw: &str, what: &str) -> Result<String, String> {
     let name = raw.trim();
-    if name.is_empty() { return Err("名称不能为空".into()); }
+    if name.is_empty() { return Err(format!("{what}不能为空")); }
+    /*
+     * 控制符一并挡掉。
+     *
+     * 原先只有迁移那条路（cli::safe_segment）查控制符，新建这条不查 ——
+     * 于是带控制符的名字在这里放行、在那里又被拒，同一个名字两条路结论相反。
+     * 带控制符的目录名在资源管理器里显示成空白或乱码，本就不该被接受。
+     */
+    if name.chars().any(|c| c.is_control()) { return Err(format!("{what}不能包含控制字符")); }
     if name.chars().any(|c| matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|')) {
-        return Err("名称不能包含 \\ / : * ? \" < > | 等字符".into());
+        return Err(format!("{what}不能包含 \\ / : * ? \" < > | 等字符"));
     }
     if name == "." || name == ".." || name.trim_matches('.').is_empty() {
-        return Err("名称不能是 . 或 ..".into());
+        return Err(format!("{what}不能是 . 或 .."));
     }
     /*
      * 不能以句点结尾（原版 ValidateName 明写）。
@@ -134,7 +167,7 @@ pub fn validate_name(raw: &str) -> Result<String, String> {
      * 用户打 "foo " 得到 "foo" 是符合预期的，不必报错。
      */
     if name.ends_with('.') {
-        return Err("名称不能以句点结尾（Windows 会静默去掉，导致配置里的名字与磁盘不一致）".into());
+        return Err(format!("{what}不能以句点结尾（Windows 会静默去掉，导致配置里的名字与磁盘不一致）"));
     }
     /*
      * 按**字符数**算，不能用 `name.len()`（字节数）。
@@ -143,9 +176,9 @@ pub fn validate_name(raw: &str) -> Result<String, String> {
      * "上限 120 字符" —— 用户数着自己打了 50 个字，却被告知超过 120，
      * 于是以为是别的地方出了问题（这条报错指向不了真正的原因）。
      */
-    if name.chars().count() > 120 { return Err("名称过长（上限 120 字符）".into()); }
+    if name.chars().count() > 120 { return Err(format!("{what}过长（上限 120 字符）")); }
     if is_reserved_name(name) {
-        return Err("名称是 Windows 保留设备名（CON / NUL / COM1 等），无法创建".into());
+        return Err(format!("{what}是 Windows 保留设备名（CON / NUL / COM1 等），无法创建"));
     }
     Ok(name.to_string())
 }
@@ -216,8 +249,16 @@ pub fn resolve_new_target(
     } else {
         PathBuf::from(parent)
     };
+    /*
+     * 页签名走同一套规则，但报错里必须写**是页签名**。
+     *
+     * 页签名是页签的名字，用户在新建框里敲的是项目名 —— 若两条共用一句
+     * 「名称不能包含 \ / : ...」，他只会反复改自己刚敲的项目名，
+     * 而真正的拦路者是页签名。带上页签名本身的值，一眼就能看出该改哪个
+     * （页签名里带 `/` 是很自然的写法，比如「前端/后端」）。
+     */
     if let Some(h) = hierarchy {
-        let h = validate_name(h)?;
+        let h = validate_name_as(h, &format!("页签名「{h}」"))?;
         target = target.join(h);
     }
     target = target.join(&name);

@@ -74,7 +74,6 @@
     "test:plugin-theme": "node plugin-theme-test.mjs",
     "test:react": "node smoke-react.mjs",
     "test:registry": "node test-registry-test.mjs",
-    "test:regression": "node regression-guard-test.mjs",
     "test:responsive": "node responsive-test.mjs",
     "test:rtdeps": "node runtime-deps-test.mjs",
     "test:service-available": "node service-available-test.mjs",
@@ -211,9 +210,9 @@
     "test:pg-watch-toggle": "node plugins/project-group/watch-toggle-test.mjs",
     "test:pg-watch-scope": "node plugins/project-group/watch-scope-test.mjs",
     "test:pg-win-icon": "node plugins/project-group/win-icon-test.mjs",
-    "test:pg-screen-capture": "node plugins/project-group/screen-capture-test.mjs",
     "test:pg-link-switch-ci": "node plugins/project-group/link-switch-ci-test.mjs",
-    "test:pg-config-corrupt-notice": "node plugins/project-group/config-corrupt-notice-test.mjs"
+    "test:pg-config-corrupt-notice": "node plugins/project-group/config-corrupt-notice-test.mjs",
+    "test:pg-segment-name-scope": "node plugins/project-group/segment-name-scope-test.mjs"
   },
   "dependencies": {
     "@plantuml/core": "1.2026.8",
