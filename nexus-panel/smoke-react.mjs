@@ -94,34 +94,64 @@ await tick(600);
 const q = (s) => document.querySelector(s);
 const qa = (s) => [...document.querySelectorAll(s)];
 
-console.log('侧边栏插件数:', qa('#plugin-list .nav-item').length,
-  qa('#plugin-list .nav-label').map((e) => e.textContent).join(', '));
-console.log('窗口标题栏:', q('.tb-brand span')?.textContent, '| 内容区标题:', q('#plugin-bar h1')?.textContent);
+/* 每条观察都必须是断言，并且失败要让进程非 0 退出。
+   ⚠️ 旧版只把结果 console.log 出来、末尾无条件 process.exit(0)：
+      于是这里报什么问题都"通过"，体检单上看它永远是绿的，
+      而它其实一条断言都没守（本项目反复出现的"崩/错 ≠ 红"）。 */
+let pass = 0;
+const fails = [];
+const ok = (name, cond, detail = '') => {
+  if (cond) { pass++; console.log(`✅ ${name}${detail ? ' → ' + detail : ''}`); }
+  else { fails.push(name); console.log(`❌ ${name}${detail ? ' → ' + detail : ''}`); }
+};
+
+const navCount = qa('#plugin-list .nav-item').length;
+ok('侧边栏渲染出插件列表', navCount > 0, `${navCount} 个：${qa('#plugin-list .nav-label').map((e) => e.textContent).join(', ')}`);
+
+const brand = q('.tb-brand span')?.textContent;
+ok('窗口标题栏有品牌名', brand === 'Nexus Panel', brand);
+ok('内容区有插件标题', !!q('#plugin-bar h1')?.textContent, q('#plugin-bar h1')?.textContent);
 
 // 切到「示例·同页」插件（原生 JS，jsdom 里可运行）
 const target = qa('#plugin-list .nav-item').find((b) => b.textContent.includes('示例·同页'));
-console.log('找到同页示例插件:', !!target);
+ok('找到同页示例插件', !!target);
 target?.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
 await tick(500);
 
 const stage = q('#stage-scroll');
-console.log('同页插件挂载:', /计数器/.test(stage.textContent));
+ok('同页插件挂载', /计数器/.test(stage.textContent));
 const btn = qa('#stage-scroll button').find((b) => b.textContent.includes('＋'));
 btn?.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
 await tick(200);
-console.log('计数器:', stage.querySelector('.num')?.textContent,
-  '| 持久化:', localStorage.getItem('nexus:demo-module:count'));
-console.log('侧边栏角标:', qa('.nav-badge').map((e) => e.textContent).filter(Boolean).join(','));
+const num = stage.querySelector('.num')?.textContent;
+const persisted = localStorage.getItem('nexus:demo-module:count');
+ok('计数器点击后自增', num === '1', num);
+ok('计数写入持久化', persisted === '1', persisted);
+ok('侧边栏角标出现', qa('.nav-badge').map((e) => e.textContent).filter(Boolean).length > 0,
+  qa('.nav-badge').map((e) => e.textContent).filter(Boolean).join(','));
 
 // 切到 iframe 插件，验证 iframe 被创建（jsdom 不会加载页面，只验证宿主行为）
 const iframePlugin = qa('#plugin-list .nav-item').find((b) => b.textContent.includes('示例·React'));
 iframePlugin?.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
 await tick(400);
-console.log('iframe 已插入:', !!q('#stage-scroll iframe'), '| src:', q('#stage-scroll iframe')?.getAttribute('src'));
+ok('iframe 插件已插入', !!q('#stage-scroll iframe'), q('#stage-scroll iframe')?.getAttribute('src'));
 
-console.log('主题已应用:', document.documentElement.dataset.theme,
-  '| 基调:', document.documentElement.dataset.themeBase,
-  '| --bg:', document.documentElement.style.getPropertyValue('--bg'));
+ok('主题已应用到 documentElement',
+  document.documentElement.dataset.theme === 'agentflow-dark' && document.documentElement.dataset.themeBase === 'dark',
+  `${document.documentElement.dataset.theme} / ${document.documentElement.dataset.themeBase} / --bg=${document.documentElement.style.getPropertyValue('--bg')}`);
 
-console.log(errors.length ? '⚠ 控制台错误: ' + errors.slice(0, 3).join(' | ') : '✅ 无运行时错误');
-process.exit(0);
+/* 控制台错误的处理必须分两类，不能一把豁免：
+   · TSX 插件入口在纯 Node 下加载不了（要 vite 转译，Node 20 不认 .tsx）
+     —— 这是**环境限制**不是缺陷，单列跳过并说明；
+   · 除此之外的任何错误都是真失败。
+   豁免写成"忽略全部 errors"的话，真错误会跟着一起被吞掉。 */
+const TSX_LIMIT = /Unknown file extension "\.tsx"|无法加载插件入口：.*\.tsx/;
+const tsxErrs = errors.filter((e) => TSX_LIMIT.test(e));
+const otherErrs = errors.filter((e) => !TSX_LIMIT.test(e));
+ok('除 Node 不认 .tsx 这类环境限制外，无运行时错误', otherErrs.length === 0, otherErrs.slice(0, 2).join(' | '));
+// 元断言：豁免必须真的命中过。没命中说明上面的过滤条件是空转的，
+// 那它就会把真错误也一并放过（"豁免必须真会豁免"）。
+ok('TSX 豁免确实命中（否则等于放行一切）', tsxErrs.length > 0, `豁免 ${tsxErrs.length} 条`);
+
+console.log(`\nReact 外壳冒烟：通过 ${pass} 项，失败 ${fails.length} 项（共 ${pass + fails.length} 项）`);
+process.exit(fails.length ? 1 : 0);
