@@ -117,6 +117,81 @@ console.log('\n=== 1.5 插件间依赖方向 ===');
 }
 
 /* ============================================================
+ * 1.6 孤儿入口文件（写了但没人加载的插件入口）
+ * ------------------------------------------------------------
+ * 入口文件只有被下面三条链之一指到才会真正加载：
+ *   ① registry.js 的 entry（含 noBuild 三元的两边）
+ *   ② 同目录 index.html 的 script src
+ *   ③ 任何源码的相对 import
+ *
+ * 三条都够不上的就是死入口。它**不报错、不崩溃、测试也不红** ——
+ * 谁都看不出来。危险在将来：哪天有人把它接上（比如给插件加个无构建
+ * 分支），一个从没跑过、且与主实现漂移了很久的分叉就突然生效。
+ *
+ * 已实测：color-picker/index.js 就是这样一份休眠的第二实现，
+ * 它的 pick 返回**颜色字符串**，而在跑的 main.tsx 返回 { hex, custom }。
+ * 接上去调用方的 r.hex 会静默变成 undefined。详见该文件头部说明。
+ * ============================================================ */
+console.log('\n=== 1.6 孤儿入口文件 ===');
+{
+  const NAMES = ['index.js', 'index.tsx', 'main.js', 'main.tsx',
+    'module.js', 'module.mjs', 'module.tsx'];
+  /* 全仓源码（含 html），用来查引用链 */
+  const srcs = new Map();
+  for (const abs of walk(HERE)) {
+    if (!/\.(js|mjs|ts|tsx|html|json)$/.test(abs)) continue;
+    let txt;
+    try { txt = readFileSync(abs, 'utf8'); } catch { continue; }
+    srcs.set(relativeTo(abs), txt);
+  }
+  const reg = srcs.get('plugins/registry.js') || '';
+  const norm = (base, r) => join(base, r).split('\\').join('/');
+
+  const orphans = [];
+  for (const dir of readdirSync(join(HERE, 'plugins'), { withFileTypes: true })) {
+    if (!dir.isDirectory()) continue;
+    const pd = 'plugins/' + dir.name;
+    for (const n of NAMES) {
+      const file = pd + '/' + n;
+      if (!srcs.has(file)) continue;
+      let ref = false;
+      /* ① registry 提到这个路径 */
+      if (reg.includes(file) || reg.includes('./' + file)) ref = true;
+      /* ② 同目录 index.html 的 script src */
+      const html = srcs.get(pd + '/index.html');
+      if (html) {
+        for (const m of html.matchAll(/src=["'](\.\/[^"']+)["']/g)) {
+          if (norm(pd, m[1]) === file) ref = true;
+        }
+      }
+      /* ③ 任何源码的相对 import */
+      if (!ref) {
+        for (const [q, txt] of srcs) {
+          if (q === file) continue;
+          const base = q.includes('/') ? q.slice(0, q.lastIndexOf('/')) : '';
+          for (const m of txt.matchAll(/\bfrom\s+['"](\.[^'"]+)['"]|import\s+['"](\.[^'"]+)['"]/g)) {
+            if (norm(base, m[1] || m[2]) === file) { ref = true; break; }
+          }
+          if (ref) break;
+        }
+      }
+      if (!ref) orphans.push(file);
+    }
+  }
+
+  /* 已知清单：登记时写清为什么留着 —— 只增不减，新增立刻报红 */
+  const KNOWN = ['plugins/color-picker/index.js'];
+  t('孤儿入口统计范围有效', srcs.size > 50, `实测 ${srcs.size} 个源码文件`);
+  t('孤儿入口不超过已知清单', orphans.length <= KNOWN.length,
+    orphans.length > KNOWN.length
+      ? `实测 ${orphans.length} 个：${orphans.join('、')}`
+      : `${orphans.length} / ${KNOWN.length}`);
+  for (const k of KNOWN) {
+    t(`已知孤儿仍存在（登记未过期）：${k}`, srcs.has(k));
+  }
+}
+
+/* ============================================================
  * 2. 画布假描边框必须真的被创建
  * ------------------------------------------------------------
  * 此前 styles.css 里整套规则都写好了，但全仓 JS **没有任何地方

@@ -1,3 +1,33 @@
+/* ⚠️ 本文件当前**没有任何地方加载它** —— 是休眠的死入口。
+ * ------------------------------------------------------------
+ * 引用链实测：registry 的 entry 是 ./plugins/color-picker/index.html，
+ * 而 index.html 只 script src 了 ./main.tsx。全仓（源码 / 测试 / 脚本 /
+ * index.html / registry）扫不到任何一处 import 本文件。
+ *
+ * 于是这里写的是**色盘的第二份完整实现**（原生 JS 版），而真正在跑的是
+ * main.tsx（React 版，走共享组件 ColorPicker）。两份做同一件事，
+ * 已经漂移 —— 对照如下（2026-10 核对）：
+ *
+ *   · version      本文件 1.0.0            main.tsx 3.0.0
+ *   · methods      声明里漏了 presets      五项齐全，另有 implementation
+ *   · 起始色       硬编码 #3E63DD          共享常量 DEFAULT_COLOR #7C8CFF
+ *   · pick 返回    **颜色字符串**          **{ hex, custom } 对象**
+ *   · 取消         reject(已取消)          resolve({ hex: null, custom })
+ *   · 自定义色     存进 ctx.store          交给调用方存（取消也要带回）
+ *
+ * 最危险的是 pick 的返回类型：调用方按现行契约写 `r.hex`（见 main.tsx
+ * 的注释），接到本文件会拿到字符串，`r.hex` 是 undefined —— 不报错，
+ * 静默拿错值。取消那条更糟：契约是 resolve，这里是 reject。
+ *
+ * 结论：**别直接把它接上无构建**（registry 加 noBuild 分支之类）。
+ * 要启用就得先把上面六项与 main.tsx 对齐，尤其是 pick 的返回形态。
+ * 在此之前它只有"参考实现"的价值，改动不会体现在界面上、也不会报错。
+ *
+ * 同理，本文件也**不该再新增功能** —— 加在这里等于加进一个没人走的分叉。
+ *
+ * 守卫：regression-guard-test.mjs 第 1.6 节盯着"孤儿入口文件"清单，
+ * 新增一个会立刻报红（本文件已登记为已知）。
+ */
 import { bootServicePlugin } from '../../js/plugin-sdk.js';
 import { alert as showAlert } from '../../js/dialog.js';
 /*
