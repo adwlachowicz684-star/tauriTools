@@ -602,7 +602,10 @@ fn tools() -> Vec<Value> {
         }), vec!["kind"]),
         // ---- 与原版对齐、此前缺失的能力 ----
         tool("get_manual", "返回本服务全部工具的能力总览（Markdown 表格）", json!({}), vec![]),
-        tool("get_status", "返回当前状态：数据目录、项目/项目组清单、链接数、当前选择", json!({}), vec![]),
+        /* 说明里把两个数字都点出来（链接条数 / 已建链的项目数）：
+           只写"链接数"的话，调用方看到 linkCount 无从判断它是哪一种，
+           而两者在"一个项目建了多条链接"时并不相等。 */
+        tool("get_status", "返回当前状态：数据目录、项目/项目组清单、链接条数（linkCount）与已建链的项目数（linkedProjects）、当前选择", json!({}), vec![]),
         tool("select_folder", "指定当前操作对象（后续工具可省略 target）", json!({
             "path": { "type": "string", "description": "项目或项目组文件夹完整路径" },
         }), vec!["path"]),
@@ -773,6 +776,29 @@ fn link_names_of(snap: &super::model::Snapshot, project: &str) -> usize {
         .find(|r| super::store::normalize_key(&r.project) == key)
         .map(|r| r.names.len())
         .unwrap_or(0)
+}
+
+/**
+ * 账本里的链接**总条数**（各项目 names 之和）。
+ *
+ * 与上面同一个坑的另一半：`snap.links.len()` 是**记录条数**（一条
+ * LinkRow = 一个「项目→项目组」的建链记录），不是链接条数。
+ *
+ * 一个项目建了 3 个链接名（.claude / .cursor / .opencode）时，
+ * 记录仍是 1 条，而链接是 3 条 —— 卡片徽章上的 `link_count` 也是 3
+ * （`store.rs` 里取的是 `details.len()`）。用 `links.len()` 报成 1，
+ * 就凑成"同一份数据、两个通道给出互相矛盾的数字"，正是上面那段注释
+ * 写明要防的局面，只是换到 get_status 这条通道上。
+ *
+ * AI 靠 get_status 判断"现在一共连着几条"，拿到 1 会以为另外两条没建成，
+ * 于是重复去建（junction 已存在，返回"已在页签中"之类）或告诉用户"只连了 1 条"。
+ * 全程不报错，只是数字不对。
+ *
+ * 两个数字都给、各自写清口径（与 remove_link 回包同一套做法）：
+ * 含糊地只写一个 `linkCount`，调用方分不清是链接条数还是项目数。
+ */
+fn link_total(snap: &super::model::Snapshot) -> usize {
+    snap.links.iter().map(|r| r.names.len()).sum()
 }
 
 /**
@@ -1324,7 +1350,11 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
                 "recordPath": dir.join("link-record.json").to_string_lossy(),
                 "projects": projects,
                 "groups": groups,
-                "linkCount": snap.links.len(),
+                /* 链接**条数**（各项目 names 之和），不是记录条数 ——
+                   见 link_total 的说明。同时给 linkedProjects（记录数），
+                   两个数字各自写清口径，避免调用方猜。 */
+                "linkCount": link_total(&snap),
+                "linkedProjects": snap.links.len(),
                 "chainClient": cfg.chain_client,
                 /* #445 原版 get_status 里叫 `aiAgentCmd`；本版这个角色由
                    `chain_client` 承担。两个名字都给：按原版字段写的调用方
