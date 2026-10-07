@@ -192,6 +192,94 @@ console.log('\n=== 1.6 孤儿入口文件 ===');
 }
 
 /* ============================================================
+ * 1.7 孤儿模块 + 汇合节点的重复实现
+ * ------------------------------------------------------------
+ * 孤儿模块 = 写了但没有任何文件 import 的模块。它不报错、不崩溃、
+ * 测试永远绿 —— 只有扫引用链才看得见。危险在将来：谁按文件名把它接上，
+ * 一个与主实现漂移了很久的分叉就突然生效（同 1.6 的死入口）。
+ *
+ * 范围刻意**排除两个活跃区**（plugins/mindmap、plugins/agent-flow）：
+ * 那边每次拉都有新文件，纳入统计等于为一个我控制不了的数字反复报红
+ * （dead-class 的内联副本基线已经吃过这个亏）。活跃区改用下面
+ * 「汇合节点」那样的**定向断言**：钉具体那一个，钉得住且不吵。
+ * ============================================================ */
+console.log('\n=== 1.7 孤儿模块 ===');
+{
+  const ACTIVE = ['plugins/mindmap/', 'plugins/agent-flow/'];
+  const NOISE = /(\.d\.ts$|\.min\.js$|(-test|\.test)\.(mjs|ts|tsx)$|testkit)/;
+  const srcs = new Map();
+  for (const abs of walk(HERE)) {
+    if (!/\.(js|mjs|ts|tsx)$/.test(abs)) continue;
+    const rel = relativeTo(abs);
+    if (NOISE.test(rel)) continue;
+    if (ACTIVE.some((a) => rel.startsWith(a))) continue;
+    if (!rel.includes('/')) continue;              // 根目录脚本：手工跑的工具
+    let txt;
+    try { txt = readFileSync(abs, 'utf8'); } catch { continue; }
+    srcs.set(rel, txt);
+  }
+
+  /* 引用方要扫**全部**源码（含测试文件）—— 只扫上面那份筛过的集合的话，
+     只有测试在 import 的模块会被误判成孤儿（js/dead-class-scan.js 就是这样：
+     它运行时不用，四个测试在用）。判据失效比数字难看更糟。 */
+  const all = new Map();
+  for (const abs of walk(HERE)) {
+    if (!/\.(js|mjs|ts|tsx)$/.test(abs)) continue;
+    let txt;
+    try { txt = readFileSync(abs, 'utf8'); } catch { continue; }
+    all.set(relativeTo(abs), txt);
+  }
+  const imported = new Set();
+  for (const [q, txt] of all) {
+    const base = q.includes('/') ? q.slice(0, q.lastIndexOf('/')) : '';
+    for (const m of txt.matchAll(/\bfrom\s+['"](\.[^'"]+)['"]|import\s+['"](\.[^'"]+)['"]|import\s*\(\s*['"](\.[^'"]+)['"]\s*\)/g)) {
+      const r = m[1] || m[2] || m[3];
+      const x = join(base, r).split('\\').join('/');
+      for (const c of [x, x + '.js', x + '.mjs', x + '.ts', x + '.tsx',
+        x + '/index.js', x + '/index.ts']) {
+        if (srcs.has(c)) { imported.add(c); break; }
+      }
+    }
+  }
+  /* 入口文件由加载器/registry 拉起，不算孤儿（1.6 已单独守过）；
+     scripts/ 是手工或 CI 跑的独立脚本，不走 import 链 */
+  const orphans = [...srcs.keys()].filter((p) => !imported.has(p)
+    && !p.startsWith('scripts/')
+    && !/(^|\/)(index|main|module)\.(js|mjs|ts|tsx)$/.test(p));
+
+  /* 已知清单：登记时写清为什么留着 —— 只增不减，新增立刻报红。
+     · contract-scan.mjs —— 手工跑的诊断工具，头部写明 `用法：node ...`
+     · src/components/Dialog.tsx —— 弹窗的 React 包装，等 React 插件用。
+       刻意留着：它内部复用 js/dialog.js 同一套实现，不是第二套弹窗；
+       删了将来重写会忍不住另起一份样式（该文件头部注释正是警告这点）。 */
+  const KNOWN = ['plugins/project-group/contract-scan.mjs', 'src/components/Dialog.tsx'];
+  t('孤儿模块统计范围有效', srcs.size > 30, `实测 ${srcs.size} 个模块`);
+  t('孤儿模块不超过已知清单', orphans.length <= KNOWN.length,
+    orphans.length > KNOWN.length
+      ? `实测 ${orphans.length} 个：${orphans.join('、')}`
+      : `${orphans.length} / ${KNOWN.length}`);
+  for (const k of KNOWN) t(`已知孤儿仍存在（登记未过期）：${k}`, srcs.has(k));
+}
+
+console.log('\n=== 1.7b agent-flow 汇合节点不能有两份实现 ===');
+{
+  /* 实测：components/JoinNode.tsx 与 components/ControlNode.tsx 各导出一个
+     JoinNode。生效的是后者（nodes/defs/join.tsx 从 ControlNode 取）；
+     前者无人 import，是重构到共享 Card 之前的旧版，还带着两个装饰性
+     handle。留在仓库里最坏的情况不是"多一份死代码"，而是有人按文件名
+     把它接回去 —— 汇合节点会突然长出两个不参与引擎判定的入口。 */
+  const def = code('plugins/agent-flow/nodes/defs/join.tsx');
+  t('join 定义存在', def !== null);
+  if (def !== null) {
+    t('生效的 JoinNode 来自 ControlNode（共享 Card 版）',
+      /from\s+['"][^'"]*components\/ControlNode['"]/.test(def)
+      && /JoinNode/.test(def));
+    t('不再引用独立文件 components/JoinNode',
+      !/from\s+['"][^'"]*components\/JoinNode['"]/.test(def));
+  }
+}
+
+/* ============================================================
  * 2. 画布假描边框必须真的被创建
  * ------------------------------------------------------------
  * 此前 styles.css 里整套规则都写好了，但全仓 JS **没有任何地方
