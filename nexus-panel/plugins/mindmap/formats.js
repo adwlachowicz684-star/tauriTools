@@ -129,11 +129,34 @@ export function stringifyKm(root, template, theme) {
  */
 export const EMPTY_NODE_TEXT = '未命名';
 
+/**
+ * 换行类字符 → 单个空格（**不** trim）。
+ *
+ * 用于**整行文本**：Markdown 的 ATX 标题最多缩进三格，整行 trim 会把
+ * 四格缩进（CommonMark 里是代码块、不是标题）也变成合法标题 —— 所以
+ * 这里只换行终止符，缩进语义原样保留。
+ *
+ * 为什么必须有它：JS 正则里 \r / \u2028 / \u2029 都是「行终止符」，
+ * 而 `.` **不匹配**行终止符。于是 `# 含\r回车` 撞上 `/^#{1,6}\s+(.*)$/`
+ * 时整行不匹配 → 被当成"不是标题行"跳过 → 节点凭空消失（BUG 72 那一类）。
+ *
+ * \r 不是凭空构造：.xmind 的 content.json 与原生 .json 都是 JSON，
+ * JSON.parse 会如实还原文本里的 `\r` 转义，导入即带进来
+ * （.mm / .opml 走 XML 属性规范化，天然把 \r 变空格，所以只有 JSON 系受影响）。
+ */
+export const flattenBreaks = (v) => String(v ?? '').replace(/[\r\n\u2028\u2029]+/g, ' ');
+
+/**
+ * 节点文字规范化：换行类字符及其前后空白 → 单个空格，并 trim。
+ *
+ * 导出节点文字 / 画布标题用这个；判「整行是不是标题」用 flattenBreaks。
+ * 两者是同一个替换，只是要不要 trim —— 分开成两个函数，是为了让
+ * 每条路都只写一遍（抄两遍必漏，BUG 100 / 101 都是这么来的）。
+ */
+export const inlineText = (v) => String(v ?? '').replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ').trim();
+
 export function nodeText(n, fallback = EMPTY_NODE_TEXT) {
-  const t = String(n?.data?.text ?? '')
-    .replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ')
-    .trim();
-  return t || fallback;
+  return inlineText(n?.data?.text) || fallback;
 }
 
 /** 节点是否折叠（kityminder 用 expandState: 'collapse' 表示收起） */

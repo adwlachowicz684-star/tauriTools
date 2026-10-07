@@ -5226,7 +5226,7 @@ group('BUG 99 · Markdown 空标题同样不能丢行');
   // 源码层：丢行那句 continue 不许回来；占位必须是同一个常量
   const wsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
   ok(!/if\s*\(!text\)\s*continue;/.test(wsrc), '★ markdownToSheet 不再丢空行（丢行 = 子树抬层）');
-  ok(/import \{ EMPTY_NODE_TEXT \} from '\.\/formats\.js'/.test(wsrc),
+  ok(/import \{[^}]*\bEMPTY_NODE_TEXT\b[^}]*\} from '\.\/formats\.js'/.test(wsrc),
     '占位用的是 formats.js 的 EMPTY_NODE_TEXT（两条导入路径同一个常量）');
   ok(/if\s*\(!text\)\s*text = EMPTY_NODE_TEXT;/.test(wsrc), 'sheetToMarkdown 空文字回落占位');
 }
@@ -5298,6 +5298,136 @@ group('BUG 100 · 空白节点不得导出成空行（PlantUML / Mermaid）');
   ok(!/if\s*\(!t\)\s*continue;/.test(fsrc), '★ fromPlantUml 不再丢空行');
   ok(/if\s*\(!body\)\s*body = EMPTY_NODE_TEXT;/.test(fsrc), 'fromMermaid 空文字补占位');
   ok(/raw\.trim\(\)\s*===\s*'""'/.test(fsrc), '裸 "" 判的是整行（不是取出来的文字）');
+}
+
+/* ------------------------------------------------------------------
+   BUG 101：Markdown 这条路上，节点文字 / 画布标题含 CR（或 U+2028/2029）
+   会静默丢节点、丢标题
+   ------------------------------------------------------------------
+   BUG 72 修的是 PlantUML（formats.js）：JS 正则的 `.` 不匹配行终止符，
+   `# 含\r回车` 整行不命中 → 节点消失。而 workbook.js 的 Markdown 这条
+   路**自己抄了一份规范化**，抄的是「只认 LF」的旧版 —— 同一份逻辑抄两遍，
+   只修了一遍，于是这条路上 BUG 72 原样还在（第 9 次撞到这个模式）。
+   ------------------------------------------------------------------ */
+group('BUG 101 · Markdown 的 CR：节点不得消失、画布标题不得截断');
+
+{
+  const wb101 = await import('./workbook.js');
+  const fl = (n, d = 0, o = []) => {
+    o.push('  '.repeat(d) + JSON.stringify(n.data.text));
+    (n.children || []).forEach((c) => fl(c, d + 1, o));
+    return o.join(' | ');
+  };
+  const rt = (md) => JSON.parse(wb101.markdownToSheet(md)).root;
+
+  // ① 节点文字含各类行终止符：往返不能丢节点
+  for (const [name, c] of [['CR', '\r'], ['LF', '\n'], ['U+2028', '\u2028'], ['U+2029', '\u2029'], ['CRLF', '\r\n']]) {
+    const md = wb101.sheetToMarkdown(JSON.stringify({
+      root: { data: { text: '含' + c + 'X' }, children: [{ data: { text: '子' }, children: [] }] },
+    }));
+    eq(fl(rt(md)), '"含 X" |   "子"', `节点文字含 ${name}：往返保留（不再整条消失）`);
+  }
+
+  /*
+   * ①b ★ 导出的 .md **本身**不得含裸行终止符。
+   *
+   * 只看往返会被导入侧的摊平兜住 —— 于是导出侧那份「只认 LF」的替换
+   * 即使退回旧写法，往返照样是绿的（M1 第一次跑就是只红了两条源码断言）。
+   * 那条断言看着在把关、实际没把关。
+   *
+   * 必须单独看产物：导出的文件是要给**别的工具**读的，里面带着裸 CR
+   * 会让别的 Markdown 解析器整行判不出来。
+   */
+  for (const [name, c] of [['CR', '\r'], ['U+2028', '\u2028'], ['U+2029', '\u2029']]) {
+    const md = wb101.sheetToMarkdown(JSON.stringify({
+      root: { data: { text: '含' + c + 'X' }, children: [] },
+    }));
+    ok(!/[\r\u2028\u2029]/.test(md), `★ 导出的 md 里不得含裸 ${name}（产物要给别的工具读）`);
+  }
+
+  // ② ★ BUG 36 点名的事故：只有根含 CR → rowCount 说有大纲、解析出空画布
+  //    → 导入是整体替换，一张空的「中心主题」顶掉用户全部画布
+  {
+    const md = '# 含\r回车\n';
+    eq(wb101.markdownRowCount(md), 1, 'rowCount 说有大纲（放行导入）');
+    eq(JSON.parse(wb101.markdownToSheet(md)).root.data.text, '含 回车',
+      '★ 单行根含 CR：解析出的是它自己，不是空的「中心主题」');
+  }
+
+  // ③ 中间节点含 CR：子树不能被抬层
+  eq(fl(rt('# R\n## 含\r回车\n### A1\n### A2\n## B')),
+    '"R" |   "含 回车" |     "A1" |     "A2" |   "B"',
+    '★ 中间节点含 CR：子树仍挂在它下面（早先 A1/A2 被抬成 R 的直接子）');
+
+  // ④ 根含 CR + 有子：根不能消失、子不能被抬成根
+  eq(fl(rt('# 含\r回车\n## 子\n')), '"含 回车" |   "子"', '根含 CR 不消失、子不被抬成根');
+
+  // ⑤ 别的工具产出的文件里的裸 CR（没经过我们的导出侧）
+  eq(fl(rt('# 甲\r乙\n## 子\n')), '"甲 乙" |   "子"', '外部 md 的裸 CR 行也要能解析');
+
+  // ⑥ 画布标题：含换行不能截断、含 CR 不能整块失效
+  {
+    const mk = () => JSON.stringify({ root: { data: { text: '根' }, children: [{ data: { text: '子' }, children: [] }] } });
+    const S = (t, i) => ({ id: i, title: t, content: mk(), theme: null, layout: null });
+    const titles = (t) => wb101.markdownToWorkbook(wb101.workbookToMarkdown([S(t, 'a'), S('乙', 'b')])).map((s) => s.title);
+    eq(JSON.stringify(titles('含\n换行')), JSON.stringify(['含 换行', '乙']),
+      '★ 画布标题含 LF：摊成空格（早先被截断成「含」）');
+    eq(JSON.stringify(titles('含\r回车')), JSON.stringify(['含 回车', '乙']),
+      '★ 画布标题含 CR：摊成空格（早先整块失效 → 变「画布 1」）');
+    eq(JSON.stringify(titles('含\r\n换行')), JSON.stringify(['含 换行', '乙']), '画布标题含 CRLF');
+    eq(JSON.stringify(titles('含\u2028X')), JSON.stringify(['含 X', '乙']), '画布标题含 U+2028');
+    eq(JSON.stringify(titles('正常')), JSON.stringify(['正常', '乙']), '正常标题不变');
+    eq(JSON.stringify(titles('  空  ')), JSON.stringify(['空', '乙']), '标题前后空白仍 trim');
+  }
+
+  /*
+   * ⑥b ★ 外部 .md 的**分块行**里带裸 CR（别的工具产出，没经过我们的导出侧）。
+   *
+   * 上面的标题用例都是先 `workbookToMarkdown` 再 `markdownToWorkbook` ——
+   * 而导出侧已经摊平过了，于是导入侧即使不摊平也遇不到裸 CR
+   * （M4 变异实测：去掉分块行的摊平，3257 项仍全绿 —— 断言没在把关）。
+   * 必须**直接**喂一份带 CR 的 md 才算测到。
+   */
+  {
+    const b = wb101.markdownToWorkbook('## 画布：含\r回车\n# 根\n## 子\n\n## 画布：乙\n# 根2\n');
+    eq(b.length, 2, '外部 md 带 CR 的分块行：仍是两张画布（整块没失效）');
+    eq(b[0].title, '含 回车', '★ 外部 md 的分块标题不被 CR 破坏（早先整块失效 → 「画布 1」）');
+    eq(b[1].title, '乙', '第二块标题正常');
+  }
+
+  // ⑦ 缩进语义不能因为摊平而回归（整行不能 trim，否则四格缩进变合法标题）
+  eq(wb101.markdownRowCount('   # 甲\n'), 1, '三格缩进仍算标题（CommonMark）');
+  eq(wb101.markdownRowCount('    # 甲\n'), 0, '★ 四格缩进仍不算标题（不能因摊平而放开）');
+  eq(wb101.markdownRowCount('\t# 甲\n'), 0, '制表符缩进仍不算标题');
+  eq(JSON.parse(wb101.markdownToSheet('    # 甲\n')).root.data.text, '中心主题',
+    '★ 四格缩进解析出空画布（与 rowCount=0 一致，不重演 BUG 90）');
+
+  // ⑧ 源码层：三条路都必须走 formats 的共享函数，不许再各抄一份
+  const wsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
+  ok(!/\.replace\(\/\\s\*\\n\\s\*\/g/.test(wsrc),
+    '★ workbook.js 不得再有「只认 LF」的那份替换（BUG 101 本身就是它）');
+  ok(/flattenBreaks\(rawLine\)/.test(wsrc), 'markdownToSheet 先摊平行再判标题');
+  /*
+   * rowCount 与解析器必须**同判**（BUG 90 的通用契约，这里补 CR 那一类）。
+   *
+   * 不写成「rowCount 源码里必须出现 flattenBreaks」—— 那条是空转的：
+   * rowCount 的正则不含 `.`，本来就不受 CR 影响，去掉摊平结果一样
+   * （M3 变异实测：去掉后 3253 项仍全绿）。断言要管的是**两边的判断
+   * 是否一致**，不是某一行代码长什么样。
+   */
+  for (const md of ['# 含\r回车\n', '# R\n## 含\r回车\n### A1\n', '# 甲\r乙\n## 子\n', '## \r\n', '#\r甲\n']) {
+    const nRows = wb101.markdownRowCount(md);
+    const root = JSON.parse(wb101.markdownToSheet(md)).root;
+    const nNodes = 1 + (root.children || []).length;
+    ok(nRows > 0 === (root.data.text !== '中心主题' || nNodes > 1),
+      `rowCount 与解析器对 CR 输入同判：${JSON.stringify(md)}（rowCount=${nRows}）`);
+  }
+  ok(/inlineText\(s\.title\)/.test(wsrc), '画布标题走 inlineText');
+  ok(/inlineText\(n\?\.data\?\.text\)/.test(wsrc), '节点文字走 inlineText');
+
+  const fsrc2 = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+  ok(/export const flattenBreaks/.test(fsrc2) && /export const inlineText/.test(fsrc2),
+    '两个共享函数都在 formats.js（各路只写一遍）');
 }
 
 group('Mermaid（.mmd）');
@@ -13798,13 +13928,22 @@ group('节点文字含 CR：PlantUML 往返静默丢节点（BUG 72）');
   // ⑤ 源码断言：nodeText 的字符集必须含 \r（只写 \n 就是 BUG 本身）
   {
     const src = fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8').replace(/\r\n/g, '\n');
-    const i = src.indexOf('export function nodeText');
-    ok(i > 0, '能定位 nodeText');
-    const body = src.slice(i, i + 700);
+    /*
+     * BUG 101：nodeText 现在只是「inlineText(文字) || fallback」——
+     * 真正的字符集挪到 inlineText 里了，所以这里定位的是 **inlineText**。
+     * 只查 nodeText 会看到一句不含正则的调用，断言恒假。
+     */
+    const i = src.indexOf('export const inlineText');
+    ok(i > 0, '能定位 inlineText（nodeText 的规范化字符集在这里）');
+    const body = src.slice(i, i + 400);
     const code = stripCommentsFlatJs(body);
-    ok(code.length > 0, '能剥出 nodeText 的代码体（注释里同样写着 `\\s*\\n\\s*`，必须先剥）');
-    ok(!/\.replace\(\/\\s\*\\n\\s\*\/g/.test(code), 'nodeText 不得只认 \\n（那正是 BUG 72 本身）');
-    ok(/\\r/.test(code), 'nodeText 的规范化字符集必须含 \\r');
+    ok(code.length > 0, '能剥出 inlineText 的代码体（注释里同样写着 `\\s*\\n\\s*`，必须先剥）');
+    ok(!/\.replace\(\/\\s\*\\n\\s\*\/g/.test(code), 'inlineText 不得只认 \\n（那正是 BUG 72 / 101 本身）');
+    ok(/\\r/.test(code), 'inlineText 的规范化字符集必须含 \\r');
+    // nodeText 必须真的走 inlineText —— 否则上面查的字符集根本没生效
+    const j = src.indexOf('export function nodeText');
+    const nbody = stripCommentsFlatJs(src.slice(j, j + 300));
+    ok(/inlineText\(/.test(nbody), 'nodeText 走 inlineText（不再自己抄一份正则）');
   }
 }
 

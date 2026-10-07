@@ -18,7 +18,7 @@ import { decodeRefList } from './io.js';
  * 两处必须用同一个值：各写一份的话，改了一处不改另一处，
  * Markdown 往返就会凭空多出/少掉「未命名」。
  */
-import { EMPTY_NODE_TEXT } from './formats.js';
+import { EMPTY_NODE_TEXT, inlineText, flattenBreaks } from './formats.js';
 
 const SHEET_MARK = /^##\s*画布[:：]\s*(.*)$/;
 
@@ -145,7 +145,25 @@ export function sheetToMarkdown(content) {
 
   function walk(n, depth) {
     if (!n) return;
-    let text = String(n?.data?.text ?? '').replace(/\s*\n\s*/g, ' ').trim();
+    /*
+     * BUG 101：早先这里的替换正则**只认 LF**（`\n`），不认 CR 与 U+2028/2029。
+     *
+     * formats.nodeText 用的是 `[\r\n\u2028\u2029]`，这一份漏了后三个。
+     * 于是节点文字含 CR 时，导出的行里带着裸 \r：
+     *   `# 含\r回车`
+     * 而 JS 正则的 `.` **不匹配** \r（行终止符）—— markdownToSheet 那句
+     * `/^ {0,3}#{1,6}\s+(.*)$/` 整行不匹配，被当成"不是标题"跳过：
+     *
+     *   只有根节点含 \r  → rows 为空 → emptyContent()
+     *                    → 一张空的「中心主题」顶掉用户全部画布
+     *                      （rowCount 那时说"有大纲"，放行导入 —— 正是
+     *                       BUG 36 点名要防的事故）
+     *   根含 \r + 有子   → 根消失，子节点被抬成根
+     *   中间节点含 \r    → 它的子树整层抬到祖父身上
+     *
+     * 同一份规范化抄两遍、漏了一处 —— 用 formats 的 inlineText 统一。
+     */
+    let text = inlineText(n?.data?.text);
     /*
      * 空文字必须回落成占位文案，不能导出成 `## `（井号后面什么都没有）。
      *
@@ -199,7 +217,19 @@ export function sheetToMarkdown(content) {
  */
 export function markdownToSheet(md) {
   const rows = [];
-  for (const raw of String(md || '').split(/\r?\n/)) {
+  for (const rawLine of String(md || '').split(/\r?\n/)) {
+    /*
+     * BUG 101：先把行里的换行终止符摊平成空格，再判"是不是标题行"。
+     *
+     * 不摊平的话，`# 含\r回车` 里的 \r 让 `(.*)$` 无法匹配 —— `.` 不匹配
+     * 行终止符 —— 整行被跳过，节点静默消失、子树抬层（详见 sheetToMarkdown
+     * 里那段注释）。用 flattenBreaks 而不是 inlineText：后者会 trim，
+     * 把「四格缩进」（CommonMark 里是代码块、不是标题）也变成合法标题。
+     *
+     * 这条同时挡住**别的工具**产出的文件：那种文件里的裸 CR 没经过我们的
+     * 导出侧规范化，只能在这里拦。
+     */
+    const raw = flattenBreaks(rawLine);
     /*
      * **井号前面允许 0~3 个空格**（CommonMark：ATX 标题最多缩进三格）。
      *
@@ -272,7 +302,21 @@ export function markdownToSheet(md) {
 /** 整个工作簿 → Markdown（多画布分块） */
 export function workbookToMarkdown(sheets) {
   const blocks = sheets.map((s) => {
-    const head = `## 画布：${s.title}\n`;
+    /*
+     * BUG 101：画布标题同样必须摊平换行终止符。
+     *
+     * 早先这里是 `## 画布：${s.title}` —— 标题原样拼进去，于是：
+     *   标题含 \n  → 拼出两行，第二行不带 `#`、不是分块标记
+     *                被当成块内内容丢掉 → **标题被截断**（「含\n换行」→「含」）
+     *   标题含 \r  → 整行是 `## 画布：含\r回车`
+     *                SHEET_MARK 的 `(.*)$` 不匹 \r → **整行失效**
+     *                → 这一块变成无标题 → 导回后叫「画布 1」
+     *
+     * 画布标题能带上换行的真实路径：从 .xmind 导入（XMind 的标题是 JSON
+     * 字段，原样保留换行），再导出成 .md。
+     * 摊平成空格后是「含 换行」—— 仍丢了一个换行，但不再截断/整块失效。
+     */
+    const head = `## 画布：${inlineText(s.title)}\n`;
     return head + (sheetToMarkdown(s.content) || '# （空画布）\n');
   });
   return blocks.join('\n');
@@ -295,7 +339,10 @@ export function workbookToMarkdown(sheets) {
  */
 export function markdownRowCount(md) {
   let n = 0;
-  for (const raw of String(md || '').split(/\r?\n/)) {
+  for (const rawLine of String(md || '').split(/\r?\n/)) {
+    // 与 markdownToSheet 逐字同一套：先摊平换行终止符，再判（BUG 101）。
+    // 不摊平就会重演 BUG 90 —— 这里说"有大纲"、那边解析出空画布。
+    const raw = flattenBreaks(rawLine);
     /*
      * 口径必须与 markdownToSheet() 逐字一致（见那里的注释）：
      * 早先这里是 `\s{0,3}`（含制表符）、那边是顶格，于是「这里说有大纲、
@@ -317,7 +364,10 @@ export function markdownToWorkbook(md) {
   const chunks = [];
   let cur = { title: null, lines: [] };
 
-  for (const line of lines) {
+  for (const rawLine of lines) {
+    // 同 markdownToSheet：先摊平换行终止符，否则 `## 画布：含\r回车`
+    // 整行不命中 SHEET_MARK（`.` 不匹 \r）→ 这一块被当成无标题（BUG 101）。
+    const line = flattenBreaks(rawLine);
     const m = line.match(SHEET_MARK);
     if (m) {
       if (cur.title !== null || cur.lines.length) chunks.push(cur);
