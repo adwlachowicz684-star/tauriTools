@@ -314,6 +314,147 @@ t('③b 必须要求"至少核对到 1 个框架"（只判空集合 = 防线放�
     ? '判据含 kits.length > 0'
     : '判据里没有 kits.length > 0 —— 空集合会让 ③b 恒真');
 
+/* ---- ③d 恒真断言：判据永远为真 = 防线被悄悄撤掉 ---- */
+/*
+ * 起因（2026-10-03 全仓扫描扫出四处）：
+ *   ok(r.posted.length >= 0, '渲染不主动发消息')
+ *   ok(e2.posted.length >= 0, '（对照）不同对象引用不会被当成自己')
+ *   ok(bad.length >= 0, 'panels：扫描到 input.mm-input 定义')
+ *   t('待决定的会被列出', ext.pendingHosts().length >= 0)
+ * 共同点是「长度 >= 0」—— 数组长度永远不可能小于 0，判据**不可能失败**。
+ *
+ * 后果比"多一条绿"严重得多：破坏验证实测，把源码真的改坏
+ * （① 渲染时主动发消息 ② 拖回自己由引用比较退化成 id 比较）：
+ *   旧的恒真写法 → 3187 通过 / **0 失败**（一处都没抓到）
+ *   改成真判据后   → 3185 通过 / **3 失败**（全部抓到）
+ * 也就是说这四处此前一条都没守，而报告一直是全绿。
+ *
+ * 只收**机械可判定**的形态（长度 >= 0 / > -1）。
+ * `!csp || …` 这种"前缀逃生舱"同样让断言空转（external-test 里真有一条），
+ * 但形态太多、误伤重，不在这里判 —— 靠人工读和破坏验证。
+ *
+ * ⚠️ 必须剥注释：下面这段注释本身就写着「长度 >= 0」字样，
+ *    不剥的话本文件自己就会命中。同理，**说明文字里也不要写出 `.length` 加
+ *    比较符的字面组合**（字符串不会被剥），否则本守卫恒红。
+ */
+const TAUT = [/\.length\s*>=\s*0\b/, /\.length\s*>\s*-1\b/];
+/*
+ * ⓘ 检测器自检：喂一条已知恒真的样本，要求判据**必须命中**。
+ *   否则有人把 TAUT 清空（或把正则改坏），本守卫照样全绿 ——
+ *   防线被撤了还报平安，与 ③b「空集合 = 防线放水」是同一类假绿。
+ *   实测：判据清空后注入一条真恒真断言，本守卫 9 通过 / 0 失败（一处没抓到）。
+ *
+ *   样本用**拼接**构造：整条字面量写进源码会被本守卫自己扫到
+ *   （字符串不受"剥注释"保护），那会让它**恒红** —— 比恒真更难发现。
+ */
+const TAUT_SAMPLE = '.' + 'length' + ' >' + '= 0';
+t('③d 判据必须真能命中恒真样本（判据被清空 = 防线被悄悄撤掉）',
+  TAUT.length > 0 && TAUT.some((re) => re.test(TAUT_SAMPLE)),
+  `判据 ${TAUT.length} 条`);
+const tautHits = [];
+for (const f of real) {
+  const body = stripCommentsJs(readFileSync(f, 'utf8'));
+  body.split('\n').forEach((line, i) => {
+    if (TAUT.some((re) => re.test(line))) {
+      tautHits.push(`${f.replace(HERE, '')}:${i + 1} → ${line.trim().slice(0, 90)}`);
+    }
+  });
+}
+t('测试里没有恒真的长度判据（永远为真 = 那条断言一条都没守）',
+  /*
+   * real.length > 0 这条不能省：收集判据要是被改坏，集合为空 → 恒真 →
+   * 报出来还是"核对 0 个测试文件"这种看着像过的措辞（③b 已踩过一次）。
+   */
+  real.length > 0 && tautHits.length === 0,
+  real.length === 0
+    ? '一个测试文件都没收到（收集判据坏了）'
+    : (tautHits.join(' | ') || `核对 ${real.length} 个测试文件`));
+
+/* ---- ③e 逃生舱：条件以「空则短路」开头 = 那条断言常年在空跑 ---- */
+/*
+ * 起因（external-test 实测）：条件是这种形状 —— 前半段先判"有没有东西"，
+ * 没有就直接算通过，有才去验内容。而历史上走到那里恰好**一个都没有**，
+ * 于是它从来没验过任何东西；反过来说，一旦真有了内容它立刻红，
+ * 而红的原因跟"内容对不对"毫无关系（详见 external-test 里的说明）。
+ *
+ * 跟 ③d 的区别：③d 是"那个量恒非负"（长度永远不小于 0），
+ * 这里是"空集合短路"。共同点是**断言不可能失败**，而报告一片绿。
+ *
+ * ============ 为什么不能像 ③d 那样整行扫 ============
+ *
+ * 这个形状出现在模拟代码、循环跳过里**完全正常**。实测全仓按行扫出
+ * 7 处，逐条核对后 7 处都是这类合法用法（React 依赖比较、every 回调里的
+ * 跳过）。整行扫会一片误报，而误报的下场不是"红着"，是**守卫被删掉** ——
+ * 那连 ③d 一起没了。所以只判**断言调用的条件参数开头**。
+ *
+ * 覆盖边界：只认 t / ok / assert 三种调用（各文件的断言函数名不同，
+ * 全认会误伤同名变量）。.test.ts 用的是别家的断言函数，不在覆盖内。
+ */
+/*
+ * 只抓**同向矛盾**的那一半：`没有东西 → 就算验到了`。
+ * 反过来的写法是语义自洽的，实测 tooltip-test 有一条 ——
+ * "元素不存在" 本来就属于 "元素不带 on" 的子集，两种实现（摘类 / 删元素）
+ * 都真地让提示不见了，那条断言并不是在空跑。误报它的下场不是红着，
+ * 是守卫被人删掉（连 ③d 一起），所以这里宁松一档。
+ */
+const ESCAPE = /^!\s*(\w+)\s*\|\|\s*\(?\s*\1\s*[.[]/;
+/* 样本拼接构造：整条字面量写进源码会被本节自己扫到，那会让它恒红 */
+const ESC_SAMPLE = '!' + 'csp' + ' || csp' + '.includes(';
+t('③e 判据必须真能命中逃生舱样本（判据被清空 = 防线被悄悄撤掉）',
+  ESCAPE.test(ESC_SAMPLE) && !ESCAPE.test('a || b'),
+  ESCAPE.test(ESC_SAMPLE) ? '样本命中' : '判据没命中样本 —— 防线已被撤');
+{
+  /* 取 start 处左括号的配对内容 */
+  const parenOf = (src, start) => {
+    let depth = 0;
+    for (let i = start; i < src.length; i++) {
+      if (src[i] === '(') depth += 1;
+      else if (src[i] === ')' && (depth -= 1) === 0) return src.slice(start + 1, i);
+    }
+    return null;
+  };
+  /* 按顶层逗号切参数（跳过嵌套括号与字符串里的逗号） */
+  const splitTop = (s) => {
+    const out = []; let depth = 0, cur = '', q = null;
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (q) { cur += c; if (c === q && s[i - 1] !== '\\') q = null; continue; }
+      if (c === '"' || c === "'" || c === '`') { q = c; cur += c; continue; }
+      if ('([{'.includes(c)) depth += 1;
+      else if (')]}'.includes(c)) depth -= 1;
+      if (c === ',' && depth === 0) { out.push(cur); cur = ''; continue; }
+      cur += c;
+    }
+    out.push(cur);
+    return out;
+  };
+  const escHits = [];
+  for (const f of real) {
+    if (!f.endsWith('.mjs')) continue;
+    let raw;
+    try { raw = readFileSync(f, 'utf8'); } catch { continue; }
+    const src = stripCommentsJs(raw);
+    for (const fn of ['t', 'ok', 'assert']) {
+      const re = new RegExp('\\b' + fn + '\\s*\\(', 'g');
+      let m;
+      while ((m = re.exec(src))) {
+        const inner = parenOf(src, m.index + m[0].length - 1);
+        if (inner === null) continue;
+        const args = splitTop(inner);
+        let cond = ((fn === 't' ? args[1] : args[0]) || '').trim();
+        /* 容 (x || y) 的外层括号 */
+        while (cond.startsWith('(') && cond.endsWith(')')) cond = cond.slice(1, -1).trim();
+        if (ESCAPE.test(cond)) {
+          const line = src.slice(0, m.index).split('\n').length;
+          escHits.push(`${f.replace(HERE, '')}:${line} → ${cond.slice(0, 80)}`);
+        }
+      }
+    }
+  }
+  t('断言条件里没有逃生舱（空则直接判过 = 那条常年没在验）',
+    escHits.length === 0, escHits.join(' | ') || '干净');
+}
+
 /* ---- ④ 元守卫：本文件自己也得被引用 ---- */
 t('本守卫自身也被 npm script 引用（不然它也会变成孤儿）',
   scriptText.includes('test-registry-test.mjs'),
