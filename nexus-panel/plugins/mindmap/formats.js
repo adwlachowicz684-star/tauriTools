@@ -200,7 +200,22 @@ export function rowsToKm(rows, rootFallback = '中心主题') {
 export function kmToRows(root) {
   const out = [];
   walkKm(root, (n, depth) => {
-    out.push({ depth, text: nodeText(n, ''), collapsed: isCollapsed(n) });
+    /*
+     * 空文字必须走 nodeText 的**默认**占位（EMPTY_NODE_TEXT），不能传 ''。
+     *
+     * BUG 100：早先这里写 `nodeText(n, '')`，于是空白节点导出成空行：
+     *   · PlantUML 写出 `* `（井号后什么都没有）
+     *     → fromPlantUml 早先对空行 `continue` → 节点消失、子树整层抬上去；
+     *       若整张图只有这一个节点，rows 为空 → **返回 null**，
+     *       再导入时直接报「无法识别该文件」。
+     *   · Mermaid 写出 `""`（Mermaid 的空占位）
+     *     → mermaidTextOf 不认它 → 导回后节点文字变成字面 `""`。
+     *
+     * kmToRows 只被 toMermaid / toPlantUml 用，OPML / FreeMind / Markdown
+     * 各自走 nodeText()，早已是占位 —— 把这里也统一成占位，
+     * 四种交换格式的口径才一致（见 BUG 98 / 99：同一份逻辑抄两遍就会漏）。
+     */
+    out.push({ depth, text: nodeText(n), collapsed: isCollapsed(n) });
   });
   return out;
 }
@@ -471,8 +486,22 @@ export function fromMermaid(text) {
     if (/^\s*mindmap\s*$/i.test(raw)) continue;
     if (/^\s*(%%|\/\/:)/.test(raw)) continue;      // 注释
     const indent = (raw.match(/^[ \t]*/) || [''])[0].replace(/\t/g, '  ').length;
-    const body = mermaidTextOf(raw);
-    if (!body) continue;
+    let body = mermaidTextOf(raw);
+    /*
+     * **整行就是** `""` 时当空节点 —— 那是 Mermaid 自己的空占位
+     * （mermaidLabel('') 就写它）。不认它的话，别的工具导出的 .mmd 里
+     * 空白节点会变成**字面两个引号**。
+     *
+     * 判的是**整行**而不是取出的文字：节点文字真的就是 `""` 时，
+     * 它含引号、导出走 `["#quot;#quot;"]`（带方括号），不是裸 `""`；
+     * 照 body 判断会把「文字是 `""`」也误判成空节点（往返变「未命名」）。
+     */
+    if (raw.trim() === '""') body = '';
+    /*
+     * **空文字不能丢行**（BUG 100，与 BUG 98 / 99 同一类）：
+     * 丢掉一行等于把它的子树整层抬到祖父身上，层级静默错位。
+     */
+    if (!body) body = EMPTY_NODE_TEXT;
     rows.push({ depth: Math.floor(indent / 2), text: body });
   }
   if (!rows.length) return null;
@@ -512,8 +541,19 @@ export function fromPlantUml(text) {
     if (!line || line.startsWith("'")) continue;
     const m = line.match(/^(\*+)\s*(.*)$/);
     if (!m) continue;
-    const t = m[2].trim();
-    if (!t) continue;
+    let t = m[2].trim();
+    /*
+     * **空标题不能丢行**（BUG 100，与 BUG 98 / 99 同一类）。
+     *
+     * 早先这里是一句 `if (!t) continue;`：
+     *   · 空白节点所在行被丢掉 → 它的子树**整层抬到祖父身上**
+     *   · 整张图只有这一个节点时 rows 为空 → 返回 **null**
+     *     → 再导入时报「无法识别该文件」，整份文件报废
+     *
+     * 本工具自己导出就会踩到：toPlantUml 早先走 kmToRows(含 `nodeText(n,'')`)，
+     * 空白节点写出 `* ` 空行，导回来就是上面两条后果。
+     */
+    if (!t) t = EMPTY_NODE_TEXT;
     rows.push({ depth: m[1].length - 1, text: t });
   }
   if (!rows.length) return null;

@@ -5231,6 +5231,75 @@ group('BUG 99 · Markdown 空标题同样不能丢行');
   ok(/if\s*\(!text\)\s*text = EMPTY_NODE_TEXT;/.test(wsrc), 'sheetToMarkdown 空文字回落占位');
 }
 
+/* ------------------------------------------------------------------
+   BUG 100：空白节点导出成 PlantUML / Mermaid 再导回，节点消失或整份报废
+   ------------------------------------------------------------------
+   BUG 98 / 99 修的是「导入时丢行」，这一条修的是**导出侧根本没写占位**：
+   kmToRows 显式传 `nodeText(n, '')`，于是空白节点导出成空行 ——
+   这是「同一份占位逻辑抄了五遍」的第五处。
+   ------------------------------------------------------------------ */
+group('BUG 100 · 空白节点不得导出成空行（PlantUML / Mermaid）');
+
+{
+  const f100 = await import('./formats.js');
+  const flat = (n, d = 0, o = []) => {
+    o.push('  '.repeat(d) + JSON.stringify(n.data.text));
+    (n.children || []).forEach((c) => flat(c, d + 1, o));
+    return o.join(' | ');
+  };
+  const mk = (t, ch = []) => ({ data: { text: t }, children: ch });
+  const back = (to, from, root) => {
+    const c = JSON.stringify({ root, template: 'default', theme: 'fresh-blue' });
+    const b = from(to(c));
+    return b ? flat(JSON.parse(b).root) : null;
+  };
+  const P = (root) => back(f100.toPlantUml, f100.fromPlantUml, root);
+  const M = (root) => back(f100.toMermaid, f100.fromMermaid, root);
+  const E = f100.EMPTY_NODE_TEXT;
+  const WANT_MID = `"R" |   "${E}" |     "A1" |     "A2" |   "B"`;
+
+  // ① 整张图只有一个空白节点：puml 早先返回 null → 再导入报「无法识别该文件」
+  eq(P(mk('  ')), `"${E}"`, '★ 单个空白根：puml 导回不再是 null（早先整份报废）');
+  eq(M(mk('  ')), `"${E}"`, '单个空白根：mmd 导回是占位');
+
+  // ② 中间空白节点：子树不能被抬层
+  eq(P(mk('R', [mk('  ', [mk('A1'), mk('A2')]), mk('B')])), WANT_MID,
+    '★ puml 空白节点保留，子树仍挂在它下面（早先 A1/A2 被抬成 R 的直接子）');
+  eq(M(mk('R', [mk('  ', [mk('A1'), mk('A2')]), mk('B')])), WANT_MID,
+    '★ mmd 空白节点保留，子树仍挂在它下面（早先变成字面两个引号）');
+
+  // ③ 根是空白：不能把第二行抬成根
+  eq(P(mk('', [mk('A'), mk('B')])), `"${E}" |   "A" |   "B"`,
+    '★ puml 根为空白时补占位（早先 A 被当成根、B 变成 A 的子）');
+  eq(M(mk('', [mk('A'), mk('B')])), `"${E}" |   "A" |   "B"`, 'mmd 根为空白时补占位');
+
+  // ④ 叶子空白：不能消失
+  eq(P(mk('R', [mk('A'), mk('')])), `"R" |   "A" |   "${E}"`, 'puml 叶子空白不消失');
+  eq(M(mk('R', [mk('A'), mk('')])), `"R" |   "A" |   "${E}"`, 'mmd 叶子空白不消失');
+
+  // ⑤ 正常树不受影响
+  eq(P(mk('R', [mk('A', [mk('A1')]), mk('B')])), '"R" |   "A" |     "A1" |   "B"', 'puml 正常树不变');
+  eq(M(mk('R', [mk('A', [mk('A1')]), mk('B')])), '"R" |   "A" |     "A1" |   "B"', 'mmd 正常树不变');
+
+  /* ⑥ `""` 只能认**整行**的裸占位，不能认取出来的文字 ——
+     否则「节点文字真的就是两个引号」会被误判成空节点（往返变「未命名」）。 */
+  eq(M(mk('""')), '"\\"\\""', '★ 文字真是两个引号时不被当成空占位');
+  eq(M(mk('""')), P(mk('""')), '两个引号：mmd 与 puml 口径一致');
+
+  // ⑦ 别的工具产出的文件里的空行同样不能丢
+  eq(flat(JSON.parse(f100.fromPlantUml('@startmindmap\n* R\n** \n*** A1\n** B\n@endmindmap')).root),
+    `"R" |   "${E}" |     "A1" |   "B"`, '外部 puml 的空行保留（不抬层）');
+  eq(flat(JSON.parse(f100.fromMermaid('mindmap\n  root((R))\n    ""\n      A1\n')).root),
+    `"R" |   "${E}" |     "A1"`, '外部 mmd 的裸 "" 行当空节点（不变成字面引号）');
+
+  // 源码层
+  const fsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+  ok(/text:\s*nodeText\(n\)/.test(fsrc), '★ kmToRows 用 nodeText 的默认占位（不再传 \'\'）');
+  ok(!/if\s*\(!t\)\s*continue;/.test(fsrc), '★ fromPlantUml 不再丢空行');
+  ok(/if\s*\(!body\)\s*body = EMPTY_NODE_TEXT;/.test(fsrc), 'fromMermaid 空文字补占位');
+  ok(/raw\.trim\(\)\s*===\s*'""'/.test(fsrc), '裸 "" 判的是整行（不是取出来的文字）');
+}
+
 group('Mermaid（.mmd）');
 
 {
