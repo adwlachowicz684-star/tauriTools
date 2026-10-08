@@ -2469,9 +2469,25 @@ async function gcOrphanAssets(quiet = false) {
       const blob = await xmind.writeXMind(workbook.sheets, workbook.activeId, loadAsset);
       const r = await io.saveBlob(io.stampName('脑图', 'xmind'), blob);
       reportSave(r, 'XMind');
+      /*
+       * 两类损失都要说，且**分开说** —— 混成一句「有 N 个附件」用户还是不知道该怪谁：
+       *   · lost      字节没读出来，压根没进包（引用成了死链）
+       *   · loss      字节进了 resources/，但**没有任何 href 指向它** ——
+       *               XMind 一个节点只能挂 1 个附件、1 张图，多出来的全被丢下。
+       *               这一档最坑：文件体积变大了、状态栏还说「含 N 个附件」，
+       *               在别的 XMind 软件里打开却是没有那个附件的。
+       */
       const lost = wanted - packed;
-      if (lost > 0) status(`XMind 已导出，但有 ${lost} 个附件未能打包`, true);
-      else if (packed > 0) status(`XMind 已导出（含 ${packed} 个附件）`);
+      const loss = xmind.xmindLossCount(workbook.sheets) || { blocked: 0, unlinked: 0, images: 0 };
+      const lossTotal = loss.blocked + loss.unlinked + loss.images;
+      if (lost > 0 || lossTotal > 0) {
+        const seg = [];
+        if (lost > 0) seg.push(`${lost} 个附件未能打包`);
+        if (loss.blocked > 0) seg.push(`${loss.blocked} 个附件被超链接挤掉`);
+        if (loss.unlinked > 0) seg.push(`${loss.unlinked} 个附件未能挂到节点`);
+        if (loss.images > 0) seg.push(`${loss.images} 张图片未能写入`);
+        status(`XMind 已导出，但有 ${seg.join('、')}（XMind 每个节点只能挂 1 个附件、1 张图片）`, true);
+      } else if (packed > 0) status(`XMind 已导出（含 ${packed} 个附件）`);
     } catch (e) {
       status('XMind 导出失败：' + (e?.message || e), true);
     }

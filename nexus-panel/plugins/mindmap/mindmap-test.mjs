@@ -5629,6 +5629,152 @@ group('BUG 103 · 分块标记行不得算作大纲行（闸门不许被它骗�
   }
 }
 
+/* ------------------------------------------------------------------
+   BUG 105：语法标记 / 注释行把**节点**吃掉 —— 节点消失 + 子树抬层
+   ------------------------------------------------------------------
+   三处的判定都写在「整行」上，而节点文字撞上标记写法时，导出的那一行
+   长得就和标记一模一样：
+
+     · fromMermaid  `if (/^\s*mindmap\s*$/i.test(raw)) continue;`
+       正则带 `\s*` → **缩进也匹配**，于是节点文字就叫「mindmap」的
+       节点整条被丢掉（还有 i，所以 MindMap / MINDMAP 全中）
+     · fromMermaid  `/^\s*(%%|\/\/:)/`
+       文字以 `%%` 开头时 mermaidLabel 写出的是裸 `%% …` → 被当注释丢掉
+     · fromPlantUml `/@startmindmap/i`
+       节点行 `** @startmindmap` 照样命中 → 被当标记吃掉
+
+   后果都一样，且都不报错：节点消失，它的子树**整层抬到祖父身上** ——
+   与 BUG 98/99/100 是同一类「丢一行 = 抬一层」，只是这次丢在**自己的
+   导出文件**上，往返就发作。
+
+   修法是「标记只在它确实是标记时才生效」：
+     · `mindmap` 只在**第一条节点之前**（rows 为空）才算头行
+     · PlantUML 的标记行不以 `*` 开头（节点行一律以 `*` 开头）
+     · `%%` 走导出侧加引号（mermaidLabel 的 `^%`），行首变成 `[`
+   ------------------------------------------------------------------ */
+group('BUG 105 · 语法标记不得吃掉同名节点（Mermaid / PlantUML）');
+
+{
+  const f104 = await import('./formats.js');
+  const N = (t, ch) => ({ data: { text: t }, children: ch || [] });
+  const wrap = (r) => JSON.stringify({ root: r, template: 'default', theme: 'fresh-blue' });
+  /*
+   * 展平成 [文字, 深度] 序列，比 JSON 更好读。
+   *
+   * ★ 必须先判 null：fromPlantUml / fromMermaid 失败时返回 null，直接
+   * `JSON.parse(c).root` 会抛 TypeError —— 整个测试进程当场崩掉，后面的
+   * 断言一条都跑不到，看着"抓到了"其实漏了大半（本项目第 33 次遇到这类
+   * "崩了也算失败"的假把关）。返回 null 让 eq 正常报出"期望 X 实际 null"。
+   */
+  const flat = (c) => {
+    if (!c) return null;
+    const out = [];
+    (function w(n, d) { out.push([n.data.text, d]); (n.children || []).forEach((x) => w(x, d + 1)); })(JSON.parse(c).root, 0);
+    return out;
+  };
+  /** 根 → 目标节点（带两个子） → 尾 */
+  const tree = (t) => wrap(N('根', [N(t, [N('子1'), N('子2')]), N('尾')]));
+
+  // ① Mermaid：叫「mindmap」的节点必须还在，子树必须挂在它下面
+  for (const t of ['mindmap', 'MindMap', 'MINDMAP']) {
+    const back = f104.fromMermaid(f104.toMermaid(tree(t)));
+    ok(back, `fromMermaid 不返回 null：${t}`);
+    eq(JSON.stringify(flat(back)), JSON.stringify([['根', 0], [t, 1], ['子1', 2], ['子2', 2], ['尾', 1]]),
+      `★ Mermaid：文字「${t}」的节点往返后仍在原位（早先整个消失、子1/子2 被抬到根下）`);
+  }
+  eq(JSON.stringify(flat(f104.fromMermaid(f104.toMermaid(tree('mindmap 用法'))))),
+    JSON.stringify([['根', 0], ['mindmap 用法', 1], ['子1', 2], ['子2', 2], ['尾', 1]]),
+    '「mindmap 用法」本来就没事（只有整行等于 mindmap 才撞）');
+
+  // ② 头行**仍然**要跳（不能为了保节点就把头行也留下）
+  eq(JSON.stringify(flat(f104.fromMermaid('mindmap\n  root((R))\n    A\n    B\n'))),
+    JSON.stringify([['R', 0], ['A', 1], ['B', 1]]), '★ 头行仍被跳过（不误留成节点）');
+  eq(JSON.stringify(flat(f104.fromMermaid('  root((R))\n    A\n'))),
+    JSON.stringify([['R', 0], ['A', 1]]), '没有头行同样能解析');
+  eq(JSON.stringify(flat(f104.fromMermaid('%% 说明\nmindmap\n  root((R))\n'))),
+    JSON.stringify([['R', 0]]), '注释行在前时头行仍被跳过');
+
+  /*
+   * ③ 根节点本身叫「mindmap」也不能丢。
+   * toMermaid 把根写成 `  root((mindmap))`（缩进 2），不是裸 `mindmap` ——
+   * 若哪天改成裸写，这条会立刻红。
+   */
+  {
+    const back = f104.fromMermaid(f104.toMermaid(wrap(N('mindmap', [N('A')]))));
+    eq(JSON.stringify(flat(back)), JSON.stringify([['mindmap', 0], ['A', 1]]),
+      '★ 根节点叫「mindmap」同样保留');
+  }
+
+  // ④ Mermaid 注释：文字以 %% 开头 → 导出侧必须加引号，导回不被当注释
+  ok(f104.mermaidLabel('%% 注释').startsWith('["'), '★ 以 % 开头的文字加引号（否则整行被当注释丢掉）');
+  ok(f104.mermaidLabel('%%x').startsWith('["'), '%%x 同样加引号');
+  eq(f104.mermaidLabel('50%'), '50%', '中间的 % 不触发（Mermaid 里没有语法含义，照旧裸写）');
+  eq(JSON.stringify(flat(f104.fromMermaid(f104.toMermaid(tree('%% 注释'))))),
+    JSON.stringify([['根', 0], ['%% 注释', 1], ['子1', 2], ['子2', 2], ['尾', 1]]),
+    '★ Mermaid：以 %% 开头的节点往返后仍在原位');
+  eq(JSON.stringify(flat(f104.fromMermaid('mindmap\n  root((R))\n    %% 真的注释\n    A\n'))),
+    JSON.stringify([['R', 0], ['A', 1]]), '★ 不带引号的裸 %% 行**仍**当注释（不能被反过来误留）');
+
+  // ⑤ PlantUML：文字撞标记写法时同样不能被吃掉
+  for (const t of ['@startmindmap', '@endmindmap']) {
+    const back = f104.fromPlantUml(f104.toPlantUml(tree(t)));
+    ok(back, `fromPlantUml 不返回 null：${t}`);
+    eq(JSON.stringify(flat(back)), JSON.stringify([['根', 0], [t, 1], ['子1', 2], ['子2', 2], ['尾', 1]]),
+      `★ PlantUML：文字「${t}」的节点往返后仍在原位（早先被当标记吃掉、子树抬层）`);
+  }
+  eq(JSON.stringify(flat(f104.fromPlantUml(f104.toPlantUml(tree('语法见 @startmindmap 的用法'))))),
+    JSON.stringify([['根', 0], ['语法见 @startmindmap 的用法', 1], ['子1', 2], ['子2', 2], ['尾', 1]]),
+    '★ 文字里**包含**标记串也不能丢');
+
+  // ⑥ 标记本身照旧生效（不能为了保节点就把标记也留下）
+  eq(JSON.stringify(flat(f104.fromPlantUml('@startmindmap\n* R\n** A\n@endmindmap'))),
+    JSON.stringify([['R', 0], ['A', 1]]), '★ @startmindmap 包裹照旧生效');
+  eq(JSON.stringify(flat(f104.fromPlantUml('* R\n** A\n'))),
+    JSON.stringify([['R', 0], ['A', 1]]), '无标记片段照旧能解析');
+  eq(f104.fromPlantUml('@startmindmap\n@endmindmap'), null, '无节点 → null（既有口径不变）');
+  /*
+   * 标记**之外**的内容仍要被跳过：有 @startmindmap 时块前的行不算节点。
+   */
+  eq(JSON.stringify(flat(f104.fromPlantUml('前言\n@startmindmap\n* R\n** A\n@endmindmap\n'))),
+    JSON.stringify([['R', 0], ['A', 1]]), '★ 块外的行仍不算节点（anyMarker 逻辑不变）');
+  /*
+   * `@endmindmap` 之后的行不算节点 —— 但**只有在真有 @startmindmap 时**才成立
+   * （anyMarker 为 false 时整段都算块内）。早先我把输入写成只有 @endmindmap，
+   * 期望值算错了。
+   */
+  eq(JSON.stringify(flat(f104.fromPlantUml('@startmindmap\n* R\n** A\n@endmindmap\n* 尾巴\n'))),
+    JSON.stringify([['R', 0], ['A', 1]]), '★ @endmindmap 之后的行仍不算节点');
+
+  /*
+   * ⑥b ★ anyMarker 的守卫：外来 .puml **没有** @startmindmap 包裹时，
+   * 只要某个节点文字里含 `@startmindmap`，不守卫就会把 anyMarker 判成 true ——
+   * 于是那一行**之前的所有节点行**全部被 `anyMarker && !inBlock` 跳过，
+   * 整棵树只剩 null。加守卫后只有非节点行参与判定，三个节点都还在。
+   */
+  eq(JSON.stringify(flat(f104.fromPlantUml('* R\n** A\n** 语法 @startmindmap\n'))),
+    JSON.stringify([['R', 0], ['A', 1], ['语法 @startmindmap', 1]]),
+    '★ 无包裹的片段里，文字含 @startmindmap 也不得让前面的节点消失');
+
+  // ⑦ 源码层（先剥注释：这些正则本身就写在注释里，不剥会命中注释而永远绿）
+  {
+    const fsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    const iM = fsrc.indexOf('export function fromMermaid');
+    ok(iM > 0, '能定位 fromMermaid');
+    const mBody = fsrc.slice(iM, iM + 2200);
+    ok(mBody.includes('!rows.length && /^\\s*mindmap'),
+      '★ fromMermaid 的 mindmap 头行只在 rows 为空时跳（否则吃掉同名节点）');
+    ok(!/if \(\/\^\\s\*mindmap\\s\*\$\/i\.test\(raw\)\) continue;/.test(mBody),
+      '★ 不得再有「任何缩进都跳过 mindmap」那句');
+    ok(/MERMAID_NEEDS_QUOTE[\s\S]{0,200}\^%/.test(fsrc), '★ 引号判定里含 ^%（%% 开头要加引号）');
+
+    const iP = fsrc.indexOf('export function fromPlantUml');
+    ok(iP > 0, '能定位 fromPlantUml');
+    const pBody = fsrc.slice(iP, iP + 1600);
+    ok(pBody.includes("!line.startsWith('*')"), '★ PlantUML 标记判定排除节点行（以 * 开头）');
+    ok(/!l\.trim\(\)\.startsWith\('\*'\)/.test(pBody), '★ anyMarker 同样排除节点行');
+  }
+}
+
 group('Mermaid（.mmd）');
 
 {
@@ -6351,6 +6497,114 @@ group('BUG 97 · XMind 必须带上「这是图标还是用户挂的图片」的
     ok((await mkZen(1)).data.icon === undefined, 'nexusIcon 是数字时不认');
     // 布尔仍然认
     ok((await mkZen(false)).data.icon === false, '布尔 false 要认（这才是真信号）');
+  }
+}
+
+/* ------------------------------------------------------------------
+   BUG 104：XMind 一个节点只能挂 1 个附件 / 1 张图 —— 多出来的静默消失
+   ------------------------------------------------------------------
+   XMind 的 topic 只有**一个** href（附件）和**一个** image（图片），这是格式的
+   硬限制，不是实现的疏漏。但它是**静默**发生的，而且比"没导出"更坑：
+
+     实测一个节点挂 2 个附件 → resources/ 里 2 个文件的字节都在，
+     但 content.json 只有 1 条 href → 另一个**在包里却没人指向它**
+     → 在别的 XMind 软件里打开，那个附件就是不存在。
+
+   更糟的是状态栏：导出侧原本按「打包成功的字节数」报「含 2 个附件」，
+   数的根本不是"能挂到节点上的个数"—— 等于谎报。
+
+   与 BUG 102（Markdown 超 6 级）同口径：限制改不掉，但**必须说出来**，
+   导出那一刻是唯一能提醒的机会（导入是整体替换，等导回来发现少了已经晚了）。
+
+   这里锁三件事：① 能算出损失 ② 分类正确（超链接挤掉 / 挂不上 / 图片）
+   ③ 导出侧真的说了、且不再谎报"含 N 个附件"。
+   ------------------------------------------------------------------ */
+group('BUG 104 · XMind 装不下的附件与图片必须数得出来、且要说出来');
+
+{
+  const X104 = await import('./xmind.js');
+  const S = (d) => ({ id: 'sh1', title: 'T', theme: null, layout: null,
+    content: JSON.stringify({ root: { data: { id: 'nR', text: '根', ...d }, children: [] } }) });
+  const A = (n) => JSON.stringify([{ n: 'r' + n + '.pdf', a: 'a' + n, s: 1 }]);
+  const V = (n) => JSON.stringify([{ n: 'v' + n + '.mp4', a: 'b' + n, s: 1 }]);
+
+  // ① 附件：一个节点挂 N 个 → 只有 1 个挂得上
+  eq(X104.xmindLossCount([S({ text: 'a', file: A(1) })]).unlinked, 0, '单附件没有损失');
+  eq(X104.xmindLossCount([S({ text: 'a', file: JSON.stringify([{ n: '1.pdf' }, { n: '2.pdf' }]) })]).unlinked, 1,
+    '★ 两个文件附件：1 个挂不上');
+  eq(X104.xmindLossCount([S({ text: 'a', file: JSON.stringify([{ n: '1.pdf' }, { n: '2.pdf' }, { n: '3.pdf' }]) })]).unlinked, 2,
+    '三个文件附件：2 个挂不上');
+  eq(X104.xmindLossCount([S({ text: 'a', video: V(1), file: A(1) })]).unlinked, 1,
+    '★ 视频 + 文件：href 只写视频，文件挂不上');
+  eq(X104.xmindLossCount([S({ text: 'a', video: JSON.stringify([{ n: '1.mp4' }, { n: '2.mp4' }]) })]).unlinked, 1,
+    '两个视频附件：1 个挂不上');
+
+  // ② 超链接优先 → href 被占掉，附件**一个都挂不上**
+  eq(X104.xmindLossCount([S({ text: 'a', hyperlink: 'https://x', file: A(1) })]).blocked, 1,
+    '★ 超链接 + 附件：附件被超链接挤掉（不是 unlinked，性质不同）');
+  eq(X104.xmindLossCount([S({ text: 'a', hyperlink: 'https://x', video: V(1), file: A(2) })]).blocked, 2,
+    '超链接 + 视频 + 文件：两个都被挤掉');
+  eq(X104.xmindLossCount([S({ text: 'a', hyperlink: '   ' })]).blocked, 0, '空白超链接不算（等于没有）');
+
+  // ③ 图片：槽位 + 横幅合计，只写 1 张
+  eq(X104.xmindLossCount([S({ text: 'a', image: 'data:image/png;base64,P0' })]).images, 0, '单张图没有损失');
+  eq(X104.xmindLossCount([S({ text: 'a', images: JSON.stringify(['a', 'b', 'c']) })]).images, 2,
+    '★ 横幅三张图：2 张写不进 image');
+  eq(X104.xmindLossCount([S({ text: 'a', image: 'ic', images: JSON.stringify(['p1']) })]).images, 1,
+    '槽位 + 横幅：合计 2 张，1 张写不进');
+
+  // ④ 健壮性：坏内容 / 空输入都不能抛（抛了会让整个导出流程崩掉）
+  {
+    const callSafe = (fn) => { try { return { v: fn() }; } catch (e) { return { err: e }; } };
+    for (const [name, arg] of [['坏 JSON', [{ content: '{坏' }]], ['空数组', []],
+      ['undefined', undefined], ['无 content', [{ id: 'x' }]]]) {
+      const r = callSafe(() => X104.xmindLossCount(arg));
+      ok(!r.err && r.v && r.v.images === 0 && r.v.blocked === 0 && r.v.unlinked === 0,
+        `★ ${name} 不抛且算作 0（抛了整个导出就崩了）`, r.err ? String(r.err) : JSON.stringify(r.v));
+    }
+  }
+
+  /*
+   * ⑤ 行为实据：这些损失是**真的会发生**的，不是统计口径想出来的。
+   *
+   * 写一次真的 xmind，看 content.json 里到底剩几条 href / 几张 image，
+   * 以及 resources/ 里到底躺了几个文件 —— 字节在包里、却没人指向它，
+   * 正是「体积变大了、界面说含 N 个附件、打开却没有」的来源。
+   */
+  {
+    const sheets = [{ id: 'sh1', title: 'T', theme: null, layout: null,
+      content: JSON.stringify({ root: { data: { id: 'nR', text: '根' }, children: [
+        { data: { id: 'n1', text: '两附件', file: JSON.stringify([{ n: '1.pdf', a: 'x1', s: 1 }, { n: '2.pdf', a: 'x2', s: 1 }]) }, children: [] },
+        { data: { id: 'n2', text: '链接+附件', hyperlink: 'https://x', file: A(1) }, children: [] },
+        { data: { id: 'n3', text: '三张图', images: JSON.stringify(['data:image/png;base64,A', 'data:image/png;base64,B', 'data:image/png;base64,C']) }, children: [] },
+      ] } }) }];
+    const blob = await X104.writeXMind(sheets, 'sh1', async () => new Uint8Array([1, 2, 3]));
+    const en = await X104.zipRead(new Uint8Array(await new Blob([blob]).arrayBuffer()));
+    const cj = JSON.parse(new TextDecoder().decode(en.get('content.json')));
+    const kids = cj[0].rootTopic.children.attached;
+    eq(kids.length, 3, '三个子节点都写出来了');
+    ok(/resources\//.test(String(kids[0].href)), '两附件：只有第 1 个挂上 href', String(kids[0].href));
+    ok(!/2\.pdf/.test(String(kids[0].href)), '★ 第 2 个附件没挂上 href');
+    eq(String(kids[1].href), 'https://x', '★ 有超链接时 href 是超链接，附件根本没写');
+    eq(kids[2].image?.src, 'data:image/png;base64,A', '★ 三张图只写进第 1 张');
+    const res = [...en.keys()].filter((k) => k.startsWith('resources/'));
+    eq(res.length, 3, '★ 3 个附件字节都在包里，但只有 1 条 href 指向它们（另 2 个没人引用）');
+  }
+
+  // ⑥ 导出侧必须说出来，且**不再谎报**「含 N 个附件」
+  {
+    const isrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    const i = isrc.indexOf('async function exportXMind');
+    ok(i > 0, '能定位 exportXMind');
+    const body = isrc.slice(i, i + 2600);
+    ok(/xmindLossCount\(/.test(body), '★ exportXMind 调用了统计（否则丢了没人知道）');
+    for (const k of ['blocked', 'unlinked', 'images']) {
+      ok(body.includes('loss.' + k), `提示区分 ${k} 这一类（混成一句用户不知道该怪谁）`);
+    }
+    ok(/未能打包/.test(body), '打包失败那档仍在（不能因为加了新提示就把它顶掉）');
+    // 顺序：先确认存好了再说限制
+    ok(body.indexOf('reportSave') < body.indexOf('xmindLossCount'),
+      '提示在 reportSave 之后（先让人看到文件存好了）');
   }
 }
 

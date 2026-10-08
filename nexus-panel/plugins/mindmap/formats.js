@@ -393,7 +393,14 @@ export function fromOpml(text) {
  * 否则轻则渲染错乱，重则整张图**解析失败一片空白**。
  * 空白同样致命（纯空格节点会让 Mermaid 报语法错误）。
  */
-const MERMAID_NEEDS_QUOTE = /[()[\]{}"#;:,`]|^\s|\s$|\s\s/;
+/*
+ * `^%`：文字以 `%` 开头必须加引号（BUG 104）。
+ *
+ * Mermaid 里 `%%` 起头是注释，而裸写的话整行会被 fromMermaid 当注释丢掉 ——
+ * 节点消失、子树抬层。加引号后行首是 `[`，不再命中注释判定。
+ * 只管**开头**：中间的 `50%` 之类在 Mermaid 里没有语法含义，照旧裸写。
+ */
+const MERMAID_NEEDS_QUOTE = /[()[\]{}"#;:,`]|^\s|\s$|\s\s|^%/;
 
 /** 单个节点文字 → 安全的 Mermaid 写法（纯函数，可测） */
 export function mermaidLabel(text) {
@@ -505,8 +512,27 @@ export function fromMermaid(text) {
   const rows = [];
   for (const raw of String(text || '').split(/\r?\n/)) {
     if (!raw.trim()) continue;
-    // 头行 / 指令行
-    if (/^\s*mindmap\s*$/i.test(raw)) continue;
+    /*
+     * 头行 / 指令行。
+     *
+     * ★ `mindmap` 头行**只有在它确实是头行时**才能跳过（BUG 104）。
+     *
+     * 早先写成 `if (/^\s*mindmap\s*$/i.test(raw)) continue;` —— 正则带 `\s*`
+     * 所以**缩进也匹配**，于是节点文字就叫「mindmap」的节点被整条吃掉，
+     * 它的子树整层抬到祖父身上（`mindmap` / `MindMap` / `MINDMAP` 三种写法
+     * 全中，因为还带 i）。实测：根 → mindmap → （子1、子2）、尾，导回后
+     * 5 个节点变 4 个，子1/子2 变成根的直接子。
+     *
+     * 头行一定是「第一条节点之前的那行」，所以只在 rows 为空时跳过 ——
+     * 此时不可能有节点行（根节点写在 2 空格缩进上，从来不是裸 `mindmap`）。
+     */
+    if (!rows.length && /^\s*mindmap\s*$/i.test(raw)) continue;
+    /*
+     * 注释行。它同样会吞节点：节点文字以 `%%` 开头时，mermaidLabel 写出的
+     * 是裸 `%% …`，导回就被当成注释丢掉（同 BUG 104）。文字侧已经把它纳入
+     * 「必须加引号」的判定（见 MERMAID_NEEDS_QUOTE 的 `^%`），加引号后
+     * 行首是 `[`、不再命中注释 —— 两边一起才叫往返安全。
+     */
     if (/^\s*(%%|\/\/:)/.test(raw)) continue;      // 注释
     const indent = (raw.match(/^[ \t]*/) || [''])[0].replace(/\t/g, '  ').length;
     let body = mermaidTextOf(raw);
@@ -555,11 +581,17 @@ export function fromPlantUml(text) {
   let inBlock = false;
   const src = String(text || '').split(/\r?\n/);
   // 允许没有 @startmindmap / @endmindmap 包裹（有些片段只有 * 行）
-  const anyMarker = src.some((l) => /@startmindmap/i.test(l));
+  // ★ 只看**非节点行**（BUG 104）：节点行以 `*` 开头，文字里带
+  //   `@startmindmap` 时也会被 `/@startmindmap/i` 命中，于是那一行被当成
+  //   标记吃掉 —— 节点消失 + 子树抬层，与 Mermaid 的 `mindmap` 头行同一个毛病。
+  const anyMarker = src.some((l) => !l.trim().startsWith('*') && /@startmindmap/i.test(l));
   for (const raw of src) {
     const line = raw.trim();
-    if (/@startmindmap/i.test(line)) { inBlock = true; continue; }
-    if (/@endmindmap/i.test(line)) { inBlock = false; continue; }
+    // 同上：节点行（以 `*` 开头）永不参与标记判定
+    if (!line.startsWith('*')) {
+      if (/@startmindmap/i.test(line)) { inBlock = true; continue; }
+      if (/@endmindmap/i.test(line)) { inBlock = false; continue; }
+    }
     if (anyMarker && !inBlock) continue;
     if (!line || line.startsWith("'")) continue;
     const m = line.match(/^(\*+)\s*(.*)$/);

@@ -1253,6 +1253,59 @@ function applyXmlBoundaries(pairs, boundariesEl) {
    ============================================================ */
 
 /**
+ * 统计「XMind 装不下」的条目：一个 topic 只能挂 **1 个附件**（href）+ **1 张图**（image）。
+ *
+ * 这是格式的硬限制，不是实现的疏漏 —— 但**不能静默发生**：
+ *   实测一个节点挂 2 个附件 → 导出后 content.json 里只有 1 条 href，
+ *   另一个的字节**确实进了 resources/**，却没有任何东西指向它；
+ *   在别的 XMind 软件里打开，那个附件就是不存在。
+ *   而导出那一句状态栏写的是「XMind 已导出（含 2 个附件）」——
+ *   数的是**打包成功的字节数**，不是**能挂到节点上的个数**，等于谎报。
+ *
+ * 与 workbook.deepNodeCount 同口径：导出时说出来，是唯一能提醒的机会
+ * （导入是整体替换，等用户导回来发现少了已经晚了）。
+ *
+ * 三类损失分开统计，提示才能说清是哪一种：
+ *   · blocked      节点上有超链接 → href 被超链接占掉，附件**一个都挂不上**
+ *   · unlinked     没有超链接，但附件多于 1 个 → 只有第一个挂得上
+ *   · images       图片（槽位 + 横幅合计）多于 1 张 → 只有第一张写进 image
+ *
+ * @param {Array} sheets 画布数组（content 为 kityminder JSON 文本或对象）
+ * @returns {{blocked:number, unlinked:number, images:number}} 0 = 没有损失
+ */
+export function xmindLossCount(sheets) {
+  const out = { blocked: 0, unlinked: 0, images: 0 };
+  for (const s of sheets || []) {
+    const km = parseKm(s?.content);
+    if (!km) continue;              // 坏内容不算 —— 它本来也导不出东西
+    walkKmNodes(km, (node) => {
+      const d = node?.data;
+      if (!d) return;
+
+      // 图片：槽位一张 + 横幅若干张，XMind 只写 src 一个
+      const imgs = [];
+      const slot = str(d.image);
+      if (slot && slot.trim()) imgs.push(slot);
+      for (const one of refListOf(d.images)) {
+        const v = str(one);
+        if (v && v.trim()) imgs.push(v);
+      }
+      if (imgs.length > 1) out.images += imgs.length - 1;
+
+      // 附件：href 只有一个，且**超链接优先**（见 buildTopic）
+      const files = refListOf(d.file);
+      const videos = refListOf(d.video);
+      const total = files.length + videos.length;
+      if (!total) return;
+      const hasHref = !!(str(d.hyperlink) || '').trim();
+      if (hasHref) out.blocked += total;
+      else if (total > 1) out.unlinked += total - 1;
+    });
+  }
+  return out;
+}
+
+/**
  * 导出为 .xmind 文件的 Blob。
  *
  * @param {Array} sheets 画布数组 [{id,title,content,theme,layout}]
