@@ -280,6 +280,50 @@ console.log('\n=== 1.7b agent-flow 汇合节点不能有两份实现 ===');
 }
 
 /* ============================================================
+ * 1.8 Rust 命令必须进了 generate_handler
+ * ------------------------------------------------------------
+ * 写了 `#[tauri::command]` 却没登记进 invoke_handler 的命令，
+ * **编译得过、前端调不到**：invoke 返回一个"命令未找到"，界面上表现为
+ * 点了没反应。历史上有过 rt_dep::* 四条漏登记的就是这类。
+ *
+ * 判据只用**一个方向**（声明 ⊆ 注册）：
+ *   · 反方向（注册 ⊆ 声明）不能守 —— Rust 编译期就会报错，用不着测试；
+ *     而且 invoke_handler 块里有说明性块注释，剥掉它们会把注释里点名的
+ *     命令一起丢掉（tray_toggle_window 就是写在注释里说明"必须留末位"的）。
+ *   所以这里**只剥行注释，保留块注释** —— 宁可把注释里的词也收进来，
+ *   也不能漏掉真命令。
+ * ============================================================ */
+console.log('\n=== 1.8 Rust 命令登记 ===');
+{
+  const rsFiles = walk(HERE).filter((p) => p.endsWith('.rs'));
+  const declared = new Set();
+  for (const abs of rsFiles) {
+    let txt;
+    try { txt = readFileSync(abs, 'utf8'); } catch { continue; }
+    for (const m of txt.matchAll(/#\[tauri::command[^\]]*\]\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)/g)) {
+      declared.add(m[1]);
+    }
+  }
+  t('扫到了 Rust 命令声明', declared.size > 20, `实测 ${declared.size} 个`);
+
+  const main = read('src-tauri/src/main.rs');
+  t('main.rs 存在', typeof main === 'string' && main.length > 0);
+  if (typeof main === 'string') {
+    const i = main.indexOf('generate_handler![');
+    t('能定位 generate_handler', i > 0);
+    if (i > 0) {
+      const seg = main.slice(i, main.indexOf('])', i));
+      /* 只剥行注释 —— 块注释里的命令名要留着，理由见上方 */
+      const noLine = seg.replace(/\/\/[^\n]*/g, '');
+      const reg = new Set([...noLine.matchAll(/(?:[a-z_]+::)?\b([a-z_]\w*)\b/g)].map((m) => m[1]));
+      const miss = [...declared].filter((n) => !reg.has(n));
+      t('所有 #[tauri::command] 都已登记进 invoke_handler',
+        miss.length === 0, miss.length ? `未登记：${miss.join('、')}` : '');
+    }
+  }
+}
+
+/* ============================================================
  * 2. 画布假描边框必须真的被创建
  * ------------------------------------------------------------
  * 此前 styles.css 里整套规则都写好了，但全仓 JS **没有任何地方
