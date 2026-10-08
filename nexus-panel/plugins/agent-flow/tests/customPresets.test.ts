@@ -6,6 +6,8 @@ import {
   presetKey, presetIdOf, dataOf, type CustomPreset, type KV,
 } from '../engine/customPresets';
 import { hadInlineSecret } from '../engine/sanitize';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 /** 内存版存储，避免测试依赖 localStorage（Node 里没有） */
 function memKV() {
@@ -338,4 +340,40 @@ test('dataOf 是深拷贝：数组类配置（如条件规则）同样独立', (
   (one.rules as Array<Record<string, unknown>>).push({ id: 'r2' });
   const two = dataOf(p) as unknown as Record<string, unknown>;
   assert.equal((two.rules as unknown[]).length, 1);
+});
+
+/* ================================================================ */
+/* 侧栏入口：自定义预设不得绕过 legacy 跳过                          */
+/* ================================================================ */
+
+/*
+ * 为什么是源码级检查：registry.tsx 含 JSX，本项目的测试链路只做类型剥离、
+ * 不转 JSX，Node 加载不了，于是没法真跑 allPresets()。
+ * 退而求其次盯源码形态（与 inspectorRemount.test.ts 同一套做法）。
+ *
+ * allPresets() 里有两条产出预设的路，而 legacy 的规矩必须两条都守：
+ *   1. 内置 def —— `if (def.meta.legacy) continue;`
+ *   2. 自定义预设 —— 以前只有 `if (!hasDef(cp.baseType)) continue;`
+ *
+ * 漏了第 2 条的后果：基于老类型（play-audio / ocr / translate / bili /
+ * wechat / github-update）存的自定义预设会绕过跳过，重新出现在侧栏里。
+ * 标 legacy 的意思正是"已并入另一个节点，不再推荐拖"。
+ */
+test('自定义预设也要跳过 legacy 基础类型（否则老节点绕回侧栏）', () => {
+  const SRC = process.env.AF_SRC;
+  assert.ok(SRC, 'AF_SRC 未设置：run-tests.sh 应导出仓库根路径');
+  const src = readFileSync(join(SRC, 'nodes/registry.tsx'), 'utf8');
+  const at = src.indexOf('export function allPresets');
+  assert.ok(at > 0, '没找到 allPresets');
+  const body = src.slice(at, src.indexOf('export function presetsByCategory', at));
+
+  const customAt = body.indexOf('loadCustomPresets()');
+  assert.ok(customAt > 0, 'allPresets 里没看到自定义预设那段');
+  const seg = body.slice(customAt);
+  assert.match(
+    seg,
+    /meta\.legacy/,
+    '自定义预设那段只查了 hasDef、没查 meta.legacy —— ' +
+      '基于老类型存的预设会绕过跳过回到侧栏，而 legacy 的意思正是"已并入别的节点，不再推荐拖"。',
+  );
 });

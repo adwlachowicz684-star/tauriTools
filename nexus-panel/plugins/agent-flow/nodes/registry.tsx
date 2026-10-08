@@ -185,6 +185,17 @@ export function allPresets(): NodePreset[] {
   for (const cp of loadCustomPresets()) {
     if (!hasDef(cp.baseType)) continue;
     const def = getDef(cp.baseType);
+    /*
+     * 与内置那条路**同一条规矩**：老类型不该再被拖出来。
+     *
+     * 这里以前只查了 hasDef —— 于是基于老类型存的自定义预设会绕过上面的
+     * legacy 跳过，堂而皇之地回到侧栏。而标 legacy 的意思正是"已并入另一个
+     * 节点，不再推荐拖"，绕过去的后果是用户在新画布上拖出一个没人维护的
+     * 老节点：能跑、不报错，只是它已经是另一个节点的前身。
+     *
+     * 老画布上的实例不受影响（数据还在、照常运行），消失的只是入口。
+     */
+    if (def.meta.legacy) continue;
     out.push({
       key: presetKey(cp.id),
       type: cp.baseType,
