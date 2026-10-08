@@ -2841,8 +2841,23 @@ pub fn fpx_chain_send_action(
 /// 前端拿不到"实际会发出去的那段文字"。没有它，确认弹窗就只能显示模板原文
 /// —— 满屏 `{项目名称}` 让用户去脑补替换结果，等于没确认。
 ///
-/// 与 `fpx_chain_send_action` 用**同一套**解析（resolve_prompt），
+/// 与 `fpx_chain_send_action` 用**同一套**解析，
 /// 保证"看到的"与"发出的"是同一份。两边各写一套迟早会漂。
+///
+/// ## `prompt` 为什么必须有（#43 的那一半此前没做）
+///
+/// 发送那侧有"临时覆盖"分支：`prompt` 非空走 `fill_all`，否则走
+/// `resolve_prompt`。而预览此前**没有这个参数**，一律只走 `resolve_prompt`；
+/// 前端又写了 `override.trim() || await chainPreview(...)` —— 用户一改动指令框，
+/// 预览就被短路掉，确认弹窗显示的是**没替换占位符的原文**。
+///
+/// 而指令框的标签上明写着「{path} / {name} 会替换」，也就是鼓励用户手写占位符：
+/// 于是他看到「请分析 {项目名称}」，发出去的是「请分析 我的项目」。
+/// 这恰恰是本命令的注释里写明"等于没确认"的那一幕——只不过这次的模板原文
+/// 是他自己刚敲的。
+///
+/// 所以预览必须把覆盖分支也镜像过来：**两个分支、同一套判据**，
+/// 而不是"预览管模板、覆盖归前端自己显示"。
 #[tauri::command(rename_all = "snake_case")]
 pub fn fpx_chain_preview(
     app: AppHandle,
@@ -2850,6 +2865,7 @@ pub fn fpx_chain_preview(
     action_id: String,
     kind: String,
     path: String,
+    prompt: Option<String>,
 ) -> Result<String, String> {
     let dir = store::data_dir(&app, &state)?;
     let mut cfg = store::load_config(&dir);
@@ -2860,7 +2876,14 @@ pub fn fpx_chain_preview(
     // 否则可以靠"预览"把任意路径的内容读进指令里（略过路径收口）。
     guard::must_be_under(&path, &content_roots(&dir, &cfg))?;
     let dir_str = dir.to_string_lossy().to_string();
-    Ok(chain::resolve_prompt(item, &kind, &path, &dir_str))
+    /* 与 fpx_chain_send_action 同一套判据：覆盖非空走 fill_all，否则走模板。
+       判据写成两份的话，漂移的表现就是"确认框里看到的和发出去的不是同一句"，
+       而那时用户已经点过确认了。 */
+    let text = match prompt.as_deref().map(str::trim) {
+        Some(p) if !p.is_empty() => chain::fill_all(p, &path, &dir_str),
+        _ => chain::resolve_prompt(item, &kind, &path, &dir_str),
+    };
+    Ok(text)
 }
 
 /* ---------------------------- 截图 ---------------------------- */

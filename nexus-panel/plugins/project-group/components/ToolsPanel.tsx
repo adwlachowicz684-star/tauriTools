@@ -365,10 +365,19 @@ export function ChainDialog({
     if (!needConfirm()) { await doSend(override); return; }
     setConfirming(true);
     try {
-      /* 预览走后端，与真正发送用同一套解析（resolve_prompt）：
-         两边各写一套的话，"看到的"和"发出的"迟早会漂。 */
-      const text = override.trim()
-        || await api.chainPreview(actionId, kind, target);
+      /*
+       * 预览**一律**走后端，包括用户改过指令框的情况。
+       *
+       * 此前写的是 `override.trim() || await chainPreview(...)`：一改动指令框
+       * 就把后端预览短路掉了，确认弹窗显示的是**没替换占位符的原文**。
+       * 而指令框的标签上明写着「{path} / {name} 会替换」，也就是鼓励手写占位符
+       * —— 于是他看到「请分析 {项目名称}」，发出去的是「请分析 我的项目」。
+       * 这正是 #43 那条注释写明"等于没确认"的那一幕，只不过模板原文是他自己刚敲的。
+       *
+       * 覆盖文本交给后端 `fill_all`（与发送侧同一套判据），
+       * 两边各写一份迟早漂移，漂移的表现就是确认框与实发文案对不上。
+       */
+      const text = await api.chainPreview(actionId, kind, target, override || null);
       setConfirm({ text, skip: false });
     } catch (e) {
       // 预览失败不该拦住发送：退回原来的"直接发"，并把原因记进日志

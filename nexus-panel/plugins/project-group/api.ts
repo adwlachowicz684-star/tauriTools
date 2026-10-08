@@ -183,9 +183,15 @@ export function makeApi(ctx: PluginContext) {
      * 预览某动作将要发出的指令全文（#43 确认弹窗用）。
      * 占位符替换在后端，前端拿不到"实际会发出去的那段文字"，
      * 只能显示模板原文的话等于没确认。
+     *
+     * `prompt` 是发送面板里那次临时覆盖，**必须一并传过去**：
+     * 发送侧覆盖非空走 fill_all、否则走模板，预览若不知道覆盖，
+     * 就只能显示没替换占位符的原文 —— 于是"看到的"与"发出的"又是两份。
      */
-    chainPreview: (actionId: string, kind: CardKind, path: string) =>
-      call<string>('fpx_chain_preview', { action_id: actionId, kind, path }),
+    chainPreview: (actionId: string, kind: CardKind, path: string, prompt?: string | null) =>
+      call<string>('fpx_chain_preview', {
+        action_id: actionId, kind, path, prompt: prompt ?? null,
+      }),
     chainSendAction: (
       actionId: string, kind: CardKind, path: string,
       prompt?: string | null, client?: string | null,
