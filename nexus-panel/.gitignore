@@ -20,6 +20,9 @@ npm-debug.log*
 # 校验脚本产物
 .smoke-react.cjs
 .drag-payload-test*.cjs
+# 全量体检的明细落盘目录（sweep-tests.mjs 写在项目内 ROOT/.tool_output）
+# 不忽略的话跑一次就多一个未跟踪目录，容易被当成新改动一起提交
+.tool_output/
 
 # 本地临时测试脚手架（不入库）
 .rt/

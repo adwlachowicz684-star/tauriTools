@@ -23,7 +23,7 @@
  *    —— 那正是"删掉实现、断言照样全绿"的假绿来源。
  * 4. 嵌套正则的转义极易写错，能用字符串包含判就别套正则。
  */
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname, relative as relPath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripComments as stripBlock, stripCommentsJs as stripJs } from './test-scan-utils.mjs';
@@ -365,6 +365,50 @@ console.log('\n=== 1.8 Rust 命令登记 ===');
         miss.length === 0, miss.length ? `未登记：${miss.join('、')}` : '');
     }
   }
+}
+
+/* ============================================================
+ * 1.10 .d.ts 声明必须与 JS 实现对齐（只守危险的一向）
+ * ------------------------------------------------------------
+ * 「d.ts 声明了值、JS 里没有」是最坏的一种漂移：
+ * TS 编译得过、编辑器补全还提示你它在，运行时拿到 undefined，调用即崩。
+ * 反方向（JS 有、d.ts 没写）只是 TS 侧用不了，**不会炸**，
+ * 而且 host.js 有一批导出是只给 .mjs 测试用的，全部补进 d.ts 属于噪音。
+ *
+ * 所以这里只守危险的一向。判据只认**值导出**（function / const / class），
+ * interface / type 是编译期概念、运行时本来就不存在，不能拿它们比对。
+ * ============================================================ */
+console.log('\n=== 1.10 .d.ts 与实现对齐 ===');
+{
+  const pairs = ['plugin-sdk', 'host', 'tauri-core', 'plugin-config', 'external-policy']
+    .map((n) => [`js/${n}.d.ts`, `js/${n}.js`])
+    .filter(([d, j]) => existsSync(d) && existsSync(j));
+  t('成对存在的 d.ts / js', pairs.length >= 5, `实测 ${pairs.length} 对`);
+
+  const ghost = [];
+  for (const [d, j] of pairs) {
+    const dd = stripJs(read(d));
+    const jj = stripJs(read(j));
+    const declV = new Set([
+      ...[...dd.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]),
+      ...[...dd.matchAll(/export const (\w+)/g)].map((m) => m[1]),
+      ...[...dd.matchAll(/export (?:declare )?class (\w+)/g)].map((m) => m[1]),
+    ]);
+    const implV = new Set([
+      ...[...jj.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]),
+      ...[...jj.matchAll(/export const (\w+)/g)].map((m) => m[1]),
+      ...[...jj.matchAll(/export class (\w+)/g)].map((m) => m[1]),
+    ]);
+    for (const m of jj.matchAll(/export\s*\{([^}]*)\}/g)) {
+      for (const y of m[1].split(',')) {
+        const n = y.trim().split(' as ').pop().trim();
+        if (n) implV.add(n);
+      }
+    }
+    for (const n of declV) if (!implV.has(n)) ghost.push(`${d} → ${n}`);
+  }
+  t('d.ts 里没有「声明了但实现不存在」的值导出',
+    ghost.length === 0, ghost.length ? ghost.join('；') : '');
 }
 
 /* ============================================================
