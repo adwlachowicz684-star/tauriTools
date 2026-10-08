@@ -36,6 +36,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+/*
+ * ⓘ 剥注释改用全仓共用实现（../../test-scan-utils.mjs）。
+ *   本文件此前内联一份（块注释→空串、行注释→空串），语义与共用版的
+ *   stripCommentsJs（块注释→空格、行注释→空串）只差"留不留空格"；
+ *   留空格不会把注释两侧粘成一个不存在的记号，扫 Rust 更安全。
+ */
+import { stripCommentsJs } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SYS = path.join(HERE, '..', '..', 'src-tauri', 'src', 'fpx', 'sys.rs');
@@ -45,8 +52,8 @@ const { t, done } = makeT();
 const sysSrc = fs.readFileSync(SYS, 'utf8');
 const modSrc = fs.readFileSync(MOD, 'utf8');
 /** 只看真代码：修复注释里就写着 tab_index.min(tabs.len() - 1)，不剥会误报。 */
-const SYS_CODE = sysSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-const MOD_CODE = modSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+const SYS_CODE = stripCommentsJs(sysSrc);
+const MOD_CODE = stripCommentsJs(modSrc);
 
 /** 按大括号配平切出一段（避免切到别处 / 切到文件末尾） */
 function sliceBlock(src, anchor) {
@@ -144,8 +151,7 @@ console.log('=== 4. 兜底：全仓没有其他漏网的调用点 ===');
   for (const f of ['mod.rs', 'sys.rs', 'store.rs', 'mcp.rs', 'junction.rs', 'cli.rs', 'backup.rs']) {
     const p = path.join(HERE, '..', '..', 'src-tauri', 'src', 'fpx', f);
     if (!fs.existsSync(p)) continue;
-    const code = fs.readFileSync(p, 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = stripCommentsJs(fs.readFileSync(p, 'utf8'));
     code.split('\n').forEach((line) => {
       if (line.includes('insert_card_into_tab') && !line.includes('pub fn')) {
         all.push({ f, line: line.trim().replace(/;$/, '') });

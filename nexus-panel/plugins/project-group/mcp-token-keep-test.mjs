@@ -20,23 +20,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
+/*
+ * ⓘ 剥注释改用全仓共用实现（test-scan-utils.mjs）。
+ *   此前本文件内联一份，判据与共用版语义不同（行首起判注释、整行丢弃），
+ *   两份并存必然漂移；且"只减不增"的守卫会因新增副本报红。
+ *   这里别名成 stripComments，调用点无需改动。
+ */
+import { stripCommentsJs as stripComments } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RS = path.join(HERE, '../../src-tauri/src/fpx');
 const { t, done } = makeT();
 
 /** 只剥行注释与块注释：护栏要求「名字不含注释字样的断言必须匹配剥注释后的源码」。 */
-function stripComments(text) {
-  const out = []; let inb = false;
-  for (const line of text.split('\n')) {
-    const s = line.replace(/^\s+/, '');
-    if (inb) { if (s.includes('*/')) inb = false; continue; }
-    if (s.startsWith('/*')) { if (!s.slice(2).includes('*/')) inb = true; continue; }
-    if (s.startsWith('//')) continue;
-    out.push(line);
-  }
-  return out.join('\n');
-}
 
 const modRaw = fs.readFileSync(path.join(RS, 'mod.rs'), 'utf8');
 const mod = stripComments(modRaw);

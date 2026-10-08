@@ -31,7 +31,22 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 let pass = 0;
 let fail = 0;
+let skipped = 0;
 const failures = [];
+
+/*
+ * 显式「跳过」—— 前置条件没满足 / 已知取舍不在这里验。
+ *
+ * ⓘ 早先这类地方写的是 `ok(true, '（跳过）…')`：
+ *   ① 恒真，无论跳过没跳过都绿；
+ *   ② 更糟的是它**计入 pass**，于是"这一条其实没测"被伪装成
+ *      "通过 3260 项"里的一员，报告上看不出有任何东西被跳过了。
+ *   所以单列一个计数器，并写进汇总行 —— 跳过必须**看得见**。
+ */
+function skip(name, why) {
+  skipped++;
+  console.log('  \x1b[33m⊘\x1b[0m ' + name + '（跳过：' + why + '）');
+}
 
 function ok(cond, name, detail = '') {
   if (cond) {
@@ -2864,7 +2879,11 @@ const picons = await import('./preset-icons.js');
     ok(lib.length >= 5 && lib.every((g) => g.builtin), '删光用户分组后仍剩内置分组');
     ok(lib.some((g) => (g.icons || []).length > 0), '内置图标仍在 —— 库不会变空');
   } else {
-    ok(true, '（跳过）用户分组数量不符，跳过最后一组删除测试');
+    /*
+     * ⓘ 原写 `ok(true, '（跳过）…')` —— 恒真，且计入 pass，
+     *   于是"最后一组删除"到底测没测过，报告上永远看不出来。
+     */
+    skip('最后一个用户分组可删', '用户分组数量不符，前置条件没满足');
   }
 }
 
@@ -6719,7 +6738,13 @@ group('画布附件区渲染（真实源码）');
   // ---- 点击附件要发消息（带 index） ----
   {
     const r = render({ file: JSON.stringify([{ n: '一.pdf' }, { n: '二.pdf' }]) });
-    ok(r.posted.length >= 0, '渲染不主动发消息');
+    /*
+     * ⓘ 这里原写的是 `r.posted.length >= 0` —— 恒真，无论渲染发不发消息都绿。
+     *   本组要守的恰恰是「**只挂载点击钩子、渲染时不主动发**」，
+     *   写成 >= 0 等于把这条防线整个撤掉（2026-10-03 全仓扫恒真断言时发现）。
+     *   恒真的后果不是"多一条绿"，而是"渲染改坏了也没人知道"。
+     */
+    eq(r.posted.length, 0, '渲染不主动发消息（只挂点击钩子）');
     const hooks = r.appended.filter((x) => x.content === '二.pdf');
     eq(hooks.length, 1, '第二个文件也有自己的一行');
   }
@@ -7282,7 +7307,15 @@ group('附件在节点间拖拽：分发逻辑（跑真实源码）');
     const e2 = makeEnv(drag());
     e2.env._hit = { data: { id: 'N1' } };
     e2.env.up({ clientX: 5, clientY: 5 });
-    ok(e2.posted.length >= 0, '（对照）不同对象引用不会被当成自己');
+    /*
+     * ⓘ 原写 `e2.posted.length >= 0` —— 恒真，且**与意图相反**。
+     *   这条是对照组：要证明"同 id 但不同对象引用"**不**被当成自己，
+     *   所以它**必须**发出 moveattach（发 0 条才是错）。
+     *   写成 >= 0 后，就算引用比较退化成"只比 id"（于是当成自己、一条不发），
+     *   这条照样绿 —— 对照组失守，上面那条"拖回自己不发"也就没了意义。
+     */
+    eq(e2.posted.length, 1, '（对照）同 id 但不同对象引用 → 不会被当成自己，照样发 moveattach');
+    eq(e2.posted[0]?.type, 'moveattach', '（对照）发的确实是 moveattach');
   }
   // 5) 结束拖拽一定被清理（不清理会残留状态，下次点击变成拖拽）
   {
@@ -9132,8 +9165,19 @@ group('导入导出页：标题右侧圆形问号 + 悬浮说明');
     eq(tip?.querySelectorAll('.mm-helptip-line').length, 2, '导入节说明是 2 段');
 
     // mouseleave 后要能关掉（有延迟，用定时器断言）
-    dot?.dispatchEvent(new dom.window.MouseEvent('mouseleave', { bubbles: false }));
-    ok(true, 'mouseleave 未抛错');
+    /*
+     * ⓘ 原写 `ok(true, 'mouseleave 未抛错')` —— 恒真，而且它掩盖了真正的事：
+     *   dispatchEvent 真抛异常时整个脚本**崩在半路**，后面几千条断言一条都不跑，
+     *   而"崩"不等于"红"（本项目反复栽的同一类）。所以必须自己接住再判。
+     */
+    let leaveErr = null;
+    try {
+      dot?.dispatchEvent(new dom.window.MouseEvent('mouseleave', { bubbles: false }));
+    } catch (e) {
+      leaveErr = e;
+    }
+    ok(leaveErr === null, 'mouseleave 不抛错',
+      leaveErr ? String(leaveErr?.message || leaveErr) : '');
   }
 
   // ---- 5) 样式：fixed + 默认不显示 ----
@@ -11461,8 +11505,14 @@ group('多附件：XMind 往返（导出再导回）');
   }
 
   // 缩略图在导出时被替换掉了（本体进包，t 不进包）—— 这是已知的取舍，
-  // 导入后由 index.js 的 saveAssetWithThumb 重新生成，这里只确认不会崩
-  ok(true, '（已知）ref.t 不随包带走，导入后重新生成首帧');
+  // 导入后由 index.js 的 saveAssetWithThumb 重新生成
+  /*
+   * ⓘ 原写 `ok(true, '（已知）…')` —— 恒真，且计入 pass。
+   *   这里其实**没有验任何东西**（端到端重新生成首帧要走 index.js，
+   *   本测试直接调 io，跑不到那一步），所以如实登记为跳过。
+   */
+  skip('ref.t 随包带走（端到端重新生成首帧）',
+    '已知取舍：导入侧由 index.js 的 saveAssetWithThumb 负责，这里不验');
 }
 
 group('多附件：画布点击的分发');
@@ -13236,7 +13286,13 @@ group('BUG 59 · 超链接与备注输入框必须回显（否则已有值看不
         bad.push(pn.slice(0, m.index).split('\n').length + ': ' + body.replace(/\s+/g, ' ').slice(0, 70));
       }
     }
-    ok(bad.length >= 0, 'panels：扫描到 input.mm-input 定义');
+    /*
+     * ⓘ 原写 `ok(bad.length >= 0, 'panels：扫描到 input.mm-input 定义')` —— 恒真，
+     *   而且**措辞和判据对不上**（说是"扫描到定义"，判的却是 bad 的数量）。
+     *   真正的断言就是下面这一条 bad.length === 0；
+     *   扫描有没有空转由再下面的 withVal >= 2 守着。
+     *   留着那条恒真的只会让人以为这里有两道防线，实际只有一道。
+     */
     eq(bad.length, 0,
       'panels 里每个 input.mm-input 都要有 value（漏了就变成只写不读）'
       + (bad.length ? ' → ' + bad.join(' | ') : ''));
@@ -14984,7 +15040,7 @@ group('快捷键说明 × 实际绑定：文档写的每一条都得真的接上
    ============================================================ */
 
 console.log('\n' + '─'.repeat(60));
-console.log(`通过 ${pass} 项，失败 ${fail} 项`);
+console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');
   for (const f of failures) console.log('  · ' + f);
