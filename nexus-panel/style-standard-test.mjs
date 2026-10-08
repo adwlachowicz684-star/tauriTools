@@ -62,8 +62,25 @@ function t(name, ok, detail = '') {
   if (!WANT_JSON) console.log(`  ${ok ? '✓' : '❌'} ${name}${!ok && detail ? ` → ${detail}` : ''}`);
 }
 const todo = [];
+/*
+ * 纯告知 —— 打印，但**不计入通过数**。
+ *
+ * 与断言的区别：断言必须有可能失败；告知只是把现状摆出来
+ * （"已登记 N 处""由别的机制兜底"）。混进 pass 里会让人以为
+ * 这里验过了什么，实际一条都没守。
+ */
+const notes = [];
+function note(name, detail = '') {
+  notes.push({ name, detail: String(detail) });
+  if (!WANT_JSON) console.log(`  ⓘ ${name}${detail ? ` → ${detail}` : ''}`);
+}
+/*
+ * ⓘ 早先这里写 `t(name, true)` —— 恒真，且计入 pass。
+ *   分支条件已经是 `!list.length`，等于"没有违规 → 这项通过"，
+ *   但写成 true 之后**看不出这条到底在判什么**。改成写出真判据。
+ */
 function soft(name, list) {
-  if (!list.length) { t(name, true); return; }
+  if (!list.length) { t(name, list.length === 0, '无命中'); return; }
   const d = list.slice(0, 3).join(' | ');
   if (STRICT) t(name, false, d);
   else { todo.push(`${name} → ${d}`); console.log(`  ⚠ 存量待办 ${name}（${list.length} 处）→ ${d}`); }
@@ -649,7 +666,12 @@ console.log('\n=== 14. 内联样式（影子层） ===');
         n > allow ? `当前 ${n}：${(byProp[prop] || []).slice(0, 4).map((x) => x.rel + '=' + x.v).join(', ')}` : '');
     }
   } else {
-    t(`内联写死已登记（${hits.length} 处）`, true, summary);
+    /*
+     * ⓘ 早先写 `t(…, true, summary)` —— 恒真且计入 pass，
+     *   "登记了几处"被当成一条通过项，实际这里一条断言都没守。
+     *   纯告知改用 note：打印出来，但不冒充通过。
+     */
+    note(`内联写死已登记（${hits.length} 处）`, summary);
   }
 
   /* 反向：内联里**不许出现颜色字面量** —— 那是最严重的不跟随主题 */
@@ -698,7 +720,7 @@ console.log('\n=== 14. 内联样式（影子层） ===');
     bare.length === 0, bare.slice(0, 4).join(', '));
 }
 
-console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
+console.log(`\n通过 ${pass} 项，失败 ${fail} 项，告知 ${notes.length} 条`);
   if (todo.length) {
     console.log(`\n存量待办 ${todo.length} 条（跑 --dir <界面> 时按新界面标准严格判定）：`);
     for (const x of todo) console.log(`  · ${x}`);
