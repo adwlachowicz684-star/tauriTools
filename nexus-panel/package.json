@@ -120,6 +120,7 @@
     "test:pg-chain": "node plugins/project-group/chain-placeholder-test.mjs",
     "test:pg-chain-default-fill": "node plugins/project-group/chain-default-fill-test.mjs",
     "test:pg-chain-panel-input": "node plugins/project-group/chain-panel-input-test.mjs",
+"test:pg-chain-send-scope": "node plugins/project-group/chain-send-scope-test.mjs",
     "test:pg-chain-tpl-norm": "node plugins/project-group/chain-template-normalize-test.mjs",
     "test:pg-click-debounce": "node plugins/project-group/click-debounce-test.mjs",
     "test:pg-clients": "node plugins/project-group/chain-clients-test.mjs",

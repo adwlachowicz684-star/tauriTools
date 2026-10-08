@@ -2679,6 +2679,16 @@ pub fn fpx_chain_send(
 ) -> Result<chain::ChainSendResult, String> {
     let dir = store::data_dir(&app, &state)?;
     let cfg = store::load_config(&dir);
+    /*
+     * `directory` 不是只被拼进文案 —— 它是**交给外部 AI 客户端的工作目录**
+     * （opencode 的 `directory=` 参数、vscode / 自定义客户端的打开目标）。
+     * 不收口的话，传一条任意路径就等于"让 AI 会话在任意目录下打开"，
+     * 那比把路径写进指令严重得多：指令只是文本，而这是把目录交给外部进程。
+     *
+     * 与 `fpx_open_path` 同一条理由：凡是"把路径交出去"的命令都要收口，
+     * 而这一条此前恰恰是唯一没收口的（见 `fpx_chain_preview` 的注释）。
+     */
+    ensure_path_in(&dir, &cfg, &directory)?;
     let tpl = prompt.filter(|p| !p.trim().is_empty())
         .or_else(|| cfg.chain_prompt.clone())
         .unwrap_or_else(|| chain::default_prompt().to_string());
@@ -2788,6 +2798,19 @@ pub fn fpx_chain_send_action(
 ) -> Result<chain::ChainSendResult, String> {
     let dir = store::data_dir(&app, &state)?;
     let mut cfg = store::load_config(&dir);
+    /*
+     * `path` 有两个去处，都要求收口：
+     *   ① 替换进指令文案（`fill_all` / `resolve_prompt`）；
+     *   ② **作为工作目录交给外部 AI 客户端**（`chain::send` 的第二个参数）。
+     *
+     * 此前这一条**没有**收口，而同一件事里几乎无害的那一侧
+     * （`fpx_chain_preview`，只是把文案显示给用户看）反而有 —— 收口装反了：
+     * 预览只把路径显示在自己窗口里，发送却把它交给了外部进程。
+     * 换句话说，最该拦的那条通道此前是敞开的。
+     *
+     * 校验放在最前面：越界的路径不该先被拿去拼指令、更不该走到 send。
+     */
+    ensure_path_in(&dir, &cfg, &path)?;
     let list = chain::ensure_actions(&mut cfg);
 
     let item = chain::find(&list, &action_id)
