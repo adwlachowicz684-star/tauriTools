@@ -15,7 +15,10 @@ let mod;
 try {
   mod = await import('./js/plugin-admit.js');
 } catch (e) {
-  console.error('❌ 无法加载 plugin-admit.js（缺 acorn / esbuild？）:', e.message);
+  /* 提示文案要跟着解析器走：解析器早已从 acorn 换成 typescript，
+     这里还写着 acorn / esbuild 的话，真缺依赖时会看到一条**指错方向**
+     的提示（同 scripts/scan-admit.mjs 里修过的那处）。 */
+  console.error('❌ 无法加载 plugin-admit.js（缺 typescript？）:', e.message);
   process.exit(1);
 }
 const { scanCode, scanFileText, admit, renderMember, isGlobalRoot } = mod;

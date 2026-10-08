@@ -56,9 +56,13 @@ if [ ! -f "$TSCONFIG_REAL" ]; then
   exit 1
 fi
 
-TSC="${AF_TSC:-$(command -v tsc || echo /data/workspace/tsenv2/node_modules/.bin/tsc)}"
-if ! command -v "$TSC" >/dev/null 2>&1 && [ ! -x "$TSC" ]; then
-  echo "✗ 找不到 tsc（用 AF_TSC 指定路径）"
+# ⚠️ 兜底值不能写死绝对路径：原先是 /data/workspace/tsenv2/... ，那是
+#    某台机器上的路径，换台机器就是一条永远不存在的路径 —— 而下面的
+#    command -v 检查会让它一路走到"找不到 tsc"，报错却指错方向。
+#    找不到就明确让人装，不要去碰一个假路径。
+TSC="${AF_TSC:-$(command -v tsc 2>/dev/null || true)}"
+if [ -z "$TSC" ]; then
+  echo "✗ 找不到 tsc：请先 npm install（typescript 在 devDependencies），或用 AF_TSC 指定路径"
   exit 1
 fi
 

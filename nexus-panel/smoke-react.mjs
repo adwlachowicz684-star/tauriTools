@@ -7,15 +7,19 @@
 import { JSDOM } from 'jsdom';
 import { createRequire as _cr } from 'node:module';
 const _req = _cr(import.meta.url);
-/* esbuild 不在 dependencies 里（vite 间接带着一份），所以解析顺序是：
-   ESBUILD_PATH 环境变量 → 项目本地 node_modules → 开发机上的预置副本。
-   写死单一路径会让这个脚本在 CI / 别人机器上直接挂掉。 */
+/* esbuild 已声明在 devDependencies（此前只靠 vite 间接带一份，换台机器
+   或换个包管理器就解析不到）。解析顺序：ESBUILD_PATH 环境变量 → 本地
+   node_modules。
+   ⚠️ 这里**不能再加写死的绝对路径兜底** —— 原先写着
+   /data/workspace/.deps/node_modules/esbuild，那是某台机器上的路径，
+   在别人机器上和 CI 上都没有意义。缺包就该明确报错让人 npm install，
+   而不是悄悄去碰一个不存在的目录。 */
 function loadEsbuild() {
   if (process.env.ESBUILD_PATH) return _req(process.env.ESBUILD_PATH);
   try {
     return _req('esbuild');
   } catch {
-    return _req('/data/workspace/.deps/node_modules/esbuild');
+    throw new Error('缺 esbuild：请先 npm install（它已声明在 devDependencies）');
   }
 }
 const esbuild = loadEsbuild();
