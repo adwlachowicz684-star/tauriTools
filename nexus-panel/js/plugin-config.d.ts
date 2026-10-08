@@ -21,4 +21,9 @@ export function getPluginConfig(id: string): PluginSandboxConfig;
 export function setPluginConfig(id: string, patch: Partial<PluginSandboxConfig>): PluginSandboxConfig;
 export function onPluginConfigChange(fn: (id: string, config: PluginSandboxConfig) => void): () => void;
 export function isIsolated(id: string): boolean;
-export function shouldAdaptTheme(id: string): boolean;
+/* ⚠️ 这里原先还声明着 shouldAdaptTheme(id): boolean。
+   它属于那套「外壳判定插件基调、不一致就罩滤镜反转」的机制，该机制已整套
+   删除，函数本体也一并删了（见 plugin-config.js 里的说明）。
+   声明留着就属于**最危险的那一向漂移**：TS 编译得过，运行时拿到 undefined，
+   调用即崩 —— 而且是「类型说有、实际没有」，代码提示里根本看不出来。
+   谁再补一个同名函数回来，这条声明要跟着恢复。 */
