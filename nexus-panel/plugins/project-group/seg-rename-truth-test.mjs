@@ -22,15 +22,19 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
 import { stripComments as strip } from '../../test-scan-utils.mjs';
+/*
+ * ⓘ 剥注释改用全仓共用实现（test-scan-utils.mjs）。
+ *   此前本文件内联一份，判据与共用版语义不同（行首起判注释、整行丢弃），
+ *   两份并存必然漂移；且"只减不增"的守卫会因新增副本报红。
+ *   这里别名成 stripComments，调用点无需改动。
+ */
+import { stripCommentsJs as stripComments } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
 const read = (p) => fs.readFileSync(path.join(HERE, p), 'utf8');
 
 /** 剥掉块注释与行注释，只留代码 —— 防"注释里的字样把断言喂饱" */
-function stripComments(s) {
-  return strip(s).replace(/(^|[^:])\/\/.*$/gm, '$1');
-}
 
 /** 从 from 处的 `{` 起，配平大括号切出整段（忽略字符串与注释里的括号） */
 function balanced(src, from) {

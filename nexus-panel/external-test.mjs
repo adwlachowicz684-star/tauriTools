@@ -115,10 +115,35 @@ t('移除后回到全局策略', ext.decideHost('good.example.com') === 'block')
 ext.setHostStatus('new.example.com', 'blocked');   // 重新登记一条
 const listed = ext.listHosts();
 t('清单持久化并可读', listed.some((x) => x.host === 'new.example.com'), `${listed.length} 条`);
-t('待决定的会被列出', ext.pendingHosts().length >= 0);
+/*
+ * ⓘ 原写 `ext.pendingHosts().length >= 0` —— 恒真，无论登记没登记都绿。
+ *   "待决定的会被列出"要守的是两件事：登记进来的算待决定；
+ *   一旦决策（信任/禁止）就**不再**算待决定 —— 后者才是这条存在的意义
+ *   （决策完还留在待决定清单里，用户会以为自己没设过）。
+ */
+ext.recordHosts([{ host: 'wait.example.com', kind: 'unknown' }], 'test-plugin');
+const pend1 = ext.pendingHosts();
+t('待决定的会被列出', pend1.some((h) => h.host === 'wait.example.com'),
+  pend1.map((h) => h.host).join(',') || '（空）');
+t('已决策的不算待决定', !pend1.some((h) => h.host === 'new.example.com'),
+  pend1.map((h) => h.host).join(',') || '（空）');
+ext.setHostStatus('wait.example.com', 'trusted');
+t('决策后不再算待决定', !ext.pendingHosts().some((h) => h.host === 'wait.example.com'),
+  ext.pendingHosts().map((h) => h.host).join(',') || '（空）');
 
+/*
+ * ⓘ 原写 `!csp || csp.includes('new.example.com')` —— 双重假绿：
+ *   ① 前缀 `!csp ||` 让"没有已信任域名 → suggestCsp 返回空串"时**直接判过**，
+ *      而历史上走到这里恰好一个已信任域名都没有，所以它从来没验过任何东西；
+ *   ② 'new.example.com' 在上面被设成 **blocked**，suggestCsp 只列 trusted，
+ *      它永远不可能出现在 CSP 里 —— 一旦真有已信任域名、csp 变非空，
+ *      这条立刻红，而红的原因跟"域名有没有被信任"毫无关系。
+ *   改成分三条：先钉"非空"（防空转），再钉"信任的在内、禁止的不在内"。
+ */
 const csp = ext.suggestCsp();
-t('建议 CSP 含已信任域名', !csp || csp.includes('new.example.com'), csp ? '已生成' : '（无信任项）');
+t('有已信任域名时 CSP 非空（否则下面两条会空转）', !!csp, csp ? '已生成' : '（空 —— 说明没收集到已信任域名）');
+t('建议 CSP 含已信任域名', !!csp && csp.includes('wait.example.com'), csp ? csp.slice(0, 60) + '…' : '（空）');
+t('建议 CSP 不含被禁止的域名', !!csp && !csp.includes('new.example.com'), csp ? '已排除' : '（空）');
 
 /* ---------- D. 沙箱开关 ---------- */
 /*

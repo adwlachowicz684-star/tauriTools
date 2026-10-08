@@ -453,6 +453,53 @@ t('③e 判据必须真能命中逃生舱样本（判据被清空 = 防线被悄
   }
   t('断言条件里没有逃生舱（空则直接判过 = 那条常年没在验）',
     escHits.length === 0, escHits.join(' | ') || '干净');
+
+  /* ---- ③f 占位断言：条件写成字面量 true = 那条永远不可能失败 ---- */
+  /*
+   * 起因（2026-10-08 全仓扫描，mindmap-test 三处）：
+   *   ok(true, '（跳过）用户分组数量不符，跳过最后一组删除测试')
+   *   ok(true, 'mouseleave 未抛错')
+   *   ok(true, '（已知）ref.t 不随包带走，导入后重新生成首帧')
+   * 三条都恒真，而且**计入通过数** —— 于是"这一条其实没测"被混进
+   * "通过 3260 项"里，报告上看不出有任何东西被跳过/没验过。
+   * 其中第二条还掩盖了"崩 ≠ 红"：真抛异常时脚本崩在半路，
+   * 后面几千条断言一条都不跑，而这三条照样绿。
+   *
+   * 修法不是删掉它们（跳过确实要登记），而是**单列 skip 计数**并写进汇总行：
+   * 跳过必须看得见，不能冒充通过。
+   *
+   * 判据：只认布尔断言函数（t / ok / assert）里出现**裸 true / !0** 这个参数。
+   * 不认字符串字面量 —— ok('说明') 在"名字在前"的签名下是合法写法，
+   * 无法与"忘了写条件"区分，误报的下场是守卫被删（连 ③d 一起），宁松一档。
+   */
+  const bareTrue = (inner) => splitTop(inner)
+    .some((a) => /^(true|!0)$/.test(a.trim()));
+  /* 样本拼接构造：整条字面量写进源码会被本节自己扫到，那会让它恒红 */
+  const TRUE_SAMPLE = 'tr' + 'ue, x)';
+  t('③f 判据必须真能命中占位样本（判据被清空 = 防线被悄悄撤掉）',
+    bareTrue(TRUE_SAMPLE) && !bareTrue('a === b, x'),
+    bareTrue(TRUE_SAMPLE) ? '样本命中' : '判据没命中样本 —— 防线已被撤');
+  const trueHits = [];
+  for (const f of real) {
+    if (!f.endsWith('.mjs')) continue;
+    let raw;
+    try { raw = readFileSync(f, 'utf8'); } catch { continue; }
+    const src = stripCommentsJs(raw);
+    for (const fn of ['t', 'ok', 'assert']) {
+      const re = new RegExp('\\b' + fn + '\\s*\\(', 'g');
+      let m;
+      while ((m = re.exec(src))) {
+        const inner = parenOf(src, m.index + m[0].length - 1);
+        if (inner === null) continue;
+        if (bareTrue(inner)) {
+          const line = src.slice(0, m.index).split('\n').length;
+          trueHits.push(`${f.replace(HERE, '')}:${line} → ${inner.trim().slice(0, 70)}`);
+        }
+      }
+    }
+  }
+  t('断言里没有占位式的恒真 true（跳过/已知取舍要单列，不能冒充通过）',
+    trueHits.length === 0, trueHits.join(' | ') || '干净');
 }
 
 /* ---- ④ 元守卫：本文件自己也得被引用 ---- */

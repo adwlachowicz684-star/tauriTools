@@ -25,6 +25,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { stripComments as strip } from '../../test-scan-utils.mjs';
+/*
+ * ⓘ 剥注释改用全仓共用实现（test-scan-utils.mjs）。
+ *   此前本文件内联一份，判据与共用版语义不同（行首起判注释、整行丢弃），
+ *   两份并存必然漂移；且"只减不增"的守卫会因新增副本报红。
+ *   这里别名成 stripComments，调用点无需改动。
+ */
+import { stripCommentsJs as stripComments } from '../../test-scan-utils.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const read = (rel) => readFileSync(join(HERE, rel), 'utf8');
@@ -36,9 +43,6 @@ function ok(cond, name) {
 }
 
 /** 剥注释：断言只能看代码，否则注释里的字样会把断言喂饱（已踩过多次） */
-function stripComments(s) {
-  return strip(s).replace(/\/\/[^\n]*/g, '');
-}
 
 /**
  * 从 `anchor` 之后切出一段配平的 `{ ... }`。
