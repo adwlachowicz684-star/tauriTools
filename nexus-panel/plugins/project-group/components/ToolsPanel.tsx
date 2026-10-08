@@ -377,8 +377,8 @@ export function ChainDialog({
        * 覆盖文本交给后端 `fill_all`（与发送侧同一套判据），
        * 两边各写一份迟早漂移，漂移的表现就是确认框与实发文案对不上。
        */
-      const text = await api.chainPreview(actionId, kind, target, override || null);
-      setConfirm({ text, skip: false });
+      const r = await api.chainPreview(actionId, kind, target, override || null);
+      setConfirm({ text: r.text, skip: false });
     } catch (e) {
       // 预览失败不该拦住发送：退回原来的"直接发"，并把原因记进日志
       onLog(`指令预览失败，直接发送：${errText(e)}`, true);

@@ -1,7 +1,7 @@
 import type { PluginContext } from '../../js/plugin-sdk.js';
 import type {
   BackupAutoStatus, BackupResult, BackupTargets, Bootstrap, CaptureResult, CardKind, ChainClient,
-  ChainAction, ChainSendResult, ContentItem, CustomChainClient, DirEntryLite,
+  ChainAction, ChainSendResult, ChainPreview, ContentItem, CustomChainClient, DirEntryLite,
   ClearResult, EditorCandidate, FpxConfig, McpToolRow, MoveAcrossResult,
   ContentRenameResult, SegmentRenameResult, RenameResult, Snapshot, WatchEvent,
   RenameIconResult, LockStateLive,
@@ -187,9 +187,11 @@ export function makeApi(ctx: PluginContext) {
      * `prompt` 是发送面板里那次临时覆盖，**必须一并传过去**：
      * 发送侧覆盖非空走 fill_all、否则走模板，预览若不知道覆盖，
      * 就只能显示没替换占位符的原文 —— 于是"看到的"与"发出的"又是两份。
+     *
+     * `client` 同样由后端带回（与发送侧同一个解析），前端不再自己推算。
      */
     chainPreview: (actionId: string, kind: CardKind, path: string, prompt?: string | null) =>
-      call<string>('fpx_chain_preview', {
+      call<ChainPreview>('fpx_chain_preview', {
         action_id: actionId, kind, path, prompt: prompt ?? null,
       }),
     chainSendAction: (

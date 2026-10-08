@@ -245,6 +245,34 @@ pub struct ChainSendResult {
     pub message: String,
 }
 
+/// 预览结果（`fpx_chain_preview` 的返回）。
+///
+/// ## 为什么要把 `client` 一并带回
+///
+/// 确认弹窗上写着「动作「X」→ 客户端「Y」」，而 Y 此前由前端自己算：
+/// `config.chainClient || 'opencode'` —— **少了「动作专属客户端」那一层**。
+/// 后端 `resolve_client` 的三层是「动作专属 → 全局默认 → opencode」，
+/// 于是给某个动作配了自己的客户端时：
+///
+/// | | 客户端 |
+/// |---|---|
+/// | 弹窗显示（旧） | 全局默认 |
+/// | 实际发出 | **动作专属** |
+///
+/// 弹窗说的是一个、发出去的是另一个 —— 而 #43 要的就是
+/// 「看到的与发出的是同一份」，客户端同样是这份保证的一部分：
+/// 不同客户端是**不同的外部进程**，可能还是不同的账号与费用。
+///
+/// 所以客户端名也必须由后端给（与发送侧同一个 `resolve_client`），
+/// 前端不再自己推算。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainPreview {
+    pub text: String,
+    /// 实际会使用的客户端 id（与 `fpx_chain_send_action` 同一套解析）
+    pub client: String,
+}
+
 fn find_command(name: &str) -> Option<PathBuf> {
     let dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|v| std::env::split_paths(&v).collect()).unwrap_or_default();
     let exts: Vec<String> = if cfg!(windows) {

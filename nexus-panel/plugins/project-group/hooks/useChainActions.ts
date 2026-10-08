@@ -160,8 +160,17 @@ export function useChainActions({
   const requestSendAction = useCallback(async (actionId: string, kind: CardKind, path: string) => {
     if (!needConfirm()) { void sendAction(actionId, kind, path); return; }
     try {
-      const text = await s.api.chainPreview(actionId, kind, path);
-      setPendingSend({ actionId, kind, path, text, skip: false });
+      const r = await s.api.chainPreview(actionId, kind, path);
+      /*
+       * `r.client` 是后端按「动作专属 → 全局默认 → opencode」解析出来的
+       * **实际会用的**客户端。
+       *
+       * 不能在这里自己算（此前弹窗里写的就是 `config.chainClient || 'opencode'`）：
+       * 少算「动作专属」那层的话，给动作配了自己的客户端时，
+       * 弹窗显示全局默认、发出去的却是动作专属的另一个进程 ——
+       * 用户会以为软件串了。
+       */
+      setPendingSend({ actionId, kind, path, text: r.text, client: r.client, skip: false });
     } catch (e) {
       // 预览失败不拦发送：这两个入口没有别的编辑途径，卡住就没法用了
       s.pushLog(`指令预览失败，直接发送：${errText(e)}`, true);

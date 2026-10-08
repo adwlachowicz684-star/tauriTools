@@ -2866,12 +2866,21 @@ pub fn fpx_chain_preview(
     kind: String,
     path: String,
     prompt: Option<String>,
-) -> Result<String, String> {
+) -> Result<chain::ChainPreview, String> {
     let dir = store::data_dir(&app, &state)?;
     let mut cfg = store::load_config(&dir);
     let list = chain::ensure_actions(&mut cfg);
     let item = chain::find(&list, &action_id)
         .ok_or_else(|| format!("找不到连锁动作：{action_id}"))?;
+    /*
+     * 客户端名**由后端给**，与 `fpx_chain_send_action` 同一个 `resolve_client`。
+     *
+     * 前端此前自己算是 `config.chainClient || 'opencode'`，少了「动作专属」
+     * 那层 —— 于是给动作配了自己的客户端时，弹窗写着全局默认、
+     * 发出去的却是动作专属的。客户端不同意味着**拉起的是另一个外部进程**，
+     * 用户会以为软件串了。
+     */
+    let client = chain::resolve_client(&cfg, item);
     // path 只用于占位符替换，不落到磁盘 —— 但仍要在允许范围内，
     // 否则可以靠"预览"把任意路径的内容读进指令里（略过路径收口）。
     guard::must_be_under(&path, &content_roots(&dir, &cfg))?;
@@ -2883,7 +2892,7 @@ pub fn fpx_chain_preview(
         Some(p) if !p.is_empty() => chain::fill_all(p, &path, &dir_str),
         _ => chain::resolve_prompt(item, &kind, &path, &dir_str),
     };
-    Ok(text)
+    Ok(chain::ChainPreview { text, client })
 }
 
 /* ---------------------------- 截图 ---------------------------- */

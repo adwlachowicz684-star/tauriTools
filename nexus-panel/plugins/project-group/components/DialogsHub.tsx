@@ -95,6 +95,14 @@ export interface PendingSend {
   kind: CardKind;
   path: string;
   text: string;
+  /**
+   * 实际会使用的客户端 id，**由后端带回**（`fpx_chain_preview`）。
+   *
+   * 不能在这里按 `config.chainClient || 'opencode'` 推算 —— 那会漏掉
+   * 「动作专属客户端」这一层，弹窗显示的与真发出去的就成了两个不同的
+   * 外部进程。
+   */
+  client: string;
   skip: boolean;
 }
 
@@ -442,7 +450,7 @@ export function Dialogs(props: DialogsProps) {
       {pendingSend && (
         <ChainConfirmDialog
           actionName={chainActions.find((a) => a.id === pendingSend.actionId)?.name ?? pendingSend.actionId}
-          clientName={boot?.config.chainClient || 'opencode'}
+          clientName={pendingSend.client}
           text={pendingSend.text}
           busy={false}
           onCancel={() => setPendingSend(null)}

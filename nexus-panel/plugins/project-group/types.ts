@@ -310,6 +310,20 @@ export interface ChainSendResult {
   message: string;
 }
 
+/**
+ * 预览结果（#43 确认弹窗用）。
+ *
+ * `client` 是**实际会使用的客户端**，由后端按「动作专属 → 全局默认 →
+ * opencode」解析后一并带回。前端不能自己推算：此前就是自己算的
+ * （`config.chainClient || 'opencode'`），少了「动作专属」那层，
+ * 于是弹窗写着全局默认、发出去的却是动作专属的另一个客户端 ——
+ * 不同客户端意味着拉起的是**另一个外部进程**。
+ */
+export interface ChainPreview {
+  text: string;
+  client: string;
+}
+
 /** 文件夹改名 / 搬家的结果 */
 export interface RenameResult {
   snapshot: Snapshot;
