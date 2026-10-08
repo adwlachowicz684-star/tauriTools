@@ -377,3 +377,43 @@ test('自定义预设也要跳过 legacy 基础类型（否则老节点绕回侧
       '基于老类型存的预设会绕过跳过回到侧栏，而 legacy 的意思正是"已并入别的节点，不再推荐拖"。',
   );
 });
+
+/* ================================================================ */
+/* 拖出来时必须铺一遍基础类型的默认值                                */
+/* ================================================================ */
+
+/*
+ * 预设存的是**剥离过运行时状态的配置** —— 只有用户当时改过的键。
+ * 基础类型后来新增的字段一律不在里面。
+ *
+ * 若 init 只用 dataOf(cp)（= 预设 data 的深拷贝），拖出来的节点 data 缺字段：
+ *   · update 缺 targets —— 面板靠 targetsOf() 合成一张卡，看着有卡但没有
+ *     下标可写，一改就掉
+ *   · 缺 timeoutSec / outputFormat / userAgent / firstRunAsUpdate
+ *   · 缺 status（undefined 而不是 'idle'）、缺 kind（isUpdate 认不出）
+ *
+ * 与 duplicate.ts 复制节点同一条契约：「def.create 铺默认 → 叠配置」。
+ *
+ * 为什么是源码级检查：registry.tsx 含 JSX，测试链路只做类型剥离、不转 JSX，
+ * Node 加载不了，没法真跑 allPresets().find(...).init()。
+ */
+test('自定义预设的 init 必须走 def.create 铺默认值（只用 dataOf 会缺字段）', () => {
+  const SRC = process.env.AF_SRC;
+  assert.ok(SRC, 'AF_SRC 未设置：run-tests.sh 应导出仓库根路径');
+  const src = readFileSync(join(SRC, 'nodes/registry.tsx'), 'utf8');
+  const at = src.indexOf('export function allPresets');
+  assert.ok(at > 0, '没找到 allPresets');
+  const body = src.slice(at, src.indexOf('export function presetsByCategory', at));
+
+  const m = body.match(/init:\s*\([^)]*\)\s*=>\s*([^\n]+)/g);
+  assert.ok(m && m.length > 0, 'allPresets 里没找到 init');
+  const customInit = m.filter((s) => s.includes('dataOf'));
+  assert.equal(customInit.length, 1, '应恰好有一处自定义预设的 init 用到 dataOf');
+  assert.match(
+    customInit[0],
+    /create\(/,
+    '自定义预设的 init 只用了 dataOf —— 预设 data 是剥过运行时状态的配置，' +
+      '基础类型后来新增的字段都不在里面（update 会缺 targets，面板看着有卡但没有下标可写）。' +
+      '必须走 def.create(id, dataOf(cp)) 铺一遍默认值。',
+  );
+});

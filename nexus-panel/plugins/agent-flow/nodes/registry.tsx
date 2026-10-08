@@ -205,8 +205,33 @@ export function allPresets(): NodePreset[] {
       // 预设自带的色优先于类型覆盖，所以"用户定的"只看它自己有没有设
       colorOwn: !!cp.color,
       hint: `自定义 · 基于${def.meta.label}`,
-      // 每次返回新对象：多个实例若共享同一份，改一个会串到另一个上
-      init: () => dataOf(cp),
+      /*
+       * 必须走 def.create 铺一遍默认值，不能只用 dataOf(cp)。
+       *
+       * 预设存的是**剥离过运行时状态的配置**（sanitizeForPreset），
+       * 它只有用户当时改过的那些键 —— 基础类型后来新增的字段一律不在里面。
+       * 只用 dataOf 的话，拖出来的节点 data 缺字段：
+       *
+       *   · update 节点缺 targets —— 面板靠 targetsOf() 合成一张卡，
+       *     **看着有卡但没有下标可写**，一改就掉（makeUpdateNode 里为此
+       *     专门落成数组，自定义预设这条路以前绕过了它）
+       *   · 缺 timeoutSec / outputFormat / userAgent / firstRunAsUpdate
+       *     —— 执行器读到 undefined
+       *   · 缺 status —— 卡片状态是 undefined 而不是 'idle'
+       *   · 缺 kind —— 凡是按 data.kind 判的（isUpdate 等）都认不出它
+       *
+       * 实测：基于 update 存的预设，只用 dataOf 拖出来只有 2 个键
+       * （label / source），走 create 是 19 个键且 targets[0].kind
+       * 正确跟随预设自己的 source。
+       *
+       * 与 engine/duplicate.ts 复制节点同一条契约：
+       * 「def.create 铺默认 → 叠剥离后的配置」。把配置作为 partial 传进去
+       * 而不是事后展开，是因为 create 内部有联动（update 的 source →
+       * targets[0].kind），事后展开会把默认 targets 的 kind 留在错误的值上。
+       *
+       * 每次调用都造新对象（create 不缓存），多个实例不会共享同一份。
+       */
+      init: () => def.create('', dataOf(cp) as Record<string, unknown>),
     });
   }
 
