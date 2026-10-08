@@ -15,9 +15,18 @@ const tm = await import('./js/theme-manager.js');
 const { PRESET_THEMES, THEME_VARS, ACCENT_SWATCHES } = await import('./js/themes.js');
 
 let pass = 0, fail = 0;
+let skipped = 0;
 const t = (name, cond, extra = '') => {
   cond ? pass++ : fail++;
   console.log(`${cond ? '✅' : '❌'} ${name}${extra ? ' → ' + extra : ''}`);
+};
+/*
+ * 显式「跳过」—— 前置样本没找到时不要写成 `t(name, true, '样本不足，跳过')`：
+ * 那样恒真，而且**计入 pass**，"这条没验"被混进通过数里，报告上看不出来。
+ */
+const skip = (name, why) => {
+  skipped += 1;
+  console.log(`⊘ ${name}（跳过：${why}）`);
 };
 
 const cssVar = (k) => document.documentElement.style.getPropertyValue(k).trim();
@@ -243,7 +252,7 @@ t('THEME_VARS 均有来源（内联或 CSS 兜底）',
     t('切回未定义该变量的主题时清掉残留内联值',
       flatVal !== '' && after === '', `扁平 ${flatVal} → 切回后 ${after || '(已清除)'}`);
   } else {
-    t('切回未定义该变量的主题时清掉残留内联值', true, '样本不足，跳过');
+    skip('切回未定义该变量的主题时清掉残留内联值', '样本不足（需要一套定义 --r-xl、一套不定义的主题）');
   }
 }
 
@@ -381,5 +390,5 @@ const glassBad = glass.filter((x) => {
 t('玻璃主题浮层底板足够实（alpha ≥ .8）', glassBad.length === 0,
   glassBad.map((x) => x.id).join(', ') || `${glass.length} 套均达标`);
 
-console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
+console.log(`\n通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 process.exit(fail ? 1 : 0);

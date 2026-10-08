@@ -46,6 +46,16 @@ const t = (name, cond, hint = '') => {
     console.log(`❌ ${name}${hint ? `  —— ${hint}` : ''}`);
   }
 };
+/*
+ * 显式「跳过」—— 判据不适用于这一类插件时，不要写 t(…, true)：
+ *   恒真且计入 pass，于是"这条其实没验"被混进通过数里。
+ *   跳过必须看得见：单列计数并写进汇总行。
+ */
+let skipped = 0;
+const skip = (name, why) => {
+  skipped += 1;
+  console.log(`⊘ ${name}（跳过：${why}）`);
+};
 
 /** 从 registry.js 源码解析插件清单（不 import：它是浏览器 ESM） */
 function parseRegistry() {
@@ -78,8 +88,16 @@ console.log('=== 0. 先确认产物是新的（否则后面全是误判）===');
  * 判断依据：dist/index.html 的 mtime 必须**不早于**源码里最晚修改的
  * 插件文件。比"距今多少天"可靠 —— 后者在几天没改动时会误报。
  */
-if (!fs.existsSync(DIST)) {
-  console.log('❌ dist/ 不存在 —— 请先 npm run build');
+/*
+ * 必须查 index.html 本身，不能只查 dist/ 目录在不在：
+ *   目录存在而 index.html 缺失（构建中途失败、或产物被清了一半）时，
+ *   下面那句 statSync 直接抛 ENOENT —— **崩 ≠ 红**：进程崩在半路，
+ *   既没有 ❌ 也没有汇总行，体检会把它当成"环境异常"而不是"产物不完整"，
+ *   而真正的原因（少了一个文件）在报错里一个字都看不到。
+ *   所以这里显式判定并打印结论，让产物半残这件事**看得见**。
+ */
+if (!fs.existsSync(DIST) || !fs.existsSync(path.join(DIST, 'index.html'))) {
+  console.log(`❌ ${path.relative(HERE, path.join(DIST, 'index.html'))} 不存在 —— dist 不完整，请先 npm run build`);
   process.exit(1);
 }
 const distMtime = fs.statSync(path.join(DIST, 'index.html')).mtimeMs;
@@ -125,7 +143,7 @@ for (const p of plugins) {
    * 所以 module 类型不能用"文件存在"判断 —— 那是错的判据。
    */
   if (p.viteType === 'module') {
-    t(`${p.id}（同页 module）入口不要求以原名存在（glob 产出 chunk）`, true);
+    skip(`${p.id}（同页 module）入口存在性`, 'glob 产出 chunk，不会以原名出现在 dist');
     continue;
   }
   t(`${p.id} 的 ${rel} 存在于 dist`, ok, ok ? '' : 'Vite 模式 iframe 插件入口应是 rollup input');
@@ -193,7 +211,7 @@ if (fs.existsSync(path.join(DIST, 'plugins'))) scanTs(path.join(DIST, 'plugins')
 t('dist/plugins 下没有原样拷贝的 .ts/.tsx 源文件', strayTsx.length === 0,
   strayTsx.length ? `发现 ${strayTsx.length} 个: ${strayTsx.slice(0, 3).join(', ')}` : '');
 
-console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
+console.log(`\n通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (warns.length) {
   console.log('\n⚠️  注意：');
   for (const w of warns) console.log(`   ${w}`);

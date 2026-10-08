@@ -40,6 +40,18 @@ const t = (name, cond, hint = '') => {
   if (cond) { pass += 1; console.log(`✅ ${name}`); }
   else { fail += 1; console.log(`❌ ${name}${hint ? `  —— ${hint}` : ''}`); }
 };
+/*
+ * 纯告知 —— 打印，但**不计入通过数**。
+ *
+ * ⓘ "owned 管不了没走通道的定时器"是一条**能力边界说明**，不是断言：
+ *   它永远为真，写成 t(…, true) 就会冒充一条通过项，
+ *   让人以为运行时真的拦住了什么（实际靠的是 CI 期静态准入 S4）。
+ */
+const notes = [];
+const note = (name, detail = '') => {
+  notes.push(name);
+  console.log(`ⓘ ${name}${detail ? `  —— ${detail}` : ''}`);
+};
 
 console.log('=== 1. 实证：差分抓不到定时器泄漏（本轮核心发现）===');
 {
@@ -153,10 +165,11 @@ console.log('\n=== 5. 局限声明（不夸大）===');
    * 没走通道的定时器（插件直接 setInterval）本测试管不了，
    * 只能靠静态准入（S4）在 CI 期拦。运行时不可信插件仍靠 iframe。
    */
-  t('没走通道的定时器 owned 管不了 —— 由静态准入兜底（已声明）', true);
+  note('没走通道的定时器 owned 管不了 —— 由静态准入（S4）在 CI 期拦',
+    '运行时不可信插件仍靠 iframe');
 }
 
-console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
+console.log(`\n通过 ${pass} 项，失败 ${fail} 项，告知 ${notes.length} 条`);
 if (fail) {
   console.log(`
 若「差分抓不到定时器」这条红了，说明差分能力增强了（好事），
