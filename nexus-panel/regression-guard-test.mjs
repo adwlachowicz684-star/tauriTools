@@ -280,6 +280,50 @@ console.log('\n=== 1.7b agent-flow 汇合节点不能有两份实现 ===');
 }
 
 /* ============================================================
+ * 1.9 源码里不许写死开发机绝对路径
+ * ------------------------------------------------------------
+ * 已经清掉的三处（都是 /data/workspace/... 这类本机路径）：
+ *   · sweep-tests.mjs  —— 明细输出目录，在别人机器上要么没权限建
+ *                        （在 / 下 mkdir 直接 EACCES），要么写到找不到的地方
+ *   · smoke-react.mjs  —— esbuild 的兜底加载路径
+ *   · check-types.sh   —— tsc 的兜底路径，且会让报错指向一个陌生目录
+ *
+ * 共同症状：脚本**在自己机器上一直能用**，换台机器（或 CI）就挂，
+ * 而报错指向的路径没人认识，看的人只会以为"脚本坏了"。
+ * 判据只扫**代码**，注释里引用旧路径做说明是刻意保留的，不算数。
+ * ============================================================ */
+console.log('\n=== 1.9 不许写死开发机绝对路径 ===');
+{
+  /* 只盯"这台开发机"的路径 —— /data/workspace 是沙盒专用前缀，
+     换台机器必然不存在。
+     home / Users 那条要求用户名 ≥3 字符：测试里 'u'、'me' 这种
+     单字母占位符是刻意的假数据，当成真路径会误伤一堆 fixture。 */
+  const BAD = [/\/data\/workspace/, /\/home\/[A-Za-z]{3,}\//, /\/Users\/[A-Za-z]{3,}\//, /[A-Za-z]:\\(?:Users|workspace)\\/i];
+  const SKIPEXT = /\.(md|txt|json|lock|svg|png|jpg|ico)$/i;
+  const hits = [];
+  for (const abs of walk(HERE)) {
+    const rel = relativeTo(abs);
+    if (SKIPEXT.test(rel)) continue;
+    if (!/\.(mjs|js|cjs|ts|tsx|sh|py)$/.test(rel)) continue;
+    /* 跳过构建产物与本文件：产物是生成出来的（且不入库），
+       本文件里那段正则字面量必然命中自己。 */
+    if (rel.startsWith('.smoke-react') || rel === 'regression-guard-test.mjs') continue;
+    let txt;
+    try { txt = readFileSync(abs, 'utf8'); } catch { continue; }
+    /* 只扫代码：剥注释。shell 用的是 # 注释，stripJs 认的是 // 和块注释，
+       .sh 必须先单独剥掉 # 行，否则整段说明都被当成代码。 */
+    let code = stripJs(txt);
+    if (rel.endsWith('.sh')) code = code.replace(/^\s*#[^\n]*/gm, '').replace(/[^\\s]#[^\n]*/g, '');
+    for (const re of BAD) if (re.test(code)) { hits.push(rel); break; }
+  }
+  t('源码里没有写死的开发机绝对路径', hits.length === 0,
+    hits.length ? `${hits.length} 个文件：${hits.slice(0, 5).join('、')}` : '');
+  t('1.9 判据本身有效（注释里的路径不算）',
+    BAD.some((re) => re.test('/data/workspace/x'))
+    && !BAD.some((re) => re.test(stripJs('/* 旧路径 /data/workspace */ const a=1;'))));
+}
+
+/* ============================================================
  * 1.8 Rust 命令必须进了 generate_handler
  * ------------------------------------------------------------
  * 写了 `#[tauri::command]` 却没登记进 invoke_handler 的命令，

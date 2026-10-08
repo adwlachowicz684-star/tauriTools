@@ -135,9 +135,14 @@ for (const r of bad) {
 for (const s of selfFails) console.log(`  ❌ 自检：${s}`);
 
 // 明细落到分片各自的文件：一次跑不完，跑到一半被掐断时前面的结果不能丢。
-const outFile = `/data/workspace/.tool_output/sweep${sliceTag.replace(/\W/g, '') || '_all'}.txt`;
+// ⚠️ 输出目录必须**落在项目内**（ROOT 下），不能写死绝对路径。
+//    这里原先写的是 /data/workspace/.tool_output —— 那是某台开发机上的
+//    路径，换台机器要么没权限建（在 / 下 mkdir 直接 EACCES），要么把结果
+//    写到一个谁都找不到的地方，表现为"跑了但看不到明细"。
 const fs = await import('node:fs');
-fs.mkdirSync('/data/workspace/.tool_output', { recursive: true });
+const outDir = join(ROOT, '.tool_output');
+const outFile = join(outDir, `sweep${sliceTag.replace(/\W/g, '') || '_all'}.txt`);
+fs.mkdirSync(outDir, { recursive: true });
 fs.writeFileSync(outFile,
   rows.map(r => `${r.status}\t${r.pass}\t${r.fail}\t${r.name}\t${r.cmd}`).join('\n'));
 console.log(`\n明细已写入 ${outFile}`);
