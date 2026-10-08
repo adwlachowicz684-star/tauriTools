@@ -22,6 +22,16 @@ import { EMPTY_NODE_TEXT, inlineText, flattenBreaks } from './formats.js';
 
 const SHEET_MARK = /^##\s*画布[:：]\s*(.*)$/;
 
+/**
+ * Markdown 能表达的层级上限（ATX 标题最多 6 个 `#`）。
+ *
+ * CommonMark 规定 7 个及以上 `#` **不是标题**（`####### x` 是普通段落），
+ * 所以更深的层**没有合法写法** —— 只能拍平到第 6 级。
+ * 常量化是为了让「上限」只有一个出处：写侧截断、读侧正则、越界统计
+ * 三处各自写死 6 的话，改一处不改另一处就会出现「写得出读不进」的行。
+ */
+export const MARKDOWN_MAX_LEVEL = 6;
+
 /* ------------------------------ 构造 ------------------------------ */
 
 export function newSheetId() {
@@ -173,7 +183,11 @@ export function sheetToMarkdown(content) {
      * 占位与 OPML / FreeMind 那条路是同一个常量（formats.EMPTY_NODE_TEXT）。
      */
     if (!text) text = EMPTY_NODE_TEXT;
-    const sharp = '#'.repeat(Math.min(depth + 1, 6));
+    /*
+     * 第 7 级及更深一律截断成 6 个 `#` —— 于是它们**互相变成兄弟**。
+     * 深度损失由 deepNodeCount() 统计、导出侧据此提示（见那里的注释）。
+     */
+    const sharp = '#'.repeat(Math.min(depth + 1, MARKDOWN_MAX_LEVEL));
     let line = sharp + ' ' + text;
     /*
      * 二级节点的文字若以「画布：」开头，拼出来的行正好是**分块标记**。
@@ -209,6 +223,37 @@ export function sheetToMarkdown(content) {
     lines.push(line);
     for (const c of n.children || []) walk(c, depth + 1);
   }
+}
+
+/**
+ * 统计「Markdown 装不下」的节点数：层级深到连 6 个 `#` 都表示不了的那部分。
+ *
+ * 深度按 0 起算（根 = 0），层级 = 深度 + 1。第 7 级（深度 6）及更深
+ * 全部被截断成 6 个 `#`，于是它们**互相变成兄弟** ——
+ * 一棵 10 层的链导出再导回，第 6 级以下会摊成同一层的平铺列表。
+ *
+ * 用它而不是等导入时才发现：导入是**整体替换且不可撤销**，等用户把
+ * 拍平后的文件导回来，原始层级已经没了。导出那一句提示是唯一的机会。
+ *
+ * @param {Array} sheets 画布数组（content 为 kityminder JSON 文本或对象）
+ * @param {number} [max] 层级上限，默认 MARKDOWN_MAX_LEVEL
+ * @returns {number} 会被拍平的节点数（0 = 没有损失）
+ */
+export function deepNodeCount(sheets, max = MARKDOWN_MAX_LEVEL) {
+  let n = 0;
+  for (const s of sheets || []) {
+    let root;
+    try {
+      root = (typeof s?.content === 'string' ? JSON.parse(s.content) : s?.content)?.root;
+    } catch { continue; }        // 坏内容不算 —— 它本来也导不出东西
+    if (!root) continue;
+    (function walk(node, depth) {
+      if (!node) return;
+      if (depth >= max) n++;
+      for (const c of node.children || []) walk(c, depth + 1);
+    })(root, 0);
+  }
+  return n;
 }
 
 /**
@@ -343,6 +388,23 @@ export function markdownRowCount(md) {
     // 与 markdownToSheet 逐字同一套：先摊平换行终止符，再判（BUG 101）。
     // 不摊平就会重演 BUG 90 —— 这里说"有大纲"、那边解析出空画布。
     const raw = flattenBreaks(rawLine);
+    /*
+     * ★ 分块标记行不是节点行（BUG 102）。
+     *
+     * `## 画布：项目A` 自己就命中 `/^ {0,3}#{1,6}(\s+\S|\s+$)/` —— 于是
+     * 「只有标记、块内没有一行标题」的文件也会数出 ≥1 条，闸门放行导入：
+     *
+     *   `## 画布：项目A\n- 一些笔记\n`   rowCount = 1 → 放行
+     *   → markdownToWorkbook 给出 1 张画布，块内无标题行 → emptyContent()
+     *   → 一张空的「中心主题」顶掉用户全部画布（导入是整体替换、不可撤销）
+     *
+     * 这正是 BUG 36 / 90 点名要防的事故，只是这次是从分块标记这条缝漏进来的：
+     * 标记行在 markdownToWorkbook 里是**分隔符**，不是内容，数它等于把
+     * "有 N 张画布"误当成"有 N 个节点"。
+     *
+     * 块里真有标题时不受影响：那些行照常数，闸门照样放行。
+     */
+    if (SHEET_MARK.test(raw)) continue;
     /*
      * 口径必须与 markdownToSheet() 逐字一致（见那里的注释）：
      * 早先这里是 `\s{0,3}`（含制表符）、那边是顶格，于是「这里说有大纲、

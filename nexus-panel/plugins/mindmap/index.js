@@ -2372,6 +2372,22 @@ async function gcOrphanAssets(quiet = false) {
     const text = wb.workbookToMarkdown(workbook.sheets);
     const r = await io.saveText(io.stampName('脑图', 'md'), text, 'text/markdown');
     reportSave(r, 'Markdown');
+    /*
+     * Markdown 只有 6 级标题（CommonMark：7 个 `#` 不是标题），
+     * 更深的层**没有合法写法**，只能拍平到第 6 级 —— 一棵 10 层的链
+     * 导出再导回，第 6 级以下会摊成同一层的平铺列表。
+     *
+     * 与 exportExchange 那句「仅当前画布」同口径：格式装不下什么，
+     * 就要在导出时说清楚。不说的话，用户拿 .md 当备份、日后导回来
+     * 才发现层级没了 —— 而导入是**整体替换且不可撤销**，那时已经晚了。
+     * 放在保存之后补一句，先让人看到文件存好了。
+     */
+    const deep = wb.deepNodeCount(workbook.sheets);
+    if (deep) {
+      status(`注意：有 ${deep} 个节点深于 ${wb.MARKDOWN_MAX_LEVEL} 级，`
+        + `Markdown 最多 ${wb.MARKDOWN_MAX_LEVEL} 个 #，这些节点在导出的文件里被拍平到同一层`
+        + `（需要保留完整层级请改用 .json 或 .xmind 导出）`, true);
+    }
   }
 
   /**

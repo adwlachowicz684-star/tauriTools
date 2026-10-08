@@ -5430,6 +5430,186 @@ group('BUG 101 · Markdown 的 CR：节点不得消失、画布标题不得截�
     '两个共享函数都在 formats.js（各路只写一遍）');
 }
 
+/* ------------------------------------------------------------------
+   BUG 102：Markdown 只有 6 级标题，更深的层被**静默拍平**
+   ------------------------------------------------------------------
+   CommonMark 规定 7 个及以上 `#` **不是标题**（是普通段落），所以第 7 级
+   及更深没有合法写法 —— sheetToMarkdown 一律截断成 6 个 `#`，于是这些
+   节点互相变成兄弟。导出 → 再导入（整体替换、不可撤销）之后层级就没了，
+   而界面上一句提示都没有。
+
+   与 exportExchange 那句「仅当前画布」同口径：格式装不下什么，必须在
+   导出时说清楚。这里锁的是「能算出损失」+「导出侧说了」两件事。
+   ------------------------------------------------------------------ */
+group('BUG 102 · Markdown 超过 6 级：拍平必须说得出来');
+
+{
+  const wb102 = await import('./workbook.js');
+  const mk = (t, ch) => ({ data: { text: t }, children: ch || [] });
+  /** 造一条 lv 层的链（根 = 第 1 级） */
+  const chain = (lv) => { let n = mk('L' + (lv - 1)); for (let i = lv - 2; i >= 0; i--) n = mk('L' + i, [n]); return n; };
+  const S = (r) => ({ id: 'a', title: 'T', content: JSON.stringify({ root: r }), theme: null, layout: null });
+
+  // ① 统计口径：第 7 级起才算损失（第 1~6 级都有各自的 # 数）
+  eq(wb102.MARKDOWN_MAX_LEVEL, 6, '上限常量是 6（CommonMark：7 个 # 不是标题）');
+  eq(wb102.deepNodeCount([S(chain(6))]), 0, '6 层链：一个都不损失');
+  eq(wb102.deepNodeCount([S(chain(7))]), 1, '★ 7 层链：最深那 1 个装不下');
+  eq(wb102.deepNodeCount([S(chain(10))]), 4, '10 层链：第 7~10 级共 4 个装不下');
+  eq(wb102.deepNodeCount([S(mk('R', [chain(8), chain(8)]))]), 6, '分叉：两条分支各自统计');
+  eq(wb102.deepNodeCount([S(chain(8)), S(chain(7))]), 3, '多画布累加');
+
+  /*
+   * ② 健壮性：坏内容 / 空画布都不能抛，也不该虚报。
+   *
+   * **必须自己兜住异常再断言**，不能写成 `eq(fn(...), 0)`：
+   * 一旦 deepNodeCount 真的抛了（M4 变异就是去掉那层 try/catch），
+   * 整个测试进程当场崩掉 —— 后面几条**一条都跑不到**，看着"抓到了"
+   * 其实漏了大半（本项目第 32 次遇到这类"崩了也算失败"的假把关）。
+   */
+  const callSafe = (fn) => { try { return { v: fn() }; } catch (e) { return { err: e }; } };
+  {
+    const r = callSafe(() => wb102.deepNodeCount([{ content: '{坏' }]));
+    ok(!r.err, '★ 坏 JSON 不抛（抛了会让整个导出流程崩掉）');
+    eq(r.v, 0, '坏 JSON 不算损失');
+  }
+  eq(wb102.deepNodeCount([{ content: '{}' }]), 0, '没有 root 不算损失');
+  eq(wb102.deepNodeCount([]), 0, '空画布列表');
+  eq(wb102.deepNodeCount([{ content: { root: chain(8) } }]), 2, 'content 是对象形态同样统计');
+
+  // ③ 行为本身：导出的 md 里更深的层确实都写成 6 个 #（拍平是真的会发生）
+  {
+    const md = wb102.sheetToMarkdown(JSON.stringify({ root: chain(9) }));
+    const sharps = md.trim().split('\n').map((l) => (l.match(/^#+/) || [''])[0].length);
+    eq(JSON.stringify(sharps), JSON.stringify([1, 2, 3, 4, 5, 6, 6, 6, 6]),
+      '第 6 级之后一律写成 6 个 #（这就是拍平的来源）');
+    const r = JSON.parse(wb102.markdownToSheet(md)).root;
+    // 拍平的实据：第 7 级起全变成第 6 级的兄弟
+    const depths = [];
+    (function walk(n, d) { depths.push(d); (n.children || []).forEach((c) => walk(c, d + 1)); })(r, 0);
+    /*
+     * 期望是 [0,1,2,3,4,5,5,5,5]：6 个 # = 深度 5（层级 = 深度 + 1），
+     * 所以第 6 级以下的节点全部落到**深度 5**，与真正的第 6 级成为兄弟。
+     * 早先我写成 [...5,6,6,6] —— 那是按「# 数」而不是「深度」算的，
+     * 断言自身就错了（第 31 次遇到"断言没在把关"：错的期望会一直绿到有人改实现）。
+     */
+    eq(JSON.stringify(depths), JSON.stringify([0, 1, 2, 3, 4, 5, 5, 5, 5]),
+      '★ 导回后第 7 级起摊成同一层（深度不再往下走）');
+  }
+
+  // ④ 导出侧必须把这件事说出来（源码层）
+  const isrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+  {
+    const i = isrc.indexOf('async function exportMarkdown');
+    ok(i > 0, '能定位 exportMarkdown');
+    const body = isrc.slice(i, i + 1200);
+    ok(/deepNodeCount\(/.test(body), '★ exportMarkdown 调用了统计（否则拍平无人知晓）');
+    ok(/MARKDOWN_MAX_LEVEL/.test(body), '提示里带上具体上限');
+    // 顺序：必须在保存之后补，先让人看到文件存好了
+    ok(body.indexOf('reportSave') < body.indexOf('deepNodeCount'),
+      '提示在 reportSave 之后（先确认存好了再说限制）');
+  }
+
+  // ⑤ 写侧截断用的是同一个常量，不是写死的 6
+  {
+    const wsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
+    ok(/Math\.min\(depth \+ 1, MARKDOWN_MAX_LEVEL\)/.test(wsrc),
+      '★ 截断用 MARKDOWN_MAX_LEVEL（写死 6 会与读侧正则各说各话）');
+    ok(/export const MARKDOWN_MAX_LEVEL/.test(wsrc), '常量已导出供 index.js 使用');
+  }
+}
+
+/* ------------------------------------------------------------------
+   BUG 103：分块标记行把导入闸门骗过去 —— 一张空画布顶掉全部画布
+   ------------------------------------------------------------------
+   `## 画布：<标题>` 在 markdownToWorkbook 里是**分隔符**，但在
+   markdownRowCount 里它自己就命中 `/^ {0,3}#{1,6}(\s+\S|\s+$)/` ——
+   于是「只有分块标记、块内没有一行标题」的文件也会被数出 ≥1 条，闸门放行：
+
+     `## 画布：项目A\n- 一些笔记\n`   rowCount = 1 → 放行
+     → markdownToWorkbook 给出 1 张画布，块内无标题 → emptyContent()
+     → 一张空的「中心主题」顶掉用户全部画布
+
+   导入是**整体替换且不可撤销**（新内容 = 新基线，撤销救不回来），所以这正是
+   BUG 36 / 90 点名要防的事故，只是从分块标记这条缝漏进来的：数标记行等于把
+   「有 N 张画布」误当成「有 N 个节点」。
+
+   锁的是一条**契约**：rowCount 说有大纲 ⇒ 导回的画布不能全是空的。
+   不逐条列举输入 —— 那条缝是「分块标记不是内容」，换个输入还会漏。
+   ------------------------------------------------------------------ */
+group('BUG 103 · 分块标记行不得算作大纲行（闸门不许被它骗过）');
+
+{
+  const wb103 = await import('./workbook.js');
+
+  // ① 标记行本身不计数
+  eq(wb103.markdownRowCount('## 画布：项目A\n'), 0, '★ 只有标记：0 条（标记是分隔符不是节点）');
+  eq(wb103.markdownRowCount('## 画布：项目A\n- 一些笔记\n- 另一条\n'), 0,
+    '★ 标记 + 列表：0 条（早先算 1 条 → 放行 → 空画布顶掉全部）');
+  eq(wb103.markdownRowCount('## 画布：A\n- 笔记\n\n## 画布：B\n- 笔记2\n'), 0,
+    '★ 多个标记 + 列表：0 条（早先算 2 条）');
+  eq(wb103.markdownRowCount('## 画布：\n'), 0, '空标题的标记行同样不算');
+
+  // ② 块里真有标题时不受影响（该放行的照样放行）
+  eq(wb103.markdownRowCount('## 画布：项目A\n# 根\n## 子\n'), 2, '★ 块内有标题：照常计数（不误杀）');
+  eq(wb103.markdownRowCount('## 画布：A\n# R1\n## 子1\n\n## 画布：B\n# R2\n'), 3, '多画布分块照常计数');
+  eq(wb103.markdownRowCount('# 标题\n\n正文段落\n'), 1, '单画布普通文档不受影响');
+  eq(wb103.markdownRowCount('## \n'), 1, '空标题仍算一条（BUG 99 口径不变）');
+
+  // ③ 被转义的「画布：」标题行不是标记，得照常算一条
+  eq(wb103.markdownRowCount('## \\画布：设计\n'), 1, '★ 转义后的节点行仍算一条（它不是分隔符）');
+
+  /*
+   * ③b 标记行必须**先摊平再判**（BUG 101 那条缝在这里同样成立）。
+   *
+   * SHEET_MARK 的 `(.*)$` 不匹 \r —— 拿未摊平的原始行去判，`## 画布：含\rX`
+   * 不命中标记、于是被当成一条大纲行 → rowCount 虚高 1 → 又是"放行 + 空画布"。
+   */
+  eq(wb103.markdownRowCount('## 画布：含\rX\n# R\n'), 1,
+    '★ 含 CR 的标记行同样跳过（先摊平再判，否则虚高放行）');
+  eq(wb103.markdownRowCount('## 画布：含\nX\n# R\n'), 1, '含 LF 的标记行同样跳过');
+
+  /*
+   * ④ 契约：只要 rowCount 说有大纲，导回就不能**全是**空画布。
+   *
+   * 「空画布」= 根文字是 emptyContent 的默认「中心主题」且没有子节点 ——
+   * 这正是闸门要拦的那种结果。
+   */
+  {
+    const isEmpty = (s) => {
+      try {
+        const r = JSON.parse(s.content).root;
+        return r.data.text === '中心主题' && !(r.children || []).length;
+      } catch { return false; }
+    };
+    for (const md of [
+      '## 画布：项目A\n- 一些笔记\n',
+      '## 画布：A\n- 笔记\n\n## 画布：B\n- 笔记2\n',
+      '## 画布：\n',
+      '## 画布：A\n# R\n## 子\n',
+      '# R\n## \n### A1\n',
+      '- 纯列表\n',
+      '普通一句话\n',
+    ]) {
+      const n = wb103.markdownRowCount(md);
+      const sheets = wb103.markdownToWorkbook(md);
+      const allEmpty = sheets.every(isEmpty);
+      ok(!(n > 0 && allEmpty),
+        `★ rowCount>0 时不得全空：${JSON.stringify(md)}（rowCount=${n}）`);
+    }
+  }
+
+  // ⑤ 源码层：rowCount 必须显式跳过标记行（不许只靠正则碰巧不命中）
+  {
+    const wsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
+    const i = wsrc.indexOf('export function markdownRowCount');
+    ok(i > 0, '能定位 markdownRowCount');
+    const body = wsrc.slice(i, i + 1600);
+    ok(/SHEET_MARK\.test\(raw\)/.test(body), '★ rowCount 显式跳过分块标记行');
+    ok(/SHEET_MARK\.test\(raw\)\s*\)\s*continue;|if \(SHEET_MARK\.test\(raw\)\) continue;/.test(body),
+      '跳过用 continue（不是把计数反过来写）');
+  }
+}
+
 group('Mermaid（.mmd）');
 
 {
