@@ -412,6 +412,70 @@ console.log('\n=== 1.10 .d.ts 与实现对齐 ===');
 }
 
 /* ============================================================
+ * 1.11 两个外壳必须暴露同一套 __NEXUS__ 字段
+ * ------------------------------------------------------------
+ * React 外壳（src/App.tsx）与原生外壳（js/shell.js）是同一套接口的两种实现，
+ * 插件不区分自己在哪个壳里。谁往一侧加字段而忘了另一侧，那个字段在另一
+ * 个壳里就是 undefined —— 而 global.d.ts 里这些字段全是 optional，
+ * **TS 不会报任何错**，只有运行到那一行才炸。
+ *
+ * 历史：React 版一度只挂了一半字段，类型却按全量声明，
+ * 等于类型在撒谎（详见 src/global.d.ts 顶部说明）。
+ *
+ * 用 TS 解析器取键而不用正则：对象里嵌着箭头函数体（setRefreshHandler:
+ * (fn) => {…}），数括号深度会把函数体的花括号算成嵌套层，
+ * 实测会漏掉 / 多算好几个键 —— 我第一版就因此得出过"两边差 4 个"的假结论。
+ *
+ * 已知缺口：pluginCfg 只有 React 侧挂（原生侧刻意不暴露，
+ * global.d.ts 里也标了原因）。哪天原生侧补上了，这条登记会报"已过期"。
+ * ============================================================ */
+console.log('\n=== 1.11 两个外壳的 __NEXUS__ 字段 ===');
+{
+  let ts = null;
+  try { ts = await import('typescript'); } catch { /* 下面会判据失效 */ }
+  t('能加载 typescript（否则本节的键集合取不到）', !!ts);
+  if (ts) {
+    const nexusKeys = (file, kind) => {
+      const txt = read(file);
+      const sf = ts.createSourceFile(file, txt, ts.ScriptTarget.Latest, true, kind);
+      let found = null;
+      (function walk(n) {
+        if (found) return;
+        if (ts.isExpressionStatement(n) && ts.isBinaryExpression(n.expression)
+            && n.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+          const l = n.expression.left, r = n.expression.right;
+          if (ts.isPropertyAccessExpression(l) && l.name.text === '__NEXUS__'
+              && ts.isObjectLiteralExpression(r)) { found = r; return; }
+        }
+        ts.forEachChild(n, walk);
+      })(sf);
+      return found ? found.properties.map((p) => p.name && p.name.text).filter(Boolean) : null;
+    };
+
+    const a = nexusKeys('src/App.tsx', ts.ScriptKind.TSX);
+    const b = nexusKeys('js/shell.js', ts.ScriptKind.JS);
+    t('两个外壳都能定位到 window.__NEXUS__ 赋值', !!a && !!b,
+      `React ${a ? a.length : '?'} 个 / 原生 ${b ? b.length : '?'} 个`);
+    if (a && b) {
+      /* 判据自检：两边都该拿到十几个键，拿到一两个说明解析漏了 */
+      t('解析到的键数量合理（不是只解析出一部分）', a.length >= 10 && b.length >= 10,
+        `React ${a.length} / 原生 ${b.length}`);
+
+      const KNOWN_GAP = ['pluginCfg'];   // 已知只有 React 侧挂，原生侧刻意不暴露
+      const onlyA = a.filter((x) => !b.includes(x));
+      const onlyB = b.filter((x) => !a.includes(x));
+      const bad = [...onlyA, ...onlyB].filter((x) => !KNOWN_GAP.includes(x));
+      t('两个外壳的字段集合一致（pluginCfg 为已登记缺口）',
+        bad.length === 0,
+        bad.length ? `不对等：${bad.join('、')}` : `已知缺口 ${KNOWN_GAP.join('、')}`);
+      t('已登记缺口确实还成立（没被悄悄补上而忘了更新这里）',
+        onlyA.filter((x) => KNOWN_GAP.includes(x)).length === KNOWN_GAP.length,
+        `实测 React 独有：${onlyA.join('、') || '无'}`);
+    }
+  }
+}
+
+/* ============================================================
  * 2. 画布假描边框必须真的被创建
  * ------------------------------------------------------------
  * 此前 styles.css 里整套规则都写好了，但全仓 JS **没有任何地方
