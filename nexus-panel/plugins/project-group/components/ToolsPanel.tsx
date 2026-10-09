@@ -380,9 +380,23 @@ export function ChainDialog({
       const r = await api.chainPreview(actionId, kind, target, override || null);
       setConfirm({ text: r.text, skip: false });
     } catch (e) {
-      // 预览失败不该拦住发送：退回原来的"直接发"，并把原因记进日志
-      onLog(`指令预览失败，直接发送：${errText(e)}`, true);
-      await doSend(override);
+      /*
+       * 预览失败 → **只在用户自己写了指令时**才降级为直接发送。
+       *
+       * 指令框非空时，要发出去的就是他刚敲的那段，预览只是"再核一遍"，
+       * 它失败不该把人卡住。但指令框为空时，将要发出去的是后端模板，
+       * 而预览失败恰恰说明这份指令**取不到**（路径越界 / 动作不存在 /
+       * 自定义动作两侧模板都空）——此时 doSend 只是把同一个错误再报一遍，
+       * 顺带还**跳过了确认**。取不到就别发，把原因说出来。
+       */
+      if (override.trim()) {
+        onLog(`指令预览失败，直接发送：${errText(e)}`, true);
+        await doSend(override);
+      } else {
+        const msg = `指令预览失败，已取消发送：${errText(e)}`;
+        setTip(msg);
+        onLog(msg, true);
+      }
     } finally {
       setConfirming(false);
     }

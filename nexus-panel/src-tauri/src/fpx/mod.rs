@@ -2818,14 +2818,10 @@ pub fn fpx_chain_send_action(
         .clone();
 
     let dir_str = dir.to_string_lossy().to_string();
-    let text = match prompt.as_deref().map(str::trim) {
+    let text = chain::non_empty_text(match prompt.as_deref().map(str::trim) {
         Some(p) if !p.is_empty() => chain::fill_all(p, &path, &dir_str),
         _ => chain::resolve_prompt(&item, &kind, &path, &dir_str),
-    };
-
-    if text.trim().is_empty() {
-        return Err("该动作还没有指令模板，请先在设置里填写".into());
-    }
+    })?;
 
     // 调用方显式指定时优先（发送面板里手选的）；否则按「动作专属 → 全局默认 → opencode」
     let client = match client.as_deref().map(str::trim) {
@@ -2888,10 +2884,19 @@ pub fn fpx_chain_preview(
     /* 与 fpx_chain_send_action 同一套判据：覆盖非空走 fill_all，否则走模板。
        判据写成两份的话，漂移的表现就是"确认框里看到的和发出去的不是同一句"，
        而那时用户已经点过确认了。 */
-    let text = match prompt.as_deref().map(str::trim) {
+    /*
+     * 与发送侧同一道守卫（`chain::non_empty_text`）。
+     *
+     * 少了这一道的话：模板为空时预览**成功**返回空串，确认框打开就是一片空白，
+     * 「确认发送」按钮还因 `!draft.trim()` 灰着 —— 用户不知道为什么点不了。
+     * 而同一动作从右键菜单走发送侧，拿到的却是一句明确的
+     * 「该动作还没有指令模板」。同一个动作、两个入口、两种说法，
+     * 而两个入口在界面上看起来毫无区别。
+     */
+    let text = chain::non_empty_text(match prompt.as_deref().map(str::trim) {
         Some(p) if !p.is_empty() => chain::fill_all(p, &path, &dir_str),
         _ => chain::resolve_prompt(item, &kind, &path, &dir_str),
-    };
+    })?;
     Ok(chain::ChainPreview { text, client })
 }
 

@@ -27,8 +27,13 @@ export interface UseChainActionsArgs {
   /** boot 是否就绪——未就绪时整个注册副作用都不跑 */
   bootReady: boolean;
   /** 待确认发送（#43）：预览成功后挂起，由 App 渲染确认框 */
+  /*
+   * `client` 由预览从后端带回（动作专属 → 全局默认 → opencode）。
+   * 这一份类型此前漏了它，而 `DialogsHub` 的 `PendingSend` 有 ——
+   * 同一件事两份声明，照着这份改的人会以为 PendingSend 没有 client 字段。
+   */
   setPendingSend: (p: {
-    actionId: string; kind: CardKind; path: string; text: string; skip: boolean;
+    actionId: string; kind: CardKind; path: string; text: string; client: string; skip: boolean;
   } | null) => void;
 }
 
@@ -172,9 +177,22 @@ export function useChainActions({
        */
       setPendingSend({ actionId, kind, path, text: r.text, client: r.client, skip: false });
     } catch (e) {
-      // 预览失败不拦发送：这两个入口没有别的编辑途径，卡住就没法用了
-      s.pushLog(`指令预览失败，直接发送：${errText(e)}`, true);
-      void sendAction(actionId, kind, path);
+      /*
+       * 预览失败 → **不发**，把原因原样告诉用户。
+       *
+       * 此前这里是"预览失败就直接发送"，理由是"这两个入口没有别的编辑途径，
+       * 卡住就没法用了"。但把失败原因逐条对一遍就知道，那个理由不成立：
+       * 预览会失败的原因（数据目录取不到、动作不存在、路径不在允许范围内、
+       * 模板为空）**在发送侧同样会失败** —— `sendAction` 只是把同一个错误
+       * 再报一遍。也就是说"直接发送"救不了任何一场，它唯一的实际效果是
+       * **跳过了确认**，外加多一条「指令预览失败，直接发送」的日志。
+       *
+       * 而确认恰恰是这两个入口存在的理由（见本函数的文档注释）：
+       * 失败时跳过确认，等于把唯一会拦住误发的那道门开在**最容易误触**的入口上。
+       */
+      const msg = `指令预览失败，已取消发送：${errText(e)}`;
+      s.pushLog(msg, true);
+      ctx.toast(msg, 'err');
     }
   }, [s]);
   return { runActionOnSelection, sendAction, requestSendAction };

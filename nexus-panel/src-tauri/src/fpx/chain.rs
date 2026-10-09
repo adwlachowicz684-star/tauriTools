@@ -761,6 +761,32 @@ pub fn find<'a>(list: &'a [ChainActionItem], id: &str) -> Option<&'a ChainAction
     list.iter().find(|x| x.id == id)
 }
 
+/// 模板为空（自定义动作两侧都没写）时的统一报错。
+///
+/// ## 为什么必须是**常量**、且发送与预览共用
+///
+/// 这一句以前只写在 `fpx_chain_send_action` 里 —— 预览没有。于是同一个动作
+/// （自定义动作、两侧模板都空）走两个入口给出两种说法：
+///   · 右键菜单 → 后端发送侧拦住，明确提示「还没有指令模板」；
+///   · 侧边栏 / 快捷键 → 预览返回一个**空串**，确认框打开就是一片空白，
+///     「确认发送」按钮因 `!draft.trim()` 而灰着 —— 用户不知道为什么点不了，
+///     也不知道该去哪儿补。
+///
+/// 而预览那段注释还写着「与 fpx_chain_send_action 用同一套解析」——
+/// 注释承诺了代码没做的事。判据写两遍的代价就是这种"一边拦住一边放行"。
+pub const EMPTY_TEMPLATE_ERR: &str = "该动作还没有指令模板，请先在设置里填写";
+
+/// 空指令守卫：发送与预览共用同一份判据（见 `EMPTY_TEMPLATE_ERR`）。
+///
+/// 不做成"两边各自 if 一下"：那样改文案、改判据都会漏一处，
+/// 而漏的那一处的表现恰恰是"确认框里看到的和点下去的结果对不上"。
+pub fn non_empty_text(text: String) -> Result<String, String> {
+    if text.trim().is_empty() {
+        return Err(EMPTY_TEMPLATE_ERR.to_string());
+    }
+    Ok(text)
+}
+
 /// 解析最终要发送的指令文本：
 /// 自定义模板优先，留空则回退内置默认；自定义动作若两侧都空，返回空串（前端提示补写）。
 pub fn resolve_prompt(item: &ChainActionItem, kind: &str, path: &str, data_dir: &str) -> String {

@@ -85,15 +85,47 @@ console.log('\n=== 3. 预览与发送同源（后端）===');
   }
 }
 
-console.log('\n=== 4. 预览失败不该拦住发送 ===');
+console.log('\n=== 4. 预览失败：有用户指令才降级，否则取消并说明 ===');
 {
-  const panel = fs.readFileSync(path.join(HERE, 'components/ToolsPanel.tsx'), 'utf8');
-  const app = fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8')
-    + fs.readFileSync(path.join(HERE, 'hooks/useChainActions.ts'), 'utf8');
-  /* 预览只是"看一眼"，它失败就把发送整个卡死，是典型的"辅助功能反客为主" */
-  t('面板：预览失败时降级为直接发送', /预览失败，直接发送/.test(panel));
-  t('侧边栏：预览失败时降级为直接发送', /预览失败，直接发送/.test(app));
-  t('降级路径里带了原因（不是静默）', /errText\(e\)/.test(panel) || /errText\(e\)/.test(app));
+  /*
+   * 只看**代码**，不看注释：注释里也会写「预览失败，直接发送」这几个字，
+   * 拿注释判定会把"已改成不发"判成"还在降级发送"（本项目已栽过多次）。
+   *
+   * 判据为什么变了：预览会失败的原因（数据目录取不到 / 动作不存在 /
+   * 路径不在允许范围内 / 自定义动作两侧模板都空）**在发送侧同样会失败**。
+   * 所以"降级为直接发送"救不了任何一场，它唯一的实际效果是**跳过确认**——
+   * 而确认恰恰是侧边栏与快捷键这两个最容易误触的入口存在的理由（#43）。
+   */
+  const strip = (x) => x.split('\n')
+    .filter((l) => !/^\s*\/\//.test(l) && !/^\s*\*/.test(l) && !/^\s*\/\*/.test(l))
+    .join('\n');
+  const panelRaw = fs.readFileSync(path.join(HERE, 'components/ToolsPanel.tsx'), 'utf8');
+  const hookRaw = fs.readFileSync(path.join(HERE, 'hooks/useChainActions.ts'), 'utf8');
+  const panel = strip(panelRaw);
+  const app = strip(fs.readFileSync(path.join(HERE, 'App.tsx'), 'utf8')) + strip(hookRaw);
+
+  /* 各自定位到「预览那个 try」的 catch：
+     两个文件里都有别的 catch（发送失败那支），按 catch 取首个会切错。 */
+  const catchAfter = (src, anchor) => {
+    const i = src.indexOf(anchor);
+    if (i < 0) return '';
+    const j = src.indexOf('catch (e)', i);
+    return j < 0 ? '' : src.slice(j, j + 600);
+  };
+  const panelCatch = catchAfter(panel, 'api.chainPreview(');
+  const hookCatch = catchAfter(strip(hookRaw), 's.api.chainPreview(');
+
+  t('能定位到面板的预览 catch', panelCatch.includes('catch (e)'), panelCatch.slice(0, 40));
+  t('能定位到侧边栏的预览 catch', hookCatch.includes('catch (e)'), hookCatch.slice(0, 40));
+
+  t('面板：只有指令框非空时才降级为直接发送',
+    /if \(override\.trim\(\)\)/.test(panelCatch) && /预览失败，直接发送/.test(panelCatch));
+  t('面板：指令框为空时取消发送并说明原因',
+    /预览失败，已取消发送/.test(panelCatch) && /errText\(e\)/.test(panelCatch));
+  t('侧边栏/快捷键：预览失败不再直接发送',
+    !/sendAction\(/.test(hookCatch), hookCatch.slice(0, 60));
+  t('侧边栏/快捷键：预览失败改为取消并说明原因',
+    /预览失败，已取消发送/.test(hookCatch) && /errText\(e\)/.test(hookCatch));
 }
 
 console.log('\n=== 5. 确认框本身 ===');

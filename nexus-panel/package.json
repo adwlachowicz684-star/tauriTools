@@ -123,6 +123,7 @@
     "test:pg-chain-panel-input": "node plugins/project-group/chain-panel-input-test.mjs",
     "test:pg-chain-preview-override": "node plugins/project-group/chain-preview-override-test.mjs",
     "test:pg-chain-preview-client": "node plugins/project-group/chain-preview-client-test.mjs",
+    "test:pg-chain-preview-empty": "node plugins/project-group/chain-preview-empty-test.mjs",
     "test:pg-chain-send-scope": "node plugins/project-group/chain-send-scope-test.mjs",
     "test:pg-chain-tpl-norm": "node plugins/project-group/chain-template-normalize-test.mjs",
     "test:pg-click-debounce": "node plugins/project-group/click-debounce-test.mjs",

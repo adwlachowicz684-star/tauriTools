@@ -69,24 +69,32 @@ t('切到了 fpx_chain_send_action', sendAction.includes('pub fn fpx_chain_send_
 
 t('预览收 prompt 形参', /prompt:\s*Option<String>/.test(preview), preview.slice(0, 80));
 
-/** 取出 `let text = match ... };` 这段（按大括号配平） */
+/**
+ * 取出 `match ... }` 这段（按大括号配平）。
+ *
+ * 锚点为什么是 `let text =` 之后再找 `match`、而不是钉 `let text = match`：
+ * 这段解析现在包在共用守卫里（`chain::non_empty_text(match …)?`），
+ * 钉死旧写法的话，加一层守卫就误报 —— 而它守的本意是"两个分支怎么选"，
+ * 不是这行长什么样。切错了下面第 2 节会立刻响，不会静默空跑。
+ */
 function textBlock(body) {
-  const i = body.indexOf('let text = match');
+  const i = body.indexOf('let text =');
   if (i < 0) return '';
-  let d = 0, j = body.indexOf('{', i);
-  const from = j;
-  for (; j < body.length; j++) {
+  const k = body.indexOf('match', i);
+  if (k < 0) return '';
+  let d = 0;
+  for (let j = body.indexOf('{', k); j < body.length; j++) {
     if (body[j] === '{') d++;
-    else if (body[j] === '}' && --d === 0) return body.slice(i, j + 2);
+    else if (body[j] === '}' && --d === 0) return body.slice(k, j + 1);
   }
-  return body.slice(i, from + 40);
+  return '';
 }
 
 const pvBlock = textBlock(preview);
 const saBlock = textBlock(sendAction);
 
-t('预览取到了 let text 块', pvBlock.startsWith('let text = match'), pvBlock.slice(0, 40));
-t('发送取到了 let text 块', saBlock.startsWith('let text = match'), saBlock.slice(0, 40));
+t('预览取到了解析块', pvBlock.startsWith('match prompt.as_deref()'), pvBlock.slice(0, 40));
+t('发送取到了解析块', saBlock.startsWith('match prompt.as_deref()'), saBlock.slice(0, 40));
 
 t('预览：覆盖非空走 fill_all', /=>\s*chain::fill_all\(/.test(pvBlock), pvBlock);
 t('预览：否则走 resolve_prompt', /=>\s*chain::resolve_prompt\(/.test(pvBlock), pvBlock);
