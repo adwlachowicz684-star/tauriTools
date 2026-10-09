@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 /**
  * 发送前确认框（#43）。
@@ -28,6 +28,24 @@ export function ChainConfirmDialog({
 }) {
   const [draft, setDraft] = useState(text);
   const [skip, setSkip] = useState(false);
+
+  /*
+   * 待确认目标被换掉时，草稿必须跟着换。
+   *
+   * `useState(text)` 只在**挂载时**取一次 text。调用方是条件渲染
+   * （`{pendingSend && ...}`），弹窗开着时再按另一个动作的快捷键，
+   * `setPendingSend` 直接换成新那份 —— 中间不经过 null，组件**不卸载**，
+   * 于是草稿仍停在旧动作的指令全文上。
+   *
+   * 后果比"显示旧内容"更实：动作名与客户端名都是 props，会更新成新的，
+   * 而下面那段文本框是旧动作的指令。用户看到「动作 B → 客户端 X」
+   * 配着 A 的指令全文，点确认就把 **A 的指令发给 B 动作** ——
+   * 一条与该动作毫不相干的指令发进了外部 AI 进程，无法撤销。
+   *
+   * 同一个弹窗在 DialogsHub 里那份 `sentRef` 的 useEffect 防的是
+   * "换了目标还沿用旧标记"，这里补的是同一件事的另一半。
+   */
+  useEffect(() => { setDraft(text); }, [text]);
 
   return (
     <div className="mask" style={{ zIndex: 1001 }} onMouseDown={onCancel}>

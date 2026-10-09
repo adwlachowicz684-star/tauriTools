@@ -118,6 +118,7 @@
     "test:pg-busy-indicator": "node plugins/project-group/busy-indicator-test.mjs",
     "test:pg-card-nav": "node plugins/project-group/card-nav-test.mjs",
     "test:pg-chain": "node plugins/project-group/chain-placeholder-test.mjs",
+    "test:pg-chain-confirm-reset": "node plugins/project-group/chain-confirm-reset-test.mjs",
     "test:pg-chain-default-fill": "node plugins/project-group/chain-default-fill-test.mjs",
     "test:pg-chain-panel-input": "node plugins/project-group/chain-panel-input-test.mjs",
     "test:pg-chain-preview-override": "node plugins/project-group/chain-preview-override-test.mjs",
