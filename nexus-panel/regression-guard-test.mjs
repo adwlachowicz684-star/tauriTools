@@ -476,6 +476,85 @@ console.log('\n=== 1.11 两个外壳的 __NEXUS__ 字段 ===');
 }
 
 /* ============================================================
+ * 1.12 服务插件：广告的方法必须真的实现
+ * ------------------------------------------------------------
+ * 服务插件在 describe() 里用 methods:[...] 广告自己有哪些方法，
+ * 调用方照着这个名单去调。**广告了却没实现**是最坏的一种：
+ * 调用方写了合规的调用，运行时拿到的是"没有这个方法"——
+ * 轻则 undefined，重则在调用点直接抛，而广告名单本身看起来完全正常。
+ *
+ * 实现侧的两种写法都要认：
+ *   · bootServicePlugin({ pick, normalize, … }) —— 入口的第二参数就是分派表
+ *   · methods: { … }                             —— module.js 里显式挂的对象
+ *
+ * 扫的是文件而不是 registry 的 entry —— 休眠的孤儿入口（color-picker/index.js
+ * 就是）同样会被扫到。它**目前没人加载**，但哪天被接上，
+ * 这里的错位会立刻变成真的调用失败。
+ *
+ * 顺带发现过的一处：color-picker/index.js 广告 normalize、
+ * 实现却挂成 normalizeHex —— 已改成广告 normalizeHex，名字本身的差异
+ * 记在文件头的漂移对照表里（它与现行契约 main.tsx 差一个后缀）。
+ * ============================================================ */
+console.log('\n=== 1.12 服务插件广告的方法 ===');
+{
+  let ts2 = null;
+  try { ts2 = await import('typescript'); } catch { /* 下面会判据失效 */ }
+  t('能加载 typescript', !!ts2);
+  if (ts2) {
+    const SKIPD = new Set(['node_modules', '.git', 'dist', '__pycache__']);
+    const files = [];
+    (function w(dir) {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (SKIPD.has(e.name)) continue;
+        const p = join(dir, e.name);
+        if (e.isDirectory()) w(p);
+        else if (/\.(js|mjs|ts|tsx)$/.test(e.name)) files.push(p);
+      }
+    })(join(HERE, 'plugins'));
+
+    const bad = [];
+    let scanned = 0;
+    for (const abs of files) {
+      const rel = relativeTo(abs);
+      if (/kity|kityminder/.test(rel)) continue;
+      let txt;
+      try { txt = readFileSync(abs, 'utf8'); } catch { continue; }
+      if (!/bootService\w*Plugin\(|methods:/.test(txt)) continue;
+      const kind = rel.endsWith('.tsx') ? ts2.ScriptKind.TSX
+        : rel.endsWith('.ts') ? ts2.ScriptKind.TS : ts2.ScriptKind.JS;
+      const sf = ts2.createSourceFile(rel, txt, ts2.ScriptTarget.Latest, true, kind);
+      const adv = [], impl = [];
+      (function walk(n) {
+        if (ts2.isCallExpression(n)) {
+          const fn = n.expression.getText();
+          if (/bootService\w*Plugin$/.test(fn) && n.arguments.length) {
+            const a = n.arguments[n.arguments.length - 1];
+            if (ts2.isObjectLiteralExpression(a)) {
+              impl.push(...a.properties.map((x) => x.name && x.name.text).filter(Boolean));
+            }
+          }
+        }
+        if (ts2.isPropertyAssignment(n) && n.name && n.name.text === 'methods') {
+          if (ts2.isArrayLiteralExpression(n.initializer)) {
+            adv.push(...n.initializer.elements.map((e) => (ts2.isStringLiteral(e) ? e.text : '?')));
+          } else if (ts2.isObjectLiteralExpression(n.initializer)) {
+            impl.push(...n.initializer.properties.map((x) => x.name && x.name.text).filter(Boolean));
+          }
+        }
+        ts2.forEachChild(n, walk);
+      })(sf);
+      if (!adv.length) continue;
+      scanned++;
+      const miss = [...new Set(adv)].filter((x) => ![...new Set(impl)].includes(x));
+      if (miss.length) bad.push(`${rel} → ${miss.join('、')}`);
+    }
+    /* 判据自检：扫不到几个文件说明匹配方式失效了，而不是"天下太平" */
+    t('扫到的带 methods 声明的服务文件数量合理', scanned >= 7, `实测 ${scanned} 个`);
+    t('没有「广告了但没实现」的服务方法', bad.length === 0, bad.join('；'));
+  }
+}
+
+/* ============================================================
  * 2. 画布假描边框必须真的被创建
  * ------------------------------------------------------------
  * 此前 styles.css 里整套规则都写好了，但全仓 JS **没有任何地方

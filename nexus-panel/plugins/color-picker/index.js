@@ -9,7 +9,9 @@
  * 已经漂移 —— 对照如下（2026-10 核对）：
  *
  *   · version      本文件 1.0.0            main.tsx 3.0.0
- *   · methods      声明里漏了 presets      五项齐全，另有 implementation
+ *   · methods      漏了 presets；且**广告 normalize
+ *                  却实现成 normalizeHex**    五项齐全（normalize 名实相符），
+ *                                              另有 implementation
  *   · 起始色       硬编码 #3E63DD          共享常量 DEFAULT_COLOR #7C8CFF
  *   · pick 返回    **颜色字符串**          **{ hex, custom } 对象**
  *   · 取消         reject(已取消)          resolve({ hex: null, custom })
@@ -20,7 +22,13 @@
  * 静默拿错值。取消那条更糟：契约是 resolve，这里是 reject。
  *
  * 结论：**别直接把它接上无构建**（registry 加 noBuild 分支之类）。
- * 要启用就得先把上面六项与 main.tsx 对齐，尤其是 pick 的返回形态。
+ * 要启用就得先把上面七项与 main.tsx 对齐，尤其是 pick 的返回形态。
+ *
+ * 关于 methods：下面这行已改成**只广告真正实现的四个**。
+ * 原先广告 normalize 而实现叫 normalizeHex —— 服务调用按广告名找方法，
+ * 调用方照着 normalize 调会拿不到实现（不报"方法不存在"，只是结果不对）。
+ * 名字本身**没跟着改**：它跟 main.tsx 的 normalize 差一个后缀，
+ * 属于上面对照表里要对齐的一项，改了会让这份更"像"对齐、实际更容易误启用。
  * 在此之前它只有"参考实现"的价值，改动不会体现在界面上、也不会报错。
  *
  * 同理，本文件也**不该再新增功能** —— 加在这里等于加进一个没人走的分叉。
@@ -216,7 +224,13 @@ async function open({ initial = '#3E63DD' } = {}, ctx) {
 bootServicePlugin({
   /** 服务自述，供插件面板与调用方自检 */
   async describe() {
-    return { name: '取色服务', version: '1.0.0', methods: ['describe', 'pick', 'normalize'] };
+    /* 只广告真正实现的四个。原先广告的是 'normalize'，而实现挂的是
+       normalizeHex —— 名字对不上，按广告名调会拿到空。名字本身保留
+       normalizeHex（与 main.tsx 的 normalize 的差异见文件头对照表）。 */
+    return {
+      name: '取色服务', version: '1.0.0',
+      methods: ['describe', 'pick', 'normalizeHex', 'presets'],
+    };
   },
 
   /** 打开取色面板，返回用户选中的颜色 */
