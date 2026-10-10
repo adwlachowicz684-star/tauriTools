@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import NodeDesc from './NodeDesc';
 import { presetsByCategory, getDef, allPresets } from '../nodes';
-import { hasDef } from '../nodes/registry';
+import { canPresetOn } from '../nodes/registry';
 import { confirm, alert, prompt } from '../../../js/dialog.js';
 import { useNexus } from '../../../src/nexus-react';
 import {
@@ -319,7 +319,15 @@ export default function Sidebar({
   const doImport = async (file: File) => {
     try {
       const text = await file.text();
-      const r = importCustomPresets(text, { isKnownType: (t) => hasDef(t) });
+      /*
+       * 与 allPresets() 同一条判据（canPresetOn）：类型存在**且**不是 legacy。
+       *
+       * 以前只查 hasDef —— 于是基于老类型（ocr / translate / bili / wechat /
+       * play-audio / github-update）存的预设能顺利导入，提示框报「新增 1 条」，
+       * 而侧栏里根本不列出 legacy 的自定义预设 —— 做完了却看不见，
+       * 用户只会以为导入丢了。
+       */
+      const r = importCustomPresets(text, { isKnownType: (t) => canPresetOn(t) });
       refresh();
       const note = r.skipped.length ? `\n跳过 ${r.skipped.length} 条：${r.skipped.join('、')}` : '';
       await alert({

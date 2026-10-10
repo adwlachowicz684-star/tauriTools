@@ -204,12 +204,30 @@ export function importCustomPresets(
       continue;
     }
     // 同 id 视为同一条，覆盖；否则新增。这样重复导入不会堆出一堆副本。
+    /*
+     * 入库前先剥一遍 —— 与导出**同一道**，缺了这一道就留下两个洞：
+     *
+     *   · 内联密钥：预设存的是明文 localStorage，而画布里的密钥走加密保险箱。
+     *     导入的文件不受我们控制（可能是手改的、也可能是本次脱敏改动之前
+     *     导出的老数据），带着 token 进来就等于新开一处明文密钥存放地。
+     *     实测：导入带 token 的 JSON，落库后 token 原样在，只有**再导出时**
+     *     才被剥掉 —— 本地那份明文一直在。
+     *
+     *   · 运行时状态：文件里若带着 status/output/lastSeenId，拖出来的实例
+     *     **一落地就显示"已成功"**，看上去已经跑完了。而 lastSeenId 是
+     *     "有无更新"的基线，带别人的基线进来会让判定基准整个错位。
+     *     实测：update 预设拖出来 status='success'、lastSeenId='BV1'。
+     *
+     * 用与导出同一个 sanitizeForPreset，不另写一份（另写一份的结果又是
+     * "导出剥了、导入没剥"这种只在一边生效的修法）。
+     */
+    const clean: CustomPreset = { ...item, data: sanitizeForPreset(item.data) };
     const at = current.findIndex((p) => p.id === item.id);
     if (at >= 0) {
-      current[at] = item;
+      current[at] = clean;
       result.updated += 1;
     } else {
-      current.push(item);
+      current.push(clean);
       result.added += 1;
     }
   }

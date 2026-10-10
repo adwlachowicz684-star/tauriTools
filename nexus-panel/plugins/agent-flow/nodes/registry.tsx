@@ -125,6 +125,31 @@ export function hasDef(type: string | undefined | null): boolean {
 }
 
 /**
+ * 能不能拿这个类型当「自定义预设」的基础类型。
+ *
+ * ================= 为什么不能只用 hasDef =================
+ *
+ * 判据有两条：类型存在、且不是 legacy。而 hasDef 只管第一条 ——
+ * 于是「基于老类型存的预设」在三处各判各的，结果不一致：
+ *
+ *   1. allPresets()   —— 跳过 legacy（拖不出来，正确）
+ *   2. 导入预设       —— isKnownType 只查 hasDef → **导入成功，报"新增 1 条"**
+ *   3. 存为自定义     —— 老节点照样能存 → 存完在侧栏里找不到
+ *
+ * 2 和 3 都不报错，只是"做完了却看不见"。用户会以为导入丢了或保存失败。
+ *
+ * 标 legacy 的意思正是"已并入另一个节点，不再推荐拖"：它仍然可运行
+ * （老画布要用），但不该再成为新节点的起点。
+ *
+ * 三处共用这一个函数，不各写一份（各写一份的结果就是上面那种
+ * "一边拦住了、另一边没拦"）。
+ */
+export function canPresetOn(type: string | undefined | null): boolean {
+  if (!hasDef(type)) return false;
+  return !getDef(type as string).meta.legacy;
+}
+
+/**
  * 按 data.kind 取定义 —— 执行引擎的分发入口。
  *
  * 取不到时返回按 type 兜底的那份 unknown 定义：执行器缺失的节点会被判成
@@ -183,8 +208,6 @@ export function allPresets(): NodePreset[] {
    * 显示一个拖出来就报错的条目，比不显示更糟。
    */
   for (const cp of loadCustomPresets()) {
-    if (!hasDef(cp.baseType)) continue;
-    const def = getDef(cp.baseType);
     /*
      * 与内置那条路**同一条规矩**：老类型不该再被拖出来。
      *
@@ -194,8 +217,11 @@ export function allPresets(): NodePreset[] {
      * 老节点：能跑、不报错，只是它已经是另一个节点的前身。
      *
      * 老画布上的实例不受影响（数据还在、照常运行），消失的只是入口。
+     *
+     * 判据统一走 canPresetOn —— 导入与「存为自定义」也用它，三处同一条。
      */
-    if (def.meta.legacy) continue;
+    if (!canPresetOn(cp.baseType)) continue;
+    const def = getDef(cp.baseType);
     out.push({
       key: presetKey(cp.id),
       type: cp.baseType,

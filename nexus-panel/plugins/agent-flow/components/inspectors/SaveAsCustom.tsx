@@ -15,6 +15,30 @@ export default function SaveAsCustom({ node }: {
 }) {
   const def = getDef(node.type);
 
+  /*
+   * 老类型不给存。
+   *
+   * 与 allPresets() / 导入预设同一条判据（canPresetOn）。少了这一道的话：
+   * 老节点照样能点「存为自定义」，提示也确实存进去了，
+   * 而侧栏不列出 legacy 的自定义预设 —— **存完了却找不到**。
+   * 不报错，用户只会以为保存失败或侧栏坏了。
+   *
+   * 标 legacy 的意思是"已并入另一个节点"：它仍然可运行（老画布要用），
+   * 但不该再成为新节点的起点。禁用而非隐藏 —— 隐藏的话用户连为什么没有
+   * 这个按钮都无从知道。
+   */
+  if (def.meta.legacy) {
+    return (
+      <button
+        className="mini save-as-custom"
+        disabled
+        title={`「${def.meta.label}」已并入另一个节点，不能再作为新节点的起点`}
+      >
+        存为自定义
+      </button>
+    );
+  }
+
   const onSave = async () => {
     const d = (node.data ?? {}) as Record<string, unknown>;
     const name = await prompt({
