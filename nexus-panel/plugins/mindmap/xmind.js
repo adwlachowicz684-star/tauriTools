@@ -297,12 +297,25 @@ const MetadataEntry = 'metadata.json';
 const ManifestEntry = 'manifest.json';
 const LegacyContentEntry = 'content.xml';
 
-/** XMind 进度标记（完成百分比升序）↔ kityminder progress(0..10) */
+/**
+ * XMind 进度标记（完成百分比升序）↔ kityminder progress(**1..9**）
+ *
+ * ⓘ kityminder 的 progress 是 **1..9** 而不是 0..10 —— 内核 ProgressRenderer
+ *   就是这么画的：`pie.setAngle(-360 * (p - 1) / 8)`，p=1 → 0°（空），
+ *   p=9 → -360°（满），且 `check.setVisible(9 === p)` 只在 9 时打勾。
+ *   面板徽章的 tooltip 写的也是「进度 3/9」。
+ *
+ *   早先这里按 0..10 建表（MarkerToProgress = [0,1,3,4,5,6,8,9,10]），于是
+ *   ① 本工具导出的 progress 2 回来变 3、7 回来变 8（9 档里 2 档静默改值）；
+ *   ② 导入别的软件的 task-done 得到 10 —— 超出取值域，进度条被画成
+ *      -405°（而不是 -360°），且不打勾。
+ */
 const ProgressMarkers = [
   'task-start', 'task-oct', 'task-quarter', 'task-3oct',
   'task-half', 'task-5oct', 'task-3quar', 'task-7oct', 'task-done',
 ];
-const MarkerToProgress = [0, 1, 3, 4, 5, 6, 8, 9, 10];
+/** 9 个标记 ↔ progress 1..9，一一对应（XMind 的 0% 就是 kityminder 的 1） */
+const MarkerToProgress = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
 /**
  * kityminder **节点级** data 键 → XMind style.properties 键
@@ -379,10 +392,16 @@ const shortId = (p) => p + Math.random().toString(36).slice(2, 2 + 8);
 
 const pretty = (o) => JSON.stringify(o, null, 2);
 
-/** kityminder progress → XMind marker */
+/**
+ * kityminder progress(**1..9**) → XMind marker
+ *
+ * progress 1 就是 0%（空饼），9 就是 100%（满饼 + 打勾），故下标 = p - 1。
+ * 越界值一律钳到两端：导入别的软件的文件可能给出 0 / 10，不钳会写出
+ * undefined 标记。
+ */
 function progressToMarker(progress) {
-  const i = Math.max(0, Math.min(ProgressMarkers.length - 1,
-    Math.round(Number(progress || 0) / 10 * (ProgressMarkers.length - 1))));
+  const p = Math.round(Number(progress) || 0);
+  const i = Math.max(0, Math.min(ProgressMarkers.length - 1, p - 1));
   return ProgressMarkers[i];
 }
 

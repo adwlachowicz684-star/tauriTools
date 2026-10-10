@@ -6538,6 +6538,88 @@ group('BUG 97 · XMind 必须带上「这是图标还是用户挂的图片」的
    于是 11 项节点样式里只有字号、字体、水平对齐三项能回来。给用户标红的重要
    节点导出再打开就变回默认配色，且不报错。
    ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   BUG 107：进度（progress）在 XMind 往返中被静默改值
+
+   kityminder 的 progress 是 **1..9**（内核 ProgressRenderer：
+   pie.setAngle(-360 * (p-1) / 8)，p=9 才 check.setVisible；面板 tooltip
+   也是「进度 3/9」）。而 MarkerToProgress 早先按 0..10 建表
+   （[0,1,3,4,5,6,8,9,10]），9 个标记塞不下 11 档，于是：
+     · 本工具导出的 progress 2 → 回来 3、7 → 回来 8（9 档里 2 档被改）
+     · 导入别的软件的 task-done → 10，超出取值域：进度条被画成 -405°
+       （而不是 -360°），且不打勾
+   ------------------------------------------------------------------ */
+group('BUG 107 · 进度 progress 1..9 必须在 XMind 往返中原样保住');
+
+{
+  const X = await import('./xmind.js');
+
+  const zen = async (data) => {
+    const sheets = [{ id: 'sh1', title: '画布', theme: null, layout: null,
+      content: JSON.stringify({ root: { data: { id: 'nR', text: '根' },
+        children: [{ data: { id: 'n1', text: 'A', ...data }, children: [] }] } }) }];
+    const blob = await X.writeXMind(sheets, 'sh1');
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const en = await X.zipRead(buf);
+    const cj = JSON.parse(new TextDecoder().decode(en.get('content.json')));
+    const zb = await X.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+    const r = await X.readXMind(new Uint8Array(zb));
+    return { kid: JSON.parse(r.sheets[0].content).root.children[0],
+      topic: cj[0].rootTopic.children.attached[0] };
+  };
+
+  // ① 9 档逐档往返：一档都不许变（早先 2→3、7→8）
+  {
+    for (let p = 1; p <= 9; p++) {
+      const { kid } = await zen({ progress: p });
+      eq(String(kid.data.progress), String(p), `★ progress ${p}/9 往返回原值`);
+    }
+  }
+
+  // ② 写出的标记必须与档位一一对应（不能两个档共用同一个标记）
+  {
+    const seen = new Map();
+    for (let p = 1; p <= 9; p++) {
+      const { topic } = await zen({ progress: p });
+      const id = topic.markers?.map((m) => m.markerId).join(',');
+      ok(!seen.has(id) || seen.get(id) === p,
+        `progress ${p} 的标记不与别的档共用`, `${id}（已用于 ${seen.get(id)}）`);
+      seen.set(id, p);
+    }
+  }
+
+  // ③ 导入别的软件：9 个标记必须落成 1..9，**不能超出取值域**
+  {
+    const all = ['task-start', 'task-oct', 'task-quarter', 'task-3oct', 'task-half',
+      'task-5oct', 'task-3quar', 'task-7oct', 'task-done'];
+    const cj = [{ rootTopic: { id: 't', title: '根', children: { attached: all.map((mid, i) => ({
+      id: 'c' + i, title: 'A' + i, markers: [{ markerId: mid }] })) } } }];
+    const zb = await X.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+    const r = await X.readXMind(new Uint8Array(zb));
+    const kids = JSON.parse(r.sheets[0].content).root.children;
+    all.forEach((mid, i) => {
+      const p = kids[i].data.progress;
+      ok(p === i + 1, `★ 别的软件的 ${mid} → ${i + 1}（早先 task-done → 10 越界）`,
+        String(p));
+    });
+  }
+
+  // ④ 源码契约：MarkerToProgress 必须是 1..9 一一对应
+  {
+    const src = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+    const m = /const MarkerToProgress = \[([^\]]*)\]/.exec(src);
+    ok(!!m, '能定位 MarkerToProgress');
+    const arr = m[1].split(',').map((s) => Number(s.trim()));
+    eq(arr.length, 9, '9 个进度标记');
+    eq(arr.join(','), '1,2,3,4,5,6,7,8,9', '★ 一一对应 1..9（早先是 0,1,3,4,5,6,8,9,10）');
+    ok(!/\/\s*10\s*\*/.test(src.slice(src.indexOf('function progressToMarker'),
+      src.indexOf('function progressToMarker') + 400)),
+      '★ progressToMarker 不再按 0..10 换算');
+  }
+}
+
 group('BUG 106 · 节点自定义样式不得在 XMind 往返中丢掉（键名必须是内核那套）');
 
 {
