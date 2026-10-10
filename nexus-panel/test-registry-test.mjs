@@ -70,6 +70,42 @@ const scripts = pkg.scripts || {};
 const scriptText = Object.values(scripts).join(' ');
 
 /*
+ * ---------- 补齐「只有 script 点名、文件名不合规」的测试 ----------
+ *
+ * 上面按文件名收集（`-test.mjs` / `.test.tsx?`），于是
+ * `smoke-react.mjs` 这类**跑得到、但名字不合规**的文件一个都进不了视野：
+ * 它有 npm script、真在跑、有 12 条断言，而 ③d/③e/③f 从来没扫过它。
+ *
+ * 实测：往 smoke-react.mjs 注入一条恒真的长度判据，本守卫
+ * 14 通过 / 0 失败 —— 一条都没抓到，报的仍是"核对 296 个测试文件"。
+ *
+ * 这是同一类失效的第三遍：**判据漏掉整批对象，报告照样绿**。
+ * 前两遍是 .test.ts 漏扫、目录级运行器漏认。
+ *
+ * ⓘ 排除 sweep-tests.mjs：它是体检工具不是测试，且 test:sweep 指向它，
+ *   算进来会让"每个测试文件都被 script 引用"这类断言多一个自指对象。
+ */
+const SCRIPT_FILE_RE = /[\w./-]+\.(?:mjs|cjs|tsx?)\b/g;
+const scriptFiles = [];
+for (const [name, cmd] of Object.entries(scripts)) {
+  if (!name.startsWith('test:')) continue;
+  for (const m of cmd.match(SCRIPT_FILE_RE) || []) {
+    const rel = m.replace(/^\.\//, '');
+    if (/sweep-tests\.mjs$/.test(rel)) continue;
+    if (/testkit|\.kit\.mjs|fixtures?\//i.test(rel)) continue;
+    if (!existsSync(join(HERE, rel))) continue;
+    if (!scriptFiles.includes(rel)) scriptFiles.push(rel);
+  }
+}
+/* 只统计「文件名不合规、全靠 script 点名才被发现」的那批 */
+const scriptOnly = scriptFiles.filter(
+  (f) => !/-test\.mjs$/.test(f) && !/\.test\.tsx?$/.test(f),
+);
+for (const f of scriptOnly) {
+  if (!tests.includes(f)) { tests.push(f); real.push(f); }
+}
+
+/*
  * ---------- 目录级运行器 ----------
  *
  * 有些测试**不是逐个点名的**：一个脚本跑整个目录。
@@ -124,6 +160,17 @@ function coveredByRunner(f) {
   }
   return null;
 }
+
+/*
+ * ⓘ 这条不能省：上面那段补齐逻辑要是被删掉，scriptOnly 仍然非空、
+ *   而 real 里没有它们 —— 于是 ③d/③e/③f 集体失明，本守卫照样全绿。
+ *   跟 ③b「空集合 = 防线放水」是同一类。
+ */
+t('只被 script 点名的测试也进得了视野（漏扫＝整批断言没人守，报告照样绿）',
+  scriptOnly.length > 0 && scriptOnly.every((f) => real.includes(f)),
+  scriptOnly.length === 0
+    ? '没收到只靠 script 点名的测试（收集判据坏了）'
+    : `只靠 script 点名：${scriptOnly.join(' | ')}`);
 
 /* ---- ① 每个测试文件都要被某个 script 引用（或被目录级运行器覆盖） ---- */
 const orphan = real.filter((f) => {
