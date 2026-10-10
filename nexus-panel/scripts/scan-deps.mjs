@@ -133,7 +133,16 @@ function pkgOf(spec) {
 function importsOf(raw) {
   const src = stripCommentsJs(raw);
   const out = new Set();
-  const re = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*|\bexport\s+\*\s+from\s*)['"]([^'"\n]+)['"]/g;
+  /* 每个分支前面的 `(?<![/\w])` 是刻意加的：
+     正则/字符串字面量里**举例**写的 `from 'x'` 会被当成真实 import。
+     实例：plugin-admit-test.mjs 那句
+       `!/from 'acorn'|from 'esbuild'/.test(admit_src)`
+     让清单凭空多出一条"未声明依赖 acorn"，而全仓**没有任何一行**真的
+     import 过 acorn —— 照着这条去 `npm i acorn`，等于给项目加一个
+     永远没人用的依赖，而且下次谁清理依赖都会觉得"有人在用它"。
+     真代码里 import / from / require 前面不会紧跟 `/`，所以这个反向
+     断言只会砍掉假阳性，不会漏掉真 import。 */
+  const re = /(?:(?<![/\w])from\s*|(?<![/\w])import\s*\(\s*|(?<![/\w])import\s+|(?<![/\w])require\s*\(\s*|(?<![/\w])export\s+\*\s+from\s*)['"]([^'"\n]+)['"]/g;
   let m;
   while ((m = re.exec(src))) {
     const name = pkgOf(m[1]);

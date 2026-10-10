@@ -15,18 +15,18 @@
  * 运行时再去读只会得到一份空列表，而且不报错。
  */
 export const DEPS_MANIFEST = {
-  "generatedAt": "2026-09-29T00:13:46.232Z",
+  "generatedAt": "2026-10-10T13:32:43.634Z",
   "depsDir": "shared",
   "dirNote": "当前 node_modules 是共享副本（软链接），里面的版本与本仓库无关，故不判定实装版本",
   "summary": {
-    "total": 42,
-    "npm": 24,
+    "total": 41,
+    "npm": 25,
     "crates": 16,
     "missing": 0,
     "mismatch": 0,
     "unused": 0,
-    "undeclared": 2,
-    "unknown": 24,
+    "undeclared": 0,
+    "unknown": 25,
     "ok": 0
   },
   "npm": [
@@ -251,6 +251,20 @@ export const DEPS_MANIFEST = {
       "install": "npm i @vitejs/plugin-react@^4.3.4 -D"
     },
     {
+      "name": "esbuild",
+      "declared": "^0.21.5",
+      "installed": null,
+      "dev": true,
+      "status": "unknown",
+      "usedBy": [
+        "测试/脚本"
+      ],
+      "runtimeUsedBy": [],
+      "pinned": false,
+      "note": "",
+      "install": "npm i esbuild@^0.21.5 -D"
+    },
+    {
       "name": "jsdom",
       "declared": "^24.1.3",
       "installed": null,
@@ -379,36 +393,7 @@ export const DEPS_MANIFEST = {
       "install": "npm i ws@* -D"
     }
   ],
-  "undeclared": [
-    {
-      "name": "acorn",
-      "declared": null,
-      "installed": null,
-      "dev": false,
-      "status": "undeclared",
-      "usedBy": [
-        "测试/脚本"
-      ],
-      "runtimeUsedBy": [],
-      "pinned": false,
-      "note": "源码里 import 了，但 package.json 没写 —— 换台机器 clone 后才会暴露",
-      "install": "npm i acorn"
-    },
-    {
-      "name": "esbuild",
-      "declared": null,
-      "installed": null,
-      "dev": false,
-      "status": "undeclared",
-      "usedBy": [
-        "测试/脚本"
-      ],
-      "runtimeUsedBy": [],
-      "pinned": false,
-      "note": "源码里 import 了，但 package.json 没写 —— 换台机器 clone 后才会暴露",
-      "install": "npm i esbuild"
-    }
-  ],
+  "undeclared": [],
   "crates": [
     {
       "name": "image",
