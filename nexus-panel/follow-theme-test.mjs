@@ -9,6 +9,7 @@
  *   于是看到"变白一秒后又变黑"，像切换了好几次。
  */
 import { readFileSync } from 'node:fs';
+import { stripCommentsFlatJs } from './test-scan-utils.mjs';
 
 let pass = 0;
 const fails = [];
@@ -23,37 +24,65 @@ const host = read('js/host.js');
 const sdk = read('js/plugin-sdk.js');
 const af = read('plugins/agent-flow/styles.css');
 
-console.log('=== 1. 清单声明 ===');
-/* 先切出 agent-flow 那一段，再在里面找 —— 直接用 {0,600} 跨段匹配
-   会被后面其它插件的内容干扰（注释里也出现了这个词）。 */
-const afEntry = registry.slice(registry.indexOf("id: 'agent-flow'"));
-t('agent-flow 声明了 followsTheme',
-  /followsTheme:\s*true/.test(afEntry.slice(0, afEntry.indexOf('},'))));
-t('followsTheme 有注释说明为什么需要它',
-  /followsTheme[\s\S]{0,80}?\*\/|自己跟随面板主题/.test(registry));
+/*
+ * ⚠️ 1~3 节原本测的是「插件自报基调（followsTheme + reportBase + base-report）」
+ * 那一整套，而它**已被论证废弃并删除**。理由写在 js/host.js init 处那段注释里：
+ *   ① 它服务于「外壳采样 → 加滤镜反转」那套适配；上游已把 theme / followsTheme
+ *      收成单一约定（外壳把变量推到哪、插件就渲染到哪，不做反转也不做覆盖）。
+ *      没有滤镜，就不存在"二次翻转成黑" —— 自报基调要修的 bug 在新方案下
+ *      压根不会发生；
+ *   ② reportedBase 全仓没有任何一处读它，只有写入没有读取，是死机制。
+ *
+ * 于是本文件一度**红 7 项**。而最要命的恰恰是当时**唯一还绿的那条**
+ * （'reportBase 覆盖 isolated 与 followsTheme 两种场景'）：
+ *   它匹配到的是 host.js 注释里**引用被删代码**的那一行 ——
+ *   注释原文就写着 `reportBase: (isolated || !!manifest.followsTheme)`，
+ *   正则照样命中。于是一个已删除的特性在测试报告上看着**还在**。
+ *   这正是本项目反复栽的「断言查存在性、不查那一处存在」：
+ *   这次不是错在被测代码，而是错在**注释里恰好留了那串字符**。
+ *
+ * 因此：下面凡是判「没有 / 已删」的断言，一律先剥注释再判（见 codeOf）。
+ */
+const codeOf = (s) => stripCommentsFlatJs(s);
 
-console.log('=== 2. 自报基调用途扩展 ===');
-/* 原来只有 isolated 才上报。followsTheme 插件也要上报 ——
-   它自己会跟随主题，基调该由它说了算，外壳采样反而会误判。 */
-t('reportBase 覆盖 isolated 与 followsTheme 两种场景',
+console.log('=== 1. 基调改由宿主下发权威值 ===');
+t('init 消息下发权威基调 themeBase',
+  /themeBase:\s*pluginThemeBase\(manifest\.id\)/.test(codeOf(host)));
+t('切主题时同样下发 themeBase（否则插件停在旧基调）',
+  /type:\s*'theme'[\s\S]{0,80}themeBase:\s*pluginThemeBase\(/.test(codeOf(host)));
+/* 必须取**实际**基调：返回声明值的话，用户把主题改成浅色后插件仍按深色档
+   渲染，深色文字压在浅底上对比度掉到 1.x，不报错。 */
+t('pluginThemeBase 取实际基调（resolveThemeMeta），不是声明值',
+  /function pluginThemeBase[\s\S]{0,400}resolveThemeMeta\(t\)\.base/.test(codeOf(host)));
+
+console.log('=== 2. SDK 优先采用宿主下发的权威值 ===');
+/* 不能只按 --bg 亮度推断：用户可以只改基调、不动底色，此时 --bg 仍是深色值，
+   推断判成 dark，插件 CSS 里 [data-nexus-base="light"] 那一档永远匹配不上。 */
+t('SDK 优先采用宿主下发的 hostBase',
+  /hostBase === 'light' \|\| hostBase === 'dark'[\s\S]{0,60}\?\s*hostBase/.test(codeOf(sdk)));
+
+console.log('=== 3. 死机制不得复辟（剥注释后必须是真的没有）===');
+/*
+ * 反向断言的价值就在上面那个假绿：只看"字符串在不在"会被注释骗过去，
+ * 剥掉注释之后这几条才是真判据 —— 谁把 followsTheme / reportBase /
+ * needReportBase / base-report 加回来，这里立刻红。
+ */
+t('注册表不再有 followsTheme 声明字段', !/followsTheme/.test(codeOf(registry)));
+t('host 不再下发 reportBase 字段', !/reportBase/.test(codeOf(host)));
+t('host 不再处理 base-report 消息', !/base-report/.test(codeOf(host)));
+t('SDK 不再有 needReportBase', !/needReportBase/.test(codeOf(sdk)));
+t('SDK 不再回发 base-report', !/base-report/.test(codeOf(sdk)));
+/* 元断言：上面 5 条"没有"必须建立在**文件没被整体改写**的前提下。
+   否则哪天 host.js / plugin-sdk.js 被重命名或重写，5 条全部恒真 —— 又是假绿。 */
+t('样本仍在：host.js 仍引用 pluginThemeBase（元断言）',
+  /pluginThemeBase/.test(host));
+t('样本仍在：plugin-sdk.js 仍写 nexusBase（元断言）',
+  /nexusBase/.test(sdk));
+/* 这条专门钉住"为什么必须剥注释"：原文里那段引用被删代码的注释还在，
+   所以不剥注释的写法现在**仍然**会被骗。它一旦转红，说明那段说明被删了，
+   上面 5 条反向断言的"没有"就不再能证明什么。 */
+t('元断言：原文仍引用着被删代码（故判"没有"必须先剥注释）',
   /reportBase:\s*\(isolated\s*\|\|\s*!!manifest\.followsTheme\)/.test(host));
-t('注释说明了为什么 followsTheme 也要上报',
-  /followsTheme[\s\S]{0,300}误判|外壳采样反而会误判/.test(host));
-
-console.log('=== 3. 主题更新时重报基调 ===');
-/* 只在 init 报一次是不够的：切主题后插件颜色已变，
-   reportedBase 还是旧值 → 按旧基调判定 → 滤镜加反。 */
-t('SDK 记住了宿主是否要求上报', /let needReportBase = false/.test(sdk));
-t('init 时置位', /needReportBase = true/.test(sdk));
-t('收到 theme 更新时重报',
-  /needReportBase && d\.type === 'theme'[\s\S]{0,120}base-report/.test(sdk));
-/* 顺序很关键：必须在 theme-applied 之前发出。
-   外壳等 theme-applied 才采样，先收到新基调那次采样才会用对。 */
-const iReport = sdk.indexOf('base-report', sdk.indexOf("d.type === 'theme'"));
-const iApplied = sdk.indexOf("post({ type: 'theme-applied' })");
-t('重报排在 theme-applied 之前（否则白等一轮还得多闪一次）',
-  iReport > 0 && iApplied > 0 && iReport < iApplied,
-  `report@${iReport} vs applied@${iApplied}`);
 
 console.log('=== 4. 插件文档标记基调 ===');
 t('SDK 把基调写成 data-nexus-base', /dataset\.nexusBase = base/.test(sdk));
