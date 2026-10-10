@@ -81,6 +81,31 @@ for (const bad of ['x', 'xx']) {
   t(`占位名 ${bad} 不在清单里`, !npmNames.includes(bad) && !undNames.includes(bad));
 }
 
+/* ---- 正则 / 字符串字面量里的 from 'x' 不能被当成真实 import ---- */
+/*
+ * 实例：plugin-admit-test.mjs 里那句 `!/from 'acorn'|from 'esbuild'/…`
+ * 让清单凭空多出一条「未声明依赖 acorn」，而全仓**没有任何一行**真的
+ * import 过 acorn。照着这条去 npm i acorn，等于给项目加一个永远没人用
+ * 的依赖，而且以后谁清理依赖都会以为"还有人在用它"。
+ *
+ * 两条必须成对：只写下面那条、不写元断言的话，等哪天样本自己删掉了，
+ * "清单里没有 acorn" 就变成**恒真** —— 样本没了自然也不会被扫出来。
+ * （这里刻意用中文引号写 acorn，免得本文件自己又造出一个假样本。）
+ */
+const admitText = read('plugin-admit-test.mjs');
+t('样本仍在：准入测试里还写着 from ‘acorn’ 的正则（元断言）',
+  /from\s+['"]acorn['"]/.test(admitText));
+t('正则字面量里的 from ‘acorn’ 不算真实 import',
+  !undNames.includes('acorn') && !npmNames.includes('acorn'), undNames.join(','));
+
+/* ---- esbuild：smoke-react 真 import 了，那就必须真声明 ---- */
+/* 同一套路：元断言先钉住"样本还在"，否则下面那条是恒真。 */
+const smokeText = read('smoke-react.mjs');
+t('样本仍在：smoke-react 还在解析 esbuild（元断言）', /esbuild/.test(smokeText));
+t('esbuild 已声明在 devDependencies（不是靠 vite 间接带一份）',
+  npmNames.includes('esbuild') && /"esbuild"\s*:\s*"\^?[\d.]/.test(pkgText),
+  `npm=[${npmNames.join(',')}]`);
+
 /* ---- 共享依赖目录必须识别 ---- */
 t('depsDir 取值合法', ['local', 'shared', 'absent'].includes(M.depsDir), String(M.depsDir));
 if (M.depsDir !== 'local') {
