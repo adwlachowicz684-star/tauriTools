@@ -698,11 +698,14 @@ group('导出 content.json：下划线与「打包失败的附件」');
   };
 
   // ① 删除线与下划线同时存在
+  //    ⓘ 删除线的 data 键是 font-strikethrough（不是 strikethrough —— 那是
+  //      面板状态对象的键，node.data 上没有）。早先这里传的是旧键名，于是
+  //      这条测试测的是一份内核里根本不会出现的虚构数据。
   {
-    const { data } = await rt({ id: 'n', text: 'T', strikethrough: true, underline: true });
-    ok(data.strikethrough === true && data.underline === true,
+    const { data } = await rt({ id: 'n', text: 'T', 'font-strikethrough': true, underline: true });
+    ok(data['font-strikethrough'] === true && data.underline === true,
       '同时有删除线和下划线时两个都保住（早先 else-if 只写 line-through，下划线丢失）',
-      JSON.stringify({ s: data.strikethrough, u: data.underline }));
+      JSON.stringify({ s: data['font-strikethrough'], u: data.underline }));
   }
 
   // ② 附件打包失败：不能把引用串原样写成 href
@@ -6519,6 +6522,140 @@ group('BUG 97 · XMind 必须带上「这是图标还是用户挂的图片」的
    这里锁三件事：① 能算出损失 ② 分类正确（超链接挤掉 / 挂不上 / 图片）
    ③ 导出侧真的说了、且不再谎报"含 N 个附件"。
    ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   BUG 106：节点自定义样式在 XMind 往返中几乎全丢 —— StyleMap 用的是
+   **内核里根本不存在**的键名
+
+   左侧键名必须取内核真正落到 node.data 上的那套（editor 里 setData 用的）：
+     · 填充是 background（不是 fill）—— 主题键是 root-fill / main-fill，
+       节点级再叫 fill 会被 getStyle 的前缀拼接吃掉
+     · 描边 / 描边线宽 / 圆角 / 连线色 / 连线宽都带 node- 前缀（同理）
+     · 文字色是 color（不是 forecolor —— forecolor 是**命令名**不是 data 键）
+     · 粗体 / 斜体 / 删除线是 font-weight / font-style / font-strikethrough
+       （bold / italic / strikethrough 只是面板状态对象的键）
+
+   早先 StyleMap 写的是 fill / stroke / radius / forecolor，四个内核里一个都没有，
+   于是 11 项节点样式里只有字号、字体、水平对齐三项能回来。给用户标红的重要
+   节点导出再打开就变回默认配色，且不报错。
+   ------------------------------------------------------------------ */
+group('BUG 106 · 节点自定义样式不得在 XMind 往返中丢掉（键名必须是内核那套）');
+
+{
+  const X = await import('./xmind.js');
+
+  /** 写 → 只留 content.json → 读回（模拟被别的软件存过一遍） */
+  const zen = async (data) => {
+    const sheets = [{ id: 'sh1', title: '画布', theme: null, layout: null,
+      content: JSON.stringify({ root: { data: { id: 'nR', text: '根' },
+        children: [{ data: { id: 'n1', text: 'A', ...data }, children: [] }] } }) }];
+    const blob = await X.writeXMind(sheets, 'sh1');
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const en = await X.zipRead(buf);
+    const cj = JSON.parse(new TextDecoder().decode(en.get('content.json')));
+    const zb = await X.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+    const r = await X.readXMind(new Uint8Array(zb));
+    return { kid: JSON.parse(r.sheets[0].content).root.children[0],
+      topic: cj[0].rootTopic.children.attached[0] };
+  };
+
+  // 内核真正用的那套键（与 editor/index.html 的 setData 一致）
+  const STYLE = {
+    background: '#00ff00',          // 填充
+    'node-stroke': '#0000ff',       // 描边色
+    'node-stroke-width': 5,         // 描边线宽
+    'node-radius': 12,              // 圆角
+    'node-line-stroke': '#ff00ff',  // 连线色
+    'node-line-width': 3,           // 连线宽
+    color: '#ff0000',               // 文字色
+    'font-size': 24,
+    'font-family': '宋体',
+    'text-align': 'right',
+    'vertical-align': 'bottom',
+  };
+
+  // ① 往返：每一项都要回到原位（早先只有字号 / 字体 / 水平对齐三项能回来）
+  {
+    const { kid } = await zen(STYLE);
+    for (const [k, v] of Object.entries(STYLE)) {
+      ok(String(kid.data[k]) === String(v),
+        `★ 往返保住 ${k}`, `期望 ${JSON.stringify(v)} 实际 ${JSON.stringify(kid.data[k])}`);
+    }
+  }
+
+  // ② 写出的 properties 必须落在 XMind 标准键上
+  {
+    const { topic } = await zen(STYLE);
+    const p = topic.style?.properties || {};
+    ok(p['svg:fill'] === '#00ff00', '填充 → svg:fill', String(p['svg:fill']));
+    ok(p['svg:stroke'] === '#0000ff', '描边 → svg:stroke', String(p['svg:stroke']));
+    ok(p['svg:stroke-width'] === '5px',
+      '描边线宽 → svg:stroke-width（带 px）', String(p['svg:stroke-width']));
+    ok(p['svg:corner-radius'] === '12px',
+      '圆角 → svg:corner-radius（带 px）', String(p['svg:corner-radius']));
+    ok(p['line-color'] === '#ff00ff', '连线色 → line-color', String(p['line-color']));
+    ok(p['line-width'] === '3px', '连线宽 → line-width（带 px）', String(p['line-width']));
+    ok(p['fo:color'] === '#ff0000', '文字色 → fo:color', String(p['fo:color']));
+    ok(p['fo:font-size'] === '24pt', '字号 → fo:font-size（带 pt）', String(p['fo:font-size']));
+    ok(p.nexusValign === 'bottom',
+      '垂直对齐 → 私有键（XMind 无对应标准属性，不用私有键就会丢）', String(p.nexusValign));
+  }
+
+  // ③ 字形：font-weight / font-style / font-strikethrough
+  {
+    const { kid, topic } = await zen({ 'font-weight': 'bold', 'font-style': 'italic',
+      'font-strikethrough': true });
+    const p = topic.style?.properties || {};
+    ok(p['fo:font-weight'] === 'bold', '粗体 → fo:font-weight', String(p['fo:font-weight']));
+    ok(p['fo:font-style'] === 'italic', '斜体 → fo:font-style', String(p['fo:font-style']));
+    ok(/line-through/.test(p['fo:text-decoration'] || ''),
+      '删除线 → fo:text-decoration', String(p['fo:text-decoration']));
+    ok(kid.data['font-weight'] === 'bold' && kid.data['font-style'] === 'italic'
+      && kid.data['font-strikethrough'] === true,
+      '字形往返回内核键（面板读的就是这三个键）',
+      JSON.stringify([kid.data['font-weight'], kid.data['font-style'], kid.data['font-strikethrough']]));
+  }
+
+  // ④ ★ 源码契约：StyleMap 不许改回那四个内核里不存在的键名
+  //    这是本 BUG 的根因，也是它**从未被任何测试碰过**的原因
+  {
+    const src = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+    const i = src.indexOf('const StyleMap = [');
+    ok(i > 0, '能定位 StyleMap');
+    const body = src.slice(i, src.indexOf('];', i));
+    for (const k of ['background', 'node-stroke', 'node-stroke-width', 'node-radius',
+      'node-line-stroke', 'node-line-width', 'color', 'font-size', 'font-family', 'text-align']) {
+      ok(new RegExp("\\['" + k + "',").test(body), `StyleMap 含内核键 ${k}`);
+    }
+    ok(!/\['fill',/.test(body), "★ StyleMap 不得再出现 ['fill',（节点级是 background）");
+    ok(!/\['stroke',/.test(body), "★ 不得再出现 ['stroke',（是 node-stroke）");
+    ok(!/\['radius',/.test(body), "★ 不得再出现 ['radius',（是 node-radius）");
+    ok(!/\['forecolor',/.test(body), "★ 不得再出现 ['forecolor',（是 color）");
+    // 写侧 / 读侧都不得再读那三个面板状态键
+    const bodyAll = src.slice(src.indexOf('function buildStyle'), src.indexOf('function parseZen'));
+    ok(!/data\?\.bold|data\.bold\b/.test(bodyAll),
+      '★ buildStyle 不读 data.bold（应读 font-weight）');
+    ok(!/data\?\.italic/.test(bodyAll), '★ buildStyle 不读 data.italic（应读 font-style）');
+  }
+
+  // ⑤ 别的软件产出的文件只有标准键 → 要落成内核认得的键
+  {
+    const cj = [{ rootTopic: { id: 't', title: '根', children: { attached: [{
+      id: 'c', title: 'A',
+      style: { id: 's', properties: { 'svg:fill': '#123456', 'fo:color': '#654321',
+        'fo:font-weight': '700', 'svg:corner-radius': '8px' } } }] } } }];
+    const zb = await X.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+    const r = await X.readXMind(new Uint8Array(zb));
+    const d = JSON.parse(r.sheets[0].content).root.children[0].data;
+    ok(d.background === '#123456', '别的软件的 svg:fill → background（内核认）', String(d.background));
+    ok(d.color === '#654321', '别的软件的 fo:color → color', String(d.color));
+    ok(d['font-weight'] === 'bold',
+      '别的软件写 700 → 归一化成 bold（否则导回时内核当普通字重）', String(d['font-weight']));
+    ok(String(d['node-radius']) === '8', '别的软件的 8px → 去单位', String(d['node-radius']));
+  }
+}
+
 group('BUG 104 · XMind 装不下的附件与图片必须数得出来、且要说出来');
 
 {

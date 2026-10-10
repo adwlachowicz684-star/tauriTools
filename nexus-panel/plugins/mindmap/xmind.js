@@ -304,16 +304,41 @@ const ProgressMarkers = [
 ];
 const MarkerToProgress = [0, 1, 3, 4, 5, 6, 8, 9, 10];
 
-/** kityminder data 键 → XMind style.properties 键 */
+/**
+ * kityminder **节点级** data 键 → XMind style.properties 键
+ *
+ * ⓘ 左侧必须取内核真正用的那套键名，不能照抄 XMind / 主题的命名：
+ *   · 填充是 `background`（不是 `fill`）—— 主题键是 root-fill / main-fill，
+ *     节点级若也用 fill，会被 getStyle 的前缀拼接吃掉，故本项目用 background；
+ *   · 描边 / 描边线宽 / 圆角 / 连线色 / 连线宽同理，都带 `node-` 前缀；
+ *   · 文字色是 `color`（不是 `forecolor`）—— forecolor 是**命令名**不是 data 键。
+ *
+ *   早先这里写的是 fill / stroke / radius / forecolor，四个键**内核里一个都不存在**，
+ *   于是节点自定义样式在 XMind 往返中几乎全丢：只有字号、字体、水平对齐能回来，
+ *   填充、描边、描边线宽、圆角、连线色、连线宽、文字色 7 项静默消失 ——
+ *   给用户标红的重要节点导出再打开就变回默认配色，且不报错。
+ */
 const StyleMap = [
-  ['fill', 'svg:fill'],
-  ['stroke', 'svg:stroke'],
-  ['radius', 'svg:corner-radius'],
-  ['forecolor', 'fo:color'],
+  ['background', 'svg:fill'],
+  ['node-stroke', 'svg:stroke'],
+  ['node-stroke-width', 'svg:stroke-width'],
+  ['node-radius', 'svg:corner-radius'],
+  ['node-line-stroke', 'line-color'],
+  ['node-line-width', 'line-width'],
+  ['color', 'fo:color'],
   ['font-size', 'fo:font-size'],
   ['font-family', 'fo:font-family'],
   ['text-align', 'fo:text-align'],
+  /*
+   * 垂直对齐 XMind **没有**对应的标准属性（它的节点文字固定居中）。
+   * 走私有键保住本工具的往返，避免「设了垂直：下 → 导出再导入 → 变回居中」。
+   * 私有键只在真的设了值时才写，别的软件忽略未知键，无害。
+   */
+  ['vertical-align', 'nexusValign'],
 ];
+
+/** 这几个键 XMind 里带 px 单位（其余原样，font-size 走 pt） */
+const StylePxKeys = new Set(['node-radius', 'node-stroke-width', 'node-line-width']);
 
 export const XMIND_ENTRIES = { ContentEntry, NativeEntry, MetadataEntry, ManifestEntry, LegacyContentEntry };
 
@@ -852,10 +877,23 @@ function buildStyle(data) {
   for (const [kmKey, xmKey] of StyleMap) {
     const v = str(data?.[kmKey]);
     if (v == null || !String(v).trim()) continue;
-    props[xmKey] = kmKey === 'radius' ? toPx(v) : kmKey === 'font-size' ? toPt(v) : v;
+    props[xmKey] = StylePxKeys.has(kmKey) ? toPx(v) : kmKey === 'font-size' ? toPt(v) : v;
   }
-  if (bool(data?.bold)) props['fo:font-weight'] = 'bold';
-  if (bool(data?.italic)) props['fo:font-style'] = 'italic';
+  /*
+   * 粗体 / 斜体的 data 键是 font-weight / font-style（与 XMind 同名），
+   * 不是面板上报用的 bold / italic —— 后者只是**面板状态对象**的键，
+   * 真正落到 node.data 上的是前者。早先读 data?.bold，永远是 undefined。
+   *
+   * 值要归一化：别的软件可能写 '700' / 700 / 'bold'，一律收敛成 'bold'，
+   * 否则导回时 '700' 会被内核当普通字重处理。
+   */
+  const weight = str(data?.['font-weight']);
+  if (weight) {
+    const w = String(weight).toLowerCase().trim();
+    if (w === 'bold' || (num(weight) ?? 0) >= 600) props['fo:font-weight'] = 'bold';
+  }
+  const fstyle = str(data?.['font-style']);
+  if (fstyle && String(fstyle).toLowerCase().trim() === 'italic') props['fo:font-style'] = 'italic';
   /*
    * 删除线与下划线**可以同时在**（导入别的软件的文件时常见）。
    * 早先写的是 `if (strikethrough) ... else if (underline) ...` ——
@@ -864,8 +902,13 @@ function buildStyle(data) {
    * fo:text-decoration 本来就是空格分隔的多值属性，两个都写即可；
    * 读回侧 applyStyle 也是分别对 /line-through/ 与 /underline/ 做匹配。
    */
-  const deco = [bool(data?.strikethrough) ? 'line-through' : '',
-    bool(data?.underline) ? 'underline' : ''].filter(Boolean).join(' ');
+  /*
+   * 删除线的 data 键是 font-strikethrough（`!!值` 判断，写入什么值都行）。
+   * underline 内核没有对应 data 键（面板也没有下划线控件），但因为导回侧
+   * 会把它落成 data.underline，两边成对，往返仍然一致 —— 保留即可。
+   */
+  const deco = [data?.['font-strikethrough'] ? 'line-through' : '',
+    data?.underline ? 'underline' : ''].filter(Boolean).join(' ');
   if (deco) props['fo:text-decoration'] = deco;
   return props;
 }
@@ -1036,17 +1079,19 @@ function applyStyle(data, style) {
   for (const [kmKey, xmKey] of StyleMap) {
     const v = str(props[xmKey]);
     if (v == null || !String(v).trim()) continue;
-    data[kmKey] = kmKey === 'radius' ? fromPx(v) : kmKey === 'font-size' ? fromPt(v) : v;
+    data[kmKey] = StylePxKeys.has(kmKey) ? fromPx(v) : kmKey === 'font-size' ? fromPt(v) : v;
   }
   const weight = str(props['fo:font-weight']);
   if (String(weight).toLowerCase() === 'bold' || (num(props['fo:font-weight']) ?? 0) >= 600) {
-    data.bold = true;
+    data['font-weight'] = 'bold';
   }
   const fs = str(props['fo:font-style']);
-  if (String(fs).toLowerCase() === 'italic') data.italic = true;
+  if (String(fs).toLowerCase() === 'italic') data['font-style'] = 'italic';
   const deco = str(props['fo:text-decoration']);
   if (deco) {
-    if (/line-through/i.test(deco)) data.strikethrough = true;
+    if (/line-through/i.test(deco)) data['font-strikethrough'] = true;
+    // 内核没有下划线 data 键（面板也无此控件），落成 data.underline 只为
+    // 与写侧成对，保证「导入 → 再导出」不把它丢掉
     if (/underline/i.test(deco)) data.underline = true;
   }
 }
