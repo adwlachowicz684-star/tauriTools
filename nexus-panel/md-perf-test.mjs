@@ -21,6 +21,8 @@ const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 
 let pass = 0;
 let fail = 0;
+/* 跳过必须单列：不写进汇总行，13 条渲染断言悄悄少跑，报告上却看不出来。 */
+let skips = 0;
 function t(name, ok, extra = '') {
   if (ok) { pass++; console.log(`✅ ${name}`); }
   else { fail++; console.log(`❌ ${name}${extra ? '  → ' + extra : ''}`); }
@@ -191,16 +193,23 @@ t('.md-block 有 contain-intrinsic-size（不给值滚动条会一路变长）',
 console.log('\n=== 6. 真跑渲染（分块 vs 整篇）===');
 
 let React, ReactMarkdown, render, cfg;
+/* ⚠ 只有 `render` 在 try 里被赋过值，就走进下面的分支 —— 而 render-config.js
+   里 import 的 rehype-slug / rehype-highlight 没装时，cfg 是 undefined，
+   `cfg.REMARK_PLUGINS` 当场抛 TypeError：崩在半路，既没有 ❌ 也没有汇总行。
+   体检只会记成"环境异常"，看不出是这个守卫漏了 cfg。
+   所以四个必须一起判，缺任何一个都算"依赖不可用"。 */
+let depsOk = false;
 try {
   React = (await import('react')).default;
   ReactMarkdown = (await import('react-markdown')).default;
   render = (await import('react-dom/server')).renderToStaticMarkup;
   cfg = await import('./plugins/md/render-config.js');
+  depsOk = Boolean(React && ReactMarkdown && render && cfg);
 } catch (e) {
   console.log('⚠ 依赖不可用，跳过渲染比对：', String(e.message).slice(0, 80));
 }
 
-if (render) {
+if (depsOk) {
   const md = (text) => render(React.createElement(ReactMarkdown, {
     remarkPlugins: cfg.REMARK_PLUGINS,
     rehypePlugins: cfg.REHYPE_PLUGINS,
@@ -244,7 +253,9 @@ if (render) {
   t('围栏内两行都在（切开的话后半段会变成垃圾文字）',
     fblocks.length === 1 && plain.includes('a = 1') && plain.includes('b = 2'),
     `→ 块数 ${fblocks.length}, 纯文本 ${JSON.stringify(plain.slice(0, 60))}`);
+} else {
+  skips++;
 }
 
-console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
+console.log(`\n通过 ${pass} 项，失败 ${fail} 项${skips ? ` / 跳过 ${skips} 项（依赖不可用，不冒充通过）` : ''}`);
 if (fail) process.exitCode = 1;
