@@ -162,6 +162,52 @@ t('DepsCard 用 js/clipboard.js', /js\/clipboard\.js/.test(cardText));
 t('md 的 clipboard 改为复用共用实现', /js\/clipboard\.js/.test(read('plugins/md/clipboard.js')));
 t('设置页白名单含 fpx_copy_text', /settings:[\s\S]{0,200}fpx_copy_text/.test(read('js/invoke-policy.js')));
 
-console.log(`\n依赖清单：${pass} 通过 / ${fails.length} 失败`);
+/* ---- 已安装的包必须与声明范围一致 ----
+ *
+ * 起因：`npm install --no-save typescript` 不带版本 → 装成 TS 7，而
+ * package.json 声明 ^5.6.3、lock 钉 5.9.3。TS 7 没有 ts.ScriptTarget，
+ * external-card-loop 直接崩在半路：
+ *   TypeError: Cannot read properties of undefined (reading 'ES2020')
+ * 报错一个字都没提"版本装错了"，只会让人去查测试代码本身。
+ *
+ * 只校验**已安装**的包：没装的是另一类问题（sweep 会报"崩在半路"），
+ * 这里把它们算进通过数就是"把没测伪装成测过"，所以单列成跳过。
+ */
+const pkgObj = JSON.parse(pkgText);
+const num = (v) => String(v || '').replace(/^[^0-9]*/, '').split('-')[0].split('.').map(Number);
+const cmp = (a, b) => {
+  for (let i = 0; i < 3; i++) { const x = a[i] || 0, y = b[i] || 0; if (x !== y) return x - y; }
+  return 0;
+};
+function satisfies(ver, range) {
+  const v = num(ver);
+  if (!v.length || Number.isNaN(v[0])) return false;
+  const r = String(range).trim();
+  const m = r.match(/^[\^~]?\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  if (!m) return true; // 认不出的范围写法（workspace:、* 等）不误伤
+  const b = [Number(m[1]), Number(m[2] || 0), Number(m[3] || 0)];
+  if (cmp(v, b) < 0) return false;
+  if (r.startsWith('~')) return (v[0] || 0) === b[0] && (v[1] || 0) === b[1];
+  if (r.startsWith('^')) return (v[0] || 0) === b[0];
+  return cmp(v, b) === 0;
+}
+
+const declared = { ...(pkgObj.dependencies || {}), ...(pkgObj.devDependencies || {}) };
+const checked = [];
+const missing = [];
+const drift = [];
+for (const [name, range] of Object.entries(declared)) {
+  let ver;
+  try {
+    ver = JSON.parse(fs.readFileSync(path.join(HERE, 'node_modules', name, 'package.json'), 'utf8')).version;
+  } catch { missing.push(name); continue; }
+  checked.push(name);
+  if (!satisfies(ver, range)) drift.push(`${name} 装了 ${ver}，声明 ${range}`);
+}
+// 元断言：一个都没核对到就说明 node_modules 整体缺失，下面那条"没有漂移"是恒真的
+t('版本核对真的核对到了包（否则"没有漂移"是恒真）', checked.length > 0, `已装 ${checked.length} 个 / 缺失 ${missing.length} 个`);
+t('已安装的包都在声明范围内（装错大版本会让测试崩且报错指不到）', drift.length === 0, drift.join('；'));
+
+console.log(`\n依赖清单：${pass} 通过 / ${fails.length} 失败 / 跳过 ${missing.length} 项（未安装，不冒充通过）`);
 for (const f of fails) console.log('  ✗ ' + f);
 process.exit(fails.length ? 1 : 0);
