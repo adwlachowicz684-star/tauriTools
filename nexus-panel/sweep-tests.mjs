@@ -98,6 +98,35 @@ const FIXTURES = [
 const isBad = (r) => r.status !== 0 || r.pass === null || r.pass === 0
   || (r.fail !== null && r.fail > 0);
 
+// 「挂起」要与「崩」分开：两者在体检单上都是"无汇总行 + 退出码异常"，
+// 但**处置完全不同** —— 崩是测试自己的问题，挂起多半是环境（依赖半残、
+// 等外部资源）。实测案例：jsdom 本体在、它的依赖（cssstyle / parse5 /
+// rrweb-cssom / tough-cookie / ws）被环境裁掉时，require('jsdom') 既不
+// 报错也不返回，进程**静默挂起**——连一行输出都没有。体检单上它长得很像
+// "崩在半路"，于是排查方向被引到测试本身，而真因在依赖。
+//   两种信号都要认：外层用 `timeout N bash -c` 时退出码是 124；spawnSync
+// 自己的 timeout 到点则是 status=null + signal=SIGTERM（没有 124）。
+const isHung = (r) => r.status === null || r.status === 124;
+
+// 归类的判据只写一份：循环里和自检里调的是同一个函数。
+// 分着写两份，改了一处另一处不动，体检单就会把"挂起"报成"崩"。
+const whyOf = (r) => {
+  const noOutput = r.noOutput !== undefined ? r.noOutput : (r.out || '').trim() === '';
+  // ⚠️ 顺序要紧，两条都是：
+  //   · hung 必须在 crashed 之前 —— 超时被杀时 status=null 同样满足 crashed
+  //     的判据（null !== 0 且 pass===null），会被"崩在半路"吃掉（死分支）。
+  //   · '失败 N 项' 必须在 'pass===0' 之前 —— 能走到那里的只剩 pass===0
+  //     已被前面吃掉的情况，排最后就永远打不出来（同样是死分支）。
+  if (isHung(r)) return noOutput
+    ? '挂起（超时被杀，且**一行输出都没有** → 多半是依赖半残或等外部资源，不是测试自己的问题）'
+    : '超时（跑太慢，或有输出但未跑完）';
+  if (r.status !== 0 && r.pass === null) return '崩在半路（无汇总行，退出码非 0）';
+  if (r.pass === null) return '退出码 ' + r.status + ' 但无汇总行';
+  if (r.fail !== null && r.fail > 0) return '失败 ' + r.fail + ' 项，但退出码 ' + r.status + '（CI 只看退出码，看不出来）';
+  if (r.pass === 0) return '0 条断言（等于没守任何东西）';
+  return '未归类';
+};
+
 const selfFails = [];
 // 自检项数必须随实际条数走：这里原先写死成 FIXTURES.length + 2，
 // 后来新增了 2 条自检（failOk / noFalseAlarm）却没同步这个公式，
@@ -132,6 +161,20 @@ if (!zeroOk) selfFails.push('0 条断言未判为可疑');
 if (!fiveOk) selfFails.push('正常测试被误判为可疑');
 if (!failOk) selfFails.push('失败数 > 0 但退出码 0 未判为可疑');
 if (!noFalseAlarm) selfFails.push('失败 0 项被误判为可疑');
+// 「挂起」不能被「崩在半路」吃掉：超时被杀时 status=null，crashed 的判据
+// （status !== 0 && pass === null）对 null 同样成立，顺序错了这档就是死分支，
+// 体检单会把"依赖半残导致的挂起"报成"测试自身崩溃"，排查方向整个被引跑。
+const hungOk = isHung({ status: null }) && isHung({ status: 124 })
+  && whyOf({ status: null, pass: null, out: '' }).includes('挂起')
+  && whyOf({ status: 124, pass: null, out: '' }).includes('挂起');
+const hungNoFalse = !isHung({ status: 0 }) && !isHung({ status: 1 })
+  && whyOf({ status: 1, pass: null, out: 'boom' }).includes('崩在半路');
+selfTotal++;
+console.log(`${hungOk ? '✅' : '❌'} 超时被杀判为「挂起」，且不被「崩在半路」吃掉`);
+selfTotal++;
+console.log(`${hungNoFalse ? '✅' : '❌'} 真崩溃仍判为「崩在半路」（挂起判据不误伤）`);
+if (!hungOk) selfFails.push('挂起未被正确归类（会被当成崩溃，排查方向被引跑）');
+if (!hungNoFalse) selfFails.push('挂起判据误伤了真崩溃');
 
 const rows = [];
 for (const [name, cmd] of entries) {
@@ -139,7 +182,8 @@ for (const [name, cmd] of entries) {
   const out = (r.stdout || '') + (r.stderr || '');
   const { pass, fail } = parseSummary(out);
   const crashed = r.status !== 0 && pass === null;
-  rows.push({ name, cmd, status: r.status, pass, fail, crashed, out });
+  rows.push({ name, cmd, status: r.status, pass, fail, crashed, out,
+    hung: isHung(r), noOutput: out.trim() === '' });
 }
 
 const bad = rows.filter(isBad);
@@ -150,14 +194,7 @@ console.log(`✅ 正常（有汇总行且断言数 > 0）：${ok.length}`);
 console.log(`⚠️  可疑：${bad.length}\n`);
 
 for (const r of bad) {
-  // ⚠️ 顺序要紧：'失败 N 项' 必须排在 'pass===0' 前面。
-  //    原顺序里它排最后，而能走到那里的只有 pass===0 已被前面吃掉之后的情况，
-  //    于是这一档永远打不出来（死分支）。
-  const why = r.crashed ? '崩在半路（无汇总行，退出码非 0）'
-    : r.pass === null ? '退出码 ' + r.status + ' 但无汇总行'
-    : (r.fail !== null && r.fail > 0) ? '失败 ' + r.fail + ' 项，但退出码 ' + r.status + '（CI 只看退出码，看不出来）'
-    : r.pass === 0 ? '0 条断言（等于没守任何东西）'
-    : '未归类';
+  const why = whyOf(r);
   console.log(`  ${r.status === 0 && r.pass === 0 ? '⚠️' : '❌'} ${r.name} — ${why}`);
   const tail = r.out.trim().split('\n').slice(-3).join('\n     ');
   if (tail) console.log(`     ${tail}`);
