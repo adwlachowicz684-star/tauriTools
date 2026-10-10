@@ -2404,8 +2404,14 @@ async function gcOrphanAssets(quiet = false) {
    * 所以只导出当前画布，并且**必须明确说出来**：
    * 用户有 3 张画布时静默只导 1 张，会以为另外 2 张丢了。
    *
-   * 另一处诚实点：这些格式只带「文字 + 层级 + 折叠状态」，
-   * 图标/优先级/进度/附件一概不带。塞进自定义属性只会在别的软件里变乱码。
+   * 另一处诚实点：这些格式只带「文字 + 层级」，外加各自装得下的少量字段
+   * （见 `fmt.EXCHANGE_KEEP`：超链接只有 .mm 的 LINK 与 .opml 的 url 带得走，
+   * 折叠状态只有 .mm 的 FOLDED 带得走）。备注 / 优先级 / 进度 / 标签 /
+   * 自定义样式一概不带 —— 塞进自定义属性只会在别的软件里变乱码。
+   *
+   * ⓘ 早先这里写的是「只带文字 + 层级 + 折叠状态」，把 OPML / Mermaid /
+   *   PlantUML 也算成带折叠状态，与实测不符（BUG 111）。丢什么必须**按格式
+   *   分别**说，统一一句就会说错。
    */
   async function exportExchange(kind) {
     const meta = fmt.FORMAT_META[kind];
@@ -2430,11 +2436,24 @@ async function gcOrphanAssets(quiet = false) {
     );
     reportSave(r, meta.label);
 
-    // 多画布时补一句说明，放在保存之后 —— 先让人看到文件存好了
-    const extra = workbook.sheets?.length > 1
-      ? `（仅当前画布；${meta.label} 是单画布格式，其余 ${workbook.sheets.length - 1} 张请用 .xmind 或 .json 导出）`
-      : '';
-    if (extra) status(extra);
+    // BUG 111：装不下的字段必须**当场说清**。用户拿 .opml 当备份是最常见的
+    // 用法，而备注/进度/标签/样式导出去就没了 —— 等导回来才发现已经晚了
+    // （导入是整体替换且不可撤销）。放在保存之后，先让人看到文件存好了。
+    const loss = fmt.exchangeLoss(s.content, kind);
+    const NAME = { note: '备注', hyperlink: '超链接', priority: '优先级',
+      progress: '进度', labels: '标签', collapsed: '折叠状态', style: '自定义样式' };
+    const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
+      .map((k) => `${NAME[k]} ${loss[k]} 处`);
+    const notes = [];
+    if (workbook.sheets?.length > 1) {
+      notes.push(`仅当前画布；${meta.label} 是单画布格式，其余 `
+        + `${workbook.sheets.length - 1} 张请用 .xmind 或 .json 导出`);
+    }
+    if (loss.nodes > 0) {
+      notes.push(`${meta.label} 装不下 ${seg.join('、')}（共涉及 ${loss.nodes} 个节点），`
+        + '这些内容在导出的文件里不会保留 —— 需要完整备份请改用 .json 或 .xmind 导出');
+    }
+    if (notes.length) status(notes.join('；'), true);
   }
 
   /**
@@ -2569,10 +2588,10 @@ async function gcOrphanAssets(quiet = false) {
           // 早先这里写成 `if (r !== 'cancel') 就报成功` —— 'error' 也会落进
           // 那个分支，于是**保存失败却提示「已导出」**。其余 7 处导出函数
           // 都用 reportSave 正确处理了，只有这里漏了。
-          // 画布标题与 exportExchange 那一处是同一种输入（用户随手起的），
-          // 同一份判据：不在这里安全化的话，标题里带 / : 时这一路导出
-          // 与相邻那一路行为不一致（能导出的格式里偏偏 PDF 是另一套规则）。
           const r = await io.saveBlob(
+            // 画布标题与 exportExchange 那一处是同一种输入（用户随手起的），
+            // 同一份判据：不在这里安全化的话，标题里带 / : 时这一路导出
+            // 与相邻那一路行为不一致（能导出的格式里偏偏 PDF 是另一套规则）。
             io.stampName(io.safeFileName(sheet()?.title || '脑图'), 'pdf'), blob);
           reportSave(r, 'PDF（矢量）');
           // 落盘结果无论成败都不再托底：PDF 已经生成好了，

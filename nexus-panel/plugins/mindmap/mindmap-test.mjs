@@ -6708,6 +6708,150 @@ group('BUG 108 · XMind 8（content.xml）的节点样式必须读出来');
    它们不能丢：那是 XMind 里**看得见的内容**，丢掉等于改了别人的文件。
    所以读侧存进 data.xmarkers，写侧原样写回 —— 本工具不显示，但也不弄丢。
    ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   BUG 111：FreeMind 的 LINK / OPML 的 url 必须双向支持；
+            交换格式装不下的字段必须在导出时说清
+
+   ① 导入别人的 .mm（带 LINK 属性）与 .opml（带 url 属性）—— 这两个都是
+      **规范属性**，FreeMind / Freeplane / XMind / OmniOutliner / 幕布
+      普遍读写。早先只读 TEXT/text，于是导入别人的文件时节点上的超链接
+      全部静默消失：不报错，用户只会以为"这软件不支持超链接"。
+
+   ② 导成 .mm / .opml / .mmd / .puml 时，备注、优先级、进度、标签、
+      自定义样式（以及 OPML/Mermaid/PlantUML 的折叠状态）一概不带，
+      而界面只说「已保存」。用户拿 .opml 当备份是最常见的用法，等导回来
+      才发现没了 —— 导入是**整体替换且不可撤销**，那时已经晚了。
+   ------------------------------------------------------------------ */
+group('BUG 111 · 交换格式的超链接与"装不下什么"必须说清');
+
+{
+  const fmt = await import('file://' + path.join(HERE, 'formats.js'));
+
+  const mkContent = (data, kids = []) => JSON.stringify({ root: { data, children: kids } });
+
+  // ① 导入**别人的**文件：LINK / url 必须读出来
+  {
+    const mm = `<map version="1.0.1"><node TEXT="根" LINK="https://root.example">
+ <node TEXT="带链接" LINK="https://a.example/p?x=1&amp;y=2"/>
+ <node TEXT="无链接"/>
+</node></map>`;
+    const r = JSON.parse(fmt.fromFreemind(mm));
+    eq(r.root.data.hyperlink, 'https://root.example', '★ 导入别人的 .mm：根上的 LINK 读出来了');
+    eq(r.root.children[0].data.hyperlink, 'https://a.example/p?x=1&y=2',
+      '★ 导入别人的 .mm：子节点 LINK 读出来（&amp; 已还原）');
+    ok(!r.root.children[1].data.hyperlink, '.mm：没有 LINK 的节点不长出超链接');
+  }
+
+  {
+    const opml = `<?xml version="1.0" encoding="UTF-8"?><opml version="2.0"><head><title>T</title></head><body>
+<outline text="根" url="https://root.example">
+  <outline text="带链接" url="https://a.example/p?x=1&amp;y=2"/>
+  <outline text="无链接"/>
+</outline></body></opml>`;
+    const r = JSON.parse(fmt.fromOpml(opml));
+    eq(r.root.data.hyperlink, 'https://root.example', '★ 导入别人的 .opml：根上的 url 读出来了');
+    eq(r.root.children[0].data.hyperlink, 'https://a.example/p?x=1&y=2',
+      '★ 导入别人的 .opml：子节点 url 读出来（&amp; 已还原）');
+    ok(!r.root.children[1].data.hyperlink, '.opml：没有 url 的节点不长出超链接');
+  }
+
+  // ② 往返：自己导出再导回，链接要保住（含需要转义的字符）
+  {
+    const c = mkContent({ id: 'r', text: '根', hyperlink: 'https://r.example' }, [
+      { data: { id: 'c1', text: '带链接', hyperlink: 'https://a.example/p?x=1&y=2' }, children: [] },
+      { data: { id: 'c2', text: '带引号', hyperlink: 'https://b.example/"q"&<x>' }, children: [] },
+      { data: { id: 'c3', text: '无链接' }, children: [] },
+    ]);
+    for (const [name, to, from] of [
+      ['FreeMind', fmt.toFreemind, fmt.fromFreemind],
+      ['OPML', (x) => fmt.toOpml(x, 'T'), fmt.fromOpml],
+    ]) {
+      const back = JSON.parse(from(to(c)));
+      eq(back.root.data.hyperlink, 'https://r.example', `${name}：根链接往返保住`);
+      eq(back.root.children[0].data.hyperlink, 'https://a.example/p?x=1&y=2',
+        `★ ${name}：含 & 与 ? 的链接往返保住`);
+      eq(back.root.children[1].data.hyperlink, 'https://b.example/"q"&<x>',
+        `★ ${name}：含引号与尖括号的链接往返保住（属性值必须转义）`);
+      ok(!back.root.children[2].data.hyperlink, `${name}：无链接节点不长出超链接`);
+    }
+  }
+
+  // ③ 深层 + 折叠：索引必须一一对齐（applyLinks 与 applyCollapsed 同走前序）
+  {
+    const c = mkContent({ id: 'r', text: '根', hyperlink: 'https://r.x' }, [
+      { data: { id: 'a', text: 'A', hyperlink: 'https://a.x', expandState: 'collapse' }, children: [
+        { data: { id: 'a1', text: 'A1', hyperlink: 'https://a1.x' }, children: [] },
+      ] },
+      { data: { id: 'b', text: 'B', hyperlink: 'https://b.x' }, children: [] },
+    ]);
+    const back = JSON.parse(fmt.fromFreemind(fmt.toFreemind(c)));
+    eq(back.root.data.hyperlink, 'https://r.x', '深层：根链接不错位');
+    eq(back.root.children[0].data.hyperlink, 'https://a.x', '★ 深层：A 的链接不错位');
+    eq(back.root.children[0].data.expandState, 'collapse', '深层：A 的折叠状态仍在（LINK 不挤掉 FOLDED）');
+    eq(back.root.children[0].children[0].data.hyperlink, 'https://a1.x', '★ 深层：A1 的链接不错位');
+    eq(back.root.children[1].data.hyperlink, 'https://b.x', '★ 深层：B 的链接不错位');
+  }
+
+  // ④ OPML 多顶层 outline 会插虚拟根 —— 索引必须跟着 rows2 走，不能错位
+  {
+    const opml = `<?xml version="1.0"?><opml version="2.0"><body>
+<outline text="A" url="https://a.x"/><outline text="B" url="https://b.x"/></body></opml>`;
+    const r = JSON.parse(fmt.fromOpml(opml));
+    eq(r.root.data.text, '中心主题', '多顶层：造了虚拟根');
+    ok(!r.root.data.hyperlink, '★ 多顶层：虚拟根自己没有链接（不能抢走 A 的）');
+    eq(r.root.children[0].data.hyperlink, 'https://a.x', '★ 多顶层：A 的链接没被虚拟根挤掉');
+    eq(r.root.children[1].data.hyperlink, 'https://b.x', '多顶层：B 的链接正确');
+  }
+
+  // ⑤ 装不下的字段：按格式分别统计（统一一句会说错）
+  {
+    const c = mkContent({ id: 'r', text: '根', note: '备注', hyperlink: 'https://a.x',
+      priority: 4, progress: 7, labels: ['A'] }, [
+      { data: { id: 'c1', text: '子1', expandState: 'collapse', background: '#f00' }, children: [] },
+      { data: { id: 'c2', text: '子2' }, children: [] },
+    ]);
+    const fm = fmt.exchangeLoss(c, 'freemind');
+    const op = fmt.exchangeLoss(c, 'opml');
+    const mm = fmt.exchangeLoss(c, 'mermaid');
+    const pu = fmt.exchangeLoss(c, 'plantuml');
+
+    eq(fm.hyperlink, 0, '★ FreeMind 带得走超链接（LINK），不计入丢失');
+    eq(fm.collapsed, 0, '★ FreeMind 带得走折叠状态（FOLDED），不计入丢失');
+    eq(fm.note, 1, 'FreeMind 装不下备注');
+    eq(fm.priority, 1, 'FreeMind 装不下优先级');
+    eq(fm.progress, 1, 'FreeMind 装不下进度');
+    eq(fm.labels, 1, 'FreeMind 装不下标签');
+    eq(fm.style, 1, 'FreeMind 装不下自定义样式');
+    eq(fm.nodes, 2, 'FreeMind：受影响节点数（去重）');
+
+    eq(op.hyperlink, 0, '★ OPML 带得走超链接（url），不计入丢失');
+    eq(op.collapsed, 1, '★ OPML **装不下折叠状态**（早先注释 wrongly 说它带）');
+    eq(mm.hyperlink, 1, '★ Mermaid 装不下超链接');
+    eq(mm.collapsed, 1, '★ Mermaid 装不下折叠状态');
+    eq(pu.hyperlink, 1, '★ PlantUML 装不下超链接');
+
+    // 干净画布不该报损失
+    const clean = mkContent({ id: 'r', text: '根' });
+    eq(fmt.exchangeLoss(clean, 'opml').nodes, 0, '无损失的画布不报');
+    eq(fmt.exchangeLoss('坏内容', 'opml').nodes, 0, '内容解析不了时按无损失处理（它本来也导不出）');
+  }
+
+  // ⑥ 导出侧必须真的把损失说出来（只改统计函数不接提示 = 没修）
+  {
+    const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+    ok(/exchangeLoss\(s\.content, kind\)/.test(idx), '★ exportExchange 调用了 exchangeLoss');
+    // 只数一次不行：函数定义里也有 `exchangeLoss(`，会被命中
+    const sites = (idx.match(/exchangeLoss\(/g) || []).length;
+    ok(sites >= 1, 'exchangeLoss 有调用点', String(sites));
+    const i = idx.indexOf('async function exportExchange');
+    const body = idx.slice(i, i + 3000);
+    ok(/status\(notes\.join/.test(body), '★ 有损失时 status 提示（不是只统计不说）');
+    ok(/\.json 或 \.xmind/.test(body), '★ 要告诉用户**怎么办**（改用 .json / .xmind）');
+    // 早先那条"折叠状态通用"的错误注释必须改掉
+    ok(!/只带「文字 \+ 层级 \+ 折叠状态」/.test(idx), '★ 不再声称所有格式都带折叠状态');
+  }
+}
+
 group('BUG 110 · 不认识的 XMind 标记必须原样保住');
 
 {
