@@ -2389,11 +2389,34 @@ async function gcOrphanAssets(quiet = false) {
      * 才发现层级没了 —— 而导入是**整体替换且不可撤销**，那时已经晚了。
      * 放在保存之后补一句，先让人看到文件存好了。
      */
+    /*
+     * BUG 116：Markdown 只带「文字 + 层级」，备注 / 超链接 / 优先级 / 进度 /
+     * 标签 / 折叠状态 / 自定义样式**一概装不下**。而这里是**最常被当成备份**
+     * 的格式 —— 用户拿 .md 存一份，日后导回来才发现那些内容没了，而导入是
+     * 整体替换且不可撤销，那时已经晚了。
+     *
+     * BUG 112 已经让 FreeMind / OPML / Mermaid / PlantUML 四种格式在导出时
+     * 说清丢什么，唯独漏了 Markdown —— 同一条约束只修了部分路径（这是本项目
+     * 第 N 次撞上）。口径与那边完全一致，复用同一个 `exchangeLoss`。
+     */
     const deep = wb.deepNodeCount(workbook.sheets);
+    const notes = [];
     if (deep) {
-      status(`注意：有 ${deep} 个节点深于 ${wb.MARKDOWN_MAX_LEVEL} 级，`
-        + `Markdown 最多 ${wb.MARKDOWN_MAX_LEVEL} 个 #，这些节点在导出的文件里被拍平到同一层`
-        + `（需要保留完整层级请改用 .json 或 .xmind 导出）`, true);
+      notes.push(`有 ${deep} 个节点深于 ${wb.MARKDOWN_MAX_LEVEL} 级，`
+        + `Markdown 最多 ${wb.MARKDOWN_MAX_LEVEL} 个 #，这些节点在导出的文件里被拍平到同一层`);
+    }
+    const loss = fmt.exchangeLoss(sheet()?.content || '', 'markdown');
+    if (loss.nodes > 0) {
+      const NAME = { note: '备注', hyperlink: '超链接', priority: '优先级',
+        progress: '进度', labels: '标签', collapsed: '折叠状态', style: '自定义样式' };
+      const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
+        .map((k) => `${NAME[k]} ${loss[k]} 处`);
+      notes.push(`Markdown 装不下 ${seg.join('、')}（共涉及 ${loss.nodes} 个节点），`
+        + '这些内容在导出的文件里不会保留');
+    }
+    if (notes.length) {
+      status(`注意：${notes.join('；')}`
+        + ' —— 需要完整备份请改用 .json 或 .xmind 导出', true);
     }
   }
 

@@ -921,10 +921,14 @@ const NODE_STYLE_KEYS = [
  *   把这三种也算进去了，与实测不符（BUG 111）。
  * ⓘ 超链接：FreeMind 走 `LINK`、OPML 走 `url`，都是规范属性（BUG 111 补上）。
  * ⓘ 备注：FreeMind 走 `<richcontent TYPE="NOTE">`（BUG 113 补上）。
+ * ⓘ Markdown 只带「文字 + 层级」：备注 / 超链接 / 优先级 / 进度 / 标签 /
+ *   折叠状态 / 自定义样式一概装不下（BUG 116 起在导出时说清）。
  * ⓘ 样式：FreeMind 只带得走**颜色**两项（`COLOR` / `BACKGROUND_COLOR`，
  *   BUG 114 补上）—— 字号 / 圆角 / 连线等一概没有对应属性，仍是丢的。
  */
 export const EXCHANGE_KEEP = {
+  // 空对象 = 除了文字与层级，其余一概装不下（exchangeLoss 会全算成丢失）
+  markdown: {},
   freemind: { hyperlink: true, collapsed: true, note: true,
     styleKeys: ['color', 'background'] },
   opml: { hyperlink: true },

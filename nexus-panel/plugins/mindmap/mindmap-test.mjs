@@ -6775,6 +6775,98 @@ group('BUG 108 · XMind 8（content.xml）的节点样式必须读出来');
    ⓘ 读侧只认 `folded` **这一个字面值**：别的软件若写了 `expand`、
      `true` 之类，不该被当成"已折叠"（宁可展开，不要静默改结构）。
    ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   BUG 116：Markdown 导出也要说清装不下什么
+
+   Markdown 只带「文字 + 层级」：备注 / 超链接 / 优先级 / 进度 / 标签 /
+   折叠状态 / 自定义样式**一概装不下**。实测（workbookToMarkdown 往返）：
+
+     输入：root(note=N0) → c1(note=备注1, hyperlink, priority=3,
+           progress=5, labels=[甲], expandState=collapse, color, font-size)
+     md：  `## 画布：甲 / # 根 / ## 子1 / ### 孙1`
+     导回：c1 = { text: '子1' }，root.note = undefined —— 全部没了
+
+   而 Markdown 恰恰是**最常被当成备份**的格式。BUG 112 已经让 FreeMind /
+   OPML / Mermaid / PlantUML 四种格式在导出时说清丢什么，唯独漏了 Markdown
+   —— 同一条约束只修了部分路径（本项目第 N 次撞上这个模式）。
+
+   ⓘ 不提示的后果与别处同：用户拿 .md 存一份，日后导回来才发现没了，
+     而导入是**整体替换且不可撤销**，那时已经晚了。
+   ⓘ 深于 6 级那条提示（BUG 102）要保留，两句合并成一条说，
+     否则后一句会把前一句盖掉（status 是覆盖式的）。
+   ------------------------------------------------------------------ */
+group('BUG 116 · Markdown 导出也要说清装不下什么');
+
+{
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const fmt = await import('file://' + path.join(HERE, 'formats.js'));
+  const wb = await import('file://' + path.join(HERE, 'workbook.js'));
+
+  const content = JSON.stringify({ root: { data: { id: 'r', text: '根', note: 'N0' }, children: [
+    { data: { id: 'c1', text: '子1', note: '备注1', hyperlink: 'https://h.x', priority: 3,
+      progress: 5, labels: ['甲'], expandState: 'collapse', color: '#ff0000', 'font-size': 20 },
+      children: [{ data: { id: 'g1', text: '孙1' }, children: [] }] },
+  ] } });
+
+  // ① 事实：Markdown 确实什么字段都带不走
+  {
+    const md = wb.workbookToMarkdown([{ id: 'sh1', title: '甲', content }]);
+    ok(!/备注1/.test(md) && !/https:\/\/h\.x/.test(md) && !/甲/.test(md.replace('画布：甲', '')),
+      '★ Markdown 里没有备注 / 超链接 / 标签');
+    const back = wb.markdownToWorkbook(md);
+    const c = JSON.parse(back[0].content);
+    eq(c.root.children[0].data.text, '子1', 'Markdown 往返：文字保住');
+    ok(!c.root.children[0].data.note, 'Markdown 往返：备注没了');
+    ok(!c.root.children[0].data.hyperlink, 'Markdown 往返：超链接没了');
+    ok(!c.root.children[0].data.priority, 'Markdown 往返：优先级没了');
+    ok(!c.root.children[0].data.progress, 'Markdown 往返：进度没了');
+    ok(!c.root.children[0].data.expandState, 'Markdown 往返：折叠状态没了');
+    ok(!c.root.data.note, 'Markdown 往返：根节点的备注也没了');
+  }
+
+  // ② exchangeLoss 对 markdown 要如实统计（EXCHANGE_KEEP 里它是空对象）
+  {
+    const l = fmt.exchangeLoss(content, 'markdown');
+    eq(l.note, 2, '★ Markdown 装不下备注（根 + c1 共 2 处）');
+    eq(l.hyperlink, 1, '★ Markdown 装不下超链接');
+    eq(l.priority, 1, 'Markdown 装不下优先级');
+    eq(l.progress, 1, 'Markdown 装不下进度');
+    eq(l.labels, 1, 'Markdown 装不下标签');
+    eq(l.collapsed, 1, 'Markdown 装不下折叠状态');
+    eq(l.style, 1, 'Markdown 装不下自定义样式');
+    eq(l.nodes, 2, '受影响节点数（根 + c1，去重）');
+  }
+
+  // ③ 什么都没设时不该瞎提示
+  {
+    const plain = JSON.stringify({ root: { data: { id: 'r', text: '根' },
+      children: [{ data: { id: 'c1', text: '子1' }, children: [] }] } });
+    eq(fmt.exchangeLoss(plain, 'markdown').nodes, 0,
+      '★ 纯文字画布 → 不报丢失（不能每次导出都喊狼来了）');
+  }
+
+  // ④ exportMarkdown 必须真的把这句话说出来
+  {
+    const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+    const starts = [...src.matchAll(/^ +async function (\w+)\(/gm)]
+      .map((m) => ({ name: m[1], i: m.index }));
+    const mdFn = starts.find((f) => f.name === 'exportMarkdown');
+    ok(!!mdFn, '找到 exportMarkdown');
+    const next = starts.filter((f) => f.i > mdFn.i).sort((a, b) => a.i - b.i)[0];
+    const body = src.slice(mdFn.i, next ? next.i : src.length);
+    ok(/fmt\.exchangeLoss\(/.test(body),
+      '★ exportMarkdown 里调用了 exchangeLoss（不提示等于没修）');
+    ok(/'markdown'/.test(body), '★ 传的 kind 是 markdown');
+    // 深于 6 级那条（BUG 102）不能被这条顶掉
+    ok(/deepNodeCount/.test(body), '★ 深于 6 级的提示仍然保留（两条并存）');
+    ok(/notes\.push/.test(body) && /notes\.join/.test(body),
+      '★ 两条提示合并成一句（status 是覆盖式的，分开写后一句会盖掉前一句）');
+    ok(/loss\.nodes > 0/.test(body),
+      '★ 只在真有丢失时才提示（纯文字画布每次导出都喊狼来了没人看）');
+  }
+}
+
 group('BUG 115 · XMind 折叠状态（branch: "folded"）双向');
 
 {
