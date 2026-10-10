@@ -6696,6 +6696,161 @@ group('BUG 108 · XMind 8（content.xml）的节点样式必须读出来');
    之一，猜错一个就会让文件在 XMind 里呈现另一种排布；不写则由 XMind
    按自己的默认来，反而最接近我们的「思维导图」。
    ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   BUG 110：本工具不认识的 XMind 标记必须保住（不得静默丢掉）
+
+   内核只有 priority / progress 两个标记类 data 键，没有 marker 概念。
+   于是 priority-1..9 与 task-*（进度）之外的标记 —— 红旗、星星、问号、
+   人物、月份… —— 读进来时**一律丢掉**：导入别人的文件，节点上那些标记
+   图标凭空消失；再导出，文件里也没了。不报错、不计入 xmindLossCount。
+
+   它们不能丢：那是 XMind 里**看得见的内容**，丢掉等于改了别人的文件。
+   所以读侧存进 data.xmarkers，写侧原样写回 —— 本工具不显示，但也不弄丢。
+   ------------------------------------------------------------------ */
+group('BUG 110 · 不认识的 XMind 标记必须原样保住');
+
+{
+  const X = xmind;
+
+  const mkSheet = (topics) => [{
+    id: 'a', class: 'sheet', title: '外来文件',
+    rootTopic: { id: 'r', title: '根', children: { attached: topics } },
+  }];
+
+  const round = async (topics, rounds = 1) => {
+    const zb = await X.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(mkSheet(topics))) }]);
+    let sheets = (await X.readXMind(new Uint8Array(zb))).sheets;
+    let out = null;
+    for (let i = 0; i < rounds; i++) {
+      const blob = await X.writeXMind(sheets, sheets[0].id);
+      const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+      const en = await X.zipRead(buf);
+      out = JSON.parse(new TextDecoder().decode(en.get('content.json')))[0]
+        .rootTopic.children.attached.map((t) => (t.markers || []).map((m) => m.markerId));
+      sheets = (await X.readXMind(buf)).sheets;
+    }
+    return { kids: JSON.parse(sheets[0].content).root.children, out };
+  };
+
+  const T = [
+    { id: 't1', title: '红旗', markers: [{ markerId: 'flag-red' }] },
+    { id: 't2', title: '多标记', markers: [{ markerId: 'star' }, { markerId: 'symbol-question' }] },
+    { id: 't3', title: '人物', markers: [{ markerId: 'people' }] },
+    { id: 't4', title: '月份', markers: [{ markerId: 'month-jan' }] },
+    { id: 't5', title: '混合', markers: [{ markerId: 'priority-3' }, { markerId: 'flag-blue' }] },
+    { id: 't6', title: '进度混合', markers: [{ markerId: 'task-half' }, { markerId: 'star' }] },
+    { id: 't7', title: '裸串', markers: ['people'] },
+    { id: 't8', title: '重复', markers: [{ markerId: 'star' }, { markerId: 'star' }] },
+    { id: 't9', title: '无标记' },
+  ];
+
+  // ① 读进来：不认识的一个不少，认识的仍落成 priority / progress
+  {
+    const { kids } = await round(T);
+    const by = (t) => kids.find((k) => k.data.text === t).data;
+    eq(by('红旗').xmarkers?.join(','), 'flag-red', '★ 红旗标记保住了');
+    eq(by('多标记').xmarkers?.join(','), 'star,symbol-question', '★ 多个标记按原序保住');
+    eq(by('人物').xmarkers?.join(','), 'people', '★ 人物标记保住了');
+    eq(by('月份').xmarkers?.join(','), 'month-jan', '★ 月份标记保住了');
+    eq(by('混合').priority, 3, '认识的 priority 照样落成 priority');
+    eq(by('混合').xmarkers?.join(','), 'flag-blue', '★ 混合时只存不认识的那个（不重复）');
+    eq(by('进度混合').progress, 5, '认识的 task-half 照样落成 progress');
+    eq(by('进度混合').xmarkers?.join(','), 'star', '★ 进度之外那个标记也保住');
+    eq(by('裸串').xmarkers?.join(','), 'people', '★ markers 里直接写字符串也算');
+    eq(by('重复').xmarkers?.length, 1, '★ 重复标记去重');
+    ok(!by('无标记').xmarkers, '没有标记就不写 xmarkers');
+  }
+
+  // ② 再导出：原样写回，且**不重复**（priority-3 只出现一次）
+  {
+    const { out } = await round(T);
+    eq(out[0].join(','), 'flag-red', '红旗写回');
+    eq(out[1].join(','), 'star,symbol-question', '多标记写回');
+    eq(out[4].join(','), 'priority-3,flag-blue', '★ 认识的与不认识的一起写，priority 不重复');
+    eq(out[5].join(','), 'task-half,star', '★ 进度与标记一起写');
+    eq(out[8].length, 0, '本来没标记的节点不凭空长出标记');
+  }
+
+  // ③ 三轮往返必须恒定（早先一轮就没了）
+  {
+    const { out } = await round(T, 3);
+    eq(out[0].join(','), 'flag-red', '★ 三轮后仍在（早先第一轮就没）');
+    eq(out[1].join(','), 'star,symbol-question', '三轮后多标记仍在');
+    eq(out[4].join(','), 'priority-3,flag-blue', '三轮后不重复');
+  }
+
+  // ④ 脏标记 id 不许写进文件（会产出打不开的 .xmind）
+  {
+    const { kids } = await round([{ id: 'x1', title: '脏',
+      markers: [{ markerId: 'a b!@#' }, { markerId: '' }, { markerId: 'ok_1' }] }]);
+    eq(kids[0].data.xmarkers?.join(','), 'ok_1', '★ 非法 markerId 被拒，合法的留下');
+  }
+
+  // ⑤ 老版 content.xml 的 marker-ref 同样要保住
+  {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<xmap-content xmlns="urn:xmind:xmap:xmlns:content:2.0" version="2.0">
+  <sheet id="sh1"><title>老</title>
+    <topic id="root"><title>根</title><children><topics type="attached">
+      <topic id="a"><title>红旗</title><marker-ref marker-id="flag-red"/></topic>
+      <topic id="b"><title>优先级</title><marker-ref marker-id="priority-2"/></topic>
+    </topics></children></topic>
+  </sheet>
+</xmap-content>`;
+    const zb = await X.zipWrite([{ name: 'content.xml', data: new TextEncoder().encode(xml) }]);
+    const r = await X.readXMind(new Uint8Array(zb));
+    const kids = JSON.parse(r.sheets[0].content).root.children;
+    eq(kids[0].data.xmarkers?.join(','), 'flag-red', '★ 老版 marker-ref 也保住');
+    eq(kids[0].data.priority, undefined, '老版：flag-red 不是优先级');
+    eq(kids[1].data.priority, 2, '老版：priority-2 仍落成 priority');
+    ok(!kids[1].data.xmarkers, '老版：认识的标记不写 xmarkers');
+  }
+
+  // ⑥ 源码契约：两处读侧都必须接住（同一份逻辑抄两遍，只修一遍就会漏）
+  {
+    const src = fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8');
+    const flat = stripCommentsFlat(src);
+    // 只数**调用点**：上面的函数定义也匹配 `collectXMarkers(data, mid)`，
+    // 早先写成裸匹配于是恒为 3，删掉任意一个调用点都照样"通过"。
+    const calls = (flat.match(/else collectXMarkers\(data, mid\)/g) || []).length;
+    eq(calls, 2, '★ zen 与 legacy 两处读侧都要接住不认识的标记', String(calls));
+    ok(/SAFE_MARKER_ID/.test(flat), '写回前要有 markerId 白名单（脏 id 会产出打不开的文件）');
+  }
+
+  // ⑥b 写侧不能**信任** data.xmarkers：它来自节点数据，可能带脏值/重复/已认识的
+  //     id。写侧必须自己校验一遍 —— 否则会产出 markerId 非法的 .xmind，
+  //     别的软件打不开，而我们的读侧根本没机会拦（它是**下游**）。
+  {
+    const content = JSON.stringify({ root: { data: { id: 'r', text: '根' }, children: [
+      { data: { id: 'n1', text: 'A', priority: 3,
+        xmarkers: ['priority-3', 'star', 'a b!@#', 'star', 'flag-red'] }, children: [] },
+    ] } });
+    const blob = await X.writeXMind([{ id: 's1', title: '画布', theme: null, layout: null, content }], 's1');
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const en = await X.zipRead(buf);
+    const got = JSON.parse(new TextDecoder().decode(en.get('content.json')))[0]
+      .rootTopic.children.attached[0].markers.map((m) => m.markerId);
+    eq(got.join(','), 'priority-3,star,flag-red',
+      '★ 写侧自己校验：剔掉脏 id、剔掉已认识的、去重', got.join(','));
+  }
+
+  // ⑦ 导入提示：本工具不显示，但必须说出来（否则用户以为文件被改坏）
+  {
+    const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+    ok(/function unsupportedMarkersTip/.test(idx), '★ 新增 unsupportedMarkersTip');
+    // 只写 `/unsupportedMarkersTip\(sheets\)/` 会被**函数定义**本身命中
+    // （`function unsupportedMarkersTip(sheets) {`），删掉调用点照样绿 ——
+    // 和上面 collectXMarkers 那个坑是同一个。所以数出现次数：定义 1 + 调用 ≥1。
+    const sites = (idx.match(/unsupportedMarkersTip\(sheets\)/g) || []).length;
+    ok(sites >= 2, '★ 导入成功后立即调用（不能等用户点到节点）', String(sites));
+    const i = idx.indexOf('function unsupportedMarkersTip');
+    const body = idx.slice(i, i + 1200);
+    ok(/不显示/.test(body) && /写回/.test(body),
+      '★ 要说清「不显示」但「已保留、导出写回」');
+  }
+}
+
 group('BUG 109 · 布局必须在 XMind 往返中保住（structureClass）');
 
 {

@@ -2748,13 +2748,14 @@ async function gcOrphanAssets(quiet = false) {
     const formTip = { workbook: '多画布包', single: '单画布', markdown: 'Markdown',
       'markdown(兜底)': 'Markdown（未按 JSON 解析，走了兜底）',
       freemind: 'FreeMind', opml: 'OPML', mermaid: 'Mermaid', plantuml: 'PlantUML' }[form] || form;
+    // BUG 110：导入进来的标记图标本工具不显示（内核没有 marker 概念），
+    // 但已原样保留在 data.xmarkers 里、导出时会写回 —— 必须现在就说，
+    // 否则用户看到"标记没了"会以为文件被改坏。
+    const warns = [await warnForeignAssets(sheets), unsupportedMarkersTip(sheets)].filter(Boolean);
     status(`已导入 ${sheets.length} 张画布（识别为：${formTip}）`
-      + (ok ? '' : '；未能写入本地库，重载后会回到导入前的内容'));
+      + (ok ? '' : '；未能写入本地库，重载后会回到导入前的内容')
+      + (warns.length ? ' ⚠ ' + warns.join('；') : ''), warns.length > 0);
     ctx.toast(ok ? `已导入 ${sheets.length} 张画布` : '已导入，但保存失败', ok ? 'ok' : 'err');
-
-    // B22 跨机迁移提示：必须**在导入成功后立刻**说，
-    // 不能等用户点到那个节点才发现 —— 那时他已经以为文件坏了。
-    await warnForeignAssets(sheets);
   }
 
   /**
@@ -2779,11 +2780,40 @@ async function gcOrphanAssets(quiet = false) {
     }
     if (!missing) return;
 
-    status(
-      `⚠ ${missing} 个附件在本机找不到数据（JSON 只带引用、不带本体）。`
-      + '如需跨机器迁移，请改用 .xmind 导出（会把附件一起打包）。',
-      true,
-    );
+    // 返回而不是自己 status()：导入成功那句「已导入 N 张画布」还压在状态栏上，
+    // 自己 status 会把它盖掉（见调用处的组合）。
+    return `${missing} 个附件在本机找不到数据（JSON 只带引用、不带本体）。`
+      + '如需跨机器迁移，请改用 .xmind 导出（会把附件一起打包）。';
+  }
+
+  /**
+   * BUG 110：数出「本工具不显示的标记图标」并给出提示串（没有则空串）。
+   *
+   * XMind 的标记只有 priority-1..9（优先级）和 task-*（进度）落进了
+   * kityminder 的 data，其余（红旗、星星、问号、人物、月份…）内核没有
+   * 对应字段 —— xmind.js 把它们存进 data.xmarkers 保住了往返，但画布上
+   * **看不见**。不提示的话，用户会以为导入把文件改坏了。
+   *
+   * @param {Array} sheets 画布数组
+   * @returns {string} 提示串；没有则 ''
+   */
+  function unsupportedMarkersTip(sheets) {
+    let nodes = 0;
+    let total = 0;
+    const walk = (n, depth) => {
+      if (!n || depth > 200) return;
+      const xm = n?.data?.xmarkers;
+      if (Array.isArray(xm) && xm.length) { nodes++; total += xm.length; }
+      for (const c of n.children || []) walk(c, depth + 1);
+    };
+    for (const sh of sheets || []) {
+      let root = null;
+      try { root = JSON.parse(sh?.content || '{}').root; } catch { /* 坏内容跳过 */ }
+      walk(root, 0);
+    }
+    if (!nodes) return '';
+    return `${nodes} 个节点上的 ${total} 个标记图标本工具不显示`
+      + '（已原样保留，导出 .xmind 时会写回）';
   }
 
   /**

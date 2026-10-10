@@ -338,6 +338,34 @@ const StructureToLayout = Object.fromEntries(
   Object.entries(LayoutToStructure).map(([k, v]) => [v, k]));
 
 /**
+ * 本工具**认识**的 XMind 标记：只有 priority-1..9（优先级）和
+ * ProgressMarkers（进度）有对应的 kityminder 字段，其余一概没有 ——
+ * 内核压根没有 marker 概念（只有 priority / progress 两个 data 键）。
+ *
+ * ⓘ 不认识的标记不能丢：它们在 XMind 里是**可见内容**（红旗、星星、
+ *   问号、人物、月份…），静默丢掉等于改了别人的文件。所以读进来时存进
+ *   data.xmarkers，导出时原样写回 —— 本工具不显示它们，但也不会弄丢
+ *   （BUG 110）。
+ */
+const KNOWN_MARKER_ID = /^(priority-[1-9])$/;
+/** 写回时才做的白名单：拒绝把任意字符串塞进 markerId */
+const SAFE_MARKER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** 该标记 id 本工具是否认识（认识=已转成 priority/progress，不必再存） */
+function isKnownMarker(mid) {
+  return KNOWN_MARKER_ID.test(mid) || ProgressMarkers.indexOf(mid) >= 0;
+}
+
+/** 读侧：把不认识的 markerId 收集进 data.xmarkers（去重、保序、上限保护） */
+function collectXMarkers(data, mid) {
+  if (!mid || isKnownMarker(mid) || !SAFE_MARKER_ID.test(mid)) return;
+  const cur = Array.isArray(data.xmarkers) ? data.xmarkers : [];
+  if (cur.indexOf(mid) >= 0) return;
+  if (cur.length >= 20) return;          // 异常文件里的海量标记，别把 data 撑爆
+  data.xmarkers = cur.concat([mid]);
+}
+
+/**
  * kityminder **节点级** data 键 → XMind style.properties 键
  *
  * ⓘ 左侧必须取内核真正用的那套键名，不能照抄 XMind / 主题的命名：
@@ -736,6 +764,13 @@ function buildTopic(kmNode, packs) {
   if (priority >= 1 && priority <= 9) markers.push({ markerId: 'priority-' + Math.round(priority) });
   const progress = num(data.progress);
   if (progress > 0 && progress <= 10) markers.push({ markerId: progressToMarker(progress) });
+  // BUG 110：导进来的、本工具不认识的标记原样写回（去重、剔掉已认识的）
+  const extra = Array.isArray(data.xmarkers) ? data.xmarkers : [];
+  for (const mid of extra) {
+    if (typeof mid !== 'string' || isKnownMarker(mid) || !SAFE_MARKER_ID.test(mid)) continue;
+    if (markers.some((m) => m.markerId === mid)) continue;
+    markers.push({ markerId: mid });
+  }
   if (markers.length) topic.markers = markers;
 
   const labels = buildLabels(data.labels);
@@ -1049,6 +1084,7 @@ function buildKmNode(topic, depth = 0, counter = null) {
       } else {
         const idx = ProgressMarkers.indexOf(mid);
         if (idx >= 0) data.progress = MarkerToProgress[idx];
+        else collectXMarkers(data, mid);   // BUG 110
       }
     }
   }
@@ -1332,6 +1368,7 @@ function buildKmFromXmlTopic(t, depth = 0, styles = null) {
     } else {
       const idx = ProgressMarkers.indexOf(mid);
       if (idx >= 0) data.progress = MarkerToProgress[idx];
+      else collectXMarkers(data, mid);   // BUG 110
     }
   }
 
