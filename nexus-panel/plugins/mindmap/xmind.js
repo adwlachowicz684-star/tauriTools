@@ -320,6 +320,24 @@ const ProgressMarkers = [
 const MarkerToProgress = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
 /**
+ * 布局 ↔ XMind 的 structureClass（写在 rootTopic 上）
+ *
+ * ⓘ 只列**有标准对应值**的四种。`default`（思维导图）刻意**不写** ——
+ *   XMind 自家的默认图型是 balanced/clockwise 之一，猜错一个就会让文件
+ *   在 XMind 里呈现出另一种排布；不写则由 XMind 按它自己的默认来，反而
+ *   最接近我们的「思维导图」。`tianpan`（天盘图）XMind 没有对应结构，
+ *   同样不写。
+ */
+const LayoutToStructure = {
+  right: 'org.xmind.ui.logic.right',
+  structure: 'org.xmind.ui.org-chart.down',
+  filetree: 'org.xmind.ui.tree.right',
+  'fish-bone': 'org.xmind.ui.fishbone.leftHeaded',
+};
+const StructureToLayout = Object.fromEntries(
+  Object.entries(LayoutToStructure).map(([k, v]) => [v, k]));
+
+/**
  * kityminder **节点级** data 键 → XMind style.properties 键
  *
  * ⓘ 左侧必须取内核真正用的那套键名，不能照抄 XMind / 主题的命名：
@@ -623,6 +641,18 @@ function walkKmTopic(node, action, depth = 0) {
    五、写：kityminder → content.json
    ============================================================ */
 
+/**
+ * 把布局写成 rootTopic.structureClass。
+ *
+ * 没有对应值的（default / tianpan / 未知）**不写这个键** —— 见 LayoutToStructure。
+ */
+function withStructure(rootTopic, layout) {
+  const sc = LayoutToStructure[str(layout) || ''];
+  if (!sc || !rootTopic) return rootTopic;
+  rootTopic.structureClass = sc;
+  return rootTopic;
+}
+
 function buildContentJson(sheets, packs) {
   const arr = [];
   for (const s of sheets) {
@@ -632,7 +662,7 @@ function buildContentJson(sheets, packs) {
       id: s.id,
       class: 'sheet',
       title: s.title,
-      rootTopic: buildTopic(km.root, packs),
+      rootTopic: withStructure(buildTopic(km.root, packs), s.layout),
     });
   }
   if (arr.length === 0) {
@@ -963,7 +993,9 @@ function parseZen(json) {
       title: str(sn.title) || ('画布 ' + index),
       content: pretty(doc),
       theme: 'fresh-blue',
-      layout: 'default',
+      // BUG 109：布局也得读回来 —— 早先写死 'default'，于是本工具导出的
+      // 「组织结构图」过一遍别的软件，导回就一律变成「思维导图」
+      layout: StructureToLayout[str(sn.rootTopic?.structureClass) || ''] || 'default',
     });
   }
   return { sheets };
@@ -1196,13 +1228,15 @@ function parseLegacy(xml, stylesXml = null) {
     if (!kmRoot) continue;   // 根节点就超深 —— 异常文件，跳过这张画布
     const titleEl = childrenOf(sheetEl, 'title')[0];
     const title = titleEl?.textContent?.trim();
+    // 老版 content.xml 把结构类写在根 topic 的 structure-class 属性上
+    const legacySc = topicEls[0].getAttribute?.('structure-class');
     const wrapper = { root: kmRoot, template: 'default', theme: 'fresh-blue', version: '1.4.43' };
     sheets.push({
       id: sheetEl.getAttribute('id') || newSheetId(),
       title: title || ('画布 ' + index),
       content: pretty(wrapper),
       theme: 'fresh-blue',
-      layout: 'default',
+      layout: StructureToLayout[str(legacySc) || ''] || 'default',
     });
   }
   return { sheets };

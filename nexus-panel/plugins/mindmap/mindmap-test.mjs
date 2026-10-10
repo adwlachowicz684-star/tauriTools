@@ -6683,6 +6683,102 @@ group('BUG 108 · XMind 8（content.xml）的节点样式必须读出来');
   }
 }
 
+/* ------------------------------------------------------------------
+   BUG 109：布局（layout）必须在 XMind 往返中保住
+
+   XMind 把图型写在 rootTopic.structureClass 上（org.xmind.ui.logic.right /
+   org.xmind.ui.org-chart.down / org.xmind.ui.tree.right /
+   org.xmind.ui.fishbone.leftHeaded）。而写侧不写、读侧写死 `layout: 'default'`，
+   于是「组织结构图 / 目录组织图 / 逻辑结构图 / 鱼骨图」过一遍别的软件，
+   导回一律变成「思维导图」——不报错、也不计入 xmindLossCount。
+
+   default（思维导图）刻意**不写**：XMind 自家的默认图型是 balanced/clockwise
+   之一，猜错一个就会让文件在 XMind 里呈现另一种排布；不写则由 XMind
+   按自己的默认来，反而最接近我们的「思维导图」。
+   ------------------------------------------------------------------ */
+group('BUG 109 · 布局必须在 XMind 往返中保住（structureClass）');
+
+{
+  const X = xmind;
+
+  const mk = (n) => JSON.stringify({ root: { data: { id: 'r' + n, text: '根' + n }, children: [] } });
+  /** 剥掉本工具的无损快照，只留 content.json —— 模拟"被别的软件存过一遍" */
+  const zen = async (sheets) => {
+    const blob = await X.writeXMind(sheets, sheets[0].id);
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const en = await X.zipRead(buf);
+    const cj = JSON.parse(new TextDecoder().decode(en.get('content.json')));
+    const zb = await X.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+    const r = await X.readXMind(new Uint8Array(zb));
+    return { cj, sheets: r.sheets };
+  };
+
+  // ① 四种有标准对应值的布局：逐一来回，一种都不许变
+  {
+    for (const [layout, sc] of [
+      ['right', 'org.xmind.ui.logic.right'],
+      ['structure', 'org.xmind.ui.org-chart.down'],
+      ['filetree', 'org.xmind.ui.tree.right'],
+      ['fish-bone', 'org.xmind.ui.fishbone.leftHeaded'],
+    ]) {
+      const { cj, sheets } = await zen([{ id: 's1', title: '画布', theme: null, layout, content: mk(1) }]);
+      eq(sheets[0].layout, layout, `★ 布局 ${layout} 往返回原值`);
+      eq(cj[0].rootTopic.structureClass, sc, `${layout} 写成 ${sc}`);
+    }
+  }
+
+  // ② default 与 tianpan **不写** structureClass（见上面的理由）
+  {
+    for (const layout of ['default', 'tianpan']) {
+      const { cj, sheets } = await zen([{ id: 's1', title: '画布', theme: null, layout, content: mk(1) }]);
+      ok(!cj[0].rootTopic.structureClass,
+        `★ ${layout} 不写 structureClass（写了就是猜 XMind 的默认图型）`,
+        String(cj[0].rootTopic.structureClass));
+      eq(sheets[0].layout, 'default', `${layout} 导回是 default`);
+    }
+  }
+
+  // ③ 反向：别的软件写的 structureClass 必须落成我们的布局
+  {
+    const cj = [
+      { id: 'a', class: 'sheet', title: '逻辑图',
+        rootTopic: { id: 't1', title: '根', structureClass: 'org.xmind.ui.logic.right' } },
+      { id: 'b', class: 'sheet', title: '组织图',
+        rootTopic: { id: 't2', title: '根', structureClass: 'org.xmind.ui.org-chart.down' } },
+      { id: 'c', class: 'sheet', title: '鱼骨',
+        rootTopic: { id: 't3', title: '根', structureClass: 'org.xmind.ui.fishbone.leftHeaded' } },
+      { id: 'd', class: 'sheet', title: '不认识的',
+        rootTopic: { id: 't4', title: '根', structureClass: 'org.xmind.ui.spreadsheet' } },
+    ];
+    const zb = await X.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+    const r = await X.readXMind(new Uint8Array(zb));
+    const got = r.sheets.map((s) => s.layout);
+    eq(got.join(','), 'right,structure,fish-bone,default', '★ 反向映射（不认识 → default）');
+  }
+
+  // ④ 老版 content.xml：structure-class 属性同样要读出来
+  {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<xmap-content xmlns="urn:xmind:xmap:xmlns:content:2.0" version="2.0">
+  <sheet id="sh1"><title>老画布</title>
+    <topic id="root" structure-class="org.xmind.ui.tree.right"><title>根</title></topic>
+  </sheet>
+</xmap-content>`;
+    const zb = await X.zipWrite([{ name: 'content.xml', data: new TextEncoder().encode(xml) }]);
+    const r = await X.readXMind(new Uint8Array(zb));
+    eq(r.sheets[0].layout, 'filetree', '★ 老版 content.xml 的 structure-class 也要读');
+  }
+
+  // ⑤ 源码契约：读侧不许再写死 layout: 'default'
+  {
+    const src = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+    ok(!/layout:\s*'default'/.test(src),
+      '★ 读侧不再写死 layout（早先两处都写死，过一遍别的软件布局就没了）');
+  }
+}
+
 group('BUG 107 · 进度 progress 1..9 必须在 XMind 往返中原样保住');
 
 {
