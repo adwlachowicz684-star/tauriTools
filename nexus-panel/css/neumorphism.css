@@ -2728,10 +2728,18 @@ html.theme-transition *:not(.spinner) {
    依据（创建时没传色调、也没有 tone/hue 计算），凭空写一个色值等于
    替所有被适配的插件发明观感。等视觉意图定了再补，那时定位与
    pointer-events 都已就位，加上去即可生效。
-   ============================================================ *//* [幽灵规则 neumorphism.css:2710] .nexus-tone-overlay
-   全仓代码 0 处引用（已排除模板拼接类与外部库类），判定为旧 UI 残留。
-   暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
-/*
+   ============================================================ */
+
+/* ⚠️ 这里原先写着「全仓代码 0 处引用，判定为旧 UI 残留，暂不删除，仅注释」，
+   并把下面的规则整段注释掉 —— **那条判定是错的**：js/theme-normalizer.js 里有
+   两处真实引用（L3 创建覆盖层时赋类名、以及幂等清理时按类名查询），
+   当时 theme-normalizer.js 不在这次扫描的范围内，于是被当成了旧 UI 残留。
+
+   后果不是"少一条样式"，而是 L3 覆盖层退化成一个没有定位的普通空 div：
+   · absolute + inset:0 缺失 → 铺不开，将来补了背景色也只是内容流里一条线；
+   · pointer-events:none 缺失 → 一旦有人补上背景色，它会盖住整个插件并
+     吃掉所有点击，表现为"插件点了没反应"且不报错，极难归因到这一层。
+   所以这里恢复为生效状态；那条"0 处引用"的说明不再成立，已替换为上述实情。 */
 
 .nexus-tone-overlay {
   position: absolute;
@@ -2739,7 +2747,14 @@ html.theme-transition *:not(.spinner) {
   pointer-events: none;
   z-index: var(--z-flat);
 }
-*/
+
+/* .nexus-adapted：installAdapter 施加滤镜后打在 target 上的标记类
+   （施加时 add、teardown 时 remove），此前全仓没有对应规则。
+   这里只补一条有依据的声明：isolation: isolate ——
+   L3 覆盖层将来要用 mix-blend-mode 与**本容器内**的内容混合；不隔离的话
+   混合会穿透到页面背景，表现为"整个面板被一起染色"而不是"只统一插件自己的色调"。
+   缺它时滤镜照常生效，所以症状只在补上 L3 背景色之后才暴露，比没有滤镜更难查。 */
+.nexus-adapted { isolation: isolate; }
 
 
 .fp-dirname:hover { filter: brightness(var(--hover-bright, 1.06)); }
